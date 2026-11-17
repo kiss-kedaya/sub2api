@@ -31,6 +31,29 @@ func TestCacheCreationTokensFromUsage(t *testing.T) {
 	}
 }
 
+func TestCapCacheCreationBreakdownKeepsPartialSplit(t *testing.T) {
+	cases := []struct {
+		name              string
+		aggregate, m5, h1 int
+		want5m, want1h    int
+	}{
+		{"partial 5m stays as reported", 200, 80, 0, 80, 0},
+		{"partial 1h stays as reported", 200, 0, 120, 0, 120},
+		{"complete split unchanged", 200, 80, 120, 80, 120},
+		{"details above aggregate are capped proportionally", 200, 200, 200, 100, 100},
+		{"no aggregate keeps legacy details", 0, 30, 40, 30, 40},
+		{"negative details are clamped", 200, -5, 120, 0, 120},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m5, h1 := CapCacheCreationBreakdown(tc.aggregate, tc.m5, tc.h1)
+			if m5 != tc.want5m || h1 != tc.want1h {
+				t.Fatalf("got (%d, %d), want (%d, %d)", m5, h1, tc.want5m, tc.want1h)
+			}
+		})
+	}
+}
+
 func TestNormalizeCacheCreationBreakdown(t *testing.T) {
 	cases := []struct {
 		name              string

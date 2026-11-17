@@ -1699,11 +1699,9 @@ func normalizeOpenAICacheCreationUsage(usage *OpenAIUsage) {
 		usage.CacheCreation5mTokens, usage.CacheCreation1hTokens = 0, 0
 		return
 	}
-	usage.CacheCreation5mTokens, usage.CacheCreation1hTokens = normalizeCacheCreationBreakdown(UsageTokens{
-		CacheCreationTokens:   usage.CacheCreationInputTokens,
-		CacheCreation5mTokens: usage.CacheCreation5mTokens,
-		CacheCreation1hTokens: usage.CacheCreation1hTokens,
-	})
+	usage.CacheCreation5mTokens, usage.CacheCreation1hTokens = apicompat.NormalizeCacheCreationBreakdown(
+		usage.CacheCreationInputTokens, usage.CacheCreation5mTokens, usage.CacheCreation1hTokens,
+	)
 }
 
 func addOpenAIUsage(dst *OpenAIUsage, usage OpenAIUsage) {

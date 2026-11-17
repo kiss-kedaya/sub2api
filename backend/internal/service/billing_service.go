@@ -1730,10 +1730,12 @@ func (s *BillingService) computeCacheCreationCost(pricing *ModelPricing, tokens 
 	return float64(tokens.CacheCreationTokens) * price * multiplier
 }
 
-// normalizeCacheCreationBreakdown shares the same per-response accounting rules
-// with the WebSocket relay; a partial split charges its remainder at 5m.
+// normalizeCacheCreationBreakdown prevents contradictory upstream TTL details
+// from billing more tokens than the authoritative aggregate count. A split
+// that adds up to less than the aggregate is billed as reported; the OpenAI
+// gateway fills that remainder (as 5m) before it gets here.
 func normalizeCacheCreationBreakdown(tokens UsageTokens) (int, int) {
-	return apicompat.NormalizeCacheCreationBreakdown(tokens.CacheCreationTokens, tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens)
+	return apicompat.CapCacheCreationBreakdown(tokens.CacheCreationTokens, tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens)
 }
 
 // calculatePerRequestCost 按次/图片计费

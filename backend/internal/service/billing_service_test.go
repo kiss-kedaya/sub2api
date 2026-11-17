@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1330,7 +1331,10 @@ func TestCacheCreationSplitPricingSafety(t *testing.T) {
 	for _, total := range []int{1, 100, 200, 10000, int(^uint(0) >> 1), int(^uint(0)>>1) - 1025} {
 		for _, five := range []int{-1, 0, 80, 200, 10000, int(^uint(0) >> 1)} {
 			for _, hour := range []int{-1, 0, 120, 200, 10000, int(^uint(0) >> 1)} {
-				tokens := UsageTokens{CacheCreationTokens: total, CacheCreation5mTokens: five, CacheCreation1hTokens: hour}
+				// The OpenAI gateway fills an unclassified remainder (as 5m) before
+				// billing; the shared cost function itself keeps the Anthropic rule.
+				tokens := UsageTokens{CacheCreationTokens: total}
+				tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = apicompat.NormalizeCacheCreationBreakdown(total, five, hour)
 				cost := (&BillingService{}).computeCacheCreationCost(pricing, tokens, 0, 1)
 				require.GreaterOrEqual(t, cost+1e-12, float64(total)*2.5e-6, "no cache writes may be dropped: %+v", tokens)
 				require.LessOrEqual(t, cost, float64(total)*4e-6+1e-12, "no charge above the 1h ceiling: %+v", tokens)
@@ -1343,6 +1347,17 @@ func TestCacheCreationSplitPricingSafety(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The Anthropic billing path bills a partial split exactly as reported. Whether
+// the unclassified remainder should be charged there depends on how each
+// upstream bills it, so that is a pricing decision, not part of the OpenAI fix.
+func TestCacheCreationPartialSplitStaysAsReportedOnSharedCostPath(t *testing.T) {
+	pricing := &ModelPricing{SupportsCacheBreakdown: true, CacheCreation5mPrice: 2.5e-6, CacheCreation1hPrice: 4e-6}
+	tokens := UsageTokens{CacheCreationTokens: 200, CacheCreation5mTokens: 80}
+	require.InDelta(t, 80*2.5e-6, (&BillingService{}).computeCacheCreationCost(pricing, tokens, 0, 1), 1e-12)
+	tokens = UsageTokens{CacheCreationTokens: 200, CacheCreation1hTokens: 120}
+	require.InDelta(t, 120*4e-6, (&BillingService{}).computeCacheCreationCost(pricing, tokens, 0, 1), 1e-12)
 }
 
 func TestCacheCreationSplitAnthropicPricingCompatibility(t *testing.T) {
@@ -1398,27 +1413,27 @@ func TestNormalizeCacheCreationBreakdown_BillingSafetyInvariant(t *testing.T) {
 			want1h: 40,
 		},
 		{
-			name:   "partial details fill 5m remainder",
+			name:   "details below aggregate unchanged",
 			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: 30, CacheCreation1hTokens: 60},
-			want5m: 40,
+			want5m: 30,
 			want1h: 60,
 		},
 		{
-			name:   "absent 5m detail fills remainder",
+			name:   "absent 5m detail unchanged",
 			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation1hTokens: 60},
-			want5m: 40,
+			want5m: 0,
 			want1h: 60,
 		},
 		{
-			name:   "absent 1h detail fills 5m remainder",
+			name:   "absent 1h detail unchanged",
 			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: 30},
-			want5m: 100,
+			want5m: 30,
 			want1h: 0,
 		},
 		{
-			name:   "negative detail clamped and remainder filled",
+			name:   "negative detail clamped",
 			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: -50, CacheCreation1hTokens: 60},
-			want5m: 40,
+			want5m: 0,
 			want1h: 60,
 		},
 		{

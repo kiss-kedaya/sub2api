@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"go.uber.org/zap"
@@ -218,7 +219,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		// The OpenAI aggregate (including an explicit zero) remains authoritative.
 		tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = 0, 0
 	} else {
-		tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = normalizeCacheCreationBreakdown(tokens)
+		// OpenAI gateway rule: an unclassified remainder stays billable as 5m.
+		tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = apicompat.NormalizeCacheCreationBreakdown(
+			tokens.CacheCreationTokens, tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens,
+		)
 	}
 
 	cacheTTLOverridden := false

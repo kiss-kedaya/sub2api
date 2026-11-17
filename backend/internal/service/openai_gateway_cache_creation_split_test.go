@@ -51,7 +51,8 @@ func TestOpenAICacheCreationSplitPartialBuckets(t *testing.T) {
 			require.InDelta(t, tc.want, log.CacheCreationCost, 1e-12)
 			require.Equal(t, tc.want5m, log.CacheCreation5mTokens)
 			require.Equal(t, tc.hour, log.CacheCreation1hTokens)
-			stats := calculateTokenStatsCost(&ChannelModelPricing{CacheWritePrice: testPtrFloat64(2.5e-6), CacheWrite1hPrice: testPtrFloat64(4e-6)}, UsageTokens{CacheCreationTokens: 200, CacheCreation5mTokens: tc.five, CacheCreation1hTokens: tc.hour})
+			// Account statistics receive the same normalized tokens as billing.
+			stats := calculateTokenStatsCost(&ChannelModelPricing{CacheWritePrice: testPtrFloat64(2.5e-6), CacheWrite1hPrice: testPtrFloat64(4e-6)}, UsageTokens{CacheCreationTokens: 200, CacheCreation5mTokens: log.CacheCreation5mTokens, CacheCreation1hTokens: log.CacheCreation1hTokens})
 			require.NotNil(t, stats)
 			require.InDelta(t, tc.want, *stats, 1e-12)
 		})
