@@ -116,6 +116,45 @@ describe('polling', () => {
     expect(mocks.getChainStatus).toHaveBeenCalledTimes(2)
   })
 
+  it('aborts each pending request on visibility or tab changes and on unmount', async () => {
+    const signals: AbortSignal[] = []
+    mocks.getChainStatus.mockImplementation((signal: AbortSignal) => {
+      signals.push(signal)
+      return new Promise(() => {})
+    })
+    const wrapper = await mountPanel()
+    for (let i = 0; i < 4; i++) {
+      setVisibility('hidden')
+      await flushPromises()
+      expect(signals.at(-1)?.aborted).toBe(true)
+      setVisibility('visible')
+      await flushPromises()
+      expect(signals.filter(signal => !signal.aborted)).toHaveLength(1)
+    }
+    await wrapper.setProps({ active: false })
+    expect(signals.every(signal => signal.aborted)).toBe(true)
+    await wrapper.setProps({ active: true })
+    await flushPromises()
+    wrapper.unmount()
+    expect(signals.every(signal => signal.aborted)).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('does not let an aborted response overwrite the new visible report', async () => {
+    let release!: (r: ChainStatusReport) => void
+    mocks.getChainStatus.mockReturnValueOnce(new Promise<ChainStatusReport>(resolve => { release = resolve }))
+      .mockResolvedValue(report([chain({ chain: 'ethereum' })]))
+    const wrapper = await mountPanel()
+    setVisibility('hidden')
+    await flushPromises()
+    setVisibility('visible')
+    await flushPromises()
+    release(report([chain({ chain: 'bsc' })]))
+    await flushPromises()
+    expect(wrapper.find('[data-testid="chain-row-ethereum"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="chain-row-bsc"]').exists()).toBe(false)
+  })
+
   it('drops a response that arrives after polling was stopped', async () => {
     let release!: (r: ChainStatusReport) => void
     mocks.getChainStatus.mockReset()

@@ -1,10 +1,11 @@
 import { defineComponent, h } from 'vue'
-import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MonitorMatrixRow, MonitorSnapshot } from '@/api/channelMonitorV2'
 
 const getMatrix = vi.fn()
 const getSnapshot = vi.fn()
+enableAutoUnmount(afterEach)
 
 vi.mock('@/api/channelMonitorV2', () => ({
   getMatrix: (...args: unknown[]) => getMatrix(...args),
@@ -132,7 +133,7 @@ describe('ChannelStatusV3View platform grouping', () => {
           EmptyState: true,
           ChannelMonitorV3Card: defineComponent({
             name: 'ChannelMonitorV3Card',
-            props: ['row'],
+            props: ['row', 'anchorBucketStart', 'bucketSeconds'],
             setup: (props) => () => h('div', { 'data-testid': `card-${props.row.group_id}` }, props.row.group_name),
           }),
         },
@@ -154,13 +155,34 @@ describe('ChannelStatusV3View platform grouping', () => {
           EmptyState: true,
           ChannelMonitorV3Card: defineComponent({
             name: 'ChannelMonitorV3Card',
-            props: ['row'],
+            props: ['row', 'anchorBucketStart', 'bucketSeconds'],
             setup: (props) => () => h('div', { 'data-testid': `card-${props.row.group_id}` }, props.row.group_name),
           }),
         },
       },
     })
   }
+
+  it('shares the latest valid bucket and matrix step across clustered and compact cards', async () => {
+    const older = row('openai', 1, 'GPT')
+    const newest = row('openai', 2, 'Codex')
+    const compact = row('gemini', 9, 'Gemini')
+    newest.buckets[0].bucket_start = '2026-09-11T12:05:00Z'
+    compact.buckets.push({ ...compact.buckets[0], bucket_start: 'invalid' })
+    getMatrix.mockResolvedValue({
+      coverage: { ...coverage(), bucket_seconds: 600 },
+      group_by: 'platform_group',
+      items: [compact, newest, older],
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    const cards = wrapper.findAllComponents({ name: 'ChannelMonitorV3Card' })
+    expect(cards).toHaveLength(3)
+    for (const card of cards) {
+      expect(card.props('anchorBucketStart')).toBe('2026-09-11T12:05:00.000Z')
+      expect(card.props('bucketSeconds')).toBe(600)
+    }
+  })
 
   it('packs consecutive single-group platforms onto one row with their own headings', async () => {
     getMatrix.mockResolvedValue({

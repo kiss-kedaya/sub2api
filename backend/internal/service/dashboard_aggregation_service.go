@@ -16,12 +16,14 @@ import (
 const (
 	defaultDashboardAggregationTimeout         = 2 * time.Minute
 	defaultDashboardAggregationBackfillTimeout = 30 * time.Minute
-	dashboardAggregationRetentionInterval      = 6 * time.Hour
+	// Allow a 5-minute group-rollup statement plus lock/transaction overhead.
+	defaultDashboardGroupUsageSyncTimeout = 6 * time.Minute
+	dashboardAggregationRetentionInterval = 6 * time.Hour
 
 	// dashboardAggregationLeaderLockKey 保证多副本部署中每个周期只有一个实例执行聚合。
 	dashboardAggregationLeaderLockKey = "dashboard:aggregation:leader"
 	// TTL 必须覆盖 dashboard 聚合与分组日汇总两个有界阶段，避免任务中途失锁。
-	dashboardAggregationLeaderLockTTL = 5 * time.Minute
+	dashboardAggregationLeaderLockTTL = defaultDashboardAggregationTimeout + defaultDashboardGroupUsageSyncTimeout + time.Minute
 
 	// Startup and periodic group-usage syncs share this lock. They have different
 	// entry points and may overlap during rolling restarts, but both rebuild the
@@ -281,7 +283,7 @@ func (s *DashboardAggregationService) runScheduledAggregation() {
 }
 
 func (s *DashboardAggregationService) runScheduledGroupUsageSync() {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardAggregationTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultDashboardGroupUsageSyncTimeout)
 	defer cancel()
 	release, ok := tryAcquireSingletonLeaderLock(
 		ctx,

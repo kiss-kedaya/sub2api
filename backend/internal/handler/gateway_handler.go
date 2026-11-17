@@ -1882,7 +1882,9 @@ func (h *GatewayHandler) Usage(c *gin.Context) {
 
 // parseUsageDateRange 解析 start_date / end_date query params，默认返回近 30 天范围
 func (h *GatewayHandler) parseUsageDateRange(c *gin.Context) (time.Time, time.Time) {
-	now := timezone.Now()
+	// Moving defaults must be stable long enough to reuse aggregate cache entries.
+	// Explicit date ranges below retain their original day boundaries.
+	now := timezone.Now().Truncate(time.Minute)
 	endTime := now
 	startTime := now.AddDate(0, 0, -30)
 

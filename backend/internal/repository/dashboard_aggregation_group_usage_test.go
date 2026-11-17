@@ -21,6 +21,8 @@ func TestDashboardAggregationRepositorySyncGroupUsageRollupsNoopsAtCurrentDate(t
 	todayStart := time.Date(2026, 8, 13, 16, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL statement_timeout = '5min'`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT closed_before::text, retained_from.*FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"closed_before", "retained_from", "timezone_name"}).
 			AddRow("2026-08-14", time.Unix(0, 0).UTC(), "Asia/Shanghai"))
@@ -39,6 +41,8 @@ func TestDashboardAggregationRepositorySyncGroupUsageRollupsRebuildsWhenTimezone
 	retainedFrom := time.Date(2026, 3, 1, 5, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL statement_timeout = '5min'`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT closed_before::text, retained_from.*FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"closed_before", "retained_from", "timezone_name"}).
 			AddRow("2026-03-09", time.Unix(0, 0).UTC(), "Asia/Shanghai"))
@@ -68,6 +72,8 @@ func TestDashboardAggregationRepositorySyncGroupUsageRollupsPublishesWatermarkLa
 	rebuildStart := time.Date(2026, 8, 12, 16, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL statement_timeout = '5min'`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT closed_before::text, retained_from.*FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"closed_before", "retained_from", "timezone_name"}).
 			AddRow("2026-08-13", time.Unix(0, 0).UTC(), "Asia/Shanghai"))
@@ -95,6 +101,8 @@ func TestDashboardAggregationRepositorySyncGroupUsageRollupsRejectsFutureWaterma
 	todayStart := time.Date(2026, 8, 13, 16, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL statement_timeout = '5min'`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT closed_before::text, retained_from.*FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"closed_before", "retained_from", "timezone_name"}).
 			AddRow("2026-08-15", time.Unix(0, 0).UTC(), "Asia/Shanghai"))
@@ -160,6 +168,8 @@ func TestDashboardAggregationRepositoryRecomputeRangeRebuildsGroupRollupsBeforeC
 	} {
 		mock.ExpectExec(query).WillReturnResult(sqlmock.NewResult(0, 1))
 	}
+	mock.ExpectExec(`SET LOCAL statement_timeout = '5min'`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT closed_before::text, retained_from.*FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"closed_before", "retained_from", "timezone_name"}).
 			AddRow(startDate, time.Unix(0, 0).UTC(), "Asia/Shanghai"))
@@ -180,12 +190,11 @@ func TestDashboardAggregationRepositoryRecomputeRangeRebuildsGroupRollupsBeforeC
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestDashboardAggregationRepositoryCleanupUsageLogsNonPartitionedInvalidatesEachBatchAndSyncs(t *testing.T) {
+func TestDashboardAggregationRepositoryCleanupUsageLogsNonPartitionedAdvancesRetentionBeforeDeleteAndSyncs(t *testing.T) {
 	setGroupUsageRollupTestTimezone(t)
 	db, mock := newSQLMock(t)
 	repo := newDashboardAggregationRepositoryWithSQL(db)
 	cutoff := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
-	earliestDeletedAt := time.Date(2026, 5, 3, 2, 0, 0, 0, time.UTC)
 	fixedNow := time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC)
 	repo.clock = func() time.Time { return fixedNow }
 	todayStart := service.GroupUsageTodayStart(fixedNow)
@@ -195,19 +204,19 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsNonPartitionedInvalidates
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-	mock.ExpectQuery(`(?s)DELETE FROM usage_logs.*RETURNING created_at`).
-		WithArgs(cutoff, usageLogsCleanupBatchSize).
-		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).
-			AddRow(earliestDeletedAt.Add(time.Hour)).
-			AddRow(earliestDeletedAt))
-	mock.ExpectExec(`UPDATE usage_group_rollup_state`).
-		WithArgs(earliestDeletedAt, "Asia/Shanghai").
+	mock.ExpectExec(`UPDATE usage_group_rollup_state SET retained_from = GREATEST\(retained_from, \$1\)`).
+		WithArgs(cutoff).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)SELECT ctid.*ORDER BY created_at ASC, id ASC.*DELETE FROM usage_logs`).
+		WithArgs(cutoff, usageLogsCleanupBatchSize).
+		WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectCommit()
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL statement_timeout = '5min'`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT closed_before::text, retained_from.*FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"closed_before", "retained_from", "timezone_name"}).
-			AddRow(service.GroupUsageDate(todayStart), time.Unix(0, 0).UTC(), "Asia/Shanghai"))
+			AddRow(service.GroupUsageDate(todayStart), cutoff, "Asia/Shanghai"))
 	mock.ExpectCommit()
 
 	require.NoError(t, repo.CleanupUsageLogs(context.Background(), cutoff))
@@ -252,6 +261,8 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsPartitionedSortsAndInvali
 		mock.ExpectCommit()
 	}
 	mock.ExpectBegin()
+	mock.ExpectExec(`SET LOCAL statement_timeout = '5min'`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT closed_before::text, retained_from.*FOR UPDATE`).
 		WillReturnRows(sqlmock.NewRows([]string{"closed_before", "retained_from", "timezone_name"}).
 			AddRow(service.GroupUsageDate(todayStart), time.Unix(0, 0).UTC(), "Asia/Shanghai"))
@@ -262,28 +273,37 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsPartitionedSortsAndInvali
 }
 
 func TestDashboardAggregationRepositoryCleanupUsageLogsNonPartitionedFailureRollsBackWithoutSync(t *testing.T) {
-	setGroupUsageRollupTestTimezone(t)
-	db, mock := newSQLMock(t)
-	repo := newDashboardAggregationRepositoryWithSQL(db)
-	cutoff := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
-	deletedAt := time.Date(2026, 5, 3, 2, 0, 0, 0, time.UTC)
+	for _, failAt := range []string{"retention", "delete", "rows_affected"} {
+		t.Run(failAt, func(t *testing.T) {
+			db, mock := newSQLMock(t)
+			repo := newDashboardAggregationRepositoryWithSQL(db)
+			cutoff := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 
-	mock.ExpectQuery(`SELECT EXISTS`).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-	mock.ExpectQuery(`(?s)SELECT ctid.*ORDER BY created_at ASC, id ASC.*DELETE FROM usage_logs.*RETURNING created_at`).
-		WithArgs(cutoff, usageLogsCleanupBatchSize).
-		WillReturnRows(sqlmock.NewRows([]string{"created_at"}).AddRow(deletedAt))
-	mock.ExpectExec(`UPDATE usage_group_rollup_state`).
-		WithArgs(deletedAt, "Asia/Shanghai").
-		WillReturnError(sql.ErrConnDone)
-	mock.ExpectRollback()
+			mock.ExpectQuery(`SELECT EXISTS`).
+				WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT id FROM usage_group_rollup_state.*FOR UPDATE`).
+				WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+			advance := mock.ExpectExec(`UPDATE usage_group_rollup_state SET retained_from = GREATEST\(retained_from, \$1\)`).WithArgs(cutoff)
+			if failAt == "retention" {
+				advance.WillReturnError(sql.ErrConnDone)
+			} else {
+				advance.WillReturnResult(sqlmock.NewResult(0, 1))
+				deletion := mock.ExpectExec(`(?s)SELECT ctid.*ORDER BY created_at ASC, id ASC.*DELETE FROM usage_logs`).
+					WithArgs(cutoff, usageLogsCleanupBatchSize)
+				if failAt == "delete" {
+					deletion.WillReturnError(sql.ErrConnDone)
+				} else {
+					deletion.WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+				}
+			}
+			mock.ExpectRollback()
 
-	err := repo.CleanupUsageLogs(context.Background(), cutoff)
-	require.ErrorIs(t, err, sql.ErrConnDone)
-	require.NoError(t, mock.ExpectationsWereMet())
+			err := repo.CleanupUsageLogs(context.Background(), cutoff)
+			require.ErrorIs(t, err, sql.ErrConnDone)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestDashboardAggregationRepositoryCleanupUsageLogsPartitionFailureRollsBackAndStops(t *testing.T) {

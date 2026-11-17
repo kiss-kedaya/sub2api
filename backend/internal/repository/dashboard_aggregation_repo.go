@@ -335,7 +335,7 @@ func (r *dashboardAggregationRepository) cleanupUsageLogsBatches(ctx context.Con
 	}
 }
 
-func cleanupUsageLogsBatchWithRollupInvalidation(ctx context.Context, db *sql.DB, cutoff time.Time) (int64, error) {
+func cleanupUsageLogsBatchWithRollupInvalidation(ctx context.Context, db sqlTxBeginner, cutoff time.Time) (int64, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -348,7 +348,19 @@ func cleanupUsageLogsBatchWithRollupInvalidation(ctx context.Context, db *sql.DB
 	if err := lockGroupUsageRollupState(ctx, tx); err != nil {
 		return rollback(err)
 	}
-	rows, err := tx.QueryContext(ctx, `
+	// The midnight sync may have observed a minimum from the previous day while
+	// retention was still catching up. Publish this cutoff under the same lock
+	// before DELETE so row triggers cannot rewind closed_before for expired rows.
+	// Readers keep the entire first retained day, as they did before this trim.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE usage_group_rollup_state
+		SET retained_from = GREATEST(retained_from, $1),
+			updated_at = NOW()
+		WHERE id = 1 AND retained_from < $1
+	`, cutoff.UTC()); err != nil {
+		return rollback(err)
+	}
+	res, err := tx.ExecContext(ctx, `
 		WITH victims AS (
 			SELECT ctid
 			FROM usage_logs
@@ -358,36 +370,13 @@ func cleanupUsageLogsBatchWithRollupInvalidation(ctx context.Context, db *sql.DB
 		)
 		DELETE FROM usage_logs
 		WHERE ctid IN (SELECT ctid FROM victims)
-		RETURNING created_at
 	`, cutoff.UTC(), usageLogsCleanupBatchSize)
 	if err != nil {
 		return rollback(err)
 	}
-
-	var affected int64
-	var earliestDeletedAt time.Time
-	for rows.Next() {
-		var deletedAt time.Time
-		if err := rows.Scan(&deletedAt); err != nil {
-			_ = rows.Close()
-			return rollback(err)
-		}
-		affected++
-		if earliestDeletedAt.IsZero() || deletedAt.Before(earliestDeletedAt) {
-			earliestDeletedAt = deletedAt
-		}
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
+	affected, err := res.RowsAffected()
+	if err != nil {
 		return rollback(err)
-	}
-	if err := rows.Close(); err != nil {
-		return rollback(err)
-	}
-	if affected > 0 {
-		if err := invalidateGroupUsageRollupsAt(ctx, tx, earliestDeletedAt); err != nil {
-			return rollback(err)
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
@@ -395,33 +384,44 @@ func cleanupUsageLogsBatchWithRollupInvalidation(ctx context.Context, db *sql.DB
 	return affected, nil
 }
 
+const usageBillingDedupCleanupHeadSQL = `
+	SELECT id, request_id, api_key_id, request_fingerprint, created_at
+	FROM usage_billing_dedup
+	WHERE id > $1
+	ORDER BY id
+	LIMIT $2
+`
+
 func (r *dashboardAggregationRepository) CleanupUsageBillingDedup(ctx context.Context, cutoff time.Time) error {
+	var cursor int64
 	for {
-		res, err := r.sql.ExecContext(ctx, `
-			WITH victims AS (
-				SELECT ctid, request_id, api_key_id, request_fingerprint, created_at
-				FROM usage_billing_dedup
-				WHERE created_at < $1
-				LIMIT $2
+		var affected, nextCursor int64
+		// Bound the primary-key head before filtering expiry: a sparse expired tail
+		// must not scan the whole hot table or stale BRIN ranges to fill a batch.
+		err := scanSingleRow(ctx, r.sql, `
+			WITH batch AS MATERIALIZED (`+usageBillingDedupCleanupHeadSQL+`), victims AS (
+				SELECT * FROM batch WHERE created_at < $3
 			), archived AS (
 				INSERT INTO usage_billing_dedup_archive (request_id, api_key_id, request_fingerprint, created_at)
 				SELECT request_id, api_key_id, request_fingerprint, created_at
 				FROM victims
 				ON CONFLICT (request_id, api_key_id) DO NOTHING
+			), deleted AS (
+				DELETE FROM usage_billing_dedup
+				WHERE id IN (SELECT id FROM victims)
+				RETURNING id
 			)
-			DELETE FROM usage_billing_dedup
-			WHERE ctid IN (SELECT ctid FROM victims)
-		`, cutoff.UTC(), usageBillingDedupCleanupBatchSize)
+			SELECT COUNT(*), COALESCE(MAX(id), $1) FROM deleted
+		`, []any{cursor, usageBillingDedupCleanupBatchSize, cutoff.UTC()}, &affected, &nextCursor)
 		if err != nil {
 			return err
 		}
-		affected, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
+		// A fresh row ends this pass. Restart at zero next time so locally
+		// out-of-order timestamps are reconsidered without persisting a watermark.
 		if affected < usageBillingDedupCleanupBatchSize {
 			return nil
 		}
+		cursor = nextCursor
 	}
 }
 

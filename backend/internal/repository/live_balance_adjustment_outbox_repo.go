@@ -15,6 +15,8 @@ import (
 
 const liveBalanceOutboxClaimLockKey int64 = 0x535542324f555442
 
+const liveBalanceOutboxClaimPlannerSQL = `SET LOCAL enable_sort = off; SET LOCAL jit = off`
+
 type liveBalanceAdjustmentOutboxRepository struct {
 	db *sql.DB
 }
@@ -55,67 +57,20 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 		return []service.LiveBalanceAdjustmentEvent{}, nil
 	}
 
-	rows, err := tx.QueryContext(ctx, `
-	WITH active_users AS (
-		SELECT h.user_id, first_event.id AS first_id, first_event.available_at, first_event.predecessor_id
-		FROM live_balance_adjustment_heads AS h
-		CROSS JOIN LATERAL (
-			SELECT o.id, o.predecessor_id, o.available_at, o.claimed_at
-			FROM live_balance_adjustment_outbox AS o
-			WHERE o.user_id = h.user_id AND o.delivered_at IS NULL
-			ORDER BY o.id
-			LIMIT 1
-		) AS first_event
-		WHERE first_event.available_at <= NOW()
-			AND (first_event.claimed_at IS NULL OR first_event.claimed_at < NOW() - ($3 * INTERVAL '1 second'))
-			AND (first_event.predecessor_id = 0 OR NOT EXISTS (
-				SELECT 1 FROM live_balance_adjustment_outbox AS predecessor
-				WHERE predecessor.id = first_event.predecessor_id AND predecessor.delivered_at IS NULL
-			))
-		ORDER BY first_event.available_at, first_event.id
-		LIMIT 8
-	), user_pages AS (
-		SELECT active.user_id, page.id, page.predecessor_id, page.available_at, page.claimed_at,
-			row_number() OVER (PARTITION BY active.user_id ORDER BY page.id) AS seq,
-			lag(page.id) OVER (PARTITION BY active.user_id ORDER BY page.id) AS previous_id
-		FROM active_users AS active
-		CROSS JOIN LATERAL (
-			-- Bound each selected chain page so a single large backlog cannot
-			-- materialize unbounded rows while the outer batch remains capped.
-			SELECT o.id, o.predecessor_id, o.available_at, o.claimed_at
-			FROM live_balance_adjustment_outbox AS o
-			WHERE o.user_id = active.user_id AND o.delivered_at IS NULL
-			ORDER BY o.id
-			LIMIT $4
-		) AS page
-	), ready_pages AS (
-		SELECT page.id, page.seq,
-			BOOL_AND(
-				(page.seq = 1 OR page.predecessor_id = page.previous_id)
-				AND page.available_at <= NOW()
-				AND (page.claimed_at IS NULL OR page.claimed_at < NOW() - ($3 * INTERVAL '1 second'))
-			) OVER (PARTITION BY page.user_id ORDER BY page.id ROWS UNBOUNDED PRECEDING) AS ready
-		FROM user_pages AS page
-	), candidates AS (
-		SELECT page.id FROM ready_pages AS page
-		WHERE page.ready
-		-- Round-robin across selected users, always retaining each user's prefix.
-		ORDER BY page.seq, page.id
-		LIMIT $2
-	), claimed AS (
-		SELECT o.id
-		FROM live_balance_adjustment_outbox AS o
-		JOIN candidates AS c ON c.id = o.id
-		FOR UPDATE OF o SKIP LOCKED
-	)
-		UPDATE live_balance_adjustment_outbox AS o
-		SET claimed_at = NOW(),
-			claimed_by = $1,
-			updated_at = NOW()
-	FROM claimed AS c
-		WHERE o.id = c.id
-		RETURNING o.id, o.user_id, o.predecessor_id, o.delta::text, o.attempts, o.created_at
-	`, workerID, limit, leaseSeconds, service.LiveBalanceOutboxPerUserMaxBatchSize)
+	// ponytail: transaction-local planner hint, not an index hint. When ANALYZE
+	// sees no pending rows, both LATERAL probes can otherwise scan the entire
+	// pending index per user. Discourage their extra Sort so (user_id, id) wins;
+	// unavoidable outer sorts still run. Keep JIT off: their disabled-sort cost
+	// can trigger expensive compilation on PostgreSQL 15-17. This still probes
+	// every head; track pending heads if that grows, or retire the pending index
+	// after replacing the Stats last-error lookup that uses its ordering.
+	if _, err := tx.ExecContext(ctx, liveBalanceOutboxClaimPlannerSQL); err != nil {
+		rollback()
+		return nil, fmt.Errorf("configure live balance adjustment claim planner: %w", err)
+	}
+
+	rows, err := tx.QueryContext(ctx, liveBalanceOutboxClaimSQL,
+		workerID, limit, leaseSeconds, service.LiveBalanceOutboxPerUserMaxBatchSize)
 	if err != nil {
 		rollback()
 		return nil, err
@@ -168,6 +123,71 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 	sort.Slice(events, func(i, j int) bool { return events[i].ID < events[j].ID })
 	return events, nil
 }
+
+const liveBalanceOutboxClaimSQL = `
+	WITH active_users AS (
+		SELECT h.user_id, first_event.id AS first_id, first_event.available_at, first_event.predecessor_id
+		FROM live_balance_adjustment_heads AS h
+		CROSS JOIN LATERAL (
+			SELECT o.id, o.predecessor_id, o.available_at, o.claimed_at
+			FROM live_balance_adjustment_outbox AS o
+			WHERE o.user_id = h.user_id AND o.delivered_at IS NULL
+			ORDER BY o.id
+			LIMIT 1
+		) AS first_event
+		WHERE first_event.available_at <= NOW()
+			AND (first_event.claimed_at IS NULL OR first_event.claimed_at < NOW() - ($3 * INTERVAL '1 second'))
+			-- Filter delivery after the primary-key lookup; a stale null_frac
+			-- must not turn this probe into another full pending-index scan.
+			AND (first_event.predecessor_id = 0 OR COALESCE((
+				SELECT predecessor.delivered_at IS NOT NULL
+				FROM live_balance_adjustment_outbox AS predecessor
+				WHERE predecessor.id = first_event.predecessor_id
+			), TRUE))
+		ORDER BY first_event.available_at, first_event.id
+		LIMIT 8
+	), user_pages AS (
+		SELECT active.user_id, page.id, page.predecessor_id, page.available_at, page.claimed_at,
+			row_number() OVER (PARTITION BY active.user_id ORDER BY page.id) AS seq,
+			lag(page.id) OVER (PARTITION BY active.user_id ORDER BY page.id) AS previous_id
+		FROM active_users AS active
+		CROSS JOIN LATERAL (
+			-- Bound each selected chain page so a single large backlog cannot
+			-- materialize unbounded rows while the outer batch remains capped.
+			SELECT o.id, o.predecessor_id, o.available_at, o.claimed_at
+			FROM live_balance_adjustment_outbox AS o
+			WHERE o.user_id = active.user_id AND o.delivered_at IS NULL
+			ORDER BY o.id
+			LIMIT $4
+		) AS page
+	), ready_pages AS (
+		SELECT page.id, page.seq,
+			BOOL_AND(
+				(page.seq = 1 OR page.predecessor_id = page.previous_id)
+				AND page.available_at <= NOW()
+				AND (page.claimed_at IS NULL OR page.claimed_at < NOW() - ($3 * INTERVAL '1 second'))
+			) OVER (PARTITION BY page.user_id ORDER BY page.id ROWS UNBOUNDED PRECEDING) AS ready
+		FROM user_pages AS page
+	), candidates AS (
+		SELECT page.id FROM ready_pages AS page
+		WHERE page.ready
+		-- Round-robin across selected users, always retaining each user's prefix.
+		ORDER BY page.seq, page.id
+		LIMIT $2
+	), claimed AS (
+		SELECT o.id
+		FROM live_balance_adjustment_outbox AS o
+		JOIN candidates AS c ON c.id = o.id
+		FOR UPDATE OF o SKIP LOCKED
+	)
+		UPDATE live_balance_adjustment_outbox AS o
+		SET claimed_at = NOW(),
+			claimed_by = $1,
+			updated_at = NOW()
+	FROM claimed AS c
+		WHERE o.id = c.id
+		RETURNING o.id, o.user_id, o.predecessor_id, o.delta::text, o.attempts, o.created_at
+	`
 
 func (r *liveBalanceAdjustmentOutboxRepository) MarkDelivered(ctx context.Context, id int64, workerID string) error {
 	if r == nil || r.db == nil {

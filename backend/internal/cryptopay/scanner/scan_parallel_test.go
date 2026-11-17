@@ -60,6 +60,95 @@ func TestScanWorkersAreCappedPerNodeTheChainCanRotateOver(t *testing.T) {
 	}
 }
 
+func TestScanWorkersUseConfiguredConcurrency(t *testing.T) {
+	pool := rpc.NewPoolWithHTTPClient("http://a.invalid", &http.Client{})
+	for _, tc := range []struct{ configured, want int }{
+		{0, 4}, {1, 1}, {32, 32}, {64, 64}, {1000, 64}, {-1, 1},
+	} {
+		t.Run(fmt.Sprint(tc.configured), func(t *testing.T) {
+			scanner := (ChainConfig{ScanConcurrency: tc.configured}).evmScanner(pool)
+			if got := scanner.scanWorkers(); got != tc.want {
+				t.Fatalf("scanWorkers = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestConfiguredScanConcurrencyRunsLogsAndNativeBlocks(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		t.Run(fmt.Sprintf("native=%t", native), func(t *testing.T) {
+			const workers = 32
+			entered, release := make(chan struct{}, workers), make(chan struct{})
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			var inflight, peak atomic.Int64
+			node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					Method string            `json:"method"`
+					Params []json.RawMessage `json:"params"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				raiseTo(&peak, inflight.Add(1))
+				defer inflight.Add(-1)
+				entered <- struct{}{}
+				select {
+				case <-release:
+				case <-r.Context().Done():
+					return
+				}
+				var result any
+				if native {
+					if request.Method != "eth_getBlockByNumber" {
+						t.Errorf("unexpected native RPC: %s", request.Method)
+					}
+					var block string
+					_ = json.Unmarshal(request.Params[0], &block)
+					result = map[string]any{"number": block, "hash": nativeTestBlock, "transactions": []any{}}
+				} else {
+					if request.Method != "eth_getLogs" {
+						t.Errorf("unexpected log RPC: %s", request.Method)
+					}
+					// Non-empty logs avoid the independent synced-head probe here.
+					result = []evmLog{logFor(testTransfer())}
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": result})
+			}))
+			t.Cleanup(node.Close)
+			t.Cleanup(unblock)
+			s := (ChainConfig{ScanConcurrency: workers}).evmScanner(rpc.NewPoolWithHTTPClient(node.URL, node.Client()))
+			done := make(chan error, 1)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			go func() {
+				var err error
+				if native {
+					_, err = s.ScanNativeRange(ctx, "bsc", 100, 100+workers-1, []string{nativeDeposit})
+				} else {
+					_, err = s.ScanRange(ctx, "bsc", 100, 200, []string{splitToken}, splitRecipients(workers*batchSize))
+				}
+				done <- err
+			}()
+			for range workers {
+				select {
+				case <-entered:
+				case <-ctx.Done():
+					t.Fatal("configured workers did not all start before the first response")
+				}
+			}
+			unblock()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if got := peak.Load(); got != workers {
+				t.Fatalf("peak concurrent requests = %d, want %d", got, workers)
+			}
+		})
+	}
+}
+
 // raiseTo lifts target to value if it is lower, without losing a concurrent raise.
 func raiseTo(target *atomic.Int64, value int64) {
 	for {

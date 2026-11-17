@@ -2561,7 +2561,7 @@ const executeCcsImport = (row: ApiKey, app: CcSwitchApp, model: string) => {
 
   const usageScript = `({
     request: {
-      url: "{{baseUrl}}/v1/usage",
+      url: "{{baseUrl}}".replace(/\\/+$/, "").replace(/\\/v1$/, "") + "/v1/usage",
       method: "GET",
       headers: { "Authorization": "Bearer {{apiKey}}" }
     },

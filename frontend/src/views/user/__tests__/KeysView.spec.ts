@@ -101,6 +101,10 @@ vi.mock('@/api', () => ({
   },
 }))
 
+vi.mock('@/features/channel-monitor-v2/groupStatusDot', () => ({
+  loadGroupStatusClasses: vi.fn().mockResolvedValue({}),
+}))
+
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError,
@@ -347,6 +351,37 @@ describe('user KeysView column settings', () => {
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
     isCurrentStep.mockReturnValue(false)
+  })
+
+  it.each([
+    { baseUrl: 'https://api.example.com/prefix', app: 'codex', endpoint: 'https://api.example.com/prefix' },
+    { baseUrl: 'https://api.example.com/prefix/v1', app: 'codex', endpoint: 'https://api.example.com/prefix/v1' },
+    { baseUrl: 'https://api.example.com/prefix/v1///', app: 'codex', endpoint: 'https://api.example.com/prefix/v1///' },
+    { baseUrl: 'https://api.example.com/prefix', app: 'grokbuild', endpoint: 'https://api.example.com/prefix/v1' }
+  ])('imports a balance script with exactly one /v1 for $app at $baseUrl', async ({ baseUrl, app, endpoint }) => {
+    getPublicSettings.mockResolvedValue({ api_base_url: baseUrl })
+    listKeys.mockResolvedValue({ items: [{ ...createApiKey(), key: '' }], total: 1 })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }))
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const wrapper = await mountView()
+    try {
+      await getButtonByText(wrapper, 'keys.importToCcSwitch').trigger('click')
+      await flushPromises()
+      wrapper.getComponent('#ccs-import-platform').vm.$emit('update:modelValue', app)
+      await nextTick()
+      await getButtonByText(wrapper, 'common.import').trigger('click')
+      const params = new URL(String(open.mock.calls[0][0])).searchParams
+      expect(params.get('endpoint')).toBe(endpoint)
+      expect(params.get('usageAutoInterval')).toBe('30')
+      const script = atob(params.get('usageScript')!).replaceAll('{{baseUrl}}', endpoint)
+      const request = new Function(`return (${script})`)().request
+      expect(request.url).toBe('https://api.example.com/prefix/v1/usage')
+      expect(request.method).toBe('GET')
+    } finally {
+      wrapper.unmount()
+      open.mockRestore()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('keeps named icon tools and the key count in the workspace heading', async () => {
