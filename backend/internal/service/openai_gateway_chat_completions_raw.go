@@ -789,10 +789,13 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	_, _ = c.Writer.Write(respBody)
 
 	return &OpenAIForwardResult{
-		RequestID:                     requestID,
-		UpstreamHeaders:               resp.Header,
-		Usage:                         usage,
-		NonBillableUpstreamError:      openAIExplicitUpstreamError(gjson.ParseBytes(respBody), ""),
+		RequestID:       requestID,
+		UpstreamHeaders: resp.Header,
+		Usage:           usage,
+		// A body that carries choices is an answer the client received in full,
+		// the same rule as the buffered fallbacks: a relay's error note next to it
+		// does not make the request free.
+		NonBillableUpstreamError:      !gjson.GetBytes(respBody, "choices.0").Exists() && openAIExplicitUpstreamError(gjson.ParseBytes(respBody), ""),
 		Model:                         originalModel,
 		BillingModel:                  billingModel,
 		UpstreamModel:                 upstreamModel,
