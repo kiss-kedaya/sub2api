@@ -1598,7 +1598,19 @@ func anthropicNonStreamingUpstreamError(body []byte) bool {
 	if !upstreamError.IsObject() || root.Get("content").Exists() {
 		return false
 	}
-	return upstreamError.Get("message").Exists() || upstreamError.Get("type").Exists()
+	return upstreamError.Get("message").Exists() || upstreamError.Get("type").Exists() || upstreamError.Get("code").Exists()
+}
+
+// anthropicDataOnlyErrorLine reports a bare `data:` line whose JSON root is an
+// error frame. A relay may send its own error that way, with no event name. The
+// conversion loops pair every event line with its data line, so only the stray
+// lines they used to skip reach this check.
+func anthropicDataOnlyErrorLine(line string) bool {
+	payload, ok := extractOpenAISSEDataLine(line)
+	if !ok || !strings.Contains(payload, `"error"`) {
+		return false
+	}
+	return gjson.Get(payload, "type").String() == "error"
 }
 
 func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*anthropicNonStreamingResult, error) {

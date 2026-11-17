@@ -282,6 +282,9 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		// 返回紧凑格式，严格匹配 "event: " 会丢弃全部事件（#4653 同根因）。
 		eventType, ok := extractOpenAISSEEventLine(line)
 		if !ok {
+			if anthropicDataOnlyErrorLine(line) {
+				sawError = true
+			}
 			continue
 		}
 		if eventType == "error" {
@@ -590,6 +593,9 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		// 与缓冲路径一致：接受 SSE 紧凑格式（冒号后无空格，#4653 同根因）。
 		eventType, ok := extractOpenAISSEEventLine(line)
 		if !ok {
+			if anthropicDataOnlyErrorLine(line) {
+				sawError = true
+			}
 			continue
 		}
 		if eventType == "error" {

@@ -192,7 +192,7 @@ func TestAnthropicConvertedExplicitErrorBilling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, protocol := range []string{"chat", "responses"} {
 		for _, stream := range []bool{false, true} {
-			for _, terminal := range []string{"error", "financial", "financial_envelope", "success_after_error", "disconnect_after_error", "break_without_error"} {
+			for _, terminal := range []string{"error", "data_only_error", "financial", "financial_envelope", "success_after_error", "disconnect_after_error", "break_without_error"} {
 				t.Run(fmt.Sprintf("%s/stream=%t/%s", protocol, stream, terminal), func(t *testing.T) {
 					wire := syntheticAnthropicUsagePrefix
 					if terminal != "break_without_error" {
@@ -205,6 +205,10 @@ func TestAnthropicConvertedExplicitErrorBilling(t *testing.T) {
 							header, envelope = "message", "message"
 						}
 						wire += "event: " + header + "\ndata: {\"type\":\"" + envelope + "\",\"error\":{\"type\":\"" + errorType + "\",\"message\":\"synthetic rejection\"}}\n\n"
+					}
+					if terminal == "data_only_error" {
+						// A relay may send its own error as a bare data line, with no event name.
+						wire = syntheticAnthropicUsagePrefix + "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"synthetic rejection\"}}\n\n"
 					}
 					if terminal == "success_after_error" {
 						wire += "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
@@ -260,6 +264,7 @@ func TestAnthropicNonStreamingUpstreamError(t *testing.T) {
 		`{"type":"error","error":{"type":"invalid_request_error","message":"synthetic"}}`:                                 true,
 		`{"error":{"message":"synthetic rejection"}}`:                                                                     true,
 		`{"error":{"type":"upstream_error"}}`:                                                                             true,
+		`{"error":{"code":"insufficient_quota"},"usage":{"input_tokens":11}}`:                                             true,
 		`{"id":"msg_1","type":"message","content":[{"type":"text","text":"ok"}],"error":null}`:                            false,
 		`{"id":"msg_1","type":"message","content":[],"error":{}}`:                                                         false,
 		`{"id":"msg_1","type":"message","content":[{"type":"text","text":"ok"}],"error":{"message":"relay note"}}`:        false,

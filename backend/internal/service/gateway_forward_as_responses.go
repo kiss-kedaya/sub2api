@@ -436,6 +436,9 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		line := scanner.Text()
 		eventType, ok := parseAnthropicSSEField(line, "event")
 		if !ok {
+			if anthropicDataOnlyErrorLine(line) {
+				sawError = true
+			}
 			continue
 		}
 		if eventType == "error" {
@@ -761,6 +764,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		}
 		eventType, ok := parseAnthropicSSEField(line, "event")
 		if !ok {
+			if anthropicDataOnlyErrorLine(line) {
+				sawError = true
+			}
 			continue
 		}
 		if eventType == "error" {
