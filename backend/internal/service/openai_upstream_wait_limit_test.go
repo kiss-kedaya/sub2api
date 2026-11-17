@@ -73,6 +73,31 @@ func TestDeepSeekUpstreamWaitLimitOutlastsTheProvider(t *testing.T) {
 	require.Greater(t, deepSeekUpstreamWaitLimit, 60*time.Minute)
 }
 
+// A request that pins more than 20MB while it waits gets 30 minutes.
+func TestDeepSeekLargeRequestGetsTheShorterWaitLimit(t *testing.T) {
+	deepSeek := &Account{ID: 1, Platform: PlatformDeepseek, Type: AccountTypeAPIKey}
+	openAI := &Account{ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	for _, tc := range []struct {
+		name    string
+		account *Account
+		profile HTTPUpstreamProfile
+		size    int64
+		want    time.Duration
+	}{
+		{"exactly 20MB is not large", deepSeek, HTTPUpstreamProfileOpenAI, 20 << 20, deepSeekUpstreamWaitLimit},
+		{"one byte over", deepSeek, HTTPUpstreamProfileOpenAI, 20<<20 + 1, 30 * time.Minute},
+		{"unknown length is not large", deepSeek, HTTPUpstreamProfileOpenAI, -1, deepSeekUpstreamWaitLimit},
+		{"large tool upload keeps its own deadlines", deepSeek, HTTPUpstreamProfileDeepSeekTools, 40 << 20, 0},
+		{"large openai request is untouched", openAI, HTTPUpstreamProfileOpenAI, 40 << 20, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := waitLimitRequest(t, context.Background(), tc.profile)
+			req.ContentLength = tc.size
+			require.Equal(t, tc.want, openAIUpstreamWaitLimitFor(req, tc.account))
+		})
+	}
+}
+
 func TestDoOpenAIUpstreamEndsSilentDeepSeekRequest(t *testing.T) {
 	shortenDeepSeekUpstreamWaitLimit(t, 40*time.Millisecond)
 	upstream := &silentUpstream{}

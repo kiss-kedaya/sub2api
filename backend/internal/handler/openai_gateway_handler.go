@@ -473,6 +473,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	if deepSeekChatBodyTooLarge(apiKey, "", c.Request.ContentLength) {
+		h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(deepSeekChatBodyLimit))
+		return
+	}
 	// Read request body
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
@@ -492,6 +496,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	setOpsRequestContext(c, "", false)
 	sessionHashBody := body
+	if int64(len(body)) > deepSeekChatBodyLimit && deepSeekChatBodyTooLarge(apiKey, gjson.GetBytes(body, "model").String(), int64(len(body))) {
+		h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(deepSeekChatBodyLimit))
+		return
+	}
 	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
 	if !ok {
 		return
@@ -1325,6 +1333,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
+	if deepSeekChatBodyTooLarge(apiKey, "", c.Request.ContentLength) {
+		h.anthropicErrorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(deepSeekChatBodyLimit))
+		return
+	}
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
 		if maxErr, ok := extractMaxBytesError(err); ok {
@@ -1336,6 +1348,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	}
 	if len(body) == 0 {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
+		return
+	}
+	if int64(len(body)) > deepSeekChatBodyLimit && deepSeekChatBodyTooLarge(apiKey, gjson.GetBytes(body, "model").String(), int64(len(body))) {
+		h.anthropicErrorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(deepSeekChatBodyLimit))
 		return
 	}
 
