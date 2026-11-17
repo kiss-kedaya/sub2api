@@ -156,8 +156,9 @@ func TestGroupUsageRollupTriggerDoesNotBlockCurrentDayInsertDuringHistoricalPubl
 	insertResult := make(chan error, 1)
 	go func() {
 		_, insertErr := insertTx.ExecContext(ctx, `
-			INSERT INTO usage_logs (id, user_id, group_id, actual_cost, created_at)
-			VALUES (1, 1, 10, 1.25, CURRENT_TIMESTAMP)
+			INSERT INTO usage_logs (id, user_id, group_id, actual_cost, created_at) VALUES
+				(1, 1, 10, 1.25, CURRENT_TIMESTAMP),
+				(2, 1, 10, 1.25, CURRENT_TIMESTAMP + INTERVAL '1 day')
 		`)
 		insertResult <- insertErr
 	}()
@@ -206,6 +207,80 @@ func TestGroupUsageRollupTriggerKeepsWatermarkForTodayInsert(t *testing.T) {
 	`).Scan(&unchanged)
 	require.NoError(t, err)
 	require.True(t, unchanged)
+}
+
+func TestGroupUsageRollupTriggerRetainsHistoricalInsertInvalidation(t *testing.T) {
+	ctx := context.Background()
+	schema := createGroupUsageRollupTriggerTestSchema(t, ctx, false)
+	for _, tt := range []struct {
+		name   string
+		values string
+		want   string
+	}{
+		{"retained_history", "(1, 1, 10, 1.25, '2020-01-05 12:00:00+08')", "2020-01-05"},
+		{"retention_boundary", "(1, 1, 10, 1.25, '2020-01-02 12:00:00+08')", "2020-01-10"},
+		{"expired_history", "(1, 1, 10, 1.25, '2020-01-01 12:00:00+08')", "2020-01-10"},
+		{"mixed_expired_and_retained", "(1, 1, 10, 1.25, '2020-01-01 12:00:00+08'), (2, 1, 10, 2.5, '2020-01-05 12:00:00+08')", "2020-01-05"},
+		{"ungrouped_history", "(1, 1, NULL, 1.25, '2020-01-05 12:00:00+08')", "2020-01-10"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tx := beginGroupUsageRollupTriggerTestTx(t, ctx, schema)
+			defer func() { _ = tx.Rollback() }()
+			require.NoError(t, setGroupUsageRollupTriggerTimeZone(ctx, tx, "Asia/Shanghai"))
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO groups (id) VALUES (10);
+				INSERT INTO users (id) VALUES (1);
+				UPDATE usage_group_rollup_state
+				SET closed_before = DATE '2020-01-10',
+					retained_from = TIMESTAMPTZ '2020-01-02 00:00:00+08'
+				WHERE id = 1;
+			`)
+			require.NoError(t, err)
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO usage_logs (id, user_id, group_id, actual_cost, created_at)
+				VALUES `+tt.values)
+			require.NoError(t, err)
+			var closedBefore string
+			require.NoError(t, tx.QueryRowContext(ctx, `
+				SELECT closed_before::text FROM usage_group_rollup_state WHERE id = 1
+			`).Scan(&closedBefore))
+			require.Equal(t, tt.want, closedBefore)
+		})
+	}
+}
+
+func TestGroupUsageRollupRowTriggerUsesSessionTimezoneAcrossDST(t *testing.T) {
+	ctx := context.Background()
+	schema := createGroupUsageRollupTriggerTestSchema(t, ctx, false)
+	for _, operation := range []string{
+		"DELETE FROM usage_logs WHERE id = 1",
+		"UPDATE usage_logs SET actual_cost = 2.5 WHERE id = 1",
+	} {
+		t.Run(operation, func(t *testing.T) {
+			tx := beginGroupUsageRollupTriggerTestTx(t, ctx, schema)
+			defer func() { _ = tx.Rollback() }()
+			require.NoError(t, setGroupUsageRollupTriggerTimeZone(ctx, tx, "America/New_York"))
+			_, err := tx.ExecContext(ctx, `
+				INSERT INTO groups (id) VALUES (10);
+				INSERT INTO users (id) VALUES (1);
+				INSERT INTO usage_logs (id, user_id, group_id, actual_cost, created_at)
+				VALUES (1, 1, 10, 1.25, TIMESTAMPTZ '2020-03-08 04:30:00+00');
+				UPDATE usage_group_rollup_state
+				SET closed_before = DATE '2020-03-09',
+					retained_from = TIMESTAMPTZ '2020-03-01 00:00:00+00',
+					timezone_name = 'America/New_York'
+				WHERE id = 1;
+			`)
+			require.NoError(t, err)
+			_, err = tx.ExecContext(ctx, operation)
+			require.NoError(t, err)
+			var closedBefore string
+			require.NoError(t, tx.QueryRowContext(ctx, `
+				SELECT closed_before::text FROM usage_group_rollup_state WHERE id = 1
+			`).Scan(&closedBefore))
+			require.Equal(t, "2020-03-07", closedBefore)
+		})
+	}
 }
 
 func TestGroupUsageRollupTriggerUsesSessionTimezoneAcrossDST(t *testing.T) {
@@ -391,13 +466,16 @@ func TestGroupUsageSummarySnapshotSurvivesConcurrentHistoryCleanup(t *testing.T)
 	schema := createGroupUsageRollupTriggerTestSchema(t, ctx, false)
 	seedTx := beginGroupUsageRollupTriggerTestTx(t, ctx, schema)
 	defer func() { _ = seedTx.Rollback() }()
+	// Keep the deleted day inside the retained window; its first-day boundary
+	// deliberately does not invalidate under the retention guard from 315.
 	_, err := seedTx.ExecContext(ctx, `
 		INSERT INTO groups (id) VALUES (10);
 		INSERT INTO users (id) VALUES (1);
 		INSERT INTO usage_logs (id, user_id, group_id, actual_cost, created_at) VALUES
 			(1, 1, 10, 2, TIMESTAMPTZ '2026-03-07 12:00:00+00'),
 			(2, 1, 10, 3, TIMESTAMPTZ '2026-03-08 12:00:00+00'),
-			(3, 1, 10, 5, TIMESTAMPTZ '2026-03-09 12:00:00+00');
+			(3, 1, 10, 5, TIMESTAMPTZ '2026-03-09 12:00:00+00'),
+			(4, 1, 10, 0, TIMESTAMPTZ '2026-03-06 12:00:00+00');
 		UPDATE usage_group_rollup_state SET closed_before = DATE '1970-01-01', timezone_name = 'UTC' WHERE id = 1;
 	`)
 	require.NoError(t, err)
@@ -488,6 +566,8 @@ func createGroupUsageRollupTriggerTestSchema(t *testing.T, ctx context.Context, 
 		"222_group_usage_daily_rollups.sql",
 		"223_group_usage_rollup_timezone.sql",
 		"234_group_usage_rollup_current_day_fast_path.sql",
+		"315_group_usage_rollup_trim_guard.sql",
+		"316_group_usage_rollup_trigger_fast_path.sql",
 	} {
 		migrationSQL, readErr := migrations.FS.ReadFile(migrationName)
 		require.NoError(t, readErr)
