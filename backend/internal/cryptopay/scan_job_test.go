@@ -531,6 +531,39 @@ func TestScanRegistryIsSafeUnderConcurrentReadersAndCancel(t *testing.T) {
 	require.Equal(t, ScanRunCancelled, r.get(started.ID).Status)
 }
 
+func TestScanRunScopeIsReturnedAndSnapshotsAreIndependent(t *testing.T) {
+	r := newTestRegistry()
+	f := newFakeScan(100, 100)
+	scope := []string{"bsc"}
+	started, err := r.start(t.Context(), f, fastScanCfg(), 0, scope...)
+	require.NoError(t, err)
+	scope[0] = "ethereum"
+	started.ChainScope[0] = "polygon"
+	r.mu.Lock()
+	job := r.jobs[started.ID]
+	r.mu.Unlock()
+	<-job.done
+	require.Equal(t, []string{"bsc"}, r.get(started.ID).ChainScope)
+	listed := r.list()
+	require.Equal(t, []string{"bsc"}, listed[0].ChainScope)
+	listed[0].ChainScope[0] = "base"
+	require.Equal(t, []string{"bsc"}, r.get(started.ID).ChainScope)
+	raw, err := json.Marshal(r.get(started.ID))
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"chain_scope":["bsc"]`)
+}
+
+func TestStartScanAsyncRejectsDisabledOrNonEVMChains(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
+	s := &Service{config: CryptoConfig{Enabled: true, Chains: []string{"bsc"}}}
+	for _, chain := range []string{"ethereum", "solana", "unknown"} {
+		state, err := s.StartScanAsync(t.Context(), 0, chain)
+		require.ErrorIs(t, err, ErrInvalidScanChain)
+		require.Nil(t, state)
+	}
+	require.NoError(t, s.validateScanChains([]string{"bsc"}))
+}
+
 func TestStartScanAsyncRefusesWhenTheScannerIsNotRunning(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
 	before := len(scanJobs.list())

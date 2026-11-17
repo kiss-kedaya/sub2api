@@ -511,19 +511,7 @@
               </UPageCard>
             </UPageGrid>
 
-            <UAlert v-if="scanningDeposits || activeScan" :color="scanAlertColor" variant="subtle" :icon="scanRunning ? 'i-lucide-loader-circle' : 'i-lucide-circle-alert'" :title="scanAlertTitle">
-              <template #description>
-                <div class="space-y-0.5">
-                  <p v-if="scanRunning">{{ t('admin.crypto.scanDepositsRunningHint') }}</p>
-                  <p v-if="scanProgressLine">{{ scanProgressLine }}</p>
-                  <p v-for="line in scanChainLines" :key="line">{{ line }}</p>
-                  <p v-if="activeScan?.last_error">{{ t('admin.crypto.scanRunLastError', { message: activeScan.last_error }) }}</p>
-                </div>
-              </template>
-              <template v-if="scanRunning && activeScan" #actions>
-                <UButton color="neutral" variant="outline" size="xs" :loading="cancellingScan" :disabled="cancellingScan" @click="cancelScan">{{ t('admin.crypto.scanRunCancel') }}</UButton>
-              </template>
-            </UAlert>
+            <CryptoScanProgress />
 
             <div class="crypto-view__filters flex flex-wrap items-center justify-between gap-1.5">
               <div class="flex flex-wrap items-center gap-1.5">
@@ -670,7 +658,7 @@
   </AppLayout>
 </template>
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { revealActiveNavItem } from '@/utils/revealActiveNavItem'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -687,6 +675,8 @@ import CryptoPrivateKeyDialog from '@/components/crypto/CryptoPrivateKeyDialog.v
 import CryptoWalletSecurityPanel from '@/components/crypto/CryptoWalletSecurityPanel.vue'
 import CryptoGasWalletPanel from '@/components/crypto/CryptoGasWalletPanel.vue'
 import CryptoChainStatusPanel from '@/components/crypto/CryptoChainStatusPanel.vue'
+import CryptoScanProgress from '@/components/crypto/CryptoScanProgress.vue'
+import { cryptoScanKey, useCryptoScan } from '@/composables/useCryptoScan'
 import ProfileBarkCard from '@/components/user/profile/ProfileBarkCard.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Toggle from '@/components/common/Toggle.vue'
@@ -716,10 +706,6 @@ import {
   startSweep,
   listSweepRuns,
   waitForSweepRun,
-  startCryptoScan,
-  listScanRuns,
-  cancelScanRun,
-  waitForScanRun,
   setAddressStatus,
   exportDepositsCSV,
   initializeWallet,
@@ -742,7 +728,6 @@ import {
   type BlockedSweep,
   type SweepSummary,
   type SweepRun,
-  type ScanRun,
   type WalletSecurityStatus,
   type WalletOperationAction,
   type CryptoVerification
@@ -1012,11 +997,13 @@ const depositStatus = ref('')
 const depositPage = ref(1)
 const depositPageSize = 50
 const loadingDeposits = ref(false)
-const scanningDeposits = ref(false)
-const activeScan = ref<ScanRun | null>(null)
-const cancellingScan = ref(false)
-let scanPoll: AbortController | null = null
-onUnmounted(() => scanPoll?.abort())
+const cryptoScan = useCryptoScan(withCryptoVerification, async completed => {
+  if (completed) depositPage.value = 1
+  await loadDeposits()
+}, appStore)
+provide(cryptoScanKey, cryptoScan)
+const { running: scanningDeposits, resume: resumeScanRun } = cryptoScan
+const runDepositCatchup = () => cryptoScan.start()
 
 const depositTotalPages = computed(() =>
   Math.max(1, Math.ceil(depositSummary.value.total / depositPageSize))
@@ -1916,118 +1903,6 @@ async function submitDepositConfirm(note: string) {
     confirmingDeposits.value = false
   }
 }
-
-async function runDepositCatchup() {
-  if (scanningDeposits.value) return
-  scanningDeposits.value = true
-  activeScan.value = null
-  try {
-    // Forward catch-up only: needs no second factor, runs in the background on
-    // the server and keeps going until the cursor reaches the confirmed head.
-    const run = await startCryptoScan(0)
-    if (!run) {
-      // A server that predates background scans has already finished one pass.
-      depositPage.value = 1
-      await loadDeposits()
-      appStore.showSuccess(t('admin.crypto.scanDepositsDone'))
-      return
-    }
-    activeScan.value = run
-    await followScanRun(run)
-  } catch (error) {
-    // A scan that is already running (409) or one whose start response was lost
-    // is picked up instead of reported as a failure.
-    const running = await findRunningScan()
-    if (running) {
-      await followScanRun(running)
-    } else {
-      appStore.showError(extractApiErrorMessage(error, t('admin.crypto.scanDepositsFailed')))
-    }
-  } finally {
-    if (!scanPoll) scanningDeposits.value = false
-  }
-}
-
-async function findRunningScan(): Promise<ScanRun | null> {
-  try {
-    return (await listScanRuns()).find(run => run.status === 'running') ?? null
-  } catch {
-    return null
-  }
-}
-
-// Polls one run. Leaving the page aborts only this polling: the scan keeps
-// running on the server and is picked up again by resumeScanRun.
-async function followScanRun(run: ScanRun) {
-  scanPoll?.abort()
-  const controller = new AbortController()
-  scanPoll = controller
-  scanningDeposits.value = true
-  try {
-    const result = await waitForScanRun(run, controller.signal, next => { activeScan.value = next })
-    if (result.status === 'completed') {
-      activeScan.value = null
-      depositPage.value = 1
-    }
-    // A scan that stopped early may still have recorded deposits.
-    await loadDeposits()
-    if (result.status === 'completed') appStore.showSuccess(t('admin.crypto.scanDepositsDone'))
-    else if (result.status === 'failed') appStore.showError(scanStopTitle(result))
-  } catch (error) {
-    if (!controller.signal.aborted) appStore.showError(extractApiErrorMessage(error, t('admin.crypto.scanDepositsFailed')))
-  } finally {
-    if (scanPoll === controller) {
-      scanPoll = null
-      scanningDeposits.value = false
-    }
-  }
-}
-
-// The scan outlives the page, so entering the tab re-attaches to a running one.
-async function resumeScanRun() {
-  if (scanPoll || scanningDeposits.value) return
-  const running = await findRunningScan()
-  if (running) void followScanRun(running)
-}
-
-// Cancelling needs the same fresh proof as a sweep. Saved progress stays saved;
-// the polling already running reports the final "cancelled" state.
-async function cancelScan() {
-  const run = activeScan.value
-  if (!run || run.status !== 'running' || cancellingScan.value) return
-  cancellingScan.value = true
-  try {
-    await withCryptoVerification(t('admin.crypto.scanRunCancelVerify'), async (verification) => {
-      await cancelScanRun(run.id, verification)
-    })
-  } finally {
-    cancellingScan.value = false
-  }
-}
-
-function scanStopTitle(run: ScanRun | null): string {
-  if (run?.status === 'cancelled') return t('admin.crypto.scanRunCancelled')
-  if (run?.stop_reason === 'stalled') return t('admin.crypto.scanRunStalled')
-  if (run?.stop_reason === 'deadline') return t('admin.crypto.scanRunDeadline')
-  return t('admin.crypto.scanDepositsFailed')
-}
-
-const scanRunning = computed(() => scanningDeposits.value && (!activeScan.value || activeScan.value.status === 'running'))
-const scanAlertTitle = computed(() => scanRunning.value ? t('admin.crypto.scanDepositsRunning') : scanStopTitle(activeScan.value))
-const scanAlertColor = computed(() => {
-  if (scanRunning.value) return 'info'
-  return activeScan.value?.status === 'cancelled' ? 'warning' : 'error'
-})
-const scanProgressLine = computed(() => {
-  const run = activeScan.value
-  if (!run || (run.rounds === 0 && run.busy_retries === 0)) return ''
-  const parts = [t('admin.crypto.scanRunRounds', { count: run.rounds })]
-  if (run.busy_retries > 0) parts.push(t('admin.crypto.scanRunWaited', { count: run.busy_retries }))
-  return parts.join(' · ')
-})
-const scanChainLines = computed(() => (activeScan.value?.chains ?? []).map(chain => chain.head_known
-  ? t('admin.crypto.scanRunChain', { chain: chain.chain, cursor: chain.cursor, head: chain.confirmed_head, remaining: chain.remaining })
-  : t('admin.crypto.scanRunChainPending', { chain: chain.chain, cursor: chain.cursor })))
 
 // Sub-page routes drive the tab panels; the overview keeps the addresses panel ready behind it.
 watch(section, value => { if (routed && value !== 'overview' && value !== activeTab.value) switchTab(value) }, { immediate: true })

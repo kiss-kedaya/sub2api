@@ -34,6 +34,25 @@ func TestScanProgressReportsCursorAndConfirmedHead(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestScanProgressOnlyReadsSelectedChain(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	mock.ExpectQuery(`SELECT last_block FROM crypto_scan_cursors`).WithArgs("bsc").WillReturnRows(cursorRow(100))
+	w := &Worker{
+		cursor: NewCursorStore(db),
+		pools:  map[string]*rpc.Pool{"bsc": rpc.NewPool("http://127.0.0.1:1"), "ethereum": rpc.NewPool("http://127.0.0.1:1")},
+		chains: []ChainConfig{{Chain: "bsc"}, {Chain: "ethereum"}},
+	}
+	w.noteHead("bsc", 100)
+	progress, err := w.ScanProgress(t.Context(), "bsc")
+	require.NoError(t, err)
+	require.Len(t, progress, 1)
+	require.Equal(t, "bsc", progress[0].Chain)
+	require.True(t, progress[0].CaughtUp(), "another chain's lag must not keep the scoped run alive")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestScanProgressWithoutASampledHeadIsNeverCaughtUp(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

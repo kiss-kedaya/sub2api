@@ -37,6 +37,9 @@ const maxScanTimePerChain = 90 * time.Second
 
 var ErrScanBusy = errors.New("another payment scan is running")
 
+// ErrInvalidScanChain rejects a scope that includes a chain this worker does not scan.
+var ErrInvalidScanChain = errors.New("scan chain must be an enabled EVM chain")
+
 // ChainConfig describes one chain's scan parameters.
 type ChainConfig struct {
 	Chain         string
@@ -622,10 +625,39 @@ func (w *Worker) RunOnce(ctx context.Context) (err error) {
 	return w.RunOnceFrom(ctx, 0)
 }
 
-// RunOnceFrom permits a bounded, explicitly authorized backfill for a single
-// configured chain. Rewinding reuses the ledger's unique transfer identity.
-func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64) (err error) {
+// ScanChains resolves an optional allowlist without mutating the live worker.
+// Unknown names fail closed, including chains that only have an RPC configured.
+func (w *Worker) ScanChains(scope ...string) ([]ChainConfig, error) {
+	if w == nil {
+		return nil, ErrInvalidScanChain
+	}
+	if len(scope) == 0 {
+		return append([]ChainConfig(nil), w.chains...), nil
+	}
+	var selected []ChainConfig
+	seen := make(map[string]bool, len(scope))
+	for _, name := range scope {
+		chain, ok := w.chainConfig(name)
+		if !ok {
+			return nil, ErrInvalidScanChain
+		}
+		if !seen[name] {
+			selected = append(selected, chain)
+			seen[name] = true
+		}
+	}
+	return selected, nil
+}
+
+// RunOnceFrom permits a bounded, explicitly authorized backfill. An optional
+// scope limits discovery and maintenance; a rewind requires exactly one chain.
+// Rewinding reuses the ledger's unique transfer identity.
+func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64, scope ...string) (err error) {
 	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
+	chains, err := w.ScanChains(scope...)
+	if err != nil {
 		return err
 	}
 	if w != nil && w.beforePass != nil {
@@ -645,10 +677,10 @@ func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64) (err error) 
 		return ctx.Err()
 	}
 	if fromBlock != 0 {
-		if len(w.chains) != 1 {
+		if len(chains) != 1 {
 			return fmt.Errorf("historical scan requires exactly one configured chain")
 		}
-		chain := w.chains[0]
+		chain := chains[0]
 		pool := w.pools[chain.Chain]
 		if pool == nil {
 			return fmt.Errorf("historical scan has no RPC pool")
@@ -683,7 +715,7 @@ func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64) (err error) 
 	w.replayMu.Unlock()
 	var bscHead *chainHeadSnapshot
 	if w.liveProgress && fromBlock == 0 && w.handler != nil {
-		for _, chain := range w.chains {
+		for _, chain := range chains {
 			if chain.Chain == "bsc" {
 				bscHead = w.observeConfiguredHead(ctx, chain)
 				break
@@ -692,7 +724,7 @@ func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64) (err error) 
 	}
 	// Discover new payments before rotating historical receipt/reorg checks.
 	// Maintenance has its own bounded budget and must not delay fresh deposits.
-	for _, chain := range w.chains {
+	for _, chain := range chains {
 		var scanErr error
 		if bscHead != nil && chain.Chain == "bsc" {
 			scanErr = w.scanChainFromSnapshot(ctx, chain, fromBlock, bscHead)
@@ -703,10 +735,10 @@ func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64) (err error) 
 			err = errors.Join(err, fmt.Errorf("scan %s: %w", chain.Chain, scanErr))
 		}
 	}
-	if pendingErr := w.retryPending(ctx); pendingErr != nil {
+	if pendingErr := w.retryPending(ctx, scope...); pendingErr != nil {
 		err = errors.Join(err, fmt.Errorf("pending retry: %w", pendingErr))
 	}
-	if recheckErr := w.recheckCredited(ctx); recheckErr != nil {
+	if recheckErr := w.recheckCredited(ctx, scope...); recheckErr != nil {
 		err = errors.Join(err, fmt.Errorf("credited recheck: %w", recheckErr))
 	}
 	return err
