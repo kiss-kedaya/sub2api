@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Verify that a running sub2api instance can serve every asset its entry bundle
-# references. A release whose embedded dist is missing chunks returns 200 for
-# "/" and for the entry script, then 404s on the first lazy route, which is how
-# 2.3.93 took the whole site down.
+# Verify that a running sub2api instance can serve every embedded frontend file.
+# An instance whose frontend is incomplete returns 200 for "/" and for the entry
+# script, then 404s on the first lazy route (white screen).
 #
 # Usage: scripts/verify-embedded-assets.sh http://10.254.0.2:18532 [--timeout 10]
 set -euo pipefail
@@ -34,12 +33,86 @@ status() {
   curl -s -o /dev/null -w '%{http_code}' -m "$timeout_s" "$1" || echo 000
 }
 
-home_code="$(status "$base/")"
+home="$(curl -s -o /dev/null -w '%{http_code} %{content_type}' -m "$timeout_s" "$base/" || echo 000)"
+home_code="${home%% *}"
 if [ "$home_code" != "200" ]; then
   echo "FAIL  home  $home_code  $base/"
   exit 1
 fi
-echo "ok    home  200"
+case "$home" in
+  *text/html*) echo "ok    home  200 text/html" ;;
+  *)
+    echo "FAIL  home is not text/html ($home): binary built without the embedded frontend?"
+    exit 1
+    ;;
+esac
+
+# Preferred check: the build writes /frontend-build.json listing every embedded
+# file with its size and sha256. Fetching that list covers what parsing the
+# entry bundle cannot see: chunks imported by lazy chunks, CSS and fonts, and a
+# wrong body served with status 200. Instances without the manifest fall back
+# to the entry-bundle scan below.
+manifest_code="$(curl -s -o "$tmp/manifest.json" -w '%{http_code}' -m "$timeout_s" "$base/frontend-build.json" || echo 000)"
+if [ "$manifest_code" = "200" ]; then
+  if ! python3 - "$tmp/manifest.json" "$tmp/files.tsv" <<'PY'; then
+import json, re, sys
+
+src, dst = sys.argv[1:3]
+try:
+    manifest = json.load(open(src, encoding='utf-8'))
+except Exception as exc:
+    sys.exit(f'FAIL  manifest is not JSON: {exc}')
+files = manifest.get('files')
+if manifest.get('schema') != 1 or manifest.get('product') != 'sub2api-frontend':
+    sys.exit('FAIL  manifest schema/product is not sub2api-frontend v1')
+if not isinstance(files, list) or not files:
+    sys.exit('FAIL  manifest lists no files')
+entry = manifest.get('entry') or 'index.html'
+rows = []
+for item in files:
+    path, digest, size = item.get('path'), item.get('sha256'), item.get('size')
+    if not isinstance(path, str) or not re.fullmatch(r'[A-Za-z0-9._/@+~-]+', path) or '..' in path or path.startswith('/'):
+        sys.exit(f'FAIL  manifest has an unsafe path: {path!r}')
+    if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest) or not isinstance(size, int):
+        sys.exit(f'FAIL  manifest entry is malformed: {path!r}')
+    if path == entry:
+        continue  # served with injected settings/nonce, so its bytes differ
+    rows.append(f'{path} {digest} {size}')
+if not rows:
+    sys.exit('FAIL  manifest lists nothing besides the entry page')
+with open(dst, 'w', encoding='utf-8') as fh:
+    for row in rows:
+        print(row, file=fh)
+print(f"ok    manifest version={manifest.get('version')} commit={str(manifest.get('commit'))[:9]} files={len(rows)}")
+PY
+    echo "embedded assets incomplete: do NOT switch traffic to this instance" >&2
+    exit 1
+  fi
+  bad=0
+  total=0
+  while read -r path digest size; do
+    [ -n "$path" ] || continue
+    total=$((total + 1))
+    got="$(curl -s -o "$tmp/file" -w '%{http_code} %{size_download}' -m "$timeout_s" "$base/$path" || echo "000 0")"
+    if [ "$got" != "200 $size" ]; then
+      echo "FAIL  file  got=[$got] want=[200 $size]  $path"
+      bad=$((bad + 1))
+      continue
+    fi
+    if [ "$(sha256sum "$tmp/file" | cut -d' ' -f1)" != "$digest" ]; then
+      echo "FAIL  file  sha256 mismatch  $path"
+      bad=$((bad + 1))
+    fi
+  done <"$tmp/files.tsv"
+  echo "checked $total manifest file(s), bad $bad"
+  if [ "$bad" != "0" ]; then
+    echo "embedded assets incomplete: do NOT switch traffic to this instance" >&2
+    exit 1
+  fi
+  echo "embedded assets complete"
+  exit 0
+fi
+echo "note  no /frontend-build.json ($manifest_code); falling back to the entry-bundle scan"
 
 curl -s -m "$timeout_s" "$base/" >"$tmp/index.html"
 

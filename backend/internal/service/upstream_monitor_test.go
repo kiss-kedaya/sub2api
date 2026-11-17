@@ -1,11 +1,171 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+type upstreamMonitorSampleRepo struct {
+	UpstreamMonitorRepository
+	snapshots   []UpstreamProbeSnapshot
+	states      map[int64]UpstreamMonitorState
+	rules       map[int64]UpstreamAlertRule
+	recordErr   error
+	applyErr    error
+	recordCalls [][]UpstreamAlert
+	applyCalls  [][]UpstreamSampleWrite
+}
+
+func (r *upstreamMonitorSampleRepo) ListProbeSnapshots(context.Context) ([]UpstreamProbeSnapshot, error) {
+	return r.snapshots, nil
+}
+
+func (r *upstreamMonitorSampleRepo) LoadSampleStates(context.Context) (map[int64]UpstreamMonitorState, error) {
+	return r.states, nil
+}
+
+func (r *upstreamMonitorSampleRepo) LoadAlertRules(context.Context) (map[int64]UpstreamAlertRule, error) {
+	return r.rules, nil
+}
+
+func (r *upstreamMonitorSampleRepo) RecordAlerts(_ context.Context, alerts []UpstreamAlert, since time.Time) (int, error) {
+	r.recordCalls = append(r.recordCalls, append([]UpstreamAlert(nil), alerts...))
+	if r.recordErr != nil {
+		return len(alerts), r.recordErr // A failed transaction can report affected rows before rollback.
+	}
+	return len(alerts), nil
+}
+
+func (r *upstreamMonitorSampleRepo) ApplySamples(_ context.Context, writes []UpstreamSampleWrite, _, _, _ time.Time) error {
+	r.applyCalls = append(r.applyCalls, append([]UpstreamSampleWrite(nil), writes...))
+	if r.applyErr != nil {
+		return r.applyErr
+	}
+	// Mirror the repository's state advancement so retry tests do not regenerate
+	// alerts accidentally from an unchanged mock state.
+	for _, write := range writes {
+		state := r.states[write.AccountID]
+		if write.HasBalance {
+			balance := write.Balance
+			state.LastBalance, state.LastUnit = &balance, write.Unit
+		}
+		if write.HasRate {
+			rate := write.Rate
+			state.LastRate = &rate
+		}
+		if write.SampledAt != nil {
+			state.LastSampleAt = write.SampledAt
+		}
+		r.states[write.AccountID] = state
+	}
+	return nil
+}
+
+func TestUpstreamMonitorSampleNowKeepsSamplesAndRetriesFailedAlerts(t *testing.T) {
+	for _, sampleFails := range []bool{false, true} {
+		name := "alerts_fail"
+		if sampleFails {
+			name = "alerts_and_samples_fail"
+		}
+		t.Run(name, func(t *testing.T) {
+			lastSample := time.Now().UTC().Add(-time.Minute)
+			balance, rate := 15.0, 1.0
+			recordErr := errors.New("alert write failed")
+			applyErr := errors.New("sample write failed")
+			repo := &upstreamMonitorSampleRepo{
+				snapshots: []UpstreamProbeSnapshot{
+					{AccountID: 1, BalanceText: "5", Unit: "USD", RateText: "1.5"},
+					{AccountID: 2, BalanceText: "20", Unit: "USD"},
+				},
+				states: map[int64]UpstreamMonitorState{
+					1: {LastBalance: &balance, LastUnit: "USD", LastRate: &rate, LastSampleAt: &lastSample},
+				},
+				rules:     map[int64]UpstreamAlertRule{1: {AccountID: 1, Threshold: 10, Unit: "USD", Enabled: true}},
+				recordErr: recordErr,
+			}
+			if sampleFails {
+				repo.applyErr = applyErr
+			}
+			svc := NewUpstreamMonitorService(repo)
+			hub := NewNotificationHub()
+			notified := 0
+			hub.Register(NotificationChannelFunc{ChannelName: "test", Send: func(context.Context, NotificationMessage) error {
+				notified++
+				return nil
+			}})
+			svc.SetNotificationHub(hub)
+
+			result, err := svc.SampleNow(context.Background())
+			require.ErrorIs(t, err, recordErr)
+			if sampleFails {
+				require.ErrorIs(t, err, applyErr)
+			}
+			require.Zero(t, result.Alerts, "rolled-back alerts are not recorded")
+			require.Zero(t, notified, "an alert must be committed before notification")
+			require.Len(t, repo.applyCalls, 1, "alert errors must not skip the sampling transaction")
+			require.Len(t, repo.applyCalls[0], 2, "all accounts must still be sampled")
+			require.Equal(t, 10.0, repo.applyCalls[0][0].Spend)
+			require.True(t, repo.applyCalls[0][0].RateChanged)
+			require.Len(t, repo.recordCalls[0], 2)
+
+			repo.recordErr, repo.applyErr = nil, nil
+			result, err = svc.SampleNow(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, 2, result.Alerts)
+			require.Len(t, repo.recordCalls, 2, "unchanged snapshots must still retry the failed alert batch")
+			require.Len(t, repo.recordCalls[1], len(repo.recordCalls[0]))
+			for _, alert := range repo.recordCalls[0] {
+				found := false
+				for _, retried := range repo.recordCalls[1] {
+					if retried.Kind == alert.Kind && retried.AccountID == alert.AccountID {
+						found = true
+						require.False(t, retried.CreatedAt.Before(alert.CreatedAt))
+						alert.CreatedAt = retried.CreatedAt
+						require.Equal(t, alert, retried, "retry must preserve event data without duplicates")
+					}
+				}
+				require.True(t, found)
+			}
+			require.Equal(t, 2, notified)
+			if !sampleFails {
+				require.Zero(t, result.Sampled)
+				require.Zero(t, result.RateChanges, "retrying an alert must not rewrite rate history")
+				require.Empty(t, repo.applyCalls[1], "already committed spend must not be counted twice")
+			}
+			_, err = svc.SampleNow(context.Background())
+			require.NoError(t, err)
+			require.Len(t, repo.recordCalls, 2, "successful retries must clear pending alerts")
+		})
+	}
+}
+
+func TestUpstreamMonitorSampleNowRetriesOldPendingAlertsWithFreshCooldown(t *testing.T) {
+	old := time.Now().UTC().Add(-7 * time.Hour)
+	repo := &upstreamMonitorSampleRepo{
+		snapshots: []UpstreamProbeSnapshot{{AccountID: 1, BalanceText: "invalid"}},
+		states:    map[int64]UpstreamMonitorState{},
+	}
+	svc := NewUpstreamMonitorService(repo)
+	svc.pendingAlerts = map[string]UpstreamAlert{
+		"1:rate_jump": {AccountID: 1, Kind: UpstreamAlertKindRateJump, Message: "original rate change", CreatedAt: old},
+		"2:rate_jump": {AccountID: 2, Kind: UpstreamAlertKindRateJump, CreatedAt: old},
+	}
+	before := time.Now().UTC()
+	result, err := svc.SampleNow(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Alerts, "missing accounts must not poison retries for existing accounts")
+	require.Len(t, repo.recordCalls, 1)
+	require.Len(t, repo.recordCalls[0], 1)
+	retried := repo.recordCalls[0][0]
+	require.Equal(t, int64(1), retried.AccountID)
+	require.Equal(t, "original rate change", retried.Message)
+	require.False(t, retried.CreatedAt.Before(before), "recording now must start a full six-hour cooldown")
+	require.Empty(t, svc.pendingAlerts)
+}
 
 func TestBuildUpstreamSampleWritesFirstSnapshot(t *testing.T) {
 	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)

@@ -1837,5 +1837,13 @@ func copyOpenAIUsageFromResponsesUsage(usage *apicompat.ResponsesUsage) OpenAIUs
 	if usage.InputTokensDetails != nil {
 		result.CacheReadInputTokens = usage.InputTokensDetails.CachedTokens
 	}
+	if usage.CacheCreation != nil {
+		if value := usage.CacheCreation.Ephemeral5mInputTokens; value != nil {
+			result.CacheCreation5mTokens = max(*value, 0)
+		}
+		if value := usage.CacheCreation.Ephemeral1hInputTokens; value != nil {
+			result.CacheCreation1hTokens = max(*value, 0)
+		}
+	}
 	return result
 }

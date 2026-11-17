@@ -1467,8 +1467,13 @@ func (s *OpenAIGatewayService) parseSSEUsageBytesWithType(data []byte, eventType
 	}
 	if openAIStreamEventTypeIsTerminal(effectiveOpenAISSEEventType(data, eventType)) {
 		if !openAIUsageHasTokens(&parsedUsage) && openAIUsageHasTokens(usage) {
+			mergeOpenAICacheCreationUsage(usage, parsedUsage)
 			return
 		}
+		mergeOpenAICacheCreationUsage(usage, parsedUsage)
+		parsedUsage.CacheCreationInputTokens = usage.CacheCreationInputTokens
+		parsedUsage.CacheCreation5mTokens = usage.CacheCreation5mTokens
+		parsedUsage.CacheCreation1hTokens = usage.CacheCreation1hTokens
 		*usage = parsedUsage
 		return
 	}
@@ -1476,9 +1481,10 @@ func (s *OpenAIGatewayService) parseSSEUsageBytesWithType(data []byte, eventType
 }
 
 // Compatible Responses upstreams may report usage before the terminal event.
-// Retain those non-zero fields as a fallback. A terminal usage with any billed
-// tokens is authoritative as a whole; an all-zero terminal does not erase a
-// non-zero progressive observation from the same turn.
+// Retain non-zero fields as a fallback, except cache creation snapshots: their
+// field presence is authoritative, including explicit zeroes. Terminal events
+// retain missing cache-creation fields too; other tokens keep their existing
+// whole-snapshot terminal semantics.
 func mergeOpenAIUsageNonZero(dst *OpenAIUsage, src OpenAIUsage) {
 	if dst == nil {
 		return
@@ -1495,14 +1501,30 @@ func mergeOpenAIUsageNonZero(dst *OpenAIUsage, src OpenAIUsage) {
 	if src.OutputTokens > 0 {
 		dst.OutputTokens = src.OutputTokens
 	}
-	if src.CacheCreationInputTokens > 0 {
-		dst.CacheCreationInputTokens = src.CacheCreationInputTokens
-	}
+	mergeOpenAICacheCreationUsage(dst, src)
 	if src.CacheReadInputTokens > 0 {
 		dst.CacheReadInputTokens = src.CacheReadInputTokens
 	}
 	if src.ImageOutputTokens > 0 {
 		dst.ImageOutputTokens = src.ImageOutputTokens
+	}
+}
+
+func mergeOpenAICacheCreationUsage(dst *OpenAIUsage, src OpenAIUsage) {
+	if src.cacheCreationInputTokensZero || src.CacheCreationInputTokens > 0 {
+		dst.CacheCreationInputTokens = src.CacheCreationInputTokens
+		dst.cacheCreationInputTokensZero = src.cacheCreationInputTokensZero
+	}
+	if src.cacheCreation5mTokensZero || src.CacheCreation5mTokens > 0 {
+		dst.CacheCreation5mTokens = src.CacheCreation5mTokens
+		dst.cacheCreation5mTokensZero = src.cacheCreation5mTokensZero
+	}
+	if src.cacheCreation1hTokensZero || src.CacheCreation1hTokens > 0 {
+		dst.CacheCreation1hTokens = src.CacheCreation1hTokens
+		dst.cacheCreation1hTokensZero = src.cacheCreation1hTokensZero
+	}
+	if src.cacheCreationInputTokensZero {
+		dst.CacheCreation5mTokens, dst.CacheCreation1hTokens = 0, 0
 	}
 }
 
@@ -1777,7 +1799,7 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 		)
 	}
 	cacheReadTokens := openAICacheReadTokensFromUsage(value)
-	cacheCreationTokens := openAICacheCreationTokensFromUsage(value)
+	cacheCreationTokens, cacheCreationPresent := apicompat.CacheCreationTokensFromUsage(value)
 	imageOutputTokens := value.Get("output_tokens_details.image_tokens").Int()
 	if imageOutputTokens == 0 {
 		imageOutputTokens = value.Get("completion_tokens_details.image_tokens").Int()
@@ -1790,12 +1812,17 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 		value.Get("prompt_tokens_details.image_tokens"),
 	)
 	return OpenAIUsage{
-		InputTokens:              int(inputTokens),
-		ImageInputTokens:         imageInputTokens,
-		OutputTokens:             int(outputTokens),
-		CacheCreationInputTokens: cacheCreationTokens,
-		CacheReadInputTokens:     cacheReadTokens,
-		ImageOutputTokens:        int(imageOutputTokens),
+		InputTokens:                  int(inputTokens),
+		ImageInputTokens:             imageInputTokens,
+		OutputTokens:                 int(outputTokens),
+		CacheCreationInputTokens:     cacheCreationTokens,
+		CacheCreation5mTokens:        max(int(value.Get("cache_creation.ephemeral_5m_input_tokens").Int()), 0),
+		CacheCreation1hTokens:        max(int(value.Get("cache_creation.ephemeral_1h_input_tokens").Int()), 0),
+		cacheCreationInputTokensZero: cacheCreationPresent && cacheCreationTokens == 0,
+		cacheCreation5mTokensZero:    value.Get("cache_creation.ephemeral_5m_input_tokens").Exists() && value.Get("cache_creation.ephemeral_5m_input_tokens").Int() <= 0,
+		cacheCreation1hTokensZero:    value.Get("cache_creation.ephemeral_1h_input_tokens").Exists() && value.Get("cache_creation.ephemeral_1h_input_tokens").Int() <= 0,
+		CacheReadInputTokens:         cacheReadTokens,
+		ImageOutputTokens:            int(imageOutputTokens),
 	}, true
 }
 
@@ -1817,23 +1844,8 @@ func openAICacheReadTokensFromUsage(value gjson.Result) int {
 }
 
 func openAICacheCreationTokensFromUsage(value gjson.Result) int {
-	for _, nested := range []gjson.Result{
-		value.Get("input_tokens_details.cache_write_tokens"),
-		value.Get("prompt_tokens_details.cache_write_tokens"),
-		value.Get("input_tokens_details.cache_creation_tokens"),
-		value.Get("prompt_tokens_details.cache_creation_tokens"),
-	} {
-		if nested.Exists() {
-			return max(int(nested.Int()), 0)
-		}
-	}
-
-	return firstPositiveGJSONInt(
-		value.Get("cache_write_tokens"),
-		value.Get("cache_creation_input_tokens"),
-		value.Get("cache_write_input_tokens"),
-		value.Get("cache_creation_tokens"),
-	)
+	tokens, _ := apicompat.CacheCreationTokensFromUsage(value)
+	return tokens
 }
 
 func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {

@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -338,6 +340,11 @@ type UpstreamMonitorService struct {
 	db         *sql.DB
 	instanceID string
 	hub        *NotificationHub
+
+	// ponytail: retries are process-local and bounded to one alert per account/kind;
+	// durable retries across leader changes would need an outbox.
+	sampleMu      sync.Mutex
+	pendingAlerts map[string]UpstreamAlert
 }
 
 func NewUpstreamMonitorService(repo UpstreamMonitorRepository) *UpstreamMonitorService {
@@ -484,13 +491,16 @@ func (s *UpstreamMonitorService) RateChanges(ctx context.Context, filter Upstrea
 // SampleNow collects one bounded snapshot pass. It reads only accounts.extra,
 // so it adds no upstream requests and no usage_logs work.
 func (s *UpstreamMonitorService) SampleNow(ctx context.Context) (UpstreamMonitorSampleResult, error) {
+	s.sampleMu.Lock()
+	defer s.sampleMu.Unlock()
+
 	var result UpstreamMonitorSampleResult
 	snapshots, err := s.repo.ListProbeSnapshots(ctx)
 	if err != nil {
 		return result, err
 	}
 	result.Scanned = len(snapshots)
-	if len(snapshots) == 0 {
+	if len(snapshots) == 0 && len(s.pendingAlerts) == 0 {
 		return result, nil
 	}
 	states, err := s.repo.LoadSampleStates(ctx)
@@ -499,7 +509,7 @@ func (s *UpstreamMonitorService) SampleNow(ctx context.Context) (UpstreamMonitor
 	}
 	now := time.Now().UTC()
 	writes := buildUpstreamSampleWrites(snapshots, states, now)
-	if len(writes) == 0 {
+	if len(writes) == 0 && len(s.pendingAlerts) == 0 {
 		return result, nil
 	}
 	for _, write := range writes {
@@ -516,13 +526,40 @@ func (s *UpstreamMonitorService) SampleNow(ctx context.Context) (UpstreamMonitor
 	}
 	alerts := buildUpstreamAlerts(writes, rules)
 	alerts = append(alerts, buildUpstreamUsageAlerts(snapshots, rules, now)...)
-	if len(alerts) > 0 {
-		recorded, recordErr := s.repo.RecordAlerts(ctx, alerts, now.Add(-upstreamMonitorAlertCooldown))
-		if recordErr != nil {
-			return result, recordErr
+	cooldownSince := now.Add(-upstreamMonitorAlertCooldown)
+	accounts := make(map[int64]bool, len(snapshots))
+	for _, snapshot := range snapshots {
+		accounts[snapshot.AccountID] = true
+	}
+	for key, alert := range s.pendingAlerts {
+		if !accounts[alert.AccountID] {
+			delete(s.pendingAlerts, key)
 		}
-		result.Alerts = recorded
-		s.publishAlerts(ctx, alerts)
+	}
+	if s.pendingAlerts == nil {
+		s.pendingAlerts = make(map[string]UpstreamAlert)
+	}
+	for _, alert := range alerts {
+		key := fmt.Sprintf("%d:%s", alert.AccountID, alert.Kind)
+		if _, pending := s.pendingAlerts[key]; !pending {
+			s.pendingAlerts[key] = alert
+		}
+	}
+	alerts = alerts[:0]
+	for _, alert := range s.pendingAlerts {
+		// A successful retry starts the same six-hour cooldown as a fresh alert.
+		alert.CreatedAt = now
+		alerts = append(alerts, alert)
+	}
+	var recordErr error
+	if len(alerts) > 0 {
+		var recorded int
+		recorded, recordErr = s.repo.RecordAlerts(ctx, alerts, cooldownSince)
+		if recordErr == nil {
+			result.Alerts = recorded
+			s.pendingAlerts = nil
+			s.publishAlerts(ctx, alerts)
+		}
 	}
 	err = s.repo.ApplySamples(
 		ctx,
@@ -531,7 +568,7 @@ func (s *UpstreamMonitorService) SampleNow(ctx context.Context) (UpstreamMonitor
 		now.Add(-upstreamMonitorRateRetention),
 		now.Add(-upstreamMonitorDailyRetention),
 	)
-	return result, err
+	return result, errors.Join(recordErr, err)
 }
 
 // Start runs the sampler until ctx is cancelled. Leadership is re-contested on

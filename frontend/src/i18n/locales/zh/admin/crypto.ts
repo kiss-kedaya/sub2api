@@ -380,6 +380,8 @@ export default {
     gasTopup: '单地址 Gas 补充上限（按实际缺额补充）',
     confirmations: '确认数',
     scanRange: '扫链范围',
+    scanConcurrency: '扫链并发',
+    scanConcurrencyHint: '0 为自动（每节点最多 4、总计最多 8）；1–64 覆盖该链并发，同时用于日志和完整区块读取，仍受 RPC 请求间隔限制。付费节点可先设 32。',
     mnemonicsTitle: '导出钱包助记词',
     mnemonicsSensitive: '极敏感操作 · 将在本页短暂显示明文',
     mnemonicsWarning: '需要当次 6 位两步验证码。服务器仅为本次导出解密，助记词不会写入浏览器存储或自动复制。',

@@ -297,7 +297,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		firstTokenMs = streamResult.firstTokenMs
 		clientDisconnect = streamResult.clientDisconnect
 	} else {
-		usage, err = s.handleNonStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account)
+		usage, err = s.handleNonStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account, input.RequestModel)
 		if err != nil {
 			// 上游已受理，客户端在最终 JSON 读完前离开：没有 usage 可读，输入按估算计费。
 			if upstream.departedClient(err) {
@@ -308,6 +308,9 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	}
 	if usage == nil {
 		usage = &ClaudeUsage{}
+	}
+	if input.RequestStream && !clientDisconnect {
+		s.rateLimitService.observeModelTransientSuccess(ctx, c, account, input.RequestModel)
 	}
 
 	return &ForwardResult{
@@ -1120,6 +1123,7 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	resp *http.Response,
 	c *gin.Context,
 	account *Account,
+	requestedModel ...string,
 ) (*ClaudeUsage, error) {
 	if s.rateLimitService != nil {
 		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
@@ -1160,6 +1164,9 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 		defer GuardUpstreamFinancialError(c, 0, body)()
 	}
 	c.Data(resp.StatusCode, contentType, sanitizeClientUpstreamErrorBody(resp.StatusCode, body))
+	if len(requestedModel) > 0 {
+		s.rateLimitService.observeModelTransientSuccess(ctx, c, account, requestedModel[0], body)
+	}
 	return usage, nil
 }
 

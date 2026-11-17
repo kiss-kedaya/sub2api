@@ -205,8 +205,13 @@ func parseOpenAIWSResponseUsageFromCompletedEvent(message []byte, usage *OpenAIU
 	if parsedUsage, ok := extractOpenAIUsageFromJSONBytes(message); ok {
 		if openAIStreamEventTypeIsTerminal(effectiveOpenAISSEEventType(message, "")) {
 			if !openAIUsageHasTokens(&parsedUsage) && openAIUsageHasTokens(usage) {
+				mergeOpenAICacheCreationUsage(usage, parsedUsage)
 				return
 			}
+			mergeOpenAICacheCreationUsage(usage, parsedUsage)
+			parsedUsage.CacheCreationInputTokens = usage.CacheCreationInputTokens
+			parsedUsage.CacheCreation5mTokens = usage.CacheCreation5mTokens
+			parsedUsage.CacheCreation1hTokens = usage.CacheCreation1hTokens
 			*usage = parsedUsage
 		} else {
 			mergeOpenAIUsageNonZero(usage, parsedUsage)

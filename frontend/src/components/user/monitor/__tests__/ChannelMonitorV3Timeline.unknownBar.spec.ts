@@ -1,5 +1,5 @@
-import { mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MonitorHealth, MonitorMatrixBucket, MonitorMetric } from '@/api/channelMonitorV2'
 import ChannelMonitorV3Timeline from '../ChannelMonitorV3Timeline.vue'
 
@@ -7,9 +7,14 @@ vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
     ...actual,
-    useI18n: () => ({ t: (key: string) => key, locale: { value: 'zh-CN' } }),
+    useI18n: () => ({
+      t: (key: string, params?: Record<string, unknown>) => params ? `${key}:${JSON.stringify(params)}` : key,
+      locale: { value: 'zh-CN' },
+    }),
   }
 })
+
+enableAutoUnmount(afterEach)
 
 function metrics(errorRate: number): MonitorMetric {
   return {
@@ -84,5 +89,91 @@ describe('ChannelMonitorV3Timeline unknown bars', () => {
     })
     const bar = wrapper.get('.v3-soft-glass-bar')
     expect(bar.classes()).toContain('bg-gray-950')
+  })
+})
+
+const anchorBucketStart = '2026-11-17T12:00:00Z'
+const bucketSeconds = 300
+
+function recentBucket(offset: number) {
+  return bucket('healthy', 0, new Date(Date.parse(anchorBucketStart) - offset * bucketSeconds * 1000).toISOString())
+}
+
+function mountTimeline(buckets: MonitorMatrixBucket[], timing: { anchorBucketStart?: string; bucketSeconds?: number } = { anchorBucketStart, bucketSeconds }) {
+  return mount(ChannelMonitorV3Timeline, {
+    props: { buckets, countdownSeconds: 0, length: 18, ...timing },
+    global: { stubs: { teleport: true } },
+  })
+}
+
+function occupiedSlots(wrapper: ReturnType<typeof mountTimeline>) {
+  return wrapper.findAll('.v3-bar-slot')
+    .flatMap((slot, index) => slot.find('.v3-soft-glass-bar').exists() ? [index] : [])
+}
+
+describe('ChannelMonitorV3Timeline time alignment', () => {
+  it('places five recent buckets in the last five of eighteen slots', () => {
+    const wrapper = mountTimeline(Array.from({ length: 5 }, (_, index) => recentBucket(index)))
+    expect(wrapper.findAll('.v3-bar-slot')).toHaveLength(18)
+    expect(occupiedSlots(wrapper)).toEqual([13, 14, 15, 16, 17])
+    expect(wrapper.findAll('.v3-bar-hitbox').slice(0, 13).every(button => button.attributes('aria-label') === '-')).toBe(true)
+  })
+
+  it('keeps the last slot empty when another group has the newest bucket', () => {
+    const wrapper = mountTimeline(Array.from({ length: 17 }, (_, index) => recentBucket(index + 1)))
+    expect(occupiedSlots(wrapper)).toEqual(Array.from({ length: 17 }, (_, index) => index))
+    expect(wrapper.findAll('.v3-bar-hitbox')[17].attributes('aria-label')).toBe('-')
+  })
+
+  it('leaves internal gaps without shifting newer buckets', () => {
+    const wrapper = mountTimeline(Array.from({ length: 18 }, (_, index) => index)
+      .filter(offset => offset !== 7 && offset !== 8)
+      .map(recentBucket))
+    expect(occupiedSlots(wrapper)).toEqual(Array.from({ length: 18 }, (_, index) => index).filter(index => index !== 9 && index !== 10))
+  })
+
+  it.each([
+    {},
+    { bucketSeconds },
+    { anchorBucketStart },
+    { anchorBucketStart: 'invalid', bucketSeconds },
+    { anchorBucketStart: '1970-01-01T00:00:00Z', bucketSeconds },
+    { anchorBucketStart, bucketSeconds: 0 },
+    { anchorBucketStart, bucketSeconds: -300 },
+    { anchorBucketStart, bucketSeconds: NaN },
+    { anchorBucketStart, bucketSeconds: Infinity },
+  ])('right-aligns recent buckets when timing is missing or invalid: %j', (timing) => {
+    const wrapper = mountTimeline(Array.from({ length: 5 }, (_, index) => recentBucket(index)), timing)
+    expect(occupiedSlots(wrapper)).toEqual([13, 14, 15, 16, 17])
+  })
+
+  it('drops buckets outside the window or with invalid dates', () => {
+    const wrapper = mountTimeline([
+      recentBucket(18), recentBucket(-1), recentBucket(0),
+      bucket('healthy', 0, 'invalid'),
+    ])
+    expect(occupiedSlots(wrapper)).toEqual([17])
+  })
+
+  it('keeps the newer bucket when two timestamps round to the same slot', () => {
+    const newer = bucket('critical', 0.8, anchorBucketStart)
+    const older = bucket('healthy', 0, '2026-11-17T11:59:30Z')
+    const wrapper = mountTimeline([newer, older])
+    expect(occupiedSlots(wrapper)).toEqual([17])
+    expect(wrapper.get('.v3-soft-glass-bar').classes()).toContain('bg-gray-950')
+  })
+
+  it('uses slot indices for focus, tooltips, neighbors and animation delays', async () => {
+    const wrapper = mountTimeline(Array.from({ length: 5 }, (_, index) => recentBucket(index)))
+    const slots = wrapper.findAll('.v3-bar-slot')
+    await slots[0].trigger('mouseenter')
+    expect(wrapper.find('[role="tooltip"]').exists()).toBe(false)
+    await slots[13].get('button').trigger('focus')
+    expect(slots[13].get('button').classes()).toContain('is-active')
+    expect(slots[14].get('button').classes()).toContain('is-neighbor')
+    expect(slots[13].get('.v3-soft-glass-bar').attributes('style')).toContain('animation-delay: 234ms')
+    expect(wrapper.get('[role="tooltip"]').text()).toBe(slots[13].get('button').attributes('aria-label'))
+    await slots[13].get('button').trigger('blur')
+    expect(wrapper.find('[role="tooltip"]').exists()).toBe(false)
   })
 })

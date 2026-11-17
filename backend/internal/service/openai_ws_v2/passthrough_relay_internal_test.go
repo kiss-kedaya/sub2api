@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	coderws "github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -455,11 +456,86 @@ func TestObserveUpstreamMessageBareErrorBeforeNextCompletedKeepsBothTurns(t *tes
 	require.Equal(t, Usage{InputTokens: 8, OutputTokens: 3}, state.usage)
 }
 
+func TestPassthroughCacheCreationSplitPerTurnUsage(t *testing.T) {
+	t.Parallel()
+	state := &relayState{}
+	for _, tc := range []struct {
+		raw        string
+		five, hour int
+	}{
+		{`{"input_tokens":1000,"output_tokens":1,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_1h_input_tokens":200}}`, 0, 0},
+		{`{"input_tokens":1000,"output_tokens":1,"cache_creation_input_tokens":100,"cache_creation":{"ephemeral_1h_input_tokens":200}}`, 0, 100},
+		{`{"input_tokens":1000,"output_tokens":1,"cache_creation_input_tokens":200}`, 0, 0},
+		{`{"input_tokens":1000,"output_tokens":1,"cache_creation_input_tokens":200,"cache_creation":{"ephemeral_1h_input_tokens":120}}`, 80, 120},
+	} {
+		parseUsageAndAccumulate(state, []byte(`{"type":"response.completed","usage":`+tc.raw+`}`), "response.completed", nil)
+		turn := finalizeRelayTurnUsage(state)
+		require.Equal(t, tc.five, turn.CacheCreation5mTokens)
+		require.Equal(t, tc.hour, turn.CacheCreation1hTokens)
+	}
+	require.Equal(t, 500, state.usage.CacheCreationInputTokens)
+	require.Equal(t, 80, state.usage.CacheCreation5mTokens)
+	require.Equal(t, 220, state.usage.CacheCreation1hTokens)
+	result := &RelayResult{}
+	enrichResult(result, state, 0)
+	require.Equal(t, state.usage, result.Usage)
+}
+
+func TestPassthroughCacheCreationSplitProgressivePresence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, update      string
+		five, hour, total int
+	}{
+		{"explicit bucket zero", `"cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":0}`, 200, 0, 200},
+		{"missing buckets", `"output_tokens":2`, 0, 200, 200},
+		{"missing hour", `"cache_creation":{"ephemeral_5m_input_tokens":0}`, 0, 200, 200},
+		{"explicit total zero", `"cache_creation_input_tokens":0`, 0, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := &relayState{}
+			parseUsageAndAccumulate(state, []byte(`{"type":"response.in_progress","usage":{"input_tokens":1000,"cache_creation_input_tokens":200,"cache_creation":{"ephemeral_1h_input_tokens":200}}}`), "response.in_progress", nil)
+			parseUsageAndAccumulate(state, []byte(`{"type":"response.in_progress","usage":{`+tc.update+`}}`), "response.in_progress", nil)
+			parseUsageAndAccumulate(state, []byte(`{"type":"response.completed","response":{"id":"resp_cache"}}`), "response.completed", nil)
+			turn := finalizeRelayTurnUsage(state)
+			require.Equal(t, tc.total, turn.CacheCreationInputTokens)
+			require.Equal(t, tc.five, turn.CacheCreation5mTokens)
+			require.Equal(t, tc.hour, turn.CacheCreation1hTokens)
+		})
+	}
+}
+
+func TestPassthroughCacheCreationSplitTerminalPresence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, final       string
+		five, hour, total int
+	}{
+		{"missing cache fields", `"input_tokens":1000,"output_tokens":2`, 0, 200, 200},
+		{"missing total with 5m correction", `"input_tokens":1000,"output_tokens":2,"cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":0}`, 200, 0, 200},
+		{"cache-only terminal correction", `"cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":0}`, 200, 0, 200},
+		{"cache-only terminal zero", `"cache_creation_input_tokens":0`, 0, 0, 0},
+		{"explicit total zero", `"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0`, 0, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := &relayState{}
+			parseUsageAndAccumulate(state, []byte(`{"type":"response.in_progress","usage":{"input_tokens":1000,"cache_creation_input_tokens":200,"cache_creation":{"ephemeral_1h_input_tokens":200}}}`), "response.in_progress", nil)
+			parseUsageAndAccumulate(state, []byte(`{"type":"response.completed","usage":{`+tc.final+`}}`), "response.completed", nil)
+			turn := finalizeRelayTurnUsage(state)
+			require.Equal(t, tc.total, turn.CacheCreationInputTokens)
+			require.Equal(t, tc.five, turn.CacheCreation5mTokens)
+			require.Equal(t, tc.hour, turn.CacheCreation1hTokens)
+		})
+	}
+}
+
 func TestOpenAICacheCreationTokensFromUsageNestedZeroWins(t *testing.T) {
 	t.Parallel()
 
 	usage := gjson.Parse(`{"input_tokens_details":{"cache_write_tokens":0},"cache_creation_input_tokens":19}`)
-	require.Zero(t, openAICacheCreationTokensFromUsage(usage))
+	tokens, present := apicompat.CacheCreationTokensFromUsage(usage)
+	require.True(t, present)
+	require.Zero(t, tokens)
 }
 
 func TestEmitTurnCompleteCoverage(t *testing.T) {

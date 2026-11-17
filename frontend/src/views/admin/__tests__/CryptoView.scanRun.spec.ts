@@ -155,6 +155,23 @@ describe('background catch-up scan on the deposits tab', () => {
     expect(scanCalls()).toHaveLength(0)
   })
 
+  it('recovers a lost progress response and refreshes deposits without re-entering the tab', async () => {
+    runList = [run()]
+    runStates = [run({ status: 'completed', stop_reason: 'caught_up' })]
+    const wrapper = await openDeposits()
+    const before = depositCalls()
+    const get = mocks.get.getMockImplementation()!
+    mocks.get.mockImplementationOnce(async () => { throw new Error('Temporary progress failure') })
+    await tick()
+    expect(button(wrapper, 'admin.crypto.scanDeposits').attributes('disabled')).toBeDefined()
+    mocks.get.mockImplementation(get)
+    await tick(3000)
+    expect(depositCalls()).toBeGreaterThan(before)
+    expect(button(wrapper, 'admin.crypto.scanDeposits').attributes('disabled')).toBeUndefined()
+    expect(mocks.showSuccess).toHaveBeenCalledWith('admin.crypto.scanDepositsDone')
+    expect(scanCalls()).toHaveLength(0)
+  })
+
   it('a 409 on start attaches to the scan that is already running instead of reporting an error', async () => {
     runStates = [run({ status: 'completed', stop_reason: 'caught_up', chains: [chainRow(1000)] })]
     const wrapper = await openDeposits()

@@ -55,6 +55,8 @@
                 :signals="groupSignals[row.group_id ?? 0] ?? null"
                 :countdown-seconds="countdownSeconds"
                 :timeline-length="timelineLength"
+                :anchor-bucket-start="timelineAnchorBucketStart"
+                :bucket-seconds="matrix?.coverage.bucket_seconds"
               />
             </div>
           </template>
@@ -74,6 +76,8 @@
                 :signals="groupSignals[item.row.group_id ?? 0] ?? null"
                 :countdown-seconds="countdownSeconds"
                 :timeline-length="timelineLength"
+                :anchor-bucket-start="timelineAnchorBucketStart"
+                :bucket-seconds="matrix?.coverage.bucket_seconds"
               />
             </div>
           </div>
@@ -144,6 +148,16 @@ const platformSections = computed(() => {
 })
 const layoutBlocks = computed(() => buildChannelStatusLayout(platformSections.value))
 const timelineLength = computed(() => ({ '90m': 18, '24h': 24, '7d': 14, '30d': 30 })[filter.value.range])
+const timelineAnchorBucketStart = computed(() => {
+  let latest = 0
+  for (const row of rows.value) {
+    for (const bucket of row.buckets) {
+      const start = Date.parse(bucket.bucket_start)
+      if (Number.isFinite(start) && start > latest) latest = start
+    }
+  }
+  return latest > 0 ? new Date(latest).toISOString() : undefined
+})
 const latestSnapshotMetrics = computed(() => {
   const trend = [...(snapshot.value?.trend ?? [])]
     .filter(point => point.bucket_start && point.metrics)

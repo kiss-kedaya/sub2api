@@ -64,11 +64,18 @@ func (s *GatewayService) SelectAccountAlongKeyRoutes(
 	if s == nil || apiKey == nil {
 		return nil, apiKey, ErrNoAvailableAccounts
 	}
-	result, _, routed, err := selectWithUpstreamPreferences(ctx, s.cache, apiKey, excludedIDs, func(excluded map[int64]struct{}) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
-		result, routed, err := s.selectAccountAlongKeyRoutesOnce(ctx, apiKey, sessionHash, requestedModel, excluded, metadataUserID, sub2apiUserID, requestPlatform...)
-		return result, OpenAIAccountScheduleDecision{}, routed, err
+	type routeSelection struct {
+		result *AccountSelectionResult
+		key    *APIKey
+	}
+	selected, err := withModelTransientFallback(ctx, func(ctx context.Context) (routeSelection, error) {
+		result, _, routed, err := selectWithUpstreamPreferences(ctx, s.cache, apiKey, excludedIDs, func(excluded map[int64]struct{}) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
+			result, routed, err := s.selectAccountAlongKeyRoutesOnce(ctx, apiKey, sessionHash, requestedModel, excluded, metadataUserID, sub2apiUserID, requestPlatform...)
+			return result, OpenAIAccountScheduleDecision{}, routed, err
+		})
+		return routeSelection{result: result, key: routed}, err
 	})
-	return result, routed, err
+	return selected.result, selected.key, err
 }
 
 func (s *GatewayService) selectAccountAlongKeyRoutesOnce(ctx context.Context, apiKey *APIKey, sessionHash, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64, requestPlatform ...string) (*AccountSelectionResult, *APIKey, error) {

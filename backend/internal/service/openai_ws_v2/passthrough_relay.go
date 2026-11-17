@@ -26,11 +26,16 @@ type FrameConn interface {
 }
 
 type Usage struct {
-	InputTokens              int
-	OutputTokens             int
-	CacheCreationInputTokens int
-	CacheReadInputTokens     int
-	ImageOutputTokens        int
+	InputTokens                  int
+	OutputTokens                 int
+	CacheCreationInputTokens     int
+	CacheCreation5mTokens        int
+	CacheCreation1hTokens        int
+	cacheCreationInputTokensZero bool
+	cacheCreation5mTokensZero    bool
+	cacheCreation1hTokensZero    bool
+	CacheReadInputTokens         int
+	ImageOutputTokens            int
 }
 
 type RelayResult struct {
@@ -870,6 +875,7 @@ func emitAbandonedTurn(onTurnComplete func(turn RelayTurnResult), state *relaySt
 	}
 	// Nothing the upstream reported counts as final: the turn never completed.
 	partial := state.turnUsage
+	normalizeRelayCacheCreationUsage(&partial)
 	state.turnUsage = Usage{}
 	output := state.output
 	state.output = nil
@@ -1162,7 +1168,9 @@ func parseUsageAndAccumulate(
 		imageTokens = usageResult.Get("completion_tokens_details.image_tokens").Int()
 	}
 
-	requireTotals := isTerminalEvent(strings.TrimSpace(eventType))
+	cacheCreationTokens, cacheCreationPresent := apicompat.CacheCreationTokensFromUsage(usageResult)
+	// A terminal cache-only correction is still authoritative for that turn.
+	requireTotals := isTerminalEvent(strings.TrimSpace(eventType)) && !cacheCreationPresent && !usageResult.Get("cache_creation").IsObject()
 	inputTokens, inputOK := parseUsageIntField(inputResult, requireTotals)
 	outputTokens, outputOK := parseUsageIntField(outputResult, requireTotals)
 	cachedTokens, cachedOK := parseUsageIntField(cachedResult, false)
@@ -1183,16 +1191,27 @@ func parseUsageAndAccumulate(
 			int64(inputTokens), int64(outputTokens), usageResult.Get("total_tokens").Int(), reasoningTokens,
 		))
 	}
+	fiveMinute := usageResult.Get("cache_creation.ephemeral_5m_input_tokens")
+	oneHour := usageResult.Get("cache_creation.ephemeral_1h_input_tokens")
 	parsedUsage := Usage{
-		InputTokens:              inputTokens,
-		OutputTokens:             outputTokens,
-		CacheCreationInputTokens: openAICacheCreationTokensFromUsage(usageResult),
-		CacheReadInputTokens:     cachedTokens,
-		ImageOutputTokens:        int(imageTokens),
+		InputTokens:                  inputTokens,
+		OutputTokens:                 outputTokens,
+		CacheCreationInputTokens:     cacheCreationTokens,
+		CacheCreation5mTokens:        max(int(fiveMinute.Int()), 0),
+		CacheCreation1hTokens:        max(int(oneHour.Int()), 0),
+		cacheCreationInputTokensZero: cacheCreationPresent && cacheCreationTokens == 0,
+		cacheCreation5mTokensZero:    fiveMinute.Exists() && fiveMinute.Int() <= 0,
+		cacheCreation1hTokensZero:    oneHour.Exists() && oneHour.Int() <= 0,
+		CacheReadInputTokens:         cachedTokens,
+		ImageOutputTokens:            int(imageTokens),
 	}
 
 	if isTerminalEvent(strings.TrimSpace(eventType)) {
+		mergeRelayCacheCreationUsage(&state.turnUsage, parsedUsage)
 		if relayUsageHasTokens(parsedUsage) || !relayUsageHasTokens(state.turnUsage) {
+			parsedUsage.CacheCreationInputTokens = state.turnUsage.CacheCreationInputTokens
+			parsedUsage.CacheCreation5mTokens = state.turnUsage.CacheCreation5mTokens
+			parsedUsage.CacheCreation1hTokens = state.turnUsage.CacheCreation1hTokens
 			state.turnUsage = parsedUsage
 		}
 	} else {
@@ -1218,9 +1237,7 @@ func mergeRelayUsageNonZero(dst *Usage, src Usage) {
 	if src.OutputTokens > 0 {
 		dst.OutputTokens = src.OutputTokens
 	}
-	if src.CacheCreationInputTokens > 0 {
-		dst.CacheCreationInputTokens = src.CacheCreationInputTokens
-	}
+	mergeRelayCacheCreationUsage(dst, src)
 	if src.CacheReadInputTokens > 0 {
 		dst.CacheReadInputTokens = src.CacheReadInputTokens
 	}
@@ -1229,14 +1246,46 @@ func mergeRelayUsageNonZero(dst *Usage, src Usage) {
 	}
 }
 
+func mergeRelayCacheCreationUsage(dst *Usage, src Usage) {
+	if src.cacheCreationInputTokensZero || src.CacheCreationInputTokens > 0 {
+		dst.CacheCreationInputTokens = src.CacheCreationInputTokens
+		dst.cacheCreationInputTokensZero = src.cacheCreationInputTokensZero
+	}
+	if src.cacheCreation5mTokensZero || src.CacheCreation5mTokens > 0 {
+		dst.CacheCreation5mTokens = src.CacheCreation5mTokens
+		dst.cacheCreation5mTokensZero = src.cacheCreation5mTokensZero
+	}
+	if src.cacheCreation1hTokensZero || src.CacheCreation1hTokens > 0 {
+		dst.CacheCreation1hTokens = src.CacheCreation1hTokens
+		dst.cacheCreation1hTokensZero = src.cacheCreation1hTokensZero
+	}
+	if src.cacheCreationInputTokensZero {
+		dst.CacheCreation5mTokens, dst.CacheCreation1hTokens = 0, 0
+	}
+}
+
+func normalizeRelayCacheCreationUsage(usage *Usage) {
+	if usage.CacheCreationInputTokens <= 0 {
+		usage.CacheCreationInputTokens = 0
+		usage.CacheCreation5mTokens, usage.CacheCreation1hTokens = 0, 0
+		return
+	}
+	usage.CacheCreation5mTokens, usage.CacheCreation1hTokens = apicompat.NormalizeCacheCreationBreakdown(
+		usage.CacheCreationInputTokens, usage.CacheCreation5mTokens, usage.CacheCreation1hTokens,
+	)
+}
+
 func finalizeRelayTurnUsage(state *relayState) Usage {
 	if state == nil {
 		return Usage{}
 	}
 	turnUsage := state.turnUsage
+	normalizeRelayCacheCreationUsage(&turnUsage)
 	state.usage.InputTokens += turnUsage.InputTokens
 	state.usage.OutputTokens += turnUsage.OutputTokens
 	state.usage.CacheCreationInputTokens += turnUsage.CacheCreationInputTokens
+	state.usage.CacheCreation5mTokens += turnUsage.CacheCreation5mTokens
+	state.usage.CacheCreation1hTokens += turnUsage.CacheCreation1hTokens
 	state.usage.CacheReadInputTokens += turnUsage.CacheReadInputTokens
 	state.usage.ImageOutputTokens += turnUsage.ImageOutputTokens
 	state.turnUsage = Usage{}
@@ -1251,31 +1300,6 @@ func parseUsageIntField(value gjson.Result, required bool) (int, bool) {
 		return 0, false
 	}
 	return int(value.Int()), true
-}
-
-func openAICacheCreationTokensFromUsage(value gjson.Result) int {
-	for _, field := range []string{
-		"input_tokens_details.cache_write_tokens",
-		"prompt_tokens_details.cache_write_tokens",
-		"input_tokens_details.cache_creation_tokens",
-		"prompt_tokens_details.cache_creation_tokens",
-	} {
-		result := value.Get(field)
-		if result.Exists() {
-			return max(int(result.Int()), 0)
-		}
-	}
-	for _, field := range []string{
-		"cache_write_tokens",
-		"cache_creation_input_tokens",
-		"cache_write_input_tokens",
-		"cache_creation_tokens",
-	} {
-		if tokens := int(value.Get(field).Int()); tokens > 0 {
-			return tokens
-		}
-	}
-	return 0
 }
 
 func enrichResult(result *RelayResult, state *relayState, duration time.Duration) {
