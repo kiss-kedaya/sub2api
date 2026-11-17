@@ -203,14 +203,22 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// Calculate cost
 	tokens := UsageTokens{
-		InputTokens:          actualInputTokens,
-		ImageInputTokens:     max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
-		ImageCacheReadTokens: result.Usage.ImageCacheReadTokens,
-		OutputTokens:         result.Usage.OutputTokens,
-		CacheCreationTokens:  result.Usage.CacheCreationInputTokens,
-		CacheReadTokens:      result.Usage.CacheReadInputTokens,
-		ImageOutputTokens:    result.Usage.ImageOutputTokens,
-		CacheReadEstimated:   result.Usage.CacheReadEstimated,
+		InputTokens:           actualInputTokens,
+		ImageInputTokens:      max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
+		ImageCacheReadTokens:  result.Usage.ImageCacheReadTokens,
+		OutputTokens:          result.Usage.OutputTokens,
+		CacheCreationTokens:   result.Usage.CacheCreationInputTokens,
+		CacheCreation5mTokens: result.Usage.CacheCreation5mTokens,
+		CacheCreation1hTokens: result.Usage.CacheCreation1hTokens,
+		CacheReadTokens:       result.Usage.CacheReadInputTokens,
+		ImageOutputTokens:     result.Usage.ImageOutputTokens,
+		CacheReadEstimated:    result.Usage.CacheReadEstimated,
+	}
+	if tokens.CacheCreationTokens <= 0 {
+		// The OpenAI aggregate (including an explicit zero) remains authoritative.
+		tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = 0, 0
+	} else {
+		tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = normalizeCacheCreationBreakdown(tokens)
 	}
 
 	// Get rate multiplier
@@ -435,6 +443,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		InputTokens:              actualInputTokens,
 		OutputTokens:             result.Usage.OutputTokens,
 		CacheCreationTokens:      result.Usage.CacheCreationInputTokens,
+		CacheCreation5mTokens:    tokens.CacheCreation5mTokens,
+		CacheCreation1hTokens:    tokens.CacheCreation1hTokens,
 		CacheReadTokens:          result.Usage.CacheReadInputTokens,
 		ImageInputTokens:         result.Usage.ImageInputTokens,
 		ImageOutputTokens:        result.Usage.ImageOutputTokens,

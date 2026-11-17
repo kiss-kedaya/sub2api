@@ -1498,6 +1498,12 @@ func mergeOpenAIUsageNonZero(dst *OpenAIUsage, src OpenAIUsage) {
 	if src.CacheCreationInputTokens > 0 {
 		dst.CacheCreationInputTokens = src.CacheCreationInputTokens
 	}
+	if src.CacheCreation5mTokens > 0 {
+		dst.CacheCreation5mTokens = src.CacheCreation5mTokens
+	}
+	if src.CacheCreation1hTokens > 0 {
+		dst.CacheCreation1hTokens = src.CacheCreation1hTokens
+	}
 	if src.CacheReadInputTokens > 0 {
 		dst.CacheReadInputTokens = src.CacheReadInputTokens
 	}
@@ -1794,6 +1800,8 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 		ImageInputTokens:         imageInputTokens,
 		OutputTokens:             int(outputTokens),
 		CacheCreationInputTokens: cacheCreationTokens,
+		CacheCreation5mTokens:    max(int(value.Get("cache_creation.ephemeral_5m_input_tokens").Int()), 0),
+		CacheCreation1hTokens:    max(int(value.Get("cache_creation.ephemeral_1h_input_tokens").Int()), 0),
 		CacheReadInputTokens:     cacheReadTokens,
 		ImageOutputTokens:        int(imageOutputTokens),
 	}, true

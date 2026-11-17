@@ -862,6 +862,8 @@ func (s *deepSeekHostedSearchState) addResult(result *OpenAIForwardResult) {
 		s.result.Usage.OutputTokens += result.Usage.OutputTokens
 		s.result.Usage.CacheReadInputTokens += result.Usage.CacheReadInputTokens
 		s.result.Usage.CacheCreationInputTokens += result.Usage.CacheCreationInputTokens
+		s.result.Usage.CacheCreation5mTokens += result.Usage.CacheCreation5mTokens
+		s.result.Usage.CacheCreation1hTokens += result.Usage.CacheCreation1hTokens
 		s.result.Usage.ImageInputTokens += result.Usage.ImageInputTokens
 		s.result.Usage.ImageOutputTokens += result.Usage.ImageOutputTokens
 		s.result.Usage.CacheReadEstimated = s.result.Usage.CacheReadEstimated || result.Usage.CacheReadEstimated
