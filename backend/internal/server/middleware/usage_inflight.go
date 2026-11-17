@@ -324,11 +324,26 @@ func (w *usageInflightWriter) WriteString(data string) (int, error) {
 	return n, err
 }
 
-// isSSEKeepaliveComment 识别一次只含 SSE 注释行的短写入（": keepalive\n\n" 这类）。
-// 真实事件以 event:/data:/id: 开头，JSON 以 { 开头；长度上限把碰巧以冒号开头的
-// 二进制分片排除在外。
+// isSSEKeepaliveComment 识别一次只含 SSE 注释行的短写入（": keepalive\n\n" 这类）：
+// 每一行都以冒号开头或是空行。注释行后面跟着 data:/event: 的写入是真实事件，
+// 不算心跳；长度上限把碰巧以冒号开头的二进制分片排除在外。
 func isSSEKeepaliveComment[T ~string | ~[]byte](data T) bool {
-	return len(data) > 0 && len(data) <= 64 && data[0] == ':' && data[len(data)-1] == '\n'
+	if len(data) == 0 || len(data) > 64 || data[0] != ':' || data[len(data)-1] != '\n' {
+		return false
+	}
+	lineStart := true
+	for i := 0; i < len(data); i++ {
+		switch {
+		case data[i] == '\n':
+			lineStart = true
+		case data[i] == '\r':
+		case lineStart && data[i] != ':':
+			return false
+		default:
+			lineStart = false
+		}
+	}
+	return true
 }
 
 // fillUsageInflightDisplay 建快照时在请求 goroutine 里调一次。

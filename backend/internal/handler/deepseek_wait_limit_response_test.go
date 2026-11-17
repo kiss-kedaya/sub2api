@@ -44,4 +44,27 @@ func TestUpstreamWaitLimitClientResponse(t *testing.T) {
 		require.Contains(t, rec.Body.String(), "Upstream did not respond in time")
 		require.Contains(t, rec.Body.String(), "response.failed")
 	})
+
+	t.Run("messages, before anything was written", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		(&OpenAIGatewayHandler{}).handleAnthropicFailoverExhausted(c, failover, false)
+		require.Equal(t, http.StatusGatewayTimeout, rec.Code)
+		require.JSONEq(t, `{"type":"error","error":{"type":"upstream_error","message":"Upstream did not respond in time"}}`, rec.Body.String())
+	})
+
+	t.Run("messages, after the heartbeat committed the stream", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		c.Writer.Header().Set("Content-Type", "text/event-stream")
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write([]byte(": keepalive\n\n"))
+		(&OpenAIGatewayHandler{}).handleAnthropicFailoverExhausted(c, failover, true)
+		require.Equal(t, http.StatusOK, rec.Code)
+		t.Logf("messages stream body: %q", rec.Body.String())
+		require.Contains(t, rec.Body.String(), "event: error")
+		require.Contains(t, rec.Body.String(), "Upstream did not respond in time")
+	})
 }

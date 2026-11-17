@@ -324,12 +324,17 @@ func TestUsageInflightIgnoresHeartbeatPadding(t *testing.T) {
 
 func TestIsSSEKeepaliveComment(t *testing.T) {
 	for input, want := range map[string]bool{
-		": keepalive\n\n":                    true,
-		":\n\n":                              true,
-		": ping\n":                           true,
-		"":                                   false,
-		"data: {}\n\n":                       false,
-		"event: ping\ndata: {}\n\n":          false,
+		": keepalive\n\n":           true,
+		":\n\n":                     true,
+		": ping\n":                  true,
+		": a\n: b\n\n":              true,
+		": keepalive\r\n\r\n":       true,
+		"":                          false,
+		"data: {}\n\n":              false,
+		"event: ping\ndata: {}\n\n": false,
+		// A real event that happens to start with a comment line must still count.
+		": p\ndata: {\"delta\":\"x\"}\n\n":   false,
+		": p\n\ndata: x\n\n":                 false,
 		"{\"error\":{}}":                     false,
 		": no trailing newline":              false,
 		":" + strings.Repeat("x", 80) + "\n": false,

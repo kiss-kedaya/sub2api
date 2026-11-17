@@ -765,7 +765,7 @@ func (e *UpstreamFailoverError) ShouldReportAccountScheduleFailure() bool {
 	}
 	// A model-specific quality rejection must not mark an otherwise healthy
 	// account unavailable for all other models and qualities.
-	if e.Reason == GrokImageQualityUnsupportedReason {
+	if e.Reason == GrokImageQualityUnsupportedReason || e.IsUpstreamWaitLimit() {
 		return false
 	}
 	return !e.IsCredentialFailure() || e.Scope == GatewayFailureScopeAccount

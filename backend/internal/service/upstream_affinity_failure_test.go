@@ -25,6 +25,22 @@ func (s *failedAffinityCacheStub) InvalidateFailedSession(ctx context.Context, _
 	return nil
 }
 
+func TestUpstreamWaitLimitKeepsSessionAffinity(t *testing.T) {
+	cache := &failedAffinityCacheStub{}
+	account := &Account{ID: 1, Platform: PlatformDeepseek}
+	ctx := withUpstreamAttempts(context.Background())
+	state, ok := ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts)
+	require.True(t, ok)
+
+	invalidateUpstreamAffinity(ctx, cache, nil, []string{"session"}, account,
+		&UpstreamFailoverError{StatusCode: 504, Reason: upstreamWaitLimitReason, NextAccountAction: NextAccountStop})
+	require.Empty(t, cache.invalidated, "the provider went silent on one request; the account is not at fault")
+	require.NotContains(t, state.failed, int64(1))
+
+	invalidateUpstreamAffinity(ctx, cache, nil, []string{"session"}, account, &UpstreamFailoverError{StatusCode: 502})
+	require.Equal(t, []string{"session"}, cache.invalidated, "other upstream failures still move the session")
+}
+
 func TestUpstreamPreferencesTriesUnusedBeforeBoundedFallback(t *testing.T) {
 	ctx := withUpstreamAttempts(context.Background())
 	state, ok := ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts)

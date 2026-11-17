@@ -67,6 +67,25 @@ func TestOpenAIUpstreamWaitLimitFor(t *testing.T) {
 	require.Zero(t, openAIUpstreamWaitLimitFor(nil, deepSeek))
 }
 
+// /v1/messages reaches DeepSeek through the native Anthropic endpoint, which
+// is built without the OpenAI profile.
+func TestNativeAnthropicRequestCarriesTheWaitLimit(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	body := []byte(`{"model":"deepseek-flash","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`)
+	for _, tc := range []struct {
+		platform string
+		want     time.Duration
+	}{
+		{PlatformDeepseek, deepSeekUpstreamWaitLimit},
+		{PlatformKimi, 0},
+	} {
+		account := &Account{ID: 1, Platform: tc.platform, Type: AccountTypeAPIKey}
+		req, _, err := svc.buildNativeAnthropicUpstreamRequest(context.Background(), nil, account, body, "synthetic-key", "http://upstream.test/v1/messages")
+		require.NoError(t, err)
+		require.Equal(t, tc.want, openAIUpstreamWaitLimitFor(req, account), tc.platform)
+	}
+}
+
 func TestDoOpenAIUpstreamEndsSilentDeepSeekRequest(t *testing.T) {
 	shortenDeepSeekUpstreamWaitLimit(t, 40*time.Millisecond)
 	upstream := &silentUpstream{}
@@ -120,14 +139,16 @@ func TestDoWithUpstreamWaitLimit(t *testing.T) {
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
-			time.Sleep(120 * time.Millisecond) // well past the limit
+			time.Sleep(600 * time.Millisecond) // well past the limit
 			_, _ = io.WriteString(w, "late but complete")
 		}))
 		defer server.Close()
 		req, err := http.NewRequest(http.MethodGet, server.URL, nil)
 		require.NoError(t, err)
 
-		resp, err := doWithUpstreamWaitLimit(req, 40*time.Millisecond, http.DefaultClient.Do)
+		// The limit only has to outlast the headers of a local round trip; it is
+		// generous so a loaded CI machine does not trip it.
+		resp, err := doWithUpstreamWaitLimit(req, 300*time.Millisecond, http.DefaultClient.Do)
 		require.NoError(t, err)
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
@@ -174,6 +195,8 @@ func TestUpstreamWaitLimitEndsTheRequestWithoutFailover(t *testing.T) {
 	require.Equal(t, http.StatusGatewayTimeout, failover.StatusCode)
 	require.False(t, failover.ShouldRetryNextAccount(), "another account would hold the same payload for another full limit")
 	require.False(t, failover.RetryableOnSameAccount)
+	require.True(t, failover.IsUpstreamWaitLimit())
+	require.False(t, failover.ShouldReportAccountScheduleFailure(), "a silent provider is not the account's fault")
 	require.JSONEq(t, `{"error":{"type":"upstream_error","message":"Upstream did not respond in time"}}`, string(failover.ResponseBody))
 	require.Equal(t, http.StatusGatewayTimeout, c.GetInt(OpsUpstreamStatusCodeKey))
 	require.Contains(t, c.GetString(OpsUpstreamErrorMessageKey), "10m0s")
