@@ -143,6 +143,38 @@ describe('public API documentation page', () => {
     wrapper.unmount()
   })
 
+  it('navigates to and searches each new DeepSeek tool reference, including anchors and code tabs', async () => {
+    const { wrapper, router } = await openDocs('deepseek-asr')
+    for (const [id, title, path] of [
+      ['deepseek-asr', 'Speech recognition ASR', '/v1/tools/asr'],
+      ['deepseek-tts', 'Speech synthesis TTS', '/v1/tools/tts'],
+      ['deepseek-ocr', 'Document recognition OCR', '/v1/tools/ocr'],
+    ]) {
+      await router.push(`/docs?page=${id}`)
+      await flushPromises()
+      expect(wrapper.get('h1').text()).toBe(title)
+      expect(wrapper.text()).toContain(`POST ${path}`)
+      const prefix = id.slice('deepseek-'.length)
+      const request = wrapper.get(`section#${prefix}-parameters`)
+      for (const language of ['Python', 'Node.js', 'cURL']) {
+        const tab = request.findAll('button').find(button => button.text() === language)!
+        expect(tab, `${id}:${language}`).toBeDefined()
+        await tab.trigger('click')
+        await request.get(`[data-testid="docs-copy-${prefix}-parameters"]`).trigger('click')
+        await flushPromises()
+        expect(mocks.copy.mock.lastCall?.[0]).toContain(path)
+      }
+      await wrapper.get('[data-testid="docs-search"]').setValue(title)
+      expect(wrapper.get('#docs-sidebar').text()).toContain(title)
+      await wrapper.get('[data-testid="docs-search"]').setValue('')
+      await wrapper.get(`nav[aria-label="On this page"] a[href="#${prefix}-parameters"]`).trigger('click')
+      await flushPromises()
+      expect(router.currentRoute.value.hash).toBe(`#${prefix}-parameters`)
+    }
+    expect(wrapper.text()).toContain('Check error even after HTTP 200')
+    wrapper.unmount()
+  })
+
   it('places the image and video category between guides and client setup', async () => {
     const { wrapper } = await openDocs()
     expect(wrapper.findAll('.docs-category').map(link => link.text())).toEqual(['Get started', 'API guides', 'Image & video', 'Client setup', 'API reference'])

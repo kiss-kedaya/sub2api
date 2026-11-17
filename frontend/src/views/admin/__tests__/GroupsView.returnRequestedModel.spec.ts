@@ -199,3 +199,142 @@ describe('GroupsView requested response model setting', () => {
     }
   })
 })
+
+const toolPriceFields = ['ocr-price', 'deepseek-tts-price', 'deepseek-asr-price']
+const toolPricePayload = { ocr_price_per_1k_pages: 0.45, audio_tts_price_per_million_chars: 45, audio_stt_price_per_hour: 0.117 }
+
+async function selectCreatePlatform(wrapper: Awaited<ReturnType<typeof render>>, platform: GroupPlatform) {
+  await wrapper.get('#create-group-form [data-tour="group-form-platform"]').setValue(platform)
+  await flushPromises()
+}
+
+// UInput keeps data-testid on its root; address the native input for actual v-model events.
+function toolInput(wrapper: Awaited<ReturnType<typeof render>>, id: string) {
+  const field = wrapper.get(`[data-testid="${id}"]`)
+  return field.element.tagName === 'INPUT' ? field : field.get('input')
+}
+
+describe('GroupsView DeepSeek fixed tool pricing', () => {
+  it('shows all three prices only for DeepSeek, without changing Grok voice controls', async () => {
+    const wrapper = await render()
+    await openCreate(wrapper)
+    for (const { value: platform } of GROUP_PLATFORM_OPTIONS) {
+      await selectCreatePlatform(wrapper, platform)
+      for (const field of toolPriceFields) {
+        expect(wrapper.find(`[data-testid="create-${field}"]`).exists(), `${platform}:${field}`).toBe(platform === 'deepseek')
+      }
+      expect(wrapper.find('[data-testid="create-audio-tts-price"]').exists(), platform).toBe(platform === 'grok')
+      expect(wrapper.find('[data-testid="create-audio-stt-price"]').exists(), platform).toBe(platform === 'grok')
+    }
+  })
+
+  it.each([null, 0, 'custom'] as const)('creates with %s prices, preserving blank defaults and explicit free', async (setting) => {
+    const wrapper = await render()
+    await openCreate(wrapper)
+    await selectCreatePlatform(wrapper, 'deepseek')
+    const values = setting === 'custom' ? Object.values(toolPricePayload) : [setting, setting, setting]
+    for (const [index, field] of toolPriceFields.entries()) {
+      const input = toolInput(wrapper, `create-${field}`)
+      expect(input.attributes('min')).toBe('0')
+      await input.setValue('1')
+      await input.setValue(values[index] === null ? '' : String(values[index]))
+    }
+    await wrapper.get('#create-group-form').trigger('submit')
+    await flushPromises()
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining(Object.fromEntries(Object.keys(toolPricePayload).map((key, index) => [key, values[index]]))))
+    expect(mocks.showError).not.toHaveBeenCalled()
+  })
+
+  it('resets a discarded tool pricing draft when reopening create', async () => {
+    const wrapper = await render()
+    await openCreate(wrapper)
+    await selectCreatePlatform(wrapper, 'deepseek')
+    for (const field of toolPriceFields) await toolInput(wrapper, `create-${field}`).setValue('1')
+    await wrapper.findAll('button').find(button => button.text() === 'common.cancel')!.trigger('click')
+    await openCreate(wrapper)
+    await selectCreatePlatform(wrapper, 'deepseek')
+    for (const field of toolPriceFields) expect((toolInput(wrapper, `create-${field}`).element as HTMLInputElement).value).toBe('')
+  })
+
+  it.each([null, 0, 'custom'] as const)('loads saved %s prices and submits empty edits as -1 (clear)', async (setting) => {
+    const prices = setting === 'custom' ? toolPricePayload : { ocr_price_per_1k_pages: setting, audio_tts_price_per_million_chars: setting, audio_stt_price_per_hour: setting }
+    mocks.list.mockResolvedValue({ items: [group({ platform: 'deepseek', ...prices })], total: 1, page: 1, page_size: 20, pages: 1 })
+    mocks.update.mockImplementation(async (_id: number, payload: Partial<AdminGroup>) => group(payload))
+    const wrapper = await render()
+    await openEdit(wrapper)
+    for (const [index, field] of toolPriceFields.entries()) {
+      expect((toolInput(wrapper, `edit-${field}`).element as HTMLInputElement).value).toBe(String(Object.values(prices)[index] ?? ''))
+    }
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+    // Same convention as every other group price: an empty field is sent as -1,
+    // which the backend normalizes to NULL (default price). 0 stays "free".
+    const submitted = Object.fromEntries(Object.entries(prices).map(([key, value]) => [key, value ?? -1]))
+    expect(mocks.update).toHaveBeenLastCalledWith(42, expect.objectContaining(submitted))
+
+    await openEdit(wrapper)
+    for (const field of toolPriceFields) {
+      await toolInput(wrapper, `edit-${field}`).setValue('1')
+      await toolInput(wrapper, `edit-${field}`).setValue('')
+    }
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+    expect(mocks.update).toHaveBeenLastCalledWith(42, expect.objectContaining({ ocr_price_per_1k_pages: -1, audio_tts_price_per_million_chars: -1, audio_stt_price_per_hour: -1 }))
+  })
+
+  it.each(toolPriceFields)('rejects a negative %s on create and edit', async (field) => {
+    mocks.list.mockResolvedValue({ items: [group({ platform: 'deepseek' })], total: 1, page: 1, page_size: 20, pages: 1 })
+    const wrapper = await render()
+    await openCreate(wrapper)
+    await selectCreatePlatform(wrapper, 'deepseek')
+    await toolInput(wrapper, `create-${field}`).setValue('-0.1')
+    await wrapper.get('#create-group-form').trigger('submit')
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(mocks.showError).toHaveBeenCalledWith('admin.groups.explicitPricing.invalidDeepseekToolPrice')
+    await wrapper.findAll('button').find(button => button.text() === 'common.cancel')!.trigger('click')
+    await openEdit(wrapper)
+    await toolInput(wrapper, `edit-${field}`).setValue('-0.1')
+    await wrapper.get('#edit-group-form').trigger('submit')
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+
+  it('reopens prices returned by the server-side duplicate operation', async () => {
+    mocks.list.mockResolvedValueOnce({ items: [group({ platform: 'deepseek', ...toolPricePayload })], total: 1, page: 1, page_size: 20, pages: 1 })
+    mocks.list.mockResolvedValue({ items: [group({ id: 43, platform: 'deepseek', ...toolPricePayload })], total: 1, page: 1, page_size: 20, pages: 1 })
+    mocks.duplicate.mockResolvedValue(group({ id: 43, platform: 'deepseek', ...toolPricePayload }))
+    const wrapper = await render()
+    await wrapper.get('[data-testid="group-duplicate"]').trigger('click')
+    await flushPromises()
+    expect(mocks.duplicate).toHaveBeenCalledWith(42)
+    await openEdit(wrapper, 43)
+    for (const [index, field] of toolPriceFields.entries()) expect((toolInput(wrapper, `edit-${field}`).element as HTMLInputElement).value).toBe(String(Object.values(toolPricePayload)[index]))
+  })
+
+  it('keeps Grok editing controls and its existing clear-price payload unchanged', async () => {
+    mocks.list.mockResolvedValue({ items: [group({ platform: 'grok', audio_tts_price_per_million_chars: 15, audio_stt_price_per_hour: 0.10 })], total: 1, page: 1, page_size: 20, pages: 1 })
+    const wrapper = await render()
+    await openEdit(wrapper)
+    expect(wrapper.find('[data-testid="edit-ocr-price"]').exists()).toBe(false)
+    for (const [field, value] of [['tts', '15'], ['stt', '0.1']]) {
+      const input = toolInput(wrapper, `edit-audio-${field}-price`)
+      expect((input.element as HTMLInputElement).value).toBe(value)
+      expect(input.attributes('placeholder')).toBe('admin.groups.voicePricing.pricePlaceholder')
+      await input.setValue('')
+    }
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+    expect(mocks.update).toHaveBeenCalledWith(42, expect.objectContaining({ audio_tts_price_per_million_chars: -1, audio_stt_price_per_hour: -1 }))
+  })
+
+  it('states the official list-price defaults and the zero semantics in both locales', () => {
+    for (const messages of [zh, en]) {
+      const text = messages.groups.explicitPricing
+      expect(text.ocrPricePlaceholder).toContain('1.5')
+      expect(text.deepseekTtsPlaceholder).toContain('300')
+      expect(text.deepseekAsrPlaceholder).toContain('0.78')
+      expect(text.deepseekToolsHint).toContain('0')
+      // This group is priced in the same unit as its search price, not in USD.
+      for (const label of [text.ocrPricePer1kPages, text.deepseekTtsPerMillionChars, text.deepseekAsrPerHour]) expect(label).not.toContain('USD')
+    }
+  })
+})

@@ -160,6 +160,61 @@ describe('public API documentation', () => {
     expect(page.sections[page.sections.length - 1].links!.map(link => link.page)).toEqual(expect.arrayContaining(['image-generation', 'nano-banana']))
   })
 
+  it.each(['zh', 'en'])('publishes DeepSeek ASR, TTS and OCR reference pages in %s with safe examples', (locale) => {
+    const origin = 'http://127.0.0.1:18888'
+    const pages = getApiDocs(locale, origin)
+    const ids = ['deepseek-asr', 'deepseek-tts', 'deepseek-ocr']
+    expect(pages.slice(pages.findIndex(page => page.id === 'deepseek-fetch') + 1).map(page => page.id)).toEqual(ids)
+    const titles = locale === 'zh'
+      ? ['语音识别 ASR', '语音合成 TTS', '文档识别 OCR']
+      : ['Speech recognition ASR', 'Speech synthesis TTS', 'Document recognition OCR']
+    for (const [index, id] of ids.entries()) {
+      const page = resolveDocsPage(pages, id)
+      expect(page.title).toBe(titles[index])
+      expect(page.category).toBe('reference')
+      expect(page.sections[0].note).toContain('DeepSeek')
+      const request = page.sections.find(section => section.id.endsWith('-parameters'))!
+      expect(Object.keys(request.examples!)).toEqual(['curl', 'python', 'node'])
+      for (const [language, snippet] of Object.entries(request.examples!)) {
+        expect(snippet).toContain(`${origin}/v1/tools/${id.slice('deepseek-'.length)}`)
+        expect(snippet).toContain(language === 'curl' ? '$API_KEY' : language === 'python' ? 'os.environ["API_KEY"]' : 'process.env.API_KEY')
+        expect(snippet).not.toMatch(/kedaya\.(ai|xyz)|api\.deepseek\.com|sk-[A-Za-z0-9]/)
+        expect(snippet).not.toContain('"model"')
+      }
+      expect(JSON.stringify(page)).not.toMatch(/\$\s?\d|0\.225|0\.116|0\.45/)
+      expect(page.sections.some(section => section.id.endsWith('-errors') && section.fields?.some(field => field.name.includes('429')))).toBe(true)
+    }
+  })
+
+  it('documents audio limits, streamed binary output and unsupported WebSocket synthesis', () => {
+    const pages = getApiDocs('en', 'https://example.test')
+    const asr = resolveDocsPage(pages, 'deepseek-asr')
+    const asrContent = JSON.stringify(asr)
+    for (const text of ['16-bit PCM WAV', 'Ogg Opus', '8 MiB', '120 seconds', 'left channel', '4 seconds']) expect(asrContent).toContain(text)
+    expect(asr.sections.find(section => section.id === 'asr-parameters')!.fields!.map(field => field.name)).toEqual(['file'])
+    const tts = resolveDocsPage(pages, 'deepseek-tts')
+    const ttsContent = JSON.stringify(tts)
+    for (const text of ['10,000', '64 KiB', '30 minutes', 'stella', 'tide', 'audio/wav', '24 kHz', 'Chinese character counts as 2', 'does not support WebSocket', 'interrupted response as a failure']) expect(ttsContent).toContain(text)
+    const request = tts.sections.find(section => section.id === 'tts-parameters')!.examples!
+    expect(request.curl).toContain('--output speech.wav')
+    expect(request.python).toContain('response.iter_content(')
+    expect(request.node).toContain('await pipeline(')
+    expect(JSON.stringify(resolveDocsPage(getApiDocs('zh', 'https://example.test'), 'deepseek-tts'))).toContain('不支持 WebSocket')
+  })
+
+  it('documents OCR keepalives, body errors, coordinates, billing and exact multipart fields', () => {
+    const page = resolveDocsPage(getApiDocs('en', 'https://example.test'), 'deepseek-ocr')
+    const content = JSON.stringify(page)
+    for (const text of ['100 MiB', '1,000 pages', '180 seconds', 'leading JSON whitespace', 'HTTP status is already 200', '<｜ref｜>', '<｜box｜>', '0–1000', 'page_count', 'disconnect does not cancel', 'not charged']) expect(content).toContain(text)
+    const request = page.sections.find(section => section.id === 'ocr-parameters')!
+    expect(request.fields!.map(field => [field.name, field.required])).toEqual([['file', true], ['purpose', true]])
+    expect(request.examples!.curl).toContain('-F "purpose=text_recognition"')
+    expect(request.examples!.python).toContain('if result.get("error")')
+    expect(request.examples!.node).toContain('if (result.error)')
+    const error = page.sections.find(section => section.id === 'ocr-errors')!.examples!.json!
+    expect(JSON.parse(error)).toMatchObject({ error: { param: null, code: 'UPSTREAM_ERROR_CODE' } })
+  })
+
   it('keeps media docs free of prices, real credentials, and private hosts', () => {
     const origin = 'http://127.0.0.1:18888'
     for (const locale of ['zh', 'en']) {
