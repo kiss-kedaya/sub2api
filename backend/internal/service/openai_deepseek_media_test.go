@@ -93,9 +93,10 @@ func TestDeepSeekMediaPassThroughAndFixedBilling(t *testing.T) {
 			require.Equal(t, tc.response, recorder.Body.String())
 			require.Equal(t, "native-local", recorder.Header().Get("x-request-id"))
 			require.True(t, result.FixedToolBilling)
-			if tc.path == DeepSeekToolsPathOCR {
+			switch tc.path {
+			case DeepSeekToolsPathOCR:
 				require.Equal(t, 2, result.OCRPages)
-			} else if tc.path == DeepSeekToolsPathASR {
+			case DeepSeekToolsPathASR:
 				require.Equal(t, 4.0/3600, result.AudioUsage.DurationOrUnits)
 			}
 			logs := &openAIRecordUsageLogRepoStub{inserted: true}

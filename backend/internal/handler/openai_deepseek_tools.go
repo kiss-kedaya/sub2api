@@ -91,7 +91,14 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
 		}
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		// Validation failures carry a client-facing message; transport read
+		// errors keep the generic text instead of exposing internals.
+		message := "Failed to read request body"
+		var invalid *deepSeekToolBodyError
+		if errors.As(err, &invalid) {
+			message = invalid.message
+		}
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", message)
 		return
 	}
 	if len(body) == 0 {
@@ -344,13 +351,19 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 	}
 }
 
+// deepSeekToolBodyError is a request validation failure whose message is
+// returned to the client verbatim.
+type deepSeekToolBodyError struct{ message string }
+
+func (e *deepSeekToolBodyError) Error() string { return e.message }
+
 func readDeepSeekToolBody(c *gin.Context, path string) ([]byte, error) {
 	limit := int64(0)
 	switch path {
 	case service.DeepSeekToolsPathASR, service.DeepSeekToolsPathOCR:
 		mediaType, params, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 		if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
-			return nil, errors.New("Content-Type must be multipart/form-data with a boundary")
+			return nil, &deepSeekToolBodyError{"Content-Type must be multipart/form-data with a boundary"}
 		}
 		limit = 9 << 20 // 8 MiB file plus 1 MiB multipart envelope
 		if path == service.DeepSeekToolsPathOCR {
@@ -359,7 +372,7 @@ func readDeepSeekToolBody(c *gin.Context, path string) ([]byte, error) {
 	case service.DeepSeekToolsPathTTS:
 		mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 		if err != nil || mediaType != "application/json" {
-			return nil, errors.New("Content-Type must be application/json")
+			return nil, &deepSeekToolBodyError{"Content-Type must be application/json"}
 		}
 		limit = 64 << 10
 	}
@@ -374,11 +387,11 @@ func readDeepSeekToolBody(c *gin.Context, path string) ([]byte, error) {
 		return nil, err
 	}
 	if len(body) == 0 {
-		return nil, errors.New("Request body is empty")
+		return nil, &deepSeekToolBodyError{"Request body is empty"}
 	}
 	if path == service.DeepSeekToolsPathTTS {
 		if !gjson.ValidBytes(body) {
-			return nil, errors.New("Invalid JSON request body")
+			return nil, &deepSeekToolBodyError{"Invalid JSON request body"}
 		}
 		textFields := 0
 		gjson.ParseBytes(body).ForEach(func(key, _ gjson.Result) bool {
@@ -388,14 +401,14 @@ func readDeepSeekToolBody(c *gin.Context, path string) ([]byte, error) {
 			return true
 		})
 		if textFields != 1 {
-			return nil, errors.New("text must occur exactly once")
+			return nil, &deepSeekToolBodyError{"text must occur exactly once"}
 		}
 		text := gjson.GetBytes(body, "text")
 		if text.Type != gjson.String || strings.TrimSpace(text.String()) == "" {
-			return nil, errors.New("text is required and must not be empty")
+			return nil, &deepSeekToolBodyError{"text is required and must not be empty"}
 		}
 		if service.DeepSeekTTSBillableCharacters(text.String()) > 10_000 {
-			return nil, errors.New("text exceeds the 10,000 billable character limit")
+			return nil, &deepSeekToolBodyError{"text exceeds the 10,000 billable character limit"}
 		}
 	}
 	return body, nil
