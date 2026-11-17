@@ -169,7 +169,9 @@ func TestDashboardAggregationService_RunScheduledAggregationSyncsGroupAfterDashb
 	}
 	groupDeadline, ok := repo.groupRollupCtx.Deadline()
 	require.True(t, ok, "group rollup context must be bounded")
-	require.LessOrEqual(t, time.Until(groupDeadline), defaultDashboardAggregationTimeout)
+	require.Greater(t, time.Until(groupDeadline), 5*time.Minute, "允许重建越过数据库默认的 20 秒超时")
+	require.LessOrEqual(t, time.Until(groupDeadline), 6*time.Minute)
+	require.Greater(t, dashboardAggregationLeaderLockTTL, defaultDashboardAggregationTimeout+6*time.Minute)
 }
 
 type dashboardAggregationLeaderLockRecordingCache struct {
