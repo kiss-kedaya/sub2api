@@ -176,8 +176,17 @@ func selectWithUpstreamPreferences(ctx context.Context, cache GatewayCache, key 
 		}
 	}
 	state.mu.Unlock()
-	if canRetry && ctx.Err() == nil {
-		return selectOne(strict)
+	if canRetry {
+		// Reserve the request's single fallback without holding mu across selection.
+		// A cooldown-only rejection must leave that reservation for the bypass pass.
+		if ctx.Err() == nil {
+			result, decision, routed, err = selectOne(strict)
+		}
+		if err != nil || result == nil || result.Account == nil {
+			state.mu.Lock()
+			state.fallbackUsed = false
+			state.mu.Unlock()
+		}
 	}
 	return result, decision, routed, err
 }

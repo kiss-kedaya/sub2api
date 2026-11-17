@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,6 +70,57 @@ func TestModelTransientCooldownIsScopedPerAccountAndModel(t *testing.T) {
 	require.True(t, c.Allow(1, "  M  ") == false, "model ids are case/space normalized")
 }
 
+func TestModelTransientCooldownSuccessWithoutEntriesDoesNotLock(t *testing.T) {
+	c := NewModelTransientCooldown()
+	for _, state := range []string{"new", "cleared"} {
+		t.Run(state, func(t *testing.T) {
+			if state == "cleared" {
+				c.ObserveFailure(1, "model-a")
+				c.ObserveSuccess(1, "model-a")
+			}
+			c.mu.Lock()
+			done := make(chan struct{})
+			go func() {
+				c.ObserveSuccess(1, "model-a")
+				(&RateLimitService{modelTransient: c}).observeModelTransientSuccess(context.Background(), nil, &Account{ID: 1}, "model-a")
+				close(done)
+			}()
+			returned := false
+			select {
+			case <-done:
+				returned = true
+			case <-time.After(time.Second):
+			}
+			c.mu.Unlock()
+			<-done
+			require.True(t, returned, "empty success path must return even while the state lock is held")
+			require.Zero(t, testing.AllocsPerRun(100, func() { c.ObserveSuccess(1, "model-a") }))
+		})
+	}
+}
+
+func BenchmarkModelTransientCooldownSuccessEmpty(b *testing.B) {
+	c := NewModelTransientCooldown()
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			c.ObserveSuccess(1, "model-a")
+		}
+	})
+}
+
+func BenchmarkModelTransientForwardSuccessEmpty(b *testing.B) {
+	svc := &RateLimitService{modelTransient: NewModelTransientCooldown()}
+	account := &Account{ID: 1}
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			svc.observeModelTransientSuccess(ctx, nil, account, "model-a")
+		}
+	})
+}
+
 func TestModelTransientCooldownNilAndEmptyInputsAreSafe(t *testing.T) {
 	var nilCooldown *ModelTransientCooldown
 	require.True(t, nilCooldown.Allow(1, "m"))
@@ -79,6 +132,27 @@ func TestModelTransientCooldownNilAndEmptyInputsAreSafe(t *testing.T) {
 	require.True(t, c.Allow(0, "m"))
 	require.True(t, c.Allow(1, "   "))
 	c.ObserveFailure(0, "")
+}
+
+func TestModelTransientCooldownConcurrentSuccessAndEviction(t *testing.T) {
+	c := NewModelTransientCooldown()
+	c.maxEntries = 4
+	var wg sync.WaitGroup
+	for id := int64(1); id <= 8; id++ {
+		wg.Go(func() {
+			for range 100 {
+				c.ObserveFailure(id, "model-a")
+				c.ObserveSuccess(id, "model-a")
+			}
+		})
+	}
+	wg.Wait()
+	c.mu.Lock()
+	entries := len(c.entries)
+	count := c.entryCount.Load()
+	c.mu.Unlock()
+	require.EqualValues(t, entries, count)
+	require.Zero(t, count)
 }
 
 func TestModelTransientCooldownEvictsExpiredEntries(t *testing.T) {

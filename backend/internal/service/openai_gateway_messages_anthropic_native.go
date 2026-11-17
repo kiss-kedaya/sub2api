@@ -308,6 +308,8 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 	}
 	body = reverseToolNamesIfPresent(c, body)
 	c.Data(resp.StatusCode, contentType, body)
+	// Invalid JSON failures on this path use billingModel, not upstreamModel.
+	s.rateLimitService.observeModelTransientSuccess(ctx, c, account, billingModel, body)
 
 	return &OpenAIForwardResult{
 		RequestID:        resp.Header.Get("x-request-id"),
@@ -336,7 +338,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	upstreamModel string,
 	reasoningEffort *string,
 	startTime time.Time,
-) (*OpenAIForwardResult, error) {
+) (result *OpenAIForwardResult, err error) {
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -374,7 +376,12 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
 	clientDisconnected := false
-	sawTerminalEvent := false
+	sawTerminalEvent, sawError := false, false
+	defer func() {
+		if err == nil && sawTerminalEvent && !sawError && result != nil && !result.ClientDisconnect {
+			s.rateLimitService.observeModelTransientSuccess(ctx, c, account, billingModel)
+		}
+	}()
 	pendingErrorHeader := ""
 
 	// The client leaving (its request ends, or a write to it fails) closes the upstream
@@ -540,11 +547,15 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 
 			line := ev.line
 			if strings.TrimSpace(line) == "event: error" {
+				sawError = true
 				pendingErrorHeader = line
 				continue
 			}
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
 				trimmed := strings.TrimSpace(data)
+				if _, failed := anthropicStreamErrorPayload(trimmed); failed {
+					sawError = true
+				}
 				if upstreamFinancialFailureEnvelope([]byte(data)) || pendingErrorHeader != "" && IsUpstreamFinancialError(0, []byte(data)) {
 					setOpsUpstreamError(c, http.StatusBadGateway, extractUpstreamErrorMessage([]byte(data)), "")
 					if !clientDisconnected {

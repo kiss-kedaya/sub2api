@@ -271,7 +271,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
 	progress := &anthropicStreamProgress{}
-	sawStop := false
+	sawStop, sawError := false, false
 	// 客户端一走就关上游，不再读完整个应答。
 	clientWatch := newAnthropicClientWatch(context.Background(), c, resp.Body)
 	defer clientWatch.stop()
@@ -280,8 +280,12 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		line := scanner.Text()
 		// SSE 规范允许 `event:xxx`（冒号后无空格）：Kimi 等 Anthropic 兼容上游
 		// 返回紧凑格式，严格匹配 "event: " 会丢弃全部事件（#4653 同根因）。
-		if _, ok := extractOpenAISSEEventLine(line); !ok {
+		eventType, ok := extractOpenAISSEEventLine(line)
+		if !ok {
 			continue
+		}
+		if eventType == "error" {
+			sawError = true
 		}
 
 		if !scanner.Scan() {
@@ -299,6 +303,9 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		var event apicompat.AnthropicStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
+		}
+		if event.Type == "error" {
+			sawError = true
 		}
 		progress.observeEvent(&event)
 		if event.Type == "message_stop" {
@@ -402,6 +409,9 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		c.JSON(http.StatusOK, ccResp)
 	}
 
+	if sawStop && !sawError && scanErr == nil {
+		s.rateLimitService.observeModelTransientSuccess(context.Background(), c, estimate.account, mappedModel)
+	}
 	return &ForwardResult{
 		RequestID:       requestID,
 		UpstreamHeaders: resp.Header,
@@ -450,7 +460,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
-	sawStop := false
+	sawStop, sawError := false, false
 	progress := &anthropicStreamProgress{}
 
 	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
@@ -534,6 +544,9 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
+		if event.Type == "error" {
+			sawError = true
+		}
 		progress.observeEvent(event)
 
 		// Extract usage from message_delta
@@ -572,8 +585,12 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			break
 		}
 		// 与缓冲路径一致：接受 SSE 紧凑格式（冒号后无空格，#4653 同根因）。
-		if _, ok := extractOpenAISSEEventLine(line); !ok {
+		eventType, ok := extractOpenAISSEEventLine(line)
+		if !ok {
 			continue
+		}
+		if eventType == "error" {
+			sawError = true
 		}
 
 		dataLine, err := pump.next()
@@ -641,10 +658,15 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 
 	// Write [DONE] marker
 	if !clientDisconnected {
-		fmt.Fprint(c.Writer, "data: [DONE]\n\n") //nolint:errcheck
+		if _, err := fmt.Fprint(c.Writer, "data: [DONE]\n\n"); err != nil {
+			markClientGone("client write failed")
+		}
 		c.Writer.Flush()
 	}
 
+	if sawStop && !sawError && !clientDisconnected {
+		s.rateLimitService.observeModelTransientSuccess(context.Background(), c, estimate.account, mappedModel)
+	}
 	return resultWithUsage(), nil
 }
 

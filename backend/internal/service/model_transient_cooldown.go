@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,6 +35,7 @@ type modelTransientEntry struct {
 // matching how upstream blips behave.
 type ModelTransientCooldown struct {
 	mu         sync.Mutex
+	entryCount atomic.Int64
 	entries    map[string]*modelTransientEntry
 	now        func() time.Time
 	short      time.Duration
@@ -111,6 +113,7 @@ func (c *ModelTransientCooldown) ObserveFailure(accountID int64, model string) {
 	if !ok {
 		entry = &modelTransientEntry{}
 		c.entries[key] = entry
+		c.entryCount.Store(int64(len(c.entries)))
 	}
 	entry.streak++
 	entry.lastSeen = now
@@ -126,7 +129,7 @@ func (c *ModelTransientCooldown) ObserveFailure(accountID int64, model string) {
 
 // ObserveSuccess clears the streak after a successful request.
 func (c *ModelTransientCooldown) ObserveSuccess(accountID int64, model string) {
-	if c == nil {
+	if c == nil || c.entryCount.Load() == 0 {
 		return
 	}
 	model = strings.TrimSpace(model)
@@ -136,6 +139,7 @@ func (c *ModelTransientCooldown) ObserveSuccess(accountID int64, model string) {
 	key := modelTransientKey(accountID, model)
 	c.mu.Lock()
 	delete(c.entries, key)
+	c.entryCount.Store(int64(len(c.entries)))
 	c.mu.Unlock()
 }
 
@@ -153,7 +157,13 @@ func (c *ModelTransientCooldown) CooldownUntil(accountID int64, model string) ti
 	return time.Time{}
 }
 
+// isCooling reads the pause without refreshing lastSeen or resetting its streak.
+func (c *ModelTransientCooldown) isCooling(accountID int64, model string) bool {
+	return c != nil && c.now().Before(c.CooldownUntil(accountID, model))
+}
+
 func (c *ModelTransientCooldown) evictLocked(now time.Time) {
+	defer func() { c.entryCount.Store(int64(len(c.entries))) }()
 	for key, entry := range c.entries {
 		if now.Sub(entry.lastSeen) > c.retention {
 			delete(c.entries, key)

@@ -1654,6 +1654,7 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 
 	// 写入响应
 	c.Data(resp.StatusCode, contentType, sanitizeClientUpstreamErrorBody(resp.StatusCode, body))
+	s.rateLimitService.observeModelTransientSuccess(ctx, c, account, mappedModel, body)
 
 	return &response.Usage, nil
 }
