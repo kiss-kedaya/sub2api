@@ -15,7 +15,7 @@
     <div v-else-if="loadFailed" class="pb-1 text-[10px] text-red-500/90 dark:text-red-400/90">{{ t('monitorCommon.qualityHistoryFailed') }}</div>
     <div v-else-if="!events.length" class="pb-1 text-[10px] text-gray-400">{{ t('monitorCommon.qualityHistoryEmpty') }}</div>
 
-    <div v-else class="quality-history-strip flex flex-wrap gap-1.5" @mouseleave="clearHover">
+    <div v-else class="quality-history-strip flex flex-wrap justify-end gap-1.5" @mouseleave="clearHover">
       <button
         v-for="(event, index) in events"
         :key="event.id"
@@ -136,7 +136,10 @@ async function load() {
   try {
     const list = await getQualityEvents(groupId!, 30)
     if (generation !== loadGeneration) return
-    events.value = Array.isArray(list) ? list : []
+    // Match the timeline's PAST → NOW direction, regardless of API ordering.
+    events.value = Array.isArray(list)
+      ? [...list].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id - b.id)
+      : []
   } catch {
     if (generation !== loadGeneration) return
     loadFailed.value = true
