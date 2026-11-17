@@ -1623,7 +1623,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			filterStats.exclude("platform_mismatch")
 			continue
 		}
-		if s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel, req.RequireCompact) {
+		if s.service.isOpenAIAccountRequestRuntimeBlocked(ctx, account, req.RequestedModel, req.RequireCompact) {
 			filterStats.exclude("runtime_blocked")
 			continue
 		}
@@ -1972,7 +1972,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if req.RequirePrivacySet && !account.IsPrivacySet() {
 		return false, "privacy_not_set"
 	}
-	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel, req.RequireCompact) {
+	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(ctx, account, req.RequestedModel, req.RequireCompact) {
 		return false, "runtime_blocked"
 	}
 	if s != nil && s.service != nil && s.service.isOpenAIProxyStreamQuarantined(ctx, account) {
@@ -2422,7 +2422,7 @@ func (s *OpenAIGatewayService) RefreshSchedulerAccountFreshness(ctx context.Cont
 	if !parentHealthyForShadow(fresh, s.parentAccountLookup(ctx)) {
 		return nil, false
 	}
-	if s.isOpenAIAccountRequestRuntimeBlocked(fresh, requestedModel, false) || s.isOpenAIProxyStreamQuarantined(ctx, fresh) || s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, fresh) {
+	if s.isOpenAIAccountRequestRuntimeBlocked(ctx, fresh, requestedModel, false) || s.isOpenAIProxyStreamQuarantined(ctx, fresh) || s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, fresh) {
 		return nil, false
 	}
 	rememberSchedulerHydratedAccount(ctx, fresh)
@@ -2461,14 +2461,20 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIImagesCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	selection, decision, err := s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", requiredCapability, false, PlatformOpenAI, false, false)
-	if err == nil && selection != nil && selection.Account != nil {
-		return selection, decision, nil
-	}
-	// 如果要求 native 能力（如指定了模型）但没有可用的 APIKey 账号，回退到 basic（OAuth 账号）
-	if requiredCapability == OpenAIImagesCapabilityNative {
-		return s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", OpenAIImagesCapabilityBasic, false, PlatformOpenAI, false, false)
-	}
+	var decision OpenAIAccountScheduleDecision
+	selection, err := withModelTransientFallback(ctx, func(ctx context.Context) (*AccountSelectionResult, error) {
+		selection, selectedDecision, err := s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", requiredCapability, false, PlatformOpenAI, false, false)
+		decision = selectedDecision
+		if err == nil && selection != nil && selection.Account != nil {
+			return selection, nil
+		}
+		// Exhaust the existing native -> basic capability fallback before
+		// re-admitting model-paused accounts.
+		if requiredCapability == OpenAIImagesCapabilityNative {
+			selection, decision, err = s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", OpenAIImagesCapabilityBasic, false, PlatformOpenAI, false, false)
+		}
+		return selection, err
+	})
 	return selection, decision, err
 }
 
@@ -2480,6 +2486,35 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 // quarantine checks bypassed, so healthy proxies always win the first pass
 // and quarantined ones only serve when nothing else can.
 func (s *OpenAIGatewayService) selectAccountWithScheduler(
+	ctx context.Context,
+	groupID *int64,
+	previousResponseID string,
+	sessionHash string,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredTransport OpenAIUpstreamTransport,
+	requiredCapability OpenAIEndpointCapability,
+	requiredImageCapability OpenAIImagesCapability,
+	requireCompact bool,
+	platform string,
+	previousResponseCanMove bool,
+	useUpstreamTokenCost bool,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	var decision OpenAIAccountScheduleDecision
+	selection, err := withModelTransientFallback(ctx, func(ctx context.Context) (*AccountSelectionResult, error) {
+		selected, selectedDecision, err := s.selectAccountWithSchedulerProxyFallback(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+		decision = selectedDecision
+		if err == nil && selected != nil {
+			s.logOpenAIModelTransientFallback(ctx, selected.Account, groupID, requestedModel)
+		}
+		return selected, err
+	}, ErrNoAvailableCompactAccounts)
+	return selection, decision, err
+}
+
+// The model-transient retry surrounds the proxy retry, so its bypass pass can
+// still relax proxy quarantine if both independent circuits withhold the pool.
+func (s *OpenAIGatewayService) selectAccountWithSchedulerProxyFallback(
 	ctx context.Context,
 	groupID *int64,
 	previousResponseID string,

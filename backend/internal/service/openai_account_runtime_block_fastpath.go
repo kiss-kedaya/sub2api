@@ -566,7 +566,7 @@ func (s *OpenAIGatewayService) clearOpenAIAccountRuntimeBlockIfUnchanged(account
 // requireCompact 必须与 Forward 的 /responses/compact 判定同源（两侧都来自
 // IsOpenAIResponsesCompactPath）：门票门控按真正出站的模型名判定，否则 compact
 // 请求会被按客户端原始模型误拦（见 openAICodexTicketOutboundModel）。
-func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Account, requestedModel string, requireCompact bool) bool {
+func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(ctx context.Context, account *Account, requestedModel string, requireCompact bool) bool {
 	if s == nil {
 		return false
 	}
@@ -581,7 +581,39 @@ func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Acc
 		}
 		s.clearOpenAIAccountRuntimeBlockIfUnchanged(account.ID, snapshot)
 	}
-	return s.isOpenAIAccountModelRuntimeBlocked(account, requestedModel)
+	if !s.isOpenAIAccountModelRuntimeBlocked(account, requestedModel) {
+		return false
+	}
+	var probe *modelTransientFallbackProbe
+	if ctx != nil {
+		probe, _ = ctx.Value(modelTransientFallbackContextKey{}).(*modelTransientFallbackProbe)
+	}
+	if probe != nil {
+		if probe.bypass {
+			return false
+		}
+		probe.blocked.Store(true)
+	}
+	return true
+}
+
+func (s *OpenAIGatewayService) logOpenAIModelTransientFallback(ctx context.Context, account *Account, groupID *int64, model string) {
+	if s == nil || ctx == nil || account == nil {
+		return
+	}
+	probe, _ := ctx.Value(modelTransientFallbackContextKey{}).(*modelTransientFallbackProbe)
+	if probe == nil || !probe.bypass || !s.isOpenAIAccountModelRuntimeBlocked(account, model) {
+		return
+	}
+	s.openaiModelTransientFailOpenCount.Add(1)
+	now := time.Now().UnixNano()
+	last := s.openaiModelTransientFailOpenLogAt.Load()
+	if now-last < int64(openAIProxyStreamFailOpenLogInterval) || !s.openaiModelTransientFailOpenLogAt.CompareAndSwap(last, now) {
+		return
+	}
+	slog.Warn("openai_model_transient_fail_open",
+		"account_id", account.ID, "group_id", derefGroupID(groupID), "model", model,
+		"selections", s.openaiModelTransientFailOpenCount.Swap(0))
 }
 
 func (s *OpenAIGatewayService) recordOpenAIOAuth429() {
