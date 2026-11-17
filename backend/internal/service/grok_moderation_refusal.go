@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -76,6 +77,23 @@ func (s *OpenAIGatewayService) BlockGlobalIPBlacklistSession(ctx context.Context
 // A refused conversation stays blocked. Redis TTL 0 persists the block so
 // resuming the same conversation later cannot create another provider charge.
 const grokModerationRefusalSessionBlockTTL time.Duration = 0
+
+// grokModerationSessionBlockEnabled controls whether a refusal locks the
+// conversation. It is off (owner decision 2026-11-18): the lock matched far
+// more than the refused conversation. In production one refusal was followed
+// by hundreds of locally rejected requests from the same user, new
+// conversations included, and the lock never expires. While it is off a
+// refused request still settles its refusal fee, nothing new is locked, and
+// locks written by earlier versions are ignored. Tests switch it on to keep
+// the locking code covered until the matching is fixed.
+var grokModerationSessionBlockEnabled atomic.Bool
+
+// SetGrokModerationSessionBlockEnabled switches the conversation lock and
+// returns a function that restores the previous setting.
+func SetGrokModerationSessionBlockEnabled(enabled bool) (restore func()) {
+	previous := grokModerationSessionBlockEnabled.Swap(enabled)
+	return func() { grokModerationSessionBlockEnabled.Store(previous) }
+}
 
 // IsGrokModerationRefusal reports the provider-specific refusal signature that
 // must be surfaced unchanged and settled as a billable request. Keep this
@@ -250,6 +268,9 @@ func grokModerationTranscriptKeys(apiKey *APIKey, body []byte, write bool) []str
 }
 
 func (s *OpenAIGatewayService) BlockGrokModerationRefusedRequest(ctx context.Context, c *gin.Context, apiKey *APIKey, body []byte) {
+	if !grokModerationSessionBlockEnabled.Load() {
+		return
+	}
 	if hash := GrokModerationSessionHash(c, apiKey, body); hash != "" {
 		s.BlockModerationRefusedSessionForOpenAI(ctx, nil, hash, grokModerationRefusalSessionBlockTTL)
 		return
@@ -262,6 +283,9 @@ func (s *OpenAIGatewayService) BlockGrokModerationRefusedRequest(ctx context.Con
 }
 
 func (s *OpenAIGatewayService) GrokModerationRefusedRequestBlocked(ctx context.Context, c *gin.Context, apiKey *APIKey, body []byte) bool {
+	if !grokModerationSessionBlockEnabled.Load() {
+		return false
+	}
 	if hash := GrokModerationSessionHash(c, apiKey, body); hash != "" {
 		return s.ModerationRefusedSessionBlocked(ctx, nil, hash)
 	}
