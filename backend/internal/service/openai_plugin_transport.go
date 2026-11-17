@@ -9,6 +9,15 @@ func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 // doOpenAIUpstream 只在 OpenAI OAuth 能力绑定已启用时把真实请求交给插件。
 // 插件返回标准 http.Response，响应解析、错误映射、SSE 和计费仍由现有核心链处理。
 func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
+	if limit := openAIUpstreamWaitLimitFor(request, account); limit > 0 {
+		return doWithUpstreamWaitLimit(request, limit, func(req *http.Request) (*http.Response, error) {
+			return s.doOpenAIUpstreamOnce(req, proxyURL, account)
+		})
+	}
+	return s.doOpenAIUpstreamOnce(request, proxyURL, account)
+}
+
+func (s *OpenAIGatewayService) doOpenAIUpstreamOnce(request *http.Request, proxyURL string, account *Account) (*http.Response, error) {
 	logGrokUpstreamHTTPDump(request, proxyURL, account)
 	if s.pluginManager != nil {
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)

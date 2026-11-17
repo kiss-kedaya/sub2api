@@ -281,3 +281,69 @@ func TestUsageInflightSnapshotFollowsSelectedAccountAndGroup(t *testing.T) {
 		}
 	}
 }
+
+// 网关自己的 SSE 心跳不是上游的输出：只有心跳的请求没有首字、输出为 0；
+// 之后的真实内容才开始计首字和字节。线上曾把上游零回应的请求显示成「首字 10 秒、0.3 t/s」。
+func TestUsageInflightIgnoresHeartbeatPadding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	state := &usageInflightWriteState{ginCtx: c, requestCtx: c.Request.Context()}
+	state.snap.StartedAt = time.Now().Add(-30 * time.Second)
+	writer := &usageInflightWriter{ResponseWriter: c.Writer, state: state}
+	snapshot := func() service.UsageInflightSnapshot {
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		return state.snapshotLocked()
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := writer.Write([]byte(": keepalive\n\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := writer.WriteString(": keepalive\n\n"); err != nil {
+		t.Fatal(err)
+	}
+	if snap := snapshot(); snap.FirstTokenMs != nil || snap.OutputTokens != 0 || !snap.Stream {
+		t.Fatalf("心跳被算成了输出: first=%v output=%d stream=%v", snap.FirstTokenMs, snap.OutputTokens, snap.Stream)
+	}
+
+	event := []byte("data: {\"delta\":\"hello world\"}\n\n")
+	if _, err := writer.Write(event); err != nil {
+		t.Fatal(err)
+	}
+	snap := snapshot()
+	if snap.FirstTokenMs == nil || *snap.FirstTokenMs < 29000 {
+		t.Fatalf("首字应记在第一段真实内容上: %v", snap.FirstTokenMs)
+	}
+	if snap.OutputTokens != len(event)/4 {
+		t.Fatalf("输出只应统计真实内容: got %d want %d", snap.OutputTokens, len(event)/4)
+	}
+}
+
+func TestIsSSEKeepaliveComment(t *testing.T) {
+	for input, want := range map[string]bool{
+		": keepalive\n\n":           true,
+		":\n\n":                     true,
+		": ping\n":                  true,
+		": a\n: b\n\n":              true,
+		": keepalive\r\n\r\n":       true,
+		"":                          false,
+		"data: {}\n\n":              false,
+		"event: ping\ndata: {}\n\n": false,
+		// A real event that happens to start with a comment line must still count.
+		": p\ndata: {\"delta\":\"x\"}\n\n":   false,
+		": p\n\ndata: x\n\n":                 false,
+		"{\"error\":{}}":                     false,
+		": no trailing newline":              false,
+		":" + strings.Repeat("x", 80) + "\n": false,
+	} {
+		if got := isSSEKeepaliveComment(input); got != want {
+			t.Errorf("isSSEKeepaliveComment(%q) = %v, want %v", input, got, want)
+		}
+		if got := isSSEKeepaliveComment([]byte(input)); got != want {
+			t.Errorf("isSSEKeepaliveComment([]byte(%q)) = %v, want %v", input, got, want)
+		}
+	}
+}

@@ -54,6 +54,11 @@ func invalidateUpstreamAffinity(ctx context.Context, cache GatewayCache, groupID
 	if errors.As(err, &policyErr) || (errors.Is(err, context.Canceled) && ctx.Err() != nil) {
 		return
 	}
+	// Neither is a provider that went silent on this one request.
+	var waitErr *UpstreamFailoverError
+	if errors.As(err, &waitErr) && waitErr.IsUpstreamWaitLimit() {
+		return
+	}
 	if state, ok := ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts); ok {
 		var upstreamErr *UpstreamFailoverError
 		retry := errors.As(err, &upstreamErr) && upstreamErr.ShouldRetryNextAccount() &&

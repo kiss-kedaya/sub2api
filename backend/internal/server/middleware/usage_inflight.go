@@ -208,11 +208,20 @@ type usageInflightWriteState struct {
 
 // note 只在请求 goroutine 里调。header 也只能在这里读：定时器 goroutine 读它，
 // 会和 handler 的 Header().Set 撞成 fatal error: concurrent map read and map write，进程直接重启。
-func (s *usageInflightWriteState) note(n int, header http.Header) {
+//
+// padding 为真表示这次写的是网关自己的 SSE 注释心跳（见 isSSEKeepaliveComment）。
+// 它由心跳 goroutine 写出，所以这里不读 header；它也不是上游的输出，不记首字、
+// 不计字节。否则上游一个字没回的请求会显示成「首字 10 秒、每秒 0.3 个 token」。
+func (s *usageInflightWriteState) note(n int, header http.Header, padding bool) {
 	if s == nil || n <= 0 {
 		return
 	}
 	s.mu.Lock()
+	if padding {
+		s.snap.Stream = true
+		s.mu.Unlock()
+		return
+	}
 	now := time.Now()
 	flushFirst := false
 	if s.first == nil {
@@ -305,14 +314,36 @@ func (w *usageInflightWriter) Unwrap() http.ResponseWriter { return w.ResponseWr
 
 func (w *usageInflightWriter) Write(data []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(data)
-	w.state.note(n, w.Header())
+	w.state.note(n, w.Header(), isSSEKeepaliveComment(data))
 	return n, err
 }
 
 func (w *usageInflightWriter) WriteString(data string) (int, error) {
 	n, err := w.ResponseWriter.WriteString(data)
-	w.state.note(n, w.Header())
+	w.state.note(n, w.Header(), isSSEKeepaliveComment(data))
 	return n, err
+}
+
+// isSSEKeepaliveComment 识别一次只含 SSE 注释行的短写入（": keepalive\n\n" 这类）：
+// 每一行都以冒号开头或是空行。注释行后面跟着 data:/event: 的写入是真实事件，
+// 不算心跳；长度上限把碰巧以冒号开头的二进制分片排除在外。
+func isSSEKeepaliveComment[T ~string | ~[]byte](data T) bool {
+	if len(data) == 0 || len(data) > 64 || data[0] != ':' || data[len(data)-1] != '\n' {
+		return false
+	}
+	lineStart := true
+	for i := 0; i < len(data); i++ {
+		switch {
+		case data[i] == '\n':
+			lineStart = true
+		case data[i] == '\r':
+		case lineStart && data[i] != ':':
+			return false
+		default:
+			lineStart = false
+		}
+	}
+	return true
 }
 
 // fillUsageInflightDisplay 建快照时在请求 goroutine 里调一次。
