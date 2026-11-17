@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -76,6 +77,28 @@ func (s *OpenAIGatewayService) BlockGlobalIPBlacklistSession(ctx context.Context
 // A refused conversation stays blocked. Redis TTL 0 persists the block so
 // resuming the same conversation later cannot create another provider charge.
 const grokModerationRefusalSessionBlockTTL time.Duration = 0
+
+// grokModerationSessionBlockEnabled controls the identifier-based conversation
+// lock: the one keyed on a client-supplied id (x-grok-conv-id, session_id, a
+// Claude Code session, metadata.user_id) or on the routing session hash. It is
+// off (owner decision 2026-11-18). Those ids are not one conversation: relays
+// reuse a single x-grok-conv-id for most of a customer's traffic, so one
+// refusal was followed by hundreds of locally rejected requests from the same
+// user, new conversations included, and the lock never expires. Locks of this
+// kind written by earlier versions are ignored. Tests switch it on to keep the
+// remaining code covered.
+//
+// What stays on is the content lock (see BlockGrokModerationRefusedRequest):
+// it matches the refused transcript itself, so only resending or continuing
+// that exact conversation is stopped.
+var grokModerationSessionBlockEnabled atomic.Bool
+
+// SetGrokModerationSessionBlockEnabled switches the conversation lock and
+// returns a function that restores the previous setting.
+func SetGrokModerationSessionBlockEnabled(enabled bool) (restore func()) {
+	previous := grokModerationSessionBlockEnabled.Swap(enabled)
+	return func() { grokModerationSessionBlockEnabled.Store(previous) }
+}
 
 // IsGrokModerationRefusal reports the provider-specific refusal signature that
 // must be surfaced unchanged and settled as a billable request. Keep this
@@ -249,34 +272,46 @@ func grokModerationTranscriptKeys(apiKey *APIKey, body []byte, write bool) []str
 	return keys
 }
 
-func (s *OpenAIGatewayService) BlockGrokModerationRefusedRequest(ctx context.Context, c *gin.Context, apiKey *APIKey, body []byte) {
-	if hash := GrokModerationSessionHash(c, apiKey, body); hash != "" {
-		s.BlockModerationRefusedSessionForOpenAI(ctx, nil, hash, grokModerationRefusalSessionBlockTTL)
+// grokModerationTranscriptBlockTTL bounds how long a refused transcript stays
+// locked. A day stops a client that keeps resending the refused content from
+// paying the refusal fee on every attempt, and lets a mistaken match heal.
+const grokModerationTranscriptBlockTTL = 24 * time.Hour
+
+// BlockGrokModerationRefusedRequest locks the refused conversation by its
+// content: the transcript up to and including the refused turn and, when the
+// history holds model output, the history right before that turn. Client
+// identifiers are deliberately not used; see grokModerationSessionBlockEnabled.
+func (s *OpenAIGatewayService) BlockGrokModerationRefusedRequest(ctx context.Context, _ *gin.Context, apiKey *APIKey, body []byte) {
+	store := s.cyberSessionBlockStore()
+	if store == nil {
 		return
 	}
-	if store := s.cyberSessionBlockStore(); store != nil {
-		if err := store.SetCyberSessionBlocked(ctx, grokModerationTranscriptScope(apiKey), grokModerationTranscriptKeys(apiKey, body, true), 0); err != nil {
-			logger.L().Warn("openai_gateway.moderation_transcript_block_failed", zap.Error(err))
-		}
+	keys := grokModerationTranscriptKeys(apiKey, body, true)
+	if len(keys) == 0 {
+		return
+	}
+	if err := store.SetCyberSessionBlocked(ctx, grokModerationTranscriptScope(apiKey), keys, grokModerationTranscriptBlockTTL); err != nil {
+		logger.L().Warn("openai_gateway.moderation_transcript_block_failed", zap.Error(err))
 	}
 }
 
-func (s *OpenAIGatewayService) GrokModerationRefusedRequestBlocked(ctx context.Context, c *gin.Context, apiKey *APIKey, body []byte) bool {
-	if hash := GrokModerationSessionHash(c, apiKey, body); hash != "" {
-		return s.ModerationRefusedSessionBlocked(ctx, nil, hash)
+// GrokModerationRefusedRequestBlocked reports whether this request resends or
+// continues a transcript the provider refused. A request with other content is
+// never blocked, whatever identifiers it carries.
+func (s *OpenAIGatewayService) GrokModerationRefusedRequestBlocked(ctx context.Context, _ *gin.Context, apiKey *APIKey, body []byte) bool {
+	store := s.cyberSessionBlockStore()
+	if store == nil {
+		return false
 	}
-	if store := s.cyberSessionBlockStore(); store != nil {
-		active, err := store.IsCyberSessionScopeActive(ctx, grokModerationTranscriptScope(apiKey))
-		if err != nil || !active {
-			return false
-		}
-		key, err := store.FindCyberSessionBlocked(ctx, grokModerationTranscriptKeys(apiKey, body, false))
-		if err != nil {
-			logger.L().Warn("openai_gateway.moderation_transcript_lookup_failed", zap.Error(err))
-		}
-		return err == nil && key != ""
+	active, err := store.IsCyberSessionScopeActive(ctx, grokModerationTranscriptScope(apiKey))
+	if err != nil || !active {
+		return false
 	}
-	return false
+	key, err := store.FindCyberSessionBlocked(ctx, grokModerationTranscriptKeys(apiKey, body, false))
+	if err != nil {
+		logger.L().Warn("openai_gateway.moderation_transcript_lookup_failed", zap.Error(err))
+	}
+	return err == nil && key != ""
 }
 
 func grokModerationTranscriptScope(apiKey *APIKey) string {

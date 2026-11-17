@@ -16,6 +16,11 @@ import (
 // Failures are logged and swallowed: a cache problem must never turn a billable
 // refusal into a 5xx for the client.
 func (s *GatewayService) BlockModerationRefusedSession(ctx context.Context, groupID *int64, sessionHash string, ttl time.Duration) {
+	// Switched off together with the OpenAI-gateway lock; see
+	// grokModerationSessionBlockEnabled.
+	if !grokModerationSessionBlockEnabled.Load() {
+		return
+	}
 	if s == nil || s.cache == nil || sessionHash == "" || ttl < 0 {
 		return
 	}
@@ -34,6 +39,9 @@ func (s *GatewayService) BlockModerationRefusedSession(ctx context.Context, grou
 // ModerationRefusedSessionBlocked reports whether this conversation was already
 // refused on safety grounds.
 func (s *GatewayService) ModerationRefusedSessionBlocked(ctx context.Context, groupID *int64, sessionHash string) bool {
+	if !grokModerationSessionBlockEnabled.Load() {
+		return false
+	}
 	if s == nil || s.cache == nil || sessionHash == "" {
 		return false
 	}
