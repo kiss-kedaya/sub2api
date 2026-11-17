@@ -196,7 +196,7 @@ func (s *OpenAIGatewayService) buildNativeAnthropicUpstreamRequest(
 	body = enforceCacheControlLimit(body)
 	body = normalizeCacheControlTTLOrder(body)
 
-	req, err := http.NewRequestWithContext(withUpstreamWaitLimitChat(ctx), http.MethodPost, targetURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, err
 	}

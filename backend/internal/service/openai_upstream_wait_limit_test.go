@@ -67,23 +67,10 @@ func TestOpenAIUpstreamWaitLimitFor(t *testing.T) {
 	require.Zero(t, openAIUpstreamWaitLimitFor(nil, deepSeek))
 }
 
-// /v1/messages reaches DeepSeek through the native Anthropic endpoint, which
-// is built without the OpenAI profile.
-func TestNativeAnthropicRequestCarriesTheWaitLimit(t *testing.T) {
-	svc := &OpenAIGatewayService{}
-	body := []byte(`{"model":"deepseek-flash","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`)
-	for _, tc := range []struct {
-		platform string
-		want     time.Duration
-	}{
-		{PlatformDeepseek, deepSeekUpstreamWaitLimit},
-		{PlatformKimi, 0},
-	} {
-		account := &Account{ID: 1, Platform: tc.platform, Type: AccountTypeAPIKey}
-		req, _, err := svc.buildNativeAnthropicUpstreamRequest(context.Background(), nil, account, body, "synthetic-key", "http://upstream.test/v1/messages")
-		require.NoError(t, err)
-		require.Equal(t, tc.want, openAIUpstreamWaitLimitFor(req, account), tc.platform)
-	}
+// The limit must stay above the provider's own 60-minute cutoff: below it, the
+// gateway would end requests that were still going to succeed.
+func TestDeepSeekUpstreamWaitLimitOutlastsTheProvider(t *testing.T) {
+	require.Greater(t, deepSeekUpstreamWaitLimit, 60*time.Minute)
 }
 
 func TestDoOpenAIUpstreamEndsSilentDeepSeekRequest(t *testing.T) {
@@ -188,7 +175,7 @@ func TestUpstreamWaitLimitEndsTheRequestWithoutFailover(t *testing.T) {
 	account := &Account{ID: 1, Name: "synthetic", Platform: PlatformDeepseek, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true}
 	svc := &OpenAIGatewayService{}
 
-	err := svc.handleOpenAIUpstreamTransportError(context.Background(), c, account, fmt.Errorf("%w (%s)", errOpenAIUpstreamWaitLimit, 10*time.Minute), false)
+	err := svc.handleOpenAIUpstreamTransportError(context.Background(), c, account, fmt.Errorf("%w (%s)", errOpenAIUpstreamWaitLimit, deepSeekUpstreamWaitLimit), false)
 
 	var failover *UpstreamFailoverError
 	require.ErrorAs(t, err, &failover)
@@ -199,7 +186,7 @@ func TestUpstreamWaitLimitEndsTheRequestWithoutFailover(t *testing.T) {
 	require.False(t, failover.ShouldReportAccountScheduleFailure(), "a silent provider is not the account's fault")
 	require.JSONEq(t, `{"error":{"type":"upstream_error","message":"Upstream did not respond in time"}}`, string(failover.ResponseBody))
 	require.Equal(t, http.StatusGatewayTimeout, c.GetInt(OpsUpstreamStatusCodeKey))
-	require.Contains(t, c.GetString(OpsUpstreamErrorMessageKey), "10m0s")
+	require.Contains(t, c.GetString(OpsUpstreamErrorMessageKey), deepSeekUpstreamWaitLimit.String())
 	require.True(t, account.Schedulable)
 	require.Nil(t, account.TempUnschedulableUntil)
 	require.False(t, rec.Flushed)

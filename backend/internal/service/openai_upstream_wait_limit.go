@@ -14,15 +14,20 @@ import (
 // deepSeekUpstreamWaitLimit bounds how long a DeepSeek chat-style request waits
 // for the upstream to answer at all. The OpenAI transport profile it shares has
 // no response-header timeout, and the gateway's own SSE heartbeat keeps the
-// client, nginx and the CDN from giving up, so a provider that accepts the
-// request and then goes silent used to hold it for hours. Ten minutes is the
-// owner's decision (2026-11-17). A stream that has started is never cut: the
-// limit ends once the upstream call returns its response, which is when the
-// headers arrive, or the first body bytes if the response is compressed (the
-// transport reads those to set up decompression).
+// client, nginx and the CDN from giving up, so a connection the provider had
+// abandoned was held for hours.
+//
+// The limit only ends requests that can no longer succeed (owner decision
+// 2026-11-18: user experience first, necessary measures only). Over six hours
+// of production traffic the latest successful answer arrived after 59 minutes
+// of silence, and the provider itself answers with an error at 60 minutes;
+// anything still silent after that is a dead connection. A stream that has
+// started is never cut: the limit ends once the upstream call returns its
+// response, which is when the headers arrive, or the first body bytes if the
+// response is compressed (the transport reads those to set up decompression).
 //
 // It is a variable only so tests can shorten it.
-var deepSeekUpstreamWaitLimit = 10 * time.Minute
+var deepSeekUpstreamWaitLimit = 65 * time.Minute
 
 // errOpenAIUpstreamWaitLimit marks a request ended by the limit above.
 var errOpenAIUpstreamWaitLimit = errors.New("upstream sent no response within the wait limit")
@@ -38,26 +43,16 @@ func (e *UpstreamFailoverError) IsUpstreamWaitLimit() bool {
 
 var openAIUpstreamWaitLimitFailoverBody = []byte(`{"error":{"type":"upstream_error","message":"Upstream did not respond in time"}}`)
 
-type upstreamWaitLimitChatKey struct{}
-
-// withUpstreamWaitLimitChat marks a chat-style forward that is not built with
-// the OpenAI profile: the native Anthropic endpoint. Its default profile does
-// time out after ten minutes, but as a transport error that fails over, so one
-// silent request was held once per account and same-account retry.
-func withUpstreamWaitLimitChat(ctx context.Context) context.Context {
-	return context.WithValue(ctx, upstreamWaitLimitChatKey{}, true)
-}
-
 // openAIUpstreamWaitLimitFor returns the limit for this request, or 0 for none.
-// Only DeepSeek chat-style forwards qualify: the ones built with the OpenAI
-// profile and the marked native Anthropic ones. DeepSeek tool routes carry
-// their own deadlines and profiles.
+// Only DeepSeek forwards built with the OpenAI profile qualify: that profile
+// is the one without a response-header timeout. The native Anthropic endpoint
+// and the search and fetch tools use the default profile, which already times
+// out at the transport; the media tools carry their own deadlines.
 func openAIUpstreamWaitLimitFor(request *http.Request, account *Account) time.Duration {
 	if request == nil || account == nil || account.Platform != PlatformDeepseek {
 		return 0
 	}
-	ctx := request.Context()
-	if HTTPUpstreamProfileFromContext(ctx) != HTTPUpstreamProfileOpenAI && ctx.Value(upstreamWaitLimitChatKey{}) == nil {
+	if HTTPUpstreamProfileFromContext(request.Context()) != HTTPUpstreamProfileOpenAI {
 		return 0
 	}
 	return deepSeekUpstreamWaitLimit
