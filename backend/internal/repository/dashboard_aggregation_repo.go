@@ -384,33 +384,44 @@ func cleanupUsageLogsBatchWithRollupInvalidation(ctx context.Context, db sqlTxBe
 	return affected, nil
 }
 
+const usageBillingDedupCleanupHeadSQL = `
+	SELECT id, request_id, api_key_id, request_fingerprint, created_at
+	FROM usage_billing_dedup
+	WHERE id > $1
+	ORDER BY id
+	LIMIT $2
+`
+
 func (r *dashboardAggregationRepository) CleanupUsageBillingDedup(ctx context.Context, cutoff time.Time) error {
+	var cursor int64
 	for {
-		res, err := r.sql.ExecContext(ctx, `
-			WITH victims AS (
-				SELECT ctid, request_id, api_key_id, request_fingerprint, created_at
-				FROM usage_billing_dedup
-				WHERE created_at < $1
-				LIMIT $2
+		var affected, nextCursor int64
+		// Bound the primary-key head before filtering expiry: a sparse expired tail
+		// must not scan the whole hot table or stale BRIN ranges to fill a batch.
+		err := scanSingleRow(ctx, r.sql, `
+			WITH batch AS MATERIALIZED (`+usageBillingDedupCleanupHeadSQL+`), victims AS (
+				SELECT * FROM batch WHERE created_at < $3
 			), archived AS (
 				INSERT INTO usage_billing_dedup_archive (request_id, api_key_id, request_fingerprint, created_at)
 				SELECT request_id, api_key_id, request_fingerprint, created_at
 				FROM victims
 				ON CONFLICT (request_id, api_key_id) DO NOTHING
+			), deleted AS (
+				DELETE FROM usage_billing_dedup
+				WHERE id IN (SELECT id FROM victims)
+				RETURNING id
 			)
-			DELETE FROM usage_billing_dedup
-			WHERE ctid IN (SELECT ctid FROM victims)
-		`, cutoff.UTC(), usageBillingDedupCleanupBatchSize)
+			SELECT COUNT(*), COALESCE(MAX(id), $1) FROM deleted
+		`, []any{cursor, usageBillingDedupCleanupBatchSize, cutoff.UTC()}, &affected, &nextCursor)
 		if err != nil {
 			return err
 		}
-		affected, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
+		// A fresh row ends this pass. Restart at zero next time so locally
+		// out-of-order timestamps are reconsidered without persisting a watermark.
 		if affected < usageBillingDedupCleanupBatchSize {
 			return nil
 		}
+		cursor = nextCursor
 	}
 }
 
