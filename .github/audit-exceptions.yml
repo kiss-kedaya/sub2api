@@ -43,6 +43,11 @@ exceptions:
     severity: high
     mitigation: Dev/build transitive dependency. The application does not expose user-controlled glob patterns to picomatch; CI and the Vite build use repository-owned patterns only.
     expires_on: 2026-12-31
+  - package: picomatch
+    advisory: GHSA-fc5q-39xc-vjpf
+    severity: high
+    mitigation: Same dev/build transitive dependency as GHSA-c2c7-rcm5-vvqj (published 2026-11-17). Another ReDoS that needs an attacker-chosen glob pattern; only repository-owned patterns reach picomatch, at build time. Remove both entries once the build toolchain pulls a patched picomatch.
+    expires_on: 2026-12-31
   - package: vite
     advisory: GHSA-587h-7wmj-h5pm
     severity: high
