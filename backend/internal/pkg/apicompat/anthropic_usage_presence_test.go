@@ -5,7 +5,28 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
+
+func TestCacheCreationUsageAggregatePresence(t *testing.T) {
+	for _, tc := range []struct {
+		raw     string
+		total   int
+		present bool
+	}{
+		{`{}`, 0, false},
+		{`{"cache_creation_input_tokens":0}`, 0, true},
+		{`{"cache_creation_input_tokens":200}`, 200, true},
+		{`{"cache_creation_input_tokens":-1}`, 0, true},
+		{`{"input_tokens_details":{"cache_write_tokens":0},"cache_creation_input_tokens":200}`, 0, true},
+	} {
+		t.Run(tc.raw, func(t *testing.T) {
+			total, present := CacheCreationTokensFromUsage(gjson.Parse(tc.raw))
+			require.Equal(t, tc.total, total)
+			require.Equal(t, tc.present, present)
+		})
+	}
+}
 
 func TestAnthropicUsagePresenceCumulativeMerge(t *testing.T) {
 	var usage AnthropicUsage

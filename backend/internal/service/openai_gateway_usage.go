@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"go.uber.org/zap"
@@ -203,15 +204,35 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// Calculate cost
 	tokens := UsageTokens{
-		InputTokens:          actualInputTokens,
-		ImageInputTokens:     max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
-		ImageCacheReadTokens: result.Usage.ImageCacheReadTokens,
-		OutputTokens:         result.Usage.OutputTokens,
-		CacheCreationTokens:  result.Usage.CacheCreationInputTokens,
-		CacheReadTokens:      result.Usage.CacheReadInputTokens,
-		ImageOutputTokens:    result.Usage.ImageOutputTokens,
-		CacheReadEstimated:   result.Usage.CacheReadEstimated,
+		InputTokens:           actualInputTokens,
+		ImageInputTokens:      max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
+		ImageCacheReadTokens:  result.Usage.ImageCacheReadTokens,
+		OutputTokens:          result.Usage.OutputTokens,
+		CacheCreationTokens:   result.Usage.CacheCreationInputTokens,
+		CacheCreation5mTokens: result.Usage.CacheCreation5mTokens,
+		CacheCreation1hTokens: result.Usage.CacheCreation1hTokens,
+		CacheReadTokens:       result.Usage.CacheReadInputTokens,
+		ImageOutputTokens:     result.Usage.ImageOutputTokens,
+		CacheReadEstimated:    result.Usage.CacheReadEstimated,
 	}
+	if tokens.CacheCreationTokens <= 0 {
+		// The OpenAI aggregate (including an explicit zero) remains authoritative.
+		tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = 0, 0
+	} else {
+		// OpenAI gateway rule: an unclassified remainder stays billable as 5m.
+		tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = apicompat.NormalizeCacheCreationBreakdown(
+			tokens.CacheCreationTokens, tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens,
+		)
+	}
+
+	cacheTTLOverridden := false
+	ttlPolicy := &GatewayService{settingService: s.settingService}
+	if target, ok := ttlPolicy.resolveCacheTTLUsageOverrideTarget(ctx, apiKey, account); ok && target == cacheTTLTarget5m && tokens.CacheCreationTokens > 0 {
+		tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = tokens.CacheCreationTokens, 0
+		cacheTTLOverridden = true
+	}
+	// A forced 1h TTL must not promote unreported writes on the OpenAI path;
+	// only explicit upstream 1h tokens may increase the existing 5m charge.
 
 	// Get rate multiplier
 	multiplier := 1.0
@@ -435,6 +456,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		InputTokens:              actualInputTokens,
 		OutputTokens:             result.Usage.OutputTokens,
 		CacheCreationTokens:      result.Usage.CacheCreationInputTokens,
+		CacheCreation5mTokens:    tokens.CacheCreation5mTokens,
+		CacheCreation1hTokens:    tokens.CacheCreation1hTokens,
+		CacheTTLOverridden:       cacheTTLOverridden,
 		CacheReadTokens:          result.Usage.CacheReadInputTokens,
 		ImageInputTokens:         result.Usage.ImageInputTokens,
 		ImageOutputTokens:        result.Usage.ImageOutputTokens,

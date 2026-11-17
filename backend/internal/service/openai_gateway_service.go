@@ -227,8 +227,16 @@ type OpenAIUsage struct {
 	ImageCacheReadTokens     int `json:"image_cache_read_tokens,omitempty"`
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
-	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
+	// TTL buckets come only from upstream usage, never from the requested TTL.
+	CacheCreation5mTokens int `json:"-"`
+	CacheCreation1hTokens int `json:"-"`
+	// Positive values imply presence; these flags distinguish explicit zeroes
+	// from absent fields while merging snapshots within one upstream turn.
+	cacheCreationInputTokensZero bool
+	cacheCreation5mTokensZero    bool
+	cacheCreation1hTokensZero    bool
+	CacheReadInputTokens         int `json:"cache_read_input_tokens,omitempty"`
+	ImageOutputTokens            int `json:"image_output_tokens,omitempty"`
 	// CacheReadEstimated marks CacheReadInputTokens as a request-body estimate made
 	// when no usage frame arrived (see incomplete_request_usage.go). It never comes
 	// from the upstream, so it is not part of the wire format.

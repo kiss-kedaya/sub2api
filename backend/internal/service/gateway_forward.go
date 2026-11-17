@@ -887,6 +887,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			return nil, err
 		}
 	}
+	if reqStream && !clientDisconnect {
+		s.rateLimitService.observeModelTransientSuccess(ctx, c, account, reqModel)
+	}
 
 	return &ForwardResult{
 		RequestID:                     resp.Header.Get("x-request-id"),

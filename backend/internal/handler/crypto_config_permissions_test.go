@@ -92,12 +92,13 @@ func TestCryptoConfigPublicViewHidesNativePriceFeed(t *testing.T) {
 		"the audited 2FA view must show which feed settles native deposits")
 }
 
-func TestCryptoConfigOnlyFiveEffectiveFieldsMayChangeWithoutFreshCode(t *testing.T) {
+func TestCryptoConfigOperationalFieldsMayChangeWithoutFreshCode(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
 	for _, body := range []string{
 		`{"sweep_global_threshold":2000}`,
 		`{"sweep_min_per_address":{"bsc":5}}`,
 		`{"scan_range":{"bsc":500}}`,
+		`{"scan_concurrency":{"bsc":32}}`,
 		`{"credit_min_amount":0.01}`,
 		`{"credit_max_amount":5000}`,
 		`{"sweep_global_threshold":2000,"credit_min_amount":0.01,"credit_max_amount":5000,"scan_range":{"bsc":500},"sweep_min_per_address":{"bsc":5}}`,
@@ -115,6 +116,16 @@ func TestCryptoConfigOnlyFiveEffectiveFieldsMayChangeWithoutFreshCode(t *testing
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			require.Zero(t, security.calls.Load())
 			require.Equal(t, "https://unchanged.example.test", gjson.Get(store.values[cryptopay.SettingKeyCryptoConfig], "rpc.bsc").String())
+			if strings.Contains(body, "scan_concurrency") {
+				require.Equal(t, int64(32), gjson.Get(store.values[cryptopay.SettingKeyCryptoConfig], "scan_concurrency.bsc").Int())
+				for name, read := range map[string]gin.HandlerFunc{"public": (&CryptoHandler{store: store}).AdminGetConfig, "private": (&CryptoHandler{store: store}).AdminGetPrivateConfig} {
+					router.GET("/"+name, read)
+					view := httptest.NewRecorder()
+					router.ServeHTTP(view, httptest.NewRequest(http.MethodGet, "/"+name, nil))
+					require.Equal(t, http.StatusOK, view.Code)
+					require.Equal(t, int64(32), gjson.Get(view.Body.String(), "data.scan_concurrency.bsc").Int())
+				}
+			}
 		})
 	}
 }

@@ -380,6 +380,8 @@ export default {
     gasTopup: 'Per-address Gas funding limit (only the shortfall is funded)',
     confirmations: 'Confirmations',
     scanRange: 'Scan range',
+    scanConcurrency: 'Scan concurrency',
+    scanConcurrencyHint: '0 = automatic (up to 4 requests per node, 8 total); 1–64 overrides it for this chain. Applies to logs and full blocks; RPC pacing still applies. Paid RPC: start at 32.',
     mnemonicsTitle: 'Export wallet mnemonics',
     mnemonicsSensitive: 'Highly sensitive · plaintext is briefly shown on this page',
     mnemonicsWarning: 'Requires a fresh 6-digit authenticator code. The server decrypts only for this export; mnemonics are never stored in browser storage or copied automatically.',

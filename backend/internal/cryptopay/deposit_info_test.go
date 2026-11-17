@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/nativeprice"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/wallet"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -142,6 +145,101 @@ func TestDepositInfoJSONHasNoRateForNativeCoin(t *testing.T) {
 		}
 	}
 	require.True(t, seenNative && seenStable)
+}
+
+func TestNativePriceReferenceUsesOneSnapshotDuringReload(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "false")
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "")
+	t.Setenv("SUB2API_DISABLE_BACKGROUND_JOBS", "true")
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	oldFeed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		once.Do(func() { close(entered) })
+		<-release
+		if _, err := fmt.Fprint(w, `{"price":"100"}`); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(oldFeed.Close)
+	newFeed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := fmt.Fprint(w, `{"price":"200"}`); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(newFeed.Close)
+	repo := &reloadConfigRepository{}
+	cfg := depositInfoConfig()
+	cfg.NativePriceURL = oldFeed.URL
+	repo.set(t, cfg)
+	s := &Service{settings: service.NewSettingService(repo, nil), wallet: wallet.New(nil)}
+	t.Cleanup(s.Close)
+	s.Reload(t.Context())
+	info := buildDepositInfo(cfg, depositInfoAssigned())
+	done := make(chan struct{})
+	go func() {
+		s.attachNativeReferencePrices(t.Context(), info)
+		close(done)
+	}()
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(func() { unblock(); <-done })
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reference price request never reached local feed")
+	}
+	cfg.NativePriceURL = newFeed.URL
+	repo.set(t, cfg)
+	s.Reload(t.Context())
+	// The reload must not wait for a network quote holding the read lock.
+	unblock()
+	<-done
+	for _, chain := range []string{ChainEthereum, ChainBSC} {
+		symbol := "ETH"
+		if chain == ChainBSC {
+			symbol = "BNB"
+		}
+		price := depositInfoAsset(t, info, chain, symbol).ReferencePriceUSD
+		require.NotNil(t, price)
+		require.Equal(t, "100", *price, "one page response must keep the same provider snapshot")
+	}
+}
+
+func TestNativePriceReferenceConcurrentReload(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "false")
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "")
+	t.Setenv("SUB2API_DISABLE_BACKGROUND_JOBS", "true")
+	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := fmt.Fprint(w, `{"price":"100"}`); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(feed.Close)
+	repo := &reloadConfigRepository{}
+	cfg := depositInfoConfig()
+	cfg.NativePriceURL = feed.URL
+	repo.set(t, cfg)
+	s := &Service{settings: service.NewSettingService(repo, nil), wallet: wallet.New(nil)}
+	t.Cleanup(s.Close)
+	s.Reload(t.Context())
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for range 100 {
+				info := buildDepositInfo(cfg, depositInfoAssigned())
+				s.attachNativeReferencePrices(t.Context(), info)
+			}
+		}()
+	}
+	close(start)
+	for range 100 {
+		s.Reload(t.Context())
+	}
+	wg.Wait()
 }
 
 func TestAttachNativeReferencePricesAddsDisplayQuote(t *testing.T) {

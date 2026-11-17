@@ -98,9 +98,12 @@ export interface CcSwitchImportDeeplinkInput {
   model?: string
 }
 
-function withV1Endpoint(baseUrl: string): string {
-  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
-  return normalizedBaseUrl.endsWith('/v1') ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`
+function withV1Endpoint(baseUrl: string, path = ''): string {
+  const url = new URL(baseUrl)
+  const pathname = url.pathname.replace(/\/+$/, '')
+  url.pathname = `${pathname.endsWith('/v1') ? pathname : `${pathname}/v1`}${path}`
+  url.hash = ''
+  return url.toString()
 }
 
 export function isCcSwitchApp(value: string): value is CcSwitchApp {
@@ -185,7 +188,7 @@ export async function fetchCcSwitchModels(
   apiKey: string,
   signal?: AbortSignal
 ): Promise<string[]> {
-  const response = await fetch(`${withV1Endpoint(baseUrl)}/models`, {
+  const response = await fetch(withV1Endpoint(baseUrl, '/models'), {
     headers: { Authorization: `Bearer ${apiKey}` },
     signal
   })

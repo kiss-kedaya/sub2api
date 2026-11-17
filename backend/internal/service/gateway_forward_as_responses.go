@@ -427,7 +427,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
 	progress := &anthropicStreamProgress{}
-	sawStop := false
+	sawStop, sawError := false, false
 	// 客户端一走就关上游，不再读完整个应答。
 	clientWatch := newAnthropicClientWatch(context.Background(), c, resp.Body)
 	defer clientWatch.stop()
@@ -437,6 +437,9 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		eventType, ok := parseAnthropicSSEField(line, "event")
 		if !ok {
 			continue
+		}
+		if eventType == "error" {
+			sawError = true
 		}
 
 		// Read the data line
@@ -461,6 +464,9 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 				zap.String("event_type", eventType),
 			)
 			continue
+		}
+		if event.Type == "error" {
+			sawError = true
 		}
 		progress.observeEvent(&event)
 		if event.Type == "message_stop" {
@@ -568,6 +574,9 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		c.JSON(http.StatusOK, responsesResp)
 	}
 
+	if sawStop && !sawError && scanErr == nil {
+		s.rateLimitService.observeModelTransientSuccess(context.Background(), c, estimate.account, mappedModel)
+	}
 	return &ForwardResult{
 		RequestID:       requestID,
 		UpstreamHeaders: resp.Header,
@@ -612,7 +621,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
-	sawStop := false
+	sawStop, sawError := false, false
 	progress := &anthropicStreamProgress{}
 
 	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
@@ -667,6 +676,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
+		}
+		if event.Type == "error" {
+			sawError = true
 		}
 		progress.observeEvent(event)
 
@@ -726,7 +738,10 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 					continue
 				}
 				out := string(reverseToolNamesIfPresent(c, []byte(sse)))
-				fmt.Fprint(c.Writer, out) //nolint:errcheck
+				if _, err := fmt.Fprint(c.Writer, out); err != nil {
+					markClientGone("client write failed")
+					break
+				}
 			}
 			c.Writer.Flush()
 		}
@@ -744,6 +759,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		eventType, ok := parseAnthropicSSEField(line, "event")
 		if !ok {
 			continue
+		}
+		if eventType == "error" {
+			sawError = true
 		}
 
 		// Read data line
@@ -802,7 +820,11 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		return resultWithUsage(), err
 	}
 
-	return finalizeStream()
+	result, err := finalizeStream()
+	if err == nil && sawStop && !sawError && !clientDisconnected {
+		s.rateLimitService.observeModelTransientSuccess(context.Background(), c, estimate.account, mappedModel)
+	}
+	return result, err
 }
 
 // appendRawJSON appends a JSON fragment string to existing raw JSON.
