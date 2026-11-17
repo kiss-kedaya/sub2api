@@ -51,7 +51,7 @@ WITH src AS (
 
 const upstreamMonitorOverviewCTE = `
 WITH shaped AS (
-  SELECT id, name, COALESCE(notes, '') AS notes, platform, type, status, rate_sync_text,
+  SELECT id, name, COALESCE(notes, '') AS notes, platform, type, status,
     NULLIF(extra->'upstream_billing_probe'->'balance'->'data'->>'remaining','') AS balance_text,
     NULLIF(extra->'upstream_billing_probe'->'balance'->'data'->>'unit','') AS unit,
     NULLIF(extra->'upstream_billing_probe'->'balance'->'data'->>'unlimited','') AS unlimited_text,
@@ -310,7 +310,7 @@ func (r *upstreamMonitorRepository) RateChanges(ctx context.Context, filter serv
 	if err := r.db.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM upstream_rate_changes
 WHERE changed_at >= $1 AND ($2 = 0 OR account_id = $2)
-  AND ($3 = 0 OR (old_rate > 0 AND ABS((new_rate - old_rate) / old_rate) * 100 >= $3))`,
+  AND ($3::numeric = 0 OR (old_rate > 0 AND ABS((new_rate - old_rate) / old_rate) * 100 >= $3))`,
 		filter.From, filter.AccountID, filter.MinPct).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -322,7 +322,7 @@ SELECT c.id, c.account_id, COALESCE(a.name,''), c.old_rate::float8, c.new_rate::
 FROM upstream_rate_changes c
 LEFT JOIN accounts a ON a.id = c.account_id
 WHERE c.changed_at >= $1 AND ($2 = 0 OR c.account_id = $2)
-  AND ($3 = 0 OR (c.old_rate > 0 AND ABS((c.new_rate - c.old_rate) / c.old_rate) * 100 >= $3))
+  AND ($3::numeric = 0 OR (c.old_rate > 0 AND ABS((c.new_rate - c.old_rate) / c.old_rate) * 100 >= $3))
 ORDER BY c.changed_at DESC, c.id DESC
 LIMIT $4 OFFSET $5`,
 		filter.From, filter.AccountID, filter.MinPct, filter.PageSize, (filter.Page-1)*filter.PageSize)

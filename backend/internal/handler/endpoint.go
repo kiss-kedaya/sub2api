@@ -3,6 +3,7 @@ package handler
 import (
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -364,6 +365,12 @@ func openAIForwardResultAsGateway(result *service.OpenAIForwardResult) *service.
 	if result == nil {
 		return nil
 	}
+	cache5m, cache1h := 0, 0
+	if result.Usage.CacheCreationInputTokens > 0 {
+		cache5m, cache1h = apicompat.NormalizeCacheCreationBreakdown(
+			result.Usage.CacheCreationInputTokens, result.Usage.CacheCreation5mTokens, result.Usage.CacheCreation1hTokens,
+		)
+	}
 	return &service.ForwardResult{
 		RequestID:       result.RequestID,
 		UpstreamHeaders: result.UpstreamHeaders,
@@ -372,6 +379,8 @@ func openAIForwardResultAsGateway(result *service.OpenAIForwardResult) *service.
 			InputTokens:              max(result.Usage.InputTokens-result.Usage.CacheReadInputTokens-result.Usage.CacheCreationInputTokens, 0),
 			OutputTokens:             result.Usage.OutputTokens,
 			CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
+			CacheCreation5mTokens:    cache5m,
+			CacheCreation1hTokens:    cache1h,
 			CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
 			ImageOutputTokens:        result.Usage.ImageOutputTokens,
 			CacheReadEstimated:       result.Usage.CacheReadEstimated,

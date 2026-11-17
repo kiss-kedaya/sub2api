@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -192,6 +194,62 @@ func TestOpenAIFirstOutputTimeoutForReasoningEffort(t *testing.T) {
 	require.Equal(t, 300*time.Second, svc.openAIFirstOutputTimeout("max"))
 }
 
+func TestOpenAIFirstOutputStageReleasesMemoryOnClose(t *testing.T) {
+	for _, commit := range []bool{false, true} {
+		t.Run(fmt.Sprintf("commit_%t", commit), func(t *testing.T) {
+			stage := newDefaultOpenAIFirstOutputStage()
+			t.Cleanup(func() { _ = stage.Close() })
+			_, err := stage.WriteString("buffered preamble")
+			require.NoError(t, err)
+			require.Positive(t, stage.memory.Cap())
+			if commit {
+				require.NoError(t, stage.CommitTo(io.Discard))
+			} else {
+				require.NoError(t, stage.Close())
+			}
+			require.Zero(t, stage.memory.Cap(), "completed streams must not retain the staging allocation")
+		})
+	}
+}
+
+func TestOpenAIFirstOutputStageSpillReleasesMemoryAndForgetsUnlinkedPath(t *testing.T) {
+	resetOpenAIFirstOutputSpoolRetryForTest(t)
+	stage := newDefaultOpenAIFirstOutputStage()
+	t.Cleanup(func() { _ = stage.Close() })
+	dir := t.TempDir()
+	var spoolPath string
+	stage.memoryOnly = false
+	stage.createTemp = func() (*os.File, error) {
+		file, err := os.CreateTemp(dir, "spool-*")
+		if err == nil {
+			spoolPath = file.Name()
+		}
+		return file, err
+	}
+	t.Cleanup(func() {
+		_ = stage.Close()
+		_ = os.Remove(spoolPath)
+	})
+	removeCalls := 0
+	stage.removeFile = func(path string) error {
+		removeCalls++
+		if runtime.GOOS == "windows" {
+			return nil // Emulate Unix unlink success while exercising the real file I/O.
+		}
+		return os.Remove(path)
+	}
+	_, err := stage.WriteString("private preamble")
+	require.NoError(t, err)
+	require.Positive(t, stage.memory.Cap())
+	_, err = stage.Write(bytes.Repeat([]byte("x"), openAIFirstOutputStageMemoryLimit))
+	require.NoError(t, err)
+	require.NotNil(t, stage.tempFile)
+	require.Zero(t, stage.memory.Cap(), "spilling must release the old in-memory buffer immediately")
+	require.Empty(t, stage.tempPath, "an unlinked spool needs no later path cleanup")
+	require.NoError(t, stage.Close())
+	require.Equal(t, 1, removeCalls, "Close must not unlink an already unlinked path")
+}
+
 func TestOpenAIFirstOutputStageDefaultLimitIsIndependentFromScannerLimit(t *testing.T) {
 	stage := newDefaultOpenAIFirstOutputStage()
 	defer func() { require.NoError(t, stage.Close()) }()
@@ -234,8 +292,8 @@ func TestOpenAIFirstOutputStageOverflowIsAtomicAndCleanupRemovesSpool(t *testing
 		require.Empty(t, stage.tempPath)
 	} else {
 		require.NotNil(t, stage.tempFile)
-		require.NotEmpty(t, stage.tempPath)
-		_, err = os.Stat(stage.tempPath)
+		require.Empty(t, stage.tempPath)
+		_, err = os.Stat(stage.tempFile.Name())
 		require.ErrorIs(t, err, os.ErrNotExist)
 		stat, statErr := stage.tempFile.Stat()
 		require.NoError(t, statErr)
@@ -267,9 +325,9 @@ func TestOpenAIFirstOutputStageCommitCopiesSpoolAndRemovesTemp(t *testing.T) {
 		require.Empty(t, path)
 		require.Nil(t, stage.tempFile)
 	} else {
-		require.NotEmpty(t, path)
+		require.Empty(t, path)
 		require.NotNil(t, stage.tempFile)
-		_, statErr := os.Stat(path)
+		_, statErr := os.Stat(stage.tempFile.Name())
 		require.ErrorIs(t, statErr, os.ErrNotExist)
 	}
 
@@ -284,6 +342,154 @@ func TestOpenAIFirstOutputStageCommitCopiesSpoolAndRemovesTemp(t *testing.T) {
 	require.NoError(t, stage.Close())
 }
 
+func resetOpenAIFirstOutputSpoolRetryForTest(t *testing.T) {
+	t.Helper()
+	previous := openAIFirstOutputSpoolRetryAfter.Swap(0)
+	t.Cleanup(func() { openAIFirstOutputSpoolRetryAfter.Store(previous) })
+}
+
+func TestOpenAIFirstOutputSpoolDirectoryPermissions(t *testing.T) {
+	require.Equal(t, os.FileMode(os.ModeSticky|0o777), os.FileMode(openAIFirstOutputSpoolDirectoryMode), "Go sticky mode is not the Unix octal 01000 bit")
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing_%t", existing), func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "spool")
+			var before os.FileMode
+			if existing {
+				require.NoError(t, os.Mkdir(dir, 0o700))
+				info, err := os.Stat(dir)
+				require.NoError(t, err)
+				before = info.Mode()
+			}
+			file, err := createOpenAIFirstOutputSpool(dir)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = os.Remove(file.Name()) })
+			t.Cleanup(func() { _ = file.Close() })
+			info, err := os.Stat(dir)
+			require.NoError(t, err)
+			if existing {
+				require.Equal(t, before, info.Mode(), "existing directory permissions must not change")
+			} else if runtime.GOOS != "windows" {
+				require.Equal(t, os.FileMode(0o777), info.Mode().Perm(), "new directory permissions must override umask")
+				require.NotZero(t, info.Mode()&os.ModeSticky, "new shared directory must have the Go sticky bit")
+			}
+		})
+	}
+}
+
+func TestOpenAIFirstOutputStageSpoolDirectoryFailureCooldown(t *testing.T) {
+	resetOpenAIFirstOutputSpoolRetryForTest(t)
+	createCalls := 0
+	for i := 0; i < 2; i++ {
+		stage := newDefaultOpenAIFirstOutputStage()
+		stage.memoryOnly = false
+		t.Cleanup(func() { _ = stage.Close() })
+		stage.createTemp = func() (*os.File, error) {
+			createCalls++
+			return nil, os.ErrPermission
+		}
+		_, err := stage.Write(bytes.Repeat([]byte("x"), 68*1024))
+		require.NoError(t, err)
+		require.NoError(t, stage.CommitTo(io.Discard))
+	}
+	require.Equal(t, 1, createCalls, "unwritable preferred directories must be skipped across requests for a short window")
+}
+
+func TestOpenAIFirstOutputStageSpoolExpiredWindowHasOneProbe(t *testing.T) {
+	resetOpenAIFirstOutputSpoolRetryForTest(t)
+	openAIFirstOutputSpoolRetryAfter.Store(time.Now().Add(-time.Second).UnixNano())
+	var createCalls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	probeStage := newDefaultOpenAIFirstOutputStage()
+	probeStage.memoryOnly = false
+	t.Cleanup(func() { _ = probeStage.Close() })
+	probeStage.createTemp = func() (*os.File, error) {
+		createCalls.Add(1)
+		close(started)
+		<-release
+		return nil, os.ErrPermission
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := probeStage.Write(bytes.Repeat([]byte("x"), 68*1024))
+		if err == nil {
+			err = probeStage.CommitTo(io.Discard)
+		}
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("preferred directory was not probed")
+	}
+	for i := 0; i < 4; i++ {
+		stage := newDefaultOpenAIFirstOutputStage()
+		stage.memoryOnly = false
+		t.Cleanup(func() { _ = stage.Close() })
+		stage.createTemp = func() (*os.File, error) {
+			createCalls.Add(1)
+			return nil, os.ErrPermission
+		}
+		_, err := stage.Write(bytes.Repeat([]byte("x"), 68*1024))
+		require.NoError(t, err)
+		require.NoError(t, stage.CommitTo(io.Discard))
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("preferred directory probe did not finish")
+	}
+	require.EqualValues(t, 1, createCalls.Load(), "only one request should probe an expired failure window")
+}
+
+func TestOpenAIFirstOutputStageSpoolReprobesAndLogsEachUnavailableWindow(t *testing.T) {
+	resetOpenAIFirstOutputSpoolRetryForTest(t)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	createCalls := 0
+	unavailable := true
+	writeStage := func() {
+		t.Helper()
+		stage := newDefaultOpenAIFirstOutputStage()
+		stage.memoryOnly = false
+		t.Cleanup(func() { _ = stage.Close() })
+		stage.createTemp = func() (*os.File, error) {
+			createCalls++
+			if unavailable {
+				return nil, os.ErrPermission
+			}
+			return os.CreateTemp(t.TempDir(), "recovered-spool-*")
+		}
+		_, err := stage.Write(bytes.Repeat([]byte("x"), 68*1024))
+		require.NoError(t, err)
+		require.NoError(t, stage.CommitTo(io.Discard))
+	}
+	writeStage()
+	deadline := openAIFirstOutputSpoolRetryAfter.Load()
+	require.Greater(t, deadline, time.Now().UnixNano())
+	require.LessOrEqual(t, time.Until(time.Unix(0, deadline)), time.Minute)
+	writeStage()
+	require.Equal(t, 1, createCalls)
+	require.Equal(t, 1, strings.Count(logs.String(), "preferred spool directory unavailable"))
+
+	openAIFirstOutputSpoolRetryAfter.Store(time.Now().Add(-time.Second).UnixNano())
+	unavailable = false
+	writeStage()
+	require.Equal(t, 2, createCalls, "the preferred directory must be probed after cooldown")
+	unavailable = true
+	writeStage()
+	require.Equal(t, 3, createCalls, "a recovered directory must be eligible immediately")
+	require.Equal(t, 2, strings.Count(logs.String(), "preferred spool directory unavailable"), "a new unavailable window needs a new log")
+	writeStage()
+	require.Equal(t, 3, createCalls)
+}
+
 func TestOpenAIFirstOutputStageSpoolDirectoryFallback(t *testing.T) {
 	for _, failFallback := range []bool{false, true} {
 		name := "preferred_unwritable"
@@ -291,6 +497,7 @@ func TestOpenAIFirstOutputStageSpoolDirectoryFallback(t *testing.T) {
 			name = "both_unavailable"
 		}
 		t.Run(name, func(t *testing.T) {
+			resetOpenAIFirstOutputSpoolRetryForTest(t)
 			tempDir := t.TempDir()
 			if failFallback {
 				tempDir = filepath.Join(tempDir, "missing")
@@ -339,6 +546,7 @@ func TestOpenAIFirstOutputStageSpoolDirectoryFallback(t *testing.T) {
 }
 
 func TestOpenAIFirstOutputStageUnlinkFailurePermanentlyFallsBackToMemoryAndRetriesCleanup(t *testing.T) {
+	resetOpenAIFirstOutputSpoolRetryForTest(t)
 	stage := newDefaultOpenAIFirstOutputStage()
 	stage.memoryOnly = false
 	t.Cleanup(func() {

@@ -743,6 +743,8 @@ func claudeUsageToOpenAIUsage(u *ClaudeUsage) OpenAIUsage {
 		InputTokens:              u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens,
 		OutputTokens:             u.OutputTokens,
 		CacheCreationInputTokens: u.CacheCreationInputTokens,
+		CacheCreation5mTokens:    u.CacheCreation5mTokens,
+		CacheCreation1hTokens:    u.CacheCreation1hTokens,
 		CacheReadInputTokens:     u.CacheReadInputTokens,
 	}
 }
