@@ -67,8 +67,11 @@ func TestUpstreamPreferencesFallbackReservation(t *testing.T) {
 				return nil, OpenAIAccountScheduleDecision{}, nil, ErrNoAvailableAccounts
 			}
 			// Selection can take the attempt lock: the caller must release it first.
-			state.mu.Lock()
-			state.mu.Unlock()
+			if state.mu.TryLock() {
+				state.mu.Unlock()
+			} else {
+				t.Error("selection must run without the attempt lock held")
+			}
 			close(entered)
 			<-resume
 			return nil, OpenAIAccountScheduleDecision{}, nil, ErrNoAvailableAccounts
