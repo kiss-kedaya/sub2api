@@ -127,6 +127,7 @@ func TestGatewayHandlerMessagesPassthroughStreamFailureIsTerminal(t *testing.T) 
 		status    int
 		errorType string
 		withUsage bool
+		native    bool
 	}{
 		{
 			name:    "explicit status preserves partial usage once",
@@ -137,6 +138,16 @@ func TestGatewayHandlerMessagesPassthroughStreamFailureIsTerminal(t *testing.T) 
 			name:    "overload is 529 and not generic 502",
 			payload: `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`,
 			status:  529, errorType: "overloaded_error", withUsage: true,
+		},
+		{
+			name:    "passthrough parameter error with observed usage is free",
+			payload: `{"type":"error","error":{"type":"invalid_request_error","message":"synthetic invalid parameter","status_code":400}}`,
+			status:  http.StatusBadRequest, errorType: "invalid_request_error", withUsage: true,
+		},
+		{
+			name:    "native data-only parameter error with large cache usage is free",
+			payload: `{"type":"error","error":{"type":"invalid_request_error","message":"synthetic invalid parameter"}}`,
+			status:  http.StatusBadRequest, errorType: "invalid_request_error", withUsage: true, native: true,
 		},
 		{
 			name:    "error without measured usage does not charge",
@@ -155,6 +166,9 @@ func TestGatewayHandlerMessagesPassthroughStreamFailureIsTerminal(t *testing.T) 
 				Credentials:   map[string]any{"api_key": "synthetic-test-key", "base_url": "https://api.anthropic.com"},
 				Extra:         map[string]any{"anthropic_passthrough": true},
 			}
+			if tc.native {
+				account.Extra["anthropic_passthrough"] = false
+			}
 			cfg := &config.Config{RunMode: config.RunModeStandard}
 			cfg.Default.RateMultiplier = 1
 			cfg.Gateway.MaxLineSize = 1024 * 1024
@@ -171,9 +185,14 @@ func TestGatewayHandlerMessagesPassthroughStreamFailureIsTerminal(t *testing.T) 
 					"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial answer\"}}\n\n" +
 					"event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":3}}\n\n"
 			}
-			upstream.wire += "event: error\ndata: " + tc.payload + "\n\n" +
-				"event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":999,\"output_tokens\":999}}\n\n" +
-				"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+			if tc.native {
+				upstream.wire = strings.Replace(upstream.wire, `"input_tokens":11`, `"input_tokens":11,"cache_creation_input_tokens":300000`, 1)
+				upstream.wire += "data: " + tc.payload + "\n\n"
+			} else {
+				upstream.wire += "event: error\ndata: " + tc.payload + "\n\n" +
+					"event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":999,\"output_tokens\":999}}\n\n" +
+					"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+			}
 			snapshot := service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: []*service.Account{account}}, nil, nil, nil, nil)
 			gateway := service.NewGatewayService(
 				nil, &fakeGroupRepo{group: group}, usage, billing, nil, nil, nil, cache, cfg,
@@ -204,7 +223,10 @@ func TestGatewayHandlerMessagesPassthroughStreamFailureIsTerminal(t *testing.T) 
 			require.Contains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
 			require.EqualValues(t, 1, upstream.calls.Load(), "a terminal stream failure must never replay the request")
 			wire := recorder.Body.String()
-			require.Equal(t, 1, strings.Count(wire, "event: error\n"), wire)
+			if !tc.native {
+				require.Equal(t, 1, strings.Count(wire, "event: error\n"), wire)
+			}
+			require.Equal(t, 1, strings.Count(wire, `"type":"error"`), "only one terminal error frame")
 			require.Equal(t, 1, strings.Count(wire, tc.payload), "the original provider error must be sent exactly once")
 			require.NotContains(t, wire, "Upstream request failed")
 			require.NotContains(t, wire, "event: message_stop")
@@ -213,7 +235,7 @@ func TestGatewayHandlerMessagesPassthroughStreamFailureIsTerminal(t *testing.T) 
 			require.True(t, ok, "HTTP 200 must still be recorded as an application failure")
 			require.Equal(t, tc.status, failure.IntendedStatus)
 			require.Equal(t, tc.errorType, failure.ErrType)
-			require.True(t, failure.CountTowardsSLA)
+			require.Equal(t, !tc.native, failure.CountTowardsSLA, "parameter errors remain outside upstream SLA failures")
 
 			cache.mu.Lock()
 			preBindings, postBindings, remainingBindings := cache.preForwardBindings, cache.postForwardBindings, len(cache.bindings)
@@ -229,9 +251,9 @@ func TestGatewayHandlerMessagesPassthroughStreamFailureIsTerminal(t *testing.T) 
 			billing.mu.Lock()
 			commands := append([]*service.UsageBillingCommand(nil), billing.commands...)
 			billing.mu.Unlock()
-			if !tc.withUsage {
-				require.Empty(t, logs, "an error-only stream has no observed usage to record")
-				require.Empty(t, commands, "an error-only stream must not fabricate a charge")
+			if !tc.withUsage || tc.native {
+				require.Empty(t, logs, "native terminal errors retain the existing nil-result path")
+				require.Empty(t, commands, "terminal errors must not fabricate a charge")
 				return
 			}
 			require.Len(t, logs, 1, "partial usage must be recorded once through the handler's error branch")
@@ -239,7 +261,7 @@ func TestGatewayHandlerMessagesPassthroughStreamFailureIsTerminal(t *testing.T) 
 			require.Equal(t, 11, logs[0].InputTokens)
 			require.Equal(t, 7, logs[0].CacheReadTokens)
 			require.Equal(t, 3, logs[0].OutputTokens)
-			require.Positive(t, logs[0].ActualCost, "real provider-measured tokens remain billable")
+			require.Zero(t, logs[0].ActualCost, "explicit upstream errors are free even after measured usage")
 			require.InDelta(t, logs[0].ActualCost, commands[0].BalanceCost, 1e-12)
 			require.Equal(t, logs[0].RequestID, commands[0].RequestID)
 		})

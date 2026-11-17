@@ -125,6 +125,7 @@ func TestAnthropicPassthroughForwardStreamErrorsPreserveFailureAndUsage(t *testi
 			require.False(t, errors.As(err, &failover), "an already accepted failed stream must not replay")
 			if tc.withUsage {
 				require.NotNil(t, result)
+				require.True(t, result.NonBillableUpstreamError, "explicit upstream errors retain usage but do not charge")
 				require.Equal(t, 11, result.Usage.InputTokens)
 				require.Equal(t, 7, result.Usage.CacheReadInputTokens)
 				require.Equal(t, 3, result.Usage.OutputTokens, "usage after the first terminal error must be ignored")
@@ -193,6 +194,7 @@ func TestAnthropicPassthroughOversizedErrorRemainsFailedAndRetainsUsage(t *testi
 			var retry *UpstreamFailoverError
 			require.False(t, errors.As(err, &retry), "oversized terminal errors cannot replay accepted work")
 			require.NotNil(t, result)
+			require.True(t, result.NonBillableUpstreamError)
 			require.Equal(t, 11, result.Usage.InputTokens)
 			require.Equal(t, usagePrefix, recorder.Body.String())
 			require.NotContains(t, recorder.Body.String(), "synthetic-private-provider-diagnostic")

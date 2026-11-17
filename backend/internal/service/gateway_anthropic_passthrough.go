@@ -278,6 +278,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
+	var nonBillableUpstreamError bool
 	if input.RequestStream {
 		// 上游已经确认 200 + SSE，现在才允许向下游写心跳（之前保持静默，
 		// 保证上游 4xx/5xx 能按真实状态码返回）。
@@ -296,8 +297,9 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		usage = streamResult.usage
 		firstTokenMs = streamResult.firstTokenMs
 		clientDisconnect = streamResult.clientDisconnect
+		nonBillableUpstreamError = streamResult.nonBillableUpstreamError
 	} else {
-		usage, err = s.handleNonStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account, input.RequestModel)
+		nonStreamResult, err := s.handleNonStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account, input.RequestModel)
 		if err != nil {
 			// 上游已受理，客户端在最终 JSON 读完前离开：没有 usage 可读，输入按估算计费。
 			if upstream.departedClient(err) {
@@ -305,6 +307,8 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			}
 			return nil, err
 		}
+		usage = nonStreamResult.ClaudeUsage
+		nonBillableUpstreamError = nonStreamResult.nonBillableUpstreamError
 	}
 	if usage == nil {
 		usage = &ClaudeUsage{}
@@ -326,6 +330,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		Duration:                      time.Since(input.StartTime),
 		FirstTokenMs:                  firstTokenMs,
 		ClientDisconnect:              clientDisconnect,
+		NonBillableUpstreamError:      nonBillableUpstreamError,
 	}, nil
 }
 
@@ -690,7 +695,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					if !clientDisconnected {
 						WriteUpstreamFinancialError(c, 0, []byte(data))
 					}
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected, nonBillableUpstreamError: true}, nil
 				}
 			}
 			if pendingErrorHeader != "" {
@@ -1124,7 +1129,7 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	c *gin.Context,
 	account *Account,
 	requestedModel ...string,
-) (*ClaudeUsage, error) {
+) (*anthropicNonStreamingResult, error) {
 	if s.rateLimitService != nil {
 		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
 	}
@@ -1167,7 +1172,7 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	if len(requestedModel) > 0 {
 		s.rateLimitService.observeModelTransientSuccess(ctx, c, account, requestedModel[0], body)
 	}
-	return usage, nil
+	return &anthropicNonStreamingResult{ClaudeUsage: usage, nonBillableUpstreamError: anthropicNonStreamingUpstreamError(body)}, nil
 }
 
 func classifyAnthropicResponseInputAsCacheRead(body []byte, usage *ClaudeUsage) ([]byte, error) {
