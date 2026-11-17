@@ -515,11 +515,20 @@ func (w *Worker) run(ctx context.Context) {
 	}
 }
 
-func (w *Worker) scanAll(ctx context.Context) {
+// scanPassDeadline bounds one whole pass. Without it a single hung RPC call
+// keeps the pass (and therefore the scan session lock) forever, every later
+// tick answers ErrScanBusy, and the chain stops advancing until the process is
+// restarted. The budget is deliberately larger than the per-chain allowance so
+// a normal backlog still finishes.
+const scanPassDeadline = 15 * time.Minute
+
+func (w *Worker) scanAll(parent context.Context) {
 	if w == nil {
 		return
 	}
-	if err := w.RunOnce(ctx); err != nil && !errors.Is(err, ErrScanBusy) && !errors.Is(err, mode.ErrReadOnly) && ctx.Err() == nil {
+	ctx, cancel := context.WithTimeout(parent, scanPassDeadline)
+	defer cancel()
+	if err := w.RunOnce(ctx); err != nil && !errors.Is(err, ErrScanBusy) && !errors.Is(err, mode.ErrReadOnly) && parent.Err() == nil {
 		// A node rate limit says nothing about the block range: the same pass
 		// succeeds once the burst has drained. Waiting out one backoff keeps the
 		// cursor moving inside the tick instead of losing the whole interval —
@@ -527,19 +536,22 @@ func (w *Worker) scanAll(ctx context.Context) {
 		// hours while the other chains advanced.
 		if isRateLimitedScan(err) {
 			select {
-			case <-ctx.Done():
+			case <-parent.Done():
 				return
 			case <-time.After(scanRateLimitRoundBackoff):
 			}
 			if retried := w.RunOnce(ctx); retried == nil {
 				return
-			} else if ctx.Err() != nil {
+			} else if parent.Err() != nil {
 				return
 			} else {
 				err = retried
 			}
 		}
 		w.reportScanFailure(err)
+	}
+	if ctx.Err() != nil && parent.Err() == nil {
+		slog.Error("[cryptopay] scan pass exceeded its deadline; session lock released", "deadline", scanPassDeadline.String())
 	}
 }
 
