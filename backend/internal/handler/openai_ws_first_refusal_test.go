@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -293,7 +294,7 @@ func TestOpenAIResponsesWebSocketFirstUpstreamRefusal(t *testing.T) {
 			c.Request.Header = harness.headers.Clone()
 			hash := service.GrokModerationSessionHash(c, harness.apiKey, payload)
 			require.NotEmpty(t, hash)
-			blockKey := "blocked:sess:0:" + hash
+			blockKey := "cyber_session_scope:grok-moderation-user:" + strconv.FormatInt(harness.apiKey.UserID, 10)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			require.False(t, harness.redisServer.Exists(blockKey), "first request must not start pre-blocked")
@@ -340,9 +341,9 @@ func TestOpenAIResponsesWebSocketFirstUpstreamRefusal(t *testing.T) {
 			require.True(t, harness.redisServer.Exists(blockKey), "first refusal must persist its block through BeforeUpstreamFailure")
 			ttl, err := harness.redisClient.TTL(ctx, blockKey).Result()
 			require.NoError(t, err)
-			require.Equal(t, time.Duration(-1), ttl, "Redis block must have no expiration")
-			harness.redisServer.FastForward(365 * 24 * time.Hour)
-			require.True(t, harness.redisServer.Exists(blockKey), "block must survive long after ordinary session TTLs")
+			require.Equal(t, 24*time.Hour, ttl, "the refused transcript stays locked for a day")
+			harness.redisServer.FastForward(time.Hour)
+			require.True(t, harness.redisServer.Exists(blockKey), "block must survive ordinary session TTLs")
 
 			// A fresh socket must consult Redis before selecting/dialing upstream.
 			blockedClose := harness.request(t, payload, "")
@@ -455,7 +456,7 @@ func TestOpenAIResponsesWebSocketSSE403RefusalBillsAndBlocks(t *testing.T) {
 	c.Request.Header = harness.headers.Clone()
 	hash := service.GrokModerationSessionHash(c, harness.apiKey, payload)
 	require.NotEmpty(t, hash)
-	blockKey := "blocked:sess:0:" + hash
+	blockKey := "cyber_session_scope:grok-moderation-user:" + strconv.FormatInt(harness.apiKey.UserID, 10)
 	require.True(t, harness.redisServer.Exists(blockKey), "protocol-level refusal must persist the conversation block")
 
 	blockedClose := harness.request(t, payload, "")
