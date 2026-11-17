@@ -1586,10 +1586,19 @@ type anthropicNonStreamingResult struct {
 }
 
 // Only inspect the response envelope, never model output or tool arguments.
+// A body counts as an upstream error when it says so itself (type "error"), or
+// when it carries an error object and no message content. A relay that adds an
+// empty or null "error" field to a normal answer must stay billable.
 func anthropicNonStreamingUpstreamError(body []byte) bool {
 	root := gjson.ParseBytes(body)
+	if root.Get("type").String() == "error" {
+		return true
+	}
 	upstreamError := root.Get("error")
-	return root.Get("type").String() == "error" || upstreamError.Exists() && upstreamError.Type != gjson.Null
+	if !upstreamError.IsObject() || root.Get("content").Exists() {
+		return false
+	}
+	return upstreamError.Get("message").Exists() || upstreamError.Get("type").Exists()
 }
 
 func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*anthropicNonStreamingResult, error) {

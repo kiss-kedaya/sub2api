@@ -252,3 +252,20 @@ func TestAnthropicConvertedExplicitErrorBilling(t *testing.T) {
 		}
 	}
 }
+
+// A normal answer from a relay that adds an empty or null "error" field, or
+// that mentions an error inside its content, must stay billable.
+func TestAnthropicNonStreamingUpstreamError(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"type":"error","error":{"type":"invalid_request_error","message":"synthetic"}}`:                                 true,
+		`{"error":{"message":"synthetic rejection"}}`:                                                                     true,
+		`{"error":{"type":"upstream_error"}}`:                                                                             true,
+		`{"id":"msg_1","type":"message","content":[{"type":"text","text":"ok"}],"error":null}`:                            false,
+		`{"id":"msg_1","type":"message","content":[],"error":{}}`:                                                         false,
+		`{"id":"msg_1","type":"message","content":[{"type":"text","text":"ok"}],"error":{"message":"relay note"}}`:        false,
+		`{"id":"msg_1","type":"message","error":""}`:                                                                      false,
+		`{"id":"msg_1","type":"message","content":[{"type":"text","text":"the word error and \"type\":\"error\" here"}]}`: false,
+	} {
+		require.Equal(t, want, anthropicNonStreamingUpstreamError([]byte(body)), body)
+	}
+}
