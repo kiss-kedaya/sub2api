@@ -29,6 +29,16 @@ import (
 // It is a variable only so tests can shorten it.
 var deepSeekUpstreamWaitLimit = 65 * time.Minute
 
+// A request whose body is over deepSeekLargeRequestBytes gets the shorter
+// deepSeekLargeRequestWaitLimit instead (owner decision 2026-11-18): it pins
+// tens of megabytes for as long as it waits, so it is ended after 30 minutes
+// without an answer. Over the same six hours this would have ended 12 of the
+// 1,050 large requests that went on to succeed.
+const (
+	deepSeekLargeRequestBytes     int64 = 20 << 20
+	deepSeekLargeRequestWaitLimit       = 30 * time.Minute
+)
+
 // errOpenAIUpstreamWaitLimit marks a request ended by the limit above.
 var errOpenAIUpstreamWaitLimit = errors.New("upstream sent no response within the wait limit")
 
@@ -47,13 +57,17 @@ var openAIUpstreamWaitLimitFailoverBody = []byte(`{"error":{"type":"upstream_err
 // Only DeepSeek forwards built with the OpenAI profile qualify: that profile
 // is the one without a response-header timeout. The native Anthropic endpoint
 // and the search and fetch tools use the default profile, which already times
-// out at the transport; the media tools carry their own deadlines.
+// out at the transport; the media tools carry their own deadlines. The body
+// size is the upstream request's own Content-Length.
 func openAIUpstreamWaitLimitFor(request *http.Request, account *Account) time.Duration {
 	if request == nil || account == nil || account.Platform != PlatformDeepseek {
 		return 0
 	}
 	if HTTPUpstreamProfileFromContext(request.Context()) != HTTPUpstreamProfileOpenAI {
 		return 0
+	}
+	if request.ContentLength > deepSeekLargeRequestBytes {
+		return deepSeekLargeRequestWaitLimit
 	}
 	return deepSeekUpstreamWaitLimit
 }
