@@ -3,6 +3,7 @@ package cryptopay
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"log/slog"
@@ -302,19 +303,25 @@ type Service struct {
 	settings *service.SettingService
 	creditor ledger.Creditor
 
-	mu        sync.RWMutex
-	config    CryptoConfig
-	pools     map[string]*rpc.Pool
-	worker    *scanner.Worker
-	planner   *sweeper.Planner
-	wallet    *wallet.Manager
-	executor  *sweeper.Executor
-	addresses *addresses.Service
+	mu                sync.RWMutex
+	config            CryptoConfig
+	configFingerprint string // Stored config, before the local wallet guard.
+	reloadFailed      bool   // Retry transient load/guard failures without a config change.
+	pools             map[string]*rpc.Pool
+	worker            *scanner.Worker
+	planner           *sweeper.Planner
+	wallet            *wallet.Manager
+	executor          *sweeper.Executor
+	addresses         *addresses.Service
 	// nativePrice is the process-wide market feed. It is rebuilt only when the
 	// configured endpoint changes, so its 60s cache survives scan passes and
 	// manual confirmations share the same observations.
 	nativePrice *nativeprice.Provider
 
+	// configCancel/configDone own the independent config watcher across reloads.
+	configCancel context.CancelFunc
+	configDone   chan struct{}
+	closed       bool
 	// maintCancel stops the pool top-up / scheduled sweep loop.
 	maintCancel     context.CancelFunc
 	securityCancel  context.CancelFunc
@@ -369,6 +376,7 @@ func NewService(
 		addressSvc.SetSecurityGuards(s.checkWalletActivity, s.validateWalletAssignment)
 	}
 	s.reload(context.Background())
+	s.startConfigPoller(context.Background(), time.Minute)
 	if masterKey != "" && cryptoWorkersAllowed() && service.CryptoInstanceEnabled() {
 		securityCtx, cancel := context.WithCancel(context.Background())
 		s.securityCancel = cancel
@@ -392,11 +400,33 @@ func applyRPCThrottle(cfg CryptoConfig) {
 }
 
 func (s *Service) reload(ctx context.Context) {
+	// Serialize config checks with admin reloads, retaining sweepMu -> mu order.
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
+	_ = s.reloadLocked(ctx) // Reload failures are logged before returning.
+}
+
+// reloadLocked is called with sweepMu held, never with mu held.
+func (s *Service) reloadLocked(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.RLock()
+	closed := s.closed
+	s.mu.RUnlock()
+	if closed {
+		return context.Canceled
+	}
 	cfg, err := LoadConfig(ctx, NewServiceSettingStore(s.settings))
 	if err != nil {
-		slog.Warn("[cryptopay] config load failed", "error", err)
-		return
+		s.mu.Lock()
+		s.reloadFailed = true
+		s.mu.Unlock()
+		slog.Error("[cryptopay] config load failed", "error", rpc.SanitizeNodeMessage(err.Error()))
+		return err
 	}
+	fingerprint := configFingerprint(cfg)
+	var guardErr error
 	// Two independent decisions share one stored row:
 	//   channelEnabled - the admin switch customers see and the user API serves.
 	//   scanEnabled    - whether THIS host runs the scanner, maintenance and
@@ -407,28 +437,37 @@ func (s *Service) reload(ctx context.Context) {
 	channelEnabled := cfg.Enabled
 	if channelEnabled && !mode.ReadOnly() {
 		guardCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		guardErr := s.checkWalletSecurity(guardCtx)
+		guardErr = s.checkWalletSecurity(guardCtx)
 		cancel()
 		if guardErr != nil {
 			channelEnabled = false
-			slog.Warn("[cryptopay] channel paused by wallet security guard")
+			slog.Error("[cryptopay] channel paused by wallet security guard",
+				"error", rpc.SanitizeNodeMessage(guardErr.Error()))
 		}
 	}
 	cfg.Enabled = channelEnabled
 	scanEnabled := channelEnabled && service.CryptoInstanceEnabled()
 
 	// A queued run must not retain an executor built from obsolete config.
-	s.sweepMu.Lock()
-	defer s.sweepMu.Unlock()
 	// The feed is cheap to build; its quote cache lives inside the provider.
 	priceProvider := nativeprice.New(cfg.NativePriceURL)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return context.Canceled
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if s.discoveryCancel != nil {
 		s.discoveryCancel()
 		s.discoveryCancel = nil
 	}
 	s.config = cfg
+	s.configFingerprint = fingerprint
+	// Only a proven security lock suppresses retries; an unavailable or
+	// uninitialized guard must be checked again even if it paused the channel.
+	s.reloadFailed = guardErr != nil && !errors.Is(guardErr, wallet.ErrSecurityLocked)
 	s.nativePrice = priceProvider
 	// An imported hot mnemonic changes the gas wallet address; the next poll
 	// must derive it again instead of trusting the cached one.
@@ -468,7 +507,7 @@ func (s *Service) reload(ctx context.Context) {
 		}
 		s.executor = nil
 		s.planner = nil
-		return
+		return guardErr
 	}
 
 	// The map is immutable per worker; only each Pool's synchronized endpoint
@@ -633,24 +672,18 @@ func (s *Service) reload(ctx context.Context) {
 	if cryptoWorkersAllowed() {
 		maintCtx, maintCancel := context.WithCancel(context.Background())
 		s.maintCancel = maintCancel
-		go s.maintenance(maintCtx, cfg)
+		go s.maintenance(maintCtx)
 	}
 	slog.Info("[cryptopay] started", "chains", cfg.Chains)
+	return nil
 }
 
 // maintenance keeps the address pool topped up and, when sweep_auto is on,
 // runs the sweep on a timer. Both are no-ops for deployments that leave the
 // defaults alone.
-func (s *Service) maintenance(ctx context.Context, cfg CryptoConfig) {
+func (s *Service) maintenance(ctx context.Context) {
 	poolTicker := time.NewTicker(10 * time.Minute)
 	defer poolTicker.Stop()
-	// The admin config lives in the database, but the running process only
-	// reads it at startup and on an authenticated save. Patching a row directly
-	// — which is what an operator does at 05:00 when a provider runs out of
-	// quota — therefore did nothing until the next restart, and a restart with
-	// long-lived streams can take many minutes. Poll the stored config on the
-	// same tick as the pool top-up and reload when it actually changed.
-	cfgFingerprint := configFingerprint(cfg)
 	// Sweeps move money: check rarely and only on the hour, so a fork that
 	// enables it never sees more than one automatic run per sweep cycle.
 	sweepTicker := time.NewTicker(time.Hour)
@@ -662,11 +695,6 @@ func (s *Service) maintenance(ctx context.Context, cfg CryptoConfig) {
 		case <-poolTicker.C:
 			if err := s.addresses.EnsurePool(ctx); err != nil {
 				slog.Warn("[cryptopay] pool top-up failed", "error", err)
-			}
-			if reloaded, err := s.reloadIfConfigChanged(ctx, &cfgFingerprint); err != nil {
-				slog.Warn("[cryptopay] config reload check failed", "error", err)
-			} else if reloaded {
-				slog.Info("[cryptopay] config changed in storage; reloaded")
 			}
 		case <-sweepTicker.C:
 			// A swept record is a claim about the chain, not the chain itself.
@@ -1489,7 +1517,7 @@ const nativeReferencePriceTimeout = 2 * time.Second
 func (s *Service) DepositInfo(ctx context.Context, userID int64) (*DepositInfo, error) {
 	cfg := s.Config()
 	if !cfg.Enabled {
-		return &DepositInfo{Enabled: false}, nil
+		return &DepositInfo{Enabled: false, Chains: []DepositChain{}}, nil
 	}
 	assigned, err := s.addresses.GetOrAssign(ctx, userID)
 	if err != nil {
@@ -1748,26 +1776,78 @@ func applyRPCLimits(cfg CryptoConfig) {
 	rpc.ReplaceEndpointLimits(limits)
 }
 
-// reloadIfConfigChanged re-reads the stored config and rebuilds pools and the
-// worker when the operator edited it out-of-band. Returns whether it reloaded.
-//
-// The comparison is against the last fingerprint this process applied, so a
-// successful reload updates the caller's marker: a storage failure then retries
-// on the next tick instead of being masked by a stale marker.
-func (s *Service) reloadIfConfigChanged(ctx context.Context, last *string) (bool, error) {
-	stored, err := LoadConfig(ctx, NewServiceSettingStore(s.settings))
-	if err != nil {
-		return false, err
+// startConfigPoller watches config even when this instance delegates scanning
+// or the initial load failed. Its lifetime is independent of worker reloads.
+func (s *Service) startConfigPoller(parent context.Context, interval time.Duration) {
+	if !cryptoWorkersAllowed() {
+		return
 	}
-	if configFingerprint(stored) == *last {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.configCancel != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	s.configCancel, s.configDone = cancel, done
+	go func() {
+		defer close(done)
+		defer cancel()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				checkCtx, checkCancel := context.WithTimeout(ctx, 30*time.Second)
+				reloaded, err := s.reloadIfConfigChanged(checkCtx)
+				checkCancel()
+				if err != nil && ctx.Err() == nil {
+					slog.Error("[cryptopay] config reload check failed", "error", rpc.SanitizeNodeMessage(err.Error()))
+				} else if reloaded {
+					slog.Info("[cryptopay] stored config applied")
+				}
+			}
+		}
+	}()
+}
+
+// reloadIfConfigChanged compares with the last stored config processed, not the
+// locally paused snapshot. Failed loads and transient guard errors retry; an
+// unchanged config with a real security incident never rebuilds workers.
+func (s *Service) reloadIfConfigChanged(ctx context.Context) (bool, error) {
+	// A long manual sweep may own this lock. Skip this tick rather than
+	// blocking the independent watcher (and its cancellation) behind it.
+	if !s.sweepMu.TryLock() {
 		return false, nil
 	}
-	// Reload reads the config again itself; only the fingerprint matters here.
-	s.Reload(ctx)
+	defer s.sweepMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	s.mu.RLock()
-	applied := s.config
+	last, retry, closed := s.configFingerprint, s.reloadFailed, s.closed
 	s.mu.RUnlock()
-	*last = configFingerprint(applied)
+	if closed {
+		return false, context.Canceled
+	}
+	stored, err := LoadConfig(ctx, NewServiceSettingStore(s.settings))
+	if err != nil {
+		s.mu.Lock()
+		s.reloadFailed = true
+		s.mu.Unlock()
+		return false, err
+	}
+	if configFingerprint(stored) == last && !retry {
+		return false, nil
+	}
+	if err := s.reloadLocked(ctx); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 
