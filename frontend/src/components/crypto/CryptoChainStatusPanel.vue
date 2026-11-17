@@ -143,23 +143,26 @@ const pageVisible = ref(typeof document === 'undefined' || document.visibilitySt
 let timer: ReturnType<typeof setInterval> | undefined
 let generation = 0
 let inFlight = false
+let request: AbortController | undefined
 
 async function load() {
   if (inFlight) return
   inFlight = true
   const mine = generation
+  const controller = new AbortController()
+  request = controller
   loading.value = true
   try {
-    const next = await getChainStatus()
+    const next = await getChainStatus(controller.signal)
     if (mine !== generation) return
     report.value = next
-    void scan?.resume()
     failed.value = false
   } catch {
     // Keep the last good report on screen and say it is out of date.
     if (mine === generation) failed.value = true
   } finally {
     if (mine === generation) {
+      request = undefined
       inFlight = false
       loading.value = false
     }
@@ -172,12 +175,15 @@ function stopPolling() {
     timer = undefined
   }
   generation++
+  request?.abort()
+  request = undefined
   inFlight = false
   loading.value = false
 }
 
 function startPolling() {
   if (timer !== undefined) return
+  void scan?.resume()
   void load()
   timer = setInterval(() => { void load() }, POLL_MS)
 }

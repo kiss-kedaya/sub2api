@@ -98,7 +98,7 @@ describe('per-chain catch-up from node status', () => {
     expect(w.get('[data-testid="chain-scan-bsc"]').attributes('disabled')).toBeDefined()
   })
 
-  it('keeps buttons disabled after a lost progress response, then reconnects on the next status refresh', async () => {
+  it('keeps buttons disabled after a lost progress response, then reconnects without a status-page resume', async () => {
     running = [run()]
     const w = await render()
     const get = mocks.get.getMockImplementation()!
@@ -119,6 +119,22 @@ describe('per-chain catch-up from node status', () => {
     await vi.advanceTimersByTimeAsync(2000)
     await flushPromises()
     expect(w.get('[data-testid="chain-scan-ethereum"]').attributes('disabled')).toBeUndefined()
+    expect(startCalls()).toHaveLength(0)
+  })
+
+  it('discovers and cancels an existing run even when node status is unavailable', async () => {
+    running = [run()]
+    const get = mocks.get.getMockImplementation()!
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path.endsWith('/chains/status')) throw { status: 503 }
+      return get(path)
+    })
+    const w = await render()
+    expect(w.find('[data-testid="chain-status-error"]').exists()).toBe(true)
+    expect(w.get('[data-testid="crypto-scan-progress"]').text()).toContain('补扫范围：bsc')
+    const cancel = w.findAll('button').find(button => button.text() === '取消补扫')!
+    await cancel.trigger('click')
+    expect(mocks.verify).toHaveBeenCalled()
     expect(startCalls()).toHaveLength(0)
   })
 

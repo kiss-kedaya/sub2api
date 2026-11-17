@@ -837,8 +837,8 @@ export interface ChainStatusReport {
 
 // The server probes every node (cached 5 s, shared by all viewers), so allow a little
 // more than the slowest probe before the poller gives up on one request.
-export async function getChainStatus(): Promise<ChainStatusReport> {
-  const { data } = await apiClient.get('/admin/crypto/chains/status', { timeout: 12_000 })
+export async function getChainStatus(signal?: AbortSignal): Promise<ChainStatusReport> {
+  const { data } = await apiClient.get('/admin/crypto/chains/status', { timeout: 12_000, signal })
   const report = data?.data
   return {
     generated_at: typeof report?.generated_at === 'string' ? report.generated_at : '',

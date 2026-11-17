@@ -19,7 +19,24 @@ export function useCryptoScan(
   let poll: AbortController | null = null
   let discovering = false
   let disposed = false
-  onUnmounted(() => { disposed = true; poll?.abort() })
+  let needsDiscovery = false
+  let retryTimer: ReturnType<typeof setTimeout> | undefined
+  let retryAttempt = 0
+  // Retry reads only, with a bounded budget per outage. Never create a run here.
+  const retryDelays = [1000, 2000, 4000]
+  onUnmounted(() => {
+    disposed = true
+    poll?.abort()
+    clearTimeout(retryTimer)
+  })
+
+  function retry() {
+    if (disposed || retryTimer !== undefined || retryAttempt >= retryDelays.length) return
+    retryTimer = setTimeout(() => {
+      retryTimer = undefined
+      void resume(true)
+    }, retryDelays[retryAttempt++]!)
+  }
 
   function stopTitle(run: ScanRun | null): string {
     if (run?.status === 'cancelled') return t('admin.crypto.scanRunCancelled')
@@ -29,11 +46,7 @@ export function useCryptoScan(
   }
 
   async function findRunning(): Promise<ScanRun | null> {
-    try {
-      return (await listScanRuns()).find(run => run.status === 'running') ?? null
-    } catch {
-      return null
-    }
+    return (await listScanRuns()).find(run => run.status === 'running') ?? null
   }
 
   async function follow(run: ScanRun) {
@@ -43,22 +56,41 @@ export function useCryptoScan(
     poll = controller
     scanning.value = true
     activeScan.value = run
+    let missing = false
     try {
-      const result = await waitForScanRun(run, controller.signal, next => { activeScan.value = next })
+      const result = await waitForScanRun(run, controller.signal, next => {
+        if (disposed || controller.signal.aborted) return
+        activeScan.value = next
+        if (next !== run) retryAttempt = 0
+      })
+      if (disposed || controller.signal.aborted) return
       if (result.status === 'completed') activeScan.value = null
       // A stopped scan can still have recorded deposits.
       await refresh(result.status === 'completed')
+      if (disposed) return
       if (result.status === 'completed') appStore.showSuccess(t('admin.crypto.scanDepositsDone'))
       else if (result.status === 'failed') appStore.showError(stopTitle(result))
     } catch (error) {
-      if (!controller.signal.aborted) appStore.showError(extractApiErrorMessage(error, t('admin.crypto.scanDepositsFailed')))
+      if (disposed || controller.signal.aborted) return
+      if (activeScan.value?.status === 'running' && (error as { status?: number } | null)?.status === 404) {
+        needsDiscovery = true
+        missing = true
+      } else {
+        appStore.showError(extractApiErrorMessage(error, t('admin.crypto.scanDepositsFailed')))
+        if (activeScan.value?.status === 'running') retry()
+      }
     } finally {
       if (poll === controller) { poll = null; scanning.value = false }
+      if (missing) void resume(true)
     }
   }
 
   async function start(chains?: string[]) {
-    if (scanning.value || activeScan.value?.status === 'running' || disposed) return
+    if (scanning.value || discovering || activeScan.value?.status === 'running' || disposed) return
+    clearTimeout(retryTimer)
+    retryTimer = undefined
+    retryAttempt = 0
+    needsDiscovery = false
     scanning.value = true
     activeScan.value = null
     try {
@@ -71,7 +103,8 @@ export function useCryptoScan(
       }
     } catch (error) {
       // A 409 or lost start response attaches to the existing run.
-      const running = await findRunning()
+      let running: ScanRun | null = null
+      try { running = await findRunning() } catch { needsDiscovery = true; retry() }
       if (disposed) return
       if (running) await follow(running)
       else appStore.showError(extractApiErrorMessage(error, t('admin.crypto.scanDepositsFailed')))
@@ -80,16 +113,23 @@ export function useCryptoScan(
     }
   }
 
-  async function resume() {
-    if (poll || scanning.value || discovering || disposed) return
-    if (activeScan.value?.status === 'running') {
+  async function resume(retrying = false) {
+    if (poll || scanning.value || discovering || retryTimer !== undefined || disposed) return
+    if (!retrying) retryAttempt = 0
+    if (activeScan.value?.status === 'running' && !needsDiscovery) {
       void follow(activeScan.value) // It may have finished while the last poll was lost.
       return
     }
     discovering = true
     try {
       const running = await findRunning()
-      if (running && !poll && !scanning.value && !disposed) void follow(running)
+      if (poll || scanning.value || disposed) return
+      needsDiscovery = false
+      if (running) void follow(running)
+      else if (activeScan.value?.status === 'running') activeScan.value = null
+    } catch {
+      // A failed list read cannot prove that a vanished run is no longer active.
+      retry()
     } finally {
       discovering = false
     }
