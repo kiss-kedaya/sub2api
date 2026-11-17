@@ -282,6 +282,9 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		// 返回紧凑格式，严格匹配 "event: " 会丢弃全部事件（#4653 同根因）。
 		eventType, ok := extractOpenAISSEEventLine(line)
 		if !ok {
+			if anthropicDataOnlyErrorLine(line) {
+				sawError = true
+			}
 			continue
 		}
 		if eventType == "error" {
@@ -297,7 +300,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		}
 
 		if upstreamFinancialFailureEnvelope([]byte(payload)) && WriteUpstreamFinancialError(c, 0, []byte(payload)) {
-			return &ForwardResult{Usage: usage}, fmt.Errorf("anthropic upstream financial error")
+			return &ForwardResult{Usage: usage, NonBillableUpstreamError: true}, fmt.Errorf("anthropic upstream financial error")
 		}
 
 		var event apicompat.AnthropicStreamEvent
@@ -352,15 +355,16 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		clientWatch.markGone()
 		estimate.fill(&usage, progress, requestID, true, scanErr)
 		return &ForwardResult{
-			RequestID:        requestID,
-			UpstreamHeaders:  resp.Header,
-			Usage:            usage,
-			Model:            originalModel,
-			UpstreamModel:    mappedModel,
-			ReasoningEffort:  reasoningEffort,
-			Stream:           false,
-			Duration:         time.Since(startTime),
-			ClientDisconnect: true,
+			RequestID:                requestID,
+			UpstreamHeaders:          resp.Header,
+			Usage:                    usage,
+			Model:                    originalModel,
+			UpstreamModel:            mappedModel,
+			ReasoningEffort:          reasoningEffort,
+			Stream:                   false,
+			Duration:                 time.Since(startTime),
+			ClientDisconnect:         true,
+			NonBillableUpstreamError: sawError && !sawStop,
 		}, newAnthropicClientGoneError(anthropicGoneStream, scanErr)
 	}
 	if scanErr != nil {
@@ -413,14 +417,15 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		s.rateLimitService.observeModelTransientSuccess(context.Background(), c, estimate.account, mappedModel)
 	}
 	return &ForwardResult{
-		RequestID:       requestID,
-		UpstreamHeaders: resp.Header,
-		Usage:           billedUsage,
-		Model:           originalModel,
-		UpstreamModel:   mappedModel,
-		ReasoningEffort: reasoningEffort,
-		Stream:          false,
-		Duration:        time.Since(startTime),
+		RequestID:                requestID,
+		UpstreamHeaders:          resp.Header,
+		Usage:                    billedUsage,
+		NonBillableUpstreamError: sawError && !sawStop,
+		Model:                    originalModel,
+		UpstreamModel:            mappedModel,
+		ReasoningEffort:          reasoningEffort,
+		Stream:                   false,
+		Duration:                 time.Since(startTime),
 	}, nil
 }
 
@@ -493,16 +498,17 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
-			RequestID:        requestID,
-			UpstreamHeaders:  resp.Header,
-			Usage:            usage,
-			Model:            originalModel,
-			UpstreamModel:    mappedModel,
-			ReasoningEffort:  reasoningEffort,
-			Stream:           true,
-			Duration:         time.Since(startTime),
-			FirstTokenMs:     firstTokenMs,
-			ClientDisconnect: clientDisconnected,
+			RequestID:                requestID,
+			UpstreamHeaders:          resp.Header,
+			Usage:                    usage,
+			Model:                    originalModel,
+			UpstreamModel:            mappedModel,
+			ReasoningEffort:          reasoningEffort,
+			Stream:                   true,
+			Duration:                 time.Since(startTime),
+			FirstTokenMs:             firstTokenMs,
+			ClientDisconnect:         clientDisconnected,
+			NonBillableUpstreamError: sawError && !sawStop,
 		}
 	}
 
@@ -587,6 +593,9 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		// 与缓冲路径一致：接受 SSE 紧凑格式（冒号后无空格，#4653 同根因）。
 		eventType, ok := extractOpenAISSEEventLine(line)
 		if !ok {
+			if anthropicDataOnlyErrorLine(line) {
+				sawError = true
+			}
 			continue
 		}
 		if eventType == "error" {
@@ -604,6 +613,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		}
 
 		if upstreamFinancialFailureEnvelope([]byte(payload)) && (clientDisconnected || WriteUpstreamFinancialError(c, 0, []byte(payload))) {
+			sawError = true
 			return resultWithUsage(), fmt.Errorf("anthropic upstream financial error")
 		}
 
