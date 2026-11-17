@@ -221,6 +221,33 @@ func TestConfigPollerCloseDoesNotWaitForSweep(t *testing.T) {
 	}
 }
 
+func TestConfigPollAppliesScanConcurrency(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "")
+	t.Setenv("SUB2API_DISABLE_BACKGROUND_JOBS", "true")
+	repo := &reloadConfigRepository{}
+	cfg := DefaultCryptoConfig()
+	cfg.Enabled = true
+	repo.set(t, cfg)
+	s := &Service{settings: service.NewSettingService(repo, nil), wallet: wallet.New(nil)}
+	t.Cleanup(s.Close)
+	s.Reload(t.Context())
+	old := s.worker
+	require.NotNil(t, old)
+	cfg.ScanConcurrency[ChainBSC] = 32
+	repo.set(t, cfg)
+	reloaded, err := s.reloadIfConfigChanged(t.Context())
+	require.NoError(t, err)
+	require.True(t, reloaded, "changing concurrency alone must reload")
+	require.NotSame(t, old, s.worker)
+	chains, err := s.worker.ScanChains(ChainBSC)
+	require.NoError(t, err)
+	require.Equal(t, 32, chains[0].ScanConcurrency)
+	reloaded, err = s.reloadIfConfigChanged(t.Context())
+	require.NoError(t, err)
+	require.False(t, reloaded, "unchanged concurrency must not churn the worker")
+}
+
 func TestConfigReloadFailuresAreVisibleAtErrorLevel(t *testing.T) {
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "false")
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "")

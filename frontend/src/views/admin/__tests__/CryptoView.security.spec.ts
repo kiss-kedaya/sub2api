@@ -249,7 +249,9 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     { id: 'crypto-credit-min', value: 2, key: 'credit_min_amount', expected: 2 },
     { id: 'crypto-credit-max', value: 9000, key: 'credit_max_amount', expected: 9000 },
     { id: 'crypto-sweep-min-bsc', value: 5, key: 'sweep_min_per_address', expected: { bsc: 5 } },
-    { id: 'crypto-scan-range-bsc', value: 100, key: 'scan_range', expected: { bsc: 100 } }
+    { id: 'crypto-scan-range-bsc', value: 100, key: 'scan_range', expected: { bsc: 100 } },
+    { id: 'crypto-scan-concurrency-bsc', value: 32, key: 'scan_concurrency', expected: { bsc: 32 } },
+    { id: 'crypto-scan-concurrency-bsc', value: 0, key: 'scan_concurrency', expected: { bsc: 0 } }
   ])('saves ordinary parameter $id without 2FA and preserves hidden RPC credentials', async ({ id, value, key, expected }) => {
     const wrapper = await render()
     await configTab(wrapper)

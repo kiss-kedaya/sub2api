@@ -218,14 +218,14 @@ func nativeToken(chain string) (TokenConfig, bool) {
 // block-level scan is the only way to see it) while staying out of Tokens,
 // which is the eth_getLogs address filter and cannot contain a non-address
 // sentinel. ok is false for a chain with nothing to watch.
-func chainScanConfig(chain string, confirmations, maxRange int) (scanner.ChainConfig, bool) {
+func chainScanConfig(chain string, confirmations, maxRange, concurrency int) (scanner.ChainConfig, bool) {
 	tokens := watchedTokens[chain]
 	if len(tokens) == 0 {
 		return scanner.ChainConfig{}, false
 	}
 	contracts := make([]string, 0, len(tokens))
 	decimals := make(map[string]int, len(tokens))
-	config := scanner.ChainConfig{Chain: chain, MaxRange: uint64(maxRange)}
+	config := scanner.ChainConfig{Chain: chain, MaxRange: uint64(maxRange), ScanConcurrency: concurrency}
 	for _, token := range tokens {
 		decimals[token.Contract] = token.Decimals
 		if token.Native {
@@ -338,8 +338,7 @@ type Service struct {
 	nativeGuardAt  time.Time
 	securityPaused atomic.Bool
 	// push delivers operator alerts (unmatched deposits). Optional.
-	// Keep its lock separate: reload holds mu while waiting for worker.Stop,
-	// and the worker can still deliver an alert before it exits.
+	// Keep notification delivery independent of configuration publication.
 	pushMu sync.RWMutex
 	push   PushNotifier
 	// sweepMu serialises sweep runs: the manual admin trigger and the
@@ -452,16 +451,38 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 	// The feed is cheap to build; its quote cache lives inside the provider.
 	priceProvider := nativeprice.New(cfg.NativePriceURL)
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return context.Canceled
+	}
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	// Retire the old runtime before publishing new configuration. Its final
+	// own-wallet callback still reads Config/HotAddresses, so Stop must never
+	// wait with mu held. sweepMu continues to serialize reloads and sweeps.
+	oldWorker := s.worker
+	s.worker = nil
+	discoveryCancel, nativeCancel, maintCancel := s.discoveryCancel, s.nativeCancel, s.maintCancel
+	s.discoveryCancel, s.nativeCancel, s.maintCancel = nil, nil, nil
+	s.reloadFailed = true // An interrupted replacement must retry the same config.
+	s.mu.Unlock()
+	for _, cancel := range []context.CancelFunc{discoveryCancel, nativeCancel, maintCancel} {
+		if cancel != nil {
+			cancel()
+		}
+	}
+	if oldWorker != nil {
+		oldWorker.Stop()
+	}
+	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return context.Canceled
 	}
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	if s.discoveryCancel != nil {
-		s.discoveryCancel()
-		s.discoveryCancel = nil
 	}
 	s.config = cfg
 	s.configFingerprint = fingerprint
@@ -496,15 +517,6 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 	s.startRPCDiscoveryLocked()
 
 	if !scanEnabled {
-		if s.worker != nil {
-			s.worker.Stop()
-			s.worker = nil
-		}
-		s.stopNativePollerLocked()
-		if s.maintCancel != nil {
-			s.maintCancel()
-			s.maintCancel = nil
-		}
 		s.executor = nil
 		s.planner = nil
 		return guardErr
@@ -520,7 +532,7 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 		if !IsEVMChain(chain) {
 			continue
 		}
-		chainConfig, ok := chainScanConfig(chain, cfg.Confirmations[chain], cfg.ScanRange[chain])
+		chainConfig, ok := chainScanConfig(chain, cfg.Confirmations[chain], cfg.ScanRange[chain], cfg.ScanConcurrency[chain])
 		if !ok {
 			continue
 		}
@@ -559,12 +571,6 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 		return s.addresses.ActiveAddresses(ctx, family)
 	}
 
-	if s.worker != nil {
-		s.worker.Stop()
-	}
-	// The previous poller writes through the previous worker; retire it before
-	// publishing the replacement.
-	s.stopNativePollerLocked()
 	// 5s poll: finality is decided by the chain's safe tag, so a tighter
 	// interval only shortens detection latency, not safety.
 	s.worker = scanner.NewWorker(s.db, pools, chainConfigs, cursor, led, addressLister, 5*time.Second, 2000)
@@ -666,9 +672,6 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 		HotWalletEVM:    cfg.HotWalletEVM,
 	}, sweepTokens, newBalanceReader(s.db, sweepDecimals), cfg.HotIndex)
 
-	if s.maintCancel != nil {
-		s.maintCancel()
-	}
 	if cryptoWorkersAllowed() {
 		maintCtx, maintCancel := context.WithCancel(context.Background())
 		s.maintCancel = maintCancel
@@ -759,6 +762,7 @@ func (s *Service) Config() CryptoConfig {
 	cfg.RPC = maps.Clone(cfg.RPC)
 	cfg.Confirmations = maps.Clone(cfg.Confirmations)
 	cfg.ScanRange = maps.Clone(cfg.ScanRange)
+	cfg.ScanConcurrency = maps.Clone(cfg.ScanConcurrency)
 	cfg.SweepMinPerAddress = maps.Clone(cfg.SweepMinPerAddress)
 	cfg.GasTopUp = maps.Clone(cfg.GasTopUp)
 	return cfg

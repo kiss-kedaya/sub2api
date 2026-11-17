@@ -51,6 +51,9 @@ type ChainConfig struct {
 	// a chain that needs smaller chunks must be able to say so. 0 = use the
 	// worker default.
 	MaxRange uint64
+	// ScanConcurrency overrides both log-batch and native-block concurrency.
+	// Zero retains the automatic per-endpoint limit.
+	ScanConcurrency int
 	// Native enables mainnet-coin (ETH/BNB) scanning for this chain, which
 	// cannot ride the eth_getLogs path: native value transfers exist only in
 	// transactions. NativeDecimals is that coin's exponent (18 on both
@@ -931,7 +934,7 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 			span = min(span, w.maxRange)
 		}
 		span = min(span, head)
-		if err := w.securityRange(ctx, NewEVMScanner(pool), pool, chain, head-span+1, head); err != nil {
+		if err := w.securityRange(ctx, chain.evmScanner(pool), pool, chain, head-span+1, head); err != nil {
 			// This head window is an early warning only. A slow public node
 			// failing it must not freeze deposit discovery: every deposit range
 			// below still runs securityRange itself before credit or cursor
@@ -993,7 +996,7 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 		return w.cursor.Save(ctx, chain.Chain, confirmed)
 	}
 
-	scanner := NewEVMScanner(pool)
+	scanner := chain.evmScanner(pool)
 	// Per-chain cap: public providers enforce very different getLogs spans
 	// (X Layer rejects anything over 100 blocks), so the chunk size must be
 	// configurable per chain instead of one global constant.
@@ -1259,13 +1262,13 @@ func (w *Worker) observeHead(ctx context.Context, pool *rpc.Pool, chain ChainCon
 	}
 	observeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	transfers, scanErr := NewEVMScanner(pool).ScanRange(observeCtx, chain.Chain, from, head, chain.Tokens, recipients)
+	transfers, scanErr := chain.evmScanner(pool).ScanRange(observeCtx, chain.Chain, from, head, chain.Tokens, recipients)
 	if scanErr == nil && chain.NativeBlockScan() {
 		// The unconfirmed window must count native deposits too, otherwise a
 		// user who paid ETH/BNB sees nothing until the cursor reaches the
 		// block. A failure here is best effort, like the log scan above.
 		var nativeTransfers []Transfer
-		nativeTransfers, scanErr = NewEVMScanner(pool).ScanNativeRange(observeCtx, chain.Chain, from, head, recipients)
+		nativeTransfers, scanErr = chain.evmScanner(pool).ScanNativeRange(observeCtx, chain.Chain, from, head, recipients)
 		transfers = append(transfers, nativeTransfers...)
 	}
 	if own := w.ownAddressSet(ctx, chain.Chain); len(own) > 0 {
