@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,239 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func recordCacheCreationSplitForTest(t *testing.T, usage OpenAIUsage) *UsageLog {
+	t.Helper()
+	repo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(repo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.billingService = newTestBillingServiceWithPrices(map[string]*ModelPricing{
+		"claude-sonnet-4": {CacheCreationPricePerToken: 2.5e-6, CacheCreation5mPrice: 2.5e-6, CacheCreation1hPrice: 4e-6, SupportsCacheBreakdown: true},
+	})
+	require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{Model: "claude-sonnet-4", Usage: usage},
+		APIKey: &APIKey{ID: 2}, User: &User{ID: 1}, Account: &Account{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+	}))
+	require.NotNil(t, repo.lastLog)
+	return repo.lastLog
+}
+
+func TestOpenAICacheCreationSplitPartialBuckets(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		five, hour, want5m int
+		want               float64
+	}{
+		{"5m only", 80, 0, 200, 0.00050000},
+		{"1h only", 0, 120, 80, 0.00068000},
+		{"both", 50, 100, 100, 0.00065000},
+		{"no split", 0, 0, 0, 0.00050000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log := recordCacheCreationSplitForTest(t, OpenAIUsage{CacheCreationInputTokens: 200, CacheCreation5mTokens: tc.five, CacheCreation1hTokens: tc.hour})
+			t.Logf("cache cost=%.8f expected=%.8f", log.CacheCreationCost, tc.want)
+			require.InDelta(t, tc.want, log.CacheCreationCost, 1e-12)
+			require.Equal(t, tc.want5m, log.CacheCreation5mTokens)
+			require.Equal(t, tc.hour, log.CacheCreation1hTokens)
+			stats := calculateTokenStatsCost(&ChannelModelPricing{CacheWritePrice: testPtrFloat64(2.5e-6), CacheWrite1hPrice: testPtrFloat64(4e-6)}, UsageTokens{CacheCreationTokens: 200, CacheCreation5mTokens: tc.five, CacheCreation1hTokens: tc.hour})
+			require.NotNil(t, stats)
+			require.InDelta(t, tc.want, *stats, 1e-12)
+		})
+	}
+}
+
+func TestOpenAICacheCreationSplitPerTurnTotals(t *testing.T) {
+	for _, hosted := range []bool{false, true} {
+		for _, total := range []int{0, -1, 100} {
+			t.Run(fmt.Sprintf("hosted=%t/total=%d", hosted, total), func(t *testing.T) {
+				first := OpenAIUsage{CacheCreationInputTokens: total, CacheCreation1hTokens: 200}
+				second := OpenAIUsage{CacheCreationInputTokens: 200, CacheCreation5mTokens: 200}
+				var combined OpenAIUsage
+				if hosted {
+					state := &deepSeekHostedSearchState{}
+					state.addResult(&OpenAIForwardResult{Usage: first})
+					state.addResult(&OpenAIForwardResult{Usage: second})
+					combined = state.result.Usage
+				} else {
+					addOpenAIUsage(&combined, first)
+					addOpenAIUsage(&combined, second)
+				}
+				want := recordCacheCreationSplitForTest(t, first).CacheCreationCost + recordCacheCreationSplitForTest(t, second).CacheCreationCost
+				actual := recordCacheCreationSplitForTest(t, combined)
+				t.Logf("combined=%.8f separate=%.8f", actual.CacheCreationCost, want)
+				require.InDelta(t, want, actual.CacheCreationCost, 1e-12)
+			})
+		}
+	}
+}
+
+func TestOpenAICacheCreationSplitProgressivePresence(t *testing.T) {
+	for _, ws := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, update   string
+			want5m, want1h int
+			wantCost       float64
+		}{
+			{"explicit zero", `"cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":0}`, 200, 0, 0.00050000},
+			{"missing bucket", `"output_tokens":1`, 0, 200, 0.00080000},
+			{"missing 1h retains it", `"cache_creation":{"ephemeral_5m_input_tokens":0}`, 0, 200, 0.00080000},
+			{"explicit total zero", `"cache_creation_input_tokens":0`, 0, 0, 0},
+		} {
+			t.Run(fmt.Sprintf("ws=%t/%s", ws, tc.name), func(t *testing.T) {
+				var usage OpenAIUsage
+				parse := func(raw string) {
+					if ws {
+						parseOpenAIWSResponseUsageFromCompletedEvent([]byte(raw), &usage)
+					} else {
+						(&OpenAIGatewayService{}).parseSSEUsage(raw, &usage)
+					}
+				}
+				parse(`{"type":"response.in_progress","response":{"usage":{"input_tokens":1000,"cache_creation_input_tokens":200,"cache_creation":{"ephemeral_1h_input_tokens":200}}}}`)
+				parse(`{"type":"response.in_progress","response":{"usage":{` + tc.update + `}}}`)
+				parse(`{"type":"response.completed","response":{"id":"resp_cache","output":[]}}`)
+				log := recordCacheCreationSplitForTest(t, usage)
+				t.Logf("cache cost=%.8f expected=%.8f", log.CacheCreationCost, tc.wantCost)
+				require.Equal(t, tc.want5m, log.CacheCreation5mTokens)
+				require.Equal(t, tc.want1h, log.CacheCreation1hTokens)
+				require.InDelta(t, tc.wantCost, log.CacheCreationCost, 1e-12)
+			})
+		}
+	}
+}
+
+func TestOpenAICacheCreationSplitTerminalPresence(t *testing.T) {
+	for _, ws := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, final string
+			want1h      int
+			wantCost    float64
+		}{
+			{"missing cache fields", `"input_tokens":1000,"output_tokens":2`, 200, 0.00080000},
+			{"missing total with 5m correction", `"input_tokens":1000,"output_tokens":2,"cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":0}`, 0, 0.00050000},
+			{"explicit total zero", `"cache_creation_input_tokens":0`, 0, 0},
+		} {
+			t.Run(fmt.Sprintf("ws=%t/%s", ws, tc.name), func(t *testing.T) {
+				var usage OpenAIUsage
+				parse := func(raw string) {
+					if ws {
+						parseOpenAIWSResponseUsageFromCompletedEvent([]byte(raw), &usage)
+					} else {
+						(&OpenAIGatewayService{}).parseSSEUsage(raw, &usage)
+					}
+				}
+				parse(`{"type":"response.in_progress","usage":{"input_tokens":1000,"cache_creation_input_tokens":200,"cache_creation":{"ephemeral_1h_input_tokens":200}}}`)
+				parse(`{"type":"response.completed","usage":{` + tc.final + `}}`)
+				log := recordCacheCreationSplitForTest(t, usage)
+				require.Equal(t, tc.want1h, log.CacheCreation1hTokens)
+				require.InDelta(t, tc.wantCost, log.CacheCreationCost, 1e-12)
+			})
+		}
+	}
+}
+
+func TestOpenAICacheCreationSplitTTLOverrides(t *testing.T) {
+	previous := gatewayForwardingCache.Load()
+	if previous == nil {
+		previous = &cachedGatewayForwardingSettings{}
+	}
+	t.Cleanup(func() { gatewayForwardingCache.Store(previous) })
+	for _, tc := range []struct {
+		name, keyMode      string
+		global             bool
+		extra              map[string]any
+		upstream1h, want1h int
+		overridden         bool
+	}{
+		{"global injection", AnthropicCacheTTLModeInherit, true, nil, 200, 0, true},
+		{"account 5m", AnthropicCacheTTLModeInherit, false, map[string]any{"cache_ttl_override_enabled": true, "cache_ttl_override_target": "5m"}, 200, 0, true},
+		{"key 5m", AnthropicCacheTTLMode5m, false, nil, 200, 0, true},
+		{"key off", AnthropicCacheTTLModeOff, true, nil, 200, 200, false},
+		{"key 1h without explicit 1h", AnthropicCacheTTLMode1h, false, nil, 0, 0, false},
+		{"key 1h keeps explicit 1h", AnthropicCacheTTLMode1h, false, nil, 120, 120, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &openAIRecordUsageLogRepoStub{inserted: true}
+			svc := newOpenAIRecordUsageServiceForTest(repo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+			svc.billingService = newTestBillingServiceWithPrices(map[string]*ModelPricing{"claude-sonnet-4": {CacheCreationPricePerToken: 2.5e-6, CacheCreation5mPrice: 2.5e-6, CacheCreation1hPrice: 4e-6, SupportsCacheBreakdown: true}})
+			value := "false"
+			if tc.global {
+				value = "true"
+			}
+			svc.settingService = NewSettingService(&gatewayTTLSettingRepo{data: map[string]string{SettingKeyEnableAnthropicCacheTTL1hInjection: value}}, &config.Config{})
+			gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{})
+			account := &Account{ID: 3, Platform: PlatformAnthropic, Type: AccountTypeOAuth, Extra: tc.extra}
+			key := &APIKey{ID: 2, AnthropicCacheTTLMode: tc.keyMode}
+			usage := OpenAIUsage{CacheCreationInputTokens: 200, CacheCreation1hTokens: tc.upstream1h}
+			require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{Result: &OpenAIForwardResult{Model: "claude-sonnet-4", Usage: usage}, APIKey: key, User: &User{ID: 1}, Account: account}))
+			want := float64(200-tc.want1h)*2.5e-6 + float64(tc.want1h)*4e-6
+			t.Logf("cache cost=%.8f expected=%.8f", repo.lastLog.CacheCreationCost, want)
+			require.InDelta(t, want, repo.lastLog.CacheCreationCost, 1e-12)
+			require.Equal(t, tc.want1h, repo.lastLog.CacheCreation1hTokens)
+			require.Equal(t, tc.overridden, repo.lastLog.CacheTTLOverridden)
+		})
+	}
+}
+
+func TestOpenAICacheCreationSplitAnthropicGroupKey5m(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const request = `{"model":"claude-sonnet-4","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}`
+	account := nativeAnthropicTestAccount()
+	key := &APIKey{ID: 2, GroupID: i64p(10), Group: &Group{ID: 10, Platform: PlatformAnthropic, RateMultiplier: 1, ModelPricing: []ChannelModelPricing{{Models: []string{"claude-sonnet-4"}, CacheWritePrice: testPtrFloat64(2.5e-6), CacheWrite1hPrice: testPtrFloat64(4e-6)}}}, AnthropicCacheTTLMode: AnthropicCacheTTLMode5m}
+	c := adaptiveProtocolTestContext("/v1/messages", []byte(request))
+	c.Set("api_key", key)
+	repo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(repo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.StopOpenAICodexTicketHarvester()
+	svc.cfg = rawChatCompletionsTestConfig()
+	svc.httpUpstream = &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"msg_cache","type":"message","role":"assistant","model":"claude-sonnet-4","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":700,"output_tokens":50,"cache_creation_input_tokens":200,"cache_creation":{"ephemeral_1h_input_tokens":200}}}`))}}
+	svc.billingService = newTestBillingServiceWithPrices(map[string]*ModelPricing{"claude-sonnet-4": {CacheCreationPricePerToken: 2.5e-6, CacheCreation5mPrice: 2.5e-6, CacheCreation1hPrice: 4e-6, SupportsCacheBreakdown: true}})
+	svc.resolver = NewModelPricingResolver(nil, svc.billingService)
+	result, err := svc.ForwardAsAnthropic(context.Background(), c, account, []byte(request), "", "")
+	require.NoError(t, err)
+	require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{Result: result, APIKey: key, User: &User{ID: 1}, Account: account}))
+	require.InDelta(t, 0.00050000, repo.lastLog.CacheCreationCost, 1e-12)
+	require.True(t, repo.lastLog.CacheTTLOverridden)
+	require.Zero(t, repo.lastLog.CacheCreation1hTokens)
+}
+
+func TestOpenAICacheCreationSplitPassthroughWebSocket(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	controlCtx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(context.Canceled)
+	upstream := newStagedPassthroughConn()
+	const payload = `{"type":"response.completed","response":{"id":"resp_cache_ws","model":"claude-sonnet-4","usage":{"input_tokens":1000,"output_tokens":50,"cache_creation_input_tokens":200,"cache_creation":{"ephemeral_5m_input_tokens":80,"ephemeral_1h_input_tokens":120}}}}`
+	upstream.Send(payload)
+	results := make(chan *OpenAIForwardResult, 2)
+	hooks := &OpenAIWSIngressHooks{AfterTurn: func(_ int, result *OpenAIForwardResult, _ error) { results <- result }}
+	server, serverErr := startPassthroughHookRecordingServer(t, controlCtx, newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream), passthroughLifecycleAccount(), hooks)
+	defer server.Close()
+	client := dialPassthroughLifecycleClientWithPayload(t, server, `{"type":"response.create","model":"claude-sonnet-4","stream":false}`)
+	defer func() {
+		if err := client.CloseNow(); err != nil && !strings.Contains(err.Error(), "closed network connection") {
+			t.Error(err)
+		}
+	}()
+	frame, err := readPassthroughLifecycleFrame(t, client, 3*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, payload, string(frame), "billing must not change client frames")
+	var result *OpenAIForwardResult
+	select {
+	case result = <-results:
+	case <-time.After(3 * time.Second):
+		t.Fatal("turn result not received")
+	}
+	require.NotNil(t, result)
+	log := recordCacheCreationSplitForTest(t, result.Usage)
+	require.NoError(t, client.CloseNow())
+	cancel(context.Canceled)
+	select {
+	case <-serverErr:
+	case <-time.After(3 * time.Second):
+		t.Fatal("relay did not stop")
+	}
+	t.Logf("cache cost=%.8f expected=0.00068000", log.CacheCreationCost)
+	require.Equal(t, 120, result.Usage.CacheCreation1hTokens)
+	require.InDelta(t, 0.00068000, log.CacheCreationCost, 1e-12)
+}
 
 func TestOpenAICacheCreationSplitRecordUsage(t *testing.T) {
 	for _, tc := range []struct {

@@ -221,6 +221,15 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = normalizeCacheCreationBreakdown(tokens)
 	}
 
+	cacheTTLOverridden := false
+	ttlPolicy := &GatewayService{settingService: s.settingService}
+	if target, ok := ttlPolicy.resolveCacheTTLUsageOverrideTarget(ctx, apiKey, account); ok && target == cacheTTLTarget5m && tokens.CacheCreationTokens > 0 {
+		tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = tokens.CacheCreationTokens, 0
+		cacheTTLOverridden = true
+	}
+	// A forced 1h TTL must not promote unreported writes on the OpenAI path;
+	// only explicit upstream 1h tokens may increase the existing 5m charge.
+
 	// Get rate multiplier
 	multiplier := 1.0
 	if s.cfg != nil {
@@ -445,6 +454,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		CacheCreationTokens:      result.Usage.CacheCreationInputTokens,
 		CacheCreation5mTokens:    tokens.CacheCreation5mTokens,
 		CacheCreation1hTokens:    tokens.CacheCreation1hTokens,
+		CacheTTLOverridden:       cacheTTLOverridden,
 		CacheReadTokens:          result.Usage.CacheReadInputTokens,
 		ImageInputTokens:         result.Usage.ImageInputTokens,
 		ImageOutputTokens:        result.Usage.ImageOutputTokens,

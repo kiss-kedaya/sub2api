@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
@@ -1729,34 +1730,10 @@ func (s *BillingService) computeCacheCreationCost(pricing *ModelPricing, tokens 
 	return float64(tokens.CacheCreationTokens) * price * multiplier
 }
 
-// normalizeCacheCreationBreakdown prevents contradictory upstream TTL details
-// from billing more tokens than the authoritative aggregate count. Explicit
-// zero values remain meaningful; only negative detail values are clamped.
+// normalizeCacheCreationBreakdown shares the same per-response accounting rules
+// with the WebSocket relay; a partial split charges its remainder at 5m.
 func normalizeCacheCreationBreakdown(tokens UsageTokens) (int, int) {
-	cacheCreation5mTokens := tokens.CacheCreation5mTokens
-	cacheCreation1hTokens := tokens.CacheCreation1hTokens
-	aggregate := tokens.CacheCreationTokens
-	if cacheCreation5mTokens < 0 {
-		cacheCreation5mTokens = 0
-	}
-	if cacheCreation1hTokens < 0 {
-		cacheCreation1hTokens = 0
-	}
-	if aggregate <= 0 || (cacheCreation5mTokens <= aggregate && cacheCreation1hTokens <= aggregate-cacheCreation5mTokens) {
-		return cacheCreation5mTokens, cacheCreation1hTokens
-	}
-
-	detailTotal := float64(cacheCreation5mTokens) + float64(cacheCreation1hTokens)
-	if detailTotal <= 0 {
-		return 0, 0
-	}
-	normalized5mTokens := math.Round(float64(aggregate) * float64(cacheCreation5mTokens) / detailTotal)
-	if normalized5mTokens >= float64(aggregate) {
-		cacheCreation5mTokens = aggregate
-	} else {
-		cacheCreation5mTokens = int(normalized5mTokens)
-	}
-	return cacheCreation5mTokens, aggregate - cacheCreation5mTokens
+	return apicompat.NormalizeCacheCreationBreakdown(tokens.CacheCreationTokens, tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens)
 }
 
 // calculatePerRequestCost 按次/图片计费

@@ -69,6 +69,52 @@ func TestGeminiBridgeGatewayBillingUsesExclusiveInputBuckets(t *testing.T) {
 	require.Equal(t, original, *upstream, "dedicated OpenAI billing must still receive total input")
 }
 
+func TestGeminiBridgeCacheCreationSplitBilling(t *testing.T) {
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	cfg.Default.RateMultiplier = 1
+	logs, repo := &geminiBridgeUsageRepo{}, &geminiBridgeBillingRepo{}
+	billing := service.NewBillingService(cfg, nil)
+	gateway := service.NewGatewayService(nil, nil, logs, repo, nil, nil, nil, nil, cfg,
+		nil, nil, billing, nil, &service.BillingCacheService{}, nil, nil, &service.DeferredService{},
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	upstream := &service.OpenAIForwardResult{Model: "claude-sonnet-5-5", Usage: service.OpenAIUsage{
+		InputTokens: 1000, CacheCreationInputTokens: 200, CacheCreation5mTokens: 80, CacheCreation1hTokens: 120,
+	}}
+	converted := openAIForwardResultAsGateway(upstream)
+	require.NoError(t, gateway.RecordUsage(context.Background(), &service.RecordUsageInput{
+		Result: converted, APIKey: &service.APIKey{ID: 2}, User: &service.User{ID: 1},
+		Account: &service.Account{ID: 3, Platform: service.PlatformGemini, Type: service.AccountTypeAPIKey},
+	}))
+	want, err := billing.CalculateCost("claude-sonnet-5-5", service.UsageTokens{
+		InputTokens: 800, CacheCreationTokens: 200, CacheCreation5mTokens: 80, CacheCreation1hTokens: 120,
+	}, 1)
+	require.NoError(t, err)
+	require.NotNil(t, logs.last)
+	t.Logf("bridge cache cost=%.8f expected=%.8f", logs.last.CacheCreationCost, want.CacheCreationCost)
+	require.InDelta(t, want.CacheCreationCost, logs.last.CacheCreationCost, 1e-12)
+	require.Equal(t, 80, logs.last.CacheCreation5mTokens)
+	require.Equal(t, 120, logs.last.CacheCreation1hTokens)
+}
+
+func TestGeminiBridgeCacheCreationSplitAuthoritativeZero(t *testing.T) {
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	cfg.Default.RateMultiplier = 1
+	logs, repo := &geminiBridgeUsageRepo{}, &geminiBridgeBillingRepo{}
+	gateway := service.NewGatewayService(nil, nil, logs, repo, nil, nil, nil, nil, cfg,
+		nil, nil, service.NewBillingService(cfg, nil), nil, &service.BillingCacheService{}, nil, nil, &service.DeferredService{},
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	converted := openAIForwardResultAsGateway(&service.OpenAIForwardResult{
+		Model: "claude-sonnet-5-5", Usage: service.OpenAIUsage{InputTokens: 1000, CacheCreation1hTokens: 200},
+	})
+	require.NoError(t, gateway.RecordUsage(context.Background(), &service.RecordUsageInput{
+		Result: converted, APIKey: &service.APIKey{ID: 2}, User: &service.User{ID: 1},
+		Account: &service.Account{ID: 3, Platform: service.PlatformGemini, Type: service.AccountTypeAPIKey},
+	}))
+	require.NotNil(t, logs.last)
+	require.Zero(t, logs.last.CacheCreationCost, "the bridge must not turn a zero OpenAI aggregate into a 1h charge")
+	require.Zero(t, logs.last.CacheCreation1hTokens)
+}
+
 func TestGeminiBridgeGatewayConversionPreservesMetadataAndClampsInput(t *testing.T) {
 	require.Nil(t, openAIForwardResultAsGateway(nil))
 	headers := http.Header{"X-Request-Id": {"upstream-id"}}

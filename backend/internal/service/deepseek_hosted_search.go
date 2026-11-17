@@ -853,20 +853,14 @@ func (s *deepSeekHostedSearchState) addResult(result *OpenAIForwardResult) {
 		copy := *result
 		if result.NonBillableUpstreamError {
 			copy.Usage = OpenAIUsage{}
+		} else {
+			normalizeOpenAICacheCreationUsage(&copy.Usage)
 		}
 		s.result = &copy
 		return
 	}
 	if !result.NonBillableUpstreamError {
-		s.result.Usage.InputTokens += result.Usage.InputTokens
-		s.result.Usage.OutputTokens += result.Usage.OutputTokens
-		s.result.Usage.CacheReadInputTokens += result.Usage.CacheReadInputTokens
-		s.result.Usage.CacheCreationInputTokens += result.Usage.CacheCreationInputTokens
-		s.result.Usage.CacheCreation5mTokens += result.Usage.CacheCreation5mTokens
-		s.result.Usage.CacheCreation1hTokens += result.Usage.CacheCreation1hTokens
-		s.result.Usage.ImageInputTokens += result.Usage.ImageInputTokens
-		s.result.Usage.ImageOutputTokens += result.Usage.ImageOutputTokens
-		s.result.Usage.CacheReadEstimated = s.result.Usage.CacheReadEstimated || result.Usage.CacheReadEstimated
+		addOpenAIUsage(&s.result.Usage, result.Usage)
 	}
 	s.result.ClientDisconnect = s.result.ClientDisconnect || result.ClientDisconnect
 	s.result.NonBillableUpstreamError = s.result.NonBillableUpstreamError && result.NonBillableUpstreamError

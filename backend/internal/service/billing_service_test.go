@@ -1324,6 +1324,47 @@ func TestCalculateCost_SupportsCacheBreakdown(t *testing.T) {
 	require.InDelta(t, expected5m+expected1h, cost.CacheCreationCost, 1e-10)
 }
 
+func TestCacheCreationSplitPricingSafety(t *testing.T) {
+	pricing := &ModelPricing{SupportsCacheBreakdown: true, CacheCreation5mPrice: 2.5e-6, CacheCreation1hPrice: 4e-6}
+	statsPricing := &ChannelModelPricing{CacheWritePrice: testPtrFloat64(2.5e-6), CacheWrite1hPrice: testPtrFloat64(4e-6)}
+	for _, total := range []int{1, 100, 200, 10000, int(^uint(0) >> 1), int(^uint(0)>>1) - 1025} {
+		for _, five := range []int{-1, 0, 80, 200, 10000, int(^uint(0) >> 1)} {
+			for _, hour := range []int{-1, 0, 120, 200, 10000, int(^uint(0) >> 1)} {
+				tokens := UsageTokens{CacheCreationTokens: total, CacheCreation5mTokens: five, CacheCreation1hTokens: hour}
+				cost := (&BillingService{}).computeCacheCreationCost(pricing, tokens, 0, 1)
+				require.GreaterOrEqual(t, cost+1e-12, float64(total)*2.5e-6, "no cache writes may be dropped: %+v", tokens)
+				require.LessOrEqual(t, cost, float64(total)*4e-6+1e-12, "no charge above the 1h ceiling: %+v", tokens)
+				if hour <= 0 {
+					require.InDelta(t, float64(total)*2.5e-6, cost, 1e-12, "without explicit 1h, all writes stay 5m: %+v", tokens)
+				}
+				stats := calculateTokenStatsCost(statsPricing, tokens)
+				require.NotNil(t, stats)
+				require.InDelta(t, cost, *stats, 1e-12)
+			}
+		}
+	}
+}
+
+func TestCacheCreationSplitAnthropicPricingCompatibility(t *testing.T) {
+	pricing := &ModelPricing{SupportsCacheBreakdown: true, CacheCreation5mPrice: 2.5e-6, CacheCreation1hPrice: 4e-6}
+	for _, tc := range []struct {
+		name   string
+		tokens UsageTokens
+		want   float64
+	}{
+		{"complete", UsageTokens{CacheCreationTokens: 200, CacheCreation5mTokens: 80, CacheCreation1hTokens: 120}, 0.00068000},
+		{"absent", UsageTokens{CacheCreationTokens: 200}, 0.00050000},
+		{"legacy aggregate absent", UsageTokens{CacheCreation5mTokens: 80, CacheCreation1hTokens: 120}, 0.00068000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.InDelta(t, tc.want, (&BillingService{}).computeCacheCreationCost(pricing, tc.tokens, 0, 1), 1e-12)
+			cost := calculateTokenStatsCost(&ChannelModelPricing{CacheWritePrice: testPtrFloat64(2.5e-6), CacheWrite1hPrice: testPtrFloat64(4e-6)}, tc.tokens)
+			require.NotNil(t, cost)
+			require.InDelta(t, tc.want, *cost, 1e-12)
+		})
+	}
+}
+
 func TestComputeCacheCreationCost_CapsContradictoryBreakdownAtAggregate(t *testing.T) {
 	svc := &BillingService{}
 	pricing := &ModelPricing{
@@ -1357,27 +1398,27 @@ func TestNormalizeCacheCreationBreakdown_BillingSafetyInvariant(t *testing.T) {
 			want1h: 40,
 		},
 		{
-			name:   "details below aggregate unchanged",
+			name:   "partial details fill 5m remainder",
 			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: 30, CacheCreation1hTokens: 60},
-			want5m: 30,
+			want5m: 40,
 			want1h: 60,
 		},
 		{
-			name:   "absent 5m detail unchanged",
+			name:   "absent 5m detail fills remainder",
 			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation1hTokens: 60},
-			want5m: 0,
+			want5m: 40,
 			want1h: 60,
 		},
 		{
-			name:   "absent 1h detail unchanged",
+			name:   "absent 1h detail fills 5m remainder",
 			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: 30},
-			want5m: 30,
+			want5m: 100,
 			want1h: 0,
 		},
 		{
-			name:   "negative detail clamped",
+			name:   "negative detail clamped and remainder filled",
 			tokens: UsageTokens{CacheCreationTokens: 100, CacheCreation5mTokens: -50, CacheCreation1hTokens: 60},
-			want5m: 0,
+			want5m: 40,
 			want1h: 60,
 		},
 		{
