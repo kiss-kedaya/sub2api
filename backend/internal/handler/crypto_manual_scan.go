@@ -31,16 +31,25 @@ func (h *CryptoHandler) AdminRunScan(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Payment scanner unavailable")
 		return
 	}
+	chains := parseChainScope(c.QueryArray("chain"))
+	if _, specified := c.Request.URL.Query()["chain"]; specified && len(chains) == 0 {
+		response.BadRequest(c, cryptopay.ErrInvalidScanChain.Error())
+		return
+	}
 	// ?async=1 runs repeated passes in the background and returns 202 with a
 	// run to poll. Without it the request stays synchronous: one pass, bound to
 	// this request, exactly as older pages expect.
 	if c.Query("async") == "1" {
-		h.startAsyncScan(c, request.FromBlock)
+		h.startAsyncScan(c, request.FromBlock, chains)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Minute)
 	defer cancel()
-	if err := h.service.RunScan(ctx, request.FromBlock); err != nil {
+	if err := h.service.RunScan(ctx, request.FromBlock, chains...); err != nil {
+		if errors.Is(err, cryptopay.ErrInvalidScanChain) {
+			response.BadRequest(c, cryptopay.ErrInvalidScanChain.Error())
+			return
+		}
 		if errors.Is(err, cryptopay.ErrScanBusy) {
 			response.Error(c, http.StatusConflict, "Another payment operation is running; retry later")
 			return

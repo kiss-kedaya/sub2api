@@ -297,6 +297,7 @@ export interface ScanRun {
   started_at: string
   finished_at?: string
   from_block: number
+  chain_scope?: string[] // Empty means all enabled chains; absent on older servers.
   rounds: number
   busy_retries: number
   stalled_rounds: number
@@ -309,11 +310,11 @@ export interface ScanRun {
 // cursor reaches its confirmed head. A server that predates async scanning
 // ignores the flag and answers after one synchronous pass; that comes back as
 // null: the scan already ran, there is nothing to follow.
-export async function startCryptoScan(fromBlock = 0, verification?: CryptoVerification): Promise<ScanRun | null> {
+export async function startCryptoScan(fromBlock = 0, verification?: CryptoVerification, chains?: string[]): Promise<ScanRun | null> {
   const { data } = await apiClient.post('/admin/crypto/scan/run', { from_block: fromBlock }, {
     ...cryptoRequestOptions(verification),
     timeout: 30000,
-    params: { async: '1' }
+    params: { async: '1', ...(chains?.length ? { chain: chains.join(',') } : {}) }
   })
   const run = data?.data
   return run && typeof run.id === 'string' ? run : null

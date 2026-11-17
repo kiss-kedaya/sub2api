@@ -28,6 +28,7 @@ func TestScanStartFailureMapsToFixedStatusesAndMessages(t *testing.T) {
 		err    error
 		status int
 	}{
+		"invalid chain": {cryptopay.ErrInvalidScanChain, http.StatusBadRequest},
 		"job running":   {cryptopay.ErrScanJobRunning, http.StatusConflict},
 		"lock busy":     {fmt.Errorf("wrapped: %w", cryptopay.ErrScanBusy), http.StatusConflict},
 		"read only":     {mode.ErrReadOnly, http.StatusForbidden},
@@ -116,6 +117,21 @@ func TestScanWithoutAsyncKeepsTheSynchronousContract(t *testing.T) {
 		h.AdminRunScan(c)
 		require.Equal(t, http.StatusServiceUnavailable, w.Code, target)
 		require.Contains(t, w.Body.String(), "Payment scan did not complete", "%s must take the old one-pass path", target)
+	}
+}
+
+func TestScanRejectsInvalidChainScope(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
+	h := &CryptoHandler{service: &cryptopay.Service{}}
+	for _, async := range []string{"0", "1"} {
+		for _, scope := range []string{"unknown", "bsc,unknown", "ethereum", "solana", ","} {
+			t.Run(async+"/"+scope, func(t *testing.T) {
+				c, w := scanRunContext(http.MethodPost, "/api/v1/admin/crypto/scan/run?async="+async+"&chain="+scope, `{"from_block":0}`)
+				h.AdminRunScan(c)
+				require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+				require.Contains(t, w.Body.String(), cryptopay.ErrInvalidScanChain.Error())
+			})
+		}
 	}
 }
 

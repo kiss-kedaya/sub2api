@@ -15,8 +15,8 @@ import (
 // request: StartScanAsync drops the request's cancellation, so a browser that
 // leaves does not stop it. The caller has already enforced the from_block
 // step-up rule.
-func (h *CryptoHandler) startAsyncScan(c *gin.Context, fromBlock uint64) {
-	state, err := h.service.StartScanAsync(c.Request.Context(), fromBlock)
+func (h *CryptoHandler) startAsyncScan(c *gin.Context, fromBlock uint64, chains []string) {
+	state, err := h.service.StartScanAsync(c.Request.Context(), fromBlock, chains...)
 	if err != nil {
 		status, message := scanStartFailure(err)
 		if status >= http.StatusInternalServerError {
@@ -31,6 +31,8 @@ func (h *CryptoHandler) startAsyncScan(c *gin.Context, fromBlock uint64) {
 // scanStartFailure maps a start error to a status and a fixed message.
 func scanStartFailure(err error) (int, string) {
 	switch {
+	case errors.Is(err, cryptopay.ErrInvalidScanChain):
+		return http.StatusBadRequest, cryptopay.ErrInvalidScanChain.Error()
 	case errors.Is(err, cryptopay.ErrScanJobRunning), errors.Is(err, cryptopay.ErrScanBusy):
 		return http.StatusConflict, "A catch-up scan is already running; follow it instead of starting another"
 	case errors.Is(err, mode.ErrReadOnly):

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
+	"github.com/lib/pq"
 )
 
 const missingReceiptPrefix = "reorg_missing_receipt:"
@@ -68,9 +69,15 @@ func readObservations(rows *sql.Rows, status string) ([]depositObservation, erro
 // last longer than an hour. Legacy rows fall back to observation creation;
 // last_attempt_at only rotates the queue and never renews the window.
 // These updates never change balances or fulfillment orders.
-func (w *Worker) recheckCredited(ctx context.Context) error {
+func (w *Worker) recheckCredited(ctx context.Context, scope ...string) error {
 	if err := mode.CheckWritable(); err != nil {
 		return err
+	}
+	filter := ""
+	var args []any
+	if len(scope) > 0 {
+		filter = " AND d.chain = ANY($1)"
+		args = append(args, pq.Array(scope))
 	}
 	rows, err := w.db.QueryContext(ctx, `
 		SELECT d.chain, d.tx_hash, d.log_index, d.from_address, d.to_address, d.token,
@@ -79,9 +86,9 @@ func (w *Worker) recheckCredited(ctx context.Context) error {
 		  LEFT JOIN payment_orders o ON o.id = d.order_id
 		 WHERE d.status = 'credited'
 		   AND (COALESCE(o.completed_at, d.created_at) > NOW() - INTERVAL '1 hour'
-		        OR d.reason LIKE 'reorg_missing_receipt:%')
+		        OR d.reason LIKE 'reorg_missing_receipt:%')`+filter+`
 		 ORDER BY COALESCE(d.last_attempt_at, d.created_at), d.id
-		 LIMIT 200`)
+		 LIMIT 200`, args...)
 	if err != nil {
 		return err
 	}
@@ -94,9 +101,15 @@ func (w *Worker) recheckCredited(ctx context.Context) error {
 
 // retryPending uses the same receipt, canonical-log and finality checks as
 // live scanning. Each attempted row rotates even if its RPC remains broken.
-func (w *Worker) retryPending(ctx context.Context) error {
+func (w *Worker) retryPending(ctx context.Context, scope ...string) error {
 	if err := mode.CheckWritable(); err != nil {
 		return err
+	}
+	filter := ""
+	var args []any
+	if len(scope) > 0 {
+		filter = " AND chain = ANY($1)"
+		args = append(args, pq.Array(scope))
 	}
 	rows, err := w.db.QueryContext(ctx, `
 		SELECT chain, tx_hash, log_index, from_address, to_address, token,
@@ -104,9 +117,9 @@ func (w *Worker) retryPending(ctx context.Context) error {
 		  FROM deposit_transactions
 		 WHERE status = 'pending'
 		   AND (last_attempt_at IS NULL OR last_attempt_at < NOW() -
-		       CASE WHEN chain = 'bsc' THEN INTERVAL '5 seconds' ELSE INTERVAL '1 minute' END)
+		       CASE WHEN chain = 'bsc' THEN INTERVAL '5 seconds' ELSE INTERVAL '1 minute' END)`+filter+`
 		 ORDER BY COALESCE(last_attempt_at, created_at), id
-		 LIMIT 50`)
+		 LIMIT 50`, args...)
 	if err != nil {
 		return err
 	}
