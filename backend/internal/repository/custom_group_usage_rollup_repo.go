@@ -203,6 +203,13 @@ func (r *dashboardAggregationRepository) SyncGroupUsageRollups(ctx context.Conte
 }
 
 func (r *dashboardAggregationRepository) syncGroupUsageRollupsInTx(ctx context.Context, todayStart time.Time) error {
+	// ponytail: a rare retained-window rebuild gets 5 minutes per statement,
+	// not the cluster's 20s default. It holds the singleton state lock until
+	// commit; if rebuilds become frequent, rebuild one day per transaction and
+	// advance the watermark incrementally, releasing the lock between days.
+	if _, err := r.sql.ExecContext(ctx, `SET LOCAL statement_timeout = '5min'`); err != nil {
+		return fmt.Errorf("设置分组用量汇总语句超时: %w", err)
+	}
 	var closedBefore string
 	var previousRetainedFrom time.Time
 	var stateTimezoneName string

@@ -335,7 +335,7 @@ func (r *dashboardAggregationRepository) cleanupUsageLogsBatches(ctx context.Con
 	}
 }
 
-func cleanupUsageLogsBatchWithRollupInvalidation(ctx context.Context, db *sql.DB, cutoff time.Time) (int64, error) {
+func cleanupUsageLogsBatchWithRollupInvalidation(ctx context.Context, db sqlTxBeginner, cutoff time.Time) (int64, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -348,7 +348,19 @@ func cleanupUsageLogsBatchWithRollupInvalidation(ctx context.Context, db *sql.DB
 	if err := lockGroupUsageRollupState(ctx, tx); err != nil {
 		return rollback(err)
 	}
-	rows, err := tx.QueryContext(ctx, `
+	// The midnight sync may have observed a minimum from the previous day while
+	// retention was still catching up. Publish this cutoff under the same lock
+	// before DELETE so row triggers cannot rewind closed_before for expired rows.
+	// Readers keep the entire first retained day, as they did before this trim.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE usage_group_rollup_state
+		SET retained_from = GREATEST(retained_from, $1),
+			updated_at = NOW()
+		WHERE id = 1 AND retained_from < $1
+	`, cutoff.UTC()); err != nil {
+		return rollback(err)
+	}
+	res, err := tx.ExecContext(ctx, `
 		WITH victims AS (
 			SELECT ctid
 			FROM usage_logs
@@ -358,36 +370,13 @@ func cleanupUsageLogsBatchWithRollupInvalidation(ctx context.Context, db *sql.DB
 		)
 		DELETE FROM usage_logs
 		WHERE ctid IN (SELECT ctid FROM victims)
-		RETURNING created_at
 	`, cutoff.UTC(), usageLogsCleanupBatchSize)
 	if err != nil {
 		return rollback(err)
 	}
-
-	var affected int64
-	var earliestDeletedAt time.Time
-	for rows.Next() {
-		var deletedAt time.Time
-		if err := rows.Scan(&deletedAt); err != nil {
-			_ = rows.Close()
-			return rollback(err)
-		}
-		affected++
-		if earliestDeletedAt.IsZero() || deletedAt.Before(earliestDeletedAt) {
-			earliestDeletedAt = deletedAt
-		}
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
+	affected, err := res.RowsAffected()
+	if err != nil {
 		return rollback(err)
-	}
-	if err := rows.Close(); err != nil {
-		return rollback(err)
-	}
-	if affected > 0 {
-		if err := invalidateGroupUsageRollupsAt(ctx, tx, earliestDeletedAt); err != nil {
-			return rollback(err)
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
