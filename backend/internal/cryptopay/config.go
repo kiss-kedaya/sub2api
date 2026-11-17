@@ -17,8 +17,6 @@ import (
 	"maps"
 	"net/url"
 	"slices"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -685,90 +683,17 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	return out
 }
 
-// configFingerprint renders the parts of a config that change runtime
-// behaviour into a stable string. It deliberately covers the fields an operator
-// edits to unblock a chain — endpoints, ranges, confirmations, chain list — and
-// ignores fields that only affect the next scheduled sweep, because reloading
-// for those would churn RPC pools for no reason.
-func configFingerprint(cfg CryptoConfig) string {
-	var b strings.Builder
-	_, _ = b.WriteString("enabled=")
-	_, _ = b.WriteString(strconv.FormatBool(cfg.Enabled))
-	_, _ = b.WriteString("|chains=")
-	_, _ = b.WriteString(strings.Join(cfg.Chains, ","))
-	_, _ = b.WriteString("|throttle_ms=")
-	_, _ = b.WriteString(strconv.Itoa(cfg.RPCThrottleMs))
-	_, _ = b.WriteString("|native_price_url=")
-	_, _ = b.WriteString(cfg.NativePriceURL)
-	for _, chain := range sortedKeys(cfg.RPC) {
-		_, _ = b.WriteString("|rpc.")
-		_, _ = b.WriteString(chain)
-		_, _ = b.WriteString("=")
-		_, _ = b.WriteString(cfg.RPC[chain])
+// configFingerprint hashes the entire normalized persisted snapshot. Every
+// CryptoConfig field affects runtime configuration; none is a timestamp, nonce
+// or display-only value. JSON sorts map keys, so identical snapshots stay stable
+// and new persisted fields are covered automatically. Never log it or the JSON.
+func configFingerprint(cfg CryptoConfig) (string, error) {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return "", errors.New("crypto config: cannot serialize configuration fingerprint")
 	}
-	for _, endpoint := range sortedKeys(cfg.RPCLimits) {
-		limit := cfg.RPCLimits[endpoint]
-		_, _ = b.WriteString("|limit.")
-		_, _ = b.WriteString(endpoint)
-		_, _ = b.WriteString("=")
-		_, _ = b.WriteString(strconv.FormatUint(limit.MaxBlocks, 10))
-		_, _ = b.WriteString("/")
-		_, _ = b.WriteString(strconv.Itoa(limit.MaxAddresses))
-	}
-	for _, chain := range sortedKeys(cfg.ScanRange) {
-		_, _ = b.WriteString("|range.")
-		_, _ = b.WriteString(chain)
-		_, _ = b.WriteString("=")
-		_, _ = b.WriteString(strconv.Itoa(cfg.ScanRange[chain]))
-	}
-	for _, chain := range sortedKeys(cfg.ScanConcurrency) {
-		_, _ = b.WriteString("|concurrency.")
-		_, _ = b.WriteString(chain)
-		_, _ = b.WriteString("=")
-		_, _ = b.WriteString(strconv.Itoa(cfg.ScanConcurrency[chain]))
-	}
-	for _, chain := range sortedKeys(cfg.Confirmations) {
-		_, _ = b.WriteString("|conf.")
-		_, _ = b.WriteString(chain)
-		_, _ = b.WriteString("=")
-		_, _ = b.WriteString(strconv.Itoa(cfg.Confirmations[chain]))
-	}
-	// The native source changes which loop touches the chain, so it must
-	// reload; rotating only the provider key must reload too, without putting
-	// the key itself into a fingerprint string.
-	_, _ = b.WriteString("|native=")
-	_, _ = b.WriteString(cfg.NativeScan)
-	_, _ = b.WriteString("|native_poll_s=")
-	_, _ = b.WriteString(strconv.Itoa(cfg.NativePollSeconds))
-	for _, chain := range sortedKeys(cfg.ExplorerAPIURL) {
-		_, _ = b.WriteString("|explorer.")
-		_, _ = b.WriteString(chain)
-		_, _ = b.WriteString("=")
-		_, _ = b.WriteString(cfg.ExplorerAPIURL[chain])
-	}
-	_, _ = b.WriteString("|explorer_key=")
-	_, _ = b.WriteString(secretFingerprint(cfg.ExplorerAPIKey))
-	return b.String()
-}
-
-// secretFingerprint is a short, non-reversible marker of a credential: enough
-// to notice a rotation, not enough to recover the value from a fingerprint.
-func secretFingerprint(secret string) string {
-	secret = strings.TrimSpace(secret)
-	if secret == "" {
-		return "-"
-	}
-	sum := sha256.Sum256([]byte(secret))
-	return hex.EncodeToString(sum[:8])
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // RPCEndpointLimits is the per-endpoint eth_getLogs capability an operator can

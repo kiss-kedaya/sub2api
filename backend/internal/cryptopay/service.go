@@ -417,6 +417,10 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 		return context.Canceled
 	}
 	cfg, err := LoadConfig(ctx, NewServiceSettingStore(s.settings))
+	var fingerprint string
+	if err == nil {
+		fingerprint, err = configFingerprint(cfg)
+	}
 	if err != nil {
 		s.mu.Lock()
 		s.reloadFailed = true
@@ -424,7 +428,12 @@ func (s *Service) reloadLocked(ctx context.Context) error {
 		slog.Error("[cryptopay] config load failed", "error", rpc.SanitizeNodeMessage(err.Error()))
 		return err
 	}
-	fingerprint := configFingerprint(cfg)
+	return s.applyConfigLocked(ctx, cfg, fingerprint)
+}
+
+// applyConfigLocked applies the already normalized snapshot with sweepMu held,
+// never mu. Stop still completes before the replacement config is published.
+func (s *Service) applyConfigLocked(ctx context.Context, cfg CryptoConfig, fingerprint string) error {
 	var guardErr error
 	// Two independent decisions share one stored row:
 	//   channelEnabled - the admin switch customers see and the user API serves.
@@ -1584,7 +1593,8 @@ func buildDepositInfo(cfg CryptoConfig, assigned map[string]string) *DepositInfo
 // chain, no configured feed or an exhausted time budget all leave the field
 // absent. The deposit page must render with or without a market quote.
 func (s *Service) attachNativeReferencePrices(parent context.Context, info *DepositInfo) {
-	if info == nil || s.nativePrice == nil {
+	pricer := s.liveNativePricer()
+	if info == nil || pricer == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(parent, nativeReferencePriceTimeout)
@@ -1601,7 +1611,7 @@ func (s *Service) attachNativeReferencePrices(parent context.Context, info *Depo
 				// rather than making the page wait for another exchange call.
 				return
 			}
-			quote, err := s.nativePrice.Quote(ctx, chain)
+			quote, err := pricer.Quote(ctx, chain)
 			if err != nil || !quote.Usable(time.Now()) {
 				continue
 			}
@@ -1840,16 +1850,20 @@ func (s *Service) reloadIfConfigChanged(ctx context.Context) (bool, error) {
 		return false, context.Canceled
 	}
 	stored, err := LoadConfig(ctx, NewServiceSettingStore(s.settings))
+	var fingerprint string
+	if err == nil {
+		fingerprint, err = configFingerprint(stored)
+	}
 	if err != nil {
 		s.mu.Lock()
 		s.reloadFailed = true
 		s.mu.Unlock()
 		return false, err
 	}
-	if configFingerprint(stored) == last && !retry {
+	if fingerprint == last && !retry {
 		return false, nil
 	}
-	if err := s.reloadLocked(ctx); err != nil {
+	if err := s.applyConfigLocked(ctx, stored, fingerprint); err != nil {
 		return false, err
 	}
 	return true, nil

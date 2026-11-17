@@ -49,10 +49,10 @@ func TestScanConcurrencyFingerprintAndPatch(t *testing.T) {
 	base.ScanConcurrency = map[string]int{ChainBSC: 32, ChainEthereum: 4}
 	same := base
 	same.ScanConcurrency = map[string]int{ChainEthereum: 4, ChainBSC: 32}
-	require.Equal(t, configFingerprint(base), configFingerprint(same))
+	require.Equal(t, fingerprintForTest(t, base), fingerprintForTest(t, same))
 	changed := map[string]int{ChainBSC: 64}
 	patched := CryptoConfigPatch{ScanConcurrency: &changed}.Apply(base)
-	require.NotEqual(t, configFingerprint(base), configFingerprint(patched), "concurrency changes must trigger reloads")
+	require.NotEqual(t, fingerprintForTest(t, base), fingerprintForTest(t, patched), "concurrency changes must trigger reloads")
 	empty := map[string]int{}
 	cleared, err := NormalizeConfig(CryptoConfigPatch{ScanConcurrency: &empty}.Apply(base))
 	require.NoError(t, err)
