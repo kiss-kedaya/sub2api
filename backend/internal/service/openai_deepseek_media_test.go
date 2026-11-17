@@ -129,6 +129,49 @@ func TestDeepSeekMediaPassThroughAndFixedBilling(t *testing.T) {
 	}
 }
 
+func TestDeepSeekMediaClientErrorRelayFingerprint(t *testing.T) {
+	const response = `{"error":{"message":"voice_id must be stella or tide (request id: 20260101000000000000000000aaaaaaSyntheticA1)","type":"new_api_error","param":"","code":"invalid_request"}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, err := io.WriteString(w, response)
+		assert.NoError(t, err)
+	}))
+	defer server.Close()
+	svc, account := deepSeekMediaFixture(server)
+	svc.cfg.Gateway.FailoverOn400 = true
+	c, recorder := deepSeekMediaContext(DeepSeekToolsPathTTS, "application/json", nil)
+	result, err := svc.ForwardDeepSeekMedia(t.Context(), c, account, DeepSeekToolsPathTTS, DeepSeekToolsLabelTTS, nil)
+	require.NoError(t, err)
+	require.Nil(t, result, "validation failures must not bill")
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.NotContains(t, recorder.Body.String(), "new_api_error")
+	require.NotContains(t, recorder.Body.String(), "request id:")
+	require.Equal(t, response, c.GetString(OpsUpstreamErrorDetailKey))
+	require.Contains(t, c.GetString(OpsUpstreamErrorMessageKey), "request id:")
+	require.JSONEq(t, `{"error":{"message":"voice_id must be stella or tide","type":"invalid_request_error","param":"","code":"invalid_request"}}`, recorder.Body.String())
+}
+
+func TestDeepSeekMediaSuccessfulNon200KeepsOpsClear(t *testing.T) {
+	const response = `{"id":"accepted"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, err := io.WriteString(w, response)
+		assert.NoError(t, err)
+	}))
+	defer server.Close()
+	svc, account := deepSeekMediaFixture(server)
+	c, recorder := deepSeekMediaContext(DeepSeekToolsPathASR, "application/json", nil)
+	result, err := svc.ForwardDeepSeekMedia(t.Context(), c, account, DeepSeekToolsPathASR, DeepSeekToolsLabelASR, nil)
+	require.NoError(t, err)
+	require.Nil(t, result)
+	require.Equal(t, http.StatusCreated, recorder.Code)
+	require.Equal(t, response, recorder.Body.String())
+	require.Empty(t, c.GetString(OpsUpstreamErrorMessageKey))
+	require.Empty(t, c.GetString(OpsUpstreamErrorDetailKey))
+	require.Zero(t, c.GetInt(OpsUpstreamStatusCodeKey))
+}
+
 func TestDeepSeekMediaStreamingFlushBeforeUpstreamFinishes(t *testing.T) {
 	for _, path := range []string{DeepSeekToolsPathTTS, DeepSeekToolsPathOCR} {
 		t.Run(path, func(t *testing.T) {

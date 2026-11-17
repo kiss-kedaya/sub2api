@@ -14,6 +14,15 @@ func TestWrapUpstreamErrorForClient_KeepsUpstreamStatusAndMessage(t *testing.T) 
 	require.Equal(t, "Our servers are currently overloaded. Please try again later.", message)
 }
 
+func TestWrapUpstreamErrorForClient_ClientErrorRelayFingerprint(t *testing.T) {
+	body := []byte(`{"error":{"type":"new_api_error","code":"invalid_request","message":"bad input (request id: Synthetic123)"}}`)
+	status, errType, code, message := WrapUpstreamErrorForClient(http.StatusBadRequest, body)
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "invalid_request_error", errType)
+	require.Equal(t, "invalid_request", code)
+	require.Equal(t, "bad input", message)
+}
+
 func TestWrapUpstreamErrorForClient_KeepsRateLimit(t *testing.T) {
 	status, errType, _, message := WrapUpstreamErrorForClient(http.StatusTooManyRequests, []byte(`{"error":{"type":"rate_limit_error","message":"Rate limit reached"}}`))
 	require.Equal(t, http.StatusTooManyRequests, status)

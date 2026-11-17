@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/util/clientprivacy"
 	"github.com/tidwall/gjson"
 )
 
@@ -61,6 +62,8 @@ func WrapUpstreamErrorForClient(statusCode int, body []byte) (status int, errTyp
 			errType = "api_error"
 		}
 	}
+	errType = clientprivacy.ErrorType(status, errType)
+	message = ClientUpstreamErrorMessage(message)
 	errCode = extractUpstreamErrorCode(body)
 	return
 }

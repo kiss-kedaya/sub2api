@@ -1817,7 +1817,7 @@ func (h *OpenAIGatewayHandler) anthropicErrorResponse(c *gin.Context, status int
 		"type": "error",
 		"error": gin.H{
 			"type":    errType,
-			"message": message,
+			"message": service.ClientUpstreamErrorMessage(message),
 		},
 	})
 }
@@ -1839,7 +1839,7 @@ func (h *OpenAIGatewayHandler) anthropicStreamingAwareError(c *gin.Context, stat
 				"type": "error",
 				"error": gin.H{
 					"type":    errType,
-					"message": message,
+					"message": service.ClientUpstreamErrorMessage(message),
 				},
 			})
 			fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", errPayload) //nolint:errcheck
@@ -3779,7 +3779,7 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 		// Stream already started, send error as SSE event then close
 		flusher, ok := c.Writer.(http.Flusher)
 		if ok {
-			errorObject := gin.H{"type": errType, "message": message}
+			errorObject := gin.H{"type": errType, "message": service.ClientUpstreamErrorMessage(message)}
 			if code != "" {
 				errorObject["code"] = code
 			}
@@ -3802,7 +3802,7 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 		return
 	}
 	c.JSON(status, gin.H{"error": gin.H{
-		"type": errType, "code": code, "message": message,
+		"type": errType, "code": code, "message": service.ClientUpstreamErrorMessage(message),
 	}})
 }
 
@@ -3952,7 +3952,7 @@ func (h *OpenAIGatewayHandler) errorResponse(c *gin.Context, status int, errType
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"type":    errType,
-			"message": message,
+			"message": service.ClientUpstreamErrorMessage(message),
 		},
 	})
 }

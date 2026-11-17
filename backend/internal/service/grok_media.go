@@ -1886,7 +1886,7 @@ func writeGrokMediaErrorResponse(c *gin.Context, statusCode int, errType, messag
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
 			"type":    strings.TrimSpace(errType),
-			"message": strings.TrimSpace(message),
+			"message": ClientUpstreamErrorMessage(strings.TrimSpace(message)),
 		},
 	})
 }

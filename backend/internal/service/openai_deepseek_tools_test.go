@@ -148,6 +148,29 @@ func TestForwardDeepSeekToolsUpstreamErrorIsNotBilled(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), "between 1 and 50")
 }
 
+func TestForwardDeepSeekToolsClientErrorRelayFingerprint(t *testing.T) {
+	const response = `{"error":{"message":"invalid OCR purpose (request id: 20260101000000000000000000aaaaaaSyntheticC3)","type":"new_api_error","param":"","code":"invalid_request"}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, err := io.WriteString(w, response)
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	svc, account := deepSeekMediaFixture(server)
+	c, recorder := deepSeekMediaContext(DeepSeekToolsPathSearch, "application/json", nil)
+	result, err := svc.ForwardDeepSeekTools(t.Context(), c, account, nil, DeepSeekToolsPathSearch, "", []byte(`{"query":"test"}`))
+	require.NoError(t, err)
+	require.Nil(t, result, "validation failures must not bill")
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.NotContains(t, recorder.Body.String(), "new_api_error")
+	require.NotContains(t, recorder.Body.String(), "request id:")
+	require.Equal(t, response, c.GetString(OpsUpstreamErrorDetailKey))
+	require.Contains(t, c.GetString(OpsUpstreamErrorMessageKey), "request id:")
+	require.JSONEq(t, `{"error":{"message":"invalid OCR purpose","type":"invalid_request_error","param":"","code":"invalid_request"}}`, recorder.Body.String())
+}
+
 func TestForwardDeepSeekToolsVersionedBaseDoesNotDuplicateV1(t *testing.T) {
 	for _, endpoint := range []string{DeepSeekToolsPathSearch, DeepSeekToolsPathFetch} {
 		t.Run(endpoint, func(t *testing.T) {

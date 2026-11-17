@@ -1000,7 +1000,7 @@ func googleError(c *gin.Context, status int, message string) {
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"code":    status,
-			"message": message,
+			"message": service.ClientUpstreamErrorMessage(message),
 			"status":  googleapi.HTTPStatusToGoogleStatus(status),
 		},
 	})

@@ -135,6 +135,9 @@ func (s *OpenAIGatewayService) forwardDeepSeekTools(
 		return nil, fmt.Errorf("deepseek hosted tool response exceeds size limit")
 	}
 
+	if resp.StatusCode >= http.StatusBadRequest {
+		setOpsUpstreamError(c, resp.StatusCode, sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(respBody)), truncateString(string(respBody), 2048))
+	}
 	if resp.StatusCode >= http.StatusBadRequest && !HasIndependentDeepSeekSearchProvider(group) {
 		upstreamMessage := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMessage, respBody) {

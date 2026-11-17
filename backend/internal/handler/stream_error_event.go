@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -73,7 +74,7 @@ func writeResponsesFailedSSE(c *gin.Context, errType, code, message string) bool
 			Output:    []any{},
 			Error: responsesFailedError{
 				Code:    mapResponsesErrorCode(errType, code),
-				Message: message,
+				Message: service.ClientUpstreamErrorMessage(message),
 			},
 		},
 	})

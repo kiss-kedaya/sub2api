@@ -193,6 +193,10 @@ func writeOpenAIEmbeddingsUpstreamResponse(c *gin.Context, resp *http.Response, 
 	} else {
 		c.Writer.Header().Set("Content-Type", "application/json")
 	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		setOpsUpstreamError(c, resp.StatusCode, sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(body)), truncateString(string(body), 2048))
+		body = sanitizeClientUpstreamErrorBody(resp.StatusCode, body)
+	}
 	c.Writer.WriteHeader(resp.StatusCode)
 	_, _ = c.Writer.Write(body)
 }

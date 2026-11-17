@@ -80,5 +80,5 @@ func applyErrorPassthroughRule(
 	if upstreamFinancialMessage(errMsg) {
 		status, errMsg = http.StatusBadGateway, UpstreamUnavailableMessage
 	}
-	return status, errType, errMsg, true
+	return status, errType, ClientUpstreamErrorMessage(errMsg), true
 }

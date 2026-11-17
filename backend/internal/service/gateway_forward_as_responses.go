@@ -846,7 +846,7 @@ func writeResponsesError(c *gin.Context, statusCode int, code, message string) {
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
 			"code":    code,
-			"message": message,
+			"message": ClientUpstreamErrorMessage(message),
 		},
 	})
 }

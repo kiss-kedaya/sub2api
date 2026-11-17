@@ -1252,7 +1252,7 @@ func writeChatCompletionsError(c *gin.Context, statusCode int, errType, message 
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
 			"type":    errType,
-			"message": message,
+			"message": ClientUpstreamErrorMessage(message),
 		},
 	})
 }
@@ -1266,7 +1266,7 @@ func buildChatStreamErrorSSE(code, message string) string {
 		"error": gin.H{
 			"type":    "invalid_request_error",
 			"code":    code,
-			"message": message,
+			"message": ClientUpstreamErrorMessage(message),
 		},
 	})
 	if err != nil {

@@ -744,8 +744,8 @@ readLoop:
 				}
 				c.JSON(statusCode, gin.H{
 					"error": gin.H{
-						"type":    clientprivacy.Text(clientErrType),
-						"message": clientprivacy.Text(errMsg),
+						"type":    clientprivacy.ErrorType(statusCode, clientprivacy.Text(clientErrType)),
+						"message": ClientUpstreamErrorMessage(clientprivacy.Text(errMsg)),
 					},
 				})
 			}

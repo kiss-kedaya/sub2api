@@ -206,7 +206,7 @@ func writeOpenAIResponsesInputTokensError(c *gin.Context, status int, errType, m
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"type":    errType,
-			"message": message,
+			"message": ClientUpstreamErrorMessage(message),
 		},
 	})
 }
@@ -517,7 +517,7 @@ func writeAnthropicCountTokensError(c *gin.Context, status int, errType, message
 		"type": "error",
 		"error": gin.H{
 			"type":    errType,
-			"message": message,
+			"message": ClientUpstreamErrorMessage(message),
 		},
 	})
 }

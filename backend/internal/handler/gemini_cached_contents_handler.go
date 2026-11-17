@@ -928,7 +928,7 @@ func geminiCachedContentConcurrencyError(c *gin.Context, err error, slot string)
 var geminiCachedContentPrivateResource = regexp.MustCompile(`(?i)(?:projects/[a-z0-9_.:-]+/locations/[a-z0-9-]+/(?:publishers/google/models/|cachedContents/)[a-z0-9_.:-]+|cachedContents/[a-z0-9_-]+)`)
 
 func geminiCachedContentClientError(message string) string {
-	message = clientprivacy.Text(message)
+	message = service.ClientUpstreamErrorMessage(clientprivacy.Text(message))
 	message = geminiCachedContentPrivateResource.ReplaceAllString(message, "[resource]")
 	if strings.TrimSpace(message) == "" {
 		return "Upstream cached content request failed"
