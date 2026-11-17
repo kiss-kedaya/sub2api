@@ -117,7 +117,9 @@ func TestDoWithUpstreamWaitLimit(t *testing.T) {
 	t.Run("a stream that started is never cut", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.(http.Flusher).Flush()
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
 			time.Sleep(120 * time.Millisecond) // well past the limit
 			_, _ = io.WriteString(w, "late but complete")
 		}))
