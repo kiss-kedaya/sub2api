@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 type protocolError struct{ error }
@@ -17,11 +18,15 @@ func (e protocolError) Unwrap() error { return e.error }
 
 type streamBody struct {
 	*io.PipeReader
-	upstream io.ReadCloser
-	once     sync.Once
-	err      error
-	cancel   context.CancelFunc
+	upstream     io.ReadCloser
+	once         sync.Once
+	err          error
+	cancel       context.CancelFunc
+	localFailure atomic.Bool
 }
+
+// LocalFailure distinguishes bridge validation failures from provider failures.
+func (b *streamBody) LocalFailure() bool { return b.localFailure.Load() }
 
 func (b *streamBody) closeUpstream() error {
 	b.once.Do(func() { b.err = b.upstream.Close() })
@@ -81,14 +86,14 @@ func (b *Bridge) StreamWithRepairs(ctx context.Context, upstream io.ReadCloser, 
 			_ = body.closeUpstream()
 		})
 		defer stop()
-		err := b.transformWithRepairs(ctx, upstream, writer, continueTool, regenerate)
+		err := b.transformWithRepairs(ctx, upstream, writer, continueTool, regenerate, &body.localFailure)
 		_ = body.closeUpstream()
 		_ = writer.CloseWithError(err)
 	}()
 	return body
 }
 
-func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, writer io.Writer, repair ToolRepairFunc, unknown RepairToolCall) error {
+func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, writer io.Writer, repair ToolRepairFunc, unknown RepairToolCall, localFailure *atomic.Bool) error {
 	sequence := 0
 	terminal := false
 	visibleContent := false
@@ -310,6 +315,9 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 		var upstreamFailure *UpstreamFailure
 		if errors.As(err, &upstreamFailure) {
 			failed["error"] = upstreamFailure.Details()
+		} else {
+			// Publish provenance before the pipe makes a synthetic failure visible.
+			localFailure.Store(true)
 		}
 		for _, field := range []string{"id", "model", "usage"} {
 			if value := terminalResponse[field]; value != nil {

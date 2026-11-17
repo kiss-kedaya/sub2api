@@ -2021,6 +2021,10 @@ func bodyHasSSEFraming(body []byte) bool {
 func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
 	bodyText := string(body)
 	terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
+	if terminalOK {
+		// Preserve the upstream source before error mapping can discard this round's result.
+		observeDeepSeekHostedUpstreamEvent(c.Request.Context(), terminalType)
+	}
 	if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
 		if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, terminalPayload); refusalErr != nil {
 			return nil, refusalErr

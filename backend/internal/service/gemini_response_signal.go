@@ -73,26 +73,7 @@ func detectGeminiResponseSignal(payload []byte) (geminiResponseSignal, bool) {
 	}
 
 	if errObj := gjson.GetBytes(payload, "error"); errObj.Exists() && errObj.IsObject() {
-		googleStatus := strings.ToUpper(strings.TrimSpace(errObj.Get("status").String()))
-		status := int(errObj.Get("code").Int())
-		if status < 400 || status > 599 {
-			status = geminiGoogleStatusToHTTPStatus(googleStatus)
-		}
-		message := strings.TrimSpace(errObj.Get("message").String())
-		if message == "" {
-			message = "Gemini upstream returned an error event"
-		}
-		reason := googleStatus
-		if reason == "" {
-			reason = "UPSTREAM_ERROR"
-		}
-		return geminiResponseSignal{
-			Kind:    geminiSignalError,
-			Reason:  reason,
-			Message: message,
-			Status:  status,
-			Detail:  truncateString(string(payload), 2048),
-		}, true
+		return geminiErrorResponseSignal(int(errObj.Get("code").Int()), errObj.Get("status").String(), errObj.Get("message").String(), payload), true
 	}
 
 	blockReason := strings.ToUpper(strings.TrimSpace(gjson.GetBytes(payload, "promptFeedback.blockReason").String()))
@@ -125,6 +106,38 @@ func detectGeminiResponseSignal(payload []byte) (geminiResponseSignal, bool) {
 		Message: fmt.Sprintf("Gemini content policy stop (finishReason=%s): %s", finishReason, detail),
 		Status:  http.StatusBadRequest,
 	}, true
+}
+
+// geminiErrorResponseSignal keeps both decoders consistent without reparsing stream events.
+func geminiErrorResponseSignal(status int, googleStatus, message string, payload []byte) geminiResponseSignal {
+	googleStatus = strings.ToUpper(strings.TrimSpace(googleStatus))
+	if status < 400 || status > 599 {
+		status = geminiGoogleStatusToHTTPStatus(googleStatus)
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "Gemini upstream returned an error event"
+	}
+	reason := googleStatus
+	if reason == "" {
+		reason = "UPSTREAM_ERROR"
+	}
+	return geminiResponseSignal{
+		Kind: geminiSignalError, Reason: reason, Message: message,
+		Status: status, Detail: truncateString(string(payload), 2048),
+	}
+}
+
+// geminiParsedResponseSignal reuses the Messages decoder so observing errors adds no JSON parse.
+// Policy endings are not error envelopes and must not change their existing billing.
+func geminiParsedResponseSignal(payload map[string]any, raw []byte) geminiResponseSignal {
+	if errObj, ok := payload["error"].(map[string]any); ok {
+		status, _ := asInt(errObj["code"])
+		googleStatus, _ := errObj["status"].(string)
+		message, _ := errObj["message"].(string)
+		return geminiErrorResponseSignal(status, googleStatus, message, raw)
+	}
+	return geminiResponseSignal{Reason: strings.ToUpper(strings.TrimSpace(extractGeminiFinishReason(payload)))}
 }
 
 // geminiPrimaryCandidate 返回首候选：index 缺省或为 0 的候选。多候选流里其它 index 的候选不参与判定。

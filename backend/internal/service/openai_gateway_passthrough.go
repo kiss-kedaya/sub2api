@@ -2954,6 +2954,10 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel string, mappedModel string) (*openaiNonStreamingResultPassthrough, error) {
 	bodyText := string(body)
 	terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
+	if terminalOK {
+		// Preserve the upstream source before error mapping can discard this round's result.
+		observeDeepSeekHostedUpstreamEvent(c.Request.Context(), terminalType)
+	}
 	if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
 		if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, terminalPayload); refusalErr != nil {
 			return nil, refusalErr

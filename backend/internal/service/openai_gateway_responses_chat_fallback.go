@@ -172,12 +172,12 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	// request was dispatched and accepted, so its input is still billed from an estimate.
 	watch := newCompatClientWatch(c, resp.Body)
 	defer watch.Stop()
-	ccResp, usage, err := s.readCCUpstreamJSONResponse(c, watch.wrapResponse(resp), func(c *gin.Context, status int, errType, message string) {
+	ccResp, usage, nonBillableUpstreamError, err := s.readCCUpstreamJSONResponse(c, watch.wrapResponse(resp), func(c *gin.Context, status int, errType, message string) {
 		if !watch.Gone() {
 			writeOpenAIResponsesFallbackError(c, status, errType, message)
 		}
 	})
-	if err != nil {
+	if err != nil && ccResp == nil {
 		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
 			return openAIStreamSilenceResult(resp, usage, originalModel, billingModel, upstreamModel, false, startTime), err
 		}
@@ -200,18 +200,21 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 		}
 		return nil, err
 	}
-	responsesResp := apicompat.ChatCompletionsResponseToResponsesWithLocalShell(ccResp, originalModel, customTools, functionTools, toolSearch, namespaceTools, localShellTools)
-	s.cacheReasoningItemsFromOutput(responsesResp.Output)
+	if err == nil {
+		responsesResp := apicompat.ChatCompletionsResponseToResponsesWithLocalShell(ccResp, originalModel, customTools, functionTools, toolSearch, namespaceTools, localShellTools)
+		s.cacheReasoningItemsFromOutput(responsesResp.Output)
 
-	if s.responseHeaderFilter != nil {
-		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+		if s.responseHeaderFilter != nil {
+			responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+		}
+		c.JSON(http.StatusOK, responsesResp)
 	}
-	c.JSON(http.StatusOK, responsesResp)
 
 	return &OpenAIForwardResult{
 		RequestID:                   requestID,
 		UpstreamHeaders:             resp.Header,
 		Usage:                       usage,
+		NonBillableUpstreamError:    nonBillableUpstreamError,
 		Model:                       originalModel,
 		BillingModel:                billingModel,
 		UpstreamModel:               upstreamModel,
@@ -220,7 +223,7 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 		ServiceTier:                 resolvedOpenAIUpstreamServiceTier(c, serviceTier),
 		Stream:                      false,
 		Duration:                    time.Since(startTime),
-	}, nil
+	}, err
 }
 
 func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(

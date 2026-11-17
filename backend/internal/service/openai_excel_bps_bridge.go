@@ -107,6 +107,9 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "message": "Excel response could not be converted"}})
 		return nil, true, err
 	}
+	// Provenance is published by the bridge before emitting a synthetic failure;
+	// do not classify that generated frame as a provider rejection.
+	localFailure, _ := resp.Body.(interface{ LocalFailure() bool })
 	// Conversion owns a pipe above the resource-server body. Give both stream
 	// and buffered clients the normal bounded usage-drain window on cancel.
 	resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
@@ -150,6 +153,9 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 			result.NonBillableUpstreamError = tap.nonBillableUpstreamError
 		}
 		err = relayErr
+	}
+	if localFailure != nil && localFailure.LocalFailure() {
+		result.NonBillableUpstreamError = false
 	}
 	result.Duration = time.Since(start)
 	if observer := upstreamResponseModelObserverFromContext(c); observer != nil {
