@@ -555,6 +555,8 @@ func TestGeminiBridgeErrorPreludeSuccessfulTerminalKeepsBilling(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, result.NonBillableUpstreamError)
 	require.NotContains(t, recorder.Body.String(), `"error"`)
+	require.Equal(t, 1, strings.Count(recorder.Body.String(), `"text":"hello"`))
+	require.Equal(t, 1, strings.Count(recorder.Body.String(), `"text":"completed answer"`))
 	requireGeminiBridgeBilling(t, result, account, false)
 }
 

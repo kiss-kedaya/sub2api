@@ -351,17 +351,8 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 			terminal = protocol != APIProtocolResponses || (parsed.eventType != "error" && parsed.eventType != "")
 			return
 		}
-		if streamErr != nil && (parsed.eventType == "response.completed" || parsed.eventType == "response.done") {
-			// The provider's successful terminal supersedes a pending error prelude.
-			streamErr = nil
-			financialFailure = false
-			policyFailure = false
-			result.NonBillableUpstreamError = false
-		}
-		if streamErr != nil {
-			terminal = isOpenAICompatResponsesTerminalEvent(parsed.eventType)
-			return
-		}
+		// A pending provider prelude must not discard later answer deltas: a
+		// successful terminal can only restore billing for an answer we delivered.
 		var chunks []apicompat.ChatCompletionsChunk
 		if protocol == APIProtocolResponses {
 			var event apicompat.ResponsesStreamEvent
@@ -418,6 +409,13 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 					finish = geminiBridgeFinishReason(*choice.FinishReason)
 				}
 			}
+		}
+		if streamErr != nil && result.FirstTokenMs != nil && (parsed.eventType == "response.completed" || parsed.eventType == "response.done") {
+			// A successful terminal supersedes the prelude only after real answer delivery.
+			streamErr = nil
+			financialFailure = false
+			policyFailure = false
+			result.NonBillableUpstreamError = false
 		}
 	}
 	for !terminal && !result.ClientDisconnect && ctx.Err() == nil && scanner.Scan() {
