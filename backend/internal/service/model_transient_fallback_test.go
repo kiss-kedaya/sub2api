@@ -182,6 +182,42 @@ func TestModelTransientFallbackOnlyRetriesNoAvailableErrors(t *testing.T) {
 	}
 }
 
+func TestModelTransientFallbackCompactErrorsAreOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		optIn     bool
+		retryErr  error
+		wantErr   error
+		wantCalls int
+	}{
+		{name: "default unchanged", wantErr: ErrNoAvailableCompactAccounts, wantCalls: 1},
+		{name: "compact recovered", optIn: true, wantCalls: 2},
+		{name: "compact still unavailable", optIn: true, retryErr: ErrNoAvailableAccounts, wantErr: ErrNoAvailableCompactAccounts, wantCalls: 2},
+		{name: "new error not swallowed", optIn: true, retryErr: ErrSchedulerCacheNotReady, wantErr: ErrSchedulerCacheNotReady, wantCalls: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			var additional []error
+			if tc.optIn {
+				additional = []error{ErrNoAvailableCompactAccounts}
+			}
+			_, err := withModelTransientFallback(context.Background(), func(ctx context.Context) (int, error) {
+				calls++
+				probe, ok := ctx.Value(modelTransientFallbackContextKey{}).(*modelTransientFallbackProbe)
+				require.True(t, ok)
+				probe.blocked.Store(true)
+				if calls == 1 {
+					return 0, fmt.Errorf("compact: %w", ErrNoAvailableCompactAccounts)
+				}
+				require.True(t, probe.bypass)
+				return 0, tc.retryErr
+			}, additional...)
+			require.ErrorIs(t, err, tc.wantErr)
+			require.Equal(t, tc.wantCalls, calls)
+		})
+	}
+}
+
 func TestModelTransientFallbackNoAccountsWithoutCooldownRunsOnce(t *testing.T) {
 	svc, cache, ctx, group := newModelTransientFallbackFixture()
 	_, err := svc.SelectAccountWithLoadAwareness(ctx, &group.ID, "", "model-a", nil, "", 0)

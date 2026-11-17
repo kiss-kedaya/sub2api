@@ -480,7 +480,23 @@ func (s *OpenAIGatewayService) SelectAccountByPreviousResponseID(
 	// 分组利润控制：公共入口装门，保证不经 selectAccountWithScheduler
 	// 的调用方也无法绕过利润准入（scheduler 内部路径已在唯一调度入口装门）。
 	ctx = s.withOpenAIProfitControlGate(ctx, groupID)
-	return s.selectAccountByPreviousResponseIDForCapability(ctx, groupID, previousResponseID, requestedModel, excludedIDs, "", requireCompact)
+	selection, err := withModelTransientFallback(ctx, func(ctx context.Context) (*AccountSelectionResult, error) {
+		selected, err := s.selectAccountByPreviousResponseIDForCapability(ctx, groupID, previousResponseID, requestedModel, excludedIDs, "", requireCompact)
+		if err == nil && selected != nil {
+			s.logOpenAIModelTransientFallback(ctx, selected.Account, groupID, requestedModel)
+		}
+		// A sticky miss normally returns nil, nil. Only a transient rejection
+		// needs the unavailable sentinel to drive the outer fallback helper.
+		probe, _ := ctx.Value(modelTransientFallbackContextKey{}).(*modelTransientFallbackProbe)
+		if err == nil && selected == nil && probe != nil && probe.blocked.Load() {
+			return nil, ErrNoAvailableAccounts
+		}
+		return selected, err
+	}, ErrNoAvailableCompactAccounts)
+	if errors.Is(err, ErrNoAvailableAccounts) {
+		return nil, nil
+	}
+	return selection, err
 }
 
 func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
@@ -650,11 +666,17 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		if vetoed, _ := openAIProfitControlVetoReason(ctx, latest); vetoed {
 			return 0, nil, "", nil
 		}
-		if s.isOpenAIAccountRequestRuntimeBlocked(latest, requestedModel, requireCompact) {
-			_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+		if s.isOpenAIAccountRequestRuntimeBlocked(ctx, latest, requestedModel, requireCompact) {
+			// Keep a model-paused chain available for the outer pool retry.
+			if !s.isOpenAIAccountModelRuntimeBlocked(latest, requestedModel) {
+				_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+			}
 			return 0, nil, "", nil
 		}
 		account = latest
+	}
+	if s.isOpenAIAccountRequestRuntimeBlocked(ctx, account, requestedModel, requireCompact) {
+		return 0, nil, "", nil
 	}
 	if requireCompact && openAICompactSupportTier(account) == 0 {
 		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
