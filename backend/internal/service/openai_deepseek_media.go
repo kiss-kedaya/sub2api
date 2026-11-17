@@ -103,6 +103,9 @@ func (s *OpenAIGatewayService) ForwardDeepSeekMedia(ctx context.Context, c *gin.
 			return nil, fmt.Errorf("deepseek media: read error response: %w", readErr)
 		}
 		message := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(data))
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices || clientPrivacyErrorValue(gjson.GetBytes(data, "error")) {
+			setOpsUpstreamError(c, resp.StatusCode, message, truncateString(string(data), 2048))
+		}
 		// Validation/moderation errors are request-scoped, even with FailoverOn400.
 		if resp.StatusCode >= 400 && resp.StatusCode != http.StatusBadRequest &&
 			s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, message, data) {
@@ -121,6 +124,9 @@ func (s *OpenAIGatewayService) ForwardDeepSeekMedia(ctx context.Context, c *gin.
 		data, readErr := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 		if readErr != nil {
 			return nil, fmt.Errorf("deepseek asr: read response: %w", readErr)
+		}
+		if clientPrivacyErrorValue(gjson.GetBytes(data, "error")) {
+			setOpsUpstreamError(c, resp.StatusCode, sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(data)), truncateString(string(data), 2048))
 		}
 		writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 		c.Data(resp.StatusCode, firstNonEmpty(resp.Header.Get("Content-Type"), "application/json"), sanitizeClientUpstreamErrorBody(resp.StatusCode, data))
@@ -255,6 +261,9 @@ func streamDeepSeekOCR(c *gin.Context, reader io.Reader, limit int) (pages int, 
 	data := captured
 	if !overflow {
 		if !streaming {
+			if clientPrivacyErrorValue(gjson.GetBytes(data, "error")) {
+				setOpsUpstreamError(c, http.StatusOK, sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(data)), truncateString(string(data), 2048))
+			}
 			write(sanitizeClientUpstreamErrorBody(http.StatusOK, data))
 		}
 		var payload struct {

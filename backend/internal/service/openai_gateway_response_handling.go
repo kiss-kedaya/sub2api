@@ -2330,7 +2330,7 @@ func (s *OpenAIGatewayService) writeOpenAINonStreamingProtocolError(resp *http.R
 	c.JSON(http.StatusBadGateway, gin.H{
 		"error": gin.H{
 			"type":    "upstream_error",
-			"message": message,
+			"message": ClientUpstreamErrorMessage(message),
 		},
 	})
 	return fmt.Errorf("non-streaming openai protocol error: %s", message)

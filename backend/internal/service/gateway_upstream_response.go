@@ -532,7 +532,7 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 			"type": "error",
 			"error": gin.H{
 				"type":    errType,
-				"message": errMsg,
+				"message": ClientUpstreamErrorMessage(errMsg),
 			},
 		})
 
@@ -578,7 +578,7 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 		"type": "error",
 		"error": gin.H{
 			"type":    errType,
-			"message": errMsg,
+			"message": ClientUpstreamErrorMessage(errMsg),
 		},
 	})
 
@@ -684,7 +684,7 @@ func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *ht
 			"type": "error",
 			"error": gin.H{
 				"type":    errType,
-				"message": errMsg,
+				"message": ClientUpstreamErrorMessage(errMsg),
 			},
 		})
 

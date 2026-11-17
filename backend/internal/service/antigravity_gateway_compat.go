@@ -534,7 +534,7 @@ func (s *AntigravityGatewayService) writeAntigravityCompatError(
 	MarkResponseCommitted(c)
 	c.JSON(status, gin.H{
 		"error": gin.H{
-			"message": message,
+			"message": ClientUpstreamErrorMessage(message),
 			"type":    errType,
 			"param":   nil,
 			"code":    nil,

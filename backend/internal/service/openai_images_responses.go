@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/util/clientprivacy"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -1069,22 +1070,7 @@ func openAIImagesUpstreamErrorFromGJSON(errorObj gjson.Result, upstreamRequestID
 // openAIImagesErrorTypeForStatus returns an OpenAI-style error type when the
 // upstream body does not provide one of its own.
 func openAIImagesErrorTypeForStatus(status int) string {
-	switch {
-	case status == http.StatusBadRequest:
-		return "invalid_request_error"
-	case status == http.StatusUnauthorized:
-		return "authentication_error"
-	case status == http.StatusForbidden:
-		return "permission_error"
-	case status == http.StatusNotFound:
-		return "not_found_error"
-	case status == http.StatusTooManyRequests:
-		return "rate_limit_error"
-	case status >= 500:
-		return "api_error"
-	default:
-		return "upstream_error"
-	}
+	return clientprivacy.ErrorTypeForStatus(status)
 }
 
 // openAIImagesUpstreamErrorFromHTTP builds an OpenAIImagesUpstreamError from a
@@ -1352,8 +1338,8 @@ func writeOpenAIImagesUpstreamErrorResponse(c *gin.Context, err *OpenAIImagesUps
 	StopOpenAIImagesJSONKeepaliveCommitted(c)
 	defer GuardUpstreamFinancialError(c, err.StatusCode, openAIImagesUpstreamErrorResponseBody(err))()
 	errorObj := gin.H{
-		"type":    err.clientErrorType(),
-		"message": err.clientMessage(),
+		"type":    clientprivacy.ErrorType(err.clientStatusCode(), err.clientErrorType()),
+		"message": ClientUpstreamErrorMessage(err.clientMessage()),
 	}
 	if code := strings.TrimSpace(err.Code); code != "" {
 		errorObj["code"] = code
@@ -1371,6 +1357,9 @@ func (s *OpenAIGatewayService) writeOpenAIImagesStreamEvent(c *gin.Context, flus
 
 	if eventName == "error" && WriteUpstreamFinancialError(c, 0, payload) {
 		return nil
+	}
+	if eventName == "error" {
+		payload = clientprivacy.JSON(payload)
 	}
 	if strings.TrimSpace(eventName) != "" {
 		if _, err := fmt.Fprintf(c.Writer, "event: %s\n", eventName); err != nil {

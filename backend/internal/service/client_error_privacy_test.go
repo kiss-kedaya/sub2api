@@ -11,13 +11,82 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
 
+func TestClientErrorPrivacyRelayFingerprintKeepsOpsAndRuleEvidence(t *testing.T) {
+	const message = "invalid OCR purpose (request id: 20260101000000000000000000aaaaaaSyntheticC3)"
+	const body = `{"error":{"type":"new_api_error","code":"invalid_request","message":"` + message + `"}}`
+	for _, mode := range []string{"responses", "chat", "messages", "rule"} {
+		t.Run(mode, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			svc := &OpenAIGatewayService{cfg: &config.Config{}}
+			svc.cfg.Gateway.LogUpstreamErrorBody = true
+			account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+			if mode == "rule" {
+				rules := &ErrorPassthroughService{}
+				rules.setLocalCache([]*model.ErrorPassthroughRule{{
+					ID: 1, Enabled: true, ErrorCodes: []int{400}, Keywords: []string{"new_api_error", "request id:"},
+					MatchMode: model.MatchModeAll, PassthroughCode: true, PassthroughBody: true,
+				}})
+				BindErrorPassthroughService(c, rules)
+			}
+			resp := &http.Response{StatusCode: http.StatusBadRequest, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+			var err error
+			switch mode {
+			case "chat":
+				_, err = svc.handleCompatErrorResponse(resp, c, account, writeChatCompletionsError)
+			case "messages":
+				_, err = svc.handleCompatErrorResponse(resp, c, account, writeAnthropicError)
+			default:
+				_, err = svc.handleErrorResponse(t.Context(), resp, c, account, nil)
+			}
+			require.Error(t, err)
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+			require.NotContains(t, rec.Body.String(), "new_api_error")
+			require.NotContains(t, rec.Body.String(), "request id:")
+			require.Equal(t, "invalid OCR purpose", gjson.Get(rec.Body.String(), "error.message").String())
+			wantType := "invalid_request_error"
+			if mode == "rule" {
+				wantType = "upstream_error" // a keyword rule must still match the original body
+			}
+			require.Equal(t, wantType, gjson.Get(rec.Body.String(), "error.type").String())
+			require.Equal(t, message, c.GetString(OpsUpstreamErrorMessageKey))
+			require.Equal(t, body, c.GetString(OpsUpstreamErrorDetailKey))
+			require.Equal(t, message, sanitizeUpstreamErrorMessage(message), "ops/classification sanitizer must retain correlation")
+		})
+	}
+}
+
+func TestClientErrorPrivacyRelayFingerprintLeavesHealthRulesRaw(t *testing.T) {
+	const body = `{"error":{"type":"new_api_error","message":"bad input (request id: Synthetic123)"}}`
+	account := &Account{Credentials: map[string]any{
+		"temp_unschedulable_enabled": true,
+		"temp_unschedulable_rules": []any{map[string]any{
+			"error_code": float64(400), "keywords": []any{"request id:"}, "duration_minutes": float64(5),
+		}},
+	}}
+	original := []byte(body)
+	cleaned := sanitizeClientUpstreamErrorBody(http.StatusBadRequest, original)
+	require.NotContains(t, string(cleaned), "request id:")
+	require.Equal(t, body, string(original))
+	require.Len(t, matchTempUnschedulableRules(account, http.StatusBadRequest, original), 1)
+	require.Empty(t, matchTempUnschedulableRules(account, http.StatusBadRequest, cleaned))
+	stored, truncated := SanitizeOpsErrorBodyForQueue(body)
+	require.False(t, truncated)
+	require.Contains(t, stored, "new_api_error")
+	require.Contains(t, stored, "request id: Synthetic123")
+}
+
 func TestClientErrorPrivacyPreservesSuccessfulDocuments(t *testing.T) {
 	for _, body := range []string{
+		`{"results":[{"type":"new_api_error","message":"sample (request id: Synthetic123)"}]}`,
+		`{"error":null,"type":"new_api_error","message":"sample (request id: Synthetic123)"}`,
 		`{"error":null,"output":[{"text":"https://public.example/article"}],"usage":{"input_tokens":9}}`,
 		`{"error":false,"content":"https://public.example/article"}`,
 		`{"error":"","content":"https://public.example/article"}`,

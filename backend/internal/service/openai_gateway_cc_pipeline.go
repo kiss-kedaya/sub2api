@@ -388,7 +388,7 @@ func writeOpenAIResponsesFallbackError(c *gin.Context, statusCode int, errType, 
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
 			"type":    errType,
-			"message": message,
+			"message": ClientUpstreamErrorMessage(message),
 		},
 	})
 }

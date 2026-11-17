@@ -677,7 +677,7 @@ func writeGatewayCCError(c *gin.Context, statusCode int, errType, message string
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
 			"type":    errType,
-			"message": message,
+			"message": ClientUpstreamErrorMessage(message),
 		},
 	})
 }

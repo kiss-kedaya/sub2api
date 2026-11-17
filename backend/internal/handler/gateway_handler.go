@@ -2293,7 +2293,7 @@ func (h *GatewayHandler) handleStreamingAwareErrorWithCode(c *gin.Context, statu
 			if code != "" {
 				errorCode = `,"code":` + strconv.Quote(code)
 			}
-			errorEvent := `data: {"type":"error","error":{"type":` + strconv.Quote(errType) + errorCode + `,"message":` + strconv.Quote(message) + `}}` + "\n\n"
+			errorEvent := `data: {"type":"error","error":{"type":` + strconv.Quote(errType) + errorCode + `,"message":` + strconv.Quote(service.ClientUpstreamErrorMessage(message)) + `}}` + "\n\n"
 			if _, err := fmt.Fprint(c.Writer, errorEvent); err != nil {
 				_ = c.Error(err)
 			}
@@ -2413,7 +2413,7 @@ func (h *GatewayHandler) errorResponseWithCode(c *gin.Context, status int, errTy
 		return
 	}
 
-	errorObject := gin.H{"type": errType, "message": message}
+	errorObject := gin.H{"type": errType, "message": service.ClientUpstreamErrorMessage(message)}
 	if code != "" {
 		errorObject["code"] = code
 	}

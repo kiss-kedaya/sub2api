@@ -25,9 +25,15 @@ func sanitizeClientUpstreamErrorBody(status int, body []byte) []byte {
 		return body
 	}
 	if bodyHasSSEFraming(body) {
-		return []byte(clientprivacy.ErrorSSE(string(body)))
+		return []byte(clientprivacy.ErrorSSEWithStatus(string(body), status))
 	}
-	return clientprivacy.JSON(body)
+	return clientprivacy.JSONWithStatus(body, status)
+}
+
+// ClientUpstreamErrorMessage removes relay correlation suffixes only at client
+// write boundaries. Internal diagnostics and rule matching keep their original.
+func ClientUpstreamErrorMessage(message string) string {
+	return clientprivacy.ErrorMessage(message)
 }
 
 func clientPrivacyErrorValue(value gjson.Result) bool {

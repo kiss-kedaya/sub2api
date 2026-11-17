@@ -1010,7 +1010,7 @@ func writeOpenAIPassthroughErrorEnvelope(c *gin.Context, downstreamStatus int, u
 	body, _ := json.Marshal(gin.H{
 		"error": gin.H{
 			"type":    "upstream_error",
-			"message": message,
+			"message": ClientUpstreamErrorMessage(message),
 		},
 	})
 	if writeOpenAICompactSSEBridge(c, downstreamStatus, body) {

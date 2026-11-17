@@ -3,6 +3,7 @@ package clientprivacy
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -78,6 +79,70 @@ func TestTextBoundsRecursiveDiagnosticEscaping(t *testing.T) {
 	}
 	if output := Text(input); output != redacted {
 		t.Fatalf("over-nested encoding did not fail closed: %q", output)
+	}
+}
+
+func TestJSONRemovesRelayFingerprints(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, want string
+	}{
+		{"voice", `{"error":{"message":"voice_id must be stella or tide (request id: 20260101000000000000000000aaaaaaSyntheticA1)","type":"new_api_error","param":"","code":"invalid_request"}}`, `{"error":{"message":"voice_id must be stella or tide","type":"upstream_error","param":"","code":"invalid_request"}}`},
+		{"format", `{"error":{"message":"format must be wav or pcm (request id: 20260101000000000000000000aaaaaaSyntheticB2)","type":"new_api_error","param":"","code":"invalid_request"}}`, `{"error":{"message":"format must be wav or pcm","type":"upstream_error","param":"","code":"invalid_request"}}`},
+		{"purpose", `{"error":{"message":"invalid OCR purpose (request id: 20260101000000000000000000aaaaaaSyntheticC3)","type":"new_api_error","param":"","code":"invalid_request"}}`, `{"error":{"message":"invalid OCR purpose","type":"upstream_error","param":"","code":"invalid_request"}}`},
+		{"nested response", `{"type":"response.failed","response":{"error":{"type":"one_api_error","message":"invalid OCR purpose (request id: Synthetic123)"}}}`, `{"type":"response.failed","response":{"error":{"type":"upstream_error","message":"invalid OCR purpose"}}}`},
+		{"anthropic envelope", `{"type":"error","error":{"type":"new_api_error","message":"bad input (request id: Synthetic123)"}}`, `{"type":"error","error":{"type":"upstream_error","message":"bad input"}}`},
+		{"duplicate type", `{"error":{"type":"new_api_error","type":"invalid_request_error","message":"bad input"}}`, `{"error":{"type":"invalid_request_error","message":"bad input"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := []byte(tc.input)
+			output := JSON(input)
+			var got, want any
+			if err := json.Unmarshal(output, &got); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("got %s, want %s", output, tc.want)
+			}
+			if bytes.Contains(output, []byte("new_api_error")) || bytes.Contains(output, []byte("one_api_error")) || bytes.Contains(output, []byte("request id:")) {
+				t.Fatalf("relay fingerprint survived: %s", output)
+			}
+			if string(input) != tc.input {
+				t.Fatal("original upstream evidence was mutated")
+			}
+		})
+	}
+}
+
+func TestJSONKeepsOfficialErrorsAndNonSuffixRequestIDs(t *testing.T) {
+	for _, input := range []string{
+		` {"error":{"message":"'count' must be between 1 and 50 (request_id: 00000000-0000-4000-8000-000000000001)","type":"invalid_request_error","param":"","code":"invalid_request_error"}} `,
+		`{"error":{"message":"Unsupported audio format: expected 16-bit PCM WAV or Ogg Opus, mono or stereo (request_id: 00000000-0000-4000-8000-000000000002)","type":"invalid_request_error","param":"","code":"invalid_request_error"}}`,
+		`{"error":{"message":"Failed to recognize the file: the file could not be parsed or its format is not supported","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}`,
+		`{"type":"error","error":{"type":"api_error","message":"Overloaded"}}`,
+		`{"error":{"type":"rate_limit_error","message":"Rate limit reached"}}`,
+		`{"error":{"type":"vendor_api_error","message":"bad input"}}`,
+		`{"error":{"message":"bad input (request id: Synthetic123) please retry"}}`,
+		`{"error":{"message":"request id is a required field"}}`,
+		`{"error":{"message":"bad input (request id: not-a-relay-id)"}}`,
+	} {
+		if output := JSON([]byte(input)); string(output) != input {
+			t.Fatalf("safe error bytes changed: got %s, want %s", output, input)
+		}
+	}
+}
+
+func TestSSERemovesRelayErrorFingerprintsOnly(t *testing.T) {
+	success := "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"new_api_error (request id: Synthetic123)\"}\n\n"
+	failure := "event: error\r\nid: evt_safe\r\ndata: {\"type\":\"error\",\"error\":{\"type\":\"one_api_error\",\"message\":\"bad input (request id: Synthetic123)\"}}\r\n\r\n"
+	output := SSE(success + failure)
+	if !strings.HasPrefix(output, success) || !strings.Contains(output, "event: error\r\nid: evt_safe\r\n") || !strings.HasSuffix(output, "\r\n\r\n") {
+		t.Fatalf("SSE success/framing changed: %q", output)
+	}
+	if strings.Contains(strings.TrimPrefix(output, success), "one_api_error") || strings.Contains(strings.TrimPrefix(output, success), "request id:") || !strings.Contains(output, `"message":"bad input"`) {
+		t.Fatalf("relay error fingerprint survived: %q", output)
 	}
 }
 

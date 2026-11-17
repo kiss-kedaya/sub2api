@@ -1802,7 +1802,7 @@ func writeAnthropicError(c *gin.Context, statusCode int, errType, message string
 		"type": "error",
 		"error": gin.H{
 			"type":    errType,
-			"message": message,
+			"message": ClientUpstreamErrorMessage(message),
 		},
 	})
 }
@@ -1816,7 +1816,7 @@ func buildAnthropicStreamErrorSSE(errType, message string) string {
 		"type": "error",
 		"error": gin.H{
 			"type":    errType,
-			"message": message,
+			"message": ClientUpstreamErrorMessage(message),
 		},
 	})
 	if err != nil {

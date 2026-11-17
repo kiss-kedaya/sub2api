@@ -534,7 +534,7 @@ func isPassthroughErrorMessage(msg string) bool {
 // getPassthroughOrDefault 若消息在白名单内则返回原始消息，否则返回默认消息
 func getPassthroughOrDefault(upstreamMsg, defaultMsg string) string {
 	if isPassthroughErrorMessage(upstreamMsg) {
-		return upstreamMsg
+		return ClientUpstreamErrorMessage(upstreamMsg)
 	}
 	return defaultMsg
 }
