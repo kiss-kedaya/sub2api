@@ -26,13 +26,15 @@ const (
 	openAIFirstOutputScannerFramingAllowance = 64
 	openAIFirstOutputGuardQueueSize          = 1
 	openAIDefaultStreamQueueSize             = 1
+	openAIFirstOutputSpoolRetryInterval      = time.Minute
+	openAIFirstOutputSpoolDirectoryMode      = os.ModeSticky | 0o777
 )
 
 var (
-	errOpenAIFirstOutputStageLimit     = errors.New("openai first-output staging limit exceeded")
-	errOpenAIFirstOutputScannerLimit   = errors.New("openai pre-output scanner token limit exceeded")
-	errOpenAIFirstOutputClientWrite    = errors.New("openai first-output client write failed")
-	openAIFirstOutputSpoolFallbackOnce sync.Once
+	errOpenAIFirstOutputStageLimit   = errors.New("openai first-output staging limit exceeded")
+	errOpenAIFirstOutputScannerLimit = errors.New("openai pre-output scanner token limit exceeded")
+	errOpenAIFirstOutputClientWrite  = errors.New("openai first-output client write failed")
+	openAIFirstOutputSpoolRetryAfter atomic.Int64
 )
 
 type openAIFirstOutputStage struct {
@@ -55,15 +57,24 @@ func newOpenAIFirstOutputStage(limit int64) *openAIFirstOutputStage {
 	return &openAIFirstOutputStage{
 		limit: limit,
 		createTemp: func() (*os.File, error) {
-			const dir = "/var/tmp/sub2api"
-			if err := os.MkdirAll(dir, 0o1777); err != nil {
-				return nil, err
-			}
-			return os.CreateTemp(dir, "sub2api-openai-first-output-*")
+			return createOpenAIFirstOutputSpool("/var/tmp/sub2api")
 		},
 		removeFile: os.Remove,
 		memoryOnly: runtime.GOOS == "windows",
 	}
+}
+
+func createOpenAIFirstOutputSpool(dir string) (*os.File, error) {
+	// Mkdir, unlike MkdirAll, tells us whether this process created the leaf.
+	// Never chmod an existing directory owned by another service or operator.
+	if err := os.Mkdir(dir, openAIFirstOutputSpoolDirectoryMode); err == nil {
+		if err := os.Chmod(dir, openAIFirstOutputSpoolDirectoryMode); err != nil {
+			return nil, err
+		}
+	} else if !errors.Is(err, os.ErrExist) {
+		return nil, err
+	}
+	return os.CreateTemp(dir, "sub2api-openai-first-output-*")
 }
 
 func newDefaultOpenAIFirstOutputStage() *openAIFirstOutputStage {
@@ -152,12 +163,25 @@ func (s *openAIFirstOutputStage) prepareWrite(incoming int) error {
 	if s.tempFile != nil || s.memoryOnly || s.size+int64(incoming) <= openAIFirstOutputStageMemoryLimit {
 		return nil
 	}
-	file, err := s.createTemp()
-	if err != nil {
-		openAIFirstOutputSpoolFallbackOnce.Do(func() {
-			slog.Error("OpenAI first-output preferred spool directory unavailable; falling back to system temp directory",
-				"component", "service.openai_gateway", "directory", "/var/tmp/sub2api", "error", err)
-		})
+	var file *os.File
+	var err error
+	retryAfter := openAIFirstOutputSpoolRetryAfter.Load()
+	now := time.Now()
+	nextProbe := now.Add(openAIFirstOutputSpoolRetryInterval).UnixNano()
+	// Once unavailable, reserve the expired window before probing so concurrent
+	// requests keep using the fallback instead of stampeding the bad directory.
+	if now.UnixNano() >= retryAfter && (retryAfter == 0 || openAIFirstOutputSpoolRetryAfter.CompareAndSwap(retryAfter, nextProbe)) {
+		file, err = s.createTemp()
+		if err != nil {
+			if retryAfter != 0 || openAIFirstOutputSpoolRetryAfter.CompareAndSwap(0, nextProbe) {
+				slog.Error("OpenAI first-output preferred spool directory unavailable; falling back to system temp directory",
+					"component", "service.openai_gateway", "directory", "/var/tmp/sub2api", "error", err)
+			}
+		} else if retryAfter != 0 {
+			openAIFirstOutputSpoolRetryAfter.CompareAndSwap(nextProbe, 0)
+		}
+	}
+	if file == nil {
 		file, err = os.CreateTemp("", "sub2api-openai-first-output-*")
 		if err != nil {
 			return fmt.Errorf("create first-output spool: %w", err)
@@ -189,8 +213,7 @@ func (s *openAIFirstOutputStage) prepareWrite(incoming int) error {
 		return fmt.Errorf("initialize first-output spool: %w", err)
 	}
 	s.tempFile = file
-	s.tempPath = path
-	s.memory.Reset()
+	s.memory = bytes.Buffer{}
 	return nil
 }
 
@@ -243,7 +266,7 @@ func (s *openAIFirstOutputStage) Close() error {
 	}
 	s.closed = true
 	s.size = 0
-	s.memory.Reset()
+	s.memory = bytes.Buffer{}
 	closeErr := s.cleanupErr
 	s.cleanupErr = nil
 	if s.tempFile != nil {
