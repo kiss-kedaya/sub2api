@@ -17,13 +17,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The conversation lock is switched off in production (see
-// service.SetGrokModerationSessionBlockEnabled). The handler tests written for
-// the lock keep running with it on so that code stays covered until the
-// matching is fixed; the test below pins what production does now.
+// The identifier-based lock is switched off in production (see
+// service.SetGrokModerationSessionBlockEnabled). The handler tests keep it on
+// so the remaining code for it stays covered; the test below pins what
+// production does.
 func init() { service.SetGrokModerationSessionBlockEnabled(true) }
 
-func TestGrokRefusalDoesNotLockTheConversationWhileTheLockIsOff(t *testing.T) {
+// A refusal locks the refused conversation by its content and nothing else:
+// the same client identifier with other content is served, and a lock that an
+// earlier version wrote for the identifier is ignored.
+func TestGrokRefusalLocksOnlyTheRefusedConversation(t *testing.T) {
 	defer service.SetGrokModerationSessionBlockEnabled(false)()
 	gin.SetMode(gin.TestMode)
 	const refusal = `{"error":{"message":"I'm sorry, I can't help with that request.","type":"upstream_error"}}`
@@ -50,37 +53,52 @@ func TestGrokRefusalDoesNotLockTheConversationWhileTheLockIsOff(t *testing.T) {
 	key := &service.APIKey{ID: 55, UserID: 77, GroupID: &groupID, User: &service.User{ID: 77, Balance: 100, Status: service.StatusActive},
 		Group: &service.Group{ID: groupID, Platform: service.PlatformGrok, Status: service.StatusActive, Hydrated: true,
 			CrossProtocolConversionEnabled: true, RateMultiplier: 0.07, GrokModerationRefusalPrice: &price}}
-	call := func() *httptest.ResponseRecorder {
-		body := `{"model":"grok-4.7","stream":false,"messages":[{"role":"user","content":"hello"}],"max_tokens":128}`
+	// Every request carries the same client identifiers, the way a relay reuses
+	// one x-grok-conv-id for most of a customer's traffic.
+	call := func(messages string) *httptest.ResponseRecorder {
+		body := `{"model":"grok-4.7","stream":false,"messages":` + messages + `,"max_tokens":128}`
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.ClientRequestID, "refusal-fixture"))
 		c.Request.Header.Set("Content-Type", "application/json")
-		c.Request.Header.Set("Session_id", "refused-conversation")
+		c.Request.Header.Set("Session_id", "shared-identifier")
+		c.Request.Header.Set("x-grok-conv-id", "shared-identifier")
 		c.Set(string(middleware.ContextKeyAPIKey), key)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 77})
 		h.ChatCompletions(c)
 		return rec
 	}
+	const refused = `[{"role":"user","content":"refused request"}]`
+	const continued = `[{"role":"user","content":"refused request"},{"role":"assistant","content":"earlier answer"},{"role":"user","content":"go on"}]`
+	const unrelated = `[{"role":"user","content":"an unrelated conversation"}]`
 
-	// A lock written by an earlier version must be ignored.
+	// A lock written by an earlier version for the shared identifier.
 	probe, _ := gin.CreateTestContext(httptest.NewRecorder())
 	probe.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	probe.Request.Header.Set("Session_id", "refused-conversation")
+	probe.Request.Header.Set("Session_id", "shared-identifier")
 	staleHash := service.GrokModerationSessionHash(probe, key, nil)
 	require.NotEmpty(t, staleHash)
 	require.NoError(t, cache.BlockSession(context.Background(), 0, staleHash, 0))
 
-	first := call()
+	first := call(refused)
 	require.Equal(t, http.StatusForbidden, first.Code, first.Body.String())
-	require.Equal(t, refusal, first.Body.String(), "the request must reach the provider and return its refusal")
-	require.Equal(t, 1, upstream.calls, "a lock from an earlier version must not stop the request locally")
+	require.Equal(t, refusal, first.Body.String(), "the identifier lock of an earlier version must not stop the request locally")
+	require.Equal(t, 1, upstream.calls)
 	require.NotNil(t, ledger.last)
-	require.InDelta(t, price, ledger.last.BalanceCost, 1e-8, "the refusal fee itself is unchanged")
+	require.InDelta(t, price, ledger.last.BalanceCost, 1e-8, "the refusal itself is charged once")
+	firstCharge := ledger.last
 
-	second := call()
-	require.Equal(t, http.StatusForbidden, second.Code, second.Body.String())
-	require.Equal(t, 2, upstream.calls, "the same conversation is asked again instead of being rejected locally")
-	require.Len(t, cache.blocked, 1, "no new lock is written")
+	again := call(refused)
+	require.Equal(t, http.StatusForbidden, again.Code, again.Body.String())
+	require.Equal(t, 1, upstream.calls, "resending the refused conversation is stopped locally")
+	require.Same(t, firstCharge, ledger.last, "and is not charged again")
+
+	next := call(continued)
+	require.Equal(t, http.StatusForbidden, next.Code, next.Body.String())
+	require.Equal(t, 1, upstream.calls, "continuing the refused conversation is stopped locally too")
+	require.Same(t, firstCharge, ledger.last)
+
+	other := call(unrelated)
+	require.Equal(t, 2, upstream.calls, "another conversation with the same identifiers must reach the provider: %s", other.Body.String())
 }

@@ -34,11 +34,13 @@ func TestGrokModerationBlockedSessionRejectsWebSocketBeforeUpstream(t *testing.T
 	payload := []byte(`{"type":"response.create","model":"gpt-5.1","previous_response_id":"resp_refused_conversation","input":"hello"}`)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	hash := service.GrokModerationSessionHash(c, harness.apiKey, payload)
-	require.NotEmpty(t, hash)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	require.NoError(t, harness.gatewayCache.BlockSession(ctx, 0, hash, 0))
+	// The refusal of this exact turn was recorded earlier, by content.
+	recorder := service.NewOpenAIGatewayService(nil, nil, nil, nil, nil, nil, harness.gatewayCache, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	recorder.BlockGrokModerationRefusedRequest(ctx, c, harness.apiKey, payload)
+	require.True(t, recorder.GrokModerationRefusedRequestBlocked(ctx, c, harness.apiKey, payload))
 	require.NoError(t, harness.clientConn.Write(ctx, coderws.MessageText, payload))
 	_, _, err := harness.clientConn.Read(ctx)
 	require.Equal(t, coderws.StatusPolicyViolation, coderws.CloseStatus(err), "must block before dialing the deliberately unreachable upstream")
@@ -85,6 +87,31 @@ func (s *grokRefusalCache) BlockSession(_ context.Context, groupID int64, hash s
 
 func (s *grokRefusalCache) IsSessionBlocked(_ context.Context, groupID int64, hash string) (bool, error) {
 	return s.blocked[strconv.FormatInt(groupID, 10)+":"+hash], nil
+}
+
+// The refusal lock is keyed on the refused transcript, stored through the
+// cyber session block store. Keep it in the same map under its own prefixes.
+func (s *grokRefusalCache) SetCyberSessionBlocked(_ context.Context, scopeKey string, keys []string, _ time.Duration) error {
+	for _, key := range keys {
+		s.blocked["transcript:"+key] = true
+	}
+	if scopeKey != "" {
+		s.blocked["scope:"+scopeKey] = true
+	}
+	return nil
+}
+
+func (s *grokRefusalCache) IsCyberSessionScopeActive(_ context.Context, scopeKey string) (bool, error) {
+	return s.blocked["scope:"+scopeKey], nil
+}
+
+func (s *grokRefusalCache) FindCyberSessionBlocked(_ context.Context, keys []string) (string, error) {
+	for _, key := range keys {
+		if s.blocked["transcript:"+key] {
+			return key, nil
+		}
+	}
+	return "", nil
 }
 
 func TestGrokModerationRefusalBillsOnceAndBlocksBeforeUpstream(t *testing.T) {
@@ -261,9 +288,10 @@ func TestGrokGlobalIPBlacklistFeeRequiresReal403(t *testing.T) {
 			c.Request.Header.Set("Session_id", "actual-status-fixture")
 			var billed *service.OpenAIForwardResult
 			err := &service.UpstreamFailoverError{StatusCode: status, ResponseBody: []byte(`{"error":{"message":"blocked by global ip blacklist"}}`)}
-			handled := h.handleGrokModerationRefusal(c, key, account, nil, "grok-4.7", false, nil, err, func(result *service.OpenAIForwardResult) { billed = result })
+			body := []byte(`{"model":"grok-4.7","input":"hello"}`)
+			handled := h.handleGrokModerationRefusal(c, key, account, body, "grok-4.7", false, nil, err, func(result *service.OpenAIForwardResult) { billed = result })
 			require.Equal(t, status == http.StatusForbidden, handled)
-			require.Equal(t, status == http.StatusForbidden, h.grokModerationSessionBlocked(c, key, nil), "only an actual Grok 403 may persist the conversation block")
+			require.Equal(t, status == http.StatusForbidden, h.grokModerationSessionBlocked(c, key, body), "only an actual Grok 403 may persist the conversation block")
 			if status == http.StatusForbidden {
 				require.NotNil(t, billed)
 				require.Equal(t, price, billed.ForcedBillingCost)
