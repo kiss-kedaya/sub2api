@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -281,6 +282,60 @@ func TestOpenAIFirstOutputStageCommitCopiesSpoolAndRemovesTemp(t *testing.T) {
 		require.ErrorIs(t, err, os.ErrNotExist)
 	}
 	require.NoError(t, stage.Close())
+}
+
+func TestOpenAIFirstOutputStageSpoolDirectoryFallback(t *testing.T) {
+	for _, failFallback := range []bool{false, true} {
+		name := "preferred_unwritable"
+		if failFallback {
+			name = "both_unavailable"
+		}
+		t.Run(name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			if failFallback {
+				tempDir = filepath.Join(tempDir, "missing")
+			}
+			for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+				t.Setenv(key, tempDir)
+			}
+
+			stage := newDefaultOpenAIFirstOutputStage()
+			stage.memoryOnly = false // Exercise disk creation on Windows too.
+			t.Cleanup(func() { _ = stage.Close() })
+			createCalls := 0
+			stage.createTemp = func() (*os.File, error) {
+				createCalls++
+				return nil, os.ErrPermission
+			}
+			var spoolPath string
+			stage.removeFile = func(path string) error {
+				spoolPath = path
+				return os.Remove(path)
+			}
+
+			payload := bytes.Repeat([]byte("f"), 68*1024)
+			n, err := stage.Write(payload)
+			require.Equal(t, 1, createCalls)
+			if failFallback {
+				require.ErrorContains(t, err, "create first-output spool")
+				require.ErrorIs(t, err, os.ErrNotExist)
+				require.Zero(t, n)
+				require.Zero(t, stage.Buffered())
+				require.Empty(t, spoolPath)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, len(payload), n)
+			require.NotEmpty(t, spoolPath, "fallback must create a spool and attempt immediate unlink")
+			require.Equal(t, filepath.Clean(os.TempDir()), filepath.Dir(spoolPath))
+			_, statErr := os.Stat(spoolPath)
+			require.ErrorIs(t, statErr, os.ErrNotExist)
+
+			var downstream bytes.Buffer
+			require.NoError(t, stage.CommitTo(&downstream))
+			require.Equal(t, payload, downstream.Bytes())
+		})
+	}
 }
 
 func TestOpenAIFirstOutputStageUnlinkFailurePermanentlyFallsBackToMemoryAndRetriesCleanup(t *testing.T) {
