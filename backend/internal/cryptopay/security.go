@@ -334,6 +334,17 @@ func (s *Service) Close() {
 		return
 	}
 	s.mu.Lock()
+	s.closed = true
+	if s.configCancel != nil {
+		s.configCancel()
+	}
+	configDone := s.configDone
+	s.mu.Unlock()
+	// Never wait while holding mu: the watcher may be inside reload.
+	if configDone != nil {
+		<-configDone
+	}
+	s.mu.Lock()
 	if s.discoveryCancel != nil {
 		s.discoveryCancel()
 		s.discoveryCancel = nil

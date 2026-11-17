@@ -45,6 +45,18 @@ func depositInfoAsset(t *testing.T, info *DepositInfo, chain, symbol string) Dep
 	return DepositAsset{}
 }
 
+func TestDisabledDepositInfoSerializesEmptyChains(t *testing.T) {
+	s := &Service{}
+	info, err := s.DepositInfo(t.Context(), 42)
+	require.NoError(t, err)
+	require.False(t, info.Enabled)
+	raw, err := json.Marshal(info)
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	require.Equal(t, "[]", string(fields["chains"]))
+}
+
 // The deposit page must be able to tell "this asset is settled at the live
 // market price" from "this asset has a fixed rate". A native coin carrying the
 // stablecoin multiplier is exactly the bug this guards.
