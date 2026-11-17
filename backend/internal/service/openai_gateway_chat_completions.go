@@ -826,9 +826,6 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				return true
 			}
 			message := extractOpenAISSEErrorMessage(payloadBytes)
-			if !clientOutputStarted && isOpenAINonBillableRequestError(message, payloadBytes) {
-				nonBillableUpstreamError = true
-			}
 			if hit, code, msg := detectOpenAICyberPolicy(payloadBytes); hit {
 				// cyber_policy 致命且不可重试：不 failover。下发标准 error chunk +
 				// [DONE]，让程序化客户端可感知并停止重试（F4）；标记供 handler 事后
@@ -860,6 +857,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				}
 				return true
 			}
+			nonBillableUpstreamError = true
 			shouldFailover := openAIStreamFailedEventShouldFailover(payloadBytes, message)
 			if strings.TrimSpace(event.Type) == "error" {
 				shouldFailover = openAIStreamErrorEventShouldFailover(payloadBytes, message)

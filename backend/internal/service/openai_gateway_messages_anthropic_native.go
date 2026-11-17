@@ -312,16 +312,17 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 	s.rateLimitService.observeModelTransientSuccess(ctx, c, account, billingModel, body)
 
 	return &OpenAIForwardResult{
-		RequestID:        resp.Header.Get("x-request-id"),
-		UpstreamHeaders:  resp.Header,
-		Usage:            claudeUsageToOpenAIUsage(usage),
-		Model:            originalModel,
-		BillingModel:     billingModel,
-		UpstreamModel:    upstreamModel,
-		UpstreamEndpoint: "/v1/messages",
-		Stream:           false,
-		ReasoningEffort:  reasoningEffort,
-		Duration:         time.Since(startTime),
+		RequestID:                resp.Header.Get("x-request-id"),
+		UpstreamHeaders:          resp.Header,
+		Usage:                    claudeUsageToOpenAIUsage(usage),
+		Model:                    originalModel,
+		BillingModel:             billingModel,
+		UpstreamModel:            upstreamModel,
+		UpstreamEndpoint:         "/v1/messages",
+		Stream:                   false,
+		ReasoningEffort:          reasoningEffort,
+		Duration:                 time.Since(startTime),
+		NonBillableUpstreamError: openAIExplicitUpstreamError(gjson.ParseBytes(body), ""),
 	}, nil
 }
 
@@ -377,6 +378,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent, sawError := false, false
+	nonBillableUpstreamError := false
 	defer func() {
 		if err == nil && sawTerminalEvent && !sawError && result != nil && !result.ClientDisconnect {
 			s.rateLimitService.observeModelTransientSuccess(ctx, c, account, billingModel)
@@ -408,7 +410,9 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 		}
 	}
 	buildResult := func() *OpenAIForwardResult {
-		return s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected || watch.Gone(), originalModel, billingModel, upstreamModel, reasoningEffort, startTime)
+		result := s.nativeAnthropicStreamResult(c, resp, usage, firstTokenMs, clientDisconnected || watch.Gone(), originalModel, billingModel, upstreamModel, reasoningEffort, startTime)
+		result.NonBillableUpstreamError = nonBillableUpstreamError
+		return result
 	}
 	// finishIncomplete ends a stream that has no terminal event. When the client is gone
 	// the request is complete from the gateway's side: what the upstream produced and
@@ -546,15 +550,18 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 			}
 
 			line := ev.line
-			if strings.TrimSpace(line) == "event: error" {
+			if eventType, ok := extractOpenAISSEEventLine(line); ok && eventType == "error" {
 				sawError = true
+				nonBillableUpstreamError = true
 				pendingErrorHeader = line
 				continue
 			}
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
 				trimmed := strings.TrimSpace(data)
-				if _, failed := anthropicStreamErrorPayload(trimmed); failed {
+				root := gjson.Parse(trimmed)
+				if root.Get("type").String() == "error" || pendingErrorHeader != "" {
 					sawError = true
+					nonBillableUpstreamError = openAIExplicitUpstreamError(root, "error")
 				}
 				if upstreamFinancialFailureEnvelope([]byte(data)) || pendingErrorHeader != "" && IsUpstreamFinancialError(0, []byte(data)) {
 					setOpsUpstreamError(c, http.StatusBadGateway, extractUpstreamErrorMessage([]byte(data)), "")
@@ -566,6 +573,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 				observer.ObserveAnthropic([]byte(trimmed))
 				if anthropicStreamEventIsTerminal("", trimmed) {
 					sawTerminalEvent = true
+					nonBillableUpstreamError = false
 				}
 				if firstTokenMs == nil && trimmed != "" && trimmed != "[DONE]" {
 					ms := int(time.Since(startTime).Milliseconds())
@@ -577,6 +585,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
 					sawTerminalEvent = true
+					nonBillableUpstreamError = false
 				}
 			}
 

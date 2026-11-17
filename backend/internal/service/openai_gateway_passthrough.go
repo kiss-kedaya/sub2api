@@ -2539,7 +2539,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					})
 				}
 				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
-				if !outputStarted && !cyberHit && isOpenAINonBillableRequestError(failedMessage, dataBytes) {
+				if !cyberHit {
 					nonBillableUpstreamError = true
 				}
 				if !clientDisconnected && !outputStarted && !cyberHit {
@@ -2917,11 +2917,12 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 		c.Data(resp.StatusCode, contentType, sanitizeClientUpstreamErrorBody(resp.StatusCode, body))
 	}
 	return &openaiNonStreamingResultPassthrough{
-		OpenAIUsage:      usage,
-		usage:            usage,
-		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
-		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
-		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
+		OpenAIUsage:              usage,
+		usage:                    usage,
+		nonBillableUpstreamError: openAIExplicitUpstreamError(gjson.ParseBytes(body), ""),
+		responseID:               extractOpenAIResponseIDFromJSONBytes(body),
+		imageCount:               countOpenAIResponseImageOutputsFromJSONBytes(body),
+		imageOutputSizes:         collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
 	}, nil
 }
 
@@ -3013,11 +3014,12 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 	}
 
 	return &openaiNonStreamingResultPassthrough{
-		OpenAIUsage:      usage,
-		usage:            usage,
-		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
-		imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
-		imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
+		OpenAIUsage:              usage,
+		usage:                    usage,
+		nonBillableUpstreamError: openAIExplicitUpstreamError(gjson.ParseBytes(body), ""),
+		responseID:               extractOpenAIResponseIDFromJSONBytes(body),
+		imageCount:               countOpenAIImageOutputsFromSSEBody(bodyText),
+		imageOutputSizes:         collectOpenAIImageOutputSizesFromSSEBody(bodyText),
 	}, nil
 }
 

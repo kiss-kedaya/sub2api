@@ -282,6 +282,26 @@ func isOpenAINonBillableRequestError(upstreamMsg string, upstreamBody []byte) bo
 		strings.Contains(combined, "must be less")
 }
 
+// openAIExplicitUpstreamError inspects only the provider's envelope, never generated
+// client errors or echoed output. Callers on streaming paths reuse their parsed root.
+func openAIExplicitUpstreamError(root gjson.Result, eventType string) bool {
+	if strings.EqualFold(root.Get("error.code").String(), "cyber_policy") ||
+		strings.EqualFold(root.Get("response.error.code").String(), "cyber_policy") {
+		return false
+	}
+	if eventType == "error" || eventType == "response.failed" ||
+		root.Get("type").String() == "error" || root.Get("type").String() == "response.failed" ||
+		root.Get("status").String() == "failed" || root.Get("response.status").String() == "failed" {
+		return true
+	}
+	for _, path := range []string{"error", "response.error"} {
+		if value := root.Get(path); (value.IsObject() && value.Raw != "{}") || (value.Type == gjson.String && strings.TrimSpace(value.String()) != "") {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
 	return ShouldFailoverUpstream(statusCode, nil, nil, nil)
 }

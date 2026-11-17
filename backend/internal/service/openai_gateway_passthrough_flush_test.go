@@ -233,6 +233,7 @@ func TestOpenAIStreamingPassthroughBareErrorDrainsAuthoritativeFailedUsage(t *te
 	require.Equal(t, []int{len(body)}, writer.flushBodyLengths)
 	require.Equal(t, 9, result.usage.InputTokens)
 	require.Equal(t, 2, result.usage.OutputTokens)
+	assertExplicitUpstreamErrorFree(t, &OpenAIForwardResult{Usage: *result.usage, NonBillableUpstreamError: result.nonBillableUpstreamError})
 }
 
 func TestOpenAIStreamingPassthroughFailedAfterOutputFlushesAtBoundaryAndKeepsUsage(t *testing.T) {
@@ -251,6 +252,7 @@ func TestOpenAIStreamingPassthroughFailedAfterOutputFlushesAtBoundaryAndKeepsUsa
 	require.Equal(t, []int{len(firstOutput), len(upstream)}, writer.flushBodyLengths)
 	require.Equal(t, 7, result.usage.InputTokens)
 	require.Equal(t, 2, result.usage.OutputTokens)
+	assertExplicitUpstreamErrorFree(t, &OpenAIForwardResult{Usage: *result.usage, NonBillableUpstreamError: result.nonBillableUpstreamError})
 }
 
 // A write failure closes the upstream, but a terminal frame already read keeps its

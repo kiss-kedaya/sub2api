@@ -234,24 +234,26 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	imageCount := 0
 	var imageOutputSizes []string
 	clientDisconnect := false
+	nonBillableUpstreamError := false
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(patchedBody, originalModel)
 	buildForwardResult := func() *OpenAIForwardResult {
 		if usage == nil {
 			usage = &OpenAIUsage{}
 		}
 		result := &OpenAIForwardResult{
-			RequestID:        firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
-			ResponseID:       responseID,
-			Usage:            *usage,
-			Model:            originalModel,
-			UpstreamModel:    upstreamModel,
-			ReasoningEffort:  reasoningEffort,
-			Stream:           reqStream,
-			OpenAIWSMode:     false,
-			ResponseHeaders:  resp.Header.Clone(),
-			Duration:         time.Since(startTime),
-			FirstTokenMs:     firstTokenMs,
-			ClientDisconnect: clientDisconnect,
+			RequestID:                firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
+			ResponseID:               responseID,
+			Usage:                    *usage,
+			Model:                    originalModel,
+			UpstreamModel:            upstreamModel,
+			ReasoningEffort:          reasoningEffort,
+			Stream:                   reqStream,
+			OpenAIWSMode:             false,
+			ResponseHeaders:          resp.Header.Clone(),
+			Duration:                 time.Since(startTime),
+			FirstTokenMs:             firstTokenMs,
+			ClientDisconnect:         clientDisconnect,
+			NonBillableUpstreamError: nonBillableUpstreamError,
 		}
 		if searchCount > 0 {
 			result.SearchCount = searchCount
@@ -280,6 +282,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			imageCount = streamResult.imageCount
 			imageOutputSizes = streamResult.imageOutputSizes
 			clientDisconnect = streamResult.clientDisconnect
+			nonBillableUpstreamError = streamResult.nonBillableUpstreamError
 		}
 		if err != nil {
 			applyIncompleteOpenAIStreamUsage(account, streamResult, patchedBody, upstreamModel, err)
@@ -299,6 +302,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			return nil, err
 		}
 		usage = nonStreamResult.usage
+		nonBillableUpstreamError = nonStreamResult.nonBillableUpstreamError
 		responseID = strings.TrimSpace(nonStreamResult.responseID)
 		searchCount = nonStreamResult.searchCount
 		imageCount = nonStreamResult.imageCount

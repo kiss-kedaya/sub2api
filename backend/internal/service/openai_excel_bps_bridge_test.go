@@ -121,6 +121,7 @@ func TestExcelBPSGatewayBufferedFailedTurnKeepsUsageAndCannotFailover(t *testing
 	require.NotNil(t, result)
 	require.Equal(t, 17, result.Usage.InputTokens)
 	require.Equal(t, 2, result.Usage.OutputTokens)
+	assertExplicitUpstreamErrorFree(t, result)
 	require.Len(t, upstream.requests, 1)
 	require.Equal(t, "Bearer independent-excel-token", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
@@ -140,4 +141,5 @@ func TestExcelBPSUsageTapHandlesSplitFrames(t *testing.T) {
 	}
 	require.Equal(t, 19, tap.usage.InputTokens)
 	require.Equal(t, 3, tap.usage.OutputTokens)
+	require.True(t, tap.nonBillableUpstreamError)
 }
