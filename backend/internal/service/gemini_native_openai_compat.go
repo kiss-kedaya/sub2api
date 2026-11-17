@@ -128,9 +128,9 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 		Model: mappedModel, UpstreamModel: mappedModel, Usage: geminiBridgeClaudeUsage(usage),
 		Duration: time.Since(start),
 	}
-	if status := geminiBridgeFailureStatus(raw, ""); status != 0 {
+	if status, explicitError := geminiBridgeFailureStatus(raw, ""); status != 0 {
 		defer GuardUpstreamFinancialError(c, status, raw)()
-		result.NonBillableUpstreamError = geminiBridgeNonBillableFailure(status, raw) && !geminiBridgeHasOutput(raw, result.Usage)
+		result.NonBillableUpstreamError = explicitError && geminiBridgeNonBillableFailure(raw)
 		return result, s.writeGoogleError(c, status, sanitizeUpstreamErrorMessage(extractGeminiBridgeErrorMessage(raw)))
 	}
 	usageMetadata := geminiBridgeUsageMetadata(usage, geminiBridgeUsageObject(raw))
@@ -301,10 +301,10 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 	var streamErr error
 	streamStatus := http.StatusBadGateway
 	financialFailure := false
+	policyFailure := false
 	streamMessage := "Gemini upstream stream did not complete"
 	finish := ""
 	terminal := false
-	sawOutput := false
 	write := func(data []byte) error {
 		if result.ClientDisconnect {
 			return io.ErrClosedPipe
@@ -341,20 +341,22 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 			result.Usage = geminiBridgeClaudeUsage(usage)
 			metadata = geminiBridgeUsageMetadata(usage, geminiBridgeUsageObject(parsed.data))
 		}
-		sawOutput = sawOutput || geminiBridgeHasOutput(parsed.data, result.Usage) || openAIStreamFrameStartsVisibleOutput(parsed)
-		if sawOutput {
-			result.NonBillableUpstreamError = false
-		}
-		if status := geminiBridgeFailureStatus(parsed.data, parsed.eventType); status != 0 {
-			if !sawOutput && geminiBridgeNonBillableFailure(status, parsed.data) {
-				result.NonBillableUpstreamError = true
-			}
+		if status, explicitError := geminiBridgeFailureStatus(parsed.data, parsed.eventType); status != 0 {
+			policyFailure = policyFailure || !geminiBridgeNonBillableFailure(parsed.data)
+			result.NonBillableUpstreamError = !policyFailure && (result.NonBillableUpstreamError || explicitError)
 			streamStatus = status
 			financialFailure = financialFailure || IsUpstreamFinancialError(status, parsed.data)
 			streamErr = fmt.Errorf("gemini upstream stream failed: %s", parsed.eventType)
 			// A Responses error prelude can be followed by a terminal usage snapshot.
 			terminal = protocol != APIProtocolResponses || (parsed.eventType != "error" && parsed.eventType != "")
 			return
+		}
+		if streamErr != nil && (parsed.eventType == "response.completed" || parsed.eventType == "response.done") {
+			// The provider's successful terminal supersedes a pending error prelude.
+			streamErr = nil
+			financialFailure = false
+			policyFailure = false
+			result.NonBillableUpstreamError = false
 		}
 		if streamErr != nil {
 			terminal = isOpenAICompatResponsesTerminalEvent(parsed.eventType)
@@ -458,52 +460,27 @@ func extractGeminiBridgeErrorMessage(raw []byte) string {
 	return "Gemini upstream request failed"
 }
 
-func geminiBridgeFailureStatus(raw []byte, eventType string) int {
+func geminiBridgeFailureStatus(raw []byte, eventType string) (int, bool) {
 	status := gjson.GetBytes(raw, "response.status").String()
 	if status == "" {
 		status = gjson.GetBytes(raw, "status").String()
 	}
-	if eventType == "error" || eventType == "response.failed" || eventType == "response.cancelled" || eventType == "response.canceled" ||
-		status == "failed" || status == "cancelled" || status == "canceled" || gjson.GetBytes(raw, "error").IsObject() || gjson.GetBytes(raw, "response.error").IsObject() {
+	explicitError := eventType == "error" || eventType == "response.failed" || status == "failed" ||
+		gjson.GetBytes(raw, "error").IsObject() || gjson.GetBytes(raw, "response.error").IsObject()
+	if explicitError || eventType == "response.cancelled" || eventType == "response.canceled" || status == "cancelled" || status == "canceled" {
 		code := firstNonEmpty(openAIStreamFailedEventErrorCode(raw), gjson.GetBytes(raw, "code").String())
 		if strings.EqualFold(code, "input_too_small") || isOpenAINonBillableRequestError("", raw) {
-			return http.StatusBadRequest
+			return http.StatusBadRequest, explicitError
 		}
 		if isOpenAIDeterministicClientErrorMessage("", raw) {
-			return openAIDeterministicClientHTTPStatus("", raw)
+			return openAIDeterministicClientHTTPStatus("", raw), explicitError
 		}
-		return openAIStreamFailedEventSemanticStatus(raw, extractGeminiBridgeErrorMessage(raw))
+		return openAIStreamFailedEventSemanticStatus(raw, extractGeminiBridgeErrorMessage(raw)), explicitError
 	}
-	return 0
+	return 0, false
 }
 
-func geminiBridgeNonBillableFailure(status int, raw []byte) bool {
-	if status != http.StatusBadRequest {
-		return false
-	}
+func geminiBridgeNonBillableFailure(raw []byte) bool {
 	policy, _, _ := detectOpenAICyberPolicy(raw)
 	return !policy
-}
-
-func geminiBridgeHasOutput(raw []byte, usage ClaudeUsage) bool {
-	if usage.OutputTokens > 0 || usage.ImageOutputTokens > 0 {
-		return true
-	}
-	root := gjson.ParseBytes(raw)
-	for _, path := range []string{"output", "response.output"} {
-		for _, item := range root.Get(path).Array() {
-			if openAIStreamItemHasVisibleOutput(item) {
-				return true
-			}
-		}
-	}
-	for _, choice := range root.Get("choices").Array() {
-		for _, path := range []string{"message", "delta"} {
-			message := choice.Get(path)
-			if message.Get("content").String() != "" || message.Get("reasoning_content").String() != "" || len(message.Get("tool_calls").Array()) > 0 {
-				return true
-			}
-		}
-	}
-	return false
 }

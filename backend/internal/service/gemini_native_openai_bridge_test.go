@@ -48,8 +48,9 @@ func geminiBridgeResponse(body string) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Request-Id": {"bridge-upstream-id"}}, Body: io.NopCloser(strings.NewReader(body))}
 }
 
-func requireGeminiBridgeBilling(t *testing.T, result *ForwardResult, account *Account) {
+func requireGeminiBridgeBilling(t *testing.T, result *ForwardResult, account *Account, free bool) {
 	t.Helper()
+	require.Equal(t, free, result.NonBillableUpstreamError)
 	require.Equal(t, ClaudeUsage{InputTokens: 300, OutputTokens: 50, CacheReadInputTokens: 600, CacheCreationInputTokens: 100}, result.Usage)
 	logs := &openAIRecordUsageLogRepoStub{inserted: true}
 	repo := &openAIRecordUsageBillingRepoStub{}
@@ -64,6 +65,13 @@ func requireGeminiBridgeBilling(t *testing.T, result *ForwardResult, account *Ac
 	expected, err := billing.CalculateCost("gemini-2.5-flash", UsageTokens{InputTokens: 300, OutputTokens: 50, CacheReadTokens: 600, CacheCreationTokens: 100}, 1)
 	require.NoError(t, err)
 	require.NotNil(t, repo.lastCmd)
+	if result.NonBillableUpstreamError {
+		require.Zero(t, repo.lastCmd.BalanceCost, "explicit upstream errors waive the whole request, even after output")
+		require.Zero(t, logs.lastLog.ActualCost)
+		require.Equal(t, result.Usage.InputTokens, logs.lastLog.InputTokens)
+		require.Equal(t, result.Usage.OutputTokens, logs.lastLog.OutputTokens)
+		return
+	}
 	require.Positive(t, repo.lastCmd.BalanceCost)
 	require.InDelta(t, expected.ActualCost, repo.lastCmd.BalanceCost, 1e-12)
 	require.InDelta(t, expected.ActualCost, logs.lastLog.ActualCost, 1e-12)
@@ -124,7 +132,7 @@ func TestGeminiBridgeProtocolUsageAndBilling(t *testing.T) {
 				require.Equal(t, int64(1000), gjson.GetBytes(final, "usageMetadata.promptTokenCount").Int())
 				require.Equal(t, int64(600), gjson.GetBytes(final, "usageMetadata.cachedContentTokenCount").Int())
 				require.Equal(t, int64(1050), gjson.GetBytes(final, "usageMetadata.totalTokenCount").Int())
-				requireGeminiBridgeBilling(t, result, account)
+				requireGeminiBridgeBilling(t, result, account, false)
 			})
 		}
 	}
@@ -169,13 +177,13 @@ func TestGeminiBridgeResponsesStreamTerminalAliases(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, 1, strings.Count(rec.Body.String(), `"text":"hello"`))
 				require.Equal(t, 1, strings.Count(rec.Body.String(), `"finishReason":"STOP"`))
-				requireGeminiBridgeBilling(t, result, account)
+				requireGeminiBridgeBilling(t, result, account, false)
 			})
 		}
 	}
 }
 
-func TestGeminiBridgeFailureAndCancellationKeepUsage(t *testing.T) {
+func TestGeminiBridgeExplicitFailureAndCancellationKeepUsage(t *testing.T) {
 	for _, status := range []string{"failed", "cancelled", "canceled"} {
 		for _, stream := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/stream=%v", status, stream), func(t *testing.T) {
@@ -194,7 +202,7 @@ func TestGeminiBridgeFailureAndCancellationKeepUsage(t *testing.T) {
 				require.NotContains(t, rec.Body.String(), `"finishReason"`)
 				require.Contains(t, rec.Body.String(), `"error"`)
 				require.NotNil(t, result)
-				requireGeminiBridgeBilling(t, result, account)
+				requireGeminiBridgeBilling(t, result, account, status == "failed")
 			})
 		}
 	}
@@ -210,7 +218,7 @@ func TestGeminiBridgeResponsesErrorPreludeKeepsTerminalUsage(t *testing.T) {
 	require.Error(t, err)
 	require.NotContains(t, rec.Body.String(), `"finishReason"`)
 	require.Equal(t, 1, strings.Count(rec.Body.String(), `"error"`))
-	requireGeminiBridgeBilling(t, result, account)
+	requireGeminiBridgeBilling(t, result, account, true)
 }
 
 func TestGeminiBridgeHTTPClientErrorsDoNotRetry(t *testing.T) {
@@ -258,7 +266,7 @@ func TestGeminiBridgeStreamErrorsNeverSynthesizeStop(t *testing.T) {
 			var final []byte
 			forEachOpenAISSEDataPayload(rec.Body.String(), func(data []byte) { final = data })
 			require.Equal(t, int64(tc.status), gjson.GetBytes(final, "error.code").Int())
-			requireGeminiBridgeBilling(t, result, account)
+			requireGeminiBridgeBilling(t, result, account, tc.name == "bare-error")
 		})
 	}
 }
@@ -303,7 +311,7 @@ func TestGeminiBridgeCanceledReadKeepsPartialUsage(t *testing.T) {
 	require.True(t, reader.closed)
 	require.True(t, result.ClientDisconnect)
 	require.NotContains(t, rec.Body.String(), `"finishReason"`)
-	requireGeminiBridgeBilling(t, result, account)
+	requireGeminiBridgeBilling(t, result, account, false)
 }
 
 func TestGeminiBridgeStreamMissingUsageIsNotSuccessfulFreeResponse(t *testing.T) {
@@ -410,7 +418,7 @@ func TestGeminiBridgeStreamingOutputHoldBeforeEmission(t *testing.T) {
 				require.Positive(t, fixture.wallet.topUpCalls)
 				require.Equal(t, 1, body.closed)
 				require.NotNil(t, result)
-				requireGeminiBridgeBilling(t, result, geminiBridgeAccount(protocol))
+				requireGeminiBridgeBilling(t, result, geminiBridgeAccount(protocol), false)
 				if insufficient {
 					require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
 					require.ErrorContains(t, err, "stream output hold top-up failed")
@@ -453,7 +461,7 @@ func TestGeminiBridgeCancellationStopsBeforeAnotherRead(t *testing.T) {
 				require.Zero(t, body.reads)
 			} else {
 				require.Equal(t, 1, body.reads)
-				requireGeminiBridgeBilling(t, result, geminiBridgeAccount(APIProtocolChatCompletions))
+				requireGeminiBridgeBilling(t, result, geminiBridgeAccount(APIProtocolChatCompletions), false)
 			}
 			require.NotContains(t, rec.Body.String(), "must not read")
 			require.NotContains(t, rec.Body.String(), `"finishReason"`)
@@ -475,7 +483,7 @@ func TestGeminiBridgeWriterFailureStopsReading(t *testing.T) {
 	require.True(t, result.ClientDisconnect)
 	require.Equal(t, 1, body.reads)
 	require.Equal(t, 1, body.closed)
-	requireGeminiBridgeBilling(t, result, geminiBridgeAccount(APIProtocolResponses))
+	requireGeminiBridgeBilling(t, result, geminiBridgeAccount(APIProtocolResponses), false)
 }
 
 type geminiBridgeBlockingBody struct {
@@ -535,6 +543,21 @@ func TestGeminiBridgeFirstTokenIncludesHeaderWait(t *testing.T) {
 	}
 }
 
+func TestGeminiBridgeErrorPreludeSuccessfulTerminalKeepsBilling(t *testing.T) {
+	body := "event: error\ndata: {\"error\":{\"code\":\"invalid_request_error\",\"message\":\"synthetic prelude\"}}\n\n" +
+		strings.Join(geminiBridgeStreamFrames(APIProtocolResponses, "completed answer"), "")
+	svc := &GeminiMessagesCompatService{httpUpstream: &geminiBridgeUpstream{do: func(*http.Request) (*http.Response, error) {
+		return geminiBridgeResponse(body), nil
+	}}}
+	c, recorder := geminiBridgeContext()
+	account := geminiBridgeAccount(APIProtocolResponses)
+	result, err := svc.ForwardNative(context.Background(), c, account, "gemini-2.5-flash", "streamGenerateContent", true, []byte(geminiBridgeRequest))
+	require.NoError(t, err)
+	require.False(t, result.NonBillableUpstreamError)
+	require.NotContains(t, recorder.Body.String(), `"error"`)
+	requireGeminiBridgeBilling(t, result, account, false)
+}
+
 func TestGeminiBridgeRejectedRequestBilling(t *testing.T) {
 	inputUsage := `{"input_tokens":1000,"output_tokens":0}`
 	partialUsage := `{"input_tokens":1000,"output_tokens":50}`
@@ -556,13 +579,17 @@ func TestGeminiBridgeRejectedRequestBilling(t *testing.T) {
 		{"responses-stream-invalid-request", APIProtocolResponses, sse(failed(invalidRequest, inputUsage)), true, true, 0},
 		{"chat-buffered-invalid-request", APIProtocolChatCompletions, failed(invalidRequest, inputUsage), false, true, 0},
 		{"chat-stream-invalid-request", APIProtocolChatCompletions, "data: " + failed(invalidRequest, inputUsage) + "\n\n", true, true, 0},
-		{"server-error-input-stays-billable", APIProtocolResponses, sse(failed(serverError, inputUsage)), true, false, 0},
-		{"server-error-partial-output", APIProtocolResponses, textDelta + sse(failed(serverError, partialUsage)), true, false, 50},
-		{"client-error-after-output-stays-billable", APIProtocolResponses, textDelta + sse(failed(invalidRequest, inputUsage)), true, false, 0},
-		{"client-error-with-output-usage-stays-billable", APIProtocolResponses, sse(failed(invalidRequest, partialUsage)), true, false, 50},
-		{"buffered-client-error-with-output-stays-billable", APIProtocolResponses, `{"status":"failed","error":` + invalidRequest + `,"usage":` + inputUsage + `,"output":[{"type":"message","content":[{"type":"output_text","text":"partial output"}]}]}`, false, false, 0},
+		{"server-error-input-is-free", APIProtocolResponses, sse(failed(serverError, inputUsage)), true, true, 0},
+		{"server-error-partial-output-is-free", APIProtocolResponses, textDelta + sse(failed(serverError, partialUsage)), true, true, 50},
+		{"client-error-after-output-is-free", APIProtocolResponses, textDelta + sse(failed(invalidRequest, inputUsage)), true, true, 0},
+		{"client-error-with-output-usage-is-free", APIProtocolResponses, sse(failed(invalidRequest, partialUsage)), true, true, 50},
+		{"buffered-client-error-with-output-is-free", APIProtocolResponses, `{"status":"failed","error":` + invalidRequest + `,"usage":` + inputUsage + `,"output":[{"type":"message","content":[{"type":"output_text","text":"partial output"}]}]}`, false, true, 0},
 		{"truncated-stream-stays-billable", APIProtocolResponses, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial output\",\"usage\":" + partialUsage + "}\n\n", true, false, 50},
-		{"cancelled-stream-stays-billable", APIProtocolResponses, "event: response.cancelled\ndata: {\"response\":{\"status\":\"cancelled\",\"usage\":" + inputUsage + "}}\n\n", true, false, 0},
+		{"cancelled-without-error-stays-billable", APIProtocolResponses, "event: response.cancelled\ndata: {\"response\":{\"status\":\"cancelled\",\"usage\":" + inputUsage + "}}\n\n", true, false, 0},
+		{"usage-then-explicit-error-is-free", APIProtocolResponses, "event: response.in_progress\ndata: {\"response\":{\"usage\":" + partialUsage + "}}\n\n" + sse(failed(serverError, partialUsage)), true, true, 50},
+		{"chat-usage-then-error-is-free", APIProtocolChatCompletions, "data: {\"choices\":[],\"usage\":" + partialUsage + "}\n\ndata: {\"error\":" + serverError + "}\n\n", true, true, 50},
+		{"cyber-policy-after-output-stays-billable", APIProtocolResponses, textDelta + sse(failed(`{"code":"cyber_policy","message":"synthetic policy rejection"}`, partialUsage)), true, false, 50},
+		{"cyber-prelude-terminal-usage-stays-billable", APIProtocolResponses, "event: error\ndata: {\"error\":{\"code\":\"cyber_policy\",\"message\":\"synthetic policy rejection\"}}\n\nevent: response.failed\ndata: {\"response\":{\"status\":\"failed\",\"usage\":" + partialUsage + "}}\n\n", true, false, 50},
 		{"request-error-prelude-with-terminal-usage", APIProtocolResponses, "event: error\ndata: {\"error\":" + smallInput + "}\n\nevent: response.failed\ndata: {\"response\":{\"status\":\"failed\",\"usage\":" + inputUsage + "}}\n\n", true, true, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
