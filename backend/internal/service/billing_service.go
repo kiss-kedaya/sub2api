@@ -1481,6 +1481,10 @@ type CostInput struct {
 	Resolver                  *ModelPricingResolver // 定价解析器
 	Resolved                  *ResolvedPricing      // 可选：预解析的定价结果（避免重复 Resolve 调用）
 	LongContextBillingEnabled *bool
+	// CacheCreationTTLHint 是本请求实际向上游声明的缓存 TTL（"1h" / "5m" / ""）。
+	// 上游没返回 ephemeral 明细时用它兜底选单价：声明 1h 就按 1h 收，
+	// 否则按 5m 收。空值保持旧行为。
+	CacheCreationTTLHint string
 }
 
 // CalculateCostUnified 统一计费入口，支持三种计费模式。
@@ -1585,7 +1589,7 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	// 官方长上下文阶梯仅在无区间定价时应用（区间定价已包含上下文分层）。
 	applyLongCtx := len(resolved.Intervals) == 0 && contextTierPricingEnabled
 
-	breakdown := s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx)
+	breakdown := s.computeTokenBreakdownWithCacheTTL(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx, input.CacheCreationTTLHint)
 	applyCostBreakdownMultiplier(breakdown, resolvedChannelTimeMultiplier(resolved, input.PricingAt))
 	applyCostBreakdownMultiplier(breakdown, reasoningEffortBillingMultiplier(input.ReasoningEffort, pricing.ReasoningEffortMultipliers))
 	return breakdown, nil
@@ -1593,10 +1597,21 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 
 // computeTokenBreakdown 是 token 计费的核心逻辑，由 calculateTokenCost 和 calculateCostInternal 共用。
 // applyLongCtx 控制是否检查长上下文定价（区间定价已自含上下文分层，不需要额外应用）。
+// computeTokenBreakdown 是 computeTokenBreakdownWithCacheTTL 的兼容入口，
+// 不携带缓存 TTL 提示（上游明细缺失时按 5m 兜底，旧行为）。
 func (s *BillingService) computeTokenBreakdown(
 	pricing *ModelPricing, tokens UsageTokens,
 	rateMultiplier float64, serviceTier string,
 	applyLongCtx bool,
+) *CostBreakdown {
+	return s.computeTokenBreakdownWithCacheTTL(pricing, tokens, rateMultiplier, serviceTier, applyLongCtx, "")
+}
+
+func (s *BillingService) computeTokenBreakdownWithCacheTTL(
+	pricing *ModelPricing, tokens UsageTokens,
+	rateMultiplier float64, serviceTier string,
+	applyLongCtx bool,
+	cacheTTLHint string,
 ) *CostBreakdown {
 	// 保存时强制 > 0；若仍有负数泄漏，按 0 处理避免按 1x 误扣。
 	if rateMultiplier < 0 {
@@ -1691,7 +1706,7 @@ func (s *BillingService) computeTokenBreakdown(
 	}
 
 	// 缓存创建费用
-	bd.CacheCreationCost = s.computeCacheCreationCost(pricing, tokens, cacheCreationPrice, cacheCreationMultiplier)
+	bd.CacheCreationCost = s.computeCacheCreationCostWithCacheTTL(pricing, tokens, cacheCreationPrice, cacheCreationMultiplier, cacheTTLHint)
 
 	bd.CacheReadCost = float64(tokens.CacheReadTokens) * cacheReadPrice
 	if imageCached := min(max(tokens.ImageCacheReadTokens, 0), max(tokens.CacheReadTokens, 0)); imageCached > 0 && pricing.ImageCacheReadPricePerToken > 0 {
@@ -1717,11 +1732,20 @@ func (s *BillingService) computeTokenBreakdown(
 
 // computeCacheCreationCost 计算缓存创建费用（支持 5m/1h 分类或标准计费）。
 // multiplier 用于长上下文等场景下的整体价格缩放（普通调用传 1.0 即可）。
+// computeCacheCreationCost 是不带缓存 TTL 提示的兼容入口。
 func (s *BillingService) computeCacheCreationCost(pricing *ModelPricing, tokens UsageTokens, price, multiplier float64) float64 {
+	return s.computeCacheCreationCostWithCacheTTL(pricing, tokens, price, multiplier, "")
+}
+
+func (s *BillingService) computeCacheCreationCostWithCacheTTL(pricing *ModelPricing, tokens UsageTokens, price, multiplier float64, ttlHint string) float64 {
 	if pricing.SupportsCacheBreakdown && (pricing.CacheCreation5mPrice > 0 || pricing.CacheCreation1hPrice > 0) {
 		cacheCreation5mTokens, cacheCreation1hTokens := normalizeCacheCreationBreakdown(tokens)
 		if cacheCreation5mTokens == 0 && cacheCreation1hTokens == 0 && tokens.CacheCreationTokens > 0 {
-			// API 未返回 ephemeral 明细，回退到全部按 5m 单价计费
+			// API 未返回 ephemeral 明细。我们向上游声明的是 1h 时必须按 1h 单价收：
+			// 上游按 1h 建缓存却漏报明细的话，按 5m 收就是净亏（1h 单价更高）。
+			if ttlHint == cacheTTLTarget1h && pricing.CacheCreation1hPrice > 0 {
+				return float64(tokens.CacheCreationTokens) * pricing.CacheCreation1hPrice * multiplier
+			}
 			return float64(tokens.CacheCreationTokens) * pricing.CacheCreation5mPrice * multiplier
 		}
 		return float64(cacheCreation5mTokens)*pricing.CacheCreation5mPrice*multiplier +

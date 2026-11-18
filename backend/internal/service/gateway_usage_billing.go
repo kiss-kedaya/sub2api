@@ -1242,6 +1242,9 @@ func (s *GatewayService) calculateTokenCost(
 		ReasoningEffort: optionalStringValue(result.ReasoningEffort),
 		Resolver:        s.resolver,
 		Resolved:        resolved,
+		// 密钥强制 1h 时，请求体里的 cache_control 一定被改写成 ttl=1h；
+		// 上游若漏报 ephemeral 明细，计费必须按 1h 而不是 5m 兜底。
+		CacheCreationTTLHint: cacheCreationTTLHintForAPIKey(apiKey),
 	})
 	if err != nil {
 		logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
@@ -1364,4 +1367,16 @@ func optionalSubscriptionID(subscription *UserSubscription) *int64 {
 		return &subscription.ID
 	}
 	return nil
+}
+
+// cacheCreationTTLHintForAPIKey 返回本次请求实际声明的缓存 TTL 供计费兜底使用。
+// 只有密钥级强制 1h 时才能确定结论；inherit/off/5m 保持空值，沿用旧行为。
+func cacheCreationTTLHintForAPIKey(apiKey *APIKey) string {
+	if apiKey == nil {
+		return ""
+	}
+	if NormalizeAnthropicCacheTTLMode(apiKey.AnthropicCacheTTLMode) == AnthropicCacheTTLMode1h {
+		return cacheTTLTarget1h
+	}
+	return ""
 }
