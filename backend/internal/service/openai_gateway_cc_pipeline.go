@@ -351,6 +351,9 @@ func (s *OpenAIGatewayService) scanCCStream(
 		}
 		answerSeen = answerSeen || chatChunkHasAnswer(&chunk)
 		for _, choice := range chunk.Choices {
+			if !st.NonBillableUpstreamError && choice.FinishReason != nil && *choice.FinishReason != "" && *choice.FinishReason != "error" {
+				sawSuccessfulFinish = true
+			}
 			if answerSeen && choice.FinishReason != nil && chatFinishReasonIsSuccess(*choice.FinishReason) {
 				st.NonBillableUpstreamError = false
 				st.UpstreamError = nil

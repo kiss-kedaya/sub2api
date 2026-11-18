@@ -13,6 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 // Tests shorten the interval without changing the production request-size gate.
@@ -208,6 +209,15 @@ func writeOpenAIStreamSilenceError(c *gin.Context, stream bool) {
 	} else {
 		c.Data(http.StatusGatewayTimeout, "application/json", openAIUpstreamWaitLimitFailoverBody)
 	}
+}
+
+// A complete successful JSON document also ends a generation without HTTP EOF.
+func openAIStreamSilenceHasCompletedJSON(body []byte) bool {
+	if !gjson.ValidBytes(body) {
+		return false
+	}
+	root := gjson.ParseBytes(body)
+	return root.IsObject() && root.Get("status").String() == "completed" && !openAIExplicitUpstreamError(root, "")
 }
 
 // A terminal success, not EOF, completes a provider's SSE generation.

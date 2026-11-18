@@ -343,6 +343,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	clientDisconnected := false
 	clientOutputStarted := false
 	nonBillableUpstreamError := false
+	upstreamErrorPending := false
+	upstreamErrorBuffered := false
+	upstreamErrorDelivered := false
 	answerSeen := false
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
@@ -384,6 +387,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			}
 			pendingLines = pendingLines[:0]
 			clientOutputStarted = true
+			upstreamErrorDelivered = upstreamErrorDelivered || upstreamErrorBuffered
 		}
 		if _, werr := c.Writer.WriteString(line + "\n"); werr != nil {
 			markGone()
@@ -436,6 +440,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				}
 				if len(choices) == 0 && openAIExplicitUpstreamError(root, pendingSSEEventType) {
 					nonBillableUpstreamError = true
+					upstreamErrorPending = true
 				} else if answerSeen {
 					for _, choice := range choices {
 						if chatFinishReasonIsSuccess(choice.Get("finish_reason").String()) {
@@ -466,6 +471,13 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		writeLine(line)
 		if line == "" {
 			pendingSSEEventType = ""
+			if upstreamErrorPending {
+				upstreamErrorBuffered = true
+				upstreamErrorPending = false
+				if !clientDisconnected && clientOutputStarted {
+					upstreamErrorDelivered = true
+				}
+			}
 			if !clientDisconnected && clientOutputStarted {
 				c.Writer.Flush()
 			}
@@ -516,7 +528,11 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	clientGone := clientDisconnected || watch.Gone()
 	if errors.Is(scanErr, errOpenAIUpstreamWaitLimit) && !clientGone && !terminal.sawDone && !terminal.sawFinishReason {
 		nonBillableUpstreamError = true
-		writeOpenAIStreamSilenceError(c, true)
+		if !upstreamErrorDelivered {
+			writeOpenAIStreamSilenceError(c, true)
+		} else {
+			MarkResponseCommitted(c)
+		}
 		return resultWithUsage(), openAIStreamSilenceError(scanErr)
 	}
 	if scanErr != nil && !clientGone && !errors.Is(scanErr, context.Canceled) && !errors.Is(scanErr, context.DeadlineExceeded) {

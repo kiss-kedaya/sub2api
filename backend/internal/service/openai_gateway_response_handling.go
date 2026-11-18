@@ -532,12 +532,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if scanErr == nil {
 			return nil, nil, false
 		}
-		if errors.Is(scanErr, errOpenAIUpstreamWaitLimit) && !clientDisconnected {
-			nonBillableUpstreamError = true
-			flushPending("Client disconnected during silence-limit flush")
-			writeOpenAIStreamSilenceError(c, true)
-			return resultWithUsage(), openAIStreamSilenceError(scanErr), true
-		}
 		if clientDisconnected {
 			if sawTerminalEvent {
 				result, err := finalizeStream()
@@ -566,12 +560,24 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return resultWithUsage(), failoverErr, true
 		}
 		if sawTerminalEvent {
+			if errors.Is(scanErr, errOpenAIUpstreamWaitLimit) && eventInProgress && !clientDisconnected {
+				// A parsed terminal needs its blank line before the held body closes.
+				if _, err := writePendingString("\n"); err != nil {
+					handlePendingWriteError(err)
+				}
+			}
 			if !sawFailedEvent {
 				s.clearOpenAIProxyStreamDisconnect(account)
 				logger.LegacyPrintf("service.openai_gateway", "Upstream scan ended after terminal event: %v", scanErr)
 			}
 			result, err := finalizeStream()
 			return result, err, true
+		}
+		if errors.Is(scanErr, errOpenAIUpstreamWaitLimit) {
+			nonBillableUpstreamError = true
+			flushPending("Client disconnected during silence-limit flush")
+			writeOpenAIStreamSilenceError(c, true)
+			return resultWithUsage(), openAIStreamSilenceError(scanErr), true
 		}
 		// 客户端断开/取消请求时，上游读取往往会返回 context canceled。
 		// /v1/responses 的 SSE 事件必须符合 OpenAI 协议；这里不注入自定义 error event，避免下游 SDK 解析失败。
@@ -1873,6 +1879,9 @@ func openAICacheCreationTokensFromUsage(value gjson.Result) int {
 
 func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	if errors.Is(err, errOpenAIUpstreamWaitLimit) && openAIStreamSilenceHasCompletedJSON(body) {
+		err = nil
+	}
 	if err != nil {
 		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
 			if openAIStreamSilenceHasSuccessfulTerminal(body) {

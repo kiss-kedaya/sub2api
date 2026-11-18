@@ -487,6 +487,9 @@ func TestDeepSeekStreamSilenceHostedContinuationIsEntirelyFree(t *testing.T) {
 				if index == 1 {
 					if stream {
 						response = silenceResponsesPrelude
+					} else {
+						// A complete successful JSON now retains billing without EOF.
+						response = strings.TrimSuffix(response, "}")
 					}
 					return &streamSilenceBlockingBody{prefix: strings.NewReader(response), closed: make(chan struct{})}
 				}

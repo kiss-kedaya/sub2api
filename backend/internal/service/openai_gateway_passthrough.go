@@ -2873,6 +2873,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	mappedModel string,
 ) (*openaiNonStreamingResultPassthrough, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	if errors.Is(err, errOpenAIUpstreamWaitLimit) && openAIStreamSilenceHasCompletedJSON(body) {
+		err = nil
+	}
 	if err != nil {
 		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
 			if openAIStreamSilenceHasSuccessfulTerminal(body) {
