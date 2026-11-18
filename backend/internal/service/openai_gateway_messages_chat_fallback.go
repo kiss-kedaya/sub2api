@@ -259,7 +259,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 	usage := scan.Usage
 
 	var upstreamErr error
-	if scan.NonBillableUpstreamError {
+	// A scan ended by the silence limit has already told the client and carries its
+	// own error; writing the upstream-error frame as well would send two errors.
+	if scan.NonBillableUpstreamError && !errors.Is(scan.Err, errOpenAIUpstreamWaitLimit) {
 		upstreamErr = writeCompatUpstreamStreamError(c, "messages", originalModel, scan.UpstreamError)
 	}
 	if upstreamErr != nil || scan.Err != nil {
