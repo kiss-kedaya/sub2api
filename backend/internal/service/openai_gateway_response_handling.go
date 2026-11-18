@@ -335,11 +335,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	failedMessage := ""
 	clientOutputStarted := false
 	// API-key providers can return the same bare Responses errors as OAuth.
-	codexFailureTerminal := account != nil && account.Platform == PlatformOpenAI
+	codexFailureTerminal := account != nil && account.IsOpenAICompatible() && account.Platform != PlatformGrok
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	var streamEarlyErr error
 	terminalFailurePending := false
 	nonBillableUpstreamError := false
+	answerSeen := false
 	failureDelivered := false
 	suppressCurrentEvent := false
 	var bareErrorPayload []byte
@@ -607,19 +608,28 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
 			frame := parseOpenAISSEDataFrame(dataBytes, pendingSSEEventType)
+			// Reuse the parsed envelope; untyped error frames are provider failures too.
+			if frame.eventType == "" && openAIExplicitUpstreamError(frame.root, "") {
+				frame.eventType = "error"
+			}
 			nativeReasoning.ObserveFrame(frame)
 			eventType := frame.eventType
+			answerFrame := responsesFrameHasAnswer(frame)
+			successAfterError := (eventType == "response.completed" || eventType == "response.done") &&
+				!clientDisconnected && (answerSeen || answerFrame) && !openAIExplicitUpstreamError(frame.root, eventType) &&
+				(frame.root.Get("response.status").String() == "" || frame.root.Get("response.status").String() == "completed")
 			switch eventType {
 			case "error", "response.failed", "response.completed", "response.done":
-				// Raw upstream terminal events only; gateway-made frames never pass here.
-				observeDeepSeekHostedUpstreamEvent(ctx, eventType)
+				// Empty success frames cannot erase a real provider rejection.
+				if eventType == "error" || eventType == "response.failed" || !nonBillableUpstreamError || successAfterError {
+					observeDeepSeekHostedUpstreamEvent(ctx, eventType)
+				}
 			}
 			if sawResponseFailed && (eventType == "response.failed" || eventType == "error") {
 				s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
 				return
 			}
-			if codexFailureTerminal && sawBareError && !sawResponseFailed &&
-				(eventType == "response.completed" || eventType == "response.done") {
+			if codexFailureTerminal && sawBareError && !sawResponseFailed && successAfterError {
 				// A later successful terminal is authoritative over a pending bare
 				// error. Keep its usage and terminal visible to the client.
 				sawBareError = false
@@ -632,7 +642,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				failedMessage = ""
 			}
 			if codexFailureTerminal && sawBareError && !sawResponseFailed && eventType != "response.failed" {
-				suppressCurrentEvent = true
+				// Keep actual answer deltas; only the error and empty success are held.
+				suppressCurrentEvent = eventType == "error" || eventType == "response.completed" || eventType == "response.done" || frame.isDone()
 			}
 			observer.ObserveOpenAIFrame(frame)
 			// 初始上游 data 的 type 只解析一次：原始值保持终止事件的精确匹配，规范化值供后续分支复用。
@@ -931,6 +942,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					handlePendingWriteError(err)
 				} else {
 					eventInProgress = true
+					answerSeen = answerSeen || answerFrame
 					// 可见输出帧计量：累加已承诺字节作 token 上界，跨预扣窗口时补扣。
 					// 补扣失败通过 streamEarlyErr 中止：后续行被 processSSELine 顶部的
 					// 守卫跳过，scanner 循环结束后按该错误返回并关闭上游连接。

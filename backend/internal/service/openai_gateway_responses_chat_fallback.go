@@ -293,8 +293,13 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		writeEvents(events)
 	})
 
+	var upstreamErr error
+	if scan.NonBillableUpstreamError {
+		upstreamErr = writeCompatUpstreamStreamError(c, "responses", originalModel, scan.UpstreamError)
+	}
+
 	// The stream ended without [DONE] and the client is gone: nothing more will come.
-	if gone := clientDisconnected || watch.Gone(); scan.Err != nil || (gone && !scan.SawDone) {
+	if gone := clientDisconnected || watch.Gone(); upstreamErr != nil || scan.Err != nil || (gone && !scan.SawDone) {
 		result := &OpenAIForwardResult{
 			RequestID:                   requestID,
 			UpstreamHeaders:             resp.Header,
@@ -310,6 +315,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			Duration:                    time.Since(startTime),
 			FirstTokenMs:                scan.FirstTokenMs,
 			ClientDisconnect:            gone,
+		}
+		if upstreamErr != nil {
+			return result, upstreamErr
 		}
 		cause := scan.Err
 		if cause == nil {

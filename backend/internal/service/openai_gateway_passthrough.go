@@ -2258,11 +2258,12 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	capacityFailoverSuppressedLogged := false
 	failedMessage := ""
 	clientOutputStarted := false
-	codexFailureTerminal := account != nil && account.Platform == PlatformOpenAI
+	codexFailureTerminal := account != nil && account.IsOpenAICompatible() && account.Platform != PlatformGrok
 	failureDelivered := false
 	suppressCurrentEvent := false
 	responseFailedPending := false
 	nonBillableUpstreamError := false
+	answerSeen := false
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
@@ -2419,12 +2420,20 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			dataBytes := []byte(data)
 			trimmedData := strings.TrimSpace(data)
 			frame := parseOpenAISSEDataFrame(dataBytes, pendingSSEEventType)
+			if frame.eventType == "" && openAIExplicitUpstreamError(frame.root, "") {
+				frame.eventType = "error"
+			}
 			nativeReasoning.ObserveFrame(frame)
 			rawEventType := frame.eventType
+			answerFrame := responsesFrameHasAnswer(frame)
+			successAfterError := (rawEventType == "response.completed" || rawEventType == "response.done") &&
+				!clientDisconnected && (answerSeen || answerFrame) && !openAIExplicitUpstreamError(frame.root, rawEventType) &&
+				(frame.root.Get("response.status").String() == "" || frame.root.Get("response.status").String() == "completed")
 			switch rawEventType {
 			case "error", "response.failed", "response.completed", "response.done":
-				// Raw upstream terminal events only; gateway-made frames never pass here.
-				observeDeepSeekHostedUpstreamEvent(ctx, rawEventType)
+				if rawEventType == "error" || rawEventType == "response.failed" || !nonBillableUpstreamError || successAfterError {
+					observeDeepSeekHostedUpstreamEvent(ctx, rawEventType)
+				}
 			}
 			observer.ObserveOpenAIFrame(frame)
 			if refusalErr := grokModerationRefusalProtocolError(account, dataBytes); refusalErr != nil &&
@@ -2486,8 +2495,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
 				continue
 			}
-			if codexFailureTerminal && sawBareError && !sawResponseFailed &&
-				(eventType == "response.completed" || eventType == "response.done") {
+			if codexFailureTerminal && sawBareError && !sawResponseFailed && successAfterError {
 				sawBareError = false
 				sawFailedEvent = false
 				responseFailedPending = false
@@ -2498,7 +2506,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				failedMessage = ""
 			}
 			if codexFailureTerminal && sawBareError && !sawResponseFailed && eventType != "response.failed" {
-				suppressCurrentEvent = true
+				suppressCurrentEvent = eventType == "error" || eventType == "response.completed" || eventType == "response.done" || frame.isDone()
+			}
+			if !clientDisconnected && !suppressCurrentEvent && answerFrame {
+				answerSeen = true
 			}
 			if !capacityFailoverSuppressedLogged && account != nil && account.Platform == PlatformOpenAI &&
 				(eventType == "error" || eventType == "response.failed") &&
