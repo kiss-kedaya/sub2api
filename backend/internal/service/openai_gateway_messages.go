@@ -1336,6 +1336,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		ttftMode = s.openAITTFTMode(c.Request.Context())
 	}
 	nonBillableUpstreamError := false
+	var pendingBareError []byte
+	answerSeen := false
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 
@@ -1419,7 +1421,10 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			searchCount += countGrokNativeSearchCallsInSSEDataDedup([]byte(payload), streamSearchSeen)
 		}
 
-		var event apicompat.ResponsesStreamEvent
+		var event struct {
+			apicompat.ResponsesStreamEvent
+			Error any `json:"error"`
+		}
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			logger.L().Warn("openai messages stream: failed to parse event",
 				zap.Error(err),
@@ -1427,13 +1432,41 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			)
 			return false
 		}
+		if event.Type == "" && openAIParsedErrorPresent(event.Error) {
+			event.Type = "error"
+		}
 		observer.ObserveOpenAI([]byte(payload), event.Type)
 		s.parseSSEUsageBytesWithType([]byte(payload), event.Type, &usage)
-		streamAcc.ProcessEvent(&event)
+		streamAcc.ProcessEvent(&event.ResponsesStreamEvent)
 
 		eventType := strings.TrimSpace(event.Type)
 		isBareErrorEvent := eventType == "error"
 		isTerminalEvent := isOpenAICompatResponsesTerminalEvent(eventType) || isBareErrorEvent
+		cyberPrelude := false
+		if isBareErrorEvent {
+			cyberPrelude, _, _ = detectOpenAICyberPolicy(rawPayload)
+		}
+		if isBareErrorEvent && !cyberPrelude && grokModerationRefusalProtocolError(account, rawPayload) == nil {
+			message := extractOpenAISSEErrorMessage(rawPayload)
+			if !clientOutputStarted && openAIStreamErrorEventShouldFailover(rawPayload, message) {
+				nonBillableUpstreamError = true
+				streamFailoverErr = s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, rawPayload, message, upstreamModel, resp.Header)
+				return true
+			}
+			nonBillableUpstreamError = true
+			pendingBareError = append(pendingBareError[:0], rawPayload...)
+			return false
+		}
+		if (eventType == "response.completed" || eventType == "response.done") &&
+			(answerSeen || responsesEventHasAnswer(&event.ResponsesStreamEvent)) &&
+			(event.Response == nil || event.Response.Status == "" || event.Response.Status == "completed") {
+			nonBillableUpstreamError = false
+			pendingBareError = nil
+		}
+		if len(pendingBareError) > 0 && isTerminalEvent && eventType != "response.failed" {
+			streamNonFailoverErr = writeCompatUpstreamStreamError(c, "messages", originalModel, pendingBareError)
+			return true
+		}
 		if isTerminalEvent {
 			terminalEventType = eventType
 			if event.Response != nil {
@@ -1523,7 +1556,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		}
 
 		// Convert to Anthropic events
-		events := apicompat.ResponsesEventToAnthropicEvents(&event, state)
+		events := apicompat.ResponsesEventToAnthropicEvents(&event.ResponsesStreamEvent, state)
 		if !clientDisconnected {
 			for _, evt := range events {
 				sse, err := apicompat.ResponsesAnthropicEventToSSE(evt)
@@ -1545,6 +1578,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				clientOutputStarted = true
 			}
 		}
+		if !clientDisconnected && clientOutputStarted {
+			answerSeen = answerSeen || responsesEventHasAnswer(&event.ResponsesStreamEvent)
+		}
 		if len(events) > 0 && !clientDisconnected {
 			c.Writer.Flush()
 		}
@@ -1558,6 +1594,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		}
 		if streamNonFailoverErr != nil {
 			return resultWithUsage(), streamNonFailoverErr
+		}
+		if len(pendingBareError) > 0 {
+			return resultWithUsage(), writeCompatUpstreamStreamError(c, "messages", originalModel, pendingBareError)
 		}
 		if finalEvents := apicompat.FinalizeResponsesAnthropicStream(state); len(finalEvents) > 0 && !clientDisconnected {
 			for _, evt := range finalEvents {
@@ -1592,6 +1631,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	// still billed.
 	finishIncomplete := func(cause error) (*OpenAIForwardResult, error) {
 		gone := clientDisconnected || watch.Gone()
+		if len(pendingBareError) > 0 && !gone {
+			return resultWithUsage(), writeCompatUpstreamStreamError(c, "messages", originalModel, pendingBareError)
+		}
 		applyCompatIncompleteUsage(c, &usage, compatIncompleteUsage{
 			Path: "messages_stream", Account: account, Model: originalModel, RequestID: requestID,
 			ClientGone: gone, Cause: cause, OutputEstimate: estimateIncompleteStreamOutputTokens(streamAcc),
@@ -1612,6 +1654,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		}
 	}
 	missingTerminalErr := func() (*OpenAIForwardResult, error) {
+		if len(pendingBareError) > 0 {
+			return finalizeStream()
+		}
 		if clientDisconnected || watch.Gone() {
 			return finishIncomplete(fmt.Errorf("stream usage incomplete: missing terminal event"))
 		}

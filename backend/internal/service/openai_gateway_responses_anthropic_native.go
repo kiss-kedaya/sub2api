@@ -147,6 +147,42 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	return s.handleResponsesBufferedFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)
 }
 
+// anthropicCompatOutcome retains provider failure provenance while converters
+// ignore error events. Only an answer followed by a successful stop overrides it.
+type anthropicCompatOutcome struct {
+	failed     bool
+	answerSeen bool
+	stopReason string
+	source     []byte
+}
+
+func (o *anthropicCompatOutcome) observe(event *apicompat.AnthropicStreamEvent, eventType string, payload []byte, delivered bool) {
+	if event.Type == "" {
+		event.Type = eventType
+	}
+	if event.Type == "error" || eventType == "error" {
+		o.failed = true
+		o.source = append(o.source[:0], payload...)
+		return
+	}
+	if delivered {
+		if event.Type == "content_block_start" && event.ContentBlock != nil {
+			block := event.ContentBlock
+			o.answerSeen = o.answerSeen || block.Text != "" || ((block.Type == "tool_use" || block.Type == "server_tool_use") && block.Name != "")
+		}
+		if event.Type == "content_block_delta" && event.Delta != nil {
+			o.answerSeen = o.answerSeen || event.Delta.Text != "" || event.Delta.PartialJSON != ""
+		}
+	}
+	if event.Type == "message_delta" && event.Delta != nil && event.Delta.StopReason != "" {
+		o.stopReason = event.Delta.StopReason
+	}
+	if event.Type == "message_stop" && o.answerSeen && anthropicStopReasonIsSuccess(o.stopReason) {
+		o.failed = false
+		o.source = nil
+	}
+}
+
 // handleResponsesBufferedFromNativeAnthropic reads Anthropic SSE events, assembles
 // the full response, then converts Anthropic → Responses.
 func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
@@ -170,7 +206,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
-	nonBillableUpstreamError := false
+	var outcome anthropicCompatOutcome
 
 	// 读间隔上限：上游挂住 SSE 时中止组装（缓冲路径尚未提交响应头，可回 502）。
 	streamInterval := s.anthropicNativeStreamInterval()
@@ -210,7 +246,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 			continue
 		}
 		if eventType == "error" {
-			nonBillableUpstreamError = true
+			outcome.failed = true
 		}
 
 		dataLine, rerr := pump.next()
@@ -230,11 +266,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
-		if event.Type == "error" {
-			nonBillableUpstreamError = true
-		} else if event.Type == "message_stop" {
-			nonBillableUpstreamError = false
-		}
+		outcome.observe(&event, eventType, []byte(payload), true)
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
 			mergeAnthropicUsage(&usage, event.Message.Usage)
@@ -265,6 +297,19 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		}
 	}
 
+	result := &OpenAIForwardResult{
+		RequestID: requestID, UpstreamHeaders: resp.Header,
+		Usage: claudeUsageToOpenAIUsage(&usage), NonBillableUpstreamError: outcome.failed,
+		Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel,
+		UpstreamEndpoint: "/v1/messages", ReasoningEffort: reasoningEffort,
+		Stream: false, Duration: time.Since(startTime),
+	}
+	if outcome.failed {
+		message := sanitizeUpstreamErrorMessage(extractOpenAISSEErrorMessage(outcome.source))
+		writeResponsesError(c, http.StatusBadGateway, "upstream_error", message)
+		MarkResponseCommitted(c)
+		return result, fmt.Errorf("upstream response failed: %s", message)
+	}
 	if finalResp == nil {
 		writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream stream ended without a response")
 		return nil, fmt.Errorf("upstream stream ended without response")
@@ -295,7 +340,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		RequestID:                requestID,
 		UpstreamHeaders:          resp.Header,
 		Usage:                    claudeUsageToOpenAIUsage(&usage),
-		NonBillableUpstreamError: nonBillableUpstreamError,
+		NonBillableUpstreamError: outcome.failed,
 		Model:                    originalModel,
 		BillingModel:             billingModel,
 		UpstreamModel:            upstreamModel,
@@ -334,7 +379,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 	clientToolRestorer := apicompat.NewResponsesClientToolStreamRestorer(clientToolMapping)
 
 	var usage ClaudeUsage
-	nonBillableUpstreamError := false
+	var outcome anthropicCompatOutcome
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
@@ -351,7 +396,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			RequestID:                requestID,
 			UpstreamHeaders:          resp.Header,
 			Usage:                    claudeUsageToOpenAIUsage(&usage),
-			NonBillableUpstreamError: nonBillableUpstreamError,
+			NonBillableUpstreamError: outcome.failed,
 			Model:                    originalModel,
 			BillingModel:             billingModel,
 			UpstreamModel:            upstreamModel,
@@ -399,10 +444,8 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			firstTokenMs = &ms
 		}
 
-		if event.Type == "error" {
-			nonBillableUpstreamError = true
-		} else if event.Type == "message_stop" {
-			nonBillableUpstreamError = false
+		if event.Type == "message_stop" && outcome.failed {
+			return
 		}
 		if event.Type == "message_delta" && event.Usage != nil {
 			mergeAnthropicUsage(&usage, *event.Usage)
@@ -431,6 +474,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 					clientDisconnected = true
 					return
 				}
+				outcome.answerSeen = outcome.answerSeen || responsesEventHasAnswer(&evt)
 			}
 		}
 		if len(events) > 0 {
@@ -452,7 +496,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			continue
 		}
 		if eventType == "error" {
-			nonBillableUpstreamError = true
+			outcome.failed = true
 		}
 
 		dataLine, rerr := pump.next()
@@ -473,7 +517,12 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			continue
 		}
 
+		outcome.observe(&event, eventType, []byte(payload), false)
 		processAnthropicEvent(&event)
+	}
+
+	if outcome.failed {
+		return resultWithUsage(), writeCompatUpstreamStreamError(c, "responses", originalModel, outcome.source)
 	}
 
 	// Finalize state machine（客户端已断开时仍推进，保证 usage 汇总完整；仅在

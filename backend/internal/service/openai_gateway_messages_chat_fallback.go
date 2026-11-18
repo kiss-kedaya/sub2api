@@ -251,10 +251,17 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 	scan := s.scanCCStream(c, resp, "openai messages chat fallback", requestID, startTime, emitChunk)
 	usage := scan.Usage
 
-	if scan.Err != nil {
+	var upstreamErr error
+	if scan.NonBillableUpstreamError {
+		upstreamErr = writeCompatUpstreamStreamError(c, "messages", originalModel, scan.UpstreamError)
+	}
+	if upstreamErr != nil || scan.Err != nil {
 		// Broken upstream read: skip finalization so no synthetic message_stop
 		// masks the truncation, and surface the error to flag usage incomplete
 		// (mirrors forwardResponsesViaRawChatCompletions).
+		if upstreamErr == nil {
+			upstreamErr = fmt.Errorf("stream usage incomplete: %w", scan.Err)
+		}
 		return &OpenAIForwardResult{
 			RequestID:                   requestID,
 			UpstreamHeaders:             resp.Header,
@@ -270,7 +277,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			Duration:                    time.Since(startTime),
 			FirstTokenMs:                scan.FirstTokenMs,
 			ClientDisconnect:            clientDisconnected,
-		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
+		}, upstreamErr
 	}
 
 	// Finalize: close open blocks + emit message_delta/message_stop.

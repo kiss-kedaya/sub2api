@@ -272,6 +272,8 @@ type ccStreamScanState struct {
 	SawDone bool
 	// NonBillableUpstreamError distinguishes provider errors from broken reads.
 	NonBillableUpstreamError bool
+	// UpstreamError retains the last provider rejection until delivered success.
+	UpstreamError []byte
 	// Err 为 scanner 读错误（客户端 context 取消不属于此类，会原样带出）。
 	// 非 nil 时调用方必须跳过 finalize 并返回 usage-incomplete 错误，避免
 	// 把上游截断伪装成正常收尾。
@@ -291,6 +293,7 @@ func (s *OpenAIGatewayService) scanCCStream(
 	emit func(*apicompat.ChatCompletionsChunk),
 ) ccStreamScanState {
 	var st ccStreamScanState
+	answerSeen := false
 	pendingEventType := ""
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
@@ -325,8 +328,10 @@ func (s *OpenAIGatewayService) scanCCStream(
 		if u := extractCCStreamUsageFromRoot(root, resp.Header); u != nil {
 			st.Usage = *u
 		}
-		if openAIExplicitUpstreamError(root, pendingEventType) {
+		// A relay note next to real choices is not a rejected response.
+		if !root.Get("choices.0").Exists() && openAIExplicitUpstreamError(root, pendingEventType) {
 			st.NonBillableUpstreamError = true
+			st.UpstreamError = append(st.UpstreamError[:0], payload...)
 			continue
 		}
 
@@ -338,10 +343,18 @@ func (s *OpenAIGatewayService) scanCCStream(
 			)
 			continue
 		}
+		answerSeen = answerSeen || chatChunkHasAnswer(&chunk)
 		for _, choice := range chunk.Choices {
-			if choice.FinishReason != nil && *choice.FinishReason != "" {
+			if answerSeen && choice.FinishReason != nil && chatFinishReasonIsSuccess(*choice.FinishReason) {
 				st.NonBillableUpstreamError = false
+				st.UpstreamError = nil
 				break
+			}
+		}
+		if st.NonBillableUpstreamError {
+			// Converters otherwise turn even an error finish into a success terminal.
+			for i := range chunk.Choices {
+				chunk.Choices[i].FinishReason = nil
 			}
 		}
 		if st.FirstTokenMs == nil && !isOpenAIChatUsageOnlyStreamChunk(payload) && chatChunkStartsResponsesOutput(&chunk) {
@@ -361,6 +374,119 @@ func (s *OpenAIGatewayService) scanCCStream(
 		st.Err = err
 	}
 	return st
+}
+
+// responsesFrameHasAnswer also accepts a named tool with no argument delta.
+func responsesFrameHasAnswer(frame openAISSEDataFrame) bool {
+	if openAIStreamFrameStartsVisibleOutput(frame) {
+		return true
+	}
+	tool := func(item gjson.Result) bool {
+		kind := item.Get("type").String()
+		return (kind == "function_call" || kind == "custom_tool_call") && item.Get("name").String() != ""
+	}
+	if tool(frame.root.Get("item")) {
+		return true
+	}
+	for _, item := range frame.root.Get("response.output").Array() {
+		if tool(item) {
+			return true
+		}
+	}
+	return false
+}
+
+// responsesEventHasAnswer uses decoded content, never usage or lifecycle events.
+func responsesEventHasAnswer(event *apicompat.ResponsesStreamEvent) bool {
+	switch event.Type {
+	case "response.output_text.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
+		return event.Delta != ""
+	case "response.output_text.done":
+		return event.Text != ""
+	}
+	itemHasAnswer := func(item *apicompat.ResponsesOutput) bool {
+		if item == nil {
+			return false
+		}
+		if (item.Type == "function_call" || item.Type == "custom_tool_call") && item.Name != "" {
+			return true
+		}
+		for _, part := range item.Content {
+			if part.Text != "" {
+				return true
+			}
+		}
+		return false
+	}
+	if itemHasAnswer(event.Item) {
+		return true
+	}
+	if event.Response != nil {
+		for i := range event.Response.Output {
+			if itemHasAnswer(&event.Response.Output[i]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// openAIParsedErrorPresent reuses fields decoded by the existing compat parser.
+func openAIParsedErrorPresent(value any) bool {
+	switch value := value.(type) {
+	case string:
+		return strings.TrimSpace(value) != ""
+	case map[string]any:
+		return len(value) > 0
+	default:
+		return false
+	}
+}
+
+// chatChunkHasAnswer excludes role and empty deltas from the recovery gate.
+func chatChunkHasAnswer(chunk *apicompat.ChatCompletionsChunk) bool {
+	for _, choice := range chunk.Choices {
+		delta := choice.Delta
+		if delta.Content != nil && *delta.Content != "" {
+			return true
+		}
+		for _, call := range delta.ToolCalls {
+			if call.Function.Name != "" || call.Function.Arguments != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func chatFinishReasonIsSuccess(reason string) bool {
+	switch reason {
+	case "stop", "length", "tool_calls", "function_call":
+		return true
+	default:
+		return false
+	}
+}
+
+// writeCompatUpstreamStreamError emits one failure, never a synthetic success.
+func writeCompatUpstreamStreamError(c *gin.Context, protocol, model string, source []byte) error {
+	message := sanitizeUpstreamErrorMessage(extractOpenAISSEErrorMessage(source))
+	if message == "" {
+		message = "Upstream response failed"
+	}
+	wire := buildOpenAIResponseFailedSSE("", model, source, message)
+	switch protocol {
+	case "messages":
+		wire = buildAnthropicStreamErrorSSE("api_error", message)
+	case "chat":
+		wire = buildChatStreamErrorSSE("upstream_error", message)
+	}
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	if _, err := fmt.Fprint(c.Writer, wire); err == nil {
+		c.Writer.Flush()
+	}
+	MarkResponseCommitted(c)
+	return fmt.Errorf("upstream response failed: %s", message)
 }
 
 // logCCStreamMissingDoneSentinel 记录"上游未发 [DONE] 哨兵即结束"的 debug 日志。

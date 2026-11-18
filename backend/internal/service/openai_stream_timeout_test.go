@@ -37,8 +37,8 @@ func TestOpenAIStreamTimeoutTerminal(t *testing.T) {
 				{name: "authoritative failed", stream: preamble + output + timeout + failed, code: "server_error", message: "final upstream failure", usage: true},
 				{name: "duplicate failed", stream: preamble + output + timeout + failed + failed, code: "server_error", message: "final upstream failure", usage: true},
 				{name: "authoritative success", stream: preamble + output + generic + completed, success: true, usage: true},
-				{name: "policy error then success", stream: preamble + contextLimit + completed, success: true, usage: true},
-				{name: "policy error then done", stream: preamble + contextLimit + strings.ReplaceAll(completed, "response.completed", "response.done"), success: true, usage: true},
+				{name: "policy error then success", stream: preamble + contextLimit + output + completed, success: true, usage: true},
+				{name: "policy error then done", stream: preamble + contextLimit + output + strings.ReplaceAll(completed, "response.completed", "response.done"), success: true, usage: true},
 				{name: "nonretryable before output", stream: preamble + generic, code: "provider_error", message: "provider failed"},
 			} {
 				t.Run(map[bool]string{false: "native", true: "passthrough"}[passthrough]+"/"+accountType+"/"+tt.name, func(t *testing.T) {
