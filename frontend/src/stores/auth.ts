@@ -21,7 +21,11 @@ const AUTH_USER_KEY = 'auth_user'
 const REFRESH_TOKEN_KEY = 'refresh_token'
 const TOKEN_EXPIRES_AT_KEY = 'token_expires_at' // 存储过期时间戳而非有效期
 const PENDING_AUTH_SESSION_KEY = 'pending_auth_session'
-const AUTO_REFRESH_INTERVAL = 60 * 1000 // 60 seconds for user data refresh
+const AUTO_REFRESH_INTERVAL = 90 * 1000 // idle-tab refresh; the dedupe below covers navigation bursts
+// /auth/me is the busiest API call in the app (about a quarter of API traffic),
+// and several views call refreshUser() on mount. One backend answer may be
+// reused for this long; callers that just changed money pass force.
+const AUTH_REFRESH_MIN_INTERVAL = 5 * 1000
 const TOKEN_REFRESH_BUFFER = 120 * 1000 // 120 seconds before expiry to refresh token
 
 type PendingAuthTokenField = 'pending_auth_token' | 'pending_oauth_token'
@@ -90,6 +94,8 @@ export const useAuthStore = defineStore('auth', () => {
   const runMode = ref<'standard' | 'simple'>('standard')
   const pendingAuthSession = ref<PendingAuthSessionSummary | null>(null)
   let refreshIntervalId: ReturnType<typeof setInterval> | null = null
+  let lastRefreshAt = 0
+  let inflightRefresh: Promise<User> | null = null
   let tokenRefreshTimeoutId: ReturnType<typeof setTimeout> | null = null
 
   // Dialog drafts are keyed by user id so one account never reads another's half-typed
@@ -168,6 +174,9 @@ export const useAuthStore = defineStore('auth', () => {
     stopAutoRefresh()
 
     refreshIntervalId = setInterval(() => {
+      // A hidden tab has no user looking at the balance; skip the poll entirely
+      // and let the first visible reload catch up.
+      if (typeof document !== 'undefined' && document.hidden) return
       if (token.value || cookieSession.value) {
         refreshUser().catch((error) => {
           console.error('Auto-refresh user failed:', error)
@@ -316,6 +325,10 @@ export const useAuthStore = defineStore('auth', () => {
    * Internal helper function
    */
   function setAuthFromResponse(response: AuthResponse): void {
+    // A fresh login payload is authoritative; never answer from a window that
+    // belonged to the previous session.
+    lastRefreshAt = 0
+    inflightRefresh = null
     if (getAppRuntimeContext()?.cookieSession) {
       cookieSession.value = true
       token.value = null
@@ -495,30 +508,45 @@ export const useAuthStore = defineStore('auth', () => {
    * @returns Promise resolving to the updated user
    * @throws Error if not authenticated or request fails
    */
-  async function refreshUser(): Promise<User> {
+  async function refreshUser(options?: { force?: boolean }): Promise<User> {
     if (!token.value && !cookieSession.value) {
       throw new Error('Not authenticated')
     }
 
-    try {
-      const response = await authAPI.getCurrentUser()
-      if (response.data.run_mode) {
-        runMode.value = response.data.run_mode
-      }
-      const { run_mode: _run_mode, ...userData } = response.data
-      user.value = userData
-
-      // Update localStorage
-      if (!cookieSession.value && typeof localStorage !== 'undefined') localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData))
-
-      return userData
-    } catch (error) {
-      // If refresh fails with 401, clear auth state
-      if ((error as { status?: number }).status === 401) {
-        clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
-      }
-      throw error
+    const force = options?.force === true
+    if (!force && lastRefreshAt > 0 && Date.now() - lastRefreshAt < AUTH_REFRESH_MIN_INTERVAL && user.value) {
+      return user.value
     }
+    if (inflightRefresh) {
+      return inflightRefresh
+    }
+
+    inflightRefresh = (async () => {
+      try {
+        const response = await authAPI.getCurrentUser()
+        if (response.data.run_mode) {
+          runMode.value = response.data.run_mode
+        }
+        const { run_mode: _run_mode, ...userData } = response.data
+        user.value = userData
+        lastRefreshAt = Date.now()
+
+        // Update localStorage
+        if (!cookieSession.value && typeof localStorage !== 'undefined') localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData))
+
+        return userData
+      } catch (error) {
+        // If refresh fails with 401, clear auth state
+        if ((error as { status?: number }).status === 401) {
+          clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+        }
+        throw error
+      } finally {
+        inflightRefresh = null
+      }
+    })()
+
+    return inflightRefresh
   }
 
   /**
@@ -526,6 +554,8 @@ export const useAuthStore = defineStore('auth', () => {
    * Internal helper function
    */
   function clearAuth(options?: { preservePendingAuthSession?: boolean }): void {
+    lastRefreshAt = 0
+    inflightRefresh = null
     // Stop auto-refresh
     stopAutoRefresh()
     // Stop token refresh

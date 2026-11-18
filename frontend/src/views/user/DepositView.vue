@@ -451,7 +451,7 @@ function announceCredited(previous: DepositRecord[], next: DepositRecord[]) {
   const landed = next.filter(r => r.status === 'credited' && r.tx_hash && wasPending.has(depositKey(r)))
   if (!landed.length) return
   for (const r of landed.filter(hasKnownCredit)) appStore.showSuccess(t('deposit.creditedToast', { amount: fmtCredited(r.credited) }))
-  void authStore.refreshUser().catch(() => undefined)
+  void authStore.refreshUser({ force: true }).catch(() => undefined)
 }
 
 function stopPolling() {
