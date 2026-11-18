@@ -51,6 +51,7 @@ func registerAccountOperationsRoutes(admin *gin.RouterGroup, h *handler.Handlers
 	r.PUT("/webhooks/:id", v.RequireStepUp, v.SaveWebhook)
 	r.DELETE("/webhooks/:id", v.RequireStepUp, v.DeleteWebhook)
 	r.POST("/webhooks/:id/test", v.RequireStepUp, v.TestWebhook)
+	r.POST("/admin-defaults/:channel/test", v.RequireStepUp, v.TestAdminChannel)
 	r.PUT("/rules/batch", v.SaveRulesBatch)
 	r.PUT("/rules/:id", v.SaveRule)
 	r.DELETE("/rules/:id", v.DeleteRule)

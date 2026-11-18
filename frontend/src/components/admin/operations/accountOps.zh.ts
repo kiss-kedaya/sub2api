@@ -1,4 +1,21 @@
 export default {
+  "adminDefaults": "管理员默认渠道",
+  "adminDefaultsHint": "直接引用主管理员当前资料；修改邮箱或 Bark 后，下次通知自动跟随。",
+  "adminProfileSource": "来源：主管理员资料",
+  "adminEmail": "主管理员邮箱",
+  "adminBark": "主管理员 Bark",
+  "configureInProfile": "前往个人资料配置",
+  "customChannels": "自定义渠道",
+  "adminEmailOverridesCustom": "使用主管理员邮箱时，自定义邮箱保留但不同时发送。",
+  "adminBarkDuplicateHint": "默认 Bark 占用一个机器人名额；若自定义渠道指向同一设备，请停用重复渠道。",
+  "adminReasons": {
+    "admin_unavailable": "主管理员不可用（须启用且未删除）",
+    "email_unavailable": "主管理员邮箱不可用",
+    "bark_unavailable": "Bark 状态不可用",
+    "bark_unconfigured": "未配置",
+    "bark_disabled": "个人 Bark 已关闭",
+    "unavailable": "状态未获取"
+  },
   "enabledChannels": "已启用通知渠道",
   "enabledRules": "已启用阈值规则",
   "loadedPending": "待处理提醒（已加载）",

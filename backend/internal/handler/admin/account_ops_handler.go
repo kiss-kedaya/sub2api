@@ -58,7 +58,7 @@ func (h *AccountOpsHandler) GetConfig(c *gin.Context) {
 		ready = smtpErr == nil && smtp != nil && smtp.Host != "" && smtp.From != ""
 	}
 	dropped, failures := h.svc.RuntimeCounters()
-	response.Success(c, gin.H{"config": cfg, "smtp_configured": ready, "dropped_signals": dropped, "storage_failures": failures, "encryption_key_configured": h.svc.EncryptionKeyConfigured()})
+	response.Success(c, gin.H{"config": cfg, "admin_defaults": h.svc.AdminDefaults(c.Request.Context()), "smtp_configured": ready, "dropped_signals": dropped, "storage_failures": failures, "encryption_key_configured": h.svc.EncryptionKeyConfigured()})
 }
 func (h *AccountOpsHandler) SaveConfig(c *gin.Context) {
 	if !middleware.IsPrimaryAdmin(c) {
@@ -136,6 +136,18 @@ func (h *AccountOpsHandler) TestWebhook(c *gin.Context) {
 	response.Success(c, gin.H{"ok": true})
 }
 
+func (h *AccountOpsHandler) TestAdminChannel(c *gin.Context) {
+	if !middleware.IsPrimaryAdmin(c) {
+		response.Forbidden(c, "Primary administrator access required")
+		return
+	}
+	if err := h.svc.TestAdminChannel(c.Request.Context(), c.Param("channel")); err != nil {
+		response.BadRequest(c, "Administrator channel test failed; check primary administrator profile and notification settings")
+		return
+	}
+	response.Success(c, gin.H{"ok": true})
+}
+
 func (h *AccountOpsHandler) ThresholdAccounts(c *gin.Context) {
 	if !middleware.IsPrimaryAdmin(c) {
 		response.Forbidden(c, "Primary administrator access required")
@@ -199,9 +211,9 @@ func (h *AccountOpsHandler) SaveNotificationSettings(c *gin.Context) {
 		response.BadRequest(c, "Invalid notification settings")
 		return
 	}
-	// A supplied recipient always requires a fresh session grant. Comparing an
-	// unlocked old value could let concurrent edits bypass destination protection.
-	if v.Recipient != nil && !middleware.EnforceStepUpAlways(c, h.totp, h.users) {
+	// Supplied destinations and reference switches require a fresh session grant.
+	// Comparing unlocked old values could let concurrent edits bypass protection.
+	if (v.Recipient != nil || v.UseAdminEmail != nil || v.UseAdminBark != nil) && !middleware.EnforceStepUpAlways(c, h.totp, h.users) {
 		return
 	}
 	cfg, err := h.svc.SaveNotificationSettings(c.Request.Context(), v)

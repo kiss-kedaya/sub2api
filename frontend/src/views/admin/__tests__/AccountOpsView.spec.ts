@@ -5,7 +5,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import AccountOpsView from '../AccountOpsView.vue'
 import { useAppStore } from '@/stores/app'
-import { getAccountOpsSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, getAccountOpsThresholdGroups, saveAccountOpsGroups, saveAccountOpsNotificationSettings, saveAccountOpsRulesBatch, saveAccountOpsRuleGroups, testAccountOpsWebhook, deleteAccountOpsWebhook } from '@/api/admin/accountOps'
+import { getAccountOpsSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, getAccountOpsThresholdGroups, saveAccountOpsGroups, saveAccountOpsNotificationSettings, saveAccountOpsRulesBatch, saveAccountOpsRuleGroups, testAccountOpsWebhook, testAccountOpsAdminChannel, deleteAccountOpsWebhook } from '@/api/admin/accountOps'
 const state = vi.hoisted(() => ({ auth: null as any }))
 // Channel credential writes are step-up guarded; the spec controls when the TOTP prompt is required/cancelled/blocked.
 const stepUp = vi.hoisted(() => ({ run: vi.fn(), cancelled: false, blocked: false, reason: '' }))
@@ -18,7 +18,7 @@ vi.mock('@/composables/useStepUp', () => ({
 }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
 vi.mock('vue-i18n', async importOriginal => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key }) }))
-vi.mock('@/api/admin/accountOps', () => ({ getAccountOpsSettings: vi.fn(), getAccountOpsEvents: vi.fn(), getAccountOpsThresholdAccounts: vi.fn(), getAccountOpsThresholdGroups: vi.fn(), saveAccountOpsNotificationSettings: vi.fn(), saveAccountOpsRulesBatch: vi.fn(), saveAccountOpsRuleGroups: vi.fn(), saveAccountOpsGroups: vi.fn(), deleteAccountOpsRule: vi.fn(), saveAccountOpsWebhook: vi.fn(), deleteAccountOpsWebhook: vi.fn(), testAccountOpsWebhook: vi.fn() }))
+vi.mock('@/api/admin/accountOps', () => ({ getAccountOpsSettings: vi.fn(), getAccountOpsEvents: vi.fn(), getAccountOpsThresholdAccounts: vi.fn(), getAccountOpsThresholdGroups: vi.fn(), saveAccountOpsNotificationSettings: vi.fn(), saveAccountOpsRulesBatch: vi.fn(), saveAccountOpsRuleGroups: vi.fn(), saveAccountOpsGroups: vi.fn(), deleteAccountOpsRule: vi.fn(), saveAccountOpsWebhook: vi.fn(), deleteAccountOpsWebhook: vi.fn(), testAccountOpsWebhook: vi.fn(), testAccountOpsAdminChannel: vi.fn() }))
 const config = { enabled: false, recipient: '', balance_low: true, weekly_quota: true, cooldown_minutes: 60, webhooks: [], balance_thresholds: [], quota_thresholds: [] }
 const settings = () => ({ config: { ...config }, smtp_configured: true, dropped_signals: 0, storage_failures: 0, encryption_key_configured: true })
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes }); return { promise, resolve } }
@@ -32,6 +32,49 @@ const create = (section: Section = 'overview') => {
 }
 beforeEach(() => { vi.resetAllMocks(); stepUp.cancelled = false; stepUp.blocked = false; stepUp.reason = ''; stepUp.run.mockImplementation((action: () => Promise<unknown>) => action()); state.auth = reactive({ user: { id: 1, role: 'admin' } }); vi.mocked(getAccountOpsSettings).mockResolvedValue(settings()); vi.mocked(getAccountOpsEvents).mockResolvedValue({ items: [], has_more: false }); vi.mocked(getAccountOpsThresholdAccounts).mockResolvedValue([]); vi.mocked(getAccountOpsThresholdGroups).mockResolvedValue([]); vi.mocked(saveAccountOpsGroups).mockResolvedValue(config); vi.mocked(saveAccountOpsRulesBatch).mockResolvedValue(config); vi.mocked(saveAccountOpsRuleGroups).mockResolvedValue(config); vi.mocked(testAccountOpsWebhook).mockResolvedValue({ ok: true }); vi.mocked(deleteAccountOpsWebhook).mockResolvedValue(config); vi.mocked(saveAccountOpsNotificationSettings).mockImplementation(async c => ({ ...config, ...c })) })
 describe('account operations tabs and independent saves', () => {
+  it('keeps administrator references after saves and protects toggles and tests with step-up', async () => {
+    const defaults = { email_available: true, email_masked: 'o***r@example.invalid', email_unavailable_reason: '', bark_configured: true, bark_enabled: true, bark_available: true, bark_unavailable_reason: '' }
+    const saved = { ...config, use_admin_email: true, use_admin_bark: true }
+    vi.mocked(getAccountOpsSettings).mockResolvedValue({ ...settings(), config: saved, admin_defaults: defaults })
+    vi.mocked(saveAccountOpsNotificationSettings).mockImplementation(async c => ({ ...saved, ...c }))
+    vi.mocked(testAccountOpsAdminChannel).mockResolvedValue({ ok: true })
+    const wrapper = create('channels'); await flushPromises()
+    expect(wrapper.get('[data-testid="admin-email-row"]').text()).toContain('o***r@example.invalid')
+    expect(wrapper.get('[data-testid="use-admin-email"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.get('[data-testid="use-admin-bark"]').attributes('aria-checked')).toBe('true')
+    await wrapper.get('[data-testid="notifications-enabled"]').trigger('click'); await flushPromises()
+    expect(wrapper.get('[data-testid="use-admin-email"]').attributes('aria-checked')).toBe('true')
+    await wrapper.get('[data-testid="use-admin-email"]').trigger('click'); await flushPromises()
+    expect(saveAccountOpsNotificationSettings).toHaveBeenLastCalledWith({ use_admin_email: false })
+    expect(wrapper.get('[data-testid="use-admin-email"]').attributes('aria-checked')).toBe('false')
+    expect(wrapper.get('[data-testid="use-admin-bark"]').attributes('aria-checked')).toBe('true')
+    await wrapper.get('[data-testid="test-admin-bark"]').trigger('click'); await flushPromises()
+    expect(testAccountOpsAdminChannel).toHaveBeenCalledWith('bark')
+    expect(stepUp.run).toHaveBeenCalledTimes(2)
+    expect(useAppStore().toasts.at(-1)).toMatchObject({ type: 'success', message: 'accountOps.testSuccess' })
+    wrapper.unmount()
+  })
+  it.each(['bark_unconfigured', 'bark_disabled', 'admin_unavailable'])('disables unavailable administrator Bark tests: %s', async reason => {
+    vi.mocked(getAccountOpsSettings).mockResolvedValue({ ...settings(), admin_defaults: { email_available: false, email_masked: '', email_unavailable_reason: 'admin_unavailable', bark_configured: reason === 'bark_disabled', bark_enabled: false, bark_available: false, bark_unavailable_reason: reason } })
+    const wrapper = create('channels'); await flushPromises()
+    expect(wrapper.get('[data-testid="test-admin-bark"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="test-admin-email"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="configure-admin-bark"]').attributes('href')).toBe('/profile')
+    expect(wrapper.text()).toContain(`accountOps.adminReasons.${reason}`)
+    expect(testAccountOpsAdminChannel).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+  it('counts default Bark in the robot limit and shows failed tests honestly', async () => {
+    vi.mocked(getAccountOpsSettings).mockResolvedValue({ ...settings(), config: { ...config, use_admin_bark: true, webhooks: Array.from({ length: 4 }, (_, i) => ({ id: `bot-${i}`, provider: 'custom' as const, enabled: true, url_configured: true })) }, admin_defaults: { email_available: true, email_masked: 'o***r@example.invalid', email_unavailable_reason: '', bark_configured: true, bark_enabled: true, bark_available: true, bark_unavailable_reason: '' } })
+    vi.mocked(testAccountOpsAdminChannel).mockRejectedValue(new Error('Bark unavailable'))
+    const wrapper = create('channels'); await flushPromises()
+    await wrapper.get('[data-testid="account-ops-add-channel"]').trigger('click'); await flushPromises()
+    expect(wrapper.get('[data-testid="add-channel-webhook"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="test-admin-bark"]').trigger('click'); await flushPromises()
+    expect(useAppStore().toasts.at(-1)).toMatchObject({ type: 'error' })
+    expect(useAppStore().toasts.some(toast => toast.message === 'accountOps.testSuccess')).toBe(false)
+    wrapper.unmount()
+  })
   it('keeps previous settings and rules visible if a refresh fails', async () => {
     const wrapper = create(); await flushPromises()
     expect(wrapper.find('[data-testid="account-ops-summary"]').exists()).toBe(true)

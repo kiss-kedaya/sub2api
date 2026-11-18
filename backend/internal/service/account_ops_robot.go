@@ -217,6 +217,9 @@ func (s *AccountOpsService) TestWebhook(ctx context.Context, id string) error {
 }
 
 func (s *AccountOpsService) robotIdentity(w AccountOpsWebhook) (string, error) {
+	if w.ID == accountOpsAdminBarkID {
+		return accountOpsAdminBarkID, nil
+	}
 	if s.encryptor == nil {
 		return "", errors.New("robot encryption unavailable")
 	}

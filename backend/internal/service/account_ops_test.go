@@ -92,6 +92,7 @@ func TestAccountOpsExplicitOptInAndRedaction(t *testing.T) {
 	cfg := defaultAccountOpsConfig()
 	cfg.Enabled = true
 	cfg.Recipient = "ops@example.com"
+	cfg.UseAdminBark = opsBool(false)
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
 	svc.Observe(a, 402, nil, body)
 	event := <-svc.queue
@@ -129,6 +130,7 @@ func TestAccountOpsMailFailureDoesNotBecomeSent(t *testing.T) {
 }
 func TestAccountOpsRejectsMultipleRecipients(t *testing.T) {
 	c := defaultAccountOpsConfig()
+	c.UseAdminEmail, c.UseAdminBark = opsBool(false), opsBool(false)
 	c.Enabled = true
 	for _, recipient := range []string{"", "one@example.com,two@example.com", "Name <one@example.com>", "one@example.com\r\nBcc: other@example.com"} {
 		c.Recipient = recipient

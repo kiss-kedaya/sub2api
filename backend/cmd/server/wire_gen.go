@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay"
@@ -126,7 +127,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	compositeTokenCacheInvalidator := service.NewCompositeTokenCacheInvalidator(geminiTokenCache)
 	usageCache := service.NewUsageCache()
 	accountOpsRepository := repository.NewAccountOpsRepository(db)
-	accountOpsService := service.ProvideAccountOpsService(settingRepository, accountOpsRepository, emailService, accountRepository, secretEncryptor, configConfig, usageCache, usageLogRepository, geminiQuotaService)
+	accountOpsAdminChannels := provideAccountOpsAdminChannels(userRepository, db, secretEncryptor)
+	accountOpsService := service.ProvideAccountOpsService(settingRepository, accountOpsRepository, emailService, accountRepository, secretEncryptor, configConfig, usageCache, usageLogRepository, geminiQuotaService, accountOpsAdminChannels)
 	rateLimitService := service.ProvideRateLimitService(accountRepository, usageLogRepository, configConfig, geminiQuotaService, tempUnschedCache, timeoutCounterCache, openAI403CounterCache, settingService, compositeTokenCacheInvalidator, accountOpsService)
 	identityCache := repository.NewIdentityCache(redisClient)
 	identityService := service.NewIdentityService(identityCache)
@@ -418,6 +420,10 @@ type Application struct {
 	PromptAudit   *securityaudit.PromptService
 	PluginManager *service.PluginManager
 	Cleanup       func()
+}
+
+func provideAccountOpsAdminChannels(users service.UserRepository, db *sql.DB, encryptor service.SecretEncryptor) service.AccountOpsAdminChannels {
+	return notify.NewAccountOpsAdminChannels(users, notify.NewUserBarkService(db, notify.AdaptEncryptor(encryptor)))
 }
 
 func providePrivacyClientFactory() service.PrivacyClientFactory {
