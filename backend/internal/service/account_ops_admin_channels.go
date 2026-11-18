@@ -34,14 +34,15 @@ func (c AccountOpsConfig) usesAdminEmail() bool {
 	if c.UseAdminEmail != nil {
 		return *c.UseAdminEmail
 	}
-	return c.Recipient == ""
+	return c.Recipient == "" && len(c.Webhooks) == 0
 }
 
 func (c AccountOpsConfig) usesAdminBark() bool {
 	if c.UseAdminBark != nil {
 		return *c.UseAdminBark
 	}
-	return len(c.Webhooks) == 0
+	// Legacy custom destinations retain their exact audience, including disabled robots.
+	return c.Recipient == "" && len(c.Webhooks) == 0 && c.adminBarkAvailable
 }
 
 func (s *AccountOpsService) primaryAdmin(ctx context.Context) (*User, error) {

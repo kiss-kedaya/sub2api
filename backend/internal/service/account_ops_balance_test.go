@@ -92,7 +92,8 @@ func TestAccountOpsDeliveryRechecksAmountUnitTypeIdentityAndRules(t *testing.T) 
 	svc.SetNotificationDependencies(accounts, nil, false, "Asia/Shanghai")
 	cfg := defaultAccountOpsConfig()
 	cfg.Enabled = true
-	cfg.Recipient = "ops@example.test"
+	cfg.Recipient = "ops@example.invalid"
+	cfg.UseAdminEmail = opsBool(false)
 	cfg.BalanceLow = false
 	cfg.WeeklyQuota = false
 	cfg.BalanceThresholds = []AccountOpsBalanceRule{{AccountID: 1, Enabled: true, Threshold: 5, Unit: "USD"}}

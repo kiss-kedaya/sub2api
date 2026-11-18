@@ -242,6 +242,8 @@ func (s *AccountOpsService) deliverNotification(ctx context.Context, e *AccountO
 			switch w.ID {
 			case accountOpsAdminEmailID:
 				if !c.usesAdminEmail() {
+					// The replacement email is absent from this round's destination list.
+					state = "failed"
 					continue
 				}
 			case accountOpsAdminBarkID:
@@ -251,6 +253,7 @@ func (s *AccountOpsService) deliverNotification(ctx context.Context, e *AccountO
 			default:
 				if w.Provider == "email" {
 					if c.usesAdminEmail() || c.Recipient == "" {
+						state = "failed"
 						continue
 					}
 					w.ID = opsEmailIdentity(c.Recipient)

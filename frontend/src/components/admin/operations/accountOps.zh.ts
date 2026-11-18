@@ -4,6 +4,7 @@ export default {
   "adminProfileSource": "来源：主管理员资料",
   "adminEmail": "主管理员邮箱",
   "adminBark": "主管理员 Bark",
+  "channelUnused": "未使用",
   "configureInProfile": "前往个人资料配置",
   "customChannels": "自定义渠道",
   "adminEmailOverridesCustom": "使用主管理员邮箱时，自定义邮箱保留但不同时发送。",

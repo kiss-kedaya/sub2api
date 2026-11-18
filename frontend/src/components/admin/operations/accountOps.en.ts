@@ -4,6 +4,7 @@ export default {
   "adminProfileSource": "Source: primary administrator profile",
   "adminEmail": "Primary administrator email",
   "adminBark": "Primary administrator Bark",
+  "channelUnused": "Not in use",
   "configureInProfile": "Configure in personal profile",
   "customChannels": "Custom channels",
   "adminEmailOverridesCustom": "While the administrator email is selected, the custom email is retained but does not receive a second copy.",

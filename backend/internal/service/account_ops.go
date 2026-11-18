@@ -28,6 +28,8 @@ type AccountOpsConfig struct {
 	UngroupedAccountIDs []int64                 `json:"ungrouped_account_ids,omitempty"`
 	BalanceThresholds   []AccountOpsBalanceRule `json:"balance_thresholds"`
 	QuotaThresholds     []AccountOpsQuotaRule   `json:"quota_thresholds"`
+	// Only profile availability is cached per read; credentials never enter this config.
+	adminBarkAvailable bool
 }
 
 func defaultAccountOpsConfig() AccountOpsConfig {

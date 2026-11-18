@@ -315,6 +315,10 @@ func (s *AccountOpsService) loadConfig(ctx context.Context) (AccountOpsConfig, e
 	for _, w := range st.StoredWebhooks {
 		c.Webhooks = append(c.Webhooks, AccountOpsWebhook{ID: w.ID, Name: w.Name, Provider: w.Provider, Enabled: w.Enabled, URLConfigured: w.URLCipher != "", SecretConfigured: w.SecretCipher != "", MessageTemplate: w.MessageTemplate, urlCipher: w.URLCipher, secretCipher: w.SecretCipher, revision: w.Revision})
 	}
+	if c.UseAdminBark == nil {
+		// Availability is read-only; only a save may turn an implicit default into a choice.
+		c.adminBarkAvailable = s.AdminDefaults(ctx).BarkAvailable
+	}
 	if err = ValidateAccountOpsConfig(c); err != nil {
 		return defaultAccountOpsConfig(), errors.New("invalid stored notification configuration")
 	}
@@ -339,12 +343,12 @@ func (s *AccountOpsService) saveConfigWithRuleScope(ctx context.Context, c Accou
 	if err != nil {
 		return err
 	}
-	// Omitted reference switches must not erase an explicit choice from another client.
+	// Freeze the previous effective audience before custom destinations can change defaults.
 	if c.UseAdminEmail == nil {
-		c.UseAdminEmail = old.UseAdminEmail
+		c.UseAdminEmail = opsBool(old.usesAdminEmail())
 	}
 	if c.UseAdminBark == nil {
-		c.UseAdminBark = old.UseAdminBark
+		c.UseAdminBark = opsBool(old.usesAdminBark())
 	}
 	normalizeOpsFlags(&c, old)
 	byID := map[string]AccountOpsWebhook{}

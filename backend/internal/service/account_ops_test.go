@@ -91,7 +91,8 @@ func TestAccountOpsExplicitOptInAndRedaction(t *testing.T) {
 	require.Empty(t, svc.queue)
 	cfg := defaultAccountOpsConfig()
 	cfg.Enabled = true
-	cfg.Recipient = "ops@example.com"
+	cfg.Recipient = "ops@example.invalid"
+	cfg.UseAdminEmail = opsBool(false)
 	cfg.UseAdminBark = opsBool(false)
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
 	svc.Observe(a, 402, nil, body)
@@ -102,7 +103,7 @@ func TestAccountOpsExplicitOptInAndRedaction(t *testing.T) {
 	event.AccountName = "<script>"
 	svc.deliverNotification(context.Background(), &event)
 	require.Equal(t, 1, sender.calls)
-	require.Equal(t, "ops@example.com", sender.to)
+	require.Equal(t, "ops@example.invalid", sender.to)
 	require.Equal(t, "sent", repo.state)
 	require.NotContains(t, sender.body, "secret")
 	require.NotContains(t, sender.body, "<script>")

@@ -44,14 +44,15 @@ func TestAccountOpsAdminDefaultsLegacyAndExplicitChoices(t *testing.T) {
 		email, bark bool
 	}{
 		{"empty", `{}`, true, true},
-		{"custom email", `{"recipient":"custom@example.invalid"}`, false, true},
-		{"custom robot", `{"encrypted_webhooks":[{"id":"custom","provider":"custom","enabled":false,"url_cipher":"opaque","revision":"unchanged"}]}`, true, false},
+		{"custom email", `{"recipient":"custom@example.invalid"}`, false, false},
+		{"custom robot", `{"encrypted_webhooks":[{"id":"custom","provider":"custom","enabled":false,"url_cipher":"opaque","revision":"unchanged"}]}`, false, false},
 		{"both custom", `{"recipient":"custom@example.invalid","encrypted_webhooks":[{"id":"custom","provider":"custom","enabled":true,"url_cipher":"opaque","revision":"unchanged"}]}`, false, false},
 		{"explicit off", `{"use_admin_email":false,"use_admin_bark":false}`, false, false},
 		{"explicit on", `{"recipient":"custom@example.invalid","use_admin_email":true,"use_admin_bark":true}`, true, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := NewAccountOpsService(&accountOpsSettingsStub{raw: tt.raw}, &accountOpsRepoStub{}, nil)
+			svc.adminChannels = opsAdminFixture()
 			cfg, err := svc.GetConfig(context.Background())
 			require.NoError(t, err)
 			require.NotNil(t, cfg.UseAdminEmail)
@@ -125,6 +126,8 @@ func TestAccountOpsAdminChannelsUnavailableNeverSucceedOrFallback(t *testing.T) 
 			svc.adminChannels = admin
 			cfg := defaultAccountOpsConfig()
 			cfg.Enabled = true
+			// Unavailable channels fail only when the administrator explicitly selects them.
+			cfg.UseAdminEmail, cfg.UseAdminBark = opsBool(true), opsBool(true)
 			require.NoError(t, svc.SaveConfig(context.Background(), cfg))
 			e := &AccountOpsEvent{AccountID: 7, Kind: "balance_low"}
 			svc.deliverNotification(context.Background(), e)
