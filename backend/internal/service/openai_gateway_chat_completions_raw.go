@@ -339,6 +339,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	var firstTokenMs *int
 	clientDisconnected := false
 	clientOutputStarted := false
+	nonBillableUpstreamError := false
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
@@ -419,10 +420,23 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			}
 			terminal.ObserveDataLine(trimmedPayload)
 			if trimmedPayload != "[DONE]" {
-				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(gjson.Get(payload, "type").String()))
+				root := gjson.Parse(payload)
+				if openAIExplicitUpstreamError(root, pendingSSEEventType) {
+					nonBillableUpstreamError = true
+				} else if root.Get("type").String() == "response.completed" || root.Get("type").String() == "response.done" {
+					nonBillableUpstreamError = false
+				} else {
+					for _, choice := range root.Get("choices").Array() {
+						if choice.Get("finish_reason").String() != "" {
+							nonBillableUpstreamError = false
+							break
+						}
+					}
+				}
+				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(root.Get("type").String()))
 				tally.AddPayload(payload)
 				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
-				if u := extractCCStreamUsage(payload, resp.Header); u != nil {
+				if u := extractCCStreamUsageFromRoot(root, resp.Header); u != nil {
 					usage = *u
 				}
 				if firstTokenMs == nil && !usageOnlyChunk {
@@ -471,6 +485,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
 			ClientDisconnect:              clientDisconnected || watch.Gone(),
+			NonBillableUpstreamError:      nonBillableUpstreamError,
 		}
 	}
 	if protocolRefusalErr != nil {
@@ -575,11 +590,11 @@ func isOpenAIChatUsageOnlyStreamChunk(payload string) bool {
 	return choices.Exists() && choices.IsArray() && len(choices.Array()) == 0
 }
 
-// extractCCStreamUsage 从单个 CC 流式 chunk 的 payload 中提取 usage 字段。
+// extractCCStreamUsageFromRoot 从单个 CC 流式 chunk（已解析）中提取 usage 字段。
 // CC 协议中 usage 仅出现在末尾 chunk（且仅当 include_usage 生效时），
 // 但上游可能在多个 chunk 中重复——总是用最新值。
-func extractCCStreamUsage(payload string, headers http.Header) *OpenAIUsage {
-	usageResult := gjson.Get(payload, "usage")
+func extractCCStreamUsageFromRoot(root gjson.Result, headers http.Header) *OpenAIUsage {
+	usageResult := root.Get("usage")
 	if !usageResult.Exists() || !usageResult.IsObject() {
 		return nil
 	}
@@ -761,9 +776,13 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	_, _ = c.Writer.Write(respBody)
 
 	return &OpenAIForwardResult{
-		RequestID:                     requestID,
-		UpstreamHeaders:               resp.Header,
-		Usage:                         usage,
+		RequestID:       requestID,
+		UpstreamHeaders: resp.Header,
+		Usage:           usage,
+		// A body that carries choices is an answer the client received in full,
+		// the same rule as the buffered fallbacks: a relay's error note next to it
+		// does not make the request free.
+		NonBillableUpstreamError:      !gjson.GetBytes(respBody, "choices.0").Exists() && openAIExplicitUpstreamError(gjson.ParseBytes(respBody), ""),
 		Model:                         originalModel,
 		BillingModel:                  billingModel,
 		UpstreamModel:                 upstreamModel,

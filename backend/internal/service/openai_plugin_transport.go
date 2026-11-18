@@ -38,6 +38,9 @@ func captureOpsHeadersFromRequest(request *http.Request, response *http.Response
 		return
 	}
 	CaptureOpsUpstreamHeaders(request.Context(), request, response)
+	// A hosted-search round needs the real HTTP outcome of each send, before any
+	// error mapping, to tell an upstream rejection from a broken connection.
+	observeDeepSeekHostedUpstreamResponse(request, response)
 }
 
 // doOpenAIAccountTestUpstream 让 OpenAI OAuth 账号测试与真实转发使用同一插件路径。

@@ -609,6 +609,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			frame := parseOpenAISSEDataFrame(dataBytes, pendingSSEEventType)
 			nativeReasoning.ObserveFrame(frame)
 			eventType := frame.eventType
+			switch eventType {
+			case "error", "response.failed", "response.completed", "response.done":
+				// Raw upstream terminal events only; gateway-made frames never pass here.
+				observeDeepSeekHostedUpstreamEvent(ctx, eventType)
+			}
 			if sawResponseFailed && (eventType == "response.failed" || eventType == "error") {
 				s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
 				return
@@ -701,7 +706,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					})
 				}
 				outputStarted := openAIStreamClientOutputStarted(c, clientOutputStarted)
-				if !outputStarted && !cyberHit && isOpenAINonBillableRequestError(failedMessage, dataBytes) {
+				if !cyberHit {
 					nonBillableUpstreamError = true
 				}
 				if !clientDisconnected && !outputStarted && !cyberHit {
@@ -1971,12 +1976,13 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	}
 
 	return &openaiNonStreamingResult{
-		OpenAIUsage:      usage,
-		usage:            usage,
-		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
-		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
-		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
-		searchCount:      countGrokNativeSearchCallsFromJSONBytes(body),
+		OpenAIUsage:              usage,
+		usage:                    usage,
+		responseID:               extractOpenAIResponseIDFromJSONBytes(body),
+		imageCount:               countOpenAIResponseImageOutputsFromJSONBytes(body),
+		imageOutputSizes:         collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
+		searchCount:              countGrokNativeSearchCallsFromJSONBytes(body),
+		nonBillableUpstreamError: openAIExplicitUpstreamError(gjson.ParseBytes(body), ""),
 	}, nil
 }
 
@@ -2004,6 +2010,10 @@ func bodyHasSSEFraming(body []byte) bool {
 func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
 	bodyText := string(body)
 	terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
+	if terminalOK {
+		// Preserve the upstream source before error mapping can discard this round's result.
+		observeDeepSeekHostedUpstreamEvent(c.Request.Context(), terminalType)
+	}
 	if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
 		if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, terminalPayload); refusalErr != nil {
 			return nil, refusalErr

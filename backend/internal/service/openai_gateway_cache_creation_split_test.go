@@ -400,8 +400,9 @@ func TestOpenAICacheCreationSplitChatHeaders(t *testing.T) {
 					require.NoError(t, err)
 					usage = result.Usage
 				case "fallback buffered":
-					wire, parsed, err := svc.readCCUpstreamJSONResponse(c, response, writeResponsesError)
+					wire, parsed, nonBillableUpstreamError, err := svc.readCCUpstreamJSONResponse(c, response, writeResponsesError)
 					require.NoError(t, err)
+					require.False(t, nonBillableUpstreamError)
 					require.Equal(t, tc.split != "", wire.Usage.CacheCreation != nil, "header enrichment must not change the converted client response")
 					usage = parsed
 				case "fallback stream":

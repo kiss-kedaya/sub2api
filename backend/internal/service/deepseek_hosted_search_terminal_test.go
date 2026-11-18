@@ -66,7 +66,7 @@ func TestDeepSeekHostedSearchRejectsUnknownAndMissingTerminal(t *testing.T) {
 	})
 }
 
-func TestDeepSeekHostedSearchPreservesFailureAndExcludesNonBillableUsage(t *testing.T) {
+func TestDeepSeekHostedSearchPreservesFailureAndRetainsNonBillableUsage(t *testing.T) {
 	state, writer, recorder := newDeepSeekHostedTerminalFixture(t, true)
 	state.responseID = "resp_visible"
 	writer.response = []byte(`{"id":"resp_internal","object":"response","created_at":1,"status":"failed","model":"deepseek-test","output":[],"error":{"code":"context_length_exceeded","message":"The input exceeds the context window."}}`)
@@ -75,10 +75,12 @@ func TestDeepSeekHostedSearchPreservesFailureAndExcludesNonBillableUsage(t *test
 	state.addResult(&OpenAIForwardResult{Model: state.model, NonBillableUpstreamError: true, Usage: OpenAIUsage{InputTokens: 9999, OutputTokens: 999, CacheReadInputTokens: 999}})
 	state.searchCount = 1
 	result := state.finishResult()
-	require.Equal(t, OpenAIUsage{InputTokens: 100, OutputTokens: 20, CacheReadInputTokens: 40}, result.Usage)
+	// Explicit failures now waive the whole request, without deleting diagnostic usage.
+	require.Equal(t, OpenAIUsage{InputTokens: 10099, OutputTokens: 1019, CacheReadInputTokens: 1039}, result.Usage)
 	require.Equal(t, 1, result.SearchCount)
 	require.Zero(t, result.WebSearchCalls)
-	require.False(t, result.NonBillableUpstreamError)
+	require.True(t, result.NonBillableUpstreamError)
+	requireDeepSeekHostedBilling(t, result, true)
 	require.NoError(t, state.writeFinal(writer))
 	require.Contains(t, recorder.Body.String(), `"code":"context_length_exceeded"`)
 	require.Contains(t, recorder.Body.String(), `"message":"The input exceeds the context window."`)
@@ -87,10 +89,12 @@ func TestDeepSeekHostedSearchPreservesFailureAndExcludesNonBillableUsage(t *test
 
 	state, _, _ = newDeepSeekHostedTerminalFixture(t, false)
 	state.addResult(&OpenAIForwardResult{NonBillableUpstreamError: true, Usage: OpenAIUsage{InputTokens: 12}})
-	require.Equal(t, OpenAIUsage{}, state.finishResult().Usage)
+	require.Equal(t, OpenAIUsage{InputTokens: 12}, state.finishResult().Usage)
 	require.True(t, state.finishResult().NonBillableUpstreamError)
 	state.searchCount = 1
-	require.False(t, state.finishResult().NonBillableUpstreamError)
+	state.addResult(&OpenAIForwardResult{Usage: OpenAIUsage{InputTokens: 8}})
+	require.True(t, state.finishResult().NonBillableUpstreamError, "later successful model/tool work cannot restore a waived charge")
+	requireDeepSeekHostedBilling(t, state.finishResult(), true)
 }
 
 type deepSeekHostedTerminalFailWriter struct{ gin.ResponseWriter }

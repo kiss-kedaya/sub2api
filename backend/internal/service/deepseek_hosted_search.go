@@ -24,6 +24,33 @@ import (
 // Only the outer request owns hosted execution. Recursive model turns retain
 // the same account, authentication and forwarding implementation.
 type deepSeekHostedSearchSkipContextKey struct{}
+type deepSeekHostedRoundContextKey struct{}
+
+// observeDeepSeekHostedUpstreamResponse captures the real HTTP outcome before
+// error mapping. The transport calls it for each send; a successful retry clears
+// the rejected attempt, and a network failure never becomes an HTTP rejection.
+func observeDeepSeekHostedUpstreamResponse(request *http.Request, response *http.Response) {
+	if request == nil {
+		return
+	}
+	if round, ok := request.Context().Value(deepSeekHostedRoundContextKey{}).(*deepSeekHostedRoundWriter); ok {
+		round.upstreamHTTPError = response != nil && response.StatusCode >= http.StatusBadRequest
+		round.upstreamStreamError = false
+	}
+}
+
+// observeDeepSeekHostedUpstreamEvent is called only where the original upstream
+// event type was already parsed, never for a gateway-generated error frame.
+func observeDeepSeekHostedUpstreamEvent(ctx context.Context, eventType string) {
+	if round, ok := ctx.Value(deepSeekHostedRoundContextKey{}).(*deepSeekHostedRoundWriter); ok {
+		switch eventType {
+		case "error", "response.failed":
+			round.upstreamStreamError = true
+		case "response.completed", "response.done":
+			round.upstreamStreamError = false
+		}
+	}
+}
 
 const (
 	deepSeekHostedMaxCalls      = 3
@@ -40,21 +67,22 @@ type deepSeekHostedCall struct {
 }
 
 type deepSeekHostedSearchState struct {
-	c                      *gin.Context
-	stream                 bool
-	started                time.Time
-	responseID             string
-	model                  string
-	sequence               int
-	outputs                []json.RawMessage
-	usage                  map[string]any
-	searchCount, attempted int
-	domains                []string
-	header                 http.Header
-	result                 *OpenAIForwardResult
-	firstTokenMs           *int
-	callIDs                map[string]struct{}
-	clientDisconnected     bool
+	c                        *gin.Context
+	stream                   bool
+	started                  time.Time
+	responseID               string
+	model                    string
+	sequence                 int
+	outputs                  []json.RawMessage
+	usage                    map[string]any
+	searchCount, attempted   int
+	domains                  []string
+	header                   http.Header
+	result                   *OpenAIForwardResult
+	firstTokenMs             *int
+	callIDs                  map[string]struct{}
+	clientDisconnected       bool
+	nonBillableUpstreamError bool
 	// A disabled key leaves an explicitly supplied client web_fetch function
 	// client-owned, including its declaration, call output and forced choice.
 	skipFetchTool bool
@@ -62,19 +90,21 @@ type deepSeekHostedSearchState struct {
 
 type deepSeekHostedRoundWriter struct {
 	gin.ResponseWriter
-	state        *deepSeekHostedSearchState
-	header       http.Header
-	status, size int
-	buffer       []byte
-	err          error
-	response     []byte
-	terminal     string
-	indices      map[int]int
-	calls        []*deepSeekHostedCall
-	owned        map[string]*deepSeekHostedCall
-	ownedIndices map[int]*deepSeekHostedCall
-	canonicalIDs map[int]string
-	done         bool
+	state               *deepSeekHostedSearchState
+	header              http.Header
+	status, size        int
+	buffer              []byte
+	err                 error
+	response            []byte
+	terminal            string
+	indices             map[int]int
+	calls               []*deepSeekHostedCall
+	owned               map[string]*deepSeekHostedCall
+	ownedIndices        map[int]*deepSeekHostedCall
+	canonicalIDs        map[int]string
+	done                bool
+	upstreamHTTPError   bool
+	upstreamStreamError bool
 }
 
 func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, bool, error) {
@@ -164,12 +194,21 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 			return fail(err)
 		}
 		shadow := c.Copy()
-		innerCtx := context.WithValue(ctx, deepSeekHostedSearchSkipContextKey{}, true)
-		shadow.Request = c.Request.Clone(innerCtx)
 		writer := &deepSeekHostedRoundWriter{ResponseWriter: c.Writer, state: state, header: make(http.Header), status: http.StatusOK, size: -1, indices: make(map[int]int), owned: make(map[string]*deepSeekHostedCall)}
+		innerCtx := context.WithValue(ctx, deepSeekHostedSearchSkipContextKey{}, true)
+		innerCtx = context.WithValue(innerCtx, deepSeekHostedRoundContextKey{}, writer)
+		shadow.Request = c.Request.Clone(innerCtx)
 		shadow.Writer = writer
 		result, forwardErr := s.Forward(innerCtx, shadow, account, request)
 		writer.finish()
+		var failover *UpstreamFailoverError
+		// Preserve the original source before fail() replaces continuation errors.
+		// A failed model round makes the entire logical response free, including
+		// earlier model turns and successful searches. Tool-only failures do not.
+		if (writer.upstreamHTTPError || writer.upstreamStreamError) && GetOpsCyberPolicy(shadow) == nil ||
+			errors.As(forwardErr, &failover) && failover.IsUpstreamWaitLimit() {
+			state.nonBillableUpstreamError = true
+		}
 		if writer.err != nil && !state.clientDisconnected && ctx.Err() == nil && result != nil && result.ClientDisconnect {
 			// The ordinary streaming forwarder sees a Write error for both a
 			// closed socket and this writer's protocol validation. Only the former
@@ -851,19 +890,13 @@ func (s *deepSeekHostedSearchState) addResult(result *OpenAIForwardResult) {
 	}
 	if s.result == nil {
 		copy := *result
-		if result.NonBillableUpstreamError {
-			copy.Usage = OpenAIUsage{}
-		} else {
-			normalizeOpenAICacheCreationUsage(&copy.Usage)
-		}
+		normalizeOpenAICacheCreationUsage(&copy.Usage)
 		s.result = &copy
 		return
 	}
-	if !result.NonBillableUpstreamError {
-		addOpenAIUsage(&s.result.Usage, result.Usage)
-	}
+	addOpenAIUsage(&s.result.Usage, result.Usage)
 	s.result.ClientDisconnect = s.result.ClientDisconnect || result.ClientDisconnect
-	s.result.NonBillableUpstreamError = s.result.NonBillableUpstreamError && result.NonBillableUpstreamError
+	s.result.NonBillableUpstreamError = s.result.NonBillableUpstreamError || result.NonBillableUpstreamError
 	if result.RequestID != "" {
 		s.result.RequestID = result.RequestID
 	}
@@ -880,9 +913,7 @@ func (s *deepSeekHostedSearchState) finishResult() *OpenAIForwardResult {
 	s.result.FixedToolBilling = true
 	s.result.WebSearchCalls = 0
 	s.result.ClientDisconnect = s.result.ClientDisconnect || s.clientDisconnected
-	if s.searchCount > 0 {
-		s.result.NonBillableUpstreamError = false
-	}
+	s.result.NonBillableUpstreamError = s.result.NonBillableUpstreamError || s.nonBillableUpstreamError
 	s.result.Duration = time.Since(s.started)
 	s.result.ResponseID = s.responseID
 	if s.firstTokenMs != nil {

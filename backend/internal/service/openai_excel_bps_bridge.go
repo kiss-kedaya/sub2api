@@ -107,6 +107,9 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "message": "Excel response could not be converted"}})
 		return nil, true, err
 	}
+	// Provenance is published by the bridge before emitting a synthetic failure;
+	// do not classify that generated frame as a provider rejection.
+	localFailure, _ := resp.Body.(interface{ LocalFailure() bool })
 	// Conversion owns a pipe above the resource-server body. Give both stream
 	// and buffered clients the normal bounded usage-drain window on cancel.
 	resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
@@ -132,8 +135,7 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 		err = relayErr
 	} else {
 		// The shared buffered handler returns nil on a failed SSE terminal. Keep
-		// provider-reported usage independently so a failed billed turn does not
-		// silently lose its metered usage.
+		// provider-reported usage and its failure source for zero-cost settlement.
 		tap := &excelBPSUsageBody{ReadCloser: resp.Body, parse: s.parseSSEUsageBytesWithType}
 		resp.Body = tap
 		v, relayErr := s.handleNonStreamingResponsePassthrough(ctx, resp, c, account, clientModel, model)
@@ -148,8 +150,12 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 		}
 		if v == nil {
 			result.Usage = tap.usage
+			result.NonBillableUpstreamError = tap.nonBillableUpstreamError
 		}
 		err = relayErr
+	}
+	if localFailure != nil && localFailure.LocalFailure() {
+		result.NonBillableUpstreamError = false
 	}
 	result.Duration = time.Since(start)
 	if observer := upstreamResponseModelObserverFromContext(c); observer != nil {
@@ -186,9 +192,10 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 
 type excelBPSUsageBody struct {
 	io.ReadCloser
-	pending []byte
-	usage   OpenAIUsage
-	parse   func([]byte, string, *OpenAIUsage)
+	pending                  []byte
+	usage                    OpenAIUsage
+	nonBillableUpstreamError bool
+	parse                    func([]byte, string, *OpenAIUsage)
 }
 
 func (b *excelBPSUsageBody) Read(p []byte) (int, error) {
@@ -203,7 +210,14 @@ func (b *excelBPSUsageBody) Read(p []byte) (int, error) {
 			line := bytes.TrimSuffix(b.pending[:at], []byte{'\r'})
 			if bytes.HasPrefix(line, []byte("data:")) {
 				data := bytes.TrimSpace(line[5:])
-				b.parse(data, gjson.GetBytes(data, "type").String(), &b.usage)
+				root := gjson.ParseBytes(data)
+				eventType := root.Get("type").String()
+				b.parse(data, eventType, &b.usage)
+				if openAIExplicitUpstreamError(root, eventType) {
+					b.nonBillableUpstreamError = true
+				} else if eventType == "response.completed" || eventType == "response.done" {
+					b.nonBillableUpstreamError = false
+				}
 			}
 			b.pending = b.pending[at+1:]
 		}

@@ -282,6 +282,45 @@ func isOpenAINonBillableRequestError(upstreamMsg string, upstreamBody []byte) bo
 		strings.Contains(combined, "must be less")
 }
 
+// openAIExplicitUpstreamError inspects only the provider's envelope, never generated
+// client errors or echoed output. Callers on streaming paths reuse their parsed root.
+func openAIExplicitUpstreamError(root gjson.Result, eventType string) bool {
+	if strings.EqualFold(root.Get("error.code").String(), "cyber_policy") ||
+		strings.EqualFold(root.Get("response.error.code").String(), "cyber_policy") {
+		return false
+	}
+	if eventType == "error" || eventType == "response.failed" ||
+		root.Get("type").String() == "error" || root.Get("type").String() == "response.failed" ||
+		root.Get("status").String() == "failed" || root.Get("response.status").String() == "failed" {
+		return true
+	}
+	for _, path := range []string{"error", "response.error"} {
+		if openAIErrorValuePresent(root.Get(path)) {
+			return true
+		}
+	}
+	return false
+}
+
+// openAIErrorValuePresent reports whether an "error" field carries anything: a
+// non-blank string, or an object with at least one member. Relays attach
+// placeholders such as {}, { } or null to successful answers, and how the empty
+// object is spelled must not decide whether the answer is free.
+func openAIErrorValuePresent(value gjson.Result) bool {
+	if value.Type == gjson.String {
+		return strings.TrimSpace(value.String()) != ""
+	}
+	if !value.IsObject() {
+		return false
+	}
+	present := false
+	value.ForEach(func(_, _ gjson.Result) bool {
+		present = true
+		return false
+	})
+	return present
+}
+
 func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
 	return ShouldFailoverUpstream(statusCode, nil, nil, nil)
 }

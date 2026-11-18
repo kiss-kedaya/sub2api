@@ -163,6 +163,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
+	nonBillableUpstreamError := false
 
 	// 读间隔上限：上游挂住 SSE 时中止组装（缓冲路径尚未提交响应头，可回 502）。
 	streamInterval := s.anthropicNativeStreamInterval()
@@ -198,8 +199,12 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 		}
 		// SSE 规范允许 `event:xxx`（冒号后无空格）：Kimi 等 Anthropic 兼容上游
 		// 返回紧凑格式，严格匹配 "event: " 会丢弃全部事件（#4653 同根因）。
-		if _, ok := extractOpenAISSEEventLine(line); !ok {
+		eventType, ok := extractOpenAISSEEventLine(line)
+		if !ok {
 			continue
+		}
+		if eventType == "error" {
+			nonBillableUpstreamError = true
 		}
 
 		dataLine, rerr := pump.next()
@@ -219,7 +224,12 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
-
+		switch event.Type {
+		case "error":
+			nonBillableUpstreamError = true
+		case "message_stop":
+			nonBillableUpstreamError = false
+		}
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
 			mergeAnthropicUsage(&usage, event.Message.Usage)
@@ -273,16 +283,17 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 	}
 
 	return &OpenAIForwardResult{
-		RequestID:        requestID,
-		UpstreamHeaders:  resp.Header,
-		Usage:            claudeUsageToOpenAIUsage(&usage),
-		Model:            originalModel,
-		BillingModel:     billingModel,
-		UpstreamModel:    upstreamModel,
-		UpstreamEndpoint: "/v1/messages",
-		ReasoningEffort:  reasoningEffort,
-		Stream:           false,
-		Duration:         time.Since(startTime),
+		RequestID:                requestID,
+		UpstreamHeaders:          resp.Header,
+		Usage:                    claudeUsageToOpenAIUsage(&usage),
+		NonBillableUpstreamError: nonBillableUpstreamError,
+		Model:                    originalModel,
+		BillingModel:             billingModel,
+		UpstreamModel:            upstreamModel,
+		UpstreamEndpoint:         "/v1/messages",
+		ReasoningEffort:          reasoningEffort,
+		Stream:                   false,
+		Duration:                 time.Since(startTime),
 	}, nil
 }
 
@@ -318,6 +329,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 	ccState.IncludeUsage = includeUsage
 
 	var usage ClaudeUsage
+	nonBillableUpstreamError := false
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
@@ -331,18 +343,19 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 
 	resultWithUsage := func() *OpenAIForwardResult {
 		return &OpenAIForwardResult{
-			RequestID:        requestID,
-			UpstreamHeaders:  resp.Header,
-			Usage:            claudeUsageToOpenAIUsage(&usage),
-			Model:            originalModel,
-			BillingModel:     billingModel,
-			UpstreamModel:    upstreamModel,
-			UpstreamEndpoint: "/v1/messages",
-			ReasoningEffort:  reasoningEffort,
-			Stream:           true,
-			Duration:         time.Since(startTime),
-			FirstTokenMs:     firstTokenMs,
-			ClientDisconnect: clientDisconnected,
+			RequestID:                requestID,
+			UpstreamHeaders:          resp.Header,
+			Usage:                    claudeUsageToOpenAIUsage(&usage),
+			NonBillableUpstreamError: nonBillableUpstreamError,
+			Model:                    originalModel,
+			BillingModel:             billingModel,
+			UpstreamModel:            upstreamModel,
+			UpstreamEndpoint:         "/v1/messages",
+			ReasoningEffort:          reasoningEffort,
+			Stream:                   true,
+			Duration:                 time.Since(startTime),
+			FirstTokenMs:             firstTokenMs,
+			ClientDisconnect:         clientDisconnected,
 		}
 	}
 
@@ -397,6 +410,12 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			firstTokenMs = &ms
 		}
 
+		switch event.Type {
+		case "error":
+			nonBillableUpstreamError = true
+		case "message_stop":
+			nonBillableUpstreamError = false
+		}
 		// usage 恒累计（含客户端断开后的排水阶段，payg 上游照常计费）。
 		if event.Type == "message_delta" && event.Usage != nil {
 			mergeAnthropicUsage(&usage, *event.Usage)
@@ -433,8 +452,12 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			logReadErr(rerr)
 			break
 		}
-		if _, ok := extractOpenAISSEEventLine(line); !ok {
+		eventType, ok := extractOpenAISSEEventLine(line)
+		if !ok {
 			continue
+		}
+		if eventType == "error" {
+			nonBillableUpstreamError = true
 		}
 
 		dataLine, rerr := pump.next()
