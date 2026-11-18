@@ -63,6 +63,7 @@ type containerState struct{ object, key, media bool }
 
 // jsonFilter never buffers an entire string. Escapes and redaction survive chunks.
 type jsonFilter struct {
+	cleanURL                                        func(string) (string, bool)
 	credential                                      func(string) bool
 	media                                           bool
 	stack                                           []containerState
@@ -126,7 +127,20 @@ func (f *jsonFilter) stringEnd(out *bytes.Buffer) {
 			_, _ = out.WriteString("\"[invalid URL omitted]\"")
 			f.omitted = true
 		} else {
-			b, _ := json.Marshal(SafeURL(raw))
+			if f.cleanURL == nil {
+				raw = SafeURL(raw)
+			} else {
+				clean, changed := f.cleanURL(raw)
+				if !changed {
+					_ = out.WriteByte('"')
+					_, _ = out.Write(f.prefix)
+					_ = out.WriteByte('"')
+					return
+				}
+				raw = clean
+				f.redacted = true
+			}
+			b, _ := json.Marshal(raw)
 			_, _ = out.Write(b)
 		}
 	case "prefix":
@@ -394,7 +408,7 @@ func (f *bodyFilter) writeText(p []byte) []byte {
 					f.omitted = f.omitted || f.json.omitted
 					f.invalid = f.invalid || (f.json.started && !f.json.validator.complete()) || f.json.invalid
 					f.redacted = f.redacted || f.json.redacted
-					f.json = jsonFilter{media: f.json.media, credential: f.json.credential}
+					f.json = jsonFilter{media: f.json.media, credential: f.json.credential, cleanURL: f.json.cleanURL}
 				} else if strings.HasPrefix(prefix, "event:") || strings.HasPrefix(prefix, "id:") || strings.HasPrefix(prefix, "retry:") {
 					field, v, _ := strings.Cut(prefix, ":")
 					v = strings.TrimSpace(v)

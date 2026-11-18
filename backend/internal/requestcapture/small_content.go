@@ -188,6 +188,33 @@ func smallBodyCredential(name string) bool {
 	}
 }
 
+func smallBodySafeURL(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return SmallCredentialPlaceholder, true
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return SmallCredentialPlaceholder, true
+	}
+	changedQuery := false
+	for name := range query {
+		lower := strings.ToLower(name)
+		if smallBodyCredential(name) || strings.HasPrefix(lower, "x-amz-") || strings.HasPrefix(lower, "x-goog-") {
+			query.Set(name, SmallCredentialPlaceholder)
+			changedQuery = true
+		}
+	}
+	if !changedQuery && u.User == nil && u.Fragment == "" {
+		return raw, false
+	}
+	if changedQuery {
+		u.RawQuery = query.Encode()
+	}
+	u.User, u.Fragment = nil, ""
+	return u.String(), true
+}
+
 func sanitizeSmallBody(body []byte, contentType string) (contents []byte, changed, ok bool) {
 	if len(bytes.TrimSpace(body)) == 0 {
 		return body, false, true
@@ -197,11 +224,18 @@ func sanitizeSmallBody(body []byte, contentType string) (contents []byte, change
 	// unrecognized response bodies that have no structured filtering boundary.
 	if json.Valid(body) {
 		contentType = "application/json"
-	} else if !strings.Contains(strings.ToLower(contentType), "text/event-stream") {
+	} else if strings.Contains(strings.ToLower(contentType), "text/event-stream") {
+		// SSE permits a leading UTF-8 BOM and LF, CRLF or CR line endings.
+		body = bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))
+		if bytes.ContainsRune(body, '\r') {
+			body = bytes.ReplaceAll(body, []byte("\r\n"), []byte("\n"))
+			body = bytes.ReplaceAll(body, []byte("\r"), []byte("\n"))
+		}
+	} else {
 		contentType = ""
 	}
 	f := newBodyFilter(contentType, false)
-	f.json.credential = smallBodyCredential
+	f.json.credential, f.json.cleanURL = smallBodyCredential, smallBodySafeURL
 	contents = f.Write(body)
 	end, reason := f.End()
 	if reason != "" || !f.sse && !f.json.started {
@@ -246,7 +280,7 @@ func prepareSmallExchange(e SmallExchange, credentialHeader func(string) bool) (
 	if e.Partial {
 		reasons["client_delivery_incomplete"] = true
 	}
-	if strings.Contains(strings.ToLower(e.ResponseHeaders.Get("Content-Type")), "text/event-stream") && !smallSSETerminal(e.ResponseBody) {
+	if strings.Contains(strings.ToLower(e.ResponseHeaders.Get("Content-Type")), "text/event-stream") && !smallSSETerminal(response) {
 		reasons["stream_terminal_missing"] = true
 	}
 	for reason := range reasons {
@@ -305,13 +339,27 @@ func decodeSmallResponse(body []byte, encoding string) ([]byte, error) {
 }
 
 func smallSSETerminal(body []byte) bool {
+	namedTerminal := false
 	for _, line := range bytes.Split(body, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			namedTerminal = false
+			continue
+		}
+		if name, ok := bytes.CutPrefix(line, []byte("event:")); ok {
+			switch string(bytes.TrimSpace(name)) {
+			case "message_stop", "response.completed", "response.done", "response.failed", "response.incomplete", "error":
+				namedTerminal = true
+			default:
+				namedTerminal = false
+			}
+			continue
+		}
 		if !bytes.HasPrefix(line, []byte("data:")) {
 			continue
 		}
 		data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-		if bytes.Equal(data, []byte("[DONE]")) {
+		if bytes.Equal(data, []byte("[DONE]")) || namedTerminal && len(data) != 0 {
 			return true
 		}
 		root := gjson.ParseBytes(data)

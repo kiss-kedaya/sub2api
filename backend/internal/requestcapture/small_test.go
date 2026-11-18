@@ -172,6 +172,37 @@ func TestSmallRetentionFiltersStructuredCredentialsBeforeHashing(t *testing.T) {
 	require.Equal(t, before, p.Fingerprint)
 }
 
+func TestSmallRetentionBodyURLsPreserveBusinessParameters(t *testing.T) {
+	e := smallTestExchange()
+	e.RequestBody = []byte(`{"signature":"https://example.invalid/callback?signature=business-signature&key=business-key"}`)
+	plain, reason := prepareSmallExchange(e, nil)
+	require.Empty(t, reason)
+	require.Equal(t, e.RequestBody, plain.RequestBody)
+	require.NotContains(t, plain.ReplayReasons, "request_credentials_redacted")
+	e.RequestBody = []byte(`{"target":"https://example.invalid/callback?signature=business-signature&access_token=url-fixture"}`)
+	p, reason := prepareSmallExchange(e, nil)
+	require.Empty(t, reason)
+	require.NotContains(t, string(p.RequestBody), "url-fixture")
+	require.Contains(t, string(p.RequestBody), "signature=business-signature")
+	require.Contains(t, p.ReplayReasons, "request_credentials_redacted")
+}
+
+func TestSmallRetentionAcceptsStandardSSELineEndings(t *testing.T) {
+	for name, separator := range map[string]string{"LF": "\n", "CRLF": "\r\n", "CR": "\r"} {
+		t.Run(name, func(t *testing.T) {
+			e := smallTestExchange()
+			e.ResponseHeaders.Set("Content-Type", "text/event-stream; charset=utf-8")
+			e.ResponseBody = []byte("\xef\xbb\xbf" + strings.Join([]string{"event: response.completed", "data: {", "data: \"type\":\"response.completed\",", "data: \"password\":\"multipart-fixture\"}", "", ""}, separator))
+			p, reason := prepareSmallExchange(e, nil)
+			require.Empty(t, reason)
+			require.NotContains(t, string(p.ResponseBody), "multipart-fixture")
+			require.Contains(t, string(p.ResponseBody), "[REDACTED]")
+			require.Contains(t, string(p.ResponseBody), "event: response.completed\n")
+			require.NotContains(t, p.ReplayReasons, "stream_terminal_missing")
+		})
+	}
+}
+
 func TestSmallRetentionFiltersMislabelledJSONAndSkipsInvalidBody(t *testing.T) {
 	e := smallTestExchange()
 	e.ResponseHeaders.Set("Content-Type", "text/plain")
