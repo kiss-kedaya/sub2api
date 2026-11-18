@@ -292,6 +292,21 @@ func TestPinnedOpenAIModelsListMixedAccountsShareColdCacheAcrossGroups(t *testin
 	require.EqualValues(t, 1, oauthCalls.Load())
 }
 
+func TestOpenAIModelsRefreshReusesFreshCatalog(t *testing.T) {
+	s := &OpenAIGatewayService{}
+	const cacheKey = "models-refresh-regression"
+	want := &OpenAIModelsResponse{Body: []byte("catalog"), ETag: "catalog-etag"}
+	s.openAIModelsCache.set(cacheKey, want, time.Now())
+	var calls atomic.Int32
+	result := <-s.refreshCachedOpenAIModels(cacheKey, openAIModelsRequest{}, func(context.Context, string) (*OpenAIModelsResponse, error) {
+		calls.Add(1)
+		return &OpenAIModelsResponse{}, nil
+	})
+	require.NoError(t, result.Err)
+	require.EqualValues(t, 0, calls.Load())
+	require.Equal(t, want, result.Val)
+}
+
 func TestFetchOpenAIModelsListResolvesShadowOAuthCredentials(t *testing.T) {
 	_, calls := newCodexModelsOAuthCacheServer(t, `{"models":[{"slug":"parent-model"}]}`)
 	parent := newCodexModelsTestAccount()
