@@ -41,6 +41,7 @@ const qualityDemoEvents = [
   error_message: entry.errorMessage,
   created_at: new Date(Date.now() - entry.minutesAgo * 60_000).toISOString(),
 }))
+import { createSmallRetentionDemo } from './small-retention'
 import { createFixtures, makeKey, settings } from './fixtures'
 import { createUsageDraft, supportsCustomUsage, usagePayload, usageTemplate, validateUsageDraft } from '../src/utils/customUsage'
 import type { CustomUsageConfig, CustomUsageResult, CustomUsageTemplate } from '../src/api/admin/customUsage'
@@ -118,6 +119,7 @@ function buckets<T extends UsageLog>(rows: T[], key: (row: T) => string) {
 
 export function createMockApi(now = new Date()) {
   const data = createFixtures(now)
+  const smallRetention = createSmallRetentionDemo(now)
   const customUsageConfigs = new Map<number, CustomUsageConfig>()
   const customUsageCache = new Map<number, CustomUsageResult>()
   const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -490,6 +492,9 @@ export function createMockApi(now = new Date()) {
   return {
     user: data.user,
     handle(method: string, path: string, query: URLSearchParams, body: Record<string, unknown> = {}): unknown {
+      if (path === '/api/v1/admin/request-captures/config' || path.startsWith('/api/v1/admin/request-captures/small') || path === '/api/v1/__preview/small-retention') {
+        return copy(smallRetention(method, path, query, body))
+      }
       const timerPath = path.match(/^\/api\/v1\/admin\/accounts\/(\d+)\/schedulable-timers(?:\/(open|close|recurring))?$/)
       if (timerPath) {
         const id = Number(timerPath[1])

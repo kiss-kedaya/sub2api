@@ -13,7 +13,7 @@ vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { template: 
 vi.mock('@/composables/useStepUp', () => ({ isStepUpCancelled: () => false, useStepUp: () => ({ visible: ref(false), run: state.stepUp, onCancel: vi.fn() }) }))
 vi.mock('@/api', () => ({ adminAPI: { users: { list: vi.fn(async () => ({ items: [], total: 0 })) } } }))
 vi.mock('@/api/admin/requestCaptures', () => ({
-  getConfig: vi.fn(), saveConfig: vi.fn(), listTasks: vi.fn(), listRecords: vi.fn(), getRecord: vi.fn(),
+  getConfig: vi.fn(), saveConfig: vi.fn(), saveSmallConfig: vi.fn(), listTasks: vi.fn(), listRecords: vi.fn(), getRecord: vi.fn(),
   getContent: vi.fn(), createTask: vi.fn(), stopTask: vi.fn(), deleteTask: vi.fn(),
   canStreamExport: () => true, exportCapture: vi.fn(), authorizeSensitiveRead: vi.fn()
 }))
@@ -34,6 +34,32 @@ beforeEach(() => {
 })
 
 describe('ID1 rolling request diagnostics', () => {
+  it('saves the retention tab switch through the same independent configuration action', async () => {
+    vi.mocked(captures.getConfig).mockResolvedValue({ ...config, storage_ready: false, small_request_enabled: false, small_request_ready: true })
+    vi.mocked(captures.saveSmallConfig).mockResolvedValue({ enabled: true, ready: true })
+    const wrapper = mount(RequestCaptureView, { global: { stubs: { SmallRequestRetentionPanel: { props: ['enabled', 'ready', 'configLoaded', 'busy'], emits: ['toggle'], template: '<button data-testid="retention-tab-switch" :disabled="!configLoaded || !ready || busy" @click="$emit(\'toggle\', !enabled)" />' } } } }); await flushPromises()
+    wrapper.findComponent({ name: 'Tabs' }).vm.$emit('update:modelValue', 'small'); await flushPromises()
+    await wrapper.get('[data-testid="retention-tab-switch"]').trigger('click'); await flushPromises()
+    expect(captures.saveSmallConfig).toHaveBeenCalledWith(true)
+    expect(captures.saveConfig).not.toHaveBeenCalled()
+    expect(captures.listTasks).not.toHaveBeenCalled()
+    expect(state.stepUp).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+  it('saves small retention without requiring instance-local disk capture', async () => {
+    vi.mocked(captures.getConfig).mockResolvedValue({ ...config, storage_ready: false, small_request_enabled: false, small_request_ready: true })
+    vi.mocked(captures.saveSmallConfig).mockResolvedValue({ enabled: true, ready: true })
+    const wrapper = mount(RequestCaptureView); await flushPromises()
+    const toggle = wrapper.get('[data-testid="small-request-enabled"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    expect(wrapper.get<HTMLButtonElement>('[data-testid="small-config-save"]').element.disabled).toBe(false)
+    await toggle.trigger('click'); await wrapper.get('[data-testid="small-config-save"]').trigger('click'); await flushPromises()
+    expect(captures.saveSmallConfig).toHaveBeenCalledWith(true)
+    expect(captures.saveConfig).not.toHaveBeenCalled()
+    expect(captures.listTasks).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('does not overwrite configuration or poll an unpinned instance before configuration loads', async () => {
     vi.mocked(captures.getConfig).mockRejectedValueOnce(new Error('Configuration unavailable'))
     const wrapper = mount(RequestCaptureView); await flushPromises()

@@ -74,8 +74,10 @@ export async function exportCapture(task: string, record?: string, authorize?: (
 }
 
 export interface CaptureConfig {
+  small_request_enabled?: boolean; small_request_ready?: boolean
   enabled: boolean; id1_diagnostic_enabled?: boolean; diagnostic_user_ids?: number[]; quota_mib: number; retention_days: number
   diagnostic_retention_hours?: number; diagnostic_record_limit?: number; record_limit_mib?: number; instance_id?: string; storage_ready?: boolean
 }
+export async function saveSmallConfig(enabled: boolean) { return (await apiClient.put<{ enabled: boolean; ready: boolean }>(base + '/small/config', { enabled })).data }
 export async function getConfig(){const data=(await apiClient.get<CaptureConfig>(base+'/config')).data; selectedInstance=data.instance_id || ''; return data}
 export async function saveConfig(input:CaptureConfig){return (await apiClient.put<CaptureConfig>(base+'/config',input,{headers:instanceHeaders()})).data}
