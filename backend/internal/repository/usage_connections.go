@@ -64,7 +64,7 @@ func (r *usageLogRepository) runConnectionWriter() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			for pass := 0; pass < connectionTracePrunePasses; pass++ {
 				res, err := r.db.ExecContext(ctx, `DELETE FROM request_connection_traces WHERE trace_id IN
-    (SELECT trace_id FROM request_connection_traces WHERE started_at < NOW()-INTERVAL '14 days' LIMIT `+strconv.Itoa(connectionTracePruneBatch)+`)`)
+    (SELECT trace_id FROM request_connection_traces WHERE started_at < NOW()-INTERVAL '7 days' LIMIT `+strconv.Itoa(connectionTracePruneBatch)+`)`)
 				if err != nil {
 					logger.LegacyPrintf("connection_diagnostics", "retention failed")
 					break
@@ -74,6 +74,22 @@ func (r *usageLogRepository) runConnectionWriter() {
 				}
 			}
 			cancel()
+
+			// user_traffic_events had no retention at all: it reached 67 GB and
+			// 22 days of history. Same window and budget as the traces.
+			trafficCtx, trafficCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			for pass := 0; pass < userTrafficEventPrunePasses; pass++ {
+				res, err := r.db.ExecContext(trafficCtx, `DELETE FROM user_traffic_events WHERE ctid IN
+    (SELECT ctid FROM user_traffic_events WHERE started_at < NOW()-INTERVAL '7 days' LIMIT `+strconv.Itoa(userTrafficEventPruneBatch)+`)`)
+				if err != nil {
+					logger.LegacyPrintf("connection_diagnostics", "traffic event retention failed")
+					break
+				}
+				if n, err := res.RowsAffected(); err == nil && n < int64(userTrafficEventPruneBatch) {
+					break
+				}
+			}
+			trafficCancel()
 		}
 	}
 }
@@ -276,11 +292,18 @@ func (r *usageLogRepository) StopConnectionDiagnostics() {
 	r.connectionStop.Do(func() { close(r.connectionDone) })
 }
 
-// Retention window and pruning budget for request_connection_traces.
+// Retention windows and pruning budgets for the two high-volume diagnostic
+// tables. Traces run ~10 GB/day and traffic events ~3 GB/day, so both windows
+// are deliberately short; the hourly loop drains several batches per run so
+// retention can actually keep up with ingestion.
 const (
-	connectionTraceRetentionDays = 14
+	connectionTraceRetentionDays = 7
 	connectionTracePruneBatch    = 200000
 	connectionTracePrunePasses   = 20
+
+	userTrafficEventRetentionDays = 7
+	userTrafficEventPruneBatch    = 200000
+	userTrafficEventPrunePasses   = 20
 )
 
 // Protocol metadata carries no diagnostic value per row and repeats the same

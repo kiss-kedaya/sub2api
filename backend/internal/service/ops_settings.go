@@ -364,9 +364,10 @@ func defaultOpsAdvancedSettings() *OpsAdvancedSettings {
 		DataRetention: OpsDataRetentionSettings{
 			// Keep the DB-backed default aligned with ops.cleanup.enabled so a
 			// first settings read cannot silently disable configured retention.
-			CleanupEnabled:             true,
-			CleanupSchedule:            opsCleanupDefaultSchedule,
-			ErrorLogRetentionDays:      30,
+			CleanupEnabled:  true,
+			CleanupSchedule: opsCleanupDefaultSchedule,
+			// 统一 7 天：诊断类日志增长快，线上已按 7 天运行。
+			ErrorLogRetentionDays:      7,
 			MinuteMetricsRetentionDays: 30,
 			HourlyMetricsRetentionDays: 30,
 		},
@@ -411,7 +412,7 @@ func normalizeOpsAdvancedSettings(cfg *OpsAdvancedSettings) {
 	// 保留天数：0 表示每次定时清理全部（清空所有），> 0 表示按天数保留；
 	// 仅在拿到非法的负数时回填默认值，避免覆盖用户主动设的 0。
 	if cfg.DataRetention.ErrorLogRetentionDays < 0 {
-		cfg.DataRetention.ErrorLogRetentionDays = 30
+		cfg.DataRetention.ErrorLogRetentionDays = 7
 	}
 	if cfg.DataRetention.MinuteMetricsRetentionDays < 0 {
 		cfg.DataRetention.MinuteMetricsRetentionDays = 30
