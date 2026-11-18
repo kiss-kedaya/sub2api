@@ -1,6 +1,6 @@
 import type { AccountOpsSettings, AccountOpsThresholdAccount, AccountOpsEvent } from '../src/api/admin/accountOps'
 import type { OpsAutomationConfig } from '../src/api/admin/opsAutomation'
-import type { Snapshot } from '../src/api/admin/channelOperations'
+import { channelOperationsPreviewRead } from './channel-operations-fixtures'
 import type { RegionalStatus } from '../src/api/admin/serverless'
 
 // Read-only, synthetic fixtures for the existing localhost-only preview. No upstream calls or writes.
@@ -32,20 +32,8 @@ export function operationsPreviewRead(path: string, query: URLSearchParams, time
     return automation
   }
   if (path === '/api/v1/admin/ops-automation/reasoning') return []
-  if (path === '/api/v1/admin/channels') return { items: [], total: 0, page: 1, page_size: 20, pages: 0 }
-  if (path === '/api/v1/admin/channels/operations/snapshot') {
-    const section = <T>(data: T) => ({ status: 'ready' as const, data, queried_at: timestamp })
-    const metrics = { requests: 0, samples: 0, unknown_samples: 0, duration_samples: 0, p50_ms: null, p90_ms: null, p95_ms: null, duration_p90_ms: null, latest_sample_at: null }
-    const snapshot: Snapshot = {
-      scope: { channel_id: 0, upstream_id: 0, account_id: 0, group_id: 0, model: '', model_scope: 'public', dimension: 'channel' },
-      from: query.get('from') || timestamp, until: query.get('until') || timestamp, model_scope: 'public',
-      usage: section({ source: 'local-demo', attribution: 'current', latency_measurement: 'legacy_forward', summary: metrics, total: 0, rows: [], lineage: [], lineage_total: 0, error_rate: null, error_scope: 'unsupported' }),
-      quality: section({ source: 'local-demo', scope: 'current accounts', summary: { rounds: 0, passed: 0, degraded: 0, inconclusive: 0, latest_sample_at: null }, rows: [], has_more: false }),
-      errors: section({ source: 'local-demo', scope: 'current accounts', records: 0, upstream_5xx: 0, latest_sample_at: null, rows: [], bucket_total: 0, error_rate: null }),
-      capacity: section({ source: 'local-demo', scope: 'current', accounts: 0, schedulable: 0, configured_concurrency: 0 }),
-    }
-    return snapshot
-  }
+  const channelData = channelOperationsPreviewRead(path, query, timestamp)
+  if (channelData !== undefined) return channelData
   if (path === '/api/v1/admin/request-captures/config') return { enabled: false, id1_diagnostic_enabled: false, diagnostic_user_ids: [], quota_mib: 128, retention_days: 1, instance_id: 'local-demo', storage_ready: true }
   if (path === '/api/v1/admin/request-captures') return { items: [], has_more: false, stats: { instance_id: 'local-demo', used_bytes: 0, buffer_bytes: 0, peak_buffer_bytes: 0, active_requests: 0, admission_skipped: 0, storage_error: false } }
   if (path === '/api/v1/admin/serverless') {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { AxiosError, AxiosHeaders } from 'axios'
+import USelect from '@nuxt/ui/components/Select.vue'
 import { apiClient } from '@/api/client'
 import ChannelOperationsView from '../ChannelOperationsView.vue'
 import * as channels from '@/api/admin/channels'
@@ -51,6 +52,31 @@ function mockPagedScope() {
 }
 
 describe('channel operations workflow', () => {
+  it('renders applied scope badges from the returned snapshot rather than unsaved filter fields', async () => {
+    const value = snapshot(); value.scope = { channel_id: 17, upstream_id: -1, account_id: 19, group_id: 21, model: 'returned-model', model_scope: 'recorded', dimension: 'account' }
+    vi.mocked(ops.snapshot).mockResolvedValue(value)
+    const w = mount(ChannelOperationsView); await flushPromises()
+    const form = w.findAll('form')[1]
+    await form.get('input[type="number"]').setValue(999)
+    await form.get('input[maxlength="200"]').setValue('unsaved-model')
+    const scope = w.get('[data-testid="applied-scope"]')
+    expect(scope.findAll('[data-slot="base"]').length).toBeGreaterThanOrEqual(6)
+    expect(scope.text()).toContain('#17'); expect(scope.text()).toContain('#19'); expect(scope.text()).toContain('#21')
+    expect(scope.text()).toContain('channelOps.unassigned'); expect(scope.text()).toContain('channelOps.recorded'); expect(scope.text()).toContain('returned-model')
+    expect(scope.text()).not.toContain('#999'); expect(scope.text()).not.toContain('unsaved-model'); expect(scope.text()).not.toContain('#*'); expect(scope.text()).not.toContain('#-1')
+    w.unmount()
+  })
+  it('labels unrestricted returned scope as all and keeps table headings and empty states', async () => {
+    const value = snapshot(); value.scope = { ...value.scope, channel_id: 0 }; value.usage.data!.rows = []; value.usage.data!.summary.requests = 0; value.quality.data!.rows = []; value.errors.data!.rows = []
+    vi.mocked(ops.snapshot).mockResolvedValue(value)
+    const w = mount(ChannelOperationsView); await flushPromises()
+    expect(w.get('[data-testid="applied-scope"]').text()).toContain('channelOps.all')
+    expect(w.get('[data-testid="usage-section"] thead').text()).toContain('channelOps.requests')
+    expect(w.get('[data-testid="usage-section"]').text()).toContain('channelOps.empty')
+    expect(w.get('[data-testid="quality-section"]').text()).toContain('channelOps.noQuality')
+    expect(w.get('[data-testid="errors-section"]').text()).toContain('channelOps.noErrors')
+    w.unmount()
+  })
   it('shows quality plan IDs without linking to the nonexistent quality editor', async () => {
     const w = mount(ChannelOperationsView); await flushPromises()
     expect(w.get('[data-testid="quality-section"]').text()).toContain('#8')
@@ -150,7 +176,7 @@ describe('channel operations workflow', () => {
   it('uses exact selected model identity and group, paginates quality history by cursor', async () => {
     const w = mount(ChannelOperationsView); await flushPromises()
     const form = w.findAll('form')[1]
-    await form.get('select').setValue('upstream'); await form.get('input[maxlength="200"]').setValue('upstream-alias'); await form.get('input[type="number"]').setValue(11); await form.trigger('submit'); await flushPromises()
+    form.getComponent(USelect).vm.$emit('update:modelValue', 'upstream'); await flushPromises(); await form.get('input[maxlength="200"]').setValue('upstream-alias'); await form.get('input[type="number"]').setValue(11); await form.trigger('submit'); await flushPromises()
     expect(ops.snapshot).toHaveBeenLastCalledWith(expect.objectContaining({ model_scope: 'upstream', model: 'upstream-alias', group_id: 11 }), expect.anything())
     await button(w, 'channelOps.older').trigger('click'); await flushPromises()
     expect(ops.snapshot).toHaveBeenLastCalledWith(expect.objectContaining({ quality_before: 99 }), expect.anything()); w.unmount()
