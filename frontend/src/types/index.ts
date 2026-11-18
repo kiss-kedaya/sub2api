@@ -1216,7 +1216,9 @@ export interface UpstreamBalanceData {
   key_status?: string
   plan_name?: string
   unit?: string
-  // new-api amounts are converted with its default 500000 points = 1 USD ratio.
+  // The configured New API quota ratio is cached from /api/status.
+  quota_per_unit?: number
+  wallet_status?: 'available' | 'forbidden' | 'unlimited'
   unit_assumed?: boolean
   // Headroom left on this API key. Absent when unlimited.
   remaining?: number

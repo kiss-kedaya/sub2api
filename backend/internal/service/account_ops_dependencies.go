@@ -11,6 +11,9 @@ func (s *RateLimitService) SetAccountOpsService(ops *AccountOpsService) {
 func (s *UpstreamBillingProbeService) SetAccountOpsService(ops *AccountOpsService) {
 	if s != nil {
 		s.accountOps = ops
+		if ops != nil {
+			ops.balanceProbe = s
+		}
 	}
 }
 

@@ -243,7 +243,9 @@ export default {
         failed: '读取失败',
         reading: '读取中',
         notRead: '未读取',
-        keyQuotaShort: '密钥额度',
+        keyQuotaShort: 'Key 额度',
+        keyQuotaValue: 'Key {value}',
+        forbidden: '未授权查询',
         walletShort: '账户 {value}',
         walletOnlyShort: '账户余额',
         usedPercent: '已用 {value}%',
@@ -257,8 +259,8 @@ export default {
         unlimitedNote: '上游把这个密钥设成了无限额度，所以没有剩余金额。',
         notProvidedNote: '上游只返回了已用金额，没有返回可用余额；系统会每 10 分钟继续探测。',
         keptLastValueNote: '最近一次读取失败，显示的是上次成功读到的值。',
-        readingNote: '上游已识别为 Sub2API / New API，余额读取失败时后台会自动重试（1 秒、3 秒、9 秒退避），读到之前只显示上次成功的值，不显示失败。',
-        refreshHint: '余额默认每 10 分钟刷新一次；识别到 Sub2API / New API 的上游，读取失败会一直重试，列表只显示上次成功读到的值。',
+        readingNote: '后台重试余额读取；New API 每站至少间隔 61 秒，限流或服务端错误会继续退避。',
+        refreshHint: '按配置周期刷新余额；有余额规则的账号由后台扫描补充刷新，页面读取缓存，不重复请求上游。',
         staleNote: '已超过有效期，显示的是上次读到的值，可能已经变了。',
         detail: {
           kind: '上游类型',
@@ -285,6 +287,9 @@ export default {
           custom_usage: '自定义提取器'
         },
         failure: {
+          invalid_key: 'Key 无效或已禁用',
+          ip_forbidden: 'IP 不在上游白名单',
+          rate_limited: '被限流，等待退避重试',
           unsupported: '上游没有这个接口（404/405）',
           http_error: '上游返回了错误状态码',
           invalid_response: '响应格式不对',

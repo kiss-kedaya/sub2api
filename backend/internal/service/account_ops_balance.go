@@ -32,6 +32,11 @@ type AccountOpsBalanceAccount struct {
 	Platform      string                  `json:"platform"`
 	Type          string                  `json:"type"`
 	Balance       *float64                `json:"balance"`
+	KeyBalance    *float64                `json:"key_balance,omitempty"`
+	WalletBalance *float64                `json:"wallet_balance,omitempty"`
+	WalletStatus  string                  `json:"wallet_status,omitempty"`
+	UpstreamKind  string                  `json:"upstream_kind,omitempty"`
+	BalanceReason string                  `json:"balance_reason,omitempty"`
 	Unit          string                  `json:"unit"`
 	BalanceStatus string                  `json:"balance_status"`
 	ReceivedAt    *time.Time              `json:"received_at"`
@@ -89,15 +94,31 @@ func opsBalanceAccount(a *Account, now time.Time) AccountOpsBalanceAccount {
 	}
 	snap := decodeUpstreamBillingProbeSnapshot(a.Extra)
 	if snap == nil || snap.Balance == nil {
+		if !upstreamBillingProbeScheduled(a) {
+			item.BalanceStatus = "disabled"
+		}
 		return item
 	}
 	b := snap.Balance
+	item.UpstreamKind = snap.UpstreamKind
+	item.BalanceReason = b.LastError
 	item.BalanceStatus = b.Status
 	item.ReceivedAt = b.ReceivedAt
+	item.WalletStatus, _ = b.Data["wallet_status"].(string)
+	if n, ok := opsNumber(b.Data["remaining"]); ok {
+		item.KeyBalance = &n
+	}
+	if n, ok := opsNumber(b.Data["wallet_balance"]); ok {
+		item.WalletBalance = &n
+	}
 	if unit, ok := b.Data["unit"].(string); ok && unit != "" {
 		item.Unit = unit
 	}
 	if b.Status != "ok" {
+		switch b.LastError {
+		case "invalid_key", "ip_forbidden", "rate_limited":
+			item.BalanceStatus = b.LastError
+		}
 		return item
 	}
 	if !opsFresh(b.ReceivedAt, b.FreshUntil, now) {
@@ -105,8 +126,19 @@ func opsBalanceAccount(a *Account, now time.Time) AccountOpsBalanceAccount {
 		return item
 	}
 	if unlimited, ok := b.Data["unlimited"].(bool); ok && unlimited {
-		item.BalanceStatus = "unsupported"
+		item.BalanceStatus = "unlimited"
 		return item
+	}
+	if snap.UpstreamKind == UpstreamKindNewAPI {
+		if item.WalletStatus == "forbidden" {
+			item.BalanceStatus = "forbidden"
+			return item
+		}
+		// Account rules monitor a wallet, not an independently capped API key.
+		if item.WalletBalance != nil {
+			item.Balance = item.WalletBalance
+			return item
+		}
 	}
 	n, ok := opsNumber(b.Data["remaining"])
 	if !ok {
@@ -131,7 +163,7 @@ const accountOpsCustomUsagePrefetchLimit = 4
 // the same source the account page's balance query reads. Unconfigured or
 // disabled custom usage keeps the existing upstream billing probe behavior.
 func opsConfiguredCustomUsage(a *Account) bool {
-	if a == nil || a.Type != AccountTypeAPIKey || a.IsCredentialShadow() {
+	if a == nil || a.Type != AccountTypeAPIKey || a.IsCredentialShadow() || !customUsageExplicitlyConfigured(a) {
 		return false
 	}
 	c, _, configured := readCustomUsage(a)
@@ -637,10 +669,28 @@ func accountOpsGroupCriteria(c AccountOpsConfig, kind string, members []accountO
 
 func (s *AccountOpsService) assessThresholdGroup(ctx context.Context, group AccountOpsGroupAssignment, members []accountOpsThresholdMember, kind string, c AccountOpsConfig, now time.Time) (*AccountOpsEvent, string) {
 	criteria, _, _, _ := accountOpsGroupCriteria(c, kind, members)
-	// Membership declares a shared upstream account. Use its first member as
-	// the representative; discrepancies in other keys do not change the result.
-	if len(members) > 0 && members[0].account != nil && members[0].lookupErr == nil {
-		e, state := s.assessThreshold(ctx, members[0].account, kind, c, now)
+	// Manual membership declares a shared wallet. Pick a readable member rather
+	// than letting a paused or unconfigured first key suppress the whole group.
+	if kind != "balance_threshold" && len(members) > 1 {
+		members = members[:1]
+	}
+	for _, member := range members {
+		if member.account == nil || member.lookupErr != nil {
+			continue
+		}
+		effective := c
+		if kind == "balance_threshold" {
+			// Group rules apply to the shared wallet even when only another member
+			// owns the saved rule. Preserve its threshold and notification policy.
+			for _, rule := range c.BalanceThresholds {
+				if rule.Enabled && thresholdAccountGroup(nil, rule.AccountID, c).ID == group.ID {
+					rule.AccountID = member.id
+					effective.BalanceThresholds = []AccountOpsBalanceRule{rule}
+					break
+				}
+			}
+		}
+		e, state := s.assessThreshold(ctx, member.account, kind, effective, now)
 		if e != nil {
 			e.GroupID, e.GroupName, e.Identity, e.Criteria = group.ID, group.Name, group.ID, criteria
 			return e, state
@@ -681,6 +731,9 @@ func (s *AccountOpsService) loadThresholdGroupMembers(ctx context.Context, group
 	var assignment AccountOpsGroupAssignment
 	members := make([]accountOpsThresholdMember, 0)
 	ids := thresholdRuleIDs(c, kind)
+	if kind == "balance_threshold" {
+		ids = thresholdBalanceMemberIDs(c)
+	}
 	accounts := s.loadThresholdAccounts(ctx, ids)
 	for _, id := range ids {
 		a, err := accounts[id].account, accounts[id].lookupErr
@@ -721,8 +774,9 @@ func (s *AccountOpsService) scanBalances(ctx context.Context) {
 	if !c.Enabled || s.accounts == nil {
 		return
 	}
-	ids := append(thresholdRuleIDs(c, "balance_threshold"), thresholdRuleIDs(c, "quota_threshold")...)
+	ids := append(thresholdBalanceMemberIDs(c), thresholdRuleIDs(c, "quota_threshold")...)
 	accounts := s.loadThresholdAccounts(ctx, ids)
+	s.opsRefreshNativeBalances(ctx, accounts, c)
 
 	// Warm the balance-rule custom usage cache concurrently before the serial
 	// group assessments, so one slow or dead upstream cannot delay every later
@@ -746,7 +800,11 @@ func (s *AccountOpsService) scanBalances(ctx context.Context) {
 			assignment AccountOpsGroupAssignment
 			members    []accountOpsThresholdMember
 		}{}
-		for _, id := range thresholdRuleIDs(c, kind) {
+		groupIDs := thresholdRuleIDs(c, kind)
+		if kind == "balance_threshold" {
+			groupIDs = thresholdBalanceMemberIDs(c)
+		}
+		for _, id := range groupIDs {
 			a, err := accounts[id].account, accounts[id].lookupErr
 			if err != nil && !errors.Is(err, ErrAccountNotFound) {
 				a = nil

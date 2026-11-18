@@ -358,6 +358,8 @@ export default {
         reading: 'Reading',
         notRead: 'Not read',
         keyQuotaShort: 'Key quota',
+        keyQuotaValue: 'Key {value}',
+        forbidden: 'Query not authorized',
         walletShort: 'Account {value}',
         walletOnlyShort: 'Account balance',
         usedPercent: '{value}% used',
@@ -371,8 +373,8 @@ export default {
         unlimitedNote: 'The upstream set this key to unlimited quota, so there is no remaining amount.',
         notProvidedNote: 'The upstream reported spend but no usable balance; the probe keeps retrying every 10 minutes.',
         keptLastValueNote: 'The latest read failed; this is the last value that was read successfully.',
-        readingNote: 'This upstream was recognised as Sub2API / New API. A failed read is retried in the background (1s, 3s, 9s back-off); until it succeeds only the last successful value is shown, never a failure.',
-        refreshHint: 'The balance refreshes every 10 minutes by default. For a recognised Sub2API / New API upstream a failed read is retried until it succeeds, and the list only ever shows the last successful value.',
+        readingNote: 'Balance reads retry in the background. New API waits at least 61 seconds per site, with backoff for rate limits and server errors.',
+        refreshHint: 'Balances refresh at the configured interval. Enabled balance rules refresh from the background scanner; page reads reuse cached snapshots.',
         staleNote: 'Past its valid-until time; this is the last value read and may have changed.',
         detail: {
           kind: 'Upstream',
@@ -399,6 +401,9 @@ export default {
           custom_usage: 'Custom extractor'
         },
         failure: {
+          invalid_key: 'Key invalid or disabled',
+          ip_forbidden: 'IP not in upstream allowlist',
+          rate_limited: 'Rate limited; waiting to retry',
           unsupported: 'The upstream has no such endpoint (404/405)',
           http_error: 'The upstream returned an error status',
           invalid_response: 'Unexpected response format',

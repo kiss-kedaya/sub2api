@@ -172,7 +172,7 @@ func TestUpstreamKindProbeRecognisesNewAPI(t *testing.T) {
 	require.Equal(t, "my-key", data["plan_name"])
 	require.NotContains(t, data, "expires_at", "expires_at 0 means the token never expires")
 	requireNormalProbeInterval(t, snapshot)
-	require.Equal(t, []string{upstreamKindTestBillingPath, upstreamKindTestUsagePath, upstreamNewAPIUsagePath}, upstream.requested())
+	require.Equal(t, []string{upstreamKindTestBillingPath, upstreamKindTestUsagePath, upstreamNewAPIUsagePath, upstreamNewAPIStatusPath}, upstream.requested())
 }
 
 // The account stores the model endpoint (…/v1); new-api's usage endpoint lives
@@ -324,7 +324,7 @@ func TestUpstreamKindProbeKnownNewAPIAsksOnlyItsOwnEndpoint(t *testing.T) {
 
 	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
-	require.Equal(t, []string{upstreamKindTestBillingPath, upstreamNewAPIUsagePath}, upstream.requested())
+	require.Equal(t, []string{upstreamNewAPIUsagePath, upstreamNewAPIStatusPath}, upstream.requested())
 }
 
 // A timeout says nothing about which software the upstream runs.
@@ -345,9 +345,8 @@ func TestUpstreamKindProbeKeepsKindAcrossATransientFailure(t *testing.T) {
 	snapshot := runUpstreamKindProbe(t, newUpstreamBalanceProbeTestAccount(79, extra), upstream)
 
 	require.Equal(t, UpstreamKindNewAPI, snapshot.UpstreamKind)
-	// A recognised upstream never reports a failed read any more: the last good
-	// balance stays on screen while the retry rounds continue.
-	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+	// Keep the last sample but make the latest failure visible to rules and UI.
+	require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Balance.Status)
 	require.Equal(t, 1, snapshot.Balance.RetryCount)
 	require.Equal(t, 7.6, snapshot.Balance.Data["remaining"], "the last good balance stays readable")
 }
@@ -899,12 +898,12 @@ func TestParseUpstreamNewAPIUsagePrefersAccountQuotaOverUnlimitedToken(t *testin
 	data, err := parseUpstreamNewAPIUsageResponse(body)
 	require.NoError(t, err)
 
-	require.NotContains(t, data, "unlimited", "an unlimited token still has a finite account balance to show")
-	// 104941429 / 500000 = 209.88..., 52161124 / 500000 = 104.32...
-	require.InDelta(t, 209.882858, data["remaining"], 1e-6)
-	require.InDelta(t, 104.322248, data["quota_used"], 1e-6)
-	require.InDelta(t, 314.205106, data["quota_limit"], 1e-6)
-	require.NotContains(t, data, "wallet_balance", "the account quota is already the headline, not a second number")
+	require.Equal(t, true, data["unlimited"])
+	require.Equal(t, "unlimited", data["wallet_status"])
+	require.NotContains(t, data, "remaining")
+	require.NotContains(t, data, "quota_limit")
+	require.InDelta(t, 0.0, data["quota_used"], 1e-6)
+	require.NotContains(t, data, "wallet_balance")
 }
 
 // The account quota is unknown when the token predates allow_user_quota_query or
@@ -950,6 +949,8 @@ func TestUpstreamKindProbeReadsNewAPIAccountBalanceFromLegacyBilling(t *testing.
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
 	require.NotNil(t, snapshot.Balance)
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
-	require.NotContains(t, snapshot.Balance.Data, "unlimited")
-	require.InDelta(t, 175.5, snapshot.Balance.Data["remaining"], 1e-9)
+	require.Equal(t, true, snapshot.Balance.Data["unlimited"])
+	require.Equal(t, "unlimited", snapshot.Balance.Data["wallet_status"])
+	require.NotContains(t, snapshot.Balance.Data, "remaining")
+	require.NotContains(t, upstream.requested(), upstreamLegacySubscriptionPath)
 }
