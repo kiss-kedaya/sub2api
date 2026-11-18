@@ -63,9 +63,10 @@ func geminiPayloadMayCarrySignal(payload []byte) bool {
 // {"response":{...}} 包装体先解包。判定顺序：错误信封 > promptFeedback.blockReason > 首候选 finishReason。
 // finishReason 只有内容过滤类枚举登记为信号；STOP、MAX_TOKENS、OTHER、MALFORMED_FUNCTION_CALL、
 // UNEXPECTED_TOOL_CALL、TOO_MANY_TOOL_CALLS 等其余枚举都是模型侧的生成结果，不做上游归因，一律不登记。
-func detectGeminiResponseSignal(payload []byte) (geminiResponseSignal, bool) {
+func detectGeminiResponseSignal(payload []byte, eventType ...string) (geminiResponseSignal, bool) {
 	payload = bytes.TrimSpace(payload)
-	if len(payload) == 0 || !geminiPayloadMayCarrySignal(payload) || !gjson.ValidBytes(payload) {
+	namedError := len(eventType) > 0 && eventType[0] == "error"
+	if len(payload) == 0 || (!namedError && !geminiPayloadMayCarrySignal(payload)) || !gjson.ValidBytes(payload) {
 		return geminiResponseSignal{}, false
 	}
 	if inner := gjson.GetBytes(payload, "response"); inner.Exists() && inner.IsObject() {
@@ -74,6 +75,9 @@ func detectGeminiResponseSignal(payload []byte) (geminiResponseSignal, bool) {
 
 	if errObj := gjson.GetBytes(payload, "error"); errObj.Exists() && errObj.IsObject() {
 		return geminiErrorResponseSignal(int(errObj.Get("code").Int()), errObj.Get("status").String(), errObj.Get("message").String(), payload), true
+	}
+	if namedError {
+		return geminiErrorResponseSignal(int(gjson.GetBytes(payload, "code").Int()), gjson.GetBytes(payload, "status").String(), gjson.GetBytes(payload, "message").String(), payload), true
 	}
 
 	blockReason := strings.ToUpper(strings.TrimSpace(gjson.GetBytes(payload, "promptFeedback.blockReason").String()))
@@ -130,8 +134,13 @@ func geminiErrorResponseSignal(status int, googleStatus, message string, payload
 
 // geminiParsedResponseSignal reuses the Messages decoder so observing errors adds no JSON parse.
 // Policy endings are not error envelopes and must not change their existing billing.
-func geminiParsedResponseSignal(payload map[string]any, raw []byte) geminiResponseSignal {
-	if errObj, ok := payload["error"].(map[string]any); ok {
+func geminiParsedResponseSignal(payload map[string]any, raw []byte, eventType ...string) geminiResponseSignal {
+	errObj, ok := payload["error"].(map[string]any)
+	if !ok && len(eventType) > 0 && eventType[0] == "error" {
+		// Named provider errors also use Google's flat status object.
+		errObj, ok = payload, true
+	}
+	if ok {
 		status, _ := asInt(errObj["code"])
 		googleStatus, _ := errObj["status"].(string)
 		message, _ := errObj["message"].(string)

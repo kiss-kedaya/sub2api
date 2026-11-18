@@ -128,7 +128,7 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 		Model: mappedModel, UpstreamModel: mappedModel, Usage: geminiBridgeClaudeUsage(usage),
 		Duration: time.Since(start),
 	}
-	if status, explicitError := geminiBridgeFailureStatus(raw, ""); status != 0 {
+	if status, explicitError := geminiBridgeFailureStatus(raw, "", gjson.ParseBytes(raw)); status != 0 {
 		defer GuardUpstreamFinancialError(c, status, raw)()
 		result.NonBillableUpstreamError = explicitError && geminiBridgeNonBillableFailure(raw)
 		return result, s.writeGoogleError(c, status, sanitizeUpstreamErrorMessage(extractGeminiBridgeErrorMessage(raw)))
@@ -341,7 +341,7 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 			result.Usage = geminiBridgeClaudeUsage(usage)
 			metadata = geminiBridgeUsageMetadata(usage, geminiBridgeUsageObject(parsed.data))
 		}
-		if status, explicitError := geminiBridgeFailureStatus(parsed.data, parsed.eventType); status != 0 {
+		if status, explicitError := geminiBridgeFailureStatus(parsed.data, parsed.eventType, parsed.root); status != 0 {
 			policyFailure = policyFailure || !geminiBridgeNonBillableFailure(parsed.data)
 			result.NonBillableUpstreamError = !policyFailure && (result.NonBillableUpstreamError || explicitError)
 			streamStatus = status
@@ -458,13 +458,17 @@ func extractGeminiBridgeErrorMessage(raw []byte) string {
 	return "Gemini upstream request failed"
 }
 
-func geminiBridgeFailureStatus(raw []byte, eventType string) (int, bool) {
-	status := gjson.GetBytes(raw, "response.status").String()
+func geminiBridgeFailureStatus(raw []byte, eventType string, root gjson.Result) (int, bool) {
+	status := root.Get("response.status").String()
 	if status == "" {
-		status = gjson.GetBytes(raw, "status").String()
+		status = root.Get("status").String()
+	}
+	// A real Chat answer takes precedence over relay error metadata beside it.
+	if choices := root.Get("choices"); choices.IsArray() && len(choices.Array()) > 0 {
+		return 0, false
 	}
 	explicitError := eventType == "error" || eventType == "response.failed" || status == "failed" ||
-		gjson.GetBytes(raw, "error").IsObject() || gjson.GetBytes(raw, "response.error").IsObject()
+		openAIErrorValuePresent(root.Get("error")) || openAIErrorValuePresent(root.Get("response.error"))
 	if explicitError || eventType == "response.cancelled" || eventType == "response.canceled" || status == "cancelled" || status == "canceled" {
 		code := firstNonEmpty(openAIStreamFailedEventErrorCode(raw), gjson.GetBytes(raw, "code").String())
 		if strings.EqualFold(code, "input_too_small") || isOpenAINonBillableRequestError("", raw) {
