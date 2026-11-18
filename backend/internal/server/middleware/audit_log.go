@@ -109,6 +109,7 @@ func truncateAuditExtraString(value string, limit int) string {
 
 // auditSensitiveReads 需要审计的敏感 GET 读取（method+FullPath → 动作名）。
 var auditSensitiveReads = map[string]string{
+	"GET /api/v1/admin/request-captures/small/:record":                        "admin.small_request_retention.content.read",
 	"GET /api/v1/admin/request-captures/:task/requests/:record/content/:part": "admin.request_capture.content.read",
 	"GET /api/v1/admin/request-captures/:task/export":                         "admin.request_capture.export",
 	"GET /api/v1/admin/request-captures/:task/requests/:record/export":        "admin.request_capture.export",

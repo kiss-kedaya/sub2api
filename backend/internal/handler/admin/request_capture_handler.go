@@ -73,7 +73,9 @@ func (h *RequestCaptureHandler) GetConfig(c *gin.Context) {
 		instance = h.Manager.InstanceID()
 	}
 	c.Header("Cache-Control", "no-store")
-	response.Success(c, captureConfigResponse(v, instance, h.Manager != nil))
+	result := captureConfigResponse(v, instance, h.Manager != nil)
+	result["small_request_ready"] = h.Settings.SmallRequestRecorder().Ready()
+	response.Success(c, result)
 }
 
 func (h *RequestCaptureHandler) UpdateConfig(c *gin.Context) {
@@ -86,6 +88,11 @@ func (h *RequestCaptureHandler) UpdateConfig(c *gin.Context) {
 	var v service.CaptureSettings
 	if err := c.ShouldBindJSON(&v); err != nil {
 		response.BadRequest(c, "Invalid capture settings")
+		return
+	}
+	small := h.Settings.SmallRequestRecorder()
+	if v.SmallRequestEnabled && !small.Ready() {
+		response.Error(c, 503, "Small request retention tables are not ready")
 		return
 	}
 	if (v.Enabled || v.ID1DiagnosticEnabled) && h.Manager == nil {
@@ -103,11 +110,13 @@ func (h *RequestCaptureHandler) UpdateConfig(c *gin.Context) {
 	if h.Manager != nil {
 		instance = h.Manager.InstanceID()
 	}
-	response.Success(c, captureConfigResponse(v, instance, h.Manager != nil))
+	result := captureConfigResponse(v, instance, h.Manager != nil)
+	result["small_request_ready"] = h.Settings.SmallRequestRecorder().Ready()
+	response.Success(c, result)
 }
 
 func captureConfigResponse(v service.CaptureSettings, instance string, ready bool) gin.H {
-	return gin.H{"enabled": v.Enabled, "id1_diagnostic_enabled": v.ID1DiagnosticEnabled, "diagnostic_user_ids": v.DiagnosticUserIDs, "diagnostic_retention_hours": 8, "diagnostic_record_limit": requestcapture.ID1DiagnosticRecordLimit, "record_limit_mib": requestcapture.RecordLimit >> 20, "quota_mib": v.QuotaMiB, "retention_days": v.RetentionDays, "instance_id": instance, "storage_ready": ready}
+	return gin.H{"small_request_enabled": v.SmallRequestEnabled, "enabled": v.Enabled, "id1_diagnostic_enabled": v.ID1DiagnosticEnabled, "diagnostic_user_ids": v.DiagnosticUserIDs, "diagnostic_retention_hours": 8, "diagnostic_record_limit": requestcapture.ID1DiagnosticRecordLimit, "record_limit_mib": requestcapture.RecordLimit >> 20, "quota_mib": v.QuotaMiB, "retention_days": v.RetentionDays, "instance_id": instance, "storage_ready": ready}
 }
 
 func (h *RequestCaptureHandler) requireInstance(c *gin.Context, required bool) bool {

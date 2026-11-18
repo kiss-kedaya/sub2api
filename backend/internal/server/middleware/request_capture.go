@@ -10,8 +10,17 @@ import (
 )
 
 // RequestCapture runs after authentication and before model/body rewriting.
-func RequestCapture(manager *requestcapture.Manager) gin.HandlerFunc {
+func RequestCapture(manager *requestcapture.Manager, smallRecorders ...*requestcapture.SmallRecorder) gin.HandlerFunc {
+	var small *requestcapture.SmallRecorder
+	if len(smallRecorders) > 0 {
+		small = smallRecorders[0]
+	}
 	return func(c *gin.Context) {
+		if small.Enabled() {
+			if finish := beginSmallRequestCapture(c, small); finish != nil {
+				defer finish()
+			}
+		}
 		if manager == nil {
 			c.Next()
 			return

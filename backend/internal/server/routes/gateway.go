@@ -62,7 +62,7 @@ func RegisterGatewayRoutes(
 	}
 	capture := func(c *gin.Context) { c.Next() }
 	if h.Admin != nil && h.Admin.RequestCapture != nil {
-		capture = middleware.RequestCapture(h.Admin.RequestCapture.Manager)
+		capture = middleware.RequestCapture(h.Admin.RequestCapture.Manager, settingService.SmallRequestRecorder())
 	}
 	// Composite routing runs before the concrete gateway handler. Install the
 	// same request mode here so a route/model-list lookup cannot bypass the

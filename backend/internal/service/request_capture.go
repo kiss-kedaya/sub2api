@@ -19,6 +19,7 @@ const SettingKeyRequestCapture = "request_capture_config"
 // CaptureSettings is independent of gateway and billing configuration. An
 // omitted setting never enables body collection on an existing installation.
 type CaptureSettings struct {
+	SmallRequestEnabled  bool    `json:"small_request_enabled"`
 	ID1DiagnosticEnabled bool    `json:"id1_diagnostic_enabled"`
 	DiagnosticUserIDs    []int64 `json:"diagnostic_user_ids,omitempty"`
 	Enabled              bool    `json:"enabled"`
@@ -64,6 +65,9 @@ func (s *SettingService) UpdateCaptureSettings(ctx context.Context, c CaptureSet
 	if s.requestCaptureRuntime != nil {
 		s.requestCaptureRuntime.manager.ApplyConfig(c.captureConfig())
 	}
+	if s.smallRequestRecorder != nil {
+		s.smallRequestRecorder.ApplyEnabled(c.SmallRequestEnabled)
+	}
 	return nil
 }
 
@@ -77,7 +81,7 @@ type captureRuntime struct {
 // InitializeRequestCapture is called once during router composition, after
 // migration validation. Optional diagnostic storage must not stop the gateway.
 func (s *SettingService) InitializeRequestCapture(db *sql.DB) (*requestcapture.Manager, error) {
-	if db == nil {
+	if s == nil || db == nil {
 		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -86,6 +90,7 @@ func (s *SettingService) InitializeRequestCapture(db *sql.DB) (*requestcapture.M
 	if err != nil {
 		return nil, err
 	}
+	s.initializeSmallRequests(db, c.SmallRequestEnabled)
 	dir := os.Getenv("DATA_DIR")
 	if dir == "" {
 		dir = "./data"
@@ -129,6 +134,9 @@ func (s *SettingService) InitializeRequestCapture(db *sql.DB) (*requestcapture.M
 }
 
 func (s *SettingService) StopRequestCapture() {
+	if s != nil {
+		s.smallRequestRecorder.Close()
+	}
 	if s == nil || s.requestCaptureRuntime == nil {
 		return
 	}
