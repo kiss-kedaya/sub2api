@@ -1905,6 +1905,11 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		}
 	}
 
+	nonBillableUpstreamError := !gjson.GetBytes(body, "choices.0").Exists() && openAIExplicitUpstreamError(gjson.ParseBytes(body), "")
+	if nonBillableUpstreamError {
+		// Preserve a provider rejection even if usage validation discards this round.
+		observeDeepSeekHostedUpstreamEvent(ctx, "error")
+	}
 	usageValue, usageOK := extractOpenAIUsageFromJSONBytes(body)
 	if !usageOK {
 		if bodyLooksLikeSSE {
@@ -1982,7 +1987,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		imageCount:               countOpenAIResponseImageOutputsFromJSONBytes(body),
 		imageOutputSizes:         collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
 		searchCount:              countGrokNativeSearchCallsFromJSONBytes(body),
-		nonBillableUpstreamError: openAIExplicitUpstreamError(gjson.ParseBytes(body), ""),
+		nonBillableUpstreamError: nonBillableUpstreamError,
 	}, nil
 }
 
@@ -2009,12 +2014,9 @@ func bodyHasSSEFraming(body []byte) bool {
 
 func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
 	bodyText := string(body)
-	terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
-	if terminalOK {
-		// Preserve the upstream source before error mapping can discard this round's result.
-		observeDeepSeekHostedUpstreamEvent(c.Request.Context(), terminalType)
-	}
-	if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
+	terminalType, terminalPayload, nonBillableUpstreamError := inspectOpenAIBufferedSSE(c.Request.Context(), bodyText)
+	usage := s.parseSSEUsageFromBody(bodyText)
+	if terminalType == "response.failed" || terminalType == "error" {
 		if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, terminalPayload); refusalErr != nil {
 			return nil, refusalErr
 		}
@@ -2029,11 +2031,16 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 			return nil, failoverErr
 		}
 		defer GuardUpstreamFinancialError(c, 0, terminalPayload)()
-		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
+		var result *openaiNonStreamingResult
+		if nonBillableUpstreamError && openAIUsageHasTokens(usage) {
+			result = &openaiNonStreamingResult{
+				OpenAIUsage: usage, usage: usage, nonBillableUpstreamError: true,
+			}
+		}
+		return result, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 	}
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
 
-	usage := s.parseSSEUsageFromBody(bodyText)
 	if ok {
 		if parsedUsage, parsed := extractOpenAIUsageFromJSONBytes(finalResponse); parsed {
 			*usage = parsedUsage
@@ -2093,12 +2100,13 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 	}
 
 	return &openaiNonStreamingResult{
-		OpenAIUsage:      usage,
-		usage:            usage,
-		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
-		imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
-		imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
-		searchCount:      countGrokNativeSearchCallsFromSSEBody(bodyText),
+		OpenAIUsage:              usage,
+		usage:                    usage,
+		nonBillableUpstreamError: nonBillableUpstreamError,
+		responseID:               extractOpenAIResponseIDFromJSONBytes(body),
+		imageCount:               countOpenAIImageOutputsFromSSEBody(bodyText),
+		imageOutputSizes:         collectOpenAIImageOutputSizesFromSSEBody(bodyText),
+		searchCount:              countGrokNativeSearchCallsFromSSEBody(bodyText),
 	}, nil
 }
 
@@ -2138,6 +2146,42 @@ func (s *OpenAIGatewayService) writeGrokModerationRefusalProtocolError(resp *htt
 		c.Data(http.StatusForbidden, "application/json", clientPayload)
 	}
 	return refusalErr
+}
+
+// inspectOpenAIBufferedSSE retains the last unresolved provider failure. A later
+// incomplete/cancelled terminal or EOF is not evidence that the request recovered.
+func inspectOpenAIBufferedSSE(ctx context.Context, body string) (string, []byte, bool) {
+	var terminalType string
+	var terminalPayload, failurePayload []byte
+	failureType := ""
+	nonBillable, visibleOutput := false, false
+	forEachOpenAISSEFrame(body, func(eventType string, data []byte) {
+		frame := parseOpenAISSEDataFrame(data, eventType)
+		if openAIExplicitUpstreamError(frame.root, eventType) && !frame.root.Get("choices.0").Exists() {
+			nonBillable = true
+			failureType = "error"
+			if eventType == "response.failed" {
+				failureType = eventType
+			}
+			failurePayload = append(failurePayload[:0], data...)
+			observeDeepSeekHostedUpstreamEvent(ctx, "error")
+		} else {
+			visibleOutput = visibleOutput || openAIStreamFrameStartsVisibleOutput(frame)
+			if (eventType == "response.completed" || eventType == "response.done") && visibleOutput {
+				nonBillable = false
+				failurePayload = nil
+				observeDeepSeekHostedUpstreamEvent(ctx, eventType)
+			}
+		}
+		switch eventType {
+		case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "error":
+			terminalType, terminalPayload = eventType, append(terminalPayload[:0], data...)
+		}
+	})
+	if failurePayload != nil {
+		return failureType, failurePayload, nonBillable
+	}
+	return terminalType, terminalPayload, nonBillable
 }
 
 func extractOpenAISSETerminalEvent(body string) (string, []byte, bool) {
@@ -2322,6 +2366,8 @@ func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 }
 
 func (s *OpenAIGatewayService) writeOpenAINonStreamingProtocolError(resp *http.Response, c *gin.Context, message string) error {
+	// The service owns this terminal body; the handler must not append another one.
+	MarkResponseCommitted(c)
 
 	defer GuardUpstreamFinancialError(c, http.StatusBadGateway, []byte(message))()
 	message = sanitizeUpstreamErrorMessage(strings.TrimSpace(message))
@@ -2333,7 +2379,7 @@ func (s *OpenAIGatewayService) writeOpenAINonStreamingProtocolError(resp *http.R
 	// response.failed 终止事件回传错误，不能再写 JSON+状态码。
 	if openAICompactClientWantsStream(c) && StopOpenAICompactSSEKeepaliveCommitted(c) {
 		writeOpenAICompactSSEFailureMessage(c, http.StatusBadGateway, "upstream_error", message)
-		return fmt.Errorf("non-streaming openai protocol error: %s", message)
+		return fmt.Errorf("upstream response failed: %s", message)
 	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -2343,7 +2389,7 @@ func (s *OpenAIGatewayService) writeOpenAINonStreamingProtocolError(resp *http.R
 			"message": ClientUpstreamErrorMessage(message),
 		},
 	})
-	return fmt.Errorf("non-streaming openai protocol error: %s", message)
+	return fmt.Errorf("upstream response failed: %s", message)
 }
 
 func extractCodexFinalResponse(body string) ([]byte, bool) {

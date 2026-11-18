@@ -74,7 +74,8 @@ func TestDeepSeekHostedBufferedSSEContinuationBilling(t *testing.T) {
 				require.False(t, gjson.GetBytes(request, "stream").Bool())
 			}
 			wantUsage := OpenAIUsage{InputTokens: 10, OutputTokens: 2}
-			if !tc.wantErr {
+			if !tc.wantErr || tc.name == "response_failed" {
+				// Terminal provider failures retain their observed usage for diagnostics.
 				wantUsage = OpenAIUsage{InputTokens: 30, OutputTokens: 5}
 			}
 			require.Equal(t, wantUsage, result.Usage)
