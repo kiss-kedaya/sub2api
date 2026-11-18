@@ -358,12 +358,14 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 			streamStatus = status
 			financialFailure = financialFailure || IsUpstreamFinancialError(status, parsed.data)
 			streamErr = fmt.Errorf("gemini upstream stream failed: %s", failureEventType)
-			// A Responses error prelude can be followed by a terminal usage snapshot.
-			terminal = protocol != APIProtocolResponses || (failureEventType != "error" && failureEventType != "")
+			// Error preludes in either protocol may be followed by a successful finish.
+			// Keep the pending failure until that finish or EOF; never turn [DONE] alone into success.
+			terminal = failureEventType != "error" && failureEventType != ""
 			return
 		}
 		// A pending provider prelude must not discard later answer deltas.
 		var chunks []apicompat.ChatCompletionsChunk
+		successfulChatFinish := false
 		if protocol == APIProtocolResponses {
 			var event apicompat.ResponsesStreamEvent
 			if err := json.Unmarshal(parsed.data, &event); err != nil {
@@ -415,12 +417,14 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 						return
 					}
 				}
-				if choice.FinishReason != nil {
+				if choice.FinishReason != nil && *choice.FinishReason != "" {
 					finish = geminiBridgeFinishReason(*choice.FinishReason)
+					successfulChatFinish = true
 				}
 			}
 		}
-		if streamErr != nil && (parsed.eventType == "response.completed" || parsed.eventType == "response.done") {
+		if streamErr != nil && (parsed.eventType == "response.completed" || parsed.eventType == "response.done" ||
+			(protocol == APIProtocolChatCompletions && successfulChatFinish)) {
 			// A successful terminal supersedes a preceding provider error.
 			streamErr = nil
 			financialFailure = false

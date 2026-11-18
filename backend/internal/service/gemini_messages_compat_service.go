@@ -3151,7 +3151,9 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 				if eventType == "error" {
 					pendingErrorHeader = line
 				} else {
-					emit(line)
+					// Preserve field order: the last event field in this frame wins.
+					emit(pendingErrorHeader + line)
+					pendingErrorHeader = ""
 				}
 				continue
 			}

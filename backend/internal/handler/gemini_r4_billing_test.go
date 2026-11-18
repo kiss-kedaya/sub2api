@@ -32,6 +32,16 @@ func TestGeminiR4NativeHandlerRegressionsSettleOnce(t *testing.T) {
 		{name: "chat-placeholder-buffered", protocol: "chat_completions", body: `{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":null}],"error":{"message":"synthetic failure"},"usage":{"prompt_tokens":10,"completion_tokens":2}}`, free: true},
 		{name: "chat-placeholder-stream", protocol: "chat_completions", stream: true, body: "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}],\"error\":{\"message\":\"synthetic failure\"}}\n\ndata: [DONE]\n\n", free: true},
 	}
+	for _, text := range []string{"", "synthetic recovered answer"} {
+		body := "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2}}\n\n" +
+			"data: {\"error\":\"synthetic transient prelude\"}\n\n" +
+			fmt.Sprintf("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":%q},\"finish_reason\":null}]}\n\n", text) +
+			"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+		cases = append(cases, struct {
+			name, protocol, body, marker string
+			stream, oauth, free          bool
+		}{"chat-string-prelude/" + text, "chat_completions", body, `"finishReason":"STOP"`, true, false, false})
+	}
 	for _, stream := range []bool{false, true} {
 		for _, part := range []struct{ name, data, marker string }{
 			{"audio", `{"inlineData":{"mimeType":"audio/pcm","data":"c3ludGhldGlj"}}`, "c3ludGhldGlj"},
@@ -118,6 +128,13 @@ func TestGeminiR4NativeHandlerRegressionsSettleOnce(t *testing.T) {
 				require.Equal(t, http.StatusOK, rec.Code)
 				require.Positive(t, entries[0].ActualCost)
 				require.Contains(t, rec.Body.String(), tc.marker)
+			}
+			if strings.HasPrefix(tc.name, "chat-string-prelude/") {
+				require.NotContains(t, rec.Body.String(), `"error"`)
+				require.InDelta(t, 0.000015, entries[0].ActualCost, 1e-12)
+				if strings.HasSuffix(tc.name, "synthetic recovered answer") {
+					require.Contains(t, rec.Body.String(), "synthetic recovered answer")
+				}
 			}
 			require.Equal(t, entries[0].ActualCost, commands[0].BalanceCost)
 			require.LessOrEqual(t, strings.Count(rec.Body.String(), "event: error\n"), 1)
