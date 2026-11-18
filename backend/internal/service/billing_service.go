@@ -1732,11 +1732,6 @@ func (s *BillingService) computeTokenBreakdownWithCacheTTL(
 
 // computeCacheCreationCost 计算缓存创建费用（支持 5m/1h 分类或标准计费）。
 // multiplier 用于长上下文等场景下的整体价格缩放（普通调用传 1.0 即可）。
-// computeCacheCreationCost 是不带缓存 TTL 提示的兼容入口。
-func (s *BillingService) computeCacheCreationCost(pricing *ModelPricing, tokens UsageTokens, price, multiplier float64) float64 {
-	return s.computeCacheCreationCostWithCacheTTL(pricing, tokens, price, multiplier, "")
-}
-
 func (s *BillingService) computeCacheCreationCostWithCacheTTL(pricing *ModelPricing, tokens UsageTokens, price, multiplier float64, ttlHint string) float64 {
 	if pricing.SupportsCacheBreakdown && (pricing.CacheCreation5mPrice > 0 || pricing.CacheCreation1hPrice > 0) {
 		cacheCreation5mTokens, cacheCreation1hTokens := normalizeCacheCreationBreakdown(tokens)

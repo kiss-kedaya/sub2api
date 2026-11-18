@@ -1335,7 +1335,7 @@ func TestCacheCreationSplitPricingSafety(t *testing.T) {
 				// billing; the shared cost function itself keeps the Anthropic rule.
 				tokens := UsageTokens{CacheCreationTokens: total}
 				tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = apicompat.NormalizeCacheCreationBreakdown(total, five, hour)
-				cost := (&BillingService{}).computeCacheCreationCost(pricing, tokens, 0, 1)
+				cost := (&BillingService{}).computeCacheCreationCostWithCacheTTL(pricing, tokens, 0, 1, "")
 				require.GreaterOrEqual(t, cost+1e-12, float64(total)*2.5e-6, "no cache writes may be dropped: %+v", tokens)
 				require.LessOrEqual(t, cost, float64(total)*4e-6+1e-12, "no charge above the 1h ceiling: %+v", tokens)
 				if hour <= 0 {
@@ -1355,9 +1355,9 @@ func TestCacheCreationSplitPricingSafety(t *testing.T) {
 func TestCacheCreationPartialSplitStaysAsReportedOnSharedCostPath(t *testing.T) {
 	pricing := &ModelPricing{SupportsCacheBreakdown: true, CacheCreation5mPrice: 2.5e-6, CacheCreation1hPrice: 4e-6}
 	tokens := UsageTokens{CacheCreationTokens: 200, CacheCreation5mTokens: 80}
-	require.InDelta(t, 80*2.5e-6, (&BillingService{}).computeCacheCreationCost(pricing, tokens, 0, 1), 1e-12)
+	require.InDelta(t, 80*2.5e-6, (&BillingService{}).computeCacheCreationCostWithCacheTTL(pricing, tokens, 0, 1, ""), 1e-12)
 	tokens = UsageTokens{CacheCreationTokens: 200, CacheCreation1hTokens: 120}
-	require.InDelta(t, 120*4e-6, (&BillingService{}).computeCacheCreationCost(pricing, tokens, 0, 1), 1e-12)
+	require.InDelta(t, 120*4e-6, (&BillingService{}).computeCacheCreationCostWithCacheTTL(pricing, tokens, 0, 1, ""), 1e-12)
 }
 
 func TestCacheCreationSplitAnthropicPricingCompatibility(t *testing.T) {
@@ -1372,7 +1372,7 @@ func TestCacheCreationSplitAnthropicPricingCompatibility(t *testing.T) {
 		{"legacy aggregate absent", UsageTokens{CacheCreation5mTokens: 80, CacheCreation1hTokens: 120}, 0.00068000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.InDelta(t, tc.want, (&BillingService{}).computeCacheCreationCost(pricing, tc.tokens, 0, 1), 1e-12)
+			require.InDelta(t, tc.want, (&BillingService{}).computeCacheCreationCostWithCacheTTL(pricing, tc.tokens, 0, 1, ""), 1e-12)
 			cost := calculateTokenStatsCost(&ChannelModelPricing{CacheWritePrice: testPtrFloat64(2.5e-6), CacheWrite1hPrice: testPtrFloat64(4e-6)}, tc.tokens)
 			require.NotNil(t, cost)
 			require.InDelta(t, tc.want, *cost, 1e-12)
@@ -1393,7 +1393,7 @@ func TestComputeCacheCreationCost_CapsContradictoryBreakdownAtAggregate(t *testi
 		CacheCreation5mTokens: 463184,
 		CacheCreation1hTokens: 463184,
 	}
-	cost := svc.computeCacheCreationCost(pricing, tokens, 0, 1)
+	cost := svc.computeCacheCreationCostWithCacheTTL(pricing, tokens, 0, 1, "")
 	require.Equal(t, float64(tokens.CacheCreationTokens), cost,
 		"TTL detail tokens must not exceed the aggregate cache-creation count")
 }
@@ -1489,7 +1489,7 @@ func TestComputeCacheCreationCost_PreservesZeroDetailFallback(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cost := svc.computeCacheCreationCost(pricing, tt.tokens, 0, 1)
+			cost := svc.computeCacheCreationCostWithCacheTTL(pricing, tt.tokens, 0, 1, "")
 			require.InDelta(t, 100*4e-6, cost, 1e-12)
 		})
 	}
