@@ -1191,18 +1191,15 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 			collected, usageObj, stats, err := collectGeminiSSEObserved(resp.Body, true, nil)
 			if stats.dataEvents == 0 && !stats.fallback.Truncated() {
 				stats.errorSignal, _ = detectGeminiResponseSignalInBody(stats.fallback.Bytes())
-				if stats.errorSignal.Kind == geminiSignalError {
+				stats.nonBillableUpstreamError = stats.errorSignal.Kind == geminiSignalError
+				if stats.nonBillableUpstreamError {
 					usageObj = extractGeminiUsage(unwrapIfNeeded(true, stats.fallback.Bytes()))
 					if usageObj == nil {
 						usageObj = &ClaudeUsage{}
 					}
 				}
 			}
-			collectedBytes, _ := json.Marshal(collected)
-			claudeResp, usageObj2 := convertGeminiToClaudeMessage(collected, originalModel, collectedBytes, false)
-			content, _ := claudeResp["content"].([]any)
-			// Only content the Messages converter will actually send can restore billing.
-			nonBillableUpstreamError = stats.errorSignal.Kind == geminiSignalError && !(stats.successfulTerminal && len(content) > 0)
+			nonBillableUpstreamError = stats.nonBillableUpstreamError
 			if nonBillableUpstreamError {
 				usage = usageObj
 				responseErr = s.writeGeminiMessagesSignalError(c, stats.errorSignal, false)
@@ -1212,8 +1209,10 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 				}
 				clientGone, usage, goneOutputTokens = true, usageObj, stats.meter.tokens()
 			} else {
+				collectedBytes, _ := json.Marshal(collected)
 				upstreamResponseModelObserverFromContext(c).ObserveGemini(collectedBytes)
 				observeGeminiImageOutputs(c, collectedBytes)
+				claudeResp, usageObj2 := convertGeminiToClaudeMessage(collected, originalModel, collectedBytes, false)
 				c.JSON(http.StatusOK, claudeResp)
 				usage = usageObj2
 				if usageObj != nil && (usageObj.InputTokens > 0 || usageObj.OutputTokens > 0) {
@@ -1785,19 +1784,15 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			}
 			if stats.dataEvents == 0 && !stats.fallback.Truncated() {
 				stats.errorSignal, _ = detectGeminiResponseSignalInBody(stats.fallback.Bytes())
-				if stats.errorSignal.Kind == geminiSignalError {
+				stats.nonBillableUpstreamError = stats.errorSignal.Kind == geminiSignalError
+				if stats.nonBillableUpstreamError {
 					best = stats.errorSignal
 					if reported := extractGeminiUsage(unwrapIfNeeded(isOAuth, stats.fallback.Bytes())); reported != nil {
 						usageObj = reported
 					}
 				}
 			}
-			b, _ := json.Marshal(collected)
-			var delivered geminiOutputMeter
-			delivered.observe(b)
-			observeGeminiImageOutputs(c, b)
-			nonBillableUpstreamError = stats.errorSignal.Kind == geminiSignalError &&
-				!(stats.successfulTerminal && (delivered.runes > 0 || observedGeminiImageOutputs(c) > 0))
+			nonBillableUpstreamError = stats.nonBillableUpstreamError
 			if nonBillableUpstreamError {
 				usage = usageObj
 				s.markGeminiResponseSignal(c, account, stats.errorSignal, false, requestID)
@@ -1817,10 +1812,12 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 				clientGone, usage, goneOutputTokens = true, usageObj, stats.meter.tokens()
 			} else {
 				s.finalizeGeminiSSESignal(c, account, false, requestID, best, stats.dataEvents > 0, stats.fallback)
+				b, _ := json.Marshal(collected)
 				if upstreamFinancialFailureEnvelope(b) {
 					defer GuardUpstreamFinancialError(c, 0, b)()
 				}
 				upstreamResponseModelObserverFromContext(c).ObserveGemini(b)
+				observeGeminiImageOutputs(c, b)
 				c.Data(http.StatusOK, "application/json", b)
 				usage = usageObj
 			}
@@ -2627,10 +2624,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 		if u := extractGeminiUsage(unwrappedBytes); u != nil {
 			usage = *u
 		}
-		// A successful stop only supersedes an error if an answer was delivered.
-		if signal.Kind == geminiSignalError || meter.runes > 0 {
-			nonBillableUpstreamError = geminiNativeErrorBillingSignal(nonBillableUpstreamError, signal)
-		}
+		nonBillableUpstreamError = geminiNativeErrorBillingSignal(nonBillableUpstreamError, signal)
 
 		// Process the final unterminated event at EOF as well.
 		if errors.Is(readErr, io.EOF) {
@@ -2764,9 +2758,9 @@ type geminiSSECollectStats struct {
 	dataEvents int
 	fallback   *geminiSSEFallbackBody
 	// meter estimates the content collected so far, for a read that fails midway.
-	meter              geminiOutputMeter
-	errorSignal        geminiResponseSignal
-	successfulTerminal bool
+	meter                    geminiOutputMeter
+	errorSignal              geminiResponseSignal
+	nonBillableUpstreamError bool
 }
 
 // collectGeminiSSEObserved 在聚合的同时把每个解包后的事件原文交给 observe（可为 nil）。
@@ -2809,12 +2803,9 @@ func collectGeminiSSEObserved(body io.Reader, isOAuth bool, observe func(rawByte
 				}
 				if parsed != nil {
 					signal := geminiParsedResponseSignal(parsed, rawBytes, frame.EventType)
+					stats.nonBillableUpstreamError = geminiNativeErrorBillingSignal(stats.nonBillableUpstreamError, signal)
 					if signal.Kind == geminiSignalError {
 						stats.errorSignal = signal
-						stats.successfulTerminal = false
-					} else if signal.Reason == "STOP" || signal.Reason == "MAX_TOKENS" {
-						// Later content cannot retroactively make an earlier empty stop successful.
-						stats.successfulTerminal = lastWithParts != nil || len(extractGeminiParts(parsed)) > 0
 					}
 					last = parsed
 					if u := extractGeminiUsage(rawBytes); u != nil {
@@ -3194,6 +3185,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 
 					sawDataEvent = true
 					sig, ok := detectGeminiResponseSignal(rawBytes, upstreamEventType)
+					nonBillableUpstreamError = geminiNativeErrorBillingSignal(nonBillableUpstreamError, sig)
 					if ok && sig.Kind > best.Kind {
 						best = sig
 					}
@@ -3226,10 +3218,6 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 						emit(pendingErrorHeader + line)
 					}
 					pendingErrorHeader = ""
-					// Count native text, tools and inline images only after a successful write.
-					if sig.Kind == geminiSignalError || (!clientGone && (meter.runes > 0 || observedGeminiImageOutputs(c) > 0)) {
-						nonBillableUpstreamError = geminiNativeErrorBillingSignal(nonBillableUpstreamError, sig)
-					}
 				}
 			} else {
 				if !sawDataEvent {
