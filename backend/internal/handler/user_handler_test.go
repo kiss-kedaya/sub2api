@@ -23,6 +23,10 @@ type userHandlerRepoStub struct {
 	user       *service.User
 	identities []service.UserAuthIdentityRecord
 	unbound    []string
+
+	// getByIDCalls counts repository hits so a cache test can prove a poll did
+	// not touch the database.
+	getByIDCalls int
 }
 
 func (s *userHandlerRepoStub) Create(context.Context, *service.User) error { return nil }
@@ -30,6 +34,7 @@ func (s *userHandlerRepoStub) CreateWithEmailAliasGuard(context.Context, *servic
 	return nil
 }
 func (s *userHandlerRepoStub) GetByID(context.Context, int64) (*service.User, error) {
+	s.getByIDCalls++
 	cloned := *s.user
 	return &cloned, nil
 }

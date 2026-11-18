@@ -31,6 +31,10 @@ type AuthHandler struct {
 
 	dingTalkClientInstance *DingTalkClient
 	dingTalkClientMu       sync.Mutex
+
+	// currentUserCache reuses one /auth/me payload for a few seconds; the route
+	// is the busiest API call in the product.
+	currentUserCache authCurrentUserCache
 }
 
 // NewAuthHandler creates a new AuthHandler
@@ -455,12 +459,24 @@ func (h *AuthHandler) recordSuccessfulLogin(c *gin.Context, userID int64) {
 	h.authService.RecordSuccessfulLogin(c.Request.Context(), userID)
 }
 
+// currentUserResponse is the /auth/me payload. It is a named type so the short
+// reuse window can cache it without re-marshalling on every poll.
+type currentUserResponse struct {
+	userProfileResponse
+	RunMode string `json:"run_mode"`
+}
+
 // GetCurrentUser handles getting current authenticated user
 // GET /api/v1/auth/me
 func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	if cached, ok := h.currentUserCache.get(subject.UserID); ok {
+		response.Success(c, cached)
 		return
 	}
 
@@ -476,20 +492,17 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
-	type UserResponse struct {
-		userProfileResponse
-		RunMode string `json:"run_mode"`
-	}
-
 	runMode := config.RunModeStandard
 	if h.cfg != nil {
 		runMode = h.cfg.RunMode
 	}
 
-	response.Success(c, UserResponse{
+	payload := &currentUserResponse{
 		userProfileResponse: userProfileResponseFromService(user, identities),
 		RunMode:             runMode,
-	})
+	}
+	h.currentUserCache.put(subject.UserID, payload)
+	response.Success(c, payload)
 }
 
 // ValidatePromoCodeRequest 验证优惠码请求

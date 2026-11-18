@@ -389,7 +389,7 @@ const formatSignedNumber = (value: number) => `${value >= 0 ? '+' : ''}${value}`
 // cached user would double count if an automatic profile refresh already saw it.
 const refreshAccountAfterRedeem = async (type: RedeemCode['type']) => {
   try {
-    const refreshed = await authStore.refreshUser()
+    const refreshed = await authStore.refreshUser({ force: true })
     if (type === 'balance' && Number.isFinite(refreshed.balance)) redeemBalanceAfter.value = refreshed.balance
     if (type === 'concurrency' && Number.isFinite(refreshed.concurrency)) redeemConcurrencyAfter.value = refreshed.concurrency
   } catch (error) {

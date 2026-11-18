@@ -410,6 +410,50 @@ describe('useAuthStore', () => {
       const store = useAuthStore()
       await expect(store.refreshUser()).rejects.toThrow('Not authenticated')
     })
+
+    // /auth/me is the busiest API route: a navigation burst must reuse one
+    // backend answer instead of firing a request per mounted view.
+    it('5 秒内复用同一份数据', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      mockGetCurrentUser.mockClear()
+      mockGetCurrentUser.mockResolvedValue({ data: { ...fakeUser, username: 'reused' } })
+
+      await store.refreshUser()
+      const second = await store.refreshUser()
+
+      expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+      expect(second.username).toBe('reused')
+    })
+
+    it('force 绕过复用窗口', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      mockGetCurrentUser.mockClear()
+      mockGetCurrentUser.mockResolvedValue({ data: { ...fakeUser } })
+
+      await store.refreshUser()
+      await store.refreshUser({ force: true })
+
+      expect(mockGetCurrentUser).toHaveBeenCalledTimes(2)
+    })
+
+    it('并发调用只发一次请求', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      mockGetCurrentUser.mockClear()
+      mockGetCurrentUser.mockResolvedValue({ data: { ...fakeUser } })
+
+      await Promise.all([store.refreshUser({ force: true }), store.refreshUser({ force: true })])
+
+      expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+    })
   })
 
   // --- isSimpleMode ---
