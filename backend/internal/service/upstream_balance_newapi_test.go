@@ -139,7 +139,7 @@ func TestUpstreamBalanceNewAPIRuleScanRefreshesWithoutRateOptIn(t *testing.T) {
 	defer server.Close()
 	now := time.Now().UTC()
 	stale := now.Add(-2 * time.Hour)
-	a := &Account{ID: 8301, Type: AccountTypeAPIKey, Platform: PlatformOpenAI, Status: StatusActive, Credentials: map[string]any{"api_key": "synthetic-key", "base_url": server.URL}, Extra: map[string]any{UpstreamBillingProbeEnabledExtraKey: false, UpstreamBillingProbeExtraKey: &UpstreamBillingProbeSnapshot{Status: "ok", UpstreamKind: UpstreamKindNewAPI, Balance: &UpstreamBalanceSnapshot{Status: "ok", ReceivedAt: &stale, FreshUntil: &stale, Data: map[string]any{"remaining": 9.0}}}}}
+	a := &Account{ID: 8301, Type: AccountTypeAPIKey, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true, Credentials: map[string]any{"api_key": "synthetic-key", "base_url": server.URL}, Extra: map[string]any{UpstreamBillingProbeEnabledExtraKey: false, UpstreamBillingProbeExtraKey: &UpstreamBillingProbeSnapshot{Status: "ok", UpstreamKind: UpstreamKindNewAPI, Balance: &UpstreamBalanceSnapshot{Status: "ok", ReceivedAt: &stale, FreshUntil: &stale, Data: map[string]any{"remaining": 9.0}}}}}
 	repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{a.ID: a}}
 	probe := newUpstreamBillingProbeTestService(repo, upstreamBalanceNewAPIHTTP{server.Client()}, &upstreamBillingProbeSettingRepo{})
 	probe.now = func() time.Time { return now }
@@ -192,7 +192,9 @@ func TestUpstreamBalanceNewAPIRetryAfterServerFailure(t *testing.T) {
 	require.Equal(t, http.StatusOK, svc.fetchNewAPIBalance(context.Background(), a, target, server.URL).statusCode)
 	require.Equal(t, int32(2), calls.Load())
 	// Another key on the same site does not consume the same IP's next budget.
-	require.Equal(t, http.StatusTooManyRequests, svc.fetchNewAPIBalance(context.Background(), a, upstreamBillingProbeTarget{apiKey: "synthetic-other-key"}, server.URL).statusCode)
+	deferred := svc.fetchNewAPIBalance(context.Background(), a, upstreamBillingProbeTarget{apiKey: "synthetic-other-key"}, server.URL)
+	require.Zero(t, deferred.statusCode, "a local budget deferral is not an upstream HTTP rejection")
+	require.Equal(t, "rate_limited", deferred.failure)
 	require.Equal(t, int32(2), calls.Load())
 }
 
@@ -222,8 +224,8 @@ func TestUpstreamBalanceNewAPIUnlimitedDoesNotPromoteWallet(t *testing.T) {
 func TestUpstreamBalanceNewAPIGroupSkipsMissingRepresentative(t *testing.T) {
 	now := time.Now().UTC()
 	fresh := now.Add(time.Hour)
-	missing := &Account{ID: 8101, Type: AccountTypeAPIKey, Extra: map[string]any{}}
-	available := &Account{ID: 8102, Type: AccountTypeAPIKey, Extra: map[string]any{UpstreamBillingProbeExtraKey: &UpstreamBillingProbeSnapshot{Status: "ok", Balance: &UpstreamBalanceSnapshot{Status: "ok", ReceivedAt: &now, FreshUntil: &fresh, Data: map[string]any{"remaining": 2.0, "unit": "USD"}}}}}
+	missing := &Account{ID: 8101, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://example.invalid"}, Extra: map[string]any{UpstreamBillingUserIDExtraKey: int64(7)}}
+	available := &Account{ID: 8102, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://example.invalid"}, Extra: map[string]any{UpstreamBillingUserIDExtraKey: int64(7), UpstreamBillingProbeExtraKey: &UpstreamBillingProbeSnapshot{Status: "ok", Balance: &UpstreamBalanceSnapshot{Status: "ok", ReceivedAt: &now, FreshUntil: &fresh, Data: map[string]any{"remaining": 2.0, "unit": "USD"}}}}}
 	c := defaultAccountOpsConfig()
 	c.Groups = []AccountOpsGroup{{ID: "manual-synthetic", Name: "Synthetic wallet", AccountIDs: []int64{missing.ID, available.ID}}}
 	c.BalanceThresholds = []AccountOpsBalanceRule{{AccountID: missing.ID, Enabled: true, Threshold: 5, Unit: "USD"}, {AccountID: available.ID, Enabled: true, Threshold: 5, Unit: "USD"}}

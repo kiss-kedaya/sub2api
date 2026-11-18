@@ -24,23 +24,24 @@ type AccountOpsUsageWindow struct {
 	ResetsAt    *time.Time `json:"resets_at,omitempty"`
 }
 type AccountOpsBalanceAccount struct {
-	AccountID     int64                   `json:"account_id"`
-	AccountName   string                  `json:"account_name"`
-	GroupID       string                  `json:"group_id"`
-	GroupName     string                  `json:"group_name"`
-	GroupMode     string                  `json:"group_mode"`
-	Platform      string                  `json:"platform"`
-	Type          string                  `json:"type"`
-	Balance       *float64                `json:"balance"`
-	KeyBalance    *float64                `json:"key_balance,omitempty"`
-	WalletBalance *float64                `json:"wallet_balance,omitempty"`
-	WalletStatus  string                  `json:"wallet_status,omitempty"`
-	UpstreamKind  string                  `json:"upstream_kind,omitempty"`
-	BalanceReason string                  `json:"balance_reason,omitempty"`
-	Unit          string                  `json:"unit"`
-	BalanceStatus string                  `json:"balance_status"`
-	ReceivedAt    *time.Time              `json:"received_at"`
-	UsageWindows  []AccountOpsUsageWindow `json:"usage_windows"`
+	AccountID      int64                   `json:"account_id"`
+	AccountName    string                  `json:"account_name"`
+	GroupID        string                  `json:"group_id"`
+	GroupName      string                  `json:"group_name"`
+	GroupMode      string                  `json:"group_mode"`
+	Platform       string                  `json:"platform"`
+	Type           string                  `json:"type"`
+	Balance        *float64                `json:"balance"`
+	KeyBalance     *float64                `json:"key_balance,omitempty"`
+	WalletBalance  *float64                `json:"wallet_balance,omitempty"`
+	WalletStatus   string                  `json:"wallet_status,omitempty"`
+	WalletIdentity string                  `json:"wallet_identity,omitempty"`
+	UpstreamKind   string                  `json:"upstream_kind,omitempty"`
+	BalanceReason  string                  `json:"balance_reason,omitempty"`
+	Unit           string                  `json:"unit"`
+	BalanceStatus  string                  `json:"balance_status"`
+	ReceivedAt     *time.Time              `json:"received_at"`
+	UsageWindows   []AccountOpsUsageWindow `json:"usage_windows"`
 }
 
 func opsNumber(v any) (float64, bool) {
@@ -489,6 +490,7 @@ func (s *AccountOpsService) thresholdAccounts(ctx context.Context, apiOnly bool)
 			}
 		}
 		group := accountOpsGroupAssignment(a, c)
+		item.WalletIdentity = opsBalanceWalletIdentity(a)
 		item.GroupID, item.GroupName, item.GroupMode = group.ID, group.Name, group.Mode
 		if a.Type == AccountTypeOAuth {
 			item.UsageWindows = s.usageWindows(ctx, a, now)
@@ -669,12 +671,19 @@ func accountOpsGroupCriteria(c AccountOpsConfig, kind string, members []accountO
 
 func (s *AccountOpsService) assessThresholdGroup(ctx context.Context, group AccountOpsGroupAssignment, members []accountOpsThresholdMember, kind string, c AccountOpsConfig, now time.Time) (*AccountOpsEvent, string) {
 	criteria, _, _, _ := accountOpsGroupCriteria(c, kind, members)
-	// Manual membership declares a shared wallet. Pick a readable member rather
-	// than letting a paused or unconfigured first key suppress the whole group.
 	if kind != "balance_threshold" && len(members) > 1 {
 		members = members[:1]
 	}
+	var anchor *Account
+	if len(members) > 0 {
+		anchor = members[0].account
+	}
 	for _, member := range members {
+		// Manual groups are site-scoped, not proof that their users share money.
+		if kind == "balance_threshold" && member.account != anchor &&
+			(opsBalanceWalletIdentity(anchor) == "" || opsBalanceWalletIdentity(anchor) != opsBalanceWalletIdentity(member.account)) {
+			continue
+		}
 		if member.account == nil || member.lookupErr != nil {
 			continue
 		}
@@ -697,6 +706,20 @@ func (s *AccountOpsService) assessThresholdGroup(ctx context.Context, group Acco
 		}
 	}
 	return &AccountOpsEvent{AccountID: groupAccountID(members), AccountName: group.Name, GroupID: group.ID, GroupName: group.Name, Kind: kind, Signal: kind, Identity: group.ID, Criteria: criteria}, "unknown"
+}
+
+// opsBalanceWalletIdentity exposes only a fingerprint; site membership alone
+// cannot authorize one upstream user's balance to stand in for another's.
+func opsBalanceWalletIdentity(a *Account) string {
+	if a == nil {
+		return ""
+	}
+	provider, site, userID := accountOpsUpstreamIdentity(a)
+	if provider == "" || site == "" || userID <= 0 {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", provider, site, userID)))
+	return hex.EncodeToString(sum[:])
 }
 
 func groupAccountID(members []accountOpsThresholdMember) int64 {

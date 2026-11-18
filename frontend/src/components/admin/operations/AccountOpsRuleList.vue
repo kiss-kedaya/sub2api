@@ -185,11 +185,12 @@ const rows = computed<GroupRow[]>(() => groups.value.map(group => {
   const accounts = group.account_ids.map(id => accountByID.value.get(id)).filter((account): account is AccountOpsThresholdAccount => !!account)
   const balanceAccounts = accounts.filter(account => account.type === 'apikey')
   const quotaAccounts = accounts.filter(account => account.type === 'oauth')
-  const balanceRule = balanceAccounts.map(account => props.config.balance_thresholds?.find(rule => rule.account_id === account.account_id)).find((rule): rule is NonNullable<GroupRow['balanceRule']> => !!rule)
+  const balanceRule = group.account_ids.map(id => props.config.balance_thresholds?.find(rule => rule.account_id === id)).find((rule): rule is NonNullable<GroupRow['balanceRule']> => !!rule)
   const quotaRule = quotaAccounts.map(account => props.config.quota_thresholds?.find(rule => rule.account_id === account.account_id)).find((rule): rule is NonNullable<GroupRow['quotaRule']> => !!rule)
-  // Manual membership declares a shared wallet; match the scanner's first readable member.
-  const representative = balanceAccounts.find(account => account.balance_status === 'ok' && account.balance != null) ?? balanceAccounts[0]
-  const statesForGroup = [...(representative ? [metricState(representative, balanceRule)] : []), ...quotaAccounts.map(account => metricState(account, quotaRule))]
+  // Site-scoped manual groups may contain different wallets; only proven peers can substitute.
+  const anchor = balanceRule ? accountByID.value.get(balanceRule.account_id) : balanceAccounts[0]
+  const representative = balanceAccounts.find(account => (account === anchor || (!!anchor?.wallet_identity && account.wallet_identity === anchor.wallet_identity)) && account.balance_status === 'ok' && account.balance != null) ?? anchor
+  const statesForGroup = [...(representative ? [metricState(representative, balanceRule)] : balanceRule ? ['unknown'] : []), ...quotaAccounts.map(account => metricState(account, quotaRule))]
   const partial = balanceAccounts.some(account => account.balance_status !== 'ok' || account.balance == null)
   let balanceNote = partial && representative?.balance_status === 'ok' ? t('accountOps.partialBalance') : ''
   if (representative?.balance_status === 'stale' && representative.received_at) {
