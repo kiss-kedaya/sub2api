@@ -45,10 +45,8 @@ const (
 	// envelope is a fingerprint even when the endpoint asked no longer exists.
 	upstreamNewAPIErrorType = "new_api_error"
 
-	// upstreamNewAPIQuotaPerUnit is new-api's default QuotaPerUnit: 500000 quota
-	// points are one US dollar. A site can change that ratio or switch its
-	// display currency, and neither is visible through the key-scoped endpoint,
-	// so every amount derived with it is marked as assumed.
+	// upstreamNewAPIQuotaPerUnit is only the fallback when /api/status cannot
+	// report the site's configured ratio; fallback amounts are marked assumed.
 	upstreamNewAPIQuotaPerUnit = 500000.0
 )
 
@@ -87,24 +85,30 @@ type upstreamNewAPIUsageResponse struct {
 // response into the same balance fields the Sub2API parser produces, so the
 // account list renders one shape regardless of the upstream software.
 //
-// Amounts are converted to US dollars with new-api's default QuotaPerUnit and
-// flagged unit_assumed. An unlimited token reports total_available = 0, which
-// must not be read as an empty balance: unlimited_quota decides.
-func parseUpstreamNewAPIUsageResponse(body []byte) (map[string]any, error) {
+// Amounts use the site's cached QuotaPerUnit; absent metadata uses the marked
+// default. An unlimited token must never read as an empty balance.
+func parseUpstreamNewAPIUsageResponse(body []byte, quotaPerUnit ...float64) (map[string]any, error) {
 	var response upstreamNewAPIUsageResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
 	}
-	// object=token_usage is what tells new-api apart from any other JSON API
-	// that happens to answer this path with 200.
-	if response.Data == nil || response.Data.Object == nil || *response.Data.Object != "token_usage" {
+	// HTTP 200 alone is not success: failed envelopes can carry stale data.
+	if response.Code == nil || !*response.Code || response.Data == nil || response.Data.Object == nil || *response.Data.Object != "token_usage" {
 		return nil, fmt.Errorf("unexpected new-api usage response schema")
 	}
 	usage := response.Data
+	ratio := upstreamNewAPIQuotaPerUnit
+	assumed := true
+	if len(quotaPerUnit) > 0 && quotaPerUnit[0] > 0 && !math.IsNaN(quotaPerUnit[0]) && !math.IsInf(quotaPerUnit[0], 0) {
+		ratio, assumed = quotaPerUnit[0], false
+	}
+	amount := func(value *float64) (float64, bool) {
+		n, ok := finiteUpstreamBalanceNumber(value)
+		return n / ratio, ok
+	}
 	data := map[string]any{
-		"is_valid":     true,
-		"unit":         "USD",
-		"unit_assumed": true,
+		"is_valid": true, "unit": "USD", "unit_assumed": assumed, "quota_per_unit": ratio,
+		"wallet_status": "forbidden",
 	}
 	if usage.Name != nil {
 		if name := sanitizeUpstreamBalanceText(*usage.Name, upstreamNewAPIMaxTokenNameRunes); name != "" {
@@ -112,50 +116,30 @@ func parseUpstreamNewAPIUsageResponse(body []byte) (map[string]any, error) {
 		}
 	}
 	unlimited := usage.UnlimitedQuota != nil && *usage.UnlimitedQuota
-	// unlimited_quota is a per-token cap flag, not a statement about the account.
-	// new-api forces it true on the default token it creates for every user, so
-	// treating it as "no number to show" hid the account balance on most relays.
-	// The account quota is finite and is the figure an operator is looking at, so
-	// it becomes the headline instead of the word "unlimited".
-	accountRemaining, hasAccountQuota := 0.0, false
-	accountUsed, _ := 0.0, false
-	if usage.UserQuota != nil {
-		if balance, ok := upstreamNewAPIQuotaToUSD(usage.UserQuota.TotalAvailable); ok {
-			accountRemaining, hasAccountQuota = balance, true
-		}
-		if used, ok := upstreamNewAPIQuotaToUSD(usage.UserQuota.TotalUsed); ok {
-			accountUsed = used
-		}
-	}
-	promoteAccountQuota := unlimited && hasAccountQuota
-	if unlimited && !promoteAccountQuota {
+	// The key cap and account wallet are different scopes. An unlimited key
+	// must never turn a finite wallet into a fabricated key quota.
+	if unlimited {
 		data["unlimited"] = true
+		data["wallet_status"] = "unlimited"
 	}
-	if used, ok := upstreamNewAPIQuotaToUSD(usage.TotalUsed); ok {
+	if used, ok := amount(usage.TotalUsed); ok {
 		data["quota_used"] = used
 	}
-	switch {
-	case promoteAccountQuota:
-		// The token has no cap of its own, so the account quota is the balance.
-		data["remaining"] = accountRemaining
-		data["quota_limit"] = accountRemaining + accountUsed
-		if accountUsed > 0 {
-			data["quota_used"] = accountUsed
-		}
-	case !unlimited:
-		if remaining, ok := upstreamNewAPIQuotaToUSD(usage.TotalAvailable); ok {
+	if !unlimited {
+		if remaining, ok := amount(usage.TotalAvailable); ok {
 			data["remaining"] = remaining
 		}
-		if granted, ok := upstreamNewAPIQuotaToUSD(usage.TotalGranted); ok {
+		if granted, ok := amount(usage.TotalGranted); ok {
 			data["quota_limit"] = granted
 		}
-	}
-	if usage.UserQuota != nil && !promoteAccountQuota {
-		if balance, ok := upstreamNewAPIQuotaToUSD(usage.UserQuota.TotalAvailable); ok {
-			data["wallet_balance"] = balance
-		}
-		if used, ok := upstreamNewAPIQuotaToUSD(usage.UserQuota.TotalUsed); ok {
-			data["wallet_used"] = used
+		if usage.UserQuota != nil {
+			if balance, ok := amount(usage.UserQuota.TotalAvailable); ok {
+				data["wallet_balance"] = balance
+				data["wallet_status"] = "available"
+			}
+			if used, ok := amount(usage.UserQuota.TotalUsed); ok {
+				data["wallet_used"] = used
+			}
 		}
 	}
 	// expires_at is a Unix timestamp in seconds; 0 means the token never expires.
@@ -222,14 +206,6 @@ func parseUpstreamNewAPILegacyAccountBalance(subscriptionBody, usageBody []byte)
 	return data, nil
 }
 
-func upstreamNewAPIQuotaToUSD(value *float64) (float64, bool) {
-	quota, ok := finiteUpstreamBalanceNumber(value)
-	if !ok {
-		return 0, false
-	}
-	return quota / upstreamNewAPIQuotaPerUnit, true
-}
-
 type upstreamLegacySubscriptionResponse struct {
 	Object             *string  `json:"object"`
 	HardLimitUSD       *float64 `json:"hard_limit_usd"`
@@ -251,6 +227,14 @@ type upstreamLegacyUsageResponse struct {
 // still stored, without a remaining amount, rather than presenting the granted
 // total as if it were what is left.
 func parseUpstreamLegacySubscriptionResponse(subscriptionBody, usageBody []byte) (map[string]any, error) {
+	if err := upstreamBillingEnvelopeError(subscriptionBody); err != nil {
+		return nil, err
+	}
+	if len(usageBody) > 0 {
+		if err := upstreamBillingEnvelopeError(usageBody); err != nil {
+			return nil, err
+		}
+	}
 	var subscription upstreamLegacySubscriptionResponse
 	if err := json.Unmarshal(subscriptionBody, &subscription); err != nil {
 		return nil, err

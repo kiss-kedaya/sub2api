@@ -95,7 +95,7 @@ type upstreamUsageBalanceRateLimit struct {
 // second official path.
 func upstreamBalanceProbeAllowed(baseURL string, rate upstreamBillingProbeHTTPResult) bool {
 	switch rate.statusCode {
-	case 0, http.StatusUnauthorized, http.StatusTooManyRequests:
+	case 0, http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
 		return false
 	}
 	return !upstreamBillingProbeTargetIsOfficialAPI(baseURL)
@@ -136,7 +136,7 @@ func upstreamBalanceSnapshotFromResult(
 		case result.statusCode == http.StatusNotFound || result.statusCode == http.StatusMethodNotAllowed:
 			reason = "unsupported"
 		case result.statusCode < 200 || result.statusCode >= 300:
-			reason = "http_error"
+			reason = upstreamBalanceFailureStatus(result)
 		default:
 			data, err := parseUpstreamBalanceResponse(result.body)
 			if err == nil {

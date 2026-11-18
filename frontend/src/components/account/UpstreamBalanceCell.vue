@@ -23,11 +23,15 @@
         >
           <span class="flex items-center gap-1 text-sm" :class="headlineClass">
             <UIcon v-if="headlineIcon" :name="headlineIcon" class="size-3.5 shrink-0" aria-hidden="true" />
+            <span v-if="kind === 'newapi'" class="text-xs text-muted">{{ t('admin.accounts.upstreamBalance.keyQuotaShort') }}</span>
             <span
               :class="isAmount ? 'font-mono tabular-nums' : 'font-medium'"
               class="whitespace-nowrap border-b border-dotted border-accented"
               data-testid="upstream-balance-value"
             >{{ headline }}</span>
+          </span>
+          <span v-if="kind === 'newapi'" class="mt-0.5 text-xs text-muted" data-testid="upstream-balance-wallet-state">
+            {{ t('admin.accounts.upstreamBalance.walletShort', { value: newAPIWallet }) }}
           </span>
           <span v-if="subline" class="mt-0.5 whitespace-nowrap text-xs" :class="sublineClass" data-testid="upstream-balance-subline">
             {{ subline }}
@@ -99,12 +103,23 @@ const unit = computed(() => view.value.data?.unit)
 const money = (value: number) => formatUpstreamAmount(value, unit.value, locale.value)
 const isAmount = computed(() => view.value.state === 'value' || view.value.state === 'wallet')
 
+const newAPIWallet = computed(() => {
+  const data = view.value.data
+  if (data?.unlimited) return t('admin.accounts.upstreamBalance.unlimited')
+  if (data?.wallet_status === 'forbidden') return t('admin.accounts.upstreamBalance.forbidden')
+  return typeof data?.wallet_balance === 'number' ? money(data.wallet_balance) : t('admin.accounts.upstreamBalance.notRead')
+})
+
 const headline = computed(() => {
   const v = view.value
   switch (v.state) {
     case 'value':
     case 'wallet':
       return money(v.amount ?? 0)
+    case 'invalid_key':
+    case 'ip_forbidden':
+    case 'rate_limited':
+      return t(`admin.accounts.upstreamBalance.failure.${v.state}`)
     case 'unlimited':
       return t('admin.accounts.upstreamBalance.unlimited')
     case 'used_only':
@@ -153,14 +168,15 @@ const elapsed = (iso?: string) => {
 const subline = computed(() => {
   const v = view.value
   if (v.state === 'value' || v.state === 'unlimited') {
-    if (v.lastReadFailed) return t('admin.accounts.upstreamBalance.lastReadFailedShort')
+    if (v.lastReadFailed) return kind.value === 'newapi' ? failureText(v.balance?.last_error) || t('admin.accounts.upstreamBalance.lastReadFailedShort') : t('admin.accounts.upstreamBalance.lastReadFailedShort')
     if (v.stale) return t('admin.accounts.upstreamBalance.staleShort', { value: elapsed(v.balance?.received_at) })
+    if (kind.value === 'newapi') return ''
     if (v.walletBalance !== undefined) return t('admin.accounts.upstreamBalance.walletShort', { value: money(v.walletBalance) })
     if (v.usedPercent !== undefined) return t('admin.accounts.upstreamBalance.usedPercent', { value: Math.round(v.usedPercent) })
     return v.state === 'value' ? t('admin.accounts.upstreamBalance.keyQuotaShort') : ''
   }
   if (v.state === 'wallet') {
-    if (v.lastReadFailed) return t('admin.accounts.upstreamBalance.lastReadFailedShort')
+    if (v.lastReadFailed) return kind.value === 'newapi' ? failureText(v.balance?.last_error) || t('admin.accounts.upstreamBalance.lastReadFailedShort') : t('admin.accounts.upstreamBalance.lastReadFailedShort')
     if (v.stale) return t('admin.accounts.upstreamBalance.staleShort', { value: elapsed(v.balance?.received_at) })
     return t('admin.accounts.upstreamBalance.walletOnlyShort')
   }

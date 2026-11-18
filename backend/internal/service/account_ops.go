@@ -99,6 +99,7 @@ type AccountOpsService struct {
 	usageLogs              UsageLogRepository
 	geminiQuota            *GeminiQuotaService
 	accounts               AccountRepository
+	balanceProbe           *UpstreamBillingProbeService
 	customUsage            *CustomUsageService
 	customUsageOnce        sync.Once
 	usageCache             *UsageCache

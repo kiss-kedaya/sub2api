@@ -30,6 +30,9 @@ export type UpstreamBalanceState =
   | 'unsupported' // reached the upstream, no known balance endpoint answered
   | 'failed' // read failed and there is no earlier value to show
   | 'reading' // an identified Sub2API / New API read is still being retried
+  | 'invalid_key'
+  | 'ip_forbidden'
+  | 'rate_limited'
   | 'unlimited'
   | 'used_only' // the upstream reported spend but no usable balance
   | 'value' // remaining (key quota) is the headline number
@@ -68,6 +71,9 @@ export function upstreamBalanceView(account: Pick<Account, 'type' | 'extra'>, no
   if (!hasData) {
     if (kind === 'official') return { ...base, state: 'official', balance }
     if (!balance) return { ...base, state: 'not_read' }
+    if (balance.last_error === 'invalid_key' || balance.last_error === 'ip_forbidden' || balance.last_error === 'rate_limited') {
+      return { ...base, state: balance.last_error, balance }
+    }
     // A recognised Sub2API / New API upstream whose read is still being retried:
     // show a read in progress instead of "Read failed".
     if (balance.status === 'pending') return { ...base, state: 'reading', balance }
@@ -117,6 +123,9 @@ export function formatUpstreamAmount(value: number, unit: string | undefined, lo
 }
 
 export const UPSTREAM_BALANCE_FAILURE_KEYS = [
+  'invalid_key',
+  'ip_forbidden',
+  'rate_limited',
   'unsupported',
   'http_error',
   'invalid_response',

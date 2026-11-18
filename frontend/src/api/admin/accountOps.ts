@@ -35,7 +35,7 @@ export interface AccountOpsQuotaThreshold {
   notify_alert?: boolean
   notify_recovery?: boolean
 }
-export type AccountOpsObservationStatus = 'ok' | 'stale' | 'failed' | 'unsupported' | 'unknown'
+export type AccountOpsObservationStatus = 'ok' | 'stale' | 'failed' | 'unsupported' | 'unknown' | 'disabled' | 'pending' | 'forbidden' | 'unlimited' | 'invalid_key' | 'ip_forbidden' | 'rate_limited'
 export interface AccountOpsThresholdAccount {
   account_id: number
   account_name: string
@@ -45,6 +45,11 @@ export interface AccountOpsThresholdAccount {
   platform: string
   type: 'apikey' | 'oauth'
   balance: number | null
+  key_balance?: number
+  wallet_balance?: number
+  wallet_status?: 'available' | 'forbidden' | 'unlimited'
+  upstream_kind?: string
+  balance_reason?: string
   unit: string
   balance_status: AccountOpsObservationStatus
   received_at: string | null

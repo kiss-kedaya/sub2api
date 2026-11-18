@@ -265,6 +265,8 @@ type UpstreamBillingProbeService struct {
 	stopped      bool
 	cycleMu      sync.Mutex
 	probeGroup   singleflight.Group
+	balanceCache sync.Map
+	statusCache  sync.Map
 	probeSlots   chan struct{}
 	now          func() time.Time
 	lockCache    LeaderLockCache
@@ -684,11 +686,14 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 		proxyURL = account.Proxy.URL()
 	}
 	target := upstreamBillingProbeTarget{apiKey: apiKey, proxyURL: proxyURL}
-	rateResult := s.fetchUpstreamProbeBody(ctx, account, target,
-		buildOpenAIEndpointURL(normalizedBaseURL, "/v1/sub2api/billing"), upstreamBillingProbeMaxBodyBytes)
+	rateResult := upstreamBillingProbeHTTPResult{statusCode: http.StatusNotFound}
+	previous := decodeUpstreamBillingProbeSnapshot(account.Extra)
+	if previous == nil || previous.UpstreamKind != UpstreamKindNewAPI {
+		rateResult = s.fetchUpstreamProbeBody(ctx, account, target,
+			buildOpenAIEndpointURL(normalizedBaseURL, "/v1/sub2api/billing"), upstreamBillingProbeMaxBodyBytes)
+	}
 	previousRate := account.BillingRateMultiplier()
 	snapshot, syncRate := upstreamBillingRateSnapshotFromResult(account, intervalMinutes, now, rateResult, previousRate)
-	previous := decodeUpstreamBillingProbeSnapshot(account.Extra)
 	if previous != nil {
 		snapshot.UpstreamKind = normalizeUpstreamKind(previous.UpstreamKind)
 	}
@@ -697,6 +702,8 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 	}
 	if upstreamBalanceProbeAllowed(normalizedBaseURL, rateResult) {
 		s.identifyUpstreamAndReadBalance(ctx, account, target, normalizedBaseURL, intervalMinutes, now, rateResult, snapshot)
+	} else if upstreamProbeRejectedKey(rateResult) {
+		snapshot.Balance = upstreamBalanceSnapshotFromResult(rateResult, snapshot.Balance, intervalMinutes, now)
 	}
 	if err := s.updateSnapshot(ctx, account, snapshot, syncRate); err != nil {
 		return nil, err
@@ -823,41 +830,13 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 			return newAPIUsageResult
 		}
 		newAPIUsageFetched = true
-		// new-api answers the trailing-slash form with a redirect on some
-		// deployments (the production account #34760 answered 302). Follows
-		// same-origin hops only; a login page stays "unavailable".
-		newAPIUsageResult = s.fetchUpstreamProbeBodyFollowingRedirects(ctx, account, target,
-			upstreamSiteRootURL(baseURL, upstreamNewAPIUsagePath), upstreamKindProbeMaxBodyBytes)
+		newAPIUsageResult = s.fetchNewAPIBalance(ctx, account, target, baseURL)
 		noteResponse(newAPIUsageResult)
 		return newAPIUsageResult
 	}
 
-	// newAPIAccountBalanceFallback fills in the account balance for a token whose
-	// /api/usage/token/ answer is "unlimited" with no user_quota to promote.
-	//
-	// new-api forces unlimited_quota on the default token it creates for every
-	// user and leaves allow_user_quota_query off for tokens that predate that
-	// field, so the usage payload can legitimately carry no number at all. The
-	// legacy billing pair reports the account's granted total and spend and does
-	// not depend on that switch, so it is asked before giving up on the balance.
-	newAPIAccountBalanceFallback := func(data map[string]any) map[string]any {
-		if data == nil || data["unlimited"] != true {
-			return data
-		}
-		subscription := fetch(upstreamLegacySubscriptionPath, upstreamKindProbeMaxBodyBytes)
-		noteResponse(subscription)
-		if !upstreamProbeAnswered(subscription) {
-			return data
-		}
-		var usageBody []byte
-		if usage := fetch(upstreamLegacyUsagePath, upstreamKindProbeMaxBodyBytes); upstreamProbeAnswered(usage) {
-			usageBody = usage.body
-		}
-		account, err := parseUpstreamNewAPILegacyAccountBalance(subscription.body, usageBody)
-		if err != nil {
-			return data
-		}
-		return account
+	parseNewAPI := func(body []byte) (map[string]any, error) {
+		return s.parseNewAPIBalance(ctx, account, target, baseURL, body)
 	}
 
 	// adoptNewAPIFromEvidence records new-api from a fingerprint rather than
@@ -874,8 +853,9 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 		usage := fetchNewAPIUsage()
 		snapshot.UpstreamKind = UpstreamKindNewAPI
 		if upstreamProbeAnswered(usage) {
-			if data, err := parseUpstreamNewAPIUsageResponse(usage.body); err == nil {
-				snapshot.Balance = fresh(newAPIAccountBalanceFallback(data), UpstreamBalanceSourceNewAPITokenUsage, usage.statusCode)
+			if data, err := parseNewAPI(usage.body); err == nil {
+				snapshot.Balance = fresh(data, UpstreamBalanceSourceNewAPITokenUsage, usage.statusCode)
+				upstreamNewAPIObservedTime(snapshot.Balance, usage, intervalMinutes)
 				readable()
 				return
 			}
@@ -913,8 +893,7 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 		if newAPISignal != "" {
 			return true
 		}
-		result := s.fetchUpstreamProbeBody(ctx, account, target,
-			upstreamSiteRootURL(baseURL, upstreamNewAPIStatusPath), upstreamKindProbeMaxBodyBytes)
+		result := s.newAPIStatus(ctx, account, target, baseURL)
 		noteResponse(result)
 		if newAPISignal == "" && upstreamProbeAnswered(result) {
 			if signal, ok := upstreamNewAPIStatusEvidence(result.body); ok {
@@ -931,19 +910,25 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 	// retrying until the upstream answers.
 	readRecognisedBalance := func(kind, source string, fetch func() upstreamBillingProbeHTTPResult, parse func([]byte) (map[string]any, error)) {
 		attempts := 1
-		if upstreamBalanceRetryAllowed(ctx) {
+		if kind != UpstreamKindNewAPI && upstreamBalanceRetryAllowed(ctx) {
 			attempts = upstreamBalanceRetryAttempts
 		}
 		result, data, ok := upstreamBalanceRead(ctx, attempts, fetch, parse)
 		if ok {
 			snapshot.UpstreamKind = kind
 			snapshot.Balance = fresh(data, source, result.statusCode)
+			if kind == UpstreamKindNewAPI {
+				upstreamNewAPIObservedTime(snapshot.Balance, result, intervalMinutes)
+			}
 			readable()
 			return
 		}
 		snapshot.UpstreamKind = kind
-		reason := upstreamBalanceReadReason(result)
+		reason := upstreamBalanceFailureStatus(result)
 		snapshot.Balance = upstreamBalanceRetryPendingSnapshot(previousBalance, now, result.statusCode, reason)
+		if kind == UpstreamKindNewAPI {
+			snapshot.Balance.Status = UpstreamBillingProbeStatusFailed
+		}
 		if (reason == "unsupported" || reason == "invalid_response") &&
 			(previousBalance == nil || previousBalance.Status != UpstreamBillingProbeStatusOK) {
 			// There is no earlier successful balance to keep and the endpoint is
@@ -962,11 +947,24 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 		// it retries on the ten-minute cadence instead of the 1s/3s/9s recovery
 		// loop. That loop is for transport errors and rejected keys.
 		delay := upstreamBalanceRetryNextDelay(previousBalance, upstreamProbeRejectedKey(result))
+		if kind == UpstreamKindNewAPI {
+			delay = upstreamNewAPIMinInterval
+			for i := 1; i < snapshot.Balance.RetryCount && delay < 20*time.Minute; i++ {
+				delay *= 2
+			}
+			if requested := retryAfter(result.header, now); requested > delay {
+				delay = requested
+			}
+		}
 		switch reason {
 		case "unsupported", "invalid_response":
 			delay = unsupportedProbeDelay(retryAfter(result.header, now))
 		}
-		if retryAt := now.Add(delay); snapshot.NextProbeAt.IsZero() || retryAt.Before(snapshot.NextProbeAt) {
+		if kind == UpstreamKindNewAPI && (reason == "invalid_key" || reason == "ip_forbidden") {
+			// Credential/base/proxy edits clear the snapshot; manual refresh remains
+			// available. Do not consume the IP budget retrying unchanged rejections.
+			snapshot.NextProbeAt = time.Date(9999, time.December, 31, 0, 0, 0, 0, time.UTC)
+		} else if retryAt := now.Add(delay); snapshot.NextProbeAt.IsZero() || retryAt.Before(snapshot.NextProbeAt) {
 			snapshot.NextProbeAt = retryAt
 		}
 	}
@@ -1001,20 +999,15 @@ func (s *UpstreamBillingProbeService) identifyUpstreamAndReadBalance(
 		// Site root, not the model base path: see upstreamSiteRootURL.
 		fetchBalance := fetchNewAPIUsage
 		if snapshot.UpstreamKind == UpstreamKindNewAPI {
-			readRecognisedBalance(UpstreamKindNewAPI, UpstreamBalanceSourceNewAPITokenUsage, fetchBalance, func(body []byte) (map[string]any, error) {
-				data, err := parseUpstreamNewAPIUsageResponse(body)
-				if err != nil {
-					return nil, err
-				}
-				return newAPIAccountBalanceFallback(data), nil
-			})
+			readRecognisedBalance(UpstreamKindNewAPI, UpstreamBalanceSourceNewAPITokenUsage, fetchBalance, parseNewAPI)
 			return true
 		}
 		result := fetchBalance()
 		if upstreamProbeAnswered(result) {
-			if data, err := parseUpstreamNewAPIUsageResponse(result.body); err == nil {
+			if data, err := parseNewAPI(result.body); err == nil {
 				snapshot.UpstreamKind = UpstreamKindNewAPI
-				snapshot.Balance = fresh(newAPIAccountBalanceFallback(data), UpstreamBalanceSourceNewAPITokenUsage, result.statusCode)
+				snapshot.Balance = fresh(data, UpstreamBalanceSourceNewAPITokenUsage, result.statusCode)
+				upstreamNewAPIObservedTime(snapshot.Balance, result, intervalMinutes)
 				readable()
 				return true
 			}
@@ -1149,6 +1142,7 @@ type upstreamBillingProbeHTTPResult struct {
 	statusCode int
 	header     http.Header
 	body       []byte
+	observedAt time.Time
 	failure    string
 }
 
@@ -1173,8 +1167,13 @@ func (s *UpstreamBillingProbeService) fetchUpstreamProbeBody(
 	reqCtx := WithHTTPUpstreamProfile(req.Context(), profile)
 	req = req.WithContext(WithHTTPUpstreamRedirectsDisabled(reqCtx))
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+target.apiKey)
+	if target.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+target.apiKey)
+	}
 	account.ApplyHeaderOverrides(req.Header)
+	if target.apiKey == "" {
+		req.Header.Del("Authorization")
+	}
 	var tlsProfile *tlsfingerprint.Profile
 	if s.accountTestService.tlsFPProfileService != nil {
 		tlsProfile = s.accountTestService.tlsFPProfileService.ResolveTLSProfile(account)

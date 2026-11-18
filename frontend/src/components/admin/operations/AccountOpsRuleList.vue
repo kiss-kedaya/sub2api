@@ -75,6 +75,7 @@
           </div>
           <div class="px-4">
             <p v-if="row.balanceValue" class="font-mono text-xs text-default">{{ row.balanceValue }}</p>
+            <p v-if="row.balanceNote" class="mt-1 text-xs text-warning">{{ row.balanceNote }}</p>
             <p v-if="row.quotaValue" class="mt-1 font-mono text-xs text-default">{{ row.quotaValue }}</p>
             <UBadge class="mt-1" :color="row.state === 'warning' ? 'warning' : row.state === 'normal' ? 'success' : 'neutral'" variant="subtle" size="sm">
               {{ t(`accountOps.ruleStates.${row.state}`) }}
@@ -124,6 +125,7 @@ interface GroupRow {
   balanceRule?: NonNullable<AccountOpsConfig['balance_thresholds']>[number]
   quotaRule?: NonNullable<AccountOpsConfig['quota_thresholds']>[number]
   balanceValue: string
+  balanceNote: string
   quotaValue: string
   quotaWindow: string
   memberNames: string
@@ -168,7 +170,13 @@ function metricState(account: AccountOpsThresholdAccount, rule: GroupRow['balanc
 }
 function metricValue(account: AccountOpsThresholdAccount, rule: GroupRow['balanceRule'] | GroupRow['quotaRule'] | undefined): string {
   if (!rule) return ''
-  if ('unit' in rule) return account.balance_status === 'ok' && account.balance != null ? `${account.balance.toFixed(2)} ${account.unit}` : t(`accountOps.observations.${account.balance_status}`)
+  if ('unit' in rule) {
+    const observed = account.balance_status === 'ok' && account.balance != null ? `${account.balance.toFixed(2)} ${account.unit}` : t(`accountOps.observations.${account.balance_status}`)
+    if (account.upstream_kind !== 'newapi') return observed
+    const key = account.wallet_status === 'unlimited' ? t('accountOps.observations.unlimited') : account.key_balance != null ? `${account.key_balance.toFixed(2)} ${account.unit}` : t('accountOps.observations.unknown')
+    const wallet = account.wallet_status === 'forbidden' ? t('accountOps.observations.forbidden') : observed
+    return `${t('accountOps.keyQuota')}: ${key} · ${t('accountOps.accountBalance')}: ${wallet}`
+  }
   const selected = rule.window || 'any'
   const current = account.usage_windows.find(item => (selected === 'any' || selected === '' || selected === item.window) && item.status === 'ok' && item.used_percent != null)
   return current ? `${current.used_percent!.toFixed(1)}%` : t('accountOps.observations.unknown')
@@ -179,9 +187,17 @@ const rows = computed<GroupRow[]>(() => groups.value.map(group => {
   const quotaAccounts = accounts.filter(account => account.type === 'oauth')
   const balanceRule = balanceAccounts.map(account => props.config.balance_thresholds?.find(rule => rule.account_id === account.account_id)).find((rule): rule is NonNullable<GroupRow['balanceRule']> => !!rule)
   const quotaRule = quotaAccounts.map(account => props.config.quota_thresholds?.find(rule => rule.account_id === account.account_id)).find((rule): rule is NonNullable<GroupRow['quotaRule']> => !!rule)
-  const statesForGroup = [...balanceAccounts.map(account => metricState(account, balanceRule)), ...quotaAccounts.map(account => metricState(account, quotaRule))]
+  // Manual membership declares a shared wallet; match the scanner's first readable member.
+  const representative = balanceAccounts.find(account => account.balance_status === 'ok' && account.balance != null) ?? balanceAccounts[0]
+  const statesForGroup = [...(representative ? [metricState(representative, balanceRule)] : []), ...quotaAccounts.map(account => metricState(account, quotaRule))]
+  const partial = balanceAccounts.some(account => account.balance_status !== 'ok' || account.balance == null)
+  let balanceNote = partial && representative?.balance_status === 'ok' ? t('accountOps.partialBalance') : ''
+  if (representative?.balance_status === 'stale' && representative.received_at) {
+    const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(representative.received_at)) / 60_000))
+    if (Number.isFinite(minutes)) balanceNote = t('accountOps.balanceAge', { minutes })
+  }
   const rowState = statesForGroup.includes('warning') ? 'warning' : statesForGroup.includes('unknown') ? 'unknown' : statesForGroup.length > 0 && statesForGroup.every(value => value === 'disabled') ? 'disabled' : statesForGroup.length > 0 && statesForGroup.every(value => value === 'unconfigured') ? 'unconfigured' : 'normal'
-  return { group, accounts, balanceAccounts, quotaAccounts, balanceRule, quotaRule, balanceValue: balanceRule && balanceAccounts[0] ? metricValue(balanceAccounts[0], balanceRule) : '', quotaValue: quotaRule && quotaAccounts[0] ? metricValue(quotaAccounts[0], quotaRule) : '', quotaWindow: quotaRule?.window && quotaRule.window !== 'any' ? quotaRule.window : '', memberNames: accounts.map(account => account.account_name).join('、'), state: rowState }
+  return { group, accounts, balanceAccounts, quotaAccounts, balanceRule, quotaRule, balanceValue: balanceRule && representative ? metricValue(representative, balanceRule) : '', balanceNote, quotaValue: quotaRule && quotaAccounts[0] ? metricValue(quotaAccounts[0], quotaRule) : '', quotaWindow: quotaRule?.window && quotaRule.window !== 'any' ? quotaRule.window : '', memberNames: accounts.map(account => account.account_name).join('、'), state: rowState }
 }))
 const filtered = computed(() => {
   const needle = search.value.trim().toLowerCase()
