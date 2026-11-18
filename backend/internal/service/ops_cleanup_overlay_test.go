@@ -218,8 +218,9 @@ func TestComputeEffective_PartialAdvancedSettingsUseSafeDefaults(t *testing.T) {
 
 	svc.computeEffectiveLocked(context.Background())
 
+	// 诊断日志默认保留 7 天（线上统一口径），其它维度仍是 30。
 	if svc.effective.Schedule != opsCleanupDefaultSchedule ||
-		svc.effective.ErrorLogRetentionDays != 30 ||
+		svc.effective.ErrorLogRetentionDays != 7 ||
 		svc.effective.MinuteMetricsRetentionDays != 30 ||
 		svc.effective.HourlyMetricsRetentionDays != 30 {
 		t.Fatalf("partial settings did not use safe defaults: %#v", svc.effective)
