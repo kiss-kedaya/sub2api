@@ -6,9 +6,8 @@ import (
 	"time"
 )
 
-// thresholdBalanceMemberIDs includes every declared wallet member even when a
-// rule was saved on only one key. Membership, not the rate-probe switch, is the
-// operator's declaration that another key may supply the same wallet balance.
+// thresholdBalanceMemberIDs includes group peers so a proven shared wallet can
+// supply a readable balance even when the rule was saved on only one key.
 func thresholdBalanceMemberIDs(c AccountOpsConfig) []int64 {
 	ids := thresholdRuleIDs(c, "balance_threshold")
 	seen := make(map[int64]bool, len(ids))
@@ -69,7 +68,7 @@ func (s *AccountOpsService) opsRefreshNativeBalances(ctx context.Context, member
 		}
 		member := members[id]
 		a := member.account
-		if a == nil || member.lookupErr != nil || a.Type != AccountTypeAPIKey || !a.IsActive() || opsConfiguredCustomUsage(a) {
+		if a == nil || member.lookupErr != nil || a.Type != AccountTypeAPIKey || !a.IsActive() || !a.Schedulable || opsConfiguredCustomUsage(a) {
 			continue
 		}
 		group := accountOpsGroupAssignment(a, c)

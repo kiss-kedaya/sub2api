@@ -10,7 +10,7 @@ const config: AccountOpsConfig = {
   balance_thresholds: [{ account_id: 8101, enabled: true, threshold: 5, unit: 'USD' }]
 }
 const group: AccountOpsGroup = { id: 'synthetic-wallet', name: 'Synthetic wallet', default_name: 'Synthetic wallet', provider: 'newapi', site: 'https://example.invalid', mode: 'manual', account_ids: [8101, 8102] }
-const account: AccountOpsThresholdAccount = { account_id: 8101, account_name: 'Synthetic key', platform: 'openai', type: 'apikey', balance: null, unit: 'USD', balance_status: 'disabled', received_at: null, usage_windows: [] }
+const account: AccountOpsThresholdAccount = { account_id: 8101, account_name: 'Synthetic key', platform: 'openai', type: 'apikey', balance: null, unit: 'USD', balance_status: 'disabled', wallet_identity: 'synthetic-shared-wallet', received_at: null, usage_windows: [] }
 
 function create(accounts: AccountOpsThresholdAccount[]) {
   return mount(RuleList, { props: { accounts, groups: [group], config, loading: false, ready: true, error: '' } })

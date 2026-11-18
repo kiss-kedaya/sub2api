@@ -21,7 +21,8 @@ func (r *accountRepository) ListAccountOpsSnapshots(ctx context.Context, ids []i
 	}
 	rows, err := query.Select(dbaccount.FieldID, dbaccount.FieldName,
 		dbaccount.FieldPlatform, dbaccount.FieldType, dbaccount.FieldCredentials,
-		dbaccount.FieldExtra, dbaccount.FieldSessionWindowEnd).All(ctx)
+		dbaccount.FieldExtra, dbaccount.FieldSessionWindowEnd,
+		dbaccount.FieldStatus, dbaccount.FieldSchedulable).All(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -18,11 +18,34 @@ type upstreamNewAPICachedRead struct {
 	next     time.Time
 	result   upstreamBillingProbeHTTPResult
 	failures int
+	done     chan struct{}
 }
 
-// fetchNewAPIBalance shares one IP budget per site, including manual clicks and
-// different keys. Cached bodies remain key-scoped: a wallet is never guessed
-// from another key merely because its host matches.
+// upstreamNewAPIResponseIdentity includes the effective route, not just the
+// stored proxy ID: editing a proxy or header can select a different wallet.
+func upstreamNewAPIResponseIdentity(a *Account, target upstreamBillingProbeTarget, base string, public bool) [32]byte {
+	identity := upstreamBillingProbeIdentity(a)
+	headers := make(http.Header)
+	headers.Set("Accept", "application/json")
+	if target.apiKey != "" {
+		headers.Set("Authorization", "Bearer "+target.apiKey)
+	}
+	a.ApplyHeaderOverrides(headers)
+	if public {
+		headers.Del("Authorization")
+		delete(identity, "api_key")
+		delete(identity, credKeyHeaderOverrides)
+		delete(identity, credKeyHeaderOverrideEnabled)
+	}
+	identity["effective_headers"] = headers
+	identity["effective_proxy"] = target.proxyURL
+	identity["effective_base"] = base
+	raw, _ := json.Marshal(identity)
+	return sha256.Sum256(raw)
+}
+
+// fetchNewAPIBalance shares one IP budget per site. A local deferral carries no
+// HTTP status, so unknown sites can still try their working billing protocol.
 func (s *UpstreamBillingProbeService) fetchNewAPIBalance(ctx context.Context, a *Account, target upstreamBillingProbeTarget, base string) upstreamBillingProbeHTTPResult {
 	site := upstreamSiteRootURL(base, "/")
 	entry, _ := s.balanceCache.LoadOrStore(site, &upstreamNewAPICachedRead{})
@@ -30,45 +53,71 @@ func (s *UpstreamBillingProbeService) fetchNewAPIBalance(ctx context.Context, a 
 	if !ok {
 		return upstreamBillingProbeHTTPResult{failure: "request_failed"}
 	}
-	cached.mu.Lock()
-	defer cached.mu.Unlock()
-	now := s.currentTime()
-	key := sha256.Sum256([]byte(target.apiKey + "\x00" + target.proxyURL))
-	if now.Before(cached.next) {
-		if key == cached.key {
-			return cached.result
+	key := upstreamNewAPIResponseIdentity(a, target, base, false)
+	for {
+		if ctx.Err() != nil {
+			return upstreamBillingProbeHTTPResult{failure: "request_failed"}
 		}
-		return upstreamBillingProbeHTTPResult{statusCode: http.StatusTooManyRequests, failure: "rate_limited"}
-	}
-	result := s.fetchUpstreamProbeBodyFollowingRedirects(ctx, a, target, upstreamSiteRootURL(base, upstreamNewAPIUsagePath), upstreamKindProbeMaxBodyBytes)
-	delay := upstreamNewAPIMinInterval
-	if result.failure != "" || result.statusCode >= 500 || result.statusCode == http.StatusTooManyRequests {
-		cached.failures++
-		// Retries use the next scheduled round, never the IP budget again in this round.
-		for i := 1; i < cached.failures && delay < 20*time.Minute; i++ {
-			delay *= 2
+		cached.mu.Lock()
+		now := s.currentTime()
+		if cached.done != nil {
+			done, same := cached.done, key == cached.key
+			cached.mu.Unlock()
+			if !same {
+				return upstreamBillingProbeHTTPResult{failure: "rate_limited"}
+			}
+			select {
+			case <-ctx.Done():
+				return upstreamBillingProbeHTTPResult{failure: "request_failed"}
+			case <-done:
+				continue
+			}
 		}
-	} else {
-		cached.failures = 0
+		if now.Before(cached.next) {
+			result := upstreamBillingProbeHTTPResult{failure: "rate_limited"}
+			if key == cached.key {
+				result = cached.result
+			}
+			cached.mu.Unlock()
+			return result
+		}
+		// Reserve before I/O so peers cannot spend the same site's budget.
+		cached.key, cached.next, cached.done = key, now.Add(upstreamNewAPIMinInterval), make(chan struct{})
+		cached.mu.Unlock()
+
+		result := s.fetchUpstreamProbeBodyFollowingRedirects(ctx, a, target, upstreamSiteRootURL(base, upstreamNewAPIUsagePath), upstreamKindProbeMaxBodyBytes)
+		cached.mu.Lock()
+		delay := upstreamNewAPIMinInterval
+		if result.failure != "" || result.statusCode >= 500 || result.statusCode == http.StatusTooManyRequests {
+			cached.failures++
+			for i := 1; i < cached.failures && delay < 20*time.Minute; i++ {
+				delay *= 2
+			}
+		} else {
+			cached.failures = 0
+		}
+		if requested := retryAfter(result.header, now); requested > delay {
+			delay = requested
+		}
+		result.observedAt = now
+		cached.result, cached.next = result, now.Add(delay)
+		close(cached.done)
+		cached.done = nil
+		cached.mu.Unlock()
+		return result
 	}
-	if requested := retryAfter(result.header, now); requested > delay {
-		delay = requested
-	}
-	result.observedAt = now
-	cached.key, cached.result, cached.next = key, result, now.Add(delay)
-	return result
 }
 
-// newAPIStatus is public metadata. Read it once per site/route, without the key,
-// and remember even an unavailable response so a page cannot poll /api/status.
+// newAPIStatus is public metadata. Cache it per effective route, without the key;
+// each waiter can cancel without being held by another caller's network I/O.
 func (s *UpstreamBillingProbeService) newAPIStatus(ctx context.Context, a *Account, target upstreamBillingProbeTarget, base string) upstreamBillingProbeHTTPResult {
-	id := upstreamSiteRootURL(base, upstreamNewAPIStatusPath) + "|" + target.proxyURL
+	id := upstreamNewAPIResponseIdentity(a, target, base, true)
 	if cached, ok := s.statusCache.Load(id); ok {
 		if result, ok := cached.(upstreamBillingProbeHTTPResult); ok {
 			return result
 		}
 	}
-	value, _, _ := s.probeGroup.Do("status:"+id, func() (any, error) {
+	pending := s.probeGroup.DoChan(fmt.Sprintf("status:%x", id), func() (any, error) {
 		if cached, ok := s.statusCache.Load(id); ok {
 			return cached, nil
 		}
@@ -78,8 +127,13 @@ func (s *UpstreamBillingProbeService) newAPIStatus(ctx context.Context, a *Accou
 		s.statusCache.Store(id, result)
 		return result, nil
 	})
-	result, _ := value.(upstreamBillingProbeHTTPResult)
-	return result
+	select {
+	case <-ctx.Done():
+		return upstreamBillingProbeHTTPResult{failure: "request_failed"}
+	case value := <-pending:
+		result, _ := value.Val.(upstreamBillingProbeHTTPResult)
+		return result
+	}
 }
 
 func (s *UpstreamBillingProbeService) parseNewAPIBalance(ctx context.Context, a *Account, target upstreamBillingProbeTarget, base string, body []byte) (map[string]any, error) {

@@ -48,6 +48,7 @@ export interface AccountOpsThresholdAccount {
   key_balance?: number
   wallet_balance?: number
   wallet_status?: 'available' | 'forbidden' | 'unlimited'
+  wallet_identity?: string
   upstream_kind?: string
   balance_reason?: string
   unit: string
