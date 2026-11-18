@@ -103,7 +103,7 @@ func TestR4GroupDoesNotBorrowAnUnprovenWallet(t *testing.T) {
 		{"unknown user", "https://example.invalid", "new_api", 0, "unknown"},
 		{"different provider", "https://example.invalid", "sub2api", 7, "unknown"},
 		{"different site", "https://other.example.invalid", "new_api", 7, "unknown"},
-		{"same wallet", "https://example.invalid", "new_api", 7, "active"},
+		{"same user without route proof", "https://example.invalid", "new_api", 7, "unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now().UTC()

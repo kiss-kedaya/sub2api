@@ -84,6 +84,17 @@ func (s *UpstreamBillingProbeService) fetchNewAPIBalance(ctx context.Context, a 
 		// Reserve before I/O so peers cannot spend the same site's budget.
 		cached.key, cached.next, cached.done = key, now.Add(upstreamNewAPIMinInterval), make(chan struct{})
 		cached.mu.Unlock()
+		completed := false
+		defer func() {
+			cached.mu.Lock()
+			defer cached.mu.Unlock()
+			if !completed {
+				// A recovered transport panic must never publish an older success.
+				cached.result = upstreamBillingProbeHTTPResult{failure: "request_failed"}
+			}
+			close(cached.done)
+			cached.done = nil
+		}()
 
 		result := s.fetchUpstreamProbeBodyFollowingRedirects(ctx, a, target, upstreamSiteRootURL(base, upstreamNewAPIUsagePath), upstreamKindProbeMaxBodyBytes)
 		cached.mu.Lock()
@@ -101,8 +112,7 @@ func (s *UpstreamBillingProbeService) fetchNewAPIBalance(ctx context.Context, a 
 		}
 		result.observedAt = now
 		cached.result, cached.next = result, now.Add(delay)
-		close(cached.done)
-		cached.done = nil
+		completed = true
 		cached.mu.Unlock()
 		return result
 	}
@@ -110,6 +120,8 @@ func (s *UpstreamBillingProbeService) fetchNewAPIBalance(ctx context.Context, a 
 
 // newAPIStatus is public metadata. Cache it per effective route, without the key;
 // each waiter can cancel without being held by another caller's network I/O.
+// The cache and coalescing are service-instance-local (including failed reads),
+// retained for that service lifetime; they are not a cross-instance site budget.
 func (s *UpstreamBillingProbeService) newAPIStatus(ctx context.Context, a *Account, target upstreamBillingProbeTarget, base string) upstreamBillingProbeHTTPResult {
 	id := upstreamNewAPIResponseIdentity(a, target, base, true)
 	if cached, ok := s.statusCache.Load(id); ok {
@@ -151,7 +163,14 @@ func (s *UpstreamBillingProbeService) parseNewAPIBalance(ctx context.Context, a 
 			}
 		}
 	}
-	return parseUpstreamNewAPIUsageResponse(body, ratio)
+	data, err := parseUpstreamNewAPIUsageResponse(body, ratio)
+	if err == nil {
+		// Bind this observation to the authenticated request route. Legacy
+		// snapshots carry no proof and cannot authorize cross-account reuse.
+		id := upstreamNewAPIResponseIdentity(a, target, base, false)
+		data["wallet_route_identity"] = fmt.Sprintf("v2:%x", id)
+	}
+	return data, err
 }
 
 func upstreamNewAPIObservedTime(snapshot *UpstreamBalanceSnapshot, result upstreamBillingProbeHTTPResult, intervalMinutes int) {

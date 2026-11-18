@@ -221,7 +221,7 @@ func TestUpstreamBalanceNewAPIUnlimitedDoesNotPromoteWallet(t *testing.T) {
 	require.NotContains(t, data, "wallet_balance")
 }
 
-func TestUpstreamBalanceNewAPIGroupSkipsMissingRepresentative(t *testing.T) {
+func TestUpstreamBalanceNewAPIGroupRejectsUnprovenRepresentative(t *testing.T) {
 	now := time.Now().UTC()
 	fresh := now.Add(time.Hour)
 	missing := &Account{ID: 8101, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://example.invalid"}, Extra: map[string]any{UpstreamBillingUserIDExtraKey: int64(7)}}
@@ -232,8 +232,6 @@ func TestUpstreamBalanceNewAPIGroupSkipsMissingRepresentative(t *testing.T) {
 	svc := NewAccountOpsService(nil, nil, nil)
 	group := accountOpsGroupAssignment(missing, c)
 	event, state := svc.assessThresholdGroup(context.Background(), group, []accountOpsThresholdMember{{id: missing.ID, account: missing}, {id: available.ID, account: available}}, "balance_threshold", c, now)
-	require.Equal(t, "active", state)
-	require.NotNil(t, event.Details)
-	require.NotNil(t, event.Details.Balance)
-	require.Equal(t, 2.0, *event.Details.Balance)
+	require.Equal(t, "unknown", state)
+	require.Nil(t, event.Details, "legacy snapshots do not prove a shared authenticated route")
 }

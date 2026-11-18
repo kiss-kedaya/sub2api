@@ -718,7 +718,35 @@ func opsBalanceWalletIdentity(a *Account) string {
 	if provider == "" || site == "" || userID <= 0 {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", provider, site, userID)))
+	// Only an observation of the same authenticated route proves shared money.
+	// Equal tenant-local user IDs, old fingerprints and manual grouping do not.
+	snapshot := decodeUpstreamBillingProbeSnapshot(a.Extra)
+	if snapshot == nil || snapshot.Balance == nil {
+		return ""
+	}
+	base := a.GetCredential("base_url")
+	if a.IsCNProvider() && a.IsAdaptiveAPIProtocol() {
+		base = a.GetCNProtocolBaseURL(APIProtocolChatCompletions)
+	}
+	if base == "" {
+		return ""
+	}
+	target := upstreamBillingProbeTarget{apiKey: a.GetCredential("api_key")}
+	if target.apiKey == "" {
+		return ""
+	}
+	if a.ProxyID != nil {
+		if a.Proxy == nil || a.Proxy.ID != *a.ProxyID {
+			return ""
+		}
+		target.proxyURL = a.Proxy.URL()
+	}
+	id := upstreamNewAPIResponseIdentity(a, target, strings.TrimRight(strings.TrimSpace(base), "/"), false)
+	proof := fmt.Sprintf("v2:%x", id)
+	if snapshot.Balance.Data["wallet_route_identity"] != proof {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("v2\x00%s\x00%s\x00%d\x00%s", provider, site, userID, proof)))
 	return hex.EncodeToString(sum[:])
 }
 
