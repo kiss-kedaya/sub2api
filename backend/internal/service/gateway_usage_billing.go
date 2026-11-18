@@ -359,7 +359,14 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	return cmd
 }
 
-func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog, p *postUsageBillingParams, deps *billingDeps, repo UsageBillingRepository) (bool, error) {
+func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog, p *postUsageBillingParams, deps *billingDeps, repo UsageBillingRepository) (applied bool, billingErr error) {
+	defer func() {
+		var account *Account
+		if p != nil {
+			account = p.Account
+		}
+		observeSmallUsage(ctx, usageLog, account, billingErr, applied)
+	}()
 	if p == nil || deps == nil {
 		return false, nil
 	}
@@ -942,6 +949,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		return nil
 	}
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		observeSmallUsage(ctx, usageLog, account, errSmallSimpleMode, false)
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)

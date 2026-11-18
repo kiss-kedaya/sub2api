@@ -69,6 +69,7 @@ func ReadRequestBodyWithPrealloc(req *http.Request) (body []byte, readErr error)
 	defer func() {
 		if readErr == nil && req != nil {
 			requestcapture.FromContext(req.Context()).ClientRequest(body, req.Header.Get("Content-Type"), req.Header)
+			requestcapture.SmallFromContext(req.Context()).ClientRequest(body, req.Header)
 		}
 		if readErr == nil && req != nil && req.URL != nil {
 			body = ipnotice.NormalizeReplay(body, ipnotice.ReplayProtocolForPath(req.URL.Path))

@@ -94,6 +94,22 @@ jobs:
           SUB2API_TEST_POSTGRES_IMAGE: postgres:15-alpine
         run: go test -race -p 1 -tags=integration ./internal/repository -run '^TestRequestCaptureSQLStore' -count=1
 
+  small-retention-integration:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    timeout-minutes: 20
+    env:
+      GOMAXPROCS: '3'
+      GOFLAGS: '-p=1'
+      SUB2API_TEST_POSTGRES_IMAGE: postgres:15-alpine
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/go-cache
+      - name: Small retention migration, concurrent deduplication and expiry
+        working-directory: backend
+        run: go test -race -tags=integration ./internal/requestcapture -run '^TestSmallRetentionPostgresStore$' -count=1 -v
+
   deepseek-native-replay:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -293,7 +309,7 @@ jobs:
   # parallel; this job fails unless every one of them passed, or all were
   # skipped because only frontend/docs/markdown files changed.
   test:
-    needs: [changes, test-unit, test-integration, test-race-a, test-race-b, test-race-c]
+    needs: [changes, test-unit, test-integration, small-retention-integration, test-race-a, test-race-b, test-race-c]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -304,6 +320,7 @@ jobs:
           BACKEND: ${{ needs.changes.outputs.backend }}
           R_UNIT: ${{ needs.test-unit.result }}
           R_INTEGRATION: ${{ needs.test-integration.result }}
+          R_SMALL_RETENTION: ${{ needs.small-retention-integration.result }}
           R_RACE_A: ${{ needs.test-race-a.result }}
           R_RACE_B: ${{ needs.test-race-b.result }}
           R_RACE_C: ${{ needs.test-race-c.result }}
@@ -316,7 +333,7 @@ jobs:
           want=success
           [ "$BACKEND" = true ] || want=skipped
           bad=0
-          for pair in unit:"$R_UNIT" integration:"$R_INTEGRATION" race-a:"$R_RACE_A" race-b:"$R_RACE_B" race-c:"$R_RACE_C"; do
+          for pair in unit:"$R_UNIT" integration:"$R_INTEGRATION" small-retention:"$R_SMALL_RETENTION" race-a:"$R_RACE_A" race-b:"$R_RACE_B" race-c:"$R_RACE_C"; do
             if [ "${pair#*:}" != "$want" ]; then
               echo "test-${pair%%:*}: ${pair#*:} (expected $want)"
               bad=1

@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
+	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -281,6 +282,7 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	// cancellation/deadlines; otherwise token-cache misses and Spark shadow
 	// parent resolution can re-enter PostgreSQL once the worker starts.
 	base = service.WithSchedulerSnapshotContext(parent, base)
+	base = requestcapture.WithSmallHandle(base, requestcapture.SmallFromContext(parent))
 	// 计费结算（finalizePostUsageBilling）需要在扣费落地后更新 key 配额的实时用量镜像；
 	// 把请求级预留句柄带进 worker context，Release 仍由 wrapUsageRecordTaskContext 的
 	// Acquire 引用控制（这里只传值，不改变引用计数）。

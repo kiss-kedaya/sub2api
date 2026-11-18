@@ -16,7 +16,7 @@
         </template>
       </PageToolbar>
       <UAlert v-if="error" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="error" />
-      <p class="text-sm text-muted">{{ t('admin.requestCapture.instanceScope') }} <code v-if="captureConfig.instance_id" class="text-default">{{ captureConfig.instance_id }}</code><span v-else class="text-warning">{{ t('admin.requestCapture.storageNotConfigured') }}</span></p>
+      <p v-if="tab === 'tasks'" class="text-sm text-muted">{{ t('admin.requestCapture.instanceScope') }} <code v-if="captureConfig.instance_id" class="text-default">{{ captureConfig.instance_id }}</code><span v-else class="text-warning">{{ t('admin.requestCapture.storageNotConfigured') }}</span></p>
 
       <div v-show="tab === 'tasks'" class="flex flex-col gap-4">
         <template v-if="stats">
@@ -122,11 +122,12 @@
         </section>
       </div>
 
+      <SmallRequestRetentionPanel v-if="tab === 'small'" :enabled="!!captureConfig.small_request_enabled" :ready="captureConfig.small_request_ready !== false" :config-loaded="configLoaded" :busy="busy" @toggle="captureConfig.small_request_enabled = $event; saveSmallConfig()" />
       <div v-show="tab === 'settings'" class="mx-auto w-full lg:max-w-2xl">
         <form id="capture-config" data-testid="capture-config" class="flex flex-col gap-4 sm:gap-6" @submit.prevent="saveConfig">
           <div>
             <UPageCard :title="t('admin.requestCapture.targetedSettings')" :description="t('admin.requestCapture.limitsHint')" variant="naked" orientation="horizontal" class="mb-4" :ui="{ container: 'lg:grid-cols-[minmax(0,1fr)_auto]' }">
-              <UButton type="submit" form="capture-config" data-testid="capture-config-save" :label="t('common.save')" :disabled="busy || !configLoaded || captureConfig.storage_ready === false" :loading="busy" class="w-fit lg:ms-auto" />
+              <UButton type="submit" form="capture-config" data-testid="capture-config-save" :label="t('common.save')" :disabled="busy || !configLoaded" :loading="busy" class="w-fit lg:ms-auto" />
             </UPageCard>
             <UPageCard variant="subtle">
               <UFormField :label="t('admin.requestCapture.enabled')" class="flex items-center justify-between gap-4"><USwitch v-model="captureConfig.enabled" data-testid="capture-enabled" :disabled="!configLoaded || captureConfig.storage_ready === false" /></UFormField>
@@ -144,6 +145,15 @@
               <UFormField :label="t('admin.requestCapture.diagnosticUsers')" :description="t('admin.requestCapture.diagnosticLimits', { mib: captureConfig.record_limit_mib || 128, records: captureConfig.diagnostic_record_limit || 100000 })" class="flex max-sm:flex-col justify-between items-start gap-4">
                 <UInput v-model="diagnosticUserIDsText" data-testid="diagnostic-user-ids" inputmode="numeric" placeholder="1, 5279" class="w-full sm:w-56" :disabled="!configLoaded || captureConfig.storage_ready === false" />
               </UFormField>
+            </UPageCard>
+          </div>
+          <div>
+            <UPageCard :title="t('admin.requestCapture.small.title')" :description="t('admin.requestCapture.small.settingsHint')" variant="naked" orientation="horizontal" class="mb-4">
+              <UButton type="button" data-testid="small-config-save" :label="t('common.save')" :disabled="busy || !configLoaded || captureConfig.small_request_ready === false" :loading="busy" @click="saveSmallConfig" />
+            </UPageCard>
+            <UPageCard variant="subtle">
+              <UFormField :label="t('admin.requestCapture.small.enabled')" :description="t('admin.requestCapture.small.applyHint')" class="flex items-center justify-between gap-4"><USwitch v-model="captureConfig.small_request_enabled" data-testid="small-request-enabled" :disabled="!configLoaded || captureConfig.small_request_ready === false" /></UFormField>
+              <UAlert v-if="captureConfig.small_request_ready === false" color="warning" variant="subtle" :description="t('admin.requestCapture.small.notReady')" />
             </UPageCard>
           </div>
         </form>
@@ -177,7 +187,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -194,9 +204,10 @@ import type { CaptureTask, CaptureRecord, CapturePart, CaptureStats, CaptureTarg
 import zh from '@/i18n/locales/zh/admin/requestCapture'
 import en from '@/i18n/locales/en/admin/requestCapture'
 import { confirm } from '@/composables/useConfirmation'
+const SmallRequestRetentionPanel = defineAsyncComponent(() => import('./SmallRequestRetentionPanel.vue'))
 const { t } = useI18n({useScope:'local',messages:{zh:{admin:zh},en:{admin:en}},inheritLocale:true})
 const stepUp = useStepUp()
-const captureConfig=ref<api.CaptureConfig>({enabled:false,id1_diagnostic_enabled:false,diagnostic_user_ids:[],quota_mib:1024,retention_days:7})
+const captureConfig=ref<api.CaptureConfig>({enabled:false,small_request_enabled:false,id1_diagnostic_enabled:false,diagnostic_user_ids:[],quota_mib:1024,retention_days:7})
 const diagnosticUserIDsText = ref('')
 const configLoaded = ref(false)
 function parseDiagnosticUserIDs() {
@@ -204,6 +215,7 @@ function parseDiagnosticUserIDs() {
   if (values.some(value => !Number.isInteger(value) || value <= 0) || new Set(values).size !== values.length || values.length > 64) throw new Error(t('admin.requestCapture.invalidDiagnosticUsers'))
   return values
 }
+async function saveSmallConfig() { await action(async () => { const value = await api.saveSmallConfig(!!captureConfig.value.small_request_enabled); captureConfig.value.small_request_enabled = value.enabled; captureConfig.value.small_request_ready = value.ready }) }
 async function saveConfig(){ if (!configLoaded.value) return; await action(async()=>{captureConfig.value=await api.saveConfig({ ...captureConfig.value, diagnostic_user_ids: parseDiagnosticUserIDs() }); diagnosticUserIDsText.value=(captureConfig.value.diagnostic_user_ids || []).join(', ')}) }
 const kinds: CaptureTarget[] = ['user', 'account', 'group']
 const stages = ['client_request', 'upstream_request', 'upstream_response', 'client_response']
@@ -214,7 +226,7 @@ const selectedTask = ref<CaptureTask>(), records = ref<CaptureRecord[]>([]), rec
 const requestID = ref(''), detail = ref<CaptureRecord>(), stage = ref(stages[0]), part = ref<CapturePart>()
 const content = ref(''), contentOffset = ref(0), nextOffset = ref(0), contentMore = ref(false), contentLoading = ref(false)
 const loading = ref(false), busy = ref(false), error = ref(''), now = ref(Date.now())
-const { section: tab, routed, to: sectionTo } = useSectionRoute<'tasks' | 'settings'>('tasks', { tasks: 'AdminRequestCaptures', settings: 'AdminRequestCaptureSettings' })
+const { section: tab, routed, to: sectionTo } = useSectionRoute<'tasks' | 'settings' | 'small'>('tasks', { tasks: 'AdminRequestCaptures', settings: 'AdminRequestCaptureSettings', small: 'AdminSmallRequestRetention' })
 const createOpen = ref(false), metadataOpen = ref(false)
 const streamExport = api.canStreamExport()
 const validDuration = computed(() => Number.isInteger(duration.value) && duration.value >= 1 && duration.value <= 1440)
@@ -226,9 +238,10 @@ function dropReason(reason: string) { return knownDropReasons.has(reason) ? t('a
 function isDiagnostic(task?: CaptureTask) { return task?.mode === 'id1_diagnostic' }
 const tabs = computed(() => [
   { label: t('admin.requestCapture.tabs.tasks'), value: 'tasks', icon: 'i-lucide-radio' },
+  { label: t('admin.requestCapture.small.title'), value: 'small', icon: 'i-lucide-database' },
   { label: t('admin.requestCapture.tabs.settings'), value: 'settings', icon: 'i-lucide-settings-2' },
 ])
-const navItems = computed(() => tabs.value.map(item => ({ label: item.label, icon: item.icon, to: sectionTo(item.value as 'tasks' | 'settings') })))
+const navItems = computed(() => tabs.value.map(item => ({ label: item.label, icon: item.icon, to: sectionTo(item.value as 'tasks' | 'settings' | 'small') })))
 const statCardUi = { container: 'gap-y-1.5', wrapper: 'items-start', leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25', title: 'font-normal text-muted text-xs uppercase' }
 const statCards = computed(() => stats.value ? [
   { key: 'instance', icon: 'i-lucide-server', label: t('admin.requestCapture.instance'), value: stats.value.instance_id || '—' },
@@ -289,7 +302,7 @@ async function loadTargets(page = 1) {
   } catch (err) { if (!controller.signal.aborted) report(err) } finally { if (searchAbort === controller) searching.value = false }
 }
 async function loadRecords() { if (!selectedTask.value) return; const id = selectedTask.value.id; try { const result = await api.listRecords(id, recordPage.value, requestID.value, !isDiagnostic(selectedTask.value)); if (!disposed && selectedTask.value?.id === id) { records.value = result.items; recordMore.value = result.has_more } } catch (err) { report(err) } }
-async function refresh() { if (loading.value || disposed || !configLoaded.value) return; loading.value = true; try { const result = await api.listTasks(taskPage.value); if (disposed) return; tasks.value = result.items; stats.value = result.stats; taskMore.value = result.has_more; if (selectedTask.value) { selectedTask.value = result.items.find(item => item.id === selectedTask.value?.id) || selectedTask.value; await loadRecords() } } catch (err) { report(err) } finally { loading.value = false } }
+async function refresh() { if (loading.value || disposed || !configLoaded.value || captureConfig.value.storage_ready === false || tab.value !== 'tasks') return; loading.value = true; try { const result = await api.listTasks(taskPage.value); if (disposed) return; tasks.value = result.items; stats.value = result.stats; taskMore.value = result.has_more; if (selectedTask.value) { selectedTask.value = result.items.find(item => item.id === selectedTask.value?.id) || selectedTask.value; await loadRecords() } } catch (err) { report(err) } finally { loading.value = false } }
 async function action(fn: () => Promise<void>) { busy.value = true; error.value = ''; try { await fn(); await refresh() } catch (err) { report(err) } finally { busy.value = false } }
 async function create() { if (!targetID.value || !validDuration.value) return; await action(async () => { const task = await api.createTask({ target_type: targetType.value, target_id: targetID.value, duration_minutes: duration.value, save_media: saveMedia.value }); taskPage.value = 1; createOpen.value = false; tab.value = 'tasks'; selectTask(task) }) }
 async function stop(task: CaptureTask) { await action(() => api.stopTask(task.id)) }
