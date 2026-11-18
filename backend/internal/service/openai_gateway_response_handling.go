@@ -340,7 +340,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	var streamEarlyErr error
 	terminalFailurePending := false
 	nonBillableUpstreamError := false
-	answerSeen := false
 	failureDelivered := false
 	suppressCurrentEvent := false
 	var bareErrorPayload []byte
@@ -614,16 +613,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 			nativeReasoning.ObserveFrame(frame)
 			eventType := frame.eventType
-			answerFrame := responsesFrameHasAnswer(frame)
-			successAfterError := (eventType == "response.completed" || eventType == "response.done") &&
-				!clientDisconnected && (answerSeen || answerFrame) && !openAIExplicitUpstreamError(frame.root, eventType) &&
-				(frame.root.Get("response.status").String() == "" || frame.root.Get("response.status").String() == "completed")
+			successAfterError := openAIResponsesSuccessTerminal(frame.root, eventType)
 			switch eventType {
 			case "error", "response.failed", "response.completed", "response.done":
-				// Empty success frames cannot erase a real provider rejection.
-				if eventType == "error" || eventType == "response.failed" || !nonBillableUpstreamError || successAfterError {
-					observeDeepSeekHostedUpstreamEvent(ctx, eventType)
-				}
+				observeDeepSeekHostedUpstreamEvent(ctx, eventType)
 			}
 			if sawResponseFailed && (eventType == "response.failed" || eventType == "error") {
 				s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
@@ -942,7 +935,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					handlePendingWriteError(err)
 				} else {
 					eventInProgress = true
-					answerSeen = answerSeen || answerFrame
 					// 可见输出帧计量：累加已承诺字节作 token 上界，跨预扣窗口时补扣。
 					// 补扣失败通过 streamEarlyErr 中止：后续行被 processSSELine 顶部的
 					// 守卫跳过，scanner 循环结束后按该错误返回并关闭上游连接。
@@ -1917,7 +1909,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		}
 	}
 
-	nonBillableUpstreamError := !gjson.GetBytes(body, "choices.0").Exists() && openAIExplicitUpstreamError(gjson.ParseBytes(body), "")
+	nonBillableUpstreamError := openAIBufferedUpstreamError(gjson.ParseBytes(body), "")
 	if nonBillableUpstreamError {
 		// Preserve a provider rejection even if usage validation discards this round.
 		observeDeepSeekHostedUpstreamEvent(ctx, "error")
@@ -2166,10 +2158,10 @@ func inspectOpenAIBufferedSSE(ctx context.Context, body string) (string, []byte,
 	var terminalType string
 	var terminalPayload, failurePayload []byte
 	failureType := ""
-	nonBillable, visibleOutput := false, false
+	nonBillable := false
 	forEachOpenAISSEFrame(body, func(eventType string, data []byte) {
 		frame := parseOpenAISSEDataFrame(data, eventType)
-		if openAIExplicitUpstreamError(frame.root, eventType) && !frame.root.Get("choices.0").Exists() {
+		if openAIBufferedUpstreamError(frame.root, eventType) {
 			nonBillable = true
 			failureType = "error"
 			if eventType == "response.failed" {
@@ -2177,13 +2169,10 @@ func inspectOpenAIBufferedSSE(ctx context.Context, body string) (string, []byte,
 			}
 			failurePayload = append(failurePayload[:0], data...)
 			observeDeepSeekHostedUpstreamEvent(ctx, "error")
-		} else {
-			visibleOutput = visibleOutput || openAIStreamFrameStartsVisibleOutput(frame)
-			if (eventType == "response.completed" || eventType == "response.done") && visibleOutput {
-				nonBillable = false
-				failurePayload = nil
-				observeDeepSeekHostedUpstreamEvent(ctx, eventType)
-			}
+		} else if eventType == "response.completed" || eventType == "response.done" {
+			nonBillable = false
+			failurePayload = nil
+			observeDeepSeekHostedUpstreamEvent(ctx, eventType)
 		}
 		switch eventType {
 		case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "error":

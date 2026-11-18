@@ -1337,7 +1337,6 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	}
 	nonBillableUpstreamError := false
 	var pendingBareError []byte
-	answerSeen := false
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 
@@ -1458,8 +1457,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			return false
 		}
 		if (eventType == "response.completed" || eventType == "response.done") &&
-			(answerSeen || responsesEventHasAnswer(&event.ResponsesStreamEvent)) &&
-			(event.Response == nil || event.Response.Status == "" || event.Response.Status == "completed") {
+			openAIResponsesSuccessTerminal(gjson.ParseBytes(rawPayload), eventType) {
 			nonBillableUpstreamError = false
 			pendingBareError = nil
 		}
@@ -1577,9 +1575,6 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				}
 				clientOutputStarted = true
 			}
-		}
-		if !clientDisconnected && clientOutputStarted {
-			answerSeen = answerSeen || responsesEventHasAnswer(&event.ResponsesStreamEvent)
 		}
 		if len(events) > 0 && !clientDisconnected {
 			c.Writer.Flush()

@@ -68,7 +68,7 @@ func TestDSHostedBufferedGapsHandlerSettlement(t *testing.T) {
 		{"chat_json_without_usage", service.APIProtocolChatCompletions, "application/json", `{"error":{"message":"unknown parameter synthetic"}}`, true, 10, 2},
 		{"untyped_error_then_incomplete", service.APIProtocolResponses, "text/event-stream", errorFrame + "data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"output\":[],\"usage\":{\"input_tokens\":20,\"output_tokens\":3}}}\n\n", true, 30, 5},
 		{"untyped_error_then_done", service.APIProtocolResponses, "text/event-stream", usageFrame + errorFrame + "data: [DONE]\n\n", true, 30, 5},
-		{"error_then_empty_completed", service.APIProtocolResponses, "text/event-stream", errorFrame + emptyTerminal, true, 30, 5},
+		{"error_then_empty_completed", service.APIProtocolResponses, "text/event-stream", errorFrame + emptyTerminal, false, 30, 5},
 		{"error_then_answer_completed", service.APIProtocolResponses, "text/event-stream", errorFrame + answerTerminal, false, 30, 5},
 		{"pure_EOF_keeps_charging", service.APIProtocolResponses, "text/event-stream", usageFrame, false, 30, 5},
 	} {

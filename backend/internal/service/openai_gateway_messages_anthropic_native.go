@@ -379,8 +379,6 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	clientDisconnected := false
 	sawTerminalEvent, sawError := false, false
 	nonBillableUpstreamError := false
-	answerSeen := false
-	stopReason := ""
 	defer func() {
 		if err == nil && sawTerminalEvent && !sawError && result != nil && !result.ClientDisconnect {
 			s.rateLimitService.observeModelTransientSuccess(ctx, c, account, billingModel)
@@ -561,12 +559,6 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
 				trimmed := strings.TrimSpace(data)
 				root := gjson.Parse(trimmed)
-				if !clientDisconnected && !watch.Gone() && anthropicRootHasAnswer(root) {
-					answerSeen = true
-				}
-				if reason := root.Get("delta.stop_reason").String(); reason != "" {
-					stopReason = reason
-				}
 				if root.Get("type").String() == "error" || pendingErrorHeader != "" {
 					sawError = true
 					nonBillableUpstreamError = openAIExplicitUpstreamError(root, "error")
@@ -582,7 +574,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 				if trimmed == "[DONE]" || root.Get("type").String() == "message_stop" {
 					sawTerminalEvent = true
 					// A sentinel ends reading but cannot overturn a provider error.
-					if root.Get("type").String() == "message_stop" && answerSeen && anthropicStopReasonIsSuccess(stopReason) {
+					if root.Get("type").String() == "message_stop" {
 						nonBillableUpstreamError = false
 					}
 				}
@@ -596,7 +588,8 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
 					sawTerminalEvent = true
-					// The data payload, not the event header, decides successful delivery.
+					// Preserve the native terminal-header clearing rule.
+					nonBillableUpstreamError = false
 				}
 			}
 
@@ -665,30 +658,6 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 			lastDataAt = time.Now()
 			resetKeepaliveTimer()
 		}
-	}
-}
-
-// anthropicStopReasonIsSuccess keeps explicit failed stops from clearing errors.
-func anthropicStopReasonIsSuccess(reason string) bool {
-	switch reason {
-	case "", "end_turn", "stop_sequence", "max_tokens", "tool_use", "pause_turn":
-		return true
-	default:
-		return false
-	}
-}
-
-func anthropicRootHasAnswer(root gjson.Result) bool {
-	switch root.Get("type").String() {
-	case "content_block_start":
-		block := root.Get("content_block")
-		return block.Get("text").String() != "" ||
-			((block.Get("type").String() == "tool_use" || block.Get("type").String() == "server_tool_use") && block.Get("name").String() != "")
-	case "content_block_delta":
-		delta := root.Get("delta")
-		return delta.Get("text").String() != "" || delta.Get("partial_json").String() != ""
-	default:
-		return false
 	}
 }
 

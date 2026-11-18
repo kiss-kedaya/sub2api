@@ -64,7 +64,7 @@ func TestOpenAIGaps3ResponsesUntypedStreamError(t *testing.T) {
 	}
 }
 
-func TestOpenAIGaps3ResponsesSuccessRequiresAnswer(t *testing.T) {
+func TestOpenAIGaps3ResponsesSuccessfulTerminalClearsError(t *testing.T) {
 	for _, route := range []string{"responses", "passthrough", "messages", "chat"} {
 		for _, answer := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/answer=%t", route, answer), func(t *testing.T) {
@@ -94,17 +94,13 @@ func TestOpenAIGaps3ResponsesSuccessRequiresAnswer(t *testing.T) {
 				} else {
 					result, err = svc.handleChatStreamingResponse(resp, c, account, "gpt-5.1", "gpt-5.1", "gpt-5.1", time.Now(), 0)
 				}
+				require.NoError(t, err)
+				assertTransientFallbackBilled(t, result)
 				if answer {
-					require.NoError(t, err)
-					assertTransientFallbackBilled(t, result)
 					require.Contains(t, rec.Body.String(), "synthetic answer")
 					if route == "responses" || route == "passthrough" {
 						require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.output_text.delta"`))
 					}
-				} else {
-					require.Error(t, err)
-					assertExplicitUpstreamErrorFree(t, result)
-					require.NotContains(t, rec.Body.String(), "response.completed")
 				}
 			})
 		}
@@ -169,16 +165,22 @@ func TestOpenAIGaps3ChatFallbackOutcome(t *testing.T) {
 				} else {
 					result, err = svc.streamChatCompletionsAsAnthropic(c, resp, "gpt-5.1", "gpt-5.1", "gpt-5.1", nil, nil, time.Now())
 				}
-				if mode == "answer_success" || mode == "disconnect" {
+				if mode == "empty_success" || mode == "answer_success" || mode == "disconnect" {
 					require.NoError(t, err)
 					assertTransientFallbackBilled(t, result)
-					require.Contains(t, rec.Body.String(), "synthetic answer")
+					if mode != "empty_success" {
+						require.Contains(t, rec.Body.String(), "synthetic answer")
+					}
 				} else {
 					require.ErrorContains(t, err, "upstream response failed:")
 					assertExplicitUpstreamErrorFree(t, result)
 					require.NotContains(t, rec.Body.String(), "response.completed")
 					require.NotContains(t, rec.Body.String(), "message_stop")
-					require.Equal(t, 1, strings.Count(rec.Body.String(), "synthetic rejection"))
+					if strings.Contains(mode, "finish") {
+						require.Contains(t, rec.Body.String(), "Upstream response failed")
+					} else {
+						require.Equal(t, 1, strings.Count(rec.Body.String(), "synthetic rejection"))
+					}
 					require.True(t, IsResponseCommitted(c))
 				}
 			})
@@ -231,14 +233,15 @@ func TestOpenAIGaps3NativeAnthropicOutcome(t *testing.T) {
 				case "chat_buffered":
 					result, err = svc.handleCCBufferedFromNativeAnthropic(resp, c, "gpt-5.1", "gpt-5.1", "gpt-5.1", nil, time.Now())
 				}
-				if mode == "answer_success" || mode == "disconnect" || mode == "tool_success" {
+				if mode == "answer_success" || mode == "disconnect" || mode == "tool_success" || mode == "empty_success" || mode == "role_success" || route == "messages" && mode == "error_header_stop" {
 					if route != "messages" || mode != "disconnect" {
 						require.NoError(t, err)
 					}
 					assertTransientFallbackBilled(t, result)
-					if mode == "tool_success" {
+					switch mode {
+					case "tool_success":
 						require.Contains(t, rec.Body.String(), "synthetic_tool")
-					} else {
+					case "answer_success", "disconnect":
 						require.Contains(t, rec.Body.String(), "synthetic answer")
 					}
 				} else {
