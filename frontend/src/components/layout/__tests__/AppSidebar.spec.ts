@@ -59,13 +59,13 @@ describe('AppSidebar operations center group', () => {
     expect(componentSource).toContain('v-if="row.section"')
   })
 
-  it('groups account, channel and diagnostics entries under one expandable parent', () => {
+  it('uses the shared five workspaces instead of maintaining another page directory', () => {
     expect(componentSource).toContain("path: '/admin/ops-center'")
-    expect(componentSource).toContain("label: locale.value === 'zh' ? '运营中心' : 'Operations center'")
-    expect(componentSource).toContain("path: '#ops-tier-accounts'")
-    expect(componentSource).toContain("path: '#ops-tier-channels'")
-    expect(componentSource).toContain("path: '#ops-tier-diagnostics'")
-    expect(componentSource).toContain("path: '#ops-tier-platform'")
+    expect(componentSource).toContain("label: t('opsCenter.title')")
+    expect(componentSource).toContain('children: operationsNavigation.value.map(area => ({')
+    expect(componentSource).toContain('path: area.items[0].path')
+    expect(componentSource).not.toContain('#ops-tier-')
+    expect(componentSource).not.toContain('/admin/ops?alertRules=1')
   })
 
   it('no longer shows the standalone ops entry next to the group', () => {
@@ -132,8 +132,8 @@ describe('AppSidebar rail size and density', () => {
   })
 
   it('highlights a nested child route, not only an exact match', () => {
-    expect(componentSource).toContain('children.some(child => !child.section && isActive(child.path))')
-    expect(componentSource).toContain('active: isActive(child.path),')
+    expect(componentSource).toContain('children.some(child => !child.section && (child.active ?? isActive(child.path)))')
+    expect(componentSource).toContain('active: child.active ?? isActive(child.path),')
   })
 })
 

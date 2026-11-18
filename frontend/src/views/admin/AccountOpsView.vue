@@ -118,10 +118,12 @@
 
       <!-- Channels sub-page -->
       <section v-if="activeTab === 'channels' && remote" id="ops-panel-channels" class="space-y-8">
+        <AccountOpsAdminChannels :config="remote.config" :status="remote.admin_defaults" :smtp-configured="remote.smtp_configured"
+          :busy="loading || mutating || globalSaving" :testing-id="testingId" @toggle="toggleAdminChannel" @test="testAdminChannel" />
         <div class="space-y-3" data-testid="account-ops-channels">
           <div class="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h2 class="text-base font-semibold text-highlighted">{{ t('accountOps.notificationChannels') }}</h2>
+              <h2 class="text-base font-semibold text-highlighted">{{ t('accountOps.customChannels') }}</h2>
               <p class="mt-1 text-sm text-muted">{{ t('accountOps.channelSummaryHint') }}</p>
             </div>
             <UButton color="neutral" variant="outline" icon="i-lucide-plus" :disabled="!canAddChannel" data-testid="account-ops-add-channel" :label="t('accountOps.addChannel')" @click="showAddChannel = true" />
@@ -187,7 +189,7 @@
         <AccountOpsBatchRuleDialog :show="batchAccounts.length > 0" :accounts="batchAccounts" :config="remote.config" @close="batchAccounts = []"
           @saved="acceptBatchConfig" @error="app.showError" />
         <AccountOpsAddChannelDialog :show="showAddChannel" :email-configured="!!remote.config.recipient"
-          :webhook-count="remote.config.webhooks?.length ?? 0" :encryption-configured="remote.encryption_key_configured === true"
+          :webhook-count="robotCount" :encryption-configured="remote.encryption_key_configured === true"
           @close="showAddChannel = false" @select="addChannel" />
         <AccountOpsWebhookDialog :show="showWebhook" :hook="editingHook" :initial-provider="editingProvider" :encryption-configured="remote.encryption_key_configured === true"
           :testing-id="testingId" @close="showWebhook = false" @saved="acceptConfig" @error="app.showError" @test="testWebhook" />
@@ -219,10 +221,11 @@ import AccountOpsBatchRuleDialog from '@/components/admin/operations/AccountOpsB
 import AccountOpsDeliveryDetails from '@/components/admin/operations/AccountOpsDeliveryDetails.vue'
 import AccountOpsWebhookDialog from '@/components/admin/operations/AccountOpsWebhookDialog.vue'
 import AccountOpsEmailDialog from '@/components/admin/operations/AccountOpsEmailDialog.vue'
+import AccountOpsAdminChannels from '@/components/admin/operations/AccountOpsAdminChannels.vue'
 import AccountOpsAddChannelDialog from '@/components/admin/operations/AccountOpsAddChannelDialog.vue'
 import AccountOpsGlobalSettings from '@/components/admin/operations/AccountOpsGlobalSettings.vue'
 import AccountOpsGroupDialog from '@/components/admin/operations/AccountOpsGroupDialog.vue'
-import { getAccountOpsSettings, saveAccountOpsNotificationSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, getAccountOpsThresholdGroups, testAccountOpsWebhook, saveAccountOpsRuleGroups, deleteAccountOpsWebhook } from '@/api/admin/accountOps'
+import { getAccountOpsSettings, saveAccountOpsNotificationSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, getAccountOpsThresholdGroups, testAccountOpsWebhook, testAccountOpsAdminChannel, saveAccountOpsRuleGroups, deleteAccountOpsWebhook } from '@/api/admin/accountOps'
 import type { AccountOpsConfig, AccountOpsEvent, AccountOpsThresholdAccount, AccountOpsWebhook, AccountOpsWebhookProvider, AccountOpsGroup, AccountOpsRuleBatchGroup } from '@/api/admin/accountOps'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
@@ -246,9 +249,10 @@ const loading = ref(false), loadingMore = ref(false), mutating = ref(false)
 const thresholdAccounts = ref<AccountOpsThresholdAccount[]>([]), thresholdLoading = ref(false), thresholdReady = ref(false), thresholdError = ref('')
 const accountGroups = ref<AccountOpsGroup[]>([]), showGroupDialog = ref(false)
 const enabledDraft = ref(false), globalSaving = ref(false), showAddChannel = ref(false)
-const canAddChannel = computed(() => !!remote.value && (!remote.value.config.recipient || ((remote.value.config.webhooks?.length ?? 0) < 5 && remote.value.encryption_key_configured === true)))
+const robotCount = computed(() => (remote.value?.config.webhooks?.length ?? 0) + (remote.value?.config.use_admin_bark ? 1 : 0))
+const canAddChannel = computed(() => !!remote.value && (!remote.value.config.recipient || (robotCount.value < 5 && remote.value.encryption_key_configured === true)))
 const loadError = ref('')
-const enabledChannelCount = computed(() => (remote.value?.config.recipient ? 1 : 0) + (remote.value?.config.webhooks ?? []).filter(h => h.enabled).length)
+const enabledChannelCount = computed(() => (remote.value?.config.use_admin_email || remote.value?.config.recipient ? 1 : 0) + (remote.value?.config.use_admin_bark ? 1 : 0) + (remote.value?.config.webhooks ?? []).filter(h => h.enabled).length)
 const enabledRuleCount = computed(() => [...(remote.value?.config.balance_thresholds ?? []), ...(remote.value?.config.quota_thresholds ?? [])].filter(r => r.enabled).length)
 const pendingEventCount = computed(() => events.value.filter(e => ['pending', 'sending', 'failed'].includes(e.state)).length)
 // Overview list: the first few alerts still waiting or failed; the records sub-page has the rest.
@@ -283,7 +287,7 @@ const tableUi = {
 }
 const editingHook = ref<AccountOpsWebhook|null>(null), editingProvider = ref<AccountOpsWebhookProvider>('custom'), showWebhook = ref(false), showEmail = ref(false), testingId = ref<string|null>(null)
 let version = 0, accountsVersion = 0, testSequence = 0, mutationSequence = 0, paginationSequence = 0, alive = true, timer: ReturnType<typeof setInterval>|null = null
-const normalize = (c: AccountOpsConfig): AccountOpsConfig => ({ enabled:c.enabled, recipient:c.recipient,email_name:c.email_name ?? '', balance_low:c.balance_low, weekly_quota:c.weekly_quota, cooldown_minutes:c.cooldown_minutes, webhooks:(c.webhooks??[]).map(h=>({id:h.id,name:h.name,provider:h.provider,enabled:h.enabled,url_configured:h.url_configured===true,secret_configured:h.secret_configured===true,message_template:h.message_template})), groups:(c.groups??[]).map(g=>({id:g.id,name:g.name,provider:g.provider,site:g.site,account_ids:g.account_ids ? [...g.account_ids] : []})), balance_thresholds:(c.balance_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})), quota_thresholds:(c.quota_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})) })
+const normalize = (c: AccountOpsConfig): AccountOpsConfig => ({ enabled:c.enabled, recipient:c.recipient,email_name:c.email_name ?? '', use_admin_email:c.use_admin_email ?? false, use_admin_bark:c.use_admin_bark ?? false, balance_low:c.balance_low, weekly_quota:c.weekly_quota, cooldown_minutes:c.cooldown_minutes, webhooks:(c.webhooks??[]).map(h=>({id:h.id,name:h.name,provider:h.provider,enabled:h.enabled,url_configured:h.url_configured===true,secret_configured:h.secret_configured===true,message_template:h.message_template})), groups:(c.groups??[]).map(g=>({id:g.id,name:g.name,provider:g.provider,site:g.site,account_ids:g.account_ids ? [...g.account_ids] : []})), balance_thresholds:(c.balance_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})), quota_thresholds:(c.quota_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})) })
 const eventKey = (e: AccountOpsEvent) => e.id ?? `${e.account_id}:${e.kind}:${e.phase??'legacy'}:${e.first_seen}`
 const filteredEvents = computed(()=>events.value.filter(e=>(kind.value==='all'||kind.value===e.kind)&&(phase.value==='all'||phase.value===(e.phase??'alert'))&&`${e.account_name} ${e.account_id}`.toLowerCase().includes(query.value.toLowerCase().trim())))
 const date = (value: string) => { const d=new Date(value);return Number.isFinite(d.getTime())?d.toLocaleString():'-' }
@@ -327,7 +331,7 @@ function addChannel(provider: 'email'|'webhook'|'bark') {
     if (remote.value.config.recipient) return
     showEmail.value = true
   } else {
-    if (remote.value.encryption_key_configured !== true || (remote.value.config.webhooks?.length ?? 0) >= 5) return
+    if (remote.value.encryption_key_configured !== true || robotCount.value >= 5) return
     editWebhook(null, provider === 'bark' ? 'bark' : 'custom')
   }
   showAddChannel.value = false
@@ -363,12 +367,21 @@ async function toggleGroup(_group:AccountOpsGroup, accounts:AccountOpsThresholdA
   if (groups.length) await mutate(() => saveAccountOpsRuleGroups(groups))
 }
 async function removeWebhook(id:string){await mutate(()=>stepUp.run(()=>deleteAccountOpsWebhook(id)))}
-async function testWebhook(id:string){
+async function toggleAdminChannel(channel: 'email' | 'bark', enabled: boolean) {
+  await mutate(() => stepUp.run(() => saveAccountOpsNotificationSettings(channel === 'email' ? { use_admin_email: enabled } : { use_admin_bark: enabled })))
+}
+async function testAdminChannel(channel: 'email' | 'bark') {
+  await testChannel(`admin-${channel}`, () => testAccountOpsAdminChannel(channel))
+}
+async function testWebhook(id: string) {
+  await testChannel(id, () => testAccountOpsWebhook(id))
+}
+async function testChannel(id: string, action: () => Promise<unknown>){
   if(testingId.value)return
   const current=++testSequence
   testingId.value=id
   try{
-    await stepUp.run(()=>testAccountOpsWebhook(id))
+    await stepUp.run(action)
     if(alive&&current===testSequence)app.showSuccess(t('accountOps.testSuccess'))
   }catch(e){
     if(!alive||current!==testSequence)return

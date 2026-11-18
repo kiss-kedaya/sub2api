@@ -92,7 +92,8 @@ func TestAccountOpsDeliveryRechecksAmountUnitTypeIdentityAndRules(t *testing.T) 
 	svc.SetNotificationDependencies(accounts, nil, false, "Asia/Shanghai")
 	cfg := defaultAccountOpsConfig()
 	cfg.Enabled = true
-	cfg.Recipient = "ops@example.test"
+	cfg.Recipient = "ops@example.invalid"
+	cfg.UseAdminEmail = opsBool(false)
 	cfg.BalanceLow = false
 	cfg.WeeklyQuota = false
 	cfg.BalanceThresholds = []AccountOpsBalanceRule{{AccountID: 1, Enabled: true, Threshold: 5, Unit: "USD"}}
@@ -321,6 +322,8 @@ func TestAccountOpsRulesReadConfiguredCustomUsageWithoutBillingProbe(t *testing.
 		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://relay.example.test"},
 		Extra:       map[string]any{},
 	}
+	config, _ := customUsageAccountDefaults(a)
+	a.Extra[CustomUsageExtraKey] = config
 	svc, fixture := newOpsCustomUsageFixture(t, a, clock)
 	cfg := opsCustomUsageRuleConfig(a.ID, 20, "USD")
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
@@ -373,6 +376,8 @@ func TestAccountOpsCustomUsageFailureNeverConfirmsRecovery(t *testing.T) {
 		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://relay.example.test"},
 		Extra:       map[string]any{},
 	}
+	config, _ := customUsageAccountDefaults(a)
+	a.Extra[CustomUsageExtraKey] = config
 	svc, fixture := newOpsCustomUsageFixture(t, a, clock)
 	cfg := opsCustomUsageRuleConfig(a.ID, 20, "USD")
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
@@ -489,6 +494,8 @@ func TestAccountOpsRulesPrefetchQueriesEachAccountOnce(t *testing.T) {
 			Credentials: map[string]any{"api_key": "sk-test", "base_url": fmt.Sprintf("https://relay%d.example.test", id)},
 			Extra:       map[string]any{},
 		}
+		config, _ := customUsageAccountDefaults(accounts[id])
+		accounts[id].Extra[CustomUsageExtraKey] = config
 		ids = append(ids, id)
 	}
 	usage := NewCustomUsageService(&customUsageTestRepo{accounts: accounts})

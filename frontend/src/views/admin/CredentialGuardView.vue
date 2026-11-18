@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="flex flex-col gap-4">
-      <AdminPageHeader :title="text('凭证守护', 'Credential inspection')" :description="text('按账号开启巡检，失效凭证按需恢复；风控验证交由人工处理。', 'Opt in per account to inspect credentials and recover expired sessions. Security verification always requires an operator.')">
+      <AdminPageHeader :title="t('opsCenter.pages.credentials')" :description="text('按账号开启巡检，失效凭证按需恢复；风控验证交由人工处理。', 'Opt in per account to inspect credentials and recover expired sessions. Security verification always requires an operator.')">
         <template #actions>
           <UButton icon="i-lucide-refresh-cw" color="neutral" variant="outline" :label="text('刷新', 'Refresh')" :disabled="busy" @click="refresh" />
           <UButton icon="i-lucide-plus" :label="text('添加账号', 'Add account')" :disabled="busy" @click="openNew" />
@@ -93,7 +93,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import { useStepUp } from '@/composables/useStepUp'
 import { credentialGuardAPI, type CredentialGuardRecord, type CredentialGuardInput } from '@/api/admin/credentialGuard'
-const { locale } = useI18n()
+const { t, locale } = useI18n()
 const text = (zh: string, en: string) => locale.value.startsWith('zh') ? zh : en
 const stepUp = useStepUp()
 const rows = ref<CredentialGuardRecord[]>([])

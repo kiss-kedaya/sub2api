@@ -17,9 +17,19 @@ beforeEach(() => { vi.resetAllMocks(); vi.mocked(api.getAutomation).mockResolved
 describe('account automation', () => {
   it('keeps all policies disabled initially and requires an explicit save', async () => {
     const w = mount(OpsAutomationView); await flushPromises()
-    for (const box of w.findAll('input[type="checkbox"]')) expect((box.element as HTMLInputElement).checked).toBe(false)
+    expect(w.findAll('[role="switch"]')).toHaveLength(5)
+    for (const box of w.findAll('[role="switch"]')) expect(box.attributes('aria-checked')).toBe('false')
     expect(api.saveAutomation).not.toHaveBeenCalled()
     expect(w.text()).toContain('opsAutomation.oauthHint'); expect(w.text()).toContain('opsAutomation.rankingHint')
+    w.unmount()
+  })
+  it('keeps numeric edits local and submits the same automation payload on explicit save', async () => {
+    const w = mount(OpsAutomationView); await flushPromises()
+    await w.get('input[aria-label="opsAutomation.concurrency"]').setValue('6')
+    expect(api.saveAutomation).not.toHaveBeenCalled()
+    await w.find('form').trigger('submit'); await flushPromises()
+    const expected = config(); expected.oauth[0].concurrency = 6
+    expect(api.saveAutomation).toHaveBeenCalledWith(expected)
     w.unmount()
   })
   it('retains the loaded configuration after a failed refresh', async () => {
@@ -32,8 +42,8 @@ describe('account automation', () => {
   it('offers all three explicit judge methods while a new plan stays disabled', async () => {
     const w = mount(OpsAutomationView); await flushPromises()
     await w.findAll('button').find(b => b.text() === 'opsAutomation.newPlan')!.trigger('click')
-    const judge = w.findAll('select').find(s => s.find('option[value="jev"]').exists())!
-    expect(judge.findAll('option').map(o => o.attributes('value'))).toEqual(['local', 'llm', 'jev'])
+    const judge = w.findAllComponents({ name: 'Select' }).find(s => s.props('items')?.some((item: { value: string }) => item.value === 'jev'))!
+    expect(judge.props('items').map((item: { value: string }) => item.value)).toEqual(['local', 'llm', 'jev'])
     expect(api.saveReasoningPlan).not.toHaveBeenCalled(); w.unmount()
   })
 })

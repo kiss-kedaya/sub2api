@@ -1,3 +1,4 @@
+import opsCenter from './opsCenter'
 import landing from './landing'
 import common from './common'
 import dashboard from './dashboard'
@@ -26,7 +27,7 @@ import { serverlessMessages } from '@/components/admin/operations/serverlessMess
 export default {
  serverless: serverlessMessages.en.serverless,
   opsAutomation: opsAutomationMessages.en.opsAutomation,
-  accountOps, channelOps,
+  accountOps, channelOps, opsCenter,
   qualityOps: { refresh: 'Refresh', accounts: 'Accounts', loadMore: 'Load more' },
   ...landing,
   ...common,

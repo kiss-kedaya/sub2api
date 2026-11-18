@@ -17,6 +17,8 @@ type AccountOpsConfig struct {
 	Enabled             bool                    `json:"enabled"`
 	Recipient           string                  `json:"recipient"`
 	EmailName           string                  `json:"email_name,omitempty"`
+	UseAdminEmail       *bool                   `json:"use_admin_email,omitempty"`
+	UseAdminBark        *bool                   `json:"use_admin_bark,omitempty"`
 	BalanceLow          bool                    `json:"balance_low"`
 	WeeklyQuota         bool                    `json:"weekly_quota"`
 	CooldownMinutes     int                     `json:"cooldown_minutes"`
@@ -26,6 +28,8 @@ type AccountOpsConfig struct {
 	UngroupedAccountIDs []int64                 `json:"ungrouped_account_ids,omitempty"`
 	BalanceThresholds   []AccountOpsBalanceRule `json:"balance_thresholds"`
 	QuotaThresholds     []AccountOpsQuotaRule   `json:"quota_thresholds"`
+	// Only profile availability is cached per read; credentials never enter this config.
+	adminBarkAvailable bool
 }
 
 func defaultAccountOpsConfig() AccountOpsConfig {
@@ -40,11 +44,8 @@ func ValidateAccountOpsConfig(c AccountOpsConfig) (err error) {
 	if c.CooldownMinutes < 5 || c.CooldownMinutes > 1440 {
 		return errors.New("cooldown_minutes must be between 5 and 1440")
 	}
-	if c.Recipient != "" {
-		address, err := mail.ParseAddress(c.Recipient)
-		if err != nil || address.Address != c.Recipient || strings.ContainsAny(c.Recipient, "\r\n") || len(c.Recipient) > 254 {
-			return errors.New("recipient must be one email address")
-		}
+	if err := validateAccountOpsRecipient(c.Recipient); err != nil {
+		return err
 	}
 	if err := validateAccountOpsExtras(c); err != nil {
 		return err
@@ -54,6 +55,16 @@ func ValidateAccountOpsConfig(c AccountOpsConfig) (err error) {
 	}
 	return nil
 }
+func validateAccountOpsRecipient(recipient string) error {
+	if recipient != "" {
+		address, err := mail.ParseAddress(recipient)
+		if err != nil || address.Address != recipient || strings.ContainsAny(recipient, "\r\n") || len(recipient) > 254 {
+			return errors.New("recipient must be one email address")
+		}
+	}
+	return nil
+}
+
 func (c AccountOpsConfig) Allows(kind string) bool {
 	return c.Enabled && c.hasDestination() && ((kind == "balance_low" && c.BalanceLow) || (kind == "weekly_quota" && c.WeeklyQuota) || (kind == "balance_threshold" && c.hasThreshold()) || (kind == "quota_threshold" && c.hasQuotaThreshold()))
 }
@@ -99,6 +110,7 @@ type AccountOpsService struct {
 	usageLogs              UsageLogRepository
 	geminiQuota            *GeminiQuotaService
 	accounts               AccountRepository
+	balanceProbe           *UpstreamBillingProbeService
 	customUsage            *CustomUsageService
 	customUsageOnce        sync.Once
 	usageCache             *UsageCache
@@ -108,6 +120,7 @@ type AccountOpsService struct {
 	robotClient            *http.Client
 	robotMu                sync.Mutex
 	robotLast              map[string]time.Time
+	adminChannels          AccountOpsAdminChannels
 	settings               SettingRepository
 	repo                   AccountOpsRepository
 	email                  accountOpsEmailSender

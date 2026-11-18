@@ -5,7 +5,7 @@ import UpstreamMonitorView from '../UpstreamMonitorView.vue'
 import * as api from '@/api/admin/upstreamMonitor'
 import * as accountsApi from '@/api/admin/accounts'
 
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ locale: { value: 'zh' } }) }))
+vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, locale: { value: 'zh' } }) }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
 vi.mock('@/components/layout/PageToolbar.vue', () => ({ default: { template: '<div><slot name="left" /><slot name="right" /></div>' } }))
 vi.mock('@/components/admin/page/AdminPageHeader.vue', () => ({ default: { template: '<header><slot name="actions" /></header>' } }))

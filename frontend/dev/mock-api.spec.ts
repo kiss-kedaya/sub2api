@@ -13,6 +13,29 @@ const date = new Date('2026-09-17T13:00:00Z')
 const query = (value = '') => new URLSearchParams(value)
 
 describe('local demo API contracts', () => {
+  it('previews operations reads with separate currencies and no business writes', () => {
+    const api = createMockApi(date)
+    const accounts = api.handle('GET', '/api/v1/admin/account-ops/threshold-accounts', query()) as { items: Array<{ unit: string }> }
+    expect(accounts.items.map(account => account.unit)).toContain('CNY')
+    expect(accounts.items.map(account => account.unit)).toContain('USD')
+    expect(api.handle('GET', '/api/v1/admin/ops-automation', query())).toMatchObject({ ramp: { enabled: false }, oauth: expect.any(Array) })
+    expect(api.handle('GET', '/api/v1/admin/channels/operations/snapshot', query())).toMatchObject({ usage: { status: 'ready' }, quality: { data: { rows: expect.any(Array) } } })
+    expect(api.handle('GET', '/api/v1/admin/request-captures', query())).toMatchObject({ items: [], stats: { instance_id: 'local-demo' } })
+    expect(api.handle('GET', '/api/v1/admin/serverless', query())).toMatchObject({ config: { enabled: false } })
+    expect(() => api.handle('PUT', '/api/v1/admin/ops-automation', query(), {})).toThrow()
+    expect(() => api.handle('POST', '/api/v1/admin/ops-automation/reasoning/1/run', query(), {})).toThrow()
+  })
+  it('previews channel drilldown, searched catalogs and empty scopes without allowing channel writes', () => {
+    const api = createMockApi(date)
+    const list = api.handle('GET', '/api/v1/admin/channels', query()) as PaginatedResponse<{ id: number }>
+    expect(list.items).toHaveLength(3)
+    expect(api.handle('GET', '/api/v1/admin/channels/1', query())).toMatchObject({ id: 1, status: 'active' })
+    expect(api.handle('GET', '/api/v1/admin/channels/1/operations', query('membership=unassigned'))).toMatchObject({ accounts: [expect.objectContaining({ upstream_id: 0 })] })
+    expect(api.handle('GET', '/api/v1/admin/channels/1/operations', query('upstream_search=北区'))).toMatchObject({ upstreams: [expect.objectContaining({ id: 101 })], upstream_total: 1 })
+    expect(api.handle('GET', '/api/v1/admin/channels/operations/snapshot', query('channel_id=1&upstream_id=101&dimension=account'))).toMatchObject({ scope: { channel_id: 1, upstream_id: 101, dimension: 'account' }, usage: { data: { total: 4 } }, capacity: { data: { accounts: 4 } } })
+    expect(api.handle('GET', '/api/v1/admin/channels/operations/snapshot', query('channel_id=3'))).toMatchObject({ usage: { data: { rows: [] } }, quality: { data: { rows: [] } }, errors: { data: { rows: [] } }, capacity: { data: { accounts: 0 } } })
+    for (const [method, path] of [['POST', '/api/v1/admin/channels'], ['PUT', '/api/v1/admin/channels/1'], ['DELETE', '/api/v1/admin/channels/1'], ['POST', '/api/v1/admin/channels/1/operations']]) expect(() => api.handle(method, path, query(), {})).toThrow('演示不支持')
+  })
   it('filters admin usage down to one exact second without including its neighbor', () => {
     const api = createMockApi(date)
     const all = api.handle('GET', '/api/v1/admin/usage', query('page_size=100&timezone=UTC')) as PaginatedResponse<AdminUsageLog>

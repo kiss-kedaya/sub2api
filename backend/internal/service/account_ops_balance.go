@@ -24,18 +24,24 @@ type AccountOpsUsageWindow struct {
 	ResetsAt    *time.Time `json:"resets_at,omitempty"`
 }
 type AccountOpsBalanceAccount struct {
-	AccountID     int64                   `json:"account_id"`
-	AccountName   string                  `json:"account_name"`
-	GroupID       string                  `json:"group_id"`
-	GroupName     string                  `json:"group_name"`
-	GroupMode     string                  `json:"group_mode"`
-	Platform      string                  `json:"platform"`
-	Type          string                  `json:"type"`
-	Balance       *float64                `json:"balance"`
-	Unit          string                  `json:"unit"`
-	BalanceStatus string                  `json:"balance_status"`
-	ReceivedAt    *time.Time              `json:"received_at"`
-	UsageWindows  []AccountOpsUsageWindow `json:"usage_windows"`
+	AccountID      int64                   `json:"account_id"`
+	AccountName    string                  `json:"account_name"`
+	GroupID        string                  `json:"group_id"`
+	GroupName      string                  `json:"group_name"`
+	GroupMode      string                  `json:"group_mode"`
+	Platform       string                  `json:"platform"`
+	Type           string                  `json:"type"`
+	Balance        *float64                `json:"balance"`
+	KeyBalance     *float64                `json:"key_balance,omitempty"`
+	WalletBalance  *float64                `json:"wallet_balance,omitempty"`
+	WalletStatus   string                  `json:"wallet_status,omitempty"`
+	WalletIdentity string                  `json:"wallet_identity,omitempty"`
+	UpstreamKind   string                  `json:"upstream_kind,omitempty"`
+	BalanceReason  string                  `json:"balance_reason,omitempty"`
+	Unit           string                  `json:"unit"`
+	BalanceStatus  string                  `json:"balance_status"`
+	ReceivedAt     *time.Time              `json:"received_at"`
+	UsageWindows   []AccountOpsUsageWindow `json:"usage_windows"`
 }
 
 func opsNumber(v any) (float64, bool) {
@@ -89,15 +95,31 @@ func opsBalanceAccount(a *Account, now time.Time) AccountOpsBalanceAccount {
 	}
 	snap := decodeUpstreamBillingProbeSnapshot(a.Extra)
 	if snap == nil || snap.Balance == nil {
+		if !upstreamBillingProbeScheduled(a) {
+			item.BalanceStatus = "disabled"
+		}
 		return item
 	}
 	b := snap.Balance
+	item.UpstreamKind = snap.UpstreamKind
+	item.BalanceReason = b.LastError
 	item.BalanceStatus = b.Status
 	item.ReceivedAt = b.ReceivedAt
+	item.WalletStatus, _ = b.Data["wallet_status"].(string)
+	if n, ok := opsNumber(b.Data["remaining"]); ok {
+		item.KeyBalance = &n
+	}
+	if n, ok := opsNumber(b.Data["wallet_balance"]); ok {
+		item.WalletBalance = &n
+	}
 	if unit, ok := b.Data["unit"].(string); ok && unit != "" {
 		item.Unit = unit
 	}
 	if b.Status != "ok" {
+		switch b.LastError {
+		case "invalid_key", "ip_forbidden", "rate_limited":
+			item.BalanceStatus = b.LastError
+		}
 		return item
 	}
 	if !opsFresh(b.ReceivedAt, b.FreshUntil, now) {
@@ -105,8 +127,19 @@ func opsBalanceAccount(a *Account, now time.Time) AccountOpsBalanceAccount {
 		return item
 	}
 	if unlimited, ok := b.Data["unlimited"].(bool); ok && unlimited {
-		item.BalanceStatus = "unsupported"
+		item.BalanceStatus = "unlimited"
 		return item
+	}
+	if snap.UpstreamKind == UpstreamKindNewAPI {
+		if item.WalletStatus == "forbidden" {
+			item.BalanceStatus = "forbidden"
+			return item
+		}
+		// Account rules monitor a wallet, not an independently capped API key.
+		if item.WalletBalance != nil {
+			item.Balance = item.WalletBalance
+			return item
+		}
 	}
 	n, ok := opsNumber(b.Data["remaining"])
 	if !ok {
@@ -131,7 +164,7 @@ const accountOpsCustomUsagePrefetchLimit = 4
 // the same source the account page's balance query reads. Unconfigured or
 // disabled custom usage keeps the existing upstream billing probe behavior.
 func opsConfiguredCustomUsage(a *Account) bool {
-	if a == nil || a.Type != AccountTypeAPIKey || a.IsCredentialShadow() {
+	if a == nil || a.Type != AccountTypeAPIKey || a.IsCredentialShadow() || !customUsageExplicitlyConfigured(a) {
 		return false
 	}
 	c, _, configured := readCustomUsage(a)
@@ -457,6 +490,7 @@ func (s *AccountOpsService) thresholdAccounts(ctx context.Context, apiOnly bool)
 			}
 		}
 		group := accountOpsGroupAssignment(a, c)
+		item.WalletIdentity = opsBalanceWalletIdentity(a)
 		item.GroupID, item.GroupName, item.GroupMode = group.ID, group.Name, group.Mode
 		if a.Type == AccountTypeOAuth {
 			item.UsageWindows = s.usageWindows(ctx, a, now)
@@ -637,16 +671,83 @@ func accountOpsGroupCriteria(c AccountOpsConfig, kind string, members []accountO
 
 func (s *AccountOpsService) assessThresholdGroup(ctx context.Context, group AccountOpsGroupAssignment, members []accountOpsThresholdMember, kind string, c AccountOpsConfig, now time.Time) (*AccountOpsEvent, string) {
 	criteria, _, _, _ := accountOpsGroupCriteria(c, kind, members)
-	// Membership declares a shared upstream account. Use its first member as
-	// the representative; discrepancies in other keys do not change the result.
-	if len(members) > 0 && members[0].account != nil && members[0].lookupErr == nil {
-		e, state := s.assessThreshold(ctx, members[0].account, kind, c, now)
+	if kind != "balance_threshold" && len(members) > 1 {
+		members = members[:1]
+	}
+	var anchor *Account
+	if len(members) > 0 {
+		anchor = members[0].account
+	}
+	for _, member := range members {
+		// Manual groups are site-scoped, not proof that their users share money.
+		if kind == "balance_threshold" && member.account != anchor &&
+			(opsBalanceWalletIdentity(anchor) == "" || opsBalanceWalletIdentity(anchor) != opsBalanceWalletIdentity(member.account)) {
+			continue
+		}
+		if member.account == nil || member.lookupErr != nil {
+			continue
+		}
+		effective := c
+		if kind == "balance_threshold" {
+			// Group rules apply to the shared wallet even when only another member
+			// owns the saved rule. Preserve its threshold and notification policy.
+			for _, rule := range c.BalanceThresholds {
+				if rule.Enabled && thresholdAccountGroup(nil, rule.AccountID, c).ID == group.ID {
+					rule.AccountID = member.id
+					effective.BalanceThresholds = []AccountOpsBalanceRule{rule}
+					break
+				}
+			}
+		}
+		e, state := s.assessThreshold(ctx, member.account, kind, effective, now)
 		if e != nil {
 			e.GroupID, e.GroupName, e.Identity, e.Criteria = group.ID, group.Name, group.ID, criteria
 			return e, state
 		}
 	}
 	return &AccountOpsEvent{AccountID: groupAccountID(members), AccountName: group.Name, GroupID: group.ID, GroupName: group.Name, Kind: kind, Signal: kind, Identity: group.ID, Criteria: criteria}, "unknown"
+}
+
+// opsBalanceWalletIdentity exposes only a fingerprint; site membership alone
+// cannot authorize one upstream user's balance to stand in for another's.
+func opsBalanceWalletIdentity(a *Account) string {
+	if a == nil {
+		return ""
+	}
+	provider, site, userID := accountOpsUpstreamIdentity(a)
+	if provider == "" || site == "" || userID <= 0 {
+		return ""
+	}
+	// Only an observation of the same authenticated route proves shared money.
+	// Equal tenant-local user IDs, old fingerprints and manual grouping do not.
+	snapshot := decodeUpstreamBillingProbeSnapshot(a.Extra)
+	if snapshot == nil || snapshot.Balance == nil {
+		return ""
+	}
+	base := a.GetCredential("base_url")
+	if a.IsCNProvider() && a.IsAdaptiveAPIProtocol() {
+		base = a.GetCNProtocolBaseURL(APIProtocolChatCompletions)
+	}
+	if base == "" {
+		return ""
+	}
+	target := upstreamBillingProbeTarget{apiKey: a.GetCredential("api_key")}
+	if target.apiKey == "" {
+		return ""
+	}
+	if a.ProxyID != nil {
+		if a.Proxy == nil || a.Proxy.ID != *a.ProxyID {
+			return ""
+		}
+		target.proxyURL = a.Proxy.URL()
+	}
+	id := upstreamNewAPIResponseIdentity(a, target, strings.TrimRight(strings.TrimSpace(base), "/"), false)
+	proof := fmt.Sprintf("v2:%x", id)
+	if snapshot.Balance.Data["wallet_route_identity"] != proof {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("v2\x00%s\x00%s\x00%d\x00%s", provider, site, userID, proof)))
+	return hex.EncodeToString(sum[:])
 }
 
 func groupAccountID(members []accountOpsThresholdMember) int64 {
@@ -681,6 +782,9 @@ func (s *AccountOpsService) loadThresholdGroupMembers(ctx context.Context, group
 	var assignment AccountOpsGroupAssignment
 	members := make([]accountOpsThresholdMember, 0)
 	ids := thresholdRuleIDs(c, kind)
+	if kind == "balance_threshold" {
+		ids = thresholdBalanceMemberIDs(c)
+	}
 	accounts := s.loadThresholdAccounts(ctx, ids)
 	for _, id := range ids {
 		a, err := accounts[id].account, accounts[id].lookupErr
@@ -721,8 +825,9 @@ func (s *AccountOpsService) scanBalances(ctx context.Context) {
 	if !c.Enabled || s.accounts == nil {
 		return
 	}
-	ids := append(thresholdRuleIDs(c, "balance_threshold"), thresholdRuleIDs(c, "quota_threshold")...)
+	ids := append(thresholdBalanceMemberIDs(c), thresholdRuleIDs(c, "quota_threshold")...)
 	accounts := s.loadThresholdAccounts(ctx, ids)
+	s.opsRefreshNativeBalances(ctx, accounts, c)
 
 	// Warm the balance-rule custom usage cache concurrently before the serial
 	// group assessments, so one slow or dead upstream cannot delay every later
@@ -746,7 +851,11 @@ func (s *AccountOpsService) scanBalances(ctx context.Context) {
 			assignment AccountOpsGroupAssignment
 			members    []accountOpsThresholdMember
 		}{}
-		for _, id := range thresholdRuleIDs(c, kind) {
+		groupIDs := thresholdRuleIDs(c, kind)
+		if kind == "balance_threshold" {
+			groupIDs = thresholdBalanceMemberIDs(c)
+		}
+		for _, id := range groupIDs {
 			a, err := accounts[id].account, accounts[id].lookupErr
 			if err != nil && !errors.Is(err, ErrAccountNotFound) {
 				a = nil

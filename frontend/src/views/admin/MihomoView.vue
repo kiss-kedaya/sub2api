@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="flex flex-col gap-4 sm:gap-6">
-      <AdminPageHeader :title="text('受管代理出口', 'Managed outbound proxies')">
+      <AdminPageHeader :title="t('opsCenter.pages.proxies')">
         <template #description>{{ text('维护当前服务器的订阅和节点，按需共享至站点代理列表。', 'Maintain this server’s subscriptions and nodes, then share selected exits with the site when needed.') }}</template>
         <template #actions>
           <UButton
@@ -34,7 +34,7 @@ import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import MihomoSettings from '@/features/mihomo/MihomoSettings.vue'
 import { useSectionRoute } from './sysSectionRoute'
 type Section = 'subscriptions' | 'nodes' | 'dynamic' | 'kernel'
-const { locale } = useI18n()
+const { t, locale } = useI18n()
 const text = (zh: string, en: string) => locale.value.startsWith('zh') ? zh : en
 const { section, routed, to } = useSectionRoute<Section>('subscriptions', { subscriptions: 'AdminMihomo', nodes: 'AdminMihomoNodes', dynamic: 'AdminMihomoDynamic', kernel: 'AdminMihomoKernel' })
 const tabs = computed(() => [

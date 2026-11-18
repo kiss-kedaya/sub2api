@@ -1,0 +1,25 @@
+export default {
+  title: '运营中心',
+  description: '先看需要处理的事，再进入对应工作区。资产、通知、渠道与请求各归其位。',
+  areas: { overview: '总览', accounts: '账号与上游', channels: '渠道运营', diagnostics: '请求诊断', network: '网络与地区' },
+  descriptions: {
+    overview: '查看关键数字与待处理事项，快速进入工作区。',
+    accounts: '管理上游站点、账号通知、自动化与授权。',
+    channels: '维护渠道归属、质量、定价和监控配置。',
+    diagnostics: '从请求采集下钻到实时状态、连接、缓存和流量。',
+    network: '管理代理出口、节点与地区路由。',
+  },
+  pages: {
+    credentials: '凭证巡检', excel: 'Excel 授权', comparison: '模型比价',
+    connections: '连接诊断', traffic: '用户流量', captureSettings: '采集设置',
+    proxies: '代理出口', proxyNodes: '代理节点', dynamicProxies: '动态代理', proxyKernel: '代理高级设置',
+  },
+  workspaces: '工作入口', openWorkspace: '进入工作区',
+  balance: '上游总余额', balanceSnapshots: '{count} 个账号有余额快照', currencies: '另有 {count} 种币种',
+  spend: '今日消耗', requests: '今日请求', health: '账号健康', errors: '异常', rateLimited: '限流', overloaded: '过载',
+  attention: '待处理', alerts: '告警', risks: '资产风险', notifications: '通知', on: '已开启', off: '未开启',
+  attentionDescription: '通知失败、余额读取失败或额度即将用尽。', openNotifications: '打开账号通知', resolve: '处理',
+  noAttention: '当前没有需要处理的账号。', observer: '账号资产与告警需要主管理员权限，当前只显示系统统计。',
+  loadOverviewFailed: '概览统计加载失败', loadAssetsFailed: '账号资产加载失败', loadAlertsFailed: '告警加载失败', loadSettingsFailed: '通知配置加载失败',
+  events: { balance_low: '余额不足', weekly_quota: '周额度告急', balance_threshold: '余额低于阈值', quota_threshold: '额度低于阈值', balanceFailed: '余额读取失败', balanceStale: '余额数据过期', quota: '额度即将用尽', used: '已用 {percent}%' },
+}

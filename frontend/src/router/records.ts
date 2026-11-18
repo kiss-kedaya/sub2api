@@ -1,4 +1,5 @@
 import type { RouteRecordRaw } from 'vue-router'
+import { getOperationsPages, operationsAreas } from '@/components/admin/operations/opsNavigation'
 
 // Sys areas: sub-pages are sibling routes sharing one view (meta.section picks the sub-page).
 const mihomoView = () => import('@/views/admin/MihomoView.vue')
@@ -943,3 +944,10 @@ export const routes: RouteRecordRaw[] = [
     }
   }
 ]
+
+// Navigation, page headers and browser titles use the same translated page names.
+// Paths, names, guards and legacy redirects above remain unchanged.
+for (const page of getOperationsPages(operationsAreas)) {
+  const route = routes.find(record => record.name === page.name)
+  if (route?.meta) route.meta.titleKey = page.labelKey
+}

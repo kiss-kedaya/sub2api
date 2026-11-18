@@ -125,6 +125,7 @@ import { FeatureFlags, isFeatureFlagEnabled, makeSidebarFlag } from '@/utils/fea
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import { SIDEBAR_TOUR_ANCHORS, SIDEBAR_TOUR_SELECTORS } from '@/components/Guide/steps'
 import UserMenu from './UserMenu.vue'
+import { applyFeatureFlags, isOperationsPageActive, useOperationsNavigation } from '@/components/admin/operations/opsNavigation'
 
 interface NavItem {
   path: string
@@ -135,6 +136,7 @@ interface NavItem {
   iconSvg?: string
   hideInSimpleMode?: boolean
   children?: NavItem[]
+  active?: boolean
   /**
    * Section header rendered inside an expanded group. The item does not
    * navigate; `path` is only a stable key.
@@ -152,21 +154,6 @@ interface NavItem {
    * 开关切换时菜单自动更新。
    */
   featureFlag?: () => boolean | undefined
-}
-
-// applyFeatureFlags 递归过滤掉 featureFlag() === false 的节点（含子节点）。
-// 使用 `!== false` 宽容语义：undefined（设置未加载）或 true 都视为显示。
-function applyFeatureFlags(items: NavItem[]): NavItem[] {
-  const out: NavItem[] = []
-  for (const item of items) {
-    if (item.featureFlag && item.featureFlag() === false) continue
-    if (item.children) {
-      out.push({ ...item, children: applyFeatureFlags(item.children) })
-    } else {
-      out.push(item)
-    }
-  }
-  return out
 }
 
 const { t, locale } = useI18n()
@@ -211,7 +198,7 @@ const flagAvailableChannels = makeSidebarFlag(FeatureFlags.availableChannels)
 const flagAffiliate = makeSidebarFlag(FeatureFlags.affiliate)
 const flagRiskControl = makeSidebarFlag(FeatureFlags.riskControl)
 const flagPluginManagement = makeSidebarFlag(FeatureFlags.pluginManagement)
-const flagOpsMonitoring = () => adminSettingsStore.opsMonitoringEnabled
+const operationsNavigation = useOperationsNavigation()
 const flagAdminPayment = () => adminSettingsStore.paymentEnabled
 const flagBatchImageAccess = () => canUseBatchImage.value
 
@@ -291,45 +278,17 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/dashboard', label: t('nav.dashboard'), icon: 'i-lucide-layout-dashboard' },
     {
       path: '/admin/ops-center',
-      label: locale.value === 'zh' ? '运营中心' : 'Operations center',
+      label: t('opsCenter.title'),
       icon: 'i-lucide-gauge',
       expandOnly: true,
-      children: [
-        { path: '/admin/ops-center', label: locale.value === 'zh' ? '运营总览' : 'Operations overview' },
-        { path: '#ops-tier-accounts', label: locale.value === 'zh' ? '账号运营' : 'Account operations', section: true },
-        { path: '/admin/account-ops', label: locale.value === 'zh' ? '账号通知' : 'Account notifications' },
-        { path: '/admin/ops-automation', label: locale.value === 'zh' ? '账号自动化' : 'Account automation' },
-        { path: '/admin/credential-guard', label: locale.value === 'zh' ? '凭证巡检' : 'Credential inspection' },
-        { path: '#ops-tier-channels', label: locale.value === 'zh' ? '渠道运营' : 'Channel operations', section: true },
-        { path: '/admin/channel-operations', label: locale.value === 'zh' ? '渠道运维' : 'Channel operations' },
-        { path: '/admin/upstream-monitor', label: locale.value === 'zh' ? '上游监控' : 'Upstream monitor' },
-        { path: '/admin/model-comparison', label: locale.value === 'zh' ? '模型比价' : 'Model comparison' },
-        { path: '/admin/mihomo', label: locale.value === 'zh' ? '代理出口' : 'Managed proxies' },
-        { path: '#ops-tier-diagnostics', label: locale.value === 'zh' ? '监控诊断' : 'Monitoring and diagnostics', section: true },
-        { path: '/admin/ops', label: locale.value === 'zh' ? '渠道状态' : 'Channel status', featureFlag: flagOpsMonitoring },
-        { path: '/admin/ops?alertRules=1', label: locale.value === 'zh' ? '告警阈值' : 'Alert thresholds', featureFlag: flagOpsMonitoring },
-        { path: '/admin/connections', label: locale.value === 'zh' ? '连接诊断' : 'Connections' },
-        { path: '/admin/group-cache-tests', label: locale.value === 'zh' ? '分组缓存测试' : 'Cache tests' },
-        { path: '/admin/request-captures', label: locale.value === 'zh' ? '请求采集' : 'Request capture' },
-        { path: '/admin/traffic', label: locale.value === 'zh' ? '用户流量' : 'User traffic' },
-        { path: '#ops-tier-platform', label: locale.value === 'zh' ? '平台工具' : 'Platform tools', section: true },
-        { path: '/admin/excel-grants', label: locale.value === 'zh' ? 'Excel 协议授权' : 'Excel authorization' },
-        { path: '/admin/serverless', label: locale.value === 'zh' ? '地区路由' : 'Regional routing' },
-      ],
+      children: operationsNavigation.value.map(area => ({
+        path: area.items[0].path,
+        label: t(area.labelKey),
+        active: area.items.some(item => isOperationsPageActive(item.path, route.path)),
+      })),
     },
     { path: '/admin/users', label: t('nav.users'), icon: 'i-lucide-users', hideInSimpleMode: true },
     { path: '/admin/groups', label: t('nav.groups'), icon: 'i-lucide-folder' },
-    {
-      path: '/admin/channels',
-      label: t('nav.channelManagement'),
-      icon: 'i-lucide-layers',
-      hideInSimpleMode: true,
-      expandOnly: true,
-      children: [
-        { path: '/admin/channels/pricing', label: t('nav.channelPricing') },
-        { path: '/admin/channels/monitor', label: t('nav.channelMonitor'), featureFlag: flagChannelMonitor },
-      ],
-    },
     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: 'i-lucide-credit-card', hideInSimpleMode: true },
     { path: '/admin/accounts', label: t('nav.accounts'), icon: 'i-lucide-globe' },
     { path: '/admin/plugins', label: t('nav.plugins'), icon: 'i-lucide-box', featureFlag: flagPluginManagement },
@@ -443,7 +402,7 @@ function isActive(path: string): boolean {
 
 function isGroupActive(item: NavItem): boolean {
   if (!item.children) return false
-  return item.children.some(child => !child.section && isActive(child.path))
+  return item.children.some(child => !child.section && (child.active ?? isActive(child.path)))
 }
 
 /**
@@ -490,7 +449,7 @@ function toMenuItems(items: NavItem[], collapsed: boolean): NavigationMenuItem[]
               label: child.label,
               to: child.path,
               value: child.path,
-              active: isActive(child.path),
+              active: child.active ?? isActive(child.path),
               badge: ticketBadge(child.path),
               onSelect: () => handleMenuItemClick(child.path)
             })

@@ -1,295 +1,89 @@
 <template>
-  <section class="mx-auto w-full max-w-6xl space-y-5 px-1 py-2 sm:px-2">
-    <header
-      class="page-header mb-0 flex flex-wrap items-center justify-between gap-3 rounded-3xl bg-white p-5 shadow-xs ring-1 ring-gray-900/5 dark:bg-dark-800 dark:ring-dark-700 sm:p-6"
-    >
-      <div class="min-w-0">
-        <h2 class="page-title flex items-center gap-2 text-xl font-black text-gray-900 dark:text-white">
-          <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400">
-            <Icon name="chart" size="sm" />
-          </span>
-          {{ t('channelMonitorV2.settings.title') }}
-        </h2>
-        <p class="page-description mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-          {{ t('channelMonitorV2.settings.description') }}
-        </p>
-      </div>
-      <button
-        type="button"
-        class="btn btn-primary"
-        :disabled="saving || !dirty"
-        @click="save"
-      >
-        <Icon name="check" size="sm" />
-        {{ t('channelMonitorV2.settings.save') }}
-      </button>
-    </header>
-
-    <div
-      v-if="!systemModeV2"
-      class="rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-100"
-      role="status"
-    >
-      {{
-        t('channelMonitorV2.settings.modeBanner', {
-          mode: systemModeLabel,
-          modeV2: t('channelMonitorV2.settings.modeV2'),
-        })
-      }}
-      <router-link class="ml-1 font-medium underline" to="/admin/settings">{{ t('admin.settings.tabs.features') }}</router-link>
+  <section class="min-w-0 space-y-5">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <p class="max-w-3xl text-sm text-muted">{{ t('channelMonitorV2.settings.description') }}</p>
+      <UButton icon="i-lucide-check" :disabled="saving || !dirty" :loading="saving" :label="t('channelMonitorV2.settings.save')" @click="save" />
     </div>
-
-    <div
-      v-if="loading"
-      class="card flex min-h-[200px] items-center justify-center rounded-3xl! border-0! text-sm text-gray-400 shadow-xs ring-1 ring-gray-900/5 dark:ring-dark-700"
-    >
-      <span class="animate-pulse">{{ t('channelMonitorV2.settings.loading') }}</span>
-    </div>
-
+    <UAlert v-if="!systemModeV2" color="warning" variant="subtle" role="status" :title="t('channelMonitorV2.settings.modeBanner', { mode: systemModeLabel, modeV2: t('channelMonitorV2.settings.modeV2') })">
+      <template #description><RouterLink to="/admin/settings" class="underline">{{ t('admin.settings.tabs.features') }}</RouterLink></template>
+    </UAlert>
+    <USkeleton v-if="loading" class="h-48 w-full" :aria-label="t('channelMonitorV2.settings.loading')" />
     <template v-else-if="draft">
-      <div class="card divide-y divide-gray-100 rounded-3xl! border-0! shadow-xs ring-1 ring-gray-900/5 dark:divide-dark-700 dark:bg-dark-800! dark:ring-dark-700">
-        <div class="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-          <div>
-            <strong class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('channelMonitorV2.settings.enableTitle') }}</strong>
-            <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
-              {{ t('channelMonitorV2.settings.enableHint') }}
-            </p>
-          </div>
-          <Toggle v-model="draft.enabled" />
+      <UPageCard variant="outline" :ui="{ container: 'gap-y-0' }">
+        <SettingRow :label="t('channelMonitorV2.settings.enableTitle')" :hint="t('channelMonitorV2.settings.enableHint')" :on="draft.enabled">
+          <template #control><USwitch v-model="draft.enabled" :aria-label="t('channelMonitorV2.settings.enableTitle')" /></template>
+        </SettingRow>
+        <SettingRow :label="t('channelMonitorV2.settings.refreshTitle')" :hint="t('channelMonitorV2.settings.refreshHint')">
+          <template #control>
+            <div class="flex gap-1" role="group" :aria-label="t('channelMonitorV2.settings.refreshAria')">
+              <UButton color="neutral" :variant="draft.refresh_interval_seconds === 60 ? 'soft' : 'ghost'" :aria-pressed="draft.refresh_interval_seconds === 60" @click="draft.refresh_interval_seconds = 60">1 {{ t('common.minutes') }}</UButton>
+              <UButton color="neutral" :variant="draft.refresh_interval_seconds === 300 ? 'soft' : 'ghost'" :aria-pressed="draft.refresh_interval_seconds === 300" @click="draft.refresh_interval_seconds = 300">5 {{ t('common.minutes') }}</UButton>
+            </div>
+          </template>
+        </SettingRow>
+      </UPageCard>
+      <UPageCard :title="t('channelMonitorV2.settings.platformsTitle')" :description="t('channelMonitorV2.settings.platformsHint')" variant="outline">
+        <div v-for="platform in draft.platforms" :key="platform.platform" class="grid items-center gap-3 border-b border-default pb-3 last:border-0 last:pb-0 sm:grid-cols-[auto_7rem_minmax(0,1fr)_auto]">
+          <USwitch v-model="platform.enabled" :aria-label="platformLabel(platform.platform)" />
+          <strong class="text-sm font-medium text-highlighted">{{ platformLabel(platform.platform) }}</strong>
+          <UInput :model-value="platform.models.join(', ')" class="w-full" type="text" :placeholder="t('channelMonitorV2.settings.modelsPlaceholder')" :aria-label="`${platformLabel(platform.platform)} ${t('channelMonitorV2.settings.modelsPlaceholder')}`" @change="setModels(platform, $event)" />
+          <UBadge color="neutral" variant="subtle" class="w-fit">{{ platform.models.length ? t('channelMonitorV2.settings.badgeOther') : t('channelMonitorV2.settings.badgeAllModels') }}</UBadge>
         </div>
-        <div class="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-          <div>
-            <strong class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('channelMonitorV2.settings.refreshTitle') }}</strong>
-            <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">{{ t('channelMonitorV2.settings.refreshHint') }}</p>
-          </div>
-          <div class="tabs inline-flex w-auto" role="group" :aria-label="t('channelMonitorV2.settings.refreshAria')">
-            <button
-              type="button"
-              class="tab"
-              :class="draft.refresh_interval_seconds === 60 ? 'tab-active' : ''"
-              @click="draft.refresh_interval_seconds = 60"
-            >
-              1 min
-            </button>
-            <button
-              type="button"
-              class="tab"
-              :class="draft.refresh_interval_seconds === 300 ? 'tab-active' : ''"
-              @click="draft.refresh_interval_seconds = 300"
-            >
-              5 min
-            </button>
-          </div>
+      </UPageCard>
+      <UPageCard :title="t('channelMonitorV2.settings.groupsTitle')" variant="outline">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <p class="text-sm text-muted">{{ draft.group_ids.length ? t('channelMonitorV2.settings.groupsSelected', { count: draft.group_ids.length }) : t('channelMonitorV2.settings.groupsAll') }}</p>
+          <UButton v-if="draft.group_ids.length" color="neutral" variant="ghost" size="sm" :label="t('channelMonitorV2.settings.groupsAll')" @click="draft.group_ids = []" />
         </div>
-      </div>
-
-      <div class="card overflow-hidden rounded-3xl! border-0! shadow-xs ring-1 ring-gray-900/5 dark:bg-dark-800! dark:ring-dark-700">
-        <div class="card-header py-3!">
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('channelMonitorV2.settings.platformsTitle') }}</h3>
-          <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
-            {{ t('channelMonitorV2.settings.platformsHint') }}
-          </p>
-        </div>
-        <div class="divide-y divide-gray-100 dark:divide-dark-700">
-          <div
-            v-for="platform in draft.platforms"
-            :key="platform.platform"
-            class="grid grid-cols-1 items-center gap-3 px-5 py-3 sm:grid-cols-[auto_7rem_minmax(0,1fr)_auto]"
-          >
-            <Toggle v-model="platform.enabled" />
-            <strong class="text-sm font-medium text-gray-900 dark:text-white">{{ platformLabel(platform.platform) }}</strong>
-            <input
-              class="input"
-              :value="platform.models.join(', ')"
-              type="text"
-              :placeholder="t('channelMonitorV2.settings.modelsPlaceholder')"
-              @change="setModels(platform, $event)"
-            />
-            <span
-              class="badge justify-self-start sm:justify-self-end"
-              :class="platform.models.length ? 'badge-gray' : 'badge badge-primary'"
-            >
-              {{ platform.models.length ? t('channelMonitorV2.settings.badgeOther') : t('channelMonitorV2.settings.badgeAllModels') }}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div class="card overflow-hidden rounded-3xl! border-0! shadow-xs ring-1 ring-gray-900/5 dark:bg-dark-800! dark:ring-dark-700">
-        <div class="card-header flex flex-wrap items-center justify-between gap-2 py-3!">
-          <div>
-            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('channelMonitorV2.settings.groupsTitle') }}</h3>
-            <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
-              {{
-                draft.group_ids.length
-                  ? t('channelMonitorV2.settings.groupsSelected', { count: draft.group_ids.length })
-                  : t('channelMonitorV2.settings.groupsAll')
-              }}
-            </p>
-          </div>
-          <button
-            v-if="draft.group_ids.length"
-            type="button"
-            class="btn btn-ghost btn-sm"
-            @click="draft.group_ids = []"
-          >
-            {{ t('channelMonitorV2.settings.groupsAll') }}
-          </button>
-        </div>
-        <div class="max-h-[min(40vh,280px)] overflow-y-auto px-3 py-2 sm:px-4">
-          <div class="grid grid-cols-1 gap-1 sm:grid-cols-2">
-            <label
-              v-for="group in groups"
-              :key="group.id"
-              class="flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition hover:bg-gray-50 dark:hover:bg-dark-800/60"
-            >
-              <input
-                type="checkbox"
-                class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500/40"
-                :checked="draft.group_ids.includes(group.id)"
-                @change="toggleGroup(group.id)"
-              />
-              <span class="min-w-0 flex-1 truncate font-medium text-gray-800 dark:text-gray-100">{{ group.name }}</span>
-              <small class="shrink-0 text-xs text-gray-400">{{ platformLabel(group.platform) }} · #{{ group.id }}</small>
-            </label>
-          </div>
-          <p v-if="groups.length === 0" class="empty-state py-8 text-sm text-gray-400">{{ t('channelMonitorV2.settings.groupsEmpty') }}</p>
-        </div>
-      </div>
-
-      <div class="card overflow-hidden rounded-3xl! border-0! shadow-xs ring-1 ring-gray-900/5 dark:bg-dark-800! dark:ring-dark-700">
-        <div class="card-header py-3!">
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('channelMonitorV2.settings.qualityTitle') }}</h3>
-          <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
-            {{ t('channelMonitorV2.settings.qualityHint') }}
-          </p>
-        </div>
-        <div class="max-h-[min(40vh,280px)] overflow-y-auto px-3 py-2 sm:px-4">
-          <div class="grid grid-cols-1 gap-1 sm:grid-cols-2">
-            <div
-              v-for="group in groups"
-              :key="group.id"
-              class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition hover:bg-gray-50 dark:hover:bg-dark-800/60"
-            >
-              <Toggle
-                :model-value="qualityEnabled(group.id)"
-                :disabled="qualityUpdating.has(group.id)"
-                @update:model-value="toggleQualityCheck(group.id)"
-              />
-              <span class="min-w-0 flex-1 truncate font-medium text-gray-800 dark:text-gray-100">{{ group.name }}</span>
-              <span
-                v-if="qualityBadge(group.id)"
-                class="badge shrink-0"
-                :class="qualityBadgeClass(qualityStatuses[group.id]?.status)"
-              >
-                {{ qualityBadge(group.id) }}
-              </span>
-              <small class="shrink-0 text-xs text-gray-400">#{{ group.id }}</small>
+        <div class="max-h-[min(40vh,280px)] overflow-y-auto">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div v-for="group in groups" :key="group.id" class="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-default px-3 py-2">
+              <UCheckbox :model-value="draft.group_ids.includes(group.id)" :label="group.name" @update:model-value="toggleGroup(group.id)" />
+              <span class="shrink-0 text-xs text-muted">{{ platformLabel(group.platform) }} · #{{ group.id }}</span>
             </div>
           </div>
-          <p v-if="groups.length === 0" class="empty-state py-8 text-sm text-gray-400">{{ t('channelMonitorV2.settings.groupsEmpty') }}</p>
+          <p v-if="!groups.length" class="py-6 text-center text-sm text-muted">{{ t('channelMonitorV2.settings.groupsEmpty') }}</p>
         </div>
-      </div>
-
-      <div class="card overflow-hidden rounded-3xl! border-0! shadow-xs ring-1 ring-gray-900/5 dark:bg-dark-800! dark:ring-dark-700">
-        <div class="card-header py-3!">
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('channelMonitorV2.settings.errorsTitle') }}</h3>
-          <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
-            {{ t('channelMonitorV2.settings.errorsHint') }}
-          </p>
+      </UPageCard>
+      <UPageCard :title="t('channelMonitorV2.settings.qualityTitle')" :description="t('channelMonitorV2.settings.qualityHint')" variant="outline">
+        <div class="max-h-[min(40vh,280px)] overflow-y-auto">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div v-for="group in groups" :key="group.id" class="flex min-w-0 items-center gap-3 rounded-lg border border-default px-3 py-2">
+              <USwitch :model-value="qualityEnabled(group.id)" :disabled="qualityUpdating.has(group.id)" :aria-label="group.name" @update:model-value="toggleQualityCheck(group.id)" />
+              <span class="min-w-0 flex-1 break-words text-sm text-highlighted">{{ group.name }}</span>
+              <UBadge v-if="qualityBadge(group.id)" :color="qualityStatuses[group.id]?.status === 'suspect' ? 'warning' : 'success'" variant="subtle">{{ qualityBadge(group.id) }}</UBadge>
+              <span class="shrink-0 text-xs text-muted">#{{ group.id }}</span>
+            </div>
+          </div>
+          <p v-if="!groups.length" class="py-6 text-center text-sm text-muted">{{ t('channelMonitorV2.settings.groupsEmpty') }}</p>
         </div>
-        <div class="max-h-[min(40vh,320px)] overflow-y-auto px-3 py-2 sm:px-4">
-          <div class="grid grid-cols-1 gap-1 sm:grid-cols-2">
-            <label
-              v-for="category in errorCategories"
-              :key="category"
-              class="flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition hover:bg-gray-50 dark:hover:bg-dark-800/60"
-            >
-              <input
-                type="checkbox"
-                class="h-4 w-4 rounded-sm border-gray-300 text-primary-600 focus:ring-primary-500/40"
-                :checked="isCategoryIgnored(category)"
-                @change="toggleIgnoredCategory(category)"
-              />
-              <span class="min-w-0 flex-1 truncate font-medium text-gray-800 dark:text-gray-100">
-                {{ categoryLabel(category) }}
-              </span>
-              <small class="shrink-0 font-mono text-[10px] text-gray-400">{{ category }}</small>
-            </label>
+      </UPageCard>
+      <UPageCard :title="t('channelMonitorV2.settings.errorsTitle')" :description="t('channelMonitorV2.settings.errorsHint')" variant="outline">
+        <div class="grid max-h-[min(40vh,320px)] gap-3 overflow-y-auto sm:grid-cols-2">
+          <div v-for="category in errorCategories" :key="category" class="flex items-center justify-between gap-3 rounded-lg border border-default px-3 py-2">
+            <UCheckbox :model-value="isCategoryIgnored(category)" :label="categoryLabel(category)" @update:model-value="toggleIgnoredCategory(category)" />
+            <span class="shrink-0 font-mono text-[10px] text-muted">{{ category }}</span>
           </div>
         </div>
-        <div class="border-t border-gray-100 px-5 py-3 text-xs text-gray-500 dark:border-dark-700 dark:text-dark-400">
-          {{
-            t('channelMonitorV2.settings.ignoredSummary', {
-              ignored: draft.ignored_error_categories?.length || 0,
-              counted: countedErrorCategoryCount,
-            })
-          }}
+        <p class="text-xs text-muted">{{ t('channelMonitorV2.settings.ignoredSummary', { ignored: draft.ignored_error_categories?.length || 0, counted: countedErrorCategoryCount }) }}</p>
+      </UPageCard>
+      <UPageCard :title="t('channelMonitorV2.settings.healthTitle')" :description="t('channelMonitorV2.settings.healthHint')" variant="outline">
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <UFormField :label="t('channelMonitorV2.settings.fields.minimumSample')"><UInput v-model.number="draft.health_thresholds.minimum_sample" class="w-full" type="number" min="1" max="10000" /></UFormField>
+          <UFormField :label="t('channelMonitorV2.settings.fields.warningError')"><UInput v-model.number="warningErrorPercent" class="w-full" type="number" min="0" max="100" step="0.1" /></UFormField>
+          <UFormField :label="t('channelMonitorV2.settings.fields.criticalError')"><UInput v-model.number="criticalErrorPercent" class="w-full" type="number" min="0" max="100" step="0.1" /></UFormField>
+          <UFormField :label="t('channelMonitorV2.settings.fields.targetTtft')"><UInput v-model.number="draft.health_thresholds.target_ttft_ms" class="w-full" type="number" min="1" step="100" /></UFormField>
+          <UFormField :label="t('channelMonitorV2.settings.fields.warningTtft')"><UInput v-model.number="draft.health_thresholds.warning_ttft_ms" class="w-full" type="number" min="1" step="100" /></UFormField>
+          <UFormField :label="t('channelMonitorV2.settings.fields.criticalTtft')"><UInput v-model.number="draft.health_thresholds.critical_ttft_ms" class="w-full" type="number" min="1" step="100" /></UFormField>
+          <UFormField :label="t('channelMonitorV2.settings.fields.warningCache')"><UInput v-model.number="warningCachePercent" class="w-full" type="number" min="0" max="100" step="0.1" /></UFormField>
+          <UFormField :label="t('channelMonitorV2.settings.fields.criticalCache')"><UInput v-model.number="criticalCachePercent" class="w-full" type="number" min="0" max="100" step="0.1" /></UFormField>
         </div>
-      </div>
-
-      <div class="card overflow-hidden rounded-3xl! border-0! shadow-xs ring-1 ring-gray-900/5 dark:bg-dark-800! dark:ring-dark-700">
-        <div class="card-header py-3!">
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('channelMonitorV2.settings.healthTitle') }}</h3>
-          <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
-            {{ t('channelMonitorV2.settings.healthHint') }}
-          </p>
-        </div>
-        <div class="grid grid-cols-1 gap-4 px-5 py-4 sm:grid-cols-2 lg:grid-cols-4">
-          <label class="block">
-            <span class="input-label">{{ t('channelMonitorV2.settings.fields.minimumSample') }}</span>
-            <input v-model.number="draft.health_thresholds.minimum_sample" class="input" type="number" min="1" max="10000" />
-          </label>
-          <label class="block">
-            <span class="input-label">{{ t('channelMonitorV2.settings.fields.warningError') }}</span>
-            <input v-model.number="warningErrorPercent" class="input" type="number" min="0" max="100" step="0.1" />
-          </label>
-          <label class="block">
-            <span class="input-label">{{ t('channelMonitorV2.settings.fields.criticalError') }}</span>
-            <input v-model.number="criticalErrorPercent" class="input" type="number" min="0" max="100" step="0.1" />
-          </label>
-          <label class="block">
-            <span class="input-label">{{ t('channelMonitorV2.settings.fields.targetTtft') }}</span>
-            <input v-model.number="draft.health_thresholds.target_ttft_ms" class="input" type="number" min="1" step="100" />
-          </label>
-          <label class="block">
-            <span class="input-label">{{ t('channelMonitorV2.settings.fields.warningTtft') }}</span>
-            <input v-model.number="draft.health_thresholds.warning_ttft_ms" class="input" type="number" min="1" step="100" />
-          </label>
-          <label class="block">
-            <span class="input-label">{{ t('channelMonitorV2.settings.fields.criticalTtft') }}</span>
-            <input v-model.number="draft.health_thresholds.critical_ttft_ms" class="input" type="number" min="1" step="100" />
-          </label>
-          <label class="block">
-            <span class="input-label">{{ t('channelMonitorV2.settings.fields.warningCache') }}</span>
-            <input v-model.number="warningCachePercent" class="input" type="number" min="0" max="100" step="0.1" />
-          </label>
-          <label class="block">
-            <span class="input-label">{{ t('channelMonitorV2.settings.fields.criticalCache') }}</span>
-            <input v-model.number="criticalCachePercent" class="input" type="number" min="0" max="100" step="0.1" />
-          </label>
-        </div>
-      </div>
-
-      <div class="space-y-2">
-        <div class="rounded-2xl border border-primary-200 bg-primary-50/80 px-4 py-3 text-sm text-primary-900 dark:border-primary-800/50 dark:bg-primary-900/20 dark:text-primary-100">
-          <template v-if="namedModelCount === 0">
-            {{ t('channelMonitorV2.settings.namedModelsEmpty') }}
-          </template>
-          <template v-else>
-            {{ t('channelMonitorV2.settings.namedModelsCount', { count: namedModelCount }) }}
-          </template>
-        </div>
-        <div class="rounded-2xl border border-gray-200 bg-gray-50/80 px-4 py-3 text-xs text-gray-600 dark:border-dark-600 dark:bg-dark-800/50 dark:text-gray-300">
-          <p class="font-medium text-gray-800 dark:text-gray-100">{{ t('channelMonitorV2.settings.userContractTitle') }}</p>
-          <ul class="mt-1.5 list-disc space-y-0.5 pl-4">
-            <li>{{ t('channelMonitorV2.settings.userContract.health') }}</li>
-            <li>{{ t('channelMonitorV2.settings.userContract.trend') }}</li>
-            <li>{{ t('channelMonitorV2.settings.userContract.latency') }}</li>
-            <li>{{ t('channelMonitorV2.settings.userContract.models') }}</li>
-          </ul>
-        </div>
-      </div>
+      </UPageCard>
+      <UAlert color="neutral" variant="subtle" :title="namedModelCount === 0 ? t('channelMonitorV2.settings.namedModelsEmpty') : t('channelMonitorV2.settings.namedModelsCount', { count: namedModelCount })" />
+      <UCollapsible>
+        <UButton color="neutral" variant="ghost" trailing-icon="i-lucide-chevron-down" :label="t('channelMonitorV2.settings.userContractTitle')" />
+        <template #content><ul class="mt-3 list-disc space-y-1 pl-5 text-xs leading-6 text-muted"><li>{{ t('channelMonitorV2.settings.userContract.health') }}</li><li>{{ t('channelMonitorV2.settings.userContract.trend') }}</li><li>{{ t('channelMonitorV2.settings.userContract.latency') }}</li><li>{{ t('channelMonitorV2.settings.userContract.models') }}</li></ul></template>
+      </UCollapsible>
     </template>
   </section>
 </template>
@@ -297,8 +91,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Toggle from '@/components/common/Toggle.vue'
-import Icon from '@/components/icons/Icon.vue'
+import SettingRow from '@/components/common/SettingRow.vue'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { getChannelMonitorMode, isChannelMonitorV2Mode } from '@/utils/featureFlags'
@@ -400,10 +193,6 @@ function qualityBadge(groupId: number): string | null {
   if (!status?.enabled || status.status === 'unknown') return null
   const key = `channelMonitorV2.settings.qualityStatus.${status.status}`
   return te(key) ? t(key) : status.status
-}
-
-function qualityBadgeClass(status?: GroupQualityCheckStatus['status']): string {
-  return status === 'suspect' ? 'badge-warning' : 'badge-success'
 }
 
 async function toggleQualityCheck(groupId: number) {

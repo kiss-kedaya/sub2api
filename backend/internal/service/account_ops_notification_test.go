@@ -223,7 +223,8 @@ func TestAccountOpsChannelRetrySkipsSuccessfulDestinations(t *testing.T) {
 	svc.SetNotificationDependencies(nil, opsTestEncryptor{}, true, "Asia/Shanghai")
 	cfg := defaultAccountOpsConfig()
 	cfg.Enabled = true
-	cfg.Recipient = "ops@example.test"
+	cfg.Recipient = "ops@example.invalid"
+	cfg.UseAdminEmail = opsBool(false)
 	cfg.Webhooks = []AccountOpsWebhook{{ID: "robot", Provider: "feishu", Enabled: true, URL: "https://open.feishu.cn/open-apis/bot/v2/hook/fake-id"}}
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
 	calls := 0
@@ -271,7 +272,8 @@ func TestAccountOpsReloadsRemovedDestinationBeforeSending(t *testing.T) {
 	svc.SetNotificationDependencies(nil, opsTestEncryptor{}, true, "Asia/Shanghai")
 	cfg := defaultAccountOpsConfig()
 	cfg.Enabled = true
-	cfg.Recipient = "ops@example.test"
+	cfg.Recipient = "ops@example.invalid"
+	cfg.UseAdminEmail = opsBool(false)
 	cfg.Webhooks = []AccountOpsWebhook{{ID: "robot", Provider: "feishu", Enabled: true, URL: "https://open.feishu.cn/open-apis/bot/v2/hook/fake-id"}}
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
 	svc.email = opsChangingSender{change: func() { cfg.Webhooks = nil; require.NoError(t, svc.SaveConfig(context.Background(), cfg)) }}

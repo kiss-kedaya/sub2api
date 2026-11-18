@@ -1,6 +1,6 @@
 export default {
     ops: {
-      title: '运维监控',
+      title: '实时运维',
       description: '运维监控与排障',
       // Dashboard
       systemHealth: '系统健康',

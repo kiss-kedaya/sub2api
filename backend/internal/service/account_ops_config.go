@@ -91,7 +91,7 @@ var opsGroupID = regexp.MustCompile(`^(?:auto:[A-Za-z0-9_-]{16,64}|manual-[A-Za-
 var opsWindowID = regexp.MustCompile(`^[A-Za-z0-9_.:/-]{1,128}$`)
 
 func (c AccountOpsConfig) hasDestination() bool {
-	if c.Recipient != "" {
+	if c.usesAdminEmail() || c.usesAdminBark() || c.Recipient != "" {
 		return true
 	}
 	for _, w := range c.Webhooks {
@@ -118,6 +118,8 @@ func (c AccountOpsConfig) hasQuotaThreshold() bool {
 	return false
 }
 func (c AccountOpsConfig) public() AccountOpsConfig {
+	email, bark := c.usesAdminEmail(), c.usesAdminBark()
+	c.UseAdminEmail, c.UseAdminBark = &email, &bark
 	c.Webhooks = append([]AccountOpsWebhook{}, c.Webhooks...)
 	c.Groups = append([]AccountOpsGroup{}, c.Groups...)
 	for i := range c.Groups {
@@ -176,7 +178,11 @@ func validateAccountOpsExtras(c AccountOpsConfig) error {
 	if err := validateAccountOpsChannelName(c.EmailName); err != nil {
 		return err
 	}
-	if len(c.Webhooks) > 5 || len(c.Groups) > 200 || len(c.BalanceThresholds)+len(c.QuotaThresholds) > 1000 {
+	robots := len(c.Webhooks)
+	if c.usesAdminBark() {
+		robots++
+	}
+	if robots > 5 || len(c.Groups) > 200 || len(c.BalanceThresholds)+len(c.QuotaThresholds) > 1000 {
 		return errors.New("too many robot destinations or balance rules")
 	}
 	if err := validateAccountOpsGroups(c.Groups); err != nil {
@@ -309,6 +315,10 @@ func (s *AccountOpsService) loadConfig(ctx context.Context) (AccountOpsConfig, e
 	for _, w := range st.StoredWebhooks {
 		c.Webhooks = append(c.Webhooks, AccountOpsWebhook{ID: w.ID, Name: w.Name, Provider: w.Provider, Enabled: w.Enabled, URLConfigured: w.URLCipher != "", SecretConfigured: w.SecretCipher != "", MessageTemplate: w.MessageTemplate, urlCipher: w.URLCipher, secretCipher: w.SecretCipher, revision: w.Revision})
 	}
+	if c.UseAdminBark == nil {
+		// Availability is read-only; only a save may turn an implicit default into a choice.
+		c.adminBarkAvailable = s.AdminDefaults(ctx).BarkAvailable
+	}
 	if err = ValidateAccountOpsConfig(c); err != nil {
 		return defaultAccountOpsConfig(), errors.New("invalid stored notification configuration")
 	}
@@ -332,6 +342,13 @@ func (s *AccountOpsService) saveConfigWithRuleScope(ctx context.Context, c Accou
 	old, err := s.loadConfig(ctx)
 	if err != nil {
 		return err
+	}
+	// Freeze the previous effective audience before custom destinations can change defaults.
+	if c.UseAdminEmail == nil {
+		c.UseAdminEmail = opsBool(old.usesAdminEmail())
+	}
+	if c.UseAdminBark == nil {
+		c.UseAdminBark = opsBool(old.usesAdminBark())
 	}
 	normalizeOpsFlags(&c, old)
 	byID := map[string]AccountOpsWebhook{}

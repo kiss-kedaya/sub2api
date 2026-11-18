@@ -207,15 +207,20 @@ func (s *AccountOpsService) deliverNotification(ctx context.Context, e *AccountO
 			e.Deliveries = map[string]AccountOpsDelivery{}
 		}
 		destinations := []AccountOpsWebhook{}
-		if c.Recipient != "" {
+		if c.usesAdminEmail() {
+			destinations = append(destinations, AccountOpsWebhook{ID: accountOpsAdminEmailID, Provider: "email"})
+		} else if c.Recipient != "" {
 			destinations = append(destinations, AccountOpsWebhook{ID: opsEmailIdentity(c.Recipient), Provider: "email"})
+		}
+		if c.usesAdminBark() {
+			destinations = append(destinations, AccountOpsWebhook{ID: accountOpsAdminBarkID, Provider: "bark"})
 		}
 		for _, w := range c.Webhooks {
 			if w.Enabled {
 				destinations = append(destinations, w)
 			}
 		}
-		// Six channels at twelve seconds each, including rate waits, remain below the two minute lease.
+		// One email and at most five robots share the existing lease and send budget.
 		deliveryCtx, stop := context.WithTimeout(ctx, 100*time.Second)
 		defer stop()
 		for _, w := range destinations {
@@ -234,26 +239,40 @@ func (s *AccountOpsService) deliverNotification(ctx context.Context, e *AccountO
 				s.finishNotification(ctx, e, "suppressed", delay)
 				return
 			}
-			if w.Provider == "email" {
-				if c.Recipient == "" {
+			switch w.ID {
+			case accountOpsAdminEmailID:
+				if !c.usesAdminEmail() {
+					// The replacement email is absent from this round's destination list.
+					state = "failed"
 					continue
 				}
-				w.ID = opsEmailIdentity(c.Recipient)
-			} else {
-				found := false
-				for _, current := range c.Webhooks {
-					if current.ID == w.ID && current.Enabled {
-						w = current
-						found = true
-						break
+			case accountOpsAdminBarkID:
+				if !c.usesAdminBark() {
+					continue
+				}
+			default:
+				if w.Provider == "email" {
+					if c.usesAdminEmail() || c.Recipient == "" {
+						state = "failed"
+						continue
 					}
-				}
-				if !found {
-					continue
+					w.ID = opsEmailIdentity(c.Recipient)
+				} else {
+					found := false
+					for _, current := range c.Webhooks {
+						if current.ID == w.ID && current.Enabled {
+							w = current
+							found = true
+							break
+						}
+					}
+					if !found {
+						continue
+					}
 				}
 			}
 			key := w.ID
-			if w.Provider != "email" {
+			if w.Provider != "email" && w.ID != accountOpsAdminBarkID {
 				key = "robot:" + w.ID + ":" + w.revision
 			}
 			out := e.Deliveries[key]
@@ -315,14 +334,21 @@ func (s *AccountOpsService) deliverNotification(ctx context.Context, e *AccountO
 				return
 			}
 			unchanged := false
-			if w.Provider == "email" {
-				unchanged = opsEmailIdentity(latest.Recipient) == key && latest.Recipient != ""
-			} else {
-				for _, current := range latest.Webhooks {
-					if current.ID == w.ID && current.Provider == w.Provider && current.revision == w.revision && current.Enabled {
-						w = current
-						unchanged = true
-						break
+			switch w.ID {
+			case accountOpsAdminEmailID:
+				unchanged = latest.usesAdminEmail()
+			case accountOpsAdminBarkID:
+				unchanged = latest.usesAdminBark()
+			default:
+				if w.Provider == "email" {
+					unchanged = !latest.usesAdminEmail() && opsEmailIdentity(latest.Recipient) == key && latest.Recipient != ""
+				} else {
+					for _, current := range latest.Webhooks {
+						if current.ID == w.ID && current.Provider == w.Provider && current.revision == w.revision && current.Enabled {
+							w = current
+							unchanged = true
+							break
+						}
 					}
 				}
 			}
@@ -347,22 +373,34 @@ func (s *AccountOpsService) deliverNotification(ctx context.Context, e *AccountO
 				}
 				message = s.notificationMessage(e)
 			}
-			if w.Provider == "email" {
-				if s.email == nil {
-					err = errors.New("email unavailable")
+			switch w.ID {
+			case accountOpsAdminEmailID, accountOpsAdminBarkID:
+				err = s.sendAdminChannel(send, w.ID, message)
+			default:
+				if w.Provider == "email" {
+					if s.email == nil {
+						err = errors.New("email unavailable")
+					} else {
+						err = s.email.SendEmail(send, c.Recipient, message.title, message.html)
+					}
 				} else {
-					err = s.email.SendEmail(send, c.Recipient, message.title, message.html)
+					err = s.sendRobot(send, w, message)
 				}
-			} else {
-				err = s.sendRobot(send, w, message)
 			}
 			cancel()
 			out.Provider = w.Provider
 			out.Name = ""
-			if w.Provider == "email" {
-				out.Name = c.EmailName
-			} else if w.Name != nil {
-				out.Name = *w.Name
+			switch w.ID {
+			case accountOpsAdminEmailID:
+				out.Name = "主管理员邮箱"
+			case accountOpsAdminBarkID:
+				out.Name = "主管理员 Bark"
+			default:
+				if w.Provider == "email" {
+					out.Name = c.EmailName
+				} else if w.Name != nil {
+					out.Name = *w.Name
+				}
 			}
 			out.Attempts++
 			out.Status = "sent"

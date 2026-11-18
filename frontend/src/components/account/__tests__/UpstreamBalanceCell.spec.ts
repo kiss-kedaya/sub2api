@@ -158,7 +158,7 @@ describe('UpstreamBalanceCell', () => {
     const account = makeAccount({ upstream_kind: 'newapi', balance: ok({ unit: 'USD', unit_assumed: true, remaining: 37.5, wallet_balance: 412.09 }, 'newapi_token_usage') })
     const wrapper = mountCell(account)
     expect(wrapper.get('[data-testid="upstream-balance-value"]').text()).toBe('$37.50')
-    expect(wrapper.get('[data-testid="upstream-balance-subline"]').text()).toBe('admin.accounts.upstreamBalance.walletShort:$412.09')
+    expect(wrapper.get('[data-testid="upstream-balance-wallet-state"]').text()).toBe('admin.accounts.upstreamBalance.walletShort:$412.09')
     const detail = wrapper.get('[data-testid="upstream-balance-details"]')
     expect(detail.get('[data-detail="remaining"]').text()).toContain('$37.50')
     expect(detail.get('[data-detail="wallet"]').text()).toContain('$412.09')

@@ -1,5 +1,5 @@
 const zh = {
-  title: '地区网关路由', description: '按可信客户端 IP 的国家地区，将文本请求发送到已批准网关，继续使用现有鉴权和计费。默认关闭。',
+  title: '地区路由', description: '按可信客户端 IP 的国家地区，将文本请求发送到已批准网关，继续使用现有鉴权和计费。默认关闭。',
   refresh: '刷新', save: '保存路由', enabled: '启用新请求地区分配', saved: '配置已保存', failed: '地区路由操作失败',
   setup: '节点密钥与可信私网在服务器环境变量配置。页面不接收或展示集群密钥。新网关必须连接同一在线数据库与 Redis。',
   secret: '集群密钥已配置', redis: 'Redis 已连接', private: '可信私网已配置', yes: '是', no: '否',
@@ -12,7 +12,7 @@ const zh = {
   assignment: '新请求分配', runtime: '运行环境'
 }
 const en = {
-  title: 'Regional gateway routing', description: 'Route text requests by the trusted client IP country to approved gateways using existing authentication and billing. Disabled by default.',
+  title: 'Regional routing', description: 'Route text requests by the trusted client IP country to approved gateways using existing authentication and billing. Disabled by default.',
   refresh: 'Refresh', save: 'Save routing', enabled: 'Enable assignment of new requests', saved: 'Routing configuration saved', failed: 'Regional routing operation failed',
   setup: 'Configure cluster credentials and trusted private networks in server environment variables. This page never accepts or displays a cluster secret. Nodes must use the same online database and Redis.',
   secret: 'Cluster secret configured', redis: 'Redis connected', private: 'Trusted private networks configured', yes: 'Yes', no: 'No',

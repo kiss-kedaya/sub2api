@@ -176,7 +176,7 @@ func TestUpstreamBalanceProbeAllowed(t *testing.T) {
 	}{
 		{"rate ok", relay, http.StatusOK, true},
 		{"rate endpoint missing", relay, http.StatusNotFound, true},
-		{"rate forbidden", relay, http.StatusForbidden, true},
+		{"rate forbidden", relay, http.StatusForbidden, false},
 		{"rate server error", relay, http.StatusBadGateway, true},
 		{"no response", relay, 0, false},
 		{"key rejected", relay, http.StatusUnauthorized, false},
@@ -313,7 +313,7 @@ func TestUpstreamBalanceProbeSkipsBalanceAfterRejectedOrThrottledRate(t *testing
 			require.Len(t, upstream.requests, 1)
 			require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Status)
 			require.NotNil(t, snapshot.Balance)
-			require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Balance.Status)
+			require.Equal(t, UpstreamBillingProbeStatusFailed, snapshot.Balance.Status)
 			require.Equal(t, 5.0, snapshot.Balance.Data["remaining"])
 			require.Equal(t, time.Date(2026, time.July, 13, 1, 0, 0, 0, time.UTC), *snapshot.Balance.ReceivedAt)
 		})

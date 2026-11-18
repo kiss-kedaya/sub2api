@@ -3,7 +3,7 @@
     <TablePageLayout>
       <template #actions>
         <AdminPageHeader
-          :title="t('admin.channels.title')"
+          :title="t('nav.channelPricing')"
           :description="t('admin.channels.description')"
         >
           <template #actions>

@@ -1,0 +1,25 @@
+export default {
+  title: 'Operations center',
+  description: 'Start with what needs attention, then open a workspace. Assets, notifications, channels and requests each have a place.',
+  areas: { overview: 'Overview', accounts: 'Accounts & upstreams', channels: 'Channel operations', diagnostics: 'Request diagnostics', network: 'Network & regions' },
+  descriptions: {
+    overview: 'Review key numbers and pending issues, then open a workspace.',
+    accounts: 'Manage upstream sites, account notifications, automation and authorization.',
+    channels: 'Maintain channel ownership, quality, pricing and monitor settings.',
+    diagnostics: 'Drill down from captures to live operations, connections, cache and traffic.',
+    network: 'Manage proxy egress, nodes and regional routing.',
+  },
+  pages: {
+    credentials: 'Credential inspection', excel: 'Excel authorization', comparison: 'Model comparison',
+    connections: 'Connection diagnostics', traffic: 'User traffic', captureSettings: 'Capture settings',
+    proxies: 'Proxy egress', proxyNodes: 'Proxy nodes', dynamicProxies: 'Dynamic proxies', proxyKernel: 'Advanced proxy settings',
+  },
+  workspaces: 'Workspaces', openWorkspace: 'Open workspace',
+  balance: 'Total upstream balance', balanceSnapshots: '{count} accounts with a balance snapshot', currencies: '{count} more currencies',
+  spend: 'Spend today', requests: 'Requests today', health: 'Account health', errors: 'Errors', rateLimited: 'Rate limited', overloaded: 'Overloaded',
+  attention: 'Needs attention', alerts: 'Alerts', risks: 'Asset risks', notifications: 'Notifications', on: 'On', off: 'Off',
+  attentionDescription: 'Failed notifications, unreadable balances or nearly exhausted quotas.', openNotifications: 'Open account notifications', resolve: 'Resolve',
+  noAttention: 'Nothing needs attention right now.', observer: 'Account assets and alerts require the primary administrator; only system totals are shown.',
+  loadOverviewFailed: 'Failed to load overview', loadAssetsFailed: 'Failed to load account assets', loadAlertsFailed: 'Failed to load alerts', loadSettingsFailed: 'Failed to load notification settings',
+  events: { balance_low: 'Insufficient balance', weekly_quota: 'Weekly quota running low', balance_threshold: 'Balance below threshold', quota_threshold: 'Quota below threshold', balanceFailed: 'Balance read failed', balanceStale: 'Balance snapshot is stale', quota: 'Quota nearly exhausted', used: '{percent}% used' },
+}

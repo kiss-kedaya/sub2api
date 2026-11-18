@@ -205,24 +205,25 @@ describe('console frame (Nuxt UI dashboard)', () => {
     expect(wrapper!.find('.sidebar-footer [data-test="user-menu"]').exists()).toBe(true)
     expect(wrapper!.find('.sidebar-footer button:last-child').attributes('data-test')).toBe('user-menu')
     // Expanded: the active group opens and lists its children as links.
-    expect(wrapper!.find('.sidebar-nav [data-slot="childList"] a[href="/admin/channels/pricing"]').exists()).toBe(true)
+    expect(wrapper!.find('.sidebar-nav [data-slot="childList"] a[href="/admin/channel-operations"]').exists()).toBe(true)
     app.sidebarCollapsed = true
     await flushPromises()
     // Collapsed rail: no inline children, the group becomes a popover trigger with its label.
     expect(wrapper!.find('.sidebar-nav [data-slot="childList"]').exists()).toBe(false)
-    const trigger = wrapper!.get('.sidebar-nav [aria-label="nav.channelManagement"]')
+    const trigger = wrapper!.get('.sidebar-nav [aria-label="opsCenter.title"]')
     expect(trigger.attributes('aria-haspopup')).toBe('dialog')
     // The rail button of the group holding the current page is drawn active (primary pill).
     expect(trigger.classes()).toContain('text-primary')
     await trigger.trigger('click')
-    await vi.waitFor(() => expect(document.body.querySelector('.console-flyout-list a[href="/admin/channels/pricing"]')).not.toBeNull())
+    await vi.waitFor(() => expect(document.body.querySelector('.console-flyout-list a[href="/admin/channel-operations"]')).not.toBeNull())
   })
 
-  it('shows the operations center tier headers inside the expanded group', async () => {
+  it('shows five shared workspaces and highlights the area of a nested page', async () => {
     await renderShell('/admin/account-ops', 'admin')
-    const headers = wrapper!.findAll('.sidebar-nav .sidebar-child-section').map((node) => node.text())
-    expect(headers).toEqual(['Account operations', 'Channel operations', 'Monitoring and diagnostics', 'Platform tools'])
-    expect(wrapper!.find('.sidebar-nav a[href="/admin/account-ops"][aria-current="page"]').exists()).toBe(true)
+    const entries = wrapper!.findAll('.sidebar-nav [data-slot="childList"] a')
+    expect(entries.map(node => node.text())).toEqual(['opsCenter.areas.overview', 'opsCenter.areas.accounts', 'opsCenter.areas.channels', 'opsCenter.areas.diagnostics', 'opsCenter.areas.network'])
+    expect(wrapper!.find('.sidebar-nav a[href="/admin/upstream-monitor"][aria-current="page"]').exists()).toBe(true)
+    expect(wrapper!.findAll('.sidebar-nav .sidebar-child-section')).toHaveLength(0)
   })
 
   it('anchors the onboarding tour on the sidebar links', async () => {

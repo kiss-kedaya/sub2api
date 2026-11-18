@@ -35,7 +35,7 @@ export interface AccountOpsQuotaThreshold {
   notify_alert?: boolean
   notify_recovery?: boolean
 }
-export type AccountOpsObservationStatus = 'ok' | 'stale' | 'failed' | 'unsupported' | 'unknown'
+export type AccountOpsObservationStatus = 'ok' | 'stale' | 'failed' | 'unsupported' | 'unknown' | 'disabled' | 'pending' | 'forbidden' | 'unlimited' | 'invalid_key' | 'ip_forbidden' | 'rate_limited'
 export interface AccountOpsThresholdAccount {
   account_id: number
   account_name: string
@@ -45,6 +45,12 @@ export interface AccountOpsThresholdAccount {
   platform: string
   type: 'apikey' | 'oauth'
   balance: number | null
+  key_balance?: number
+  wallet_balance?: number
+  wallet_status?: 'available' | 'forbidden' | 'unlimited'
+  wallet_identity?: string
+  upstream_kind?: string
+  balance_reason?: string
   unit: string
   balance_status: AccountOpsObservationStatus
   received_at: string | null
@@ -70,6 +76,8 @@ export interface AccountOpsConfig {
   enabled: boolean
   recipient: string
   email_name?: string
+  use_admin_email?: boolean
+  use_admin_bark?: boolean
   balance_low: boolean
   weekly_quota: boolean
   cooldown_minutes: number
@@ -101,7 +109,7 @@ export interface AccountOpsEvent {
   details?: { balance?: number; threshold?: number; unit?: string; used_percent?: number; threshold_percent?: number; window?: string; observed_at?: string; resets_at?: string }
   deliveries?: Record<string, { provider: string; name?: string; status: 'sent' | 'failed'; attempts: number; last_sent_at?: string }>
 }
-export type AccountOpsNotificationSettings = Partial<Pick<AccountOpsConfig, 'enabled' | 'recipient' | 'email_name' | 'balance_low' | 'weekly_quota' | 'cooldown_minutes'>>
+export type AccountOpsNotificationSettings = Partial<Pick<AccountOpsConfig, 'enabled' | 'recipient' | 'email_name' | 'use_admin_email' | 'use_admin_bark' | 'balance_low' | 'weekly_quota' | 'cooldown_minutes'>>
 export interface AccountOpsRuleInput {
   metric: 'balance' | 'quota'
   enabled: boolean
@@ -138,8 +146,18 @@ export async function saveAccountOpsWebhook(id: string, input: Omit<AccountOpsWe
 export async function deleteAccountOpsWebhook(id: string): Promise<AccountOpsConfig> {
   return (await apiClient.delete(`/admin/account-ops/webhooks/${encodeURIComponent(id)}`)).data
 }
+export interface AccountOpsAdminDefaults {
+  email_available: boolean
+  email_masked: string
+  email_unavailable_reason: string
+  bark_configured: boolean
+  bark_enabled: boolean
+  bark_available: boolean
+  bark_unavailable_reason: string
+}
 export interface AccountOpsSettings {
   config: AccountOpsConfig
+  admin_defaults?: AccountOpsAdminDefaults
   smtp_configured: boolean
   dropped_signals: number
   storage_failures: number
@@ -167,6 +185,9 @@ export async function saveAccountOpsGroups(groups: Array<{ id: string; name: str
 }
 export async function testAccountOpsWebhook(id: string): Promise<{ ok: boolean }> {
   return (await apiClient.post(`/admin/account-ops/webhooks/${encodeURIComponent(id)}/test`)).data
+}
+export async function testAccountOpsAdminChannel(channel: 'email' | 'bark'): Promise<{ ok: boolean }> {
+  return (await apiClient.post(`/admin/account-ops/admin-defaults/${channel}/test`)).data
 }
 export async function getAccountOpsEvents(offset = 0): Promise<{ items: AccountOpsEvent[]; has_more: boolean }> {
   const { data } = await apiClient.get('/admin/account-ops/alerts', { params: { offset, limit: 50 } })

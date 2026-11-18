@@ -11,6 +11,8 @@ type AccountOpsNotificationSettings struct {
 	Enabled         *bool   `json:"enabled"`
 	Recipient       *string `json:"recipient"`
 	EmailName       *string `json:"email_name"`
+	UseAdminEmail   *bool   `json:"use_admin_email"`
+	UseAdminBark    *bool   `json:"use_admin_bark"`
 	BalanceLow      *bool   `json:"balance_low"`
 	WeeklyQuota     *bool   `json:"weekly_quota"`
 	CooldownMinutes *int    `json:"cooldown_minutes"`
@@ -137,6 +139,12 @@ func (s *AccountOpsService) SaveNotificationSettings(ctx context.Context, v Acco
 		}
 		if v.EmailName != nil {
 			c.EmailName = *v.EmailName
+		}
+		if v.UseAdminEmail != nil {
+			c.UseAdminEmail = v.UseAdminEmail
+		}
+		if v.UseAdminBark != nil {
+			c.UseAdminBark = v.UseAdminBark
 		}
 		if v.BalanceLow != nil {
 			c.BalanceLow = *v.BalanceLow
