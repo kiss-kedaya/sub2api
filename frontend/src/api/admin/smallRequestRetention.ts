@@ -12,7 +12,7 @@ export interface SmallRecord {
   first_seen: string; last_seen: string; expires_at: string; repeat_count: number
   input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number
   actual_cost: string; raw_bytes: number; omitted_responses: number; request_ids: string[]
-  data: { method: string; path: string; group_id: number; replay_reasons: string[] | null; first_usage: SmallUsage }
+  data: { method: string; path: string; group_id: number; replay_reasons: string[] | null; first_usage?: SmallUsage }
 }
 export interface SmallStats {
   ready: boolean; records: number; requests: number; duplicates: number
@@ -22,7 +22,7 @@ export interface SmallStats {
 export interface SmallDetail {
   record: SmallRecord; request_headers: Record<string, string[]>; request_body: string; curl: string
   responses: Array<{ fingerprint: string; first_seen: string; last_seen: string; repeat_count: number
-    data: { status: number; usage: SmallUsage; partial: boolean; replay_reasons?: string[] }; headers: Record<string, string[]>; body: string }>
+    data: { status: number; usage?: SmallUsage; partial: boolean; replay_reasons?: string[] }; headers: Record<string, string[]>; body: string }>
 }
 export interface SmallFilter {
   user_id?: number; api_key_id?: number; model?: string; request_id?: string

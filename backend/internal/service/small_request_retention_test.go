@@ -51,7 +51,7 @@ func smallUsageCaptureFixture(t *testing.T, expected smallUsageExpectation) cont
 	require.NoError(t, err)
 	mock.ExpectQuery("SELECT to_regclass").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(true))
 	mock.ExpectQuery("SELECT COALESCE").WillReturnRows(sqlmock.NewRows([]string{"size"}).AddRow(0))
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		mock.ExpectBegin()
 		mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
 		mock.ExpectExec("DELETE FROM small_request_").WillReturnResult(sqlmock.NewResult(0, 0))
@@ -60,12 +60,13 @@ func smallUsageCaptureFixture(t *testing.T, expected smallUsageExpectation) cont
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT pg_advisory_xact_lock_shared").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("SELECT \\$1::timestamptz").WillReturnRows(sqlmock.NewRows([]string{"live"}).AddRow(true))
+	mock.ExpectQuery("SELECT \\$1::timestamptz").WillReturnRows(sqlmock.NewRows([]string{"fresh", "after_clear"}).AddRow(true, true))
 	mock.ExpectQuery("INSERT INTO small_request_records").WithArgs(
 		sqlmock.AnyArg(), sqlmock.AnyArg(), int64(42), int64(7), "text-test", 200, sqlmock.AnyArg(),
 		expected.input, expected.output, expected.read, expected.creation, expected.cost, sqlmock.AnyArg(),
 		`["synthetic-retention"]`, sqlmock.AnyArg(), sqlmock.AnyArg(), expected,
 	).WillReturnRows(sqlmock.NewRows([]string{"id", "repeat_count"}).AddRow(1, 2))
+	mock.ExpectExec("INSERT INTO small_request_occurrences").WithArgs(int64(1), int64(2), sqlmock.AnyArg(), "synthetic-retention", sqlmock.AnyArg(), 200, expected.input, expected.output, expected.read, expected.creation, expected.cost, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE small_request_responses SET").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	r := requestcapture.NewSmallRecorder(&requestcapture.SmallStore{DB: db}, nil)

@@ -5,6 +5,7 @@ import SmallRequestRetentionPanel from '../SmallRequestRetentionPanel.vue'
 import { highlightRetentionJSON } from '../smallRequestRetentionFormat'
 import * as api from '@/api/admin/smallRequestRetention'
 import type { SmallRecord, SmallDetail } from '@/api/admin/smallRequestRetention'
+import { createSmallRetentionDemo } from '../../../../dev/small-retention'
 
 const state = vi.hoisted(() => ({ stepUp: vi.fn(), confirm: vi.fn(), toast: vi.fn() }))
 vi.mock('vue-i18n', async importOriginal => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key }) }))
@@ -132,6 +133,47 @@ describe('small request retention', () => {
     expect(wrapper.text()).toContain('admin.requestCapture.small.skipReasons.quota_full')
     expect(wrapper.get<HTMLButtonElement>('[data-testid="small-retention-toggle"]').element.disabled).toBe(false)
     wrapper.unmount()
+  })
+  it('explains expired representative billing without inventing zero usage or delivery values', async () => {
+    const wrapper = mount(SmallRequestRetentionPanel); await flushPromises()
+    await wrapper.get('[data-testid="small-detail-1"]').trigger('click'); await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'admin.requestCapture.small.correlations')!.trigger('click'); await flushPromises()
+    expect(wrapper.get('[data-testid="small-first-usage-expired"]').text()).toBe('admin.requestCapture.small.firstUsageExpired')
+    expect(wrapper.text()).not.toContain('admin.requestCapture.small.milliseconds')
+    expect(wrapper.text()).not.toContain('admin.requestCapture.small.nonStream')
+    expect(wrapper.text()).not.toContain('admin.requestCapture.small.firstCharge')
+    expect(wrapper.text()).toContain('170 / 5')
+    wrapper.unmount()
+  })
+  it('keeps expired sample bodies readable and switches to a live billing sample', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const expired = { ...detail.responses[0]!, data: { status: 200, partial: false } }
+    vi.mocked(api.getSmallDetail).mockResolvedValue({ ...detail, responses: [expired, detail.responses[1]!] })
+    const wrapper = mount(SmallRequestRetentionPanel); await flushPromises()
+    await wrapper.get('[data-testid="small-detail-1"]').trigger('click'); await flushPromises()
+    wrapper.findComponent({ name: 'Tabs' }).vm.$emit('update:modelValue', 'response_body'); await flushPromises()
+    expect(wrapper.get('[data-testid="small-sample-usage-expired"]').text()).toBe('admin.requestCapture.small.sampleUsageExpired')
+    expect(wrapper.text()).not.toContain('admin.requestCapture.small.sampleCharge')
+    expect(wrapper.text()).toContain('data: first')
+    await wrapper.get('[data-testid="small-copy-body"]').trigger('click'); await flushPromises()
+    expect(writeText).toHaveBeenLastCalledWith(expired.body)
+    const selector = wrapper.findAllComponents({ name: 'Select' }).at(-1)!
+    selector.vm.$emit('update:modelValue', 1); await flushPromises()
+    expect(wrapper.find('[data-testid="small-sample-usage-expired"]').exists()).toBe(false)
+    await wrapper.findAll('button').find(button => button.text() === 'admin.requestCapture.small.sampleUsage')!.trigger('click'); await flushPromises()
+    expect(wrapper.text()).toContain('admin.requestCapture.small.sampleCharge')
+    expect(wrapper.text()).toContain('#14')
+    expect(wrapper.text()).toContain('data: latest')
+    wrapper.unmount()
+  })
+  it('previews rolling group expiry and both expired representative associations', () => {
+    const preview = createSmallRetentionDemo(new Date('2026-11-18T10:00:00Z'))
+    const result = preview('GET', '/api/v1/admin/request-captures/small/1', new URLSearchParams(), {}) as SmallDetail
+    expect(new Date(result.record.expires_at).getTime() - new Date(result.record.last_seen).getTime()).toBe(24 * 60 * 60 * 1000)
+    expect(result.record.data.first_usage).toBeUndefined()
+    expect(result.responses[0]!.data.usage).toBeUndefined()
+    expect(result.responses[1]!.data.usage).toBeDefined()
   })
   it('never renders retained HTML as executable markup in JSON display', () => {
     const highlighted = highlightRetentionJSON('{"key":"<img src=x onerror=alert(1)>","signature":"unchanged"}')

@@ -21,7 +21,7 @@ type SmallRecordData struct {
 	GroupID                int64       `json:"group_id"`
 	RequestVolatileHeaders http.Header `json:"request_volatile_headers,omitempty"`
 	ReplayReasons          []string    `json:"replay_reasons"`
-	FirstUsage             SmallUsage  `json:"first_usage"`
+	FirstUsage             *SmallUsage `json:"first_usage,omitempty"`
 }
 type SmallRecord struct {
 	ID                  int64           `json:"id"`
@@ -45,10 +45,11 @@ type SmallRecord struct {
 	RequestHeadersHash  string          `json:"-"`
 	RequestBodyHash     string          `json:"-"`
 	Data                SmallRecordData `json:"data"`
+	windowTrimmed       bool
 }
 type SmallResponseData struct {
 	Status          int         `json:"status"`
-	Usage           SmallUsage  `json:"usage"`
+	Usage           *SmallUsage `json:"usage,omitempty"`
 	VolatileHeaders http.Header `json:"volatile_headers,omitempty"`
 	Partial         bool        `json:"partial"`
 	ReplayReasons   []string    `json:"replay_reasons"`
@@ -92,13 +93,12 @@ type SmallStats struct {
 	Ready              bool             `json:"ready"`
 }
 
-func smallCutoff(now time.Time) time.Time { return now.UTC().Truncate(time.Hour).Add(-24 * time.Hour) }
 func (s *SmallStore) Ready(ctx context.Context) bool {
 	if s == nil || s.DB == nil {
 		return false
 	}
 	var ready bool
-	err := s.DB.QueryRowContext(ctx, `SELECT to_regclass('small_request_records') IS NOT NULL AND to_regclass('small_request_blobs') IS NOT NULL AND to_regclass('small_request_responses') IS NOT NULL AND to_regclass('small_request_skips') IS NOT NULL AND to_regclass('small_request_state') IS NOT NULL`).Scan(&ready)
+	err := s.DB.QueryRowContext(ctx, `SELECT to_regclass('small_request_records') IS NOT NULL AND to_regclass('small_request_blobs') IS NOT NULL AND to_regclass('small_request_responses') IS NOT NULL AND to_regclass('small_request_skips') IS NOT NULL AND to_regclass('small_request_state') IS NOT NULL AND to_regclass('small_request_occurrences') IS NOT NULL`).Scan(&ready)
 	return err == nil && ready
 }
 func volatileSmallHeaders(headers http.Header) http.Header {
@@ -137,14 +137,18 @@ func (s *SmallStore) Save(ctx context.Context, p preparedSmallExchange) error {
 	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('small-user:' || $1::text,0))`, p.UserID); err != nil {
 		return err
 	}
-	var live bool
-	if err = tx.QueryRowContext(ctx, `SELECT $1::timestamptz >= date_trunc('hour',now())-interval '24 hours' AND $2::timestamptz >= (SELECT cleared_at FROM small_request_state WHERE id=1)`, p.Bucket, p.StartedAt).Scan(&live); err != nil {
+	var fresh, afterClear bool
+	if err = tx.QueryRowContext(ctx, `SELECT $1::timestamptz > clock_timestamp()-interval '24 hours',
+ COALESCE($1::timestamptz >= (SELECT cleared_at FROM small_request_state WHERE id=1), false)`, p.StartedAt).Scan(&fresh, &afterClear); err != nil {
 		return err
 	}
-	if !live {
+	if !fresh {
+		return errSmallRetentionExpired
+	}
+	if !afterClear {
 		return nil
 	}
-	data, err := json.Marshal(SmallRecordData{Method: p.Method, Path: p.Path, GroupID: p.GroupID, RequestVolatileHeaders: volatileSmallHeaders(p.RequestHeaders), ReplayReasons: p.ReplayReasons, FirstUsage: p.Usage})
+	data, err := json.Marshal(SmallRecordData{Method: p.Method, Path: p.Path, GroupID: p.GroupID, RequestVolatileHeaders: volatileSmallHeaders(p.RequestHeaders), ReplayReasons: p.ReplayReasons, FirstUsage: &p.Usage})
 	if err != nil {
 		return err
 	}
@@ -169,6 +173,9 @@ ON CONFLICT(bucket,fingerprint) DO UPDATE SET
  (SELECT value,n FROM jsonb_array_elements(small_request_records.request_ids || EXCLUDED.request_ids) WITH ORDINALITY e(value,n) ORDER BY n DESC LIMIT 20) recent)
 RETURNING id,repeat_count`, p.Bucket, p.Fingerprint, p.UserID, p.APIKeyID, p.Usage.Model, p.Status, p.StartedAt, p.Usage.InputTokens, p.Usage.OutputTokens, p.Usage.CacheReadTokens, p.Usage.CacheCreationTokens, smallCostOrZero(p.Usage.ActualCost), p.RawBytes, string(ids), p.RequestHeaderBlob.Hash, p.RequestBodyBlob.Hash, string(data)).Scan(&id, &repeats)
 	if err != nil {
+		return err
+	}
+	if err = insertSmallOccurrence(ctx, tx, id, repeats, p); err != nil {
 		return err
 	}
 	if repeats == 1 {
@@ -210,7 +217,7 @@ RETURNING id,repeat_count`, p.Bucket, p.Fingerprint, p.UserID, p.APIKeyID, p.Usa
 				return err
 			}
 		}
-		responseData, marshalErr := json.Marshal(SmallResponseData{Status: p.Status, Usage: p.Usage, VolatileHeaders: volatileSmallHeaders(p.ResponseHeaders), Partial: p.Partial, ReplayReasons: p.ReplayReasons})
+		responseData, marshalErr := json.Marshal(SmallResponseData{Status: p.Status, Usage: &p.Usage, VolatileHeaders: volatileSmallHeaders(p.ResponseHeaders), Partial: p.Partial, ReplayReasons: p.ReplayReasons})
 		if marshalErr != nil {
 			return marshalErr
 		}
@@ -243,9 +250,19 @@ func (s *SmallStore) AddSkipped(ctx context.Context, bucket time.Time, reason st
 // transaction lock elects one instance and prevents a writer recreating old blobs.
 func (s *SmallStore) Cleanup(ctx context.Context, now time.Time) error {
 	cutoff := smallCutoff(now)
-	for _, table := range []string{"small_request_responses", "small_request_records", "small_request_blobs", "small_request_skips"} {
+	bucket := cutoff.Truncate(time.Hour)
+	for _, target := range []struct {
+		table, condition string
+		cutoff           time.Time
+	}{
+		{"small_request_occurrences", "seen_at<=$1", cutoff},
+		{"small_request_responses", "bucket<$1", bucket},
+		{"small_request_records", "bucket<$1", bucket},
+		{"small_request_blobs", "bucket<$1", bucket},
+		{"small_request_skips", "bucket<$1", bucket},
+	} {
 		for i := 0; i < 8; i++ {
-			n, locked, err := s.cleanupBatch(ctx, table, cutoff)
+			n, locked, err := s.cleanupBatch(ctx, target.table, target.condition, target.cutoff)
 			if err != nil || !locked {
 				return err
 			}
@@ -256,7 +273,7 @@ func (s *SmallStore) Cleanup(ctx context.Context, now time.Time) error {
 	}
 	return nil
 }
-func (s *SmallStore) cleanupBatch(ctx context.Context, table string, cutoff time.Time) (int64, bool, error) {
+func (s *SmallStore) cleanupBatch(ctx context.Context, table, condition string, cutoff time.Time) (int64, bool, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, false, err
@@ -266,7 +283,7 @@ func (s *SmallStore) cleanupBatch(ctx context.Context, table string, cutoff time
 	if err = tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock($1)`, smallMaintenanceLock).Scan(&locked); err != nil || !locked {
 		return 0, locked, err
 	}
-	result, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE ctid IN (SELECT ctid FROM `+table+` WHERE bucket<$1 LIMIT 5000)`, cutoff)
+	result, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE ctid IN (SELECT ctid FROM `+table+` WHERE `+condition+` LIMIT 5000)`, cutoff)
 	if err != nil {
 		return 0, true, err
 	}
@@ -288,21 +305,21 @@ func (s *SmallStore) Clear(ctx context.Context) error {
 	if _, err = tx.ExecContext(ctx, `UPDATE small_request_state SET cleared_at=clock_timestamp() WHERE id=1`); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `TRUNCATE small_request_responses,small_request_records,small_request_blobs,small_request_skips`)
+	_, err = tx.ExecContext(ctx, `TRUNCATE small_request_occurrences,small_request_responses,small_request_records,small_request_blobs,small_request_skips`)
 	if err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-const smallRecordColumns = `id,bucket,user_id,api_key_id,model,status,first_seen,last_seen,repeat_count,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,actual_cost::text,raw_bytes,omitted_responses,request_ids,request_headers_hash,request_body_hash,data`
+const smallRecordColumns = `id,bucket,user_id,api_key_id,model,status,first_seen,last_seen,repeat_count,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,actual_cost::text,raw_bytes,omitted_responses,request_ids,request_headers_hash,request_body_hash,data,window_trimmed`
 
 type smallRowScanner interface{ Scan(...any) error }
 
 func scanSmallRecord(row smallRowScanner) (SmallRecord, error) {
 	var r SmallRecord
 	var ids, data []byte
-	err := row.Scan(&r.ID, &r.Bucket, &r.UserID, &r.APIKeyID, &r.Model, &r.Status, &r.FirstSeen, &r.LastSeen, &r.RepeatCount, &r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheCreationTokens, &r.ActualCost, &r.RawBytes, &r.OmittedResponses, &ids, &r.RequestHeadersHash, &r.RequestBodyHash, &data)
+	err := row.Scan(&r.ID, &r.Bucket, &r.UserID, &r.APIKeyID, &r.Model, &r.Status, &r.FirstSeen, &r.LastSeen, &r.RepeatCount, &r.InputTokens, &r.OutputTokens, &r.CacheReadTokens, &r.CacheCreationTokens, &r.ActualCost, &r.RawBytes, &r.OmittedResponses, &ids, &r.RequestHeadersHash, &r.RequestBodyHash, &data, &r.windowTrimmed)
 	if err != nil {
 		return r, err
 	}
@@ -310,12 +327,16 @@ func scanSmallRecord(row smallRowScanner) (SmallRecord, error) {
 		return r, err
 	}
 	err = json.Unmarshal(data, &r.Data)
-	r.ExpiresAt = r.Bucket.Add(25 * time.Hour)
+	r.ExpiresAt = r.LastSeen.Add(smallRetentionWindow)
 	return r, err
 }
 func (s *SmallStore) List(ctx context.Context, f SmallFilter) ([]SmallRecord, error) {
-	conditions := []string{"bucket>= $1"}
-	args := []any{smallCutoff(time.Now())}
+	return s.listAt(ctx, f, smallCutoff(time.Now()))
+}
+
+func (s *SmallStore) listAt(ctx context.Context, f SmallFilter, cutoff time.Time) ([]SmallRecord, error) {
+	var conditions []string
+	args := []any{cutoff.Truncate(time.Hour), cutoff}
 	add := func(condition string, value any) {
 		args = append(args, value)
 		conditions = append(conditions, fmt.Sprintf(condition, len(args)))
@@ -350,7 +371,11 @@ func (s *SmallStore) List(ctx context.Context, f SmallFilter) ([]SmallRecord, er
 		limit = 20
 	}
 	args = append(args, limit, max(0, f.Offset))
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+smallRecordColumns+` FROM small_request_records WHERE `+strings.Join(conditions, " AND ")+` ORDER BY last_seen DESC,id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
+	where := ""
+	if len(conditions) != 0 {
+		where = " WHERE " + strings.Join(conditions, " AND ")
+	}
+	rows, err := s.DB.QueryContext(ctx, smallActiveRecords+`SELECT `+smallRecordColumns+` FROM live_records`+where+` ORDER BY last_seen DESC,id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -375,6 +400,10 @@ func smallBlobPayload(ctx context.Context, tx *sql.Tx, bucket time.Time, user in
 	return decodeSmallBlob(codec, payload)
 }
 func (s *SmallStore) Detail(ctx context.Context, id int64) (*SmallDetail, error) {
+	return s.detailAt(ctx, id, smallCutoff(time.Now()))
+}
+
+func (s *SmallStore) detailAt(ctx context.Context, id int64, cutoff time.Time) (*SmallDetail, error) {
 	// A sample can be evicted while the operator opens it. Read a single MVCC
 	// snapshot so headers and bodies cannot disappear between these queries.
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
@@ -382,7 +411,7 @@ func (s *SmallStore) Detail(ctx context.Context, id int64) (*SmallDetail, error)
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	r, err := scanSmallRecord(tx.QueryRowContext(ctx, `SELECT `+smallRecordColumns+` FROM small_request_records WHERE id=$1 AND bucket>=$2`, id, smallCutoff(time.Now())))
+	r, err := scanSmallRecord(tx.QueryRowContext(ctx, smallActiveRecords+`SELECT `+smallRecordColumns+` FROM live_records WHERE id=$3`, cutoff.Truncate(time.Hour), cutoff, id))
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +432,7 @@ func (s *SmallStore) Detail(ctx context.Context, id int64) (*SmallDetail, error)
 	}
 	d.RequestBody = string(body)
 	d.Curl = SmallCurl(r.Data.Method, r.Data.Path, d.RequestHeaders, body)
-	rows, err := tx.QueryContext(ctx, `SELECT fingerprint,first_seen,last_seen,repeat_count,data,headers_hash,body_hash FROM small_request_responses WHERE record_id=$1 ORDER BY first_seen,fingerprint`, id)
+	rows, err := smallResponseRows(ctx, tx, r, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -458,10 +487,14 @@ func (s *SmallStore) StoredBytes(ctx context.Context) (int64, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	var size int64
-	err := s.DB.QueryRowContext(queryCtx, `SELECT COALESCE(sum(stored_size),0) FROM small_request_blobs WHERE bucket>=$1`, smallCutoff(time.Now())).Scan(&size)
+	err := s.DB.QueryRowContext(queryCtx, `SELECT COALESCE(sum(stored_size),0) FROM small_request_blobs WHERE bucket>=$1`, smallCutoff(time.Now()).Truncate(time.Hour)).Scan(&size)
 	return size, err
 }
 func (s *SmallStore) Stats(ctx context.Context) (SmallStats, error) {
+	return s.statsAt(ctx, smallCutoff(time.Now()))
+}
+
+func (s *SmallStore) statsAt(ctx context.Context, cutoff time.Time) (SmallStats, error) {
 	out := SmallStats{StoredLimitBytes: SmallStoredBytesLimit, Skipped: map[string]int64{}, RepeatDistribution: map[string]int64{}, Ready: s.Ready(ctx)}
 	for _, reason := range smallSkipReasons {
 		out.Skipped[reason] = 0
@@ -469,18 +502,27 @@ func (s *SmallStore) Stats(ctx context.Context) (SmallStats, error) {
 	if !out.Ready {
 		return out, nil
 	}
-	cutoff := smallCutoff(time.Now())
-	err := s.DB.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(repeat_count),0),COALESCE(sum(raw_bytes),0),min(first_seen),max(last_seen) FROM small_request_records WHERE bucket>=$1`, cutoff).Scan(&out.Records, &out.Requests, &out.RawBytes, &out.Oldest, &out.Newest)
+	bucket := cutoff.Truncate(time.Hour)
+	var once, few, many, hundred int64
+	err := s.DB.QueryRowContext(ctx, smallActiveRecords+`SELECT count(*),COALESCE(sum(repeat_count),0),COALESCE(sum(raw_bytes),0),min(first_seen),max(last_seen),
+ COUNT(*) FILTER(WHERE repeat_count=1),COUNT(*) FILTER(WHERE repeat_count BETWEEN 2 AND 9),
+ COUNT(*) FILTER(WHERE repeat_count BETWEEN 10 AND 99),COUNT(*) FILTER(WHERE repeat_count>=100) FROM live_records`, bucket, cutoff).
+		Scan(&out.Records, &out.Requests, &out.RawBytes, &out.Oldest, &out.Newest, &once, &few, &many, &hundred)
 	if err != nil {
 		return out, err
 	}
 	out.Duplicates = out.Requests - out.Records
+	for key, count := range map[string]int64{"1": once, "2-9": few, "10-99": many, "100+": hundred} {
+		if count != 0 {
+			out.RepeatDistribution[key] = count
+		}
+	}
 	if out.StoredBytes, err = s.StoredBytes(ctx); err != nil {
 		return out, err
 	}
 	out.QuotaFull = out.StoredBytes >= SmallStoredBytesLimit
 	out.SavedBytes = max(0, out.RawBytes-out.StoredBytes)
-	rows, err := s.DB.QueryContext(ctx, `SELECT reason,sum(count) FROM small_request_skips WHERE bucket>=$1 GROUP BY reason`, cutoff)
+	rows, err := s.DB.QueryContext(ctx, `SELECT reason,sum(count) FROM small_request_skips WHERE bucket>=$1 GROUP BY reason`, bucket)
 	if err != nil {
 		return out, err
 	}
@@ -500,18 +542,5 @@ func (s *SmallStore) Stats(ctx context.Context) (SmallStats, error) {
 	if e != nil {
 		return out, e
 	}
-	rows, err = s.DB.QueryContext(ctx, `SELECT CASE WHEN repeat_count=1 THEN '1' WHEN repeat_count<10 THEN '2-9' WHEN repeat_count<100 THEN '10-99' ELSE '100+' END,count(*) FROM small_request_records WHERE bucket>=$1 GROUP BY 1`, cutoff)
-	if err != nil {
-		return out, err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var key string
-		var count int64
-		if err = rows.Scan(&key, &count); err != nil {
-			return out, err
-		}
-		out.RepeatDistribution[key] = count
-	}
-	return out, rows.Err()
+	return out, nil
 }
