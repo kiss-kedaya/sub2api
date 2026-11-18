@@ -18,6 +18,9 @@ type TokenCostRequest struct {
 	Resolver        *ModelPricingResolver
 	// Resolved 为调用方预先解析的定价（Resolver.Resolve 的结果），nil 表示未解析。
 	Resolved *ResolvedPricing
+	// CacheCreationTTLHint 是本请求实际向上游声明的缓存 TTL（"1h" / "5m" / ""）。
+	// 上游不返回 ephemeral 明细时，用它决定缓存创建按哪档单价计费。
+	CacheCreationTTLHint string
 }
 
 // CalculateTokenCostForRequest 按通用网关的路径选择计算 token 费用：
@@ -42,17 +45,18 @@ func (s *BillingService) CalculateTokenCostForRequest(req TokenCostRequest) (*Co
 
 func (s *BillingService) tokenCostInput(req TokenCostRequest, resolved *ResolvedPricing) CostInput {
 	input := CostInput{
-		Ctx:             req.Ctx,
-		Model:           req.Model,
-		Group:           req.Group,
-		Tokens:          req.Tokens,
-		RequestCount:    1,
-		RateMultiplier:  req.RateMultiplier,
-		PricingAt:       req.PricingAt,
-		ServiceTier:     req.ServiceTier,
-		ReasoningEffort: req.ReasoningEffort,
-		Resolver:        req.Resolver,
-		Resolved:        resolved,
+		Ctx:                  req.Ctx,
+		Model:                req.Model,
+		Group:                req.Group,
+		Tokens:               req.Tokens,
+		RequestCount:         1,
+		RateMultiplier:       req.RateMultiplier,
+		PricingAt:            req.PricingAt,
+		ServiceTier:          req.ServiceTier,
+		ReasoningEffort:      req.ReasoningEffort,
+		Resolver:             req.Resolver,
+		Resolved:             resolved,
+		CacheCreationTTLHint: req.CacheCreationTTLHint,
 	}
 	if req.Group != nil {
 		gid := req.Group.ID
