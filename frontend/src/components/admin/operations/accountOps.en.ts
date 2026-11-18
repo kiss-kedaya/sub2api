@@ -1,4 +1,21 @@
 export default {
+  "adminDefaults": "Administrator default channels",
+  "adminDefaultsHint": "Uses the primary administrator's current profile. Email and Bark changes apply to the next notification.",
+  "adminProfileSource": "Source: primary administrator profile",
+  "adminEmail": "Primary administrator email",
+  "adminBark": "Primary administrator Bark",
+  "configureInProfile": "Configure in personal profile",
+  "customChannels": "Custom channels",
+  "adminEmailOverridesCustom": "While the administrator email is selected, the custom email is retained but does not receive a second copy.",
+  "adminBarkDuplicateHint": "Default Bark uses one robot slot. Disable any custom channel targeting the same device to avoid duplicates.",
+  "adminReasons": {
+    "admin_unavailable": "Primary administrator unavailable (must be active and not deleted)",
+    "email_unavailable": "Primary administrator email unavailable",
+    "bark_unavailable": "Bark status unavailable",
+    "bark_unconfigured": "Not configured",
+    "bark_disabled": "Personal Bark is disabled",
+    "unavailable": "Status not loaded"
+  },
   "enabledChannels": "Enabled destinations",
   "enabledRules": "Enabled threshold rules",
   "loadedPending": "Pending alerts (loaded records)",

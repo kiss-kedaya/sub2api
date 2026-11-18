@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"net/http"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/notify"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
@@ -40,6 +42,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		// Business layer ProviderSets
 		repository.ProviderSet,
 		service.ProviderSet,
+		provideAccountOpsAdminChannels,
 		securityaudit.ProviderSet,
 		payment.ProviderSet,
 		middleware.ProviderSet,
@@ -62,6 +65,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "Cleanup"),
 	)
 	return nil, nil
+}
+
+func provideAccountOpsAdminChannels(users service.UserRepository, db *sql.DB, encryptor service.SecretEncryptor) service.AccountOpsAdminChannels {
+	return notify.NewAccountOpsAdminChannels(users, notify.NewUserBarkService(db, notify.AdaptEncryptor(encryptor)))
 }
 
 func providePrivacyClientFactory() service.PrivacyClientFactory {

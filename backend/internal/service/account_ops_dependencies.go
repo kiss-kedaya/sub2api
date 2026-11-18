@@ -1,7 +1,7 @@
 package service
 
-// New notification destinations are opt-in and separate from the existing Bark
-// and balance mail services. Enabling this service does not change their rules.
+// Account notifications keep their own rules. Profile-channel references reuse
+// the primary administrator's destinations without changing other alert services.
 func (s *RateLimitService) SetAccountOpsService(ops *AccountOpsService) {
 	if s != nil {
 		s.accountOps = ops
