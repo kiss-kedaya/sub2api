@@ -155,7 +155,7 @@ func TestGeminiB2MessagesJSONErrorOnStream(t *testing.T) {
 	}
 }
 
-func TestGeminiB2MessagesEmptyStopDoesNotRecoverBilling(t *testing.T) {
+func TestGeminiB2MessagesEmptyStopRecoversBilling(t *testing.T) {
 	for _, stream := range []bool{true, false} {
 		t.Run(fmt.Sprint(stream), func(t *testing.T) {
 			account := geminiSignalTestAccount()
@@ -171,13 +171,13 @@ func TestGeminiB2MessagesEmptyStopDoesNotRecoverBilling(t *testing.T) {
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 			request := []byte(fmt.Sprintf(`{"model":"gemini-3.7-flash","max_tokens":64,"stream":%t,"messages":[{"role":"user","content":"hello"}]}`, stream))
 			result, err := svc.Forward(context.Background(), c, account, request)
-			require.Error(t, err)
-			requireGeminiSignalBilling(t, result, true)
+			require.NoError(t, err)
+			requireGeminiSignalBilling(t, result, false)
 		})
 	}
 }
 
-func TestGeminiB2BridgeEmptyCompletionDoesNotRecoverBilling(t *testing.T) {
+func TestGeminiB2BridgeEmptyCompletionRecoversBilling(t *testing.T) {
 	body := "event: error\ndata: {\"error\":{\"code\":\"server_error\",\"message\":\"synthetic prelude\"}}\n\n" +
 		"event: response.completed\ndata: {\"response\":{\"status\":\"completed\",\"usage\":" + geminiBridgeResponsesUsage + "}}\n\n"
 	svc := &GeminiMessagesCompatService{httpUpstream: &geminiBridgeUpstream{do: func(*http.Request) (*http.Response, error) {
@@ -186,9 +186,9 @@ func TestGeminiB2BridgeEmptyCompletionDoesNotRecoverBilling(t *testing.T) {
 	c, recorder := geminiBridgeContext()
 	account := geminiBridgeAccount(APIProtocolResponses)
 	result, err := svc.ForwardNative(context.Background(), c, account, "gemini-2.5-flash", "streamGenerateContent", true, []byte(geminiBridgeRequest))
-	require.Error(t, err)
-	require.Contains(t, recorder.Body.String(), `"error"`)
-	requireGeminiBridgeBilling(t, result, account, true)
+	require.NoError(t, err)
+	require.NotContains(t, recorder.Body.String(), `"error"`)
+	requireGeminiBridgeBilling(t, result, account, false)
 }
 
 func TestGeminiB2MessagesReadFailuresKeepExistingResult(t *testing.T) {
