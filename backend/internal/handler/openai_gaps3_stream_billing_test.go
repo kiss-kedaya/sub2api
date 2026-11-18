@@ -72,13 +72,15 @@ func TestOpenAIGaps3StreamHandlerBilling(t *testing.T) {
 					require.Len(t, logs, 1, rec.Body.String())
 					require.Len(t, commands, 1)
 					require.Positive(t, logs[0].InputTokens)
-					if mode == "failure" || mode == "empty_success" {
+					if mode == "failure" {
 						require.Zero(t, commands[0].BalanceCost)
 						require.Zero(t, logs[0].ActualCost)
 						require.Equal(t, 1, strings.Count(rec.Body.String(), "synthetic rejection"), rec.Body.String())
 					} else {
 						require.Positive(t, commands[0].BalanceCost)
-						require.Contains(t, rec.Body.String(), "synthetic answer")
+						if mode != "empty_success" {
+							require.Contains(t, rec.Body.String(), "synthetic answer")
+						}
 					}
 				})
 			}

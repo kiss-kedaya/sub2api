@@ -67,17 +67,20 @@ func TestDeepSeekStreamSilenceR4ReasoningFinishKeepsBilling(t *testing.T) {
 	}
 }
 
-func TestDeepSeekStreamSilenceR4ReasoningDoesNotClearPendingError(t *testing.T) {
+// A normal finish after a provider error is a finished, billed request, as on
+// main. The silence that follows must not turn it back into a failure.
+func TestDeepSeekStreamSilenceR4FinishAfterErrorKeepsBilling(t *testing.T) {
 	shortenDeepSeekStreamSilence(t, 80*time.Millisecond)
 	wire := "data: {\"error\":{\"message\":\"synthetic provider rejection\"}}\n\n" +
 		"data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"synthetic reasoning\"}}],\"usage\":{\"prompt_tokens\":1000,\"completion_tokens\":2}}\n\n" +
 		"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"
-	svc, c, rec, account, resp := streamSilenceFixture(t, "/v1/responses", wire)
+	svc, c, rec, _, resp := streamSilenceFixture(t, "/v1/responses", wire)
 	result, err := svc.streamChatCompletionsAsResponses(c, resp, "synthetic", nil, nil, false, nil, nil, "synthetic", "synthetic", nil, nil, time.Now())
-	requireStreamSilenceError(t, err, account)
-	assertExplicitUpstreamErrorFree(t, result)
-	require.NotContains(t, rec.Body.String(), `"type":"response.completed"`)
-	require.Equal(t, 1, strings.Count(rec.Body.String(), `"type":"response.failed"`))
+	require.NoError(t, err)
+	require.Contains(t, rec.Body.String(), `"type":"response.completed"`)
+	require.NotContains(t, rec.Body.String(), `"type":"response.failed"`)
+	require.NotContains(t, rec.Body.String(), "Upstream did not respond in time")
+	requireDeepSeekR4NormalSettlement(t, result)
 }
 
 func TestDeepSeekStreamSilenceR4NativeTerminalWithoutBlank(t *testing.T) {

@@ -224,7 +224,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
-		outcome.observe(&event, eventType, []byte(payload), true)
+		outcome.observe(&event, eventType, []byte(payload))
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
 			mergeAnthropicUsage(&usage, event.Message.Usage)
@@ -408,7 +408,6 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			clientDisconnected = true
 			return false
 		}
-		outcome.answerSeen = outcome.answerSeen || chatChunkHasAnswer(&chunk)
 		return false
 	}
 
@@ -485,7 +484,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			continue
 		}
 
-		outcome.observe(&event, eventType, []byte(payload), false)
+		outcome.observe(&event, eventType, []byte(payload))
 		if processAnthropicEvent(&event) {
 			return resultWithUsage(), nil
 		}

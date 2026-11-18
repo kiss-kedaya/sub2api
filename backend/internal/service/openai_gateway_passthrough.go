@@ -2276,7 +2276,6 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	suppressCurrentEvent := false
 	responseFailedPending := false
 	nonBillableUpstreamError := false
-	answerSeen := false
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
@@ -2438,15 +2437,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 			nativeReasoning.ObserveFrame(frame)
 			rawEventType := frame.eventType
-			answerFrame := responsesFrameHasAnswer(frame)
-			successAfterError := (rawEventType == "response.completed" || rawEventType == "response.done") &&
-				!clientDisconnected && (answerSeen || answerFrame) && !openAIExplicitUpstreamError(frame.root, rawEventType) &&
-				(frame.root.Get("response.status").String() == "" || frame.root.Get("response.status").String() == "completed")
+			successAfterError := openAIResponsesSuccessTerminal(frame.root, rawEventType)
 			switch rawEventType {
 			case "error", "response.failed", "response.completed", "response.done":
-				if rawEventType == "error" || rawEventType == "response.failed" || !nonBillableUpstreamError || successAfterError {
-					observeDeepSeekHostedUpstreamEvent(ctx, rawEventType)
-				}
+				observeDeepSeekHostedUpstreamEvent(ctx, rawEventType)
 			}
 			observer.ObserveOpenAIFrame(frame)
 			if refusalErr := grokModerationRefusalProtocolError(account, dataBytes); refusalErr != nil &&
@@ -2520,9 +2514,6 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 			if codexFailureTerminal && sawBareError && !sawResponseFailed && eventType != "response.failed" {
 				suppressCurrentEvent = eventType == "error" || eventType == "response.completed" || eventType == "response.done" || frame.isDone()
-			}
-			if !clientDisconnected && !suppressCurrentEvent && answerFrame {
-				answerSeen = true
 			}
 			if !capacityFailoverSuppressedLogged && account != nil && account.Platform == PlatformOpenAI &&
 				(eventType == "error" || eventType == "response.failed") &&
@@ -2908,7 +2899,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if isEventStreamResponse(resp.Header) && (!gjson.ValidBytes(body) || bodyHasSSEFraming(body)) {
 		return s.handlePassthroughSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
-	nonBillableUpstreamError := !gjson.GetBytes(body, "choices.0").Exists() && openAIExplicitUpstreamError(gjson.ParseBytes(body), "")
+	nonBillableUpstreamError := openAIBufferedUpstreamError(gjson.ParseBytes(body), "")
 	if nonBillableUpstreamError {
 		observeDeepSeekHostedUpstreamEvent(ctx, "error")
 	}

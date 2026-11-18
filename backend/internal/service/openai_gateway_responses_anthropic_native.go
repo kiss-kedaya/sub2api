@@ -147,16 +147,14 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	return s.handleResponsesBufferedFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)
 }
 
-// anthropicCompatOutcome retains provider failure provenance while converters
-// ignore error events. Only an answer followed by a successful stop overrides it.
+// anthropicCompatOutcome retains provider failures until a successful stop,
+// since converters otherwise ignore error events and synthesize successful endings.
 type anthropicCompatOutcome struct {
-	failed     bool
-	answerSeen bool
-	stopReason string
-	source     []byte
+	failed bool
+	source []byte
 }
 
-func (o *anthropicCompatOutcome) observe(event *apicompat.AnthropicStreamEvent, eventType string, payload []byte, delivered bool) {
+func (o *anthropicCompatOutcome) observe(event *apicompat.AnthropicStreamEvent, eventType string, payload []byte) {
 	if event.Type == "" {
 		event.Type = eventType
 	}
@@ -165,19 +163,7 @@ func (o *anthropicCompatOutcome) observe(event *apicompat.AnthropicStreamEvent, 
 		o.source = append(o.source[:0], payload...)
 		return
 	}
-	if delivered {
-		if event.Type == "content_block_start" && event.ContentBlock != nil {
-			block := event.ContentBlock
-			o.answerSeen = o.answerSeen || block.Text != "" || ((block.Type == "tool_use" || block.Type == "server_tool_use") && block.Name != "")
-		}
-		if event.Type == "content_block_delta" && event.Delta != nil {
-			o.answerSeen = o.answerSeen || event.Delta.Text != "" || event.Delta.PartialJSON != ""
-		}
-	}
-	if event.Type == "message_delta" && event.Delta != nil && event.Delta.StopReason != "" {
-		o.stopReason = event.Delta.StopReason
-	}
-	if event.Type == "message_stop" && o.answerSeen && anthropicStopReasonIsSuccess(o.stopReason) {
+	if event.Type == "message_stop" {
 		o.failed = false
 		o.source = nil
 	}
@@ -278,7 +264,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
-		outcome.observe(&event, eventType, []byte(payload), true)
+		outcome.observe(&event, eventType, []byte(payload))
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
 			mergeAnthropicUsage(&usage, event.Message.Usage)
@@ -492,7 +478,6 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 					clientDisconnected = true
 					return
 				}
-				outcome.answerSeen = outcome.answerSeen || responsesEventHasAnswer(&evt)
 			}
 		}
 		if len(events) > 0 {
@@ -535,7 +520,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			continue
 		}
 
-		outcome.observe(&event, eventType, []byte(payload), false)
+		outcome.observe(&event, eventType, []byte(payload))
 		processAnthropicEvent(&event)
 	}
 

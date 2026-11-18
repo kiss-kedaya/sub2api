@@ -82,35 +82,6 @@ func TestGeminiGaps3NamedErrorBilling(t *testing.T) {
 	}
 }
 
-func TestGeminiGaps3EmptyStopAndInvisibleContentStayFree(t *testing.T) {
-	for _, native := range []bool{false, true} {
-		for _, mode := range []string{"stream", "oauth-collected"} {
-			t.Run(fmt.Sprintf("native=%t/%s", native, mode), func(t *testing.T) {
-				body := geminiB2SSE(mode == "oauth-collected", geminiGaps3Error, geminiGaps3EmptyStop)
-				result, err, _, rec := geminiGaps3Forward(t, native, mode, body, nil)
-				require.NotNil(t, result)
-				if !native || mode == "oauth-collected" {
-					require.Error(t, err)
-					require.Contains(t, rec.Body.String(), `"error"`)
-				}
-				requireGeminiSignalBilling(t, result, true)
-			})
-		}
-	}
-	for _, frame := range []string{
-		`{"candidates":[{"content":{"parts":[{"executableCode":{"code":"print(1)"}}]},"finishReason":"STOP"}],` + geminiB2Usage + `}`,
-		`{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"c3ludGhldGlj"}}]},"finishReason":"STOP"}],` + geminiB2Usage + `}`,
-		`{"candidates":[{"finishReason":"STOP"},{"index":1,"content":{"parts":[{"text":"invisible second candidate"}]}}],` + geminiB2Usage + `}`,
-	} {
-		t.Run(frame, func(t *testing.T) {
-			result, err, _, rec := geminiGaps3Forward(t, false, "oauth-collected", geminiB2SSE(true, geminiGaps3Error, frame), nil)
-			require.Error(t, err)
-			require.Contains(t, rec.Body.String(), `"error"`)
-			requireGeminiSignalBilling(t, result, true)
-		})
-	}
-}
-
 func TestGeminiGaps3DeliveredAnswerRecoversBilling(t *testing.T) {
 	for _, native := range []bool{false, true} {
 		parts := []string{`{"text":"complete answer"}`, `{"functionCall":{"name":"synthetic_tool","args":{}}}`}
@@ -209,7 +180,7 @@ func TestGeminiGaps3ChatStringErrorAndTruncation(t *testing.T) {
 	}
 }
 
-func TestGeminiGaps3ChatAnswerWithErrorMetadataIsBillable(t *testing.T) {
+func TestGeminiGaps3ChatErrorMetadataExceptionIsBufferedOnly(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(fmt.Sprint(stream), func(t *testing.T) {
 			body := `{"choices":[{"message":{"content":"complete answer"},"finish_reason":"stop"}],"error":"synthetic relay note","usage":` + geminiBridgeChatUsage + `}`
@@ -225,10 +196,15 @@ func TestGeminiGaps3ChatAnswerWithErrorMetadataIsBillable(t *testing.T) {
 				action = "streamGenerateContent"
 			}
 			result, err := svc.ForwardNative(context.Background(), c, account, "gemini-2.5-flash", action, stream, []byte(geminiBridgeRequest))
-			require.NoError(t, err)
-			require.Contains(t, rec.Body.String(), "complete answer")
+			if stream {
+				require.Error(t, err)
+				require.Contains(t, rec.Body.String(), `"error"`)
+			} else {
+				require.NoError(t, err)
+				require.Contains(t, rec.Body.String(), "complete answer")
+			}
 			require.Equal(t, ClaudeUsage{InputTokens: 300, OutputTokens: 50, CacheReadInputTokens: 600, CacheCreationInputTokens: 100}, result.Usage)
-			requireGeminiSignalBilling(t, result, false)
+			requireGeminiSignalBilling(t, result, stream)
 		})
 	}
 }

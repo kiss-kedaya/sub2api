@@ -346,7 +346,6 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	upstreamErrorPending := false
 	upstreamErrorBuffered := false
 	upstreamErrorDelivered := false
-	answerSeen := false
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
@@ -429,21 +428,15 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			terminal.ObserveDataLine(trimmedPayload)
 			if trimmedPayload != "[DONE]" {
 				root := gjson.Parse(payload)
-				choices := root.Get("choices").Array()
-				if !clientDisconnected && !watch.Gone() {
-					for _, choice := range choices {
-						answerSeen = answerSeen || choice.Get("delta.content").String() != ""
-						for _, call := range choice.Get("delta.tool_calls").Array() {
-							answerSeen = answerSeen || call.Get("function.name").String() != "" || call.Get("function.arguments").String() != ""
-						}
-					}
-				}
-				if len(choices) == 0 && openAIExplicitUpstreamError(root, pendingSSEEventType) {
+				if openAIExplicitUpstreamError(root, pendingSSEEventType) {
 					nonBillableUpstreamError = true
 					upstreamErrorPending = true
-				} else if answerSeen {
-					for _, choice := range choices {
-						if chatFinishReasonIsSuccess(choice.Get("finish_reason").String()) {
+				} else if root.Get("type").String() == "response.completed" || root.Get("type").String() == "response.done" {
+					nonBillableUpstreamError = false
+				} else {
+					for _, choice := range root.Get("choices").Array() {
+						reason := choice.Get("finish_reason").String()
+						if reason != "" && reason != "error" {
 							nonBillableUpstreamError = false
 							break
 						}
@@ -800,25 +793,11 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	respBody = applyOllamaCloudRawChatCompletionsResponse(account, respBody)
 	respBody = InjectChatCompletionCacheCreation(respBody, resp.Header)
 
-	if s.responseHeaderFilter != nil {
-		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
-	}
-	if ct := resp.Header.Get("Content-Type"); ct != "" {
-		c.Writer.Header().Set("Content-Type", ct)
-	} else {
-		c.Writer.Header().Set("Content-Type", "application/json")
-	}
-	c.Writer.WriteHeader(http.StatusOK)
-	_, _ = c.Writer.Write(respBody)
-
-	return &OpenAIForwardResult{
-		RequestID:       requestID,
-		UpstreamHeaders: resp.Header,
-		Usage:           usage,
-		// A body that carries choices is an answer the client received in full,
-		// the same rule as the buffered fallbacks: a relay's error note next to it
-		// does not make the request free.
-		NonBillableUpstreamError:      !gjson.GetBytes(respBody, "choices.0").Exists() && openAIExplicitUpstreamError(gjson.ParseBytes(respBody), ""),
+	result := &OpenAIForwardResult{
+		RequestID:                     requestID,
+		UpstreamHeaders:               resp.Header,
+		Usage:                         usage,
+		NonBillableUpstreamError:      openAIBufferedUpstreamError(gjson.ParseBytes(respBody), ""),
 		Model:                         originalModel,
 		BillingModel:                  billingModel,
 		UpstreamModel:                 upstreamModel,
@@ -829,7 +808,25 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		ServiceTier:                   resolvedOpenAIUpstreamServiceTier(c, serviceTier),
 		Stream:                        false,
 		Duration:                      time.Since(startTime),
-	}, nil
+	}
+	if result.NonBillableUpstreamError {
+		message := extractOpenAISSEErrorMessage(respBody)
+		status, errType, _, clientMessage := WrapUpstreamErrorForClient(openAIStreamFailureStatus(respBody, message), respBody)
+		writeChatCompletionsError(c, status, errType, clientMessage)
+		MarkResponseCommitted(c)
+		return result, fmt.Errorf("upstream response failed: %s", sanitizeUpstreamErrorMessage(message))
+	}
+	if s.responseHeaderFilter != nil {
+		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		c.Writer.Header().Set("Content-Type", ct)
+	} else {
+		c.Writer.Header().Set("Content-Type", "application/json")
+	}
+	c.Writer.WriteHeader(http.StatusOK)
+	_, _ = c.Writer.Write(respBody)
+	return result, nil
 }
 
 // buildOpenAIChatCompletionsURL 拼接上游 Chat Completions 端点 URL。

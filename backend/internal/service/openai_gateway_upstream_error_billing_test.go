@@ -237,7 +237,11 @@ func TestOpenAIExplicitUpstreamErrorJSONIsFree(t *testing.T) {
 			case "messages":
 				result, err = svc.handleNativeAnthropicBufferedResponse(context.Background(), resp, c, account, "gpt-5.1", "gpt-5.1", "gpt-5.1", nil, time.Now())
 			}
-			require.NoError(t, err)
+			if route == "raw_chat" {
+				require.ErrorContains(t, err, "upstream response failed:")
+			} else {
+				require.NoError(t, err)
+			}
 			assertExplicitUpstreamErrorFree(t, result)
 		})
 	}

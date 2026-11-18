@@ -100,7 +100,7 @@ func dsHostedBufferedGapsCases() []struct {
 		{"error_then_canceled", dsHostedBufferedGapsError + strings.ReplaceAll(incomplete, "incomplete", "canceled"), true, true},
 		{"untyped_error_then_done", dsHostedBufferedGapsUsage + dsHostedBufferedGapsUntypedError + "data: [DONE]\n\n", true, true},
 		{"error_then_EOF", dsHostedBufferedGapsUsage + dsHostedBufferedGapsError, true, true},
-		{"error_then_empty_completed", dsHostedBufferedGapsError + empty, true, true},
+		{"error_then_empty_completed", dsHostedBufferedGapsError + empty, false, false},
 		{"delta_reconstructed_after_error", dsHostedBufferedGapsError + "data: {\"type\":\"response.output_text.delta\",\"delta\":\"The search API returns structured web results.\"}\n\n" + empty, false, false},
 		{"untyped_object_error", dsHostedBufferedGapsUsage + "data: {\"error\":{\"message\":\"unknown parameter synthetic\"}}\n\n", true, true},
 		{"error_then_completed_answer", dsHostedBufferedGapsError + answer, false, false},
@@ -117,11 +117,13 @@ func TestDSHostedBufferedGapsContinuationSettlement(t *testing.T) {
 			account.Credentials["base_url"] = "https://example.invalid"
 			svc.httpUpstream = upstream
 			result, err := svc.Forward(c.Request.Context(), c, account, body)
-			if tc.wantErr || tc.name == "EOF_without_error" {
+			if tc.wantErr || tc.name == "EOF_without_error" || tc.name == "error_then_empty_completed" {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
-				require.Contains(t, recorder.Body.String(), "structured web results")
+				if tc.name != "error_then_empty_completed" {
+					require.Contains(t, recorder.Body.String(), "structured web results")
+				}
 			}
 			require.NotNil(t, result)
 			require.Equal(t, 2, upstream.turns)

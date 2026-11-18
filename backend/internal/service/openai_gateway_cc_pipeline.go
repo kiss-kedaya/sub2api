@@ -277,7 +277,7 @@ type ccStreamScanState struct {
 	SawDone bool
 	// NonBillableUpstreamError distinguishes provider errors from broken reads.
 	NonBillableUpstreamError bool
-	// UpstreamError retains the last provider rejection until delivered success.
+	// UpstreamError retains the last provider rejection until a successful terminal.
 	UpstreamError []byte
 	// Err 为 scanner 读错误（客户端 context 取消不属于此类，会原样带出）。
 	// 非 nil 时调用方必须跳过 finalize 并返回 usage-incomplete 错误，避免
@@ -298,7 +298,6 @@ func (s *OpenAIGatewayService) scanCCStream(
 	emit func(*apicompat.ChatCompletionsChunk),
 ) ccStreamScanState {
 	var st ccStreamScanState
-	answerSeen := false
 	pendingEventType := ""
 	sawSuccessfulFinish := false
 
@@ -334,8 +333,7 @@ func (s *OpenAIGatewayService) scanCCStream(
 		if u := extractCCStreamUsageFromRoot(root, resp.Header); u != nil {
 			st.Usage = *u
 		}
-		// A relay note next to real choices is not a rejected response.
-		if !root.Get("choices.0").Exists() && openAIExplicitUpstreamError(root, pendingEventType) {
+		if openAIExplicitUpstreamError(root, pendingEventType) {
 			st.NonBillableUpstreamError = true
 			st.UpstreamError = append(st.UpstreamError[:0], payload...)
 			continue
@@ -349,12 +347,8 @@ func (s *OpenAIGatewayService) scanCCStream(
 			)
 			continue
 		}
-		answerSeen = answerSeen || chatChunkHasAnswer(&chunk)
 		for _, choice := range chunk.Choices {
-			if !st.NonBillableUpstreamError && choice.FinishReason != nil && *choice.FinishReason != "" && *choice.FinishReason != "error" {
-				sawSuccessfulFinish = true
-			}
-			if answerSeen && choice.FinishReason != nil && chatFinishReasonIsSuccess(*choice.FinishReason) {
+			if choice.FinishReason != nil && *choice.FinishReason != "" && *choice.FinishReason != "error" {
 				st.NonBillableUpstreamError = false
 				st.UpstreamError = nil
 				sawSuccessfulFinish = true
@@ -393,61 +387,6 @@ func (s *OpenAIGatewayService) scanCCStream(
 	return st
 }
 
-// responsesFrameHasAnswer also accepts a named tool with no argument delta.
-func responsesFrameHasAnswer(frame openAISSEDataFrame) bool {
-	if openAIStreamFrameStartsVisibleOutput(frame) {
-		return true
-	}
-	tool := func(item gjson.Result) bool {
-		kind := item.Get("type").String()
-		return (kind == "function_call" || kind == "custom_tool_call") && item.Get("name").String() != ""
-	}
-	if tool(frame.root.Get("item")) {
-		return true
-	}
-	for _, item := range frame.root.Get("response.output").Array() {
-		if tool(item) {
-			return true
-		}
-	}
-	return false
-}
-
-// responsesEventHasAnswer uses decoded content, never usage or lifecycle events.
-func responsesEventHasAnswer(event *apicompat.ResponsesStreamEvent) bool {
-	switch event.Type {
-	case "response.output_text.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
-		return event.Delta != ""
-	case "response.output_text.done":
-		return event.Text != ""
-	}
-	itemHasAnswer := func(item *apicompat.ResponsesOutput) bool {
-		if item == nil {
-			return false
-		}
-		if (item.Type == "function_call" || item.Type == "custom_tool_call") && item.Name != "" {
-			return true
-		}
-		for _, part := range item.Content {
-			if part.Text != "" {
-				return true
-			}
-		}
-		return false
-	}
-	if itemHasAnswer(event.Item) {
-		return true
-	}
-	if event.Response != nil {
-		for i := range event.Response.Output {
-			if itemHasAnswer(&event.Response.Output[i]) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // openAIParsedErrorPresent reuses fields decoded by the existing compat parser.
 func openAIParsedErrorPresent(value any) bool {
 	switch value := value.(type) {
@@ -455,31 +394,6 @@ func openAIParsedErrorPresent(value any) bool {
 		return strings.TrimSpace(value) != ""
 	case map[string]any:
 		return len(value) > 0
-	default:
-		return false
-	}
-}
-
-// chatChunkHasAnswer excludes role and empty deltas from the recovery gate.
-func chatChunkHasAnswer(chunk *apicompat.ChatCompletionsChunk) bool {
-	for _, choice := range chunk.Choices {
-		delta := choice.Delta
-		if delta.Content != nil && *delta.Content != "" {
-			return true
-		}
-		for _, call := range delta.ToolCalls {
-			if call.Function.Name != "" || call.Function.Arguments != "" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func chatFinishReasonIsSuccess(reason string) bool {
-	switch reason {
-	case "stop", "length", "tool_calls", "function_call":
-		return true
 	default:
 		return false
 	}
@@ -548,22 +462,11 @@ func (s *OpenAIGatewayService) readCCUpstreamJSONResponse(
 	if parsed, ok := extractOpenAIUsageFromJSONBytes(InjectChatCompletionCacheCreation(respBody, resp.Header)); ok {
 		usage = parsed
 	}
-	// Inspect the provider envelope before conversion drops its error fields.
-	// Empty relay metadata and error text inside choices are not failures, and a
-	// response that carries choices is an answer: the client keeps it, and pays
-	// for it, even if a relay attached an error note next to it.
-	if len(ccResp.Choices) > 0 {
-		return &ccResp, usage, false, nil
-	}
+	// Inspect the original envelope before conversion drops explicit failure markers.
 	root := gjson.ParseBytes(respBody)
-	upstreamError := root.Get("error")
-	explicitError := root.Get("type").String() == "error" || root.Get("type").String() == "response.failed" || root.Get("status").String() == "failed"
-	if upstreamError.IsObject() {
-		explicitError = explicitError || strings.TrimSpace(upstreamError.Get("message").String()) != "" || strings.TrimSpace(upstreamError.Get("type").String()) != "" || strings.TrimSpace(upstreamError.Get("code").String()) != ""
-	} else if upstreamError.Type == gjson.String {
-		explicitError = explicitError || strings.TrimSpace(upstreamError.String()) != ""
-	}
-	if explicitError {
+	if openAIBufferedUpstreamError(root, "") || len(ccResp.Choices) == 0 &&
+		(strings.EqualFold(root.Get("error.code").String(), "cyber_policy") ||
+			strings.EqualFold(root.Get("response.error.code").String(), "cyber_policy")) {
 		message := extractOpenAISSEErrorMessage(respBody)
 		status, errType, _, clientMessage := WrapUpstreamErrorForClient(openAIStreamFailureStatus(respBody, message), respBody)
 		writeError(c, status, errType, clientMessage)

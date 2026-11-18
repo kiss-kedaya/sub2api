@@ -722,7 +722,6 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	}
 	nonBillableUpstreamError := false
 	var pendingBareError []byte
-	answerSeen := false
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -849,8 +848,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			return false
 		}
 		if (event.Type == "response.completed" || event.Type == "response.done") &&
-			(answerSeen || responsesEventHasAnswer(&event.ResponsesStreamEvent)) &&
-			(event.Response == nil || event.Response.Status == "" || event.Response.Status == "completed") {
+			openAIResponsesSuccessTerminal(gjson.ParseBytes(rawPayload), event.Type) {
 			nonBillableUpstreamError = false
 			pendingBareError = nil
 		}
@@ -986,9 +984,6 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					break
 				}
 			}
-		}
-		if !clientDisconnected && clientOutputStarted {
-			answerSeen = answerSeen || responsesEventHasAnswer(&event.ResponsesStreamEvent)
 		}
 		if len(chunks) > 0 && !clientDisconnected && clientOutputStarted {
 			c.Writer.Flush()

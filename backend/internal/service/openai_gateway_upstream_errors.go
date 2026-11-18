@@ -291,9 +291,7 @@ func openAIExplicitUpstreamError(root gjson.Result, eventType string) bool {
 		strings.EqualFold(root.Get("response.error.code").String(), "cyber_policy") {
 		return false
 	}
-	if eventType == "error" || eventType == "response.failed" ||
-		root.Get("type").String() == "error" || root.Get("type").String() == "response.failed" ||
-		root.Get("status").String() == "failed" || root.Get("response.status").String() == "failed" {
+	if openAIUpstreamFailureMarked(root, eventType) {
 		return true
 	}
 	for _, path := range []string{"error", "response.error"} {
@@ -302,6 +300,62 @@ func openAIExplicitUpstreamError(root gjson.Result, eventType string) bool {
 		}
 	}
 	return false
+}
+
+// openAIUpstreamFailureMarked takes precedence over any accompanying output.
+func openAIUpstreamFailureMarked(root gjson.Result, eventType string) bool {
+	if eventType == "error" || eventType == "response.failed" ||
+		root.Get("type").String() == "error" || root.Get("type").String() == "response.failed" ||
+		root.Get("status").String() == "failed" || root.Get("response.status").String() == "failed" {
+		return true
+	}
+	for _, choice := range root.Get("choices").Array() {
+		if choice.Get("finish_reason").String() == "error" {
+			return true
+		}
+	}
+	return false
+}
+
+// openAIResponsesSuccessTerminal is the only frame that withdraws an earlier
+// provider error: a completed/done terminal that is not itself marked failed.
+func openAIResponsesSuccessTerminal(root gjson.Result, eventType string) bool {
+	return (eventType == "response.completed" || eventType == "response.done") && !openAIUpstreamFailureMarked(root, eventType)
+}
+
+// openAIBufferedUpstreamError ignores relay notes only beside a real JSON answer;
+// explicit failure markers still win, and streaming callers must not use this exception.
+func openAIBufferedUpstreamError(root gjson.Result, eventType string) bool {
+	if !openAIExplicitUpstreamError(root, eventType) {
+		return false
+	}
+	if openAIUpstreamFailureMarked(root, eventType) {
+		return true
+	}
+	response := root.Get("response")
+	if !response.IsObject() {
+		response = root
+	}
+	if response.Get("status").String() == "completed" && len(response.Get("output").Array()) > 0 {
+		return false
+	}
+	for _, choice := range root.Get("choices").Array() {
+		message := choice.Get("message")
+		if strings.TrimSpace(extractTextFromContentRaw(message.Get("content"))) != "" ||
+			strings.TrimSpace(message.Get("reasoning_content").String()) != "" ||
+			strings.TrimSpace(message.Get("reasoning").String()) != "" {
+			return false
+		}
+		for _, call := range message.Get("tool_calls").Array() {
+			if strings.TrimSpace(call.Get("function.name").String()) != "" {
+				return false
+			}
+		}
+		if strings.TrimSpace(message.Get("function_call.name").String()) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // openAIErrorValuePresent reports whether an "error" field carries anything: a
