@@ -163,7 +163,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
-	nonBillableUpstreamError := false
+	var outcome anthropicCompatOutcome
 
 	// 读间隔上限：上游挂住 SSE 时中止组装（缓冲路径尚未提交响应头，可回 502）。
 	streamInterval := s.anthropicNativeStreamInterval()
@@ -204,7 +204,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 			continue
 		}
 		if eventType == "error" {
-			nonBillableUpstreamError = true
+			outcome.failed = true
 		}
 
 		dataLine, rerr := pump.next()
@@ -224,12 +224,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
-		switch event.Type {
-		case "error":
-			nonBillableUpstreamError = true
-		case "message_stop":
-			nonBillableUpstreamError = false
-		}
+		outcome.observe(&event, eventType, []byte(payload))
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
 			mergeAnthropicUsage(&usage, event.Message.Usage)
@@ -247,7 +242,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 		}
 		if event.Type == "content_block_delta" && event.Delta != nil && finalResp != nil && event.Index != nil {
 			idx := *event.Index
-			if idx < len(finalResp.Content) {
+			if idx >= 0 && idx < len(finalResp.Content) {
 				switch event.Delta.Type {
 				case "text_delta":
 					finalResp.Content[idx].Text += event.Delta.Text
@@ -260,6 +255,19 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 		}
 	}
 
+	result := &OpenAIForwardResult{
+		RequestID: requestID, UpstreamHeaders: resp.Header,
+		Usage: claudeUsageToOpenAIUsage(&usage), NonBillableUpstreamError: outcome.failed,
+		Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel,
+		UpstreamEndpoint: "/v1/messages", ReasoningEffort: reasoningEffort,
+		Stream: false, Duration: time.Since(startTime),
+	}
+	if outcome.failed {
+		message := sanitizeUpstreamErrorMessage(extractOpenAISSEErrorMessage(outcome.source))
+		writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", message)
+		MarkResponseCommitted(c)
+		return result, fmt.Errorf("upstream response failed: %s", message)
+	}
 	if finalResp == nil {
 		writeChatCompletionsError(c, http.StatusBadGateway, "server_error", "Upstream stream ended without a response")
 		return nil, fmt.Errorf("upstream stream ended without response")
@@ -286,7 +294,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 		RequestID:                requestID,
 		UpstreamHeaders:          resp.Header,
 		Usage:                    claudeUsageToOpenAIUsage(&usage),
-		NonBillableUpstreamError: nonBillableUpstreamError,
+		NonBillableUpstreamError: outcome.failed,
 		Model:                    originalModel,
 		BillingModel:             billingModel,
 		UpstreamModel:            upstreamModel,
@@ -329,7 +337,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 	ccState.IncludeUsage = includeUsage
 
 	var usage ClaudeUsage
-	nonBillableUpstreamError := false
+	var outcome anthropicCompatOutcome
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
@@ -346,7 +354,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			RequestID:                requestID,
 			UpstreamHeaders:          resp.Header,
 			Usage:                    claudeUsageToOpenAIUsage(&usage),
-			NonBillableUpstreamError: nonBillableUpstreamError,
+			NonBillableUpstreamError: outcome.failed,
 			Model:                    originalModel,
 			BillingModel:             billingModel,
 			UpstreamModel:            upstreamModel,
@@ -410,11 +418,8 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			firstTokenMs = &ms
 		}
 
-		switch event.Type {
-		case "error":
-			nonBillableUpstreamError = true
-		case "message_stop":
-			nonBillableUpstreamError = false
+		if event.Type == "message_stop" && outcome.failed {
+			return false
 		}
 		// usage 恒累计（含客户端断开后的排水阶段，payg 上游照常计费）。
 		if event.Type == "message_delta" && event.Usage != nil {
@@ -457,7 +462,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			continue
 		}
 		if eventType == "error" {
-			nonBillableUpstreamError = true
+			outcome.failed = true
 		}
 
 		dataLine, rerr := pump.next()
@@ -479,9 +484,14 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			continue
 		}
 
+		outcome.observe(&event, eventType, []byte(payload))
 		if processAnthropicEvent(&event) {
 			return resultWithUsage(), nil
 		}
+	}
+
+	if outcome.failed {
+		return resultWithUsage(), writeCompatUpstreamStreamError(c, "chat", originalModel, outcome.source)
 	}
 
 	// Finalize both state machines（客户端已断开时仍执行，保证 usage 汇总完整）。

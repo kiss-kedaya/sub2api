@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"time"
 
@@ -21,10 +22,9 @@ import (
 // 2026-11-18: user experience first, necessary measures only). Over six hours
 // of production traffic the latest successful answer arrived after 59 minutes
 // of silence, and the provider itself answers with an error at 60 minutes;
-// anything still silent after that is a dead connection. A stream that has
-// started is never cut: the limit ends once the upstream call returns its
-// response, which is when the headers arrive, or the first body bytes if the
-// response is compressed (the transport reads those to set up decompression).
+// anything still silent after that is a dead connection. The header limit ends
+// once the response arrives. Large requests additionally bound body silence;
+// smaller streams keep their existing lifetime.
 //
 // It is a variable only so tests can shorten it.
 var deepSeekUpstreamWaitLimit = 65 * time.Minute
@@ -73,9 +73,9 @@ func openAIUpstreamWaitLimitFor(request *http.Request, account *Account) time.Du
 }
 
 // doWithUpstreamWaitLimit cancels send when no response headers arrive within
-// limit. Once headers are in, the timer is disarmed and the body keeps reading
-// under the same context, which is released when the body is closed.
-func doWithUpstreamWaitLimit(request *http.Request, limit time.Duration, send func(*http.Request) (*http.Response, error)) (*http.Response, error) {
+// limit. After headers, only callers supplying onSilence opt into a body-silence
+// timer; all other bodies keep their existing lifetime until Close.
+func doWithUpstreamWaitLimit(request *http.Request, limit time.Duration, send func(*http.Request) (*http.Response, error), onSilence ...func()) (*http.Response, error) {
 	ctx, cancel := context.WithCancelCause(request.Context())
 	timer := time.AfterFunc(limit, func() { cancel(errOpenAIUpstreamWaitLimit) })
 	resp, err := send(request.WithContext(ctx))
@@ -94,7 +94,12 @@ func doWithUpstreamWaitLimit(request *http.Request, limit time.Duration, send fu
 		cancel(nil)
 		return resp, err
 	}
-	resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: func() { cancel(nil) }}
+	if len(onSilence) > 0 && onSilence[0] != nil {
+		mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+		resp.Body = newOpenAIStreamSilenceBody(ctx, cancel, resp.Body, onSilence[0], mediaType == "text/event-stream")
+	} else {
+		resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: func() { cancel(nil) }}
+	}
 	return resp, nil
 }
 

@@ -40,6 +40,7 @@ func (s *OpenAIGatewayService) newUpstreamSSEScanner(r io.Reader) *bufio.Scanner
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	attachSSEScannerBuffer(scanner, nil, maxLineSize)
+	observeOpenAIStreamSilence(scanner, r, nil)
 	return scanner
 }
 
@@ -68,13 +69,18 @@ func (s *OpenAIGatewayService) newStreamHeaderWriter(c *gin.Context, upstream ht
 // （下游 handleXxxErrorResponse 需要再次读取），返回原始错误体与脱敏后的
 // 上游错误消息。
 func (s *OpenAIGatewayService) readOpenAIUpstreamError(resp *http.Response) ([]byte, string) {
-	respBody := s.readUpstreamErrorBody(resp)
+	body, message, _ := s.readOpenAIUpstreamErrorWithError(resp)
+	return body, message
+}
+
+func (s *OpenAIGatewayService) readOpenAIUpstreamErrorWithError(resp *http.Response) ([]byte, string, error) {
+	respBody, readErr := s.readUpstreamErrorBodyWithError(resp)
 	_ = resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-	return respBody, upstreamMsg
+	return respBody, upstreamMsg, readErr
 }
 
 // failoverOpenAIUpstreamHTTPError 对 >=400 的上游响应做 failover 判定：命中时
@@ -272,6 +278,8 @@ type ccStreamScanState struct {
 	SawDone bool
 	// NonBillableUpstreamError distinguishes provider errors from broken reads.
 	NonBillableUpstreamError bool
+	// UpstreamError retains the last provider rejection until a successful terminal.
+	UpstreamError []byte
 	// Err 为 scanner 读错误（客户端 context 取消不属于此类，会原样带出）。
 	// 非 nil 时调用方必须跳过 finalize 并返回 usage-incomplete 错误，避免
 	// 把上游截断伪装成正常收尾。
@@ -292,6 +300,7 @@ func (s *OpenAIGatewayService) scanCCStream(
 ) ccStreamScanState {
 	var st ccStreamScanState
 	pendingEventType := ""
+	sawSuccessfulFinish := false
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 	for scanner.Scan() {
@@ -327,6 +336,7 @@ func (s *OpenAIGatewayService) scanCCStream(
 		}
 		if openAIExplicitUpstreamError(root, pendingEventType) {
 			st.NonBillableUpstreamError = true
+			st.UpstreamError = append(st.UpstreamError[:0], payload...)
 			continue
 		}
 
@@ -339,9 +349,17 @@ func (s *OpenAIGatewayService) scanCCStream(
 			continue
 		}
 		for _, choice := range chunk.Choices {
-			if choice.FinishReason != nil && *choice.FinishReason != "" {
+			if choice.FinishReason != nil && *choice.FinishReason != "" && *choice.FinishReason != "error" {
 				st.NonBillableUpstreamError = false
+				st.UpstreamError = nil
+				sawSuccessfulFinish = true
 				break
+			}
+		}
+		if st.NonBillableUpstreamError {
+			// Converters otherwise turn even an error finish into a success terminal.
+			for i := range chunk.Choices {
+				chunk.Choices[i].FinishReason = nil
 			}
 		}
 		if st.FirstTokenMs == nil && !isOpenAIChatUsageOnlyStreamChunk(payload) && chatChunkStartsResponsesOutput(&chunk) {
@@ -352,6 +370,9 @@ func (s *OpenAIGatewayService) scanCCStream(
 	}
 
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) && sawSuccessfulFinish && !st.NonBillableUpstreamError {
+			return st
+		}
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			logger.L().Warn(logPrefix+": stream read error",
 				zap.Error(err),
@@ -359,8 +380,45 @@ func (s *OpenAIGatewayService) scanCCStream(
 			)
 		}
 		st.Err = err
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			st.NonBillableUpstreamError, st.Err = true, openAIStreamSilenceError(err)
+			writeOpenAIStreamSilenceError(c, true)
+		}
 	}
 	return st
+}
+
+// openAIParsedErrorPresent reuses fields decoded by the existing compat parser.
+func openAIParsedErrorPresent(value any) bool {
+	switch value := value.(type) {
+	case string:
+		return strings.TrimSpace(value) != ""
+	case map[string]any:
+		return len(value) > 0
+	default:
+		return false
+	}
+}
+
+// writeCompatUpstreamStreamError emits one failure, never a synthetic success.
+func writeCompatUpstreamStreamError(c *gin.Context, protocol, model string, source []byte) error {
+	message := sanitizeUpstreamErrorMessage(extractOpenAISSEErrorMessage(source))
+	if message == "" {
+		message = "Upstream response failed"
+	}
+	wire := buildOpenAIResponseFailedSSE("", model, source, message)
+	switch protocol {
+	case "messages":
+		wire = buildAnthropicStreamErrorSSE("api_error", message)
+	case "chat":
+		wire = buildChatStreamErrorSSE("upstream_error", message)
+	}
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	if _, err := fmt.Fprint(c.Writer, wire); err == nil {
+		c.Writer.Flush()
+	}
+	MarkResponseCommitted(c)
+	return fmt.Errorf("upstream response failed: %s", message)
 }
 
 // logCCStreamMissingDoneSentinel 记录"上游未发 [DONE] 哨兵即结束"的 debug 日志。
@@ -380,6 +438,10 @@ func (s *OpenAIGatewayService) readCCUpstreamJSONResponse(
 ) (*apicompat.ChatCompletionsResponse, OpenAIUsage, bool, error) {
 	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			writeOpenAIStreamSilenceError(c, false)
+			return nil, s.openAIStreamSilenceUsage(respBody), false, openAIStreamSilenceError(err)
+		}
 		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
 			writeError(c, http.StatusBadGateway, "api_error", "Failed to read upstream response")
 		}
@@ -401,22 +463,11 @@ func (s *OpenAIGatewayService) readCCUpstreamJSONResponse(
 	if parsed, ok := extractOpenAIUsageFromJSONBytes(InjectChatCompletionCacheCreation(respBody, resp.Header)); ok {
 		usage = parsed
 	}
-	// Inspect the provider envelope before conversion drops its error fields.
-	// Empty relay metadata and error text inside choices are not failures, and a
-	// response that carries choices is an answer: the client keeps it, and pays
-	// for it, even if a relay attached an error note next to it.
-	if len(ccResp.Choices) > 0 {
-		return &ccResp, usage, false, nil
-	}
+	// Inspect the original envelope before conversion drops explicit failure markers.
 	root := gjson.ParseBytes(respBody)
-	upstreamError := root.Get("error")
-	explicitError := root.Get("type").String() == "error" || root.Get("type").String() == "response.failed" || root.Get("status").String() == "failed"
-	if upstreamError.IsObject() {
-		explicitError = explicitError || strings.TrimSpace(upstreamError.Get("message").String()) != "" || strings.TrimSpace(upstreamError.Get("type").String()) != "" || strings.TrimSpace(upstreamError.Get("code").String()) != ""
-	} else if upstreamError.Type == gjson.String {
-		explicitError = explicitError || strings.TrimSpace(upstreamError.String()) != ""
-	}
-	if explicitError {
+	if openAIBufferedUpstreamError(root, "") || len(ccResp.Choices) == 0 &&
+		(strings.EqualFold(root.Get("error.code").String(), "cyber_policy") ||
+			strings.EqualFold(root.Get("response.error.code").String(), "cyber_policy")) {
 		message := extractOpenAISSEErrorMessage(respBody)
 		status, errType, _, clientMessage := WrapUpstreamErrorForClient(openAIStreamFailureStatus(respBody, message), respBody)
 		writeError(c, status, errType, clientMessage)

@@ -115,7 +115,10 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		respBody := s.readUpstreamErrorBody(resp)
+		respBody, readErr := s.readUpstreamErrorBodyWithError(resp)
+		if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
+			return s.openAIStreamSilenceHTTPError(c, resp, respBody, readErr, originalModel, billingModel, upstreamModel, false, startTime)
+		}
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
@@ -158,6 +161,10 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 
 	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			writeOpenAIStreamSilenceError(c, false)
+			return openAIStreamSilenceResult(resp, extractOpenAIEmbeddingsUsage(respBody), originalModel, billingModel, upstreamModel, false, startTime), openAIStreamSilenceError(err)
+		}
 		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
 			writeOpenAIEmbeddingsError(c, http.StatusBadGateway, "api_error", "Failed to read upstream response")
 		}

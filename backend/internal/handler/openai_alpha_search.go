@@ -256,8 +256,15 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			return
 		}
 
+		if openAIWSTurnSilenceFailure(result, err) {
+			h.recordAlphaSearchUsage(c, apiKey, account, subscription, channelMapping, requestedModel, body, result, subject.UserID)
+			h.handleFailoverExhausted(c, failoverErr, false)
+			return
+		}
 		if c.Writer.Size() != writerSizeBeforeForward {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestedModel, false, result), false, nil, err)
+			if failoverErr.ShouldReportAccountScheduleFailure() {
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestedModel, false, result), false, nil, err)
+			}
 			h.handleFailoverExhausted(c, failoverErr, true)
 			return
 		}
@@ -266,6 +273,10 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 				zap.Int64("account_id", account.ID),
 				zap.Int("upstream_status", failoverErr.StatusCode),
 			)
+			return
+		}
+		if !failoverErr.ShouldRetryNextAccount() {
+			h.handleFailoverExhausted(c, failoverErr, false)
 			return
 		}
 		if failoverErr.RetryableOnSameAccount {

@@ -1868,6 +1868,9 @@ func (h *OpenAIGatewayHandler) anthropicStreamingAwareError(c *gin.Context, stat
 
 // handleAnthropicFailoverExhausted maps upstream failover errors to Anthropic format.
 func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	if failoverErr != nil && failoverErr.IsUpstreamWaitLimit() && service.IsResponseCommitted(c) {
+		return
+	}
 
 	if failoverErr != nil {
 		defer service.GuardUpstreamFinancialError(c, failoverErr.StatusCode, failoverErr.ResponseBody)()
@@ -3183,7 +3186,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				)
 				if turnErr != nil {
 					h.gatewayService.InvalidateUpstreamAffinity(ctx, apiKey.GroupID, sessionHash, account, turnErr)
-					if result == nil || result.ImageCount <= 0 {
+					if result == nil || result.ImageCount <= 0 && !openAIWSTurnSilenceFailure(result, turnErr) {
 						return
 					}
 					reqLog.Warn("openai.websocket_partial_error_with_image_result",
@@ -3210,7 +3213,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if scheduleModel == "" {
 					scheduleModel = turnRequestedModel
 				}
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account, scheduleModel, openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
+				if !openAIWSTurnSilenceFailure(result, turnErr) {
+					h.gatewayService.ReportOpenAIAccountScheduleResult(account, scheduleModel, openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
+				}
 				inboundEndpoint := GetInboundEndpoint(c)
 				upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, result)
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
@@ -3571,6 +3576,9 @@ func (h *OpenAIGatewayHandler) handleConcurrencyError(c *gin.Context, err error,
 }
 
 func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	if failoverErr != nil && failoverErr.IsUpstreamWaitLimit() && service.IsResponseCommitted(c) {
+		return
+	}
 
 	if failoverErr != nil {
 		defer service.GuardUpstreamFinancialError(c, failoverErr.StatusCode, failoverErr.ResponseBody)()

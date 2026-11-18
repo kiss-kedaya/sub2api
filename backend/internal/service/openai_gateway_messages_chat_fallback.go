@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -152,7 +153,10 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 
 	// 4. Handle error responses
 	if resp.StatusCode >= 400 {
-		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		respBody, upstreamMsg, readErr := s.readOpenAIUpstreamErrorWithError(resp)
+		if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
+			return s.openAIStreamSilenceHTTPError(c, resp, respBody, readErr, originalModel, billingModel, upstreamModel, clientStream, startTime)
+		}
 		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr
 		}
@@ -181,6 +185,9 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsAnthropic(
 	requestID := resp.Header.Get("x-request-id")
 	ccResp, usage, nonBillableUpstreamError, err := s.readCCUpstreamJSONResponse(c, resp, writeAnthropicError)
 	if err != nil && ccResp == nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			return openAIStreamSilenceResult(resp, usage, originalModel, billingModel, upstreamModel, false, startTime), err
+		}
 		return nil, err
 	}
 	if err == nil {
@@ -251,10 +258,19 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 	scan := s.scanCCStream(c, resp, "openai messages chat fallback", requestID, startTime, emitChunk)
 	usage := scan.Usage
 
-	if scan.Err != nil {
+	var upstreamErr error
+	// A scan ended by the silence limit has already told the client and carries its
+	// own error; writing the upstream-error frame as well would send two errors.
+	if scan.NonBillableUpstreamError && !errors.Is(scan.Err, errOpenAIUpstreamWaitLimit) {
+		upstreamErr = writeCompatUpstreamStreamError(c, "messages", originalModel, scan.UpstreamError)
+	}
+	if upstreamErr != nil || scan.Err != nil {
 		// Broken upstream read: skip finalization so no synthetic message_stop
 		// masks the truncation, and surface the error to flag usage incomplete
 		// (mirrors forwardResponsesViaRawChatCompletions).
+		if upstreamErr == nil {
+			upstreamErr = fmt.Errorf("stream usage incomplete: %w", scan.Err)
+		}
 		return &OpenAIForwardResult{
 			RequestID:                   requestID,
 			UpstreamHeaders:             resp.Header,
@@ -270,7 +286,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			Duration:                    time.Since(startTime),
 			FirstTokenMs:                scan.FirstTokenMs,
 			ClientDisconnect:            clientDisconnected,
-		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
+		}, upstreamErr
 	}
 
 	// Finalize: close open blocks + emit message_delta/message_stop.

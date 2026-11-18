@@ -566,8 +566,15 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			break
 		}
 
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, openAIWSHTTPBridgeErrorBodyLimitBytes))
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, openAIWSHTTPBridgeErrorBodyLimitBytes))
 		_ = resp.Body.Close()
+		if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
+			result := openAIStreamSilenceResult(resp, s.openAIStreamSilenceUsage(respBody), originalModel, originalModel, originalModel, true, turnStart)
+			if writeErr := writeClientMessage(buildOpenAIWSHTTPBridgeErrorEvent(http.StatusGatewayTimeout, "Upstream did not respond in time")); writeErr != nil {
+				return result, errors.Join(openAIStreamSilenceError(readErr), writeErr)
+			}
+			return result, openAIStreamSilenceError(readErr)
+		}
 		if account.Platform == PlatformGrok && resp.StatusCode == http.StatusForbidden && IsGlobalIPBlacklistResponse(respBody) {
 			// This is a request-scoped Grok refusal. Preserve the real 403 for
 			// the hook's fixed-price settlement without retrying or cooling the account.
@@ -718,6 +725,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	scanner := bufio.NewScanner(resp.Body)
 	scanBuf := getSSEScannerBuf64K()
 	attachSSEScannerBuffer(scanner, scanBuf[:], maxLineSize)
+	observeOpenAIStreamSilence(scanner, resp.Body, nil)
 	defer putSSEScannerBuf64K(scanBuf)
 
 	pendingSSEEventType := ""
@@ -1014,6 +1022,14 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			)
 			return resultWithUsage(), nil
 		}
+	}
+	if err := scanner.Err(); errors.Is(err, errOpenAIUpstreamWaitLimit) {
+		result := resultWithUsage()
+		result.NonBillableUpstreamError = true
+		if writeErr := writeClientMessage(buildOpenAIWSHTTPBridgeErrorEvent(http.StatusGatewayTimeout, "Upstream did not respond in time")); writeErr != nil {
+			return result, errors.Join(openAIStreamSilenceError(err), writeErr)
+		}
+		return result, openAIStreamSilenceError(err)
 	}
 	if bareErrorPending {
 		if finalizeErr := finalizeBareError(); finalizeErr != nil {

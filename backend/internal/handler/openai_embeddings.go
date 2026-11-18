@@ -264,7 +264,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		}
 		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, responseLatencyMs)
 
-		if err != nil {
+		if err != nil && !openAIWSTurnSilenceFailure(result, err) {
 			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, "", account, err)
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
@@ -337,7 +337,9 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 			return
 		}
 
-		h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), true, nil)
+		if err == nil {
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), true, nil)
+		}
 		userAgent := c.GetHeader("User-Agent")
 		clientIP := ip.GetClientIP(c)
 		inboundEndpoint := GetInboundEndpoint(c)
@@ -372,6 +374,13 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 				).Error("openai_embeddings.record_usage_failed", zap.Error(err))
 			}
 		})
+		if err != nil {
+			var failoverErr *service.UpstreamFailoverError
+			if errors.As(err, &failoverErr) {
+				h.handleFailoverExhausted(c, failoverErr, false)
+			}
+			return
+		}
 		reqLog.Debug("openai_embeddings.request_completed",
 			zap.Int64("account_id", account.ID),
 			zap.Int("switch_count", switchCount),

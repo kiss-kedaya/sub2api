@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -289,14 +291,84 @@ func openAIExplicitUpstreamError(root gjson.Result, eventType string) bool {
 		strings.EqualFold(root.Get("response.error.code").String(), "cyber_policy") {
 		return false
 	}
-	if eventType == "error" || eventType == "response.failed" ||
-		root.Get("type").String() == "error" || root.Get("type").String() == "response.failed" ||
-		root.Get("status").String() == "failed" || root.Get("response.status").String() == "failed" {
+	if openAIUpstreamFailureMarked(root, eventType) {
 		return true
 	}
 	for _, path := range []string{"error", "response.error"} {
 		if openAIErrorValuePresent(root.Get(path)) {
 			return true
+		}
+	}
+	return false
+}
+
+// openAIUpstreamFailureMarked takes precedence over any accompanying output.
+func openAIUpstreamFailureMarked(root gjson.Result, eventType string) bool {
+	if eventType == "error" || eventType == "response.failed" ||
+		root.Get("type").String() == "error" || root.Get("type").String() == "response.failed" ||
+		root.Get("status").String() == "failed" || root.Get("response.status").String() == "failed" {
+		return true
+	}
+	for _, choice := range root.Get("choices").Array() {
+		if choice.Get("finish_reason").String() == "error" {
+			return true
+		}
+	}
+	return false
+}
+
+// openAIResponsesSuccessTerminal is the only frame that withdraws an earlier
+// provider error: a completed/done terminal that is not itself marked failed.
+func openAIResponsesSuccessTerminal(root gjson.Result, eventType string) bool {
+	return (eventType == "response.completed" || eventType == "response.done") && !openAIUpstreamFailureMarked(root, eventType)
+}
+
+// openAIBufferedUpstreamError ignores relay notes only beside a real JSON answer;
+// explicit failure markers still win, and streaming callers must not use this exception.
+func openAIBufferedUpstreamError(root gjson.Result, eventType string) bool {
+	if !openAIExplicitUpstreamError(root, eventType) {
+		return false
+	}
+	if openAIUpstreamFailureMarked(root, eventType) {
+		return true
+	}
+	response := root.Get("response")
+	if !response.IsObject() {
+		response = root
+	}
+	if response.Get("status").String() == "completed" && len(response.Get("output").Array()) > 0 {
+		return false
+	}
+	for _, choice := range root.Get("choices").Array() {
+		message := choice.Get("message")
+		if strings.TrimSpace(extractTextFromContentRaw(message.Get("content"))) != "" ||
+			strings.TrimSpace(message.Get("reasoning_content").String()) != "" ||
+			strings.TrimSpace(message.Get("reasoning").String()) != "" {
+			return false
+		}
+		if chatMessageHasImageOutput(message) {
+			return false
+		}
+		for _, call := range message.Get("tool_calls").Array() {
+			if strings.TrimSpace(call.Get("function.name").String()) != "" {
+				return false
+			}
+		}
+		if strings.TrimSpace(message.Get("function_call.name").String()) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// chatMessageHasImageOutput distinguishes a delivered image from an empty placeholder.
+func chatMessageHasImageOutput(message gjson.Result) bool {
+	for _, field := range []string{"content", "images"} {
+		for _, part := range message.Get(field).Array() {
+			url := part.Get("image_url.url")
+			if url.Type == gjson.String && strings.TrimSpace(url.Str) != "" {
+				return true
+			}
 		}
 	}
 	return false
@@ -615,16 +687,21 @@ func openAIUpstreamErrorBodyReadLimitForConfig(cfg *config.Config) int64 {
 	return limit
 }
 
+// Non-OpenAI profiles retain their existing partial-error-body policy.
 func (s *OpenAIGatewayService) readUpstreamErrorBody(resp *http.Response) []byte {
+	body, _ := s.readUpstreamErrorBodyWithError(resp)
+	return body
+}
+
+func (s *OpenAIGatewayService) readUpstreamErrorBodyWithError(resp *http.Response) ([]byte, error) {
 	if resp == nil || resp.Body == nil {
-		return nil
+		return nil, nil
 	}
 	cfg := (*config.Config)(nil)
 	if s != nil {
 		cfg = s.cfg
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, openAIUpstreamErrorBodyReadLimitForConfig(cfg)))
-	return body
+	return io.ReadAll(io.LimitReader(resp.Body, openAIUpstreamErrorBodyReadLimitForConfig(cfg)))
 }
 
 func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, resp *http.Response, account *Account, responseBody []byte, canonicalModel ...string) bool {
@@ -642,7 +719,11 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	requestBody []byte,
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
-	body := s.readUpstreamErrorBody(resp)
+	body, readErr := s.readUpstreamErrorBodyWithError(resp)
+	if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
+		model := strings.TrimSpace(gjson.GetBytes(requestBody, "model").String())
+		return s.openAIStreamSilenceHTTPError(c, resp, body, readErr, model, model, model, gjson.GetBytes(requestBody, "stream").Bool(), time.Now())
+	}
 	// Opt-in forensic dump. This is the handler the Responses gateway uses, so
 	// the passthrough hook alone missed every /v1/responses failure — the exact
 	// requests being diagnosed never produced a file.
@@ -879,7 +960,14 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	writeError compatErrorWriter,
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
-	body := s.readUpstreamErrorBody(resp)
+	body, readErr := s.readUpstreamErrorBodyWithError(resp)
+	if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
+		model := ""
+		if len(requestedModel) > 0 {
+			model = requestedModel[0]
+		}
+		return s.openAIStreamSilenceHTTPError(c, resp, body, readErr, model, model, model, false, time.Now())
+	}
 	defer GuardUpstreamFinancialError(c, resp.StatusCode, body)()
 	body = s.redactAgentIdentitySensitiveBody(context.Background(), account, body)
 	if IsGlobalIPBlacklistResponse(body) && (account == nil || account.Platform != PlatformGrok || resp.StatusCode == http.StatusForbidden) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -86,6 +87,10 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 
 	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			writeOpenAIStreamSilenceError(c, false)
+			return openAIStreamSilenceResult(resp, s.openAIStreamSilenceUsage(respBody), requestedModel, requestedModel, upstreamModel, false, upstreamStart), openAIStreamSilenceError(err)
+		}
 		return nil, fmt.Errorf("read alpha search response: %w", err)
 	}
 

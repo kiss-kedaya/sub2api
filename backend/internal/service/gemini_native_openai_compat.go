@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
@@ -128,7 +129,7 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 		Model: mappedModel, UpstreamModel: mappedModel, Usage: geminiBridgeClaudeUsage(usage),
 		Duration: time.Since(start),
 	}
-	if status, explicitError := geminiBridgeFailureStatus(raw, ""); status != 0 {
+	if status, explicitError := geminiBridgeFailureStatus(raw, "", gjson.ParseBytes(raw), false); status != 0 {
 		defer GuardUpstreamFinancialError(c, status, raw)()
 		result.NonBillableUpstreamError = explicitError && geminiBridgeNonBillableFailure(raw)
 		return result, s.writeGoogleError(c, status, sanitizeUpstreamErrorMessage(extractGeminiBridgeErrorMessage(raw)))
@@ -136,7 +137,12 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 	usageMetadata := geminiBridgeUsageMetadata(usage, geminiBridgeUsageObject(raw))
 	if protocol == APIProtocolResponses {
 		var response apicompat.ResponsesResponse
-		if err := json.Unmarshal(raw, &response); err != nil || (response.Status != "completed" && response.Status != "incomplete") {
+		responseBody := raw
+		if root := gjson.ParseBytes(raw); root.Get("error").Type == gjson.String && geminiBridgeJSONHasAnswer(root) {
+			// Relay notes are not Responses errors and may have a different JSON type.
+			responseBody, _ = sjson.DeleteBytes(raw, "error")
+		}
+		if err := json.Unmarshal(responseBody, &response); err != nil || (response.Status != "completed" && response.Status != "incomplete") {
 			return nil, s.writeGoogleError(c, http.StatusBadGateway, "Invalid Gemini upstream response")
 		}
 		raw, err = json.Marshal(apicompat.ResponsesToChatCompletions(&response, mappedModel))
@@ -341,19 +347,25 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 			result.Usage = geminiBridgeClaudeUsage(usage)
 			metadata = geminiBridgeUsageMetadata(usage, geminiBridgeUsageObject(parsed.data))
 		}
-		if status, explicitError := geminiBridgeFailureStatus(parsed.data, parsed.eventType); status != 0 {
+		failureEventType := parsed.eventType
+		if frame.EventType == "error" || frame.EventType == "response.failed" {
+			// A payload type must not hide an explicit SSE error event.
+			failureEventType = frame.EventType
+		}
+		if status, explicitError := geminiBridgeFailureStatus(parsed.data, failureEventType, parsed.root, true); status != 0 {
 			policyFailure = policyFailure || !geminiBridgeNonBillableFailure(parsed.data)
 			result.NonBillableUpstreamError = !policyFailure && (result.NonBillableUpstreamError || explicitError)
 			streamStatus = status
 			financialFailure = financialFailure || IsUpstreamFinancialError(status, parsed.data)
-			streamErr = fmt.Errorf("gemini upstream stream failed: %s", parsed.eventType)
-			// A Responses error prelude can be followed by a terminal usage snapshot.
-			terminal = protocol != APIProtocolResponses || (parsed.eventType != "error" && parsed.eventType != "")
+			streamErr = fmt.Errorf("gemini upstream stream failed: %s", failureEventType)
+			// Error preludes in either protocol may be followed by a successful finish.
+			// Keep the pending failure until that finish or EOF; never turn [DONE] alone into success.
+			terminal = failureEventType != "error" && failureEventType != ""
 			return
 		}
-		// A pending provider prelude must not discard later answer deltas: a
-		// successful terminal can only restore billing for an answer we delivered.
+		// A pending provider prelude must not discard later answer deltas.
 		var chunks []apicompat.ChatCompletionsChunk
+		successfulChatFinish := false
 		if protocol == APIProtocolResponses {
 			var event apicompat.ResponsesStreamEvent
 			if err := json.Unmarshal(parsed.data, &event); err != nil {
@@ -405,13 +417,15 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 						return
 					}
 				}
-				if choice.FinishReason != nil {
+				if choice.FinishReason != nil && *choice.FinishReason != "" {
 					finish = geminiBridgeFinishReason(*choice.FinishReason)
+					successfulChatFinish = true
 				}
 			}
 		}
-		if streamErr != nil && result.FirstTokenMs != nil && (parsed.eventType == "response.completed" || parsed.eventType == "response.done") {
-			// A successful terminal supersedes the prelude only after real answer delivery.
+		if streamErr != nil && (parsed.eventType == "response.completed" || parsed.eventType == "response.done" ||
+			(protocol == APIProtocolChatCompletions && successfulChatFinish)) {
+			// A successful terminal supersedes a preceding provider error.
 			streamErr = nil
 			financialFailure = false
 			policyFailure = false
@@ -458,13 +472,23 @@ func extractGeminiBridgeErrorMessage(raw []byte) string {
 	return "Gemini upstream request failed"
 }
 
-func geminiBridgeFailureStatus(raw []byte, eventType string) (int, bool) {
-	status := gjson.GetBytes(raw, "response.status").String()
+func geminiBridgeFailureStatus(raw []byte, eventType string, root gjson.Result, stream bool) (int, bool) {
+	status := root.Get("response.status").String()
 	if status == "" {
-		status = gjson.GetBytes(raw, "status").String()
+		status = root.Get("status").String()
 	}
-	explicitError := eventType == "error" || eventType == "response.failed" || status == "failed" ||
-		gjson.GetBytes(raw, "error").IsObject() || gjson.GetBytes(raw, "response.error").IsObject()
+	explicitError := eventType == "error" || eventType == "response.failed" ||
+		root.Get("type").String() == "error" || root.Get("type").String() == "response.failed" ||
+		root.Get("status").String() == "failed" || root.Get("response.status").String() == "failed"
+	for _, choice := range root.Get("choices").Array() {
+		if choice.Get("finish_reason").String() == "error" {
+			explicitError = true
+		}
+	}
+	// Only buffered answers may carry harmless relay notes; explicit failures always win.
+	if !explicitError && (stream || !geminiBridgeJSONHasAnswer(root)) {
+		explicitError = openAIErrorValuePresent(root.Get("error")) || openAIErrorValuePresent(root.Get("response.error"))
+	}
 	if explicitError || eventType == "response.cancelled" || eventType == "response.canceled" || status == "cancelled" || status == "canceled" {
 		code := firstNonEmpty(openAIStreamFailedEventErrorCode(raw), gjson.GetBytes(raw, "code").String())
 		if strings.EqualFold(code, "input_too_small") || isOpenAINonBillableRequestError("", raw) {
@@ -476,6 +500,32 @@ func geminiBridgeFailureStatus(raw []byte, eventType string) (int, bool) {
 		return openAIStreamFailedEventSemanticStatus(raw, extractGeminiBridgeErrorMessage(raw)), explicitError
 	}
 	return 0, false
+}
+
+func geminiBridgeJSONHasAnswer(root gjson.Result) bool {
+	for _, choice := range root.Get("choices").Array() {
+		message := choice.Get("message")
+		for _, field := range []string{"content", "reasoning_content", "reasoning"} {
+			value := message.Get(field)
+			if value.Type == gjson.String && strings.TrimSpace(value.String()) != "" {
+				return true
+			}
+		}
+		for _, part := range message.Get("content").Array() {
+			if strings.TrimSpace(part.Get("text").String()) != "" {
+				return true
+			}
+		}
+		if strings.TrimSpace(message.Get("function_call.name").String()) != "" {
+			return true
+		}
+		for _, tool := range message.Get("tool_calls").Array() {
+			if strings.TrimSpace(tool.Get("function.name").String()) != "" {
+				return true
+			}
+		}
+	}
+	return root.Get("status").String() == "completed" && len(root.Get("output").Array()) > 0
 }
 
 func geminiBridgeNonBillableFailure(raw []byte) bool {

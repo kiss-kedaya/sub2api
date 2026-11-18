@@ -1224,7 +1224,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				_ = resp.Body.Close()
 				return nil, clientErr
 			}
-			respBody := s.readUpstreamErrorBody(resp)
+			respBody, readErr := s.readUpstreamErrorBodyWithError(resp)
+			if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
+				_ = resp.Body.Close()
+				return s.openAIStreamSilenceHTTPError(c, resp, respBody, readErr, originalModel, billingModel, upstreamModel, reqStream, startTime)
+			}
 			_ = resp.Body.Close()
 			if clientErr := clientCtx.Err(); clientErr != nil {
 				return nil, clientErr
@@ -1477,6 +1481,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		} else {
 			nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 			if err != nil {
+				if nonStreamResult != nil && errors.Is(err, errOpenAIUpstreamWaitLimit) {
+					usage, nonBillableUpstreamError = nonStreamResult.usage, true
+					return buildForwardResult(), err
+				}
 				if clientErr := clientCtx.Err(); clientErr != nil {
 					// Headers arrived and the body read was cut by the client leaving.
 					return clientGone(nil, clientErr)
@@ -1493,6 +1501,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 						SetOpsUpstreamModel(c, fallbackModel)
 						continue
 					}
+				}
+				if nonStreamResult != nil && nonStreamResult.nonBillableUpstreamError {
+					// Only terminal, non-replayable failures return diagnostic usage.
+					usage = nonStreamResult.usage
+					nonBillableUpstreamError = true
+					return buildForwardResult(), err
 				}
 				return nil, err
 			}

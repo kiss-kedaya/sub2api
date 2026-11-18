@@ -147,6 +147,28 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	return s.handleResponsesBufferedFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)
 }
 
+// anthropicCompatOutcome retains provider failures until a successful stop,
+// since converters otherwise ignore error events and synthesize successful endings.
+type anthropicCompatOutcome struct {
+	failed bool
+	source []byte
+}
+
+func (o *anthropicCompatOutcome) observe(event *apicompat.AnthropicStreamEvent, eventType string, payload []byte) {
+	if event.Type == "" {
+		event.Type = eventType
+	}
+	if event.Type == "error" || eventType == "error" {
+		o.failed = true
+		o.source = append(o.source[:0], payload...)
+		return
+	}
+	if event.Type == "message_stop" {
+		o.failed = false
+		o.source = nil
+	}
+}
+
 // handleResponsesBufferedFromNativeAnthropic reads Anthropic SSE events, assembles
 // the full response, then converts Anthropic → Responses.
 func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
@@ -169,8 +191,9 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 	attachSSEScannerBuffer(scanner, nil, maxLineSize)
 
 	var finalResp *apicompat.AnthropicResponse
+	var rawJSON strings.Builder
 	var usage ClaudeUsage
-	nonBillableUpstreamError := false
+	var outcome anthropicCompatOutcome
 
 	// 读间隔上限：上游挂住 SSE 时中止组装（缓冲路径尚未提交响应头，可回 502）。
 	streamInterval := s.anthropicNativeStreamInterval()
@@ -204,13 +227,24 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 			logReadErr(rerr)
 			break
 		}
+		// A provider may return a JSON rejection despite the requested SSE format.
+		// Keep that source before the SSE parser would discard its physical lines.
+		if rawJSON.Len() > 0 || strings.HasPrefix(strings.TrimSpace(line), "{") {
+			if int64(rawJSON.Len()+len(line)+1) > resolveUpstreamResponseReadLimit(s.cfg) {
+				openAITooLargeError(c)
+				return nil, ErrUpstreamResponseBodyTooLarge
+			}
+			_, _ = rawJSON.WriteString(line)
+			_ = rawJSON.WriteByte('\n')
+			continue
+		}
 		// SSE 规范允许 `event:xxx`（冒号后无空格）：Kimi 等上游返回紧凑格式。
 		eventType, ok := extractOpenAISSEEventLine(line)
 		if !ok {
 			continue
 		}
 		if eventType == "error" {
-			nonBillableUpstreamError = true
+			outcome.failed = true
 		}
 
 		dataLine, rerr := pump.next()
@@ -230,12 +264,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
-		switch event.Type {
-		case "error":
-			nonBillableUpstreamError = true
-		case "message_stop":
-			nonBillableUpstreamError = false
-		}
+		outcome.observe(&event, eventType, []byte(payload))
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
 			mergeAnthropicUsage(&usage, event.Message.Usage)
@@ -253,7 +282,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		}
 		if event.Type == "content_block_delta" && event.Delta != nil && finalResp != nil && event.Index != nil {
 			idx := *event.Index
-			if idx < len(finalResp.Content) {
+			if idx >= 0 && idx < len(finalResp.Content) {
 				switch event.Delta.Type {
 				case "text_delta":
 					finalResp.Content[idx].Text += event.Delta.Text
@@ -266,6 +295,25 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		}
 	}
 
+	if rawJSON.Len() > 0 && openAIExplicitUpstreamError(gjson.Parse(rawJSON.String()), "") {
+		observeDeepSeekHostedUpstreamEvent(c.Request.Context(), "error")
+		writeResponsesError(c, http.StatusBadGateway, "upstream_error", "Upstream response failed")
+		MarkResponseCommitted(c)
+		return nil, fmt.Errorf("upstream response failed: invalid upstream JSON envelope")
+	}
+	result := &OpenAIForwardResult{
+		RequestID: requestID, UpstreamHeaders: resp.Header,
+		Usage: claudeUsageToOpenAIUsage(&usage), NonBillableUpstreamError: outcome.failed,
+		Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel,
+		UpstreamEndpoint: "/v1/messages", ReasoningEffort: reasoningEffort,
+		Stream: false, Duration: time.Since(startTime),
+	}
+	if outcome.failed {
+		message := sanitizeUpstreamErrorMessage(extractOpenAISSEErrorMessage(outcome.source))
+		writeResponsesError(c, http.StatusBadGateway, "upstream_error", message)
+		MarkResponseCommitted(c)
+		return result, fmt.Errorf("upstream response failed: %s", message)
+	}
 	if finalResp == nil {
 		writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream stream ended without a response")
 		return nil, fmt.Errorf("upstream stream ended without response")
@@ -296,7 +344,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		RequestID:                requestID,
 		UpstreamHeaders:          resp.Header,
 		Usage:                    claudeUsageToOpenAIUsage(&usage),
-		NonBillableUpstreamError: nonBillableUpstreamError,
+		NonBillableUpstreamError: outcome.failed,
 		Model:                    originalModel,
 		BillingModel:             billingModel,
 		UpstreamModel:            upstreamModel,
@@ -335,7 +383,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 	clientToolRestorer := apicompat.NewResponsesClientToolStreamRestorer(clientToolMapping)
 
 	var usage ClaudeUsage
-	nonBillableUpstreamError := false
+	var outcome anthropicCompatOutcome
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
@@ -352,7 +400,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			RequestID:                requestID,
 			UpstreamHeaders:          resp.Header,
 			Usage:                    claudeUsageToOpenAIUsage(&usage),
-			NonBillableUpstreamError: nonBillableUpstreamError,
+			NonBillableUpstreamError: outcome.failed,
 			Model:                    originalModel,
 			BillingModel:             billingModel,
 			UpstreamModel:            upstreamModel,
@@ -400,11 +448,8 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			firstTokenMs = &ms
 		}
 
-		switch event.Type {
-		case "error":
-			nonBillableUpstreamError = true
-		case "message_stop":
-			nonBillableUpstreamError = false
+		if event.Type == "message_stop" && outcome.failed {
+			return
 		}
 		if event.Type == "message_delta" && event.Usage != nil {
 			mergeAnthropicUsage(&usage, *event.Usage)
@@ -454,7 +499,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			continue
 		}
 		if eventType == "error" {
-			nonBillableUpstreamError = true
+			outcome.failed = true
 		}
 
 		dataLine, rerr := pump.next()
@@ -475,7 +520,12 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			continue
 		}
 
+		outcome.observe(&event, eventType, []byte(payload))
 		processAnthropicEvent(&event)
+	}
+
+	if outcome.failed {
+		return resultWithUsage(), writeCompatUpstreamStreamError(c, "responses", originalModel, outcome.source)
 	}
 
 	// Finalize state machine（客户端已断开时仍推进，保证 usage 汇总完整；仅在

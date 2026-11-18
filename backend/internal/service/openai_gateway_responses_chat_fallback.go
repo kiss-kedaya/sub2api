@@ -136,7 +136,10 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		respBody, upstreamMsg, readErr := s.readOpenAIUpstreamErrorWithError(resp)
+		if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
+			return s.openAIStreamSilenceHTTPError(c, resp, respBody, readErr, originalModel, billingModel, upstreamModel, clientStream, startTime)
+		}
 		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr
 		}
@@ -178,6 +181,9 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 		}
 	})
 	if err != nil && ccResp == nil {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			return openAIStreamSilenceResult(resp, usage, originalModel, billingModel, upstreamModel, false, startTime), err
+		}
 		if watch.Gone() && errors.Is(err, context.Canceled) {
 			base := &OpenAIForwardResult{
 				RequestID:                   requestID,
@@ -293,8 +299,15 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		writeEvents(events)
 	})
 
+	var upstreamErr error
+	// A scan ended by the silence limit has already told the client and carries its
+	// own error; writing the upstream-error frame as well would send two errors.
+	if scan.NonBillableUpstreamError && !errors.Is(scan.Err, errOpenAIUpstreamWaitLimit) {
+		upstreamErr = writeCompatUpstreamStreamError(c, "responses", originalModel, scan.UpstreamError)
+	}
+
 	// The stream ended without [DONE] and the client is gone: nothing more will come.
-	if gone := clientDisconnected || watch.Gone(); scan.Err != nil || (gone && !scan.SawDone) {
+	if gone := clientDisconnected || watch.Gone(); upstreamErr != nil || scan.Err != nil || (gone && !scan.SawDone) {
 		result := &OpenAIForwardResult{
 			RequestID:                   requestID,
 			UpstreamHeaders:             resp.Header,
@@ -310,6 +323,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			Duration:                    time.Since(startTime),
 			FirstTokenMs:                scan.FirstTokenMs,
 			ClientDisconnect:            gone,
+		}
+		if upstreamErr != nil {
+			return result, upstreamErr
 		}
 		cause := scan.Err
 		if cause == nil {

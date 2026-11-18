@@ -588,6 +588,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
 					sawTerminalEvent = true
+					// Preserve the native terminal-header clearing rule.
 					nonBillableUpstreamError = false
 				}
 			}

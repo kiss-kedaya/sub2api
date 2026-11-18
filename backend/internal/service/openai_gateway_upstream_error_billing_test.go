@@ -114,7 +114,7 @@ func TestOpenAIExplicitUpstreamErrorNativeAnthropicIsFree(t *testing.T) {
 			wire := base + failure
 			if success {
 				name = route + "/success_after_error"
-				wire += "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+				wire += "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"synthetic answer\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 			}
 			t.Run(name, func(t *testing.T) {
 				c, resp := explicitErrorContext(), explicitErrorResponse(wire, "text/event-stream")
@@ -237,7 +237,11 @@ func TestOpenAIExplicitUpstreamErrorJSONIsFree(t *testing.T) {
 			case "messages":
 				result, err = svc.handleNativeAnthropicBufferedResponse(context.Background(), resp, c, account, "gpt-5.1", "gpt-5.1", "gpt-5.1", nil, time.Now())
 			}
-			require.NoError(t, err)
+			if route == "raw_chat" {
+				require.ErrorContains(t, err, "upstream response failed:")
+			} else {
+				require.NoError(t, err)
+			}
 			assertExplicitUpstreamErrorFree(t, result)
 		})
 	}
