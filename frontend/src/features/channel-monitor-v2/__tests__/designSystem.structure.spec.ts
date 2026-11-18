@@ -87,21 +87,23 @@ describe('channel-monitor-v2 design system structure', () => {
     expect(src).toContain('dropdown-item')
   })
 
-  it('MonitorSettingsPanel uses page-header, card, btn-primary, tabs', () => {
+  it('MonitorSettingsPanel uses Nuxt UI cards and controls with shared setting rows', () => {
     const src = read('features/channel-monitor-v2/MonitorSettingsPanel.vue')
-    expect(src).toContain('page-header')
-    expect(src).toContain('btn btn-primary')
-    expect(src).toContain('class="card')
-    expect(src).toContain('tab-active')
+    expect(src).toContain('<UPageCard')
+    expect(src).toContain('<SettingRow')
+    expect(src).toContain('<UInput')
+    expect(src).toContain('<UCheckbox')
+    expect(src).toContain('<UFormField')
+    expect(src).not.toContain('page-header')
+    expect(src).not.toContain('btn btn-primary')
     expect(src).toMatch(/max-h-\[min\(40vh/)
   })
 
-  it('admin ChannelMonitorView V2 tab chrome uses project tabs', () => {
+  it('admin ChannelMonitorView keeps its two modes under the shared page header', () => {
     const src = read('views/admin/ChannelMonitorView.vue')
-    expect(src).toContain('page-header')
-    expect(src).toContain('page-title')
-    expect(src).toContain('class="tabs')
-    expect(src).toContain('tab-active')
+    expect(src).toContain('<AdminPageHeader')
+    expect(src).toContain('<UButton')
+    expect(src).toContain(':aria-pressed=')
     expect(src).toContain('MonitorSettingsPanel')
   })
 

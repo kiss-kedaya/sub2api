@@ -1,13 +1,7 @@
 <template>
   <AppLayout>
     <div class="model-comparison space-y-5">
-      <AdminPageHeader :description="text('同一模型在各分组的实付价、价差和最稳渠道；价格已乘分组倍率，按 1M token 展示。', 'Effective prices per group for the same model, with spread and the most stable option. Prices already include the group ratio, shown per 1M tokens.')">
-        <template #title>
-          <span class="inline-flex flex-wrap items-center gap-2">
-            {{ text('模型比价', 'Model price comparison') }}
-            <span class="badge badge-primary">{{ text('L2 渠道运营', 'L2 channel operations') }}</span>
-          </span>
-        </template>
+      <AdminPageHeader :title="t('opsCenter.pages.comparison')" :description="text('同一模型在各分组的实付价、价差和最稳渠道；价格已乘分组倍率，按 1M token 展示。', 'Effective prices per group for the same model, with spread and the most stable option. Prices already include the group ratio, shown per 1M tokens.')">
         <template #actions>
           <RouterLink to="/admin/groups" class="btn btn-secondary">{{ text('分组与倍率', 'Groups and ratios') }}</RouterLink>
           <RouterLink to="/model-plaza?embedded=1" class="btn btn-secondary">{{ text('模型广场', 'Model plaza') }}</RouterLink>
@@ -287,7 +281,7 @@ import {
   type ModelOffer,
 } from '@/utils/modelComparison'
 
-const { locale } = useI18n()
+const { t, locale } = useI18n()
 const text = (zh: string, en: string) => (locale.value.startsWith('zh') ? zh : en)
 
 const loading = ref(false)

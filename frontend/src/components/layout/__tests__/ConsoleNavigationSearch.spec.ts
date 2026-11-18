@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
+import { useAdminSettingsStore } from '@/stores/adminSettings'
 import ConsoleNavigationSearch from '../ConsoleNavigationSearch.vue'
 
 // UModal teleports its content; render it in place so the palette can be driven.
@@ -148,6 +149,27 @@ describe('console navigation search', () => {
     const labels = wrapper.findAll('[data-slot="item"]').map((node) => node.text())
     expect(labels.some((label) => label.includes('admin.settings.linuxdo.title'))).toBe(false)
     expect(labels.some((label) => label.includes('admin.settings.wechatConnect.title'))).toBe(false)
+  })
+
+  it('finds operations pages and sub-pages while honoring the same feature flags', async () => {
+    const { wrapper, push } = await render('admin')
+    await search('/admin/account-ops/channels')
+    expect(wrapper.findAll('.console-search-result')).toHaveLength(1)
+    await wrapper.get('input').trigger('keydown.enter')
+    await flushPromises()
+    expect(push).toHaveBeenCalledWith('/admin/account-ops/channels')
+    await pressCtrlK()
+    useAdminSettingsStore().opsMonitoringEnabled = false
+    await search('/admin/ops')
+    expect(wrapper.text()).not.toContain('admin.ops.title')
+    await search('/admin/channels/monitor')
+    expect(wrapper.findAll('.console-search-result')).toHaveLength(0)
+  })
+
+  it('never exposes operations results to a secondary administrator', async () => {
+    const { wrapper } = await render('admin', false, 2)
+    await search('/admin/request-captures')
+    expect(wrapper.findAll('.console-search-result')).toHaveLength(0)
   })
 
   it('switches the theme from the palette and closes it', async () => {

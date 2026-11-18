@@ -51,6 +51,12 @@ function mockPagedScope() {
 }
 
 describe('channel operations workflow', () => {
+  it('shows quality plan IDs without linking to the nonexistent quality editor', async () => {
+    const w = mount(ChannelOperationsView); await flushPromises()
+    expect(w.get('[data-testid="quality-section"]').text()).toContain('#8')
+    expect(w.get('[data-testid="quality-section"]').text()).not.toContain('channelOps.qualityEditor')
+    w.unmount()
+  })
   it('shows measured samples, current data scope and allows unassigned account drilldown without losing the channel denominator', async () => {
     const w = mount(ChannelOperationsView); await flushPromises()
     expect(w.text()).toContain('channelOps.unknown'); expect(w.text()).toContain('123 ms'); expect(w.text()).toContain('channelOps.qualityNote')

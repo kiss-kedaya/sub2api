@@ -86,6 +86,13 @@ describe('buildAttentionItems', () => {
     expect(items[2].title).toBe('额度即将用尽')
   })
 
+  it('translates attention labels without changing their ordering, numbers or links', () => {
+    const items = buildAttentionItems([account({ balance_status: 'failed' })], [event({ id: 'demo' })], 100, key => `translated:${key}`)
+    expect(items[0].title).toBe('translated:opsCenter.events.balanceFailed')
+    expect(items[1].title).toBe('translated:opsCenter.events.balance_low')
+    expect(items.map(item => item.href)).toEqual(['/admin/account-ops/rules', '/admin/account-ops/records'])
+  })
+
   it('drops resolved events and applies the limit', () => {
     const items = buildAttentionItems(
       [

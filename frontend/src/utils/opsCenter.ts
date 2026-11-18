@@ -76,6 +76,7 @@ export function buildAttentionItems(
   accounts: AccountOpsThresholdAccount[],
   events: AccountOpsEvent[],
   limit = 8,
+  translate?: (key: string, params?: Record<string, unknown>) => string,
 ): AttentionItem[] {
   const items: AttentionItem[] = []
   const seen = new Set<string>()
@@ -90,11 +91,11 @@ export function buildAttentionItems(
     push({
       key: `event:${event.id ?? `${event.account_id}:${event.kind}:${event.first_seen}`}`,
       severity: event.state === 'failed' ? 'critical' : 'warning',
-      title: EVENT_LABELS[event.kind] ?? event.kind,
+      title: EVENT_LABELS[event.kind] ? (translate?.(`opsCenter.events.${event.kind}`) ?? EVENT_LABELS[event.kind]) : event.kind,
       detail: [event.group_name || event.account_name, eventValue(event)].filter(Boolean).join(' · '),
       accountId: event.account_id,
       accountName: event.account_name,
-      href: '/admin/account-ops',
+      href: '/admin/account-ops/records',
     })
   }
 
@@ -102,14 +103,14 @@ export function buildAttentionItems(
     const base = {
       accountId: account.account_id,
       accountName: account.account_name,
-      href: '/admin/account-ops',
+      href: '/admin/account-ops/rules',
     }
     if (account.balance_status === 'failed') {
       push({
         ...base,
         key: `balance-failed:${account.account_id}`,
         severity: 'critical',
-        title: '余额读取失败',
+        title: translate?.('opsCenter.events.balanceFailed') ?? '余额读取失败',
         detail: `${account.account_name} · ${account.platform}`,
       })
     } else if (account.balance_status === 'stale') {
@@ -117,7 +118,7 @@ export function buildAttentionItems(
         ...base,
         key: `balance-stale:${account.account_id}`,
         severity: 'warning',
-        title: '余额数据过期',
+        title: translate?.('opsCenter.events.balanceStale') ?? '余额数据过期',
         detail: `${account.account_name} · ${account.platform}`,
       })
     }
@@ -127,8 +128,8 @@ export function buildAttentionItems(
         ...base,
         key: `quota:${account.account_id}`,
         severity: 'warning',
-        title: '额度即将用尽',
-        detail: `${account.account_name} · 已用 ${Math.round(used)}%`,
+        title: translate?.('opsCenter.events.quota') ?? '额度即将用尽',
+        detail: `${account.account_name} · ${translate?.('opsCenter.events.used', { percent: Math.round(used) }) ?? `已用 ${Math.round(used)}%`}`,
       })
     }
   }

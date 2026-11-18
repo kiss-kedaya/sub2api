@@ -25,6 +25,7 @@ import { useLocale } from '@nuxt/ui/composables/useLocale'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
+import { getOperationsPages, useOperationsNavigation } from '@/components/admin/operations/opsNavigation'
 import { THEME_MODE_OPTIONS, useSiteColorMode, type ThemeMode } from '@/composables/useSiteTheme'
 
 const { t } = useI18n()
@@ -32,6 +33,7 @@ const { t: uiT } = useLocale()
 const router = useRouter()
 const auth = useAuthStore()
 const app = useAppStore()
+const operationsNavigation = useOperationsNavigation()
 const colorMode = useSiteColorMode()
 const open = ref(false)
 const query = ref('')
@@ -62,6 +64,10 @@ const destinations = computed((): Destination[] => {
     return [{ path: '/admin/usage', label: t('admin.usage.title'), icon: 'i-lucide-chart-column', group: 'admin' }, ...personal]
   }
   const admin: Destination[] = [
+    ...operationsNavigation.value.flatMap(area => getOperationsPages([area]).map(item => ({
+      path: item.path, label: t(item.labelKey), icon: area.icon, group: 'admin' as const,
+      keywords: [t('opsCenter.title'), t(area.labelKey)],
+    }))),
     { path: '/admin/dashboard', label: t('admin.dashboard.title'), icon: 'i-lucide-layout-dashboard', group: 'admin' },
     { path: '/admin/accounts', label: t('admin.accounts.title'), icon: 'i-lucide-server', group: 'admin' },
     { path: '/admin/users', label: t('admin.users.title'), icon: 'i-lucide-users', group: 'admin' },

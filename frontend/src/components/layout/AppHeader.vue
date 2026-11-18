@@ -74,6 +74,8 @@
     </template>
   </UDashboardNavbar>
 
+  <OperationsAreaNav class="px-4 pt-4 sm:px-6" />
+
   <!-- UDashboardToolbar: shown only while a page puts something in it (CSS :has below). -->
   <UDashboardToolbar
     class="console-toolbar bg-(--app-page-bg)"
@@ -94,6 +96,7 @@ import { useAdminSettingsStore } from '@/stores/adminSettings'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import { useSiteColorMode } from '@/composables/useSiteTheme'
 import UserMenu from './UserMenu.vue'
+import OperationsAreaNav from './OperationsAreaNav.vue'
 import { FRAME_TARGETS, useDashboardFrame } from './dashboardFrame'
 
 const route = useRoute()

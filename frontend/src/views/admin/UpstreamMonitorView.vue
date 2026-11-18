@@ -2,7 +2,7 @@
   <AppLayout>
     <div class="flex flex-col gap-4">
       <AdminPageHeader
-        :title="text('上游监控', 'Upstream monitor')"
+        :title="t('nav.upstreamMonitor')"
         :description="text(
           '余额、消费、套餐额度、告警、上游倍率与变动记录集中在一页。数据只来自已有的上游探测快照和本地汇总表，页面不会额外请求上游，也不扫 usage_logs。',
           'Balances, spend, plan quotas, alerts and upstream rates in one place. Everything reads the existing probe snapshots plus local rollups; the page adds no upstream calls and never scans usage_logs.'
@@ -515,7 +515,7 @@ import {
   type UpstreamUsageWindow,
 } from '@/api/admin/upstreamMonitor'
 
-const { locale } = useI18n()
+const { t, locale } = useI18n()
 const text = (zh: string, en: string) => (locale.value.startsWith('zh') ? zh : en)
 
 // Tabs keep the overview light: new panels are mounted only when opened, so the

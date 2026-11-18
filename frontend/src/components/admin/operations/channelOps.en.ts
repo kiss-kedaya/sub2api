@@ -2,7 +2,7 @@ export default {
   "scopeTitle": "Scope and data notes",
   "advancedFilters": "Time, group and model filters",
   "previousData": "Refresh failed. Showing the last successful data and its original scope and timestamp. Refresh before editing membership.",
-  "title": "Channel operations",
+  "title": "Channel ownership & quality",
   "description": "Manage channels, upstream labels and accounts; inspect persisted latency and measured quality.",
   "scope": "Upstream labels classify operations without changing routing, groups, credentials, scheduling or billing. Historical usage is regrouped by current membership; it does not identify upstream routing at request time. Reassignment never modifies usage history. No automatic paid probes.",
   "refresh": "Refresh",

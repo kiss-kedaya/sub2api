@@ -1,51 +1,11 @@
 <template>
   <AppLayout>
     <div class="w-full min-w-0 space-y-6 pb-8">
-      <header
-        class="page-header mb-0 rounded-lg bg-white p-5 shadow-xs ring-1 ring-gray-200 dark:bg-dark-800 dark:ring-dark-700 sm:p-6"
-      >
-        <h1 class="page-title flex items-center gap-2 text-xl font-semibold text-gray-900 dark:font-black dark:text-white">
-          <span class="admin-stat-icon inline-flex h-8 w-8 items-center justify-center rounded-xl bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-400">
-            <Icon name="chart" size="sm" />
-          </span>
-          {{ t('admin.channelMonitor.title') }}
-        </h1>
-        <p class="page-description mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-          {{
-            isV1Mode
-              ? t('channelMonitorV2.admin.descriptionV1')
-              : t('channelMonitorV2.admin.descriptionV2')
-          }}
-        </p>
-        <div class="mt-4 border-t border-gray-100 pt-4 dark:border-dark-700">
-          <div
-            class="tabs inline-flex w-full max-w-xl flex-wrap sm:w-auto"
-            role="tablist"
-            :aria-label="t('channelMonitorV2.admin.tabAria')"
-          >
-            <button
-              type="button"
-              role="tab"
-              class="tab flex-1 sm:flex-none"
-              :class="adminMonitorTab === 'v2' ? 'tab-active' : ''"
-              :aria-selected="adminMonitorTab === 'v2'"
-              @click="adminMonitorTab = 'v2'"
-            >
-              {{ t('channelMonitorV2.admin.tabV2') }}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              class="tab flex-1 sm:flex-none"
-              :class="adminMonitorTab === 'legacy' ? 'tab-active' : ''"
-              :aria-selected="adminMonitorTab === 'legacy'"
-              @click="adminMonitorTab = 'legacy'"
-            >
-              {{ isV1Mode ? t('channelMonitorV2.admin.tabV1Active') : t('channelMonitorV2.admin.tabV1History') }}
-            </button>
-          </div>
-        </div>
-      </header>
+      <AdminPageHeader :title="t('admin.channelMonitor.title')" :description="isV1Mode ? t('channelMonitorV2.admin.descriptionV1') : t('channelMonitorV2.admin.descriptionV2')" />
+      <div class="flex flex-wrap gap-1 border-b border-default pb-3" :aria-label="t('channelMonitorV2.admin.tabAria')">
+        <UButton color="neutral" :variant="adminMonitorTab === 'v2' ? 'soft' : 'ghost'" :aria-pressed="adminMonitorTab === 'v2'" :label="t('channelMonitorV2.admin.tabV2')" @click="adminMonitorTab = 'v2'" />
+        <UButton color="neutral" :variant="adminMonitorTab === 'legacy' ? 'soft' : 'ghost'" :aria-pressed="adminMonitorTab === 'legacy'" :label="isV1Mode ? t('channelMonitorV2.admin.tabV1Active') : t('channelMonitorV2.admin.tabV1History')" @click="adminMonitorTab = 'legacy'" />
+      </div>
 
       <MonitorSettingsPanel v-if="adminMonitorTab === 'v2'" />
 
@@ -182,6 +142,7 @@ import type {
 } from '@/api/admin/channelMonitor'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import '@/components/admin/page/admin-page.css'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'

@@ -13,6 +13,7 @@ import type {
 import type { MonitorMatrixGroupBy, MonitorMatrixRow } from '../src/api/channelMonitorV2'
 import type { PaymentOrder } from '../src/types/payment'
 import { readFileSync } from 'node:fs'
+import { operationsPreviewRead } from './operations-fixtures'
 
 // Preview-only deposit address: a syntactically valid EVM address, not a real
 // wallet. One address serves every network because the channel derives one HD
@@ -567,6 +568,8 @@ export function createMockApi(now = new Date()) {
         })) }
       }
       if (method === 'GET') {
+        const operations = operationsPreviewRead(path, query, now.toISOString())
+        if (operations !== undefined) return operations
         if (path === '/setup/status') return { needs_setup: false, step: 'complete' }
         if (path === '/api/v1/settings/public') return settings
         if (path === '/api/v1/announcements/summary') return { total: 0, unread: 0 }
@@ -579,6 +582,8 @@ export function createMockApi(now = new Date()) {
           required: false, version: 'local-preview', document_path_zh: '', document_path_en: '',
           document_url_zh: '', document_url_en: '', ack_phrase_zh: '', ack_phrase_en: '',
         }
+        if (path === '/api/v1/admin/quality-check/groups') return {}
+        if (path === '/api/v1/admin/channel-monitor-v2/config') return data.monitorConfig
         if (path === '/api/v1/admin/settings') return adminSettings()
         if (path === '/api/v1/admin/payment/config') return { enabled: true }
         if (path === '/api/v1/admin/settings/web-search-emulation') return { enabled: false, providers: [] }
@@ -843,7 +848,7 @@ export function createMockApi(now = new Date()) {
           { rank: 2, display_label: '匿名演示用户', is_self: false, can_drilldown: false, metrics: { ...data.monitorSnapshot.metrics, request_count: 680, success_requests: 648, error_requests: 32 } },
         ] }
         if (path === '/api/v1/channels/available') return data.availableChannels
-        if (path === '/api/v1/model-plaza') return data.modelPlaza
+        if (path === '/api/v1/model-plaza' || path === '/api/v1/admin/model-plaza') return data.modelPlaza
         if (path === '/api/v1/payment/config') return data.paymentConfig
         if (path === '/api/v1/payment/plans') return data.paymentPlans
         if (path === '/api/v1/payment/checkout-info') return data.checkoutInfo

@@ -1,7 +1,7 @@
 <template>
   <AppLayout>
     <div class="space-y-5">
-      <AdminPageHeader title="Excel / BPS" :description="text('为现有 OpenAI OAuth 账号单独授权，按模型选择 BPS 通道。', 'Authorize an independent grant for an existing OpenAI OAuth account and select BPS models explicitly.')">
+      <AdminPageHeader :title="t('opsCenter.pages.excel')" :description="text('为现有 OpenAI OAuth 账号单独授权，按模型选择 BPS 通道。', 'Authorize an independent grant for an existing OpenAI OAuth account and select BPS models explicitly.')">
         <template #actions>
           <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :disabled="busy" :label="text('刷新', 'Refresh')" @click="refresh" />
           <UButton icon="i-lucide-plus" :disabled="busy" :label="text('添加账号', 'Add account')" @click="edit()" />
@@ -87,7 +87,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import { useStepUp } from '@/composables/useStepUp'
 import { excelGrantsAPI, type ExcelGrantRecord } from '@/api/admin/excelGrants'
-const { locale } = useI18n()
+const { t, locale } = useI18n()
 const text = (zh: string, en: string) => locale.value.startsWith('zh') ? zh : en
 const stepUp = useStepUp()
 const columns = computed<TableColumn<ExcelGrantRecord>[]>(() => [
