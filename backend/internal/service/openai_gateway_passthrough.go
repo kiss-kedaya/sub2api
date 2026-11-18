@@ -2332,14 +2332,34 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		flushPending = false
 	}
 	defer flushPendingOutput()
+	eventInProgress := false
+	writeForwardedLine := func(line string) bool {
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			markClientDisconnected()
+			return false
+		}
+		eventInProgress = line != ""
+		return true
+	}
 	writePendingLines := func() bool {
 		for _, pending := range pendingLines {
-			if _, err := fmt.Fprintln(w, pending); err != nil {
-				markClientDisconnected()
+			if !writeForwardedLine(pending) {
 				return false
 			}
 		}
 		pendingLines = pendingLines[:0]
+		return true
+	}
+	terminateOpenEvent := func() bool {
+		if clientDisconnected {
+			return false
+		}
+		if eventInProgress {
+			if !writeForwardedLine("") {
+				return false
+			}
+			flushPending = true
+		}
 		return true
 	}
 	ensureResponseFailedTerminal := func() {
@@ -2357,6 +2377,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return
 		}
 		stopKeepalive()
+		if !terminateOpenEvent() {
+			return
+		}
 		if WriteUpstreamFinancialError(c, 0, bareErrorPayload) {
 			pendingLines = pendingLines[:0]
 			failureDelivered = true
@@ -2364,7 +2387,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			flushPending = false
 			return
 		}
-		if !writePendingLines() {
+		if !writePendingLines() || !terminateOpenEvent() {
 			return
 		}
 		if _, err := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, bareErrorPayload, failedMessage)); err != nil {
@@ -2385,6 +2408,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	scanBuf := getSSEScannerBuf64K()
 	attachSSEScannerBuffer(scanner, scanBuf[:], maxLineSize)
 	defer putSSEScannerBuf64K(scanBuf)
+	observeOpenAIStreamSilence(scanner, resp.Body, nil)
 	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
 	var deepSeekPass deepSeekPassthrough
 	// The DeepSeek response rewrite chain is opt-in: official DeepSeek now emits
@@ -2714,8 +2738,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 			writeDeepSeekLines := func(lines []string) bool {
 				for _, extra := range lines {
-					if _, err := fmt.Fprintln(w, extra); err != nil {
-						markClientDisconnected()
+					if !writeForwardedLine(extra) {
 						return false
 					}
 					clientOutputStarted = true
@@ -2740,9 +2763,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if rewritten, did := repairChatCompletionChunkSSELine(line); did {
 				line = rewritten
 			}
-			if _, err := fmt.Fprintln(w, line); err != nil {
-				markClientDisconnected()
-			} else {
+			if writeForwardedLine(line) {
 				clientOutputStarted = true
 				flushPending = true
 				if line == "" {
@@ -2774,12 +2795,17 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	ensureResponseFailedTerminal()
 	if err := documentScanner.Err(); err != nil {
-		if errors.Is(err, errOpenAIUpstreamWaitLimit) && !clientDisconnected && !failureDelivered && !sawFailedEvent && !sawDone && !sawTerminalEvent {
-			nonBillableUpstreamError = true
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) && !clientDisconnected {
 			stopKeepalive()
-			flushPendingOutput()
-			writeOpenAIStreamSilenceError(c, true)
-			return resultWithUsage(), openAIStreamSilenceError(err)
+			terminateOpenEvent()
+			if !failureDelivered && !sawFailedEvent && !sawDone && !sawTerminalEvent {
+				nonBillableUpstreamError = true
+				flushPendingOutput()
+				if !clientDisconnected {
+					writeOpenAIStreamSilenceError(c, true)
+				}
+				return resultWithUsage(), openAIStreamSilenceError(err)
+			}
 		}
 		if (sawDone || sawTerminalEvent) && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)

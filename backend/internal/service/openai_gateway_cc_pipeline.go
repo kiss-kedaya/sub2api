@@ -40,6 +40,7 @@ func (s *OpenAIGatewayService) newUpstreamSSEScanner(r io.Reader) *bufio.Scanner
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	attachSSEScannerBuffer(scanner, nil, maxLineSize)
+	observeOpenAIStreamSilence(scanner, r, nil)
 	return scanner
 }
 

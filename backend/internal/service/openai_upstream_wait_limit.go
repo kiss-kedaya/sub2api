@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"time"
 
@@ -94,7 +95,8 @@ func doWithUpstreamWaitLimit(request *http.Request, limit time.Duration, send fu
 		return resp, err
 	}
 	if len(onSilence) > 0 && onSilence[0] != nil {
-		resp.Body = newOpenAIStreamSilenceBody(ctx, cancel, resp.Body, onSilence[0])
+		mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+		resp.Body = newOpenAIStreamSilenceBody(ctx, cancel, resp.Body, onSilence[0], mediaType == "text/event-stream")
 	} else {
 		resp.Body = &openAIRequestContextReadCloser{ReadCloser: resp.Body, cleanup: func() { cancel(nil) }}
 	}

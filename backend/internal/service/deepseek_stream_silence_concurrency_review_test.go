@@ -22,9 +22,10 @@ func (b *silenceReadBoundary) Read(p []byte) (int, error) {
 		close(b.returned)
 		return 0, b.err
 	}
-	copy(p, "data: synthetic\n")
+	const line = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"
+	n := copy(p, line)
 	close(b.returned)
-	return len("data: synthetic\n"), nil
+	return n, nil
 }
 func (*silenceReadBoundary) Close() error { return nil }
 
@@ -37,7 +38,7 @@ func TestDeepSeekStreamSilenceReviewReadBeforeTimerLock(t *testing.T) {
 			if eof {
 				source.err = io.EOF
 			}
-			b := newOpenAIStreamSilenceBody(ctx, cancel, source, nil)
+			b := newOpenAIStreamSilenceBody(ctx, cancel, source, nil, true)
 			t.Cleanup(func() { require.NoError(t, b.Close()) })
 			b.timer.Stop()
 			b.mu.Lock()
@@ -48,7 +49,13 @@ func TestDeepSeekStreamSilenceReviewReadBeforeTimerLock(t *testing.T) {
 			expired := make(chan struct{})
 			go func() { b.expire(); close(expired) }()
 			readDone := make(chan error, 1)
-			go func() { _, err := b.Read(make([]byte, 64)); readDone <- err }()
+			go func() {
+				scanner := (&OpenAIGatewayService{}).newUpstreamSSEScanner(b)
+				if scanner.Scan() {
+					scanner.Scan()
+				}
+				readDone <- scanner.Err()
+			}()
 			<-source.returned
 			require.Eventually(t, func() bool {
 				progress := b.progress.Load()
@@ -57,11 +64,7 @@ func TestDeepSeekStreamSilenceReviewReadBeforeTimerLock(t *testing.T) {
 			b.mu.Unlock()
 			<-expired
 			err := <-readDone
-			if eof {
-				require.ErrorIs(t, err, io.EOF)
-			} else {
-				require.NoError(t, err)
-			}
+			require.NoError(t, err) // Scanner consumes ordinary EOF.
 			require.NotErrorIs(t, context.Cause(ctx), errOpenAIStreamSilenceLimit)
 		})
 	}
@@ -84,7 +87,7 @@ func TestDeepSeekStreamSilenceReviewCloseOutsideStateLock(t *testing.T) {
 	shortenDeepSeekStreamSilence(t, 40*time.Millisecond)
 	ctx, cancel := context.WithCancelCause(context.Background())
 	source := &silenceWaitForReadCloser{closed: make(chan struct{}), readDone: make(chan struct{})}
-	b := newOpenAIStreamSilenceBody(ctx, cancel, source, nil)
+	b := newOpenAIStreamSilenceBody(ctx, cancel, source, nil, true)
 	readDone := make(chan error, 1)
 	go func() { _, err := b.Read(make([]byte, 8)); close(source.readDone); readDone <- err }()
 	select {

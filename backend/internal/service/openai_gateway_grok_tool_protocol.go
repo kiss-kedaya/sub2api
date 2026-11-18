@@ -251,6 +251,7 @@ func transformResponsesClientToolStream(
 	scanBuf := getSSEScannerBuf64K()
 	defer putSSEScannerBuf64K(scanBuf)
 	attachSSEScannerBuffer(scanner, scanBuf[:], maxLineSize)
+	observeOpenAIStreamSilence(scanner, source, nil)
 	documents := newOpenAISSEJSONDocumentScanner(scanner)
 	restorer := apicompat.NewResponsesClientToolStreamRestorer(mapping)
 	buffered := bufio.NewWriterSize(destination, 4*1024)

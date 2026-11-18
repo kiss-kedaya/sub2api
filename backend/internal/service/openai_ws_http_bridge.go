@@ -725,6 +725,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	scanner := bufio.NewScanner(resp.Body)
 	scanBuf := getSSEScannerBuf64K()
 	attachSSEScannerBuffer(scanner, scanBuf[:], maxLineSize)
+	observeOpenAIStreamSilence(scanner, resp.Body, nil)
 	defer putSSEScannerBuf64K(scanBuf)
 
 	pendingSSEEventType := ""

@@ -247,9 +247,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	scanner := bufio.NewScanner(resp.Body)
 	scanBuf := getSSEScannerBuf64K()
 	attachSSEScannerBufferCapped(scanner, scanBuf[:], maxLineSize, sseScannerTokenMaxOpenAI)
+	splitLines := bufio.SplitFunc(bufio.ScanLines)
 	if stageFirstOutput {
-		scanner.Split(openAIFirstOutputDynamicScanLines(&firstOutputScanGuard))
+		splitLines = openAIFirstOutputDynamicScanLines(&firstOutputScanGuard)
+		scanner.Split(splitLines)
 	}
+	observeOpenAIStreamSilence(scanner, resp.Body, splitLines)
 	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
 
 	streamInterval := time.Duration(0)
@@ -470,8 +473,26 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		clientOutputStarted = true
 		lastDownstreamWriteAt = time.Now()
 	}
+	terminateOpenEvent := func() {
+		if !eventInProgress || clientDisconnected {
+			return
+		}
+		if _, err := writePendingString("\n"); err != nil {
+			handlePendingWriteError(err)
+			return
+		}
+		if stageFirstOutput {
+			completeGuardedEvent(true)
+		} else {
+			eventInProgress = false
+		}
+	}
 	finalizeStream := func() (*openaiStreamingResult, error) {
 		observeClientCancellation()
+		if codexFailureTerminal && sawBareError && !sawResponseFailed {
+			// The synthesized failure is a separate SSE event, even at EOF.
+			terminateOpenEvent()
+		}
 		if stageFirstOutput && eventInProgress {
 			// EOF dispatches the final SSE event even without a trailing blank line.
 			completeGuardedEvent(true)
@@ -559,11 +580,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			return resultWithUsage(), failoverErr, true
 		}
 		if sawTerminalEvent {
-			if errors.Is(scanErr, errOpenAIUpstreamWaitLimit) && eventInProgress && !clientDisconnected {
+			if errors.Is(scanErr, errOpenAIUpstreamWaitLimit) {
 				// A parsed terminal needs its blank line before the held body closes.
-				if _, err := writePendingString("\n"); err != nil {
-					handlePendingWriteError(err)
-				}
+				terminateOpenEvent()
 			}
 			if !sawFailedEvent {
 				s.clearOpenAIProxyStreamDisconnect(account)
@@ -574,8 +593,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		}
 		if errors.Is(scanErr, errOpenAIUpstreamWaitLimit) {
 			nonBillableUpstreamError = true
+			terminateOpenEvent()
 			flushPending("Client disconnected during silence-limit flush")
-			writeOpenAIStreamSilenceError(c, true)
+			if !clientDisconnected {
+				writeOpenAIStreamSilenceError(c, true)
+			}
 			return resultWithUsage(), openAIStreamSilenceError(scanErr), true
 		}
 		// 客户端断开/取消请求时，上游读取往往会返回 context canceled。
@@ -1115,11 +1137,6 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			// Observe cancellation before classifying a replayable failure.
 			observeClientCancellation()
 			if !ok {
-				if stageFirstOutput && eventInProgress {
-					// EOF dispatches the final SSE event even without a trailing blank
-					// line. Do not synthesize extra bytes on the downstream wire.
-					completeGuardedEvent(true)
-				}
 				return finalizeStream()
 			}
 			if result, err, done := handleScanErr(ev.err); done {

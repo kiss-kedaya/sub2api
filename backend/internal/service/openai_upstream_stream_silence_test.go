@@ -222,18 +222,18 @@ func TestDeepSeekStreamSilenceBufferedConsumers(t *testing.T) {
 }
 
 func TestDeepSeekStreamSilenceBody(t *testing.T) {
-	t.Run("split heartbeat comments do not refresh activity", func(t *testing.T) {
+	t.Run("comments, status and usage do not refresh activity", func(t *testing.T) {
 		shortenDeepSeekStreamSilence(t, 100*time.Millisecond)
 		ctx, cancel := context.WithCancelCause(context.Background())
 		reader, writer := io.Pipe()
-		b := newOpenAIStreamSilenceBody(ctx, cancel, reader, nil)
+		b := newOpenAIStreamSilenceBody(ctx, cancel, reader, nil, true)
 		defer func() { require.NoError(t, b.Close()) }()
 		writerDone := make(chan struct{})
 		go func() {
 			defer close(writerDone)
 			defer func() { _ = writer.Close() }()
 			for {
-				for _, part := range []string{":", " keep-alive", "\r\n", " \t\n"} {
+				for _, part := range []string{":", " keep-alive\r\n\r\n", "event: ping\r\ndata: {}\r\n\r\n", "data: {\"type\":\"response.in_progress\"}\n\n", "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10}}\n\n"} {
 					if _, err := io.WriteString(writer, part); err != nil {
 						return
 					}
@@ -248,8 +248,10 @@ func TestDeepSeekStreamSilenceBody(t *testing.T) {
 			}
 		}()
 		started := time.Now()
-		_, err := io.Copy(io.Discard, b)
-		require.ErrorIs(t, err, errOpenAIStreamSilenceLimit)
+		scanner := (&OpenAIGatewayService{}).newUpstreamSSEScanner(b)
+		for scanner.Scan() {
+		}
+		require.ErrorIs(t, scanner.Err(), errOpenAIStreamSilenceLimit)
 		require.Less(t, time.Since(started), time.Second)
 		<-writerDone
 	})
@@ -257,13 +259,13 @@ func TestDeepSeekStreamSilenceBody(t *testing.T) {
 		shortenDeepSeekStreamSilence(t, 200*time.Millisecond)
 		ctx, cancel := context.WithCancelCause(context.Background())
 		reader, writer := io.Pipe()
-		b := newOpenAIStreamSilenceBody(ctx, cancel, reader, nil)
+		b := newOpenAIStreamSilenceBody(ctx, cancel, reader, nil, true)
 		defer func() { require.NoError(t, b.Close()) }()
 		done := make(chan error, 1)
 		go func() {
 			defer func() { _ = writer.Close() }()
 			for i := 0; i < 20; i++ {
-				if _, err := io.WriteString(writer, "data: output\n\n"); err != nil {
+				if _, err := io.WriteString(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"output\"}}]}\n\n"); err != nil {
 					done <- err
 					return
 				}
@@ -272,10 +274,14 @@ func TestDeepSeekStreamSilenceBody(t *testing.T) {
 			done <- nil
 		}()
 		started := time.Now()
-		data, err := io.ReadAll(b)
-		require.NoError(t, err)
+		scanner := (&OpenAIGatewayService{}).newUpstreamSSEScanner(b)
+		var data strings.Builder
+		for scanner.Scan() {
+			data.WriteString(scanner.Text())
+		}
+		require.NoError(t, scanner.Err())
 		require.NoError(t, <-done)
-		require.Equal(t, 20, strings.Count(string(data), "data: output"))
+		require.Equal(t, 20, strings.Count(data.String(), "\"output\""))
 		require.Greater(t, time.Since(started), 2*b.limit)
 		require.NoError(t, ctx.Err())
 	})
@@ -286,7 +292,7 @@ func TestDeepSeekStreamSilenceBody(t *testing.T) {
 		c.Request = c.Request.WithContext(clientCtx)
 		ctx, cancel := context.WithCancelCause(WithOpsGinContext(context.Background(), c))
 		source := &streamSilenceBlockingBody{prefix: strings.NewReader(""), closed: make(chan struct{})}
-		b := newOpenAIStreamSilenceBody(ctx, cancel, source, nil)
+		b := newOpenAIStreamSilenceBody(ctx, cancel, source, nil, false)
 		clientCancel()
 		time.Sleep(60 * time.Millisecond)
 		b.mu.Lock()
@@ -301,7 +307,7 @@ func TestDeepSeekStreamSilenceBody(t *testing.T) {
 		ctx, cancel := context.WithCancelCause(context.Background())
 		source := &streamSilenceBlockingBody{prefix: strings.NewReader(""), closed: make(chan struct{})}
 		var reports atomic.Int32
-		b := newOpenAIStreamSilenceBody(ctx, cancel, source, func() { reports.Add(1) })
+		b := newOpenAIStreamSilenceBody(ctx, cancel, source, func() { reports.Add(1) }, false)
 		done := make(chan error, 1)
 		go func() { _, err := b.Read(make([]byte, 8)); done <- err }()
 		require.NoError(t, b.Close())

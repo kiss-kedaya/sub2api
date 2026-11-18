@@ -346,6 +346,9 @@ func openAIBufferedUpstreamError(root gjson.Result, eventType string) bool {
 			strings.TrimSpace(message.Get("reasoning").String()) != "" {
 			return false
 		}
+		if chatMessageHasImageOutput(message) {
+			return false
+		}
 		for _, call := range message.Get("tool_calls").Array() {
 			if strings.TrimSpace(call.Get("function.name").String()) != "" {
 				return false
@@ -356,6 +359,19 @@ func openAIBufferedUpstreamError(root gjson.Result, eventType string) bool {
 		}
 	}
 	return true
+}
+
+// chatMessageHasImageOutput distinguishes a delivered image from an empty placeholder.
+func chatMessageHasImageOutput(message gjson.Result) bool {
+	for _, field := range []string{"content", "images"} {
+		for _, part := range message.Get(field).Array() {
+			url := part.Get("image_url.url")
+			if url.Type == gjson.String && strings.TrimSpace(url.Str) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // openAIErrorValuePresent reports whether an "error" field carries anything: a

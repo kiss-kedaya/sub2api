@@ -1,6 +1,8 @@
 package service
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -38,24 +40,25 @@ type openAIStreamSilenceProgress struct {
 // or the reader's line state; cleanup never holds the state mutex across Close.
 type openAIStreamSilenceBody struct {
 	io.ReadCloser
-	mu          sync.Mutex
-	ctx         context.Context
-	clientCtx   context.Context
-	cancel      context.CancelCauseFunc
-	timer       *time.Timer
-	limit       time.Duration
-	progress    atomic.Pointer[openAIStreamSilenceProgress]
-	finished    bool
-	expired     bool
-	closeOnce   sync.Once
-	closeErr    error
-	lineStarted bool
-	comment     bool
-	failure     *openAIStreamSilenceReadError
+	mu        sync.Mutex
+	ctx       context.Context
+	clientCtx context.Context
+	cancel    context.CancelCauseFunc
+	timer     *time.Timer
+	limit     time.Duration
+	progress  atomic.Pointer[openAIStreamSilenceProgress]
+	finished  bool
+	expired   bool
+	closeOnce sync.Once
+	closeErr  error
+	sse       bool
+	semantic  atomic.Bool
+	failure   *openAIStreamSilenceReadError
 }
 
-func newOpenAIStreamSilenceBody(ctx context.Context, cancel context.CancelCauseFunc, body io.ReadCloser, onLimit func()) *openAIStreamSilenceBody {
+func newOpenAIStreamSilenceBody(ctx context.Context, cancel context.CancelCauseFunc, body io.ReadCloser, onLimit func(), sse bool) *openAIStreamSilenceBody {
 	b := &openAIStreamSilenceBody{ReadCloser: body, ctx: ctx, cancel: cancel, limit: deepSeekStreamSilenceLimit, failure: &openAIStreamSilenceReadError{onLimit: onLimit}}
+	b.sse = sse
 	b.progress.Store(&openAIStreamSilenceProgress{lastOutput: time.Now()})
 	if c := OpsGinContextFrom(ctx); c != nil && c.Request != nil {
 		b.clientCtx = c.Request.Context()
@@ -97,26 +100,38 @@ func (b *openAIStreamSilenceBody) closeBody() error {
 	return b.closeErr
 }
 
-func (b *openAIStreamSilenceBody) Read(p []byte) (int, error) {
-	n, err := b.ReadCloser.Read(p)
-	// Publish returned output/EOF before contending with the timer. Otherwise a
-	// completed read queued behind expire could be mistaken for provider silence.
-	if output := b.hasOutput(p[:n]); output || err != nil {
-		for previous := b.progress.Load(); previous != nil; previous = b.progress.Load() {
-			progress := &openAIStreamSilenceProgress{lastOutput: previous.lastOutput, finished: err != nil}
-			if output {
-				progress.lastOutput = time.Now()
-			}
-			if b.progress.CompareAndSwap(previous, progress) {
-				break
-			}
+func (b *openAIStreamSilenceBody) publishProgress(output, finished bool) {
+	if !output && !finished {
+		return
+	}
+	for previous := b.progress.Load(); previous != nil; previous = b.progress.Load() {
+		progress := &openAIStreamSilenceProgress{lastOutput: previous.lastOutput, finished: previous.finished || finished}
+		if output {
+			progress.lastOutput = time.Now()
+		}
+		if b.progress.CompareAndSwap(previous, progress) {
+			return
 		}
 	}
-	b.mu.Lock()
-	if err != nil {
-		b.finished = true
-		b.timer.Stop()
+}
+
+func (b *openAIStreamSilenceBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	// SSE activity is published by the existing scanner after complete tokens,
+	// independent of transport Read boundaries. Buffered/non-SSE reads keep
+	// byte activity until a streaming consumer attaches semantic observation.
+	b.publishProgress(!b.semantic.Load() && len(bytes.TrimSpace(p[:n])) != 0, err != nil)
+	if err == nil {
+		// Do not hold up the parser behind expire's mutex: its output must be
+		// published before the timer claims that observation.
+		if b.progress.Load() == nil {
+			return n, b.failure
+		}
+		return n, nil
 	}
+	b.mu.Lock()
+	b.finished = true
+	b.timer.Stop()
 	expired := b.expired
 	b.mu.Unlock()
 	if expired {
@@ -125,26 +140,118 @@ func (b *openAIStreamSilenceBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// Keep line state across reads: a split comment must never buy another interval.
-func (b *openAIStreamSilenceBody) hasOutput(p []byte) bool {
-	output := false
-	for _, ch := range p {
-		switch ch {
-		case '\r', '\n':
-			b.lineStarted, b.comment = false, false
-		case ' ', '\t':
-			if b.lineStarted && !b.comment {
-				output = true
-			}
+// Observe tokens from the consumer's scanner, using its exact split function
+// and size limits. Framing, multi-data joining and concatenated-document repair
+// reuse the gateway's compatibility parsers; Read never parses another protocol.
+func observeOpenAIStreamSilence(scanner *bufio.Scanner, source io.Reader, split bufio.SplitFunc) {
+	var body *openAIStreamSilenceBody
+	for source != nil {
+		switch r := source.(type) {
+		case *openAIStreamSilenceBody:
+			body = r
+			source = nil
+		case *openAIRequestContextReadCloser:
+			source = r.ReadCloser
+		case *compatWatchedBody:
+			source = r.ReadCloser
 		default:
-			if !b.lineStarted {
-				b.lineStarted = true
-				b.comment = ch == ':'
-			}
-			output = output || !b.comment
+			source = nil
 		}
 	}
-	return output
+	if body == nil || !body.sse {
+		return
+	}
+	body.semantic.Store(true)
+	if split == nil {
+		split = bufio.ScanLines
+	}
+	var parser openAICompatSSEFrameParser
+	joinBytes := 0
+	discardJoinedFrame := false
+	observeDocument := func(frame openAISSEDataFrame, eventType string) {
+		// A named error event remains an error even if the payload claims output.
+		if !openAIUpstreamFailureMarked(frame.root, eventType) {
+			body.publishProgress(openAIStreamSilenceFrameHasOutput(frame), false)
+		}
+	}
+	observeDocuments := func(payload []byte, eventType string) bool {
+		frame := parseOpenAISSEDataFrame(payload, eventType)
+		if frame.validJSON || frame.isDone() {
+			observeDocument(frame, eventType)
+			return true
+		}
+		documents, repaired := splitOpenAIConcatenatedJSONDocuments(payload)
+		for _, document := range documents {
+			observeDocument(parseTrustedOpenAISSEDataFrame(document, eventType), eventType)
+		}
+		return repaired
+	}
+	observe := func(frame openAICompatSSEFrame, ok bool) {
+		if !ok || observeDocuments([]byte(frame.Data), frame.EventType) {
+			return
+		}
+		emitOpenAISSEDataPayloads(strings.Split(frame.Data, "\n"), func(payload []byte) {
+			observeDocuments(payload, frame.EventType)
+		})
+	}
+	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		advance, token, err := split(data, atEOF)
+		if token != nil {
+			line := string(token)
+			payload, isData := extractOpenAISSEDataLine(line)
+			// The existing consumers accept independent complete data documents too.
+			// Publish those now and retain no copy while waiting for an event boundary.
+			// Only genuinely split multi-data JSON needs the existing frame assembler.
+			if line == "" {
+				observe(parser.AddLine(line))
+				joinBytes, discardJoinedFrame = 0, false
+			} else if !isData {
+				observe(parser.AddLine(line))
+			} else if len(parser.dataLines) == 0 && observeDocuments([]byte(payload), parser.eventType) {
+				// A complete compatibility document needs no retained copy.
+			} else if !discardJoinedFrame {
+				// Bound pending observation copies using the existing scanner ceiling.
+				// This does not cap or alter the consumer's original frame handling.
+				fragmentBytes := len(line) + 32 // Include string/slice metadata, even for empty data.
+				if fragmentBytes > sseScannerTokenMaxOpenAI-joinBytes {
+					parser.dataLines = nil
+					discardJoinedFrame = true
+				} else {
+					joinBytes += fragmentBytes
+					observe(parser.AddLine(line))
+				}
+			}
+		}
+		if atEOF && advance == len(data) {
+			observe(parser.Finish())
+		}
+		return advance, token, err
+	})
+}
+
+func openAIStreamSilenceFrameHasOutput(frame openAISSEDataFrame) bool {
+	if !frame.validJSON || openAIUpstreamFailureMarked(frame.root, frame.eventType) {
+		return false
+	}
+	if openAIStreamFrameStartsVisibleOutput(frame) {
+		return true
+	}
+	for _, choice := range frame.root.Get("choices").Array() {
+		delta := choice.Get("delta")
+		if delta.Get("content").Str != "" || delta.Get("reasoning_content").Str != "" ||
+			delta.Get("reasoning").Str != "" || delta.Get("refusal").Str != "" ||
+			delta.Get("function_call.arguments").Str != "" || delta.Get("function_call.name").Str != "" ||
+			chatMessageHasImageOutput(delta) {
+			return true
+		}
+		for _, call := range delta.Get("tool_calls").Array() {
+			if call.Get("function.arguments").Str != "" || call.Get("function.name").Str != "" ||
+				call.Get("custom.input").Str != "" || call.Get("custom.name").Str != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (b *openAIStreamSilenceBody) Close() error {
@@ -217,7 +324,7 @@ func openAIStreamSilenceHasCompletedJSON(body []byte) bool {
 		return false
 	}
 	root := gjson.ParseBytes(body)
-	return root.IsObject() && root.Get("status").String() == "completed" && !openAIExplicitUpstreamError(root, "")
+	return root.IsObject() && root.Get("status").String() == "completed" && !openAIBufferedUpstreamError(root, "")
 }
 
 // A terminal success, not EOF, completes a provider's SSE generation.

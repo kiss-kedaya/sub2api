@@ -346,6 +346,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	upstreamErrorPending := false
 	upstreamErrorBuffered := false
 	upstreamErrorDelivered := false
+	eventInProgress := false
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
@@ -394,7 +395,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				zap.Error(werr),
 				zap.String("request_id", requestID),
 			)
+			return
 		}
+		eventInProgress = line != ""
 	}
 
 	for scanner.Scan() {
@@ -519,8 +522,20 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 	scanErr := scanner.Err()
 	clientGone := clientDisconnected || watch.Gone()
+	if errors.Is(scanErr, errOpenAIUpstreamWaitLimit) && !clientGone && eventInProgress {
+		// Finish the event already handed to the client. A forwarded provider
+		// error is now complete and does not need a second timeout event.
+		writeLine("")
+		if !clientDisconnected {
+			upstreamErrorDelivered = upstreamErrorDelivered || upstreamErrorPending
+			c.Writer.Flush()
+		}
+	}
 	if errors.Is(scanErr, errOpenAIUpstreamWaitLimit) && !clientGone && !terminal.sawDone && !terminal.sawFinishReason {
 		nonBillableUpstreamError = true
+		if clientDisconnected {
+			return resultWithUsage(), openAIStreamSilenceError(scanErr)
+		}
 		if !upstreamErrorDelivered {
 			writeOpenAIStreamSilenceError(c, true)
 		} else {
