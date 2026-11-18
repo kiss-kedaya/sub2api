@@ -20,11 +20,11 @@ export function createSmallRetentionDemo(now: Date) {
     }
     const record: SmallRecord = {
       id, bucket: iso(60 * (index + 1)), user_id: usage.user_id, api_key_id: usage.api_key_id, model, status,
-      first_seen: iso(60 * (index + 1)), last_seen: iso(index * 7 + 1), expires_at: iso(-60 * (23 - index)), repeat_count: count,
+      first_seen: iso(60 * (index + 1)), last_seen: iso(index * 7 + 1), expires_at: iso(index * 7 + 1 - 24 * 60), repeat_count: count,
       input_tokens: usage.input_tokens * count, cache_read_tokens: usage.cache_read_tokens * count, cache_creation_tokens: usage.cache_creation_tokens * count, output_tokens: usage.output_tokens * count,
       actual_cost: (Number(usage.actual_cost) * (count - (count >= 10 ? 1 : 0))).toFixed(8), raw_bytes: count * 1600,
       omitted_responses: index === 0 ? 18 : 0, request_ids: [requestID, ...(count > 1 ? [requestID + '-latest'] : [])],
-      data: { method: 'POST', path: index % 2 ? '/v1/chat/completions' : '/v1/responses', group_id: usage.group_id, replay_reasons: reasons, first_usage: usage },
+      data: { method: 'POST', path: index % 2 ? '/v1/chat/completions' : '/v1/responses', group_id: usage.group_id, replay_reasons: reasons, ...(index === 0 ? {} : { first_usage: usage }) },
     }
     const responseCount = count >= 10 ? 3 : 1
     const retained = count - record.omitted_responses
@@ -36,7 +36,7 @@ export function createSmallRetentionDemo(now: Date) {
         : JSON.stringify(status >= 400 ? { error: { message: 'Synthetic upstream error for local reconciliation preview', type: 'demo_error' } } : { id: 'demo-response-' + id, output_text: text, usage: { input_tokens: 208, output_tokens: 48 } }, null, 2)
       const retainedBody = index === 6 ? responseBody.split('event: response.completed')[0]! : responseBody
       return { fingerprint: `demo-response-${id}-${sampleIndex}`, first_seen: sampleIndex === 0 ? record.first_seen : record.last_seen, last_seen: record.last_seen, repeat_count: repeatCount,
-        data: { status, usage: { ...usage, ...(sampleIndex === 1 ? { settlement: 'already_settled', actual_cost: '0.00000000' } : {}) }, partial: index === 6, replay_reasons: reasons },
+        data: { status, ...(index === 0 && sampleIndex === 0 ? {} : { usage: { ...usage, ...(sampleIndex === 1 ? { settlement: 'already_settled', actual_cost: '0.00000000' } : {}) } }), partial: index === 6, replay_reasons: reasons },
         headers: { 'content-type': [stream ? 'text/event-stream' : 'application/json'], 'x-request-id': [requestID], 'cache-control': ['no-store'] }, body: retainedBody }
     })
     return { record, request_headers: { authorization: ['<REPLACE_CREDENTIAL>'], 'content-type': ['application/json'], 'x-client-request-id': [requestID], 'x-demo-note': ['Synthetic evidence only', 'No real credentials'] }, request_body: body,

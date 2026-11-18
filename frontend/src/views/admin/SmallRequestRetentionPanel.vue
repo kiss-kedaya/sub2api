@@ -127,7 +127,7 @@
         <div class="flex min-w-0 flex-wrap items-center gap-2"><span class="text-xs text-muted">{{ t('admin.requestCapture.small.requestID') }}</span><UButton v-for="id in detail.record.request_ids" :key="id" color="neutral" variant="subtle" size="xs" icon="i-lucide-copy" class="max-w-full font-mono" :ui="{ label: 'truncate' }" :label="id" :title="t('admin.requestCapture.small.copyRequestID')" @click="copyText(id)" /></div>
         <UCollapsible>
           <UButton color="neutral" variant="ghost" size="sm" trailing-icon="i-lucide-chevron-down" :label="t('admin.requestCapture.small.correlations')" />
-          <template #content><dl class="grid grid-cols-2 gap-3 rounded-lg bg-elevated/40 p-3 text-xs sm:grid-cols-4">
+          <template #content><p v-if="!detail.record.data.first_usage" data-testid="small-first-usage-expired" class="p-3 text-xs leading-5 text-muted">{{ t('admin.requestCapture.small.firstUsageExpired') }}</p><dl v-else class="grid grid-cols-2 gap-3 rounded-lg bg-elevated/40 p-3 text-xs sm:grid-cols-4">
             <div><dt class="text-muted">{{ t('admin.requestCapture.group') }}</dt><dd class="mt-1">#{{ detail.record.data.group_id }}</dd></div>
             <div><dt class="text-muted">{{ t('admin.requestCapture.small.accountID') }}</dt><dd class="mt-1">#{{ detail.record.data.first_usage?.account_id || '—' }}</dd></div>
             <div><dt class="text-muted">{{ t('admin.requestCapture.small.settlement') }}</dt><dd class="mt-1">{{ settlement(detail.record.data.first_usage?.settlement || '') }}</dd></div>
@@ -146,10 +146,11 @@
         <div v-if="selectedResponse && part.startsWith('response')" class="flex flex-wrap items-center gap-2 text-xs text-muted">
           <UBadge :color="selectedResponse.data.status >= 400 ? 'warning' : 'success'" variant="subtle">HTTP {{ selectedResponse.data.status }}</UBadge>
           <span>{{ t('admin.requestCapture.small.sampleRepeats', { count: selectedResponse.repeat_count }) }}</span>
-          <span>{{ settlement(selectedResponse.data.usage.settlement) }}</span>
-          <span>{{ t('admin.requestCapture.small.accountID') }} #{{ selectedResponse.data.usage.account_id }}</span>
+          <span v-if="selectedResponse.data.usage">{{ settlement(selectedResponse.data.usage.settlement) }}</span>
+          <span v-if="selectedResponse.data.usage">{{ t('admin.requestCapture.small.accountID') }} #{{ selectedResponse.data.usage.account_id }}</span>
+          <span v-else data-testid="small-sample-usage-expired">{{ t('admin.requestCapture.small.sampleUsageExpired') }}</span>
         </div>
-        <UCollapsible v-if="selectedResponse && part.startsWith('response')">
+        <UCollapsible v-if="selectedResponse?.data.usage && part.startsWith('response')">
           <UButton color="neutral" variant="ghost" size="sm" trailing-icon="i-lucide-chevron-down" :label="t('admin.requestCapture.small.sampleUsage')" />
           <template #content><dl class="grid grid-cols-2 gap-3 rounded-lg bg-elevated/40 p-3 text-xs sm:grid-cols-4">
             <div class="col-span-2"><dt class="text-muted">{{ t('admin.requestCapture.small.sampleTokens') }}</dt><dd class="mt-1">{{ tokenBreakdown(selectedResponse.data.usage) }}</dd></div>

@@ -2,6 +2,7 @@ package requestcapture
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -408,7 +409,9 @@ func (r *SmallRecorder) run(ctx context.Context) {
 				}
 				writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
-				if err := r.Store.Save(writeCtx, e); err != nil {
+				if err := r.Store.Save(writeCtx, e); errors.Is(err, errSmallRetentionExpired) {
+					r.skip("expired")
+				} else if err != nil {
 					r.skip("storage_error")
 				}
 			}()

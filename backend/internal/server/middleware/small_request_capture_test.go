@@ -70,7 +70,7 @@ func TestSmallRetentionEnabledMiddlewareKeepsOriginalClientExchange(t *testing.T
 	defer func() { _ = db.Close() }()
 	mock.ExpectQuery("SELECT to_regclass").WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(true))
 	mock.ExpectQuery("SELECT COALESCE").WillReturnRows(sqlmock.NewRows([]string{"size"}).AddRow(0))
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		mock.ExpectBegin()
 		mock.ExpectQuery("SELECT pg_try_advisory_xact_lock").WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
 		mock.ExpectExec("DELETE FROM small_request_").WillReturnResult(sqlmock.NewResult(0, 0))
@@ -79,8 +79,9 @@ func TestSmallRetentionEnabledMiddlewareKeepsOriginalClientExchange(t *testing.T
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT pg_advisory_xact_lock_shared").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("SELECT \\$1::timestamptz").WillReturnRows(sqlmock.NewRows([]string{"live"}).AddRow(true))
+	mock.ExpectQuery("SELECT \\$1::timestamptz").WillReturnRows(sqlmock.NewRows([]string{"fresh", "after_clear"}).AddRow(true, true))
 	mock.ExpectQuery("INSERT INTO small_request_records").WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), int64(11), int64(12), "text-test", 200, sqlmock.AnyArg(), 99, 5, 800, 100, "0.00000001", sqlmock.AnyArg(), `["synthetic-request"]`, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id", "repeat_count"}).AddRow(1, 1))
+	mock.ExpectExec("INSERT INTO small_request_occurrences").WithArgs(int64(1), int64(1), sqlmock.AnyArg(), "synthetic-request", sqlmock.AnyArg(), 200, 99, 5, 800, 100, "0.00000001", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	for i := 0; i < 2; i++ {
 		mock.ExpectExec("INSERT INTO small_request_blobs").WillReturnResult(sqlmock.NewResult(0, 1))
 	}
