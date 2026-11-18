@@ -205,6 +205,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 	attachSSEScannerBuffer(scanner, nil, maxLineSize)
 
 	var finalResp *apicompat.AnthropicResponse
+	var rawJSON strings.Builder
 	var usage ClaudeUsage
 	var outcome anthropicCompatOutcome
 
@@ -239,6 +240,17 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 			}
 			logReadErr(rerr)
 			break
+		}
+		// A provider may return a JSON rejection despite the requested SSE format.
+		// Keep that source before the SSE parser would discard its physical lines.
+		if rawJSON.Len() > 0 || strings.HasPrefix(strings.TrimSpace(line), "{") {
+			if int64(rawJSON.Len()+len(line)+1) > resolveUpstreamResponseReadLimit(s.cfg) {
+				openAITooLargeError(c)
+				return nil, ErrUpstreamResponseBodyTooLarge
+			}
+			_, _ = rawJSON.WriteString(line)
+			_ = rawJSON.WriteByte('\n')
+			continue
 		}
 		// SSE 规范允许 `event:xxx`（冒号后无空格）：Kimi 等上游返回紧凑格式。
 		eventType, ok := extractOpenAISSEEventLine(line)
@@ -297,6 +309,12 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		}
 	}
 
+	if rawJSON.Len() > 0 && openAIExplicitUpstreamError(gjson.Parse(rawJSON.String()), "") {
+		observeDeepSeekHostedUpstreamEvent(c.Request.Context(), "error")
+		writeResponsesError(c, http.StatusBadGateway, "upstream_error", "Upstream response failed")
+		MarkResponseCommitted(c)
+		return nil, fmt.Errorf("upstream response failed: invalid upstream JSON envelope")
+	}
 	result := &OpenAIForwardResult{
 		RequestID: requestID, UpstreamHeaders: resp.Header,
 		Usage: claudeUsageToOpenAIUsage(&usage), NonBillableUpstreamError: outcome.failed,

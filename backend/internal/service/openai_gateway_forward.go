@@ -1494,6 +1494,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 						continue
 					}
 				}
+				if nonStreamResult != nil && nonStreamResult.nonBillableUpstreamError {
+					// Only terminal, non-replayable failures return diagnostic usage.
+					usage = nonStreamResult.usage
+					nonBillableUpstreamError = true
+					return buildForwardResult(), err
+				}
 				return nil, err
 			}
 			usage = nonStreamResult.usage
