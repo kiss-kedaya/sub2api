@@ -309,7 +309,7 @@ jobs:
   # parallel; this job fails unless every one of them passed, or all were
   # skipped because only frontend/docs/markdown files changed.
   test:
-    needs: [changes, test-unit, test-integration, test-race-a, test-race-b, test-race-c]
+    needs: [changes, test-unit, test-integration, small-retention-integration, test-race-a, test-race-b, test-race-c]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -320,6 +320,7 @@ jobs:
           BACKEND: ${{ needs.changes.outputs.backend }}
           R_UNIT: ${{ needs.test-unit.result }}
           R_INTEGRATION: ${{ needs.test-integration.result }}
+          R_SMALL_RETENTION: ${{ needs.small-retention-integration.result }}
           R_RACE_A: ${{ needs.test-race-a.result }}
           R_RACE_B: ${{ needs.test-race-b.result }}
           R_RACE_C: ${{ needs.test-race-c.result }}
@@ -332,7 +333,7 @@ jobs:
           want=success
           [ "$BACKEND" = true ] || want=skipped
           bad=0
-          for pair in unit:"$R_UNIT" integration:"$R_INTEGRATION" race-a:"$R_RACE_A" race-b:"$R_RACE_B" race-c:"$R_RACE_C"; do
+          for pair in unit:"$R_UNIT" integration:"$R_INTEGRATION" small-retention:"$R_SMALL_RETENTION" race-a:"$R_RACE_A" race-b:"$R_RACE_B" race-c:"$R_RACE_C"; do
             if [ "${pair#*:}" != "$want" ]; then
               echo "test-${pair%%:*}: ${pair#*:} (expected $want)"
               bad=1

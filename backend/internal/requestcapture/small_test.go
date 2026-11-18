@@ -128,7 +128,9 @@ func TestSmallRetentionBodyFidelityCredentialsAndStableHash(t *testing.T) {
 	require.Equal(t, e.RequestBody, request)
 	response, err := decodeSmallBlob(p.ResponseBodyBlob.Codec, p.ResponseBodyBlob.Payload)
 	require.NoError(t, err)
-	require.Equal(t, e.ResponseBody, response)
+	// The shared SSE filter can normalize framing whitespace without changing the payload.
+	require.JSONEq(t, `{"text":"hello","token":"business-field"}`, string(bytes.TrimPrefix(bytes.SplitN(response, []byte("\n"), 2)[0], []byte("data:"))))
+	require.Contains(t, string(response), "data: [DONE]\n\n")
 	require.Equal(t, []string{"first", "second"}, map[string][]string(p.RequestHeaders)["x-list"])
 	require.NotContains(t, p.Path, "synthetic-secret")
 	require.NotContains(t, p.Path, "synthetic-signature")
@@ -144,6 +146,46 @@ func TestSmallRetentionBodyFidelityCredentialsAndStableHash(t *testing.T) {
 	require.Contains(t, command, "business-signature")
 	require.NotContains(t, command, "x-request-id:")
 }
+func TestSmallRetentionFiltersStructuredCredentialsBeforeHashing(t *testing.T) {
+	e := smallTestExchange()
+	e.RequestBody = []byte(`{"model":"m","api_key":"request-fixture","input":[{"client_secret":{"value":"nested-fixture"},"signature":"protocol-signature","key":"business-key","token":"business-token"}]}`)
+	e.ResponseHeaders.Set("Content-Type", "text/event-stream")
+	e.ResponseBody = []byte("event: response.created\ndata: {\"access_token\":\"response-fixture\",\"usage\":{\"output_tokens\":17}}\n\n" +
+		"event: response.completed\ndata: {\"refresh_token\":\"second-event-fixture\",\"type\":\"response.completed\"}\n\n")
+	p, reason := prepareSmallExchange(e, nil)
+	require.Empty(t, reason)
+	request, err := decodeSmallBlob(p.RequestBodyBlob.Codec, p.RequestBodyBlob.Payload)
+	require.NoError(t, err)
+	response, err := decodeSmallBlob(p.ResponseBodyBlob.Codec, p.ResponseBodyBlob.Payload)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"model":"m","api_key":"[REDACTED]","input":[{"client_secret":"[REDACTED]","signature":"protocol-signature","key":"business-key","token":"business-token"}]}`, string(request))
+	require.NotContains(t, string(response), "response-fixture")
+	require.NotContains(t, string(response), "second-event-fixture")
+	require.Contains(t, string(response), `"output_tokens":17`)
+	require.Contains(t, string(response), "event: response.completed\n")
+	require.Contains(t, p.ReplayReasons, "request_credentials_redacted")
+	require.NotContains(t, SmallCurl(p.Method, p.Path, p.RequestHeaders, request), "request-fixture")
+	before := p.Fingerprint
+	e.RequestBody = bytes.ReplaceAll(e.RequestBody, []byte("request-fixture"), []byte("rotated-fixture"))
+	p, reason = prepareSmallExchange(e, nil)
+	require.Empty(t, reason)
+	require.Equal(t, before, p.Fingerprint)
+}
+
+func TestSmallRetentionFiltersMislabelledJSONAndSkipsInvalidBody(t *testing.T) {
+	e := smallTestExchange()
+	e.ResponseHeaders.Set("Content-Type", "text/plain")
+	e.ResponseBody = []byte(`{"password":"response-fixture","answer":"ordinary text"}`)
+	p, reason := prepareSmallExchange(e, nil)
+	require.Empty(t, reason)
+	body, err := decodeSmallBlob(p.ResponseBodyBlob.Codec, p.ResponseBodyBlob.Payload)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"password":"[REDACTED]","answer":"ordinary text"}`, string(body))
+	e.ResponseBody = []byte(`{"password":"incomplete-fixture`)
+	_, reason = prepareSmallExchange(e, nil)
+	require.Equal(t, "unsupported_body", reason)
+}
+
 func TestSmallRetentionCompressionAndReplayReasons(t *testing.T) {
 	for _, body := range [][]byte{[]byte("tiny"), bytes.Repeat([]byte("compress me"), 1000)} {
 		b := makeSmallBlob(body)
@@ -420,21 +462,25 @@ func TestSmallRetentionStoredQuotaRefreshAndQueryFailure(t *testing.T) {
 	require.True(t, r.QuotaFull(), "a query timeout must keep the last full decision")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
-func TestSmallRetentionResponseDecompressionPreservesBytes(t *testing.T) {
+func TestSmallRetentionResponseDecompressionUsesSameFilter(t *testing.T) {
 	e := smallTestExchange()
+	e.ResponseBody = []byte("data: {\"text\":\"hello\",\"access_token\":\"compressed-fixture\"}\n\ndata: [DONE]\n\n")
+	plain, reason := prepareSmallExchange(e, nil)
+	require.Empty(t, reason)
 	var compressed bytes.Buffer
 	w := gzip.NewWriter(&compressed)
 	_, err := w.Write(e.ResponseBody)
 	require.NoError(t, err)
 	require.NoError(t, w.Close())
-	raw := append([]byte(nil), e.ResponseBody...)
 	e.ResponseBody = compressed.Bytes()
 	e.ResponseHeaders.Set("Content-Encoding", "gzip")
 	p, reason := prepareSmallExchange(e, nil)
 	require.Empty(t, reason)
 	decoded, err := decodeSmallBlob(p.ResponseBodyBlob.Codec, p.ResponseBodyBlob.Payload)
 	require.NoError(t, err)
-	require.Equal(t, raw, decoded)
+	require.Equal(t, plain.ResponseBodyBlob.Hash, p.ResponseBodyBlob.Hash)
+	require.NotContains(t, string(decoded), "compressed-fixture")
+	require.Contains(t, string(decoded), "[REDACTED]")
 	require.NotContains(t, p.ResponseHeaders, "content-encoding")
 }
 func TestSmallRetentionClearBlocksOldCopiesAcrossInstances(t *testing.T) {

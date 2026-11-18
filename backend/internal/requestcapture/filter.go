@@ -63,6 +63,7 @@ type containerState struct{ object, key, media bool }
 
 // jsonFilter never buffers an entire string. Escapes and redaction survive chunks.
 type jsonFilter struct {
+	credential                                      func(string) bool
 	media                                           bool
 	stack                                           []containerState
 	started, invalid, quoted, escaped, isKey        bool
@@ -78,8 +79,15 @@ type jsonFilter struct {
 	redacted, omitted                               bool
 }
 
+func (f *jsonFilter) isCredential() bool {
+	if f.credential != nil {
+		return f.credential(f.key)
+	}
+	return sensitive(f.key)
+}
+
 func (f *jsonFilter) valueMode() string {
-	if sensitive(f.key) {
+	if f.isCredential() {
 		return "secret"
 	}
 	if !f.media {
@@ -242,7 +250,7 @@ func (f *jsonFilter) Write(p []byte) []byte {
 			}
 			f.started = true
 		}
-		if sensitive(f.key) && b != '"' && b != ':' && b != ' ' && b != '\n' && b != '\r' && b != '\t' && b != ',' && b != '}' && b != ']' {
+		if f.isCredential() && b != '"' && b != ':' && b != ' ' && b != '\n' && b != '\r' && b != '\t' && b != ',' && b != '}' && b != ']' {
 			_, _ = out.WriteString("\"[REDACTED]\"")
 			f.redacted = true
 			f.key = ""
@@ -322,6 +330,7 @@ type bodyFilter struct {
 	invalid          bool
 	dataPrefix       []byte
 	dataReady        bool
+	redacted         bool
 	knownMedia       bool
 	contentType      string
 	binary           bool
@@ -384,7 +393,8 @@ func (f *bodyFilter) writeText(p []byte) []byte {
 					_ = out.WriteByte('\n')
 					f.omitted = f.omitted || f.json.omitted
 					f.invalid = f.invalid || (f.json.started && !f.json.validator.complete()) || f.json.invalid
-					f.json = jsonFilter{media: f.json.media}
+					f.redacted = f.redacted || f.json.redacted
+					f.json = jsonFilter{media: f.json.media, credential: f.json.credential}
 				} else if strings.HasPrefix(prefix, "event:") || strings.HasPrefix(prefix, "id:") || strings.HasPrefix(prefix, "retry:") {
 					field, v, _ := strings.Cut(prefix, ":")
 					v = strings.TrimSpace(v)

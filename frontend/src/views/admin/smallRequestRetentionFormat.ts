@@ -26,6 +26,7 @@ export function retentionDistribution(distribution: Record<string, number>) {
 const replayReasons = new Set([
   'external_context:previous_response_id', 'external_context:file_id', 'external_context:cachedcontent',
   'external_context:cached_content', 'external_context:encrypted_content', 'client_delivery_incomplete', 'stream_terminal_missing',
+  'request_credentials_redacted',
 ])
 const settlements = new Set(['settled', 'already_settled', 'failed', 'not_billed', 'not_billed_no_usage_row'])
 export function retentionReasonKey(reason: string): string | null {

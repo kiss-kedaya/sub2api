@@ -170,6 +170,46 @@ func inspectSmallBody(v any, reasons map[string]bool) bool {
 	}
 	return media
 }
+
+// Explicit credential fields can be replaced without erasing opaque business
+// keys, protocol reasoning signatures, or normal token/usage fields.
+func smallBodyCredential(name string) bool {
+	if name == "" {
+		return false
+	}
+	name = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(name, "-", ""), "_", ""))
+	switch name {
+	case "authorization", "proxyauthorization", "cookie", "setcookie", "apikey", "xapikey", "xgoogapikey",
+		"accesstoken", "refreshtoken", "idtoken", "authtoken", "bearertoken", "sessiontoken", "accesskey", "accesskeyid",
+		"secretkey", "secretaccesskey", "awsaccesskeyid", "awssecretaccesskey", "clientsecret", "password", "privatekey", "credentials":
+		return true
+	default:
+		return false
+	}
+}
+
+func sanitizeSmallBody(body []byte, contentType string) (contents []byte, changed, ok bool) {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return body, false, true
+	}
+	// In this worker the body is already bounded and decoded. Match the
+	// payload when a relay mislabels a JSON response, without retaining raw
+	// unrecognized response bodies that have no structured filtering boundary.
+	if json.Valid(body) {
+		contentType = "application/json"
+	} else if !strings.Contains(strings.ToLower(contentType), "text/event-stream") {
+		contentType = ""
+	}
+	f := newBodyFilter(contentType, false)
+	f.json.credential = smallBodyCredential
+	contents = f.Write(body)
+	end, reason := f.End()
+	if reason != "" || !f.sse && !f.json.started {
+		return nil, false, false
+	}
+	return append(contents, end...), f.redacted || f.json.redacted, true
+}
+
 func prepareSmallExchange(e SmallExchange, credentialHeader func(string) bool) (preparedSmallExchange, string) {
 	p := preparedSmallExchange{SmallExchange: e, Bucket: e.StartedAt.UTC().Truncate(time.Hour)}
 	decoded, err := decodeSmallResponse(e.ResponseBody, e.ResponseHeaders.Get("Content-Encoding"))
@@ -180,7 +220,6 @@ func prepareSmallExchange(e SmallExchange, credentialHeader func(string) bool) (
 		return p, "response_too_large"
 	}
 	e.ResponseBody = decoded
-	p.ResponseBody = decoded
 	var body any
 	if json.Unmarshal(e.RequestBody, &body) != nil {
 		return p, "unsupported_body"
@@ -188,6 +227,21 @@ func prepareSmallExchange(e SmallExchange, credentialHeader func(string) bool) (
 	reasons := map[string]bool{}
 	if inspectSmallBody(body, reasons) {
 		return p, "unsupported_body"
+	}
+	request, requestRedacted, requestOK := sanitizeSmallBody(e.RequestBody, "application/json")
+	response, _, responseOK := sanitizeSmallBody(e.ResponseBody, e.ResponseHeaders.Get("Content-Type"))
+	if !requestOK || !responseOK {
+		return p, "unsupported_body"
+	}
+	if len(request) > SmallRequestLimit {
+		return p, "request_too_large"
+	}
+	if len(response) > SmallResponseLimit {
+		return p, "response_too_large"
+	}
+	p.RequestBody, p.ResponseBody = request, response
+	if requestRedacted {
+		reasons["request_credentials_redacted"] = true
 	}
 	if e.Partial {
 		reasons["client_delivery_incomplete"] = true
@@ -207,8 +261,8 @@ func prepareSmallExchange(e SmallExchange, credentialHeader func(string) bool) (
 	p.RequestHeaders.Del("Content-Encoding")
 	delete(p.RequestHeaders, "content-encoding")
 	delete(p.ResponseHeaders, "content-encoding")
-	p.RequestHeaderBlob, p.RequestBodyBlob = makeSmallBlob(smallStableHeaders(p.RequestHeaders)), makeSmallBlob(e.RequestBody)
-	p.ResponseHeaderBlob, p.ResponseBodyBlob = makeSmallBlob(smallStableHeaders(p.ResponseHeaders)), makeSmallBlob(e.ResponseBody)
+	p.RequestHeaderBlob, p.RequestBodyBlob = makeSmallBlob(smallStableHeaders(p.RequestHeaders)), makeSmallBlob(p.RequestBody)
+	p.ResponseHeaderBlob, p.ResponseBodyBlob = makeSmallBlob(smallStableHeaders(p.ResponseHeaders)), makeSmallBlob(p.ResponseBody)
 	fingerprint, _ := json.Marshal([]any{e.UserID, e.APIKeyID, e.Method, p.Path, e.Usage.Model, p.RequestHeaderBlob.Hash, p.RequestBodyBlob.Hash})
 	p.Fingerprint = hashSmall(fingerprint)
 	p.ResponseFingerprint = hashSmall([]byte(fmt.Sprintf("%d:%s:%s", e.Status, p.ResponseHeaderBlob.Hash, p.ResponseBodyBlob.Hash)))

@@ -80,7 +80,7 @@
           </div>
         </form>
         <p v-if="filters.from || filters.to" class="text-xs text-muted">{{ t('admin.requestCapture.small.timeRange') }}: {{ retentionTime(filters.from) }} → {{ retentionTime(filters.to) }}</p>
-        <UTable :data="records" :columns="columns" :loading="loading" :ui="{ root: 'max-w-full overflow-x-auto rounded-lg border border-default', base: 'min-w-[1080px]', tr: 'cursor-pointer', th: 'bg-elevated/50 text-xs', td: 'align-top py-4' }" @select="(_event, row) => open(row.original.id)">
+        <UTable :data="records" :columns="columns" :loading="loading" :ui="{ root: 'max-w-full overflow-x-auto rounded-lg border border-default', base: 'min-w-[1080px]', tr: 'cursor-pointer', th: 'bg-elevated/50 text-xs', td: 'align-top py-4' }" @select="selectRecord">
           <template #request-cell="{ row: { original: record } }">
             <UButton variant="link" color="neutral" class="p-0 text-left text-xs tabular-nums" :data-testid="'small-detail-' + record.id" @click.stop="open(record.id)">{{ retentionTime(record.last_seen) }}</UButton>
             <p class="mt-1 max-w-44 truncate font-mono text-xs text-muted" :title="record.data.path">{{ record.data.path }}</p>
@@ -176,7 +176,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, shallowRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { TableColumn, SelectItem } from '@nuxt/ui'
+import type { TableColumn, SelectItem, TableRow } from '@nuxt/ui'
 import PageToolbar from '@/components/layout/PageToolbar.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
@@ -245,6 +245,9 @@ async function load() {
     const [summary, result] = await Promise.all([api.getSmallStats(), api.listSmallRecords(params)])
     if (!disposed) { stats.value = summary; records.value = result.items; more.value = result.has_more }
   } catch (err) { report(err) } finally { loading.value = false }
+}
+function selectRecord(_event: Event, row: TableRow<api.SmallRecord>) {
+  void open(row.original.id)
 }
 async function open(id: number) {
   const version = ++detailVersion
