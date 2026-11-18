@@ -135,10 +135,12 @@ func (s *OpenAIGatewayService) forwardDeepSeekHostedSearch(ctx context.Context, 
 		// Replaying old hosted history (including tool_choice=none) is only a
 		// request normalization. Preserve the ordinary response path exactly.
 		innerCtx := context.WithValue(ctx, deepSeekHostedSearchSkipContextKey{}, true)
-		shadow := c.Copy()
-		shadow.Request = c.Request.Clone(innerCtx)
-		shadow.Writer = c.Writer
-		result, forwardErr := s.Forward(innerCtx, shadow, account, prepared)
+		// Normalization writes the actual response, so its committed marker must
+		// remain on the context the outer handler will inspect.
+		originalRequest := c.Request
+		c.Request = c.Request.Clone(innerCtx)
+		defer func() { c.Request = originalRequest }()
+		result, forwardErr := s.Forward(innerCtx, c, account, prepared)
 		return result, true, forwardErr
 	}
 	state := &deepSeekHostedSearchState{c: c, stream: gjson.GetBytes(body, "stream").Bool(), model: gjson.GetBytes(body, "model").String(), started: time.Now(), header: make(http.Header), callIDs: make(map[string]struct{}), skipFetchTool: !injectTools}

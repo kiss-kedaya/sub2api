@@ -1863,6 +1863,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
 		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			if openAIStreamSilenceHasSuccessfulTerminal(body) {
+				return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
+			}
 			writeOpenAIStreamSilenceError(c, false)
 			usage := s.openAIStreamSilenceUsage(body)
 			return &openaiNonStreamingResult{OpenAIUsage: &usage, usage: &usage, nonBillableUpstreamError: true}, openAIStreamSilenceError(err)

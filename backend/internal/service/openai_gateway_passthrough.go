@@ -460,7 +460,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if resp.StatusCode >= 400 {
 			// Peek only to identify an invalid task. Restore the body so the existing
 			// passthrough error handling sees the same response after recovery fails.
-			probeBody := s.readUpstreamErrorBody(resp)
+			probeBody, readErr := s.readUpstreamErrorBodyWithError(resp)
+			if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
+				_ = resp.Body.Close()
+				return s.openAIStreamSilenceHTTPError(c, resp, probeBody, readErr, reqModel, reqModel, upstreamPassthroughModel, reqStream, startTime)
+			}
 			_ = resp.Body.Close()
 			if clientErr := clientCtx.Err(); clientErr != nil {
 				// The client left while the error body was being read. The upstream
@@ -2763,7 +2767,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	ensureResponseFailedTerminal()
 	if err := documentScanner.Err(); err != nil {
-		if errors.Is(err, errOpenAIUpstreamWaitLimit) && !clientDisconnected && !((sawDone || sawTerminalEvent) && !sawFailedEvent) {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) && !clientDisconnected && !failureDelivered && !sawFailedEvent && !(sawDone || sawTerminalEvent) {
 			nonBillableUpstreamError = true
 			stopKeepalive()
 			flushPendingOutput()
@@ -2855,6 +2859,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
 		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
+			if openAIStreamSilenceHasSuccessfulTerminal(body) {
+				return s.handlePassthroughSSEToJSON(resp, c, account, body, originalModel, mappedModel)
+			}
 			writeOpenAIStreamSilenceError(c, false)
 			usage := s.openAIStreamSilenceUsage(body)
 			return &openaiNonStreamingResultPassthrough{OpenAIUsage: &usage, usage: &usage, nonBillableUpstreamError: true}, openAIStreamSilenceError(err)

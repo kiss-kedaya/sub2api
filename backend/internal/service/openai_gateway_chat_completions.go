@@ -365,7 +365,10 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 
 	// 8. Handle error response with failover
 	if resp.StatusCode >= 400 {
-		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		respBody, upstreamMsg, readErr := s.readOpenAIUpstreamErrorWithError(resp)
+		if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
+			return s.openAIStreamSilenceHTTPError(c, resp, respBody, readErr, originalModel, billingModel, upstreamModel, clientStream, startTime)
+		}
 		if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 			expectedTaskID := account.GetCredential("task_id")
 			if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {

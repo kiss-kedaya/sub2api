@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -615,16 +617,21 @@ func openAIUpstreamErrorBodyReadLimitForConfig(cfg *config.Config) int64 {
 	return limit
 }
 
+// Non-OpenAI profiles retain their existing partial-error-body policy.
 func (s *OpenAIGatewayService) readUpstreamErrorBody(resp *http.Response) []byte {
+	body, _ := s.readUpstreamErrorBodyWithError(resp)
+	return body
+}
+
+func (s *OpenAIGatewayService) readUpstreamErrorBodyWithError(resp *http.Response) ([]byte, error) {
 	if resp == nil || resp.Body == nil {
-		return nil
+		return nil, nil
 	}
 	cfg := (*config.Config)(nil)
 	if s != nil {
 		cfg = s.cfg
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, openAIUpstreamErrorBodyReadLimitForConfig(cfg)))
-	return body
+	return io.ReadAll(io.LimitReader(resp.Body, openAIUpstreamErrorBodyReadLimitForConfig(cfg)))
 }
 
 func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, resp *http.Response, account *Account, responseBody []byte, canonicalModel ...string) bool {
@@ -642,7 +649,11 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	requestBody []byte,
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
-	body := s.readUpstreamErrorBody(resp)
+	body, readErr := s.readUpstreamErrorBodyWithError(resp)
+	if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
+		model := strings.TrimSpace(gjson.GetBytes(requestBody, "model").String())
+		return s.openAIStreamSilenceHTTPError(c, resp, body, readErr, model, model, model, gjson.GetBytes(requestBody, "stream").Bool(), time.Now())
+	}
 	// Opt-in forensic dump. This is the handler the Responses gateway uses, so
 	// the passthrough hook alone missed every /v1/responses failure — the exact
 	// requests being diagnosed never produced a file.
@@ -879,7 +890,14 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	writeError compatErrorWriter,
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
-	body := s.readUpstreamErrorBody(resp)
+	body, readErr := s.readUpstreamErrorBodyWithError(resp)
+	if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
+		model := ""
+		if len(requestedModel) > 0 {
+			model = requestedModel[0]
+		}
+		return s.openAIStreamSilenceHTTPError(c, resp, body, readErr, model, model, model, false, time.Now())
+	}
 	defer GuardUpstreamFinancialError(c, resp.StatusCode, body)()
 	body = s.redactAgentIdentitySensitiveBody(context.Background(), account, body)
 	if IsGlobalIPBlacklistResponse(body) && (account == nil || account.Platform != PlatformGrok || resp.StatusCode == http.StatusForbidden) {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -27,8 +28,13 @@ type openAIStreamSilenceReadError struct {
 func (e *openAIStreamSilenceReadError) Error() string { return errOpenAIStreamSilenceLimit.Error() }
 func (e *openAIStreamSilenceReadError) Unwrap() error { return errOpenAIStreamSilenceLimit }
 
+type openAIStreamSilenceProgress struct {
+	lastOutput time.Time
+	finished   bool
+}
+
 // One timer follows activity, not total duration. Its callback never touches Gin
-// or the reader's line state; Close and expiry serialize all cancellation/cleanup.
+// or the reader's line state; cleanup never holds the state mutex across Close.
 type openAIStreamSilenceBody struct {
 	io.ReadCloser
 	mu          sync.Mutex
@@ -37,10 +43,10 @@ type openAIStreamSilenceBody struct {
 	cancel      context.CancelCauseFunc
 	timer       *time.Timer
 	limit       time.Duration
-	lastOutput  time.Time
+	progress    atomic.Pointer[openAIStreamSilenceProgress]
 	finished    bool
 	expired     bool
-	bodyClosed  bool
+	closeOnce   sync.Once
 	closeErr    error
 	lineStarted bool
 	comment     bool
@@ -48,7 +54,8 @@ type openAIStreamSilenceBody struct {
 }
 
 func newOpenAIStreamSilenceBody(ctx context.Context, cancel context.CancelCauseFunc, body io.ReadCloser, onLimit func()) *openAIStreamSilenceBody {
-	b := &openAIStreamSilenceBody{ReadCloser: body, ctx: ctx, cancel: cancel, limit: deepSeekStreamSilenceLimit, lastOutput: time.Now(), failure: &openAIStreamSilenceReadError{onLimit: onLimit}}
+	b := &openAIStreamSilenceBody{ReadCloser: body, ctx: ctx, cancel: cancel, limit: deepSeekStreamSilenceLimit, failure: &openAIStreamSilenceReadError{onLimit: onLimit}}
+	b.progress.Store(&openAIStreamSilenceProgress{lastOutput: time.Now()})
 	if c := OpsGinContextFrom(ctx); c != nil && c.Request != nil {
 		b.clientCtx = c.Request.Context()
 	}
@@ -60,33 +67,51 @@ func newOpenAIStreamSilenceBody(ctx context.Context, cancel context.CancelCauseF
 
 func (b *openAIStreamSilenceBody) expire() {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.finished || b.ctx.Err() != nil || (b.clientCtx != nil && b.clientCtx.Err() != nil) {
-		return
-	}
-	if remaining := b.limit - time.Since(b.lastOutput); remaining > 0 {
-		b.timer.Reset(remaining)
-		return
+	for {
+		progress := b.progress.Load()
+		if b.finished || progress == nil || progress.finished || b.ctx.Err() != nil || (b.clientCtx != nil && b.clientCtx.Err() != nil) {
+			b.mu.Unlock()
+			return
+		}
+		if remaining := b.limit - time.Since(progress.lastOutput); remaining > 0 {
+			b.timer.Reset(remaining)
+			b.mu.Unlock()
+			return
+		}
+		// Claim this exact observation. If Read published output or EOF while
+		// expiry was deciding, recheck it instead of cancelling a completed read.
+		if b.progress.CompareAndSwap(progress, nil) {
+			break
+		}
 	}
 	b.expired, b.finished = true, true
 	b.cancel(errOpenAIStreamSilenceLimit)
-	b.closeBody()
+	b.mu.Unlock()
+	// A decoder may wait for Read to return; Read needs mu to finish.
+	_ = b.closeBody()
 }
 
-// closeBody requires mu. A timed-out read and its caller may both close the body.
-func (b *openAIStreamSilenceBody) closeBody() {
-	if !b.bodyClosed {
-		b.bodyClosed = true
-		b.closeErr = b.ReadCloser.Close()
-	}
+func (b *openAIStreamSilenceBody) closeBody() error {
+	b.closeOnce.Do(func() { b.closeErr = b.ReadCloser.Close() })
+	return b.closeErr
 }
 
 func (b *openAIStreamSilenceBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
-	b.mu.Lock()
-	if !b.finished && b.hasOutput(p[:n]) {
-		b.lastOutput = time.Now()
+	// Publish returned output/EOF before contending with the timer. Otherwise a
+	// completed read queued behind expire could be mistaken for provider silence.
+	if output := b.hasOutput(p[:n]); output || err != nil {
+		for previous := b.progress.Load(); previous != nil; previous = b.progress.Load() {
+			progress := &openAIStreamSilenceProgress{lastOutput: previous.lastOutput, finished: err != nil}
+			if output {
+				progress.lastOutput = time.Now()
+			}
+			if b.progress.CompareAndSwap(previous, progress) {
+				break
+			}
+		}
 	}
+	b.mu.Lock()
 	if err != nil {
 		b.finished = true
 		b.timer.Stop()
@@ -123,12 +148,11 @@ func (b *openAIStreamSilenceBody) hasOutput(p []byte) bool {
 
 func (b *openAIStreamSilenceBody) Close() error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.finished = true
 	b.timer.Stop()
 	b.cancel(nil)
-	b.closeBody()
-	return b.closeErr
+	b.mu.Unlock()
+	return b.closeBody()
 }
 
 func recordOpenAIStreamSilenceLimit(ctx context.Context, account *Account) {
@@ -184,6 +208,17 @@ func writeOpenAIStreamSilenceError(c *gin.Context, stream bool) {
 	} else {
 		c.Data(http.StatusGatewayTimeout, "application/json", openAIUpstreamWaitLimitFailoverBody)
 	}
+}
+
+// A terminal success, not EOF, completes a provider's SSE generation.
+func openAIStreamSilenceHasSuccessfulTerminal(body []byte) bool {
+	kind, _, ok := extractOpenAISSETerminalEvent(string(body))
+	return ok && (kind == "response.completed" || kind == "response.done")
+}
+
+func (s *OpenAIGatewayService) openAIStreamSilenceHTTPError(c *gin.Context, resp *http.Response, body []byte, err error, model, billingModel, upstreamModel string, stream bool, start time.Time) (*OpenAIForwardResult, error) {
+	writeOpenAIStreamSilenceError(c, stream)
+	return openAIStreamSilenceResult(resp, s.openAIStreamSilenceUsage(body), model, billingModel, upstreamModel, stream, start), openAIStreamSilenceError(err)
 }
 
 func (s *OpenAIGatewayService) openAIStreamSilenceUsage(body []byte) OpenAIUsage {

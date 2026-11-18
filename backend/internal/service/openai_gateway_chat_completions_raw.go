@@ -228,7 +228,10 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 
 	// 7. Handle error response with failover
 	if resp.StatusCode >= 400 {
-		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		respBody, upstreamMsg, readErr := s.readOpenAIUpstreamErrorWithError(resp)
+		if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
+			return s.openAIStreamSilenceHTTPError(c, resp, respBody, readErr, originalModel, billingModel, upstreamModel, clientStream, startTime)
+		}
 		if (account.Platform != PlatformGrok || resp.StatusCode == http.StatusForbidden) && IsGlobalIPBlacklistResponse(respBody) {
 			MarkGlobalIPBlacklistRejection(c)
 			setOpsUpstreamError(c, resp.StatusCode, GlobalIPBlacklistSessionBlockedMessage(), "")
