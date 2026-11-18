@@ -625,6 +625,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					return nil, s.handleErrorResponsePassthrough(ctx, compactResp, c, account, body, compactBody)
 				}
 				_ = resp.Body.Close()
+				if result != nil && result.nonBillableUpstreamError {
+					usage = result.usage
+					nonBillableUpstreamError = true
+					return buildForwardResult(), handleErr
+				}
 				return nil, handleErr
 			}
 			usage = result.usage
@@ -2266,11 +2271,12 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	capacityFailoverSuppressedLogged := false
 	failedMessage := ""
 	clientOutputStarted := false
-	codexFailureTerminal := account != nil && account.Platform == PlatformOpenAI
+	codexFailureTerminal := account != nil && account.IsOpenAICompatible() && account.Platform != PlatformGrok
 	failureDelivered := false
 	suppressCurrentEvent := false
 	responseFailedPending := false
 	nonBillableUpstreamError := false
+	answerSeen := false
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
@@ -2427,12 +2433,20 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			dataBytes := []byte(data)
 			trimmedData := strings.TrimSpace(data)
 			frame := parseOpenAISSEDataFrame(dataBytes, pendingSSEEventType)
+			if frame.eventType == "" && openAIExplicitUpstreamError(frame.root, "") {
+				frame.eventType = "error"
+			}
 			nativeReasoning.ObserveFrame(frame)
 			rawEventType := frame.eventType
+			answerFrame := responsesFrameHasAnswer(frame)
+			successAfterError := (rawEventType == "response.completed" || rawEventType == "response.done") &&
+				!clientDisconnected && (answerSeen || answerFrame) && !openAIExplicitUpstreamError(frame.root, rawEventType) &&
+				(frame.root.Get("response.status").String() == "" || frame.root.Get("response.status").String() == "completed")
 			switch rawEventType {
 			case "error", "response.failed", "response.completed", "response.done":
-				// Raw upstream terminal events only; gateway-made frames never pass here.
-				observeDeepSeekHostedUpstreamEvent(ctx, rawEventType)
+				if rawEventType == "error" || rawEventType == "response.failed" || !nonBillableUpstreamError || successAfterError {
+					observeDeepSeekHostedUpstreamEvent(ctx, rawEventType)
+				}
 			}
 			observer.ObserveOpenAIFrame(frame)
 			if refusalErr := grokModerationRefusalProtocolError(account, dataBytes); refusalErr != nil &&
@@ -2494,8 +2508,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
 				continue
 			}
-			if codexFailureTerminal && sawBareError && !sawResponseFailed &&
-				(eventType == "response.completed" || eventType == "response.done") {
+			if codexFailureTerminal && sawBareError && !sawResponseFailed && successAfterError {
 				sawBareError = false
 				sawFailedEvent = false
 				responseFailedPending = false
@@ -2506,7 +2519,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				failedMessage = ""
 			}
 			if codexFailureTerminal && sawBareError && !sawResponseFailed && eventType != "response.failed" {
-				suppressCurrentEvent = true
+				suppressCurrentEvent = eventType == "error" || eventType == "response.completed" || eventType == "response.done" || frame.isDone()
+			}
+			if !clientDisconnected && !suppressCurrentEvent && answerFrame {
+				answerSeen = true
 			}
 			if !capacityFailoverSuppressedLogged && account != nil && account.Platform == PlatformOpenAI &&
 				(eventType == "error" || eventType == "response.failed") &&
@@ -2886,8 +2902,12 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	// Some upstreams (e.g. other sub2api instances) may return SSE even when
 	// stream=false was requested. Without this conversion the client would
 	// receive raw SSE text or a terminal event with empty output.
-	if isEventStreamResponse(resp.Header) {
+	if isEventStreamResponse(resp.Header) && (!gjson.ValidBytes(body) || bodyHasSSEFraming(body)) {
 		return s.handlePassthroughSSEToJSON(resp, c, account, body, originalModel, mappedModel)
+	}
+	nonBillableUpstreamError := !gjson.GetBytes(body, "choices.0").Exists() && openAIExplicitUpstreamError(gjson.ParseBytes(body), "")
+	if nonBillableUpstreamError {
+		observeDeepSeekHostedUpstreamEvent(ctx, "error")
 	}
 	if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, body); refusalErr != nil {
 		return nil, refusalErr
@@ -2947,7 +2967,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	return &openaiNonStreamingResultPassthrough{
 		OpenAIUsage:              usage,
 		usage:                    usage,
-		nonBillableUpstreamError: openAIExplicitUpstreamError(gjson.ParseBytes(body), ""),
+		nonBillableUpstreamError: nonBillableUpstreamError,
 		responseID:               extractOpenAIResponseIDFromJSONBytes(body),
 		imageCount:               countOpenAIResponseImageOutputsFromJSONBytes(body),
 		imageOutputSizes:         collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
@@ -2960,12 +2980,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 // rewrite model fields back to the original requested model.
 func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c *gin.Context, account *Account, body []byte, originalModel string, mappedModel string) (*openaiNonStreamingResultPassthrough, error) {
 	bodyText := string(body)
-	terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
-	if terminalOK {
-		// Preserve the upstream source before error mapping can discard this round's result.
-		observeDeepSeekHostedUpstreamEvent(c.Request.Context(), terminalType)
-	}
-	if terminalOK && (terminalType == "response.failed" || terminalType == "error") {
+	terminalType, terminalPayload, nonBillableUpstreamError := inspectOpenAIBufferedSSE(c.Request.Context(), bodyText)
+	usage := s.parseSSEUsageFromBody(bodyText)
+	if terminalType == "response.failed" || terminalType == "error" {
 		if refusalErr := s.writeGrokModerationRefusalProtocolError(resp, c, account, terminalPayload); refusalErr != nil {
 			return nil, refusalErr
 		}
@@ -2980,11 +2997,16 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			return nil, failoverErr
 		}
 		defer GuardUpstreamFinancialError(c, 0, terminalPayload)()
-		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
+		var result *openaiNonStreamingResultPassthrough
+		if nonBillableUpstreamError && openAIUsageHasTokens(usage) {
+			result = &openaiNonStreamingResultPassthrough{
+				OpenAIUsage: usage, usage: usage, nonBillableUpstreamError: true,
+			}
+		}
+		return result, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
 	}
 	finalResponse, ok := extractCodexFinalResponse(bodyText)
 
-	usage := s.parseSSEUsageFromBody(bodyText)
 	if ok {
 		if parsedUsage, parsed := extractOpenAIUsageFromJSONBytes(finalResponse); parsed {
 			*usage = parsedUsage
@@ -3048,7 +3070,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 	return &openaiNonStreamingResultPassthrough{
 		OpenAIUsage:              usage,
 		usage:                    usage,
-		nonBillableUpstreamError: openAIExplicitUpstreamError(gjson.ParseBytes(body), ""),
+		nonBillableUpstreamError: nonBillableUpstreamError,
 		responseID:               extractOpenAIResponseIDFromJSONBytes(body),
 		imageCount:               countOpenAIImageOutputsFromSSEBody(bodyText),
 		imageOutputSizes:         collectOpenAIImageOutputSizesFromSSEBody(bodyText),

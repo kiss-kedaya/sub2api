@@ -343,6 +343,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	clientDisconnected := false
 	clientOutputStarted := false
 	nonBillableUpstreamError := false
+	answerSeen := false
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
@@ -424,13 +425,20 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			terminal.ObserveDataLine(trimmedPayload)
 			if trimmedPayload != "[DONE]" {
 				root := gjson.Parse(payload)
-				if openAIExplicitUpstreamError(root, pendingSSEEventType) {
+				choices := root.Get("choices").Array()
+				if !clientDisconnected && !watch.Gone() {
+					for _, choice := range choices {
+						answerSeen = answerSeen || choice.Get("delta.content").String() != ""
+						for _, call := range choice.Get("delta.tool_calls").Array() {
+							answerSeen = answerSeen || call.Get("function.name").String() != "" || call.Get("function.arguments").String() != ""
+						}
+					}
+				}
+				if len(choices) == 0 && openAIExplicitUpstreamError(root, pendingSSEEventType) {
 					nonBillableUpstreamError = true
-				} else if root.Get("type").String() == "response.completed" || root.Get("type").String() == "response.done" {
-					nonBillableUpstreamError = false
-				} else {
-					for _, choice := range root.Get("choices").Array() {
-						if choice.Get("finish_reason").String() != "" {
+				} else if answerSeen {
+					for _, choice := range choices {
+						if chatFinishReasonIsSuccess(choice.Get("finish_reason").String()) {
 							nonBillableUpstreamError = false
 							break
 						}
@@ -598,13 +606,9 @@ func isOpenAIChatUsageOnlyStreamChunk(payload string) bool {
 	return choices.Exists() && choices.IsArray() && len(choices.Array()) == 0
 }
 
-// extractCCStreamUsage 从单个 CC 流式 chunk 的 payload 中提取 usage 字段。
+// extractCCStreamUsageFromRoot 从单个 CC 流式 chunk（已解析）中提取 usage 字段。
 // CC 协议中 usage 仅出现在末尾 chunk（且仅当 include_usage 生效时），
 // 但上游可能在多个 chunk 中重复——总是用最新值。
-func extractCCStreamUsage(payload string, headers http.Header) *OpenAIUsage {
-	return extractCCStreamUsageFromRoot(gjson.Parse(payload), headers)
-}
-
 func extractCCStreamUsageFromRoot(root gjson.Result, headers http.Header) *OpenAIUsage {
 	usageResult := root.Get("usage")
 	if !usageResult.Exists() || !usageResult.IsObject() {

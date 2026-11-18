@@ -50,7 +50,7 @@ func TestGeminiForwardNative_CollectedStreamErrorIsFree(t *testing.T) {
 	svc.tokenProvider = &GeminiTokenProvider{}
 	c, _ := newGeminiNativeTestContext(t)
 	result, err := svc.ForwardNative(context.Background(), c, account, "gemini-3.7-flash", "generateContent", false, geminiSignalTestRequest())
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "upstream response failed")
 	require.NotNil(t, result)
 	require.Equal(t, ClaudeUsage{InputTokens: 10, OutputTokens: 2}, result.Usage)
 	requireGeminiSignalBilling(t, result, true)
