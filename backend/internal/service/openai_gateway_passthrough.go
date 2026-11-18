@@ -2774,7 +2774,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	ensureResponseFailedTerminal()
 	if err := documentScanner.Err(); err != nil {
-		if errors.Is(err, errOpenAIUpstreamWaitLimit) && !clientDisconnected && !failureDelivered && !sawFailedEvent && !(sawDone || sawTerminalEvent) {
+		if errors.Is(err, errOpenAIUpstreamWaitLimit) && !clientDisconnected && !failureDelivered && !sawFailedEvent && !sawDone && !sawTerminalEvent {
 			nonBillableUpstreamError = true
 			stopKeepalive()
 			flushPendingOutput()
