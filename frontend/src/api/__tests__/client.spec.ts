@@ -1,17 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import axios from 'axios'
 import type { AxiosInstance } from 'axios'
+import { getAppRuntimeContext } from '@runtime/context'
 
 // 需要在导入 client 之前设置 mock
 vi.mock('@/i18n', () => ({
   getLocale: () => 'zh-CN',
 }))
+vi.mock('@runtime/context', () => ({ getAppRuntimeContext: vi.fn() }))
 
 describe('API Client', () => {
   let apiClient: AxiosInstance
 
   beforeEach(async () => {
     localStorage.clear()
+    vi.mocked(getAppRuntimeContext).mockReset()
     sessionStorage.clear()
     window.history.replaceState({}, '', '/')
     // 每次测试重新导入以获取干净的模块状态
@@ -276,6 +279,25 @@ describe('API Client', () => {
         retryAfter: '12',
       })
     })
+
+    it('preserves Retry-After through the cookieSession early return', async () => {
+      vi.mocked(getAppRuntimeContext).mockReturnValue({ cookieSession: true } as NonNullable<ReturnType<typeof getAppRuntimeContext>>)
+      apiClient.defaults.adapter = vi.fn().mockRejectedValue({
+        response: {
+          status: 429,
+          data: { code: 'RATE_LIMITED', message: 'Too many requests' },
+          headers: new axios.AxiosHeaders({ 'Retry-After': '12' }),
+        },
+        config: { url: '/usage' },
+      })
+      await expect(apiClient.get('/usage')).rejects.toMatchObject({
+        status: 429,
+        code: 'RATE_LIMITED',
+        retryAfter: '12',
+      })
+      vi.mocked(getAppRuntimeContext).mockReset()
+    })
+
 
     it('code!=0 时拒绝并返回结构化错误', async () => {
       const adapter = vi.fn().mockResolvedValue({
