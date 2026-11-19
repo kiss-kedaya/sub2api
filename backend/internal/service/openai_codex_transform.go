@@ -300,13 +300,25 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	// callers must also keep the guidance in input as developer (notably
 	// Responses JSON object mode), while Chat Completions compatibility can
 	// omit text-only messages after promoting them losslessly.
-	if extractSystemMessagesFromInput(reqBody, opts.OmitPromotedSystemMessagesFromInput) {
-		result.Modified = true
-	}
-
-	// instructions 处理逻辑：根据是否是 Codex CLI 分别调用不同方法
-	if !opts.SkipDefaultInstructions && applyInstructions(reqBody, opts.IsCodexCLI) {
-		result.Modified = true
+	cacheablePrefix := !opts.IsCompact && usesGPT62CodexCachePrefix(normalizedModel)
+	if cacheablePrefix {
+		// Codex needs developer roles, but mirroring input guidance into instructions
+		// makes it an uncached suffix on GPT-6.2 and duplicates the caller's input.
+		if input, ok := reqBody["input"].([]any); ok {
+			for _, item := range input {
+				if msg, ok := item.(map[string]any); ok && msg["role"] == "system" {
+					msg["role"] = "developer"
+					result.Modified = true
+				}
+			}
+		}
+	} else {
+		if extractSystemMessagesFromInput(reqBody, opts.OmitPromotedSystemMessagesFromInput) {
+			result.Modified = true
+		}
+		if !opts.SkipDefaultInstructions && applyInstructions(reqBody, opts.IsCodexCLI) {
+			result.Modified = true
+		}
 	}
 	if isCodexSparkModel(normalizedModel) && applyCodexSparkImageUnsupportedInstructions(reqBody) {
 		result.Modified = true
@@ -352,6 +364,20 @@ func applyCodexOAuthTransformWithOptions(reqBody map[string]any, opts codexOAuth
 	}
 
 	// 输入过滤之后再看最终历史。compact 的报文形态不动。
+	if cacheablePrefix && !opts.SkipDefaultInstructions && isInstructionsEmpty(reqBody) {
+		previous, _ := reqBody["previous_response_id"].(string)
+		if strings.TrimSpace(previous) == "" {
+			if prependCodexDeveloperPrefix(reqBody, defaultCodexSynthInstructions(normalizedModel)) {
+				result.Modified = true
+			}
+		}
+		// Keep the legacy Codex wire field without sending a second prompt.
+		if _, ok := reqBody["instructions"].(string); !ok {
+			ensureCodexOAuthInstructionsField(reqBody)
+			result.Modified = true
+		}
+	}
+
 	if !opts.IsCompact && ensureOpenAIOAuthWebSearchToolForHistory(reqBody, opts.ResponsesLite) {
 		result.Modified = true
 	}
@@ -1493,6 +1519,47 @@ func applyCodexClientMetadata(reqBody map[string]any, account *Account) bool {
 	default:
 		return false
 	}
+}
+
+// usesGPT62CodexCachePrefix keys off the outbound model, not the requested alias.
+func usesGPT62CodexCachePrefix(model string) bool {
+	switch canonicalizeOpenAIModelAliasSpelling(model) {
+	case "gpt-6.2", "gpt-6.2-sol", "gpt-6.2-astra":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasCodexDeveloperPrefix(input []any, text string) bool {
+	if len(input) == 0 {
+		return false
+	}
+	msg, ok := input[0].(map[string]any)
+	if !ok || msg["role"] != "developer" {
+		return false
+	}
+	existing, lossless := extractLosslessTextFromContent(msg["content"])
+	return lossless && existing == text
+}
+
+func prependCodexDeveloperPrefix(reqBody map[string]any, text string) bool {
+	input, ok := reqBody["input"].([]any)
+	if hasCodexDeveloperPrefix(input, text) {
+		return false
+	}
+	if !ok && reqBody["input"] != nil {
+		return false // Preserve malformed input for the existing validation path.
+	}
+	message := map[string]any{
+		"type":    "message",
+		"role":    "developer",
+		"content": []any{map[string]any{"type": "input_text", "text": text}},
+	}
+	prefix := make([]any, 1, len(input)+1)
+	prefix[0] = message
+	reqBody["input"] = append(prefix, input...)
+	return true
 }
 
 // applyInstructions 处理 instructions 字段：仅在 instructions 为空时填充默认值。
