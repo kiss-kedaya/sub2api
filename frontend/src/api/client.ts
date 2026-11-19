@@ -187,6 +187,13 @@ apiClient.interceptors.response.use(
       }
 
       const cookieSession = Boolean(context?.cookieSession || getAppRuntimeContext()?.cookieSession)
+      const headers = error.response.headers
+      const rawRetryAfter = status === 429
+        ? (headers instanceof axios.AxiosHeaders
+          ? headers.get('Retry-After')
+          : Object.entries(headers ?? {}).find(([name]) => name.toLowerCase() === 'retry-after')?.[1])
+        : undefined
+      const retryAfter = typeof rawRetryAfter === 'string' || typeof rawRetryAfter === 'number' ? String(rawRetryAfter) : undefined
       if (cookieSession && status === 401 && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('auth-session-expired'))
         if (!window.location.pathname.includes('/login')) window.location.href = '/login'
@@ -195,7 +202,7 @@ apiClient.interceptors.response.use(
       // Server rendering must never touch browser storage or redirect a global window.
       // The BFF owns HttpOnly session rotation; browser cookie expiry is handled above.
       if (typeof window === 'undefined' || cookieSession) {
-        return Promise.reject({ status, code: apiData.code, reason: apiData.reason,
+        return Promise.reject({ status, ...(retryAfter ? { retryAfter } : {}), code: apiData.code, reason: apiData.reason,
           error: apiData.error, message: apiData.message || apiData.detail || error.message,
           metadata: apiData.metadata })
       }
@@ -294,9 +301,9 @@ apiClient.interceptors.response.use(
         }
       }
 
-      // Return structured error
       return Promise.reject({
         status,
+        ...(retryAfter ? { retryAfter } : {}),
         code: apiData.code,
         reason: apiData.reason,
         error: apiData.error,
