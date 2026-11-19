@@ -1,5 +1,9 @@
 <template>
   <nav class="grid grid-cols-2 gap-3" :class="items.length > 4 ? 'lg:grid-cols-5' : 'lg:grid-cols-4'" :aria-label="label">
+    <!-- data-no-lift lands on UPageCard's stretched <a>: the console's press-feedback
+         transform (style.css) would otherwise make that zero-width anchor the containing
+         block of its `absolute inset-0` overlay, collapsing the click target to nothing
+         and leaving the card itself unclickable. -->
     <UPageCard
       v-for="item in items"
       :key="item.to"
@@ -8,6 +12,7 @@
       :title="item.label"
       variant="outline"
       :ui="linkUi"
+      data-no-lift
     />
   </nav>
 </template>
