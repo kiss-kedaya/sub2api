@@ -42,6 +42,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		// Business layer ProviderSets
 		repository.ProviderSet,
 		service.ProviderSet,
+		provideLocalCryptoRuntime,
+		provideLocalPaymentOrderExpiry,
+		provideNotificationRuntime,
+		wire.FieldsOf(new(localCryptoRuntime), "CryptoService", "CryptoHandler", "CryptoDepositHandler"),
 		provideAccountOpsAdminChannels,
 		securityaudit.ProviderSet,
 		payment.ProviderSet,

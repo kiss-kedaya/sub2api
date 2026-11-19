@@ -684,6 +684,8 @@ type PricingConfig struct {
 }
 
 type ServerConfig struct {
+	// DelegatePayments leaves payment and wallet operations to a separate backend.
+	DelegatePayments         bool      `mapstructure:"delegate_payments"`
 	Host                     string    `mapstructure:"host"`
 	Port                     int       `mapstructure:"port"`
 	Mode                     string    `mapstructure:"mode"`                  // debug/release
@@ -2158,6 +2160,7 @@ func setDefaults() {
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8080)
 	viper.SetDefault("server.mode", "release")
+	viper.SetDefault("server.delegate_payments", false)
 	viper.SetDefault("server.enable_server_timing", false)
 	viper.SetDefault("server.frontend_url", "")
 	viper.SetDefault("server.read_header_timeout", 10) // 10秒读取请求头
