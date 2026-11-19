@@ -51,6 +51,10 @@ func SetupRouter(
 	redisClient *redis.Client,
 	db *sql.DB,
 ) *gin.Engine {
+	if cfg.Server.DelegatePayments {
+		// Reject misrouted payments before ingress, CORS preflight, or frontend handling.
+		r.Use(middleware2.DelegatedPaymentRoutesGuard())
+	}
 	adminhandler.ConfigureReportCacheRedis(redisClient)
 	if handlers.Admin != nil && handlers.Admin.Setting != nil && settingService != nil {
 		regional, err := service.NewServerlessRouting(settingService, db, redisClient, cfg)

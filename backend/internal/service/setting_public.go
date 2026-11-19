@@ -365,7 +365,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		WeChatOAuthMPEnabled:     weChatMPEnabled,
 		WeChatOAuthMobileEnabled: weChatMobileEnabled,
 		BackendModeEnabled:       settings[SettingKeyBackendModeEnabled] == "true",
-		PaymentEnabled:           settings[SettingPaymentEnabled] == "true",
+		PaymentEnabled:           settings[SettingPaymentEnabled] == "true" && (s.cfg == nil || !s.cfg.Server.DelegatePayments),
 		// The crypto channel ships disabled; the sidebar entry must follow the
 		// shared admin switch plus this process's ability to serve the API. The
 		// scan-delegation switch (CRYPTO_INSTANCE_ENABLED) deliberately stays

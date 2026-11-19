@@ -35,7 +35,7 @@ func CryptoUserAPIReady(cfg *config.Config) bool {
 	if CryptoAdminTestReadOnly() {
 		return false
 	}
-	return cfg != nil && cfg.Totp.HasPersistentEncryptionKey()
+	return cfg != nil && !cfg.Server.DelegatePayments && cfg.Totp.HasPersistentEncryptionKey()
 }
 
 // CryptoAdminAllowHTTP is an explicit local opt-in for installations without

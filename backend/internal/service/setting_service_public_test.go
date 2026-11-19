@@ -262,6 +262,24 @@ func TestSettingService_GetPublicSettings_FallsBackToConfigForWeChatOAuthCapabil
 	require.False(t, settings.WeChatOAuthMobileEnabled)
 }
 
+func TestSettingService_GetPublicSettings_ExternalPaymentsHideLocalEntries(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
+	repo := &settingPublicRepoStub{values: map[string]string{
+		SettingKeyCryptoConfig: `{"enabled":true}`,
+		SettingPaymentEnabled:  "true",
+	}}
+	for _, delegated := range []bool{false, true} {
+		cfg := &config.Config{
+			Server: config.ServerConfig{DelegatePayments: delegated},
+			Totp:   config.TotpConfig{EncryptionKeyConfigured: true},
+		}
+		public, err := NewSettingService(repo, cfg).GetPublicSettings(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, !delegated, public.CryptoEnabled)
+		require.Equal(t, !delegated, public.PaymentEnabled)
+	}
+}
+
 func TestSettingService_GetPublicSettings_CryptoEntryFollowsAdminSwitchNotScanGate(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "")
 	t.Setenv("CRYPTO_ADMIN_TEST_WRITE_ENABLED", "")

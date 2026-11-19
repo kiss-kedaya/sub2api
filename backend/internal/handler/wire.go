@@ -278,7 +278,7 @@ var ProviderSet = wire.NewSet(
 	ProvideSettingHandler,
 	NewPaymentHandler,
 	NewPaymentWebhookHandler,
-	NewCryptoHandler,
+	NewUserBarkHandler,
 	NewAvailableChannelHandler,
 	NewModelPlazaHandler,
 	NewAsyncImageHandler,

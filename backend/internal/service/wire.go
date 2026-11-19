@@ -1012,7 +1012,7 @@ var ProviderSet = wire.NewSet(
 	NewAffiliateService,
 	ProvidePaymentConfigService,
 	ProvidePaymentService,
-	ProvidePaymentOrderExpiryService,
+	ProvideAPIKeyDatacenterAutoBlockService,
 	ProvideBalanceNotifyService,
 	ProvideChannelMonitorService,
 	ProvideChannelMonitorRunner,

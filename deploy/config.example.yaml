@@ -23,6 +23,11 @@ server:
   # Return Server-Timing for authenticated requests made by the Admin web UI
   # 为管理端 Web 页面发出的已认证请求返回 Server-Timing
   enable_server_timing: false
+
+  # On an internal gateway only, leave crypto, payments and payment callbacks
+  # on the existing backend. Route those endpoints and public settings/HTML
+  # to that backend at ingress before enabling this role.
+  delegate_payments: false
   # Frontend base URL used to generate external links in emails (e.g. password reset)
   # 用于生成邮件中的外部链接（例如：重置密码链接）的前端基础地址
   # Example: "https://example.com"
