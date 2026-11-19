@@ -168,7 +168,10 @@ func (r *settingRepository) Get(ctx context.Context, key string) (*service.Setti
 			found:     found,
 			expiresAt: time.Now().Add(settingCacheTTL).UnixNano(),
 		}
-		r.storeKeyCacheIfVersion(key, entry, flightVersion)
+		// Acknowledgements saved by another gateway must be visible on the next lookup.
+		if found || !service.IsAdminComplianceAcknowledgementKey(key) {
+			r.storeKeyCacheIfVersion(key, entry, flightVersion)
+		}
 		return entry, nil
 	})
 	var value any

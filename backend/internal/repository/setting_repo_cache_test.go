@@ -65,6 +65,34 @@ func TestSettingRepositoryGetCachesMissingKey(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestSettingRepositoryGetSeesAcknowledgementWrittenByAnotherProcess(t *testing.T) {
+	for _, key := range []string{"admin_compliance_acknowledgement", "admin_compliance_acknowledgement:42"} {
+		t.Run(key, func(t *testing.T) {
+			repo, mock := newSettingRepositorySQLMock(t)
+			mock.ExpectQuery(`SELECT .* FROM "settings"`).
+				WithArgs(key).
+				WillReturnRows(sqlmock.NewRows([]string{"id", "key", "value", "updated_at"}))
+			mock.ExpectQuery(`SELECT .* FROM "settings"`).
+				WithArgs(key).
+				WillReturnRows(settingRows(1, key, "confirmed in another process"))
+
+			ctx := context.Background()
+			_, err := repo.GetValue(ctx, key)
+			require.ErrorIs(t, err, service.ErrSettingNotFound)
+
+			value, err := repo.GetValue(ctx, key)
+			require.NoError(t, err)
+			require.Equal(t, "confirmed in another process", value)
+
+			// Positive results still use the process-local cache.
+			cached, err := repo.GetValue(ctx, key)
+			require.NoError(t, err)
+			require.Equal(t, value, cached)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
 func TestSettingRepositoryGetSingleflight(t *testing.T) {
 	repo, mock := newSettingRepositorySQLMock(t)
 	mock.ExpectQuery(`SELECT .* FROM "settings"`).

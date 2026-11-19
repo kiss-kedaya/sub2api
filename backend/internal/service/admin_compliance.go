@@ -82,6 +82,11 @@ func expectedAdminCompliancePhrase(language string) string {
 	return AdminComplianceAckPhraseEN
 }
 
+// IsAdminComplianceAcknowledgementKey reports whether key stores an admin policy acknowledgement.
+func IsAdminComplianceAcknowledgementKey(key string) bool {
+	return key == settingKeyAdminComplianceAcknowledgement || strings.HasPrefix(key, settingKeyAdminComplianceAcknowledgement+":")
+}
+
 func adminComplianceAcknowledgementKey(adminUserID int64) string {
 	if adminUserID <= 0 {
 		return settingKeyAdminComplianceAcknowledgement
