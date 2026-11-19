@@ -447,7 +447,7 @@ describe('user UsageView', () => {
       sort_by: 'created_at',
       sort_order: 'desc',
       native_compaction_v2: true,
-    }))
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(clickSpy).toHaveBeenCalled()
     expect(showSuccess).toHaveBeenCalled()
     expect(csvContent.startsWith('\uFEFF')).toBe(true)
@@ -485,9 +485,18 @@ describe('user UsageView', () => {
     let resolveFirstPage!: (value: typeof pageResponse) => void
     const firstPage = new Promise<typeof pageResponse>((resolve) => { resolveFirstPage = resolve })
     query.mockClear()
+    let exportSignal: AbortSignal | undefined
     query.mockImplementation((params, options) => {
-      if (!options && params.page === 1) return firstPage
-      if (!options && params.page === 3) return Promise.resolve({ ...pageResponse, items: [{ ...usageLog, id: 101 }] })
+      if (params.page === 1 && params.page_size === 100) {
+        exportSignal = options?.signal
+        return firstPage
+      }
+      if (exportSignal && options?.signal === exportSignal && params.page === 2) {
+        return Promise.resolve({ ...pageResponse, page: 2, items: Array.from({ length: 50 }, (_, id) => ({ ...usageLog, id: id + 51 })) })
+      }
+      if (exportSignal && options?.signal === exportSignal && params.page === 3) {
+        return Promise.resolve({ ...pageResponse, page: 3, items: [{ ...usageLog, id: 101 }] })
+      }
       return Promise.resolve(pageResponse)
     })
     const originalCreateObjectURL = window.URL.createObjectURL
@@ -523,11 +532,12 @@ describe('user UsageView', () => {
       resolveFirstPage(pageResponse)
       await flushPromises()
 
-      const exportCalls = query.mock.calls.filter((call) => call.length === 1)
+      expect(exportSignal).toBeInstanceOf(AbortSignal)
+      const exportCalls = query.mock.calls.filter(([, options]) => options?.signal === exportSignal).map(([params]) => params)
       expect.soft(exportCalls).toEqual([
-        [initialParams],
-        [{ ...initialParams, page: 2, page_size: 50 }],
-        [{ ...initialParams, page: 3, page_size: 50 }],
+        initialParams,
+        { ...initialParams, page: 2, page_size: 50 },
+        { ...initialParams, page: 3, page_size: 50 },
       ])
       expect.soft(filename).toBe('usage_2026-03-01_to_2026-03-08.csv')
       expect(showSuccess).toHaveBeenCalledWith('Export success')

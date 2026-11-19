@@ -294,9 +294,15 @@ apiClient.interceptors.response.use(
         }
       }
 
-      // Return structured error
+      // Keep Retry-After for callers that resume a rate-limited read.
+      const headers = error.response.headers
+      const rawRetryAfter = status === 429
+        ? (headers instanceof axios.AxiosHeaders ? headers.get('Retry-After') : headers?.['retry-after'])
+        : undefined
+      const retryAfter = typeof rawRetryAfter === 'string' || typeof rawRetryAfter === 'number' ? String(rawRetryAfter) : undefined
       return Promise.reject({
         status,
+        ...(retryAfter ? { retryAfter } : {}),
         code: apiData.code,
         reason: apiData.reason,
         error: apiData.error,

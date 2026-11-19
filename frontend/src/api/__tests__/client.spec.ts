@@ -261,6 +261,22 @@ describe('API Client', () => {
       expect(response.data).toEqual({ name: 'test' })
     })
 
+    it('preserves Retry-After when a table request is rate limited', async () => {
+      apiClient.defaults.adapter = vi.fn().mockRejectedValue({
+        response: {
+          status: 429,
+          data: { code: 'RATE_LIMITED', message: 'Too many requests' },
+          headers: new axios.AxiosHeaders({ 'Retry-After': '12' }),
+        },
+        config: { url: '/usage' },
+      })
+      await expect(apiClient.get('/usage')).rejects.toMatchObject({
+        status: 429,
+        code: 'RATE_LIMITED',
+        retryAfter: '12',
+      })
+    })
+
     it('code!=0 时拒绝并返回结构化错误', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,
