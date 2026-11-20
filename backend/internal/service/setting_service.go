@@ -185,6 +185,7 @@ type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[i
 type SettingService struct {
 	requestCaptureRuntime *captureRuntime
 	smallRequestRecorder  *requestcapture.SmallRecorder
+	scopedAdminKeyRepo    ScopedAdminKeyRepository
 	settingRepo           SettingRepository
 	defaultSubGroupReader DefaultSubscriptionGroupReader
 	proxyRepo             ProxyRepository // for resolving websearch provider proxy URLs

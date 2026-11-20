@@ -1,3 +1,4 @@
+import adminAccessKeys from './adminAccessKeys'
 import opsCenter from './opsCenter'
 import landing from './landing'
 import common from './common'
@@ -29,6 +30,7 @@ export default {
   opsAutomation: opsAutomationMessages.zh.opsAutomation,
   accountOps, channelOps, opsCenter,
   qualityOps: { refresh: '刷新', accounts: '账号', loadMore: '加载更多' },
+  adminAccessKeys,
   ...landing,
   ...common,
   ...dashboard,
