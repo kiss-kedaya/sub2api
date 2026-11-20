@@ -28,7 +28,7 @@ func TestRoutingHotpathAudit_ModelCandidatesKeepGroupScope(t *testing.T) {
 	}
 	for _, tc := range cases {
 		rows := modelAvailabilityCandidateRow().AddRow(tc.accountID, "openai", "api_key", 2, 80,
-			nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+			nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 		query := mock.ExpectQuery("model availability candidates")
 		if tc.group != nil {
 			query.WithArgs(*tc.group, service.StatusActive, service.PlatformOpenAI)

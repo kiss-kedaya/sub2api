@@ -253,6 +253,9 @@ var modelAvailabilityExtraSubKeys = []string{
 	"openai_apikey_responses_websockets_v2_enabled",
 	"responses_websockets_v2_enabled",
 	"openai_ws_enabled",
+	// openai_image_size_tiers：生图尺寸档位分流。OpenAIImageSizeTierUnsupported
+	// 用该查询判定“分组里是否有账号允许请求的档位”，缺了它受限账号会被当成不限档位。
+	"openai_image_size_tiers",
 }
 
 func appendProjectedJSONColumns(cols []string, alias, column string, keys []string) []string {

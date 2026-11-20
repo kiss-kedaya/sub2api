@@ -1029,6 +1029,8 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		// so omitting them makes a valid account look unsupported after a snapshot
 		// round-trip even though forwarding still treats it as passthrough.
 		"openai_passthrough",
+		// 生图尺寸档位在候选过滤阶段按本投影判定，裁掉后受限账号会接到不允许的档位。
+		service.AccountExtraOpenAIImageSizeTiers,
 		"openai_copilot_sdk",
 		"excel_bps_enabled",
 		"excel_bps_models",

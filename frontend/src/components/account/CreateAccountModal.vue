@@ -2235,6 +2235,23 @@
                   </template>
                 </SettingRow>
               </div>
+
+              <!-- OpenAI images: size tier routing -->
+              <div v-if="form.platform === 'openai'">
+                <SettingRow
+                  :label="t('admin.accounts.openai.imageSizeTiers')"
+                  :hint="t('admin.accounts.openai.imageSizeTiersDesc')"
+                  :on="openAIImageSizeTiers.length < OPENAI_IMAGE_SIZE_TIERS.length"
+                  :summary="openAIImageSizeTiers.join(' / ')"
+                  :persistent-summary="true"
+                  wide-control
+                  test-id="create-openai-image-size-tiers"
+                >
+                  <template #control>
+                    <OpenAIImageSizeTiersField v-model="openAIImageSizeTiers" hide-label />
+                  </template>
+                </SettingRow>
+              </div>
               </SettingGroup>
 
               <SettingGroup v-if="(form.platform === 'openai' && !hideAccountLongContextBilling && (accountCategory === 'oauth-based' || accountCategory === 'apikey'))" :title="t('admin.accounts.formSections.billing')">
@@ -2853,6 +2870,12 @@ import SettingPanel from '@/components/common/SettingPanel.vue'
 import SettingGroup from '@/components/common/SettingGroup.vue'
 import SettingRow from '@/components/common/SettingRow.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
+import OpenAIImageSizeTiersField from '@/components/account/OpenAIImageSizeTiersField.vue'
+import {
+  OPENAI_IMAGE_SIZE_TIERS,
+  applyOpenAIImageSizeTiersToExtra,
+  type OpenAIImageSizeTier
+} from '@/components/account/openaiImageSizeTiers'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
@@ -3363,6 +3386,8 @@ const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 // Images 非流式响应缺 b64_json 时由网关下载 url 回填（仅 OpenAI API Key）。
 const openAIImagesUrlToB64JsonEnabled = ref(false)
+// 生图尺寸档位：限制本账号承接的 1K/2K/4K 请求，全选即不限。
+const openAIImageSizeTiers = ref<OpenAIImageSizeTier[]>([...OPENAI_IMAGE_SIZE_TIERS])
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
@@ -3864,6 +3889,7 @@ watch(
     headerOverrideEnabled.value = false
     headerOverrideRows.value = []
     openAIImagesUrlToB64JsonEnabled.value = false
+    openAIImageSizeTiers.value = [...OPENAI_IMAGE_SIZE_TIERS]
     grokOAuthCustomBaseUrlEnabled.value = false
     grokOAuthBaseUrl.value = ''
     // Reset OAuth states
@@ -4305,6 +4331,7 @@ const resetForm = () => {
   headerOverrideEnabled.value = false
   headerOverrideRows.value = []
   openAIImagesUrlToB64JsonEnabled.value = false
+  openAIImageSizeTiers.value = [...OPENAI_IMAGE_SIZE_TIERS]
   grokOAuthCustomBaseUrlEnabled.value = false
   grokOAuthBaseUrl.value = ''
   interceptWarmupRequests.value = false
@@ -4449,6 +4476,8 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   } else {
     delete extra.images_url_to_b64_json
   }
+  // 三档全选即不限，不写该键；受限档位写 extra.openai_image_size_tiers。
+  applyOpenAIImageSizeTiersToExtra(extra, openAIImageSizeTiers.value)
 
   return Object.keys(extra).length > 0 ? extra : undefined
 }

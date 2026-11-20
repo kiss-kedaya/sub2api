@@ -161,6 +161,14 @@ async function selectButtonByText(wrapper: ReturnType<typeof mountModal>, text: 
   await button?.trigger('click')
 }
 
+// UCheckbox 以 aria-checked 暴露选中态，点击根元素切换。
+async function setTierChecked(
+  el: { attributes: (name: string) => string | undefined; trigger: (event: string) => Promise<unknown> },
+  value: boolean
+) {
+  if ((el.attributes('aria-checked') === 'true') !== value) await el.trigger('click')
+}
+
 async function submitApiKeyAccount(
   platform: 'openai' | 'anthropic',
   enableLongContextBilling = false,
@@ -355,8 +363,26 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(createAccountMock.mock.calls[0]?.[0]?.extra?.images_url_to_b64_json).toBe(true)
   })
 
-  it('persists upstream model metadata after creating an account from preview', async () => {
+  it('omits image size tiers by default and sends restricted tiers when set', async () => {
+    await submitApiKeyAccount('openai')
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty('openai_image_size_tiers')
+
+    createAccountMock.mockClear()
     const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('openai account')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await setTierChecked(wrapper.get('[data-testid="openai-image-size-tier-1K"]'), false)
+    await setTierChecked(wrapper.get('[data-testid="openai-image-size-tier-2K"]'), false)
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_image_size_tiers).toEqual(['4K'])
+  })
+
+  it('persists upstream model metadata after creating an account from preview', async () => {    const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
     await selectButtonByText(wrapper, 'API Key')
     await wrapper.get('form#create-account-form input[type="text"]').setValue('OpenCode account')

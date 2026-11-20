@@ -68,6 +68,7 @@ func modelAvailabilityCandidateRow() *sqlmock.Rows {
 		"openai_apikey_responses_websockets_v2_mode",
 		"openai_apikey_responses_websockets_v2_enabled",
 		"responses_websockets_v2_enabled", "openai_ws_enabled",
+		"openai_image_size_tiers",
 	})
 }
 
@@ -81,7 +82,7 @@ func addOAuthCandidateRow(rows *sqlmock.Rows) *sqlmock.Rows {
 		`"training_off"`, nil, nil,
 		`"auto"`, nil,
 		nil, `"managed_session"`, nil,
-		nil, nil, nil,
+		nil, nil, nil, nil,
 	)
 }
 
@@ -120,7 +121,7 @@ func TestListModelAvailabilityCandidates_CacheExpiresAfterTTL(t *testing.T) {
 	mock.ExpectQuery("model availability candidates").
 		WillReturnRows(addOAuthCandidateRow(modelAvailabilityCandidateRow()))
 	rows := modelAvailabilityCandidateRow()
-	rows.AddRow(int64(9), "openai", "api_key", 2, 80, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	rows.AddRow(int64(9), "openai", "api_key", 2, 80, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	mock.ExpectQuery("model availability candidates").WillReturnRows(rows)
 
 	groupID := int64(42)
@@ -251,6 +252,8 @@ func assertModelAvailabilityProjectionSelect(t *testing.T, normalized string) {
 	require.Contains(t, selectClause, "credentials->'openai_capabilities'")
 	require.Contains(t, selectClause, "extra->'privacy_mode'")
 	require.Contains(t, selectClause, "extra->'openai_passthrough'")
+	// 生图尺寸档位用于 400-vs-503 判别，未投影会让受限账号被当成不限档位。
+	require.Contains(t, selectClause, "extra->'openai_image_size_tiers'")
 }
 
 // TestListModelAvailabilityCandidates_ProjectedAccountsPreserveSupportSemantics
@@ -264,11 +267,11 @@ func TestListModelAvailabilityCandidates_ProjectedAccountsPreserveSupportSemanti
 	// OAuth：显式 model_mapping 决定支持集。
 	rows.AddRow(int64(7), "openai", "oauth", 3, 100,
 		`{"gpt-5.4-high":"gpt-5.4-high"}`, nil, nil, nil, nil, nil,
-		`"training_off"`, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		`"training_off"`, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, `["1K","2K"]`)
 	// APIKey：openai_passthrough=true → 任何模型都支持。
 	rows.AddRow(int64(9), "openai", "api_key", 2, 80,
 		nil, nil, nil, nil, nil, nil,
-		nil, true, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		nil, true, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	mock.ExpectQuery("model availability candidates").WillReturnRows(rows)
 
 	groupID := int64(42)
@@ -278,6 +281,7 @@ func TestListModelAvailabilityCandidates_ProjectedAccountsPreserveSupportSemanti
 
 	require.True(t, accounts[0].IsModelSupported("gpt-5.4-high"), "mapping 内模型应受支持")
 	require.False(t, accounts[0].IsModelSupported("deepseek-v4"), "mapping 外模型应不受支持")
+	require.Equal(t, []string{service.ImageBillingSize1K, service.ImageBillingSize2K}, accounts[0].OpenAIImageSizeTiers(), "尺寸档位必须随投影进入判别账号")
 	require.True(t, accounts[1].IsModelSupported("anything-else"), "passthrough 账号应支持任意模型")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
