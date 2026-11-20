@@ -838,10 +838,7 @@ func paymentAuditCurrentTimestampExpr(client *dbent.Client) string {
 }
 
 func paymentAuditDialect(client *dbent.Client) string {
-	if client == nil || client.Driver() == nil {
-		return ""
-	}
-	return client.Driver().Dialect()
+	return clientDialect(client)
 }
 
 func (s *PaymentService) updateClaimedAffiliateRebateAudit(ctx context.Context, client *dbent.Client, orderID int64, action string, detail map[string]any) error {

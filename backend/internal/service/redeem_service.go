@@ -499,6 +499,9 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 	}
 
 	// 执行兑换逻辑（兑换码已被锁定，此时可安全操作）
+	// debtApplied 记录本次到账里被用来抵扣历史欠款的部分：这部分不进可用余额，
+	// 也不产生实时余额增量。
+	var debtApplied float64
 	switch redeemCode.Type {
 	case RedeemTypeBalance, RedeemTypePaymentBalance:
 		amount := redeemCode.Value
@@ -509,8 +512,19 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 			if err := s.redeemUserRepo.ApplyRedeemBalanceAdjustment(txCtx, userID, amount); err != nil {
 				return nil, fmt.Errorf("update user balance: %w", err)
 			}
-		} else if err := s.userRepo.UpdateBalance(txCtx, userID, amount); err != nil {
-			return nil, fmt.Errorf("update user balance: %w", err)
+		} else {
+			// 充值到账先抵扣历史欠款（清零前的负余额），与入账同一事务：
+			// 抵扣失败则整笔回滚，不会出现「到账了但欠款没扣」。
+			applied, err := payDownUserDebt(txCtx, s.entClient, userID, amount, DebtClawbackSourceRedeemCode, redeemCode.Code)
+			if err != nil {
+				return nil, fmt.Errorf("collect user debt: %w", err)
+			}
+			debtApplied = applied
+			if credited := amount - applied; credited > 0 {
+				if err := s.userRepo.UpdateBalance(txCtx, userID, credited); err != nil {
+					return nil, fmt.Errorf("update user balance: %w", err)
+				}
+			}
 		}
 
 	case RedeemTypeConcurrency:
@@ -562,7 +576,7 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 			s.billingCacheService,
 			userID,
 			fmt.Sprintf("redeem:%d:user:%d", redeemCode.ID, userID),
-			redeemCode.Value,
+			redeemCode.Value-debtApplied,
 		)
 	}
 
