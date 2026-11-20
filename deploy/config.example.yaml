@@ -143,6 +143,22 @@ security:
   # forwarded_client_ip_headers:
   #   - "True-Client-IP"
   #   - "X-CDN-Client-IP"
+  # Key rotation gate (security incident response). When enabled, a user whose
+  # active API keys were all created before key_rotation_cutoff AND lack an IP
+  # allowlist cannot redeem codes or top up until they rotate a key or configure
+  # an IP allowlist. Model calls, login, balance reads and key management stay
+  # reachable so the user can fix it. Set enabled=false to roll the gate back.
+  # 密钥轮换门禁（安全事件响应）。开启时，若用户名下所有启用中的 API Key 都创建于
+  # key_rotation_cutoff 之前且没有配置 IP 白名单，则在完成“更换 Key”或“设置 IP
+  # 白名单”之前禁止兑换码 / 充值 / USDT 充值；模型调用、登录、查余额、密钥管理不受影响。
+  # 关闭 enabled 即完全恢复原行为。
+  # Environment / 环境变量: SECURITY_KEY_ROTATION_GATE_ENABLED=false
+  key_rotation_gate_enabled: true
+  # RFC3339 instant. Active keys created before this time are treated as
+  # potentially leaked. Keep the offset (+08:00 below) explicit.
+  # 门槛时间（RFC3339）。早于此刻创建且仍在启用中的 Key 视为可能已泄露。
+  # Environment / 环境变量: SECURITY_KEY_ROTATION_CUTOFF=2026-11-21T00:00:00+08:00
+  key_rotation_cutoff: "2026-11-21T00:00:00+08:00"
   url_allowlist:
     # Enable URL allowlist validation (disable to skip all URL checks)
     # 启用 URL 白名单验证（禁用则跳过所有 URL 检查）

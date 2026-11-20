@@ -17,6 +17,33 @@ vi.mock('@/api', () => ({
   redeemAPI: { redeem, getHistory },
   authAPI: { getPublicSettings: vi.fn().mockResolvedValue({}) },
 }))
+// The key-rotation gate is a separate concern (its own spec); page specs only
+// need a stable, non-required gate so the page renders normally.
+const keyRotationGateMock = vi.hoisted(() => ({ requiredRef: null as any, statusRef: null as any }))
+vi.mock('@/composables/useKeyRotationGate', async () => {
+  const { ref } = await import('vue')
+  keyRotationGateMock.requiredRef = ref(false)
+  keyRotationGateMock.statusRef = ref(null)
+  return {
+    useKeyRotationGate: () => ({
+      required: keyRotationGateMock.requiredRef,
+      status: keyRotationGateMock.statusRef,
+      refresh: vi.fn(),
+    }),
+    resetKeyRotationGate: vi.fn(),
+    markKeyRotationRequired: vi.fn(),
+    ensureKeyRotationGate: vi.fn(),
+  }
+})
+// Keep the real code/reason matching so page specs can exercise a blocked response.
+vi.mock('@/api/keyRotationGate', async () => {
+  const codes = await vi.importActual<typeof import('@/api/keyRotationGateCodes')>('@/api/keyRotationGateCodes')
+  return {
+    ...codes,
+    isKeyRotationRequiredError: codes.isKeyRotationRequiredPayload,
+    keyRotationGateAPI: { getStatus: vi.fn() },
+  }
+})
 vi.mock('@/stores/auth', async () => {
   const { reactive } = await import('vue')
   const state = reactive({ user: { balance: 10, concurrency: 2 }, refreshUser })
@@ -42,6 +69,9 @@ const mountRedeemView = () => {
       stubs: {
         AppLayout: { template: '<div><slot /></div>' },
         Icon: true,
+        // Rendered for real in KeyRotationGateNotice.spec; here only its presence matters
+        // (the real UButton needs a router that this page spec does not install).
+        KeyRotationGateNotice: { template: '<div data-testid="key-rotation-gate-notice"><button data-testid="key-rotation-gate-action" /></div>' },
       },
     },
   })
@@ -415,5 +445,67 @@ describe('RedeemView refresh after redemption', () => {
     expect(showError).toHaveBeenCalledWith('redeem.historyLoadFailed')
     expect(showError).not.toHaveBeenCalledWith('redeem.redeemFailed')
     wrapper.unmount()
+  })
+})
+
+describe('RedeemView key rotation gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    for (const request of [redeem, getHistory, refreshUser, fetchActiveSubscriptions]) request.mockReset()
+    getHistory.mockResolvedValue({ items: [], total: 0 })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    for (const wrapper of mountedWrappers.splice(0)) wrapper.unmount()
+    keyRotationGateMock.requiredRef.value = false
+    keyRotationGateMock.statusRef.value = null
+    vi.restoreAllMocks()
+  })
+
+  it('replaces the redeem form with the remediation card when blocked', async () => {
+    keyRotationGateMock.requiredRef.value = true
+    keyRotationGateMock.statusRef.value = {
+      enabled: true,
+      required: true,
+      cutoff: '2026-11-21T00:00:00+08:00',
+      active_key_count: 2,
+      compliant_key_count: 0,
+      pending_key_count: 2,
+      reason: 'rotation_required',
+      error_code: 'KEY_ROTATION_REQUIRED',
+      remediation_path: '/keys',
+    }
+    const wrapper = mountRedeemView()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="key-rotation-gate-notice"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="key-rotation-gate-action"]').exists()).toBe(true)
+    expect(wrapper.find('form').exists()).toBe(false)
+  })
+
+  it('does not report a business failure when the redeem call is blocked by the gate', async () => {
+    redeem.mockRejectedValue({
+      status: 403,
+      reason: 'KEY_ROTATION_REQUIRED',
+      metadata: { error_code: 'KEY_ROTATION_REQUIRED' },
+    })
+    const wrapper = await submitCode()
+
+    expect(redeem).toHaveBeenCalledTimes(1)
+    expect(showError).not.toHaveBeenCalledWith('redeem.redeemFailed')
+    expect(wrapper.text()).not.toContain('redeem.redeemFailed')
+  })
+
+  it('does not toast a history load failure when the gate blocks the history read', async () => {
+    getHistory.mockRejectedValue({
+      status: 403,
+      reason: 'KEY_ROTATION_REQUIRED',
+      metadata: { error_code: 'KEY_ROTATION_REQUIRED' },
+    })
+    mountRedeemView()
+    await flushPromises()
+
+    expect(showError).not.toHaveBeenCalledWith('redeem.historyLoadFailed')
   })
 })

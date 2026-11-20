@@ -14,6 +14,7 @@ import {
 } from './adminUIRequest'
 import { refreshAuthTokens } from './tokenRefresh'
 import { getAPIBaseURL } from './url'
+import { KEY_ROTATION_REQUIRED_EVENT, isKeyRotationRequiredPayload } from './keyRotationGateCodes'
 import { getAppRuntimeContext, type AppRuntimeContext } from '@runtime/context'
 export { buildApiUrl, buildGatewayUrl } from './url'
 
@@ -142,6 +143,17 @@ apiClient.interceptors.response.use(
 
       // Validate `data` shape to avoid HTML error pages breaking our error handling.
       const apiData = (typeof data === 'object' && data !== null ? data : {}) as Record<string, any>
+
+      // 密钥轮换门禁：兑换/充值/USDT 相关接口会返回 403 KEY_ROTATION_REQUIRED。
+      // 在这里统一广播，由 useKeyRotationGate 标记状态并展示整改卡片，
+      // 页面自己的 catch 只需避免弹出误导性错误提示。
+      if (status === 403 && isKeyRotationRequiredPayload(apiData) && typeof window !== 'undefined') {
+        try {
+          window.dispatchEvent(new CustomEvent(KEY_ROTATION_REQUIRED_EVENT))
+        } catch {
+          // ignore event failures
+        }
+      }
 
       // Ops monitoring disabled: treat as feature-flagged 404, and proactively redirect away
       // from ops pages to avoid broken UI states.

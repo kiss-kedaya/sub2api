@@ -848,7 +848,7 @@ func TestCryptoUserRoutesFollowAdminSwitchNotScanGate(t *testing.T) {
 		EncryptionKey:           strings.Repeat("a", 64),
 		EncryptionKeyConfigured: true,
 	}}
-	RegisterCryptoRoutes(v1, handler.NewCryptoHandler(nil, h.settings, nil, nil, userCfg), nil, jwt, nil, nil)
+	RegisterCryptoRoutes(v1, handler.NewCryptoHandler(nil, h.settings, nil, nil, userCfg), nil, jwt, nil, nil, nil)
 
 	// Delegating scans to another host must not 503 the customer endpoint; the
 	// handler's own channel switch decides the answer (no config row here).
@@ -865,7 +865,7 @@ func TestCryptoUserRoutesFollowAdminSwitchNotScanGate(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
 	noKeyRouter := gin.New()
 	noKeyV1 := noKeyRouter.Group("/api/v1")
-	RegisterCryptoRoutes(noKeyV1, handler.NewCryptoHandler(nil, h.settings, nil, nil, &config.Config{}), nil, jwt, nil, nil)
+	RegisterCryptoRoutes(noKeyV1, handler.NewCryptoHandler(nil, h.settings, nil, nil, &config.Config{}), nil, jwt, nil, nil, nil)
 	response = cryptoRouteRequest(noKeyRouter, http.MethodGet, "/api/v1/crypto/deposit-addresses", "", nil, "127.0.0.1:1", "localhost")
 	requireCryptoReason(t, response, http.StatusServiceUnavailable, "CRYPTO_DISABLED")
 }

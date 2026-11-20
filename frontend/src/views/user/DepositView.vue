@@ -8,6 +8,10 @@
       </UserPageHeader>
 
       <div v-if="loading" class="card deposit-view__empty" role="status"><LoadingSpinner /></div>
+      <!-- 密钥轮换门禁：/crypto/deposit-* 全部返回 403 KEY_ROTATION_REQUIRED -->
+      <div v-else-if="keyRotationRequired" class="deposit-view__gate">
+        <KeyRotationGateNotice :status="keyRotationStatus" />
+      </div>
       <div v-else-if="loadError" class="card deposit-view__empty" role="alert">
         <strong>{{ t('deposit.loadFailed') }}</strong>
         <p>{{ t('deposit.loadFailedHint') }}</p>
@@ -181,8 +185,11 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
 import { getDepositHistory, getDepositInfo, type DepositChain, type DepositInfo, type DepositRecord } from '@/api/crypto'
+import { isKeyRotationRequiredError } from '@/api/keyRotationGate'
 import { useClipboard } from '@/composables/useClipboard'
+import { useKeyRotationGate } from '@/composables/useKeyRotationGate'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { explorerTxURL } from '@/utils/cryptoExplorer'
@@ -191,6 +198,8 @@ const { t } = useI18n()
 const { copyToClipboard } = useClipboard()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+// 密钥轮换门禁：未完成整改时 USDT/链上充值入口整体替换为整改卡片。
+const { required: keyRotationRequired, status: keyRotationStatus } = useKeyRotationGate()
 
 // A transfer can be mined between two reads, so the page keeps one cadence
 // whether or not anything is already confirming. Five seconds is short enough
@@ -463,7 +472,7 @@ function stopPolling() {
 // tabs and unmounted views schedule nothing.
 function schedulePoll() {
   stopPolling()
-  if (disposed || !info.value?.enabled || loadError.value) return
+  if (disposed || keyRotationRequired.value || !info.value?.enabled || loadError.value) return
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
   pollTimer = setTimeout(() => void refreshHistory(), HISTORY_POLL_MS)
 }
@@ -483,7 +492,11 @@ async function refreshHistory() {
     announceCredited(history.value, next)
     history.value = next
     historyError.value = false
-  } catch {
+  } catch (error) {
+    if (isKeyRotationRequiredError(error)) {
+      // 门禁拦截由整改卡片表达，跳过历史轮询即可。
+      return
+    }
     historyError.value = true
   } finally {
     refreshingHistory.value = false
@@ -496,6 +509,7 @@ function onVisibilityChange() {
     stopPolling()
     return
   }
+  if (keyRotationRequired.value) return
   if (info.value?.enabled && !loadError.value && !loading.value) void refreshHistory()
 }
 
@@ -508,7 +522,10 @@ async function load() {
       selectedChain.value = info.value.chains[0]?.chain ?? ''
     }
     if (info.value.enabled) await refreshHistory()
-  } catch {
+  } catch (error) {
+    // 403 KEY_ROTATION_REQUIRED：整改卡片（全局事件 + 状态接口）已经接管页面，
+    // 不再显示“加载失败/重试”。
+    if (isKeyRotationRequiredError(error)) return
     loadError.value = true
   } finally {
     loading.value = false

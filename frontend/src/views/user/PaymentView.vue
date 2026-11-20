@@ -4,6 +4,10 @@
       <div v-if="loading" class="flex items-center justify-center py-20">
         <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
       </div>
+      <!-- 密钥轮换门禁：后端对 /payment/orders* 全部返回 403 KEY_ROTATION_REQUIRED -->
+      <template v-else-if="keyRotationRequired">
+        <KeyRotationGateNotice :status="keyRotationStatus" />
+      </template>
       <template v-else>
         <UserPageHeader v-if="paymentPhase === 'select' && !selectedPlan" flush :title="t('nav.buySubscription')">
           <template #actions>
@@ -402,6 +406,9 @@ import type { PaymentMethodOption } from '@/components/payment/PaymentMethodSele
 import { buildPaymentErrorToastMessage, describePaymentScenarioError } from './paymentUx'
 import { buildEmbeddedUrl, detectTheme } from '@/utils/embedded-url'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
+import { isKeyRotationRequiredError } from '@/api/keyRotationGate'
+import { useKeyRotationGate } from '@/composables/useKeyRotationGate'
 import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 import { hasWechatResumeQuery, parseWechatResumeRoute, stripWechatResumeQuery } from './paymentWechatResume'
 
@@ -413,6 +420,8 @@ const authStore = useAuthStore()
 const paymentStore = usePaymentStore()
 const subscriptionStore = useSubscriptionStore()
 const appStore = useAppStore()
+// 密钥轮换门禁：未完成整改时充值中心与订阅购买整体替换为整改卡片。
+const { required: keyRotationRequired, status: keyRotationStatus } = useKeyRotationGate()
 // 管理员的支付页签布局保存在 /admin/payment/config：该接口已强制 step-up，这里负责弹码并重试。
 const stepUp = useStepUp()
 
@@ -1220,6 +1229,11 @@ async function createOrder(orderAmount: number, orderType: OrderType, planId?: n
       openWindow(decision.paymentState.payUrl)
     }
   } catch (err: unknown) {
+    // 403 KEY_ROTATION_REQUIRED：整改卡片已由全局事件驱动展示，
+    // 这里不再把“需要更换 Key”渲染成支付失败。
+    if (isKeyRotationRequiredError(err)) {
+      return
+    }
     const apiErr = err as Record<string, unknown>
     if (apiErr.reason === 'TOO_MANY_PENDING') {
       const metadata = apiErr.metadata as Record<string, unknown> | undefined

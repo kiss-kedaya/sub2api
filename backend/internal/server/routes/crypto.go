@@ -18,6 +18,7 @@ func RegisterCryptoRoutes(
 	cryptoHandler *handler.CryptoHandler,
 	depositHandler *handler.CryptoDepositHandler,
 	jwtAuth middleware.JWTAuthMiddleware,
+	keyRotationGate middleware.KeyRotationGateMiddleware,
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
 ) {
@@ -29,6 +30,8 @@ func RegisterCryptoRoutes(
 	authenticated.Use(cryptoHandler.CryptoUserAccess)
 	authenticated.Use(middleware.BackendModeUserGuard(settingService))
 	authenticated.Use(panelRateLimiter.Global())
+	// 密钥轮换门禁：USDT / 链上充值入口（地址、充值说明、充值记录）全部拦截。
+	applyKeyRotationGate(authenticated, keyRotationGate)
 	{
 		authenticated.GET("/deposit-addresses", cryptoHandler.GetDepositAddresses)
 		if depositHandler != nil {

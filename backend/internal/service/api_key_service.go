@@ -698,6 +698,24 @@ func (s *APIKeyService) List(ctx context.Context, userID int64, params paginatio
 	return keys, pagination, nil
 }
 
+// ListActiveKeysByUser returns every active API key of one user without
+// pagination. It backs the key-rotation gate, which must see all enabled keys
+// (a paginated read could miss old, possibly leaked credentials).
+func (s *APIKeyService) ListActiveKeysByUser(ctx context.Context, userID int64) ([]APIKey, error) {
+	if s == nil || s.apiKeyRepo == nil {
+		return nil, nil
+	}
+	repo, ok := s.apiKeyRepo.(apiKeyAllByUserIDLister)
+	if !ok {
+		return nil, fmt.Errorf("list active api keys: repository does not support unpaginated api key listing")
+	}
+	keys, err := repo.ListAllByUserID(ctx, userID, APIKeyListFilters{Status: StatusAPIKeyActive})
+	if err != nil {
+		return nil, fmt.Errorf("list active api keys: %w", err)
+	}
+	return keys, nil
+}
+
 func (s *APIKeyService) listByCurrentConcurrency(ctx context.Context, userID int64, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error) {
 	repo, ok := s.apiKeyRepo.(apiKeyAllByUserIDLister)
 	if !ok {
