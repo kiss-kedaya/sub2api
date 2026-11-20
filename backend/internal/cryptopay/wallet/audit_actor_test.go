@@ -124,13 +124,14 @@ func TestAuditActorNormalization(t *testing.T) {
 	}
 
 	// Attribution is optional: a nil context must not panic in either helper.
-	if actor := AuditActorFromContext(nil); actor != (AuditActor{}) {
+	var nilCtx context.Context
+	if actor := AuditActorFromContext(nilCtx); actor != (AuditActor{}) {
 		t.Fatal("nil context must resolve to the zero actor")
 	}
-	if WithAuditActor(nil, AuditActor{Email: "ops@example.com"}) == nil {
+	if WithAuditActor(nilCtx, AuditActor{Email: "ops@example.com"}) == nil {
 		t.Fatal("nil context must be upgraded to a context")
 	}
-	if actor := AuditActorFromContext(WithAuditActor(nil, AuditActor{Email: "ops@example.com"})); actor.Email != "ops@example.com" {
+	if actor := AuditActorFromContext(WithAuditActor(nilCtx, AuditActor{Email: "ops@example.com"})); actor.Email != "ops@example.com" {
 		t.Fatal("attribution lost on nil context")
 	}
 }
