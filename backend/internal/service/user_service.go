@@ -10,6 +10,7 @@ import (
 	"fmt"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 	"image"
 	"image/color"
 	stddraw "image/draw"
@@ -1362,7 +1363,7 @@ func verifyNotifyCode(ctx context.Context, cache EmailCache, email, code string)
 			return ErrInvalidVerifyCode
 		}
 		if err := cache.SetNotifyVerifyCode(ctx, email, data, remaining); err != nil {
-			slog.Error("failed to update notify verify code attempts", "email", email, "error", err)
+			slog.Error("failed to update notify verify code attempts", "email", logredact.MaskEmail(email), "error", err)
 		}
 		if data.Attempts >= maxVerifyCodeAttempts {
 			return ErrVerifyCodeMaxAttempts

@@ -232,3 +232,27 @@ func isSensitiveKey(key string, keys map[string]struct{}) bool {
 func normalizeKey(key string) string {
 	return strings.ToLower(strings.TrimSpace(key))
 }
+
+// MaskEmail masks a user email address for operational logs while keeping the
+// mail domain, so operators can still group failures by mail provider without
+// persisting a directly identifying address. Input that is not a plausible
+// address is replaced with a fixed placeholder instead of being echoed.
+func MaskEmail(address string) string {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return ""
+	}
+	at := strings.LastIndex(address, "@")
+	if at <= 0 || at >= len(address)-1 || strings.ContainsAny(address, " \t\r\n") {
+		return "***"
+	}
+	local, domain := address[:at], address[at+1:]
+	if domain == "" {
+		return "***"
+	}
+	runes := []rune(local)
+	if len(runes) == 0 {
+		return "***@" + domain
+	}
+	return string(runes[0]) + "***@" + domain
+}

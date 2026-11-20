@@ -22,6 +22,7 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 )
 
 var (
@@ -474,7 +475,7 @@ func (s *EmailService) VerifyCode(ctx context.Context, email, code string) error
 	if atomic, ok := s.cache.(verificationCodeAtomicConsumer); ok {
 		status, _, err := atomic.ConsumeVerificationCode(ctx, email, code, maxVerifyCodeAttempts)
 		if err != nil {
-			slog.Error("failed to consume verification code", "email", email, "error", err)
+			slog.Error("failed to consume verification code", "email", logredact.MaskEmail(email), "error", err)
 			return ErrInvalidVerifyCode
 		}
 		switch status {
@@ -504,7 +505,7 @@ func (s *EmailService) VerifyCode(ctx context.Context, email, code string) error
 			return ErrInvalidVerifyCode
 		}
 		if err := s.cache.SetVerificationCode(ctx, email, data, remaining); err != nil {
-			slog.Error("failed to update verification attempt count", "email", email, "error", err)
+			slog.Error("failed to update verification attempt count", "email", logredact.MaskEmail(email), "error", err)
 		}
 		if data.Attempts >= maxVerifyCodeAttempts {
 			return ErrVerifyCodeMaxAttempts
@@ -514,7 +515,7 @@ func (s *EmailService) VerifyCode(ctx context.Context, email, code string) error
 
 	// 验证成功，删除验证码
 	if err := s.cache.DeleteVerificationCode(ctx, email); err != nil {
-		slog.Error("failed to delete verification code after success", "email", email, "error", err)
+		slog.Error("failed to delete verification code after success", "email", logredact.MaskEmail(email), "error", err)
 	}
 	return nil
 }
@@ -659,7 +660,7 @@ func (s *EmailService) SendPasswordResetEmail(ctx context.Context, email, siteNa
 func (s *EmailService) SendPasswordResetEmailWithCooldown(ctx context.Context, email, siteName, resetURL string, locale ...string) error {
 	// Check email cooldown to prevent email bombing
 	if s.cache.IsPasswordResetEmailInCooldown(ctx, email) {
-		slog.Info("password reset email skipped due to cooldown", "email", email)
+		slog.Info("password reset email skipped due to cooldown", "email", logredact.MaskEmail(email))
 		return nil // Silent success to prevent revealing cooldown to attackers
 	}
 
@@ -670,7 +671,7 @@ func (s *EmailService) SendPasswordResetEmailWithCooldown(ctx context.Context, e
 
 	// Set cooldown marker (Redis TTL handles expiration)
 	if err := s.cache.SetPasswordResetEmailCooldown(ctx, email, passwordResetEmailCooldown); err != nil {
-		slog.Error("failed to set password reset cooldown", "email", email, "error", err)
+		slog.Error("failed to set password reset cooldown", "email", logredact.MaskEmail(email), "error", err)
 	}
 
 	return nil
@@ -700,7 +701,7 @@ func (s *EmailService) ConsumePasswordResetToken(ctx context.Context, email, tok
 
 	// Delete after verification (one-time use)
 	if err := s.cache.DeletePasswordResetToken(ctx, email); err != nil {
-		slog.Error("failed to delete password reset token after consumption", "email", email, "error", err)
+		slog.Error("failed to delete password reset token after consumption", "email", logredact.MaskEmail(email), "error", err)
 	}
 	return nil
 }

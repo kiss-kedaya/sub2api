@@ -24,6 +24,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 )
 
 const (
@@ -2005,14 +2006,14 @@ func (s *ContentModerationService) sendFlaggedNotificationSideEffects(ctx contex
 	emailSent := false
 	if cfg.EmailOnHit {
 		if err := s.sendViolationEmail(ctx, cfg, log); err != nil {
-			slog.Warn("content_moderation.email_failed", "user_id", *log.UserID, "email", log.UserEmail, "error", err)
+			slog.Warn("content_moderation.email_failed", "user_id", *log.UserID, "email", logredact.MaskEmail(log.UserEmail), "error", err)
 		} else {
 			emailSent = true
 		}
 	}
 	if autoBanJustApplied {
 		if err := s.sendAccountDisabledEmail(ctx, cfg, log); err != nil {
-			slog.Warn("content_moderation.ban_email_failed", "user_id", *log.UserID, "email", log.UserEmail, "error", err)
+			slog.Warn("content_moderation.ban_email_failed", "user_id", *log.UserID, "email", logredact.MaskEmail(log.UserEmail), "error", err)
 		} else {
 			emailSent = true
 		}
