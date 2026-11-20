@@ -2,6 +2,7 @@ package payment
 
 import (
 	"crypto/rand"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -179,5 +180,89 @@ func TestCiphertextFormat(t *testing.T) {
 		if part == "" {
 			t.Fatalf("ciphertext part %d is empty", i)
 		}
+	}
+}
+
+func TestEncryptProviderConfigRoundTrip(t *testing.T) {
+	t.Parallel()
+	key := makeKey(t)
+	plaintext := `{"pkey":"merchant-secret","appId":"app-1"}`
+
+	encrypted, err := EncryptProviderConfig(plaintext, key)
+	if err != nil {
+		t.Fatalf("EncryptProviderConfig error: %v", err)
+	}
+	if !strings.HasPrefix(encrypted, ProviderConfigCipherPrefix) {
+		t.Fatalf("ciphertext %q must carry the %q version prefix", encrypted, ProviderConfigCipherPrefix)
+	}
+	if strings.Contains(encrypted, "merchant-secret") {
+		t.Fatal("ciphertext must not contain the plaintext secret")
+	}
+	if !IsEncryptedProviderConfig(encrypted) {
+		t.Fatal("IsEncryptedProviderConfig must report current ciphertext as encrypted")
+	}
+
+	decrypted, err := DecryptProviderConfig(encrypted, key)
+	if err != nil {
+		t.Fatalf("DecryptProviderConfig error: %v", err)
+	}
+	if decrypted != plaintext {
+		t.Fatalf("round trip = %q, want %q", decrypted, plaintext)
+	}
+}
+
+func TestDecryptProviderConfigLegacyAndPlaintextCompat(t *testing.T) {
+	t.Parallel()
+	key := makeKey(t)
+	plaintext := `{"pkey":"merchant-secret"}`
+
+	legacy, err := Encrypt(plaintext, key)
+	if err != nil {
+		t.Fatalf("seed legacy ciphertext: %v", err)
+	}
+	if !IsEncryptedProviderConfig(legacy) {
+		t.Fatal("IsEncryptedProviderConfig must recognise legacy ciphertext")
+	}
+	decrypted, err := DecryptProviderConfig(legacy, key)
+	if err != nil {
+		t.Fatalf("DecryptProviderConfig legacy error: %v", err)
+	}
+	if decrypted != plaintext {
+		t.Fatalf("legacy decrypt = %q, want %q", decrypted, plaintext)
+	}
+
+	// Pre-encryption plaintext rows stay readable so an upgrade never loses a
+	// merchant configuration.
+	if IsEncryptedProviderConfig(plaintext) {
+		t.Fatal("plaintext JSON must not be reported as encrypted")
+	}
+	decrypted, err = DecryptProviderConfig(plaintext, nil)
+	if err != nil {
+		t.Fatalf("DecryptProviderConfig plaintext error: %v", err)
+	}
+	if decrypted != plaintext {
+		t.Fatalf("plaintext passthrough = %q, want %q", decrypted, plaintext)
+	}
+}
+
+func TestDecryptProviderConfigFailsClosed(t *testing.T) {
+	t.Parallel()
+	key := makeKey(t)
+	wrongKey := makeKey(t)
+	encrypted, err := EncryptProviderConfig(`{"pkey":"merchant-secret"}`, key)
+	if err != nil {
+		t.Fatalf("EncryptProviderConfig error: %v", err)
+	}
+
+	if _, err := DecryptProviderConfig(encrypted, wrongKey); err == nil {
+		t.Fatal("wrong key must fail closed")
+	} else if strings.Contains(err.Error(), "merchant-secret") {
+		t.Fatal("error must not echo secret material")
+	}
+	if _, err := DecryptProviderConfig(encrypted, nil); !errors.Is(err, ErrProviderConfigKeyUnavailable) {
+		t.Fatalf("missing key must return ErrProviderConfigKeyUnavailable, got %v", err)
+	}
+	if _, err := DecryptProviderConfig(encrypted, []byte("short-key")); !errors.Is(err, ErrProviderConfigKeyUnavailable) {
+		t.Fatalf("short key must return ErrProviderConfigKeyUnavailable, got %v", err)
 	}
 }

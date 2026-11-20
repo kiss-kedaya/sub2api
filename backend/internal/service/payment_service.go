@@ -248,6 +248,11 @@ func (s *PaymentService) RefreshProviders(ctx context.Context) {
 }
 
 func (s *PaymentService) loadProviders(ctx context.Context) {
+	// First payment read also migrates provider configs that predate encryption.
+	// Best-effort and idempotent: a failure never blocks provider loading.
+	if s.configService != nil {
+		s.configService.ensureProviderConfigsMigrated(ctx)
+	}
 	instances, err := s.entClient.PaymentProviderInstance.Query().
 		Where(paymentproviderinstance.EnabledEQ(true)).
 		All(ctx)

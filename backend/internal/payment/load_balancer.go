@@ -332,20 +332,21 @@ func (lb *DefaultLoadBalancer) decryptConfig(stored string) (map[string]string, 
 	}
 	var config map[string]string
 	if err := json.Unmarshal([]byte(stored), &config); err == nil {
+		// Pre-encryption plaintext row. Reads stay compatible; the config
+		// service re-encrypts it on the next write or lazy migration.
 		return config, nil
 	}
-	// Deprecated: legacy AES-256-GCM ciphertext fallback — scheduled for removal.
-	if len(lb.encryptionKey) == AES256KeySize {
-		//nolint:staticcheck // SA1019: intentional legacy fallback, scheduled for removal
-		if plaintext, err := Decrypt(stored, lb.encryptionKey); err == nil {
-			if err := json.Unmarshal([]byte(plaintext), &config); err == nil {
-				return config, nil
-			}
-		}
+	plaintext, err := DecryptProviderConfig(stored, lb.encryptionKey)
+	if err != nil {
+		// Fail closed: never treat undecryptable merchant credentials as an
+		// empty configuration, which would silently disable or misconfigure
+		// the payment provider.
+		return nil, fmt.Errorf("payment provider config is unreadable: %w", err)
 	}
-	slog.Warn("payment provider config unreadable, treating as empty for re-entry",
-		"stored_len", len(stored))
-	return nil, nil
+	if err := json.Unmarshal([]byte(plaintext), &config); err != nil {
+		return nil, fmt.Errorf("payment provider config is not a valid JSON object")
+	}
+	return config, nil
 }
 
 // GetInstanceDailyAmount returns the total completed order amount for an instance today.
