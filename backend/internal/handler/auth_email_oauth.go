@@ -194,6 +194,14 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 		readOAuthPromoCode(c),
 	)
 	if err != nil {
+		if errors.Is(err, service.ErrLoginTOTPRequired) {
+			if user == nil {
+				redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "two-factor verification is unavailable", "")
+				return
+			}
+			h.redirectEmailOAuthTOTPChallenge(c, user, provider, frontendCallback, redirectTo)
+			return
+		}
 		if errors.Is(err, service.ErrOAuthInvitationRequired) {
 			if pendingErr := h.createEmailOAuthRegistrationPendingSession(c, provider, frontendCallback, redirectTo, profile); pendingErr != nil {
 				redirectOAuthError(c, frontendCallback, infraerrors.Reason(pendingErr), infraerrors.Message(pendingErr), "")
@@ -215,6 +223,38 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 	fragment.Set("refresh_token", tokenPair.RefreshToken)
 	fragment.Set("expires_in", fmt.Sprintf("%d", tokenPair.ExpiresIn))
 	fragment.Set("token_type", "Bearer")
+	fragment.Set("redirect", redirectTo)
+	redirectWithFragment(c, frontendCallback, fragment)
+}
+
+// redirectEmailOAuthTOTPChallenge 为已启用 TOTP 的已有账号签发一次性 2FA 登录会话，
+// 前端拿到 requires_2fa + temp_token 后走 /auth/login/2fa 完成验证再拿 token。
+// 这里不签发任何 access/refresh token，避免 OAuth 路径绕过登录二次验证。
+func (h *AuthHandler) redirectEmailOAuthTOTPChallenge(
+	c *gin.Context,
+	user *service.User,
+	provider string,
+	frontendCallback string,
+	redirectTo string,
+) {
+	if h.totpService == nil {
+		redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "two-factor verification is unavailable", "")
+		return
+	}
+	if err := h.ensureBackendModeAllowsUser(c.Request.Context(), user); err != nil {
+		redirectOAuthError(c, frontendCallback, "login_blocked", infraerrors.Reason(err), infraerrors.Message(err))
+		return
+	}
+	tempToken, err := h.totpService.CreateLoginSession(c.Request.Context(), user.ID, user.Email)
+	if err != nil {
+		redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "failed to create two-factor session", "")
+		return
+	}
+	fragment := url.Values{}
+	fragment.Set("requires_2fa", "1")
+	fragment.Set("temp_token", tempToken)
+	fragment.Set("user_email_masked", service.MaskEmail(user.Email))
+	fragment.Set("provider", provider)
 	fragment.Set("redirect", redirectTo)
 	redirectWithFragment(c, frontendCallback, fragment)
 }

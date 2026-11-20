@@ -785,6 +785,20 @@ onMounted(async () => {
   )
 
   try {
+    // 已启用 TOTP 的已有账号：后端只下发一次性挑战，必须先完成动态码。
+    if (params.get('requires_2fa') === '1' && params.get('temp_token')) {
+      redirectTo.value = redirect
+      if (
+        applyTotpChallenge({
+          requires_2fa: true,
+          temp_token: params.get('temp_token') || '',
+          user_email_masked: params.get('user_email_masked') || ''
+        } as PendingOidcCompletion)
+      ) {
+        return
+      }
+    }
+
     if (legacyLogin) {
       persistOAuthTokenContext(legacyLogin)
       await authStore.setToken(legacyLogin.access_token)

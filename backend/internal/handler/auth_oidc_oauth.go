@@ -1271,7 +1271,7 @@ func (h *AuthHandler) tryOIDCVerifiedEmailFastPath(
 		AvatarURL:        pendingSessionStringValue(upstreamClaims, "suggested_avatar_url"),
 		UpstreamMetadata: upstreamMetadata,
 	}
-	tokenPair, _, err := h.authService.LoginOrRegisterVerifiedEmailOAuthWithSignupCodes(
+	tokenPair, user, err := h.authService.LoginOrRegisterVerifiedEmailOAuthWithSignupCodes(
 		ctx,
 		input,
 		"",
@@ -1279,6 +1279,18 @@ func (h *AuthHandler) tryOIDCVerifiedEmailFastPath(
 		readOAuthPromoCode(c),
 	)
 	if err != nil {
+		// 已启用 TOTP 的已有账号：与 GitHub/Google 邮箱 OAuth 同口径，
+		// 只下发 2FA 挑战，不签发会话，也不退回会直接登录的 pending 流程。
+		if errors.Is(err, service.ErrLoginTOTPRequired) && user != nil {
+			clearOAuthPendingSessionCookie(c, isRequestHTTPS(c))
+			clearOAuthPendingBrowserCookie(c, isRequestHTTPS(c))
+			provider := strings.TrimSpace(identity.ProviderType)
+			if provider == "" {
+				provider = "oidc"
+			}
+			h.redirectEmailOAuthTOTPChallenge(c, user, provider, frontendCallback, redirectTo)
+			return true
+		}
 		log.Printf("[OIDC OAuth] verified-email fast path skipped: reason=%s", infraerrors.Reason(err))
 		return false
 	}
