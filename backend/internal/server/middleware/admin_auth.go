@@ -4,12 +4,14 @@ package middleware
 import (
 	"crypto/subtle"
 	"errors"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -27,6 +29,10 @@ func NewAdminAuthMiddleware(
 	auditService *service.AuditLogService,
 	cfg *config.Config,
 ) AdminAuthMiddleware {
+	// 回退开关等价于「分权失效、旧版全权 key 独占 API key 通道」，启动时必须显式可见。
+	if scopedAdminKeysDisabled {
+		slog.Warn("SCOPED_ADMIN_API_KEYS_DISABLED=true: all scoped admin API keys are rejected and the legacy full-power admin API key path remains active")
+	}
 	return AdminAuthMiddleware(adminAuth(authService, userService, settingService, auditService, cfg))
 }
 
@@ -296,7 +302,9 @@ func authenticateScopedAdminRequest(c *gin.Context, key string, settings *servic
 	c.Set(string(ContextKeyUserRole), user.Role)
 	c.Set(ContextKeyAuthEmail, user.Email)
 	c.Set("auth_method", service.AuditAuthMethodAdminAPIKey)
-	c.Set(auditCtxKeySkip, true)
+	// 不跳过审计中间件：受限密钥是自动化身份，变更操作必须与真人会话一样
+	// 留下动作名、脱敏请求体和路径参数。密钥身份通过专门的标量字段补充。
+	SetAuditExtra(c, map[string]any{"admin_key_id": item.ID, "admin_key_name": item.Name})
 	// 密钥只能由主管理员通过 JWT 创建（handler 强制），因此受限密钥等价于主管理员
 	// 的自动化身份；这里沿用旧版全权密钥的账户归属作用域，不再叠加观察员边界。
 	setAdminAccountOwnerScope(c, cfg)
@@ -311,7 +319,15 @@ func recordAdminKeyRequest(c *gin.Context, audit *service.AuditLogService, item 
 	if audit == nil {
 		return
 	}
+	// 变更类请求和敏感读取已由审计中间件落库（含密钥身份），不重复补记。
+	// 认证/授权失败发生在审计中间件之前，因此仍需在此兜底留痕。
+	if c.GetBool(auditCtxKeyRecorded) {
+		return
+	}
 	entry := &service.AuditLog{CreatedAt: time.Now().UTC(), AuthMethod: service.AuditAuthMethodAdminAPIKey, Action: "admin.api_key.request", Method: c.Request.Method, Path: c.Request.URL.Path, StatusCode: c.Writer.Status(), ClientIP: SecurityClientIP(c), UserAgent: c.Request.UserAgent()}
+	if requestID, ok := c.Request.Context().Value(ctxkey.RequestID).(string); ok {
+		entry.RequestID = requestID
+	}
 	if item != nil {
 		entry.Extra = map[string]any{"admin_key_id": item.ID, "admin_key_name": item.Name}
 		uid := item.CreatedBy
