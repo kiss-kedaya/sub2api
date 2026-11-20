@@ -72,17 +72,18 @@ func (r *usageLogRepository) rollupBounds(ctx context.Context, start, end time.T
 	if staleness <= 0 {
 		staleness = time.Minute
 	}
-	if now.Sub(watermark) > staleness {
-		return time.Time{}, time.Time{}, false
-	}
-	if !watermark.After(start.UTC()) {
+	watermarkHour := watermark.Truncate(time.Hour)
+	// The open hour is read from usage_logs. A delayed refresh in that hour
+	// does not change which earlier hours can be read from the rollups.
+	if now.Sub(watermark) > staleness && !watermarkHour.Equal(now.Truncate(time.Hour)) {
 		return time.Time{}, time.Time{}, false
 	}
 	var coverageStart time.Time
 	if err := scanSingleRow(ctx, r.sql, "SELECT COALESCE(MIN(bucket_start), TIMESTAMPTZ 'epoch') FROM usage_dashboard_hourly", nil, &coverageStart); err != nil || coverageStart.Equal(time.Unix(0, 0).UTC()) || start.UTC().Before(coverageStart.UTC()) {
 		return time.Time{}, time.Time{}, false
 	}
-	cutoff := watermark
+	// Keep the raw tail and the full-hour rollups disjoint at rollover.
+	cutoff := watermarkHour
 	if cutoff.After(rollupEnd) {
 		cutoff = rollupEnd
 	}
