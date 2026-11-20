@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 func TestAdminUserNumericContractRejectsNegativeLimits(t *testing.T) {
@@ -18,7 +20,10 @@ func TestAdminUserNumericContractRejectsNegativeLimits(t *testing.T) {
 			for _, method := range []string{http.MethodPost, http.MethodPut} {
 				t.Run(fmt.Sprintf("%s/%d/%s", field, value, method), func(t *testing.T) {
 					svc := newStubAdminService()
-					h := NewUserHandler(svc, nil, nil, nil, nil, nil, nil)
+					// 本用例只验证数值契约：step-up 关闭时保持既有行为，
+					// 敏感字段门控由 user_handler_update_stepup_test.go 覆盖。
+					settings := service.NewSettingService(&settingHandlerRepoStub{values: map[string]string{service.SettingKeyStepUpEnabled: "false"}}, nil)
+					h := NewUserHandler(svc, nil, nil, nil, nil, nil, settings)
 					r := gin.New()
 					r.POST("/users", h.Create)
 					r.PUT("/users/:id", h.Update)
