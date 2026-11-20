@@ -669,6 +669,25 @@ async function openUsersTab(wrapper: ReturnType<typeof mountView>) {
   await flushPromises();
 }
 
+/**
+ * SettingsView renders its own TotpStepUpDialog, but the security tab's AdminAccessKeysSettings
+ * mounts a second one (that tab uses v-show, so it is always in the tree). Tree order puts the
+ * nested dialog first, so `getComponent(TotpStepUpDialog)` returns that always-closed instance.
+ * Select by state instead: only the dialog backing an open prompt renders the one-time-code input.
+ */
+function openTotpStepUpDialogs(wrapper: ReturnType<typeof mountView>) {
+  return wrapper
+    .findAllComponents(TotpStepUpDialog)
+    .filter((dialog) => dialog.find('input[autocomplete="one-time-code"]').exists());
+}
+
+function openTotpStepUpDialog(wrapper: ReturnType<typeof mountView>) {
+  const [dialog, ...rest] = openTotpStepUpDialogs(wrapper);
+  expect(dialog, "the settings step-up dialog should be open").toBeDefined();
+  expect(rest, "only one step-up dialog should be open").toHaveLength(0);
+  return dialog!;
+}
+
 describe("admin SettingsView email domain quota copy", () => {
   it("documents the email domain quota and empty-whitelist behavior in both locales", () => {
     expect(zhCommon.auth.emailDomainRegistrationLimit).toContain("主流邮箱");
@@ -796,7 +815,7 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings).toHaveBeenCalledTimes(1);
     expect(updateSettings.mock.calls[0]?.[0][field]).toBe(true);
     expect(verifyStepUp).not.toHaveBeenCalled();
-    expect(wrapper.getComponent(TotpStepUpDialog).find('input[autocomplete="one-time-code"]').exists()).toBe(false);
+    expect(openTotpStepUpDialogs(wrapper)).toHaveLength(0);
     wrapper.unmount();
   });
 
@@ -810,7 +829,7 @@ describe("admin SettingsView payment visible method controls", () => {
     await flushPromises();
     expect(updateSettings).toHaveBeenCalledTimes(1);
     const original = updateSettings.mock.calls[0]?.[0];
-    const dialog = wrapper.getComponent(TotpStepUpDialog);
+    const dialog = openTotpStepUpDialog(wrapper);
     expect(dialog.findAll('.totp-code-input span[aria-hidden="true"]')).toHaveLength(6);
     await dialog.get('input[autocomplete="one-time-code"]').setValue("123456");
     await flushPromises();
@@ -832,7 +851,7 @@ describe("admin SettingsView payment visible method controls", () => {
     formOf(wrapper).site_name = "Step Up Site";
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
-    await wrapper.getComponent(TotpStepUpDialog).get('button').trigger("click");
+    await openTotpStepUpDialog(wrapper).get('button').trigger("click");
     await flushPromises();
     expect(updateSettings).toHaveBeenCalledTimes(1);
     expect(verifyStepUp).not.toHaveBeenCalled();
@@ -851,7 +870,7 @@ describe("admin SettingsView payment visible method controls", () => {
     formOf(wrapper).site_name = "Step Up Site";
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
-    const dialog = wrapper.getComponent(TotpStepUpDialog);
+    const dialog = openTotpStepUpDialog(wrapper);
     await dialog.get('input[autocomplete="one-time-code"]').setValue("111111");
     await flushPromises();
     expect(updateSettings).toHaveBeenCalledTimes(1);

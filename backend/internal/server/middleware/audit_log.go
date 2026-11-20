@@ -21,7 +21,10 @@ const (
 	auditCtxKeyActorID    = "audit_actor_id"
 	auditCtxKeyActorEmail = "audit_actor_email"
 	auditCtxKeySkip       = "audit_skip"
-	auditCtxKeyExtra      = "audit_extra"
+	// auditCtxKeyRecorded 标记本请求已由审计中间件写入完整记录；
+	// 认证层据此避免为同一请求再补记一条低信息量的兜底记录。
+	auditCtxKeyRecorded = "audit_recorded"
+	auditCtxKeyExtra    = "audit_extra"
 	// ContextKeyAuthEmail 认证中间件写入的用户邮箱（审计用）。
 	ContextKeyAuthEmail = "auth_email"
 	// ContextKeySessionID 认证中间件写入的会话 ID（refresh token family）。
@@ -58,6 +61,8 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"http_status": {}, "latency_ms": {}, "token_applied": {}, "retryable": {},
 	"event_id": {}, "requested_count": {}, "deleted_events": {}, "deleted_jobs": {},
 	"matched_count": {}, "snapshot_max_id": {}, "filter_hash": {}, "confirm": {},
+	// 受限管理员密钥身份（认证中间件写入，用于在完整审计记录中定位具体密钥）。
+	"admin_key_id": {}, "admin_key_name": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.
@@ -342,6 +347,9 @@ func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddle
 			entry.Extra = extra
 		}
 
+		// 先标记再入队：认证层的兜底记录在整条中间件链返回后才执行，
+		// 只有确认完整记录已产生，才不重复补记。
+		c.Set(auditCtxKeyRecorded, true)
 		auditService.Record(entry)
 	})
 }
