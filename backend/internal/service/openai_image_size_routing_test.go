@@ -98,7 +98,7 @@ func TestOpenAIImageSizeVetoReason(t *testing.T) {
 	vetoed, reason := openAIImageSizeVetoReason(ctx, &unlimited)
 	require.False(t, vetoed)
 	require.Empty(t, reason)
-	vetoed, reason = openAIImageSizeVetoReason(ctx, &highOnly)
+	vetoed, _ = openAIImageSizeVetoReason(ctx, &highOnly)
 	require.False(t, vetoed, "4K-only account serves a 4K request")
 	vetoed, reason = openAIImageSizeVetoReason(ctx, &lowOnly)
 	require.True(t, vetoed)
