@@ -3396,8 +3396,10 @@ func convertGeminiToClaudeMessage(geminiResp map[string]any, originalModel strin
 		"stop_reason":   stopReason,
 		"stop_sequence": nil,
 		"usage": map[string]any{
-			"input_tokens":  usage.InputTokens,
-			"output_tokens": usage.OutputTokens,
+			"input_tokens":                usage.InputTokens,
+			"output_tokens":               usage.OutputTokens,
+			"cache_read_input_tokens":     usage.CacheReadInputTokens,
+			"cache_creation_input_tokens": usage.CacheCreationInputTokens,
 		},
 	}
 
