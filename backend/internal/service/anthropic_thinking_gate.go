@@ -53,12 +53,25 @@ func anthropicModelRequiresAdaptiveThinking(modelID string) bool {
 }
 
 // sanitizeAnthropicThinkingForModel 修正直连 Anthropic 路径上的 thinking 协议漂移：
-// 对已不接受 "enabled" 的模型把 thinking.type 换成 "adaptive"。
+// 只把上游已不再接受的 thinking.type="enabled" 换成 "adaptive"（保留「开思考」语义）。
 //
 // 为什么连 budget_tokens 一起删：
 //   - adaptive 的语义是「由模型自决思考预算」，budget_tokens 对它没有作用，删掉不丢语义；
 //   - 上游把 adaptive 和 output_config.effort 组合在一起描述，没有定义 adaptive 下的
 //     budget_tokens，留着只多一个被拒的可能。
+//
+// disabled / between_tools 一律原样返回，不改写。2026-11-20 对上游实测：
+//   - 省略 thinking 不等于关闭思考：5.5 代模型省略 thinking 的默认语义是 adaptive，
+//     思考是开着的。因此不能把 disabled 删成「省略」——那会把用户明确关掉的思考
+//     重新打开，上游还会按 thinking token 计费（opus-5-5 / fable-5-2：直发 disabled
+//     是 400，删成省略后是 200 且 thinking_tokens > 0）。
+//   - haiku-5-5 本来就接受 disabled（直发 disabled + effort=high 是 200 且不思考）。
+//   - between_tools 是「不思考」的另一种表达，转成 adaptive 同样会把思考打开；
+//     不支持的型号交给上游回 400 文案。
+//
+// 上游对这两种取值本来就有明确的 400 文案（告诉客户端用 adaptive / effort /
+// between_tools），原样放行客户端才能拿到与官方一致的行为；网关只修「上游不再接受
+// enabled」这一种漂移。
 //
 // 只动 thinking 一个对象，其余字段字节级原样保留；无命中时返回原切片。
 func sanitizeAnthropicThinkingForModel(body []byte, modelID string) []byte {
@@ -67,75 +80,24 @@ func sanitizeAnthropicThinkingForModel(body []byte, modelID string) []byte {
 	}
 
 	thinking := gjson.GetBytes(body, "thinking")
-	if !thinking.IsObject() {
+	if !thinking.IsObject() || thinking.Get("type").String() != "enabled" {
 		return body
 	}
 
-	// 已验证的上游 thinking 兼容矩阵：
-	//   opus-5-5  : enabled / disabled / between_tools 全部 400；adaptive（带不带
-	//               budget_tokens 都行）和省略 thinking 都是 200。
-	//   sonnet-5-5: adaptive 与 between_tools 200；enabled / disabled 400。
-	// 因此不能再只处理 "enabled"：客户端把 thinking 关掉时会发 disabled，
-	// 上游同样直接 400。disabled 的语义是「不要思考」，与省略 thinking 等价，
-	// 只能整段删除（改 adaptive 会把用户明确关掉的思考又打开）。
-	switch thinking.Get("type").String() {
-	case "enabled":
-		// 保持「开思考」语义，换成上游唯一接受的 adaptive。
-		out := body
-		changed := false
-		if next, err := sjson.SetBytes(out, "thinking.type", "adaptive"); err == nil {
+	out := body
+	changed := false
+	if next, err := sjson.SetBytes(out, "thinking.type", "adaptive"); err == nil {
+		out = next
+		changed = true
+	}
+	if thinking.Get("budget_tokens").Exists() {
+		if next, err := sjson.DeleteBytes(out, "thinking.budget_tokens"); err == nil {
 			out = next
 			changed = true
 		}
-		if thinking.Get("budget_tokens").Exists() {
-			if next, err := sjson.DeleteBytes(out, "thinking.budget_tokens"); err == nil {
-				out = next
-				changed = true
-			}
-		}
-		if !changed {
-			return body
-		}
-		return out
-
-	case "between_tools":
-		// 只有 sonnet 5.5 接受 between_tools；opus 会报
-		// "thinking.type=between_tools is unsupported"。
-		if anthropicModelAllowsBetweenToolsThinking(modelID) {
-			return body
-		}
-		out := body
-		changed := false
-		if next, err := sjson.SetBytes(out, "thinking.type", "adaptive"); err == nil {
-			out = next
-			changed = true
-		}
-		if thinking.Get("budget_tokens").Exists() {
-			if next, err := sjson.DeleteBytes(out, "thinking.budget_tokens"); err == nil {
-				out = next
-				changed = true
-			}
-		}
-		if !changed {
-			return body
-		}
-		return out
-
-	case "disabled":
-		// 上游不接受 disabled，唯一合法且保留原意的表达是省略 thinking。
-		out, err := sjson.DeleteBytes(body, "thinking")
-		if err != nil {
-			return body
-		}
-		return removeThinkingDependentContextStrategies(out)
-
-	default:
+	}
+	if !changed {
 		return body
 	}
-}
-
-// anthropicModelAllowsBetweenToolsThinking 判断模型是否接受
-// thinking.type="between_tools"。目前只有 sonnet 5.5 明确支持；opus 5.5 实测 400。
-func anthropicModelAllowsBetweenToolsThinking(modelID string) bool {
-	return strings.Contains(strings.ToLower(modelID), "sonnet")
+	return out
 }

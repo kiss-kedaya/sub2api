@@ -348,11 +348,13 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	if ttlMode, applyTTL := s.resolveAnthropicCacheTTLMode(ctx, c, account); applyTTL {
 		body = forceEphemeralCacheControlTTL(body, ttlMode)
 	}
-	// 透传路径只替换认证，但这两条是上游硬约束，不规整就是必然 400：
-	//   - cache_control 的 ttl 顺序（1h 不得跟在 5m 后面）
-	//   - Claude 5.x 不接受 thinking.type="enabled"
+	// 透传路径只替换认证，唯一的 body 改写是 cache_control 的 ttl 顺序
+	// （1h 不得跟在 5m 后面，不规整上游必然 400）。
+	//
+	// thinking 刻意不动：本路径的契约是字节级透传。Claude 5.5 代对 disabled /
+	// enabled+budget_tokens 有明确的 400 文案，应由上游原样回给客户端；网关改写
+	// 会把「关思考」变成「默认开思考」并多计费（实测记录见 anthropic_thinking_gate.go）。
 	body = normalizeCacheControlTTLOrder(body)
-	body = sanitizeAnthropicThinkingForModel(body, gjson.GetBytes(body, "model").String())
 	targetURL := claudeAPIURL
 	baseURL := account.GetBaseURL()
 	if baseURL != "" {

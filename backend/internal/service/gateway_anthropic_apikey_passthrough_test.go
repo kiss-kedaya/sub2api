@@ -311,6 +311,60 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_BearerAuthScheme(t *testing.T
 	require.Empty(t, getHeaderRaw(countReq.Header, "cookie"))
 }
 
+// 透传账号的契约是字节级转发：thinking 不能被网关改写。disabled / enabled+budget
+// 必须原样到上游，由上游返回官方 400 文案；网关若把 disabled 删成「省略 thinking」，
+// 5.5 代模型会按默认 adaptive 继续思考并按 thinking token 多计费（2026-11-20 实测）。
+func TestGatewayService_AnthropicAPIKeyPassthrough_KeepsThinkingUntouched(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	svc := &GatewayService{
+		cfg: &config.Config{
+			Security: config.SecurityConfig{
+				URLAllowlist: config.URLAllowlistConfig{Enabled: false},
+			},
+		},
+	}
+	account := &Account{
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "upstream-key",
+			"base_url": "https://direct.example.com",
+		},
+		Extra: map[string]any{"anthropic_passthrough": true},
+	}
+
+	for _, body := range []string{
+		`{"model":"claude-opus-5-5","thinking":{"type":"disabled"},"max_tokens":2048,"messages":[]}`,
+		`{"model":"claude-opus-5-5","thinking":{"type":"enabled","budget_tokens":1024},"max_tokens":2048,"messages":[]}`,
+		`{"model":"claude-haiku-5-5","thinking":{"type":"disabled"},"output_config":{"effort":"high"},"max_tokens":2048,"messages":[]}`,
+		`{"model":"claude-fable-5-2","thinking":{"type":"between_tools"},"max_tokens":2048,"messages":[]}`,
+	} {
+		msgReq, wireBody, err := svc.buildUpstreamRequestAnthropicAPIKeyPassthrough(
+			context.Background(), c, account, []byte(body), "upstream-key",
+		)
+		require.NoError(t, err)
+		require.Equal(t, body, string(wireBody), "thinking 必须原样透传")
+		require.Equal(t, "https://direct.example.com/v1/messages?beta=true", msgReq.URL.String())
+	}
+
+	// count_tokens 透传同样不改写 thinking，只按 count_tokens 规则剥生成参数。
+	ctReq, err := svc.buildCountTokensRequestAnthropicAPIKeyPassthrough(
+		context.Background(), c, account,
+		[]byte(`{"model":"claude-opus-5-5","thinking":{"type":"disabled","budget_tokens":1024},"messages":[]}`),
+		"upstream-key",
+	)
+	require.NoError(t, err)
+	ctRaw, err := io.ReadAll(ctReq.Body)
+	require.NoError(t, err)
+	require.Equal(t, "disabled", gjson.GetBytes(ctRaw, "thinking.type").String())
+	require.Equal(t, int64(1024), gjson.GetBytes(ctRaw, "thinking.budget_tokens").Int())
+}
+
 // TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingEdgeCases 覆盖透传模式下模型映射的各种边界情况
 func TestGatewayService_AnthropicAPIKeyPassthrough_ModelMappingEdgeCases(t *testing.T) {
 	gin.SetMode(gin.TestMode)

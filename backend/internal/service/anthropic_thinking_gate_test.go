@@ -89,40 +89,34 @@ func TestSanitizeAnthropicThinkingForModel(t *testing.T) {
 		require.Equal(t, string(body), string(sanitizeAnthropicThinkingForModel(body, "claude-opus-5-5")))
 	})
 
-	// 上游实测（2026-10-19）：opus-5-5 对 disabled 同样返回
-	// "requires adaptive thinking"，所以必须整段删除（等价于省略 thinking）。
-	t.Run("disabled 整段删除", func(t *testing.T) {
-		body := []byte(`{"model":"claude-opus-5-5","thinking":{"type":"disabled"},"max_tokens":1024,"messages":[]}`)
-		out := sanitizeAnthropicThinkingForModel(body, "claude-opus-5-5")
-		require.False(t, gjson.GetBytes(out, "thinking").Exists())
-		require.Equal(t, int64(1024), gjson.GetBytes(out, "max_tokens").Int())
+	// 2026-11-20 实测：5.5 代模型省略 thinking 的默认语义是 adaptive（思考开着），
+	// 所以 disabled 不能删成省略——否则会把用户明确关掉的思考重新打开，并按
+	// thinking token 多计费。disabled 原样放行，支持它的上游（haiku-5-5）正常不思考，
+	// 不支持的型号由上游返回官方 400 文案。
+	t.Run("disabled 原样保留", func(t *testing.T) {
+		for _, model := range []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"} {
+			body := []byte(`{"model":"` + model + `","thinking":{"type":"disabled"},"max_tokens":1024,"messages":[]}`)
+			require.Equal(t, string(body), string(sanitizeAnthropicThinkingForModel(body, model)))
+		}
 	})
 
-	t.Run("disabled 连同 budget_tokens 一起消失", func(t *testing.T) {
+	t.Run("disabled 连同 budget_tokens 原样保留", func(t *testing.T) {
 		body := []byte(`{"thinking":{"type":"disabled","budget_tokens":1024},"messages":[]}`)
-		out := sanitizeAnthropicThinkingForModel(body, "claude-sonnet-5-5")
-		require.False(t, gjson.GetBytes(out, "thinking").Exists())
-	})
-
-	t.Run("disabled 删除后一并清理依赖 thinking 的 context_management", func(t *testing.T) {
-		body := []byte(`{"thinking":{"type":"disabled"},"context_management":{"edits":[{"type":"clear_thinking_20251015"},{"type":"compact_20251015"}]},"messages":[]}`)
-		out := sanitizeAnthropicThinkingForModel(body, "claude-opus-5-5")
-		require.False(t, gjson.GetBytes(out, "thinking").Exists())
-		require.Len(t, gjson.GetBytes(out, "context_management.edits").Array(), 1)
-		require.Equal(t, "compact_20251015", gjson.GetBytes(out, "context_management.edits.0.type").String())
-	})
-
-	// sonnet 5.5 接受 between_tools；opus 5.5 不接受（实测 400），要转 adaptive。
-	t.Run("sonnet between_tools 原样保留", func(t *testing.T) {
-		body := []byte(`{"thinking":{"type":"between_tools"},"messages":[]}`)
 		require.Equal(t, string(body), string(sanitizeAnthropicThinkingForModel(body, "claude-sonnet-5-5")))
 	})
 
-	t.Run("opus between_tools 转 adaptive", func(t *testing.T) {
-		body := []byte(`{"thinking":{"type":"between_tools","budget_tokens":2048},"messages":[]}`)
-		out := sanitizeAnthropicThinkingForModel(body, "claude-opus-5-5")
-		require.Equal(t, "adaptive", gjson.GetBytes(out, "thinking.type").String())
-		require.False(t, gjson.GetBytes(out, "thinking.budget_tokens").Exists())
+	t.Run("disabled 不再清理 context_management", func(t *testing.T) {
+		body := []byte(`{"thinking":{"type":"disabled"},"context_management":{"edits":[{"type":"clear_thinking_20251015"},{"type":"compact_20251015"}]},"messages":[]}`)
+		require.Equal(t, string(body), string(sanitizeAnthropicThinkingForModel(body, "claude-opus-5-5")))
+	})
+
+	// between_tools 是「不思考」的另一种表达；转成 adaptive 同样会把思考打开。
+	// 只接受 sonnet-5-5，其它型号原样放行、由上游回 400。
+	t.Run("between_tools 原样保留", func(t *testing.T) {
+		for _, model := range []string{"claude-sonnet-5-5", "claude-opus-5-5"} {
+			body := []byte(`{"thinking":{"type":"between_tools","budget_tokens":2048},"messages":[]}`)
+			require.Equal(t, string(body), string(sanitizeAnthropicThinkingForModel(body, model)))
+		}
 	})
 
 	t.Run("老模型不碰", func(t *testing.T) {
