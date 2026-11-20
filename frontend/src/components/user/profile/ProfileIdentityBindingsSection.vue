@@ -216,6 +216,8 @@ type BindableProvider = Exclude<UserAuthProvider, 'email'>
 const props = withDefaults(
   defineProps<{
     user: User | null
+    githubEnabled?: boolean
+    googleEnabled?: boolean
     linuxdoEnabled?: boolean
     dingtalkEnabled?: boolean
     oidcEnabled?: boolean
@@ -227,6 +229,8 @@ const props = withDefaults(
     compact?: boolean
   }>(),
   {
+    githubEnabled: false,
+    googleEnabled: false,
     linuxdoEnabled: false,
     dingtalkEnabled: false,
     oidcEnabled: false,
@@ -405,6 +409,12 @@ function getDisplayableEmail(user: User | null | undefined): string {
 }
 
 function isProviderEnabledForBinding(provider: BindableProvider): boolean {
+  if (provider === 'github') {
+    return props.githubEnabled
+  }
+  if (provider === 'google') {
+    return props.googleEnabled
+  }
   if (provider === 'linuxdo') {
     return props.linuxdoEnabled
   }
@@ -425,6 +435,28 @@ const providerItems = computed(() => [
     canBind: false,
     canUnbind: false,
     details: getBindingDetails('email'),
+  },
+  {
+    provider: 'github' as const,
+    label: t('profile.authBindings.providers.github'),
+    bound: getBindingStatus('github'),
+    canBind:
+      !getBindingStatus('github') &&
+      isProviderEnabledForBinding('github') &&
+      (getBindingDetails('github')?.can_bind ?? true),
+    canUnbind: Boolean(getBindingStatus('github') && getBindingDetails('github')?.can_unbind),
+    details: getBindingDetails('github'),
+  },
+  {
+    provider: 'google' as const,
+    label: t('profile.authBindings.providers.google'),
+    bound: getBindingStatus('google'),
+    canBind:
+      !getBindingStatus('google') &&
+      isProviderEnabledForBinding('google') &&
+      (getBindingDetails('google')?.can_bind ?? true),
+    canUnbind: Boolean(getBindingStatus('google') && getBindingDetails('google')?.can_unbind),
+    details: getBindingDetails('google'),
   },
   {
     provider: 'linuxdo' as const,
@@ -473,6 +505,12 @@ const providerItems = computed(() => [
 ])
 
 function providerInitial(provider: UserAuthProvider): string {
+  if (provider === 'github') {
+    return 'GH'
+  }
+  if (provider === 'google') {
+    return 'G'
+  }
   if (provider === 'linuxdo') {
     return 'L'
   }
@@ -489,6 +527,12 @@ function providerInitial(provider: UserAuthProvider): string {
 }
 
 function providerIconClass(provider: UserAuthProvider): string {
+  if (provider === 'github') {
+    return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200'
+  }
+  if (provider === 'google') {
+    return 'bg-red-100 text-red-600 dark:bg-red-900/20 dark:text-red-300'
+  }
   if (provider === 'linuxdo') {
     return 'bg-orange-100 text-orange-600 dark:bg-orange-900/20 dark:text-orange-300'
   }

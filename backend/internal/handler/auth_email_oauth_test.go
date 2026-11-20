@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -479,4 +480,123 @@ func findSetCookieValue(cookies []*http.Cookie, name string) string {
 		}
 	}
 	return ""
+}
+
+func TestEmailOAuthCallbackBindCurrentUserCreatesBindingPendingSession(t *testing.T) {
+	handler, client := newOAuthPendingFlowTestHandler(t, false)
+	handler.cfg = &config.Config{JWT: config.JWTConfig{Secret: "test-secret"}}
+	ctx := context.Background()
+
+	user, err := client.User.Create().
+		SetEmail("bind@example.com").
+		SetUsername("bind-user").
+		SetPasswordHash("hash").
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	bindCookieValue, err := buildOAuthBindUserCookieValue(user.ID, "test-secret")
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/github/callback", nil)
+	c.Request.AddCookie(&http.Cookie{Name: emailOAuthBindUserCookie, Value: encodeCookieValue(bindCookieValue)})
+
+	handler.emailOAuthCallbackBindWithProfile(c, "github", "/auth/oauth/callback", "/profile", &emailOAuthProfile{
+		Subject:       "github-123",
+		Email:         "Bound@Example.com",
+		EmailVerified: true,
+		Username:      "bound",
+	})
+
+	require.Equal(t, http.StatusFound, recorder.Code)
+	require.Contains(t, recorder.Header().Get("Location"), "/auth/oauth/callback")
+	require.NotContains(t, recorder.Header().Get("Location"), "access_token=")
+
+	session, err := client.PendingAuthSession.Query().Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, oauthIntentBindCurrentUser, session.Intent)
+	require.Equal(t, "github", session.ProviderType)
+	require.Equal(t, "github", session.ProviderKey)
+	require.Equal(t, "github-123", session.ProviderSubject)
+	require.Equal(t, user.ID, *session.TargetUserID)
+	require.Equal(t, "/profile", session.RedirectTo)
+	require.Equal(t, "bound@example.com", session.ResolvedEmail)
+
+	completion, ok := readCompletionResponse(session.LocalFlowState)
+	require.True(t, ok)
+	require.Equal(t, true, completion["binding"])
+	require.Equal(t, "github", completion["provider"])
+	require.Equal(t, "/profile", completion["redirect"])
+
+	require.NotEmpty(t, findSetCookieValue(recorder.Result().Cookies(), oauthPendingSessionCookieName))
+	require.NotEmpty(t, findSetCookieValue(recorder.Result().Cookies(), oauthPendingBrowserCookieName))
+	require.Empty(t, findSetCookieValue(recorder.Result().Cookies(), emailOAuthBindUserCookie))
+}
+
+func TestEmailOAuthBindPendingExchangeBindsIdentityToCurrentUser(t *testing.T) {
+	handler, client := newOAuthPendingFlowTestHandler(t, false)
+	handler.cfg = &config.Config{JWT: config.JWTConfig{Secret: "test-secret"}}
+	ctx := context.Background()
+
+	user, err := client.User.Create().
+		SetEmail("bind-exchange@example.com").
+		SetUsername("bind-exchange").
+		SetPasswordHash("hash").
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+
+	bindCookieValue, err := buildOAuthBindUserCookieValue(user.ID, "test-secret")
+	require.NoError(t, err)
+
+	callbackRecorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(callbackRecorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oauth/google/callback", nil)
+	c.Request.AddCookie(&http.Cookie{Name: emailOAuthBindUserCookie, Value: encodeCookieValue(bindCookieValue)})
+
+	handler.emailOAuthCallbackBindWithProfile(c, "google", "/auth/oauth/callback", "/profile", &emailOAuthProfile{
+		Subject:       "google-456",
+		Email:         "bound-google@example.com",
+		EmailVerified: true,
+		Username:      "bound-google",
+	})
+
+	callbackCookies := callbackRecorder.Result().Cookies()
+	sessionCookieValue := findSetCookieValue(callbackCookies, oauthPendingSessionCookieName)
+	browserCookieValue := findSetCookieValue(callbackCookies, oauthPendingBrowserCookieName)
+	require.NotEmpty(t, sessionCookieValue)
+	require.NotEmpty(t, browserCookieValue)
+
+	exchangeRecorder := httptest.NewRecorder()
+	exchangeCtx, _ := gin.CreateTestContext(exchangeRecorder)
+	exchangeCtx.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/oauth/pending/exchange", nil)
+	exchangeCtx.Request.AddCookie(&http.Cookie{Name: oauthPendingSessionCookieName, Value: sessionCookieValue})
+	exchangeCtx.Request.AddCookie(&http.Cookie{Name: oauthPendingBrowserCookieName, Value: browserCookieValue})
+
+	handler.ExchangePendingOAuthCompletion(exchangeCtx)
+
+	require.Equal(t, http.StatusOK, exchangeRecorder.Code)
+
+	var resp struct {
+		Code int            `json:"code"`
+		Data map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(exchangeRecorder.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, true, resp.Data["binding"])
+	require.Equal(t, "/profile", resp.Data["redirect"])
+	require.Nil(t, resp.Data["access_token"])
+
+	identity, err := client.AuthIdentity.Query().
+		Where(
+			authidentity.ProviderTypeEQ("google"),
+			authidentity.ProviderSubjectEQ("google-456"),
+		).
+		Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, user.ID, identity.UserID)
 }

@@ -101,6 +101,8 @@ type userProfileResponse struct {
 	OIDCBound         bool                                   `json:"oidc_bound"`
 	WeChatBound       bool                                   `json:"wechat_bound"`
 	DingTalkBound     bool                                   `json:"dingtalk_bound"`
+	GitHubBound       bool                                   `json:"github_bound"`
+	GoogleBound       bool                                   `json:"google_bound"`
 }
 
 type userProfileSourceContext struct {
@@ -622,12 +624,16 @@ func userProfileResponseFromService(user *service.User, identities service.UserI
 		OIDCBound:         identities.OIDC.Bound,
 		WeChatBound:       identities.WeChat.Bound,
 		DingTalkBound:     identities.DingTalk.Bound,
+		GitHubBound:       identities.GitHub.Bound,
+		GoogleBound:       identities.Google.Bound,
 	}
 }
 
 func userProfileBindingMap(identities service.UserIdentitySummarySet) map[string]service.UserIdentitySummary {
 	return map[string]service.UserIdentitySummary{
 		"email":    identities.Email,
+		"github":   identities.GitHub,
+		"google":   identities.Google,
 		"linuxdo":  identities.LinuxDo,
 		"oidc":     identities.OIDC,
 		"wechat":   identities.WeChat,

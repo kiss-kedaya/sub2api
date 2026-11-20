@@ -613,6 +613,110 @@ func TestGetProfileIdentitySummaries_UsesBindStartRoute(t *testing.T) {
 		"/api/v1/auth/oauth/wechat/bind/start?intent=bind_current_user&redirect=%2Fsettings%2Fprofile",
 		summaries.WeChat.BindStartPath,
 	)
+	require.Equal(
+		t,
+		"/api/v1/auth/oauth/github/bind/start?intent=bind_current_user&redirect=%2Fsettings%2Fprofile",
+		summaries.GitHub.BindStartPath,
+	)
+	require.Equal(
+		t,
+		"/api/v1/auth/oauth/google/bind/start?intent=bind_current_user&redirect=%2Fsettings%2Fprofile",
+		summaries.Google.BindStartPath,
+	)
+}
+
+func TestGetProfileIdentitySummaries_GitHubAndGoogleBindingStates(t *testing.T) {
+	repo := &mockUserRepo{
+		getByIDUser: &User{
+			ID:    17,
+			Email: "alice@example.com",
+		},
+		identities: []UserAuthIdentityRecord{
+			{
+				ProviderType:    "email",
+				ProviderKey:     "email",
+				ProviderSubject: "alice@example.com",
+			},
+			{
+				ProviderType:    "github",
+				ProviderKey:     "github",
+				ProviderSubject: "github-123",
+				Metadata: map[string]any{
+					"username":     "alice-gh",
+					"display_name": "Alice GitHub",
+				},
+			},
+		},
+	}
+	svc := NewUserService(repo, nil, nil, nil)
+
+	summaries, err := svc.GetProfileIdentitySummaries(context.Background(), 17, repo.getByIDUser)
+
+	require.NoError(t, err)
+	require.True(t, summaries.GitHub.Bound)
+	require.Equal(t, 1, summaries.GitHub.BoundCount)
+	require.True(t, summaries.GitHub.CanUnbind)
+	require.False(t, summaries.Google.Bound)
+	require.True(t, summaries.Google.CanBind)
+}
+
+func TestGetProfileIdentitySummaries_DisablesGitHubAndGoogleWhenOAuthDisabled(t *testing.T) {
+	repo := &mockUserRepo{
+		getByIDUser: &User{
+			ID:    18,
+			Email: "alice@example.com",
+		},
+		identities: []UserAuthIdentityRecord{
+			{
+				ProviderType:    "email",
+				ProviderKey:     "email",
+				ProviderSubject: "alice@example.com",
+			},
+		},
+	}
+	settingRepo := &mockUserSettingRepo{
+		values: map[string]string{
+			SettingKeyGitHubOAuthEnabled: "false",
+			SettingKeyGoogleOAuthEnabled: "false",
+		},
+	}
+	svc := NewUserService(repo, settingRepo, nil, nil)
+
+	summaries, err := svc.GetProfileIdentitySummaries(context.Background(), 18, repo.getByIDUser)
+
+	require.NoError(t, err)
+	require.False(t, summaries.GitHub.CanBind)
+	require.Empty(t, summaries.GitHub.BindStartPath)
+	require.False(t, summaries.Google.CanBind)
+	require.Empty(t, summaries.Google.BindStartPath)
+}
+
+func TestUnbindUserAuthProvider_GitHub(t *testing.T) {
+	repo := &mockUserRepo{
+		getByIDUser: &User{
+			ID:    19,
+			Email: "alice@example.com",
+		},
+		identities: []UserAuthIdentityRecord{
+			{
+				ProviderType:    "email",
+				ProviderKey:     "email",
+				ProviderSubject: "alice@example.com",
+			},
+			{
+				ProviderType:    "github",
+				ProviderKey:     "github",
+				ProviderSubject: "github-123",
+			},
+		},
+	}
+	svc := NewUserService(repo, nil, nil, nil)
+
+	_, unbound, err := svc.UnbindUserAuthProviderWithResult(context.Background(), 19, "github")
+
+	require.NoError(t, err)
+	require.True(t, unbound)
+	require.Equal(t, []string{"github"}, repo.unboundProviders)
 }
 
 func TestUpdateBalance_NilBillingCache_NoPanic(t *testing.T) {

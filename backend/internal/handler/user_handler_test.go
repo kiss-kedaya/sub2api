@@ -335,6 +335,8 @@ func TestUserHandlerGetProfileReturnsLegacyCompatibilityFields(t *testing.T) {
 	require.Equal(t, true, resp.Data["linuxdo_bound"])
 	require.Equal(t, false, resp.Data["oidc_bound"])
 	require.Equal(t, false, resp.Data["wechat_bound"])
+	require.Equal(t, false, resp.Data["github_bound"])
+	require.Equal(t, false, resp.Data["google_bound"])
 	require.Equal(t, "https://cdn.example.com/linuxdo.png", resp.Data["avatar_url"])
 
 	avatarSource, ok := resp.Data["avatar_source"].(map[string]any)
@@ -348,6 +350,18 @@ func TestUserHandlerGetProfileReturnsLegacyCompatibilityFields(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, true, linuxdoBinding["bound"])
 	require.Equal(t, "linuxdo", linuxdoBinding["provider"])
+
+	githubBinding, ok := authBindings["github"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, false, githubBinding["bound"])
+	require.Equal(t, true, githubBinding["can_bind"])
+	require.Contains(t, githubBinding["bind_start_path"], "/api/v1/auth/oauth/github/bind/start")
+
+	googleBinding, ok := authBindings["google"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, false, googleBinding["bound"])
+	require.Equal(t, true, googleBinding["can_bind"])
+	require.Contains(t, googleBinding["bind_start_path"], "/api/v1/auth/oauth/google/bind/start")
 
 	identityBindings, ok := resp.Data["identity_bindings"].(map[string]any)
 	require.True(t, ok)
@@ -622,6 +636,115 @@ func TestUserHandlerUnbindIdentityReturnsUpdatedProfile(t *testing.T) {
 	linuxdoBinding, ok := authBindings["linuxdo"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, false, linuxdoBinding["bound"])
+}
+
+func TestUserHandlerGetProfileReportsGitHubAndGoogleBindings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := &userHandlerRepoStub{
+		user: &service.User{
+			ID:       31,
+			Email:    "oauth@example.com",
+			Username: "oauth-user",
+			Role:     service.RoleUser,
+			Status:   service.StatusActive,
+		},
+		identities: []service.UserAuthIdentityRecord{
+			{
+				ProviderType:    "email",
+				ProviderKey:     "email",
+				ProviderSubject: "oauth@example.com",
+			},
+			{
+				ProviderType:    "github",
+				ProviderKey:     "github",
+				ProviderSubject: "github-subject-31",
+				Metadata: map[string]any{
+					"username":     "oauth-user-gh",
+					"display_name": "OAuth User",
+				},
+			},
+		},
+	}
+	handler := NewUserHandler(service.NewUserService(repo, nil, nil, nil), nil, nil, nil, nil, nil)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/user/profile", nil)
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 31})
+
+	handler.GetProfile(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var resp struct {
+		Code int            `json:"code"`
+		Data map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, true, resp.Data["github_bound"])
+	require.Equal(t, false, resp.Data["google_bound"])
+
+	authBindings, ok := resp.Data["auth_bindings"].(map[string]any)
+	require.True(t, ok)
+	githubBinding, ok := authBindings["github"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, true, githubBinding["bound"])
+	require.Equal(t, true, githubBinding["can_unbind"])
+	require.Equal(t, "github", githubBinding["provider"])
+}
+
+func TestUserHandlerUnbindIdentityGitHubReturnsUpdatedProfile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := &userHandlerRepoStub{
+		user: &service.User{
+			ID:       32,
+			Email:    "identity@example.com",
+			Username: "identity-user",
+			Role:     service.RoleUser,
+			Status:   service.StatusActive,
+		},
+		identities: []service.UserAuthIdentityRecord{
+			{
+				ProviderType:    "email",
+				ProviderKey:     "email",
+				ProviderSubject: "identity@example.com",
+			},
+			{
+				ProviderType:    "github",
+				ProviderKey:     "github",
+				ProviderSubject: "github-subject-32",
+			},
+		},
+	}
+	handler := NewUserHandler(service.NewUserService(repo, nil, nil, nil), nil, nil, nil, nil, nil)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodDelete, "/api/v1/user/account-bindings/github", nil)
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 32})
+	c.Params = gin.Params{{Key: "provider", Value: "github"}}
+
+	handler.UnbindIdentity(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, []string{"github"}, repo.unbound)
+
+	var resp struct {
+		Code int            `json:"code"`
+		Data map[string]any `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, false, resp.Data["github_bound"])
+
+	authBindings, ok := resp.Data["auth_bindings"].(map[string]any)
+	require.True(t, ok)
+	githubBinding, ok := authBindings["github"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, false, githubBinding["bound"])
 }
 
 func TestUserHandlerUnbindIdentityRevokesAllUserSessionsWhenAuthServiceConfigured(t *testing.T) {

@@ -1189,6 +1189,8 @@ export default {
       },
       providers: {
         email: 'Email',
+        github: 'GitHub',
+        google: 'Google',
         linuxdo: 'LinuxDo',
         dingtalk: 'DingTalk',
         oidc: '{providerName}',
