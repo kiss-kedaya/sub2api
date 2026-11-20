@@ -187,6 +187,17 @@ const claudeCodeLongContextModelSuffix = "[1m]"
 
 // Claude Code treats [1m] as a client-side context selector and normally removes it
 // before provider requests. Normalize leaked suffixes, including its duplicated form.
+//
+// NormalizeClaudeCodeLongContextModel 剥掉 Claude Code 的 [1m] 上下文选择后缀。
+//
+// Claude Code 把它当成客户端语法，正常情况下自己会剥；但它也会出现在手动
+// /model 输入的模型名里，直接送到上游就是 404/400。OpenAI 兼容入口
+// （OpenAIGatewayHandler.Messages）不经过 ParseGatewayRequest，必须显式调用
+// 这里，否则 gpt-6-astra[1M] 会被当成一个不存在的模型名。
+func NormalizeClaudeCodeLongContextModel(model string) string {
+	return normalizeClaudeCodeLongContextModel(model)
+}
+
 func normalizeClaudeCodeLongContextModel(model string) string {
 	for len(model) > len(claudeCodeLongContextModelSuffix) &&
 		strings.EqualFold(model[len(model)-len(claudeCodeLongContextModelSuffix):], claudeCodeLongContextModelSuffix) {
