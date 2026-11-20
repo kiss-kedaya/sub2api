@@ -108,6 +108,8 @@ func (r *usageLogRepository) getAllGroupUsageSummaryFromRollups(ctx context.Cont
 	// 换成参数之后走 idx_usage_logs_created_at：
 	//   Index Scan … Index Cond: (created_at >= $7)
 	//   Execution Time: 34 ms
+	// 只有可与 groups.id 匹配的用量才会进入结果。显式排除 NULL group_id，
+	// 让尾段能使用 (created_at, group_id) INCLUDE (actual_cost) 的部分覆盖索引。
 	const query = `
 		WITH historical AS (
 			SELECT
@@ -133,6 +135,7 @@ func (r *usageLogRepository) getAllGroupUsageSummaryFromRollups(ctx context.Cont
 				), 0) AS yesterday_cost
 			FROM usage_logs ul
 			WHERE ul.created_at >= $7
+				AND ul.group_id IS NOT NULL
 			GROUP BY ul.group_id
 		)
 		SELECT
