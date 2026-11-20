@@ -137,9 +137,10 @@ type timingWriter struct {
 	writes  int64
 	flushAt int64
 	gin.ResponseWriter
-	collector *requesttiming.Collector
-	outcome   *requestcapture.OutcomeObserver
-	flushed   bool
+	collector   *requesttiming.Collector
+	textFlushed bool
+	outcome     *requestcapture.OutcomeObserver
+	flushed     bool
 }
 
 func (w *timingWriter) Write(p []byte) (int, error) {
@@ -175,14 +176,24 @@ func (w *timingWriter) WriteString(s string) (int, error) {
 func (w *timingWriter) Flush() { _ = w.FlushError() }
 func (w *timingWriter) FlushError() error {
 	start := time.Now()
-	err := http.NewResponseController(w.ResponseWriter).Flush()
 	w.mu.Lock()
-	if err == nil {
-		w.flushed = true
-		w.flushAt = w.writes
-	}
+	writes := w.writes
+	hasText := !w.textFlushed && w.outcome != nil && w.outcome.TextDeltaSeen()
 	w.mu.Unlock()
+
+	err := http.NewResponseController(w.ResponseWriter).Flush()
+	flushedAt := time.Now()
 	w.collector.Written(start, 0, err, err == nil)
+	if err == nil {
+		w.mu.Lock()
+		w.flushed = true
+		w.flushAt = writes
+		if hasText && !w.textFlushed {
+			w.collector.ResponseTextFlushed(flushedAt)
+			w.textFlushed = true
+		}
+		w.mu.Unlock()
+	}
 	return err
 }
 func (w *timingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }

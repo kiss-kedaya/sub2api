@@ -11,6 +11,9 @@ func NewOutcomeObserver(contentType string) *OutcomeObserver {
 
 func (o *OutcomeObserver) Write(p []byte) { o.observer.write(p) }
 
+// TextDeltaSeen reports a complete SSE Responses text delta with nonempty text.
+func (o *OutcomeObserver) TextDeltaSeen() bool { return o.observer.textDeltaSeen }
+
 func (o *OutcomeObserver) Finish() (terminal string) {
 	o.observer.end()
 	if o.observer.failed {
