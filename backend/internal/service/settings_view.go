@@ -532,14 +532,21 @@ type RectifierSettings struct {
 	ThinkingBudgetEnabled    bool     `json:"thinking_budget_enabled"`    // Thinking Budget 整流
 	APIKeySignatureEnabled   bool     `json:"apikey_signature_enabled"`   // API Key 签名整流开关
 	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`  // API Key 自定义匹配关键词
+	// AnthropicThinkingRewriteEnabled 控制是否改写 Anthropic 请求体的 thinking 参数
+	// （disabled → 删除；enabled+budget_tokens → adaptive；between_tools → 视型号）。
+	// 默认关闭：关闭时请求体 thinking 一个字节都不改，完全原样透传，与上游直连一致。
+	AnthropicThinkingRewriteEnabled bool `json:"anthropic_thinking_rewrite_enabled"`
 }
 
-// DefaultRectifierSettings 返回默认的整流器配置（全部启用）
+// DefaultRectifierSettings 返回默认的整流器配置。
+// 签名/Budget 整流默认启用以维持历史行为；Anthropic thinking 改写默认关闭，
+// 主打与上游直连一致的字节级原样透传。
 func DefaultRectifierSettings() *RectifierSettings {
 	return &RectifierSettings{
-		Enabled:                  true,
-		ThinkingSignatureEnabled: true,
-		ThinkingBudgetEnabled:    true,
+		Enabled:                         true,
+		ThinkingSignatureEnabled:        true,
+		ThinkingBudgetEnabled:           true,
+		AnthropicThinkingRewriteEnabled: false,
 	}
 }
 

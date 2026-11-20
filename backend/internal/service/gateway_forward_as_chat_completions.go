@@ -118,8 +118,9 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	// 7c. Claude 5.x（opus/sonnet 5.5+、fable-5）只认 adaptive thinking。
 	// CC→Responses→Anthropic 转换会把客户端 reasoning.effort 合成为
 	// thinking.type="enabled"+budget_tokens，直接转发必被上游 400
-	// （"requires adaptive thinking"）。这里按映射后的出站模型名统一修正。
-	anthropicBody = sanitizeAnthropicThinkingForModel(anthropicBody, mappedModel)
+	// （"requires adaptive thinking"）。这里按映射后的出站模型名统一修正；
+	// 「请求整流器」里的改写开关默认关闭，关闭时不碰 thinking，原样透传。
+	anthropicBody = s.settingService.RewriteAnthropicThinkingForModel(ctx, anthropicBody, mappedModel)
 
 	// 8. Get access token
 	token, tokenType, err := s.GetAccessToken(ctx, account)

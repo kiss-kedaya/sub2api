@@ -1185,7 +1185,11 @@ export default {
         title: '请求整流器',
         description: '当上游返回特定错误时，自动修正请求参数并重试，提高请求成功率',
         enabled: '启用请求整流器',
-        enabledHint: '总开关，关闭后所有整流功能均不生效',
+        enabledHint:
+          '总开关，关闭后签名与 Budget 整流不生效；Anthropic thinking 改写由下方独立开关控制',
+        anthropicThinkingRewrite: 'Anthropic thinking 改写（默认关闭）',
+        anthropicThinkingRewriteHint:
+          '关闭时 Anthropic 请求体 thinking 参数原样透传，不再做兼容改写（与上游直连行为一致）；打开后才恢复旧的 adaptive thinking 兼容改写',
         thinkingSignature: 'Thinking 签名整流',
         thinkingSignatureHint: '当上游返回 thinking block 签名校验错误时，自动去除签名并重试',
         thinkingBudget: 'Thinking Budget 整流',

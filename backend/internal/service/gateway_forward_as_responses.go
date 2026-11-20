@@ -137,7 +137,8 @@ func (s *GatewayService) ForwardAsResponses(
 	// 7c. 同 CC 入站路径：Responses→Anthropic 转换合成的
 	// thinking.type="enabled"+budget_tokens 对 Claude 5.x 必 400，按映射后的
 	// 出站模型名统一修正（enabled/disabled/between_tools 三种取值）。
-	anthropicBody = sanitizeAnthropicThinkingForModel(anthropicBody, mappedModel)
+	// 开关默认关闭：关闭时不碰 thinking，原样透传。
+	anthropicBody = s.settingService.RewriteAnthropicThinkingForModel(ctx, anthropicBody, mappedModel)
 
 	// 8. Get access token
 	token, tokenType, err := s.GetAccessToken(ctx, account)

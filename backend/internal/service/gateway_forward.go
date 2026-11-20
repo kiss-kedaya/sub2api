@@ -330,8 +330,13 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 	// Claude 5.x（opus/sonnet 5.5+、fable-5 全系）已不接受 thinking.type="enabled"，
 	// 客户端仍按老协议发 enabled 时上游直接 400。模型名此处已映射为出站值。
-	if err := replaceBody(sanitizeAnthropicThinkingForModel(body, reqModel)); err != nil {
-		return nil, err
+	//
+	// 「请求整流器 → Anthropic thinking 改写」默认关闭：关闭时整段跳过，不改 body、
+	// 也不重建 parsed ranges，thinking 参数一个字节都不动，与上游直连一致。
+	if s.settingService.IsAnthropicThinkingRewriteEnabled(ctx) {
+		if err := replaceBody(sanitizeAnthropicThinkingForModel(body, reqModel)); err != nil {
+			return nil, err
+		}
 	}
 
 	// 获取凭证

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,23 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+// newThinkingRewriteEnabledSettingService 显式打开「请求整流器 → Anthropic thinking
+// 改写」开关：下面两个端到端用例锁的是「打开后」的既有改写行为。
+// 默认关闭（thinking 原样透传）由 anthropic_thinking_rewrite_toggle_test.go 覆盖。
+func newThinkingRewriteEnabledSettingService(t *testing.T) *SettingService {
+	t.Helper()
+	raw, err := json.Marshal(RectifierSettings{
+		Enabled:                         true,
+		ThinkingSignatureEnabled:        true,
+		ThinkingBudgetEnabled:           true,
+		AnthropicThinkingRewriteEnabled: true,
+	})
+	require.NoError(t, err)
+	return NewSettingService(&anthropicThinkingRewriteRepo{values: map[string]string{
+		SettingKeyRectifierSettings: string(raw),
+	}}, &config.Config{})
+}
 
 // 上游原文（实测）：
 //
@@ -175,6 +193,7 @@ func TestForwardAnthropicAPIKeyConvertsEnabledThinkingForOpus55(t *testing.T) {
 		httpUpstream:         upstream,
 		rateLimitService:     &RateLimitService{},
 		deferredService:      &DeferredService{},
+		settingService:       newThinkingRewriteEnabledSettingService(t),
 	}
 	account := &Account{
 		ID: 7, Name: "upstream-fixture", Platform: PlatformAnthropic, Type: AccountTypeAPIKey,
@@ -237,6 +256,7 @@ func TestForwardAsChatCompletionsRewritesSynthesizedThinkingForOpus55(t *testing
 		httpUpstream:         upstream,
 		rateLimitService:     &RateLimitService{},
 		deferredService:      &DeferredService{},
+		settingService:       newThinkingRewriteEnabledSettingService(t),
 	}
 	account := &Account{
 		ID: 201, Name: "anthropic-apikey-cc", Platform: PlatformAnthropic, Type: AccountTypeAPIKey,

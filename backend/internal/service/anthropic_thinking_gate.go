@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -50,6 +51,21 @@ func anthropicModelRequiresAdaptiveThinking(modelID string) bool {
 	major, _ := strconv.Atoi(matches[1])
 	minor, _ := strconv.Atoi(matches[2])
 	return major == 5 && minor >= claudeAdaptiveThinkingMinMinor
+}
+
+// RewriteAnthropicThinkingForModel 是所有出站 Anthropic 请求体 thinking 改写的统一入口。
+//
+// 「请求整流器」里的 Anthropic thinking 改写子开关默认关闭：
+//   - 关闭（默认）：直接返回入参切片，body 一个字节都不改，与上游直连行为一致；
+//   - 打开：套用 sanitizeAnthropicThinkingForModel 的兼容改写（5.5 代模型的
+//     disabled / enabled+budget_tokens / between_tools 漂移修正）。
+//
+// 改写是可选兼容层，透传才是默认语义；因此读取开关失败也按关闭处理。
+func (s *SettingService) RewriteAnthropicThinkingForModel(ctx context.Context, body []byte, modelID string) []byte {
+	if !s.IsAnthropicThinkingRewriteEnabled(ctx) {
+		return body
+	}
+	return sanitizeAnthropicThinkingForModel(body, modelID)
 }
 
 // sanitizeAnthropicThinkingForModel 修正直连 Anthropic 路径上的 thinking 协议漂移：

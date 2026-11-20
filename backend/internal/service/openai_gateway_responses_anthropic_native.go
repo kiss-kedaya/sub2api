@@ -103,7 +103,8 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	anthropicBody = FilterWebSearchHistoryBlocks(anthropicBody, upstreamModel)
 	// Claude 5.x 只认 adaptive thinking；Responses→Anthropic 的合成会把
 	// reasoning.effort 落成 enabled+budget_tokens，出站前按模型名修正。
-	anthropicBody = sanitizeAnthropicThinkingForModel(anthropicBody, upstreamModel)
+	// 改写开关默认关闭：关闭时不碰 thinking，原样透传。
+	anthropicBody = s.settingService.RewriteAnthropicThinkingForModel(ctx, anthropicBody, upstreamModel)
 
 	apiKey := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())
 	if apiKey == "" {

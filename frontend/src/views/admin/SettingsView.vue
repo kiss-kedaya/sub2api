@@ -368,6 +368,19 @@
                     <Toggle v-model="rectifierForm.enabled" />
                   </template>
                 </SettingRow>
+                <!-- Anthropic thinking rewrite: default off = verbatim passthrough.
+                     Kept outside the master-switch block so it stays visible and
+                     independently controllable. -->
+                <SettingRow
+                  :label="t('admin.settings.rectifier.anthropicThinkingRewrite')"
+                  :hint="t('admin.settings.rectifier.anthropicThinkingRewriteHint')"
+                  :on="rectifierForm.anthropic_thinking_rewrite_enabled">
+                  <template #control>
+                    <Toggle
+                      v-model="rectifierForm.anthropic_thinking_rewrite_enabled"
+                      data-testid="rectifier-anthropic-thinking-rewrite" />
+                  </template>
+                </SettingRow>
                 <!-- Sub-toggles (only show when master is enabled) -->
                 <template v-if="rectifierForm.enabled">
                   <!-- Thinking Signature Rectifier -->
@@ -7270,6 +7283,8 @@ const rectifierForm = reactive({
   thinking_budget_enabled: true,
   apikey_signature_enabled: false,
   apikey_signature_patterns: [] as string[],
+  // 默认关闭：thinking 参数原样透传，与上游直连一致
+  anthropic_thinking_rewrite_enabled: false,
 });
 
 // Beta Policy 状态
@@ -10379,6 +10394,8 @@ async function saveRectifierSettings() {
       apikey_signature_patterns: rectifierForm.apikey_signature_patterns.filter(
         (p) => p.trim() !== "",
       ),
+      anthropic_thinking_rewrite_enabled:
+        rectifierForm.anthropic_thinking_rewrite_enabled,
     });
     Object.assign(rectifierForm, updated);
     if (!Array.isArray(rectifierForm.apikey_signature_patterns)) {

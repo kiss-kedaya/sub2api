@@ -1447,6 +1447,11 @@ export interface RectifierSettings {
   thinking_budget_enabled: boolean;
   apikey_signature_enabled: boolean;
   apikey_signature_patterns: string[];
+  /**
+   * 是否改写 Anthropic 请求体 thinking 参数。
+   * 默认 false：关闭时原样透传，与上游直连一致。
+   */
+  anthropic_thinking_rewrite_enabled: boolean;
 }
 
 /**
