@@ -86,6 +86,16 @@ func OutputFlushed(ctx context.Context) {
 	c.event("first_output_flush", time.Now())
 }
 
+// ResponseTextFlushed records a local flush of an observed complete text frame.
+// It leaves the upstream semantic timing fields untouched.
+func (c *Collector) ResponseTextFlushed(at time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.finished && !c.data.DownstreamError {
+		c.event("first_output_flush", at)
+	}
+}
+
 // TerminalFlushed records successful local write/flush completion, not receipt
 // or parsing by a remote client. The upstream terminal remains a separate fact.
 func TerminalFlushed(ctx context.Context, terminal string) {

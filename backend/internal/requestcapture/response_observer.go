@@ -72,6 +72,7 @@ type responseObserver struct {
 	terminal        string
 	failed          bool
 	expectsTerminal bool
+	textDeltaSeen   bool
 }
 
 func (o *responseObserver) write(p []byte) {
@@ -141,6 +142,9 @@ func (o *responseObserver) endEvent() {
 		o.expectsTerminal = true
 	} else if event, failed, valid := o.json.result(); valid {
 		o.sawEvent = true
+		if !failed && o.json.event == "response.output_text.delta" && o.json.nonemptyDelta {
+			o.textDeltaSeen = true
+		}
 		o.expectsTerminal = o.expectsTerminal || strings.HasPrefix(o.json.event, "response.") || o.json.event == "message_start" || o.json.event == "message_delta" || o.json.event == "message_stop"
 		if event != "" {
 			o.terminal = event
@@ -183,8 +187,10 @@ type responseJSON struct {
 	scope    byte
 	invalid  bool
 	hasError bool
-	event    string
-	status   string
+	// Track whether the top-level delta string contained bytes. Do not buffer the text.
+	nonemptyDelta bool
+	event         string
+	status        string
 }
 
 func (j *responseJSON) write(b byte) {
@@ -199,6 +205,12 @@ func (j *responseJSON) write(b byte) {
 	field := ""
 	if scope == 1 || scope == 2 {
 		field = j.keys[scope]
+	}
+	if !quoted && state == 0 && scope == 1 && field == "delta" && b != ' ' && b != '\t' && b != '\r' && b != '\n' {
+		j.nonemptyDelta = false
+	}
+	if quoted && !j.keyToken && j.scope == 1 && j.field == "delta" && (b != '"' || j.v.escape) {
+		j.nonemptyDelta = true
 	}
 	if !quoted && b == '"' {
 		j.keyToken = state == 1 || state == 5
