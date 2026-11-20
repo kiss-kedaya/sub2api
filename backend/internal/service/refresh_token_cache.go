@@ -12,12 +12,15 @@ var ErrRefreshTokenNotFound = errors.New("refresh token not found")
 
 // RefreshTokenData 存储在Redis中的Refresh Token数据
 type RefreshTokenData struct {
-	UserID       int64     `json:"user_id"`
-	TokenVersion int64     `json:"token_version"`          // 用于检测密码更改后的Token失效
-	FamilyID     string    `json:"family_id"`              // Token家族ID，用于防重放攻击
-	BindingHash  string    `json:"binding_hash,omitempty"` // 会话指纹哈希（IP+UA），会话绑定开启时校验
-	CreatedAt    time.Time `json:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	UserID       int64  `json:"user_id"`
+	TokenVersion int64  `json:"token_version"`          // 用于检测密码更改后的Token失效
+	FamilyID     string `json:"family_id"`              // Token家族ID，用于防重放攻击
+	BindingHash  string `json:"binding_hash,omitempty"` // 会话指纹哈希（IP+UA），会话绑定开启时校验
+	// Consumed 标记该 Token 已因轮换被消费。轮换时保留一条短 TTL 墓碑，
+	// 用于再次收到同一 Token 时识别重放并撤销整个 family。
+	Consumed  bool      `json:"consumed,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // RefreshTokenCache 管理Refresh Token的Redis缓存

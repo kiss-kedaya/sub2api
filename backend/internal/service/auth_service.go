@@ -25,17 +25,20 @@ import (
 )
 
 var (
-	ErrInvalidCredentials           = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
-	ErrUserNotActive                = infraerrors.Forbidden("USER_NOT_ACTIVE", "user is not active")
-	ErrEmailExists                  = infraerrors.Conflict("EMAIL_EXISTS", "email already exists")
-	ErrEmailReserved                = infraerrors.BadRequest("EMAIL_RESERVED", "email is reserved")
-	ErrInvalidToken                 = infraerrors.Unauthorized("INVALID_TOKEN", "invalid token")
-	ErrTokenExpired                 = infraerrors.Unauthorized("TOKEN_EXPIRED", "token has expired")
-	ErrAccessTokenExpired           = infraerrors.Unauthorized("ACCESS_TOKEN_EXPIRED", "access token has expired")
-	ErrTokenTooLarge                = infraerrors.BadRequest("TOKEN_TOO_LARGE", "token too large")
-	ErrTokenRevoked                 = infraerrors.Unauthorized("TOKEN_REVOKED", "token has been revoked")
-	ErrRefreshTokenInvalid          = infraerrors.Unauthorized("REFRESH_TOKEN_INVALID", "invalid refresh token")
-	ErrRefreshTokenExpired          = infraerrors.Unauthorized("REFRESH_TOKEN_EXPIRED", "refresh token has expired")
+	ErrInvalidCredentials  = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
+	ErrUserNotActive       = infraerrors.Forbidden("USER_NOT_ACTIVE", "user is not active")
+	ErrEmailExists         = infraerrors.Conflict("EMAIL_EXISTS", "email already exists")
+	ErrEmailReserved       = infraerrors.BadRequest("EMAIL_RESERVED", "email is reserved")
+	ErrInvalidToken        = infraerrors.Unauthorized("INVALID_TOKEN", "invalid token")
+	ErrTokenExpired        = infraerrors.Unauthorized("TOKEN_EXPIRED", "token has expired")
+	ErrAccessTokenExpired  = infraerrors.Unauthorized("ACCESS_TOKEN_EXPIRED", "access token has expired")
+	ErrTokenTooLarge       = infraerrors.BadRequest("TOKEN_TOO_LARGE", "token too large")
+	ErrTokenRevoked        = infraerrors.Unauthorized("TOKEN_REVOKED", "token has been revoked")
+	ErrRefreshTokenInvalid = infraerrors.Unauthorized("REFRESH_TOKEN_INVALID", "invalid refresh token")
+	ErrRefreshTokenExpired = infraerrors.Unauthorized("REFRESH_TOKEN_EXPIRED", "refresh token has expired")
+	// ErrRefreshTokenReuse 表示已消费（已轮换）的 Refresh Token 被再次使用：
+	// 按标准 OAuth 实践撤销整个 token family，合法端需要重新登录。
+	ErrRefreshTokenReuse            = infraerrors.Unauthorized("REFRESH_TOKEN_REUSE", "refresh token has already been used; the session has been revoked")
 	ErrRefreshTokenReused           = infraerrors.Unauthorized("REFRESH_TOKEN_REUSED", "refresh token has been reused")
 	ErrEmailVerifyRequired          = infraerrors.BadRequest("EMAIL_VERIFY_REQUIRED", "email verification is required")
 	ErrEmailSuffixNotAllowed        = infraerrors.BadRequest("EMAIL_SUFFIX_NOT_ALLOWED", "email suffix is not allowed")
@@ -60,6 +63,11 @@ const maxTokenLength = 8192
 
 // refreshTokenPrefix is the prefix for refresh tokens to distinguish them from access tokens.
 const refreshTokenPrefix = "rt_"
+
+// refreshTokenReuseWindow 是"已消费 Token 墓碑"的保留上限：在此窗口内重放旧
+// Refresh Token 会被识别为复用并撤销整个 family；超过窗口后旧 Token 仍被拒绝
+// （查不到记录），只是不再连带撤销 family，避免墓碑长期占用 Redis。
+const refreshTokenReuseWindow = 24 * time.Hour
 
 // JWTClaims JWT载荷数据
 type JWTClaims struct {
@@ -1826,7 +1834,8 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 }
 
 // RefreshTokenPair 使用Refresh Token刷新Token对
-// 实现Token轮转：每次刷新都会生成新的Refresh Token，旧Token立即失效
+// 实现Token轮转：每次刷新都会生成新的Refresh Token，旧 Token 失效并留下
+// "已消费"墓碑；旧 Token 被再次使用（重放/并发重试）时撤销整个 token family。
 func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string) (*TokenPairWithUser, error) {
 	// 检查 refreshTokenCache 是否可用
 	if s.refreshTokenCache == nil {
@@ -1850,6 +1859,15 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 		}
 		logger.LegacyPrintf("service.auth", "[Auth] Error getting refresh token: %v", err)
 		return nil, ErrServiceUnavailable
+	}
+
+	// 已消费的 Token 再次出现 = 重放：按标准 OAuth 实践撤销整个 token family。
+	// 这样即使攻击者先用了被盗 Token，合法会话也会随之失效（用户重新登录），
+	// 而不是让攻击者与受害者长期并行持有会话。
+	if data.Consumed {
+		_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
+		logger.LegacyPrintf("service.auth", "[Auth] Refresh token replay detected, family revoked: user_id=%d family=%s", data.UserID, data.FamilyID)
+		return nil, ErrRefreshTokenReuse
 	}
 
 	// 检查Token是否过期
@@ -1895,10 +1913,20 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 		}
 	}
 
-	// Token轮转：立即使旧Token失效
-	if err := s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash); err != nil {
+	// Token轮转：立即让旧 Token 失效，但保留一条短 TTL 的"已消费"墓碑，
+	// 使下一次重放能定位 family 并撤销整个会话链。
+	data.Consumed = true
+	reuseTTL := time.Until(data.ExpiresAt)
+	if reuseTTL > refreshTokenReuseWindow {
+		reuseTTL = refreshTokenReuseWindow
+	}
+	if reuseTTL > 0 {
+		if err := s.refreshTokenCache.StoreRefreshToken(ctx, tokenHash, data, reuseTTL); err != nil {
+			logger.LegacyPrintf("service.auth", "[Auth] Failed to mark old refresh token consumed, deleting it: %v", err)
+			_ = s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash)
+		}
+	} else if err := s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to delete old refresh token: %v", err)
-		// 继续处理，不影响主流程
 	}
 
 	// 生成新的Token对，保持同一个家族ID
