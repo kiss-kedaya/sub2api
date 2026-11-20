@@ -405,7 +405,8 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 	}
 	// Claude 5.x 只认 adaptive thinking；count_tokens 与 messages 用同一套
 	// thinking 校验，enabled/disabled 会直接 400。模型名取请求体里的出站值。
-	body = sanitizeAnthropicThinkingForModel(body, gjson.GetBytes(body, "model").String())
+	// 改写受「请求整流器 → Anthropic thinking 改写」开关控制，默认关闭即原样透传。
+	body = s.settingService.RewriteAnthropicThinkingForModel(ctx, body, gjson.GetBytes(body, "model").String())
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
@@ -534,8 +535,8 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 	}
 
 	// 同 buildCountTokensRequestAnthropicAPIKeyPassthrough：Claude 5.x 的
-	// thinking 协议修正必须在构造请求前完成。
-	body = sanitizeAnthropicThinkingForModel(body, modelID)
+	// thinking 协议修正必须在构造请求前完成；默认关闭时完全跳过，body 原样。
+	body = s.settingService.RewriteAnthropicThinkingForModel(ctx, body, modelID)
 
 	body = sanitizeCountTokensRequestBody(body)
 

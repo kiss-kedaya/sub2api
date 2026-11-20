@@ -505,6 +505,9 @@ type RectifierSettings struct {
 	ThinkingBudgetEnabled    bool     `json:"thinking_budget_enabled"`
 	APIKeySignatureEnabled   bool     `json:"apikey_signature_enabled"`
 	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`
+	// AnthropicThinkingRewriteEnabled 是否改写 Anthropic 请求体 thinking 参数。
+	// 默认 false：关闭时原样透传，与上游直连一致。
+	AnthropicThinkingRewriteEnabled bool `json:"anthropic_thinking_rewrite_enabled"`
 }
 
 // BetaPolicyRule Beta 策略规则 DTO

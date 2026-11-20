@@ -1191,7 +1191,11 @@ export default {
         title: 'Request Rectifier',
         description: 'Automatically fix request parameters and retry when upstream returns specific errors',
         enabled: 'Enable Request Rectifier',
-        enabledHint: 'Master switch - disabling turns off all rectification features',
+        enabledHint:
+          'Master switch for signature and budget rectification; Anthropic thinking rewrite is controlled by its own toggle below',
+        anthropicThinkingRewrite: 'Anthropic Thinking Rewrite (off by default)',
+        anthropicThinkingRewriteHint:
+          'When off, thinking parameters in the Anthropic request body pass through unchanged with no compatibility rewrite (same as connecting upstream directly); turn on to restore the legacy adaptive-thinking rewrite',
         thinkingSignature: 'Thinking Signature Rectifier',
         thinkingSignatureHint: 'Automatically strip signatures and retry when upstream returns thinking block signature validation errors',
         thinkingBudget: 'Thinking Budget Rectifier',

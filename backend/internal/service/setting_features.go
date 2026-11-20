@@ -1002,6 +1002,22 @@ func (s *SettingService) IsBudgetRectifierEnabled(ctx context.Context) bool {
 	return settings.Enabled && settings.ThinkingBudgetEnabled
 }
 
+// IsAnthropicThinkingRewriteEnabled 判断 Anthropic thinking 改写是否启用。
+//
+// 只看本子开关，不叠加其它开关：产品口径是「默认 false = 全部 Claude 请求原样透传」，
+// 只有显式打开才恢复兼容改写，不引入额外限制。
+//
+// 与上面两个子开关不同，这里必须 fail-closed：查询失败、配置缺失或反序列化失败时
+// 一律返回 false，保证请求体 thinking 原样透传——原样透传是安全默认，
+// 改写只是可选的兼容层。
+func (s *SettingService) IsAnthropicThinkingRewriteEnabled(ctx context.Context) bool {
+	settings, err := s.GetRectifierSettings(ctx)
+	if err != nil || settings == nil {
+		return false // fail-closed: 不能因为读配置失败就偷偷改写请求体
+	}
+	return settings.AnthropicThinkingRewriteEnabled
+}
+
 // GetBetaPolicySettings 获取 Beta 策略配置
 func (s *SettingService) GetBetaPolicySettings(ctx context.Context) (*BetaPolicySettings, error) {
 	if schedulerSnapshotOnlyFromContext(ctx) {
