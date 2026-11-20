@@ -463,6 +463,21 @@ func (s *BillingService) initFallbackPricing() {
 		SupportsCacheBreakdown:     true,
 	}
 
+	// Claude Fable 5.2 / Mythos 5.2: $8/MTok input, $40/MTok output;
+	// 5m cache write $10, 1h cache write $16, cache read $0.2 per MTok.
+	// 与 Fable 5.0/5.1 不同价，必须各自建条目，不能靠 "fable-5" 前缀回退。
+	for _, model := range []string{"claude-fable-5-2", "claude-mythos-5-2"} {
+		s.fallbackPrices[model] = &ModelPricing{
+			InputPricePerToken:         8e-6,
+			OutputPricePerToken:        40e-6,
+			CacheCreationPricePerToken: 10e-6,
+			CacheCreation5mPrice:       10e-6,
+			CacheCreation1hPrice:       16e-6,
+			CacheReadPricePerToken:     0.2e-6,
+			SupportsCacheBreakdown:     true,
+		}
+	}
+
 	// Gemini 3.1 Pro
 	s.fallbackPrices["gemini-3.1-pro"] = &ModelPricing{
 		InputPricePerToken:         2e-6,   // $2 per MTok
@@ -1003,6 +1018,14 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	}
 
 	// 按模型系列匹配
+	// 5.2 必须先精确拦截：它同时命中下面的 "fable-5"/"mythos-5" 子串，
+	// 落到旧系列会按 $10/$50 计费（多收 25%）。
+	if claude.IsFable52(modelLower) {
+		return s.fallbackPrices["claude-fable-5-2"]
+	}
+	if claude.IsMythos52(modelLower) {
+		return s.fallbackPrices["claude-mythos-5-2"]
+	}
 	if isClaudeFable51Model(modelLower) {
 		return s.fallbackPrices["claude-fable-5-1"]
 	}

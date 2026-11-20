@@ -53,6 +53,18 @@ func IsSonnet55(model string) bool {
 	return normalizeEffortModelID(model) == "claude-sonnet-5-5"
 }
 
+// IsFable52 identifies Fable 5.2 after provider/local suffix normalization.
+// 5.2 与 5.0/5.1 不同价（$8/$40 vs $10/$50），调用方必须在本系列匹配之前精确拦截，
+// 否则会落进 "fable-5" 前缀按旧价多收 25%。
+func IsFable52(model string) bool {
+	return normalizeEffortModelID(model) == "claude-fable-5-2"
+}
+
+// IsMythos52 identifies the Mythos 5.2 model the same way as IsFable52.
+func IsMythos52(model string) bool {
+	return normalizeEffortModelID(model) == "claude-mythos-5-2"
+}
+
 func normalizeEffortModelID(model string) string {
 	id := strings.ToLower(strings.TrimSpace(model))
 	id = strings.TrimPrefix(id, "models/")
