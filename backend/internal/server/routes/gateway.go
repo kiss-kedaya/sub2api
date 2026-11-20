@@ -80,6 +80,11 @@ func RegisterGatewayRoutes(
 	// 保证校验发生在合成路由改写与调度之前，且只看客户端书写的模型名。
 	groupModelAllowlist := middleware.GroupModelAllowlist()
 
+	// 请求体同名字段歧义拒绝（GHSA-p3r4-jcm3-2hph）：一次性解析器取第一个 model 计费，
+	// 重写路径取最后一个转发，两者分叉就能低价计费、高价调用。紧跟白名单之后、
+	// 合成路由改写与调度之前拒绝，所有分组生效。
+	rejectConflictingFields := middleware.RejectConflictingRequestFields()
+
 	isOpenAIResponsesCompatibleGatewayPlatform := func(c *gin.Context) bool {
 		switch getGroupPlatform(c) {
 		case service.PlatformOpenAI, service.PlatformGrok,
@@ -240,6 +245,7 @@ func RegisterGatewayRoutes(
 	gateway.Use(ipNotice)
 	gateway.GET("/sub2api/billing", h.Gateway.KeyBillingInfo)
 	gateway.Use(groupModelAllowlist)
+	gateway.Use(rejectConflictingFields)
 	gateway.Use(compositeTarget)
 	gateway.Use(requireGroupAnthropic)
 	{
@@ -398,7 +404,7 @@ func RegisterGatewayRoutes(
 	// Ark native task management keeps ordinary key authentication and routing.
 	ark := r.Group("/api/v3")
 	ark.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth))
-	ark.Use(capture, ipSharing, ipNotice, groupModelAllowlist, compositeTarget)
+	ark.Use(capture, ipSharing, ipNotice, groupModelAllowlist, rejectConflictingFields, compositeTarget)
 	ark.POST("/contents/generations/tasks", h.OpenAIGateway.SeedanceTasks)
 	ark.GET("/contents/generations/tasks/:task_id", h.OpenAIGateway.SeedanceTasks)
 	ark.DELETE("/contents/generations/tasks/:task_id", h.OpenAIGateway.SeedanceTasks)
@@ -413,6 +419,7 @@ func RegisterGatewayRoutes(
 	gemini.Use(middleware.APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, cfg))
 	gemini.Use(capture, ipSharing, ipNotice)
 	gemini.Use(groupModelAllowlist)
+	gemini.Use(rejectConflictingFields)
 	gemini.Use(compositeGeminiTarget)
 	gemini.Use(requireGroupGoogle)
 	gemini.POST("/cachedContents", h.Gateway.GeminiCachedContentsCreate)
@@ -439,7 +446,7 @@ func RegisterGatewayRoutes(
 	// 根路径别名共用中间件链：白名单准入在 apiKeyAuth 之后、compositeTarget
 	// 之前，避免逐条路由手工维护链导致漏挂。
 	rootRoute := func(method, path string, limit gin.HandlerFunc, handler gin.HandlerFunc) {
-		r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), regional, capture, ipSharing, ipNotice, groupModelAllowlist, compositeTarget, requireGroupAnthropic, handler)
+		r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), regional, capture, ipSharing, ipNotice, groupModelAllowlist, rejectConflictingFields, compositeTarget, requireGroupAnthropic, handler)
 	}
 	rootRoute(http.MethodPost, "/responses", bodyLimit, responsesHandler)
 	rootRoute(http.MethodPost, "/responses/*subpath", bodyLimit, guardResponsesSubpath(responsesHandler))
@@ -451,7 +458,7 @@ func RegisterGatewayRoutes(
 	rootRoute(http.MethodGet, "/models/:model", bodyLimit, h.Gateway.Models)
 	rootRoute(http.MethodPost, "/messages/count_tokens", bodyLimit, countTokensHandler)
 	codexDirect := r.Group("/backend-api/codex")
-	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), regional, capture, ipSharing, ipNotice, groupModelAllowlist, compositeTarget, requireGroupAnthropic)
+	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), regional, capture, ipSharing, ipNotice, groupModelAllowlist, rejectConflictingFields, compositeTarget, requireGroupAnthropic)
 	{
 		codexDirect.POST("/realtime/calls", h.OpenAIGateway.Live)
 		codexDirect.GET("/:call_id", h.OpenAIGateway.LiveSideband)
@@ -567,6 +574,7 @@ func RegisterGatewayRoutes(
 	antigravityV1.Use(ipSharing)
 	antigravityV1.Use(ipNotice)
 	antigravityV1.Use(groupModelAllowlist)
+	antigravityV1.Use(rejectConflictingFields)
 	antigravityV1.Use(requireGroupAnthropic)
 	{
 		antigravityV1.POST("/messages", h.Gateway.Messages)
@@ -585,6 +593,7 @@ func RegisterGatewayRoutes(
 	antigravityV1Beta.Use(ipSharing)
 	antigravityV1Beta.Use(ipNotice)
 	antigravityV1Beta.Use(groupModelAllowlist)
+	antigravityV1Beta.Use(rejectConflictingFields)
 	antigravityV1Beta.Use(requireGroupGoogle)
 	{
 		antigravityV1Beta.GET("/models", h.Gateway.GeminiV1BetaListModels)
