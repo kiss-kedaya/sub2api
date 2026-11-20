@@ -114,6 +114,7 @@
 
     <AdminRefundDialog :show="showRefundDialog" :order="selectedOrder" :submitting="refundSubmitting" :require-force="refundRequireForce" :warning="refundWarning" @confirm="handleRefund" @cancel="closeRefundDialog" />
   </AppLayout>
+  <TotpStepUpDialog :controller="stepUp" />
 </template>
 
 <script setup lang="ts">
@@ -135,6 +136,8 @@ import AdminRefundDialog from '@/components/admin/payment/AdminRefundDialog.vue'
 import OrderStatusBadge from '@/components/payment/OrderStatusBadge.vue'
 import OrderTable from '@/components/payment/OrderTable.vue'
 import { currencySymbol } from '@/components/payment/currency'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 
 interface AuditLog {
   id: number
@@ -146,6 +149,8 @@ interface AuditLog {
 
 const { t } = useI18n()
 const appStore = useAppStore()
+// 退款/退款确认会改变资金状态：后端要求 step-up 二次验证，这里负责弹码并重试一次。
+const stepUp = useStepUp()
 
 const ordersLoading = ref(false)
 const orders = ref<PaymentOrder[]>([])
@@ -262,7 +267,8 @@ async function handleRefund(data: { amount: number; reason: string; deduct_balan
   if (!selectedOrder.value) return
   refundSubmitting.value = true
   try {
-    const res = await adminPaymentAPI.refundOrder(selectedOrder.value.id, { amount: data.amount, reason: data.reason, deduct_balance: data.deduct_balance, force: data.force })
+    const orderID = selectedOrder.value.id
+    const res = await stepUp.run(() => adminPaymentAPI.refundOrder(orderID, { amount: data.amount, reason: data.reason, deduct_balance: data.deduct_balance, force: data.force }))
     if (res.data.success) {
       appStore.showSuccess(t('payment.admin.refundSuccess'))
       closeRefundDialog()
@@ -284,14 +290,24 @@ async function handleRefund(data: { amount: number; reason: string; deduct_balan
       return
     }
     appStore.showError(res.data.warning || t('common.error'))
-  } catch (err: unknown) { appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error'))) }
-  finally { refundSubmitting.value = false }
+  } catch (err: unknown) {
+    if (isStepUpCancelled(err)) return
+    if (isStepUpBlocked(err)) {
+      appStore.showError(
+        stepUpBlockReason(err) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+          ? t('stepUp.adminApiKeyForbidden')
+          : t('stepUp.notEnabled')
+      )
+      return
+    }
+    appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+  } finally { refundSubmitting.value = false }
 }
 
 async function handleQueryRefund(order: PaymentOrder) {
   refundQueryingIds.value = new Set(refundQueryingIds.value).add(order.id)
   try {
-    const res = await adminPaymentAPI.queryRefund(order.id)
+    const res = await stepUp.run(() => adminPaymentAPI.queryRefund(order.id))
     if (res.data.success) {
       appStore.showSuccess(t('payment.admin.refundSuccess'))
     } else if (isRefundPendingWarning(res.data.warning)) {
@@ -301,7 +317,17 @@ async function handleQueryRefund(order: PaymentOrder) {
     }
     loadOrders()
   } catch (err: unknown) {
-    appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+    if (isStepUpCancelled(err) || isStepUpBlocked(err)) {
+      if (isStepUpBlocked(err)) {
+        appStore.showError(
+          stepUpBlockReason(err) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+            ? t('stepUp.adminApiKeyForbidden')
+            : t('stepUp.notEnabled')
+        )
+      }
+    } else {
+      appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+    }
   } finally {
     const next = new Set(refundQueryingIds.value)
     next.delete(order.id)

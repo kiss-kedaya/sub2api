@@ -38,7 +38,7 @@ func TestScopedAdminPaymentWritesUseHeavyRateLimitWithAdminExemption(t *testing.
 	require.NoError(t, err)
 	auth := middleware.NewAdminAuthMiddleware(nil, service.NewUserService(&scopedRouteUsers{}, nil, nil, nil), settings, nil, nil)
 	r := gin.New()
-	RegisterPaymentRoutes(r.Group("/api/v1"), &handler.PaymentHandler{}, &handler.PaymentWebhookHandler{}, &adminhandler.PaymentHandler{}, middleware.JWTAuthMiddleware(func(c *gin.Context) { c.Next() }), auth, middleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() }), nil, middleware.NewPanelRateLimiter(client, settings))
+	RegisterPaymentRoutes(r.Group("/api/v1"), &handler.PaymentHandler{}, &handler.PaymentWebhookHandler{}, &adminhandler.PaymentHandler{}, middleware.JWTAuthMiddleware(func(c *gin.Context) { c.Next() }), auth, middleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() }), middleware.StepUpAuthMiddleware(func(c *gin.Context) { c.Next() }), nil, middleware.NewPanelRateLimiter(client, settings))
 	// 无效订单 ID 在实际支付处理器返回 400，证明首个请求已经通过认证和授权。
 	// 第二次应在解析订单之前触发严格档限流，不依赖真实支付数据库。
 	for _, want := range []int{400, 429} {

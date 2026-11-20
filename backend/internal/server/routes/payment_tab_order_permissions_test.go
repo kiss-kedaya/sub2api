@@ -80,6 +80,7 @@ func TestPaymentTabOrderWriteRejectsNonAdmin(t *testing.T) {
 		middleware.JWTAuthMiddleware(noop),
 		middleware.NewAdminAuthMiddleware(authService, userService, settings, nil, cfg),
 		middleware.AuditLogMiddleware(noop),
+		middleware.StepUpAuthMiddleware(noop),
 		settings,
 		limiter,
 	)

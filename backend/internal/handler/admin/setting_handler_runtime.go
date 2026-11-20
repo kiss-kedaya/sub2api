@@ -4,10 +4,18 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+)
+
+// 旧版全权密钥已退役：已有密钥保留读取与使用，仅停止新建/轮换入口。
+const (
+	legacyAdminKeyRetiredReason  = "LEGACY_ADMIN_KEY_RETIRED"
+	legacyAdminKeyRetiredMessage = "旧版全权管理员 API Key 已停止新建与轮换，请改用受限管理密钥"
+	legacyAdminKeyMigrationHint  = "请在「系统设置 → 安全 → 管理员访问密钥」创建受限密钥并迁移自动化；已有旧版密钥在删除前仍可继续使用。"
 )
 
 // GetAdminAPIKey 获取管理员 API Key 状态
@@ -22,25 +30,21 @@ func (h *SettingHandler) GetAdminAPIKey(c *gin.Context) {
 	response.Success(c, gin.H{
 		"exists":     exists,
 		"masked_key": maskedKey,
+		// 旧版全权密钥只保留读取与使用；前端据此隐藏新建/轮换入口并展示迁移提示。
+		"deprecated":     true,
+		"migration_hint": legacyAdminKeyMigrationHint,
 	})
 }
 
-// RegenerateAdminAPIKey 轮换已存在的旧版管理员 API Key
+// RegenerateAdminAPIKey 旧版全权管理员 API Key 已停止新建与轮换。
+// 保留该路由是为了返回可读的迁移提示（而不是静默 404），不生成任何新密钥。
 // POST /api/v1/admin/settings/admin-api-key/regenerate
 func (h *SettingHandler) RegenerateAdminAPIKey(c *gin.Context) {
 	if err := service.RequireConfiguredPoolOwner(c.Request.Context(), 0); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	key, err := h.settingService.GenerateAdminAPIKey(c.Request.Context())
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	response.Success(c, gin.H{
-		"key": key, // 完整 key 只在生成时返回一次
-	})
+	response.ErrorFrom(c, infraerrors.Forbidden(legacyAdminKeyRetiredReason, legacyAdminKeyRetiredMessage))
 }
 
 // DeleteAdminAPIKey 删除管理员 API Key

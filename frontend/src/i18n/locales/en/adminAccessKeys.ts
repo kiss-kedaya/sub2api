@@ -69,6 +69,6 @@ export default {
   "rotateConfirm": "Rotating “{name}” immediately invalidates its current key. Continue?",
   "revokeConfirm": "Permanently revoking “{name}” cannot be undone. Continue?",
   "deleteConfirm": "Delete the key record “{name}”? This removes it from the list only. Historical operation records are retained.",
-  "legacyHint": "The legacy full-access key keeps working; no need to disable it before migration. Use scoped keys for new automation, and rotate the legacy key from the Security tab.",
+  "legacyHint": "The legacy full-access key keeps working but can no longer be created or rotated. Use scoped keys for new automation, and delete the legacy key from the Security tab once migration is done.",
   "legacy": "Legacy full-access key (migration to scoped keys recommended)"
 }

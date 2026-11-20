@@ -461,6 +461,14 @@ func (h *UserHandler) Update(c *gin.Context) {
 		return
 	}
 
+	// 修改他人密码等同于账号接管：必须完成 step-up 二次验证。
+	// 未携带 password 的常规资料编辑不触发，避免日常维护被打断。
+	if strings.TrimSpace(req.Password) != "" {
+		if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
+			return
+		}
+	}
+
 	// 防锁死保护：管理员不能把自己降级为普通用户(单管理员场景下会失去后台访问权)。
 	// 与既有"不能禁用/删除 admin"保护一致。降级其他管理员仍然允许。
 	if req.Role == service.RoleUser && userID == getAdminIDFromContext(c) {

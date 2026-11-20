@@ -356,6 +356,7 @@
       </Transition>
     </Teleport>
   </AppLayout>
+    <TotpStepUpDialog :controller="stepUp" />
 </template>
 
 <script setup lang="ts">
@@ -400,6 +401,8 @@ import { planValiditySuffix as validitySuffixOf } from '@/components/payment/val
 import type { PaymentMethodOption } from '@/components/payment/PaymentMethodSelector.vue'
 import { buildPaymentErrorToastMessage, describePaymentScenarioError } from './paymentUx'
 import { buildEmbeddedUrl, detectTheme } from '@/utils/embedded-url'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 import { hasWechatResumeQuery, parseWechatResumeRoute, stripWechatResumeQuery } from './paymentWechatResume'
 
 const i18n = useI18n()
@@ -410,6 +413,8 @@ const authStore = useAuthStore()
 const paymentStore = usePaymentStore()
 const subscriptionStore = useSubscriptionStore()
 const appStore = useAppStore()
+// 管理员的支付页签布局保存在 /admin/payment/config：该接口已强制 step-up，这里负责弹码并重试。
+const stepUp = useStepUp()
 
 const user = computed(() => authStore.user)
 const isAdmin = computed(() => authStore.isAdmin)
@@ -692,13 +697,24 @@ async function persistTabLayout(nextOrder: string[], nextDefault: string) {
   tabOrderOverride.value = nextOrder
   defaultTabOverride.value = nextDefault
   try {
-    await adminPaymentAPI.updateConfig({
-      payment_tab_order: nextOrder,
-      payment_default_tab: nextDefault,
-    })
+    await stepUp.run(() =>
+      adminPaymentAPI.updateConfig({
+        payment_tab_order: nextOrder,
+        payment_default_tab: nextDefault,
+      })
+    )
   } catch (err: unknown) {
     tabOrderOverride.value = previousOrder
     defaultTabOverride.value = previousDefault
+    if (isStepUpCancelled(err)) return
+    if (isStepUpBlocked(err)) {
+      appStore.showError(
+        stepUpBlockReason(err) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+          ? t('stepUp.adminApiKeyForbidden')
+          : t('stepUp.notEnabled')
+      )
+      return
+    }
     appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('payment.tabAdmin.saveFailed')))
   }
 }

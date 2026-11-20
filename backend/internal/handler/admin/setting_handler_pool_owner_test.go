@@ -41,9 +41,16 @@ func TestGlobalAdminKeyMutationsRequireConfiguredPoolOwner(t *testing.T) {
 				c.Request = c.Request.WithContext(service.WithAccountOwnerScope(c.Request.Context(), tc.adminID, tc.ownerID))
 				if action == "regenerate" {
 					h.RegenerateAdminAPIKey(c)
-				} else {
-					h.DeleteAdminAPIKey(c)
+					// 旧版全权密钥已退役：任何管理员都不能再生成，且不写库。
+					require.Equal(t, http.StatusForbidden, w.Code)
+					require.Zero(t, repo.writes)
+					require.NotContains(t, w.Body.String(), `"key":`)
+					if tc.wantStatus == http.StatusOK {
+						require.Contains(t, w.Body.String(), "LEGACY_ADMIN_KEY_RETIRED")
+					}
+					return
 				}
+				h.DeleteAdminAPIKey(c)
 				require.Equal(t, tc.wantStatus, w.Code)
 				if tc.wantStatus == http.StatusForbidden {
 					require.Zero(t, repo.writes)

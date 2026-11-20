@@ -19,6 +19,7 @@ func RegisterPaymentRoutes(
 	jwtAuth middleware.JWTAuthMiddleware,
 	adminAuth middleware.AdminAuthMiddleware,
 	auditLog middleware.AuditLogMiddleware,
+	stepUpAuth middleware.StepUpAuthMiddleware,
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
 ) {
@@ -87,7 +88,8 @@ func RegisterPaymentRoutes(
 
 		// Config
 		adminGroup.GET("/config", adminPaymentHandler.GetConfig)
-		adminGroup.PUT("/config", adminPaymentHandler.UpdateConfig)
+		// 支付配置包含渠道密钥与回调地址：要求 step-up 二次验证（机器凭据返回 403）。
+		adminGroup.PUT("/config", gin.HandlerFunc(stepUpAuth), adminPaymentHandler.UpdateConfig)
 
 		// Orders
 		adminOrders := adminGroup.Group("/orders")
@@ -96,8 +98,9 @@ func RegisterPaymentRoutes(
 			adminOrders.GET("/:id", adminPaymentHandler.GetOrderDetail)
 			adminOrders.POST("/:id/cancel", adminPaymentHandler.CancelOrder)
 			adminOrders.POST("/:id/retry", adminPaymentHandler.RetryFulfillment)
-			adminOrders.POST("/:id/refund", adminPaymentHandler.ProcessRefund)
-			adminOrders.POST("/:id/refund/query", adminPaymentHandler.QueryAndFinalizeRefund)
+			// 退款与退款确认会改变资金状态：要求 step-up 二次验证（机器凭据返回 403）。
+			adminOrders.POST("/:id/refund", gin.HandlerFunc(stepUpAuth), adminPaymentHandler.ProcessRefund)
+			adminOrders.POST("/:id/refund/query", gin.HandlerFunc(stepUpAuth), adminPaymentHandler.QueryAndFinalizeRefund)
 		}
 
 		// Subscription Plans
@@ -113,9 +116,10 @@ func RegisterPaymentRoutes(
 		providers := adminGroup.Group("/providers")
 		{
 			providers.GET("", adminPaymentHandler.ListProviders)
-			providers.POST("", adminPaymentHandler.CreateProvider)
-			providers.PUT("/:id", adminPaymentHandler.UpdateProvider)
-			providers.DELETE("/:id", adminPaymentHandler.DeleteProvider)
+			// 支付渠道实例包含密钥与生效范围：写操作要求 step-up 二次验证（机器凭据返回 403）。
+			providers.POST("", gin.HandlerFunc(stepUpAuth), adminPaymentHandler.CreateProvider)
+			providers.PUT("/:id", gin.HandlerFunc(stepUpAuth), adminPaymentHandler.UpdateProvider)
+			providers.DELETE("/:id", gin.HandlerFunc(stepUpAuth), adminPaymentHandler.DeleteProvider)
 		}
 	}
 }
