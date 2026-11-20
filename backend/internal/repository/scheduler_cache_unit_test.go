@@ -546,6 +546,14 @@ func TestBuildSchedulerMetadataAccount_KeepsQuotaStateForCachedAccounts(t *testi
 				"quota_weekly_reset_hour": 0.0, "quota_reset_timezone": "UTC",
 			},
 		},
+		{
+			name: "vertex service_account total quota exhausted", platform: service.PlatformGemini, typ: service.AccountTypeServiceAccount,
+			extra: map[string]any{"quota_limit": 15.0, "quota_used": 15.0}, quotaExceeded: true,
+		},
+		{
+			name: "vertex service_account under its limit stays schedulable", platform: service.PlatformGemini, typ: service.AccountTypeServiceAccount,
+			extra: map[string]any{"quota_limit": 15.0, "quota_used": 3.25},
+		},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

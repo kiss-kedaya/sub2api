@@ -1523,7 +1523,7 @@
       </div>
       <div v-show="showWizardStep(3)" data-wizard-step="3" class="space-y-6">
         <SettingPanel>
-        <SettingGroup v-if="[(form.platform === 'anthropic' && (form.type === 'apikey' || form.type === 'bedrock')), (form.type === 'apikey' || form.type === 'cloudflare' || form.type === 'bedrock')].some(Boolean)" :title="t('admin.accounts.formSections.limits')">
+        <SettingGroup v-if="[(form.platform === 'anthropic' && (form.type === 'apikey' || form.type === 'bedrock')), supportsAccountQuota(form.type), form.type === 'cloudflare'].some(Boolean)" :title="t('admin.accounts.formSections.limits')">
 
         <!-- 配额控制 (Anthropic apikey/bedrock: 配额限制 + 亲和) -->
         <div
@@ -1572,9 +1572,9 @@
           />
         </div>
   
-        <!-- 配额控制 (非 Anthropic apikey/bedrock) -->
+        <!-- 配额控制 (非 Anthropic apikey/bedrock，以及 Vertex service_account) -->
         <div
-          v-else-if="form.type === 'apikey' || form.type === 'cloudflare' || form.type === 'bedrock'"
+          v-else-if="supportsAccountQuota(form.type) || form.type === 'cloudflare'"
           class="pb-3"
         >
           <QuotaLimitCard
@@ -2889,6 +2889,7 @@ import {
   parseDateTimeLocalInput
 } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
+import { supportsAccountQuota } from '@/utils/accountQuota'
 import { getAccountExpiryTimestamp } from '@/components/account/accountExpiry'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
 import {
@@ -4562,7 +4563,7 @@ const applyVertexServiceAccountJson = (value: string) => {
 const parseVertexServiceAccountJson = () => applyVertexServiceAccountJson(vertexServiceAccountJson.value)
 
 const applyAPIKeyQuotaExtra = (extra: Record<string, unknown> | undefined, type: AccountType) => {
-  if (type !== 'apikey' && type !== 'cloudflare' && type !== 'bedrock') {
+  if (!supportsAccountQuota(type) && type !== 'cloudflare') {
     return extra
   }
   const quotaExtra: Record<string, unknown> = { ...(extra || {}) }

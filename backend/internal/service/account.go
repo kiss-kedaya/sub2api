@@ -235,7 +235,7 @@ func (a *Account) IsSchedulable() bool {
 	if a.TempUnschedulableUntil != nil && now.Before(*a.TempUnschedulableUntil) {
 		return false
 	}
-	if a.IsAPIKeyOrBedrock() && a.IsQuotaExceeded() {
+	if a.SupportsAccountQuota() && a.IsQuotaExceeded() {
 		return false
 	}
 	return true
@@ -1496,9 +1496,27 @@ func (a *Account) IsBedrockAPIKey() bool {
 	return a.IsBedrock() && a.GetCredential("auth_mode") == "apikey"
 }
 
-// IsAPIKeyOrBedrock 返回账号类型是否支持配额和池模式等特性
+// IsAPIKeyOrBedrock 返回账号类型是否支持池模式等特性（账号配额判定见 SupportsAccountQuota）
 func (a *Account) IsAPIKeyOrBedrock() bool {
 	return a.Type == AccountTypeAPIKey || a.Type == AccountTypeBedrock
+}
+
+// AccountTypeSupportsQuota 返回账号类型是否支持账号配额（quota_limit 及日/周额度、quota_used 累加、超限停调度）。
+// 在 apikey/bedrock 之外额外放开 Vertex service_account；池模式等其它特性仍只看 IsAPIKeyOrBedrock。
+func AccountTypeSupportsQuota(accountType string) bool {
+	switch strings.ToLower(accountType) {
+	case AccountTypeAPIKey, AccountTypeBedrock, AccountTypeServiceAccount:
+		return true
+	}
+	return false
+}
+
+// SupportsAccountQuota 返回账号是否支持账号配额，类型集合见 AccountTypeSupportsQuota。
+func (a *Account) SupportsAccountQuota() bool {
+	if a == nil {
+		return false
+	}
+	return AccountTypeSupportsQuota(a.Type)
 }
 
 func (a *Account) IsOpenAI() bool {
