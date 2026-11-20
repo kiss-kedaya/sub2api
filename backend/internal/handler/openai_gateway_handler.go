@@ -2450,8 +2450,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "invalid JSON payload")
 		return
 	}
-	if openAIConflictingModels("application/json", firstMessage) {
-		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, service.ErrDuplicateModelField.Error())
+	// WS 帧没有 HTTP 请求体的重复字段准入，model 之外的计费/策略字段
+	// （service_tier、speed、reasoning.effort）同样不能重复：网关按 gjson 首个值
+	// 计费，帧又以原始字节转发给上游，上游按末值绑定即可分叉。
+	if field, conflict := openAIWSConflictingFrameField(firstMessage); conflict {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, duplicateWSFrameFieldMessage(field))
 		return
 	}
 	reqModel := strings.TrimSpace(gjson.GetBytes(firstMessage, "model").String())
@@ -2993,8 +2996,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if !gjson.ValidBytes(payload) {
 					return nil, service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
 				}
-				if openAIConflictingModels("application/json", payload) {
-					return nil, service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, service.ErrDuplicateModelField.Error(), service.ErrDuplicateModelField)
+				if field, conflict := openAIWSConflictingFrameField(payload); conflict {
+					wrapped := error(nil)
+					if field == "model" {
+						wrapped = service.ErrDuplicateModelField
+					}
+					return nil, service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, duplicateWSFrameFieldMessage(field), wrapped)
 				}
 				// 分组级模型白名单：后续 turn 同样校验客户端模型（省略 model 时
 				// 沿用会话实际生效模型，含 session.update 轮换后的模型），不通过
@@ -4072,6 +4079,30 @@ func isOpenAIWSUpgradeRequest(r *http.Request) bool {
 
 func openAIConflictingModels(contentType string, body []byte) bool {
 	return requestmodel.ConflictingModelCandidates(requestmodel.FromBodyCandidates("", contentType, body))
+}
+
+// openAIWSConflictingFrameField 检查一个 Responses WebSocket 帧：先按既有规则
+// 检查重复 model（含大小写变体与 session.model），再检查计费/策略字段
+// （service_tier、speed、reasoning.effort、output_config.effort）。返回首个
+// 冲突字段路径与是否冲突。
+//
+// 这些字段在计费/策略侧按 gjson 首个值读取，而帧以原始字节转发（sjson 只改首个），
+// 上游解析器按末值绑定，重复即可让计费档位与上游实际档位分叉。
+func openAIWSConflictingFrameField(body []byte) (string, bool) {
+	if openAIConflictingModels("application/json", body) {
+		return "model", true
+	}
+	return requestmodel.ConflictingWSBillingField(body)
+}
+
+// duplicateWSFrameFieldMessage 生成 WS 帧重复字段的关闭原因，字段名来自客户端
+// 帧，限制长度后回显，避免把整帧内容带进 close reason。model 沿用既有文案，
+// 与 HTTP 入口的 ErrDuplicateModelField 保持一致。
+func duplicateWSFrameFieldMessage(field string) string {
+	if field == "model" {
+		return service.ErrDuplicateModelField.Error()
+	}
+	return fmt.Sprintf("request payload declares field %.64q more than once", field)
 }
 
 // blockedModelAllowlistCandidate 对全部候选模型逐一校验分组白名单，返回第一个
