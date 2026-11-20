@@ -33,6 +33,20 @@ func applyForcedCodexInstructionsTemplate(
 		return false, nil
 	}
 
+	// A template with no caller guidance can be a stable gateway-owned prefix.
+	// If it incorporates user guidance, keep the established turn-scoped contract.
+	previous, _ := reqBody["previous_response_id"].(string)
+	model, _ := reqBody["model"].(string)
+	if usesGPT62CodexCachePrefix(model) && strings.TrimSpace(existing) == "" &&
+		strings.TrimSpace(data.ExistingInstructions) == "" && strings.TrimSpace(previous) == "" {
+		input, _ := reqBody["input"].([]any)
+		if hasCodexDeveloperPrefix(input, rendered) {
+			return false, nil
+		}
+		if prependCodexDeveloperPrefix(reqBody, rendered) {
+			return true, nil
+		}
+	}
 	reqBody["instructions"] = rendered
 	return true, nil
 }
