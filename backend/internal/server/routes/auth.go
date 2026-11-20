@@ -80,6 +80,12 @@ func RegisterAuthRoutes(
 		auth.POST("/oauth/github/start", rateLimiter.LimitWithOptions("oauth-github-start", 20, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,
 		}), h.Auth.GitHubOAuthStart)
+		auth.GET("/oauth/github/bind/start", func(c *gin.Context) {
+			query := c.Request.URL.Query()
+			query.Set("intent", "bind_current_user")
+			c.Request.URL.RawQuery = query.Encode()
+			h.Auth.GitHubOAuthStart(c)
+		})
 		auth.GET("/oauth/github/callback", h.Auth.GitHubOAuthCallback)
 		auth.POST("/oauth/github/complete-registration",
 			rateLimiter.LimitWithOptions("oauth-github-complete", 10, time.Minute, middleware.RateLimitOptions{
@@ -91,6 +97,12 @@ func RegisterAuthRoutes(
 		auth.POST("/oauth/google/start", rateLimiter.LimitWithOptions("oauth-google-start", 20, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,
 		}), h.Auth.GoogleOAuthStart)
+		auth.GET("/oauth/google/bind/start", func(c *gin.Context) {
+			query := c.Request.URL.Query()
+			query.Set("intent", "bind_current_user")
+			c.Request.URL.RawQuery = query.Encode()
+			h.Auth.GoogleOAuthStart(c)
+		})
 		auth.GET("/oauth/google/callback", h.Auth.GoogleOAuthCallback)
 		auth.POST("/oauth/google/complete-registration",
 			rateLimiter.LimitWithOptions("oauth-google-complete", 10, time.Minute, middleware.RateLimitOptions{

@@ -77,6 +77,8 @@ func TestAPIContracts(t *testing.T) {
 					"oidc_bound": false,
 					"wechat_bound": false,
 					"dingtalk_bound": false,
+					"github_bound": false,
+					"google_bound": false,
 					"identities": {
 						"email": {
 							"provider": "email",
@@ -89,6 +91,22 @@ func TestAPIContracts(t *testing.T) {
 							"subject_hint": "a***e@example.com",
 							"note_key": "profile.authBindings.notes.emailManagedFromProfile",
 							"note": "Primary account email is managed from the profile form."
+						},
+						"github": {
+							"provider": "github",
+							"bound": false,
+							"bound_count": 0,
+							"can_bind": true,
+							"can_unbind": false,
+							"bind_start_path": "/api/v1/auth/oauth/github/bind/start?intent=bind_current_user&redirect=%2Fsettings%2Fprofile"
+						},
+						"google": {
+							"provider": "google",
+							"bound": false,
+							"bound_count": 0,
+							"can_bind": true,
+							"can_unbind": false,
+							"bind_start_path": "/api/v1/auth/oauth/google/bind/start?intent=bind_current_user&redirect=%2Fsettings%2Fprofile"
 						},
 						"linuxdo": {
 							"provider": "linuxdo",
@@ -136,6 +154,22 @@ func TestAPIContracts(t *testing.T) {
 							"note_key": "profile.authBindings.notes.emailManagedFromProfile",
 							"note": "Primary account email is managed from the profile form."
 						},
+						"github": {
+							"provider": "github",
+							"bound": false,
+							"bound_count": 0,
+							"can_bind": true,
+							"can_unbind": false,
+							"bind_start_path": "/api/v1/auth/oauth/github/bind/start?intent=bind_current_user&redirect=%2Fsettings%2Fprofile"
+						},
+						"google": {
+							"provider": "google",
+							"bound": false,
+							"bound_count": 0,
+							"can_bind": true,
+							"can_unbind": false,
+							"bind_start_path": "/api/v1/auth/oauth/google/bind/start?intent=bind_current_user&redirect=%2Fsettings%2Fprofile"
+						},
 						"linuxdo": {
 							"provider": "linuxdo",
 							"bound": false,
@@ -181,6 +215,22 @@ func TestAPIContracts(t *testing.T) {
 							"subject_hint": "a***e@example.com",
 							"note_key": "profile.authBindings.notes.emailManagedFromProfile",
 							"note": "Primary account email is managed from the profile form."
+						},
+						"github": {
+							"provider": "github",
+							"bound": false,
+							"bound_count": 0,
+							"can_bind": true,
+							"can_unbind": false,
+							"bind_start_path": "/api/v1/auth/oauth/github/bind/start?intent=bind_current_user&redirect=%2Fsettings%2Fprofile"
+						},
+						"google": {
+							"provider": "google",
+							"bound": false,
+							"bound_count": 0,
+							"can_bind": true,
+							"can_unbind": false,
+							"bind_start_path": "/api/v1/auth/oauth/google/bind/start?intent=bind_current_user&redirect=%2Fsettings%2Fprofile"
 						},
 						"linuxdo": {
 							"provider": "linuxdo",

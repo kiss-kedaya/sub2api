@@ -21,13 +21,15 @@ import (
 )
 
 const (
-	emailOAuthCookiePath      = "/api/v1/auth/oauth"
-	emailOAuthStateCookieName = "email_oauth_state"
-	emailOAuthRedirectCookie  = "email_oauth_redirect"
-	emailOAuthProviderCookie  = "email_oauth_provider"
-	emailOAuthAffiliateCookie = "email_oauth_affiliate"
-	emailOAuthCookieMaxAgeSec = 10 * 60
-	emailOAuthDefaultRedirect = "/dashboard"
+	emailOAuthCookiePath       = "/api/v1/auth/oauth"
+	emailOAuthStateCookieName  = "email_oauth_state"
+	emailOAuthRedirectCookie   = "email_oauth_redirect"
+	emailOAuthProviderCookie   = "email_oauth_provider"
+	emailOAuthAffiliateCookie  = "email_oauth_affiliate"
+	emailOAuthIntentCookieName = "email_oauth_intent"
+	emailOAuthBindUserCookie   = "email_oauth_bind_user"
+	emailOAuthCookieMaxAgeSec  = 10 * 60
+	emailOAuthDefaultRedirect  = "/dashboard"
 )
 
 type emailOAuthTokenResponse struct {
@@ -81,6 +83,18 @@ func (h *AuthHandler) emailOAuthStart(c *gin.Context, provider string) {
 	emailOAuthSetCookie(c, emailOAuthStateCookieName, encodeCookieValue(state), secureCookie)
 	emailOAuthSetCookie(c, emailOAuthRedirectCookie, encodeCookieValue(redirectTo), secureCookie)
 	emailOAuthSetCookie(c, emailOAuthProviderCookie, encodeCookieValue(provider), secureCookie)
+	intent := normalizeOAuthIntent(c.Query("intent"))
+	emailOAuthSetCookie(c, emailOAuthIntentCookieName, encodeCookieValue(intent), secureCookie)
+	if intent == oauthIntentBindCurrentUser {
+		bindCookieValue, err := h.buildOAuthBindUserCookieFromContext(c)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		emailOAuthSetCookie(c, emailOAuthBindUserCookie, encodeCookieValue(bindCookieValue), secureCookie)
+	} else {
+		emailOAuthClearCookie(c, emailOAuthBindUserCookie, secureCookie)
+	}
 	captureOAuthPromoCode(c, secureCookie)
 	if affCode := strings.TrimSpace(firstNonEmpty(c.Query("aff_code"), c.Query("aff"))); affCode != "" {
 		emailOAuthSetCookie(c, emailOAuthAffiliateCookie, encodeCookieValue(affCode), secureCookie)
@@ -123,6 +137,8 @@ func (h *AuthHandler) emailOAuthCallback(c *gin.Context, provider string) {
 		emailOAuthClearCookie(c, emailOAuthRedirectCookie, secureCookie)
 		emailOAuthClearCookie(c, emailOAuthProviderCookie, secureCookie)
 		emailOAuthClearCookie(c, emailOAuthAffiliateCookie, secureCookie)
+		emailOAuthClearCookie(c, emailOAuthIntentCookieName, secureCookie)
+		emailOAuthClearCookie(c, emailOAuthBindUserCookie, secureCookie)
 		clearOAuthPromoCodeCookie(c, secureCookie)
 	}()
 	expectedState, err := readCookieDecoded(c, emailOAuthStateCookieName)
@@ -140,6 +156,8 @@ func (h *AuthHandler) emailOAuthCallback(c *gin.Context, provider string) {
 	if redirectTo == "" {
 		redirectTo = emailOAuthDefaultRedirect
 	}
+	intent, _ := readCookieDecoded(c, emailOAuthIntentCookieName)
+	intent = normalizeOAuthIntent(intent)
 
 	tokenResp, err := exchangeEmailOAuthCode(c.Request.Context(), cfg, code)
 	if err != nil {
@@ -151,7 +169,72 @@ func (h *AuthHandler) emailOAuthCallback(c *gin.Context, provider string) {
 		redirectOAuthError(c, frontendCallback, "userinfo_failed", "failed to fetch verified email", singleLine(err.Error()))
 		return
 	}
+	if intent == oauthIntentBindCurrentUser {
+		h.emailOAuthCallbackBindWithProfile(c, provider, frontendCallback, redirectTo, profile)
+		return
+	}
 	h.emailOAuthCallbackWithProfile(c, provider, cfg, frontendCallback, redirectTo, profile)
+}
+
+// emailOAuthCallbackBindWithProfile 处理已登录用户主动绑定 GitHub / Google 的回调：
+// 不登录也不注册，只把本次 OAuth 身份写入 pending 会话，等前端兑换接口
+// （/auth/oauth/pending/exchange）在登录态下把身份绑到当前用户。
+func (h *AuthHandler) emailOAuthCallbackBindWithProfile(
+	c *gin.Context,
+	provider string,
+	frontendCallback string,
+	redirectTo string,
+	profile *emailOAuthProfile,
+) {
+	targetUserID, err := h.readOAuthBindUserIDFromCookie(c, emailOAuthBindUserCookie)
+	if err != nil {
+		redirectOAuthError(c, frontendCallback, "invalid_state", "invalid oauth bind target", "")
+		return
+	}
+	browserSessionKey, err := generateOAuthPendingBrowserSession()
+	if err != nil {
+		redirectOAuthError(c, frontendCallback, "session_error", "failed to continue oauth bind", "")
+		return
+	}
+	secureCookie := isRequestHTTPS(c)
+	setOAuthPendingBrowserCookie(c, browserSessionKey, secureCookie)
+	clearOAuthPendingSessionCookie(c, secureCookie)
+
+	email := strings.TrimSpace(strings.ToLower(profile.Email))
+	upstreamClaims := map[string]any{
+		"email":            email,
+		"email_verified":   profile.EmailVerified,
+		"username":         strings.TrimSpace(profile.Username),
+		"provider":         provider,
+		"provider_key":     provider,
+		"provider_subject": strings.TrimSpace(profile.Subject),
+	}
+	for key, value := range profile.Metadata {
+		if _, exists := upstreamClaims[key]; !exists {
+			upstreamClaims[key] = value
+		}
+	}
+	markAuthAuditEmail(c, profile.Email)
+	if err := h.createOAuthPendingSession(c, oauthPendingSessionPayload{
+		Intent:                 oauthIntentBindCurrentUser,
+		Identity:               service.PendingAuthIdentityKey{ProviderType: provider, ProviderKey: provider, ProviderSubject: strings.TrimSpace(profile.Subject)},
+		TargetUserID:           &targetUserID,
+		ResolvedEmail:          email,
+		RedirectTo:             redirectTo,
+		BrowserSessionKey:      browserSessionKey,
+		UpstreamIdentityClaims: upstreamClaims,
+		CompletionResponse: map[string]any{
+			"provider": provider,
+			"binding":  true,
+			"redirect": redirectTo,
+		},
+	}); err != nil {
+		markAuthAuditFailureFromError(c, err)
+		redirectOAuthError(c, frontendCallback, "session_error", "failed to continue oauth bind", "")
+		return
+	}
+	markAuthAuditPending(c, "binding_started")
+	redirectToFrontendCallback(c, frontendCallback)
 }
 
 func (h *AuthHandler) emailOAuthCallbackWithProfile(

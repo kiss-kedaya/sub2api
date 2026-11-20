@@ -46,6 +46,8 @@ vi.mock('vue-i18n', async (importOriginal) => {
         if (key === 'profile.authBindings.status.bound') return 'Bound'
         if (key === 'profile.authBindings.status.notBound') return 'Not bound'
         if (key === 'profile.authBindings.providers.email') return 'Email'
+        if (key === 'profile.authBindings.providers.github') return 'GitHub'
+        if (key === 'profile.authBindings.providers.google') return 'Google'
         if (key === 'profile.authBindings.providers.linuxdo') return 'LinuxDo'
         if (key === 'profile.authBindings.providers.wechat') return 'WeChat'
         if (key === 'profile.authBindings.providers.oidc') return params?.providerName || 'OIDC'
@@ -284,6 +286,126 @@ describe('ProfileIdentityBindingsSection', () => {
     })
 
     expect(wrapper.find('[data-testid="profile-binding-wechat-action"]').exists()).toBe(true)
+  })
+
+  it('renders GitHub and Google binding rows with their bound states', () => {
+    const wrapper = mount(ProfileIdentityBindingsSection, {
+      global: {
+        plugins: [pinia],
+      },
+      props: {
+        user: createUser({
+          auth_bindings: {
+            email: { bound: true },
+            github: { bound: true },
+            google: { bound: false },
+          },
+        }),
+        githubEnabled: true,
+        googleEnabled: true,
+      },
+    })
+
+    expect(wrapper.get('[data-testid="profile-binding-github-status"]').text()).toBe('Bound')
+    expect(wrapper.get('[data-testid="profile-binding-google-status"]').text()).toBe('Not bound')
+    expect(wrapper.get('[data-testid="profile-binding-google-action"]').text()).toBe('Bind Google')
+    expect(wrapper.find('[data-testid="profile-binding-github-action"]').exists()).toBe(false)
+  })
+
+  it('starts the GitHub bind flow from the profile page', async () => {
+    const wrapper = mount(ProfileIdentityBindingsSection, {
+      global: {
+        plugins: [pinia],
+      },
+      props: {
+        user: createUser(),
+        githubEnabled: true,
+        googleEnabled: true,
+      },
+    })
+
+    await wrapper.get('[data-testid="profile-binding-github-action"]').trigger('click')
+
+    expect(locationState.current.href).toContain('/api/v1/auth/oauth/github/bind/start?')
+    expect(locationState.current.href).toContain('intent=bind_current_user')
+    expect(locationState.current.href).toContain('redirect=%2Fprofile')
+  })
+
+  it('starts the Google bind flow from the profile page', async () => {
+    const wrapper = mount(ProfileIdentityBindingsSection, {
+      global: {
+        plugins: [pinia],
+      },
+      props: {
+        user: createUser(),
+        githubEnabled: true,
+        googleEnabled: true,
+      },
+    })
+
+    await wrapper.get('[data-testid="profile-binding-google-action"]').trigger('click')
+
+    expect(locationState.current.href).toContain('/api/v1/auth/oauth/google/bind/start?')
+    expect(locationState.current.href).toContain('intent=bind_current_user')
+  })
+
+  it('unbinds a connected Google identity', async () => {
+    userApiMocks.unbindAuthIdentity.mockResolvedValue(
+      createUser({
+        email_bound: true,
+        google_bound: false,
+        auth_bindings: {
+          email: { bound: true },
+          google: { bound: false, can_unbind: false },
+        },
+      })
+    )
+
+    const wrapper = mount(ProfileIdentityBindingsSection, {
+      global: {
+        plugins: [pinia],
+      },
+      props: {
+        user: createUser({
+          email_bound: true,
+          google_bound: true,
+          auth_bindings: {
+            email: { bound: true },
+            google: {
+              bound: true,
+              display_name: 'Alice on Google',
+              subject_hint: 'goo***1234',
+              can_unbind: true,
+            },
+          },
+        }),
+        githubEnabled: true,
+        googleEnabled: true,
+      },
+    })
+
+    expect(wrapper.text()).toContain('Alice on Google')
+
+    await wrapper.get('[data-testid="profile-binding-google-unbind"]').trigger('click')
+
+    expect(userApiMocks.unbindAuthIdentity).toHaveBeenCalledWith('google')
+    expect(wrapper.get('[data-testid="profile-binding-google-status"]').text()).toBe('Not bound')
+  })
+
+  it('hides GitHub and Google bind actions when the providers are disabled', () => {
+    const wrapper = mount(ProfileIdentityBindingsSection, {
+      global: {
+        plugins: [pinia],
+      },
+      props: {
+        user: createUser(),
+        githubEnabled: false,
+        googleEnabled: false,
+      },
+    })
+
+    expect(wrapper.find('[data-testid="profile-binding-github-action"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="profile-binding-google-action"]').exists()).toBe(false)
   })
 
   it('sends email verification code and binds email from the profile card', async () => {

@@ -117,6 +117,8 @@
         >
           <ProfileIdentityBindingsSection
             :user="user"
+            :github-enabled="githubEnabled"
+            :google-enabled="googleEnabled"
             :linuxdo-enabled="linuxdoEnabled"
             :dingtalk-enabled="dingtalkEnabled"
             :oidc-enabled="oidcEnabled"
@@ -170,6 +172,8 @@ import type { User, UserAuthBindingStatus, UserAuthProvider, UserProfileSourceCo
 
 const props = withDefaults(defineProps<{
   user: User | null
+  githubEnabled?: boolean
+  googleEnabled?: boolean
   linuxdoEnabled?: boolean
   dingtalkEnabled?: boolean
   oidcEnabled?: boolean
@@ -178,6 +182,8 @@ const props = withDefaults(defineProps<{
   wechatOpenEnabled?: boolean
   wechatMpEnabled?: boolean
 }>(), {
+  githubEnabled: false,
+  googleEnabled: false,
   linuxdoEnabled: false,
   dingtalkEnabled: false,
   oidcEnabled: false,
@@ -244,12 +250,12 @@ const memberSinceLabel = computed(() => {
 
 const providerLabels = computed<Record<UserAuthProvider, string>>(() => ({
   email: t('profile.authBindings.providers.email'),
+  github: t('profile.authBindings.providers.github'),
+  google: t('profile.authBindings.providers.google'),
   linuxdo: t('profile.authBindings.providers.linuxdo'),
   dingtalk: t('profile.authBindings.providers.dingtalk'),
   oidc: t('profile.authBindings.providers.oidc', { providerName: props.oidcProviderName }),
   wechat: t('profile.authBindings.providers.wechat'),
-  github: 'GitHub',
-  google: 'Google'
 }))
 
 function formatCurrency(value: number): string {

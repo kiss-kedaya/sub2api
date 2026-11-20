@@ -193,6 +193,23 @@ describe('OAuthCallbackView', () => {
     expect(routerReplaceMock).toHaveBeenCalledWith('/settings')
   })
 
+  it('completes a GitHub/Google identity binding exchange and returns to the profile page', async () => {
+    routeState.path = '/auth/oauth/callback'
+    exchangePendingOAuthCompletionMock.mockResolvedValue({
+      binding: true,
+      provider: 'google',
+      redirect: '/profile',
+    })
+
+    mount(OAuthCallbackView)
+    await vi.dynamicImportSettled()
+
+    expect(exchangePendingOAuthCompletionMock).toHaveBeenCalledTimes(1)
+    expect(showSuccessMock).toHaveBeenCalledWith('profile.authBindings.bindSuccess')
+    expect(routerReplaceMock).toHaveBeenCalledWith('/profile')
+    expect(setTokenMock).not.toHaveBeenCalled()
+  })
+
   it('forwards frontend email oauth provider callbacks back to the backend callback endpoint', async () => {
     routeState.path = '/auth/oauth/callback'
     routeState.query = {

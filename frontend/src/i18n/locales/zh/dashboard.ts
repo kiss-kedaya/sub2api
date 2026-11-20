@@ -1192,6 +1192,8 @@ export default {
       },
       providers: {
         email: '邮箱',
+        github: 'GitHub',
+        google: 'Google',
         linuxdo: 'LinuxDo',
         dingtalk: '钉钉',
         oidc: '{providerName}',

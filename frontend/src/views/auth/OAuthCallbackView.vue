@@ -239,6 +239,7 @@ type EmailOAuthPendingCompletion = Partial<OAuthTokenResponse> & {
   email?: string
   resolved_email?: string
   invitation_required?: boolean
+  binding?: boolean
   requires_2fa?: boolean
   temp_token?: string
   user_email_masked?: string
@@ -405,6 +406,16 @@ async function resumePendingEmailOAuth() {
       registrationEmail.value = String(completion.resolved_email || completion.email || '').trim()
       needsRegistrationCompletion.value = true
       isProcessing.value = false
+      return
+    }
+
+    if (completion.binding === true) {
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.removeItem(EMAIL_OAUTH_PENDING_PROVIDER_KEY)
+      }
+      clearAllAffiliateReferralCodes()
+      appStore.showSuccess(t('profile.authBindings.bindSuccess'))
+      await router.replace(sanitizeRedirectPath(completionRedirect))
       return
     }
 
