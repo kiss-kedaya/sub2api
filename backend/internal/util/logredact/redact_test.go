@@ -83,6 +83,30 @@ func TestRedactText_DefaultPathDoesNotUseExtraCache(t *testing.T) {
 	}
 }
 
+func TestMaskEmail(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"alice@example.com", "a***@example.com"},
+		{"a@example.com", "a***@example.com"},
+		{"alice.smith+tag@mail.example.org", "a***@mail.example.org"},
+		{"赵四@example.cn", "赵***@example.cn"},
+		{"not-an-email", "***"},
+		{"@example.com", "***"},
+		{"alice@", "***"},
+		{"alice @example.com", "***"},
+	}
+	for _, tc := range cases {
+		if got := MaskEmail(tc.in); got != tc.want {
+			t.Fatalf("MaskEmail(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	if out := MaskEmail("alice@example.com"); strings.Contains(out, "alice") {
+		t.Fatalf("masked email must not keep the full local part: %q", out)
+	}
+}
+
 func clearExtraTextPatternCache() {
 	extraTextPatternCache.Range(func(key, value any) bool {
 		extraTextPatternCache.Delete(key)

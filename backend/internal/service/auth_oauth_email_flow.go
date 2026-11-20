@@ -12,6 +12,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 )
 
 func normalizeOAuthSignupSource(signupSource string) string {
@@ -122,26 +123,26 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 		return nil, nil, ErrEmailReserved
 	}
 	if err := s.VerifyOAuthEmailCode(ctx, email, verifyCode); err != nil {
-		slog.Error("oauth email register: verify code failed", "email", email, "error", err.Error())
+		slog.Error("oauth email register: verify code failed", "email", logredact.MaskEmail(email), "error", err.Error())
 		return nil, nil, err
 	}
 
 	if _, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode); err != nil {
-		slog.Error("oauth email register: invitation failed", "email", email, "error", err.Error())
+		slog.Error("oauth email register: invitation failed", "email", logredact.MaskEmail(email), "error", err.Error())
 		return nil, nil, err
 	}
 
 	// 含 +别名 / Gmail 点号 / FQDN 根点变体归一化：该路径同样发放注册赠额，不能被单个收件箱刷号。
 	existsEmail, err := s.existsByEmailOrAlias(ctx, email)
 	if err != nil {
-		slog.Error("oauth email register: ExistsByEmail failed", "email", email, "error", err.Error())
+		slog.Error("oauth email register: ExistsByEmail failed", "email", logredact.MaskEmail(email), "error", err.Error())
 		return nil, nil, ErrServiceUnavailable
 	}
 	if existsEmail {
 		return nil, nil, ErrEmailExists
 	}
 	if err := s.validateRegistrationEmailQuota(ctx, email); err != nil {
-		slog.Error("oauth email register: policy rejected", "email", email, "error", err.Error())
+		slog.Error("oauth email register: policy rejected", "email", logredact.MaskEmail(email), "error", err.Error())
 		return nil, nil, err
 	}
 
@@ -170,7 +171,7 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 		case errors.Is(err, ErrEmailDomainRegistrationLimit):
 			return nil, nil, ErrEmailDomainRegistrationLimit
 		default:
-			slog.Error("oauth email register: userRepo.Create failed", "email", email, "signup_source", signupSource, "error", err.Error())
+			slog.Error("oauth email register: userRepo.Create failed", "email", logredact.MaskEmail(email), "signup_source", signupSource, "error", err.Error())
 			return nil, nil, ErrServiceUnavailable
 		}
 	}
