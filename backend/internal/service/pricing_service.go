@@ -168,6 +168,14 @@ var (
 		CacheReadInputTokenCost: 0.1e-6,
 		LiteLLMProvider:         "anthropic", Mode: "chat", SupportsPromptCaching: true,
 	}
+	// Claude Fable 5.2 / Mythos 5.2: $8/$40 per MTok, cache write $10 (5m) / $16 (1h),
+	// cache read $0.2. Must be intercepted before the fable-5 family match.
+	claude52FallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken: 8e-6, OutputCostPerToken: 40e-6,
+		CacheCreationInputTokenCost: 10e-6, CacheCreationInputTokenCostAbove1hr: 16e-6,
+		CacheReadInputTokenCost: 0.2e-6,
+		LiteLLMProvider:         "anthropic", Mode: "chat", SupportsPromptCaching: true,
+	}
 	openAIGPT56SolFallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:                   5e-06,
 		InputCostPerTokenPriority:           1e-05,
@@ -1509,6 +1517,12 @@ func (s *PricingService) matchByModelFamily(model string) *LiteLLMModelPricing {
 	// 系列会被 "4-5" 捕获，按 claude-sonnet-4-5（$3/$15）计费——50% 超收。
 	if claude.IsSonnet55(model) {
 		return claudeSonnet55FallbackPricing
+	}
+
+	// Fable/Mythos 5.2 精确拦截：前缀 "claude-fable-5"/"claude-mythos-5" 会把
+	// 5.2 归入 5.0/5.1 系列，按 $10/$50 计费（多收 25%）。
+	if claude.IsFable52(model) || claude.IsMythos52(model) {
+		return claude52FallbackPricing
 	}
 
 	// 按特异性降序排列：高版本号在前，避免 "claude-opus-4"（opus-4 系列）
