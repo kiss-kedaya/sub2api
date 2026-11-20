@@ -53,7 +53,7 @@ local count = redis.call('ZCARD', key)
 if count < limit then
   redis.call('ZADD', key, now, ARGV[4])
   redis.call('PEXPIRE', key, window)
-  return {count + 1, 0}
+  return {count + 1, 0, 1}
 end
 local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
 local retry = 0
@@ -61,27 +61,32 @@ if oldest[2] then
   retry = tonumber(oldest[2]) + window - now
   if retry < 0 then retry = 0 end
 end
-return {count, retry}
+return {count, retry, 0}
 `)
 
 // rateLimitSlidingRun 允许测试覆写滑动窗口脚本执行逻辑。
-var rateLimitSlidingRun = func(ctx context.Context, client *redis.Client, key string, windowMillis int64, limit int64, member string) (int64, int64, error) {
+// 返回 (窗口内计数, 超限重试毫秒, 是否放行)。
+var rateLimitSlidingRun = func(ctx context.Context, client *redis.Client, key string, windowMillis int64, limit int64, member string) (int64, int64, bool, error) {
 	values, err := rateLimitSlidingScript.Run(ctx, client, []string{key}, time.Now().UnixNano()/int64(time.Millisecond), windowMillis, limit, member).Slice()
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, false, err
 	}
-	if len(values) < 2 {
-		return 0, 0, fmt.Errorf("rate limit sliding script returned %d values", len(values))
+	if len(values) < 3 {
+		return 0, 0, false, fmt.Errorf("rate limit sliding script returned %d values", len(values))
 	}
 	count, err := parseInt64(values[0])
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, false, err
 	}
 	retry, err := parseInt64(values[1])
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, false, err
 	}
-	return count, retry, nil
+	allowed, err := parseInt64(values[2])
+	if err != nil {
+		return 0, 0, false, err
+	}
+	return count, retry, allowed == 1, nil
 }
 
 // rateLimitRun 允许测试覆写脚本执行逻辑
@@ -216,11 +221,11 @@ func (r *RateLimiter) AllowSliding(ctx context.Context, key string, limit int, w
 	windowMillis := windowTTLMillis(window)
 	member := strconv.FormatInt(time.Now().UnixNano(), 10)
 
-	count, retryMillis, err := rateLimitSlidingRun(ctx, r.redis, redisKey, windowMillis, int64(limit), member)
+	count, retryMillis, allowed, err := rateLimitSlidingRun(ctx, r.redis, redisKey, windowMillis, int64(limit), member)
 	if err != nil {
 		return AllowResult{}, err
 	}
-	result := AllowResult{Allowed: count <= int64(limit), Count: count}
+	result := AllowResult{Allowed: allowed, Count: count}
 	if !result.Allowed {
 		result.RetryAfter = time.Duration(retryMillis) * time.Millisecond
 		if result.RetryAfter <= 0 {
