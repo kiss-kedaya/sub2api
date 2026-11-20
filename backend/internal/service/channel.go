@@ -96,6 +96,7 @@ type ChannelModelPricing struct {
 	OutputPrice                  *float64            `json:"output_price"`
 	CacheWritePrice              *float64            `json:"cache_write_price"`
 	CacheWrite1hPrice            *float64            `json:"cache_write_1h_price"`
+	CacheWrite12hPrice           *float64            `json:"cache_write_12h_price"`
 	CacheReadPrice               *float64            `json:"cache_read_price"`
 	FastMultiplier               *float64            `json:"fast_multiplier"`
 	FlexMultiplier               *float64            `json:"flex_multiplier"`
@@ -135,6 +136,7 @@ type PricingInterval struct {
 	OutputPrice          *float64  `json:"output_price"`
 	CacheWritePrice      *float64  `json:"cache_write_price"`
 	CacheWrite1hPrice    *float64  `json:"cache_write_1h_price"`
+	CacheWrite12hPrice   *float64  `json:"cache_write_12h_price"`
 	CacheReadPrice       *float64  `json:"cache_read_price"`
 	InputMultiplier      *float64  `json:"input_multiplier"`
 	OutputMultiplier     *float64  `json:"output_multiplier"`
@@ -239,6 +241,7 @@ func (p ChannelModelPricing) Clone() ChannelModelPricing {
 	cp.InputPrice = clonePricingFloat64(p.InputPrice)
 	cp.OutputPrice = clonePricingFloat64(p.OutputPrice)
 	cp.CacheWritePrice = clonePricingFloat64(p.CacheWritePrice)
+	cp.CacheWrite12hPrice = clonePricingFloat64(p.CacheWrite12hPrice)
 	cp.CacheReadPrice = clonePricingFloat64(p.CacheReadPrice)
 	cp.FastMultiplier = clonePricingFloat64(p.FastMultiplier)
 	cp.FlexMultiplier = clonePricingFloat64(p.FlexMultiplier)
@@ -269,6 +272,7 @@ func clonePricingInterval(value PricingInterval) PricingInterval {
 	value.InputPrice = clonePricingFloat64(value.InputPrice)
 	value.OutputPrice = clonePricingFloat64(value.OutputPrice)
 	value.CacheWritePrice = clonePricingFloat64(value.CacheWritePrice)
+	value.CacheWrite12hPrice = clonePricingFloat64(value.CacheWrite12hPrice)
 	value.CacheReadPrice = clonePricingFloat64(value.CacheReadPrice)
 	value.InputMultiplier = clonePricingFloat64(value.InputMultiplier)
 	value.OutputMultiplier = clonePricingFloat64(value.OutputMultiplier)
