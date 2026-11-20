@@ -25,14 +25,15 @@ type ConnectionTraceRecorder interface {
 func RequestTiming(recorders ...ConnectionTraceRecorder) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := strings.TrimRight(c.Request.URL.Path, "/")
-		if c.Request.Method != http.MethodPost || (!strings.HasSuffix(path, "/responses") && !strings.HasSuffix(path, "/responses/compact") && !strings.HasSuffix(path, "/messages") && !strings.HasSuffix(path, "/chat/completions")) {
+		geminiPath, geminiStream := geminiGenerationTracePath(c.FullPath(), c.Param("modelAction"))
+		if c.Request.Method != http.MethodPost || (geminiPath == "" && !strings.HasSuffix(path, "/responses") && !strings.HasSuffix(path, "/responses/compact") && !strings.HasSuffix(path, "/messages") && !strings.HasSuffix(path, "/chat/completions")) {
 			c.Next()
 			return
 		}
 		collector := requesttiming.New(time.Now(), c.Request.ContentLength)
 		c.Request = c.Request.WithContext(requesttiming.With(c.Request.Context(), collector))
 		c.Request.Body = collector.WrapBody(c.Request.Body)
-		writer := &timingWriter{ResponseWriter: c.Writer, collector: collector}
+		writer := &timingWriter{ResponseWriter: c.Writer, collector: collector, skipOutcome: geminiPath != ""}
 		c.Writer = writer
 		finish := func() {
 			writer.mu.Lock()
@@ -46,11 +47,15 @@ func RequestTiming(recorders ...ConnectionTraceRecorder) gin.HandlerFunc {
 			writer.mu.Unlock()
 			// Copy bounded metadata even before authentication. Never retain headers,
 			// bodies, credential values or gin.Context in the async writer.
-			if len(recorders) > 0 && recorders[0] != nil {
+			key, authenticated := GetAPIKeyFromContext(c)
+			if len(recorders) > 0 && recorders[0] != nil && (geminiPath == "" || authenticated) {
 				requestID, _ := c.Request.Context().Value(ctxkey.RequestID).(string)
 				clientID, _ := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
 				accountID, _ := c.Request.Context().Value(ctxkey.AccountID).(int64)
-				record := service.ConnectionTrace{RequestID: requestID, ClientRequestID: clientID, AccountID: accountID, Model: connectionMetadata(c.GetString("ops_model"), 256), Path: service.ConnectionPath(path), ClientIP: connectionMetadata(SecurityClientIP(c), 64), UserAgent: connectionMetadata(c.GetHeader("User-Agent"), 512), Stream: c.GetBool("ops_stream")}
+				record := service.ConnectionTrace{RequestID: requestID, ClientRequestID: clientID, AccountID: accountID, Model: connectionMetadata(c.GetString("ops_model"), 256), Path: service.ConnectionPath(path), ClientIP: connectionMetadata(SecurityClientIP(c), 64), UserAgent: connectionMetadata(c.GetHeader("User-Agent"), 512), Stream: geminiStream || c.GetBool("ops_stream")}
+				if geminiPath != "" {
+					record.Path = geminiPath
+				}
 
 				record.Source = "application"
 				record.Host = connectionMetadata(c.Request.Host, 255)
@@ -70,7 +75,6 @@ func RequestTiming(recorders ...ConnectionTraceRecorder) gin.HandlerFunc {
 				}
 				// Diagnostic attribution is independent of authentication. The
 				// fallback is populated only by a successful trusted key lookup.
-				key, authenticated := GetAPIKeyFromContext(c)
 				identitySource := ""
 				if authenticated {
 					identitySource = "authenticated"
@@ -132,10 +136,35 @@ func RequestTiming(recorders ...ConnectionTraceRecorder) gin.HandlerFunc {
 	}
 }
 
+// geminiGenerationTracePath keeps the matched route and action, with the model
+// and query values omitted from the recorded path.
+func geminiGenerationTracePath(route, modelAction string) (string, bool) {
+	switch route {
+	case "/v1beta/models/*modelAction", "/antigravity/v1beta/models/*modelAction":
+	default:
+		return "", false
+	}
+	modelAction = strings.TrimSpace(strings.TrimPrefix(modelAction, "/"))
+	model, action, ok := strings.Cut(modelAction, ":")
+	if !ok {
+		model, action, ok = strings.Cut(modelAction, "/")
+	}
+	if !ok || model == "" || strings.ContainsAny(model, ":/") {
+		return "", false
+	}
+	switch action {
+	case "generateContent", "streamGenerateContent":
+		return strings.TrimSuffix(route, "/*modelAction") + "/:model:" + action, action == "streamGenerateContent"
+	default:
+		return "", false
+	}
+}
+
 type timingWriter struct {
-	mu      sync.Mutex
-	writes  int64
-	flushAt int64
+	skipOutcome bool
+	mu          sync.Mutex
+	writes      int64
+	flushAt     int64
 	gin.ResponseWriter
 	collector   *requesttiming.Collector
 	textFlushed bool
@@ -147,6 +176,9 @@ func (w *timingWriter) Write(p []byte) (int, error) {
 	start := time.Now()
 	n, err := w.ResponseWriter.Write(p)
 	w.collector.Written(start, n, err, false)
+	if w.skipOutcome {
+		return n, err
+	}
 	w.mu.Lock()
 	if n > 0 {
 		w.writes++
@@ -162,6 +194,9 @@ func (w *timingWriter) WriteString(s string) (int, error) {
 	start := time.Now()
 	n, err := w.ResponseWriter.WriteString(s)
 	w.collector.Written(start, n, err, false)
+	if w.skipOutcome {
+		return n, err
+	}
 	w.mu.Lock()
 	if n > 0 {
 		w.writes++

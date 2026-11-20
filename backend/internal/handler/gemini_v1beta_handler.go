@@ -19,6 +19,7 @@ import (
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
@@ -467,7 +468,9 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	if h.errorPassthroughService != nil {
 		service.BindErrorPassthroughService(c, h.errorPassthroughService)
 	}
+	finishUserSlot := requesttiming.Observe(c.Request.Context(), "gemini_user_slot")
 	userReleaseFunc, err := geminiConcurrency.AcquireUserSlotWithWait(c, authSubject.UserID, authSubject.Concurrency, stream, &streamStarted)
+	finishUserSlot()
 	if err != nil {
 		reqLog.Warn("gemini.user_slot_acquire_failed", zap.Error(err))
 		googleError(c, http.StatusTooManyRequests, err.Error())
@@ -657,11 +660,13 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	for {
 		var selection *service.AccountSelectionResult
 		var routedKey *service.APIKey
+		finishSelection := requesttiming.Observe(c.Request.Context(), "gemini_account_selection")
 		if boundCache != nil {
 			selection, err = h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, "", modelName, cacheExcluded, "", int64(0))
 		} else {
 			selection, routedKey, err = h.gatewayService.SelectAccountAlongKeyRoutes(c.Request.Context(), apiKey, sessionKey, reqModel, fs.FailedAccountIDs, "", int64(0), service.PlatformGemini) // Gemini 不使用会话限制
 		}
+		finishSelection()
 		if boundCache != nil && err != nil {
 			googleError(c, http.StatusServiceUnavailable, geminiCachedContentUnavailableMessage)
 			return
@@ -768,6 +773,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				}
 			}()
 
+			finishAccountSlot := requesttiming.Observe(c.Request.Context(), "gemini_account_slot")
 			accountReleaseFunc, err = geminiConcurrency.AcquireAccountSlotWithWaitTimeout(
 				c,
 				account.ID,
@@ -776,6 +782,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				stream,
 				&streamStarted,
 			)
+			finishAccountSlot()
 			if err != nil {
 				reqLog.Warn("gemini.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 				googleError(c, http.StatusTooManyRequests, err.Error())
