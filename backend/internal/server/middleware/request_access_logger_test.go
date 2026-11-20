@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
 )
@@ -237,6 +238,11 @@ func TestLogger_AccessLogUsesForwardedClientIPFromTrustedProxy(t *testing.T) {
 	if err := r.SetTrustedProxies([]string{"104.23.251.120"}); err != nil {
 		t.Fatalf("set trusted proxies: %v", err)
 	}
+	// 等价于 SessionBindingContext 的请求快照：只有可信代理才能启用原始转发头。
+	r.Use(func(c *gin.Context) {
+		ip.SetForwardedIPSettings(c, true, nil, []string{"104.23.251.120"})
+		c.Next()
+	})
 	r.Use(Logger())
 	r.GET("/api/test", func(c *gin.Context) {
 		c.Status(http.StatusOK)

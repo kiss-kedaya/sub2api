@@ -30,14 +30,17 @@ the application's responsibility.
 ## Trusted client IPs
 
 `security.trust_forwarded_ip_for_api_key_acl` is enabled by default for upgrade
-compatibility. While enabled, raw forwarding headers take over client-IP
-resolution for logs and security-sensitive paths. Custom headers from
-`security.forwarded_client_ip_headers` are checked in configured order before
-the built-in `CF-Connecting-IP`, `X-Real-IP`, and `X-Forwarded-For` fallback.
+compatibility, but raw forwarding headers are only trusted when the request's
+TCP peer is one of `server.trusted_proxies`. A direct client can set every
+forwarding header, so requests from an untrusted peer always resolve to the TCP
+peer address. In trusted-header mode `X-Forwarded-For` is walked from right to
+left, skipping configured proxy hops, so client-supplied values on the left can
+never win. Custom headers from `security.forwarded_client_ip_headers` are only
+consulted for trusted peers and are checked in configured order before the
+built-in `X-Forwarded-For`, `X-Real-IP`, and `CF-Connecting-IP` fallback.
 Header names are case-insensitive, normalized when loaded, de-duplicated, and
 limited to 16 unique valid HTTP field names. Header values must contain IP
-literals; comma-separated values are supported, invalid entries are skipped,
-and public addresses are preferred over private fallback addresses.
+literals; comma-separated values are supported and invalid entries are skipped.
 
 The list can be supplied in YAML or with the comma-separated environment
 variable `SECURITY_FORWARDED_CLIENT_IP_HEADERS`; an explicitly empty environment
@@ -60,11 +63,13 @@ the process fails closed to trusted-proxy mode with no custom headers. If a
 migration write fails, the computed mode remains active for the current process
 and startup records a warning.
 
-Compatibility takeover accepts forwarded headers without validating the direct
-peer, including any configured custom header. Protect the origin from direct
-access while it is enabled. A CDN deployment must firewall the origin so only
-the CDN or load balancer can reach it, and that proxy must overwrite every
-trusted client-IP header rather than append an untrusted client value.
+Compatibility mode no longer accepts forwarded headers from arbitrary peers: the
+direct peer must be listed in `server.trusted_proxies`, and every proxy in the
+chain must append `X-Forwarded-For` (for Nginx, `$proxy_add_x_forwarded_for`)
+rather than pass a client-supplied value through unchanged. If
+`server.trusted_proxies` is not configured, compatibility mode fails closed to
+the TCP peer address. Prefer `trust_forwarded_ip_for_api_key_acl: false` with an
+exact proxy list; the trusted-proxy chain is authoritative in that mode.
 
 Example for a proxy on the same host:
 

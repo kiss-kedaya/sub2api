@@ -156,9 +156,10 @@ func TestRateLimiterHonorsForwardedIPSnapshot(t *testing.T) {
 	limiter := NewRateLimiter(redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"}))
 
 	router := gin.New()
-	// 模拟 SessionBindingContext：开启转发 IP 兼容模式快照
+	// 模拟 SessionBindingContext：开启转发 IP 兼容模式快照，
+	// 且反代地址 127.0.0.1 必须在可信代理列表内，转发头才会被采信。
 	router.Use(func(c *gin.Context) {
-		ippkg.SetForwardedIPSettings(c, true, nil)
+		ippkg.SetForwardedIPSettings(c, true, nil, []string{"127.0.0.1"})
 		c.Next()
 	})
 	router.Use(limiter.Limit("fwd", 1, time.Second))

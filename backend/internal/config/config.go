@@ -741,8 +741,11 @@ type SecurityConfig struct {
 	CSP                    CSPConfig            `mapstructure:"csp"`
 	ProxyFallback          ProxyFallbackConfig  `mapstructure:"proxy_fallback"`
 	ProxyProbe             ProxyProbeConfig     `mapstructure:"proxy_probe"`
-	// TrustForwardedIPForAPIKeyACL enables legacy raw forwarded-header takeover.
-	// When disabled, server.trusted_proxies is authoritative for all client-IP consumers.
+	// TrustForwardedIPForAPIKeyACL enables the legacy forwarded-header
+	// compatibility mode. Headers are only trusted when the TCP peer is in
+	// server.trusted_proxies, and X-Forwarded-For is read right-to-left.
+	// When disabled, server.trusted_proxies is authoritative for all client-IP
+	// consumers.
 	TrustForwardedIPForAPIKeyACL bool `mapstructure:"trust_forwarded_ip_for_api_key_acl"`
 	// HoneypotExemptNets lists CIDRs/IPs belonging to the operator's own edge.
 	// They are never banned by the scanner trap. Kept in config so real

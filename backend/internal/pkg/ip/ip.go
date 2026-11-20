@@ -3,6 +3,7 @@ package ip
 
 import (
 	"net"
+	"net/netip"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -13,24 +14,77 @@ const forwardedIPSettingsKey = "sub2api.forwarded_ip_settings"
 type forwardedIPSettings struct {
 	trustForwarded bool
 	headers        []string
+	// trustedProxies 是 server.trusted_proxies 的解析快照。只有直连对端命中
+	// 这些网段时，原始转发头才被采信；否则一律使用 TCP 对端地址。
+	trustedProxies []netip.Prefix
 }
 
-// SetForwardedIPSettings snapshots the forwarded-IP mode and custom header list
-// for this request.
-func SetForwardedIPSettings(c *gin.Context, enabled bool, headers []string) {
+// SetForwardedIPSettings snapshots the forwarded-IP mode, custom header list and
+// trusted proxy networks for this request.
+func SetForwardedIPSettings(c *gin.Context, enabled bool, headers, trustedProxies []string) {
 	if c == nil {
 		return
 	}
 	c.Set(forwardedIPSettingsKey, forwardedIPSettings{
 		trustForwarded: enabled,
 		headers:        append([]string(nil), headers...),
+		trustedProxies: parseTrustedProxyPrefixes(trustedProxies),
 	})
 }
 
-// SetLegacyForwardedIPTrust records whether raw forwarding headers override
-// Gin's server.trusted_proxies chain for this request.
+// SetLegacyForwardedIPTrust records whether raw forwarding headers may be used
+// for this request. Headers remain conditional on the TCP peer being a
+// configured trusted proxy; an empty trusted proxy list never trusts headers.
 func SetLegacyForwardedIPTrust(c *gin.Context, enabled bool) {
-	SetForwardedIPSettings(c, enabled, nil)
+	SetForwardedIPSettings(c, enabled, nil, nil)
+}
+
+// parseTrustedProxyPrefixes 解析 server.trusted_proxies，非法项忽略。
+func parseTrustedProxyPrefixes(values []string) []netip.Prefix {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]netip.Prefix, 0, len(values))
+	for _, raw := range values {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if strings.Contains(raw, "/") {
+			if prefix, err := netip.ParsePrefix(raw); err == nil {
+				out = append(out, prefix.Masked())
+			}
+			continue
+		}
+		if addr, err := netip.ParseAddr(raw); err == nil {
+			addr = addr.Unmap()
+			out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
+		}
+	}
+	return out
+}
+
+// peerAddr 返回 TCP 对端地址（不含端口）。
+func peerAddr(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	return normalizeIP(c.Request.RemoteAddr)
+}
+
+// engineTrustedProxy 报告 addr 是否命中可信代理网段。
+func engineTrustedProxy(addr string, prefixes []netip.Prefix) bool {
+	parsed, err := netip.ParseAddr(strings.TrimSpace(addr))
+	if err != nil {
+		return false
+	}
+	parsed = parsed.Unmap()
+	for _, prefix := range prefixes {
+		if prefix.Contains(parsed) {
+			return true
+		}
+	}
+	return false
 }
 
 func requestForwardedIPSettings(c *gin.Context) (forwardedIPSettings, bool) {
@@ -50,10 +104,12 @@ func requestUsesLegacyForwardedIPTrust(c *gin.Context) bool {
 	return !ok || settings.trustForwarded
 }
 
-// GetClientIP resolves the client address using the legacy forwarding-header
-// precedence used before the trusted-proxy hardening. It remains the
-// compatibility path for request metadata and usage/error logs; security-
-// sensitive callers must use GetTrustedClientIP or GetSecurityClientIP.
+// GetClientIP resolves the client address. In legacy forwarded-header mode the
+// headers are only trusted when the TCP peer is one of server.trusted_proxies:
+// a direct peer controls every forwarding header, so such requests always fall
+// back to the TCP peer address. When the peer is trusted, X-Forwarded-For is
+// walked right-to-left, skipping trusted proxy hops, so client-supplied values
+// on the left cannot win. Custom operator-configured headers keep precedence.
 func GetClientIP(c *gin.Context) string {
 	if c == nil {
 		return ""
@@ -64,28 +120,24 @@ func GetClientIP(c *gin.Context) string {
 	if !requestUsesLegacyForwardedIPTrust(c) {
 		return GetTrustedClientIP(c)
 	}
-
 	settings, _ := requestForwardedIPSettings(c)
+	peer := peerAddr(c)
+	if !engineTrustedProxy(peer, settings.trustedProxies) {
+		// 直连对端不可信：忽略所有转发头，使用真实 TCP 对端。
+		return peer
+	}
+
 	customIP, customFallback := resolveCustomForwardedClientIP(c, settings.headers)
 	if customIP != "" {
 		return customIP
 	}
-
-	// Preserve the historical precedence used by existing reverse-proxy
-	// deployments, while skipping an internal proxy address when a public XFF
-	// value is available. This covers Docker/Nginx setups that accidentally
-	// write the bridge address into X-Real-IP.
-	legacyIP, legacyFallback := resolveLegacyForwardedHeaderIP(c)
-	if legacyIP != "" {
+	if legacyIP := resolveLegacyForwardedHeaderIP(c, settings.trustedProxies); legacyIP != "" {
 		return legacyIP
 	}
 	if customFallback != "" {
 		return customFallback
 	}
-	if legacyFallback != "" {
-		return legacyFallback
-	}
-	return normalizeIP(c.ClientIP())
+	return peer
 }
 
 func resolveCustomForwardedClientIP(c *gin.Context, headers []string) (string, string) {
@@ -114,40 +166,43 @@ func resolveCustomForwardedClientIP(c *gin.Context, headers []string) (string, s
 	return "", fallback
 }
 
-func resolveLegacyForwardedHeaderIP(c *gin.Context) (string, string) {
-	var fallback string
-	if forwarded := normalizeValidIP(c.GetHeader("CF-Connecting-IP")); forwarded != "" {
-		fallback = forwarded
-		if !isPrivateIP(forwarded) {
-			return forwarded, fallback
-		}
+// resolveLegacyForwardedHeaderIP 只在直连对端已通过可信代理校验后被调用。
+// X-Forwarded-For 从右往左解析：跳过可信代理自身追加的跳，第一个非可信地址
+// 才是真正的客户端；客户端自带的左侧值永远不会被选中。只有 XFF 无法解析时
+// 才回退到 X-Real-IP / CF-Connecting-IP（两者都是单值头部，边缘必须覆盖写入）。
+func resolveLegacyForwardedHeaderIP(c *gin.Context, trustedProxies []netip.Prefix) string {
+	if clientIP := rightmostForwardedForClientIP(c.GetHeader("X-Forwarded-For"), trustedProxies); clientIP != "" {
+		return clientIP
 	}
 	if realIP := normalizeValidIP(c.GetHeader("X-Real-IP")); realIP != "" {
-		if fallback == "" {
-			fallback = realIP
-		}
-		if !isPrivateIP(realIP) {
-			return realIP, fallback
-		}
+		return realIP
 	}
-	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
-		ips := strings.Split(xff, ",")
-		for _, candidate := range ips {
-			candidate = normalizeValidIP(candidate)
-			if candidate != "" && !isPrivateIP(candidate) {
-				return candidate, fallback
-			}
-		}
-		if fallback == "" {
-			for _, candidate := range ips {
-				if candidate = normalizeValidIP(candidate); candidate != "" {
-					fallback = candidate
-					break
-				}
-			}
-		}
+	if forwarded := normalizeValidIP(c.GetHeader("CF-Connecting-IP")); forwarded != "" {
+		return forwarded
 	}
-	return "", fallback
+	return ""
+}
+
+// rightmostForwardedForClientIP walks an X-Forwarded-For chain from right to
+// left, skipping addresses that belong to configured trusted proxies, and
+// returns the first remaining address. The left-most entries are client
+// controlled, so they never take precedence.
+func rightmostForwardedForClientIP(raw string, trustedProxies []netip.Prefix) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	parts := strings.Split(raw, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		candidate := normalizeValidIP(parts[i])
+		if candidate == "" {
+			continue
+		}
+		if engineTrustedProxy(candidate, trustedProxies) {
+			continue
+		}
+		return candidate
+	}
+	return ""
 }
 
 // GetTrustedClientIP 从 Gin 的可信代理解析链提取客户端 IP。
@@ -164,9 +219,10 @@ func GetTrustedClientIP(c *gin.Context) string {
 }
 
 // GetSecurityClientIP returns the address used by security-sensitive paths.
-// When legacy forwarded-IP trust is enabled, raw forwarding headers take over
-// client-IP resolution. When disabled, Gin's server.trusted_proxies chain is
-// authoritative.
+// When legacy forwarded-IP trust is enabled, raw forwarding headers are only
+// consulted for requests whose TCP peer is a configured trusted proxy
+// (server.trusted_proxies); otherwise the TCP peer address is authoritative.
+// When disabled, Gin's server.trusted_proxies chain is authoritative.
 func GetSecurityClientIP(c *gin.Context, trustForwarded bool) string {
 	if verified := verifiedGatewayIP(c); verified != "" {
 		return verified

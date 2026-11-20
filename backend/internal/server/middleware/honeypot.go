@@ -134,6 +134,8 @@ func Honeypot(rdb *redis.Client, exemptNets ...string) gin.HandlerFunc {
 			return
 		}
 		MarkIngressRejected(c, IngressRejectHoneypot)
+		// 封禁键必须使用与审计/会话绑定同一套加固后的客户端 IP 解析：
+		// 只有可信代理转发的地址才采信转发头，直连对端伪造的 IP 不会进入封禁键。
 		noteHoneypotBan(rdb, SecurityClientIP(c), class)
 		c.Header("Cache-Control", "no-store")
 		c.AbortWithStatus(http.StatusNotFound)
