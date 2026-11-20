@@ -88,7 +88,7 @@ var ProviderSet = wire.NewSet(
 	NewTicketRepository,
 	NewAnnouncementReadRepository,
 	NewUsageLogRepository,
-	NewUsageBillingRepository,
+	ProvideUsageBillingRepository,
 	NewUsageBalanceSettlementRepository,
 	NewLiveBalanceAdjustmentOutboxRepository,
 	NewBatchImageRepository,

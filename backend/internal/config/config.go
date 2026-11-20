@@ -919,6 +919,20 @@ type BillingConfig struct {
 	// BalancePreauthorizationEnabled controls request-time balance holds. When
 	// disabled, completed usage is still charged by the normal settlement path.
 	BalancePreauthorizationEnabled bool `mapstructure:"balance_preauthorization_enabled"`
+	// BalanceMergeSettlementEnabled routes completed balance charges through the
+	// durable billing_balance_settlements queue instead of issuing one
+	// UPDATE users SET balance per request. The queue worker coalesces all pending
+	// charges of the same user into a single balance update, which removes the
+	// users.balance row-lock queue that serialises a single user's concurrent
+	// requests. Off (default) keeps the legacy per-request synchronous UPDATE.
+	//
+	// Amounts, the final balance and failure behaviour are identical in both
+	// modes; only the moment at which users.balance becomes visible moves from
+	// "inside the request's billing transaction" to "the next settlement flush"
+	// (bounded by the worker poll interval). Roll back by setting the env to
+	// false and restarting: the worker keeps running, so queued charges still
+	// drain.
+	BalanceMergeSettlementEnabled bool `mapstructure:"balance_merge_settlement_enabled"`
 	// MinimumBalanceReserve is the conservative preflight floor for balance billing.
 	// Requests in balance mode are rejected when the cached balance is below this
 	// amount, even if it is still positive. Set to 0 to keep the legacy balance > 0 gate.
@@ -2251,6 +2265,11 @@ func setDefaults() {
 	viper.SetDefault("billing.circuit_breaker.reset_timeout_seconds", 30)
 	viper.SetDefault("billing.circuit_breaker.half_open_requests", 3)
 	viper.SetDefault("billing.balance_preauthorization_enabled", false)
+	// 余额扣费合并结算默认关闭。开启后扣费先落持久化队列（billing_balance_settlements，
+	// status=settlement_pending），由 UsageBalanceSettlementWorker 按用户合并成一次
+	// users.balance 更新。回滚：环境变量置 false 重启即可，worker 始终运行，队列里的
+	// 扣费照常结算，不会丢。
+	viper.SetDefault("billing.balance_merge_settlement_enabled", false)
 	viper.SetDefault("billing.minimum_balance_reserve", 0.000001)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
