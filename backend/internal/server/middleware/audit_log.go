@@ -29,7 +29,79 @@ const (
 	ContextKeyAuthEmail = "auth_email"
 	// ContextKeySessionID 认证中间件写入的会话 ID（refresh token family）。
 	ContextKeySessionID = "session_id"
+
+	// 认证事件（第三方登录 / 2FA）审计标记：handler 在关键分支写入，
+	// 审计中间件在请求结束后合成一条结构化记录。
+	// 这样即使回调失败走的是 302 跳转，也能准确区分 success / failure / pending。
+	auditCtxKeyAuthResult        = "audit_auth_result"
+	auditCtxKeyAuthFailureReason = "audit_auth_failure_reason"
+	auditCtxKeyAuthEmailHash     = "audit_auth_email_hash"
+	auditCtxKeyAuthEmailMasked   = "audit_auth_email_masked"
+	auditCtxKeyAuthProvider      = "audit_auth_provider"
+	auditCtxKeyAuthFlow          = "audit_auth_flow"
+	auditCtxKeyAuthRequires2FA   = "audit_auth_requires_2fa"
 )
+
+// MarkAuthAuditActor 为认证事件记录操作者：user_id 落列，邮箱只落脱敏值与指纹。
+// 认证成功但尚未签发会话时（OAuth 回调）也用它把主体写进审计。
+func MarkAuthAuditActor(c *gin.Context, userID int64, email string) {
+	if c == nil {
+		return
+	}
+	if userID > 0 {
+		c.Set(auditCtxKeyActorID, userID)
+	}
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return
+	}
+	c.Set(auditCtxKeyAuthEmailHash, service.HashAuditEmail(email))
+	c.Set(auditCtxKeyAuthEmailMasked, service.MaskEmail(email))
+}
+
+// MarkAuthAuditEmail 只登记被尝试账号的邮箱指纹（失败路径也要能按账号反查撞库）。
+func MarkAuthAuditEmail(c *gin.Context, email string) {
+	if c == nil {
+		return
+	}
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return
+	}
+	c.Set(auditCtxKeyAuthEmailHash, service.HashAuditEmail(email))
+	c.Set(auditCtxKeyAuthEmailMasked, service.MaskEmail(email))
+}
+
+// MarkAuthAuditResult 记录认证请求结果：success / failure / pending / challenge_issued / started。
+func MarkAuthAuditResult(c *gin.Context, result, reason string) {
+	if c == nil {
+		return
+	}
+	if result = strings.TrimSpace(result); result != "" {
+		c.Set(auditCtxKeyAuthResult, result)
+	}
+	if reason = strings.TrimSpace(reason); reason != "" {
+		c.Set(auditCtxKeyAuthFailureReason, reason)
+	}
+}
+
+// MarkAuthAuditProvider 覆盖路由推导出的 provider（灰色渠道 / 通用 pending 兑换等场景）。
+func MarkAuthAuditProvider(c *gin.Context, provider string) {
+	if c == nil {
+		return
+	}
+	if provider = strings.TrimSpace(provider); provider != "" {
+		c.Set(auditCtxKeyAuthProvider, provider)
+	}
+}
+
+// MarkAuthAuditRequires2FA 标记本次请求已下发 2FA 挑战（未签发会话）。
+func MarkAuthAuditRequires2FA(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	c.Set(auditCtxKeyAuthRequires2FA, true)
+}
 
 // SetAuditAction 允许 handler / 中间件为当前请求指定审计动作名（覆盖自动推导）。
 func SetAuditAction(c *gin.Context, action string) {
@@ -172,6 +244,169 @@ var auditActionOverrides = map[string]string{
 	"POST /api/v1/admin/prompt-audit/events/delete-by-filter":    "admin.prompt_audit.events.filter_delete",
 }
 
+// auditAuthEventMeta 第三方登录 / 2FA 认证事件的审计元数据。
+// Action 为固定动作名；Provider/Flow 便于按渠道与阶段过滤；
+// DefaultResult 是该路由在没有 handler 显式结果时的兜底判定。
+type auditAuthEventMeta struct {
+	Action        string
+	AuthMethod    string
+	Provider      string
+	Flow          string
+	DefaultResult string
+}
+
+// auditAuthEvents 认证事件路由表（method + FullPath）。
+//
+// 此前 audit_logs 只在 POST /auth/login、/auth/login/2fa、passkey finish 上留痕，
+// 而 GitHub / Google / LinuxDo / OIDC / 钉钉 / 微信 的 OAuth 回调是 GET，
+// 既不进敏感读白名单、也不进变更类请求，导致「OAuth 登录成功/失败」完全无法反查，
+// 2FA 是否被绕过也缺少证据链。这里把全部第三方登录入口、回调与后续兑换显式登记，
+// 由审计中间件统一落一条结构化记录（result / reason / provider / flow / email_hash）。
+var auditAuthEvents = map[string]auditAuthEventMeta{
+	// 密码 / 邮箱登录与 2FA 挑战
+	"POST /api/v1/auth/login":     {Action: service.AuditActionLogin, AuthMethod: service.AuditAuthMethodPassword, Provider: "password", Flow: "password"},
+	"POST /api/v1/auth/login/2fa": {Action: service.AuditActionLogin2FA, AuthMethod: service.AuditAuthMethodPassword, Provider: "totp", Flow: "two_factor"},
+	"POST /api/v1/auth/register":  {Action: service.AuditActionRegister, AuthMethod: service.AuditAuthMethodPassword, Provider: "password", Flow: "email_register"},
+
+	// Passkey（WebAuthn）登录
+	"POST /api/v1/auth/passkey/login/begin": {
+		Action: service.AuditActionPasskeyLoginBegin, AuthMethod: service.AuditAuthMethodPasskey, Provider: "passkey",
+		Flow: "passkey_challenge", DefaultResult: service.AuditResultChallengeIssued,
+	},
+	"POST /api/v1/auth/passkey/login/finish": {
+		Action: service.AuditActionLogin, AuthMethod: service.AuditAuthMethodPasskey, Provider: "passkey", Flow: "passkey_login",
+	},
+
+	// 各渠道 start（GET 重定向 / POST 取 authorize_url）
+	"GET /api/v1/auth/oauth/github/start":    {Action: service.AuditActionOAuthLoginStart, AuthMethod: service.AuditAuthMethodOAuth, Provider: "github", Flow: "login_start", DefaultResult: service.AuditResultStarted},
+	"POST /api/v1/auth/oauth/github/start":   {Action: service.AuditActionOAuthLoginStart, AuthMethod: service.AuditAuthMethodOAuth, Provider: "github", Flow: "login_start", DefaultResult: service.AuditResultStarted},
+	"GET /api/v1/auth/oauth/google/start":    {Action: service.AuditActionOAuthLoginStart, AuthMethod: service.AuditAuthMethodOAuth, Provider: "google", Flow: "login_start", DefaultResult: service.AuditResultStarted},
+	"POST /api/v1/auth/oauth/google/start":   {Action: service.AuditActionOAuthLoginStart, AuthMethod: service.AuditAuthMethodOAuth, Provider: "google", Flow: "login_start", DefaultResult: service.AuditResultStarted},
+	"GET /api/v1/auth/oauth/linuxdo/start":   {Action: service.AuditActionOAuthLoginStart, AuthMethod: service.AuditAuthMethodOAuth, Provider: "linuxdo", Flow: "login_start", DefaultResult: service.AuditResultStarted},
+	"POST /api/v1/auth/oauth/linuxdo/start":  {Action: service.AuditActionOAuthLoginStart, AuthMethod: service.AuditAuthMethodOAuth, Provider: "linuxdo", Flow: "login_start", DefaultResult: service.AuditResultStarted},
+	"GET /api/v1/auth/oauth/wechat/start":    {Action: service.AuditActionOAuthLoginStart, AuthMethod: service.AuditAuthMethodOAuth, Provider: "wechat", Flow: "login_start", DefaultResult: service.AuditResultStarted},
+	"POST /api/v1/auth/oauth/wechat/start":   {Action: service.AuditActionOAuthLoginStart, AuthMethod: service.AuditAuthMethodOAuth, Provider: "wechat", Flow: "login_start", DefaultResult: service.AuditResultStarted},
+	"GET /api/v1/auth/oauth/oidc/start":      {Action: service.AuditActionOAuthLoginStart, AuthMethod: service.AuditAuthMethodOAuth, Provider: "oidc", Flow: "login_start", DefaultResult: service.AuditResultStarted},
+	"POST /api/v1/auth/oauth/oidc/start":     {Action: service.AuditActionOAuthLoginStart, AuthMethod: service.AuditAuthMethodOAuth, Provider: "oidc", Flow: "login_start", DefaultResult: service.AuditResultStarted},
+	"GET /api/v1/auth/oauth/dingtalk/start":  {Action: service.AuditActionOAuthLoginStart, AuthMethod: service.AuditAuthMethodOAuth, Provider: "dingtalk", Flow: "login_start", DefaultResult: service.AuditResultStarted},
+	"POST /api/v1/auth/oauth/dingtalk/start": {Action: service.AuditActionOAuthLoginStart, AuthMethod: service.AuditAuthMethodOAuth, Provider: "dingtalk", Flow: "login_start", DefaultResult: service.AuditResultStarted},
+
+	// 绑定现有账号
+	"GET /api/v1/auth/oauth/linuxdo/bind/start":   {Action: service.AuditActionOAuthBind, AuthMethod: service.AuditAuthMethodOAuth, Provider: "linuxdo", Flow: "bind_start", DefaultResult: service.AuditResultStarted},
+	"GET /api/v1/auth/oauth/wechat/bind/start":    {Action: service.AuditActionOAuthBind, AuthMethod: service.AuditAuthMethodOAuth, Provider: "wechat", Flow: "bind_start", DefaultResult: service.AuditResultStarted},
+	"GET /api/v1/auth/oauth/oidc/bind/start":      {Action: service.AuditActionOAuthBind, AuthMethod: service.AuditAuthMethodOAuth, Provider: "oidc", Flow: "bind_start", DefaultResult: service.AuditResultStarted},
+	"GET /api/v1/auth/oauth/dingtalk/bind/start":  {Action: service.AuditActionOAuthBind, AuthMethod: service.AuditAuthMethodOAuth, Provider: "dingtalk", Flow: "bind_start", DefaultResult: service.AuditResultStarted},
+	"POST /api/v1/auth/oauth/linuxdo/bind-login":  {Action: service.AuditActionOAuthBind, AuthMethod: service.AuditAuthMethodOAuth, Provider: "linuxdo", Flow: "bind_login"},
+	"POST /api/v1/auth/oauth/wechat/bind-login":   {Action: service.AuditActionOAuthBind, AuthMethod: service.AuditAuthMethodOAuth, Provider: "wechat", Flow: "bind_login"},
+	"POST /api/v1/auth/oauth/oidc/bind-login":     {Action: service.AuditActionOAuthBind, AuthMethod: service.AuditAuthMethodOAuth, Provider: "oidc", Flow: "bind_login"},
+	"POST /api/v1/auth/oauth/dingtalk/bind-login": {Action: service.AuditActionOAuthBind, AuthMethod: service.AuditAuthMethodOAuth, Provider: "dingtalk", Flow: "bind_login"},
+	"POST /api/v1/auth/oauth/pending/bind-login":  {Action: service.AuditActionOAuthBind, AuthMethod: service.AuditAuthMethodOAuth, Provider: "oauth", Flow: "bind_login"},
+
+	// OAuth 回调（GET）：成功即签发会话（或 2FA 挑战），失败由 redirectOAuthError 标记。
+	// 无显式结果时按 pending（需前端继续）而非 success，避免把「差一步」误记为登录成功。
+	"GET /api/v1/auth/oauth/github/callback":   {Action: service.AuditActionOAuthLogin, AuthMethod: service.AuditAuthMethodOAuth, Provider: "github", Flow: "login_callback", DefaultResult: service.AuditResultPending},
+	"GET /api/v1/auth/oauth/google/callback":   {Action: service.AuditActionOAuthLogin, AuthMethod: service.AuditAuthMethodOAuth, Provider: "google", Flow: "login_callback", DefaultResult: service.AuditResultPending},
+	"GET /api/v1/auth/oauth/linuxdo/callback":  {Action: service.AuditActionOAuthLogin, AuthMethod: service.AuditAuthMethodOAuth, Provider: "linuxdo", Flow: "login_callback", DefaultResult: service.AuditResultPending},
+	"GET /api/v1/auth/oauth/wechat/callback":   {Action: service.AuditActionOAuthLogin, AuthMethod: service.AuditAuthMethodOAuth, Provider: "wechat", Flow: "login_callback", DefaultResult: service.AuditResultPending},
+	"GET /api/v1/auth/oauth/oidc/callback":     {Action: service.AuditActionOAuthLogin, AuthMethod: service.AuditAuthMethodOAuth, Provider: "oidc", Flow: "login_callback", DefaultResult: service.AuditResultPending},
+	"GET /api/v1/auth/oauth/dingtalk/callback": {Action: service.AuditActionOAuthLogin, AuthMethod: service.AuditAuthMethodOAuth, Provider: "dingtalk", Flow: "login_callback", DefaultResult: service.AuditResultPending},
+
+	// 回调后的注册 / 补邮箱 / 建号
+	"POST /api/v1/auth/oauth/github/complete-registration":   {Action: service.AuditActionOAuthRegister, AuthMethod: service.AuditAuthMethodOAuth, Provider: "github", Flow: "register"},
+	"POST /api/v1/auth/oauth/google/complete-registration":   {Action: service.AuditActionOAuthRegister, AuthMethod: service.AuditAuthMethodOAuth, Provider: "google", Flow: "register"},
+	"POST /api/v1/auth/oauth/linuxdo/complete-registration":  {Action: service.AuditActionOAuthRegister, AuthMethod: service.AuditAuthMethodOAuth, Provider: "linuxdo", Flow: "register"},
+	"POST /api/v1/auth/oauth/wechat/complete-registration":   {Action: service.AuditActionOAuthRegister, AuthMethod: service.AuditAuthMethodOAuth, Provider: "wechat", Flow: "register"},
+	"POST /api/v1/auth/oauth/oidc/complete-registration":     {Action: service.AuditActionOAuthRegister, AuthMethod: service.AuditAuthMethodOAuth, Provider: "oidc", Flow: "register"},
+	"POST /api/v1/auth/oauth/dingtalk/complete-registration": {Action: service.AuditActionOAuthRegister, AuthMethod: service.AuditAuthMethodOAuth, Provider: "dingtalk", Flow: "register"},
+	"POST /api/v1/auth/oauth/linuxdo/create-account":         {Action: service.AuditActionOAuthRegister, AuthMethod: service.AuditAuthMethodOAuth, Provider: "linuxdo", Flow: "create_account"},
+	"POST /api/v1/auth/oauth/wechat/create-account":          {Action: service.AuditActionOAuthRegister, AuthMethod: service.AuditAuthMethodOAuth, Provider: "wechat", Flow: "create_account"},
+	"POST /api/v1/auth/oauth/oidc/create-account":            {Action: service.AuditActionOAuthRegister, AuthMethod: service.AuditAuthMethodOAuth, Provider: "oidc", Flow: "create_account"},
+	"POST /api/v1/auth/oauth/dingtalk/create-account":        {Action: service.AuditActionOAuthRegister, AuthMethod: service.AuditAuthMethodOAuth, Provider: "dingtalk", Flow: "create_account"},
+	"POST /api/v1/auth/oauth/pending/create-account":         {Action: service.AuditActionOAuthRegister, AuthMethod: service.AuditAuthMethodOAuth, Provider: "oauth", Flow: "create_account"},
+	"POST /api/v1/auth/oauth/pending/send-verify-code":       {Action: service.AuditActionOAuthRegister, AuthMethod: service.AuditAuthMethodOAuth, Provider: "oauth", Flow: "send_verify_code"},
+
+	// pending OAuth 一次性兑换（登录终态 / 2FA 挑战下发都走这里）
+	"POST /api/v1/auth/oauth/pending/exchange": {Action: service.AuditActionOAuthPending, AuthMethod: service.AuditAuthMethodOAuth, Provider: "oauth", Flow: "pending_exchange"},
+}
+
+// decorateAuthAuditEntry 把认证事件的上下文标记合成进审计记录。
+func decorateAuthAuditEntry(c *gin.Context, entry *service.AuditLog, meta auditAuthEventMeta) {
+	if c == nil || entry == nil {
+		return
+	}
+	if meta.AuthMethod != "" {
+		entry.AuthMethod = meta.AuthMethod
+	}
+	if masked := c.GetString(auditCtxKeyAuthEmailMasked); masked != "" {
+		entry.ActorEmail = masked
+	}
+
+	extra := entry.Extra
+	if extra == nil {
+		extra = map[string]any{}
+	}
+	provider := meta.Provider
+	if override := strings.TrimSpace(c.GetString(auditCtxKeyAuthProvider)); override != "" {
+		provider = override
+	}
+	if provider != "" {
+		extra["provider"] = provider
+	}
+	if meta.Flow != "" {
+		extra["flow"] = meta.Flow
+	}
+
+	result := strings.TrimSpace(c.GetString(auditCtxKeyAuthResult))
+	if entry.StatusCode >= 400 {
+		result = service.AuditResultFailure
+	} else if result == "" {
+		result = meta.DefaultResult
+		if result == "" {
+			result = service.AuditResultSuccess
+		}
+	}
+	extra["result"] = result
+
+	reason := strings.TrimSpace(c.GetString(auditCtxKeyAuthFailureReason))
+	if reason == "" && result == service.AuditResultFailure {
+		// response.ErrorFrom 会把 infra error reason 写到 gin context，
+		// 让 POST 类登录入口（pending 兑换 / bind-login）也能拿到失败分类。
+		reason = strings.TrimSpace(c.GetString("response_error_reason"))
+	}
+	if reason != "" {
+		extra["reason"] = truncateAuditExtraString(sanitizeAuditReason(reason), 64)
+		extra["reason_class"] = service.ClassifyAuthFailure(reason, entry.StatusCode)
+	} else if result == service.AuditResultFailure {
+		extra["reason_class"] = service.ClassifyAuthFailure("", entry.StatusCode)
+	}
+	if emailHash := c.GetString(auditCtxKeyAuthEmailHash); emailHash != "" {
+		extra["email_hash"] = emailHash
+	}
+	if value, ok := c.Get(auditCtxKeyAuthRequires2FA); ok {
+		if required, _ := value.(bool); required {
+			extra["requires_2fa"] = true
+		}
+	}
+	entry.Extra = extra
+}
+
+// sanitizeAuditReason 只保留错误码字符集，避免把上游错误原文（可能含邮箱/链接）写进审计。
+func sanitizeAuditReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	var b strings.Builder
+	b.Grow(len(reason))
+	for _, r := range reason {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '_', r == '-', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
+}
+
 // auditBodyOmittedRoutes 请求体几乎整体由凭证构成的路由（如整块粘贴 auth JSON 的导入接口）。
 // 这类 body 的凭证内嵌在普通字符串值里，键级脱敏无法覆盖，整体不入库。
 var auditBodyOmittedRoutes = map[string]struct{}{
@@ -221,6 +456,7 @@ func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddle
 			return
 		}
 		routeKey := c.Request.Method + " " + c.FullPath()
+		authMeta, isAuthEvent := auditAuthEvents[routeKey]
 
 		record := false
 		action := ""
@@ -236,6 +472,11 @@ func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddle
 				action = v
 			}
 		}
+		// 认证事件（OAuth 回调是 GET）不受变更类请求白名单限制，单独放行。
+		if isAuthEvent {
+			record = true
+			action = authMeta.Action
+		}
 		if !record {
 			c.Next()
 			return
@@ -245,7 +486,11 @@ func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddle
 		// 只读取脱敏解析上限内的字节，超出部分与已读部分拼接回填，
 		// 避免大体积导入请求被完整复制进内存两次。
 		var bodyRedacted string
-		if _, omit := auditBodyOmittedRoutes[routeKey]; omit {
+		if isAuthEvent {
+			// 登录/回调请求体里可能同时含邮箱、密码、临时 token，
+			// 认证审计只保留结构化字段，整体不入库。
+			bodyRedacted = "<credential-bearing body omitted>"
+		} else if _, omit := auditBodyOmittedRoutes[routeKey]; omit {
 			bodyRedacted = "<credential-bearing body omitted>"
 		} else if c.Request.Body != nil && c.Request.Method != "GET" {
 			orig := c.Request.Body
@@ -345,6 +590,9 @@ func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddle
 		}
 		if len(extra) > 0 {
 			entry.Extra = extra
+		}
+		if isAuthEvent {
+			decorateAuthAuditEntry(c, entry, authMeta)
 		}
 
 		// 先标记再入队：认证层的兜底记录在整条中间件链返回后才执行，

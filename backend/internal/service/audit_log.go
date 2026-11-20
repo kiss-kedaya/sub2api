@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +23,10 @@ const (
 	AuditAuthMethodJWT         = "jwt"
 	AuditAuthMethodAdminAPIKey = "admin_api_key"
 	AuditAuthMethodPasskey     = "passkey"
+	// AuditAuthMethodPassword / AuditAuthMethodOAuth 用于登录事件：
+	// 密码/邮箱登录与第三方（OAuth / 扫码 / OIDC / 钉钉 / 微信）登录分开检索。
+	AuditAuthMethodPassword = "password"
+	AuditAuthMethodOAuth    = "oauth"
 
 	// auditRequestBodyMaxBytes 请求体脱敏后入库的最大长度（字节），超出截断。
 	auditRequestBodyMaxBytes = 16 * 1024
@@ -37,6 +44,41 @@ const (
 	AuditActionSessionBindingMismatch = "auth.session_binding.mismatch"
 	AuditActionStepUpVerify           = "auth.step_up.verify"
 	AuditActionAuditLogClear          = "admin.audit_log.clear"
+
+	// 第三方登录（OAuth / 扫码 / 设备登录）与 2FA 挑战的固定动作名。
+	// 与 AuditAuthMethodOAuth / AuditAuthMethodPasskey 配套，让「哪个渠道、
+	// 哪一步、成功还是失败」都能直接从 audit_logs 反查。
+	AuditActionOAuthLoginStart   = "auth.login.oauth.start"
+	AuditActionOAuthLogin        = "auth.login.oauth"
+	AuditActionOAuthRegister     = "auth.register.oauth"
+	AuditActionOAuthBind         = "auth.oauth.bind"
+	AuditActionOAuthPending      = "auth.oauth.pending"
+	AuditActionPasskeyLoginBegin = "auth.login.passkey.begin"
+	AuditActionLogin2FAChallenge = "auth.login.2fa.challenge"
+
+	// 认证事件结果（写入 audit_logs.extra.result）。
+	AuditResultSuccess         = "success"
+	AuditResultFailure         = "failure"
+	AuditResultPending         = "pending"
+	AuditResultChallengeIssued = "challenge_issued"
+	AuditResultStarted         = "started"
+
+	// 认证失败原因粗分类（写入 audit_logs.extra.reason_class）。
+	AuditFailureClassOAuthState     = "oauth_state"
+	AuditFailureClassOAuthParams    = "oauth_params"
+	AuditFailureClassOAuthProvider  = "oauth_provider"
+	AuditFailureClassOAuthToken     = "oauth_token_exchange"
+	AuditFailureClassOAuthUserInfo  = "oauth_userinfo"
+	AuditFailureClassOAuthEmail     = "oauth_email"
+	AuditFailureClassAccountState   = "account_state"
+	AuditFailureClassBackendMode    = "backend_mode"
+	AuditFailureClassInvitation     = "invitation"
+	AuditFailureClassTwoFactor      = "two_factor"
+	AuditFailureClassPendingSession = "pending_session"
+	AuditFailureClassPassword       = "password"
+	AuditFailureClassRateLimit      = "rate_limit"
+	AuditFailureClassInternal       = "internal_error"
+	AuditFailureClassOther          = "other"
 )
 
 // AuditLog 一条管理面操作审计记录。
@@ -128,6 +170,8 @@ var auditBodySensitiveExactKeys = func() map[string]struct{} {
 		"code", "codes", "pin", "cvv",
 		"authorization", "cookie", "x-api-key",
 		"key",
+		// OAuth 一次性凭证：授权码 / 状态 / nonce / PKCE verifier 均不得入库。
+		"state", "nonce", "verifier", "code_verifier", "code_challenge", "email_code", "verify_code",
 		// 字符串值内嵌完整凭证的字段：
 		// proxy_key 为 protocol|host|port|username|password 拼接，
 		// custom_key 为用户自设的平台 API Key 明文，
@@ -250,10 +294,118 @@ func MaskAuditCredential(credential string) string {
 }
 
 // RedactAuditQuery 对 URL query 做轻量脱敏后返回。
+// auditQuerySensitiveSubstrings 需要脱敏的 query 键名片段（对归一化键名做包含匹配）。
+// 认证回调里的 code / state / nonce / verifier 与 token 同级，一律擦除；
+// 归一化后再比较，兼容 api_key / apiKey / x-api-key 等写法。
+var auditQuerySensitiveSubstrings = []string{
+	"token", "secret", "password", "passwd",
+	"apikey", "accesskey", "privatekey", "key",
+	"code", "state", "nonce", "verifier", "otp", "sign",
+}
+
+func isAuditSensitiveQueryKey(key string) bool {
+	normalized := auditNormalizeBodyKey(key)
+	if normalized == "" {
+		return false
+	}
+	for _, sub := range auditQuerySensitiveSubstrings {
+		if strings.Contains(normalized, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// RedactAuditQuery 对 query 做逐键脱敏：
+//   - 敏感键（token/code/state/nonce/verifier/key/secret/otp/sign…）整值替换为 ***；
+//   - 其余键保留（截断超长值），例如 redirect / aff 这类排障需要的字段。
 func RedactAuditQuery(rawQuery string) string {
 	rawQuery = strings.TrimSpace(rawQuery)
 	if rawQuery == "" {
 		return ""
 	}
-	return logredact.RedactText(rawQuery, "api_key", "apikey", "token", "secret", "key")
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil || len(values) == 0 {
+		// 解析不了就退回整串脱敏，宁可过度脱敏也不漏凭证。
+		return logredact.RedactText(rawQuery,
+			"api_key", "apikey", "token", "secret", "key",
+			"code", "state", "nonce", "verifier", "code_verifier", "code_challenge",
+		)
+	}
+	out := make(url.Values, len(values))
+	for key, items := range values {
+		if isAuditSensitiveQueryKey(key) {
+			out.Set(key, "***")
+			continue
+		}
+		for _, item := range items {
+			if len(item) > 512 {
+				item = item[:512] + "...<truncated>"
+			}
+			out.Add(key, item)
+		}
+	}
+	return out.Encode()
+}
+
+// HashAuditEmail 把邮箱转换成不可逆的审计指纹（sha256 前 16 字节 hex）。
+// 认证审计只允许记录脱敏邮箱或指纹，禁止落全量邮箱。
+func HashAuditEmail(email string) string {
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	if normalized == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(normalized))
+	return "sha256:" + hex.EncodeToString(sum[:16])
+}
+
+// ClassifyAuthFailure 把原始失败码（infra error reason / OAuth 错误码）归类成
+// 粗粒度原因分类，便于按类检索「绕过 2FA / 撞库 / 状态失配」等攻击面。
+func ClassifyAuthFailure(reason string, statusCode int) string {
+	normalized := strings.ToLower(strings.TrimSpace(reason))
+	switch {
+	case normalized == "":
+		if statusCode == 429 {
+			return AuditFailureClassRateLimit
+		}
+		if statusCode >= 500 {
+			return AuditFailureClassInternal
+		}
+		return AuditFailureClassOther
+	case strings.Contains(normalized, "state"), strings.Contains(normalized, "csrf"),
+		strings.Contains(normalized, "browser_session"), strings.Contains(normalized, "missing_params"):
+		return AuditFailureClassOAuthState
+	case strings.Contains(normalized, "two_factor"), strings.Contains(normalized, "2fa"),
+		strings.Contains(normalized, "totp"), strings.Contains(normalized, "step_up"):
+		return AuditFailureClassTwoFactor
+	case strings.Contains(normalized, "pending_auth"), strings.Contains(normalized, "pending_oauth"):
+		return AuditFailureClassPendingSession
+	case strings.Contains(normalized, "invitation"):
+		return AuditFailureClassInvitation
+	case strings.Contains(normalized, "backend_mode"):
+		return AuditFailureClassBackendMode
+	case strings.Contains(normalized, "user_not_active"), strings.Contains(normalized, "disabled"),
+		strings.Contains(normalized, "not_active"), strings.Contains(normalized, "frozen"):
+		return AuditFailureClassAccountState
+	case strings.Contains(normalized, "token_exchange"), strings.Contains(normalized, "invalid_grant"):
+		return AuditFailureClassOAuthToken
+	case strings.Contains(normalized, "userinfo"):
+		return AuditFailureClassOAuthUserInfo
+	case strings.Contains(normalized, "email_unverified"), strings.Contains(normalized, "email_not_verified"),
+		strings.Contains(normalized, "missing_email"):
+		return AuditFailureClassOAuthEmail
+	case strings.Contains(normalized, "provider_error"), strings.Contains(normalized, "not_enabled"):
+		return AuditFailureClassOAuthProvider
+	case strings.Contains(normalized, "rate_limit"), strings.Contains(normalized, "too_many"):
+		return AuditFailureClassRateLimit
+	case strings.Contains(normalized, "password"), strings.Contains(normalized, "invalid_credential"),
+		strings.Contains(normalized, "credentials"):
+		return AuditFailureClassPassword
+	case strings.Contains(normalized, "oauth"):
+		return AuditFailureClassOAuthState
+	case statusCode >= 500:
+		return AuditFailureClassInternal
+	default:
+		return AuditFailureClassOther
+	}
 }

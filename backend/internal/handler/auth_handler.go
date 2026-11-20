@@ -205,10 +205,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		req.AffCode,
 	)
 	if err != nil {
+		markAuthAuditEmail(c, req.Email)
 		response.ErrorFrom(c, err)
 		return
 	}
 
+	markAuthAuditSuccess(c, user.ID, user.Email)
 	h.respondWithTokenPair(c, user)
 }
 
@@ -275,6 +277,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	token, user, err := h.authService.Login(c.Request.Context(), req.Email, req.Password)
 	if err != nil {
+		// 审计：失败也登记被尝试账号的邮箱指纹（不含明文），便于反查撞库。
+		markAuthAuditEmail(c, req.Email)
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -294,6 +298,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			return
 		}
 
+		// 审计：2FA 挑战下发（此时尚未签发会话，2FA 绕过尝试靠这条反查）。
+		markAuthAuditChallenge(c, user.ID, user.Email)
 		response.Success(c, TotpLoginResponse{
 			Requires2FA:     true,
 			TempToken:       tempToken,
@@ -350,6 +356,8 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 	slog.Debug("login_2fa_session_found",
 		"user_id", session.UserID,
 		"email", session.Email)
+	// 审计：2FA 验证请求也登记被验证账号的邮箱指纹（不含明文）。
+	markAuthAuditEmail(c, session.Email)
 
 	// Verify without consuming the shared replay marker yet. The login flow
 	// still has account-mode and OAuth binding checks that can fail after code
@@ -456,6 +464,8 @@ func (h *AuthHandler) recordSuccessfulLogin(c *gin.Context, userID int64) {
 	if service.CryptoAdminTestMode() {
 		return
 	}
+	// 审计：密码登录 / 2FA 验证通过时写入操作者主体（邮箱指纹由调用方按需补充）。
+	markAuthAuditSuccess(c, userID, "")
 	h.authService.RecordSuccessfulLogin(c.Request.Context(), userID)
 }
 

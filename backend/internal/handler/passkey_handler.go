@@ -125,7 +125,8 @@ func (h *PasskeyHandler) FinishLogin(c *gin.Context) {
 		response.Forbidden(c, "This account has two-factor authentication enabled; sign in with your password and 2FA code instead of a passkey")
 		return
 	}
-	middleware2.SetAuditActor(c, user.ID, user.Email)
+	middleware2.MarkAuthAuditActor(c, user.ID, user.Email)
+	middleware2.MarkAuthAuditResult(c, service.AuditResultSuccess, "")
 	c.Set("auth_method", service.AuditAuthMethodPasskey)
 	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
 	respondWithTokenPair(c, h.authService, user)

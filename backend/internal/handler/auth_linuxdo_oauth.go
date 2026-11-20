@@ -272,6 +272,8 @@ func (h *AuthHandler) LinuxDoOAuthCallback(c *gin.Context) {
 	if compatEmail != "" && !strings.EqualFold(strings.TrimSpace(compatEmail), strings.TrimSpace(email)) {
 		upstreamClaims["compat_email"] = compatEmail
 	}
+	// 审计：只登记被尝试账号的邮箱指纹（LinuxDo 用合成邮箱，不落明文）。
+	markAuthAuditEmail(c, email)
 	if intent == oauthIntentBindCurrentUser {
 		targetUserID, err := h.readOAuthBindUserIDFromCookie(c, linuxDoOAuthBindUserCookieName)
 		if err != nil {
@@ -366,6 +368,7 @@ func (h *AuthHandler) LinuxDoOAuthCallback(c *gin.Context) {
 				return
 			}
 			h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
+			markAuthAuditSuccess(c, user.ID, user.Email)
 			clearOAuthPendingSessionCookie(c, secureCookie)
 			clearOAuthPendingBrowserCookie(c, secureCookie)
 			redirectOAuthTokenPair(c, frontendCallback, tokenPair, redirectTo)
@@ -392,6 +395,7 @@ func (h *AuthHandler) LinuxDoOAuthCallback(c *gin.Context) {
 		redirectOAuthError(c, frontendCallback, "session_error", "failed to continue oauth login", "")
 		return
 	}
+	markAuthAuditPending(c, "registration_choice")
 	redirectToFrontendCallback(c, frontendCallback)
 }
 
@@ -604,6 +608,7 @@ func (h *AuthHandler) CompleteLinuxDoOAuthRegistration(c *gin.Context) {
 		respondPendingOAuthBindingApplyError(c, err)
 		return
 	}
+	markAuthAuditSuccess(c, user.ID, user.Email)
 	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
 	clearOAuthPendingSessionCookie(c, secureCookie)
 	clearOAuthPendingBrowserCookie(c, secureCookie)
@@ -808,6 +813,8 @@ func buildLinuxDoAuthorizeURL(cfg config.LinuxDoConnectConfig, state string, cod
 }
 
 func redirectOAuthError(c *gin.Context, frontendCallback string, code string, message string, description string) {
+	// 审计：OAuth 回调失败（错误码即失败原因分类来源；message/description 不入审计）。
+	markAuthAuditFailure(c, code)
 	fragment := url.Values{}
 	fragment.Set("error", truncateFragmentValue(code))
 	if strings.TrimSpace(message) != "" {

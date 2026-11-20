@@ -174,14 +174,19 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 		UpstreamMetadata: profile.Metadata,
 	}
 	affiliateCode := h.emailOAuthAffiliateCode(c)
+	// 审计：只登记尝试账号的邮箱指纹，绝不落明文。
+	markAuthAuditEmail(c, profile.Email)
 	if shouldCreate, err := h.emailOAuthShouldCreatePendingRegistration(c.Request.Context(), input); err != nil {
+		markAuthAuditFailureFromError(c, err)
 		redirectOAuthError(c, frontendCallback, infraerrors.Reason(err), infraerrors.Message(err), "")
 		return
 	} else if shouldCreate {
 		if pendingErr := h.createEmailOAuthRegistrationPendingSession(c, provider, frontendCallback, redirectTo, profile); pendingErr != nil {
+			markAuthAuditFailureFromError(c, pendingErr)
 			redirectOAuthError(c, frontendCallback, infraerrors.Reason(pendingErr), infraerrors.Message(pendingErr), "")
 			return
 		}
+		markAuthAuditPending(c, "registration_required")
 		redirectToFrontendCallback(c, frontendCallback)
 		return
 	}
@@ -207,6 +212,7 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 				redirectOAuthError(c, frontendCallback, infraerrors.Reason(pendingErr), infraerrors.Message(pendingErr), "")
 				return
 			}
+			markAuthAuditPending(c, "invitation_required")
 			redirectToFrontendCallback(c, frontendCallback)
 			return
 		}
@@ -218,6 +224,7 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 		return
 	}
 
+	markAuthAuditSuccess(c, user.ID, user.Email)
 	fragment := url.Values{}
 	fragment.Set("access_token", tokenPair.AccessToken)
 	fragment.Set("refresh_token", tokenPair.RefreshToken)
@@ -250,6 +257,8 @@ func (h *AuthHandler) redirectEmailOAuthTOTPChallenge(
 		redirectOAuthError(c, frontendCallback, "two_factor_unavailable", "failed to create two-factor session", "")
 		return
 	}
+	// 审计：OAuth 登录被 2FA 拦下（挑战下发，未签发会话）。
+	markAuthAuditChallenge(c, user.ID, user.Email)
 	fragment := url.Values{}
 	fragment.Set("requires_2fa", "1")
 	fragment.Set("temp_token", tempToken)
@@ -479,6 +488,7 @@ func (h *AuthHandler) completeEmailOAuthRegistration(c *gin.Context, provider st
 		return
 	}
 	h.authService.ApplyOAuthSignupPromoCode(c.Request.Context(), user.ID, pendingOAuthPromoCode(session))
+	markAuthAuditSuccess(c, user.ID, user.Email)
 	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
 	clearCookies()
 	writeOAuthTokenPairResponse(c, tokenPair)
