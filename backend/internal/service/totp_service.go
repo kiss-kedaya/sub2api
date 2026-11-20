@@ -591,6 +591,16 @@ func (s *TotpService) reserveVerifyAttempt(ctx context.Context, userID int64) er
 	return nil
 }
 
+// ResetAccountVerificationBudget 清空账号的 TOTP 校验失败预算。
+// 供已接入 HTTP 账号维度限速（60s/5 次滑动窗口）的入口调用，避免旧的长窗口预算
+// 与新窗口叠加导致用户 60 秒后仍被锁死；未接入限速器的深层接口仍依赖该预算。
+func (s *TotpService) ResetAccountVerificationBudget(ctx context.Context, userID int64) error {
+	if s == nil || s.cache == nil || userID <= 0 {
+		return ErrTotpUnavailable
+	}
+	return s.cache.ClearVerifyAttempts(ctx, userID)
+}
+
 // Return the exact account snapshot whose secret was verified so security
 // mutations can use it as an atomic write precondition.
 func (s *TotpService) verifyCode(ctx context.Context, userID int64, code string, consume func(int64) error, consumeAdminCode bool) (*User, int64, error) {

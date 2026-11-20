@@ -40,6 +40,50 @@ end
 return {current, repaired}
 `)
 
+// rateLimitSlidingScript 是滑动窗口计数：ZSET 成员为本次尝试的时间戳（纳秒），
+// 每次调用先清理窗口外的旧成员，再判断窗口内计数是否达到上限。
+// 返回 {窗口内计数, 超限时最早成员离开窗口还需的毫秒数（未超限为 0）}。
+var rateLimitSlidingScript = redis.NewScript(`
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local key = KEYS[1]
+redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window)
+local count = redis.call('ZCARD', key)
+if count < limit then
+  redis.call('ZADD', key, now, ARGV[4])
+  redis.call('PEXPIRE', key, window)
+  return {count + 1, 0}
+end
+local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+local retry = 0
+if oldest[2] then
+  retry = tonumber(oldest[2]) + window - now
+  if retry < 0 then retry = 0 end
+end
+return {count, retry}
+`)
+
+// rateLimitSlidingRun 允许测试覆写滑动窗口脚本执行逻辑。
+var rateLimitSlidingRun = func(ctx context.Context, client *redis.Client, key string, windowMillis int64, limit int64, member string) (int64, int64, error) {
+	values, err := rateLimitSlidingScript.Run(ctx, client, []string{key}, time.Now().UnixNano()/int64(time.Millisecond), windowMillis, limit, member).Slice()
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(values) < 2 {
+		return 0, 0, fmt.Errorf("rate limit sliding script returned %d values", len(values))
+	}
+	count, err := parseInt64(values[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	retry, err := parseInt64(values[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	return count, retry, nil
+}
+
 // rateLimitRun 允许测试覆写脚本执行逻辑
 var rateLimitRun = func(ctx context.Context, client *redis.Client, key string, windowMillis int64) (int64, bool, error) {
 	values, err := rateLimitScript.Run(ctx, client, []string{key}, windowMillis).Slice()
@@ -156,6 +200,42 @@ func (r *RateLimiter) LimitWithOptions(key string, limit int, window time.Durati
 
 		c.Next()
 	}
+}
+
+// AllowSliding 对给定 key 执行滑动窗口计数判定：任意 window 时长内最多 limit 次。
+// 超限时 RetryAfter 为最早一次尝试离开窗口还剩的时间；Redis 错误由调用方决定
+// fail-open / fail-close。与固定窗口的 Allow 共用 RateLimiter 实例与前缀。
+func (r *RateLimiter) AllowSliding(ctx context.Context, key string, limit int, window time.Duration) (AllowResult, error) {
+	if r == nil || r.redis == nil {
+		return AllowResult{}, fmt.Errorf("rate limiter not configured")
+	}
+	if limit <= 0 {
+		return AllowResult{Allowed: true}, nil
+	}
+	redisKey := r.prefix + key
+	windowMillis := windowTTLMillis(window)
+	member := strconv.FormatInt(time.Now().UnixNano(), 10)
+
+	count, retryMillis, err := rateLimitSlidingRun(ctx, r.redis, redisKey, windowMillis, int64(limit), member)
+	if err != nil {
+		return AllowResult{}, err
+	}
+	result := AllowResult{Allowed: count <= int64(limit), Count: count}
+	if !result.Allowed {
+		result.RetryAfter = time.Duration(retryMillis) * time.Millisecond
+		if result.RetryAfter <= 0 {
+			result.RetryAfter = window
+		}
+	}
+	return result, nil
+}
+
+// Delete 清除某个限流 key（如 2FA 验证成功后重置账号维度计数）。
+func (r *RateLimiter) Delete(ctx context.Context, key string) error {
+	if r == nil || r.redis == nil {
+		return fmt.Errorf("rate limiter not configured")
+	}
+	return r.redis.Del(ctx, r.prefix+key).Err()
 }
 
 func windowTTLMillis(window time.Duration) int64 {

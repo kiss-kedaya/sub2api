@@ -56,6 +56,17 @@ func SetupRouter(
 		r.Use(middleware2.DelegatedPaymentRoutesGuard())
 	}
 	adminhandler.ConfigureReportCacheRedis(redisClient)
+	// 账号维度 2FA 校验限速（60s 滚动窗口 5 次，Redis 共享计数）。
+	// 覆盖 /auth/login/2fa、/user/totp/step-up、/user/totp/enable、/user/totp/disable。
+	if redisClient != nil && handlers != nil {
+		twoFactorLimiter := middleware2.NewTwoFactorRateLimiter(redisClient)
+		if handlers.Auth != nil {
+			handlers.Auth.SetTwoFactorRateLimiter(twoFactorLimiter)
+		}
+		if handlers.Totp != nil {
+			handlers.Totp.SetTwoFactorRateLimiter(twoFactorLimiter)
+		}
+	}
 	if handlers.Admin != nil && handlers.Admin.Setting != nil && settingService != nil {
 		regional, err := service.NewServerlessRouting(settingService, db, redisClient, cfg)
 		if err != nil {

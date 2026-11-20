@@ -206,6 +206,7 @@
     ref="totpModalRef"
     :temp-token="totpTempToken"
     :user-email-masked="totpUserEmailMasked"
+    :account-key="formData.email"
     @verify="handle2FAVerify"
     @cancel="handle2FACancel"
   />
@@ -706,6 +707,8 @@ async function handle2FAVerify(code: string): Promise<void> {
   try {
     await authStore.login2FA(totpTempToken.value, code)
 
+    // 成功即清：清空前端账号维度尝试计数
+    totpModalRef.value?.resetLimit?.()
     // Close modal and show success
     show2FAModal.value = false
     clearAllAffiliateReferralCodes()
@@ -719,11 +722,17 @@ async function handle2FAVerify(code: string): Promise<void> {
       recoverFromChunkLoadError((router.currentRoute.value.query.redirect as string) || '/dashboard')
       return
     }
-    const err = error as { message?: string; response?: { data?: { message?: string } } }
+    const err = error as {
+      message?: string
+      retryAfter?: string | number
+      response?: { data?: { message?: string }; headers?: Record<string, string> }
+    }
     const message = err.response?.data?.message || err.message || t('profile.totp.loginFailed')
+    // 服务端 429 的 Retry-After 优先于本地计数（网络层已把 header 解出为 retryAfter）。
+    const retryAfterSeconds = Number(err.retryAfter ?? err.response?.headers?.['retry-after'] ?? 0) || 0
 
     if (totpModalRef.value) {
-      totpModalRef.value.setError(message)
+      totpModalRef.value.setError(message, retryAfterSeconds)
       totpModalRef.value.setVerifying(false)
     }
   }

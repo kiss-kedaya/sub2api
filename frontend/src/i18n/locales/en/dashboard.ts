@@ -1057,6 +1057,7 @@ export default {
       useServerAuthorization: 'Authenticator unavailable? Use a server authorization code',
       disableServerAuthorizationHint: 'Use this only when you have lost access to 2FA. Generate a one-time authorization code for this account on the server. It expires in 10 minutes and can be used once. Your administrator password, email code, or previous authorization cannot replace this verification.',
       loginTitle: 'Two-Factor Authentication',
+      loginRateLimited: 'Too many attempts, please try again in {seconds}s',
       loginHint: 'Enter the 6-digit code from your authenticator app',
       loginFailed: 'Verification failed, please try again',
       // New translations for email verification

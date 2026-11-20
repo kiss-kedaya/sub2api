@@ -28,6 +28,8 @@ type AuthHandler struct {
 	redeemService        *service.RedeemService
 	totpService          *service.TotpService
 	userAttributeService *service.UserAttributeService
+	// twoFactorLimiter 按账号维度限制 2FA 校验尝试（60s 滚动窗口 5 次）。
+	twoFactorLimiter twoFactorRateLimiter
 
 	dingTalkClientInstance *DingTalkClient
 	dingTalkClientMu       sync.Mutex
@@ -116,6 +118,11 @@ func ensureLoginUserActive(user *service.User) error {
 
 // respondWithTokenPair 生成 Token 对并返回认证响应
 // 如果 Token 对生成失败，回退到只返回 Access Token（向后兼容）
+// SetTwoFactorRateLimiter 注入账号维度 2FA 限速器（由 router 装配）。
+func (h *AuthHandler) SetTwoFactorRateLimiter(limiter twoFactorRateLimiter) {
+	h.twoFactorLimiter = limiter
+}
+
 func (h *AuthHandler) respondWithTokenPair(c *gin.Context, user *service.User) {
 	respondWithTokenPair(c, h.authService, user)
 }
@@ -363,6 +370,12 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 	// 审计：2FA 验证请求也登记被验证账号的邮箱指纹（不含明文）。
 	markAuthAuditEmail(c, session.Email)
 
+	// 账号维度限速：同一账号 60 秒滚动窗口内最多 5 次 2FA 校验尝试。
+	// 超限 429 + Retry-After；限流存储故障 fail-closed（只影响 2FA 校验）。
+	if !checkTwoFactorRateLimit(c, h.twoFactorLimiter, h.totpService, session.UserID) {
+		return
+	}
+
 	// Verify without consuming the shared replay marker yet. The login flow
 	// still has account-mode and OAuth binding checks that can fail after code
 	// validation; consuming here would make a valid retry report "already used".
@@ -453,6 +466,9 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+
+	// 成功验证后清空账号维度计数（成功即清）。
+	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, session.UserID)
 
 	// Delete the login session (only after all checks pass)
 	_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
