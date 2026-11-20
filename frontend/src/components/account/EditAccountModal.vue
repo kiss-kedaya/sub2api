@@ -1669,6 +1669,23 @@
                 </SettingRow>
               </div>
 
+              <!-- OpenAI images: size tier routing -->
+              <div v-if="account?.platform === 'openai'">
+                <SettingRow
+                  :label="t('admin.accounts.openai.imageSizeTiers')"
+                  :hint="t('admin.accounts.openai.imageSizeTiersDesc')"
+                  :on="openAIImageSizeTiers.length < OPENAI_IMAGE_SIZE_TIERS.length"
+                  :summary="openAIImageSizeTiers.join(' / ')"
+                  :persistent-summary="true"
+                  wide-control
+                  test-id="edit-openai-image-size-tiers"
+                >
+                  <template #control>
+                    <OpenAIImageSizeTiersField v-model="openAIImageSizeTiers" hide-label />
+                  </template>
+                </SettingRow>
+              </div>
+
               <!-- Anthropic API Key 自动透传开关 -->
               <div v-if="account?.platform === 'anthropic' && account?.type === 'apikey'">
                 <SettingRow
@@ -2356,6 +2373,13 @@ import SettingPanel from '@/components/common/SettingPanel.vue'
 import SettingGroup from '@/components/common/SettingGroup.vue'
 import SettingRow from '@/components/common/SettingRow.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
+import OpenAIImageSizeTiersField from '@/components/account/OpenAIImageSizeTiersField.vue'
+import {
+  OPENAI_IMAGE_SIZE_TIERS,
+  applyOpenAIImageSizeTiersToExtra,
+  readOpenAIImageSizeTiers,
+  type OpenAIImageSizeTier
+} from '@/components/account/openaiImageSizeTiers'
 import Toggle from '@/components/common/Toggle.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
@@ -2965,6 +2989,8 @@ const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 // Images 非流式响应缺 b64_json 时由网关下载 url 回填（仅 OpenAI API Key）。
 const openAIImagesUrlToB64JsonEnabled = ref(false)
+// 生图尺寸档位：限制本账号承接的 1K/2K/4K 请求，全选即不限。
+const openAIImageSizeTiers = ref<OpenAIImageSizeTier[]>([...OPENAI_IMAGE_SIZE_TIERS])
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
@@ -3423,6 +3449,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	allowOverages.value = extra?.allow_overages === true
 	upstreamRequestIdHeader.value = readUpstreamRequestIdHeader(extra)
 	openAIImagesUrlToB64JsonEnabled.value = extra?.images_url_to_b64_json === true
+	openAIImageSizeTiers.value = readOpenAIImageSizeTiers(extra)
 	autoPause5hThreshold.value = typeof extra?.auto_pause_5h_threshold === 'number' ? extra.auto_pause_5h_threshold * 100 : null
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
 	autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
@@ -4934,6 +4961,7 @@ const handleSubmit = async () => {
       } else {
         newExtra.openai_compact_mode = openAICompactMode.value
       }
+      applyOpenAIImageSizeTiersToExtra(newExtra, openAIImageSizeTiers.value)
 		if (props.account.type === 'apikey') {
         if (!openAITextGenerationCapabilityEnabled.value || openAIResponsesMode.value === 'auto') {
           delete newExtra.openai_responses_mode

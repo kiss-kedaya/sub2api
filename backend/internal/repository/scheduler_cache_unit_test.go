@@ -381,6 +381,26 @@ func TestBuildSchedulerMetadataAccount_KeepsOpenAIPassthroughFlags(t *testing.T)
 	require.Equal(t, true, got.Extra["openai_oauth_passthrough"])
 }
 
+// 生图尺寸档位在候选过滤阶段按快照 extra 判定，投影裁掉后受限账号
+// 会接到不允许的档位请求。
+func TestBuildSchedulerMetadataAccount_KeepsOpenAIImageSizeTiers(t *testing.T) {
+	account := service.Account{
+		ID:       46,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Extra: map[string]any{
+			service.AccountExtraOpenAIImageSizeTiers: []any{"1K", "2K"},
+			"unused_large_field":                     "drop-me",
+		},
+	}
+
+	got := buildSchedulerMetadataAccount(account)
+
+	require.Equal(t, []any{"1K", "2K"}, got.Extra[service.AccountExtraOpenAIImageSizeTiers])
+	require.Equal(t, []string{service.ImageBillingSize1K, service.ImageBillingSize2K}, got.OpenAIImageSizeTiers())
+	require.Nil(t, got.Extra["unused_large_field"])
+}
+
 func TestBuildSchedulerMetadataAccount_KeepsGrokMediaEligibility(t *testing.T) {
 	t.Run("explicit override", func(t *testing.T) {
 		account := service.Account{
