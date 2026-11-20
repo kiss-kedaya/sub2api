@@ -469,6 +469,21 @@ func (h *UserHandler) Update(c *gin.Context) {
 		}
 	}
 
+	// 管理员账号的邮箱是登录身份与密码找回的接收地址：改它等同于把账号控制权
+	// 转移到新的邮箱，因此与改密码同级，也要 step-up；普通用户资料编辑不受影响。
+	if email := strings.TrimSpace(req.Email); email != "" {
+		target, err := h.adminService.GetUser(c.Request.Context(), userID)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if target.Role == service.RoleAdmin && !strings.EqualFold(email, strings.TrimSpace(target.Email)) {
+			if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
+				return
+			}
+		}
+	}
+
 	// 防锁死保护：管理员不能把自己降级为普通用户(单管理员场景下会失去后台访问权)。
 	// 与既有"不能禁用/删除 admin"保护一致。降级其他管理员仍然允许。
 	if req.Role == service.RoleUser && userID == getAdminIDFromContext(c) {
