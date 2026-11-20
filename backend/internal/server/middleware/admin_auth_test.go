@@ -259,3 +259,73 @@ func (s *stubUserRepo) DisableTotp(ctx context.Context, userID int64) error {
 func (s *stubUserRepo) GetByIDIncludeDeleted(ctx context.Context, id int64) (*service.User, error) {
 	panic("unexpected GetByIDIncludeDeleted call")
 }
+
+// revocationCacheStub 只实现 access token 撤销时间线；其余 RefreshTokenCache
+// 方法由嵌入的 nil 接口提供（本测试不会调用）。
+type revocationCacheStub struct {
+	service.RefreshTokenCache
+	revokedBefore time.Time
+}
+
+func (s *revocationCacheStub) RevokeAccessTokensBefore(context.Context, int64, time.Time, time.Duration) error {
+	return nil
+}
+
+func (s *revocationCacheStub) AccessTokensRevokedBefore(context.Context, int64) (time.Time, error) {
+	return s.revokedBefore, nil
+}
+
+// "撤销所有会话"写入 auth:revoked_before 后，管理面 JWT 通道必须与用户面
+// 中间件同口径拒绝旧 access token；否则被盗的管理员 token 在撤销后仍能继续
+// 调用 /api/v1/admin/* 直到自然过期。
+func TestAdminAuthJWTRejectsRevokedAccessTokens(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := &config.Config{JWT: config.JWTConfig{Secret: "test-secret", ExpireHour: 1}}
+	cache := &revocationCacheStub{}
+	authService := service.NewAuthService(nil, nil, nil, cache, cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	admin := &service.User{
+		ID:           1,
+		Email:        "admin@example.com",
+		Role:         service.RoleAdmin,
+		Status:       service.StatusActive,
+		TokenVersion: 2,
+		Concurrency:  1,
+	}
+	userRepo := &stubUserRepo{
+		getByID: func(context.Context, int64) (*service.User, error) {
+			clone := *admin
+			return &clone, nil
+		},
+	}
+	userService := service.NewUserService(userRepo, nil, nil, nil)
+
+	router := gin.New()
+	router.Use(gin.HandlerFunc(NewAdminAuthMiddleware(authService, userService, nil, nil, cfg)))
+	router.GET("/t", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	token, err := authService.GenerateToken(context.Background(), admin)
+	require.NoError(t, err)
+
+	doRequest := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/t", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("no_revocation_allows", func(t *testing.T) {
+		w := doRequest()
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	})
+
+	t.Run("revoked_before_rejects_admin_access_token", func(t *testing.T) {
+		// 撤销时间点晚于 token 的 iat：等于"撤销所有会话"刚刚执行过。
+		cache.revokedBefore = time.Now().Add(time.Minute)
+		w := doRequest()
+		require.Equal(t, http.StatusUnauthorized, w.Code)
+		require.Contains(t, w.Body.String(), "TOKEN_REVOKED")
+	})
+}

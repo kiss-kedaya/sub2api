@@ -255,6 +255,15 @@ func validateJWTForAdmin(
 		return false
 	}
 
+	// "撤销所有会话"必须同样让无状态 access token 失效：管理面与用户面共用同一
+	// 撤销时间线（auth:revoked_before）。此前只有 jwtAuth 中间件检查这里，
+	// 管理员在面板点过"撤销所有会话"后，被盗的管理员 access token 仍可继续访问
+	// /api/v1/admin/* 直到自然过期。
+	if claims.IssuedAt != nil && authService.IsAccessTokenRevoked(c.Request.Context(), claims.UserID, claims.IssuedAt.Time) {
+		AbortWithError(c, 401, "TOKEN_REVOKED", "Token has been revoked")
+		return false
+	}
+
 	// 会话绑定校验：IP/UA 任一变化即撤销会话（功能可在系统设置中关闭）
 	if !enforceSessionBinding(c, authService, settingService, auditService, claims) {
 		return false
