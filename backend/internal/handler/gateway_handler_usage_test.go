@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
@@ -137,4 +138,91 @@ func TestUsageLoadsWalletBeforeStatsWithBoundedContext(t *testing.T) {
 	require.ErrorIs(t, requestCtx.Err(), context.Canceled)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.JSONEq(t, `{"mode":"unrestricted","isValid":true,"planName":"钱包余额","remaining":12.5,"unit":"USD","balance":12.5}`, recorder.Body.String())
+}
+
+type usageBudgetStatsRepo struct {
+	service.UsageLogRepository
+	query func(context.Context, string) error
+}
+
+func (r *usageBudgetStatsRepo) GetAPIKeyDashboardStats(ctx context.Context, _ int64) (*usagestats.UserDashboardStats, error) {
+	if err := r.query(ctx, "summary"); err != nil {
+		return nil, err
+	}
+	return &usagestats.UserDashboardStats{TodayRequests: 2}, nil
+}
+
+func (r *usageBudgetStatsRepo) GetUsageTrendWithFilters(ctx context.Context, _, _ time.Time, _ string, _, _, _, _ int64, _ string, _ *int16, _ *bool, _ *int8) ([]usagestats.TrendDataPoint, error) {
+	if err := r.query(ctx, "daily"); err != nil {
+		return nil, err
+	}
+	return []usagestats.TrendDataPoint{{Date: "2026-11-21", Requests: 2}}, nil
+}
+
+func (r *usageBudgetStatsRepo) GetModelStatsWithFilters(ctx context.Context, _, _ time.Time, _, _, _, _ int64, _ *int16, _ *bool, _ *int8) ([]usagestats.ModelStat, error) {
+	if err := r.query(ctx, "models"); err != nil {
+		return nil, err
+	}
+	return []usagestats.ModelStat{{Model: "gemini-test", Requests: 2}}, nil
+}
+
+func TestUsageOptionalStatsShareOneDeadline(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name       string
+		dailyDelay time.Duration
+		complete   bool
+	}{
+		{name: "all stats available", dailyDelay: 100 * time.Millisecond, complete: true},
+		{name: "slow daily stats", dailyDelay: 10 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var calls []string
+				started := time.Now()
+				stats := &usageBudgetStatsRepo{query: func(ctx context.Context, operation string) error {
+					calls = append(calls, operation)
+					deadline, ok := ctx.Deadline()
+					require.True(t, ok)
+					require.Equal(t, started.Add(2*time.Second), deadline)
+					delay := 500 * time.Millisecond
+					if operation == "daily" {
+						delay = tc.dailyDelay
+					}
+					select {
+					case <-time.After(delay):
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}}
+				h := &GatewayHandler{
+					userService:  service.NewUserService(&usageWalletUserRepo{events: &calls}, nil, nil, nil),
+					usageService: service.NewUsageService(stats, nil, nil, nil),
+				}
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest(http.MethodGet, "/v1/usage", nil)
+				c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{ID: 7})
+				c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 11})
+				h.Usage(c)
+
+				require.Equal(t, http.StatusOK, recorder.Code)
+				var result map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &result))
+				require.JSONEq(t, "12.5", string(result["balance"]))
+				require.Contains(t, result, "usage")
+				if tc.complete {
+					require.Equal(t, []string{"user", "summary", "daily", "models"}, calls)
+					require.Contains(t, result, "daily_usage")
+					require.Contains(t, result, "model_stats")
+				} else {
+					require.Equal(t, 2*time.Second, time.Since(started))
+					require.Equal(t, []string{"user", "summary", "daily"}, calls)
+					require.NotContains(t, result, "daily_usage")
+					require.NotContains(t, result, "model_stats")
+				}
+			})
+		})
+	}
 }

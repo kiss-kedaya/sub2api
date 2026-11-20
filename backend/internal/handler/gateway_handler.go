@@ -1814,6 +1814,8 @@ func cloneAPIKeyWithGroup(apiKey *service.APIKey, group *service.Group) *service
 	return &cloned
 }
 
+const apiKeyUsageStatsBudget = 2 * time.Second
+
 // Usage handles getting account balance and usage statistics for CC Switch integration
 // GET /v1/usage
 //
@@ -1860,14 +1862,17 @@ func (h *GatewayHandler) Usage(c *gin.Context) {
 		latestUser = user
 	}
 
-	// Best-effort: 获取用量统计（按当前 API Key 过滤），失败不影响基础响应
-	usageData := h.buildUsageData(ctx, apiKey.ID)
-	dailyUsage := h.buildAPIKeyDailyUsage(c, subject.UserID, apiKey.ID, days)
-
-	// Best-effort: 获取模型统计
-	var modelStats any
-	if h.usageService != nil {
-		if stats, err := h.usageService.GetAPIKeyModelStats(ctx, apiKey.ID, startTime, endTime); err == nil && len(stats) > 0 {
+	// Give all optional reports one wait budget. Keep the core response available
+	// when aggregate queries are slow, and keep any reports already available.
+	statsCtx, cancelStats := context.WithTimeout(ctx, apiKeyUsageStatsBudget)
+	defer cancelStats()
+	usageData := h.buildUsageData(statsCtx, apiKey.ID)
+	var dailyUsage, modelStats any
+	if statsCtx.Err() == nil {
+		dailyUsage = h.buildAPIKeyDailyUsage(statsCtx, subject.UserID, apiKey.ID, days, c.Query("timezone"))
+	}
+	if statsCtx.Err() == nil && h.usageService != nil {
+		if stats, err := h.usageService.GetAPIKeyModelStats(statsCtx, apiKey.ID, startTime, endTime); err == nil && len(stats) > 0 {
 			modelStats = stats
 		}
 	}
@@ -1937,12 +1942,12 @@ func (h *GatewayHandler) buildUsageData(ctx context.Context, apiKeyID int64) gin
 	}
 }
 
-func (h *GatewayHandler) buildAPIKeyDailyUsage(c *gin.Context, userID, apiKeyID int64, days int) any {
+func (h *GatewayHandler) buildAPIKeyDailyUsage(ctx context.Context, userID, apiKeyID int64, days int, userTZ string) any {
 	if h.usageService == nil {
 		return nil
 	}
-	startTime, endTime := apiKeyDailyUsageRange(days, c.Query("timezone"))
-	stats, err := h.usageService.GetAPIKeyDailyUsage(c.Request.Context(), userID, apiKeyID, startTime, endTime)
+	startTime, endTime := apiKeyDailyUsageRange(days, userTZ)
+	stats, err := h.usageService.GetAPIKeyDailyUsage(ctx, userID, apiKeyID, startTime, endTime)
 	if err != nil {
 		return nil
 	}
