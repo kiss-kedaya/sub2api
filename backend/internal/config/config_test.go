@@ -46,6 +46,32 @@ func TestValidateMinOutputTokensAllowsZero(t *testing.T) {
 	require.NoError(t, cfg.Validate())
 }
 
+func TestLoadGeminiSameAccountRetries(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 4, cfg.Gateway.MaxSameAccountRetriesGemini)
+
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_MAX_SAME_ACCOUNT_RETRIES_GEMINI", "0")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.Zero(t, cfg.Gateway.MaxSameAccountRetriesGemini)
+}
+
+func TestValidateGeminiSameAccountRetriesRange(t *testing.T) {
+	for _, tc := range []struct {
+		value int
+		want  string
+	}{{-1, "gateway.max_same_account_retries_gemini must be between 0-10"}, {11, "gateway.max_same_account_retries_gemini must be between 0-10"}} {
+		resetViperWithJWTSecret(t)
+		cfg, err := Load()
+		require.NoError(t, err)
+		cfg.Gateway.MaxSameAccountRetriesGemini = tc.value
+		require.EqualError(t, cfg.Validate(), tc.want)
+	}
+}
+
 func TestLoadDefaultModelsListReadMaxBytes(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	cfg, err := Load()
