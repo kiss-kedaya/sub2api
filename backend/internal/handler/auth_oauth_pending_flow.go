@@ -1656,7 +1656,9 @@ func (h *AuthHandler) bindPendingOAuthLogin(c *gin.Context, provider string) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	if h.totpService != nil && h.settingSvc.IsTotpEnabled(c.Request.Context()) && user.TotpEnabled {
+	// 绑定已有账户登录同样必须与密码登录/第三方登录同口径：设置读取失败时
+	// LoginRequiresTOTP fail-closed，不能因为 IsTotpEnabled 的 fail-open 跳过动态码。
+	if h.totpService != nil && h.settingSvc.LoginRequiresTOTP(c.Request.Context(), user) {
 		tempToken, err := h.totpService.CreatePendingOAuthBindLoginSession(
 			c.Request.Context(),
 			user.ID,
