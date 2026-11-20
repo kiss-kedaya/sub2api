@@ -38,7 +38,7 @@ func TestUsagePaginationRedactsOnlyObserverAndNeverMutatesOwnerRecords(t *testin
 	gin.SetMode(gin.TestMode)
 	private := "fixture-secret-identity"
 	record := dto.AdminUsageLog{UsageLog: dto.UsageLog{ID: 8, UserID: 2, AccountID: 3, ActualCost: 2.5,
-		User: &dto.User{ID: 2, Email: private}, APIKey: &dto.APIKey{Name: private, Key: private}, IPAddress: &private, RequestID: private},
+		User: &dto.User{ID: 2, Email: private}, APIKey: &dto.APIKey{Name: private, KeyMasked: private}, IPAddress: &private, RequestID: private},
 		Account: &dto.AccountSummary{ID: 3, Name: private}, IPAddress: &private}
 	for _, id := range []int64{2, 1, 2} {
 		w := httptest.NewRecorder()
@@ -53,7 +53,7 @@ func TestUsagePaginationRedactsOnlyObserverAndNeverMutatesOwnerRecords(t *testin
 			t.Fatal("billing metric was changed")
 		}
 	}
-	if record.User.Email != private || record.APIKey.Key != private {
+	if record.User.Email != private || record.APIKey.KeyMasked != private {
 		t.Fatal("shared source changed")
 	}
 }

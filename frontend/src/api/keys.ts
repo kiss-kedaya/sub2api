@@ -4,7 +4,7 @@
  */
 
 import { apiClient } from './client'
-import type { ApiKey, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
+import type { ApiKey, ApiKeySecret, ApiKeyUpdateResult, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
 
 /**
  * List all API keys for current user
@@ -71,7 +71,7 @@ export async function create(
   groupIds?: number[],
   anthropicCacheTtlMode?: 'inherit' | 'off' | '1h' | '5m',
   options?: { idempotencyKey?: string; deepseekToolInjectionEnabled?: boolean; concurrencyLimit?: number; autoBlockDatacenterIPs?: boolean }
-): Promise<ApiKey> {
+): Promise<ApiKeySecret> {
   const payload: CreateApiKeyRequest = {
     name,
     deepseek_tool_injection_enabled: options?.deepseekToolInjectionEnabled ?? true,
@@ -113,7 +113,7 @@ export async function create(
     payload.anthropic_cache_ttl_mode = anthropicCacheTtlMode
   }
 
-  const { data } = await apiClient.post<ApiKey>('/keys', payload, options?.idempotencyKey
+  const { data } = await apiClient.post<ApiKeySecret>('/keys', payload, options?.idempotencyKey
     ? { headers: { 'Idempotency-Key': options.idempotencyKey } }
     : undefined)
   return data
@@ -125,8 +125,8 @@ export async function create(
  * @param updates - Fields to update
  * @returns Updated API key
  */
-export async function update(id: number, updates: UpdateApiKeyRequest): Promise<ApiKey> {
-  const { data } = await apiClient.put<ApiKey>(`/keys/${id}`, updates)
+export async function update(id: number, updates: UpdateApiKeyRequest): Promise<ApiKeyUpdateResult> {
+  const { data } = await apiClient.put<ApiKeyUpdateResult>(`/keys/${id}`, updates)
   return data
 }
 
@@ -195,8 +195,9 @@ export async function blockDatacenterIPs(id: number): Promise<BlockDatacenterIPs
  * and reactivates a key that the gateway risk control disabled. The old key
  * stops authenticating immediately.
  */
-export async function rotateKey(id: number): Promise<ApiKey> {
-  return update(id, { regenerate_key: true })
+export async function rotateKey(id: number): Promise<ApiKeySecret> {
+  // regenerate_key 让服务端在这一次响应里返回新明文，之后列表只回 key_masked。
+  return update(id, { regenerate_key: true }) as Promise<ApiKeySecret>
 }
 
 export const keysAPI = {

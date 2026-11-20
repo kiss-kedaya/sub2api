@@ -591,6 +591,7 @@ export default {
         useMyKey: '使用我的 Key',
         selectKeyTitle: '选择我的 API Key',
         selectKeyHint: '仅显示当前账号下处于「启用」状态且未过期的 Key。',
+        pasteKeyHint: '出于安全考虑，列表不再返回明文 Key；请在输入框手动粘贴该 Key 后保存。',
         noActiveKey: '没有可用的启用状态 Key',
         primaryModel: '主模型',
         primaryModelPlaceholder: 'gpt-4o-mini',

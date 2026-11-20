@@ -269,7 +269,8 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		if err != nil {
 			return nil, err
 		}
-		return dto.APIKeyFromService(key), nil
+		// 创建是明文 key 的唯一一次回执；后续接口只给 key_prefix / key_masked。
+		return dto.APIKeySecretFromService(key), nil
 	})
 }
 
@@ -344,6 +345,12 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		return
 	}
 
+	// 轮换是明文 key 的另一次（也是唯一另一次）回执：旧值立刻失效，
+	// 用户必须当场拿到新值。普通编辑只回脱敏视图。
+	if req.RegenerateKey {
+		response.Success(c, dto.APIKeySecretFromService(key))
+		return
+	}
 	response.Success(c, dto.APIKeyFromService(key))
 }
 

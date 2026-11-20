@@ -3,6 +3,7 @@
     <TablePageLayout class="signal-keys">
       <template #filters>
         <div class="flex flex-col gap-3">
+          <TwoFactorSuggestionBanner storage-key="keys" />
           <div class="flex flex-wrap items-center gap-2">
             <SearchInput
               v-model="filterSearch"
@@ -120,31 +121,12 @@
             <span class="font-mono text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
           </template>
 
-          <template #cell-key="{ value, row }">
-            <div class="flex items-center gap-2">
-              <code class="rounded-md bg-elevated px-1.5 py-0.5 font-mono text-xs text-default ring ring-inset ring-default">
-                {{ maskApiKey(value) }}
-              </code>
-              <button
-                type="button"
-                @click="copyToClipboard(value, row.id)"
-                class="rounded-md p-1 transition-colors hover:bg-elevated"
-                :class="
-                  copiedKeyId === row.id
-                    ? 'text-green-500'
-                    : 'text-dimmed hover:text-highlighted'
-                "
-                :title="copiedKeyId === row.id ? t('keys.copied') : t('keys.copyToClipboard')"
-              >
-                <Icon
-                  v-if="copiedKeyId === row.id"
-                  name="check"
-                  size="sm"
-                  :stroke-width="2"
-                />
-                <Icon v-else name="clipboard" size="sm" />
-              </button>
-            </div>
+          <template #cell-key="{ row }">
+            <!-- 明文不再回读：直接展示后端给的 key_masked，前端不做任何截断/拼接。 -->
+            <code
+              class="rounded-md bg-elevated px-1.5 py-0.5 font-mono text-xs text-default ring ring-inset ring-default"
+              :title="t('keys.maskedOnlyHint')"
+            >{{ row.key_masked || row.key_prefix || '-' }}</code>
           </template>
 
           <template #cell-name="{ value, row }">
@@ -380,21 +362,8 @@
 
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-0.5">
-              <!-- Use Key Button -->
-              <button type="button" class="key-row-action" @click="openUseKeyModal(row)">
-                <UIcon name="i-lucide-square-terminal" class="size-4" />
-                <span>{{ t('keys.useKey') }}</span>
-              </button>
-              <!-- Import to CC Switch Button -->
-              <button
-                v-if="!publicSettings?.hide_ccs_import_button"
-                type="button"
-                class="key-row-action"
-                @click="importToCcswitch(row)"
-              >
-                <UIcon name="i-lucide-upload" class="size-4" />
-                <span>{{ t('keys.importToCcSwitch') }}</span>
-              </button>
+              <!-- 明文 key 只在创建/轮换当次可见，"使用密钥 / 导入 CCS"入口移到
+                   明文回执弹窗里，避免让用户以为列表可以随时复制完整 key。 -->
               <!-- Toggle Status Button -->
               <button type="button" class="key-row-action" @click="toggleKeyStatus(row)">
                 <UIcon v-if="row.status === 'active'" name="i-lucide-ban" class="size-4" />
@@ -1088,11 +1057,22 @@
 
     <UseKeyModal
       :show="showUseKeyModal"
-      :api-key="selectedKey?.key || ''"
+      :api-key="useKeyPlaintext"
       :base-url="publicSettings?.api_base_url || ''"
       :platform="selectedKey?.group?.platform || null"
       :allow-messages-dispatch="selectedKey?.group?.allow_messages_dispatch || false"
       @close="closeUseKeyModal"
+    />
+
+    <!-- 明文密钥只展示这一次：复制、使用引导、导入 CCS 都从这里进入 -->
+    <ApiKeySecretDialog
+      :show="showSecretDialog"
+      :api-key="secretRow"
+      :secret="secretPlaintext"
+      :hide-ccs-import="!!publicSettings?.hide_ccs_import_button"
+      @close="closeSecretDialog"
+      @use="useRevealedKey"
+      @import-ccs="importRevealedToCcswitch"
     />
 
     <!-- CCS import: pick platform + model, then open ccswitch:// deeplink -->
@@ -1231,7 +1211,6 @@ import '@/styles/console-workspace.css'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
-	import { useClipboard } from '@/composables/useClipboard'
 import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
@@ -1250,6 +1229,8 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import Pagination from '@/components/common/Pagination.vue'
 	import BaseDialog from '@/components/common/BaseDialog.vue'
 	import KeyUsageDialog from '@/components/user/KeyUsageDialog.vue'
+	import ApiKeySecretDialog from '@/components/keys/ApiKeySecretDialog.vue'
+	import TwoFactorSuggestionBanner from '@/components/user/TwoFactorSuggestionBanner.vue'
 	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 	import EmptyState from '@/components/common/EmptyState.vue'
 	import Select from '@/components/common/Select.vue'
@@ -1269,7 +1250,6 @@ import type { Column } from '@/components/common/types'
 import type { GroupSignalSource } from '@/utils/groupRateSignals'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
-import { maskApiKey } from '@/utils/maskApiKey'
 import { rateLimitWindows, RATE_LIMIT_BAR_CLASS, RATE_LIMIT_TEXT_CLASS } from '@/utils/keyRateLimits'
 import { platformBadgeLightClass } from '@/utils/platformColors'
 import {
@@ -1311,7 +1291,6 @@ interface GroupOption {
 
 const appStore = useAppStore()
 const onboardingStore = useOnboardingStore()
-const { copyToClipboard: clipboardCopy } = useClipboard()
 
 const allColumns = computed<Column[]>(() => [
   { key: 'name', label: t('common.name'), sortable: true },
@@ -1471,7 +1450,9 @@ const showCcsImportModal = ref(false)
 const showColumnDropdown = ref(false)
 // 正在轮换（重置）密钥的 key ID，用于禁用按钮并显示转圈。
 const rotatingKeyId = ref<number | null>(null)
-const pendingCcsRow = ref<ApiKey | null>(null)
+// CCS 导入只在刚拿到明文回执时可用：这里带上明文，用完即弃。
+type ApiKeyWithPlaintext = ApiKey & { key: string }
+const pendingCcsRow = ref<ApiKeyWithPlaintext | null>(null)
 const ccsImportApp = ref<CcSwitchApp>('claude')
 const ccsImportModel = ref('')
 const ccsAvailableModels = ref<string[]>([])
@@ -1502,8 +1483,13 @@ const ccsModelOptions = computed(() => {
   return values.map((value) => ({ value, label: value }))
 })
 const selectedKey = ref<ApiKey | null>(null)
-const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
+// 明文 key 的短生命周期状态：只在创建/轮换回执弹窗与"使用密钥"弹窗之间流转，
+// 关掉弹窗即清空，不写 localStorage、不进列表行。
+const secretPlaintext = ref('')
+const secretRow = ref<ApiKey | null>(null)
+const showSecretDialog = ref(false)
+const useKeyPlaintext = ref('')
 // Group health dots, keyed by group id. Loaded lazily the first time a picker
 // opens and cached for a minute, so the key page never pays for it up front.
 const groupStatusClasses = ref<Record<number, string>>({})
@@ -1783,16 +1769,6 @@ const filteredGroupOptions = computed(() => {
   })
 })
 
-const copyToClipboard = async (text: string, keyId: number) => {
-  const success = await clipboardCopy(text, t('keys.copied'))
-  if (success) {
-    copiedKeyId.value = keyId
-    setTimeout(() => {
-      copiedKeyId.value = null
-    }, 800)
-  }
-}
-
 const isAbortError = (error: unknown) => {
   if (!error || typeof error !== 'object') return false
   const { name, code } = error as { name?: string; code?: string }
@@ -1900,14 +1876,39 @@ const loadCustomEndpoints = async () => {
   }
 }
 
-const openUseKeyModal = (key: ApiKey) => {
+// 明文密钥回执：创建 / 轮换后唯一一次展示。
+const openSecretDialog = (row: ApiKey | null | undefined, secret: string) => {
+  if (!secret) return
+  secretRow.value = row ?? null
+  secretPlaintext.value = secret
+  showSecretDialog.value = true
+}
+
+const closeSecretDialog = () => {
+  showSecretDialog.value = false
+  secretPlaintext.value = ''
+  secretRow.value = null
+}
+
+const openUseKeyModal = (key: ApiKey, secret: string) => {
   selectedKey.value = key
+  useKeyPlaintext.value = secret
   showUseKeyModal.value = true
 }
 
 const closeUseKeyModal = () => {
   showUseKeyModal.value = false
   selectedKey.value = null
+  useKeyPlaintext.value = ''
+}
+
+// 从明文回执弹窗进入"使用密钥"引导：这次会话内仍然持有明文，可以继续渲染客户端配置。
+const useRevealedKey = () => {
+  const row = secretRow.value
+  const secret = secretPlaintext.value
+  if (!row || !secret) return
+  showSecretDialog.value = false
+  openUseKeyModal(row, secret)
 }
 
 const handlePageChange = (page: number) => {
@@ -1969,7 +1970,10 @@ const rotateRiskKey = async (key: ApiKey) => {
   rotatingKeyId.value = key.id
   try {
     const updated = await keysAPI.rotateKey(key.id)
-    mergeKeyLocally(updated)
+    const { key: rotatedSecret, ...rotatedMasked } = updated
+    mergeKeyLocally(rotatedMasked as ApiKey)
+    // 旧 key 已立刻失效，新明文必须当场给用户，否则这把 key 就废了。
+    openSecretDialog(rotatedMasked as ApiKey, rotatedSecret)
     appStore.showSuccess(t('keys.riskRotateSuccess'))
   } catch (error) {
     appStore.showError(t('keys.riskRotateFailed'))
@@ -2158,7 +2162,7 @@ const matchesActiveFilters = (key: ApiKey) => {
   }
   const query = filterSearch.value.trim().toLowerCase()
   if (query) {
-    const haystack = `${key.name ?? ''} ${key.key ?? ''}`.toLowerCase()
+    const haystack = `${key.name ?? ''} ${key.key_masked ?? ''} ${key.key_prefix ?? ''}`.toLowerCase()
     if (!haystack.includes(query)) return false
   }
   return true
@@ -2187,6 +2191,8 @@ const mergeKeyLocally = (updated: ApiKey | null | undefined): ApiKey | null => {
   const patch = updated as unknown as Record<string, unknown>
   const target = merged as unknown as Record<string, unknown>
   for (const [field, value] of Object.entries(patch)) {
+    // 明文 key 只属于回执弹窗，绝不落到列表行里。
+    if (field === 'key') continue
     // `group` comes back empty on update responses; keep the badge we already have.
     if (value === undefined) continue
     if (value === null && (field === 'group' || field === 'user')) continue
@@ -2324,8 +2330,11 @@ const handleSubmit = async () => {
         formData.value.anthropic_cache_ttl_mode,
         { deepseekToolInjectionEnabled: formData.value.deepseek_tool_injection_enabled, autoBlockDatacenterIPs: formData.value.enable_ip_restriction && formData.value.auto_block_datacenter_ips, ...(formData.value.concurrency_limit > 0 ? { concurrencyLimit: formData.value.concurrency_limit } : {}) }
       )
-      insertKeyLocally(created)
+      // 明文只在当次响应里：列表行只放脱敏视图，明文交给回执弹窗。
+      const { key: createdSecret, ...createdMasked } = created
+      insertKeyLocally(createdMasked as ApiKey)
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
+      openSecretDialog(createdMasked as ApiKey, createdSecret)
       // Only advance tour if active, on submit step, and creation succeeded
       if (onboardingStore.isCurrentStep('[data-tour="key-form-submit"]')) {
         onboardingStore.nextStep(500)
@@ -2507,7 +2516,7 @@ const applyCcsModelDefault = () => {
   )
 }
 
-const loadCcsModels = async (row: ApiKey) => {
+const loadCcsModels = async (row: ApiKeyWithPlaintext) => {
   ccsModelsAbort?.abort()
   const abort = new AbortController()
   ccsModelsAbort = abort
@@ -2529,7 +2538,7 @@ const loadCcsModels = async (row: ApiKey) => {
   }
 }
 
-const importToCcswitch = (row: ApiKey) => {
+const importToCcswitch = (row: ApiKeyWithPlaintext) => {
   const platform = row.group?.platform || 'anthropic'
   const baseUrl = publicSettings.value?.api_base_url || window.location.origin
   const config = resolveCcSwitchImportConfig(
@@ -2544,6 +2553,15 @@ const importToCcswitch = (row: ApiKey) => {
   void loadCcsModels(row)
 }
 
+// 明文回执弹窗里点"导入 CCS"：把这次拿到的明文交给既有 CCS 导入流程。
+const importRevealedToCcswitch = () => {
+  const row = secretRow.value
+  const secret = secretPlaintext.value
+  if (!row || !secret) return
+  showSecretDialog.value = false
+  importToCcswitch({ ...row, key: secret })
+}
+
 const onCcsAppChange = (value: string | number | boolean | null) => {
   const app = String(value)
   if (!isCcSwitchApp(app)) return
@@ -2555,7 +2573,7 @@ const onCcsModelChange = (value: string | number | boolean | null) => {
   ccsImportModel.value = value == null ? '' : String(value)
 }
 
-const executeCcsImport = (row: ApiKey, app: CcSwitchApp, model: string) => {
+const executeCcsImport = (row: ApiKeyWithPlaintext, app: CcSwitchApp, model: string) => {
   const baseUrl = publicSettings.value?.api_base_url || window.location.origin
   const platform = row.group?.platform || 'anthropic'
 

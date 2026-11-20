@@ -9,6 +9,11 @@
         <KeyRotationGateNotice :status="keyRotationStatus" />
       </template>
       <template v-else>
+        <TwoFactorSuggestionBanner
+          v-if="paymentPhase === 'select'"
+          storage-key="payment"
+          class="mb-4"
+        />
         <UserPageHeader v-if="paymentPhase === 'select' && !selectedPlan" flush :title="t('nav.buySubscription')">
           <template #actions>
             <UButton to="/orders" color="neutral" variant="outline" icon="i-lucide-receipt-text">{{ t('payment.orders.title') }}</UButton>
@@ -409,6 +414,7 @@ import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
 import { isKeyRotationRequiredError } from '@/api/keyRotationGate'
 import { useKeyRotationGate } from '@/composables/useKeyRotationGate'
+import TwoFactorSuggestionBanner from '@/components/user/TwoFactorSuggestionBanner.vue'
 import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 import { hasWechatResumeQuery, parseWechatResumeRoute, stripWechatResumeQuery } from './paymentWechatResume'
 

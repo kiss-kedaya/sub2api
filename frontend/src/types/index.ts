@@ -799,7 +799,10 @@ export interface ApiKey {
   concurrency_limit?: number // 0 keeps user-level admission only
   id: number
   user_id: number
-  key: string
+  // 后端只回脱敏视图：前 8 位前缀 + 掩码（前 8 + **** + 后 4）。
+  // 明文 key 只在创建/轮换的当次响应里出现（见 ApiKeySecret），列表永不回读。
+  key_prefix: string
+  key_masked: string
   name: string
   group_id: number | null
   group_ids?: number[]
@@ -839,6 +842,17 @@ export interface ApiKey {
   risk_hit_ip?: string | null
   risk_hit_at?: string | null
 }
+
+/**
+ * 创建 / 轮换密钥的当次响应：这是后端唯一一次返回明文 key。
+ * 拿到后必须立刻展示给用户保存，不要写进持久化存储，也不要拼进列表行。
+ */
+export interface ApiKeySecret extends ApiKey {
+  key: string
+}
+
+/** 更新接口：只有 regenerate_key=true 时才会带明文 key。 */
+export type ApiKeyUpdateResult = ApiKey & { key?: string }
 
 export interface CreateApiKeyRequest {
   concurrency_limit?: number // 0 keeps user-level admission only

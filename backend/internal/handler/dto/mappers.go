@@ -77,6 +77,35 @@ func UserFromServiceAdmin(u *service.User) *AdminUser {
 	}
 }
 
+// API key 明文脱敏的固定展示规则：前 8 位 + **** + 后 4 位。
+// 规则只在这里实现一次，前端禁止再自行截断拼接（避免前后端掩码不一致）。
+const (
+	apiKeyVisiblePrefixLen = 8
+	apiKeyVisibleSuffixLen = 4
+	// 短于该长度的 key 不展示任何可识别片段。自定义 key 最短 16 位，
+	// 生成 key 固定 67 位，这条兜底只防历史/异常数据被整段回显。
+	apiKeyMaskMinLen = apiKeyVisiblePrefixLen + apiKeyVisibleSuffixLen
+)
+
+// APIKeyPrefix 返回可展示的 key 前缀（前 8 位）；数据异常过短时返回空串。
+func APIKeyPrefix(key string) string {
+	if len(key) <= apiKeyMaskMinLen {
+		return ""
+	}
+	return key[:apiKeyVisiblePrefixLen]
+}
+
+// MaskAPIKey 返回脱敏后的 key：前 8 + **** + 后 4；过短或空值不泄露任何字符。
+func MaskAPIKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	if len(key) <= apiKeyMaskMinLen {
+		return "****"
+	}
+	return key[:apiKeyVisiblePrefixLen] + "****" + key[len(key)-apiKeyVisibleSuffixLen:]
+}
+
 func APIKeyFromService(k *service.APIKey) *APIKey {
 	if k == nil {
 		return nil
@@ -84,7 +113,8 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 	out := &APIKey{
 		ID:                           k.ID,
 		UserID:                       k.UserID,
-		Key:                          k.Key,
+		KeyPrefix:                    APIKeyPrefix(k.Key),
+		KeyMasked:                    MaskAPIKey(k.Key),
 		Name:                         k.Name,
 		GroupID:                      k.GroupID,
 		GroupIDs:                     k.RouteGroupIDs,
@@ -140,6 +170,18 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 		}
 	}
 	return out
+}
+
+// APIKeySecretFromService 只用于创建/轮换密钥的当次响应：这是明文 key
+// 唯一一次离开服务端的机会，其它调用点必须用 APIKeyFromService。
+func APIKeySecretFromService(k *service.APIKey) *APIKeySecret {
+	if k == nil {
+		return nil
+	}
+	return &APIKeySecret{
+		APIKey: *APIKeyFromService(k),
+		Key:    k.Key,
+	}
 }
 
 func GroupFromServiceShallow(g *service.Group) *Group {

@@ -133,7 +133,7 @@ func RegisterAdminRoutes(
 		registerUserManagementRoutes(admin, h, stepUpAuth)
 
 		// 分组管理
-		registerGroupRoutes(admin, h)
+		registerGroupRoutes(admin, h, stepUpAuth)
 
 		// 账号管理
 		registerAccountRoutes(admin, h, stepUpAuth)
@@ -419,7 +419,9 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers, s
 		users.DELETE("/:id", gin.HandlerFunc(stepUpAuth), h.Admin.User.Delete)
 		// 增减余额属资金操作：要求 step-up 二次验证（机器凭据返回 403）。
 		users.POST("/:id/balance", gin.HandlerFunc(stepUpAuth), h.Admin.User.UpdateBalance)
-		users.GET("/:id/api-keys", h.Admin.User.GetUserAPIKeys)
+		// 查看用户 API Key 列表会暴露 key 前缀/掩码与绑定关系：要求 step-up 二次验证
+		// （机器凭据返回 403），且不属于日常维护，每次打开都重新过门控。
+		users.GET("/:id/api-keys", gin.HandlerFunc(stepUpAuth), h.Admin.User.GetUserAPIKeys)
 		users.GET("/:id/usage", h.Admin.User.GetUserUsage)
 		users.GET("/:id/balance-history", h.Admin.User.GetBalanceHistory)
 		users.POST("/:id/replace-group", h.Admin.User.ReplaceGroup)
@@ -438,7 +440,7 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers, s
 	}
 }
 
-func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	groups := admin.Group("/groups")
 	groups.Use(h.Admin.Group.ScopedAdminKeyGroupModels)
 	{
@@ -465,7 +467,7 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		groups.DELETE("/:id/rate-multipliers", h.Admin.Group.ClearGroupRateMultipliers)
 		groups.PUT("/:id/rpm-overrides", h.Admin.Group.BatchSetGroupRPMOverrides)
 		groups.DELETE("/:id/rpm-overrides", h.Admin.Group.ClearGroupRPMOverrides)
-		groups.GET("/:id/api-keys", h.Admin.Group.GetGroupAPIKeys)
+		groups.GET("/:id/api-keys", gin.HandlerFunc(stepUpAuth), h.Admin.Group.GetGroupAPIKeys)
 	}
 }
 

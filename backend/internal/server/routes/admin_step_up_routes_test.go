@@ -133,6 +133,9 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		{http.MethodPost, "/api/v1/admin/users/1/balance", "admin"},
 		// 给账号绑定第三方登录身份（会新增一条登录路径）
 		{http.MethodPost, "/api/v1/admin/users/1/auth-identities", "admin"},
+		// 查看用户/分组的 API Key 列表（key 前缀、掩码与绑定关系）
+		{http.MethodGet, "/api/v1/admin/users/1/api-keys", "admin"},
+		{http.MethodGet, "/api/v1/admin/groups/1/api-keys", "admin"},
 		// 上游失败 dump 的正文含客户端请求体与上游响应体
 		{http.MethodGet, "/api/v1/admin/debug-dumps/test.txt", "admin"},
 		// 支付渠道配置

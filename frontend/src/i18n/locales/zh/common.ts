@@ -482,5 +482,13 @@ export default {
     adminApiKeyForbidden: '管理 API Key 无法执行此操作，请使用已通过二次验证的管理员会话。'
   },
 
+  // 建议开启 2FA（可关闭提示，非强制）
+  twoFactorSuggestion: {
+    title: '建议开启两步验证（2FA）',
+    body: '开启后，查看/修改密钥等敏感操作会额外校验动态验证码，密钥泄露风险更低。这是建议，不影响当前使用。',
+    enable: '去开启',
+    dismiss: '不再提示'
+  },
+
   // Dashboard
 }

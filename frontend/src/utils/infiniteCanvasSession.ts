@@ -23,19 +23,32 @@ export interface InfiniteCanvasSession {
   groupIds: number[]
   truncated: boolean
   created: boolean
+  /** 旧画布密钥的明文已不可回读，本次为进入画布重新签发了凭据。 */
+  rotated: boolean
   keyId: number
 }
 
 export interface InfiniteCanvasKeyClient {
   list: typeof keysAPI.list
   create: typeof keysAPI.create
+  rotate: typeof keysAPI.rotateKey
   getAvailableGroups: typeof userGroupsAPI.getAvailable
 }
 
 const defaultClient: InfiniteCanvasKeyClient = {
   list: keysAPI.list,
   create: keysAPI.create,
+  rotate: keysAPI.rotateKey,
   getAvailableGroups: userGroupsAPI.getAvailable,
+}
+
+// SPA 生命周期内的内存缓存：明文 key 不再从服务端回读，创建/轮换后先记在这里，
+// 供同一标签页内再次进入画布时复用；刷新页面即消失，不写 localStorage/sessionStorage。
+const sessionSecrets = new Map<number, string>()
+
+/** 仅供单测隔离：清空 SPA 内存中的明文缓存。 */
+export function __resetInfiniteCanvasSecretsForTests(): void {
+  sessionSecrets.clear()
 }
 
 // Only share pending work within the same user and operation. Every later
@@ -65,13 +78,20 @@ function extractErrorMessage(error: unknown): string {
   return response?.data?.detail || response?.data?.message || ''
 }
 
-function toSession(key: ApiKey, created: boolean): InfiniteCanvasSession {
-  if (!key.key) throw new InfiniteCanvasSetupError('missing-key', 'API key value is empty')
+interface SecretCapableKey extends ApiKey {
+  key?: string
+}
+
+function toSession(key: SecretCapableKey, created: boolean, rotated = false): InfiniteCanvasSession {
+  const secret = key.key || sessionSecrets.get(key.id) || ''
+  if (!secret) throw new InfiniteCanvasSetupError('missing-key', 'API key value is not available')
+  sessionSecrets.set(key.id, secret)
   return {
-    apiKey: key.key,
+    apiKey: secret,
     groupIds: key.group_ids?.length ? key.group_ids : key.group_id ? [key.group_id] : [],
     truncated: false,
     created,
+    rotated,
     keyId: key.id,
   }
 }
@@ -88,6 +108,13 @@ async function prepareInfiniteCanvasApiKey(
     if (existing) {
       if (!isUsableCanvasKey(existing)) {
         throw new InfiniteCanvasSetupError('key-unavailable', 'Canvas key is disabled, expired or exhausted')
+      }
+      // 明文只在创建/轮换时出现一次：本标签页内存里没有这把 key 的明文时，
+      // 就地轮换这把画布专用 key 拿一次新明文（旧值立即失效，画布每次都用新值加载）。
+      if (!sessionSecrets.has(existing.id) && typeof client.rotate === 'function') {
+        const rotated = await client.rotate(existing.id)
+        assertUserScope(userScope)
+        return toSession(rotated, false, true)
       }
       return toSession(existing, false)
     }

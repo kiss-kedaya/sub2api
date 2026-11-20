@@ -18,7 +18,9 @@ vi.mock('vue-i18n', async () => ({
   ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'),
   useI18n: () => ({ t: (key: string) => key })
 }))
-const key = { id: 10, name: 'My key', key: 'NEVER_STORE_SECRET', status: 'active', user_id: 1, group_id: 7, quota: 0 }
+const key = { id: 10, name: 'My key', key_prefix: 'NEVER_', key_masked: 'NEVER_****CRET', status: 'active', user_id: 1, group_id: 7, quota: 0 }
+// 明文 key 不再由列表返回，测试里由管理员手动粘贴（仅页面内存）。
+const pastedKey = 'PASTED_SESSION_SECRET'
 const result = (items: unknown[]) => ({ items, pages: 1 })
 let wrapper: ReturnType<typeof mount>
 const mountView = () => mount(GroupCacheTestView, { global: { stubs: {
@@ -30,6 +32,8 @@ async function configure() {
   await wrapper.get('[data-testid="cache-group"]').setValue(7)
   await flushPromises()
   await wrapper.get('[data-testid="cache-model"]').setValue('test-model')
+  await wrapper.get('[data-testid="cache-key-value"]').setValue(pastedKey)
+  await flushPromises()
 }
 beforeEach(() => {
   localStorage.clear()
@@ -56,9 +60,9 @@ describe('GroupCacheTestView', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     expect(mocks.execute).toHaveBeenCalledTimes(1)
-    expect(mocks.execute.mock.calls[0][1]).toBe('NEVER_STORE_SECRET')
-    expect(JSON.stringify(loadCacheHistory(1))).not.toContain('NEVER_STORE_SECRET')
-    expect(wrapper.text()).not.toContain('NEVER_STORE_SECRET')
+    expect(mocks.execute.mock.calls[0][1]).toBe(pastedKey)
+    expect(JSON.stringify(loadCacheHistory(1))).not.toContain(pastedKey)
+    expect(wrapper.text()).not.toContain(pastedKey)
   })
   it('excludes multi-group smart-routing keys and rechecks before sending', async () => {
     mocks.keys.mockResolvedValue(result([{ ...key, group_ids: [7, 8] }]))

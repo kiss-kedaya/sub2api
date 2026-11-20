@@ -145,7 +145,8 @@ vi.mock('vue-i18n', async () => {
 const createApiKey = (): ApiKey => ({
   id: 1,
   user_id: 1,
-  key: 'sk-test-key',
+  key_prefix: 'sk-test-',
+  key_masked: 'sk-test-****-key',
   name: 'test-key',
   group_id: null,
   status: 'active',
@@ -213,6 +214,7 @@ const DataTableStub = {
         >
           <slot name="cell-id" :value="row.id" :row="row" />
         </div>
+        <div data-test="key-cell"><slot name="cell-key" :value="row.key_masked" :row="row" /></div>
         <slot name="cell-name" :value="row.name" :row="row" />
         <div data-test="key-groups">
           <slot name="cell-group" :row="row" />
@@ -360,12 +362,20 @@ describe('user KeysView column settings', () => {
     { baseUrl: 'https://api.example.com/prefix', app: 'grokbuild', endpoint: 'https://api.example.com/prefix/v1' }
   ])('imports a balance script with exactly one /v1 for $app at $baseUrl', async ({ baseUrl, app, endpoint }) => {
     getPublicSettings.mockResolvedValue({ api_base_url: baseUrl })
-    listKeys.mockResolvedValue({ items: [{ ...createApiKey(), key: '' }], total: 1 })
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'Claude', platform: 'anthropic' }])
+    // 创建/轮换响应是唯一带明文的回执，CCS 导入只能从这次回执进入。
+    createKey.mockResolvedValue({ ...createApiKey(), key: 'sk-test-key' })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }))
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     const wrapper = await mountView()
     try {
-      await getButtonByText(wrapper, 'keys.importToCcSwitch').trigger('click')
+      await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+      await wrapper.get('[data-tour="key-form-name"]').setValue('ccs key')
+      wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+      await getButtonByText(wrapper, 'keys.secretDialog.importCcs').trigger('click')
       await flushPromises()
       wrapper.getComponent('#ccs-import-platform').vm.$emit('update:modelValue', app)
       await nextTick()
@@ -382,6 +392,13 @@ describe('user KeysView column settings', () => {
       open.mockRestore()
       vi.unstubAllGlobals()
     }
+  })
+
+  it('renders the server-masked key and never builds the mask in the frontend', async () => {
+    const wrapper = await mountView()
+    expect(wrapper.get('[data-test="key-cell"]').text()).toBe('sk-test-****-key')
+    expect(wrapper.text()).not.toContain('sk-test-key')
+    wrapper.unmount()
   })
 
   it('keeps named icon tools and the key count in the workspace heading', async () => {

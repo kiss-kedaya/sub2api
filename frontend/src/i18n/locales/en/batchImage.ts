@@ -1,5 +1,9 @@
 export default {
   batchImage: {
+    keyPanel: {
+      hint: 'This page calls the gateway with a key directly. The server no longer returns plaintext, so paste a Gemini API key (kept in page memory only).',
+      placeholder: 'Paste the full API key to load jobs and models',
+    },
     columns: {
       taskName: 'Task name',
       model: 'Model',
@@ -110,6 +114,9 @@ export default {
       loadingKeys: 'Loading API keys...',
       selectKeyPlaceholder: 'Select a Gemini API key',
       noKeysHint: 'No Gemini API key is available for batch image generation. Create one and bind it to a Gemini group with batch image generation enabled first.',
+      pasteKeyLabel: 'Paste the key value',
+      pasteKeyPlaceholder: 'Paste the full plaintext Gemini API key',
+      pasteKeyHint: 'Security policy: the API only returns masked keys and this page calls the gateway directly, so paste the plaintext here. It stays in page memory only, is never written to storage, and is cleared on reload.',
       model: 'Model',
       imageSize: 'Image size',
       imageSizeHint: 'Batch jobs are currently submitted at a fixed 1K image size.',
@@ -149,6 +156,7 @@ export default {
       loadModelsFailed: 'Failed to load available models.',
       loadJobsFailed: 'Failed to load batch jobs.',
       selectApiKey: 'Select an available Gemini API key.',
+      pasteKeyRequired: 'For security the API no longer returns plaintext keys; paste the full key at the top of the page first.',
       noModelsForKey: 'This key has no available batch image models.',
       selectModel: 'Select a model.',
       promptRequired: 'Enter at least one prompt.',

@@ -8,6 +8,9 @@
           <p class="text-sm text-muted">{{ user.username }}</p>
         </div>
       </div>
+      <div v-if="stepUpBlocked" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-100" data-test="step-up-blocked">
+        {{ stepUpBlocked === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN' ? t('stepUp.adminApiKeyForbidden') : t('stepUp.notEnabled') }}
+      </div>
       <div v-if="loading" class="flex justify-center py-8">
         <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin text-dimmed" />
       </div>
@@ -18,7 +21,8 @@
             <span class="font-medium text-highlighted">{{ key.name }}</span>
             <UBadge :color="key.status === 'active' ? 'success' : 'error'" variant="subtle" size="sm" :label="key.status" />
           </div>
-          <p class="mt-0.5 truncate font-mono text-sm text-muted">{{ key.key.substring(0, 20) }}...{{ key.key.substring(key.key.length - 8) }}</p>
+          <!-- 明文不再回读：直接展示后端 key_masked，禁止前端截断拼接。 -->
+          <p class="mt-0.5 truncate font-mono text-sm text-muted">{{ key.key_masked || key.key_prefix || '-' }}</p>
           <div class="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted">
             <div class="flex items-center gap-1">
               <span>{{ t('admin.users.group') }}:</span>
@@ -95,6 +99,7 @@
         @update:page-size="changePageSize"
       />
     </div>
+    <TotpStepUpDialog :controller="stepUp" />
   </BaseDialog>
 </template>
 
@@ -110,11 +115,21 @@ import Pagination from '@/components/common/Pagination.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import {
+  useStepUp,
+  isStepUpBlocked,
+  isStepUpCancelled,
+  stepUpBlockReason,
+} from '@/composables/useStepUp'
 
 const props = defineProps<{ show: boolean; user: AdminUser | null }>()
 const emit = defineEmits(['close'])
 const { t } = useI18n()
 const appStore = useAppStore()
+// 管理员查看用户 key 列表需要 step-up 2FA：每次打开都重新过门控，不缓存授权。
+const stepUp = useStepUp()
+const stepUpBlocked = ref('')
 
 const apiKeys = ref<ApiKey[]>([])
 const allGroups = ref<AdminGroup[]>([])
@@ -141,13 +156,18 @@ watch(() => [props.show, props.user?.id] as const, ([show], _, onCleanup) => {
 })
 
 const load = async () => {
-  if (!props.user) return
+  const targetUser = props.user
+  if (!targetUser) return
   const version = ++requestVersion
   closeGroupSelector()
   apiKeys.value = []
   loading.value = true
+  stepUpBlocked.value = ''
   try {
-    const res = await adminAPI.users.getUserApiKeys(props.user.id, page.value, pageSize.value)
+    // 门控被拒时弹 TOTP 并自动重试一次；取消则静默。
+    const res = await stepUp.run(() =>
+      adminAPI.users.getUserApiKeys(targetUser.id, page.value, pageSize.value)
+    )
     if (version !== requestVersion) return
     apiKeys.value = res.items || []
     total.value = res.total
@@ -155,6 +175,11 @@ const load = async () => {
     pageSize.value = res.page_size
   } catch (error) {
     if (version !== requestVersion) return
+    if (isStepUpCancelled(error)) return
+    if (isStepUpBlocked(error)) {
+      stepUpBlocked.value = stepUpBlockReason(error)
+      return
+    }
     console.error('Failed to load API keys:', error)
   } finally {
     if (version === requestVersion) loading.value = false

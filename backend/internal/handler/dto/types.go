@@ -53,11 +53,19 @@ type AdminUser struct {
 	RestrictPublicGroups bool `json:"restrict_public_groups"`
 }
 
+// APIKey 是 API Key 的对外展示模型。
+//
+// 明文 key 只有两个出口：创建和轮换的当次响应（见 APIKeySecret）。
+// 列表、详情、管理员视图、导出、usage 等所有其它出口一律只带
+// KeyPrefix（前 8 位）与 KeyMasked（前 8 + **** + 后 4）。
+// 这里刻意不存在 Key 字段：脱敏发生在 DTO 边界，任何映射疏漏都无法
+// 把明文塞进响应。
 type APIKey struct {
 	ConcurrencyLimit int        `json:"concurrency_limit"`
 	ID               int64      `json:"id"`
 	UserID           int64      `json:"user_id"`
-	Key              string     `json:"key"`
+	KeyPrefix        string     `json:"key_prefix"`
+	KeyMasked        string     `json:"key_masked"`
 	Name             string     `json:"name"`
 	GroupID          *int64     `json:"group_id"`
 	GroupIDs         []int64    `json:"group_ids,omitempty"`
@@ -101,6 +109,24 @@ type APIKey struct {
 
 	User  *User  `json:"user,omitempty"`
 	Group *Group `json:"group,omitempty"`
+}
+
+// APIKeySecret 是「密钥明文唯一一次出口」的响应模型：只在创建（POST /api/v1/keys）
+// 与轮换（PUT /api/v1/keys/:id 且 regenerate_key=true）的当次响应里使用。
+// 其它任何接口都必须返回 APIKey（只含 key_prefix / key_masked）。
+// 新代码不要复用这个类型，除非确实是"刚刚生成/替换了凭据"的那一次回执。
+type APIKeySecret struct {
+	APIKey
+	Key string `json:"key"`
+}
+
+// ToAPIKey 丢弃明文，只保留脱敏视图（需要把创建结果并回列表时使用）。
+func (s *APIKeySecret) ToAPIKey() *APIKey {
+	if s == nil {
+		return nil
+	}
+	base := s.APIKey
+	return &base
 }
 
 type Group struct {

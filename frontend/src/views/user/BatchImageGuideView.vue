@@ -11,6 +11,20 @@
       </template>
       <template #filters>
         <div class="flex flex-col gap-3">
+          <!-- 服务端不再回读明文 key：本页直接调网关，需要用户手动粘贴一把 key，
+               仅保存在页面内存里，刷新即消失，不落 localStorage。 -->
+          <div class="flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-800 dark:bg-amber-900/20 sm:flex-row sm:items-center">
+            <p class="text-xs text-amber-900 dark:text-amber-100">{{ t('batchImage.keyPanel.hint') }}</p>
+            <input
+              v-model="manualApiKey"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              class="input h-9 sm:ml-auto sm:w-96"
+              :placeholder="t('batchImage.keyPanel.placeholder')"
+              :aria-label="t('batchImage.keyPanel.placeholder')"
+            />
+          </div>
           <div class="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
             <div class="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[260px_160px_144px_152px] 2xl:w-auto">
               <div class="min-w-0">
@@ -560,6 +574,16 @@
             <p v-if="!loadingKeys && geminiApiKeys.length === 0" class="input-hint text-amber-600 dark:text-amber-400">
               {{ t('batchImage.create.noKeysHint') }}
             </p>
+            <label class="input-label mt-3">{{ t('batchImage.create.pasteKeyLabel') }}</label>
+            <input
+              v-model="manualApiKey"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              class="input"
+              :placeholder="t('batchImage.create.pasteKeyPlaceholder')"
+            />
+            <p class="input-hint text-amber-600 dark:text-amber-400">{{ t('batchImage.create.pasteKeyHint') }}</p>
           </div>
 
           <div>
@@ -890,6 +914,9 @@ const pagination = reactive({
 })
 
 const apiKeys = ref<ApiKey[]>([])
+// 手动粘贴的明文 key：只存在页面内存，刷新即清空，不落 localStorage。
+const manualApiKey = ref('')
+const activeApiKey = computed(() => manualApiKey.value.trim())
 const loadingKeys = ref(false)
 const loadingJobs = ref(false)
 const submitting = ref(false)
@@ -1269,10 +1296,15 @@ async function loadAvailableModels() {
   availableBatchImageModels.value = []
   form.model = ''
   if (!key) return
+  if (!activeApiKey.value) {
+    // 没有明文时只提示，不发明文为空的请求。
+    modelLoadError.value = batchImageText('pasteKeyRequired')
+    return
+  }
 
   loadingModels.value = true
   try {
-    const result = await listBatchImageModels(key.key)
+    const result = await listBatchImageModels(activeApiKey.value)
     if (requestID !== modelRequestSeq) return
     const seen = new Set<string>()
     availableBatchImageModels.value = (result.data || [])
@@ -1497,8 +1529,9 @@ function copyPromptPopover() {
 }
 
 async function loadBatchJobs() {
-  const keys = filteredApiKeys.value
-  if (!keys.length) {
+  const key = withPlaintext(filteredApiKeys.value[0] || selectedApiKey.value)
+  if (!key) {
+    // 没粘贴明文时不发请求，页头提示已经说明原因。
     batchJobs.value = []
     pagination.has_more = false
     return
@@ -1507,18 +1540,12 @@ async function loadBatchJobs() {
   closeMoreMenu()
   try {
     const options = listOptions()
-    const results = await Promise.all(keys.map(async (key) => {
-      const result = await listBatchImageJobs(key.key, options)
-      return {
-        hasMore: Boolean(result.has_more),
-        rows: (result.data || []).map(job => toJobRow(job, key)),
-      }
-    }))
-    batchJobs.value = applyChildCounts(results
-      .flatMap(result => result.rows)
+    const result = await listBatchImageJobs(key.key, options)
+    batchJobs.value = applyChildCounts((result.data || [])
+      .map(job => toJobRow(job, key))
       .sort((a, b) => b.created_at - a.created_at)
       .slice(0, pagination.page_size))
-    pagination.has_more = results.some(result => result.hasMore)
+    pagination.has_more = Boolean(result.has_more)
     selectedJobIds.value = new Set([...selectedJobIds.value].filter(id => visibleBatchJobs.value.some(job => job.id === id)))
   } catch (error: any) {
     appStore.showError(batchImageErrorMessage(error, batchImageText('loadJobsFailed')))
@@ -1588,20 +1615,34 @@ function closeDetail() {
   clearItemPreviews()
 }
 
-function keyForSelectedBatch(): ApiKey | null {
-  if (selectedBatchApiKeyId.value) {
-    const key = geminiApiKeys.value.find(item => item.id === selectedBatchApiKeyId.value)
-    if (key) return key
+// 本页直接带 Bearer 调网关，必须拿到明文；列表接口只回 key_masked，
+// 所以明文由用户手动粘贴，只存在页面内存（manualApiKey）里。
+type ApiKeyWithPlaintext = ApiKey & { key: string }
+
+const withPlaintext = (key: ApiKey | null | undefined): ApiKeyWithPlaintext | null => {
+  if (!key) return null
+  const secret = activeApiKey.value
+  if (!secret) {
+    appStore.showError(batchImageText('pasteKeyRequired'))
+    return null
   }
-  return selectedApiKey.value
+  return { ...key, key: secret }
 }
 
-function requireApiKey(): ApiKey | null {
+function keyForSelectedBatch(): ApiKeyWithPlaintext | null {
+  if (selectedBatchApiKeyId.value) {
+    const key = geminiApiKeys.value.find(item => item.id === selectedBatchApiKeyId.value)
+    if (key) return withPlaintext(key)
+  }
+  return withPlaintext(selectedApiKey.value)
+}
+
+function requireApiKey(): ApiKeyWithPlaintext | null {
   if (!selectedApiKey.value) {
     appStore.showError(batchImageText('selectApiKey'))
     return null
   }
-  return selectedApiKey.value
+  return withPlaintext(selectedApiKey.value)
 }
 
 function validateForm(): boolean {
@@ -1742,11 +1783,11 @@ function applyJobApiKey(job: BatchImageJobRow | Pick<BatchImageJob, 'id'>) {
   }
 }
 
-function apiKeyForJob(job: BatchImageJobRow | Pick<BatchImageJob, 'id'>): ApiKey | null {
+function apiKeyForJob(job: BatchImageJobRow | Pick<BatchImageJob, 'id'>): ApiKeyWithPlaintext | null {
   if ('api_key_id' in job && job.api_key_id) {
-    return geminiApiKeys.value.find(key => key.id === job.api_key_id) || null
+    return withPlaintext(geminiApiKeys.value.find(key => key.id === job.api_key_id) || null)
   }
-  return selectedApiKey.value
+  return withPlaintext(selectedApiKey.value)
 }
 
 function toggleJobSelection(batchId: string, checked: boolean) {
@@ -2407,6 +2448,7 @@ type BatchImageTextKey =
   | 'loadJobsFailed'
   | 'selectApiKey'
   | 'noModelsForKey'
+  | 'pasteKeyRequired'
   | 'selectModel'
   | 'promptRequired'
   | 'submitted'
@@ -2621,6 +2663,18 @@ watch(
     void loadAvailableModels()
   },
 )
+
+// 粘贴/清空临时明文后刷新依赖网关的列表。
+watch(activeApiKey, (value) => {
+  if (!value) {
+    availableBatchImageModels.value = []
+    batchJobs.value = []
+    pagination.has_more = false
+    return
+  }
+  void loadAvailableModels()
+  void loadBatchJobs()
+})
 
 watch(
   () => form.model,
