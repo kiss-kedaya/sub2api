@@ -58,6 +58,7 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.GET("/addresses", cryptoHandler.AdminListAddresses)
 		crypto.GET("/address-owners", cryptoHandler.AdminAddressOwners)
 		crypto.POST("/addresses/:id/status", cryptoHandler.AdminSetAddressStatus)
+		crypto.POST("/addresses/:id/rotate", cryptoHandler.AdminRotateAddress)
 		crypto.POST("/addresses/:id/export-private-key", cryptoHandler.AdminExportAddressPrivateKey)
 		crypto.GET("/sweep/plan", cryptoHandler.AdminSweepPlan)
 		crypto.POST("/sweep/run", cryptoHandler.AdminRunSweep)
