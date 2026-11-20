@@ -1363,11 +1363,17 @@ func (s *PricingService) buildModelLookupCandidates(modelLower string) []string 
 	candidates := rawCandidates
 	modelID := lastSegment(modelLower)
 	if base := normalizeGeminiThinkingTierAlias(modelID); base != modelID {
-		// Preserve an explicit catalog namespace before trying the plain model ID.
-		if namespace := strings.TrimSuffix(modelLower, modelID); namespace != "" {
-			candidates = append(candidates, namespace+base)
+		namespace := strings.TrimSuffix(modelLower, modelID)
+		switch {
+		case namespace == "":
+			candidates = append(candidates, base)
+		case isGeminiModelResourceName(modelLower):
+			// Google resource URLs identify the public model without a provider alias.
+			candidates = []string{modelLower, modelID, base}
+		default:
+			// An explicit provider stays within its own price namespace.
+			candidates = []string{modelLower, namespace + base}
 		}
-		candidates = append(candidates, base)
 	} else {
 		// Prefer canonical model names for all other aliases (including models/xxx).
 		candidates = append([]string{normalized}, candidates...)
@@ -1427,6 +1433,12 @@ func normalizeModelNameForPricing(model string) string {
 
 // normalizeGeminiThinkingTierAlias only strips known levels from the same
 // base model. Exact quotes retain priority over the base lookup.
+func isGeminiModelResourceName(model string) bool {
+	return strings.HasPrefix(model, "models/") ||
+		strings.HasPrefix(model, "publishers/google/models/") ||
+		(strings.HasPrefix(model, "projects/") && strings.Contains(model, "/publishers/google/models/"))
+}
+
 func normalizeGeminiThinkingTierAlias(model string) string {
 	idx := strings.LastIndexByte(model, '-')
 	if idx < 0 {
