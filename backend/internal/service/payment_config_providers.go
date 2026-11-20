@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
@@ -54,6 +55,9 @@ type ProviderInstanceResponse struct {
 
 // ListProviderInstancesWithConfig returns provider instances with decrypted config.
 func (s *PaymentConfigService) ListProviderInstancesWithConfig(ctx context.Context) ([]ProviderInstanceResponse, error) {
+	// Admin reads double as the lazy upgrade point: a legacy plaintext row is
+	// re-encrypted before it is projected back into the UI.
+	s.ensureProviderConfigsMigrated(ctx)
 	instances, err := s.entClient.PaymentProviderInstance.Query().
 		Order(paymentproviderinstance.BySortOrder()).All(ctx)
 	if err != nil {
@@ -545,14 +549,13 @@ func (s *PaymentConfigService) mergeConfig(ctx context.Context, id int64, newCon
 }
 
 // decryptConfig parses a stored provider config.
-// New records are plaintext JSON; legacy records are AES-256-GCM ciphertext
-// ("iv:authTag:ciphertext"). Values that cannot be parsed as either — including
-// legacy ciphertext with no/invalid TOTP_ENCRYPTION_KEY — are treated as empty,
-// letting the admin re-enter the config via the UI to complete the migration.
 //
-// TODO(deprecated-legacy-ciphertext): The AES fallback branch is a transitional
-// shim for pre-plaintext records. Remove it (and the encryptionKey field) after
-// a few releases once all live deployments have re-saved their provider configs.
+// Accepted inputs are identical to payment.DecryptProviderConfig: current
+// "v2:" AES-256-GCM ciphertext, pre-plaintext legacy ciphertext, and
+// pre-encryption plaintext JSON (kept readable until lazy migration rewrites
+// it). Encrypted rows fail closed when the installation key is missing or the
+// authentication tag does not verify; an unreadable row is reported as an error
+// instead of being projected as an empty configuration.
 func (s *PaymentConfigService) decryptConfig(stored string) (map[string]string, error) {
 	if stored == "" {
 		return nil, nil
@@ -561,18 +564,69 @@ func (s *PaymentConfigService) decryptConfig(stored string) (map[string]string, 
 	if err := json.Unmarshal([]byte(stored), &cfg); err == nil {
 		return cfg, nil
 	}
-	// Deprecated: legacy AES-256-GCM ciphertext fallback — scheduled for removal.
-	if len(s.encryptionKey) == payment.AES256KeySize {
-		//nolint:staticcheck // SA1019: intentional legacy fallback, scheduled for removal
-		if plaintext, err := payment.Decrypt(stored, s.encryptionKey); err == nil {
-			if err := json.Unmarshal([]byte(plaintext), &cfg); err == nil {
-				return cfg, nil
-			}
-		}
+	plaintext, err := payment.DecryptProviderConfig(stored, s.encryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("payment provider config is unreadable: %w", err)
 	}
-	slog.Warn("payment provider config unreadable, treating as empty for re-entry",
-		"stored_len", len(stored))
-	return nil, nil
+	if err := json.Unmarshal([]byte(plaintext), &cfg); err != nil {
+		return nil, fmt.Errorf("payment provider config is not a valid JSON object")
+	}
+	return cfg, nil
+}
+
+// ensureProviderConfigsMigrated runs the plaintext→encrypted migration at most
+// once per process. It is safe to call from hot read paths: without a usable
+// installation key it is a no-op, and the detached context keeps a client
+// disconnect from interrupting a partially applied migration.
+func (s *PaymentConfigService) ensureProviderConfigsMigrated(ctx context.Context) {
+	if s == nil || s.entClient == nil || len(s.encryptionKey) != payment.AES256KeySize {
+		return
+	}
+	s.legacyMigrateOnce.Do(func() {
+		migrateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		s.MigrateLegacyProviderConfigs(migrateCtx)
+	})
+}
+
+// MigrateLegacyProviderConfigs re-encrypts provider-instance configs that are
+// still stored as pre-encryption plaintext. It is idempotent and best-effort:
+// rows that cannot be parsed are left untouched for an administrator to re-save,
+// and no secret material is ever logged. Runtime callers invoke it lazily on the
+// first payment read; disabled instances are migrated too, so enabling one later
+// cannot reintroduce plaintext storage.
+func (s *PaymentConfigService) MigrateLegacyProviderConfigs(ctx context.Context) {
+	if s == nil || s.entClient == nil || len(s.encryptionKey) != payment.AES256KeySize {
+		return
+	}
+	instances, err := s.entClient.PaymentProviderInstance.Query().All(ctx)
+	if err != nil {
+		slog.Warn("[PaymentConfigService] legacy config migration query failed", "error", err)
+		return
+	}
+	migrated := 0
+	for _, inst := range instances {
+		if inst == nil || inst.Config == "" || payment.IsEncryptedProviderConfig(inst.Config) {
+			continue
+		}
+		var cfg map[string]string
+		if err := json.Unmarshal([]byte(inst.Config), &cfg); err != nil {
+			continue
+		}
+		encrypted, err := s.encryptConfig(cfg)
+		if err != nil {
+			slog.Warn("[PaymentConfigService] legacy config migration encrypt failed", "instance_id", inst.ID, "error", err)
+			continue
+		}
+		if _, err := s.entClient.PaymentProviderInstance.UpdateOneID(inst.ID).SetConfig(encrypted).Save(ctx); err != nil {
+			slog.Warn("[PaymentConfigService] legacy config migration update failed", "instance_id", inst.ID, "error", err)
+			continue
+		}
+		migrated++
+	}
+	if migrated > 0 {
+		slog.Info("[PaymentConfigService] provider configs migrated to encrypted storage", "count", migrated)
+	}
 }
 
 func (s *PaymentConfigService) DeleteProviderInstance(ctx context.Context, id int64) error {
@@ -587,13 +641,25 @@ func (s *PaymentConfigService) DeleteProviderInstance(ctx context.Context, id in
 	return s.entClient.PaymentProviderInstance.DeleteOneID(id).Exec(ctx)
 }
 
-// encryptConfig serialises a provider config for storage.
-// New records are written as plaintext JSON; the historical AES-GCM wrapping
-// has been dropped but decryptConfig still accepts old ciphertext during migration.
+// encryptConfig serialises a provider config for storage using AES-256-GCM
+// keyed by the installation encryption key (the same durable key that protects
+// TOTP secrets). Merchant credentials therefore never reach the database as
+// plaintext. Missing key material fails closed: the write is rejected instead of
+// silently persisting plaintext.
 func (s *PaymentConfigService) encryptConfig(cfg map[string]string) (string, error) {
 	data, err := json.Marshal(cfg)
 	if err != nil {
-		return "", fmt.Errorf("marshal config: %w", err)
+		return "", fmt.Errorf("marshal payment provider config: %w", err)
 	}
-	return string(data), nil
+	if len(s.encryptionKey) != payment.AES256KeySize {
+		return "", infraerrors.ServiceUnavailable(
+			"PAYMENT_ENCRYPTION_KEY_UNAVAILABLE",
+			"payment config encryption key is unavailable; configure or restore TOTP_ENCRYPTION_KEY before saving payment providers",
+		)
+	}
+	encrypted, err := payment.EncryptProviderConfig(string(data), s.encryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("encrypt payment provider config: %w", err)
+	}
+	return encrypted, nil
 }

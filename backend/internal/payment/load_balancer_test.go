@@ -488,16 +488,21 @@ func TestDecryptConfig_PlaintextAndLegacyCompat(t *testing.T) {
 
 	plaintextJSON := `{"appId":"app-123","secret":"sec-xyz"}`
 
+	encrypted, err := EncryptProviderConfig(plaintextJSON, key)
+	if err != nil {
+		t.Fatalf("seed EncryptProviderConfig: %v", err)
+	}
 	legacyEncrypted, err := Encrypt(plaintextJSON, key)
 	if err != nil {
-		t.Fatalf("seed Encrypt: %v", err)
+		t.Fatalf("seed legacy Encrypt: %v", err)
 	}
 
 	tests := []struct {
-		name   string
-		stored string
-		key    []byte
-		want   map[string]string
+		name    string
+		stored  string
+		key     []byte
+		want    map[string]string
+		wantErr bool
 	}{
 		{
 			name:   "empty stored returns nil map",
@@ -518,28 +523,40 @@ func TestDecryptConfig_PlaintextAndLegacyCompat(t *testing.T) {
 			want:   map[string]string{"appId": "app-123", "secret": "sec-xyz"},
 		},
 		{
+			name:   "current ciphertext with correct key decrypts",
+			stored: encrypted,
+			key:    key,
+			want:   map[string]string{"appId": "app-123", "secret": "sec-xyz"},
+		},
+		{
 			name:   "legacy ciphertext with correct key decrypts",
 			stored: legacyEncrypted,
 			key:    key,
 			want:   map[string]string{"appId": "app-123", "secret": "sec-xyz"},
 		},
 		{
-			name:   "legacy ciphertext with no key treated as empty",
-			stored: legacyEncrypted,
-			key:    nil,
-			want:   nil,
+			name:    "legacy ciphertext with no key fails closed",
+			stored:  legacyEncrypted,
+			key:     nil,
+			wantErr: true,
 		},
 		{
-			name:   "legacy ciphertext with wrong key treated as empty",
-			stored: legacyEncrypted,
-			key:    wrongKey,
-			want:   nil,
+			name:    "current ciphertext with wrong key fails closed",
+			stored:  encrypted,
+			key:     wrongKey,
+			wantErr: true,
 		},
 		{
-			name:   "garbage data treated as empty",
-			stored: "not-json-and-not-ciphertext",
-			key:    key,
-			want:   nil,
+			name:    "legacy ciphertext with wrong key fails closed",
+			stored:  legacyEncrypted,
+			key:     wrongKey,
+			wantErr: true,
+		},
+		{
+			name:    "garbage data fails closed",
+			stored:  "not-json-and-not-ciphertext",
+			key:     key,
+			wantErr: true,
 		},
 	}
 
@@ -548,6 +565,12 @@ func TestDecryptConfig_PlaintextAndLegacyCompat(t *testing.T) {
 			t.Parallel()
 			lb := NewDefaultLoadBalancer(nil, tt.key)
 			got, err := lb.decryptConfig(tt.stored)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("decryptConfig expected error, got %v", got)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("decryptConfig unexpected error: %v", err)
 			}

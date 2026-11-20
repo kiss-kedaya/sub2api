@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
@@ -268,6 +269,9 @@ type PaymentConfigService struct {
 	entClient     *dbent.Client
 	settingRepo   SettingRepository
 	encryptionKey []byte
+	// legacyMigrateOnce runs the plaintext→encrypted provider config migration
+	// at most once per process on the first read that can trigger it.
+	legacyMigrateOnce sync.Once
 }
 
 // NewPaymentConfigService creates a new PaymentConfigService.

@@ -21,18 +21,18 @@ type EncryptionKey []byte
 // to prevent startup with a misconfigured encryption key.
 func ProvideEncryptionKey(cfg *config.Config) (EncryptionKey, error) {
 	if cfg == nil {
-		slog.Warn("payment encryption key not configured — encrypted payment config and resume signing will be unavailable")
+		slog.Warn("payment encryption key not configured — saving payment provider configs fails closed and encrypted configs cannot be decrypted")
 		return nil, nil
 	}
 	keyHex := strings.TrimSpace(cfg.Totp.EncryptionKey)
 	if keyHex == "" {
-		slog.Warn("payment encryption key not configured — encrypted payment config will be unavailable")
+		slog.Warn("payment encryption key not configured — saving payment provider configs fails closed")
 		return nil, nil
 	}
 	// Process-local defaults change across restarts. Configured or bootstrapped
 	// persistent installation keys are shared by all instances.
 	if !cfg.Totp.HasPersistentEncryptionKey() {
-		slog.Warn("persistent installation key unavailable; payment encryption and resume signing are disabled")
+		slog.Warn("persistent installation key unavailable; payment provider config encryption is disabled (writes fail closed)")
 		return nil, nil
 	}
 	key, err := hex.DecodeString(keyHex)
