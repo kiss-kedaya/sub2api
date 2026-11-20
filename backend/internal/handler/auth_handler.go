@@ -285,8 +285,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Check if TOTP 2FA is enabled for this user
-	if h.totpService != nil && h.settingSvc.IsTotpEnabled(c.Request.Context()) && user.TotpEnabled {
+	// Check if TOTP 2FA is enabled for this user.
+	// 统一走 SettingService.LoginRequiresTOTP：功能开关读取失败时 fail-closed
+	// （要求动态码），与第三方 OAuth / passkey / pending OAuth 兑换同一口径。
+	// 这里不能用 IsTotpEnabled —— 它在设置读取失败时返回 false，会让密码登录
+	// 在设置存储抖动时静默跳过已启用账号的二次验证。
+	if h.totpService != nil && h.settingSvc.LoginRequiresTOTP(c.Request.Context(), user) {
 		// Create a temporary login session for 2FA
 		tempToken, err := h.totpService.CreateLoginSession(c.Request.Context(), user.ID, user.Email)
 		if err != nil {
