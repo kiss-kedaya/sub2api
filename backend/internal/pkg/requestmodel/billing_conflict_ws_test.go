@@ -126,20 +126,20 @@ func BenchmarkConflictingWSBillingFieldTypical(b *testing.B) {
 func buildConflictingWSBenchFrame(size int) []byte {
 	var sb strings.Builder
 	sb.Grow(size + 256)
-	sb.WriteString(`{"type":"response.create","model":"gpt-6.1-sol","service_tier":"priority","reasoning":{"effort":"high"},"input":[`)
+	_, _ = sb.WriteString(`{"type":"response.create","model":"gpt-6.1-sol","service_tier":"priority","reasoning":{"effort":"high"},"input":[`)
 	part := strings.Repeat("abcdefgh", 128) // 1KB 文本块
 	written := 0
 	first := true
 	for written < size {
 		if !first {
-			sb.WriteByte(',')
+			_ = sb.WriteByte(',')
 		}
 		first = false
-		sb.WriteString(`{"type":"message","role":"user","content":[{"type":"input_text","text":"`)
-		sb.WriteString(part)
-		sb.WriteString(`"}]}`)
+		_, _ = sb.WriteString(`{"type":"message","role":"user","content":[{"type":"input_text","text":"`)
+		_, _ = sb.WriteString(part)
+		_, _ = sb.WriteString(`"}]}`)
 		written += len(part) + 64
 	}
-	sb.WriteString(`]}`)
+	_, _ = sb.WriteString(`]}`)
 	return []byte(sb.String())
 }
