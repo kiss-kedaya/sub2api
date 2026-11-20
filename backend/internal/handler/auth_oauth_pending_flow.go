@@ -1636,6 +1636,8 @@ func (h *AuthHandler) bindPendingOAuthLogin(c *gin.Context, provider string) {
 		response.BadRequest(c, "Pending oauth session provider mismatch")
 		return
 	}
+	markAuthAuditProvider(c, pendingOAuthAuditProvider(provider, session.ProviderType))
+	markAuthAuditEmail(c, req.Email)
 
 	user, err := h.authService.ValidatePasswordCredentials(c.Request.Context(), strings.TrimSpace(req.Email), req.Password)
 	if err != nil {
@@ -1670,6 +1672,8 @@ func (h *AuthHandler) bindPendingOAuthLogin(c *gin.Context, provider string) {
 			response.InternalError(c, "Failed to create 2FA session")
 			return
 		}
+		// 审计：OAuth 绑定登录被 2FA 拦下（挑战下发，未签发会话）。
+		markAuthAuditChallenge(c, user.ID, user.Email)
 		response.Success(c, TotpLoginResponse{
 			Requires2FA:     true,
 			TempToken:       tempToken,
@@ -1682,6 +1686,7 @@ func (h *AuthHandler) bindPendingOAuthLogin(c *gin.Context, provider string) {
 		return
 	}
 
+	markAuthAuditSuccess(c, user.ID, user.Email)
 	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
 	// bindPendingOAuthLogin = 绑定已有账户登录，不动 users.username（用户已有自己的名字）
 	h.maybeSyncDingTalkAfterLogin(c.Request.Context(), session, user.ID)
@@ -1728,6 +1733,7 @@ func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string)
 		response.BadRequest(c, "Pending oauth session provider mismatch")
 		return
 	}
+	markAuthAuditProvider(c, pendingOAuthAuditProvider(provider, session.ProviderType))
 
 	client := h.entClient()
 	if client == nil {
@@ -1736,6 +1742,7 @@ func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string)
 	}
 
 	email := strings.TrimSpace(strings.ToLower(req.Email))
+	markAuthAuditEmail(c, email)
 	existingUser, err := findUserByNormalizedEmail(c.Request.Context(), client, email)
 	if err != nil {
 		switch {
@@ -1888,6 +1895,7 @@ func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string)
 	}
 
 	h.authService.ApplyOAuthSignupPromoCode(c.Request.Context(), user.ID, pendingOAuthPromoCode(session))
+	markAuthAuditSuccess(c, user.ID, user.Email)
 	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
 	// createPendingOAuthAccount = 注册新账户，需要把钉钉昵称同步到 users.username 作为初始值
 	h.maybeSyncDingTalkAfterRegistration(c.Request.Context(), session, user.ID)
@@ -1935,6 +1943,9 @@ func (h *AuthHandler) ExchangePendingOAuthCompletion(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// 审计：pending 兑换无法从路径判断渠道，用 session 里的真实 provider 回填。
+	markAuthAuditProvider(c, pendingOAuthAuditProvider("", session.ProviderType))
+	markAuthAuditEmail(c, session.ResolvedEmail)
 
 	payload, ok := readCompletionResponse(session.LocalFlowState)
 	if !ok {
@@ -1992,6 +2003,8 @@ func (h *AuthHandler) ExchangePendingOAuthCompletion(c *gin.Context) {
 			payload["requires_2fa"] = true
 			payload["temp_token"] = tempToken
 			payload["user_email_masked"] = service.MaskEmail(loginUser.Email)
+			// 审计：2FA 挑战下发（第三方登录不能绕过二次验证）。
+			markAuthAuditChallenge(c, loginUser.ID, loginUser.Email)
 			clearCookies()
 			response.Success(c, payload)
 			return
@@ -2016,14 +2029,17 @@ func (h *AuthHandler) ExchangePendingOAuthCompletion(c *gin.Context) {
 			}
 			_ = decision
 		}
+		markAuthAuditPending(c, "invitation_required")
 		response.Success(c, payload)
 		return
 	}
 	if pendingSessionRequiresEmailCompletion(payload) {
+		markAuthAuditPending(c, "email_completion")
 		response.Success(c, payload)
 		return
 	}
 	if pendingSessionRequiresBindLogin(payload) {
+		markAuthAuditPending(c, "bind_login_required")
 		response.Success(c, payload)
 		return
 	}
@@ -2039,12 +2055,14 @@ func (h *AuthHandler) ExchangePendingOAuthCompletion(c *gin.Context) {
 	//   2. intent == bind_current_user —— 已登录用户主动发起绑定（绑定目标来自登录态 cookie）。
 	// 其余状态一律只返回 payload，不绑定、不消费 session。
 	if !canIssueTokenPair && !strings.EqualFold(strings.TrimSpace(session.Intent), oauthIntentBindCurrentUser) {
+		markAuthAuditPending(c, "choice_required")
 		response.Success(c, payload)
 		return
 	}
 	if !adoptionDecision.hasDecision() {
 		adoptionRequired, _ := payload["adoption_required"].(bool)
 		if adoptionRequired {
+			markAuthAuditPending(c, "adoption_required")
 			response.Success(c, payload)
 			return
 		}
@@ -2088,6 +2106,9 @@ func (h *AuthHandler) ExchangePendingOAuthCompletion(c *gin.Context) {
 		payload["refresh_token"] = tokenPair.RefreshToken
 		payload["expires_in"] = tokenPair.ExpiresIn
 		payload["token_type"] = "Bearer"
+		markAuthAuditSuccess(c, loginUser.ID, loginUser.Email)
+	} else {
+		markAuthAuditPending(c, "binding_applied")
 	}
 
 	clearCookies()

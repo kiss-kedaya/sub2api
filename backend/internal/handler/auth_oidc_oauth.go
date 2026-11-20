@@ -707,6 +707,7 @@ func (h *AuthHandler) CompleteOIDCOAuthRegistration(c *gin.Context) {
 		respondPendingOAuthBindingApplyError(c, err)
 		return
 	}
+	markAuthAuditSuccess(c, user.ID, user.Email)
 	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
 	clearOAuthPendingSessionCookie(c, secureCookie)
 	clearOAuthPendingBrowserCookie(c, secureCookie)
@@ -1295,6 +1296,7 @@ func (h *AuthHandler) tryOIDCVerifiedEmailFastPath(
 		return false
 	}
 
+	markAuthAuditSuccess(c, user.ID, user.Email)
 	fragment := url.Values{}
 	fragment.Set("access_token", tokenPair.AccessToken)
 	fragment.Set("refresh_token", tokenPair.RefreshToken)
