@@ -27,6 +27,8 @@ var DefaultModels = []Model{
 	{ID: "gpt-5.6-luna", Object: "model", Created: 1780876800, OwnedBy: "openai", Type: "model", DisplayName: "GPT-5.6 Luna"},
 	{ID: "gpt-6.1-terra", Object: "model", Created: 1704067200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.1 Terra"},
 	{ID: "gpt-6.1-sol", Object: "model", Created: 1790640000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.1 Sol"},
+	{ID: "gpt-6.2-sol", Object: "model", Created: 1794873600, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.2 Sol"},
+	{ID: "gpt-6.2-astra", Object: "model", Created: 1794873600, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6.2 Astra"},
 	{ID: "gpt-6-sol", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Sol"},
 	{ID: "gpt-6-luna", Object: "model", Created: 1790035200, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Luna"},
 	{ID: "gpt-6-astra", Object: "model", Created: 1788480000, OwnedBy: "openai", Type: "model", DisplayName: "GPT-6 Astra"},
@@ -198,6 +200,26 @@ func IsGPT6SolOrLunaModelSpelling(model string) bool {
 		}
 	}
 	return false
+}
+
+// GPT62ModelID returns the published model ID for local effort and compact
+// spellings of the GPT-6.2 family. An empty result means the model is not 6.2.
+func GPT62ModelID(model string) string {
+	canonical := CanonicalizeOpenAIModelAliasSpelling(model)
+	for _, base := range []string{"gpt-6.2-sol", "gpt-6.2-astra"} {
+		if canonical == base {
+			return base
+		}
+		suffix, ok := strings.CutPrefix(canonical, base+"-")
+		if !ok {
+			continue
+		}
+		switch suffix {
+		case "none", "minimal", "low", "medium", "high", "xhigh", "max", "openai-compact":
+			return base
+		}
+	}
+	return ""
 }
 
 // IsGPT61SolModelSpelling recognizes the published model and local effort/compact
