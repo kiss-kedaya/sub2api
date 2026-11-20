@@ -86,6 +86,36 @@ func IsUpstreamCapacityCoolingBody(body []byte) bool {
 	return false
 }
 
+// upstreamRequestBodyBudgetExhaustedMarker is emitted verbatim by sub2api
+// instances (v0.2.20+) when the gateway request-body memory budget
+// (GATEWAY_REQUEST_BODY_MEMORY_BUDGET_BYTES) is full:
+//
+//	503 {"error":{"message":"Request body buffering capacity is exhausted; retry later",...}}
+//	Retry-After: 1
+//
+// Only that phrase marks this condition; generic capacity/cooling wording must
+// keep its existing classification.
+const upstreamRequestBodyBudgetExhaustedMarker = "request body buffering capacity is exhausted"
+
+// UpstreamRequestBodyBudgetClientMessage is the fixed downstream message for
+// this condition. The upstream text names the supplier instance's internal
+// memory budget, so it is replaced instead of relayed verbatim.
+const UpstreamRequestBodyBudgetClientMessage = "Upstream request capacity is temporarily exhausted, please retry later"
+
+// IsUpstreamRequestBodyBudgetExhausted reports whether an upstream response is
+// the request-body memory budget rejection from a sub2api instance.
+//
+// This is a per-instance capacity signal, not a credential or request error:
+// the instance cannot accept another buffered body until in-flight bodies are
+// released, so retrying the same account immediately only deepens the deficit.
+// Rotating to another account/upstream instance remains valid.
+func IsUpstreamRequestBodyBudgetExhausted(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	return strings.Contains(strings.ToLower(string(body)), upstreamRequestBodyBudgetExhaustedMarker)
+}
+
 func isUpstreamCapacityCoolingMessage(value string) bool {
 	lower := strings.ToLower(strings.TrimSpace(value))
 	if lower == "" {

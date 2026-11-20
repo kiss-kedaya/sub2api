@@ -21,6 +21,7 @@ const (
 	UpstreamFailureAuth         UpstreamFailureKind = "credential-forbidden"
 	UpstreamFailureWAF          UpstreamFailureKind = "cloudflare-waf"
 	UpstreamFailureCapacity     UpstreamFailureKind = "capacity-cooling"
+	UpstreamFailureBodyBudget   UpstreamFailureKind = "request-body-budget"
 	UpstreamFailureRateLimit    UpstreamFailureKind = "rate-limit"
 	UpstreamFailureServer       UpstreamFailureKind = "server"
 	UpstreamFailureNetwork      UpstreamFailureKind = "network"
@@ -43,6 +44,13 @@ func ClassifyUpstreamFailure(statusCode int, headers http.Header, body []byte, e
 	}
 	if httputil.IsCloudflareChallengeResponse(statusCode, headers, body) || IsUpstreamWAFBody(body) {
 		return UpstreamFailureClass{Kind: UpstreamFailureWAF, Failover: true}
+	}
+	// A sub2api supplier instance rejects new request bodies once its in-memory
+	// buffering budget is exhausted. This is per-instance capacity, not a
+	// credential/request error: replaying it on the same account can only make
+	// the deficit worse, so never same-account retry it, but do rotate.
+	if IsUpstreamRequestBodyBudgetExhausted(body) {
+		return UpstreamFailureClass{Kind: UpstreamFailureBodyBudget, Failover: true}
 	}
 	if IsUpstreamCapacityCoolingBody(body) {
 		return UpstreamFailureClass{

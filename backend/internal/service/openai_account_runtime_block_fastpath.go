@@ -188,7 +188,9 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	// same-account retry budget. Recording the generic account+model transient
 	// cooldown here would block the next approved retry before that budget is used.
 	class := ClassifyUpstreamFailure(statusCode, headers, responseBody, nil)
-	if class.Kind == UpstreamFailureWAF {
+	if class.Kind == UpstreamFailureWAF || class.Kind == UpstreamFailureBodyBudget {
+		// Request-scoped body-budget rejections name the supplier instance, not
+		// this account: rotate, but do not cool the account+model down.
 		return shouldDisable
 	}
 	poolModeRetryable := PoolModeSameAccountRetry(account, statusCode, headers, responseBody)

@@ -143,7 +143,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		}
 
 		// 透传分支禁止 400 请求体降级重试（该重试会改写请求体）
-		if resp.StatusCode >= 400 && resp.StatusCode != 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
+		if resp.StatusCode >= 400 && resp.StatusCode != 400 && s.shouldRetryUpstreamErrorForResponse(account, resp) {
 			if resp.StatusCode == http.StatusNotFound {
 				respBody, _ := s.readUpstreamErrorBody(resp)
 				_ = resp.Body.Close()
@@ -210,7 +210,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
-		if s.shouldRetryUpstreamError(account, resp.StatusCode) {
+		if s.shouldRetryUpstreamErrorForResponse(account, resp) {
 			if s.shouldFailoverUpstreamResponse(resp.StatusCode, resp.Header, respBody) {
 				logger.LegacyPrintf("service.gateway", "[Anthropic Passthrough] Upstream error (retry exhausted, failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
 					account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
@@ -237,6 +237,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 				return nil, &UpstreamFailoverError{
 					StatusCode:             resp.StatusCode,
 					ResponseBody:           respBody,
+					ResponseHeaders:        resp.Header.Clone(),
 					RetryableOnSameAccount: PoolModeSameAccountRetry(account, resp.StatusCode, resp.Header, respBody),
 				}
 			}
@@ -269,6 +270,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
+				ResponseHeaders:        resp.Header.Clone(),
 				RetryableOnSameAccount: PoolModeSameAccountRetry(account, resp.StatusCode, resp.Header, respBody),
 			}
 		}
