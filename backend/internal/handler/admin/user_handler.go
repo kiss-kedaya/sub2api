@@ -469,21 +469,6 @@ func (h *UserHandler) Update(c *gin.Context) {
 		}
 	}
 
-	// 管理员账号的邮箱是登录身份与密码找回的接收地址：改它等同于把账号控制权
-	// 转移到新的邮箱，因此与改密码同级，也要 step-up；普通用户资料编辑不受影响。
-	if email := strings.TrimSpace(req.Email); email != "" {
-		target, err := h.adminService.GetUser(c.Request.Context(), userID)
-		if err != nil {
-			response.ErrorFrom(c, err)
-			return
-		}
-		if target.Role == service.RoleAdmin && !strings.EqualFold(email, strings.TrimSpace(target.Email)) {
-			if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
-				return
-			}
-		}
-	}
-
 	// 防锁死保护：管理员不能把自己降级为普通用户(单管理员场景下会失去后台访问权)。
 	// 与既有"不能禁用/删除 admin"保护一致。降级其他管理员仍然允许。
 	if req.Role == service.RoleUser && userID == getAdminIDFromContext(c) {
@@ -491,35 +476,49 @@ func (h *UserHandler) Update(c *gin.Context) {
 		return
 	}
 
+	// 加载目标用户用于“字段是否真的变更”判断：前端编辑表单会回传未修改的
+	// email/role/concurrency/rpm_limit，只有真实变更的敏感字段才触发 step-up。
+	target, err := h.adminService.GetUser(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	// 管理员账号的邮箱是登录身份与密码找回的接收地址：改它等同于把账号控制权
+	// 转移到新的邮箱，因此与改密码同级，也要 step-up；普通用户资料编辑不受影响。
+	if email := strings.TrimSpace(req.Email); email != "" && target.Role == service.RoleAdmin && !strings.EqualFold(email, strings.TrimSpace(target.Email)) {
+		if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
+			return
+		}
+	}
+
 	// 降级管理员会移除其管理员 TOTP 保护，必须校验操作者的动态码授权。
 	// 不受全局 step-up 开关影响；批准标记只由此处设置，不接受请求绑定。
 	totpDemotionApproved := false
-	if req.Role == service.RoleUser {
-		target, err := h.adminService.GetUser(c.Request.Context(), userID)
-		if err != nil {
-			response.ErrorFrom(c, err)
+	stepUpEnforced := false
+	if req.Role == service.RoleUser && target.Role == service.RoleAdmin {
+		if !middleware.EnforceStepUpAlways(c, h.totpService, h.userService) {
 			return
 		}
-		if target.Role == service.RoleAdmin {
-			if !middleware.EnforceStepUpAlways(c, h.totpService, h.userService) {
-				return
-			}
-			totpDemotionApproved = true
-		}
+		totpDemotionApproved = true
+		stepUpEnforced = true
 	}
 
 	// 把普通用户提升为管理员属权限敏感操作：需最近完成 step-up 2FA 验证。
 	// 目标已是管理员时（前端编辑表单总是携带 role）不触发，避免日常编辑被打断。
-	if req.Role == service.RoleAdmin {
-		target, err := h.adminService.GetUser(c.Request.Context(), userID)
-		if err != nil {
-			response.ErrorFrom(c, err)
+	if req.Role == service.RoleAdmin && target.Role != service.RoleAdmin {
+		if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
 			return
 		}
-		if target.Role != service.RoleAdmin {
-			if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
-				return
-			}
+		stepUpEnforced = true
+	}
+
+	// 启停账号、分组授权（allowed_groups / restrict_public_groups）、用户专属倍率、
+	// 并发与 RPM 上限均属账号安全或权限敏感操作，统一要求 step-up 二次验证。
+	// 普通资料字段（username/notes）以及前端回传但未变更的字段不触发。
+	if !stepUpEnforced && updateUserRequiresStepUp(target, req) {
+		if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
+			return
 		}
 	}
 
@@ -546,6 +545,76 @@ func (h *UserHandler) Update(c *gin.Context) {
 	}
 
 	response.Success(c, dto.UserFromServiceAdmin(user))
+}
+
+// updateUserRequiresStepUp 判断一次管理员用户更新是否改动了敏感字段。
+// 前端编辑表单会回传未修改的 concurrency/rpm_limit 等字段，因此逐项与当前值
+// 比较；只有真实变更才返回 true。密码/邮箱/角色由 Update 内独立门控处理。
+func updateUserRequiresStepUp(target *service.User, req UpdateUserRequest) bool {
+	if target == nil {
+		return true
+	}
+	if req.Status != "" && req.Status != target.Status {
+		return true
+	}
+	if req.AllowedGroups != nil && !sameInt64SetForStepUp(*req.AllowedGroups, target.AllowedGroups) {
+		return true
+	}
+	if req.RestrictPublicGroups != nil && *req.RestrictPublicGroups != target.RestrictPublicGroups {
+		return true
+	}
+	if req.Concurrency != nil && *req.Concurrency != target.Concurrency {
+		return true
+	}
+	if req.RPMLimit != nil && *req.RPMLimit != target.RPMLimit {
+		return true
+	}
+	return groupRatesChangedForStepUp(target.GroupRates, req.GroupRates)
+}
+
+func sameInt64SetForStepUp(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 {
+		return true
+	}
+	counts := make(map[int64]int, len(a))
+	for _, v := range a {
+		counts[v]++
+	}
+	for _, v := range b {
+		if counts[v] == 0 {
+			return false
+		}
+		counts[v]--
+	}
+	return true
+}
+
+// groupRatesChangedForStepUp 复刻 SyncUserGroupRates 的语义：nil 表示不修改；
+// 空 map 表示清空该用户全部专属倍率；非空 map 只处理列出的分组（nil 值=删除）。
+func groupRatesChangedForStepUp(current map[int64]float64, next map[int64]*float64) bool {
+	if next == nil {
+		return false
+	}
+	if len(next) == 0 {
+		// 空集合会清空全部专属倍率，属资金敏感变更。
+		return true
+	}
+	for groupID, rate := range next {
+		currentRate, exists := current[groupID]
+		if rate == nil {
+			if exists {
+				return true
+			}
+			continue
+		}
+		if !exists || currentRate != *rate {
+			return true
+		}
+	}
+	return false
 }
 
 // Delete handles deleting a user

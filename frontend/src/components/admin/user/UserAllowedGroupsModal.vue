@@ -107,6 +107,9 @@
       </div>
     </template>
   </BaseDialog>
+
+  <!-- 分组授权与专属倍率变更属敏感操作：后端要求 step-up 2FA 时弹码并自动重试 -->
+  <TotpStepUpDialog :controller="stepUp" />
 </template>
 
 <script setup lang="ts">
@@ -118,6 +121,8 @@ import { fetchPaginatedItems } from '@/utils/paginatedItems'
 import type { AdminUser, Group, GroupPlatform } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
+import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 
 interface GroupRateConfig {
   groupId: number
@@ -133,6 +138,7 @@ const props = defineProps<{ show: boolean; user: AdminUser | null }>()
 const emit = defineEmits(['close', 'success'])
 const { t } = useI18n()
 const appStore = useAppStore()
+const stepUp = useStepUp()
 
 const groups = ref<Group[]>([])
 const groupConfigs = ref<GroupRateConfig[]>([])
@@ -233,7 +239,8 @@ const updateCustomRate = (groupId: number, value: string) => {
 }
 
 const handleSave = async () => {
-  if (!props.user) return
+  const targetUser = props.user
+  if (!targetUser) return
   submitting.value = true
 
   try {
@@ -259,17 +266,29 @@ const handleSave = async () => {
       }
     }
 
-    await adminAPI.users.update(props.user.id, {
+    // 分组授权/专属倍率变更属敏感字段：后端要求 step-up 时弹 TOTP 并自动重试。
+    await stepUp.run(() => adminAPI.users.update(targetUser.id, {
       allowed_groups: allowedGroups,
       restrict_public_groups: restrictPublicGroups.value,
       group_rates: Object.keys(groupRates).length > 0 ? groupRates : undefined,
-    })
+    }))
 
     appStore.showSuccess(t('admin.users.groupConfigUpdated'))
     emit('success')
     emit('close')
-  } catch (error) {
-    console.error('Failed to update user group config:', error)
+  } catch (error: any) {
+    if (isStepUpCancelled(error)) {
+      // 用户主动取消二次验证：保持弹窗打开。
+    } else if (isStepUpBlocked(error)) {
+      appStore.showError(
+        stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+          ? t('stepUp.adminApiKeyForbidden')
+          : t('stepUp.notEnabled')
+      )
+    } else {
+      console.error('Failed to update user group config:', error)
+      appStore.showError(error?.response?.data?.detail || t('admin.users.failedToUpdate'))
+    }
   } finally {
     submitting.value = false
   }
