@@ -393,18 +393,17 @@ func decorateAuthAuditEntry(c *gin.Context, entry *service.AuditLog, meta auditA
 // sanitizeAuditReason 只保留错误码字符集，避免把上游错误原文（可能含邮箱/链接）写进审计。
 func sanitizeAuditReason(reason string) string {
 	reason = strings.TrimSpace(reason)
-	var b strings.Builder
-	b.Grow(len(reason))
+	out := make([]rune, 0, len(reason))
 	for _, r := range reason {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
 			r == '_', r == '-', r == '.':
-			b.WriteRune(r)
+			out = append(out, r)
 		default:
-			b.WriteRune('_')
+			out = append(out, '_')
 		}
 	}
-	return b.String()
+	return string(out)
 }
 
 // auditBodyOmittedRoutes 请求体几乎整体由凭证构成的路由（如整块粘贴 auth JSON 的导入接口）。
