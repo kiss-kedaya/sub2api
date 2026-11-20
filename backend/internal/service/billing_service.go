@@ -105,7 +105,10 @@ type BillingCache interface {
 // ModelPricing 模型价格配置（per-token价格，与LiteLLM格式一致）
 type ModelPricing struct {
 	// UltrafastMultiplier is model-owned and independent of operator Fast pricing.
-	UltrafastMultiplier                float64
+	UltrafastMultiplier float64
+	// UltrafastMultiplierOverride 是渠道显式配置的 Ultra Fast 倍率；非 nil 时优先于
+	// 模型自有倍率。运营者按渠道覆盖，因为不同上游对该档位的定价并不相同。
+	UltrafastMultiplierOverride        *float64
 	InputPricePerToken                 float64            // 每token输入价格 (USD)
 	InputPricePerTokenPriority         float64            // priority service tier 下每token输入价格 (USD)
 	ImageInputPricePerToken            float64            // 图片输入 token 价格 (USD)，用于多模态 embedding 等图文不同价场景；为 0 时回退到 InputPricePerToken
@@ -172,10 +175,15 @@ func serviceTierCostMultiplier(serviceTier string) float64 {
 
 func configuredServiceTierMultiplier(serviceTier string, pricing *ModelPricing) float64 {
 	if pricing != nil {
-		if normalizeBillingServiceTier(serviceTier) == OpenAIFastTierUltrafast && pricing.UltrafastMultiplier > 0 {
-			return pricing.UltrafastMultiplier
-		}
 		switch normalizeBillingServiceTier(serviceTier) {
+		case OpenAIFastTierUltrafast:
+			// 渠道覆盖优先：运营者按渠道定价，未配置（nil/非正）时回退模型自有倍率。
+			if pricing.UltrafastMultiplierOverride != nil && *pricing.UltrafastMultiplierOverride > 0 {
+				return *pricing.UltrafastMultiplierOverride
+			}
+			if pricing.UltrafastMultiplier > 0 {
+				return pricing.UltrafastMultiplier
+			}
 		case "priority", "fast":
 			if pricing.FastMultiplier != nil {
 				return *pricing.FastMultiplier
@@ -380,6 +388,19 @@ type BillingService struct {
 	// 让 "[Billing] Using fallback pricing" 每个模型每进程最多打一条,
 	// 避免热路径上每请求刷屏(issue #3394)。零值即可用,无需在构造函数初始化。
 	fallbackWarnSeen sync.Map
+
+	// now 是计费侧的可注入时间源；nil 时回退到 timezone.Now。时间敏感的定价
+	// 规则（如 GPT-6.2 Ultra Fast 促销/常规倍率切换）通过它取当前时刻，单测可
+	// 直接替换而无需改系统时钟。
+	now func() time.Time
+}
+
+// currentTime 返回计费当前时刻。测试可注入 s.now 固定时间。
+func (s *BillingService) currentTime() time.Time {
+	if s != nil && s.now != nil {
+		return s.now()
+	}
+	return timezone.Now()
 }
 
 // NewBillingService 创建计费服务实例
@@ -1518,7 +1539,7 @@ func (s *BillingService) GetModelPricingWithChannel(model string, channelPricing
 	// channel: providers price the tier differently and a fixed 6x is wrong for
 	// some upstreams. A nil or non-positive override keeps the model default.
 	if channelPricing.UltrafastMultiplier != nil && *channelPricing.UltrafastMultiplier > 0 {
-		pricing.UltrafastMultiplier = *channelPricing.UltrafastMultiplier
+		pricing.UltrafastMultiplierOverride = channelPricing.UltrafastMultiplier
 	}
 	if channelPricing.MaxReasoningEffortMultiplier != nil {
 		pricing.ReasoningEffortMultipliers = map[string]float64{"max": *channelPricing.MaxReasoningEffortMultiplier}
@@ -1692,7 +1713,8 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 
 	// 默认价卡（Source=LiteLLM）应用 DeepSeek 官方价强制覆盖（幂等，GetModelPricing
 	// 内部已强制过）；分组/渠道自定义定价保留运营者配置，不强制覆盖官方价。
-	pricing = s.applyModelSpecificPricingPolicyEx(input.Model, pricing, resolved.Source == PricingSourceLiteLLM)
+	// 同时用请求时刻重算 Ultra Fast 等时间敏感倍率（幂等）。
+	pricing = s.applyModelSpecificPricingPolicyEx(input.Model, pricing, resolved.Source == PricingSourceLiteLLM, input.PricingAt)
 
 	// DeepSeek 模型默认价卡按官方峰谷口径调整：高峰时段（01:00–04:00 与
 	// 06:00–10:00 UTC，仅工作日；北京时间周末全天低谷）按 2× 低谷价计费。
@@ -2006,20 +2028,22 @@ func (s *BillingService) calculateCostInternalWithPolicy(
 
 // applyModelSpecificPricingPolicy 对目录数据做模型特定修正：DeepSeek 官方价
 // 强制覆盖；GPT-5.6 缺 cache_write 价时按官方规则补 1.25 倍输入价；Fast/priority
-// 档按业务倍率改写（本地/远程目录的 priority 价可能沿用官方旧口径）。长上下文
+// 档按业务倍率改写（本地/远程目录的 priority 价可能沿用官方旧口径）；Ultra Fast
+// 档按模型与请求时点写入倍率（GPT-6.2 促销期 3x，之后 6x）。长上下文
 // 阶梯不在此处补齐：一律由目录数据（above_XXXk 折算或显式 long_context_* 字段）
 // 驱动。默认强制 DeepSeek 官方价——该路径仅被默认价卡（GetModelPricing 内部）
 // 调用；分组/渠道自定义定价路径用带参数的 applyModelSpecificPricingPolicyEx
 // 关闭强制，保留运营者配置。
 func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *ModelPricing) *ModelPricing {
-	return s.applyModelSpecificPricingPolicyEx(model, pricing, true)
+	return s.applyModelSpecificPricingPolicyEx(model, pricing, true, time.Time{})
 }
 
 // applyModelSpecificPricingPolicyEx 与 applyModelSpecificPricingPolicy 相同，
-// 但由调用方控制是否强制 DeepSeek 官方价（forceDeepSeekRates）。
+// 但由调用方控制是否强制 DeepSeek 官方价（forceDeepSeekRates）以及计费时刻
+// （pricingAt：延迟结算按请求时点，零值回退 s.currentTime()）。
 // calculateTokenCost 对分组/渠道自定义定价（Source 非 LiteLLM）传 false：
 // 强制覆盖会把运营者配置的售价盖回官方价，违反自定义定价语义。
-func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing *ModelPricing, forceDeepSeekRates bool) *ModelPricing {
+func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing *ModelPricing, forceDeepSeekRates bool, pricingAt time.Time) *ModelPricing {
 	if pricing == nil {
 		return nil
 	}
@@ -2045,7 +2069,15 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 		return &cloned
 	}
 	normalized := normalizeKnownOpenAICodexModel(model)
-	usesCacheWritePremium := isOpenAIGPT56Model(normalized) || isOpenAIGPT6AstraModel(normalized) || (openai.IsGPT6SolOrLunaModelSpelling(normalized) || openai.IsGPT61SolModelSpelling(normalized) || openai.IsGPT61TerraModelSpelling(normalized))
+	// GPT-6.2 的型号归一化由 normalizeKnownOpenAICodexModel 统一处理；这里再取一次
+	// 基础 id，供 Fast 倍率与 Ultra Fast 判定使用（对 effort/compact 变体也成立）。
+	gpt62Base := openai.GPT62ModelID(model)
+	if gpt62Base != "" {
+		normalized = gpt62Base
+	}
+	usesCacheWritePremium := isOpenAIGPT56Model(normalized) || isOpenAIGPT6AstraModel(normalized) ||
+		(openai.IsGPT6SolOrLunaModelSpelling(normalized) || openai.IsGPT61SolModelSpelling(normalized) ||
+			openai.IsGPT61TerraModelSpelling(normalized)) || gpt62Base != ""
 	needsCacheCreationPolicy := usesCacheWritePremium && !pricing.CacheCreationPriceExplicit && (pricing.CacheCreationPricePerToken <= 0 ||
 		(pricing.InputPricePerTokenPriority > 0 && pricing.CacheCreationPricePerTokenPriority <= 0))
 	// GPT-5.6 / GPT-6 系列未配置 12h 价时需要补默认 2.5 倍输入价；
@@ -2055,12 +2087,19 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 		!pricing.CacheCreation12hExplicit && (forceDeepSeekRates || !pricing.CacheCreationWritePriceOperatorExplicit)
 	fastRatio := openAIModelFastPricingRatio(normalized)
 	needsOpus55FastMultiplier := claude.IsOpus55(model) && pricing.FastMultiplier == nil
-	if !needsCacheCreationPolicy && !needsCacheCreation12hPolicy && fastRatio <= 0 && !needsOpus55FastMultiplier {
+	supportsUltrafast := openAIModelSupportsUltrafast(model)
+	if !needsCacheCreationPolicy && !needsCacheCreation12hPolicy && fastRatio <= 0 && !needsOpus55FastMultiplier && !supportsUltrafast {
 		return pricing
 	}
 	cloned := *pricing
-	if isOpenAIGPT6AstraModel(normalized) {
-		cloned.UltrafastMultiplier = 6
+	if supportsUltrafast {
+		// Ultra Fast 倍率按请求时点切换：2027-03-01 00:00 PT 前 3x 促销，之后 6x。
+		// 时间源可注入（s.now / pricingAt），单测直接固定边界时刻。
+		at := pricingAt
+		if at.IsZero() {
+			at = s.currentTime()
+		}
+		cloned.UltrafastMultiplier = openAIUltrafastMultiplier(model, at)
 	}
 	if needsOpus55FastMultiplier {
 		multiplier := 2.0
@@ -2082,7 +2121,7 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 	}
 	if fastRatio > 0 {
 		enforceOpenAIFastPricingRatio(&cloned, fastRatio)
-		if (openai.IsGPT6SolOrLunaModelSpelling(normalized) || openai.IsGPT61SolModelSpelling(normalized) || openai.IsGPT61TerraModelSpelling(normalized)) && cloned.CacheCreationPriceExplicit {
+		if (openai.IsGPT6SolOrLunaModelSpelling(normalized) || openai.IsGPT61SolModelSpelling(normalized) || openai.IsGPT61TerraModelSpelling(normalized) || gpt62Base != "") && cloned.CacheCreationPriceExplicit {
 			cloned.CacheCreationPricePerTokenPriority = cloned.CacheCreationPricePerToken * fastRatio
 		}
 	}
@@ -2090,11 +2129,11 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 }
 
 // openAIModelFastPricingRatio 返回业务口径下 OpenAI GPT 模型 Fast/priority
-// 的标准价倍率：gpt-5.6 / gpt-6-astra / gpt-5.4 为 2x，gpt-5.5 为 2.5x。未定义 Fast
-// 档的模型（如 gpt-5.5-pro、gpt-5.4-mini/nano）返回 0。
+// 的标准价倍率：gpt-5.6 / gpt-6-astra / gpt-6.2 / gpt-5.4 为 2x，gpt-5.5 为 2.5x。
+// 未定义 Fast 档的模型（如 gpt-5.5-pro、gpt-5.4-mini/nano）返回 0。
 func openAIModelFastPricingRatio(normalized string) float64 {
 	switch normalized {
-	case "gpt-5.4", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna":
+	case "gpt-5.4", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna":
 		return 2.0
 	case "gpt-5.5":
 		return 2.5

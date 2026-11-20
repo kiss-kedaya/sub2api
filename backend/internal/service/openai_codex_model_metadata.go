@@ -3,9 +3,13 @@ package service
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"net/url"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 var codexToolCapabilityFields = []string{
@@ -94,16 +98,38 @@ func accountCodexToolCapabilities(account *Account, modelID string) map[string]j
 			capabilities["use_responses_lite"] = json.RawMessage("false")
 		}
 	}
-	// API Astra publicly supports Ultrafast. OAuth must advertise it in its
-	// account manifest; a subscription label alone does not grant the capability.
-	if account.IsOpenAIApiKey() && isOfficialOpenAIModelsBaseURL(baseURL) && isOpenAIGPT6AstraModel(modelID) {
-		tiers := configuredCodexServiceTiersForModel(modelID)
-		tiers = append(tiers, configuredCodexServiceTier{ID: OpenAIFastTierUltrafast, Name: "Ultrafast", Description: "Lowest latency; 6x Standard token pricing."})
-		encoded, err := json.Marshal(tiers)
-		if err != nil {
-			panic(err)
+	// GPT-6.2 / GPT-6 Astra 的 Ultra Fast 档位声明。
+	//   - API Key + 官方 OpenAI base URL：官方公开支持，直接声明；
+	//   - OAuth/ChatGPT 订阅账号：上游按订阅套餐放行。本仓库没有 Pro 200/500
+	//     套餐模型，改用可配置白名单判断（默认不限制）；账号目录自身声明过的
+	//     档位始终保留，不会被这里删掉。
+	// 声明与计费共用 openAIModelSupportsUltrafast / openAIUltrafastMultiplier，
+	// 避免「目录能选档位、计费却没按档位算」。
+	base62 := openai.GPT62ModelID(modelID)
+	apiKeyUltrafast := account.IsOpenAIApiKey() && isOfficialOpenAIModelsBaseURL(baseURL) &&
+		(base62 != "" || isOpenAIGPT6AstraModel(modelID))
+	subscriptionUltrafast := base62 != "" && account.IsOpenAIOAuthLike() && openAIUltrafastEntitled(account, base62)
+	if apiKeyUltrafast || subscriptionUltrafast {
+		tiers := capabilities["service_tiers"]
+		if len(bytes.TrimSpace(tiers)) == 0 {
+			encoded, err := json.Marshal(configuredCodexServiceTiersForModel(modelID))
+			if err != nil {
+				panic(err)
+			}
+			tiers = encoded
 		}
-		applyCodexToolCapabilities(capabilities, map[string]json.RawMessage{"service_tiers": encoded}, false)
+		if !gjson.GetBytes(tiers, `#(id=="ultrafast")`).Exists() {
+			updated, err := sjson.SetBytes(tiers, "-1", configuredCodexServiceTier{
+				ID:          OpenAIFastTierUltrafast,
+				Name:        "Ultrafast",
+				Description: openAIUltrafastTierDescription(modelID, timezone.Now()),
+			})
+			if err != nil {
+				panic(err)
+			}
+			tiers = updated
+		}
+		capabilities["service_tiers"] = tiers
 	}
 	return capabilities
 }

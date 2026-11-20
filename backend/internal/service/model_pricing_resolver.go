@@ -258,6 +258,10 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 	}
 	resolved.BasePricing.FastMultiplier = chPricing.FastMultiplier
 	resolved.BasePricing.FlexMultiplier = chPricing.FlexMultiplier
+	// 渠道显式 Ultra Fast 倍率优先于模型自有倍率；nil/非正回退模型默认。
+	if chPricing.UltrafastMultiplier != nil && *chPricing.UltrafastMultiplier > 0 {
+		resolved.BasePricing.UltrafastMultiplierOverride = chPricing.UltrafastMultiplier
+	}
 	if chPricing.MaxReasoningEffortMultiplier != nil {
 		resolved.BasePricing.ReasoningEffortMultipliers = map[string]float64{"max": *chPricing.MaxReasoningEffortMultiplier}
 	}
