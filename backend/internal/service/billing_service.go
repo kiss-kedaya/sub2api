@@ -129,6 +129,15 @@ type ModelPricing struct {
 	LongContextOutputMultiplier        float64            // 长上下文整次会话输出倍率
 	ImageOutputPricePerToken           float64            // 图片输出 token 价格 (USD)
 	ImageOutputPriceExplicit           bool               // 是否由渠道定价显式设定（为 true 时即使 == 0 也不回退）
+	// CacheCreation12hPricePerToken 是 OpenAI 12h 缓存写入的每 token 价格 (USD)。
+	// nil 表示未配置：沿用通用缓存写入价（保持存量价卡语义）。
+	CacheCreation12hPricePerToken *float64
+	// CacheCreation12hExplicit 12h 价是否由渠道/区间显式设定。
+	CacheCreation12hExplicit bool
+	// CacheCreationWritePriceOperatorExplicit 通用缓存写入价是否由渠道/区间显式设定。
+	// 决定 GPT-5.6/GPT-6 的 12h 默认价（输入价 2.5 倍）是否回退生效：
+	// 运营者显式配了通用写入价时，12h 也按该价保持平价。
+	CacheCreationWritePriceOperatorExplicit bool
 }
 
 func normalizeBillingServiceTier(serviceTier string) string {
@@ -202,7 +211,10 @@ type UsageTokens struct {
 	CacheReadTokens       int
 	CacheCreation5mTokens int
 	CacheCreation1hTokens int
-	ImageOutputTokens     int
+	// OpenAI 原生缓存写入寿命桶（来自上游 usage，和 Anthropic 的 5m/1h 互不混用）。
+	CacheCreation30mTokens int
+	CacheCreation12hTokens int
+	ImageOutputTokens      int
 	// CacheReadEstimated 表示 CacheReadTokens 是断开后无终帧时按请求体估算出的值
 	// （见 incomplete_request_usage.go），不是上游上报的真实缓存命中。模型没有缓存读价时，
 	// 这部分按普通输入价计费，而不是当成免费。上游真实上报的缓存读不受影响。
@@ -1550,6 +1562,7 @@ func applyChannelTokenPriceOverrides(pricing *ModelPricing, channelPricing *Chan
 		pricing.CacheCreationPricePerToken = *channelPricing.CacheWritePrice
 		pricing.CacheCreationPricePerTokenPriority = priority
 		pricing.CacheCreationPriceExplicit = true
+		pricing.CacheCreationWritePriceOperatorExplicit = true
 		pricing.CacheCreation5mPrice = *channelPricing.CacheWritePrice
 		if channelPricing.CacheWrite1hPrice == nil {
 			// Preserve the pre-split behavior for existing configurations: a lone
@@ -1560,6 +1573,14 @@ func applyChannelTokenPriceOverrides(pricing *ModelPricing, channelPricing *Chan
 	if channelPricing.CacheWrite1hPrice != nil {
 		pricing.CacheCreation1hPrice = *channelPricing.CacheWrite1hPrice
 		pricing.SupportsCacheBreakdown = true
+	}
+	if channelPricing.CacheWrite12hPrice != nil {
+		pricing.CacheCreation12hPricePerToken = channelPricing.CacheWrite12hPrice
+		pricing.CacheCreation12hExplicit = true
+	} else if channelPricing.CacheWritePrice != nil {
+		// 存量「只配了通用写入价」的价卡继续保持通用价：
+		// 没配 12h 价时不引入 12h 溢价。
+		pricing.CacheCreation12hPricePerToken = nil
 	}
 	if channelPricing.CacheReadPrice != nil {
 		priority := channelTierOverridePrice(pricing.CacheReadPricePerToken, pricing.CacheReadPricePerTokenPriority, *channelPricing.CacheReadPrice)
@@ -1728,6 +1749,9 @@ func (s *BillingService) computeTokenBreakdownWithCacheTTL(
 	outputPrice := pricing.OutputPricePerToken
 	cacheReadPrice := pricing.CacheReadPricePerToken
 	cacheCreationPrice := pricing.CacheCreationPricePerToken
+	// cacheCreationPricing 是传给缓存创建计费的定价副本：priority/fast 档下
+	// 12h 单价需要按同档倍率缩放，但不能改动共享的定价对象。
+	cacheCreationPricing := pricing
 	cacheCreationMultiplier := 1.0
 	tierMultiplier := 1.0
 
@@ -1743,6 +1767,20 @@ func (s *BillingService) computeTokenBreakdownWithCacheTTL(
 		}
 		if pricing.CacheCreationPricePerTokenPriority > 0 {
 			cacheCreationPrice = pricing.CacheCreationPricePerTokenPriority
+		}
+		if pricing.CacheCreation12hPricePerToken != nil {
+			// 12h 单价随 priority/fast 档同比例缩放：优先跟通用写入价的档位比例，
+			// 没有通用写入价时退回输入价的档位比例。
+			ratio := 1.0
+			if pricing.CacheCreationPricePerToken > 0 {
+				ratio = cacheCreationPrice / pricing.CacheCreationPricePerToken
+			} else if pricing.InputPricePerToken > 0 {
+				ratio = inputPrice / pricing.InputPricePerToken
+			}
+			cloned := *pricing
+			price := *pricing.CacheCreation12hPricePerToken * ratio
+			cloned.CacheCreation12hPricePerToken = &price
+			cacheCreationPricing = &cloned
 		}
 	} else {
 		tierMultiplier = configuredServiceTierMultiplier(serviceTier, pricing)
@@ -1812,7 +1850,7 @@ func (s *BillingService) computeTokenBreakdownWithCacheTTL(
 	}
 
 	// 缓存创建费用
-	bd.CacheCreationCost = s.computeCacheCreationCostWithCacheTTL(pricing, tokens, cacheCreationPrice, cacheCreationMultiplier, cacheTTLHint)
+	bd.CacheCreationCost = s.computeCacheCreationCostWithCacheTTL(cacheCreationPricing, tokens, cacheCreationPrice, cacheCreationMultiplier, cacheTTLHint)
 
 	bd.CacheReadCost = float64(tokens.CacheReadTokens) * cacheReadPrice
 	if imageCached := min(max(tokens.ImageCacheReadTokens, 0), max(tokens.CacheReadTokens, 0)); imageCached > 0 && pricing.ImageCacheReadPricePerToken > 0 {
@@ -1839,6 +1877,12 @@ func (s *BillingService) computeTokenBreakdownWithCacheTTL(
 // computeCacheCreationCost 计算缓存创建费用（支持 5m/1h 分类或标准计费）。
 // multiplier 用于长上下文等场景下的整体价格缩放（普通调用传 1.0 即可）。
 func (s *BillingService) computeCacheCreationCostWithCacheTTL(pricing *ModelPricing, tokens UsageTokens, price, multiplier float64, ttlHint string) float64 {
+	// OpenAI 原生缓存写入按上游报告的 30m/12h 寿命分桶：两桶互斥且穷尽聚合值，
+	// 12h 桶按 12h 单价（未配置时沿用通用写入价）。明细缺失/矛盾时回退到聚合值，
+	// 我们已有的 5m/1h TTL 兜底逻辑保持不变。
+	if cost, ok := openAICacheCreationTTLCost(tokens, price, pricing.CacheCreation12hPricePerToken); ok {
+		return cost * multiplier
+	}
 	if pricing.SupportsCacheBreakdown && (pricing.CacheCreation5mPrice > 0 || pricing.CacheCreation1hPrice > 0) {
 		cacheCreation5mTokens, cacheCreation1hTokens := normalizeCacheCreationBreakdown(tokens)
 		if cacheCreation5mTokens == 0 && cacheCreation1hTokens == 0 && tokens.CacheCreationTokens > 0 {
@@ -1853,6 +1897,22 @@ func (s *BillingService) computeCacheCreationCostWithCacheTTL(pricing *ModelPric
 			float64(cacheCreation1hTokens)*pricing.CacheCreation1hPrice*multiplier
 	}
 	return float64(tokens.CacheCreationTokens) * price * multiplier
+}
+
+// openAICacheCreationTTLCost 计算 OpenAI 原生 30m/12h 缓存写入费用。
+// 两桶互斥且穷尽聚合值：不重复加聚合、也不复用 Anthropic 的 5m/1h 桶。
+// 明细缺失或矛盾（负数、超过聚合值、两桶之和不等于聚合值）时返回 ok=false，
+// 回退到聚合值的既有单价。
+func openAICacheCreationTTLCost(tokens UsageTokens, shortPrice float64, longPrice *float64) (float64, bool) {
+	a, b := tokens.CacheCreation30mTokens, tokens.CacheCreation12hTokens
+	if tokens.CacheCreationTokens <= 0 || a < 0 || b < 0 || a > tokens.CacheCreationTokens || b != tokens.CacheCreationTokens-a {
+		return 0, false
+	}
+	p := shortPrice
+	if longPrice != nil {
+		p = *longPrice
+	}
+	return float64(a)*shortPrice + float64(b)*p, true
 }
 
 // normalizeCacheCreationBreakdown prevents contradictory upstream TTL details
@@ -1985,12 +2045,17 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 		return &cloned
 	}
 	normalized := normalizeKnownOpenAICodexModel(model)
-	usesCacheWritePremium := isOpenAIGPT56Model(normalized) || (openai.IsGPT6SolOrLunaModelSpelling(normalized) || openai.IsGPT61SolModelSpelling(normalized) || openai.IsGPT61TerraModelSpelling(normalized))
+	usesCacheWritePremium := isOpenAIGPT56Model(normalized) || isOpenAIGPT6AstraModel(normalized) || (openai.IsGPT6SolOrLunaModelSpelling(normalized) || openai.IsGPT61SolModelSpelling(normalized) || openai.IsGPT61TerraModelSpelling(normalized))
 	needsCacheCreationPolicy := usesCacheWritePremium && !pricing.CacheCreationPriceExplicit && (pricing.CacheCreationPricePerToken <= 0 ||
 		(pricing.InputPricePerTokenPriority > 0 && pricing.CacheCreationPricePerTokenPriority <= 0))
+	// GPT-5.6 / GPT-6 系列未配置 12h 价时需要补默认 2.5 倍输入价；
+	// 即便通用写入价已就位（needsCacheCreationPolicy=false）也要单独判定。
+	// 运营者显式配了 12h 价、或显式配了通用写入价（平价覆盖）时不叠加默认溢价。
+	needsCacheCreation12hPolicy := usesCacheWritePremium && pricing.CacheCreation12hPricePerToken == nil &&
+		!pricing.CacheCreation12hExplicit && (forceDeepSeekRates || !pricing.CacheCreationWritePriceOperatorExplicit)
 	fastRatio := openAIModelFastPricingRatio(normalized)
 	needsOpus55FastMultiplier := claude.IsOpus55(model) && pricing.FastMultiplier == nil
-	if !needsCacheCreationPolicy && fastRatio <= 0 && !needsOpus55FastMultiplier {
+	if !needsCacheCreationPolicy && !needsCacheCreation12hPolicy && fastRatio <= 0 && !needsOpus55FastMultiplier {
 		return pricing
 	}
 	cloned := *pricing
@@ -2008,6 +2073,12 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 		if cloned.CacheCreationPricePerTokenPriority <= 0 {
 			cloned.CacheCreationPricePerTokenPriority = cloned.InputPricePerTokenPriority * 1.25
 		}
+	}
+	// GPT-5.6 / GPT-6 系列：未配置 12h 价时按上游规则取输入价 2.5 倍。
+	// 其它模型未配置 12h 价时保持通用缓存写入价（openAICacheCreationTTLCost 的 nil 分支）。
+	if needsCacheCreation12hPolicy && cloned.CacheCreation12hPricePerToken == nil {
+		price := cloned.InputPricePerToken * 2.5
+		cloned.CacheCreation12hPricePerToken = &price
 	}
 	if fastRatio > 0 {
 		enforceOpenAIFastPricingRatio(&cloned, fastRatio)

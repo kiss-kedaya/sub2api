@@ -230,13 +230,18 @@ type OpenAIUsage struct {
 	// TTL buckets come only from upstream usage, never from the requested TTL.
 	CacheCreation5mTokens int `json:"-"`
 	CacheCreation1hTokens int `json:"-"`
+	// OpenAI 原生缓存写入寿命桶（30m/12h），来自 usage.cache_write_tokens_details，
+	// 与 Anthropic 的 5m/1h 桶互斥，不进入 wire JSON。
+	CacheCreation30mInputTokens int `json:"-"`
+	CacheCreation12hInputTokens int `json:"-"`
 	// Positive values imply presence; these flags distinguish explicit zeroes
 	// from absent fields while merging snapshots within one upstream turn.
-	cacheCreationInputTokensZero bool
-	cacheCreation5mTokensZero    bool
-	cacheCreation1hTokensZero    bool
-	CacheReadInputTokens         int `json:"cache_read_input_tokens,omitempty"`
-	ImageOutputTokens            int `json:"image_output_tokens,omitempty"`
+	cacheCreationInputTokensZero   bool
+	cacheCreation5mTokensZero      bool
+	cacheCreation1hTokensZero      bool
+	cacheCreationTTLDetailsPresent bool
+	CacheReadInputTokens           int `json:"cache_read_input_tokens,omitempty"`
+	ImageOutputTokens              int `json:"image_output_tokens,omitempty"`
 	// CacheReadEstimated marks CacheReadInputTokens as a request-body estimate made
 	// when no usage frame arrived (see incomplete_request_usage.go). It never comes
 	// from the upstream, so it is not part of the wire format.

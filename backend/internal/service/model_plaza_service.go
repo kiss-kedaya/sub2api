@@ -13,11 +13,12 @@ import (
 // 管理员给模型配过价时改显示配置价，见 configuredReferencePricing：
 // 分组价卡生效时 Custom=true；渠道定价生效时用渠道价，不打标记。
 type PlazaOfficialPricing struct {
-	InputPrice        *float64
-	OutputPrice       *float64
-	CacheWritePrice   *float64 // 5m 缓存写入（= LiteLLM cache_creation）
-	CacheWrite1hPrice *float64 // 1h 缓存写入，仅计费会区分 5m/1h 时给出
-	CacheReadPrice    *float64
+	InputPrice         *float64
+	OutputPrice        *float64
+	CacheWritePrice    *float64 // 5m 缓存写入（= LiteLLM cache_creation）
+	CacheWrite1hPrice  *float64 // 1h 缓存写入，仅计费会区分 5m/1h 时给出
+	CacheWrite12hPrice *float64 // OpenAI 12h 缓存写入，未配置时为空（沿用通用写入价）
+	CacheReadPrice     *float64
 	// Intervals 长上下文阶梯（多档时给出）。目录价不受分组开关影响；
 	// 配置价（分组价卡/渠道改价）取计费阶梯表，与实付逐档对应。
 	Intervals []PricingInterval
@@ -324,12 +325,13 @@ func configuredReferencePricing(official *PlazaOfficialPricing, sched *ContextPr
 func referencePricingFromSchedule(sched *ContextPricingSchedule, custom bool) *PlazaOfficialPricing {
 	first := sched.Tiers[0]
 	ref := &PlazaOfficialPricing{
-		InputPrice:        first.Input,
-		OutputPrice:       first.Output,
-		CacheWritePrice:   first.CacheWrite,
-		CacheWrite1hPrice: first.CacheWrite1h,
-		CacheReadPrice:    first.CacheRead,
-		Custom:            custom,
+		InputPrice:         first.Input,
+		OutputPrice:        first.Output,
+		CacheWritePrice:    first.CacheWrite,
+		CacheWrite1hPrice:  first.CacheWrite1h,
+		CacheWrite12hPrice: first.CacheWrite12h,
+		CacheReadPrice:     first.CacheRead,
+		Custom:             custom,
 	}
 	if len(sched.Tiers) > 1 {
 		ref.Intervals = plazaIntervalsFromTiers(sched.Tiers)
@@ -392,6 +394,7 @@ func plazaPricingFromSchedule(raw *ChannelModelPricing, sched *ContextPricingSch
 	out.OutputPrice = first.Output
 	out.CacheWritePrice = first.CacheWrite
 	out.CacheWrite1hPrice = first.CacheWrite1h
+	out.CacheWrite12hPrice = first.CacheWrite12h
 	out.CacheReadPrice = first.CacheRead
 	if len(sched.Tiers) > 1 {
 		out.Intervals = plazaIntervalsFromTiers(sched.Tiers)
@@ -403,15 +406,16 @@ func plazaIntervalsFromTiers(tiers []ContextPricingTier) []PricingInterval {
 	intervals := make([]PricingInterval, 0, len(tiers))
 	for i, t := range tiers {
 		intervals = append(intervals, PricingInterval{
-			MinTokens:         t.MinTokens,
-			MaxTokens:         t.MaxTokens,
-			TierLabel:         t.Label,
-			InputPrice:        t.Input,
-			OutputPrice:       t.Output,
-			CacheWritePrice:   t.CacheWrite,
-			CacheWrite1hPrice: t.CacheWrite1h,
-			CacheReadPrice:    t.CacheRead,
-			SortOrder:         i,
+			MinTokens:          t.MinTokens,
+			MaxTokens:          t.MaxTokens,
+			TierLabel:          t.Label,
+			InputPrice:         t.Input,
+			OutputPrice:        t.Output,
+			CacheWritePrice:    t.CacheWrite,
+			CacheWrite1hPrice:  t.CacheWrite1h,
+			CacheWrite12hPrice: t.CacheWrite12h,
+			CacheReadPrice:     t.CacheRead,
+			SortOrder:          i,
 		})
 	}
 	return intervals
@@ -486,6 +490,11 @@ func (s *ModelPlazaService) lookupOfficialPricing(ctx context.Context, modelName
 		if mp.SupportsCacheBreakdown {
 			result.CacheWrite1hPrice = nonZeroPtr(mp.CacheCreation1hPrice)
 		}
+		// 12h 价只在管理员配置或 GPT-5.6/GPT-6 的 2.5 倍兜底时有值；
+		// nil 表示沿用通用写入价，不单独展示。
+		if mp.CacheCreation12hPricePerToken != nil && *mp.CacheCreation12hPricePerToken > 0 {
+			result.CacheWrite12hPrice = mp.CacheCreation12hPricePerToken
+		}
 		if s.resolver != nil {
 			sched, schedErr := s.billingService.ResolveContextPricingSchedule(ctx, s.resolver, ContextPricingScheduleInput{Model: modelName})
 			if schedErr == nil && sched != nil && len(sched.Tiers) > 1 {
@@ -493,7 +502,7 @@ func (s *ModelPlazaService) lookupOfficialPricing(ctx context.Context, modelName
 			}
 		}
 		if result.InputPrice == nil && result.OutputPrice == nil && result.CacheWritePrice == nil &&
-			result.CacheWrite1hPrice == nil && result.CacheReadPrice == nil && len(result.Intervals) == 0 {
+			result.CacheWrite1hPrice == nil && result.CacheWrite12hPrice == nil && result.CacheReadPrice == nil && len(result.Intervals) == 0 {
 			result = nil
 		}
 	}

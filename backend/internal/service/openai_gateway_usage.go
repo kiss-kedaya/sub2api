@@ -204,19 +204,25 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// Calculate cost
 	tokens := UsageTokens{
-		InputTokens:           actualInputTokens,
-		ImageInputTokens:      max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
-		ImageCacheReadTokens:  result.Usage.ImageCacheReadTokens,
-		OutputTokens:          result.Usage.OutputTokens,
-		CacheCreationTokens:   result.Usage.CacheCreationInputTokens,
-		CacheCreation5mTokens: result.Usage.CacheCreation5mTokens,
-		CacheCreation1hTokens: result.Usage.CacheCreation1hTokens,
-		CacheReadTokens:       result.Usage.CacheReadInputTokens,
-		ImageOutputTokens:     result.Usage.ImageOutputTokens,
-		CacheReadEstimated:    result.Usage.CacheReadEstimated,
+		InputTokens:            actualInputTokens,
+		ImageInputTokens:       max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
+		ImageCacheReadTokens:   result.Usage.ImageCacheReadTokens,
+		OutputTokens:           result.Usage.OutputTokens,
+		CacheCreationTokens:    result.Usage.CacheCreationInputTokens,
+		CacheCreation5mTokens:  result.Usage.CacheCreation5mTokens,
+		CacheCreation1hTokens:  result.Usage.CacheCreation1hTokens,
+		CacheCreation30mTokens: result.Usage.CacheCreation30mInputTokens,
+		CacheCreation12hTokens: result.Usage.CacheCreation12hInputTokens,
+		CacheReadTokens:        result.Usage.CacheReadInputTokens,
+		ImageOutputTokens:      result.Usage.ImageOutputTokens,
+		CacheReadEstimated:     result.Usage.CacheReadEstimated,
 	}
 	if tokens.CacheCreationTokens <= 0 {
 		// The OpenAI aggregate (including an explicit zero) remains authoritative.
+		tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = 0, 0
+	} else if result.Usage.cacheCreationTTLDetailsPresent {
+		// 上游已按 OpenAI 原生 30m/12h 上报明细，这是权威口径，
+		// 不再把聚合值折算进 Anthropic 的 5m 桶（避免 usage log 误标）。
 		tokens.CacheCreation5mTokens, tokens.CacheCreation1hTokens = 0, 0
 	} else {
 		// OpenAI gateway rule: an unclassified remainder stays billable as 5m.
