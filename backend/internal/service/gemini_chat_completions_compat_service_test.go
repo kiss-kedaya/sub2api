@@ -9,7 +9,7 @@ import (
 
 func TestGeminiResponseToChatCompletionsPreservesCachedUsage(t *testing.T) {
 	geminiResp := map[string]any{
-		"candidates": []any{map[string]any{"content": map[string]any{"parts": []any{map[string]any{"text": "ok"}}}, "finishReason": "STOP"}},
+		"candidates":    []any{map[string]any{"content": map[string]any{"parts": []any{map[string]any{"text": "ok"}}}, "finishReason": "STOP"}},
 		"usageMetadata": map[string]any{"promptTokenCount": 14435, "cachedContentTokenCount": 6299, "candidatesTokenCount": 6},
 	}
 	rawData, err := json.Marshal(geminiResp)
