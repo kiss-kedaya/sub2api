@@ -27,7 +27,7 @@ func TestUsageLogRepositoryGetAllGroupUsageSummaryUsesRollupTail(t *testing.T) {
 
 	// 尾段起点必须以参数形式进 WHERE —— 这正是把 usage_logs 全表扫换回
 	// idx_usage_logs_created_at 索引扫的那一步。
-	mock.ExpectQuery(`(?s)usage_group_daily_rollups.*FROM usage_logs ul\s+WHERE ul\.created_at >= \$7`).
+	mock.ExpectQuery(`(?s)usage_group_daily_rollups.*FROM usage_logs ul\s+WHERE ul\.created_at >= \$7\s+AND ul\.group_id IS NOT NULL`).
 		WithArgs(
 			todayStart,
 			yesterdayStart,
@@ -88,7 +88,7 @@ func TestUsageLogRepositoryGetAllGroupUsageSummaryFallsBackWhenWatermarkInvalid(
 			mock.ExpectBegin()
 			mock.ExpectQuery(`(?s)COUNT\(\*\).*usage_group_rollup_state.*WHERE id = 1`).
 				WillReturnRows(tc.rows)
-			mock.ExpectQuery(`(?s)usage_group_daily_rollups.*FROM usage_logs ul\s+WHERE ul\.created_at >= \$7`).
+			mock.ExpectQuery(`(?s)usage_group_daily_rollups.*FROM usage_logs ul\s+WHERE ul\.created_at >= \$7\s+AND ul\.group_id IS NOT NULL`).
 				WithArgs(todayStart, yesterdayStart, "2026-03-08", false, "1970-01-01", "1970-01-01", epoch).
 				WillReturnRows(sqlmock.NewRows([]string{"group_id", "total_cost", "today_cost", "yesterday_cost"}))
 			mock.ExpectCommit()
