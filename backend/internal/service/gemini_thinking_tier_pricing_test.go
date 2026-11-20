@@ -46,7 +46,7 @@ func TestGemini4ThinkingTierPricingKeepsQualifiedQuotePreference(t *testing.T) {
 	tier := &LiteLLMModelPricing{InputCostPerToken: 3e-6}
 	svc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{
 		"gemini-4-argon": base, "google/gemini-4-argon": qualifiedBase,
-		"gemini-4-argon-high": tier,
+		"gemini-4-argon-high":    tier,
 		"google/gemini-4-carbon": qualifiedBase,
 	}}
 	require.Same(t, tier, svc.GetModelPricing("google/gemini-4-argon-high"))
