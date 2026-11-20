@@ -924,6 +924,11 @@ func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, r
 	if isUpstreamBillingAccountFrozen(responseBody) || isUpstreamUsageLimitExhausted(responseBody) {
 		return true
 	}
+	// A supplier instance whose request-body memory budget is full must be
+	// rotated away from even when the account type normally keeps 503 local.
+	if IsUpstreamRequestBodyBudgetExhausted(responseBody) {
+		return true
+	}
 	if isOpenAIRequestBodyTooLargeError(statusCode, "", responseBody) {
 		return true
 	}

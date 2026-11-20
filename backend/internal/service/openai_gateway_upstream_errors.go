@@ -483,6 +483,10 @@ func newOpenAIUpstreamFailoverError(
 	retryableOnSameAccount bool,
 ) *UpstreamFailoverError {
 	requestScopedCapacity := isOpenAIRequestScopedCapacityShed(upstreamMsg, responseBody)
+	// A supplier sub2api instance that exhausted its request-body memory budget
+	// cannot recover for this request by being retried immediately. Allow account
+	// rotation, but never the same-account retry, and never blame the account.
+	requestBodyBudget := IsUpstreamRequestBodyBudgetExhausted(responseBody)
 	class := ClassifyUpstreamFailure(statusCode, responseHeaders, responseBody, nil)
 	if isUpstreamRouteNotFound(statusCode, responseBody) {
 		retryableOnSameAccount = false
@@ -492,12 +496,16 @@ func newOpenAIUpstreamFailoverError(
 		retryableOnSameAccount = false
 		requestScopedCapacity = false
 	}
+	if requestBodyBudget {
+		retryableOnSameAccount = false
+		requestScopedCapacity = false
+	}
 	failoverErr := &UpstreamFailoverError{
 		StatusCode:             statusCode,
 		ResponseBody:           responseBody,
 		ResponseHeaders:        responseHeaders.Clone(),
 		RetryableOnSameAccount: retryableOnSameAccount || requestScopedCapacity,
-		RequestScopedTransient: requestScopedCapacity || class.Kind == UpstreamFailureWAF,
+		RequestScopedTransient: requestScopedCapacity || class.Kind == UpstreamFailureWAF || requestBodyBudget,
 	}
 	if isOpenAIRequestBodyTooLargeError(statusCode, upstreamMsg, responseBody) {
 		failoverErr.RetryableOnSameAccount = false
@@ -508,7 +516,14 @@ func newOpenAIUpstreamFailoverError(
 		failoverErr.ClientStatusCode = http.StatusRequestEntityTooLarge
 		failoverErr.ClientMessage = OpenAIRequestBodyTooLargeClientMessage
 	}
-	if isOpenAIHTTPUpstreamAccessStateError(statusCode, upstreamMsg, responseBody) {
+	if requestBodyBudget {
+		failoverErr.RetryableOnSameAccount = false
+		failoverErr.RequestScopedTransient = true
+		failoverErr.Scope = GatewayFailureScopeRequest
+		failoverErr.NextAccountAction = NextAccountRetry
+		failoverErr.ClientStatusCode = http.StatusServiceUnavailable
+		failoverErr.ClientMessage = UpstreamRequestBodyBudgetClientMessage
+	} else if isOpenAIHTTPUpstreamAccessStateError(statusCode, upstreamMsg, responseBody) {
 		failoverErr.RetryableOnSameAccount = false
 		failoverErr.RequestScopedTransient = false
 		failoverErr.Stage = GatewayFailureStageAccountAuth

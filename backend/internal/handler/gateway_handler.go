@@ -2169,6 +2169,9 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 
 	if failoverErr != nil {
 		defer service.GuardUpstreamFinancialError(c, failoverErr.StatusCode, failoverErr.ResponseBody)()
+		// Preserve the supplier's explicit retry boundary (the request-body
+		// budget rejection carries Retry-After: 1) on the final response.
+		copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
 	}
 	statusCode := failoverErr.StatusCode
 	responseBody := failoverErr.ResponseBody

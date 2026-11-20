@@ -43,6 +43,24 @@ func (s *GatewayService) shouldRetryUpstreamError(account *Account, statusCode i
 	return !account.ShouldHandleErrorCode(statusCode)
 }
 
+// shouldRetryUpstreamErrorForResponse is the body-aware form of
+// shouldRetryUpstreamError. A supplier sub2api instance that exhausted its
+// request-body memory budget rejects on capacity, so replaying the same
+// account only deepens the deficit even when the status code is in the
+// account's configured retry set.
+func (s *GatewayService) shouldRetryUpstreamErrorForResponse(account *Account, resp *http.Response) bool {
+	if resp == nil || !s.shouldRetryUpstreamError(account, resp.StatusCode) {
+		return false
+	}
+	if resp.Body == nil {
+		return true
+	}
+	body, _ := s.readUpstreamErrorBody(resp)
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return !IsUpstreamRequestBodyBudgetExhausted(body)
+}
+
 // shouldFailoverUpstreamError is the status-only wrapper used by tests and
 // callers that have not yet read the body. 400/404/422 stay false without a body.
 func (s *GatewayService) shouldFailoverUpstreamError(statusCode int) bool {
@@ -650,7 +668,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		}
 
 		// 检查是否需要通用重试（排除400，因为400已经在上面特殊处理过了）
-		if resp.StatusCode >= 400 && resp.StatusCode != 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
+		if resp.StatusCode >= 400 && resp.StatusCode != 400 && s.shouldRetryUpstreamErrorForResponse(account, resp) {
 			if resp.StatusCode == http.StatusNotFound {
 				respBody, _ := s.readUpstreamErrorBody(resp)
 				_ = resp.Body.Close()
@@ -725,7 +743,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
-		if s.shouldRetryUpstreamError(account, resp.StatusCode) {
+		if s.shouldRetryUpstreamErrorForResponse(account, resp) {
 			if s.shouldFailoverUpstreamResponse(resp.StatusCode, resp.Header, respBody) {
 				logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (retry exhausted, failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
 					account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
@@ -751,6 +769,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				return nil, &UpstreamFailoverError{
 					StatusCode:             resp.StatusCode,
 					ResponseBody:           respBody,
+					ResponseHeaders:        resp.Header.Clone(),
 					RetryableOnSameAccount: PoolModeSameAccountRetry(account, resp.StatusCode, resp.Header, respBody),
 				}
 			}
@@ -785,6 +804,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
+				ResponseHeaders:        resp.Header.Clone(),
 				RetryableOnSameAccount: PoolModeSameAccountRetry(account, resp.StatusCode, resp.Header, respBody),
 			}
 		}

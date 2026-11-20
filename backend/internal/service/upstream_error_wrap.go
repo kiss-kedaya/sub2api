@@ -16,6 +16,12 @@ func WrapUpstreamErrorForClient(statusCode int, body []byte) (status int, errTyp
 	if IsUpstreamFinancialError(statusCode, body) {
 		return http.StatusBadGateway, "upstream_error", "upstream_error", UpstreamUnavailableMessage
 	}
+	// Preserve the upstream 503 semantics for the supplier instance's
+	// request-body memory budget rejection, but never relay the internal
+	// buffering wording to clients.
+	if IsUpstreamRequestBodyBudgetExhausted(body) {
+		return http.StatusServiceUnavailable, "overloaded_error", "", UpstreamRequestBodyBudgetClientMessage
+	}
 	status = statusCode
 	if status < 400 || status > 599 {
 		status = http.StatusBadGateway

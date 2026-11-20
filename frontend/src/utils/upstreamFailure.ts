@@ -24,7 +24,11 @@ export function classifyUpstreamFailureBody(body: string, statusCode?: number | 
     text.includes('cooling') ||
     text.includes('货源均在冷却中') ||
     text.includes('候选供应商均请求失败') ||
-    text.includes('all candidates failed')
+    text.includes('all candidates failed') ||
+    // sub2api v0.2.20+ request-body memory budget rejection. It must win over
+    // the model_not_found check below: the supplier body carries
+    // `"code":"model_not_found"` even though the status is 503.
+    text.includes('request body buffering capacity is exhausted')
   ) {
     return 'capacity-cooling'
   }
