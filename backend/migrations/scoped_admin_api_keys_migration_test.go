@@ -10,7 +10,7 @@ import (
 // 管理密钥只落不可逆摘要；范围、过期、IP 白名单与撤销时间都在库内，
 // 列表隐藏通过 deleted_at 完成，历史审计记录永不被物理删除。
 func TestScopedAdminAPIKeysMigration(t *testing.T) {
-	content, err := FS.ReadFile("321_scoped_admin_api_keys.sql")
+	content, err := FS.ReadFile("322_scoped_admin_api_keys.sql")
 	require.NoError(t, err)
 
 	sql := strings.Join(strings.Fields(string(content)), " ")
