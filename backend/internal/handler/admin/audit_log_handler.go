@@ -7,24 +7,22 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
-	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
 // AuditLogHandler 操作审计日志管理接口。
-// 审计日志仅管理员可见；不提供单条删除，仅支持带 TOTP 验证的全量清空。
+// 审计日志仅管理员可读；不提供单条删除，也不提供任何 HTTP 清空能力：
+// 人工清理只能由数据库管理员在数据库层执行（见 Clear 的说明）。
 type AuditLogHandler struct {
 	auditService *service.AuditLogService
-	totpService  *service.TotpService
 }
 
 // NewAuditLogHandler 创建审计日志处理器。
-func NewAuditLogHandler(auditService *service.AuditLogService, totpService *service.TotpService) *AuditLogHandler {
+func NewAuditLogHandler(auditService *service.AuditLogService) *AuditLogHandler {
 	return &AuditLogHandler{
 		auditService: auditService,
-		totpService:  totpService,
 	}
 }
 
@@ -100,72 +98,19 @@ func (h *AuditLogHandler) Get(c *gin.Context) {
 	response.Success(c, item)
 }
 
-type auditLogClearRequest struct {
-	TotpCode string `json:"totp_code" binding:"required"`
-}
-
-// Clear 全量清空审计日志。
+// Clear 已停用：后台管理端不得清理审计日志。
 // POST /api/v1/admin/audit-logs/clear
 //
-// 安全要求（与需求对齐）：
-//  1. 每次清空都必须现场验证 TOTP 码（不复用 step-up sudo 窗口）
-//  2. 未启用 TOTP 的管理员不允许清空
-//  3. admin API key（机器凭证）不允许清空
-//  4. 清空完成后同步写入一条留痕记录（操作者、IP、UA、删除行数）
+// 审计日志是追责链路，只允许追加，并按保留期自动滚动清理；
+// 人工清理只能由数据库管理员直接在数据库层执行（例如 TRUNCATE audit_logs）。
+// 路由保留并固定返回 403，避免旧前端拿到 404 后误判为接口不存在，
+// 同时明确告知唯一合规路径。
+// 服务内部的 AuditLogService.ClearAll 仍保留给内部/运维 CLI 使用，
+// 但不再经由任何 HTTP 接口暴露。
 func (h *AuditLogHandler) Clear(c *gin.Context) {
-	if c.GetString("auth_method") == service.AuditAuthMethodAdminAPIKey {
-		response.ErrorWithDetails(c, http.StatusForbidden,
-			"Admin API key cannot clear audit logs; a two-factor verified admin session is required",
-			"STEP_UP_ADMIN_API_KEY_FORBIDDEN", nil)
-		return
-	}
-
-	subject, ok := middleware.GetAuthSubjectFromContext(c)
-	if !ok || subject.UserID <= 0 {
-		response.Unauthorized(c, "Unauthorized")
-		return
-	}
-
-	var req auditLogClearRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.ErrorWithDetails(c, http.StatusBadRequest,
-			"TOTP code is required to clear audit logs", "TOTP_CODE_REQUIRED", nil)
-		return
-	}
-
-	// 校验 TOTP：未启用（ErrTotpNotSetup）、码错误、尝试过多均在此拦截。
-	if err := h.totpService.VerifyCode(c.Request.Context(), subject.UserID, strings.TrimSpace(req.TotpCode)); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	uid := subject.UserID
-	role, _ := middleware.GetUserRoleFromContext(c)
-	trace := &service.AuditLog{
-		ActorUserID:      &uid,
-		ActorEmail:       c.GetString(middleware.ContextKeyAuthEmail),
-		ActorRole:        role,
-		AuthMethod:       c.GetString("auth_method"),
-		CredentialMasked: middleware.MaskedRequestCredential(c),
-		Method:           http.MethodPost,
-		Path:             c.FullPath(),
-		ClientIP:         middleware.SecurityClientIP(c),
-		UserAgent:        c.Request.UserAgent(),
-		StatusCode:       http.StatusOK,
-	}
-	if requestID := c.Writer.Header().Get("X-Request-ID"); requestID != "" {
-		trace.RequestID = requestID
-	}
-
-	deleted, err := h.auditService.ClearAll(c.Request.Context(), trace)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	// 留痕记录已同步落库，跳过异步审计中间件的重复记录。
-	middleware.SkipAudit(c)
-	response.Success(c, gin.H{"deleted": deleted})
+	response.ErrorWithDetails(c, http.StatusForbidden,
+		"Audit logs cannot be cleared from the admin console; only a database administrator may purge them directly in the database",
+		"AUDIT_LOG_CLEAR_DISABLED", nil)
 }
 
 // GroupRateChanges reconstructs real configuration-level rate multiplier changes

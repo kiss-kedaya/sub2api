@@ -21,7 +21,9 @@ const (
 
 // AuditLogService 管理面操作审计日志服务。
 // 写入端为非阻塞异步批量落库（不拖慢管理请求）；
-// 读取端提供分页查询；清空端点由 handler 层做 TOTP 强校验后调用 ClearAll。
+// 读取端提供分页查询；ClearAll 仅保留给内部/运维 CLI 使用，
+// 管理端 HTTP 接口已禁止清理（固定 403）。
+// 审计日志的常规回收走保留期清理（audit_log_retention_days）。
 type AuditLogService struct {
 	repo           AuditLogRepository
 	settingService *SettingService
@@ -101,7 +103,8 @@ func (s *AuditLogService) GetByID(ctx context.Context, id int64) (*AuditLog, err
 }
 
 // ClearAll 全量清空审计日志并写入留痕记录。
-// 调用方（handler）必须先完成 TOTP 验证；本方法负责：
+// 仅供内部/运维 CLI 使用：管理端 HTTP 接口已固定返回 403，
+// 生产环境的人工清理只能由 DBA 在数据库层执行。本方法负责：
 //  1. 统计并清空全表
 //  2. 同步写入一条 "audit_log.clear" 留痕记录（绕过异步队列，保证落库）
 func (s *AuditLogService) ClearAll(ctx context.Context, trace *AuditLog) (int64, error) {
