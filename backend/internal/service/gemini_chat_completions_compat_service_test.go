@@ -7,6 +7,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGeminiResponseToChatCompletionsPreservesCachedUsage(t *testing.T) {
+	geminiResp := map[string]any{
+		"candidates": []any{map[string]any{"content": map[string]any{"parts": []any{map[string]any{"text": "ok"}}}, "finishReason": "STOP"}},
+		"usageMetadata": map[string]any{"promptTokenCount": 14435, "cachedContentTokenCount": 6299, "candidatesTokenCount": 6},
+	}
+	rawData, err := json.Marshal(geminiResp)
+	require.NoError(t, err)
+	out, usage, err := geminiResponseToChatCompletions(geminiResp, "gemini-test", rawData, nil)
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	require.Equal(t, 6299, usage.CacheReadInputTokens)
+	require.Equal(t, 8136, usage.InputTokens)
+	require.Equal(t, 6299, out.Usage.PromptTokensDetails.CachedTokens)
+	require.Equal(t, 14435, out.Usage.PromptTokens)
+}
+
 func TestGeminiResponseToChatCompletionsPreservesInlineData(t *testing.T) {
 	tests := []struct {
 		name  string
