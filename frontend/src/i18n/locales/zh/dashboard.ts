@@ -1063,6 +1063,7 @@ export default {
       loginTitle: '双因素认证',
       loginHint: '请输入您认证器应用显示的 6 位验证码',
       loginFailed: '验证失败，请重试',
+      loginRateLimited: '尝试次数过多，请 {seconds} 秒后再试',
       // New translations for email verification
       verifyEmailFirst: '请先验证您的邮箱',
       verifyPasswordFirst: '请先验证您的身份',

@@ -11,6 +11,8 @@ import (
 // TotpHandler handles TOTP-related requests
 type TotpHandler struct {
 	totpService *service.TotpService
+	// twoFactorLimiter 按账号维度限制 2FA 校验尝试（60s 滚动窗口 5 次）。
+	twoFactorLimiter twoFactorRateLimiter
 }
 
 // NewTotpHandler creates a new TotpHandler
@@ -25,6 +27,11 @@ type TotpStatusResponse struct {
 	Enabled        bool   `json:"enabled"`
 	EnabledAt      *int64 `json:"enabled_at,omitempty"` // Unix timestamp
 	FeatureEnabled bool   `json:"feature_enabled"`
+}
+
+// SetTwoFactorRateLimiter 注入账号维度 2FA 限速器（由 router 装配）。
+func (h *TotpHandler) SetTwoFactorRateLimiter(limiter twoFactorRateLimiter) {
+	h.twoFactorLimiter = limiter
 }
 
 // GetStatus returns the TOTP status for the current user
@@ -119,10 +126,14 @@ func (h *TotpHandler) Enable(c *gin.Context) {
 		return
 	}
 
+	if !checkTwoFactorRateLimit(c, h.twoFactorLimiter, h.totpService, subject.UserID) {
+		return
+	}
 	if err := h.totpService.CompleteSetupForSession(c.Request.Context(), subject.UserID, req.TotpCode, req.SetupToken, cryptoSessionID(c)); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
+	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, subject.UserID)
 
 	response.Success(c, gin.H{"success": true})
 }
@@ -158,12 +169,16 @@ func (h *TotpHandler) Disable(c *gin.Context) {
 		}
 		err = h.totpService.DisableWithServerAuthorization(c.Request.Context(), subject.UserID, req.ServerAuthorizationCode)
 	} else {
+		if !checkTwoFactorRateLimit(c, h.twoFactorLimiter, h.totpService, subject.UserID) {
+			return
+		}
 		err = h.totpService.Disable(c.Request.Context(), subject.UserID, req.EmailCode, req.Password, req.TotpCode)
 	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
+	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, subject.UserID)
 
 	response.Success(c, gin.H{"success": true})
 }
@@ -233,12 +248,17 @@ func (h *TotpHandler) StepUp(c *gin.Context) {
 		return
 	}
 
+	if !checkTwoFactorRateLimit(c, h.twoFactorLimiter, h.totpService, subject.UserID) {
+		return
+	}
+
 	sessionKey := middleware2.StepUpSessionKey(c, subject.UserID)
 	ttl, err := h.totpService.VerifyStepUp(c.Request.Context(), subject.UserID, sessionKey, req.Code)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
+	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, subject.UserID)
 
 	response.Success(c, TotpStepUpResponse{
 		Verified:  true,

@@ -28,9 +28,17 @@
             ref="codeInput"
             v-model="code"
             :label="t('profile.totp.enterCode')"
-            :disabled="verifying"
+            :disabled="verifying || !canSubmit"
             @complete="submit"
           />
+          <!-- 账号维度限速：60 秒窗口内第 6 次提交或服务端 429 后禁用并倒计时 -->
+          <p
+            v-if="remainingSeconds > 0"
+            class="mt-3 text-center text-sm font-medium text-amber-600 dark:text-amber-400"
+            data-testid="totp-login-rate-limit"
+          >
+            {{ t('profile.totp.loginRateLimited', { seconds: remainingSeconds }) }}
+          </p>
           <!-- Loading indicator -->
           <div v-if="verifying" class="mt-3 flex items-center justify-center gap-2 text-sm text-gray-500">
             <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-500"></div>
@@ -57,10 +65,13 @@ import { ref, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores'
 import TotpCodeInput from '@/components/common/TotpCodeInput.vue'
+import { useTotpAttemptLimit } from '@/composables/useTotpAttemptLimit'
 
-defineProps<{
+const props = defineProps<{
   tempToken: string
   userEmailMasked?: string
+  /** 账号维度限速 key（规范化邮箱）；缺省时用脱敏邮箱/临时 token 退化计数。 */
+  accountKey?: string
 }>()
 
 const emit = defineEmits<{
@@ -75,24 +86,36 @@ const verifying = ref(false)
 const code = ref('')
 const codeInput = ref<InstanceType<typeof TotpCodeInput> | null>(null)
 
+const { canSubmit, remainingSeconds, recordAttempt, applyServerRetryAfter, reset } =
+  useTotpAttemptLimit({
+    accountKey: () => props.accountKey || props.userEmailMasked || props.tempToken
+  })
+
 function submit(otp: string) {
-  if (verifying.value || !/^[0-9]{6}$/.test(otp)) return
+  if (verifying.value || !canSubmit.value || !/^[0-9]{6}$/.test(otp)) return
+  // 本地账号维度计数：60 秒窗口第 6 次提交直接拦下，不发请求（服务端仍有同样限速）。
+  if (!recordAttempt()) return
   verifying.value = true
   emit('verify', otp)
 }
 
 defineExpose({
   setVerifying: (value: boolean) => { verifying.value = value },
-  setError: (message: string) => {
+  // retryAfterSeconds: 服务端 429 的 Retry-After，与本地计数取更大者继续禁用。
+  setError: (message: string, retryAfterSeconds = 0) => {
     verifying.value = false
+    if (retryAfterSeconds > 0) {
+      applyServerRetryAfter(retryAfterSeconds)
+    }
     if (message) {
       appStore.showError(message)
     }
     code.value = ''
     nextTick(() => {
-      codeInput.value?.focus()
+      if (canSubmit.value) codeInput.value?.focus()
     })
-  }
+  },
+  resetLimit: () => reset()
 })
 
 </script>
