@@ -147,12 +147,54 @@ describe('admin DashboardView', () => {
     const now = new Date()
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
 
-    expect(getSnapshotV2).toHaveBeenCalledTimes(1)
-    expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({
+    expect(getSnapshotV2).toHaveBeenCalledTimes(2)
+    expect(getSnapshotV2).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      include_stats: true,
+      include_trend: false,
+      include_model_stats: false
+    }))
+    expect(getSnapshotV2).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      include_stats: false,
       start_date: formatLocalDate(yesterday),
       end_date: formatLocalDate(now),
       granularity: 'hour'
     }))
+  })
+
+  it('shows overview cards while reports wait and retains them on report failure', async () => {
+    let failReport!: (error: Error) => void
+    const pending = new Promise((_, reject) => { failReport = reject })
+    getSnapshotV2.mockImplementation((params) => params.include_stats
+      ? Promise.resolve({ stats: createDashboardStats() })
+      : pending)
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const wrapper = mount(DashboardView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          LoadingSpinner: true,
+          TokenUsageTrend: true,
+          ModelDistributionChart: true,
+          Line: true
+        }
+      }
+    })
+    try {
+      await flushPromises()
+      expect(wrapper.findAllComponents({ name: 'DashboardStat' })).toHaveLength(8)
+      expect(wrapper.findComponent({ name: 'TokenUsageTrend' }).exists()).toBe(true)
+      failReport(new Error('report timeout'))
+      await flushPromises()
+      expect(wrapper.findAllComponents({ name: 'DashboardStat' })).toHaveLength(8)
+      expect(wrapper.findComponent({ name: 'TokenUsageTrend' }).exists()).toBe(false)
+      expect(wrapper.get('[role="alert"]').text()).toBe('admin.dashboard.failedToLoad')
+      const chart = wrapper.getComponent({ name: 'ModelDistributionChart' })
+      expect(chart.props('modelStatsError')).toBe(true)
+      expect(chart.props('rankingError')).toBe(false)
+    } finally {
+      wrapper.unmount()
+      log.mockRestore()
+    }
   })
 
   it('keeps every stat number in the eight tiles and the group pricing link', async () => {

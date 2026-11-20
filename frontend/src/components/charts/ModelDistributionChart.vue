@@ -75,8 +75,8 @@
         />
       </template>
     </DistributionPanel>
-    <div v-else-if="activeView === 'model_distribution'" class="flex h-48 items-center justify-center text-sm text-muted">
-      {{ t('admin.dashboard.noDataAvailable') }}
+    <div v-else-if="activeView === 'model_distribution'" class="flex h-48 items-center justify-center text-sm text-muted" :role="modelStatsError ? 'alert' : undefined">
+      {{ t(modelStatsError ? 'admin.dashboard.failedToLoad' : 'admin.dashboard.noDataAvailable') }}
     </div>
 
     <div v-else-if="rankingLoading" class="flex h-48 items-center justify-center">
@@ -142,6 +142,7 @@ const props = withDefaults(defineProps<{
   rankingTotalRequests?: number
   rankingTotalTokens?: number
   loading?: boolean
+  modelStatsError?: boolean
   animationDuration?: number
   metric?: DistributionMetric
   showSourceToggle?: boolean
