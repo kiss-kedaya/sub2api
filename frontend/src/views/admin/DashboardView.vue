@@ -16,7 +16,7 @@
       />
 
       <!-- Loading State -->
-      <div v-if="loading" class="flex items-center justify-center py-12">
+      <div v-if="loading && !stats" class="flex items-center justify-center py-12">
         <LoadingSpinner />
       </div>
 
@@ -80,10 +80,13 @@
         <DashboardChartCard
           class="admin-trend-card"
           :title="t('admin.dashboard.tokenUsageTrend')"
-          :value="chartsLoading ? '-' : formatTokens(trendTotalTokens)"
+          :value="chartsLoading || chartsError ? '-' : formatTokens(trendTotalTokens)"
         >
           <div class="admin-chart-body px-2 pb-2 pt-4 sm:px-4">
-            <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" />
+            <p v-if="chartsError" role="alert" class="py-12 text-center text-sm text-muted">
+              {{ t('admin.dashboard.failedToLoad') }}
+            </p>
+            <TokenUsageTrend v-else :trend-data="trendData" :loading="chartsLoading" />
           </div>
         </DashboardChartCard>
 
@@ -96,6 +99,7 @@
             :ranking-total-requests="rankingTotalRequests"
             :ranking-total-tokens="rankingTotalTokens"
             :loading="chartsLoading"
+            :model-stats-error="chartsError"
             :ranking-loading="rankingLoading"
             :ranking-error="rankingError"
             :start-date="startDate"
@@ -107,12 +111,15 @@
         <!-- User Usage Trend (Top 12) -->
         <DashboardChartCard
           :title="`${t('admin.dashboard.recentUsage')} (Top 12)`"
-          :value="userTrendLoading ? '-' : formatTokens(userTrendTotalTokens)"
+          :value="userTrendLoading || userTrendError ? '-' : formatTokens(userTrendTotalTokens)"
         >
           <div class="h-64 px-2 pb-2 pt-4 sm:px-4">
             <div v-if="userTrendLoading" class="flex h-full items-center justify-center">
               <LoadingSpinner size="md" />
             </div>
+            <p v-else-if="userTrendError" role="alert" class="flex h-full items-center justify-center text-sm text-muted">
+              {{ t('admin.dashboard.failedToLoad') }}
+            </p>
             <Line v-else-if="userTrendChartData" :data="userTrendChartData" :options="lineOptions" />
             <div v-else class="flex h-full items-center justify-center text-sm text-muted">
               {{ t('admin.dashboard.noDataAvailable') }}
@@ -128,7 +135,6 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { useAppStore } from '@/stores/app'
 
 const { t } = useI18n()
 import { adminAPI } from '@/api/admin'
@@ -174,14 +180,15 @@ ChartJS.register(
   Filler
 )
 
-const appStore = useAppStore()
 const router = useRouter()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 const stats = ref<DashboardStats | null>(null)
 const loading = ref(false)
 const dashboardError = ref(false)
 const chartsLoading = ref(false)
+const chartsError = ref(false)
 const userTrendLoading = ref(false)
+const userTrendError = ref(false)
 const rankingLoading = ref(false)
 const rankingError = ref(false)
 
@@ -193,6 +200,7 @@ const rankingItems = ref<UserSpendingRankingItem[]>([])
 const rankingTotalActualCost = ref(0)
 const rankingTotalRequests = ref(0)
 const rankingTotalTokens = ref(0)
+let overviewLoadSeq = 0
 let chartLoadSeq = 0
 let usersTrendLoadSeq = 0
 let rankingLoadSeq = 0
@@ -443,46 +451,66 @@ const onDateRangeChange = (range: {
 }
 
 // Load data
-const loadDashboardSnapshot = async (includeStats: boolean) => {
-  const currentSeq = ++chartLoadSeq
-  if (includeStats && !stats.value) {
-    loading.value = true
+const loadDashboardOverview = async () => {
+  const currentSeq = ++overviewLoadSeq
+  loading.value = true
+  dashboardError.value = false
+  try {
+    const response = await adminAPI.dashboard.getSnapshotV2({
+      include_stats: true,
+      include_trend: false,
+      include_model_stats: false,
+      include_group_stats: false,
+      include_users_trend: false
+    })
+    if (currentSeq !== overviewLoadSeq) return false
+    if (!response.stats) throw new Error('Missing dashboard overview')
+    stats.value = response.stats
+    return true
+  } catch (error) {
+    if (currentSeq === overviewLoadSeq) {
+      dashboardError.value = true
+      console.error('Error loading dashboard overview:', error)
+    }
+    return false
+  } finally {
+    if (currentSeq === overviewLoadSeq) loading.value = false
   }
+}
+
+const loadDashboardCharts = async () => {
+  const currentSeq = ++chartLoadSeq
   chartsLoading.value = true
-  if (includeStats) dashboardError.value = false
+  chartsError.value = false
   try {
     const response = await adminAPI.dashboard.getSnapshotV2({
       start_date: startDate.value,
       end_date: endDate.value,
       granularity: granularity.value,
-      include_stats: includeStats,
+      include_stats: false,
       include_trend: true,
       include_model_stats: true,
       include_group_stats: false,
       include_users_trend: false
     })
     if (currentSeq !== chartLoadSeq) return
-    if (includeStats && response.stats) {
-      stats.value = response.stats
-    }
     trendData.value = response.trend || []
     modelStats.value = response.models || []
   } catch (error) {
     if (currentSeq !== chartLoadSeq) return
-    appStore.showError(t('admin.dashboard.failedToLoad'))
-    if (includeStats) dashboardError.value = true
-    console.error('Error loading dashboard snapshot:', error)
+    chartsError.value = true
+    trendData.value = []
+    modelStats.value = []
+    console.error('Error loading dashboard charts:', error)
   } finally {
-    if (currentSeq === chartLoadSeq) {
-      loading.value = false
-      chartsLoading.value = false
-    }
+    if (currentSeq === chartLoadSeq) chartsLoading.value = false
   }
 }
 
 const loadUsersTrend = async () => {
   const currentSeq = ++usersTrendLoadSeq
   userTrendLoading.value = true
+  userTrendError.value = false
   try {
     const response = await adminAPI.dashboard.getUserUsageTrend({
       start_date: startDate.value,
@@ -495,6 +523,7 @@ const loadUsersTrend = async () => {
   } catch (error) {
     if (currentSeq !== usersTrendLoadSeq) return
     console.error('Error loading users trend:', error)
+    userTrendError.value = true
     userTrend.value = []
   } finally {
     if (currentSeq === usersTrendLoadSeq) {
@@ -534,16 +563,15 @@ const loadUserSpendingRanking = async () => {
 }
 
 const loadDashboardStats = async () => {
-  await Promise.all([
-    loadDashboardSnapshot(true),
-    loadUsersTrend(),
-    loadUserSpendingRanking()
-  ])
+  const initialChartSeq = chartLoadSeq
+  if (await loadDashboardOverview() && initialChartSeq === chartLoadSeq) {
+    await loadChartData()
+  }
 }
 
 const loadChartData = async () => {
   await Promise.all([
-    loadDashboardSnapshot(false),
+    loadDashboardCharts(),
     loadUsersTrend(),
     loadUserSpendingRanking()
   ])
