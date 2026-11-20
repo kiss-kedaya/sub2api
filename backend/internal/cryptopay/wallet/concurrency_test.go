@@ -26,7 +26,8 @@ func TestDerive500ConcurrentWithHotImportDoesNotReplaceActiveSeed(t *testing.T) 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM settings WHERE key = $1 FOR SHARE`)).WithArgs(gate).
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
-	mock.ExpectExec(regexp.QuoteMeta(auditSQL)).WithArgs("derive", "", 0, 0, "", "", "500", "ok", "").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta(auditSQL)).WithArgs("derive", "", 0, 0, "", "", "500", "ok", "",
+		nil, nil, nil, nil, nil, nil).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	expectImportStart(mock, raw, false)
 	expectAddresses(mock, nil)

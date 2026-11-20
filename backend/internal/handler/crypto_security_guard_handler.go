@@ -41,7 +41,7 @@ func (h *CryptoHandler) AdminRecoverWalletSecurity(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Wallet unavailable")
 		return
 	}
-	status, err := h.service.RecoverWalletSecurity(c.Request.Context())
+	status, err := h.service.RecoverWalletSecurity(cryptoAuditContext(c))
 	if err != nil {
 		response.Error(c, http.StatusConflict, "Recovery refused; repair wallet address integrity before retrying")
 		return

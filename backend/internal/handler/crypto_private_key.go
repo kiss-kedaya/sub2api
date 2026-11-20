@@ -34,7 +34,7 @@ func (h *CryptoHandler) AdminExportAddressPrivateKey(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Private key export unavailable")
 		return
 	}
-	result, err := h.privateKeyExporter.ExportAddressPrivateKey(c.Request.Context(), id)
+	result, err := h.privateKeyExporter.ExportAddressPrivateKey(cryptoAuditContext(c), id)
 	if result != nil {
 		defer func() { result.PrivateKey = "" }()
 	}

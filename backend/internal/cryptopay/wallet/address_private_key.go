@@ -58,7 +58,7 @@ func (m *Manager) ExportAddressPrivateKey(ctx context.Context, addressID int64) 
 		}
 		// The transaction has already rolled back before this independent audit,
 		// including when the connection pool has only one connection.
-		return nil, m.denied(addressPrivateKeyExportOp, err)
+		return nil, m.denied(ctx, addressPrivateKeyExportOp, err)
 	}
 	return value, nil
 }

@@ -60,7 +60,8 @@ func expectExportPool(mock sqlmock.Sqlmock, family, address, status string, inde
 
 func expectPrivateKeyExportAudit(mock sqlmock.Sqlmock, family, address string, index uint32) *sqlmock.ExpectedExec {
 	return mock.ExpectExec(regexp.QuoteMeta(auditSQL)).WithArgs(addressPrivateKeyExportOp,
-		family, index, int64(0), address, "", "", "success", "")
+		family, index, int64(0), address, "", "", "success", "",
+		nil, nil, nil, nil, nil, nil)
 }
 
 func assertExportedPrivateKey(t *testing.T, value *AddressPrivateKeyExport, family, address string) {

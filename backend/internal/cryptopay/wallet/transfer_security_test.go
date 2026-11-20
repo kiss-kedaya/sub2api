@@ -53,7 +53,8 @@ func TestSignedSweepAuthorizationBindsTransactionAndTransferFields(t *testing.T)
 	securityRead(t, m, mock, state, "FOR SHARE")
 	mock.ExpectQuery("SELECT COALESCE.*FROM settings.*FOR SHARE").WithArgs("crypto.config").WillReturnRows(sqlmock.NewRows([]string{"enabled"}).AddRow(true))
 	var authorization string
-	mock.ExpectExec("INSERT INTO crypto_signer_audit").WithArgs("sign_evm", req.Kind, req.Index, req.ChainID, req.To, req.Token, req.Amount, "ok", sealedArg{capture: &authorization}).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO crypto_signer_audit").WithArgs("sign_evm", req.Kind, req.Index, req.ChainID, req.To, req.Token, req.Amount, "ok", sealedArg{capture: &authorization},
+		nil, nil, nil, nil, nil, nil).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	rawTx, err := m.SignEVM(ctx, req)
 	if err != nil {

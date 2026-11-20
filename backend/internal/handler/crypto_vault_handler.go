@@ -34,7 +34,7 @@ func (h *CryptoHandler) AdminImportHotMnemonic(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Wallet unavailable")
 		return
 	}
-	err := h.service.ImportHotMnemonic(c.Request.Context(), req.HotMnemonic)
+	err := h.service.ImportHotMnemonic(cryptoAuditContext(c), req.HotMnemonic)
 	req.HotMnemonic = ""
 	if err != nil {
 		response.Error(c, http.StatusConflict, "Hot-wallet import refused; check the wallet configuration and unresolved sweeps")

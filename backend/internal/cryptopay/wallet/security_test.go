@@ -139,7 +139,8 @@ func TestChangedOrDeletedAddressPersistsLockAndSurvivesRuntimeSwitches(t *testin
 			snapshotRead(mock, rows)
 			var persisted string
 			mock.ExpectExec("INSERT INTO settings").WithArgs(settingSecurity, sealedArg{capture: &persisted}).WillReturnResult(sqlmock.NewResult(1, 1))
-			mock.ExpectExec("INSERT INTO crypto_signer_audit").WithArgs("security_lock", "", 0, 0, "", "", "", "locked", reason).WillReturnResult(sqlmock.NewResult(1, 1))
+			mock.ExpectExec("INSERT INTO crypto_signer_audit").WithArgs("security_lock", "", 0, 0, "", "", "", "locked", reason,
+				nil, nil, nil, nil, nil, nil).WillReturnResult(sqlmock.NewResult(1, 1))
 			mock.ExpectCommit()
 			status, err := m.CheckSecurity(t.Context())
 			if !errors.Is(err, ErrSecurityLocked) || !status.Locked || !status.DepositsPaused || !status.AlertPending {
@@ -182,7 +183,8 @@ func TestDeletingOrForgingRegisteredSnapshotPersistsIncident(t *testing.T) {
 			}
 			mock.ExpectQuery("SELECT value FROM settings WHERE key.*FOR UPDATE").WithArgs(settingSecurity).WillReturnRows(rows)
 			mock.ExpectExec("INSERT INTO settings").WithArgs(settingSecurity, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
-			mock.ExpectExec("INSERT INTO crypto_signer_audit").WithArgs("security_lock", "", 0, 0, "", "", "", "locked", reason).WillReturnResult(sqlmock.NewResult(1, 1))
+			mock.ExpectExec("INSERT INTO crypto_signer_audit").WithArgs("security_lock", "", 0, 0, "", "", "", "locked", reason,
+				nil, nil, nil, nil, nil, nil).WillReturnResult(sqlmock.NewResult(1, 1))
 			mock.ExpectCommit()
 			status, err := m.CheckSecurity(t.Context())
 			if !errors.Is(err, ErrSecurityLocked) || status.Reason != reason {
@@ -209,7 +211,8 @@ func TestDuplicateNormalizedAddressRowsCannotHideMutation(t *testing.T) {
 			securityRead(t, m, mock, state, "FOR UPDATE")
 			snapshotRead(mock, rows)
 			mock.ExpectExec("INSERT INTO settings").WillReturnResult(sqlmock.NewResult(1, 1))
-			mock.ExpectExec("INSERT INTO crypto_signer_audit").WithArgs("security_lock", "", 0, 0, "", "", "", "locked", "deposit_address_derivation_mismatch").WillReturnResult(sqlmock.NewResult(1, 1))
+			mock.ExpectExec("INSERT INTO crypto_signer_audit").WithArgs("security_lock", "", 0, 0, "", "", "", "locked", "deposit_address_derivation_mismatch",
+				nil, nil, nil, nil, nil, nil).WillReturnResult(sqlmock.NewResult(1, 1))
 			mock.ExpectCommit()
 			status, err := m.CheckSecurity(t.Context())
 			if !errors.Is(err, ErrSecurityLocked) || !status.Locked {
@@ -306,7 +309,8 @@ func TestRecoveryRefusesUnrepairedAddressAndKeepsSigningOff(t *testing.T) {
 	securityRead(t, m, mock, state, "FOR UPDATE")
 	snapshotRead(mock, addressRows(good))
 	mock.ExpectExec("INSERT INTO settings").WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("INSERT INTO crypto_signer_audit").WithArgs("security_recover", "", 0, 0, "", "", "", "ok", "").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO crypto_signer_audit").WithArgs("security_recover", "", 0, 0, "", "", "", "ok", "",
+		nil, nil, nil, nil, nil, nil).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	if err := m.RecoverSecurity(t.Context()); err != nil {
 		t.Fatal(err)

@@ -39,7 +39,7 @@ func (h *CryptoHandler) AdminExportMnemonics(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Mnemonic export unavailable")
 		return
 	}
-	result, err := h.mnemonicExporter.ExportMnemonics(c.Request.Context())
+	result, err := h.mnemonicExporter.ExportMnemonics(cryptoAuditContext(c))
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		message := "Mnemonic export unavailable"

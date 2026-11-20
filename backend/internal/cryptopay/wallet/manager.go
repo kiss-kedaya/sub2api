@@ -160,7 +160,7 @@ func (m *Manager) Initialize(ctx context.Context, depositMnemonic, hotMnemonic s
 	defer m.mu.Unlock()
 	err := m.initialize(ctx, depositMnemonic, hotMnemonic)
 	if err != nil {
-		return m.denied("wallet_init", err)
+		return m.denied(ctx, "wallet_init", err)
 	}
 	return nil
 }
@@ -219,16 +219,16 @@ func (m *Manager) Derive(ctx context.Context, start, count uint32) ([]addresses.
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if count == 0 || count > 500 || start >= 1<<31 || uint64(start)+uint64(count) > 1<<31 {
-		return nil, m.denied("derive", errors.New("derivation count must be 1-500 within nonhardened index range"))
+		return nil, m.denied(ctx, "derive", errors.New("derivation count must be 1-500 within nonhardened index range"))
 	}
 	storeTx, err := m.currentVaultTx(ctx)
 	if err != nil {
-		return nil, m.denied("derive", err)
+		return nil, m.denied(ctx, "derive", err)
 	}
 	defer func() { _ = storeTx.Rollback() }()
 	if err := m.checkSecurityInTx(ctx, storeTx); err != nil {
 		_ = storeTx.Rollback()
-		return nil, m.denied("derive", err)
+		return nil, m.denied(ctx, "derive", err)
 	}
 	out := make([]addresses.Derived, 0, count)
 	for i := uint32(0); i < count; i++ {
@@ -268,7 +268,7 @@ func (m *Manager) HotAddresses(ctx context.Context) (*HotAddress, error) {
 	}
 	storeTx, err := m.currentVaultTx(ctx)
 	if err != nil {
-		return nil, m.denied("hot_address", err)
+		return nil, m.denied(ctx, "hot_address", err)
 	}
 	defer func() { _ = storeTx.Rollback() }()
 	_, evm, err := m.hot.EVMKey(0)

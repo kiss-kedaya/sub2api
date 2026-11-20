@@ -274,7 +274,7 @@ func (h *CryptoHandler) AdminInitializeWallet(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Wallet unavailable")
 		return
 	}
-	if err := h.service.InitializeWallet(c.Request.Context(), body.DepositMnemonic, body.HotMnemonic); err != nil {
+	if err := h.service.InitializeWallet(cryptoAuditContext(c), body.DepositMnemonic, body.HotMnemonic); err != nil {
 		response.BadRequest(c, "Wallet initialization refused; check seed validity and whether a wallet already exists")
 		return
 	}
