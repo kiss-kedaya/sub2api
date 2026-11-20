@@ -130,6 +130,10 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		// 删号、改余额
 		{http.MethodDelete, "/api/v1/admin/users/1", "admin"},
 		{http.MethodPost, "/api/v1/admin/users/1/balance", "admin"},
+		// 给账号绑定第三方登录身份（会新增一条登录路径）
+		{http.MethodPost, "/api/v1/admin/users/1/auth-identities", "admin"},
+		// 上游失败 dump 的正文含客户端请求体与上游响应体
+		{http.MethodGet, "/api/v1/admin/debug-dumps/test.txt", "admin"},
 		// 支付渠道配置
 		{http.MethodPut, "/api/v1/admin/payment/config", "payment"},
 		{http.MethodPost, "/api/v1/admin/payment/providers", "payment"},

@@ -410,7 +410,9 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers, s
 		users.GET("", h.Admin.User.List)
 		users.GET("/:id", h.Admin.User.GetByID)
 		users.GET("/:id/load", h.Admin.User.GetLoad)
-		users.POST("/:id/auth-identities", h.Admin.User.BindAuthIdentity)
+		// 绑定第三方登录身份等于给目标账号增加一条登录路径（对管理员账号是持久化后门），
+		// 与改密码/改角色同级：要求 step-up 2FA，机器凭据一律拒绝。
+		users.POST("/:id/auth-identities", gin.HandlerFunc(stepUpAuth), h.Admin.User.BindAuthIdentity)
 		users.POST("", h.Admin.User.Create)
 		users.PUT("/:id", h.Admin.User.Update)
 		// 删除用户属不可逆敏感操作：要求 step-up 二次验证（机器凭据返回 403）。
@@ -514,10 +516,12 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/:id/upstream-billing-probe", h.Admin.Account.ProbeUpstreamBilling)
 
 		// 上游失败现场：SUB2API_DEBUG_DUMP_DIR 打开时落盘的 txt，可直接下载。
+		// dump 内含客户端请求体与上游响应体（用户提示词、工具结果），与
+		// request-capture 的正文读取同级：列目录保留元数据，读取正文要求 step-up 2FA。
 		debugDumps := admin.Group("/debug-dumps")
 		{
 			debugDumps.GET("", h.Admin.DebugDump.List)
-			debugDumps.GET("/:name", h.Admin.DebugDump.Download)
+			debugDumps.GET("/:name", gin.HandlerFunc(stepUpAuth), h.Admin.DebugDump.Download)
 		}
 		accounts.GET("/:id/ollama-cloud-usage", h.Admin.Account.GetOllamaCloudUsage)
 		accounts.PUT("/:id/ollama-cloud-usage/session", h.Admin.Account.SaveOllamaCloudUsageSession)
