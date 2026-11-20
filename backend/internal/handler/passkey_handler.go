@@ -118,6 +118,13 @@ func (h *PasskeyHandler) FinishLogin(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// passkey 登录不能绕过登录二次验证：与密码登录 / 第三方 OAuth 登录同一口径
+	// （SettingService.LoginRequiresTOTP）。当前前端没有 passkey → 2FA 的挑战流程，
+	// 宁可 fail-closed 也不能直接发 token。
+	if h.settingSvc != nil && h.settingSvc.LoginRequiresTOTP(c.Request.Context(), user) {
+		response.Forbidden(c, "This account has two-factor authentication enabled; sign in with your password and 2FA code instead of a passkey")
+		return
+	}
 	middleware2.SetAuditActor(c, user.ID, user.Email)
 	c.Set("auth_method", service.AuditAuthMethodPasskey)
 	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)

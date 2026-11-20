@@ -86,3 +86,41 @@ func TestEmailOAuthAuto_SnapshotsPlatformQuotaDefaults(t *testing.T) {
 	require.NotNil(t, geminiRecord.MonthlyLimitUSD)
 	require.InDelta(t, 100.0, *geminiRecord.MonthlyLimitUSD, 0.0001)
 }
+
+// 第三方登录（OAuth/passkey）不得绕过已启用账号的登录动态码：
+// 该判定必须与密码登录同口径，且功能总开关关闭/账号未开 TOTP 时不能误伤正常登录。
+func TestLoginRequiresTOTPSharedAcrossLoginEntrypoints(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("totp开且账号已启用：必须挑战", func(t *testing.T) {
+		svc := newEmailOAuthAutoAuthService(
+			&userRepoStub{nextID: 1},
+			map[string]string{SettingKeyTotpEnabled: "true"},
+			nil,
+		)
+		require.True(t, svc.loginRequiresTOTP(ctx, &User{ID: 7, TotpEnabled: true}))
+	})
+
+	t.Run("账号未启用TOTP：不误伤", func(t *testing.T) {
+		svc := newEmailOAuthAutoAuthService(
+			&userRepoStub{nextID: 1},
+			map[string]string{SettingKeyTotpEnabled: "true"},
+			nil,
+		)
+		require.False(t, svc.loginRequiresTOTP(ctx, &User{ID: 7, TotpEnabled: false}))
+	})
+
+	t.Run("功能总开关关闭：不误伤", func(t *testing.T) {
+		svc := newEmailOAuthAutoAuthService(
+			&userRepoStub{nextID: 1},
+			map[string]string{SettingKeyTotpEnabled: "false"},
+			nil,
+		)
+		require.False(t, svc.loginRequiresTOTP(ctx, &User{ID: 7, TotpEnabled: true}))
+	})
+
+	t.Run("nil用户：不误伤", func(t *testing.T) {
+		svc := newEmailOAuthAutoAuthService(&userRepoStub{nextID: 1}, map[string]string{SettingKeyTotpEnabled: "true"}, nil)
+		require.False(t, svc.loginRequiresTOTP(ctx, nil))
+	})
+}

@@ -29,6 +29,15 @@ func (s *AuthService) LoginOrRegisterVerifiedEmailOAuth(ctx context.Context, inp
 	return s.loginOrRegisterVerifiedEmailOAuth(ctx, input, "", "", "")
 }
 
+// loginRequiresTOTP 判断一次第三方登录是否必须先完成动态码校验：
+// 与密码登录/待定 OAuth 流同口径（功能总开关开启且该账号自身启用了 TOTP）。
+func (s *AuthService) loginRequiresTOTP(ctx context.Context, user *User) bool {
+	if s == nil || s.settingService == nil {
+		return false
+	}
+	return s.settingService.LoginRequiresTOTP(ctx, user)
+}
+
 func (s *AuthService) LoginOrRegisterVerifiedEmailOAuthWithInvitation(
 	ctx context.Context,
 	input EmailOAuthIdentityInput,
@@ -145,6 +154,12 @@ func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
 		}
 	} else {
 		user = s.applyOAuthSignupPromoCode(ctx, user, promoCode)
+	}
+	// 登录二次验证不能被第三方 OAuth 绕过：密码登录与待定 OAuth 绑定流都会在
+	// step-up 前要求 TOTP，这条"邮箱已存在则直接登录"的路径必须同口径。
+	// 返回已解析出的 user，由 handler 创建 TOTP 临时登录会话（不签发 token）。
+	if s.loginRequiresTOTP(ctx, user) {
+		return nil, user, ErrLoginTOTPRequired
 	}
 	s.RecordSuccessfulLogin(ctx, user.ID)
 

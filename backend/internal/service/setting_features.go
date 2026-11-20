@@ -190,6 +190,16 @@ func (s *SettingService) IsTotpEnabled(ctx context.Context) bool {
 	return value == "true"
 }
 
+// LoginRequiresTOTP 统一判定"已有账号的这次登录是否必须先过动态码"。
+// 密码登录、第三方邮箱 OAuth 登录、passkey 登录必须共用同一口径，
+// 避免某条登录入口漏掉二次验证。
+func (s *SettingService) LoginRequiresTOTP(ctx context.Context, user *User) bool {
+	if s == nil || user == nil || !user.TotpEnabled {
+		return false
+	}
+	return s.IsTotpEnabled(ctx)
+}
+
 // PasskeyEnabled reports the effective runtime switch. WebAuthn deployment
 // configuration remains the security boundary; the database setting can only
 // disable a valid configured relying party, never replace or weaken it.
@@ -263,6 +273,22 @@ func (s *SettingService) IsStepUpEnabled(ctx context.Context) bool {
 		return false // 默认关闭
 	}
 	return value == "true"
+}
+
+// IsStepUpEnabledStrict 与 IsStepUpEnabled 语义相同，但把存储故障暴露给调用方，
+// 供安全门控 fail-closed（缺失键仍按"默认关闭"处理，读取失败返回 error）。
+func (s *SettingService) IsStepUpEnabledStrict(ctx context.Context) (bool, error) {
+	if s == nil || s.settingRepo == nil {
+		return false, fmt.Errorf("step-up setting reader unavailable")
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyStepUpEnabled)
+	if errors.Is(err, ErrSettingNotFound) {
+		return false, nil // 默认关闭
+	}
+	if err != nil {
+		return false, fmt.Errorf("read step-up setting: %w", err)
+	}
+	return value == "true", nil
 }
 
 // defaultAuditLogRetentionDays 审计日志默认保留天数。
