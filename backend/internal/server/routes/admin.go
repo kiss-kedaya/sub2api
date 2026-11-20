@@ -259,7 +259,7 @@ func registerAuditLogRoutes(admin *gin.RouterGroup, h *handler.Handlers, _ middl
 		// 倍率配置变更的真实修改时间（来自审计日志，不要用 usage_logs 推断）
 		auditLogs.GET("/group-rate-changes", h.Admin.AuditLog.GroupRateChanges)
 		auditLogs.GET("/:id", h.Admin.AuditLog.Get)
-		// 清空需现场 TOTP 校验（在 handler 内强制），不复用 step-up sudo 窗口
+		// 后台已禁止清理审计日志：固定 403，只能由 DBA 在数据库层清理
 		auditLogs.POST("/clear", h.Admin.AuditLog.Clear)
 	}
 }

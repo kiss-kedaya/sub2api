@@ -67,7 +67,9 @@
               :aria-label="t('common.search')"
               @click="search"
             />
-            <UButton color="error" variant="subtle" icon="i-lucide-trash" :label="t('admin.audit.clearAll')" @click="openClearDialog" />
+            <UBadge color="neutral" variant="subtle" icon="i-lucide-lock">
+              {{ t('admin.audit.dbOnlyNotice') }}
+            </UBadge>
             <UDropdownMenu :items="columnMenuItems" :content="{ align: 'end' }">
               <UButton color="neutral" variant="outline" trailing-icon="i-lucide-settings-2" :aria-label="t('admin.audit.displayColumns')">
                 <span class="hidden sm:inline">{{ t('admin.audit.displayColumns') }}</span>
@@ -209,44 +211,7 @@
       </template>
     </BaseDialog>
 
-    <!-- Clear confirmation → step-up TOTP -->
-    <ConfirmDialog
-      :show="clearConfirmVisible"
-      :title="t('admin.audit.clearConfirm.title')"
-      :message="t('admin.audit.clearConfirm.message')"
-      :confirm-text="t('admin.audit.clearAll')"
-      :cancel-text="t('common.cancel')"
-      danger
-      @confirm="onClearConfirmed"
-      @cancel="clearConfirmVisible = false"
-    />
-
-    <!-- TOTP prompt for the clear operation -->
-    <BaseDialog :show="clearTotpVisible" :title="t('admin.audit.clearConfirm.totpTitle')" width="narrow" :z-index="60" @close="cancelClearTotp">
-      <p class="text-sm text-muted">{{ t('admin.audit.clearConfirm.totpHint') }}</p>
-      <UInput
-        v-model.trim="clearTotpCode"
-        inputmode="numeric"
-        maxlength="6"
-        autocomplete="one-time-code"
-        placeholder="••••••"
-        class="mt-4 w-full"
-        :ui="{ base: 'text-center text-lg tracking-[0.5em]' }"
-        @keyup.enter="submitClear"
-      />
-      <template #footer>
-        <div class="flex justify-end gap-2">
-          <UButton color="neutral" variant="subtle" :disabled="clearing" :label="t('common.cancel')" @click="cancelClearTotp" />
-          <UButton
-            color="error"
-            :loading="clearing"
-            :disabled="clearing || clearTotpCode.length !== 6"
-            :label="clearing ? t('common.loading') : t('admin.audit.clearAll')"
-            @click="submitClear"
-          />
-        </div>
-      </template>
-    </BaseDialog>
+    <!-- 后台已禁止清理审计日志：只保留只读提示，清理只能由 DBA 在数据库层执行 -->
   </AppLayout>
 </template>
 
@@ -254,7 +219,6 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI, type AuditLog } from '@/api/admin'
-import { totpAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
@@ -262,7 +226,6 @@ import type { Column } from '@/components/common/types'
 import Pagination from '@/components/common/Pagination.vue'
 import Select from '@/components/common/Select.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
-import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import { useListColumnMenu } from './useListColumnMenu'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
@@ -517,59 +480,8 @@ function prettyBody(body: string): string {
   }
 }
 
-// Clear-all flow: confirm → TOTP → clear
-const clearConfirmVisible = ref(false)
-const clearTotpVisible = ref(false)
-const clearTotpCode = ref('')
-const clearing = ref(false)
-const checkingTotpStatus = ref(false)
-
-// 与其他敏感操作一致：未启用 2FA 时直接提示去个人资料启用 TOTP，
-// 而不是弹出一个无法完成的验证码输入框（后端会以 TOTP_NOT_SETUP 拒绝）。
-async function openClearDialog() {
-  if (checkingTotpStatus.value) return
-  checkingTotpStatus.value = true
-  try {
-    const status = await totpAPI.getStatus()
-    if (!status.enabled) {
-      appStore.showError(t('stepUp.notEnabled'))
-      return
-    }
-  } catch (err: any) {
-    appStore.showError(err?.message || t('admin.audit.loadFailed'))
-    return
-  } finally {
-    checkingTotpStatus.value = false
-  }
-  clearConfirmVisible.value = true
-}
-
-function onClearConfirmed() {
-  clearConfirmVisible.value = false
-  clearTotpCode.value = ''
-  clearTotpVisible.value = true
-}
-
-function cancelClearTotp() {
-  if (clearing.value) return
-  clearTotpVisible.value = false
-}
-
-async function submitClear() {
-  if (clearTotpCode.value.length !== 6) return
-  clearing.value = true
-  try {
-    const res = await adminAPI.audit.clear(clearTotpCode.value)
-    clearTotpVisible.value = false
-    appStore.showSuccess(t('admin.audit.clearConfirm.success', { count: res.deleted }))
-    search()
-  } catch (err: any) {
-    appStore.showError(err?.message || t('admin.audit.clearConfirm.failed'))
-    clearTotpCode.value = ''
-  } finally {
-    clearing.value = false
-  }
-}
+// 后台管理端已禁止清理审计日志：没有确认弹窗、没有 TOTP 步骤，
+// 清理只能由数据库管理员在数据库层执行（页面只读提示见 toolbar）。
 
 // Helpers
 function formatTime(iso: string): string {
