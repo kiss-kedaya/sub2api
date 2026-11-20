@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -122,5 +123,11 @@ func TestLoginRequiresTOTPSharedAcrossLoginEntrypoints(t *testing.T) {
 	t.Run("nil用户：不误伤", func(t *testing.T) {
 		svc := newEmailOAuthAutoAuthService(&userRepoStub{nextID: 1}, map[string]string{SettingKeyTotpEnabled: "true"}, nil)
 		require.False(t, svc.loginRequiresTOTP(ctx, nil))
+	})
+
+	t.Run("设置读取失败：fail-closed 仍要求挑战", func(t *testing.T) {
+		repo := &settingRepoStub{values: map[string]string{}, err: errors.New("settings db down")}
+		svc := NewSettingService(repo, &config.Config{})
+		require.True(t, svc.LoginRequiresTOTP(ctx, &User{ID: 7, TotpEnabled: true}))
 	})
 }

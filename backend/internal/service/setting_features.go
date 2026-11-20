@@ -191,13 +191,23 @@ func (s *SettingService) IsTotpEnabled(ctx context.Context) bool {
 }
 
 // LoginRequiresTOTP 统一判定"已有账号的这次登录是否必须先过动态码"。
-// 密码登录、第三方邮箱 OAuth 登录、passkey 登录必须共用同一口径，
-// 避免某条登录入口漏掉二次验证。
+// 密码登录、第三方邮箱 OAuth 登录、passkey/pending OAuth 兑换必须共用同一口径，
+// 避免某条登录入口漏掉二次验证。设置读取失败时 fail-closed（要求动态码）。
 func (s *SettingService) LoginRequiresTOTP(ctx context.Context, user *User) bool {
 	if s == nil || user == nil || !user.TotpEnabled {
 		return false
 	}
-	return s.IsTotpEnabled(ctx)
+	if s.settingRepo == nil {
+		return true
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyTotpEnabled)
+	if errors.Is(err, ErrSettingNotFound) {
+		return false // 默认关闭
+	}
+	if err != nil {
+		return true // 读取失败时不能把二次验证静默关掉
+	}
+	return value == "true"
 }
 
 // PasskeyEnabled reports the effective runtime switch. WebAuthn deployment
