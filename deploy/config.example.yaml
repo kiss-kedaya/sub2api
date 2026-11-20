@@ -41,10 +41,12 @@ server:
   # Keep-alive idle timeout in seconds.
   # Keep-Alive 空闲连接超时（秒）。
   idle_timeout: 120
-  # Trusted proxies used when security.trust_forwarded_ip_for_api_key_acl is false.
+  # Trusted proxies. Also the only peers allowed to supply forwarded client-IP
+  # headers while security.trust_forwarded_ip_for_api_key_acl is enabled.
   # List only the exact proxy addresses that connect directly to Sub2API.
   # Set [] explicitly to disable forwarded-IP trust in high-security mode.
-  # security.trust_forwarded_ip_for_api_key_acl=false 时使用的可信代理。
+  # security.trust_forwarded_ip_for_api_key_acl=true 时，原始转发头也只在
+  # 直连对端属于本列表时才会被采信；列表为空则一律使用 TCP 对端地址。
   # 只填写直接连接 Sub2API 的精确代理地址；显式设置 [] 可在高安全模式下
   # 禁用转发 IP 信任。
   trusted_proxies:
@@ -122,9 +124,12 @@ cors:
 # 安全配置
 # =============================================================================
 security:
-  # Legacy compatibility switch. When true, raw forwarded headers take over
-  # server.trusted_proxies. Set false to enforce the trusted proxy chain above.
-  # 旧版兼容开关。开启时原始转发头会接管 server.trusted_proxies；关闭后严格
+  # Legacy compatibility switch. When true, forwarded headers are only trusted
+  # when the TCP peer is listed in server.trusted_proxies; X-Forwarded-For is
+  # read right-to-left so client-supplied values cannot win. Set false to
+  # enforce the trusted proxy chain above for every request.
+  # 旧版兼容开关。开启时，只有直连对端在 server.trusted_proxies 内才采信原始
+  # 转发头，且 X-Forwarded-For 从右往左解析，客户端伪造值不会生效；关闭后严格
   # 使用上方配置的可信代理链。示例配置采用高安全模式。
   trust_forwarded_ip_for_api_key_acl: false
   # Optional client-IP headers for third-party CDNs, checked in list order before

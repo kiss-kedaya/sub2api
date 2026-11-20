@@ -24,13 +24,15 @@ func TestSessionBindingContextFollowsForwardedIPSwitch(t *testing.T) {
 		trustedProxies []string
 		wantIP         string
 	}{
-		{name: "enabled switch takes over raw headers", trustForwarded: true, wantIP: "1.2.3.4"},
+		{name: "enabled switch without trusted proxy ignores raw headers", trustForwarded: true, wantIP: "127.0.0.1"},
+		{name: "enabled switch behind configured trusted proxy uses real client", trustForwarded: true, trustedProxies: []string{"127.0.0.1"}, wantIP: "1.2.3.4"},
 		{name: "disabled switch ignores untrusted headers", trustForwarded: false, wantIP: "127.0.0.1"},
 		{name: "disabled switch uses configured Gin proxy", trustForwarded: false, trustedProxies: []string{"127.0.0.1"}, wantIP: "1.2.3.4"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{}
 			cfg.SetTrustForwardedIPForAPIKeyACL(tc.trustForwarded)
+			cfg.Server.TrustedProxies = tc.trustedProxies
 
 			r := gin.New()
 			require.NoError(t, r.SetTrustedProxies(tc.trustedProxies))
@@ -61,6 +63,8 @@ func TestSessionBindingContextSnapshotsForwardedModeAndHeaders(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.SetForwardedClientIPSettings(true, []string{"X-Initial-IP"})
+	// 原始转发头只在 TCP 对端属于可信代理时采信；本用例固定同一反代地址。
+	cfg.Server.TrustedProxies = []string{"9.9.9.9"}
 
 	r := gin.New()
 	require.NoError(t, r.SetTrustedProxies(nil))
@@ -132,6 +136,7 @@ func TestRequestSessionBindingPrefersInjectedBinding(t *testing.T) {
 
 	cfg := &config.Config{}
 	cfg.SetTrustForwardedIPForAPIKeyACL(true)
+	cfg.Server.TrustedProxies = []string{"127.0.0.1"}
 
 	r := gin.New()
 	require.NoError(t, r.SetTrustedProxies([]string{"127.0.0.1"}))
