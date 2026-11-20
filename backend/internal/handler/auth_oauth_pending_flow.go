@@ -1967,6 +1967,33 @@ func (h *AuthHandler) ExchangePendingOAuthCompletion(c *gin.Context) {
 			response.ErrorFrom(c, err)
 			return
 		}
+		// 身份已绑定就直接签会话的路径同样不能绕过登录二次验证
+		// （LinuxDo / 钉钉 / 微信 / OIDC 等第三方登录共用此兑换接口）。
+		if h.settingSvc != nil && h.settingSvc.LoginRequiresTOTP(c.Request.Context(), loginUser) {
+			if h.totpService == nil {
+				clearCookies()
+				response.ErrorFrom(c, infraerrors.ServiceUnavailable("TWO_FACTOR_UNAVAILABLE", "two-factor verification is unavailable"))
+				return
+			}
+			tempToken, err := h.totpService.CreateLoginSession(c.Request.Context(), loginUser.ID, loginUser.Email)
+			if err != nil {
+				clearCookies()
+				response.ErrorFrom(c, infraerrors.InternalServer("TWO_FACTOR_SESSION_FAILED", "failed to create two-factor session"))
+				return
+			}
+			// 一次性：挑战下发即消费 pending 会话，同一个浏览器会话不能重复兑换。
+			if _, err := svc.ConsumeBrowserSession(c.Request.Context(), sessionToken, browserSessionKey); err != nil {
+				clearCookies()
+				response.ErrorFrom(c, err)
+				return
+			}
+			payload["requires_2fa"] = true
+			payload["temp_token"] = tempToken
+			payload["user_email_masked"] = service.MaskEmail(loginUser.Email)
+			clearCookies()
+			response.Success(c, payload)
+			return
+		}
 	}
 	skipAdoptionPrompt, err := h.shouldSkipPendingOAuthAdoptionPrompt(c.Request.Context(), session, payload)
 	if err != nil {
