@@ -33,6 +33,8 @@ Compared with upstream, this tree is built around a production site that already
 
 Balance preauthorization stays **off** in this deployment (`BILLING_BALANCE_PREAUTHORIZATION_ENABLED=false`). Do not turn it on without a dedicated review.
 
+Balance charges are settled per request by default. The optional durable merge settlement (`BILLING_BALANCE_MERGE_SETTLEMENT_ENABLED=false`) commits each completed balance charge to `billing_balance_settlements` and lets the settlement worker coalesce every pending charge of the same user into a single `users.balance` update, removing the row-lock queue under one user's concurrency. Amounts, final balance and failure semantics are unchanged; rollback is the env flag set back to `false` plus a restart (queued charges keep draining).
+
 ## Features
 
 - Multi-account upstreams: Anthropic OAuth / setup token, OpenAI API key and OAuth, Gemini, Grok, Antigravity

@@ -5,18 +5,53 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
+
+// usageBillingMergeFallbackLogInterval 限制「要求合并结算但没有消费者」日志的频率。
+const usageBillingMergeFallbackLogInterval = time.Minute
 
 type usageBillingRepository struct {
 	db *sql.DB
+
+	// mergeBalanceSettlement 把普通余额扣费改走持久化队列 billing_balance_settlements，
+	// 由 UsageBalanceSettlementWorker 按用户合并成一次 users.balance 更新。
+	// 关闭时保持逐请求同步 UPDATE（历史行为）。
+	mergeBalanceSettlement bool
+
+	lastMergeFallbackLog atomic.Int64
 }
 
+// NewUsageBillingRepository builds the billing repository with the legacy
+// per-request settlement mode. Production wiring goes through
+// ProvideUsageBillingRepository so the merge-settlement switch is applied;
+// tests that do not care about that switch can keep using this constructor.
 func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB) service.UsageBillingRepository {
-	return &usageBillingRepository{db: sqlDB}
+	return newUsageBillingRepository(sqlDB, nil)
+}
+
+// ProvideUsageBillingRepository is the wire provider that applies
+// billing.balance_merge_settlement_enabled.
+func ProvideUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB, cfg *config.Config) service.UsageBillingRepository {
+	return newUsageBillingRepository(sqlDB, cfg)
+}
+
+func newUsageBillingRepository(sqlDB *sql.DB, cfg *config.Config) service.UsageBillingRepository {
+	mergeBalanceSettlement := false
+	if cfg != nil {
+		mergeBalanceSettlement = cfg.Billing.BalanceMergeSettlementEnabled
+	}
+	return &usageBillingRepository{
+		db:                     sqlDB,
+		mergeBalanceSettlement: mergeBalanceSettlement,
+	}
 }
 
 func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (_ *service.UsageBillingApplyResult, err error) {
@@ -184,12 +219,23 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		}
 		result.BalanceFinalizationPending = true
 	} else if cmd.BalanceCost > 0 {
-		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
-		if err != nil {
-			return err
+		if r.balanceMergeSettlementActive() {
+			// 合并结算：只把扣费作为不可变事件持久化到队列（与 dedup 认领同一事务，
+			// 因此和直接扣费一样精确一次）。真正的 users.balance 更新由
+			// UsageBalanceSettlementWorker 按用户合并执行，同一用户的并发扣费不再
+			// 争抢同一行锁。金额、最终余额和失败语义与直接扣费一致。
+			if err := enqueueUsageBillingBalance(ctx, tx, cmd); err != nil {
+				return err
+			}
+			result.BalanceSettlementDeferred = true
+		} else {
+			newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+			if err != nil {
+				return err
+			}
+			result.NewBalance = &newBalance
+			result.BalanceOverdrafted = !sufficient
 		}
-		result.NewBalance = &newBalance
-		result.BalanceOverdrafted = !sufficient
 	}
 
 	// API Key 在请求进行中被删除时，其自身的额度/限速计数已无意义，跳过即可；
@@ -254,6 +300,31 @@ func beginUsageBillingBalanceFinalization(ctx context.Context, tx *sql.Tx, cmd *
 	return nil
 }
 
+// balanceMergeSettlementActive 判断本次扣费是否走合并结算队列。
+//
+// 只有当配置开启且本进程确实有结算消费者在运行时才入队：如果配置开启但后台任务
+// 被关闭（如测试模式 / SUB2API_DISABLE_BACKGROUND_JOBS），队列里的扣费将永远没人
+// 结算。这种情况下退回同步扣费，宁可少一次合并，也不能把已提交的扣费留在队列里。
+func (r *usageBillingRepository) balanceMergeSettlementActive() bool {
+	if r == nil || !r.mergeBalanceSettlement {
+		return false
+	}
+	if service.UsageBalanceSettlementConsumerRunning() {
+		return true
+	}
+	if now := time.Now().UnixNano(); now-r.lastMergeFallbackLog.Load() >= int64(usageBillingMergeFallbackLogInterval) &&
+		r.lastMergeFallbackLog.CompareAndSwap(r.lastMergeFallbackLog.Load(), now) {
+		logger.LegacyPrintf("repository.usage_billing",
+			"ALERT: billing.balance_merge_settlement_enabled=true but no balance settlement consumer is running; falling back to synchronous balance deduction")
+	}
+	return false
+}
+
+// enqueueUsageBillingBalance 把一笔余额扣费写入持久化结算队列。
+//
+// 行与 usage_billing_dedup 的认领在同一个事务里提交：事务成功即代表这笔扣费已经被
+// 持久化（进程崩溃也不会丢），事务失败则两者一起回滚。队列按 (request_id, api_key_id)
+// 唯一，配合 dedup 保证一笔请求只扣一次。
 func enqueueUsageBillingBalance(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) error {
 	var status int16
 	err := tx.QueryRowContext(ctx, `
@@ -275,6 +346,12 @@ func enqueueUsageBillingBalance(ctx context.Context, tx *sql.Tx, cmd *service.Us
 		return service.ErrUsageBillingRequestConflict
 	}
 	if err != nil {
+		// users(id) 外键拒绝等价于旧路径的 ErrUserNotFound：用户已被删除时，
+		// 直接扣费返回 ErrUserNotFound，合并路径必须返回同样的语义。
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23503" {
+			return service.ErrUserNotFound
+		}
 		return err
 	}
 	if status != service.BalanceSettlementPending {
