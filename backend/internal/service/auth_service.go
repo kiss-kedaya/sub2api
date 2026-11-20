@@ -753,6 +753,16 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 				return nil, nil, ErrRegDisabled
 			}
 
+			// 第三方直登注册同样必须遵守注册邮箱策略：精确黑名单（含收件箱别名归一）、
+			// 别名去重/禁止、邮箱域名白名单与域名限量。此前这条路径只检查注册总开关，
+			// 导致 LinuxDo/钉钉/OIDC 等渠道可以绕过邮箱黑名单/域名额度批量建号。
+			// 合成邮箱是内部占位（渠道没返回真实邮箱时使用），不参与真实邮箱策略。
+			if !isReservedEmail(email) {
+				if err := s.validateRegistrationEmailQuota(ctx, email); err != nil {
+					return nil, nil, err
+				}
+			}
+
 			// 检查是否需要邀请码
 			var invitationRedeemCode *RedeemCode
 			if s.settingService != nil && s.settingService.IsInvitationCodeEnabled(ctx) {
@@ -811,7 +821,7 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 				defer func() { _ = tx.Rollback() }()
 				txCtx := dbent.NewTxContext(ctx, tx)
 
-				if err := s.userRepo.Create(txCtx, newUser); err != nil {
+				if err := s.createOAuthRegisteredUser(txCtx, newUser); err != nil {
 					if errors.Is(err, ErrEmailExists) {
 						user, err = s.userRepo.GetByEmail(ctx, email)
 						if err != nil {
@@ -839,7 +849,7 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 					s.bindOAuthAffiliate(ctx, user.ID, affiliateCode)
 				}
 			} else {
-				if err := s.userRepo.Create(ctx, newUser); err != nil {
+				if err := s.createOAuthRegisteredUser(ctx, newUser); err != nil {
 					if errors.Is(err, ErrEmailExists) {
 						user, err = s.userRepo.GetByEmail(ctx, email)
 						if err != nil {
@@ -1291,6 +1301,19 @@ func (s *AuthService) validateRegistrationEmailQuota(ctx context.Context, email 
 		return ErrEmailDomainRegistrationLimit
 	}
 	return nil
+}
+
+// createOAuthRegisteredUser 创建第三方登录/注册产生的新账号。
+// 真实邮箱必须走与邮箱注册相同的原子守卫（别名去重 + 域名限量），
+// 渠道合成邮箱是内部占位，不参与真实邮箱策略。
+func (s *AuthService) createOAuthRegisteredUser(ctx context.Context, user *User) error {
+	if user == nil {
+		return ErrServiceUnavailable
+	}
+	if isReservedEmail(user.Email) {
+		return s.userRepo.Create(ctx, user)
+	}
+	return s.createUserWithRegistrationEmailGuard(ctx, user)
 }
 
 func (s *AuthService) createUserWithRegistrationEmailGuard(ctx context.Context, user *User) error {

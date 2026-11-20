@@ -174,8 +174,11 @@ func (s *AuthService) createEmailOAuthUser(ctx context.Context, email, username,
 	if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 		return nil, ErrRegDisabled
 	}
-	if s.settingService.IsRegistrationEmailBlacklisted(ctx, email) {
-		return nil, ErrEmailBlocked
+	// 与邮箱注册同一套策略：精确黑名单、别名去重/禁止、邮箱域名白名单与域名限量。
+	// 此前这里只查精确黑名单，第三方 OAuth（GitHub/Google/OIDC 已验证邮箱）可以
+	// 绕过 registration_email_alias_block_enabled 与域名限量批量注册。
+	if err := s.validateRegistrationEmailQuota(ctx, email); err != nil {
+		return nil, err
 	}
 	invitationRedeemCode, err := s.validateOAuthRegistrationInvitation(ctx, invitationCode)
 	if err != nil {
@@ -209,7 +212,7 @@ func (s *AuthService) createEmailOAuthUser(ctx context.Context, email, username,
 		Status:       StatusActive,
 		SignupSource: providerType,
 	}
-	if err := s.userRepo.Create(ctx, user); err != nil {
+	if err := s.createOAuthRegisteredUser(ctx, user); err != nil {
 		if errors.Is(err, ErrEmailExists) {
 			existing, loadErr := s.userRepo.GetByEmail(ctx, email)
 			if loadErr != nil {
