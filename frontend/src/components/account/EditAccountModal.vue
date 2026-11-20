@@ -1909,7 +1909,7 @@
             :title="t('admin.accounts.formSections.limits')"
             :description="account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token') ? t('admin.accounts.quotaControl.hint') : undefined"
           >
-            <div v-if="[(account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')), (account?.type === 'apikey' || account?.type === 'cloudflare' || account?.type === 'bedrock'), (account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token'))].some(Boolean)">
+            <div v-if="[(account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')), (supportsAccountQuota(account?.type) || account?.type === 'cloudflare'), (account?.platform === 'anthropic' && (account?.type === 'oauth' || account?.type === 'setup-token'))].some(Boolean)">
               <!-- 配额控制 (Anthropic apikey/bedrock: 配额限制 + 亲和) -->
               <div v-if="account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')" class="pb-3">
                 <QuotaLimitCard
@@ -1953,8 +1953,8 @@
                   @update:quotaNotifyTotalThresholdType="quotaNotifyState.total.thresholdType = $event"
                 />
               </div>
-              <!-- 配额控制 (非 Anthropic apikey/bedrock) -->
-              <div v-else-if="account?.type === 'apikey' || account?.type === 'cloudflare' || account?.type === 'bedrock'" class="pb-3">
+              <!-- 配额控制 (非 Anthropic apikey/bedrock，以及 Vertex service_account) -->
+              <div v-else-if="supportsAccountQuota(account?.type) || account?.type === 'cloudflare'" class="pb-3">
                 <QuotaLimitCard
                   :hint="t('admin.accounts.quotaLimitHint')"
                   :totalLimit="editQuotaLimit"
@@ -2398,6 +2398,7 @@ import {
   parseDateTimeLocalInput
 } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
+import { supportsAccountQuota } from '@/utils/accountQuota'
 import { getAccountExpiryTimestamp } from '@/components/account/accountExpiry'
 import { allSelectedGroupsEnableLongContextPricing } from '@/components/account/longContextBilling'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
@@ -3530,8 +3531,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     }
   }
 
-  // Load quota limit for apikey/bedrock accounts (bedrock quota is also loaded in its own branch above)
-  if (newAccount.type === 'apikey' || newAccount.type === 'bedrock') {
+  // Load quota limit for apikey/bedrock/service_account accounts (bedrock quota is also loaded in its own branch above)
+  if (supportsAccountQuota(newAccount.type)) {
     const quotaVal = extra?.quota_limit as number | undefined
     editQuotaLimit.value = (quotaVal && quotaVal > 0) ? quotaVal : null
     const dailyVal = extra?.quota_daily_limit as number | undefined
@@ -5021,8 +5022,8 @@ const handleSubmit = async () => {
       updatePayload.extra = newExtra
     }
 
-    // For apikey/bedrock accounts, handle quota_limit in extra
-    if (props.account.type === 'apikey' || props.account.type === 'cloudflare' || props.account.type === 'bedrock') {
+    // For apikey/bedrock/service_account accounts, handle quota_limit in extra
+    if (supportsAccountQuota(props.account.type) || props.account.type === 'cloudflare') {
       const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
         (props.account.extra as Record<string, unknown>) || {}
       const newExtra: Record<string, unknown> = { ...currentExtra }

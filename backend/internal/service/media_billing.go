@@ -76,7 +76,7 @@ func capturePreparedMediaUsage(ctx context.Context, usage *UsageLog, input *Open
 			if input.APIKeyService != nil && input.APIKey.HasRateLimits() {
 				amounts[3] = cost.ActualCost
 			}
-			if input.Account.IsAPIKeyOrBedrock() && input.Account.HasAnyQuotaLimit() {
+			if input.Account.SupportsAccountQuota() && input.Account.HasAnyQuotaLimit() {
 				amounts[4] = cost.TotalCost * accountRate
 			}
 		}
@@ -222,7 +222,7 @@ func (s *OpenAIGatewayService) mediaBillingPostUsageParams(ctx context.Context, 
 			params.User = user
 		}
 	}
-	if params.Cost.TotalCost > 0 && params.Account.IsAPIKeyOrBedrock() && s.accountRepo != nil {
+	if params.Cost.TotalCost > 0 && params.Account.SupportsAccountQuota() && s.accountRepo != nil {
 		account, err := s.accountRepo.GetByID(lookupCtx, cmd.AccountID)
 		if err != nil {
 			logger.L().Warn("media_billing.notification_account_unavailable", zap.String("job_id", job.ID), zap.Error(err))

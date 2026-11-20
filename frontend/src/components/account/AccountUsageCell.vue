@@ -416,6 +416,29 @@
       <!-- Usage data or unlimited flow -->
       <div class="space-y-1">
         <AccountTodayStatsCell v-if="showGeminiTodayStats" inline :stats="todayStats" :loading="todayStatsLoading" />
+        <!-- Vertex 设置了配额上限：显示配额进度条 -->
+        <template v-if="isGeminiVertex">
+          <UsageProgressBar
+            v-if="quotaDailyBar"
+            label="1d"
+            :utilization="quotaDailyBar.utilization"
+            :resets-at="quotaDailyBar.resetsAt"
+            color="indigo"
+          />
+          <UsageProgressBar
+            v-if="quotaWeeklyBar"
+            label="7d"
+            :utilization="quotaWeeklyBar.utilization"
+            :resets-at="quotaWeeklyBar.resetsAt"
+            color="emerald"
+          />
+          <UsageProgressBar
+            v-if="quotaTotalBar"
+            label="total"
+            :utilization="quotaTotalBar.utilization"
+            color="purple"
+          />
+        </template>
         <div v-if="loading" class="space-y-1">
           <div class="flex items-center gap-1">
             <USkeleton class="h-3 w-[32px]" />
@@ -442,7 +465,7 @@
           </p>
         </div>
         <!-- AI Studio Client OAuth: show unlimited flow (no usage tracking) -->
-        <div v-else class="text-xs text-dimmed">
+        <div v-else-if="!showGeminiTodayStats" class="text-xs text-dimmed">
           {{ t('admin.accounts.gemini.rateLimit.unlimited') }}
         </div>
       </div>
@@ -507,6 +530,7 @@ import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber } from '@/utils/format'
+import { supportsAccountQuota } from '@/utils/accountQuota'
 import UsageProgressBar from './UsageProgressBar.vue'
 import AccountTodayStatsCell from './AccountTodayStatsCell.vue'
 import AccountQuotaInfo from './AccountQuotaInfo.vue'
@@ -624,6 +648,11 @@ const cnBalanceCellVisible = computed(() => cnBalanceCellVisibleFn(props.account
 const isBatchManaged = computed(() => typeof props.requestBatchedUsage === 'function')
 
 const showGeminiTodayStats = computed(() => {
+  return props.account.platform === 'gemini' && props.account.type === 'service_account'
+})
+
+// Vertex 的 Gemini service_account：可配置账号配额，用量列需要展示配额进度条。
+const isGeminiVertex = computed(() => {
   return props.account.platform === 'gemini' && props.account.type === 'service_account'
 })
 
@@ -1391,7 +1420,7 @@ const makeQuotaBar = (
 }
 
 const hasApiKeyQuota = computed(() => {
-  if (props.account.type !== 'apikey' && props.account.type !== 'bedrock') return false
+  if (!supportsAccountQuota(props.account.type)) return false
   return (
     (props.account.quota_daily_limit ?? 0) > 0 ||
     (props.account.quota_weekly_limit ?? 0) > 0 ||
