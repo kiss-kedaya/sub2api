@@ -195,10 +195,10 @@ type UsageBillingApplyResult struct {
 	// instead of being deducted by this transaction. The charge is already
 	// persisted and will be applied by the settlement worker; NewBalance is nil.
 	BalanceSettlementDeferred bool
-	APIKeyQuotaExhausted       bool
-	NewBalance                 *float64           // post-deduction balance (nil = no balance deduction)
-	BalanceOverdrafted         bool               // true when the sufficient-balance guard missed and debt was still recorded
-	QuotaState                 *AccountQuotaState // post-increment quota state (nil = no quota increment)
+	APIKeyQuotaExhausted      bool
+	NewBalance                *float64           // post-deduction balance (nil = no balance deduction)
+	BalanceOverdrafted        bool               // true when the sufficient-balance guard missed and debt was still recorded
+	QuotaState                *AccountQuotaState // post-increment quota state (nil = no quota increment)
 }
 
 type BalancePreauthorizationCommand struct {
