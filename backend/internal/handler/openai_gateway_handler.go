@@ -27,6 +27,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
 
@@ -1388,7 +1389,20 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
-	finishModelResponse := service.InstallRequestedModelResponse(c, "anthropic", clientRequestedModel(c, reqModel), func() bool {
+	// Claude Code 的 [1m] 是客户端上下文选择语法，不是真实模型名。这个入口不经过
+	// ParseGatewayRequest（那条路已经剥过），所以必须在这里补一次，否则
+	// gpt-6-astra[1M] 会以"模型不存在"被拒。原始写法要留给回显。
+	clientModel := reqModel
+	if normalized := service.NormalizeClaudeCodeLongContextModel(reqModel); normalized != reqModel {
+		reqModel = normalized
+		replaced, err := sjson.SetBytes(body, "model", reqModel)
+		if err != nil {
+			h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to normalize model")
+			return
+		}
+		body = replaced
+	}
+	finishModelResponse := service.InstallRequestedModelResponse(c, "anthropic", clientRequestedModel(c, clientModel), func() bool {
 		return service.ContextShouldReturnRequestedModel(c)
 	})
 	defer finishModelResponse()
