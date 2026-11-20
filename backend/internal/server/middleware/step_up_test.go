@@ -156,7 +156,8 @@ func TestEnforceStepUpFailsClosedOnSettingReadError(t *testing.T) {
 }
 
 // settings 为 nil 时保持门控（fail-closed），避免装配缺陷静默关闭安全控制。
-func TestEnforceStepUpNilSettingsFailsClosed(t *testing.T) {	c, rec := newStepUpTestContext(t)
+func TestEnforceStepUpNilSettingsFailsClosed(t *testing.T) {
+	c, rec := newStepUpTestContext(t)
 	c.Set(string(ContextKeyUser), AuthSubject{UserID: 1})
 
 	ok := enforceStepUp(c, stubStepUpGrantChecker{granted: false}, stubStepUpUserReader{user: &service.User{ID: 1, TotpEnabled: true}}, nil)

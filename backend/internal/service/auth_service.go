@@ -50,7 +50,7 @@ var (
 	ErrOAuthInvitationRequired = infraerrors.Forbidden("OAUTH_INVITATION_REQUIRED", "invitation code required to complete oauth registration")
 	// ErrLoginTOTPRequired 表示已有账号启用了 TOTP：第三方邮箱 OAuth 登录与密码登录
 	// 同一策略，必须先完成动态码校验，不得直接签发会话。
-	ErrLoginTOTPRequired = infraerrors.Forbidden("LOGIN_TOTP_REQUIRED", "two-factor verification required")
+	ErrLoginTOTPRequired       = infraerrors.Forbidden("LOGIN_TOTP_REQUIRED", "two-factor verification required")
 	ErrCaptchaProviderConflict = infraerrors.ServiceUnavailable("CAPTCHA_PROVIDER_CONFLICT", "multiple captcha providers are enabled")
 )
 
