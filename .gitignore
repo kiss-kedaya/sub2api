@@ -185,6 +185,7 @@ docs/*
 !docs/release-notes/
 !docs/release-notes/*.md
 !docs/ANTIGRAVITY_ATTRIBUTION_429.md
+!docs/admin-api-keys.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md

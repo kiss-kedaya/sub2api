@@ -1,3 +1,4 @@
+import adminAccessKeys from './adminAccessKeys'
 import opsCenter from './opsCenter'
 import landing from './landing'
 import common from './common'
@@ -29,6 +30,7 @@ export default {
   opsAutomation: opsAutomationMessages.en.opsAutomation,
   accountOps, channelOps, opsCenter,
   qualityOps: { refresh: 'Refresh', accounts: 'Accounts', loadMore: 'Load more' },
+  adminAccessKeys,
   ...landing,
   ...common,
   ...dashboard,

@@ -25,7 +25,7 @@ func (h *SettingHandler) GetAdminAPIKey(c *gin.Context) {
 	})
 }
 
-// RegenerateAdminAPIKey 生成/重新生成管理员 API Key
+// RegenerateAdminAPIKey 轮换已存在的旧版管理员 API Key
 // POST /api/v1/admin/settings/admin-api-key/regenerate
 func (h *SettingHandler) RegenerateAdminAPIKey(c *gin.Context) {
 	if err := service.RequireConfiguredPoolOwner(c.Request.Context(), 0); err != nil {

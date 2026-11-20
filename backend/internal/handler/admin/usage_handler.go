@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -252,6 +253,11 @@ func (h *UsageHandler) List(c *gin.Context) {
 	out := make([]dto.AdminUsageLog, 0, len(records))
 	for i := range records {
 		out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]))
+	}
+	// 受限管理密钥只输出本次请求的用量快照，并在复用缓存重放时同样受限。
+	if adminaccess.FromContext(c.Request.Context()) != nil {
+		response.Paginated(c, adminUsageLogResponses(c, records), result.Total, page, pageSize)
+		return
 	}
 	if page == 1 && (service.QueryIncludesUsageInflight(c.Query("include_inflight")) || filters.RequestID != "") {
 		finished := make(map[string]struct{}, len(out))

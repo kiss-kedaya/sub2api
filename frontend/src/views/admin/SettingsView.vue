@@ -44,6 +44,8 @@
         <!-- Tab: Security — Admin API Key -->
         <div v-show="activeTab === 'security'" class="flex flex-col gap-4 sm:gap-6 lg:gap-12">
           <GatewayIPNoticeSettings />
+          <!-- 分权管理密钥：多 key、范围/过期/IP 白名单/撤销审计 -->
+          <AdminAccessKeysSettings />
           <!-- Admin API Key Settings -->
           <SettingsSection
             id="settings-admin-api-key"
@@ -7036,6 +7038,7 @@ import {
   isStepUpBlocked,
   stepUpBlockReason,
 } from "@/composables/useStepUp";
+import AdminAccessKeysSettings from "@/components/admin/settings/AdminAccessKeysSettings.vue";
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSimpleUser } from "@/api/admin/affiliates";
 import type {
@@ -10097,15 +10100,17 @@ async function loadAdminApiKey() {
 }
 
 async function createAdminApiKey() {
+  if (!adminApiKeyExists.value) return;
   adminApiKeyOperating.value = true;
   try {
-    const result = await adminAPI.settings.regenerateAdminApiKey();
+    const result = await settingsStepUp.run(() => adminAPI.settings.regenerateAdminApiKey());
     newAdminApiKey.value = result.key;
     adminApiKeyExists.value = true;
     adminApiKeyMasked.value =
       result.key.substring(0, 10) + "..." + result.key.slice(-4);
     appStore.showSuccess(t("admin.settings.adminApiKey.keyGenerated"));
   } catch (error: unknown) {
+    if (isStepUpCancelled(error)) return;
     appStore.showError(extractApiErrorMessage(error, t("common.error")));
   } finally {
     adminApiKeyOperating.value = false;
@@ -10121,12 +10126,13 @@ async function deleteAdminApiKey() {
   if (!confirm(t("admin.settings.adminApiKey.deleteConfirm"))) return;
   adminApiKeyOperating.value = true;
   try {
-    await adminAPI.settings.deleteAdminApiKey();
+    await settingsStepUp.run(() => adminAPI.settings.deleteAdminApiKey());
     adminApiKeyExists.value = false;
     adminApiKeyMasked.value = "";
     newAdminApiKey.value = "";
     appStore.showSuccess(t("admin.settings.adminApiKey.keyDeleted"));
   } catch (error: unknown) {
+    if (isStepUpCancelled(error)) return;
     appStore.showError(extractApiErrorMessage(error, t("common.error")));
   } finally {
     adminApiKeyOperating.value = false;
