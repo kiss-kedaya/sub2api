@@ -107,6 +107,21 @@ func TestPreserveManagedAccountExtraKeepsAutoSyncConfig(t *testing.T) {
 	require.Equal(t, "value", replacement["another_key"])
 }
 
+func TestPreserveManagedAccountExtraHonorsExplicitAutoSyncConfig(t *testing.T) {
+	account := &Account{Extra: map[string]any{
+		ModelWhitelistAutoSyncExtraKey: map[string]any{"enabled": true, "interval_hours": 12, "mode": "whitelist"},
+	}}
+	replacement := map[string]any{
+		ModelWhitelistAutoSyncExtraKey: map[string]any{"enabled": false, "interval_hours": 1, "mode": "whitelist"},
+	}
+	preserveManagedAccountExtra(account, replacement)
+
+	config, ok := replacement[ModelWhitelistAutoSyncExtraKey].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, false, config["enabled"])
+	require.Equal(t, 1, config["interval_hours"])
+}
+
 func TestManagedAccountExtraKeysIncludeAutoSync(t *testing.T) {
 	require.Contains(t, managedAccountExtraKeysPreservedOnUpdate(), ModelWhitelistAutoSyncExtraKey)
 }
