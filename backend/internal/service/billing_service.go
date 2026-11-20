@@ -237,6 +237,40 @@ func applyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
 	cost.ActualCost *= multiplier
 }
 
+// isGemini4ArgonModel 只接受基础型号与上游公布的 high/low/medium 三档，
+// 不认识的档位一律不兜底，避免把未公布型号按已知价计费。
+func isGemini4ArgonModel(model string) bool {
+	return isGemini4ArgonSuffixModel(model, false)
+}
+
+// isGemini4ArgonCyberModel 匹配 Vertex 价的 Cyber 变体（不享受 Argon 优惠价）。
+func isGemini4ArgonCyberModel(model string) bool {
+	return isGemini4ArgonSuffixModel(model, true)
+}
+
+func isGemini4ArgonSuffixModel(model string, cyber bool) bool {
+	id := strings.ToLower(strings.TrimSpace(model))
+	if cyber {
+		id = strings.TrimSuffix(id, "-cyber-permissive")
+		if id == strings.ToLower(model) || !strings.HasSuffix(strings.ToLower(strings.TrimSpace(model)), "-cyber-permissive") {
+			return false
+		}
+		id = strings.TrimSuffix(id, "/")
+	}
+	// 去掉 provider 前缀与 models/ 前缀
+	for _, prefix := range []string{"models/", "google/", "vertex_ai/", "vertex/", "openrouter/"} {
+		id = strings.TrimPrefix(id, prefix)
+	}
+	if slash := strings.LastIndexByte(id, '/'); slash >= 0 {
+		id = id[slash+1:]
+	}
+	switch id {
+	case "gemini-4-argon", "gemini-4-argon-high", "gemini-4-argon-low", "gemini-4-argon-medium":
+		return true
+	}
+	return false
+}
+
 func isClaudeFable51Model(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	for _, marker := range []string{"fable-5-1", "fable-5.1", "fable5.1", "fable51"} {
@@ -1085,11 +1119,14 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	if strings.Contains(modelLower, "gemini-3.8-flash") || strings.Contains(modelLower, "gemini-3-8-flash") {
 		return s.fallbackPrices["gemini-3.8-flash"]
 	}
-	// Cyber 变体不享受 Gemini 4 Argon 的优惠价，必须先于 "gemini-4-argon" 判。
-	if strings.Contains(modelLower, "gemini-4-argon-cyber") {
+	// Cyber 变体不享受 Gemini 4 Argon 的优惠价，必须先于基础型号判。
+	// 只认白名单后缀：`gemini-4-argon-image` / `-xhigh` 这类未公布型号必须继续
+	// 返回「无定价」，否则会被兜底价静默计费（TestGemini4ThinkingTierPricingDoesNotGuessUnknownModels
+	// 就是防这个）。provider 前缀（google/、vertex_ai/、models/）在归一化后已被裁掉。
+	if isGemini4ArgonCyberModel(modelLower) {
 		return s.fallbackPrices["gemini-4-argon-cyber-permissive"]
 	}
-	if strings.Contains(modelLower, "gemini-4-argon") {
+	if isGemini4ArgonModel(modelLower) {
 		return s.fallbackPrices["gemini-4-argon"]
 	}
 
