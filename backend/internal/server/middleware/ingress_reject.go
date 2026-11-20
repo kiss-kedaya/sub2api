@@ -16,15 +16,17 @@ import (
 type IngressRejectReason string
 
 const (
-	IngressRejectQueryAPIKeyDeprecated  IngressRejectReason = "query_api_key_deprecated"
-	IngressRejectAPIKeyRequired         IngressRejectReason = "api_key_required"
-	IngressRejectInvalidAPIKey          IngressRejectReason = "invalid_api_key"
-	IngressRejectAPIKeyDisabled         IngressRejectReason = "api_key_disabled"
-	IngressRejectIPRestricted           IngressRejectReason = "ip_restricted"
-	IngressRejectUserInactive           IngressRejectReason = "user_inactive"
-	IngressRejectGroupDeleted           IngressRejectReason = "group_deleted"
-	IngressRejectGroupDisabled          IngressRejectReason = "group_disabled"
-	IngressRejectGroupNotAllowed        IngressRejectReason = "group_not_allowed"
+	IngressRejectQueryAPIKeyDeprecated IngressRejectReason = "query_api_key_deprecated"
+	IngressRejectAPIKeyRequired        IngressRejectReason = "api_key_required"
+	IngressRejectInvalidAPIKey         IngressRejectReason = "invalid_api_key"
+	IngressRejectAPIKeyDisabled        IngressRejectReason = "api_key_disabled"
+	IngressRejectIPRestricted          IngressRejectReason = "ip_restricted"
+	IngressRejectUserInactive          IngressRejectReason = "user_inactive"
+	IngressRejectGroupDeleted          IngressRejectReason = "group_deleted"
+	IngressRejectGroupDisabled         IngressRejectReason = "group_disabled"
+	IngressRejectGroupNotAllowed       IngressRejectReason = "group_not_allowed"
+	// IngressRejectInvalidRequestFields 请求体同名字段重复且取值不一致（GHSA-p3r4-jcm3-2hph）。
+	IngressRejectInvalidRequestFields   IngressRejectReason = "conflicting_request_fields"
 	IngressRejectGroupUnassigned        IngressRejectReason = "group_unassigned"
 	IngressRejectInvalidAuthRateLimited IngressRejectReason = "invalid_auth_rate_limited"
 	IngressRejectAPIKeyAuthOverloaded   IngressRejectReason = "api_key_auth_overloaded"
