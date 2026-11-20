@@ -190,6 +190,13 @@ func preserveManagedAccountExtra(account *Account, normalizedExtra map[string]an
 		return
 	}
 	for _, key := range managedAccountExtraKeysPreservedOnUpdate() {
+		// An explicitly supplied auto-sync config is an intentional admin update.
+		// Preserve runtime snapshots and other managed keys, but honor the toggle.
+		if key == ModelWhitelistAutoSyncExtraKey {
+			if _, provided := normalizedExtra[key]; provided {
+				continue
+			}
+		}
 		if value, ok := account.Extra[key]; ok {
 			normalizedExtra[key] = value
 		}
