@@ -21,6 +21,17 @@ const (
 	FamilySolana = "solana"
 )
 
+// Rotation errors. The HTTP layer maps them to precise statuses instead of a
+// generic 500; none of them may leak the wallet or pool internals.
+var (
+	// ErrAssignmentNotFound means the requested deposit assignment does not exist.
+	ErrAssignmentNotFound = errors.New("deposit assignment not found")
+	// ErrAssignmentNotActive means the assignment was already rotated or disabled.
+	ErrAssignmentNotActive = errors.New("deposit assignment is not active")
+	// ErrNoFreeAddress means the pool has no free address for the family.
+	ErrNoFreeAddress = errors.New("no free deposit address in pool")
+)
+
 // FamilyForChain maps a chain id to its family.
 func FamilyForChain(chain string) (string, error) {
 	switch chain {
@@ -107,11 +118,14 @@ func (r *Repo) FreePoolCount(ctx context.Context, family string) (int64, error) 
 }
 
 // ExistingAssignment returns the user's current assignment for a family, or
-// nil when none exists.
+// nil when none exists. Rotation keeps the retired rows as disabled history, so
+// the active row always wins over any older disabled one.
 func (r *Repo) ExistingAssignment(ctx context.Context, userID int64, family string) (*Assignment, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, user_id, chain, address, derivation_index, status
-		   FROM deposit_addresses WHERE user_id = $1 AND chain = $2`,
+		   FROM deposit_addresses WHERE user_id = $1 AND chain = $2
+		  ORDER BY (status = 'active') DESC, id DESC
+		  LIMIT 1`,
 		userID, family)
 	var a Assignment
 	err := row.Scan(&a.ID, &a.UserID, &a.Family, &a.Address, &a.DerivationIndex, &a.Status)
@@ -181,6 +195,88 @@ func (r *Repo) AssignFromPool(ctx context.Context, userID int64, family string) 
 	return &Assignment{
 		ID: assignmentID, UserID: userID, Family: family,
 		Address: address, DerivationIndex: index, Status: "active",
+	}, nil
+}
+
+// Rotate retires one active assignment and binds the next free pool address of
+// the same family in a single transaction. The retired deposit row is kept as
+// disabled history so the scanner keeps watching the old address for late
+// deposits; the old pool row becomes retired and the new one assigned.
+func (r *Repo) Rotate(ctx context.Context, assignmentID int64) (*Assignment, *Assignment, error) {
+	if err := mode.CheckWritable(); err != nil {
+		return nil, nil, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin rotate tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var old Assignment
+	err = tx.QueryRowContext(ctx,
+		`SELECT id, user_id, chain, address, derivation_index, status
+		   FROM deposit_addresses WHERE id = $1 FOR UPDATE`, assignmentID).
+		Scan(&old.ID, &old.UserID, &old.Family, &old.Address, &old.DerivationIndex, &old.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, ErrAssignmentNotFound
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("load assignment: %w", err)
+	}
+	if old.Status != "active" {
+		return nil, nil, ErrAssignmentNotActive
+	}
+
+	var poolID, newIndex int64
+	var newAddress string
+	err = tx.QueryRowContext(ctx,
+		`SELECT id, derivation_index, address
+		   FROM crypto_address_pool
+		  WHERE chain_family = $1 AND status = 'free'
+		  ORDER BY derivation_index
+		  FOR UPDATE SKIP LOCKED
+		  LIMIT 1`, old.Family).Scan(&poolID, &newIndex, &newAddress)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, ErrNoFreeAddress
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("select free address: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE deposit_addresses SET status = 'disabled' WHERE id = $1`, old.ID); err != nil {
+		return nil, nil, fmt.Errorf("disable old assignment: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE crypto_address_pool
+		    SET status = 'retired'
+		  WHERE chain_family = $1 AND derivation_index = $2 AND status = 'assigned'`,
+		old.Family, old.DerivationIndex); err != nil {
+		return nil, nil, fmt.Errorf("retire old pool row: %w", err)
+	}
+
+	var newID int64
+	err = tx.QueryRowContext(ctx,
+		`INSERT INTO deposit_addresses (user_id, chain, address, derivation_index, status)
+		 VALUES ($1, $2, $3, $4, 'active')
+		 RETURNING id`, old.UserID, old.Family, newAddress, newIndex).Scan(&newID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("insert rotated assignment: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE crypto_address_pool
+		    SET status = 'assigned', assigned_user_id = $1, assigned_at = NOW()
+		  WHERE id = $2`, old.UserID, poolID); err != nil {
+		return nil, nil, fmt.Errorf("mark new pool row assigned: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("commit rotate tx: %w", err)
+	}
+	old.Status = "disabled"
+	return &old, &Assignment{
+		ID: newID, UserID: old.UserID, Family: old.Family,
+		Address: newAddress, DerivationIndex: newIndex, Status: "active",
 	}, nil
 }
 

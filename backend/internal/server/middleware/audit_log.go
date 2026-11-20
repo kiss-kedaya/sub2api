@@ -211,6 +211,7 @@ var auditActionOverrides = map[string]string{
 	"POST /api/v1/admin/crypto/deposits/confirm":                 "admin.crypto.deposit.manual_confirm",
 	"PUT /api/v1/admin/crypto/config":                            "admin.crypto.config.update",
 	"POST /api/v1/admin/crypto/addresses/:id/status":             "admin.crypto.address.status.update",
+	"POST /api/v1/admin/crypto/addresses/:id/rotate":             "admin.crypto.address.rotate",
 	"POST /api/v1/admin/crypto/addresses/:id/export-private-key": "admin.crypto.address.private_key.export",
 	"POST /api/v1/admin/crypto/sweep/run":                        "admin.crypto.sweep.run",
 	"POST /api/v1/admin/crypto/scan/runs/:id/cancel":             "admin.crypto.scan.run.cancel",

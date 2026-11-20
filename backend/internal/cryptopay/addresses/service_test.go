@@ -114,6 +114,38 @@ func (f *fakeStore) SetStatus(_ context.Context, id int64, status string) error 
 	return nil
 }
 
+// Rotate mirrors the SQL repo: retire the active row in place and bind the next
+// free pool address for the same user/family.
+func (f *fakeStore) Rotate(_ context.Context, assignmentID int64) (*Assignment, *Assignment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for key, a := range f.assignments {
+		if a.ID != assignmentID {
+			continue
+		}
+		if a.Status != "active" {
+			return nil, nil, ErrAssignmentNotActive
+		}
+		if len(f.free[a.Family]) == 0 {
+			return nil, nil, ErrNoFreeAddress
+		}
+		old := a
+		old.Status = "disabled"
+		f.assignments[key] = old
+		rowID := f.free[a.Family][0]
+		f.free[a.Family] = f.free[a.Family][1:]
+		row := f.rows[rowID]
+		rotated := Assignment{
+			ID: rowID, UserID: a.UserID, Family: a.Family,
+			Address: row.address, DerivationIndex: row.index, Status: "active",
+		}
+		f.assignments[key] = rotated
+		copiedOld, copiedNew := old, rotated
+		return &copiedOld, &copiedNew, nil
+	}
+	return nil, nil, ErrAssignmentNotFound
+}
+
 func (f *fakeStore) ActiveAddresses(_ context.Context, family string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -23,6 +23,7 @@ type PoolStore interface {
 	AssignFromPool(ctx context.Context, userID int64, family string) (*Assignment, error)
 	ListByUser(ctx context.Context, userID int64) ([]Assignment, error)
 	SetStatus(ctx context.Context, id int64, status string) error
+	Rotate(ctx context.Context, assignmentID int64) (*Assignment, *Assignment, error)
 	ActiveAddresses(ctx context.Context, family string) ([]string, error)
 	LookupByFamily(ctx context.Context, family, address string) (*Assignment, error)
 	AdminList(ctx context.Context, userID int64, family string, limit, offset int, sortBy, sortDir string) ([]AdminRow, int64, error)
@@ -254,6 +255,15 @@ func (s *Service) SetStatus(ctx context.Context, id int64, status string) error 
 		return err
 	}
 	return s.repo.SetStatus(ctx, id, status)
+}
+
+// Rotate retires one active assignment and binds a fresh pool address for the
+// same user and family. The retired row stays disabled for the scanners.
+func (s *Service) Rotate(ctx context.Context, assignmentID int64) (*Assignment, *Assignment, error) {
+	if err := mode.CheckWritable(); err != nil {
+		return nil, nil, err
+	}
+	return s.repo.Rotate(ctx, assignmentID)
 }
 
 // ActiveAddresses returns every active address for a chain family (the
