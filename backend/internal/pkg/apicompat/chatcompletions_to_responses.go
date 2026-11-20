@@ -98,8 +98,8 @@ func chatCompletionsToResponses(req *ChatCompletionsRequest, anthropic bool, opt
 	}
 	if maxTokens > 0 {
 		v := maxTokens
-		if v < minMaxOutputTokens {
-			v = minMaxOutputTokens
+		if floor := MinOutputTokens(); v < floor {
+			v = floor
 		}
 		out.MaxOutputTokens = &v
 	}

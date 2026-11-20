@@ -7,6 +7,7 @@ package apicompat
 import (
 	"bytes"
 	"encoding/json"
+	"sync/atomic"
 )
 
 // ---------------------------------------------------------------------------
@@ -1175,6 +1176,35 @@ func (d ChatDelta) reasoningText() *string {
 // Shared constants
 // ---------------------------------------------------------------------------
 
-// minMaxOutputTokens is the floor for max_output_tokens in a Responses request.
-// Very small values may cause upstream API errors, so we enforce a minimum.
-const minMaxOutputTokens = 128
+// DefaultMinMaxOutputTokens is the built-in floor for max_output_tokens in a
+// Responses / Chat Completions request. Very small values may cause upstream API
+// errors, so conversions never emit less than this (upstream 0.2.17 made the
+// floor configurable through gateway.min_output_tokens).
+const DefaultMinMaxOutputTokens = 128
+
+// MinAllowedOutputTokens is the hard lower bound for a configured floor.
+const MinAllowedOutputTokens = 16
+
+// minMaxOutputTokens keeps the historical unexported name for tests.
+const minMaxOutputTokens = DefaultMinMaxOutputTokens
+
+// minOutputTokens is the process-wide floor. It is set once at bootstrap from
+// gateway.min_output_tokens; reads on the conversion hot path stay lock-free.
+var minOutputTokens atomic.Int64
+
+func init() {
+	minOutputTokens.Store(DefaultMinMaxOutputTokens)
+}
+
+// SetMinOutputTokens configures the floor. Values below MinAllowedOutputTokens
+// are clamped instead of rejected: a bad config must not turn into tiny upstream
+// max_output_tokens and 400s on every request.
+func SetMinOutputTokens(n int) {
+	if n < MinAllowedOutputTokens {
+		n = MinAllowedOutputTokens
+	}
+	minOutputTokens.Store(int64(n))
+}
+
+// MinOutputTokens returns the current floor.
+func MinOutputTokens() int { return int(minOutputTokens.Load()) }

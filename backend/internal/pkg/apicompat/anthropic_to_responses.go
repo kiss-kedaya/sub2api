@@ -64,8 +64,8 @@ func AnthropicToResponsesWithOptions(req *AnthropicRequest, opts *AnthropicToRes
 
 	if req.MaxTokens > 0 {
 		v := req.MaxTokens
-		if v < minMaxOutputTokens {
-			v = minMaxOutputTokens
+		if floor := MinOutputTokens(); v < floor {
+			v = floor
 		}
 		out.MaxOutputTokens = &v
 	}
