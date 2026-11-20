@@ -208,10 +208,10 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 		}
 	}
 
-	// 账号已不存在时跳过其配额计数，其余结算项不受影响（与 API Key 对称）。
+	// 账号配额计数只对支持配额的账号类型生效；账号已删除等错误仍按原语义回滚计费事务。
 	if cmd.AccountQuotaCost > 0 && service.AccountTypeSupportsQuota(cmd.AccountType) {
 		quotaState, err := incrementUsageBillingAccountQuota(ctx, tx, cmd.AccountID, cmd.AccountQuotaCost)
-		if err != nil && !errors.Is(err, service.ErrAccountNotFound) {
+		if err != nil {
 			return err
 		}
 		result.QuotaState = quotaState

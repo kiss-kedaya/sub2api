@@ -591,10 +591,6 @@ func notifyAccountQuota(p *postUsageBillingParams, deps *billingDeps, result *Us
 	var quotaState *AccountQuotaState
 	if result != nil {
 		quotaState = result.QuotaState
-		// 本应累加却无递增后状态（账号已删除等，计数被跳过）：没有新用量，不做阈值判定。
-		if quotaState == nil && p.shouldUpdateAccountQuota() {
-			return
-		}
 	}
 	slog.Debug("notifyAccountQuota: calling CheckAccountQuotaAfterIncrement",
 		"account_id", p.Account.ID,

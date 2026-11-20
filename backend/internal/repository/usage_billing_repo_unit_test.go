@@ -22,7 +22,6 @@ const (
 	userExistsForBillingSQL     = `(?s)SELECT 1\s+FROM users\s+WHERE id = \$1 AND deleted_at IS NULL`
 	apiKeyQuotaIncrementSQL     = `(?s)UPDATE api_keys\s+SET quota_used = quota_used \+ \$1,.*WHERE id = \$2 AND deleted_at IS NULL\s+RETURNING`
 	apiKeyRateLimitIncrementSQL = `(?s)UPDATE api_keys SET\s+usage_5h = .*WHERE id = \$2 AND deleted_at IS NULL`
-	accountQuotaIncrementSQL    = `(?s)UPDATE accounts SET extra = .*WHERE id = \$2 AND deleted_at IS NULL\s+RETURNING`
 )
 
 func TestDeductUsageBillingBalance_UsesSufficientBalanceGuard(t *testing.T) {
@@ -135,39 +134,6 @@ func TestApplyUsageBillingEffects_DeletedAPIKeyStillBillsBalance(t *testing.T) {
 	require.NotNil(t, result.NewBalance)
 	require.InDelta(t, 90.0, *result.NewBalance, 0.000001)
 	require.False(t, result.APIKeyQuotaExhausted)
-	require.NoError(t, tx.Commit())
-	require.NoError(t, mock.ExpectationsWereMet())
-}
-
-func TestApplyUsageBillingEffects_DeletedAccountStillBillsBalance(t *testing.T) {
-	ctx := context.Background()
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() { _ = db.Close() }()
-
-	mock.ExpectBegin()
-	tx, err := db.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	mock.ExpectQuery(conditionalBalanceDeductSQL).
-		WithArgs(10.0, int64(42)).
-		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(90.0))
-	mock.ExpectQuery(accountQuotaIncrementSQL).
-		WithArgs(4.0, int64(9)).
-		WillReturnRows(sqlmock.NewRows([]string{"quota_used", "quota_limit", "quota_daily_used", "quota_daily_limit", "quota_weekly_used", "quota_weekly_limit"}))
-	mock.ExpectCommit()
-
-	result := &service.UsageBillingApplyResult{Applied: true}
-	err = (&usageBillingRepository{}).applyUsageBillingEffects(ctx, tx, &service.UsageBillingCommand{
-		UserID:           42,
-		AccountID:        9,
-		AccountType:      service.AccountTypeServiceAccount,
-		BalanceCost:      10,
-		AccountQuotaCost: 4,
-	}, result)
-	require.NoError(t, err)
-	require.NotNil(t, result.NewBalance)
-	require.InDelta(t, 90.0, *result.NewBalance, 0.000001)
-	require.Nil(t, result.QuotaState)
 	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
