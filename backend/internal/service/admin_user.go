@@ -579,6 +579,17 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 		return nil, err
 	}
 
+	// 管理员「加余额」视同充值：同一事务里先抵扣历史欠款，只有剩余部分进可用余额。
+	// set/subtract 不是充值，不触发抵扣。
+	var debtApplied float64
+	if operation == "add" && balance > 0 {
+		applied, clawbackErr := payDownUserDebt(txCtx, s.entClient, userID, balance, DebtClawbackSourceAdminAdjust, notes)
+		if clawbackErr != nil {
+			return nil, fmt.Errorf("collect user debt: %w", clawbackErr)
+		}
+		debtApplied = applied
+	}
+
 	// 余额调整必须走原子接口：先读后整行写回会把并发的计费扣款覆盖掉。
 	var (
 		change    BalanceChange
@@ -588,7 +599,12 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 	case "set":
 		change, adjustErr = s.userRepo.SetBalance(txCtx, userID, balance)
 	case "add":
-		change, adjustErr = s.userRepo.AdjustBalance(txCtx, userID, balance)
+		if credited := balance - debtApplied; credited == 0 {
+			// 全额抵扣欠款，余额不变；AdjustBalance(0) 在负余额用户上会误报，直接跳过。
+			change = BalanceChange{Old: user.Balance, New: user.Balance}
+		} else {
+			change, adjustErr = s.userRepo.AdjustBalance(txCtx, userID, credited)
+		}
 	case "subtract":
 		change, adjustErr = s.userRepo.AdjustBalance(txCtx, userID, -balance)
 	}
