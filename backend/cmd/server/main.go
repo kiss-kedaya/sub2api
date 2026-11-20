@@ -19,6 +19,7 @@ import (
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -165,6 +166,9 @@ func runMigrationCommand(validateOnly bool) {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+
+	// 协议转换层的 max_output_tokens 下限来自配置；启动时注入一次。
+	apicompat.SetMinOutputTokens(cfg.Gateway.MinOutputTokens)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	if err := repository.RunConfiguredMigrations(ctx, cfg, validateOnly); err != nil {
@@ -231,6 +235,9 @@ func runMainServer() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+
+	// 协议转换层的 max_output_tokens 下限来自配置；启动时注入一次。
+	apicompat.SetMinOutputTokens(cfg.Gateway.MinOutputTokens)
 	if err := logger.Init(logger.OptionsFromConfig(cfg.Log)); err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
