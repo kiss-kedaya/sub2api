@@ -62,6 +62,10 @@ func (s *totpCacheStub) HasStepUpGrant(context.Context, int64, string) (bool, er
 	return true, nil
 }
 
+func (s *totpCacheStub) MarkLoginCodeUsed(context.Context, int64, string, time.Duration) (bool, error) {
+	return true, nil
+}
+
 // 已启用 TOTP 的账号走第三方 OAuth 登录时，后端只能下发 2FA 挑战，
 // 不得在重定向片段里携带任何 access/refresh token。
 func TestEmailOAuthTOTPChallengeRedirectCarriesNoTokens(t *testing.T) {

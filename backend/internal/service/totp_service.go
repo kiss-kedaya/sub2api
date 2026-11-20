@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pquerna/otp"
@@ -46,6 +48,11 @@ type TotpCache interface {
 	// Step-up grant methods (敏感操作 sudo 窗口)
 	SetStepUpGrant(ctx context.Context, userID int64, sessionKey string, ttl time.Duration) error
 	HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error)
+
+	// MarkLoginCodeUsed 记录一次成功登录使用的 TOTP 码（独立于支付/敏感操作
+	// 重放标记）。返回 false 表示该码已被使用过（重放）。codeDigest 是
+	// userID+counter+code 的不可逆摘要，缓存层不需要看到原始验证码。
+	MarkLoginCodeUsed(ctx context.Context, userID int64, codeDigest string, ttl time.Duration) (bool, error)
 }
 
 // SecretEncryptor defines encryption operations for TOTP secrets
@@ -98,6 +105,9 @@ const (
 	totpAttemptsTTL = 15 * time.Minute
 	maxTotpAttempts = 5
 	totpIssuer      = "Sub2API"
+	// totpLoginReplayTTL 覆盖 TOTP 校验窗口（±1 个 30s 步长 = 90s）并留出余量：
+	// 窗口内同一个码第二次用于登录会被拒绝。
+	totpLoginReplayTTL = 5 * time.Minute
 )
 
 // TotpService handles TOTP operations
@@ -515,14 +525,37 @@ func (s *TotpService) VerifyLoginCode(ctx context.Context, userID int64, code st
 	return counter, err
 }
 
-// ConsumeLoginCode consumes the shared replay marker after a login request
-// has passed all checks. Sites without the payment/security key retain the
-// legacy login behavior and do not require a replay marker.
+// ConsumeLoginCode records a successful login code so the same code cannot be
+// replayed for another login inside the TOTP window. The login replay marker is
+// independent of payment/security configuration: previously it was skipped
+// entirely on deployments without payment verification, leaving a 90s replay
+// window for password+TOTP logins.
+//
+// 支付/敏感操作的安全重放标记（cryptoSecurity）仍然单独消费，避免同一个码
+// 既完成登录又完成资金操作。
 func (s *TotpService) ConsumeLoginCode(ctx context.Context, userID, counter int64, code string) error {
+	if s == nil || s.cache == nil || userID <= 0 {
+		return ErrTotpUnavailable
+	}
+	digest := loginCodeReplayDigest(userID, counter, code)
+	ok, err := s.cache.MarkLoginCodeUsed(ctx, userID, digest, totpLoginReplayTTL)
+	if err != nil {
+		return ErrTotpUnavailable
+	}
+	if !ok {
+		return ErrTotpCodeReplayed
+	}
 	if s.cryptoSecurity == nil || !s.cryptoSecurity.ready() {
 		return nil
 	}
 	return s.cryptoSecurity.consume(ctx, userID, counter, code)
+}
+
+// loginCodeReplayDigest 生成登录动态码的重放键摘要：绑定用户、时间步与验证码，
+// 缓存层只保存不可逆摘要。
+func loginCodeReplayDigest(userID, counter int64, code string) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%d:%s", userID, counter, strings.TrimSpace(code))))
+	return hex.EncodeToString(sum[:])
 }
 
 // VerifyCodeOnce adds an atomic, shared consumption step to ordinary verification.
