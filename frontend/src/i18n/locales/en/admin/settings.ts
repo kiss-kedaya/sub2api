@@ -1135,6 +1135,9 @@ export default {
         deleting: 'Deleting...',
         create: 'Create Key',
         creating: 'Creating...',
+        retiredBadge: 'Retired',
+        retiredHint:
+          'Creating or rotating the legacy full-access admin API key is disabled. Existing keys keep working until deleted; migrate automation to scoped admin API keys under Admin Access Keys.',
         regenerateConfirm: 'Are you sure? The current key will be immediately invalidated.',
         deleteConfirm:
           'Are you sure you want to delete the admin API key? External integrations will stop working.',

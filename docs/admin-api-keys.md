@@ -12,7 +12,19 @@
 
 创建、更新、停用/启用、轮换、撤销和删除记录均沿用系统二次验证流程；是否弹出验证由系统的 step-up 配置和当前授权状态决定。密钥生命周期接口只接受管理员 JWT 会话，受限密钥不能管理自身或创建其他管理员密钥。
 
-已有旧版全权密钥时，页面显示兼容折叠区，可轮换或删除。页面不再提供新建旧版全权密钥的入口；应将自动化任务迁移到受限密钥。
+已有旧版全权密钥时，页面显示兼容折叠区，只保留「读取状态」与「删除」：**新建与轮换入口已退役**，`POST /api/v1/admin/settings/admin-api-key/regenerate` 固定返回 `403 LEGACY_ADMIN_KEY_RETIRED`，不生成、不改写任何密钥。已有旧 key 在删除前继续可用（认证路径不变），便于平滑迁移；服务启动时若检测到旧 key 会输出迁移告警。请把自动化迁移到受限密钥后再删除旧 key。
+
+## 敏感写操作的二次验证（step-up）
+
+以下管理面写操作在 `step_up_enabled` 开启时要求「JWT 管理员会话 + 已启用 TOTP + 当前会话近期完成验证」，管理员 API Key（旧版或受限密钥）一律 `403 STEP_UP_ADMIN_API_KEY_FORBIDDEN`：
+
+- 支付配置：`PUT /api/v1/admin/payment/config`、支付渠道实例的创建/修改/删除；
+- 退款：`POST /api/v1/admin/payment/orders/:id/refund` 与退款确认 `.../refund/query`（因此 `payment.refund` 不再作为受限密钥可授予权限，已从权限目录移除）；
+- 系统设置保存：`PUT /api/v1/admin/settings`（关闭 TOTP/step-up 开关本身仍沿用无条件门控）；
+- 删号 `DELETE /api/v1/admin/users/:id`、增减余额 `POST /api/v1/admin/users/:id/balance`；
+- 修改用户密码 `PUT /api/v1/admin/users/:id`（仅当请求携带 `password`，普通资料编辑不触发）。
+
+开关关闭时行为与门控引入前一致。管理员前端在这些入口统一弹 TOTP 验证对话框并在成功后重试一次。
 
 ## 账户规则如何匹配
 
@@ -41,7 +53,7 @@
 
 `global_permissions` 与资源规则独立，不受所选分组或账户类型约束。例如 `users.read`、`dashboard.read`、`payment.read` 可读取全站相应数据。选择某个分组不会将这些权限限制为该分组；反过来，选择分组也不会隐式获得这些权限。
 
-权限目录按接口与 HTTP 方法精确登记。当前不提供 `payment.mark_paid` 或退款预览权限；不要把退款、取消订单、重新履约等其他权限当作这些动作的替代。
+权限目录按接口与 HTTP 方法精确登记。当前不提供 `payment.mark_paid`、退款或退款预览权限（退款已强制 step-up，机器凭据不可执行）；不要把取消订单、重新履约等其他权限当作这些动作的替代。
 
 受限响应按用途收窄：
 

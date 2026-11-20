@@ -573,8 +573,8 @@ func (s *SettingService) GetIdentityPatchPrompt(ctx context.Context) string {
 }
 
 // GenerateAdminAPIKey 生成/轮换旧版单 key 管理员 API Key。
-// 保留旧部署的创建与轮换路径，避免现有管理员集成被打断；
-// 新部署应改用分权管理密钥（scoped_admin_api_keys）。
+// Deprecated: 旧版全权密钥的新建/轮换已退役（handler 固定返回 LEGACY_ADMIN_KEY_RETIRED）；
+// 仅保留实现用于历史兼容，新部署必须改用分权管理密钥（scoped_admin_api_keys）。
 func (s *SettingService) GenerateAdminAPIKey(ctx context.Context) (string, error) {
 	// 生成 32 字节随机数 = 64 位十六进制字符
 	bytes := make([]byte, 32)

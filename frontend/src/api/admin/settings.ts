@@ -1250,6 +1250,9 @@ export async function previewEmailTemplate(
 export interface AdminApiKeyStatus {
   exists: boolean;
   masked_key: string;
+  /** 旧版全权密钥已退役：只保留读取与使用，不再支持新建/轮换。 */
+  deprecated?: boolean;
+  migration_hint?: string;
 }
 
 /**

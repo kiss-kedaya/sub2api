@@ -1130,6 +1130,9 @@ export default {
         deleting: '删除中...',
         create: '创建密钥',
         creating: '创建中...',
+        retiredBadge: '已停止新建',
+        retiredHint:
+          '旧版全权管理员 API Key 已停止新建与轮换；已有密钥在删除前仍可继续使用。请改用「管理员访问密钥」创建受限密钥并迁移自动化。',
         regenerateConfirm: '确定要重新生成吗？当前密钥将立即失效。',
         deleteConfirm: '确定要删除管理员 API Key 吗？外部集成将停止工作。',
         keyGenerated: '新的管理员 API Key 已生成',

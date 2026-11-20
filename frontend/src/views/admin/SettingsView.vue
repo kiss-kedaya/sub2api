@@ -74,18 +74,14 @@
                   :in-summary="false"
                 >
                   <template #control>
-                    <UButton
-                      :loading="adminApiKeyOperating"
-                      @click="createAdminApiKey"
-                      :disabled="adminApiKeyOperating"
-                      size="sm"
-                    >
-                      {{
-                        adminApiKeyOperating
-                          ? t("admin.settings.adminApiKey.creating")
-                          : t("admin.settings.adminApiKey.create")
-                      }}
-                    </UButton>
+                    <UBadge color="neutral" variant="subtle" size="sm">
+                      {{ t("admin.settings.adminApiKey.retiredBadge") }}
+                    </UBadge>
+                  </template>
+                  <template #status>
+                    <p class="pb-3 text-sm text-muted">
+                      {{ t("admin.settings.adminApiKey.retiredHint") }}
+                    </p>
                   </template>
                 </SettingRow>
               </SettingGroup>
@@ -99,29 +95,21 @@
                   :in-summary="false"
                 >
                   <template #control>
-                    <div class="flex gap-2">
-                      <UButton
-                        @click="regenerateAdminApiKey"
-                        :disabled="adminApiKeyOperating"
-                        color="neutral"
-                        variant="outline"
-                        size="sm"
-                      >
-                        {{
-                          adminApiKeyOperating
-                            ? t("admin.settings.adminApiKey.regenerating")
-                            : t("admin.settings.adminApiKey.regenerate")
-                        }}
-                      </UButton>
-                      <UButton
-                        @click="deleteAdminApiKey"
-                        :disabled="adminApiKeyOperating"
-                        color="error"
-                        variant="soft"
-                        size="sm"
-                      >
-                        {{ t("admin.settings.adminApiKey.delete") }}
-                      </UButton>
+                    <div class="flex flex-col gap-2">
+                      <div class="flex gap-2">
+                        <UButton
+                          @click="deleteAdminApiKey"
+                          :disabled="adminApiKeyOperating"
+                          color="error"
+                          variant="soft"
+                          size="sm"
+                        >
+                          {{ t("admin.settings.adminApiKey.delete") }}
+                        </UButton>
+                      </div>
+                      <p class="text-sm text-muted">
+                        {{ t("admin.settings.adminApiKey.retiredHint") }}
+                      </p>
                     </div>
                   </template>
                   <!-- Newly Generated Key Display: live state, never folded away -->
@@ -10112,29 +10100,6 @@ async function loadAdminApiKey() {
   } finally {
     adminApiKeyLoading.value = false;
   }
-}
-
-async function createAdminApiKey() {
-  if (!adminApiKeyExists.value) return;
-  adminApiKeyOperating.value = true;
-  try {
-    const result = await settingsStepUp.run(() => adminAPI.settings.regenerateAdminApiKey());
-    newAdminApiKey.value = result.key;
-    adminApiKeyExists.value = true;
-    adminApiKeyMasked.value =
-      result.key.substring(0, 10) + "..." + result.key.slice(-4);
-    appStore.showSuccess(t("admin.settings.adminApiKey.keyGenerated"));
-  } catch (error: unknown) {
-    if (isStepUpCancelled(error)) return;
-    appStore.showError(extractApiErrorMessage(error, t("common.error")));
-  } finally {
-    adminApiKeyOperating.value = false;
-  }
-}
-
-async function regenerateAdminApiKey() {
-  if (!confirm(t("admin.settings.adminApiKey.regenerateConfirm"))) return;
-  await createAdminApiKey();
 }
 
 async function deleteAdminApiKey() {

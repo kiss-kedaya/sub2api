@@ -26,7 +26,11 @@ func TestAdminUserNumericContractRejectsNegativeLimits(t *testing.T) {
 					if method == http.MethodPut {
 						path += "/1"
 					}
-					body := fmt.Sprintf(`{"email":"test@example.test","password":"fixture-password",%q:%d}`, field, value)
+					// PUT 改密码会触发 step-up 门控，此处只验证数值契约；创建用例保留密码。
+					body := fmt.Sprintf(`{"email":"test@example.test",%q:%d}`, field, value)
+					if method == http.MethodPost {
+						body = fmt.Sprintf(`{"email":"test@example.test","password":"fixture-password",%q:%d}`, field, value)
+					}
 					rec := httptest.NewRecorder()
 					req := httptest.NewRequest(method, path, strings.NewReader(body))
 					req.Header.Set("Content-Type", "application/json")

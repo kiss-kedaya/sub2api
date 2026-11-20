@@ -457,6 +457,7 @@
     <GroupReplaceModal :show="showGroupReplaceModal" :user="groupReplaceUser" :old-group="groupReplaceOldGroup" :all-groups="allGroups" @close="closeGroupReplaceModal" @success="loadUsers" />
     <UserAttributesConfigModal :show="showAttributesModal" @close="handleAttributesModalClose" />
   </AppLayout>
+  <TotpStepUpDialog :controller="stepUp" />
 </template>
 
 <script setup lang="ts">
@@ -501,8 +502,12 @@ import UserAllowedGroupsModal from '@/components/admin/user/UserAllowedGroupsMod
 import UserBalanceModal from '@/components/admin/user/UserBalanceModal.vue'
 import UserBalanceHistoryModal from '@/components/admin/user/UserBalanceHistoryModal.vue'
 import GroupReplaceModal from '@/components/admin/user/GroupReplaceModal.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import { useStepUp, isStepUpRequired, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 
 const appStore = useAppStore()
+// 删号属不可逆敏感操作：后端要求 step-up 二次验证，这里负责弹码并重试一次。
+const stepUp = useStepUp()
 
 // Generate dynamic attribute columns from enabled definitions
 const attributeColumns = computed<Column[]>(() =>
@@ -1465,14 +1470,24 @@ const handleDelete = (user: AdminUser) => {
 }
 
 const confirmDelete = async () => {
-  if (!deletingUser.value) return
+  const user = deletingUser.value
+  if (!user) return
   try {
-    await adminAPI.users.delete(deletingUser.value.id)
+    await stepUp.run(() => adminAPI.users.delete(user.id))
     appStore.showSuccess(t('common.success'))
     showDeleteDialog.value = false
     deletingUser.value = null
     loadUsers()
   } catch (error: any) {
+    if (isStepUpCancelled(error)) return
+    if (isStepUpBlocked(error)) {
+      appStore.showError(
+        stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+          ? t('stepUp.adminApiKeyForbidden')
+          : t('stepUp.notEnabled')
+      )
+      return
+    }
     appStore.showError(error.response?.data?.detail || t('admin.users.failedToDelete'))
     console.error('Error deleting user:', error)
   }
@@ -1483,13 +1498,31 @@ const confirmBulkDelete = async () => {
   bulkDeleteIds.value = []
   bulkDeleting.value = true
   const deletedIds: number[] = []
-  for (const id of ids) {
-    try {
-      await adminAPI.users.delete(id)
-      deletedIds.push(id)
-    } catch (error) {
-      console.error('Error deleting user:', error)
+  try {
+    // 批量删除同样需要 step-up：首次调用弹码，授权后整批重试一次。
+    await stepUp.run(async () => {
+      for (const id of ids) {
+        try {
+          await adminAPI.users.delete(id)
+          deletedIds.push(id)
+        } catch (error) {
+          if (isStepUpRequired(error)) throw error
+          console.error('Error deleting user:', error)
+        }
+      }
+    })
+  } catch (error: unknown) {
+    bulkDeleting.value = false
+    if (isStepUpCancelled(error)) return
+    if (isStepUpBlocked(error)) {
+      appStore.showError(
+        stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+          ? t('stepUp.adminApiKeyForbidden')
+          : t('stepUp.notEnabled')
+      )
+      return
     }
+    throw error
   }
   removeSelectedIds(deletedIds)
   if (deletedIds.length > 0) {

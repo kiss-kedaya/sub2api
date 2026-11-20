@@ -44,7 +44,7 @@ var definitions = []permissionDefinition{
 	{Permission{"payment.read", "读取全站支付订单与报表", "财务", "global"}, []string{"GET /payment/dashboard", "GET /payment/orders", "GET /payment/orders/:id"}},
 	{Permission{"payment.cancel", "取消支付订单", "财务", "global"}, []string{"POST /payment/orders/:id/cancel"}},
 	{Permission{"payment.fulfill", "重新履约支付订单", "财务", "global"}, []string{"POST /payment/orders/:id/retry"}},
-	{Permission{"payment.refund", "发起退款及确认退款结果", "财务", "global"}, []string{"POST /payment/orders/:id/refund", "POST /payment/orders/:id/refund/query"}},
+	// 退款/退款确认已强制 step-up（机器凭据一律 403），不再作为受限密钥可授予权限。
 	{Permission{"payment.plans.read", "读取全部支付套餐", "财务", "global"}, []string{"GET /payment/plans"}},
 	{Permission{"payment.plans.write", "创建、修改和删除支付套餐", "财务", "global"}, []string{"POST /payment/plans", "PUT /payment/plans/:id", "DELETE /payment/plans/:id"}},
 	{Permission{"subscriptions.read", "读取全站订阅记录", "订阅", "global"}, []string{"GET /subscriptions", "GET /subscriptions/:id", "GET /subscriptions/:id/progress", "GET /groups/:id/subscriptions", "GET /users/:id/subscriptions"}},
