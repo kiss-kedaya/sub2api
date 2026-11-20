@@ -75,6 +75,20 @@ func (c *cryptoSecurityTestCache) ClearVerifyAttempts(context.Context, int64) er
 	return nil
 }
 
+func (c *cryptoSecurityTestCache) MarkLoginCodeUsed(_ context.Context, _ int64, digest string, _ time.Duration) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.fail {
+		return false, errors.New("store unavailable")
+	}
+	key := "login-replay:" + digest
+	if _, exists := c.values[key]; exists {
+		return false, nil
+	}
+	c.values[key] = "1"
+	return true, nil
+}
+
 func (c *cryptoSecurityTestCache) IncrementCryptoAttempt(_ context.Context, key string, _ time.Duration) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

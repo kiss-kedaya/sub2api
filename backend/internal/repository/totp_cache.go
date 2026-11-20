@@ -16,6 +16,7 @@ const (
 	totpLoginKeyPrefix        = "totp:login:"
 	totpAttemptsKeyPrefix     = "totp:attempts:"
 	totpStepUpKeyPrefix       = "totp:stepup:"
+	totpLoginReplayKeyPrefix  = "totp:login-replay:"
 	admin2FAApprovalKeyPrefix = "totp:admin-approval:"
 	totpAttemptsTTL           = 15 * time.Minute
 )
@@ -53,6 +54,16 @@ func (c *TotpCache) ConsumeAdmin2FAApproval(ctx context.Context, userID int64, d
 	}
 	consumed, err := cryptoTotpReleaseScript.Run(ctx, c.rdb, []string{fmt.Sprintf("%s{%d}", admin2FAApprovalKeyPrefix, userID)}, digest).Int()
 	return consumed == 1, err
+}
+
+// MarkLoginCodeUsed 用 SETNX 记录登录动态码重放键：只有第一次写入成功，
+// 之后的同一码（同用户+同时间步）在 TTL 内会被判定为重放。
+func (c *TotpCache) MarkLoginCodeUsed(ctx context.Context, userID int64, codeDigest string, ttl time.Duration) (bool, error) {
+	if c == nil || c.rdb == nil || userID <= 0 || codeDigest == "" || ttl <= 0 {
+		return false, fmt.Errorf("invalid login code replay marker")
+	}
+	key := fmt.Sprintf("%s{%d}:%s", totpLoginReplayKeyPrefix, userID, codeDigest)
+	return c.rdb.SetNX(ctx, key, "1", ttl).Result()
 }
 
 // NewTotpCache creates a new TOTP cache
