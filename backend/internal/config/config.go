@@ -1023,6 +1023,10 @@ type GatewayConfig struct {
 	MinOutputTokens int `mapstructure:"min_output_tokens"`
 	// 请求体最大字节数，用于网关请求体大小限制
 	MaxBodySize int64 `mapstructure:"max_body_size"`
+	// MaxSameAccountRetriesGemini 是 Gemini 三条转发路径对可重试上游错误
+	// （429/5xx 等）在同一账号上的重试次数，不含首次请求。默认 4（即每号最多 5 次
+	// 请求），范围 0-10；调小可以让调度更快换号，代价是单号容忍瞬时报错的能力下降。
+	MaxSameAccountRetriesGemini int `mapstructure:"max_same_account_retries_gemini"`
 	// TextMaxBodySize limits endpoints that cannot carry inline image/video payloads.
 	TextMaxBodySize int64 `mapstructure:"text_max_body_size"`
 	// 非流式上游响应体读取上限（字节），用于防止无界读取导致内存放大
@@ -2680,6 +2684,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
 	viper.SetDefault("gateway.min_output_tokens", 128)
+	viper.SetDefault("gateway.max_same_account_retries_gemini", 4)
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))
 	viper.SetDefault("gateway.text_max_body_size", int64(32*1024*1024))
 	viper.SetDefault("gateway.upstream_response_read_max_bytes", DefaultUpstreamResponseReadMaxBytes)
@@ -3544,6 +3549,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.MinOutputTokens > 0 && c.Gateway.MinOutputTokens < 16 {
 		return fmt.Errorf("gateway.min_output_tokens must be at least 16 when set")
+	}
+	if c.Gateway.MaxSameAccountRetriesGemini < 0 || c.Gateway.MaxSameAccountRetriesGemini > 10 {
+		return fmt.Errorf("gateway.max_same_account_retries_gemini must be between 0-10")
 	}
 	if c.Gateway.MaxBodySize <= 0 {
 		return fmt.Errorf("gateway.max_body_size must be positive")
