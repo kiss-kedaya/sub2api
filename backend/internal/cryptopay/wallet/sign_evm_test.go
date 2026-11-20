@@ -30,7 +30,8 @@ func signExpectation(mock sqlmock.Sqlmock, raw string, req EVMSignRequest) {
 	if req.Kind == "gas" {
 		index = 0
 	}
-	mock.ExpectExec(regexp.QuoteMeta(auditSQL)).WithArgs("sign_evm", req.Kind, index, req.ChainID, req.To, req.Token, req.Amount, "ok", "").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta(auditSQL)).WithArgs("sign_evm", req.Kind, index, req.ChainID, req.To, req.Token, req.Amount, "ok", "",
+		nil, nil, nil, nil, nil, nil).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 }
 
@@ -269,7 +270,8 @@ func TestSweepGasHeadroomIsAccepted(t *testing.T) {
 	expectRead(mock, raw, " FOR SHARE")
 	req := sweepRequest()
 	req.GasLimit = 90_000
-	mock.ExpectExec(regexp.QuoteMeta(auditSQL)).WithArgs("sign_evm", req.Kind, req.Index, req.ChainID, req.To, req.Token, req.Amount, "ok", "").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta(auditSQL)).WithArgs("sign_evm", req.Kind, req.Index, req.ChainID, req.To, req.Token, req.Amount, "ok", "",
+		nil, nil, nil, nil, nil, nil).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	signed, err := m.SignEVM(t.Context(), req)
 	if err != nil || signed == "" {

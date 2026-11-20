@@ -78,7 +78,8 @@ func residentManager(t *testing.T) (*Manager, sqlmock.Sqlmock, string) {
 }
 
 func expectAudit(mock sqlmock.Sqlmock, op, result string) *sqlmock.ExpectedExec {
-	return mock.ExpectExec(regexp.QuoteMeta(auditSQL)).WithArgs(op, "", 0, 0, "", "", "", result, "")
+	return mock.ExpectExec(regexp.QuoteMeta(auditSQL)).WithArgs(op, "", 0, 0, "", "", "", result, "",
+		nil, nil, nil, nil, nil, nil)
 }
 
 func auditOK(mock sqlmock.Sqlmock, op, result string) {

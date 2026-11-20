@@ -16,7 +16,7 @@ func (m *Manager) ExportMnemonics(ctx context.Context) (*MnemonicExport, error) 
 	defer m.mu.Unlock()
 	tx, err := m.currentVaultTx(ctx)
 	if err != nil {
-		return nil, m.denied("mnemonic_export", err)
+		return nil, m.denied(ctx, "mnemonic_export", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	raw, err := readVault(ctx, tx, false)
@@ -49,7 +49,7 @@ func (m *Manager) ImportHotMnemonic(ctx context.Context, mnemonic string) error 
 	defer m.mu.Unlock()
 	err := m.importHotMnemonic(ctx, normalizeMnemonic(mnemonic))
 	if err != nil {
-		return m.denied(op, err)
+		return m.denied(ctx, op, err)
 	}
 	return nil
 }

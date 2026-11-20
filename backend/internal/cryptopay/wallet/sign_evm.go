@@ -26,7 +26,7 @@ func (m *Manager) SignEVM(ctx context.Context, req EVMSignRequest) (string, erro
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	const op = "sign_evm"
-	deny := func(err error) (string, error) { return "", m.denied(op, err) }
+	deny := func(err error) (string, error) { return "", m.denied(ctx, op, err) }
 	if err := ctx.Err(); err != nil {
 		return deny(err)
 	}
@@ -49,7 +49,7 @@ func (m *Manager) SignEVM(ctx context.Context, req EVMSignRequest) (string, erro
 	defer func() { _ = storeTx.Rollback() }()
 	// Roll back BEFORE recording a denial via db. This also works with a
 	// one-connection pool, avoiding pool starvation and self-deadlocks.
-	deny = func(err error) (string, error) { _ = storeTx.Rollback(); return "", m.denied(op, err) }
+	deny = func(err error) (string, error) { _ = storeTx.Rollback(); return "", m.denied(ctx, op, err) }
 	if err := m.checkSecurityInTx(ctx, storeTx); err != nil {
 		return deny(err)
 	}

@@ -24,14 +24,95 @@ const unfinishedSweepPredicate = `status NOT IN ('swept','failed') AND job_versi
 	(status IN ('manual_review','gas_sent') OR gas_tx_hash <> '' OR sweep_tx_hash <> '')`
 
 const auditSQL = `INSERT INTO crypto_signer_audit
-	(op, kind, derivation_index, chain_id, to_address, token, amount, result, reason)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`
+	(op, kind, derivation_index, chain_id, to_address, token, amount, result, reason,
+	 actor_user_id, actor_email, client_ip, user_agent, request_id, auth_method)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`
 
 type auditEntry struct {
 	op, kind                          string
 	index                             uint32
 	chainID                           int64
 	to, token, amount, result, reason string
+}
+
+// Bounds for operator provenance. The columns are TEXT so the database cannot
+// constrain them; truncating here keeps a forged header from bloating a row.
+const (
+	maxAuditActorEmail = 255
+	maxAuditClientIP   = 64
+	maxAuditUserAgent  = 512
+	maxAuditRequestID  = 128
+	maxAuditAuthMethod = 64
+)
+
+// AuditActor is the authenticated operator plus request provenance attached to
+// an audit row. Every field is optional: when identity cannot be resolved the
+// column is stored as NULL instead of failing the audited operation.
+type AuditActor struct {
+	UserID     *int64
+	Email      string
+	ClientIP   string
+	UserAgent  string
+	RequestID  string
+	AuthMethod string
+}
+
+type auditActorContextKey struct{}
+
+// WithAuditActor attaches operator attribution to ctx. Callers that cannot
+// resolve an identity skip this helper entirely and the write stores NULLs.
+// Metadata handling never returns an error, so attribution problems cannot
+// block an export or seed change.
+func WithAuditActor(ctx context.Context, actor AuditActor) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, auditActorContextKey{}, normalizeAuditActor(actor))
+}
+
+// AuditActorFromContext returns the attribution attached by WithAuditActor.
+// The zero value means "no resolvable operator"; writeAudit then stores NULLs.
+func AuditActorFromContext(ctx context.Context) AuditActor {
+	if ctx == nil {
+		return AuditActor{}
+	}
+	actor, _ := ctx.Value(auditActorContextKey{}).(AuditActor)
+	return actor
+}
+
+func normalizeAuditActor(actor AuditActor) AuditActor {
+	if actor.UserID != nil {
+		id := *actor.UserID
+		if id > 0 {
+			actor.UserID = &id
+		} else {
+			actor.UserID = nil
+		}
+	}
+	actor.Email = auditText(actor.Email, maxAuditActorEmail)
+	actor.ClientIP = auditText(actor.ClientIP, maxAuditClientIP)
+	actor.UserAgent = auditText(actor.UserAgent, maxAuditUserAgent)
+	actor.RequestID = auditText(actor.RequestID, maxAuditRequestID)
+	actor.AuthMethod = auditText(actor.AuthMethod, maxAuditAuthMethod)
+	return actor
+}
+
+func auditText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= limit {
+		return value
+	}
+	// Cut on a byte boundary, then drop any dangling partial UTF-8 sequence.
+	return strings.ToValidUTF8(value[:limit], "")
+}
+
+// auditNullable maps an absent string to SQL NULL so old and unattributed rows
+// stay distinguishable from an empty recorded value.
+func auditNullable(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 type auditWriter interface {
@@ -42,8 +123,16 @@ func writeAudit(ctx context.Context, w auditWriter, e auditEntry) error {
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
+	actor := AuditActorFromContext(ctx)
+	var actorUserID any
+	if actor.UserID != nil {
+		actorUserID = *actor.UserID
+	}
 	if _, err := w.ExecContext(ctx, auditSQL, e.op, e.kind, e.index, e.chainID,
-		e.to, e.token, e.amount, e.result, e.reason); err != nil {
+		e.to, e.token, e.amount, e.result, e.reason, actorUserID,
+		auditNullable(actor.Email), auditNullable(actor.ClientIP),
+		auditNullable(actor.UserAgent), auditNullable(actor.RequestID),
+		auditNullable(actor.AuthMethod)); err != nil {
 		// Drivers can include SQL arguments in errors. Never propagate them.
 		return ErrAuditUnavailable
 	}
@@ -59,9 +148,12 @@ func (m *Manager) audit(ctx context.Context, e auditEntry) error {
 
 // Denials use a bounded independent context, so cancellation cannot suppress
 // the audit attempt. Only fixed operation/reason strings reach this path.
-func (m *Manager) denied(op string, cause error) error {
+func (m *Manager) denied(caller context.Context, op string, cause error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// Detaching from the request must not drop attribution: a denied
+	// high-risk attempt is exactly as traceable as a successful one.
+	ctx = WithAuditActor(ctx, AuditActorFromContext(caller))
 	if err := m.audit(ctx, auditEntry{op: op, result: "denied"}); err != nil {
 		return errors.Join(cause, err)
 	}

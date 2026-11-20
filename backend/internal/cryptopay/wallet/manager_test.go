@@ -21,7 +21,8 @@ func TestAutomaticReloadAndStableAddressQueries(t *testing.T) {
 	}
 	mock.ExpectBegin()
 	expectRead(mock, raw, " FOR SHARE")
-	mock.ExpectExec(regexp.QuoteMeta(auditSQL)).WithArgs("derive", "", 0, 0, "", "", "2", "ok", "").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta(auditSQL)).WithArgs("derive", "", 0, 0, "", "", "2", "ok", "",
+		nil, nil, nil, nil, nil, nil).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	got, err := m.Derive(t.Context(), 0, 2)
 	if err != nil {
