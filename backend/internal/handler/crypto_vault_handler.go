@@ -22,6 +22,7 @@ func (h *CryptoHandler) AdminImportHotMnemonic(c *gin.Context) {
 	cryptoVaultHeaders(c)
 	var req struct {
 		HotMnemonic string `json:"hot_mnemonic"`
+		Share       string `json:"share"`
 	}
 	if !decodeCryptoVaultRequest(c, &req) {
 		return

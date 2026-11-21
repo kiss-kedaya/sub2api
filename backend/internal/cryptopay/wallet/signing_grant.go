@@ -60,6 +60,12 @@ func (m *Manager) AuthorizeSweep(ctx context.Context) (context.Context, func(), 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// The cached generation is enough here: a locked v3 vault fails closed
+	// again when the signer actually reads the vault. Avoid a database read on
+	// every sweep authorization.
+	if m.vaultVersion == 3 && !m.dataKeyUsable() {
+		return nil, nil, ErrSignerShareRequired
+	}
 	if !m.enabled || m.destination == "" {
 		return nil, nil, ErrSigningDisabled
 	}

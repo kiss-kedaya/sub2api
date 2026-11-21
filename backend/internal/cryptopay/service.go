@@ -725,7 +725,24 @@ func (s *Service) maintenance(ctx context.Context) {
 				continue
 			}
 			maintCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-			summary, err := s.runSweep(maintCtx, false, false, nil)
+			// A data-key vault only sweeps automatically when the operator
+			// explicitly stored the sealed automatic-sweep share.
+			if s.wallet != nil {
+				if locked, lockErr := s.wallet.SignerLocked(maintCtx); lockErr == nil && locked {
+					if unsealErr := s.wallet.UnlockAutoSigner(maintCtx); unsealErr != nil {
+						slog.Warn("[cryptopay] scheduled sweep paused: signer locked and no automatic share", "error", unsealErr)
+						cancel()
+						continue
+					}
+				}
+			}
+			summary, err := s.runSweep(maintCtx, false, false, nil, "")
+			if err == nil {
+				s.topUpAddressPoolIfUnlocked(maintCtx)
+			}
+			if s.wallet != nil {
+				s.wallet.LockSigner()
+			}
 			cancel()
 			if err != nil {
 				slog.Warn("[cryptopay] scheduled sweep failed", "error", err)
@@ -965,24 +982,30 @@ func (s *Service) InitializeWallet(ctx context.Context, depositMnemonic, hotMnem
 // RunSweep executes the sweep (or a dry-run) and returns the summary.
 // Serialised by the caller via the admin route; sweeps are operator-driven.
 func (s *Service) RunSweep(ctx context.Context, dryRun bool) (summary *sweeper.Summary, err error) {
-	return s.runSweep(ctx, dryRun, true, nil)
+	return s.runSweep(ctx, dryRun, true, nil, "")
 }
 
 // RunSweepChains is RunSweep restricted to the named chains. An empty list
 // keeps the global behaviour, so existing callers are unaffected.
 func (s *Service) RunSweepChains(ctx context.Context, dryRun bool, chains []string) (summary *sweeper.Summary, err error) {
-	return s.runSweep(ctx, dryRun, true, chains)
+	return s.runSweep(ctx, dryRun, true, chains, "")
 }
 
-func (s *Service) runSweep(ctx context.Context, dryRun, manual bool, chains []string) (summary *sweeper.Summary, err error) {
+// RunSweepChainsWithShare is the operator path for a vault sealed with a data
+// key: the recovery share unlocks the signer for this run only.
+func (s *Service) RunSweepChainsWithShare(ctx context.Context, dryRun bool, chains []string, share string) (summary *sweeper.Summary, err error) {
+	return s.runSweep(ctx, dryRun, true, chains, share)
+}
+
+func (s *Service) runSweep(ctx context.Context, dryRun, manual bool, chains []string, share string) (summary *sweeper.Summary, err error) {
 	s.sweepMu.Lock()
 	defer s.sweepMu.Unlock()
-	return s.runSweepLocked(ctx, dryRun, manual, chains)
+	return s.runSweepLocked(ctx, dryRun, manual, chains, share)
 }
 
 // runSweepLocked is shared by synchronous and asynchronous runs. Its caller
 // owns sweepMu; acquiring it again would deadlock every asynchronous run.
-func (s *Service) runSweepLocked(ctx context.Context, dryRun, manual bool, chains []string) (summary *sweeper.Summary, err error) {
+func (s *Service) runSweepLocked(ctx context.Context, dryRun, manual bool, chains []string, share string) (summary *sweeper.Summary, err error) {
 	if !dryRun {
 		// Notify on the common result path: manual runs, scheduled sweeps and
 		// resumption of already-signed jobs must report the same failures.
@@ -997,6 +1020,17 @@ func (s *Service) runSweepLocked(ctx context.Context, dryRun, manual bool, chain
 			if err := s.checkWalletActivity(ctx); err != nil {
 				return nil, err
 			}
+		}
+	}
+	// A data-key vault stays sealed until a recovery share is presented. The
+	// cleanup clears the reconstructed key and cached seeds when the run ends.
+	if !dryRun && s.wallet != nil {
+		cleanup, unsealErr := s.unsealForRun(ctx, manual, share)
+		if unsealErr != nil {
+			return nil, unsealErr
+		}
+		if cleanup != nil {
+			defer cleanup()
 		}
 	}
 	s.mu.RLock()
@@ -1093,9 +1127,21 @@ const sweepRunRetention = 20
 // caller can poll. Refuses when a run is already active: two concurrent sweeps
 // would read the same balances and could double-send.
 func (s *Service) StartSweepAsync(dryRun bool, chains []string) (*SweepRunState, error) {
+	return s.startSweepAsync(dryRun, chains, "")
+}
+
+// StartSweepAsyncWithShare is the data-key variant: it unseals the signer in
+// the request (so a wrong share fails immediately) and keeps it unlocked only
+// for the worker.
+func (s *Service) StartSweepAsyncWithShare(dryRun bool, chains []string, share string) (*SweepRunState, error) {
+	return s.startSweepAsync(dryRun, chains, share)
+}
+
+func (s *Service) startSweepAsync(dryRun bool, chains []string, share string) (*SweepRunState, error) {
 	if !s.sweepMu.TryLock() {
 		return nil, ErrScanBusy
 	}
+	cleanup := func() {}
 	// Run the cheap preflight in the request so a disabled wallet/security lock
 	// is returned to the operator now instead of a 202 followed by an in-memory
 	// error they can never see. The worker repeats it while holding the sweep.
@@ -1109,6 +1155,11 @@ func (s *Service) StartSweepAsync(dryRun bool, chains []string) (*SweepRunState,
 				return err
 			}
 			if s.wallet != nil {
+				unsealCleanup, unsealErr := s.unsealForRun(preflightCtx, true, share)
+				if unsealErr != nil {
+					return unsealErr
+				}
+				cleanup = unsealCleanup
 				_, revoke, err := s.wallet.AuthorizeSweep(preflightCtx)
 				if err != nil {
 					return err
@@ -1119,6 +1170,7 @@ func (s *Service) StartSweepAsync(dryRun bool, chains []string) (*SweepRunState,
 		}()
 		cancel()
 		if preErr != nil {
+			cleanup()
 			s.sweepMu.Unlock()
 			return nil, preErr
 		}
@@ -1143,10 +1195,11 @@ func (s *Service) StartSweepAsync(dryRun bool, chains []string) (*SweepRunState,
 
 	go func() {
 		defer s.sweepMu.Unlock()
+		defer cleanup()
 		// Detached from any request: a browser leaving must not cancel the run.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
-		summary, err := s.runSweepLocked(ctx, dryRun, true, state.Chains)
+		summary, err := s.runSweepLocked(ctx, dryRun, true, state.Chains, "")
 		sweepRunsMu.Lock()
 		state.Finished = true
 		state.Summary = summary
