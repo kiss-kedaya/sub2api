@@ -397,17 +397,26 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 		}
 	}
 	// url.ParseQuery already decodes values — no additional decode needed.
-	params := make(map[string]string)
+	//
+	// 不再用「未知参数一律拒绝」的白名单：真实易支付变体（如 ylyun.net）回调会
+	// 额外携带 bill_trade_no / api_trade_no / buyer 等由支付方生成的字段，白名单
+	// 会让合法回调直接 400，表现为「支付成功但订单永远 PENDING」。
+	//
+	// 安全边界改为：签名基串覆盖**全部**非空参数（与支付方算法一致），任何被追加、
+	// 篡改或重放的参数都会让签名失效；同时强制业务必需字段存在且唯一（重复 key 在
+	// 上面的循环里已拒绝）。业务判断只读这里解析出的单值 map，绝不按 "&" 手工切分
+	// 原始 query，因此 return_url 之类的值即使内含 "trade_status=TRADE_SUCCESS"
+	// 也只是一段字符串值，不会被误认为顶层参数（upstream issue #7881）。
+	params := make(map[string]string, len(values))
 	for k := range values {
-		if !easyPayNotifyAllowedParams[k] {
-			return nil, fmt.Errorf("unexpected notify param: %s", k)
-		}
 		params[k] = values.Get(k)
 	}
-	sign := params["sign"]
-	if sign == "" {
-		return nil, fmt.Errorf("missing sign")
+	for _, required := range easyPayNotifyRequiredParams {
+		if strings.TrimSpace(params[required]) == "" {
+			return nil, fmt.Errorf("missing notify param: %s", required)
+		}
 	}
+	sign := params["sign"]
 	if !easyPayVerifySign(params, e.config["pkey"], sign) {
 		return nil, fmt.Errorf("invalid signature")
 	}
@@ -655,24 +664,20 @@ func easyPayVerifySign(params map[string]string, pkey string, sign string) bool 
 	return hmac.Equal([]byte(easyPaySign(params, pkey)), []byte(sign))
 }
 
-// easyPayNotifyAllowedParams is the exact parameter set a genuine EasyPay
-// (彩虹易支付-compatible) async notification carries. Order-creation-only fields
-// (notify_url, return_url, cid, device, clientip, ...) must never appear in a
-// callback: the sign base string concatenates values unescaped, so a signed
-// order URL whose return_url embeds e.g. "trade_status=TRADE_SUCCESS" could
-// otherwise be replayed as a forged payment-success notification (upstream
-// issue #7881). Rejecting unknown keys closes the whole smuggling class;
-// genuinely paid orders rejected by an exotic upstream variant are still
-// recovered through the upstream QueryOrder reconcile path.
-var easyPayNotifyAllowedParams = map[string]bool{
-	"pid":          true,
-	"trade_no":     true,
-	"out_trade_no": true,
-	"type":         true,
-	"name":         true,
-	"money":        true,
-	"trade_status": true,
-	"param":        true,
-	"sign":         true,
-	"sign_type":    true,
+// easyPayNotifyRequiredParams are the fields a genuine EasyPay
+// (彩虹易支付-compatible) async notification must carry for us to settle money.
+// Everything else is tolerated as an upstream-generated variant field as long as
+// it participates in the signature: the sign base covers every non-empty
+// parameter, so appended or tampered values fail verification. Business logic
+// only reads these fields from the parsed single-value map (see
+// VerifyNotification), so smuggling a pair inside another value — e.g. an order
+// URL's return_url containing "trade_status=TRADE_SUCCESS" — cannot be promoted
+// to a top-level parameter (upstream issue #7881).
+var easyPayNotifyRequiredParams = []string{
+	"pid",
+	"trade_no",
+	"out_trade_no",
+	"money",
+	"trade_status",
+	"sign",
 }
