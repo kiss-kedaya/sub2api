@@ -147,6 +147,7 @@ const countdown = ref(0)
 const feedback = ref<{ ip: string; duplicate: boolean } | null>(null)
 
 let timer: ReturnType<typeof setInterval> | null = null
+let inflight: Promise<boolean> | null = null
 
 const recentIPs = computed(() => assist.value?.recent_ips ?? [])
 
@@ -159,24 +160,36 @@ function describeIP(ip: string, geo: IPWhitelistAssistGeo | undefined): string {
   return `${ip} · ${region}${isp}`
 }
 
-async function loadAssist(): Promise<boolean> {
-  if (assist.value) return true
-  if (loading.value) return false
+/**
+ * Load the assist payload.
+ *
+ * `force` bypasses the component cache: "fill in current IP" must reflect the
+ * network the user is on right now, so a modal that stayed open while the user
+ * switched to a VPN must not keep offering the previous address (whitelisting
+ * it would lock them out). Concurrent clicks share one in-flight request.
+ */
+async function loadAssist(force = false): Promise<boolean> {
+  if (!force && assist.value) return true
+  if (inflight) return inflight
   loading.value = true
   loadError.value = ''
-  try {
-    assist.value = await getIPWhitelistAssist()
-    return true
-  } catch {
-    loadError.value = t('keys.ipWhitelistAssist.loadFailed')
-    return false
-  } finally {
-    loading.value = false
-  }
+  inflight = (async () => {
+    try {
+      assist.value = await getIPWhitelistAssist()
+      return true
+    } catch {
+      loadError.value = t('keys.ipWhitelistAssist.loadFailed')
+      return false
+    } finally {
+      loading.value = false
+      inflight = null
+    }
+  })()
+  return inflight
 }
 
 async function fillCurrentIP(): Promise<void> {
-  if (!(await loadAssist())) return
+  if (!(await loadAssist(true))) return
   const currentIP = assist.value?.current_ip?.trim() ?? ''
   if (!currentIP) {
     loadError.value = t('keys.ipWhitelistAssist.noCurrentIP')

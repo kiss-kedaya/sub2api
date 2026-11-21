@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -12,14 +13,17 @@ import (
 
 // IP whitelist assist defaults. The endpoint is rendered by two modals and is
 // clicked by humans, so the budget is intentionally small: one database scan
-// and at most one ip-api batch per user per cache window.
+// and at most one ip-api batch per user per cache window. The per-user rate
+// limit only counts cache misses (30s answers are served for free), and it is
+// kept low because every miss fans out to the shared ip-api batch quota used by
+// the datacenter auto-block feature as well.
 const (
 	ipWhitelistAssistRecentLimit  = 5
 	ipWhitelistAssistDefaultTTL   = 30 * time.Second
 	ipWhitelistAssistLookupBudget = 3 * time.Second
 	ipWhitelistAssistRecentBudget = 2 * time.Second
 	ipWhitelistAssistRateWindow   = time.Minute
-	ipWhitelistAssistRateLimit    = 30
+	ipWhitelistAssistRateLimit    = 10
 	ipWhitelistAssistCacheSweep   = 4096
 )
 
@@ -70,6 +74,16 @@ type ipWhitelistAssistCacheEntry struct {
 	expiresAt time.Time
 }
 
+// ipWhitelistAssistCacheKey includes the resolved client IP: the payload embeds
+// "this is your IP right now", so serving one network's answer to a request
+// that arrived from another network would show a stale address. A user who
+// switched to a VPN would then whitelist the old egress and lock themselves
+// out — the exact failure this endpoint exists to prevent.
+type ipWhitelistAssistCacheKey struct {
+	userID    int64
+	currentIP string
+}
+
 type ipWhitelistAssistRateBucket struct {
 	windowStart time.Time
 	count       int
@@ -80,9 +94,10 @@ type ipWhitelistAssistRateBucket struct {
 type geoLookuper func(ctx context.Context, ips []string) map[string]ipquality.Geo
 
 // IPWhitelistAssistService powers the "fill in my current IP" helper. It caches
-// per-user answers for a short TTL, accepts at most one bounded database scan
-// and one geo lookup per user per window, and degrades to "IP only, empty geo"
-// whenever the repository or ip-api misbehaves.
+// answers for a short TTL keyed by user and resolved client IP, accepts at most
+// one bounded database scan and one geo lookup per user per window, and
+// degrades to "IP only, empty geo" whenever the repository or ip-api
+// misbehaves.
 type IPWhitelistAssistService struct {
 	repo   IPWhitelistAssistRepository
 	lookup geoLookuper
@@ -95,7 +110,7 @@ type IPWhitelistAssistService struct {
 	rateLimit    int
 
 	mu      sync.Mutex
-	cache   map[int64]ipWhitelistAssistCacheEntry
+	cache   map[ipWhitelistAssistCacheKey]ipWhitelistAssistCacheEntry
 	buckets map[int64]*ipWhitelistAssistRateBucket
 }
 
@@ -111,7 +126,7 @@ func NewIPWhitelistAssistService(repo IPWhitelistAssistRepository) *IPWhitelistA
 		recentBudget: ipWhitelistAssistRecentBudget,
 		rateWindow:   ipWhitelistAssistRateWindow,
 		rateLimit:    ipWhitelistAssistRateLimit,
-		cache:        map[int64]ipWhitelistAssistCacheEntry{},
+		cache:        map[ipWhitelistAssistCacheKey]ipWhitelistAssistCacheEntry{},
 		buckets:      map[int64]*ipWhitelistAssistRateBucket{},
 	}
 }
@@ -123,11 +138,12 @@ func (s *IPWhitelistAssistService) Get(ctx context.Context, userID int64, curren
 	if s == nil {
 		return IPWhitelistAssistResult{}, nil
 	}
-	currentIP = strings.TrimSpace(currentIP)
+	currentIP = normalizeAssistCurrentIP(currentIP)
 	now := s.now()
+	key := ipWhitelistAssistCacheKey{userID: userID, currentIP: currentIP}
 
 	s.mu.Lock()
-	if entry, ok := s.cache[userID]; ok && now.Before(entry.expiresAt) {
+	if entry, ok := s.cache[key]; ok && now.Before(entry.expiresAt) {
 		s.mu.Unlock()
 		return entry.result, nil
 	}
@@ -140,9 +156,22 @@ func (s *IPWhitelistAssistService) Get(ctx context.Context, userID int64, curren
 	result := s.compute(ctx, userID, currentIP)
 
 	s.mu.Lock()
-	s.storeLocked(userID, result, now)
+	s.storeLocked(key, result, now)
 	s.mu.Unlock()
 	return result, nil
+}
+
+// normalizeAssistCurrentIP keeps only addresses the whitelist can actually
+// store. The caller resolves the IP from trusted proxy headers; if that ever
+// yields a malformed value (misconfigured trusted proxies, junk header), the
+// UI must say "could not determine your IP" instead of offering a value that
+// the API key update would reject.
+func normalizeAssistCurrentIP(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || net.ParseIP(trimmed) == nil {
+		return ""
+	}
+	return trimmed
 }
 
 func (s *IPWhitelistAssistService) compute(ctx context.Context, userID int64, currentIP string) IPWhitelistAssistResult {
@@ -214,11 +243,11 @@ func (s *IPWhitelistAssistService) allowLocked(userID int64, now time.Time) bool
 	return bucket.count <= s.rateLimit
 }
 
-func (s *IPWhitelistAssistService) storeLocked(userID int64, result IPWhitelistAssistResult, now time.Time) {
+func (s *IPWhitelistAssistService) storeLocked(key ipWhitelistAssistCacheKey, result IPWhitelistAssistResult, now time.Time) {
 	if s.cache == nil {
-		s.cache = map[int64]ipWhitelistAssistCacheEntry{}
+		s.cache = map[ipWhitelistAssistCacheKey]ipWhitelistAssistCacheEntry{}
 	}
-	s.cache[userID] = ipWhitelistAssistCacheEntry{result: result, expiresAt: now.Add(s.cacheTTL)}
+	s.cache[key] = ipWhitelistAssistCacheEntry{result: result, expiresAt: now.Add(s.cacheTTL)}
 	if len(s.cache) > ipWhitelistAssistCacheSweep {
 		for id, entry := range s.cache {
 			if !now.Before(entry.expiresAt) {

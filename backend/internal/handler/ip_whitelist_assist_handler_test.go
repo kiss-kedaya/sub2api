@@ -106,3 +106,15 @@ func TestIPWhitelistAssistHandlerUnexpectedError(t *testing.T) {
 
 	require.NotEqual(t, http.StatusOK, recorder.Code)
 }
+
+func TestIPWhitelistAssistHandlerMarksResponseNoStore(t *testing.T) {
+	handler := &IPWhitelistAssistHandler{service: &ipWhitelistAssistServiceStub{result: service.IPWhitelistAssistResult{
+		CurrentIP: "203.0.113.7",
+	}}}
+	c, recorder := newIPWhitelistAssistTestContext(t, 42)
+
+	handler.Get(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "no-store", recorder.Header().Get("Cache-Control"))
+}

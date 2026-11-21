@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -137,5 +138,39 @@ func TestLookupGeoSharesDatacenterCache(t *testing.T) {
 	geo := LookupGeo(context.Background(), []string{"8.8.8.8"})
 	if !geo["8.8.8.8"].Hosting || geo["8.8.8.8"].City != "Ashburn" || calls != 1 {
 		t.Fatalf("expected shared cache, calls=%d geo=%#v", calls, geo)
+	}
+}
+
+func TestLookupGeoClampsProviderControlledFields(t *testing.T) {
+	resetForTest()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]batchResult{
+			{
+				Status:     "success",
+				Query:      "9.9.9.9",
+				Country:    strings.Repeat("地", 500),
+				RegionName: "  " + strings.Repeat("r", 200) + "  ",
+				City:       "Shenzhen",
+				ISP:        strings.Repeat("i", 300),
+			},
+		})
+	}))
+	defer server.Close()
+	oldURL := lookupURL
+	lookupURL = server.URL
+	defer func() { lookupURL = oldURL }()
+
+	geo := LookupGeo(context.Background(), []string{"9.9.9.9"})["9.9.9.9"]
+	if got := len([]rune(geo.Country)); got != geoFieldMaxRunes {
+		t.Fatalf("country runes = %d, want %d", got, geoFieldMaxRunes)
+	}
+	if got := len([]rune(geo.Region)); got != geoFieldMaxRunes {
+		t.Fatalf("region runes = %d, want %d", got, geoFieldMaxRunes)
+	}
+	if got := len([]rune(geo.ISP)); got != geoFieldMaxRunes {
+		t.Fatalf("isp runes = %d, want %d", got, geoFieldMaxRunes)
+	}
+	if geo.City != "Shenzhen" {
+		t.Fatalf("short field must pass through, got %q", geo.City)
 	}
 }

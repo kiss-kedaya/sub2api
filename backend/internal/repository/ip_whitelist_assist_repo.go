@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -112,7 +113,11 @@ func scanRecentClientIPs(rows *sql.Rows) ([]service.RecentClientIP, error) {
 			return nil, err
 		}
 		ip = strings.TrimSpace(ip)
-		if ip == "" {
+		// The UI offers these values for one-click insertion into the IP
+		// whitelist, so only real addresses may pass: historical rows written by
+		// older/misconfigured proxies can contain host:port strings, hostnames or
+		// empty values, and inserting one of those would only make the save fail.
+		if ip == "" || net.ParseIP(ip) == nil {
 			continue
 		}
 		out = append(out, service.RecentClientIP{IP: ip, Count: count})

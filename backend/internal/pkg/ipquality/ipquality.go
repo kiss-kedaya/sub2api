@@ -153,14 +153,28 @@ func lookupAndCache(ctx context.Context, missing []string, now time.Time) []batc
 	return fetched
 }
 
+// geoFieldMaxRunes bounds provider-controlled strings before they reach an HTTP
+// response and the UI. ip-api is a third party; a broken or hostile answer must
+// not be able to bloat the payload or wreck the layout.
+const geoFieldMaxRunes = 64
+
 func geoOf(result batchResult) Geo {
 	return Geo{
-		Country: strings.TrimSpace(result.Country),
-		Region:  strings.TrimSpace(result.RegionName),
-		City:    strings.TrimSpace(result.City),
-		ISP:     strings.TrimSpace(result.ISP),
+		Country: clampGeoField(result.Country),
+		Region:  clampGeoField(result.RegionName),
+		City:    clampGeoField(result.City),
+		ISP:     clampGeoField(result.ISP),
 		Hosting: result.Hosting || result.Proxy,
 	}
+}
+
+func clampGeoField(value string) string {
+	trimmed := strings.TrimSpace(value)
+	runes := []rune(trimmed)
+	if len(runes) <= geoFieldMaxRunes {
+		return trimmed
+	}
+	return string(runes[:geoFieldMaxRunes])
 }
 
 func lookup(ctx context.Context, ips []string) ([]batchResult, error) {
