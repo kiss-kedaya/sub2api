@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"slices"
 	"time"
 
@@ -12,16 +13,79 @@ import (
 
 const (
 	depositStatusAvailable = "available"
-	depositStatusDelayed   = "delayed"
-	depositStatusPaused    = "paused"
-	depositStatusStalled   = "stalled"
-	depositStatusUnknown   = "unknown"
+	// depositStatusSlow is a still-caught-up scanner with a moderate backlog:
+	// the network is slower than usual, but nothing is broken. It is kept
+	// separate from delayed so the page can say so calmly in neutral words.
+	depositStatusSlow    = "slow"
+	depositStatusDelayed = "delayed"
+	depositStatusPaused  = "paused"
+	depositStatusStalled = "stalled"
+	depositStatusUnknown = "unknown"
 
 	// A long or missing pass loses its evidence. Do not carry a stopped state
 	// through an unobserved interval just to accommodate a slow scanner.
 	depositNetworkTTL       = 2 * time.Minute
 	depositNetworkIOTimeout = 350 * time.Millisecond
 )
+
+// Customer-facing backlog thresholds. A scan cursor is almost always a little
+// behind the confirmed head: BSC mines one block every ~3s while the scanner
+// covers the interval in batches, so "tens of blocks behind" is the normal,
+// healthy state and must never raise a notice. Only a backlog measured in
+// chain time is user-relevant, so a block count is converted with the network's
+// own block interval before it is classified:
+//
+//	100 BSC blocks (3s each)   = 5 minutes
+//	100 ETH blocks (12s each)  = 20 minutes
+//	100 Arbitrum blocks (.25s) = 25 seconds
+//
+// Bands (a backlog exactly at a boundary stays in the calmer band, so the
+// notice never appears one second earlier than the stated window):
+//
+//	<= 5 min   -> available, the page shows no notice at all
+//	5–30 min   -> slow, a calm "network is slower" note
+//	> 30 min   -> delayed, a real delay
+//
+// Scan/RPC failures keep their own path (delayed, then stalled) because they
+// are abnormal regardless of how many blocks the cursor reached.
+const (
+	depositLagNoticeAfter  = 5 * time.Minute
+	depositLagDelayedAfter = 30 * time.Minute
+)
+
+// depositChainBlockTime is the nominal block interval of each deposit network.
+// It is used only to translate a cursor backlog into chain time for the bands
+// above; it never affects crediting, confirmations or money. Values are kept at
+// or above the observed interval: overestimating the interval can only hide a
+// borderline notice, underestimating it could invent one.
+var depositChainBlockTime = map[string]time.Duration{
+	ChainBSC:      3 * time.Second,
+	ChainEthereum: 12 * time.Second,
+	ChainPolygon:  2 * time.Second,
+	ChainPlasma:   2 * time.Second,
+	ChainArbitrum: 250 * time.Millisecond,
+	ChainBase:     2 * time.Second,
+	ChainXLayer:   3 * time.Second,
+}
+
+// depositChainBlockTimeDefault applies to a network without an entry above.
+const depositChainBlockTimeDefault = 3 * time.Second
+
+// depositBacklogChainTime converts an unscanned block count into how much chain
+// time it represents.
+func depositBacklogChainTime(chain string, blocks uint64) time.Duration {
+	if blocks == 0 {
+		return 0
+	}
+	interval := depositChainBlockTime[chain]
+	if interval <= 0 {
+		interval = depositChainBlockTimeDefault
+	}
+	if maxBlocks := uint64(math.MaxInt64 / int64(interval)); blocks > maxBlocks {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(blocks) * interval
+}
 
 // DepositNetworkStatusReport is the customer-safe chain status read model.
 type DepositNetworkStatusReport struct {
@@ -104,7 +168,6 @@ func (m *depositNetworkMonitor) observer(fingerprint string) func(scanner.Deposi
 
 type networkScanEvidence struct {
 	previous     scanner.DepositScanObservation
-	lastAdvance  time.Time
 	advanceProof time.Time
 	blockedAt    time.Time
 	blockedHead  uint64
@@ -125,14 +188,13 @@ func (e *networkScanEvidence) observe(o scanner.DepositScanObservation) (string,
 	e.previous = o
 	advanced := o.Cursor > o.CursorBefore
 	if advanced && !o.Failed {
-		e.lastAdvance = o.At
 		e.advanceProof = o.At
 		if continuous {
 			e.advanceProof = prev.At
 		}
 	}
 	if o.Failed {
-		e.lastAdvance, e.advanceProof = time.Time{}, time.Time{}
+		e.advanceProof = time.Time{}
 	}
 	behind := o.Cursor < o.ConfirmedHead
 	if o.ForwardFailed && behind && !advanced && !o.NearHeadScanned {
@@ -150,10 +212,29 @@ func (e *networkScanEvidence) observe(o scanner.DepositScanObservation) (string,
 	if !continuous {
 		return depositStatusUnknown, o.At
 	}
-	if !o.Failed && !behind && !e.lastAdvance.IsZero() && o.At.Sub(e.lastAdvance) < depositNetworkTTL {
-		return depositStatusAvailable, e.advanceProof
+	if o.Failed {
+		// A failed pass is abnormal evidence even when the cursor did not move.
+		return depositStatusDelayed, o.At
 	}
-	return depositStatusDelayed, o.At
+	var lag uint64
+	if behind {
+		lag = o.ConfirmedHead - o.Cursor
+	}
+	switch chainTime := depositBacklogChainTime(o.Chain, lag); {
+	case chainTime <= depositLagNoticeAfter:
+		// The scanner is inside the normal lag of a healthy network. This is the
+		// case that used to show "may be delayed" for a few dozen BSC blocks.
+		proof := e.advanceProof
+		if proof.IsZero() {
+			proof = prev.At
+		}
+		return depositStatusAvailable, proof
+	case chainTime <= depositLagDelayedAfter:
+		// 5–30 minutes of chain time: worth a calm note, not an alarm.
+		return depositStatusSlow, o.At
+	default:
+		return depositStatusDelayed, o.At
+	}
 }
 
 type networkStatusPolicy struct {
@@ -239,7 +320,7 @@ func (s *Service) DepositNetworkStatus(ctx context.Context) DepositNetworkStatus
 
 func (s networkStatusSnapshot) fresh(policy networkStatusPolicy, now time.Time) (time.Time, bool) {
 	switch s.Status {
-	case depositStatusAvailable, depositStatusDelayed, depositStatusStalled:
+	case depositStatusAvailable, depositStatusSlow, depositStatusDelayed, depositStatusStalled:
 	default:
 		return time.Time{}, false
 	}

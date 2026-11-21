@@ -29,7 +29,7 @@ func TestDepositNetworkStatusContinuousEvidence(t *testing.T) {
 		state, _ = s.observe(obs(3, 10, 106, 106, 107, true, false))
 		require.Equal(t, depositStatusDelayed, state)
 		state, _ = s.observe(obs(4, 15, 106, 107, 108, false, false))
-		require.Equal(t, depositStatusDelayed, state)
+		require.Equal(t, depositStatusAvailable, state, "a one-block backlog is normal scan lag, not a delay")
 		state, _ = s.observe(obs(5, 20, 107, 108, 108, false, true))
 		require.Equal(t, depositStatusAvailable, state)
 		state, _ = s.observe(obs(7, 25, 108, 109, 109, false, true))
@@ -55,6 +55,74 @@ func TestDepositNetworkStatusContinuousEvidence(t *testing.T) {
 		state, _ = s.observe(obs(8, 310, 110, 111, 491, false, false))
 		require.Equal(t, depositStatusUnknown, state, "freshness gap ends evidence")
 	})
+}
+
+// backlogObservation is one healthy scan pass whose durable cursor sits `lag`
+// blocks behind the confirmed head.
+func backlogObservation(chain string, round int, lag uint64, at time.Time) scanner.DepositScanObservation {
+	const cursor = 10_000
+	return scanner.DepositScanObservation{
+		Chain: chain, Round: uint64(round), At: at,
+		ConfirmedHead: cursor + lag, CursorBefore: cursor, Cursor: cursor,
+		CanMeasure: true,
+	}
+}
+
+// The bands are chain-time based: the same block count means very different
+// delays per network, so a fixed block threshold cannot be correct for all.
+func TestDepositNetworkStatusBacklogBands(t *testing.T) {
+	start := time.Date(2026, 11, 21, 2, 0, 0, 0, time.UTC)
+	secondPass := start.Add(15 * time.Second)
+	for _, tc := range []struct {
+		name  string
+		chain string
+		lag   uint64
+		want  string
+	}{
+		{"BSC 59 blocks stays quiet", ChainBSC, 59, depositStatusAvailable},
+		{"BSC 100 blocks is the five-minute normal boundary", ChainBSC, 100, depositStatusAvailable},
+		{"BSC 101 blocks gets the calm notice", ChainBSC, 101, depositStatusSlow},
+		{"BSC 600 blocks is the thirty-minute slow boundary", ChainBSC, 600, depositStatusSlow},
+		{"BSC 601 blocks is a real delay", ChainBSC, 601, depositStatusDelayed},
+		{"Ethereum 25 blocks is the five-minute boundary", ChainEthereum, 25, depositStatusAvailable},
+		{"Ethereum 26 blocks is already slower than normal", ChainEthereum, 26, depositStatusSlow},
+		{"the same 100 blocks are twenty minutes on Ethereum", ChainEthereum, 100, depositStatusSlow},
+		{"Ethereum 150 blocks is the thirty-minute slow boundary", ChainEthereum, 150, depositStatusSlow},
+		{"Ethereum 151 blocks is a real delay", ChainEthereum, 151, depositStatusDelayed},
+		{"Arbitrum 1200 blocks is still five minutes", ChainArbitrum, 1200, depositStatusAvailable},
+		{"Arbitrum 1201 blocks is slower than normal", ChainArbitrum, 1201, depositStatusSlow},
+		{"an unknown chain falls back to the BSC interval", "future-chain", 101, depositStatusSlow},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var evidence networkScanEvidence
+			state, _ := evidence.observe(backlogObservation(tc.chain, 1, tc.lag, start))
+			require.Equal(t, depositStatusUnknown, state, "a single pass has no continuity evidence yet")
+			state, proof := evidence.observe(backlogObservation(tc.chain, 2, tc.lag, secondPass))
+			require.Equal(t, tc.want, state)
+			if tc.want == depositStatusAvailable {
+				require.Equal(t, start, proof, "available is proven by the previous healthy pass")
+			} else {
+				require.Equal(t, secondPass, proof)
+			}
+		})
+	}
+}
+
+// A healthy scanner idles a little behind the head all the time. Twelve minutes
+// of that must never turn into "delayed", which is the production false positive.
+func TestDepositNetworkStatusSteadySmallLagNeverDelayed(t *testing.T) {
+	start := time.Date(2026, 11, 21, 2, 0, 0, 0, time.UTC)
+	// 60 BSC blocks ≈ 3 minutes: inside the five-minute quiet band.
+	const cursor, lag = 10_000, uint64(60)
+	var evidence networkScanEvidence
+	for round := 1; round <= 25; round++ {
+		state, _ := evidence.observe(backlogObservation(ChainBSC, round, lag, start.Add(time.Duration(round-1)*30*time.Second)))
+		if round == 1 {
+			require.Equal(t, depositStatusUnknown, state)
+			continue
+		}
+		require.Equal(t, depositStatusAvailable, state, "round %d", round)
+	}
 }
 
 type networkSnapshotMemory struct {
@@ -87,6 +155,7 @@ func TestDepositNetworkStatusFreshSharedPolicy(t *testing.T) {
 		want           string
 	}{
 		{"fresh available", raw, observed.Add(-time.Minute), observed.Add(time.Second), policy.fingerprint, depositStatusAvailable, nil, depositStatusAvailable},
+		{"fresh slow", raw, observed.Add(-time.Minute), observed, policy.fingerprint, depositStatusSlow, nil, depositStatusSlow},
 		{"fresh delayed", raw, observed.Add(-time.Minute), observed, policy.fingerprint, depositStatusDelayed, nil, depositStatusDelayed},
 		{"fresh confirmed stalled", raw, observed.Add(-4 * time.Minute), observed, policy.fingerprint, depositStatusStalled, nil, depositStatusStalled},
 		{"unproven cached stalled", raw, observed.Add(-time.Minute), observed, policy.fingerprint, depositStatusStalled, nil, depositStatusUnknown},

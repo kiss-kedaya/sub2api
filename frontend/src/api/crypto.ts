@@ -37,7 +37,9 @@ export interface DepositInfo {
   max_amount: number
 }
 
-const DEPOSIT_NETWORK_STATES = ['available', 'delayed', 'paused', 'stalled', 'unknown'] as const
+// 'slow' is a moderate, still self-healing backlog; 'delayed' is a real delay.
+// 'unknown' is the absence of fresh evidence and must not be shown as an alarm.
+const DEPOSIT_NETWORK_STATES = ['available', 'slow', 'delayed', 'paused', 'stalled', 'unknown'] as const
 
 export type DepositNetworkState = (typeof DEPOSIT_NETWORK_STATES)[number]
 
