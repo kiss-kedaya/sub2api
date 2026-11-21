@@ -26,6 +26,17 @@ func NewAuditLogHandler(auditService *service.AuditLogService) *AuditLogHandler 
 	}
 }
 
+// AuditService exposes the audit recorder for wiring that lives outside the
+// handler layer: the gateway IP risk control records its own auto-disables
+// through it so the action is visible even when the process log level hides
+// WARN lines.
+func (h *AuditLogHandler) AuditService() *service.AuditLogService {
+	if h == nil {
+		return nil
+	}
+	return h.auditService
+}
+
 // List 分页查询审计日志。
 // GET /api/v1/admin/audit-logs
 func (h *AuditLogHandler) List(c *gin.Context) {

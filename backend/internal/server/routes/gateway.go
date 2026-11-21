@@ -46,6 +46,13 @@ func RegisterGatewayRoutes(
 	// Risk markers outlive the process only when a shared store exists; without
 	// Redis they stay process-local, matching the detector's own degradation.
 	service.ConfigureAPIKeyRiskStore(middleware.NewRedisAPIKeyRiskStore(redisClient))
+	// The same event must also leave a durable audit row: production runs the
+	// process log at ERROR level, so the structured WARN line written by the
+	// detector never reaches the operator. Record only enqueues, so the gateway
+	// hot path is unaffected.
+	if h != nil && h.Admin != nil && h.Admin.AuditLog != nil {
+		service.ConfigureAPIKeyRiskAuditSink(h.Admin.AuditLog.AuditService().Record)
+	}
 	// Distinct-user IP sharing detection runs before the notice middleware so an
 	// IP that is appended by this very request is throttled immediately.
 	ipSharing := middleware.GatewayIPSharing(settingService, middleware.NewIPKeySharingDetector(settingService, redisClient), apiKeyService)

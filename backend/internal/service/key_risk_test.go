@@ -70,6 +70,7 @@ func newKeyRiskFixture(t *testing.T, keys ...*APIKey) *keyRiskFixture {
 	t.Helper()
 	resetAPIKeyRiskMarkers()
 	ConfigureAPIKeyRiskStore(nil)
+	ConfigureAPIKeyRiskAuditSink(nil)
 
 	repo := newRiskKeyRepo(keys...)
 	cfg := &config.Config{}
@@ -133,6 +134,54 @@ func TestKeyRiskDisableIsIdempotent(t *testing.T) {
 	require.Error(t, err, "the missing key is reported")
 	require.Equal(t, []int64{14}, disabled, "the valid key is still disabled")
 	require.Equal(t, 4, f.repo.updates)
+}
+
+// TestKeyRiskAutoDisableLeavesAuditRow proves the durable trail: every key the
+// risk control flips produces exactly one audit entry, the entry names the
+// affected user and the observed evidence, and a repeated detection adds
+// nothing. The status write stays the source of truth; the audit row is
+// best-effort and must not duplicate.
+func TestKeyRiskAutoDisableLeavesAuditRow(t *testing.T) {
+	f := newKeyRiskFixture(t, sharedEgressKeys()...)
+	var mu sync.Mutex
+	var entries []*AuditLog
+	ConfigureAPIKeyRiskAuditSink(func(entry *AuditLog) {
+		mu.Lock()
+		defer mu.Unlock()
+		entries = append(entries, entry)
+	})
+	t.Cleanup(func() { ConfigureAPIKeyRiskAuditSink(nil) })
+
+	info := riskInfo("203.0.113.77")
+	disabled, err := f.keys.DisableKeysForRisk(context.Background(), []int64{11, 12, 13}, info)
+	require.NoError(t, err)
+	require.Len(t, disabled, 3)
+	require.Len(t, entries, 3)
+
+	byKey := map[int64]*AuditLog{}
+	for _, entry := range entries {
+		require.Equal(t, AuditActionAPIKeyAutoDisableIPSharing, entry.Action)
+		require.Equal(t, "system", entry.ActorRole)
+		require.Equal(t, "203.0.113.77", entry.ClientIP)
+		require.Nil(t, entry.ActorUserID, "the user did not act, the system did")
+		require.Equal(t, info.DistinctUsers, entry.Extra["distinct_users"])
+		require.Equal(t, info.WindowMinutes, entry.Extra["window_minutes"])
+		require.Equal(t, KeyRiskReasonAutoIPSharing, entry.Extra["reason"])
+		keyID, ok := entry.Extra["key_id"].(int64)
+		require.True(t, ok)
+		byKey[keyID] = entry
+	}
+	for _, key := range sharedEgressKeys() {
+		entry := byKey[key.ID]
+		require.NotNil(t, entry, "key %d must have an audit row", key.ID)
+		require.Equal(t, key.UserID, entry.Extra["user_id"])
+	}
+
+	// A second detection (another replica, a retried request) must not duplicate
+	// the trail: the keys are already inactive.
+	_, err = f.keys.DisableKeysForRisk(context.Background(), []int64{11, 12, 13}, info)
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
 }
 
 // TestKeyRiskRotateRestoresKey covers the user-side recovery path: rotating the
