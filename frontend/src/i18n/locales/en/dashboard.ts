@@ -927,6 +927,17 @@ export default {
     }
   },
 
+  // Key rotation gate (security incident: recharge/redeem blocked until remediation)
+  keyRotationGate: {
+    title: 'Recharge and redemption are paused',
+    description: 'To protect your account, rotate your API key or set an IP allowlist for it before you recharge or redeem a code.',
+    cutoffLabel: 'Cutoff',
+    activeKeysLabel: 'Active keys',
+    pendingKeysLabel: 'Keys to fix',
+    hint: 'Rotate one API key created at or after the cutoff, or add an IP allowlist to every active key, and this page recovers automatically. Model calls, balance reads and key management stay available.',
+    action: 'Go to API Keys'
+  },
+
   // Redeem
   redeem: {
     title: 'Redeem Code',

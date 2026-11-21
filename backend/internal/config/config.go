@@ -28,6 +28,12 @@ const (
 	DatabaseMigrationModeValidate = "validate"
 )
 
+// DefaultKeyRotationCutoff is the default value of security.key_rotation_cutoff.
+// Active API keys created before this instant are treated as potentially leaked
+// by the key-rotation gate and must be rotated (or put behind an IP allowlist)
+// before the user may redeem codes or top up.
+const DefaultKeyRotationCutoff = "2026-11-21T00:00:00+08:00"
+
 // 使用量记录队列溢出策略
 const (
 	UsageRecordOverflowPolicyDrop   = "drop"
@@ -747,6 +753,14 @@ type SecurityConfig struct {
 	// When disabled, server.trusted_proxies is authoritative for all client-IP
 	// consumers.
 	TrustForwardedIPForAPIKeyACL bool `mapstructure:"trust_forwarded_ip_for_api_key_acl"`
+	// KeyRotationGateEnabled forces a user whose active API keys may all be
+	// leaked (created before KeyRotationCutoff and without an IP allowlist) to
+	// rotate a key or configure an IP allowlist before redeeming codes or
+	// topping up. Defaults to true; set false to roll the gate back.
+	KeyRotationGateEnabled bool `mapstructure:"key_rotation_gate_enabled"`
+	// KeyRotationCutoff is the RFC3339 instant that separates "possibly leaked"
+	// API keys from rotated ones. Defaults to config.DefaultKeyRotationCutoff.
+	KeyRotationCutoff string `mapstructure:"key_rotation_cutoff"`
 	// HoneypotExemptNets lists CIDRs/IPs belonging to the operator's own edge.
 	// They are never banned by the scanner trap. Kept in config so real
 	// addresses never land in this public repository.
@@ -811,6 +825,32 @@ func (c *Config) TrustForwardedIPForAPIKeyACL() bool {
 // compatibility mode currently overrides server.trusted_proxies.
 func (c *Config) ForwardedClientIPTrustEnabled() bool {
 	return c != nil && c.TrustForwardedIPForAPIKeyACL()
+}
+
+// KeyRotationGateSettings returns the effective key-rotation gate switch and
+// cutoff. An empty or unparsable cutoff falls back to
+// DefaultKeyRotationCutoff so a typo cannot silently switch the gate off for
+// every API key. Validate() rejects an unparsable value at startup; the
+// fallback only covers programmatically constructed configs (tests, embedders).
+func (c *Config) KeyRotationGateSettings() (enabled bool, cutoff time.Time) {
+	if c == nil {
+		return true, DefaultKeyRotationCutoffTime()
+	}
+	enabled = c.Security.KeyRotationGateEnabled
+	if parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(c.Security.KeyRotationCutoff)); err == nil {
+		return enabled, parsed
+	}
+	return enabled, DefaultKeyRotationCutoffTime()
+}
+
+// DefaultKeyRotationCutoffTime returns DefaultKeyRotationCutoff as a time value.
+func DefaultKeyRotationCutoffTime() time.Time {
+	parsed, err := time.Parse(time.RFC3339, DefaultKeyRotationCutoff)
+	if err != nil {
+		// The constant is compile-time data; a failure here is a programming error.
+		panic(fmt.Sprintf("invalid DefaultKeyRotationCutoff %q: %v", DefaultKeyRotationCutoff, err))
+	}
+	return parsed
 }
 
 func (c *Config) SetForwardedClientIPSettings(enabled bool, headers []string) {
@@ -2258,6 +2298,8 @@ func setDefaults() {
 	viper.SetDefault("security.csp.policy", DefaultCSPPolicy)
 	viper.SetDefault("security.proxy_probe.insecure_skip_verify", false)
 	viper.SetDefault("security.trust_forwarded_ip_for_api_key_acl", true)
+	viper.SetDefault("security.key_rotation_gate_enabled", true)
+	viper.SetDefault("security.key_rotation_cutoff", DefaultKeyRotationCutoff)
 
 	// Security - disable direct fallback on proxy error
 	viper.SetDefault("security.proxy_fallback.allow_direct_on_error", false)
@@ -2907,6 +2949,14 @@ func (c *Config) Validate() error {
 	if c.Security.AccountPoolOwnerUserID < 0 {
 		return fmt.Errorf("security.account_pool_owner_user_id must be non-negative")
 	}
+	keyRotationCutoff := strings.TrimSpace(c.Security.KeyRotationCutoff)
+	if keyRotationCutoff == "" {
+		keyRotationCutoff = DefaultKeyRotationCutoff
+	}
+	if _, err := time.Parse(time.RFC3339, keyRotationCutoff); err != nil {
+		return fmt.Errorf("security.key_rotation_cutoff must be an RFC3339 timestamp: %w", err)
+	}
+	c.Security.KeyRotationCutoff = keyRotationCutoff
 	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
 	if err != nil {
 		return fmt.Errorf("security.forwarded_client_ip_headers: %w", err)

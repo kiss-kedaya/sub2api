@@ -111,6 +111,7 @@ func buildPaymentProbeRouter(t *testing.T, stepUp middleware.StepUpAuthMiddlewar
 		adminRoutesTestAuth(authMode),
 		middleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() }),
 		stepUp,
+		nil,
 		stepUpRouteSettings(map[string]string{}),
 		nil,
 	)

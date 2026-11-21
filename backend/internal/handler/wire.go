@@ -225,6 +225,7 @@ func ProvideHandlers(
 	cryptoHandler *CryptoHandler,
 	cryptoDepositHandler *CryptoDepositHandler,
 	barkHandler *UserBarkHandler,
+	keyRotationHandler *KeyRotationHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 	_ *service.OpenAIQuotaAutoResetService,
@@ -255,6 +256,7 @@ func ProvideHandlers(
 		Crypto:           cryptoHandler,
 		CryptoDeposit:    cryptoDepositHandler,
 		Bark:             barkHandler,
+		KeyRotation:      keyRotationHandler,
 	}
 }
 
@@ -279,6 +281,7 @@ var ProviderSet = wire.NewSet(
 	NewPaymentHandler,
 	NewPaymentWebhookHandler,
 	NewUserBarkHandler,
+	NewKeyRotationHandler,
 	NewAvailableChannelHandler,
 	NewModelPlazaHandler,
 	NewAsyncImageHandler,

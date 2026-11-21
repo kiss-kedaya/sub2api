@@ -18,6 +18,33 @@ vi.mock('vue-i18n', async (original) => ({
 }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
 
+// The key-rotation gate has its own spec; this page spec only needs a stable,
+// non-required gate unless a test explicitly flips it on.
+const keyRotationGateMock = vi.hoisted(() => ({ requiredRef: null as any, statusRef: null as any }))
+vi.mock('@/composables/useKeyRotationGate', async () => {
+  const { ref } = await import('vue')
+  keyRotationGateMock.requiredRef = ref(false)
+  keyRotationGateMock.statusRef = ref(null)
+  return {
+    useKeyRotationGate: () => ({
+      required: keyRotationGateMock.requiredRef,
+      status: keyRotationGateMock.statusRef,
+      refresh: vi.fn(),
+    }),
+    resetKeyRotationGate: vi.fn(),
+    markKeyRotationRequired: vi.fn(),
+    ensureKeyRotationGate: vi.fn(),
+  }
+})
+vi.mock('@/api/keyRotationGate', async () => {
+  const codes = await vi.importActual<typeof import('@/api/keyRotationGateCodes')>('@/api/keyRotationGateCodes')
+  return {
+    ...codes,
+    isKeyRotationRequiredError: codes.isKeyRotationRequiredPayload,
+    keyRotationGateAPI: { getStatus: vi.fn() },
+  }
+})
+
 enableAutoUnmount(afterEach)
 
 const hash = '0x' + 'ab'.repeat(32)
@@ -29,7 +56,9 @@ function render() {
       stubs: {
         AppLayout: { template: '<main><slot /></main>' },
         Icon: true,
-        LoadingSpinner: true
+        LoadingSpinner: true,
+        // Rendered for real in KeyRotationGateNotice.spec; its UButton needs a router.
+        KeyRotationGateNotice: { template: '<div data-testid="key-rotation-gate-notice" />' }
       }
     }
   })
@@ -480,5 +509,27 @@ describe('user deposit credit details', () => {
     const wrapper = render()
     await flushPromises()
     expect(wrapper.get('.deposit-view__reason').text()).toBe('deposit.reasonBelowMinUsd {"min":0.001}')
+  })
+})
+
+describe('user deposit key rotation gate', () => {
+  afterEach(() => {
+    keyRotationGateMock.requiredRef.value = false
+    keyRotationGateMock.statusRef.value = null
+  })
+
+  it('shows the remediation card instead of a load failure when the gate blocks the page', async () => {
+    keyRotationGateMock.requiredRef.value = true
+    mocks.getDepositInfo.mockRejectedValue({
+      status: 403,
+      reason: 'KEY_ROTATION_REQUIRED',
+      metadata: { error_code: 'KEY_ROTATION_REQUIRED' },
+    })
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="key-rotation-gate-notice"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('deposit.loadFailed')
+    expect(wrapper.text()).not.toContain('deposit.disabled')
   })
 })

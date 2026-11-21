@@ -8,6 +8,7 @@ import { ref, computed, readonly } from 'vue'
 import { getAppRuntimeContext } from '@runtime/context'
 import { authAPI, isTotp2FARequired, passkeyAPI, type LoginResponse } from '@/api'
 import { clearUserDialogDrafts, setDialogDraftUserIdResolver } from '@/composables/useDialogDraft'
+import { resetKeyRotationGate } from '@/composables/useKeyRotationGate'
 import type {
   User,
   LoginRequest,
@@ -556,6 +557,8 @@ export const useAuthStore = defineStore('auth', () => {
   function clearAuth(options?: { preservePendingAuthSession?: boolean }): void {
     lastRefreshAt = 0
     inflightRefresh = null
+    // A key-rotation block belongs to one account; never carry it to the next user.
+    resetKeyRotationGate()
     // Stop auto-refresh
     stopAutoRefresh()
     // Stop token refresh

@@ -70,6 +70,7 @@ func newPaymentCallbackSecurityRouter(t *testing.T, rpm int) (*gin.Engine, *dben
 	RegisterPaymentRoutes(router.Group("/api/v1"), &handler.PaymentHandler{}, webhook, &adminhandler.PaymentHandler{},
 		middleware.JWTAuthMiddleware(noop), middleware.AdminAuthMiddleware(noop), middleware.AuditLogMiddleware(noop),
 		middleware.StepUpAuthMiddleware(noop),
+		nil,
 		settings, middleware.NewPanelRateLimiter(rdb, settings))
 	return router, client
 }

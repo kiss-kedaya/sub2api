@@ -20,6 +20,7 @@ func RegisterPaymentRoutes(
 	adminAuth middleware.AdminAuthMiddleware,
 	auditLog middleware.AuditLogMiddleware,
 	stepUpAuth middleware.StepUpAuthMiddleware,
+	keyRotationGate middleware.KeyRotationGateMiddleware,
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
 ) {
@@ -37,6 +38,8 @@ func RegisterPaymentRoutes(
 		authenticated.GET("/limits", paymentHandler.GetLimits)
 
 		orders := authenticated.Group("/orders")
+		// 密钥轮换门禁：充值 / 订阅购买订单（创建、查询、取消、退款申请）全部拦截。
+		applyKeyRotationGate(orders, keyRotationGate)
 		{
 			orders.POST("", paymentHandler.CreateOrder)
 			orders.POST("/verify", paymentHandler.VerifyOrder)

@@ -44,6 +44,11 @@ const (
 	AuditActionSessionBindingMismatch = "auth.session_binding.mismatch"
 	AuditActionStepUpVerify           = "auth.step_up.verify"
 	AuditActionAuditLogClear          = "admin.audit_log.clear"
+	// AuditActionRechargeBlockedKeyRotation is written by the key-rotation gate
+	// whenever it rejects a redeem-code, payment-order or crypto-deposit request.
+	// It records user_id / client IP / request path so the operator can measure
+	// the remediation rate after the key-leak incident.
+	AuditActionRechargeBlockedKeyRotation = "user.recharge.blocked_key_rotation"
 
 	// 第三方登录（OAuth / 扫码 / 设备登录）与 2FA 挑战的固定动作名。
 	// 与 AuditAuthMethodOAuth / AuditAuthMethodPasskey 配套，让「哪个渠道、

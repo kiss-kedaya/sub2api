@@ -2,6 +2,9 @@
   <AppLayout>
     <div class="signal-account-page mx-auto max-w-3xl space-y-6">
       <UserPageHeader flush :title="t('redeem.title')" />
+
+      <!-- 密钥轮换门禁：未完成整改时兑换全链路（含历史读取）被后端 403 拦截 -->
+      <KeyRotationGateNotice v-if="keyRotationRequired" :status="keyRotationStatus" />
       <div class="grid grid-cols-1 divide-y divide-default overflow-hidden rounded-lg bg-default shadow-xs ring ring-default sm:grid-cols-[1.4fr_1fr] sm:divide-x sm:divide-y-0 dark:shadow-none">
         <div class="px-5 py-4 sm:px-6">
           <p class="text-sm text-muted">{{ t('redeem.currentBalance') }}</p>
@@ -18,7 +21,7 @@
       </div>
 
       <!-- Redeem Form -->
-      <section class="rounded-lg bg-default p-5 shadow-xs ring ring-default sm:p-6 dark:shadow-none">
+      <section v-if="!keyRotationRequired" class="rounded-lg bg-default p-5 shadow-xs ring ring-default sm:p-6 dark:shadow-none">
         <form @submit.prevent="handleRedeem" class="space-y-5">
           <div>
             <label for="code" class="mb-1.5 block text-sm font-medium text-default">
@@ -86,7 +89,7 @@
       </UAlert>
 
       <!-- Recent Activity -->
-      <section class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
+      <section v-if="!keyRotationRequired" class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
         <header class="border-b border-default px-5 py-4 sm:px-6">
           <h2 class="text-base font-semibold text-highlighted">
             {{ t('redeem.recentActivity') }}
@@ -304,13 +307,17 @@ import { redeemAPI, authAPI, type RedeemHistoryItem } from '@/api'
 import type { RedeemCode } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
+import { isKeyRotationRequiredError } from '@/api/keyRotationGate'
+import { useKeyRotationGate } from '@/composables/useKeyRotationGate'
 import { formatDateTime } from '@/utils/format'
 
 const { t } = useI18n()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 const subscriptionStore = useSubscriptionStore()
+const { required: keyRotationRequired, status: keyRotationStatus } = useKeyRotationGate()
 
 const user = computed(() => authStore.user)
 
@@ -413,8 +420,11 @@ const fetchHistory = async (page = 1) => {
   } catch (error) {
     if (request !== historyRequest) return
     historyPageSize.value = loadedHistoryPageSize
-    appStore.showError(t('redeem.historyLoadFailed'))
-    console.error('Failed to fetch history:', error)
+    // 门禁拦截由页面上的整改卡片表达，不再叠加“加载失败”的误导性提示。
+    if (!isKeyRotationRequiredError(error)) {
+      appStore.showError(t('redeem.historyLoadFailed'))
+      console.error('Failed to fetch history:', error)
+    }
   } finally {
     if (request === historyRequest) loadingHistory.value = false
   }
@@ -440,9 +450,12 @@ const handleRedeem = async () => {
   try {
     result = await redeemAPI.redeem(redeemCode.value.trim())
   } catch (error: any) {
+    submitting.value = false
+    // 403 KEY_ROTATION_REQUIRED：页面已展示整改卡片（由全局事件驱动），
+    // 不再弹“兑换失败”，否则会把安全要求说成业务错误。
+    if (isKeyRotationRequiredError(error)) return
     errorMessage.value = error.response?.data?.detail || t('redeem.failedToRedeem')
     appStore.showError(t('redeem.redeemFailed'))
-    submitting.value = false
     return
   }
 

@@ -931,6 +931,17 @@ export default {
     }
   },
 
+  // Key rotation gate（安全事件响应：密钥泄露整改完成前禁止充值/兑换）
+  keyRotationGate: {
+    title: '充值 / 兑换暂不可用',
+    description: '为保护您的账户安全，请先更换 API Key 或为其设置 IP 白名单后再充值/兑换。',
+    cutoffLabel: '门槛时间',
+    activeKeysLabel: '启用中的 Key',
+    pendingKeysLabel: '待整改 Key',
+    hint: '更换一个创建于门槛时间之后的 API Key，或为每个启用中的 Key 配置 IP 白名单，完成后本页自动恢复。模型调用、查看余额和密钥管理不受影响。',
+    action: '前往 API 密钥'
+  },
+
   // Redeem
   redeem: {
     title: '兑换码',

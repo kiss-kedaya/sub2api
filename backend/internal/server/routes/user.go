@@ -14,6 +14,7 @@ func RegisterUserRoutes(
 	h *handler.Handlers,
 	jwtAuth middleware.JWTAuthMiddleware,
 	auditLog middleware.AuditLogMiddleware,
+	keyRotationGate middleware.KeyRotationGateMiddleware,
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
 ) {
@@ -49,6 +50,11 @@ func RegisterUserRoutes(
 			user.GET("/api-keys/:id/usage/daily", panelRateLimiter.Heavy(), h.Usage.GetMyAPIKeyDailyUsage)
 			user.GET("/api-keys/:id/usage", panelRateLimiter.Heavy(), h.Usage.GetMyAPIKeyUsage)
 			user.GET("/platform-quotas", h.User.GetMyPlatformQuotas)
+			// 密钥轮换门禁状态：前端充值 / 兑换 / USDT 页进入时读取，
+			// 用于在提交前展示整改提示卡片。该接口本身不拦截。
+			if h.KeyRotation != nil {
+				user.GET("/key-rotation-gate", h.KeyRotation.GetStatus)
+			}
 
 			// 通知邮箱管理
 			notifyEmail := user.Group("/notify-email")
@@ -144,7 +150,10 @@ func RegisterUserRoutes(
 		}
 
 		// 卡密兑换
+		// 密钥轮换门禁：未完成「更换 Key / 设置 IP 白名单」的用户禁止兑换，
+		// 兑换历史查询同样拦截，避免绕过前端直接读兑换面数据。
 		redeem := authenticated.Group("/redeem")
+		applyKeyRotationGate(redeem, keyRotationGate)
 		{
 			redeem.POST("", h.Redeem.Redeem)
 			redeem.GET("/history", h.Redeem.GetHistory)

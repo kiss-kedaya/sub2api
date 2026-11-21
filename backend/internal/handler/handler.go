@@ -84,6 +84,7 @@ type Handlers struct {
 	Crypto           *CryptoHandler
 	CryptoDeposit    *CryptoDepositHandler
 	Bark             *UserBarkHandler
+	KeyRotation      *KeyRotationHandler
 }
 
 // BuildInfo contains build-time information

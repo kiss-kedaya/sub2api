@@ -25,4 +25,5 @@ var ProviderSet = wire.NewSet(
 	NewAPIKeyAuthMiddleware,
 	NewAuditLogMiddleware,
 	NewStepUpAuthMiddleware,
+	NewKeyRotationGateMiddleware,
 )

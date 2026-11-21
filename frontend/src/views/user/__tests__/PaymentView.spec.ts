@@ -110,6 +110,33 @@ vi.mock('@/utils/device', () => ({
   isMobileDevice: () => true,
 }))
 
+// The key-rotation gate has its own spec; page specs only need a stable,
+// non-required gate unless a test explicitly flips it on.
+const keyRotationGateMock = vi.hoisted(() => ({ requiredRef: null as any, statusRef: null as any }))
+vi.mock('@/composables/useKeyRotationGate', async () => {
+  const { ref } = await import('vue')
+  keyRotationGateMock.requiredRef = ref(false)
+  keyRotationGateMock.statusRef = ref(null)
+  return {
+    useKeyRotationGate: () => ({
+      required: keyRotationGateMock.requiredRef,
+      status: keyRotationGateMock.statusRef,
+      refresh: vi.fn(),
+    }),
+    resetKeyRotationGate: vi.fn(),
+    markKeyRotationRequired: vi.fn(),
+    ensureKeyRotationGate: vi.fn(),
+  }
+})
+vi.mock('@/api/keyRotationGate', async () => {
+  const codes = await vi.importActual<typeof import('@/api/keyRotationGateCodes')>('@/api/keyRotationGateCodes')
+  return {
+    ...codes,
+    isKeyRotationRequiredError: codes.isKeyRotationRequiredPayload,
+    keyRotationGateAPI: { getStatus: vi.fn() },
+  }
+})
+
 function checkoutInfoFixture(overrides: Partial<CheckoutInfoResponse> = {}) {
   const wxpayMethod: MethodLimit = {
     daily_limit: 0,
@@ -1274,5 +1301,46 @@ describe('PaymentView instance recharge terms', () => {
     expect(text).toContain('payment.fee')
     expect(text).toContain(formatPaymentAmount(2.5, 'CNY'))
     expect(text).toContain(formatPaymentAmount(102.5, 'CNY'))
+  })
+})
+
+describe('PaymentView key rotation gate', () => {
+  afterEach(() => {
+    keyRotationGateMock.requiredRef.value = false
+    keyRotationGateMock.statusRef.value = null
+  })
+
+  it('replaces the recharge center with the remediation card when blocked', async () => {
+    vi.useRealTimers()
+    routeState.path = '/purchase'
+    routeState.query = {}
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture())
+    keyRotationGateMock.requiredRef.value = true
+    keyRotationGateMock.statusRef.value = {
+      enabled: true,
+      required: true,
+      cutoff: '2026-11-21T00:00:00+08:00',
+      active_key_count: 1,
+      compliant_key_count: 0,
+      pending_key_count: 1,
+      reason: 'rotation_required',
+      error_code: 'KEY_ROTATION_REQUIRED',
+      remediation_path: '/keys',
+    }
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.find('key-rotation-gate-notice-stub').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('payment.createOrder')
   })
 })
