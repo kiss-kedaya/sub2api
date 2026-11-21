@@ -591,6 +591,7 @@ export default {
         useMyKey: 'Use my key',
         selectKeyTitle: 'Select my API Key',
         selectKeyHint: 'Only your active, non-expired keys are listed.',
+        pasteKeyHint: 'For security the plaintext key is no longer returned; paste the key into the field manually.',
         noActiveKey: 'No active API keys available',
         primaryModel: 'Primary Model',
         primaryModelPlaceholder: 'gpt-4o-mini',

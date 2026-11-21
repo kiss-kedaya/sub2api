@@ -14,6 +14,8 @@
             <fieldset :disabled="busy || loading" class="space-y-4">
               <label class="cache-field"><span>{{ t('admin.groupCacheTest.group') }}</span><select v-model="groupId" class="input" data-testid="cache-group"><option :value="null">{{ t('admin.groupCacheTest.selectGroup') }}</option><option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }} · {{ group.platform }}</option></select></label>
               <label class="cache-field"><span>{{ t('admin.groupCacheTest.key') }}</span><select v-model="keyId" class="input" :disabled="keysLoading || !groupId" data-testid="cache-key"><option :value="null">{{ keysLoading ? t('admin.groupCacheTest.loading') : t('admin.groupCacheTest.selectKey') }}</option><option v-for="key in keys" :key="key.id" :value="key.id">{{ key.name }} · #{{ key.id }}</option></select></label>
+              <label class="cache-field"><span>{{ t('admin.groupCacheTest.keyValue') }}</span><input v-model.trim="manualKey" type="password" autocomplete="off" spellcheck="false" class="input" :placeholder="t('admin.groupCacheTest.keyValuePlaceholder')" data-testid="cache-key-value" /></label>
+              <p class="cache-hint">{{ t('admin.groupCacheTest.keyValueHint') }}</p>
               <p class="cache-hint">{{ t('admin.groupCacheTest.ownedKeyHint') }}</p>
               <p v-if="keyError" role="alert" class="text-sm text-red-600">{{ t('admin.groupCacheTest.keysError') }} <button type="button" class="underline" @click="loadKeys">{{ t('admin.groupCacheTest.reload') }}</button></p>
               <p v-else-if="groupId && !keysLoading && !keys.length" class="cache-hint">{{ t('admin.groupCacheTest.noKeys') }} <RouterLink to="/keys" class="text-primary-600 underline">{{ t('admin.groupCacheTest.manageKeys') }}</RouterLink></p>
@@ -103,11 +105,14 @@ const { t } = useI18n({ useScope: 'local', messages: { zh: { admin: cacheTestZh 
 const settings = reactive({ ...DEFAULT_CACHE_SETTINGS })
 const groups = ref<AdminGroup[]>([]), keys = ref<Pick<ApiKey, 'id' | 'name'>[]>([]), models = ref<string[]>([])
 const groupId = ref<number | null>(null), keyId = ref<number | null>(null)
+// 明文 key 不再回读：管理员需手动粘贴所选 Key 的明文才能发起真实请求。
+const manualKey = ref('')
 const loading = ref(false), keysLoading = ref(false), keyError = ref(false), busy = ref(false), reconciling = ref(false), stopping = ref(false)
 const error = ref(''), storageError = ref(false), selected = ref<CacheTestRun | null>(null), history = ref<CacheTestRun[]>([]), detailIndex = ref<number | null>(null)
 let alive = true, generation = 0, keysController: AbortController | null = null, runController: AbortController | null = null
+watch(keyId, () => { manualKey.value = '' })
 const group = computed(() => groups.value.find(g => g.id === groupId.value))
-const canStart = computed(() => !!auth.user && !!group.value && !!keyId.value && keys.value.some(k => k.id === keyId.value) && !busy.value && !loading.value && !keysLoading.value && !keyError.value && validCacheSettings(settings))
+const canStart = computed(() => !!auth.user && !!group.value && !!keyId.value && !!manualKey.value && keys.value.some(k => k.id === keyId.value) && !busy.value && !loading.value && !keysLoading.value && !keyError.value && validCacheSettings(settings))
 const prefixLength = computed(() => buildCachePrefix('00000000-0000-0000-0000-000000000000', settings.prefixBlocks).length)
 const detail = computed(() => selected.value?.rounds.find(r => r.index === detailIndex.value))
 const repeatTokens = computed(() => aggregateCacheTokens(selected.value?.rounds.slice(1) ?? []))
@@ -182,13 +187,16 @@ async function start() {
   try {
     const key = await keysAPI.getById(targetKey)
     if (controller.signal.aborted || !alive || userId !== auth.user?.id) return
-    if (key.user_id !== userId || !isSingleGroupKey(key, targetGroup.id) || key.status !== 'active' || !key.key || (key.expires_at && Date.parse(key.expires_at) <= Date.now()) || (key.quota > 0 && key.quota_used >= key.quota)) {
+    if (key.user_id !== userId || !isSingleGroupKey(key, targetGroup.id) || key.status !== 'active' || (key.expires_at && Date.parse(key.expires_at) <= Date.now()) || (key.quota > 0 && key.quota_used >= key.quota)) {
       error.value = t('admin.groupCacheTest.keyChanged'); return
+    }
+    if (!manualKey.value) {
+      error.value = t('admin.groupCacheTest.keyValueRequired'); return
     }
     selected.value = { version: 1, id: createCacheTestId(), startedAt: new Date().toISOString(), finishedAt: null, groupId: targetGroup.id, groupName: targetGroup.name, keyId: key.id, keyName: key.name, settings: snapshot, status: 'running', rounds: [] }
     const run = selected.value
     const changed = () => persist(run, userId)
-    await executeCacheRun(run, key.key, controller.signal, changed)
+    await executeCacheRun(run, manualKey.value, controller.signal, changed)
     if (!controller.signal.aborted) {
       reconciling.value = true
       await reconcileCacheBills(run, userId, controller.signal, changed)

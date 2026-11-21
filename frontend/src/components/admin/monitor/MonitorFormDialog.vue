@@ -807,8 +807,10 @@ async function openMyKeyPicker() {
 }
 
 function pickMyKey(k: ApiKey) {
-  form.api_key = k.key
+  // 服务端不再回读明文 key：选择仅用于确认是哪个 key，实际值需手动粘贴。
+  if (!form.name.trim()) form.name = k.name
   showKeyPicker.value = false
+  appStore.showWarning(t('admin.channelMonitor.form.pasteKeyHint'))
 }
 
 function buildPayload(): CreateParams {

@@ -180,6 +180,18 @@ export default {
     riskRotateHint: '重新生成一个 key 值，旧 key 立即失效，此 key 恢复可用',
     riskRotateSuccess: '密钥已轮换，旧密钥立即失效',
     riskRotateFailed: '轮换密钥失败',
+    // 后端只回脱敏视图：明文 key 仅在创建/轮换当次响应出现。
+    maskedOnlyHint: '出于安全考虑，完整密钥只在创建或轮换时显示一次；这里展示的是后端口径的脱敏值。',
+    secretDialog: {
+      title: '密钥明文（仅显示一次）',
+      description: '服务端不会再返回明文，关闭后无法再次查看。',
+      saveNotice: '请立即复制并妥善保存。关闭本窗口或刷新页面后，这把密钥的明文将永久不可再读；遗失只能轮换。',
+      copy: '复制密钥',
+      copied: '已复制',
+      use: '使用密钥',
+      importCcs: '导入到 CCS',
+      done: '我已保存'
+    },
     clickToChangeGroup: '点击更换分组',
     groupChangedSuccess: '分组更换成功',
     failedToChangeGroup: '更换分组失败',

@@ -136,8 +136,11 @@ export function makeKey(id: number, group: Group | undefined, timestamp: string)
   // One demo key is auto-disabled by the gateway risk control so the console
   // preview can show the "compromised key" hint and the rotate action.
   const riskDisabled = id === 7
+  // 后端只回脱敏视图；只有创建/轮换的响应会临时拼出一次明文（见 mock-api）。
+  const demoCode = String(id).padStart(6, '0')
   return {
-    id, user_id: DEMO_USER_ID, key: `sk-demo-not-valid-${String(id).padStart(6, '0')}`,
+    id, user_id: DEMO_USER_ID, key_prefix: 'sk-demo-',
+    key_masked: `sk-demo-****${demoCode.slice(-4)}`,
     name: `演示密钥 ${String(id).padStart(2, '0')}`, group_id: group?.id ?? null,
     group_ids: group ? [group.id] : [], group, status: id % 7 === 0 ? 'inactive' : 'active',
     ip_whitelist: [], ip_blacklist: [], last_used_at: null, last_used_ip: null,
@@ -300,7 +303,8 @@ function createAdminFixtures(now: Date, groups: Group[], sourceKeys: ApiKey[], s
       id: 940001 + index,
       user_id: owner.id,
       name: `后台演示密钥 ${String(index + 1).padStart(2, '0')}`,
-      key: `sk-admin-demo-not-valid-${String(index + 1).padStart(6, '0')}`,
+      key_prefix: 'sk-admin',
+      key_masked: `sk-admin****${String(index + 1).padStart(6, '0').slice(-4)}`,
       group,
     }
   })

@@ -180,6 +180,18 @@ export default {
     riskRotateHint: 'Generate a new key value. The old key stops working immediately and this key becomes usable again.',
     riskRotateSuccess: 'Key rotated. The old key no longer works.',
     riskRotateFailed: 'Failed to rotate key',
+    // The backend only returns a masked view; plaintext appears once at creation/rotation.
+    maskedOnlyHint: 'For security, the full key is shown only once when created or rotated. This is the server-side masked value.',
+    secretDialog: {
+      title: 'Plaintext key (shown once)',
+      description: 'The server will not return the plaintext again.',
+      saveNotice: 'Copy and store it now. Once this dialog closes or the page reloads, the plaintext can no longer be retrieved; if lost, rotate the key.',
+      copy: 'Copy key',
+      copied: 'Copied',
+      use: 'Use key',
+      importCcs: 'Import to CCS',
+      done: "I've saved it"
+    },
     clickToChangeGroup: 'Click to change group',
     groupChangedSuccess: 'Group changed successfully',
     failedToChangeGroup: 'Failed to change group',

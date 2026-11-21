@@ -785,7 +785,7 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/admin/keys' || path === '/api/v1/admin/api-keys') {
           const search = query.get('search')?.toLowerCase()
           return page(data.adminKeys.filter(key =>
-            (!search || `${key.name} ${key.key}`.toLowerCase().includes(search)) &&
+            (!search || `${key.name} ${key.key_masked}`.toLowerCase().includes(search)) &&
             (!query.get('status') || key.status === query.get('status')) &&
             (!query.get('user_id') || key.user_id === Number(query.get('user_id'))) &&
             (!query.get('group_id') || key.group_ids?.includes(Number(query.get('group_id'))))), query)
@@ -946,7 +946,7 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/keys') {
           const items = data.keys.filter(key => {
             const search = query.get('search')?.toLowerCase()
-            return (!search || `${key.name} ${key.key}`.toLowerCase().includes(search)) &&
+            return (!search || `${key.name} ${key.key_masked}`.toLowerCase().includes(search)) &&
               (!query.get('status') || key.status === query.get('status')) &&
               (!query.get('group_id') || key.group_ids?.includes(Number(query.get('group_id'))))
           })
@@ -1210,8 +1210,10 @@ export function createMockApi(now = new Date()) {
         if (!('name' in body)) throw new PreviewError(422, '请输入演示密钥名称')
         const key = editKey({ ...makeKey(nextId, undefined, new Date().toISOString()), status: 'active', quota: 0 }, body)
         data.keys.unshift(key)
+        // 创建响应是唯一一次明文回执；列表里始终只有脱敏视图。
+        const secret = `sk-demo-not-valid-${String(nextId).padStart(6, '0')}`
         nextId++
-        return key
+        return { ...key, key: secret }
       }
       if (['PUT', 'DELETE'].includes(method) && /^\/api\/v1\/keys\/\d+$/.test(path)) {
         const index = data.keys.findIndex(key => key.id === Number(path.split('/').pop()))
@@ -1222,16 +1224,19 @@ export function createMockApi(now = new Date()) {
         }
         if (body.regenerate_key === true) {
           // Rotation preview: new credential, key reactivated, risk marker gone.
-          const rotated = {
-            ...editKey(data.keys[index], body),
-            key: `sk-demo-rotated-${Date.now().toString(36)}`,
+          // 列表行保持脱敏；明文只出现在这一次响应里。
+          const rotated = editKey(data.keys[index], body)
+          const rotatedRow = {
+            ...rotated,
+            key_prefix: 'sk-demo-',
+            key_masked: `sk-demo-****${String(Date.now()).slice(-4)}`,
             status: 'active' as const,
             risk_disabled: false,
             risk_hit_ip: null,
             risk_hit_at: null,
           }
-          data.keys[index] = rotated
-          return rotated
+          data.keys[index] = rotatedRow
+          return { ...rotatedRow, key: `sk-demo-rotated-${Date.now().toString(36)}` }
         }
         data.keys[index] = editKey(data.keys[index], body)
         return data.keys[index]

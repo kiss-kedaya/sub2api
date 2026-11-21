@@ -483,5 +483,13 @@ export default {
     adminApiKeyForbidden: 'Admin API keys cannot perform this operation. Use a two-factor verified admin session.'
   },
 
+  // Recommended 2FA (dismissible, never enforced here)
+  twoFactorSuggestion: {
+    title: 'Enable two-factor authentication (recommended)',
+    body: 'With 2FA on, sensitive actions such as viewing or rotating keys also require a one-time code, which lowers the risk of key leakage. This is only a suggestion and never blocks you.',
+    enable: 'Enable',
+    dismiss: 'Dismiss'
+  },
+
   // Dashboard
 }

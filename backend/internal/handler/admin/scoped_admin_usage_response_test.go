@@ -67,8 +67,12 @@ func TestScopedAdminUsageListDoesNotGrantNestedResourceRead(t *testing.T) {
 					require.NotContains(t, item, field)
 				}
 			} else {
-				require.Contains(t, w.Body.String(), "private-api-key-secret")
+				// 完整管理员仍能看到 key 身份（id/name）与脱敏展示，
+				// 但明文 key 已不允许出现在任何响应里。
+				require.NotContains(t, w.Body.String(), "private-api-key-secret")
 				require.Contains(t, w.Body.String(), "private-email@example.invalid")
+				require.Contains(t, w.Body.String(), `"key_masked"`)
+				require.Contains(t, w.Body.String(), `"key_prefix"`)
 				require.Contains(t, item, "user")
 				require.Contains(t, item, "api_key")
 				require.Contains(t, item, "account")

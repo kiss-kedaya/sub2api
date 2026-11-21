@@ -12,7 +12,7 @@ func TestObserverUsageCannotSerializeCustomerOrUpstreamSecrets(t *testing.T) {
 	log := AdminUsageLog{UsageLog: UsageLog{ID: 99, UserID: 2, APIKeyID: 3, AccountID: 4, GroupID: &groupID,
 		Model: "public-model", InputTokens: 123, ActualCost: 1.25, UserAgent: &secret, IPAddress: &secret, SessionID: &secret, RequestID: secret,
 		User:   &User{ID: 2, Email: secret, Username: secret, Balance: 500},
-		APIKey: &APIKey{ID: 3, Name: secret, Key: secret},
+		APIKey: &APIKey{ID: 3, Name: secret, KeyMasked: secret},
 		Group:  &Group{ID: 4, Name: secret},
 	}, IPAddress: &secret, Account: &AccountSummary{ID: 4, Name: secret}, UpstreamRequestID: &secret, ModelMappingChain: &secret}
 	encoded, err := json.Marshal(UsageLogForObserver(log))
@@ -41,7 +41,7 @@ func TestObserverUsageCannotSerializeCustomerOrUpstreamSecrets(t *testing.T) {
 	if apiKey["key"] != nil {
 		t.Fatal("API key secret is serialized")
 	}
-	if log.User.Email != secret || log.APIKey.Key != secret || log.Account.Name != secret {
+	if log.User.Email != secret || log.APIKey.KeyMasked != secret || log.Account.Name != secret {
 		t.Fatal("redaction mutated an owner/shared snapshot")
 	}
 }

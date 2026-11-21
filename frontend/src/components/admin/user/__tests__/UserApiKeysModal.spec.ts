@@ -9,6 +9,8 @@ vi.mock('@/api/admin', () => ({ adminAPI: {
 } }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn() }) }))
 vi.mock('@/utils/format', () => ({ formatDateTime: (value: string) => value }))
+// step-up 弹窗会拉 @/api（依赖 i18n 实例），本用例只验证列表门控，直接桩掉弹窗。
+vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 enableAutoUnmount(afterEach)
 beforeEach(() => {
@@ -26,7 +28,7 @@ function deferred() {
 }
 const user = (id: number) => ({ id, email: `user${id}@example.com`, username: `user${id}` }) as AdminUser
 const keys = (id: number, name: string, page = 1, total = 1, pageSize = 20) => ({
-  items: [{ id, name, key: 'sk-example-key-value-for-tests', status: 'active', created_at: '2026-09-20', group_id: null }],
+  items: [{ id, name, key_prefix: 'sk-example', key_masked: 'sk-example****-tests', status: 'active', created_at: '2026-09-20', group_id: null }],
   total, page, page_size: pageSize, pages: Math.ceil(total / pageSize),
 })
 async function open() {
@@ -48,6 +50,15 @@ async function switchUser(wrapper: Awaited<ReturnType<typeof open>>) {
   await wrapper.setProps({ show: false })
   await wrapper.setProps({ show: true, user: user(2) })
 }
+
+describe('user API key masking', () => {
+  it('renders the server key_masked value instead of slicing the key in the frontend', async () => {
+    getKeys.mockResolvedValue(keys(1, 'masked-key'))
+    const wrapper = await open(); await flushPromises()
+    expect(wrapper.text()).toContain('sk-example****-tests')
+    expect(wrapper.text()).not.toContain('sk-example-key-value-for-tests')
+  })
+})
 
 describe('user API key loading', () => {
   it('does not display the previous user keys when the next load fails', async () => {

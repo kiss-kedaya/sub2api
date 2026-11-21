@@ -1,5 +1,9 @@
 export default {
   batchImage: {
+    keyPanel: {
+      hint: '本页直接用密钥调用网关。服务端不再回读明文，请粘贴一把 Gemini API Key（仅保存在当前页面内存）。',
+      placeholder: '粘贴完整 API Key 以加载任务与模型',
+    },
     columns: {
       taskName: '任务名称',
       model: '模型',
@@ -110,6 +114,9 @@ export default {
       loadingKeys: '加载 API Key 中...',
       selectKeyPlaceholder: '请选择 Gemini API Key',
       noKeysHint: '当前没有可用于批量生图的 Gemini API Key。请先创建并绑定已开启批量生图的 Gemini 分组。',
+      pasteKeyLabel: '临时粘贴密钥明文',
+      pasteKeyPlaceholder: '粘贴该 Gemini API Key 的完整明文',
+      pasteKeyHint: '安全策略：列表只返回脱敏 key，本页需要明文才能直连网关。明文只留在当前页面内存，不写浏览器存储，刷新即清空。',
       model: '模型',
       imageSize: '图片尺寸',
       imageSizeHint: '当前批量任务固定按 1K 图片提交。',
@@ -149,6 +156,7 @@ export default {
       loadModelsFailed: '加载可用模型失败',
       loadJobsFailed: '加载批量任务失败',
       selectApiKey: '请选择可用的 Gemini API Key',
+      pasteKeyRequired: '出于安全策略，列表不再返回明文 key；请先在页面顶部粘贴该 API Key 的完整明文。',
       noModelsForKey: '当前密钥没有可用的批量生图模型',
       selectModel: '请选择模型',
       promptRequired: '请至少填写一条 prompt',

@@ -40,6 +40,7 @@
         :user-email="user.email"
       />
 
+      <TwoFactorSuggestionBanner storage-key="profile" />
       <ProfileTotpCard />
       <ProfilePasskeyCard :enabled="passkeyEnabled" />
       <ProfileBarkCard />
@@ -56,6 +57,7 @@ import ProfileBalanceNotifyCard from '@/components/user/profile/ProfileBalanceNo
 import ProfileInfoCard from '@/components/user/profile/ProfileInfoCard.vue'
 import ProfilePasswordForm from '@/components/user/profile/ProfilePasswordForm.vue'
 import ProfileTotpCard from '@/components/user/profile/ProfileTotpCard.vue'
+import TwoFactorSuggestionBanner from '@/components/user/TwoFactorSuggestionBanner.vue'
 import ProfilePasskeyCard from '@/components/user/profile/ProfilePasskeyCard.vue'
 import ProfileBarkCard from '@/components/user/profile/ProfileBarkCard.vue'
 import { isWeChatWebOAuthEnabled } from '@/api/auth'
