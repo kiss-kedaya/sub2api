@@ -10,6 +10,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/notify"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/redis/go-redis/v9"
 )
 
 // provideNotificationRuntime preserves the gateway notifications in both payment roles.
@@ -28,7 +29,7 @@ type localCryptoRuntime struct {
 	CryptoDepositHandler *handler.CryptoDepositHandler
 }
 
-func provideLocalCryptoRuntime(cfg *config.Config, db *sql.DB, client *ent.Client, settings *service.SettingService, payments *service.PaymentService, bark *notify.UserBarkService, totp *service.TotpService) localCryptoRuntime {
+func provideLocalCryptoRuntime(cfg *config.Config, db *sql.DB, client *ent.Client, settings *service.SettingService, payments *service.PaymentService, bark *notify.UserBarkService, totp *service.TotpService, rdb *redis.Client) localCryptoRuntime {
 	// The normal constructor checks shared wallet state synchronously, even
 	// when this process delegates chain scanning. Skip construction entirely.
 	if cfg.Server.DelegatePayments {
@@ -37,7 +38,7 @@ func provideLocalCryptoRuntime(cfg *config.Config, db *sql.DB, client *ent.Clien
 	addresses := cryptopay.NewAddressService(db, settings)
 	creditor := cryptopay.NewDepositCreditor(client, payments, db)
 	creditor.SetBarkNotifier(bark)
-	runtime := cryptopay.NewService(db, settings, creditor, addresses, cfg)
+	runtime := cryptopay.NewService(db, settings, creditor, addresses, cfg, rdb)
 	runtime.SetPushNotifier(notify.NewOwnerPushAdapter(bark, 1))
 	payments.SetDepositAddressResolver(runtime)
 	return localCryptoRuntime{CryptoService: runtime, CryptoHandler: handler.NewCryptoHandler(addresses, settings, runtime, totp, cfg), CryptoDepositHandler: handler.NewCryptoDepositHandler(runtime)}

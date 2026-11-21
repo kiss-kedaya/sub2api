@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import QRCode from 'qrcode'
 import DepositView from '../DepositView.vue'
 
 const mocks = vi.hoisted(() => ({
-  getDepositInfo: vi.fn(), getDepositHistory: vi.fn(), apiGet: vi.fn(), copy: vi.fn(), refreshUser: vi.fn(), showSuccess: vi.fn()
+  getDepositInfo: vi.fn(), getDepositHistory: vi.fn(), getDepositNetworkStatus: vi.fn(),
+  apiGet: vi.fn(), copy: vi.fn(), refreshUser: vi.fn(), showSuccess: vi.fn()
 }))
 vi.mock('@/api/client', () => ({ apiClient: { get: mocks.apiGet } }))
-vi.mock('@/api/crypto', () => ({ getDepositInfo: mocks.getDepositInfo, getDepositHistory: mocks.getDepositHistory }))
+vi.mock('@/api/crypto', () => ({
+  getDepositInfo: mocks.getDepositInfo, getDepositHistory: mocks.getDepositHistory,
+  getDepositNetworkStatus: mocks.getDepositNetworkStatus
+}))
 vi.mock('@/composables/useClipboard', () => ({ useClipboard: () => ({ copyToClipboard: mocks.copy }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ refreshUser: mocks.refreshUser }) }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess }) }))
@@ -83,6 +88,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.getDepositHistory.mockReset()
+  mocks.getDepositNetworkStatus.mockReset().mockResolvedValue([])
   mocks.refreshUser.mockResolvedValue(undefined)
   mocks.getDepositInfo.mockResolvedValue({
     enabled: true, chains: [{ chain: 'bsc', address: '0x' + '12'.repeat(20), tokens: ['USDT'] }],
@@ -158,6 +164,182 @@ describe('user deposit availability', () => {
     expect(mocks.getDepositHistory).toHaveBeenCalledTimes(3)
     await vi.advanceTimersByTimeAsync(5000)
     expect(mocks.getDepositHistory).toHaveBeenCalledTimes(4)
+  })
+})
+
+describe('user deposit network status', () => {
+  const bscAddress = '0x' + '12'.repeat(20)
+  const baseAddress = '0x' + '34'.repeat(20)
+  const readStatus = (wrapper: ReturnType<typeof render>) =>
+    wrapper.get('.deposit-view__chain[aria-pressed="true"] .deposit-view__network-status').text()
+
+  function expectTransferActions(wrapper: ReturnType<typeof render>, address: string) {
+    expect(wrapper.get('.deposit-view__address').text()).toBe(address)
+    expect(wrapper.find('.deposit-view__copy').exists()).toBe(true)
+    expect(wrapper.find('canvas').exists()).toBe(true)
+  }
+
+  const expiresSoon = () => new Date(Date.now() + 60_000).toISOString()
+
+  it.each([
+    ['an explicit unknown status', [{ chain: 'bsc', status: 'unknown' }]],
+    ['a missing chain', [{ chain: 'base', status: 'paused' }]],
+    ['a confirmed status without expiration', [{ chain: 'bsc', status: 'paused' }]],
+    ['an already expired status', [{ chain: 'bsc', status: 'stalled', expires_at: '2025-01-01T00:00:00Z' }]],
+    ['a malformed expiration time', [{ chain: 'bsc', status: 'paused', expires_at: 'not-a-time' }]],
+  ])('falls back to unknown without hiding transfer actions for %s', async (_reason, networks) => {
+    mocks.getDepositNetworkStatus.mockResolvedValueOnce(networks)
+    const wrapper = render()
+    await flushPromises()
+
+    expect(readStatus(wrapper)).toBe('deposit.networkStatus.unknown')
+    expect(wrapper.get('.deposit-view__network-notice').text()).toContain('deposit.networkStatusHint.unknown')
+    expectTransferActions(wrapper, bscAddress)
+  })
+
+  it.each([404, 503])('keeps deposits and history usable when the status endpoint returns %s', async (status) => {
+    mocks.getDepositNetworkStatus.mockRejectedValueOnce({ status })
+    const wrapper = render()
+    await flushPromises()
+
+    expect(readStatus(wrapper)).toBe('deposit.networkStatus.unknown')
+    expectTransferActions(wrapper, bscAddress)
+    expect(wrapper.get('.deposit-view__history').text()).toContain(hash)
+    expect(wrapper.text()).not.toContain('deposit.loadFailed')
+  })
+
+  it('loads status while instructions are pending and renders instructions while status is pending', async () => {
+    const info = { enabled: true, chains: [{ chain: 'bsc', address: bscAddress, tokens: ['USDT'] }], min_amount: 1, max_amount: 0 }
+    let resolveInfo!: (value: typeof info) => void
+    let resolveStatus!: (value: { chain: string; status: 'available'; expires_at: string }[]) => void
+    mocks.getDepositInfo.mockReturnValueOnce(new Promise(resolve => { resolveInfo = resolve }))
+    mocks.getDepositNetworkStatus.mockReturnValueOnce(new Promise(resolve => { resolveStatus = resolve }))
+    const wrapper = render()
+    await flushPromises()
+
+    expect(mocks.getDepositNetworkStatus).toHaveBeenCalledOnce()
+    resolveInfo(info)
+    await flushPromises()
+    expect(readStatus(wrapper)).toBe('deposit.networkStatus.unknown')
+    expectTransferActions(wrapper, bscAddress)
+    expect(wrapper.get('.deposit-view__history').text()).toContain(hash)
+
+    resolveStatus([{ chain: 'bsc', status: 'available', expires_at: expiresSoon() }])
+    await flushPromises()
+    expect(readStatus(wrapper)).toBe('deposit.networkStatus.available')
+    expect(wrapper.find('.deposit-view__network-notice').exists()).toBe(false)
+  })
+
+  it('keeps network selection and history available, blocking only the paused or stalled network', async () => {
+    mocks.getDepositInfo.mockResolvedValueOnce({
+      enabled: true,
+      chains: [
+        { chain: 'bsc', address: bscAddress, tokens: ['USDT'] },
+        { chain: 'base', address: baseAddress, tokens: ['USDT'] },
+        { chain: 'ethereum', address: '0x' + '56'.repeat(20), tokens: ['USDT'] },
+        { chain: 'polygon', address: '0x' + '78'.repeat(20), tokens: ['USDT'] },
+      ],
+      min_amount: 1, max_amount: 0
+    })
+    mocks.getDepositNetworkStatus.mockResolvedValueOnce([
+      { chain: 'polygon', status: 'stalled', expires_at: expiresSoon() },
+      { chain: 'base', status: 'paused', expires_at: expiresSoon() },
+      { chain: 'ethereum', status: 'delayed', expires_at: expiresSoon() },
+      { chain: 'bsc', status: 'available', expires_at: expiresSoon() },
+    ])
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.findAll('.deposit-view__network-status').map(badge => badge.text())).toEqual([
+      'deposit.networkStatus.available', 'deposit.networkStatus.paused',
+      'deposit.networkStatus.delayed', 'deposit.networkStatus.stalled',
+    ])
+    expectTransferActions(wrapper, bscAddress)
+    const chains = wrapper.findAll('.deposit-view__chain')
+    for (const [index, state] of [[1, 'paused'], [3, 'stalled']] as const) {
+      await chains[index].trigger('click')
+      expect(chains[index].attributes('aria-pressed')).toBe('true')
+      expect(wrapper.get('.deposit-view__network-notice').text()).toContain('deposit.networkStatusHint.' + state)
+      expect(wrapper.find('.deposit-view__address').exists()).toBe(false)
+      expect(wrapper.find('.deposit-view__copy').exists()).toBe(false)
+      expect(wrapper.find('canvas').exists()).toBe(false)
+      expect(wrapper.get('.deposit-view__history').text()).toContain(hash)
+    }
+    mocks.getDepositHistory.mockResolvedValueOnce([pendingRow()])
+    await wrapper.get('.deposit-view__history-head button').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.deposit-view__history').text()).not.toContain(hash)
+    expect(chains[3].attributes('aria-pressed')).toBe('true')
+
+    await chains[2].trigger('click')
+    expect(wrapper.get('.deposit-view__network-notice').text()).toContain('deposit.networkStatusHint.delayed')
+    expectTransferActions(wrapper, '0x' + '56'.repeat(20))
+  })
+
+  it('downgrades stalled status at its expiration even without a fresh response', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    const expiration = new Date(Date.now() + 1000).toISOString()
+    mocks.getDepositNetworkStatus.mockResolvedValueOnce([{ chain: 'bsc', status: 'stalled', expires_at: expiration }])
+    const wrapper = render()
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(999)
+    expect(readStatus(wrapper)).toBe('deposit.networkStatus.stalled')
+    expect(wrapper.find('.deposit-view__address-block').exists()).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(readStatus(wrapper)).toBe('deposit.networkStatus.unknown')
+    expectTransferActions(wrapper, bscAddress)
+    expect(QRCode.toCanvas).toHaveBeenLastCalledWith(wrapper.get('canvas').element, bscAddress, expect.any(Object))
+    expect(mocks.getDepositNetworkStatus).toHaveBeenCalledOnce()
+  })
+
+  it('restores transfer actions on fresh available status without changing the selected network', async () => {
+    mocks.getDepositInfo.mockResolvedValueOnce({
+      enabled: true,
+      chains: [
+        { chain: 'bsc', address: bscAddress, tokens: ['USDT'] },
+        { chain: 'base', address: baseAddress, tokens: ['USDT'] },
+      ],
+      min_amount: 1, max_amount: 0
+    })
+    mocks.getDepositNetworkStatus
+      .mockResolvedValueOnce([{ chain: 'base', status: 'paused', expires_at: expiresSoon() }])
+      .mockResolvedValueOnce([{ chain: 'base', status: 'available', expires_at: expiresSoon() }])
+    mocks.copy.mockResolvedValueOnce(true)
+    const wrapper = render()
+    await flushPromises()
+    const base = wrapper.findAll('.deposit-view__chain')[1]
+    await base.trigger('click')
+    expect(readStatus(wrapper)).toBe('deposit.networkStatus.paused')
+    expect(wrapper.find('.deposit-view__address-block').exists()).toBe(false)
+
+    await wrapper.get('.deposit-view__network-refresh').trigger('click')
+    await flushPromises()
+    expect(base.attributes('aria-pressed')).toBe('true')
+    expect(readStatus(wrapper)).toBe('deposit.networkStatus.available')
+    expectTransferActions(wrapper, baseAddress)
+    expect(QRCode.toCanvas).toHaveBeenLastCalledWith(wrapper.get('canvas').element, baseAddress, expect.any(Object))
+    await wrapper.get('.deposit-view__copy').trigger('click')
+    expect(mocks.copy).toHaveBeenCalledWith(baseAddress)
+    expect(mocks.getDepositInfo).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    [{ networks: [{ chain: 'bsc', status: 'paused', expires_at: expiresSoon() }] }, 'paused'],
+    [{ data: { networks: [{ chain: 'bsc', status: 'paused', expires_at: expiresSoon() }] } }, 'paused'],
+    [{ networks: [null, { chain: 'bsc', status: 'unexpected' }] }, 'unknown'],
+    ['<html>legacy app shell</html>', 'unknown'],
+  ])('accepts supported response envelopes and treats legacy/malformed data as unknown', async (data, state) => {
+    mocks.apiGet.mockResolvedValueOnce({ data })
+    const { getDepositNetworkStatus } = await vi.importActual<typeof import('@/api/crypto')>('@/api/crypto')
+    mocks.getDepositNetworkStatus.mockImplementationOnce(getDepositNetworkStatus)
+    const wrapper = render()
+    await flushPromises()
+
+    expect(mocks.apiGet).toHaveBeenLastCalledWith('/crypto/deposit-network-status', { signal: expect.any(AbortSignal) })
+    expect(readStatus(wrapper)).toBe('deposit.networkStatus.' + state)
+    expect(wrapper.find('.deposit-view__address-block').exists()).toBe(state === 'unknown')
   })
 })
 
@@ -605,6 +787,22 @@ describe('user deposit key rotation gate', () => {
     expect(wrapper.text()).not.toContain('deposit.disabled')
     expect(wrapper.find('.deposit-view__history').exists()).toBe(false)
     expect(mocks.getDepositHistory).not.toHaveBeenCalled()
+    if (sharedGate) expect(mocks.getDepositNetworkStatus).not.toHaveBeenCalled()
+  })
+
+  it('treats an explicit denial from the network status read as a key rotation requirement', async () => {
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get('.deposit-view__history').text()).toContain(hash)
+
+    mocks.getDepositNetworkStatus.mockRejectedValueOnce(gateError)
+    setVisibility('visible')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="key-rotation-gate-notice"]').exists()).toBe(true)
+    expect(wrapper.find('.deposit-view__history').exists()).toBe(false)
+    expect(wrapper.find('.deposit-view__address-block').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain(hash)
   })
 
   it('hides the previous history and stops polling when a refresh is denied by the gate', async () => {
