@@ -35,10 +35,26 @@ func (RedeemCode) Annotations() []schema.Annotation {
 
 func (RedeemCode) Fields() []ent.Field {
 	return []ent.Field{
+		// code 是历史明文列。迁移 328 之后只写 NULL，卡密本体以 code_hash 的
+		// 形式保存，明文只在「生成」的当次响应里出现一次。保留 Unique() 是为了
+		// 与库里的唯一约束保持 schema 对齐；NULL 不受唯一约束限制。
 		field.String("code").
 			MaxLen(32).
-			NotEmpty().
-			Unique(),
+			Optional().
+			Unique().
+			Comment("Legacy plaintext redeem code; NULL for hash-only rows"),
+		// code_hash = sha256(明文 code) 的小写 hex。校验/兑换只按这一列等值查询。
+		field.String("code_hash").
+			MaxLen(64).
+			Optional().
+			Unique().
+			Comment("Lowercase hex SHA-256 of the redeem code; the only stored credential"),
+		// code_prefix 是展示用前缀（前 8 位）。库里没有明文之后，后台列表/搜索/
+		// 日志/审计只能靠它识别「这是哪张卡」。
+		field.String("code_prefix").
+			MaxLen(16).
+			Optional().
+			Comment("Display prefix (first 8 characters) of the redeem code"),
 		field.String("type").
 			MaxLen(20).
 			Default(domain.RedeemTypeBalance),
@@ -95,5 +111,7 @@ func (RedeemCode) Indexes() []ent.Index {
 		index.Fields("used_by"),
 		index.Fields("group_id"),
 		index.Fields("expires_at"),
+		// 后台按前缀搜索卡密（哈希列已由 Unique() 建索引）。
+		index.Fields("code_prefix"),
 	}
 }

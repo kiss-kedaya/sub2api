@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -132,6 +133,10 @@ func (h *RedeemHandler) GetByID(c *gin.Context) {
 
 // Generate handles generating new redeem codes
 // POST /api/v1/admin/redeem-codes/generate
+//
+// 明文只在这个响应的「首次执行」里出现一次。幂等重放（同一 Idempotency-Key
+// 重试）只回掩码，绝不回放明文——重试日志/网关缓存里出现过的完整卡密等于二次
+// 查看。与 API Key 创建（#464）保持同一套语义。
 func (h *RedeemHandler) Generate(c *gin.Context) {
 	var req GenerateRedeemCodesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -145,31 +150,73 @@ func (h *RedeemHandler) Generate(c *gin.Context) {
 		return
 	}
 
-	// Generated codes are the response payload and already exist in redeem_codes.
-	// Preserve this response exactly so an idempotent replay returns the same codes.
-	executeAdminIdempotentJSONWithResponseStorage(c, "admin.redeem_codes.generate", req, service.DefaultWriteIdempotencyTTL(), redeemGenerationStoredResponseLimit, true, func(ctx context.Context) (any, error) {
-		codes, execErr := h.adminService.GenerateRedeemCodes(ctx, &service.GenerateRedeemCodesInput{
-			Count:        req.Count,
-			Type:         req.Type,
-			Value:        req.Value,
-			GroupID:      req.GroupID,
-			ValidityDays: req.ValidityDays,
-			ExpiresAt:    expiresAt,
-		})
-		if execErr != nil {
-			return nil, execErr
-		}
+	c.Header("Cache-Control", "no-store")
 
-		out := make([]dto.AdminRedeemCode, 0, len(codes))
-		for i := range codes {
-			out = append(out, *dto.RedeemCodeFromServiceAdmin(&codes[i]))
+	// first 保存本次真实生成的明文列表；幂等 journal 里只写掩码形态。
+	var first []dto.GeneratedRedeemCode
+	result, err := executeAdminIdempotentWithResponseOptions(
+		c,
+		"admin.redeem_codes.generate",
+		req,
+		service.DefaultWriteIdempotencyTTL(),
+		redeemGenerationStoredResponseLimit,
+		true,
+		func(ctx context.Context) (any, error) {
+			codes, execErr := h.adminService.GenerateRedeemCodes(ctx, &service.GenerateRedeemCodesInput{
+				Count:        req.Count,
+				Type:         req.Type,
+				Value:        req.Value,
+				GroupID:      req.GroupID,
+				ValidityDays: req.ValidityDays,
+				ExpiresAt:    expiresAt,
+			})
+			if execErr != nil {
+				return nil, execErr
+			}
+
+			first = make([]dto.GeneratedRedeemCode, 0, len(codes))
+			masked := make([]dto.AdminRedeemCode, 0, len(codes))
+			for i := range codes {
+				if secret := dto.GeneratedRedeemCodeFromService(&codes[i]); secret != nil {
+					first = append(first, *secret)
+				}
+				masked = append(masked, *dto.RedeemCodeFromServiceAdmin(&codes[i]))
+			}
+			// 只有掩码形态进 journal，重放时拿不回明文。
+			return masked, nil
+		})
+	if err != nil {
+		if retryAfter := service.RetryAfterSecondsFromError(err); retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		return out, nil
-	})
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	if result != nil && result.Replayed {
+		c.Header("X-Idempotency-Replayed", "true")
+		body, marshalErr := json.Marshal(result.Data)
+		if marshalErr != nil {
+			response.ErrorFrom(c, service.ErrIdempotencyStoreUnavail)
+			return
+		}
+		var replay []dto.AdminRedeemCode
+		if unmarshalErr := json.Unmarshal(body, &replay); unmarshalErr != nil {
+			response.ErrorFrom(c, service.ErrIdempotencyStoreUnavail)
+			return
+		}
+		response.Success(c, dto.SanitizeAdminRedeemCodes(replay))
+		return
+	}
+
+	response.Success(c, first)
 }
 
 // CreateAndRedeem creates a fixed redeem code and redeems it for a target user in one step.
 // POST /api/v1/admin/redeem-codes/create-and-redeem
+//
+// 卡密由管理员自己提供，所以「只能看一次」的自然含义是：库里不留、后续读接口
+// 不回显。幂等重放同样只回掩码（明文是入参，管理员本来就有）。
 func (h *RedeemHandler) CreateAndRedeem(c *gin.Context) {
 	if h.redeemService == nil {
 		response.InternalError(c, "redeem service not configured")
@@ -181,7 +228,7 @@ func (h *RedeemHandler) CreateAndRedeem(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	req.Code = strings.TrimSpace(req.Code)
+	req.Code = service.NormalizeRedeemCode(req.Code)
 	// 向后兼容：旧版调用方（如 Sub2ApiPay）不传 type 字段，默认当作 balance 充值处理。
 	// 请勿删除此默认值逻辑，否则会导致旧版调用方 400 报错。
 	if req.Type == "" {
@@ -205,43 +252,85 @@ func (h *RedeemHandler) CreateAndRedeem(c *gin.Context) {
 		return
 	}
 
-	executeAdminIdempotentJSON(c, "admin.redeem_codes.create_and_redeem", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		existing, err := h.redeemService.GetByCode(ctx, req.Code)
-		if err == nil {
-			return h.resolveCreateAndRedeemExisting(ctx, existing, req.UserID)
-		}
-		if !errors.Is(err, service.ErrRedeemCodeNotFound) {
-			return nil, err
-		}
+	c.Header("Cache-Control", "no-store")
 
-		createErr := h.redeemService.CreateCode(ctx, &service.RedeemCode{
-			Code:         req.Code,
-			Type:         req.Type,
-			Value:        req.Value,
-			Status:       service.StatusUnused,
-			Notes:        req.Notes,
-			GroupID:      req.GroupID,
-			ValidityDays: req.ValidityDays,
-			ExpiresAt:    expiresAt,
-		})
-		if createErr != nil {
-			// Unique code race: if code now exists, use idempotent semantics by used_by.
-			existingAfterCreateErr, getErr := h.redeemService.GetByCode(ctx, req.Code)
-			if getErr == nil {
-				return h.resolveCreateAndRedeemExisting(ctx, existingAfterCreateErr, req.UserID)
+	result, err := executeAdminIdempotentWithResponseOptions(
+		c,
+		"admin.redeem_codes.create_and_redeem",
+		req,
+		service.DefaultWriteIdempotencyTTL(),
+		0,
+		false,
+		func(ctx context.Context) (any, error) {
+			// 过渡期兼容：历史行可能只有明文列，所以 GetByCode 仍然是
+			// 「哈希优先 + 明文回退」，这里不需要区分。
+			existing, err := h.redeemService.GetByCode(ctx, req.Code)
+			if err == nil {
+				return h.resolveCreateAndRedeemExisting(ctx, existing, req.UserID, req.Code)
 			}
-			return nil, createErr
-		}
+			if !errors.Is(err, service.ErrRedeemCodeNotFound) {
+				return nil, err
+			}
 
-		redeemed, redeemErr := h.redeemService.RedeemForAdminFulfillment(ctx, req.UserID, req.Code)
-		if redeemErr != nil {
-			return nil, redeemErr
+			createErr := h.redeemService.CreateCode(ctx, &service.RedeemCode{
+				Code:         req.Code,
+				Type:         req.Type,
+				Value:        req.Value,
+				Status:       service.StatusUnused,
+				Notes:        req.Notes,
+				GroupID:      req.GroupID,
+				ValidityDays: req.ValidityDays,
+				ExpiresAt:    expiresAt,
+			})
+			if createErr != nil {
+				// Unique code race: if code now exists, use idempotent semantics by used_by.
+				existingAfterCreateErr, getErr := h.redeemService.GetByCode(ctx, req.Code)
+				if getErr == nil {
+					return h.resolveCreateAndRedeemExisting(ctx, existingAfterCreateErr, req.UserID, req.Code)
+				}
+				return nil, createErr
+			}
+
+			redeemed, redeemErr := h.redeemService.RedeemForAdminFulfillment(ctx, req.UserID, req.Code)
+			if redeemErr != nil {
+				return nil, redeemErr
+			}
+			return gin.H{"redeem_code": dto.RedeemCodeFromServiceAdmin(redeemed)}, nil
+		})
+	if err != nil {
+		if retryAfter := service.RetryAfterSecondsFromError(err); retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
-		return gin.H{"redeem_code": dto.RedeemCodeFromServiceAdmin(redeemed)}, nil
-	})
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	if result != nil && result.Replayed {
+		c.Header("X-Idempotency-Replayed", "true")
+		body, marshalErr := json.Marshal(result.Data)
+		if marshalErr != nil {
+			response.ErrorFrom(c, service.ErrIdempotencyStoreUnavail)
+			return
+		}
+		var replay struct {
+			RedeemCode *dto.AdminRedeemCode `json:"redeem_code"`
+		}
+		if unmarshalErr := json.Unmarshal(body, &replay); unmarshalErr != nil {
+			response.ErrorFrom(c, service.ErrIdempotencyStoreUnavail)
+			return
+		}
+		response.Success(c, gin.H{"redeem_code": dto.SanitizeAdminRedeemCode(replay.RedeemCode)})
+		return
+	}
+
+	response.Success(c, result.Data)
 }
 
-func (h *RedeemHandler) resolveCreateAndRedeemExisting(ctx context.Context, existing *service.RedeemCode, userID int64) (any, error) {
+// resolveCreateAndRedeemExisting 处理「卡密已存在」的幂等语义。
+//
+// plainCode 必须由调用方传入：迁移 328 之后从库里读回来的 existing.Code 是空的，
+// 用 existing.Code 去兑换会 404，也会把明文重新带进流程。
+func (h *RedeemHandler) resolveCreateAndRedeemExisting(ctx context.Context, existing *service.RedeemCode, userID int64, plainCode string) (any, error) {
 	if existing == nil {
 		return nil, infraerrors.Conflict("REDEEM_CODE_CONFLICT", "redeem code conflict")
 	}
@@ -251,14 +340,14 @@ func (h *RedeemHandler) resolveCreateAndRedeemExisting(ctx context.Context, exis
 		return nil, service.ErrRedeemCodeExpired
 	}
 	if existing.CanUse() {
-		redeemed, err := h.redeemService.RedeemForAdminFulfillment(ctx, userID, existing.Code)
+		redeemed, err := h.redeemService.RedeemForAdminFulfillment(ctx, userID, plainCode)
 		if err == nil {
 			return gin.H{"redeem_code": dto.RedeemCodeFromServiceAdmin(redeemed)}, nil
 		}
 		if !errors.Is(err, service.ErrRedeemCodeUsed) {
 			return nil, err
 		}
-		latest, getErr := h.redeemService.GetByCode(ctx, existing.Code)
+		latest, getErr := h.redeemService.GetByCode(ctx, plainCode)
 		if getErr == nil {
 			existing = latest
 		}
@@ -385,6 +474,11 @@ func (h *RedeemHandler) GetStats(c *gin.Context) {
 
 // Export handles exporting redeem codes to CSV
 // GET /api/v1/admin/redeem-codes/export
+//
+// 导出不再包含明文卡密：卡密一旦落盘成 CSV，任何一个拿到文件的环节都能直接兑换，
+// 「只返回一次」的边界会被导出整体绕过。因此这里只导出掩码 + 前缀 + 元数据，
+// 用于对账/审计（谁在什么时候用了哪一类卡、值多少、是否过期）。
+// 需要完整卡密的场景只剩「生成回执」这一条路径。
 func (h *RedeemHandler) Export(c *gin.Context) {
 	codeType := c.Query("type")
 	status := c.Query("status")
@@ -410,8 +504,11 @@ func (h *RedeemHandler) Export(c *gin.Context) {
 	var buf bytes.Buffer
 	writer := csv.NewWriter(&buf)
 
-	// Write header
-	if err := writer.Write([]string{"id", "code", "type", "value", "status", "used_by", "used_by_email", "used_at", "expires_at", "created_at"}); err != nil {
+	c.Header("Cache-Control", "no-store")
+
+	// Write header. code_mask = 前 4 位 + ****；code_prefix = 落库的前 8 位。
+	// 两列都不是凭据，无法用于兑换。
+	if err := writer.Write([]string{"id", "code_mask", "code_prefix", "type", "value", "status", "used_by", "used_by_email", "used_at", "expires_at", "created_at"}); err != nil {
 		response.InternalError(c, "Failed to export redeem codes: "+err.Error())
 		return
 	}
@@ -434,9 +531,14 @@ func (h *RedeemHandler) Export(c *gin.Context) {
 		if code.ExpiresAt != nil {
 			expiresAt = code.ExpiresAt.Format("2006-01-02 15:04:05")
 		}
+		codePrefix := ""
+		if !code.SyntheticCode {
+			codePrefix = code.DisplayPrefix()
+		}
 		if err := writer.Write([]string{
 			fmt.Sprintf("%d", code.ID),
-			code.Code,
+			code.DisplayCode(),
+			codePrefix,
 			code.Type,
 			fmt.Sprintf("%.2f", code.Value),
 			code.Status,

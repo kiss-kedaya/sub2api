@@ -39959,6 +39959,8 @@ type RedeemCodeMutation struct {
 	typ              string
 	id               *int64
 	code             *string
+	code_hash        *string
+	code_prefix      *string
 	_type            *string
 	value            *float64
 	addvalue         *float64
@@ -40108,9 +40110,120 @@ func (m *RedeemCodeMutation) OldCode(ctx context.Context) (v string, err error) 
 	return oldValue.Code, nil
 }
 
+// ClearCode clears the value of the "code" field.
+func (m *RedeemCodeMutation) ClearCode() {
+	m.code = nil
+	m.clearedFields[redeemcode.FieldCode] = struct{}{}
+}
+
+// CodeCleared returns if the "code" field was cleared in this mutation.
+func (m *RedeemCodeMutation) CodeCleared() bool {
+	_, ok := m.clearedFields[redeemcode.FieldCode]
+	return ok
+}
+
 // ResetCode resets all changes to the "code" field.
 func (m *RedeemCodeMutation) ResetCode() {
 	m.code = nil
+	delete(m.clearedFields, redeemcode.FieldCode)
+}
+
+// SetCodeHash sets the "code_hash" field.
+func (m *RedeemCodeMutation) SetCodeHash(s string) {
+	m.code_hash = &s
+}
+
+// CodeHash returns the value of the "code_hash" field in the mutation.
+func (m *RedeemCodeMutation) CodeHash() (r string, exists bool) {
+	v := m.code_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCodeHash returns the old "code_hash" field's value of the RedeemCode entity.
+// If the RedeemCode object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RedeemCodeMutation) OldCodeHash(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCodeHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCodeHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCodeHash: %w", err)
+	}
+	return oldValue.CodeHash, nil
+}
+
+// ClearCodeHash clears the value of the "code_hash" field.
+func (m *RedeemCodeMutation) ClearCodeHash() {
+	m.code_hash = nil
+	m.clearedFields[redeemcode.FieldCodeHash] = struct{}{}
+}
+
+// CodeHashCleared returns if the "code_hash" field was cleared in this mutation.
+func (m *RedeemCodeMutation) CodeHashCleared() bool {
+	_, ok := m.clearedFields[redeemcode.FieldCodeHash]
+	return ok
+}
+
+// ResetCodeHash resets all changes to the "code_hash" field.
+func (m *RedeemCodeMutation) ResetCodeHash() {
+	m.code_hash = nil
+	delete(m.clearedFields, redeemcode.FieldCodeHash)
+}
+
+// SetCodePrefix sets the "code_prefix" field.
+func (m *RedeemCodeMutation) SetCodePrefix(s string) {
+	m.code_prefix = &s
+}
+
+// CodePrefix returns the value of the "code_prefix" field in the mutation.
+func (m *RedeemCodeMutation) CodePrefix() (r string, exists bool) {
+	v := m.code_prefix
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCodePrefix returns the old "code_prefix" field's value of the RedeemCode entity.
+// If the RedeemCode object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RedeemCodeMutation) OldCodePrefix(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCodePrefix is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCodePrefix requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCodePrefix: %w", err)
+	}
+	return oldValue.CodePrefix, nil
+}
+
+// ClearCodePrefix clears the value of the "code_prefix" field.
+func (m *RedeemCodeMutation) ClearCodePrefix() {
+	m.code_prefix = nil
+	m.clearedFields[redeemcode.FieldCodePrefix] = struct{}{}
+}
+
+// CodePrefixCleared returns if the "code_prefix" field was cleared in this mutation.
+func (m *RedeemCodeMutation) CodePrefixCleared() bool {
+	_, ok := m.clearedFields[redeemcode.FieldCodePrefix]
+	return ok
+}
+
+// ResetCodePrefix resets all changes to the "code_prefix" field.
+func (m *RedeemCodeMutation) ResetCodePrefix() {
+	m.code_prefix = nil
+	delete(m.clearedFields, redeemcode.FieldCodePrefix)
 }
 
 // SetType sets the "type" field.
@@ -40679,9 +40792,15 @@ func (m *RedeemCodeMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *RedeemCodeMutation) Fields() []string {
-	fields := make([]string, 0, 11)
+	fields := make([]string, 0, 13)
 	if m.code != nil {
 		fields = append(fields, redeemcode.FieldCode)
+	}
+	if m.code_hash != nil {
+		fields = append(fields, redeemcode.FieldCodeHash)
+	}
+	if m.code_prefix != nil {
+		fields = append(fields, redeemcode.FieldCodePrefix)
 	}
 	if m._type != nil {
 		fields = append(fields, redeemcode.FieldType)
@@ -40723,6 +40842,10 @@ func (m *RedeemCodeMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case redeemcode.FieldCode:
 		return m.Code()
+	case redeemcode.FieldCodeHash:
+		return m.CodeHash()
+	case redeemcode.FieldCodePrefix:
+		return m.CodePrefix()
 	case redeemcode.FieldType:
 		return m.GetType()
 	case redeemcode.FieldValue:
@@ -40754,6 +40877,10 @@ func (m *RedeemCodeMutation) OldField(ctx context.Context, name string) (ent.Val
 	switch name {
 	case redeemcode.FieldCode:
 		return m.OldCode(ctx)
+	case redeemcode.FieldCodeHash:
+		return m.OldCodeHash(ctx)
+	case redeemcode.FieldCodePrefix:
+		return m.OldCodePrefix(ctx)
 	case redeemcode.FieldType:
 		return m.OldType(ctx)
 	case redeemcode.FieldValue:
@@ -40789,6 +40916,20 @@ func (m *RedeemCodeMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCode(v)
+		return nil
+	case redeemcode.FieldCodeHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCodeHash(v)
+		return nil
+	case redeemcode.FieldCodePrefix:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCodePrefix(v)
 		return nil
 	case redeemcode.FieldType:
 		v, ok := value.(string)
@@ -40917,6 +41058,15 @@ func (m *RedeemCodeMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *RedeemCodeMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(redeemcode.FieldCode) {
+		fields = append(fields, redeemcode.FieldCode)
+	}
+	if m.FieldCleared(redeemcode.FieldCodeHash) {
+		fields = append(fields, redeemcode.FieldCodeHash)
+	}
+	if m.FieldCleared(redeemcode.FieldCodePrefix) {
+		fields = append(fields, redeemcode.FieldCodePrefix)
+	}
 	if m.FieldCleared(redeemcode.FieldUsedBy) {
 		fields = append(fields, redeemcode.FieldUsedBy)
 	}
@@ -40946,6 +41096,15 @@ func (m *RedeemCodeMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *RedeemCodeMutation) ClearField(name string) error {
 	switch name {
+	case redeemcode.FieldCode:
+		m.ClearCode()
+		return nil
+	case redeemcode.FieldCodeHash:
+		m.ClearCodeHash()
+		return nil
+	case redeemcode.FieldCodePrefix:
+		m.ClearCodePrefix()
+		return nil
 	case redeemcode.FieldUsedBy:
 		m.ClearUsedBy()
 		return nil
@@ -40971,6 +41130,12 @@ func (m *RedeemCodeMutation) ResetField(name string) error {
 	switch name {
 	case redeemcode.FieldCode:
 		m.ResetCode()
+		return nil
+	case redeemcode.FieldCodeHash:
+		m.ResetCodeHash()
+		return nil
+	case redeemcode.FieldCodePrefix:
+		m.ResetCodePrefix()
 		return nil
 	case redeemcode.FieldType:
 		m.ResetType()

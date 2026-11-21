@@ -16,6 +16,10 @@ const (
 	FieldID = "id"
 	// FieldCode holds the string denoting the code field in the database.
 	FieldCode = "code"
+	// FieldCodeHash holds the string denoting the code_hash field in the database.
+	FieldCodeHash = "code_hash"
+	// FieldCodePrefix holds the string denoting the code_prefix field in the database.
+	FieldCodePrefix = "code_prefix"
 	// FieldType holds the string denoting the type field in the database.
 	FieldType = "type"
 	// FieldValue holds the string denoting the value field in the database.
@@ -62,6 +66,8 @@ const (
 var Columns = []string{
 	FieldID,
 	FieldCode,
+	FieldCodeHash,
+	FieldCodePrefix,
 	FieldType,
 	FieldValue,
 	FieldStatus,
@@ -87,6 +93,10 @@ func ValidColumn(column string) bool {
 var (
 	// CodeValidator is a validator for the "code" field. It is called by the builders before save.
 	CodeValidator func(string) error
+	// CodeHashValidator is a validator for the "code_hash" field. It is called by the builders before save.
+	CodeHashValidator func(string) error
+	// CodePrefixValidator is a validator for the "code_prefix" field. It is called by the builders before save.
+	CodePrefixValidator func(string) error
 	// DefaultType holds the default value on creation for the "type" field.
 	DefaultType string
 	// TypeValidator is a validator for the "type" field. It is called by the builders before save.
@@ -114,6 +124,16 @@ func ByID(opts ...sql.OrderTermOption) OrderOption {
 // ByCode orders the results by the code field.
 func ByCode(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCode, opts...).ToFunc()
+}
+
+// ByCodeHash orders the results by the code_hash field.
+func ByCodeHash(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCodeHash, opts...).ToFunc()
+}
+
+// ByCodePrefix orders the results by the code_prefix field.
+func ByCodePrefix(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCodePrefix, opts...).ToFunc()
 }
 
 // ByType orders the results by the type field.

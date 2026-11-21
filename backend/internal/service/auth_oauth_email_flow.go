@@ -362,8 +362,19 @@ func (s *AuthService) oauthEmailFlowClient(ctx context.Context) *dbent.Client {
 }
 
 func (s *AuthService) loadOAuthRegistrationInvitation(ctx context.Context, invitationCode string) (*RedeemCode, error) {
+	normalized := NormalizeRedeemCode(invitationCode)
 	if client := s.oauthEmailFlowClient(ctx); client != nil {
-		entity, err := client.RedeemCode.Query().Where(redeemcode.CodeEQ(invitationCode)).Only(ctx)
+		// 与 repository.GetByCode 同一契约：先按 sha256 命中（迁移 328 之后所有
+		// 新行），未命中再回退历史明文列（尚未回填的行）。事务内不能走 repo，
+		// 所以在这里显式实现两段查询。
+		entity, err := client.RedeemCode.Query().
+			Where(redeemcode.CodeHashEQ(HashRedeemCode(normalized))).
+			Only(ctx)
+		if dbent.IsNotFound(err) {
+			entity, err = client.RedeemCode.Query().
+				Where(redeemcode.CodeEQ(normalized)).
+				Only(ctx)
+		}
 		if err != nil {
 			if dbent.IsNotFound(err) {
 				return nil, ErrRedeemCodeNotFound
@@ -372,7 +383,8 @@ func (s *AuthService) loadOAuthRegistrationInvitation(ctx context.Context, invit
 		}
 		return &RedeemCode{
 			ID:           entity.ID,
-			Code:         entity.Code,
+			CodeHash:     entity.CodeHash,
+			CodePrefix:   entity.CodePrefix,
 			Type:         entity.Type,
 			Value:        entity.Value,
 			Status:       entity.Status,
@@ -416,8 +428,9 @@ func (s *AuthService) updateOAuthRegistrationInvitation(ctx context.Context, cod
 		return nil
 	}
 	if client := s.oauthEmailFlowClient(ctx); client != nil {
+		// 凭据本体不可变：这里绝不 SetCode 回写明文，否则回填过的行会重新长出
+		// 明文卡密。恢复邀请码只需要改状态/使用者/过期时间这些可变字段。
 		update := client.RedeemCode.UpdateOneID(code.ID).
-			SetCode(code.Code).
 			SetType(code.Type).
 			SetValue(code.Value).
 			SetStatus(code.Status).

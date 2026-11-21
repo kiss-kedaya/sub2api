@@ -577,15 +577,20 @@ type ProxyAccountSummary struct {
 }
 
 type RedeemCode struct {
-	ID        int64      `json:"id"`
-	Code      string     `json:"code"`
-	Type      string     `json:"type"`
-	Value     float64    `json:"value"`
-	Status    string     `json:"status"`
-	UsedBy    *int64     `json:"used_by"`
-	UsedAt    *time.Time `json:"used_at"`
-	CreatedAt time.Time  `json:"created_at"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	ID int64 `json:"id"`
+	// Code 永远只是掩码（前 4 位 + ****）。完整卡密只在「生成」接口的当次响应里
+	// 出现一次，任何列表 / 详情 / 历史 / 导出都不会、也不得返回明文。
+	Code string `json:"code"`
+	// CodePrefix 是落库的展示前缀（前 8 位）。它不是凭据，只用于后台识别与搜索；
+	// 短于 8 位的自定义卡密没有前缀。
+	CodePrefix string     `json:"code_prefix,omitempty"`
+	Type       string     `json:"type"`
+	Value      float64    `json:"value"`
+	Status     string     `json:"status"`
+	UsedBy     *int64     `json:"used_by"`
+	UsedAt     *time.Time `json:"used_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 
 	GroupID      *int64 `json:"group_id"`
 	ValidityDays int    `json:"validity_days"`
@@ -596,6 +601,23 @@ type RedeemCode struct {
 
 	User  *User  `json:"user,omitempty"`
 	Group *Group `json:"group,omitempty"`
+}
+
+// GeneratedRedeemCode 是「生成卡密」接口的一次性响应元素。
+//
+// 它是整个系统里唯一携带完整卡密明文的 DTO：只由 Generate handler 在首次执行时
+// 构造，绝不用于列表 / 详情 / 导出 / 幂等重放（重放走 AdminRedeemCode 掩码形态）。
+type GeneratedRedeemCode struct {
+	ID           int64      `json:"id"`
+	Code         string     `json:"code"`
+	CodePrefix   string     `json:"code_prefix,omitempty"`
+	Type         string     `json:"type"`
+	Value        float64    `json:"value"`
+	Status       string     `json:"status"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	GroupID      *int64     `json:"group_id,omitempty"`
+	ValidityDays int        `json:"validity_days"`
 }
 
 // AdminRedeemCode 是管理员接口使用的 redeem code DTO（包含 notes 等字段）。

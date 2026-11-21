@@ -361,6 +361,8 @@ export default {
       count: '数量',
       generate: '生成',
       copyAll: '全部复制',
+      plaintextOnceOnly:
+        '完整卡密只在这里显示一次，且只能复制一次。关闭后无法再次查看或复制，库里只保存哈希；丢失只能作废重发。',
       download: '下载',
       codesExported: '兑换码导出成功',
       codeDeleted: '兑换码删除成功',

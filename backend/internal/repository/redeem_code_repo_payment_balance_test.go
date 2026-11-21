@@ -30,6 +30,17 @@ func newRedeemCodePaymentBalanceRepo(t *testing.T) (*redeemCodeRepository, *dben
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
 
+	// redeem_code_hashes 是迁移 328 新增的原生 DDL 表，enttest 只建 schema 里的表，
+	// 这里用 SQLite 兼容的列类型补一份，保证创建/删除的双写路径可测。
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS redeem_code_hashes (
+		redeem_code_id INTEGER PRIMARY KEY REFERENCES redeem_codes(id) ON DELETE CASCADE,
+		code_hash      TEXT NOT NULL UNIQUE,
+		code_prefix    TEXT NOT NULL,
+		created_at     TIMESTAMP NOT NULL,
+		updated_at     TIMESTAMP NOT NULL
+	)`)
+	require.NoError(t, err)
+
 	repo, ok := NewRedeemCodeRepository(client).(*redeemCodeRepository)
 	require.True(t, ok, "repository constructor must return concrete test repository")
 	return repo, client
@@ -54,11 +65,21 @@ func TestRedeemCodeRepositoryCreateUsesTransactionFromContext(t *testing.T) {
 		UsedAt: &usedAt,
 	}
 	require.NoError(t, repo.Create(txCtx, code))
+	require.NotEmpty(t, code.CodeHash, "create must derive the credential hash in memory")
 	require.NoError(t, tx.Rollback())
 
-	count, err := client.RedeemCode.Query().Where(redeemcode.CodeEQ(code.Code)).Count(ctx)
+	// 凭据本体是 code_hash；code 明文列必须保持 NULL（只落哈希）。
+	count, err := client.RedeemCode.Query().Where(redeemcode.CodeHashEQ(code.CodeHash)).Count(ctx)
 	require.NoError(t, err)
 	require.Zero(t, count, "source record must roll back with its balance transaction")
+
+	ledgerCount, err := client.QueryContext(ctx, `SELECT COUNT(*) FROM redeem_code_hashes WHERE code_hash = $1`, code.CodeHash)
+	require.NoError(t, err)
+	require.True(t, ledgerCount.Next())
+	var ledgerRows int
+	require.NoError(t, ledgerCount.Scan(&ledgerRows))
+	require.NoError(t, ledgerCount.Close())
+	require.Zero(t, ledgerRows, "hash ledger row must roll back with the source record")
 }
 
 func TestRedeemCodeRepositorySumPositiveBalanceByUserIncludesPaymentBalance(t *testing.T) {

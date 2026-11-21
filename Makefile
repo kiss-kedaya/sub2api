@@ -83,6 +83,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/auth/__tests__/TotpLoginModal.spec.ts \
 	src/components/auth/__tests__/TotpStepUpDialog.spec.ts \
 	src/views/admin/__tests__/RedeemView.stepUp.spec.ts \
+	src/views/admin/__tests__/RedeemView.onceOnly.spec.ts \
 	src/components/user/profile/__tests__/ProfileBarkCard.spec.ts \
 	src/components/crypto/__tests__/CryptoWalletSecurityPanel.spec.ts \
 	src/components/crypto/__tests__/CryptoGasWalletPanel.spec.ts \

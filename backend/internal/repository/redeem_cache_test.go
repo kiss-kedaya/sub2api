@@ -6,6 +6,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,32 +47,20 @@ func TestRedeemRateLimitKey(t *testing.T) {
 }
 
 func TestRedeemLockKey(t *testing.T) {
-	tests := []struct {
-		name     string
-		code     string
-		expected string
-	}{
-		{
-			name:     "normal_code",
-			code:     "ABC123",
-			expected: "redeem:lock:ABC123",
-		},
-		{
-			name:     "empty_code",
-			code:     "",
-			expected: "redeem:lock:",
-		},
-		{
-			name:     "code_with_special_chars",
-			code:     "CODE-2024:test",
-			expected: "redeem:lock:CODE-2024:test",
-		},
-	}
+	// 锁键必须是 sha256(明文) 而不是明文本身：卡密是可兑现凭据，明文进 Redis
+	// key 会出现在 slowlog / MONITOR / 备份 / 运维截图里。
+	// 同一张卡（含首尾空白）必须落到同一个锁键，不同卡必须不同。
+	sameA := redeemLockKey("ABC123")
+	sameB := redeemLockKey("  ABC123  ")
+	require.Equal(t, sameA, sameB, "normalized plaintext must share one lock key")
+	require.Equal(t, redeemLockKeyPrefix+service.HashRedeemCode("ABC123"), sameA)
+	require.NotContains(t, sameA, "ABC123", "lock key must not contain the plaintext code")
+	require.Len(t, sameA, len(redeemLockKeyPrefix)+service.RedeemCodeHashHexLen)
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := redeemLockKey(tc.code)
-			require.Equal(t, tc.expected, got)
-		})
-	}
+	other := redeemLockKey("ABC124")
+	require.NotEqual(t, sameA, other)
+
+	// 空卡密退化为固定字面量：查库阶段必然 404，不会放大可用性。
+	require.Equal(t, redeemLockKeyPrefix+"empty", redeemLockKey(""))
+	require.Equal(t, redeemLockKeyPrefix+"empty", redeemLockKey("   "))
 }

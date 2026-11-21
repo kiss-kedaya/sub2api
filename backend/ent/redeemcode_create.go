@@ -30,6 +30,42 @@ func (_c *RedeemCodeCreate) SetCode(v string) *RedeemCodeCreate {
 	return _c
 }
 
+// SetNillableCode sets the "code" field if the given value is not nil.
+func (_c *RedeemCodeCreate) SetNillableCode(v *string) *RedeemCodeCreate {
+	if v != nil {
+		_c.SetCode(*v)
+	}
+	return _c
+}
+
+// SetCodeHash sets the "code_hash" field.
+func (_c *RedeemCodeCreate) SetCodeHash(v string) *RedeemCodeCreate {
+	_c.mutation.SetCodeHash(v)
+	return _c
+}
+
+// SetNillableCodeHash sets the "code_hash" field if the given value is not nil.
+func (_c *RedeemCodeCreate) SetNillableCodeHash(v *string) *RedeemCodeCreate {
+	if v != nil {
+		_c.SetCodeHash(*v)
+	}
+	return _c
+}
+
+// SetCodePrefix sets the "code_prefix" field.
+func (_c *RedeemCodeCreate) SetCodePrefix(v string) *RedeemCodeCreate {
+	_c.mutation.SetCodePrefix(v)
+	return _c
+}
+
+// SetNillableCodePrefix sets the "code_prefix" field if the given value is not nil.
+func (_c *RedeemCodeCreate) SetNillableCodePrefix(v *string) *RedeemCodeCreate {
+	if v != nil {
+		_c.SetCodePrefix(*v)
+	}
+	return _c
+}
+
 // SetType sets the "type" field.
 func (_c *RedeemCodeCreate) SetType(v string) *RedeemCodeCreate {
 	_c.mutation.SetType(v)
@@ -253,12 +289,19 @@ func (_c *RedeemCodeCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *RedeemCodeCreate) check() error {
-	if _, ok := _c.mutation.Code(); !ok {
-		return &ValidationError{Name: "code", err: errors.New(`ent: missing required field "RedeemCode.code"`)}
-	}
 	if v, ok := _c.mutation.Code(); ok {
 		if err := redeemcode.CodeValidator(v); err != nil {
 			return &ValidationError{Name: "code", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.code": %w`, err)}
+		}
+	}
+	if v, ok := _c.mutation.CodeHash(); ok {
+		if err := redeemcode.CodeHashValidator(v); err != nil {
+			return &ValidationError{Name: "code_hash", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.code_hash": %w`, err)}
+		}
+	}
+	if v, ok := _c.mutation.CodePrefix(); ok {
+		if err := redeemcode.CodePrefixValidator(v); err != nil {
+			return &ValidationError{Name: "code_prefix", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.code_prefix": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.GetType(); !ok {
@@ -316,6 +359,14 @@ func (_c *RedeemCodeCreate) createSpec() (*RedeemCode, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Code(); ok {
 		_spec.SetField(redeemcode.FieldCode, field.TypeString, value)
 		_node.Code = value
+	}
+	if value, ok := _c.mutation.CodeHash(); ok {
+		_spec.SetField(redeemcode.FieldCodeHash, field.TypeString, value)
+		_node.CodeHash = value
+	}
+	if value, ok := _c.mutation.CodePrefix(); ok {
+		_spec.SetField(redeemcode.FieldCodePrefix, field.TypeString, value)
+		_node.CodePrefix = value
 	}
 	if value, ok := _c.mutation.GetType(); ok {
 		_spec.SetField(redeemcode.FieldType, field.TypeString, value)
@@ -444,6 +495,48 @@ func (u *RedeemCodeUpsert) SetCode(v string) *RedeemCodeUpsert {
 // UpdateCode sets the "code" field to the value that was provided on create.
 func (u *RedeemCodeUpsert) UpdateCode() *RedeemCodeUpsert {
 	u.SetExcluded(redeemcode.FieldCode)
+	return u
+}
+
+// ClearCode clears the value of the "code" field.
+func (u *RedeemCodeUpsert) ClearCode() *RedeemCodeUpsert {
+	u.SetNull(redeemcode.FieldCode)
+	return u
+}
+
+// SetCodeHash sets the "code_hash" field.
+func (u *RedeemCodeUpsert) SetCodeHash(v string) *RedeemCodeUpsert {
+	u.Set(redeemcode.FieldCodeHash, v)
+	return u
+}
+
+// UpdateCodeHash sets the "code_hash" field to the value that was provided on create.
+func (u *RedeemCodeUpsert) UpdateCodeHash() *RedeemCodeUpsert {
+	u.SetExcluded(redeemcode.FieldCodeHash)
+	return u
+}
+
+// ClearCodeHash clears the value of the "code_hash" field.
+func (u *RedeemCodeUpsert) ClearCodeHash() *RedeemCodeUpsert {
+	u.SetNull(redeemcode.FieldCodeHash)
+	return u
+}
+
+// SetCodePrefix sets the "code_prefix" field.
+func (u *RedeemCodeUpsert) SetCodePrefix(v string) *RedeemCodeUpsert {
+	u.Set(redeemcode.FieldCodePrefix, v)
+	return u
+}
+
+// UpdateCodePrefix sets the "code_prefix" field to the value that was provided on create.
+func (u *RedeemCodeUpsert) UpdateCodePrefix() *RedeemCodeUpsert {
+	u.SetExcluded(redeemcode.FieldCodePrefix)
+	return u
+}
+
+// ClearCodePrefix clears the value of the "code_prefix" field.
+func (u *RedeemCodeUpsert) ClearCodePrefix() *RedeemCodeUpsert {
+	u.SetNull(redeemcode.FieldCodePrefix)
 	return u
 }
 
@@ -653,6 +746,55 @@ func (u *RedeemCodeUpsertOne) SetCode(v string) *RedeemCodeUpsertOne {
 func (u *RedeemCodeUpsertOne) UpdateCode() *RedeemCodeUpsertOne {
 	return u.Update(func(s *RedeemCodeUpsert) {
 		s.UpdateCode()
+	})
+}
+
+// ClearCode clears the value of the "code" field.
+func (u *RedeemCodeUpsertOne) ClearCode() *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.ClearCode()
+	})
+}
+
+// SetCodeHash sets the "code_hash" field.
+func (u *RedeemCodeUpsertOne) SetCodeHash(v string) *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.SetCodeHash(v)
+	})
+}
+
+// UpdateCodeHash sets the "code_hash" field to the value that was provided on create.
+func (u *RedeemCodeUpsertOne) UpdateCodeHash() *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.UpdateCodeHash()
+	})
+}
+
+// ClearCodeHash clears the value of the "code_hash" field.
+func (u *RedeemCodeUpsertOne) ClearCodeHash() *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.ClearCodeHash()
+	})
+}
+
+// SetCodePrefix sets the "code_prefix" field.
+func (u *RedeemCodeUpsertOne) SetCodePrefix(v string) *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.SetCodePrefix(v)
+	})
+}
+
+// UpdateCodePrefix sets the "code_prefix" field to the value that was provided on create.
+func (u *RedeemCodeUpsertOne) UpdateCodePrefix() *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.UpdateCodePrefix()
+	})
+}
+
+// ClearCodePrefix clears the value of the "code_prefix" field.
+func (u *RedeemCodeUpsertOne) ClearCodePrefix() *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.ClearCodePrefix()
 	})
 }
 
@@ -1053,6 +1195,55 @@ func (u *RedeemCodeUpsertBulk) SetCode(v string) *RedeemCodeUpsertBulk {
 func (u *RedeemCodeUpsertBulk) UpdateCode() *RedeemCodeUpsertBulk {
 	return u.Update(func(s *RedeemCodeUpsert) {
 		s.UpdateCode()
+	})
+}
+
+// ClearCode clears the value of the "code" field.
+func (u *RedeemCodeUpsertBulk) ClearCode() *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.ClearCode()
+	})
+}
+
+// SetCodeHash sets the "code_hash" field.
+func (u *RedeemCodeUpsertBulk) SetCodeHash(v string) *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.SetCodeHash(v)
+	})
+}
+
+// UpdateCodeHash sets the "code_hash" field to the value that was provided on create.
+func (u *RedeemCodeUpsertBulk) UpdateCodeHash() *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.UpdateCodeHash()
+	})
+}
+
+// ClearCodeHash clears the value of the "code_hash" field.
+func (u *RedeemCodeUpsertBulk) ClearCodeHash() *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.ClearCodeHash()
+	})
+}
+
+// SetCodePrefix sets the "code_prefix" field.
+func (u *RedeemCodeUpsertBulk) SetCodePrefix(v string) *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.SetCodePrefix(v)
+	})
+}
+
+// UpdateCodePrefix sets the "code_prefix" field to the value that was provided on create.
+func (u *RedeemCodeUpsertBulk) UpdateCodePrefix() *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.UpdateCodePrefix()
+	})
+}
+
+// ClearCodePrefix clears the value of the "code_prefix" field.
+func (u *RedeemCodeUpsertBulk) ClearCodePrefix() *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.ClearCodePrefix()
 	})
 }
 

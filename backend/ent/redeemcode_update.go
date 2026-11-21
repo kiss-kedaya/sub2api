@@ -44,6 +44,52 @@ func (_u *RedeemCodeUpdate) SetNillableCode(v *string) *RedeemCodeUpdate {
 	return _u
 }
 
+// ClearCode clears the value of the "code" field.
+func (_u *RedeemCodeUpdate) ClearCode() *RedeemCodeUpdate {
+	_u.mutation.ClearCode()
+	return _u
+}
+
+// SetCodeHash sets the "code_hash" field.
+func (_u *RedeemCodeUpdate) SetCodeHash(v string) *RedeemCodeUpdate {
+	_u.mutation.SetCodeHash(v)
+	return _u
+}
+
+// SetNillableCodeHash sets the "code_hash" field if the given value is not nil.
+func (_u *RedeemCodeUpdate) SetNillableCodeHash(v *string) *RedeemCodeUpdate {
+	if v != nil {
+		_u.SetCodeHash(*v)
+	}
+	return _u
+}
+
+// ClearCodeHash clears the value of the "code_hash" field.
+func (_u *RedeemCodeUpdate) ClearCodeHash() *RedeemCodeUpdate {
+	_u.mutation.ClearCodeHash()
+	return _u
+}
+
+// SetCodePrefix sets the "code_prefix" field.
+func (_u *RedeemCodeUpdate) SetCodePrefix(v string) *RedeemCodeUpdate {
+	_u.mutation.SetCodePrefix(v)
+	return _u
+}
+
+// SetNillableCodePrefix sets the "code_prefix" field if the given value is not nil.
+func (_u *RedeemCodeUpdate) SetNillableCodePrefix(v *string) *RedeemCodeUpdate {
+	if v != nil {
+		_u.SetCodePrefix(*v)
+	}
+	return _u
+}
+
+// ClearCodePrefix clears the value of the "code_prefix" field.
+func (_u *RedeemCodeUpdate) ClearCodePrefix() *RedeemCodeUpdate {
+	_u.mutation.ClearCodePrefix()
+	return _u
+}
+
 // SetType sets the "type" field.
 func (_u *RedeemCodeUpdate) SetType(v string) *RedeemCodeUpdate {
 	_u.mutation.SetType(v)
@@ -289,6 +335,16 @@ func (_u *RedeemCodeUpdate) check() error {
 			return &ValidationError{Name: "code", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.code": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.CodeHash(); ok {
+		if err := redeemcode.CodeHashValidator(v); err != nil {
+			return &ValidationError{Name: "code_hash", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.code_hash": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.CodePrefix(); ok {
+		if err := redeemcode.CodePrefixValidator(v); err != nil {
+			return &ValidationError{Name: "code_prefix", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.code_prefix": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.GetType(); ok {
 		if err := redeemcode.TypeValidator(v); err != nil {
 			return &ValidationError{Name: "type", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.type": %w`, err)}
@@ -316,6 +372,21 @@ func (_u *RedeemCodeUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 	}
 	if value, ok := _u.mutation.Code(); ok {
 		_spec.SetField(redeemcode.FieldCode, field.TypeString, value)
+	}
+	if _u.mutation.CodeCleared() {
+		_spec.ClearField(redeemcode.FieldCode, field.TypeString)
+	}
+	if value, ok := _u.mutation.CodeHash(); ok {
+		_spec.SetField(redeemcode.FieldCodeHash, field.TypeString, value)
+	}
+	if _u.mutation.CodeHashCleared() {
+		_spec.ClearField(redeemcode.FieldCodeHash, field.TypeString)
+	}
+	if value, ok := _u.mutation.CodePrefix(); ok {
+		_spec.SetField(redeemcode.FieldCodePrefix, field.TypeString, value)
+	}
+	if _u.mutation.CodePrefixCleared() {
+		_spec.ClearField(redeemcode.FieldCodePrefix, field.TypeString)
 	}
 	if value, ok := _u.mutation.GetType(); ok {
 		_spec.SetField(redeemcode.FieldType, field.TypeString, value)
@@ -442,6 +513,52 @@ func (_u *RedeemCodeUpdateOne) SetNillableCode(v *string) *RedeemCodeUpdateOne {
 	if v != nil {
 		_u.SetCode(*v)
 	}
+	return _u
+}
+
+// ClearCode clears the value of the "code" field.
+func (_u *RedeemCodeUpdateOne) ClearCode() *RedeemCodeUpdateOne {
+	_u.mutation.ClearCode()
+	return _u
+}
+
+// SetCodeHash sets the "code_hash" field.
+func (_u *RedeemCodeUpdateOne) SetCodeHash(v string) *RedeemCodeUpdateOne {
+	_u.mutation.SetCodeHash(v)
+	return _u
+}
+
+// SetNillableCodeHash sets the "code_hash" field if the given value is not nil.
+func (_u *RedeemCodeUpdateOne) SetNillableCodeHash(v *string) *RedeemCodeUpdateOne {
+	if v != nil {
+		_u.SetCodeHash(*v)
+	}
+	return _u
+}
+
+// ClearCodeHash clears the value of the "code_hash" field.
+func (_u *RedeemCodeUpdateOne) ClearCodeHash() *RedeemCodeUpdateOne {
+	_u.mutation.ClearCodeHash()
+	return _u
+}
+
+// SetCodePrefix sets the "code_prefix" field.
+func (_u *RedeemCodeUpdateOne) SetCodePrefix(v string) *RedeemCodeUpdateOne {
+	_u.mutation.SetCodePrefix(v)
+	return _u
+}
+
+// SetNillableCodePrefix sets the "code_prefix" field if the given value is not nil.
+func (_u *RedeemCodeUpdateOne) SetNillableCodePrefix(v *string) *RedeemCodeUpdateOne {
+	if v != nil {
+		_u.SetCodePrefix(*v)
+	}
+	return _u
+}
+
+// ClearCodePrefix clears the value of the "code_prefix" field.
+func (_u *RedeemCodeUpdateOne) ClearCodePrefix() *RedeemCodeUpdateOne {
+	_u.mutation.ClearCodePrefix()
 	return _u
 }
 
@@ -703,6 +820,16 @@ func (_u *RedeemCodeUpdateOne) check() error {
 			return &ValidationError{Name: "code", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.code": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.CodeHash(); ok {
+		if err := redeemcode.CodeHashValidator(v); err != nil {
+			return &ValidationError{Name: "code_hash", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.code_hash": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.CodePrefix(); ok {
+		if err := redeemcode.CodePrefixValidator(v); err != nil {
+			return &ValidationError{Name: "code_prefix", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.code_prefix": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.GetType(); ok {
 		if err := redeemcode.TypeValidator(v); err != nil {
 			return &ValidationError{Name: "type", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.type": %w`, err)}
@@ -747,6 +874,21 @@ func (_u *RedeemCodeUpdateOne) sqlSave(ctx context.Context) (_node *RedeemCode, 
 	}
 	if value, ok := _u.mutation.Code(); ok {
 		_spec.SetField(redeemcode.FieldCode, field.TypeString, value)
+	}
+	if _u.mutation.CodeCleared() {
+		_spec.ClearField(redeemcode.FieldCode, field.TypeString)
+	}
+	if value, ok := _u.mutation.CodeHash(); ok {
+		_spec.SetField(redeemcode.FieldCodeHash, field.TypeString, value)
+	}
+	if _u.mutation.CodeHashCleared() {
+		_spec.ClearField(redeemcode.FieldCodeHash, field.TypeString)
+	}
+	if value, ok := _u.mutation.CodePrefix(); ok {
+		_spec.SetField(redeemcode.FieldCodePrefix, field.TypeString, value)
+	}
+	if _u.mutation.CodePrefixCleared() {
+		_spec.ClearField(redeemcode.FieldCodePrefix, field.TypeString)
 	}
 	if value, ok := _u.mutation.GetType(); ok {
 		_spec.SetField(redeemcode.FieldType, field.TypeString, value)

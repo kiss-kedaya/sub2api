@@ -60,6 +60,16 @@ func Code(v string) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldEQ(FieldCode, v))
 }
 
+// CodeHash applies equality check predicate on the "code_hash" field. It's identical to CodeHashEQ.
+func CodeHash(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEQ(FieldCodeHash, v))
+}
+
+// CodePrefix applies equality check predicate on the "code_prefix" field. It's identical to CodePrefixEQ.
+func CodePrefix(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEQ(FieldCodePrefix, v))
+}
+
 // Type applies equality check predicate on the "type" field. It's identical to TypeEQ.
 func Type(v string) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldEQ(FieldType, v))
@@ -165,6 +175,16 @@ func CodeHasSuffix(v string) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldHasSuffix(FieldCode, v))
 }
 
+// CodeIsNil applies the IsNil predicate on the "code" field.
+func CodeIsNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldIsNull(FieldCode))
+}
+
+// CodeNotNil applies the NotNil predicate on the "code" field.
+func CodeNotNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNotNull(FieldCode))
+}
+
 // CodeEqualFold applies the EqualFold predicate on the "code" field.
 func CodeEqualFold(v string) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldEqualFold(FieldCode, v))
@@ -173,6 +193,156 @@ func CodeEqualFold(v string) predicate.RedeemCode {
 // CodeContainsFold applies the ContainsFold predicate on the "code" field.
 func CodeContainsFold(v string) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldContainsFold(FieldCode, v))
+}
+
+// CodeHashEQ applies the EQ predicate on the "code_hash" field.
+func CodeHashEQ(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEQ(FieldCodeHash, v))
+}
+
+// CodeHashNEQ applies the NEQ predicate on the "code_hash" field.
+func CodeHashNEQ(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNEQ(FieldCodeHash, v))
+}
+
+// CodeHashIn applies the In predicate on the "code_hash" field.
+func CodeHashIn(vs ...string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldIn(FieldCodeHash, vs...))
+}
+
+// CodeHashNotIn applies the NotIn predicate on the "code_hash" field.
+func CodeHashNotIn(vs ...string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNotIn(FieldCodeHash, vs...))
+}
+
+// CodeHashGT applies the GT predicate on the "code_hash" field.
+func CodeHashGT(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldGT(FieldCodeHash, v))
+}
+
+// CodeHashGTE applies the GTE predicate on the "code_hash" field.
+func CodeHashGTE(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldGTE(FieldCodeHash, v))
+}
+
+// CodeHashLT applies the LT predicate on the "code_hash" field.
+func CodeHashLT(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldLT(FieldCodeHash, v))
+}
+
+// CodeHashLTE applies the LTE predicate on the "code_hash" field.
+func CodeHashLTE(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldLTE(FieldCodeHash, v))
+}
+
+// CodeHashContains applies the Contains predicate on the "code_hash" field.
+func CodeHashContains(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldContains(FieldCodeHash, v))
+}
+
+// CodeHashHasPrefix applies the HasPrefix predicate on the "code_hash" field.
+func CodeHashHasPrefix(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldHasPrefix(FieldCodeHash, v))
+}
+
+// CodeHashHasSuffix applies the HasSuffix predicate on the "code_hash" field.
+func CodeHashHasSuffix(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldHasSuffix(FieldCodeHash, v))
+}
+
+// CodeHashIsNil applies the IsNil predicate on the "code_hash" field.
+func CodeHashIsNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldIsNull(FieldCodeHash))
+}
+
+// CodeHashNotNil applies the NotNil predicate on the "code_hash" field.
+func CodeHashNotNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNotNull(FieldCodeHash))
+}
+
+// CodeHashEqualFold applies the EqualFold predicate on the "code_hash" field.
+func CodeHashEqualFold(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEqualFold(FieldCodeHash, v))
+}
+
+// CodeHashContainsFold applies the ContainsFold predicate on the "code_hash" field.
+func CodeHashContainsFold(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldContainsFold(FieldCodeHash, v))
+}
+
+// CodePrefixEQ applies the EQ predicate on the "code_prefix" field.
+func CodePrefixEQ(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEQ(FieldCodePrefix, v))
+}
+
+// CodePrefixNEQ applies the NEQ predicate on the "code_prefix" field.
+func CodePrefixNEQ(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNEQ(FieldCodePrefix, v))
+}
+
+// CodePrefixIn applies the In predicate on the "code_prefix" field.
+func CodePrefixIn(vs ...string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldIn(FieldCodePrefix, vs...))
+}
+
+// CodePrefixNotIn applies the NotIn predicate on the "code_prefix" field.
+func CodePrefixNotIn(vs ...string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNotIn(FieldCodePrefix, vs...))
+}
+
+// CodePrefixGT applies the GT predicate on the "code_prefix" field.
+func CodePrefixGT(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldGT(FieldCodePrefix, v))
+}
+
+// CodePrefixGTE applies the GTE predicate on the "code_prefix" field.
+func CodePrefixGTE(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldGTE(FieldCodePrefix, v))
+}
+
+// CodePrefixLT applies the LT predicate on the "code_prefix" field.
+func CodePrefixLT(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldLT(FieldCodePrefix, v))
+}
+
+// CodePrefixLTE applies the LTE predicate on the "code_prefix" field.
+func CodePrefixLTE(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldLTE(FieldCodePrefix, v))
+}
+
+// CodePrefixContains applies the Contains predicate on the "code_prefix" field.
+func CodePrefixContains(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldContains(FieldCodePrefix, v))
+}
+
+// CodePrefixHasPrefix applies the HasPrefix predicate on the "code_prefix" field.
+func CodePrefixHasPrefix(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldHasPrefix(FieldCodePrefix, v))
+}
+
+// CodePrefixHasSuffix applies the HasSuffix predicate on the "code_prefix" field.
+func CodePrefixHasSuffix(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldHasSuffix(FieldCodePrefix, v))
+}
+
+// CodePrefixIsNil applies the IsNil predicate on the "code_prefix" field.
+func CodePrefixIsNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldIsNull(FieldCodePrefix))
+}
+
+// CodePrefixNotNil applies the NotNil predicate on the "code_prefix" field.
+func CodePrefixNotNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNotNull(FieldCodePrefix))
+}
+
+// CodePrefixEqualFold applies the EqualFold predicate on the "code_prefix" field.
+func CodePrefixEqualFold(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEqualFold(FieldCodePrefix, v))
+}
+
+// CodePrefixContainsFold applies the ContainsFold predicate on the "code_prefix" field.
+func CodePrefixContainsFold(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldContainsFold(FieldCodePrefix, v))
 }
 
 // TypeEQ applies the EQ predicate on the "type" field.

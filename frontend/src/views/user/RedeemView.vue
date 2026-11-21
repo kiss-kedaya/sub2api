@@ -184,7 +184,7 @@
                   v-if="!isAdminAdjustment(item.type)"
                   class="font-mono text-xs text-dimmed"
                 >
-                  {{ item.code.slice(0, 8) }}...
+                  {{ item.code }}
                 </p>
                 <p v-else class="text-xs text-dimmed">
                   {{ t('redeem.adminAdjustment') }}

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -23,42 +24,62 @@ func NewRedeemCodeRepository(client *dbent.Client) service.RedeemCodeRepository 
 	return &redeemCodeRepository{client: client}
 }
 
+// Create 写入一张卡密：库里只落 sha256 哈希与前缀，明文列写 NULL。
+//
+// 明文只存在于调用方内存对象里（生成/创建回执），用于当次响应；之后再没有任何
+// 读路径能把它取回来。台账 redeem_code_hashes 与主表同事务双写。
 func (r *redeemCodeRepository) Create(ctx context.Context, code *service.RedeemCode) error {
+	if code == nil {
+		return errors.New("redeem code is required")
+	}
+	code.EnsureCodeHash()
+	if code.CodeHash == "" {
+		return errors.New("redeem code hash is required")
+	}
 	client := clientFromContext(ctx, r.client)
 	created, err := client.RedeemCode.Create().
-		SetCode(code.Code).
 		SetType(code.Type).
 		SetValue(code.Value).
 		SetStatus(code.Status).
 		SetNotes(code.Notes).
 		SetValidityDays(code.ValidityDays).
+		SetCodeHash(code.CodeHash).
+		SetCodePrefix(code.CodePrefix).
 		SetNillableExpiresAt(code.ExpiresAt).
 		SetNillableUsedBy(code.UsedBy).
 		SetNillableUsedAt(code.UsedAt).
 		SetNillableGroupID(code.GroupID).
 		Save(ctx)
-	if err == nil {
-		code.ID = created.ID
-		code.CreatedAt = created.CreatedAt
+	if err != nil {
+		return err
 	}
-	return err
+	code.ID = created.ID
+	code.CreatedAt = created.CreatedAt
+	return r.upsertRedeemCodeHash(ctx, code.ID, code.CodeHash, code.CodePrefix)
 }
 
+// CreateBatch 批量写入卡密：同样只落哈希与前缀，台账用单条 unnest 语句双写。
 func (r *redeemCodeRepository) CreateBatch(ctx context.Context, codes []service.RedeemCode) error {
 	if len(codes) == 0 {
 		return nil
 	}
 
+	client := clientFromContext(ctx, r.client)
 	builders := make([]*dbent.RedeemCodeCreate, 0, len(codes))
 	for i := range codes {
 		c := &codes[i]
-		b := r.client.RedeemCode.Create().
-			SetCode(c.Code).
+		c.EnsureCodeHash()
+		if c.CodeHash == "" {
+			return fmt.Errorf("create redeem code batch: row %d has no code hash", i)
+		}
+		b := client.RedeemCode.Create().
 			SetType(c.Type).
 			SetValue(c.Value).
 			SetStatus(c.Status).
 			SetNotes(c.Notes).
 			SetValidityDays(c.ValidityDays).
+			SetCodeHash(c.CodeHash).
+			SetCodePrefix(c.CodePrefix).
 			SetNillableExpiresAt(c.ExpiresAt).
 			SetNillableUsedBy(c.UsedBy).
 			SetNillableUsedAt(c.UsedAt).
@@ -66,18 +87,24 @@ func (r *redeemCodeRepository) CreateBatch(ctx context.Context, codes []service.
 		builders = append(builders, b)
 	}
 
-	created, err := r.client.RedeemCode.CreateBulk(builders...).Save(ctx)
+	created, err := client.RedeemCode.CreateBulk(builders...).Save(ctx)
 	if err != nil {
 		return err
 	}
 	if len(created) != len(codes) {
 		return fmt.Errorf("create redeem code batch: inserted %d of %d rows", len(created), len(codes))
 	}
+	ledger := make([]dbentRedeemCodeIdentity, 0, len(created))
 	for i := range created {
 		codes[i].ID = created[i].ID
 		codes[i].CreatedAt = created[i].CreatedAt
+		ledger = append(ledger, dbentRedeemCodeIdentity{
+			ID:     created[i].ID,
+			Hash:   codes[i].CodeHash,
+			Prefix: codes[i].CodePrefix,
+		})
 	}
-	return nil
+	return r.upsertRedeemCodeHashesBatch(ctx, ledger)
 }
 
 func (r *redeemCodeRepository) GetByID(ctx context.Context, id int64) (*service.RedeemCode, error) {
@@ -93,15 +120,34 @@ func (r *redeemCodeRepository) GetByID(ctx context.Context, id int64) (*service.
 	return redeemCodeEntityToService(m), nil
 }
 
+// GetByCode 按明文卡密查询：先查 sha256 哈希，未命中再回退历史明文列。
+//
+// 回退是过渡期行为，只为「迁移 328 已上线但生产回填还没跑完」的历史行：
+// 这些行 code 里还有明文、code_hash 还是 NULL，只能按明文命中。新行与已回填
+// 行 code 为 NULL，明文查询永远命中不到，所以回退不会泄露或放大权限。
+// 阶段 B 清理完成、确认 count(明文且无哈希)=0 之后，可删掉回退分支。
 func (r *redeemCodeRepository) GetByCode(ctx context.Context, code string) (*service.RedeemCode, error) {
+	normalized := service.NormalizeRedeemCode(code)
+	if normalized == "" {
+		return nil, service.ErrRedeemCodeNotFound
+	}
+
 	m, err := r.client.RedeemCode.Query().
-		Where(redeemcode.CodeEQ(code)).
+		Where(redeemcode.CodeHashEQ(service.HashRedeemCode(normalized))).
 		Only(ctx)
-	if err != nil {
-		if dbent.IsNotFound(err) {
-			return nil, service.ErrRedeemCodeNotFound
-		}
+	if err != nil && !dbent.IsNotFound(err) {
 		return nil, err
+	}
+	if dbent.IsNotFound(err) {
+		m, err = r.client.RedeemCode.Query().
+			Where(redeemcode.CodeEQ(normalized)).
+			Only(ctx)
+		if err != nil {
+			if dbent.IsNotFound(err) {
+				return nil, service.ErrRedeemCodeNotFound
+			}
+			return nil, err
+		}
 	}
 	return redeemCodeEntityToService(m), nil
 }
@@ -146,12 +192,29 @@ func (r *redeemCodeRepository) ListWithFilters(ctx context.Context, params pagin
 		}
 	}
 	if search != "" {
-		q = q.Where(
-			redeemcode.Or(
-				redeemcode.CodeContainsFold(search),
-				redeemcode.HasUserWith(user.EmailContainsFold(search)),
-			),
+		// 库里已经没有明文之后，后台「搜索卡密」只能三路并查：
+		//   - code_hash 等值：管理员手里有完整卡密（哈希命中，唯一可靠路径）；
+		//   - code_prefix 前缀：只记得开头几位；
+		//   - code 明文 LIKE：尚未回填的历史行（回填完成后永远不命中）。
+		// 少任何一路都会让后台在迁移期搜不到某类卡。
+		normalizedSearch := service.NormalizeRedeemCode(search)
+		searchCondition := redeemcode.Or(
+			redeemcode.CodeContainsFold(normalizedSearch),
+			redeemcode.HasUserWith(user.EmailContainsFold(search)),
 		)
+		if normalizedSearch != "" {
+			searchCondition = redeemcode.Or(
+				redeemcode.CodeHashEQ(service.HashRedeemCode(normalizedSearch)),
+				searchCondition,
+			)
+			if prefix := service.RedeemCodePrefixFromPlaintext(normalizedSearch); prefix != "" {
+				searchCondition = redeemcode.Or(
+					redeemcode.CodePrefixHasPrefix(prefix),
+					searchCondition,
+				)
+			}
+		}
+		q = q.Where(searchCondition)
 	}
 
 	total, err := q.Count(ctx)
@@ -208,9 +271,13 @@ func redeemCodeListOrder(params pagination.PaginationParams) []func(*entsql.Sele
 	return []func(*entsql.Selector){dbent.Desc(field), dbent.Desc(redeemcode.FieldID)}
 }
 
+// Update 更新卡密的可变字段。
+//
+// 凭据本体（code / code_hash / code_prefix）是不可变的：写入之后没有任何
+// 业务需要改卡密字符串，这里也绝不回写明文——一旦回写，迁移期回填过的行会重新
+// 出现明文，整个「只落哈希」的边界就破了。
 func (r *redeemCodeRepository) Update(ctx context.Context, code *service.RedeemCode) error {
 	up := r.client.RedeemCode.UpdateOneID(code.ID).
-		SetCode(code.Code).
 		SetType(code.Type).
 		SetValue(code.Value).
 		SetStatus(code.Status).
@@ -438,6 +505,8 @@ func redeemCodeEntityToService(m *dbent.RedeemCode) *service.RedeemCode {
 	out := &service.RedeemCode{
 		ID:           m.ID,
 		Code:         m.Code,
+		CodeHash:     m.CodeHash,
+		CodePrefix:   m.CodePrefix,
 		Type:         m.Type,
 		Value:        m.Value,
 		Status:       m.Status,

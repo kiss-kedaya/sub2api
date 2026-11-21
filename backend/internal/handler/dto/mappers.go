@@ -747,10 +747,41 @@ func RedeemCodeFromServiceAdmin(rc *service.RedeemCode) *AdminRedeemCode {
 	}
 }
 
+// SanitizeAdminRedeemCodes 是幂等重放路径的兜底：本版本之前的 journal 里可能
+// 存过完整明文 code（生成接口当时把明文写进了重放存储）。重放一律重新掩码，
+// 绝不因为「那是历史数据」就把明文转发出去。
+func SanitizeAdminRedeemCodes(codes []AdminRedeemCode) []AdminRedeemCode {
+	if len(codes) == 0 {
+		return codes
+	}
+	out := make([]AdminRedeemCode, 0, len(codes))
+	for i := range codes {
+		row := codes[i]
+		maskSource := row.CodePrefix
+		if maskSource == "" {
+			maskSource = row.Code
+		}
+		row.Code = service.MaskRedeemCodePrefix(maskSource)
+		out = append(out, row)
+	}
+	return out
+}
+
+// SanitizeAdminRedeemCode 是单条的同一兜底（create-and-redeem 重放用）。
+func SanitizeAdminRedeemCode(row *AdminRedeemCode) *AdminRedeemCode {
+	if row == nil {
+		return nil
+	}
+	sanitized := SanitizeAdminRedeemCodes([]AdminRedeemCode{*row})
+	return &sanitized[0]
+}
+
 func redeemCodeFromServiceBase(rc *service.RedeemCode) RedeemCode {
 	out := RedeemCode{
-		ID:           rc.ID,
-		Code:         rc.Code,
+		ID:   rc.ID,
+		Code: rc.DisplayCode(),
+		// 前缀只对「真实卡密」有意义；合成展示行（返利流水）没有凭据前缀。
+		CodePrefix:   displayPrefixForDTO(rc),
 		Type:         rc.Type,
 		Value:        rc.Value,
 		Status:       rc.Status,
@@ -774,6 +805,36 @@ func redeemCodeFromServiceBase(rc *service.RedeemCode) RedeemCode {
 	}
 
 	return out
+}
+
+// displayPrefixForDTO 只在真实卡密上返回前缀；合成展示行（SyntheticCode）的
+// code 是 AFF-<id> 这类非凭据标签，不需要也不应该再带一个「前缀」。
+func displayPrefixForDTO(rc *service.RedeemCode) string {
+	if rc == nil || rc.SyntheticCode {
+		return ""
+	}
+	return rc.DisplayPrefix()
+}
+
+// GeneratedRedeemCodeFromService 把「刚生成的卡密」转成一次性响应 DTO。
+//
+// 只允许 Generate handler 在首次执行（非幂等重放）时调用；它会把明文写进响应。
+func GeneratedRedeemCodeFromService(rc *service.RedeemCode) *GeneratedRedeemCode {
+	if rc == nil {
+		return nil
+	}
+	return &GeneratedRedeemCode{
+		ID:           rc.ID,
+		Code:         rc.Code,
+		CodePrefix:   rc.DisplayPrefix(),
+		Type:         rc.Type,
+		Value:        rc.Value,
+		Status:       rc.Status,
+		CreatedAt:    rc.CreatedAt,
+		ExpiresAt:    rc.ExpiresAt,
+		GroupID:      rc.GroupID,
+		ValidityDays: rc.ValidityDays,
+	}
 }
 
 // AccountSummaryFromService returns a minimal AccountSummary for usage log display.
