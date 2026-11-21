@@ -474,14 +474,9 @@ func bindOptionalOAuthAdoptionDecision(c *gin.Context) (oauthAdoptionDecisionReq
 }
 
 func cloneOAuthMetadata(values map[string]any) map[string]any {
-	if len(values) == 0 {
-		return map[string]any{}
-	}
-	cloned := make(map[string]any, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
-	return cloned
+	// 写进 auth_identities.metadata / auth_identity_channels.metadata 的副本
+	// 必须先剥掉 subject 派生字段（subject/unionid/openid/email/...）。
+	return service.SanitizeAuthIdentityMetadata(values)
 }
 
 func mergeOAuthMetadata(base map[string]any, overlay map[string]any) map[string]any {
@@ -528,7 +523,7 @@ func (h *AuthHandler) findOAuthIdentityUser(ctx context.Context, identity servic
 		Where(
 			authidentity.ProviderTypeEQ(strings.TrimSpace(identity.ProviderType)),
 			authidentity.ProviderKeyEQ(strings.TrimSpace(identity.ProviderKey)),
-			authidentity.ProviderSubjectEQ(strings.TrimSpace(identity.ProviderSubject)),
+			service.AuthIdentitySubjectLookupPredicate(identity.ProviderType, identity.ProviderSubject),
 		).
 		Only(ctx)
 	if err != nil {
@@ -538,6 +533,86 @@ func (h *AuthHandler) findOAuthIdentityUser(ctx context.Context, identity servic
 		return nil, infraerrors.InternalServer("AUTH_IDENTITY_LOOKUP_FAILED", "failed to inspect auth identity ownership").WithCause(err)
 	}
 	return findActiveUserByID(ctx, client, record.UserID)
+}
+
+// derefOptionalString 读取 ent 里可空的 string 列。
+func derefOptionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+// pendingSessionProviderSubject 返回 pending 会话里的 (provider_type, hash, 明文)。
+// 新会话三列都写；历史在途会话可能只有明文。
+func pendingSessionProviderSubject(session *dbent.PendingAuthSession) (string, string, string) {
+	if session == nil {
+		return "", "", ""
+	}
+	return strings.TrimSpace(session.ProviderType),
+		derefOptionalString(session.ProviderSubjectHash),
+		service.PendingAuthSubjectPlaintext(derefOptionalString(session.ProviderSubject))
+}
+
+// pendingSessionIdentityPredicate 用 pending 会话的 hash（或过渡期明文）
+// 匹配 auth_identities，避免中间态明文参与比对。
+func pendingSessionIdentityPredicate(session *dbent.PendingAuthSession) predicate.AuthIdentity {
+	providerType, hashValue, plaintext := pendingSessionProviderSubject(session)
+	if hashValue != "" || plaintext != "" {
+		return service.AuthIdentitySubjectHashLookupPredicate(providerType, hashValue, plaintext)
+	}
+	// 既无 hash 也无明文的会话不匹配任何身份（fail-closed）。
+	return authidentity.ProviderSubjectHashEQ(service.HashAuthIdentitySubject(providerType, ""))
+}
+
+// pendingSessionSubjectHashPrefix 返回会话 subject 的 keyed hash + 展示前缀，
+// 兼容只有明文的历史会话。
+func pendingSessionSubjectHashPrefix(session *dbent.PendingAuthSession) (string, string) {
+	providerType, hashValue, plaintext := pendingSessionProviderSubject(session)
+	if hashValue == "" && plaintext != "" {
+		hashValue = service.HashAuthIdentitySubject(providerType, plaintext)
+	}
+	prefix := derefOptionalString(session.ProviderSubjectPrefix)
+	if prefix == "" && hashValue != "" {
+		prefix = service.AuthSubjectPrefixFromHash(hashValue)
+	}
+	return hashValue, prefix
+}
+
+// applyPendingSessionIdentitySubject 给新建 identity 写 keyed hash + 前缀；
+// 过渡期在会话仍带明文时继续双写明文，保证旧实例混跑期间可回退查询。
+func applyPendingSessionIdentitySubject(create *dbent.AuthIdentityCreate, session *dbent.PendingAuthSession) *dbent.AuthIdentityCreate {
+	providerType, _, plaintext := pendingSessionProviderSubject(session)
+	if plaintext != "" {
+		return service.ApplyAuthIdentitySubjectCreate(create, providerType, plaintext)
+	}
+	hashValue, prefix := pendingSessionSubjectHashPrefix(session)
+	return service.ApplyAuthIdentitySubjectOnlyHash(create, hashValue, prefix)
+}
+
+// pendingSessionSubjectFields 给未落库的合成 pending 会话准备明文 + keyed hash
+// + 展示前缀。合成会话不落库，保留明文供 ensurePending* 在内存里直接双写
+// identity/channel 的过渡期明文列。
+func pendingSessionSubjectFields(providerType, subject string) (*string, *string, *string) {
+	providerType = strings.TrimSpace(providerType)
+	subject = strings.TrimSpace(subject)
+	if subject == "" {
+		return nil, nil, nil
+	}
+	hashValue := service.HashAuthIdentitySubject(providerType, subject)
+	prefix := service.AuthSubjectPrefixFromHash(hashValue)
+	return &subject, &hashValue, &prefix
+}
+
+// applyPendingSessionIdentitySubjectUpdate 给已有 identity 改 subject 时同步
+// 刷新 keyed hash + 前缀；过渡期仍带明文时继续双写。
+func applyPendingSessionIdentitySubjectUpdate(update *dbent.AuthIdentityUpdateOne, session *dbent.PendingAuthSession) *dbent.AuthIdentityUpdateOne {
+	providerType, _, plaintext := pendingSessionProviderSubject(session)
+	if plaintext != "" {
+		return service.ApplyAuthIdentitySubjectUpdate(update, providerType, plaintext)
+	}
+	hashValue, prefix := pendingSessionSubjectHashPrefix(session)
+	return update.SetProviderSubjectHash(hashValue).SetProviderSubjectPrefix(prefix)
 }
 
 func (h *AuthHandler) BindLinuxDoOAuthLogin(c *gin.Context) { h.bindPendingOAuthLogin(c, "linuxdo") }
@@ -787,7 +862,7 @@ func ensurePendingOAuthRegistrationIdentityAvailable(ctx context.Context, client
 		Where(
 			authidentity.ProviderTypeEQ(strings.TrimSpace(session.ProviderType)),
 			authidentity.ProviderKeyEQ(strings.TrimSpace(session.ProviderKey)),
-			authidentity.ProviderSubjectEQ(strings.TrimSpace(session.ProviderSubject)),
+			pendingSessionIdentityPredicate(session),
 		).
 		Only(ctx)
 	if err != nil {
@@ -843,7 +918,7 @@ func ensurePendingOAuthIdentityForUser(ctx context.Context, tx *dbent.Tx, sessio
 		Where(
 			authidentity.ProviderTypeEQ(strings.TrimSpace(session.ProviderType)),
 			authidentity.ProviderKeyEQ(strings.TrimSpace(session.ProviderKey)),
-			authidentity.ProviderSubjectEQ(strings.TrimSpace(session.ProviderSubject)),
+			pendingSessionIdentityPredicate(session),
 		).
 		Only(ctx)
 	if err != nil && !dbent.IsNotFound(err) {
@@ -869,8 +944,8 @@ func ensurePendingOAuthIdentityForUser(ctx context.Context, tx *dbent.Tx, sessio
 		SetUserID(userID).
 		SetProviderType(strings.TrimSpace(session.ProviderType)).
 		SetProviderKey(strings.TrimSpace(session.ProviderKey)).
-		SetProviderSubject(strings.TrimSpace(session.ProviderSubject)).
 		SetMetadata(cloneOAuthMetadata(session.UpstreamIdentityClaims))
+	create = applyPendingSessionIdentitySubject(create, session)
 	if issuer := oauthIdentityIssuer(session); issuer != nil {
 		create = create.SetIssuer(strings.TrimSpace(*issuer))
 	}
@@ -881,18 +956,36 @@ func ensurePendingWeChatOAuthIdentityForUser(ctx context.Context, tx *dbent.Tx, 
 	client := tx.Client()
 	providerType := strings.TrimSpace(session.ProviderType)
 	providerKey := strings.TrimSpace(session.ProviderKey)
-	providerSubject := strings.TrimSpace(session.ProviderSubject)
 	providerKeys := wechatCompatibleProviderKeys(providerKey)
+	_, providerSubjectHash, _ := pendingSessionProviderSubject(session)
 	channel := strings.TrimSpace(pendingSessionStringValue(session.UpstreamIdentityClaims, "channel"))
 	channelAppID := strings.TrimSpace(pendingSessionStringValue(session.UpstreamIdentityClaims, "channel_app_id"))
-	channelSubject := strings.TrimSpace(pendingSessionStringValue(session.UpstreamIdentityClaims, "channel_subject"))
+	// 新会话 claims 已清洗：channel_subject 明文不存在，只保留 hash/前缀；
+	// 历史在途会话仍带明文，读取时现算 hash 并按明文回退。
+	legacyChannelSubject := strings.TrimSpace(pendingSessionStringValue(session.UpstreamIdentityClaims, "channel_subject"))
+	if legacyChannelSubject == "" {
+		// 新会话的 claims 只带安装密钥封存的 channel subject。
+		if sealed := pendingSessionStringValue(session.UpstreamIdentityClaims, "channel_subject_sealed"); sealed != "" {
+			legacyChannelSubject = service.PendingAuthSubjectPlaintext(sealed)
+		}
+	}
+	channelSubjectHash := strings.TrimSpace(pendingSessionStringValue(session.UpstreamIdentityClaims, "channel_subject_hash"))
+	channelSubjectPrefix := strings.TrimSpace(pendingSessionStringValue(session.UpstreamIdentityClaims, "channel_subject_prefix"))
+	channelSubjectIdentityHash := strings.TrimSpace(pendingSessionStringValue(session.UpstreamIdentityClaims, "channel_subject_identity_hash"))
+	if channelSubjectHash == "" && legacyChannelSubject != "" {
+		channelSubjectHash = service.HashAuthChannelSubject(providerType, legacyChannelSubject)
+		channelSubjectPrefix = service.AuthSubjectPrefixFromHash(channelSubjectHash)
+	}
+	if channelSubjectIdentityHash == "" && legacyChannelSubject != "" {
+		channelSubjectIdentityHash = service.HashAuthIdentitySubject(providerType, legacyChannelSubject)
+	}
 	metadata := cloneOAuthMetadata(session.UpstreamIdentityClaims)
 
 	identityRecords, err := client.AuthIdentity.Query().
 		Where(
 			authidentity.ProviderTypeEQ(providerType),
 			authidentity.ProviderKeyIn(providerKeys...),
-			authidentity.ProviderSubjectEQ(providerSubject),
+			pendingSessionIdentityPredicate(session),
 		).
 		All(ctx)
 	if err != nil {
@@ -903,13 +996,15 @@ func ensurePendingWeChatOAuthIdentityForUser(ctx context.Context, tx *dbent.Tx, 
 		return nil, err
 	}
 
+	// 历史数据里可能有「provider_subject 存的是 openid、unionid 在 metadata」的
+	// 老行：用 channel_subject 的 identity 域 hash 再查一次（不接受明文）。
 	var legacyOpenIDIdentity *dbent.AuthIdentity
-	if channelSubject != "" && channelSubject != providerSubject {
+	if channelSubjectIdentityHash != "" && channelSubjectIdentityHash != providerSubjectHash {
 		legacyOpenIDRecords, err := client.AuthIdentity.Query().
 			Where(
 				authidentity.ProviderTypeEQ(providerType),
 				authidentity.ProviderKeyIn(providerKeys...),
-				authidentity.ProviderSubjectEQ(channelSubject),
+				service.AuthIdentitySubjectHashLookupPredicate(providerType, channelSubjectIdentityHash, legacyChannelSubject),
 			).
 			All(ctx)
 		if err != nil {
@@ -940,9 +1035,9 @@ func ensurePendingWeChatOAuthIdentityForUser(ctx context.Context, tx *dbent.Tx, 
 		}
 	case legacyOpenIDIdentity != nil:
 		update := client.AuthIdentity.UpdateOneID(legacyOpenIDIdentity.ID).
-			SetProviderKey(providerKey).
-			SetProviderSubject(providerSubject).
-			SetMetadata(mergeOAuthMetadata(legacyOpenIDIdentity.Metadata, metadata))
+			SetProviderKey(providerKey)
+		update = applyPendingSessionIdentitySubjectUpdate(update, session)
+		update = update.SetMetadata(mergeOAuthMetadata(legacyOpenIDIdentity.Metadata, metadata))
 		if issuer := oauthIdentityIssuer(session); issuer != nil {
 			update = update.SetIssuer(strings.TrimSpace(*issuer))
 		}
@@ -955,8 +1050,8 @@ func ensurePendingWeChatOAuthIdentityForUser(ctx context.Context, tx *dbent.Tx, 
 			SetUserID(userID).
 			SetProviderType(providerType).
 			SetProviderKey(providerKey).
-			SetProviderSubject(providerSubject).
 			SetMetadata(metadata)
+		create = applyPendingSessionIdentitySubject(create, session)
 		if issuer := oauthIdentityIssuer(session); issuer != nil {
 			create = create.SetIssuer(strings.TrimSpace(*issuer))
 		}
@@ -966,7 +1061,7 @@ func ensurePendingWeChatOAuthIdentityForUser(ctx context.Context, tx *dbent.Tx, 
 		}
 	}
 
-	if channel == "" || channelAppID == "" || channelSubject == "" {
+	if channel == "" || channelAppID == "" || (channelSubjectHash == "" && legacyChannelSubject == "") {
 		return identity, nil
 	}
 
@@ -976,7 +1071,7 @@ func ensurePendingWeChatOAuthIdentityForUser(ctx context.Context, tx *dbent.Tx, 
 			authidentitychannel.ProviderKeyIn(providerKeys...),
 			authidentitychannel.ChannelEQ(channel),
 			authidentitychannel.ChannelAppIDEQ(channelAppID),
-			authidentitychannel.ChannelSubjectEQ(channelSubject),
+			service.AuthChannelSubjectHashLookupPredicate(providerType, channelSubjectHash, legacyChannelSubject),
 		).
 		WithIdentity().
 		All(ctx)
@@ -990,15 +1085,19 @@ func ensurePendingWeChatOAuthIdentityForUser(ctx context.Context, tx *dbent.Tx, 
 
 	channelMetadata := mergeOAuthMetadata(channelRecordMetadata(channelRecord), metadata)
 	if channelRecord == nil {
-		if _, err := client.AuthIdentityChannel.Create().
+		channelCreate := client.AuthIdentityChannel.Create().
 			SetIdentityID(identity.ID).
 			SetProviderType(providerType).
 			SetProviderKey(providerKey).
 			SetChannel(channel).
 			SetChannelAppID(channelAppID).
-			SetChannelSubject(channelSubject).
-			SetMetadata(channelMetadata).
-			Save(ctx); err != nil {
+			SetMetadata(channelMetadata)
+		if legacyChannelSubject != "" {
+			channelCreate = service.ApplyAuthChannelSubjectCreate(channelCreate, providerType, legacyChannelSubject)
+		} else {
+			channelCreate = service.ApplyAuthChannelSubjectOnlyHash(channelCreate, channelSubjectHash, channelSubjectPrefix)
+		}
+		if _, err := channelCreate.Save(ctx); err != nil {
 			return nil, err
 		}
 		return identity, nil
@@ -1232,7 +1331,7 @@ func applyPendingOAuthBindingTx(
 		metadata["avatar_url"] = adoptedAvatarURL
 	}
 
-	updateIdentity := tx.Client().AuthIdentity.UpdateOneID(identity.ID).SetMetadata(metadata)
+	updateIdentity := tx.Client().AuthIdentity.UpdateOneID(identity.ID).SetMetadata(service.SanitizeAuthIdentityMetadata(metadata))
 	if issuer := oauthIdentityIssuer(session); issuer != nil {
 		updateIdentity = updateIdentity.SetIssuer(strings.TrimSpace(*issuer))
 	}
@@ -1401,15 +1500,18 @@ func pendingOAuthIdentityExistsForUser(
 
 	providerType := strings.TrimSpace(session.ProviderType)
 	providerKey := strings.TrimSpace(session.ProviderKey)
-	providerSubject := strings.TrimSpace(session.ProviderSubject)
-	if providerType == "" || providerSubject == "" {
+	providerSubjectHash, providerSubjectPlaintext := func() (string, string) {
+		_, hashValue, plaintext := pendingSessionProviderSubject(session)
+		return hashValue, plaintext
+	}()
+	if providerType == "" || (providerSubjectHash == "" && providerSubjectPlaintext == "") {
 		return false, nil
 	}
 
 	query := client.AuthIdentity.Query().
 		Where(
 			authidentity.ProviderTypeEQ(providerType),
-			authidentity.ProviderSubjectEQ(providerSubject),
+			service.AuthIdentitySubjectHashLookupPredicate(providerType, providerSubjectHash, providerSubjectPlaintext),
 			authidentity.UserIDEQ(userID),
 		)
 	if strings.EqualFold(providerType, "wechat") {

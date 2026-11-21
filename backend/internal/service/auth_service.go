@@ -1178,50 +1178,47 @@ func (s *AuthService) ensureEmailAuthIdentity(ctx context.Context, user *User, s
 		return client.AuthIdentity.Query().Where(
 			authidentity.ProviderTypeEQ("email"),
 			authidentity.ProviderKeyEQ("email"),
-			authidentity.ProviderSubjectEQ(email),
+			AuthIdentitySubjectLookupPredicate("email", email),
 		)
 	}
 
 	existed, err := buildQuery().Exist(ctx)
 	if err != nil {
-		logger.LegacyPrintf("service.auth", "[Auth] Failed to inspect email auth identity: user_id=%d email=%s err=%v", user.ID, email, err)
+		logger.LegacyPrintf("service.auth", "[Auth] Failed to inspect email auth identity: user_id=%d email=%s err=%v", user.ID, MaskEmail(email), err)
 		return nil, false
 	}
 
 	if !existed {
-		if err = client.AuthIdentity.Create().
+		create := client.AuthIdentity.Create().
 			SetUserID(user.ID).
 			SetProviderType("email").
 			SetProviderKey("email").
-			SetProviderSubject(email).
 			SetVerifiedAt(time.Now().UTC()).
 			SetMetadata(map[string]any{
 				"source": strings.TrimSpace(source),
-			}).
-			OnConflictColumns(
-				authidentity.FieldProviderType,
-				authidentity.FieldProviderKey,
-				authidentity.FieldProviderSubject,
-			).
+			})
+		create = ApplyAuthIdentitySubjectCreate(create, "email", email)
+		if err = create.
+			OnConflictColumns(AuthIdentitySubjectHashConflictColumns()...).
 			DoNothing().
 			Exec(ctx); err != nil {
-			if isSQLNoRowsError(err) {
+			// 滚动窗口兼容：旧实例写入的行只有明文、hash 还是 NULL，冲突会落在
+			// 明文唯一索引上。这里不当作失败，交给下面的查询按 hash/明文回退定位，
+			// 并做归属校验。
+			if !isSQLNoRowsError(err) && !dbent.IsConstraintError(err) {
+				logger.LegacyPrintf("service.auth", "[Auth] Failed to ensure email auth identity: user_id=%d email=%s err=%v", user.ID, MaskEmail(email), err)
 				return nil, false
 			}
-		}
-		if err != nil {
-			logger.LegacyPrintf("service.auth", "[Auth] Failed to ensure email auth identity: user_id=%d email=%s err=%v", user.ID, email, err)
-			return nil, false
 		}
 	}
 
 	identity, err := buildQuery().Only(ctx)
 	if err != nil {
-		logger.LegacyPrintf("service.auth", "[Auth] Failed to reload email auth identity: user_id=%d email=%s err=%v", user.ID, email, err)
+		logger.LegacyPrintf("service.auth", "[Auth] Failed to reload email auth identity: user_id=%d email=%s err=%v", user.ID, MaskEmail(email), err)
 		return nil, false
 	}
 	if identity.UserID != user.ID {
-		logger.LegacyPrintf("service.auth", "[Auth] Email auth identity ownership mismatch: user_id=%d email=%s owner_id=%d", user.ID, email, identity.UserID)
+		logger.LegacyPrintf("service.auth", "[Auth] Email auth identity ownership mismatch: user_id=%d email=%s owner_id=%d", user.ID, MaskEmail(email), identity.UserID)
 		return nil, false
 	}
 

@@ -169,6 +169,13 @@ func InitEnt(cfg *config.Config) (*ent.Client, *sql.DB, error) {
 		return nil, nil, err
 	}
 
+	// subject 盲索引使用安装密钥（与 TOTP 密文同一把 key）做 HMAC-SHA256；
+	// 缺少 key 时 fail-closed，避免静默使用弱哈希或在多实例间算出不同摘要。
+	if err := service.ConfigureAuthSubjectHashKey(cfg.Totp.EncryptionKey); err != nil {
+		_ = client.Close()
+		return nil, nil, fmt.Errorf("configure auth subject hash key: %w", err)
+	}
+
 	// 在密钥补齐后执行完整配置校验，避免空 jwt.secret 导致服务运行时失败。
 	if err := cfg.Validate(); err != nil {
 		_ = client.Close()

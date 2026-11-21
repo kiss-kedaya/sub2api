@@ -24,11 +24,15 @@ func TestAuthIdentityFoundationSchemas(t *testing.T) {
 		"provider_type",
 		"provider_key",
 		"provider_subject",
+		"provider_subject_hash",
+		"provider_subject_prefix",
 		"verified_at",
 		"issuer",
 		"metadata",
 	)
 	requireHasUniqueIndex(t, authIdentity, "provider_type", "provider_key", "provider_subject")
+	requireHasUniqueIndex(t, authIdentity, "provider_type", "provider_key", "provider_subject_hash")
+	requireHasIndex(t, authIdentity, "provider_type", "provider_subject_hash")
 
 	authIdentityChannel := requireSchema(t, schemas, "AuthIdentityChannel")
 	requireSchemaFields(t, authIdentityChannel,
@@ -38,9 +42,13 @@ func TestAuthIdentityFoundationSchemas(t *testing.T) {
 		"channel",
 		"channel_app_id",
 		"channel_subject",
+		"channel_subject_hash",
+		"channel_subject_prefix",
 		"metadata",
 	)
 	requireHasUniqueIndex(t, authIdentityChannel, "provider_type", "provider_key", "channel", "channel_app_id", "channel_subject")
+	requireHasUniqueIndex(t, authIdentityChannel, "provider_type", "provider_key", "channel", "channel_app_id", "channel_subject_hash")
+	requireHasIndex(t, authIdentityChannel, "provider_type", "channel_subject_hash")
 
 	pendingAuthSession := requireSchema(t, schemas, "PendingAuthSession")
 	requireSchemaFields(t, pendingAuthSession,
@@ -48,6 +56,8 @@ func TestAuthIdentityFoundationSchemas(t *testing.T) {
 		"provider_type",
 		"provider_key",
 		"provider_subject",
+		"provider_subject_hash",
+		"provider_subject_prefix",
 		"target_user_id",
 		"redirect_to",
 		"resolved_email",
@@ -63,6 +73,7 @@ func TestAuthIdentityFoundationSchemas(t *testing.T) {
 		"expires_at",
 		"consumed_at",
 	)
+	requireHasIndex(t, pendingAuthSession, "provider_type", "provider_key", "provider_subject_hash")
 
 	adoptionDecision := requireSchema(t, schemas, "IdentityAdoptionDecision")
 	requireSchemaFields(t, adoptionDecision,
@@ -145,24 +156,45 @@ func requireStringFieldValidator(t *testing.T, fields []ent.Field, name string) 
 func requireHasUniqueIndex(t *testing.T, schema *load.Schema, fields ...string) {
 	t.Helper()
 
+	require.True(t, hasIndex(schema, true, fields), "schema %s should include unique index on %v", schema.Name, fields)
+}
+
+// requireHasIndex 断言存在指定列的普通（非唯一）索引：盲索引除了唯一约束，
+// 还需要一条 (provider_type, provider_subject_hash) 的兼容查询索引。
+func requireHasIndex(t *testing.T, schema *load.Schema, fields ...string) {
+	t.Helper()
+
 	for _, index := range schema.Indexes {
-		if !index.Unique {
+		if index.Unique {
 			continue
 		}
-		if len(index.Fields) != len(fields) {
-			continue
-		}
-		match := true
-		for i := range fields {
-			if index.Fields[i] != fields[i] {
-				match = false
-				break
-			}
-		}
-		if match {
+		if indexFieldsMatch(index.Fields, fields) {
 			return
 		}
 	}
+	require.Failf(t, "missing index", "schema %s should include index on %v", schema.Name, fields)
+}
 
-	require.Failf(t, "missing unique index", "schema %s should include unique index on %v", schema.Name, fields)
+func hasIndex(schema *load.Schema, unique bool, fields []string) bool {
+	for _, index := range schema.Indexes {
+		if index.Unique != unique {
+			continue
+		}
+		if indexFieldsMatch(index.Fields, fields) {
+			return true
+		}
+	}
+	return false
+}
+
+func indexFieldsMatch(indexFields, fields []string) bool {
+	if len(indexFields) != len(fields) {
+		return false
+	}
+	for i := range fields {
+		if indexFields[i] != fields[i] {
+			return false
+		}
+	}
+	return true
 }

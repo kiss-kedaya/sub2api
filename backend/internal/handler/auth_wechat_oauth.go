@@ -765,7 +765,7 @@ func (h *AuthHandler) ensureWeChatBindOwnership(
 		Where(
 			authidentity.ProviderTypeEQ("wechat"),
 			authidentity.ProviderKeyIn(wechatCompatibleProviderKeys(wechatOAuthProviderKey)...),
-			authidentity.ProviderSubjectEQ(strings.TrimSpace(providerSubject)),
+			service.AuthIdentitySubjectLookupPredicate("wechat", providerSubject),
 		).
 		All(ctx)
 	if err != nil {
@@ -795,7 +795,7 @@ func (h *AuthHandler) ensureWeChatBindOwnership(
 			authidentitychannel.ProviderKeyIn(wechatCompatibleProviderKeys(wechatOAuthProviderKey)...),
 			authidentitychannel.ChannelEQ(strings.TrimSpace(cfg.mode)),
 			authidentitychannel.ChannelAppIDEQ(channelAppID),
-			authidentitychannel.ChannelSubjectEQ(channelSubject),
+			service.AuthChannelSubjectLookupPredicate("wechat", channelSubject),
 		).
 		WithIdentity().
 		All(ctx)
@@ -835,7 +835,7 @@ func (h *AuthHandler) findWeChatUserByLegacyOpenID(
 			Where(
 				authidentity.ProviderTypeEQ(providerType),
 				authidentity.ProviderKeyIn(providerKeys...),
-				authidentity.ProviderSubjectEQ(providerSubject),
+				service.AuthIdentitySubjectLookupPredicate(providerType, providerSubject),
 			).
 			WithUser().
 			All(ctx)
@@ -860,7 +860,7 @@ func (h *AuthHandler) findWeChatUserByLegacyOpenID(
 				authidentitychannel.ProviderKeyIn(providerKeys...),
 				authidentitychannel.ChannelEQ(channel),
 				authidentitychannel.ChannelAppIDEQ(channelAppID),
-				authidentitychannel.ChannelSubjectEQ(openid),
+				service.AuthChannelSubjectLookupPredicate(providerType, openid),
 			).
 			WithIdentity(func(q *dbent.AuthIdentityQuery) {
 				q.WithUser()
@@ -885,7 +885,7 @@ func (h *AuthHandler) findWeChatUserByLegacyOpenID(
 		Where(
 			authidentity.ProviderTypeEQ(providerType),
 			authidentity.ProviderKeyIn(providerKeys...),
-			authidentity.ProviderSubjectEQ(openid),
+			service.AuthIdentitySubjectLookupPredicate(providerType, openid),
 		).
 		WithUser().
 		All(ctx)
@@ -962,11 +962,14 @@ func (h *AuthHandler) ensureWeChatRuntimeIdentityBinding(
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	subjectPlaintext, subjectHash, subjectPrefix := pendingSessionSubjectFields(identity.ProviderType, identity.ProviderSubject)
 	_, err = ensurePendingOAuthIdentityForUser(dbent.NewTxContext(ctx, tx), tx, &dbent.PendingAuthSession{
 		ProviderType:           strings.TrimSpace(identity.ProviderType),
 		ProviderKey:            strings.TrimSpace(identity.ProviderKey),
-		ProviderSubject:        strings.TrimSpace(identity.ProviderSubject),
-		UpstreamIdentityClaims: cloneOAuthMetadata(upstreamClaims),
+		ProviderSubject:        subjectPlaintext,
+		ProviderSubjectHash:    subjectHash,
+		ProviderSubjectPrefix:  subjectPrefix,
+		UpstreamIdentityClaims: clonePendingMap(upstreamClaims),
 	}, userID)
 	if err != nil {
 		return err

@@ -366,7 +366,9 @@ var (
 		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "provider_type", Type: field.TypeString, Size: 20},
 		{Name: "provider_key", Type: field.TypeString, SchemaType: map[string]string{"postgres": "text"}},
-		{Name: "provider_subject", Type: field.TypeString, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "provider_subject", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "provider_subject_hash", Type: field.TypeString, Nullable: true, Size: 64, SchemaType: map[string]string{"postgres": "char(64)"}},
+		{Name: "provider_subject_prefix", Type: field.TypeString, Nullable: true, Size: 16, SchemaType: map[string]string{"postgres": "varchar(16)"}},
 		{Name: "verified_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "issuer", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
 		{Name: "metadata", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
@@ -380,7 +382,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "auth_identities_users_auth_identities",
-				Columns:    []*schema.Column{AuthIdentitiesColumns[9]},
+				Columns:    []*schema.Column{AuthIdentitiesColumns[11]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.Cascade,
 			},
@@ -392,14 +394,24 @@ var (
 				Columns: []*schema.Column{AuthIdentitiesColumns[3], AuthIdentitiesColumns[4], AuthIdentitiesColumns[5]},
 			},
 			{
+				Name:    "authidentity_provider_type_provider_key_provider_subject_hash",
+				Unique:  true,
+				Columns: []*schema.Column{AuthIdentitiesColumns[3], AuthIdentitiesColumns[4], AuthIdentitiesColumns[6]},
+			},
+			{
+				Name:    "authidentity_provider_type_provider_subject_hash",
+				Unique:  false,
+				Columns: []*schema.Column{AuthIdentitiesColumns[3], AuthIdentitiesColumns[6]},
+			},
+			{
 				Name:    "authidentity_user_id",
 				Unique:  false,
-				Columns: []*schema.Column{AuthIdentitiesColumns[9]},
+				Columns: []*schema.Column{AuthIdentitiesColumns[11]},
 			},
 			{
 				Name:    "authidentity_user_id_provider_type",
 				Unique:  false,
-				Columns: []*schema.Column{AuthIdentitiesColumns[9], AuthIdentitiesColumns[3]},
+				Columns: []*schema.Column{AuthIdentitiesColumns[11], AuthIdentitiesColumns[3]},
 			},
 		},
 	}
@@ -412,7 +424,9 @@ var (
 		{Name: "provider_key", Type: field.TypeString, SchemaType: map[string]string{"postgres": "text"}},
 		{Name: "channel", Type: field.TypeString, Size: 20},
 		{Name: "channel_app_id", Type: field.TypeString, SchemaType: map[string]string{"postgres": "text"}},
-		{Name: "channel_subject", Type: field.TypeString, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "channel_subject", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "channel_subject_hash", Type: field.TypeString, Nullable: true, Size: 64, SchemaType: map[string]string{"postgres": "char(64)"}},
+		{Name: "channel_subject_prefix", Type: field.TypeString, Nullable: true, Size: 16, SchemaType: map[string]string{"postgres": "varchar(16)"}},
 		{Name: "metadata", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "identity_id", Type: field.TypeInt64},
 	}
@@ -424,7 +438,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "auth_identity_channels_auth_identities_channels",
-				Columns:    []*schema.Column{AuthIdentityChannelsColumns[9]},
+				Columns:    []*schema.Column{AuthIdentityChannelsColumns[11]},
 				RefColumns: []*schema.Column{AuthIdentitiesColumns[0]},
 				OnDelete:   schema.Cascade,
 			},
@@ -436,9 +450,19 @@ var (
 				Columns: []*schema.Column{AuthIdentityChannelsColumns[3], AuthIdentityChannelsColumns[4], AuthIdentityChannelsColumns[5], AuthIdentityChannelsColumns[6], AuthIdentityChannelsColumns[7]},
 			},
 			{
+				Name:    "authidentitychannel_provider_type_provider_key_channel_channel_app_id_channel_subject_hash",
+				Unique:  true,
+				Columns: []*schema.Column{AuthIdentityChannelsColumns[3], AuthIdentityChannelsColumns[4], AuthIdentityChannelsColumns[5], AuthIdentityChannelsColumns[6], AuthIdentityChannelsColumns[8]},
+			},
+			{
+				Name:    "authidentitychannel_provider_type_channel_subject_hash",
+				Unique:  false,
+				Columns: []*schema.Column{AuthIdentityChannelsColumns[3], AuthIdentityChannelsColumns[8]},
+			},
+			{
 				Name:    "authidentitychannel_identity_id",
 				Unique:  false,
-				Columns: []*schema.Column{AuthIdentityChannelsColumns[9]},
+				Columns: []*schema.Column{AuthIdentityChannelsColumns[11]},
 			},
 		},
 	}
@@ -1279,7 +1303,9 @@ var (
 		{Name: "intent", Type: field.TypeString, Size: 40},
 		{Name: "provider_type", Type: field.TypeString, Size: 20},
 		{Name: "provider_key", Type: field.TypeString, SchemaType: map[string]string{"postgres": "text"}},
-		{Name: "provider_subject", Type: field.TypeString, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "provider_subject", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "provider_subject_hash", Type: field.TypeString, Nullable: true, Size: 64, SchemaType: map[string]string{"postgres": "char(64)"}},
+		{Name: "provider_subject_prefix", Type: field.TypeString, Nullable: true, Size: 16, SchemaType: map[string]string{"postgres": "varchar(16)"}},
 		{Name: "redirect_to", Type: field.TypeString, Default: "", SchemaType: map[string]string{"postgres": "text"}},
 		{Name: "resolved_email", Type: field.TypeString, Default: "", SchemaType: map[string]string{"postgres": "text"}},
 		{Name: "registration_password_hash", Type: field.TypeString, Default: "", SchemaType: map[string]string{"postgres": "text"}},
@@ -1303,7 +1329,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "pending_auth_sessions_users_pending_auth_sessions",
-				Columns:    []*schema.Column{PendingAuthSessionsColumns[21]},
+				Columns:    []*schema.Column{PendingAuthSessionsColumns[23]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -1317,12 +1343,12 @@ var (
 			{
 				Name:    "pendingauthsession_target_user_id",
 				Unique:  false,
-				Columns: []*schema.Column{PendingAuthSessionsColumns[21]},
+				Columns: []*schema.Column{PendingAuthSessionsColumns[23]},
 			},
 			{
 				Name:    "pendingauthsession_expires_at",
 				Unique:  false,
-				Columns: []*schema.Column{PendingAuthSessionsColumns[19]},
+				Columns: []*schema.Column{PendingAuthSessionsColumns[21]},
 			},
 			{
 				Name:    "pendingauthsession_provider_type_provider_key_provider_subject",
@@ -1330,9 +1356,14 @@ var (
 				Columns: []*schema.Column{PendingAuthSessionsColumns[5], PendingAuthSessionsColumns[6], PendingAuthSessionsColumns[7]},
 			},
 			{
+				Name:    "pendingauthsession_provider_type_provider_key_provider_subject_hash",
+				Unique:  false,
+				Columns: []*schema.Column{PendingAuthSessionsColumns[5], PendingAuthSessionsColumns[6], PendingAuthSessionsColumns[8]},
+			},
+			{
 				Name:    "pendingauthsession_completion_code_hash",
 				Unique:  false,
-				Columns: []*schema.Column{PendingAuthSessionsColumns[14]},
+				Columns: []*schema.Column{PendingAuthSessionsColumns[16]},
 			},
 		},
 	}

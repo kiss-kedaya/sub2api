@@ -95,6 +95,16 @@ func ChannelSubject(v string) predicate.AuthIdentityChannel {
 	return predicate.AuthIdentityChannel(sql.FieldEQ(FieldChannelSubject, v))
 }
 
+// ChannelSubjectHash applies equality check predicate on the "channel_subject_hash" field. It's identical to ChannelSubjectHashEQ.
+func ChannelSubjectHash(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldEQ(FieldChannelSubjectHash, v))
+}
+
+// ChannelSubjectPrefix applies equality check predicate on the "channel_subject_prefix" field. It's identical to ChannelSubjectPrefixEQ.
+func ChannelSubjectPrefix(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldEQ(FieldChannelSubjectPrefix, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.AuthIdentityChannel {
 	return predicate.AuthIdentityChannel(sql.FieldEQ(FieldCreatedAt, v))
@@ -510,6 +520,16 @@ func ChannelSubjectHasSuffix(v string) predicate.AuthIdentityChannel {
 	return predicate.AuthIdentityChannel(sql.FieldHasSuffix(FieldChannelSubject, v))
 }
 
+// ChannelSubjectIsNil applies the IsNil predicate on the "channel_subject" field.
+func ChannelSubjectIsNil() predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldIsNull(FieldChannelSubject))
+}
+
+// ChannelSubjectNotNil applies the NotNil predicate on the "channel_subject" field.
+func ChannelSubjectNotNil() predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldNotNull(FieldChannelSubject))
+}
+
 // ChannelSubjectEqualFold applies the EqualFold predicate on the "channel_subject" field.
 func ChannelSubjectEqualFold(v string) predicate.AuthIdentityChannel {
 	return predicate.AuthIdentityChannel(sql.FieldEqualFold(FieldChannelSubject, v))
@@ -518,6 +538,156 @@ func ChannelSubjectEqualFold(v string) predicate.AuthIdentityChannel {
 // ChannelSubjectContainsFold applies the ContainsFold predicate on the "channel_subject" field.
 func ChannelSubjectContainsFold(v string) predicate.AuthIdentityChannel {
 	return predicate.AuthIdentityChannel(sql.FieldContainsFold(FieldChannelSubject, v))
+}
+
+// ChannelSubjectHashEQ applies the EQ predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashEQ(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldEQ(FieldChannelSubjectHash, v))
+}
+
+// ChannelSubjectHashNEQ applies the NEQ predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashNEQ(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldNEQ(FieldChannelSubjectHash, v))
+}
+
+// ChannelSubjectHashIn applies the In predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashIn(vs ...string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldIn(FieldChannelSubjectHash, vs...))
+}
+
+// ChannelSubjectHashNotIn applies the NotIn predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashNotIn(vs ...string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldNotIn(FieldChannelSubjectHash, vs...))
+}
+
+// ChannelSubjectHashGT applies the GT predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashGT(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldGT(FieldChannelSubjectHash, v))
+}
+
+// ChannelSubjectHashGTE applies the GTE predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashGTE(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldGTE(FieldChannelSubjectHash, v))
+}
+
+// ChannelSubjectHashLT applies the LT predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashLT(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldLT(FieldChannelSubjectHash, v))
+}
+
+// ChannelSubjectHashLTE applies the LTE predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashLTE(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldLTE(FieldChannelSubjectHash, v))
+}
+
+// ChannelSubjectHashContains applies the Contains predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashContains(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldContains(FieldChannelSubjectHash, v))
+}
+
+// ChannelSubjectHashHasPrefix applies the HasPrefix predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashHasPrefix(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldHasPrefix(FieldChannelSubjectHash, v))
+}
+
+// ChannelSubjectHashHasSuffix applies the HasSuffix predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashHasSuffix(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldHasSuffix(FieldChannelSubjectHash, v))
+}
+
+// ChannelSubjectHashIsNil applies the IsNil predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashIsNil() predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldIsNull(FieldChannelSubjectHash))
+}
+
+// ChannelSubjectHashNotNil applies the NotNil predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashNotNil() predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldNotNull(FieldChannelSubjectHash))
+}
+
+// ChannelSubjectHashEqualFold applies the EqualFold predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashEqualFold(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldEqualFold(FieldChannelSubjectHash, v))
+}
+
+// ChannelSubjectHashContainsFold applies the ContainsFold predicate on the "channel_subject_hash" field.
+func ChannelSubjectHashContainsFold(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldContainsFold(FieldChannelSubjectHash, v))
+}
+
+// ChannelSubjectPrefixEQ applies the EQ predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixEQ(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldEQ(FieldChannelSubjectPrefix, v))
+}
+
+// ChannelSubjectPrefixNEQ applies the NEQ predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixNEQ(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldNEQ(FieldChannelSubjectPrefix, v))
+}
+
+// ChannelSubjectPrefixIn applies the In predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixIn(vs ...string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldIn(FieldChannelSubjectPrefix, vs...))
+}
+
+// ChannelSubjectPrefixNotIn applies the NotIn predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixNotIn(vs ...string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldNotIn(FieldChannelSubjectPrefix, vs...))
+}
+
+// ChannelSubjectPrefixGT applies the GT predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixGT(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldGT(FieldChannelSubjectPrefix, v))
+}
+
+// ChannelSubjectPrefixGTE applies the GTE predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixGTE(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldGTE(FieldChannelSubjectPrefix, v))
+}
+
+// ChannelSubjectPrefixLT applies the LT predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixLT(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldLT(FieldChannelSubjectPrefix, v))
+}
+
+// ChannelSubjectPrefixLTE applies the LTE predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixLTE(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldLTE(FieldChannelSubjectPrefix, v))
+}
+
+// ChannelSubjectPrefixContains applies the Contains predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixContains(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldContains(FieldChannelSubjectPrefix, v))
+}
+
+// ChannelSubjectPrefixHasPrefix applies the HasPrefix predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixHasPrefix(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldHasPrefix(FieldChannelSubjectPrefix, v))
+}
+
+// ChannelSubjectPrefixHasSuffix applies the HasSuffix predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixHasSuffix(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldHasSuffix(FieldChannelSubjectPrefix, v))
+}
+
+// ChannelSubjectPrefixIsNil applies the IsNil predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixIsNil() predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldIsNull(FieldChannelSubjectPrefix))
+}
+
+// ChannelSubjectPrefixNotNil applies the NotNil predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixNotNil() predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldNotNull(FieldChannelSubjectPrefix))
+}
+
+// ChannelSubjectPrefixEqualFold applies the EqualFold predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixEqualFold(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldEqualFold(FieldChannelSubjectPrefix, v))
+}
+
+// ChannelSubjectPrefixContainsFold applies the ContainsFold predicate on the "channel_subject_prefix" field.
+func ChannelSubjectPrefixContainsFold(v string) predicate.AuthIdentityChannel {
+	return predicate.AuthIdentityChannel(sql.FieldContainsFold(FieldChannelSubjectPrefix, v))
 }
 
 // HasIdentity applies the HasEdge predicate on the "identity" edge.

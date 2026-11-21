@@ -106,6 +106,52 @@ func (_u *PendingAuthSessionUpdate) SetNillableProviderSubject(v *string) *Pendi
 	return _u
 }
 
+// ClearProviderSubject clears the value of the "provider_subject" field.
+func (_u *PendingAuthSessionUpdate) ClearProviderSubject() *PendingAuthSessionUpdate {
+	_u.mutation.ClearProviderSubject()
+	return _u
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (_u *PendingAuthSessionUpdate) SetProviderSubjectHash(v string) *PendingAuthSessionUpdate {
+	_u.mutation.SetProviderSubjectHash(v)
+	return _u
+}
+
+// SetNillableProviderSubjectHash sets the "provider_subject_hash" field if the given value is not nil.
+func (_u *PendingAuthSessionUpdate) SetNillableProviderSubjectHash(v *string) *PendingAuthSessionUpdate {
+	if v != nil {
+		_u.SetProviderSubjectHash(*v)
+	}
+	return _u
+}
+
+// ClearProviderSubjectHash clears the value of the "provider_subject_hash" field.
+func (_u *PendingAuthSessionUpdate) ClearProviderSubjectHash() *PendingAuthSessionUpdate {
+	_u.mutation.ClearProviderSubjectHash()
+	return _u
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (_u *PendingAuthSessionUpdate) SetProviderSubjectPrefix(v string) *PendingAuthSessionUpdate {
+	_u.mutation.SetProviderSubjectPrefix(v)
+	return _u
+}
+
+// SetNillableProviderSubjectPrefix sets the "provider_subject_prefix" field if the given value is not nil.
+func (_u *PendingAuthSessionUpdate) SetNillableProviderSubjectPrefix(v *string) *PendingAuthSessionUpdate {
+	if v != nil {
+		_u.SetProviderSubjectPrefix(*v)
+	}
+	return _u
+}
+
+// ClearProviderSubjectPrefix clears the value of the "provider_subject_prefix" field.
+func (_u *PendingAuthSessionUpdate) ClearProviderSubjectPrefix() *PendingAuthSessionUpdate {
+	_u.mutation.ClearProviderSubjectPrefix()
+	return _u
+}
+
 // SetTargetUserID sets the "target_user_id" field.
 func (_u *PendingAuthSessionUpdate) SetTargetUserID(v int64) *PendingAuthSessionUpdate {
 	_u.mutation.SetTargetUserID(v)
@@ -421,9 +467,14 @@ func (_u *PendingAuthSessionUpdate) check() error {
 			return &ValidationError{Name: "provider_key", err: fmt.Errorf(`ent: validator failed for field "PendingAuthSession.provider_key": %w`, err)}
 		}
 	}
-	if v, ok := _u.mutation.ProviderSubject(); ok {
-		if err := pendingauthsession.ProviderSubjectValidator(v); err != nil {
-			return &ValidationError{Name: "provider_subject", err: fmt.Errorf(`ent: validator failed for field "PendingAuthSession.provider_subject": %w`, err)}
+	if v, ok := _u.mutation.ProviderSubjectHash(); ok {
+		if err := pendingauthsession.ProviderSubjectHashValidator(v); err != nil {
+			return &ValidationError{Name: "provider_subject_hash", err: fmt.Errorf(`ent: validator failed for field "PendingAuthSession.provider_subject_hash": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.ProviderSubjectPrefix(); ok {
+		if err := pendingauthsession.ProviderSubjectPrefixValidator(v); err != nil {
+			return &ValidationError{Name: "provider_subject_prefix", err: fmt.Errorf(`ent: validator failed for field "PendingAuthSession.provider_subject_prefix": %w`, err)}
 		}
 	}
 	return nil
@@ -458,6 +509,21 @@ func (_u *PendingAuthSessionUpdate) sqlSave(ctx context.Context) (_node int, err
 	}
 	if value, ok := _u.mutation.ProviderSubject(); ok {
 		_spec.SetField(pendingauthsession.FieldProviderSubject, field.TypeString, value)
+	}
+	if _u.mutation.ProviderSubjectCleared() {
+		_spec.ClearField(pendingauthsession.FieldProviderSubject, field.TypeString)
+	}
+	if value, ok := _u.mutation.ProviderSubjectHash(); ok {
+		_spec.SetField(pendingauthsession.FieldProviderSubjectHash, field.TypeString, value)
+	}
+	if _u.mutation.ProviderSubjectHashCleared() {
+		_spec.ClearField(pendingauthsession.FieldProviderSubjectHash, field.TypeString)
+	}
+	if value, ok := _u.mutation.ProviderSubjectPrefix(); ok {
+		_spec.SetField(pendingauthsession.FieldProviderSubjectPrefix, field.TypeString, value)
+	}
+	if _u.mutation.ProviderSubjectPrefixCleared() {
+		_spec.ClearField(pendingauthsession.FieldProviderSubjectPrefix, field.TypeString)
 	}
 	if value, ok := _u.mutation.RedirectTo(); ok {
 		_spec.SetField(pendingauthsession.FieldRedirectTo, field.TypeString, value)
@@ -664,6 +730,52 @@ func (_u *PendingAuthSessionUpdateOne) SetNillableProviderSubject(v *string) *Pe
 	if v != nil {
 		_u.SetProviderSubject(*v)
 	}
+	return _u
+}
+
+// ClearProviderSubject clears the value of the "provider_subject" field.
+func (_u *PendingAuthSessionUpdateOne) ClearProviderSubject() *PendingAuthSessionUpdateOne {
+	_u.mutation.ClearProviderSubject()
+	return _u
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (_u *PendingAuthSessionUpdateOne) SetProviderSubjectHash(v string) *PendingAuthSessionUpdateOne {
+	_u.mutation.SetProviderSubjectHash(v)
+	return _u
+}
+
+// SetNillableProviderSubjectHash sets the "provider_subject_hash" field if the given value is not nil.
+func (_u *PendingAuthSessionUpdateOne) SetNillableProviderSubjectHash(v *string) *PendingAuthSessionUpdateOne {
+	if v != nil {
+		_u.SetProviderSubjectHash(*v)
+	}
+	return _u
+}
+
+// ClearProviderSubjectHash clears the value of the "provider_subject_hash" field.
+func (_u *PendingAuthSessionUpdateOne) ClearProviderSubjectHash() *PendingAuthSessionUpdateOne {
+	_u.mutation.ClearProviderSubjectHash()
+	return _u
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (_u *PendingAuthSessionUpdateOne) SetProviderSubjectPrefix(v string) *PendingAuthSessionUpdateOne {
+	_u.mutation.SetProviderSubjectPrefix(v)
+	return _u
+}
+
+// SetNillableProviderSubjectPrefix sets the "provider_subject_prefix" field if the given value is not nil.
+func (_u *PendingAuthSessionUpdateOne) SetNillableProviderSubjectPrefix(v *string) *PendingAuthSessionUpdateOne {
+	if v != nil {
+		_u.SetProviderSubjectPrefix(*v)
+	}
+	return _u
+}
+
+// ClearProviderSubjectPrefix clears the value of the "provider_subject_prefix" field.
+func (_u *PendingAuthSessionUpdateOne) ClearProviderSubjectPrefix() *PendingAuthSessionUpdateOne {
+	_u.mutation.ClearProviderSubjectPrefix()
 	return _u
 }
 
@@ -995,9 +1107,14 @@ func (_u *PendingAuthSessionUpdateOne) check() error {
 			return &ValidationError{Name: "provider_key", err: fmt.Errorf(`ent: validator failed for field "PendingAuthSession.provider_key": %w`, err)}
 		}
 	}
-	if v, ok := _u.mutation.ProviderSubject(); ok {
-		if err := pendingauthsession.ProviderSubjectValidator(v); err != nil {
-			return &ValidationError{Name: "provider_subject", err: fmt.Errorf(`ent: validator failed for field "PendingAuthSession.provider_subject": %w`, err)}
+	if v, ok := _u.mutation.ProviderSubjectHash(); ok {
+		if err := pendingauthsession.ProviderSubjectHashValidator(v); err != nil {
+			return &ValidationError{Name: "provider_subject_hash", err: fmt.Errorf(`ent: validator failed for field "PendingAuthSession.provider_subject_hash": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.ProviderSubjectPrefix(); ok {
+		if err := pendingauthsession.ProviderSubjectPrefixValidator(v); err != nil {
+			return &ValidationError{Name: "provider_subject_prefix", err: fmt.Errorf(`ent: validator failed for field "PendingAuthSession.provider_subject_prefix": %w`, err)}
 		}
 	}
 	return nil
@@ -1049,6 +1166,21 @@ func (_u *PendingAuthSessionUpdateOne) sqlSave(ctx context.Context) (_node *Pend
 	}
 	if value, ok := _u.mutation.ProviderSubject(); ok {
 		_spec.SetField(pendingauthsession.FieldProviderSubject, field.TypeString, value)
+	}
+	if _u.mutation.ProviderSubjectCleared() {
+		_spec.ClearField(pendingauthsession.FieldProviderSubject, field.TypeString)
+	}
+	if value, ok := _u.mutation.ProviderSubjectHash(); ok {
+		_spec.SetField(pendingauthsession.FieldProviderSubjectHash, field.TypeString, value)
+	}
+	if _u.mutation.ProviderSubjectHashCleared() {
+		_spec.ClearField(pendingauthsession.FieldProviderSubjectHash, field.TypeString)
+	}
+	if value, ok := _u.mutation.ProviderSubjectPrefix(); ok {
+		_spec.SetField(pendingauthsession.FieldProviderSubjectPrefix, field.TypeString, value)
+	}
+	if _u.mutation.ProviderSubjectPrefixCleared() {
+		_spec.ClearField(pendingauthsession.FieldProviderSubjectPrefix, field.TypeString)
 	}
 	if value, ok := _u.mutation.RedirectTo(); ok {
 		_spec.SetField(pendingauthsession.FieldRedirectTo, field.TypeString, value)

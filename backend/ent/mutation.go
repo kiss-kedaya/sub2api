@@ -7787,6 +7787,8 @@ type AuthIdentityMutation struct {
 	provider_type             *string
 	provider_key              *string
 	provider_subject          *string
+	provider_subject_hash     *string
+	provider_subject_prefix   *string
 	verified_at               *time.Time
 	issuer                    *string
 	metadata                  *map[string]interface{}
@@ -8099,7 +8101,7 @@ func (m *AuthIdentityMutation) ProviderSubject() (r string, exists bool) {
 // OldProviderSubject returns the old "provider_subject" field's value of the AuthIdentity entity.
 // If the AuthIdentity object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AuthIdentityMutation) OldProviderSubject(ctx context.Context) (v string, err error) {
+func (m *AuthIdentityMutation) OldProviderSubject(ctx context.Context) (v *string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldProviderSubject is only allowed on UpdateOne operations")
 	}
@@ -8113,9 +8115,120 @@ func (m *AuthIdentityMutation) OldProviderSubject(ctx context.Context) (v string
 	return oldValue.ProviderSubject, nil
 }
 
+// ClearProviderSubject clears the value of the "provider_subject" field.
+func (m *AuthIdentityMutation) ClearProviderSubject() {
+	m.provider_subject = nil
+	m.clearedFields[authidentity.FieldProviderSubject] = struct{}{}
+}
+
+// ProviderSubjectCleared returns if the "provider_subject" field was cleared in this mutation.
+func (m *AuthIdentityMutation) ProviderSubjectCleared() bool {
+	_, ok := m.clearedFields[authidentity.FieldProviderSubject]
+	return ok
+}
+
 // ResetProviderSubject resets all changes to the "provider_subject" field.
 func (m *AuthIdentityMutation) ResetProviderSubject() {
 	m.provider_subject = nil
+	delete(m.clearedFields, authidentity.FieldProviderSubject)
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (m *AuthIdentityMutation) SetProviderSubjectHash(s string) {
+	m.provider_subject_hash = &s
+}
+
+// ProviderSubjectHash returns the value of the "provider_subject_hash" field in the mutation.
+func (m *AuthIdentityMutation) ProviderSubjectHash() (r string, exists bool) {
+	v := m.provider_subject_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProviderSubjectHash returns the old "provider_subject_hash" field's value of the AuthIdentity entity.
+// If the AuthIdentity object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AuthIdentityMutation) OldProviderSubjectHash(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProviderSubjectHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProviderSubjectHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProviderSubjectHash: %w", err)
+	}
+	return oldValue.ProviderSubjectHash, nil
+}
+
+// ClearProviderSubjectHash clears the value of the "provider_subject_hash" field.
+func (m *AuthIdentityMutation) ClearProviderSubjectHash() {
+	m.provider_subject_hash = nil
+	m.clearedFields[authidentity.FieldProviderSubjectHash] = struct{}{}
+}
+
+// ProviderSubjectHashCleared returns if the "provider_subject_hash" field was cleared in this mutation.
+func (m *AuthIdentityMutation) ProviderSubjectHashCleared() bool {
+	_, ok := m.clearedFields[authidentity.FieldProviderSubjectHash]
+	return ok
+}
+
+// ResetProviderSubjectHash resets all changes to the "provider_subject_hash" field.
+func (m *AuthIdentityMutation) ResetProviderSubjectHash() {
+	m.provider_subject_hash = nil
+	delete(m.clearedFields, authidentity.FieldProviderSubjectHash)
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (m *AuthIdentityMutation) SetProviderSubjectPrefix(s string) {
+	m.provider_subject_prefix = &s
+}
+
+// ProviderSubjectPrefix returns the value of the "provider_subject_prefix" field in the mutation.
+func (m *AuthIdentityMutation) ProviderSubjectPrefix() (r string, exists bool) {
+	v := m.provider_subject_prefix
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProviderSubjectPrefix returns the old "provider_subject_prefix" field's value of the AuthIdentity entity.
+// If the AuthIdentity object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AuthIdentityMutation) OldProviderSubjectPrefix(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProviderSubjectPrefix is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProviderSubjectPrefix requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProviderSubjectPrefix: %w", err)
+	}
+	return oldValue.ProviderSubjectPrefix, nil
+}
+
+// ClearProviderSubjectPrefix clears the value of the "provider_subject_prefix" field.
+func (m *AuthIdentityMutation) ClearProviderSubjectPrefix() {
+	m.provider_subject_prefix = nil
+	m.clearedFields[authidentity.FieldProviderSubjectPrefix] = struct{}{}
+}
+
+// ProviderSubjectPrefixCleared returns if the "provider_subject_prefix" field was cleared in this mutation.
+func (m *AuthIdentityMutation) ProviderSubjectPrefixCleared() bool {
+	_, ok := m.clearedFields[authidentity.FieldProviderSubjectPrefix]
+	return ok
+}
+
+// ResetProviderSubjectPrefix resets all changes to the "provider_subject_prefix" field.
+func (m *AuthIdentityMutation) ResetProviderSubjectPrefix() {
+	m.provider_subject_prefix = nil
+	delete(m.clearedFields, authidentity.FieldProviderSubjectPrefix)
 }
 
 // SetVerifiedAt sets the "verified_at" field.
@@ -8421,7 +8534,7 @@ func (m *AuthIdentityMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AuthIdentityMutation) Fields() []string {
-	fields := make([]string, 0, 9)
+	fields := make([]string, 0, 11)
 	if m.created_at != nil {
 		fields = append(fields, authidentity.FieldCreatedAt)
 	}
@@ -8439,6 +8552,12 @@ func (m *AuthIdentityMutation) Fields() []string {
 	}
 	if m.provider_subject != nil {
 		fields = append(fields, authidentity.FieldProviderSubject)
+	}
+	if m.provider_subject_hash != nil {
+		fields = append(fields, authidentity.FieldProviderSubjectHash)
+	}
+	if m.provider_subject_prefix != nil {
+		fields = append(fields, authidentity.FieldProviderSubjectPrefix)
 	}
 	if m.verified_at != nil {
 		fields = append(fields, authidentity.FieldVerifiedAt)
@@ -8469,6 +8588,10 @@ func (m *AuthIdentityMutation) Field(name string) (ent.Value, bool) {
 		return m.ProviderKey()
 	case authidentity.FieldProviderSubject:
 		return m.ProviderSubject()
+	case authidentity.FieldProviderSubjectHash:
+		return m.ProviderSubjectHash()
+	case authidentity.FieldProviderSubjectPrefix:
+		return m.ProviderSubjectPrefix()
 	case authidentity.FieldVerifiedAt:
 		return m.VerifiedAt()
 	case authidentity.FieldIssuer:
@@ -8496,6 +8619,10 @@ func (m *AuthIdentityMutation) OldField(ctx context.Context, name string) (ent.V
 		return m.OldProviderKey(ctx)
 	case authidentity.FieldProviderSubject:
 		return m.OldProviderSubject(ctx)
+	case authidentity.FieldProviderSubjectHash:
+		return m.OldProviderSubjectHash(ctx)
+	case authidentity.FieldProviderSubjectPrefix:
+		return m.OldProviderSubjectPrefix(ctx)
 	case authidentity.FieldVerifiedAt:
 		return m.OldVerifiedAt(ctx)
 	case authidentity.FieldIssuer:
@@ -8553,6 +8680,20 @@ func (m *AuthIdentityMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetProviderSubject(v)
 		return nil
+	case authidentity.FieldProviderSubjectHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProviderSubjectHash(v)
+		return nil
+	case authidentity.FieldProviderSubjectPrefix:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProviderSubjectPrefix(v)
+		return nil
 	case authidentity.FieldVerifiedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -8607,6 +8748,15 @@ func (m *AuthIdentityMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *AuthIdentityMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(authidentity.FieldProviderSubject) {
+		fields = append(fields, authidentity.FieldProviderSubject)
+	}
+	if m.FieldCleared(authidentity.FieldProviderSubjectHash) {
+		fields = append(fields, authidentity.FieldProviderSubjectHash)
+	}
+	if m.FieldCleared(authidentity.FieldProviderSubjectPrefix) {
+		fields = append(fields, authidentity.FieldProviderSubjectPrefix)
+	}
 	if m.FieldCleared(authidentity.FieldVerifiedAt) {
 		fields = append(fields, authidentity.FieldVerifiedAt)
 	}
@@ -8627,6 +8777,15 @@ func (m *AuthIdentityMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *AuthIdentityMutation) ClearField(name string) error {
 	switch name {
+	case authidentity.FieldProviderSubject:
+		m.ClearProviderSubject()
+		return nil
+	case authidentity.FieldProviderSubjectHash:
+		m.ClearProviderSubjectHash()
+		return nil
+	case authidentity.FieldProviderSubjectPrefix:
+		m.ClearProviderSubjectPrefix()
+		return nil
 	case authidentity.FieldVerifiedAt:
 		m.ClearVerifiedAt()
 		return nil
@@ -8658,6 +8817,12 @@ func (m *AuthIdentityMutation) ResetField(name string) error {
 		return nil
 	case authidentity.FieldProviderSubject:
 		m.ResetProviderSubject()
+		return nil
+	case authidentity.FieldProviderSubjectHash:
+		m.ResetProviderSubjectHash()
+		return nil
+	case authidentity.FieldProviderSubjectPrefix:
+		m.ResetProviderSubjectPrefix()
 		return nil
 	case authidentity.FieldVerifiedAt:
 		m.ResetVerifiedAt()
@@ -8803,23 +8968,25 @@ func (m *AuthIdentityMutation) ResetEdge(name string) error {
 // AuthIdentityChannelMutation represents an operation that mutates the AuthIdentityChannel nodes in the graph.
 type AuthIdentityChannelMutation struct {
 	config
-	op              Op
-	typ             string
-	id              *int64
-	created_at      *time.Time
-	updated_at      *time.Time
-	provider_type   *string
-	provider_key    *string
-	channel         *string
-	channel_app_id  *string
-	channel_subject *string
-	metadata        *map[string]interface{}
-	clearedFields   map[string]struct{}
-	identity        *int64
-	clearedidentity bool
-	done            bool
-	oldValue        func(context.Context) (*AuthIdentityChannel, error)
-	predicates      []predicate.AuthIdentityChannel
+	op                     Op
+	typ                    string
+	id                     *int64
+	created_at             *time.Time
+	updated_at             *time.Time
+	provider_type          *string
+	provider_key           *string
+	channel                *string
+	channel_app_id         *string
+	channel_subject        *string
+	channel_subject_hash   *string
+	channel_subject_prefix *string
+	metadata               *map[string]interface{}
+	clearedFields          map[string]struct{}
+	identity               *int64
+	clearedidentity        bool
+	done                   bool
+	oldValue               func(context.Context) (*AuthIdentityChannel, error)
+	predicates             []predicate.AuthIdentityChannel
 }
 
 var _ ent.Mutation = (*AuthIdentityChannelMutation)(nil)
@@ -9189,7 +9356,7 @@ func (m *AuthIdentityChannelMutation) ChannelSubject() (r string, exists bool) {
 // OldChannelSubject returns the old "channel_subject" field's value of the AuthIdentityChannel entity.
 // If the AuthIdentityChannel object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AuthIdentityChannelMutation) OldChannelSubject(ctx context.Context) (v string, err error) {
+func (m *AuthIdentityChannelMutation) OldChannelSubject(ctx context.Context) (v *string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldChannelSubject is only allowed on UpdateOne operations")
 	}
@@ -9203,9 +9370,120 @@ func (m *AuthIdentityChannelMutation) OldChannelSubject(ctx context.Context) (v 
 	return oldValue.ChannelSubject, nil
 }
 
+// ClearChannelSubject clears the value of the "channel_subject" field.
+func (m *AuthIdentityChannelMutation) ClearChannelSubject() {
+	m.channel_subject = nil
+	m.clearedFields[authidentitychannel.FieldChannelSubject] = struct{}{}
+}
+
+// ChannelSubjectCleared returns if the "channel_subject" field was cleared in this mutation.
+func (m *AuthIdentityChannelMutation) ChannelSubjectCleared() bool {
+	_, ok := m.clearedFields[authidentitychannel.FieldChannelSubject]
+	return ok
+}
+
 // ResetChannelSubject resets all changes to the "channel_subject" field.
 func (m *AuthIdentityChannelMutation) ResetChannelSubject() {
 	m.channel_subject = nil
+	delete(m.clearedFields, authidentitychannel.FieldChannelSubject)
+}
+
+// SetChannelSubjectHash sets the "channel_subject_hash" field.
+func (m *AuthIdentityChannelMutation) SetChannelSubjectHash(s string) {
+	m.channel_subject_hash = &s
+}
+
+// ChannelSubjectHash returns the value of the "channel_subject_hash" field in the mutation.
+func (m *AuthIdentityChannelMutation) ChannelSubjectHash() (r string, exists bool) {
+	v := m.channel_subject_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldChannelSubjectHash returns the old "channel_subject_hash" field's value of the AuthIdentityChannel entity.
+// If the AuthIdentityChannel object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AuthIdentityChannelMutation) OldChannelSubjectHash(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldChannelSubjectHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldChannelSubjectHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldChannelSubjectHash: %w", err)
+	}
+	return oldValue.ChannelSubjectHash, nil
+}
+
+// ClearChannelSubjectHash clears the value of the "channel_subject_hash" field.
+func (m *AuthIdentityChannelMutation) ClearChannelSubjectHash() {
+	m.channel_subject_hash = nil
+	m.clearedFields[authidentitychannel.FieldChannelSubjectHash] = struct{}{}
+}
+
+// ChannelSubjectHashCleared returns if the "channel_subject_hash" field was cleared in this mutation.
+func (m *AuthIdentityChannelMutation) ChannelSubjectHashCleared() bool {
+	_, ok := m.clearedFields[authidentitychannel.FieldChannelSubjectHash]
+	return ok
+}
+
+// ResetChannelSubjectHash resets all changes to the "channel_subject_hash" field.
+func (m *AuthIdentityChannelMutation) ResetChannelSubjectHash() {
+	m.channel_subject_hash = nil
+	delete(m.clearedFields, authidentitychannel.FieldChannelSubjectHash)
+}
+
+// SetChannelSubjectPrefix sets the "channel_subject_prefix" field.
+func (m *AuthIdentityChannelMutation) SetChannelSubjectPrefix(s string) {
+	m.channel_subject_prefix = &s
+}
+
+// ChannelSubjectPrefix returns the value of the "channel_subject_prefix" field in the mutation.
+func (m *AuthIdentityChannelMutation) ChannelSubjectPrefix() (r string, exists bool) {
+	v := m.channel_subject_prefix
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldChannelSubjectPrefix returns the old "channel_subject_prefix" field's value of the AuthIdentityChannel entity.
+// If the AuthIdentityChannel object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AuthIdentityChannelMutation) OldChannelSubjectPrefix(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldChannelSubjectPrefix is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldChannelSubjectPrefix requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldChannelSubjectPrefix: %w", err)
+	}
+	return oldValue.ChannelSubjectPrefix, nil
+}
+
+// ClearChannelSubjectPrefix clears the value of the "channel_subject_prefix" field.
+func (m *AuthIdentityChannelMutation) ClearChannelSubjectPrefix() {
+	m.channel_subject_prefix = nil
+	m.clearedFields[authidentitychannel.FieldChannelSubjectPrefix] = struct{}{}
+}
+
+// ChannelSubjectPrefixCleared returns if the "channel_subject_prefix" field was cleared in this mutation.
+func (m *AuthIdentityChannelMutation) ChannelSubjectPrefixCleared() bool {
+	_, ok := m.clearedFields[authidentitychannel.FieldChannelSubjectPrefix]
+	return ok
+}
+
+// ResetChannelSubjectPrefix resets all changes to the "channel_subject_prefix" field.
+func (m *AuthIdentityChannelMutation) ResetChannelSubjectPrefix() {
+	m.channel_subject_prefix = nil
+	delete(m.clearedFields, authidentitychannel.FieldChannelSubjectPrefix)
 }
 
 // SetMetadata sets the "metadata" field.
@@ -9305,7 +9583,7 @@ func (m *AuthIdentityChannelMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AuthIdentityChannelMutation) Fields() []string {
-	fields := make([]string, 0, 9)
+	fields := make([]string, 0, 11)
 	if m.created_at != nil {
 		fields = append(fields, authidentitychannel.FieldCreatedAt)
 	}
@@ -9329,6 +9607,12 @@ func (m *AuthIdentityChannelMutation) Fields() []string {
 	}
 	if m.channel_subject != nil {
 		fields = append(fields, authidentitychannel.FieldChannelSubject)
+	}
+	if m.channel_subject_hash != nil {
+		fields = append(fields, authidentitychannel.FieldChannelSubjectHash)
+	}
+	if m.channel_subject_prefix != nil {
+		fields = append(fields, authidentitychannel.FieldChannelSubjectPrefix)
 	}
 	if m.metadata != nil {
 		fields = append(fields, authidentitychannel.FieldMetadata)
@@ -9357,6 +9641,10 @@ func (m *AuthIdentityChannelMutation) Field(name string) (ent.Value, bool) {
 		return m.ChannelAppID()
 	case authidentitychannel.FieldChannelSubject:
 		return m.ChannelSubject()
+	case authidentitychannel.FieldChannelSubjectHash:
+		return m.ChannelSubjectHash()
+	case authidentitychannel.FieldChannelSubjectPrefix:
+		return m.ChannelSubjectPrefix()
 	case authidentitychannel.FieldMetadata:
 		return m.Metadata()
 	}
@@ -9384,6 +9672,10 @@ func (m *AuthIdentityChannelMutation) OldField(ctx context.Context, name string)
 		return m.OldChannelAppID(ctx)
 	case authidentitychannel.FieldChannelSubject:
 		return m.OldChannelSubject(ctx)
+	case authidentitychannel.FieldChannelSubjectHash:
+		return m.OldChannelSubjectHash(ctx)
+	case authidentitychannel.FieldChannelSubjectPrefix:
+		return m.OldChannelSubjectPrefix(ctx)
 	case authidentitychannel.FieldMetadata:
 		return m.OldMetadata(ctx)
 	}
@@ -9451,6 +9743,20 @@ func (m *AuthIdentityChannelMutation) SetField(name string, value ent.Value) err
 		}
 		m.SetChannelSubject(v)
 		return nil
+	case authidentitychannel.FieldChannelSubjectHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetChannelSubjectHash(v)
+		return nil
+	case authidentitychannel.FieldChannelSubjectPrefix:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetChannelSubjectPrefix(v)
+		return nil
 	case authidentitychannel.FieldMetadata:
 		v, ok := value.(map[string]interface{})
 		if !ok {
@@ -9490,7 +9796,17 @@ func (m *AuthIdentityChannelMutation) AddField(name string, value ent.Value) err
 // ClearedFields returns all nullable fields that were cleared during this
 // mutation.
 func (m *AuthIdentityChannelMutation) ClearedFields() []string {
-	return nil
+	var fields []string
+	if m.FieldCleared(authidentitychannel.FieldChannelSubject) {
+		fields = append(fields, authidentitychannel.FieldChannelSubject)
+	}
+	if m.FieldCleared(authidentitychannel.FieldChannelSubjectHash) {
+		fields = append(fields, authidentitychannel.FieldChannelSubjectHash)
+	}
+	if m.FieldCleared(authidentitychannel.FieldChannelSubjectPrefix) {
+		fields = append(fields, authidentitychannel.FieldChannelSubjectPrefix)
+	}
+	return fields
 }
 
 // FieldCleared returns a boolean indicating if a field with the given name was
@@ -9503,6 +9819,17 @@ func (m *AuthIdentityChannelMutation) FieldCleared(name string) bool {
 // ClearField clears the value of the field with the given name. It returns an
 // error if the field is not defined in the schema.
 func (m *AuthIdentityChannelMutation) ClearField(name string) error {
+	switch name {
+	case authidentitychannel.FieldChannelSubject:
+		m.ClearChannelSubject()
+		return nil
+	case authidentitychannel.FieldChannelSubjectHash:
+		m.ClearChannelSubjectHash()
+		return nil
+	case authidentitychannel.FieldChannelSubjectPrefix:
+		m.ClearChannelSubjectPrefix()
+		return nil
+	}
 	return fmt.Errorf("unknown AuthIdentityChannel nullable field %s", name)
 }
 
@@ -9533,6 +9860,12 @@ func (m *AuthIdentityChannelMutation) ResetField(name string) error {
 		return nil
 	case authidentitychannel.FieldChannelSubject:
 		m.ResetChannelSubject()
+		return nil
+	case authidentitychannel.FieldChannelSubjectHash:
+		m.ResetChannelSubjectHash()
+		return nil
+	case authidentitychannel.FieldChannelSubjectPrefix:
+		m.ResetChannelSubjectPrefix()
 		return nil
 	case authidentitychannel.FieldMetadata:
 		m.ResetMetadata()
@@ -35291,6 +35624,8 @@ type PendingAuthSessionMutation struct {
 	provider_type              *string
 	provider_key               *string
 	provider_subject           *string
+	provider_subject_hash      *string
+	provider_subject_prefix    *string
 	redirect_to                *string
 	resolved_email             *string
 	registration_password_hash *string
@@ -35645,7 +35980,7 @@ func (m *PendingAuthSessionMutation) ProviderSubject() (r string, exists bool) {
 // OldProviderSubject returns the old "provider_subject" field's value of the PendingAuthSession entity.
 // If the PendingAuthSession object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *PendingAuthSessionMutation) OldProviderSubject(ctx context.Context) (v string, err error) {
+func (m *PendingAuthSessionMutation) OldProviderSubject(ctx context.Context) (v *string, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldProviderSubject is only allowed on UpdateOne operations")
 	}
@@ -35659,9 +35994,120 @@ func (m *PendingAuthSessionMutation) OldProviderSubject(ctx context.Context) (v 
 	return oldValue.ProviderSubject, nil
 }
 
+// ClearProviderSubject clears the value of the "provider_subject" field.
+func (m *PendingAuthSessionMutation) ClearProviderSubject() {
+	m.provider_subject = nil
+	m.clearedFields[pendingauthsession.FieldProviderSubject] = struct{}{}
+}
+
+// ProviderSubjectCleared returns if the "provider_subject" field was cleared in this mutation.
+func (m *PendingAuthSessionMutation) ProviderSubjectCleared() bool {
+	_, ok := m.clearedFields[pendingauthsession.FieldProviderSubject]
+	return ok
+}
+
 // ResetProviderSubject resets all changes to the "provider_subject" field.
 func (m *PendingAuthSessionMutation) ResetProviderSubject() {
 	m.provider_subject = nil
+	delete(m.clearedFields, pendingauthsession.FieldProviderSubject)
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (m *PendingAuthSessionMutation) SetProviderSubjectHash(s string) {
+	m.provider_subject_hash = &s
+}
+
+// ProviderSubjectHash returns the value of the "provider_subject_hash" field in the mutation.
+func (m *PendingAuthSessionMutation) ProviderSubjectHash() (r string, exists bool) {
+	v := m.provider_subject_hash
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProviderSubjectHash returns the old "provider_subject_hash" field's value of the PendingAuthSession entity.
+// If the PendingAuthSession object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PendingAuthSessionMutation) OldProviderSubjectHash(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProviderSubjectHash is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProviderSubjectHash requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProviderSubjectHash: %w", err)
+	}
+	return oldValue.ProviderSubjectHash, nil
+}
+
+// ClearProviderSubjectHash clears the value of the "provider_subject_hash" field.
+func (m *PendingAuthSessionMutation) ClearProviderSubjectHash() {
+	m.provider_subject_hash = nil
+	m.clearedFields[pendingauthsession.FieldProviderSubjectHash] = struct{}{}
+}
+
+// ProviderSubjectHashCleared returns if the "provider_subject_hash" field was cleared in this mutation.
+func (m *PendingAuthSessionMutation) ProviderSubjectHashCleared() bool {
+	_, ok := m.clearedFields[pendingauthsession.FieldProviderSubjectHash]
+	return ok
+}
+
+// ResetProviderSubjectHash resets all changes to the "provider_subject_hash" field.
+func (m *PendingAuthSessionMutation) ResetProviderSubjectHash() {
+	m.provider_subject_hash = nil
+	delete(m.clearedFields, pendingauthsession.FieldProviderSubjectHash)
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (m *PendingAuthSessionMutation) SetProviderSubjectPrefix(s string) {
+	m.provider_subject_prefix = &s
+}
+
+// ProviderSubjectPrefix returns the value of the "provider_subject_prefix" field in the mutation.
+func (m *PendingAuthSessionMutation) ProviderSubjectPrefix() (r string, exists bool) {
+	v := m.provider_subject_prefix
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProviderSubjectPrefix returns the old "provider_subject_prefix" field's value of the PendingAuthSession entity.
+// If the PendingAuthSession object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PendingAuthSessionMutation) OldProviderSubjectPrefix(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProviderSubjectPrefix is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProviderSubjectPrefix requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProviderSubjectPrefix: %w", err)
+	}
+	return oldValue.ProviderSubjectPrefix, nil
+}
+
+// ClearProviderSubjectPrefix clears the value of the "provider_subject_prefix" field.
+func (m *PendingAuthSessionMutation) ClearProviderSubjectPrefix() {
+	m.provider_subject_prefix = nil
+	m.clearedFields[pendingauthsession.FieldProviderSubjectPrefix] = struct{}{}
+}
+
+// ProviderSubjectPrefixCleared returns if the "provider_subject_prefix" field was cleared in this mutation.
+func (m *PendingAuthSessionMutation) ProviderSubjectPrefixCleared() bool {
+	_, ok := m.clearedFields[pendingauthsession.FieldProviderSubjectPrefix]
+	return ok
+}
+
+// ResetProviderSubjectPrefix resets all changes to the "provider_subject_prefix" field.
+func (m *PendingAuthSessionMutation) ResetProviderSubjectPrefix() {
+	m.provider_subject_prefix = nil
+	delete(m.clearedFields, pendingauthsession.FieldProviderSubjectPrefix)
 }
 
 // SetTargetUserID sets the "target_user_id" field.
@@ -36346,7 +36792,7 @@ func (m *PendingAuthSessionMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *PendingAuthSessionMutation) Fields() []string {
-	fields := make([]string, 0, 21)
+	fields := make([]string, 0, 23)
 	if m.created_at != nil {
 		fields = append(fields, pendingauthsession.FieldCreatedAt)
 	}
@@ -36367,6 +36813,12 @@ func (m *PendingAuthSessionMutation) Fields() []string {
 	}
 	if m.provider_subject != nil {
 		fields = append(fields, pendingauthsession.FieldProviderSubject)
+	}
+	if m.provider_subject_hash != nil {
+		fields = append(fields, pendingauthsession.FieldProviderSubjectHash)
+	}
+	if m.provider_subject_prefix != nil {
+		fields = append(fields, pendingauthsession.FieldProviderSubjectPrefix)
 	}
 	if m.target_user != nil {
 		fields = append(fields, pendingauthsession.FieldTargetUserID)
@@ -36432,6 +36884,10 @@ func (m *PendingAuthSessionMutation) Field(name string) (ent.Value, bool) {
 		return m.ProviderKey()
 	case pendingauthsession.FieldProviderSubject:
 		return m.ProviderSubject()
+	case pendingauthsession.FieldProviderSubjectHash:
+		return m.ProviderSubjectHash()
+	case pendingauthsession.FieldProviderSubjectPrefix:
+		return m.ProviderSubjectPrefix()
 	case pendingauthsession.FieldTargetUserID:
 		return m.TargetUserID()
 	case pendingauthsession.FieldRedirectTo:
@@ -36483,6 +36939,10 @@ func (m *PendingAuthSessionMutation) OldField(ctx context.Context, name string) 
 		return m.OldProviderKey(ctx)
 	case pendingauthsession.FieldProviderSubject:
 		return m.OldProviderSubject(ctx)
+	case pendingauthsession.FieldProviderSubjectHash:
+		return m.OldProviderSubjectHash(ctx)
+	case pendingauthsession.FieldProviderSubjectPrefix:
+		return m.OldProviderSubjectPrefix(ctx)
 	case pendingauthsession.FieldTargetUserID:
 		return m.OldTargetUserID(ctx)
 	case pendingauthsession.FieldRedirectTo:
@@ -36568,6 +37028,20 @@ func (m *PendingAuthSessionMutation) SetField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetProviderSubject(v)
+		return nil
+	case pendingauthsession.FieldProviderSubjectHash:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProviderSubjectHash(v)
+		return nil
+	case pendingauthsession.FieldProviderSubjectPrefix:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProviderSubjectPrefix(v)
 		return nil
 	case pendingauthsession.FieldTargetUserID:
 		v, ok := value.(int64)
@@ -36700,6 +37174,15 @@ func (m *PendingAuthSessionMutation) AddField(name string, value ent.Value) erro
 // mutation.
 func (m *PendingAuthSessionMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(pendingauthsession.FieldProviderSubject) {
+		fields = append(fields, pendingauthsession.FieldProviderSubject)
+	}
+	if m.FieldCleared(pendingauthsession.FieldProviderSubjectHash) {
+		fields = append(fields, pendingauthsession.FieldProviderSubjectHash)
+	}
+	if m.FieldCleared(pendingauthsession.FieldProviderSubjectPrefix) {
+		fields = append(fields, pendingauthsession.FieldProviderSubjectPrefix)
+	}
 	if m.FieldCleared(pendingauthsession.FieldTargetUserID) {
 		fields = append(fields, pendingauthsession.FieldTargetUserID)
 	}
@@ -36732,6 +37215,15 @@ func (m *PendingAuthSessionMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *PendingAuthSessionMutation) ClearField(name string) error {
 	switch name {
+	case pendingauthsession.FieldProviderSubject:
+		m.ClearProviderSubject()
+		return nil
+	case pendingauthsession.FieldProviderSubjectHash:
+		m.ClearProviderSubjectHash()
+		return nil
+	case pendingauthsession.FieldProviderSubjectPrefix:
+		m.ClearProviderSubjectPrefix()
+		return nil
 	case pendingauthsession.FieldTargetUserID:
 		m.ClearTargetUserID()
 		return nil
@@ -36778,6 +37270,12 @@ func (m *PendingAuthSessionMutation) ResetField(name string) error {
 		return nil
 	case pendingauthsession.FieldProviderSubject:
 		m.ResetProviderSubject()
+		return nil
+	case pendingauthsession.FieldProviderSubjectHash:
+		m.ResetProviderSubjectHash()
+		return nil
+	case pendingauthsession.FieldProviderSubjectPrefix:
+		m.ResetProviderSubjectPrefix()
 		return nil
 	case pendingauthsession.FieldTargetUserID:
 		m.ResetTargetUserID()

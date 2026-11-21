@@ -30,7 +30,11 @@ type AuthIdentity struct {
 	// ProviderKey holds the value of the "provider_key" field.
 	ProviderKey string `json:"provider_key,omitempty"`
 	// ProviderSubject holds the value of the "provider_subject" field.
-	ProviderSubject string `json:"provider_subject,omitempty"`
+	ProviderSubject *string `json:"provider_subject,omitempty"`
+	// ProviderSubjectHash holds the value of the "provider_subject_hash" field.
+	ProviderSubjectHash *string `json:"provider_subject_hash,omitempty"`
+	// ProviderSubjectPrefix holds the value of the "provider_subject_prefix" field.
+	ProviderSubjectPrefix *string `json:"provider_subject_prefix,omitempty"`
 	// VerifiedAt holds the value of the "verified_at" field.
 	VerifiedAt *time.Time `json:"verified_at,omitempty"`
 	// Issuer holds the value of the "issuer" field.
@@ -94,7 +98,7 @@ func (*AuthIdentity) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case authidentity.FieldID, authidentity.FieldUserID:
 			values[i] = new(sql.NullInt64)
-		case authidentity.FieldProviderType, authidentity.FieldProviderKey, authidentity.FieldProviderSubject, authidentity.FieldIssuer:
+		case authidentity.FieldProviderType, authidentity.FieldProviderKey, authidentity.FieldProviderSubject, authidentity.FieldProviderSubjectHash, authidentity.FieldProviderSubjectPrefix, authidentity.FieldIssuer:
 			values[i] = new(sql.NullString)
 		case authidentity.FieldCreatedAt, authidentity.FieldUpdatedAt, authidentity.FieldVerifiedAt:
 			values[i] = new(sql.NullTime)
@@ -153,7 +157,22 @@ func (_m *AuthIdentity) assignValues(columns []string, values []any) error {
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field provider_subject", values[i])
 			} else if value.Valid {
-				_m.ProviderSubject = value.String
+				_m.ProviderSubject = new(string)
+				*_m.ProviderSubject = value.String
+			}
+		case authidentity.FieldProviderSubjectHash:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field provider_subject_hash", values[i])
+			} else if value.Valid {
+				_m.ProviderSubjectHash = new(string)
+				*_m.ProviderSubjectHash = value.String
+			}
+		case authidentity.FieldProviderSubjectPrefix:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field provider_subject_prefix", values[i])
+			} else if value.Valid {
+				_m.ProviderSubjectPrefix = new(string)
+				*_m.ProviderSubjectPrefix = value.String
 			}
 		case authidentity.FieldVerifiedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -243,8 +262,20 @@ func (_m *AuthIdentity) String() string {
 	builder.WriteString("provider_key=")
 	builder.WriteString(_m.ProviderKey)
 	builder.WriteString(", ")
-	builder.WriteString("provider_subject=")
-	builder.WriteString(_m.ProviderSubject)
+	if v := _m.ProviderSubject; v != nil {
+		builder.WriteString("provider_subject=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.ProviderSubjectHash; v != nil {
+		builder.WriteString("provider_subject_hash=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.ProviderSubjectPrefix; v != nil {
+		builder.WriteString("provider_subject_prefix=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	if v := _m.VerifiedAt; v != nil {
 		builder.WriteString("verified_at=")

@@ -119,6 +119,52 @@ func (_u *AuthIdentityChannelUpdate) SetNillableChannelSubject(v *string) *AuthI
 	return _u
 }
 
+// ClearChannelSubject clears the value of the "channel_subject" field.
+func (_u *AuthIdentityChannelUpdate) ClearChannelSubject() *AuthIdentityChannelUpdate {
+	_u.mutation.ClearChannelSubject()
+	return _u
+}
+
+// SetChannelSubjectHash sets the "channel_subject_hash" field.
+func (_u *AuthIdentityChannelUpdate) SetChannelSubjectHash(v string) *AuthIdentityChannelUpdate {
+	_u.mutation.SetChannelSubjectHash(v)
+	return _u
+}
+
+// SetNillableChannelSubjectHash sets the "channel_subject_hash" field if the given value is not nil.
+func (_u *AuthIdentityChannelUpdate) SetNillableChannelSubjectHash(v *string) *AuthIdentityChannelUpdate {
+	if v != nil {
+		_u.SetChannelSubjectHash(*v)
+	}
+	return _u
+}
+
+// ClearChannelSubjectHash clears the value of the "channel_subject_hash" field.
+func (_u *AuthIdentityChannelUpdate) ClearChannelSubjectHash() *AuthIdentityChannelUpdate {
+	_u.mutation.ClearChannelSubjectHash()
+	return _u
+}
+
+// SetChannelSubjectPrefix sets the "channel_subject_prefix" field.
+func (_u *AuthIdentityChannelUpdate) SetChannelSubjectPrefix(v string) *AuthIdentityChannelUpdate {
+	_u.mutation.SetChannelSubjectPrefix(v)
+	return _u
+}
+
+// SetNillableChannelSubjectPrefix sets the "channel_subject_prefix" field if the given value is not nil.
+func (_u *AuthIdentityChannelUpdate) SetNillableChannelSubjectPrefix(v *string) *AuthIdentityChannelUpdate {
+	if v != nil {
+		_u.SetChannelSubjectPrefix(*v)
+	}
+	return _u
+}
+
+// ClearChannelSubjectPrefix clears the value of the "channel_subject_prefix" field.
+func (_u *AuthIdentityChannelUpdate) ClearChannelSubjectPrefix() *AuthIdentityChannelUpdate {
+	_u.mutation.ClearChannelSubjectPrefix()
+	return _u
+}
+
 // SetMetadata sets the "metadata" field.
 func (_u *AuthIdentityChannelUpdate) SetMetadata(v map[string]interface{}) *AuthIdentityChannelUpdate {
 	_u.mutation.SetMetadata(v)
@@ -199,9 +245,14 @@ func (_u *AuthIdentityChannelUpdate) check() error {
 			return &ValidationError{Name: "channel_app_id", err: fmt.Errorf(`ent: validator failed for field "AuthIdentityChannel.channel_app_id": %w`, err)}
 		}
 	}
-	if v, ok := _u.mutation.ChannelSubject(); ok {
-		if err := authidentitychannel.ChannelSubjectValidator(v); err != nil {
-			return &ValidationError{Name: "channel_subject", err: fmt.Errorf(`ent: validator failed for field "AuthIdentityChannel.channel_subject": %w`, err)}
+	if v, ok := _u.mutation.ChannelSubjectHash(); ok {
+		if err := authidentitychannel.ChannelSubjectHashValidator(v); err != nil {
+			return &ValidationError{Name: "channel_subject_hash", err: fmt.Errorf(`ent: validator failed for field "AuthIdentityChannel.channel_subject_hash": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.ChannelSubjectPrefix(); ok {
+		if err := authidentitychannel.ChannelSubjectPrefixValidator(v); err != nil {
+			return &ValidationError{Name: "channel_subject_prefix", err: fmt.Errorf(`ent: validator failed for field "AuthIdentityChannel.channel_subject_prefix": %w`, err)}
 		}
 	}
 	if _u.mutation.IdentityCleared() && len(_u.mutation.IdentityIDs()) > 0 {
@@ -239,6 +290,21 @@ func (_u *AuthIdentityChannelUpdate) sqlSave(ctx context.Context) (_node int, er
 	}
 	if value, ok := _u.mutation.ChannelSubject(); ok {
 		_spec.SetField(authidentitychannel.FieldChannelSubject, field.TypeString, value)
+	}
+	if _u.mutation.ChannelSubjectCleared() {
+		_spec.ClearField(authidentitychannel.FieldChannelSubject, field.TypeString)
+	}
+	if value, ok := _u.mutation.ChannelSubjectHash(); ok {
+		_spec.SetField(authidentitychannel.FieldChannelSubjectHash, field.TypeString, value)
+	}
+	if _u.mutation.ChannelSubjectHashCleared() {
+		_spec.ClearField(authidentitychannel.FieldChannelSubjectHash, field.TypeString)
+	}
+	if value, ok := _u.mutation.ChannelSubjectPrefix(); ok {
+		_spec.SetField(authidentitychannel.FieldChannelSubjectPrefix, field.TypeString, value)
+	}
+	if _u.mutation.ChannelSubjectPrefixCleared() {
+		_spec.ClearField(authidentitychannel.FieldChannelSubjectPrefix, field.TypeString)
 	}
 	if value, ok := _u.mutation.Metadata(); ok {
 		_spec.SetField(authidentitychannel.FieldMetadata, field.TypeJSON, value)
@@ -382,6 +448,52 @@ func (_u *AuthIdentityChannelUpdateOne) SetNillableChannelSubject(v *string) *Au
 	return _u
 }
 
+// ClearChannelSubject clears the value of the "channel_subject" field.
+func (_u *AuthIdentityChannelUpdateOne) ClearChannelSubject() *AuthIdentityChannelUpdateOne {
+	_u.mutation.ClearChannelSubject()
+	return _u
+}
+
+// SetChannelSubjectHash sets the "channel_subject_hash" field.
+func (_u *AuthIdentityChannelUpdateOne) SetChannelSubjectHash(v string) *AuthIdentityChannelUpdateOne {
+	_u.mutation.SetChannelSubjectHash(v)
+	return _u
+}
+
+// SetNillableChannelSubjectHash sets the "channel_subject_hash" field if the given value is not nil.
+func (_u *AuthIdentityChannelUpdateOne) SetNillableChannelSubjectHash(v *string) *AuthIdentityChannelUpdateOne {
+	if v != nil {
+		_u.SetChannelSubjectHash(*v)
+	}
+	return _u
+}
+
+// ClearChannelSubjectHash clears the value of the "channel_subject_hash" field.
+func (_u *AuthIdentityChannelUpdateOne) ClearChannelSubjectHash() *AuthIdentityChannelUpdateOne {
+	_u.mutation.ClearChannelSubjectHash()
+	return _u
+}
+
+// SetChannelSubjectPrefix sets the "channel_subject_prefix" field.
+func (_u *AuthIdentityChannelUpdateOne) SetChannelSubjectPrefix(v string) *AuthIdentityChannelUpdateOne {
+	_u.mutation.SetChannelSubjectPrefix(v)
+	return _u
+}
+
+// SetNillableChannelSubjectPrefix sets the "channel_subject_prefix" field if the given value is not nil.
+func (_u *AuthIdentityChannelUpdateOne) SetNillableChannelSubjectPrefix(v *string) *AuthIdentityChannelUpdateOne {
+	if v != nil {
+		_u.SetChannelSubjectPrefix(*v)
+	}
+	return _u
+}
+
+// ClearChannelSubjectPrefix clears the value of the "channel_subject_prefix" field.
+func (_u *AuthIdentityChannelUpdateOne) ClearChannelSubjectPrefix() *AuthIdentityChannelUpdateOne {
+	_u.mutation.ClearChannelSubjectPrefix()
+	return _u
+}
+
 // SetMetadata sets the "metadata" field.
 func (_u *AuthIdentityChannelUpdateOne) SetMetadata(v map[string]interface{}) *AuthIdentityChannelUpdateOne {
 	_u.mutation.SetMetadata(v)
@@ -475,9 +587,14 @@ func (_u *AuthIdentityChannelUpdateOne) check() error {
 			return &ValidationError{Name: "channel_app_id", err: fmt.Errorf(`ent: validator failed for field "AuthIdentityChannel.channel_app_id": %w`, err)}
 		}
 	}
-	if v, ok := _u.mutation.ChannelSubject(); ok {
-		if err := authidentitychannel.ChannelSubjectValidator(v); err != nil {
-			return &ValidationError{Name: "channel_subject", err: fmt.Errorf(`ent: validator failed for field "AuthIdentityChannel.channel_subject": %w`, err)}
+	if v, ok := _u.mutation.ChannelSubjectHash(); ok {
+		if err := authidentitychannel.ChannelSubjectHashValidator(v); err != nil {
+			return &ValidationError{Name: "channel_subject_hash", err: fmt.Errorf(`ent: validator failed for field "AuthIdentityChannel.channel_subject_hash": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.ChannelSubjectPrefix(); ok {
+		if err := authidentitychannel.ChannelSubjectPrefixValidator(v); err != nil {
+			return &ValidationError{Name: "channel_subject_prefix", err: fmt.Errorf(`ent: validator failed for field "AuthIdentityChannel.channel_subject_prefix": %w`, err)}
 		}
 	}
 	if _u.mutation.IdentityCleared() && len(_u.mutation.IdentityIDs()) > 0 {
@@ -532,6 +649,21 @@ func (_u *AuthIdentityChannelUpdateOne) sqlSave(ctx context.Context) (_node *Aut
 	}
 	if value, ok := _u.mutation.ChannelSubject(); ok {
 		_spec.SetField(authidentitychannel.FieldChannelSubject, field.TypeString, value)
+	}
+	if _u.mutation.ChannelSubjectCleared() {
+		_spec.ClearField(authidentitychannel.FieldChannelSubject, field.TypeString)
+	}
+	if value, ok := _u.mutation.ChannelSubjectHash(); ok {
+		_spec.SetField(authidentitychannel.FieldChannelSubjectHash, field.TypeString, value)
+	}
+	if _u.mutation.ChannelSubjectHashCleared() {
+		_spec.ClearField(authidentitychannel.FieldChannelSubjectHash, field.TypeString)
+	}
+	if value, ok := _u.mutation.ChannelSubjectPrefix(); ok {
+		_spec.SetField(authidentitychannel.FieldChannelSubjectPrefix, field.TypeString, value)
+	}
+	if _u.mutation.ChannelSubjectPrefixCleared() {
+		_spec.ClearField(authidentitychannel.FieldChannelSubjectPrefix, field.TypeString)
 	}
 	if value, ok := _u.mutation.Metadata(); ok {
 		_spec.SetField(authidentitychannel.FieldMetadata, field.TypeJSON, value)

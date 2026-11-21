@@ -147,12 +147,16 @@ func TestWeChatOAuthCallbackCreatesPendingSessionForUnifiedFlow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "wechat", session.ProviderType)
 	require.Equal(t, "wechat-main", session.ProviderKey)
-	require.Equal(t, "union-456", session.ProviderSubject)
+	require.True(t, service.IsAuthSubjectSealed(service.AuthSubjectPlaintext(session.ProviderSubject)))
+	require.Equal(t, "union-456", service.PendingAuthSubjectPlaintext(service.AuthSubjectPlaintext(session.ProviderSubject)))
 	require.Equal(t, "wechat-union-456@wechat-connect.invalid", session.ResolvedEmail)
 	require.Equal(t, "WeChat Nick", session.UpstreamIdentityClaims["suggested_display_name"])
 	require.Equal(t, "https://cdn.example/avatar.png", session.UpstreamIdentityClaims["suggested_avatar_url"])
-	require.Equal(t, "union-456", session.UpstreamIdentityClaims["unionid"])
-	require.Equal(t, "openid-123", session.UpstreamIdentityClaims["openid"])
+	// subject 派生的 claims 已清洗：只保留 hash 前缀，不再明文落库。
+	for _, sensitive := range []string{"subject", "unionid", "openid", "channel_subject"} {
+		require.NotContains(t, session.UpstreamIdentityClaims, sensitive)
+	}
+	require.NotEmpty(t, session.UpstreamIdentityClaims["channel_subject_hash"])
 }
 
 func TestWeChatOAuthCallbackFallsBackToOpenIDWhenUnionIDMissingInSingleChannelMode(t *testing.T) {
@@ -205,7 +209,8 @@ func TestWeChatOAuthCallbackFallsBackToOpenIDWhenUnionIDMissingInSingleChannelMo
 		Only(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, oauthIntentLogin, session.Intent)
-	require.Equal(t, "openid-123", session.ProviderSubject)
+	require.True(t, service.IsAuthSubjectSealed(service.AuthSubjectPlaintext(session.ProviderSubject)))
+	require.Equal(t, "openid-123", service.PendingAuthSubjectPlaintext(service.AuthSubjectPlaintext(session.ProviderSubject)))
 	require.Equal(t, wechatSyntheticEmail("openid-123"), session.ResolvedEmail)
 
 	completion := session.LocalFlowState[oauthCompletionResponseKey].(map[string]any)
@@ -566,13 +571,14 @@ func TestWeChatOAuthCallbackBindUsesUnionCanonicalIdentityAcrossChannels(t *test
 			require.NotNil(t, session.TargetUserID)
 			require.Equal(t, currentUser.ID, *session.TargetUserID)
 			require.Equal(t, currentUser.Email, session.ResolvedEmail)
-			require.Equal(t, "union-456", session.ProviderSubject)
-			require.Equal(t, "union-456", session.UpstreamIdentityClaims["subject"])
-			require.Equal(t, "union-456", session.UpstreamIdentityClaims["unionid"])
-			require.Equal(t, tc.openID, session.UpstreamIdentityClaims["openid"])
+			require.True(t, service.IsAuthSubjectSealed(service.AuthSubjectPlaintext(session.ProviderSubject)))
+			require.Equal(t, "union-456", service.PendingAuthSubjectPlaintext(service.AuthSubjectPlaintext(session.ProviderSubject)))
+			for _, sensitive := range []string{"subject", "unionid", "openid", "channel_subject"} {
+				require.NotContains(t, session.UpstreamIdentityClaims, sensitive)
+			}
 			require.Equal(t, tc.mode, session.UpstreamIdentityClaims["channel"])
 			require.Equal(t, tc.appID, session.UpstreamIdentityClaims["channel_app_id"])
-			require.Equal(t, tc.openID, session.UpstreamIdentityClaims["channel_subject"])
+			require.NotEmpty(t, session.UpstreamIdentityClaims["channel_subject_hash"])
 
 			completionResponse := session.LocalFlowState[oauthCompletionResponseKey].(map[string]any)
 			require.Equal(t, "/dashboard", completionResponse["redirect"])

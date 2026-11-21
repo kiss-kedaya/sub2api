@@ -25,7 +25,9 @@ export interface AdminBindAuthIdentityRequest {
 export interface AdminBoundAuthIdentityChannel {
   channel: string
   channel_app_id: string
-  channel_subject: string
+  // channel_subject 同样已 keyed 哈希化：只回显前缀 + 掩码，不返回原文。
+  channel_subject_prefix?: string
+  channel_subject_masked: string
   metadata: Record<string, unknown> | null
   created_at: string
   updated_at: string
@@ -35,7 +37,9 @@ export interface AdminBoundAuthIdentity {
   user_id: number
   provider_type: string
   provider_key: string
-  provider_subject: string
+  // subject 已哈希化：接口只回显前缀与掩码，不再返回完整明文。
+  provider_subject_prefix?: string
+  provider_subject_masked: string
   verified_at?: string | null
   issuer?: string | null
   metadata: Record<string, unknown> | null

@@ -224,14 +224,17 @@ func (s *AuthPendingIdentityService) CreatePendingSession(ctx context.Context, i
 		SetIntent(strings.TrimSpace(input.Intent)).
 		SetProviderType(strings.TrimSpace(input.Identity.ProviderType)).
 		SetProviderKey(strings.TrimSpace(input.Identity.ProviderKey)).
-		SetProviderSubject(strings.TrimSpace(input.Identity.ProviderSubject)).
 		SetRedirectTo(strings.TrimSpace(input.RedirectTo)).
 		SetResolvedEmail(strings.TrimSpace(input.ResolvedEmail)).
 		SetRegistrationPasswordHash(strings.TrimSpace(input.RegistrationPasswordHash)).
 		SetBrowserSessionKey(strings.TrimSpace(input.BrowserSessionKey)).
-		SetUpstreamIdentityClaims(copyPendingMap(input.UpstreamIdentityClaims)).
+		SetUpstreamIdentityClaims(copyPendingMap(SanitizeOAuthIdentityClaims(input.Identity.ProviderType, input.UpstreamIdentityClaims))).
 		SetLocalFlowState(copyPendingMap(input.LocalFlowState)).
 		SetExpiresAt(expiresAt)
+	create, err := ApplyPendingAuthSubjectCreate(create, input.Identity.ProviderType, input.Identity.ProviderSubject)
+	if err != nil {
+		return nil, fmt.Errorf("seal pending auth subject: %w", err)
+	}
 	if input.TargetUserID != nil {
 		create = create.SetTargetUserID(*input.TargetUserID)
 	}

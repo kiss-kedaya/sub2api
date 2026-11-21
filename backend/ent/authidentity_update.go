@@ -93,6 +93,52 @@ func (_u *AuthIdentityUpdate) SetNillableProviderSubject(v *string) *AuthIdentit
 	return _u
 }
 
+// ClearProviderSubject clears the value of the "provider_subject" field.
+func (_u *AuthIdentityUpdate) ClearProviderSubject() *AuthIdentityUpdate {
+	_u.mutation.ClearProviderSubject()
+	return _u
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (_u *AuthIdentityUpdate) SetProviderSubjectHash(v string) *AuthIdentityUpdate {
+	_u.mutation.SetProviderSubjectHash(v)
+	return _u
+}
+
+// SetNillableProviderSubjectHash sets the "provider_subject_hash" field if the given value is not nil.
+func (_u *AuthIdentityUpdate) SetNillableProviderSubjectHash(v *string) *AuthIdentityUpdate {
+	if v != nil {
+		_u.SetProviderSubjectHash(*v)
+	}
+	return _u
+}
+
+// ClearProviderSubjectHash clears the value of the "provider_subject_hash" field.
+func (_u *AuthIdentityUpdate) ClearProviderSubjectHash() *AuthIdentityUpdate {
+	_u.mutation.ClearProviderSubjectHash()
+	return _u
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (_u *AuthIdentityUpdate) SetProviderSubjectPrefix(v string) *AuthIdentityUpdate {
+	_u.mutation.SetProviderSubjectPrefix(v)
+	return _u
+}
+
+// SetNillableProviderSubjectPrefix sets the "provider_subject_prefix" field if the given value is not nil.
+func (_u *AuthIdentityUpdate) SetNillableProviderSubjectPrefix(v *string) *AuthIdentityUpdate {
+	if v != nil {
+		_u.SetProviderSubjectPrefix(*v)
+	}
+	return _u
+}
+
+// ClearProviderSubjectPrefix clears the value of the "provider_subject_prefix" field.
+func (_u *AuthIdentityUpdate) ClearProviderSubjectPrefix() *AuthIdentityUpdate {
+	_u.mutation.ClearProviderSubjectPrefix()
+	return _u
+}
+
 // SetVerifiedAt sets the "verified_at" field.
 func (_u *AuthIdentityUpdate) SetVerifiedAt(v time.Time) *AuthIdentityUpdate {
 	_u.mutation.SetVerifiedAt(v)
@@ -275,9 +321,14 @@ func (_u *AuthIdentityUpdate) check() error {
 			return &ValidationError{Name: "provider_key", err: fmt.Errorf(`ent: validator failed for field "AuthIdentity.provider_key": %w`, err)}
 		}
 	}
-	if v, ok := _u.mutation.ProviderSubject(); ok {
-		if err := authidentity.ProviderSubjectValidator(v); err != nil {
-			return &ValidationError{Name: "provider_subject", err: fmt.Errorf(`ent: validator failed for field "AuthIdentity.provider_subject": %w`, err)}
+	if v, ok := _u.mutation.ProviderSubjectHash(); ok {
+		if err := authidentity.ProviderSubjectHashValidator(v); err != nil {
+			return &ValidationError{Name: "provider_subject_hash", err: fmt.Errorf(`ent: validator failed for field "AuthIdentity.provider_subject_hash": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.ProviderSubjectPrefix(); ok {
+		if err := authidentity.ProviderSubjectPrefixValidator(v); err != nil {
+			return &ValidationError{Name: "provider_subject_prefix", err: fmt.Errorf(`ent: validator failed for field "AuthIdentity.provider_subject_prefix": %w`, err)}
 		}
 	}
 	if _u.mutation.UserCleared() && len(_u.mutation.UserIDs()) > 0 {
@@ -309,6 +360,21 @@ func (_u *AuthIdentityUpdate) sqlSave(ctx context.Context) (_node int, err error
 	}
 	if value, ok := _u.mutation.ProviderSubject(); ok {
 		_spec.SetField(authidentity.FieldProviderSubject, field.TypeString, value)
+	}
+	if _u.mutation.ProviderSubjectCleared() {
+		_spec.ClearField(authidentity.FieldProviderSubject, field.TypeString)
+	}
+	if value, ok := _u.mutation.ProviderSubjectHash(); ok {
+		_spec.SetField(authidentity.FieldProviderSubjectHash, field.TypeString, value)
+	}
+	if _u.mutation.ProviderSubjectHashCleared() {
+		_spec.ClearField(authidentity.FieldProviderSubjectHash, field.TypeString)
+	}
+	if value, ok := _u.mutation.ProviderSubjectPrefix(); ok {
+		_spec.SetField(authidentity.FieldProviderSubjectPrefix, field.TypeString, value)
+	}
+	if _u.mutation.ProviderSubjectPrefixCleared() {
+		_spec.ClearField(authidentity.FieldProviderSubjectPrefix, field.TypeString)
 	}
 	if value, ok := _u.mutation.VerifiedAt(); ok {
 		_spec.SetField(authidentity.FieldVerifiedAt, field.TypeTime, value)
@@ -526,6 +592,52 @@ func (_u *AuthIdentityUpdateOne) SetNillableProviderSubject(v *string) *AuthIden
 	return _u
 }
 
+// ClearProviderSubject clears the value of the "provider_subject" field.
+func (_u *AuthIdentityUpdateOne) ClearProviderSubject() *AuthIdentityUpdateOne {
+	_u.mutation.ClearProviderSubject()
+	return _u
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (_u *AuthIdentityUpdateOne) SetProviderSubjectHash(v string) *AuthIdentityUpdateOne {
+	_u.mutation.SetProviderSubjectHash(v)
+	return _u
+}
+
+// SetNillableProviderSubjectHash sets the "provider_subject_hash" field if the given value is not nil.
+func (_u *AuthIdentityUpdateOne) SetNillableProviderSubjectHash(v *string) *AuthIdentityUpdateOne {
+	if v != nil {
+		_u.SetProviderSubjectHash(*v)
+	}
+	return _u
+}
+
+// ClearProviderSubjectHash clears the value of the "provider_subject_hash" field.
+func (_u *AuthIdentityUpdateOne) ClearProviderSubjectHash() *AuthIdentityUpdateOne {
+	_u.mutation.ClearProviderSubjectHash()
+	return _u
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (_u *AuthIdentityUpdateOne) SetProviderSubjectPrefix(v string) *AuthIdentityUpdateOne {
+	_u.mutation.SetProviderSubjectPrefix(v)
+	return _u
+}
+
+// SetNillableProviderSubjectPrefix sets the "provider_subject_prefix" field if the given value is not nil.
+func (_u *AuthIdentityUpdateOne) SetNillableProviderSubjectPrefix(v *string) *AuthIdentityUpdateOne {
+	if v != nil {
+		_u.SetProviderSubjectPrefix(*v)
+	}
+	return _u
+}
+
+// ClearProviderSubjectPrefix clears the value of the "provider_subject_prefix" field.
+func (_u *AuthIdentityUpdateOne) ClearProviderSubjectPrefix() *AuthIdentityUpdateOne {
+	_u.mutation.ClearProviderSubjectPrefix()
+	return _u
+}
+
 // SetVerifiedAt sets the "verified_at" field.
 func (_u *AuthIdentityUpdateOne) SetVerifiedAt(v time.Time) *AuthIdentityUpdateOne {
 	_u.mutation.SetVerifiedAt(v)
@@ -721,9 +833,14 @@ func (_u *AuthIdentityUpdateOne) check() error {
 			return &ValidationError{Name: "provider_key", err: fmt.Errorf(`ent: validator failed for field "AuthIdentity.provider_key": %w`, err)}
 		}
 	}
-	if v, ok := _u.mutation.ProviderSubject(); ok {
-		if err := authidentity.ProviderSubjectValidator(v); err != nil {
-			return &ValidationError{Name: "provider_subject", err: fmt.Errorf(`ent: validator failed for field "AuthIdentity.provider_subject": %w`, err)}
+	if v, ok := _u.mutation.ProviderSubjectHash(); ok {
+		if err := authidentity.ProviderSubjectHashValidator(v); err != nil {
+			return &ValidationError{Name: "provider_subject_hash", err: fmt.Errorf(`ent: validator failed for field "AuthIdentity.provider_subject_hash": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.ProviderSubjectPrefix(); ok {
+		if err := authidentity.ProviderSubjectPrefixValidator(v); err != nil {
+			return &ValidationError{Name: "provider_subject_prefix", err: fmt.Errorf(`ent: validator failed for field "AuthIdentity.provider_subject_prefix": %w`, err)}
 		}
 	}
 	if _u.mutation.UserCleared() && len(_u.mutation.UserIDs()) > 0 {
@@ -772,6 +889,21 @@ func (_u *AuthIdentityUpdateOne) sqlSave(ctx context.Context) (_node *AuthIdenti
 	}
 	if value, ok := _u.mutation.ProviderSubject(); ok {
 		_spec.SetField(authidentity.FieldProviderSubject, field.TypeString, value)
+	}
+	if _u.mutation.ProviderSubjectCleared() {
+		_spec.ClearField(authidentity.FieldProviderSubject, field.TypeString)
+	}
+	if value, ok := _u.mutation.ProviderSubjectHash(); ok {
+		_spec.SetField(authidentity.FieldProviderSubjectHash, field.TypeString, value)
+	}
+	if _u.mutation.ProviderSubjectHashCleared() {
+		_spec.ClearField(authidentity.FieldProviderSubjectHash, field.TypeString)
+	}
+	if value, ok := _u.mutation.ProviderSubjectPrefix(); ok {
+		_spec.SetField(authidentity.FieldProviderSubjectPrefix, field.TypeString, value)
+	}
+	if _u.mutation.ProviderSubjectPrefixCleared() {
+		_spec.ClearField(authidentity.FieldProviderSubjectPrefix, field.TypeString)
 	}
 	if value, ok := _u.mutation.VerifiedAt(); ok {
 		_spec.SetField(authidentity.FieldVerifiedAt, field.TypeTime, value)
