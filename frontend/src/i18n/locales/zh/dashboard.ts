@@ -214,6 +214,8 @@ export default {
     groupChangedSuccess: '分组更换成功',
     failedToChangeGroup: '更换分组失败',
     groupRequired: '请选择分组',
+    groupRequiredByServer: '实例中已有可用分组，请先选择分组后再创建密钥；分组列表为空请联系管理员分配分组',
+    createWithoutGroupHint: '当前账号没有可绑定的分组。若实例中也没有任何可用分组，可直接创建，但需要先分配分组才能使用。',
     usage: '用量',
     today: '今日',
     total: '近30天',
@@ -252,6 +254,7 @@ export default {
       noGroupTitle: '请先分配分组',
       noGroupDescription:
         '此 API 密钥尚未分配分组，请先在密钥列表中点击分组列进行分配，然后才能查看使用配置。',
+      assignGroup: '去分配分组',
       openai: {
         description: '将以下配置文件添加到 Codex CLI 配置目录中。',
         authModeTitle: 'Codex 认证模式',

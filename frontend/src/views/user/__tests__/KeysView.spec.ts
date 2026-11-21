@@ -300,6 +300,20 @@ const ConfirmDialogStub = {
   `,
 }
 
+const UseKeyModalStub = {
+  name: 'UseKeyModal',
+  props: ['show', 'apiKey', 'baseUrl', 'platform', 'allowMessagesDispatch'],
+  emits: ['close', 'assign-group'],
+  template: `
+    <div v-if="show" data-test="use-key-modal" :data-platform="platform || 'none'">
+      <span data-test="use-key-modal-api-key">{{ apiKey }}</span>
+      <span data-test="use-key-modal-no-group">{{ platform ? '' : 'keys.useKeyModal.noGroupTitle' }}</span>
+      <button data-test="use-key-modal-close" @click="$emit('close')">close</button>
+      <button data-test="use-key-modal-assign" @click="$emit('assign-group')">assign</button>
+    </div>
+  `,
+}
+
 const mountView = async () => {
   const wrapper = mount(KeysView, {
     global: {
@@ -317,7 +331,7 @@ const mountView = async () => {
         Select: SelectStub,
         SearchInput: SearchInputStub,
         Icon: IconStub,
-        UseKeyModal: true,
+        UseKeyModal: UseKeyModalStub,
         EndpointPopover: true,
         GroupBadge: { props: ['name'], template: '<span data-test="group-badge">{{ name }}</span>' },
         GroupOptionItem: true,
@@ -1369,6 +1383,137 @@ describe('user KeysView mutations', () => {
       expect(wrapper.find('[data-testid="group-rate-signal-rate"]').exists()).toBe(true)
       expect(wrapper.find('[data-testid="group-rate-signal-new"]').exists()).toBe(false)
       wrapper.unmount()
+    })
+  })
+
+  describe('one-time receipt with stacked child dialogs', () => {
+    const CREATED_SECRET = 'fixture-only-created-secret'
+    const deepSeekGroup = { id: 3, name: 'DeepSeek', platform: 'deepseek' }
+
+    const createKeyThroughForm = async (overrides: Partial<ApiKey> = {}, selectGroup = true) => {
+      createKey.mockResolvedValue({
+        ...createApiKey(), id: 99, name: 'used key', group_id: 3, group_ids: [3],
+        key: CREATED_SECRET, ...overrides,
+      })
+      const wrapper = await mountView()
+      await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+      await wrapper.get('[data-tour="key-form-name"]').setValue('used key')
+      const groupSelect = wrapper.findComponent('[data-tour="key-form-group"]')
+      if (selectGroup && groupSelect.exists()) {
+        groupSelect.vm.$emit('update:modelValue', 3)
+        await nextTick()
+      }
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+      return wrapper
+    }
+
+    it('opens the use-key guide without a no-group warning and returns to the receipt', async () => {
+      getAvailableGroups.mockResolvedValue([deepSeekGroup])
+      const wrapper = await createKeyThroughForm()
+      try {
+        await getButtonByText(wrapper, 'keys.secretDialog.use').trigger('click')
+        await flushPromises()
+
+        // 子弹窗叠在回执之上，拿到的分组来自刚创建的 key。
+        const guide = wrapper.get('[data-test="use-key-modal"]')
+        expect(guide.attributes('data-platform')).toBe('deepseek')
+        expect(wrapper.get('[data-test="use-key-modal-no-group"]').text()).toBe('')
+        // 回执本身没被销毁，明文还在。
+        expect(wrapper.get('[data-test="api-key-secret-value"]').text()).toBe(CREATED_SECRET)
+
+        await wrapper.get('[data-test="use-key-modal-close"]').trigger('click')
+        await flushPromises()
+
+        expect(wrapper.find('[data-test="use-key-modal"]').exists()).toBe(false)
+        expect(wrapper.get('[data-test="api-key-secret-value"]').text()).toBe(CREATED_SECRET)
+        await getButtonByText(wrapper, 'keys.secretDialog.copy').trigger('click')
+        expect(copyToClipboard).toHaveBeenCalledWith(CREATED_SECRET, 'keys.secretDialog.copied')
+      } finally {
+        wrapper.unmount()
+      }
+    })
+
+    it('returns to the receipt after closing the CCS import dialog', async () => {
+      getAvailableGroups.mockResolvedValue([deepSeekGroup])
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }))
+      const wrapper = await createKeyThroughForm()
+      try {
+        await getButtonByText(wrapper, 'keys.secretDialog.importCcs').trigger('click')
+        await flushPromises()
+        expect(getButtonByText(wrapper, 'common.cancel')).toBeDefined()
+
+        await getButtonByText(wrapper, 'common.cancel').trigger('click')
+        await flushPromises()
+
+        // 关掉 CCS 导入后回到回执：明文还在，还能继续选「使用密钥」。
+        expect(wrapper.get('[data-test="api-key-secret-value"]').text()).toBe(CREATED_SECRET)
+        await getButtonByText(wrapper, 'keys.secretDialog.use').trigger('click')
+        await flushPromises()
+        expect(wrapper.get('[data-test="use-key-modal"]').attributes('data-platform')).toBe('deepseek')
+      } finally {
+        wrapper.unmount()
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('jumps from the no-group warning to the key row group selector', async () => {
+      // 账号没有任何可绑定分组时允许建无分组 key（后端同样只在实例没有分组时放行）。
+      getAvailableGroups.mockResolvedValue([])
+      const wrapper = await createKeyThroughForm({ group_id: null, group_ids: undefined, name: 'orphan key' }, false)
+      try {
+        await getButtonByText(wrapper, 'keys.secretDialog.use').trigger('click')
+        await flushPromises()
+        expect(wrapper.get('[data-test="use-key-modal-no-group"]').text()).toBe('keys.useKeyModal.noGroupTitle')
+        await wrapper.get('[data-test="use-key-modal-assign"]').trigger('click')
+        await flushPromises()
+        await nextTick()
+
+        // 子弹窗和回执都关掉，并直接把这一行的分组选择器打开。
+        expect(wrapper.find('[data-test="use-key-modal"]').exists()).toBe(false)
+        expect(wrapper.find('[data-test="api-key-secret-value"]').exists()).toBe(false)
+        expect(wrapper.find('[data-test="group-selector-dropdown"]').exists()).toBe(true)
+      } finally {
+        wrapper.unmount()
+      }
+    })
+
+    it('allows creating a key without a group only when the account has no available groups', async () => {
+      getAvailableGroups.mockResolvedValue([])
+      createKey.mockResolvedValue({
+        ...createApiKey(), id: 88, name: 'bootstrap key', group_id: null, key: CREATED_SECRET,
+      })
+      const wrapper = await mountView()
+      try {
+        await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+        expect(wrapper.get('[data-test="key-no-available-groups-hint"]').exists()).toBe(true)
+        await wrapper.get('[data-tour="key-form-name"]').setValue('bootstrap key')
+        await wrapper.get('#key-form').trigger('submit')
+        await flushPromises()
+
+        expect(createKey).toHaveBeenCalledTimes(1)
+        expect(createKey.mock.calls[0][1]).toBeNull()
+        expect(wrapper.get('[data-test="api-key-secret-value"]').text()).toBe(CREATED_SECRET)
+      } finally {
+        wrapper.unmount()
+      }
+    })
+
+    it('maps the server group-required rejection to a clear message', async () => {
+      getAvailableGroups.mockResolvedValue([])
+      createKey.mockRejectedValueOnce({ reason: 'API_KEY_GROUP_REQUIRED' })
+      const wrapper = await mountView()
+      try {
+        await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+        await wrapper.get('[data-tour="key-form-name"]').setValue('needs group')
+        await wrapper.get('#key-form').trigger('submit')
+        await flushPromises()
+
+        expect(showError).toHaveBeenCalledWith('keys.groupRequiredByServer')
+        expect(wrapper.find('#key-form').exists()).toBe(true)
+      } finally {
+        wrapper.unmount()
+      }
     })
   })
 })

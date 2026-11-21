@@ -730,6 +730,13 @@
               />
             </template>
           </Select>
+          <p
+            v-if="!showEditModal && groupsLoaded && !hasAvailableGroups"
+            class="mt-2 text-xs text-amber-600 dark:text-amber-400"
+            data-test="key-no-available-groups-hint"
+          >
+            {{ t('keys.createWithoutGroupHint') }}
+          </p>
         </UFormField>
 
         <!-- Custom Key Section (only for create) -->
@@ -1147,6 +1154,7 @@
       :platform="selectedKey?.group?.platform || null"
       :allow-messages-dispatch="selectedKey?.group?.allow_messages_dispatch || false"
       @close="closeUseKeyModal"
+      @assign-group="assignGroupForRevealedKey"
     />
 
     <!-- 明文密钥只展示这一次：复制、使用引导、导入 CCS 都从这里进入 -->
@@ -1224,6 +1232,7 @@
       <div
         v-if="groupSelectorKeyId !== null && dropdownPosition"
         ref="dropdownRef"
+        data-test="group-selector-dropdown"
         class="animate-in fade-in slide-in-from-top-2 fixed z-100000020 w-max max-w-[calc(100vw-16px)] overflow-hidden rounded-lg bg-default shadow-lg ring ring-default duration-200 sm:min-w-[380px]"
         style="pointer-events: auto !important;"
         :style="{
@@ -1292,7 +1301,7 @@
 
 <script setup lang="ts">
 import '@/styles/console-workspace.css'
-	import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+	import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
@@ -1492,6 +1501,10 @@ const handleBulkEditApplied = async (result: { updated: number; failed: number }
 }
 const keyRowId = (row: ApiKey) => row.id
 const groups = ref<Group[]>([])
+// 分组列表是否成功加载过：为空数组和"还没加载/加载失败"必须区分，
+// 只有确认「一个可绑定分组都没有」时才允许建无分组 key。
+const groupsLoaded = ref(false)
+const hasAvailableGroups = computed(() => groups.value.length > 0)
 const availableGroupsById = computed(() => new Map(groups.value.map((group) => [group.id, group])))
 const loading = ref(false)
 const submitting = ref(false)
@@ -1895,6 +1908,18 @@ const groupForKey = (key: ApiKey, groupId: number | null): Group | undefined => 
   return key.group?.id === groupId ? key.group : availableGroupsById.value.get(groupId)
 }
 
+/**
+ * 创建/轮换回执与列表行保持同构：服务端回执可能只带 group_id（或只带主分组），
+ * 这里用已加载的分组补上 group_ids 与 group 对象，避免「刚建完立刻用」时
+ * 被当成未分配分组，也避免列表 badge 和平台向导缺数据。
+ */
+const resolveKeyGroupRow = (row: ApiKey): ApiKey => {
+  const groupId = primaryGroupId(row)
+  const resolved: ApiKey = { ...row, group_ids: keyGroupIds(row) }
+  resolved.group = groupId == null ? undefined : groupForKey(row, groupId)
+  return resolved
+}
+
 watch(
   () => formData.value.smart_routing,
   (enabled) => {
@@ -2028,6 +2053,7 @@ const loadApiKeys = async () => {
 const loadGroups = async () => {
   try {
     groups.value = await userGroupsAPI.getAvailable()
+    groupsLoaded.value = true
   } catch (error) {
     console.error('Failed to load groups:', error)
   }
@@ -2086,12 +2112,36 @@ const closeUseKeyModal = () => {
 }
 
 // 从明文回执弹窗进入"使用密钥"引导：这次会话内仍然持有明文，可以继续渲染客户端配置。
+// 子弹窗叠在回执之上，回执本身不关：关掉子弹窗后还能回到明文、再复制、再换入口。
 const useRevealedKey = () => {
   const row = secretRow.value
   const secret = secretPlaintext.value
   if (!row || !secret) return
-  showSecretDialog.value = false
   openUseKeyModal(row, secret)
+}
+
+// 「使用密钥」里发现无分组时：关掉子弹窗和回执，定位到这一行的分组列直接选分组。
+const assignGroupForRevealedKey = () => {
+  const row = selectedKey.value ?? secretRow.value
+  closeUseKeyModal()
+  closeSecretDialog()
+  if (!row) return
+  const listed = apiKeys.value.find((key) => key.id === row.id) ?? row
+  nextTick(() => {
+    if (isSmartRoutingKey(listed)) {
+      // 智能路由 key 的分组只能在编辑弹窗里改。
+      editKey(listed)
+      return
+    }
+    const cell = groupButtonRefs.value.get(listed.id)
+    if (cell) {
+      cell.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+      openGroupSelector(listed)
+      return
+    }
+    // 行不在当前页/被筛掉时退回到编辑弹窗，避免按钮点了没反应。
+    editKey(listed)
+  })
 }
 
 const handlePageChange = (page: number) => {
@@ -2155,9 +2205,10 @@ const rotateKeyValue = async (key: ApiKey) => {
   try {
     const updated = await keysAPI.rotateKey(key.id)
     const { key: rotatedSecret, ...rotatedMasked } = updated
-    mergeKeyLocally(rotatedMasked as ApiKey)
+    const merged = mergeKeyLocally(rotatedMasked as ApiKey)
     // 旧 key 已立刻失效，新明文必须当场给用户，否则这把 key 就废了。
-    openSecretDialog(rotatedMasked as ApiKey, rotatedSecret)
+    // 回执行同样要带分组，否则立刻点「使用密钥」会被误判成无分组。
+    openSecretDialog(merged ?? resolveKeyGroupRow(rotatedMasked as ApiKey), rotatedSecret)
     appStore.showSuccess(t('keys.riskRotateSuccess'))
     // 轮换即整改：角标就地消失，门禁汇总数量同步减少。
     await syncRotationRemediation()
@@ -2402,50 +2453,52 @@ const mergeKeyLocally = (updated: ApiKey | null | undefined): ApiKey | null => {
     const localGroup = groups.value.find((group) => group.id === merged.group_id)
     if (localGroup) merged.group = localGroup
   }
-  apiKeys.value[index] = merged
-  if (selectedKey.value?.id === merged.id) selectedKey.value = merged
+  const resolved = resolveKeyGroupRow(merged)
+  apiKeys.value[index] = resolved
+  if (selectedKey.value?.id === resolved.id) selectedKey.value = resolved
   // 「只看待整改」视图里同一把 key 也要跟着变：整改完成的立即移出列表。
-  const rotationIndex = rotationOnlyRows.value.findIndex((key) => key.id === merged.id)
+  const rotationIndex = rotationOnlyRows.value.findIndex((key) => key.id === resolved.id)
   if (rotationIndex !== -1) {
     const nextRotationRows = [...rotationOnlyRows.value]
-    if (merged.needs_rotation) {
-      nextRotationRows[rotationIndex] = merged
+    if (resolved.needs_rotation) {
+      nextRotationRows[rotationIndex] = resolved
     } else {
       nextRotationRows.splice(rotationIndex, 1)
     }
     rotationOnlyRows.value = nextRotationRows
   }
-  return merged
+  return resolved
 }
 
-/** Insert a freshly created key without refetching the page. */
-const insertKeyLocally = (created: ApiKey | null | undefined) => {
-  if (!created || typeof created !== 'object' || typeof created.id !== 'number') return false
-  // The server's create DTO contains ordered group_ids but only embeds the primary Group.
-  // Resolve every bound route from the already-loaded available-group list for the new row.
-  const createdRow: ApiKey = {
-    ...created,
-    group_ids: keyGroupIds(created),
-    group: groupForKey(created, created.group_id),
-  }
+/** Insert a freshly created key without refetching the page; returns the normalized row. */
+const insertKeyLocally = (created: ApiKey | null | undefined): ApiKey | null => {
+  if (!created || typeof created !== 'object' || typeof created.id !== 'number') return null
+  // 创建回执可能只带主分组/分组 ID：补齐 group_ids 与 group，供列表行和
+  // 紧随其后的「使用密钥」弹窗直接复用，不需要为了一次回执再拉整页列表。
+  const createdRow = resolveKeyGroupRow(created)
   applyTotalDelta(1)
-  if (pagination.value.page !== 1 || !matchesActiveFilters(createdRow)) return false
+  if (pagination.value.page !== 1 || !matchesActiveFilters(createdRow)) return createdRow
   const index = apiKeys.value.findIndex((key) => compareRowsForCurrentSort(key, createdRow) > 0)
   const next = [...apiKeys.value]
   next.splice(index === -1 ? next.length : index, 0, createdRow)
   apiKeys.value = next
-  return true
+  return createdRow
 }
 
 const handleSubmit = async () => {
-  // Validate group_id is required
+  // 分组是默认必选项：只有确认「当前账号一个可绑定分组都没有」时才允许建无分组 key。
+  // 无分组 key 不能路由任何请求，不能因为分组还没加载完就静默放行。
+  const canCreateWithoutGroup = groupsLoaded.value && !hasAvailableGroups.value
   if (formData.value.smart_routing) {
     if (formData.value.group_ids.length === 0) {
-      appStore.showError(t('keys.groupRequired'))
-      return
+      if (!canCreateWithoutGroup) {
+        appStore.showError(t('keys.groupRequired'))
+        return
+      }
+    } else {
+      formData.value.group_id = formData.value.group_ids[0] ?? null
     }
-    formData.value.group_id = formData.value.group_ids[0] ?? null
-  } else if (formData.value.group_id === null) {
+  } else if (formData.value.group_id === null && !canCreateWithoutGroup) {
     appStore.showError(t('keys.groupRequired'))
     return
   }
@@ -2544,9 +2597,10 @@ const handleSubmit = async () => {
       // 明文只在当次响应里：列表行只放脱敏视图，明文交给回执弹窗。
       const { key: createdSecret, ...createdMasked } = created
       if (createdSecret) {
-        insertKeyLocally(createdMasked)
+        const createdRow = insertKeyLocally(createdMasked)
         appStore.showSuccess(t('keys.keyCreatedSuccess'))
-        openSecretDialog(createdMasked, createdSecret)
+        // 回执弹窗拿补齐分组后的行：立刻点「使用密钥」时平台/分组都在。
+        openSecretDialog(createdRow ?? createdMasked, createdSecret)
       } else {
         // 重试回执可能是历史快照，行状态与总数以当前列表为准。
         appStore.showSuccess(t('keys.keyCreatedReplaySuccess'))
@@ -2561,7 +2615,10 @@ const handleSubmit = async () => {
   } catch (error: any) {
     const errorMsg = error?.reason === 'API_KEY_TOO_PREDICTABLE'
       ? t('keys.customKeyTooPredictable')
-      : error.response?.data?.detail || t('keys.failedToSave')
+      : error?.reason === 'API_KEY_GROUP_REQUIRED'
+        // 实例里已有可分配分组（但当前账号没拿到）：明确告诉用户去要分组，别以为是前端坏了。
+        ? t('keys.groupRequiredByServer')
+        : error.response?.data?.detail || t('keys.failedToSave')
     appStore.showError(errorMsg)
     // Don't advance tour on error
   } finally {
@@ -2775,11 +2832,11 @@ const importToCcswitch = (row: ApiKeyWithPlaintext) => {
 }
 
 // 明文回执弹窗里点"导入 CCS"：把这次拿到的明文交给既有 CCS 导入流程。
+// CCS 弹窗同样叠在回执之上，关闭后回到回执，明文不会丢。
 const importRevealedToCcswitch = () => {
   const row = secretRow.value
   const secret = secretPlaintext.value
   if (!row || !secret) return
-  showSecretDialog.value = false
   importToCcswitch({ ...row, key: secret })
 }
 

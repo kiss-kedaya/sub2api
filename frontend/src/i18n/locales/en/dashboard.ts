@@ -214,6 +214,8 @@ export default {
     groupChangedSuccess: 'Group changed successfully',
     failedToChangeGroup: 'Failed to change group',
     groupRequired: 'Please select a group',
+    groupRequiredByServer: 'This instance already has available groups. Select one before creating a key; if the list is empty, ask an administrator to assign a group.',
+    createWithoutGroupHint: 'No group is available to this account. If the instance has no groups at all you can still create a key, but it cannot be used until a group is assigned.',
     usage: 'Usage',
     today: 'Today',
     total: 'Last 30d',
@@ -252,6 +254,7 @@ export default {
       claudeSettingsHint: 'User-level persistent configuration. Do not commit this file containing your API key to a project repository.',
       noGroupTitle: 'Please assign a group first',
       noGroupDescription: 'This API key has not been assigned to a group. Please click the group column in the key list to assign one before viewing the configuration.',
+      assignGroup: 'Assign a group',
       openai: {
         description: 'Add the following configuration files to your Codex CLI config directory.',
         authModeTitle: 'Codex authentication mode',

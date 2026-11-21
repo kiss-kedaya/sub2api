@@ -18,6 +18,15 @@
           <p class="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
             {{ t('keys.useKeyModal.noGroupDescription') }}
           </p>
+          <UButton
+            class="mt-3"
+            color="warning"
+            variant="soft"
+            size="sm"
+            :label="t('keys.useKeyModal.assignGroup')"
+            data-test="use-key-assign-group"
+            @click="emit('assign-group')"
+          />
         </div>
       </div>
 
@@ -292,6 +301,8 @@ interface Props {
 
 interface Emits {
   (e: 'close'): void
+  // 无分组时用户可以一键去分配分组，而不是只看到一段文字。
+  (e: 'assign-group'): void
 }
 
 interface TabConfig {
