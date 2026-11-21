@@ -191,8 +191,9 @@ describe('ensureInfiniteCanvasApiKey', () => {
     expect(session.keyId).toBe(7)
   })
 
-  it('reuses the in-memory plaintext within the same tab instead of rotating again', async () => {
-    list.mockResolvedValue({ items: [key({ id: 7, group_ids: [2] })] })
+  it('reuses the in-memory plaintext when the rotation time is omitted or null', async () => {
+    list.mockResolvedValueOnce({ items: [key({ id: 7, group_ids: [2] })] })
+      .mockResolvedValueOnce({ items: [key({ id: 7, group_ids: [2], key_rotated_at: null })] })
     rotate.mockResolvedValue(secretKey({ id: 7, group_ids: [2] }, 'sk-rotated'))
 
     const client = { list, create, rotate, getAvailableGroups }
@@ -202,6 +203,96 @@ describe('ensureInfiniteCanvasApiKey', () => {
     expect(rotate).toHaveBeenCalledTimes(1)
     expect(first.apiKey).toBe('sk-rotated')
     expect(second.apiKey).toBe('sk-rotated')
+  })
+
+  it.each([
+    { entry: 're-entry', replay: false },
+    { entry: 'redacted creation replay', replay: true },
+  ])('recovers once on $entry after a rotation with the same mask', async ({ replay }) => {
+    localStorage.setItem('auth_user', JSON.stringify({ id: 1 }))
+    const original = key({ id: 7, key_rotated_at: '2026-01-01T00:00:00.123456Z' })
+    const rotatedElsewhere = { ...original, key_rotated_at: '2026-01-01T00:00:00.123457Z' }
+    list.mockResolvedValueOnce({ items: [original] })
+    rotate.mockResolvedValueOnce(secretKey(original, 'fixture-before-rotation'))
+      .mockResolvedValueOnce(secretKey({ ...original, key_rotated_at: '2026-01-01T00:00:00.123458Z' }, 'fixture-after-recovery'))
+    const client = { list, create, rotate, getAvailableGroups }
+    await ensureInfiniteCanvasApiKey(client)
+
+    if (replay) {
+      list.mockResolvedValueOnce({ items: [] })
+      getAvailableGroups.mockResolvedValue([group(2)])
+      create.mockResolvedValue(original)
+    }
+    list.mockResolvedValueOnce({ items: [rotatedElsewhere] })
+
+    const session = await ensureInfiniteCanvasApiKey(client, { createIfMissing: replay })
+
+    expect(session).toMatchObject({ keyId: 7, apiKey: 'fixture-after-recovery', created: false, rotated: true })
+    expect(rotate.mock.calls).toEqual([[7], [7]])
+    expect(create).toHaveBeenCalledTimes(replay ? 1 : 0)
+  })
+
+  it('reuses the same credential after routing or usage metadata changes', async () => {
+    const original = key({ id: 7, key_rotated_at: '2026-01-01T00:00:00.123456Z' })
+    list.mockResolvedValueOnce({ items: [original] }).mockResolvedValueOnce({
+      items: [{
+        ...original,
+        group_ids: [9],
+        updated_at: '2026-01-02T00:00:00Z',
+        last_used_at: '2026-01-03T00:00:00Z',
+        quota_used: 4,
+      }],
+    })
+    rotate.mockResolvedValueOnce(secretKey(original, 'fixture-unchanged'))
+    const client = { list, create, rotate, getAvailableGroups }
+    await ensureInfiniteCanvasApiKey(client)
+
+    await expect(ensureInfiniteCanvasApiKey(client))
+      .resolves.toMatchObject({ apiKey: 'fixture-unchanged', groupIds: [9], rotated: false })
+    expect(rotate).toHaveBeenCalledTimes(1)
+  })
+
+  it('recovers when the mask changes in an older response without a rotation time', async () => {
+    const original = key({ id: 7 })
+    const changedMask = { ...original, key_masked: 'sk-live****next' }
+    list.mockResolvedValueOnce({ items: [original] }).mockResolvedValueOnce({ items: [changedMask] })
+    rotate.mockResolvedValueOnce(secretKey(original, 'fixture-original'))
+      .mockResolvedValueOnce(secretKey(changedMask, 'fixture-legacy-recovery'))
+    const client = { list, create, rotate, getAvailableGroups }
+    await ensureInfiniteCanvasApiKey(client)
+
+    await expect(ensureInfiniteCanvasApiKey(client))
+      .resolves.toMatchObject({ apiKey: 'fixture-legacy-recovery', rotated: true })
+    expect(rotate.mock.calls).toEqual([[7], [7]])
+  })
+
+  it('fails without returning stale plaintext when recovery supplies none', async () => {
+    const original = key({ id: 7 })
+    const rotated = { ...original, key_rotated_at: '2026-01-01T00:00:00.123456Z' }
+    list.mockResolvedValueOnce({ items: [original] }).mockResolvedValueOnce({ items: [rotated] })
+    rotate.mockResolvedValueOnce(secretKey(original, 'fixture-original')).mockResolvedValueOnce(rotated)
+    const client = { list, create, rotate, getAvailableGroups }
+    await ensureInfiniteCanvasApiKey(client)
+
+    await expect(ensureInfiniteCanvasApiKey(client)).rejects.toMatchObject({ code: 'missing-key' })
+    expect(rotate.mock.calls).toEqual([[7], [7]])
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('does not reuse a cached credential belonging to a different owner', async () => {
+    const firstOwner = key({ id: 7, user_id: 1 })
+    const secondOwner = { ...firstOwner, user_id: 2 }
+    list.mockResolvedValueOnce({ items: [firstOwner] }).mockResolvedValueOnce({ items: [secondOwner] })
+    rotate.mockResolvedValueOnce(secretKey(firstOwner, 'fixture-first-owner'))
+      .mockResolvedValueOnce(secretKey(secondOwner, 'fixture-second-owner'))
+    const client = { list, create, rotate, getAvailableGroups }
+    localStorage.setItem('auth_user', JSON.stringify({ id: 1 }))
+    await ensureInfiniteCanvasApiKey(client)
+
+    localStorage.setItem('auth_user', JSON.stringify({ id: 2 }))
+    await expect(ensureInfiniteCanvasApiKey(client))
+      .resolves.toMatchObject({ apiKey: 'fixture-second-owner', rotated: true })
+    expect(rotate.mock.calls).toEqual([[7], [7]])
   })
 
   it('fails when the user has no bindable groups', async () => {

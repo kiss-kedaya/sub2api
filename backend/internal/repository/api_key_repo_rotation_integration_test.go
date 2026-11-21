@@ -47,6 +47,8 @@ func assertKeyRotationPersistence(t *testing.T, ctx context.Context, repo *apiKe
 	require.ErrorIs(t, err, service.ErrAPIKeyNotFound)
 	after := read()
 	require.NotNil(t, after.KeyRotatedAt)
+	require.NotNil(t, key.KeyRotatedAt)
+	require.True(t, key.KeyRotatedAt.Equal(*after.KeyRotatedAt), "the rotation receipt must match a fresh list")
 	require.True(t, service.IsKeyRotationCompliant(after, cutoff))
 	// 明文不再落库：轮换后库里只有新哈希与展示前缀。
 	require.Empty(t, after.Key)
