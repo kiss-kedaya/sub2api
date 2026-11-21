@@ -1,5 +1,6 @@
 import { apiClient } from '@/api/client'
 import type { CryptoGrant } from '@/composables/cryptoGrant'
+import type { SignerShardStatus } from '@/api/admin/cryptoSigner'
 
 // Crypto deposit channel admin API. The channel is additive and gated by
 // the server-side config; the UI simply reflects what the API returns.
@@ -197,10 +198,11 @@ export interface CryptoPrivateKeyExport {
 export async function exportAddressPrivateKey(
   id: number,
   verification: CryptoVerification,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  share?: string
 ): Promise<CryptoPrivateKeyExport> {
   const request = cryptoRequestOptions(verification)
-  const { data } = await apiClient.post<CryptoPrivateKeyExport>(`/admin/crypto/addresses/${id}/export-private-key`, {}, {
+  const { data } = await apiClient.post<CryptoPrivateKeyExport>(`/admin/crypto/addresses/${id}/export-private-key`, share ? { share } : {}, {
     ...request,
     signal,
     headers: { ...request.headers, 'Cache-Control': 'no-store', Pragma: 'no-cache' }
@@ -214,9 +216,10 @@ export async function getSweepPlan(): Promise<SweepPlan> {
 }
 
 // runSweep executes the sweep. dryRun defaults to true server-side; the
-// caller must pass dryRun=false to move funds.
-export async function runSweep(dryRun: boolean, verification?: CryptoVerification): Promise<SweepSummary> {
-  const { data } = await apiClient.post('/admin/crypto/sweep/run', null, {
+// caller must pass dryRun=false to move funds. A vault sealed with a browser
+// data key (v3) requires a recovery share in the body.
+export async function runSweep(dryRun: boolean, verification?: CryptoVerification, share?: string): Promise<SweepSummary> {
+  const { data } = await apiClient.post('/admin/crypto/sweep/run', share ? { share } : null, {
     ...cryptoRequestOptions(verification),
     // The server waits up to 90s for this operation's gas/token receipts.
     timeout: dryRun ? 30000 : 180000,
@@ -238,11 +241,11 @@ export interface SweepRun {
 // A 202 response means the run was accepted, not that the transfer finished.
 // `chains` reuses the existing repeated ?chain= scope of the run endpoint; an
 // empty list keeps the historical "every configured chain" behaviour.
-export async function startSweep(dryRun: boolean, verification?: CryptoVerification, chains?: string[]): Promise<SweepRun> {
+export async function startSweep(dryRun: boolean, verification?: CryptoVerification, chains?: string[], share?: string): Promise<SweepRun> {
   const scope = (chains ?? []).filter(Boolean)
     .map(chain => `chain=${encodeURIComponent(chain)}`)
     .join('&')
-  const { data } = await apiClient.post(`/admin/crypto/sweep/run${scope ? `?${scope}` : ''}`, null, {
+  const { data } = await apiClient.post(`/admin/crypto/sweep/run${scope ? `?${scope}` : ''}`, share ? { share } : null, {
     ...cryptoRequestOptions(verification),
     timeout: 30000,
     params: { dry_run: dryRun ? '1' : '0', async: '1' }
@@ -515,6 +518,9 @@ export interface WalletStatus {
   ready: boolean
   enabled: boolean
   security?: WalletSecurityStatus
+  /** v3 vault is sealed and no recovery share was combined in this process. */
+  signer_locked?: boolean
+  shards?: SignerShardStatus
 }
 
 export interface WalletSecurityStatus {
@@ -762,18 +768,20 @@ export interface CryptoMnemonicExport {
 }
 
 // Plaintext is returned only for this verified request, without browser caching.
-export async function exportWalletMnemonics(verification: CryptoVerification): Promise<CryptoMnemonicExport> {
+// A v3 (browser data key) vault additionally needs one operator-held share.
+export async function exportWalletMnemonics(verification: CryptoVerification, share?: string): Promise<CryptoMnemonicExport> {
   const request = cryptoRequestOptions(verification)
-  const { data } = await apiClient.post<CryptoMnemonicExport>('/admin/crypto/wallet/export-mnemonics', {}, {
+  const { data } = await apiClient.post<CryptoMnemonicExport>('/admin/crypto/wallet/export-mnemonics', share ? { share } : {}, {
     ...request,
     headers: { ...request.headers, 'Cache-Control': 'no-store', Pragma: 'no-cache' }
   })
   return data
 }
 
-export async function importHotMnemonic(hotMnemonic: string, verification?: CryptoVerification): Promise<{ saved: true }> {
+export async function importHotMnemonic(hotMnemonic: string, verification?: CryptoVerification, share?: string): Promise<{ saved: true }> {
   const { data } = await apiClient.post<{ saved: true }>('/admin/crypto/wallet/hot-mnemonic', {
-    hot_mnemonic: hotMnemonic
+    hot_mnemonic: hotMnemonic,
+    ...(share ? { share } : {})
   }, cryptoRequestOptions(verification))
   return data
 }

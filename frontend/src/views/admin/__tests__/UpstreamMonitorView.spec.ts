@@ -5,14 +5,30 @@ import UpstreamMonitorView from '../UpstreamMonitorView.vue'
 import * as api from '@/api/admin/upstreamMonitor'
 import * as accountsApi from '@/api/admin/accounts'
 
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, locale: { value: 'zh' } }) }))
+// The page transitively imports the shared API client, which builds the app
+// i18n instance at module load; the mock needs the factory as well.
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (key: string) => key, locale: { value: 'zh' } }),
+  createI18n: () => ({
+    global: {
+      t: (key: string) => key,
+      te: () => false,
+      locale: { value: 'zh' },
+      setLocaleMessage: vi.fn()
+    }
+  })
+}))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
 vi.mock('@/components/layout/PageToolbar.vue', () => ({ default: { template: '<div><slot name="left" /><slot name="right" /></div>' } }))
 vi.mock('@/components/admin/page/AdminPageHeader.vue', () => ({ default: { template: '<header><slot name="actions" /></header>' } }))
 vi.mock('@/components/common/BaseDialog.vue', () => ({
   default: { props: ['show', 'title'], template: '<div v-if="show" data-test="dialog"><slot /><slot name="footer" /></div>' },
 }))
-vi.mock('@/api/admin/accounts', () => ({ probeUpstreamBilling: vi.fn() }))
+const accountsMocks = vi.hoisted(() => ({ probeUpstreamBilling: vi.fn() }))
+vi.mock('@/api/admin/accounts', () => ({
+  probeUpstreamBilling: accountsMocks.probeUpstreamBilling,
+  default: { probeUpstreamBilling: accountsMocks.probeUpstreamBilling }
+}))
 vi.mock('@/api/admin/upstreamMonitor', () => ({
   getOverview: vi.fn(),
   listAccounts: vi.fn(),

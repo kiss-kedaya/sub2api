@@ -19,6 +19,12 @@
       </PageToolbar>
 
       <CryptoWalletSecurityPanel v-show="!routed || section === 'overview'" class="crypto-view__security" @change="updateWalletSecurityState" @recovered="onWalletSecurityRecovered" />
+      <SignerShardsPanel
+        v-show="!routed || section === 'overview'"
+        class="crypto-view__signer"
+        @change="onSignerStatusChange"
+        @open-sweep="openSweepUnlock"
+      />
 
       <UCollapsible v-show="!routed || section === 'overview'" class="crypto-view__notifications" :unmount-on-hide="false">
         <UButton color="neutral" variant="ghost" trailing-icon="i-lucide-chevron-down" class="-mx-2.5 group" :ui="{ trailingIcon: 'transition-transform group-data-[state=open]:rotate-180' }">
@@ -422,6 +428,7 @@
                 @click="requestSweep"
               >{{ t('admin.crypto.sweepRun') }}</UButton>
             </div>
+            <UAlert v-if="signerLocked" role="status" color="warning" variant="subtle" icon="i-lucide-lock" :title="t('admin.crypto.signer.locked')" :description="t('admin.crypto.signer.lockedHint')" data-testid="crypto-sweep-signer-locked" />
             <CryptoGasWalletPanel class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
             <UAlert v-if="activeSweep && !activeSweep.finished" color="info" variant="subtle" icon="i-lucide-loader-circle" :title="t('admin.crypto.sweepRunning')" :description="t('admin.crypto.sweepRunningHint')" />
             <UAlert v-if="sweepRunError" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :title="sweepRunError" />
@@ -635,6 +642,15 @@
     />
 
     <CryptoMnemonicsDialog :show="mnemonicsDialogOpen" @close="mnemonicsDialogOpen = false" />
+    <ShardUnlockDialog
+      :show="sweepUnlockOpen"
+      mode="sweep"
+      :crypto="signerCrypto"
+      :locked="signerLocked"
+      :run-sweep="runUnlockedSweep"
+      @close="sweepUnlockOpen = false"
+      @completed="onUnlockedSweepCompleted"
+    />
     <CryptoPrivateKeyDialog :address="privateKeyAddress" @close="privateKeyAddress = null" />
     <CryptoDepositConfirmDialog
       :show="depositDialogOpen"
@@ -677,6 +693,8 @@ import CryptoGrantStatus from '@/components/crypto/CryptoGrantStatus.vue'
 import CryptoMnemonicsDialog from '@/components/crypto/CryptoMnemonicsDialog.vue'
 import CryptoPrivateKeyDialog from '@/components/crypto/CryptoPrivateKeyDialog.vue'
 import CryptoWalletSecurityPanel from '@/components/crypto/CryptoWalletSecurityPanel.vue'
+import SignerShardsPanel from '@/components/crypto/signer/SignerShardsPanel.vue'
+import ShardUnlockDialog from '@/components/crypto/signer/ShardUnlockDialog.vue'
 import CryptoGasWalletPanel from '@/components/crypto/CryptoGasWalletPanel.vue'
 import CryptoChainStatusPanel from '@/components/crypto/CryptoChainStatusPanel.vue'
 import CryptoScanProgress from '@/components/crypto/CryptoScanProgress.vue'
@@ -736,6 +754,10 @@ import {
   type WalletOperationAction,
   type CryptoVerification
 } from '@/api/admin/crypto'
+import type { SignerShardStatus } from '@/api/admin/cryptoSigner'
+import { detectSignerCrypto, detectSignerCryptoSupport, type SignerCrypto } from '@/utils/signer/cryptoProvider'
+import { buildSweepAuditInfo, type SweepAuditInfo } from '@/utils/signer/audit'
+import { isShareRequiredError } from '@/utils/signer/errors'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -1039,6 +1061,12 @@ const walletLoaded = ref(false)
 const walletChannelEnabled = ref(false)
 const walletOk = ref(false)
 const walletSecurityLocked = ref(false)
+// v3 vault state from the signer shard setup (PR #519 contract).
+const walletSignerLocked = ref(false)
+const signerStatus = ref<SignerShardStatus | null>(null)
+const signerCrypto = ref<SignerCrypto | null>(null)
+const sweepUnlockOpen = ref(false)
+const signerLocked = computed(() => signerStatus.value?.locked === true || walletSignerLocked.value)
 const walletCanDerive = computed(() => walletOk.value && walletLoaded.value && !walletSecurityLocked.value)
 const walletReady = computed(() => walletCanDerive.value && walletChannelEnabled.value)
 const walletStateLabel = computed(() => walletSecurityLocked.value ? 'admin.crypto.walletSecurityLocked'
@@ -1564,6 +1592,7 @@ async function doSweep(dryRun: boolean, chains?: string[]) {
   if (sweeping.value) return
   sweeping.value = true
   const operationTab = activeTab.value
+  let shareRequired = false
   try {
     if (!dryRun && !await notifyOperationIntent('sweep')) return
     if (activeTab.value !== operationTab) return
@@ -1571,12 +1600,63 @@ async function doSweep(dryRun: boolean, chains?: string[]) {
     if (activeTab.value !== operationTab) return
     const label = dryRun ? t('admin.crypto.sweepDryRun') : sweepConfirmMessage.value
     const completed = await withCryptoVerification(label, async (verification) => {
-      activeSweep.value = await startSweep(dryRun, verification, chains)
+      try {
+        activeSweep.value = await startSweep(dryRun, verification, chains)
+      } catch (error) {
+        // A v3 vault can reject the run even when the shard status was not
+        // loaded yet; route the operator to the share prompt instead of a
+        // generic failure.
+        if (!dryRun && isShareRequiredError(error)) shareRequired = true
+        throw error
+      }
     })
     if (completed && activeSweep.value) await followSweepRun(activeSweep.value)
   } finally {
     sweeping.value = false
+    if (shareRequired) {
+      walletSignerLocked.value = true
+      openSweepUnlock()
+    }
   }
+}
+
+/**
+ * Executes one real sweep after the operator unlocked the signer with a share.
+ * Returns the audit summary shown inside the unlock dialog.
+ */
+async function runUnlockedSweep(share: string, totpCode: string): Promise<SweepAuditInfo> {
+  if (!await notifyOperationIntent('sweep')) throw new Error(t('admin.crypto.walletOperationNotifyFailed'))
+  await loadSweepPlan()
+  const plan = sweepPlan.value
+  sweeping.value = true
+  sweepRunError.value = ''
+  sweepPoll?.abort()
+  const controller = new AbortController()
+  sweepPoll = controller
+  try {
+    const run = await startSweep(false, { totpCode }, undefined, share)
+    activeSweep.value = run
+    const finished = await waitForSweepRun(run, controller.signal, next => { activeSweep.value = next })
+    sweepSummary.value = finished.summary ?? null
+    await Promise.all([loadSweepRecords(), loadSweepPlan()])
+    if (finished.error) {
+      sweepRunError.value = finished.error
+      throw new Error(finished.error)
+    }
+    appStore.showSuccess(t('admin.crypto.sweepCompleted'))
+    return buildSweepAuditInfo({ plan, summary: finished.summary, finished: finished.finished })
+  } finally {
+    if (sweepPoll === controller) {
+      sweepPoll = null
+      sweeping.value = false
+    }
+  }
+}
+
+function onUnlockedSweepCompleted(): void {
+  walletSignerLocked.value = false
+  if (signerStatus.value) signerStatus.value = { ...signerStatus.value, locked: false }
+  void loadWalletStatus()
 }
 
 // A released failure no longer holds its address, so the normal sweep run is
@@ -1610,9 +1690,14 @@ async function followSweepRun(run: SweepRun) {
 }
 
 // The run button opens a confirmation that restates the destination and the
-// amount: two deliberate clicks before any funds move.
+// amount: two deliberate clicks before any funds move. A locked signer needs
+// a recovery share first, so it opens the unlock dialog instead.
 function requestSweep() {
   if (!sweepReady.value) return
+  if (signerLocked.value) {
+    openSweepUnlock()
+    return
+  }
   void doSweep(false)
 }
 
@@ -1720,6 +1805,8 @@ async function loadWalletStatus() {
     walletConfigured.value = st.configured === true
     walletLoaded.value = st.ready === true
     walletChannelEnabled.value = st.enabled === true
+    walletSignerLocked.value = st.signer_locked === true
+    if (st.shards) signerStatus.value = st.shards
     if (st.security) updateWalletSecurityState(st.security)
   } catch {
     // Reflect unavailable state in the wallet badge without breaking the page.
@@ -1734,6 +1821,47 @@ async function loadWalletStatus() {
 function updateWalletSecurityState(state: WalletSecurityStatus) {
   walletSecurityLocked.value = state.locked || state.deposits_paused
   if (walletSecurityLocked.value) reflectSecurityChannelPause()
+}
+
+function onSignerStatusChange(next: SignerShardStatus) {
+  signerStatus.value = next
+  walletSignerLocked.value = next.locked
+}
+
+/**
+ * Resolve the browser crypto implementation on demand. A non-secure context
+ * or a missing CSPRNG disables the flow with an explicit message; there is no
+ * weak-random fallback.
+ */
+function ensureSignerCrypto(): boolean {
+  if (signerCrypto.value) return true
+  const support = detectSignerCryptoSupport()
+  if (!support.supported) {
+    appStore.showError(describeCryptoUnavailable(support.reason))
+    return false
+  }
+  try {
+    signerCrypto.value = detectSignerCrypto()
+    return true
+  } catch {
+    appStore.showError(describeCryptoUnavailable(support.reason))
+    return false
+  }
+}
+
+function openSweepUnlock(): void {
+  if (routed) section.value = 'sweep'
+  else switchTab('sweep')
+  if (!ensureSignerCrypto()) return
+  sweepUnlockOpen.value = true
+}
+
+function describeCryptoUnavailable(reason: string | null): string {
+  return t(reason === 'insecure-context'
+    ? 'admin.crypto.signer.insecureContext'
+    : reason === 'no-csprng'
+      ? 'admin.crypto.signer.noCsprng'
+      : 'admin.crypto.signer.noAes')
 }
 
 function reflectSecurityChannelPause() {
