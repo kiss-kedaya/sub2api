@@ -170,3 +170,31 @@ func TestSeedanceSchedulerSnapshotMetadataKeepsCapability(t *testing.T) {
 	require.NotContains(t, string(metaPayload), "access_token")
 	require.Contains(t, string(fullPayload), "ark-secret")
 }
+
+// The projection must also preserve capability exclusions: dropping the field
+// makes openAIEndpointCapabilitySet report "not configured", which fails open
+// for every capability the operator did not grant (chat-only accounts would be
+// admitted for embeddings on the snapshot path).
+func TestSeedanceSchedulerSnapshotPreservesCapabilityExclusions(t *testing.T) {
+	account := service.Account{
+		ID:       1108,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":             "ark-secret",
+			"base_url":            "https://api.example.com/v1",
+			"openai_capabilities": []any{"chat_completions"},
+		},
+	}
+	require.False(t, account.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilityEmbeddings))
+	require.True(t, account.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilityChatCompletions))
+
+	_, metaPayload, err := marshalSchedulerCacheAccount(account)
+	require.NoError(t, err)
+	cached, err := decodeCachedAccount(metaPayload)
+	require.NoError(t, err)
+
+	require.True(t, cached.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilityChatCompletions))
+	require.False(t, cached.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilityEmbeddings),
+		"a chat-only account must not be admitted for embeddings on the snapshot path")
+}
