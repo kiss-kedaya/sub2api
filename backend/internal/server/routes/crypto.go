@@ -88,6 +88,15 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.GET("/hot-wallet", cryptoHandler.AdminHotWalletStatus)
 		crypto.GET("/hot-wallet/address", cryptoHandler.AdminHotWalletAddress)
 		crypto.GET("/deposits.csv", cryptoHandler.AdminExportDeposits)
+		// Signer shard (SLIP-39/Shamir 2-of-3) endpoints. Share B/C never
+		// reaches the server: setup/verify only ever receive share A plus the
+		// browser-held data key commitment.
+		crypto.GET("/signer/status", cryptoHandler.AdminSignerStatus)
+		crypto.GET("/signer/risk-notice", cryptoHandler.AdminSignerRiskNotice)
+		crypto.POST("/signer/setup", cryptoHandler.AdminSignerSetup)
+		crypto.POST("/signer/resplit", cryptoHandler.AdminSignerResplit)
+		crypto.POST("/signer/verify-share", cryptoHandler.AdminSignerVerifyShare)
+		crypto.POST("/signer/auto-sweep", cryptoHandler.AdminSignerAutoSweep)
 		crypto.POST("/rpc/test", cryptoHandler.AdminTestRPC)
 		crypto.GET("/rpc/candidates", cryptoHandler.AdminChainlistCandidates)
 		crypto.POST("/rpc/auto-pick", cryptoHandler.AdminAutoPickRPC)
