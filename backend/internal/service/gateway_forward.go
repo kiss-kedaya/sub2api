@@ -934,6 +934,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		FirstTokenMs:                  firstTokenMs,
 		ClientDisconnect:              clientDisconnect,
 		NonBillableUpstreamError:      nonBillableUpstreamError,
+		SearchCount:                   usage.WebSearchRequests,
 	}, nil
 }
 

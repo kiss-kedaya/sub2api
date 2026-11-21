@@ -699,7 +699,10 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	if result != nil && result.ImageCount > 0 {
 		// 渠道定价为 token 计费时走 token 路径，否则走图片计费
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil || resolved.Mode != BillingModeToken {
-			return s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier), nil
+			// 同一次响应里既有生成图片又有内置检索时，图片计费会在这条早返回里
+			// 结束；检索按次费用必须叠加，否则 image_generation + web_search 的
+			// 组合请求会整笔漏收检索费（issue #491 边际审查项）。
+			return s.addOpenAISearchSurcharge(result, apiKey, toolMultiplier, s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier)), nil
 		}
 	}
 
@@ -773,6 +776,27 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	tokenCost.TotalCost += searchCost.TotalCost
 	tokenCost.ActualCost += searchCost.ActualCost
 	return tokenCost, nil
+}
+
+// addOpenAISearchSurcharge 把内置检索工具的按次费用叠加到已有费用上。
+//
+// 用于“按图片/视频等按次计价、且提前 return”的分支：token 路径本来就会在末尾
+// 叠加检索费（见 calculateOpenAIRecordUsageCost），这些早返回分支不会，导致一次
+// 响应里同时含 image_generation 与 web_search 时整笔检索费漏收（issue #491）。
+func (s *OpenAIGatewayService) addOpenAISearchSurcharge(result *OpenAIForwardResult, apiKey *APIKey, toolMultiplier float64, base *CostBreakdown) *CostBreakdown {
+	if result == nil || result.SearchCount <= 0 || s.billingService == nil {
+		return base
+	}
+	cost := s.billingService.CalculateSearchCost(result.SearchCount, groupSearchPricePer1kFromAPIKey(apiKey), toolMultiplier)
+	if cost == nil || (cost.TotalCost == 0 && cost.ActualCost == 0) {
+		return base
+	}
+	if base == nil {
+		return cost
+	}
+	base.TotalCost += cost.TotalCost
+	base.ActualCost += cost.ActualCost
+	return base
 }
 
 func isGrokVideoBillingModel(model string) bool {

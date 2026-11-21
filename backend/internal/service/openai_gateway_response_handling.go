@@ -436,10 +436,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	searchCounter := 0
 	// Dedup search tool calls across SSE events (item.done + response.completed
 	// both list the same call_id — counting both would ~2× the surcharge).
-	var streamSearchSeen map[string]struct{}
-	if account != nil && account.Platform == PlatformGrok {
-		streamSearchSeen = make(map[string]struct{})
-	}
+	// 所有平台都要数：内置检索工具（web_search / web_search_preview 等）不是
+	// Grok 独有的计费项，按次计费对 OpenAI / DeepSeek / Anthropic 兼容通道同样成立
+	// （issue #491：此前只在 Grok 平台计数，其余通道次数被直接丢弃）。
+	var streamSearchSeen = make(map[string]struct{})
+	searchSkipFunctionTools := openAINativeSearchSkipFunctionTools(c)
 	resultWithUsage := func() *openaiStreamingResult {
 		incompleteStream := !sawTerminalEvent && !nonBillableUpstreamError
 		incompleteOutputTokens := 0
@@ -820,8 +821,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if openAISSEFrameMayContainImageOutput(frame) {
 				imageCounter.AddSSEFrame(frame)
 			}
-			if account != nil && account.Platform == PlatformGrok && openAISSEFrameMayContainGrokSearch(frame) {
-				searchCounter += countGrokNativeSearchCallsInSSEFrameDedup(frame, streamSearchSeen)
+			if openAISSEFrameMayContainGrokSearch(frame) && openAINativeSearchBillingApplies(account) {
+				searchCounter += countNativeSearchCallsInSSEFrameDedup(frame, streamSearchSeen, searchSkipFunctionTools)
 			}
 
 			// Correct Codex tool calls if needed (apply_patch -> edit, etc.)
@@ -2068,7 +2069,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		responseID:               extractOpenAIResponseIDFromJSONBytes(body),
 		imageCount:               countOpenAIResponseImageOutputsFromJSONBytes(body),
 		imageOutputSizes:         collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
-		searchCount:              countGrokNativeSearchCallsFromJSONBytes(body),
+		searchCount:              countNativeSearchCallsFromJSONBytes(body, openAINativeSearchSkipFunctionTools(c)),
 		nonBillableUpstreamError: nonBillableUpstreamError,
 	}, nil
 }
@@ -2188,7 +2189,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		responseID:               extractOpenAIResponseIDFromJSONBytes(body),
 		imageCount:               countOpenAIImageOutputsFromSSEBody(bodyText),
 		imageOutputSizes:         collectOpenAIImageOutputSizesFromSSEBody(bodyText),
-		searchCount:              countGrokNativeSearchCallsFromSSEBody(bodyText),
+		searchCount:              countNativeSearchCallsFromSSEBody(bodyText, openAINativeSearchSkipFunctionTools(c)),
 	}, nil
 }
 

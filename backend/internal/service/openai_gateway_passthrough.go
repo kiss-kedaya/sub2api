@@ -135,6 +135,8 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	reqStream bool,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
+	// 记录客户端自己声明的函数工具名，供内置检索按次计费排除同名客户端函数调用。
+	rememberOpenAINativeSearchSkipFunctionTools(c, body)
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
 	if isOpenAIResponsesCompactPath(c) && !account.IsCopilotSDKEnabled() {
@@ -365,6 +367,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	var firstTokenMs *int
 	responseID := ""
 	imageCount := 0
+	searchCount := 0
 	var imageOutputSizes []string
 	nonBillableUpstreamError := false
 	clientDisconnect := false
@@ -397,6 +400,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			forwardResult.ImageInputSize = imageInputSize
 			forwardResult.ImageOutputSizes = imageOutputSizes
 			forwardResult.BillingModel = imageBillingModel
+		}
+		if searchCount > 0 {
+			forwardResult.SearchCount = searchCount
 		}
 		return forwardResult
 	}
@@ -573,6 +579,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					responseID = strings.TrimSpace(result.responseID)
 					imageCount = result.imageCount
 					imageOutputSizes = result.imageOutputSizes
+					searchCount = result.searchCount
 					nonBillableUpstreamError = result.nonBillableUpstreamError
 					clientDisconnect = result.clientDisconnect
 				}
@@ -587,6 +594,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			responseID = strings.TrimSpace(result.responseID)
 			imageCount = result.imageCount
 			imageOutputSizes = result.imageOutputSizes
+			searchCount = result.searchCount
 			nonBillableUpstreamError = result.nonBillableUpstreamError
 			clientDisconnect = result.clientDisconnect
 		} else {
@@ -636,6 +644,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			responseID = strings.TrimSpace(result.responseID)
 			imageCount = result.imageCount
 			imageOutputSizes = result.imageOutputSizes
+			searchCount = result.searchCount
 			nonBillableUpstreamError = result.nonBillableUpstreamError
 		}
 		break
@@ -1235,6 +1244,7 @@ type openaiStreamingResultPassthrough struct {
 	responseID               string
 	imageCount               int
 	imageOutputSizes         []string
+	searchCount              int
 	nonBillableUpstreamError bool
 	clientDisconnect         bool
 	// incompleteStream is true when the stream ended without any terminal frame, so
@@ -1251,6 +1261,7 @@ type openaiNonStreamingResultPassthrough struct {
 	responseID               string
 	imageCount               int
 	imageOutputSizes         []string
+	searchCount              int
 	nonBillableUpstreamError bool
 }
 
@@ -2422,6 +2433,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		s.deepSeekResponseCompatEnabled()
 
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
+	// 内置检索工具按次计费（issue #491）：透传分支同样要数，否则开了透传的账号
+	// 会整体漏收 web_search 一类的按次费用。计数口径与 Forward 分支一致。
+	searchSkipFunctionTools := openAINativeSearchSkipFunctionTools(c)
+	searchCounter := 0
+	streamSearchSeen := make(map[string]struct{})
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
 		incompleteStream := !sawTerminalEvent && !nonBillableUpstreamError
 		incompleteOutputTokens := 0
@@ -2436,6 +2452,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			responseID:               responseID,
 			imageCount:               imageCounter.Count(),
 			imageOutputSizes:         imageCounter.Sizes(),
+			searchCount:              searchCounter,
 			nonBillableUpstreamError: nonBillableUpstreamError,
 			clientDisconnect:         clientDisconnected,
 			incompleteStream:         incompleteStream,
@@ -2463,6 +2480,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			frame := parseOpenAISSEDataFrame(dataBytes, pendingSSEEventType)
 			if frame.eventType == "" && openAIExplicitUpstreamError(frame.root, "") {
 				frame.eventType = "error"
+			}
+			if openAISSEFrameMayContainGrokSearch(frame) {
+				searchCounter += countNativeSearchCallsInSSEFrameDedup(frame, streamSearchSeen, searchSkipFunctionTools)
 			}
 			nativeReasoning.ObserveFrame(frame)
 			rawEventType := frame.eventType
@@ -2996,6 +3016,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 		responseID:               extractOpenAIResponseIDFromJSONBytes(body),
 		imageCount:               countOpenAIResponseImageOutputsFromJSONBytes(body),
 		imageOutputSizes:         collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
+		searchCount:              countNativeSearchCallsFromJSONBytes(body, openAINativeSearchSkipFunctionTools(c)),
 	}, nil
 }
 
@@ -3099,6 +3120,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		responseID:               extractOpenAIResponseIDFromJSONBytes(body),
 		imageCount:               countOpenAIImageOutputsFromSSEBody(bodyText),
 		imageOutputSizes:         collectOpenAIImageOutputSizesFromSSEBody(bodyText),
+		searchCount:              countNativeSearchCallsFromSSEBody(bodyText, openAINativeSearchSkipFunctionTools(c)),
 	}, nil
 }
 

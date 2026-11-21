@@ -152,14 +152,18 @@ func TestSplitOpenAIConcatenatedJSONDocumentsPrefilterPreservesRepairSemantics(t
 	require.Nil(t, documents)
 }
 
-func TestOpenAIStreamingCountsGrokSearchOnlyForGrokPlatform(t *testing.T) {
+// 内置检索工具的按次计费对所有平台成立（issue #491）：账号平台不再决定是否计数，
+// 只有“写不写进计费结果”由 openAINativeSearchBillingApplies 决定。
+func TestOpenAIStreamingCountsNativeSearchForEveryPlatform(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tt := range []struct {
 		platform string
 		want     int
 	}{
-		{platform: PlatformOpenAI, want: 0},
+		{platform: PlatformOpenAI, want: 1},
 		{platform: PlatformGrok, want: 1},
+		{platform: PlatformDeepseek, want: 1},
+		{platform: PlatformAnthropic, want: 1},
 	} {
 		t.Run(tt.platform, func(t *testing.T) {
 			body := strings.Join([]string{

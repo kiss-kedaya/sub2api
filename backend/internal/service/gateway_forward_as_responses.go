@@ -374,6 +374,10 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 	if src.HasOutputTokens() {
 		dst.OutputTokens = src.OutputTokens
 	}
+	// 内置检索工具按次计费的来源；累计值取最大，避免流式重复事件被累加。
+	if n := src.WebSearchRequests(); n > dst.WebSearchRequests {
+		dst.WebSearchRequests = n
+	}
 }
 
 func claudeUsageToAnthropicUsage(usage ClaudeUsage) apicompat.AnthropicUsage {
@@ -388,6 +392,10 @@ func claudeUsageToAnthropicUsage(usage ClaudeUsage) apicompat.AnthropicUsage {
 			Ephemeral5mInputTokens: &usage.CacheCreation5mTokens,
 			Ephemeral1hInputTokens: &usage.CacheCreation1hTokens,
 		}
+	}
+	if usage.WebSearchRequests > 0 {
+		n := usage.WebSearchRequests
+		out.ServerToolUse = &apicompat.AnthropicServerToolUse{WebSearchRequests: &n}
 	}
 	return out
 }
@@ -530,6 +538,8 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 			Duration:                 time.Since(startTime),
 			ClientDisconnect:         true,
 			NonBillableUpstreamError: sawError && !sawStop,
+			// Anthropic 上游已完成的检索在客户端断开时仍要收费（issue #491）。
+			SearchCount: usage.WebSearchRequests,
 		}, newAnthropicClientGoneError(anthropicGoneStream, scanErr)
 	}
 	if scanErr != nil {
@@ -593,6 +603,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		ReasoningEffort:          reasoningEffort,
 		Stream:                   false,
 		Duration:                 time.Since(startTime),
+		SearchCount:              billedUsage.WebSearchRequests,
 	}, nil
 }
 
@@ -672,6 +683,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			FirstTokenMs:             firstTokenMs,
 			ClientDisconnect:         clientDisconnected,
 			NonBillableUpstreamError: sawError && !sawStop,
+			SearchCount:              usage.WebSearchRequests,
 		}
 	}
 

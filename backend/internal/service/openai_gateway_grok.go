@@ -44,6 +44,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if account.Type != AccountTypeOAuth && account.Type != AccountTypeAPIKey {
 		return nil, fmt.Errorf("grok account type %s is not supported by Responses forwarding", account.Type)
 	}
+	rememberOpenAINativeSearchSkipFunctionTools(c, body)
 
 	upstreamModel := account.GetMappedModel(originalModel)
 	if strings.TrimSpace(upstreamModel) == "" {

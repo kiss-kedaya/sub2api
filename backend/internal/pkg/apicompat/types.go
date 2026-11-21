@@ -184,6 +184,15 @@ type AnthropicUsage struct {
 	PromptTokensDetails   *AnthropicPromptTokensDetails `json:"prompt_tokens_details,omitempty"`
 	PromptCacheHitTokens  *int                          `json:"prompt_cache_hit_tokens,omitempty"`
 	PromptCacheMissTokens *int                          `json:"prompt_cache_miss_tokens,omitempty"`
+	// ServerToolUse 承载 Anthropic 内置服务端工具的累计调用计数。目前只有
+	// web_search 参与按次计费（usage.server_tool_use.web_search_requests），
+	// 它是 token 计费之外的叠加项，不能替代 token 计量（issue #491）。
+	ServerToolUse *AnthropicServerToolUse `json:"server_tool_use,omitempty"`
+}
+
+// AnthropicServerToolUse 是 Anthropic usage 里的服务端内置工具计数块。
+type AnthropicServerToolUse struct {
+	WebSearchRequests *int `json:"web_search_requests,omitempty"`
 }
 
 // AnthropicCacheCreation retains the upstream TTL buckets. Pointers distinguish
@@ -316,6 +325,25 @@ func (u *AnthropicUsage) Merge(src AnthropicUsage) {
 			}
 		}
 	}
+	// server_tool_use.web_search_requests 是累计值：message_start 与
+	// message_delta 都可能带，取最大而不是累加，避免把同一批检索计成两倍。
+	if src.ServerToolUse != nil && src.ServerToolUse.WebSearchRequests != nil {
+		incoming := max(*src.ServerToolUse.WebSearchRequests, 0)
+		current := 0
+		if u.ServerToolUse != nil && u.ServerToolUse.WebSearchRequests != nil {
+			current = max(*u.ServerToolUse.WebSearchRequests, 0)
+		}
+		merged := max(incoming, current)
+		u.ServerToolUse = &AnthropicServerToolUse{WebSearchRequests: &merged}
+	}
+}
+
+// WebSearchRequests 返回内置检索工具（web_search）的累计调用次数，缺省 0。
+func (u AnthropicUsage) WebSearchRequests() int {
+	if u.ServerToolUse == nil || u.ServerToolUse.WebSearchRequests == nil {
+		return 0
+	}
+	return max(*u.ServerToolUse.WebSearchRequests, 0)
 }
 
 // ---------------------------------------------------------------------------
