@@ -29,6 +29,16 @@ type liveBalanceAdjustmentCacheStub struct {
 	initializeCalls     int
 	initializeBalance   float64
 	initializeWatermark int64
+
+	watermarkState      LiveBalanceWatermarkState
+	watermarkStateErr   error
+	watermarkStateCalls int
+	rebuildResult       LiveBalanceResult
+	rebuildErr          error
+	rebuildCalls        int
+	rebuildBalance      float64
+	rebuildWatermark    int64
+	rebuildExpected     LiveBalanceWatermarkState
 }
 
 type liveBalanceSnapshotReaderStub struct {
@@ -128,6 +138,28 @@ func (s *liveBalanceAdjustmentCacheStub) InitializeLiveBalanceAtWatermark(
 	s.initializeBalance = balance
 	s.initializeWatermark = watermark
 	return s.initializeResult, s.initializeErr
+}
+
+func (s *liveBalanceAdjustmentCacheStub) LoadLiveBalanceWatermarkState(
+	_ context.Context,
+	_ int64,
+) (LiveBalanceWatermarkState, error) {
+	s.watermarkStateCalls++
+	return s.watermarkState, s.watermarkStateErr
+}
+
+func (s *liveBalanceAdjustmentCacheStub) RebuildLiveBalanceAtWatermark(
+	_ context.Context,
+	_ int64,
+	expected LiveBalanceWatermarkState,
+	balance float64,
+	watermark int64,
+) (LiveBalanceResult, error) {
+	s.rebuildCalls++
+	s.rebuildExpected = expected
+	s.rebuildBalance = balance
+	s.rebuildWatermark = watermark
+	return s.rebuildResult, s.rebuildErr
 }
 
 func TestApplyExternalBalanceAdjustmentInvalidatesLegacyCacheThenAdjusts(t *testing.T) {
@@ -249,20 +281,94 @@ func TestRecoveringLiveBalanceAdjustmentWaitsForUnsettledBilling(t *testing.T) {
 	require.Zero(t, cache.initializeCalls)
 }
 
-func TestRecoveringLiveBalanceAdjustmentDoesNotMaskRealConflict(t *testing.T) {
+func TestRecoveringLiveBalanceAdjustmentHealsLaggingWatermarkAndReplays(t *testing.T) {
+	cache := &liveBalanceAdjustmentCacheStub{
+		// The Redis watermark lags the database chain, so the first batch is a
+		// conflict. After the snapshot rebuild the replay is included by the new
+		// watermark and must be an idempotent no-op.
+		watermarkResults: []LiveBalanceResult{
+			{Outcome: LiveBalanceOutcomeConflict},
+			{Outcome: LiveBalanceOutcomeIdempotent},
+		},
+		watermarkState: LiveBalanceWatermarkState{
+			WalletValue: "163832846020", WalletExists: true,
+			WatermarkValue: "286884590", WatermarkExists: true,
+		},
+		rebuildResult: LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied},
+	}
+	reader := &liveBalanceSnapshotReaderStub{
+		snapshot: LiveBalanceInitializationSnapshot{Balance: 2584.85424897, Watermark: 291000347},
+	}
+	applier := newRecoveringLiveBalanceAdjustmentApplier(&BillingCacheService{cache: cache}, reader)
+	events := []LiveBalanceAdjustmentEvent{
+		{ID: 287036667, UserID: 9250, PredecessorID: 287034410, DeltaUnits: -51800},
+		{ID: 287036709, UserID: 9250, PredecessorID: 287036667, DeltaUnits: -38920},
+	}
+
+	require.NoError(t, applier.ApplyExternalBalanceOutboxAdjustments(context.Background(), events))
+
+	require.Equal(t, 2, cache.watermarkCalls)
+	require.Equal(t, 1, cache.watermarkStateCalls)
+	require.Equal(t, 1, cache.rebuildCalls)
+	require.Equal(t, cache.watermarkState, cache.rebuildExpected)
+	require.Equal(t, 2584.85424897, cache.rebuildBalance)
+	require.Equal(t, int64(291000347), cache.rebuildWatermark)
+	require.Equal(t, uint64(1), applier.RecoveryStats().Healed)
+	require.Zero(t, applier.RecoveryStats().HealFailures)
+}
+
+func TestRecoveringLiveBalanceAdjustmentRetriesWhenRebuildLosesCompareAndSwap(t *testing.T) {
 	cache := &liveBalanceAdjustmentCacheStub{
 		watermarkResults: []LiveBalanceResult{{Outcome: LiveBalanceOutcomeConflict}},
+		rebuildResult:    LiveBalanceResult{Outcome: LiveBalanceOutcomeConflict},
 	}
-	reader := &liveBalanceSnapshotReaderStub{}
+	reader := &liveBalanceSnapshotReaderStub{
+		snapshot: LiveBalanceInitializationSnapshot{Balance: 12.5, Watermark: 40},
+	}
 	applier := newRecoveringLiveBalanceAdjustmentApplier(&BillingCacheService{cache: cache}, reader)
 
 	err := applier.ApplyExternalBalanceOutboxAdjustment(context.Background(), LiveBalanceAdjustmentEvent{
-		ID: 17, UserID: 42, PredecessorID: 11, DeltaUnits: 100000000,
+		ID: 41, UserID: 42, PredecessorID: 39, DeltaUnits: 100000000,
 	})
 
-	require.ErrorContains(t, err, "watermark conflict")
-	require.Zero(t, reader.calls)
-	require.Zero(t, cache.initializeCalls)
+	require.ErrorIs(t, err, errLiveBalanceWatermarkConflict)
+	require.Equal(t, 1, cache.watermarkCalls, "a lost compare-and-swap must not replay the stale chain")
+	require.Equal(t, uint64(1), applier.RecoveryStats().HealFailures)
+	require.Zero(t, applier.RecoveryStats().Healed)
+}
+
+func TestRecoveringLiveBalanceAdjustmentWaitsForUnsettledBillingOnConflict(t *testing.T) {
+	cache := &liveBalanceAdjustmentCacheStub{
+		watermarkResults: []LiveBalanceResult{{Outcome: LiveBalanceOutcomeConflict}},
+	}
+	reader := &liveBalanceSnapshotReaderStub{
+		snapshot: LiveBalanceInitializationSnapshot{Balance: 12.5, Watermark: 40, HasUnsettled: true},
+	}
+	applier := newRecoveringLiveBalanceAdjustmentApplier(&BillingCacheService{cache: cache}, reader)
+
+	err := applier.ApplyExternalBalanceOutboxAdjustment(context.Background(), LiveBalanceAdjustmentEvent{
+		ID: 41, UserID: 42, PredecessorID: 39, DeltaUnits: 100000000,
+	})
+
+	require.ErrorContains(t, err, "has unsettled billing")
+	require.Zero(t, cache.rebuildCalls, "an outstanding hold is not yet reflected in users.balance")
+	require.Equal(t, uint64(1), applier.RecoveryStats().HealFailures)
+}
+
+func TestRecoveringLiveBalanceAdjustmentSkipsVanishedUser(t *testing.T) {
+	cache := &liveBalanceAdjustmentCacheStub{
+		watermarkResults: []LiveBalanceResult{{Outcome: LiveBalanceOutcomeConflict}},
+	}
+	reader := &liveBalanceSnapshotReaderStub{err: ErrUserNotFound}
+	applier := newRecoveringLiveBalanceAdjustmentApplier(&BillingCacheService{cache: cache}, reader)
+
+	err := applier.ApplyExternalBalanceOutboxAdjustment(context.Background(), LiveBalanceAdjustmentEvent{
+		ID: 41, UserID: 42, PredecessorID: 39, DeltaUnits: 100000000,
+	})
+
+	require.ErrorIs(t, err, errLiveBalanceAdjustmentUserGone)
+	require.Zero(t, cache.rebuildCalls)
+	require.Equal(t, uint64(1), applier.RecoveryStats().Abandoned)
 }
 
 func TestCommittedBalanceSyncOnlyInvalidatesLegacyCache(t *testing.T) {

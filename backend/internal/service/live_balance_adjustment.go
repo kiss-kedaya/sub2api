@@ -21,7 +21,41 @@ const (
 
 var liveBalanceAdjustmentFallbackSequence atomic.Uint64
 
-var errLiveBalanceWalletNotInitialized = errors.New("live balance wallet is not initialized")
+var (
+	errLiveBalanceWalletNotInitialized = errors.New("live balance wallet is not initialized")
+	// errLiveBalanceWatermarkConflict marks a Redis-side outbox watermark that no
+	// longer lines up with the database event chain (lost/rolled-back/evicted
+	// watermark or wallet, historical manual edits, a chain break). It is
+	// recoverable when the authoritative database snapshot says no settlement
+	// hold is outstanding: the wallet is only a projection of users.balance.
+	errLiveBalanceWatermarkConflict = errors.New("live balance outbox watermark conflict")
+	// errLiveBalanceAdjustmentUserGone marks outbox rows that can never be
+	// projected because the user no longer exists. Retrying them forever only
+	// burns claims, so the worker abandons them after recording the reason.
+	errLiveBalanceAdjustmentUserGone = errors.New("live balance outbox user is gone")
+)
+
+// LiveBalanceWatermarkState is the raw Redis projection state observed before a
+// conflict repair. Comparing these exact strings inside the rebuild script makes
+// the repair a compare-and-swap: a concurrent authorization or outbox write
+// aborts the rebuild instead of overwriting a newer wallet.
+type LiveBalanceWatermarkState struct {
+	WalletValue     string
+	WalletExists    bool
+	WatermarkValue  string
+	WatermarkExists bool
+}
+
+type liveBalanceWatermarkHealer interface {
+	LoadLiveBalanceWatermarkState(ctx context.Context, userID int64) (LiveBalanceWatermarkState, error)
+	RebuildLiveBalanceAtWatermark(
+		ctx context.Context,
+		userID int64,
+		expected LiveBalanceWatermarkState,
+		balance float64,
+		watermark int64,
+	) (LiveBalanceResult, error)
+}
 
 // ApplyExternalBalanceAdjustment publishes one already-committed, non-usage
 // balance delta to the persistent Redis wallet. The legacy short-lived balance
@@ -88,7 +122,8 @@ func (s *BillingCacheService) ApplyExternalBalanceOutboxAdjustment(
 		return fmt.Errorf("%w: user_id=%d", errLiveBalanceWalletNotInitialized, event.UserID)
 	case LiveBalanceOutcomeConflict:
 		return fmt.Errorf(
-			"live balance outbox watermark conflict: user_id=%d event_id=%d predecessor_id=%d",
+			"%w: user_id=%d event_id=%d predecessor_id=%d",
+			errLiveBalanceWatermarkConflict,
 			event.UserID,
 			event.ID,
 			event.PredecessorID,
@@ -141,7 +176,13 @@ func (s *BillingCacheService) ApplyExternalBalanceOutboxAdjustments(
 	case LiveBalanceOutcomeNotFound:
 		return fmt.Errorf("%w: user_id=%d", errLiveBalanceWalletNotInitialized, userID)
 	case LiveBalanceOutcomeConflict:
-		return fmt.Errorf("live balance outbox batch watermark conflict: user_id=%d first_event_id=%d last_event_id=%d", userID, events[0].ID, events[len(events)-1].ID)
+		return fmt.Errorf(
+			"%w: user_id=%d first_event_id=%d last_event_id=%d",
+			errLiveBalanceWatermarkConflict,
+			userID,
+			events[0].ID,
+			events[len(events)-1].ID,
+		)
 	default:
 		return fmt.Errorf("unexpected live balance batch outcome: %d", result.Outcome)
 	}

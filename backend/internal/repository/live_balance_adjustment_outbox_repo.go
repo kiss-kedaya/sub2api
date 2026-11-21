@@ -234,8 +234,66 @@ func (r *liveBalanceAdjustmentOutboxRepository) MarkDeliveredBatch(ctx context.C
 	return nil
 }
 
-func (r *liveBalanceAdjustmentOutboxRepository) RetryClaimed(
+// AbandonClaimed marks a poison row as delivered without projecting it to Redis
+// and records why. The database balance stays authoritative; the next successful
+// repair (or the next event for that user) re-anchors the Redis projection, so
+// this only stops the row from blocking the user's chain forever.
+func (r *liveBalanceAdjustmentOutboxRepository) AbandonClaimed(
 	ctx context.Context,
+	id int64,
+	workerID string,
+	reason string,
+) error {
+	if r == nil || r.db == nil {
+		return errors.New("live balance adjustment outbox database is unavailable")
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE live_balance_adjustment_outbox
+		SET delivered_at = NOW(),
+			claimed_at = NULL,
+			claimed_by = NULL,
+			last_error = $3,
+			updated_at = NOW()
+		WHERE id = $1 AND claimed_by = $2 AND delivered_at IS NULL
+	`, id, workerID, reason)
+	if err != nil {
+		return err
+	}
+	return requireLiveBalanceOutboxClaim(result, id, workerID, "abandon")
+}
+
+func (r *liveBalanceAdjustmentOutboxRepository) AbandonClaimedBatch(
+	ctx context.Context, ids []int64, workerID string, reason string,
+) error {
+	if r == nil || r.db == nil {
+		return errors.New("live balance adjustment outbox database is unavailable")
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE live_balance_adjustment_outbox
+		SET delivered_at = NOW(),
+			claimed_at = NULL,
+			claimed_by = NULL,
+			last_error = $3,
+			updated_at = NOW()
+		WHERE id = ANY($1::bigint[]) AND claimed_by = $2 AND delivered_at IS NULL
+	`, pq.Array(ids), workerID, reason)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != int64(len(ids)) {
+		return fmt.Errorf("live balance adjustment batch claim changed during abandon: updated %d of %d", affected, len(ids))
+	}
+	return nil
+}
+
+func (r *liveBalanceAdjustmentOutboxRepository) RetryClaimed(ctx context.Context,
 	id int64,
 	workerID string,
 	availableAt time.Time,

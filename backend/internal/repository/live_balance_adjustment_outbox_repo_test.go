@@ -104,6 +104,15 @@ func TestLiveBalanceAdjustmentOutboxAckRetryAndCleanupAreClaimSafe(t *testing.T)
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	require.NoError(t, repo.RetryClaimedBatch(context.Background(), []int64{8, 9}, "worker-1", retryAt, "redis down"))
 
+	mock.ExpectExec(`(?s)UPDATE live_balance_adjustment_outbox.*delivered_at = NOW\(\).*last_error = \$3.*WHERE id = \$1`).
+		WithArgs(int64(7), "worker-1", "abandoned after 64 attempts: conflict").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, repo.AbandonClaimed(context.Background(), 7, "worker-1", "abandoned after 64 attempts: conflict"))
+	mock.ExpectExec(`(?s)UPDATE live_balance_adjustment_outbox.*last_error = \$3.*id = ANY\(\$1::bigint\[\]\)`).
+		WithArgs(pq.Array([]int64{7, 8}), "worker-1", "abandoned after 64 attempts: conflict").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	require.NoError(t, repo.AbandonClaimedBatch(context.Background(), []int64{7, 8}, "worker-1", "abandoned after 64 attempts: conflict"))
+
 	before := time.Now().UTC().Add(-24 * time.Hour)
 	mock.ExpectExec(`(?s)WITH doomed AS .*delivered_at < \$1.*FOR UPDATE SKIP LOCKED.*DELETE FROM live_balance_adjustment_outbox`).
 		WithArgs(before, 10000).

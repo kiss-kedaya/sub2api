@@ -17,8 +17,16 @@ const (
 	liveBalanceOutboxRedisTimeout     = 2 * time.Second
 	liveBalanceOutboxConcurrency      = 16
 	liveBalanceOutboxRetention        = 24 * time.Hour
-	liveBalanceOutboxCleanupInterval  = time.Hour
-	liveBalanceOutboxCleanupBatch     = 10000
+	liveBalanceOutboxCleanupInterval  = 5 * time.Minute
+	liveBalanceOutboxCleanupBatch     = 20000
+	// liveBalanceOutboxCleanupMaxBatches bounds one cleanup tick so deleting a
+	// multi-million-row backlog never holds one transaction for minutes. Three
+	// batches every five minutes outpaces the ~350k rows/hour production creates.
+	liveBalanceOutboxCleanupMaxBatches = 3
+	// liveBalanceOutboxMaxAttempts is the hard stop for a poison row. Recoverable
+	// conflicts are healed before this is reached; once reached the worker records
+	// the error and abandons the row instead of retrying it forever.
+	liveBalanceOutboxMaxAttempts = 64
 )
 
 const LiveBalanceOutboxMaxBatchSize = liveBalanceOutboxBatchSize
@@ -57,22 +65,32 @@ type LiveBalanceAdjustmentOutboxRepository interface {
 	MarkDeliveredBatch(ctx context.Context, ids []int64, workerID string) error
 	RetryClaimed(ctx context.Context, id int64, workerID string, availableAt time.Time, lastError string) error
 	RetryClaimedBatch(ctx context.Context, ids []int64, workerID string, availableAt time.Time, lastError string) error
+	AbandonClaimed(ctx context.Context, id int64, workerID string, reason string) error
+	AbandonClaimedBatch(ctx context.Context, ids []int64, workerID string, reason string) error
 	DeleteDelivered(ctx context.Context, before time.Time, limit int) (int64, error)
 	Stats(ctx context.Context) (LiveBalanceAdjustmentOutboxStats, error)
 }
 
 type LiveBalanceAdjustmentOutboxHealth struct {
-	Running     bool          `json:"running"`
-	Processed   uint64        `json:"processed"`
-	Retries     uint64        `json:"retries"`
-	Failures    uint64        `json:"failures"`
-	Cleaned     uint64        `json:"cleaned"`
-	Pending     int64         `json:"pending"`
-	Delivered   int64         `json:"delivered"`
-	OldestLag   time.Duration `json:"oldest_lag"`
-	MaxAttempts int           `json:"max_attempts"`
-	LastError   string        `json:"last_error,omitempty"`
-	StatsError  string        `json:"stats_error,omitempty"`
+	Running      bool          `json:"running"`
+	Processed    uint64        `json:"processed"`
+	Retries      uint64        `json:"retries"`
+	Failures     uint64        `json:"failures"`
+	Conflicts    uint64        `json:"conflicts"`
+	Healed       uint64        `json:"healed"`
+	HealFailures uint64        `json:"heal_failures"`
+	Abandoned    uint64        `json:"abandoned"`
+	Cleaned      uint64        `json:"cleaned"`
+	Pending      int64         `json:"pending"`
+	Delivered    int64         `json:"delivered"`
+	OldestLag    time.Duration `json:"oldest_lag"`
+	MaxAttempts  int           `json:"max_attempts"`
+	LastError    string        `json:"last_error,omitempty"`
+	StatsError   string        `json:"stats_error,omitempty"`
+}
+
+type liveBalanceRecoveryStatsProvider interface {
+	RecoveryStats() LiveBalanceAdjustmentRecoveryStats
 }
 
 type liveBalanceAdjustmentApplier interface {

@@ -384,6 +384,32 @@ end
 return {3, 0, wallet or '0', '0', '0'}
 `)
 
+// Watermark keys are deliberately persistent (no TTL): a lost watermark used to
+// strand every later outbox event in a permanent conflict. This repair script
+// rebuilds both wallet and watermark from one authoritative PostgreSQL snapshot.
+// It is a compare-and-swap against the exact values the caller observed, so a
+// concurrent authorization hold or outbox write aborts instead of being
+// overwritten. Callers must only rebuild when no settlement hold is outstanding.
+var rebuildLiveBalanceAtWatermarkScript = redis.NewScript(`
+local wallet = redis.call('GET', KEYS[1])
+local watermark = redis.call('GET', KEYS[2])
+if ARGV[4] == '1' then
+  if wallet ~= false then return {3, 0, wallet, '0', '0'} end
+elseif wallet ~= ARGV[3] then
+  return {3, 0, wallet or '0', '0', '0'}
+end
+if ARGV[6] == '1' then
+  if watermark ~= false then return {3, 0, wallet or '0', '0', '0'} end
+elseif watermark ~= ARGV[5] then
+  return {3, 0, wallet or '0', '0', '0'}
+end
+redis.call('SET', KEYS[1], ARGV[1])
+redis.call('SET', KEYS[2], ARGV[2])
+redis.call('PERSIST', KEYS[1])
+redis.call('PERSIST', KEYS[2])
+return {1, 0, ARGV[1], '0', '0'}
+`)
+
 func (c *billingCache) GetLiveBalance(ctx context.Context, userID int64) (float64, bool, error) {
 	if userID <= 0 {
 		return 0, false, errInvalidLiveBalanceUserID
@@ -639,6 +665,76 @@ func (c *billingCache) InitializeLiveBalanceAtWatermark(
 	}, balanceUnits, watermark).Result()
 	if err != nil {
 		return service.LiveBalanceResult{}, fmt.Errorf("initialize live balance at watermark: %w", err)
+	}
+	return parseLiveBalanceResult(raw)
+}
+
+// LoadLiveBalanceWatermarkState reads the raw wallet/watermark pair used by the
+// conflict healer's compare-and-swap. Both keys share a hash tag, so the MGET is
+// a single slot-local round trip.
+func (c *billingCache) LoadLiveBalanceWatermarkState(
+	ctx context.Context,
+	userID int64,
+) (service.LiveBalanceWatermarkState, error) {
+	var state service.LiveBalanceWatermarkState
+	if userID <= 0 {
+		return state, errInvalidLiveBalanceUserID
+	}
+	values, err := c.rdb.MGet(ctx, liveBalanceWalletKey(userID), liveBalanceWatermarkKey(userID)).Result()
+	if err != nil {
+		return state, fmt.Errorf("load live balance watermark state: %w", err)
+	}
+	if len(values) != 2 {
+		return state, fmt.Errorf("load live balance watermark state: unexpected reply length %d", len(values))
+	}
+	if raw, ok := values[0].(string); ok {
+		state.WalletValue = raw
+		state.WalletExists = true
+	}
+	if raw, ok := values[1].(string); ok {
+		state.WatermarkValue = raw
+		state.WatermarkExists = true
+	}
+	return state, nil
+}
+
+// RebuildLiveBalanceAtWatermark replaces a stale or broken Redis projection with
+// one authoritative PostgreSQL snapshot. The database balance is the source of
+// truth and the wallet only mirrors it, so replaying every already-committed
+// event again is a no-op once the watermark is set to the snapshot head.
+func (c *billingCache) RebuildLiveBalanceAtWatermark(
+	ctx context.Context,
+	userID int64,
+	expected service.LiveBalanceWatermarkState,
+	balance float64,
+	watermark int64,
+) (service.LiveBalanceResult, error) {
+	if userID <= 0 {
+		return service.LiveBalanceResult{}, errInvalidLiveBalanceUserID
+	}
+	if watermark < 0 || watermark > maxExactLuaInteger {
+		return service.LiveBalanceResult{}, errors.New("live balance rebuild watermark is invalid")
+	}
+	balanceUnits, err := liveBalanceMoneyToUnits(balance, false)
+	if err != nil {
+		return service.LiveBalanceResult{}, fmt.Errorf("live balance rebuild: %w", err)
+	}
+	args := []any{strconv.FormatInt(balanceUnits, 10), strconv.FormatInt(watermark, 10)}
+	if expected.WalletExists {
+		args = append(args, expected.WalletValue, "0")
+	} else {
+		args = append(args, "", "1")
+	}
+	if expected.WatermarkExists {
+		args = append(args, expected.WatermarkValue, "0")
+	} else {
+		args = append(args, "", "1")
+	}
+	raw, err := rebuildLiveBalanceAtWatermarkScript.Run(ctx, c.rdb, []string{
+		liveBalanceWalletKey(userID), liveBalanceWatermarkKey(userID),
+	}, args...).Result()
+	if err != nil {
+		return service.LiveBalanceResult{}, fmt.Errorf("rebuild live balance at watermark: %w", err)
 	}
 	return parseLiveBalanceResult(raw)
 }
