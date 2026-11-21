@@ -98,6 +98,62 @@ describe('ensureInfiniteCanvasApiKey', () => {
     expect(session).toMatchObject({ apiKey: 'sk-new', created: true, groupIds: [4, 1, 9] })
   })
 
+  it('rereads a redacted creation replay and rotates only the matching usable canvas key', async () => {
+    localStorage.setItem('auth_user', JSON.stringify({ id: 1 }))
+    getAvailableGroups.mockResolvedValue([group(2)])
+    const current = { id: 7, group_id: 9, group_ids: [9] }
+    list.mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [key({ id: 8 }), key(current)] })
+    create.mockResolvedValue(key({ id: 7 }))
+    rotate.mockResolvedValue(secretKey(current, 'fixture-only-rotated-secret'))
+
+    const session = await ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { createIfMissing: true })
+
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(rotate).toHaveBeenCalledTimes(1)
+    expect(rotate).toHaveBeenCalledWith(7)
+    expect(session).toMatchObject({
+      keyId: 7, apiKey: 'fixture-only-rotated-secret', groupIds: [9], created: false, rotated: true,
+    })
+  })
+
+  it.each([
+    { reason: 'missing', current: undefined, code: 'missing-key' },
+    { reason: 'renamed', current: { name: 'Not a canvas key' }, code: 'missing-key' },
+    { reason: 'owned by another user', current: { user_id: 2 }, code: 'missing-key' },
+    { reason: 'disabled', current: { status: 'inactive' }, code: 'key-unavailable' },
+    { reason: 'expired', current: { expires_at: '2020-01-01T00:00:00Z' }, code: 'key-unavailable' },
+    { reason: 'out of quota', current: { quota: 1, quota_used: 1 }, code: 'key-unavailable' },
+  ] satisfies Array<{ reason: string; current?: Partial<ApiKey>; code: string }>)('does not rotate or create again on a redacted replay when the original key is $reason', async ({ current, code }) => {
+    localStorage.setItem('auth_user', JSON.stringify({ id: 1 }))
+    list.mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [key({ id: 8 }), ...(current ? [key({ id: 7, ...current })] : [])] })
+    getAvailableGroups.mockResolvedValue([group(2)])
+    create.mockResolvedValue(key({ id: 7 }))
+
+    await expect(ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { createIfMissing: true }))
+      .rejects.toMatchObject({ code })
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(rotate).not.toHaveBeenCalled()
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not rotate after the account changes during the redacted replay lookup', async () => {
+    localStorage.setItem('auth_user', JSON.stringify({ id: 1 }))
+    list.mockResolvedValueOnce({ items: [] }).mockImplementationOnce(async () => {
+      localStorage.setItem('auth_user', JSON.stringify({ id: 2 }))
+      return { items: [key({ id: 7 })] }
+    })
+    getAvailableGroups.mockResolvedValue([group(2)])
+    create.mockResolvedValue(key({ id: 7 }))
+
+    await expect(ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { createIfMissing: true }))
+      .rejects.toMatchObject({ code: 'request-failed' })
+    expect(rotate).not.toHaveBeenCalled()
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+
   it('deduplicates concurrent first-entry setup requests', async () => {
     getAvailableGroups.mockResolvedValue([group(4), group(1)])
     list.mockResolvedValue({ items: [], pages: 1 })

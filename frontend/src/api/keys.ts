@@ -6,6 +6,9 @@
 import { apiClient } from './client'
 import type { ApiKey, ApiKeySecret, ApiKeyUpdateResult, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
 
+/** Only the initial create response includes the plaintext key. */
+type ApiKeyCreateResult = ApiKey & Partial<Pick<ApiKeySecret, 'key'>>
+
 /**
  * List all API keys for current user
  * @param page - Page number (default: 1)
@@ -57,7 +60,7 @@ export async function getById(id: number): Promise<ApiKey> {
  * @param rateLimitData - Optional rate limit fields
  * @param anthropicCacheTtlMode - Optional Anthropic cache_control TTL override
  * @param options - Optional idempotency key and DeepSeek tool injection setting (enabled by default)
- * @returns Created API key
+ * @returns Created API key, with plaintext omitted on an idempotent replay
  */
 export async function create(
   name: string,
@@ -71,7 +74,7 @@ export async function create(
   groupIds?: number[],
   anthropicCacheTtlMode?: 'inherit' | 'off' | '1h' | '5m',
   options?: { idempotencyKey?: string; deepseekToolInjectionEnabled?: boolean; concurrencyLimit?: number; autoBlockDatacenterIPs?: boolean }
-): Promise<ApiKeySecret> {
+): Promise<ApiKeyCreateResult> {
   const payload: CreateApiKeyRequest = {
     name,
     deepseek_tool_injection_enabled: options?.deepseekToolInjectionEnabled ?? true,
@@ -113,7 +116,7 @@ export async function create(
     payload.anthropic_cache_ttl_mode = anthropicCacheTtlMode
   }
 
-  const { data } = await apiClient.post<ApiKeySecret>('/keys', payload, options?.idempotencyKey
+  const { data } = await apiClient.post<ApiKeyCreateResult>('/keys', payload, options?.idempotencyKey
     ? { headers: { 'Idempotency-Key': options.idempotencyKey } }
     : undefined)
   return data

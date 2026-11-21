@@ -216,6 +216,7 @@ const DataTableStub = {
         </div>
         <div data-test="key-cell"><slot name="cell-key" :value="row.key_masked" :row="row" /></div>
         <slot name="cell-name" :value="row.name" :row="row" />
+        <div data-test="key-status"><slot name="cell-status" :value="row.status" :row="row" /></div>
         <div data-test="key-groups">
           <slot name="cell-group" :row="row" />
         </div>
@@ -971,9 +972,10 @@ describe('user KeysView mutations', () => {
     wrapper.unmount()
   })
 
-  it('inserts a created key locally without refetching the list', async () => {
+  it('shows the first creation secret and inserts the masked key without refetching', async () => {
     getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
-    createKey.mockResolvedValue({ ...createApiKey(), id: 99, name: 'new key', group_id: 3, group_ids: [3] })
+    const secret = 'fixture-only-creation-secret'
+    createKey.mockResolvedValue({ ...createApiKey(), id: 99, name: 'new key', group_id: 3, group_ids: [3], key: secret })
     const wrapper = await mountView()
 
     listKeys.mockClear()
@@ -989,7 +991,64 @@ describe('user KeysView mutations', () => {
     expect(wrapper.findAll('[data-test="current-concurrency"]')).toHaveLength(2)
     expect(wrapper.get('[data-test="key-bound-group"]').attributes('data-group-id')).toBe('3')
     expect(wrapper.text()).toContain('DeepSeek')
+    expect(wrapper.find('#key-form').exists()).toBe(false)
+    expect(wrapper.get('[data-test="api-key-secret-value"]').text()).toBe(secret)
+    expect(wrapper.findAll('[data-test="key-cell"]').every((cell) => !cell.text().includes(secret))).toBe(true)
+    expect(showSuccess).toHaveBeenCalledTimes(1)
+    expect(showSuccess).toHaveBeenCalledWith('keys.keyCreatedSuccess')
+    await getButtonByText(wrapper, 'keys.secretDialog.copy').trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledWith(secret, 'keys.secretDialog.copied')
     wrapper.unmount()
+  })
+
+  it.each([
+    { state: 'already listed', id: 1 },
+    { state: 'absent from the list', id: 2 },
+  ])('refreshes after a redacted create replay without applying the snapshot when its key is $state', async ({ id }) => {
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
+    const replayedKey = { ...createApiKey(), name: 'stale receipt name', key_masked: 'fixture****old', group_id: 3, group_ids: [3] }
+    const listedKey: ApiKey = { ...createApiKey(), id, name: 'listed name', status: 'inactive', key_masked: 'fixture****seen' }
+    const latestKey = { ...listedKey, name: 'latest name', key_masked: 'fixture****new' }
+    const page = (row: ApiKey) => ({ items: [row], total: 1, page: 1, page_size: 20, pages: 1 })
+    listKeys.mockResolvedValueOnce(page(listedKey))
+    createKey.mockResolvedValue(replayedKey)
+    const wrapper = await mountView()
+    try {
+      listKeys.mockClear()
+      let finishRefresh!: (value: ReturnType<typeof page>) => void
+      listKeys.mockImplementationOnce(() => new Promise((resolve) => { finishRefresh = resolve }))
+
+      await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+      await wrapper.get('[data-tour="key-form-name"]').setValue(replayedKey.name)
+      wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+
+      expect(wrapper.text()).toContain(listedKey.name)
+      expect(wrapper.text()).not.toContain(replayedKey.name)
+      expect(wrapper.get('[data-test="key-status"]').text()).toBe('Inactive')
+      expect(wrapper.get('[data-test="key-cell"]').text()).toBe(listedKey.key_masked)
+      expect(wrapper.get('[data-test="key-count"]').text()).toBe('1')
+      expect(listKeys).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('#key-form').exists()).toBe(false)
+      expect(wrapper.find('[data-test="api-key-secret-dialog"]').exists()).toBe(false)
+      expect(showSuccess).toHaveBeenCalledTimes(1)
+      expect(showSuccess).toHaveBeenCalledWith('keys.keyCreatedReplaySuccess')
+      expect(copyToClipboard).not.toHaveBeenCalled()
+
+      finishRefresh(page(latestKey))
+      await flushPromises()
+
+      expect(showError).not.toHaveBeenCalled()
+      expect(wrapper.findAll('[data-test="key-cell"]')).toHaveLength(1)
+      expect(wrapper.text()).toContain(latestKey.name)
+      expect(wrapper.get('[data-test="key-status"]').text()).toBe('Inactive')
+      expect(wrapper.get('[data-test="key-cell"]').text()).toBe(latestKey.key_masked)
+      expect(wrapper.get('[data-test="key-count"]').text()).toBe('1')
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('shows a newly created smart-routing key when filtering by a secondary route group', async () => {
@@ -998,7 +1057,7 @@ describe('user KeysView mutations', () => {
       { id: 3, name: 'Grok', platform: 'grok' },
     ])
     createKey.mockResolvedValue({
-      ...createApiKey(), id: 99, name: 'filtered route key', group_id: 2, group_ids: [2, 3],
+      ...createApiKey(), id: 99, name: 'filtered route key', group_id: 2, group_ids: [2, 3], key: 'fixture-only-creation-secret',
     })
     const wrapper = await mountView()
 
@@ -1042,7 +1101,7 @@ describe('user KeysView mutations', () => {
       { id: 3, name: 'Grok', platform: 'grok' },
     ])
     createKey.mockResolvedValue({
-      ...createApiKey(), id: 99, name: 'mapped key', group_id: 2, group_ids: [2, 3],
+      ...createApiKey(), id: 99, name: 'mapped key', group_id: 2, group_ids: [2, 3], key: 'fixture-only-creation-secret',
     })
     const wrapper = await mountView()
 

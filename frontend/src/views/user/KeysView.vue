@@ -2332,9 +2332,15 @@ const handleSubmit = async () => {
       )
       // 明文只在当次响应里：列表行只放脱敏视图，明文交给回执弹窗。
       const { key: createdSecret, ...createdMasked } = created
-      insertKeyLocally(createdMasked as ApiKey)
-      appStore.showSuccess(t('keys.keyCreatedSuccess'))
-      openSecretDialog(createdMasked as ApiKey, createdSecret)
+      if (createdSecret) {
+        insertKeyLocally(createdMasked)
+        appStore.showSuccess(t('keys.keyCreatedSuccess'))
+        openSecretDialog(createdMasked, createdSecret)
+      } else {
+        // 重试回执可能是历史快照，行状态与总数以当前列表为准。
+        appStore.showSuccess(t('keys.keyCreatedReplaySuccess'))
+        void loadApiKeys()
+      }
       // Only advance tour if active, on submit step, and creation succeeded
       if (onboardingStore.isCurrentStep('[data-tour="key-form-submit"]')) {
         onboardingStore.nextStep(500)

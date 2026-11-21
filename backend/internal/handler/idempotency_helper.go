@@ -21,15 +21,28 @@ func executeUserIdempotentJSON(
 	ttl time.Duration,
 	execute func(context.Context) (any, error),
 ) {
+	if result := runUserIdempotentJSON(c, scope, payload, ttl, execute); result != nil {
+		response.Success(c, result.Data)
+	}
+}
+
+// runUserIdempotentJSON returns the result that may be persisted for replay.
+// A caller can use a separate, request-local response for the initial success.
+func runUserIdempotentJSON(
+	c *gin.Context,
+	scope string,
+	payload any,
+	ttl time.Duration,
+	execute func(context.Context) (any, error),
+) *service.IdempotencyExecuteResult {
 	coordinator := service.DefaultIdempotencyCoordinator()
 	if coordinator == nil {
 		data, err := execute(c.Request.Context())
 		if err != nil {
 			response.ErrorFrom(c, err)
-			return
+			return nil
 		}
-		response.Success(c, data)
-		return
+		return &service.IdempotencyExecuteResult{Data: data}
 	}
 
 	actorScope := "user:0"
@@ -56,10 +69,10 @@ func executeUserIdempotentJSON(
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
 		response.ErrorFrom(c, err)
-		return
+		return nil
 	}
 	if result != nil && result.Replayed {
 		c.Header("X-Idempotency-Replayed", "true")
 	}
-	response.Success(c, result.Data)
+	return result
 }
