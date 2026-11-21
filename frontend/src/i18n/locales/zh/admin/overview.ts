@@ -855,6 +855,8 @@ export default {
       usageToday: '今日',
       usageYesterday: '昨日',
       usageTotal: '累计',
+      usageUnavailable: '未知',
+      usageStale: '已过期',
       accountsAvailable: '可用:',
       accountsRateLimited: '限流:',
       accountsTotal: '总量:',

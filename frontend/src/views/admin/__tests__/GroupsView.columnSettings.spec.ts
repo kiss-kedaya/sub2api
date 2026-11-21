@@ -49,6 +49,9 @@ const messages: Record<string, string> = {
   'admin.groups.usageToday': 'Today',
   'admin.groups.usageYesterday': 'Yesterday',
   'admin.groups.usageTotal': 'Total',
+  'admin.groups.usageUnavailable': 'Unknown',
+  'admin.groups.usageStale': 'Stale',
+  'common.refresh': 'Refresh',
 }
 
 vi.mock('@/api/admin', () => ({
@@ -161,8 +164,11 @@ const DataTableStub = {
     <div>
       <div data-test="columns">{{ columns.map((col) => col.key).join(',') }}</div>
       <div data-test="rows">{{ data.map((row) => row.name).join(',') }}</div>
-      <div v-if="data.length" data-test="usage-cell">
+      <div v-if="data.length && columns.some(col => col.key === 'usage')" data-test="usage-cell">
         <slot name="cell-usage" :row="data[0]" />
+      </div>
+      <div v-if="data.length && columns.some(col => col.key === 'billing_type')" data-test="billing-cell">
+        <slot name="cell-billing_type" :row="data[0]" />
       </div>
     </div>
   `,
@@ -200,7 +206,11 @@ const mountView = async () => {
         AppLayout: AppLayoutStub,
         TablePageLayout: TablePageLayoutStub,
         DataTable: DataTableStub,
-        Pagination: true,
+        Pagination: {
+          props: ['page'],
+          emits: ['update:page'],
+          template: `<button data-test="next-page" @click="$emit('update:page', page + 1)">Next</button>`,
+        },
         BaseDialog: BaseDialogStub,
         ConfirmDialog: true,
         EmptyState: true,
@@ -245,6 +255,27 @@ const clickColumnToggle = async (wrapper: ReturnType<typeof mount>, label: strin
   expect(item, `column toggle ${label}`).toBeTruthy()
   item!.click()
   await flushPromises()
+}
+
+const usageCell = (wrapper: ReturnType<typeof mount>) => wrapper.get('[data-test="usage-cell"]')
+const billingCell = (wrapper: ReturnType<typeof mount>) => wrapper.get('[data-test="billing-cell"]')
+const refresh = async (wrapper: ReturnType<typeof mount>) => {
+  await wrapper.get('button[aria-label="Refresh"]').trigger('click')
+  await flushPromises()
+}
+
+const usageRow = (today_cost: number, yesterday_cost: number, total_cost: number) => ({
+  group_id: 1, today_cost, yesterday_cost, total_cost,
+})
+
+const deferredUsage = () => {
+  let resolve!: (value: ReturnType<typeof usageRow>[]) => void
+  let reject!: (reason: Error) => void
+  const promise = new Promise<ReturnType<typeof usageRow>[]>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
 }
 
 describe('admin GroupsView column settings', () => {
@@ -429,7 +460,6 @@ describe('admin GroupsView column settings', () => {
     await openColumnSettings(wrapper)
     await clickColumnToggle(wrapper, 'Usage')
     expect(getUsageSummary).toHaveBeenCalledTimes(1)
-    expect(getUsageSummary).toHaveBeenCalledWith()
     expect(getCapacitySummary).not.toHaveBeenCalled()
 
     await clickColumnToggle(wrapper, 'Capacity')
@@ -450,5 +480,108 @@ describe('admin GroupsView column settings', () => {
     expect(text).toContain('Total$9.75')
     expect(text.indexOf('Today')).toBeLessThan(text.indexOf('Yesterday'))
     expect(text.indexOf('Yesterday')).toBeLessThan(text.indexOf('Total'))
+  })
+
+  it('shows unknown on first failure and genuine zero after a successful refresh', async () => {
+    listGroups.mockResolvedValue({
+      items: [createGroup({ subscription_type: 'subscription', daily_limit_usd: 10 })],
+      total: 1, page: 1, page_size: 20, pages: 1,
+    })
+    getUsageSummary.mockRejectedValueOnce(new Error('summary failed'))
+      .mockResolvedValueOnce([usageRow(0, 0, 0)])
+
+    const wrapper = await mountView()
+    expect(usageCell(wrapper).text()).toBe('Unknown')
+    expect(billingCell(wrapper).text()).toContain('Unknown')
+    expect(billingCell(wrapper).text()).not.toContain('$0.00')
+
+    await refresh(wrapper)
+    expect(getUsageSummary).toHaveBeenCalledTimes(2)
+    expect(usageCell(wrapper).text()).toBe('Today$0.00Yesterday$0.00Total$0.00')
+    expect(billingCell(wrapper).text()).toContain('$0.00')
+    expect(billingCell(wrapper).text()).not.toContain('Unknown')
+  })
+
+  it('preserves the last amounts and labels them stale after refresh fails', async () => {
+    listGroups.mockResolvedValue({
+      items: [createGroup({ subscription_type: 'subscription', daily_limit_usd: 10 })],
+      total: 1, page: 1, page_size: 20, pages: 1,
+    })
+    const pending = deferredUsage()
+    getUsageSummary.mockResolvedValueOnce([usageRow(1.25, 2.5, 9.75)])
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce([usageRow(1.5, 2.5, 10)])
+
+    const wrapper = await mountView()
+    await refresh(wrapper)
+    expect(usageCell(wrapper).text()).toContain('Today$1.25')
+    expect(usageCell(wrapper).text()).not.toContain('Stale')
+
+    pending.reject(new Error('refresh failed'))
+    await flushPromises()
+    expect(usageCell(wrapper).text()).toContain('Stale')
+    expect(usageCell(wrapper).text()).toContain('Today$1.25Yesterday$2.50Total$9.75')
+    expect(billingCell(wrapper).text()).toContain('Stale')
+    expect(billingCell(wrapper).text()).toContain('$9.75')
+
+    await refresh(wrapper)
+    expect(usageCell(wrapper).text()).toContain('Today$1.50')
+    expect(usageCell(wrapper).text()).not.toContain('Stale')
+    expect(billingCell(wrapper).text()).not.toContain('Stale')
+  })
+
+  it('does not turn a missing group row in a successful summary into zero', async () => {
+    const wrapper = await mountView()
+    expect(usageCell(wrapper).text()).toBe('Unknown')
+  })
+
+  it('does not refetch for pagination or usage column changes during and after a request', async () => {
+    const pending = deferredUsage()
+    getUsageSummary.mockReturnValueOnce(pending.promise)
+    const wrapper = await mountView()
+    expect(getUsageSummary).toHaveBeenCalledTimes(1)
+
+    await wrapper.get('[data-test="next-page"]').trigger('click')
+    await openColumnSettings(wrapper)
+    await clickColumnToggle(wrapper, 'Billing Type')
+    await clickColumnToggle(wrapper, 'Billing Type')
+    expect(listGroups).toHaveBeenCalledTimes(2)
+    expect(listGroups.mock.calls[1][0]).toBe(2)
+    expect(getUsageSummary).toHaveBeenCalledTimes(1)
+
+    pending.resolve([usageRow(1.25, 2.5, 9.75)])
+    await flushPromises()
+    await clickColumnToggle(wrapper, 'Usage')
+    await clickColumnToggle(wrapper, 'Usage')
+    await wrapper.get('[data-test="next-page"]').trigger('click')
+    await flushPromises()
+    expect(listGroups).toHaveBeenCalledTimes(3)
+    expect(getUsageSummary).toHaveBeenCalledTimes(1)
+    expect(usageCell(wrapper).text()).toContain('Today$1.25')
+  })
+
+  it('ignores a superseded success after the latest request failed', async () => {
+    const old = deferredUsage()
+    getUsageSummary.mockReturnValueOnce(old.promise)
+      .mockRejectedValueOnce(new Error('latest request failed'))
+    const wrapper = await mountView()
+
+    await refresh(wrapper)
+    const oldSignal = getUsageSummary.mock.calls[0][0]?.signal as AbortSignal | undefined
+    old.resolve([usageRow(9, 9, 99)])
+    await flushPromises()
+    expect(usageCell(wrapper).text()).toBe('Unknown')
+    expect(oldSignal?.aborted).toBe(true)
+  })
+
+  it('ignores a superseded failure after the latest request succeeded', async () => {
+    const old = deferredUsage()
+    getUsageSummary.mockReturnValueOnce(old.promise).mockResolvedValueOnce([usageRow(0, 1, 2)])
+    const wrapper = await mountView()
+
+    await refresh(wrapper)
+    old.reject(new Error('superseded request failed'))
+    await flushPromises()
+    expect(usageCell(wrapper).text()).toBe('Today$0.00Yesterday$1.00Total$2.00')
   })
 })
