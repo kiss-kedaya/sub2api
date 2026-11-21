@@ -72,7 +72,7 @@ func TestScopedAdminKeyWriteAuditKeepsFullDetail(t *testing.T) {
 	defer repo.mu.Unlock()
 	require.Len(t, repo.logs, 1, "受限密钥请求不能重复记账")
 	entry := repo.logs[0]
-	require.Equal(t, "admin_api_key", entry.AuthMethod)
+	require.Equal(t, service.AuditAuthMethodScopedAdminAPIKey, entry.AuthMethod)
 	require.Equal(t, "POST", entry.Method)
 	require.Equal(t, http.StatusNoContent, entry.StatusCode)
 	// 1) 动作必须由真实路由推导，而不是统一的 admin.api_key.request。
@@ -112,30 +112,65 @@ func TestScopedAdminKeyDeniedRequestStillAudited(t *testing.T) {
 	require.NotContains(t, entry.RequestBody, key)
 }
 
-// 旧版全权 key 的审计路径不能被本次修复改变。
-func TestLegacyAdminKeyAuditUnchanged(t *testing.T) {
+// 旧版全权 key 的审计：非白名单接口默认拒绝并记安全事件；白名单接口每次调用留痕。
+func TestLegacyAdminKeyAuditDefaultDenyAndAllowlist(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	repo := &auditCaptureRepository{}
-	settings := service.NewSettingService(fakeSettingRepo{values: map[string]string{
-		service.SettingKeyAdminAPIKey: "admin-legacy",
-	}}, nil)
-	r, audit := scopedAuditRouter(t, repo, settings, scopedAuditUsers())
 
-	req := httptest.NewRequest("PUT", "/api/v1/admin/accounts/7", strings.NewReader(`{"name":"legacy-probe"}`))
-	req.Header.Set("x-api-key", "admin-legacy")
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
-	audit.Stop()
+	t.Run("非白名单接口默认拒绝并记安全事件", func(t *testing.T) {
+		repo := &auditCaptureRepository{}
+		settings := service.NewSettingService(fakeSettingRepo{values: map[string]string{
+			service.SettingKeyAdminAPIKey: "admin-legacy",
+		}}, nil)
+		r, audit := scopedAuditRouter(t, repo, settings, scopedAuditUsers())
 
-	repo.mu.Lock()
-	defer repo.mu.Unlock()
-	require.Len(t, repo.logs, 1)
-	entry := repo.logs[0]
-	require.Equal(t, "admin_api_key", entry.AuthMethod)
-	require.Equal(t, "admin.accounts.update", entry.Action)
-	require.Contains(t, entry.RequestBody, "legacy-probe")
+		req := httptest.NewRequest("PUT", "/api/v1/admin/accounts/7", strings.NewReader(`{"name":"legacy-probe"}`))
+		req.Header.Set("x-api-key", "admin-legacy")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), "STEP_UP_ADMIN_API_KEY_FORBIDDEN")
+		audit.Stop()
+
+		repo.mu.Lock()
+		defer repo.mu.Unlock()
+		require.Len(t, repo.logs, 1, "机器凭据越权必须恰好记一条安全事件")
+		entry := repo.logs[0]
+		require.Equal(t, "admin_api_key", entry.AuthMethod)
+		require.Equal(t, "admin.machine_credential.sensitive_denied", entry.Action)
+		require.Equal(t, http.StatusForbidden, entry.StatusCode)
+		require.NotContains(t, entry.Path, "admin-legacy")
+		require.NotContains(t, entry.RequestBody, "admin-legacy")
+	})
+
+	t.Run("白名单接口放行且每次调用留痕", func(t *testing.T) {
+		repo := &auditCaptureRepository{}
+		settings := service.NewSettingService(fakeSettingRepo{values: map[string]string{
+			service.SettingKeyAdminAPIKey: "admin-legacy",
+		}}, nil)
+		r := gin.New()
+		audit := service.NewAuditLogService(repo, nil)
+		audit.Start()
+		admin := r.Group("/api/v1/admin")
+		admin.Use(gin.HandlerFunc(NewAdminAuthMiddleware(nil, scopedAuditUsers(), settings, audit, nil)))
+		admin.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
+		admin.GET("/dashboard/stats", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+		req := httptest.NewRequest("GET", "/api/v1/admin/dashboard/stats", nil)
+		req.Header.Set("x-api-key", "admin-legacy")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+		audit.Stop()
+
+		repo.mu.Lock()
+		defer repo.mu.Unlock()
+		require.Len(t, repo.logs, 1)
+		entry := repo.logs[0]
+		require.Equal(t, "admin_api_key", entry.AuthMethod)
+		require.Equal(t, "admin.machine_credential.request", entry.Action)
+		require.Equal(t, http.StatusNoContent, entry.StatusCode)
+	})
 }
 
 // 非法受限密钥的认证失败仍要留痕，且不含任何密钥材料。

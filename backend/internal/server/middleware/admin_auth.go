@@ -2,7 +2,6 @@
 package middleware
 
 import (
-	"crypto/subtle"
 	"errors"
 	"log/slog"
 	"os"
@@ -81,10 +80,19 @@ func adminAuth(
 			if !validateAdminAPIKey(c, apiKey, settingService, userService) {
 				return
 			}
+			// 统一默认拒绝：机器凭据只能调用集中注册表里的 machine_allowlisted
+			// 接口（健康检查 / 只读统计聚合 / 无敏感数据的自动化触发）。其余
+			// 路由一律 403 STEP_UP_ADMIN_API_KEY_FORBIDDEN 并记安全事件。
+			if !enforceAdminMachineRoutePolicy(c, auditService) {
+				return
+			}
 			if !enforceAdminObserverAccess(c) {
 				return
 			}
 			setAdminAccountOwnerScope(c, cfg)
+			// 审计中间件只记录变更类请求与白名单敏感读；这里兜底记录其它调用，
+			// 保证机器凭据每次调用都有可追溯记录（只含前缀）。
+			defer recordAdminMachineAllowedRequest(c, auditService)
 			c.Next()
 			return
 		}
@@ -172,21 +180,22 @@ func extractJWTFromWebSocketSubprotocol(c *gin.Context) string {
 	return ""
 }
 
-// validateAdminAPIKey 验证管理员 API Key
+// validateAdminAPIKey 验证旧版全权管理员 API Key（x-api-key）。
+//
+// 只存哈希：优先用哈希等值比较；历史明文行只做只读兼容（启动/状态接口负责
+// 迁移）。未配置与 key 错误返回完全一致的 401，避免探测"是否配置过"。
 func validateAdminAPIKey(
 	c *gin.Context,
 	key string,
 	settingService *service.SettingService,
 	userService *service.UserService,
 ) bool {
-	storedKey, err := settingService.GetAdminAPIKey(c.Request.Context())
+	result, err := settingService.VerifyAdminAPIKey(c.Request.Context(), key)
 	if err != nil {
 		AbortWithError(c, 500, "INTERNAL_ERROR", "Internal server error")
 		return false
 	}
-
-	// 未配置或不匹配，统一返回相同错误（避免信息泄露）
-	if storedKey == "" || subtle.ConstantTimeCompare([]byte(key), []byte(storedKey)) != 1 {
+	if !result.Verified {
 		AbortWithError(c, 401, "INVALID_ADMIN_KEY", "Invalid admin API key")
 		return false
 	}
@@ -208,7 +217,13 @@ func validateAdminAPIKey(
 	})
 	c.Set(string(ContextKeyUserRole), admin.Role)
 	c.Set(ContextKeyAuthEmail, admin.Email)
-	c.Set("auth_method", "admin_api_key")
+	c.Set("auth_method", service.AuditAuthMethodAdminAPIKey)
+	c.Set(ContextKeyAdminCredentialKind, AdminCredentialKindLegacy)
+	c.Set(ContextKeyAdminCredentialPrefix, result.Hint)
+	// last_used_at 只对哈希存储生效（历史明文模式交给迁移流程，不在认证热路径写库）。
+	if result.HashStorage {
+		settingService.TouchAdminAPIKeyLastUsedAsync(c.Request.Context(), result.Hint)
+	}
 	return true
 }
 
@@ -310,13 +325,18 @@ func authenticateScopedAdminRequest(c *gin.Context, key string, settings *servic
 	c.Set(string(ContextKeyUser), AuthSubject{UserID: user.ID, Concurrency: user.Concurrency})
 	c.Set(string(ContextKeyUserRole), user.Role)
 	c.Set(ContextKeyAuthEmail, user.Email)
-	c.Set("auth_method", service.AuditAuthMethodAdminAPIKey)
+	c.Set("auth_method", service.AuditAuthMethodScopedAdminAPIKey)
+	c.Set(ContextKeyAdminCredentialKind, AdminCredentialKindScoped)
+	c.Set(ContextKeyAdminCredentialPrefix, item.KeyPrefix)
 	// 不跳过审计中间件：受限密钥是自动化身份，变更操作必须与真人会话一样
 	// 留下动作名、脱敏请求体和路径参数。密钥身份通过专门的标量字段补充。
 	SetAuditExtra(c, map[string]any{"admin_key_id": item.ID, "admin_key_name": item.Name})
 	// 密钥只能由主管理员通过 JWT 创建（handler 强制），因此受限密钥等价于主管理员
 	// 的自动化身份；这里沿用旧版全权密钥的账户归属作用域，不再叠加观察员边界。
 	setAdminAccountOwnerScope(c, cfg)
+	// 受限密钥是显式授权、可过期/轮换、带 IP 限制的自动化身份，仍按自身 policy
+	// 逐路由授权；但敏感资源（含只读）由 step-up 门控统一拒绝机器凭据，
+	// 它同样过不去。旧版全权 key 的默认拒绝在 legacy 分支里。
 	if strings.Contains(c.FullPath(), "/settings/admin-api-key") || !adminaccess.RouteAllowed(item.Policy, c.Request.Method, c.FullPath()) {
 		c.Set("admin_key_denial_reason", "permission_denied")
 		AbortWithError(c, 403, "FORBIDDEN", "管理密钥未获此操作权限")
@@ -333,7 +353,7 @@ func recordAdminKeyRequest(c *gin.Context, audit *service.AuditLogService, item 
 	if c.GetBool(auditCtxKeyRecorded) {
 		return
 	}
-	entry := &service.AuditLog{CreatedAt: time.Now().UTC(), AuthMethod: service.AuditAuthMethodAdminAPIKey, Action: "admin.api_key.request", Method: c.Request.Method, Path: c.Request.URL.Path, StatusCode: c.Writer.Status(), ClientIP: SecurityClientIP(c), UserAgent: c.Request.UserAgent()}
+	entry := &service.AuditLog{CreatedAt: time.Now().UTC(), AuthMethod: service.AuditAuthMethodScopedAdminAPIKey, Action: "admin.api_key.request", Method: c.Request.Method, Path: c.Request.URL.Path, StatusCode: c.Writer.Status(), ClientIP: SecurityClientIP(c), UserAgent: c.Request.UserAgent()}
 	if requestID, ok := c.Request.Context().Value(ctxkey.RequestID).(string); ok {
 		entry.RequestID = requestID
 	}

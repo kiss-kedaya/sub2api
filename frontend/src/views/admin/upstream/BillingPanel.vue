@@ -266,7 +266,8 @@ async function withStepUp<T>(action: () => Promise<T>): Promise<T | undefined> {
 
 async function loadChannels() {
   try {
-    const result = await listChannels({ page: 1, pageSize: 100 })
+    const result = await withStepUp(() => listChannels({ page: 1, pageSize: 100 }))
+    if (!result) return
     channels.value = result.items ?? []
     channelItems.value = channels.value.map(channel => ({ label: channel.name, value: channel.id }))
     if (!channelId.value && channels.value.length) channelId.value = channels.value[0].id
@@ -281,14 +282,18 @@ async function reload() {
   error.value = ''
   try {
     if (tab.value === 'recharge') {
-      info.value = await channelRechargeInfo(channelId.value)
+      const rechargeInfo = await withStepUp(() => channelRechargeInfo(channelId.value!))
+      if (!rechargeInfo) return
+      info.value = rechargeInfo
       rechargeAmount.value = info.value.min_amount || 0
       rechargeMethod.value = info.value.methods?.[0]?.type ?? ''
     } else if (tab.value === 'subscription') {
-      const [subInfo, subUsage] = await Promise.all([
-        channelSubscriptionInfo(channelId.value),
-        channelSubscriptionUsage(channelId.value),
-      ])
+      const billing = await withStepUp(() => Promise.all([
+        channelSubscriptionInfo(channelId.value!),
+        channelSubscriptionUsage(channelId.value!),
+      ]))
+      if (!billing) return
+      const [subInfo, subUsage] = billing
       subscriptionInfo.value = subInfo
       usage.value = subUsage.items ?? []
       subscriptionMethod.value = subInfo.methods?.[0]?.type ?? ''

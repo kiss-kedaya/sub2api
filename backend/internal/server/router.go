@@ -260,7 +260,7 @@ func registerRoutes(
 	routes.RegisterModelPlazaRoutes(v1, h, optionalJWTAuth, settingService, panelRateLimiter)
 	routes.RegisterAdminRoutes(v1, h, adminAuth, auditLog, stepUpAuth, settingService, panelRateLimiter)
 	// 旧版全权管理员 API Key 只保留读取与使用；启动时提示迁移，避免遗忘。
-	go routes.WarnLegacyAdminAPIKeyConfigured(settingService)
+	go routes.MigrateAndWarnLegacyAdminAPIKey(settingService)
 	routes.RegisterGatewayRoutes(r, h, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient)
 	routes.RegisterPaymentRoutes(v1, h.Payment, h.PaymentWebhook, h.Admin.Payment, jwtAuth, adminAuth, auditLog, stepUpAuth, keyRotationGate, settingService, panelRateLimiter)
 	routes.RegisterCryptoRoutes(v1, h.Crypto, h.CryptoDeposit, jwtAuth, keyRotationGate, settingService, panelRateLimiter)

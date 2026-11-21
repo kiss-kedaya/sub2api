@@ -293,12 +293,15 @@ async function load(pageValue = page.value) {
   loading.value = true
   error.value = ''
   try {
-    const result = await listChannels({
+    const result = await withStepUp(() => listChannels({
       page: pageValue,
       pageSize,
       search: search.value,
       status: statusFilter.value === 'all' ? '' : statusFilter.value,
-    })
+    }))
+    if (!result) {
+      return
+    }
     rows.value = result.items ?? []
     total.value = result.total ?? 0
     pages.value = result.pages ?? 1

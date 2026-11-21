@@ -753,15 +753,18 @@ const loadCodes = async () => {
   abortController = currentController
   loading.value = true
   try {
-    const response = await adminAPI.redeem.list(
-      pagination.page,
-      pagination.page_size,
-      buildRedeemQueryFilters(),
-      {
-        signal: currentController.signal
-      }
+    // 卡密列表返回明文 code，属于敏感读：命中 403 STEP_UP_REQUIRED 时弹码并自动重试。
+    const response = await withStepUp(() =>
+      adminAPI.redeem.list(
+        pagination.page,
+        pagination.page_size,
+        buildRedeemQueryFilters(),
+        {
+          signal: currentController.signal
+        }
+      )
     )
-    if (currentController.signal.aborted) {
+    if (!response || currentController.signal.aborted) {
       return
     }
     codes.value = response.items

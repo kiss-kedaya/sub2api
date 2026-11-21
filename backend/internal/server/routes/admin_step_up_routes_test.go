@@ -89,10 +89,14 @@ func buildAdminRouteProbeRouter(t *testing.T, stepUp middleware.StepUpAuthMiddle
 	r.Use(gin.Recovery())
 	RegisterAdminRoutes(
 		r.Group("/api/v1"),
-		&handler.Handlers{Admin: &handler.AdminHandlers{
-			// 上游渠道接口按 handler 是否装配决定是否注册，探针需要非 nil 占位。
-			UpstreamChannel: &adminhandler.UpstreamChannelHandler{},
-		}},
+		&handler.Handlers{
+			Crypto: &handler.CryptoHandler{},
+			Admin: &handler.AdminHandlers{
+				// 上游渠道/请求抓取接口按 handler 是否装配决定是否注册，探针需要非 nil 占位。
+				UpstreamChannel: &adminhandler.UpstreamChannelHandler{},
+				RequestCapture:  &adminhandler.RequestCaptureHandler{},
+			},
+		},
 		adminRoutesTestAuth(authMode),
 		middleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() }),
 		stepUp,
@@ -197,29 +201,53 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		// 退款与退款确认
 		{http.MethodPost, "/api/v1/admin/payment/orders/1/refund", "payment"},
 		{http.MethodPost, "/api/v1/admin/payment/orders/1/refund/query", "payment"},
-	}
-}
-
-// readOnlyStepUpRoutes 是与上面写操作同组的只读查询：挂 step-up 会误伤日常运营，
-// 必须保证它们不经过门控（列表/详情/统计/使用记录）。
-func readOnlyStepUpRoutes() []stepUpRouteCase {
-	return []stepUpRouteCase{
+		// 敏感资源的只读接口同样是敏感读：卡密列表/详情（明文 code）、代理列表/详情
+		// （明文密码）、上游渠道/账号（上游凭证）、系统设置（渠道密钥）等。
+		// 「只读所以不用 2FA」的口径已废弃，全部要求 step-up（机器凭据一律 403）。
 		{http.MethodGet, "/api/v1/admin/redeem-codes", "admin"},
-		{http.MethodGet, "/api/v1/admin/redeem-codes/stats", "admin"},
 		{http.MethodGet, "/api/v1/admin/redeem-codes/1", "admin"},
-		{http.MethodGet, "/api/v1/admin/promo-codes", "admin"},
-		{http.MethodGet, "/api/v1/admin/promo-codes/1", "admin"},
-		{http.MethodGet, "/api/v1/admin/promo-codes/1/usages", "admin"},
+		{http.MethodGet, "/api/v1/admin/redeem-codes/stats", "admin"},
+		{http.MethodGet, "/api/v1/admin/proxies", "admin"},
+		{http.MethodGet, "/api/v1/admin/proxies/1", "admin"},
+		{http.MethodGet, "/api/v1/admin/proxies/all", "admin"},
 		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels", "admin"},
 		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels/1", "admin"},
 		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels/1/api-keys", "admin"},
 		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels/1/recharge", "admin"},
+		{http.MethodGet, "/api/v1/admin/accounts/1/credential", "admin"},
+		{http.MethodGet, "/api/v1/admin/backups/s3-config", "admin"},
+		{http.MethodGet, "/api/v1/admin/backups/1/download-url", "admin"},
+		{http.MethodGet, "/api/v1/admin/debug-dumps/1", "admin"},
+	}
+}
+
+// readOnlyStepUpRoutes 是明确无敏感数据的只读查询：挂 step-up 会误伤日常运营，
+// 必须保证它们不经过门控。这里只允许 secret_free 家族；任何返回卡密/凭证/
+// 密码/密钥的只读接口都必须放进上方的 sensitive 列表。
+func readOnlyStepUpRoutes() []stepUpRouteCase {
+	return []stepUpRouteCase{
+		{http.MethodGet, "/api/v1/admin/dashboard/stats", "admin"},
+		{http.MethodGet, "/api/v1/admin/users", "admin"},
+		{http.MethodGet, "/api/v1/admin/groups", "admin"},
+		{http.MethodGet, "/api/v1/admin/usage", "admin"},
+		{http.MethodGet, "/api/v1/admin/ops/dashboard/overview", "admin"},
+		{http.MethodGet, "/api/v1/admin/announcements", "admin"},
 		{http.MethodGet, "/api/v1/admin/subscriptions", "admin"},
 		{http.MethodGet, "/api/v1/admin/subscriptions/1", "admin"},
 		{http.MethodGet, "/api/v1/admin/subscriptions/1/progress", "admin"},
-		{http.MethodGet, "/api/v1/admin/announcements", "admin"},
 		// 分组倍率列表只是读取当前配置（不是改价），不得被门控误伤。
 		{http.MethodGet, "/api/v1/admin/groups/1/rate-multipliers", "admin"},
+		{http.MethodGet, "/api/v1/admin/tickets", "admin"},
+		{http.MethodGet, "/api/v1/admin/channel-monitors", "admin"},
+		{http.MethodGet, "/api/v1/admin/audit-logs", "admin"},
+		// 资源列表已明确脱敏（不返回秘密），不要求 step-up；写操作仍要求。
+		{http.MethodGet, "/api/v1/admin/accounts", "admin"},
+		{http.MethodGet, "/api/v1/admin/settings", "admin"},
+		{http.MethodGet, "/api/v1/admin/crypto/config", "admin"},
+		{http.MethodGet, "/api/v1/admin/payment/orders", "payment"},
+		{http.MethodGet, "/api/v1/admin/plugins", "admin"},
+		{http.MethodGet, "/api/v1/admin/request-captures", "admin"},
+		{http.MethodGet, "/api/v1/admin/debug-dumps", "admin"},
 	}
 }
 
@@ -352,33 +380,50 @@ func TestReadOnlyRedeemRoutesRejectAdminAPIKeyMachineCredential(t *testing.T) {
 	}
 }
 
-// 人只会话（JWT）读同一组接口必须放行（不误伤日常运营，也不需要 step-up）。
-func TestReadOnlyRedeemRoutesAllowHumanSession(t *testing.T) {
-	var gated []string
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, _ any) {
-		c.AbortWithStatus(http.StatusInternalServerError)
-	}))
-	RegisterAdminRoutes(
-		r.Group("/api/v1"),
-		&handler.Handlers{Admin: &handler.AdminHandlers{
-			UpstreamChannel: &adminhandler.UpstreamChannelHandler{},
-		}},
-		adminRoutesTestAuth(service.AuditAuthMethodJWT),
-		middleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() }),
-		stepUpRecordingProbe(&gated),
-		stepUpRouteSettings(map[string]string{}),
-		nil,
-	)
-	for _, tc := range readOnlyMachineCredentialForbiddenRoutes() {
+// sensitiveRedeemReadRoutes 是返回卡密秘密的只读接口（#489 审计 B-2 的绕过点）。
+// 「只读所以不用 2FA」口径已废弃：任何方法（含 GET）都要求真人 JWT + step-up，
+// 机器凭据（旧版全权 x-api-key 与 adm_sc_ 受限密钥）一律 403。
+func sensitiveRedeemReadRoutes() []stepUpRouteCase {
+	return []stepUpRouteCase{
+		{http.MethodGet, "/api/v1/admin/redeem-codes", "admin"},
+		{http.MethodGet, "/api/v1/admin/redeem-codes/stats", "admin"},
+		{http.MethodGet, "/api/v1/admin/redeem-codes/1", "admin"},
+	}
+}
+
+// 机器凭据访问卡密只读接口被拒：敏感资源由 step-up 门控统一拒绝机器身份。
+func TestSensitiveRedeemReadRoutesRejectAdminAPIKeyMachineCredential(t *testing.T) {
+	// 开启 step-up：敏感只读接口由统一门控拒绝机器凭据（与写操作同一错误码）。
+	settings := stepUpRouteSettings(map[string]string{service.SettingKeyStepUpEnabled: "true"})
+	realStepUp := middleware.NewStepUpAuthMiddleware(nil, nil, settings)
+	router := buildAdminRouteProbeRouter(t, realStepUp, service.AuditAuthMethodAdminAPIKey)
+	for _, tc := range sensitiveRedeemReadRoutes() {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
-			gated = nil
 			w := httptest.NewRecorder()
-			r.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
-			require.NotEqual(t, http.StatusForbidden, w.Code, "human admin sessions must not be blocked: "+w.Body.String())
-			require.NotContains(t, w.Body.String(), middleware.MachineCredentialForbiddenCode)
-			require.NotContains(t, gated, tc.path, "read-only route must not run the step-up gate")
+			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			// 只读敏感接口与写操作使用同一错误码，前端统一弹 TOTP / 提示机器凭据被禁。
+			require.Contains(t, w.Body.String(), "STEP_UP_ADMIN_API_KEY_FORBIDDEN")
+		})
+	}
+}
+
+// 人只会话读卡密只读接口同样要求 step-up：未验证时 403 STEP_UP_REQUIRED，
+// 完成 TOTP 后放行。
+func TestSensitiveRedeemReadRoutesRequireStepUpForHumans(t *testing.T) {
+	router := buildAdminRouteProbeRouter(t, stepUpProbe(), service.AuditAuthMethodJWT)
+	for _, tc := range sensitiveRedeemReadRoutes() {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			require.Contains(t, w.Body.String(), "STEP_UP_REQUIRED")
+
+			w = httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req.Header.Set(stepUpProbeHeader, "1")
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
 		})
 	}
 }

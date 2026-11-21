@@ -110,7 +110,12 @@ func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader s
 		}
 	}
 
-	if c.GetString("auth_method") == service.AuditAuthMethodAdminAPIKey {
+	// 机器凭据（旧版全权 admin_api_key 与受限 adm_sc_ 密钥）一律无法完成
+	// step-up：敏感资源（含只读）只能由真人 JWT 会话访问。
+	switch c.GetString("auth_method") {
+	case service.AuditAuthMethodAdminAPIKey, service.AuditAuthMethodScopedAdminAPIKey:
+		// 标记给审计中间件：机器凭据访问敏感资源被拒要落安全事件。
+		c.Set(ContextKeyStepUpMachineDenied, true)
 		AbortWithError(c, 403, "STEP_UP_ADMIN_API_KEY_FORBIDDEN",
 			"Admin API key cannot access this endpoint; a two-factor verified admin session is required")
 		return false

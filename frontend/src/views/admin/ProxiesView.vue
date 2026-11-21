@@ -691,11 +691,35 @@ import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import { useSwipeSelect } from '@/composables/useSwipeSelect'
 import { useTableSelection } from '@/composables/useTableSelection'
+import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatDateTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 
 const { t } = useI18n()
+const stepUp = useStepUp()
+
+// 代理列表/详情返回明文密码，属于敏感读：命中 403 STEP_UP_REQUIRED 时弹码并自动重试；
+// 机器凭据（管理 API Key）命中 STEP_UP_ADMIN_API_KEY_FORBIDDEN 时明确提示禁止访问。
+async function withStepUp<T>(action: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await stepUp.run(action)
+  } catch (error: any) {
+    if (isStepUpCancelled(error)) {
+      appStore.showInfo(t('stepUp.cancelled'))
+      return undefined
+    }
+    if (isStepUpBlocked(error)) {
+      appStore.showError(
+        stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+          ? t('stepUp.adminApiKeyForbidden')
+          : t('stepUp.notEnabled')
+      )
+      return undefined
+    }
+    throw error
+  }
+}
 const appStore = useAppStore()
 const { copyToClipboard } = useClipboard()
 
@@ -904,13 +928,15 @@ const loadProxies = async () => {
   abortController = currentAbortController
   loading.value = true
   try {
-    const response = await adminAPI.proxies.list(
-      pagination.page,
-      pagination.page_size,
-      buildProxyQueryFilters(),
-      { signal: currentAbortController.signal }
+    const response = await withStepUp(() =>
+      adminAPI.proxies.list(
+        pagination.page,
+        pagination.page_size,
+        buildProxyQueryFilters(),
+        { signal: currentAbortController.signal }
+      )
     )
-    if (currentAbortController.signal.aborted || abortController !== currentAbortController) {
+    if (!response || currentAbortController.signal.aborted || abortController !== currentAbortController) {
       return
     }
     proxies.value = response.items

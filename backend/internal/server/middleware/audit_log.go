@@ -479,6 +479,8 @@ func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddle
 		}
 		if !record {
 			c.Next()
+			// 敏感 GET 不在审计白名单里，但机器凭据被 step-up 拒绝必须留安全事件。
+			recordStepUpMachineDenial(c, auditService)
 			return
 		}
 
@@ -599,6 +601,8 @@ func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddle
 		// 只有确认完整记录已产生，才不重复补记。
 		c.Set(auditCtxKeyRecorded, true)
 		auditService.Record(entry)
+		// 变更类请求被 step-up 拒绝时，主记录之外再落一条机器凭据安全事件。
+		recordStepUpMachineDenial(c, auditService)
 	})
 }
 

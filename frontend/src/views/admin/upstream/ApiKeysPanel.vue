@@ -282,7 +282,8 @@ function splitList(value: string): string[] {
 
 async function loadChannels() {
   try {
-    const result = await listChannels({ page: 1, pageSize: 100 })
+    const result = await withStepUp(() => listChannels({ page: 1, pageSize: 100 }))
+    if (!result) return
     channels.value = result.items ?? []
     channelItems.value = channels.value.map(channel => ({ label: channel.name, value: channel.id }))
     if (!channelId.value && channels.value.length) channelId.value = channels.value[0].id
@@ -292,9 +293,11 @@ async function loadChannels() {
 }
 
 async function loadGroups() {
-  if (!channelId.value) return
+  const currentChannelId = channelId.value
+  if (!currentChannelId) return
   try {
-    const result = await listUpstreamAPIKeyGroups(channelId.value)
+    const result = await withStepUp(() => listUpstreamAPIKeyGroups(currentChannelId))
+    if (!result) return
     groups.value = result.items ?? []
     groupItems.value = [
       { label: text('不绑定分组', 'No group'), value: null },
@@ -310,12 +313,13 @@ async function load(pageValue = page.value) {
   loading.value = true
   error.value = ''
   try {
-    const result = await listUpstreamAPIKeys(channelId.value, {
+    const result = await withStepUp(() => listUpstreamAPIKeys(channelId.value!, {
       page: pageValue,
       pageSize,
       search: search.value,
       status: statusFilter.value === 'all' ? '' : statusFilter.value,
-    })
+    }))
+    if (!result) return
     rows.value = result.items ?? []
     total.value = result.total ?? 0
     pages.value = result.pages ?? 1

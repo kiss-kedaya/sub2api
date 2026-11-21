@@ -85,6 +85,9 @@ func RegisterPaymentRoutes(
 	adminGroup.Use(panelRateLimiter.Global())
 	adminGroup.Use(gin.HandlerFunc(auditLog))
 	adminGroup.Use(middleware.AdminComplianceGuard(settingService))
+	// 支付管理面同样走集中注册表：/admin/payment 属于敏感资源，任何方法
+	// （含只读列表）都要求真人 step-up；机器凭据在 adminAuth 已默认拒绝。
+	adminGroup.Use(adminStepUpRouteGuard(stepUpAuth))
 	{
 		// Dashboard
 		adminGroup.GET("/dashboard", adminPaymentHandler.GetDashboard)

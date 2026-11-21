@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -615,66 +613,45 @@ func (s *SettingService) GetIdentityPatchPrompt(ctx context.Context) string {
 	return value
 }
 
-// GenerateAdminAPIKey 生成/轮换旧版单 key 管理员 API Key。
-// Deprecated: 旧版全权密钥的新建/轮换已退役（handler 固定返回 LEGACY_ADMIN_KEY_RETIRED）；
-// 仅保留实现用于历史兼容，新部署必须改用分权管理密钥（scoped_admin_api_keys）。
-func (s *SettingService) GenerateAdminAPIKey(ctx context.Context) (string, error) {
-	// 生成 32 字节随机数 = 64 位十六进制字符
-	bytes := make([]byte, 32)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", fmt.Errorf("generate random bytes: %w", err)
-	}
-
-	key := AdminAPIKeyPrefix + hex.EncodeToString(bytes)
-
-	// 存储到 settings 表
-	if err := s.settingRepo.Set(ctx, SettingKeyAdminAPIKey, key); err != nil {
-		return "", fmt.Errorf("save admin api key: %w", err)
-	}
-
-	return key, nil
-}
-
-// GetAdminAPIKeyStatus 获取管理员 API Key 状态
-// 返回脱敏的 key、是否存在、错误
+// GetAdminAPIKeyStatus 获取旧版管理员 API Key 状态。
+//
+// 哈希化改造后只能返回展示前缀（hint），绝不返回 key 中段/后段；明文只在
+// 生成时返回一次。历史明文行在迁移前仍可据此判定 exists。
 func (s *SettingService) GetAdminAPIKeyStatus(ctx context.Context) (maskedKey string, exists bool, err error) {
-	key, err := s.settingRepo.GetValue(ctx, SettingKeyAdminAPIKey)
-	if err != nil {
-		if errors.Is(err, ErrSettingNotFound) {
-			return "", false, nil
-		}
+	hint, err := s.settingRepo.GetValue(ctx, SettingKeyAdminAPIKeyHint)
+	if err != nil && !errors.Is(err, ErrSettingNotFound) {
 		return "", false, err
 	}
-	if key == "" {
+	if hash, hashErr := s.settingRepo.GetValue(ctx, SettingKeyAdminAPIKeyHash); hashErr == nil && strings.TrimSpace(hash) != "" {
+		return maskAdminAPIKeyHint(strings.TrimSpace(hint)), true, nil
+	} else if hashErr != nil && !errors.Is(hashErr, ErrSettingNotFound) {
+		return "", false, hashErr
+	}
+	legacy, legacyErr := s.settingRepo.GetValue(ctx, SettingKeyAdminAPIKey)
+	if legacyErr != nil {
+		if errors.Is(legacyErr, ErrSettingNotFound) {
+			return "", false, nil
+		}
+		return "", false, legacyErr
+	}
+	if strings.TrimSpace(legacy) == "" {
 		return "", false, nil
 	}
-
-	// 脱敏：显示前 10 位和后 4 位
-	if len(key) > 14 {
-		maskedKey = key[:10] + "..." + key[len(key)-4:]
-	} else {
-		maskedKey = key
-	}
-
-	return maskedKey, true, nil
+	return maskAdminAPIKeyHint(AdminAPIKeyHint(legacy)), true, nil
 }
 
-// GetAdminAPIKey 获取完整的管理员 API Key（仅供内部验证使用）
-// 如果未配置返回空字符串和 nil 错误，只有数据库错误时才返回 error
-func (s *SettingService) GetAdminAPIKey(ctx context.Context) (string, error) {
-	key, err := s.settingRepo.GetValue(ctx, SettingKeyAdminAPIKey)
-	if err != nil {
-		if errors.Is(err, ErrSettingNotFound) {
-			return "", nil // 未配置，返回空字符串
-		}
-		return "", err // 数据库错误
+// maskAdminAPIKeyHint 只展示可识别前缀，任何情况下都不回显 key 中后段。
+func maskAdminAPIKeyHint(hint string) string {
+	hint = strings.TrimSpace(hint)
+	if hint == "" {
+		return ""
 	}
-	return key, nil
+	return hint + "..."
 }
 
-// DeleteAdminAPIKey 删除管理员 API Key
+// DeleteAdminAPIKey 删除旧版管理员 API Key 的全部存储形态。
 func (s *SettingService) DeleteAdminAPIKey(ctx context.Context) error {
-	return s.settingRepo.Delete(ctx, SettingKeyAdminAPIKey)
+	return s.DeleteAdminAPIKeyStorage(ctx)
 }
 
 // IsModelFallbackEnabled 检查是否启用模型兜底机制
