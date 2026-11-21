@@ -1,4 +1,6 @@
 import { apiClient } from '../client'
+// 账号列表的时间表快照是加载读取：静默降级，不弹 TOTP。
+import { SILENT_STEP_UP } from '../silentStepUp'
 
 export type TimerAction = 'open' | 'close' | 'recurring'
 export interface TimerInput {
@@ -68,7 +70,7 @@ export interface RecurringSchedule {
 }
 export const schedulableTimersAPI = {
   async list(id: number) {
-    return (await apiClient.get<TimerSnapshot>(`/admin/accounts/${id}/schedulable-timers`)).data
+    return (await apiClient.get<TimerSnapshot>(`/admin/accounts/${id}/schedulable-timers`, SILENT_STEP_UP)).data
   },
   async preview(id: number, input: TimerInput) {
     return (await apiClient.post<TimerPreview>(`/admin/accounts/${id}/schedulable-timers/preview`, input)).data

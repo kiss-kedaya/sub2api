@@ -13,13 +13,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from '../client'
 import { i18n } from '@/i18n'
 import enCommon from '@/i18n/locales/en/common'
-import { StepUpCancelledError } from '@/composables/useStepUp'
 import {
   isStepUpHostAvailable,
   registerStepUpHost,
   resetStepUpGateForTests,
   stepUpGate,
 } from '@/composables/useStepUpGate'
+import { isStepUpCancelled } from '@/utils/stepUpErrors'
+import { getBatchTodayStats, getById } from '@/api/admin/accounts'
+import { getAll as getAllProxies } from '@/api/admin/proxies'
 
 const originalLocale = i18n.global.locale.value
 
@@ -120,7 +122,7 @@ describe('shared client step-up gate', () => {
     expect(adapter).toHaveBeenCalledTimes(4)
   })
 
-  it('rejects with StepUpCancelledError (nothing executed) when the prompt is dismissed', async () => {
+  it('degrades quietly when the prompt is dismissed: localized plain rejection, no StepUpCancelledError', async () => {
     const adapter = vi.fn(async (config: any) => {
       throw { ...stepUpError(), config }
     })
@@ -130,8 +132,75 @@ describe('shared client step-up gate', () => {
     await vi.waitFor(() => expect(stepUpGate.visible.value).toBe(true))
     stepUpGate.onCancel()
 
-    await expect(pending).rejects.toBeInstanceOf(StepUpCancelledError)
+    const err = await pending.then(
+      () => { throw new Error('expected rejection') },
+      (rejection) => rejection,
+    )
+    expect(err).toMatchObject({
+      status: 403,
+      code: 'STEP_UP_CANCELLED',
+      cancelled: true,
+      message: enCommon.stepUp.cancelled,
+    })
+    // 不是 Error 实例：控制台不会出现 StepUpCancelledError 堆栈。
+    expect(err).not.toBeInstanceOf(Error)
+    // 页面既有的「取消」处理仍能识别它（统一从 "未执行" 分支降级）。
+    expect(isStepUpCancelled(err)).toBe(true)
     expect(adapter).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects every concurrent call of one cancelled prompt with the same quiet code', async () => {
+    const adapter = vi.fn(async (config: any) => {
+      throw { ...stepUpError(), config }
+    })
+    apiClient.defaults.adapter = adapter
+
+    const first = apiClient.put('/admin/payment/providers/1', {})
+    const second = apiClient.put('/admin/payment/providers/2', {})
+    await vi.waitFor(() => expect(stepUpGate.visible.value).toBe(true))
+    stepUpGate.onCancel()
+
+    const results = await Promise.allSettled([first, second])
+    expect(
+      results.every(
+        (result) => result.status === 'rejected' && (result.reason as any).code === 'STEP_UP_CANCELLED',
+      ),
+    ).toBe(true)
+  })
+
+  it('never opens the TOTP dialog for a silent background read (explicit silentStepUp marker)', async () => {
+    const adapter = vi.fn(async (config: any) => {
+      throw { ...stepUpError(), config }
+    })
+    apiClient.defaults.adapter = adapter
+    const promptSpy = vi.spyOn(stepUpGate, 'prompt')
+
+    await expect(
+      apiClient.post('/admin/accounts/usage/batch', { account_ids: [30772] }, { silentStepUp: true }),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: 'STEP_UP_REQUIRED',
+      silentStepUp: true,
+      message: enCommon.stepUp.required,
+    })
+    expect(promptSpy).not.toHaveBeenCalled()
+  })
+
+  it('keeps page-load accounts/proxies reads silent end-to-end (API layer marker)', async () => {
+    const adapter = vi.fn(async (config: any) => {
+      throw { ...stepUpError(), config }
+    })
+    apiClient.defaults.adapter = adapter
+    const promptSpy = vi.spyOn(stepUpGate, 'prompt')
+
+    for (const load of [
+      () => getById(30772),
+      () => getBatchTodayStats([30772]),
+      () => getAllProxies(),
+    ]) {
+      await expect(load()).rejects.toMatchObject({ code: 'STEP_UP_REQUIRED', silentStepUp: true })
+    }
+    expect(promptSpy).not.toHaveBeenCalled()
   })
 
   it('localizes non-retryable step-up codes instead of toasting the backend English', async () => {

@@ -20,6 +20,7 @@ describe('admin account stats API', () => {
     await getStats(42, 30)
 
     expect(get).toHaveBeenCalledWith('/admin/accounts/42/stats', {
+      silentStepUp: true,
       params: { days: 30 },
       timeout: 180000
     })

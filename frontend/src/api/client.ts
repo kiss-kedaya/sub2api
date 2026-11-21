@@ -6,7 +6,13 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
 import type { ApiResponse } from '@/types'
 import { getLocale } from '@/i18n'
-import { localizeStepUpErrorCode, stepUpMarkerOf } from '@/utils/stepUpErrors'
+import {
+  STEP_UP_CANCELLED,
+  STEP_UP_REQUIRED,
+  isStepUpCancelled,
+  localizeStepUpErrorCode,
+  stepUpMarkerOf,
+} from '@/utils/stepUpErrors'
 import { isStepUpHostAvailable, retryWithGlobalStepUp } from '@/composables/useStepUpGate'
 import {
   ADMIN_UI_REQUEST_HEADER,
@@ -19,6 +25,17 @@ import { getAPIBaseURL } from './url'
 import { KEY_ROTATION_REQUIRED_EVENT, isKeyRotationRequiredPayload } from './keyRotationGateCodes'
 import { getAppRuntimeContext, type AppRuntimeContext } from '@runtime/context'
 export { buildApiUrl, buildGatewayUrl } from './url'
+
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /**
+     * Marks a page-load / background read. A STEP_UP_REQUIRED 403 on such a
+     * request never opens the TOTP dialog; it rejects so the caller can render
+     * a degraded placeholder instead (see src/api/silentStepUp.ts).
+     */
+    silentStepUp?: boolean
+  }
+}
 
 // ==================== Axios Instance Configuration ====================
 
@@ -173,18 +190,47 @@ apiClient.interceptors.response.use(
       // pages that will not) wrap calls in useStepUp. The prompt is app-wide and
       // single-flight: concurrent 403s share one dialog, then each request retries
       // once with the newly minted grant.
+      //
+      // Page-load/background reads are explicitly marked `silentStepUp` (see
+      // src/api/silentStepUp.ts): a background read must never interrupt the
+      // operator with a TOTP dialog. It rejects instead so the caller degrades.
       const stepUpMarker = stepUpMarkerOf({ code: apiData.code, reason: apiData.reason })
       if (stepUpMarker) {
+        if (originalRequest.silentStepUp === true) {
+          return Promise.reject({
+            status,
+            code: stepUpMarker,
+            reason: stepUpMarker,
+            message: localizeStepUpMessage(stepUpMarker, apiData.message),
+            silentStepUp: true,
+            metadata: apiData.metadata,
+          })
+        }
         const retryRequest =
-          stepUpMarker === 'STEP_UP_REQUIRED' &&
+          stepUpMarker === STEP_UP_REQUIRED &&
           !originalRequest._stepUpRetried &&
           !stepUpVerificationPath(url) &&
           typeof window !== 'undefined' &&
           isStepUpHostAvailable()
         if (retryRequest) {
           originalRequest._stepUpRetried = true
-          // Throws StepUpCancelledError if the operator dismisses the dialog.
-          return await retryWithGlobalStepUp(() => apiClient(originalRequest))
+          try {
+            return await retryWithGlobalStepUp(() => apiClient(originalRequest))
+          } catch (cancelled) {
+            if (!isStepUpCancelled(cancelled)) throw cancelled
+            // Operator dismissed the dialog: degrade quietly. Callers get a plain
+            // object (no StepUpCancelledError stack in the console) carrying the
+            // localized Chinese copy; page-level handlers decide whether/how to
+            // surface it (most already catch step-up cancellation).
+            const message = localizeStepUpMessage(STEP_UP_CANCELLED) ?? 'Step-up verification cancelled'
+            return Promise.reject({
+              status,
+              code: STEP_UP_CANCELLED,
+              reason: STEP_UP_CANCELLED,
+              message,
+              cancelled: true,
+            })
+          }
         }
         // Non-retryable step-up state (or no dialog host / failed retry):
         // reject with localized copy instead of the backend's English message.

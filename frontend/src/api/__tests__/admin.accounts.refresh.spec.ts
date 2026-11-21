@@ -27,7 +27,7 @@ describe('admin account refresh response', () => {
     await expect(refreshCredentials(42)).resolves.toEqual({ ...account, ...warning })
     expect(post).toHaveBeenCalledTimes(1)
     expect(get).toHaveBeenCalledTimes(1)
-    expect(get).toHaveBeenCalledWith('/admin/accounts/42')
+    expect(get).toHaveBeenCalledWith('/admin/accounts/42', { silentStepUp: true })
   })
 
   it('does not return an incomplete account when the follow-up fetch fails', async () => {

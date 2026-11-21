@@ -711,8 +711,10 @@ import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 const { t } = useI18n()
 const stepUp = useStepUp()
 
-// 代理列表/详情返回明文密码，属于敏感读：命中 403 STEP_UP_REQUIRED 时弹码并自动重试；
-// 机器凭据（管理 API Key）命中 STEP_UP_ADMIN_API_KEY_FORBIDDEN 时明确提示禁止访问。
+// 代理列表/详情/统计的密码已在 #497 改掩码，属于无秘密的只读：页面加载不再弹 TOTP
+// （读取 API 已标 silentStepUp）。这里仍保留统一封装给写操作/明文导出用：
+// 命中 403 STEP_UP_REQUIRED 时弹码并自动重试；机器凭据命中
+// STEP_UP_ADMIN_API_KEY_FORBIDDEN 时明确提示禁止访问。
 async function withStepUp<T>(action: () => Promise<T>): Promise<T | undefined> {
   try {
     return await stepUp.run(action)
