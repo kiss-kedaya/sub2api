@@ -23,9 +23,13 @@ const appStore = vi.hoisted(() => ({
   siteName: 'Sub2API',
   backendModeEnabled: false,
   publicSettingsLoaded: false,
+  // True while the store still runs on the server-injected window.__APP_CONFIG__
+  // snapshot and has not confirmed it against /api/v1/settings/public.
+  publicSettingsNeedsRevalidate: false,
   cachedPublicSettings: null as null | {
     payment_enabled?: boolean
     risk_control_enabled?: boolean
+    crypto_enabled?: boolean
     custom_menu_items?: []
   },
   fetchPublicSettings: vi.fn(),
@@ -117,6 +121,7 @@ describe('feature route guard', () => {
     authStore.isAdminObserver = false
     authStore.isSimpleMode = false
     appStore.publicSettingsLoaded = false
+    appStore.publicSettingsNeedsRevalidate = false
     appStore.cachedPublicSettings = null
     appStore.fetchPublicSettings.mockReset()
   })
@@ -191,5 +196,74 @@ describe('feature route guard', () => {
     expect(appStore.fetchPublicSettings).not.toHaveBeenCalled()
     expect(next).toHaveBeenCalledOnce()
     expect(next).toHaveBeenCalledWith(target)
+  })
+
+  // Regression: an instance rendered crypto_enabled=false into
+  // window.__APP_CONFIG__ while another instance had it enabled. The injected
+  // snapshot was treated as authoritative, so /deposit was redirected away for
+  // good. The guard must wait for the API before enforcing requiresCrypto.
+  it('revalidates the injected snapshot instead of trusting a stale crypto_enabled', async () => {
+    appStore.publicSettingsLoaded = true
+    appStore.publicSettingsNeedsRevalidate = true
+    appStore.cachedPublicSettings = { crypto_enabled: false }
+
+    appStore.fetchPublicSettings.mockImplementation(async () => {
+      appStore.publicSettingsNeedsRevalidate = false
+      appStore.cachedPublicSettings = { crypto_enabled: true }
+      return appStore.cachedPublicSettings
+    })
+
+    const { navigation, next } = runGuard({ requiresCrypto: true }, '/deposit')
+    await navigation
+
+    expect(appStore.fetchPublicSettings).toHaveBeenCalledTimes(1)
+    expect(next).toHaveBeenCalledOnce()
+    // next() with no argument = navigation allowed.
+    expect(next).toHaveBeenCalledWith()
+  })
+
+  it('redirects /deposit once revalidation confirms crypto is disabled', async () => {
+    appStore.publicSettingsLoaded = true
+    appStore.publicSettingsNeedsRevalidate = true
+    appStore.cachedPublicSettings = { crypto_enabled: false }
+
+    appStore.fetchPublicSettings.mockImplementation(async () => {
+      appStore.publicSettingsNeedsRevalidate = false
+      appStore.cachedPublicSettings = { crypto_enabled: false }
+      return appStore.cachedPublicSettings
+    })
+
+    const { navigation, next } = runGuard({ requiresCrypto: true }, '/deposit')
+    await navigation
+
+    expect(appStore.fetchPublicSettings).toHaveBeenCalledTimes(1)
+    expect(next).toHaveBeenCalledWith('/dashboard')
+  })
+
+  it('falls back to the injected value when revalidation cannot complete', async () => {
+    appStore.publicSettingsLoaded = true
+    appStore.publicSettingsNeedsRevalidate = true
+    appStore.cachedPublicSettings = { crypto_enabled: false }
+    // Timeout degradation: fetchPublicSettings resolves with the injected value
+    // without confirming it, so the guard keeps the conservative crypto rule.
+    appStore.fetchPublicSettings.mockImplementation(async () => appStore.cachedPublicSettings)
+
+    const { navigation, next } = runGuard({ requiresCrypto: true }, '/deposit')
+    await navigation
+
+    expect(appStore.fetchPublicSettings).toHaveBeenCalledTimes(1)
+    expect(next).toHaveBeenCalledWith('/dashboard')
+  })
+
+  it('allows /deposit without refetching once settings were revalidated', async () => {
+    appStore.publicSettingsLoaded = true
+    appStore.publicSettingsNeedsRevalidate = false
+    appStore.cachedPublicSettings = { crypto_enabled: true }
+
+    const { navigation, next } = runGuard({ requiresCrypto: true }, '/deposit')
+    await navigation
+
+    expect(appStore.fetchPublicSettings).not.toHaveBeenCalled()
+    expect(next).toHaveBeenCalledWith()
   })
 })

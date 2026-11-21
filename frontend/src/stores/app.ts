@@ -26,6 +26,16 @@ export const useAppStore = defineStore('app', () => {
   // Public settings cache state
   const publicSettingsLoaded = ref<boolean>(false)
   const publicSettingsLoading = ref<boolean>(false)
+  // True while the store is running on the server-rendered window.__APP_CONFIG__
+  // and has not yet confirmed it against /api/v1/settings/public. The injected
+  // snapshot is produced by whichever backend instance served the HTML, so it can
+  // disagree with the other instances (this is how /deposit was guarded away by a
+  // stale crypto_enabled=false). Route guards must wait for the revalidation.
+  const publicSettingsFromInjection = ref<boolean>(false)
+  let publicSettingsRevalidated = false
+  const publicSettingsNeedsRevalidate = computed(
+    () => publicSettingsFromInjection.value && !publicSettingsRevalidated
+  )
   const siteName = ref<string>('Sub2API')
   const siteLogo = ref<string>('')
   const siteVersion = ref<string>('')
@@ -41,6 +51,10 @@ export const useAppStore = defineStore('app', () => {
   // it, a rate-limited response is retried by every remount of the login page.
   const PUBLIC_SETTINGS_RETRY_COOLDOWN_MS = 30_000
   let publicSettingsRetryAfter = 0
+  // How long a route guard may block on the post-injection revalidation. On
+  // expiry the already-adopted injected snapshot is used (degraded but not
+  // hanging); the API request keeps running and applies its result when it lands.
+  const INJECTED_SETTINGS_REVALIDATE_TIMEOUT_MS = 3_000
 
   // Version cache state
   const versionLoaded = ref<boolean>(false)
@@ -298,8 +312,12 @@ export const useAppStore = defineStore('app', () => {
 
   /**
    * Apply settings to store state (internal helper to avoid code duplication)
+   *
+   * `source` distinguishes the server-rendered boot snapshot from an
+   * authoritative API response: only the latter clears
+   * publicSettingsNeedsRevalidate.
    */
-  function applySettings(config: PublicSettings): void {
+  function applySettings(config: PublicSettings, source: 'injection' | 'api' = 'api'): void {
     const normalizedConfig: PublicSettings = {
       ...config,
       site_logo: normalizeSiteLogo(config.site_logo),
@@ -315,6 +333,13 @@ export const useAppStore = defineStore('app', () => {
     apiBaseUrl.value = normalizedConfig.api_base_url || ''
     docUrl.value = normalizedConfig.doc_url || ''
     publicSettingsLoaded.value = true
+    if (source === 'injection') {
+      publicSettingsFromInjection.value = true
+      publicSettingsRevalidated = false
+    } else {
+      publicSettingsFromInjection.value = false
+      publicSettingsRevalidated = true
+    }
   }
 
   function normalizeSiteLogo(value: string | undefined): string {
@@ -330,7 +355,9 @@ export const useAppStore = defineStore('app', () => {
     // An active request always wins over cache/force semantics so every caller observes
     // the same refresh result and no older request can overwrite a newer one.
     if (publicSettingsRequest) {
-      return publicSettingsRequest
+      return publicSettingsNeedsRevalidate.value
+        ? withInjectedRevalidateDeadline(publicSettingsRequest, cachedPublicSettings.value)
+        : publicSettingsRequest
     }
 
     // A failed load must not be retried on the next mount: the login page remounts on
@@ -340,15 +367,26 @@ export const useAppStore = defineStore('app', () => {
       return Promise.resolve(cachedPublicSettings.value ?? null)
     }
 
-    // Check for injected config from server (eliminates flash)
+    // The server rendered window.__APP_CONFIG__ into the HTML. Adopt it for the
+    // first paint (no flash), then ALWAYS revalidate against the API: the snapshot
+    // was produced by one backend instance and can disagree with the others. The
+    // returned promise resolves with the authoritative API value when it answers
+    // in time, and with the injected value otherwise.
     if (
       !publicSettingsLoaded.value &&
       !force &&
       typeof window !== 'undefined' &&
       window.__APP_CONFIG__
     ) {
-      applySettings(window.__APP_CONFIG__)
-      return Promise.resolve(window.__APP_CONFIG__)
+      applySettings(window.__APP_CONFIG__, 'injection')
+      return revalidateInjectedSettings()
+    }
+
+    // Already booted from the injected snapshot: still revalidate once, so a stale
+    // injected flag (e.g. crypto_enabled=false) cannot outlive the page load. Route
+    // guards await this before deciding to redirect /deposit away.
+    if (publicSettingsNeedsRevalidate.value && !force) {
+      return revalidateInjectedSettings()
     }
 
     // Return cached data if available and not forcing refresh
@@ -456,11 +494,91 @@ export const useAppStore = defineStore('app', () => {
   }
 
   /**
+   * Revalidate the injected boot snapshot against the authoritative API.
+   *
+   * Resolves with the API response when it arrives within the guard deadline and
+   * with the injected value otherwise. The request is never cancelled: when it
+   * lands after the deadline it still applies its result (stale-while-revalidate),
+   * so the store converges even if a guard already navigated on the fallback.
+   */
+  function revalidateInjectedSettings(): Promise<PublicSettings | null> {
+    const fallback = cachedPublicSettings.value
+    if (publicSettingsRequest) {
+      return withInjectedRevalidateDeadline(publicSettingsRequest, fallback)
+    }
+
+    const requestVersion = publicSettingsVersion
+    publicSettingsLoading.value = true
+    let apiRequest: Promise<PublicSettings>
+    try {
+      apiRequest = fetchPublicSettingsAPI()
+    } catch (error) {
+      console.error('Failed to fetch public settings:', error)
+      publicSettingsLoading.value = false
+      return Promise.resolve(fallback)
+    }
+
+    const request = apiRequest
+      .then((data) => {
+        if (requestVersion !== publicSettingsVersion) {
+          // A local patch landed while this request was in flight; keep it.
+          return cachedPublicSettings.value ?? data
+        }
+        applySettings(data)
+        publicSettingsRetryAfter = 0
+        return data
+      })
+      .catch((error) => {
+        console.error('Failed to fetch public settings:', error)
+        publicSettingsRetryAfter = Date.now() + PUBLIC_SETTINGS_RETRY_COOLDOWN_MS
+        // Keep the injected snapshot: the server-side injection TTL bounds its
+        // staleness and the next navigation retries the API.
+        return fallback
+      })
+      .finally(() => {
+        if (publicSettingsRequest === request) {
+          publicSettingsRequest = null
+          publicSettingsLoading.value = false
+        }
+      })
+
+    publicSettingsRequest = request
+    return withInjectedRevalidateDeadline(request, fallback)
+  }
+
+  /**
+   * Bound how long a caller (route guard) waits for the injected snapshot to be
+   * confirmed. After the deadline the injected value is used — degraded, but the
+   * navigation cannot hang on a slow settings endpoint.
+   */
+  function withInjectedRevalidateDeadline(
+    request: Promise<PublicSettings | null>,
+    fallback: PublicSettings | null
+  ): Promise<PublicSettings | null> {
+    return new Promise((resolve) => {
+      let settled = false
+      const timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        resolve(fallback)
+      }, INJECTED_SETTINGS_REVALIDATE_TIMEOUT_MS)
+      void request.then((data) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(data)
+      })
+    })
+  }
+
+  /**
    * Clear public settings cache
    */
   function clearPublicSettingsCache(): void {
     publicSettingsVersion += 1
     publicSettingsLoaded.value = false
+    publicSettingsFromInjection.value = false
+    publicSettingsRevalidated = false
     cachedPublicSettings.value = null
   }
 
@@ -488,7 +606,9 @@ export const useAppStore = defineStore('app', () => {
    */
   function initFromInjectedConfig(): boolean {
     if (typeof window !== 'undefined' && window.__APP_CONFIG__) {
-      applySettings(window.__APP_CONFIG__)
+      // Mark the snapshot as injected so the first fetchPublicSettings() always
+      // revalidates it instead of treating it as authoritative.
+      applySettings(window.__APP_CONFIG__, 'injection')
       return true
     }
     return false
@@ -506,6 +626,7 @@ export const useAppStore = defineStore('app', () => {
 
     // Public settings state
     publicSettingsLoaded,
+    publicSettingsNeedsRevalidate,
     siteName,
     siteLogo,
     siteVersion,

@@ -57,6 +57,15 @@ server:
   # Applies to all requests, especially important for h2c first request memory protection
   # 适用于所有请求，对 h2c 第一请求的内存保护尤为重要
   max_request_body_size: 268435456
+  # Fallback TTL for the rendered index.html that embeds window.__APP_CONFIG__
+  # (seconds, 5-300, default 45). A settings write broadcasts an invalidation to
+  # every replica over Redis pub/sub; this TTL is the safety net for a lost
+  # broadcast, so keep it short. Two replicas injecting different feature flags
+  # for the same site is a production incident, not a cosmetic delay.
+  # 内嵌 window.__APP_CONFIG__ 的 index.html 渲染缓存兜底 TTL（秒，5-300，
+  # 默认 45）。设置写入会通过 Redis pub/sub 通知所有实例；广播丢失时靠这个 TTL
+  # 收敛，所以别调大。两台实例给同一个站点注入不同的功能开关是生产事故。
+  settings_injection_cache_ttl_seconds: 45
   # HTTP/2 Cleartext (h2c) configuration
   # HTTP/2 Cleartext (h2c) 配置
   h2c:

@@ -287,6 +287,19 @@ type SettingService struct {
 	gatewayIPNoticeCache      atomic.Pointer[cachedGatewayIPNotice]
 	gatewayIPNoticeMu         sync.Mutex
 	gatewayIPNoticeRefreshing atomic.Bool
+
+	// Cross-instance settings invalidation. settingsVersion is bumped on every
+	// settings change this process observes (local write or peer broadcast) and
+	// keys the embedded frontend server's rendered-HTML cache. The subscriber
+	// fields follow the API key auth invalidation pattern: one retrying
+	// goroutine, started once, stopped on shutdown.
+	settingsInvalidationBusMu  sync.RWMutex
+	settingsInvalidationBus    SettingCacheInvalidationBus
+	settingsVersion            atomic.Uint64
+	settingsInvalidationStart  sync.Once
+	settingsInvalidationStop   sync.Once
+	settingsInvalidationCancel context.CancelFunc
+	settingsInvalidationWG     sync.WaitGroup
 }
 
 // settingRefreshBackoff gates stale-while-revalidate attempts.  It is kept
@@ -624,9 +637,8 @@ func (s *SettingService) SetRawSetting(ctx context.Context, key, value string) e
 	if err := s.settingRepo.Set(ctx, key, value); err != nil {
 		return err
 	}
-	if s.onUpdate != nil {
-		s.onUpdate()
-	}
+	s.notifySettingsChanged()
+	s.broadcastSettingsChanged(ctx)
 	return nil
 }
 

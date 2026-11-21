@@ -38,8 +38,9 @@ func (s *SettingService) CompareAndSwapRawSetting(ctx context.Context, key strin
 		return false, ErrAtomicSettingUnavailable
 	}
 	changed, err := repo.CompareAndSwapValue(ctx, key, expected, value)
-	if err == nil && changed && s.onUpdate != nil {
-		s.onUpdate()
+	if err == nil && changed {
+		s.notifySettingsChanged()
+		s.broadcastSettingsChanged(ctx)
 	}
 	return changed, err
 }

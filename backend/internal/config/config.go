@@ -691,19 +691,25 @@ type PricingConfig struct {
 
 type ServerConfig struct {
 	// DelegatePayments leaves payment and wallet operations to a separate backend.
-	DelegatePayments         bool      `mapstructure:"delegate_payments"`
-	Host                     string    `mapstructure:"host"`
-	Port                     int       `mapstructure:"port"`
-	Mode                     string    `mapstructure:"mode"`                  // debug/release
-	EnableServerTiming       bool      `mapstructure:"enable_server_timing"`  // Admin UI Server-Timing response header
-	FrontendURL              string    `mapstructure:"frontend_url"`          // 前端基础 URL，用于生成邮件中的外部链接
-	ReadHeaderTimeout        int       `mapstructure:"read_header_timeout"`   // 读取请求头超时（秒）
-	MaxHeaderBytes           int       `mapstructure:"max_header_bytes"`      // 请求头最大字节数（HTTP/2 映射为 header-list 上限）
-	IdleTimeout              int       `mapstructure:"idle_timeout"`          // 空闲连接超时（秒）
-	TrustedProxies           []string  `mapstructure:"trusted_proxies"`       // 可信代理列表（CIDR/IP）
-	TrustedProxiesConfigured bool      `mapstructure:"-" json:"-" yaml:"-"`   // 是否显式配置了可信代理列表
-	MaxRequestBodySize       int64     `mapstructure:"max_request_body_size"` // 全局最大请求体限制
-	H2C                      H2CConfig `mapstructure:"h2c"`                   // HTTP/2 Cleartext 配置
+	DelegatePayments         bool     `mapstructure:"delegate_payments"`
+	Host                     string   `mapstructure:"host"`
+	Port                     int      `mapstructure:"port"`
+	Mode                     string   `mapstructure:"mode"`                  // debug/release
+	EnableServerTiming       bool     `mapstructure:"enable_server_timing"`  // Admin UI Server-Timing response header
+	FrontendURL              string   `mapstructure:"frontend_url"`          // 前端基础 URL，用于生成邮件中的外部链接
+	ReadHeaderTimeout        int      `mapstructure:"read_header_timeout"`   // 读取请求头超时（秒）
+	MaxHeaderBytes           int      `mapstructure:"max_header_bytes"`      // 请求头最大字节数（HTTP/2 映射为 header-list 上限）
+	IdleTimeout              int      `mapstructure:"idle_timeout"`          // 空闲连接超时（秒）
+	TrustedProxies           []string `mapstructure:"trusted_proxies"`       // 可信代理列表（CIDR/IP）
+	TrustedProxiesConfigured bool     `mapstructure:"-" json:"-" yaml:"-"`   // 是否显式配置了可信代理列表
+	MaxRequestBodySize       int64    `mapstructure:"max_request_body_size"` // 全局最大请求体限制
+	// SettingsInjectionCacheTTLSeconds bounds how long a replica may serve the
+	// rendered index.html (which embeds window.__APP_CONFIG__) without re-reading
+	// settings. It is the fallback for a lost cross-instance invalidation, so keep
+	// it short: two replicas injecting different flags for the same site is a
+	// production incident, not a cosmetic delay.
+	SettingsInjectionCacheTTLSeconds int       `mapstructure:"settings_injection_cache_ttl_seconds"`
+	H2C                              H2CConfig `mapstructure:"h2c"` // HTTP/2 Cleartext 配置
 }
 
 // H2CConfig HTTP/2 Cleartext 配置
@@ -2231,6 +2237,10 @@ func setDefaults() {
 	viper.SetDefault("server.max_header_bytes", 64*1024)
 	viper.SetDefault("server.idle_timeout", 120) // 120秒空闲超时
 	viper.SetDefault("server.max_request_body_size", int64(256*1024*1024))
+	// Rendered index.html cache TTL (seconds). Short on purpose: it caps how long
+	// a replica can keep injecting stale window.__APP_CONFIG__ when a settings
+	// invalidation broadcast never arrives.
+	viper.SetDefault("server.settings_injection_cache_ttl_seconds", 45)
 	// H2C 默认配置
 	viper.SetDefault("server.h2c.enabled", false)
 	viper.SetDefault("server.h2c.max_concurrent_streams", uint32(50))      // 50 个并发流

@@ -813,11 +813,16 @@ func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsSer
 }
 
 // ProvideSettingService wires SettingService with group reader and proxy repo.
-func ProvideSettingService(scopedKeys ScopedAdminKeyRepository, settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
+func ProvideSettingService(scopedKeys ScopedAdminKeyRepository, settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config, settingsInvalidationBus SettingCacheInvalidationBus) *SettingService {
 	svc := NewSettingService(settingRepo, cfg)
 	svc.scopedAdminKeyRepo = scopedKeys
 	svc.SetDefaultSubscriptionGroupReader(groupRepo)
 	svc.SetProxyRepository(proxyRepo)
+	// Keep every replica's public-settings / injected-HTML caches in step with
+	// writes made on any other replica. Without this, a settings change only
+	// refreshed the process that handled the request.
+	svc.SetSettingsCacheInvalidationBus(settingsInvalidationBus)
+	svc.StartSettingsCacheInvalidationSubscriber(context.Background())
 	if !CryptoAdminTestMode() {
 		if err := svc.LoadForwardedClientIPSettings(context.Background()); err != nil {
 			logger.LegacyPrintf("service.setting", "Warning: load forwarded client IP settings failed: %v", err)
