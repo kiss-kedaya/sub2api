@@ -55,7 +55,9 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/admin/account/__tests__/AccountTableFilters.spec.ts \
 	src/components/admin/account/__tests__/AccountBulkActionsBar.spec.ts \
 	src/components/user/dashboard/__tests__/signal-dashboard.spec.ts \
+	src/components/user/dashboard/__tests__/UserDashboardQuickActions.spec.ts \
 	src/components/dashboard/__tests__/DashboardQuickLinks.spec.ts \
+	src/router/__tests__/simpleMode.spec.ts \
 	src/components/charts/__tests__/TokenUsageTrend.spec.ts \
 	src/components/charts/__tests__/ModelDistributionChart.spec.ts \
 	src/components/charts/__tests__/GroupDistributionChart.spec.ts \

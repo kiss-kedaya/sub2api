@@ -27,6 +27,9 @@ defineProps<{
 }>()
 
 const linkUi = {
+  // UPageCard's only focusable node is the zero-size stretched <a>, so keyboard focus
+  // has to be painted on the card itself; Tab must land somewhere visible (#400).
+  root: 'has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary',
   container: 'flex-row lg:flex items-center gap-3 p-3 sm:p-3',
   wrapper: 'flex-row items-center gap-3 min-w-0',
   leading: 'mb-0',
