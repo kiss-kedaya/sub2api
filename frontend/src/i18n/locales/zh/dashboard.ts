@@ -181,6 +181,21 @@ export default {
     riskRotateHint: '重新生成一个 key 值，旧 key 立即失效，此 key 恢复可用',
     riskRotateSuccess: '密钥已轮换，旧密钥立即失效',
     riskRotateFailed: '轮换密钥失败',
+    // 充值/兑换门禁待整改：列表角标 + 页头汇总 + 一键处理
+    rotationBadge: '待整改',
+    rotationReasonCreatedBeforeCutoff: '创建时间早于门槛',
+    rotationReasonNoIPAllowlist: '未设置 IP 白名单',
+    rotationFixByRotate: '轮换',
+    rotationFixByWhitelist: '设置白名单',
+    rotationFixByWhitelistHint: '打开编辑，为这把 Key 配置 IP 白名单后保存',
+    rotationPendingSummary: '{count} 个 Key 需整改',
+    rotationPendingHint: '轮换这些 Key 或为它们设置 IP 白名单后，充值 / 兑换会自动恢复。',
+    rotationPendingAction: '一键处理',
+    rotationFilterHint: '正在只显示 {count} 个待整改 Key，逐把轮换或加白名单即可',
+    rotationShowAll: '显示全部',
+    rotationNoneTitle: '没有待整改的 Key',
+    rotationNoneDescription: '轮换或加白名单后，角标会立即消失。',
+    rotationAllClear: '所有 Key 都已整改完成',
     // 后端只回脱敏视图：明文 key 仅在创建/轮换当次响应出现。
     maskedOnlyHint: '出于安全考虑，完整密钥只在创建或轮换时显示一次；这里展示的是后端口径的脱敏值。',
     secretDialog: {
@@ -951,10 +966,9 @@ export default {
   keyRotationGate: {
     title: '充值 / 兑换暂不可用',
     description: '为保护您的账户安全，请先更换 API Key 或为其设置 IP 白名单后再充值/兑换。',
-    cutoffLabel: '门槛时间',
     activeKeysLabel: '启用中的 Key',
     pendingKeysLabel: '待整改 Key',
-    hint: '更换一个创建于门槛时间之后的 API Key，或为每个启用中的 Key 配置 IP 白名单，完成后本页自动恢复。模型调用、查看余额和密钥管理不受影响。',
+    hint: '更换一个新的 API Key，或为每个启用中的 Key 配置 IP 白名单，完成后本页自动恢复。模型调用、查看余额和密钥管理不受影响。',
     action: '前往 API 密钥'
   },
 

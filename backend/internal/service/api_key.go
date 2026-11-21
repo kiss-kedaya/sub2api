@@ -92,6 +92,11 @@ type APIKey struct {
 	// nil preserves the enabled behavior of keys and auth snapshots created
 	// before the per-key tool-injection setting existed.
 	DeepSeekToolInjectionEnabled *bool
+
+	// NeedsRotation / RotationReasons 是读时计算字段，不落库。它们来自与充值/
+	// 兑换门禁同一份判定（AssessKeyRotation），供 /keys 列表标出待整改的 Key。
+	NeedsRotation   bool
+	RotationReasons []string
 }
 
 // IsDeepSeekToolInjectionEnabled defaults to enabled for existing keys.

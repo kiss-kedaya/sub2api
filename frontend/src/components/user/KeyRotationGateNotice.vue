@@ -15,10 +15,6 @@
         </div>
 
         <dl class="flex flex-wrap gap-x-8 gap-y-2 text-xs">
-          <div v-if="cutoffText">
-            <dt class="font-medium text-amber-700 dark:text-amber-200">{{ t('keyRotationGate.cutoffLabel') }}</dt>
-            <dd class="mt-0.5 tabular-nums">{{ cutoffText }}</dd>
-          </div>
           <div v-if="activeCount >= 0">
             <dt class="font-medium text-amber-700 dark:text-amber-200">{{ t('keyRotationGate.activeKeysLabel') }}</dt>
             <dd class="mt-0.5 tabular-nums">{{ activeCount }}</dd>
@@ -61,16 +57,6 @@ const props = defineProps<{
 const { t } = useI18n()
 
 const remediationPath = computed(() => props.status?.remediation_path || KEY_ROTATION_REMEDIATION_PATH)
-
-// Show the deadline in the user's locale, but never hide the raw ISO value:
-// an unparsable backend value must still be visible instead of silently blank.
-const cutoffText = computed(() => {
-  const raw = props.status?.cutoff
-  if (!raw) return ''
-  const date = new Date(raw)
-  if (Number.isNaN(date.getTime())) return raw
-  return date.toLocaleString()
-})
 
 const activeCount = computed(() => props.status?.active_key_count ?? -1)
 const pendingCount = computed(() => props.status?.pending_key_count ?? 0)

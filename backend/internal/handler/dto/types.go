@@ -80,6 +80,11 @@ type APIKey struct {
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 	KeyRotatedAt     *time.Time `json:"key_rotated_at,omitempty"` // Last successful credential replacement, not a metadata edit.
+	// NeedsRotation 为 true 时表示这把启用中的 Key 仍在充值/兑换门禁的待整改
+	// 名单里（创建/轮换时间早于门槛且没有 IP 白名单）。判定与门禁同源。
+	NeedsRotation bool `json:"needs_rotation"`
+	// RotationReasons 是待整改原因分类：created_before_cutoff / no_ip_allowlist。
+	RotationReasons []string `json:"rotation_reasons,omitempty"`
 	// CurrentConcurrency is the real-time active request count for this API key.
 	CurrentConcurrency int `json:"current_concurrency"`
 
