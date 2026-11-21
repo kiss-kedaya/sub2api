@@ -56,7 +56,7 @@ func TestSemanticStreamFailoverSubmitsPartialUsageBeforeReturning(t *testing.T) 
 					return true
 				}
 				for i := 1; i < len(block.List); i++ {
-					if statementCalls(block.List[i-1], tt.submitCall) && statementCalls(block.List[i], tt.handleCall) {
+					if statementSubmitsUsage(block.List[i-1], tt.submitCall) && statementCalls(block.List[i], tt.handleCall) {
 						found = true
 						return false
 					}
@@ -70,18 +70,39 @@ func TestSemanticStreamFailoverSubmitsPartialUsageBeforeReturning(t *testing.T) 
 	}
 }
 
+// statementSubmitsUsage matches either a direct submit call or the retained-usage
+// wrapper that bills the same closure once (issue #456): the partial usage of a
+// semantic-output failover is still submitted immediately before the terminal
+// handler, so it is never lost.
+func statementSubmitsUsage(statement ast.Stmt, submitCall string) bool {
+	if statementCalls(statement, submitCall) {
+		return true
+	}
+	return statementCalls(statement, "settle") && statementCalls(statement, submitCall)
+}
+
+// statementCalls reports whether the statement mentions name, either as a call or as
+// a value passed to another call (the retained-usage wrapper passes the submit
+// closure as an argument).
 func statementCalls(statement ast.Stmt, name string) bool {
 	found := false
 	ast.Inspect(statement, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		switch fn := call.Fun.(type) {
+		switch n := node.(type) {
 		case *ast.Ident:
-			found = fn.Name == name
-		case *ast.SelectorExpr:
-			found = fn.Sel.Name == name
+			if n.Name == name {
+				found = true
+			}
+		case *ast.CallExpr:
+			switch fn := n.Fun.(type) {
+			case *ast.Ident:
+				if fn.Name == name {
+					found = true
+				}
+			case *ast.SelectorExpr:
+				if fn.Sel.Name == name {
+					found = true
+				}
+			}
 		}
 		return !found
 	})

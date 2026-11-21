@@ -2842,7 +2842,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				msg += ": " + errText
 			}
 			return resultWithUsage(),
-				s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, nil, msg, mappedModel)
+				markOpenAIStreamEndedWithoutTerminal(
+					s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, nil, msg, mappedModel),
+				)
 		}
 		s.markOpenAIStreamFinalFailure(c, account, true, upstreamRequestID, false)
 		s.recordOpenAIProxyStreamDisconnect(account, err, upstreamRequestID)
@@ -2866,7 +2868,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		).Info("OpenAI passthrough 上游流在未收到 [DONE] 时结束，疑似断流")
 		if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
 			return resultWithUsage(),
-				s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, nil, "OpenAI stream ended before a terminal event", mappedModel)
+				markOpenAIStreamEndedWithoutTerminal(
+					s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, nil, "OpenAI stream ended before a terminal event", mappedModel),
+				)
 		}
 		s.markOpenAIStreamFinalFailure(c, account, true, upstreamRequestID, false)
 		s.recordOpenAIProxyStreamDisconnect(account, errors.New("stream ended before terminal event"), upstreamRequestID)

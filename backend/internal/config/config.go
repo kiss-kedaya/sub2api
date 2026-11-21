@@ -995,6 +995,15 @@ type BillingConfig struct {
 	// Requests in balance mode are rejected when the cached balance is below this
 	// amount, even if it is still positive. Set to 0 to keep the legacy balance > 0 gate.
 	MinimumBalanceReserve float64 `mapstructure:"minimum_balance_reserve"`
+	// OpenAIIncompleteInputCacheReadPercent is the share (0-100) of an estimated
+	// input that is priced as a cache read when an OpenAI-family stream ends
+	// without a usage report (client disconnect, upstream EOF, mid-stream break).
+	// The default is 0: an estimate never invents a cache discount. That matches
+	// the upstream new-api abnormal-end fallback, which bills the whole prompt
+	// (including cache hits) at the plain input price, so the operator no longer
+	// absorbs the difference (issue #456). Set 95 to restore the pre-#456
+	// heuristic. Reported usage is never re-split; this only affects estimates.
+	OpenAIIncompleteInputCacheReadPercent int `mapstructure:"openai_incomplete_input_cache_read_percent"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
 	//   - billing_cache_service.cacheWriteWorker 异步累加
@@ -2339,6 +2348,10 @@ func setDefaults() {
 	// 扣费照常结算，不会丢。
 	viper.SetDefault("billing.balance_merge_settlement_enabled", false)
 	viper.SetDefault("billing.minimum_balance_reserve", 0.000001)
+	// 无 usage 的 OpenAI 流式异常结束按请求体估算输入时，缓存读占比（0-100）。
+	// 0 = 不臆造缓存折扣，与上游 new-api 异常结束回退（整段 prompt 按普通输入计）
+	// 对齐；95 = #456 之前的旧口径。仅影响估算，绝不改写上游真实上报的 usage。
+	viper.SetDefault("billing.openai_incomplete_input_cache_read_percent", 0)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
 	// 在途预留默认关闭。开启后会在准入时按估算费用占用余额，生产保持关，需要时显式打开。
@@ -3385,6 +3398,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Billing.MinimumBalanceReserve < 0 {
 		return fmt.Errorf("billing.minimum_balance_reserve must be non-negative")
+	}
+	if c.Billing.OpenAIIncompleteInputCacheReadPercent < 0 || c.Billing.OpenAIIncompleteInputCacheReadPercent > 100 {
+		return fmt.Errorf("billing.openai_incomplete_input_cache_read_percent must be between 0 and 100")
 	}
 	if c.Billing.InflightReservation.TTLSeconds < 0 || c.Billing.InflightReservation.DefaultMaxTokens < 0 ||
 		c.Billing.InflightReservation.MaxOutputTokens < 0 || c.Billing.InflightReservation.MaxInputTokens < 0 ||

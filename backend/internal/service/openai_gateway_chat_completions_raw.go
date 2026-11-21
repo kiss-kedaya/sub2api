@@ -577,7 +577,13 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			zap.Bool("client_output_started", clientOutputStarted),
 		)
 		if !clientOutputStarted {
-			return nil, newOpenAIRawStreamTruncatedFailoverError(c, account, requestID, cause)
+			// Replayable, but the upstream accepted the request and may already have
+			// billed it: keep the input estimate so the handler can settle it when no
+			// retry succeeds (issue #456).
+			failoverErr := markOpenAIStreamEndedWithoutTerminal(
+				newOpenAIRawStreamTruncatedFailoverError(c, account, requestID, cause),
+			)
+			return finishIncomplete(failoverErr, false), failoverErr
 		}
 		recordOpenAIRawStreamTruncation(c, account, requestID, cause, "http_error")
 		return finishIncomplete(cause, false), newOpenAIUpstreamStreamReadError(cause)

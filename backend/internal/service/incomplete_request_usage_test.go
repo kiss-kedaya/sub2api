@@ -75,3 +75,35 @@ func TestAddOpenAIUsage_KeepsTheEstimatedCacheReadMark(t *testing.T) {
 	addOpenAIUsage(&clean, OpenAIUsage{InputTokens: 5})
 	require.False(t, clean.CacheReadEstimated)
 }
+
+// withOpenAIIncompleteInputCacheReadPercent sets the OpenAI-family estimate policy
+// for one test and restores it afterwards.
+func withOpenAIIncompleteInputCacheReadPercent(t *testing.T, percent int) {
+	t.Helper()
+	previous := OpenAIIncompleteInputCacheReadPercent()
+	SetOpenAIIncompleteInputCacheReadPercent(percent)
+	t.Cleanup(func() { SetOpenAIIncompleteInputCacheReadPercent(previous) })
+}
+
+// An OpenAI-family estimate bills the whole input at the plain input price by
+// default, matching new-api's abnormal-end fallback (issue #456); the share is
+// configurable and clamped.
+func TestOpenAIIncompleteInputCacheReadPolicy(t *testing.T) {
+	require.Zero(t, OpenAIIncompleteInputCacheReadPercent(), "no cache discount is invented by default")
+	require.Equal(t, incompleteInputEstimate{Total: 100, CacheRead: 0, Fresh: 100}, splitOpenAIIncompleteInput(100))
+	require.Zero(t, openAIIncompleteCacheReadTokens(100))
+
+	withOpenAIIncompleteInputCacheReadPercent(t, 95)
+	require.Equal(t, 95, OpenAIIncompleteInputCacheReadPercent())
+	require.Equal(t, incompleteInputEstimate{Total: 100, CacheRead: 95, Fresh: 5}, splitOpenAIIncompleteInput(100))
+	require.Equal(t, 950, openAIIncompleteCacheReadTokens(1000))
+
+	SetOpenAIIncompleteInputCacheReadPercent(-7)
+	require.Equal(t, 0, OpenAIIncompleteInputCacheReadPercent(), "out-of-range values are clamped")
+	SetOpenAIIncompleteInputCacheReadPercent(300)
+	require.Equal(t, 100, OpenAIIncompleteInputCacheReadPercent(), "out-of-range values are clamped")
+	SetOpenAIIncompleteInputCacheReadPercent(openAIIncompleteInputCacheReadPercentDefault)
+
+	// The Anthropic/Gemini families keep their historical heuristic.
+	require.Equal(t, 95, splitIncompleteInput(100).CacheRead)
+}

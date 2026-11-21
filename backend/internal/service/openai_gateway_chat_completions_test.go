@@ -1077,9 +1077,13 @@ func TestForwardAsChatCompletions_DoneSentinelWithoutTerminalReturnsError(t *tes
 
 	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "gpt-5.1")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "missing terminal event")
+	// Nothing reached the client, so the attempt stays replayable; it keeps the input
+	// estimate because the accepted request may already be billed upstream (#456).
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.True(t, failoverErr.StreamEndedWithoutTerminal)
 	require.NotNil(t, result)
-	require.Zero(t, result.Usage.InputTokens)
+	require.Greater(t, result.Usage.InputTokens, 0)
 	require.Zero(t, result.Usage.OutputTokens)
 }
 

@@ -448,9 +448,10 @@ func (h *wsGoneHarness) awaitHandler(t *testing.T, closedAt time.Time) {
 }
 
 // requireEstimatedBill checks one usage record is the estimate for a turn cut off
-// after the client had read minDeltas deltas: input from the request body with 95%
-// priced as cache read, output from the streamed content, never the real usage the
-// terminal frame would have reported.
+// after the client had read minDeltas deltas: input from the request body billed at
+// the plain input price (issue #456: an estimate never invents a cache discount),
+// output from the streamed content, never the real usage the terminal frame would
+// have reported.
 func (h *wsGoneHarness) requireEstimatedBill(t *testing.T, index int, requestBody []byte, minDeltas int) {
 	t.Helper()
 	logs, commands := h.usage.snapshot(), h.billing.snapshot()
@@ -461,9 +462,8 @@ func (h *wsGoneHarness) requireEstimatedBill(t *testing.T, index int, requestBod
 	total, err := service.EstimateOpenAIResponsesInputTokens(requestBody)
 	require.NoError(t, err)
 	require.Positive(t, total)
-	cacheRead := total * 95 / 100
-	assert.Equal(t, cacheRead, log.CacheReadTokens, "95%% of the estimated input is priced as cache read")
-	assert.Equal(t, total-cacheRead, log.InputTokens, "the other 5%% is normal input")
+	assert.Zero(t, log.CacheReadTokens, "an estimate never invents a cache discount")
+	assert.Equal(t, total, log.InputTokens, "the whole estimated input bills at the plain input price")
 
 	sent := int(h.upstream.sentDeltas.Load())
 	assert.Zero(t, log.OutputTokens%wsGoneDeltaTokens, "output is estimated from whole deltas")

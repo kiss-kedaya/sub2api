@@ -729,12 +729,20 @@ type UpstreamFailoverError struct {
 	SameAccountRetryMax      int           // 可选的错误级同账号重试上限，低于 handler 默认预算时优先采用
 	RequestScopedTransient   bool          // 故障因素与账号无关（如上游按客户端身份/模型容量降载）：可同账号重试，但不得据此对账号做临时封禁
 	SafeToFailoverAfterWrite bool          // 仅写出 SSE 注释等非语义字节时，仍可在同一客户端流中切换账号
-	Stage                    GatewayFailureStage
-	Scope                    GatewayFailureScope
-	Reason                   GatewayFailureReason
-	NextAccountAction        NextAccountAction
-	ClientStatusCode         int
-	ClientMessage            string
+	// StreamEndedWithoutTerminal 标记「上游已接受请求、随后在没有任何终止帧的情况下
+	// 结束（双方都未见 finish_reason / response.completed），且站在切换账号前没有
+	// 向客户端写出语义输出」。上游此时很可能已经按自己的异常结束回退口径扣了费，
+	// 因此该次尝试的已观测用量不能因为「可重放」被整条丢弃：
+	//   - 下游真的重试成功 → 只计成功后那一次，本结果丢弃（防重复计费）；
+	//   - 重试耗尽/无法重试/客户端离开 → 保留 result 并按估算入账（issue #456）。
+	// 只在最终失败时暴露 result，可重放错误本身不改变 handler 的重试判定。
+	StreamEndedWithoutTerminal bool
+	Stage                      GatewayFailureStage
+	Scope                      GatewayFailureScope
+	Reason                     GatewayFailureReason
+	NextAccountAction          NextAccountAction
+	ClientStatusCode           int
+	ClientMessage              string
 }
 
 func (e *UpstreamFailoverError) Error() string {

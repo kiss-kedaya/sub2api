@@ -1116,7 +1116,13 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		if len(pendingBareError) > 0 {
 			return finalizeStream()
 		}
-		return finishIncomplete(fmt.Errorf("stream usage incomplete: missing terminal event"))
+		gone := clientDisconnected || watch.Gone()
+		return s.openAICompatStreamEnd(c, account, requestID, upstreamModel,
+			"OpenAI chat_completions stream ended before a terminal event",
+			!gone && !clientOutputStarted,
+			fmt.Errorf("stream usage incomplete: missing terminal event"),
+			finishIncomplete,
+		)
 	}
 	processFrame := func(frame openAICompatSSEFrame) bool {
 		payload := openAICompatPayloadWithEventType(frame.Data, frame.EventType)
@@ -1155,10 +1161,14 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 		if err := scanner.Err(); err != nil {
 			handleScanErr(err)
-			if clientDisconnected || watch.Gone() || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return finishIncomplete(fmt.Errorf("stream usage incomplete: %w", err))
-			}
-			return finishIncomplete(newOpenAIUpstreamStreamReadError(err))
+			gone := clientDisconnected || watch.Gone() ||
+				errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+			return s.openAICompatStreamEnd(c, account, requestID, upstreamModel,
+				"OpenAI chat_completions stream disconnected before completion",
+				!gone && !clientOutputStarted,
+				newOpenAIUpstreamStreamReadError(err),
+				finishIncomplete,
+			)
 		}
 		if frame, ok := parser.Finish(); ok {
 			if strings.TrimSpace(frame.Data) == "[DONE]" {
@@ -1230,10 +1240,14 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			if ev.err != nil {
 				handleScanErr(ev.err)
-				if clientDisconnected || watch.Gone() || errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return finishIncomplete(fmt.Errorf("stream usage incomplete: %w", ev.err))
-				}
-				return finishIncomplete(newOpenAIUpstreamStreamReadError(ev.err))
+				gone := clientDisconnected || watch.Gone() ||
+					errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded)
+				return s.openAICompatStreamEnd(c, account, requestID, upstreamModel,
+					"OpenAI chat_completions stream disconnected before completion",
+					!gone && !clientOutputStarted,
+					newOpenAIUpstreamStreamReadError(ev.err),
+					finishIncomplete,
+				)
 			}
 			lastDataAt = time.Now()
 			line := ev.line

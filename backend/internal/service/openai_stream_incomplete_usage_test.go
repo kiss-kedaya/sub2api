@@ -158,8 +158,9 @@ func requireIncompleteStreamBilled(t *testing.T, out incompleteStreamOutcome, wa
 	require.Equal(t, wantClientDisconnect, out.result.ClientDisconnect)
 	require.Equal(t, estimateTokensForText(incompleteStreamDeltaOneText+incompleteStreamDeltaTwoText), out.result.Usage.OutputTokens)
 	require.Greater(t, out.result.Usage.InputTokens, 0, "input is estimated from the request when no usage frame exists")
-	require.Equal(t, incompleteCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens,
-		"95% of the estimated input is priced as cache read")
+	require.Zero(t, out.result.Usage.CacheReadInputTokens,
+		"an estimate never invents a cache discount: the whole input bills at the plain price")
+	require.True(t, out.result.Usage.CacheReadEstimated)
 
 	usageRepo, billingRepo := billIncompleteStreamResult(t, out.result)
 	require.Equal(t, 1, usageRepo.calls)
@@ -280,7 +281,7 @@ func TestOpenAIForward_ClientLeavesBeforeAnyOutputIsBilledForInputOnly(t *testin
 	require.True(t, out.result.ClientDisconnect)
 	require.Zero(t, out.result.Usage.OutputTokens)
 	require.Greater(t, out.result.Usage.InputTokens, 0)
-	require.Equal(t, incompleteCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens)
+	require.Zero(t, out.result.Usage.CacheReadInputTokens)
 	usageRepo, billingRepo := billIncompleteStreamResult(t, out.result)
 	require.Equal(t, 1, usageRepo.calls)
 	require.NotNil(t, billingRepo.lastCmd)
@@ -290,20 +291,31 @@ func TestOpenAIForward_ClientLeavesBeforeAnyOutputIsBilledForInputOnly(t *testin
 }
 
 // With the client still attached, an upstream that is cut before producing anything
-// is a replayable failure: nothing is billed.
-func TestOpenAIForward_UpstreamCutBeforeAnyOutputStaysFree(t *testing.T) {
+// is still replayable, but the upstream accepted the request and may already have
+// billed it. The attempt keeps an input estimate that the handler settles only when
+// no retry succeeds (issue #456).
+func TestOpenAIForward_UpstreamCutBeforeAnyOutputRetainsInputEstimate(t *testing.T) {
 	h := startIncompleteStreamForward(t, 0)
 	h.write(incompleteStreamCreatedFrame)
 	h.closeUpstream()
 
 	out := h.await(5 * time.Second)
 
-	requireIncompleteStreamNotBilled(t, out)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, out.err, &failoverErr)
+	require.True(t, failoverErr.StreamEndedWithoutTerminal, "the attempt must stay replayable but retain its usage")
+	require.NotNil(t, out.result, "an accepted request that may already be billed upstream must reach the handler")
+	require.Zero(t, out.result.Usage.OutputTokens)
+	require.Equal(t, estimateRequestInputTokens(h.upstream.lastBody), out.result.Usage.InputTokens,
+		"input is estimated from the request body that went upstream")
+	require.Zero(t, out.result.Usage.CacheReadInputTokens, "no cache discount is invented")
+	require.True(t, out.result.Usage.CacheReadEstimated)
 }
 
-// 95% of the estimated input is priced as cache read, so the bill is lower than the
-// same usage priced as plain input.
-func TestOpenAIForward_EstimatedInputIsBilledAtTheCacheDiscount(t *testing.T) {
+// By default an estimated input bills at the plain input price, matching new-api's
+// abnormal-end fallback (issue #456). Raising the configured share restores the old
+// cache-read heuristic and lowers the bill.
+func TestOpenAIForward_EstimatedInputBillsAtPlainInputPriceByDefault(t *testing.T) {
 	h := startIncompleteStreamForward(t, 0)
 	h.write(incompleteStreamCreatedFrame, incompleteStreamDeltaOneFrame, incompleteStreamDeltaTwoFrame)
 	waitOpenAIResponseFlushCount(t, h.recorder, 2)
@@ -311,16 +323,21 @@ func TestOpenAIForward_EstimatedInputIsBilledAtTheCacheDiscount(t *testing.T) {
 
 	out := h.await(5 * time.Second)
 	require.NotNil(t, out.result)
+	require.Zero(t, out.result.Usage.CacheReadInputTokens)
 
-	_, discounted := billIncompleteStreamResult(t, out.result)
-	plain := *out.result
-	plain.Usage.CacheReadInputTokens = 0
-	_, undiscounted := billIncompleteStreamResult(t, &plain)
+	_, plain := billIncompleteStreamResult(t, out.result)
+	require.NotNil(t, plain.lastCmd)
+
+	withOpenAIIncompleteInputCacheReadPercent(t, 95)
+	discountedResult := *out.result
+	discountedResult.Usage.CacheReadInputTokens = openAIIncompleteCacheReadTokens(discountedResult.Usage.InputTokens)
+	discountedResult.Usage.CacheReadEstimated = true
+	_, discounted := billIncompleteStreamResult(t, &discountedResult)
 
 	require.NotNil(t, discounted.lastCmd)
-	require.NotNil(t, undiscounted.lastCmd)
 	require.Greater(t, discounted.lastCmd.BalanceCost, 0.0)
-	require.Less(t, discounted.lastCmd.BalanceCost, undiscounted.lastCmd.BalanceCost, "the 95% cache share must lower the bill")
+	require.Less(t, discounted.lastCmd.BalanceCost, plain.lastCmd.BalanceCost,
+		"the configured cache share must lower the bill")
 }
 
 // An upstream error that produced no output must never be charged or estimated.

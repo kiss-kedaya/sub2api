@@ -5,6 +5,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -331,7 +332,8 @@ func requireCompatBilled(t *testing.T, h *incompleteStreamHarness, p compatDisco
 		}
 		require.Greater(t, usage.InputTokens, 0, "input is estimated from the request when none was reported")
 		require.Equal(t, estimateRequestInputTokens(estimateBody), usage.InputTokens)
-		require.Equal(t, incompleteCacheReadTokens(usage.InputTokens), usage.CacheReadInputTokens, "95% of the estimated input is priced as cache read")
+		require.Equal(t, openAIIncompleteCacheReadTokens(usage.InputTokens), usage.CacheReadInputTokens,
+			"the configured OpenAI cache-read share is applied to the estimate (0 by default: no invented discount)")
 		require.True(t, usage.CacheReadEstimated)
 	}
 
@@ -481,8 +483,9 @@ func TestCompatDisconnect_UpstreamCutAfterOutputIsBilled(t *testing.T) {
 }
 
 // The upstream breaks before it produced anything and the client is still attached:
-// nothing is billed and the attempt stays replayable.
-func TestCompatDisconnect_UpstreamCutBeforeOutputStaysFree(t *testing.T) {
+// the attempt stays replayable, but it keeps an input estimate for the handler to
+// settle if no retry succeeds (issue #456).
+func TestCompatDisconnect_UpstreamCutBeforeOutputRetainsInputEstimate(t *testing.T) {
 	for _, p := range compatDisconnectPaths() {
 		for _, interval := range p.intervals {
 			t.Run(fmt.Sprintf("%s/interval_%d", p.name, interval), func(t *testing.T) {
@@ -492,7 +495,18 @@ func TestCompatDisconnect_UpstreamCutBeforeOutputStaysFree(t *testing.T) {
 
 				out := h.await(5 * time.Second)
 
-				requireIncompleteStreamNotBilled(t, out)
+				// A path that can still fail over must expose the estimate with the
+				// replayable marker; a path that already committed bytes settles locally
+				// and returns the estimate with a plain error. Either way the accepted
+				// request is not dropped for free (issue #456).
+				var failoverErr *UpstreamFailoverError
+				if errors.As(out.err, &failoverErr) {
+					require.True(t, failoverErr.StreamEndedWithoutTerminal, "the attempt must stay replayable")
+				}
+				require.NotNil(t, out.result, "an accepted request must not be dropped for free")
+				require.Zero(t, out.result.Usage.OutputTokens)
+				require.Greater(t, out.result.Usage.InputTokens, 0)
+				require.Zero(t, out.result.Usage.CacheReadInputTokens)
 			})
 		}
 	}

@@ -4594,7 +4594,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ClientDisconnect
 		require.Empty(t, result.UpstreamTerminalEvent)
 		require.NotEqual(t, 2, result.Usage.InputTokens, "the usage of the unread terminal event is not used")
 		require.Positive(t, result.Usage.InputTokens, "input is estimated from the request body")
-		require.Equal(t, incompleteCacheReadTokens(result.Usage.InputTokens), result.Usage.CacheReadInputTokens)
+		require.Equal(t, openAIIncompleteCacheReadTokens(result.Usage.InputTokens), result.Usage.CacheReadInputTokens)
 		require.True(t, result.Usage.CacheReadEstimated)
 		require.Zero(t, result.Usage.OutputTokens, "nothing had been produced yet")
 		require.NotNil(t, result.ServiceTier)

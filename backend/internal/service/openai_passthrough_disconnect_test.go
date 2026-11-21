@@ -194,7 +194,7 @@ func TestOpenAIPassthroughStream_ClientLeavesBeforeAnyOutputIsBilledForInputOnly
 	require.True(t, out.result.ClientDisconnect)
 	require.Zero(t, out.result.Usage.OutputTokens)
 	require.Greater(t, out.result.Usage.InputTokens, 0)
-	require.Equal(t, incompleteCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens)
+	require.Equal(t, openAIIncompleteCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens)
 	require.True(t, out.result.Usage.CacheReadEstimated)
 	usageRepo, billingRepo := billIncompleteStreamResult(t, out.result)
 	require.Equal(t, 1, usageRepo.calls)
@@ -252,8 +252,10 @@ func TestOpenAIPassthroughStream_ReadErrorAfterDeliveredOutputIsBilled(t *testin
 }
 
 // With the client still attached, an upstream that is cut before producing anything
-// is a replayable failure: it fails over and nothing is billed.
-func TestOpenAIPassthroughStream_UpstreamCutBeforeAnyOutputStaysFree(t *testing.T) {
+// is a replayable failure, but the accepted request may already be billed upstream:
+// the attempt keeps an input estimate the handler settles only when no retry succeeds
+// (issue #456).
+func TestOpenAIPassthroughStream_UpstreamCutBeforeAnyOutputRetainsInputEstimate(t *testing.T) {
 	h := startPassthroughDisconnectForward(t, passthroughDisconnectStreamBody, true)
 	h.write(incompleteStreamCreatedFrame)
 	require.NoError(t, h.pipeW.Close())
@@ -262,8 +264,11 @@ func TestOpenAIPassthroughStream_UpstreamCutBeforeAnyOutputStaysFree(t *testing.
 
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, out.err, &failoverErr, "a silent upstream cut must still fail over")
-	require.Nil(t, out.result)
-	requireIncompleteStreamNotBilled(t, out.asIncomplete())
+	require.True(t, failoverErr.StreamEndedWithoutTerminal, "the attempt remains replayable")
+	require.NotNil(t, out.result, "an accepted request must not be dropped for free")
+	require.Greater(t, out.result.Usage.InputTokens, 0)
+	require.Zero(t, out.result.Usage.OutputTokens)
+	require.Zero(t, out.result.Usage.CacheReadInputTokens)
 }
 
 // An upstream failure frame that produced no output must never be charged.
@@ -391,7 +396,7 @@ func TestOpenAIPassthrough_ClientLeavesBeforeResponseHeadersCancelsUpstreamAndBi
 				require.True(t, out.result.ClientDisconnect)
 				require.Zero(t, out.result.Usage.OutputTokens)
 				require.Greater(t, out.result.Usage.InputTokens, 0)
-				require.Equal(t, incompleteCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens)
+				require.Equal(t, openAIIncompleteCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens)
 				require.True(t, out.result.Usage.CacheReadEstimated)
 				usageRepo, billingRepo := billIncompleteStreamResult(t, out.result)
 				require.Equal(t, 1, usageRepo.calls)
@@ -423,7 +428,7 @@ func TestOpenAIPassthroughBuffered_ClientLeavesWhileBodyArrivesBillsInputOnly(t 
 	require.True(t, out.result.ClientDisconnect)
 	require.Zero(t, out.result.Usage.OutputTokens)
 	require.Greater(t, out.result.Usage.InputTokens, 0)
-	require.Equal(t, incompleteCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens)
+	require.Equal(t, openAIIncompleteCacheReadTokens(out.result.Usage.InputTokens), out.result.Usage.CacheReadInputTokens)
 	require.True(t, out.result.Usage.CacheReadEstimated)
 	usageRepo, billingRepo := billIncompleteStreamResult(t, out.result)
 	require.Equal(t, 1, usageRepo.calls)

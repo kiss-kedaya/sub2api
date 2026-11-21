@@ -1,14 +1,24 @@
 package service
 
-import "github.com/tidwall/gjson"
+import (
+	"sync/atomic"
+
+	"github.com/tidwall/gjson"
+)
 
 // Billing policy for a request that ends without any usage report (the client left,
-// the upstream was cut or stalled). Owner decision, 2026-11-06:
+// the upstream was cut or stalled). Owner decision, 2026-11-06, revised by issue
+// #456:
 //
 //   - the upstream connection is closed the moment the client disconnects;
 //   - output is billed for what was really produced, estimated from the content;
-//   - input is billed for what was really sent, estimated from the request body,
-//     with 95% of it priced as cache read and the rest as normal input;
+//   - input is billed for what was really sent, estimated from the request body;
+//   - an OpenAI-family estimate never invents a cache discount by default: its
+//     share priced as cache read is configured by
+//     BILLING_OPENAI_INCOMPLETE_INPUT_CACHE_READ_PERCENT (0 = plain input price,
+//     which is what the upstream new-api abnormal-end fallback charges);
+//   - the Anthropic/Gemini families keep the historical 95% cache read heuristic,
+//     because their upstreams price a real cache read at about a tenth of input;
 //   - a model without a cache read price bills that share at the plain input price
 //     (UsageTokens.CacheReadEstimated, handled in computeTokenBreakdown);
 //   - usage the upstream really reported is never overwritten or re-split.
@@ -18,9 +28,44 @@ import "github.com/tidwall/gjson"
 // style reports InputTokens as the total including cache, Anthropic style reports
 // InputTokens as the fresh input only.
 
-// incompleteInputCacheReadPercent is the share of the estimated input priced as
-// cache read. It applies only to estimated input, never to reported usage.
-const incompleteInputCacheReadPercent = 95
+// legacyIncompleteInputCacheReadPercent is the share of the estimated input priced
+// as cache read for the Anthropic and Gemini families. It applies only to estimated
+// input, never to reported usage.
+const legacyIncompleteInputCacheReadPercent = 95
+
+// openAIIncompleteInputCacheReadPercentDefault is the shipped OpenAI-family share.
+// 0 means the whole estimated input is billed at the plain input price, matching
+// new-api's ResponseText2Usage fallback on an abnormal stream end (it bills the
+// merged prompt including cache hits at the normal input price). Operators whose
+// upstream really does discount cache reads on an abnormal end can raise it.
+const openAIIncompleteInputCacheReadPercentDefault = 0
+
+// openAIIncompleteInputCacheReadPercent holds the configured OpenAI-family share.
+// It is written once at startup (SetOpenAIIncompleteInputCacheReadPercent) and read
+// on the billing path, so it stays lock-free.
+var openAIIncompleteInputCacheReadPercent atomic.Int64
+
+func init() {
+	openAIIncompleteInputCacheReadPercent.Store(openAIIncompleteInputCacheReadPercentDefault)
+}
+
+// SetOpenAIIncompleteInputCacheReadPercent publishes the configured OpenAI-family
+// cache-read share of an estimated input. Values outside 0..100 are clamped; the
+// config loader rejects them first, so this is only a runtime backstop.
+func SetOpenAIIncompleteInputCacheReadPercent(percent int) {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	openAIIncompleteInputCacheReadPercent.Store(int64(percent))
+}
+
+// OpenAIIncompleteInputCacheReadPercent reports the effective OpenAI-family share.
+func OpenAIIncompleteInputCacheReadPercent() int {
+	return int(openAIIncompleteInputCacheReadPercent.Load())
+}
 
 // incompleteInputEstimate is an estimated request input split into its cache read
 // part and the part billed as normal input.
@@ -33,19 +78,43 @@ type incompleteInputEstimate struct {
 	Fresh int
 }
 
-// splitIncompleteInput rounds the cache read share down, so the remainder (normal
-// input) is the larger side of any rounding.
-func splitIncompleteInput(total int) incompleteInputEstimate {
+// splitIncompleteInputWithPercent rounds the cache read share down, so the remainder
+// (normal input) is the larger side of any rounding. percent is the family policy:
+// 0 bills the whole estimate at the plain input price.
+func splitIncompleteInputWithPercent(total, percent int) incompleteInputEstimate {
 	if total <= 0 {
 		return incompleteInputEstimate{}
 	}
-	cacheRead := total * incompleteInputCacheReadPercent / 100
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	cacheRead := total * percent / 100
 	return incompleteInputEstimate{Total: total, CacheRead: cacheRead, Fresh: total - cacheRead}
 }
 
-// incompleteCacheReadTokens is the cache read share of an estimated input total.
+// splitIncompleteInput applies the legacy Anthropic/Gemini policy (95% cache read).
+func splitIncompleteInput(total int) incompleteInputEstimate {
+	return splitIncompleteInputWithPercent(total, legacyIncompleteInputCacheReadPercent)
+}
+
+// splitOpenAIIncompleteInput applies the configured OpenAI-family policy.
+func splitOpenAIIncompleteInput(total int) incompleteInputEstimate {
+	return splitIncompleteInputWithPercent(total, OpenAIIncompleteInputCacheReadPercent())
+}
+
+// incompleteCacheReadTokens is the legacy Anthropic/Gemini cache read share of an
+// estimated input total (for the estimate log lines).
 func incompleteCacheReadTokens(total int) int {
 	return splitIncompleteInput(total).CacheRead
+}
+
+// openAIIncompleteCacheReadTokens is the configured OpenAI-family cache read share
+// of an estimated input total (for the estimate log lines).
+func openAIIncompleteCacheReadTokens(total int) int {
+	return splitOpenAIIncompleteInput(total).CacheRead
 }
 
 // maxIncompleteInputTokens bounds an estimated input. No supported model takes more

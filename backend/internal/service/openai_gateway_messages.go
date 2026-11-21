@@ -991,12 +991,21 @@ func applyCompatIncompleteUsage(c *gin.Context, usage *OpenAIUsage, in compatInc
 		return
 	}
 	var failoverErr *UpstreamFailoverError
-	if in.Cause != nil && errors.As(in.Cause, &failoverErr) {
+	isFailover := in.Cause != nil && errors.As(in.Cause, &failoverErr)
+	// A replayable attempt stays unestimated unless the upstream ended the stream
+	// without a terminal frame: then the accepted request may already have been
+	// billed upstream, so the estimate is kept for the handler to settle only if no
+	// retry succeeds (issue #456). Any other failover is billed by its retry alone.
+	streamEndedWithoutTerminal := isFailover && failoverErr.StreamEndedWithoutTerminal
+	if isFailover && !streamEndedWithoutTerminal {
 		return
 	}
-	if !in.ClientGone && in.OutputEstimate <= 0 {
-		return
-	}
+	// Every other call here ended without a usage report after the upstream accepted
+	// the request. The input that was sent is billed from the request shape even when
+	// no output was produced: an abnormal upstream end does not refund the prompt
+	// (new-api bills the merged prompt at the plain input price), so treating it as
+	// free would leave the operator absorbing the cost (issue #456). Output is billed
+	// only for what was really produced.
 	filledOutput, filledInput := 0, 0
 	if in.OutputEstimate > usage.OutputTokens && usage.OutputTokens <= in.ReplaceOutputUpTo && usage.ImageOutputTokens == 0 {
 		usage.OutputTokens = in.OutputEstimate
@@ -1006,7 +1015,7 @@ func applyCompatIncompleteUsage(c *gin.Context, usage *OpenAIUsage, in compatInc
 	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 &&
 		usage.CacheCreationInputTokens == 0 && usage.ImageInputTokens == 0 {
 		if estimated := estimateRequestInputTokens(requestBody); estimated > 0 {
-			split := splitIncompleteInput(estimated)
+			split := splitOpenAIIncompleteInput(estimated)
 			usage.InputTokens = split.Total
 			usage.CacheReadInputTokens = split.CacheRead
 			usage.CacheReadEstimated = true
@@ -1027,9 +1036,10 @@ func applyCompatIncompleteUsage(c *gin.Context, usage *OpenAIUsage, in compatInc
 		zap.String("model", strings.TrimSpace(in.Model)),
 		zap.String("request_id", in.RequestID),
 		zap.Bool("client_disconnect", in.ClientGone),
+		zap.Bool("stream_ended_without_terminal", streamEndedWithoutTerminal),
 		zap.Int("estimated_output_tokens", filledOutput),
 		zap.Int("estimated_input_tokens", filledInput),
-		zap.Int("estimated_cache_read_tokens", incompleteCacheReadTokens(filledInput)),
+		zap.Int("estimated_cache_read_tokens", openAIIncompleteCacheReadTokens(filledInput)),
 		zap.Error(in.Cause),
 	).Warn("openai_usage.incomplete_stream_estimated")
 }
@@ -1669,8 +1679,11 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		}
 		message := "OpenAI messages stream ended before a terminal event"
 		if !clientOutputStarted {
-			// Nothing reached the client yet: a replayable attempt, never estimated.
-			return resultWithUsage(), s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, nil, message, upstreamModel)
+			// Nothing reached the client yet: replayable. The marked error keeps the
+			// estimate so the attempt bills if no retry succeeds (issue #456).
+			return resultWithUsage(), markOpenAIStreamEndedWithoutTerminal(
+				s.newOpenAIStreamFailoverErrorWithModel(c, account, false, requestID, nil, message, upstreamModel),
+			)
 		}
 		s.recordOpenAIMessagesStreamUpstreamError(c, account, requestID, "stream_missing_terminal", message)
 		return finishIncomplete(fmt.Errorf("stream usage incomplete: missing terminal event"))
@@ -1709,7 +1722,14 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		}
 		if err := scanner.Err(); err != nil {
 			handleScanErr(err)
-			return finishIncomplete(fmt.Errorf("stream usage incomplete: %w", err))
+			gone := clientDisconnected || watch.Gone() ||
+				errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+			return s.openAICompatStreamEnd(c, account, requestID, upstreamModel,
+				"OpenAI messages stream disconnected before completion",
+				!gone && !clientOutputStarted,
+				fmt.Errorf("stream usage incomplete: %w", err),
+				finishIncomplete,
+			)
 		}
 		if frame, ok := parser.Finish(); ok {
 			if strings.TrimSpace(frame.Data) == "[DONE]" {
@@ -1782,7 +1802,14 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			}
 			if ev.err != nil {
 				handleScanErr(ev.err)
-				return finishIncomplete(fmt.Errorf("stream usage incomplete: %w", ev.err))
+				gone := clientDisconnected || watch.Gone() ||
+					errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded)
+				return s.openAICompatStreamEnd(c, account, requestID, upstreamModel,
+					"OpenAI messages stream disconnected before completion",
+					!gone && !clientOutputStarted,
+					fmt.Errorf("stream usage incomplete: %w", ev.err),
+					finishIncomplete,
+				)
 			}
 			lastDataAt = time.Now()
 			line := ev.line
