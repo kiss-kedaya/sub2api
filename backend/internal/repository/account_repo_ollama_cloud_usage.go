@@ -57,6 +57,14 @@ func (r *accountRepository) ListOllamaCloudUsageGroupAccounts(ctx context.Contex
 	if len(keys) == 0 {
 		return []service.Account{}, nil
 	}
+	encodedKeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		encoded, encErr := service.EncryptCredentialComparisonValue(r.credentialVault, "api_key", key)
+		if encErr != nil {
+			return nil, encErr
+		}
+		encodedKeys = append(encodedKeys, encoded)
+	}
 	rows, err := r.sql.QueryContext(ctx, `
 		SELECT id
 		FROM accounts
@@ -64,7 +72,7 @@ func (r *accountRepository) ListOllamaCloudUsageGroupAccounts(ctx context.Contex
 			AND `+ollamaCloudUsageEligibleSQL+`
 			AND credentials ->> 'api_key' = ANY($1)
 		ORDER BY id
-	`, pq.Array(keys))
+	`, pq.Array(encodedKeys))
 	if err != nil {
 		return nil, err
 	}
@@ -186,15 +194,19 @@ func (r *accountRepository) updateOllamaCloudUsageGroup(
 	if !ok || apiKey == "" {
 		return service.ErrOllamaCloudUsageAccountInvalid
 	}
+	apiKeyCipher, err := service.EncryptCredentialComparisonValue(r.credentialVault, "api_key", apiKey)
+	if err != nil {
+		return err
+	}
 	apply := func(txCtx context.Context, client *dbent.Client) error {
-		matchesProxy, err := lockAndMatchProbeProxyIdentity(txCtx, client, account)
+		matchesProxy, err := r.lockAndMatchProbeProxyIdentity(txCtx, client, account)
 		if err != nil {
 			return err
 		}
 		if !matchesProxy {
 			return service.ErrOllamaCloudUsageIdentityChanged
 		}
-		members, err := lockOllamaCloudUsageGroup(txCtx, client, account, apiKey)
+		members, err := r.lockOllamaCloudUsageGroup(txCtx, client, account, apiKeyCipher)
 		if err != nil {
 			return err
 		}
@@ -281,13 +293,13 @@ func (r *accountRepository) updateOllamaCloudUsageGroup(
 	return tx.Commit()
 }
 
-func lockOllamaCloudUsageGroup(
+func (r *accountRepository) lockOllamaCloudUsageGroup(
 	ctx context.Context,
 	client *dbent.Client,
 	account *service.Account,
 	apiKey string,
 ) ([]lockedOllamaCloudUsageMember, error) {
-	credentials, err := json.Marshal(normalizeJSONMap(account.Credentials))
+	credentials, err := r.wireCredentialsJSON(normalizeJSONMap(account.Credentials))
 	if err != nil {
 		return nil, err
 	}

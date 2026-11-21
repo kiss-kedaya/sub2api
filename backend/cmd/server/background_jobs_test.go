@@ -12,6 +12,7 @@ func TestStartOptionalBackgroundServicesDisabled(t *testing.T) {
 	startOptionalBackgroundServices(
 		func(context.Context) error { pluginStarted = true; return nil },
 		func(context.Context) error { promptAuditStarted = true; return nil },
+		nil,
 	)
 
 	if pluginStarted || promptAuditStarted {
@@ -27,6 +28,7 @@ func TestStartOptionalBackgroundServicesDefault(t *testing.T) {
 	startOptionalBackgroundServices(
 		func(context.Context) error { pluginStarted = true; return nil },
 		func(context.Context) error { promptAuditStarted = true; return nil },
+		nil,
 	)
 
 	if !pluginStarted || !promptAuditStarted {
@@ -42,6 +44,7 @@ func TestCryptoAdminTestModeDisablesOptionalBackgroundServices(t *testing.T) {
 	startOptionalBackgroundServices(
 		func(context.Context) error { pluginStarted = true; return nil },
 		func(context.Context) error { promptAuditStarted = true; return nil },
+		nil,
 	)
 
 	if pluginStarted || promptAuditStarted {

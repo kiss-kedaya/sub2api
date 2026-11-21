@@ -670,7 +670,11 @@ func ProxyWithAccountCountFromService(p *service.ProxyWithAccountCount) *ProxyWi
 }
 
 // ProxyFromServiceAdmin converts a service Proxy to AdminProxy DTO for admin users.
-// It includes the password field - user-facing endpoints must not use this.
+//
+// The stored password is encrypted at rest and is never projected to the
+// browser: list/detail only report whether a password is configured. Plaintext
+// export stays on the step-up protected /proxies/data endpoint, which uses a
+// dedicated DTO.
 func ProxyFromServiceAdmin(p *service.Proxy) *AdminProxy {
 	if p == nil {
 		return nil
@@ -680,8 +684,8 @@ func ProxyFromServiceAdmin(p *service.Proxy) *AdminProxy {
 		return nil
 	}
 	return &AdminProxy{
-		Proxy:    *base,
-		Password: p.Password,
+		Proxy:       *base,
+		HasPassword: p.Password != "",
 	}
 }
 

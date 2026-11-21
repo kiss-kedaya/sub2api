@@ -156,23 +156,11 @@
           </template>
 
           <template #cell-auth="{ row }">
-            <div v-if="row.username || row.password" class="flex items-center gap-1">
+            <div v-if="row.username || row.has_password" class="flex items-center gap-1">
               <div class="flex flex-col text-xs">
                 <span v-if="row.username" class="text-default">{{ row.username }}</span>
-                <span v-if="row.password" class="font-mono text-muted">
-                  {{ visiblePasswordIds.has(row.id) ? row.password : '••••••' }}
-                </span>
+                <span v-if="row.has_password" class="font-mono text-muted">••••••</span>
               </div>
-              <UButton
-                v-if="row.password"
-                color="neutral"
-                variant="ghost"
-                size="xs"
-                square
-                :icon="visiblePasswordIds.has(row.id) ? 'i-lucide-eye-off' : 'i-lucide-eye'"
-                :aria-label="t('admin.proxies.password')"
-                @click.stop="visiblePasswordIds.has(row.id) ? visiblePasswordIds.delete(row.id) : visiblePasswordIds.add(row.id)"
-              />
             </div>
             <span v-else class="text-dimmed">-</span>
           </template>
@@ -775,7 +763,6 @@ const editStatusOptions = computed(() => [
 ])
 
 const proxies = ref<Proxy[]>([])
-const visiblePasswordIds = reactive(new Set<number>())
 const loading = ref(false)
 const searchQuery = ref('')
 const filters = reactive({
@@ -1056,8 +1043,9 @@ const parseBatchInput = () => {
       continue
     }
 
-    // Check for duplicates (same host:port:username:password)
-    const key = `${parsed.host}:${parsed.port}:${parsed.username}:${parsed.password}`
+    // Check for duplicates (same host:port:username). The stored password is no
+    // longer readable from the API, so it cannot participate in the comparison.
+    const key = `${parsed.host}:${parsed.port}:${parsed.username}`
     if (seen.has(key)) {
       duplicate++
       continue
@@ -1758,12 +1746,10 @@ const closeAccountsModal = () => {
 
 // ── Proxy URL copy ──
 function buildAuthPart(row: any): string {
+  // Proxy passwords are encrypted at rest and never leave the server, so a
+  // copied URL can only carry the username.
   const user = row.username ? encodeURIComponent(row.username) : ''
-  const pass = row.password ? encodeURIComponent(row.password) : ''
-  if (user && pass) return `${user}:${pass}@`
-  if (user) return `${user}@`
-  if (pass) return `:${pass}@`
-  return ''
+  return user ? `${user}@` : ''
 }
 
 function buildProxyUrl(row: any): string {
@@ -1771,7 +1757,7 @@ function buildProxyUrl(row: any): string {
 }
 
 function getCopyFormats(row: any) {
-  const hasAuth = row.username || row.password
+  const hasAuth = row.username || row.has_password
   const fullUrl = buildProxyUrl(row)
   const formats = [
     { label: fullUrl, value: fullUrl },

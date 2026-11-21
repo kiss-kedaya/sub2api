@@ -149,6 +149,9 @@ type usageLogRepository struct {
 	client          *dbent.Client
 	sql             sqlExecutor
 	db              *sql.DB
+	// credentialVault decrypts account credentials for display. Nil keeps legacy
+	// plaintext fixtures working; encrypted rows fail closed.
+	credentialVault service.SecretVault
 
 	createBatchOnce      sync.Once
 	createBatchCh        chan usageLogCreateRequest
@@ -166,9 +169,10 @@ type usageLogRepository struct {
 // NewUsageLogRepository builds the usage log repository. rdb and cfg feed the
 // short-TTL stats cache; both may be nil/unset, in which case every aggregate
 // reads the database directly.
-func NewUsageLogRepository(client *dbent.Client, sqlDB *sql.DB, rdb *redis.Client, cfg *config.Config) service.UsageLogRepository {
+func NewUsageLogRepository(client *dbent.Client, sqlDB *sql.DB, rdb *redis.Client, cfg *config.Config, vault service.SecretVault) service.UsageLogRepository {
 	repo := newUsageLogRepositoryWithSQL(client, sqlDB)
 	repo.statsCache = newUsageStatsCache(rdb, cfg)
+	repo.credentialVault = vault
 	return repo
 }
 
