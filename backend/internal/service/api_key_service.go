@@ -24,8 +24,11 @@ import (
 )
 
 var (
-	ErrAPIKeyNotFound       = infraerrors.NotFound("API_KEY_NOT_FOUND", "api key not found")
-	ErrGroupNotAllowed      = infraerrors.Forbidden("GROUP_NOT_ALLOWED", "user is not allowed to bind this group")
+	ErrAPIKeyNotFound  = infraerrors.NotFound("API_KEY_NOT_FOUND", "api key not found")
+	ErrGroupNotAllowed = infraerrors.Forbidden("GROUP_NOT_ALLOWED", "user is not allowed to bind this group")
+	// ErrAPIKeyGroupRequired 用于「实例里已经有可分配分组，却要建一把无分组 key」。
+	// 无分组 key 在网关侧没有路由，等于废 key，因此在创建入口直接拒绝。
+	ErrAPIKeyGroupRequired  = infraerrors.BadRequest("API_KEY_GROUP_REQUIRED", "an API key must bind an available group")
 	ErrAPIKeyExists         = infraerrors.Conflict("API_KEY_EXISTS", "api key already exists")
 	ErrAPIKeyTooShort       = infraerrors.BadRequest("API_KEY_TOO_SHORT", "api key must be at least 16 characters")
 	ErrAPIKeyTooLong        = infraerrors.BadRequest("API_KEY_TOO_LONG", fmt.Sprintf("api key must be at most %d characters", MaxAPIKeyCredentialBytes))
@@ -619,9 +622,21 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 	}
 
-	routeIDs, primaryGroupID, err := s.validateAPIKeyGroupRoutes(ctx, user, req.GroupID, req.GroupIDs)
+	routeIDs, primaryGroupID, primaryGroup, err := s.validateAPIKeyGroupRoutes(ctx, user, req.GroupID, req.GroupIDs)
 	if err != nil {
 		return nil, err
+	}
+	// 无分组 key 在网关侧没有可用路由（列表里显示「未分组」、使用向导也会卡住），
+	// 相当于一把废 key。实例里只要还有可分配的分组就拒绝创建；只有在全新实例
+	// （一个活跃分组都没有）时才放行，避免初始化阶段完全建不了 key。
+	if len(routeIDs) == 0 {
+		hasGroups, err := s.instanceHasActiveGroups(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if hasGroups {
+			return nil, ErrAPIKeyGroupRequired
+		}
 	}
 	req.GroupID = primaryGroupID
 
@@ -704,11 +719,30 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		return nil, err
 	}
 	apiKey.RouteGroupIDs = persistedRouteGroupIDs(routeIDs)
+	if primaryGroup != nil {
+		// 回执与列表行保持同构：列表接口用 WithGroup 预加载分组，创建回执缺 group 时，
+		// 前端乐观插入的行在「立即使用密钥」里会被误判成「尚未分配分组」。
+		apiKey.Group = primaryGroup
+	}
 
 	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 	s.compileAPIKeyIPRules(apiKey)
 
 	return apiKey, nil
+}
+
+// instanceHasActiveGroups 报告实例里是否已经存在可分配的分组。
+// 创建无分组 key 之前用它判断：有分组就拒绝，全新实例才放行。
+func (s *APIKeyService) instanceHasActiveGroups(ctx context.Context) (bool, error) {
+	if s == nil || s.groupRepo == nil {
+		// 裁剪装配/单测里没有分组仓储时保持旧行为，不在创建入口阻断。
+		return false, nil
+	}
+	groups, err := s.groupRepo.ListActive(ctx)
+	if err != nil {
+		return false, fmt.Errorf("list active groups: %w", err)
+	}
+	return len(groups) > 0, nil
 }
 
 // List 获取用户的API Key列表
@@ -1038,7 +1072,7 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		if req.GroupIDs != nil {
 			incomingIDs = *req.GroupIDs
 		}
-		routeIDs, primaryGroupID, err := s.validateAPIKeyGroupRoutes(ctx, user, req.GroupID, incomingIDs)
+		routeIDs, primaryGroupID, primaryGroup, err := s.validateAPIKeyGroupRoutes(ctx, user, req.GroupID, incomingIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -1050,6 +1084,10 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 			return nil, err
 		}
 		apiKey.RouteGroupIDs = persistedRouteGroupIDs(routeIDs)
+		if primaryGroup != nil {
+			// 轮换/编辑回执也要带分组，前端才会用新分组渲染「使用密钥」向导。
+			apiKey.Group = primaryGroup
+		}
 	}
 
 	if req.Status != nil {

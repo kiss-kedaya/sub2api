@@ -618,24 +618,31 @@ func persistedRouteGroupIDs(routeIDs []int64) []int64 {
 	return out
 }
 
-func (s *APIKeyService) validateAPIKeyGroupRoutes(ctx context.Context, user *User, groupID *int64, groupIDs []int64) ([]int64, *int64, error) {
+// validateAPIKeyGroupRoutes 校验请求里的分组绑定，并回传主分组对象。
+// 主分组对象用于让创建/更新回执带上完整 group：列表接口用 WithGroup 预加载，
+// 回执缺了 group 时前端乐观插入的行在「立即使用密钥」时会被误判成无分组。
+func (s *APIKeyService) validateAPIKeyGroupRoutes(ctx context.Context, user *User, groupID *int64, groupIDs []int64) ([]int64, *int64, *Group, error) {
 	routeIDs, primary, err := normalizeAPIKeyGroupIDs(groupID, groupIDs)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if len(routeIDs) == 0 {
-		return nil, primary, nil
+		return nil, primary, nil, nil
 	}
+	var primaryGroup *Group
 	for _, id := range routeIDs {
 		group, err := s.groupRepo.GetByID(ctx, id)
 		if err != nil {
-			return nil, nil, fmt.Errorf("get group: %w", err)
+			return nil, nil, nil, fmt.Errorf("get group: %w", err)
 		}
 		if !s.canUserBindGroup(ctx, user, group) {
-			return nil, nil, ErrGroupNotAllowed
+			return nil, nil, nil, ErrGroupNotAllowed
+		}
+		if primary != nil && *primary == id {
+			primaryGroup = group
 		}
 	}
-	return routeIDs, primary, nil
+	return routeIDs, primary, primaryGroup, nil
 }
 
 func (s *APIKeyService) replaceAPIKeyGroupRoutes(ctx context.Context, apiKeyID int64, routeIDs []int64) error {

@@ -1170,3 +1170,44 @@ describe('UseKeyModal', () => {
     }
   )
 })
+
+describe('UseKeyModal no-group warning', () => {
+  const mountModal = (platform: 'deepseek' | null) =>
+    mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-no-group-test',
+        baseUrl: 'https://example.com/v1',
+        platform
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+  it('offers a real "assign group" action instead of only text when the key has no group', async () => {
+    const wrapper = mountModal(null)
+
+    expect(wrapper.text()).toContain('keys.useKeyModal.noGroupTitle')
+    expect(wrapper.text()).toContain('keys.useKeyModal.noGroupDescription')
+    const assign = wrapper.get('[data-test="use-key-assign-group"]')
+    expect(assign.text()).toBe('keys.useKeyModal.assignGroup')
+
+    await assign.trigger('click')
+    expect(wrapper.emitted('assign-group')).toHaveLength(1)
+  })
+
+  it('does not warn when the key carries a platform from its group', async () => {
+    const wrapper = mountModal('deepseek')
+
+    expect(wrapper.text()).not.toContain('keys.useKeyModal.noGroupTitle')
+    expect(wrapper.find('[data-test="use-key-assign-group"]').exists()).toBe(false)
+  })
+})
