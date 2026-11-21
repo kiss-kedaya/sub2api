@@ -186,6 +186,8 @@ export default {
       title: 'Plaintext key (shown once)',
       description: 'The server will not return the plaintext again.',
       saveNotice: 'Copy and store it now. Once this dialog closes or the page reloads, the plaintext can no longer be retrieved; if lost, rotate the key.',
+      cannotViewAgain: 'After closing you cannot view it again, and it cannot be recovered from the list or details. If lost, rotate the key.',
+      waitHint: 'Copy and save the key first. This dialog unlocks after at least 1 second so the key is on screen.',
       copy: 'Copy key',
       copied: 'Copied',
       use: 'Use key',

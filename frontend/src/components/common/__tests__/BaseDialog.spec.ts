@@ -81,6 +81,18 @@ describe('BaseDialog', () => {
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
 
+  it('keeps the header close button visible but inert when closeButtonDisabled is set', async () => {
+    const wrapper = mount(BaseDialog, {
+      attachTo: document.body,
+      props: { show: true, title: 'One-time receipt', closeButtonDisabled: true }
+    })
+    await flushPromises()
+    const close = document.querySelector<HTMLButtonElement>('.base-dialog-header [data-slot="close"]')!
+    expect(close.disabled).toBe(true)
+    close.click()
+    expect(wrapper.emitted('close')).toBeUndefined()
+  })
+
   it('makes the overlay the portal target of Nuxt UI popovers opened inside it', async () => {
     let target: Ref<string | HTMLElement | boolean> | undefined
     const Probe = defineComponent({ setup() { target = inject(portalTargetInjectionKey); return () => h('span') } })

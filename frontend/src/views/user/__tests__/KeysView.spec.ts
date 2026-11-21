@@ -322,6 +322,15 @@ const getButtonByText = (wrapper: VueWrapper, text: string) => {
   return button
 }
 
+const readBrowserStorage = () => {
+  const read = (storage: Storage) =>
+    Array.from({ length: storage.length }, (_, index) => {
+      const key = storage.key(index)
+      return key === null ? '' : `${key}=${storage.getItem(key) ?? ''}`
+    })
+  return [...read(localStorage), ...read(sessionStorage)].join('\n')
+}
+
 describe('user KeysView column settings', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -398,6 +407,64 @@ describe('user KeysView column settings', () => {
     const wrapper = await mountView()
     expect(wrapper.get('[data-test="key-cell"]').text()).toBe('sk-test-****-key')
     expect(wrapper.text()).not.toContain('sk-test-key')
+    wrapper.unmount()
+  })
+
+  it('renders no copy or save action next to the masked key in the list', async () => {
+    const wrapper = await mountView()
+    const keyCell = wrapper.get('[data-test="key-cell"]')
+    // The cell is plain server-masked text: no per-row copy/save button.
+    expect(keyCell.find('button').exists()).toBe(false)
+    expect(keyCell.find('[data-test="icon"]').exists()).toBe(false)
+    expect(keyCell.text()).toBe('sk-test-****-key')
+    expect(copyToClipboard).not.toHaveBeenCalled()
+    // No bulk copy/export entry appears anywhere on the page either.
+    expect(wrapper.findAll('button').map((button) => button.text()).join('|')).not.toMatch(/copy|save|export/i)
+    expect(wrapper.findAll('[data-test="icon"]').map((icon) => icon.text())).not.toContain('i-lucide-copy')
+    wrapper.unmount()
+  })
+
+  it('keeps the one-time receipt on screen for a second and clears the plaintext on close', async () => {
+    const secret = 'sk-live-abc123'
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
+    createKey.mockResolvedValue({ ...createApiKey(), id: 77, name: 'once key', group_id: 3, group_ids: [3], key: secret })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('once key')
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+    await nextTick()
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    // The receipt shows the full plaintext exactly once.
+    expect(wrapper.text()).toContain(secret)
+    expect(wrapper.get('[data-test="api-key-secret-wait-hint"]').exists()).toBe(true)
+    const done = wrapper.get('[data-test="api-key-secret-done"]')
+    expect(done.attributes('disabled')).toBeDefined()
+
+    // During the forced window even the footer close action is inert.
+    ;(done.element as HTMLButtonElement).click()
+    await nextTick()
+    expect(wrapper.text()).toContain(secret)
+
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    await nextTick()
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="api-key-secret-done"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+    await flushPromises()
+
+    // Closing drops the plaintext from component state and the DOM...
+    expect(wrapper.find('[data-test="api-key-secret-dialog"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain(secret)
+    // ...leaves the masked row in the list...
+    const cells = wrapper.findAll('[data-test="key-cell"]').map((cell) => cell.text())
+    expect(cells.length).toBeGreaterThan(0)
+    expect(cells.every((text) => text && !text.includes(secret))).toBe(true)
+    // ...and never writes the plaintext to browser storage.
+    expect(readBrowserStorage()).not.toContain(secret)
     wrapper.unmount()
   })
 
