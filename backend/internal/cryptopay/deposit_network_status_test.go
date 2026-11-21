@@ -104,13 +104,17 @@ func TestDepositNetworkStatusFreshSharedPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
 			q := mock.ExpectQuery("SELECT value, updated_at FROM settings WHERE key").WithArgs(SettingKeyCryptoConfig)
 			if tc.raw == "" {
 				q.WillReturnError(sql.ErrNoRows)
 			} else {
 				q.WillReturnRows(sqlmock.NewRows([]string{"value", "updated_at"}).AddRow(tc.raw, tc.updatedAt))
 			}
+			mock.ExpectClose()
+			t.Cleanup(func() {
+				require.NoError(t, db.Close())
+				require.NoError(t, mock.ExpectationsWereMet())
+			})
 			evidenceAt := observed.Add(-5 * time.Second)
 			if tc.name == "fresh confirmed stalled" || tc.name == "stale at TTL" || tc.name == "same config after edit" || tc.name == "previous config fingerprint" {
 				evidenceAt = observed.Add(-chainStalledAfter)
@@ -139,7 +143,6 @@ func TestDepositNetworkStatusFreshSharedPolicy(t *testing.T) {
 				}
 			}
 			require.Zero(t, store.writes, "a user GET never writes the health cache")
-			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
 }
