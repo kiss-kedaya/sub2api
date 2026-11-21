@@ -100,6 +100,11 @@ func LastUsedAt(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldLastUsedAt, v))
 }
 
+// KeyRotatedAt applies equality check predicate on the "key_rotated_at" field. It's identical to KeyRotatedAtEQ.
+func KeyRotatedAt(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldKeyRotatedAt, v))
+}
+
 // AutoBlockDatacenterIps applies equality check predicate on the "auto_block_datacenter_ips" field. It's identical to AutoBlockDatacenterIpsEQ.
 func AutoBlockDatacenterIps(v bool) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldAutoBlockDatacenterIps, v))
@@ -603,6 +608,56 @@ func LastUsedAtIsNil() predicate.APIKey {
 // LastUsedAtNotNil applies the NotNil predicate on the "last_used_at" field.
 func LastUsedAtNotNil() predicate.APIKey {
 	return predicate.APIKey(sql.FieldNotNull(FieldLastUsedAt))
+}
+
+// KeyRotatedAtEQ applies the EQ predicate on the "key_rotated_at" field.
+func KeyRotatedAtEQ(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldKeyRotatedAt, v))
+}
+
+// KeyRotatedAtNEQ applies the NEQ predicate on the "key_rotated_at" field.
+func KeyRotatedAtNEQ(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldKeyRotatedAt, v))
+}
+
+// KeyRotatedAtIn applies the In predicate on the "key_rotated_at" field.
+func KeyRotatedAtIn(vs ...time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldKeyRotatedAt, vs...))
+}
+
+// KeyRotatedAtNotIn applies the NotIn predicate on the "key_rotated_at" field.
+func KeyRotatedAtNotIn(vs ...time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldKeyRotatedAt, vs...))
+}
+
+// KeyRotatedAtGT applies the GT predicate on the "key_rotated_at" field.
+func KeyRotatedAtGT(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldKeyRotatedAt, v))
+}
+
+// KeyRotatedAtGTE applies the GTE predicate on the "key_rotated_at" field.
+func KeyRotatedAtGTE(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldKeyRotatedAt, v))
+}
+
+// KeyRotatedAtLT applies the LT predicate on the "key_rotated_at" field.
+func KeyRotatedAtLT(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldKeyRotatedAt, v))
+}
+
+// KeyRotatedAtLTE applies the LTE predicate on the "key_rotated_at" field.
+func KeyRotatedAtLTE(v time.Time) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldKeyRotatedAt, v))
+}
+
+// KeyRotatedAtIsNil applies the IsNil predicate on the "key_rotated_at" field.
+func KeyRotatedAtIsNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldIsNull(FieldKeyRotatedAt))
+}
+
+// KeyRotatedAtNotNil applies the NotNil predicate on the "key_rotated_at" field.
+func KeyRotatedAtNotNil() predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotNull(FieldKeyRotatedAt))
 }
 
 // IPWhitelistIsNil applies the IsNil predicate on the "ip_whitelist" field.

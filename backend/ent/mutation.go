@@ -118,6 +118,7 @@ type APIKeyMutation struct {
 	name                            *string
 	status                          *string
 	last_used_at                    *time.Time
+	key_rotated_at                  *time.Time
 	ip_whitelist                    *[]string
 	appendip_whitelist              []string
 	ip_blacklist                    *[]string
@@ -619,6 +620,55 @@ func (m *APIKeyMutation) LastUsedAtCleared() bool {
 func (m *APIKeyMutation) ResetLastUsedAt() {
 	m.last_used_at = nil
 	delete(m.clearedFields, apikey.FieldLastUsedAt)
+}
+
+// SetKeyRotatedAt sets the "key_rotated_at" field.
+func (m *APIKeyMutation) SetKeyRotatedAt(t time.Time) {
+	m.key_rotated_at = &t
+}
+
+// KeyRotatedAt returns the value of the "key_rotated_at" field in the mutation.
+func (m *APIKeyMutation) KeyRotatedAt() (r time.Time, exists bool) {
+	v := m.key_rotated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKeyRotatedAt returns the old "key_rotated_at" field's value of the APIKey entity.
+// If the APIKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *APIKeyMutation) OldKeyRotatedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKeyRotatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKeyRotatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKeyRotatedAt: %w", err)
+	}
+	return oldValue.KeyRotatedAt, nil
+}
+
+// ClearKeyRotatedAt clears the value of the "key_rotated_at" field.
+func (m *APIKeyMutation) ClearKeyRotatedAt() {
+	m.key_rotated_at = nil
+	m.clearedFields[apikey.FieldKeyRotatedAt] = struct{}{}
+}
+
+// KeyRotatedAtCleared returns if the "key_rotated_at" field was cleared in this mutation.
+func (m *APIKeyMutation) KeyRotatedAtCleared() bool {
+	_, ok := m.clearedFields[apikey.FieldKeyRotatedAt]
+	return ok
+}
+
+// ResetKeyRotatedAt resets all changes to the "key_rotated_at" field.
+func (m *APIKeyMutation) ResetKeyRotatedAt() {
+	m.key_rotated_at = nil
+	delete(m.clearedFields, apikey.FieldKeyRotatedAt)
 }
 
 // SetIPWhitelist sets the "ip_whitelist" field.
@@ -1701,7 +1751,7 @@ func (m *APIKeyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *APIKeyMutation) Fields() []string {
-	fields := make([]string, 0, 27)
+	fields := make([]string, 0, 28)
 	if m.created_at != nil {
 		fields = append(fields, apikey.FieldCreatedAt)
 	}
@@ -1728,6 +1778,9 @@ func (m *APIKeyMutation) Fields() []string {
 	}
 	if m.last_used_at != nil {
 		fields = append(fields, apikey.FieldLastUsedAt)
+	}
+	if m.key_rotated_at != nil {
+		fields = append(fields, apikey.FieldKeyRotatedAt)
 	}
 	if m.ip_whitelist != nil {
 		fields = append(fields, apikey.FieldIPWhitelist)
@@ -1809,6 +1862,8 @@ func (m *APIKeyMutation) Field(name string) (ent.Value, bool) {
 		return m.Status()
 	case apikey.FieldLastUsedAt:
 		return m.LastUsedAt()
+	case apikey.FieldKeyRotatedAt:
+		return m.KeyRotatedAt()
 	case apikey.FieldIPWhitelist:
 		return m.IPWhitelist()
 	case apikey.FieldIPBlacklist:
@@ -1872,6 +1927,8 @@ func (m *APIKeyMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldStatus(ctx)
 	case apikey.FieldLastUsedAt:
 		return m.OldLastUsedAt(ctx)
+	case apikey.FieldKeyRotatedAt:
+		return m.OldKeyRotatedAt(ctx)
 	case apikey.FieldIPWhitelist:
 		return m.OldIPWhitelist(ctx)
 	case apikey.FieldIPBlacklist:
@@ -1979,6 +2036,13 @@ func (m *APIKeyMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetLastUsedAt(v)
+		return nil
+	case apikey.FieldKeyRotatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKeyRotatedAt(v)
 		return nil
 	case apikey.FieldIPWhitelist:
 		v, ok := value.([]string)
@@ -2256,6 +2320,9 @@ func (m *APIKeyMutation) ClearedFields() []string {
 	if m.FieldCleared(apikey.FieldLastUsedAt) {
 		fields = append(fields, apikey.FieldLastUsedAt)
 	}
+	if m.FieldCleared(apikey.FieldKeyRotatedAt) {
+		fields = append(fields, apikey.FieldKeyRotatedAt)
+	}
 	if m.FieldCleared(apikey.FieldIPWhitelist) {
 		fields = append(fields, apikey.FieldIPWhitelist)
 	}
@@ -2296,6 +2363,9 @@ func (m *APIKeyMutation) ClearField(name string) error {
 		return nil
 	case apikey.FieldLastUsedAt:
 		m.ClearLastUsedAt()
+		return nil
+	case apikey.FieldKeyRotatedAt:
+		m.ClearKeyRotatedAt()
 		return nil
 	case apikey.FieldIPWhitelist:
 		m.ClearIPWhitelist()
@@ -2349,6 +2419,9 @@ func (m *APIKeyMutation) ResetField(name string) error {
 		return nil
 	case apikey.FieldLastUsedAt:
 		m.ResetLastUsedAt()
+		return nil
+	case apikey.FieldKeyRotatedAt:
+		m.ResetKeyRotatedAt()
 		return nil
 	case apikey.FieldIPWhitelist:
 		m.ResetIPWhitelist()

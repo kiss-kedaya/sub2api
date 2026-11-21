@@ -285,7 +285,7 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 		builder.SetStatus(key.Status)
 	}
 	if fields.Key {
-		builder.SetKey(key.Key)
+		builder.SetKey(key.Key).SetKeyRotatedAt(now)
 	}
 	if fields.Quota {
 		builder.SetQuota(key.Quota)
@@ -376,6 +376,9 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 
 	// 使用同一时间戳回填，避免并发删除导致二次查询失败。
 	key.UpdatedAt = now
+	if fields.Key {
+		key.KeyRotatedAt = &now
+	}
 	return nil
 }
 
@@ -1057,6 +1060,7 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 		LastUsedAt:       m.LastUsedAt,
 		CreatedAt:        m.CreatedAt,
 		UpdatedAt:        m.UpdatedAt,
+		KeyRotatedAt:     m.KeyRotatedAt,
 		GroupID:          m.GroupID,
 		Quota:            m.Quota,
 		ConcurrencyLimit: m.ConcurrencyLimit,

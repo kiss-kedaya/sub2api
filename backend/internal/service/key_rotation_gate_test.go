@@ -226,3 +226,16 @@ func TestIsKeyRotationCompliant(t *testing.T) {
 	require.False(t, IsKeyRotationCompliant(APIKey{CreatedAt: cutoff.Add(-time.Second)}, cutoff))
 	require.False(t, IsKeyRotationCompliant(APIKey{CreatedAt: cutoff.Add(-time.Second), IPWhitelist: []string{}}, cutoff))
 }
+
+func TestKeyRotationGateUsesSuccessfulRotationNotUpdateTime(t *testing.T) {
+	cutoff := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
+	old, newTime := cutoff.Add(-time.Hour), cutoff.Add(time.Hour)
+	key := APIKey{CreatedAt: old, UpdatedAt: newTime}
+	require.False(t, IsKeyRotationCompliant(key, cutoff), "ordinary metadata or usage updates do not rotate a key")
+	key.KeyRotatedAt = &old
+	require.False(t, IsKeyRotationCompliant(key, cutoff), "rotation before the threshold is not enough")
+	key.KeyRotatedAt = &cutoff
+	require.True(t, IsKeyRotationCompliant(key, cutoff))
+	key.KeyRotatedAt = &newTime
+	require.True(t, IsKeyRotationCompliant(key, cutoff))
+}
