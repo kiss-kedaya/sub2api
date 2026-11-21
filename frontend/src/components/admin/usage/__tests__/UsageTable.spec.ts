@@ -495,14 +495,10 @@ describe('admin UsageTable tooltip', () => {
     const triggers = wrapper.findAll('.group.relative')
     await triggers[triggers.length - 1].trigger('mouseenter')
     const amounts = wrapper.get('.fixed').findAll('span').map(span => span.text())
-    // token 维度不再按图片/文本分价（2026-11-21）：图片输入/输出费用行不再展示，
-    // 其余费用行保留八位小数；按张计费的图片单价行只出现在 image 模式。
     expect(amounts).toEqual(expect.arrayContaining([
-      '$0.00000001', '$0.00000003',
+      '$0.00000001', '$0.00000002', '$0.00000003', '$0.00000004',
       '$0.00000005', '$0.00000006', '$0.00000022', '$0.00000042', '$0.00000018',
     ]))
-    expect(amounts).not.toContain('$0.00000002')
-    expect(amounts).not.toContain('$0.00000004')
     if (billingMode === 'image') expect(amounts).toContain('$0.00000011')
     wrapper.unmount()
   })

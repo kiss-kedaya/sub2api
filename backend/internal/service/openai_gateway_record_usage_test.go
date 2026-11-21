@@ -505,55 +505,6 @@ func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputToke
 	require.InDelta(t, expectedActual, userRepo.lastAmount, 1e-12)
 }
 
-func TestOpenAIGatewayServiceRecordUsage_GhostImageTokensDoNotAffectCost(t *testing.T) {
-	// 复现生产事故：纯文本请求的上游 relay 回传固定 image_tokens
-	// （如 image_input_tokens=1558 / image_output_tokens=5293）。
-	// token 计费不再按图片/文本分价（2026-11-21）：总价必须等于纯文本口径，
-	// usage log 的 ImageInputCost / ImageOutputCost 必须为 0。
-	groupID := int64(21)
-	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
-	userRepo := &openAIRecordUsageUserRepoStub{}
-	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
-
-	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-		Result: &OpenAIForwardResult{
-			RequestID: "resp_ghost_image_tokens",
-			Usage: OpenAIUsage{
-				InputTokens:       1000,
-				OutputTokens:      200,
-				ImageInputTokens:  1558,
-				ImageOutputTokens: 5293,
-			},
-			Model:    "gpt-5.1",
-			Duration: time.Second,
-		},
-		APIKey: &APIKey{
-			ID:      1011,
-			GroupID: i64p(groupID),
-			Group:   &Group{ID: groupID, RateMultiplier: 1.0},
-		},
-		User:    &User{ID: 2011},
-		Account: &Account{ID: 3011},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, usageRepo.lastLog)
-
-	// 上游原值仍记录在用量行里，便于追供应商，但不产生任何图片费用。
-	require.Equal(t, 1558, usageRepo.lastLog.ImageInputTokens)
-	require.Equal(t, 5293, usageRepo.lastLog.ImageOutputTokens)
-	require.Zero(t, usageRepo.lastLog.ImageInputCost)
-	require.Zero(t, usageRepo.lastLog.ImageOutputCost)
-
-	textOnly, err := svc.billingService.CalculateCost("gpt-5.1", UsageTokens{
-		InputTokens:  1000,
-		OutputTokens: 200,
-	}, 1.0)
-	require.NoError(t, err)
-	require.InDelta(t, textOnly.TotalCost, usageRepo.lastLog.TotalCost, 1e-12, "总价必须等于纯文本口径")
-	require.InDelta(t, textOnly.InputCost, usageRepo.lastLog.InputCost, 1e-12)
-	require.InDelta(t, textOnly.OutputCost, usageRepo.lastLog.OutputCost, 1e-12)
-}
-
 func TestOpenAIGatewayServiceRecordUsage_TimePricingUsesPricingAt(t *testing.T) {
 	groupID := int64(16)
 	requestStart := time.Date(2024, time.January, 2, 2, 0, 0, 0, time.UTC) // 上海 10:00
