@@ -5,10 +5,15 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
+	"regexp"
 	"testing"
+	"time"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+	"github.com/DATA-DOG/go-sqlmock"
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,13 +64,66 @@ func TestPayDownUserDebtSkipsWhenStoreUnavailable(t *testing.T) {
 	require.Zero(t, applied)
 }
 
-func TestIsMissingDebtTableError(t *testing.T) {
-	require.True(t, isMissingDebtTableError(errors.New(`pq: relation "user_debt" does not exist`)))
-	require.True(t, isMissingDebtTableError(errors.New(`ERROR: relation "user_debt" does not exist (SQLSTATE 42P01)`)))
-	require.True(t, isMissingDebtTableError(errors.New("no such table: user_debt")))
-	require.False(t, isMissingDebtTableError(nil))
-	require.False(t, isMissingDebtTableError(errors.New("duplicate key value violates unique constraint")))
-	require.False(t, isMissingDebtTableError(fmt.Errorf("load debt: %w", errors.New("db is closed"))))
+func TestPayDownUserDebtReadsPolicyInCreditTransaction(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		value       *string
+		queryError  bool
+		rowError    bool
+		wantApplied float64
+	}{
+		{name: "disabled", value: new("false")},
+		{name: "default on when no row", wantApplied: 2},
+		{name: "explicitly enabled", value: new("true"), wantApplied: 2},
+		{name: "policy query failure", queryError: true},
+		{name: "policy row failure", rowError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+			db.SetMaxOpenConns(1)
+			client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			mock.ExpectBegin()
+			tx, err := client.Tx(ctx)
+			require.NoError(t, err)
+			defer func() { _ = tx.Rollback() }()
+			readErr := errors.New("temporary settings read failure")
+			setting := mock.ExpectQuery(regexp.QuoteMeta("SELECT value FROM settings WHERE key = $1")).WithArgs(SettingKeyDebtClawbackEnabled)
+			if tc.queryError {
+				setting.WillReturnError(readErr)
+			} else {
+				rows := sqlmock.NewRows([]string{"value"})
+				if tc.value != nil {
+					rows.AddRow(*tc.value)
+				}
+				if tc.rowError {
+					rows.AddRow("true").RowError(0, readErr)
+				}
+				setting.WillReturnRows(rows)
+			}
+			if tc.wantApplied > 0 {
+				mock.ExpectQuery(regexp.QuoteMeta("SELECT amount FROM user_debt WHERE user_id = $1 FOR UPDATE")).
+					WithArgs(int64(42)).WillReturnRows(sqlmock.NewRows([]string{"amount"}).AddRow(2.0))
+				mock.ExpectExec("UPDATE user_debt").WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("INSERT INTO user_debt_clawbacks").
+					WithArgs(int64(42), 2.0, 3.0, DebtClawbackSourceRedeemCode, "fixture").
+					WillReturnResult(sqlmock.NewResult(1, 1))
+			}
+			applied, err := payDownUserDebt(dbent.NewTxContext(ctx, tx), client, 42, 3, DebtClawbackSourceRedeemCode, "fixture")
+			if tc.queryError || tc.rowError {
+				require.ErrorIs(t, err, readErr)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.wantApplied, applied)
+			mock.ExpectRollback()
+			require.NoError(t, tx.Rollback())
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func TestClampDebtClawbackSourceID(t *testing.T) {
