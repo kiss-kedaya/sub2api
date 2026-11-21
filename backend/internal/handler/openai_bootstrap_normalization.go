@@ -26,24 +26,39 @@ func normalizeCodexAutomationBootstrap(body []byte) ([]byte, bool) {
 	return normalizeCodexCallOutputBootstrap(body, isCodexAutomationCandidate, false)
 }
 
-// applyCodexBootstrapNormalizations rewrites call-less Codex bootstrap tool
-// results. Cheap gjson scan first: typical /v1/responses bodies have no
-// automation/delegation items, and a full encoding/json Decoder walk of those
-// bodies was the hottest CPU path on production.
-func applyCodexBootstrapNormalizations(body []byte) (normalized []byte, automationChanged, delegationChanged bool) {
+// codexBootstrapNormalization 记录一次 Codex 客户端引导类条目的归一化结果。
+type codexBootstrapNormalization struct {
+	Body []byte
+	// UntrustedContext: 桌面端/IDE 注入的 call-less 外部上下文 → user 文本。
+	UntrustedContext bool
+	// Automation: 计划任务引导 → user 文本。
+	Automation bool
+	// Delegation: 跨任务委托引导 → user 文本。
+	Delegation bool
+}
+
+// applyCodexBootstrapNormalizations rewrites call-less Codex bootstrap items.
+// Cheap gjson scan first: typical /v1/responses bodies have no untrusted
+// context/automation/delegation items, and a full encoding/json Decoder walk of
+// those bodies was the hottest CPU path on production.
+func applyCodexBootstrapNormalizations(body []byte) codexBootstrapNormalization {
+	result := codexBootstrapNormalization{Body: body}
 	if !codexBootstrapInputLooksRelevant(body) {
-		return body, false, false
+		return result
 	}
-	normalized = body
-	if next, changed := normalizeCodexAutomationBootstrap(normalized); changed {
-		normalized = next
-		automationChanged = true
+	if next, changed := normalizeCodexUntrustedContext(result.Body); changed {
+		result.Body = next
+		result.UntrustedContext = true
 	}
-	if next, changed := normalizeCodexDelegationBootstrap(normalized); changed {
-		normalized = next
-		delegationChanged = true
+	if next, changed := normalizeCodexAutomationBootstrap(result.Body); changed {
+		result.Body = next
+		result.Automation = true
 	}
-	return normalized, automationChanged, delegationChanged
+	if next, changed := normalizeCodexDelegationBootstrap(result.Body); changed {
+		result.Body = next
+		result.Delegation = true
+	}
+	return result
 }
 
 func codexBootstrapInputLooksRelevant(body []byte) bool {
@@ -58,7 +73,9 @@ func codexBootstrapInputLooksRelevant(body []byte) bool {
 		}
 		namespace := item.Get("namespace").String()
 		name := item.Get("name").String()
-		if isCodexDelegationTool(namespace, name) || (namespace == "codex_app" && name == "automation_update") {
+		if isCodexDelegationTool(namespace, name) ||
+			(namespace == "codex_app" && name == "automation_update") ||
+			isCodexUntrustedContextCandidate(namespace, name) {
 			found = true
 			return false
 		}

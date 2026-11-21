@@ -558,13 +558,19 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	} else if changed {
 		body = cappedBody
 	}
-	body, automationChanged, delegationChanged := applyCodexBootstrapNormalizations(body)
-	if automationChanged {
+	bootstrap := applyCodexBootstrapNormalizations(body)
+	body = bootstrap.Body
+	if bootstrap.UntrustedContext {
+		reqLog.Info("openai.codex_untrusted_context_normalized",
+			zap.String("normalization", "call_output_to_user_message"),
+		)
+	}
+	if bootstrap.Automation {
 		reqLog.Info("openai.codex_automation_bootstrap_normalized",
 			zap.String("normalization", "call_output_to_user_message"),
 		)
 	}
-	if delegationChanged {
+	if bootstrap.Delegation {
 		reqLog.Info("openai.codex_delegation_bootstrap_normalized",
 			zap.String("normalization", "call_output_to_user_message"),
 		)
@@ -911,7 +917,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				Scope:            service.GatewayFailureScopeRequest,
 				Reason:           service.OpenAIHTTPContinuationUnsupportedReason,
 				ClientStatusCode: http.StatusBadRequest,
-				ClientMessage:    "previous_response_id requires an OpenAI API-key account for HTTP requests",
+				ClientMessage:    previousResponseIDRequiresAPIKeyMessage,
 			}
 			reqLog.Debug("openai.account_skipped_http_continuation_unsupported",
 				zap.Int64("account_id", account.ID),
@@ -1946,6 +1952,19 @@ func (h *OpenAIGatewayHandler) ensureAnthropicErrorResponse(c *gin.Context, stre
 	return true
 }
 
+const (
+	// functionCallOutputMissingCallIDMessage：HTTP 上无法关联到工具调用的
+	// function_call_output。Codex 的已知上下文注入已在
+	// normalizeCodexUntrustedContext 里还原成 user 文本，走到这里的是未知条目。
+	functionCallOutputMissingCallIDMessage = "function_call_output requires call_id on HTTP requests; unpaired tool outputs are only accepted on Responses WebSocket v2. If this comes from Codex Desktop context, update the client or set [features] untrusted_as_tool_output = false, then retry."
+	// functionCallOutputMissingItemReferenceMessage：有 call_id，但没有配套的
+	// function_call 上下文或覆盖全部 call_id 的 item_reference。
+	functionCallOutputMissingItemReferenceMessage = "function_call_output requires item_reference ids matching each call_id on HTTP requests; otherwise include the matching function_call items or a previous_response_id. Unpaired tool outputs are only accepted on Responses WebSocket v2."
+	// previousResponseIDRequiresAPIKeyMessage：HTTP 续传只支持 OpenAI API-key
+	// 账号；OAuth/SetupToken 上游无法按 response.id 映射。
+	previousResponseIDRequiresAPIKeyMessage = "previous_response_id requires an OpenAI API-key account on HTTP requests; use an API-key account, a Responses WebSocket v2 connection, or resend the full input without previous_response_id"
+)
+
 func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context, body []byte, reqLog *zap.Logger) bool {
 	if !gjson.GetBytes(body, `input.#(type=="function_call_output")`).Exists() {
 		return true
@@ -1956,8 +1975,27 @@ func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context,
 		return true
 	}
 
-	previousResponseID := gjson.GetBytes(body, "previous_response_id").String()
-	if strings.TrimSpace(previousResponseID) != "" || validation.HasToolCallContext {
+	previousResponseID := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
+	if previousResponseID != "" {
+		// HTTP 续传对 OpenAI API-key 账号是支持的：保留 previous_response_id，
+		// 由上游按 response.id 解析历史。OAuth/SetupToken 账号由选号阶段跳过并
+		// 返回明确的 400，不会静默删除续传字段。缺 call_id 的条目原样透传，
+		// 但记录告警，避免“静默丢弃/静默接受”。
+		if validation.HasFunctionCallOutputMissingCallID {
+			reqLog.Warn("openai.request_validation_passthrough",
+				zap.String("reason", "function_call_output_missing_call_id_with_previous_response_id"),
+			)
+		}
+		return true
+	}
+	if validation.HasToolCallContext {
+		// 完整历史回放：带 call_id 的工具调用上下文已在 input 内，缺 call_id 的
+		// 未识别引导条目继续原样透传，由上游决定是否接受。
+		if validation.HasFunctionCallOutputMissingCallID {
+			reqLog.Warn("openai.request_validation_passthrough",
+				zap.String("reason", "function_call_output_missing_call_id_with_tool_call_context"),
+			)
+		}
 		return true
 	}
 
@@ -1965,7 +2003,7 @@ func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context,
 		reqLog.Warn("openai.request_validation_failed",
 			zap.String("reason", "function_call_output_missing_call_id"),
 		)
-		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "function_call_output requires call_id on HTTP requests; continuation via previous_response_id is only supported on Responses WebSocket v2")
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", functionCallOutputMissingCallIDMessage)
 		return false
 	}
 	if validation.HasItemReferenceForAllCallIDs {
@@ -1975,7 +2013,7 @@ func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context,
 	reqLog.Warn("openai.request_validation_failed",
 		zap.String("reason", "function_call_output_missing_item_reference"),
 	)
-	h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "function_call_output requires item_reference ids matching each call_id on HTTP requests; continuation via previous_response_id is only supported on Responses WebSocket v2")
+	h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", functionCallOutputMissingItemReferenceMessage)
 	return false
 }
 
@@ -3645,7 +3683,7 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	if failoverErr.Reason == service.OpenAIHTTPContinuationUnsupportedReason {
 		message := strings.TrimSpace(failoverErr.ClientMessage)
 		if message == "" {
-			message = "previous_response_id requires an OpenAI API-key account for HTTP requests"
+			message = previousResponseIDRequiresAPIKeyMessage
 		}
 		h.handleStreamingAwareError(c, http.StatusBadRequest, "invalid_request_error", message, streamStarted)
 		return
