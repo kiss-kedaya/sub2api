@@ -13,7 +13,7 @@ import (
 // 回填/清空/回滚都在 docs/ops/auth-identity-subject-hash-20261121.md 里人工执行，
 // 迁移本身不能夹带 UPDATE（大表长事务），也必须可以重复执行。
 func TestAuthIdentitySubjectHashMigrationIsAdditiveAndIdempotent(t *testing.T) {
-	const filename = "328_auth_identity_subject_hash.sql"
+	const filename = "329_auth_identity_subject_hash.sql"
 	raw, err := migrations.FS.ReadFile(filename)
 	require.NoError(t, err)
 	statement := string(raw)

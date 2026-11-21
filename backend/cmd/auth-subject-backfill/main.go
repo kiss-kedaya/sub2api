@@ -1,4 +1,4 @@
-// Command auth-subject-backfill 是 328_auth_identity_subject_hash.sql 的一次性
+// Command auth-subject-backfill 是 329_auth_identity_subject_hash.sql 的一次性
 // 回填工具（不进部署镜像）：在没有 pgcrypto、或需要把回填放在跳板机执行的场景，
 // 用安装密钥在应用侧算 keyed 盲索引，再把 *_hash / *_prefix 写回数据库。
 //

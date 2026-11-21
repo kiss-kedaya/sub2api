@@ -1,7 +1,7 @@
 # auth_identities / auth_identity_channels / pending_auth_sessions subject 哈希化（运维手册）
 
 - 状态：**未执行**。本文件的 SQL 只随 PR 交付；生产上等新版本全量部署后按阶段人工执行。
-- 关联迁移：`backend/migrations/328_auth_identity_subject_hash.sql`（只加结构、幂等）。
+- 关联迁移：`backend/migrations/329_auth_identity_subject_hash.sql`（只加结构、幂等）。
 - 关联代码：`backend/internal/pkg/authsubject`、`backend/internal/service/auth_identity_subject.go`。
 - 安全目标：数据库里**不再出现完整第三方 subject 明文（含 email 型 subject）**，
   前缀只用于后台/排障展示；登录匹配、唯一约束、去重全部走 keyed 盲索引。
@@ -31,7 +31,7 @@ hash = HMAC-SHA256(
 
 ## 1. 阶段顺序（顺序错了会掉登录）
 
-1. 应用 `328_auth_identity_subject_hash.sql`（只加列/索引，旧二进制完全兼容）。
+1. 应用 `329_auth_identity_subject_hash.sql`（只加列/索引，旧二进制完全兼容）。
 2. 备份三张表（§2）。
 3. 分批回填 `*_hash / *_prefix`（§3，pgcrypto HMAC）。
 4. 验证（§4）：无 NULL 哈希、无重复、抽样重算一致、各 provider 登录冒烟。
@@ -43,7 +43,7 @@ hash = HMAC-SHA256(
 8. 清空三处明文列 + scrub metadata / 迁移报告 / 遗留表（§5、§6）。
 9. 下一版再 `DROP COLUMN`（不在本 PR 执行）。
 
-> 第 1 步可以单独先上：迁移 328 与旧二进制兼容（新列可空、无 NOT NULL / DEFAULT）。
+> 第 1 步可以单独先上：迁移 329 与旧二进制兼容（新列可空、无 NOT NULL / DEFAULT）。
 
 ## 2. 备份
 
@@ -400,4 +400,4 @@ go run ./backend/cmd/auth-subject-backfill \
   --dsn "$DSN" --installation-key-hex "$INSTALLATION_KEY_HEX" --apply
 ```
 
-该命令与迁移 328 的回填 SQL 产出完全一致（同一 HMAC 输入格式），二选一即可。
+该命令与迁移 329 的回填 SQL 产出完全一致（同一 HMAC 输入格式），二选一即可。
