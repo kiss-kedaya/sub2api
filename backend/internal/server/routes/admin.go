@@ -182,7 +182,7 @@ func RegisterAdminRoutes(
 		registerOpsRoutes(admin, h)
 
 		// 系统管理
-		registerSystemRoutes(admin, h)
+		registerSystemRoutes(admin, h, stepUpAuth)
 
 		// 订阅管理
 		registerSubscriptionRoutes(admin, h, stepUpAuth)
@@ -428,15 +428,19 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers, s
 		users.GET("/:id/api-keys", gin.HandlerFunc(stepUpAuth), h.Admin.User.GetUserAPIKeys)
 		users.GET("/:id/usage", h.Admin.User.GetUserUsage)
 		users.GET("/:id/balance-history", h.Admin.User.GetBalanceHistory)
-		users.POST("/:id/replace-group", h.Admin.User.ReplaceGroup)
+		// 改用户所属分组等于改其可用分组权限（含专属/受限分组）：要求 step-up。
+		users.POST("/:id/replace-group", gin.HandlerFunc(stepUpAuth), h.Admin.User.ReplaceGroup)
 		users.GET("/:id/rpm-status", h.Admin.User.GetUserRPMStatus)
-		users.POST("/batch-concurrency", h.Admin.User.BatchUpdateConcurrency)
-		users.POST("/batch-limits", h.Admin.User.BatchUpdateLimits)
-		users.POST("/batch-disable", h.Admin.User.BatchDisable)
+		// 批量改并发/额度、批量停用账号属批量权限变更：漏挂会让一条机器凭据
+		// 一次影响成批用户，与单个用户编辑同级要求 step-up 2FA。
+		users.POST("/batch-concurrency", gin.HandlerFunc(stepUpAuth), h.Admin.User.BatchUpdateConcurrency)
+		users.POST("/batch-limits", gin.HandlerFunc(stepUpAuth), h.Admin.User.BatchUpdateLimits)
+		users.POST("/batch-disable", gin.HandlerFunc(stepUpAuth), h.Admin.User.BatchDisable)
 		users.POST("/blacklist-matches", h.Admin.User.FindBlacklistedEmailUsers)
 		users.GET("/:id/platform-quotas", h.Admin.User.GetUserPlatformQuotas)
-		users.PUT("/:id/platform-quotas", h.Admin.User.UpdateUserPlatformQuotas)
-		users.POST("/:id/platform-quotas/reset", h.Admin.User.ResetUserPlatformQuotaWindow)
+		// 平台配额直接决定用户可用额度：改配额/重置配额窗口要求 step-up。
+		users.PUT("/:id/platform-quotas", gin.HandlerFunc(stepUpAuth), h.Admin.User.UpdateUserPlatformQuotas)
+		users.POST("/:id/platform-quotas/reset", gin.HandlerFunc(stepUpAuth), h.Admin.User.ResetUserPlatformQuotaWindow)
 
 		// User attribute values
 		users.GET("/:id/attributes", h.Admin.UserAttribute.GetUserAttributes)
@@ -467,8 +471,10 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 		groups.DELETE("/:id", h.Admin.Group.Delete)
 		groups.GET("/:id/stats", h.Admin.Group.GetStats)
 		groups.GET("/:id/rate-multipliers", h.Admin.Group.GetGroupRateMultipliers)
-		groups.PUT("/:id/rate-multipliers", h.Admin.Group.BatchSetGroupRateMultipliers)
-		groups.DELETE("/:id/rate-multipliers", h.Admin.Group.ClearGroupRateMultipliers)
+		// 分组专属倍率 = 用户实付价格：批量改价/清空会直接改钱，要求 step-up 2FA。
+		// （分组默认倍率与各模态单价走 PUT /groups/:id，由 handler 按实际改动判定。）
+		groups.PUT("/:id/rate-multipliers", gin.HandlerFunc(stepUpAuth), h.Admin.Group.BatchSetGroupRateMultipliers)
+		groups.DELETE("/:id/rate-multipliers", gin.HandlerFunc(stepUpAuth), h.Admin.Group.ClearGroupRateMultipliers)
 		groups.PUT("/:id/rpm-overrides", h.Admin.Group.BatchSetGroupRPMOverrides)
 		groups.DELETE("/:id/rpm-overrides", h.Admin.Group.ClearGroupRPMOverrides)
 		groups.GET("/:id/api-keys", gin.HandlerFunc(stepUpAuth), h.Admin.Group.GetGroupAPIKeys)
@@ -837,15 +843,17 @@ func registerBackupRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAut
 	}
 }
 
-func registerSystemRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+func registerSystemRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	system := admin.Group("/system")
 	{
 		system.GET("/version", h.Admin.System.GetVersion)
 		system.GET("/check-updates", h.Admin.System.CheckUpdates)
 		system.GET("/rollback-versions", h.Admin.System.GetRollbackVersions)
-		system.POST("/update", h.Admin.System.PerformUpdate)
-		system.POST("/rollback", h.Admin.System.Rollback)
-		system.POST("/restart", h.Admin.System.RestartService)
+		// 部署/回滚/重启是主机生命周期动作（会中断全部在途请求并更换二进制）：
+		// 此前没有任何 2FA 门控，属真实缺口；要求 step-up，机器凭据一律 403。
+		system.POST("/update", gin.HandlerFunc(stepUpAuth), h.Admin.System.PerformUpdate)
+		system.POST("/rollback", gin.HandlerFunc(stepUpAuth), h.Admin.System.Rollback)
+		system.POST("/restart", gin.HandlerFunc(stepUpAuth), h.Admin.System.RestartService)
 	}
 }
 
