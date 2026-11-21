@@ -14,7 +14,29 @@ const (
 	VideoBillingMinDurationSeconds     = 1
 	VideoBillingMaxDurationSeconds     = 15
 	VideoBillingDefaultDurationSeconds = 8
+	// SeedanceVideoBillingMaxDurationSeconds 是 Ark Seedance 原生协议的时长上限。
+	// 共享上限 15 秒只覆盖 xAI 与 MiniMax-H3；若按共享值封顶，按秒计费的 60 秒
+	// Seedance 视频只会记 15 秒，等于给长视频打 2.5 折（#436）。
+	SeedanceVideoBillingMaxDurationSeconds = 60
 )
+
+// NormalizeVideoBillingDurationSecondsForProvider 按提供方上限归一化计费用视频时长。
+// Grok/xAI 与 MiniMax-H3 保持 1-15 秒口径；Ark Seedance 允许到 60 秒。
+func NormalizeVideoBillingDurationSecondsForProvider(provider string, durationSeconds int) int {
+	if provider != VideoProviderSeedance {
+		return NormalizeVideoBillingDurationSecondsOrDefault(durationSeconds)
+	}
+	if durationSeconds <= 0 {
+		return VideoBillingDefaultDurationSeconds
+	}
+	if durationSeconds < VideoBillingMinDurationSeconds {
+		return VideoBillingMinDurationSeconds
+	}
+	if durationSeconds > SeedanceVideoBillingMaxDurationSeconds {
+		return SeedanceVideoBillingMaxDurationSeconds
+	}
+	return durationSeconds
+}
 
 // NormalizeVideoBillingDurationSecondsOrDefault 归一化计费用视频时长：
 // 未指定（<=0）按上游默认 8 秒计，超出上游允许区间按边界收敛。

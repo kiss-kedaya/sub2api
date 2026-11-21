@@ -3251,3 +3251,54 @@ func TestOpenAIGatewayServiceRecordUsage_ServiceTierNeverRaisedByUpstreamRespons
 	require.NoError(t, calcErr)
 	require.InDelta(t, baseCost.TotalCost, usageRepo.lastLog.TotalCost, 1e-10)
 }
+
+// #436: Seedance completion reports completion tokens, but when the group prices
+// the model with a per_request or video (per-second) card the video tariff must
+// win. This is the legacy (non-durable) charge path.
+func TestSeedanceRecordUsageFollowsGroupVideoTariff(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		mode     BillingMode
+		price    float64
+		duration int
+		tokens   int
+		want     float64
+	}{
+		{"per request ignores tokens and duration", BillingModePerRequest, 10, 12, 9999, 10},
+		{"per second multiplies the billed duration", BillingModeVideo, 0.5, 12, 0, 6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			groupID := int64(430436)
+			price := tc.price
+			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+			svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+			svc.resolver = NewModelPricingResolver(nil, svc.billingService)
+
+			err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+				Result: &OpenAIForwardResult{
+					RequestID: "video-seedance-tariff", ResponseID: "video-seedance-tariff",
+					Model: "doubao-seedance-2.5", BillingModel: "doubao-seedance-2.5",
+					VideoCount: 1, VideoResolution: VideoBillingResolution720P,
+					VideoDurationSeconds: tc.duration, VideoTokenBilling: false,
+					Usage: OpenAIUsage{OutputTokens: tc.tokens}, Duration: time.Second,
+				},
+				APIKey: &APIKey{ID: 4304361, GroupID: &groupID, Group: &Group{
+					ID: groupID, Platform: PlatformOpenAI, RateMultiplier: 1,
+					ModelPricing: []ChannelModelPricing{{
+						Platform: PlatformOpenAI, Models: []string{"doubao-seedance-2.5"},
+						BillingMode: tc.mode, PerRequestPrice: &price,
+					}},
+				}},
+				User:    &User{ID: 4304362},
+				Account: &Account{ID: 4304363, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+			})
+
+			require.NoError(t, err)
+			require.NotNil(t, usageRepo.lastLog)
+			require.InDelta(t, tc.want, usageRepo.lastLog.TotalCost, 1e-12)
+			require.NotNil(t, usageRepo.lastLog.BillingMode)
+			require.Equal(t, string(tc.mode), *usageRepo.lastLog.BillingMode)
+			require.Equal(t, 1, usageRepo.lastLog.VideoCount)
+		})
+	}
+}

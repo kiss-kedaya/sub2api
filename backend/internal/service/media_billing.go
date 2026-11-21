@@ -261,6 +261,30 @@ func scaleVideoMediaIntent(unit MediaBillingIntent, factor float64, seconds int)
 	return i
 }
 
+// AsyncVideoTokenBilled reports whether an asynchronous video model is charged
+// by the upstream-reported completion tokens.
+//
+// Only Ark Seedance returns a token usage payload, but the operator tariff
+// decides the billed unit (#436): a group/channel card with per_request (a fixed
+// price per task) or video (a price per output second) mode must take precedence
+// over the provider default. Without any operator card the legacy Seedance token
+// billing is kept, so an unconfigured deployment still fails closed on missing
+// token pricing instead of silently billing zero.
+func (s *OpenAIGatewayService) AsyncVideoTokenBilled(ctx context.Context, provider, billingModel string, apiKey *APIKey) bool {
+	if provider != VideoProviderSeedance {
+		return false
+	}
+	model := strings.TrimSpace(billingModel)
+	if model == "" || apiKey == nil || apiKey.Group == nil {
+		return true
+	}
+	resolved := s.resolveOpenAIChannelPricing(ctx, model, apiKey)
+	if resolved == nil {
+		return true
+	}
+	return resolved.Mode == "" || resolved.Mode == BillingModeToken
+}
+
 func (s *OpenAIGatewayService) CreateGrokVideoBillingJob(ctx context.Context, input *OpenAIRecordUsageInput, pending GrokVideoPendingBilling) (*MediaBillingJob, error) {
 	if !s.HasDurableMediaBilling() {
 		return nil, nil
@@ -274,7 +298,11 @@ func (s *OpenAIGatewayService) CreateGrokVideoBillingJob(ctx context.Context, in
 	result.ResponseID = result.RequestID
 	result.VideoCount, result.VideoDurationSeconds = 1, 1
 	result.VideoResolution = NormalizeVideoBillingResolutionOrDefault(pending.VideoResolution)
-	tokenBilled := pending.Provider == VideoProviderSeedance
+	// Ark reports completion tokens on completion, but the tariff decides the
+	// billed unit. Forcing token billing would reject per_request / video cards
+	// at submission time and made Seedance impossible to price per task/second.
+	tokenBilled := s.AsyncVideoTokenBilled(ctx, pending.Provider,
+		firstNonEmptyString(pending.BillingModel, pending.Model, result.BillingModel, result.Model), input.APIKey)
 	if tokenBilled {
 		result.VideoTokenBilling = true
 		result.Usage = OpenAIUsage{OutputTokens: 1}
@@ -290,6 +318,12 @@ func (s *OpenAIGatewayService) CreateGrokVideoBillingJob(ctx context.Context, in
 	if unit.Usage.BillingMode == nil || (!tokenBilled && *unit.Usage.BillingMode == string(BillingModeToken)) || (tokenBilled && *unit.Usage.BillingMode != string(BillingModeToken)) {
 		return nil, errors.New("asynchronous video requires duration or request pricing")
 	}
+	// A non-token Seedance card must actually carry a price. A card whose mode is
+	// set but whose amount is missing would otherwise freeze a zero-cost tariff
+	// and make every generated video free.
+	if !tokenBilled && pending.Provider == VideoProviderSeedance && unit.Usage.TotalCost <= 0 {
+		return nil, errors.New("asynchronous video price must be greater than zero")
+	}
 	perSecond := false
 	if !tokenBilled && pending.Provider != VideoProviderMiniMaxH3 {
 		result.VideoDurationSeconds = 2
@@ -299,7 +333,7 @@ func (s *OpenAIGatewayService) CreateGrokVideoBillingJob(ctx context.Context, in
 		}
 		perSecond = two.Usage.TotalCost != unit.Usage.TotalCost || two.Usage.ActualCost != unit.Usage.ActualCost
 	}
-	seconds := NormalizeVideoBillingDurationSecondsOrDefault(pending.VideoDurationSeconds)
+	seconds := NormalizeVideoBillingDurationSecondsForProvider(pending.Provider, pending.VideoDurationSeconds)
 	factor := 1.0
 	if perSecond {
 		factor = float64(seconds)
@@ -413,7 +447,7 @@ func (s *OpenAIGatewayService) SettleGrokVideoBillingJob(ctx context.Context, jo
 		if seconds <= 0 {
 			seconds = snapshot.Pending.VideoDurationSeconds
 		}
-		seconds = NormalizeVideoBillingDurationSecondsOrDefault(seconds)
+		seconds = NormalizeVideoBillingDurationSecondsForProvider(snapshot.Pending.Provider, seconds)
 		factor := 1.0
 		if snapshot.PerSecond {
 			factor = float64(seconds)

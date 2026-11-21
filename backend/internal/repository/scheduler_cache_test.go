@@ -108,3 +108,65 @@ func TestSchedulerMetadataAccountDropsInvalidUpstreamBillingProbe(t *testing.T) 
 		require.NotContains(t, metadata.Extra, service.UpstreamBillingProbeExtraKey)
 	}
 }
+
+// #436: the scheduler reads account metadata from the sched:meta projection, not
+// from the full credentials payload. openai_capabilities must survive that
+// projection or every snapshot-only scheduling decision rejects the account.
+func TestFilterSchedulerCredentialsKeepsOpenAICapabilities(t *testing.T) {
+	capabilities := map[string]any{"seedance": true}
+	filtered := filterSchedulerCredentials(map[string]any{
+		"openai_capabilities": capabilities,
+		"access_token":        "secret-access-token",
+	})
+
+	require.Equal(t, capabilities, filtered["openai_capabilities"])
+	require.NotContains(t, filtered, "access_token")
+}
+
+func TestSeedanceSchedulerMetadataKeepsCapability(t *testing.T) {
+	account := service.Account{
+		ID:       1106,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":             "ark-secret",
+			"base_url":            "https://ark.cn-beijing.volces.com/api/v3",
+			"openai_capabilities": map[string]any{"seedance": true},
+		},
+	}
+	require.True(t, account.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilitySeedance))
+
+	metadata := buildSchedulerMetadataAccount(account)
+
+	require.True(t, metadata.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilitySeedance),
+		"snapshot-only scheduling must keep the operator capability opt-in")
+	require.NotContains(t, metadata.Credentials, "access_token")
+}
+
+// GetSnapshot serves sched:meta, not the full account payload. Decode the exact
+// metadata payload a cache hit yields and require the capability gate to agree
+// with the DB fallback path (which hydrates full credentials).
+func TestSeedanceSchedulerSnapshotMetadataKeepsCapability(t *testing.T) {
+	account := service.Account{
+		ID:       1107,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":             "ark-secret",
+			"base_url":            "https://ark.cn-beijing.volces.com/api/v3",
+			"openai_capabilities": map[string]any{"seedance": true},
+		},
+	}
+	fullPayload, metaPayload, err := marshalSchedulerCacheAccount(account)
+	require.NoError(t, err)
+
+	fromDBFallback := account
+	require.True(t, fromDBFallback.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilitySeedance))
+
+	cached, err := decodeCachedAccount(metaPayload)
+	require.NoError(t, err)
+	require.True(t, cached.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilitySeedance),
+		"snapshot hit and DB fallback must agree on capability eligibility")
+	require.NotContains(t, string(metaPayload), "access_token")
+	require.Contains(t, string(fullPayload), "ark-secret")
+}
