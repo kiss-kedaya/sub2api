@@ -1,0 +1,14 @@
+{
+  "google": {
+    "id": "google",
+    "models": {
+      "gemini-4-argon": {"id":"gemini-4-argon", "cost":{"input":2,"output":10,"cache_read":0}}
+    }
+  },
+  "reseller": {
+    "id": "reseller",
+    "models": {
+      "gemini-4-neon": {"id":"gemini-4-neon", "cost":{"input":5}}
+    }
+  }
+}
