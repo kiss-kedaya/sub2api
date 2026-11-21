@@ -32,7 +32,12 @@ export class StepUpCancelledError extends Error {
 }
 
 export function isStepUpCancelled(err: unknown): boolean {
-  return err instanceof StepUpCancelledError
+  if (err instanceof StepUpCancelledError) return true
+  // The shared client turns a dismissed dialog into a plain rejection object
+  // (no Error stack in the console); pages still need to recognize it as
+  // "nothing was executed" and react quietly.
+  const e = (err ?? {}) as { code?: string | number; reason?: string }
+  return e.code === STEP_UP_CANCELLED || e.reason === STEP_UP_CANCELLED
 }
 
 /** Extract the semantic error marker from either envelope shape (code or reason). */
@@ -44,6 +49,16 @@ export function stepUpMarkerOf(err: unknown): string {
 
 export function isStepUpRequired(err: unknown): boolean {
   return stepUpMarkerOf(err) === STEP_UP_REQUIRED
+}
+
+/**
+ * True when a page-load/background read was rejected by step-up. The shared
+ * client marks such rejections (`silentStepUp: true`) and never opens the TOTP
+ * dialog; callers show a degraded placeholder instead.
+ */
+export function isSilentStepUpReadError(err: unknown): boolean {
+  const e = (err ?? {}) as { silentStepUp?: boolean }
+  return e.silentStepUp === true && stepUpMarkerOf(err) === STEP_UP_REQUIRED
 }
 
 /** Non-retryable step-up rejections: entering a code cannot resolve them. */

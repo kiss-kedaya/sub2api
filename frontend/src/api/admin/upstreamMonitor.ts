@@ -1,4 +1,6 @@
 import { apiClient } from '../client'
+// 上游监控页首屏的只读聚合/列表：静默降级，不弹 TOTP。
+import { SILENT_STEP_UP } from '../silentStepUp'
 
 export type UpstreamBalanceStatus = 'ok' | 'stale' | 'failed' | 'unsupported' | 'unknown'
 
@@ -176,12 +178,13 @@ export interface AlertQuery {
 }
 
 export async function getOverview(): Promise<UpstreamMonitorOverview> {
-  const { data } = await apiClient.get<UpstreamMonitorOverview>('/admin/upstream-monitor/overview')
+  const { data } = await apiClient.get<UpstreamMonitorOverview>('/admin/upstream-monitor/overview', SILENT_STEP_UP)
   return data
 }
 
 export async function listAccounts(query: AccountQuery): Promise<PageResult<UpstreamMonitorAccount>> {
   const { data } = await apiClient.get<PageResult<UpstreamMonitorAccount>>('/admin/upstream-monitor/accounts', {
+    ...SILENT_STEP_UP,
     params: {
       page: query.page,
       page_size: query.pageSize,
@@ -197,13 +200,14 @@ export async function listAccounts(query: AccountQuery): Promise<PageResult<Upst
 export async function getHistory(accountId: number, days = 7): Promise<{ account_id: number; days: number; points: UpstreamMonitorPoint[] }> {
   const { data } = await apiClient.get<{ account_id: number; days: number; points: UpstreamMonitorPoint[] }>(
     `/admin/upstream-monitor/accounts/${accountId}/history`,
-    { params: { days } }
+    { ...SILENT_STEP_UP, params: { days } }
   )
   return data
 }
 
 export async function getTrend(days = 7): Promise<{ days: number; points: UpstreamTrendPoint[] }> {
   const { data } = await apiClient.get<{ days: number; points: UpstreamTrendPoint[] }>('/admin/upstream-monitor/trend', {
+    ...SILENT_STEP_UP,
     params: { days },
   })
   return data
@@ -211,6 +215,7 @@ export async function getTrend(days = 7): Promise<{ days: number; points: Upstre
 
 export async function listRateChanges(query: RateQuery): Promise<PageResult<UpstreamRateChange>> {
   const { data } = await apiClient.get<PageResult<UpstreamRateChange>>('/admin/upstream-monitor/rate-changes', {
+    ...SILENT_STEP_UP,
     params: {
       page: query.page,
       page_size: query.pageSize,
@@ -224,6 +229,7 @@ export async function listRateChanges(query: RateQuery): Promise<PageResult<Upst
 
 export async function listAlerts(query: AlertQuery): Promise<PageResult<UpstreamAlert>> {
   const { data } = await apiClient.get<PageResult<UpstreamAlert>>('/admin/upstream-monitor/alerts', {
+    ...SILENT_STEP_UP,
     params: {
       page: query.page,
       page_size: query.pageSize,
@@ -242,7 +248,7 @@ export async function ackAlert(id: number): Promise<{ id: number; acked: boolean
 }
 
 export async function listAlertRules(): Promise<{ items: UpstreamAlertRule[] }> {
-  const { data } = await apiClient.get<{ items: UpstreamAlertRule[] }>('/admin/upstream-monitor/alert-rules')
+  const { data } = await apiClient.get<{ items: UpstreamAlertRule[] }>('/admin/upstream-monitor/alert-rules', SILENT_STEP_UP)
   return data
 }
 

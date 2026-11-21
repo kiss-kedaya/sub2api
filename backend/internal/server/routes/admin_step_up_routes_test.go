@@ -201,19 +201,21 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		// 退款与退款确认
 		{http.MethodPost, "/api/v1/admin/payment/orders/1/refund", "payment"},
 		{http.MethodPost, "/api/v1/admin/payment/orders/1/refund/query", "payment"},
-		// 敏感资源的只读接口同样是敏感读：卡密列表/详情（明文 code）、代理列表/详情
-		// （明文密码）、上游渠道/账号（上游凭证）、系统设置（渠道密钥）等。
-		// 「只读所以不用 2FA」的口径已废弃，全部要求 step-up（机器凭据一律 403）。
+		// 敏感资源的只读接口同样是敏感读：卡密列表/详情（明文 code）、代理明文
+		// 导出、上游渠道/账号（上游凭证）、系统设置（渠道密钥）等。
+		// 「只读所以不用 2FA」的口径已废弃，这些路由仍要求 step-up（机器凭据一律 403）。
+		// 注意：代理列表/详情/统计的密码已在 #497 改掩码，属于下方的只读豁免列表。
 		{http.MethodGet, "/api/v1/admin/redeem-codes", "admin"},
 		{http.MethodGet, "/api/v1/admin/redeem-codes/1", "admin"},
 		{http.MethodGet, "/api/v1/admin/redeem-codes/stats", "admin"},
-		{http.MethodGet, "/api/v1/admin/proxies", "admin"},
-		{http.MethodGet, "/api/v1/admin/proxies/1", "admin"},
-		{http.MethodGet, "/api/v1/admin/proxies/all", "admin"},
-		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels", "admin"},
-		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels/1", "admin"},
-		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels/1/api-keys", "admin"},
-		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels/1/recharge", "admin"},
+		// 代理只有明文导出与写操作要求 step-up；列表/详情密码已掩码（见下方只读列表）。
+		{http.MethodGet, "/api/v1/admin/proxies/data", "admin"},
+		{http.MethodPost, "/api/v1/admin/proxies", "admin"},
+		{http.MethodPut, "/api/v1/admin/proxies/1", "admin"},
+		{http.MethodDelete, "/api/v1/admin/proxies/1", "admin"},
+		// 渠道读模型已掩码（DTO 不带 password/token，API Key 列表清空 Key），
+		// 只有写操作与 reveal POST 要求 step-up；读接口见下方只读列表。
+		{http.MethodPost, "/api/v1/admin/upstream-monitor/channels/1/api-keys/1/reveal", "admin"},
 		{http.MethodGet, "/api/v1/admin/accounts/1/credential", "admin"},
 		{http.MethodGet, "/api/v1/admin/backups/s3-config", "admin"},
 		{http.MethodGet, "/api/v1/admin/backups/1/download-url", "admin"},
@@ -242,6 +244,24 @@ func readOnlyStepUpRoutes() []stepUpRouteCase {
 		{http.MethodGet, "/api/v1/admin/audit-logs", "admin"},
 		// 资源列表已明确脱敏（不返回秘密），不要求 step-up；写操作仍要求。
 		{http.MethodGet, "/api/v1/admin/accounts", "admin"},
+		{http.MethodGet, "/api/v1/admin/accounts/1", "admin"},
+		// 页面加载自动调用的批量只读聚合（POST 形式）：绝不能弹 TOTP。
+		{http.MethodPost, "/api/v1/admin/accounts/today-stats/batch", "admin"},
+		{http.MethodPost, "/api/v1/admin/accounts/usage/batch", "admin"},
+		// 账号列表滚动时自动拉取的自定义用量（只回用量数字，无上游凭证）。
+		{http.MethodPost, "/api/v1/admin/accounts/1/custom-usage-query", "admin"},
+		{http.MethodPost, "/api/v1/admin/accounts/custom-usage-batch", "admin"},
+		// 上游渠道列表/详情/密钥列表/余额：读模型已掩码，页面加载不应弹码。
+		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels", "admin"},
+		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels/1", "admin"},
+		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels/1/api-keys", "admin"},
+		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels/1/balance", "admin"},
+		// 代理列表/详情/统计/关联账号：密码已掩码，页面下拉与列表加载不应弹码。
+		{http.MethodGet, "/api/v1/admin/proxies", "admin"},
+		{http.MethodGet, "/api/v1/admin/proxies/all", "admin"},
+		{http.MethodGet, "/api/v1/admin/proxies/1", "admin"},
+		{http.MethodGet, "/api/v1/admin/proxies/1/stats", "admin"},
+		{http.MethodGet, "/api/v1/admin/proxies/1/accounts", "admin"},
 		{http.MethodGet, "/api/v1/admin/settings", "admin"},
 		{http.MethodGet, "/api/v1/admin/crypto/config", "admin"},
 		{http.MethodGet, "/api/v1/admin/payment/orders", "payment"},

@@ -505,6 +505,7 @@ import { useTableLoader } from '@/composables/useTableLoader'
 import { useSwipeSelect, type SwipeSelectVirtualContext } from '@/composables/useSwipeSelect'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
+import { isSilentStepUpReadError } from '@/utils/stepUpErrors'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -846,17 +847,20 @@ const flushQueuedUsageBatch = async () => {
   } catch (error) {
     const nextErrors = { ...usageBatchErrorByAccountId.value }
     const nextLoading = { ...usageBatchLoadingByAccountId.value }
+    const message = isSilentStepUpReadError(error) ? t('stepUp.silentReadBlocked') : 'Failed'
     for (const accountID of accountIDs) {
       const key = String(accountID)
       if ((usageBatchRequestTokenByAccountId.value[key] ?? 0) !== requestTokensByAccount[key]) {
         continue
       }
-      nextErrors[key] = 'Failed'
+      nextErrors[key] = message
       nextLoading[key] = false
     }
     usageBatchErrorByAccountId.value = nextErrors
     usageBatchLoadingByAccountId.value = nextLoading
-    console.error('Failed to load account usage batch:', error)
+    if (!isSilentStepUpReadError(error)) {
+      console.error('Failed to load account usage batch:', error)
+    }
   }
 }
 
@@ -934,8 +938,13 @@ const refreshTodayStatsBatch = async () => {
     todayStatsByAccountId.value = nextStats
   } catch (error) {
     if (reqSeq !== todayStatsReqSeq.value) return
-    todayStatsError.value = 'Failed'
-    console.error('Failed to load account today stats:', error)
+    if (isSilentStepUpReadError(error)) {
+      // 后台只读被要求二次验证：不弹 TOTP、不刷控制台，列里显示占位说明。
+      todayStatsError.value = t('stepUp.silentReadBlocked')
+    } else {
+      todayStatsError.value = 'Failed'
+      console.error('Failed to load account today stats:', error)
+    }
   } finally {
     if (reqSeq === todayStatsReqSeq.value) {
       todayStatsLoading.value = false
@@ -2771,6 +2780,9 @@ onMounted(async () => {
   ])
   if (proxiesResult.status === 'fulfilled') {
     proxies.value = proxiesResult.value
+  } else if (isSilentStepUpReadError(proxiesResult.reason)) {
+    // 代理下拉的后台读被要求二次验证：保留空列表降级，不弹 TOTP。
+    proxies.value = []
   } else {
     console.error('Failed to load proxies:', proxiesResult.reason)
   }

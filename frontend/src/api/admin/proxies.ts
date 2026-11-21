@@ -4,6 +4,8 @@
  */
 
 import { apiClient } from '../client'
+// 代理列表/详情/统计的密码已在 #497 掩码：页面加载读取静默降级，不弹 TOTP。
+import { SILENT_STEP_UP } from '../silentStepUp'
 import type {
   Proxy,
   ProxyAccountSummary,
@@ -43,6 +45,7 @@ export async function list(
   }
 ): Promise<PaginatedResponse<Proxy>> {
   const { data } = await apiClient.get<PaginatedResponse<Proxy>>('/admin/proxies', {
+    ...SILENT_STEP_UP,
     params: {
       page,
       page_size: pageSize,
@@ -59,7 +62,7 @@ export async function list(
  * @returns List of all active proxies
  */
 export async function getAll(): Promise<Proxy[]> {
-  const { data } = await apiClient.get<Proxy[]>('/admin/proxies/all')
+  const { data } = await apiClient.get<Proxy[]>('/admin/proxies/all', SILENT_STEP_UP)
   assertProxyArray(data)
   return data
 }
@@ -70,6 +73,7 @@ export async function getAll(): Promise<Proxy[]> {
  */
 export async function getAllWithCount(): Promise<Proxy[]> {
   const { data } = await apiClient.get<Proxy[]>('/admin/proxies/all', {
+    ...SILENT_STEP_UP,
     params: { with_count: 'true' }
   })
   assertProxyArray(data)
@@ -82,7 +86,7 @@ export async function getAllWithCount(): Promise<Proxy[]> {
  * @returns Proxy details
  */
 export async function getById(id: number): Promise<Proxy> {
-  const { data } = await apiClient.get<Proxy>(`/admin/proxies/${id}`)
+  const { data } = await apiClient.get<Proxy>(`/admin/proxies/${id}`, SILENT_STEP_UP)
   return data
 }
 
@@ -183,7 +187,7 @@ export async function getStats(id: number): Promise<{
     total_requests: number
     success_rate: number
     average_latency: number
-  }>(`/admin/proxies/${id}/stats`)
+  }>(`/admin/proxies/${id}/stats`, SILENT_STEP_UP)
   return data
 }
 
@@ -193,7 +197,7 @@ export async function getStats(id: number): Promise<{
  * @returns List of accounts using the proxy
  */
 export async function getProxyAccounts(id: number): Promise<ProxyAccountSummary[]> {
-  const { data } = await apiClient.get<ProxyAccountSummary[]>(`/admin/proxies/${id}/accounts`)
+  const { data } = await apiClient.get<ProxyAccountSummary[]>(`/admin/proxies/${id}/accounts`, SILENT_STEP_UP)
   return data
 }
 

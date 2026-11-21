@@ -44,7 +44,7 @@ describe('admin Ollama Cloud usage API', () => {
 
     await expect(getOllamaCloudUsageSettings()).resolves.toEqual(settings)
     await expect(updateOllamaCloudUsageSettings(settings)).resolves.toEqual(settings)
-    expect(get).toHaveBeenCalledWith('/admin/accounts/ollama-cloud-usage/settings')
+    expect(get).toHaveBeenCalledWith('/admin/accounts/ollama-cloud-usage/settings', { silentStepUp: true })
     expect(put).toHaveBeenCalledWith('/admin/accounts/ollama-cloud-usage/settings', settings)
   })
 

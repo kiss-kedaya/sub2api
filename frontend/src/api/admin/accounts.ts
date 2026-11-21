@@ -4,6 +4,8 @@
  */
 
 import { apiClient } from '../client'
+// 页面加载/自动刷新的只读请求：命中 403 时静默降级，绝不弹 TOTP。
+import { SILENT_STEP_UP } from '../silentStepUp'
 import type {
   Account,
   AccountListItem,
@@ -58,6 +60,7 @@ export async function list(
   }
 ): Promise<PaginatedResponse<AccountListItem>> {
   const { data } = await apiClient.get<PaginatedResponse<AccountListItem>>('/admin/accounts', {
+    ...SILENT_STEP_UP,
     params: {
       page,
       page_size: pageSize,
@@ -102,6 +105,7 @@ export async function getUpstreamBillingRatesWithEtag(
   if (options?.etag) headers['If-None-Match'] = options.etag
 
   const response = await apiClient.get<UpstreamBillingRatesResponse>('/admin/accounts/upstream-billing-rates', {
+    ...SILENT_STEP_UP,
     params: { page, page_size: pageSize, ...filters },
     headers,
     signal: options?.signal,
@@ -139,6 +143,7 @@ export async function listWithEtag(
   }
 
   const response = await apiClient.get<PaginatedResponse<AccountListItem>>('/admin/accounts', {
+    ...SILENT_STEP_UP,
     params: {
       page,
       page_size: pageSize,
@@ -171,7 +176,7 @@ export async function listWithEtag(
  * @returns Account details
  */
 export async function getById(id: number): Promise<Account> {
-  const { data } = await apiClient.get<Account>(`/admin/accounts/${id}`)
+  const { data } = await apiClient.get<Account>(`/admin/accounts/${id}`, SILENT_STEP_UP)
   return data
 }
 
@@ -242,7 +247,8 @@ export async function update(id: number, updates: UpdateAccountRequest): Promise
 
 export async function getGrokMediaEligibility(id: number): Promise<GrokMediaEligibilityState> {
   const { data } = await apiClient.get<GrokMediaEligibilityState>(
-    `/admin/accounts/${id}/grok-media-eligibility`
+    `/admin/accounts/${id}/grok-media-eligibility`,
+    SILENT_STEP_UP
   )
   return data
 }
@@ -375,6 +381,7 @@ export async function applyOAuthCredentials(
  */
 export async function getStats(id: number, days: number = 30): Promise<AccountUsageStatsResponse> {
   const { data } = await apiClient.get<AccountUsageStatsResponse>(`/admin/accounts/${id}/stats`, {
+    ...SILENT_STEP_UP,
     params: { days },
     // Account history aggregates can legitimately take longer on large
     // installations. Keep this longer timeout local to the stats endpoint;
@@ -404,6 +411,7 @@ export async function getUsage(id: number, source?: 'passive' | 'active', force?
   if (source) params.source = source
   if (force) params.force = 'true'
   const { data } = await apiClient.get<AccountUsageInfo>(`/admin/accounts/${id}/usage`, {
+    ...SILENT_STEP_UP,
     params: Object.keys(params).length > 0 ? params : undefined
   })
   return data
@@ -418,7 +426,7 @@ export async function getBatchUsage(accountIds: number[], force?: boolean): Prom
   const { data } = await apiClient.post<BatchAccountUsageResponse>('/admin/accounts/usage/batch', {
     account_ids: accountIds,
     force: force === true
-  })
+  }, SILENT_STEP_UP)
   return data
 }
 
@@ -463,7 +471,8 @@ export async function resetAccountQuota(id: number): Promise<Account> {
  */
 export async function getTempUnschedulableStatus(id: number): Promise<TempUnschedulableStatus> {
   const { data } = await apiClient.get<TempUnschedulableStatus>(
-    `/admin/accounts/${id}/temp-unschedulable`
+    `/admin/accounts/${id}/temp-unschedulable`,
+    SILENT_STEP_UP
   )
   return data
 }
@@ -588,7 +597,7 @@ export async function bulkUpdate(
  * @returns Today's stats (requests, tokens, cost)
  */
 export async function getTodayStats(id: number): Promise<WindowStats> {
-  const { data } = await apiClient.get<WindowStats>(`/admin/accounts/${id}/today-stats`)
+  const { data } = await apiClient.get<WindowStats>(`/admin/accounts/${id}/today-stats`, SILENT_STEP_UP)
   return data
 }
 
@@ -604,7 +613,7 @@ export interface BatchTodayStatsResponse {
 export async function getBatchTodayStats(accountIds: number[]): Promise<BatchTodayStatsResponse> {
   const { data } = await apiClient.post<BatchTodayStatsResponse>('/admin/accounts/today-stats/batch', {
     account_ids: accountIds
-  })
+  }, SILENT_STEP_UP)
   return data
 }
 
@@ -627,7 +636,7 @@ export async function setSchedulable(id: number, schedulable: boolean): Promise<
  * @returns List of available models for this account
  */
 export async function getAvailableModels(id: number): Promise<ClaudeModel[]> {
-  const { data } = await apiClient.get<ClaudeModel[]>(`/admin/accounts/${id}/models`)
+  const { data } = await apiClient.get<ClaudeModel[]>(`/admin/accounts/${id}/models`, SILENT_STEP_UP)
   return data
 }
 
@@ -809,7 +818,8 @@ export async function createOpenAICodexPAT(payload: OpenAICodexPATCreateRequest)
  */
 export async function getAntigravityDefaultModelMapping(): Promise<Record<string, string>> {
   const { data } = await apiClient.get<Record<string, string>>(
-    '/admin/accounts/antigravity/default-model-mapping'
+    '/admin/accounts/antigravity/default-model-mapping',
+    SILENT_STEP_UP
   )
   return data
 }
@@ -1026,7 +1036,7 @@ export async function createSparkShadow(parentId: number, payload: SparkShadowCr
 }
 
 export async function getUpstreamBillingProbeSettings(): Promise<UpstreamBillingProbeSettings> {
-  const { data } = await apiClient.get<UpstreamBillingProbeSettings>('/admin/accounts/upstream-billing-probe/settings')
+  const { data } = await apiClient.get<UpstreamBillingProbeSettings>('/admin/accounts/upstream-billing-probe/settings', SILENT_STEP_UP)
   return data
 }
 
@@ -1058,7 +1068,7 @@ export async function probeUpstreamBillingBatch(accountIds: number[]): Promise<U
 }
 
 export async function getOllamaCloudUsageSettings(): Promise<OllamaCloudUsageSettings> {
-  const { data } = await apiClient.get<OllamaCloudUsageSettings>('/admin/accounts/ollama-cloud-usage/settings')
+  const { data } = await apiClient.get<OllamaCloudUsageSettings>('/admin/accounts/ollama-cloud-usage/settings', SILENT_STEP_UP)
   return data
 }
 
@@ -1073,7 +1083,7 @@ export async function updateOllamaCloudUsageSettings(
 }
 
 export async function getOllamaCloudUsage(id: number): Promise<OllamaCloudUsageState> {
-  const { data } = await apiClient.get<OllamaCloudUsageState>(`/admin/accounts/${id}/ollama-cloud-usage`)
+  const { data } = await apiClient.get<OllamaCloudUsageState>(`/admin/accounts/${id}/ollama-cloud-usage`, SILENT_STEP_UP)
   return data
 }
 

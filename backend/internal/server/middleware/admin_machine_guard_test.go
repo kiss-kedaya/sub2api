@@ -131,9 +131,10 @@ func TestLegacyAdminKeySensitiveDenialRecordsSecurityEvent(t *testing.T) {
 	r := gin.New()
 	admin := r.Group("/api/v1/admin")
 	admin.Use(gin.HandlerFunc(NewAdminAuthMiddleware(nil, machineGuardUsers(), settings, audit, nil)))
-	admin.GET("/proxies", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	// 明文导出仍是 step-up_required：用它验证机器凭据访问敏感资源时的安全事件。
+	admin.GET("/proxies/data", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/proxies", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/proxies/data", nil)
 	req.Header.Set("x-api-key", legacyKey)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -147,7 +148,7 @@ func TestLegacyAdminKeySensitiveDenialRecordsSecurityEvent(t *testing.T) {
 	require.Equal(t, service.AuditAuthMethodAdminAPIKey, entry.AuthMethod)
 	require.Equal(t, ActionAdminMachineSensitiveDenied, entry.Action)
 	require.Equal(t, http.StatusForbidden, entry.StatusCode)
-	require.Equal(t, "/api/v1/admin/proxies", entry.Path)
+	require.Equal(t, "/api/v1/admin/proxies/data", entry.Path)
 	require.Equal(t, "step_up_required", entry.Extra["policy_class"])
 	require.Contains(t, entry.CredentialMasked, "admin-")
 	require.NotContains(t, entry.CredentialMasked, legacyKey)

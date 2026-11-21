@@ -112,6 +112,9 @@ const (
 	ReasonCryptoDedicatedGate      Reason = "crypto_wallet_has_dedicated_totp_risk_gate"
 	ReasonOpsReadOnlyConfig        Reason = "ops_read_only_runtime_config"
 	ReasonMihomoReadsRedacted      Reason = "mihomo_reads_redact_proxy_credentials"
+	ReasonProxyReadsRedacted       Reason = "proxy_reads_redact_passwords"
+	ReasonChannelReadsRedacted     Reason = "channel_reads_redact_upstream_keys"
+	ReasonAccountUsageAggregate    Reason = "read_only_account_usage_aggregate"
 )
 
 // Resource names the sensitive resource family a step-up route protects.
@@ -218,6 +221,9 @@ var stepUpExact = []exactRule{
 	// 上游凭证明文回读与整表导出
 	{method: "GET", path: "/api/v1/admin/accounts/:id/credential", res: Resolved{ClassStepUpRequired, ReasonUpstreamCredentials, ResourceUpstreamAccounts, "exact:accounts.credential"}},
 	{method: "GET", path: "/api/v1/admin/accounts/data", res: Resolved{ClassStepUpRequired, ReasonUpstreamCredentials, ResourceUpstreamAccounts, "exact:accounts.export"}},
+	// 代理明文导出（用户名/密码/完整 URL）。代理列表/详情/统计的密码已掩码，
+	// 不再因为「代理」这个资源名整片要求 2FA（见 free:proxies）。
+	{method: "GET", path: "/api/v1/admin/proxies/data", res: Resolved{ClassStepUpRequired, ReasonProxyPasswords, ResourceProxies, "exact:proxies.data"}},
 	// 备份下载与 S3 凭证读取
 	{method: "GET", path: "/api/v1/admin/backups/:id/download-url", res: Resolved{ClassStepUpRequired, ReasonBackupSecrets, ResourceBackups, "exact:backups.download"}},
 	{method: "GET", path: "/api/v1/admin/backups/s3-config", res: Resolved{ClassStepUpRequired, ReasonBackupSecrets, ResourceBackups, "exact:backups.s3-config"}},
@@ -255,6 +261,19 @@ var stepUpExact = []exactRule{
 	{method: "POST", path: "/api/v1/admin/system/restart", res: Resolved{ClassStepUpRequired, ReasonHostLifecycleWrite, ResourceRevenueOperations, "exact:system.restart"}},
 }
 
+// secretFreeExact pins read-only routes that are implemented with a POST verb
+// (batch read APIs). Without an exact entry the mutating-resource rule below
+// would classify them as step_up_required, which turns every page load that
+// batches aggregates into a TOTP prompt. They must not return secret material:
+// only already-redacted account usage/statistics aggregates belong here.
+var secretFreeExact = []exactRule{
+	{method: "POST", path: "/api/v1/admin/accounts/today-stats/batch", res: Resolved{ClassSecretFree, ReasonAccountUsageAggregate, ResourceNone, "exact:accounts.today-stats-batch"}},
+	{method: "POST", path: "/api/v1/admin/accounts/usage/batch", res: Resolved{ClassSecretFree, ReasonAccountUsageAggregate, ResourceNone, "exact:accounts.usage-batch"}},
+	// 自定义用量读取：账号列表滚动时自动查询/批量拉缓存，只回用量数字，不含上游凭证。
+	{method: "POST", path: "/api/v1/admin/accounts/:id/custom-usage-query", res: Resolved{ClassSecretFree, ReasonAccountUsageAggregate, ResourceNone, "exact:accounts.custom-usage-query"}},
+	{method: "POST", path: "/api/v1/admin/accounts/custom-usage-batch", res: Resolved{ClassSecretFree, ReasonAccountUsageAggregate, ResourceNone, "exact:accounts.custom-usage-batch"}},
+}
+
 // providerCredentialPrefixes are upstream provider OAuth families: POST/PUT/
 // DELETE routes mint or replace upstream credentials and must be step-up
 // gated, while GET status reads stay secret-free.
@@ -267,13 +286,15 @@ var providerCredentialPrefixes = []string{
 
 // sensitiveResources are path prefixes where EVERY method (GET included) is
 // step-up required because the resource itself returns secret material:
-// redeem codes, promo grant codes, proxy passwords, upstream channel keys.
-// This is the structural answer to "只读所以不用 2FA".
+// redeem codes and promo grant codes. This is the structural answer to
+// "只读所以不用 2FA".
+//
+// Proxies and upstream channels deliberately do not live here: their read
+// models mask passwords / upstream keys (#497 and channel DTO json:"-"), so
+// only the plaintext export / reveal POST and the write methods need step-up.
 var sensitiveResources = []prefixRule{
 	{prefix: "/api/v1/admin/redeem-codes", methods: anyMethod(), res: Resolved{ClassStepUpRequired, ReasonRedeemCodes, ResourceRedeemCodes, "prefix:redeem-codes"}},
 	{prefix: "/api/v1/admin/promo-codes", methods: anyMethod(), res: Resolved{ClassStepUpRequired, ReasonPromoCodes, ResourcePromoCodes, "prefix:promo-codes"}},
-	{prefix: "/api/v1/admin/proxies", methods: anyMethod(), res: Resolved{ClassStepUpRequired, ReasonProxyPasswords, ResourceProxies, "prefix:proxies"}},
-	{prefix: "/api/v1/admin/upstream-monitor/channels", methods: anyMethod(), res: Resolved{ClassStepUpRequired, ReasonChannelKeys, ResourceChannels, "prefix:upstream-monitor.channels"}},
 }
 
 // sensitiveMutatingResources are resources whose GET representations are
@@ -282,6 +303,11 @@ var sensitiveResources = []prefixRule{
 // Every non-read method is step-up required.
 var sensitiveMutatingResources = []prefixRule{
 	{prefix: "/api/v1/admin/accounts", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonUpstreamCredentials, ResourceUpstreamAccounts, "mutating:accounts"}},
+	// 代理写操作可以设置/替换明文密码，必须 step-up；读操作已掩码，见 free:proxies。
+	{prefix: "/api/v1/admin/proxies", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonProxyPasswords, ResourceProxies, "mutating:proxies"}},
+	// 渠道写操作与「查看 API Key 明文」的 reveal POST 会持有上游密钥，必须 step-up；
+	// 列表/详情/余额/订阅等读接口的密钥字段已脱敏，见 free:upstream-monitor.channels。
+	{prefix: "/api/v1/admin/upstream-monitor/channels", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonChannelKeys, ResourceChannels, "mutating:upstream-monitor.channels"}},
 	{prefix: "/api/v1/admin/settings", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonAdminSecrets, ResourceAdminSettings, "mutating:settings"}},
 	{prefix: "/api/v1/admin/payment", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonPaymentSecrets, ResourcePayments, "mutating:payment"}},
 	{prefix: "/api/v1/admin/data-management", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonDataManagementWrite, ResourceBackups, "mutating:data-management"}},
@@ -330,10 +356,16 @@ var secretFreeFamilies = []prefixRule{
 	{prefix: "/api/v1/admin/antigravity", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonProviderOAuthStatus, ResourceNone, "free:antigravity"}},
 	{prefix: "/api/v1/admin/grok", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonProviderOAuthStatus, ResourceNone, "free:grok"}},
 	{prefix: "/api/v1/admin/channels", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonChannelPricingConfig, ResourceNone, "free:channels"}},
+	// 渠道读模型（DTO）不序列化 password/access_token，API Key 列表显式清空 Key，
+	// 只有 reveal POST 才返回明文；因此渠道读不弹 TOTP（必须排在 free:upstream-monitor 之前）。
+	{prefix: "/api/v1/admin/upstream-monitor/channels", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonChannelReadsRedacted, ResourceNone, "free:upstream-monitor.channels"}},
 	{prefix: "/api/v1/admin/upstream-monitor", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonUpstreamMonitorTelemetry, ResourceNone, "free:upstream-monitor"}},
 	{prefix: "/api/v1/admin/crypto", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonCryptoDedicatedGate, ResourceNone, "free:crypto"}},
 	{prefix: "/api/v1/admin/prompt-audit", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonPromptAuditNoCredential, ResourceNone, "free:prompt-audit"}},
 	{prefix: "/api/v1/admin/accounts", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonAccountReadsRedacted, ResourceNone, "free:accounts"}},
+	// 代理列表/详情/统计/关联账号的密码字段已在 #497 改掩码；明文只在
+	// exact:proxies.data（导出）与写操作里出现，所以读接口不能整片要求 2FA。
+	{prefix: "/api/v1/admin/proxies", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonProxyReadsRedacted, ResourceNone, "free:proxies"}},
 	{prefix: "/api/v1/admin/settings", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonSettingsReadNoSecret, ResourceNone, "free:settings"}},
 	{prefix: "/api/v1/admin/payment", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonPaymentReadsReadOnly, ResourceNone, "free:payment"}},
 	{prefix: "/api/v1/admin/data-management", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonBackupReadsMetadataOnly, ResourceNone, "free:data-management"}},
@@ -347,12 +379,40 @@ var secretFreeFamilies = []prefixRule{
 	{prefix: "/api/v1/admin/system/mihomo", methods: anyMethod(), res: Resolved{ClassSecretFree, ReasonMihomoReadsRedacted, ResourceNone, "free:system.mihomo"}},
 }
 
+// stepUpReadRuleJustifications records, per registry rule, why a read-only GET
+// still requires step-up. The 2026-11 incident (admin pages breaking on a TOTP
+// prompt fired by page-load GETs) showed that "the resource name sounds
+// sensitive" is not a justification. The coverage test fails when a GET route
+// resolves to step_up_required through a rule missing here, so adding a new
+// read gate requires an explicit, reviewable reason.
+var stepUpReadRuleJustifications = map[string]string{
+	"exact:users.api-keys":      "GET returns plaintext user API keys",
+	"exact:groups.api-keys":     "GET returns plaintext group API keys",
+	"exact:accounts.credential": "GET returns the decrypted upstream credential",
+	"exact:accounts.export":     "GET streams every upstream credential in plaintext",
+	"exact:backups.download":    "GET mints a download URL for a full database backup",
+	"exact:backups.s3-config":   "GET returns the S3 object-storage credentials",
+	"exact:debug-dumps.payload": "GET returns captured request/response bodies",
+	"exact:proxies.data":        "GET exports proxy username/password in plaintext",
+	"prefix:redeem-codes":       "read model returns redeem code plaintext",
+	"prefix:promo-codes":        "read model returns promo grant values",
+}
+
+// StepUpReadRuleJustification returns the documented reason why a registry rule
+// gates read-only GET requests. The second result is false for rules that gate
+// writes only (which need no read justification).
+func StepUpReadRuleJustification(rule string) (string, bool) {
+	reason, ok := stepUpReadRuleJustifications[rule]
+	return reason, ok && reason != ""
+}
+
 // Resolve classifies an admin route.
 //
 // Precedence: machine allowlist (exact) → step-up exact → sensitive resource
-// (any method) → sensitive mutating resource (non-GET) → provider credential
-// mutation → secret-free family. Only routes outside /api/v1/admin are
-// returned as unknown; every admin route must match.
+// (any method) → secret-free exact (read-only POST batch reads) → sensitive
+// mutating resource (non-GET) → provider credential mutation → secret-free
+// family. Only routes outside /api/v1/admin are returned as unknown; every
+// admin route must match.
 func Resolve(method, fullPath string) (Resolved, bool) {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	if !strings.HasPrefix(fullPath, "/api/v1/admin") {
@@ -371,6 +431,11 @@ func Resolve(method, fullPath string) (Resolved, bool) {
 	for i := range sensitiveResources {
 		if ruleMatches(&sensitiveResources[i], method, fullPath) {
 			return sensitiveResources[i].res, true
+		}
+	}
+	for i := range secretFreeExact {
+		if secretFreeExact[i].method == method && secretFreeExact[i].path == fullPath {
+			return secretFreeExact[i].res, true
 		}
 	}
 	for i := range sensitiveMutatingResources {

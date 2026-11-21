@@ -32,7 +32,7 @@ describe('admin account upstream billing probe API', () => {
 
     await expect(getUpstreamBillingProbeSettings()).resolves.toEqual(settings)
     await expect(updateUpstreamBillingProbeSettings(settings)).resolves.toEqual(settings)
-    expect(get).toHaveBeenCalledWith('/admin/accounts/upstream-billing-probe/settings')
+    expect(get).toHaveBeenCalledWith('/admin/accounts/upstream-billing-probe/settings', { silentStepUp: true })
     expect(put).toHaveBeenCalledWith('/admin/accounts/upstream-billing-probe/settings', settings)
   })
 

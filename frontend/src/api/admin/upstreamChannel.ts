@@ -1,4 +1,6 @@
 import { apiClient } from '../client'
+// 渠道列表/详情/余额/密钥列表的读模型已脱敏：页面加载静默降级，不弹 TOTP。
+import { SILENT_STEP_UP } from '../silentStepUp'
 
 // Managed upstream sites: stored credentials, sessions, announcement sync,
 // upstream API key CRUD, recharge, redeem and subscriptions. Everything here is
@@ -219,6 +221,7 @@ export async function listChannels(query: {
   status?: string
 }): Promise<PageResult<UpstreamChannel>> {
   const { data } = await apiClient.get<PageResult<UpstreamChannel>>('/admin/upstream-monitor/channels', {
+    ...SILENT_STEP_UP,
     params: {
       page: query.page ?? 1,
       page_size: query.pageSize ?? 20,
@@ -230,7 +233,7 @@ export async function listChannels(query: {
 }
 
 export async function getChannel(id: number): Promise<UpstreamChannel> {
-  const { data } = await apiClient.get<UpstreamChannel>(`/admin/upstream-monitor/channels/${id}`)
+  const { data } = await apiClient.get<UpstreamChannel>(`/admin/upstream-monitor/channels/${id}`, SILENT_STEP_UP)
   return data
 }
 
@@ -256,7 +259,8 @@ export async function loginChannel(id: number): Promise<UpstreamChannel> {
 
 export async function channelBalance(id: number): Promise<{ channel_id: number; balance: number; fetched_at?: string }> {
   const { data } = await apiClient.get<{ channel_id: number; balance: number; fetched_at?: string }>(
-    `/admin/upstream-monitor/channels/${id}/balance`
+    `/admin/upstream-monitor/channels/${id}/balance`,
+    SILENT_STEP_UP
   )
   return data
 }
@@ -266,6 +270,7 @@ export async function listChannelAnnouncements(
   query: { page?: number; pageSize?: number }
 ): Promise<PageResult<UpstreamAnnouncement>> {
   const { data } = await apiClient.get<PageResult<UpstreamAnnouncement>>('/admin/upstream-monitor/announcements', {
+    ...SILENT_STEP_UP,
     params: { channel_id: id || undefined, page: query.page ?? 1, page_size: query.pageSize ?? 20 },
   })
   return data
@@ -285,6 +290,7 @@ export async function listUpstreamAPIKeys(
   const { data } = await apiClient.get<PageResult<UpstreamAPIKey>>(
     `/admin/upstream-monitor/channels/${id}/api-keys`,
     {
+      ...SILENT_STEP_UP,
       params: {
         page: query.page ?? 1,
         page_size: query.pageSize ?? 20,
@@ -299,7 +305,8 @@ export async function listUpstreamAPIKeys(
 
 export async function listUpstreamAPIKeyGroups(id: number): Promise<{ items: UpstreamAPIKeyGroup[] }> {
   const { data } = await apiClient.get<{ items: UpstreamAPIKeyGroup[] }>(
-    `/admin/upstream-monitor/channels/${id}/api-key-groups`
+    `/admin/upstream-monitor/channels/${id}/api-key-groups`,
+    SILENT_STEP_UP
   )
   return data
 }
@@ -336,7 +343,7 @@ export async function revealUpstreamAPIKey(id: number, keyId: number): Promise<{
 }
 
 export async function channelRechargeInfo(id: number): Promise<UpstreamRechargeInfo> {
-  const { data } = await apiClient.get<UpstreamRechargeInfo>(`/admin/upstream-monitor/channels/${id}/recharge`)
+  const { data } = await apiClient.get<UpstreamRechargeInfo>(`/admin/upstream-monitor/channels/${id}/recharge`, SILENT_STEP_UP)
   return data
 }
 
@@ -361,7 +368,8 @@ export async function redeemOnChannel(
 
 export async function channelSubscriptionInfo(id: number): Promise<UpstreamSubscriptionInfo> {
   const { data } = await apiClient.get<UpstreamSubscriptionInfo>(
-    `/admin/upstream-monitor/channels/${id}/subscriptions`
+    `/admin/upstream-monitor/channels/${id}/subscriptions`,
+    SILENT_STEP_UP
   )
   return data
 }
@@ -370,7 +378,8 @@ export async function channelSubscriptionUsage(
   id: number
 ): Promise<{ items: UpstreamSubscriptionUsage[]; fetched_at: string }> {
   const { data } = await apiClient.get<{ items: UpstreamSubscriptionUsage[]; fetched_at: string }>(
-    `/admin/upstream-monitor/channels/${id}/subscriptions/usage`
+    `/admin/upstream-monitor/channels/${id}/subscriptions/usage`,
+    SILENT_STEP_UP
   )
   return data
 }

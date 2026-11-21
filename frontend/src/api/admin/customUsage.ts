@@ -1,4 +1,6 @@
 import { apiClient } from '../client'
+// 账号列表加载时的自定义用量读取：静默降级，不弹 TOTP。
+import { withSilentStepUp } from '../silentStepUp'
 
 export type CustomUsageTemplate = 'custom' | 'general' | 'newapi' | 'sub2api'
 export interface NumericExtractor { path: string; divisor?: number }
@@ -46,7 +48,7 @@ export interface CustomUsageBatch { items: Record<string, CustomUsageResult> }
 const endpoint = (id: number) => '/admin/accounts/' + id
 
 export async function getConfig(id: number, signal?: AbortSignal): Promise<CustomUsageConfig> {
-  const { data } = await apiClient.get<CustomUsageConfig>(endpoint(id) + '/custom-usage-config', { signal })
+  const { data } = await apiClient.get<CustomUsageConfig>(endpoint(id) + '/custom-usage-config', withSilentStepUp({ signal }))
   return data
 }
 export async function saveConfig(id: number, config: CustomUsageConfig, signal?: AbortSignal): Promise<CustomUsageConfig> {
@@ -55,13 +57,13 @@ export async function saveConfig(id: number, config: CustomUsageConfig, signal?:
 }
 export async function queryUsage(id: number, body: { force?: boolean; config?: CustomUsageConfig } = {}, signal?: AbortSignal): Promise<CustomUsageResult> {
   // The upstream timeout may be 30 seconds; leave room for the admin handler.
-  const { data } = await apiClient.post<CustomUsageResult>(endpoint(id) + '/custom-usage-query', body, { signal, timeout: 35000 })
+  const { data } = await apiClient.post<CustomUsageResult>(endpoint(id) + '/custom-usage-query', body, withSilentStepUp({ signal, timeout: 35000 }))
   return data
 }
 export async function getCachedUsage(accountIds: number[], signal?: AbortSignal): Promise<CustomUsageBatch> {
   const ids = [...new Set(accountIds)]
   if (ids.length > 50 || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error('Invalid account batch')
   if (!ids.length) return { items: {} }
-  const { data } = await apiClient.post<CustomUsageBatch>('/admin/accounts/custom-usage-batch', { account_ids: ids }, { signal })
+  const { data } = await apiClient.post<CustomUsageBatch>('/admin/accounts/custom-usage-batch', { account_ids: ids }, withSilentStepUp({ signal }))
   return data
 }
