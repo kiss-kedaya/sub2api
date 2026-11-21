@@ -26,6 +26,8 @@ func TestCheckMigrationsRecognizesRenamedHistory(t *testing.T) {
 			for _, tc := range []struct {
 				name, old, currentChecksum, wantErr string
 				modified                            bool
+				empty                               bool
+				withExtraSpace                      bool
 			}{
 				{name: "previous filename only", old: checksum},
 				{name: "both valid", old: checksum, currentChecksum: checksum},
@@ -33,7 +35,9 @@ func TestCheckMigrationsRecognizesRenamedHistory(t *testing.T) {
 				{name: "no history", wantErr: "pending migration"},
 				{name: "previous checksum mismatch", old: "wrong", wantErr: "checksum mismatch for previous name"},
 				{name: "current mismatch cannot fall back", currentChecksum: "wrong", old: checksum, wantErr: "checksum mismatch"},
-				{name: "matching hash of different SQL", old: migrationTestChecksum("SELECT 1;"), modified: true, wantErr: "checksum mismatch for previous name"},
+				{name: "matching hash of different SQL", old: migrationTestChecksum("SELECT 1;"), modified: true, wantErr: "checksum mismatch for renamed file"},
+				{name: "empty renamed file is not skipped", old: checksum, empty: true, wantErr: "checksum mismatch for renamed file"},
+				{name: "extra whitespace changes exact SQL file hash", old: checksum, withExtraSpace: true, wantErr: "checksum mismatch for renamed file"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					db, mock, err := sqlmock.New()
@@ -51,6 +55,12 @@ func TestCheckMigrationsRecognizesRenamedHistory(t *testing.T) {
 					if tc.modified {
 						data = []byte("SELECT 1;")
 					}
+					if tc.empty {
+						data = []byte(" \n")
+					}
+					if tc.withExtraSpace {
+						data = []byte(string(content) + "\n")
+					}
 					err = checkMigrationsFS(t.Context(), db, fstest.MapFS{current: {Data: data}})
 					if tc.wantErr != "" {
 						require.ErrorContains(t, err, tc.wantErr)
@@ -62,6 +72,17 @@ func TestCheckMigrationsRecognizesRenamedHistory(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestApplyMigrationsRejectsEmptyRenamedSQL(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	prepareMigrationsBootstrapExpectations(mock)
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_unlock($1)")).WithArgs(migrationsAdvisoryLockID).WillReturnResult(sqlmock.NewResult(0, 1))
+	err = applyMigrationsFS(t.Context(), db, fstest.MapFS{"324_user_debt.sql": {Data: []byte(" \n")}})
+	require.ErrorContains(t, err, "checksum mismatch for renamed file")
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestApplyMigrationsRenamedHistory(t *testing.T) {

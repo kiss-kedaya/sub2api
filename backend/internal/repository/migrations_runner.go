@@ -112,6 +112,7 @@ var migrationChecksumCompatibilityRules = map[string]migrationChecksumCompatibil
 // them without changing their SQL. Only that exact content may reuse history.
 type renamedMigration struct {
 	previousName string
+	fileChecksum string
 	checksum     string
 }
 
@@ -119,19 +120,42 @@ var renamedMigrations = map[string]renamedMigration{
 	"324_user_debt.sql": {
 		previousName: "323_user_debt.sql",
 		checksum:     "bb2d856401ce96be65bd7e98051e5d5d50e7b09cca2058b2d236a32afb311235",
+		fileChecksum: "0170c304bb4b2a3845a183c0e6339da8dc30d2899b13d6fd1cf7de3e088199d2",
 	},
 	"325_crypto_signer_audit_actor.sql": {
 		previousName: "323_crypto_signer_audit_actor.sql",
 		checksum:     "2676ba9f5647644f4888dbf7d34c9124cd9a972077544014898995268b3db326",
+		fileChecksum: "74d96335e1360f846ecd758b51223e770fe74dd3b65aeae308fce1022a5537ad",
 	},
 }
 
-func (r renamedMigration) check(name, recordedChecksum, fileChecksum string) error {
-	if recordedChecksum != r.checksum || fileChecksum != r.checksum {
-		return fmt.Errorf("migration %s checksum mismatch for previous name %s (db=%s file=%s expected=%s)",
-			name, r.previousName, recordedChecksum, fileChecksum, r.checksum)
+func (r renamedMigration) checkHistory(name, recordedChecksum string) error {
+	if recordedChecksum != r.checksum {
+		return fmt.Errorf("migration %s checksum mismatch for previous name %s (db=%s expected=%s)",
+			name, r.previousName, recordedChecksum, r.checksum)
 	}
 	return nil
+}
+
+// readMigrationSQL preserves the journal's TrimSpace checksum convention.
+// A known rename must still match its original SQL, even if the new file
+// was accidentally left empty or the database has no record yet.
+func readMigrationSQL(fsys fs.FS, name string) (content, checksum string, err error) {
+	data, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		return "", "", fmt.Errorf("read migration %s: %w", name, err)
+	}
+	content = strings.TrimSpace(string(data))
+	sum := sha256.Sum256([]byte(content))
+	checksum = hex.EncodeToString(sum[:])
+	if rename, known := renamedMigrations[name]; known {
+		fileSum := sha256.Sum256(data)
+		fileChecksum := hex.EncodeToString(fileSum[:])
+		if fileChecksum != rename.fileChecksum {
+			return "", "", fmt.Errorf("migration %s checksum mismatch for renamed file (file=%s expected=%s)", name, fileChecksum, rename.fileChecksum)
+		}
+	}
+	return content, checksum, nil
 }
 
 // ApplyMigrations 将嵌入的 SQL 迁移文件应用到指定的数据库。
@@ -196,22 +220,18 @@ func checkMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 
 	var pending []string
 	for _, name := range files {
-		contentBytes, err := fs.ReadFile(fsys, name)
+		content, fileChecksum, err := readMigrationSQL(fsys, name)
 		if err != nil {
-			return fmt.Errorf("read migration %s: %w", name, err)
+			return err
 		}
-		content := strings.TrimSpace(string(contentBytes))
 		if content == "" {
 			continue
 		}
-
-		sum := sha256.Sum256([]byte(content))
-		fileChecksum := hex.EncodeToString(sum[:])
 		dbChecksum, ok := applied[name]
 		if !ok {
 			if rename, known := renamedMigrations[name]; known {
 				if previous, found := applied[rename.previousName]; found {
-					if err := rename.check(name, previous, fileChecksum); err != nil {
+					if err := rename.checkHistory(name, previous); err != nil {
 						return err
 					}
 					continue
@@ -293,21 +313,13 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	sort.Strings(files) // 确保按文件名顺序执行迁移
 
 	for _, name := range files {
-		// 读取迁移文件内容
-		contentBytes, err := fs.ReadFile(fsys, name)
+		content, checksum, err := readMigrationSQL(fsys, name)
 		if err != nil {
-			return fmt.Errorf("read migration %s: %w", name, err)
+			return err
 		}
-
-		content := strings.TrimSpace(string(contentBytes))
 		if content == "" {
 			continue // 跳过空文件
 		}
-
-		// 计算文件内容的 SHA256 校验和，用于检测文件是否被修改。
-		// 这是一种防篡改机制：如果有人修改了已应用的迁移文件，系统会拒绝启动。
-		sum := sha256.Sum256([]byte(content))
-		checksum := hex.EncodeToString(sum[:])
 
 		// 检查该迁移是否已经应用
 		var existing string
@@ -340,7 +352,7 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 			err := lockConn.QueryRowContext(ctx, "SELECT checksum FROM schema_migrations WHERE filename = $1", rename.previousName).Scan(&existing)
 			switch {
 			case err == nil:
-				if err := rename.check(name, existing, checksum); err != nil {
+				if err := rename.checkHistory(name, existing); err != nil {
 					return err
 				}
 				continue // Keep the verified history as-is and do not execute the SQL again.
