@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,8 +28,20 @@ func (r *apiKeyCreateReceiptRepo) Create(_ context.Context, key *service.APIKey)
 	return nil
 }
 
+type apiKeyCreateReceiptJournal struct {
+	*userMemoryIdempotencyRepoStub
+	readErr error
+}
+
+func (r *apiKeyCreateReceiptJournal) GetByScopeAndKeyHash(ctx context.Context, scope, hash string) (*service.IdempotencyRecord, error) {
+	if r.readErr != nil {
+		return nil, r.readErr
+	}
+	return r.userMemoryIdempotencyRepoStub.GetByScopeAndKeyHash(ctx, scope, hash)
+}
+
 func TestAPIKeyCreateReplaysOnlyMaskedReceipt(t *testing.T) {
-	journal := newUserMemoryIdempotencyRepoStub()
+	journal := &apiKeyCreateReceiptJournal{userMemoryIdempotencyRepoStub: newUserMemoryIdempotencyRepoStub()}
 	previous := service.DefaultIdempotencyCoordinator()
 	service.SetDefaultIdempotencyCoordinator(service.NewIdempotencyCoordinator(journal, service.DefaultIdempotencyConfig()))
 	t.Cleanup(func() { service.SetDefaultIdempotencyCoordinator(previous) })
@@ -97,4 +110,27 @@ func TestAPIKeyCreateReplaysOnlyMaskedReceipt(t *testing.T) {
 	record.ResponseBody = &legacy
 	assertMasked()
 	require.Equal(t, legacy, *record.ResponseBody, "old journal rows are not rewritten on replay")
+
+	assertUnavailable := func() {
+		t.Helper()
+		w := call()
+		require.Equal(t, http.StatusServiceUnavailable, w.Code)
+		require.Equal(t, 1, keys.calls, "failed recovery must not create a new key")
+		require.False(t, strings.Contains(w.Body.String(), keys.created.Key), "failed recovery must not return any credentials")
+	}
+
+	stored["user_id"] = 8
+	raw, err = json.Marshal(stored)
+	require.NoError(t, err)
+	wrongOwner := string(raw)
+	record.ResponseBody = &wrongOwner
+	assertUnavailable()
+
+	invalid := "{"
+	record.ResponseBody = &invalid
+	assertUnavailable()
+
+	record.ResponseBody = &legacy
+	journal.readErr = errors.New("fixture: retry journal unavailable")
+	assertUnavailable()
 }

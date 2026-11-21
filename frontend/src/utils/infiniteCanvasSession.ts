@@ -96,28 +96,37 @@ function toSession(key: SecretCapableKey, created: boolean, rotated = false): In
   }
 }
 
+function listCanvasKeys(client: InfiniteCanvasKeyClient) {
+  return client.list(1, 100, { search: INFINITE_CANVAS_KEY_NAME, sort_by: 'created_at', sort_order: 'desc' })
+}
+
+async function restoreCanvasSession(
+  client: InfiniteCanvasKeyClient,
+  key: ApiKey,
+  userScope: string | null,
+): Promise<InfiniteCanvasSession> {
+  if (!isUsableCanvasKey(key)) {
+    throw new InfiniteCanvasSetupError('key-unavailable', 'Canvas key is disabled, expired or exhausted')
+  }
+  // 没有本标签页的明文缓存时，只轮换已验证的画布专用 key。
+  if (!sessionSecrets.has(key.id) && typeof client.rotate === 'function') {
+    const rotated = await client.rotate(key.id)
+    assertUserScope(userScope)
+    return toSession(rotated, false, true)
+  }
+  return toSession(key, false)
+}
+
 async function prepareInfiniteCanvasApiKey(
   client: InfiniteCanvasKeyClient,
   createIfMissing: boolean,
   userScope: string | null,
 ): Promise<InfiniteCanvasSession> {
   try {
-    const listed = await client.list(1, 100, { search: INFINITE_CANVAS_KEY_NAME, sort_by: 'created_at', sort_order: 'desc' })
+    const listed = await listCanvasKeys(client)
     assertUserScope(userScope)
     const existing = findReusableCanvasKey(listed.items || [])
-    if (existing) {
-      if (!isUsableCanvasKey(existing)) {
-        throw new InfiniteCanvasSetupError('key-unavailable', 'Canvas key is disabled, expired or exhausted')
-      }
-      // 明文只在创建/轮换时出现一次：本标签页内存里没有这把 key 的明文时，
-      // 就地轮换这把画布专用 key 拿一次新明文（旧值立即失效，画布每次都用新值加载）。
-      if (!sessionSecrets.has(existing.id) && typeof client.rotate === 'function') {
-        const rotated = await client.rotate(existing.id)
-        assertUserScope(userScope)
-        return toSession(rotated, false, true)
-      }
-      return toSession(existing, false)
-    }
+    if (existing) return await restoreCanvasSession(client, existing, userScope)
     if (!createIfMissing) {
       throw new InfiniteCanvasSetupError('not-configured', 'No canvas key configured')
     }
@@ -142,7 +151,19 @@ async function prepareInfiniteCanvasApiKey(
       { idempotencyKey: crypto.randomUUID() },
     )
     assertUserScope(userScope)
-    return toSession(created, true)
+    if (created.key) return toSession(created, true)
+
+    // 重试回执可能过时：只在当前列表中重新核对同 ID 的画布专用 key，不换目标也不重建。
+    const latest = await listCanvasKeys(client)
+    assertUserScope(userScope)
+    const replayed = latest.items?.find((key) =>
+      key.id === created.id
+      && key.name === INFINITE_CANVAS_KEY_NAME
+      && key.user_id === created.user_id
+      && (userScope === null || String(key.user_id) === userScope),
+    )
+    if (!replayed) throw new InfiniteCanvasSetupError('missing-key', 'Could not verify the replayed canvas key')
+    return await restoreCanvasSession(client, replayed, userScope)
   } catch (error) {
     if (error instanceof InfiniteCanvasSetupError) throw error
     throw new InfiniteCanvasSetupError('request-failed', extractErrorMessage(error) || 'Failed to prepare API key')
