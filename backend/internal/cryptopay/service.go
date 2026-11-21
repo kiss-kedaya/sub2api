@@ -26,6 +26,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/wallet"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 // TokenConfig is one watched asset on a chain. Symbol is display-only:
@@ -346,7 +347,8 @@ type Service struct {
 	sweepMu sync.Mutex
 	// chainMon backs the admin node-status page (probe cache, sample window,
 	// on-demand ticker). Read-only; the zero value is ready to use.
-	chainMon chainMonitor
+	chainMon             chainMonitor
+	depositNetworkStatus *depositNetworkMonitor
 }
 
 // NewService builds the facade and starts the scan worker when enabled.
@@ -356,6 +358,7 @@ func NewService(
 	creditor ledger.Creditor,
 	addressSvc *addresses.Service,
 	appConfig *config.Config,
+	statusRedis ...*redis.Client,
 ) *Service {
 	var masterKey string
 	if appConfig != nil && appConfig.Totp.HasPersistentEncryptionKey() {
@@ -368,6 +371,9 @@ func NewService(
 		pools:     map[string]*rpc.Pool{},
 		wallet:    wallet.New(db, masterKey),
 		addresses: addressSvc,
+	}
+	if len(statusRedis) > 0 && statusRedis[0] != nil {
+		s.depositNetworkStatus = newDepositNetworkMonitor(redisNetworkStatusStore{rdb: statusRedis[0].WithTimeout(depositNetworkIOTimeout)}, time.Now)
 	}
 	s.wallet.EnableSecurityMonitoring()
 	s.hotResolver = &hotAddressResolver{svc: s}
@@ -584,6 +590,7 @@ func (s *Service) applyConfigLocked(ctx context.Context, cfg CryptoConfig, finge
 	// interval only shortens detection latency, not safety.
 	s.worker = scanner.NewWorker(s.db, pools, chainConfigs, cursor, led, addressLister, 5*time.Second, 2000)
 	s.worker.SetSecurityGuards(s.checkWalletActivity, s.scanWalletOutflows)
+	s.worker.SetDepositScanObserver(s.depositNetworkStatus.observer(fingerprint))
 	// A gas top-up we send to a deposit address is our own money moving, not a
 	// user deposit. Excluding our wallets here keeps the user's deposit list
 	// free of the phantom pending rows every funded sweep used to create.

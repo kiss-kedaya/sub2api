@@ -37,6 +37,17 @@ export interface DepositInfo {
   max_amount: number
 }
 
+const DEPOSIT_NETWORK_STATES = ['available', 'delayed', 'paused', 'stalled', 'unknown'] as const
+
+export type DepositNetworkState = (typeof DEPOSIT_NETWORK_STATES)[number]
+
+export interface DepositNetworkStatus {
+  chain: string
+  status: DepositNetworkState
+  observed_at?: string
+  expires_at?: string
+}
+
 export interface DepositRecord {
   chain: string
   tx_hash: string
@@ -58,6 +69,32 @@ export interface DepositRecord {
 export async function getDepositInfo(): Promise<DepositInfo> {
   const { data } = await apiClient.get('/crypto/deposit-info')
   return { ...data.data, chains: Array.isArray(data.data.chains) ? data.data.chains : [] }
+}
+
+function isDepositNetworkState(value: unknown): value is DepositNetworkState {
+  return DEPOSIT_NETWORK_STATES.some(status => status === value)
+}
+
+export async function getDepositNetworkStatus(signal?: AbortSignal): Promise<DepositNetworkStatus[]> {
+  const { data } = await apiClient.get<unknown>('/crypto/deposit-network-status', { signal })
+  // Crypto's legacy envelope leaves `data` in place; the standard API envelope is
+  // already unwrapped by apiClient. A legacy app shell is not status data.
+  const payload = data && typeof data === 'object' && 'data' in data ? data.data : data
+  if (!payload || typeof payload !== 'object' || !('networks' in payload) || !Array.isArray(payload.networks)) return []
+
+  const networks: unknown[] = payload.networks
+  const statuses: DepositNetworkStatus[] = []
+  for (const network of networks) {
+    if (!network || typeof network !== 'object' || !('chain' in network) ||
+        typeof network.chain !== 'string' || !network.chain || !('status' in network) ||
+        !isDepositNetworkState(network.status)) continue
+
+    const expires_at = 'expires_at' in network ? network.expires_at : undefined
+    if (expires_at !== undefined && typeof expires_at !== 'string') continue
+    const observed_at = 'observed_at' in network && typeof network.observed_at === 'string' ? network.observed_at : undefined
+    statuses.push({ chain: network.chain, status: network.status, observed_at, expires_at })
+  }
+  return statuses
 }
 
 export async function getDepositHistory(): Promise<DepositRecord[]> {

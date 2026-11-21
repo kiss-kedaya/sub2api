@@ -109,7 +109,9 @@ type Worker struct {
 	chainFailureAt map[string]time.Time
 	// liveProgress enables the head observation window and the confirmation
 	// counter writes. Production workers (positive interval) turn it on.
-	liveProgress bool
+	liveProgress        bool
+	depositScanObserver func(DepositScanObservation)
+	depositScanRound    uint64 // Periodic worker goroutine only.
 	// coverage is the per-pass record of security-scanned blocks. Pending
 	// credit is allowed only for blocks this pass proved were security-scanned.
 	coverage map[string]*chainCoverage
@@ -534,7 +536,7 @@ func (w *Worker) scanAll(parent context.Context) {
 	}
 	ctx, cancel := context.WithTimeout(parent, scanPassDeadline)
 	defer cancel()
-	if err := w.RunOnce(ctx); err != nil && !errors.Is(err, ErrScanBusy) && !errors.Is(err, mode.ErrReadOnly) && parent.Err() == nil {
+	if err := w.runPeriodicPass(ctx); err != nil && !errors.Is(err, ErrScanBusy) && !errors.Is(err, mode.ErrReadOnly) && parent.Err() == nil {
 		// A node rate limit says nothing about the block range: the same pass
 		// succeeds once the burst has drained. Waiting out one backoff keeps the
 		// cursor moving inside the tick instead of losing the whole interval —
@@ -546,7 +548,7 @@ func (w *Worker) scanAll(parent context.Context) {
 				return
 			case <-time.After(scanRateLimitRoundBackoff):
 			}
-			if retried := w.RunOnce(ctx); retried == nil {
+			if retried := w.runPeriodicPass(ctx); retried == nil {
 				return
 			} else if parent.Err() != nil {
 				return
@@ -621,6 +623,34 @@ func (w *Worker) reportScanFailure(err error) {
 	}
 }
 
+// DepositScanObservation contains the existing per-chain evidence from one
+// periodic, lock-held payment scan. It is an internal observation, not a DTO.
+type DepositScanObservation struct {
+	Chain           string
+	Round           uint64
+	At              time.Time
+	ConfirmedHead   uint64
+	CursorBefore    uint64
+	Cursor          uint64
+	CanMeasure      bool
+	ForwardFailed   bool
+	NearHeadScanned bool
+	Failed          bool
+}
+
+// SetDepositScanObserver installs a nonblocking observer before Start.
+func (w *Worker) SetDepositScanObserver(observer func(DepositScanObservation)) {
+	w.depositScanObserver = observer
+}
+
+func (w *Worker) runPeriodicPass(ctx context.Context) error {
+	if w.depositScanObserver == nil {
+		return w.RunOnce(ctx)
+	}
+	w.depositScanRound++
+	return w.runOnceFrom(ctx, 0, w.depositScanRound)
+}
+
 // RunOnce executes the complete background pass, including pending confirmations
 // and reorg checks, under the same shared session lock. Manual callers receive
 // failures rather than a false completion response.
@@ -655,7 +685,11 @@ func (w *Worker) ScanChains(scope ...string) ([]ChainConfig, error) {
 // RunOnceFrom permits a bounded, explicitly authorized backfill. An optional
 // scope limits discovery and maintenance; a rewind requires exactly one chain.
 // Rewinding reuses the ledger's unique transfer identity.
-func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64, scope ...string) (err error) {
+func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64, scope ...string) error {
+	return w.runOnceFrom(ctx, fromBlock, 0, scope...)
+}
+
+func (w *Worker) runOnceFrom(ctx context.Context, fromBlock, periodicRound uint64, scope ...string) (err error) {
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
@@ -729,10 +763,19 @@ func (w *Worker) RunOnceFrom(ctx context.Context, fromBlock uint64, scope ...str
 	// Maintenance has its own bounded budget and must not delay fresh deposits.
 	for _, chain := range chains {
 		var scanErr error
-		if bscHead != nil && chain.Chain == "bsc" {
-			scanErr = w.scanChainFromSnapshot(ctx, chain, fromBlock, bscHead)
+		var snapshot *chainHeadSnapshot
+		if chain.Chain == "bsc" {
+			snapshot = bscHead
+		}
+		if periodicRound != 0 && w.handler != nil {
+			observation := DepositScanObservation{Chain: chain.Chain, Round: periodicRound, At: time.Now()}
+			scanErr = w.scanChainObserved(ctx, chain, fromBlock, snapshot, &observation)
+			if !errors.Is(ctx.Err(), context.Canceled) {
+				observation.Failed = scanErr != nil
+				w.depositScanObserver(observation)
+			}
 		} else {
-			scanErr = w.scanChainFrom(ctx, chain, fromBlock)
+			scanErr = w.scanChainFromSnapshot(ctx, chain, fromBlock, snapshot)
 		}
 		if scanErr != nil {
 			err = errors.Join(err, fmt.Errorf("scan %s: %w", chain.Chain, scanErr))
@@ -881,7 +924,11 @@ func (w *Worker) observeConfiguredHead(ctx context.Context, chain ChainConfig) *
 	return &chainHeadSnapshot{pool: pool}
 }
 
-func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, manualFromBlock uint64, snapshot *chainHeadSnapshot) (scanErr error) {
+func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, manualFromBlock uint64, snapshot *chainHeadSnapshot) error {
+	return w.scanChainObserved(ctx, chain, manualFromBlock, snapshot, nil)
+}
+
+func (w *Worker) scanChainObserved(ctx context.Context, chain ChainConfig, manualFromBlock uint64, snapshot *chainHeadSnapshot, observation *DepositScanObservation) (scanErr error) {
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
@@ -959,6 +1006,14 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 	// block at or below it passed securityRange before the cursor moved.
 	w.noteCursor(chain.Chain, last)
 	hadCursor := last != 0
+	if observation != nil {
+		observation.ConfirmedHead = confirmed
+		observation.CursorBefore, observation.Cursor = last, last
+		// If an explorer poller owns native deposits this scan alone cannot
+		// certify the whole network. A bootstrap cursor is not progress either.
+		observation.CanMeasure = hadCursor && (!chain.Native || chain.NativeBlockScan())
+		observation.ForwardFailed = true
+	}
 	if manualFromBlock != 0 {
 		// A manual start may rewind the cursor, but must never skip blocks
 		// that have not yet been scanned. Keep the earlier durable boundary
@@ -984,6 +1039,9 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 		}
 	}
 	if last >= confirmed && (!w.recentReplay || manualFromBlock != 0 || w.handler == nil) {
+		if observation != nil {
+			observation.ForwardFailed = false
+		}
 		return nil
 	}
 
@@ -993,6 +1051,9 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 	}
 	if len(recipients) == 0 && w.securityRange == nil {
 		// Nothing to watch: advance the cursor so we do not rescan forever.
+		if observation != nil {
+			observation.CanMeasure = false
+		}
 		return w.cursor.Save(ctx, chain.Chain, confirmed)
 	}
 
@@ -1019,6 +1080,9 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 	}
 	var liveErr error
 	if last >= confirmed {
+		if observation != nil {
+			observation.ForwardFailed = false
+		}
 		return liveErr
 	}
 	if (confirmed-last-1)/maxRange >= maxScanBatchesPerChain {
@@ -1029,6 +1093,8 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 		if err := w.processScanRange(ctx, scanner, pool, chain, confirmed-span+1, confirmed, recipients); err != nil {
 			liveErr = errors.Join(liveErr, stageErr(chain.Chain, "live", confirmed-span+1, confirmed,
 				fmt.Errorf("live window %s: %w", chain.Chain, err)))
+		} else if observation != nil {
+			observation.NearHeadScanned = true
 		}
 	}
 	for from, batches := last+1, 0; from <= confirmed && batches < maxScanBatchesPerChain; batches++ {
@@ -1041,11 +1107,20 @@ func (w *Worker) scanChainFromSnapshot(ctx context.Context, chain ChainConfig, m
 		if err := w.processScanRange(ctx, scanner, pool, chain, from, to, recipients); err != nil {
 			return errors.Join(liveErr, stageErr(chain.Chain, "deposit", from, to, err))
 		}
+		if observation != nil && to == confirmed {
+			observation.NearHeadScanned = true
+		}
 		if err := w.cursor.Save(ctx, chain.Chain, to); err != nil {
 			return errors.Join(liveErr, stageErr(chain.Chain, "deposit", from, to, err))
 		}
 		w.noteCursor(chain.Chain, to)
+		if observation != nil {
+			observation.Cursor = to
+		}
 		from = to + 1
+	}
+	if observation != nil {
+		observation.ForwardFailed = false
 	}
 	return liveErr
 }

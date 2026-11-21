@@ -274,6 +274,39 @@ func TestScannerScanAllHoldsDedicatedSessionThroughCursor(t *testing.T) {
 	}
 }
 
+func TestDepositNetworkStatusScannerUsesOnlyLockedPeriodicScan(t *testing.T) {
+	t.Run("manual and periodic", func(t *testing.T) {
+		pg := &scannerMockPG{}
+		w, f := scannerLockFixture(t, pg)
+		var snapshots []DepositScanObservation
+		w.SetDepositScanObserver(func(o DepositScanObservation) {
+			holder, depth, events, _ := pg.snapshot()
+			if holder <= 0 || depth != 1 || events[len(events)-1].step != "save cursor" {
+				t.Fatalf("observation was outside the lock or preceded the commit: %+v", events)
+			}
+			snapshots = append(snapshots, o)
+		})
+		if err := w.RunOnce(t.Context()); err != nil || len(snapshots) != 0 {
+			t.Fatalf("manual scan published a user status: snapshots=%+v err=%v", snapshots, err)
+		}
+		w.scanAll(t.Context())
+		if len(snapshots) != 1 || !snapshots[0].CanMeasure || snapshots[0].Failed ||
+			snapshots[0].CursorBefore != 100 || snapshots[0].Cursor <= 100 || snapshots[0].Cursor != snapshots[0].ConfirmedHead {
+			t.Fatalf("periodic observation lacked committed per-chain evidence: %+v", snapshots)
+		}
+		if f.callCount("eth_getLogs") != 2 {
+			t.Fatal("status observation introduced another log scan")
+		}
+	})
+	t.Run("contender", func(t *testing.T) {
+		pg := &scannerMockPG{holder: -1, depth: 1}
+		w, _ := scannerLockFixture(t, pg)
+		w.SetDepositScanObserver(func(DepositScanObservation) { t.Fatal("lock contender published a status") })
+		w.scanAll(t.Context())
+		scannerAssertSteps(t, pg, "acquire")
+	})
+}
+
 func TestScannerScanAllSkipsWhenAcquireFalse(t *testing.T) {
 	// A different PostgreSQL session already owns the global lock.
 	pg := &scannerMockPG{holder: -1, depth: 1}

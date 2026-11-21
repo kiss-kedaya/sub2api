@@ -36,6 +36,7 @@ func RegisterCryptoRoutes(
 		authenticated.GET("/deposit-addresses", cryptoHandler.GetDepositAddresses)
 		if depositHandler != nil {
 			authenticated.GET("/deposit-info", depositHandler.GetDepositInfo)
+			authenticated.GET("/deposit-network-status", depositHandler.GetDepositNetworkStatus)
 			authenticated.GET("/deposit-history", depositHandler.GetDepositHistory)
 		}
 	}

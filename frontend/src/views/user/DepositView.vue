@@ -24,9 +24,13 @@
         </div>
         <div v-else class="deposit-view__layout">
           <section class="card deposit-view__funding" :aria-label="t('deposit.yourAddress')">
-            <div class="deposit-view__section-head">
+            <div class="deposit-view__section-head deposit-view__section-head--network">
               <span class="deposit-view__step">01</span>
               <h2>{{ t('deposit.chooseNetwork') }}</h2>
+              <button v-if="current" type="button" class="btn btn-secondary btn-sm deposit-view__network-refresh"
+                :disabled="networkStatusRequest !== null" @click="refreshNetworkStatuses">
+                {{ t('deposit.refreshNetworkStatus') }}
+              </button>
             </div>
             <div class="deposit-view__chains" :aria-label="t('deposit.chain')">
               <button v-for="c in info.chains" :key="c.chain" type="button" class="deposit-view__chain"
@@ -34,7 +38,15 @@
                 :aria-pressed="selectedChain === c.chain" @click="selectedChain = c.chain">
                 <span class="deposit-view__network-dot" aria-hidden="true"></span>
                 {{ chainLabel(c.chain) }}
+                <UBadge class="deposit-view__network-status" size="xs" variant="subtle"
+                  :color="networkState(c.chain) === 'available' ? 'success' : 'warning'">
+                  {{ t('deposit.networkStatus.' + networkState(c.chain)) }}
+                </UBadge>
               </button>
+            </div>
+            <div v-if="current && selectedNetworkState !== 'available'" class="deposit-view__network-notice" role="status">
+              <span class="deposit-view__notice-mark" aria-hidden="true">!</span>
+              <p>{{ t('deposit.networkStatusHint.' + selectedNetworkState, { network: chainLabel(current.chain) }) }}</p>
             </div>
             <div v-if="currentAssets.length > 1" class="deposit-view__assets" role="radiogroup"
               :aria-label="t('deposit.chooseAsset')">
@@ -45,7 +57,7 @@
                 {{ assetLabel(asset) }}
               </button>
             </div>
-            <template v-if="current">
+            <template v-if="current && !networkTransferBlocked">
               <div class="deposit-view__section-head deposit-view__section-head--address">
                 <span class="deposit-view__step">02</span>
                 <h2>{{ t('deposit.transferToAddress') }}</h2>
@@ -76,7 +88,7 @@
                 <p v-else>{{ t('deposit.networkNotice', { network: chainLabel(current.chain), tokens: selectedSymbol || current.tokens.join(' / ') }) }}</p>
               </div>
             </template>
-            <div v-else class="deposit-view__empty">{{ t('deposit.noNetworks') }}</div>
+            <div v-else-if="!current" class="deposit-view__empty">{{ t('deposit.noNetworks') }}</div>
           </section>
 
           <aside class="card deposit-view__guide">
@@ -183,7 +195,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -191,7 +203,10 @@ import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
-import { getDepositHistory, getDepositInfo, type DepositChain, type DepositInfo, type DepositRecord } from '@/api/crypto'
+import {
+  getDepositHistory, getDepositInfo, getDepositNetworkStatus,
+  type DepositChain, type DepositInfo, type DepositNetworkState, type DepositNetworkStatus, type DepositRecord,
+} from '@/api/crypto'
 import { isKeyRotationRequiredError } from '@/api/keyRotationGate'
 import { useClipboard } from '@/composables/useClipboard'
 import { useKeyRotationGate } from '@/composables/useKeyRotationGate'
@@ -260,6 +275,21 @@ const qrCanvas = ref<HTMLCanvasElement | null>(null)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 
 const current = computed(() => info.value?.chains.find((c) => c.chain === selectedChain.value))
+const networkStatuses = shallowRef<DepositNetworkStatus[]>([])
+const networkStatusRequest = shallowRef<AbortController | null>(null)
+let networkExpiryTimer: ReturnType<typeof setTimeout> | null = null
+const networkStates = computed(() => new Map<string, DepositNetworkState>(
+  networkStatuses.value.map(({ chain, status }) => [chain, status])
+))
+
+function networkState(chain: string): DepositNetworkState {
+  return networkStates.value.get(chain) ?? 'unknown'
+}
+
+const selectedNetworkState = computed(() => networkState(selectedChain.value))
+const networkTransferBlocked = computed(() =>
+  selectedNetworkState.value === 'paused' || selectedNetworkState.value === 'stalled'
+)
 
 // A backend that predates native-coin support sends only `tokens`. Those are
 // all ERC-20 assets, so the derived list keeps the page identical for it.
@@ -435,7 +465,7 @@ function statusText(status: string): string {
 }
 
 async function copyAddress() {
-  if (!current.value) return
+  if (depositBlocked.value || networkTransferBlocked.value || !current.value) return
   copyError.value = false
   if (await copyToClipboard(current.value.address)) {
     copied.value = true
@@ -447,13 +477,14 @@ async function copyAddress() {
 }
 
 async function renderQR() {
-  await nextTick()
-  if (!qrCanvas.value || !current.value) return
+  const canvas = qrCanvas.value
+  const chain = current.value
+  if (!canvas || !chain || depositBlocked.value || networkTransferBlocked.value) return
   try {
-    await QRCode.toCanvas(qrCanvas.value, current.value.address, { width: 184, margin: 1 })
-    qrError.value = false
+    await QRCode.toCanvas(canvas, chain.address, { width: 184, margin: 1 })
+    if (qrCanvas.value === canvas && current.value === chain) qrError.value = false
   } catch {
-    qrError.value = true
+    if (qrCanvas.value === canvas && current.value === chain) qrError.value = true
   }
 }
 
@@ -501,11 +532,56 @@ async function refreshHistory() {
   }
 }
 
+function applyNetworkStatuses(next: DepositNetworkStatus[]) {
+  if (networkExpiryTimer !== null) clearTimeout(networkExpiryTimer)
+  networkExpiryTimer = null
+  const now = Date.now()
+  let nextExpiry = Infinity
+  networkStatuses.value = next.filter(({ status, expires_at }) => {
+    if (expires_at === undefined) return status === 'unknown'
+    const expiry = Date.parse(expires_at)
+    if (!(expiry > now)) return false
+    nextExpiry = Math.min(nextExpiry, expiry)
+    return true
+  })
+  // Expiration is local, even while another read is pending or no read succeeds.
+  if (Number.isFinite(nextExpiry)) {
+    networkExpiryTimer = setTimeout(
+      () => applyNetworkStatuses(networkStatuses.value), Math.min(nextExpiry - now, 2_147_483_647)
+    )
+  }
+}
+
+async function refreshNetworkStatuses() {
+  if (disposed || depositBlocked.value || networkStatusRequest.value) return
+  const request = new AbortController()
+  networkStatusRequest.value = request
+  try {
+    const next = await getDepositNetworkStatus(request.signal)
+    if (!disposed && !depositBlocked.value && !request.signal.aborted) applyNetworkStatuses(next)
+  } catch (error) {
+    if (disposed || request.signal.aborted) return
+    if (isKeyRotationRequiredError(error)) keyRotationDenied.value = true
+    else applyNetworkStatuses([])
+  } finally {
+    if (networkStatusRequest.value === request) networkStatusRequest.value = null
+  }
+}
+
+function resetNetworkStatuses() {
+  networkStatusRequest.value?.abort()
+  networkStatusRequest.value = null
+  applyNetworkStatuses([])
+}
+
 function onVisibilityChange() {
   if (document.visibilityState === 'hidden') {
     stopPolling()
     return
   }
+  // Browser timers can be throttled while the tab is hidden.
+  applyNetworkStatuses(networkStatuses.value)
+  void refreshNetworkStatuses()
   if (canPollHistory.value) void refreshHistory()
 }
 
@@ -513,6 +589,7 @@ async function load() {
   stopPolling()
   loading.value = true
   loadError.value = false
+  void refreshNetworkStatuses()
   try {
     info.value = await getDepositInfo()
     if (!info.value.chains.some(c => c.chain === selectedChain.value)) {
@@ -528,19 +605,22 @@ async function load() {
   // Wait for deposit-info to reach the existing gate before reading history.
   // Closed funding and ordinary read errors still allow the history request.
   void refreshHistory()
-  if (!disposed) await renderQR()
 }
 
 watch(depositBlocked, (blocked) => {
   if (blocked) {
     stopPolling()
+    resetNetworkStatuses()
     history.value = []
   } else {
+    void refreshNetworkStatuses()
     void refreshHistory()
   }
 })
 
-watch(current, () => {
+// The canvas is recreated when a pause ends or the status expires, even if
+// neither the address nor the selected network changed.
+watch([current, qrCanvas], () => {
   copied.value = false
   copyError.value = false
   // A symbol accepted on the previous network may not exist on this one.
@@ -559,6 +639,7 @@ onUnmounted(() => {
   disposed = true
   document.removeEventListener('visibilitychange', onVisibilityChange)
   stopPolling()
+  resetNetworkStatuses()
   if (copyTimer) clearTimeout(copyTimer)
 })
 </script>
@@ -571,6 +652,8 @@ onUnmounted(() => {
 .dark .deposit-view__funding, .dark .deposit-view__guide, .dark .deposit-view__history { box-shadow: none; }
 .deposit-view h2 { font-size: .9375rem; line-height: 1.5; font-weight: 650; }
 .deposit-view__section-head { display: flex; align-items: center; gap: .625rem; margin-bottom: 1rem; }
+.deposit-view__section-head--network { flex-wrap: wrap; }
+.deposit-view__network-refresh { margin-inline-start: auto; }
 .deposit-view__section-head--address { padding-top: 1.25rem; margin-top: 1.5rem; border-top: 1px solid var(--signal-line, #64748b30); }
 .deposit-view__step { color: var(--signal-muted, #8c99a6); font: .75rem ui-monospace, monospace; }
 .deposit-view__chains { display: flex; flex-wrap: wrap; gap: .5rem; }
@@ -593,7 +676,8 @@ onUnmounted(() => {
 .deposit-view__address { display: block; padding: .875rem; min-width: 0; border: 1px solid var(--ui-border); border-radius: 6px; background: #64748b09; font-size: .8125rem; line-height: 1.8; overflow-wrap: anywhere; user-select: all; }
 .deposit-view__copy { width: 100%; min-height: 2.75rem; margin-top: .75rem; }
 .deposit-view__copy-status { margin-top: .75rem; font-size: .75rem; line-height: 1.7; color: var(--signal-muted, #8c99a6); }
-.deposit-view__notice { display: flex; gap: .625rem; align-items: flex-start; padding: .875rem 1rem; margin-top: 1.5rem; border: 1px solid #d9770638; border-radius: .625rem; background: #d9770609; font-size: .75rem; line-height: 1.7; }
+.deposit-view__notice, .deposit-view__network-notice { display: flex; gap: .625rem; align-items: flex-start; padding: .875rem 1rem; margin-top: 1.5rem; border: 1px solid #d9770638; border-radius: .625rem; background: #d9770609; font-size: .75rem; line-height: 1.7; }
+.deposit-view__network-notice { margin-top: .75rem; }
 .deposit-view__notice-mark { display: grid; place-items: center; width: 1rem; height: 1rem; flex-shrink: 0; margin-top: .15rem; border: 1px solid #d97706; border-radius: 50%; color: #d97706; font-size: .6875rem; font-weight: 700; }
 .deposit-view__terms { margin-top: 1.25rem; }
 .deposit-view__terms > div { padding: 1rem 0; border-top: 1px solid var(--signal-line, #64748b30); }

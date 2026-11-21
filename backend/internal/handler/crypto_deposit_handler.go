@@ -37,6 +37,17 @@ func (h *CryptoDepositHandler) GetDepositInfo(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": info})
 }
 
+// GetDepositNetworkStatus reports only customer-safe network status.
+// GET /api/v1/crypto/deposit-network-status
+func (h *CryptoDepositHandler) GetDepositNetworkStatus(c *gin.Context) {
+	cryptoNoStore(c)
+	if _, ok := middleware2.GetAuthSubjectFromContext(c); !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	response.Success(c, h.service.DepositNetworkStatus(c.Request.Context()))
+}
+
 // GetDepositHistory lists the caller's own deposits.
 // GET /api/v1/crypto/deposit-history
 func (h *CryptoDepositHandler) GetDepositHistory(c *gin.Context) {
