@@ -643,8 +643,12 @@ func buildIdempotencyConfig(cfg *config.Config) IdempotencyConfig {
 	return idempotencyCfg
 }
 
-func ProvideIdempotencyCoordinator(repo IdempotencyRepository, cfg *config.Config) *IdempotencyCoordinator {
+func ProvideIdempotencyCoordinator(repo IdempotencyRepository, cfg *config.Config, encryptor SecretEncryptor) *IdempotencyCoordinator {
 	coordinator := NewIdempotencyCoordinator(repo, buildIdempotencyConfig(cfg))
+	// Stored idempotent responses can contain one-time secrets (for example the
+	// initial redemption-code generation payload). Seal them at rest so a database
+	// dump or a read-only replica cannot replay still-redeemable values.
+	coordinator.SetStoredResponseEncryptor(encryptor)
 	SetDefaultIdempotencyCoordinator(coordinator)
 	return coordinator
 }
