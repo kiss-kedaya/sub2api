@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -398,33 +399,57 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 	}
 	// url.ParseQuery already decodes values — no additional decode needed.
 	//
-	// 不再用「未知参数一律拒绝」的白名单：真实易支付变体（如 ylyun.net）回调会
-	// 额外携带 bill_trade_no / api_trade_no / buyer 等由支付方生成的字段，白名单
-	// 会让合法回调直接 400，表现为「支付成功但订单永远 PENDING」。
-	//
-	// 安全边界改为：签名基串覆盖**全部**非空参数（与支付方算法一致），任何被追加、
-	// 篡改或重放的参数都会让签名失效；同时强制业务必需字段存在且唯一（重复 key 在
-	// 上面的循环里已拒绝）。业务判断只读这里解析出的单值 map，绝不按 "&" 手工切分
-	// 原始 query，因此 return_url 之类的值即使内含 "trade_status=TRADE_SUCCESS"
-	// 也只是一段字符串值，不会被误认为顶层参数（upstream issue #7881）。
+	// Fields are deliberately NOT allowlisted by name: EasyPay-compatible
+	// gateways disagree on the exact callback field set (bill_trade_no,
+	// api_trade_no, buyer, addtime/endtime, ...), and rejecting an unknown key
+	// stranded genuinely paid orders forever (the notify always 400'd, so the
+	// provider kept retrying and the order stayed PENDING). Instead every
+	// non-empty field participates in the MD5 sign base string, exactly like the
+	// gateway computes it, and the business subset we actually read is required
+	// to be present. A provider-generated field can therefore only ever appear
+	// if the gateway signed it, and it cannot change routing, amount or status
+	// because those are read from fixed keys below.
 	params := make(map[string]string, len(values))
 	for k := range values {
-		params[k] = values.Get(k)
+		value := values.Get(k)
+		// Upstream #7881: the MD5 base string concatenates values unescaped, so
+		// one signed value can be re-cut into several top-level parameters
+		// ("&trade_status=TRADE_SUCCESS") while the signature still matches. The
+		// replay can only be built from a signed checkout URL, so it always
+		// reuses the checkout request. Two guards below fail closed on that
+		// shape, without rejecting provider-generated fields.
+		if easyPayNotifyRejectedCarrierParams[k] {
+			return nil, fmt.Errorf("order-creation-only notify parameter: %s", k)
+		}
+		if easyPayNotifyValueCarriesParamPair(value) {
+			return nil, fmt.Errorf("notify parameter %q embeds a serialized parameter pair", k)
+		}
+		params[k] = value
 	}
-	for _, required := range easyPayNotifyRequiredParams {
-		if strings.TrimSpace(params[required]) == "" {
-			return nil, fmt.Errorf("missing notify param: %s", required)
+	// The fields below are the only ones the business layer trusts. Any missing
+	// one means the callback cannot be attributed or settled, so reject it
+	// instead of guessing (a paid order is still recoverable through the
+	// upstream QueryOrder reconcile path).
+	for _, key := range easyPayNotifyRequiredParams {
+		if strings.TrimSpace(params[key]) == "" {
+			return nil, fmt.Errorf("missing notify param: %s", key)
 		}
 	}
-	sign := params["sign"]
-	if !easyPayVerifySign(params, e.config["pkey"], sign) {
+	if !easyPayVerifySign(params, e.config["pkey"], params["sign"]) {
 		return nil, fmt.Errorf("invalid signature")
 	}
+	money, err := strconv.ParseFloat(strings.TrimSpace(params["money"]), 64)
+	if err != nil || math.IsNaN(money) || math.IsInf(money, 0) {
+		return nil, fmt.Errorf("invalid notify money: %q", params["money"])
+	}
+	// Only the exact success token counts. Every other value (TRADE_CLOSED,
+	// TRADE_FINISHED, missing, ...) is reported as failed so the caller ignores
+	// it without touching the order. The order amount itself is compared by the
+	// service layer against payment_orders.pay_amount before any credit.
 	status := payment.ProviderStatusFailed
 	if params["trade_status"] == tradeStatusSuccess {
 		status = payment.ProviderStatusSuccess
 	}
-	amount, _ := strconv.ParseFloat(params["money"], 64)
 
 	metadata := e.MerchantIdentityMetadata()
 	if pid := strings.TrimSpace(params["pid"]); pid != "" {
@@ -435,7 +460,7 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 	}
 	return &payment.PaymentNotification{
 		TradeNo: params["trade_no"], OrderID: params["out_trade_no"],
-		Amount: amount, Status: status, RawData: rawBody, Metadata: metadata,
+		Amount: money, Status: status, RawData: rawBody, Metadata: metadata,
 	}, nil
 }
 
@@ -664,20 +689,101 @@ func easyPayVerifySign(params map[string]string, pkey string, sign string) bool 
 	return hmac.Equal([]byte(easyPaySign(params, pkey)), []byte(sign))
 }
 
-// easyPayNotifyRequiredParams are the fields a genuine EasyPay
-// (彩虹易支付-compatible) async notification must carry for us to settle money.
-// Everything else is tolerated as an upstream-generated variant field as long as
-// it participates in the signature: the sign base covers every non-empty
-// parameter, so appended or tampered values fail verification. Business logic
-// only reads these fields from the parsed single-value map (see
-// VerifyNotification), so smuggling a pair inside another value — e.g. an order
-// URL's return_url containing "trade_status=TRADE_SUCCESS" — cannot be promoted
-// to a top-level parameter (upstream issue #7881).
+// easyPayNotifyRequiredParams are the fields a genuine EasyPay-compatible async
+// notification must carry, and the only ones the business layer reads:
+//
+//   - pid           binds the callback to the merchant instance,
+//   - out_trade_no  resolves the local order (routing happens on this field),
+//   - trade_no      is the gateway transaction used by the settlement query,
+//   - money         is compared against payment_orders.pay_amount,
+//   - trade_status  gates success (exact TRADE_SUCCESS only),
+//   - sign          authenticates all of the above.
+//
+// Unknown provider-generated fields are accepted as long as the signature over
+// the full non-empty parameter set matches; see VerifyNotification.
 var easyPayNotifyRequiredParams = []string{
 	"pid",
-	"trade_no",
 	"out_trade_no",
+	"trade_no",
 	"money",
 	"trade_status",
 	"sign",
+}
+
+// easyPayNotifyRejectedCarrierParams are request-side fields of the signed
+// checkout URL that a genuine async notification never repeats. They exist as a
+// narrow #7881 guard, not as a callback allowlist: a replay needs one of them
+// (their value is where an embedded query string can hide), while every
+// provider-generated field — known or not — is still accepted when signed.
+var easyPayNotifyRejectedCarrierParams = map[string]bool{
+	"return_url": true,
+	"notify_url": true,
+}
+
+// easyPayNotifyParamPairNames are parameter names that can steer EasyPay
+// notifications or the checkout request. easyPayNotifyValueCarriesParamPair only
+// uses them to spot an embedded serialized "&name=value" pair; this is NOT a
+// callback allowlist — any other provider-generated field is still accepted when
+// the signature covers it.
+var easyPayNotifyParamPairNames = map[string]bool{
+	"pid":            true,
+	"trade_no":       true,
+	"out_trade_no":   true,
+	"type":           true,
+	"name":           true,
+	"money":          true,
+	"trade_status":   true,
+	"param":          true,
+	"sign":           true,
+	"sign_type":      true,
+	"return_url":     true,
+	"notify_url":     true,
+	"cid":            true,
+	"device":         true,
+	"clientip":       true,
+	"method":         true,
+	"auth_code":      true,
+	"sub_openid":     true,
+	"sub_appid":      true,
+	"timestamp":      true,
+	"bill_trade_no":  true,
+	"api_trade_no":   true,
+	"buyer":          true,
+	"subject":        true,
+	"trade_time":     true,
+	"addtime":        true,
+	"endtime":        true,
+	"custom_data":    true,
+}
+
+// easyPayNotifyValueCarriesParamPair reports whether a decoded callback value
+// contains an embedded serialized parameter pair such as
+// "&trade_status=TRADE_SUCCESS".
+//
+// This guards the upstream #7881 replay: easyPaySign concatenates values with
+// '&' but does not escape them, so a signed checkout URL that embeds a query
+// string inside a parameter value (historically return_url) can be re-cut into
+// extra top-level parameters while the MD5 base string — and therefore the
+// signature — stays byte-identical. Re-cutting either leaves a carrier key at
+// the top level (rejected by easyPayNotifyRejectedCarrierParams) or pushes its
+// text inside another value as "&key=value" (rejected here), so the smuggling
+// class is closed without name-allowlisting provider fields. Genuine callback
+// values (order/product names, numeric transaction ids, timestamps) do not
+// contain such a pair.
+func easyPayNotifyValueCarriesParamPair(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] != '&' {
+			continue
+		}
+		rest := value[i+1:]
+		eq := strings.IndexByte(rest, '=')
+		if eq <= 0 {
+			continue
+		}
+		name := strings.ToLower(rest[:eq])
+		if easyPayNotifyParamPairNames[name] {
+			return true
+		}
+	}
+	return false
 }

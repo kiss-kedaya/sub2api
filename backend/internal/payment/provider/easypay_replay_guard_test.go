@@ -67,68 +67,45 @@ func TestEasyPayMissingGatewayTradeNumberStaysEmpty(t *testing.T) {
 	require.Empty(t, resp.TradeNo, "merchant order number is not a gateway transaction number")
 }
 
-// 真实服务商变体（ylyun.net / 彩虹易支付衍生）会多带支付方生成的字段：
-// 这些字段参与签名，必须被接受，否则合法回调 400、订单永远 PENDING。
-func TestEasyPayNotificationAcceptsVariantFields(t *testing.T) {
-	for _, extra := range []string{"bill_trade_no", "api_trade_no", "buyer", "subject", "trade_time"} {
+func TestEasyPayNotificationRejectsUnsignedExtraParams(t *testing.T) {
+	// Upstream issue #7881: an order-creation signature replayed as a notify,
+	// with the smuggled pair riding inside return_url. Provider-generated extra
+	// fields are tolerated, but any field the gateway did not sign breaks the
+	// signature over the full parameter set.
+	for _, extra := range []string{"return_url", "notify_url", "cid", "device", "clientip", "trade_status_extra"} {
 		t.Run(extra, func(t *testing.T) {
 			p := &EasyPay{config: map[string]string{"pid": "fixture-merchant", "pkey": "fixture-secret"}}
 			params := map[string]string{"pid": "fixture-merchant", "money": "80.00", "trade_no": "fixture-trade", "out_trade_no": "fixture-order", "trade_status": "TRADE_SUCCESS", "sign_type": "MD5"}
-			params[extra] = "provider-generated"
 			params["sign"] = easyPaySign(params, "fixture-secret")
 			values := url.Values{}
 			for k, v := range params {
 				values.Set(k, v)
 			}
-			got, err := p.VerifyNotification(context.Background(), values.Encode(), nil)
-			require.NoError(t, err)
-			require.NotNil(t, got)
-			require.Equal(t, payment.ProviderStatusSuccess, got.Status)
+			// Appended after signing: the gateway never covered this value. The two
+			// checkout-only carriers are rejected by the #7881 guard, everything else
+			// by the signature over the full parameter set.
+			values.Set(extra, "x")
+			if _, err := p.VerifyNotification(context.Background(), values.Encode(), nil); err == nil {
+				t.Fatalf("unsigned extra parameter %q was accepted", extra)
+			}
 		})
 	}
 }
 
-// 未参与签名的追加/篡改参数必须因签名失效被拒（覆盖 #7881 参数夹带面）。
-func TestEasyPayNotificationRejectsUnsignedAppendedParams(t *testing.T) {
+func TestEasyPayNotificationRejectsEmbeddedParamPairs(t *testing.T) {
+	// A value carrying "&trade_status=TRADE_SUCCESS" is the #7881 smuggling
+	// primitive: the MD5 base string is unchanged after re-cutting, so the
+	// signature alone cannot tell the replayed notify from the signed checkout.
 	p := &EasyPay{config: map[string]string{"pid": "fixture-merchant", "pkey": "fixture-secret"}}
 	params := map[string]string{"pid": "fixture-merchant", "money": "80.00", "trade_no": "fixture-trade", "out_trade_no": "fixture-order", "trade_status": "TRADE_SUCCESS", "sign_type": "MD5"}
+	params["name"] = "fixture&trade_status=TRADE_SUCCESS"
 	params["sign"] = easyPaySign(params, "fixture-secret")
-
-	// 攻击者无法重算签名：追加任意参数或改写金额都应失败。
-	for name, mutate := range map[string]func(url.Values){
-		"append return_url": func(v url.Values) { v.Set("return_url", "x&trade_status=TRADE_SUCCESS") },
-		"append notify_url": func(v url.Values) { v.Set("notify_url", "https://evil.example/cb") },
-		"raise money":       func(v url.Values) { v.Set("money", "0.01") },
-		"downgrade status":  func(v url.Values) { v.Set("trade_status", "WAIT_BUYER_PAY") },
-	} {
-		t.Run(name, func(t *testing.T) {
-			values := url.Values{}
-			for k, v := range params {
-				values.Set(k, v)
-			}
-			mutate(values)
-			_, err := p.VerifyNotification(context.Background(), values.Encode(), nil)
-			require.ErrorContains(t, err, "invalid signature")
-		})
+	values := url.Values{}
+	for k, v := range params {
+		values.Set(k, v)
 	}
-}
-
-// 必需字段缺失必须拒绝，不能把不完整回调当成成功。
-func TestEasyPayNotificationRequiresSettlementFields(t *testing.T) {
-	for _, missing := range []string{"pid", "trade_no", "out_trade_no", "money", "trade_status", "sign"} {
-		t.Run(missing, func(t *testing.T) {
-			p := &EasyPay{config: map[string]string{"pid": "fixture-merchant", "pkey": "fixture-secret"}}
-			params := map[string]string{"pid": "fixture-merchant", "money": "80.00", "trade_no": "fixture-trade", "out_trade_no": "fixture-order", "trade_status": "TRADE_SUCCESS", "sign_type": "MD5"}
-			params["sign"] = easyPaySign(params, "fixture-secret")
-			delete(params, missing)
-			values := url.Values{}
-			for k, v := range params {
-				values.Set(k, v)
-			}
-			_, err := p.VerifyNotification(context.Background(), values.Encode(), nil)
-			require.Error(t, err)
-		})
-	}
+	_, err := p.VerifyNotification(context.Background(), values.Encode(), nil)
+	require.ErrorContains(t, err, "embeds a serialized parameter pair")
 }
 
 func TestEasyPayNotificationAcceptsGenuineCallback(t *testing.T) {

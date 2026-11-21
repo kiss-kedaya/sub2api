@@ -124,10 +124,11 @@ func TestEasyPaySignedSuccessRequiresProviderSettlement(t *testing.T) {
 				signed.Set("return_url", strings.SplitN(signed.Get("return_url"), marker, 2)[0])
 				signed.Set("trade_no", fakeTradeNo)
 				signed.Set("trade_status", "TRADE_SUCCESS")
-				// Upstream #7881: the provider now rejects any parameter outside the async
-				// notify set, so the replayed checkout signature dies before the service layer.
+				// Upstream #7881: the provider rejects the checkout-only carrier
+				// parameters, so the replayed checkout signature dies before the
+				// service layer.
 				_, createErr = checkoutProvider.VerifyNotification(ctx, signed.Encode(), nil)
-				require.ErrorContains(t, createErr, "unexpected notify param")
+				require.ErrorContains(t, createErr, "order-creation-only notify parameter")
 			}
 			err = svc.HandlePaymentNotification(ctx, notification, payment.TypeEasyPay)
 			require.Equal(t, tc.wantQueries, queries)
