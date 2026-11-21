@@ -99,6 +99,23 @@ type IdempotencyExecuteResult struct {
 type IdempotencyCoordinator struct {
 	repo IdempotencyRepository
 	cfg  IdempotencyConfig
+	// encryptor seals stored response bodies at rest. Nil means "no sealing"
+	// (unit-test constructors and legacy callers keep working unchanged).
+	encryptor SecretEncryptor
+}
+
+// storedResponseCipherPrefix marks a response body that was encrypted before it
+// was written to idempotency_records.response_body. Legacy rows have no prefix
+// and are still replayed verbatim.
+const storedResponseCipherPrefix = "enc:idem:v1:"
+
+// SetStoredResponseEncryptor installs the installation secret encryptor used to
+// seal idempotent response bodies at rest. Safe to call with nil.
+func (c *IdempotencyCoordinator) SetStoredResponseEncryptor(encryptor SecretEncryptor) {
+	if c == nil {
+		return
+	}
+	c.encryptor = encryptor
 }
 
 var (
@@ -427,7 +444,15 @@ func (c *IdempotencyCoordinator) Execute(
 		})
 		return nil, ErrIdempotencyStoreUnavail.WithCause(marshalErr)
 	}
-	if markErr := c.repo.MarkSucceeded(ctx, record.ID, 200, storedBody, expiresAt); markErr != nil {
+	persistedBody, sealErr := c.sealStoredResponse(storedBody)
+	if sealErr != nil {
+		RecordIdempotencyStoreUnavailable(opts.Route, opts.Scope, "seal_response_error")
+		logIdempotencyAudit(opts.Route, opts.Scope, keyHash, "processing->store_unavailable", false, map[string]string{
+			"operation": "seal_response",
+		})
+		return nil, ErrIdempotencyStoreUnavail.WithCause(sealErr)
+	}
+	if markErr := c.repo.MarkSucceeded(ctx, record.ID, 200, persistedBody, expiresAt); markErr != nil {
 		RecordIdempotencyStoreUnavailable(opts.Route, opts.Scope, "mark_succeeded_error")
 		logIdempotencyAudit(opts.Route, opts.Scope, keyHash, "processing->store_unavailable", false, map[string]string{
 			"operation": "mark_succeeded",
@@ -483,12 +508,50 @@ func truncateUTF8(s string, maxBytes int) string {
 	return s[:maxBytes]
 }
 
+// sealStoredResponse encrypts a response body before it is persisted when an
+// encryptor is configured. The ciphertext keeps a versioned prefix so legacy
+// plaintext rows remain readable without guessing.
+func (c *IdempotencyCoordinator) sealStoredResponse(stored string) (string, error) {
+	if c == nil || c.encryptor == nil || stored == "" {
+		return stored, nil
+	}
+	ciphertext, err := c.encryptor.Encrypt(stored)
+	if err != nil {
+		return "", fmt.Errorf("encrypt stored response: %w", err)
+	}
+	if ciphertext == "" {
+		return "", errors.New("encrypt stored response: empty ciphertext")
+	}
+	return storedResponseCipherPrefix + ciphertext, nil
+}
+
+// openStoredResponse reverses sealStoredResponse. A sealed body that cannot be
+// decrypted is a hard error (fail-closed): it must never be replayed as if it
+// were the original JSON. Unprefixed bodies are legacy plaintext rows.
+func (c *IdempotencyCoordinator) openStoredResponse(stored string) (string, error) {
+	if !strings.HasPrefix(stored, storedResponseCipherPrefix) {
+		return stored, nil
+	}
+	if c == nil || c.encryptor == nil {
+		return "", errors.New("decrypt stored response: secret encryption is unavailable")
+	}
+	plaintext, err := c.encryptor.Decrypt(strings.TrimPrefix(stored, storedResponseCipherPrefix))
+	if err != nil {
+		return "", fmt.Errorf("decrypt stored response: %w", err)
+	}
+	return plaintext, nil
+}
+
 func (c *IdempotencyCoordinator) decodeStoredResponse(stored *string) (any, error) {
 	if stored == nil || strings.TrimSpace(*stored) == "" {
 		return map[string]any{}, nil
 	}
+	opened, err := c.openStoredResponse(*stored)
+	if err != nil {
+		return nil, err
+	}
 	var out any
-	if err := json.Unmarshal([]byte(*stored), &out); err != nil {
+	if err := json.Unmarshal([]byte(opened), &out); err != nil {
 		return nil, fmt.Errorf("decode stored response: %w", err)
 	}
 	return out, nil
