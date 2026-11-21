@@ -14,7 +14,7 @@ import (
 // Key-rotation gate (security incident response).
 //
 // Every API key may have leaked. Until a user has either rotated all active API
-// keys (created at/after security.key_rotation_cutoff) or put every active key
+// keys (created or rotated at/after security.key_rotation_cutoff) or put every active key
 // behind a non-empty IP allowlist, they may not redeem codes or top up (payment
 // orders, crypto deposits). This gate is deliberately narrow: model calls,
 // login, balance reads and key management (create/delete/update IP allowlist)
@@ -70,15 +70,17 @@ type KeyRotationGateStatus struct {
 	RemediationPath string `json:"remediation_path"`
 }
 
-// IsCompliant reports whether one active API key satisfies the gate:
-// it was created at/after the cutoff, or it carries a non-empty IP allowlist.
+// IsKeyRotationCompliant reports whether the current credential was issued
+// at or after the cutoff, or the key carries a non-empty IP allowlist.
 func IsKeyRotationCompliant(key APIKey, cutoff time.Time) bool {
 	if hasNonEmptyIPWhitelist(key.IPWhitelist) {
 		return true
 	}
-	// "创建于门槛时间之后" includes the cutover instant itself: a key created
-	// exactly at the cutoff is a rotated key, not a leaked one.
-	return !key.CreatedAt.Before(cutoff)
+	issuedAt := key.CreatedAt
+	if key.KeyRotatedAt != nil && key.KeyRotatedAt.After(issuedAt) {
+		issuedAt = *key.KeyRotatedAt
+	}
+	return !issuedAt.Before(cutoff)
 }
 
 func hasNonEmptyIPWhitelist(entries []string) bool {

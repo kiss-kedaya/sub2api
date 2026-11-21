@@ -33,6 +33,8 @@ const (
 	FieldStatus = "status"
 	// FieldLastUsedAt holds the string denoting the last_used_at field in the database.
 	FieldLastUsedAt = "last_used_at"
+	// FieldKeyRotatedAt holds the string denoting the key_rotated_at field in the database.
+	FieldKeyRotatedAt = "key_rotated_at"
 	// FieldIPWhitelist holds the string denoting the ip_whitelist field in the database.
 	FieldIPWhitelist = "ip_whitelist"
 	// FieldIPBlacklist holds the string denoting the ip_blacklist field in the database.
@@ -112,6 +114,7 @@ var Columns = []string{
 	FieldGroupID,
 	FieldStatus,
 	FieldLastUsedAt,
+	FieldKeyRotatedAt,
 	FieldIPWhitelist,
 	FieldIPBlacklist,
 	FieldAutoBlockDatacenterIps,
@@ -245,6 +248,11 @@ func ByStatus(opts ...sql.OrderTermOption) OrderOption {
 // ByLastUsedAt orders the results by the last_used_at field.
 func ByLastUsedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldLastUsedAt, opts...).ToFunc()
+}
+
+// ByKeyRotatedAt orders the results by the key_rotated_at field.
+func ByKeyRotatedAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldKeyRotatedAt, opts...).ToFunc()
 }
 
 // ByAutoBlockDatacenterIps orders the results by the auto_block_datacenter_ips field.

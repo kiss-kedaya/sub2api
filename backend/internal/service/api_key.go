@@ -55,6 +55,7 @@ type APIKey struct {
 	LastUsedIP          *string
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	KeyRotatedAt        *time.Time
 	User                *User
 	Group               *Group
 	CurrentConcurrency  int
