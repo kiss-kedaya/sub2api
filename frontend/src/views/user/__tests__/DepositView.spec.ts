@@ -193,7 +193,8 @@ describe('user deposit network status', () => {
     await flushPromises()
 
     expect(readStatus(wrapper)).toBe('deposit.networkStatus.unknown')
-    expect(wrapper.get('.deposit-view__network-notice').text()).toContain('deposit.networkStatusHint.unknown')
+    // Missing or expired evidence is not a delay: say nothing rather than alarm.
+    expect(wrapper.find('.deposit-view__network-notice').exists()).toBe(false)
     expectTransferActions(wrapper, bscAddress)
   })
 
@@ -238,6 +239,7 @@ describe('user deposit network status', () => {
         { chain: 'base', address: baseAddress, tokens: ['USDT'] },
         { chain: 'ethereum', address: '0x' + '56'.repeat(20), tokens: ['USDT'] },
         { chain: 'polygon', address: '0x' + '78'.repeat(20), tokens: ['USDT'] },
+        { chain: 'arbitrum', address: '0x' + '90'.repeat(20), tokens: ['USDT'] },
       ],
       min_amount: 1, max_amount: 0
     })
@@ -245,6 +247,7 @@ describe('user deposit network status', () => {
       { chain: 'polygon', status: 'stalled', expires_at: expiresSoon() },
       { chain: 'base', status: 'paused', expires_at: expiresSoon() },
       { chain: 'ethereum', status: 'delayed', expires_at: expiresSoon() },
+      { chain: 'arbitrum', status: 'slow', expires_at: expiresSoon() },
       { chain: 'bsc', status: 'available', expires_at: expiresSoon() },
     ])
     const wrapper = render()
@@ -253,6 +256,7 @@ describe('user deposit network status', () => {
     expect(wrapper.findAll('.deposit-view__network-status').map(badge => badge.text())).toEqual([
       'deposit.networkStatus.available', 'deposit.networkStatus.paused',
       'deposit.networkStatus.delayed', 'deposit.networkStatus.stalled',
+      'deposit.networkStatus.slow',
     ])
     expectTransferActions(wrapper, bscAddress)
     const chains = wrapper.findAll('.deposit-view__chain')
@@ -274,6 +278,11 @@ describe('user deposit network status', () => {
     await chains[2].trigger('click')
     expect(wrapper.get('.deposit-view__network-notice').text()).toContain('deposit.networkStatusHint.delayed')
     expectTransferActions(wrapper, '0x' + '56'.repeat(20))
+
+    // A slow network is a calm notice, not a blocked deposit.
+    await chains[4].trigger('click')
+    expect(wrapper.get('.deposit-view__network-notice').text()).toContain('deposit.networkStatusHint.slow')
+    expectTransferActions(wrapper, '0x' + '90'.repeat(20))
   })
 
   it('downgrades stalled status at its expiration even without a fresh response', async () => {

@@ -39,14 +39,14 @@
                 <span class="deposit-view__network-dot" aria-hidden="true"></span>
                 {{ chainLabel(c.chain) }}
                 <UBadge class="deposit-view__network-status" size="xs" variant="subtle"
-                  :color="networkState(c.chain) === 'available' ? 'success' : 'warning'">
+                  :color="networkBadgeColor(c.chain)">
                   {{ t('deposit.networkStatus.' + networkState(c.chain)) }}
                 </UBadge>
               </button>
             </div>
-            <div v-if="current && selectedNetworkState !== 'available'" class="deposit-view__network-notice" role="status">
+            <div v-if="current && selectedNetworkNotice" class="deposit-view__network-notice" role="status">
               <span class="deposit-view__notice-mark" aria-hidden="true">!</span>
-              <p>{{ t('deposit.networkStatusHint.' + selectedNetworkState, { network: chainLabel(current.chain) }) }}</p>
+              <p>{{ t('deposit.networkStatusHint.' + selectedNetworkNotice, { network: chainLabel(current.chain) }) }}</p>
             </div>
             <div v-if="currentAssets.length > 1" class="deposit-view__assets" role="radiogroup"
               :aria-label="t('deposit.chooseAsset')">
@@ -290,6 +290,16 @@ const selectedNetworkState = computed(() => networkState(selectedChain.value))
 const networkTransferBlocked = computed(() =>
   selectedNetworkState.value === 'paused' || selectedNetworkState.value === 'stalled'
 )
+// 'unknown' means the backend has no fresh evidence: that is not a delay and
+// must not raise a notice. Only an observed slow/delayed/failed network does.
+const NOTICE_STATES: readonly DepositNetworkState[] = ['slow', 'delayed', 'paused', 'stalled']
+const selectedNetworkNotice = computed<DepositNetworkState | null>(() =>
+  NOTICE_STATES.includes(selectedNetworkState.value) ? selectedNetworkState.value : null
+)
+function networkBadgeColor(chain: string): 'success' | 'warning' | 'neutral' {
+  const state = networkState(chain)
+  return state === 'available' ? 'success' : state === 'unknown' ? 'neutral' : 'warning'
+}
 
 // A backend that predates native-coin support sends only `tokens`. Those are
 // all ERC-20 assets, so the derived list keeps the page identical for it.
