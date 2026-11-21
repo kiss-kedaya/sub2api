@@ -484,7 +484,8 @@ export default {
     unavailable: 'Two-factor verification is temporarily unavailable; the operation was not executed. Please try again later.',
     adminApiKeyForbidden: 'This endpoint forbids machine credentials. Use a TOTP step-up verified admin session.',
     cancelled: 'Two-factor verification cancelled; the operation was not executed.',
-    silentReadBlocked: 'This data requires two-factor verification.'
+    silentReadBlocked: 'This data requires two-factor verification.',
+    skipNotice: '2FA check skipped · {time} of grace window left'
   },
 
   // Recommended 2FA (dismissible, never enforced here)

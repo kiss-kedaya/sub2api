@@ -14,6 +14,7 @@ import {
   stepUpMarkerOf,
 } from '@/utils/stepUpErrors'
 import { isStepUpHostAvailable, retryWithGlobalStepUp } from '@/composables/useStepUpGate'
+import { recordStepUpSkip } from '@/composables/useStepUpSkip'
 import {
   ADMIN_UI_REQUEST_HEADER,
   USER_UI_REQUEST_HEADER,
@@ -140,10 +141,41 @@ apiClient.interceptors.request.use(
   }
 )
 
+// ==================== Step-up skip notice ====================
+
+/**
+ * The backend gate marks every sensitive request that skipped the TOTP prompt
+ * because the 5-minute step-up window was still valid:
+ * `X-StepUp-Skipped: 1` + `X-StepUp-Remaining: <seconds>`. Feed the shared
+ * notice store so the operator always sees "2FA skipped · time left" instead of
+ * a silent bypass. Header lookup tolerates both AxiosHeaders#get and plain
+ * objects (adapter mocks in tests use plain objects).
+ */
+function syncStepUpSkipFromHeaders(headers: unknown): void {
+  if (!headers || typeof headers !== 'object') return
+  const read = (name: string): unknown => {
+    const container = headers as { get?: (key: string) => unknown } & Record<string, unknown>
+    if (typeof container.get === 'function') {
+      const viaGet = container.get(name)
+      if (viaGet !== undefined && viaGet !== null) return viaGet
+    }
+    return container[name] ?? container[name.toLowerCase()]
+  }
+  const skipped = read('x-stepup-skipped')
+  if (String(skipped) !== '1') return
+  const remaining = Number(read('x-stepup-remaining'))
+  if (Number.isFinite(remaining) && remaining > 0) {
+    recordStepUpSkip(remaining)
+  }
+}
+
 // ==================== Response Interceptor ====================
 
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => {
+    // Sensitive request executed without a TOTP prompt: surface the remaining
+    // grace window in the global bottom-right notice.
+    syncStepUpSkipFromHeaders(response.headers)
     // Unwrap standard API response format { code, message, data }
     const apiResponse = response.data as ApiResponse<unknown>
     if (apiResponse && typeof apiResponse === 'object' && 'code' in apiResponse) {
@@ -179,6 +211,9 @@ apiClient.interceptors.response.use(
     // Handle common errors
     if (error.response) {
       const { status, data } = error.response
+      // Even a 4xx can carry the skip marker (gate passed, handler rejected the
+      // body): keep the notice in sync with what the backend actually reported.
+      syncStepUpSkipFromHeaders(error.response.headers)
       const url = String(error.config?.url || '')
 
       // Validate `data` shape to avoid HTML error pages breaking our error handling.

@@ -29,6 +29,10 @@ var corsExposedHeaders = []string{
 	"Msh-Usage-Cache-Write-Tokens-5m",
 	"Msh-Usage-Cache-Write-Tokens-1h",
 	"Msh-Context-Cache-Token-Saved",
+	// step-up 门控「跳过验证码」时必须让浏览器脚本读到剩余窗口，
+	// 否则前端右下角的免授权倒计时在跨域部署下读不到这两个头。
+	"X-StepUp-Skipped",
+	"X-StepUp-Remaining",
 }
 
 // CORS 跨域中间件

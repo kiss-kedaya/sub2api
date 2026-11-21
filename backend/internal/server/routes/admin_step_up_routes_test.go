@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	adminhandler "github.com/Wei-Shaw/sub2api/internal/handler/admin"
@@ -467,11 +468,22 @@ func (r *stepUpConsistencyUserRepo) GetUserAvatar(context.Context, int64) (*serv
 // stepUpConsistencyGrantCache 是可控的 step-up 授权缓存桩。
 type stepUpConsistencyGrantCache struct {
 	service.TotpCache
-	granted bool
+	granted   bool
+	remaining time.Duration
 }
 
 func (c *stepUpConsistencyGrantCache) HasStepUpGrant(context.Context, int64, string) (bool, error) {
 	return c.granted, nil
+}
+
+func (c *stepUpConsistencyGrantCache) StepUpGrantRemaining(context.Context, int64, string) (time.Duration, bool, error) {
+	if !c.granted {
+		return 0, false, nil
+	}
+	if c.remaining > 0 {
+		return c.remaining, true, nil
+	}
+	return 4 * time.Minute, true, nil
 }
 
 // realStepUpWithGrant 装配真实 step-up 中间件（真人 JWT、已启用 TOTP，授权与否可控）。
@@ -505,6 +517,9 @@ func TestSensitiveAdminRoutesReturnStepUpRequiredCode(t *testing.T) {
 			var body stepUpErrorBody
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
 			require.Equal(t, "STEP_UP_REQUIRED", body.Code, w.Body.String())
+			// 没有授权时不得出现「已跳过 2FA」的误导性响应头。
+			require.Empty(t, w.Header().Get(middleware.StepUpSkippedHeader))
+			require.Empty(t, w.Header().Get(middleware.StepUpRemainingHeader))
 		})
 	}
 }
@@ -530,7 +545,8 @@ func TestSensitiveAdminRoutesReturnAdminAPIKeyForbiddenCode(t *testing.T) {
 	}
 }
 
-// 完成 step-up 后必须放行到业务层（不返回 403 门控错误）。
+// 完成 step-up 后敏感路由必须放行到业务层，并且响应必须显式回传
+// 「本次跳过了 2FA + 剩余免授权秒数」——不允许静默跳过。
 func TestSensitiveAdminRoutesAllowedAfterStepUpGrant(t *testing.T) {
 	adminRouter := buildAdminRouteProbeRouter(t, realStepUpWithGrant(t, true), service.AuditAuthMethodJWT)
 	paymentRouter := buildPaymentProbeRouter(t, realStepUpWithGrant(t, true), service.AuditAuthMethodJWT)
@@ -544,6 +560,10 @@ func TestSensitiveAdminRoutesAllowedAfterStepUpGrant(t *testing.T) {
 			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
 			require.NotEqual(t, http.StatusForbidden, w.Code, w.Body.String())
 			require.NotContains(t, w.Body.String(), "STEP_UP_REQUIRED")
+			require.Equal(t, "1", w.Header().Get(middleware.StepUpSkippedHeader),
+				"跳过 2FA 必须显式回传 %s", middleware.StepUpSkippedHeader)
+			require.Equal(t, "240", w.Header().Get(middleware.StepUpRemainingHeader),
+				"必须回传真实剩余秒数（桩里是 4 分钟）")
 		})
 	}
 }

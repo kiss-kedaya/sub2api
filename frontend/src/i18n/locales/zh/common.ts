@@ -483,7 +483,8 @@ export default {
     unavailable: '二次验证服务暂时不可用，操作未执行，请稍后重试。',
     adminApiKeyForbidden: '该接口禁止机器凭据访问。请使用已通过 TOTP 二次验证的管理员会话。',
     cancelled: '已取消二次验证，操作未执行。',
-    silentReadBlocked: '该数据需二次验证后查看。'
+    silentReadBlocked: '该数据需二次验证后查看。',
+    skipNotice: '已跳过 2FA 验证 · 剩余免授权 {time}'
   },
 
   // 建议开启 2FA（可关闭提示，非强制）

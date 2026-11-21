@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"time"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -233,8 +235,11 @@ type TotpStepUpRequest struct {
 
 // TotpStepUpResponse represents the step-up verification response
 type TotpStepUpResponse struct {
-	Verified  bool  `json:"verified"`
-	ExpiresIn int64 `json:"expires_in"` // 授权剩余有效期（秒）
+	Verified bool `json:"verified"`
+	// ExpiresAt 授权到期时间（Unix 秒），与链上充值 crypto grant 的返回结构一致。
+	ExpiresAt int64 `json:"expires_at"`
+	// ExpiresIn 授权剩余有效期（秒）。
+	ExpiresIn int64 `json:"expires_in"`
 }
 
 // StepUp 敏感操作二次验证：校验 TOTP 码并为当前会话授予一段时间的 step-up 权限。
@@ -267,6 +272,7 @@ func (h *TotpHandler) StepUp(c *gin.Context) {
 
 	response.Success(c, TotpStepUpResponse{
 		Verified:  true,
+		ExpiresAt: time.Now().Add(ttl).Unix(),
 		ExpiresIn: int64(ttl.Seconds()),
 	})
 }

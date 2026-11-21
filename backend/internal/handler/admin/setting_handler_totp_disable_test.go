@@ -55,6 +55,18 @@ func (c *globalTotpGrantCache) HasStepUpGrant(_ context.Context, userID int64, s
 	return c.grants[globalTotpGrantKey{userID: userID, sessionKey: sessionKey}], c.err
 }
 
+// StepUpGrantRemaining 镜像 HasStepUpGrant 的授权判定（不计入 checks：
+// 授权通过后门控还会读一次剩余时间用于 X-StepUp-Remaining）。
+func (c *globalTotpGrantCache) StepUpGrantRemaining(_ context.Context, userID int64, sessionKey string) (time.Duration, bool, error) {
+	if c.err != nil {
+		return 0, false, c.err
+	}
+	if !c.grants[globalTotpGrantKey{userID: userID, sessionKey: sessionKey}] {
+		return 0, false, nil
+	}
+	return 4 * time.Minute, true, nil
+}
+
 func newGlobalTotpTestHandler(t *testing.T, totpEnabled, stepUpEnabled, actorTotpEnabled bool) (*SettingHandler, *settingHandlerRepoStub, *globalTotpGrantCache) {
 	t.Helper()
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{

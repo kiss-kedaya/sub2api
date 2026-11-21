@@ -3595,6 +3595,10 @@ func (s *oauthPendingFlowTotpCacheStub) HasStepUpGrant(_ context.Context, _ int6
 	return false, nil
 }
 
+func (s *oauthPendingFlowTotpCacheStub) StepUpGrantRemaining(_ context.Context, _ int64, _ string) (time.Duration, bool, error) {
+	return 0, false, nil
+}
+
 func (s *oauthPendingFlowTotpCacheStub) MarkLoginCodeUsed(context.Context, int64, string, time.Duration) (bool, error) {
 	return true, nil
 }
