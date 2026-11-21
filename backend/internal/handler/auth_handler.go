@@ -372,14 +372,15 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 
 	// 账号维度限速：同一账号 60 秒滚动窗口内最多 5 次 2FA 校验尝试。
 	// 超限 429 + Retry-After；限流存储故障 fail-closed（只影响 2FA 校验）。
-	if !checkTwoFactorRateLimit(c, h.twoFactorLimiter, h.totpService, session.UserID) {
+	attemptCtx, ok := checkTwoFactorRateLimit(c, h.twoFactorLimiter, session.UserID)
+	if !ok {
 		return
 	}
 
 	// Verify without consuming the shared replay marker yet. The login flow
 	// still has account-mode and OAuth binding checks that can fail after code
 	// validation; consuming here would make a valid retry report "already used".
-	counter, err := h.totpService.VerifyLoginCode(c.Request.Context(), session.UserID, req.TotpCode)
+	counter, err := h.totpService.VerifyLoginCode(attemptCtx, session.UserID, req.TotpCode)
 	if err != nil {
 		slog.Debug("login_2fa_verify_failed",
 			"user_id", session.UserID,

@@ -17,36 +17,23 @@ type twoFactorRateLimiter interface {
 	Reset(ctx context.Context, userID int64)
 }
 
-// checkTwoFactorRateLimit 在 2FA 校验前执行账号维度限速。
-//
-//   - 超限：写出 429 + Retry-After（不含剩余次数等细节），返回 false；
-//   - 限流存储故障：fail-closed 写出 503，只影响本次 2FA 校验，不影响登录其它步骤；
-//   - 未装配限速器（仅单测/单机）放行。
-//
-// 放行时同步清空服务层旧的 TOTP 失败预算，避免「60 秒窗口恢复后仍被 15 分钟计数锁死」；
-// 未接入本限速器的深层接口（crypto、后台审计读取等）仍由服务层预算保护。
-func checkTwoFactorRateLimit(
-	c *gin.Context,
-	limiter twoFactorRateLimiter,
-	totpService *service.TotpService,
-	userID int64,
-) bool {
+// checkTwoFactorRateLimit reserves the HTTP account budget. The returned context
+// is only for the current TOTP verification; it never clears another policy's counter.
+func checkTwoFactorRateLimit(c *gin.Context, limiter twoFactorRateLimiter, userID int64) (context.Context, bool) {
+	ctx := c.Request.Context()
 	if limiter == nil {
-		return true
+		return ctx, true
 	}
-	allowed, retryAfter, err := limiter.Check(c.Request.Context(), userID)
+	attemptCtx, allowed, retryAfter, err := service.ReserveAccountTOTPAttempt(ctx, userID, limiter.Check)
 	if err != nil {
 		middleware2.AbortTwoFactorRateLimitUnavailable(c)
-		return false
+		return nil, false
 	}
 	if !allowed {
 		middleware2.AbortTwoFactorRateLimited(c, retryAfter)
-		return false
+		return nil, false
 	}
-	if totpService != nil {
-		_ = totpService.ResetAccountVerificationBudget(c.Request.Context(), userID)
-	}
-	return true
+	return attemptCtx, true
 }
 
 // resetTwoFactorRateLimit 在 2FA 校验成功后清空账号计数（成功即清）。

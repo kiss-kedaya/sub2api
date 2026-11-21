@@ -42,7 +42,9 @@ func TestCheckTwoFactorRateLimitBlockedWrites429(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/2fa", nil)
 
 	limiter := &fakeTwoFactorLimiter{allowed: false, retryAfter: 42 * time.Second}
-	require.False(t, checkTwoFactorRateLimit(c, limiter, nil, 41))
+	attemptCtx, ok := checkTwoFactorRateLimit(c, limiter, 41)
+	require.False(t, ok)
+	require.Nil(t, attemptCtx)
 
 	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
 	require.Equal(t, "42", recorder.Header().Get("Retry-After"))
@@ -59,7 +61,9 @@ func TestCheckTwoFactorRateLimitStoreFailureFailsClosed(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/user/totp/step-up", nil)
 
 	limiter := &fakeTwoFactorLimiter{err: errors.New("redis down")}
-	require.False(t, checkTwoFactorRateLimit(c, limiter, nil, 41))
+	attemptCtx, ok := checkTwoFactorRateLimit(c, limiter, 41)
+	require.False(t, ok)
+	require.Nil(t, attemptCtx)
 
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "TWO_FACTOR_RATE_LIMIT_UNAVAILABLE")
@@ -72,7 +76,11 @@ func TestCheckTwoFactorRateLimitAllowsAndResetsBudget(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/2fa", nil)
 
 	limiter := &fakeTwoFactorLimiter{allowed: true}
-	require.True(t, checkTwoFactorRateLimit(c, limiter, nil, 41))
+	originalCtx := c.Request.Context()
+	attemptCtx, ok := checkTwoFactorRateLimit(c, limiter, 41)
+	require.True(t, ok)
+	require.NotNil(t, attemptCtx)
+	require.Equal(t, originalCtx, c.Request.Context())
 	require.Equal(t, []int64{41}, limiter.checked)
 
 	resetTwoFactorRateLimit(context.Background(), limiter, 41)
