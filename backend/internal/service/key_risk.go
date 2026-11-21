@@ -81,6 +81,57 @@ func currentAPIKeyRiskStore() APIKeyRiskStore {
 	return apiKeyRiskStore.store
 }
 
+// APIKeyRiskAuditSink receives the durable audit entry for a key the gateway
+// disabled on its own. The gateway wires AuditLogService.Record here when the
+// router is built; a nil sink keeps the previous behavior (structured log plus
+// the Redis risk marker), which is what tests and Redis-less deployments use.
+type APIKeyRiskAuditSink func(entry *AuditLog)
+
+var apiKeyRiskAuditSinkRegistry = struct {
+	mu   sync.RWMutex
+	sink APIKeyRiskAuditSink
+}{}
+
+// ConfigureAPIKeyRiskAuditSink installs (or clears, with nil) the durable
+// recorder used for auto-disabled keys. Record is a non-blocking enqueue, so
+// the gateway hot path pays no database round trip.
+func ConfigureAPIKeyRiskAuditSink(sink APIKeyRiskAuditSink) {
+	apiKeyRiskAuditSinkRegistry.mu.Lock()
+	apiKeyRiskAuditSinkRegistry.sink = sink
+	apiKeyRiskAuditSinkRegistry.mu.Unlock()
+}
+
+// auditAPIKeyRiskDisabled builds and hands over the audit row. It is called
+// only after the status write succeeded, so the row always describes an action
+// that actually happened; it is best-effort by design and never returns an
+// error, because a missing audit row must not turn a successful disable into a
+// failed request.
+func auditAPIKeyRiskDisabled(keyID, userID int64, info APIKeyRiskInfo) {
+	apiKeyRiskAuditSinkRegistry.mu.RLock()
+	sink := apiKeyRiskAuditSinkRegistry.sink
+	apiKeyRiskAuditSinkRegistry.mu.RUnlock()
+	if sink == nil {
+		return
+	}
+	sink(&AuditLog{
+		ActorEmail: "system",
+		ActorRole:  "system",
+		AuthMethod: "system",
+		Action:     AuditActionAPIKeyAutoDisableIPSharing,
+		Method:     "SYSTEM",
+		Path:       "/system/api-keys/auto-disable",
+		ClientIP:   info.IP,
+		Extra: map[string]any{
+			"key_id":         keyID,
+			"user_id":        userID,
+			"reason":         info.Reason,
+			"distinct_users": info.DistinctUsers,
+			"window_minutes": info.WindowMinutes,
+			"hit_at":         info.HitAt.UTC().Format(time.RFC3339),
+		},
+	})
+}
+
 func markAPIKeyRiskDisabled(keyID int64, info APIKeyRiskInfo) {
 	if keyID <= 0 {
 		return
@@ -228,10 +279,11 @@ func (s *APIKeyService) DisableKeysForRisk(ctx context.Context, keyIDs []int64, 
 		}
 		s.InvalidateAuthCacheForAPIKey(ctx, key)
 		markAPIKeyRiskDisabled(id, info)
+		auditAPIKeyRiskDisabled(id, key.UserID, info)
 		disabled = append(disabled, id)
-		// Structured audit trail: this is the durable record of the action
-		// (source, hit time, IP and distinct users), independent of process
-		// lifetime.
+		// Human-readable trace next to the durable audit row written above: the
+		// log line is only visible when the process log level admits WARN, while
+		// the audit entry survives the process and is queryable in the admin UI.
 		slog.Warn("api key auto disabled by gateway IP risk control",
 			"source", info.Reason,
 			"key_id", id,

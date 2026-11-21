@@ -53,6 +53,11 @@ const (
 	// It records user_id / client IP / request path so the operator can measure
 	// the remediation rate after the key-leak incident.
 	AuditActionRechargeBlockedKeyRotation = "user.recharge.blocked_key_rotation"
+	// AuditActionAPIKeyAutoDisableIPSharing is written by the gateway IP-sharing
+	// risk control when it disables the keys it observed behind one shared
+	// source. The affected user did not act, so the evidence lives in extra and
+	// actor_user_id stays empty: this row records an automated system action.
+	AuditActionAPIKeyAutoDisableIPSharing = "system.api_key.auto_disable.ip_sharing"
 
 	// 第三方登录（OAuth / 扫码 / 设备登录）与 2FA 挑战的固定动作名。
 	// 与 AuditAuthMethodOAuth / AuditAuthMethodPasskey 配套，让「哪个渠道、
