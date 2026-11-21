@@ -60,7 +60,7 @@ func TestCalculateCostUnified_TokenMode(t *testing.T) {
 	require.Equal(t, string(BillingModeToken), cost.BillingMode)
 }
 
-func TestCalculateCostUnified_TokenModeAppliesRateMultiplierToImageTokens(t *testing.T) {
+func TestCalculateCostUnified_TokenModeIgnoresImageTokenSplit(t *testing.T) {
 	bs := newTestBillingService()
 	resolver := NewModelPricingResolver(nil, bs)
 
@@ -74,12 +74,12 @@ func TestCalculateCostUnified_TokenModeAppliesRateMultiplierToImageTokens(t *tes
 	})
 	require.NoError(t, err)
 
-	textInput := 1000 * 3e-6
-	textOutput := 500 * 15e-6
-	imageOutput := 100 * 15e-6
-	require.InDelta(t, textInput+textOutput+imageOutput, cost.TotalCost, 1e-10)
-	require.InDelta(t, (textInput+textOutput+imageOutput)*3.0, cost.ActualCost, 1e-10)
-	require.InDelta(t, imageOutput, cost.ImageOutputCost, 1e-10)
+	// 全部输入/输出 token 分别按输入价/输出价计，image token 拆分不再参与。
+	wantTotal := 1000*3e-6 + 600*15e-6
+	require.InDelta(t, wantTotal, cost.TotalCost, 1e-10)
+	require.InDelta(t, wantTotal*3.0, cost.ActualCost, 1e-10)
+	require.Zero(t, cost.ImageInputCost)
+	require.Zero(t, cost.ImageOutputCost)
 }
 
 func TestCalculateCostUnified_PerRequestMode(t *testing.T) {

@@ -612,9 +612,9 @@ func TestTryModelFilePricing_WithImageOutput(t *testing.T) {
 	}
 	result := tryModelFilePricing(bs, "claude-sonnet-4", tokens, "", time.Time{})
 	require.NotNil(t, result)
-	// ImageOutputTokens 是 OutputTokens 的子集，先扣除再按图片单价计。
-	// 100*0.001 + (50-10)*0.002 + 10*0.01 = 0.1 + 0.08 + 0.1 = 0.28
-	require.InDelta(t, 0.28, *result, 1e-12)
+	// token 计费不再按图片输出分价（2026-11-21）：全部输出按输出价计。
+	// 100*0.001 + 50*0.002 = 0.1 + 0.1 = 0.2
+	require.InDelta(t, 0.2, *result, 1e-12)
 }
 
 func TestTryModelFilePricing_WithCacheTokens(t *testing.T) {

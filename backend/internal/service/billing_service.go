@@ -111,8 +111,8 @@ type ModelPricing struct {
 	UltrafastMultiplierOverride        *float64
 	InputPricePerToken                 float64            // 每token输入价格 (USD)
 	InputPricePerTokenPriority         float64            // priority service tier 下每token输入价格 (USD)
-	ImageInputPricePerToken            float64            // 图片输入 token 价格 (USD)，用于多模态 embedding 等图文不同价场景；为 0 时回退到 InputPricePerToken
-	ImageCacheReadPricePerToken        float64            // 图片缓存输入价格；无独立价格时沿用缓存读取价
+	ImageInputPricePerToken            float64            // 图片输入 token 价格 (USD)。仅保留定价数据供后台展示/按张图片结算使用；token 计费已不再按图片输入分价（2026-11-21）
+	ImageCacheReadPricePerToken        float64            // 图片缓存输入价格；同上，已不参与 token 计费
 	OutputPricePerToken                float64            // 每token输出价格 (USD)
 	OutputPricePerTokenPriority        float64            // priority service tier 下每token输出价格 (USD)
 	CacheCreationPricePerToken         float64            // 缓存创建每token价格 (USD)
@@ -130,7 +130,7 @@ type ModelPricing struct {
 	LongContextThresholdInclusive      bool               // 达到阈值即应用（xAI）；默认保持严格大于以兼容既有模型
 	LongContextInputMultiplier         float64            // 长上下文整次会话输入倍率
 	LongContextOutputMultiplier        float64            // 长上下文整次会话输出倍率
-	ImageOutputPricePerToken           float64            // 图片输出 token 价格 (USD)
+	ImageOutputPricePerToken           float64            // 图片输出 token 价格 (USD)。仅保留定价数据供后台展示/按张图片结算使用；token 计费已不再按图片输出分价（2026-11-21）
 	ImageOutputPriceExplicit           bool               // 是否由渠道定价显式设定（为 true 时即使 == 0 也不回退）
 	// CacheCreation12hPricePerToken 是 OpenAI 12h 缓存写入的每 token 价格 (USD)。
 	// nil 表示未配置：沿用通用缓存写入价（保持存量价卡语义）。
@@ -211,7 +211,10 @@ func pricingWithPriorityMultiplier(base *ModelPricing, multiplier float64) *Mode
 
 // UsageTokens 使用的token数量
 type UsageTokens struct {
-	InputTokens           int
+	InputTokens int
+	// ImageInputTokens / ImageCacheReadTokens / ImageOutputTokens 是上游 usage 回传的
+	// 图片 token 明细，仅作记录/展示；token 计费已不再区分图片与文本单价
+	// （2026-11-21），计算费用时忽略这三个字段。
 	ImageInputTokens      int
 	ImageCacheReadTokens  int
 	OutputTokens          int
@@ -231,9 +234,11 @@ type UsageTokens struct {
 
 // CostBreakdown 费用明细
 type CostBreakdown struct {
-	InputCost                 float64 // 文本输入费用（不含图片输入，图片输入单独记入 ImageInputCost）
-	ImageInputCost            float64 // 图片输入 token 费用（如 gpt-image-2 图片编辑）
-	OutputCost                float64
+	InputCost float64 // 输入费用（全部输入 token × 输入价，不再拆图片输入）
+	// ImageInputCost / ImageOutputCost 自 2026-11-21 起恒为 0：token 计费不再按
+	// 图片/文本分价。字段保留以兼容历史行落库与前端展示。
+	ImageInputCost            float64
+	OutputCost                float64 // 输出费用（全部输出 token × 输出价）
 	ImageOutputCost           float64
 	CacheCreationCost         float64
 	CacheReadCost             float64
@@ -1834,62 +1839,26 @@ func (s *BillingService) computeTokenBreakdownWithCacheTTL(
 	}
 
 	bd := &CostBreakdown{}
-	// 分离图片输入 token 与文本输入 token（多模态 embedding、图片编辑等图文不同价场景）。
-	// InputCost 仅计文本输入，图片输入费用单独记入 ImageInputCost，便于对账；总额不变。
-	// ImageInputTokens 为 0 时（绝大多数 chat/vision 流量）走原始单价路径，行为不变。
-	if tokens.ImageInputTokens > 0 {
-		imageInputTokens := tokens.ImageInputTokens
-		textInputTokens := tokens.InputTokens - imageInputTokens
-		if textInputTokens < 0 {
-			textInputTokens = 0
-			imageInputTokens = tokens.InputTokens
-		}
-		imageInputPrice := pricing.ImageInputPricePerToken
-		if imageInputPrice == 0 {
-			// 未配置图片输入档时回退到文本 input 价（已含 priority / 长上下文调整）
-			imageInputPrice = inputPrice
-		}
-		bd.InputCost = float64(textInputTokens) * inputPrice
-		bd.ImageInputCost = float64(imageInputTokens) * imageInputPrice
-	} else {
-		bd.InputCost = float64(tokens.InputTokens) * inputPrice
-	}
-
-	// 分离图片输出 token 与文本输出 token
-	textOutputTokens := tokens.OutputTokens - tokens.ImageOutputTokens
-	if textOutputTokens < 0 {
-		textOutputTokens = 0
-	}
-	bd.OutputCost = float64(textOutputTokens) * outputPrice
-
-	// 图片输出 token 费用（独立费率）
-	if tokens.ImageOutputTokens > 0 {
-		imgPrice := pricing.ImageOutputPricePerToken
-		if imgPrice == 0 && !pricing.ImageOutputPriceExplicit {
-			imgPrice = outputPrice
-		}
-		bd.ImageOutputCost = float64(tokens.ImageOutputTokens) * imgPrice
-	}
+	// Token 维度不再区分图片/文本单价（2026-11-21 起）：所有输入 token 一律按
+	// 输入价、所有输出 token 一律按输出价，ImageInputCost / ImageOutputCost 恒为 0。
+	// 历史行仍保留这两个字段与上游回传的 image token 计数，前端不再展示对应的
+	// token 维度费用行；按张计费的图片生成（billing_mode=image）走独立路径，不受影响。
+	bd.InputCost = float64(tokens.InputTokens) * inputPrice
+	bd.OutputCost = float64(tokens.OutputTokens) * outputPrice
 
 	// 缓存创建费用
 	bd.CacheCreationCost = s.computeCacheCreationCostWithCacheTTL(cacheCreationPricing, tokens, cacheCreationPrice, cacheCreationMultiplier, cacheTTLHint)
 
 	bd.CacheReadCost = float64(tokens.CacheReadTokens) * cacheReadPrice
-	if imageCached := min(max(tokens.ImageCacheReadTokens, 0), max(tokens.CacheReadTokens, 0)); imageCached > 0 && pricing.ImageCacheReadPricePerToken > 0 {
-		bd.CacheReadCost = float64(tokens.CacheReadTokens-imageCached)*cacheReadPrice + float64(imageCached)*pricing.ImageCacheReadPricePerToken
-	}
 
 	if tierMultiplier != 1.0 {
 		bd.InputCost *= tierMultiplier
-		bd.ImageInputCost *= tierMultiplier
 		bd.OutputCost *= tierMultiplier
-		bd.ImageOutputCost *= tierMultiplier
 		bd.CacheCreationCost *= tierMultiplier
 		bd.CacheReadCost *= tierMultiplier
 	}
 
-	bd.TotalCost = bd.InputCost + bd.ImageInputCost + bd.OutputCost + bd.ImageOutputCost +
-		bd.CacheCreationCost + bd.CacheReadCost
+	bd.TotalCost = bd.InputCost + bd.OutputCost + bd.CacheCreationCost + bd.CacheReadCost
 	bd.ActualCost = bd.TotalCost * rateMultiplier
 	bd.LongContextBillingApplied = baselineCost != nil && bd.ActualCost > baselineCost.ActualCost
 
