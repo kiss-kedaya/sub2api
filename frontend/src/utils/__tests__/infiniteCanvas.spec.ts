@@ -21,6 +21,16 @@ describe('selectSmartRoutingGroupIds', () => {
     expect(ids).toHaveLength(2 + extra.length)
     expect(new Set(ids).size).toBe(ids.length)
   })
+
+  // issue #494：旧后端 position 约束上限是 10，前端不能为了绕过它而截断，
+  // 否则画布密钥只绑前 10 个分组，后面的分组永远选不到。
+  it('does not truncate when a user can bind more than ten groups', () => {
+    const groups = Array.from({ length: 36 }, (_, index) => ({ id: 100 + index }))
+    const ids = selectSmartRoutingGroupIds(groups)
+    expect(ids).toHaveLength(36)
+    expect(ids[0]).toBe(100)
+    expect(ids[35]).toBe(135)
+  })
 })
 
 describe('groupIdsEqual', () => {
