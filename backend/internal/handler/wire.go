@@ -211,6 +211,22 @@ func ProvideAdminAnnouncementHandler(
 	return h
 }
 
+// ProvideAdminGroupHandler creates the admin group handler and injects step-up
+// dependencies (分组改价 / search_provider_api_key 写入需要 2FA)。
+func ProvideAdminGroupHandler(
+	adminService service.AdminService,
+	dashboardService *service.DashboardService,
+	groupCapacityService *service.GroupCapacityService,
+	cfg *config.Config,
+	totpService *service.TotpService,
+	userService *service.UserService,
+	settingService *service.SettingService,
+) *admin.GroupHandler {
+	h := admin.NewGroupHandlerWithConfig(adminService, dashboardService, groupCapacityService, cfg)
+	h.SetStepUpDependencies(totpService, userService, settingService)
+	return h
+}
+
 // ProvideHandlers creates the Handlers struct
 func ProvideHandlers(
 	authHandler *AuthHandler,
@@ -303,7 +319,7 @@ var ProviderSet = wire.NewSet(
 	// Admin handlers
 	admin.NewDashboardHandler,
 	admin.NewUserHandler,
-	admin.NewGroupHandlerWithConfig,
+	ProvideAdminGroupHandler,
 	admin.ProvideAccountHandler,
 	ProvideAdminAnnouncementHandler,
 	admin.NewDataManagementHandler,

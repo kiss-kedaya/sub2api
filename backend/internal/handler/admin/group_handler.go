@@ -28,6 +28,12 @@ type GroupHandler struct {
 	dashboardService     *service.DashboardService
 	groupCapacityService *service.GroupCapacityService
 	cfg                  *config.Config
+
+	// 分组改价（倍率/各模态单价/利润控制阈值）与 search_provider_api_key
+	// 写入属资金与凭据敏感操作：真实改动时要求 step-up 2FA。依赖由 wire 注入。
+	totpService    *service.TotpService
+	userService    *service.UserService
+	settingService *service.SettingService
 }
 
 // GetLiveCapability 返回当前服务端是否具备生成 Live attestation 的运行环境。
@@ -670,6 +676,10 @@ func (h *GroupHandler) Create(c *gin.Context) {
 	if h.isSimpleMode() {
 		sanitizeCreateGroupRequestForSimpleMode(&req)
 	}
+	// 建组时写入非默认倍率/各模态单价，等于对新建分组定价：要求 step-up 2FA。
+	if createGroupRequestTouchesPricing(&req) && !h.enforceGroupPricingStepUp(c) {
+		return
+	}
 
 	if err := service.ValidatePeakRateConfig(req.SubscriptionType, req.PeakRateEnabled, req.PeakStart, req.PeakEnd, float64ValueOrDefault(req.PeakRateMultiplier, 1.0)); err != nil {
 		response.BadRequest(c, err.Error())
@@ -832,6 +842,14 @@ func (h *GroupHandler) Update(c *gin.Context) {
 	}
 	if h.isSimpleMode() {
 		sanitizeUpdateGroupRequestForSimpleMode(&req)
+	}
+	// 分组改价（倍率/单价/利润阈值）或写入搜索服务凭据：只有真实改动才要求
+	// step-up 2FA，避免前端整表单回传导致日常改名也被打断。
+	if target, err := h.adminService.GetGroup(c.Request.Context(), groupID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	} else if updateGroupRequestTouchesPricing(target, &req) && !h.enforceGroupPricingStepUp(c) {
+		return
 	}
 
 	group, err := h.adminService.UpdateGroup(c.Request.Context(), groupID, &service.UpdateGroupInput{

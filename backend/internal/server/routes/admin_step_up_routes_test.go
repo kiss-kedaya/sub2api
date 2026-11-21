@@ -4,6 +4,7 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -141,7 +142,7 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		{http.MethodGet, "/api/v1/admin/users/1/api-keys", "admin"},
 		{http.MethodGet, "/api/v1/admin/groups/1/api-keys", "admin"},
 		// 上游失败 dump 的正文含客户端请求体与上游响应体
-		{http.MethodGet, "/api/v1/admin/debug-dumps/test.txt", "admin"},
+		{http.MethodGet, "/api/v1/admin/debug-dumps/1", "admin"},
 		// 卡密（兑换码）：生成/固定码直发/改值/作废/删除都会产出或改变可兑价值
 		{http.MethodPost, "/api/v1/admin/redeem-codes/generate", "admin"},
 		{http.MethodPost, "/api/v1/admin/redeem-codes/create-and-redeem", "admin"},
@@ -160,8 +161,8 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		{http.MethodPut, "/api/v1/admin/upstream-monitor/channels/1", "admin"},
 		{http.MethodDelete, "/api/v1/admin/upstream-monitor/channels/1", "admin"},
 		{http.MethodPost, "/api/v1/admin/upstream-monitor/channels/1/api-keys", "admin"},
-		{http.MethodPut, "/api/v1/admin/upstream-monitor/channels/1/api-keys/2", "admin"},
-		{http.MethodDelete, "/api/v1/admin/upstream-monitor/channels/1/api-keys/2", "admin"},
+		{http.MethodPut, "/api/v1/admin/upstream-monitor/channels/1/api-keys/1", "admin"},
+		{http.MethodDelete, "/api/v1/admin/upstream-monitor/channels/1/api-keys/1", "admin"},
 		// 上游账户充值/兑换/订阅采购消耗或新增真实额度
 		{http.MethodPost, "/api/v1/admin/upstream-monitor/channels/1/recharge", "admin"},
 		{http.MethodPost, "/api/v1/admin/upstream-monitor/channels/1/redeem", "admin"},
@@ -174,6 +175,20 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		{http.MethodPost, "/api/v1/admin/subscriptions/1/revoke", "admin"},
 		{http.MethodPost, "/api/v1/admin/subscriptions/1/restore", "admin"},
 		{http.MethodDelete, "/api/v1/admin/subscriptions/1", "admin"},
+		// 分组专属倍率 = 用户实付价格：批量改价 / 清空属资金操作
+		{http.MethodPut, "/api/v1/admin/groups/1/rate-multipliers", "admin"},
+		{http.MethodDelete, "/api/v1/admin/groups/1/rate-multipliers", "admin"},
+		// 批量权限/配额变更与批量停用：一次影响成批用户
+		{http.MethodPost, "/api/v1/admin/users/batch-concurrency", "admin"},
+		{http.MethodPost, "/api/v1/admin/users/batch-limits", "admin"},
+		{http.MethodPost, "/api/v1/admin/users/batch-disable", "admin"},
+		{http.MethodPost, "/api/v1/admin/users/1/replace-group", "admin"},
+		{http.MethodPut, "/api/v1/admin/users/1/platform-quotas", "admin"},
+		{http.MethodPost, "/api/v1/admin/users/1/platform-quotas/reset", "admin"},
+		// 部署 / 回滚 / 重启属主机生命周期动作
+		{http.MethodPost, "/api/v1/admin/system/update", "admin"},
+		{http.MethodPost, "/api/v1/admin/system/rollback", "admin"},
+		{http.MethodPost, "/api/v1/admin/system/restart", "admin"},
 		// 支付渠道配置
 		{http.MethodPut, "/api/v1/admin/payment/config", "payment"},
 		{http.MethodPost, "/api/v1/admin/payment/providers", "payment"},
@@ -203,6 +218,8 @@ func readOnlyStepUpRoutes() []stepUpRouteCase {
 		{http.MethodGet, "/api/v1/admin/subscriptions/1", "admin"},
 		{http.MethodGet, "/api/v1/admin/subscriptions/1/progress", "admin"},
 		{http.MethodGet, "/api/v1/admin/announcements", "admin"},
+		// 分组倍率列表只是读取当前配置（不是改价），不得被门控误伤。
+		{http.MethodGet, "/api/v1/admin/groups/1/rate-multipliers", "admin"},
 	}
 }
 
@@ -362,6 +379,106 @@ func TestReadOnlyRedeemRoutesAllowHumanSession(t *testing.T) {
 			require.NotEqual(t, http.StatusForbidden, w.Code, "human admin sessions must not be blocked: "+w.Body.String())
 			require.NotContains(t, w.Body.String(), middleware.MachineCredentialForbiddenCode)
 			require.NotContains(t, gated, tc.path, "read-only route must not run the step-up gate")
+		})
+	}
+}
+
+// stepUpConsistencyUserRepo 是只实现 GetByID 的用户仓储桩（其余方法由嵌入的
+// service.UserRepository 接口提供，本测试不会调用）。
+type stepUpConsistencyUserRepo struct {
+	service.UserRepository
+	user *service.User
+}
+
+func (r *stepUpConsistencyUserRepo) GetByID(context.Context, int64) (*service.User, error) {
+	return r.user, nil
+}
+
+// GetUserAvatar 供 UserService.GetByID 的头像补全路径使用；门控测试不关心头像。
+func (r *stepUpConsistencyUserRepo) GetUserAvatar(context.Context, int64) (*service.UserAvatar, error) {
+	return nil, nil
+}
+
+// stepUpConsistencyGrantCache 是可控的 step-up 授权缓存桩。
+type stepUpConsistencyGrantCache struct {
+	service.TotpCache
+	granted bool
+}
+
+func (c *stepUpConsistencyGrantCache) HasStepUpGrant(context.Context, int64, string) (bool, error) {
+	return c.granted, nil
+}
+
+// realStepUpWithGrant 装配真实 step-up 中间件（真人 JWT、已启用 TOTP，授权与否可控）。
+func realStepUpWithGrant(t *testing.T, granted bool) middleware.StepUpAuthMiddleware {
+	t.Helper()
+	repo := &stepUpConsistencyUserRepo{user: &service.User{ID: 9, TotpEnabled: true, Role: service.RoleAdmin, Status: service.StatusActive}}
+	totpService := service.NewTotpService(repo, nil, &stepUpConsistencyGrantCache{granted: granted}, nil, nil, nil)
+	userService := service.NewUserService(repo, nil, nil, nil)
+	settings := stepUpRouteSettings(map[string]string{service.SettingKeyStepUpEnabled: "true"})
+	return middleware.NewStepUpAuthMiddleware(totpService, userService, settings)
+}
+
+type stepUpErrorBody struct {
+	Code string `json:"code"`
+}
+
+// 前端按 JSON 里的 code 弹 TOTP 对话框：所有敏感路由必须返回同一可读错误码，
+// 而不是各自拼 message 文本。这里对 sensitiveStepUpRoutes() 全量断言精确 code。
+func TestSensitiveAdminRoutesReturnStepUpRequiredCode(t *testing.T) {
+	adminRouter := buildAdminRouteProbeRouter(t, realStepUpWithGrant(t, false), service.AuditAuthMethodJWT)
+	paymentRouter := buildPaymentProbeRouter(t, realStepUpWithGrant(t, false), service.AuditAuthMethodJWT)
+	for _, tc := range sensitiveStepUpRoutes() {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			router := adminRouter
+			if tc.router == "payment" {
+				router = paymentRouter
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			var body stepUpErrorBody
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
+			require.Equal(t, "STEP_UP_REQUIRED", body.Code, w.Body.String())
+		})
+	}
+}
+
+// 机器凭据（旧版全权 x-api-key / 受限 adm_sc_ 密钥）无法完成 TOTP：
+// 敏感路由必须返回 STEP_UP_ADMIN_API_KEY_FORBIDDEN，而不是 STEP_UP_REQUIRED。
+func TestSensitiveAdminRoutesReturnAdminAPIKeyForbiddenCode(t *testing.T) {
+	adminRouter := buildAdminRouteProbeRouter(t, realStepUpWithGrant(t, true), service.AuditAuthMethodAdminAPIKey)
+	paymentRouter := buildPaymentProbeRouter(t, realStepUpWithGrant(t, true), service.AuditAuthMethodAdminAPIKey)
+	for _, tc := range sensitiveStepUpRoutes() {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			router := adminRouter
+			if tc.router == "payment" {
+				router = paymentRouter
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			var body stepUpErrorBody
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
+			require.Equal(t, "STEP_UP_ADMIN_API_KEY_FORBIDDEN", body.Code, w.Body.String())
+		})
+	}
+}
+
+// 完成 step-up 后必须放行到业务层（不返回 403 门控错误）。
+func TestSensitiveAdminRoutesAllowedAfterStepUpGrant(t *testing.T) {
+	adminRouter := buildAdminRouteProbeRouter(t, realStepUpWithGrant(t, true), service.AuditAuthMethodJWT)
+	paymentRouter := buildPaymentProbeRouter(t, realStepUpWithGrant(t, true), service.AuditAuthMethodJWT)
+	for _, tc := range sensitiveStepUpRoutes() {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			router := adminRouter
+			if tc.router == "payment" {
+				router = paymentRouter
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			require.NotEqual(t, http.StatusForbidden, w.Code, w.Body.String())
+			require.NotContains(t, w.Body.String(), "STEP_UP_REQUIRED")
 		})
 	}
 }

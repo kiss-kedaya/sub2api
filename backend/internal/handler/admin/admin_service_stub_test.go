@@ -303,7 +303,9 @@ func (s *stubAdminService) GetAllGroupsIncludingInactive(ctx context.Context) ([
 }
 
 func (s *stubAdminService) GetGroup(ctx context.Context, id int64) (*service.Group, error) {
-	group := service.Group{ID: id, Name: "group", Status: service.StatusActive}
+	// RateMultiplier 取默认值 1：分组改价的 step-up 判定会拿存储值做「是否真的
+	// 改动」比较，默认值必须与前端整表单回传的 1 一致，否则日常编辑会被误判。
+	group := service.Group{ID: id, Name: "group", Status: service.StatusActive, RateMultiplier: 1}
 	return &group, nil
 }
 
