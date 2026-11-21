@@ -11,6 +11,12 @@ type Status struct {
 	Ready      bool            `json:"ready"`
 	Enabled    bool            `json:"enabled"`
 	Security   *SecurityStatus `json:"security,omitempty"`
+	// Locked means the vault is sealed with a data key and no shard has been
+	// combined in this process, so signing/export operations need a share.
+	Locked bool `json:"signer_locked"`
+	// Shards reports the public shard configuration; it never contains share
+	// material beyond the server-held share A, which stays sealed at rest.
+	Shards *ShardStatus `json:"shards,omitempty"`
 }
 
 // HotAddress contains the public gas wallet addresses at the fixed index zero.
@@ -57,4 +63,23 @@ var (
 	ErrSweepBusy = errors.New("sweep is running in another instance")
 	// ErrSweepPending means a durable sweep still needs its existing hot seed.
 	ErrSweepPending = errors.New("unfinished sweep jobs prevent hot mnemonic import")
+	// ErrSignerShareRequired means a v3 vault is sealed and no recovery share
+	// has been supplied in this operation. The HTTP layer maps it to a stable
+	// error code so the UI can prompt for a shard.
+	ErrSignerShareRequired = errors.New("wallet signer is locked; a recovery shard is required")
+	// ErrSignerShareInvalid covers every rejected share without revealing
+	// whether the share was close to correct.
+	ErrSignerShareInvalid = errors.New("recovery shard cannot open this wallet")
+	// ErrSignerRateLimited means too many rejected shares; the operator must
+	// wait before trying again.
+	ErrSignerRateLimited = errors.New("too many rejected recovery shares; the signer is temporarily locked")
+	// ErrShardsNotConfigured means the vault still uses the installation-key
+	// ciphertext and the shard setup flow has not completed.
+	ErrShardsNotConfigured = errors.New("wallet shards are not configured")
+	// ErrShardsAlreadyConfigured means a shard set already exists; use the
+	// re-split flow instead of silently replacing it.
+	ErrShardsAlreadyConfigured = errors.New("wallet shards are already configured; use re-split")
+	// ErrShardsNotAllowed means the requested shard operation is invalid for
+	// the current vault state.
+	ErrShardsNotAllowed = errors.New("wallet shard operation is not allowed in the current state")
 )

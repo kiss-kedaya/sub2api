@@ -215,6 +215,33 @@ func (s *Service) EnsurePool(ctx context.Context) error {
 	return nil
 }
 
+// TopUpTo grows the free pool to at least target entries per family. It is the
+// unlocked-window prewarm for a vault whose data key is not resident: callers
+// must hold the wallet data key (the deriver fails closed otherwise).
+func (s *Service) TopUpTo(ctx context.Context, target int64) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
+	if target <= 0 || target > 100000 {
+		return fmt.Errorf("invalid pool target")
+	}
+	for _, family := range []string{FamilyEVM, FamilySolana} {
+		for round := 0; round < 200; round++ {
+			count, err := s.repo.FreePoolCount(ctx, family)
+			if err != nil {
+				return err
+			}
+			if count >= target {
+				break
+			}
+			if err := s.topUp(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // ListByUser exposes the user's assignments to the HTTP layer.
 func (s *Service) ListByUser(ctx context.Context, userID int64) ([]Assignment, error) {
 	return s.repo.ListByUser(ctx, userID)

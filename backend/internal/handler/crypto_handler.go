@@ -484,6 +484,15 @@ func (h *CryptoHandler) AdminRunSweep(c *gin.Context) {
 		response.BadRequest(c, "crypto channel unavailable")
 		return
 	}
+	var runRequest struct {
+		Share string `json:"share"`
+	}
+	if c.Request.ContentLength > 0 {
+		if !decodeCryptoRequest(c, &runRequest, 8<<10, "invalid sweep request") {
+			return
+		}
+	}
+	defer func() { runRequest.Share = "" }()
 	dryRun := c.DefaultQuery("dry_run", "1") != "0"
 	// A real sweep without a configured destination is operator error, not a
 	// server fault: say what is missing instead of surfacing a 500.
@@ -508,7 +517,10 @@ func (h *CryptoHandler) AdminRunSweep(c *gin.Context) {
 	// New clients explicitly opt into asynchronous execution. Preserve the
 	// summary response for existing clients and already-open browser tabs.
 	if c.Query("async") == "1" {
-		state, startErr := h.service.StartSweepAsync(dryRun, chains)
+		state, startErr := h.service.StartSweepAsyncWithShare(dryRun, chains, runRequest.Share)
+		if writeCryptoSignerError(c, startErr) {
+			return
+		}
 		if startErr != nil {
 			response.ErrorFrom(c, startErr)
 			return
@@ -516,7 +528,10 @@ func (h *CryptoHandler) AdminRunSweep(c *gin.Context) {
 		c.JSON(http.StatusAccepted, gin.H{"data": state})
 		return
 	}
-	summary, err := h.service.RunSweepChains(ctx, dryRun, chains)
+	summary, err := h.service.RunSweepChainsWithShare(ctx, dryRun, chains, runRequest.Share)
+	if writeCryptoSignerError(c, err) {
+		return
+	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
