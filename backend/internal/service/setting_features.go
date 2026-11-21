@@ -315,23 +315,25 @@ func (s *SettingService) GetAuditLogRetentionDays(ctx context.Context) (int, err
 	if err != nil {
 		return 0, err
 	}
-	return parseAuditLogRetentionDays(value), nil
+	return decodeAuditLogRetentionDays(value)
 }
 
-// parseAuditLogRetentionDays 解析保留天数配置，空/非法值回退默认值。
+// parseAuditLogRetentionDays preserves the default shown in settings when the
+// stored value is absent or invalid. Cleanup must use the strict decoder.
 func parseAuditLogRetentionDays(value string) int {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return defaultAuditLogRetentionDays
-	}
-	n, err := strconv.Atoi(value)
+	days, err := decodeAuditLogRetentionDays(value)
 	if err != nil {
 		return defaultAuditLogRetentionDays
 	}
-	if n < 0 {
-		return 0
+	return days
+}
+
+func decodeAuditLogRetentionDays(value string) (int, error) {
+	days, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0, errors.New("invalid stored audit log retention policy")
 	}
-	return n
+	return max(days, 0), nil
 }
 
 // GetSiteName 获取网站名称

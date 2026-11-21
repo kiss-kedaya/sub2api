@@ -46,6 +46,8 @@ func TestAuditRetentionRequiresAuthoritativePolicy(t *testing.T) {
 		wantDays int
 	}{
 		{name: "read fails", err: errors.New("setting repository unavailable")},
+		{name: "invalid policy", value: "not-a-number"},
+		{name: "empty stored policy", value: "   "},
 		{name: "keep forever", value: "0"},
 		{name: "configured retention", value: "365", wantDays: 365},
 		{name: "known missing key uses default", err: ErrSettingNotFound, wantDays: defaultAuditLogRetentionDays},
