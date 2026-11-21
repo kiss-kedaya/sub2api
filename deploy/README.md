@@ -38,7 +38,7 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 - 钱包密文保存在主 PostgreSQL 的 `settings` 表，键名 `crypto.signer.vault` 仅为兼容已有数据。钱包审计继续写入历史表 `crypto_signer_audit`；263 迁移原文及其 schema 保持不变，不能为改名重写迁移或破坏 checksum。
 - 钱包种子使用持久安装密钥派生的独立 AES-256-GCM 密钥加密。首次导入两份不同的 BIP39 助记词并通过新的 2FA 即可，无需钱包口令或手动解锁；重启后自动加载。已有密文禁止通过初始化覆盖。
 - 通过钱包管理导入、分段导出助记词或更换 Gas 种子，所有风险操作逐次校验后端 2FA。Gas 更换在无未完成归集时立即生效。手动解锁和旧加密文件备份入口已删除。
-- 支付开启和钱包初始化前必须先绑定并验证 2FA。安装密钥由服务首次启动自动生成、持久保存并供多实例复用，无需手工配置支付专用密钥；已有 `TOTP_ENCRYPTION_KEY` 原值保留，不能轮换后继续解密旧钱包。
+- 支付开启和钱包初始化前必须先绑定并验证 2FA。`TOTP_ENCRYPTION_KEY` 是权威安装密钥，应从部署环境或 secret 注入；数据库 `security_secrets` 里的同名行只在 env 缺失时作为过渡回退，启动会 WARN。两边都没有且已有密文时启动失败，不会生成新密钥覆盖。已有部署不要轮换该值，迁移步骤见 `deploy/TOTP_KEY_MIGRATION.md`。
 - `CRYPTO_ADMIN_USER_IDS`（逗号分隔的现有管理员用户 ID）是支付操作员权限名单。名单为空或包含非法 ID 时，支付管理接口拒绝访问；新增/提权的普通后台管理员不自动获得钱包权限。名单仅在进程启动时读取，网页设置及机器管理密钥不能改写；变更后须重启该实例。
 - `crypto-test-release.yml` 只打包一个 Linux amd64、`CGO_ENABLED=0`、带 `embed` 前端的 `sub2api` 二进制，以及版本和构建元数据；保留 `checksums.txt` 校验及隔离 prerelease 流程，不执行部署。
 
@@ -315,7 +315,7 @@ docker compose down -v
 |----------|----------|---------|-------------|
 | `POSTGRES_PASSWORD` | **Yes** | - | PostgreSQL password |
 | `JWT_SECRET` | **Recommended** | *(auto-generated)* | JWT secret (fixed for persistent sessions) |
-| `TOTP_ENCRYPTION_KEY` | **Recommended** | *(auto-generated)* | TOTP encryption key (fixed for persistent 2FA) |
+| `TOTP_ENCRYPTION_KEY` | **Yes** | *(transitional DB fallback)* | TOTP/payment installation key (64 hex chars, fixed; env is authoritative) |
 | `SERVER_PORT` | No | `8080` | Server port |
 | `ADMIN_EMAIL` | No | `admin@sub2api.local` | Admin email |
 | `ADMIN_PASSWORD` | No | *(auto-generated)* | Admin password |

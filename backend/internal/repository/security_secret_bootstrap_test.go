@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -12,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"testing"
@@ -163,9 +165,20 @@ func TestInstallationKeyFirstRegistrationAuthenticatesEveryDurableCiphertext(t *
 			correct := &config.Config{Totp: config.TotpConfig{EncryptionKey: original, EncryptionKeyConfigured: true}}
 			require.NoError(t, ensureBootstrapSecrets(t.Context(), client, correct))
 			require.True(t, correct.Totp.EncryptionKeyPersistent)
-			restarted := &config.Config{}
+			require.Equal(t, config.TotpEncryptionKeySourceEnv, correct.Totp.EncryptionKeySource)
+			// An environment key is authoritative and is never written back: the
+			// transitional row stays absent so deleting it in the database is
+			// permanent.
+			exists, queryErr = client.SecuritySecret.Query().Where(securitysecret.KeyEQ(securitySecretKeyTOTP)).Exist(t.Context())
+			require.NoError(t, queryErr)
+			require.False(t, exists, "environment key must not be persisted into security_secrets")
+			restarted := &config.Config{Totp: config.TotpConfig{EncryptionKey: original, EncryptionKeyConfigured: true}}
 			require.NoError(t, ensureBootstrapSecrets(t.Context(), client, restarted))
-			require.True(t, restarted.Totp.EncryptionKey == original, "restart must preserve the legacy key")
+			require.True(t, restarted.Totp.EncryptionKey == original, "restart must keep using the environment key")
+			// Without either source a restart must fail closed instead of
+			// generating a replacement that cannot decrypt the fixtures.
+			missing := &config.Config{}
+			require.ErrorContains(t, ensureBootstrapSecrets(t.Context(), client, missing), "requires the original TOTP_ENCRYPTION_KEY")
 		})
 	}
 }
@@ -198,9 +211,18 @@ func TestInstallationKeyAcceptsLegacyPlaintextS3Compatibility(t *testing.T) {
 			cfg := &config.Config{Totp: config.TotpConfig{EncryptionKey: strings.Repeat("ab", 32), EncryptionKeyConfigured: configured}}
 			require.NoError(t, ensureBootstrapSecrets(t.Context(), client, cfg))
 			require.True(t, cfg.Totp.EncryptionKeyPersistent)
+			if configured {
+				// The environment key is authoritative and is never written
+				// back; the same environment value keeps every restart stable.
+				require.Equal(t, config.TotpEncryptionKeySourceEnv, cfg.Totp.EncryptionKeySource)
+				restarted := &config.Config{Totp: config.TotpConfig{EncryptionKey: cfg.Totp.EncryptionKey, EncryptionKeyConfigured: true}}
+				require.NoError(t, ensureBootstrapSecrets(t.Context(), client, restarted))
+				require.Equal(t, cfg.Totp.EncryptionKey, restarted.Totp.EncryptionKey)
+				return
+			}
 			restarted := &config.Config{}
 			require.NoError(t, ensureBootstrapSecrets(t.Context(), client, restarted))
-			require.True(t, cfg.Totp.EncryptionKey == restarted.Totp.EncryptionKey, "plaintext legacy settings must permit a stable automatic installation key")
+			require.Equal(t, cfg.Totp.EncryptionKey, restarted.Totp.EncryptionKey, "plaintext legacy settings must permit a stable automatic installation key")
 		})
 	}
 }
@@ -307,20 +329,89 @@ func TestTOTPInstallationKeyPersistsAcrossRestartsAndInstances(t *testing.T) {
 	require.Equal(t, "existing-authenticator-secret", plaintext)
 }
 
-func TestTOTPInstallationKeyAdoptsLegacyKeyAndRejectsRotation(t *testing.T) {
+func TestTOTPInstallationKeyEnvironmentIsAuthoritativeAndNeverPersisted(t *testing.T) {
 	client := newSecuritySecretTestClient(t)
 	legacy := strings.Repeat("ef", 32)
-	cfg := &config.Config{Totp: config.TotpConfig{EncryptionKey: legacy, EncryptionKeyConfigured: true}}
-	require.NoError(t, ensureBootstrapSecrets(t.Context(), client, cfg))
-	withoutEnv := &config.Config{}
-	require.NoError(t, ensureBootstrapSecrets(t.Context(), client, withoutEnv))
-	require.Equal(t, legacy, withoutEnv.Totp.EncryptionKey)
+	_, err := client.SecuritySecret.Create().SetKey(securitySecretKeyTOTP).SetValue(legacy).Save(t.Context())
+	require.NoError(t, err)
 
-	conflicting := &config.Config{Totp: config.TotpConfig{EncryptionKey: strings.Repeat("ab", 32), EncryptionKeyConfigured: true}}
-	require.ErrorContains(t, ensureBootstrapSecrets(t.Context(), client, conflicting), "conflicts with the persisted")
+	// Without an environment key the transitional database row is used and
+	// reported as the database source.
+	fallback := &config.Config{}
+	require.NoError(t, ensureBootstrapSecrets(t.Context(), client, fallback))
+	require.Equal(t, legacy, fallback.Totp.EncryptionKey)
+	require.Equal(t, config.TotpEncryptionKeySourceDatabase, fallback.Totp.EncryptionKeySource)
+
+	// A configured environment key wins over a conflicting row and the row is
+	// left untouched; deleting the row is the operator's final migration step.
+	replacement := strings.Repeat("ab", 32)
+	env := &config.Config{Totp: config.TotpConfig{EncryptionKey: replacement, EncryptionKeyConfigured: true}}
+	require.NoError(t, ensureBootstrapSecrets(t.Context(), client, env))
+	require.Equal(t, replacement, env.Totp.EncryptionKey)
+	require.Equal(t, config.TotpEncryptionKeySourceEnv, env.Totp.EncryptionKeySource)
 	stored, err := client.SecuritySecret.Query().Where(securitysecret.KeyEQ(securitySecretKeyTOTP)).Only(t.Context())
 	require.NoError(t, err)
-	require.Equal(t, legacy, stored.Value)
+	require.Equal(t, legacy, stored.Value, "environment migration must not rewrite the transitional row")
+}
+
+func TestTOTPInstallationKeyEnvironmentOnlyBootstrapDoesNotWriteRow(t *testing.T) {
+	client := newSecuritySecretTestClient(t)
+	key := strings.Repeat("cd", 32)
+	cfg := &config.Config{Totp: config.TotpConfig{EncryptionKey: key, EncryptionKeyConfigured: true}}
+	require.NoError(t, ensureBootstrapSecrets(t.Context(), client, cfg))
+	require.Equal(t, key, cfg.Totp.EncryptionKey)
+	require.Equal(t, config.TotpEncryptionKeySourceEnv, cfg.Totp.EncryptionKeySource)
+	exists, err := client.SecuritySecret.Query().Where(securitysecret.KeyEQ(securitySecretKeyTOTP)).Exist(t.Context())
+	require.NoError(t, err)
+	require.False(t, exists, "an environment key must never create the transitional database row")
+}
+
+func TestTOTPInstallationKeyLogsFallbackAndMismatchWarningsWithoutKeyMaterial(t *testing.T) {
+	client := newSecuritySecretTestClient(t)
+	legacy := strings.Repeat("ef", 32)
+	_, err := client.SecuritySecret.Create().SetKey(securitySecretKeyTOTP).SetValue(legacy).Save(t.Context())
+	require.NoError(t, err)
+
+	var captured bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&captured)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	require.NoError(t, ensureBootstrapSecrets(t.Context(), client, &config.Config{}))
+	require.Contains(t, captured.String(), "using the legacy installation key stored in security_secrets")
+	require.NotContains(t, captured.String(), legacy, "installation key material must never reach the logs")
+
+	captured.Reset()
+	replacement := strings.Repeat("ab", 32)
+	env := &config.Config{Totp: config.TotpConfig{EncryptionKey: replacement, EncryptionKeyConfigured: true}}
+	require.NoError(t, ensureBootstrapSecrets(t.Context(), client, env))
+	require.Contains(t, captured.String(), "differs from the installation key stored in security_secrets")
+	require.NotContains(t, captured.String(), legacy)
+	require.NotContains(t, captured.String(), replacement)
+}
+
+func TestTOTPInstallationKeyMissingEverywhereFailsWithoutDataLoss(t *testing.T) {
+	client := newSecuritySecretTestClient(t)
+	key := strings.Repeat("11", 32)
+	encryptor, err := NewAESEncryptor(&config.Config{Totp: config.TotpConfig{EncryptionKey: key}})
+	require.NoError(t, err)
+	encrypted, err := encryptor.Encrypt("existing-authenticator-secret")
+	require.NoError(t, err)
+	user, err := client.User.Create().SetEmail("fixture@example.test").SetPasswordHash("fixture-hash").
+		SetTotpSecretEncrypted(encrypted).SetTotpEnabled(false).Save(t.Context())
+	require.NoError(t, err)
+
+	err = ensureBootstrapSecrets(t.Context(), client, &config.Config{})
+	require.ErrorContains(t, err, "requires the original TOTP_ENCRYPTION_KEY")
+
+	// Fail closed without deleting or replacing anything: no generated row and
+	// the existing ciphertext is untouched.
+	exists, err := client.SecuritySecret.Query().Where(securitysecret.KeyEQ(securitySecretKeyTOTP)).Exist(t.Context())
+	require.NoError(t, err)
+	require.False(t, exists)
+	reloaded, err := client.User.Get(t.Context(), user.ID)
+	require.NoError(t, err)
+	require.Equal(t, encrypted, *reloaded.TotpSecretEncrypted)
 }
 
 func TestTOTPInstallationKeyRejectsMalformedStoredKey(t *testing.T) {
