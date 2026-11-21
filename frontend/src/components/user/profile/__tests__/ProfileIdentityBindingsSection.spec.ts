@@ -691,7 +691,8 @@ describe('ProfileIdentityBindingsSection', () => {
     })
 
     expect(wrapper.text()).toContain('linuxdo-handle')
-    expect(wrapper.text()).toContain('lin***3456')
+    // subject_hint 是哈希后的盲索引前缀，对用户没有意义，不再展示。
+    expect(wrapper.text()).not.toContain('lin***3456')
     expect(wrapper.text()).toContain('Linked from LinuxDo')
 
     await wrapper.get('[data-testid="profile-binding-linuxdo-unbind"]').trigger('click')

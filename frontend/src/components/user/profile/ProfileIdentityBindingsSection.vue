@@ -76,9 +76,6 @@
                 >
                   {{ item.details.display_name }}
                 </p>
-                <p v-if="item.provider !== 'email' && item.details?.subject_hint">
-                  {{ item.details.subject_hint }}
-                </p>
                 <p v-if="bindingCountLabel(item.details)">
                   {{ bindingCountLabel(item.details) }}
                 </p>
@@ -586,8 +583,8 @@ function hasBindingDetails(
     return false
   }
 
-  const showsProviderIdentityDetails =
-    provider !== 'email' && Boolean(details.display_name || details.subject_hint)
+  // subject_hint 已不再展示（第三方身份 subject 哈希化后只是盲索引前缀，对用户无意义）。
+  const showsProviderIdentityDetails = provider !== 'email' && Boolean(details.display_name)
 
   return Boolean(showsProviderIdentityDetails || bindingCountLabel(details) || bindingNote(details))
 }
