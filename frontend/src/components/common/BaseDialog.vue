@@ -109,6 +109,12 @@ interface Props {
   closeOnEscape?: boolean
   closeOnClickOutside?: boolean
   showCloseButton?: boolean
+  /**
+   * Render the header close button in its disabled state instead of hiding it. Used by dialogs
+   * that must stay on screen for a minimum time (one-time API key receipt) so the control is
+   * visibly unavailable rather than missing.
+   */
+  closeButtonDisabled?: boolean
   zIndex?: number
   /**
    * Text of the quiet "restored your unsubmitted input" line (see useDialogDraft); empty hides
@@ -129,6 +135,7 @@ const props = withDefaults(defineProps<Props>(), {
   closeOnEscape: true,
   closeOnClickOutside: false,
   showCloseButton: true,
+  closeButtonDisabled: false,
   zIndex: 50,
   draftNotice: '',
   draftDiscardLabel: ''
@@ -179,7 +186,11 @@ const panelElement = () => overlayRef.value?.querySelector<HTMLElement>('.base-d
 
 // Only the close button, Escape and the veil close the dialog. UModal's own `update:open` is not
 // used: reka also reports Escape and outside interaction through it, which this layer owns.
-const closeButtonProps = { onClick: () => emit('close') }
+// `closeButtonDisabled` keeps the control visible but inert for minimum-display dialogs.
+const closeButtonProps = computed(() => ({
+  onClick: () => emit('close'),
+  disabled: props.closeButtonDisabled
+}))
 
 const onPanelLeft = () => {
   if (props.show) return
