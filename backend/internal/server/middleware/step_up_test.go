@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -16,10 +17,29 @@ import (
 type stubStepUpGrantChecker struct {
 	granted bool
 	err     error
+	// remaining 模拟 step-up 窗口剩余时间；<=0 时按默认 4 分钟返回，
+	// 保持既有用例只关心「有没有授权」的行为不变。
+	remaining time.Duration
+	// expireAfterCheck 模拟授权在 Has 与 Remaining 两次读取之间过期。
+	expireAfterCheck bool
+	remainingErr     error
 }
 
 func (s stubStepUpGrantChecker) HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error) {
 	return s.granted, s.err
+}
+
+func (s stubStepUpGrantChecker) StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string) (time.Duration, bool, error) {
+	if s.remainingErr != nil {
+		return 0, false, s.remainingErr
+	}
+	if !s.granted || s.expireAfterCheck {
+		return 0, false, nil
+	}
+	if s.remaining > 0 {
+		return s.remaining, true, nil
+	}
+	return 4 * time.Minute, true, nil
 }
 
 type stubStepUpUserReader struct {

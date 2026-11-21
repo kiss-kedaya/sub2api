@@ -3,6 +3,8 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -12,9 +14,24 @@ import (
 // StepUpAuthMiddleware 敏感操作 step-up 2FA 门控中间件类型。
 type StepUpAuthMiddleware gin.HandlerFunc
 
+// 门控「跳过验证码」时回传的响应头。
+//
+// 只要一次敏感请求因为会话里存在有效的 step-up grant 而没有要求 TOTP，响应就
+// 必须带这两个头——不允许静默跳过。前端据此在右下角展示「已跳过 2FA 验证 ·
+// 剩余免授权 4:32」的倒计时，让操作者知道此刻的 5 分钟窗口还在生效。
+const (
+	// StepUpSkippedHeader 值为 "1"，表示本次请求跳过了二次验证。
+	StepUpSkippedHeader = "X-StepUp-Skipped"
+	// StepUpRemainingHeader 回传剩余免授权秒数（向下取整）。
+	StepUpRemainingHeader = "X-StepUp-Remaining"
+)
+
 // stepUpGrantChecker 抽象 TOTP step-up 授权检查能力（由 TotpService 实现）。
 type stepUpGrantChecker interface {
 	HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error)
+	// StepUpGrantRemaining 读剩余窗口，用于回传 X-StepUp-Remaining。
+	// 返回 false 表示读的瞬间授权已失效（按未授权处理）。
+	StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string) (time.Duration, bool, error)
 }
 
 // stepUpUserReader 抽象用户读取能力（检查 TOTP 是否启用）。
@@ -51,7 +68,28 @@ func NewStepUpAuthMiddleware(
 	userService *service.UserService,
 	settingService *service.SettingService,
 ) StepUpAuthMiddleware {
-	return StepUpAuthMiddleware(stepUpAuth(totpService, userService, stepUpSettingsOrNil(settingService)))
+	return StepUpAuthMiddleware(stepUpAuth(
+		stepUpGrantCheckerOrNil(totpService),
+		stepUpUserReaderOrNil(userService),
+		stepUpSettingsOrNil(settingService),
+	))
+}
+
+// stepUpGrantCheckerOrNil / stepUpUserReaderOrNil 把可能为 nil 的具体指针归一化
+// 为 nil 接口，避免 typed-nil 装箱后在 enforceStepUp 里「看起来不是 nil」，
+// 从而绕过装配缺失的 fail-closed 分支。
+func stepUpGrantCheckerOrNil(totpService *service.TotpService) stepUpGrantChecker {
+	if totpService == nil {
+		return nil
+	}
+	return totpService
+}
+
+func stepUpUserReaderOrNil(userService *service.UserService) stepUpUserReader {
+	if userService == nil {
+		return nil
+	}
+	return userService
 }
 
 // stepUpSettingsOrNil 将可能为 nil 的具体指针归一化为接口，
@@ -81,7 +119,11 @@ func EnforceStepUp(
 	userService *service.UserService,
 	settingService *service.SettingService,
 ) bool {
-	return enforceStepUp(c, totpService, userService, stepUpSettingsOrNil(settingService))
+	return enforceStepUp(c,
+		stepUpGrantCheckerOrNil(totpService),
+		stepUpUserReaderOrNil(userService),
+		stepUpSettingsOrNil(settingService),
+	)
 }
 
 // EnforceStepUpAlways 与 EnforceStepUp 语义相同但不读取功能开关，无条件执行门控。
@@ -92,7 +134,11 @@ func EnforceStepUpAlways(
 	totpService *service.TotpService,
 	userService *service.UserService,
 ) bool {
-	return enforceStepUp(c, totpService, userService, nil)
+	return enforceStepUp(c,
+		stepUpGrantCheckerOrNil(totpService),
+		stepUpUserReaderOrNil(userService),
+		nil,
+	)
 }
 
 func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader stepUpUserReader, settings stepUpSettingReader) bool {
@@ -127,6 +173,13 @@ func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader s
 		return false
 	}
 
+	// 装配缺失（totp/user 依赖为 nil）时 fail-closed。handler 级 EnforceStepUp
+	// 调用点如果拿不到依赖，绝不能因为「没法检查」而放行。
+	if grantChecker == nil || userReader == nil {
+		AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
+		return false
+	}
+
 	user, err := userReader.GetByID(c.Request.Context(), subject.UserID)
 	if err != nil {
 		AbortWithError(c, 500, "INTERNAL_ERROR", "Failed to load user")
@@ -150,6 +203,27 @@ func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader s
 			"This operation requires recent two-factor verification")
 		return false
 	}
+
+	// 走到这里说明本次敏感操作「本来该要验证码，但因为 5 分钟窗口还有效而跳过」。
+	// 必须把这件事显式回传，不能静默跳过：前端右下角据此展示剩余免授权倒计时。
+	remaining, ok, err := grantChecker.StepUpGrantRemaining(c.Request.Context(), subject.UserID, sessionKey)
+	if err != nil {
+		// 安全门控故障时选择 fail-closed：读不到剩余窗口就不放行。
+		AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
+		return false
+	}
+	if !ok {
+		// 授权在 Has 与 Remaining 两次读取之间过期：按未验证处理，让前端重新弹码。
+		AbortWithError(c, 403, "STEP_UP_REQUIRED",
+			"This operation requires recent two-factor verification")
+		return false
+	}
+	remainingSeconds := int64(remaining / time.Second)
+	if remainingSeconds < 0 {
+		remainingSeconds = 0
+	}
+	c.Header(StepUpSkippedHeader, "1")
+	c.Header(StepUpRemainingHeader, strconv.FormatInt(remainingSeconds, 10))
 
 	return true
 }

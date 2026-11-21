@@ -259,3 +259,22 @@ func (c *TotpCache) HasStepUpGrant(ctx context.Context, userID int64, sessionKey
 	}
 	return true, nil
 }
+
+// StepUpGrantRemaining 返回 step-up 授权的剩余有效期（Redis PTTL，毫秒精度）。
+//
+// 门控用它向响应头回传「还剩多少秒免授权」，所以必须读真实 TTL，不能拿
+// StepUpGrantTTL 常量代替。key 不存在 → (0, false, nil)。PTTL 对没有过期时间
+// 的 key 返回 -1：这种异常状态同样按「无授权」处理（fail-closed），绝不放行。
+func (c *TotpCache) StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string) (time.Duration, bool, error) {
+	ttl, err := c.rdb.PTTL(ctx, totpStepUpKey(userID, sessionKey)).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("read step-up grant ttl: %w", err)
+	}
+	if ttl <= 0 {
+		return 0, false, nil
+	}
+	return ttl, true, nil
+}

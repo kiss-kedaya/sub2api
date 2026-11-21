@@ -74,10 +74,17 @@ export async function disable(request: TotpDisableRequest): Promise<{ success: b
 }
 
 /**
- * Step-up verification response
+ * Step-up verification response.
+ *
+ * The grace window is 5 minutes (same TTL as the on-chain payment crypto
+ * grant). Every sensitive request that skips the TOTP prompt while the window
+ * is valid reports `X-StepUp-Remaining`; the UI shows it as a countdown.
  */
 export interface TotpStepUpResponse {
   verified: boolean
+  /** Absolute expiry of the grace window (Unix seconds). */
+  expires_at?: number
+  /** Remaining grace window in seconds. */
   expires_in: number
 }
 

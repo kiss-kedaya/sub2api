@@ -45,9 +45,12 @@ type TotpCache interface {
 	GetVerifyAttempts(ctx context.Context, userID int64) (int, error)
 	ClearVerifyAttempts(ctx context.Context, userID int64) error
 
-	// Step-up grant methods (敏感操作 sudo 窗口)
+	// Step-up grant methods (敏感操作免授权窗口)
 	SetStepUpGrant(ctx context.Context, userID int64, sessionKey string, ttl time.Duration) error
 	HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error)
+	// StepUpGrantRemaining 返回当前会话 step-up 授权的剩余有效期。
+	// 第二个返回值为 false 表示没有有效授权（key 不存在或已过期）。
+	StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string) (time.Duration, bool, error)
 
 	// MarkLoginCodeUsed 记录一次成功登录使用的 TOTP 码（独立于支付/敏感操作
 	// 重放标记）。返回 false 表示该码已被使用过（重放）。codeDigest 是
@@ -674,8 +677,14 @@ func validateTotpCode(code, secret string, now time.Time) (int64, bool) {
 	return 0, false
 }
 
-// StepUpGrantTTL 敏感操作 step-up 验证的有效窗口（sudo 模式）。
-const StepUpGrantTTL = 15 * time.Minute
+// StepUpGrantTTL 敏感操作 step-up 验证的有效窗口。
+//
+// 与链上充值的 crypto grant 对齐（cryptoGrantTTL = 5 * time.Minute）：一次 TOTP
+// 验证后 5 分钟内重复敏感操作不再要求验证码。窗口缩短不是唯一改动——每次
+// 「因为还在窗口内而跳过验证码」的响应都必须回传跳过标记与剩余秒数
+// （middleware.StepUpSkippedHeader / StepUpRemainingHeader），前端右下角持续
+// 展示倒计时，不允许再出现「静默跳过 2FA」的体验。
+const StepUpGrantTTL = 5 * time.Minute
 
 // VerifyStepUp 校验 TOTP 码并授予当前会话一段时间的 step-up 权限。
 // 返回授权有效期，供前端展示/设置提醒。
@@ -692,6 +701,12 @@ func (s *TotpService) VerifyStepUp(ctx context.Context, userID int64, sessionKey
 // HasStepUpGrant 检查当前会话是否在 step-up 有效期内。
 func (s *TotpService) HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error) {
 	return s.cache.HasStepUpGrant(ctx, userID, sessionKey)
+}
+
+// StepUpGrantRemaining 返回当前会话 step-up 授权的剩余时间，供门控在「跳过
+// 验证码」时回传 X-StepUp-Remaining。无授权时第二个返回值为 false。
+func (s *TotpService) StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string) (time.Duration, bool, error) {
+	return s.cache.StepUpGrantRemaining(ctx, userID, sessionKey)
 }
 
 // CreateLoginSession creates a temporary login session for 2FA

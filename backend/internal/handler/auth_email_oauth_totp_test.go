@@ -62,6 +62,10 @@ func (s *totpCacheStub) HasStepUpGrant(context.Context, int64, string) (bool, er
 	return true, nil
 }
 
+func (s *totpCacheStub) StepUpGrantRemaining(context.Context, int64, string) (time.Duration, bool, error) {
+	return 4 * time.Minute, true, nil
+}
+
 func (s *totpCacheStub) MarkLoginCodeUsed(context.Context, int64, string, time.Duration) (bool, error) {
 	return true, nil
 }

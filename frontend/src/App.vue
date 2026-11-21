@@ -8,6 +8,7 @@ import { resolveRouteDocumentTitle } from '@/router/title'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import ConfirmHost from '@/components/common/ConfirmHost.vue'
 import StepUpGate from '@/components/auth/StepUpGate.vue'
+import StepUpSkipNotice from '@/components/auth/StepUpSkipNotice.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { useTicketNotificationStore } from '@/stores/ticketNotifications'
 import { getSetupStatus } from '@/api/setup'
@@ -196,5 +197,7 @@ onMounted(async () => {
     <ConfirmHost />
     <!-- 全局 step-up TOTP 门：管理端敏感接口 403 时统一弹码并自动重试一次 -->
     <StepUpGate />
+    <!-- 5 分钟免授权窗口内跳过 2FA 时，右下角展示「已跳过 + 剩余倒计时」 -->
+    <StepUpSkipNotice />
   </UApp>
 </template>

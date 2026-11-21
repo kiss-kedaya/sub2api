@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -25,6 +26,11 @@ type smallStepUpCache struct{ service.TotpCache }
 
 func (*smallStepUpCache) HasStepUpGrant(context.Context, int64, string) (bool, error) {
 	return false, nil
+}
+
+// 无授权的桩：门控不会走到剩余时间读取，返回 false 才能保持「不放行」语义。
+func (*smallStepUpCache) StepUpGrantRemaining(context.Context, int64, string) (time.Duration, bool, error) {
+	return 0, false, nil
 }
 
 func TestSmallRetentionPrimaryAdminAndStepUp(t *testing.T) {

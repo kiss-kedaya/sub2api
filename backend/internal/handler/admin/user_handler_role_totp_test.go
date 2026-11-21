@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -67,6 +68,18 @@ func (c *totpDemotionGrantCache) HasStepUpGrant(_ context.Context, userID int64,
 	c.checkedUserID = userID
 	c.checkedSessionID = sessionKey
 	return c.grantUserID != 0 && c.grantUserID == userID && c.grantSession == sessionKey, c.err
+}
+
+// StepUpGrantRemaining 镜像 HasStepUpGrant 的授权判定（不参与 checks 计数，
+// 因为门控在授权通过后还会读一次剩余时间用于 X-StepUp-Remaining 响应头）。
+func (c *totpDemotionGrantCache) StepUpGrantRemaining(_ context.Context, userID int64, sessionKey string) (time.Duration, bool, error) {
+	if c.err != nil {
+		return 0, false, c.err
+	}
+	if c.grantUserID == 0 || c.grantUserID != userID || c.grantSession != sessionKey {
+		return 0, false, nil
+	}
+	return 4 * time.Minute, true, nil
 }
 
 func TestUpdateUserAdminDemotionRequiresActorTotpRegardlessOfGlobalSwitch(t *testing.T) {
