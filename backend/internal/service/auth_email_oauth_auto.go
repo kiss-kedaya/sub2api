@@ -103,8 +103,17 @@ func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
 	if err != nil {
 		return nil, nil, err
 	}
-	if identityUser != nil && !strings.EqualFold(strings.TrimSpace(identityUser.Email), email) {
-		return nil, nil, infraerrors.Conflict("AUTH_IDENTITY_EMAIL_MISMATCH", "oauth identity belongs to a different email")
+	// 已绑定的第三方身份以「绑定关系」为准：身份绑定到哪个用户，就登录哪个用户。
+	// 这里不能再拿用户当前的账户邮箱去比对 provider 返回的邮箱——用户有权修改自己的
+	// 账户邮箱（例如管理员改邮箱），那样会把本人锁在登录之外。
+	// provider 侧邮箱变更（换邮箱/邮箱被改）只记录漂移，不影响登录。
+	if identityUser != nil {
+		boundEmail := s.lookupOAuthIdentityBoundEmail(ctx, providerType, providerKey, providerSubject)
+		if boundEmail != "" && !strings.EqualFold(boundEmail, email) {
+			logger.LegacyPrintf("service.auth",
+				"[Auth] oauth identity email drift: provider=%s user_id=%d bound_email_differs=true (binding wins)",
+				providerType, identityUser.ID)
+		}
 	}
 
 	user := identityUser
@@ -258,6 +267,28 @@ func (s *AuthService) findEmailOAuthIdentityOwner(ctx context.Context, providerT
 		return nil, ErrServiceUnavailable
 	}
 	return user, nil
+}
+
+// lookupOAuthIdentityBoundEmail 读取已绑定身份在绑定/上次登录时记录的 provider 邮箱。
+// 仅用于记录「provider 邮箱已变更」的漂移日志，不参与登录放行判断。
+func (s *AuthService) lookupOAuthIdentityBoundEmail(ctx context.Context, providerType, providerKey, providerSubject string) string {
+	if s == nil || s.entClient == nil {
+		return ""
+	}
+	identity, err := s.entClient.AuthIdentity.Query().
+		Where(
+			authidentity.ProviderTypeEQ(providerType),
+			authidentity.ProviderKeyEQ(providerKey),
+			authidentity.ProviderSubjectEQ(providerSubject),
+		).
+		Only(ctx)
+	if err != nil || identity == nil {
+		return ""
+	}
+	if email, ok := identity.Metadata["email"].(string); ok {
+		return strings.TrimSpace(strings.ToLower(email))
+	}
+	return ""
 }
 
 func (s *AuthService) ensureEmailOAuthIdentity(ctx context.Context, userID int64, input EmailOAuthIdentityInput) error {
