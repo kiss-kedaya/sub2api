@@ -971,9 +971,10 @@ describe('user KeysView mutations', () => {
     wrapper.unmount()
   })
 
-  it('inserts a created key locally without refetching the list', async () => {
+  it('shows the first creation secret and inserts the masked key without refetching', async () => {
     getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
-    createKey.mockResolvedValue({ ...createApiKey(), id: 99, name: 'new key', group_id: 3, group_ids: [3] })
+    const secret = 'fixture-only-creation-secret'
+    createKey.mockResolvedValue({ ...createApiKey(), id: 99, name: 'new key', group_id: 3, group_ids: [3], key: secret })
     const wrapper = await mountView()
 
     listKeys.mockClear()
@@ -989,6 +990,40 @@ describe('user KeysView mutations', () => {
     expect(wrapper.findAll('[data-test="current-concurrency"]')).toHaveLength(2)
     expect(wrapper.get('[data-test="key-bound-group"]').attributes('data-group-id')).toBe('3')
     expect(wrapper.text()).toContain('DeepSeek')
+    expect(wrapper.find('#key-form').exists()).toBe(false)
+    expect(wrapper.get('[data-test="api-key-secret-value"]').text()).toBe(secret)
+    expect(wrapper.findAll('[data-test="key-cell"]').every((cell) => !cell.text().includes(secret))).toBe(true)
+    expect(showSuccess).toHaveBeenCalledTimes(1)
+    expect(showSuccess).toHaveBeenCalledWith('keys.keyCreatedSuccess')
+    await getButtonByText(wrapper, 'keys.secretDialog.copy').trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledWith(secret, 'keys.secretDialog.copied')
+    wrapper.unmount()
+  })
+
+  it('treats a redacted create replay as success without a copy dialog or a duplicate row', async () => {
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
+    const replayedKey = { ...createApiKey(), name: 'replayed key', group_id: 3, group_ids: [3] }
+    createKey.mockResolvedValue(replayedKey)
+    const wrapper = await mountView()
+
+    listKeys.mockClear()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue(replayedKey.name)
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+    await nextTick()
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(showSuccess).toHaveBeenCalledTimes(1)
+    expect(showSuccess).toHaveBeenCalledWith('keys.keyCreatedReplaySuccess')
+    expect(showError).not.toHaveBeenCalled()
+    expect(wrapper.find('#key-form').exists()).toBe(false)
+    expect(wrapper.find('[data-test="api-key-secret-dialog"]').exists()).toBe(false)
+    expect(copyToClipboard).not.toHaveBeenCalled()
+    expect(listKeys).not.toHaveBeenCalled()
+    expect(wrapper.findAll('[data-test="key-cell"]')).toHaveLength(1)
+    expect(wrapper.text()).toContain(replayedKey.name)
+    expect(wrapper.get('[data-test="key-bound-group"]').attributes('data-group-id')).toBe('3')
     wrapper.unmount()
   })
 

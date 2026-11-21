@@ -3,6 +3,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"strconv"
@@ -264,14 +265,33 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	svcReq.DeepSeekToolInjectionEnabled = req.DeepSeekToolInjectionEnabled
 	svcReq.AutoBlockDatacenterIPs = req.AutoBlockDatacenterIPs
 
-	executeUserIdempotentJSON(c, "user.api_keys.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
+	c.Header("Cache-Control", "no-store")
+	var first *dto.APIKeySecret
+	result := runUserIdempotentJSON(c, "user.api_keys.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		key, err := h.apiKeyService.Create(ctx, subject.UserID, svcReq)
 		if err != nil {
 			return nil, err
 		}
-		// 创建是明文 key 的唯一一次回执；后续接口只给 key_prefix / key_masked。
-		return dto.APIKeySecretFromService(key), nil
+		first = dto.APIKeySecretFromService(key)
+		return &first.APIKey, nil // Only this masked form goes into the retry journal.
 	})
+	if result == nil {
+		return
+	}
+	if !result.Replayed && first != nil {
+		response.Success(c, first)
+		return
+	}
+
+	// Older journal entries can have a plaintext key field. Never forward
+	// the stored object directly; the masked DTO cannot serialize that field.
+	var replay dto.APIKey
+	body, err := json.Marshal(result.Data)
+	if err != nil || json.Unmarshal(body, &replay) != nil || replay.ID <= 0 || replay.UserID != subject.UserID {
+		response.ErrorFrom(c, service.ErrIdempotencyStoreUnavail)
+		return
+	}
+	response.Success(c, &replay)
 }
 
 // Update handles updating an API key

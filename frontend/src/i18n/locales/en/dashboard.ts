@@ -166,6 +166,7 @@ export default {
     noKeysYet: 'No API keys yet',
     createFirstKey: 'Create your first API key to get started with the API.',
     keyCreatedSuccess: 'API key created successfully',
+    keyCreatedReplaySuccess: 'API key already created. Retrying won’t return the plaintext key. Rotate it if needed.',
     keyUpdatedSuccess: 'API key updated successfully',
     keyDeletedSuccess: 'API key deleted successfully',
     keyEnabledSuccess: 'API key enabled successfully',
