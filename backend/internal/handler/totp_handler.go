@@ -126,10 +126,11 @@ func (h *TotpHandler) Enable(c *gin.Context) {
 		return
 	}
 
-	if !checkTwoFactorRateLimit(c, h.twoFactorLimiter, h.totpService, subject.UserID) {
+	attemptCtx, ok := checkTwoFactorRateLimit(c, h.twoFactorLimiter, subject.UserID)
+	if !ok {
 		return
 	}
-	if err := h.totpService.CompleteSetupForSession(c.Request.Context(), subject.UserID, req.TotpCode, req.SetupToken, cryptoSessionID(c)); err != nil {
+	if err := h.totpService.CompleteSetupForSession(attemptCtx, subject.UserID, req.TotpCode, req.SetupToken, cryptoSessionID(c)); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -169,16 +170,19 @@ func (h *TotpHandler) Disable(c *gin.Context) {
 		}
 		err = h.totpService.DisableWithServerAuthorization(c.Request.Context(), subject.UserID, req.ServerAuthorizationCode)
 	} else {
-		if !checkTwoFactorRateLimit(c, h.twoFactorLimiter, h.totpService, subject.UserID) {
+		attemptCtx, ok := checkTwoFactorRateLimit(c, h.twoFactorLimiter, subject.UserID)
+		if !ok {
 			return
 		}
-		err = h.totpService.Disable(c.Request.Context(), subject.UserID, req.EmailCode, req.Password, req.TotpCode)
+		err = h.totpService.Disable(attemptCtx, subject.UserID, req.EmailCode, req.Password, req.TotpCode)
 	}
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, subject.UserID)
+	if req.ServerAuthorizationCode == "" {
+		resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, subject.UserID)
+	}
 
 	response.Success(c, gin.H{"success": true})
 }
@@ -248,12 +252,13 @@ func (h *TotpHandler) StepUp(c *gin.Context) {
 		return
 	}
 
-	if !checkTwoFactorRateLimit(c, h.twoFactorLimiter, h.totpService, subject.UserID) {
+	attemptCtx, ok := checkTwoFactorRateLimit(c, h.twoFactorLimiter, subject.UserID)
+	if !ok {
 		return
 	}
 
 	sessionKey := middleware2.StepUpSessionKey(c, subject.UserID)
-	ttl, err := h.totpService.VerifyStepUp(c.Request.Context(), subject.UserID, sessionKey, req.Code)
+	ttl, err := h.totpService.VerifyStepUp(attemptCtx, subject.UserID, sessionKey, req.Code)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

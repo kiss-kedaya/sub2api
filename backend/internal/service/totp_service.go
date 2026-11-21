@@ -353,7 +353,8 @@ func (s *TotpService) CompleteSetupForSession(ctx context.Context, userID int64,
 }
 
 func (s *TotpService) completeSetup(ctx context.Context, userID int64, code, token, binding string, consume func(int64) error) error {
-	if err := s.reserveVerifyAttempt(ctx, userID); err != nil {
+	legacy, err := s.reserveVerifyAttempt(ctx, userID)
+	if err != nil {
 		return err
 	}
 	session, err := s.cache.GetSetupSession(ctx, userID)
@@ -408,8 +409,10 @@ func (s *TotpService) completeSetup(ctx context.Context, userID int64, code, tok
 	if err := s.cache.DeleteSetupSession(ctx, userID); err != nil {
 		return ErrTotpUnavailable
 	}
-	if err := s.cache.ClearVerifyAttempts(ctx, userID); err != nil {
-		return ErrTotpUnavailable
+	if legacy {
+		if err := s.cache.ClearVerifyAttempts(ctx, userID); err != nil {
+			return ErrTotpUnavailable
+		}
 	}
 	if err := binder.BindTotpIfDisabled(ctx, userID, encrypted); err != nil {
 		return fmt.Errorf("enable totp: %w", err)
@@ -569,42 +572,41 @@ func (s *TotpService) VerifyCodeOnce(ctx context.Context, userID int64, code str
 	return err
 }
 
-func (s *TotpService) reserveVerifyAttempt(ctx context.Context, userID int64) error {
+// reserveVerifyAttempt reports which budget was reserved, so success clears
+// only the counter associated with this verification.
+func (s *TotpService) reserveVerifyAttempt(ctx context.Context, userID int64) (legacy bool, err error) {
 	if s.cache == nil {
-		return ErrTotpUnavailable
+		return false, ErrTotpUnavailable
+	}
+	if attempt, ok := ctx.Value(accountTOTPAttemptKey{}).(*accountTOTPAttempt); ok {
+		if attempt.userID != userID || !attempt.used.CompareAndSwap(false, true) {
+			return false, ErrTotpUnavailable
+		}
+		return false, nil
 	}
 	attempts, err := s.cache.GetVerifyAttempts(ctx, userID)
 	if err != nil {
-		return ErrTotpUnavailable
+		return false, ErrTotpUnavailable
 	}
 	if attempts >= maxTotpAttempts {
-		return ErrTotpTooManyAttempts
+		return false, ErrTotpTooManyAttempts
 	}
 	// Reserve before validating; concurrent failures cannot all pass a read check.
 	attempts, err = s.cache.IncrementVerifyAttempts(ctx, userID)
 	if err != nil {
-		return ErrTotpUnavailable
+		return false, ErrTotpUnavailable
 	}
 	if attempts > maxTotpAttempts {
-		return ErrTotpTooManyAttempts
+		return false, ErrTotpTooManyAttempts
 	}
-	return nil
-}
-
-// ResetAccountVerificationBudget 清空账号的 TOTP 校验失败预算。
-// 供已接入 HTTP 账号维度限速（60s/5 次滑动窗口）的入口调用，避免旧的长窗口预算
-// 与新窗口叠加导致用户 60 秒后仍被锁死；未接入限速器的深层接口仍依赖该预算。
-func (s *TotpService) ResetAccountVerificationBudget(ctx context.Context, userID int64) error {
-	if s == nil || s.cache == nil || userID <= 0 {
-		return ErrTotpUnavailable
-	}
-	return s.cache.ClearVerifyAttempts(ctx, userID)
+	return true, nil
 }
 
 // Return the exact account snapshot whose secret was verified so security
 // mutations can use it as an atomic write precondition.
 func (s *TotpService) verifyCode(ctx context.Context, userID int64, code string, consume func(int64) error, consumeAdminCode bool) (*User, int64, error) {
-	if err := s.reserveVerifyAttempt(ctx, userID); err != nil {
+	legacy, err := s.reserveVerifyAttempt(ctx, userID)
+	if err != nil {
 		return nil, 0, err
 	}
 	user, err := s.userRepo.GetByID(ctx, userID)
@@ -635,8 +637,10 @@ func (s *TotpService) verifyCode(ctx context.Context, userID int64, code string,
 			return nil, 0, err
 		}
 	}
-	if err := s.cache.ClearVerifyAttempts(ctx, userID); err != nil {
-		return nil, 0, ErrTotpUnavailable
+	if legacy {
+		if err := s.cache.ClearVerifyAttempts(ctx, userID); err != nil {
+			return nil, 0, ErrTotpUnavailable
+		}
 	}
 	return user, counter, nil
 }

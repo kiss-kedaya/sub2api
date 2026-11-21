@@ -131,6 +131,14 @@ func TestTwoFactorRateLimiterResetAfterSuccess(t *testing.T) {
 	require.True(t, allowed, "successful verification resets the account budget")
 }
 
+func TestTwoFactorRateLimiterUninitializedFailsClosed(t *testing.T) {
+	for _, limiter := range []*TwoFactorRateLimiter{nil, {}} {
+		allowed, _, err := limiter.Check(t.Context(), 41)
+		require.Error(t, err)
+		require.False(t, allowed)
+	}
+}
+
 func TestTwoFactorRateLimiterStoreFailureIsExplicit(t *testing.T) {
 	f := newFakeSlidingLimiter()
 	f.err = errors.New("redis down")
