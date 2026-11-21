@@ -152,6 +152,20 @@ func loadUsageStatsCached[T any](
 	key usageStatsCacheKey,
 	load func(context.Context) (T, error),
 ) (T, error) {
+	return loadUsageStatsCachedWithTimeout(cache, ctx, key, usageStatsCacheLoadTimeout, load)
+}
+
+// loadUsageStatsCachedWithTimeout is loadUsageStatsCached with an explicit
+// database budget for the shared load. Most aggregates finish well inside the
+// default budget; an aggregate whose cold path can legitimately run longer (the
+// admin account history scan) passes its own instead of failing early.
+func loadUsageStatsCachedWithTimeout[T any](
+	cache *usageStatsCache,
+	ctx context.Context,
+	key usageStatsCacheKey,
+	loadTimeout time.Duration,
+	load func(context.Context) (T, error),
+) (T, error) {
 	if err := ctx.Err(); err != nil {
 		var zero T
 		return zero, err
@@ -166,7 +180,7 @@ func loadUsageStatsCached[T any](
 	// Only the waiter uses the request deadline. Disconnecting one caller must
 	// neither cancel the shared database query nor prevent populating Redis.
 	ch := cache.sf.DoChan(redisKey, func() (any, error) {
-		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), usageStatsCacheLoadTimeout)
+		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loadTimeout)
 		defer cancel()
 		if raw, ok := cache.get(loadCtx, redisKey); ok {
 			var value T
