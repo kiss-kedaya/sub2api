@@ -1,0 +1,6 @@
+{
+  "rows": [
+    {"row_id":"google-flat","provider_id":"google","billing_model_id":"gemini-4-argon","mode":"token","currency":"USD","unit":"per_million_tokens","required_fields":["input","cache_read"]},
+    {"row_id":"missing-neon","provider_id":"google","billing_model_id":"gemini-4-neon","mode":"token","currency":"USD","unit":"per_million_tokens","required_fields":["input"]}
+  ]
+}
