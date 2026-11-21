@@ -1080,7 +1080,7 @@ func (r *usageLogRepository) getEndpointStatsByColumnWithFilters(ctx context.Con
 		SELECT
 			COALESCE(NULLIF(TRIM(%s), ''), 'unknown') AS endpoint,
 			COUNT(*) AS requests,
-			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS total_tokens,
+			COALESCE(SUM(input_tokens::bigint + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS total_tokens,
 			COALESCE(SUM(total_cost), 0) as cost,
 			%s
 		FROM usage_logs
@@ -1148,25 +1148,92 @@ func (r *usageLogRepository) GetUpstreamEndpointStatsWithFilters(ctx context.Con
 	return r.getEndpointStatsByColumnWithFilters(ctx, "upstream_endpoint", startTime, endTime, userID, apiKeyID, accountID, groupID, model, "", requestType, stream, billingType, "")
 }
 
-// GetAccountUsageStats returns comprehensive usage statistics for an account over a time range
-func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID int64, startTime, endTime time.Time) (resp *AccountUsageStatsResponse, err error) {
+const (
+	// accountUsageStatsDBTimeout bounds one database load of the admin account
+	// stats aggregate, all statements included. The daily series is covered by an
+	// index, but the model/endpoint breakdowns still read the heap: a cold load
+	// of an account with millions of rows in the window measured 49-60s on
+	// production, so the budget leaves room for the main aggregate on top while
+	// keeping the whole response under the ~100s edge (Cloudflare) request limit.
+	accountUsageStatsDBTimeout = 90 * time.Second
+	// accountUsageStatsStatementTimeoutSQL raises PostgreSQL's per-statement
+	// ceiling for that load. The cluster default is 30s, which aborts the
+	// breakdown scan before it can return; the merged scan measured 49s idle and
+	// 60.5s while a production billing repricing job saturated IO. Keeping this
+	// below the Go budget means the database, not the client, cancels a runaway
+	// statement; when even this is exceeded the handler answers STATS_TIMEOUT so
+	// the admin can narrow the window instead of reading a generic 500.
+	accountUsageStatsStatementTimeoutSQL = "SET LOCAL statement_timeout = '70s'"
+)
+
+// GetAccountUsageStats returns comprehensive usage statistics for an account
+// over a time range.
+//
+// The aggregate is served from the short-TTL stats cache in front of the
+// database and is built from one covering-index scan: duration is summed in the
+// same GROUP BY as tokens and cost instead of running a second AVG pass.
+func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID int64, startTime, endTime time.Time) (*AccountUsageStatsResponse, error) {
+	return loadUsageStatsCachedWithTimeout(r.statsCache, ctx, usageStatsCacheKey{
+		Query:     "account_usage_stats",
+		AccountID: accountID,
+		Start:     startTime.UTC().Format(time.RFC3339Nano),
+		End:       endTime.UTC().Format(time.RFC3339Nano),
+	}, accountUsageStatsDBTimeout, func(loadCtx context.Context) (*AccountUsageStatsResponse, error) {
+		// The cache helper applies the budget only when a cache is configured;
+		// the direct path needs the same database deadline.
+		loadCtx, cancel := context.WithTimeout(loadCtx, accountUsageStatsDBTimeout)
+		defer cancel()
+		return r.loadAccountUsageStats(loadCtx, accountID, startTime, endTime)
+	})
+}
+
+// loadAccountUsageStats runs the aggregate statements inside a read-only
+// transaction that raises the PostgreSQL statement timeout. The transaction
+// scopes the setting to this load, so the cluster default stays in force for
+// every other query.
+func (r *usageLogRepository) loadAccountUsageStats(ctx context.Context, accountID int64, startTime, endTime time.Time) (*AccountUsageStatsResponse, error) {
+	db, ok := r.sql.(*sql.DB)
+	if !ok {
+		// Transaction-scoped repositories (and tests) cannot open one here; they
+		// keep the caller's deadline and the cluster statement timeout.
+		return r.queryAccountUsageStats(ctx, accountID, startTime, endTime)
+	}
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted, ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("begin account usage stats transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, accountUsageStatsStatementTimeoutSQL); err != nil {
+		return nil, fmt.Errorf("set account usage stats statement timeout: %w", err)
+	}
+	scoped := &usageLogRepository{client: r.client, sql: tx}
+	return scoped.queryAccountUsageStats(ctx, accountID, startTime, endTime)
+}
+
+func (r *usageLogRepository) queryAccountUsageStats(ctx context.Context, accountID int64, startTime, endTime time.Time) (resp *AccountUsageStatsResponse, err error) {
 	daysCount := int(endTime.Sub(startTime).Hours()/24) + 1
 	if daysCount <= 0 {
 		daysCount = 30
 	}
 
+	// Grouping on created_at::date instead of TO_CHAR(created_at, ...) is the
+	// same calendar day (both honour the session TimeZone) but avoids formatting
+	// a date string per row: on a multi-million-row account it roughly halves the
+	// aggregate's CPU time.
 	query := `
 		SELECT
-			TO_CHAR(created_at, 'YYYY-MM-DD') as date,
+			(created_at::date)::text as date,
 			COUNT(*) as requests,
-			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
+			COALESCE(SUM(input_tokens::bigint + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
 			COALESCE(SUM(total_cost), 0) as cost,
 			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as actual_cost,
-			COALESCE(SUM(actual_cost), 0) as user_cost
+			COALESCE(SUM(actual_cost), 0) as user_cost,
+			COALESCE(SUM(COALESCE(duration_ms, 0)), 0) as duration_sum,
+			COUNT(duration_ms) as duration_count
 		FROM usage_logs
 		WHERE account_id = $1 AND created_at >= $2 AND created_at < $3
-		GROUP BY date
-		ORDER BY date ASC
+		GROUP BY created_at::date
+		ORDER BY created_at::date ASC
 	`
 
 	rows, err := r.sql.QueryContext(ctx, query, accountID, startTime, endTime)
@@ -1183,6 +1250,10 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 	}()
 
 	history := make([]AccountUsageHistory, 0)
+	// Duration is aggregated in the same scan as the cost columns. The daily
+	// sums are folded into one window AVG below; COUNT(duration_ms) keeps NULL
+	// durations out of the denominator exactly like AVG(duration_ms) did.
+	var totalDurationMs, durationCount int64
 	for rows.Next() {
 		var date string
 		var requests int64
@@ -1190,9 +1261,13 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 		var cost float64
 		var actualCost float64
 		var userCost float64
-		if err = rows.Scan(&date, &requests, &tokens, &cost, &actualCost, &userCost); err != nil {
+		var durationSum int64
+		var dayDurationCount int64
+		if err = rows.Scan(&date, &requests, &tokens, &cost, &actualCost, &userCost, &durationSum, &dayDurationCount); err != nil {
 			return nil, err
 		}
+		totalDurationMs += durationSum
+		durationCount += dayDurationCount
 		t, _ := time.Parse("2006-01-02", date)
 		history = append(history, AccountUsageHistory{
 			Date:       date,
@@ -1233,10 +1308,9 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 		actualDaysUsed = 1
 	}
 
-	avgQuery := "SELECT COALESCE(AVG(duration_ms), 0) as avg_duration_ms FROM usage_logs WHERE account_id = $1 AND created_at >= $2 AND created_at < $3"
-	var avgDuration float64
-	if err := scanSingleRow(ctx, r.sql, avgQuery, []any{accountID, startTime, endTime}, &avgDuration); err != nil {
-		return nil, err
+	avgDuration := 0.0
+	if durationCount > 0 {
+		avgDuration = float64(totalDurationMs) / float64(durationCount)
 	}
 
 	summary := AccountUsageSummary{
@@ -1306,27 +1380,167 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 		}
 	}
 
-	models, err := r.GetModelStatsWithFilters(ctx, startTime, endTime, 0, 0, accountID, 0, nil, nil, nil)
-	if err != nil {
-		models = []ModelStat{}
-	}
-	endpoints, endpointErr := r.GetEndpointStatsWithFilters(ctx, startTime, endTime, 0, 0, accountID, 0, "", nil, nil, nil)
-	if endpointErr != nil {
-		logger.LegacyPrintf("repository.usage_log", "GetEndpointStatsWithFilters failed in GetAccountUsageStats: %v", endpointErr)
-		endpoints = []EndpointStat{}
-	}
-	upstreamEndpoints, upstreamEndpointErr := r.GetUpstreamEndpointStatsWithFilters(ctx, startTime, endTime, 0, 0, accountID, 0, "", nil, nil, nil)
-	if upstreamEndpointErr != nil {
-		logger.LegacyPrintf("repository.usage_log", "GetUpstreamEndpointStatsWithFilters failed in GetAccountUsageStats: %v", upstreamEndpointErr)
-		upstreamEndpoints = []EndpointStat{}
+	breakdown, breakdownErr := r.getAccountStatsBreakdown(ctx, accountID, startTime, endTime)
+	if breakdownErr != nil {
+		// A timed-out breakdown is the one error the admin can act on (narrow the
+		// window), so it must surface instead of hiding behind an empty chart.
+		if usagestats.IsStatsTimeout(breakdownErr) {
+			return nil, breakdownErr
+		}
+		// Other breakdown failures must not hide the history and summary.
+		logger.LegacyPrintf("repository.usage_log", "getAccountStatsBreakdown failed in GetAccountUsageStats: %v", breakdownErr)
 	}
 
 	resp = &AccountUsageStatsResponse{
 		History:           history,
 		Summary:           summary,
-		Models:            models,
-		Endpoints:         endpoints,
-		UpstreamEndpoints: upstreamEndpoints,
+		Models:            breakdown.models,
+		Endpoints:         breakdown.endpoints,
+		UpstreamEndpoints: breakdown.upstreamEndpoints,
 	}
 	return resp, nil
+}
+
+const (
+	accountStatsDimModel = iota + 1
+	accountStatsDimInboundEndpoint
+	accountStatsDimUpstreamEndpoint
+)
+
+// accountStatsBreakdown is the model / inbound endpoint / upstream endpoint
+// breakdown shown on the admin account page. All three share the same filtered
+// row set, so they are aggregated by one GROUPING SETS scan.
+type accountStatsBreakdown struct {
+	models            []ModelStat
+	endpoints         []EndpointStat
+	upstreamEndpoints []EndpointStat
+}
+
+// accountStatsBreakdownQuery aggregates the three dimensions the account page
+// needs in a single pass over usage_logs. Running them as three statements read
+// the same rows three times; on a 152GB table that alone exceeded the
+// statement timeout for accounts with millions of rows in the window.
+//
+// The token columns are summed as bigint: a single row may hold more than
+// int4 can represent across the four cache buckets, which used to abort the
+// whole page with "integer out of range".
+const accountStatsBreakdownQuery = `
+	SELECT
+		CASE
+			WHEN GROUPING(COALESCE(NULLIF(TRIM(requested_model), ''), model)) = 0 THEN 1
+			WHEN GROUPING(COALESCE(NULLIF(TRIM(inbound_endpoint), ''), 'unknown')) = 0 THEN 2
+			ELSE 3
+		END AS dim,
+		CASE
+			WHEN GROUPING(COALESCE(NULLIF(TRIM(requested_model), ''), model)) = 0
+				THEN COALESCE(NULLIF(TRIM(requested_model), ''), model)
+			WHEN GROUPING(COALESCE(NULLIF(TRIM(inbound_endpoint), ''), 'unknown')) = 0
+				THEN COALESCE(NULLIF(TRIM(inbound_endpoint), ''), 'unknown')
+			ELSE COALESCE(NULLIF(TRIM(upstream_endpoint), ''), 'unknown')
+		END AS dim_key,
+		COUNT(*) AS requests,
+		COALESCE(SUM(input_tokens), 0) AS input_tokens,
+		COALESCE(SUM(output_tokens), 0) AS output_tokens,
+		COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+		COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+		COALESCE(SUM(input_tokens::bigint + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS total_tokens,
+		COALESCE(SUM(total_cost), 0) AS cost,
+		COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) AS actual_cost
+	FROM usage_logs
+	WHERE account_id = $1 AND created_at >= $2 AND created_at < $3
+	GROUP BY GROUPING SETS (
+		(COALESCE(NULLIF(TRIM(requested_model), ''), model)),
+		(COALESCE(NULLIF(TRIM(inbound_endpoint), ''), 'unknown')),
+		(COALESCE(NULLIF(TRIM(upstream_endpoint), ''), 'unknown'))
+	)
+`
+
+func (r *usageLogRepository) getAccountStatsBreakdown(ctx context.Context, accountID int64, startTime, endTime time.Time) (out accountStatsBreakdown, err error) {
+	out = accountStatsBreakdown{
+		models:            make([]ModelStat, 0),
+		endpoints:         make([]EndpointStat, 0),
+		upstreamEndpoints: make([]EndpointStat, 0),
+	}
+	rows, err := r.sql.QueryContext(ctx, accountStatsBreakdownQuery, accountID, startTime, endTime)
+	if err != nil {
+		return out, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+
+	for rows.Next() {
+		var (
+			dim          int64
+			key          string
+			requests     int64
+			inputTokens  int64
+			outputTokens int64
+			cacheCreate  int64
+			cacheRead    int64
+			totalTokens  int64
+			cost         float64
+			actualCost   float64
+		)
+		if err = rows.Scan(&dim, &key, &requests, &inputTokens, &outputTokens, &cacheCreate, &cacheRead, &totalTokens, &cost, &actualCost); err != nil {
+			return out, err
+		}
+		switch dim {
+		case accountStatsDimModel:
+			out.models = append(out.models, ModelStat{
+				Model:               key,
+				Requests:            requests,
+				InputTokens:         inputTokens,
+				OutputTokens:        outputTokens,
+				CacheCreationTokens: cacheCreate,
+				CacheReadTokens:     cacheRead,
+				TotalTokens:         totalTokens,
+				Cost:                cost,
+				ActualCost:          actualCost,
+				AccountCost:         actualCost,
+			})
+		case accountStatsDimInboundEndpoint:
+			out.endpoints = append(out.endpoints, EndpointStat{
+				Endpoint:    key,
+				Requests:    requests,
+				TotalTokens: totalTokens,
+				Cost:        cost,
+				ActualCost:  actualCost,
+			})
+		case accountStatsDimUpstreamEndpoint:
+			out.upstreamEndpoints = append(out.upstreamEndpoints, EndpointStat{
+				Endpoint:    key,
+				Requests:    requests,
+				TotalTokens: totalTokens,
+				Cost:        cost,
+				ActualCost:  actualCost,
+			})
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return out, err
+	}
+
+	// Keep the ordering the three former statements produced: models by tokens
+	// (the SQL ordered them that way) and endpoints by request count.
+	sort.Slice(out.models, func(i, j int) bool {
+		if out.models[i].TotalTokens != out.models[j].TotalTokens {
+			return out.models[i].TotalTokens > out.models[j].TotalTokens
+		}
+		return out.models[i].Model < out.models[j].Model
+	})
+	sortEndpointStats := func(items []EndpointStat) {
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].Requests != items[j].Requests {
+				return items[i].Requests > items[j].Requests
+			}
+			return items[i].Endpoint < items[j].Endpoint
+		})
+	}
+	sortEndpointStats(out.endpoints)
+	sortEndpointStats(out.upstreamEndpoints)
+
+	return out, nil
 }

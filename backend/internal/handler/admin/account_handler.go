@@ -28,6 +28,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -1702,7 +1703,14 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 
 // GetStats handles getting account statistics
 // GET /api/v1/admin/accounts/:id/stats
-const accountStatsRequestTimeout = 180 * time.Second
+const (
+	// accountStatsRequestTimeout is the outer deadline for this endpoint. The
+	// repository applies its own 90s database budget (60s per statement), so a
+	// hopeless aggregation still ends in a readable 503 inside the ~100s
+	// Cloudflare origin limit instead of a hung request; the extra headroom only
+	// covers response assembly.
+	accountStatsRequestTimeout = 100 * time.Second
+)
 
 func (h *AccountHandler) GetStats(c *gin.Context) {
 	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -1724,13 +1732,21 @@ func (h *AccountHandler) GetStats(c *gin.Context) {
 	endTime := timezone.StartOfDay(now.AddDate(0, 0, 1))
 	startTime := timezone.StartOfDay(now.AddDate(0, 0, -days+1))
 
-	// Account history aggregation can be expensive on installations with a
-	// large usage log. Bound this endpoint independently so it can take up to
-	// 180s without changing the timeout behavior of other admin APIs.
 	statsCtx, cancel := context.WithTimeout(c.Request.Context(), accountStatsRequestTimeout)
 	defer cancel()
 	stats, err := h.accountUsageService.GetAccountUsageStats(statsCtx, accountID, startTime, endTime)
 	if err != nil {
+		if usagestats.IsStatsTimeout(err) {
+			// The aggregate is covered by an index for the daily series, but the
+			// model/endpoint breakdowns still read the heap. When this account's
+			// window is too large for the database budget, tell the admin to
+			// narrow it instead of returning a generic 500.
+			log.Printf("[WARN] account stats timed out (account_id=%d days=%d): %v", accountID, days, err)
+			response.ErrorWithDetails(c, http.StatusServiceUnavailable,
+				fmt.Sprintf("Account usage stats for the last %d days timed out; retry with a smaller days window", days),
+				"STATS_TIMEOUT", nil)
+			return
+		}
 		response.ErrorFrom(c, err)
 		return
 	}
