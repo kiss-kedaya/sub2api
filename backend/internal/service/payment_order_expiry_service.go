@@ -106,6 +106,27 @@ func (s *PaymentOrderExpiryService) runOnce() {
 		slog.Info("[PaymentOrderExpiry] reconciled paid orders", "count", recovered)
 	}
 
+	// Rescue paid orders whose fulfillment was interrupted (crash, canceled
+	// transaction, transient DB error) so money never stays uncredited behind a
+	// PAID/RECHARGING/FAILED row. Idempotent: the fulfillment lease CAS and the
+	// deterministic recharge code prevent a second credit.
+	recoveryCtx, cancelRecovery := context.WithTimeout(context.Background(), 2*expiryCheckTimeout)
+	stats, err := s.paymentSvc.RecoverStuckFulfillments(
+		recoveryCtx,
+		DefaultPaymentFulfillmentRecoveryThreshold,
+		DefaultPaymentFulfillmentRecoveryMaxAttempts,
+	)
+	cancelRecovery()
+	if err != nil {
+		slog.Error("[PaymentOrderExpiry] failed to recover stuck payment fulfillments", "error", err)
+	} else if stats.Failed > 0 {
+		slog.Warn("[PaymentOrderExpiry] stuck payment fulfillment recovery had failures",
+			"scanned", stats.Scanned,
+			"recovered", stats.Recovered,
+			"failed", stats.Failed,
+		)
+	}
+
 	expireCtx, cancel := context.WithTimeout(context.Background(), expiryCheckTimeout)
 	defer cancel()
 	expired, err := s.paymentSvc.ExpireTimedOutOrders(expireCtx)
