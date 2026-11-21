@@ -3,27 +3,26 @@
     <div class="deposit-view">
       <UserPageHeader class="deposit-view__header" flush :title="t('deposit.title')" :description="t('deposit.description')">
         <template #actions>
-          <UBadge v-if="info?.enabled && !loadError" color="success" variant="subtle" icon="i-lucide-shield-check">{{ t('deposit.exclusiveAddress') }}</UBadge>
+          <UBadge v-if="info?.enabled && !loading && !depositBlocked" color="success" variant="subtle" icon="i-lucide-shield-check">{{ t('deposit.exclusiveAddress') }}</UBadge>
         </template>
       </UserPageHeader>
 
-      <div v-if="loading" class="card deposit-view__empty" role="status"><LoadingSpinner /></div>
-      <!-- 密钥轮换门禁：/crypto/deposit-* 全部返回 403 KEY_ROTATION_REQUIRED -->
-      <div v-else-if="keyRotationRequired" class="deposit-view__gate">
+      <div v-if="depositBlocked" class="deposit-view__gate">
         <KeyRotationGateNotice :status="keyRotationStatus" />
       </div>
-      <div v-else-if="loadError" class="card deposit-view__empty" role="alert">
-        <strong>{{ t('deposit.loadFailed') }}</strong>
-        <p>{{ t('deposit.loadFailedHint') }}</p>
-        <button type="button" class="btn btn-secondary" @click="load">{{ t('deposit.retry') }}</button>
-      </div>
-      <div v-else-if="!info?.enabled" class="card deposit-view__empty">
-        <Icon name="wallet" size="md" />
-        <strong>{{ t('deposit.disabled') }}</strong>
-        <p>{{ t('deposit.disabledHint') }}</p>
-      </div>
       <template v-else>
-        <div class="deposit-view__layout">
+        <div v-if="loading" class="card deposit-view__empty" role="status"><LoadingSpinner /></div>
+        <div v-else-if="loadError" class="card deposit-view__empty" role="alert">
+          <strong>{{ t('deposit.loadFailed') }}</strong>
+          <p>{{ t('deposit.loadFailedHint') }}</p>
+          <button type="button" class="btn btn-secondary" @click="load">{{ t('deposit.retry') }}</button>
+        </div>
+        <div v-else-if="!info?.enabled" class="card deposit-view__empty">
+          <Icon name="wallet" size="md" />
+          <strong>{{ t('deposit.disabled') }}</strong>
+          <p>{{ t('deposit.disabledHint') }}</p>
+        </div>
+        <div v-else class="deposit-view__layout">
           <section class="card deposit-view__funding" :aria-label="t('deposit.yourAddress')">
             <div class="deposit-view__section-head">
               <span class="deposit-view__step">01</span>
@@ -113,9 +112,12 @@
 
         <section class="card deposit-view__history">
           <div class="deposit-view__history-head">
-            <div><h2>{{ t('deposit.history') }}</h2><p class="deposit-view__desc">{{ pendingRows.length ? t('deposit.autoRefreshPending') : t('deposit.autoRefresh') }}</p></div>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="refreshingHistory" @click="refreshHistory">
-              {{ refreshingHistory ? t('common.loading') : t('common.refresh') }}
+            <div>
+              <h2>{{ t('deposit.history') }}</h2>
+              <p v-if="canPollHistory" class="deposit-view__desc">{{ pendingRows.length ? t('deposit.autoRefreshPending') : t('deposit.autoRefresh') }}</p>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="loading || refreshingHistory" @click="refreshHistory">
+              {{ loading || refreshingHistory ? t('common.loading') : t('common.refresh') }}
             </button>
           </div>
           <p v-if="historyError" class="deposit-view__history-error" role="alert">{{ t('deposit.historyFailed') }}</p>
@@ -170,7 +172,10 @@
               </tbody>
             </table>
           </div>
-          <div v-else-if="!historyError" class="deposit-view__empty"><strong>{{ t('deposit.noHistory') }}</strong><p>{{ t('deposit.noHistoryHint') }}</p></div>
+          <div v-else-if="!loading && !refreshingHistory && !historyError" class="deposit-view__empty">
+            <strong>{{ t('deposit.noHistory') }}</strong>
+            <p v-if="info?.enabled">{{ t('deposit.noHistoryHint') }}</p>
+          </div>
         </section>
       </template>
     </div>
@@ -200,6 +205,9 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 // 密钥轮换门禁：未完成整改时 USDT/链上充值入口整体替换为整改卡片。
 const { required: keyRotationRequired, status: keyRotationStatus } = useKeyRotationGate()
+// An explicit denial must survive an older shared status read finishing afterwards.
+const keyRotationDenied = ref(false)
+const depositBlocked = computed(() => keyRotationRequired.value || keyRotationDenied.value)
 
 // A transfer can be mined between two reads, so the page keeps one cadence
 // whether or not anything is already confirming. Five seconds is short enough
@@ -243,6 +251,9 @@ const qrError = ref(false)
 const loadError = ref(false)
 const historyError = ref(false)
 const refreshingHistory = ref(false)
+const canPollHistory = computed(() =>
+  !depositBlocked.value && !loading.value && info.value?.enabled === true && !historyError.value
+)
 let disposed = false
 let copyTimer: ReturnType<typeof setTimeout> | null = null
 const qrCanvas = ref<HTMLCanvasElement | null>(null)
@@ -387,19 +398,16 @@ function hasKnownCredit(row: DepositRecord): boolean {
   return row.credited_known !== false && Number.isFinite(row.credited) && row.credited > 0
 }
 
-// Map the backend's machine reason codes to localized text. The thresholds
-// come from deposit-info so the text always matches the live config. A native
-// coin is compared as USD notional, so its message must not say USDT.
+// History stays readable without deposit-info, so omit thresholds we don't have.
 function reasonText(code: string, nativeAsset = false): string {
+  const limits = info.value?.enabled ? info.value : null
   switch (code) {
     case 'below_min':
-      return nativeAsset
-        ? t('deposit.reasonBelowMinUsd', { min: info.value?.min_amount ?? 0 })
-        : t('deposit.reasonBelowMin', { min: info.value?.min_amount ?? 0 })
+      if (!limits) return t('deposit.reasonOther', { code })
+      return t(nativeAsset ? 'deposit.reasonBelowMinUsd' : 'deposit.reasonBelowMin', { min: limits.min_amount })
     case 'above_max':
-      return nativeAsset
-        ? t('deposit.reasonAboveMaxUsd', { max: info.value?.max_amount ?? 0 })
-        : t('deposit.reasonAboveMax', { max: info.value?.max_amount ?? 0 })
+      if (!limits) return t('deposit.reasonOther', { code })
+      return t(nativeAsset ? 'deposit.reasonAboveMaxUsd' : 'deposit.reasonAboveMax', { max: limits.max_amount })
     case 'address_unassigned':
       return t('deposit.reasonUnassigned')
     case 'address_unknown':
@@ -468,36 +476,25 @@ function stopPolling() {
   pollTimer = null
 }
 
-// Re-armed after every read. One cadence while the page is visible; hidden
-// tabs and unmounted views schedule nothing.
 function schedulePoll() {
   stopPolling()
-  if (disposed || keyRotationRequired.value || !info.value?.enabled || loadError.value) return
-  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+  if (disposed || !canPollHistory.value || document.visibilityState === 'hidden') return
   pollTimer = setTimeout(() => void refreshHistory(), HISTORY_POLL_MS)
 }
 
 async function refreshHistory() {
-  if (refreshingHistory.value) {
-    // A timer or visibility change can fire while a read is still in flight.
-    // Skip the duplicate request but keep the poll chain armed; otherwise a
-    // single overlap would silently stop auto-refresh until the next mount.
-    schedulePoll()
-    return
-  }
+  if (disposed || depositBlocked.value || loading.value || refreshingHistory.value) return
+  stopPolling()
   refreshingHistory.value = true
   try {
     const next = await getDepositHistory()
-    if (disposed) return
+    if (disposed || depositBlocked.value) return
     announceCredited(history.value, next)
     history.value = next
     historyError.value = false
   } catch (error) {
-    if (isKeyRotationRequiredError(error)) {
-      // 门禁拦截由整改卡片表达，跳过历史轮询即可。
-      return
-    }
-    historyError.value = true
+    if (isKeyRotationRequiredError(error)) keyRotationDenied.value = true
+    else historyError.value = true
   } finally {
     refreshingHistory.value = false
     schedulePoll()
@@ -509,11 +506,11 @@ function onVisibilityChange() {
     stopPolling()
     return
   }
-  if (keyRotationRequired.value) return
-  if (info.value?.enabled && !loadError.value && !loading.value) void refreshHistory()
+  if (canPollHistory.value) void refreshHistory()
 }
 
 async function load() {
+  stopPolling()
   loading.value = true
   loadError.value = false
   try {
@@ -521,17 +518,27 @@ async function load() {
     if (!info.value.chains.some(c => c.chain === selectedChain.value)) {
       selectedChain.value = info.value.chains[0]?.chain ?? ''
     }
-    if (info.value.enabled) await refreshHistory()
   } catch (error) {
-    // 403 KEY_ROTATION_REQUIRED：整改卡片（全局事件 + 状态接口）已经接管页面，
-    // 不再显示“加载失败/重试”。
-    if (isKeyRotationRequiredError(error)) return
-    loadError.value = true
+    info.value = null
+    if (isKeyRotationRequiredError(error)) keyRotationDenied.value = true
+    else loadError.value = true
   } finally {
     loading.value = false
   }
+  // Wait for deposit-info to reach the existing gate before reading history.
+  // Closed funding and ordinary read errors still allow the history request.
+  void refreshHistory()
   if (!disposed) await renderQR()
 }
+
+watch(depositBlocked, (blocked) => {
+  if (blocked) {
+    stopPolling()
+    history.value = []
+  } else {
+    void refreshHistory()
+  }
+})
 
 watch(current, () => {
   copied.value = false
