@@ -56,9 +56,16 @@ func fmtStartup(v any) string {
 	}
 }
 
-func startOptionalBackgroundServices(startPluginManager, startPromptAudit func(context.Context) error) {
+func startOptionalBackgroundServices(startPluginManager, startPromptAudit, secretsBackfill func(context.Context) error) {
 	if service.BackgroundJobsDisabled() {
 		return
+	}
+	if secretsBackfill != nil {
+		go func() {
+			if err := secretsBackfill(context.Background()); err != nil {
+				log.Printf("Secrets at-rest backfill finished with errors: %v", err)
+			}
+		}()
 	}
 	if startPluginManager != nil {
 		if err := startPluginManager(context.Background()); err != nil {
@@ -277,7 +284,7 @@ func runMainServer() {
 	if app.PromptAudit != nil {
 		startPromptAudit = app.PromptAudit.Start
 	}
-	startOptionalBackgroundServices(startPluginManager, startPromptAudit)
+	startOptionalBackgroundServices(startPluginManager, startPromptAudit, app.SecretsBackfill)
 
 	// 启动服务器
 	go func() {

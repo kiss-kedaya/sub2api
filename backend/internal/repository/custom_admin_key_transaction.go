@@ -14,7 +14,10 @@ func (r *accountRepository) accountTransactionScope(ctx context.Context) *accoun
 	// 不复制 repository 结构体：本仓库的 accountRepository 含 sync.Mutex 与
 	// singleflight.Group（不可复制），且事务作用域不需要调度器缓存。
 	return &accountRepository{
-		proxySecretEncryptor:   r.proxySecretEncryptor,
+		proxyVault:             r.proxyVault,
+		credentialVault:        r.credentialVault,
+		credentialRewrite:      r.credentialRewrite,
+		credentialRewriteCAS:   r.credentialRewriteCAS,
 		client:                 tx.Client(),
 		sql:                    tx.Client(),
 		modelAvailabilityCache: r.modelAvailabilityCache,

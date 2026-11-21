@@ -28,10 +28,11 @@ import (
 )
 
 type Application struct {
-	Server        *http.Server
-	PromptAudit   *securityaudit.PromptService
-	PluginManager *service.PluginManager
-	Cleanup       func()
+	Server          *http.Server
+	PromptAudit     *securityaudit.PromptService
+	PluginManager   *service.PluginManager
+	SecretsBackfill func(context.Context) error
+	Cleanup         func()
 }
 
 func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
@@ -47,6 +48,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		provideNotificationRuntime,
 		wire.FieldsOf(new(localCryptoRuntime), "CryptoService", "CryptoHandler", "CryptoDepositHandler"),
 		provideAccountOpsAdminChannels,
+		provideSecretsBackfill,
 		securityaudit.ProviderSet,
 		payment.ProviderSet,
 		middleware.ProviderSet,
@@ -66,13 +68,23 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		provideCleanup,
 
 		// Application struct
-		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "Cleanup"),
+		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "SecretsBackfill", "Cleanup"),
 	)
 	return nil, nil
 }
 
 func provideAccountOpsAdminChannels(users service.UserRepository, db *sql.DB, encryptor service.SecretEncryptor) service.AccountOpsAdminChannels {
 	return notify.NewAccountOpsAdminChannels(users, notify.NewUserBarkService(db, notify.AdaptEncryptor(encryptor)))
+}
+
+// provideSecretsBackfill rewrites legacy plaintext credential rows shortly after
+// startup. It is a no-op when the installation key is unavailable.
+func provideSecretsBackfill(db *sql.DB, vault service.SecretVault) func(context.Context) error {
+	return func(ctx context.Context) error {
+		backfillCtx, cancel := context.WithTimeout(ctx, repository.SecretsBackfillTimeout)
+		defer cancel()
+		return repository.RunSecretsEncryptionBackfill(backfillCtx, db, vault)
+	}
 }
 
 func providePrivacyClientFactory() service.PrivacyClientFactory {

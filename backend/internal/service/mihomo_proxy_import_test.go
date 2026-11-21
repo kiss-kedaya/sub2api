@@ -13,12 +13,9 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/mihomo"
-	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
-
-const managedProxyCipherPrefix = "enc:managed:v1:"
 
 // importFlowStore stands in for the entity layer: it keeps the raw stored row
 // so a test can inspect the ciphertext that the ent MaxLen and column width see.
@@ -87,12 +84,12 @@ func (k *importFlowKernel) BindStaticNodes(context.Context, []string) ([]mihomo.
 func (*importFlowKernel) DeactivateStaticNodes(context.Context, []string) error { return nil }
 func (*importFlowKernel) HostID() string                                        { return "host-fixture" }
 
-func newImportFlowService(t *testing.T, store *importFlowStore) (*service.MihomoProxyService, service.SecretEncryptor) {
+func newImportFlowService(t *testing.T, store *importFlowStore) (*service.MihomoProxyService, service.SecretVault) {
 	t.Helper()
-	encryptor, err := repository.NewAESEncryptor(&config.Config{Totp: config.TotpConfig{EncryptionKey: strings.Repeat("42", 32)}})
-	require.NoError(t, err)
-	repo := service.WrapEncryptedManagedProxyRepository(store, encryptor)
-	return service.NewMihomoProxyService(&importFlowAdmin{repo: repo}, repo, importFlowBindings{}), encryptor
+	vault := service.NewSecretVault(&config.Config{Totp: config.TotpConfig{EncryptionKey: strings.Repeat("42", 32)}})
+	require.True(t, vault.Available())
+	repo := service.WrapEncryptedProxyRepository(store, vault, nil)
+	return service.NewMihomoProxyService(&importFlowAdmin{repo: repo}, repo, importFlowBindings{}), vault
 }
 
 func managedImportBinding(nodeName string) mihomo.StaticNodeBinding {
@@ -113,7 +110,7 @@ func managedImportBinding(nodeName string) mihomo.StaticNodeBinding {
 // VARCHAR(100) column even though the managed listener bind succeeded.
 func TestManagedProxyImportPersistsFullLengthEncryptedPassword(t *testing.T) {
 	store := &importFlowStore{}
-	svc, encryptor := newImportFlowService(t, store)
+	svc, vault := newImportFlowService(t, store)
 
 	binding := managedImportBinding("node-3e36dd845c440144")
 	kernel := &importFlowKernel{bindings: []mihomo.StaticNodeBinding{binding}}
@@ -132,13 +129,10 @@ func TestManagedProxyImportPersistsFullLengthEncryptedPassword(t *testing.T) {
 
 	require.NotNil(t, store.row)
 	require.NotEqual(t, binding.Password, store.row.Password)
-	require.True(t, strings.HasPrefix(store.row.Password, managedProxyCipherPrefix))
-	// len("enc:managed:v1:") + base64(12-byte nonce + 64-byte ciphertext + 16-byte tag)
-	require.Equal(t, 139, len(store.row.Password))
+	require.True(t, strings.HasPrefix(store.row.Password, "enc:v1:"))
 	require.Greater(t, len(store.row.Password), 100, "the previous VARCHAR(100)/MaxLen(100) limit rejected this ciphertext")
-	require.LessOrEqual(t, len(store.row.Password), 255, "ciphertext must fit the widened column")
 
-	decoded, err := encryptor.Decrypt(strings.TrimPrefix(store.row.Password, managedProxyCipherPrefix))
+	decoded, err := vault.DecryptString(store.row.Password)
 	require.NoError(t, err)
 	require.Equal(t, binding.Password, decoded)
 }

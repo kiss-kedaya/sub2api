@@ -44,8 +44,11 @@ func TestManagedProxyReleaseProtectsInUseAndRestoresFailedDeletion(t *testing.T)
 		{name: "released", closed: 1, deleted: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store := &managedProxyFixtureRepository{row: Proxy{ID: 7, Username: "mh_fixture", Password: managedProxyCipherPrefix + "sealed:fixture"}, references: tc.references, deleteErr: tc.deleteErr}
-			repo := WrapEncryptedManagedProxyRepository(store, managedProxyFixtureEncryptor{})
+			vault := proxyTestVault(t)
+			encrypted, encErr := vault.EncryptString("fixture")
+			require.NoError(t, encErr)
+			store := &managedProxyFixtureRepository{row: Proxy{ID: 7, Username: "mh_fixture", Password: encrypted}, references: tc.references, deleteErr: tc.deleteErr}
+			repo := WrapEncryptedProxyRepository(store, vault, nil)
 			admin := &adminServiceImpl{proxyRepo: repo}
 			svc := NewMihomoProxyService(admin, repo, mihomoReleaseFixtureBindings{})
 			kernel := &mihomoReleaseFixtureKernel{}

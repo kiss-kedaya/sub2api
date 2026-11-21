@@ -12,10 +12,13 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
-type excelGrantRepository struct{ db *sql.DB }
+type excelGrantRepository struct {
+	db              *sql.DB
+	credentialVault service.SecretVault
+}
 
-func NewExcelGrantRepository(db *sql.DB) service.ExcelGrantRepository {
-	return &excelGrantRepository{db}
+func NewExcelGrantRepository(db *sql.DB, vault service.SecretVault) service.ExcelGrantRepository {
+	return &excelGrantRepository{db: db, credentialVault: vault}
 }
 
 const excelGrantColumns = `g.account_id,a.name,g.config,g.revision,g.credentials_cipher,g.expires_at`
@@ -121,6 +124,11 @@ func (r *excelGrantRepository) StoreGrant(ctx context.Context, id int64, revisio
 	if err = json.Unmarshal(credentials, &a.Credentials); err != nil {
 		return false, err
 	}
+	decrypted, _, decryptErr := service.DecryptCredentialsFromStorage(r.credentialVault, a.Credentials)
+	if decryptErr != nil {
+		return false, decryptErr
+	}
+	a.Credentials = decrypted
 	if service.ExcelGrantPrimaryHash(a) != primaryHash {
 		return false, nil
 	}

@@ -1070,6 +1070,8 @@ export interface Proxy {
   port: number
   username: string | null
   password?: string | null
+  /** True when the proxy has a stored password; the value itself is never sent to the browser. */
+  has_password?: boolean
   status: 'active' | 'inactive' | 'expired'
   account_count?: number // Number of accounts using this proxy
   latency_ms?: number
