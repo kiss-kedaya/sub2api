@@ -528,3 +528,68 @@ func TestIssue491ToolDeclarationEdgeCases(t *testing.T) {
 		[]byte(`{"output":[{"type":"WEB_SEARCH_PREVIEW_CALL","id":"w1"}]}`), nil),
 		"条目类型大小写不影响内置检索计数")
 }
+
+// 转换入口：/v1/chat/completions 与 /v1/responses 常被转到 Anthropic 上游。
+// 这条链路上按次次数同样必须从 usage.server_tool_use 带进计费结果。
+func TestIssue491ConvertedEntriesBillAnthropicServerToolUse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, protocol := range []string{"chat", "responses"} {
+		for _, stream := range []bool{false, true} {
+			name := protocol
+			if stream {
+				name += "-stream"
+			}
+			t.Run(name, func(t *testing.T) {
+				streamField := "false"
+				if stream {
+					streamField = "true"
+				}
+				// 该链路一律强制流式打上游，再由网关聚合，所以两种客户端模式都用 SSE 上游。
+				const contentType = "text/event-stream"
+				upstreamBody := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_c\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-5-5\",\"usage\":{\"input_tokens\":7,\"output_tokens\":1,\"server_tool_use\":{\"web_search_requests\":2}}}}\n\n" +
+					"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+					"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n" +
+					"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
+					"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3,\"server_tool_use\":{\"web_search_requests\":2}}}\n\n" +
+					"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+				upstream := &httpUpstreamRecorder{resp: &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": {contentType}, "X-Request-Id": {"req_491cc"}},
+					Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+				}}
+				cfg := &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}
+				svc := &GatewayService{
+					cfg:                  cfg,
+					httpUpstream:         upstream,
+					responseHeaderFilter: compileResponseHeaderFilter(cfg),
+					rateLimitService:     &RateLimitService{},
+					deferredService:      &DeferredService{},
+				}
+				path := "/v1/chat/completions"
+				_ = streamField
+				payload := map[string]any{"model": "claude-sonnet-5-5", "messages": []map[string]string{{"role": "user", "content": "search"}}, "stream": stream}
+				if protocol == "responses" {
+					path = "/v1/responses"
+					payload = map[string]any{"model": "claude-sonnet-5-5", "input": "search", "stream": stream}
+				}
+				reqBody, err := json.Marshal(payload)
+				require.NoError(t, err)
+				c := issue491Context(t, path, reqBody)
+				c.Set("api_key", &APIKey{Group: &Group{CrossProtocolConversionEnabled: true}})
+				parsed := &ParsedRequest{Body: NewRequestBodyRef(reqBody), Model: "claude-sonnet-5-5", Stream: stream}
+				account := newAnthropicAPIKeyAccountForTest()
+
+				var result *ForwardResult
+				if protocol == "chat" {
+					result, err = svc.ForwardAsChatCompletions(context.Background(), c, account, reqBody, parsed)
+				} else {
+					result, err = svc.ForwardAsResponses(context.Background(), c, account, reqBody, parsed)
+				}
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				require.Equal(t, 2, result.SearchCount,
+					"%s 入口转 Anthropic 上游时必须把 server_tool_use 次数带进计费", protocol)
+			})
+		}
+	}
+}

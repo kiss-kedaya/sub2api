@@ -367,6 +367,8 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 			Duration:                 time.Since(startTime),
 			ClientDisconnect:         true,
 			NonBillableUpstreamError: sawError && !sawStop,
+			// Anthropic 上游已完成的检索在客户端断开时仍要收费（issue #491）。
+			SearchCount: usage.WebSearchRequests,
 		}, newAnthropicClientGoneError(anthropicGoneStream, scanErr)
 	}
 	if scanErr != nil {
@@ -428,6 +430,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		ReasoningEffort:          reasoningEffort,
 		Stream:                   false,
 		Duration:                 time.Since(startTime),
+		SearchCount:              billedUsage.WebSearchRequests,
 	}, nil
 }
 
@@ -511,6 +514,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 			FirstTokenMs:             firstTokenMs,
 			ClientDisconnect:         clientDisconnected,
 			NonBillableUpstreamError: sawError && !sawStop,
+			SearchCount:              usage.WebSearchRequests,
 		}
 	}
 

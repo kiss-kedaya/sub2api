@@ -189,6 +189,9 @@ func (s *GatewayService) forwardBedrock(
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
+		// Bedrock 目前不支持 Anthropic 服务端 web_search，字段恒为 0；
+		// 一并接线，避免上游以后支持时又变成一条只对某平台开着的计费口子。
+		SearchCount: usage.WebSearchRequests,
 	}, nil
 }
 
