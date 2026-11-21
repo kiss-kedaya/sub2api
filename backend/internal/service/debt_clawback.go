@@ -2,10 +2,8 @@ package service
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"strings"
 
@@ -41,23 +39,29 @@ const (
 	debtClawbackSourceIDMaxLen = 128
 )
 
-// debtClawbackEnabled 读取开关；settings 不可读或没配都按开启处理，
-// 宁可继续收欠款，也不因为配置表抖动放过。
-func debtClawbackEnabled(ctx context.Context, client *dbent.Client) bool {
+// debtClawbackEnabled distinguishes a missing setting (the existing default)
+// from a failed read. A failed read must not select an accounting policy.
+func debtClawbackEnabled(ctx context.Context, client *dbent.Client) (bool, error) {
 	rows, err := client.QueryContext(ctx,
 		`SELECT value FROM settings WHERE key = $1`, SettingKeyDebtClawbackEnabled)
 	if err != nil {
-		return true
+		return false, err
 	}
 	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
-		return true
+		if err := rows.Err(); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 	var raw string
 	if err := rows.Scan(&raw); err != nil {
-		return true
+		return false, err
 	}
-	return parseDebtClawbackEnabled(raw)
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	return parseDebtClawbackEnabled(raw), nil
 }
 
 // parseDebtClawbackEnabled 只认 "false" 为关闭；其它值（含空、脏数据）都视为开启。
@@ -71,32 +75,30 @@ func parseDebtClawbackEnabled(raw string) bool {
 // 必须在调用方的事务 context 内执行（txCtx），保证「扣欠款」和「加余额」
 // 同时提交或同时回滚，不会出现到账了但欠款没扣、或欠款扣了但没到账。
 //
-// 欠款台账表不存在时（迁移还没 apply 的老库、sqlite 单测库）静默跳过，
-// 不影响充值主流程；表存在后自动开始回收。
+// PostgreSQL must have the debt ledger migration before processing credits.
 func payDownUserDebt(ctx context.Context, client *dbent.Client, userID int64, creditAmount float64, source, sourceID string) (float64, error) {
 	if client == nil || userID <= 0 || creditAmount <= 0 {
 		return 0, nil
 	}
 	if clientDialect(client) != dialect.Postgres {
-		// 欠款台账只随 PostgreSQL 迁移创建；sqlite 单测库没有这两张表。
+		// Non-PostgreSQL test stores do not have the production debt ledger.
 		return 0, nil
 	}
-	if !debtClawbackEnabled(ctx, client) {
-		return 0, nil
+	tx := dbent.TxFromContext(ctx)
+	if tx == nil {
+		return 0, errors.New("debt clawback requires the credit transaction")
 	}
-
-	dbClient := client
-	if tx := dbent.TxFromContext(ctx); tx != nil {
-		dbClient = tx.Client()
+	dbClient := tx.Client()
+	enabled, err := debtClawbackEnabled(ctx, dbClient)
+	if err != nil {
+		return 0, fmt.Errorf("load debt clawback setting: %w", err)
+	}
+	if !enabled {
+		return 0, nil
 	}
 
 	outstanding, err := lockUserDebt(ctx, dbClient, userID)
 	if err != nil {
-		if isMissingDebtTableError(err) {
-			slog.Debug("user_debt table unavailable, skip debt clawback",
-				"user_id", userID, "err", err.Error())
-			return 0, nil
-		}
 		return 0, fmt.Errorf("load user debt: %w", err)
 	}
 
@@ -160,18 +162,6 @@ func planDebtClawback(creditAmount, outstandingDebt float64) float64 {
 		return 0
 	}
 	return applied
-}
-
-// isMissingDebtTableError 识别「欠款台账表不存在」类错误，用于迁移未 apply 时放行充值。
-func isMissingDebtTableError(err error) bool {
-	if err == nil || errors.Is(err, sql.ErrNoRows) {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "42p01") || strings.Contains(msg, "no such table") {
-		return true
-	}
-	return strings.Contains(msg, "does not exist") && strings.Contains(msg, "user_debt")
 }
 
 // clampDebtClawbackSourceID 按字符截断，避免超出 source_id 字段长度导致整笔充值回滚。
