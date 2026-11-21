@@ -626,14 +626,38 @@ func TestCryptoAdminPrivateConfigResponseIsNotCacheable(t *testing.T) {
 	require.Equal(t, "no-cache", response.Header().Get("Pragma"))
 }
 
+// The legacy standalone signer surface is still gone: there is no endpoint that
+// unlocks or signs with nothing but an admin session, no backup endpoint and no
+// blind /crypto/sign primitive.
+//
+// The shard endpoints added for the Shamir 2-of-3 signer are NOT that surface:
+// they only accept share A (the server never sees B/C), require an explicit
+// migration call plus a fresh TOTP, and the data key is held by the browser.
+// Signing still goes through the documented sweep/export calls that require a
+// recovery share; there is no "unlock the vault forever" endpoint.
 func TestCryptoStandaloneSignerSurfaceHasBeenRemoved(t *testing.T) {
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
 	h := newCryptoRouteHarness(t, activeCryptoAdmin())
+
+	allowedShardRoutes := map[string]bool{
+		"/api/v1/admin/crypto/signer/status":       true,
+		"/api/v1/admin/crypto/signer/risk-notice":  true,
+		"/api/v1/admin/crypto/signer/setup":        true,
+		"/api/v1/admin/crypto/signer/resplit":      true,
+		"/api/v1/admin/crypto/signer/verify-share": true,
+		"/api/v1/admin/crypto/signer/auto-sweep":   true,
+	}
 	for _, route := range h.router.Routes() {
-		require.NotContains(t, route.Path, "/crypto/signer/")
+		if strings.Contains(route.Path, "/crypto/signer/") {
+			require.True(t, allowedShardRoutes[route.Path], "unexpected signer route: %s", route.Path)
+		}
 		require.NotContains(t, route.Path, "/crypto/sign/")
 	}
-	for _, path := range []string{"/api/v1/admin/crypto/signer/unlock", "/api/v1/admin/crypto/signer/backup", "/api/v1/admin/crypto/sign/evm"} {
+	for _, path := range []string{
+		"/api/v1/admin/crypto/signer/unlock",
+		"/api/v1/admin/crypto/signer/backup",
+		"/api/v1/admin/crypto/sign/evm",
+	} {
 		response := cryptoRouteRequest(h.router, http.MethodPost, path, "", nil, "127.0.0.1:1234", "localhost")
 		require.Equal(t, http.StatusNotFound, response.Code, path)
 	}
