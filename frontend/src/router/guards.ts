@@ -95,7 +95,7 @@ router.beforeEach(async (to, _from, next) => {
     }
     // Model Plaza:公开路由但受「启用开关 + 可选强制登录」双重控制(后端同口径 fail-closed)
     if (to.path === '/model-plaza') {
-      if (!appStore.publicSettingsLoaded) {
+      if (!appStore.publicSettingsLoaded || appStore.publicSettingsNeedsRevalidate) {
         try {
           await appStore.fetchPublicSettings()
         } catch (error) {
@@ -176,9 +176,13 @@ router.beforeEach(async (to, _from, next) => {
   // 公共设置可能尚未加载（App.vue 的 onMounted 异步拉取晚于首次导航，且纯静态部署
   // 无 __APP_CONFIG__ 注入）。此时 cachedPublicSettings 为空会把 payment/risk_control
   // 误判为“未启用”而错误拦截，故这里先确保设置加载完成。
+  //
+  // 注入的 window.__APP_CONFIG__ 只是一个实例渲染的旧快照，必须等它被
+  // /api/v1/settings/public 校准后才能用于拦截判定——否则另一个实例已开启的
+  // crypto_enabled 会被旧注入值永久拦在 /deposit 之外。
   if (
     (to.meta.requiresPayment || to.meta.requiresRiskControl || to.meta.requiresCrypto) &&
-    !appStore.publicSettingsLoaded
+    (!appStore.publicSettingsLoaded || appStore.publicSettingsNeedsRevalidate)
   ) {
     try {
       await appStore.fetchPublicSettings()

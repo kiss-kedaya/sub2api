@@ -122,6 +122,7 @@ var ProviderSet = wire.NewSet(
 	NewGatewayCache,
 	NewBillingCache,
 	NewAPIKeyCache,
+	NewSettingCacheInvalidationBus,
 	NewTempUnschedCache,
 	NewTimeoutCounterCache,
 	NewOpenAI403CounterCache,

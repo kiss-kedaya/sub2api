@@ -85,17 +85,25 @@ func (s *SettingService) UpdateSettingsWithAuthSourceDefaultsOmitting(ctx contex
 // write that just landed. A partial payload carries zero values for the fields
 // it omitted, so in that case the caches are rebuilt from storage rather than
 // from the request struct.
+//
+// It also notifies the other replicas: without that broadcast each process kept
+// its own public-settings snapshot (and the rendered index.html injecting it),
+// so two replicas could serve different window.__APP_CONFIG__ flags for hours.
 func (s *SettingService) refreshCachedSettingsAfterWrite(ctx context.Context, settings *SystemSettings, omitted OmittedSettingKeys) {
 	if len(omitted) == 0 {
 		s.refreshCachedSettings(settings)
-		return
+	} else {
+		stored, err := s.GetAllSettings(ctx)
+		if err != nil {
+			// The write landed but rebuilding the caches failed. Still drop what
+			// this process has: the next read must go back to storage.
+			slog.Warn("refresh cached settings after partial update failed", "error", err)
+			s.notifySettingsChanged()
+		} else {
+			s.refreshCachedSettings(stored)
+		}
 	}
-	stored, err := s.GetAllSettings(ctx)
-	if err != nil {
-		slog.Warn("refresh cached settings after partial update failed", "error", err)
-		return
-	}
-	s.refreshCachedSettings(stored)
+	s.broadcastSettingsChanged(ctx)
 }
 
 func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, settings *SystemSettings) (map[string]string, error) {
@@ -827,9 +835,9 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	// 预扣费系统运行时开关：置空缓存，读下一请求即取新值。
 	s.InvalidateBillingPreauthorizationRuntimeCache()
 	s.codexRestrictionPolicyCache.Store(&cachedCodexRestrictionPolicy{expiresAt: 0})
-	if s.onUpdate != nil {
-		s.onUpdate() // Invalidate cache after settings update
-	}
+	// Bump the injection version and drop the rendered HTML/logo caches: the
+	// embedded frontend must re-render window.__APP_CONFIG__ from the new values.
+	s.notifySettingsChanged()
 	s.notifyChannelMonitorRuntimeListeners()
 }
 

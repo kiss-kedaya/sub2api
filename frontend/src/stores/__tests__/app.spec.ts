@@ -563,3 +563,85 @@ describe('useAppStore', () => {
       expect(getPublicSettings).toHaveBeenCalledTimes(2)
     })
   })
+
+// 注入的 window.__APP_CONFIG__ 由某一个后端实例渲染，可能落后于另一个实例。
+// 页面首次加载必须用它先渲染，但随后一定要用 /api/v1/settings/public 校准；
+// 路由守卫在拦截 /deposit 前必须等到校准结果（超时才降级用注入值）。
+describe('注入配置的 stale-while-revalidate', () => {
+  const windowAny = window as any
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(getPublicSettings).mockReset()
+    delete windowAny.__APP_CONFIG__
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    delete windowAny.__APP_CONFIG__
+  })
+
+  it('注入 crypto_enabled=false 而接口返回 true 时以接口为准', async () => {
+    windowAny.__APP_CONFIG__ = createPublicSettings({ crypto_enabled: false, site_name: 'Injected' })
+    vi.mocked(getPublicSettings).mockResolvedValue(
+      createPublicSettings({ crypto_enabled: true, site_name: 'Authoritative' })
+    )
+
+    const store = useAppStore()
+    expect(store.initFromInjectedConfig()).toBe(true)
+    // 注入值用于首屏，但被标记为待校准 —— 守卫不会据此拦截 /deposit。
+    expect(store.cachedPublicSettings?.crypto_enabled).toBe(false)
+    expect(store.publicSettingsNeedsRevalidate).toBe(true)
+
+    const result = await store.fetchPublicSettings()
+
+    expect(result?.crypto_enabled).toBe(true)
+    expect(store.cachedPublicSettings?.crypto_enabled).toBe(true)
+    expect(store.publicSettingsNeedsRevalidate).toBe(false)
+    expect(getPublicSettings).toHaveBeenCalledTimes(1)
+  })
+
+  it('接口超时降级为注入值，请求落地后仍会覆盖（后台 revalidate）', async () => {
+    vi.useFakeTimers()
+    const deferred = createDeferred<PublicSettings>()
+    windowAny.__APP_CONFIG__ = createPublicSettings({ crypto_enabled: false })
+    vi.mocked(getPublicSettings).mockReturnValueOnce(deferred.promise as never)
+
+    const store = useAppStore()
+    store.initFromInjectedConfig()
+    const pending = store.fetchPublicSettings()
+
+    // 守卫还在等真实接口：未到 deadline 时不能提前判定。
+    await Promise.resolve()
+    expect(store.publicSettingsNeedsRevalidate).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(3_000)
+    await expect(pending).resolves.toMatchObject({ crypto_enabled: false })
+    expect(store.publicSettingsNeedsRevalidate).toBe(true)
+
+    // 慢接口最终返回真值：即使守卫已经用降级值导航，状态也会被修正。
+    deferred.resolve(createPublicSettings({ crypto_enabled: true }))
+    await vi.advanceTimersByTimeAsync(0)
+    await Promise.resolve()
+
+    expect(store.cachedPublicSettings?.crypto_enabled).toBe(true)
+    expect(store.publicSettingsNeedsRevalidate).toBe(false)
+  })
+
+  it('接口失败后保留注入值并进入退避，不反复请求', async () => {
+    vi.useFakeTimers()
+    windowAny.__APP_CONFIG__ = createPublicSettings({ crypto_enabled: false })
+    vi.mocked(getPublicSettings).mockRejectedValue(new Error('503 Service Unavailable'))
+
+    const store = useAppStore()
+    store.initFromInjectedConfig()
+
+    const first = await store.fetchPublicSettings()
+    expect(first?.crypto_enabled).toBe(false)
+    expect(getPublicSettings).toHaveBeenCalledTimes(1)
+
+    const second = await store.fetchPublicSettings()
+    expect(second?.crypto_enabled).toBe(false)
+    expect(getPublicSettings).toHaveBeenCalledTimes(1)
+  })
+})

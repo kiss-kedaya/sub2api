@@ -171,10 +171,10 @@ func (s *SettingService) UpdateSiteTheme(ctx context.Context, patch SiteThemePat
 		if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
 			return SiteThemeSettings{}, fmt.Errorf("update site theme: %w", err)
 		}
-		// The injected window.__APP_CONFIG__ HTML carries the theme; drop it.
-		if s.onUpdate != nil {
-			s.onUpdate()
-		}
+		// The injected window.__APP_CONFIG__ HTML carries the theme; drop it here
+		// and on the other replicas.
+		s.notifySettingsChanged()
+		s.broadcastSettingsChanged(ctx)
 	}
 	return s.GetSiteTheme(ctx)
 }
