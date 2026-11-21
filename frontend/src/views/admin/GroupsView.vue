@@ -76,7 +76,7 @@
               :loading="loading"
               :title="t('common.refresh')"
               :aria-label="t('common.refresh')"
-              @click="loadGroups"
+              @click="refreshGroups"
             />
             <UDropdownMenu :items="columnMenuItems" :content="{ align: 'end' }">
               <UButton
@@ -190,22 +190,8 @@
                 >
                   <span v-if="row.daily_limit_usd != null" class="whitespace-nowrap">
                     <span
-                      v-if="usageLoading"
-                      class="font-medium text-dimmed"
-                      >—</span
-                    >
-                    <span
-                      v-else
-                      :class="
-                        getQuotaUsageClass(
-                          usageMap.get(row.id)?.today_cost ?? 0,
-                          row.daily_limit_usd
-                        )
-                      "
-                      >{{
-                        formatUsd(usageMap.get(row.id)?.today_cost ?? 0)
-                      }}</span
-                    >
+                      :class="getQuotaUsageClass(usageMap?.get(row.id)?.today_cost, row.daily_limit_usd)"
+                    >{{ formatGroupUsageCost(row.id, "today_cost") }}</span>
                     <span class="text-dimmed">
                       / {{ formatUsd(row.daily_limit_usd) }}/{{
                         t("admin.groups.limitDay")
@@ -241,13 +227,16 @@
                 }}</span>
                 <div class="text-dimmed">
                   {{ t("admin.groups.usageTotal") }}
-                  <span class="ml-1 font-medium text-default"
-                    >{{
-                      usageLoading
-                        ? "—"
-                        : formatUsd(usageMap.get(row.id)?.total_cost ?? 0)
-                    }}</span
-                  >
+                  <span class="ml-1 font-medium text-default">{{
+                    formatGroupUsageCost(row.id, "total_cost")
+                  }}</span>
+                  <UBadge
+                    v-if="usageSummaryFailed && usageMap?.has(row.id)"
+                    color="warning"
+                    variant="subtle"
+                    size="sm"
+                    class="ml-1"
+                  >{{ t("admin.groups.usageStale") }}</UBadge>
                 </div>
               </div>
             </div>
@@ -306,39 +295,24 @@
           </template>
 
           <template #cell-usage="{ row }">
-            <div v-if="usageLoading" class="text-xs text-dimmed">—</div>
-            <div v-else class="space-y-0.5 text-xs">
+            <div v-if="usageMap?.has(row.id)" class="space-y-0.5 text-xs">
               <div class="text-muted">
-                <span class="text-dimmed">{{
-                  t("admin.groups.usageToday")
-                }}</span>
-                <span class="ml-1 font-medium text-default"
-                  >${{
-                    formatCost(usageMap.get(row.id)?.today_cost ?? 0)
-                  }}</span
-                >
+                <span class="text-dimmed">{{ t("admin.groups.usageToday") }}</span>
+                <span class="ml-1 font-medium text-default">{{ formatGroupUsageCost(row.id, "today_cost") }}</span>
               </div>
               <div class="text-muted">
-                <span class="text-dimmed">{{
-                  t("admin.groups.usageYesterday")
-                }}</span>
-                <span class="ml-1 font-medium text-default"
-                  >${{
-                    formatCost(usageMap.get(row.id)?.yesterday_cost ?? 0)
-                  }}</span
-                >
+                <span class="text-dimmed">{{ t("admin.groups.usageYesterday") }}</span>
+                <span class="ml-1 font-medium text-default">{{ formatGroupUsageCost(row.id, "yesterday_cost") }}</span>
               </div>
               <div class="text-muted">
-                <span class="text-dimmed">{{
-                  t("admin.groups.usageTotal")
-                }}</span>
-                <span class="ml-1 font-medium text-default"
-                  >${{
-                    formatCost(usageMap.get(row.id)?.total_cost ?? 0)
-                  }}</span
-                >
+                <span class="text-dimmed">{{ t("admin.groups.usageTotal") }}</span>
+                <span class="ml-1 font-medium text-default">{{ formatGroupUsageCost(row.id, "total_cost") }}</span>
               </div>
+              <UBadge v-if="usageSummaryFailed" color="warning" variant="subtle" size="sm">
+                {{ t("admin.groups.usageStale") }}
+              </UBadge>
             </div>
+            <div v-else class="text-xs text-dimmed">{{ missingUsageLabel }}</div>
           </template>
 
           <template #cell-status="{ value }">
@@ -3489,12 +3463,13 @@
 
 <script setup lang="ts">
 import MiniMaxH3PricingFields from "@/components/group/MiniMaxH3PricingFields.vue";
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from "vue";
+import { ref, shallowRef, reactive, computed, onMounted, onUnmounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAppStore } from "@/stores/app";
 import { useAuthStore } from "@/stores/auth";
 import { useOnboardingStore } from "@/stores/onboarding";
 import { adminAPI } from "@/api/admin";
+import type { GroupUsageSummary } from "@/api/admin/groups";
 import type {
   AdminGroup,
   CodexModelsManifestConfig,
@@ -3872,7 +3847,7 @@ const toggleColumn = (key: string) => {
   saveColumnsToStorage();
 
   if (wasHidden && (key === "usage" || key === "billing_type")) {
-    loadUsageSummary();
+    void loadUsageSummary();
   }
   if (wasHidden && key === "capacity") {
     loadCapacitySummary();
@@ -4073,14 +4048,17 @@ const groups = ref<AdminGroup[]>([]);
 const selectedGroupIds = ref<Array<string | number>>([]);
 const bulkDeleting = ref(false);
 const loading = ref(false);
-type GroupUsageSummary = {
-  today_cost: number;
-  yesterday_cost: number;
-  total_cost: number;
-};
-
-const usageMap = ref<Map<number, GroupUsageSummary>>(new Map());
+const usageMap = shallowRef<Map<number, GroupUsageSummary> | null>(null);
 const usageLoading = ref(false);
+const usageSummaryFailed = ref(false);
+const missingUsageLabel = computed(() =>
+  usageLoading.value && !usageMap.value && !usageSummaryFailed.value
+    ? "—"
+    : t("admin.groups.usageUnavailable"),
+);
+let usageSummaryStarted = false;
+let usageSummaryDisposed = false;
+let usageSummaryRequest: AbortController | null = null;
 const capacityMap = ref<
   Map<
     number,
@@ -5006,11 +4984,7 @@ const loadGroups = async () => {
     selectedGroupIds.value = [];
     pagination.total = response.total;
     pagination.pages = response.pages;
-    if (hasVisibleUsageSummaryConsumer.value) {
-      loadUsageSummary();
-    } else {
-      usageLoading.value = false;
-    }
+    void loadUsageSummary();
     if (hasVisibleCapacityColumn.value) {
       loadCapacitySummary();
     }
@@ -5040,10 +5014,18 @@ const formatCost = (cost: number): string => {
 const formatUsd = (cost: number | null | undefined): string =>
   `$${formatCost(cost ?? 0)}`;
 
+const formatGroupUsageCost = (groupID: number, key: keyof Omit<GroupUsageSummary, "group_id">): string => {
+  const amount = usageMap.value?.get(groupID)?.[key];
+  return amount == null ? missingUsageLabel.value : formatUsd(amount);
+};
+
 const getQuotaUsageClass = (
-  used: number,
+  used: number | undefined,
   limit: number | null | undefined,
 ): string => {
+  if (used == null || usageSummaryFailed.value) {
+    return "font-medium text-dimmed";
+  }
   if (!limit || limit <= 0) {
     return "font-medium text-gray-700 dark:text-gray-300";
   }
@@ -5057,28 +5039,35 @@ const getQuotaUsageClass = (
   return "font-medium text-gray-700 dark:text-gray-300";
 };
 
-const loadUsageSummary = async () => {
-  if (!hasVisibleUsageSummaryConsumer.value) {
-    usageLoading.value = false;
-    return;
-  }
+const loadUsageSummary = async (refresh = false) => {
+  // The summary covers all groups, not the current page or filters.
+  if (usageSummaryDisposed || !hasVisibleUsageSummaryConsumer.value || (!refresh && usageSummaryStarted)) return;
+
+  const request = new AbortController();
+  const previous = usageSummaryRequest;
+  usageSummaryRequest = request;
+  previous?.abort();
+  usageSummaryStarted = true;
   usageLoading.value = true;
   try {
-    const data = await adminAPI.groups.getUsageSummary();
-    const map = new Map<number, GroupUsageSummary>();
-    for (const item of data) {
-      map.set(item.group_id, {
-        today_cost: item.today_cost,
-        yesterday_cost: item.yesterday_cost,
-        total_cost: item.total_cost,
-      });
-    }
-    usageMap.value = map;
-  } catch (error) {
-    console.error("Error loading group usage summary:", error);
+    const data = await adminAPI.groups.getUsageSummary({ signal: request.signal });
+    if (usageSummaryRequest !== request) return;
+
+    usageMap.value = new Map(data.map((item) => [item.group_id, item]));
+    usageSummaryFailed.value = false;
+  } catch {
+    if (usageSummaryRequest === request) usageSummaryFailed.value = true;
   } finally {
-    usageLoading.value = false;
+    if (usageSummaryRequest === request) {
+      usageSummaryRequest = null;
+      usageLoading.value = false;
+    }
   }
+};
+
+const refreshGroups = () => {
+  void loadUsageSummary(true);
+  return loadGroups();
 };
 
 const loadCapacitySummary = async () => {
@@ -5444,7 +5433,7 @@ const handleCreateGroup = async () => {
     await adminAPI.groups.create(payload);
     appStore.showSuccess(t("admin.groups.groupCreated"));
     closeCreateModal();
-    loadGroups();
+    void refreshGroups();
     // Only advance tour if active, on submit step, and creation succeeded
     if (onboardingStore.isCurrentStep('[data-tour="group-form-submit"]')) {
       onboardingStore.nextStep(500);
@@ -5905,7 +5894,7 @@ const handleDuplicate = async (group: AdminGroup) => {
     appStore.showSuccess(
       t("admin.groups.duplicateSuccess", { name: duplicate.name }),
     );
-    await loadGroups();
+    await refreshGroups();
   } catch (error: unknown) {
     appStore.showError(
       extractApiErrorMessage(error, t("admin.groups.duplicateFailed")),
@@ -6459,6 +6448,9 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  usageSummaryDisposed = true;
+  usageSummaryRequest?.abort();
+  usageSummaryRequest = null;
   document.removeEventListener("click", handleClickOutside);
   accountSearchRunner.clearAll();
   clearAllAccountSearchState();

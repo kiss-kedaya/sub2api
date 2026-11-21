@@ -862,6 +862,8 @@ export default {
       usageToday: 'Today',
       usageYesterday: 'Yesterday',
       usageTotal: 'Total',
+      usageUnavailable: 'Unknown',
+      usageStale: 'Stale',
       accountsAvailable: 'Avail:',
       accountsRateLimited: 'Limited:',
       accountsTotal: 'Total:',
