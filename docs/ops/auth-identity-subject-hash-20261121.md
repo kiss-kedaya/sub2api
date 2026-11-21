@@ -1,6 +1,12 @@
 # auth_identities / auth_identity_channels / pending_auth_sessions subject 哈希化（运维手册）
 
-- 状态：**未执行**。本文件的 SQL 只随 PR 交付；生产上等新版本全量部署后按阶段人工执行。
+- 状态：
+  - 阶段 A（哈希写入 + hash 优先查询）**已合并并随 2.3.134+ 发布**；
+  - 阶段 B（默认停止明文双写）**本 PR 交付**：`security.auth_subject_plaintext_dual_write`
+    默认 `false`，新行只写 `*_hash / *_prefix`，明文列写 NULL；过渡期可显式设为
+    `true` 恢复旧双写行为；
+  - 阶段 C（清空历史明文 + scrub）**未执行**，SQL 见 §5 与
+    `docs/ops/sql/329_clear_plaintext.sql`，执行前必须回报老板确认。
 - 关联迁移：`backend/migrations/329_auth_identity_subject_hash.sql`（只加结构、幂等）。
 - 关联代码：`backend/internal/pkg/authsubject`、`backend/internal/service/auth_identity_subject.go`。
 - 安全目标：数据库里**不再出现完整第三方 subject 明文（含 email 型 subject）**，
@@ -23,54 +29,61 @@ hash = HMAC-SHA256(
 - domain 隔离 identity / channel；provider_type 隔离不同 provider。
 - 展示前缀 = `hash 前 8 个 hex 字符`（**不是 subject 原文前缀**），后台只能看到
   `a1b2c3d4***` 这类掩码，无法据此还原/猜测 subject。
-- `pending_auth_sessions` 需要跨请求带回 subject 才能完成身份落库，因此新会话把
+- `pending_auth_sessions` 需要跨请求带回 subject 才能完成身份落库。双写打开时把
   subject 用安装密钥 AES-256-GCM 封存为 `enc:sub:v1:<base64>` 存在明文列位置；
-  hash/prefix 列负责匹配。历史在途会话仍是明文，过期/清理后自然消失。
+  **双写关闭（默认）时该列写 NULL**，完成流程只靠 hash/前缀落库，不再需要在库里
+  保留任何可还原的 subject 材料。历史在途会话仍是明文，过期/清理后自然消失。
   claims 里的 `channel_subject` 同样封存为 `channel_subject_sealed`（另存 hash/前缀）。
+- 明文双写开关：`security.auth_subject_plaintext_dual_write`（环境变量
+  `SECURITY_AUTH_SUBJECT_PLAINTEXT_DUAL_WRITE`），默认 `false`。打开时恢复阶段 A 的
+  「hash + 明文」双写，供旧二进制混跑 / 回滚窗口使用；读取路径始终 hash 优先 +
+  明文回退，与开关无关。
 - 与代码的对应：`authsubject.HashIdentity` / `authsubject.HashChannel`。
 
 ## 1. 阶段顺序（顺序错了会掉登录）
 
-1. 应用 `329_auth_identity_subject_hash.sql`（只加列/索引，旧二进制完全兼容）。
-2. 备份三张表（§2）。
-3. 分批回填 `*_hash / *_prefix`（§3，pgcrypto HMAC）。
-4. 验证（§4）：无 NULL 哈希、无重复、抽样重算一致、各 provider 登录冒烟。
-5. 部署新版本二进制（写 hash、按 hash 查询、明文回退）。**滚动期间旧实例仍按明文查询，
-   且旧实例会写入「只有明文、没有 hash」的新行。**
+1. 应用 `329_auth_identity_subject_hash.sql`（已应用：生产 2.3.136 已有三列/索引）。
+2. 备份三张表（§2，备份表名 `*_bak_20261121_subject`）。
+3. 分批回填 `*_hash / *_prefix`（§3，pgcrypto HMAC 或回填命令，按 id 分批 ≤30s）。
+4. 验证（§4）：无 NULL 哈希、无重复、抽样重算一致。
+5. 部署包含阶段 B 的新版本二进制（默认只写 hash、按 hash 查询、明文回退）。
+   **滚动期间旧实例仍按明文查询，且旧实例会写入「只有明文、没有 hash」的新行。**
 6. 部署完成后**再跑一次 §3 回填**，确认三张表 `*_hash IS NULL` 为 0
    （滚动窗口内旧实例写入的行必须补上 hash，否则清空明文后这些身份将无法匹配）。
-7. 观察一个发布窗口，确认没有 `AUTH_IDENTITY_*` 报错、各 provider 登录/绑定正常。
-8. 清空三处明文列 + scrub metadata / 迁移报告 / 遗留表（§5、§6）。
+7. 观察一个发布窗口，确认没有 `AUTH_IDENTITY_*` 报错、各 provider 登录/绑定正常，
+   且新写入行的明文列确实为 NULL（抽查 `ORDER BY id DESC LIMIT 20`）。
+8. 清空三处明文列 + scrub metadata / 迁移报告 / 遗留表（§5、§6，执行前回报老板）。
 9. 下一版再 `DROP COLUMN`（不在本 PR 执行）。
 
 > 第 1 步可以单独先上：迁移 329 与旧二进制兼容（新列可空、无 NOT NULL / DEFAULT）。
+> 阶段 B 的开关默认 `false`；如果发布时担心回滚，可先在 env 里显式
+> `SECURITY_AUTH_SUBJECT_PLAINTEXT_DUAL_WRITE=false`（与默认一致，便于审计）。
 
 ## 2. 备份
 
 ```sql
-CREATE TABLE IF NOT EXISTS auth_identities_subject_backup AS
-SELECT id, user_id, provider_type, provider_key, provider_subject, NOW() AS backed_up_at
-FROM auth_identities;
-ALTER TABLE auth_identities_subject_backup ADD PRIMARY KEY (id);
+CREATE TABLE IF NOT EXISTS auth_identities_bak_20261121_subject AS
+SELECT *, NOW() AS backed_up_at FROM auth_identities;
+ALTER TABLE auth_identities_bak_20261121_subject ADD PRIMARY KEY (id);
 
-CREATE TABLE IF NOT EXISTS auth_identity_channels_subject_backup AS
-SELECT id, identity_id, provider_type, provider_key, channel, channel_app_id, channel_subject, NOW() AS backed_up_at
-FROM auth_identity_channels;
-ALTER TABLE auth_identity_channels_subject_backup ADD PRIMARY KEY (id);
+CREATE TABLE IF NOT EXISTS auth_identity_channels_bak_20261121_subject AS
+SELECT *, NOW() AS backed_up_at FROM auth_identity_channels;
+ALTER TABLE auth_identity_channels_bak_20261121_subject ADD PRIMARY KEY (id);
 
-CREATE TABLE IF NOT EXISTS pending_auth_sessions_subject_backup AS
-SELECT id, session_token, provider_type, provider_key, provider_subject, expires_at, NOW() AS backed_up_at
-FROM pending_auth_sessions;
-ALTER TABLE pending_auth_sessions_subject_backup ADD PRIMARY KEY (id);
+CREATE TABLE IF NOT EXISTS pending_auth_sessions_bak_20261121_subject AS
+SELECT *, NOW() AS backed_up_at FROM pending_auth_sessions;
+ALTER TABLE pending_auth_sessions_bak_20261121_subject ADD PRIMARY KEY (id);
 
 SELECT
-  (SELECT COUNT(*) FROM auth_identities)                 AS identities,
-  (SELECT COUNT(*) FROM auth_identities_subject_backup)  AS identities_backup,
-  (SELECT COUNT(*) FROM auth_identity_channels)                 AS channels,
-  (SELECT COUNT(*) FROM auth_identity_channels_subject_backup)  AS channels_backup,
-  (SELECT COUNT(*) FROM pending_auth_sessions)                  AS pending,
-  (SELECT COUNT(*) FROM pending_auth_sessions_subject_backup)   AS pending_backup;
+  (SELECT COUNT(*) FROM auth_identities)                              AS identities,
+  (SELECT COUNT(*) FROM auth_identities_bak_20261121_subject)         AS identities_backup,
+  (SELECT COUNT(*) FROM auth_identity_channels)                       AS channels,
+  (SELECT COUNT(*) FROM auth_identity_channels_bak_20261121_subject)  AS channels_backup,
+  (SELECT COUNT(*) FROM pending_auth_sessions)                        AS pending,
+  (SELECT COUNT(*) FROM pending_auth_sessions_bak_20261121_subject)   AS pending_backup;
 ```
+
+> 回填前（清空明文前）这些备份表是唯一可回滚的 subject 原文来源；按敏感数据留存策略保存。
 
 ## 3. 回填（pgcrypto HMAC，key 不进 SQL 文件）
 
@@ -84,7 +97,7 @@ SELECT value FROM security_secrets WHERE key = 'totp_encryption_key';
 `psql` 用变量传入（value 是 64 位 hex）：
 
 ```bash
-psql "$DSN" -v auth_subject_hash_key="$INSTALLATION_KEY_HEX" -f docs/ops/sql/328_backfill.sql
+psql "$DSN" -v auth_subject_hash_key="$INSTALLATION_KEY_HEX" -f docs/ops/sql/329_backfill.sql
 ```
 
 > 生产环境如果 `CREATE EXTENSION pgcrypto` 不被允许，改用仓库里的
@@ -222,12 +235,16 @@ FROM auth_identities GROUP BY 1 ORDER BY 1;
 
 ## 5. 清空明文（阶段 C，必须在新版本全量部署并观察后执行）
 
+**待执行 SQL 已独立成文件：`docs/ops/sql/329_clear_plaintext.sql`**（按 id 分批、
+单条 ≤30s、幂等；含 §5 + §6 的清理与 scrub）。本 PR 只交付脚本，不自动执行；
+执行前必须先把 §4 全部跑过并向老板回报计数。
+
 ```sql
 -- 前置：§4 全部通过；部署后再回填过一次且 `*_hash IS NULL` 为 0；
 -- 备份表行数 = 主表行数。
 SELECT
   (SELECT COUNT(*) FROM auth_identities) AS identities,
-  (SELECT COUNT(*) FROM auth_identities_subject_backup) AS identities_backup;
+  (SELECT COUNT(*) FROM auth_identities_bak_20261121_subject) AS identities_backup;
 
 BEGIN;
 
@@ -245,6 +262,10 @@ DROP INDEX IF EXISTS auth_identity_channels_channel_key;
 
 COMMIT;
 ```
+
+> 生产执行时不要直接整表 UPDATE：用 `329_clear_plaintext.sql` 里的 `LIMIT` 批次
+> 循环（`WHERE id IN (SELECT id ... ORDER BY id LIMIT 2000)`），每批单独 psql，
+> 语句级 `statement_timeout = '30s'`，跑完 `*\hash IS NULL = 0` 再进入 metadata scrub。
 
 清空后验证：三张表明文列应为 0 行，哈希覆盖率 100%；再跑一轮登录冒烟（此时只可能命中 hash）。
 
@@ -339,19 +360,26 @@ DROP TABLE IF EXISTS user_external_identities;
 ```sql
 UPDATE auth_identities AS ai
 SET provider_subject = b.provider_subject
-FROM auth_identities_subject_backup AS b
+FROM auth_identities_bak_20261121_subject AS b
 WHERE ai.id = b.id AND ai.provider_subject IS NULL;
 
 UPDATE auth_identity_channels AS ac
 SET channel_subject = b.channel_subject
-FROM auth_identity_channels_subject_backup AS b
+FROM auth_identity_channels_bak_20261121_subject AS b
 WHERE ac.id = b.id AND ac.channel_subject IS NULL;
 
 UPDATE pending_auth_sessions AS ps
 SET provider_subject = b.provider_subject
-FROM pending_auth_sessions_subject_backup AS b
+FROM pending_auth_sessions_bak_20261121_subject AS b
 WHERE ps.id = b.id AND ps.provider_subject IS NULL;
 ```
+
+> 阶段 B 自身的回滚：把 `security.auth_subject_plaintext_dual_write` 设为 `true`
+> 并重启（恢复「hash + 明文」双写）。读取路径本来就有明文回退，不需要回滚代码；
+> 只有旧二进制要读明文列时才需要先按上面 SQL 从备份表恢复。
+>
+> **注意**：阶段 B 之后新写入的行没有明文。若要回滚到「只读明文」的旧二进制，
+> 必须先确认这些新行能在旧版本里重新登录/绑定，或把开关打开后再观察一轮。
 
 ### 7.2 清空明文之后
 
@@ -388,16 +416,25 @@ ALTER TABLE pending_auth_sessions DROP COLUMN IF EXISTS provider_subject_prefix;
 
 ## 9. 无 pgcrypto 时的回填方式（备选）
 
-仓库提供一次性回填命令（不进部署镜像，只本地/跳板机执行）：
+仓库提供一次性回填命令（不进部署镜像，只本地/跳板机执行）。key 推荐走环境变量，
+不出现在进程 argv / shell history：
 
 ```bash
-# 只打印 SQL，不写库（默认 dry-run）
+# 只读 dry-run：只统计待回填行数
 go run ./backend/cmd/auth-subject-backfill \
-  --dsn "$DSN" --installation-key-hex "$INSTALLATION_KEY_HEX"
+  --dsn "$DSN"
 
-# 确认后加 --apply 分批写入
+# 确认后加 --apply 分批写入（--batch 默认 2000，单批 30s 超时）
 go run ./backend/cmd/auth-subject-backfill \
-  --dsn "$DSN" --installation-key-hex "$INSTALLATION_KEY_HEX" --apply
+  --dsn "$DSN" --apply
+
+# 抽样校验：用同一安装密钥重算 N 行 HMAC，与库里已存 hash 比对（只读）
+go run ./backend/cmd/auth-subject-backfill \
+  --dsn "$DSN" --verify-samples 50
 ```
+
+- key 来源：`--installation-key-hex` 或环境变量
+  `AUTH_SUBJECT_INSTALLATION_KEY` / `TOTP_ENCRYPTION_KEY`（二选一，不要写进文件）。
+- `--verify-samples` 失败会以非零退出，并只打印 id 与 hash 前缀，不打印 subject 明文。
 
 该命令与迁移 329 的回填 SQL 产出完全一致（同一 HMAC 输入格式），二选一即可。

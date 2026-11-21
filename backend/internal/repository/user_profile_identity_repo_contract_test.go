@@ -32,6 +32,11 @@ func (s *UserProfileIdentityRepoSuite) SetupTest() {
 	s.client = testEntClient(s.T())
 	s.repo = newUserRepositoryWithSQL(s.client, integrationDB)
 
+	// 契约用例沿用阶段 A 的旧行为（CreateAuthIdentityResult.IdentityRef 仍能拿回明文
+	// 用于后续查询）；阶段 B 默认只写 hash 的行为由 unit 用例覆盖。
+	service.ConfigureAuthSubjectPlaintextDualWrite(true)
+	s.T().Cleanup(func() { service.ConfigureAuthSubjectPlaintextDualWrite(false) })
+
 	_, err := integrationDB.ExecContext(s.ctx, `
 TRUNCATE TABLE
 	identity_adoption_decisions,

@@ -30,6 +30,11 @@ func (s *UserRepoSuite) SetupTest() {
 	s.client = testEntClient(s.T())
 	s.repo = newUserRepositoryWithSQL(s.client, integrationDB)
 
+	// 这些集成用例按阶段 A 的旧行为断言（email identity 的明文列可被回读），
+	// 阶段 B 默认只写 hash 的行为由 unit 用例覆盖。
+	service.ConfigureAuthSubjectPlaintextDualWrite(true)
+	s.T().Cleanup(func() { service.ConfigureAuthSubjectPlaintextDualWrite(false) })
+
 	// 清理测试数据，确保每个测试从干净状态开始
 	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM auth_identity_channels")
 	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM auth_identities")

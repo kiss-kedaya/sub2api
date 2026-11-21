@@ -2,6 +2,7 @@ package service
 
 import (
 	"strings"
+	"sync/atomic"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
@@ -13,10 +14,12 @@ import (
 // AuthIdentitySubjectKey 是登录匹配与身份查重的统一入口。
 //
 // 迁移策略（阶段 A → 阶段 C）：
-//  1. 阶段 A 起，写入路径同时写明文列（回退用）、keyed 盲索引 hash 与展示前缀；
-//  2. 查询路径优先命中 hash 列，过渡期回退到明文列，保证「已回填」与
+//  1. 阶段 A 起，写入路径写 keyed 盲索引 hash 与展示前缀；
+//  2. 阶段 B 起，明文列默认不再写入（由 security.auth_subject_plaintext_dual_write
+//     控制，默认 false），只有过渡窗口才双写；更新路径在关闭时显式写 NULL；
+//  3. 查询路径始终 hash 优先、过渡期回退明文列，保证「已回填」与
 //     「未回填」的行都能登录；
-//  3. 全量部署 + 回填校验通过后，运维 SQL 清空明文列；OR 的明文分支自然失效
+//  4. 全量部署 + 回填校验通过后，运维 SQL 清空历史明文；OR 的明文分支自然失效
 //     （NULL 不命中），不需要再改代码删除回退路径。
 //
 // 哈希是 HMAC-SHA256(installation key, domain|provider_type|subject)：
@@ -64,6 +67,26 @@ func ConfigureAuthSubjectHashKey(installationKeyHex string) error {
 // AuthSubjectHashKeyConfigured 报告 keyed hash 的安装密钥是否已注入。
 func AuthSubjectHashKeyConfigured() bool {
 	return authsubject.InstallationKeyConfigured()
+}
+
+// authSubjectPlaintextDualWrite 控制过渡期是否继续把 subject 明文写进
+// auth_identities / auth_identity_channels / pending_auth_sessions 的明文列。
+//
+// 默认 false（只写 keyed hash + 前缀）：数据库被 dump 时不再出现第三方身份
+// 原文。读路径仍然保留「hash 优先 + 明文回退」，所以回填前的历史行不受影响；
+// 只有新的写入不再制造新的明文。过渡期可用配置
+// security.auth_subject_plaintext_dual_write=true 恢复旧的双写行为
+// （旧二进制混跑 / 回滚窗口）。
+var authSubjectPlaintextDualWrite atomic.Bool
+
+// ConfigureAuthSubjectPlaintextDualWrite 在启动阶段注入明文双写开关。
+func ConfigureAuthSubjectPlaintextDualWrite(enabled bool) {
+	authSubjectPlaintextDualWrite.Store(enabled)
+}
+
+// AuthSubjectPlaintextDualWriteEnabled 报告当前是否还在写 subject 明文列。
+func AuthSubjectPlaintextDualWriteEnabled() bool {
+	return authSubjectPlaintextDualWrite.Load()
 }
 
 // NormalizeAuthSubject 返回参与哈希与明文比对的规范形式。
@@ -138,9 +161,12 @@ func AuthSubjectPlaintext(subject *string) string {
 	return strings.TrimSpace(*subject)
 }
 
-// AuthSubjectColumns 返回 (hash, prefix, plaintext) 三列的标准写法。
-// 过渡期明文列仍然写入，供旧二进制与回退查询使用；阶段 C 的运维 SQL
-// 会把明文列清空，届时新版本代码会随下一版改为只写 hash/prefix。
+// AuthSubjectColumns 返回 (hash, prefix, plaintext) 三列的值。
+//
+// hash/prefix 是唯一落库的产物；plaintext 只在
+// ConfigureAuthSubjectPlaintextDualWrite(true) 的过渡窗口里才回填明文列，
+// 其余路径（hash 回退匹配、封存 pending subject）仍需要原文，所以函数保留
+// 第三个返回值。
 func AuthSubjectColumns(providerType, subject string, hashFn func(providerType, subject string) string) (string, string, string) {
 	normalized := authsubject.Normalize(subject)
 	hashValue := hashFn(providerType, normalized)
@@ -202,48 +228,65 @@ func AuthChannelSubjectHashLookupPredicate(providerType, hashValue, plaintext st
 	return authidentitychannel.Or(predicates...)
 }
 
-// ApplyAuthIdentitySubjectCreate 给新建身份同时写明文（过渡期）、keyed hash 与展示前缀。
+// ApplyAuthIdentitySubjectCreate 给新建身份写 keyed hash + 展示前缀。
+// 明文列只在 security.auth_subject_plaintext_dual_write=true 的过渡窗口写入；
+// 默认保持 NULL，避免新行继续产生可逆的第三方身份原文。
 func ApplyAuthIdentitySubjectCreate(create *dbent.AuthIdentityCreate, providerType, subject string) *dbent.AuthIdentityCreate {
 	hashValue, prefix, plaintext := AuthSubjectColumns(providerType, subject, authsubject.HashIdentity)
-	return create.
-		SetProviderSubject(plaintext).
+	create = create.
 		SetProviderSubjectHash(hashValue).
 		SetProviderSubjectPrefix(prefix)
+	if AuthSubjectPlaintextDualWriteEnabled() {
+		create = create.SetProviderSubject(plaintext)
+	}
+	return create
 }
 
 // ApplyAuthIdentitySubjectUpdate 在改 subject 时同步刷新 hash 与展示前缀。
+// 明文双写关闭时显式把明文列清成 NULL：改绑/合并后不能留下旧 subject 原文。
 func ApplyAuthIdentitySubjectUpdate(update *dbent.AuthIdentityUpdateOne, providerType, subject string) *dbent.AuthIdentityUpdateOne {
 	hashValue, prefix, plaintext := AuthSubjectColumns(providerType, subject, authsubject.HashIdentity)
-	return update.
-		SetProviderSubject(plaintext).
+	update = update.
 		SetProviderSubjectHash(hashValue).
 		SetProviderSubjectPrefix(prefix)
+	if AuthSubjectPlaintextDualWriteEnabled() {
+		return update.SetProviderSubject(plaintext)
+	}
+	return update.ClearProviderSubject()
 }
 
 // ApplyAuthIdentitySubjectOnlyHash 给新建身份只写 hash 与展示前缀。
-// 供「明文列已经被运维清空」之后的写路径（如 pending 会话派生）使用。
+// 明文双写关闭时这是标准写路径（含 pending 会话派生出的身份）。
 func ApplyAuthIdentitySubjectOnlyHash(create *dbent.AuthIdentityCreate, hashValue, prefix string) *dbent.AuthIdentityCreate {
 	return create.
 		SetProviderSubjectHash(strings.TrimSpace(hashValue)).
 		SetProviderSubjectPrefix(strings.TrimSpace(prefix))
 }
 
-// ApplyAuthChannelSubjectCreate 给新建渠道写明文（过渡期）、keyed hash 与展示前缀。
+// ApplyAuthChannelSubjectCreate 给新建渠道写 keyed hash + 展示前缀。
+// 明文列只在安全开关打开（过渡期）时写入，默认保持 NULL。
 func ApplyAuthChannelSubjectCreate(create *dbent.AuthIdentityChannelCreate, providerType, channelSubject string) *dbent.AuthIdentityChannelCreate {
 	hashValue, prefix, plaintext := AuthSubjectColumns(providerType, channelSubject, authsubject.HashChannel)
-	return create.
-		SetChannelSubject(plaintext).
+	create = create.
 		SetChannelSubjectHash(hashValue).
 		SetChannelSubjectPrefix(prefix)
+	if AuthSubjectPlaintextDualWriteEnabled() {
+		create = create.SetChannelSubject(plaintext)
+	}
+	return create
 }
 
 // ApplyAuthChannelSubjectUpdate 在改 channel subject 时同步刷新 hash 与展示前缀。
+// 明文双写关闭时显式把明文列清成 NULL。
 func ApplyAuthChannelSubjectUpdate(update *dbent.AuthIdentityChannelUpdateOne, providerType, channelSubject string) *dbent.AuthIdentityChannelUpdateOne {
 	hashValue, prefix, plaintext := AuthSubjectColumns(providerType, channelSubject, authsubject.HashChannel)
-	return update.
-		SetChannelSubject(plaintext).
+	update = update.
 		SetChannelSubjectHash(hashValue).
 		SetChannelSubjectPrefix(prefix)
+	if AuthSubjectPlaintextDualWriteEnabled() {
+		return update.SetChannelSubject(plaintext)
+	}
+	return update.ClearChannelSubject()
 }
 
 // ApplyAuthChannelSubjectOnlyHash 给新建渠道只写 hash 与展示前缀。
@@ -253,25 +296,28 @@ func ApplyAuthChannelSubjectOnlyHash(create *dbent.AuthIdentityChannelCreate, ha
 		SetChannelSubjectPrefix(strings.TrimSpace(prefix))
 }
 
-// ApplyPendingAuthSubjectCreate 给新建 pending 会话写入：
-//   - keyed hash + 展示前缀（登录匹配用）；
-//   - 安装密钥封存的 subject 密文（完成流程时解出原文，用于 identity 双写与旧版本兼容）。
+// ApplyPendingAuthSubjectCreate 给新建 pending 会话写入 keyed hash + 展示前缀。
 //
-// 库里不再出现 pending 会话的 subject 明文。upstream claims 由
+// 明文双写打开时（过渡期）额外把 subject 用安装密钥 AES-256-GCM 封存进
+// provider_subject 列，完成流程时解出原文给旧兼容路径/identity 双写用；
+// 关闭时（默认）该列保持 NULL，完成流程只靠 hash + 展示前缀落库，
+// 不再需要在库里保留任何可还原的 subject 材料。
+//
+// 库里仍不出现 pending 会话的 subject 明文。upstream claims 由
 // SanitizeOAuthIdentityClaims 在写入前清洗。
 func ApplyPendingAuthSubjectCreate(create *dbent.PendingAuthSessionCreate, providerType, subject string) (*dbent.PendingAuthSessionCreate, error) {
 	hashValue, prefix, plaintext := AuthSubjectColumns(providerType, subject, authsubject.HashIdentity)
-	if plaintext == "" {
-		return create.SetProviderSubjectHash(hashValue).SetProviderSubjectPrefix(prefix), nil
+	create = create.
+		SetProviderSubjectHash(hashValue).
+		SetProviderSubjectPrefix(prefix)
+	if plaintext == "" || !AuthSubjectPlaintextDualWriteEnabled() {
+		return create, nil
 	}
 	sealed, err := authsubject.SealSensitive(plaintext)
 	if err != nil {
 		return nil, err
 	}
-	return create.
-		SetProviderSubject(sealed).
-		SetProviderSubjectHash(hashValue).
-		SetProviderSubjectPrefix(prefix), nil
+	return create.SetProviderSubject(sealed), nil
 }
 
 // AuthIdentitySubjectHashConflictColumns 返回 upsert 时用于去重的唯一索引列。

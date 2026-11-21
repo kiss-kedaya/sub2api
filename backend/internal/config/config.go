@@ -767,6 +767,15 @@ type SecurityConfig struct {
 	// KeyRotationCutoff is the RFC3339 instant that separates "possibly leaked"
 	// API keys from rotated ones. Defaults to config.DefaultKeyRotationCutoff.
 	KeyRotationCutoff string `mapstructure:"key_rotation_cutoff"`
+	// AuthSubjectPlaintextDualWrite keeps writing the legacy plaintext subject
+	// columns (auth_identities.provider_subject, auth_identity_channels.channel_subject,
+	// pending_auth_sessions.provider_subject) next to the keyed blind index.
+	// Default false: new rows only persist provider_subject_hash / prefix, so a
+	// database dump cannot be reversed into third-party subjects (email included).
+	// Reads keep the hash-first + plaintext fallback path, so rows written before
+	// the backfill still resolve. Set true only as a transitional switch while
+	// older binaries are still running, or to roll the default back.
+	AuthSubjectPlaintextDualWrite bool `mapstructure:"auth_subject_plaintext_dual_write"`
 	// HoneypotExemptNets lists CIDRs/IPs belonging to the operator's own edge.
 	// They are never banned by the scanner trap. Kept in config so real
 	// addresses never land in this public repository.
@@ -2309,6 +2318,9 @@ func setDefaults() {
 	viper.SetDefault("security.proxy_probe.insecure_skip_verify", false)
 	viper.SetDefault("security.trust_forwarded_ip_for_api_key_acl", true)
 	viper.SetDefault("security.key_rotation_gate_enabled", true)
+	// 第三方身份 subject 明文双写默认关闭：新行只落 keyed 盲索引 + 前缀。
+	// 读取路径仍保留明文回退，回填前的历史行不受影响。
+	viper.SetDefault("security.auth_subject_plaintext_dual_write", false)
 	viper.SetDefault("security.key_rotation_cutoff", DefaultKeyRotationCutoff)
 
 	// Security - disable direct fallback on proxy error

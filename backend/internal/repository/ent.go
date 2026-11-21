@@ -176,6 +176,10 @@ func InitEnt(cfg *config.Config) (*ent.Client, *sql.DB, error) {
 		return nil, nil, fmt.Errorf("configure auth subject hash key: %w", err)
 	}
 
+	// subject 明文双写开关：默认关闭（只写 keyed 盲索引），
+	// 过渡期可通过 security.auth_subject_plaintext_dual_write=true 恢复旧行为。
+	service.ConfigureAuthSubjectPlaintextDualWrite(cfg.Security.AuthSubjectPlaintextDualWrite)
+
 	// 在密钥补齐后执行完整配置校验，避免空 jwt.secret 导致服务运行时失败。
 	if err := cfg.Validate(); err != nil {
 		_ = client.Close()

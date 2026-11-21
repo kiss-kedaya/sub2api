@@ -122,6 +122,11 @@ CREATE TABLE IF NOT EXISTS user_provider_default_grants (
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
 
+	// 这些用例按阶段 A 的旧行为断言（email identity 的明文列可被回读）；
+	// 阶段 B 默认只写 hash 的行为由 auth_identity_subject_dual_write_test.go 覆盖。
+	service.ConfigureAuthSubjectPlaintextDualWrite(true)
+	t.Cleanup(func() { service.ConfigureAuthSubjectPlaintextDualWrite(false) })
+
 	repo := repository.NewUserRepository(client, db)
 	cfg := &config.Config{
 		JWT: config.JWTConfig{

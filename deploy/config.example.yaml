@@ -168,6 +168,17 @@ security:
   # 门槛时间（RFC3339）。早于此刻创建且仍在启用中的 Key 视为可能已泄露。
   # Environment / 环境变量: SECURITY_KEY_ROTATION_CUTOFF=2026-11-21T00:00:00+08:00
   key_rotation_cutoff: "2026-11-21T00:00:00+08:00"
+  # Third-party identity subject plaintext dual-write (transitional switch).
+  # When false (default), new auth identities / channels / pending sessions only
+  # persist the keyed HMAC-SHA256 blind index + display prefix; the legacy
+  # plaintext columns stay NULL. Reads keep hash-first + plaintext fallback, so
+  # rows written before the backfill still log in. Set true only while older
+  # binaries that still write plaintext are running, or to roll back.
+  # 第三方身份 subject 明文双写开关（过渡期）。默认 false：新写入只落 keyed
+  # 盲索引 + 展示前缀，明文列保持 NULL；读取仍保留 hash 优先 + 明文回退，
+  # 回填前的历史行照常登录。仅在旧实例混跑或需要回滚时临时设为 true。
+  # Environment / 环境变量: SECURITY_AUTH_SUBJECT_PLAINTEXT_DUAL_WRITE=true
+  auth_subject_plaintext_dual_write: false
   url_allowlist:
     # Enable URL allowlist validation (disable to skip all URL checks)
     # 启用 URL 白名单验证（禁用则跳过所有 URL 检查）
