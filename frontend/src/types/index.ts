@@ -803,6 +803,8 @@ export interface ApiKey {
   // 明文 key 只在创建/轮换的当次响应里出现（见 ApiKeySecret），列表永不回读。
   key_prefix: string
   key_masked: string
+  // RFC3339 UTC；未轮换或旧服务可省略或为 null。
+  key_rotated_at?: string | null
   name: string
   group_id: number | null
   group_ids?: number[]

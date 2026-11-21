@@ -343,6 +343,10 @@ func (r *apiKeyRepository) updateFields(ctx context.Context, client *dbent.Clien
 	// 这里选择 Update().Where()，确保只有未软删除记录能被更新。
 	// 同时显式设置 updated_at，避免二次查询带来的并发可见性问题。
 	now := time.Now()
+	if fields.Key {
+		// PostgreSQL stores microseconds; the rotation receipt must match the later list.
+		now = now.Truncate(time.Microsecond)
+	}
 	builder := client.APIKey.Update().
 		Where(apikey.IDEQ(key.ID), apikey.DeletedAtIsNil()).
 		SetUpdatedAt(now)

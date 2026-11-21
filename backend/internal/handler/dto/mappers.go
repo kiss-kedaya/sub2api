@@ -160,6 +160,10 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 		User:                         UserFromServiceShallow(k.User),
 		Group:                        GroupFromServiceShallow(k.Group),
 	}
+	if k.KeyRotatedAt != nil {
+		rotatedAt := k.KeyRotatedAt.UTC()
+		out.KeyRotatedAt = &rotatedAt
+	}
 	if k.Window5hStart != nil && !service.IsWindowExpired(k.Window5hStart, service.RateLimitWindow5h) {
 		t := k.Window5hStart.Add(service.RateLimitWindow5h)
 		out.Reset5hAt = &t
