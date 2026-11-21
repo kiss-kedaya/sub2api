@@ -7,6 +7,7 @@ import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { getSetupStatus } from '@/api/setup'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
+import { isRestrictedInSimpleMode } from './simpleMode'
 import { isChunkLoadError, recoverFromChunkLoadError } from '@/utils/chunkLoadError'
 
 export function installNavigationGuards(router: Router, restoreAuth = true) {
@@ -223,19 +224,10 @@ router.beforeEach(async (to, _from, next) => {
   }
 
   // 简易模式下限制访问某些页面
-  if (authStore.isSimpleMode) {
-    const restrictedPaths = [
-      '/admin/subscriptions',
-      '/admin/redeem',
-      '/subscriptions',
-      '/redeem'
-    ]
-
-    if (restrictedPaths.some((path) => to.path.startsWith(path))) {
-      // 简易模式下访问受限页面,重定向到仪表板
-      next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
-      return
-    }
+  if (authStore.isSimpleMode && isRestrictedInSimpleMode(to.path)) {
+    // 简易模式下访问受限页面,重定向到仪表板
+    next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
+    return
   }
 
   // Backend mode: admin gets full access, non-admin blocked

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { resolveCompletedSetupRedirectPath } from '@/router/setupRedirect'
+import { isRestrictedInSimpleMode } from '@/router/simpleMode'
 
 // Mock 导航加载状态
 vi.mock('@/composables/useNavigationLoading', () => {
@@ -115,16 +116,8 @@ function simulateGuard(
   }
 
   // 简易模式限制
-  if (authState.isSimpleMode) {
-    const restrictedPaths = [
-      '/admin/subscriptions',
-      '/admin/redeem',
-      '/subscriptions',
-      '/redeem',
-    ]
-    if (restrictedPaths.some((path) => toPath.startsWith(path))) {
-      return authState.isAdmin ? '/admin/dashboard' : '/dashboard'
-    }
+  if (authState.isSimpleMode && isRestrictedInSimpleMode(toPath)) {
+    return authState.isAdmin ? '/admin/dashboard' : '/dashboard'
   }
 
   // Backend mode: admin gets full access, non-admin blocked
