@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -23,29 +24,47 @@ func TestCodexBootstrapInputLooksRelevant(t *testing.T) {
 	require.False(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5"}`)))
 	require.True(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_app","name":"automation_update","output":"x"}]}`)))
 	require.True(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_tui","name":"create_thread","output":"x"}]}`)))
+	require.True(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"agent","name":"codex_apps_open_page","output":"{\"page_id\":null}"}]}`)))
+	require.True(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"agent","name":"codex_apps_selected_page_part_1_of_1","output":"x"}]}`)))
 }
 
 func TestApplyCodexBootstrapNormalizationsSkipsOrdinaryResponsesBodies(t *testing.T) {
 	body := []byte(`{"model":"gpt-5","previous_response_id":"","previous_response_id":"resp-1","input":[{"type":"message","role":"user"}]}`)
-	got, automationChanged, delegationChanged := applyCodexBootstrapNormalizations(body)
-	require.False(t, automationChanged)
-	require.False(t, delegationChanged)
-	require.Equal(t, body, got)
+	result := applyCodexBootstrapNormalizations(body)
+	require.False(t, result.UntrustedContext)
+	require.False(t, result.Automation)
+	require.False(t, result.Delegation)
+	require.Equal(t, body, result.Body)
 }
 
 func TestApplyCodexBootstrapNormalizationsRewritesAutomationAndDelegation(t *testing.T) {
 	output := automationBootstrapOutput("wiki-maintenance", "never", "Review the project and report changes.")
 	autoBody := automationBootstrapBody(t, output)
-	got, automationChanged, delegationChanged := applyCodexBootstrapNormalizations(autoBody)
-	require.True(t, automationChanged)
-	require.False(t, delegationChanged)
-	require.Equal(t, "message", gjson.GetBytes(got, "input.0.type").String())
+	result := applyCodexBootstrapNormalizations(autoBody)
+	require.False(t, result.UntrustedContext)
+	require.True(t, result.Automation)
+	require.False(t, result.Delegation)
+	require.Equal(t, "message", gjson.GetBytes(result.Body, "input.0.type").String())
 
 	delegation := []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_app","name":"create_thread","output":` + mustJSONString(t, delegationBootstrapEnvelope) + `}]}`)
-	got, automationChanged, delegationChanged = applyCodexBootstrapNormalizations(delegation)
-	require.False(t, automationChanged)
-	require.True(t, delegationChanged)
-	require.Equal(t, "message", gjson.GetBytes(got, "input.0.type").String())
+	result = applyCodexBootstrapNormalizations(delegation)
+	require.False(t, result.UntrustedContext)
+	require.False(t, result.Automation)
+	require.True(t, result.Delegation)
+	require.Equal(t, "message", gjson.GetBytes(result.Body, "input.0.type").String())
+}
+
+func TestApplyCodexBootstrapNormalizationsRewritesMixedCodexContext(t *testing.T) {
+	body := pageContextRequest(t,
+		pageContextItem("codex_apps_open_page", `{"page_id":null}`),
+		map[string]any{"type": "function_call_output", "namespace": "codex_app", "name": "create_thread", "output": delegationBootstrapEnvelope},
+		map[string]any{"type": "function_call_output", "namespace": "agent", "name": "goal_objective", "output": "finish"},
+	)
+	result := applyCodexBootstrapNormalizations(body)
+	require.True(t, result.UntrustedContext)
+	require.True(t, result.Delegation)
+	require.False(t, result.Automation)
+	require.False(t, service.ValidateFunctionCallOutputContextBytes(result.Body).HasFunctionCallOutput)
 }
 
 func TestNormalizeCodexDelegationBootstrapRequiresCalllessSafeShape(t *testing.T) {

@@ -1084,3 +1084,24 @@ func TestOpenAIWSReplaySequenceSharesBodies(t *testing.T) {
 		require.Same(t, &payload[start], &items[1][0], "prefix 命中应转移当前 items 所有权并共享 payload 底层数组")
 	})
 }
+
+// TestWSIngressPageContextWithoutCallIDKeepsWSSemantics 覆盖 WebSocket v2 路径：
+// HTTP 侧的 Codex 上下文归一化不参与 WS；缺 call_id 的页面上下文既不本地拒绝、
+// 也不触发 previous_response_id 推断，帧内容原样转发。带 call_id 的工具续链
+// 推断逻辑保持原样。
+func TestWSIngressPageContextWithoutCallIDKeepsWSSemantics(t *testing.T) {
+	pageContextPayload := []byte(`{"type":"response.create","model":"gpt-5","input":[{"type":"function_call_output","namespace":"agent","name":"codex_apps_open_page","output":"{\"page_id\":null}"}]}`)
+	var pageContextBody map[string]any
+	require.NoError(t, decodeOpenAIJSONUseNumber(pageContextPayload, &pageContextBody))
+	signals := AnalyzeToolContinuationSignals(pageContextBody)
+	require.True(t, signals.HasFunctionCallOutput)
+	require.True(t, signals.HasFunctionCallOutputMissingCallID)
+	require.False(t, shouldInferIngressFunctionCallOutputPreviousResponseID(true, 2, signals, "", "resp_2"))
+
+	pairedPayload := []byte(`{"type":"response.create","model":"gpt-5","input":[{"type":"function_call_output","call_id":"call_1","output":"done"}]}`)
+	var pairedBody map[string]any
+	require.NoError(t, decodeOpenAIJSONUseNumber(pairedPayload, &pairedBody))
+	pairedSignals := AnalyzeToolContinuationSignals(pairedBody)
+	require.False(t, pairedSignals.HasFunctionCallOutputMissingCallID)
+	require.True(t, shouldInferIngressFunctionCallOutputPreviousResponseID(true, 2, pairedSignals, "", "resp_2"))
+}
