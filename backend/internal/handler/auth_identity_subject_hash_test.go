@@ -110,3 +110,40 @@ func TestEnsurePendingOAuthIdentityWritesHashAndPrefix(t *testing.T) {
 	require.NotNil(t, identity.ProviderSubjectPrefix)
 	require.Equal(t, service.AuthSubjectPrefixFromHash(service.HashAuthIdentitySubject("oidc", authIdentityHashTestSubject)), *identity.ProviderSubjectPrefix)
 }
+
+// 阶段 B 默认：pending 流程派生身份时明文列必须保持 NULL，
+// 只靠 keyed hash + 前缀落库（hash 命中路径不受影响）。
+func TestEnsurePendingOAuthIdentitySkipsPlaintextWhenDualWriteDisabled(t *testing.T) {
+	_, client := newOAuthPendingFlowTestHandler(t, false)
+	// 该 helper 为覆盖阶段 A 旧流程默认打开了过渡开关，这里显式回到阶段 B 默认。
+	service.ConfigureAuthSubjectPlaintextDualWrite(false)
+	t.Cleanup(func() { service.ConfigureAuthSubjectPlaintextDualWrite(false) })
+
+	ctx := context.Background()
+	user := newAuthIdentityHashTestUser(t, client)
+
+	tx, err := client.Tx(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+
+	subjectPlaintext, subjectHash, subjectPrefix := pendingSessionSubjectFields("oidc", authIdentityHashTestSubject)
+	identity, err := ensurePendingOAuthIdentityForUser(
+		dbent.NewTxContext(ctx, tx),
+		tx,
+		&dbent.PendingAuthSession{
+			ProviderType:           "oidc",
+			ProviderKey:            "https://issuer.example",
+			ProviderSubject:        subjectPlaintext,
+			ProviderSubjectHash:    subjectHash,
+			ProviderSubjectPrefix:  subjectPrefix,
+			UpstreamIdentityClaims: map[string]any{"issuer": "https://issuer.example"},
+		},
+		user.ID,
+	)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+
+	require.NotNil(t, identity.ProviderSubjectHash)
+	require.Equal(t, service.HashAuthIdentitySubject("oidc", authIdentityHashTestSubject), *identity.ProviderSubjectHash)
+	require.Nil(t, identity.ProviderSubject, "phase B must not persist subject plaintext")
+}

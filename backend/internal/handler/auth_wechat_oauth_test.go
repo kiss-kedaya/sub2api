@@ -1367,6 +1367,12 @@ func newWeChatOAuthTestHandlerWithSettings(t *testing.T, invitationEnabled bool,
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 
+	// 微信流程用例覆盖阶段 A 的旧行为（pending 封存 + identity 双写明文），
+	// 阶段 B 保留在过渡开关后面；默认只写 hash 的行为由
+	// auth_identity_subject_hash_test.go 覆盖。
+	service.ConfigureAuthSubjectPlaintextDualWrite(true)
+	t.Cleanup(func() { service.ConfigureAuthSubjectPlaintextDualWrite(false) })
+
 	// redeem_code_hashes 是迁移 328 新增的原生 DDL 表，enttest 只建 schema 里的表。
 	ensureRedeemCodeHashLedgerTable(t, db)
 

@@ -110,7 +110,7 @@ func TestIsHashOnlyAcceptsHexDigest(t *testing.T) {
 
 // TestKeyedHashInputFormatMatchesDocs 锁定 MAC 输入格式：
 // HMAC-SHA256(key, domain \x00 lowercase(provider_type) \x00 trim(subject))。
-// 迁移回填 SQL（docs/ops/sql/328_backfill.sql）用 bytea 拼同样的字节，
+// 迁移回填 SQL（docs/ops/sql/329_backfill.sql）用 bytea 拼同样的字节，
 // 本测试防止两边格式漂移导致回填出来的哈希与代码不匹配。
 func TestKeyedHashInputFormatMatchesDocs(t *testing.T) {
 	keyHex := testInstallationKey

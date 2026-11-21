@@ -32,6 +32,11 @@ func newAdminServiceAuthIdentityBindingTestClient(t *testing.T) *dbent.Client {
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
+
+	// 这些用例按阶段 A 的旧行为断言（identity/channel 明文列可被回读）；
+	// 阶段 B 默认只写 hash 的行为由 auth_identity_subject_dual_write_test.go 覆盖。
+	ConfigureAuthSubjectPlaintextDualWrite(true)
+	t.Cleanup(func() { ConfigureAuthSubjectPlaintextDualWrite(false) })
 	return client
 }
 

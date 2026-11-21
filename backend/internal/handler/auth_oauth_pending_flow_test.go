@@ -2579,6 +2579,12 @@ CREATE TABLE IF NOT EXISTS user_affiliates (
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 
+	// 这些流程用例覆盖的是阶段 A 的旧行为（pending 会话封存 subject、identity
+	// 双写明文），阶段 B 把它们保留在过渡开关后面；默认只写 hash 的行为由
+	// auth_identity_subject_hash_test.go 单独覆盖。
+	service.ConfigureAuthSubjectPlaintextDualWrite(true)
+	t.Cleanup(func() { service.ConfigureAuthSubjectPlaintextDualWrite(false) })
+
 	cfg := &config.Config{
 		JWT: config.JWTConfig{
 			Secret:                   "test-secret",

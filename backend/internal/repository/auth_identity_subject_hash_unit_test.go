@@ -99,8 +99,24 @@ func TestGetUserByCanonicalIdentityFallsBackToPlaintextBeforeBackfill(t *testing
 	require.Equal(t, identity.ID, lookup.Identity.ID)
 }
 
+// enableAuthSubjectPlaintextDualWriteForTest 打开过渡期明文双写（旧行为），
+// 测试结束后恢复默认关闭。
+func enableAuthSubjectPlaintextDualWriteForTest(t *testing.T) {
+	t.Helper()
+	service.ConfigureAuthSubjectPlaintextDualWrite(true)
+	t.Cleanup(func() { service.ConfigureAuthSubjectPlaintextDualWrite(false) })
+}
+
+// disableAuthSubjectPlaintextDualWriteForTest 固定为默认行为：只写 keyed 盲索引。
+func disableAuthSubjectPlaintextDualWriteForTest(t *testing.T) {
+	t.Helper()
+	service.ConfigureAuthSubjectPlaintextDualWrite(false)
+	t.Cleanup(func() { service.ConfigureAuthSubjectPlaintextDualWrite(false) })
+}
+
 // 写入路径必须同时落 hash + 前缀；否则清空明文后无法再匹配 / 展示。
 func TestCreateAuthIdentityWritesHashAndPrefix(t *testing.T) {
+	enableAuthSubjectPlaintextDualWriteForTest(t)
 	repo, _ := newUserEntRepo(t)
 	ctx := context.Background()
 	user := newAuthSubjectTestUser(t, repo, "create-hash@example.com")
@@ -285,4 +301,194 @@ func TestChannelHashColumnHasUniqueConstraint(t *testing.T) {
 		SetChannelSubjectHash(hashValue).
 		Save(ctx)
 	require.Error(t, err, "duplicate channel_subject_hash must violate the unique index")
+}
+
+// 阶段 B 默认行为：明文双写关闭时，新建 identity 只落 hash/prefix，
+// provider_subject 必须是 NULL（不再制造可逆的 subject 明文）。
+func TestCreateAuthIdentityWritesHashOnlyWhenDualWriteDisabled(t *testing.T) {
+	disableAuthSubjectPlaintextDualWriteForTest(t)
+	repo, client := newUserEntRepo(t)
+	ctx := context.Background()
+	user := newAuthSubjectTestUser(t, repo, "hash-only-create@example.com")
+
+	const subject = "github-subject-hash-only-123456"
+	result, err := repo.CreateAuthIdentity(ctx, CreateAuthIdentityInput{
+		UserID: user.ID,
+		Canonical: AuthIdentityKey{
+			ProviderType:    "github",
+			ProviderKey:     "github",
+			ProviderSubject: subject,
+		},
+		Metadata: map[string]any{"source": "test"},
+	})
+	require.NoError(t, err)
+	require.Nil(t, result.Identity.ProviderSubject, "plaintext subject must stay NULL by default")
+	require.NotNil(t, result.Identity.ProviderSubjectHash)
+	require.Equal(t, service.HashAuthIdentitySubject("github", subject), *result.Identity.ProviderSubjectHash)
+	require.NotNil(t, result.Identity.ProviderSubjectPrefix)
+	require.Equal(t, service.AuthSubjectPrefixFromHash(service.HashAuthIdentitySubject("github", subject)), *result.Identity.ProviderSubjectPrefix)
+
+	stored, err := client.AuthIdentity.Get(ctx, result.Identity.ID)
+	require.NoError(t, err)
+	require.Nil(t, stored.ProviderSubject)
+
+	// 明文没落库，登录仍必须靠 hash 命中（带空格也走同一规范化）。
+	lookup, err := repo.GetUserByCanonicalIdentity(ctx, AuthIdentityKey{
+		ProviderType:    "github",
+		ProviderKey:     "github",
+		ProviderSubject: "  " + subject + "  ",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, lookup)
+	require.Equal(t, user.ID, lookup.User.ID)
+	require.Equal(t, result.Identity.ID, lookup.Identity.ID)
+}
+
+// 阶段 B 默认行为：新建渠道只落 channel_subject_hash/prefix，
+// 渠道明文列保持 NULL，且去重/查询仍按 hash 工作。
+func TestBindAuthIdentityToUserWritesChannelHashOnlyWhenDualWriteDisabled(t *testing.T) {
+	disableAuthSubjectPlaintextDualWriteForTest(t)
+	repo, client := newUserEntRepo(t)
+	ctx := context.Background()
+	user := newAuthSubjectTestUser(t, repo, "channel-hash-only@example.com")
+
+	const (
+		providerSubject = "union-channel-hash-only-123456"
+		channelSubject  = "openid-channel-hash-only-123456"
+	)
+	input := BindAuthIdentityInput{
+		UserID: user.ID,
+		Canonical: AuthIdentityKey{
+			ProviderType:    "wechat",
+			ProviderKey:     "wechat-main",
+			ProviderSubject: providerSubject,
+		},
+		Channel: &AuthIdentityChannelKey{
+			ProviderType:   "wechat",
+			ProviderKey:    "wechat-main",
+			Channel:        "open",
+			ChannelAppID:   "wx-app",
+			ChannelSubject: channelSubject,
+		},
+	}
+	result, err := repo.BindAuthIdentityToUser(ctx, input)
+	require.NoError(t, err)
+	require.NotNil(t, result.Channel)
+	require.Nil(t, result.Channel.ChannelSubject, "channel plaintext must stay NULL by default")
+	require.NotNil(t, result.Channel.ChannelSubjectHash)
+	require.Equal(t, service.HashAuthChannelSubject("wechat", channelSubject), *result.Channel.ChannelSubjectHash)
+	require.NotNil(t, result.Channel.ChannelSubjectPrefix)
+
+	// 重复绑定同一渠道 subject：按 hash 去重，不新增行。
+	second, err := repo.BindAuthIdentityToUser(ctx, input)
+	require.NoError(t, err)
+	require.Equal(t, result.Channel.ID, second.Channel.ID)
+
+	lookup, err := repo.GetUserByChannelIdentity(ctx, AuthIdentityChannelKey{
+		ProviderType:   "wechat",
+		ProviderKey:    "wechat-main",
+		Channel:        "open",
+		ChannelAppID:   "wx-app",
+		ChannelSubject: channelSubject,
+	})
+	require.NoError(t, err)
+	require.Equal(t, result.Channel.ID, lookup.Channel.ID)
+	require.Equal(t, user.ID, lookup.User.ID)
+
+	// 数据库里确实没有渠道明文。
+	stored, err := client.AuthIdentityChannel.Get(ctx, result.Channel.ID)
+	require.NoError(t, err)
+	require.Nil(t, stored.ChannelSubject)
+}
+
+// 阶段 B：更新 subject 时关闭双写必须显式清空明文列，
+// 否则改绑/合并后的旧 subject 会继续留在库里。
+func TestApplyAuthIdentitySubjectUpdateClearsPlaintextWhenDualWriteDisabled(t *testing.T) {
+	enableAuthSubjectPlaintextDualWriteForTest(t)
+	repo, client := newUserEntRepo(t)
+	ctx := context.Background()
+	user := newAuthSubjectTestUser(t, repo, "update-clear@example.com")
+
+	const oldSubject = "github-subject-before-update"
+	created, err := repo.CreateAuthIdentity(ctx, CreateAuthIdentityInput{
+		UserID: user.ID,
+		Canonical: AuthIdentityKey{
+			ProviderType:    "github",
+			ProviderKey:     "github",
+			ProviderSubject: oldSubject,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, created.Identity.ProviderSubject, "precondition: legacy row keeps plaintext")
+
+	// 模拟阶段 B 默认配置。
+	service.ConfigureAuthSubjectPlaintextDualWrite(false)
+
+	const newSubject = "github-subject-after-update"
+	update := client.AuthIdentity.UpdateOneID(created.Identity.ID)
+	update = service.ApplyAuthIdentitySubjectUpdate(update, "github", newSubject)
+	updated, err := update.Save(ctx)
+	require.NoError(t, err)
+	require.Nil(t, updated.ProviderSubject, "update must clear plaintext while dual write is disabled")
+	require.NotNil(t, updated.ProviderSubjectHash)
+	require.Equal(t, service.HashAuthIdentitySubject("github", newSubject), *updated.ProviderSubjectHash)
+
+	lookup, err := repo.GetUserByCanonicalIdentity(ctx, AuthIdentityKey{
+		ProviderType:    "github",
+		ProviderKey:     "github",
+		ProviderSubject: newSubject,
+	})
+	require.NoError(t, err)
+	require.Equal(t, user.ID, lookup.User.ID)
+}
+
+// 阶段 B：渠道 subject 更新同样要清空明文列。
+func TestApplyAuthChannelSubjectUpdateClearsPlaintextWhenDualWriteDisabled(t *testing.T) {
+	enableAuthSubjectPlaintextDualWriteForTest(t)
+	repo, client := newUserEntRepo(t)
+	ctx := context.Background()
+	user := newAuthSubjectTestUser(t, repo, "channel-update-clear@example.com")
+
+	const (
+		providerSubject = "union-channel-update-123456"
+		oldChannel      = "openid-channel-before-update"
+	)
+	created, err := repo.CreateAuthIdentity(ctx, CreateAuthIdentityInput{
+		UserID: user.ID,
+		Canonical: AuthIdentityKey{
+			ProviderType:    "wechat",
+			ProviderKey:     "wechat-main",
+			ProviderSubject: providerSubject,
+		},
+		Channel: &AuthIdentityChannelKey{
+			ProviderType:   "wechat",
+			ProviderKey:    "wechat-main",
+			Channel:        "open",
+			ChannelAppID:   "wx-app",
+			ChannelSubject: oldChannel,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, created.Channel.ChannelSubject, "precondition: legacy row keeps channel plaintext")
+
+	service.ConfigureAuthSubjectPlaintextDualWrite(false)
+
+	const newChannel = "openid-channel-after-update"
+	update := client.AuthIdentityChannel.UpdateOneID(created.Channel.ID)
+	update = service.ApplyAuthChannelSubjectUpdate(update, "wechat", newChannel)
+	updated, err := update.Save(ctx)
+	require.NoError(t, err)
+	require.Nil(t, updated.ChannelSubject, "update must clear channel plaintext while dual write is disabled")
+	require.NotNil(t, updated.ChannelSubjectHash)
+	require.Equal(t, service.HashAuthChannelSubject("wechat", newChannel), *updated.ChannelSubjectHash)
+
+	lookup, err := repo.GetUserByChannelIdentity(ctx, AuthIdentityChannelKey{
+		ProviderType:   "wechat",
+		ProviderKey:    "wechat-main",
+		Channel:        "open",
+		ChannelAppID:   "wx-app",
+		ChannelSubject: newChannel,
+	})
+	require.NoError(t, err)
+	require.Equal(t, user.ID, lookup.User.ID)
 }
