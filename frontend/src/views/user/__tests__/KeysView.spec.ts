@@ -484,6 +484,21 @@ describe('user KeysView column settings', () => {
     wrapper.unmount()
   })
 
+  it('explains how to recover from a predictable custom key rejection', async () => {
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
+    createKey.mockRejectedValueOnce({ reason: 'API_KEY_TOO_PREDICTABLE' })
+    const wrapper = await mountView()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('test key')
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+    await nextTick()
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith('keys.customKeyTooPredictable')
+    expect(wrapper.find('#key-form').exists()).toBe(true)
+  })
+
   it('filters groups by provider and never submits a stale group after switching', async () => {
     getAvailableGroups.mockResolvedValue([
       { id: 1, name: 'Claude', platform: 'anthropic' },

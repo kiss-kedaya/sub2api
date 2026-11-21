@@ -2342,7 +2342,9 @@ const handleSubmit = async () => {
     }
     closeModals()
   } catch (error: any) {
-    const errorMsg = error.response?.data?.detail || t('keys.failedToSave')
+    const errorMsg = error?.reason === 'API_KEY_TOO_PREDICTABLE'
+      ? t('keys.customKeyTooPredictable')
+      : error.response?.data?.detail || t('keys.failedToSave')
     appStore.showError(errorMsg)
     // Don't advance tour on error
   } finally {
