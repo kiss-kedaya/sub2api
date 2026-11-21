@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -102,7 +103,10 @@ func (s *RedeemCacheSuite) TestAcquireAndReleaseRedeemLock() {
 }
 
 func (s *RedeemCacheSuite) TestAcquireRedeemLock_TTL() {
-	lockKey := redeemLockKeyPrefix + "CODE2"
+	// 锁键是 sha256(明文)，不能再拼明文：卡密是可兑现凭据，明文不能进 Redis key。
+	lockKey := redeemLockKey("CODE2")
+	require.Contains(s.T(), lockKey, service.HashRedeemCode("CODE2"))
+	require.NotContains(s.T(), lockKey, "CODE2")
 	lockTTL := 15 * time.Second
 
 	ok, err := s.cache.AcquireRedeemLock(s.ctx, "CODE2", lockTTL)

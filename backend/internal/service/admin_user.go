@@ -916,14 +916,17 @@ LIMIT $3`, userID, params.Offset(), params.Limit())
 		usedBy := userID
 		usedAt := createdAt
 		codes = append(codes, RedeemCode{
-			ID:        -id,
-			Code:      fmt.Sprintf("AFF-%d", id),
-			Type:      RedeemTypeAffiliateBalance,
-			Value:     amount,
-			Status:    StatusUsed,
-			UsedBy:    &usedBy,
-			UsedAt:    &usedAt,
-			CreatedAt: createdAt,
+			ID:   -id,
+			Code: fmt.Sprintf("AFF-%d", id),
+			// 合成展示行：AFF-<id> 不是卡密凭据，只是让「余额历史」有一列可读
+			// 标识，因此不参与掩码（掩码会把 AFF-123 变成 AFF-**** 反而更糊）。
+			SyntheticCode: true,
+			Type:          RedeemTypeAffiliateBalance,
+			Value:         amount,
+			Status:        StatusUsed,
+			UsedBy:        &usedBy,
+			UsedAt:        &usedAt,
+			CreatedAt:     createdAt,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -1372,6 +1375,9 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 			Status:    StatusUnused,
 			ExpiresAt: input.ExpiresAt,
 		}
+		// 哈希在这里就补齐，而不是留给仓储：生成回执要带 code_prefix，且
+		// 「库里只落哈希」这条不变量应当由服务层显式保证（仓储再兜一层）。
+		code.EnsureCodeHash()
 		// 订阅类型专用字段
 		if input.Type == RedeemTypeSubscription {
 			code.GroupID = input.GroupID

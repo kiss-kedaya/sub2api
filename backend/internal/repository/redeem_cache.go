@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -32,8 +33,17 @@ func redeemRateLimitKey(userID int64) string {
 }
 
 // redeemLockKey generates the Redis key for redeem code locking.
+//
+// 用 sha256(明文) 而不是明文本身：卡密是可兑现凭据，Redis 里的 key 会出现在
+// slowlog / MONITOR / 备份 / 运维截图里。哈希与 redeem_codes.code_hash 同值，
+// 排查时仍能按同一把卡对上（只是拿不回明文）。空卡密退化为字面量，调用方
+// 会在查库阶段直接 404，不会放大可用性。
 func redeemLockKey(code string) string {
-	return redeemLockKeyPrefix + code
+	normalized := strings.TrimSpace(code)
+	if normalized == "" {
+		return redeemLockKeyPrefix + "empty"
+	}
+	return redeemLockKeyPrefix + service.HashRedeemCode(normalized)
 }
 
 type redeemCache struct {

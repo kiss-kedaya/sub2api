@@ -58,7 +58,7 @@
           <div class="shrink-0 text-right">
             <p :class="['text-sm font-semibold tabular-nums', getValueColor(item)]">{{ formatValue(item) }}</p>
             <p v-if="isAdminType(item.type)" class="text-xs text-dimmed">{{ t('redeem.adminAdjustment') }}</p>
-            <p v-else class="font-mono text-xs text-dimmed">{{ item.code.slice(0, 8) }}...</p>
+            <p v-else class="font-mono text-xs text-dimmed">{{ item.code }}</p>
           </div>
         </li>
       </ul>

@@ -101,19 +101,8 @@
           </template>
 
           <template #cell-code="{ value }">
-            <div class="flex items-center gap-1">
-              <code class="font-mono text-sm text-highlighted">{{ value }}</code>
-              <UButton
-                :color="copiedCode === value ? 'success' : 'neutral'"
-                variant="ghost"
-                size="xs"
-                square
-                :icon="copiedCode === value ? 'i-lucide-check' : 'i-lucide-copy'"
-                :title="copiedCode === value ? t('admin.redeem.copied') : t('keys.copyToClipboard')"
-                :aria-label="copiedCode === value ? t('admin.redeem.copied') : t('keys.copyToClipboard')"
-                @click="copyToClipboard(value)"
-              />
-            </div>
+            <!-- 卡密已哈希化：列表只能拿到掩码（前 4 位 + ****），没有可复制的明文。 -->
+            <code class="font-mono text-sm text-muted">{{ value }}</code>
           </template>
 
           <template #cell-type="{ value }">
@@ -385,14 +374,20 @@
     </BaseDialog>
 
     <!-- Generated Codes Result Dialog -->
+    <!-- 唯一明文入口：强制展示 ≥1 秒，只能复制一次；关闭即永久丢弃。 -->
     <BaseDialog
       :show="showResultDialog"
       :title="t('admin.redeem.generatedSuccessfully')"
       width="normal"
-      close-on-click-outside
+      :close-on-click-outside="canCloseResult"
+      :close-on-escape="canCloseResult"
+      :close-button-disabled="!canCloseResult"
       @close="closeResultDialog"
     >
       <p class="mb-3 text-sm text-muted">{{ t('admin.redeem.codesCreated', { count: generatedCodes.length }) }}</p>
+      <p class="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+        {{ t('admin.redeem.plaintextOnceOnly') }}
+      </p>
       <UTextarea
         readonly
         :model-value="generatedCodesText"
@@ -407,9 +402,16 @@
             variant="subtle"
             :icon="copiedAll ? 'i-lucide-check' : 'i-lucide-copy'"
             :label="copiedAll ? t('admin.redeem.copied') : t('admin.redeem.copyAll')"
+            :disabled="copiedAll || !canCloseResult"
             @click="copyGeneratedCodes"
           />
-          <UButton icon="i-lucide-download" :label="t('admin.redeem.download')" @click="downloadGeneratedCodes" />
+          <UButton
+            color="neutral"
+            variant="subtle"
+            :label="t('common.close')"
+            :disabled="!canCloseResult"
+            @click="closeResultDialog"
+          />
         </div>
       </template>
     </BaseDialog>
@@ -541,33 +543,44 @@ const textareaHeight = computed(() => {
 })
 
 const copiedAll = ref(false)
+// 生成回执是系统里唯一能看到完整卡密的地方：强制展示 ≥1 秒再允许关闭，
+// 避免「手快点了关闭、卡密永久丢失」；复制只允许一次，防止明文被反复外带。
+const RESULT_DIALOG_MIN_VISIBLE_MS = 1000
+const canCloseResult = ref(false)
+let resultUnlockTimer: ReturnType<typeof setTimeout> | null = null
+
+const openResultDialog = (codes: RedeemCode[]) => {
+  generatedCodes.value = codes
+  copiedAll.value = false
+  canCloseResult.value = false
+  showResultDialog.value = true
+  if (resultUnlockTimer) clearTimeout(resultUnlockTimer)
+  resultUnlockTimer = setTimeout(() => {
+    canCloseResult.value = true
+    resultUnlockTimer = null
+  }, RESULT_DIALOG_MIN_VISIBLE_MS)
+}
 
 const closeResultDialog = () => {
+  // 1 秒内任何关闭入口都已禁用，这里再兜一次，防止事件被其它路径触发。
+  if (!canCloseResult.value) return
   showResultDialog.value = false
   generatedCodes.value = []
   copiedAll.value = false
-}
-
-const copyGeneratedCodes = async () => {
-  const success = await clipboardCopy(generatedCodesText.value, t('admin.redeem.copied'))
-  if (success) {
-    copiedAll.value = true
-    setTimeout(() => {
-      copiedAll.value = false
-    }, 2000)
+  canCloseResult.value = false
+  if (resultUnlockTimer) {
+    clearTimeout(resultUnlockTimer)
+    resultUnlockTimer = null
   }
 }
 
-const downloadGeneratedCodes = () => {
-  const blob = new Blob([generatedCodesText.value], { type: 'text/plain' })
-  const url = window.URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `redeem-codes-${new Date().toISOString().split('T')[0]}.txt`
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  window.URL.revokeObjectURL(url)
+const copyGeneratedCodes = async () => {
+  if (copiedAll.value) return
+  const success = await clipboardCopy(generatedCodesText.value, t('admin.redeem.copied'))
+  if (success) {
+    // 复制一次即锁定：按钮置灰，不能再复制第二次。
+    copiedAll.value = true
+  }
 }
 
 const allColumns = computed<Column[]>(() => [
@@ -649,7 +662,6 @@ const showDeleteDialog = ref(false)
 const showDeleteUnusedDialog = ref(false)
 const showBatchUpdateDialog = ref(false)
 const deletingCode = ref<RedeemCode | null>(null)
-const copiedCode = ref<string | null>(null)
 
 const {
   selectedSet: selectedCodeIds,
@@ -965,7 +977,7 @@ const handleGenerateCodes = async () => {
     // Submitted, not abandoned: the draft must not come back on the next open.
     generateDraft.markSubmitted()
     generatedCodes.value = result
-    showResultDialog.value = true
+    openResultDialog(result)
     // 重置表单
     generateForm.group_id = null
     generateForm.validity_days = 30
@@ -977,16 +989,6 @@ const handleGenerateCodes = async () => {
     console.error('Error generating codes:', error)
   } finally {
     generating.value = false
-  }
-}
-
-const copyToClipboard = async (text: string) => {
-  const success = await clipboardCopy(text, t('admin.redeem.copied'))
-  if (success) {
-    copiedCode.value = text
-    setTimeout(() => {
-      copiedCode.value = null
-    }, 2000)
   }
 }
 
@@ -1116,6 +1118,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   clearTimeout(searchTimeout)
+  if (resultUnlockTimer) clearTimeout(resultUnlockTimer)
   abortController?.abort()
 })
 </script>

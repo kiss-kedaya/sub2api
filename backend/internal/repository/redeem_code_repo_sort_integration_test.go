@@ -21,8 +21,11 @@ func (s *RedeemCodeRepoSuite) TestListWithFilters_SortByValueAsc() {
 	}, "", "", "")
 	s.Require().NoError(err)
 	s.Require().Len(codes, 2)
-	s.Require().Equal("VALUE-10", codes[0].Code)
-	s.Require().Equal("VALUE-20", codes[1].Code)
+	// Code 明文不再落库：排序断言改用落库前缀（前 8 位）。
+	s.Require().Equal("VALUE-10", codes[0].CodePrefix)
+	s.Require().Equal("VALUE-20", codes[1].CodePrefix)
+	s.Require().Equal(float64(10), codes[0].Value)
+	s.Require().Equal(float64(20), codes[1].Value)
 }
 
 func (s *RedeemCodeRepoSuite) TestHistoryPaginationIsolationAndOrdering() {

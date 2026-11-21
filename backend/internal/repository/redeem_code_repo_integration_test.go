@@ -67,7 +67,11 @@ func (s *RedeemCodeRepoSuite) TestCreate() {
 
 	got, err := s.repo.GetByID(s.ctx, code.ID)
 	s.Require().NoError(err, "GetByID")
-	s.Require().Equal("TEST-CREATE", got.Code)
+	// 明文列必须保持 NULL：库里只有 sha256 哈希与展示前缀。
+	s.Require().Empty(got.Code, "plaintext code must not be persisted")
+	s.Require().Equal(service.HashRedeemCode("TEST-CREATE"), got.CodeHash)
+	s.Require().Equal("TEST-CRE", got.CodePrefix)
+	s.Require().Equal("TEST-CREATE", code.Code, "in-memory object keeps the plaintext for the one-time receipt")
 	s.Require().NotNil(got.ExpiresAt)
 	s.Require().WithinDuration(expiresAt, *got.ExpiresAt, time.Second)
 }
@@ -184,22 +188,36 @@ func (s *RedeemCodeRepoSuite) TestListWithFilters_StatusExpiredByExpiresAt() {
 	expired, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", service.StatusExpired, "")
 	s.Require().NoError(err)
 	s.Require().Len(expired, 1)
-	s.Require().Equal("STAT-EXPIRED-BY-TIME", expired[0].Code)
+	s.Require().Equal("STAT-EXP", expired[0].CodePrefix)
 
 	unused, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", service.StatusUnused, "")
 	s.Require().NoError(err)
 	s.Require().Len(unused, 1)
-	s.Require().Equal("STAT-UNUSED-FUTURE", unused[0].Code)
+	s.Require().Equal("STAT-UNU", unused[0].CodePrefix)
 }
 
 func (s *RedeemCodeRepoSuite) TestListWithFilters_Search() {
 	s.Require().NoError(s.repo.Create(s.ctx, &service.RedeemCode{Code: "ALPHA-CODE", Type: service.RedeemTypeBalance, Value: 0, Status: service.StatusUnused}))
 	s.Require().NoError(s.repo.Create(s.ctx, &service.RedeemCode{Code: "BETA-CODE", Type: service.RedeemTypeBalance, Value: 0, Status: service.StatusUnused}))
 
-	codes, _, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", "", "alpha")
+	params := pagination.PaginationParams{Page: 1, PageSize: 10}
+
+	// 完整卡密 → sha256 等值命中。
+	codes, _, err := s.repo.ListWithFilters(s.ctx, params, "", "", "ALPHA-CODE")
 	s.Require().NoError(err)
 	s.Require().Len(codes, 1)
-	s.Require().Contains(codes[0].Code, "ALPHA")
+	s.Require().Equal("ALPHA-CO", codes[0].CodePrefix)
+
+	// 前缀命中：后台只记得开头几位时的唯一入口。
+	codes, _, err = s.repo.ListWithFilters(s.ctx, params, "", "", "ALPHA-CO")
+	s.Require().NoError(err)
+	s.Require().Len(codes, 1)
+	s.Require().Equal("ALPHA-CO", codes[0].CodePrefix)
+
+	// 明文子串不再命中（逐字符 oracle 已删除）。
+	codes, _, err = s.repo.ListWithFilters(s.ctx, params, "", "", "alpha")
+	s.Require().NoError(err)
+	s.Require().Empty(codes)
 }
 
 func (s *RedeemCodeRepoSuite) TestListWithFilters_GroupPreload() {
@@ -285,7 +303,8 @@ func (s *RedeemCodeRepoSuite) TestBatchUpdate_PartialFieldsAndClear() {
 
 	gotA, err := s.repo.GetByID(s.ctx, codeA.ID)
 	s.Require().NoError(err)
-	s.Require().Equal("BATCH-UP-A", gotA.Code)
+	s.Require().Equal("BATCH-UP", gotA.CodePrefix)
+	s.Require().Empty(gotA.Code, "update must not rewrite the plaintext credential")
 	s.Require().Equal(service.RedeemTypeBalance, gotA.Type)
 	s.Require().Equal(float64(10), gotA.Value)
 	s.Require().Equal(service.StatusDisabled, gotA.Status)
@@ -498,7 +517,8 @@ func (s *RedeemCodeRepoSuite) TestCreateBatch_Filters_Use_Idempotency_ListByUser
 	}
 	s.Require().NoError(s.repo.CreateBatch(s.ctx, codes), "CreateBatch")
 
-	list, page, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, service.RedeemTypeSubscription, service.StatusUnused, "code")
+	// 搜索已不再支持明文子串：这里用完整卡密命中（sha256 等值）。
+	list, page, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, service.RedeemTypeSubscription, service.StatusUnused, "CODEB")
 	s.Require().NoError(err, "ListWithFilters")
 	s.Require().Equal(int64(1), page.Total)
 	s.Require().Len(list, 1)
@@ -529,5 +549,5 @@ func (s *RedeemCodeRepoSuite) TestCreateBatch_Filters_Use_Idempotency_ListByUser
 	used, err := s.repo.ListByUser(s.ctx, user.ID, 10)
 	s.Require().NoError(err, "ListByUser")
 	s.Require().Len(used, 2, "expected 2 used codes")
-	s.Require().Equal("CODEA", used[0].Code, "expected newest used code first")
+	s.Require().Equal(codeA.ID, used[0].ID, "expected newest used code first")
 }

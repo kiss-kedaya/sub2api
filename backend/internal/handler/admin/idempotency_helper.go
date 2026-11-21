@@ -81,18 +81,6 @@ func executeAdminIdempotentJSON(
 	executeAdminIdempotentJSONWithMode(c, scope, payload, ttl, idempotencyStoreUnavailableFailClose, 0, false, execute)
 }
 
-func executeAdminIdempotentJSONWithResponseStorage(
-	c *gin.Context,
-	scope string,
-	payload any,
-	ttl time.Duration,
-	maxStoredResponseLen int,
-	preserveStoredResponse bool,
-	execute func(context.Context) (any, error),
-) {
-	executeAdminIdempotentJSONWithMode(c, scope, payload, ttl, idempotencyStoreUnavailableFailClose, maxStoredResponseLen, preserveStoredResponse, execute)
-}
-
 func executeAdminIdempotentJSONFailOpenOnStoreUnavailable(
 	c *gin.Context,
 	scope string,
@@ -165,4 +153,53 @@ func executeAdminIdempotentJSONWithProjection(
 		c.Header("X-Idempotency-Replayed", "true")
 	}
 	response.Success(c, present(result.Data))
+}
+
+// executeAdminIdempotentJSONWithReplayAwareResponse 用于「首次响应和重放响应必须不同」
+// 的接口（典型：一次性明文回执）。
+//
+// 与 executeAdminIdempotentJSONWithProjection 的区别只在最后一步：present 能拿到
+// replayed 标志，按「首次 / 重放」决定响应体。存储不可用时的 observability、Retry-After
+// 与 fail-close 语义完全复用，不允许调用方各自复制一份（漏了就会缺指标/缺日志）。
+//
+// present 返回错误时按「幂等存储不可用」处理：重放数据无法安全解码时绝不半截响应。
+func executeAdminIdempotentJSONWithReplayAwareResponse(
+	c *gin.Context,
+	scope string,
+	payload any,
+	ttl time.Duration,
+	maxStoredResponseLen int,
+	preserveStoredResponse bool,
+	execute func(context.Context) (any, error),
+	present func(replayed bool, data any) (any, error),
+) {
+	if present == nil {
+		present = func(_ bool, data any) (any, error) { return data, nil }
+	}
+	result, err := executeAdminIdempotentWithResponseOptions(c, scope, payload, ttl, maxStoredResponseLen, preserveStoredResponse, execute)
+	if err != nil {
+		if infraerrors.Code(err) == infraerrors.Code(service.ErrIdempotencyStoreUnavail) {
+			service.RecordIdempotencyStoreUnavailable(c.FullPath(), scope, "handler_fail_close")
+			logger.LegacyPrintf("handler.idempotency", "[Idempotency] store unavailable: method=%s route=%s scope=%s strategy=fail_close", c.Request.Method, c.FullPath(), scope)
+		}
+		if retryAfter := service.RetryAfterSecondsFromError(err); retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		response.ErrorFrom(c, err)
+		return
+	}
+	replayed := result != nil && result.Replayed
+	if replayed {
+		c.Header("X-Idempotency-Replayed", "true")
+	}
+	var payloadData any
+	if result != nil {
+		payloadData = result.Data
+	}
+	data, presentErr := present(replayed, payloadData)
+	if presentErr != nil {
+		response.ErrorFrom(c, service.ErrIdempotencyStoreUnavail)
+		return
+	}
+	response.Success(c, data)
 }

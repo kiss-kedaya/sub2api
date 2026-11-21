@@ -231,12 +231,16 @@ func (s *RedeemService) GenerateCodes(ctx context.Context, req GenerateCodesRequ
 			return nil, fmt.Errorf("generate code: %w", err)
 		}
 
-		codes = append(codes, RedeemCode{
+		item := RedeemCode{
 			Code:   code,
 			Type:   codeType,
 			Value:  value,
 			Status: StatusUnused,
-		})
+		}
+		// 服务层显式补齐哈希：仓储也会再兜一层，但生成回执与「只落哈希」的
+		// 不变量不应依赖具体仓储实现。
+		item.EnsureCodeHash()
+		codes = append(codes, item)
 	}
 
 	// 批量插入
@@ -270,6 +274,9 @@ func (s *RedeemService) CreateCode(ctx context.Context, code *RedeemCode) error 
 	if code.IsExpired() {
 		return ErrRedeemCodeExpired
 	}
+	// 卡密本体只以哈希形式落库；明文留在入参对象里供本次流程使用（例如支付
+	// 履约随后要按履约码兑换）。
+	code.EnsureCodeHash()
 
 	if err := s.redeemRepo.Create(ctx, code); err != nil {
 		return fmt.Errorf("create redeem code: %w", err)
@@ -453,8 +460,11 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 	// Crypto payment codes created by earlier builds had the ordinary balance
 	// type. Keep the public endpoint from exposing those legacy deterministic
 	// identities after the new dedicated payment type is introduced.
+	//
+	// 迁移 328 之后库里没有明文，这里只能看「调用方输入的卡密」：命中同一条
+	// 兑换记录的输入必然是同一个字符串，语义不变，也不会再读明文列。
 	if rateLimitPolicy != paymentFulfillmentRedeem &&
-		strings.HasPrefix(strings.ToLower(strings.TrimSpace(redeemCode.Code)), "crypto-") {
+		strings.HasPrefix(strings.ToLower(NormalizeRedeemCode(code)), "crypto-") {
 		return nil, ErrRedeemCodeUsed
 	}
 
@@ -515,7 +525,9 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 		} else {
 			// 充值到账先抵扣历史欠款（清零前的负余额），与入账同一事务：
 			// 抵扣失败则整笔回滚，不会出现「到账了但欠款没扣」。
-			applied, err := payDownUserDebt(txCtx, s.entClient, userID, amount, DebtClawbackSourceRedeemCode, redeemCode.Code)
+			// 欠款台账只落掩码：库里没有明文之后，source_id 不能再是卡密本体，
+			// 否则「卡密哈希化」被这张财务表整体绕过。
+			applied, err := payDownUserDebt(txCtx, s.entClient, userID, amount, DebtClawbackSourceRedeemCode, redeemCode.MaskedCode())
 			if err != nil {
 				return nil, fmt.Errorf("collect user debt: %w", err)
 			}
@@ -544,7 +556,8 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 		validityDays := redeemCode.ValidityDays
 		if validityDays < 0 {
 			// 负数天数：缩短订阅，减到 0 则取消订阅
-			if err := s.reduceOrCancelSubscription(txCtx, userID, *redeemCode.GroupID, -validityDays, redeemCode.Code); err != nil {
+			// 订阅备注同样只写掩码，避免明文卡密被抄进订阅表。
+			if err := s.reduceOrCancelSubscription(txCtx, userID, *redeemCode.GroupID, -validityDays, redeemCode.MaskedCode()); err != nil {
 				return nil, fmt.Errorf("reduce or cancel subscription: %w", err)
 			}
 		} else {
@@ -556,7 +569,7 @@ func (s *RedeemService) redeem(ctx context.Context, userID int64, code string, r
 				GroupID:      *redeemCode.GroupID,
 				ValidityDays: validityDays,
 				AssignedBy:   0, // 系统分配
-				Notes:        fmt.Sprintf("通过兑换码 %s 兑换", redeemCode.Code),
+				Notes:        fmt.Sprintf("通过兑换码 %s 兑换", redeemCode.MaskedCode()),
 			})
 			if err != nil {
 				return nil, fmt.Errorf("assign or extend subscription: %w", err)

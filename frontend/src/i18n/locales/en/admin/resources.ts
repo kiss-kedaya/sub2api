@@ -358,6 +358,8 @@ export default {
       generating: 'Generating...',
       generate: 'Generate',
       copyAll: 'Copy All',
+      plaintextOnceOnly:
+        'The full redeem code is shown only once and can be copied only once. After closing you cannot view or copy it again — only the hash is stored, and a lost code must be revoked and reissued.',
       copied: 'Copied!',
       download: 'Download',
       codesExported: 'Codes exported successfully',

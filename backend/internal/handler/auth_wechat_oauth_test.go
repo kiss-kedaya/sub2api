@@ -1361,6 +1361,9 @@ func newWeChatOAuthTestHandlerWithSettings(t *testing.T, invitationEnabled bool,
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 
+	// redeem_code_hashes 是迁移 328 新增的原生 DDL 表，enttest 只建 schema 里的表。
+	ensureRedeemCodeHashLedgerTable(t, db)
+
 	userRepo := &oauthPendingFlowUserRepo{client: client}
 	redeemRepo := repository.NewRedeemCodeRepository(client)
 	cfg := &config.Config{

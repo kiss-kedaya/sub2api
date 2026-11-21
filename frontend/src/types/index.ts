@@ -2026,7 +2026,11 @@ export interface UsageCleanupTask {
 
 export interface RedeemCode {
   id: number
+  // code 永远只是掩码（前 4 位 + ****）。完整卡密只在「生成」接口的当次响应里
+  // 出现一次，后台列表 / 详情 / 历史 / 导出都不会返回明文。
   code: string
+  // code_prefix 是落库的展示前缀（前 8 位），不是凭据。
+  code_prefix?: string
   type: RedeemCodeType
   value: number
   status: 'active' | 'used' | 'expired' | 'unused' | 'disabled'

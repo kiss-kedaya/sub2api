@@ -19,8 +19,12 @@ type RedeemCode struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int64 `json:"id,omitempty"`
-	// Code holds the value of the "code" field.
+	// Legacy plaintext redeem code; NULL for hash-only rows
 	Code string `json:"code,omitempty"`
+	// Lowercase hex SHA-256 of the redeem code; the only stored credential
+	CodeHash string `json:"code_hash,omitempty"`
+	// Display prefix (first 8 characters) of the redeem code
+	CodePrefix string `json:"code_prefix,omitempty"`
 	// Type holds the value of the "type" field.
 	Type string `json:"type,omitempty"`
 	// Value holds the value of the "value" field.
@@ -89,7 +93,7 @@ func (*RedeemCode) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case redeemcode.FieldID, redeemcode.FieldUsedBy, redeemcode.FieldGroupID, redeemcode.FieldValidityDays:
 			values[i] = new(sql.NullInt64)
-		case redeemcode.FieldCode, redeemcode.FieldType, redeemcode.FieldStatus, redeemcode.FieldNotes:
+		case redeemcode.FieldCode, redeemcode.FieldCodeHash, redeemcode.FieldCodePrefix, redeemcode.FieldType, redeemcode.FieldStatus, redeemcode.FieldNotes:
 			values[i] = new(sql.NullString)
 		case redeemcode.FieldUsedAt, redeemcode.FieldCreatedAt, redeemcode.FieldExpiresAt:
 			values[i] = new(sql.NullTime)
@@ -119,6 +123,18 @@ func (_m *RedeemCode) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field code", values[i])
 			} else if value.Valid {
 				_m.Code = value.String
+			}
+		case redeemcode.FieldCodeHash:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field code_hash", values[i])
+			} else if value.Valid {
+				_m.CodeHash = value.String
+			}
+		case redeemcode.FieldCodePrefix:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field code_prefix", values[i])
+			} else if value.Valid {
+				_m.CodePrefix = value.String
 			}
 		case redeemcode.FieldType:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -233,6 +249,12 @@ func (_m *RedeemCode) String() string {
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
 	builder.WriteString("code=")
 	builder.WriteString(_m.Code)
+	builder.WriteString(", ")
+	builder.WriteString("code_hash=")
+	builder.WriteString(_m.CodeHash)
+	builder.WriteString(", ")
+	builder.WriteString("code_prefix=")
+	builder.WriteString(_m.CodePrefix)
 	builder.WriteString(", ")
 	builder.WriteString("type=")
 	builder.WriteString(_m.Type)

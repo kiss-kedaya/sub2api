@@ -554,7 +554,8 @@ func TestAPIContracts(t *testing.T) {
 				"data": [
 					{
 						"id": 900,
-						"code": "CODE-123",
+						"code": "CODE****",
+						"code_prefix": "CODE-123",
 						"type": "balance",
 						"value": 1.25,
 						"status": "used",

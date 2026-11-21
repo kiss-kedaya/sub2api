@@ -684,19 +684,23 @@ func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 // registerRedeemCodeRoutes 注册卡密（兑换码）管理路由。
 //
 // 卡密本身就是可兑现的价值载体：生成、批量改值、作废、删除都会新增/改变可兑价值，
-// 批量导出还会一次性带走最多 1 万条仍可使用的明文卡密。这些写操作与"改余额"同口径，
-// 要求 step-up 2FA（机器凭据一律 403）；列表/详情/统计是只读查询，不额外打断。
+// 批量导出还会一次性带走最多 1 万条仍可使用的卡密。这些写操作与"改余额"同口径，
+// 要求 step-up 2FA（机器凭据一律 403）。
+//
+// 只读的列表 / 详情 / 统计现在只返回掩码（明文只在生成回执里出现一次），但仍不允许
+// 机器凭据访问：旧版全权 x-api-key 可以逐页把全量卡密元数据读走，等于绕过导出接口的
+// step-up（#489 审计 B-2）。人只会话可直接读，不需要再输 TOTP。
 func registerRedeemCodeRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	codes := admin.Group("/redeem-codes")
 	{
-		codes.GET("", h.Admin.Redeem.List)
-		codes.GET("/stats", h.Admin.Redeem.GetStats)
-		// 导出会落地明文卡密 CSV（可直接兑换）：要求 step-up 2FA
+		codes.GET("", middleware.ForbidMachineCredentials(), h.Admin.Redeem.List)
+		codes.GET("/stats", middleware.ForbidMachineCredentials(), h.Admin.Redeem.GetStats)
+		// 导出会落地卡片元数据 CSV：要求 step-up 2FA
 		codes.GET("/export", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.Export)
-		codes.GET("/:id", h.Admin.Redeem.GetByID)
+		codes.GET("/:id", middleware.ForbidMachineCredentials(), h.Admin.Redeem.GetByID)
 		// 固定卡密 + 直接发放给目标用户（一步产出可兑价值）：要求 step-up 2FA
 		codes.POST("/create-and-redeem", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.CreateAndRedeem)
-		// 生成卡密即产出可兑价值：要求 step-up 2FA
+		// 生成卡密即产出可兑价值（且响应里带一次性明文）：要求 step-up 2FA
 		codes.POST("/generate", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.Generate)
 		codes.DELETE("/:id", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.Delete)
 		codes.POST("/batch-delete", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.BatchDelete)

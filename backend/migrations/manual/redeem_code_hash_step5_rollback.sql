@@ -1,0 +1,39 @@
+-- ============================================================================
+-- 卡密哈希化 · 阶段 B · 回滚（任一步骤出问题时使用）
+-- ============================================================================
+--
+-- 回滚策略：只还原「明文列」，保留新加的 code_hash / code_prefix 与台账表。
+--   * 旧版本二进制只按明文列查询与兑换，明文还原即可恢复完整功能；
+--   * 新加的列对旧版本是惰性数据，不会影响唯一约束（NULL 不参与）或写入；
+--   * 台账表保留可以继续用于核对，回滚不需要清掉（清了反而丢失哈希证据）。
+--
+-- 回滚是分批 UPDATE（每批 5000 行，单条 ≤30s），重复跑到 UPDATE 0：
+--
+--   WITH batch AS (
+--       SELECT b.id, b.code
+--       FROM redeem_codes_plaintext_backup b
+--       JOIN redeem_codes r ON r.id = b.id
+--       WHERE r.code IS NULL
+--       ORDER BY b.id
+--       LIMIT 5000
+--   )
+--   UPDATE redeem_codes r
+--   SET code = batch.code
+--   FROM batch
+--   WHERE r.id = batch.id;
+
+-- 回滚后的验证（都应分别等于备份表行数 / 0）：
+--   SELECT COUNT(*) FROM redeem_codes WHERE code IS NOT NULL;
+--   SELECT COUNT(*) FROM redeem_codes_plaintext_backup;
+--   SELECT COUNT(*) FROM redeem_codes r
+--     JOIN redeem_codes_plaintext_backup b ON b.id = r.id
+--     WHERE r.code IS DISTINCT FROM b.code;   -- 必须 0
+
+-- 注意：回滚 UPDATE 会重新撞上原来的 code 唯一约束——备份表来自同一批行，
+-- 原值本来就互不相同，所以不会冲突。若备份后又生成过新卡密（这些新行 code
+-- 为 NULL、只有哈希），它们不会出现在备份表里，保持 NULL 即可，旧版本也读不到
+-- 它们（旧版本按明文查），这一点在回滚说明里必须同步告知。
+
+-- 只有在确定不再回滚、且校验窗口（建议 7 天）过后，才允许清理备份：
+--   DROP TABLE IF EXISTS redeem_codes_plaintext_backup;
+--   DROP TABLE IF EXISTS redeem_code_hash_backfill_audit;

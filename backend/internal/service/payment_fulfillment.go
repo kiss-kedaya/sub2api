@@ -363,7 +363,9 @@ func validatePaymentRedeemCode(o *dbent.PaymentOrder, code *RedeemCode) error {
 	if o == nil || code == nil {
 		return errors.New("payment redeem code validation requires an order and code")
 	}
-	if code.Code != o.RechargeCode {
+	// 迁移 328 之后库里只有 sha256(code)，不能再比较明文列；MatchesCode 同时
+	// 覆盖「哈希命中」和「尚未回填的历史明文行」两种形态。
+	if !code.MatchesCode(o.RechargeCode) {
 		return fmt.Errorf("payment redeem code mismatch for order %d", o.ID)
 	}
 	if code.Type != RedeemTypeBalance && code.Type != RedeemTypePaymentBalance {

@@ -113,8 +113,10 @@ describe('RedeemView refresh after redemption', () => {
     'keeps a successful %s redemption when profile refresh fails', async (type) => {
       redeem.mockResolvedValue({ type, value: 20, id: 1, code: 'REDEEM-CODE', status: 'used' })
       refreshUser.mockRejectedValue({ status: 503, message: 'Service unavailable' })
+      // Backend only ever returns a mask for history rows: real plaintext is
+      // shown once at generation time and never again.
       getHistory.mockResolvedValueOnce({ items: [], total: 0 }).mockResolvedValueOnce({ total: 1, items: [{
-        id: 1, code: 'REDEEM-CODE', type, value: 20, used_at: '2026-03-08T00:00:00Z',
+        id: 1, code: 'REDEEM****', type, value: 20, used_at: '2026-03-08T00:00:00Z',
       }] })
 
       const wrapper = await submitCode()
@@ -135,7 +137,7 @@ describe('RedeemView refresh after redemption', () => {
       expect((wrapper.get('input#code').element as HTMLInputElement).value).toBe('')
       expect((wrapper.get('input#code').element as HTMLInputElement).disabled).toBe(false)
       expect(getHistory).toHaveBeenCalledTimes(2)
-      expect(wrapper.text()).toContain('REDEEM-C...')
+      expect(wrapper.text()).toContain('REDEEM****')
       if (type === 'subscription') {
         expect(fetchActiveSubscriptions).toHaveBeenCalledWith(true)
       } else {
@@ -417,21 +419,22 @@ describe('RedeemView refresh after redemption', () => {
   })
 
   it('keeps loaded history rows visible while refreshing after a successful redemption', async () => {
-    const row = { id: 1, code: 'PREVIOUS-CODE', type: 'balance', value: 4, used_at: '2026-03-08T00:00:00Z' }
+    // History rows render the mask only: the backend never returns plaintext.
+    const row = { id: 1, code: 'PREVIOUS****', type: 'balance', value: 4, used_at: '2026-03-08T00:00:00Z' }
     getHistory.mockResolvedValueOnce({ items: [row], total: 1 })
     let resolveHistory!: (value: unknown) => void
     getHistory.mockImplementationOnce(() => new Promise((resolve) => { resolveHistory = resolve }))
     const wrapper = await submitCode()
 
     expect(wrapper.get('[data-testid="redeem-history"]').attributes('aria-busy')).toBe('true')
-    expect(wrapper.get('[data-testid="redeem-history"]').text()).toContain('PREVIOUS...')
+    expect(wrapper.get('[data-testid="redeem-history"]').text()).toContain('PREVIOUS****')
     expect(document.body.querySelector('[data-testid="redeem-result-modal-content"]')).not.toBeNull()
     expect(redeem).toHaveBeenCalledTimes(1)
 
     resolveHistory({ items: [row], total: 2 })
     await flushPromises()
     expect(wrapper.get('[data-testid="redeem-history"]').attributes('aria-busy')).toBe('false')
-    expect(wrapper.get('[data-testid="redeem-history"]').text()).toContain('PREVIOUS...')
+    expect(wrapper.get('[data-testid="redeem-history"]').text()).toContain('PREVIOUS****')
     wrapper.unmount()
   })
 
