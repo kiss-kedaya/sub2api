@@ -12,11 +12,25 @@ import (
 	"time"
 )
 
-var lookupURL = "http://ip-api.com/batch?fields=status,query,hosting,proxy"
+var lookupURL = "http://ip-api.com/batch?fields=status,query,hosting,proxy,country,regionName,city,isp&lang=zh-CN"
 
 type cacheEntry struct {
 	datacenter bool
+	geo        Geo
 	expiresAt  time.Time
+}
+
+// Geo is the human-readable location ip-api reports for an address. Fields stay
+// empty when the provider has no data, so callers can render "unknown" instead
+// of failing the whole request.
+type Geo struct {
+	Country string `json:"country"`
+	Region  string `json:"region"`
+	City    string `json:"city"`
+	ISP     string `json:"isp"`
+	// Hosting marks datacenter/cloud ranges. It is also true for proxy
+	// endpoints so a VPN/datacenter egress is never presented as a home line.
+	Hosting bool `json:"hosting"`
 }
 
 var (
@@ -27,10 +41,14 @@ var (
 )
 
 type batchResult struct {
-	Status  string `json:"status"`
-	Query   string `json:"query"`
-	Hosting bool   `json:"hosting"`
-	Proxy   bool   `json:"proxy"`
+	Status     string `json:"status"`
+	Query      string `json:"query"`
+	Hosting    bool   `json:"hosting"`
+	Proxy      bool   `json:"proxy"`
+	Country    string `json:"country"`
+	RegionName string `json:"regionName"`
+	City       string `json:"city"`
+	ISP        string `json:"isp"`
 }
 
 // ClassifyDatacenterIPs returns the subset of ips that ip-api flags as
@@ -59,6 +77,56 @@ func ClassifyDatacenterIPs(ctx context.Context, ips []string) map[string]bool {
 	if len(missing) == 0 {
 		return out
 	}
+	for _, result := range lookupAndCache(ctx, missing, now) {
+		if result.Hosting || result.Proxy {
+			out[result.Query] = true
+		}
+	}
+	return out
+}
+
+// LookupGeo resolves country/region/city/ISP (plus the hosting flag) for ips. It
+// shares the batch endpoint and the cache of ClassifyDatacenterIPs, so a page
+// that shows both the datacenter warning and the location costs one ip-api
+// round trip. Lookups are best-effort: unresolved addresses are simply absent
+// from the map and third-party failures never surface as errors.
+func LookupGeo(ctx context.Context, ips []string) map[string]Geo {
+	out := map[string]Geo{}
+	var missing []string
+	seen := make(map[string]struct{}, len(ips))
+	now := time.Now()
+	mu.Lock()
+	for _, raw := range ips {
+		ip := strings.TrimSpace(raw)
+		if ip == "" || net.ParseIP(ip) == nil {
+			continue
+		}
+		if _, dup := seen[ip]; dup {
+			continue
+		}
+		seen[ip] = struct{}{}
+		if entry, ok := cache[ip]; ok && now.Before(entry.expiresAt) {
+			out[ip] = entry.geo
+			continue
+		}
+		missing = append(missing, ip)
+	}
+	mu.Unlock()
+	if len(missing) == 0 {
+		return out
+	}
+	for _, result := range lookupAndCache(ctx, missing, now) {
+		out[result.Query] = geoOf(result)
+	}
+	return out
+}
+
+// lookupAndCache fetches addresses (in ip-api sized batches of 100) that were
+// missing from the cache and stores every successful answer. Transport or API
+// failures are swallowed so one provider outage degrades to unknown locations
+// instead of failing the caller.
+func lookupAndCache(ctx context.Context, missing []string, now time.Time) []batchResult {
+	fetched := make([]batchResult, 0, len(missing))
 	for start := 0; start < len(missing); start += 100 {
 		end := start + 100
 		if end > len(missing) {
@@ -73,15 +141,26 @@ func ClassifyDatacenterIPs(ctx context.Context, ips []string) map[string]bool {
 			if result.Status != "success" || result.Query == "" {
 				continue
 			}
-			datacenter := result.Hosting || result.Proxy
-			cache[result.Query] = cacheEntry{datacenter: datacenter, expiresAt: now.Add(ttl)}
-			if datacenter {
-				out[result.Query] = true
+			cache[result.Query] = cacheEntry{
+				datacenter: result.Hosting || result.Proxy,
+				geo:        geoOf(result),
+				expiresAt:  now.Add(ttl),
 			}
+			fetched = append(fetched, result)
 		}
 		mu.Unlock()
 	}
-	return out
+	return fetched
+}
+
+func geoOf(result batchResult) Geo {
+	return Geo{
+		Country: strings.TrimSpace(result.Country),
+		Region:  strings.TrimSpace(result.RegionName),
+		City:    strings.TrimSpace(result.City),
+		ISP:     strings.TrimSpace(result.ISP),
+		Hosting: result.Hosting || result.Proxy,
+	}
 }
 
 func lookup(ctx context.Context, ips []string) ([]batchResult, error) {

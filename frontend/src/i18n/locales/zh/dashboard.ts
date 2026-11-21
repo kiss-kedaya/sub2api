@@ -369,6 +369,24 @@ export default {
     autoBlockDatacenterIPs: '自动封禁机房 IP',
     autoBlockDatacenterIPsHint: '开启后每 5 分钟检查该密钥最近使用的 IP，自动把机房/代理 IP 加入 IP 黑名单',
     ipRestrictionEnabled: '已配置 IP 限制',
+    ipWhitelistAssist: {
+      fillCurrent: '填入当前 IP',
+      commonIPs: '常用 IP',
+      loading: '加载中…',
+      loadFailed: '获取 IP 信息失败，请稍后重试',
+      noCurrentIP: '未能识别当前 IP，请手动填写',
+      confirmHint: '确认前请先确认这是你自己的出口 IP；使用代理/VPN 时不要填错。',
+      confirm: '确认使用这个 IP',
+      confirmCounting: '确认使用这个 IP ({seconds})',
+      countdownHint: '倒计时结束后才能确认',
+      hostingWarning: '这个 IP 像机房/代理，不是你家宽带，填错会把自己锁在外面',
+      unknownRegion: '地区未知',
+      recentHint: '最近 30 天使用过的 IP（按出现次数排序，最多 5 条）',
+      recentEmpty: '最近没有可用的 IP 记录',
+      usedCount: '使用 {count} 次',
+      added: '已填入 {ip}',
+      duplicate: '已存在'
+    },
     ccSwitchNotInstalled:
       'CC-Switch 未安装或协议处理程序未注册。请先安装 CC-Switch 或手动复制 API 密钥。',
     ccsClientSelect: {

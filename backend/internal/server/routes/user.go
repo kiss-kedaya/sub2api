@@ -37,6 +37,11 @@ func RegisterUserRoutes(
 				user.GET("/security/events", h.Admin.PromptAudit.MyPenaltyEvents)
 			}
 			user.GET("/custom-endpoints", h.Setting.GetCustomEndpoints)
+			// IP 白名单助手：返回当前访问者的可信客户端 IP、归属地和最近常用 IP。
+			// 与密钥 IP ACL 使用同一套客户端 IP 解析逻辑。
+			if h.IPWhitelistAssist != nil {
+				user.GET("/ip-whitelist-assist", h.IPWhitelistAssist.Get)
+			}
 			user.PUT("/password", h.User.ChangePassword)
 			user.PUT("", h.User.UpdateProfile)
 			user.GET("/aff", h.User.GetAffiliate)

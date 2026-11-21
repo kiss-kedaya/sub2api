@@ -190,6 +190,34 @@ export async function blockDatacenterIPs(id: number): Promise<BlockDatacenterIPs
   return data
 }
 
+/** Location data for one client IP. Empty strings mean "unknown". */
+export interface IPWhitelistAssistGeo {
+  country: string
+  region: string
+  city: string
+  isp: string
+  hosting: boolean
+}
+
+export interface IPWhitelistAssistRecentIP {
+  ip: string
+  count: number
+  geo: IPWhitelistAssistGeo
+}
+
+export interface IPWhitelistAssistResponse {
+  current_ip: string
+  current_geo: IPWhitelistAssistGeo
+  recent_ips: IPWhitelistAssistRecentIP[]
+}
+
+/** Backend-derived answer for the IP whitelist helper (current IP + location). */
+export async function getIPWhitelistAssist(): Promise<IPWhitelistAssistResponse> {
+  const { data } = await apiClient.get<IPWhitelistAssistResponse>('/user/ip-whitelist-assist')
+  return data
+}
+
+
 /**
  * Rotate the key value (reset/regenerate).
  *
@@ -213,6 +241,7 @@ export const keysAPI = {
   deleteMany,
   toggleStatus,
   blockDatacenterIPs,
+  getIPWhitelistAssist,
   rotateKey
 }
 

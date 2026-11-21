@@ -93,6 +93,7 @@
               class="mt-2 w-full"
               data-test="bulk-edit-ip"
             />
+            <IpWhitelistAssist v-if="enabled.ipWhitelist" v-model="form.ipWhitelist" class="mt-2" />
             <p v-if="enabled.ipWhitelist" class="mt-1 text-xs text-muted">
               {{ t('keys.bulkEdit.ipHint') }}
             </p>
@@ -127,6 +128,7 @@ import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { keysAPI } from '@/api/keys'
 import type { UpdateApiKeyRequest } from '@/types'
+import IpWhitelistAssist from '@/components/keys/IpWhitelistAssist.vue'
 
 const props = defineProps<{
   open: boolean
