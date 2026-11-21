@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -56,7 +57,7 @@ func TwoFactorRateLimitKey(userID int64) string {
 // 存储故障：返回 error，调用方应 fail-closed。
 func (l *TwoFactorRateLimiter) Check(ctx context.Context, userID int64) (allowed bool, retryAfter time.Duration, err error) {
 	if l == nil || l.limiter == nil || userID <= 0 {
-		return true, 0, nil
+		return false, 0, errors.New("account two-factor verification budget unavailable")
 	}
 	result, err := l.limiter.AllowSliding(ctx, TwoFactorRateLimitKey(userID), TwoFactorRateLimitMaxAttempts, TwoFactorRateLimitWindow)
 	if err != nil {
