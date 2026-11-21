@@ -56,7 +56,7 @@ func TestAdminAPIKeyEstablishesOnlyVerifiedOwnerScope(t *testing.T) {
 			r := gin.New()
 			r.Use(gin.HandlerFunc(NewAdminAuthMiddleware(nil, users, settings, nil, cfg)))
 			called := false
-			r.GET("/accounts", func(c *gin.Context) {
+			r.GET("/api/v1/admin/dashboard/stats", func(c *gin.Context) {
 				called = true
 				// The middleware installs a scope only when an owner is configured.
 				id, fullPool, ok := service.AccountOwnerScopeDetail(c.Request.Context())
@@ -67,7 +67,7 @@ func TestAdminAPIKeyEstablishesOnlyVerifiedOwnerScope(t *testing.T) {
 				}
 				c.Status(http.StatusOK)
 			})
-			req := httptest.NewRequest(http.MethodGet, "/accounts?see_all=true", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/dashboard/stats?see_all=true", nil)
 			req.Header.Set("X-API-Key", tc.key)
 			req.Header.Set("X-Account-Pool-Owner-User-ID", "7")
 			w := httptest.NewRecorder()

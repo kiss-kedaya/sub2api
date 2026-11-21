@@ -22,7 +22,11 @@ const (
 	// AuditAuthMethodJWT / AuditAuthMethodAdminAPIKey 与 auth 中间件写入的 auth_method 对齐。
 	AuditAuthMethodJWT         = "jwt"
 	AuditAuthMethodAdminAPIKey = "admin_api_key"
-	AuditAuthMethodPasskey     = "passkey"
+	// AuditAuthMethodScopedAdminAPIKey 是受限管理密钥（adm_sc_）的认证方式。
+	// 与旧版全权 admin_api_key 分开登记：前者是显式授权、可过期/轮换/IP 限制的
+	// 自动化身份，后者是常驻全权的历史后门路径（默认拒绝）。
+	AuditAuthMethodScopedAdminAPIKey = "admin_scoped_api_key"
+	AuditAuthMethodPasskey           = "passkey"
 	// AuditAuthMethodPassword / AuditAuthMethodOAuth 用于登录事件：
 	// 密码/邮箱登录与第三方（OAuth / 扫码 / OIDC / 钉钉 / 微信）登录分开检索。
 	AuditAuthMethodPassword = "password"

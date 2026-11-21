@@ -192,6 +192,57 @@ describe('admin RedeemView step-up 2FA', () => {
     getAllGroups.mockResolvedValue([])
   })
 
+  it('prompts for TOTP on STEP_UP_REQUIRED list read and retries it', async () => {
+    listRedeemCodes.mockReset()
+    listRedeemCodes.mockRejectedValueOnce(stepUpRequired).mockResolvedValueOnce({
+      items: [
+        {
+          id: 1,
+          code: 'CODE-1',
+          type: 'balance',
+          value: 10,
+          status: 'unused',
+          used_by: null,
+          used_at: null,
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null
+        }
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+
+    const wrapper = mountRedeemView()
+    await flushPromises()
+
+    // 卡密列表是敏感读：第一次被 403 STEP_UP_REQUIRED 拦住，弹 TOTP 对话框。
+    expect(listRedeemCodes).toHaveBeenCalledTimes(1)
+    expect(stepUpController(wrapper).visible.value).toBe(true)
+
+    stepUpController(wrapper).onVerified()
+    await flushPromises()
+
+    // 验证通过后自动重试同一次列表读取，并把明文 code 渲染出来。
+    expect(listRedeemCodes).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('CODE-1')
+    expect(stepUpController(wrapper).visible.value).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows the machine-credential message when the read is STEP_UP_ADMIN_API_KEY_FORBIDDEN', async () => {
+    listRedeemCodes.mockReset()
+    listRedeemCodes.mockRejectedValue({ code: 'STEP_UP_ADMIN_API_KEY_FORBIDDEN', status: 403 })
+
+    const wrapper = mountRedeemView()
+    await flushPromises()
+
+    expect(stepUpController(wrapper).visible.value).toBe(false)
+    expect(showError).toHaveBeenCalledWith('stepUp.adminApiKeyForbidden')
+    wrapper.unmount()
+  })
+
   it('prompts for TOTP on STEP_UP_REQUIRED and retries the write once verified', async () => {
     batchUpdateRedeemCodes
       .mockRejectedValueOnce(stepUpRequired)

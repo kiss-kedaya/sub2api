@@ -56,7 +56,8 @@ func TestGlobalAdminKeyMutationsRequireConfiguredPoolOwner(t *testing.T) {
 					require.Zero(t, repo.writes)
 					require.NotContains(t, w.Body.String(), `"key":`)
 				} else {
-					require.Equal(t, 1, repo.writes)
+					// 删除会清掉旧版 key 的全部存储形态：明文、哈希、前缀、last_used。
+					require.Equal(t, 4, repo.writes)
 				}
 			})
 		}

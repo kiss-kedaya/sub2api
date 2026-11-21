@@ -31,6 +31,10 @@ func RegisterAdminRoutes(
 	// 审计中间件挂在认证之后：所有管理面变更类操作 + 敏感读取入审计日志
 	admin.Use(gin.HandlerFunc(auditLog))
 	admin.Use(middleware.AdminComplianceGuard(settingService))
+	// 集中注册表驱动的 step-up 门控：敏感资源（含 GET）统一要求真人 2FA。
+	// 机器凭据已在 adminAuth 里默认拒绝，这里只约束真人会话；未归类路由
+	// fail-closed 同样要求 step-up。禁止在路由文件里散落分类常量。
+	admin.Use(adminStepUpRouteGuard(stepUpAuth))
 	if h.ModelPlaza != nil {
 		admin.GET("/model-plaza", h.ModelPlaza.AdminGet)
 	}
