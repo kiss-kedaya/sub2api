@@ -90,6 +90,24 @@ func (r *usageLogRepository) runConnectionWriter() {
 				}
 			}
 			trafficCancel()
+
+			// Delivered outbox rows are history only: the consumer selects
+			// undelivered rows exclusively, so pruning what is already applied
+			// can never lose a balance adjustment.
+			outboxCtx, outboxCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			for pass := 0; pass < liveBalanceOutboxPrunePasses; pass++ {
+				res, err := r.db.ExecContext(outboxCtx, `DELETE FROM live_balance_adjustment_outbox WHERE ctid IN
+    (SELECT ctid FROM live_balance_adjustment_outbox WHERE delivered_at IS NOT NULL
+       AND delivered_at < NOW()-INTERVAL '`+strconv.Itoa(liveBalanceOutboxDeliveredRetentionDays)+` days' LIMIT `+strconv.Itoa(liveBalanceOutboxPruneBatch)+`)`)
+				if err != nil {
+					logger.LegacyPrintf("connection_diagnostics", "balance outbox retention failed")
+					break
+				}
+				if n, err := res.RowsAffected(); err == nil && n < int64(liveBalanceOutboxPruneBatch) {
+					break
+				}
+			}
+			outboxCancel()
 		}
 	}
 }
@@ -304,6 +322,19 @@ const (
 	userTrafficEventRetentionDays = 7
 	userTrafficEventPruneBatch    = 200000
 	userTrafficEventPrunePasses   = 20
+
+	// live_balance_adjustment_outbox is the durable projection that feeds the
+	// Redis live wallet used by balance preauthorization. A delivered row is
+	// never re-read: the consumer only selects `delivered_at IS NULL`, so the
+	// backlog of delivered rows is pure history. It used to grow forever
+	// (97M rows / 20 GB), which is why it is pruned here with a short window.
+	//
+	// One day of delivered rows is kept for incident forensics (a stuck wallet
+	// is diagnosed by walking the last day of events). Undelivered rows are
+	// never touched by this prune.
+	liveBalanceOutboxDeliveredRetentionDays = 1
+	liveBalanceOutboxPruneBatch             = 200000
+	liveBalanceOutboxPrunePasses            = 4
 )
 
 // Protocol metadata carries no diagnostic value per row and repeats the same
