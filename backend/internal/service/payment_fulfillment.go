@@ -39,6 +39,48 @@ var ErrCryptoRetryRequiresLedger = infraerrors.Forbidden(
 
 const paymentFulfillmentLeaseDuration = 5 * time.Minute
 
+// paymentMoneyContextTimeout bounds money-moving work that must outlive the
+// inbound request. Balance credits, redeem-code issuance, subscription
+// assignment, audit writes and cache invalidation all happen after the order is
+// already PAID, so a canceled client connection (webhook caller or browser
+// timeout) must never abort them: the order would stay stuck and the user's
+// money would not be credited.
+const paymentMoneyContextTimeout = 30 * time.Second
+
+// paymentMoneyContextKey marks a context already detached by
+// detachPaymentMoneyContext so nested fulfillment entry points reuse the outer
+// budget instead of granting a fresh timeout at every layer.
+type paymentMoneyContextKey struct{}
+
+// detachPaymentMoneyContext returns a context that is not canceled when parent
+// is canceled (HTTP request, client disconnect, provider webhook timeout) while
+// preserving parent's values, bounded by timeout so a hung database cannot
+// block forever.
+//
+// When parent already carries a deadline, the smaller of that remaining budget
+// and timeout is applied: background sweeps that share one deadline (the
+// payment order expiry service) therefore stay bounded as a whole. An
+// already-detached parent is returned unchanged so nested entry points cannot
+// extend the caller's budget.
+func detachPaymentMoneyContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	if detached, _ := parent.Value(paymentMoneyContextKey{}).(bool); detached {
+		return parent, func() {}
+	}
+	if timeout <= 0 {
+		timeout = paymentMoneyContextTimeout
+	}
+	if deadline, ok := parent.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 && remaining < timeout {
+			timeout = remaining
+		}
+	}
+	base := context.WithValue(context.WithoutCancel(parent), paymentMoneyContextKey{}, true)
+	return context.WithTimeout(base, timeout)
+}
+
 type paymentFulfillmentLease struct {
 	version time.Time
 }
@@ -46,6 +88,11 @@ type paymentFulfillmentLease struct {
 // --- Payment Notification & Fulfillment ---
 
 func (s *PaymentService) HandlePaymentNotification(ctx context.Context, n *payment.PaymentNotification, pk string) error {
+	// A verified provider callback transitions PAID and then moves money. Detach
+	// it from the inbound connection: a webhook/browser timeout must not abort
+	// the credit after the PAID commit (see incident order 11380).
+	ctx, cancel := detachPaymentMoneyContext(ctx, paymentMoneyContextTimeout)
+	defer cancel()
 	if n.Status != payment.NotificationStatusSuccess {
 		return nil
 	}
@@ -236,6 +283,10 @@ func (s *PaymentService) alreadyProcessed(ctx context.Context, o *dbent.PaymentO
 }
 
 func (s *PaymentService) executeFulfillment(ctx context.Context, oid int64) error {
+	// Money movement must survive caller cancellation; nested entry points reuse
+	// this detached budget instead of granting a fresh one.
+	ctx, cancel := detachPaymentMoneyContext(ctx, paymentMoneyContextTimeout)
+	defer cancel()
 	o, err := s.entClient.PaymentOrder.Get(ctx, oid)
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)
@@ -251,6 +302,11 @@ func (s *PaymentService) executeFulfillment(ctx context.Context, oid int64) erro
 }
 
 func (s *PaymentService) ExecuteBalanceFulfillment(ctx context.Context, oid int64) error {
+	// Direct callers (e.g. the crypto deposit creditor) may pass a context tied to
+	// their own request/scan lifecycle. Never let that cancellation interrupt
+	// crediting the user after the payment is recorded.
+	ctx, cancel := detachPaymentMoneyContext(ctx, paymentMoneyContextTimeout)
+	defer cancel()
 	o, err := s.entClient.PaymentOrder.Get(ctx, oid)
 	if err != nil {
 		return infraerrors.NotFound("NOT_FOUND", "order not found")
@@ -535,6 +591,10 @@ func (s *PaymentService) sendSubscriptionPurchaseSuccessNotification(ctx context
 }
 
 func (s *PaymentService) ExecuteSubscriptionFulfillment(ctx context.Context, oid int64) error {
+	// Same invariant as ExecuteBalanceFulfillment: subscription assignment and
+	// cache invalidation must not be canceled by the caller's connection.
+	ctx, cancel := detachPaymentMoneyContext(ctx, paymentMoneyContextTimeout)
+	defer cancel()
 	o, err := s.entClient.PaymentOrder.Get(ctx, oid)
 	if err != nil {
 		return infraerrors.NotFound("NOT_FOUND", "order not found")

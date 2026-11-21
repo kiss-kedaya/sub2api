@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -28,6 +29,23 @@ const maxWebhookBodySize = 1 << 20
 
 // webhookLogTruncateLen is the maximum length of raw body logged on verify failure.
 const webhookLogTruncateLen = 200
+
+// paymentWebhookFulfillmentTimeout bounds the post-verification money work that
+// is driven by a callback (order transition to PAID + fulfillment).
+const paymentWebhookFulfillmentTimeout = 30 * time.Second
+
+// detachWebhookFulfillmentContext returns a context for the money-moving part of
+// a payment callback that is independent from the inbound HTTP connection.
+//
+// A verified notification must never be aborted because the provider (or a
+// browser hitting a return URL) gave up waiting: the client disconnect cancels
+// c.Request.Context(), which previously canceled the PAID transition and the
+// balance credit, leaving paid orders stuck in PAID/RECHARGING (incident order
+// 11380). Values from the request context are preserved; only cancellation and
+// the deadline are replaced by our own bounded budget.
+func detachWebhookFulfillmentContext(requestCtx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(requestCtx), paymentWebhookFulfillmentTimeout)
+}
 
 // NewPaymentWebhookHandler creates a new PaymentWebhookHandler.
 func NewPaymentWebhookHandler(paymentService *service.PaymentService, registry *payment.Registry) *PaymentWebhookHandler {
@@ -133,7 +151,14 @@ func (h *PaymentWebhookHandler) handleNotify(c *gin.Context, providerKey string)
 		return
 	}
 
-	if err := h.paymentService.HandlePaymentNotification(c.Request.Context(), notification, resolvedProviderKey); err != nil {
+	// The provider signature is already verified, so from here on the callback
+	// moves money: the order becomes PAID and the user is credited. That work
+	// must not inherit the callback connection's cancellation, or a timeout on
+	// the payment provider side aborts the credit and strands the order.
+	fulfillmentCtx, cancelFulfillment := detachWebhookFulfillmentContext(c.Request.Context())
+	defer cancelFulfillment()
+
+	if err := h.paymentService.HandlePaymentNotification(fulfillmentCtx, notification, resolvedProviderKey); err != nil {
 		// Unknown order: ack with 2xx so the provider stops retrying. This
 		// guards against foreign environments whose webhook endpoints are
 		// (mis)configured to point at us — without a 2xx, the provider will
