@@ -95,3 +95,22 @@ func TestConfigCASDoesNotDowngradeUnsupportedOrReadOnlyStores(t *testing.T) {
 	_, err = NewServiceSettingStore(nil).CompareAndSwapCryptoSetting(t.Context(), SettingKeyCryptoConfig, nil, "{}")
 	require.ErrorIs(t, err, mode.ErrReadOnly)
 }
+
+// An operator (or another replica) can turn the channel on after this request
+// read its snapshot. The conditional write must then conflict instead of
+// restoring the stale enabled=false value it was built from.
+func TestConfigCASDoesNotRestoreStaleEnableFlag(t *testing.T) {
+	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "false")
+	stale := `{"enabled":false,"chains":["bsc"]}`
+	fresh := `{"enabled":true,"chains":["bsc"]}`
+	store := &configCASStore{value: &stale}
+	cfg, expected, err := LoadConfigForUpdate(t.Context(), store)
+	require.NoError(t, err)
+	require.False(t, cfg.Enabled)
+	// The admin switch lands after the snapshot this save is based on.
+	store.value = &fresh
+	cfg.ScanRange[ChainBSC] = 1500
+	require.ErrorIs(t, SaveConfigIfUnchanged(t.Context(), store, cfg, expected), ErrConfigConflict)
+	require.Equal(t, 0, store.writes)
+	require.Equal(t, fresh, *store.value, "the newer enabled=true row must survive the stale writer")
+}

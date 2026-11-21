@@ -2,6 +2,7 @@ package cryptopay
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -98,8 +99,18 @@ func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
 	return errors.Join(guardErr, nativeErr)
 }
 
+// SettingKeySecurityPauseMarker stores the lock episode that already applied
+// the automatic channel pause. The security monitor observes a persistent lock
+// on every tick (5s), so without this marker each observation rewrites
+// crypto.config.enabled=false and silently undoes an operator's explicit
+// re-enable within seconds — even after the lock was the only thing stopping
+// the channel.
+const SettingKeySecurityPauseMarker = "crypto.security.pause.v1"
+
 // Atomic field update avoids overwriting a concurrent admin RPC/chain change.
 // Config() and the signer separately fail closed even if this write fails.
+// This is the forced variant: recovery must prove the channel is off before it
+// clears the lock, so it always runs.
 func (s *Service) pauseCryptoForSecurity(ctx context.Context) error {
 	if err := mode.CheckWritable(); err != nil {
 		return err
@@ -115,13 +126,66 @@ func (s *Service) pauseCryptoForSecurity(ctx context.Context) error {
 	return nil
 }
 
+// securityLockEpisode identifies one persistent lock. A later incident gets a
+// new LockedAt, so it pauses the channel again; the same episode never does.
+func securityLockEpisode(status wallet.SecurityStatus) string {
+	if episode := strings.TrimSpace(status.LockedAt); episode != "" {
+		return episode
+	}
+	if reason := strings.TrimSpace(status.Reason); reason != "" {
+		return reason
+	}
+	return "locked"
+}
+
+// pauseCryptoForSecurityOnce disables the customer-facing channel at most once
+// per lock episode. The marker and the config write commit together, so
+// concurrent instances cannot double-write the row and an operator re-enable
+// made after the pause stands until a genuinely new incident.
+//
+// Signing and deposit-address issuance stay hard-blocked by the wallet lock
+// itself (checkSecurityInTx / ValidateAssignment), so this does not reopen fund
+// movement when an operator re-enables the channel control plane.
+func (s *Service) pauseCryptoForSecurityOnce(ctx context.Context, status wallet.SecurityStatus) error {
+	if err := mode.CheckWritable(); err != nil {
+		return err
+	}
+	if s.db == nil {
+		return wallet.ErrVaultUnavailable
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return wallet.ErrVaultUnavailable
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Claim the episode with one conditional upsert: a second observation of
+	// the same lock, or another instance, gets no row and skips the write.
+	var claimed int
+	err = tx.QueryRowContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES($1,$2,NOW())
+		ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()
+		WHERE settings.value IS DISTINCT FROM EXCLUDED.value
+		RETURNING 1`, SettingKeySecurityPauseMarker, securityLockEpisode(status)).Scan(&claimed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return tx.Commit()
+	}
+	if err != nil {
+		return wallet.ErrVaultUnavailable
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE settings SET value=jsonb_set(value::jsonb,'{enabled}','false'::jsonb)::text,updated_at=NOW()
+		WHERE key=$1 AND COALESCE((value::jsonb->>'enabled')::boolean,false)=true`, SettingKeyCryptoConfig); err != nil {
+		return wallet.ErrVaultUnavailable
+	}
+	return tx.Commit()
+}
+
 func (s *Service) handleSecurityIncident(ctx context.Context, status wallet.SecurityStatus) error {
 	if !status.Locked {
 		return nil
 	}
 	s.securityPaused.Store(true)
 	s.wallet.SetEnabled(false)
-	pauseErr := s.pauseCryptoForSecurity(ctx)
+	pauseErr := s.pauseCryptoForSecurityOnce(ctx, status)
 	if push := s.getPushNotifier(); push != nil && status.AlertPending {
 		if err := s.wallet.DeliverSecurityAlert(ctx, func(current wallet.SecurityStatus) error {
 			return push.PushToAdmins(ctx, "高危：充值钱包已安全锁定",
