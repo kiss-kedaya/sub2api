@@ -5,6 +5,10 @@
  * This utility extracts the user-facing message from any error shape.
  */
 
+import { localizeStepUpErrorCode } from './stepUpErrors'
+
+export { localizeStepUpErrorCode }
+
 interface ApiErrorLike {
   status?: number
   code?: number | string
@@ -100,6 +104,9 @@ export function extractI18nErrorMessage(
 ): string {
   const code = extractApiErrorCode(err)
   if (code) {
+    // Step-up codes have no page namespace; they must always use the shared copy.
+    const stepUpMessage = localizeStepUpErrorCode(code)
+    if (stepUpMessage) return stepUpMessage
     const key = `${namespace}.${code}`
     const rawMetadata = extractApiErrorMetadata(err) ?? {}
     const metadata = localizeMetadata(rawMetadata, t)
@@ -126,6 +133,11 @@ export function extractApiErrorMessage(
   i18nMap?: Record<string, string>,
 ): string {
   if (!err) return fallback
+
+  // Step-up codes: shared localized copy wins over the backend's English text.
+  const stepUpCode = extractApiErrorCode(err)
+  const stepUpMessage = localizeStepUpErrorCode(stepUpCode)
+  if (stepUpMessage) return stepUpMessage
 
   // Try i18n mapping by error code first
   if (i18nMap) {

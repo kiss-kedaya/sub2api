@@ -42,6 +42,7 @@ const {
   adminSettingsFetch,
   showError,
   showSuccess,
+  showInfo,
   verifyStepUp,
 } = vi.hoisted(() => ({
   getSettings: vi.fn(),
@@ -85,6 +86,7 @@ const {
   adminSettingsFetch: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
+  showInfo: vi.fn(),
   verifyStepUp: vi.fn(),
 }));
 
@@ -143,7 +145,7 @@ vi.mock("@/stores", () => ({
     showError,
     showSuccess,
     showWarning: vi.fn(),
-    showInfo: vi.fn(),
+    showInfo,
     fetchPublicSettings,
     get cachedPublicSettings() {
       return appStorePublicState.cachedPublicSettings;
@@ -167,6 +169,8 @@ vi.mock("@/composables/useClipboard", () => ({
 
 vi.mock("@/utils/apiError", () => ({
   extractApiErrorMessage: () => "error",
+  extractI18nErrorMessage: () => "error",
+  localizeStepUpErrorCode: () => null,
 }));
 
 vi.mock("vue-i18n", async () => {
@@ -629,6 +633,36 @@ function settingsPayload(): Record<string, any> {
   return call![0] as Record<string, any>;
 }
 
+
+/** Mount SettingsView with custom payment provider list/dialog stubs. */
+function mountProviderView(
+  paymentProviderList: unknown,
+  paymentProviderDialog: unknown = true,
+) {
+  return mount(SettingsView, {
+    global: {
+      plugins: [specRouter()],
+      stubs: {
+        teleport: true,
+        ThemeCustomizer: true,
+        AppLayout: AppLayoutStub,
+        Select: SelectStub,
+        Toggle: ToggleStub,
+        Icon: true,
+        ConfirmDialog: true,
+        PaymentProviderList: paymentProviderList,
+        PaymentProviderDialog: paymentProviderDialog,
+        GroupBadge: true,
+        GroupOptionItem: true,
+        ProxySelector: true,
+        ImageUpload: ImageUploadStub,
+        BackupSettings: true,
+        GatewayIPNoticeSettings: true,
+      },
+    },
+  });
+}
+
 async function openPaymentTab(wrapper: ReturnType<typeof mountView>) {
   const paymentTabButton = wrapper
     .findAll("button")
@@ -737,6 +771,7 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockReset();
     showError.mockReset();
     showSuccess.mockReset();
+    showInfo.mockReset();
     verifyStepUp.mockReset();
     verifyStepUp.mockResolvedValue({ verified: true, expires_in: 900 });
     localeRef.value = "zh-CN";
@@ -1507,6 +1542,169 @@ describe("admin SettingsView payment visible method controls", () => {
 
     expect(updateProvider).toHaveBeenCalledWith(7, { enabled: true });
     expect(getProviders).toHaveBeenCalledTimes(2);
+  });
+
+  const providerFixture = {
+    id: 7,
+    provider_key: "alipay",
+    name: "Official Alipay",
+    config: {},
+    supported_types: ["alipay"],
+    enabled: false,
+    payment_mode: "",
+    refund_enabled: false,
+    allow_user_refund: false,
+    limits: "",
+    sort_order: 0,
+  }
+
+  function providerListStub(provider: Record<string, unknown>, events?: { reorder?: () => void }) {
+    return defineComponent({
+      emits: ["edit", "reorder"],
+      setup(_, { emit }) {
+        return () =>
+          h("div", [
+            h(
+              "button",
+              { class: "provider-edit-stub", onClick: () => emit("edit", provider) },
+              "edit provider",
+            ),
+            h(
+              "button",
+              {
+                class: "provider-reorder-stub",
+                onClick: () => {
+                  if (events?.reorder) events.reorder()
+                  emit("reorder", [
+                    { id: 1, sort_order: 2 },
+                    { id: 2, sort_order: 1 },
+                  ])
+                },
+              },
+              "reorder providers",
+            ),
+          ]);
+      },
+    });
+  }
+
+  function providerDialogStub(payload: Record<string, unknown>) {
+    return defineComponent({
+      emits: ["save"],
+      setup(_, { emit, expose }) {
+        expose({ reset: vi.fn(), loadProvider: vi.fn() });
+        return () =>
+          h(
+            "button",
+            { class: "provider-save-stub", onClick: () => emit("save", payload) },
+            "save provider",
+          );
+      },
+    });
+  }
+
+  it("saves an edited payment provider after TOTP step-up verification", async () => {
+    getProviders.mockReset();
+    getProviders
+      .mockResolvedValueOnce({ data: [providerFixture] })
+      .mockResolvedValue({ data: [{ ...providerFixture, name: "Edited Provider" }] });
+    updateProvider
+      .mockRejectedValueOnce({
+        status: 403,
+        reason: "STEP_UP_REQUIRED",
+        message: "This operation requires recent two-factor verification",
+      })
+      .mockResolvedValue({ data: { ...providerFixture, name: "Edited Provider" } });
+
+    const wrapper = mountProviderView(
+      providerListStub(providerFixture),
+      providerDialogStub({ name: "Edited Provider" }),
+    );
+    await flushPromises();
+    await openPaymentTab(wrapper);
+    await wrapper.get(".provider-edit-stub").trigger("click");
+    await wrapper.get(".provider-save-stub").trigger("click");
+    await flushPromises();
+
+    // First save was rejected by the backend's step-up gate; no English toast.
+    expect(updateProvider).toHaveBeenCalledTimes(1);
+    const dialog = openTotpStepUpDialog(wrapper);
+    expect(dialog.findAll('.totp-code-input span[aria-hidden="true"]')).toHaveLength(6);
+
+    await dialog.get('input[autocomplete="one-time-code"]').setValue("123456");
+    await flushPromises();
+
+    expect(verifyStepUp).toHaveBeenCalledWith("123456");
+    expect(updateProvider).toHaveBeenCalledTimes(2);
+    expect(updateProvider).toHaveBeenNthCalledWith(2, 7, { name: "Edited Provider" });
+    expect(showError).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("does not save and reports the operation was not executed when TOTP verification is cancelled", async () => {
+    getProviders.mockReset();
+    getProviders.mockResolvedValue({ data: [providerFixture] });
+    updateProvider.mockReset();
+    updateProvider.mockRejectedValue({
+      status: 403,
+      reason: "STEP_UP_REQUIRED",
+      message: "This operation requires recent two-factor verification",
+    });
+
+    const wrapper = mountProviderView(
+      providerListStub(providerFixture),
+      providerDialogStub({ name: "Edited Provider" }),
+    );
+    await flushPromises();
+    await openPaymentTab(wrapper);
+    await wrapper.get(".provider-edit-stub").trigger("click");
+    await wrapper.get(".provider-save-stub").trigger("click");
+    await flushPromises();
+
+    await openTotpStepUpDialog(wrapper).get("button").trigger("click");
+    await flushPromises();
+
+    expect(updateProvider).toHaveBeenCalledTimes(1);
+    expect(verifyStepUp).not.toHaveBeenCalled();
+    expect(showInfo).toHaveBeenCalledWith("stepUp.cancelled");
+    expect(showError).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it("retries a provider reorder batch after a single shared TOTP verification", async () => {
+    getProviders.mockReset();
+    getProviders.mockResolvedValue({ data: [providerFixture] });
+    updateProvider.mockReset();
+    updateProvider
+      .mockRejectedValueOnce({
+        status: 403,
+        reason: "STEP_UP_REQUIRED",
+        message: "This operation requires recent two-factor verification",
+      })
+      .mockRejectedValueOnce({
+        status: 403,
+        reason: "STEP_UP_REQUIRED",
+        message: "This operation requires recent two-factor verification",
+      })
+      .mockResolvedValue({ data: providerFixture });
+
+    const wrapper = mountProviderView(providerListStub(providerFixture));
+    await flushPromises();
+    await openPaymentTab(wrapper);
+    await wrapper.get(".provider-reorder-stub").trigger("click");
+    await flushPromises();
+
+    const dialogs = openTotpStepUpDialogs(wrapper);
+    expect(dialogs).toHaveLength(1);
+    await dialogs[0].get('input[autocomplete="one-time-code"]').setValue("654321");
+    await flushPromises();
+
+    expect(verifyStepUp).toHaveBeenCalledTimes(1);
+    expect(updateProvider).toHaveBeenCalledTimes(4);
+    expect(updateProvider).toHaveBeenNthCalledWith(3, 1, { sort_order: 2 });
+    expect(updateProvider).toHaveBeenNthCalledWith(4, 2, { sort_order: 1 });
+    expect(showError).not.toHaveBeenCalled();
+    wrapper.unmount();
   });
 
   it("renders advanced scheduler copy as local experimental gateway policy", async () => {

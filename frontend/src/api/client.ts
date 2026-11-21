@@ -6,6 +6,8 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios'
 import type { ApiResponse } from '@/types'
 import { getLocale } from '@/i18n'
+import { localizeStepUpErrorCode, stepUpMarkerOf } from '@/utils/stepUpErrors'
+import { isStepUpHostAvailable, retryWithGlobalStepUp } from '@/composables/useStepUpGate'
 import {
   ADMIN_UI_REQUEST_HEADER,
   USER_UI_REQUEST_HEADER,
@@ -37,6 +39,24 @@ const longRunningReportPath = (url: string): boolean => {
     /^\/?admin\/(?:usage\/stats|dashboard\/|ops\/(?:dashboard\/|errors(?:\/|$)|request-errors(?:\/|$)|upstream-errors(?:\/|$)))/i.test(path) ||
     /^\/?usage\/(?:stats|dashboard\/)/i.test(path)
   )
+}
+
+// ==================== Step-up (sudo) 2FA ====================
+
+/**
+ * Endpoints that consume the TOTP code itself; a gate prompt there would deadlock.
+ */
+const stepUpVerificationPath = (url: string): boolean =>
+  /\/user\/totp\/step-up(?:\?|$)/i.test(url)
+
+/**
+ * Backend step-up markers are localized through the shared i18n translator
+ * (registered in src/i18n/index.ts). Falling back to the backend message keeps
+ * SSR/pre-bootstrap requests readable; the UI never sees that English text in
+ * the browser because the app shell always registers the translator first.
+ */
+function localizeStepUpMessage(marker: string, fallback?: string): string {
+  return localizeStepUpErrorCode(marker) ?? fallback ?? marker
 }
 
 // ==================== Request Interceptor ====================
@@ -134,7 +154,10 @@ apiClient.interceptors.response.use(
       return Promise.reject(error)
     }
 
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean }
+    const originalRequest = error.config as InternalAxiosRequestConfig & {
+      _retry?: boolean
+      _stepUpRetried?: boolean
+    }
 
     // Handle common errors
     if (error.response) {
@@ -143,6 +166,36 @@ apiClient.interceptors.response.use(
 
       // Validate `data` shape to avoid HTML error pages breaking our error handling.
       const apiData = (typeof data === 'object' && data !== null ? data : {}) as Record<string, any>
+
+      // Step-up (sudo) 2FA: the backend gates sensitive admin operations behind a
+      // fresh TOTP grant and answers 403 STEP_UP_REQUIRED. Every admin API call goes
+      // through this client, so handling it here covers pages that do not (and new
+      // pages that will not) wrap calls in useStepUp. The prompt is app-wide and
+      // single-flight: concurrent 403s share one dialog, then each request retries
+      // once with the newly minted grant.
+      const stepUpMarker = stepUpMarkerOf({ code: apiData.code, reason: apiData.reason })
+      if (stepUpMarker) {
+        const retryRequest =
+          stepUpMarker === 'STEP_UP_REQUIRED' &&
+          !originalRequest._stepUpRetried &&
+          !stepUpVerificationPath(url) &&
+          typeof window !== 'undefined' &&
+          isStepUpHostAvailable()
+        if (retryRequest) {
+          originalRequest._stepUpRetried = true
+          // Throws StepUpCancelledError if the operator dismisses the dialog.
+          return await retryWithGlobalStepUp(() => apiClient(originalRequest))
+        }
+        // Non-retryable step-up state (or no dialog host / failed retry):
+        // reject with localized copy instead of the backend's English message.
+        return Promise.reject({
+          status,
+          code: stepUpMarker,
+          reason: stepUpMarker,
+          message: localizeStepUpMessage(stepUpMarker, apiData.message),
+          metadata: apiData.metadata,
+        })
+      }
 
       // 密钥轮换门禁：兑换/充值/USDT 相关接口会返回 403 KEY_ROTATION_REQUIRED。
       // 在这里统一广播，由 useKeyRotationGate 标记状态并展示整改卡片，
