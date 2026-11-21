@@ -77,6 +77,42 @@ func (_c *AuthIdentityCreate) SetProviderSubject(v string) *AuthIdentityCreate {
 	return _c
 }
 
+// SetNillableProviderSubject sets the "provider_subject" field if the given value is not nil.
+func (_c *AuthIdentityCreate) SetNillableProviderSubject(v *string) *AuthIdentityCreate {
+	if v != nil {
+		_c.SetProviderSubject(*v)
+	}
+	return _c
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (_c *AuthIdentityCreate) SetProviderSubjectHash(v string) *AuthIdentityCreate {
+	_c.mutation.SetProviderSubjectHash(v)
+	return _c
+}
+
+// SetNillableProviderSubjectHash sets the "provider_subject_hash" field if the given value is not nil.
+func (_c *AuthIdentityCreate) SetNillableProviderSubjectHash(v *string) *AuthIdentityCreate {
+	if v != nil {
+		_c.SetProviderSubjectHash(*v)
+	}
+	return _c
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (_c *AuthIdentityCreate) SetProviderSubjectPrefix(v string) *AuthIdentityCreate {
+	_c.mutation.SetProviderSubjectPrefix(v)
+	return _c
+}
+
+// SetNillableProviderSubjectPrefix sets the "provider_subject_prefix" field if the given value is not nil.
+func (_c *AuthIdentityCreate) SetNillableProviderSubjectPrefix(v *string) *AuthIdentityCreate {
+	if v != nil {
+		_c.SetProviderSubjectPrefix(*v)
+	}
+	return _c
+}
+
 // SetVerifiedAt sets the "verified_at" field.
 func (_c *AuthIdentityCreate) SetVerifiedAt(v time.Time) *AuthIdentityCreate {
 	_c.mutation.SetVerifiedAt(v)
@@ -222,12 +258,14 @@ func (_c *AuthIdentityCreate) check() error {
 			return &ValidationError{Name: "provider_key", err: fmt.Errorf(`ent: validator failed for field "AuthIdentity.provider_key": %w`, err)}
 		}
 	}
-	if _, ok := _c.mutation.ProviderSubject(); !ok {
-		return &ValidationError{Name: "provider_subject", err: errors.New(`ent: missing required field "AuthIdentity.provider_subject"`)}
+	if v, ok := _c.mutation.ProviderSubjectHash(); ok {
+		if err := authidentity.ProviderSubjectHashValidator(v); err != nil {
+			return &ValidationError{Name: "provider_subject_hash", err: fmt.Errorf(`ent: validator failed for field "AuthIdentity.provider_subject_hash": %w`, err)}
+		}
 	}
-	if v, ok := _c.mutation.ProviderSubject(); ok {
-		if err := authidentity.ProviderSubjectValidator(v); err != nil {
-			return &ValidationError{Name: "provider_subject", err: fmt.Errorf(`ent: validator failed for field "AuthIdentity.provider_subject": %w`, err)}
+	if v, ok := _c.mutation.ProviderSubjectPrefix(); ok {
+		if err := authidentity.ProviderSubjectPrefixValidator(v); err != nil {
+			return &ValidationError{Name: "provider_subject_prefix", err: fmt.Errorf(`ent: validator failed for field "AuthIdentity.provider_subject_prefix": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.Metadata(); !ok {
@@ -281,7 +319,15 @@ func (_c *AuthIdentityCreate) createSpec() (*AuthIdentity, *sqlgraph.CreateSpec)
 	}
 	if value, ok := _c.mutation.ProviderSubject(); ok {
 		_spec.SetField(authidentity.FieldProviderSubject, field.TypeString, value)
-		_node.ProviderSubject = value
+		_node.ProviderSubject = &value
+	}
+	if value, ok := _c.mutation.ProviderSubjectHash(); ok {
+		_spec.SetField(authidentity.FieldProviderSubjectHash, field.TypeString, value)
+		_node.ProviderSubjectHash = &value
+	}
+	if value, ok := _c.mutation.ProviderSubjectPrefix(); ok {
+		_spec.SetField(authidentity.FieldProviderSubjectPrefix, field.TypeString, value)
+		_node.ProviderSubjectPrefix = &value
 	}
 	if value, ok := _c.mutation.VerifiedAt(); ok {
 		_spec.SetField(authidentity.FieldVerifiedAt, field.TypeTime, value)
@@ -456,6 +502,48 @@ func (u *AuthIdentityUpsert) UpdateProviderSubject() *AuthIdentityUpsert {
 	return u
 }
 
+// ClearProviderSubject clears the value of the "provider_subject" field.
+func (u *AuthIdentityUpsert) ClearProviderSubject() *AuthIdentityUpsert {
+	u.SetNull(authidentity.FieldProviderSubject)
+	return u
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (u *AuthIdentityUpsert) SetProviderSubjectHash(v string) *AuthIdentityUpsert {
+	u.Set(authidentity.FieldProviderSubjectHash, v)
+	return u
+}
+
+// UpdateProviderSubjectHash sets the "provider_subject_hash" field to the value that was provided on create.
+func (u *AuthIdentityUpsert) UpdateProviderSubjectHash() *AuthIdentityUpsert {
+	u.SetExcluded(authidentity.FieldProviderSubjectHash)
+	return u
+}
+
+// ClearProviderSubjectHash clears the value of the "provider_subject_hash" field.
+func (u *AuthIdentityUpsert) ClearProviderSubjectHash() *AuthIdentityUpsert {
+	u.SetNull(authidentity.FieldProviderSubjectHash)
+	return u
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (u *AuthIdentityUpsert) SetProviderSubjectPrefix(v string) *AuthIdentityUpsert {
+	u.Set(authidentity.FieldProviderSubjectPrefix, v)
+	return u
+}
+
+// UpdateProviderSubjectPrefix sets the "provider_subject_prefix" field to the value that was provided on create.
+func (u *AuthIdentityUpsert) UpdateProviderSubjectPrefix() *AuthIdentityUpsert {
+	u.SetExcluded(authidentity.FieldProviderSubjectPrefix)
+	return u
+}
+
+// ClearProviderSubjectPrefix clears the value of the "provider_subject_prefix" field.
+func (u *AuthIdentityUpsert) ClearProviderSubjectPrefix() *AuthIdentityUpsert {
+	u.SetNull(authidentity.FieldProviderSubjectPrefix)
+	return u
+}
+
 // SetVerifiedAt sets the "verified_at" field.
 func (u *AuthIdentityUpsert) SetVerifiedAt(v time.Time) *AuthIdentityUpsert {
 	u.Set(authidentity.FieldVerifiedAt, v)
@@ -616,6 +704,55 @@ func (u *AuthIdentityUpsertOne) SetProviderSubject(v string) *AuthIdentityUpsert
 func (u *AuthIdentityUpsertOne) UpdateProviderSubject() *AuthIdentityUpsertOne {
 	return u.Update(func(s *AuthIdentityUpsert) {
 		s.UpdateProviderSubject()
+	})
+}
+
+// ClearProviderSubject clears the value of the "provider_subject" field.
+func (u *AuthIdentityUpsertOne) ClearProviderSubject() *AuthIdentityUpsertOne {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.ClearProviderSubject()
+	})
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (u *AuthIdentityUpsertOne) SetProviderSubjectHash(v string) *AuthIdentityUpsertOne {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.SetProviderSubjectHash(v)
+	})
+}
+
+// UpdateProviderSubjectHash sets the "provider_subject_hash" field to the value that was provided on create.
+func (u *AuthIdentityUpsertOne) UpdateProviderSubjectHash() *AuthIdentityUpsertOne {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.UpdateProviderSubjectHash()
+	})
+}
+
+// ClearProviderSubjectHash clears the value of the "provider_subject_hash" field.
+func (u *AuthIdentityUpsertOne) ClearProviderSubjectHash() *AuthIdentityUpsertOne {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.ClearProviderSubjectHash()
+	})
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (u *AuthIdentityUpsertOne) SetProviderSubjectPrefix(v string) *AuthIdentityUpsertOne {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.SetProviderSubjectPrefix(v)
+	})
+}
+
+// UpdateProviderSubjectPrefix sets the "provider_subject_prefix" field to the value that was provided on create.
+func (u *AuthIdentityUpsertOne) UpdateProviderSubjectPrefix() *AuthIdentityUpsertOne {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.UpdateProviderSubjectPrefix()
+	})
+}
+
+// ClearProviderSubjectPrefix clears the value of the "provider_subject_prefix" field.
+func (u *AuthIdentityUpsertOne) ClearProviderSubjectPrefix() *AuthIdentityUpsertOne {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.ClearProviderSubjectPrefix()
 	})
 }
 
@@ -953,6 +1090,55 @@ func (u *AuthIdentityUpsertBulk) SetProviderSubject(v string) *AuthIdentityUpser
 func (u *AuthIdentityUpsertBulk) UpdateProviderSubject() *AuthIdentityUpsertBulk {
 	return u.Update(func(s *AuthIdentityUpsert) {
 		s.UpdateProviderSubject()
+	})
+}
+
+// ClearProviderSubject clears the value of the "provider_subject" field.
+func (u *AuthIdentityUpsertBulk) ClearProviderSubject() *AuthIdentityUpsertBulk {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.ClearProviderSubject()
+	})
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (u *AuthIdentityUpsertBulk) SetProviderSubjectHash(v string) *AuthIdentityUpsertBulk {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.SetProviderSubjectHash(v)
+	})
+}
+
+// UpdateProviderSubjectHash sets the "provider_subject_hash" field to the value that was provided on create.
+func (u *AuthIdentityUpsertBulk) UpdateProviderSubjectHash() *AuthIdentityUpsertBulk {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.UpdateProviderSubjectHash()
+	})
+}
+
+// ClearProviderSubjectHash clears the value of the "provider_subject_hash" field.
+func (u *AuthIdentityUpsertBulk) ClearProviderSubjectHash() *AuthIdentityUpsertBulk {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.ClearProviderSubjectHash()
+	})
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (u *AuthIdentityUpsertBulk) SetProviderSubjectPrefix(v string) *AuthIdentityUpsertBulk {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.SetProviderSubjectPrefix(v)
+	})
+}
+
+// UpdateProviderSubjectPrefix sets the "provider_subject_prefix" field to the value that was provided on create.
+func (u *AuthIdentityUpsertBulk) UpdateProviderSubjectPrefix() *AuthIdentityUpsertBulk {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.UpdateProviderSubjectPrefix()
+	})
+}
+
+// ClearProviderSubjectPrefix clears the value of the "provider_subject_prefix" field.
+func (u *AuthIdentityUpsertBulk) ClearProviderSubjectPrefix() *AuthIdentityUpsertBulk {
+	return u.Update(func(s *AuthIdentityUpsert) {
+		s.ClearProviderSubjectPrefix()
 	})
 }
 

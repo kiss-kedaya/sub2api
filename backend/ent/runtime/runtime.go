@@ -374,12 +374,16 @@ func init() {
 	authidentityDescProviderKey := authidentityFields[2].Descriptor()
 	// authidentity.ProviderKeyValidator is a validator for the "provider_key" field. It is called by the builders before save.
 	authidentity.ProviderKeyValidator = authidentityDescProviderKey.Validators[0].(func(string) error)
-	// authidentityDescProviderSubject is the schema descriptor for provider_subject field.
-	authidentityDescProviderSubject := authidentityFields[3].Descriptor()
-	// authidentity.ProviderSubjectValidator is a validator for the "provider_subject" field. It is called by the builders before save.
-	authidentity.ProviderSubjectValidator = authidentityDescProviderSubject.Validators[0].(func(string) error)
+	// authidentityDescProviderSubjectHash is the schema descriptor for provider_subject_hash field.
+	authidentityDescProviderSubjectHash := authidentityFields[4].Descriptor()
+	// authidentity.ProviderSubjectHashValidator is a validator for the "provider_subject_hash" field. It is called by the builders before save.
+	authidentity.ProviderSubjectHashValidator = authidentityDescProviderSubjectHash.Validators[0].(func(string) error)
+	// authidentityDescProviderSubjectPrefix is the schema descriptor for provider_subject_prefix field.
+	authidentityDescProviderSubjectPrefix := authidentityFields[5].Descriptor()
+	// authidentity.ProviderSubjectPrefixValidator is a validator for the "provider_subject_prefix" field. It is called by the builders before save.
+	authidentity.ProviderSubjectPrefixValidator = authidentityDescProviderSubjectPrefix.Validators[0].(func(string) error)
 	// authidentityDescMetadata is the schema descriptor for metadata field.
-	authidentityDescMetadata := authidentityFields[6].Descriptor()
+	authidentityDescMetadata := authidentityFields[8].Descriptor()
 	// authidentity.DefaultMetadata holds the default value on creation for the metadata field.
 	authidentity.DefaultMetadata = authidentityDescMetadata.Default.(func() map[string]interface{})
 	authidentitychannelMixin := schema.AuthIdentityChannel{}.Mixin()
@@ -442,12 +446,16 @@ func init() {
 	authidentitychannelDescChannelAppID := authidentitychannelFields[4].Descriptor()
 	// authidentitychannel.ChannelAppIDValidator is a validator for the "channel_app_id" field. It is called by the builders before save.
 	authidentitychannel.ChannelAppIDValidator = authidentitychannelDescChannelAppID.Validators[0].(func(string) error)
-	// authidentitychannelDescChannelSubject is the schema descriptor for channel_subject field.
-	authidentitychannelDescChannelSubject := authidentitychannelFields[5].Descriptor()
-	// authidentitychannel.ChannelSubjectValidator is a validator for the "channel_subject" field. It is called by the builders before save.
-	authidentitychannel.ChannelSubjectValidator = authidentitychannelDescChannelSubject.Validators[0].(func(string) error)
+	// authidentitychannelDescChannelSubjectHash is the schema descriptor for channel_subject_hash field.
+	authidentitychannelDescChannelSubjectHash := authidentitychannelFields[6].Descriptor()
+	// authidentitychannel.ChannelSubjectHashValidator is a validator for the "channel_subject_hash" field. It is called by the builders before save.
+	authidentitychannel.ChannelSubjectHashValidator = authidentitychannelDescChannelSubjectHash.Validators[0].(func(string) error)
+	// authidentitychannelDescChannelSubjectPrefix is the schema descriptor for channel_subject_prefix field.
+	authidentitychannelDescChannelSubjectPrefix := authidentitychannelFields[7].Descriptor()
+	// authidentitychannel.ChannelSubjectPrefixValidator is a validator for the "channel_subject_prefix" field. It is called by the builders before save.
+	authidentitychannel.ChannelSubjectPrefixValidator = authidentitychannelDescChannelSubjectPrefix.Validators[0].(func(string) error)
 	// authidentitychannelDescMetadata is the schema descriptor for metadata field.
-	authidentitychannelDescMetadata := authidentitychannelFields[6].Descriptor()
+	authidentitychannelDescMetadata := authidentitychannelFields[8].Descriptor()
 	// authidentitychannel.DefaultMetadata holds the default value on creation for the metadata field.
 	authidentitychannel.DefaultMetadata = authidentitychannelDescMetadata.Default.(func() map[string]interface{})
 	batchimageeventFields := schema.BatchImageEvent{}.Fields()
@@ -1564,36 +1572,40 @@ func init() {
 	pendingauthsessionDescProviderKey := pendingauthsessionFields[3].Descriptor()
 	// pendingauthsession.ProviderKeyValidator is a validator for the "provider_key" field. It is called by the builders before save.
 	pendingauthsession.ProviderKeyValidator = pendingauthsessionDescProviderKey.Validators[0].(func(string) error)
-	// pendingauthsessionDescProviderSubject is the schema descriptor for provider_subject field.
-	pendingauthsessionDescProviderSubject := pendingauthsessionFields[4].Descriptor()
-	// pendingauthsession.ProviderSubjectValidator is a validator for the "provider_subject" field. It is called by the builders before save.
-	pendingauthsession.ProviderSubjectValidator = pendingauthsessionDescProviderSubject.Validators[0].(func(string) error)
+	// pendingauthsessionDescProviderSubjectHash is the schema descriptor for provider_subject_hash field.
+	pendingauthsessionDescProviderSubjectHash := pendingauthsessionFields[5].Descriptor()
+	// pendingauthsession.ProviderSubjectHashValidator is a validator for the "provider_subject_hash" field. It is called by the builders before save.
+	pendingauthsession.ProviderSubjectHashValidator = pendingauthsessionDescProviderSubjectHash.Validators[0].(func(string) error)
+	// pendingauthsessionDescProviderSubjectPrefix is the schema descriptor for provider_subject_prefix field.
+	pendingauthsessionDescProviderSubjectPrefix := pendingauthsessionFields[6].Descriptor()
+	// pendingauthsession.ProviderSubjectPrefixValidator is a validator for the "provider_subject_prefix" field. It is called by the builders before save.
+	pendingauthsession.ProviderSubjectPrefixValidator = pendingauthsessionDescProviderSubjectPrefix.Validators[0].(func(string) error)
 	// pendingauthsessionDescRedirectTo is the schema descriptor for redirect_to field.
-	pendingauthsessionDescRedirectTo := pendingauthsessionFields[6].Descriptor()
+	pendingauthsessionDescRedirectTo := pendingauthsessionFields[8].Descriptor()
 	// pendingauthsession.DefaultRedirectTo holds the default value on creation for the redirect_to field.
 	pendingauthsession.DefaultRedirectTo = pendingauthsessionDescRedirectTo.Default.(string)
 	// pendingauthsessionDescResolvedEmail is the schema descriptor for resolved_email field.
-	pendingauthsessionDescResolvedEmail := pendingauthsessionFields[7].Descriptor()
+	pendingauthsessionDescResolvedEmail := pendingauthsessionFields[9].Descriptor()
 	// pendingauthsession.DefaultResolvedEmail holds the default value on creation for the resolved_email field.
 	pendingauthsession.DefaultResolvedEmail = pendingauthsessionDescResolvedEmail.Default.(string)
 	// pendingauthsessionDescRegistrationPasswordHash is the schema descriptor for registration_password_hash field.
-	pendingauthsessionDescRegistrationPasswordHash := pendingauthsessionFields[8].Descriptor()
+	pendingauthsessionDescRegistrationPasswordHash := pendingauthsessionFields[10].Descriptor()
 	// pendingauthsession.DefaultRegistrationPasswordHash holds the default value on creation for the registration_password_hash field.
 	pendingauthsession.DefaultRegistrationPasswordHash = pendingauthsessionDescRegistrationPasswordHash.Default.(string)
 	// pendingauthsessionDescUpstreamIdentityClaims is the schema descriptor for upstream_identity_claims field.
-	pendingauthsessionDescUpstreamIdentityClaims := pendingauthsessionFields[9].Descriptor()
+	pendingauthsessionDescUpstreamIdentityClaims := pendingauthsessionFields[11].Descriptor()
 	// pendingauthsession.DefaultUpstreamIdentityClaims holds the default value on creation for the upstream_identity_claims field.
 	pendingauthsession.DefaultUpstreamIdentityClaims = pendingauthsessionDescUpstreamIdentityClaims.Default.(func() map[string]interface{})
 	// pendingauthsessionDescLocalFlowState is the schema descriptor for local_flow_state field.
-	pendingauthsessionDescLocalFlowState := pendingauthsessionFields[10].Descriptor()
+	pendingauthsessionDescLocalFlowState := pendingauthsessionFields[12].Descriptor()
 	// pendingauthsession.DefaultLocalFlowState holds the default value on creation for the local_flow_state field.
 	pendingauthsession.DefaultLocalFlowState = pendingauthsessionDescLocalFlowState.Default.(func() map[string]interface{})
 	// pendingauthsessionDescBrowserSessionKey is the schema descriptor for browser_session_key field.
-	pendingauthsessionDescBrowserSessionKey := pendingauthsessionFields[11].Descriptor()
+	pendingauthsessionDescBrowserSessionKey := pendingauthsessionFields[13].Descriptor()
 	// pendingauthsession.DefaultBrowserSessionKey holds the default value on creation for the browser_session_key field.
 	pendingauthsession.DefaultBrowserSessionKey = pendingauthsessionDescBrowserSessionKey.Default.(string)
 	// pendingauthsessionDescCompletionCodeHash is the schema descriptor for completion_code_hash field.
-	pendingauthsessionDescCompletionCodeHash := pendingauthsessionFields[12].Descriptor()
+	pendingauthsessionDescCompletionCodeHash := pendingauthsessionFields[14].Descriptor()
 	// pendingauthsession.DefaultCompletionCodeHash holds the default value on creation for the completion_code_hash field.
 	pendingauthsession.DefaultCompletionCodeHash = pendingauthsessionDescCompletionCodeHash.Default.(string)
 	promocodeFields := schema.PromoCode{}.Fields()

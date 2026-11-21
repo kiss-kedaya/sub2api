@@ -228,11 +228,14 @@ type UserAuthIdentityRecord struct {
 	ProviderType    string
 	ProviderKey     string
 	ProviderSubject string
-	VerifiedAt      *time.Time
-	Issuer          *string
-	Metadata        map[string]any
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// ProviderSubjectPrefix 是落库的展示前缀；过渡期明文列仍在时可用于兼容，
+	// 明文列清空后它是唯一的可展示线索。
+	ProviderSubjectPrefix string
+	VerifiedAt            *time.Time
+	Issuer                *string
+	Metadata              map[string]any
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 type UserIdentitySummary struct {
@@ -771,10 +774,9 @@ func (s *UserService) buildEmailIdentitySummary(user *User, records []UserAuthId
 	filtered := filterUserAuthIdentities(records, "email")
 	if len(filtered) > 0 {
 		primary := selectPrimaryUserAuthIdentity(filtered)
+		// 不再回退到 provider_subject 明文：auth_identities 的 subject 只保留
+		// 哈希与展示前缀，邮箱展示一律走 metadata / users.email / provider_key。
 		email := strings.TrimSpace(firstStringIdentityValue(primary.Metadata, "email"))
-		if email == "" {
-			email = strings.TrimSpace(primary.ProviderSubject)
-		}
 		if email == "" || isReservedEmail(email) {
 			email = strings.TrimSpace(user.Email)
 		}
@@ -824,7 +826,7 @@ func (s *UserService) buildProviderIdentitySummary(provider string, user *User, 
 	summary.BoundCount = len(filtered)
 	summary.DisplayName = userAuthIdentityDisplayName(primary)
 	summary.AvatarURL = strings.TrimSpace(firstStringIdentityValue(primary.Metadata, "avatar_url", "suggested_avatar_url", "headimgurl"))
-	summary.SubjectHint = maskOpaqueIdentity(primary.ProviderSubject)
+	summary.SubjectHint = userAuthIdentitySubjectHint(primary)
 	summary.ProviderKey = strings.TrimSpace(primary.ProviderKey)
 	summary.VerifiedAt = primary.VerifiedAt
 	summary.CanUnbind = s.canUnbindProvider(provider, user, records)
@@ -1023,10 +1025,23 @@ func userAuthIdentityDisplayName(record UserAuthIdentityRecord) string {
 	); displayName != "" {
 		return displayName
 	}
-	if subject := strings.TrimSpace(record.ProviderSubject); subject != "" {
-		return subject
+	// 不再回退到完整 subject：只保留掩码提示（由 SubjectHint 展示），
+	// 让 UI 回退到 provider 名称标签而不是把身份 ID 打出来。
+	return ""
+}
+
+// userAuthIdentitySubjectHint 返回身份的可展示掩码：
+//   - 回填后的行直接使用 provider_subject_prefix；
+//   - 过渡期未回填的行用明文 subject 现算前缀（只输出掩码，不回显原文）。
+func userAuthIdentitySubjectHint(record UserAuthIdentityRecord) string {
+	if prefix := strings.TrimSpace(record.ProviderSubjectPrefix); prefix != "" {
+		return MaskAuthSubjectPrefix(prefix)
 	}
-	return strings.TrimSpace(record.ProviderType)
+	if subject := strings.TrimSpace(record.ProviderSubject); subject != "" {
+		// 过渡期明文行现算 keyed hash 再取 hash 前缀，绝不展示 subject 首尾。
+		return MaskAuthSubjectHash(HashAuthIdentitySubject(record.ProviderType, subject))
+	}
+	return ""
 }
 
 func firstStringIdentityValue(values map[string]any, keys ...string) string {

@@ -105,7 +105,7 @@ func (s *UserProfileIdentityRepoSuite) TestCreateAndLookupCanonicalAndChannelIde
 	s.Require().NoError(err)
 	s.Require().Equal(user.ID, canonical.User.ID)
 	s.Require().Equal(created.Identity.ID, canonical.Identity.ID)
-	s.Require().Equal("union-123", canonical.Identity.ProviderSubject)
+	s.Require().Equal("union-123", service.AuthSubjectPlaintext(canonical.Identity.ProviderSubject))
 
 	channel, err := s.repo.GetUserByChannelIdentity(s.ctx, *created.ChannelRef())
 	s.Require().NoError(err)

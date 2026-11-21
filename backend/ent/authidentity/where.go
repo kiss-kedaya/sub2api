@@ -85,6 +85,16 @@ func ProviderSubject(v string) predicate.AuthIdentity {
 	return predicate.AuthIdentity(sql.FieldEQ(FieldProviderSubject, v))
 }
 
+// ProviderSubjectHash applies equality check predicate on the "provider_subject_hash" field. It's identical to ProviderSubjectHashEQ.
+func ProviderSubjectHash(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldEQ(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectPrefix applies equality check predicate on the "provider_subject_prefix" field. It's identical to ProviderSubjectPrefixEQ.
+func ProviderSubjectPrefix(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldEQ(FieldProviderSubjectPrefix, v))
+}
+
 // VerifiedAt applies equality check predicate on the "verified_at" field. It's identical to VerifiedAtEQ.
 func VerifiedAt(v time.Time) predicate.AuthIdentity {
 	return predicate.AuthIdentity(sql.FieldEQ(FieldVerifiedAt, v))
@@ -380,6 +390,16 @@ func ProviderSubjectHasSuffix(v string) predicate.AuthIdentity {
 	return predicate.AuthIdentity(sql.FieldHasSuffix(FieldProviderSubject, v))
 }
 
+// ProviderSubjectIsNil applies the IsNil predicate on the "provider_subject" field.
+func ProviderSubjectIsNil() predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldIsNull(FieldProviderSubject))
+}
+
+// ProviderSubjectNotNil applies the NotNil predicate on the "provider_subject" field.
+func ProviderSubjectNotNil() predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldNotNull(FieldProviderSubject))
+}
+
 // ProviderSubjectEqualFold applies the EqualFold predicate on the "provider_subject" field.
 func ProviderSubjectEqualFold(v string) predicate.AuthIdentity {
 	return predicate.AuthIdentity(sql.FieldEqualFold(FieldProviderSubject, v))
@@ -388,6 +408,156 @@ func ProviderSubjectEqualFold(v string) predicate.AuthIdentity {
 // ProviderSubjectContainsFold applies the ContainsFold predicate on the "provider_subject" field.
 func ProviderSubjectContainsFold(v string) predicate.AuthIdentity {
 	return predicate.AuthIdentity(sql.FieldContainsFold(FieldProviderSubject, v))
+}
+
+// ProviderSubjectHashEQ applies the EQ predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashEQ(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldEQ(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashNEQ applies the NEQ predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashNEQ(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldNEQ(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashIn applies the In predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashIn(vs ...string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldIn(FieldProviderSubjectHash, vs...))
+}
+
+// ProviderSubjectHashNotIn applies the NotIn predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashNotIn(vs ...string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldNotIn(FieldProviderSubjectHash, vs...))
+}
+
+// ProviderSubjectHashGT applies the GT predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashGT(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldGT(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashGTE applies the GTE predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashGTE(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldGTE(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashLT applies the LT predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashLT(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldLT(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashLTE applies the LTE predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashLTE(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldLTE(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashContains applies the Contains predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashContains(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldContains(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashHasPrefix applies the HasPrefix predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashHasPrefix(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldHasPrefix(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashHasSuffix applies the HasSuffix predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashHasSuffix(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldHasSuffix(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashIsNil applies the IsNil predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashIsNil() predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldIsNull(FieldProviderSubjectHash))
+}
+
+// ProviderSubjectHashNotNil applies the NotNil predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashNotNil() predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldNotNull(FieldProviderSubjectHash))
+}
+
+// ProviderSubjectHashEqualFold applies the EqualFold predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashEqualFold(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldEqualFold(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashContainsFold applies the ContainsFold predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashContainsFold(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldContainsFold(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectPrefixEQ applies the EQ predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixEQ(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldEQ(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixNEQ applies the NEQ predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixNEQ(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldNEQ(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixIn applies the In predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixIn(vs ...string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldIn(FieldProviderSubjectPrefix, vs...))
+}
+
+// ProviderSubjectPrefixNotIn applies the NotIn predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixNotIn(vs ...string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldNotIn(FieldProviderSubjectPrefix, vs...))
+}
+
+// ProviderSubjectPrefixGT applies the GT predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixGT(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldGT(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixGTE applies the GTE predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixGTE(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldGTE(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixLT applies the LT predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixLT(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldLT(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixLTE applies the LTE predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixLTE(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldLTE(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixContains applies the Contains predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixContains(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldContains(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixHasPrefix applies the HasPrefix predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixHasPrefix(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldHasPrefix(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixHasSuffix applies the HasSuffix predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixHasSuffix(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldHasSuffix(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixIsNil applies the IsNil predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixIsNil() predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldIsNull(FieldProviderSubjectPrefix))
+}
+
+// ProviderSubjectPrefixNotNil applies the NotNil predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixNotNil() predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldNotNull(FieldProviderSubjectPrefix))
+}
+
+// ProviderSubjectPrefixEqualFold applies the EqualFold predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixEqualFold(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldEqualFold(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixContainsFold applies the ContainsFold predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixContainsFold(v string) predicate.AuthIdentity {
+	return predicate.AuthIdentity(sql.FieldContainsFold(FieldProviderSubjectPrefix, v))
 }
 
 // VerifiedAtEQ applies the EQ predicate on the "verified_at" field.

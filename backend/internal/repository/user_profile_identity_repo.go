@@ -83,7 +83,7 @@ func (r *CreateAuthIdentityResult) IdentityRef() AuthIdentityKey {
 	return AuthIdentityKey{
 		ProviderType:    r.Identity.ProviderType,
 		ProviderKey:     r.Identity.ProviderKey,
-		ProviderSubject: r.Identity.ProviderSubject,
+		ProviderSubject: service.AuthSubjectPlaintext(r.Identity.ProviderSubject),
 	}
 }
 
@@ -96,7 +96,7 @@ func (r *CreateAuthIdentityResult) ChannelRef() *AuthIdentityChannelKey {
 		ProviderKey:    r.Channel.ProviderKey,
 		Channel:        r.Channel.Channel,
 		ChannelAppID:   r.Channel.ChannelAppID,
-		ChannelSubject: r.Channel.ChannelSubject,
+		ChannelSubject: service.AuthSubjectPlaintext(r.Channel.ChannelSubject),
 	}
 }
 
@@ -260,10 +260,10 @@ func (r *userRepository) CreateAuthIdentity(ctx context.Context, input CreateAut
 		SetUserID(input.UserID).
 		SetProviderType(strings.TrimSpace(input.Canonical.ProviderType)).
 		SetProviderKey(strings.TrimSpace(input.Canonical.ProviderKey)).
-		SetProviderSubject(strings.TrimSpace(input.Canonical.ProviderSubject)).
 		SetMetadata(copyMetadata(input.Metadata)).
 		SetNillableIssuer(input.Issuer).
 		SetNillableVerifiedAt(input.VerifiedAt)
+	create = service.ApplyAuthIdentitySubjectCreate(create, input.Canonical.ProviderType, input.Canonical.ProviderSubject)
 
 	identity, err := create.Save(ctx)
 	if err != nil {
@@ -272,15 +272,15 @@ func (r *userRepository) CreateAuthIdentity(ctx context.Context, input CreateAut
 
 	var channel *dbent.AuthIdentityChannel
 	if input.Channel != nil {
-		channel, err = client.AuthIdentityChannel.Create().
+		channelCreate := client.AuthIdentityChannel.Create().
 			SetIdentityID(identity.ID).
 			SetProviderType(strings.TrimSpace(input.Channel.ProviderType)).
 			SetProviderKey(strings.TrimSpace(input.Channel.ProviderKey)).
 			SetChannel(strings.TrimSpace(input.Channel.Channel)).
 			SetChannelAppID(strings.TrimSpace(input.Channel.ChannelAppID)).
-			SetChannelSubject(strings.TrimSpace(input.Channel.ChannelSubject)).
-			SetMetadata(copyMetadata(input.ChannelMetadata)).
-			Save(ctx)
+			SetMetadata(copyMetadata(input.ChannelMetadata))
+		channelCreate = service.ApplyAuthChannelSubjectCreate(channelCreate, input.Channel.ProviderType, input.Channel.ChannelSubject)
+		channel, err = channelCreate.Save(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -294,7 +294,7 @@ func (r *userRepository) GetUserByCanonicalIdentity(ctx context.Context, key Aut
 		Where(
 			authidentity.ProviderTypeEQ(strings.TrimSpace(key.ProviderType)),
 			authidentity.ProviderKeyEQ(strings.TrimSpace(key.ProviderKey)),
-			authidentity.ProviderSubjectEQ(strings.TrimSpace(key.ProviderSubject)),
+			service.AuthIdentitySubjectLookupPredicate(key.ProviderType, key.ProviderSubject),
 		).
 		WithUser().
 		Only(ctx)
@@ -315,7 +315,7 @@ func (r *userRepository) GetUserByChannelIdentity(ctx context.Context, key AuthI
 			authidentitychannel.ProviderKeyEQ(strings.TrimSpace(key.ProviderKey)),
 			authidentitychannel.ChannelEQ(strings.TrimSpace(key.Channel)),
 			authidentitychannel.ChannelAppIDEQ(strings.TrimSpace(key.ChannelAppID)),
-			authidentitychannel.ChannelSubjectEQ(strings.TrimSpace(key.ChannelSubject)),
+			service.AuthChannelSubjectLookupPredicate(key.ProviderType, key.ChannelSubject),
 		).
 		WithIdentity(func(q *dbent.AuthIdentityQuery) {
 			q.WithUser()
@@ -346,14 +346,15 @@ func (r *userRepository) ListUserAuthIdentities(ctx context.Context, userID int6
 			continue
 		}
 		records = append(records, service.UserAuthIdentityRecord{
-			ProviderType:    strings.TrimSpace(identity.ProviderType),
-			ProviderKey:     strings.TrimSpace(identity.ProviderKey),
-			ProviderSubject: strings.TrimSpace(identity.ProviderSubject),
-			VerifiedAt:      identity.VerifiedAt,
-			Issuer:          identity.Issuer,
-			Metadata:        copyMetadata(identity.Metadata),
-			CreatedAt:       identity.CreatedAt,
-			UpdatedAt:       identity.UpdatedAt,
+			ProviderType:          strings.TrimSpace(identity.ProviderType),
+			ProviderKey:           strings.TrimSpace(identity.ProviderKey),
+			ProviderSubject:       service.AuthSubjectPlaintext(identity.ProviderSubject),
+			ProviderSubjectPrefix: strings.TrimSpace(derefString(identity.ProviderSubjectPrefix)),
+			VerifiedAt:            identity.VerifiedAt,
+			Issuer:                identity.Issuer,
+			Metadata:              copyMetadata(identity.Metadata),
+			CreatedAt:             identity.CreatedAt,
+			UpdatedAt:             identity.UpdatedAt,
 		})
 	}
 
@@ -416,7 +417,7 @@ func (r *userRepository) BindAuthIdentityToUser(ctx context.Context, input BindA
 			Where(
 				authidentity.ProviderTypeEQ(strings.TrimSpace(canonical.ProviderType)),
 				authidentity.ProviderKeyIn(compatibleIdentityProviderKeys(canonical.ProviderType, canonical.ProviderKey)...),
-				authidentity.ProviderSubjectEQ(strings.TrimSpace(canonical.ProviderSubject)),
+				service.AuthIdentitySubjectLookupPredicate(canonical.ProviderType, canonical.ProviderSubject),
 			).
 			All(txCtx)
 		if err != nil {
@@ -427,15 +428,15 @@ func (r *userRepository) BindAuthIdentityToUser(ctx context.Context, input BindA
 			return ErrAuthIdentityOwnershipConflict
 		}
 		if identity == nil {
-			identity, err = client.AuthIdentity.Create().
+			create := client.AuthIdentity.Create().
 				SetUserID(input.UserID).
 				SetProviderType(strings.TrimSpace(canonical.ProviderType)).
 				SetProviderKey(strings.TrimSpace(canonical.ProviderKey)).
-				SetProviderSubject(strings.TrimSpace(canonical.ProviderSubject)).
 				SetMetadata(copyMetadata(input.Metadata)).
 				SetNillableIssuer(input.Issuer).
-				SetNillableVerifiedAt(input.VerifiedAt).
-				Save(txCtx)
+				SetNillableVerifiedAt(input.VerifiedAt)
+			create = service.ApplyAuthIdentitySubjectCreate(create, canonical.ProviderType, canonical.ProviderSubject)
+			identity, err = create.Save(txCtx)
 			if err != nil {
 				return err
 			}
@@ -468,7 +469,7 @@ func (r *userRepository) BindAuthIdentityToUser(ctx context.Context, input BindA
 					authidentitychannel.ProviderKeyIn(compatibleIdentityProviderKeys(input.Channel.ProviderType, input.Channel.ProviderKey)...),
 					authidentitychannel.ChannelEQ(strings.TrimSpace(input.Channel.Channel)),
 					authidentitychannel.ChannelAppIDEQ(strings.TrimSpace(input.Channel.ChannelAppID)),
-					authidentitychannel.ChannelSubjectEQ(strings.TrimSpace(input.Channel.ChannelSubject)),
+					service.AuthChannelSubjectLookupPredicate(input.Channel.ProviderType, input.Channel.ChannelSubject),
 				).
 				WithIdentity().
 				All(txCtx)
@@ -480,15 +481,15 @@ func (r *userRepository) BindAuthIdentityToUser(ctx context.Context, input BindA
 				return ErrAuthIdentityChannelOwnershipConflict
 			}
 			if channel == nil {
-				channel, err = client.AuthIdentityChannel.Create().
+				channelCreate := client.AuthIdentityChannel.Create().
 					SetIdentityID(identity.ID).
 					SetProviderType(strings.TrimSpace(input.Channel.ProviderType)).
 					SetProviderKey(strings.TrimSpace(input.Channel.ProviderKey)).
 					SetChannel(strings.TrimSpace(input.Channel.Channel)).
 					SetChannelAppID(strings.TrimSpace(input.Channel.ChannelAppID)).
-					SetChannelSubject(strings.TrimSpace(input.Channel.ChannelSubject)).
-					SetMetadata(copyMetadata(input.ChannelMetadata)).
-					Save(txCtx)
+					SetMetadata(copyMetadata(input.ChannelMetadata))
+				channelCreate = service.ApplyAuthChannelSubjectCreate(channelCreate, input.Channel.ProviderType, input.Channel.ChannelSubject)
+				channel, err = channelCreate.Save(txCtx)
 				if err != nil {
 					return err
 				}
@@ -812,14 +813,9 @@ func (r *userRepository) DeleteUserAvatar(ctx context.Context, userID int64) err
 }
 
 func copyMetadata(in map[string]any) map[string]any {
-	if len(in) == 0 {
-		return map[string]any{}
-	}
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
+	// 写库前统一剥掉 subject 派生字段（subject/unionid/openid/channel_subject/
+	// email 等），避免身份 metadata 成为绕过哈希化的明文残留。
+	return service.SanitizeAuthIdentityMetadata(in)
 }
 
 func validateAuthIdentityChannelProviderMatch(canonical AuthIdentityKey, channel *AuthIdentityChannelKey) error {

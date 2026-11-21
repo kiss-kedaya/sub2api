@@ -362,7 +362,7 @@ function normalizeBindingStatus(binding: boolean | UserAuthBindingStatus | undef
   if (typeof binding.bound === 'boolean') {
     return binding.bound
   }
-  return Boolean(binding.provider_subject || binding.issuer || binding.provider_key)
+  return Boolean(binding.issuer || binding.provider_key || binding.subject_hint)
 }
 
 function getBindingStatus(provider: UserAuthProvider): boolean {

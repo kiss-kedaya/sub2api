@@ -60,9 +60,24 @@ func (PendingAuthSession) Fields() []ent.Field {
 		field.String("provider_key").
 			NotEmpty().
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
+		// provider_subject 是明文回退列：过渡期保留（旧实例/在途会话兼容），
+		// 新会话同时写 keyed hash，回填后由运维 SQL 清空。
 		field.String("provider_subject").
-			NotEmpty().
+			Optional().
+			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
+		// provider_subject_hash 是 HMAC-SHA256(安装密钥, identity|type|subject)。
+		field.String("provider_subject_hash").
+			Optional().
+			Nillable().
+			MaxLen(64).
+			SchemaType(map[string]string{dialect.Postgres: "char(64)"}),
+		// provider_subject_prefix 是后台/日志展示用短前缀。
+		field.String("provider_subject_prefix").
+			Optional().
+			Nillable().
+			MaxLen(16).
+			SchemaType(map[string]string{dialect.Postgres: "varchar(16)"}),
 		field.Int64("target_user_id").
 			Optional().
 			Nillable(),
@@ -130,6 +145,7 @@ func (PendingAuthSession) Indexes() []ent.Index {
 		index.Fields("target_user_id"),
 		index.Fields("expires_at"),
 		index.Fields("provider_type", "provider_key", "provider_subject"),
+		index.Fields("provider_type", "provider_key", "provider_subject_hash"),
 		index.Fields("completion_code_hash"),
 	}
 }

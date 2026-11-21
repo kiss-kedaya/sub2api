@@ -346,6 +346,7 @@ func (h *AuthHandler) LinuxDoOAuthCallback(c *gin.Context) {
 			"linuxdo",
 		)
 		if err == nil {
+			subjectPlaintext, subjectHash, subjectPrefix := pendingSessionSubjectFields(identityKey.ProviderType, identityKey.ProviderSubject)
 			if err := applyPendingOAuthBinding(
 				c.Request.Context(),
 				h.entClient(),
@@ -355,7 +356,9 @@ func (h *AuthHandler) LinuxDoOAuthCallback(c *gin.Context) {
 					Intent:                 oauthIntentLogin,
 					ProviderType:           identityKey.ProviderType,
 					ProviderKey:            identityKey.ProviderKey,
-					ProviderSubject:        identityKey.ProviderSubject,
+					ProviderSubject:        subjectPlaintext,
+					ProviderSubjectHash:    subjectHash,
+					ProviderSubjectPrefix:  subjectPrefix,
 					ResolvedEmail:          email,
 					UpstreamIdentityClaims: upstreamClaims,
 				},

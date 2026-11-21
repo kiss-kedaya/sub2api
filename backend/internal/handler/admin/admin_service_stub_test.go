@@ -260,24 +260,26 @@ func (s *stubAdminService) BindUserAuthIdentity(ctx context.Context, userID int6
 
 	now := time.Now().UTC()
 	result := &service.AdminBoundAuthIdentity{
-		UserID:          userID,
-		ProviderType:    input.ProviderType,
-		ProviderKey:     input.ProviderKey,
-		ProviderSubject: input.ProviderSubject,
-		VerifiedAt:      &now,
-		Issuer:          input.Issuer,
-		Metadata:        input.Metadata,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		UserID:                userID,
+		ProviderType:          input.ProviderType,
+		ProviderKey:           input.ProviderKey,
+		ProviderSubjectPrefix: service.AuthSubjectPrefixFromHash(service.HashAuthIdentitySubject(input.ProviderType, input.ProviderSubject)),
+		ProviderSubjectMasked: service.MaskAuthSubjectHash(service.HashAuthIdentitySubject(input.ProviderType, input.ProviderSubject)),
+		VerifiedAt:            &now,
+		Issuer:                input.Issuer,
+		Metadata:              input.Metadata,
+		CreatedAt:             now,
+		UpdatedAt:             now,
 	}
 	if input.Channel != nil {
 		result.Channel = &service.AdminBoundAuthIdentityChannel{
-			Channel:        input.Channel.Channel,
-			ChannelAppID:   input.Channel.ChannelAppID,
-			ChannelSubject: input.Channel.ChannelSubject,
-			Metadata:       input.Channel.Metadata,
-			CreatedAt:      now,
-			UpdatedAt:      now,
+			Channel:              input.Channel.Channel,
+			ChannelAppID:         input.Channel.ChannelAppID,
+			ChannelSubjectPrefix: service.AuthSubjectPrefixFromHash(service.HashAuthChannelSubject(input.ProviderType, input.Channel.ChannelSubject)),
+			ChannelSubjectMasked: service.MaskAuthSubjectHash(service.HashAuthChannelSubject(input.ProviderType, input.Channel.ChannelSubject)),
+			Metadata:             input.Channel.Metadata,
+			CreatedAt:            now,
+			UpdatedAt:            now,
 		}
 	}
 	return result, nil

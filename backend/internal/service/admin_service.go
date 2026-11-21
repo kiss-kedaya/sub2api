@@ -217,25 +217,30 @@ type AdminBindAuthIdentityChannelInput struct {
 }
 
 type AdminBoundAuthIdentity struct {
-	UserID          int64                          `json:"user_id"`
-	ProviderType    string                         `json:"provider_type"`
-	ProviderKey     string                         `json:"provider_key"`
-	ProviderSubject string                         `json:"provider_subject"`
-	VerifiedAt      *time.Time                     `json:"verified_at,omitempty"`
-	Issuer          *string                        `json:"issuer,omitempty"`
-	Metadata        map[string]any                 `json:"metadata"`
-	CreatedAt       time.Time                      `json:"created_at"`
-	UpdatedAt       time.Time                      `json:"updated_at"`
-	Channel         *AdminBoundAuthIdentityChannel `json:"channel,omitempty"`
+	UserID       int64  `json:"user_id"`
+	ProviderType string `json:"provider_type"`
+	ProviderKey  string `json:"provider_key"`
+	// ProviderSubjectPrefix / ProviderSubjectMasked 是唯一可回显的 subject 信息；
+	// 完整 provider_subject 已哈希化，管理端不再返回原文。
+	ProviderSubjectPrefix string                         `json:"provider_subject_prefix,omitempty"`
+	ProviderSubjectMasked string                         `json:"provider_subject_masked"`
+	VerifiedAt            *time.Time                     `json:"verified_at,omitempty"`
+	Issuer                *string                        `json:"issuer,omitempty"`
+	Metadata              map[string]any                 `json:"metadata"`
+	CreatedAt             time.Time                      `json:"created_at"`
+	UpdatedAt             time.Time                      `json:"updated_at"`
+	Channel               *AdminBoundAuthIdentityChannel `json:"channel,omitempty"`
 }
 
 type AdminBoundAuthIdentityChannel struct {
-	Channel        string         `json:"channel"`
-	ChannelAppID   string         `json:"channel_app_id"`
-	ChannelSubject string         `json:"channel_subject"`
-	Metadata       map[string]any `json:"metadata"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	Channel      string `json:"channel"`
+	ChannelAppID string `json:"channel_app_id"`
+	// ChannelSubject 已 keyed 哈希化：只回显前缀 + 掩码，不再返回原文。
+	ChannelSubjectPrefix string         `json:"channel_subject_prefix,omitempty"`
+	ChannelSubjectMasked string         `json:"channel_subject_masked"`
+	Metadata             map[string]any `json:"metadata"`
+	CreatedAt            time.Time      `json:"created_at"`
+	UpdatedAt            time.Time      `json:"updated_at"`
 }
 
 type CreateGroupInput struct {

@@ -294,7 +294,7 @@ func replaceBoundEmailAuthIdentityWithClient(
 			authidentity.UserIDEQ(userID),
 			authidentity.ProviderTypeEQ("email"),
 			authidentity.ProviderKeyEQ("email"),
-			authidentity.ProviderSubjectEQ(oldSubject),
+			AuthIdentitySubjectLookupPredicate("email", oldSubject),
 		).
 		Exec(ctx)
 	return err
@@ -315,21 +315,20 @@ func ensureBoundEmailAuthIdentityWithClient(
 		source = "auth_service_email_bind"
 	}
 
-	if err := client.AuthIdentity.Create().
+	create := client.AuthIdentity.Create().
 		SetUserID(userID).
 		SetProviderType("email").
 		SetProviderKey("email").
-		SetProviderSubject(subject).
 		SetVerifiedAt(time.Now().UTC()).
-		SetMetadata(map[string]any{"source": strings.TrimSpace(source)}).
-		OnConflictColumns(
-			authidentity.FieldProviderType,
-			authidentity.FieldProviderKey,
-			authidentity.FieldProviderSubject,
-		).
+		SetMetadata(map[string]any{"source": strings.TrimSpace(source)})
+	create = ApplyAuthIdentitySubjectCreate(create, "email", subject)
+	if err := create.
+		OnConflictColumns(AuthIdentitySubjectHashConflictColumns()...).
 		DoNothing().
 		Exec(ctx); err != nil {
-		if !isSQLNoRowsError(err) {
+		// 旧实例在滚动窗口写入的明文行没有 hash：明文唯一索引冲突不视为失败，
+		// 交给下面的查询走 hash/明文回退。
+		if !isSQLNoRowsError(err) && !dbent.IsConstraintError(err) {
 			return err
 		}
 	}
@@ -338,7 +337,7 @@ func ensureBoundEmailAuthIdentityWithClient(
 		Where(
 			authidentity.ProviderTypeEQ("email"),
 			authidentity.ProviderKeyEQ("email"),
-			authidentity.ProviderSubjectEQ(subject),
+			AuthIdentitySubjectLookupPredicate("email", subject),
 		).
 		Only(ctx)
 	if err != nil {

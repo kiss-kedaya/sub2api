@@ -26,6 +26,10 @@ const (
 	FieldProviderKey = "provider_key"
 	// FieldProviderSubject holds the string denoting the provider_subject field in the database.
 	FieldProviderSubject = "provider_subject"
+	// FieldProviderSubjectHash holds the string denoting the provider_subject_hash field in the database.
+	FieldProviderSubjectHash = "provider_subject_hash"
+	// FieldProviderSubjectPrefix holds the string denoting the provider_subject_prefix field in the database.
+	FieldProviderSubjectPrefix = "provider_subject_prefix"
 	// FieldVerifiedAt holds the string denoting the verified_at field in the database.
 	FieldVerifiedAt = "verified_at"
 	// FieldIssuer holds the string denoting the issuer field in the database.
@@ -72,6 +76,8 @@ var Columns = []string{
 	FieldProviderType,
 	FieldProviderKey,
 	FieldProviderSubject,
+	FieldProviderSubjectHash,
+	FieldProviderSubjectPrefix,
 	FieldVerifiedAt,
 	FieldIssuer,
 	FieldMetadata,
@@ -98,8 +104,10 @@ var (
 	ProviderTypeValidator func(string) error
 	// ProviderKeyValidator is a validator for the "provider_key" field. It is called by the builders before save.
 	ProviderKeyValidator func(string) error
-	// ProviderSubjectValidator is a validator for the "provider_subject" field. It is called by the builders before save.
-	ProviderSubjectValidator func(string) error
+	// ProviderSubjectHashValidator is a validator for the "provider_subject_hash" field. It is called by the builders before save.
+	ProviderSubjectHashValidator func(string) error
+	// ProviderSubjectPrefixValidator is a validator for the "provider_subject_prefix" field. It is called by the builders before save.
+	ProviderSubjectPrefixValidator func(string) error
 	// DefaultMetadata holds the default value on creation for the "metadata" field.
 	DefaultMetadata func() map[string]interface{}
 )
@@ -140,6 +148,16 @@ func ByProviderKey(opts ...sql.OrderTermOption) OrderOption {
 // ByProviderSubject orders the results by the provider_subject field.
 func ByProviderSubject(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldProviderSubject, opts...).ToFunc()
+}
+
+// ByProviderSubjectHash orders the results by the provider_subject_hash field.
+func ByProviderSubjectHash(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProviderSubjectHash, opts...).ToFunc()
+}
+
+// ByProviderSubjectPrefix orders the results by the provider_subject_prefix field.
+func ByProviderSubjectPrefix(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProviderSubjectPrefix, opts...).ToFunc()
 }
 
 // ByVerifiedAt orders the results by the verified_at field.

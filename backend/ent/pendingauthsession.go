@@ -33,7 +33,11 @@ type PendingAuthSession struct {
 	// ProviderKey holds the value of the "provider_key" field.
 	ProviderKey string `json:"provider_key,omitempty"`
 	// ProviderSubject holds the value of the "provider_subject" field.
-	ProviderSubject string `json:"provider_subject,omitempty"`
+	ProviderSubject *string `json:"provider_subject,omitempty"`
+	// ProviderSubjectHash holds the value of the "provider_subject_hash" field.
+	ProviderSubjectHash *string `json:"provider_subject_hash,omitempty"`
+	// ProviderSubjectPrefix holds the value of the "provider_subject_prefix" field.
+	ProviderSubjectPrefix *string `json:"provider_subject_prefix,omitempty"`
 	// TargetUserID holds the value of the "target_user_id" field.
 	TargetUserID *int64 `json:"target_user_id,omitempty"`
 	// RedirectTo holds the value of the "redirect_to" field.
@@ -110,7 +114,7 @@ func (*PendingAuthSession) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case pendingauthsession.FieldID, pendingauthsession.FieldTargetUserID:
 			values[i] = new(sql.NullInt64)
-		case pendingauthsession.FieldSessionToken, pendingauthsession.FieldIntent, pendingauthsession.FieldProviderType, pendingauthsession.FieldProviderKey, pendingauthsession.FieldProviderSubject, pendingauthsession.FieldRedirectTo, pendingauthsession.FieldResolvedEmail, pendingauthsession.FieldRegistrationPasswordHash, pendingauthsession.FieldBrowserSessionKey, pendingauthsession.FieldCompletionCodeHash:
+		case pendingauthsession.FieldSessionToken, pendingauthsession.FieldIntent, pendingauthsession.FieldProviderType, pendingauthsession.FieldProviderKey, pendingauthsession.FieldProviderSubject, pendingauthsession.FieldProviderSubjectHash, pendingauthsession.FieldProviderSubjectPrefix, pendingauthsession.FieldRedirectTo, pendingauthsession.FieldResolvedEmail, pendingauthsession.FieldRegistrationPasswordHash, pendingauthsession.FieldBrowserSessionKey, pendingauthsession.FieldCompletionCodeHash:
 			values[i] = new(sql.NullString)
 		case pendingauthsession.FieldCreatedAt, pendingauthsession.FieldUpdatedAt, pendingauthsession.FieldCompletionCodeExpiresAt, pendingauthsession.FieldEmailVerifiedAt, pendingauthsession.FieldPasswordVerifiedAt, pendingauthsession.FieldTotpVerifiedAt, pendingauthsession.FieldExpiresAt, pendingauthsession.FieldConsumedAt:
 			values[i] = new(sql.NullTime)
@@ -175,7 +179,22 @@ func (_m *PendingAuthSession) assignValues(columns []string, values []any) error
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field provider_subject", values[i])
 			} else if value.Valid {
-				_m.ProviderSubject = value.String
+				_m.ProviderSubject = new(string)
+				*_m.ProviderSubject = value.String
+			}
+		case pendingauthsession.FieldProviderSubjectHash:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field provider_subject_hash", values[i])
+			} else if value.Valid {
+				_m.ProviderSubjectHash = new(string)
+				*_m.ProviderSubjectHash = value.String
+			}
+		case pendingauthsession.FieldProviderSubjectPrefix:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field provider_subject_prefix", values[i])
+			} else if value.Valid {
+				_m.ProviderSubjectPrefix = new(string)
+				*_m.ProviderSubjectPrefix = value.String
 			}
 		case pendingauthsession.FieldTargetUserID:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -335,8 +354,20 @@ func (_m *PendingAuthSession) String() string {
 	builder.WriteString("provider_key=")
 	builder.WriteString(_m.ProviderKey)
 	builder.WriteString(", ")
-	builder.WriteString("provider_subject=")
-	builder.WriteString(_m.ProviderSubject)
+	if v := _m.ProviderSubject; v != nil {
+		builder.WriteString("provider_subject=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.ProviderSubjectHash; v != nil {
+		builder.WriteString("provider_subject_hash=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.ProviderSubjectPrefix; v != nil {
+		builder.WriteString("provider_subject_prefix=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	if v := _m.TargetUserID; v != nil {
 		builder.WriteString("target_user_id=")

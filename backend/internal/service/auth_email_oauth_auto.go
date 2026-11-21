@@ -241,7 +241,7 @@ func (s *AuthService) findEmailOAuthIdentityOwner(ctx context.Context, providerT
 		Where(
 			authidentity.ProviderTypeEQ(providerType),
 			authidentity.ProviderKeyEQ(providerKey),
-			authidentity.ProviderSubjectEQ(providerSubject),
+			AuthIdentitySubjectLookupPredicate(providerType, providerSubject),
 		).
 		Only(ctx)
 	if err != nil {
@@ -285,7 +285,7 @@ func (s *AuthService) ensureEmailOAuthIdentity(ctx context.Context, userID int64
 		Where(
 			authidentity.ProviderTypeEQ(providerType),
 			authidentity.ProviderKeyEQ(providerKey),
-			authidentity.ProviderSubjectEQ(providerSubject),
+			AuthIdentitySubjectLookupPredicate(providerType, providerSubject),
 		).
 		Only(ctx)
 	if err != nil && !dbent.IsNotFound(err) {
@@ -296,16 +296,16 @@ func (s *AuthService) ensureEmailOAuthIdentity(ctx context.Context, userID int64
 			return infraerrors.Conflict("AUTH_IDENTITY_OWNERSHIP_CONFLICT", "auth identity already belongs to another user")
 		}
 		_, err = s.entClient.AuthIdentity.UpdateOneID(identity.ID).
-			SetMetadata(metadata).
+			SetMetadata(SanitizeAuthIdentityMetadata(metadata)).
 			Save(ctx)
 		return err
 	}
-	_, err = s.entClient.AuthIdentity.Create().
+	create := s.entClient.AuthIdentity.Create().
 		SetUserID(userID).
 		SetProviderType(providerType).
 		SetProviderKey(providerKey).
-		SetProviderSubject(providerSubject).
-		SetMetadata(metadata).
-		Save(ctx)
+		SetMetadata(SanitizeAuthIdentityMetadata(metadata))
+	create = ApplyAuthIdentitySubjectCreate(create, providerType, providerSubject)
+	_, err = create.Save(ctx)
 	return err
 }

@@ -34,7 +34,11 @@ type AuthIdentityChannel struct {
 	// ChannelAppID holds the value of the "channel_app_id" field.
 	ChannelAppID string `json:"channel_app_id,omitempty"`
 	// ChannelSubject holds the value of the "channel_subject" field.
-	ChannelSubject string `json:"channel_subject,omitempty"`
+	ChannelSubject *string `json:"channel_subject,omitempty"`
+	// ChannelSubjectHash holds the value of the "channel_subject_hash" field.
+	ChannelSubjectHash *string `json:"channel_subject_hash,omitempty"`
+	// ChannelSubjectPrefix holds the value of the "channel_subject_prefix" field.
+	ChannelSubjectPrefix *string `json:"channel_subject_prefix,omitempty"`
 	// Metadata holds the value of the "metadata" field.
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
@@ -72,7 +76,7 @@ func (*AuthIdentityChannel) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case authidentitychannel.FieldID, authidentitychannel.FieldIdentityID:
 			values[i] = new(sql.NullInt64)
-		case authidentitychannel.FieldProviderType, authidentitychannel.FieldProviderKey, authidentitychannel.FieldChannel, authidentitychannel.FieldChannelAppID, authidentitychannel.FieldChannelSubject:
+		case authidentitychannel.FieldProviderType, authidentitychannel.FieldProviderKey, authidentitychannel.FieldChannel, authidentitychannel.FieldChannelAppID, authidentitychannel.FieldChannelSubject, authidentitychannel.FieldChannelSubjectHash, authidentitychannel.FieldChannelSubjectPrefix:
 			values[i] = new(sql.NullString)
 		case authidentitychannel.FieldCreatedAt, authidentitychannel.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -143,7 +147,22 @@ func (_m *AuthIdentityChannel) assignValues(columns []string, values []any) erro
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field channel_subject", values[i])
 			} else if value.Valid {
-				_m.ChannelSubject = value.String
+				_m.ChannelSubject = new(string)
+				*_m.ChannelSubject = value.String
+			}
+		case authidentitychannel.FieldChannelSubjectHash:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field channel_subject_hash", values[i])
+			} else if value.Valid {
+				_m.ChannelSubjectHash = new(string)
+				*_m.ChannelSubjectHash = value.String
+			}
+		case authidentitychannel.FieldChannelSubjectPrefix:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field channel_subject_prefix", values[i])
+			} else if value.Valid {
+				_m.ChannelSubjectPrefix = new(string)
+				*_m.ChannelSubjectPrefix = value.String
 			}
 		case authidentitychannel.FieldMetadata:
 			if value, ok := values[i].(*[]byte); !ok {
@@ -215,8 +234,20 @@ func (_m *AuthIdentityChannel) String() string {
 	builder.WriteString("channel_app_id=")
 	builder.WriteString(_m.ChannelAppID)
 	builder.WriteString(", ")
-	builder.WriteString("channel_subject=")
-	builder.WriteString(_m.ChannelSubject)
+	if v := _m.ChannelSubject; v != nil {
+		builder.WriteString("channel_subject=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.ChannelSubjectHash; v != nil {
+		builder.WriteString("channel_subject_hash=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.ChannelSubjectPrefix; v != nil {
+		builder.WriteString("channel_subject_prefix=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	builder.WriteString("metadata=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Metadata))

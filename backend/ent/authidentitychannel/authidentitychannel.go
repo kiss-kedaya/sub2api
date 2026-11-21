@@ -30,6 +30,10 @@ const (
 	FieldChannelAppID = "channel_app_id"
 	// FieldChannelSubject holds the string denoting the channel_subject field in the database.
 	FieldChannelSubject = "channel_subject"
+	// FieldChannelSubjectHash holds the string denoting the channel_subject_hash field in the database.
+	FieldChannelSubjectHash = "channel_subject_hash"
+	// FieldChannelSubjectPrefix holds the string denoting the channel_subject_prefix field in the database.
+	FieldChannelSubjectPrefix = "channel_subject_prefix"
 	// FieldMetadata holds the string denoting the metadata field in the database.
 	FieldMetadata = "metadata"
 	// EdgeIdentity holds the string denoting the identity edge name in mutations.
@@ -56,6 +60,8 @@ var Columns = []string{
 	FieldChannel,
 	FieldChannelAppID,
 	FieldChannelSubject,
+	FieldChannelSubjectHash,
+	FieldChannelSubjectPrefix,
 	FieldMetadata,
 }
 
@@ -84,8 +90,10 @@ var (
 	ChannelValidator func(string) error
 	// ChannelAppIDValidator is a validator for the "channel_app_id" field. It is called by the builders before save.
 	ChannelAppIDValidator func(string) error
-	// ChannelSubjectValidator is a validator for the "channel_subject" field. It is called by the builders before save.
-	ChannelSubjectValidator func(string) error
+	// ChannelSubjectHashValidator is a validator for the "channel_subject_hash" field. It is called by the builders before save.
+	ChannelSubjectHashValidator func(string) error
+	// ChannelSubjectPrefixValidator is a validator for the "channel_subject_prefix" field. It is called by the builders before save.
+	ChannelSubjectPrefixValidator func(string) error
 	// DefaultMetadata holds the default value on creation for the "metadata" field.
 	DefaultMetadata func() map[string]interface{}
 )
@@ -136,6 +144,16 @@ func ByChannelAppID(opts ...sql.OrderTermOption) OrderOption {
 // ByChannelSubject orders the results by the channel_subject field.
 func ByChannelSubject(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldChannelSubject, opts...).ToFunc()
+}
+
+// ByChannelSubjectHash orders the results by the channel_subject_hash field.
+func ByChannelSubjectHash(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldChannelSubjectHash, opts...).ToFunc()
+}
+
+// ByChannelSubjectPrefix orders the results by the channel_subject_prefix field.
+func ByChannelSubjectPrefix(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldChannelSubjectPrefix, opts...).ToFunc()
 }
 
 // ByIdentityField orders the results by identity field.

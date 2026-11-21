@@ -1039,7 +1039,7 @@ func (s *adminServiceImpl) BindUserAuthIdentity(ctx context.Context, userID int6
 		Where(
 			authidentity.ProviderTypeEQ(providerType),
 			authidentity.ProviderKeyIn(compatibleProviderKeys...),
-			authidentity.ProviderSubjectEQ(providerSubject),
+			AuthIdentitySubjectLookupPredicate(providerType, providerSubject),
 		).
 		All(ctx)
 	if err != nil {
@@ -1055,8 +1055,8 @@ func (s *adminServiceImpl) BindUserAuthIdentity(ctx context.Context, userID int6
 			SetUserID(userID).
 			SetProviderType(providerType).
 			SetProviderKey(canonicalProviderKey).
-			SetProviderSubject(providerSubject).
 			SetVerifiedAt(verifiedAt)
+		create = ApplyAuthIdentitySubjectCreate(create, providerType, providerSubject)
 		if issuer != nil {
 			create = create.SetIssuer(*issuer)
 		}
@@ -1091,7 +1091,7 @@ func (s *adminServiceImpl) BindUserAuthIdentity(ctx context.Context, userID int6
 				authidentitychannel.ProviderKeyIn(compatibleProviderKeys...),
 				authidentitychannel.ChannelEQ(channelInput.Channel),
 				authidentitychannel.ChannelAppIDEQ(channelInput.ChannelAppID),
-				authidentitychannel.ChannelSubjectEQ(channelInput.ChannelSubject),
+				AuthChannelSubjectLookupPredicate(providerType, channelInput.ChannelSubject),
 			).
 			WithIdentity().
 			All(ctx)
@@ -1108,8 +1108,8 @@ func (s *adminServiceImpl) BindUserAuthIdentity(ctx context.Context, userID int6
 				SetProviderType(providerType).
 				SetProviderKey(canonicalProviderKey).
 				SetChannel(channelInput.Channel).
-				SetChannelAppID(channelInput.ChannelAppID).
-				SetChannelSubject(channelInput.ChannelSubject)
+				SetChannelAppID(channelInput.ChannelAppID)
+			create = ApplyAuthChannelSubjectCreate(create, providerType, channelInput.ChannelSubject)
 			if channelInput.Metadata != nil {
 				create = create.SetMetadata(cloneAdminAuthIdentityMetadata(channelInput.Metadata))
 			}
@@ -1274,25 +1274,45 @@ func buildAdminBoundAuthIdentity(identity *dbent.AuthIdentity, channel *dbent.Au
 		return nil
 	}
 	result := &AdminBoundAuthIdentity{
-		UserID:          identity.UserID,
-		ProviderType:    strings.TrimSpace(identity.ProviderType),
-		ProviderKey:     strings.TrimSpace(identity.ProviderKey),
-		ProviderSubject: strings.TrimSpace(identity.ProviderSubject),
-		VerifiedAt:      identity.VerifiedAt,
-		Issuer:          identity.Issuer,
-		Metadata:        cloneAdminAuthIdentityMetadata(identity.Metadata),
-		CreatedAt:       identity.CreatedAt,
-		UpdatedAt:       identity.UpdatedAt,
+		UserID:                identity.UserID,
+		ProviderType:          strings.TrimSpace(identity.ProviderType),
+		ProviderKey:           strings.TrimSpace(identity.ProviderKey),
+		ProviderSubjectPrefix: strings.TrimSpace(derefString(identity.ProviderSubjectPrefix)),
+		VerifiedAt:            identity.VerifiedAt,
+		Issuer:                identity.Issuer,
+		Metadata:              cloneAdminAuthIdentityMetadata(identity.Metadata),
+		CreatedAt:             identity.CreatedAt,
+		UpdatedAt:             identity.UpdatedAt,
+	}
+	// 只回显掩码：优先用落库前缀；过渡期未回填的行用明文现算前缀后再脱敏，
+	// 完整 subject 永不出现在管理端响应里。
+	if result.ProviderSubjectPrefix != "" {
+		result.ProviderSubjectMasked = MaskAuthSubjectPrefix(result.ProviderSubjectPrefix)
+	} else if plaintext := AuthSubjectPlaintext(identity.ProviderSubject); plaintext != "" {
+		hashValue := HashAuthIdentitySubject(strings.TrimSpace(identity.ProviderType), plaintext)
+		result.ProviderSubjectPrefix = AuthSubjectPrefixFromHash(hashValue)
+		result.ProviderSubjectMasked = MaskAuthSubjectHash(hashValue)
+	} else {
+		result.ProviderSubjectMasked = MaskAuthSubjectPrefix("")
 	}
 	if channel != nil {
-		result.Channel = &AdminBoundAuthIdentityChannel{
-			Channel:        strings.TrimSpace(channel.Channel),
-			ChannelAppID:   strings.TrimSpace(channel.ChannelAppID),
-			ChannelSubject: strings.TrimSpace(channel.ChannelSubject),
-			Metadata:       cloneAdminAuthIdentityMetadata(channel.Metadata),
-			CreatedAt:      channel.CreatedAt,
-			UpdatedAt:      channel.UpdatedAt,
+		channelResult := &AdminBoundAuthIdentityChannel{
+			Channel:      strings.TrimSpace(channel.Channel),
+			ChannelAppID: strings.TrimSpace(channel.ChannelAppID),
+			Metadata:     cloneAdminAuthIdentityMetadata(channel.Metadata),
+			CreatedAt:    channel.CreatedAt,
+			UpdatedAt:    channel.UpdatedAt,
 		}
+		// channel_subject 同样已 keyed 哈希化：只回显前缀 + 掩码，完整值不出管理端。
+		channelResult.ChannelSubjectPrefix = strings.TrimSpace(derefString(channel.ChannelSubjectPrefix))
+		if channelResult.ChannelSubjectPrefix == "" {
+			if plaintext := AuthSubjectPlaintext(channel.ChannelSubject); plaintext != "" {
+				channelResult.ChannelSubjectPrefix = AuthSubjectPrefixFromHash(
+					HashAuthChannelSubject(strings.TrimSpace(channel.ProviderType), plaintext))
+			}
+		}
+		channelResult.ChannelSubjectMasked = MaskAuthSubjectPrefix(channelResult.ChannelSubjectPrefix)
+		result.Channel = channelResult
 	}
 	return result
 }
@@ -1304,7 +1324,8 @@ func cloneAdminAuthIdentityMetadata(input map[string]any) map[string]any {
 	if len(input) == 0 {
 		return map[string]any{}
 	}
-	data, err := json.Marshal(input)
+	// 管理端 DTO / 写库都只保留安全 metadata：subject 派生字段一律不落库、不回显。
+	data, err := json.Marshal(SanitizeAuthIdentityMetadata(input))
 	if err != nil {
 		out := make(map[string]any, len(input))
 		for key, value := range input {

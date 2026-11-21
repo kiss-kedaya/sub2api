@@ -3423,15 +3423,20 @@ func (r *oauthPendingFlowUserRepo) ListUserAuthIdentities(ctx context.Context, u
 		if identity == nil {
 			continue
 		}
+		prefix := ""
+		if identity.ProviderSubjectPrefix != nil {
+			prefix = *identity.ProviderSubjectPrefix
+		}
 		records = append(records, service.UserAuthIdentityRecord{
-			ProviderType:    identity.ProviderType,
-			ProviderKey:     identity.ProviderKey,
-			ProviderSubject: identity.ProviderSubject,
-			VerifiedAt:      identity.VerifiedAt,
-			Issuer:          identity.Issuer,
-			Metadata:        identity.Metadata,
-			CreatedAt:       identity.CreatedAt,
-			UpdatedAt:       identity.UpdatedAt,
+			ProviderType:          identity.ProviderType,
+			ProviderKey:           identity.ProviderKey,
+			ProviderSubject:       service.AuthSubjectPlaintext(identity.ProviderSubject),
+			ProviderSubjectPrefix: prefix,
+			VerifiedAt:            identity.VerifiedAt,
+			Issuer:                identity.Issuer,
+			Metadata:              identity.Metadata,
+			CreatedAt:             identity.CreatedAt,
+			UpdatedAt:             identity.UpdatedAt,
 		})
 	}
 	return records, nil

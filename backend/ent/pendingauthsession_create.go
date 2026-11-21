@@ -82,6 +82,42 @@ func (_c *PendingAuthSessionCreate) SetProviderSubject(v string) *PendingAuthSes
 	return _c
 }
 
+// SetNillableProviderSubject sets the "provider_subject" field if the given value is not nil.
+func (_c *PendingAuthSessionCreate) SetNillableProviderSubject(v *string) *PendingAuthSessionCreate {
+	if v != nil {
+		_c.SetProviderSubject(*v)
+	}
+	return _c
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (_c *PendingAuthSessionCreate) SetProviderSubjectHash(v string) *PendingAuthSessionCreate {
+	_c.mutation.SetProviderSubjectHash(v)
+	return _c
+}
+
+// SetNillableProviderSubjectHash sets the "provider_subject_hash" field if the given value is not nil.
+func (_c *PendingAuthSessionCreate) SetNillableProviderSubjectHash(v *string) *PendingAuthSessionCreate {
+	if v != nil {
+		_c.SetProviderSubjectHash(*v)
+	}
+	return _c
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (_c *PendingAuthSessionCreate) SetProviderSubjectPrefix(v string) *PendingAuthSessionCreate {
+	_c.mutation.SetProviderSubjectPrefix(v)
+	return _c
+}
+
+// SetNillableProviderSubjectPrefix sets the "provider_subject_prefix" field if the given value is not nil.
+func (_c *PendingAuthSessionCreate) SetNillableProviderSubjectPrefix(v *string) *PendingAuthSessionCreate {
+	if v != nil {
+		_c.SetProviderSubjectPrefix(*v)
+	}
+	return _c
+}
+
 // SetTargetUserID sets the "target_user_id" field.
 func (_c *PendingAuthSessionCreate) SetTargetUserID(v int64) *PendingAuthSessionCreate {
 	_c.mutation.SetTargetUserID(v)
@@ -391,12 +427,14 @@ func (_c *PendingAuthSessionCreate) check() error {
 			return &ValidationError{Name: "provider_key", err: fmt.Errorf(`ent: validator failed for field "PendingAuthSession.provider_key": %w`, err)}
 		}
 	}
-	if _, ok := _c.mutation.ProviderSubject(); !ok {
-		return &ValidationError{Name: "provider_subject", err: errors.New(`ent: missing required field "PendingAuthSession.provider_subject"`)}
+	if v, ok := _c.mutation.ProviderSubjectHash(); ok {
+		if err := pendingauthsession.ProviderSubjectHashValidator(v); err != nil {
+			return &ValidationError{Name: "provider_subject_hash", err: fmt.Errorf(`ent: validator failed for field "PendingAuthSession.provider_subject_hash": %w`, err)}
+		}
 	}
-	if v, ok := _c.mutation.ProviderSubject(); ok {
-		if err := pendingauthsession.ProviderSubjectValidator(v); err != nil {
-			return &ValidationError{Name: "provider_subject", err: fmt.Errorf(`ent: validator failed for field "PendingAuthSession.provider_subject": %w`, err)}
+	if v, ok := _c.mutation.ProviderSubjectPrefix(); ok {
+		if err := pendingauthsession.ProviderSubjectPrefixValidator(v); err != nil {
+			return &ValidationError{Name: "provider_subject_prefix", err: fmt.Errorf(`ent: validator failed for field "PendingAuthSession.provider_subject_prefix": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.RedirectTo(); !ok {
@@ -476,7 +514,15 @@ func (_c *PendingAuthSessionCreate) createSpec() (*PendingAuthSession, *sqlgraph
 	}
 	if value, ok := _c.mutation.ProviderSubject(); ok {
 		_spec.SetField(pendingauthsession.FieldProviderSubject, field.TypeString, value)
-		_node.ProviderSubject = value
+		_node.ProviderSubject = &value
+	}
+	if value, ok := _c.mutation.ProviderSubjectHash(); ok {
+		_spec.SetField(pendingauthsession.FieldProviderSubjectHash, field.TypeString, value)
+		_node.ProviderSubjectHash = &value
+	}
+	if value, ok := _c.mutation.ProviderSubjectPrefix(); ok {
+		_spec.SetField(pendingauthsession.FieldProviderSubjectPrefix, field.TypeString, value)
+		_node.ProviderSubjectPrefix = &value
 	}
 	if value, ok := _c.mutation.RedirectTo(); ok {
 		_spec.SetField(pendingauthsession.FieldRedirectTo, field.TypeString, value)
@@ -684,6 +730,48 @@ func (u *PendingAuthSessionUpsert) SetProviderSubject(v string) *PendingAuthSess
 // UpdateProviderSubject sets the "provider_subject" field to the value that was provided on create.
 func (u *PendingAuthSessionUpsert) UpdateProviderSubject() *PendingAuthSessionUpsert {
 	u.SetExcluded(pendingauthsession.FieldProviderSubject)
+	return u
+}
+
+// ClearProviderSubject clears the value of the "provider_subject" field.
+func (u *PendingAuthSessionUpsert) ClearProviderSubject() *PendingAuthSessionUpsert {
+	u.SetNull(pendingauthsession.FieldProviderSubject)
+	return u
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (u *PendingAuthSessionUpsert) SetProviderSubjectHash(v string) *PendingAuthSessionUpsert {
+	u.Set(pendingauthsession.FieldProviderSubjectHash, v)
+	return u
+}
+
+// UpdateProviderSubjectHash sets the "provider_subject_hash" field to the value that was provided on create.
+func (u *PendingAuthSessionUpsert) UpdateProviderSubjectHash() *PendingAuthSessionUpsert {
+	u.SetExcluded(pendingauthsession.FieldProviderSubjectHash)
+	return u
+}
+
+// ClearProviderSubjectHash clears the value of the "provider_subject_hash" field.
+func (u *PendingAuthSessionUpsert) ClearProviderSubjectHash() *PendingAuthSessionUpsert {
+	u.SetNull(pendingauthsession.FieldProviderSubjectHash)
+	return u
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (u *PendingAuthSessionUpsert) SetProviderSubjectPrefix(v string) *PendingAuthSessionUpsert {
+	u.Set(pendingauthsession.FieldProviderSubjectPrefix, v)
+	return u
+}
+
+// UpdateProviderSubjectPrefix sets the "provider_subject_prefix" field to the value that was provided on create.
+func (u *PendingAuthSessionUpsert) UpdateProviderSubjectPrefix() *PendingAuthSessionUpsert {
+	u.SetExcluded(pendingauthsession.FieldProviderSubjectPrefix)
+	return u
+}
+
+// ClearProviderSubjectPrefix clears the value of the "provider_subject_prefix" field.
+func (u *PendingAuthSessionUpsert) ClearProviderSubjectPrefix() *PendingAuthSessionUpsert {
+	u.SetNull(pendingauthsession.FieldProviderSubjectPrefix)
 	return u
 }
 
@@ -1017,6 +1105,55 @@ func (u *PendingAuthSessionUpsertOne) SetProviderSubject(v string) *PendingAuthS
 func (u *PendingAuthSessionUpsertOne) UpdateProviderSubject() *PendingAuthSessionUpsertOne {
 	return u.Update(func(s *PendingAuthSessionUpsert) {
 		s.UpdateProviderSubject()
+	})
+}
+
+// ClearProviderSubject clears the value of the "provider_subject" field.
+func (u *PendingAuthSessionUpsertOne) ClearProviderSubject() *PendingAuthSessionUpsertOne {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.ClearProviderSubject()
+	})
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (u *PendingAuthSessionUpsertOne) SetProviderSubjectHash(v string) *PendingAuthSessionUpsertOne {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.SetProviderSubjectHash(v)
+	})
+}
+
+// UpdateProviderSubjectHash sets the "provider_subject_hash" field to the value that was provided on create.
+func (u *PendingAuthSessionUpsertOne) UpdateProviderSubjectHash() *PendingAuthSessionUpsertOne {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.UpdateProviderSubjectHash()
+	})
+}
+
+// ClearProviderSubjectHash clears the value of the "provider_subject_hash" field.
+func (u *PendingAuthSessionUpsertOne) ClearProviderSubjectHash() *PendingAuthSessionUpsertOne {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.ClearProviderSubjectHash()
+	})
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (u *PendingAuthSessionUpsertOne) SetProviderSubjectPrefix(v string) *PendingAuthSessionUpsertOne {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.SetProviderSubjectPrefix(v)
+	})
+}
+
+// UpdateProviderSubjectPrefix sets the "provider_subject_prefix" field to the value that was provided on create.
+func (u *PendingAuthSessionUpsertOne) UpdateProviderSubjectPrefix() *PendingAuthSessionUpsertOne {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.UpdateProviderSubjectPrefix()
+	})
+}
+
+// ClearProviderSubjectPrefix clears the value of the "provider_subject_prefix" field.
+func (u *PendingAuthSessionUpsertOne) ClearProviderSubjectPrefix() *PendingAuthSessionUpsertOne {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.ClearProviderSubjectPrefix()
 	})
 }
 
@@ -1550,6 +1687,55 @@ func (u *PendingAuthSessionUpsertBulk) SetProviderSubject(v string) *PendingAuth
 func (u *PendingAuthSessionUpsertBulk) UpdateProviderSubject() *PendingAuthSessionUpsertBulk {
 	return u.Update(func(s *PendingAuthSessionUpsert) {
 		s.UpdateProviderSubject()
+	})
+}
+
+// ClearProviderSubject clears the value of the "provider_subject" field.
+func (u *PendingAuthSessionUpsertBulk) ClearProviderSubject() *PendingAuthSessionUpsertBulk {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.ClearProviderSubject()
+	})
+}
+
+// SetProviderSubjectHash sets the "provider_subject_hash" field.
+func (u *PendingAuthSessionUpsertBulk) SetProviderSubjectHash(v string) *PendingAuthSessionUpsertBulk {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.SetProviderSubjectHash(v)
+	})
+}
+
+// UpdateProviderSubjectHash sets the "provider_subject_hash" field to the value that was provided on create.
+func (u *PendingAuthSessionUpsertBulk) UpdateProviderSubjectHash() *PendingAuthSessionUpsertBulk {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.UpdateProviderSubjectHash()
+	})
+}
+
+// ClearProviderSubjectHash clears the value of the "provider_subject_hash" field.
+func (u *PendingAuthSessionUpsertBulk) ClearProviderSubjectHash() *PendingAuthSessionUpsertBulk {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.ClearProviderSubjectHash()
+	})
+}
+
+// SetProviderSubjectPrefix sets the "provider_subject_prefix" field.
+func (u *PendingAuthSessionUpsertBulk) SetProviderSubjectPrefix(v string) *PendingAuthSessionUpsertBulk {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.SetProviderSubjectPrefix(v)
+	})
+}
+
+// UpdateProviderSubjectPrefix sets the "provider_subject_prefix" field to the value that was provided on create.
+func (u *PendingAuthSessionUpsertBulk) UpdateProviderSubjectPrefix() *PendingAuthSessionUpsertBulk {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.UpdateProviderSubjectPrefix()
+	})
+}
+
+// ClearProviderSubjectPrefix clears the value of the "provider_subject_prefix" field.
+func (u *PendingAuthSessionUpsertBulk) ClearProviderSubjectPrefix() *PendingAuthSessionUpsertBulk {
+	return u.Update(func(s *PendingAuthSessionUpsert) {
+		s.ClearProviderSubjectPrefix()
 	})
 }
 

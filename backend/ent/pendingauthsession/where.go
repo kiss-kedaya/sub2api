@@ -90,6 +90,16 @@ func ProviderSubject(v string) predicate.PendingAuthSession {
 	return predicate.PendingAuthSession(sql.FieldEQ(FieldProviderSubject, v))
 }
 
+// ProviderSubjectHash applies equality check predicate on the "provider_subject_hash" field. It's identical to ProviderSubjectHashEQ.
+func ProviderSubjectHash(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldEQ(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectPrefix applies equality check predicate on the "provider_subject_prefix" field. It's identical to ProviderSubjectPrefixEQ.
+func ProviderSubjectPrefix(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldEQ(FieldProviderSubjectPrefix, v))
+}
+
 // TargetUserID applies equality check predicate on the "target_user_id" field. It's identical to TargetUserIDEQ.
 func TargetUserID(v int64) predicate.PendingAuthSession {
 	return predicate.PendingAuthSession(sql.FieldEQ(FieldTargetUserID, v))
@@ -545,6 +555,16 @@ func ProviderSubjectHasSuffix(v string) predicate.PendingAuthSession {
 	return predicate.PendingAuthSession(sql.FieldHasSuffix(FieldProviderSubject, v))
 }
 
+// ProviderSubjectIsNil applies the IsNil predicate on the "provider_subject" field.
+func ProviderSubjectIsNil() predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldIsNull(FieldProviderSubject))
+}
+
+// ProviderSubjectNotNil applies the NotNil predicate on the "provider_subject" field.
+func ProviderSubjectNotNil() predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldNotNull(FieldProviderSubject))
+}
+
 // ProviderSubjectEqualFold applies the EqualFold predicate on the "provider_subject" field.
 func ProviderSubjectEqualFold(v string) predicate.PendingAuthSession {
 	return predicate.PendingAuthSession(sql.FieldEqualFold(FieldProviderSubject, v))
@@ -553,6 +573,156 @@ func ProviderSubjectEqualFold(v string) predicate.PendingAuthSession {
 // ProviderSubjectContainsFold applies the ContainsFold predicate on the "provider_subject" field.
 func ProviderSubjectContainsFold(v string) predicate.PendingAuthSession {
 	return predicate.PendingAuthSession(sql.FieldContainsFold(FieldProviderSubject, v))
+}
+
+// ProviderSubjectHashEQ applies the EQ predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashEQ(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldEQ(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashNEQ applies the NEQ predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashNEQ(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldNEQ(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashIn applies the In predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashIn(vs ...string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldIn(FieldProviderSubjectHash, vs...))
+}
+
+// ProviderSubjectHashNotIn applies the NotIn predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashNotIn(vs ...string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldNotIn(FieldProviderSubjectHash, vs...))
+}
+
+// ProviderSubjectHashGT applies the GT predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashGT(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldGT(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashGTE applies the GTE predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashGTE(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldGTE(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashLT applies the LT predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashLT(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldLT(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashLTE applies the LTE predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashLTE(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldLTE(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashContains applies the Contains predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashContains(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldContains(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashHasPrefix applies the HasPrefix predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashHasPrefix(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldHasPrefix(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashHasSuffix applies the HasSuffix predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashHasSuffix(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldHasSuffix(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashIsNil applies the IsNil predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashIsNil() predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldIsNull(FieldProviderSubjectHash))
+}
+
+// ProviderSubjectHashNotNil applies the NotNil predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashNotNil() predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldNotNull(FieldProviderSubjectHash))
+}
+
+// ProviderSubjectHashEqualFold applies the EqualFold predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashEqualFold(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldEqualFold(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectHashContainsFold applies the ContainsFold predicate on the "provider_subject_hash" field.
+func ProviderSubjectHashContainsFold(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldContainsFold(FieldProviderSubjectHash, v))
+}
+
+// ProviderSubjectPrefixEQ applies the EQ predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixEQ(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldEQ(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixNEQ applies the NEQ predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixNEQ(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldNEQ(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixIn applies the In predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixIn(vs ...string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldIn(FieldProviderSubjectPrefix, vs...))
+}
+
+// ProviderSubjectPrefixNotIn applies the NotIn predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixNotIn(vs ...string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldNotIn(FieldProviderSubjectPrefix, vs...))
+}
+
+// ProviderSubjectPrefixGT applies the GT predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixGT(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldGT(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixGTE applies the GTE predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixGTE(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldGTE(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixLT applies the LT predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixLT(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldLT(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixLTE applies the LTE predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixLTE(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldLTE(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixContains applies the Contains predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixContains(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldContains(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixHasPrefix applies the HasPrefix predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixHasPrefix(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldHasPrefix(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixHasSuffix applies the HasSuffix predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixHasSuffix(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldHasSuffix(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixIsNil applies the IsNil predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixIsNil() predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldIsNull(FieldProviderSubjectPrefix))
+}
+
+// ProviderSubjectPrefixNotNil applies the NotNil predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixNotNil() predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldNotNull(FieldProviderSubjectPrefix))
+}
+
+// ProviderSubjectPrefixEqualFold applies the EqualFold predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixEqualFold(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldEqualFold(FieldProviderSubjectPrefix, v))
+}
+
+// ProviderSubjectPrefixContainsFold applies the ContainsFold predicate on the "provider_subject_prefix" field.
+func ProviderSubjectPrefixContainsFold(v string) predicate.PendingAuthSession {
+	return predicate.PendingAuthSession(sql.FieldContainsFold(FieldProviderSubjectPrefix, v))
 }
 
 // TargetUserIDEQ applies the EQ predicate on the "target_user_id" field.

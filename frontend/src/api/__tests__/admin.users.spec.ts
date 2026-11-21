@@ -48,7 +48,8 @@ type ExpectedAdminBoundAuthIdentity = {
   user_id: number
   provider_type: string
   provider_key: string
-  provider_subject: string
+  provider_subject_prefix?: string
+  provider_subject_masked: string
   verified_at?: string | null
   issuer?: string | null
   metadata: Record<string, unknown> | null
@@ -57,7 +58,8 @@ type ExpectedAdminBoundAuthIdentity = {
   channel?: {
     channel: string
     channel_app_id: string
-    channel_subject: string
+    channel_subject_prefix?: string
+    channel_subject_masked: string
     metadata: Record<string, unknown> | null
     created_at: string
     updated_at: string
@@ -108,7 +110,8 @@ describe('admin users api auth identity binding', () => {
       user_id: 9,
       provider_type: 'wechat',
       provider_key: 'wechat-main',
-      provider_subject: 'union-123',
+      provider_subject_prefix: 'a1b2c3d4',
+      provider_subject_masked: 'a1b2c3d4***',
       verified_at: '2026-04-22T00:00:00Z',
       issuer: null,
       metadata: { source: 'admin-repair' },
@@ -117,7 +120,8 @@ describe('admin users api auth identity binding', () => {
       channel: {
         channel: 'open',
         channel_app_id: 'wx-open',
-        channel_subject: 'openid-123',
+        channel_subject_prefix: '0f1e2d3c',
+        channel_subject_masked: '0f1e2d3c***',
         metadata: { scene: 'migration' },
         created_at: '2026-04-22T00:00:00Z',
         updated_at: '2026-04-22T00:00:00Z',

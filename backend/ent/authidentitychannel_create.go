@@ -87,6 +87,42 @@ func (_c *AuthIdentityChannelCreate) SetChannelSubject(v string) *AuthIdentityCh
 	return _c
 }
 
+// SetNillableChannelSubject sets the "channel_subject" field if the given value is not nil.
+func (_c *AuthIdentityChannelCreate) SetNillableChannelSubject(v *string) *AuthIdentityChannelCreate {
+	if v != nil {
+		_c.SetChannelSubject(*v)
+	}
+	return _c
+}
+
+// SetChannelSubjectHash sets the "channel_subject_hash" field.
+func (_c *AuthIdentityChannelCreate) SetChannelSubjectHash(v string) *AuthIdentityChannelCreate {
+	_c.mutation.SetChannelSubjectHash(v)
+	return _c
+}
+
+// SetNillableChannelSubjectHash sets the "channel_subject_hash" field if the given value is not nil.
+func (_c *AuthIdentityChannelCreate) SetNillableChannelSubjectHash(v *string) *AuthIdentityChannelCreate {
+	if v != nil {
+		_c.SetChannelSubjectHash(*v)
+	}
+	return _c
+}
+
+// SetChannelSubjectPrefix sets the "channel_subject_prefix" field.
+func (_c *AuthIdentityChannelCreate) SetChannelSubjectPrefix(v string) *AuthIdentityChannelCreate {
+	_c.mutation.SetChannelSubjectPrefix(v)
+	return _c
+}
+
+// SetNillableChannelSubjectPrefix sets the "channel_subject_prefix" field if the given value is not nil.
+func (_c *AuthIdentityChannelCreate) SetNillableChannelSubjectPrefix(v *string) *AuthIdentityChannelCreate {
+	if v != nil {
+		_c.SetChannelSubjectPrefix(*v)
+	}
+	return _c
+}
+
 // SetMetadata sets the "metadata" field.
 func (_c *AuthIdentityChannelCreate) SetMetadata(v map[string]interface{}) *AuthIdentityChannelCreate {
 	_c.mutation.SetMetadata(v)
@@ -190,12 +226,14 @@ func (_c *AuthIdentityChannelCreate) check() error {
 			return &ValidationError{Name: "channel_app_id", err: fmt.Errorf(`ent: validator failed for field "AuthIdentityChannel.channel_app_id": %w`, err)}
 		}
 	}
-	if _, ok := _c.mutation.ChannelSubject(); !ok {
-		return &ValidationError{Name: "channel_subject", err: errors.New(`ent: missing required field "AuthIdentityChannel.channel_subject"`)}
+	if v, ok := _c.mutation.ChannelSubjectHash(); ok {
+		if err := authidentitychannel.ChannelSubjectHashValidator(v); err != nil {
+			return &ValidationError{Name: "channel_subject_hash", err: fmt.Errorf(`ent: validator failed for field "AuthIdentityChannel.channel_subject_hash": %w`, err)}
+		}
 	}
-	if v, ok := _c.mutation.ChannelSubject(); ok {
-		if err := authidentitychannel.ChannelSubjectValidator(v); err != nil {
-			return &ValidationError{Name: "channel_subject", err: fmt.Errorf(`ent: validator failed for field "AuthIdentityChannel.channel_subject": %w`, err)}
+	if v, ok := _c.mutation.ChannelSubjectPrefix(); ok {
+		if err := authidentitychannel.ChannelSubjectPrefixValidator(v); err != nil {
+			return &ValidationError{Name: "channel_subject_prefix", err: fmt.Errorf(`ent: validator failed for field "AuthIdentityChannel.channel_subject_prefix": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.Metadata(); !ok {
@@ -257,7 +295,15 @@ func (_c *AuthIdentityChannelCreate) createSpec() (*AuthIdentityChannel, *sqlgra
 	}
 	if value, ok := _c.mutation.ChannelSubject(); ok {
 		_spec.SetField(authidentitychannel.FieldChannelSubject, field.TypeString, value)
-		_node.ChannelSubject = value
+		_node.ChannelSubject = &value
+	}
+	if value, ok := _c.mutation.ChannelSubjectHash(); ok {
+		_spec.SetField(authidentitychannel.FieldChannelSubjectHash, field.TypeString, value)
+		_node.ChannelSubjectHash = &value
+	}
+	if value, ok := _c.mutation.ChannelSubjectPrefix(); ok {
+		_spec.SetField(authidentitychannel.FieldChannelSubjectPrefix, field.TypeString, value)
+		_node.ChannelSubjectPrefix = &value
 	}
 	if value, ok := _c.mutation.Metadata(); ok {
 		_spec.SetField(authidentitychannel.FieldMetadata, field.TypeJSON, value)
@@ -416,6 +462,48 @@ func (u *AuthIdentityChannelUpsert) UpdateChannelSubject() *AuthIdentityChannelU
 	return u
 }
 
+// ClearChannelSubject clears the value of the "channel_subject" field.
+func (u *AuthIdentityChannelUpsert) ClearChannelSubject() *AuthIdentityChannelUpsert {
+	u.SetNull(authidentitychannel.FieldChannelSubject)
+	return u
+}
+
+// SetChannelSubjectHash sets the "channel_subject_hash" field.
+func (u *AuthIdentityChannelUpsert) SetChannelSubjectHash(v string) *AuthIdentityChannelUpsert {
+	u.Set(authidentitychannel.FieldChannelSubjectHash, v)
+	return u
+}
+
+// UpdateChannelSubjectHash sets the "channel_subject_hash" field to the value that was provided on create.
+func (u *AuthIdentityChannelUpsert) UpdateChannelSubjectHash() *AuthIdentityChannelUpsert {
+	u.SetExcluded(authidentitychannel.FieldChannelSubjectHash)
+	return u
+}
+
+// ClearChannelSubjectHash clears the value of the "channel_subject_hash" field.
+func (u *AuthIdentityChannelUpsert) ClearChannelSubjectHash() *AuthIdentityChannelUpsert {
+	u.SetNull(authidentitychannel.FieldChannelSubjectHash)
+	return u
+}
+
+// SetChannelSubjectPrefix sets the "channel_subject_prefix" field.
+func (u *AuthIdentityChannelUpsert) SetChannelSubjectPrefix(v string) *AuthIdentityChannelUpsert {
+	u.Set(authidentitychannel.FieldChannelSubjectPrefix, v)
+	return u
+}
+
+// UpdateChannelSubjectPrefix sets the "channel_subject_prefix" field to the value that was provided on create.
+func (u *AuthIdentityChannelUpsert) UpdateChannelSubjectPrefix() *AuthIdentityChannelUpsert {
+	u.SetExcluded(authidentitychannel.FieldChannelSubjectPrefix)
+	return u
+}
+
+// ClearChannelSubjectPrefix clears the value of the "channel_subject_prefix" field.
+func (u *AuthIdentityChannelUpsert) ClearChannelSubjectPrefix() *AuthIdentityChannelUpsert {
+	u.SetNull(authidentitychannel.FieldChannelSubjectPrefix)
+	return u
+}
+
 // SetMetadata sets the "metadata" field.
 func (u *AuthIdentityChannelUpsert) SetMetadata(v map[string]interface{}) *AuthIdentityChannelUpsert {
 	u.Set(authidentitychannel.FieldMetadata, v)
@@ -568,6 +656,55 @@ func (u *AuthIdentityChannelUpsertOne) SetChannelSubject(v string) *AuthIdentity
 func (u *AuthIdentityChannelUpsertOne) UpdateChannelSubject() *AuthIdentityChannelUpsertOne {
 	return u.Update(func(s *AuthIdentityChannelUpsert) {
 		s.UpdateChannelSubject()
+	})
+}
+
+// ClearChannelSubject clears the value of the "channel_subject" field.
+func (u *AuthIdentityChannelUpsertOne) ClearChannelSubject() *AuthIdentityChannelUpsertOne {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.ClearChannelSubject()
+	})
+}
+
+// SetChannelSubjectHash sets the "channel_subject_hash" field.
+func (u *AuthIdentityChannelUpsertOne) SetChannelSubjectHash(v string) *AuthIdentityChannelUpsertOne {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.SetChannelSubjectHash(v)
+	})
+}
+
+// UpdateChannelSubjectHash sets the "channel_subject_hash" field to the value that was provided on create.
+func (u *AuthIdentityChannelUpsertOne) UpdateChannelSubjectHash() *AuthIdentityChannelUpsertOne {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.UpdateChannelSubjectHash()
+	})
+}
+
+// ClearChannelSubjectHash clears the value of the "channel_subject_hash" field.
+func (u *AuthIdentityChannelUpsertOne) ClearChannelSubjectHash() *AuthIdentityChannelUpsertOne {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.ClearChannelSubjectHash()
+	})
+}
+
+// SetChannelSubjectPrefix sets the "channel_subject_prefix" field.
+func (u *AuthIdentityChannelUpsertOne) SetChannelSubjectPrefix(v string) *AuthIdentityChannelUpsertOne {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.SetChannelSubjectPrefix(v)
+	})
+}
+
+// UpdateChannelSubjectPrefix sets the "channel_subject_prefix" field to the value that was provided on create.
+func (u *AuthIdentityChannelUpsertOne) UpdateChannelSubjectPrefix() *AuthIdentityChannelUpsertOne {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.UpdateChannelSubjectPrefix()
+	})
+}
+
+// ClearChannelSubjectPrefix clears the value of the "channel_subject_prefix" field.
+func (u *AuthIdentityChannelUpsertOne) ClearChannelSubjectPrefix() *AuthIdentityChannelUpsertOne {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.ClearChannelSubjectPrefix()
 	})
 }
 
@@ -891,6 +1028,55 @@ func (u *AuthIdentityChannelUpsertBulk) SetChannelSubject(v string) *AuthIdentit
 func (u *AuthIdentityChannelUpsertBulk) UpdateChannelSubject() *AuthIdentityChannelUpsertBulk {
 	return u.Update(func(s *AuthIdentityChannelUpsert) {
 		s.UpdateChannelSubject()
+	})
+}
+
+// ClearChannelSubject clears the value of the "channel_subject" field.
+func (u *AuthIdentityChannelUpsertBulk) ClearChannelSubject() *AuthIdentityChannelUpsertBulk {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.ClearChannelSubject()
+	})
+}
+
+// SetChannelSubjectHash sets the "channel_subject_hash" field.
+func (u *AuthIdentityChannelUpsertBulk) SetChannelSubjectHash(v string) *AuthIdentityChannelUpsertBulk {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.SetChannelSubjectHash(v)
+	})
+}
+
+// UpdateChannelSubjectHash sets the "channel_subject_hash" field to the value that was provided on create.
+func (u *AuthIdentityChannelUpsertBulk) UpdateChannelSubjectHash() *AuthIdentityChannelUpsertBulk {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.UpdateChannelSubjectHash()
+	})
+}
+
+// ClearChannelSubjectHash clears the value of the "channel_subject_hash" field.
+func (u *AuthIdentityChannelUpsertBulk) ClearChannelSubjectHash() *AuthIdentityChannelUpsertBulk {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.ClearChannelSubjectHash()
+	})
+}
+
+// SetChannelSubjectPrefix sets the "channel_subject_prefix" field.
+func (u *AuthIdentityChannelUpsertBulk) SetChannelSubjectPrefix(v string) *AuthIdentityChannelUpsertBulk {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.SetChannelSubjectPrefix(v)
+	})
+}
+
+// UpdateChannelSubjectPrefix sets the "channel_subject_prefix" field to the value that was provided on create.
+func (u *AuthIdentityChannelUpsertBulk) UpdateChannelSubjectPrefix() *AuthIdentityChannelUpsertBulk {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.UpdateChannelSubjectPrefix()
+	})
+}
+
+// ClearChannelSubjectPrefix clears the value of the "channel_subject_prefix" field.
+func (u *AuthIdentityChannelUpsertBulk) ClearChannelSubjectPrefix() *AuthIdentityChannelUpsertBulk {
+	return u.Update(func(s *AuthIdentityChannelUpsert) {
+		s.ClearChannelSubjectPrefix()
 	})
 }
 

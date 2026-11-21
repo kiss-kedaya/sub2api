@@ -28,6 +28,10 @@ const (
 	FieldProviderKey = "provider_key"
 	// FieldProviderSubject holds the string denoting the provider_subject field in the database.
 	FieldProviderSubject = "provider_subject"
+	// FieldProviderSubjectHash holds the string denoting the provider_subject_hash field in the database.
+	FieldProviderSubjectHash = "provider_subject_hash"
+	// FieldProviderSubjectPrefix holds the string denoting the provider_subject_prefix field in the database.
+	FieldProviderSubjectPrefix = "provider_subject_prefix"
 	// FieldTargetUserID holds the string denoting the target_user_id field in the database.
 	FieldTargetUserID = "target_user_id"
 	// FieldRedirectTo holds the string denoting the redirect_to field in the database.
@@ -88,6 +92,8 @@ var Columns = []string{
 	FieldProviderType,
 	FieldProviderKey,
 	FieldProviderSubject,
+	FieldProviderSubjectHash,
+	FieldProviderSubjectPrefix,
 	FieldTargetUserID,
 	FieldRedirectTo,
 	FieldResolvedEmail,
@@ -129,8 +135,10 @@ var (
 	ProviderTypeValidator func(string) error
 	// ProviderKeyValidator is a validator for the "provider_key" field. It is called by the builders before save.
 	ProviderKeyValidator func(string) error
-	// ProviderSubjectValidator is a validator for the "provider_subject" field. It is called by the builders before save.
-	ProviderSubjectValidator func(string) error
+	// ProviderSubjectHashValidator is a validator for the "provider_subject_hash" field. It is called by the builders before save.
+	ProviderSubjectHashValidator func(string) error
+	// ProviderSubjectPrefixValidator is a validator for the "provider_subject_prefix" field. It is called by the builders before save.
+	ProviderSubjectPrefixValidator func(string) error
 	// DefaultRedirectTo holds the default value on creation for the "redirect_to" field.
 	DefaultRedirectTo string
 	// DefaultResolvedEmail holds the default value on creation for the "resolved_email" field.
@@ -188,6 +196,16 @@ func ByProviderKey(opts ...sql.OrderTermOption) OrderOption {
 // ByProviderSubject orders the results by the provider_subject field.
 func ByProviderSubject(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldProviderSubject, opts...).ToFunc()
+}
+
+// ByProviderSubjectHash orders the results by the provider_subject_hash field.
+func ByProviderSubjectHash(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProviderSubjectHash, opts...).ToFunc()
+}
+
+// ByProviderSubjectPrefix orders the results by the provider_subject_prefix field.
+func ByProviderSubjectPrefix(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProviderSubjectPrefix, opts...).ToFunc()
 }
 
 // ByTargetUserID orders the results by the target_user_id field.

@@ -389,21 +389,20 @@ func ensureEmailAuthIdentityWithClient(ctx context.Context, client *dbent.Client
 		return nil
 	}
 
-	if err := client.AuthIdentity.Create().
+	create := client.AuthIdentity.Create().
 		SetUserID(userID).
 		SetProviderType("email").
 		SetProviderKey("email").
-		SetProviderSubject(subject).
 		SetVerifiedAt(time.Now().UTC()).
-		SetMetadata(map[string]any{"source": source}).
-		OnConflictColumns(
-			authidentity.FieldProviderType,
-			authidentity.FieldProviderKey,
-			authidentity.FieldProviderSubject,
-		).
+		SetMetadata(map[string]any{"source": source})
+	create = service.ApplyAuthIdentitySubjectCreate(create, "email", subject)
+	if err := create.
+		OnConflictColumns(service.AuthIdentitySubjectHashConflictColumns()...).
 		DoNothing().
 		Exec(ctx); err != nil {
-		if !isSQLNoRowsError(err) {
+		// 滚动窗口兼容：旧实例写入的行只有明文、hash 还是 NULL，冲突会落在
+		// 明文唯一索引上；交给下面的查询走 hash/明文回退。
+		if !isSQLNoRowsError(err) && !dbent.IsConstraintError(err) {
 			return err
 		}
 	}
@@ -412,7 +411,7 @@ func ensureEmailAuthIdentityWithClient(ctx context.Context, client *dbent.Client
 		Where(
 			authidentity.ProviderTypeEQ("email"),
 			authidentity.ProviderKeyEQ("email"),
-			authidentity.ProviderSubjectEQ(subject),
+			service.AuthIdentitySubjectLookupPredicate("email", subject),
 		).
 		Only(ctx)
 	if err != nil {
@@ -443,7 +442,7 @@ func replaceEmailAuthIdentityWithClient(ctx context.Context, client *dbent.Clien
 			authidentity.UserIDEQ(userID),
 			authidentity.ProviderTypeEQ("email"),
 			authidentity.ProviderKeyEQ("email"),
-			authidentity.ProviderSubjectEQ(oldSubject),
+			service.AuthIdentitySubjectLookupPredicate("email", oldSubject),
 		).
 		Exec(ctx)
 	return err

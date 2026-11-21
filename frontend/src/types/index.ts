@@ -44,7 +44,8 @@ export interface UserAuthBindingStatus {
   bound_count?: number
   provider?: UserAuthProvider | string
   provider_key?: string | null
-  provider_subject?: string | null
+  // provider_subject 已哈希化，接口只返回掩码提示（subject_hint）；
+  // 不再下发完整 subject，也不再有 provider_subject 字段。
   issuer?: string | null
   label?: string | null
   provider_label?: string | null
