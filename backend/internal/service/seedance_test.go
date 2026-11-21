@@ -116,3 +116,29 @@ func TestSeedancePreservesUpstreamErrorsWithoutRetry(t *testing.T) {
 	require.Contains(t, w.Body.String(), "Video provider request failed")
 	require.Len(t, upstream.requests, 1)
 }
+
+// #436: only integer durations inside Ark's accepted range become a billable
+// second count. Everything else is left for the upstream to reject (no charge)
+// and the billing layer then falls back to the shared default.
+func TestSeedanceRequestDurationBillingFields(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		duration string
+		want     int
+	}{
+		{"integer", `,"duration":12`, 12},
+		{"ark maximum", `,"duration":60`, 60},
+		{"above ark maximum is ignored", `,"duration":90`, 0},
+		{"fractional is not a billable duration", `,"duration":4.5`, 0},
+		{"auto selection is not a billable duration", `,"duration":-1`, 0},
+		{"string is not a billable duration", `,"duration":"5"`, 0},
+		{"absent", ``, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"model":"doubao-seedance-2.5","content":[{"type":"text","text":"waves"}]` + tc.duration + `}`)
+			info, err := ParseSeedanceRequest(body)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, info.DurationSeconds)
+		})
+	}
+}

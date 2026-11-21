@@ -967,7 +967,14 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 	}
 	// Candidate-list admission evaluates the account override before hydrating
 	// the full account. Dropping it silently falls back to the platform threshold.
-	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold", "base_url", "auth_mode", "explicit_cache_upstream", "explicit_cache_upstream_max_ttl_seconds"}
+	//
+	// openai_capabilities is consumed by SupportsOpenAIEndpointCapability during
+	// candidate admission. Without it, a snapshot-only scheduler applies the
+	// capability gate to a projected account whose credentials no longer carry
+	// the operator's opt-in, so Seedance/MinMax-H3 accounts are rejected with
+	// capability_mismatch while the DB fallback path (full credentials) admits
+	// them (#436).
+	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold", "base_url", "auth_mode", "openai_capabilities", "explicit_cache_upstream", "explicit_cache_upstream_max_ttl_seconds"}
 	filtered := make(map[string]any)
 	for _, key := range keys {
 		if value, ok := credentials[key]; ok && value != nil {

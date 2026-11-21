@@ -150,6 +150,7 @@ func (s *OpenAIGatewayService) forwardVideoProviderContent(ctx context.Context, 
 }
 
 func parseSeedanceCompletion(body []byte, result *OpenAIForwardResult) error {
+	result.VideoProvider = VideoProviderSeedance
 	result.VideoStatus = strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "status").String()))
 	if result.VideoStatus != "succeeded" {
 		return nil

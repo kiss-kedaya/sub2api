@@ -17,9 +17,6 @@ func prepareVideoProviderCompletionBilling(ctx context.Context, h *OpenAIGateway
 		key.GroupID == nil || *key.GroupID != pending.GroupID {
 		return nil
 	}
-	if provider == service.VideoProviderSeedance && !result.VideoTokenBilling {
-		return nil
-	}
 	if provider == service.VideoProviderMiniMaxH3 && pending.MiniMaxH3BaseCost == nil {
 		return nil
 	}
@@ -37,6 +34,18 @@ func prepareVideoProviderCompletionBilling(ctx context.Context, h *OpenAIGateway
 	if provider == service.VideoProviderMiniMaxH3 {
 		merged.VideoResolution, merged.VideoDurationSeconds = pending.VideoResolution, pending.VideoDurationSeconds
 		merged.MiniMaxH3BaseCost = pending.MiniMaxH3BaseCost
+	}
+	if provider == service.VideoProviderSeedance {
+		// Ark reports completion tokens for every succeeded task, but the tariff
+		// decides whether tokens, a fixed per-task price, or a per-second price is
+		// the billable unit (#436). This legacy path has no frozen snapshot, so
+		// resolve the mode from the same group/channel pricing the charge uses.
+		tokenBilled := h.gatewayService.AsyncVideoTokenBilled(ctx, provider,
+			firstNonEmptyString(pending.BillingModel, pending.Model), key)
+		merged.VideoTokenBilling = tokenBilled
+		if !tokenBilled && merged.VideoDurationSeconds <= 0 {
+			merged.VideoDurationSeconds = pending.VideoDurationSeconds
+		}
 	}
 	return &merged
 }
