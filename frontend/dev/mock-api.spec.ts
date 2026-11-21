@@ -79,8 +79,8 @@ describe('local demo API contracts', () => {
     const page = api.handle('GET', '/api/v1/keys', query('page=2&page_size=10&sort_by=id&sort_order=asc')) as PaginatedResponse<ApiKey>
     expect(page).toMatchObject({ total: 26, page: 2, pages: 3, page_size: 10 })
     expect(page.items.map(key => key.id)).toEqual([11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
-    expect(page.items.every(key => key.key.startsWith('sk-demo-not-valid-'))).toBe(true)
-    const filtered = api.handle('GET', '/api/v1/keys', query('group_id=1&status=active&search=000001')) as PaginatedResponse<ApiKey>
+    expect(page.items.every(key => key.key_masked.startsWith('sk-demo-'))).toBe(true)
+    const filtered = api.handle('GET', '/api/v1/keys', query('group_id=1&status=active&search=0001')) as PaginatedResponse<ApiKey>
     expect(filtered.items.map(key => key.id)).toEqual([1])
     expect(() => api.handle('GET', '/api/v1/keys', query('page_size=999999'))).toThrow(PreviewError)
   })
@@ -125,7 +125,7 @@ describe('local demo API contracts', () => {
     expect(api.handle('POST', '/api/v1/admin/dashboard/users-usage', query(), { user_ids: users.items.map(item => item.id) })).toMatchObject({ stats: expect.any(Object) })
 
     const keys = api.handle('GET', '/api/v1/admin/keys', query(`user_id=${users.items[0].id}&page_size=100`)) as PaginatedResponse<ApiKey>
-    expect(keys.items.every(item => item.user_id === users.items[0].id && item.key.includes('not-valid'))).toBe(true)
+    expect(keys.items.every(item => item.user_id === users.items[0].id && item.key_masked.includes('****'))).toBe(true)
 
     const usage = api.handle('GET', '/api/v1/admin/usage', query('model=claude&page=1&page_size=8')) as PaginatedResponse<AdminUsageLog>
     expect(usage.items).toHaveLength(8)
