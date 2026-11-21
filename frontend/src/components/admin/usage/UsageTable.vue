@@ -434,24 +434,35 @@
               <span class="text-gray-400">{{ t('admin.usage.inputCost') }}</span>
               <span class="font-medium text-white">${{ tooltipData.input_cost.toFixed(8) }}</span>
             </div>
+            <div v-if="tooltipData && hasImageInputCost(tooltipData)" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('usage.imageInputCost') }}</span>
+              <span class="font-medium text-fuchsia-300">${{ tooltipData.image_input_cost.toFixed(8) }}</span>
+            </div>
             <div v-if="tooltipData && tooltipData.output_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.outputCost') }}</span>
               <span class="font-medium text-white">${{ tooltipData.output_cost.toFixed(8) }}</span>
             </div>
+            <div v-if="tooltipData && hasImageOutputCost(tooltipData)" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('usage.imageOutputCost') }}</span>
+              <span class="font-medium text-pink-300">${{ tooltipData.image_output_cost.toFixed(8) }}</span>
+            </div>
             <!-- Token billing: show unit prices per 1M tokens -->
-            <!-- token 计费已不再按图片/文本分价（2026-11-21）：单价行统一用全部输入/输出 token 计算，
-                 不再展示「图片输入费用/图片输入单价/图片输出费用/图片输出单价」这些 token 维度行；
-                 按张计费的图片用量展示（下方 isImageUsage 分支）保留。 -->
             <template v-if="tooltipData && !isImageUsage(tooltipData) && (!tooltipData.billing_mode || tooltipData.billing_mode === BILLING_MODE_TOKEN)">
-              <!-- 新行 input_cost/output_cost 已包含全部 token；历史行（仍有图片 cost 残留）
-                   回退到文本 token 数，保证旧账单单价显示不跳变。 -->
-              <div v-if="tooltipData && tooltipData.input_cost > 0 && (tooltipData.image_input_cost > 0 ? textInputTokens(tooltipData) : tooltipData.input_tokens) > 0" class="flex items-center justify-between gap-4">
+              <div v-if="tooltipData && textInputTokens(tooltipData) > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.inputTokenPrice') }}</span>
-                <span class="font-medium text-sky-300">{{ formatTokenPricePerMillion(tooltipData.input_cost, tooltipData.image_input_cost > 0 ? textInputTokens(tooltipData) : tooltipData.input_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="font-medium text-sky-300">{{ formatTokenPricePerMillion(tooltipData.input_cost, textInputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
-              <div v-if="tooltipData && tooltipData.output_cost > 0 && (tooltipData.image_output_cost > 0 ? textOutputTokens(tooltipData) : tooltipData.output_tokens) > 0" class="flex items-center justify-between gap-4">
+              <div v-if="tooltipData && hasImageInputTokens(tooltipData)" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.imageInputTokenPrice') }}</span>
+                <span class="font-medium text-fuchsia-300">{{ formatTokenPricePerMillion(tooltipData.image_input_cost ?? 0, tooltipData.image_input_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+              </div>
+              <div v-if="tooltipData && tooltipData.output_cost > 0 && textOutputTokens(tooltipData) > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.outputTokenPrice') }}</span>
-                <span class="font-medium text-violet-300">{{ formatTokenPricePerMillion(tooltipData.output_cost, tooltipData.image_output_cost > 0 ? textOutputTokens(tooltipData) : tooltipData.output_tokens) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="font-medium text-violet-300">{{ formatTokenPricePerMillion(tooltipData.output_cost, textOutputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
+              </div>
+              <div v-if="tooltipData && hasImageOutputTokens(tooltipData)" class="flex items-center justify-between gap-4">
+                <span class="text-gray-400">{{ t('usage.imageOutputTokenPrice') }}</span>
+                <span class="font-medium text-pink-300">{{ formatTokenPricePerMillion(tooltipData.image_output_cost ?? 0, tooltipData.image_output_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
             </template>
             <template v-else-if="tooltipData && isImageUsage(tooltipData)">
@@ -586,8 +597,10 @@ import {
   formatImageSizeSource,
   hasImageOutputTokens,
   textOutputTokens,
+  hasImageOutputCost,
   hasImageInputTokens,
   textInputTokens,
+  hasImageInputCost,
 } from '@/utils/imageUsage'
 
 /** Compute the account-billed cost for display: (account_stats_cost ?? total_cost) * rate_multiplier */
