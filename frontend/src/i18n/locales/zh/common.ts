@@ -479,7 +479,8 @@ export default {
     verifyFailed: '验证失败，请重试',
     rateLimited: '尝试次数过多，请 {seconds} 秒后再试',
     notEnabled: '此操作需要开启二次验证，请先在个人资料中启用 TOTP。',
-    adminApiKeyForbidden: '管理 API Key 无法执行此操作，请使用已通过二次验证的管理员会话。'
+    adminApiKeyForbidden: '管理 API Key 无法执行此操作，请使用已通过二次验证的管理员会话。',
+    cancelled: '已取消二次验证，操作未执行。'
   },
 
   // 建议开启 2FA（可关闭提示，非强制）

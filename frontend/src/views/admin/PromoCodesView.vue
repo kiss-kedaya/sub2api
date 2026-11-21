@@ -220,6 +220,8 @@
       @confirm="confirmDelete"
       @cancel="showDeleteDialog = false"
     />
+    <!-- 优惠码携带赠送余额：创建/改值/删除走 step-up 2FA 弹窗 -->
+    <TotpStepUpDialog :controller="stepUp" />
   </AppLayout>
 </template>
 
@@ -229,6 +231,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
 import { adminAPI } from '@/api/admin'
 import { formatDateTime, formatDateTimeLocalInput } from '@/utils/format'
 import type { PromoCode, PromoCodeUsage } from '@/types'
@@ -240,6 +243,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { useListColumnMenu } from './useListColumnMenu'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
@@ -248,7 +252,30 @@ import PageToolbar from '@/components/layout/PageToolbar.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 const { t } = useI18n()
 const appStore = useAppStore()
+const stepUp = useStepUp()
 const { copyToClipboard: clipboardCopy } = useClipboard()
+
+// 优惠码携带赠送余额：创建/改值/删除都会改变资金权益，后端要求 step-up 2FA。
+// 命中 403 STEP_UP_REQUIRED 时弹 TOTP 并在验证后自动重试一次；取消时提示未执行。
+async function withStepUp<T>(action: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await stepUp.run(action)
+  } catch (error: any) {
+    if (isStepUpCancelled(error)) {
+      appStore.showInfo(t('stepUp.cancelled'))
+      return undefined
+    }
+    if (isStepUpBlocked(error)) {
+      appStore.showError(
+        stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+          ? t('stepUp.adminApiKeyForbidden')
+          : t('stepUp.notEnabled')
+      )
+      return undefined
+    }
+    throw error
+  }
+}
 
 // State
 const codes = ref<PromoCode[]>([])
@@ -450,13 +477,15 @@ const copyToClipboard = async (text: string) => {
 const handleCreate = async () => {
   creating.value = true
   try {
-    await adminAPI.promo.create({
-      code: createForm.code || undefined,
-      bonus_amount: createForm.bonus_amount,
-      max_uses: createForm.max_uses,
-      expires_at: createForm.expires_at_str ? Math.floor(new Date(createForm.expires_at_str).getTime() / 1000) : undefined,
-      notes: createForm.notes || undefined
-    })
+    await withStepUp(() =>
+      adminAPI.promo.create({
+        code: createForm.code || undefined,
+        bonus_amount: createForm.bonus_amount,
+        max_uses: createForm.max_uses,
+        expires_at: createForm.expires_at_str ? Math.floor(new Date(createForm.expires_at_str).getTime() / 1000) : undefined,
+        notes: createForm.notes || undefined
+      })
+    )
     appStore.showSuccess(t('admin.promo.codeCreated'))
     showCreateDialog.value = false
     resetCreateForm()
@@ -500,14 +529,16 @@ const handleUpdate = async () => {
 
   updating.value = true
   try {
-    await adminAPI.promo.update(editingCode.value.id, {
-      code: editForm.code,
-      bonus_amount: editForm.bonus_amount,
-      max_uses: editForm.max_uses,
-      status: editForm.status,
-      expires_at: editForm.expires_at_str ? Math.floor(new Date(editForm.expires_at_str).getTime() / 1000) : 0,
-      notes: editForm.notes
-    })
+    await withStepUp(() =>
+      adminAPI.promo.update(editingCode.value!.id, {
+        code: editForm.code,
+        bonus_amount: editForm.bonus_amount,
+        max_uses: editForm.max_uses,
+        status: editForm.status,
+        expires_at: editForm.expires_at_str ? Math.floor(new Date(editForm.expires_at_str).getTime() / 1000) : 0,
+        notes: editForm.notes
+      })
+    )
     appStore.showSuccess(t('admin.promo.codeUpdated'))
     closeEditDialog()
     loadCodes()
@@ -546,9 +577,11 @@ const handleDelete = (code: PromoCode) => {
 
 const confirmDelete = async () => {
   if (!deletingCode.value) return
+  const code = deletingCode.value
 
   try {
-    await adminAPI.promo.delete(deletingCode.value.id)
+    const deleted = await withStepUp(() => adminAPI.promo.delete(code.id))
+    if (!deleted) return
     appStore.showSuccess(t('admin.promo.codeDeleted'))
     showDeleteDialog.value = false
     deletingCode.value = null

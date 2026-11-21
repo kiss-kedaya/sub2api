@@ -168,6 +168,9 @@
         </div>
       </template>
     </BaseDialog>
+
+    <!-- 上游子密钥的创建/修改/删除/明文回读走 step-up 2FA 弹窗 -->
+    <TotpStepUpDialog :controller="stepUp" />
   </div>
 </template>
 
@@ -175,7 +178,9 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import PageToolbar from '@/components/layout/PageToolbar.vue'
+import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
 import {
   createUpstreamAPIKey,
   deleteUpstreamAPIKey,
@@ -191,6 +196,7 @@ import {
 
 const { locale } = useI18n()
 const text = (zh: string, en: string) => (locale.value.startsWith('zh') ? zh : en)
+const stepUp = useStepUp()
 
 const channels = ref<UpstreamChannel[]>([])
 const channelId = ref<number | null>(null)
@@ -238,6 +244,26 @@ const statusItems = [
 ]
 const keyStatusItems = statusItems.slice(1)
 const groupItems = ref<{ label: string; value: number | null }[]>([{ label: text('不绑定分组', 'No group'), value: null }])
+
+// 上游子密钥本身就是可用的上游调用凭据，后端写操作与明文回读都要求 step-up 2FA。
+// 命中 403 STEP_UP_REQUIRED 时弹码并重试一次；取消时提示未执行。
+async function withStepUp<T>(action: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await stepUp.run(action)
+  } catch (err) {
+    if (isStepUpCancelled(err)) {
+      notice.value = text('已取消，未执行', 'Cancelled, nothing was executed')
+      return undefined
+    }
+    if (isStepUpBlocked(err)) {
+      error.value = stepUpBlockReason(err) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+        ? text('管理 API Key 无法执行此操作，请使用已通过二次验证的管理员会话', 'Admin API keys cannot perform this operation; use a two-factor verified admin session')
+        : text('此操作需要开启二次验证，请先在个人资料中启用 TOTP', 'This operation requires two-factor authentication; enable TOTP first')
+      return undefined
+    }
+    throw err
+  }
+}
 
 function formatTime(value?: string | null): string {
   return value ? new Date(value).toLocaleString() : '—'
@@ -341,7 +367,7 @@ async function save() {
   error.value = ''
   try {
     if (editingKey.value) {
-      await updateUpstreamAPIKey(channelId.value, editingKey.value.id, {
+      const updated = await withStepUp(() => updateUpstreamAPIKey(channelId.value!, editingKey.value!.id, {
         name: form.name,
         group_id: form.group_id,
         status: form.status,
@@ -354,10 +380,11 @@ async function save() {
         rate_limit_5h: form.rate_limit_5h,
         rate_limit_1d: form.rate_limit_1d,
         rate_limit_7d: form.rate_limit_7d,
-      })
+      }))
+      if (!updated) return
       notice.value = text('Key 已更新', 'Key updated')
     } else {
-      await createUpstreamAPIKey(channelId.value, {
+      const created = await withStepUp(() => createUpstreamAPIKey(channelId.value!, {
         name: form.name,
         group_id: form.group_id,
         custom_key: form.custom_key.trim() || undefined,
@@ -368,7 +395,8 @@ async function save() {
         rate_limit_7d: form.rate_limit_7d,
         ip_whitelist: splitList(form.ip_whitelist),
         ip_blacklist: splitList(form.ip_blacklist),
-      })
+      }))
+      if (!created) return
       notice.value = text('Key 已创建', 'Key created')
     }
     dialogOpen.value = false
@@ -383,7 +411,8 @@ async function save() {
 async function reveal(key: UpstreamAPIKey) {
   if (!channelId.value) return
   try {
-    const result = await revealUpstreamAPIKey(channelId.value, key.id)
+    const result = await withStepUp(() => revealUpstreamAPIKey(channelId.value!, key.id))
+    if (!result) return
     revealed.value = result.key
   } catch (err) {
     error.value = reason(err, text('读取明文 Key 失败', 'Failed to reveal the key'))
@@ -396,10 +425,12 @@ function askDelete(key: UpstreamAPIKey) {
 
 async function confirmDelete() {
   if (!channelId.value || !deleteTarget.value) return
+  const target = deleteTarget.value
   deleting.value = true
   error.value = ''
   try {
-    await deleteUpstreamAPIKey(channelId.value, deleteTarget.value.id)
+    const deleted = await withStepUp(() => deleteUpstreamAPIKey(channelId.value!, target.id))
+    if (!deleted) return
     notice.value = text('Key 已删除', 'Key deleted')
     deleteTarget.value = null
     await load()

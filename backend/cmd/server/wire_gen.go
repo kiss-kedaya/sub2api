@@ -222,7 +222,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	crsSyncService := service.NewCRSSyncService(accountRepository, proxyRepository, oAuthService, openAIOAuthService, geminiOAuthService, configConfig)
 	modelWhitelistAutoSyncService := service.ProvideModelWhitelistAutoSyncService(accountRepository, accountTestService, leaderLockCache, db)
 	accountHandler := admin.ProvideAccountHandler(configConfig, adminService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, rateLimitService, accountUsageService, accountTestService, concurrencyService, crsSyncService, sessionLimitCache, rpmCache, compositeTokenCacheInvalidator, grokQuotaService, modelWhitelistAutoSyncService)
-	adminAnnouncementHandler := admin.NewAnnouncementHandler(announcementService)
+	adminAnnouncementHandler := handler.ProvideAdminAnnouncementHandler(announcementService, totpService, userService, settingService)
 	dataManagementService := service.NewDataManagementService()
 	dataManagementHandler := admin.NewDataManagementHandler(dataManagementService)
 	backupObjectStoreFactory := repository.NewS3BackupStoreFactory()

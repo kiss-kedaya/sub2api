@@ -189,6 +189,9 @@
       preview
       @close="previewAnnouncement = null"
     />
+
+    <!-- 公告发布（status=active）的 step-up 2FA 弹窗；保存草稿/下架不触发 -->
+    <TotpStepUpDialog :controller="stepUp" />
   </AppLayout>
 </template>
 
@@ -197,6 +200,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
 import { adminAPI } from '@/api/admin'
 import { formatDateTime, formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import type { AdminGroup, Announcement, AnnouncementTargeting } from '@/types'
@@ -219,9 +223,37 @@ import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import AnnouncementTargetingEditor from '@/components/admin/announcements/AnnouncementTargetingEditor.vue'
 import AnnouncementReadStatusDialog from '@/components/admin/announcements/AnnouncementReadStatusDialog.vue'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const stepUp = useStepUp()
+
+// 公告发布（status=active）会立即对所有目标用户可见，后端要求 step-up 2FA；
+// 保存草稿、下架（archived）与删除属日常运营操作，不弹码。
+async function withStepUp<T>(action: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await stepUp.run(action)
+  } catch (error: any) {
+    if (isStepUpCancelled(error)) {
+      appStore.showInfo(t('stepUp.cancelled'))
+      return undefined
+    }
+    if (isStepUpBlocked(error)) {
+      appStore.showError(
+        stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+          ? t('stepUp.adminApiKeyForbidden')
+          : t('stepUp.notEnabled')
+      )
+      return undefined
+    }
+    throw error
+  }
+}
+
+async function saveWithStepUpMaybe<T>(publish: boolean, action: () => Promise<T>): Promise<T | undefined> {
+  return publish ? withStepUp(action) : action()
+}
 
 const announcements = ref<Announcement[]>([])
 const loading = ref(false)
@@ -507,7 +539,11 @@ async function handleSave() {
   try {
     if (!editingAnnouncement.value) {
       const payload = buildCreatePayload()
-      await adminAPI.announcements.create(payload)
+      // 创建即发布（active）需要 step-up；草稿保存直接执行。
+      const created = await saveWithStepUpMaybe(payload.status === 'active', () =>
+        adminAPI.announcements.create(payload)
+      )
+      if (created === undefined) return
       appStore.showSuccess(t('common.success'))
       showEditDialog.value = false
       await loadAnnouncements()
@@ -516,7 +552,15 @@ async function handleSave() {
 
     const original = editingAnnouncement.value
     const payload = buildUpdatePayload(original)
-    await adminAPI.announcements.update(original.id, payload)
+    // 把公告改为 active，或编辑一条已在线公告（payload 未改状态）都需要 step-up；
+    // 下架（archived）与草稿编辑不触发。
+    const willPublish = payload.status !== undefined
+      ? payload.status === 'active'
+      : original.status === 'active'
+    const updated = await saveWithStepUpMaybe(willPublish, () =>
+      adminAPI.announcements.update(original.id, payload)
+    )
+    if (updated === undefined) return
     appStore.showSuccess(t('common.success'))
     showEditDialog.value = false
     editingAnnouncement.value = null

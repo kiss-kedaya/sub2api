@@ -198,6 +198,19 @@ func ProvideAdminSettingHandler(settingService *service.SettingService, emailSer
 	return h
 }
 
+// ProvideAdminAnnouncementHandler creates the admin announcement handler and
+// injects step-up dependencies (publishing an announcement requires 2FA).
+func ProvideAdminAnnouncementHandler(
+	announcementService *service.AnnouncementService,
+	totpService *service.TotpService,
+	userService *service.UserService,
+	settingService *service.SettingService,
+) *admin.AnnouncementHandler {
+	h := admin.NewAnnouncementHandler(announcementService)
+	h.SetStepUpDependencies(totpService, userService, settingService)
+	return h
+}
+
 // ProvideHandlers creates the Handlers struct
 func ProvideHandlers(
 	authHandler *AuthHandler,
@@ -292,7 +305,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewUserHandler,
 	admin.NewGroupHandlerWithConfig,
 	admin.ProvideAccountHandler,
-	admin.NewAnnouncementHandler,
+	ProvideAdminAnnouncementHandler,
 	admin.NewDataManagementHandler,
 	admin.NewBackupHandler,
 	admin.NewOAuthHandler,
