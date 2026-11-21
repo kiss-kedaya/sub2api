@@ -202,6 +202,20 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 		response.BadRequest(c, "Invalid crypto configuration")
 		return
 	}
+	// A locked wallet must be recovered before the channel is switched back on.
+	// Accepting the save and letting the security monitor flip it back seconds
+	// later is exactly the silent revert this guard exists to prevent; signing
+	// and address issuance stay locked even if an operator writes the row by
+	// hand, so advertising the channel would show a page that cannot deliver.
+	if cryptoEnableNeedsUnlockedWallet(existing, merged) {
+		if locked, reason, lockedAt := h.walletSecurityLock(c); locked {
+			response.ErrorWithDetails(c, http.StatusConflict,
+				"充值钱包仍处于安全锁定状态，请先在安全面板完成 2FA 恢复后再开启充值通道",
+				"CRYPTO_WALLET_SECURITY_LOCKED",
+				map[string]string{"reason": reason, "locked_at": lockedAt, "recover_path": "/api/v1/admin/crypto/wallet/security/recover"})
+			return
+		}
+	}
 	// The handler checks the actual persisted change, after applying defaults.
 	// Client-side field lists and already-established step-up grants do not
 	// authorize RPC, destination, enablement, or other sensitive changes.
@@ -238,6 +252,28 @@ func cryptoConfigRequiresRisk(before, after cryptopay.CryptoConfig) bool {
 	before.HotWalletSolana = strings.TrimSpace(before.HotWalletSolana)
 	after.HotWalletSolana = strings.TrimSpace(after.HotWalletSolana)
 	return !reflect.DeepEqual(before, after)
+}
+
+// cryptoEnableNeedsUnlockedWallet reports whether this save turns a disabled
+// channel on. Saving unrelated fields while a wallet lock is active stays
+// allowed: only the enable transition has to wait for recovery.
+func cryptoEnableNeedsUnlockedWallet(before, after cryptopay.CryptoConfig) bool {
+	return !before.Enabled && after.Enabled
+}
+
+// walletSecurityLock reports the persistent wallet lock without revealing key
+// material. A status read error fails open: a brand-new deployment has no
+// wallet yet, and the durable security monitor still fails the channel closed
+// whenever it can observe the lock.
+func (h *CryptoHandler) walletSecurityLock(c *gin.Context) (locked bool, reason, lockedAt string) {
+	if h.service == nil {
+		return false, "", ""
+	}
+	status, err := h.service.WalletSecurity(c.Request.Context())
+	if err != nil {
+		return false, "", ""
+	}
+	return status.Locked, status.Reason, status.LockedAt
 }
 
 // AdminWalletStatus reports managed seed configuration and readiness.

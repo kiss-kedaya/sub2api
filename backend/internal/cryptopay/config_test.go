@@ -1,6 +1,11 @@
 package cryptopay
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
+)
 
 // The setting repository interface is defined in the service package with a
 // concrete *Setting return type, so the fake above cannot satisfy it directly.
@@ -267,3 +272,88 @@ func TestConfigPatchAppliesNativePriceURL(t *testing.T) {
 		t.Fatalf("patched native_price_url = %q, want %q", got.NativePriceURL, url)
 	}
 }
+
+// recordingSettingStore serves one stored raw config and records writes, so a
+// read path that silently normalizes/backfills the row can be detected.
+type recordingSettingStore struct {
+	raw     string
+	missing bool
+	writes  int
+	lastSet string
+}
+
+func (s *recordingSettingStore) GetCryptoSetting(context.Context, string) (string, error) {
+	if s.missing {
+		return "", service.ErrSettingNotFound
+	}
+	return s.raw, nil
+}
+
+func (s *recordingSettingStore) SetCryptoSetting(_ context.Context, _ string, value string) error {
+	s.writes++
+	s.lastSet = value
+	return nil
+}
+
+// An administrator-enabled channel must survive loading: the defaults used to
+// decode a partially stored row only fill absent fields, and reading the config
+// must never write the normalized row back.
+func TestLoadConfigKeepsStoredEnabledTrueWithoutWriteBack(t *testing.T) {
+	store := &recordingSettingStore{raw: `{"enabled":true,"chains":["bsc"],"rpc":{"bsc":"https://bsc.example.test"},"credit_multiplier":5.5}`}
+	cfg, err := LoadConfig(t.Context(), store)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.Enabled {
+		t.Fatal("stored enabled=true was overwritten by the disabled default")
+	}
+	if cfg.CreditMultiplier != 5.5 {
+		t.Fatalf("credit multiplier = %v, want the stored 5.5", cfg.CreditMultiplier)
+	}
+	if store.writes != 0 {
+		t.Fatalf("LoadConfig wrote %d times (value %q); reads must never normalize the stored row", store.writes, store.lastSet)
+	}
+}
+
+// Fields absent from an older stored row are filled from the defaults, while
+// fields that are present keep their stored value.
+func TestLoadConfigFillsMissingFieldsOnly(t *testing.T) {
+	store := &recordingSettingStore{raw: `{"enabled":true,"chains":["bsc"],"scan_range":{"bsc":150}}`}
+	cfg, err := LoadConfig(t.Context(), store)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.Enabled {
+		t.Fatal("present enabled=true was not preserved")
+	}
+	if cfg.ScanRange[ChainBSC] != 150 {
+		t.Fatalf("present scan_range = %d, want 150", cfg.ScanRange[ChainBSC])
+	}
+	if cfg.ScanRange[ChainEthereum] != DefaultCryptoConfig().ScanRange[ChainEthereum] {
+		t.Fatalf("missing scan_range.ethereum = %d, want the default", cfg.ScanRange[ChainEthereum])
+	}
+	if cfg.CreditMultiplier != DefaultCryptoConfig().CreditMultiplier {
+		t.Fatalf("missing credit_multiplier = %v, want the default", cfg.CreditMultiplier)
+	}
+	if store.writes != 0 {
+		t.Fatalf("LoadConfig wrote the config row while backfilling defaults (%d writes)", store.writes)
+	}
+}
+
+// A never-saved key is the normal first-run state and still yields defaults
+// without persisting them.
+func TestLoadConfigMissingKeyYieldsDefaultsWithoutWrite(t *testing.T) {
+	store := &recordingSettingStore{missing: true}
+	cfg, err := LoadConfig(t.Context(), store)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Enabled || cfg.CreditMultiplier != DefaultCryptoConfig().CreditMultiplier {
+		t.Fatalf("first-run defaults wrong: %+v", cfg)
+	}
+	if store.writes != 0 {
+		t.Fatalf("first-run load persisted defaults (%d writes)", store.writes)
+	}
+}
+
+var _ SettingStore = (*recordingSettingStore)(nil)
