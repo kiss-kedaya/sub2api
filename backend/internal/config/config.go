@@ -1971,7 +1971,8 @@ type DashboardAggregationConfig struct {
 	DimensionRollupsEnabled bool `mapstructure:"dimension_rollups_enabled"`
 	// ReadRollupsEnabled controls reading dimension-level usage rollups.
 	ReadRollupsEnabled bool `mapstructure:"read_rollups_enabled"`
-	// RollupStalenessSeconds is the maximum tolerated rollup lag before falling back to raw logs.
+	// RollupStalenessSeconds caps lag for a watermark from an earlier hour.
+	// Within the open hour, readers use covered closed hours and read the live tail from usage_logs.
 	RollupStalenessSeconds int `mapstructure:"rollup_staleness_seconds"`
 	// BackfillBatchHours bounds each dimension-rollup backfill query.
 	BackfillBatchHours int `mapstructure:"backfill_batch_hours"`

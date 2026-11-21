@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -44,6 +45,54 @@ func TestUserUsageTrendRollupReaderMergesHourlyRows(t *testing.T) {
 	require.Equal(t, int64(33), result[0].Tokens)
 	require.Equal(t, "u@example.com", result[0].Email)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardRollupBoundsUseOnlyClosedHours(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		clockOffset     time.Duration
+		watermarkOffset time.Duration
+		cutoffOffset    time.Duration
+		checkCoverage   bool
+		covered         bool
+	}{
+		{name: "lag within current hour", clockOffset: 30 * time.Minute, watermarkOffset: 25 * time.Minute, checkCoverage: true, covered: true},
+		{name: "fresh watermark before rollover", clockOffset: 20 * time.Second, watermarkOffset: -20 * time.Second, cutoffOffset: -time.Hour, checkCoverage: true, covered: true},
+		{name: "stale watermark from earlier hour", clockOffset: 30 * time.Minute, watermarkOffset: -5 * time.Minute},
+		{name: "missing dimension coverage", clockOffset: 30 * time.Minute, watermarkOffset: 25 * time.Minute, checkCoverage: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				hour := time.Now().UTC().Truncate(time.Hour)
+				time.Sleep(tc.clockOffset)
+				start := hour.Add(-48 * time.Hour)
+				end := hour.Add(24 * time.Hour)
+				db, mock, err := sqlmock.New()
+				require.NoError(t, err)
+				defer func() { _ = db.Close() }()
+				mock.ExpectQuery("SELECT last_aggregated_at FROM usage_dashboard_aggregation_watermark").
+					WillReturnRows(sqlmock.NewRows([]string{"last_aggregated_at"}).AddRow(hour.Add(tc.watermarkOffset)))
+				expectedCutoff := hour.Add(tc.cutoffOffset)
+				if tc.checkCoverage {
+					mock.ExpectQuery("SELECT COALESCE[(]MIN[(]bucket_start[)]").
+						WillReturnRows(sqlmock.NewRows([]string{"coverage_start"}).AddRow(start))
+					mock.ExpectQuery("SELECT [(]").WithArgs(start, expectedCutoff, "user").
+						WillReturnRows(sqlmock.NewRows([]string{"complete"}).AddRow(tc.covered))
+				}
+				// The reader only needs SQL. Do not start cache janitors inside the test clock.
+				repo := &usageLogRepository{sql: db}
+				repo.SetDashboardRollupReadEnabled(true)
+				repo.SetDashboardRollupStaleness(time.Minute)
+				cutoff, effectiveEnd, ok := repo.rollupBoundsForDimension(context.Background(), start, end, "user", 0)
+				require.Equal(t, tc.covered, ok)
+				if ok {
+					require.Equal(t, expectedCutoff, cutoff)
+					require.Equal(t, time.Now().UTC(), effectiveEnd)
+				}
+				require.NoError(t, mock.ExpectationsWereMet())
+			})
+		})
+	}
 }
 
 func TestDashboardRollupReadDisabledFallsBackToRawPath(t *testing.T) {
