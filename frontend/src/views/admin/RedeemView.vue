@@ -413,6 +413,8 @@
         </div>
       </template>
     </BaseDialog>
+    <!-- 敏感操作（生成/作废/删除/导出卡密）的 step-up 2FA 弹窗 -->
+    <TotpStepUpDialog :controller="stepUp" />
   </AppLayout>
 </template>
 
@@ -422,6 +424,7 @@ import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { useClipboard } from '@/composables/useClipboard'
 import { useDialogDraft } from '@/composables/useDialogDraft'
+import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
 import { useTableSelection } from '@/composables/useTableSelection'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { adminAPI } from '@/api/admin'
@@ -449,6 +452,7 @@ import Select from '@/components/common/Select.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import PageToolbar from '@/components/layout/PageToolbar.vue'
 import type { DropdownMenuItem } from '@nuxt/ui'
@@ -457,8 +461,32 @@ import { useListColumnMenu } from './useListColumnMenu'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 const { t } = useI18n()
 const appStore = useAppStore()
+const stepUp = useStepUp()
 const { copyToClipboard: clipboardCopy } = useClipboard()
 const browserTimeZone = getBrowserTimeZone()
+
+// 卡密的生成/改值/作废/删除/导出都会产出或带走可兑价值，后端要求 step-up 2FA。
+// 统一封装：命中 403 STEP_UP_REQUIRED 时弹 TOTP 并在验证后自动重试一次；
+// 用户取消时提示"未执行"，机器凭据/未启用 TOTP 给出对应提示，其它错误继续上抛。
+async function withStepUp<T>(action: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await stepUp.run(action)
+  } catch (error: any) {
+    if (isStepUpCancelled(error)) {
+      appStore.showInfo(t('stepUp.cancelled'))
+      return undefined
+    }
+    if (isStepUpBlocked(error)) {
+      appStore.showError(
+        stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+          ? t('stepUp.adminApiKeyForbidden')
+          : t('stepUp.notEnabled')
+      )
+      return undefined
+    }
+    throw error
+  }
+}
 
 const MAX_REDEEM_CODES_PER_BATCH = 1000
 
@@ -922,14 +950,17 @@ const handleGenerateCodes = async () => {
 
   generating.value = true
   try {
-    const result = await adminAPI.redeem.generate(
-      generateForm.count,
-      generateForm.type,
-      generateForm.value,
-      generateForm.type === 'subscription' ? generateForm.group_id : undefined,
-      generateForm.type === 'subscription' ? generateForm.validity_days : undefined,
-      expiresInDays
+    const result = await withStepUp(() =>
+      adminAPI.redeem.generate(
+        generateForm.count,
+        generateForm.type,
+        generateForm.value,
+        generateForm.type === 'subscription' ? generateForm.group_id : undefined,
+        generateForm.type === 'subscription' ? generateForm.validity_days : undefined,
+        expiresInDays
+      )
     )
+    if (!result) return
     showGenerateDialog.value = false
     // Submitted, not abandoned: the draft must not come back on the next open.
     generateDraft.markSubmitted()
@@ -961,7 +992,8 @@ const copyToClipboard = async (text: string) => {
 
 const handleExportCodes = async () => {
   try {
-    const blob = await adminAPI.redeem.exportCodes(buildRedeemQueryFilters())
+    const blob = await withStepUp(() => adminAPI.redeem.exportCodes(buildRedeemQueryFilters()))
+    if (!blob) return
 
     // Create download link
     const url = window.URL.createObjectURL(blob)
@@ -987,9 +1019,11 @@ const handleDelete = (code: RedeemCode) => {
 
 const confirmDelete = async () => {
   if (!deletingCode.value) return
+  const code = deletingCode.value
 
   try {
-    await adminAPI.redeem.delete(deletingCode.value.id)
+    const deleted = await withStepUp(() => adminAPI.redeem.delete(code.id))
+    if (!deleted) return
     appStore.showSuccess(t('admin.redeem.codeDeleted'))
     showDeleteDialog.value = false
     deletingCode.value = null
@@ -1014,7 +1048,8 @@ const confirmDeleteUnused = async () => {
       return
     }
 
-    const result = await adminAPI.redeem.batchDelete(unusedCodeIds)
+    const result = await withStepUp(() => adminAPI.redeem.batchDelete(unusedCodeIds))
+    if (!result) return
     appStore.showSuccess(t('admin.redeem.codesDeleted', { count: result.deleted }))
     showDeleteUnusedDialog.value = false
     loadCodes()
@@ -1048,7 +1083,8 @@ const handleBatchUpdate = async () => {
 
   batchUpdating.value = true
   try {
-    const result = await adminAPI.redeem.batchUpdate(ids, fields)
+    const result = await withStepUp(() => adminAPI.redeem.batchUpdate(ids, fields))
+    if (!result) return
     appStore.showSuccess(t('admin.redeem.batchUpdateSuccess', { count: result.updated }))
     // Submitted successfully: clear the draft instead of keeping it for the next open.
     batchUpdateDraft.markSubmitted()

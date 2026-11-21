@@ -22,9 +22,14 @@
 - 退款：`POST /api/v1/admin/payment/orders/:id/refund` 与退款确认 `.../refund/query`（因此 `payment.refund` 不再作为受限密钥可授予权限，已从权限目录移除）；
 - 系统设置保存：`PUT /api/v1/admin/settings`（关闭 TOTP/step-up 开关本身仍沿用无条件门控）；
 - 删号 `DELETE /api/v1/admin/users/:id`、增减余额 `POST /api/v1/admin/users/:id/balance`；
-- 修改用户密码 `PUT /api/v1/admin/users/:id`（仅当请求携带 `password`，普通资料编辑不触发）。
+- 修改用户密码 `PUT /api/v1/admin/users/:id`（仅当请求携带 `password`，普通资料编辑不触发）；
+- 卡密（兑换码）：生成 `POST /api/v1/admin/redeem-codes/generate`、固定卡密直发 `POST .../create-and-redeem`、批量改值 `POST .../batch-update`、作废 `POST .../:id/expire`、删除 `DELETE .../:id` 与 `POST .../batch-delete`；批量导出 `GET .../export` 会落地最多 1 万条明文可兑卡密，因此也要求门控。列表/详情/统计仍为普通只读查询；
+- 优惠码（含充值赠送 `bonus_amount`）：创建 `POST /api/v1/admin/promo-codes`、修改 `PUT .../:id`、删除 `DELETE .../:id`；
+- 上游渠道凭据：渠道创建/修改/删除 `POST|PUT|DELETE /api/v1/admin/upstream-monitor/channels...`、上游子密钥创建/修改/删除/明文回读 `.../api-keys...`，以及会消耗或新增上游额度的充值/兑换/订阅采购 `POST .../channels/:id/recharge|redeem|subscriptions`；
+- 订阅权益：分配/批量分配、延期、重置额度、撤销、恢复与删除 `POST /api/v1/admin/subscriptions/...`；
+- 公告发布：`POST /api/v1/admin/announcements` 与 `PUT .../:id` 仅在本次写入会进入用户可见状态（`status=active`，含对已发布公告的内容编辑）时要求 step-up；保存草稿、下架（archived）和删除不打断日常运营（仍入审计日志）。
 
-开关关闭时行为与门控引入前一致。管理员前端在这些入口统一弹 TOTP 验证对话框并在成功后重试一次。
+开关关闭时行为与门控引入前一致。管理员前端在这些入口统一弹 TOTP 验证对话框并在成功后重试一次，用户取消时提示操作未执行。
 
 ## 账户规则如何匹配
 

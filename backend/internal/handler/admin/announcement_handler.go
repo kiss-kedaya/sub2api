@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,12 @@ import (
 // AnnouncementHandler handles admin announcement management
 type AnnouncementHandler struct {
 	announcementService *service.AnnouncementService
+
+	// 公告发布属用户可见内容的对外发布动作：发布（active）时要求 step-up 2FA，
+	// 保存草稿/归档不打断日常运营。依赖由 wire 在装配后注入。
+	totpService    *service.TotpService
+	userService    *service.UserService
+	settingService *service.SettingService
 }
 
 // NewAnnouncementHandler creates a new admin announcement handler
@@ -24,6 +31,34 @@ func NewAnnouncementHandler(announcementService *service.AnnouncementService) *A
 	return &AnnouncementHandler{
 		announcementService: announcementService,
 	}
+}
+
+// SetStepUpDependencies 注入 step-up 2FA 门控依赖。
+func (h *AnnouncementHandler) SetStepUpDependencies(
+	totpService *service.TotpService,
+	userService *service.UserService,
+	settingService *service.SettingService,
+) {
+	h.totpService = totpService
+	h.userService = userService
+	h.settingService = settingService
+}
+
+// enforcePublishStepUp 对"发布公告"执行 step-up 2FA 门控。
+// 未启用 step_up_enabled 时放行（与路由级门控语义一致）；机器凭据一律 403。
+// 依赖缺失时 fail-closed 返回 503，避免装配遗漏把门控静默关掉。
+func (h *AnnouncementHandler) enforcePublishStepUp(c *gin.Context) bool {
+	if h == nil || h.totpService == nil || h.userService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Step-up verification service unavailable")
+		return false
+	}
+	return middleware2.EnforceStepUp(c, h.totpService, h.userService, h.settingService)
+}
+
+// announcementStatusNeedsPublishStepUp 判断目标状态是否会把公告发布给用户。
+// 只有 active 会立即对用户可见；draft/archived 属日常草稿与下架操作，不要求 2FA。
+func announcementStatusNeedsPublishStepUp(status string) bool {
+	return strings.TrimSpace(status) == service.AnnouncementStatusActive
 }
 
 type CreateAnnouncementRequest struct {
@@ -109,6 +144,14 @@ func (h *AnnouncementHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// 直接创建为 active 等于对外发布公告（用户可见内容，可用于钓鱼/欺诈文案）：
+	// 要求 step-up 2FA；status 缺省为 draft，保存草稿不打断。
+	if announcementStatusNeedsPublishStepUp(req.Status) {
+		if !h.enforcePublishStepUp(c) {
+			return
+		}
+	}
+
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not found in context")
@@ -154,6 +197,24 @@ func (h *AnnouncementHandler) Update(c *gin.Context) {
 	var req UpdateAnnouncementRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	// 判定本次更新是否面向"已发布/将发布"的公告：显式把状态改为 active，
+	// 或未改状态但当前公告已是 active（改正文/定向/弹窗方式等同对在线公告二次发布）。
+	// 这两类需要 step-up 2FA；草稿编辑与下架（archived）不打断。
+	publishes := false
+	if req.Status != nil {
+		publishes = announcementStatusNeedsPublishStepUp(*req.Status)
+	} else {
+		existing, getErr := h.announcementService.GetByID(c.Request.Context(), announcementID)
+		if getErr != nil {
+			response.ErrorFrom(c, getErr)
+			return
+		}
+		publishes = existing != nil && announcementStatusNeedsPublishStepUp(existing.Status)
+	}
+	if publishes && !h.enforcePublishStepUp(c) {
 		return
 	}
 

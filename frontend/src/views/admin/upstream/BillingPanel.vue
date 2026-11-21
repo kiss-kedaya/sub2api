@@ -150,6 +150,9 @@
         </div>
       </section>
     </template>
+
+    <!-- 上游充值/兑换/订阅采购消耗或新增真实额度：走 step-up 2FA 弹窗 -->
+    <TotpStepUpDialog :controller="stepUp" />
   </div>
 </template>
 
@@ -157,6 +160,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PageToolbar from '@/components/layout/PageToolbar.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
 import {
   channelRechargeInfo,
   channelSubscriptionInfo,
@@ -176,6 +181,7 @@ import {
 
 const { locale } = useI18n()
 const text = (zh: string, en: string) => (locale.value.startsWith('zh') ? zh : en)
+const stepUp = useStepUp()
 
 type BillingTab = 'recharge' | 'redeem' | 'subscription'
 const tabs = computed<{ label: string; value: BillingTab }[]>(() => [
@@ -238,6 +244,26 @@ function windowsOf(item: UpstreamSubscriptionUsage): { label: string; value: Ups
   return windows
 }
 
+// 上游充值/兑换/订阅采购直接消耗或新增真实额度，后端要求 step-up 2FA。
+// 命中 403 STEP_UP_REQUIRED 时弹码并重试一次；取消时提示未执行。
+async function withStepUp<T>(action: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await stepUp.run(action)
+  } catch (err) {
+    if (isStepUpCancelled(err)) {
+      notice.value = text('已取消，未执行', 'Cancelled, nothing was executed')
+      return undefined
+    }
+    if (isStepUpBlocked(err)) {
+      error.value = stepUpBlockReason(err) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+        ? text('管理 API Key 无法执行此操作，请使用已通过二次验证的管理员会话', 'Admin API keys cannot perform this operation; use a two-factor verified admin session')
+        : text('此操作需要开启二次验证，请先在个人资料中启用 TOTP', 'This operation requires two-factor authentication; enable TOTP first')
+      return undefined
+    }
+    throw err
+  }
+}
+
 async function loadChannels() {
   try {
     const result = await listChannels({ page: 1, pageSize: 100 })
@@ -286,11 +312,13 @@ async function submitRecharge() {
   error.value = ''
   notice.value = ''
   try {
-    launch.value = await createChannelRecharge(channelId.value, {
+    const created = await withStepUp(() => createChannelRecharge(channelId.value!, {
       amount: rechargeAmount.value,
       payment_method: rechargeMethod.value,
       confirm: true,
-    })
+    }))
+    if (!created) return
+    launch.value = created
     notice.value = text('支付入口已生成', 'Payment entry created')
     rechargeConfirm.value = false
   } catch (err) {
@@ -306,7 +334,9 @@ async function submitRedeem() {
   error.value = ''
   redeemResult.value = null
   try {
-    redeemResult.value = await redeemOnChannel(channelId.value, { code: redeemCode.value.trim(), confirm: true })
+    const redeemed = await withStepUp(() => redeemOnChannel(channelId.value!, { code: redeemCode.value.trim(), confirm: true }))
+    if (!redeemed) return
+    redeemResult.value = redeemed
     notice.value = text('兑换完成', 'Redeemed')
     redeemConfirm.value = false
     redeemCode.value = ''
@@ -324,11 +354,13 @@ async function submitSubscription() {
   error.value = ''
   notice.value = ''
   try {
-    launch.value = await createChannelSubscription(channelId.value, {
+    const created = await withStepUp(() => createChannelSubscription(channelId.value!, {
       plan_id: planId.value,
       payment_method: subscriptionMethod.value,
       confirm: true,
-    })
+    }))
+    if (!created) return
+    launch.value = created
     notice.value = text('订阅支付入口已生成', 'Subscription payment entry created')
     subscriptionConfirm.value = false
   } catch (err) {

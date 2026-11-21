@@ -528,6 +528,9 @@
         </div>
       </template>
     </BaseDialog>
+
+    <!-- 订阅权益（分配/延期/撤销/恢复/重置额度）走 step-up 2FA 弹窗 -->
+    <TotpStepUpDialog :controller="stepUp" />
   </AppLayout>
 </template>
 
@@ -542,6 +545,7 @@ import type { SimpleUser } from '@/api/admin/usage'
 import type { Column } from '@/components/common/types'
 import { formatDateTimeToMinute } from '@/utils/format'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
@@ -555,6 +559,7 @@ import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
 import AdminPageHeader from '@/components/admin/page/AdminPageHeader.vue'
 import AdminRowAction from '@/components/admin/page/AdminRowAction.vue'
 import PageToolbar from '@/components/layout/PageToolbar.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import {
   getRemainingDurationParts,
   getRemainingExpiryDuration,
@@ -565,6 +570,29 @@ import { GROUP_PLATFORM_OPTIONS } from '@/constants/platforms'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const stepUp = useStepUp()
+
+// 订阅分配/延期/撤销/恢复/重置额度直接改变用户可用权益（等同资金操作），
+// 后端要求 step-up 2FA。命中 403 STEP_UP_REQUIRED 时弹码并重试一次；取消时提示未执行。
+async function withStepUp<T>(action: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await stepUp.run(action)
+  } catch (error: any) {
+    if (isStepUpCancelled(error)) {
+      appStore.showInfo(t('stepUp.cancelled'))
+      return undefined
+    }
+    if (isStepUpBlocked(error)) {
+      appStore.showError(
+        stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+          ? t('stepUp.adminApiKeyForbidden')
+          : t('stepUp.notEnabled')
+      )
+      return undefined
+    }
+    throw error
+  }
+}
 
 interface GroupOption {
   value: number
@@ -1043,14 +1071,20 @@ const handleAssignSubscription = async () => {
     appStore.showError(t('admin.subscriptions.validityDaysRequired'))
     return
   }
+  const userId = assignForm.user_id
+  const groupId = assignForm.group_id
+  const validityDays = assignForm.validity_days
 
   submitting.value = true
   try {
-    await adminAPI.subscriptions.assign({
-      user_id: assignForm.user_id,
-      group_id: assignForm.group_id,
-      validity_days: assignForm.validity_days
-    })
+    const assigned = await withStepUp(() =>
+      adminAPI.subscriptions.assign({
+        user_id: userId,
+        group_id: groupId,
+        validity_days: validityDays
+      })
+    )
+    if (!assigned) return
     appStore.showSuccess(t('admin.subscriptions.subscriptionAssigned'))
     closeAssignModal()
     loadSubscriptions()
@@ -1088,9 +1122,12 @@ const handleExtendSubscription = async () => {
 
   submitting.value = true
   try {
-    await adminAPI.subscriptions.extend(extendingSubscription.value.id, {
-      days: extendForm.days
-    })
+    const adjusted = await withStepUp(() =>
+      adminAPI.subscriptions.extend(extendingSubscription.value!.id, {
+        days: extendForm.days
+      })
+    )
+    if (!adjusted) return
     appStore.showSuccess(t('admin.subscriptions.subscriptionAdjusted'))
     closeExtendModal()
     loadSubscriptions()
@@ -1109,9 +1146,11 @@ const handleRevoke = (subscription: UserSubscription) => {
 
 const confirmRevoke = async () => {
   if (!revokingSubscription.value) return
+  const target = revokingSubscription.value
 
   try {
-    await adminAPI.subscriptions.revoke(revokingSubscription.value.id)
+    const revoked = await withStepUp(() => adminAPI.subscriptions.revoke(target.id))
+    if (!revoked) return
     appStore.showSuccess(t('admin.subscriptions.subscriptionRevoked'))
     showRevokeDialog.value = false
     revokingSubscription.value = null
@@ -1129,9 +1168,11 @@ const handleRestore = (subscription: UserSubscription) => {
 
 const confirmRestore = async () => {
   if (!restoringSubscription.value) return
+  const target = restoringSubscription.value
 
   try {
-    await adminAPI.subscriptions.restore(restoringSubscription.value.id)
+    const restored = await withStepUp(() => adminAPI.subscriptions.restore(target.id))
+    if (!restored) return
     appStore.showSuccess(t('admin.subscriptions.subscriptionRestored'))
     showRestoreDialog.value = false
     restoringSubscription.value = null
@@ -1152,7 +1193,10 @@ const confirmResetQuota = async () => {
   if (resettingQuota.value) return
   resettingQuota.value = true
   try {
-    await adminAPI.subscriptions.resetQuota(resettingSubscription.value.id, { daily: true, weekly: true, monthly: true })
+    const reset = await withStepUp(() =>
+      adminAPI.subscriptions.resetQuota(resettingSubscription.value!.id, { daily: true, weekly: true, monthly: true })
+    )
+    if (!reset) return
     appStore.showSuccess(t('admin.subscriptions.quotaResetSuccess'))
     showResetQuotaConfirm.value = false
     resettingSubscription.value = null

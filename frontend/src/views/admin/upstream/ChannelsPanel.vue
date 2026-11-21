@@ -184,6 +184,9 @@
         </div>
       </template>
     </BaseDialog>
+
+    <!-- 上游渠道凭据的创建/修改/删除走 step-up 2FA 弹窗 -->
+    <TotpStepUpDialog :controller="stepUp" />
   </div>
 </template>
 
@@ -191,7 +194,9 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import PageToolbar from '@/components/layout/PageToolbar.vue'
+import { isStepUpBlocked, isStepUpCancelled, stepUpBlockReason, useStepUp } from '@/composables/useStepUp'
 import {
   channelBalance,
   createChannel,
@@ -204,6 +209,7 @@ import {
 
 const { locale } = useI18n()
 const text = (zh: string, en: string) => (locale.value.startsWith('zh') ? zh : en)
+const stepUp = useStepUp()
 
 const rows = ref<UpstreamChannel[]>([])
 const total = ref(0)
@@ -215,6 +221,26 @@ const statusFilter = ref('all')
 const loading = ref(false)
 const error = ref('')
 const notice = ref('')
+
+// 渠道配置与上游子密钥是可用的上游访问凭据，后端写操作要求 step-up 2FA。
+// 命中 403 STEP_UP_REQUIRED 时弹码并重试一次；取消时提示未执行。
+async function withStepUp<T>(action: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await stepUp.run(action)
+  } catch (err) {
+    if (isStepUpCancelled(err)) {
+      notice.value = text('已取消，未执行', 'Cancelled, nothing was executed')
+      return undefined
+    }
+    if (isStepUpBlocked(err)) {
+      error.value = stepUpBlockReason(err) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+        ? text('管理 API Key 无法执行此操作，请使用已通过二次验证的管理员会话', 'Admin API keys cannot perform this operation; use a two-factor verified admin session')
+        : text('此操作需要开启二次验证，请先在个人资料中启用 TOTP', 'This operation requires two-factor authentication; enable TOTP first')
+      return undefined
+    }
+    throw err
+  }
+}
 
 const dialogOpen = ref(false)
 const editing = ref<UpstreamChannel | null>(null)
@@ -356,10 +382,12 @@ async function save() {
   }
   try {
     if (editing.value) {
-      await updateChannel(editing.value.id, payload)
+      const updated = await withStepUp(() => updateChannel(editing.value!.id, payload))
+      if (!updated) return
       notice.value = text('上游已更新', 'Upstream updated')
     } else {
-      await createChannel(payload)
+      const created = await withStepUp(() => createChannel(payload))
+      if (!created) return
       notice.value = text('上游已创建', 'Upstream created')
     }
     dialogOpen.value = false
@@ -377,10 +405,12 @@ function askDelete(channel: UpstreamChannel) {
 
 async function confirmDelete() {
   if (!deleteTarget.value) return
+  const target = deleteTarget.value
   deleting.value = true
   error.value = ''
   try {
-    await deleteChannel(deleteTarget.value.id)
+    const deleted = await withStepUp(() => deleteChannel(target.id))
+    if (!deleted) return
     notice.value = text('上游已删除', 'Upstream deleted')
     deleteTarget.value = null
     await load()

@@ -4,6 +4,7 @@ package routes
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -87,7 +88,10 @@ func buildAdminRouteProbeRouter(t *testing.T, stepUp middleware.StepUpAuthMiddle
 	r.Use(gin.Recovery())
 	RegisterAdminRoutes(
 		r.Group("/api/v1"),
-		&handler.Handlers{Admin: &handler.AdminHandlers{}},
+		&handler.Handlers{Admin: &handler.AdminHandlers{
+			// 上游渠道接口按 handler 是否装配决定是否注册，探针需要非 nil 占位。
+			UpstreamChannel: &adminhandler.UpstreamChannelHandler{},
+		}},
 		adminRoutesTestAuth(authMode),
 		middleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() }),
 		stepUp,
@@ -138,6 +142,38 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		{http.MethodGet, "/api/v1/admin/groups/1/api-keys", "admin"},
 		// 上游失败 dump 的正文含客户端请求体与上游响应体
 		{http.MethodGet, "/api/v1/admin/debug-dumps/test.txt", "admin"},
+		// 卡密（兑换码）：生成/固定码直发/改值/作废/删除都会产出或改变可兑价值
+		{http.MethodPost, "/api/v1/admin/redeem-codes/generate", "admin"},
+		{http.MethodPost, "/api/v1/admin/redeem-codes/create-and-redeem", "admin"},
+		{http.MethodDelete, "/api/v1/admin/redeem-codes/1", "admin"},
+		{http.MethodPost, "/api/v1/admin/redeem-codes/batch-delete", "admin"},
+		{http.MethodPost, "/api/v1/admin/redeem-codes/batch-update", "admin"},
+		{http.MethodPost, "/api/v1/admin/redeem-codes/1/expire", "admin"},
+		// 导出会一次性带走最多 1 万条明文卡密
+		{http.MethodGet, "/api/v1/admin/redeem-codes/export", "admin"},
+		// 优惠码携带赠送余额
+		{http.MethodPost, "/api/v1/admin/promo-codes", "admin"},
+		{http.MethodPut, "/api/v1/admin/promo-codes/1", "admin"},
+		{http.MethodDelete, "/api/v1/admin/promo-codes/1", "admin"},
+		// 上游渠道凭据（渠道配置与上游子密钥）
+		{http.MethodPost, "/api/v1/admin/upstream-monitor/channels", "admin"},
+		{http.MethodPut, "/api/v1/admin/upstream-monitor/channels/1", "admin"},
+		{http.MethodDelete, "/api/v1/admin/upstream-monitor/channels/1", "admin"},
+		{http.MethodPost, "/api/v1/admin/upstream-monitor/channels/1/api-keys", "admin"},
+		{http.MethodPut, "/api/v1/admin/upstream-monitor/channels/1/api-keys/2", "admin"},
+		{http.MethodDelete, "/api/v1/admin/upstream-monitor/channels/1/api-keys/2", "admin"},
+		// 上游账户充值/兑换/订阅采购消耗或新增真实额度
+		{http.MethodPost, "/api/v1/admin/upstream-monitor/channels/1/recharge", "admin"},
+		{http.MethodPost, "/api/v1/admin/upstream-monitor/channels/1/redeem", "admin"},
+		{http.MethodPost, "/api/v1/admin/upstream-monitor/channels/1/subscriptions", "admin"},
+		// 订阅权益的分配/延期/重置额度/撤销/恢复等同资金操作
+		{http.MethodPost, "/api/v1/admin/subscriptions/assign", "admin"},
+		{http.MethodPost, "/api/v1/admin/subscriptions/bulk-assign", "admin"},
+		{http.MethodPost, "/api/v1/admin/subscriptions/1/extend", "admin"},
+		{http.MethodPost, "/api/v1/admin/subscriptions/1/reset-quota", "admin"},
+		{http.MethodPost, "/api/v1/admin/subscriptions/1/revoke", "admin"},
+		{http.MethodPost, "/api/v1/admin/subscriptions/1/restore", "admin"},
+		{http.MethodDelete, "/api/v1/admin/subscriptions/1", "admin"},
 		// 支付渠道配置
 		{http.MethodPut, "/api/v1/admin/payment/config", "payment"},
 		{http.MethodPost, "/api/v1/admin/payment/providers", "payment"},
@@ -146,6 +182,27 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		// 退款与退款确认
 		{http.MethodPost, "/api/v1/admin/payment/orders/1/refund", "payment"},
 		{http.MethodPost, "/api/v1/admin/payment/orders/1/refund/query", "payment"},
+	}
+}
+
+// readOnlyStepUpRoutes 是与上面写操作同组的只读查询：挂 step-up 会误伤日常运营，
+// 必须保证它们不经过门控（列表/详情/统计/使用记录）。
+func readOnlyStepUpRoutes() []stepUpRouteCase {
+	return []stepUpRouteCase{
+		{http.MethodGet, "/api/v1/admin/redeem-codes", "admin"},
+		{http.MethodGet, "/api/v1/admin/redeem-codes/stats", "admin"},
+		{http.MethodGet, "/api/v1/admin/redeem-codes/1", "admin"},
+		{http.MethodGet, "/api/v1/admin/promo-codes", "admin"},
+		{http.MethodGet, "/api/v1/admin/promo-codes/1", "admin"},
+		{http.MethodGet, "/api/v1/admin/promo-codes/1/usages", "admin"},
+		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels", "admin"},
+		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels/1", "admin"},
+		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels/1/api-keys", "admin"},
+		{http.MethodGet, "/api/v1/admin/upstream-monitor/channels/1/recharge", "admin"},
+		{http.MethodGet, "/api/v1/admin/subscriptions", "admin"},
+		{http.MethodGet, "/api/v1/admin/subscriptions/1", "admin"},
+		{http.MethodGet, "/api/v1/admin/subscriptions/1/progress", "admin"},
+		{http.MethodGet, "/api/v1/admin/announcements", "admin"},
 	}
 }
 
@@ -171,6 +228,46 @@ func TestSensitiveAdminRoutesAreStepUpGated(t *testing.T) {
 			req.Header.Set(stepUpProbeHeader, "1")
 			router.ServeHTTP(w, req)
 			require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+		})
+	}
+}
+
+// stepUpRecordingProbe 记录被挂上 step-up 的请求路径，供只读接口回归用。
+func stepUpRecordingProbe(recorded *[]string) middleware.StepUpAuthMiddleware {
+	return middleware.StepUpAuthMiddleware(func(c *gin.Context) {
+		*recorded = append(*recorded, c.Request.URL.Path)
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"reason": "STEP_UP_REQUIRED"})
+	})
+}
+
+// 只读列表/查询不得被 step-up 误伤：门控中间件不能被触发。
+// 业务 handler 用空桩（未挂门控时会在处理阶段 panic），这里用静默 recovery 吸收，
+// 断言点只看门控是否执行过，不依赖业务 handler 的返回。
+func TestReadOnlyAdminRoutesAreNotStepUpGated(t *testing.T) {
+	var gated []string
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, _ any) {
+		c.AbortWithStatus(http.StatusInternalServerError)
+	}))
+	RegisterAdminRoutes(
+		r.Group("/api/v1"),
+		&handler.Handlers{Admin: &handler.AdminHandlers{
+			UpstreamChannel: &adminhandler.UpstreamChannelHandler{},
+		}},
+		adminRoutesTestAuth(service.AuditAuthMethodJWT),
+		middleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() }),
+		stepUpRecordingProbe(&gated),
+		stepUpRouteSettings(map[string]string{}),
+		nil,
+	)
+	for _, tc := range readOnlyStepUpRoutes() {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			gated = nil
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			require.NotContains(t, gated, tc.path, "read-only route must not run the step-up gate")
+			require.NotContains(t, w.Body.String(), "STEP_UP_REQUIRED")
 		})
 	}
 }

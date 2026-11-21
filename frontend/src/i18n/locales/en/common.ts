@@ -480,7 +480,8 @@ export default {
     verifyFailed: 'Verification failed, please try again',
     rateLimited: 'Too many attempts, please try again in {seconds}s',
     notEnabled: 'This operation requires two-factor authentication. Please enable TOTP in your profile first.',
-    adminApiKeyForbidden: 'Admin API keys cannot perform this operation. Use a two-factor verified admin session.'
+    adminApiKeyForbidden: 'Admin API keys cannot perform this operation. Use a two-factor verified admin session.',
+    cancelled: 'Two-factor verification cancelled; the operation was not executed.'
   },
 
   // Recommended 2FA (dismissible, never enforced here)

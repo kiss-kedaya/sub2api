@@ -99,26 +99,30 @@ func RegisterAdminRoutes(
 	if h.Admin.UpstreamChannel != nil {
 		channel := admin.Group("/upstream-monitor")
 		channel.GET("/channels", h.Admin.UpstreamChannel.List)
-		channel.POST("/channels", h.Admin.UpstreamChannel.Create)
+		// 渠道凭证/中转站点配置：创建与改写等于写入或替换上游访问凭据，
+		// 与"账号导出/API Key 明文回读"同级，要求 step-up 2FA（机器凭据一律 403）。
+		channel.POST("/channels", gin.HandlerFunc(stepUpAuth), h.Admin.UpstreamChannel.Create)
 		channel.GET("/channels/:id", h.Admin.UpstreamChannel.Get)
-		channel.PUT("/channels/:id", h.Admin.UpstreamChannel.Update)
-		channel.DELETE("/channels/:id", h.Admin.UpstreamChannel.Delete)
+		channel.PUT("/channels/:id", gin.HandlerFunc(stepUpAuth), h.Admin.UpstreamChannel.Update)
+		channel.DELETE("/channels/:id", gin.HandlerFunc(stepUpAuth), h.Admin.UpstreamChannel.Delete)
 		channel.POST("/channels/:id/login", h.Admin.UpstreamChannel.Login)
 		channel.GET("/channels/:id/balance", h.Admin.UpstreamChannel.Balance)
 		channel.GET("/announcements", h.Admin.UpstreamChannel.Announcements)
 		channel.POST("/channels/:id/announcements/sync", h.Admin.UpstreamChannel.SyncAnnouncements)
 		channel.GET("/channels/:id/api-keys", h.Admin.UpstreamChannel.APIKeys)
 		channel.GET("/channels/:id/api-key-groups", h.Admin.UpstreamChannel.APIKeyGroups)
-		channel.POST("/channels/:id/api-keys", h.Admin.UpstreamChannel.CreateAPIKey)
-		channel.PUT("/channels/:id/api-keys/:key_id", h.Admin.UpstreamChannel.UpdateAPIKey)
-		channel.DELETE("/channels/:id/api-keys/:key_id", h.Admin.UpstreamChannel.DeleteAPIKey)
+		// 上游子密钥的创建/修改/删除可直接产出可用的上游调用凭据：要求 step-up 2FA。
+		channel.POST("/channels/:id/api-keys", gin.HandlerFunc(stepUpAuth), h.Admin.UpstreamChannel.CreateAPIKey)
+		channel.PUT("/channels/:id/api-keys/:key_id", gin.HandlerFunc(stepUpAuth), h.Admin.UpstreamChannel.UpdateAPIKey)
+		channel.DELETE("/channels/:id/api-keys/:key_id", gin.HandlerFunc(stepUpAuth), h.Admin.UpstreamChannel.DeleteAPIKey)
 		channel.POST("/channels/:id/api-keys/:key_id/reveal", gin.HandlerFunc(stepUpAuth), h.Admin.UpstreamChannel.RevealAPIKey)
 		channel.GET("/channels/:id/recharge", h.Admin.UpstreamChannel.RechargeInfo)
-		channel.POST("/channels/:id/recharge", h.Admin.UpstreamChannel.CreateRecharge)
-		channel.POST("/channels/:id/redeem", h.Admin.UpstreamChannel.Redeem)
+		// 上游账户充值/兑换码/订阅采购会直接消耗或新增上游额度（资金操作）：要求 step-up 2FA。
+		channel.POST("/channels/:id/recharge", gin.HandlerFunc(stepUpAuth), h.Admin.UpstreamChannel.CreateRecharge)
+		channel.POST("/channels/:id/redeem", gin.HandlerFunc(stepUpAuth), h.Admin.UpstreamChannel.Redeem)
 		channel.GET("/channels/:id/subscriptions", h.Admin.UpstreamChannel.SubscriptionInfo)
 		channel.GET("/channels/:id/subscriptions/usage", h.Admin.UpstreamChannel.SubscriptionUsage)
-		channel.POST("/channels/:id/subscriptions", h.Admin.UpstreamChannel.CreateSubscription)
+		channel.POST("/channels/:id/subscriptions", gin.HandlerFunc(stepUpAuth), h.Admin.UpstreamChannel.CreateSubscription)
 	}
 	// 受限密钥的账户操作走独立资源校验，普通管理员保持原处理器。
 	admin.Use(h.Admin.Account.ScopedAdminKeyAccounts)
@@ -160,10 +164,10 @@ func RegisterAdminRoutes(
 		registerProxyRoutes(admin, h, stepUpAuth)
 
 		// 卡密管理
-		registerRedeemCodeRoutes(admin, h)
+		registerRedeemCodeRoutes(admin, h, stepUpAuth)
 
 		// 优惠码管理
-		registerPromoCodeRoutes(admin, h)
+		registerPromoCodeRoutes(admin, h, stepUpAuth)
 
 		// 系统设置
 		registerSettingsRoutes(admin, h, stepUpAuth)
@@ -181,7 +185,7 @@ func RegisterAdminRoutes(
 		registerSystemRoutes(admin, h)
 
 		// 订阅管理
-		registerSubscriptionRoutes(admin, h)
+		registerSubscriptionRoutes(admin, h, stepUpAuth)
 
 		// 使用记录管理
 		registerUsageRoutes(admin, h)
@@ -677,30 +681,42 @@ func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 	}
 }
 
-func registerRedeemCodeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+// registerRedeemCodeRoutes 注册卡密（兑换码）管理路由。
+//
+// 卡密本身就是可兑现的价值载体：生成、批量改值、作废、删除都会新增/改变可兑价值，
+// 批量导出还会一次性带走最多 1 万条仍可使用的明文卡密。这些写操作与"改余额"同口径，
+// 要求 step-up 2FA（机器凭据一律 403）；列表/详情/统计是只读查询，不额外打断。
+func registerRedeemCodeRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	codes := admin.Group("/redeem-codes")
 	{
 		codes.GET("", h.Admin.Redeem.List)
 		codes.GET("/stats", h.Admin.Redeem.GetStats)
-		codes.GET("/export", h.Admin.Redeem.Export)
+		// 导出会落地明文卡密 CSV（可直接兑换）：要求 step-up 2FA
+		codes.GET("/export", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.Export)
 		codes.GET("/:id", h.Admin.Redeem.GetByID)
-		codes.POST("/create-and-redeem", h.Admin.Redeem.CreateAndRedeem)
-		codes.POST("/generate", h.Admin.Redeem.Generate)
-		codes.DELETE("/:id", h.Admin.Redeem.Delete)
-		codes.POST("/batch-delete", h.Admin.Redeem.BatchDelete)
-		codes.POST("/batch-update", h.Admin.Redeem.BatchUpdate)
-		codes.POST("/:id/expire", h.Admin.Redeem.Expire)
+		// 固定卡密 + 直接发放给目标用户（一步产出可兑价值）：要求 step-up 2FA
+		codes.POST("/create-and-redeem", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.CreateAndRedeem)
+		// 生成卡密即产出可兑价值：要求 step-up 2FA
+		codes.POST("/generate", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.Generate)
+		codes.DELETE("/:id", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.Delete)
+		codes.POST("/batch-delete", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.BatchDelete)
+		// 批量改值/改状态/改过期时间会直接改变可兑价值：要求 step-up 2FA
+		codes.POST("/batch-update", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.BatchUpdate)
+		codes.POST("/:id/expire", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.Expire)
 	}
 }
 
-func registerPromoCodeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+// registerPromoCodeRoutes 注册优惠码管理路由。
+// 优惠码携带赠送余额（bonus_amount），创建/改值/删除都直接改变资金权益，要求 step-up 2FA；
+// 列表与使用记录是只读查询，不额外打断。
+func registerPromoCodeRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	promoCodes := admin.Group("/promo-codes")
 	{
 		promoCodes.GET("", h.Admin.Promo.List)
 		promoCodes.GET("/:id", h.Admin.Promo.GetByID)
-		promoCodes.POST("", h.Admin.Promo.Create)
-		promoCodes.PUT("/:id", h.Admin.Promo.Update)
-		promoCodes.DELETE("/:id", h.Admin.Promo.Delete)
+		promoCodes.POST("", gin.HandlerFunc(stepUpAuth), h.Admin.Promo.Create)
+		promoCodes.PUT("/:id", gin.HandlerFunc(stepUpAuth), h.Admin.Promo.Update)
+		promoCodes.DELETE("/:id", gin.HandlerFunc(stepUpAuth), h.Admin.Promo.Delete)
 		promoCodes.GET("/:id/usages", h.Admin.Promo.GetUsages)
 	}
 }
@@ -829,19 +845,22 @@ func registerSystemRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	}
 }
 
-func registerSubscriptionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+// registerSubscriptionRoutes 注册订阅管理路由。
+// 分配/批量分配/延期/重置额度/撤销/恢复都直接改变用户的可用订阅权益（等同资金操作），
+// 要求 step-up 2FA；订阅列表与进度查询是只读，不额外打断。
+func registerSubscriptionRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	subscriptions := admin.Group("/subscriptions")
 	{
 		subscriptions.GET("", h.Admin.Subscription.List)
 		subscriptions.GET("/:id", h.Admin.Subscription.GetByID)
 		subscriptions.GET("/:id/progress", h.Admin.Subscription.GetProgress)
-		subscriptions.POST("/assign", h.Admin.Subscription.Assign)
-		subscriptions.POST("/bulk-assign", h.Admin.Subscription.BulkAssign)
-		subscriptions.POST("/:id/extend", h.Admin.Subscription.Extend)
-		subscriptions.POST("/:id/reset-quota", h.Admin.Subscription.ResetQuota)
-		subscriptions.POST("/:id/revoke", h.Admin.Subscription.Revoke)
-		subscriptions.POST("/:id/restore", h.Admin.Subscription.Restore)
-		subscriptions.DELETE("/:id", h.Admin.Subscription.Revoke)
+		subscriptions.POST("/assign", gin.HandlerFunc(stepUpAuth), h.Admin.Subscription.Assign)
+		subscriptions.POST("/bulk-assign", gin.HandlerFunc(stepUpAuth), h.Admin.Subscription.BulkAssign)
+		subscriptions.POST("/:id/extend", gin.HandlerFunc(stepUpAuth), h.Admin.Subscription.Extend)
+		subscriptions.POST("/:id/reset-quota", gin.HandlerFunc(stepUpAuth), h.Admin.Subscription.ResetQuota)
+		subscriptions.POST("/:id/revoke", gin.HandlerFunc(stepUpAuth), h.Admin.Subscription.Revoke)
+		subscriptions.POST("/:id/restore", gin.HandlerFunc(stepUpAuth), h.Admin.Subscription.Restore)
+		subscriptions.DELETE("/:id", gin.HandlerFunc(stepUpAuth), h.Admin.Subscription.Revoke)
 	}
 
 	// 分组下的订阅列表
