@@ -29,6 +29,13 @@ func (s *PaymentService) verifyEasyPaySettlement(ctx context.Context, order *dbe
 	if !psHasPinnedProviderInstance(order) {
 		return fmt.Errorf("easypay verification: original provider is not pinned")
 	}
+	// 运营开关：部分 EasyPay 服务商（如 ylyun/y1yun 这类自建网关）没有可用的
+	// 订单查询接口，或查单域名/证书不可达。此时允许只凭已验签的回调入账——
+	// 通知签名、回调金额与订单金额、订单归属仍全部校验，仅跳过「向上游再查一次」。
+	// 默认关闭；由设置项 payment.easypay.skip_upstream_verify 打开。
+	if s.easyPaySkipUpstreamVerify(ctx) {
+		return nil
+	}
 	prov, err := s.getPinnedOrderProvider(ctx, order)
 	if err != nil || prov == nil || prov.ProviderKey() != payment.TypeEasyPay {
 		// Do not return provider config or transport errors: they can contain a
@@ -55,4 +62,28 @@ func (s *PaymentService) verifyEasyPaySettlement(ctx context.Context, order *dbe
 		return fmt.Errorf("easypay verification: upstream merchant mismatch")
 	}
 	return nil
+}
+
+// SettingKeyPaymentEasyPaySkipUpstreamVerify 允许跳过 EasyPay 上游查单二次确认。
+// 值取 "true"/"1"/"yes"/"on" 时生效；其它值（含读取失败）保持默认的严格校验。
+const SettingKeyPaymentEasyPaySkipUpstreamVerify = "payment.easypay.skip_upstream_verify"
+
+func (s *PaymentService) easyPaySkipUpstreamVerify(ctx context.Context) bool {
+	if s == nil || s.configService == nil || s.configService.settingRepo == nil {
+		return false
+	}
+	raw, err := s.configService.settingRepo.GetValue(ctx, SettingKeyPaymentEasyPaySkipUpstreamVerify)
+	if err != nil {
+		return false
+	}
+	return parseEasyPaySkipUpstreamVerify(raw)
+}
+
+// parseEasyPaySkipUpstreamVerify 解析开关取值；空值/异常值保持严格校验。
+func parseEasyPaySkipUpstreamVerify(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
