@@ -11,7 +11,7 @@ import (
 // dedicated ledger; the migration must stay additive/idempotent because
 // production already created negative_balance_writeoffs by hand.
 func TestUserDebtMigration(t *testing.T) {
-	content, err := FS.ReadFile("323_user_debt.sql")
+	content, err := FS.ReadFile("324_user_debt.sql")
 	require.NoError(t, err)
 
 	sql := strings.Join(strings.Fields(string(content)), " ")

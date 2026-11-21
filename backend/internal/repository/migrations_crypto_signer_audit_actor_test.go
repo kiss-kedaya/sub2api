@@ -13,7 +13,7 @@ import (
 // of the migration may not error, lock for a rewrite, backfill existing rows or
 // introduce a NOT NULL / DEFAULT that older writers would have to satisfy.
 func TestCryptoSignerAuditActorMigrationIsAdditiveAndIdempotent(t *testing.T) {
-	const filename = "323_crypto_signer_audit_actor.sql"
+	const filename = "325_crypto_signer_audit_actor.sql"
 	raw, err := migrations.FS.ReadFile(filename)
 	require.NoError(t, err)
 	statement := string(raw)
