@@ -175,10 +175,16 @@ func TestRedeemCodeRepositorySearchUsesHashPrefixAndLegacyPlaintext(t *testing.T
 	require.Len(t, byPrefix, 1)
 	require.Equal(t, first[:8], byPrefix[0].CodePrefix)
 
-	byLegacyPlaintext, _, err := repo.ListWithFilters(ctx, params, "", "", "legacy-search")
+	byLegacyPlaintext, _, err := repo.ListWithFilters(ctx, params, "", "", "legacy-searchable")
 	require.NoError(t, err)
 	require.Len(t, byLegacyPlaintext, 1)
 	require.Equal(t, "legacy-searchable", byLegacyPlaintext[0].Code)
+
+	// 子串查询是「逐字符确认卡密片段」的 oracle（#489 审计 B-2 第 2 条），
+	// 哈希化之后必须删除：只允许完整卡密 / 前缀 / 完整历史明文命中。
+	bySubstring, _, err := repo.ListWithFilters(ctx, params, "", "", "legacy-search")
+	require.NoError(t, err)
+	require.Empty(t, bySubstring, "plaintext substring search must be gone")
 
 	none, _, err := repo.ListWithFilters(ctx, params, "", "", "ZZZZZZZZ")
 	require.NoError(t, err)

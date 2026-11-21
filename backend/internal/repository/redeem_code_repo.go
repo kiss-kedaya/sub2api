@@ -195,16 +195,17 @@ func (r *redeemCodeRepository) ListWithFilters(ctx context.Context, params pagin
 		// 库里已经没有明文之后，后台「搜索卡密」只能三路并查：
 		//   - code_hash 等值：管理员手里有完整卡密（哈希命中，唯一可靠路径）；
 		//   - code_prefix 前缀：只记得开头几位；
-		//   - code 明文 LIKE：尚未回填的历史行（回填完成后永远不命中）。
-		// 少任何一路都会让后台在迁移期搜不到某类卡。
+		//   - code 等值：尚未回填的历史明文行（回填完成后永远不命中）。
+		//
+		// 这里刻意不用「明文子串 LIKE」：子串查询本身就是逐字符确认卡密片段的
+		// oracle（#489 审计 B-2 第 2 条），卡密哈希化之后必须删除。前缀查询不是
+		// 新增信息——前缀本来就出现在后台列表里。
 		normalizedSearch := service.NormalizeRedeemCode(search)
-		searchCondition := redeemcode.Or(
-			redeemcode.CodeContainsFold(normalizedSearch),
-			redeemcode.HasUserWith(user.EmailContainsFold(search)),
-		)
+		searchCondition := redeemcode.HasUserWith(user.EmailContainsFold(search))
 		if normalizedSearch != "" {
 			searchCondition = redeemcode.Or(
 				redeemcode.CodeHashEQ(service.HashRedeemCode(normalizedSearch)),
+				redeemcode.CodeEQ(normalizedSearch),
 				searchCondition,
 			)
 			if prefix := service.RedeemCodePrefixFromPlaintext(normalizedSearch); prefix != "" {

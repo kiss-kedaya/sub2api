@@ -308,3 +308,60 @@ func TestSensitiveAdminRoutesStepUpDisabledKeepsLegacyBehavior(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/api/v1/admin/settings", nil))
 	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
 }
+
+// readOnlyMachineCredentialForbiddenRoutes 是「只读、但机器凭据不许成批读走」的
+// 管理面接口（#489 审计 B-2：卡密列表/详情/统计）。它们不需要 step-up（人只会话
+// 直接读），但必须拒绝旧版全权 x-api-key 与 adm_sc_ 受限密钥。
+func readOnlyMachineCredentialForbiddenRoutes() []stepUpRouteCase {
+	return []stepUpRouteCase{
+		{http.MethodGet, "/api/v1/admin/redeem-codes", "admin"},
+		{http.MethodGet, "/api/v1/admin/redeem-codes/stats", "admin"},
+		{http.MethodGet, "/api/v1/admin/redeem-codes/1", "admin"},
+	}
+}
+
+// 机器凭据不得访问卡密只读接口：读操作不强迫人工 TOTP，那就必须要求人只会话。
+func TestReadOnlyRedeemRoutesRejectAdminAPIKeyMachineCredential(t *testing.T) {
+	settings := stepUpRouteSettings(map[string]string{})
+	realStepUp := middleware.NewStepUpAuthMiddleware(nil, nil, settings)
+	router := buildAdminRouteProbeRouter(t, realStepUp, service.AuditAuthMethodAdminAPIKey)
+	for _, tc := range readOnlyMachineCredentialForbiddenRoutes() {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			require.Contains(t, w.Body.String(), middleware.MachineCredentialForbiddenCode)
+		})
+	}
+}
+
+// 人只会话（JWT）读同一组接口必须放行（不误伤日常运营，也不需要 step-up）。
+func TestReadOnlyRedeemRoutesAllowHumanSession(t *testing.T) {
+	var gated []string
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, _ any) {
+		c.AbortWithStatus(http.StatusInternalServerError)
+	}))
+	RegisterAdminRoutes(
+		r.Group("/api/v1"),
+		&handler.Handlers{Admin: &handler.AdminHandlers{
+			UpstreamChannel: &adminhandler.UpstreamChannelHandler{},
+		}},
+		adminRoutesTestAuth(service.AuditAuthMethodJWT),
+		middleware.AuditLogMiddleware(func(c *gin.Context) { c.Next() }),
+		stepUpRecordingProbe(&gated),
+		stepUpRouteSettings(map[string]string{}),
+		nil,
+	)
+	for _, tc := range readOnlyMachineCredentialForbiddenRoutes() {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			gated = nil
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			require.NotEqual(t, http.StatusForbidden, w.Code, "human admin sessions must not be blocked: "+w.Body.String())
+			require.NotContains(t, w.Body.String(), middleware.MachineCredentialForbiddenCode)
+			require.NotContains(t, gated, tc.path, "read-only route must not run the step-up gate")
+		})
+	}
+}

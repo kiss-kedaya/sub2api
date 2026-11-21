@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -125,6 +127,73 @@ func TestRedeemGenerateReturnsPlaintextOnceAndReplaysMasked(t *testing.T) {
 	replay := data(w)
 	require.Len(t, replay, 1)
 	require.Equal(t, "AAAA****", replay[0]["code"])
+}
+
+// sealedBodyEncryptor 是 admin 包内的一次性 SecretEncryptor，用来证明生成回执的
+// 重放存储与 #489 的落库加密兼容：journal 里是密文，重放仍能正确解出掩码形态。
+type sealedBodyEncryptor struct{ prefix string }
+
+func (e sealedBodyEncryptor) Encrypt(plaintext string) (string, error) {
+	return e.prefix + base64.StdEncoding.EncodeToString([]byte(plaintext)), nil
+}
+
+func (e sealedBodyEncryptor) Decrypt(ciphertext string) (string, error) {
+	if !strings.HasPrefix(ciphertext, e.prefix) {
+		return "", errors.New("missing sealed prefix")
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(ciphertext, e.prefix))
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// 生成回执与 #489 加密落库的兼容性：journal 里必须是密文（含 enc:idem:v1: 前缀的
+// 同款语义），重放能解密但只回掩码，明文永远不落库。
+func TestRedeemGenerateJournalSealedAndReplayStaysMasked(t *testing.T) {
+	journal := newMemoryIdempotencyRepoStub()
+	coordinator := service.NewIdempotencyCoordinator(journal, service.DefaultIdempotencyConfig())
+	coordinator.SetStoredResponseEncryptor(sealedBodyEncryptor{prefix: "testenc:"})
+	previous := service.DefaultIdempotencyCoordinator()
+	service.SetDefaultIdempotencyCoordinator(coordinator)
+	t.Cleanup(func() { service.SetDefaultIdempotencyCoordinator(previous) })
+
+	router, adminSvc := newRedeemHashTestRouter()
+	seedRedeemHashTestCodes(adminSvc)
+
+	call := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/admin/redeem-codes/generate",
+			strings.NewReader(`{"count":1,"type":"balance","value":10}`))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Idempotency-Key", "redeem-generate-sealed")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w
+	}
+
+	first := call()
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Contains(t, first.Body.String(), redeemHashTestPlaintext)
+
+	require.Len(t, journal.data, 1)
+	var record *service.IdempotencyRecord
+	for _, rec := range journal.data {
+		record = rec
+	}
+	require.NotNil(t, record.ResponseBody)
+	require.True(t, strings.HasPrefix(*record.ResponseBody, "enc:idem:v1:"),
+		"journal body must be sealed at rest (#489)")
+	require.NotContains(t, *record.ResponseBody, redeemHashTestPlaintext)
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(*record.ResponseBody, "enc:idem:v1:testenc:"))
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), redeemHashTestPlaintext, "plaintext must not survive sealing")
+	require.Contains(t, string(raw), "AAAA****")
+
+	replay := call()
+	require.Equal(t, http.StatusOK, replay.Code)
+	require.Equal(t, "true", replay.Header().Get("X-Idempotency-Replayed"))
+	require.NotContains(t, replay.Body.String(), redeemHashTestPlaintext)
+	require.Contains(t, replay.Body.String(), "AAAA****")
 }
 
 func TestRedeemListAndDetailNeverReturnPlaintext(t *testing.T) {

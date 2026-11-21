@@ -74,6 +74,17 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	// redeem_codes: subscription fields
 	requireColumn(t, tx, "redeem_codes", "group_id", "bigint", 0, true)
 	requireColumn(t, tx, "redeem_codes", "validity_days", "integer", 0, false)
+	// redeem_codes: hash storage (migration 328). The legacy plaintext column is
+	// nullable, the credential itself lives in code_hash.
+	requireColumn(t, tx, "redeem_codes", "code", "character varying", 32, true)
+	requireColumn(t, tx, "redeem_codes", "code_hash", "character", 64, true)
+	requireColumn(t, tx, "redeem_codes", "code_prefix", "character varying", 16, true)
+	requireIndex(t, tx, "redeem_codes", "uq_redeem_codes_code_hash")
+
+	// redeem_code_hashes: hash ledger keyed by redeem_code_id (isomorphic to
+	// api_key_hashes) so the credential only ever exists as a digest.
+	requireColumn(t, tx, "redeem_code_hashes", "code_hash", "character", 64, false)
+	requireColumn(t, tx, "redeem_code_hashes", "code_prefix", "character varying", 16, false)
 
 	// usage_logs: billing_type used by filters/stats
 	requireColumn(t, tx, "usage_logs", "billing_type", "smallint", 0, false)
