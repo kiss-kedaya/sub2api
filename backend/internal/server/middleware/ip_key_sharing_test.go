@@ -229,7 +229,14 @@ func TestIPKeySharingAutoBan(t *testing.T) {
 		for _, path := range []string{"/health", "/healthz", "/readyz", "/metrics", "/", "/static/app.js", "/admin/settings"} {
 			require.False(t, ipnotice.IsGatewayBusinessPath(path), path)
 		}
-		for _, path := range []string{"/v1/messages", "/v1/models", "/v1/sub2api/billing", "/v1beta/models", "/api/v3/contents/generations/tasks", "/antigravity/v1/usage", "/backend-api/codex/responses"} {
+		for _, path := range []string{
+			"/v1/messages", "/v1/models", "/v1/sub2api/billing", "/v1beta/models",
+			"/api/v3/contents/generations/tasks", "/antigravity/v1/usage", "/backend-api/codex/responses",
+			// Root aliases are the same authenticated gateway; a shell calling
+			// only these must still be counted.
+			"/responses", "/chat/completions", "/models", "/messages/count_tokens",
+			"/images/generations", "/videos/generations", "/custom-voices", "/realtime",
+		} {
 			require.True(t, ipnotice.IsGatewayBusinessPath(path), path)
 		}
 	})
@@ -590,6 +597,68 @@ func TestIPKeySharingExcludedSources(t *testing.T) {
 			require.Empty(t, client.Keys(ctx, "*").Val(), "%s must not write any Redis state", tc.ip)
 		})
 	}
+}
+
+// TestIPKeySharingNormalizesSourceAddress pins the address-equality invariant:
+// the detector is the component that turns a source address into a Redis key
+// and an enforcement bucket, so two spellings of the same host must never split
+// the distinct-user count. IPv6 may be compressed or expanded, uppercase or
+// lowercase, IPv4 can arrive as an IPv4-mapped IPv6 literal, and a zone-scoped
+// link-local address identifies no public client at all.
+func TestIPKeySharingNormalizesSourceAddress(t *testing.T) {
+	ctx := context.Background()
+
+	newFixture := func(t *testing.T) (*IPKeySharingDetector, *service.SettingService, *redis.Client) {
+		t.Helper()
+		server := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+		t.Cleanup(func() { _ = client.Close() })
+		settings := service.NewSettingService(&panelRateLimitStubRepo{}, nil)
+		require.NoError(t, settings.SetGatewayIPNotice(ctx, ipnotice.Settings{
+			Enabled: true, IPs: []string{"198.51.100.7"}, Message: "operator notice", RPM: 100,
+			SharingThreshold: 2,
+		}))
+		detector := NewIPKeySharingDetector(settings, client)
+		detector.now = func() time.Time { return sharingTestWindow }
+		return detector, settings, client
+	}
+
+	t.Run("compressed and expanded IPv6 are one source", func(t *testing.T) {
+		detector, settings, client := newFixture(t)
+		_, hit := detector.Observe(ctx, "2001:0DB8:0000:0000:0000:0000:0000:0001", 101, sharingAcceptanceKey(101, 101, 40))
+		require.False(t, hit)
+		result, hit := detector.Observe(ctx, "2001:db8::1", 102, sharingAcceptanceKey(102, 102, 40))
+		require.True(t, hit, "the second spelling must join the first counter")
+		require.Equal(t, 2, result.DistinctUsers)
+		require.Equal(t, "2001:db8::1", result.IP, "the hit must carry the canonical spelling")
+		require.EqualValues(t, 2, client.ZCard(ctx, ipKeySharingUsersPrefix+"2001:db8::1").Val(),
+			"both spellings must land in one Redis key")
+		added, err := settings.UpsertGatewayIPNoticeAutoEntry(ctx, result.AutoEntry())
+		require.NoError(t, err)
+		require.True(t, added)
+		require.True(t, settings.GatewayIPNoticeSnapshot().HasListedIP("2001:db8::1"))
+	})
+
+	t.Run("IPv4-mapped IPv6 and plain IPv4 are one source", func(t *testing.T) {
+		detector, _, client := newFixture(t)
+		_, hit := detector.Observe(ctx, "::ffff:203.0.113.9", 111, sharingAcceptanceKey(111, 111, 40))
+		require.False(t, hit)
+		result, hit := detector.Observe(ctx, "203.0.113.9", 112, sharingAcceptanceKey(112, 112, 40))
+		require.True(t, hit)
+		require.Equal(t, 2, result.DistinctUsers)
+		require.Equal(t, "203.0.113.9", result.IP)
+		require.EqualValues(t, 2, client.ZCard(ctx, ipKeySharingUsersPrefix+"203.0.113.9").Val())
+	})
+
+	t.Run("zone-scoped address is never counted", func(t *testing.T) {
+		detector, settings, client := newFixture(t)
+		for _, userID := range []int64{121, 122, 123} {
+			_, hit := detector.Observe(ctx, "fe80::1%eth0", userID, sharingAcceptanceKey(userID, userID, 40))
+			require.False(t, hit, "a link-scoped address cannot identify a public client")
+		}
+		require.Empty(t, client.Keys(ctx, "*").Val(), "a zone-scoped address must not write any Redis state")
+		require.Empty(t, settings.GatewayIPNoticeSnapshot().AutoEntries)
+	})
 }
 
 // TestIPKeySharingKeyAgeGate is the acceptance case for "make sure these keys were

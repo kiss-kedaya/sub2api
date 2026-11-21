@@ -147,16 +147,22 @@ func newSharingRouter(
 	})
 	router.Use(GatewayIPSharing(settings, detector, keysSvc))
 	router.POST("/v1/messages", func(c *gin.Context) { c.Status(http.StatusOK) })
+	// Root gateway alias: the same API-key-authenticated handler without /v1.
+	router.POST("/responses", func(c *gin.Context) { c.Status(http.StatusOK) })
 	return router
 }
 
-func callSharing(router *gin.Engine, userID int64) int {
-	request := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+func callSharingAt(router *gin.Engine, path string, userID int64) int {
+	request := httptest.NewRequest(http.MethodPost, path, nil)
 	request.RemoteAddr = "203.0.113.88:41234"
 	request.Header.Set("X-Test-User", strconv.FormatInt(userID, 10))
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	return recorder.Code
+}
+
+func callSharing(router *gin.Engine, userID int64) int {
+	return callSharingAt(router, "/v1/messages", userID)
 }
 
 func stubDatacenterClassifier(t *testing.T, datacenter bool) {
@@ -307,6 +313,57 @@ func TestGatewayIPSharingResidentialEgressTouchesNothing(t *testing.T) {
 		require.Equal(t, service.StatusActive, repo.keys[id].Status)
 	}
 	require.Empty(t, settings.GatewayIPNoticeSnapshot().AutoEntries)
+}
+
+// TestGatewayIPSharingCountsRootAliasGatewayPaths is the bypass regression for
+// the no-/v1 aliases: POST /responses is the same authenticated gateway handler
+// as POST /v1/responses, so a shared credential that only calls the root alias
+// must still cross the distinct-user threshold. Before the path list covered
+// root aliases this case produced no entry at all.
+func TestGatewayIPSharingCountsRootAliasGatewayPaths(t *testing.T) {
+	settings := noticeTestSettings(t)
+	detector := newSharingDetector(t, settings)
+	keysByUser := map[int64]*service.APIKey{}
+	for _, userID := range []int64{71, 72, 73} {
+		keysByUser[userID] = sharedEgressKey(userID, sharingTestKeyCreatedAt)
+	}
+	router := newSharingRouter(t, settings, detector, nil, keysByUser)
+
+	for _, userID := range []int64{71, 72, 73} {
+		require.Equal(t, http.StatusOK, callSharingAt(router, "/responses", userID))
+	}
+
+	policy := settings.GatewayIPNoticeSnapshot()
+	require.Len(t, policy.AutoEntries, 1, "root-alias traffic must be counted, not ignored")
+	require.Equal(t, "203.0.113.88", policy.AutoEntries[0].IP)
+	require.Equal(t, 3, policy.AutoEntries[0].DistinctUsers)
+}
+
+// TestGatewayIPSharingRootAliasCannotEvadeKeyDisable is the production-shaped
+// variant: key_disable_enabled=true (as deployed) must also act on root-alias
+// traffic. A shell that avoids /v1 had no key disabled before this regression.
+func TestGatewayIPSharingRootAliasCannotEvadeKeyDisable(t *testing.T) {
+	settings := noticeTestSettings(t)
+	setKeyDisable(t, settings, true)
+	detector := newSharingDetector(t, settings)
+	keysByUser := map[int64]*service.APIKey{}
+	var keys []*service.APIKey
+	for _, userID := range []int64{81, 82, 83} {
+		key := sharedEgressKey(userID, sharingTestKeyCreatedAt)
+		keysByUser[userID] = key
+		keys = append(keys, key)
+	}
+	keysSvc, repo := newSharingKeyService(t, keys)
+	router := newSharingRouter(t, settings, detector, keysSvc, keysByUser)
+
+	for _, userID := range []int64{81, 82, 83} {
+		require.Equal(t, http.StatusOK, callSharingAt(router, "/responses", userID))
+	}
+
+	require.Equal(t, 3, repo.updates, "root-alias traffic must disable every shared key")
+	for id := range keysByUser {
+		require.Equal(t, service.StatusAPIKeyInactive, repo.keys[id].Status, "key %d must be disabled", id)
+	}
 }
 
 // TestGatewayIPSharingYoungKeysTouchNothing is the key-age regression: four

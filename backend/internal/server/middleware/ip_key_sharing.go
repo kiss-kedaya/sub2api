@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"log/slog"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -182,10 +183,19 @@ func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID in
 	if d == nil || d.redis == nil || d.settings == nil || userID <= 0 || apiKey == nil {
 		return IPKeySharingHit{}, false
 	}
+	// Canonicalize before the address is used as a Redis key or compared to the
+	// operator's list. The same host can arrive as compressed or expanded IPv6,
+	// uppercase hex, or an IPv4-mapped IPv6 literal ("::ffff:1.2.3.4"); each
+	// spelling would otherwise mint its own counter and its own enforcement
+	// bucket, letting one shared exit look like several unrelated clients (or
+	// several one-user addresses). A zone-scoped address (fe80::1%eth0) only
+	// identifies a link, never a public client, so it is dropped outright.
 	ip = strings.TrimSpace(ip)
-	if ip == "" {
+	addr, parseErr := netip.ParseAddr(ip)
+	if parseErr != nil || addr.Zone() != "" {
 		return IPKeySharingHit{}, false
 	}
+	ip = addr.Unmap().String()
 	policy := d.settings.GatewayIPNoticeSnapshot()
 	// Detection is needed for two independent actions: listing the address
 	// (AutoAdd) and disabling the shared credential (KeyDisable). Either one
