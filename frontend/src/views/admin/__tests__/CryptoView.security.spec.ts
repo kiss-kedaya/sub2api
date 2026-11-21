@@ -512,7 +512,9 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     if (state.disabled) {
       expect(mocks.get.mock.calls.some(([path]) => path === '/admin/crypto/hot-wallet')).toBe(false)
     }
-    expect(wrapper.text()).not.toMatch(/signer|Approval|groupSigner|signerSocket/i)
+    // The shard panel is a separate card and intentionally uses the word "signer";
+    // this guard still covers the removed legacy wallet-tool socket labels.
+    expect(wrapper.text()).not.toMatch(/Approval|groupSigner|signerSocket/i)
     expect(wrapper.find('input[type="number"][name="hot_index"]').exists()).toBe(false)
     if (!state.disabled) {
       await button(wrapper, 'admin.crypto.hotAddressFill').trigger('click')

@@ -1,0 +1,55 @@
+{
+  "_source": "Emitted by the Go implementation of PR #519 (backend/internal/cryptopay/wallet/shards + wallet v3 envelope) on 2026-11-22. Frontend must reproduce these byte for byte.",
+  "scheme": "shamir-gf256",
+  "version": 1,
+  "commitment_domain_sha256": "badd224de95d70ed6c7bef75406197f6a7526f6483dddcfa40e0b02aa2664782",
+  "shard_vectors": [
+    {
+      "name": "golden-2byte",
+      "secret_hex": "0102",
+      "randomness_hex": "0101",
+      "threshold": 2,
+      "total": 3,
+      "shares": [
+        "S2V1-AEBA-GAIC-AAB6-ZCMX-QY",
+        "S2V1-AEBA-GAQC-AMAD-JJ5U-SI",
+        "S2V1-AEBA-GAYC-AIA5-CMXN-L4"
+      ],
+      "commitment_b64": "WNe9YodgzbBxvGKEC9/ZjtCTFyApKx4M2W72WlgkDag="
+    },
+    {
+      "name": "dk-zero-ramp",
+      "secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "randomness_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+      "threshold": 2,
+      "total": 3,
+      "shares": [
+        "S2V1-AEBA-GAJA-AEAA-GAQF-AQDQ-MCII-BMFA-2DAP-BYIR-AEYS-CUKB-OFQZ-DANR-UHI4-D4PL-3ETK-CA",
+        "S2V1-AEBA-GARA-AIBQ-AAIG-A4CA-KCQL-BAEQ-4DYM-BUJB-GEAR-CYLR-IFI2-DMMB-SHQ7-DQO6-SCIK-XA",
+        "S2V1-AEBA-GAZA-AMBA-CAAH-AYCQ-ICYK-BEEA-6DQN-BQJR-EEIQ-C4LB-KFA3-DIMR-QHY6-DUOB-UGMP-7A"
+      ],
+      "commitment_b64": "u4sVtg4KEqwViecD/xdQleKUwjw/Lft710L1qFIOUQ4="
+    },
+    {
+      "name": "dk-42-repeat",
+      "secret_hex": "4242424242424242424242424242424242424242424242424242424242424242",
+      "randomness_hex": "00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9",
+      "threshold": 2,
+      "total": 3,
+      "shares": [
+        "S2V1-AEBA-GAJA-IJCU-YV26-MFUH-G6T5-AQHR-MGJA-FMZD-KPGH-Z3I5-RY7K-5X2P-7BUJ-SCNW-Z4FK-BQ",
+        "S2V1-AEBA-GARA-IJGF-42D2-AQLC-AMR4-Z3MO-V5EG-SCRK-ZPST-IF7W-2GYJ-A42S-HUOP-7XV3-2ROH-W4",
+        "S2V1-AEBA-GAZA-IJFV-A7LG-E46B-CCQD-RCK3-5L7E-7HJN-XQGW-ZXWP-POVB-VCBZ-4FIE-F4ZM-3LQC-RA"
+      ],
+      "commitment_b64": "JPHzakmAaVY1Kd1ahxNdketofpKjj30PBv1GMyl85no="
+    }
+  ],
+  "vault_vector": {
+    "prefix": "sub2api-wallet:v3:",
+    "aad": "sub2api-wallet:v3:",
+    "data_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "nonce_hex": "00112233445566778899aabb",
+    "plaintext": "{\"deposit\":\"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\",\"hot\":\"zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong\"}",
+    "sealed": "sub2api-wallet:v3:ABEiM0RVZneImaq7oaSU1j8IOHccQvo+G+7jU11t3XVzCBrZ7uB40PDSf9Uc74ZL3DnENxw5q6jiEUznIdH6CqAKcg+aVkW67A/cZcxTv3//gc+fuGVJF/BPuCuR8JRnXsVZgbI/nsSKhbUGGe/YqXUaVKbUl7BqJFKPPE7IyFIvoa1Q2KJg4/ESuQPpwmYvBpvVmj1GiCrBgPA5k2Z2z+XUaCH94H7O1jAFVIIjW0H78ccaEANnsE2kaVuTUcqt9A=="
+  }
+}
