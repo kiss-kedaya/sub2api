@@ -45,12 +45,12 @@ func (Proxy) Fields() []ent.Field {
 			MaxLen(100).
 			Optional().
 			Nillable(),
-		// Proxy passwords are stored as "v2:" + base64(nonce + AES-256-GCM
-		// ciphertext + tag). A long upstream password expands past the previous
-		// 255-byte limit after base64 encoding, and the column is TEXT, so the
-		// entity validator must not reject the ciphertext.
+		// Managed proxy credentials are stored as "enc:managed:v1:" +
+		// base64(nonce + AES-256-GCM ciphertext + tag), so a 64-character
+		// generated password becomes 139 bytes at rest and must not be
+		// truncated by the entity validator.
 		field.String("password").
-			MaxLen(4096).
+			MaxLen(255).
 			Optional().
 			Nillable(),
 		field.String("status").

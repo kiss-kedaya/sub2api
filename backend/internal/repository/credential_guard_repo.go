@@ -10,13 +10,10 @@ import (
 	"github.com/google/uuid"
 )
 
-type credentialGuardRepository struct {
-	db              *sql.DB
-	credentialVault service.SecretVault
-}
+type credentialGuardRepository struct{ db *sql.DB }
 
-func NewCredentialGuardRepository(db *sql.DB, vault service.SecretVault) service.CredentialGuardRepository {
-	return &credentialGuardRepository{db: db, credentialVault: vault}
+func NewCredentialGuardRepository(db *sql.DB) service.CredentialGuardRepository {
+	return &credentialGuardRepository{db}
 }
 
 const credentialGuardColumns = `g.account_id,a.name,g.config,g.revision,g.secret_cipher,g.state,g.code,g.http_status,g.failures,g.blocked,g.last_checked_at,g.next_check_at,g.lease`
@@ -108,11 +105,11 @@ func (r *credentialGuardRepository) Complete(ctx context.Context, row *service.C
 	return err
 }
 func (r *credentialGuardRepository) PersistCredentials(ctx context.Context, row *service.CredentialGuardRecord, a *service.Account, credentials map[string]any) (bool, error) {
-	expected, err := service.WireCredentialsJSON(r.credentialVault, a.Credentials)
+	expected, err := json.Marshal(a.Credentials)
 	if err != nil {
 		return false, err
 	}
-	next, err := service.WireCredentialsJSON(r.credentialVault, credentials)
+	next, err := json.Marshal(credentials)
 	if err != nil {
 		return false, err
 	}

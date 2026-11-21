@@ -48,15 +48,18 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
+	secretEncryptor, err := repository.NewAESEncryptor(configConfig)
+	if err != nil {
+		return nil, err
+	}
 	userRepository := repository.NewUserRepository(client, db)
 	redeemCodeRepository := repository.NewRedeemCodeRepository(client)
 	redisClient := repository.ProvideRedis(configConfig)
 	refreshTokenCache := repository.NewRefreshTokenCache(redisClient)
 	scopedAdminKeyRepository := repository.NewScopedAdminKeyRepository(db)
-	secretVault := repository.ProvideSecretsVault(configConfig)
-	settingRepository := repository.ProvideSettingRepository(client, secretVault)
+	settingRepository := repository.NewSettingRepository(client)
 	groupRepository := repository.NewGroupRepository(client, db)
-	proxyRepository := repository.ProvideManagedProxyRepository(client, db, secretVault)
+	proxyRepository := repository.NewProxyRepository(client, db)
 	settingCacheInvalidationBus := repository.NewSettingCacheInvalidationBus(redisClient)
 	settingService := service.ProvideSettingService(scopedAdminKeyRepository, settingRepository, groupRepository, proxyRepository, configConfig, settingCacheInvalidationBus)
 	emailCache := repository.NewEmailCache(redisClient)
@@ -80,7 +83,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	apiKeyCache := repository.NewAPIKeyCache(redisClient)
 	concurrencyCache := repository.ProvideConcurrencyCache(redisClient, configConfig)
 	schedulerCache := repository.ProvideSchedulerCache(redisClient, configConfig)
-	accountRepository := repository.ProvideManagedAccountRepository(client, db, schedulerCache, secretVault)
+	accountRepository := repository.NewAccountRepository(client, db, schedulerCache)
 	concurrencyService := service.ProvideConcurrencyService(concurrencyCache, accountRepository, configConfig)
 	timingWheelService, err := service.ProvideTimingWheelService()
 	if err != nil {
@@ -97,10 +100,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	userService := service.NewUserService(userRepository, settingRepository, apiKeyAuthCacheInvalidator, billingCache)
 	redeemCache := repository.NewRedeemCache(redisClient)
 	redeemService := service.NewRedeemService(redeemCodeRepository, userRepository, subscriptionService, redeemCache, billingCacheService, client, apiKeyAuthCacheInvalidator, affiliateService)
-	secretEncryptor, err := repository.NewAESEncryptor(configConfig)
-	if err != nil {
-		return nil, err
-	}
 	totpCache := repository.NewTotpCache(redisClient)
 	totpService := service.NewTotpService(userRepository, secretEncryptor, totpCache, settingService, emailService, emailQueueService)
 	userAttributeDefinitionRepository := repository.NewUserAttributeDefinitionRepository(client)
@@ -109,7 +108,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	authHandler := handler.NewAuthHandler(configConfig, authService, userService, settingService, promoService, redeemService, totpService, userAttributeService)
 	userHandler := handler.NewUserHandler(userService, authService, emailService, emailCache, affiliateService, serviceUserPlatformQuotaRepository)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
-	usageLogRepository := repository.ProvideUsageLogRepository(client, db, redisClient, configConfig, secretVault)
+	usageLogRepository := repository.NewUsageLogRepository(client, db, redisClient, configConfig)
 	usageService := service.NewUsageService(usageLogRepository, userRepository, client, apiKeyAuthCacheInvalidator)
 	opsRepository := repository.NewOpsRepository(db)
 	usageBillingRepository := repository.ProvideUsageBillingRepository(client, db, configConfig)
@@ -204,7 +203,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	dashboardAggregationService := service.ProvideDashboardAggregationService(dashboardAggregationRepository, timingWheelService, leaderLockCache, db, configConfig)
 	dashboardHandler := admin.NewDashboardHandler(dashboardService, dashboardAggregationService)
 	adminGroupRepository := repository.NewAdminGroupRepository(client, db)
-	adminAccountRepository := repository.ProvideAdminAccountRepository(client, db, schedulerCache, secretVault)
+	adminAccountRepository := repository.NewAdminAccountRepository(client, db, schedulerCache)
 	proxyExitInfoProber := repository.NewProxyExitInfoProber(configConfig)
 	proxyLatencyCache := repository.NewProxyLatencyCache(redisClient)
 	adminService := service.NewAdminService(configConfig, userRepository, adminGroupRepository, adminAccountRepository, proxyRepository, apiKeyRepository, redeemCodeRepository, userGroupRateRepository, userRPMCache, billingCacheService, proxyExitInfoProber, proxyLatencyCache, apiKeyAuthCacheInvalidator, client, settingService, subscriptionService, userSubscriptionRepository, privacyClientFactory, openAIGatewayService, affiliateService, compositeModelRouteRepository, compositeRouteResolver, channelService)
@@ -310,13 +309,13 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	mihomoBindingRepository := repository.NewMihomoBindingRepository(db)
 	mihomoProxyService := service.NewMihomoProxyService(adminService, proxyRepository, mihomoBindingRepository)
 	mihomoHandler := handler.ProvideMihomoHandler(mihomoProxyService)
-	credentialGuardRepository := repository.ProvideCredentialGuardRepository(db, secretVault)
+	credentialGuardRepository := repository.NewCredentialGuardRepository(db)
 	credentialGuardService := service.ProvideCredentialGuardService(credentialGuardRepository, accountRepository, openAIGatewayService, secretEncryptor, compositeTokenCacheInvalidator)
 	credentialGuardHandler := handler.ProvideCredentialGuardHandler(credentialGuardService, totpService, userService)
 	opsAutomationRepository := repository.NewOpsAutomationRepository(db, accountRepository)
 	opsAutomationService := service.ProvideOpsAutomationService(settingRepository, groupRepository, opsAutomationRepository, accountTestService, openAIGatewayService, accountRepository, concurrencyService, contentModerationService)
 	opsAutomationHandler := admin.NewOpsAutomationHandler(opsAutomationService)
-	excelGrantRepository := repository.ProvideExcelGrantRepository(db, secretVault)
+	excelGrantRepository := repository.NewExcelGrantRepository(db)
 	excelGrantService := service.NewExcelGrantService(excelGrantRepository, accountRepository, openAIOAuthClient, secretEncryptor)
 	stateStore := repository.NewExcelBPSStateRepository(db, secretEncryptor)
 	excelBPSChannel := service.NewExcelBPSChannel(excelGrantService, stateStore)
@@ -375,7 +374,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	keyRotationGateMiddleware := middleware.NewKeyRotationGateMiddleware(keyRotationGateService, auditLogService)
 	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, optionalJWTAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, auditLogMiddleware, stepUpAuthMiddleware, keyRotationGateMiddleware, apiKeyService, subscriptionService, opsService, settingService, compositeRouteResolver, redisClient, db)
 	httpServer := server.ProvideHTTPServer(configConfig, engine)
-	v := provideSecretsBackfill(db, secretVault)
 	opsMetricsCollector := service.ProvideOpsMetricsCollector(opsRepository, settingRepository, accountRepository, concurrencyService, db, redisClient, configConfig)
 	opsAggregationService := service.ProvideOpsAggregationService(opsRepository, settingRepository, db, redisClient, configConfig)
 	opsAlertEvaluatorService := service.ProvideOpsAlertEvaluatorService(opsService, opsRepository, emailService, redisClient, configConfig, proxyRepository)
@@ -398,13 +396,12 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	channelMonitorV2Aggregator := service.ProvideChannelMonitorV2Aggregator(channelMonitorV2Repository, db, settingService, leaderLockCache)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
 	apiKeyDatacenterAutoBlockService := service.ProvideAPIKeyDatacenterAutoBlockService(apiKeyService, leaderLockCache, db)
-	v2 := provideCleanup(handlers, settingService, client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, balancePreauthorizationRecoveryWorker, usageBalanceSettlementWorker, liveBalanceAdjustmentOutboxWorker, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, cryptopayService, channelMonitorRunner, channelMonitorV2Aggregator, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, modelWhitelistAutoSyncService, apiKeyDatacenterAutoBlockService, ollamaCloudUsageService, auditLogService, openAIQuotaAutoResetService, promptService, pluginManager)
+	v := provideCleanup(handlers, settingService, client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, balancePreauthorizationRecoveryWorker, usageBalanceSettlementWorker, liveBalanceAdjustmentOutboxWorker, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, cryptopayService, channelMonitorRunner, channelMonitorV2Aggregator, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, modelWhitelistAutoSyncService, apiKeyDatacenterAutoBlockService, ollamaCloudUsageService, auditLogService, openAIQuotaAutoResetService, promptService, pluginManager)
 	application := &Application{
-		Server:          httpServer,
-		PromptAudit:     promptService,
-		PluginManager:   pluginManager,
-		SecretsBackfill: v,
-		Cleanup:         v2,
+		Server:        httpServer,
+		PromptAudit:   promptService,
+		PluginManager: pluginManager,
+		Cleanup:       v,
 	}
 	return application, nil
 }
@@ -412,25 +409,14 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 // wire.go:
 
 type Application struct {
-	Server          *http.Server
-	PromptAudit     *securityaudit.PromptService
-	PluginManager   *service.PluginManager
-	SecretsBackfill func(context.Context) error
-	Cleanup         func()
+	Server        *http.Server
+	PromptAudit   *securityaudit.PromptService
+	PluginManager *service.PluginManager
+	Cleanup       func()
 }
 
 func provideAccountOpsAdminChannels(users service.UserRepository, db *sql.DB, encryptor service.SecretEncryptor) service.AccountOpsAdminChannels {
 	return notify.NewAccountOpsAdminChannels(users, notify.NewUserBarkService(db, notify.AdaptEncryptor(encryptor)))
-}
-
-// provideSecretsBackfill rewrites legacy plaintext credential rows shortly after
-// startup. It is a no-op when the installation key is unavailable.
-func provideSecretsBackfill(db *sql.DB, vault service.SecretVault) func(context.Context) error {
-	return func(ctx context.Context) error {
-		backfillCtx, cancel := context.WithTimeout(ctx, repository.SecretsBackfillTimeout)
-		defer cancel()
-		return repository.RunSecretsEncryptionBackfill(backfillCtx, db, vault)
-	}
 }
 
 func providePrivacyClientFactory() service.PrivacyClientFactory {

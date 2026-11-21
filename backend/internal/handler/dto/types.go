@@ -546,11 +546,7 @@ type ProxyWithAccountCount struct {
 // 注意：普通接口不得使用此 DTO。
 type AdminProxy struct {
 	Proxy
-	// Password is always masked on list/detail responses: the encrypted
-	// credential never leaves the server. HasPassword lets the UI show that the
-	// proxy is authenticated without revealing the secret.
-	Password    string `json:"password,omitempty"`
-	HasPassword bool   `json:"has_password"`
+	Password string `json:"password,omitempty"`
 }
 
 // AdminProxyWithAccountCount 是管理员接口使用的带账号统计的 proxy DTO。

@@ -28,14 +28,7 @@ func (r *accountRepository) ListAccountOpsSnapshots(ctx context.Context, ids []i
 	}
 	accounts := make([]service.Account, 0, len(rows))
 	for _, row := range rows {
-		converted, err := r.accountEntityToService(ctx, row)
-		if err != nil {
-			return nil, err
-		}
-		if converted == nil {
-			continue
-		}
-		accounts = append(accounts, *converted)
+		accounts = append(accounts, *accountEntityToService(row))
 	}
 	return accounts, nil
 }

@@ -22,7 +22,7 @@ func newSettingRepositorySQLMock(t *testing.T) (*settingRepository, sqlmock.Sqlm
 	t.Cleanup(func() { _ = db.Close() })
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 	t.Cleanup(func() { _ = client.Close() })
-	repo, ok := NewSettingRepository(client, nil).(*settingRepository)
+	repo, ok := NewSettingRepository(client).(*settingRepository)
 	require.True(t, ok)
 	return repo, mock
 }

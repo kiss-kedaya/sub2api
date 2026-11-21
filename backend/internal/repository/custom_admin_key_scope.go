@@ -168,11 +168,7 @@ func (r *accountRepository) ScopedAdminCodexCandidates(ctx context.Context, iden
 	if len(scope) == 0 {
 		return []service.Account{}, nil
 	}
-	predicates, predErr := r.scopedCodexIdentityPredicates(identity)
-	if predErr != nil {
-		return nil, predErr
-	}
-	for _, match := range predicates {
+	for _, match := range scopedCodexIdentityPredicates(identity) {
 		var rows []struct {
 			ID          int64
 			Credentials json.RawMessage
@@ -191,11 +187,7 @@ func (r *accountRepository) ScopedAdminCodexCandidates(ctx context.Context, iden
 			if err := json.Unmarshal(rows[0].Credentials, &credentials); err != nil {
 				return nil, err
 			}
-			decrypted, _, decErr := service.DecryptCredentialsFromStorage(r.credentialVault, credentials)
-			if decErr != nil {
-				return nil, decErr
-			}
-			return []service.Account{{ID: rows[0].ID, Credentials: decrypted}}, nil
+			return []service.Account{{ID: rows[0].ID, Credentials: credentials}}, nil
 		}
 	}
 	return []service.Account{}, nil
@@ -203,17 +195,9 @@ func (r *accountRepository) ScopedAdminCodexCandidates(ctx context.Context, iden
 
 // 与导入器的 account_user / user / email / access / account 优先级保持一致。
 // account 回退必须排除明确属于其他用户的账户；仅 access token 和 Agent Identity 各有独立匹配规则。
-func (r *accountRepository) scopedCodexIdentityPredicates(identity service.ScopedCodexIdentity) ([]dbpredicate.Account, error) {
+func scopedCodexIdentityPredicates(identity service.ScopedCodexIdentity) []dbpredicate.Account {
 	accountID, userID := strings.TrimSpace(identity.AccountID), strings.TrimSpace(identity.UserID)
 	email, token := strings.ToLower(strings.TrimSpace(identity.Email)), strings.TrimSpace(identity.AccessToken)
-	tokenCipher := token
-	if token != "" {
-		encrypted, encErr := service.EncryptCredentialComparisonValue(r.credentialVault, "access_token", token)
-		if encErr != nil {
-			return nil, encErr
-		}
-		tokenCipher = encrypted
-	}
 	// 与 Go strings.TrimSpace 的 Unicode 空白集合一致，兼容旧凭证中的首尾空白。
 	const whitespace = "\t\n\v\f\r \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
 	field := func(key string) string {
@@ -250,8 +234,7 @@ func (r *accountRepository) scopedCodexIdentityPredicates(identity service.Scope
 		}
 	}
 	if !identity.AgentIdentity && token != "" {
-		// access_token is encrypted at rest; compare the deterministic wire form.
-		predicates = append(predicates, match(access+" = ?", tokenCipher))
+		predicates = append(predicates, match(access+" = ?", token))
 	}
 	if accountID != "" && (identity.AgentIdentity || !identity.AccessTokenOnly) {
 		if userID == "" {
@@ -260,5 +243,5 @@ func (r *accountRepository) scopedCodexIdentityPredicates(identity service.Scope
 			predicates = append(predicates, match(a+" = ? AND ("+u+" = '' OR "+u+" = ?)", accountID, userID))
 		}
 	}
-	return predicates, nil
+	return predicates
 }

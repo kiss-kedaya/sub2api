@@ -470,11 +470,7 @@ func (r *usageLogRepository) loadAccounts(ctx context.Context, ids []int64, comp
 			return nil, err
 		}
 		for _, m := range models {
-			converted, convErr := usageLogAccountEntityToService(r.credentialVault, m)
-			if convErr != nil {
-				return nil, convErr
-			}
-			out[m.ID] = converted
+			out[m.ID] = accountEntityToService(m)
 		}
 		return out, nil
 	}
@@ -483,11 +479,7 @@ func (r *usageLogRepository) loadAccounts(ctx context.Context, ids []int64, comp
 		return nil, err
 	}
 	for _, m := range models {
-		converted, convErr := usageLogAccountEntityToService(r.credentialVault, m)
-		if convErr != nil {
-			return nil, convErr
-		}
-		out[m.ID] = converted
+		out[m.ID] = accountEntityToService(m)
 	}
 	return out, nil
 }

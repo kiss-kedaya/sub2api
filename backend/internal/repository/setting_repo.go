@@ -13,7 +13,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/setting"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"golang.org/x/sync/singleflight"
 )
@@ -39,11 +38,6 @@ type settingAllCacheEntry struct {
 
 type settingRepository struct {
 	client *ent.Client
-	// vault encrypts credential-bearing setting rows at rest. Nil keeps legacy
-	// plaintext fixtures working; encrypted rows fail closed on read.
-	vault        service.SecretVault
-	rewriteMu    sync.Mutex
-	rewriteInFly map[string]struct{}
 
 	mu         sync.Mutex
 	keyCache   map[string]settingCacheEntry
@@ -54,68 +48,11 @@ type settingRepository struct {
 
 var _ service.AtomicSettingRepository = (*settingRepository)(nil)
 
-func NewSettingRepository(client *ent.Client, vault service.SecretVault) service.SettingRepository {
+func NewSettingRepository(client *ent.Client) service.SettingRepository {
 	return &settingRepository{
-		client:       client,
-		vault:        vault,
-		keyCache:     make(map[string]settingCacheEntry),
-		rewriteInFly: make(map[string]struct{}),
+		client:   client,
+		keyCache: make(map[string]settingCacheEntry),
 	}
-}
-
-// decryptSettingValue returns the plaintext value plus whether the stored row is
-// still legacy plaintext and should be rewritten. Encrypted-but-unreadable rows
-// fail the read instead of being projected empty.
-func (r *settingRepository) decryptSettingValue(key, stored string) (string, bool, error) {
-	return service.DecryptSettingValue(r.vault, key, stored)
-}
-
-// encryptSettingValue writes the at-rest form for a sensitive setting.
-func (r *settingRepository) encryptSettingValue(key, plaintext string) (string, error) {
-	return service.EncryptSettingValue(r.vault, key, plaintext)
-}
-
-// scheduleSettingRewrite re-encrypts one legacy plaintext row off the request
-// path. The compare-and-swap prevents clobbering a concurrent admin update.
-func (r *settingRepository) scheduleSettingRewrite(key, plaintext string) {
-	if r == nil || r.client == nil || !service.IsSensitiveSettingKey(key) || plaintext == "" || !service.SecretVaultAvailable(r.vault) {
-		return
-	}
-	encrypted, err := r.encryptSettingValue(key, plaintext)
-	if err != nil || encrypted == plaintext {
-		return
-	}
-	r.rewriteMu.Lock()
-	if r.rewriteInFly == nil {
-		r.rewriteInFly = make(map[string]struct{})
-	}
-	if _, exists := r.rewriteInFly[key]; exists {
-		r.rewriteMu.Unlock()
-		return
-	}
-	r.rewriteInFly[key] = struct{}{}
-	r.rewriteMu.Unlock()
-	go func() {
-		defer func() {
-			r.rewriteMu.Lock()
-			delete(r.rewriteInFly, key)
-			r.rewriteMu.Unlock()
-		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		_, err := r.client.Setting.Update().
-			Where(setting.KeyEQ(key), setting.ValueEQ(plaintext)).
-			SetValue(encrypted).
-			SetUpdatedAt(time.Now()).
-			Save(ctx)
-		if err != nil {
-			logger.LegacyPrintf("repository.setting",
-				"[Settings] lazy secrets encryption rewrite failed: key=%s err=%v", key, err)
-		} else {
-			r.invalidateKeyCache(key)
-			r.invalidateAllCache()
-		}
-	}()
 }
 
 func (r *settingRepository) peekKeyCache(key string) (settingCacheEntry, bool) {
@@ -179,17 +116,10 @@ func (r *settingRepository) loadSetting(ctx context.Context, key string) (*servi
 		}
 		return nil, false, err
 	}
-	value, needsRewrite, err := r.decryptSettingValue(m.Key, m.Value)
-	if err != nil {
-		return nil, false, err
-	}
-	if needsRewrite {
-		r.scheduleSettingRewrite(m.Key, value)
-	}
 	return &service.Setting{
 		ID:        m.ID,
 		Key:       m.Key,
-		Value:     value,
+		Value:     m.Value,
 		UpdatedAt: m.UpdatedAt,
 	}, true, nil
 }
@@ -271,15 +201,11 @@ func (r *settingRepository) GetValue(ctx context.Context, key string) (string, e
 }
 
 func (r *settingRepository) Set(ctx context.Context, key, value string) error {
-	stored, err := r.encryptSettingValue(key, value)
-	if err != nil {
-		return err
-	}
 	now := time.Now()
-	err = r.client.Setting.
+	err := r.client.Setting.
 		Create().
 		SetKey(key).
-		SetValue(stored).
+		SetValue(value).
 		SetUpdatedAt(now).
 		OnConflictColumns(setting.FieldKey).
 		UpdateNewValues().
@@ -295,32 +221,6 @@ func (r *settingRepository) Set(ctx context.Context, key, value string) error {
 // replicas cannot replace changes made after the caller's uncached read.
 // For an absent key the unique constraint makes initialization atomic too.
 func (r *settingRepository) CompareAndSwapValue(ctx context.Context, key string, expected *string, value string) (bool, error) {
-	if service.IsSensitiveSettingKey(key) {
-		// Ciphertext is randomized per write, so an atomic equality guard has to
-		// compare the decrypted plaintext. The window is tiny and these keys are
-		// only written by explicit admin actions.
-		if expected == nil {
-			current, err := r.GetValueUncached(ctx, key)
-			if err == nil && current != "" {
-				return false, nil
-			}
-			if err != nil && !errors.Is(err, service.ErrSettingNotFound) {
-				return false, err
-			}
-			return true, r.Set(ctx, key, value)
-		}
-		current, err := r.GetValueUncached(ctx, key)
-		if err != nil {
-			if errors.Is(err, service.ErrSettingNotFound) {
-				return false, nil
-			}
-			return false, err
-		}
-		if current != *expected {
-			return false, nil
-		}
-		return true, r.Set(ctx, key, value)
-	}
 	now := time.Now()
 	if expected == nil {
 		_, err := r.client.Setting.Create().SetKey(key).SetValue(value).SetUpdatedAt(now).
@@ -400,17 +300,10 @@ func (r *settingRepository) GetMultiple(ctx context.Context, keys []string) (map
 		now := time.Now().Add(settingCacheTTL).UnixNano()
 		found := make(map[string]struct{}, len(settings))
 		for _, m := range settings {
-			plaintext, needsRewrite, decErr := r.decryptSettingValue(m.Key, m.Value)
-			if decErr != nil {
-				return nil, decErr
-			}
-			if needsRewrite {
-				r.scheduleSettingRewrite(m.Key, plaintext)
-			}
-			values[m.Key] = plaintext
+			values[m.Key] = m.Value
 			found[m.Key] = struct{}{}
 			r.storeKeyCacheIfVersion(m.Key, settingCacheEntry{
-				setting:   &service.Setting{ID: m.ID, Key: m.Key, Value: plaintext, UpdatedAt: m.UpdatedAt},
+				setting:   &service.Setting{ID: m.ID, Key: m.Key, Value: m.Value, UpdatedAt: m.UpdatedAt},
 				found:     true,
 				expiresAt: now,
 			}, flightVersion)
@@ -459,11 +352,7 @@ func (r *settingRepository) SetMultiple(ctx context.Context, settings map[string
 	now := time.Now()
 	builders := make([]*ent.SettingCreate, 0, len(settings))
 	for key, value := range settings {
-		stored, err := r.encryptSettingValue(key, value)
-		if err != nil {
-			return err
-		}
-		builders = append(builders, r.client.Setting.Create().SetKey(key).SetValue(stored).SetUpdatedAt(now))
+		builders = append(builders, r.client.Setting.Create().SetKey(key).SetValue(value).SetUpdatedAt(now))
 	}
 	err := r.client.Setting.
 		CreateBulk(builders...).
@@ -512,14 +401,7 @@ func (r *settingRepository) GetAll(ctx context.Context) (map[string]string, erro
 		}
 		values := make(map[string]string, len(settings))
 		for _, s := range settings {
-			plaintext, needsRewrite, decErr := r.decryptSettingValue(s.Key, s.Value)
-			if decErr != nil {
-				return nil, decErr
-			}
-			if needsRewrite {
-				r.scheduleSettingRewrite(s.Key, plaintext)
-			}
-			values[s.Key] = plaintext
+			values[s.Key] = s.Value
 		}
 		r.storeAllCacheIfVersion(&settingAllCacheEntry{
 			values:    values,

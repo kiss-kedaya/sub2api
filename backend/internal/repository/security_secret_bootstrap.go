@@ -136,7 +136,6 @@ func ensureTOTPInstallationKey(ctx context.Context, client *ent.Client, cfg *con
 // and other short-lived capabilities do not use this persistent-key inventory.
 func inspectLegacyInstallationSecrets(ctx context.Context, client *ent.Client, keyHex string, verify bool) error {
 	var encryptor service.SecretEncryptor
-	var secretVault service.SecretVault
 	var key []byte
 	if verify {
 		var err error
@@ -144,7 +143,6 @@ func inspectLegacyInstallationSecrets(ctx context.Context, client *ent.Client, k
 		if err != nil {
 			return fmt.Errorf("invalid installation encryption key")
 		}
-		secretVault = service.NewSecretVault(&config.Config{Totp: config.TotpConfig{EncryptionKey: keyHex}})
 		key, _ = hex.DecodeString(keyHex)
 		defer clear(key)
 	}
@@ -181,14 +179,6 @@ func inspectLegacyInstallationSecrets(ctx context.Context, client *ent.Client, k
 					valid = err == nil
 				}
 			}
-		case "v2":
-			// Credential material encrypted by the at-rest vault ("enc:v1:" prefix).
-			if secretVault == nil || !secretVault.Available() {
-				valid = false
-				break
-			}
-			_, err := secretVault.DecryptString(value)
-			valid = err == nil
 		case "wallet":
 			// Reuse the wallet's domain-separated cipher and format checks.
 			// This call occurs after settings rows are closed, so a one-connection
@@ -284,12 +274,6 @@ func inspectLegacyInstallationSecrets(ctx context.Context, client *ent.Client, k
 		if raw == "" {
 			continue
 		}
-		if strings.HasPrefix(raw, "enc:v1:") {
-			if err := check(name, "v2", raw); err != nil {
-				return err
-			}
-			continue
-		}
 		var stored struct {
 			SecretAccessKey string `json:"secret_access_key"`
 			Endpoints       []struct {
@@ -308,44 +292,6 @@ func inspectLegacyInstallationSecrets(ctx context.Context, client *ent.Client, k
 		} else if err := check(name, "aes_optional_plaintext", stored.SecretAccessKey); err != nil {
 			return err
 		}
-	}
-	if err := stream("account credentials", `SELECT credentials FROM accounts WHERE credentials IS NOT NULL`, func(raw string) error {
-		var credentials map[string]any
-		if json.Unmarshal([]byte(raw), &credentials) != nil {
-			return fmt.Errorf("inspect installation secrets in account credentials failed")
-		}
-		for key, value := range credentials {
-			if !service.IsSensitiveCredential(key) {
-				continue
-			}
-			encoded, ok := value.(string)
-			if !ok || !strings.HasPrefix(encoded, "enc:v1:") {
-				continue
-			}
-			if err := check("account credentials", "v2", encoded); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	if err := stream("proxy passwords", `SELECT password FROM proxies WHERE password LIKE 'enc:v1:%' OR password LIKE 'enc:managed:v1:%'`, func(stored string) error {
-		if strings.HasPrefix(stored, "enc:managed:v1:") {
-			return check("proxy passwords", "aes_optional_plaintext", strings.TrimPrefix(stored, "enc:managed:v1:"))
-		}
-		return check("proxy passwords", "v2", stored)
-	}); err != nil {
-		return err
-	}
-	sensitiveKeys := make([]string, 0, len(service.SensitiveSettingKeys))
-	for _, key := range service.SensitiveSettingKeys {
-		sensitiveKeys = append(sensitiveKeys, "'"+strings.ReplaceAll(key, "'", "''")+"'")
-	}
-	if err := stream("settings credentials", `SELECT value FROM settings WHERE key IN (`+strings.Join(sensitiveKeys, ",")+`) AND value LIKE 'enc:v1:%'`, func(stored string) error {
-		return check("settings credentials", "v2", stored)
-	}); err != nil {
-		return err
 	}
 	return check("wallet seeds", "wallet", values["crypto.signer.vault"])
 }

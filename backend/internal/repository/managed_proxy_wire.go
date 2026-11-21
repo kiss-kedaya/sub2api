@@ -7,15 +7,10 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
-func ProvideManagedProxyRepository(client *dbent.Client, db *sql.DB, vault service.SecretVault) service.ProxyRepository {
-	inner := newProxyRepositoryWithSQL(client, db)
-	inner.setCredentialVault(vault)
-	return service.WrapEncryptedProxyRepository(inner, vault, db)
+func ProvideManagedProxyRepository(client *dbent.Client, db *sql.DB, encryptor service.SecretEncryptor) service.ProxyRepository {
+	return service.WrapEncryptedManagedProxyRepository(NewProxyRepository(client, db), encryptor)
 }
 
-func ProvideManagedAccountRepository(client *dbent.Client, db *sql.DB, cache service.SchedulerCache, vault service.SecretVault) service.AccountRepository {
-	repo := newAccountRepositoryWithSQL(client, db, cache)
-	useAccountCredentialVault(repo, vault)
-	repo.proxyVault = vault
-	return repo
+func ProvideManagedAccountRepository(client *dbent.Client, db *sql.DB, cache service.SchedulerCache, encryptor service.SecretEncryptor) service.AccountRepository {
+	return EnableManagedAccountProxyEncryption(NewAccountRepository(client, db, cache), encryptor)
 }

@@ -21,9 +21,6 @@ import (
 type proxyRepository struct {
 	client *dbent.Client
 	sql    sqlExecutor
-	// vault decrypts stored proxy passwords for identity comparisons on update.
-	// Nil keeps legacy plaintext fixtures working.
-	vault service.SecretVault
 }
 
 const proxyProbeOutboxAccountChunkSize = 500
@@ -34,12 +31,6 @@ func NewProxyRepository(client *dbent.Client, sqlDB *sql.DB) service.ProxyReposi
 
 func newProxyRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *proxyRepository {
 	return &proxyRepository{client: client, sql: sqlq}
-}
-
-func (r *proxyRepository) setCredentialVault(vault service.SecretVault) {
-	if r != nil {
-		r.vault = vault
-	}
 }
 
 func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) error {
@@ -119,7 +110,7 @@ func (r *proxyRepository) Update(ctx context.Context, proxyIn *service.Proxy) er
 		}
 	}
 
-	updated, err := updateProxyAndInvalidateProbeSnapshots(ctx, client, proxyIn, r.vault)
+	updated, err := updateProxyAndInvalidateProbeSnapshots(ctx, client, proxyIn)
 	if err != nil {
 		return err
 	}
@@ -152,8 +143,8 @@ func proxyProbeIdentityFromService(proxyIn *service.Proxy) proxyProbeIdentity {
 	}
 }
 
-func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.Client, proxyIn *service.Proxy, vault service.SecretVault) (*dbent.Proxy, error) {
-	currentIdentity, err := lockProxyProbeIdentity(ctx, client, proxyIn.ID, vault)
+func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.Client, proxyIn *service.Proxy) (*dbent.Proxy, error) {
+	currentIdentity, err := lockProxyProbeIdentity(ctx, client, proxyIn.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -193,15 +184,7 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 	if err != nil {
 		return nil, err
 	}
-	targetIdentity := proxyProbeIdentityFromService(proxyIn)
-	if vault != nil && targetIdentity.password != "" {
-		// The wrapper passes the freshly encrypted password here; compare the
-		// plaintext identity so an unrelated edit does not wipe probe snapshots.
-		if plaintext, _, decErr := service.DecryptProxyPassword(vault, targetIdentity.password); decErr == nil {
-			targetIdentity.password = plaintext
-		}
-	}
-	if currentIdentity == targetIdentity {
+	if currentIdentity == proxyProbeIdentityFromService(proxyIn) {
 		return updated, nil
 	}
 	accountIDs, err := invalidateProxyProbeSnapshots(ctx, client, proxyIn.ID)
@@ -214,7 +197,7 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 	return updated, nil
 }
 
-func lockProxyProbeIdentity(ctx context.Context, client *dbent.Client, proxyID int64, vault service.SecretVault) (proxyProbeIdentity, error) {
+func lockProxyProbeIdentity(ctx context.Context, client *dbent.Client, proxyID int64) (proxyProbeIdentity, error) {
 	rows, err := client.QueryContext(ctx, `
 		SELECT protocol, host, port, COALESCE(username, ''), COALESCE(password, ''), status
 		FROM proxies
@@ -234,13 +217,6 @@ func lockProxyProbeIdentity(ctx context.Context, client *dbent.Client, proxyID i
 	var identity proxyProbeIdentity
 	if err := rows.Scan(&identity.protocol, &identity.host, &identity.port, &identity.username, &identity.password, &identity.status); err != nil {
 		return proxyProbeIdentity{}, err
-	}
-	if identity.password != "" {
-		plaintext, _, decErr := service.DecryptProxyPassword(vault, identity.password)
-		if decErr != nil {
-			return proxyProbeIdentity{}, decErr
-		}
-		identity.password = plaintext
 	}
 	return identity, rows.Err()
 }
