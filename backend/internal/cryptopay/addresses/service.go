@@ -23,7 +23,6 @@ type PoolStore interface {
 	AssignFromPool(ctx context.Context, userID int64, family string) (*Assignment, error)
 	ListByUser(ctx context.Context, userID int64) ([]Assignment, error)
 	SetStatus(ctx context.Context, id int64, status string) error
-	Rotate(ctx context.Context, assignmentID int64) (*Assignment, *Assignment, error)
 	ActiveAddresses(ctx context.Context, family string) ([]string, error)
 	LookupByFamily(ctx context.Context, family, address string) (*Assignment, error)
 	AdminList(ctx context.Context, userID int64, family string, limit, offset int, sortBy, sortDir string) ([]AdminRow, int64, error)
@@ -103,44 +102,36 @@ func (s *Service) GetOrAssign(ctx context.Context, userID int64) (map[string]str
 	}
 	out := map[string]string{}
 	for _, family := range s.familiesSnapshot() {
-		existing, err := s.repo.ExistingAssignment(ctx, userID, family)
-		if err != nil {
-			return nil, err
-		}
-		if existing != nil {
-			if validate != nil {
-				if err := validate(ctx, *existing); err != nil {
-					return nil, err
-				}
-			}
-			// A disabled address must not be handed out again: the scanner
-			// stops watching it, so a deposit would vanish without a record.
-			if existing.Status != "active" {
-				return nil, fmt.Errorf("your %s deposit address is disabled; contact the operator", family)
-			}
-			out[family] = existing.Address
-			continue
-		}
-		assignment, err := s.repo.AssignFromPool(ctx, userID, family)
+		assignment, err := s.repo.ExistingAssignment(ctx, userID, family)
 		if err != nil {
 			return nil, err
 		}
 		if assignment == nil {
-			if err := s.topUp(ctx); err != nil {
-				return nil, fmt.Errorf("top up pool: %w", err)
-			}
 			assignment, err = s.repo.AssignFromPool(ctx, userID, family)
 			if err != nil {
 				return nil, err
 			}
 			if assignment == nil {
-				return nil, fmt.Errorf("address pool exhausted for %s", family)
+				if err := s.topUp(ctx); err != nil {
+					return nil, fmt.Errorf("top up pool: %w", err)
+				}
+				assignment, err = s.repo.AssignFromPool(ctx, userID, family)
+				if err != nil {
+					return nil, err
+				}
+				if assignment == nil {
+					return nil, fmt.Errorf("address pool exhausted for %s", family)
+				}
 			}
 		}
 		if validate != nil {
 			if err := validate(ctx, *assignment); err != nil {
 				return nil, err
 			}
+		}
+		// The allocator may also return a disabled assignment found after the first lookup.
+		if assignment.Status != "active" {
+			return nil, fmt.Errorf("your %s deposit address is disabled; contact the operator", family)
 		}
 		out[family] = assignment.Address
 	}
@@ -255,15 +246,6 @@ func (s *Service) SetStatus(ctx context.Context, id int64, status string) error 
 		return err
 	}
 	return s.repo.SetStatus(ctx, id, status)
-}
-
-// Rotate retires one active assignment and binds a fresh pool address for the
-// same user and family. The retired row stays disabled for the scanners.
-func (s *Service) Rotate(ctx context.Context, assignmentID int64) (*Assignment, *Assignment, error) {
-	if err := mode.CheckWritable(); err != nil {
-		return nil, nil, err
-	}
-	return s.repo.Rotate(ctx, assignmentID)
 }
 
 // ActiveAddresses returns every active address for a chain family (the
