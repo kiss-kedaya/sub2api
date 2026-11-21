@@ -157,6 +157,31 @@ func ensureTOTPInstallationKey(ctx context.Context, client *ent.Client, cfg *con
 	return nil
 }
 
+// walletCiphertextUsableWithInstallationKey reports whether the installation
+// key can still operate the wallet's at-rest ciphertext. A v2 vault is sealed
+// with the installation key itself and must decrypt. A v3 vault is sealed with
+// a browser-held data key, so the installation key only has to unseal the
+// server-held share A: a locked v3 vault is the supported steady state after
+// the shard migration, not a wrong-key symptom.
+func walletCiphertextUsableWithInstallationKey(ctx context.Context, db *sql.DB, keyHex string) bool {
+	if db == nil {
+		return false
+	}
+	manager := wallet.New(db, keyHex)
+	defer manager.Close()
+	status, err := manager.Status(ctx)
+	if err != nil || status == nil || !status.Configured {
+		return false
+	}
+	if status.Ready {
+		return true
+	}
+	if status.Locked && status.Shards != nil && status.Shards.Configured {
+		return manager.VerifyInstallationKey(ctx) == nil
+	}
+	return false
+}
+
 // inspectLegacyInstallationSecrets runs only before first registration. Every
 // durable consumer of the shared AES key belongs here, including disabled and
 // soft-deleted records. Queries stream values and never include user identities
@@ -213,10 +238,7 @@ func inspectLegacyInstallationSecrets(ctx context.Context, client *ent.Client, k
 			// pool cannot deadlock on the wallet's read.
 			db, err := ProvideSQLDB(client)
 			if err == nil {
-				manager := wallet.New(db, keyHex)
-				status, err := manager.Status(ctx)
-				manager.Close()
-				valid = err == nil && status != nil && status.Configured && status.Ready
+				valid = walletCiphertextUsableWithInstallationKey(ctx, db, keyHex)
 			}
 		}
 		if !valid {

@@ -17,8 +17,16 @@ type cryptoMnemonicExporter interface {
 	ExportMnemonics(ctx context.Context) (*sweeper.MnemonicExport, error)
 }
 
-// CryptoMnemonicExportRequest is accepted once per explicit user action.
+// CryptoMnemonicExportRequest is accepted once per explicit user action. A
+// data-key vault additionally requires one operator-held recovery share.
 type CryptoMnemonicExportRequest struct {
+	Share string `json:"share"`
+}
+
+// cryptoMnemonicShareExporter is implemented by the wallet facade for vaults
+// sealed with a data key.
+type cryptoMnemonicShareExporter interface {
+	ExportMnemonicsWithShare(context.Context, string) (*sweeper.MnemonicExport, error)
 }
 
 // CryptoMnemonicExportResponse contains exactly the two independent seed fields.
@@ -39,7 +47,22 @@ func (h *CryptoHandler) AdminExportMnemonics(c *gin.Context) {
 		response.Error(c, http.StatusServiceUnavailable, "Mnemonic export unavailable")
 		return
 	}
-	result, err := h.mnemonicExporter.ExportMnemonics(cryptoAuditContext(c))
+	defer func() { req.Share = "" }()
+	var result *sweeper.MnemonicExport
+	var err error
+	if strings.TrimSpace(req.Share) != "" {
+		shareExporter, ok := h.mnemonicExporter.(cryptoMnemonicShareExporter)
+		if !ok {
+			response.Error(c, http.StatusConflict, "recovery shard is required to export mnemonics")
+			return
+		}
+		result, err = shareExporter.ExportMnemonicsWithShare(cryptoAuditContext(c), req.Share)
+	} else {
+		result, err = h.mnemonicExporter.ExportMnemonics(cryptoAuditContext(c))
+	}
+	if writeCryptoSignerError(c, err) {
+		return
+	}
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		message := "Mnemonic export unavailable"

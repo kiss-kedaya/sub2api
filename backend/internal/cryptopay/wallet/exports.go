@@ -88,6 +88,11 @@ func (m *Manager) importHotMnemonic(ctx context.Context, mnemonic string) error 
 	if err := validateDepositAddresses(ctx, tx, deposit); err != nil {
 		return err
 	}
+	if m.vaultVersion == 3 {
+		if err := m.persistHotAddresses(ctx, tx, hot); err != nil {
+			return err
+		}
+	}
 	// Preserve the authenticated security-registration marker read from the
 	// current vault, even when this instance has never warmed its seed cache.
 	sealed, err := m.sealVaultContents(vaultContents{Deposit: contents.Deposit, Hot: mnemonic, SecurityVersion: contents.SecurityVersion})

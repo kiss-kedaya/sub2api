@@ -240,7 +240,7 @@ func loadAddressSnapshots(ctx context.Context, tx *sql.Tx) (map[string]addressSn
 	return assignments, pool, nil
 }
 
-func (m *Manager) compareAddressSnapshot(state *securityState, assignments, pool map[string]addressSnapshot) error {
+func (m *Manager) compareAddressSnapshot(state *securityState, assignments, pool map[string]addressSnapshot, verifyDerivation bool) error {
 	for key, old := range state.Assignments {
 		if now, ok := assignments[key]; !ok || now != old {
 			return errors.New("deposit_address_changed")
@@ -261,16 +261,18 @@ func (m *Manager) compareAddressSnapshot(state *securityState, assignments, pool
 		if row.UserID <= 0 {
 			return errors.New("deposit_address_derivation_mismatch")
 		}
-		if _, ok := state.Assignments[key]; !ok {
+		if _, ok := state.Assignments[key]; !ok && verifyDerivation {
 			if err := m.validateSnapshotAddress(row); err != nil {
 				return errors.New("deposit_address_derivation_mismatch")
 			}
 		}
 	}
-	for key, row := range pool {
-		if _, ok := state.Pool[key]; !ok {
-			if err := m.validateSnapshotAddress(row); err != nil {
-				return errors.New("deposit_pool_derivation_mismatch")
+	if verifyDerivation {
+		for key, row := range pool {
+			if _, ok := state.Pool[key]; !ok {
+				if err := m.validateSnapshotAddress(row); err != nil {
+					return errors.New("deposit_pool_derivation_mismatch")
+				}
 			}
 		}
 	}
@@ -368,8 +370,14 @@ func (m *Manager) CheckSecurity(ctx context.Context) (SecurityStatus, error) {
 	if err != nil {
 		return SecurityStatus{}, ErrVaultUnavailable
 	}
+	seedless := false
 	if err = m.refreshContents(raw); err != nil {
-		return unavailableSecurityStatus("vault_unavailable"), err
+		if !errors.Is(err, ErrSignerShareRequired) {
+			return unavailableSecurityStatus("vault_unavailable"), err
+		}
+		// A locked v3 vault cannot derive addresses, but the durable snapshot
+		// check must keep running or every deposit assignment would fail.
+		seedless = true
 	}
 	state, found, err := m.loadSecurity(ctx, tx, "FOR UPDATE")
 	if err != nil {
@@ -403,7 +411,7 @@ func (m *Manager) CheckSecurity(ctx context.Context) (SecurityStatus, error) {
 		}
 		return SecurityStatus{}, err
 	}
-	if err = m.compareAddressSnapshot(state, assignments, pool); err != nil {
+	if err = m.compareAddressSnapshot(state, assignments, pool, !seedless); err != nil {
 		err = m.persistIncident(ctx, tx, state, err.Error(), "", "")
 		return m.securityStatus, err
 	}
@@ -420,7 +428,7 @@ func (m *Manager) CheckSecurity(ctx context.Context) (SecurityStatus, error) {
 			return SecurityStatus{}, err
 		}
 	}
-	if !m.securityRegistered {
+	if !m.securityRegistered && !seedless {
 		contents, err := m.openContents(raw)
 		if err != nil {
 			return SecurityStatus{}, err
@@ -489,6 +497,13 @@ func (m *Manager) ValidateAssignment(ctx context.Context, row addresses.Assignme
 		return nil
 	}
 	tx, err := m.currentVaultTx(ctx)
+	locked := errors.Is(err, ErrSignerShareRequired)
+	if locked {
+		// The vault is sealed with a data key that is not resident. Keep the
+		// durable snapshot check (which needs no seed) so deposits continue,
+		// but skip seed re-derivation until the next unlocked operation.
+		tx, err = m.db.BeginTx(ctx, nil)
+	}
 	if err != nil {
 		m.mu.Unlock()
 		return err
@@ -504,7 +519,7 @@ func (m *Manager) ValidateAssignment(ctx context.Context, row addresses.Assignme
 		if previous, ok := state.Assignments[snapshotKey(row.UserID, row.Family)]; !ok || previous != actual {
 			reason = "deposit_address_changed"
 		}
-		if m.validateSnapshotAddress(actual) != nil {
+		if !locked && m.validateSnapshotAddress(actual) != nil {
 			reason = "deposit_address_derivation_mismatch"
 		}
 	} else if err == nil {
@@ -624,7 +639,7 @@ func (m *Manager) RecoverSecurity(ctx context.Context) error {
 		return err
 	}
 	next := emptySecurityState()
-	if err = m.compareAddressSnapshot(next, assignments, pool); err != nil {
+	if err = m.compareAddressSnapshot(next, assignments, pool, true); err != nil {
 		return err
 	}
 	next.Assignments, next.Pool = assignments, pool

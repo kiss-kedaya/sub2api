@@ -16,6 +16,10 @@ type cryptoAddressPrivateKeyExporter interface {
 	ExportAddressPrivateKey(context.Context, int64) (*wallet.AddressPrivateKeyExport, error)
 }
 
+type cryptoAddressPrivateKeyShareExporter interface {
+	ExportAddressPrivateKeyWithShare(context.Context, int64, string) (*wallet.AddressPrivateKeyExport, error)
+}
+
 // AdminExportAddressPrivateKey runs inside the same operator JWT, transport,
 // payment verification and security-notification boundary as mnemonic export.
 // Only a database assignment ID is accepted; no caller-controlled derivation.
@@ -26,17 +30,33 @@ func (h *CryptoHandler) AdminExportAddressPrivateKey(c *gin.Context) {
 		response.BadRequest(c, "Invalid address ID")
 		return
 	}
-	var req struct{}
+	var req struct {
+		Share string `json:"share"`
+	}
 	if !decodeCryptoRequest(c, &req, 4<<10, "Invalid private key export request") {
 		return
 	}
+	defer func() { req.Share = "" }()
 	if h.privateKeyExporter == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Private key export unavailable")
 		return
 	}
-	result, err := h.privateKeyExporter.ExportAddressPrivateKey(cryptoAuditContext(c), id)
+	var result *wallet.AddressPrivateKeyExport
+	if strings.TrimSpace(req.Share) != "" {
+		shareExporter, ok := h.privateKeyExporter.(cryptoAddressPrivateKeyShareExporter)
+		if !ok {
+			response.Error(c, http.StatusConflict, "recovery shard is required to export a private key")
+			return
+		}
+		result, err = shareExporter.ExportAddressPrivateKeyWithShare(cryptoAuditContext(c), id, req.Share)
+	} else {
+		result, err = h.privateKeyExporter.ExportAddressPrivateKey(cryptoAuditContext(c), id)
+	}
 	if result != nil {
 		defer func() { result.PrivateKey = "" }()
+	}
+	if writeCryptoSignerError(c, err) {
+		return
 	}
 	if err != nil {
 		if errors.Is(err, wallet.ErrExportAddressNotFound) {

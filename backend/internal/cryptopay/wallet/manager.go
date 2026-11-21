@@ -5,11 +5,13 @@ import (
 	"crypto/cipher"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
 	"github.com/ethereum/go-ethereum/common"
@@ -34,6 +36,22 @@ type Manager struct {
 	signingGrants      map[[32]byte]bool
 	cipher             cipher.AEAD
 	configured         bool
+	// masterKey is the installation key used to seal server-held shard A and
+	// the optional automatic-sweep share. It is never a data key and is
+	// zeroed on Close.
+	masterKey []byte
+	// dataKey is the ephemeral 32-byte vault key reconstructed from shard A
+	// plus an operator-supplied share. Nil means the signer is locked: a v3
+	// vault cannot be opened and sweep signing/export/import must be denied.
+	dataKey         []byte
+	dataKeyDeadline time.Time
+	// vaultVersion is 2 (installation-key ciphertext) or 3 (data-key
+	// ciphertext). Zero means no vault has been read yet.
+	vaultVersion int
+	// signerOpMu serializes operations that hold a reconstructed data key
+	// (setup, unlock, auto unlock, re-split, import/export with a share), so
+	// two operators cannot combine different shares at the same time.
+	signerOpMu sync.Mutex
 }
 
 // New uses only the supplied persistent installation key. A missing or invalid
@@ -44,6 +62,11 @@ func New(db *sql.DB, masterKey ...string) *Manager {
 	if len(masterKey) == 1 {
 		m.cipher = newSeedCipher(masterKey[0])
 		m.securityKey = newSecurityKey(masterKey[0])
+		if decoded, err := hex.DecodeString(strings.TrimSpace(masterKey[0])); err == nil && len(decoded) == 32 {
+			m.masterKey = decoded
+		} else {
+			clear(decoded)
+		}
 	}
 	return m
 }
@@ -82,9 +105,12 @@ func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.clearSeeds()
+	m.clearDataKey()
 	m.revokeSigningGrants()
 	clear(m.signingAuthority)
 	m.signingAuthority = nil
+	clear(m.masterKey)
+	m.masterKey = nil
 }
 
 func (m *Manager) clearSeeds() {
@@ -96,6 +122,18 @@ func (m *Manager) clearSeeds() {
 	}
 	m.deposit, m.hot = nil, nil
 	m.vaultFingerprint = [32]byte{}
+}
+
+// clearDataKey 清除内存中的数据密钥。调用方必须持有 m.mu 或独占管理器的
+// 操作窗口；密钥字节会被显式清零，不会留在可打印缓冲区里。
+func (m *Manager) clearDataKey() {
+	clear(m.dataKey)
+	m.dataKey = nil
+	m.dataKeyDeadline = time.Time{}
+}
+
+func (m *Manager) dataKeyUsable() bool {
+	return len(m.dataKey) == 32 && time.Now().Before(m.dataKeyDeadline)
 }
 
 func (m *Manager) ready() bool { return m.deposit != nil && m.hot != nil }
@@ -120,13 +158,28 @@ func (m *Manager) Status(ctx context.Context) (*Status, error) {
 	m.configured = raw != ""
 	st.Configured = m.configured
 	if raw != "" {
-		st.Ready = m.refreshContents(raw) == nil
+		m.vaultVersion = vaultVersion(raw)
+		if m.vaultVersion == 3 && !m.dataKeyUsable() {
+			// A locked v3 vault is a supported steady state: reporting Ready
+			// false lets the admin UI prompt for a recovery share instead of
+			// surfacing an opaque vault error.
+			m.clearSeeds()
+			st.Locked = true
+			if shardStatus, shardErr := m.shardStatusLocked(ctx); shardErr == nil {
+				st.Shards = shardStatus
+			}
+		} else if err := m.refreshContents(raw); err == nil {
+			st.Ready = true
+		} else if errors.Is(err, ErrSignerShareRequired) {
+			st.Locked = true
+		}
 	} else {
 		m.clearSeeds()
+		m.vaultVersion = 0
 	}
 	if m.securityEnabled {
 		status := m.securityStatus
-		if raw != "" && !st.Ready {
+		if raw != "" && !st.Ready && !st.Locked {
 			status = unavailableSecurityStatus("vault_unavailable")
 		}
 		if m.db != nil && st.Ready {
@@ -191,6 +244,13 @@ func (m *Manager) initialize(ctx context.Context, depositMnemonic, hotMnemonic s
 	defer clear(hot.seed)
 	if err := validateDepositAddresses(ctx, tx, deposit); err != nil {
 		return err
+	}
+	if m.vaultVersion == 3 {
+		// Public gas-wallet addresses let admin status pages keep working while
+		// the vault is locked; a v2 vault does not need them yet.
+		if err := m.persistHotAddresses(ctx, tx, hot); err != nil {
+			return err
+		}
 	}
 	sealed, err := m.sealContents(contents.Deposit, contents.Hot)
 	if err != nil {
@@ -268,6 +328,11 @@ func (m *Manager) HotAddresses(ctx context.Context) (*HotAddress, error) {
 	}
 	storeTx, err := m.currentVaultTx(ctx)
 	if err != nil {
+		if errors.Is(err, ErrSignerShareRequired) {
+			if cached, ok := m.cachedHotAddresses(ctx); ok {
+				return cached, nil
+			}
+		}
 		return nil, m.denied(ctx, "hot_address", err)
 	}
 	defer func() { _ = storeTx.Rollback() }()
@@ -322,7 +387,18 @@ func (m *Manager) currentVaultTx(ctx context.Context) (*sql.Tx, error) {
 func (m *Manager) refreshContents(raw string) error {
 	if raw == "" {
 		m.clearSeeds()
+		m.vaultVersion = 0
 		return ErrWalletNotConfigured
+	}
+	version := vaultVersion(raw)
+	if version == 0 {
+		m.clearSeeds()
+		return ErrVaultUnavailable
+	}
+	m.vaultVersion = version
+	if version == 3 && !m.dataKeyUsable() {
+		m.clearSeeds()
+		return ErrSignerShareRequired
 	}
 	if m.ready() && sha256.Sum256([]byte(raw)) == m.vaultFingerprint {
 		return nil
