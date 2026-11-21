@@ -1,5 +1,6 @@
 import { createI18n } from 'vue-i18n'
 import { getAppRuntimeContext } from '@runtime/context'
+import { registerStepUpTranslator } from '@/utils/stepUpErrors'
 
 type LocaleCode = 'en' | 'zh'
 
@@ -52,6 +53,19 @@ export const i18n = new Proxy(standaloneI18n, {
     const instance = getAppRuntimeContext()?.i18n ?? standaloneI18n
     return Reflect.get(instance, key, instance)
   }
+})
+
+// Step-up 2FA error copy lives in the shared i18n bundle (stepUp.*) instead of
+// being hard-coded per page; the API client and apiError helpers ask this
+// translator to localize STEP_UP_* codes before they reach a toast.
+registerStepUpTranslator((key) => {
+  const composer = i18n.global as unknown as {
+    te?: (key: string) => boolean
+    t: (key: string) => string
+  }
+  if (composer.te && !composer.te(key)) return undefined
+  const text = composer.t(key)
+  return typeof text === 'string' && text !== key ? text : undefined
 })
 
 const loadedLocales = new WeakMap<object, Set<LocaleCode>>()

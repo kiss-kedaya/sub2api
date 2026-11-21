@@ -7037,6 +7037,7 @@ import {
   useStepUp,
   isStepUpCancelled,
   isStepUpBlocked,
+  isStepUpUnavailable,
   stepUpBlockReason,
 } from "@/composables/useStepUp";
 import AdminAccessKeysSettings from "@/components/admin/settings/AdminAccessKeysSettings.vue";
@@ -10616,18 +10617,49 @@ async function disableProvidersByType(type: string) {
   const matching = providers.value.filter(
     (p) => p.provider_key === type && p.enabled,
   );
-  for (const p of matching) {
-    try {
-      await adminAPI.payment.updateProvider(p.id, { enabled: false });
-      p.enabled = false;
-    } catch (err: unknown) {
-      slog("disable provider failed", p.id, err);
-    }
+  if (matching.length === 0) return;
+  try {
+    // 批量停用共享同一次 step-up 授权：弹一次码，验证通过后整批重试。
+    await settingsStepUp.run(async () => {
+      for (const p of matching) {
+        await adminAPI.payment.updateProvider(p.id, { enabled: false });
+        p.enabled = false;
+      }
+    });
+  } catch (err: unknown) {
+    reportProviderActionError(err, t("common.error"));
   }
 }
 
-function slog(...args: unknown[]) {
-  console.warn("[payment]", ...args);
+/**
+ * 支付服务商写操作的统一失败处理。
+ *
+ * 服务商实例包含支付渠道密钥与生效范围，后端对创建/修改/删除/启停统一要求
+ * step-up 二次验证（机器凭据直接 403）。这里集中处理取消/受限/不可用文案，
+ * 避免每个按钮各写一套，也避免把后端英文原文直接 toast 给管理员。
+ */
+function reportProviderActionError(
+  error: unknown,
+  fallback: string = t("common.error"),
+): void {
+  if (isStepUpCancelled(error)) {
+    appStore.showInfo(t("stepUp.cancelled"));
+    return;
+  }
+  if (isStepUpBlocked(error) || isStepUpUnavailable(error)) {
+    const reason = stepUpBlockReason(error);
+    appStore.showError(
+      reason === "STEP_UP_ADMIN_API_KEY_FORBIDDEN"
+        ? t("stepUp.adminApiKeyForbidden")
+        : reason === "STEP_UP_UNAVAILABLE"
+          ? t("stepUp.unavailable")
+          : t("stepUp.notEnabled"),
+    );
+    return;
+  }
+  appStore.showError(
+    extractI18nErrorMessage(error, t, "payment.errors", fallback),
+  );
 }
 
 const providersLoading = ref(false);
@@ -10828,9 +10860,11 @@ async function handleSaveProvider(payload: Partial<ProviderInstance>) {
     }
 
     if (editingProvider.value) {
-      await adminAPI.payment.updateProvider(editingProvider.value.id, payload);
+      await settingsStepUp.run(() =>
+        adminAPI.payment.updateProvider(editingProvider.value!.id, payload),
+      );
     } else {
-      await adminAPI.payment.createProvider(payload);
+      await settingsStepUp.run(() => adminAPI.payment.createProvider(payload));
     }
     showProviderDialog.value = false;
     // Reload full list (API returns decrypted/formatted data with correct sort order)
@@ -10838,7 +10872,7 @@ async function handleSaveProvider(payload: Partial<ProviderInstance>) {
     // Auto-save settings so provider changes take effect immediately
     await saveSettings();
   } catch (err: unknown) {
-    appStore.showError(extractI18nErrorMessage(err, t, "payment.errors", t("common.error")));
+    reportProviderActionError(err);
   } finally {
     providerSaving.value = false;
   }
@@ -10873,10 +10907,12 @@ async function handleToggleField(
     payload.allow_user_refund = false;
   }
   try {
-    await adminAPI.payment.updateProvider(provider.id, payload);
+    await settingsStepUp.run(() =>
+      adminAPI.payment.updateProvider(provider.id, payload),
+    );
     await loadProviders();
   } catch (err: unknown) {
-    appStore.showError(extractI18nErrorMessage(err, t, "payment.errors", t("common.error")));
+    reportProviderActionError(err);
   }
 }
 
@@ -10899,12 +10935,14 @@ async function handleToggleType(provider: ProviderInstance, type: string) {
     return;
   }
   try {
-    await adminAPI.payment.updateProvider(provider.id, {
-      supported_types: updated,
-    } as any);
+    await settingsStepUp.run(() =>
+      adminAPI.payment.updateProvider(provider.id, {
+        supported_types: updated,
+      } as any),
+    );
     await loadProviders();
   } catch (err: unknown) {
-    appStore.showError(extractI18nErrorMessage(err, t, "payment.errors", t("common.error")));
+    reportProviderActionError(err);
   }
 }
 
@@ -10917,16 +10955,20 @@ async function handleReorderProviders(
   updates: { id: number; sort_order: number }[],
 ) {
   try {
-    await Promise.all(
-      updates.map((u) =>
-        adminAPI.payment.updateProvider(u.id, {
-          sort_order: u.sort_order,
-        } as Partial<ProviderInstance>),
+    // 同一批排序共享一次 step-up 授权：并发 403 合并成一个 TOTP 弹窗，
+    // 验证通过后整批重试一次。
+    await settingsStepUp.run(() =>
+      Promise.all(
+        updates.map((u) =>
+          adminAPI.payment.updateProvider(u.id, {
+            sort_order: u.sort_order,
+          } as Partial<ProviderInstance>),
+        ),
       ),
     );
     await loadProviders();
   } catch (err: unknown) {
-    appStore.showError(extractI18nErrorMessage(err, t, "payment.errors", t("common.error")));
+    reportProviderActionError(err);
     loadProviders();
   }
 }
@@ -10934,12 +10976,14 @@ async function handleReorderProviders(
 async function handleDeleteProvider() {
   if (!deletingProviderId.value) return;
   try {
-    await adminAPI.payment.deleteProvider(deletingProviderId.value);
+    await settingsStepUp.run(() =>
+      adminAPI.payment.deleteProvider(deletingProviderId.value!),
+    );
     appStore.showSuccess(t("common.deleted"));
     showDeleteProviderDialog.value = false;
     loadProviders();
   } catch (err: unknown) {
-    appStore.showError(extractI18nErrorMessage(err, t, "payment.errors", t("common.error")));
+    reportProviderActionError(err);
   }
 }
 

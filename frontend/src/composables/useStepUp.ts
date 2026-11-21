@@ -11,56 +11,31 @@
  *     await stepUp.run(() => adminAPI.accounts.exportData(...))
  *   }
  *   // template: <TotpStepUpDialog :controller="stepUp" />
+ *
+ * Coverage model: the shared Axios client also retries `STEP_UP_REQUIRED`
+ * responses through the app-wide TOTP gate (see `useStepUpGate`), so every
+ * admin API call is protected even when a page forgot to call `run()`. This
+ * composable stays the right tool for page-local flows that also need custom
+ * cancellation/blocked UI (and for tests that mock the API layer directly).
  */
 import { ref } from 'vue'
+import {
+  StepUpCancelledError,
+  isStepUpBlocked,
+  isStepUpRequired,
+  isStepUpUnavailable,
+  stepUpMarkerOf,
+} from '@/utils/stepUpErrors'
 
-/** Error codes the backend uses to signal step-up state. */
-const STEP_UP_REQUIRED = 'STEP_UP_REQUIRED'
-const STEP_UP_TOTP_NOT_ENABLED = 'STEP_UP_TOTP_NOT_ENABLED'
-const STEP_UP_ADMIN_API_KEY_FORBIDDEN = 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
-
-/**
- * Thrown by run() when the user dismisses the TOTP dialog.
- * Callers should treat it as a silent no-op, not an error to toast.
- */
-export class StepUpCancelledError extends Error {
-  readonly code = 'STEP_UP_CANCELLED'
-  constructor() {
-    super('step-up verification cancelled by user')
-    this.name = 'StepUpCancelledError'
-  }
-}
-
-export function isStepUpCancelled(err: unknown): boolean {
-  return err instanceof StepUpCancelledError
-}
-
-interface ApiError {
-  status?: number
-  code?: string | number
-  reason?: string
-  message?: string
-}
-
-/** Extract the semantic error marker from either envelope shape (code or reason). */
-function markerOf(err: unknown): string {
-  const e = (err ?? {}) as ApiError
-  const candidates = [e.code, e.reason].map((v) => (typeof v === 'string' ? v : ''))
-  return candidates.find((v) => v.startsWith('STEP_UP')) || ''
-}
-
-export function isStepUpRequired(err: unknown): boolean {
-  return markerOf(err) === STEP_UP_REQUIRED
-}
-
-export function isStepUpBlocked(err: unknown): boolean {
-  const m = markerOf(err)
-  return m === STEP_UP_TOTP_NOT_ENABLED || m === STEP_UP_ADMIN_API_KEY_FORBIDDEN
-}
-
-export function stepUpBlockReason(err: unknown): string {
-  return markerOf(err)
-}
+export {
+  StepUpCancelledError,
+  isStepUpCancelled,
+  isStepUpRequired,
+  isStepUpBlocked,
+  isStepUpUnavailable,
+  stepUpBlockReason,
+  stepUpMarkerOf,
+} from '@/utils/stepUpErrors'
 
 export type StepUpController = ReturnType<typeof useStepUp>
 
@@ -68,25 +43,38 @@ export function useStepUp() {
   const visible = ref(false)
   const blockedReason = ref<string>('')
   let resolver: ((ok: boolean) => void) | null = null
+  /**
+   * Single-flight prompt: concurrent sensitive operations (e.g. a batch save
+   * that fires several requests at once) must share one TOTP dialog instead of
+   * stacking prompts or overwriting the pending resolver.
+   */
+  let pendingPrompt: Promise<boolean> | null = null
+
+  function settle(verified: boolean) {
+    visible.value = false
+    const resolve = resolver
+    resolver = null
+    pendingPrompt = null
+    resolve?.(verified)
+  }
 
   /** Open the TOTP dialog and resolve true once a grant is obtained. */
   function prompt(): Promise<boolean> {
+    if (pendingPrompt) return pendingPrompt
     visible.value = true
-    return new Promise<boolean>((resolve) => {
+    pendingPrompt = new Promise<boolean>((resolve) => {
       resolver = resolve
     })
+    return pendingPrompt
   }
 
   function onVerified() {
-    visible.value = false
-    resolver?.(true)
-    resolver = null
+    blockedReason.value = ''
+    settle(true)
   }
 
   function onCancel() {
-    visible.value = false
-    resolver?.(false)
-    resolver = null
+    settle(false)
   }
 
   /**
@@ -100,8 +88,8 @@ export function useStepUp() {
     try {
       return await action()
     } catch (err) {
-      if (isStepUpBlocked(err)) {
-        blockedReason.value = markerOf(err)
+      if (isStepUpBlocked(err) || isStepUpUnavailable(err)) {
+        blockedReason.value = stepUpMarkerOf(err)
         throw err
       }
       if (!isStepUpRequired(err)) {

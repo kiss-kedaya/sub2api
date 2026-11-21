@@ -99,6 +99,10 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/account/__tests__/AccountUsageCell.spec.ts \
 	src/views/admin/__tests__/SettingsView.spec.ts \
 	src/views/admin/__tests__/UsageView.spec.ts \
+	src/api/__tests__/client.stepUp.spec.ts \
+	src/api/__tests__/admin.stepUpCoverage.spec.ts \
+	src/composables/__tests__/useStepUp.spec.ts \
+	src/utils/__tests__/stepUpApiError.spec.ts \
 	src/features/channel-monitor-v2/__tests__/designSystem.structure.spec.ts \
 	src/features/channel-monitor-v2/__tests__/monitorFormat.spec.ts \
 	src/features/channel-monitor-v2/__tests__/monitorZoom.spec.ts

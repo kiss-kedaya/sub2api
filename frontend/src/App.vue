@@ -7,6 +7,7 @@ import AdminComplianceDialog from '@/components/admin/AdminComplianceDialog.vue'
 import { resolveRouteDocumentTitle } from '@/router/title'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import ConfirmHost from '@/components/common/ConfirmHost.vue'
+import StepUpGate from '@/components/auth/StepUpGate.vue'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { useTicketNotificationStore } from '@/stores/ticketNotifications'
 import { getSetupStatus } from '@/api/setup'
@@ -193,5 +194,7 @@ onMounted(async () => {
     <AnnouncementPopup />
     <AdminComplianceDialog />
     <ConfirmHost />
+    <!-- 全局 step-up TOTP 门：管理端敏感接口 403 时统一弹码并自动重试一次 -->
+    <StepUpGate />
   </UApp>
 </template>
