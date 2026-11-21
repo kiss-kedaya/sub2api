@@ -40,6 +40,8 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/user/__tests__/PaymentResultView.spec.ts \
 	src/views/user/__tests__/ChannelStatusView.mode.spec.ts \
 	src/views/user/__tests__/KeysView.spec.ts \
+	src/components/keys/__tests__/IpWhitelistAssist.spec.ts \
+	src/utils/__tests__/ipWhitelist.spec.ts \
 	src/views/user/__tests__/UsageView.spec.ts \
 	src/components/layout/__tests__/ConsoleSignal.spec.ts \
 	src/components/layout/__tests__/ConsoleAtmosphere.spec.ts \
