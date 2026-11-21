@@ -1347,24 +1347,69 @@ type sqlTxBeginner interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
+const (
+	// Positions live in their own table and the row count follows the user's
+	// available groups (issue #494: 36 groups must fit). Two writers replacing
+	// the routes of the SAME key can still interleave: the second DELETE runs
+	// on a snapshot that predates the first writer's INSERT, so it deletes
+	// nothing and the following INSERT trips UNIQUE (api_key_id, position).
+	// A bounded retry re-runs the replace on a fresh snapshot and converges to
+	// the last writer's list instead of returning a 500.
+	groupRouteReplaceAttempts       = 4
+	groupRouteReplaceRetryBaseDelay = 5 * time.Millisecond
+)
+
+// ReplaceGroupRoutes replaces the ordered smart-routing candidate list of one
+// key. There is intentionally no upper bound on len(groupIDs): the position
+// column only carries ordering.
 func (r *apiKeyRepository) ReplaceGroupRoutes(ctx context.Context, apiKeyID int64, groupIDs []int64) error {
 	if r.sql == nil {
 		return nil
 	}
-	exec := r.sql
-	var tx *sql.Tx
-	if beginner, ok := r.sql.(sqlTxBeginner); ok {
-		started, err := beginner.BeginTx(ctx, nil)
-		if err != nil {
+	beginner, ownsTx := r.sql.(sqlTxBeginner)
+	if !ownsTx {
+		// Caller owns the transaction. A failed statement aborts that
+		// transaction, so retrying here would be meaningless.
+		if _, err := r.sql.ExecContext(ctx, "DELETE FROM api_key_group_routes WHERE api_key_id = $1", apiKeyID); err != nil {
 			return err
 		}
-		tx = started
-		defer func() { _ = tx.Rollback() }()
-		exec = tx
+		return insertAPIKeyGroupRoutes(ctx, r.sql, apiKeyID, groupIDs)
 	}
-	if _, err := exec.ExecContext(ctx, "DELETE FROM api_key_group_routes WHERE api_key_id = $1", apiKeyID); err != nil {
+
+	var lastErr error
+	for attempt := 0; attempt < groupRouteReplaceAttempts; attempt++ {
+		if attempt > 0 {
+			if err := waitAPIKeyGroupRouteRetry(ctx, attempt); err != nil {
+				return err
+			}
+		}
+		lastErr = replaceAPIKeyGroupRoutesInTx(ctx, beginner, apiKeyID, groupIDs)
+		if lastErr == nil {
+			return nil
+		}
+		if !isAPIKeyGroupRoutePositionConflict(lastErr) {
+			return lastErr
+		}
+	}
+	return lastErr
+}
+
+func replaceAPIKeyGroupRoutesInTx(ctx context.Context, beginner sqlTxBeginner, apiKeyID int64, groupIDs []int64) error {
+	tx, err := beginner.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "DELETE FROM api_key_group_routes WHERE api_key_id = $1", apiKeyID); err != nil {
+		return err
+	}
+	if err := insertAPIKeyGroupRoutes(ctx, tx, apiKeyID, groupIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func insertAPIKeyGroupRoutes(ctx context.Context, exec sqlExecutor, apiKeyID int64, groupIDs []int64) error {
 	for i, groupID := range groupIDs {
 		if groupID <= 0 {
 			continue
@@ -1376,10 +1421,30 @@ func (r *apiKeyRepository) ReplaceGroupRoutes(ctx context.Context, apiKeyID int6
 			return err
 		}
 	}
-	if tx != nil {
-		return tx.Commit()
-	}
 	return nil
+}
+
+func waitAPIKeyGroupRouteRetry(ctx context.Context, attempt int) error {
+	timer := time.NewTimer(time.Duration(attempt) * groupRouteReplaceRetryBaseDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// isAPIKeyGroupRoutePositionConflict reports the one race this retry handles:
+// UNIQUE (api_key_id, position) taken by a concurrent route replacement.
+// Primary-key conflicts (duplicate group ids in one request) are real client
+// errors and must surface immediately.
+func isAPIKeyGroupRoutePositionConflict(err error) bool {
+	var pqErr *pq.Error
+	if !errors.As(err, &pqErr) {
+		return false
+	}
+	return pqErr.Code == "23505" && pqErr.Constraint == "api_key_group_routes_api_key_id_position_key"
 }
 
 func (r *apiKeyRepository) ListGroupRoutes(ctx context.Context, apiKeyIDs []int64) (map[int64][]int64, error) {

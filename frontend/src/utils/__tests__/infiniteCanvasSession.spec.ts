@@ -98,6 +98,31 @@ describe('ensureInfiniteCanvasApiKey', () => {
     expect(session).toMatchObject({ apiKey: 'sk-new', created: true, groupIds: [4, 1, 9] })
   })
 
+  it('passes every available group when the user can bind more than ten', async () => {
+    const groups = Array.from({ length: 36 }, (_, index) => group(100 + index))
+    const ids = groups.map((item) => item.id)
+    getAvailableGroups.mockResolvedValue(groups)
+    list.mockResolvedValue({ items: [], pages: 1 })
+    create.mockResolvedValue(secretKey({ id: 9, group_id: ids[0], group_ids: ids }, 'sk-many'))
+
+    const session = await ensureInfiniteCanvasApiKey({ list, create, getAvailableGroups }, { createIfMissing: true })
+
+    expect(create).toHaveBeenCalledWith(
+      INFINITE_CANVAS_KEY_NAME,
+      ids[0],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ids,
+      undefined,
+      { idempotencyKey: expect.any(String) },
+    )
+    expect(session).toMatchObject({ apiKey: 'sk-many', created: true, groupIds: ids })
+  })
+
   it('rereads a redacted creation replay and rotates only the matching usable canvas key', async () => {
     localStorage.setItem('auth_user', JSON.stringify({ id: 1 }))
     getAvailableGroups.mockResolvedValue([group(2)])
