@@ -56,7 +56,7 @@ volumes:
 
 钱包沿用主 PostgreSQL `settings` 表的 `crypto.signer.vault` 密文行和历史 `crypto_signer_audit` 审计表。旧行名仅用于数据兼容；无需 signer socket、policy 文件或 SQLite state，不能改写旧迁移 263 或其 schema。
 
-Docker 中必须持久保留环境变量或 secret 提供的 `TOTP_ENCRYPTION_KEY`（64 位十六进制）。钱包从该安装密钥独立派生加密子密钥，AES-256-GCM 密文保存在 PostgreSQL；不依赖容器临时文件，也不需要额外钱包密码、解锁操作或 signer 容器。重建容器后保留原安装密钥，种子自动加载。
+Docker 中必须持久保留环境变量或 secret 提供的 `TOTP_ENCRYPTION_KEY`（64 位十六进制）。环境变量是权威来源；数据库 `security_secrets.totp_encryption_key` 仅在 env 缺失时作为过渡回退并在启动时 WARN。钱包从该安装密钥独立派生加密子密钥，AES-256-GCM 密文保存在 PostgreSQL；不依赖容器临时文件，也不需要额外钱包密码、解锁操作或 signer 容器。重建容器后保留原安装密钥，种子自动加载。迁移步骤见 `deploy/TOTP_KEY_MIGRATION.md`。
 
 首次导入两份有效且不同的助记词，通过后端新的 2FA 即可。更换 Gas 种子无未完成归集时立即生效。Gas 地址 EVM 路径为 `m/44'/60'/0'/0/0`；只有 Gas 助记词不能恢复用户充值私钥。
 

@@ -1862,6 +1862,24 @@ type TotpConfig struct {
 	// EncryptionKeyPersistent marks an installation key loaded or persisted by
 	// database bootstrap. Process-local configuration defaults never set it.
 	EncryptionKeyPersistent bool `mapstructure:"-"`
+	// EncryptionKeySource records where the effective installation key came
+	// from after database bootstrap. Deployments should converge on
+	// TotpEncryptionKeySourceEnv; TotpEncryptionKeySourceDatabase is the
+	// transitional fallback for a key that still lives in security_secrets.
+	EncryptionKeySource string `mapstructure:"-"`
+}
+
+// TOTP installation key provenance. The database value is a migration
+// fallback only: the deployment environment is authoritative.
+const (
+	TotpEncryptionKeySourceEnv      = "env"
+	TotpEncryptionKeySourceDatabase = "database"
+)
+
+// EncryptionKeyUsesEnvironment reports whether the active key came from the
+// deployment environment (config file or TOTP_ENCRYPTION_KEY).
+func (c TotpConfig) EncryptionKeyUsesEnvironment() bool {
+	return c.EncryptionKeySource == TotpEncryptionKeySourceEnv
 }
 
 // HasPersistentEncryptionKey distinguishes a stable installation key from the

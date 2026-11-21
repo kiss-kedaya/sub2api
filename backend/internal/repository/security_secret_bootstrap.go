@@ -70,9 +70,14 @@ func ensureBootstrapSecrets(ctx context.Context, client *ent.Client, cfg *config
 }
 
 // ensureTOTPInstallationKey supplies the same durable installation key to TOTP,
-// payment configuration and the wallet. An explicit legacy key is persisted
-// unchanged, so upgrading never rotates existing ciphertext. A conflicting
-// configuration fails closed instead of silently replacing either key.
+// payment configuration and the wallet. The deployment configuration
+// (TOTP_ENCRYPTION_KEY / totp.encryption_key) is authoritative. A key that is
+// still stored in security_secrets is a transition fallback so an environment
+// that has not migrated yet keeps working; every fallback is logged. An
+// environment key is never persisted into the database, so deleting the
+// transitional row is permanent, and a missing key alongside existing
+// ciphertext still fails closed instead of silently minting a replacement that
+// can decrypt nothing.
 func ensureTOTPInstallationKey(ctx context.Context, client *ent.Client, cfg *config.Config, readOnly bool) error {
 	configured := cfg.Totp.HasPersistentEncryptionKey()
 	configuredKey := strings.TrimSpace(cfg.Totp.EncryptionKey)
@@ -81,45 +86,68 @@ func ensureTOTPInstallationKey(ctx context.Context, client *ent.Client, cfg *con
 			return fmt.Errorf("configured TOTP installation key: %w", err)
 		}
 	}
-	if readOnly && configured {
-		// Isolated review instances may supply their own key but never persist
-		// it into, or replace a secret in, the shared database.
-		cfg.Totp.EncryptionKey = configuredKey
-		return nil
+
+	stored, err := client.SecuritySecret.Query().Where(securitysecret.KeyEQ(securitySecretKeyTOTP)).Only(ctx)
+	rowPresent := err == nil
+	if err != nil && !ent.IsNotFound(err) {
+		return fmt.Errorf("load TOTP installation key: %w", err)
+	}
+	if readOnly && !rowPresent && !configured {
+		return fmt.Errorf("read-only crypto test mode requires an existing persistent installation key or an explicitly configured TOTP_ENCRYPTION_KEY")
 	}
 
 	var key string
-	stored, err := client.SecuritySecret.Query().Where(securitysecret.KeyEQ(securitySecretKeyTOTP)).Only(ctx)
-	if err == nil {
-		key = strings.TrimSpace(stored.Value)
-		if configured && !strings.EqualFold(key, configuredKey) {
-			return fmt.Errorf("configured TOTP installation key conflicts with the persisted installation key; restore the original key instead of rotating existing ciphertext")
+	switch {
+	case configured && rowPresent:
+		// The environment is authoritative during the migration window. A
+		// mismatch is a deployment mistake worth a warning, not a startup
+		// failure: refusing to boot would let a stale database row block the
+		// change that moves the key out of the database.
+		if !strings.EqualFold(strings.TrimSpace(stored.Value), configuredKey) {
+			log.Println("Warning: TOTP_ENCRYPTION_KEY from the deployment environment differs from the installation key stored in security_secrets; using the environment key. Restore the original value if existing two-factor and wallet ciphertext must stay readable, then delete the stale database row.")
 		}
-	} else if !ent.IsNotFound(err) {
-		return fmt.Errorf("load TOTP installation key: %w", err)
-	} else {
+		key = configuredKey
+	case configured:
+		// Environment-only deployment. The key is not written to the database.
+		// Still authenticate every durable secret before serving traffic: a
+		// wrong environment key would silently break every two-factor login.
+		if !readOnly {
+			if err := inspectLegacyInstallationSecrets(ctx, client, configuredKey, true); err != nil {
+				return err
+			}
+		}
+		key = configuredKey
+	case rowPresent:
+		if !readOnly {
+			log.Println("Warning: TOTP_ENCRYPTION_KEY is not configured; using the legacy installation key stored in security_secrets. Move that value into the deployment environment (sub2api -export-totp-key) and delete the database row.")
+		}
+		key = strings.TrimSpace(stored.Value)
+		cfg.Totp.EncryptionKeySource = config.TotpEncryptionKeySourceDatabase
+	default:
 		if readOnly {
 			return fmt.Errorf("read-only crypto test mode requires an existing persistent installation key or an explicitly configured TOTP_ENCRYPTION_KEY")
 		}
-		// A legacy deployment's explicit key must authenticate every durable
-		// secret BEFORE it can become the installation key. With no key, even
-		// one existing ciphertext forbids creating a replacement key.
+		// First boot. A legacy deployment's explicit key must authenticate
+		// every durable secret BEFORE it can become the installation key. With
+		// no key, even one existing ciphertext forbids creating a replacement.
 		if err := inspectLegacyInstallationSecrets(ctx, client, configuredKey, configured); err != nil {
 			return err
 		}
 		if configured {
-			key, err = createSecuritySecretIfAbsent(ctx, client, securitySecretKeyTOTP, configuredKey)
-			if err == nil && !strings.EqualFold(key, configuredKey) {
-				return fmt.Errorf("configured TOTP installation key conflicts with the persisted installation key; restore the original key instead of rotating existing ciphertext")
-			}
+			key = configuredKey
 		} else {
 			// Discard config.Load's temporary key. Atomic insert-or-read keeps
 			// concurrent first boots on one generated installation key.
 			key, _, err = getOrCreateGeneratedSecuritySecret(ctx, client, securitySecretKeyTOTP, 32)
+			if err != nil {
+				return fmt.Errorf("persist TOTP installation key: %w", err)
+			}
+			log.Println("Warning: no TOTP_ENCRYPTION_KEY was configured; generated an installation key and persisted it in security_secrets. Export it to the deployment environment (sub2api -export-totp-key) and delete the database row.")
+			cfg.Totp.EncryptionKeySource = config.TotpEncryptionKeySourceDatabase
 		}
-		if err != nil {
-			return fmt.Errorf("persist TOTP installation key: %w", err)
-		}
+	}
+	if configured {
+		cfg.Totp.EncryptionKeySource = config.TotpEncryptionKeySourceEnv
 	}
 	if err := validateTOTPInstallationKey(key); err != nil {
 		return fmt.Errorf("stored TOTP installation key: %w", err)

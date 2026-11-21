@@ -61,7 +61,7 @@ Sub2API 内置支付系统，支持用户自助充值，无需部署独立的支
 | 主 PostgreSQL `settings.key = crypto.signer.vault` | 保存充值与 Gas 两份种子的加密 Vault；旧键名仅用于数据兼容 |
 | 主 PostgreSQL `crypto_signer_audit` | 继续记录钱包审计；沿用迁移 263，不改迁移原文、checksum 或 schema |
 
-种子以 AES-256-GCM v2 密文保存在主数据库；钱包加密子密钥从持久安装密钥经 HKDF-SHA256 独立派生，和 2FA 密文用途隔离。安装密钥由首次启动自动生成并持久保存，多实例读取同一份值；不需要手工配置支付专用密钥。已有部署的 `TOTP_ENCRYPTION_KEY` 原值继续使用并持久登记，禁止更换为新值，否则已有 2FA 和钱包密文将无法解密；配置与已保存值冲突时启动失败，不覆盖密文。
+种子以 AES-256-GCM v2 密文保存在主数据库；钱包加密子密钥从持久安装密钥经 HKDF-SHA256 独立派生，和 2FA 密文用途隔离。安装密钥的权威来源是部署配置 `TOTP_ENCRYPTION_KEY`（或 `config.yaml` 的 `totp.encryption_key`）；数据库 `security_secrets.totp_encryption_key` 只在 env 缺失时作为过渡回退，启动日志会 WARN。env 与数据库行不一致时以 env 为准并告警；两边都缺失且已有密文时启动失败，不会生成新密钥覆盖数据。已有部署禁止轮换该值，迁移步骤见 `deploy/TOTP_KEY_MIGRATION.md`。
 
 ### 主服务钱包管理
 
