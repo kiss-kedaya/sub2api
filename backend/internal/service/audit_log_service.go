@@ -221,12 +221,17 @@ func (s *AuditLogService) runRetentionOnce() {
 	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Minute)
 	defer cancel()
 
-	days := 0
-	if s.settingService != nil {
-		days = s.settingService.GetAuditLogRetentionDays(ctx)
+	if s.settingService == nil {
+		return
+	}
+	days, err := s.settingService.GetAuditLogRetentionDays(ctx)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "time=%s level=WARN msg=\"audit log cleanup skipped: cannot read retention policy\" err=%v\n",
+			time.Now().Format(time.RFC3339Nano), err)
+		return
 	}
 	if days <= 0 {
-		return // 0 或负值表示永久保留，仅支持手动清空
+		return // Nonpositive retention keeps logs indefinitely.
 	}
 	cutoff := time.Now().UTC().AddDate(0, 0, -days)
 	for {

@@ -304,29 +304,36 @@ func (s *SettingService) IsStepUpEnabledStrict(ctx context.Context) (bool, error
 // defaultAuditLogRetentionDays 审计日志默认保留天数。
 const defaultAuditLogRetentionDays = 180
 
-// GetAuditLogRetentionDays 审计日志保留天数（<=0 表示永久保留，仅支持手动清空）。
-func (s *SettingService) GetAuditLogRetentionDays(ctx context.Context) int {
-	value, err := s.settingRepo.GetValue(ctx, SettingKeyAuditLogRetentionDays)
-	if err != nil {
-		return defaultAuditLogRetentionDays
+// GetAuditLogRetentionDays obtains the current cleanup policy without using a
+// cached value. A missing setting uses the existing default; a read failure
+// leaves the retention policy unknown and must not authorize deletion.
+func (s *SettingService) GetAuditLogRetentionDays(ctx context.Context) (int, error) {
+	value, err := s.GetRawSettingUncached(ctx, SettingKeyAuditLogRetentionDays)
+	if errors.Is(err, ErrSettingNotFound) {
+		return defaultAuditLogRetentionDays, nil
 	}
-	return parseAuditLogRetentionDays(value)
+	if err != nil {
+		return 0, err
+	}
+	return decodeAuditLogRetentionDays(value)
 }
 
-// parseAuditLogRetentionDays 解析保留天数配置，空/非法值回退默认值。
+// parseAuditLogRetentionDays preserves the default shown in settings when the
+// stored value is absent or invalid. Cleanup must use the strict decoder.
 func parseAuditLogRetentionDays(value string) int {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return defaultAuditLogRetentionDays
-	}
-	n, err := strconv.Atoi(value)
+	days, err := decodeAuditLogRetentionDays(value)
 	if err != nil {
 		return defaultAuditLogRetentionDays
 	}
-	if n < 0 {
-		return 0
+	return days
+}
+
+func decodeAuditLogRetentionDays(value string) (int, error) {
+	days, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0, errors.New("invalid stored audit log retention policy")
 	}
-	return n
+	return max(days, 0), nil
 }
 
 // GetSiteName 获取网站名称
