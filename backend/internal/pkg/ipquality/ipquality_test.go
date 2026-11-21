@@ -66,3 +66,76 @@ func TestClassifyDatacenterIPsCacheAndFailOpen(t *testing.T) {
 		t.Fatalf("expected fail-open on failed lookup")
 	}
 }
+
+func TestLookupGeoReturnsLocationAndCaches(t *testing.T) {
+	resetForTest()
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_ = json.NewEncoder(w).Encode([]batchResult{
+			{
+				Status:     "success",
+				Query:      "5.5.5.5",
+				Country:    "China",
+				RegionName: "Guangdong",
+				City:       "Shenzhen",
+				ISP:        "China Telecom",
+			},
+			{Status: "fail", Query: "6.6.6.6"},
+		})
+	}))
+	defer server.Close()
+	oldURL := lookupURL
+	lookupURL = server.URL
+	defer func() { lookupURL = oldURL }()
+
+	got := LookupGeo(context.Background(), []string{"5.5.5.5", "6.6.6.6", "not-an-ip"})
+	geo, ok := got["5.5.5.5"]
+	if !ok || geo.Country != "China" || geo.Region != "Guangdong" || geo.City != "Shenzhen" || geo.ISP != "China Telecom" {
+		t.Fatalf("unexpected geo: %#v", got)
+	}
+	if _, ok := got["6.6.6.6"]; ok {
+		t.Fatalf("failed lookups must be omitted, got %#v", got["6.6.6.6"])
+	}
+	// A second call for the cached address must not hit ip-api again.
+	got = LookupGeo(context.Background(), []string{"5.5.5.5"})
+	if got["5.5.5.5"].City != "Shenzhen" || calls != 1 {
+		t.Fatalf("expected cache hit, calls=%d got=%#v", calls, got)
+	}
+}
+
+func TestLookupGeoDegradesOnProviderFailure(t *testing.T) {
+	resetForTest()
+	oldURL := lookupURL
+	lookupURL = "http://127.0.0.1:1/batch"
+	defer func() { lookupURL = oldURL }()
+
+	got := LookupGeo(context.Background(), []string{"7.7.7.7"})
+	if len(got) != 0 {
+		t.Fatalf("expected empty geo on provider failure, got %#v", got)
+	}
+}
+
+func TestLookupGeoSharesDatacenterCache(t *testing.T) {
+	resetForTest()
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_ = json.NewEncoder(w).Encode([]batchResult{
+			{Status: "success", Query: "8.8.8.8", Hosting: true, Country: "United States", City: "Ashburn"},
+		})
+	}))
+	defer server.Close()
+	oldURL := lookupURL
+	lookupURL = server.URL
+	defer func() { lookupURL = oldURL }()
+
+	datacenter := ClassifyDatacenterIPs(context.Background(), []string{"8.8.8.8"})
+	if !datacenter["8.8.8.8"] {
+		t.Fatalf("expected hosting classification")
+	}
+	geo := LookupGeo(context.Background(), []string{"8.8.8.8"})
+	if !geo["8.8.8.8"].Hosting || geo["8.8.8.8"].City != "Ashburn" || calls != 1 {
+		t.Fatalf("expected shared cache, calls=%d geo=%#v", calls, geo)
+	}
+}

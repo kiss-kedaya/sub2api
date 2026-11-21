@@ -787,6 +787,7 @@
                 :ui="{ base: 'font-mono text-sm' }"
                 :placeholder="t('keys.ipWhitelistPlaceholder')"
               />
+              <IpWhitelistAssist v-model="formData.ip_whitelist" class="mt-2" />
             </UFormField>
             <UFormField :label="t('keys.ipBlacklist')" :help="t('keys.ipBlacklistHint')" size="lg">
               <UTextarea
@@ -1306,6 +1307,7 @@ import '@/styles/console-workspace.css'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
 import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
+import IpWhitelistAssist from '@/components/keys/IpWhitelistAssist.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
 const { t } = useI18n()

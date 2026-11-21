@@ -901,6 +901,7 @@ var ProviderSet = wire.NewSet(
 	NewUserService,
 	ProvideAPIKeyService,
 	NewKeyRotationGateService,
+	NewIPWhitelistAssistService,
 	wire.Bind(new(KeyRotationActiveKeyLister), new(*APIKeyService)),
 	ProvideAPIKeyAuthCacheInvalidator,
 	ProvideAuthCacheInvalidationWorker,
