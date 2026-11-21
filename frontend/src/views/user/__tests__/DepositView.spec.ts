@@ -68,6 +68,8 @@ function pendingRow(overrides: Record<string, unknown> = {}) {
   return { chain: 'bsc', tx_hash: otherHash, token: 'USDT', amount: '10', status: 'pending', credited: 0, created_at: '2026-01-02T00:00:00Z', ...overrides }
 }
 
+const fakeTimers = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+
 function setVisibility(state: 'visible' | 'hidden') {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
   document.dispatchEvent(new Event('visibilitychange'))
@@ -93,7 +95,8 @@ beforeEach(() => {
 })
 
 describe('user deposit availability', () => {
-  it.each([null, undefined])('shows disabled deposits instead of a load error when chains is %s', async (chains) => {
+  it.each([null, undefined])('shows history without offering a new deposit when disabled and chains is %s', async (chains) => {
+    fakeTimers()
     const payload = { enabled: false, chains, min_amount: 0, max_amount: 0 }
     mocks.apiGet.mockResolvedValue({ data: { data: payload } })
     const { getDepositInfo } = await vi.importActual<typeof import('@/api/crypto')>('@/api/crypto')
@@ -106,8 +109,55 @@ describe('user deposit availability', () => {
     expect(wrapper.text()).toContain('deposit.disabledHint')
     expect(wrapper.text()).not.toContain('deposit.loadFailed')
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
-    expect(mocks.getDepositHistory).not.toHaveBeenCalled()
+    expect(wrapper.find('.deposit-view__address-block').exists()).toBe(false)
+    expect(wrapper.get('.deposit-view__history').text()).toContain(hash)
+    expect(wrapper.get('.deposit-view__history').text()).not.toContain('deposit.autoRefresh')
+    expect(mocks.getDepositHistory).toHaveBeenCalledOnce()
     await expect(getDepositInfo()).resolves.toEqual({ ...payload, chains: [] })
+
+    setVisibility('visible')
+    await vi.advanceTimersByTimeAsync(15000)
+    expect(mocks.getDepositHistory).toHaveBeenCalledOnce()
+
+    mocks.getDepositHistory.mockResolvedValueOnce([pendingRow()])
+    await wrapper.get('.deposit-view__history-head button').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.deposit-view__history').text()).toContain(otherHash)
+    expect(wrapper.get('.deposit-view__history').text()).not.toContain(hash)
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(15000)
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows and lets the user refresh their history when deposit info fails', async () => {
+    fakeTimers()
+    mocks.getDepositInfo.mockRejectedValueOnce({ status: 503 })
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('deposit.loadFailed')
+    expect(wrapper.find('.deposit-view__address-block').exists()).toBe(false)
+    expect(wrapper.get('.deposit-view__history').text()).toContain(hash)
+    expect(wrapper.get('.deposit-view__history').text()).not.toContain('deposit.autoRefresh')
+    expect(mocks.getDepositHistory).toHaveBeenCalledOnce()
+
+    setVisibility('visible')
+    await vi.advanceTimersByTimeAsync(15000)
+    expect(mocks.getDepositHistory).toHaveBeenCalledOnce()
+    mocks.getDepositHistory.mockResolvedValueOnce([pendingRow({ status: 'ignored', reason: 'below_min' })])
+    await wrapper.get('.deposit-view__history-head button').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.deposit-view__history').text()).not.toContain(hash)
+    expect(wrapper.get('.deposit-view__reason').text()).not.toContain('deposit.reasonBelowMin {"min":0}')
+    expect(mocks.getDepositInfo).toHaveBeenCalledOnce()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
+
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.deposit-view__address-block').exists()).toBe(true)
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(4)
   })
 })
 
@@ -214,8 +264,28 @@ describe('user deposit confirmation progress', () => {
 })
 
 describe('user deposit auto refresh', () => {
-  const fakeTimers = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
   const creditedRow = { chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'credited', credited: 67, created_at: '2026-01-01T00:00:00Z' }
+
+  it('keeps manual refresh available when history cannot be read and resumes the timer after success', async () => {
+    fakeTimers()
+    mocks.getDepositHistory.mockRejectedValueOnce({ status: 503 }).mockResolvedValue([creditedRow])
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get('.deposit-view__history-error').text()).toBe('deposit.historyFailed')
+    expect(wrapper.get('.deposit-view__history').text()).not.toContain('deposit.autoRefresh')
+    expect(wrapper.find('.deposit-view__address-block').exists()).toBe(true)
+    setVisibility('visible')
+    await vi.advanceTimersByTimeAsync(15000)
+    expect(mocks.getDepositHistory).toHaveBeenCalledOnce()
+
+    await wrapper.get('.deposit-view__history-head button').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.deposit-view__history').text()).toContain(hash)
+    expect(wrapper.find('.deposit-view__history-error').exists()).toBe(false)
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(3)
+  })
 
   it('discovers a new deposit within 5 seconds even when the history was empty', async () => {
     fakeTimers()
@@ -513,23 +583,45 @@ describe('user deposit credit details', () => {
 })
 
 describe('user deposit key rotation gate', () => {
+  const gateError = {
+    status: 403,
+    reason: 'KEY_ROTATION_REQUIRED',
+    metadata: { error_code: 'KEY_ROTATION_REQUIRED' },
+  }
+
   afterEach(() => {
     keyRotationGateMock.requiredRef.value = false
     keyRotationGateMock.statusRef.value = null
   })
 
-  it('shows the remediation card instead of a load failure when the gate blocks the page', async () => {
-    keyRotationGateMock.requiredRef.value = true
-    mocks.getDepositInfo.mockRejectedValue({
-      status: 403,
-      reason: 'KEY_ROTATION_REQUIRED',
-      metadata: { error_code: 'KEY_ROTATION_REQUIRED' },
-    })
+  it.each([true, false])('shows remediation without fetching history when info is denied (shared gate: %s)', async (sharedGate) => {
+    keyRotationGateMock.requiredRef.value = sharedGate
+    mocks.getDepositInfo.mockRejectedValueOnce(gateError)
     const wrapper = render()
     await flushPromises()
 
     expect(wrapper.find('[data-testid="key-rotation-gate-notice"]').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('deposit.loadFailed')
     expect(wrapper.text()).not.toContain('deposit.disabled')
+    expect(wrapper.find('.deposit-view__history').exists()).toBe(false)
+    expect(mocks.getDepositHistory).not.toHaveBeenCalled()
+  })
+
+  it('hides the previous history and stops polling when a refresh is denied by the gate', async () => {
+    fakeTimers()
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get('.deposit-view__history').text()).toContain(hash)
+
+    mocks.getDepositHistory.mockRejectedValueOnce(gateError)
+    await wrapper.get('.deposit-view__history-head button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="key-rotation-gate-notice"]').exists()).toBe(true)
+    expect(wrapper.find('.deposit-view__history').exists()).toBe(false)
+    expect(wrapper.find('.deposit-view__address-block').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain(hash)
+    setVisibility('visible')
+    await vi.advanceTimersByTimeAsync(15000)
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
   })
 })
