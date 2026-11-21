@@ -327,7 +327,7 @@ type deleteGroupAPIKeyRepoStub struct {
 	listGroupIDs []int64
 }
 
-func (s *deleteGroupAPIKeyRepoStub) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
+func (s *deleteGroupAPIKeyRepoStub) ListKeyHashesByGroupID(ctx context.Context, groupID int64) ([]string, error) {
 	s.listGroupIDs = append(s.listGroupIDs, groupID)
 	if s.listErr != nil {
 		return nil, s.listErr
@@ -678,7 +678,7 @@ func TestAdminService_DeleteGroup_Success_WithCacheInvalidation(t *testing.T) {
 
 func TestAdminService_DeleteGroup_InvalidatesAuthCacheForBoundKeys(t *testing.T) {
 	repo := &groupRepoStub{}
-	apiKeyRepo := &deleteGroupAPIKeyRepoStub{keys: []string{"k1", "k2"}}
+	apiKeyRepo := &deleteGroupAPIKeyRepoStub{keys: []string{HashAPIKey("k1"), HashAPIKey("k2")}}
 	invalidator := &authCacheInvalidatorStub{}
 	svc := &adminServiceImpl{
 		groupRepo:            repo,
@@ -690,7 +690,7 @@ func TestAdminService_DeleteGroup_InvalidatesAuthCacheForBoundKeys(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, []int64{5}, repo.deleteCalls)
 	require.Equal(t, []int64{5}, apiKeyRepo.listGroupIDs)
-	require.Equal(t, []string{"k1", "k2"}, invalidator.keys)
+	require.Equal(t, []string{HashAPIKey("k1"), HashAPIKey("k2")}, invalidator.keys)
 }
 
 func TestAdminService_DeleteGroup_NotFound(t *testing.T) {

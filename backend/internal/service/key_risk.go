@@ -226,7 +226,7 @@ func (s *APIKeyService) DisableKeysForRisk(ctx context.Context, keyIDs []int64, 
 			slog.Error("gateway key risk control could not disable key", "key_id", id, "error", err)
 			continue
 		}
-		s.InvalidateAuthCacheByKey(ctx, key.Key)
+		s.InvalidateAuthCacheForAPIKey(ctx, key)
 		markAPIKeyRiskDisabled(id, info)
 		disabled = append(disabled, id)
 		// Structured audit trail: this is the durable record of the action

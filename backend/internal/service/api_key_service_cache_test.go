@@ -31,8 +31,8 @@ func (s *authRepoStub) GetByID(ctx context.Context, id int64) (*APIKey, error) {
 	panic("unexpected GetByID call")
 }
 
-func (s *authRepoStub) GetKeyAndOwnerID(ctx context.Context, id int64) (string, int64, error) {
-	panic("unexpected GetKeyAndOwnerID call")
+func (s *authRepoStub) GetKeyHashAndOwnerID(ctx context.Context, id int64) (string, int64, error) {
+	panic("unexpected GetKeyHashAndOwnerID call")
 }
 
 func (s *authRepoStub) GetByKey(ctx context.Context, key string) (*APIKey, error) {
@@ -93,16 +93,16 @@ func (s *authRepoStub) CountByGroupID(ctx context.Context, groupID int64) (int64
 	panic("unexpected CountByGroupID call")
 }
 
-func (s *authRepoStub) ListKeysByUserID(ctx context.Context, userID int64) ([]string, error) {
+func (s *authRepoStub) ListKeyHashesByUserID(ctx context.Context, userID int64) ([]string, error) {
 	if s.listKeysByUserID == nil {
-		panic("unexpected ListKeysByUserID call")
+		panic("unexpected ListKeyHashesByUserID call")
 	}
 	return s.listKeysByUserID(ctx, userID)
 }
 
-func (s *authRepoStub) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
+func (s *authRepoStub) ListKeyHashesByGroupID(ctx context.Context, groupID int64) ([]string, error) {
 	if s.listKeysByGroupID == nil {
-		panic("unexpected ListKeysByGroupID call")
+		panic("unexpected ListKeyHashesByGroupID call")
 	}
 	return s.listKeysByGroupID(ctx, groupID)
 }
@@ -500,7 +500,8 @@ func TestAPIKeyService_InvalidateAuthCacheByUserID(t *testing.T) {
 	cache := &authCacheStub{}
 	repo := &authRepoStub{
 		listKeysByUserID: func(ctx context.Context, userID int64) ([]string, error) {
-			return []string{"k1", "k2"}, nil
+			// 批量查询返回的是 key_hash（认证缓存键 == sha256(明文)）。
+			return []string{HashAPIKey("k1"), HashAPIKey("k2")}, nil
 		},
 	}
 	cfg := &config.Config{
@@ -519,7 +520,7 @@ func TestAPIKeyService_InvalidateAuthCacheByGroupID(t *testing.T) {
 	cache := &authCacheStub{}
 	repo := &authRepoStub{
 		listKeysByGroupID: func(ctx context.Context, groupID int64) ([]string, error) {
-			return []string{"k1", "k2"}, nil
+			return []string{HashAPIKey("k1"), HashAPIKey("k2")}, nil
 		},
 	}
 	cfg := &config.Config{

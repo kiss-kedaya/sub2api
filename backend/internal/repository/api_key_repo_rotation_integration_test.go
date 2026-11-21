@@ -48,7 +48,10 @@ func assertKeyRotationPersistence(t *testing.T, ctx context.Context, repo *apiKe
 	after := read()
 	require.NotNil(t, after.KeyRotatedAt)
 	require.True(t, service.IsKeyRotationCompliant(after, cutoff))
-	require.Equal(t, key.Key, after.Key)
+	// 明文不再落库：轮换后库里只有新哈希与展示前缀。
+	require.Empty(t, after.Key)
+	require.Equal(t, service.HashAPIKey(key.Key), after.KeyHash)
+	require.Equal(t, service.APIKeyPrefixFromPlaintext(key.Key), after.KeyPrefix)
 	key.Name = "ordinary edit after rotation"
 	require.NoError(t, repo.Update(ctx, key, service.APIKeyUpdateFields{Name: true}))
 	again := read()

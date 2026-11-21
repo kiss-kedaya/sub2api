@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"sync"
 	"testing"
 	"time"
@@ -51,7 +52,10 @@ func (s *APIKeyRepoSuite) TestCreate() {
 
 	got, err := s.repo.GetByID(s.ctx, key.ID)
 	s.Require().NoError(err, "GetByID")
-	s.Require().Equal("sk-create-test", got.Key)
+	// 迁移 327 之后明文不再落库：库里只有 sha256 与展示前缀。
+	s.Require().Empty(got.Key, "plaintext must not be persisted")
+	s.Require().Equal(service.HashAPIKey("sk-create-test"), got.KeyHash)
+	s.Require().Equal("sk-creat", got.KeyPrefix)
 }
 
 func (s *APIKeyRepoSuite) TestGetByID_NotFound() {
@@ -144,7 +148,8 @@ func (s *APIKeyRepoSuite) TestUpdate() {
 
 	got, err := s.repo.GetByID(s.ctx, key.ID)
 	s.Require().NoError(err, "GetByID after update")
-	s.Require().Equal("sk-update", got.Key, "Update should not change key")
+	s.Require().Empty(got.Key, "Update should not load plaintext")
+	s.Require().Equal(service.HashAPIKey("sk-update"), got.KeyHash, "Update should not change credential")
 	s.Require().Equal(user.ID, got.UserID, "Update should not change user_id")
 	s.Require().Equal("Renamed", got.Name)
 	s.Require().Equal(service.StatusDisabled, got.Status)
@@ -372,7 +377,8 @@ func (s *APIKeyRepoSuite) TestCRUD_Search_ClearGroupID() {
 
 	got2, err := s.repo.GetByID(s.ctx, key.ID)
 	s.Require().NoError(err, "GetByID")
-	s.Require().Equal("sk-test-1", got2.Key, "Update should not change key")
+	s.Require().Empty(got2.Key, "Update should not load plaintext")
+	s.Require().Equal(service.HashAPIKey("sk-test-1"), got2.KeyHash, "Update should not change credential")
 	s.Require().Equal(user.ID, got2.UserID, "Update should not change user_id")
 	s.Require().Equal("Renamed", got2.Name)
 	s.Require().Equal(service.StatusDisabled, got2.Status)
@@ -494,7 +500,7 @@ func (s *APIKeyRepoSuite) TestIncrementQuotaUsedAndGetState() {
 	s.Require().Equal(3.5, state.QuotaUsed)
 	s.Require().Equal(3.0, state.Quota)
 	s.Require().Equal(service.StatusAPIKeyQuotaExhausted, state.Status)
-	s.Require().Equal(key.Key, state.Key)
+	s.Require().Equal(service.HashAPIKey(key.Key), state.KeyHash)
 
 	got, err := s.repo.GetByID(s.ctx, key.ID)
 	s.Require().NoError(err, "GetByID")
@@ -571,15 +577,15 @@ func (s *APIKeyRepoSuite) TestDeleteWithAudit_TombstonesWithoutRetainingCredenti
 	_, err := s.repo.GetByID(s.ctx, key.ID)
 	s.Require().Error(err)
 
-	var tombstone string
+	var tombstone, tombstoneHash sql.NullString
 	var deletedAt time.Time
-	rows, err := s.repo.sql.QueryContext(s.ctx, `SELECT key, deleted_at FROM api_keys WHERE id = $1`, key.ID)
+	rows, err := s.repo.sql.QueryContext(s.ctx, `SELECT key, key_hash, deleted_at FROM api_keys WHERE id = $1`, key.ID)
 	s.Require().NoError(err)
 	s.Require().True(rows.Next())
-	s.Require().NoError(rows.Scan(&tombstone, &deletedAt))
+	s.Require().NoError(rows.Scan(&tombstone, &tombstoneHash, &deletedAt))
 	s.Require().NoError(rows.Close())
-	s.Require().NotEqual("sk-del-audit-1", tombstone)
-	s.Require().Contains(tombstone, "__deleted__")
+	s.Require().False(tombstone.Valid, "soft-deleted rows must not retain credential material")
+	s.Require().False(tombstoneHash.Valid, "soft-deleted rows must not retain the hash")
 
 	var auditCount int
 	auditRows, err := s.repo.sql.QueryContext(s.ctx,

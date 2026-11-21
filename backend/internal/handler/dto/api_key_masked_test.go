@@ -48,6 +48,26 @@ func TestAPIKeyFromServiceNeverSerializesPlaintext(t *testing.T) {
 	require.Equal(t, "sk-abcde****1234", decoded["key_masked"])
 }
 
+// 迁移 327 回填+清理明文之后，库里只剩 key_hash / key_prefix：
+// 列表仍要显示前缀（前 8 + ****），且哈希本身也不得出现在响应里。
+func TestAPIKeyFromServiceUsesStoredPrefixWhenPlaintextGone(t *testing.T) {
+	storedHash := strings.Repeat("a", 64)
+	out := APIKeyFromService(&service.APIKey{
+		ID:        9,
+		UserID:    1,
+		KeyHash:   storedHash,
+		KeyPrefix: "sk-abcde",
+		Name:      "hash-only",
+	})
+	require.NotNil(t, out)
+	require.Equal(t, "sk-abcde", out.KeyPrefix)
+	require.Equal(t, "sk-abcde****", out.KeyMasked)
+
+	raw := mustJSON(t, out)
+	require.NotContains(t, raw, `"key"`)
+	require.NotContains(t, raw, storedHash, "key_hash must never be serialized")
+}
+
 // 只有创建/轮换的当次回执允许带明文，且同时带脱敏字段供列表复用。
 func TestAPIKeySecretFromServiceIsTheOnlyPlaintextExit(t *testing.T) {
 	plaintext := "sk-abcdefgh1234"

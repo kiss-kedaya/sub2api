@@ -34,11 +34,19 @@ func IsWindowExpired(windowStart *time.Time, duration time.Duration) bool {
 }
 
 type APIKey struct {
-	ID      int64
-	UserID  int64
-	Key     string
-	Name    string
-	GroupID *int64
+	ID     int64
+	UserID int64
+	// Key 是明文凭据，只在两种情况下有值：
+	//  1. 刚刚创建 / 轮换出来的内存对象（用于当次回执与缓存失效）；
+	//  2. 鉴权命中时把请求里带的那份明文回填（认证路径本来就有明文）。
+	// 从数据库普通读取（列表、后台视图、删除查询）不再有明文，Key 为空。
+	Key string
+	// KeyHash 是落库的 sha256 摘要，鉴权只按它查询；从库里读出来一定带值。
+	KeyHash string
+	// KeyPrefix 是落库的展示前缀（前 8 位），供列表/日志/脱敏展示使用。
+	KeyPrefix string
+	Name      string
+	GroupID   *int64
 	// RouteGroupIDs is the ordered smart-routing candidate list. Empty means
 	// fall back to GroupID only. Position 1 is also stored in GroupID.
 	RouteGroupIDs []int64
@@ -134,6 +142,33 @@ func (k *APIKey) ResolveAnthropicCacheTTLMode(global1hEnabled bool) string {
 
 func (k *APIKey) IsActive() bool {
 	return k.Status == StatusActive
+}
+
+// DisplayPrefix 返回可对外展示的前缀：优先用落库的 key_prefix；内存里只有
+// 明文时（创建 / 轮换回执）退化为临时截取。库里没有明文之后，这是列表、
+// 后台视图、渠道日志展示「这是哪把 key」的唯一来源。
+func (k *APIKey) DisplayPrefix() string {
+	if k == nil {
+		return ""
+	}
+	if k.KeyPrefix != "" {
+		return k.KeyPrefix
+	}
+	return APIKeyPrefixFromPlaintext(k.Key)
+}
+
+// EnsureKeyHash 在内存对象只有明文时补齐哈希与展示前缀。
+// 创建 / 轮换路径必须先调用它，写库时才能保证只落哈希。
+func (k *APIKey) EnsureKeyHash() {
+	if k == nil || k.Key == "" {
+		return
+	}
+	if k.KeyHash == "" {
+		k.KeyHash = HashAPIKey(k.Key)
+	}
+	if k.KeyPrefix == "" {
+		k.KeyPrefix = APIKeyPrefixFromPlaintext(k.Key)
+	}
 }
 
 // HasRateLimits returns true if any rate limit window is configured

@@ -201,6 +201,23 @@ func (m *mockChannelCachePubSub) SubscribeUpdates(_ context.Context, handler fun
 func (m *mockChannelAuthCacheInvalidator) InvalidateAuthCacheByKey(_ context.Context, key string) {
 	m.invalidatedKeys = append(m.invalidatedKeys, key)
 }
+func (m *mockChannelAuthCacheInvalidator) InvalidateAuthCacheByHash(ctx context.Context, hash string) {
+	if hash == "" {
+		return
+	}
+	m.InvalidateAuthCacheByKey(ctx, hash)
+}
+func (m *mockChannelAuthCacheInvalidator) InvalidateAuthCacheForAPIKey(ctx context.Context, apiKey *APIKey) {
+	if apiKey == nil {
+		return
+	}
+	if apiKey.KeyHash != "" {
+		m.InvalidateAuthCacheByHash(ctx, apiKey.KeyHash)
+	}
+	if apiKey.Key != "" {
+		m.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+	}
+}
 
 func (m *mockChannelAuthCacheInvalidator) InvalidateAuthCacheByUserID(_ context.Context, userID int64) {
 	m.invalidatedUserIDs = append(m.invalidatedUserIDs, userID)

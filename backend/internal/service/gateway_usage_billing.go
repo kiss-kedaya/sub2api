@@ -87,6 +87,7 @@ type APIKeyQuotaUpdater interface {
 
 type apiKeyAuthCacheInvalidator interface {
 	InvalidateAuthCacheByKey(ctx context.Context, key string)
+	InvalidateAuthCacheForAPIKey(ctx context.Context, apiKey *APIKey)
 }
 
 type usageLogBestEffortWriter interface {
@@ -423,8 +424,8 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	}
 
 	if result.APIKeyQuotaExhausted {
-		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey != nil && p.APIKey.Key != "" {
-			invalidator.InvalidateAuthCacheByKey(billingCtx, p.APIKey.Key)
+		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey != nil {
+			invalidator.InvalidateAuthCacheForAPIKey(billingCtx, p.APIKey)
 		}
 	}
 

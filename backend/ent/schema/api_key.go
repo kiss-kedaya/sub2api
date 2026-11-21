@@ -34,10 +34,26 @@ func (APIKey) Mixin() []ent.Mixin {
 func (APIKey) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("user_id"),
+		// key 是历史明文列。迁移 327 之后新行只写 NULL：凭据本体只以
+		// key_hash 的形式保存，明文列的存量由生产侧阶段 B 回填 + 清理。
+		// 保留 Unique() 是为了与库里的唯一约束保持 schema 对齐；NULL 不受约束。
 		field.String("key").
 			MaxLen(128).
-			NotEmpty().
-			Unique(),
+			Optional().
+			Unique().
+			Comment("Legacy plaintext credential; NULL for hash-only rows"),
+		// key_hash = sha256(明文 key) 的小写 hex。鉴权只按这一列等值查询。
+		field.String("key_hash").
+			MaxLen(64).
+			Optional().
+			Unique().
+			Comment("Lowercase hex SHA-256 of the API key; the only stored credential"),
+		// key_prefix 是展示用前缀（前 8 位）。库里没有明文之后，列表/日志
+		// 只能靠它展示「这是哪把 key」。
+		field.String("key_prefix").
+			MaxLen(16).
+			Optional().
+			Comment("Display prefix (first 8 characters) of the API key"),
 		field.String("name").
 			MaxLen(100).
 			NotEmpty(),

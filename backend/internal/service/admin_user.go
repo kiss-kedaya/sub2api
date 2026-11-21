@@ -423,10 +423,9 @@ func (s *adminServiceImpl) DeleteUser(ctx context.Context, id int64) error {
 	}
 
 	if s.authCacheInvalidator != nil {
-		for _, key := range apiKeys {
-			if keyValue := strings.TrimSpace(key.Key); keyValue != "" {
-				s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, keyValue)
-			}
+		// 这里拿到的行已经没有明文，必须按 KeyHash 失效；随后再按用户兜底批量清。
+		for i := range apiKeys {
+			s.authCacheInvalidator.InvalidateAuthCacheForAPIKey(ctx, &apiKeys[i])
 		}
 		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, id)
 	}

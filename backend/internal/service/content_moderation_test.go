@@ -315,6 +315,10 @@ type contentModerationTestAuthCacheInvalidator struct {
 
 func (i *contentModerationTestAuthCacheInvalidator) InvalidateAuthCacheByKey(ctx context.Context, key string) {
 }
+func (i *contentModerationTestAuthCacheInvalidator) InvalidateAuthCacheByHash(context.Context, string) {
+}
+func (i *contentModerationTestAuthCacheInvalidator) InvalidateAuthCacheForAPIKey(context.Context, *APIKey) {
+}
 
 func (i *contentModerationTestAuthCacheInvalidator) InvalidateAuthCacheByUserID(ctx context.Context, userID int64) {
 	i.userIDs = append(i.userIDs, userID)

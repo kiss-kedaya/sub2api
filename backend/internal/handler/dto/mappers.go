@@ -95,6 +95,15 @@ func APIKeyPrefix(key string) string {
 	return key[:apiKeyVisiblePrefixLen]
 }
 
+// MaskAPIKeyPrefixOnly 是「库里只剩哈希」时的展示形态：前 8 + ****。
+// 明文不再落库，末 4 位已不可恢复，所以新版行展示不到后 4 位。
+func MaskAPIKeyPrefixOnly(prefix string) string {
+	if prefix == "" {
+		return ""
+	}
+	return prefix + "****"
+}
+
 // MaskAPIKey 返回脱敏后的 key：前 8 + **** + 后 4；过短或空值不泄露任何字符。
 func MaskAPIKey(key string) string {
 	if key == "" {
@@ -110,11 +119,17 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 	if k == nil {
 		return nil
 	}
+	prefix := k.DisplayPrefix()
+	masked := MaskAPIKey(k.Key)
+	if masked == "" {
+		// 库里不再有明文：只能用落库的 key_prefix 展示（前 8 位 + ****）。
+		masked = MaskAPIKeyPrefixOnly(prefix)
+	}
 	out := &APIKey{
 		ID:                           k.ID,
 		UserID:                       k.UserID,
-		KeyPrefix:                    APIKeyPrefix(k.Key),
-		KeyMasked:                    MaskAPIKey(k.Key),
+		KeyPrefix:                    prefix,
+		KeyMasked:                    masked,
 		Name:                         k.Name,
 		GroupID:                      k.GroupID,
 		GroupIDs:                     k.RouteGroupIDs,

@@ -89,6 +89,18 @@ func keyPrefix(key string, n int) string {
 	return key[:n]
 }
 
+// apiKeyDisplayPrefix 返回可落日志的 API Key 前缀：优先用库里落着的
+// key_prefix（明文不再落库，只有它可用），鉴权路径手上带明文时再按明文截取。
+func apiKeyDisplayPrefix(apiKey *service.APIKey) string {
+	if apiKey == nil {
+		return ""
+	}
+	if prefix := apiKey.DisplayPrefix(); prefix != "" {
+		return prefix
+	}
+	return apiKeyDisplayPrefix(apiKey)
+}
+
 type opsErrorLogJob struct {
 	ops         *service.OpsService
 	entry       *service.OpsInsertErrorLogInput
@@ -1321,7 +1333,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		if apiKey != nil {
 			entry.APIKeyID = &apiKey.ID
 			// 有效 key 报错时快照前缀，key 之后被删也保留。
-			entry.APIKeyPrefix = keyPrefix(apiKey.Key, 8)
+			entry.APIKeyPrefix = apiKeyDisplayPrefix(apiKey)
 			if apiKey.User != nil {
 				entry.UserID = &apiKey.User.ID
 			}
@@ -1447,7 +1459,7 @@ func logOpsRecoveredUpstream(c *gin.Context, ops *service.OpsService, finalStatu
 	entry.UpstreamEndpoint = GetUpstreamEndpoint(c, entry.Platform)
 	if apiKey != nil {
 		entry.APIKeyID = &apiKey.ID
-		entry.APIKeyPrefix = keyPrefix(apiKey.Key, 8)
+		entry.APIKeyPrefix = apiKeyDisplayPrefix(apiKey)
 		if apiKey.User != nil {
 			entry.UserID = &apiKey.User.ID
 		}
@@ -1635,7 +1647,7 @@ func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus 
 
 	if apiKey != nil {
 		entry.APIKeyID = &apiKey.ID
-		entry.APIKeyPrefix = keyPrefix(apiKey.Key, 8)
+		entry.APIKeyPrefix = apiKeyDisplayPrefix(apiKey)
 		if apiKey.User != nil {
 			entry.UserID = &apiKey.User.ID
 		}

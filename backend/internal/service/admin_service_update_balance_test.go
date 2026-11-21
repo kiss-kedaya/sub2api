@@ -198,6 +198,23 @@ func adminRechargeSettingService(enabled bool) *SettingService {
 func (s *authCacheInvalidatorStub) InvalidateAuthCacheByKey(ctx context.Context, key string) {
 	s.keys = append(s.keys, key)
 }
+func (s *authCacheInvalidatorStub) InvalidateAuthCacheByHash(ctx context.Context, hash string) {
+	if hash == "" {
+		return
+	}
+	s.InvalidateAuthCacheByKey(ctx, hash)
+}
+func (s *authCacheInvalidatorStub) InvalidateAuthCacheForAPIKey(ctx context.Context, apiKey *APIKey) {
+	if apiKey == nil {
+		return
+	}
+	if apiKey.KeyHash != "" {
+		s.InvalidateAuthCacheByHash(ctx, apiKey.KeyHash)
+	}
+	if apiKey.Key != "" {
+		s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+	}
+}
 
 func (s *authCacheInvalidatorStub) InvalidateAuthCacheByUserID(ctx context.Context, userID int64) {
 	s.userIDs = append(s.userIDs, userID)
