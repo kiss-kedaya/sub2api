@@ -1297,11 +1297,11 @@ func (s *adminServiceImpl) deleteGroup(ctx context.Context, id int64, requireEmp
 		return fmt.Errorf("guarded group deletion is unavailable")
 	}
 
-	var groupKeys []string
+	var groupKeyHashes []string
 	if s.authCacheInvalidator != nil {
-		keys, err := s.apiKeyRepo.ListKeysByGroupID(ctx, id)
+		hashes, err := s.apiKeyRepo.ListKeyHashesByGroupID(ctx, id)
 		if err == nil {
-			groupKeys = keys
+			groupKeyHashes = hashes
 		}
 	}
 
@@ -1331,8 +1331,8 @@ func (s *adminServiceImpl) deleteGroup(ctx context.Context, id int64, requireEmp
 		}()
 	}
 	if s.authCacheInvalidator != nil {
-		for _, key := range groupKeys {
-			s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, key)
+		for _, hash := range groupKeyHashes {
+			s.authCacheInvalidator.InvalidateAuthCacheByHash(ctx, hash)
 		}
 	}
 
@@ -1516,7 +1516,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 
 			// 失效认证缓存（在事务提交后执行）
 			if s.authCacheInvalidator != nil {
-				s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+				s.authCacheInvalidator.InvalidateAuthCacheForAPIKey(ctx, apiKey)
 			}
 
 			result.APIKey = apiKey
@@ -1535,7 +1535,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 
 	// 失效认证缓存
 	if s.authCacheInvalidator != nil {
-		s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+		s.authCacheInvalidator.InvalidateAuthCacheForAPIKey(ctx, apiKey)
 	}
 
 	result.APIKey = apiKey
@@ -1569,7 +1569,7 @@ func (s *adminServiceImpl) AdminResetAPIKeyRateLimitUsage(ctx context.Context, k
 		return nil, fmt.Errorf("reset api key rate limit usage: %w", err)
 	}
 	if s.authCacheInvalidator != nil {
-		s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+		s.authCacheInvalidator.InvalidateAuthCacheForAPIKey(ctx, apiKey)
 	}
 	if s.billingCacheService != nil {
 		_ = s.billingCacheService.InvalidateAPIKeyRateLimit(ctx, apiKey.ID)
@@ -1644,12 +1644,12 @@ func (s *adminServiceImpl) ReplaceUserGroup(ctx context.Context, userID, oldGrou
 		}
 	}
 
-	// 失效该用户所有 Key 的认证缓存
+	// 失效该用户所有 Key 的认证缓存（批量查询返回 key_hash，按哈希失效）
 	if s.authCacheInvalidator != nil {
-		keys, keyErr := s.apiKeyRepo.ListKeysByUserID(ctx, userID)
+		hashes, keyErr := s.apiKeyRepo.ListKeyHashesByUserID(ctx, userID)
 		if keyErr == nil {
-			for _, k := range keys {
-				s.authCacheInvalidator.InvalidateAuthCacheByKey(ctx, k)
+			for _, hash := range hashes {
+				s.authCacheInvalidator.InvalidateAuthCacheByHash(ctx, hash)
 			}
 		}
 	}

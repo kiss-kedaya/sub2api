@@ -44,38 +44,57 @@ func (r *apiKeyRepository) activeQuery() *dbent.APIKeyQuery {
 }
 
 func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) error {
-	builder := r.client.APIKey.Create().
-		SetUserID(key.UserID).
-		SetKey(key.Key).
-		SetName(key.Name).
-		SetConcurrencyLimit(key.ConcurrencyLimit).
-		SetStatus(key.Status).
-		SetNillableGroupID(key.GroupID).
-		SetNillableLastUsedAt(key.LastUsedAt).
-		SetQuota(key.Quota).
-		SetQuotaUsed(key.QuotaUsed).
-		SetNillableExpiresAt(key.ExpiresAt).
-		SetRateLimit5h(key.RateLimit5h).
-		SetRateLimit1d(key.RateLimit1d).
-		SetRateLimit7d(key.RateLimit7d).
-		SetAnthropicCacheTTLMode(service.NormalizeAnthropicCacheTTLMode(key.AnthropicCacheTTLMode)).
-		SetDeepseekToolInjectionEnabled(key.IsDeepSeekToolInjectionEnabled()).
-		SetAutoBlockDatacenterIps(key.AutoBlockDatacenterIPs)
+	// 凭据本体只落哈希：即使调用方内存里还有明文（创建回执要用），
+	// 写库时也绝不写 api_keys.key。key_hash / key_prefix 由内存对象补齐。
+	key.EnsureKeyHash()
+	keyHash, keyPrefix := key.KeyHash, key.KeyPrefix
 
-	if len(key.IPWhitelist) > 0 {
-		builder.SetIPWhitelist(key.IPWhitelist)
-	}
-	if len(key.IPBlacklist) > 0 {
-		builder.SetIPBlacklist(key.IPBlacklist)
-	}
+	create := func(exec *dbent.Client) error {
+		builder := exec.APIKey.Create().
+			SetUserID(key.UserID).
+			SetName(key.Name).
+			SetConcurrencyLimit(key.ConcurrencyLimit).
+			SetStatus(key.Status).
+			SetNillableGroupID(key.GroupID).
+			SetNillableLastUsedAt(key.LastUsedAt).
+			SetQuota(key.Quota).
+			SetQuotaUsed(key.QuotaUsed).
+			SetNillableExpiresAt(key.ExpiresAt).
+			SetRateLimit5h(key.RateLimit5h).
+			SetRateLimit1d(key.RateLimit1d).
+			SetRateLimit7d(key.RateLimit7d).
+			SetAnthropicCacheTTLMode(service.NormalizeAnthropicCacheTTLMode(key.AnthropicCacheTTLMode)).
+			SetDeepseekToolInjectionEnabled(key.IsDeepSeekToolInjectionEnabled()).
+			SetAutoBlockDatacenterIps(key.AutoBlockDatacenterIPs)
 
-	created, err := builder.Save(ctx)
-	if err == nil {
+		if keyHash != "" {
+			builder.SetKeyHash(keyHash).SetKeyPrefix(keyPrefix)
+		}
+		if len(key.IPWhitelist) > 0 {
+			builder.SetIPWhitelist(key.IPWhitelist)
+		}
+		if len(key.IPBlacklist) > 0 {
+			builder.SetIPBlacklist(key.IPBlacklist)
+		}
+
+		created, err := builder.Save(ctx)
+		if err != nil {
+			return err
+		}
 		key.ID = created.ID
 		key.LastUsedAt = created.LastUsedAt
 		key.CreatedAt = created.CreatedAt
 		key.UpdatedAt = created.UpdatedAt
+		return nil
 	}
+
+	err := r.withTx(ctx, func(exec *dbent.Client) error {
+		if err := create(exec); err != nil {
+			return err
+		}
+		// 独立哈希表与 api_keys.key_hash 同事务双写，避免只写成功一处。
+		return r.upsertAPIKeyHash(ctx, exec, key.ID, keyHash, keyPrefix)
+	})
 	return translatePersistenceError(err, nil, service.ErrAPIKeyExists)
 }
 
@@ -94,15 +113,18 @@ func (r *apiKeyRepository) GetByID(ctx context.Context, id int64) (*service.APIK
 	return r.apiKeyEntityToServiceWithRoutes(ctx, m)
 }
 
-// GetKeyAndOwnerID 根据 API Key ID 获取其 key 与所有者（用户）ID。
+// GetKeyHashAndOwnerID 根据 API Key ID 获取其 key_hash 与所有者（用户）ID。
 // 相比 GetByID，此方法性能更优，因为：
 //   - 使用 Select() 只查询必要字段，减少数据传输量
 //   - 不加载完整的 API Key 实体及其关联数据（User、Group 等）
-//   - 适用于删除等只需 key 与用户 ID 的场景
-func (r *apiKeyRepository) GetKeyAndOwnerID(ctx context.Context, id int64) (string, int64, error) {
+//   - 适用于删除等只需「凭据标识」与用户 ID 的场景
+//
+// 返回的是 sha256 摘要而不是明文：明文从迁移 327 之后不再落库，而认证缓存
+// 键本身就等于 sha256(明文)，所以拿哈希就能失效对应缓存。
+func (r *apiKeyRepository) GetKeyHashAndOwnerID(ctx context.Context, id int64) (string, int64, error) {
 	m, err := r.activeQuery().
 		Where(apikey.IDEQ(id)).
-		Select(apikey.FieldKey, apikey.FieldUserID).
+		Select(apikey.FieldKeyHash, apikey.FieldKey, apikey.FieldUserID).
 		Only(ctx)
 	if err != nil {
 		if dbent.IsNotFound(err) {
@@ -110,19 +132,24 @@ func (r *apiKeyRepository) GetKeyAndOwnerID(ctx context.Context, id int64) (stri
 		}
 		return "", 0, err
 	}
-	return m.Key, m.UserID, nil
+	// 过渡期：尚未回填 key_hash 的历史行只能回退明文，否则删除后旧缓存仍可用。
+	credential := m.KeyHash
+	if credential == "" {
+		credential = m.Key
+	}
+	return credential, m.UserID, nil
 }
 
 func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.APIKey, error) {
-	m, err := r.activeQuery().
-		Where(apikey.KeyEQ(key)).
-		WithUser(func(q *dbent.UserQuery) {
-			q.WithAllowedGroups(func(gq *dbent.GroupQuery) {
-				gq.Select(group.FieldID)
-			})
-		}).
-		WithGroup().
-		Only(ctx)
+	m, err := r.findByCredential(ctx, key, func(q *dbent.APIKeyQuery) *dbent.APIKeyQuery {
+		return q.
+			WithUser(func(q *dbent.UserQuery) {
+				q.WithAllowedGroups(func(gq *dbent.GroupQuery) {
+					gq.Select(group.FieldID)
+				})
+			}).
+			WithGroup()
+	})
 	if err != nil {
 		if dbent.IsNotFound(err) {
 			return nil, service.ErrAPIKeyNotFound
@@ -132,14 +159,36 @@ func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.A
 	return r.apiKeyEntityToServiceWithRoutes(ctx, m)
 }
 
+// findByCredential 按 key_hash 等值查询，找不到时回退到历史明文列。
+//
+// 回退是过渡期行为，只为「迁移 327 已上线但生产回填还没跑完」的历史行：
+// 这些行 key 里还有明文、key_hash 还是 NULL，只能按明文命中。新行与已回填
+// 行 key 为 NULL，明文查询永远命中不到，所以回退不会泄露或放大权限。
+// 阶段 B 清理完成、确认 count(明文且无哈希)=0 之后，可删掉回退分支。
+func (r *apiKeyRepository) findByCredential(ctx context.Context, key string, decorate func(*dbent.APIKeyQuery) *dbent.APIKeyQuery) (*dbent.APIKey, error) {
+	if key == "" {
+		return nil, service.ErrAPIKeyNotFound
+	}
+	hash := service.HashAPIKey(key)
+	m, err := decorate(r.activeQuery().Where(apikey.KeyHashEQ(hash))).Only(ctx)
+	if err == nil {
+		return m, nil
+	}
+	if !dbent.IsNotFound(err) {
+		return nil, err
+	}
+	return decorate(r.activeQuery().Where(apikey.KeyEQ(key))).Only(ctx)
+}
+
 func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
-	m, err := r.activeQuery().
-		Where(apikey.KeyEQ(key)).
-		Select(
+	m, err := r.findByCredential(ctx, key, func(q *dbent.APIKeyQuery) *dbent.APIKeyQuery {
+		return q.Select(
 			apikey.FieldID,
 			apikey.FieldUserID,
 			apikey.FieldGroupID,
 			apikey.FieldName,
+			apikey.FieldKeyHash,
+			apikey.FieldKeyPrefix,
 			apikey.FieldStatus,
 			apikey.FieldIPWhitelist,
 			apikey.FieldIPBlacklist,
@@ -157,102 +206,102 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			apikey.FieldAutoBlockDatacenterIps,
 			apikey.FieldConcurrencyLimit,
 		).
-		WithUser(func(q *dbent.UserQuery) {
-			q.Select(
-				user.FieldID,
-				user.FieldEmail,
-				user.FieldUsername,
-				user.FieldStatus,
-				user.FieldRole,
-				user.FieldBalance,
-				user.FieldConcurrency,
-				user.FieldBalanceNotifyEnabled,
-				user.FieldRestrictPublicGroups,
-				user.FieldBalanceNotifyThresholdType,
-				user.FieldBalanceNotifyThreshold,
-				user.FieldBalanceNotifyExtraEmails,
-				user.FieldBalanceNotifyPrimaryEmailDisabled,
-				user.FieldTotalRecharged,
-				user.FieldSignupSource,
-				user.FieldLastLoginAt,
-				user.FieldLastActiveAt,
-				user.FieldRpmLimit,
-			)
-			q.WithAllowedGroups(func(gq *dbent.GroupQuery) {
-				gq.Select(group.FieldID)
+			WithUser(func(q *dbent.UserQuery) {
+				q.Select(
+					user.FieldID,
+					user.FieldEmail,
+					user.FieldUsername,
+					user.FieldStatus,
+					user.FieldRole,
+					user.FieldBalance,
+					user.FieldConcurrency,
+					user.FieldBalanceNotifyEnabled,
+					user.FieldRestrictPublicGroups,
+					user.FieldBalanceNotifyThresholdType,
+					user.FieldBalanceNotifyThreshold,
+					user.FieldBalanceNotifyExtraEmails,
+					user.FieldBalanceNotifyPrimaryEmailDisabled,
+					user.FieldTotalRecharged,
+					user.FieldSignupSource,
+					user.FieldLastLoginAt,
+					user.FieldLastActiveAt,
+					user.FieldRpmLimit,
+				)
+				q.WithAllowedGroups(func(gq *dbent.GroupQuery) {
+					gq.Select(group.FieldID)
+				})
+			}).
+			WithGroup(func(q *dbent.GroupQuery) {
+				q.Select(
+					group.FieldID,
+					group.FieldName,
+					group.FieldPlatform,
+					group.FieldIsExclusive,
+					group.FieldStatus,
+					group.FieldSubscriptionType,
+					group.FieldRateMultiplier,
+					group.FieldDailyLimitUsd,
+					group.FieldWeeklyLimitUsd,
+					group.FieldMonthlyLimitUsd,
+					group.FieldAllowImageGeneration,
+					group.FieldAllowBatchImageGeneration,
+					group.FieldImageRateIndependent,
+					group.FieldImageRateMultiplier,
+					group.FieldImagePrice1k,
+					group.FieldImagePrice2k,
+					group.FieldImagePrice4k,
+					group.FieldVideoRateIndependent,
+					group.FieldVideoRateMultiplier,
+					group.FieldVideoPrice480p,
+					group.FieldVideoPrice720p,
+					group.FieldVideoPrice1080p,
+					group.FieldVideoModelPrices,
+					group.FieldWebSearchPricePerCall,
+					group.FieldSearchPricePer1k,
+					group.FieldOcrPricePer1kPages,
+					// 搜索专用凭据随分组一起取回：执行搜索要用，
+					// 但只有配了搜索的分组才会走这条路径。
+					group.FieldSearchProviderBaseURL,
+					group.FieldSearchProviderAPIKey,
+					group.FieldAudioRealtimePricePerMin,
+					group.FieldAudioTtsPricePerMillionChars,
+					group.FieldAudioSttPricePerHour,
+					group.FieldLongContextPricingEnabled,
+					group.FieldModelPricing,
+					group.FieldClaudeCodeOnly,
+					group.FieldFallbackGroupID,
+					group.FieldFallbackGroupIDOnInvalidRequest,
+					group.FieldModelRoutingEnabled,
+					group.FieldModelRouting,
+					group.FieldMcpXMLInject,
+					group.FieldSupportedModelScopes,
+					group.FieldAllowMessagesDispatch,
+					group.FieldCrossProtocolConversionEnabled,
+					group.FieldReturnRequestedModel,
+					group.FieldAllowLive,
+					group.FieldForceOpenaiFast,
+					group.FieldFreeOpenaiFast,
+					group.FieldDefaultMappedModel,
+					group.FieldMessagesDispatchModelConfig,
+					group.FieldModelAllowlist,
+					group.FieldCodexModelsManifestConfig,
+					group.FieldRpmLimit,
+					group.FieldMaxReasoningEffort,
+					group.FieldMaxReasoningEffortOverLimit,
+					group.FieldReasoningEffortMappings,
+					group.FieldPeakRateEnabled,
+					group.FieldPeakStart,
+					group.FieldPeakEnd,
+					group.FieldPeakRateMultiplier,
+					// 分组利润控制：认证快照是调度门 enable 判定的直接来源，
+					// 漏选会让门静默失效；新增快照分组字段时必须同步本投影，
+					// 集成测试对账兜底。
+					group.FieldProfitControlEnabled,
+					group.FieldProfitMinMargin,
+					group.FieldProfitSafetyBuffer,
+				)
 			})
-		}).
-		WithGroup(func(q *dbent.GroupQuery) {
-			q.Select(
-				group.FieldID,
-				group.FieldName,
-				group.FieldPlatform,
-				group.FieldIsExclusive,
-				group.FieldStatus,
-				group.FieldSubscriptionType,
-				group.FieldRateMultiplier,
-				group.FieldDailyLimitUsd,
-				group.FieldWeeklyLimitUsd,
-				group.FieldMonthlyLimitUsd,
-				group.FieldAllowImageGeneration,
-				group.FieldAllowBatchImageGeneration,
-				group.FieldImageRateIndependent,
-				group.FieldImageRateMultiplier,
-				group.FieldImagePrice1k,
-				group.FieldImagePrice2k,
-				group.FieldImagePrice4k,
-				group.FieldVideoRateIndependent,
-				group.FieldVideoRateMultiplier,
-				group.FieldVideoPrice480p,
-				group.FieldVideoPrice720p,
-				group.FieldVideoPrice1080p,
-				group.FieldVideoModelPrices,
-				group.FieldWebSearchPricePerCall,
-				group.FieldSearchPricePer1k,
-				group.FieldOcrPricePer1kPages,
-				// 搜索专用凭据随分组一起取回：执行搜索要用，
-				// 但只有配了搜索的分组才会走这条路径。
-				group.FieldSearchProviderBaseURL,
-				group.FieldSearchProviderAPIKey,
-				group.FieldAudioRealtimePricePerMin,
-				group.FieldAudioTtsPricePerMillionChars,
-				group.FieldAudioSttPricePerHour,
-				group.FieldLongContextPricingEnabled,
-				group.FieldModelPricing,
-				group.FieldClaudeCodeOnly,
-				group.FieldFallbackGroupID,
-				group.FieldFallbackGroupIDOnInvalidRequest,
-				group.FieldModelRoutingEnabled,
-				group.FieldModelRouting,
-				group.FieldMcpXMLInject,
-				group.FieldSupportedModelScopes,
-				group.FieldAllowMessagesDispatch,
-				group.FieldCrossProtocolConversionEnabled,
-				group.FieldReturnRequestedModel,
-				group.FieldAllowLive,
-				group.FieldForceOpenaiFast,
-				group.FieldFreeOpenaiFast,
-				group.FieldDefaultMappedModel,
-				group.FieldMessagesDispatchModelConfig,
-				group.FieldModelAllowlist,
-				group.FieldCodexModelsManifestConfig,
-				group.FieldRpmLimit,
-				group.FieldMaxReasoningEffort,
-				group.FieldMaxReasoningEffortOverLimit,
-				group.FieldReasoningEffortMappings,
-				group.FieldPeakRateEnabled,
-				group.FieldPeakStart,
-				group.FieldPeakEnd,
-				group.FieldPeakRateMultiplier,
-				// 分组利润控制：认证快照是调度门 enable 判定的直接来源，
-				// 漏选会让门静默失效；新增快照分组字段时必须同步本投影，
-				// 集成测试对账兜底。
-				group.FieldProfitControlEnabled,
-				group.FieldProfitMinMargin,
-				group.FieldProfitSafetyBuffer,
-			)
-		}).
-		Only(ctx)
+	})
 	if err != nil {
 		if dbent.IsNotFound(err) {
 			return nil, service.ErrAPIKeyNotFound
@@ -268,12 +317,31 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 		return nil
 	}
 
+	if fields.Key {
+		// 轮换：新哈希、新前缀、清空明文列、更新 api_key_hashes 必须同事务，
+		// 否则旧明文还会被过渡期回退查询命中（旧 key 未失效）。
+		// 这里强制按 key.Key 重算而不是仅补空值：调用方可能只改了明文却带着
+		// 旧哈希（例如直接调用仓库的脚本/测试），补空逻辑会把旧哈希写回去。
+		key.KeyHash = service.HashAPIKey(key.Key)
+		key.KeyPrefix = service.APIKeyPrefixFromPlaintext(key.Key)
+		return r.withTx(ctx, func(exec *dbent.Client) error {
+			if err := r.updateFields(ctx, exec, key, fields); err != nil {
+				return err
+			}
+			return r.upsertAPIKeyHash(ctx, exec, key.ID, key.KeyHash, key.KeyPrefix)
+		})
+	}
+
+	return r.updateFields(ctx, clientFromContext(ctx, r.client), key, fields)
+}
+
+// updateFields 只写 fields 中显式声明的列，其余列保持库里当前值。
+func (r *apiKeyRepository) updateFields(ctx context.Context, client *dbent.Client, key *service.APIKey, fields service.APIKeyUpdateFields) error {
 	// 使用原子操作：将软删除检查与更新合并到同一语句，避免竞态条件。
 	// 之前的实现先检查 Exist 再 UpdateOneID，若在两步之间发生软删除，
 	// 则会更新已删除的记录。
 	// 这里选择 Update().Where()，确保只有未软删除记录能被更新。
 	// 同时显式设置 updated_at，避免二次查询带来的并发可见性问题。
-	client := clientFromContext(ctx, r.client)
 	now := time.Now()
 	builder := client.APIKey.Update().
 		Where(apikey.IDEQ(key.ID), apikey.DeletedAtIsNil()).
@@ -285,7 +353,11 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 		builder.SetStatus(key.Status)
 	}
 	if fields.Key {
-		builder.SetKey(key.Key).SetKeyRotatedAt(now)
+		// 轮换：写新哈希/前缀、清空明文列，并记录轮换时间（key_rotated_at）。
+		builder.SetKeyHash(key.KeyHash).
+			SetKeyPrefix(key.KeyPrefix).
+			ClearKey().
+			SetKeyRotatedAt(now)
 	}
 	if fields.Quota {
 		builder.SetQuota(key.Quota)
@@ -383,12 +455,14 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 }
 
 func (r *apiKeyRepository) Delete(ctx context.Context, id int64) error {
-	// 存在唯一键约束 生成tombstone key 用来释放原key，长度远小于 128，满足 schema 限制
-	tombstoneKey := fmt.Sprintf("__deleted__%d__%d", id, time.Now().UnixNano())
 	// 显式软删除：避免依赖 Hook 行为，确保 deleted_at 一定被设置。
-	affected, err := r.client.APIKey.Update().
+	// 同时清掉 key_hash 并删掉 api_key_hashes 行：唯一索引只为「活着的 key」
+	// 保留，删除后同一个凭据（自定义 key）可以重新创建。
+	client := clientFromContext(ctx, r.client)
+	affected, err := client.APIKey.Update().
 		Where(apikey.IDEQ(id), apikey.DeletedAtIsNil()).
-		SetKey(tombstoneKey).
+		ClearKey().
+		ClearKeyHash().
 		SetDeletedAt(time.Now()).
 		Save(ctx)
 	if err != nil {
@@ -398,7 +472,7 @@ func (r *apiKeyRepository) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if affected == 0 {
-		exists, err := r.client.APIKey.Query().
+		exists, err := client.APIKey.Query().
 			Where(apikey.IDEQ(id)).
 			Exist(mixins.SkipSoftDelete(ctx))
 		if err != nil {
@@ -409,17 +483,16 @@ func (r *apiKeyRepository) Delete(ctx context.Context, id int64) error {
 		}
 		return service.ErrAPIKeyNotFound
 	}
-	return nil
+	return r.deleteAPIKeyHash(ctx, client, id)
 }
 
 // DeleteWithAudit keeps the legacy method name for rolling-upgrade compatibility.
-// It atomically tombstones and soft-deletes the key without retaining credential
-// material. Tombstoning releases the unique key value for safe reuse.
+// It atomically clears credential material and soft-deletes the key.
 func (r *apiKeyRepository) DeleteWithAudit(ctx context.Context, id int64) error {
-	tombstoneKey := fmt.Sprintf("__deleted__%d__%d", id, time.Now().UnixNano())
-
+	// 明文与哈希同时清空：软删后的行不再保留任何凭据材料，
+	// api_key_hashes 的同事务删除负责释放新表唯一约束。
 	if existingTx := dbent.TxFromContext(ctx); existingTx != nil {
-		return r.deleteWithTombstone(ctx, existingTx.Client(), id, tombstoneKey)
+		return r.deleteWithTombstone(ctx, existingTx.Client(), id)
 	}
 
 	tx, err := r.client.Tx(ctx)
@@ -432,7 +505,7 @@ func (r *apiKeyRepository) DeleteWithAudit(ctx context.Context, id int64) error 
 		exec = tx.Client()
 	}
 
-	if err := r.deleteWithTombstone(ctx, exec, id, tombstoneKey); err != nil {
+	if err := r.deleteWithTombstone(ctx, exec, id); err != nil {
 		return err
 	}
 
@@ -442,11 +515,13 @@ func (r *apiKeyRepository) DeleteWithAudit(ctx context.Context, id int64) error 
 	return nil
 }
 
-func (r *apiKeyRepository) deleteWithTombstone(ctx context.Context, exec *dbent.Client, id int64, tombstoneKey string) error {
+func (r *apiKeyRepository) deleteWithTombstone(ctx context.Context, exec *dbent.Client, id int64) error {
+	// 时间戳由应用侧传入而不是 NOW()：这条语句同时要能在 SQLite（单测）上跑。
+	now := time.Now()
 	res, err := exec.ExecContext(ctx, `
 		UPDATE api_keys
-		SET key = $1, deleted_at = NOW(), updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL`, tombstoneKey, id)
+		SET key = NULL, key_hash = NULL, deleted_at = $1, updated_at = $1
+		WHERE id = $2 AND deleted_at IS NULL`, now, id)
 	if err != nil {
 		return err
 	}
@@ -467,16 +542,19 @@ func (r *apiKeyRepository) deleteWithTombstone(ctx context.Context, exec *dbent.
 		}
 		return service.ErrAPIKeyNotFound
 	}
-	return nil
+	return r.deleteAPIKeyHash(ctx, exec, id)
 }
 
 func (r *apiKeyRepository) apiKeyListByUserIDQuery(userID int64, filters service.APIKeyListFilters) *dbent.APIKeyQuery {
 	q := r.activeQuery().Where(apikey.UserIDEQ(userID))
 
 	if filters.Search != "" {
+		// 明文列在阶段 B 清理后为 NULL，按前缀搜索必须落在 key_prefix 上，
+		// 否则列表搜索会在新版上静默失效。
 		q = q.Where(apikey.Or(
 			apikey.NameContainsFold(filters.Search),
 			apikey.KeyContainsFold(filters.Search),
+			apikey.KeyPrefixContainsFold(filters.Search),
 		))
 	}
 	if filters.Status != "" {
@@ -658,8 +736,22 @@ func (r *apiKeyRepository) CountByUserID(ctx context.Context, userID int64) (int
 	return int64(count), err
 }
 
+// ExistsByKey 判断凭据是否已被占用。过渡期必须同时看两处：
+//   - key_hash 命中：本版本之后创建的所有 key；
+//   - key 明文命中：尚未回填 key_hash 的历史行（回填完就永远不命中）。
+//
+// 少看任何一处都会让「自定义 key 撞已有 key」在校验阶段漏过去，
+// 最终撞在唯一索引上变成 500 而不是可读的「已存在」。
 func (r *apiKeyRepository) ExistsByKey(ctx context.Context, key string) (bool, error) {
-	count, err := r.activeQuery().Where(apikey.KeyEQ(key)).Count(ctx)
+	if key == "" {
+		return false, nil
+	}
+	count, err := r.activeQuery().
+		Where(apikey.Or(
+			apikey.KeyHashEQ(service.HashAPIKey(key)),
+			apikey.KeyEQ(key),
+		)).
+		Count(ctx)
 	return count > 0, err
 }
 
@@ -839,57 +931,56 @@ func (r *apiKeyRepository) CountByGroupID(ctx context.Context, groupID int64) (i
 	return int64(count), err
 }
 
-func (r *apiKeyRepository) ListKeysByUserID(ctx context.Context, userID int64) ([]string, error) {
-	keys, err := r.activeQuery().
+// ListKeyHashesByUserID 返回用户全部未删除 Key 的 key_hash（不是明文）。
+// 认证缓存键 = sha256(明文) = key_hash，所以批量失效缓存只需要哈希。
+func (r *apiKeyRepository) ListKeyHashesByUserID(ctx context.Context, userID int64) ([]string, error) {
+	return r.activeQuery().
 		Where(apikey.UserIDEQ(userID)).
-		Select(apikey.FieldKey).
+		Select(apikey.FieldKeyHash).
 		Strings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return keys, nil
 }
 
-func (r *apiKeyRepository) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
-	keys, err := r.activeQuery().
+// ListKeyHashesByGroupID 返回分组下（含智能路由候选）全部 Key 的 key_hash。
+func (r *apiKeyRepository) ListKeyHashesByGroupID(ctx context.Context, groupID int64) ([]string, error) {
+	hashes, err := r.activeQuery().
 		Where(apikey.GroupIDEQ(groupID)).
-		Select(apikey.FieldKey).
+		Select(apikey.FieldKeyHash).
 		Strings(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if r.sql == nil {
-		return keys, nil
+		return hashes, nil
 	}
 	rows, err := r.sql.QueryContext(ctx, `
-		SELECT DISTINCT k.key
+		SELECT DISTINCT k.key_hash
 		FROM api_keys k
 		INNER JOIN api_key_group_routes r ON r.api_key_id = k.id
-		WHERE r.group_id = $1 AND k.deleted_at IS NULL
+		WHERE r.group_id = $1 AND k.deleted_at IS NULL AND k.key_hash IS NOT NULL
 	`, groupID)
 	if err != nil {
 		if isMissingRelationError(err) {
-			return keys, nil
+			return hashes, nil
 		}
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	seen := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		seen[key] = struct{}{}
+	seen := make(map[string]struct{}, len(hashes))
+	for _, hash := range hashes {
+		seen[hash] = struct{}{}
 	}
 	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
 			return nil, err
 		}
-		if _, ok := seen[key]; ok {
+		if _, ok := seen[hash]; ok {
 			continue
 		}
-		seen[key] = struct{}{}
-		keys = append(keys, key)
+		seen[hash] = struct{}{}
+		hashes = append(hashes, hash)
 	}
-	return keys, rows.Err()
+	return hashes, rows.Err()
 }
 
 func (r *apiKeyRepository) ListIDsByUserAndGroup(ctx context.Context, userID, groupID int64) ([]int64, error) {
@@ -926,11 +1017,11 @@ func (r *apiKeyRepository) IncrementQuotaUsedAndGetState(ctx context.Context, id
 			END,
 			updated_at = NOW()
 		WHERE id = $3 AND deleted_at IS NULL
-		RETURNING quota_used, quota, key, status
+		RETURNING quota_used, quota, COALESCE(key_hash, ''), status
 	`
 
 	state := &service.APIKeyQuotaUsageState{}
-	if err := scanSingleRow(ctx, r.sql, query, []any{amount, service.StatusAPIKeyQuotaExhausted, id}, &state.QuotaUsed, &state.Quota, &state.Key, &state.Status); err != nil {
+	if err := scanSingleRow(ctx, r.sql, query, []any{amount, service.StatusAPIKeyQuotaExhausted, id}, &state.QuotaUsed, &state.Quota, &state.KeyHash, &state.Status); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, service.ErrAPIKeyNotFound
 		}
@@ -1053,6 +1144,8 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 		ID:               m.ID,
 		UserID:           m.UserID,
 		Key:              m.Key,
+		KeyHash:          m.KeyHash,
+		KeyPrefix:        m.KeyPrefix,
 		Name:             m.Name,
 		Status:           m.Status,
 		IPWhitelist:      m.IPWhitelist,

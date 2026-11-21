@@ -755,6 +755,23 @@ type fakeBatchImageAuthCacheInvalidator struct {
 func (f *fakeBatchImageAuthCacheInvalidator) InvalidateAuthCacheByKey(_ context.Context, key string) {
 	f.keys = append(f.keys, key)
 }
+func (f *fakeBatchImageAuthCacheInvalidator) InvalidateAuthCacheByHash(ctx context.Context, hash string) {
+	if hash == "" {
+		return
+	}
+	f.InvalidateAuthCacheByKey(ctx, hash)
+}
+func (f *fakeBatchImageAuthCacheInvalidator) InvalidateAuthCacheForAPIKey(ctx context.Context, apiKey *APIKey) {
+	if apiKey == nil {
+		return
+	}
+	if apiKey.KeyHash != "" {
+		f.InvalidateAuthCacheByHash(ctx, apiKey.KeyHash)
+	}
+	if apiKey.Key != "" {
+		f.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+	}
+}
 
 func (f *fakeBatchImageAuthCacheInvalidator) InvalidateAuthCacheByUserID(_ context.Context, userID int64) {
 	f.userIDs = append(f.userIDs, userID)

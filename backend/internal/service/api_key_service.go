@@ -98,8 +98,10 @@ func (f APIKeyUpdateFields) IsEmpty() bool {
 type APIKeyRepository interface {
 	Create(ctx context.Context, key *APIKey) error
 	GetByID(ctx context.Context, id int64) (*APIKey, error)
-	// GetKeyAndOwnerID 仅获取 API Key 的 key 与所有者 ID，用于删除等轻量场景
-	GetKeyAndOwnerID(ctx context.Context, id int64) (string, int64, error)
+	// GetKeyHashAndOwnerID 仅获取 API Key 的凭据标识与所有者 ID，用于删除等轻量场景。
+	// 凭据标识优先返回 key_hash（新版行为）；尚未回填哈希的历史行回退返回明文，
+	// 保证删除时认证缓存仍能即时失效。
+	GetKeyHashAndOwnerID(ctx context.Context, id int64) (string, int64, error)
 	GetByKey(ctx context.Context, key string) (*APIKey, error)
 	// GetByKeyForAuth 认证专用查询，返回最小字段集
 	GetByKeyForAuth(ctx context.Context, key string) (*APIKey, error)
@@ -121,8 +123,10 @@ type APIKeyRepository interface {
 	// UpdateGroupIDByUserAndGroup 将用户下绑定 oldGroupID 的所有 Key 迁移到 newGroupID
 	UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error)
 	CountByGroupID(ctx context.Context, groupID int64) (int64, error)
-	ListKeysByUserID(ctx context.Context, userID int64) ([]string, error)
-	ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error)
+	// ListKeyHashesByUserID / ListKeyHashesByGroupID 返回 key_hash（不是明文）。
+	// 认证缓存键 = sha256(明文) = key_hash，批量失效缓存只需要哈希。
+	ListKeyHashesByUserID(ctx context.Context, userID int64) ([]string, error)
+	ListKeyHashesByGroupID(ctx context.Context, groupID int64) ([]string, error)
 
 	// Quota methods
 	IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error)
@@ -183,8 +187,9 @@ func (d *APIKeyRateLimitData) EffectiveUsage7d() float64 {
 type APIKeyQuotaUsageState struct {
 	QuotaUsed float64
 	Quota     float64
-	Key       string
-	Status    string
+	// KeyHash 是 sha256 摘要（不是明文）：配额打满后要用它即时失效认证缓存。
+	KeyHash string
+	Status  string
 }
 
 // APIKeyCache defines cache operations for API key service
@@ -219,9 +224,16 @@ func NotifyAuthCacheSubscriptionReady(ctx context.Context) {
 	}
 }
 
-// APIKeyAuthCacheInvalidator 提供认证缓存失效能力
+// APIKeyAuthCacheInvalidator 提供认证缓存失效能力。
+//
+// 凭据改为只落哈希之后，「手上只有库里读出来的一行 APIKey、没有明文」的调用方
+// 必须用 InvalidateAuthCacheForAPIKey：它按 KeyHash（必要时再按明文）失效，
+// 不再假设调用方手里有明文。
 type APIKeyAuthCacheInvalidator interface {
 	InvalidateAuthCacheByKey(ctx context.Context, key string)
+	// InvalidateAuthCacheByHash 按落库的 key_hash 失效缓存（批量/无明文场景）。
+	InvalidateAuthCacheByHash(ctx context.Context, keyHash string)
+	InvalidateAuthCacheForAPIKey(ctx context.Context, apiKey *APIKey)
 	InvalidateAuthCacheByUserID(ctx context.Context, userID int64)
 	InvalidateAuthCacheByGroupID(ctx context.Context, groupID int64)
 }
@@ -667,6 +679,9 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		apiKey.ExpiresAt = &expiresAt
 	}
 
+	// 写库前补哈希/前缀：仓库层也会补一次（兜底其它调用方），但服务层先补齐
+	// 能保证「交给仓库的对象一定带哈希」，也方便断言创建路径不依赖明文落库。
+	apiKey.EnsureKeyHash()
 	if err := s.apiKeyRepo.Create(ctx, apiKey); err != nil {
 		return nil, fmt.Errorf("create api key: %w", err)
 	}
@@ -899,7 +914,10 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 	if err != nil {
 		return nil, fmt.Errorf("get api key: %w", err)
 	}
+	// 认证路径本来就有明文：回填给下游（日志/前缀/缓存失效），并保证哈希可用。
+	// 回退命中的历史行库里 key_hash 为空，这里按明文补算。
 	apiKey.Key = key
+	apiKey.EnsureKeyHash()
 	s.compileAPIKeyIPRules(apiKey)
 	return apiKey, nil
 }
@@ -943,13 +961,20 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	// 轮换密钥：只换凭据值，旧 key 立刻失效；key 行、分组、配额和上游账号
 	// 都不动。因风控被停用的 key 轮换后恢复可用——用户已经用新密钥自救。
 	rotatedFrom := ""
+	rotatedFromHash := ""
 	if req.RegenerateKey {
 		next, err := s.regenerateAPIKeyValue(ctx)
 		if err != nil {
 			return nil, err
 		}
+		// 旧凭据的两份标识都记下来：明文（历史行）与哈希（已回填/新版行）。
 		rotatedFrom = apiKey.Key
+		rotatedFromHash = apiKey.KeyHash
 		apiKey.Key = next
+		// 轮换后必须重算哈希/前缀，并让写库路径清空明文列。
+		apiKey.KeyHash = ""
+		apiKey.KeyPrefix = ""
+		apiKey.EnsureKeyHash()
 		fields.Key = true
 		if apiKey.Status == StatusAPIKeyInactive {
 			apiKey.Status = StatusActive
@@ -1091,11 +1116,14 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		return nil, fmt.Errorf("update api key: %w", err)
 	}
 
-	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+	s.InvalidateAuthCacheForAPIKey(ctx, apiKey)
 	if rotatedFrom != "" && rotatedFrom != apiKey.Key {
 		// The old credential must stop authenticating immediately, so its
 		// cached auth entry is dropped as well.
 		s.InvalidateAuthCacheByKey(ctx, rotatedFrom)
+	}
+	if rotatedFromHash != "" && rotatedFromHash != apiKey.KeyHash {
+		s.InvalidateAuthCacheByHash(ctx, rotatedFromHash)
 	}
 	s.compileAPIKeyIPRules(apiKey)
 
@@ -1120,7 +1148,7 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 
 // Delete 删除API Key
 func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) error {
-	key, ownerID, err := s.apiKeyRepo.GetKeyAndOwnerID(ctx, id)
+	credential, ownerID, err := s.apiKeyRepo.GetKeyHashAndOwnerID(ctx, id)
 	if err != nil {
 		return fmt.Errorf("get api key: %w", err)
 	}
@@ -1137,7 +1165,9 @@ func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) erro
 
 	// 删除成功后再清理缓存,避免"缓存已清但删除失败"的竞态。
 	// 注意:不清零创建相关计数,否则"删除后反复新建"即可绕过创建限流。
-	s.InvalidateAuthCacheByKey(ctx, key)
+	// credential 可能是 key_hash（新版行）或明文（尚未回填哈希的历史行），
+	// 两种形态都要能失效对应的认证缓存。
+	s.InvalidateAuthCacheByCredential(ctx, credential)
 	s.lastUsedTouchL1.Delete(id)
 
 	return nil
@@ -1361,8 +1391,8 @@ func (s *APIKeyService) UpdateQuotaUsed(ctx context.Context, apiKeyID int64, cos
 		if err != nil {
 			return fmt.Errorf("increment quota used: %w", err)
 		}
-		if state != nil && state.Status == StatusAPIKeyQuotaExhausted && strings.TrimSpace(state.Key) != "" {
-			s.InvalidateAuthCacheByKey(ctx, state.Key)
+		if state != nil && state.Status == StatusAPIKeyQuotaExhausted {
+			s.InvalidateAuthCacheByHash(ctx, state.KeyHash)
 		}
 		return nil
 	}
@@ -1388,7 +1418,7 @@ func (s *APIKeyService) UpdateQuotaUsed(ctx context.Context, apiKeyID int64, cos
 			return nil // Don't fail the request
 		}
 		// Invalidate cache so next request sees the new status
-		s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
+		s.InvalidateAuthCacheForAPIKey(ctx, apiKey)
 	}
 
 	return nil
@@ -1418,6 +1448,7 @@ func (s *APIKeyService) GetByKeyUncached(ctx context.Context, key string) (*APIK
 		return nil, err
 	}
 	loaded.Key = key
+	loaded.EnsureKeyHash()
 	s.compileAPIKeyIPRules(loaded)
 	return loaded, nil
 }

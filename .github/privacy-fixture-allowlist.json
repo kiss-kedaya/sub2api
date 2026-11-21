@@ -14,12 +14,12 @@
     },
     {
       "path": "backend/internal/repository/api_key_repo_integration_test.go",
-      "sha256": "de5faeb328146a470e12b200855f6d8b04982f5a99649e622606d29bce3c5eb5",
+      "sha256": "68165a18d4e96ad3e95f9d9f096cc403e650fb0ac6f6433e650399d26ad74dd5",
       "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
     },
     {
       "path": "backend/internal/repository/api_key_repo_last_used_unit_test.go",
-      "sha256": "06e29f7f5c6820acf2c0aad9564070305ab544563b74f6f7468b61458d0b817c",
+      "sha256": "5bebd13f5e2685cc9991154e3c4849706e665cb22dec7c7bc4510faaa1c2c413",
       "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
     },
     {
@@ -84,7 +84,7 @@
     },
     {
       "path": "backend/internal/service/content_moderation_test.go",
-      "sha256": "5e459ddfbe396b19ab1c5b9a8c7e8f1b74f1a359cc25a92387c1654a3257f618",
+      "sha256": "e5e7cde121c4dc9e87b169b401423123ac8f5f6cac238ccc72702391905d1ef1",
       "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
     },
     {

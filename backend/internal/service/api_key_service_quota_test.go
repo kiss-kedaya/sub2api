@@ -86,8 +86,8 @@ func (s *quotaBaseAPIKeyRepoStub) GetByID(context.Context, int64) (*APIKey, erro
 	s.getByIDCalls++
 	return nil, nil
 }
-func (s *quotaBaseAPIKeyRepoStub) GetKeyAndOwnerID(context.Context, int64) (string, int64, error) {
-	panic("unexpected GetKeyAndOwnerID call")
+func (s *quotaBaseAPIKeyRepoStub) GetKeyHashAndOwnerID(context.Context, int64) (string, int64, error) {
+	panic("unexpected GetKeyHashAndOwnerID call")
 }
 func (s *quotaBaseAPIKeyRepoStub) GetByKey(context.Context, string) (*APIKey, error) {
 	panic("unexpected GetByKey call")
@@ -131,11 +131,11 @@ func (s *quotaBaseAPIKeyRepoStub) UpdateGroupIDByUserAndGroup(context.Context, i
 func (s *quotaBaseAPIKeyRepoStub) CountByGroupID(context.Context, int64) (int64, error) {
 	panic("unexpected CountByGroupID call")
 }
-func (s *quotaBaseAPIKeyRepoStub) ListKeysByUserID(context.Context, int64) ([]string, error) {
-	panic("unexpected ListKeysByUserID call")
+func (s *quotaBaseAPIKeyRepoStub) ListKeyHashesByUserID(context.Context, int64) ([]string, error) {
+	panic("unexpected ListKeyHashesByUserID call")
 }
-func (s *quotaBaseAPIKeyRepoStub) ListKeysByGroupID(context.Context, int64) ([]string, error) {
-	panic("unexpected ListKeysByGroupID call")
+func (s *quotaBaseAPIKeyRepoStub) ListKeyHashesByGroupID(context.Context, int64) ([]string, error) {
+	panic("unexpected ListKeyHashesByGroupID call")
 }
 func (s *quotaBaseAPIKeyRepoStub) IncrementQuotaUsed(context.Context, int64, float64) (float64, error) {
 	panic("unexpected IncrementQuotaUsed call")
@@ -158,7 +158,7 @@ func TestAPIKeyService_UpdateQuotaUsed_UsesAtomicStatePath(t *testing.T) {
 		state: &APIKeyQuotaUsageState{
 			QuotaUsed: 12,
 			Quota:     10,
-			Key:       "sk-test-quota",
+			KeyHash:   HashAPIKey("sk-test-quota"),
 			Status:    StatusAPIKeyQuotaExhausted,
 		},
 	}
@@ -172,7 +172,7 @@ func TestAPIKeyService_UpdateQuotaUsed_UsesAtomicStatePath(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, repo.stateCalls)
 	require.Equal(t, 0, repo.getByIDCalls, "fast path should not re-read API key by id")
-	require.Equal(t, []string{svc.authCacheKey("sk-test-quota")}, cache.deleteAuthKeys)
+	require.Equal(t, []string{HashAPIKey("sk-test-quota")}, cache.deleteAuthKeys)
 }
 
 func TestAPIKeyService_Update_ReactivatesQuotaExhaustedWhenQuotaUnlimited(t *testing.T) {

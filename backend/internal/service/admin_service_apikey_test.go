@@ -155,7 +155,7 @@ func (s *apiKeyRepoStubForGroupUpdate) Update(_ context.Context, key *APIKey, _ 
 
 // Unused methods – panic on unexpected call.
 func (s *apiKeyRepoStubForGroupUpdate) Create(context.Context, *APIKey) error { panic("unexpected") }
-func (s *apiKeyRepoStubForGroupUpdate) GetKeyAndOwnerID(context.Context, int64) (string, int64, error) {
+func (s *apiKeyRepoStubForGroupUpdate) GetKeyHashAndOwnerID(context.Context, int64) (string, int64, error) {
 	panic("unexpected")
 }
 func (s *apiKeyRepoStubForGroupUpdate) GetByKey(context.Context, string) (*APIKey, error) {
@@ -192,10 +192,10 @@ func (s *apiKeyRepoStubForGroupUpdate) ClearGroupIDByGroupID(context.Context, in
 func (s *apiKeyRepoStubForGroupUpdate) CountByGroupID(context.Context, int64) (int64, error) {
 	panic("unexpected")
 }
-func (s *apiKeyRepoStubForGroupUpdate) ListKeysByUserID(context.Context, int64) ([]string, error) {
+func (s *apiKeyRepoStubForGroupUpdate) ListKeyHashesByUserID(context.Context, int64) ([]string, error) {
 	panic("unexpected")
 }
-func (s *apiKeyRepoStubForGroupUpdate) ListKeysByGroupID(context.Context, int64) ([]string, error) {
+func (s *apiKeyRepoStubForGroupUpdate) ListKeyHashesByGroupID(context.Context, int64) ([]string, error) {
 	panic("unexpected")
 }
 func (s *apiKeyRepoStubForGroupUpdate) IncrementQuotaUsed(context.Context, int64, float64) (float64, error) {

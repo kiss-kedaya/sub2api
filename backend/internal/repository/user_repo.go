@@ -555,7 +555,12 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 				dbuser.EmailContainsFold(filters.Search),
 				dbuser.UsernameContainsFold(filters.Search),
 				dbuser.NotesContainsFold(filters.Search),
-				dbuser.HasAPIKeysWith(apikey.KeyContainsFold(filters.Search)),
+				// 明文列在阶段 B 清理后为 NULL：按 key 搜索必须同时命中 key_prefix，
+				// 否则新版上「用 key 搜用户」会静默搜不到。
+				dbuser.HasAPIKeysWith(apikey.Or(
+					apikey.KeyContainsFold(filters.Search),
+					apikey.KeyPrefixContainsFold(filters.Search),
+				)),
 			),
 		)
 	}

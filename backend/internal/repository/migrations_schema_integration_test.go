@@ -60,8 +60,16 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "groups", "force_openai_fast", "boolean", 0, false)
 	requireColumn(t, tx, "groups", "free_openai_fast", "boolean", 0, false)
 
-	// api_keys: key length should be 128
-	requireColumn(t, tx, "api_keys", "key", "character varying", 128, false)
+	// api_keys: key length should be 128, and the legacy plaintext column is
+	// nullable after the hash-storage migration (new rows only write key_hash).
+	requireColumn(t, tx, "api_keys", "key", "character varying", 128, true)
+	requireColumn(t, tx, "api_keys", "key_hash", "character", 64, true)
+	requireColumn(t, tx, "api_keys", "key_prefix", "character varying", 16, true)
+	requireIndex(t, tx, "api_keys", "uq_api_keys_key_hash")
+
+	// api_key_hashes: normalized hash ledger keyed by api_key_id.
+	requireColumn(t, tx, "api_key_hashes", "key_hash", "character", 64, false)
+	requireColumn(t, tx, "api_key_hashes", "key_prefix", "character varying", 16, false)
 
 	// redeem_codes: subscription fields
 	requireColumn(t, tx, "redeem_codes", "group_id", "bigint", 0, true)

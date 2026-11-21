@@ -4477,7 +4477,7 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 	}
 	meta.APIKeyID = apiKey.ID
 	meta.GroupID = apiKey.GroupID
-	meta.APIKeyPrefix = keyPrefix(apiKey.Key, 8)
+	meta.APIKeyPrefix = apiKeyDisplayPrefix(apiKey)
 	if apiKey.User != nil {
 		meta.UserID = apiKey.User.ID
 	}
@@ -4553,7 +4553,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 	nativeCompactionV2 := service.IsOpenAINativeCompactionV2(c)
 	apiKeyPrefix := ""
 	if apiKey != nil {
-		apiKeyPrefix = keyPrefix(apiKey.Key, 8)
+		apiKeyPrefix = apiKeyDisplayPrefix(apiKey)
 	}
 	opsMeta := cyberPolicyOpsErrorMeta{
 		RequestID:       requestID,

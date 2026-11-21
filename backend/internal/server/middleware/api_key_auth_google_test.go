@@ -94,7 +94,7 @@ func (f fakeAPIKeyRepo) Create(ctx context.Context, key *service.APIKey) error {
 func (f fakeAPIKeyRepo) GetByID(ctx context.Context, id int64) (*service.APIKey, error) {
 	return nil, errors.New("not implemented")
 }
-func (f fakeAPIKeyRepo) GetKeyAndOwnerID(ctx context.Context, id int64) (string, int64, error) {
+func (f fakeAPIKeyRepo) GetKeyHashAndOwnerID(ctx context.Context, id int64) (string, int64, error) {
 	return "", 0, errors.New("not implemented")
 }
 func (f fakeAPIKeyRepo) GetByKey(ctx context.Context, key string) (*service.APIKey, error) {
@@ -139,10 +139,10 @@ func (f fakeAPIKeyRepo) ClearGroupIDByGroupID(ctx context.Context, groupID int64
 func (f fakeAPIKeyRepo) CountByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	return 0, errors.New("not implemented")
 }
-func (f fakeAPIKeyRepo) ListKeysByUserID(ctx context.Context, userID int64) ([]string, error) {
+func (f fakeAPIKeyRepo) ListKeyHashesByUserID(ctx context.Context, userID int64) ([]string, error) {
 	return nil, errors.New("not implemented")
 }
-func (f fakeAPIKeyRepo) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
+func (f fakeAPIKeyRepo) ListKeyHashesByGroupID(ctx context.Context, groupID int64) ([]string, error) {
 	return nil, errors.New("not implemented")
 }
 func (f fakeAPIKeyRepo) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {

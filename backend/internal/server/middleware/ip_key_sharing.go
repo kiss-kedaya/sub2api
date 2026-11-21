@@ -229,7 +229,7 @@ func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID in
 		if age := now.Sub(apiKey.CreatedAt); age < minAge {
 			slog.Debug("gateway IP sharing skipped: key is younger than the minimum age",
 				"ip", ip, "user_id", userID, "key_id", apiKey.ID,
-				"key_prefix", maskAPIKeyPrefix(apiKey.Key),
+				"key_prefix", apiKeyMaskedPrefix(apiKey),
 				"age_days", int(age.Hours()/24), "min_age_days", minAgeDays,
 				"keys_excluded", 1)
 			return IPKeySharingHit{}, false
@@ -250,7 +250,7 @@ func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID in
 	// The evidence value carries the key ID in front of the masked prefix:
 	// "<keyID>:<prefix>". Older rolling-deploy entries hold a bare prefix, so
 	// the parser below treats a missing colon as "prefix only".
-	evidence := maskAPIKeyPrefix(apiKey.Key)
+	evidence := apiKeyMaskedPrefix(apiKey)
 	if apiKey.ID > 0 {
 		evidence = strconv.FormatInt(apiKey.ID, 10) + ":" + evidence
 	}
@@ -334,10 +334,22 @@ func (d *IPKeySharingDetector) Observe(ctx context.Context, ip string, userID in
 	if len(hit.KeyIDs) == 0 && apiKey.ID > 0 {
 		hit.KeyIDs = []int64{apiKey.ID}
 	}
-	if len(hit.KeyPrefixes) == 0 && apiKey.Key != "" {
-		hit.KeyPrefixes = []string{maskAPIKeyPrefix(apiKey.Key)}
+	if len(hit.KeyPrefixes) == 0 && apiKeyMaskedPrefix(apiKey) != "" {
+		hit.KeyPrefixes = []string{apiKeyMaskedPrefix(apiKey)}
 	}
 	return hit, true
+}
+
+// apiKeyMaskedPrefix 返回可落证据 / 日志的脱敏前缀：优先用落库的 key_prefix
+// （明文不再落库之后只有它可用）；鉴权路径手上带明文时退回按明文截断。
+func apiKeyMaskedPrefix(apiKey *service.APIKey) string {
+	if apiKey == nil {
+		return ""
+	}
+	if prefix := apiKey.DisplayPrefix(); prefix != "" {
+		return maskAPIKeyPrefix(prefix)
+	}
+	return maskAPIKeyPrefix(apiKey.Key)
 }
 
 // maskAPIKeyPrefix keeps only the leading characters of a key. The full key is

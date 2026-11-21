@@ -50,6 +50,17 @@ func newAPIKeyRepoSQLite(t *testing.T) (*apiKeyRepository, *dbent.Client) {
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
 
+	// api_key_hashes 是 326 迁移新增的原生 DDL 表，enttest 只建 schema 里的表，
+	// 这里用 SQLite 兼容的列类型补一份，保证创建/轮换/删除的双写路径可测。
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS api_key_hashes (
+		api_key_id INTEGER PRIMARY KEY,
+		key_hash   TEXT NOT NULL UNIQUE,
+		key_prefix TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL
+	)`)
+	require.NoError(t, err)
+
 	return &apiKeyRepository{client: client, sql: db}, client
 }
 
