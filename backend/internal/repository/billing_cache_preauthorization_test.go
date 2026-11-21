@@ -684,3 +684,123 @@ func TestGetLiveBalanceMissingAndValidation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, LiveBalanceOutcomeNotFound, missing.Outcome)
 }
+
+func TestLoadAndRebuildLiveBalanceAtWatermarkReanchorsStaleProjection(t *testing.T) {
+	cache, client := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+
+	// Redis was restored from an older snapshot: the wallet and watermark are
+	// both behind the committed PostgreSQL chain, which is exactly the production
+	// stuck-outbox state.
+	require.NoError(t, client.Set(ctx, liveBalanceWalletKey(80), "500000000", 0).Err())
+	require.NoError(t, client.Set(ctx, liveBalanceWatermarkKey(80), "3", 0).Err())
+
+	state, err := cache.LoadLiveBalanceWatermarkState(ctx, 80)
+	require.NoError(t, err)
+	require.Equal(t, service.LiveBalanceWatermarkState{
+		WalletValue:     "500000000",
+		WalletExists:    true,
+		WatermarkValue:  "3",
+		WatermarkExists: true,
+	}, state)
+
+	// Database balance is authoritative and its head already includes events
+	// 7/11/19, so the rebuilt projection must match it exactly.
+	rebuilt, err := cache.RebuildLiveBalanceAtWatermark(ctx, 80, state, 12.5, 19)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeApplied, rebuilt.Outcome)
+	require.Equal(t, 12.5, rebuilt.AvailableBalance)
+	require.Equal(t, "1250000000", client.Get(ctx, liveBalanceWalletKey(80)).Val())
+	require.Equal(t, "19", client.Get(ctx, liveBalanceWatermarkKey(80)).Val())
+
+	walletTTL, err := client.TTL(ctx, liveBalanceWalletKey(80)).Result()
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(-1), walletTTL)
+	watermarkTTL, err := client.TTL(ctx, liveBalanceWatermarkKey(80)).Result()
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(-1), watermarkTTL)
+
+	// Replaying the whole chain after the rebuild is an idempotent no-op: the
+	// deltas are already inside users.balance, so no money is applied twice.
+	replay, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, 80, []service.LiveBalanceAdjustmentEvent{
+		{ID: 7, UserID: 80, PredecessorID: 3, DeltaUnits: 500000000},
+		{ID: 11, UserID: 80, PredecessorID: 7, DeltaUnits: -200000000},
+		{ID: 19, UserID: 80, PredecessorID: 11, DeltaUnits: 50000000},
+	})
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeIdempotent, replay.Outcome)
+	require.Equal(t, 12.5, replay.AvailableBalance)
+
+	// The next database event after the snapshot head chains normally.
+	applied, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, 80, []service.LiveBalanceAdjustmentEvent{
+		{ID: 23, UserID: 80, PredecessorID: 19, DeltaUnits: -250000000},
+	})
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeApplied, applied.Outcome)
+	require.Equal(t, 10.0, applied.AvailableBalance)
+	require.Equal(t, "23", client.Get(ctx, liveBalanceWatermarkKey(80)).Val())
+}
+
+func TestRebuildLiveBalanceAtWatermarkRejectsConcurrentWriter(t *testing.T) {
+	cache, client := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+	require.NoError(t, client.Set(ctx, liveBalanceWalletKey(81), "500000000", 0).Err())
+	require.NoError(t, client.Set(ctx, liveBalanceWatermarkKey(81), "3", 0).Err())
+	state, err := cache.LoadLiveBalanceWatermarkState(ctx, 81)
+	require.NoError(t, err)
+
+	// A worker/authorization advances the projection between the read and the
+	// rebuild. The compare-and-swap must refuse to overwrite the newer value.
+	require.NoError(t, client.Set(ctx, liveBalanceWatermarkKey(81), "11", 0).Err())
+
+	conflict, err := cache.RebuildLiveBalanceAtWatermark(ctx, 81, state, 12.5, 19)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeConflict, conflict.Outcome)
+	require.Equal(t, "500000000", client.Get(ctx, liveBalanceWalletKey(81)).Val())
+	require.Equal(t, "11", client.Get(ctx, liveBalanceWatermarkKey(81)).Val())
+
+	// Re-reading the new state makes the next repair a clean rebuild.
+	freshState, err := cache.LoadLiveBalanceWatermarkState(ctx, 81)
+	require.NoError(t, err)
+	rebuilt, err := cache.RebuildLiveBalanceAtWatermark(ctx, 81, freshState, 12.5, 19)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeApplied, rebuilt.Outcome)
+	require.Equal(t, "19", client.Get(ctx, liveBalanceWatermarkKey(81)).Val())
+}
+
+func TestRebuildLiveBalanceAtWatermarkCreatesMissingKeysAndPersistsThem(t *testing.T) {
+	cache, client := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+
+	state, err := cache.LoadLiveBalanceWatermarkState(ctx, 82)
+	require.NoError(t, err)
+	require.Equal(t, service.LiveBalanceWatermarkState{}, state)
+
+	rebuilt, err := cache.RebuildLiveBalanceAtWatermark(ctx, 82, state, 7.5, 0)
+	require.NoError(t, err)
+	require.Equal(t, LiveBalanceOutcomeApplied, rebuilt.Outcome)
+	require.Equal(t, 7.5, rebuilt.AvailableBalance)
+	require.Equal(t, "750000000", client.Get(ctx, liveBalanceWalletKey(82)).Val())
+	require.Equal(t, "0", client.Get(ctx, liveBalanceWatermarkKey(82)).Val())
+
+	walletTTL, err := client.TTL(ctx, liveBalanceWalletKey(82)).Result()
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(-1), walletTTL)
+	watermarkTTL, err := client.TTL(ctx, liveBalanceWatermarkKey(82)).Result()
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(-1), watermarkTTL)
+}
+
+func TestRebuildLiveBalanceAtWatermarkRejectsInvalidInput(t *testing.T) {
+	cache, _ := newLiveBalanceTestCache(t)
+	ctx := context.Background()
+
+	_, err := cache.LoadLiveBalanceWatermarkState(ctx, 0)
+	require.Error(t, err)
+	_, err = cache.RebuildLiveBalanceAtWatermark(ctx, 0, service.LiveBalanceWatermarkState{}, 1, 1)
+	require.Error(t, err)
+	_, err = cache.RebuildLiveBalanceAtWatermark(ctx, 90, service.LiveBalanceWatermarkState{}, 1, -1)
+	require.Error(t, err)
+	_, err = cache.RebuildLiveBalanceAtWatermark(ctx, 90, service.LiveBalanceWatermarkState{}, math.NaN(), 1)
+	require.Error(t, err)
+}

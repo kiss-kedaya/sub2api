@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -11,17 +12,21 @@ import (
 )
 
 type liveBalanceOutboxRepoStub struct {
-	mu             sync.Mutex
-	events         []LiveBalanceAdjustmentEvent
-	claimLimit     int
-	marked         []int64
-	markedBatches  [][]int64
-	retried        []int64
-	retriedBatches [][]int64
-	retryError     string
-	markFailures   int
-	deleted        int64
-	stats          LiveBalanceAdjustmentOutboxStats
+	mu              sync.Mutex
+	events          []LiveBalanceAdjustmentEvent
+	claimLimit      int
+	marked          []int64
+	markedBatches   [][]int64
+	retried         []int64
+	retriedBatches  [][]int64
+	abandonedIDs    []int64
+	abandonReasons  []string
+	retryError      string
+	markFailures    int
+	abandonFailures int
+	deleted         int64
+	deletedSequence []int64
+	stats           LiveBalanceAdjustmentOutboxStats
 }
 
 func (r *liveBalanceOutboxRepoStub) Claim(_ context.Context, _ string, limit int, _ time.Duration) ([]LiveBalanceAdjustmentEvent, error) {
@@ -70,7 +75,38 @@ func (r *liveBalanceOutboxRepoStub) RetryClaimedBatch(_ context.Context, ids []i
 	return nil
 }
 
+func (r *liveBalanceOutboxRepoStub) AbandonClaimed(_ context.Context, id int64, _ string, reason string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.abandonFailures > 0 {
+		r.abandonFailures--
+		return errors.New("database unavailable")
+	}
+	r.abandonedIDs = append(r.abandonedIDs, id)
+	r.abandonReasons = append(r.abandonReasons, reason)
+	return nil
+}
+
+func (r *liveBalanceOutboxRepoStub) AbandonClaimedBatch(_ context.Context, ids []int64, _ string, reason string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.abandonFailures > 0 {
+		r.abandonFailures--
+		return errors.New("database unavailable")
+	}
+	r.abandonedIDs = append(r.abandonedIDs, ids...)
+	r.abandonReasons = append(r.abandonReasons, reason)
+	return nil
+}
+
 func (r *liveBalanceOutboxRepoStub) DeleteDelivered(context.Context, time.Time, int) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.deletedSequence) > 0 {
+		deleted := r.deletedSequence[0]
+		r.deletedSequence = r.deletedSequence[1:]
+		return deleted, nil
+	}
 	return r.deleted, nil
 }
 
@@ -257,4 +293,95 @@ func TestLiveBalanceOutboxRetryDelayIsBounded(t *testing.T) {
 		require.GreaterOrEqual(t, delay, 800*time.Millisecond)
 		require.LessOrEqual(t, delay, 308*time.Second)
 	}
+}
+
+type liveBalanceOutboxRecoveringApplierStub struct {
+	liveBalanceOutboxApplierStub
+	recovery LiveBalanceAdjustmentRecoveryStats
+}
+
+func (a *liveBalanceOutboxRecoveringApplierStub) RecoveryStats() LiveBalanceAdjustmentRecoveryStats {
+	return a.recovery
+}
+
+func TestLiveBalanceAdjustmentOutboxConflictIsCountedAndRetriedBelowCap(t *testing.T) {
+	repo := &liveBalanceOutboxRepoStub{}
+	applier := &liveBalanceOutboxApplierStub{err: errLiveBalanceWatermarkConflict}
+	worker := newLiveBalanceAdjustmentOutboxWorker(repo, applier)
+
+	worker.processEventBatch(context.Background(), []LiveBalanceAdjustmentEvent{
+		{ID: 10, UserID: 7, PredecessorID: 8, DeltaUnits: 100, Attempts: 1},
+		{ID: 11, UserID: 7, PredecessorID: 10, DeltaUnits: -25, Attempts: 1},
+	})
+
+	require.Empty(t, repo.marked)
+	require.Empty(t, repo.abandonedIDs)
+	require.Equal(t, [][]int64{{10, 11}}, repo.retriedBatches)
+	require.Equal(t, uint64(1), worker.Health(context.Background()).Conflicts)
+}
+
+func TestLiveBalanceAdjustmentOutboxAbandonsPoisonRowAtAttemptCap(t *testing.T) {
+	repo := &liveBalanceOutboxRepoStub{}
+	applier := &liveBalanceOutboxApplierStub{err: errLiveBalanceWatermarkConflict}
+	worker := newLiveBalanceAdjustmentOutboxWorker(repo, applier)
+
+	worker.processEventBatch(context.Background(), []LiveBalanceAdjustmentEvent{
+		{ID: 10, UserID: 7, PredecessorID: 8, DeltaUnits: 100, Attempts: liveBalanceOutboxMaxAttempts - 1},
+	})
+
+	require.Equal(t, []int64{10}, repo.abandonedIDs)
+	require.Empty(t, repo.retriedBatches)
+	require.Contains(t, repo.abandonReasons[0], "abandoned after")
+	require.Equal(t, uint64(1), worker.Health(context.Background()).Conflicts)
+	require.Equal(t, uint64(1), worker.abandoned.Load())
+}
+
+func TestLiveBalanceAdjustmentOutboxAbandonsRowsForVanishedUser(t *testing.T) {
+	repo := &liveBalanceOutboxRepoStub{}
+	applier := &liveBalanceOutboxApplierStub{
+		err: fmt.Errorf("%w: user_id=7", errLiveBalanceAdjustmentUserGone),
+	}
+	worker := newLiveBalanceAdjustmentOutboxWorker(repo, applier)
+
+	worker.processEventBatch(context.Background(), []LiveBalanceAdjustmentEvent{
+		{ID: 10, UserID: 7, PredecessorID: 8, DeltaUnits: 100},
+	})
+
+	require.Equal(t, []int64{10}, repo.abandonedIDs)
+	require.Empty(t, repo.retriedBatches)
+	require.Contains(t, repo.abandonReasons[0], "user is gone")
+}
+
+func TestLiveBalanceAdjustmentOutboxHealthExposesRecoveryCounters(t *testing.T) {
+	repo := &liveBalanceOutboxRepoStub{}
+	applier := &liveBalanceOutboxRecoveringApplierStub{
+		recovery: LiveBalanceAdjustmentRecoveryStats{Healed: 3, HealFailures: 2, Abandoned: 1},
+	}
+	worker := newLiveBalanceAdjustmentOutboxWorker(repo, applier)
+	worker.conflicts.Store(4)
+	worker.abandoned.Store(5)
+
+	health := worker.Health(context.Background())
+	require.Equal(t, uint64(4), health.Conflicts)
+	require.Equal(t, uint64(3), health.Healed)
+	require.Equal(t, uint64(2), health.HealFailures)
+	require.Equal(t, uint64(5), health.Abandoned)
+}
+
+func TestLiveBalanceAdjustmentOutboxCleanupDrainsBacklogAcrossBoundedBatches(t *testing.T) {
+	repo := &liveBalanceOutboxRepoStub{deletedSequence: []int64{
+		liveBalanceOutboxCleanupBatch,
+		liveBalanceOutboxCleanupBatch,
+		liveBalanceOutboxCleanupBatch,
+		liveBalanceOutboxCleanupBatch,
+	}}
+	worker := newLiveBalanceAdjustmentOutboxWorker(repo, &liveBalanceOutboxApplierStub{})
+
+	worker.cleanup(context.Background())
+
+	require.Equal(t,
+		uint64(liveBalanceOutboxCleanupMaxBatches*liveBalanceOutboxCleanupBatch),
+		worker.Health(context.Background()).Cleaned,
+		"one tick must be bounded but delete far more than the old 10k/hour")
+	require.Len(t, repo.deletedSequence, 1, "the tick stops at the batch budget")
 }

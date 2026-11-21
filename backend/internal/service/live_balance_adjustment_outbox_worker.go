@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -30,6 +31,8 @@ type LiveBalanceAdjustmentOutboxWorker struct {
 	processed atomic.Uint64
 	retries   atomic.Uint64
 	failures  atomic.Uint64
+	conflicts atomic.Uint64
+	abandoned atomic.Uint64
 	cleaned   atomic.Uint64
 	lastError atomic.Value
 }
@@ -198,7 +201,9 @@ func (w *LiveBalanceAdjustmentOutboxWorker) processEventBatch(parent context.Con
 	err := batchApplier.ApplyExternalBalanceOutboxAdjustments(ctx, events)
 	cancel()
 	if err != nil {
-		w.retryEventBatch(events, err)
+		w.handleApplyFailure(events[len(events)-1], err, func(reason string) error {
+			return w.abandonEventBatch(events, reason)
+		}, func(cause error) { w.retryEventBatch(events, cause) })
 		return
 	}
 	ackCtx, ackCancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -210,6 +215,39 @@ func (w *LiveBalanceAdjustmentOutboxWorker) processEventBatch(parent context.Con
 	}
 	w.processed.Add(uint64(len(events)))
 	w.lastError.Store("")
+}
+
+// handleApplyFailure decides between retry, self-heal, and abandonment. A
+// vanished user can never be projected; an event that already exhausted the
+// attempt budget is a poison row. Both are abandoned with the recorded error so
+// they stop blocking the rest of that user's chain forever.
+func (w *LiveBalanceAdjustmentOutboxWorker) handleApplyFailure(
+	last LiveBalanceAdjustmentEvent,
+	cause error,
+	abandon func(reason string) error,
+	retry func(cause error),
+) {
+	if errors.Is(cause, errLiveBalanceWatermarkConflict) {
+		w.conflicts.Add(1)
+	}
+	if errors.Is(cause, errLiveBalanceAdjustmentUserGone) {
+		if err := abandon(boundedLiveBalanceOutboxError(cause)); err != nil {
+			w.recordFailure("abandon", last.ID, err)
+			return
+		}
+		w.recordFailure("abandon", last.ID, cause)
+		return
+	}
+	if last.Attempts+1 >= liveBalanceOutboxMaxAttempts {
+		reason := boundedLiveBalanceOutboxError(fmt.Errorf("abandoned after %d attempts: %w", last.Attempts+1, cause))
+		if err := abandon(reason); err != nil {
+			w.recordFailure("abandon", last.ID, err)
+			return
+		}
+		w.recordFailure("abandon", last.ID, cause)
+		return
+	}
+	retry(cause)
 }
 
 func (w *LiveBalanceAdjustmentOutboxWorker) retryEventBatch(events []LiveBalanceAdjustmentEvent, cause error) {
@@ -233,12 +271,46 @@ func (w *LiveBalanceAdjustmentOutboxWorker) retryEventBatch(events []LiveBalance
 	w.retries.Add(uint64(len(events)))
 }
 
+func (w *LiveBalanceAdjustmentOutboxWorker) abandonEventBatch(
+	events []LiveBalanceAdjustmentEvent,
+	reason string,
+) error {
+	ids := make([]int64, len(events))
+	for i := range events {
+		ids[i] = events[i].ID
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	err := w.repo.AbandonClaimedBatch(ctx, ids, w.workerID, reason)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("abandon live balance adjustment batch: %w", err)
+	}
+	w.abandoned.Add(uint64(len(events)))
+	return nil
+}
+
+func (w *LiveBalanceAdjustmentOutboxWorker) abandonEvent(
+	event LiveBalanceAdjustmentEvent,
+	reason string,
+) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	err := w.repo.AbandonClaimed(ctx, event.ID, w.workerID, reason)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("abandon live balance adjustment: %w", err)
+	}
+	w.abandoned.Add(1)
+	return nil
+}
+
 func (w *LiveBalanceAdjustmentOutboxWorker) processEvent(parent context.Context, event LiveBalanceAdjustmentEvent) {
 	ctx, cancel := context.WithTimeout(parent, liveBalanceOutboxRedisTimeout)
 	err := w.applier.ApplyExternalBalanceOutboxAdjustment(ctx, event)
 	cancel()
 	if err != nil {
-		w.retry(event, err)
+		w.handleApplyFailure(event, err, func(reason string) error {
+			return w.abandonEvent(event, reason)
+		}, func(cause error) { w.retry(event, cause) })
 		return
 	}
 
@@ -268,19 +340,22 @@ func (w *LiveBalanceAdjustmentOutboxWorker) retry(event LiveBalanceAdjustmentEve
 }
 
 func (w *LiveBalanceAdjustmentOutboxWorker) cleanup(parent context.Context) {
-	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
-	deleted, err := w.repo.DeleteDelivered(
-		ctx,
-		time.Now().UTC().Add(-liveBalanceOutboxRetention),
-		liveBalanceOutboxCleanupBatch,
-	)
-	cancel()
-	if err != nil {
-		w.recordFailure("cleanup", 0, err)
-		return
-	}
-	if deleted > 0 {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	defer cancel()
+	before := time.Now().UTC().Add(-liveBalanceOutboxRetention)
+	for i := 0; i < liveBalanceOutboxCleanupMaxBatches; i++ {
+		deleted, err := w.repo.DeleteDelivered(ctx, before, liveBalanceOutboxCleanupBatch)
+		if err != nil {
+			w.recordFailure("cleanup", 0, err)
+			return
+		}
+		if deleted <= 0 {
+			return
+		}
 		w.cleaned.Add(uint64(deleted))
+		if deleted < int64(liveBalanceOutboxCleanupBatch) {
+			return
+		}
 	}
 }
 
@@ -306,7 +381,14 @@ func (w *LiveBalanceAdjustmentOutboxWorker) Health(ctx context.Context) LiveBala
 	health.Processed = w.processed.Load()
 	health.Retries = w.retries.Load()
 	health.Failures = w.failures.Load()
+	health.Conflicts = w.conflicts.Load()
+	health.Abandoned = w.abandoned.Load()
 	health.Cleaned = w.cleaned.Load()
+	if provider, ok := w.applier.(liveBalanceRecoveryStatsProvider); ok {
+		recovery := provider.RecoveryStats()
+		health.Healed = recovery.Healed
+		health.HealFailures = recovery.HealFailures
+	}
 	if value := w.lastError.Load(); value != nil {
 		health.LastError, _ = value.(string)
 	}
