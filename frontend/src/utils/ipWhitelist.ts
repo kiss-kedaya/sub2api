@@ -14,10 +14,19 @@ export function splitIPEntries(value: string): string[] {
     .filter(Boolean)
 }
 
+/**
+ * Comparison form for one entry. IPv6 hex digits are case-insensitive, so
+ * `2001:DB8::1` and `2001:db8::1` are the same address; otherwise the "fill in
+ * current IP" helper would append an entry the user already has.
+ */
+function comparableEntry(entry: string): string {
+  return entry.includes(':') ? entry.toLowerCase() : entry
+}
+
 /** True when the entry already exists in the textarea content. */
 export function hasIPEntry(value: string, entry: string): boolean {
-  const target = entry.trim()
-  return target !== '' && splitIPEntries(value).includes(target)
+  const target = comparableEntry(entry.trim())
+  return target !== '' && splitIPEntries(value).some((item) => comparableEntry(item) === target)
 }
 
 /**

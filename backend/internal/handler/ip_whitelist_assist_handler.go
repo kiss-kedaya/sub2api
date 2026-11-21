@@ -45,6 +45,9 @@ func (h *IPWhitelistAssistHandler) Get(c *gin.Context) {
 	// by the global middleware, honoring api_key_acl_trust_forwarded_ip and
 	// server.trusted_proxies), so what the user confirms is what will be checked.
 	currentIP := middleware2.SecurityClientIP(c)
+	// The payload is personal (the caller's addresses and history). Keep it out
+	// of any intermediary/HTTP cache that a shared proxy might add later.
+	c.Header("Cache-Control", "no-store")
 	result, err := h.service.Get(c.Request.Context(), subject.UserID, currentIP)
 	if err != nil {
 		if errors.Is(err, service.ErrIPWhitelistAssistRateLimited) {

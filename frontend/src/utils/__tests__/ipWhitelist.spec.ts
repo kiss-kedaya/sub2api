@@ -46,4 +46,15 @@ describe('ipWhitelist helpers', () => {
   it('treats blank input as a duplicate and leaves the content untouched', () => {
     expect(appendIPEntry('10.0.0.1', '   ')).toEqual({ value: '10.0.0.1', duplicate: true })
   })
+
+  it('treats IPv6 entries as the same address regardless of hex case', () => {
+    expect(hasIPEntry('2001:DB8::1', '2001:db8::1')).toBe(true)
+    expect(hasIPEntry('2001:db8::1', '2001:DB8::1')).toBe(true)
+    expect(appendIPEntry('2001:DB8::1', '2001:db8::1')).toEqual({
+      value: '2001:DB8::1',
+      duplicate: true
+    })
+    // IPv4 has no case fold, so distinct addresses stay distinct.
+    expect(hasIPEntry('10.0.0.1', '10.0.0.2')).toBe(false)
+  })
 })

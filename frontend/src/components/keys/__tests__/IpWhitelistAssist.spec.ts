@@ -218,6 +218,35 @@ describe('IpWhitelistAssist', () => {
     expect(wrapper.find('[data-test="ip-assist-candidate"]').exists()).toBe(false)
   })
 
+  it('re-fetches the current IP on every click so a network switch is not missed', async () => {
+    getIPWhitelistAssistMock
+      .mockResolvedValueOnce({
+        current_ip: '203.0.113.7',
+        current_geo: GEO_SHENZHEN,
+        recent_ips: []
+      })
+      .mockResolvedValueOnce({
+        current_ip: '198.51.100.9',
+        current_geo: { country: '美国', city: '阿什本', hosting: true },
+        recent_ips: []
+      })
+    const wrapper = mountAssist()
+
+    await wrapper.get('[data-test="ip-assist-fill-current"]').trigger('click')
+    await flushPromises()
+    await nextTick()
+    expect(wrapper.get('[data-test="ip-assist-candidate"]').text()).toContain('203.0.113.7')
+
+    // Same modal, user switched network (e.g. enabled a VPN) and clicks again.
+    await wrapper.get('[data-test="ip-assist-fill-current"]').trigger('click')
+    await flushPromises()
+    await nextTick()
+    expect(getIPWhitelistAssistMock).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-test="ip-assist-candidate"]').text()).toContain('198.51.100.9')
+    // The new answer keeps the datacenter warning.
+    expect(wrapper.find('[data-test="ip-assist-hosting-warning"]').exists()).toBe(true)
+  })
+
   it('lets a candidate be cancelled before the countdown ends', async () => {
     mockAssist()
     const wrapper = mountAssist()

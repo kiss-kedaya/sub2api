@@ -198,3 +198,66 @@ func TestIPWhitelistAssistGetWithoutCurrentIP(t *testing.T) {
 		t.Fatalf("recent_ips = %#v", result.RecentIPs)
 	}
 }
+
+// A user who switches networks (home -> VPN) within the cache TTL must not be
+// shown the previous network's "current IP": whitelisting it would lock them
+// out, which is the failure this endpoint is meant to prevent.
+func TestIPWhitelistAssistGetCacheSeparatesClientIPs(t *testing.T) {
+	repo := &assistRepoStub{ips: []RecentClientIP{{IP: "203.0.113.7", Count: 1}}}
+	svc := newAssistServiceForTest(repo, func(_ context.Context, _ []string) map[string]ipquality.Geo {
+		return nil
+	})
+
+	if _, err := svc.Get(context.Background(), 5, "203.0.113.7"); err != nil {
+		t.Fatalf("first Get: %v", err)
+	}
+	// Same user, different egress: must recompute instead of replaying the cache.
+	result, err := svc.Get(context.Background(), 5, "198.51.100.9")
+	if err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+	if result.CurrentIP != "198.51.100.9" {
+		t.Fatalf("stale current_ip served for a new client IP: %q", result.CurrentIP)
+	}
+	if repo.calls != 2 {
+		t.Fatalf("expected a recompute for the new IP, repo calls = %d", repo.calls)
+	}
+}
+
+func TestIPWhitelistAssistGetRejectsMalformedCurrentIP(t *testing.T) {
+	repo := &assistRepoStub{ips: []RecentClientIP{{IP: "203.0.113.7", Count: 1}}}
+	svc := newAssistServiceForTest(repo, func(_ context.Context, ips []string) map[string]ipquality.Geo {
+		if len(ips) != 1 || ips[0] != "203.0.113.7" {
+			t.Fatalf("malformed current ip must not be looked up: %#v", ips)
+		}
+		return nil
+	})
+
+	for i, raw := range []string{"not-an-ip", "203.0.113.7:443", "1.2.3.4 5.6.7.8"} {
+		result, err := svc.Get(context.Background(), 11+int64(i), raw)
+		if err != nil {
+			t.Fatalf("Get(%q) returned error: %v", raw, err)
+		}
+		if result.CurrentIP != "" || result.CurrentGeo != (IPGeo{}) {
+			t.Fatalf("Get(%q) must blank the current ip, got %#v", raw, result)
+		}
+	}
+}
+
+func TestIPWhitelistAssistGetAcceptsIPv6CurrentIP(t *testing.T) {
+	repo := &assistRepoStub{}
+	svc := newAssistServiceForTest(repo, func(_ context.Context, ips []string) map[string]ipquality.Geo {
+		if len(ips) != 1 || ips[0] != "2001:db8::1" {
+			t.Fatalf("unexpected lookup ips: %#v", ips)
+		}
+		return map[string]ipquality.Geo{"2001:db8::1": {Country: "China", City: "Shenzhen"}}
+	})
+
+	result, err := svc.Get(context.Background(), 21, "2001:db8::1")
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if result.CurrentIP != "2001:db8::1" || result.CurrentGeo.City != "Shenzhen" {
+		t.Fatalf("IPv6 current ip lost: %#v", result)
+	}
+}
