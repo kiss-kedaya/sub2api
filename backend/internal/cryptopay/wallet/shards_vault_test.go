@@ -284,4 +284,29 @@ func TestAuthorizeSweepRejectsLockedV3Vault(t *testing.T) {
 	require.ErrorIs(t, err, ErrSignerShareRequired)
 }
 
+func TestVerifyInstallationKeyUnsealsServerHeldShare(t *testing.T) {
+	m, mock, fixture := shardTestManager(t)
+	expectSettingValue(mock, fixture.record)
+	require.NoError(t, m.VerifyInstallationKey(context.Background()))
+
+	// A different installation key must be reported as unusable, so startup can
+	// fail closed instead of silently accepting a wrong environment key.
+	db, otherMock, err := sqlmock.New()
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	wrong := New(db, strings.Repeat("11", 32))
+	expectSettingValue(otherMock, fixture.record)
+	require.ErrorIs(t, wrong.VerifyInstallationKey(context.Background()), ErrSignerShareInvalid)
+
+	// A v3 vault without a configured shard record is unrecoverable.
+	emptyDB, emptyMock, err := sqlmock.New()
+	require.NoError(t, err)
+	emptyDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = emptyDB.Close() })
+	empty := New(emptyDB, testMasterKey)
+	expectSettingValue(emptyMock, "")
+	require.ErrorIs(t, empty.VerifyInstallationKey(context.Background()), ErrShardsNotConfigured)
+}
+
 var _ = sql.ErrNoRows

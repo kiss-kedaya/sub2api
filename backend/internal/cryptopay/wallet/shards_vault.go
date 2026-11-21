@@ -316,6 +316,31 @@ func (m *Manager) VerifyShardShare(ctx context.Context, share string) error {
 	return nil
 }
 
+// VerifyInstallationKey proves the installation key can still unseal the
+// server-held share A. Startup uses it to reject a wrong environment key for a
+// data-key vault without needing the operator share that would unlock it.
+func (m *Manager) VerifyInstallationKey(ctx context.Context) error {
+	if m.db == nil || len(m.masterKey) != 32 {
+		return ErrVaultUnavailable
+	}
+	record, err := m.loadShardRecord(ctx)
+	if err != nil {
+		return err
+	}
+	if !recordConfigured(record) {
+		return ErrShardsNotConfigured
+	}
+	sealed, err := m.openMasterContext(record.ShareA, shareACipherContext)
+	if err != nil {
+		return ErrSignerShareInvalid
+	}
+	defer clear(sealed)
+	if _, err := shards.ParseShare(string(sealed)); err != nil {
+		return ErrSignerShareInvalid
+	}
+	return nil
+}
+
 // UnlockSigner reconstructs the data key for one bounded operation and keeps
 // it resident only until LockSigner is called (hard-capped by dataKeyLease).
 func (m *Manager) UnlockSigner(ctx context.Context, share string) error {
