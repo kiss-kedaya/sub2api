@@ -154,7 +154,7 @@ func (h *RedeemHandler) Generate(c *gin.Context) {
 
 	// first 保存本次真实生成的明文列表；幂等 journal 里只写掩码形态。
 	var first []dto.GeneratedRedeemCode
-	result, err := executeAdminIdempotentWithResponseOptions(
+	executeAdminIdempotentJSONWithReplayAwareResponse(
 		c,
 		"admin.redeem_codes.generate",
 		req,
@@ -184,32 +184,30 @@ func (h *RedeemHandler) Generate(c *gin.Context) {
 			}
 			// 只有掩码形态进 journal，重放时拿不回明文。
 			return masked, nil
-		})
+		},
+		func(replayed bool, data any) (any, error) {
+			if !replayed {
+				return first, nil
+			}
+			return decodeAndSanitizeRedeemCodes(data)
+		},
+	)
+}
+
+// decodeAndSanitizeRedeemCodes 把幂等 journal 里的历史响应重新解码并强制掩码。
+//
+// 本版本之前的 journal 可能存过完整明文（当时的响应被原样保存）。重放一律重新
+// 掩码：不能因为「那是历史数据」就把可兑换卡密转发出去。
+func decodeAndSanitizeRedeemCodes(data any) (any, error) {
+	body, err := json.Marshal(data)
 	if err != nil {
-		if retryAfter := service.RetryAfterSecondsFromError(err); retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		response.ErrorFrom(c, err)
-		return
+		return nil, err
 	}
-
-	if result != nil && result.Replayed {
-		c.Header("X-Idempotency-Replayed", "true")
-		body, marshalErr := json.Marshal(result.Data)
-		if marshalErr != nil {
-			response.ErrorFrom(c, service.ErrIdempotencyStoreUnavail)
-			return
-		}
-		var replay []dto.AdminRedeemCode
-		if unmarshalErr := json.Unmarshal(body, &replay); unmarshalErr != nil {
-			response.ErrorFrom(c, service.ErrIdempotencyStoreUnavail)
-			return
-		}
-		response.Success(c, dto.SanitizeAdminRedeemCodes(replay))
-		return
+	var codes []dto.AdminRedeemCode
+	if err := json.Unmarshal(body, &codes); err != nil {
+		return nil, err
 	}
-
-	response.Success(c, first)
+	return dto.SanitizeAdminRedeemCodes(codes), nil
 }
 
 // CreateAndRedeem creates a fixed redeem code and redeems it for a target user in one step.
@@ -254,7 +252,7 @@ func (h *RedeemHandler) CreateAndRedeem(c *gin.Context) {
 
 	c.Header("Cache-Control", "no-store")
 
-	result, err := executeAdminIdempotentWithResponseOptions(
+	executeAdminIdempotentJSONWithReplayAwareResponse(
 		c,
 		"admin.redeem_codes.create_and_redeem",
 		req,
@@ -296,34 +294,24 @@ func (h *RedeemHandler) CreateAndRedeem(c *gin.Context) {
 				return nil, redeemErr
 			}
 			return gin.H{"redeem_code": dto.RedeemCodeFromServiceAdmin(redeemed)}, nil
-		})
-	if err != nil {
-		if retryAfter := service.RetryAfterSecondsFromError(err); retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		response.ErrorFrom(c, err)
-		return
-	}
-
-	if result != nil && result.Replayed {
-		c.Header("X-Idempotency-Replayed", "true")
-		body, marshalErr := json.Marshal(result.Data)
-		if marshalErr != nil {
-			response.ErrorFrom(c, service.ErrIdempotencyStoreUnavail)
-			return
-		}
-		var replay struct {
-			RedeemCode *dto.AdminRedeemCode `json:"redeem_code"`
-		}
-		if unmarshalErr := json.Unmarshal(body, &replay); unmarshalErr != nil {
-			response.ErrorFrom(c, service.ErrIdempotencyStoreUnavail)
-			return
-		}
-		response.Success(c, gin.H{"redeem_code": dto.SanitizeAdminRedeemCode(replay.RedeemCode)})
-		return
-	}
-
-	response.Success(c, result.Data)
+		},
+		func(replayed bool, data any) (any, error) {
+			if !replayed {
+				return data, nil
+			}
+			body, err := json.Marshal(data)
+			if err != nil {
+				return nil, err
+			}
+			var replay struct {
+				RedeemCode *dto.AdminRedeemCode `json:"redeem_code"`
+			}
+			if err := json.Unmarshal(body, &replay); err != nil {
+				return nil, err
+			}
+			return gin.H{"redeem_code": dto.SanitizeAdminRedeemCode(replay.RedeemCode)}, nil
+		},
+	)
 }
 
 // resolveCreateAndRedeemExisting 处理「卡密已存在」的幂等语义。
