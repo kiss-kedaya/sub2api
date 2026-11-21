@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"entgo.io/ent/dialect"
+	"github.com/lib/pq"
 )
 
 // redeem_code_hashes 是迁移 328 新增的独立哈希台账表，与 redeem_codes.code_hash
@@ -75,14 +76,16 @@ func (r *redeemCodeRepository) upsertRedeemCodeHashesBatch(ctx context.Context, 
 		return nil
 	}
 	now := time.Now()
+	// lib/pq 对切片参数必须包 pq.Array；列类型转换放在 SQL 里做（text[] → char(64)/varchar(16)），
+	// 避免驱动端再猜一遍数组元素类型。
 	if _, err := client.ExecContext(ctx, `
 INSERT INTO redeem_code_hashes (redeem_code_id, code_hash, code_prefix, created_at, updated_at)
-SELECT id, hash, prefix, $4, $4
-FROM unnest($1::bigint[], $2::char(64)[], $3::varchar(16)[]) AS t(id, hash, prefix)
+SELECT id, hash::char(64), prefix::varchar(16), $4, $4
+FROM unnest($1::bigint[], $2::text[], $3::text[]) AS t(id, hash, prefix)
 ON CONFLICT (redeem_code_id) DO UPDATE
 SET code_hash = EXCLUDED.code_hash,
     code_prefix = EXCLUDED.code_prefix,
-    updated_at = EXCLUDED.updated_at`, ids, hashes, prefixes, now); err != nil {
+    updated_at = EXCLUDED.updated_at`, pq.Array(ids), pq.Array(hashes), pq.Array(prefixes), now); err != nil {
 		return fmt.Errorf("upsert redeem code hashes batch: %w", err)
 	}
 	return nil

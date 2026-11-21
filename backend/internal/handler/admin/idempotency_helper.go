@@ -81,18 +81,6 @@ func executeAdminIdempotentJSON(
 	executeAdminIdempotentJSONWithMode(c, scope, payload, ttl, idempotencyStoreUnavailableFailClose, 0, false, execute)
 }
 
-func executeAdminIdempotentJSONWithResponseStorage(
-	c *gin.Context,
-	scope string,
-	payload any,
-	ttl time.Duration,
-	maxStoredResponseLen int,
-	preserveStoredResponse bool,
-	execute func(context.Context) (any, error),
-) {
-	executeAdminIdempotentJSONWithMode(c, scope, payload, ttl, idempotencyStoreUnavailableFailClose, maxStoredResponseLen, preserveStoredResponse, execute)
-}
-
 func executeAdminIdempotentJSONFailOpenOnStoreUnavailable(
 	c *gin.Context,
 	scope string,
