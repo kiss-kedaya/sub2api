@@ -28,6 +28,8 @@ var (
 	ErrGroupNotAllowed      = infraerrors.Forbidden("GROUP_NOT_ALLOWED", "user is not allowed to bind this group")
 	ErrAPIKeyExists         = infraerrors.Conflict("API_KEY_EXISTS", "api key already exists")
 	ErrAPIKeyTooShort       = infraerrors.BadRequest("API_KEY_TOO_SHORT", "api key must be at least 16 characters")
+	ErrAPIKeyTooLong        = infraerrors.BadRequest("API_KEY_TOO_LONG", fmt.Sprintf("api key must be at most %d characters", MaxAPIKeyCredentialBytes))
+	ErrAPIKeyTooPredictable = infraerrors.BadRequest("API_KEY_TOO_PREDICTABLE", "API Key 太容易猜到，请留空让系统随机生成，或使用密码管理器随机生成")
 	ErrAPIKeyInvalidChars   = infraerrors.BadRequest("API_KEY_INVALID_CHARS", "api key can only contain letters, numbers, underscores, and hyphens")
 	ErrAPIKeyRateLimited    = infraerrors.TooManyRequests("API_KEY_RATE_LIMITED", "too many failed attempts, please try again later")
 	ErrAPIKeyCreateLimited  = infraerrors.TooManyRequests("API_KEY_CREATE_RATE_LIMITED", "too many api keys created recently, please try again later")
@@ -480,11 +482,14 @@ func (s *APIKeyService) regenerateAPIKeyValue(ctx context.Context) (string, erro
 	return "", fmt.Errorf("generate regenerated api key: too many collisions")
 }
 
-// ValidateCustomKey 验证自定义API Key格式
+// ValidateCustomKey validates a new user-supplied credential without changing its value.
 func (s *APIKeyService) ValidateCustomKey(key string) error {
 	// 检查长度
 	if len(key) < 16 {
 		return ErrAPIKeyTooShort
+	}
+	if len(key) > MaxAPIKeyCredentialBytes {
+		return ErrAPIKeyTooLong
 	}
 
 	// 检查字符：只允许字母、数字、下划线、连字符
@@ -498,6 +503,13 @@ func (s *APIKeyService) ValidateCustomKey(key string) error {
 		return ErrAPIKeyInvalidChars
 	}
 
+	prefix := ""
+	if s != nil && s.cfg != nil {
+		prefix = s.cfg.Default.APIKeyPrefix
+	}
+	if hasPredictableCustomKeyPattern(key, prefix) {
+		return ErrAPIKeyTooPredictable
+	}
 	return nil
 }
 

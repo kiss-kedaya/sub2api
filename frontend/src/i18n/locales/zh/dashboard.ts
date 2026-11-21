@@ -340,6 +340,7 @@ export default {
     customKeyTooShort: '自定义密钥至少需要16个字符',
     customKeyInvalidChars: '自定义密钥只能包含字母、数字、下划线和连字符',
     customKeyRequired: '请输入自定义密钥',
+    customKeyTooPredictable: '此密钥太容易被猜到。请关闭「自定义密钥」，由系统随机生成。',
     ipRestriction: 'IP 限制',
     ipWhitelist: 'IP 白名单',
     ipWhitelistPlaceholder: '192.168.1.100\n10.0.0.0/8',

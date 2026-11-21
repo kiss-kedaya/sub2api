@@ -336,6 +336,7 @@ export default {
     customKeyTooShort: 'Custom key must be at least 16 characters',
     customKeyInvalidChars: 'Custom key can only contain letters, numbers, underscores, and hyphens',
     customKeyRequired: 'Please enter a custom key',
+    customKeyTooPredictable: 'This key is too easy to guess. Turn off Custom Key to generate a random key.',
     ipRestriction: 'IP Restriction',
     ipWhitelist: 'IP Whitelist',
     ipWhitelistPlaceholder: '192.168.1.100\n10.0.0.0/8',
