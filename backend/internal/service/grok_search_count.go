@@ -7,11 +7,46 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// 本文件统计上游 Responses 载荷里的内置检索工具调用次数，供按次计费使用。
+//
+// 历史上只对 Grok 通道统计（文件名/函数名沿用 Grok 前缀），但内置检索工具在
+// OpenAI / DeepSeek / Anthropic 兼容通道上同样由上游执行并按次收费，因此判定
+// 口径已经平台无关（issue #491）；只有“写不写进计费结果”那一层仍由
+// openAINativeSearchBillingApplies 决定。
+//
+// 认的三种形态：
+//   - 服务端工具调用条目：web_search_call / web_search_preview_call /
+//     x_search_call / tool_search_call（Responses 的原生形态）
+//   - function_call / custom_tool_call 且名字是检索工具名（部分中转把服务端工具
+//     拍平成函数调用）
+//   - 客户端自己声明的同名函数不算：见 openai_native_search_billing.go
+
+// nativeSearchFunctionToolNames 是“名字即检索工具”的候选集合（小写）。
+var nativeSearchFunctionToolNames = map[string]struct{}{
+	"web_search":         {},
+	"web_search_preview": {},
+	"x_search":           {},
+	"tool_search":        {},
+}
+
+// nativeSearchCallItemTypes 是检索工具在 Responses output 里的条目类型（小写）。
+var nativeSearchCallItemTypes = map[string]struct{}{
+	"web_search_call":         {},
+	"web_search_preview_call": {},
+	"x_search_call":           {},
+	"tool_search_call":        {},
+}
+
 // countGrokNativeSearchCallsFromJSONBytes counts completed native search tool
 // calls in a Responses-style JSON body (output array or nested response.output).
-// Counts: web_search_call, x_search_call, tool_search_call, and function_call
-// named tool_search / web_search / x_search.
 func countGrokNativeSearchCallsFromJSONBytes(body []byte) int {
+	return countNativeSearchCallsFromJSONBytes(body, nil)
+}
+
+// countNativeSearchCallsFromJSONBytes is the platform-agnostic variant. skip
+// holds client-declared function tool names that must not be billed as builtin
+// server tools.
+func countNativeSearchCallsFromJSONBytes(body []byte, skip map[string]struct{}) int {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return 0
 	}
@@ -20,29 +55,33 @@ func countGrokNativeSearchCallsFromJSONBytes(body []byte) int {
 	// both copies; counting both would bill the same search twice. Prefer the
 	// canonical nested response when present and fall back to top-level output.
 	if nested := gjson.GetBytes(body, "response.output"); nested.IsArray() {
-		return countGrokNativeSearchCallsInOutputArray(nested)
+		return countNativeSearchCallsInOutputArray(nested, skip)
 	}
-	return countGrokNativeSearchCallsInOutputArray(gjson.GetBytes(body, "output"))
+	return countNativeSearchCallsInOutputArray(gjson.GetBytes(body, "output"), skip)
 }
 
 func countGrokNativeSearchCallsFromSSEBody(body string) int {
+	return countNativeSearchCallsFromSSEBody(body, nil)
+}
+
+func countNativeSearchCallsFromSSEBody(body string, skip map[string]struct{}) int {
 	if strings.TrimSpace(body) == "" {
 		return 0
 	}
 	seen := make(map[string]struct{})
 	total := 0
 	forEachOpenAISSEDataPayload(body, func(data []byte) {
-		total += countGrokNativeSearchCallsInSSEDataDedup(data, seen)
+		total += countNativeSearchCallsInSSEDataDedup(data, seen, skip)
 	})
 	return total
 }
 
 // countGrokNativeSearchCallsInSSEData counts search tool calls in one SSE
-// payload without cross-event dedup. Prefer countGrokNativeSearchCallsInSSEDataDedup
-// for live streams so item.done + response.completed do not double-bill.
+// payload without cross-event dedup. Prefer the dedup variant for live streams
+// so item.done + response.completed do not double-bill.
 func countGrokNativeSearchCallsInSSEData(data []byte) int {
 	frame := parseOpenAISSEDataFrame(data, "")
-	n, _ := countGrokNativeSearchCallsInSSEFrameWithKeys(frame)
+	n, _ := countNativeSearchCallsInSSEFrameWithKeys(frame, nil)
 	return n
 }
 
@@ -53,25 +92,29 @@ func countGrokNativeSearchCallsInSSEData(data []byte) int {
 // item.done + response.completed for the same tool still count once (never fall
 // back to raw multi-event n, which ~2× overbills).
 func countGrokNativeSearchCallsInSSEDataDedup(data []byte, seen map[string]struct{}) int {
-	return countGrokNativeSearchCallsInSSEFrameDedup(parseOpenAISSEDataFrame(data, ""), seen)
+	return countNativeSearchCallsInSSEDataDedup(data, seen, nil)
 }
 
-func countGrokNativeSearchCallsInSSEFrameDedup(frame openAISSEDataFrame, seen map[string]struct{}) int {
+func countNativeSearchCallsInSSEDataDedup(data []byte, seen map[string]struct{}, skip map[string]struct{}) int {
+	return countNativeSearchCallsInSSEFrameDedup(parseOpenAISSEDataFrame(data, ""), seen, skip)
+}
+
+func countNativeSearchCallsInSSEFrameDedup(frame openAISSEDataFrame, seen map[string]struct{}, skip map[string]struct{}) int {
 	if !openAISSEFrameMayContainGrokSearch(frame) {
 		return 0
 	}
 	if seen == nil {
-		n, _ := countGrokNativeSearchCallsInSSEFrameWithKeys(frame)
+		n, _ := countNativeSearchCallsInSSEFrameWithKeys(frame, skip)
 		return n
 	}
-	n, keys := countGrokNativeSearchCallsInSSEFrameWithKeys(frame)
+	n, keys := countNativeSearchCallsInSSEFrameWithKeys(frame, skip)
 	if n <= 0 {
 		return 0
 	}
 	// Prefer stable ids; fill gaps with synthetic keys so we never raw-add n.
 	if len(keys) < n {
 		// Rebuild keys for every item so unkeyed items still get a fingerprint.
-		keys = collectGrokNativeSearchCallKeysFromFrame(frame)
+		keys = collectNativeSearchCallKeysFromFrame(frame, skip)
 	}
 	if len(keys) == 0 {
 		// True empty — should not happen when n>0; fail-closed to 0 extra bill.
@@ -113,18 +156,14 @@ func countGrokNativeSearchCallsInSSEFrameDedup(frame openAISSEDataFrame, seen ma
 	return added
 }
 
-func collectGrokNativeSearchCallKeys(data []byte) []string {
-	return collectGrokNativeSearchCallKeysFromFrame(parseOpenAISSEDataFrame(data, ""))
-}
-
-func collectGrokNativeSearchCallKeysFromFrame(frame openAISSEDataFrame) []string {
+func collectNativeSearchCallKeysFromFrame(frame openAISSEDataFrame, skip map[string]struct{}) []string {
 	if !openAISSEFrameMayContainGrokSearch(frame) {
 		return nil
 	}
 	var keys []string
 	syntheticOrdinals := make(map[string]int)
 	consider := func(item gjson.Result) {
-		if !isGrokNativeSearchOutputItem(item) {
+		if !isNativeSearchOutputItem(item, skip) {
 			return
 		}
 		key := firstNonEmpty(
@@ -156,24 +195,20 @@ func collectGrokNativeSearchCallKeysFromFrame(frame openAISSEDataFrame) []string
 		consider(item)
 		return true
 	})
-	if len(keys) == 0 && isGrokNativeSearchOutputItem(frame.root) {
+	if len(keys) == 0 && isNativeSearchOutputItem(frame.root, skip) {
 		consider(frame.root)
 	}
 	return keys
 }
 
-func countGrokNativeSearchCallsInSSEDataWithKeys(data []byte) (int, []string) {
-	return countGrokNativeSearchCallsInSSEFrameWithKeys(parseOpenAISSEDataFrame(data, ""))
-}
-
-func countGrokNativeSearchCallsInSSEFrameWithKeys(frame openAISSEDataFrame) (int, []string) {
+func countNativeSearchCallsInSSEFrameWithKeys(frame openAISSEDataFrame, skip map[string]struct{}) (int, []string) {
 	if !openAISSEFrameMayContainGrokSearch(frame) {
 		return 0, nil
 	}
 	var keys []string
 	n := 0
 	consider := func(item gjson.Result) {
-		if !isGrokNativeSearchOutputItem(item) {
+		if !isNativeSearchOutputItem(item, skip) {
 			return
 		}
 		n++
@@ -199,7 +234,7 @@ func countGrokNativeSearchCallsInSSEFrameWithKeys(frame openAISSEDataFrame) (int
 		return true
 	})
 	// Bare output item event without nested item key.
-	if n == 0 && isGrokNativeSearchOutputItem(frame.root) {
+	if n == 0 && isNativeSearchOutputItem(frame.root, skip) {
 		consider(frame.root)
 	}
 	return n, keys
@@ -219,13 +254,13 @@ func openAISSEFrameMayContainGrokSearch(frame openAISSEDataFrame) bool {
 	}
 }
 
-func countGrokNativeSearchCallsInOutputArray(output gjson.Result) int {
+func countNativeSearchCallsInOutputArray(output gjson.Result, skip map[string]struct{}) int {
 	if !output.IsArray() {
 		return 0
 	}
 	count := 0
 	output.ForEach(func(_, item gjson.Result) bool {
-		if isGrokNativeSearchOutputItem(item) {
+		if isNativeSearchOutputItem(item, skip) {
 			count++
 		}
 		return true
@@ -233,17 +268,25 @@ func countGrokNativeSearchCallsInOutputArray(output gjson.Result) int {
 	return count
 }
 
-func isGrokNativeSearchOutputItem(item gjson.Result) bool {
+// isNativeSearchOutputItem 判断一个 Responses output 条目是否代表一次由上游执行
+// （并计费）的内置检索调用。skip 是客户端自己声明的函数工具名。
+func isNativeSearchOutputItem(item gjson.Result, skip map[string]struct{}) bool {
 	if !item.Exists() {
 		return false
 	}
 	itemType := strings.ToLower(strings.TrimSpace(item.Get("type").String()))
-	switch itemType {
-	case "web_search_call", "x_search_call", "tool_search_call":
+	if _, ok := nativeSearchCallItemTypes[itemType]; ok {
 		return true
+	}
+	switch itemType {
 	case "function_call", "custom_tool_call":
 		name := strings.ToLower(strings.TrimSpace(item.Get("name").String()))
-		return name == "web_search" || name == "x_search" || name == "tool_search"
+		if _, ok := nativeSearchFunctionToolNames[name]; !ok {
+			return false
+		}
+		// 客户端自己声明了同名函数时，这只是模型要求客户端执行的一次函数调用，
+		// 不是上游内置工具，绝不能按次收费。
+		return !isClientDeclaredFunctionTool(name, skip)
 	default:
 		return false
 	}

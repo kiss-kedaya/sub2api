@@ -304,8 +304,9 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 	}
 	result := &OpenAIForwardResult{
 		RequestID: requestID, UpstreamHeaders: resp.Header,
-		Usage: claudeUsageToOpenAIUsage(&usage), NonBillableUpstreamError: outcome.failed,
-		Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel,
+		Usage: claudeUsageToOpenAIUsage(&usage), SearchCount: usage.WebSearchRequests,
+		NonBillableUpstreamError: outcome.failed,
+		Model:                    originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel,
 		UpstreamEndpoint: "/v1/messages", ReasoningEffort: reasoningEffort,
 		Stream: false, Duration: time.Since(startTime),
 	}
@@ -345,6 +346,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		RequestID:                requestID,
 		UpstreamHeaders:          resp.Header,
 		Usage:                    claudeUsageToOpenAIUsage(&usage),
+		SearchCount:              usage.WebSearchRequests,
 		NonBillableUpstreamError: outcome.failed,
 		Model:                    originalModel,
 		BillingModel:             billingModel,
@@ -401,6 +403,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			RequestID:                requestID,
 			UpstreamHeaders:          resp.Header,
 			Usage:                    claudeUsageToOpenAIUsage(&usage),
+			SearchCount:              usage.WebSearchRequests,
 			NonBillableUpstreamError: outcome.failed,
 			Model:                    originalModel,
 			BillingModel:             billingModel,

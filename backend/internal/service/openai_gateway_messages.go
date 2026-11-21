@@ -44,6 +44,9 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
+	// 内置检索按次计费（issue #491）：记录客户端自己声明的函数工具名，
+	// 供上游 function_call 归类时排除客户端同名函数，避免重复收费。
+	rememberOpenAINativeSearchSkipFunctionTools(c, body)
 	// Web Search 模拟：Chat Completions 转换会丢掉 web_search 工具，纯 web_search
 	// 请求在此直接调用搜索 API 构造 Anthropic 响应，不访问上游。
 	if groupID := getOpenAIGroupIDFromContext(c); shouldEmulateWebSearchFor(ctx, s.settingService, s.channelService, account, &groupID, body) {
@@ -741,10 +744,11 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 		Stream:                        false,
 		Duration:                      time.Since(startTime),
 	}
-	// Grok /v1/messages uses Responses upstream; count native search for surcharge.
-	if account != nil && account.IsGrok() && finalResponse != nil {
+	// /v1/messages 走 Responses 上游时，内置检索次数同样要进计费结果。
+	// 按次计费与平台无关（issue #491）：此前只有 Grok 会写回，其余通道次数被丢弃。
+	if openAINativeSearchBillingApplies(account) && finalResponse != nil {
 		if body, err := json.Marshal(finalResponse); err == nil {
-			if n := countGrokNativeSearchCallsFromJSONBytes(body); n > 0 {
+			if n := countNativeSearchCallsFromJSONBytes(body, openAINativeSearchSkipFunctionTools(c)); n > 0 {
 				result.SearchCount = n
 			}
 		}
@@ -1335,9 +1339,11 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	var streamNonFailoverErr error
 	terminalEventType := ""
 	searchCount := 0
-	streamSearchSeen := make(map[string]struct{})
-	countSearch := account != nil && account.IsGrok()
-	measureResponsesTTFT := account != nil && (account.Platform == PlatformOpenAI || countSearch)
+	searchSeen := make(map[string]struct{})
+	// 计数覆盖全部平台（issue #491），而不是只看 Grok。TTFT 的测量范围保持不变。
+	countSearch := openAINativeSearchBillingApplies(account)
+	searchSkipFunctionTools := openAINativeSearchSkipFunctionTools(c)
+	measureResponsesTTFT := account != nil && (account.Platform == PlatformOpenAI || account.IsGrok())
 	ttftMode := OpenAITTFTModeSemantic
 	if measureResponsesTTFT {
 		ttftMode = s.openAITTFTMode(c.Request.Context())
@@ -1424,7 +1430,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			firstTokenMs = &ms
 		}
 		if countSearch {
-			searchCount += countGrokNativeSearchCallsInSSEDataDedup([]byte(payload), streamSearchSeen)
+			searchCount += countNativeSearchCallsInSSEDataDedup([]byte(payload), searchSeen, searchSkipFunctionTools)
 		}
 
 		var event struct {

@@ -376,6 +376,11 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 	usage := &OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
+	// 内置检索按次计费（issue #491）：WebSocket Responses 通道同样是 Codex/GPT
+	// 家族主要出流路径，必须与 SSE 通道同一口径统计。
+	searchCounter := 0
+	searchSeen := make(map[string]struct{})
+	searchSkipFunctionTools := openAINativeSearchSkipFunctionTools(c)
 	var firstTokenMs *int
 	responseID := ""
 	var finalResponse []byte
@@ -441,6 +446,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
 			ClientDisconnect:              clientDisconnected,
+			SearchCount:                   searchCounter,
 		}
 	}
 
@@ -668,6 +674,9 @@ readLoop:
 			parseOpenAIWSResponseUsageFromCompletedEvent(message, usage)
 		}
 		imageCounter.AddSSEData(message)
+		if openAIWSTerminalEventMayContainNativeSearch(eventType) {
+			searchCounter += countNativeSearchCallsInSSEDataDedup(message, searchSeen, searchSkipFunctionTools)
+		}
 
 		if eventType == "error" || eventType == "response.failed" {
 			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)

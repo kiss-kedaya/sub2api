@@ -30,6 +30,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, filterErr
 	}
 	body = filteredBody
+	// 内置检索按次计费（issue #491）：先记录客户端自己声明的函数工具名，
+	// 避免把客户端同名函数调用误当成上游内置检索。
+	rememberOpenAINativeSearchSkipFunctionTools(c, body)
 	clearGrokResponsesClientToolMapping(c)
 	clearOpenAIResponsesClientToolMapping(c)
 	clearOpenAIResponsesNamespaceNames(c)
@@ -1420,7 +1423,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				forwardResult.ImageOutputSizes = imageOutputSizes
 				forwardResult.BillingModel = imageBillingModel
 			}
-			if searchCount > 0 && account != nil && account.IsGrok() {
+			if searchCount > 0 && openAINativeSearchBillingApplies(account) {
+				// 内置检索工具按次计费对所有通道成立，不再只对 Grok 写回
+				// （issue #491：此前 OpenAI / Anthropic / DeepSeek 通道的次数在
+				// 这里被 account.IsGrok() 直接丢弃，导致整批按次费用漏收）。
 				forwardResult.SearchCount = searchCount
 			}
 			return forwardResult

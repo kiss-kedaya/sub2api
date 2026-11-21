@@ -1,0 +1,127 @@
+package service
+
+import (
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+)
+
+// 内置检索工具（web_search / web_search_preview / x_search / tool_search）的按次
+// 计费口径（issue #491）。
+//
+// 历史实现把“统计次数”和“写入计费结果”都锁死在 Grok 账号上，导致 OpenAI /
+// Anthropic / DeepSeek 等通道虽然同样在上游调用内置检索，SearchCount 却恒为 0，
+// 整批按次费用漏收。这里把判定收敛成一个与平台无关的口径：
+//
+//  1. 上游确实执行了内置检索工具（Responses output 里的 *_search_call，或
+//     function_call / custom_tool_call 且名字是检索工具名）；
+//  2. 该名字不是客户端自己声明的函数工具——function_call 表示“模型要求客户端
+//     调用这个函数”，网关既没有执行也没有向上游付费，绝不能按内置工具收费。
+const openAINativeSearchSkipFunctionToolsContextKey = "openai_native_search_skip_function_tools"
+
+// openAINativeSearchBillingApplies 报告本次请求是否把内置检索次数写进计费结果。
+// 只按账号是否存在判断（没有账号就没有计费主体），不再按平台过滤。
+func openAINativeSearchBillingApplies(account *Account) bool {
+	return account != nil
+}
+
+// rememberOpenAINativeSearchSkipFunctionTools 记录客户端在请求里自己声明的函数
+// 工具名（小写）。上游回包里的同名 function_call 属于客户端工具调用，不能算成
+// 上游内置工具，否则会和客户端自己的实现重复收费。
+func rememberOpenAINativeSearchSkipFunctionTools(c *gin.Context, body []byte) {
+	if c == nil {
+		return
+	}
+	names := declaredClientFunctionToolNames(body)
+	if len(names) == 0 {
+		c.Set(openAINativeSearchSkipFunctionToolsContextKey, map[string]struct{}{})
+		return
+	}
+	c.Set(openAINativeSearchSkipFunctionToolsContextKey, names)
+}
+
+// openAINativeSearchSkipFunctionTools 取回 rememberOpenAINativeSearchSkipFunctionTools
+// 记录的客户端函数工具名。
+func openAINativeSearchSkipFunctionTools(c *gin.Context) map[string]struct{} {
+	if c == nil {
+		return nil
+	}
+	value, ok := c.Get(openAINativeSearchSkipFunctionToolsContextKey)
+	if !ok {
+		return nil
+	}
+	names, _ := value.(map[string]struct{})
+	return names
+}
+
+// declaredClientFunctionToolNames 从请求体里收集客户端声明的函数/自定义工具名。
+//
+// 同时支持三种协议写法：
+//   - Responses:  tools[].name（type 为 function / custom 或缺失）
+//   - Chat:       tools[].function.name
+//   - 旧版 Chat:  functions[].name
+//
+// 内置工具（例如 {"type":"web_search_preview"}）没有 name，不会被收集。
+func declaredClientFunctionToolNames(body []byte) map[string]struct{} {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return nil
+	}
+	names := make(map[string]struct{}, 4)
+	add := func(name string) {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" {
+			return
+		}
+		names[name] = struct{}{}
+	}
+	parsed := gjson.ParseBytes(body)
+	parsed.Get("tools").ForEach(func(_, tool gjson.Result) bool {
+		if !tool.IsObject() {
+			return true
+		}
+		kind := strings.ToLower(strings.TrimSpace(tool.Get("type").String()))
+		switch kind {
+		case "", "function", "custom":
+		default:
+			// 内置工具（web_search / web_search_preview / image_generation ...）
+			// 只按类型声明，没有可冲突的客户端函数名。
+			return true
+		}
+		add(tool.Get("name").String())
+		add(tool.Get("function.name").String())
+		return true
+	})
+	parsed.Get("functions").ForEach(func(_, fn gjson.Result) bool {
+		add(fn.Get("name").String())
+		add(fn.Get("function.name").String())
+		return true
+	})
+	if len(names) == 0 {
+		return nil
+	}
+	return names
+}
+
+// isClientDeclaredFunctionTool 判断某个 function_call / custom_tool_call 的名字
+// 是否命中客户端自己声明的函数工具。
+func isClientDeclaredFunctionTool(name string, skip map[string]struct{}) bool {
+	if len(skip) == 0 {
+		return false
+	}
+	_, ok := skip[strings.ToLower(strings.TrimSpace(name))]
+	return ok
+}
+
+// openAIWSTerminalEventMayContainNativeSearch 报告某个 WebSocket Responses 事件
+// 是否可能携带完整 output 数组（内置检索条目只在这些事件里出现）。
+//
+// 单独抽出来是为了让 WS 热路径只在终止事件上解析 JSON，而不是逐帧解析。
+func openAIWSTerminalEventMayContainNativeSearch(eventType string) bool {
+	switch eventType {
+	case "response.output_item.done", "response.completed", "response.done":
+		return true
+	default:
+		return false
+	}
+}

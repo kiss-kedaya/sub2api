@@ -611,6 +611,10 @@ type ClaudeUsage struct {
 	CacheCreation5mTokens    int // 5分钟缓存创建token（来自嵌套 cache_creation 对象）
 	CacheCreation1hTokens    int // 1小时缓存创建token（来自嵌套 cache_creation 对象）
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
+	// WebSearchRequests 是上游上报的内置检索工具调用次数
+	// （usage.server_tool_use.web_search_requests）。原生 Anthropic 通道用它做
+	// 按次计费；它与 token 计费是叠加关系，不影响 token 计量（issue #491）。
+	WebSearchRequests int `json:"-"`
 	// CacheReadEstimated 表示 CacheReadInputTokens 是无终帧时按请求体估算的值
 	// （见 incomplete_request_usage.go），不是上游上报的，不进入线上格式。
 	CacheReadEstimated bool `json:"-"`

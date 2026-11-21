@@ -61,6 +61,8 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 ) (*OpenAIForwardResult, error) {
 	ctx = context.WithoutCancel(ctx)
 	beginUpstreamResponseModelObservation(c)
+	// 内置检索按次计费（issue #491）：先记录客户端自己声明的函数工具名。
+	rememberOpenAINativeSearchSkipFunctionTools(c, body)
 	setCodexToolNameReverse(c, nil)
 	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
 		return nil, err
@@ -626,10 +628,12 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 		Stream:                        false,
 		Duration:                      time.Since(startTime),
 	}
-	// Grok chat bridge: bill native search tools found in the terminal Responses body.
-	if account != nil && account.IsGrok() && finalResponse != nil {
+	// Chat bridge: bill native search tools found in the terminal Responses body.
+	// 按次计费与平台无关（issue #491）：OpenAI / DeepSeek / Anthropic 兼容通道
+	// 在上游同样会执行 web_search 一类的内置工具。
+	if openAINativeSearchBillingApplies(account) && finalResponse != nil {
 		if body, err := json.Marshal(finalResponse); err == nil {
-			if n := countGrokNativeSearchCallsFromJSONBytes(body); n > 0 {
+			if n := countNativeSearchCallsFromJSONBytes(body, openAINativeSearchSkipFunctionTools(c)); n > 0 {
 				result.SearchCount = n
 			}
 		}
@@ -711,11 +715,13 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	var streamFailoverErr *UpstreamFailoverError
 	var streamNonFailoverErr error
 	terminalEventType := ""
-	// Grok chat bridge reuses Responses SSE; count native search tools for surcharge.
+	// Chat bridge reuses Responses SSE; count native search tools for surcharge.
 	searchCount := 0
 	streamSearchSeen := make(map[string]struct{})
-	countSearch := account != nil && account.IsGrok()
-	measureResponsesTTFT := account != nil && (account.Platform == PlatformOpenAI || countSearch)
+	// 计数覆盖全部平台（issue #491），而不是只看 Grok。TTFT 的测量范围保持不变。
+	countSearch := openAINativeSearchBillingApplies(account)
+	searchSkipFunctionTools := openAINativeSearchSkipFunctionTools(c)
+	measureResponsesTTFT := account != nil && (account.Platform == PlatformOpenAI || account.IsGrok())
 	ttftMode := OpenAITTFTModeSemantic
 	if measureResponsesTTFT {
 		ttftMode = s.openAITTFTMode(c.Request.Context())
@@ -798,7 +804,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			firstTokenMs = &ms
 		}
 		if countSearch {
-			searchCount += countGrokNativeSearchCallsInSSEDataDedup([]byte(payload), streamSearchSeen)
+			searchCount += countNativeSearchCallsInSSEDataDedup([]byte(payload), streamSearchSeen, searchSkipFunctionTools)
 		}
 
 		var event struct {

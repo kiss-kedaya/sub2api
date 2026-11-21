@@ -726,7 +726,11 @@ type streamingResult struct {
 	progress *anthropicStreamProgress
 }
 
-// hasObservedTokens 报告流式过程中是否已观测到任何上游计量的 token。
+// hasObservedTokens 报告流式过程中是否已观测到任何上游计量的用量。
+//
+// 内置检索（usage.server_tool_use.web_search_requests）也是一次已经发生并被上游
+// 计费的动作：流在终帧前断掉时，只要它已经上报过，就必须保留按次费用
+// （issue #491 边际审查项：流式中断不得漏收）。
 func (u *ClaudeUsage) hasObservedTokens() bool {
 	if u == nil {
 		return false
@@ -734,7 +738,7 @@ func (u *ClaudeUsage) hasObservedTokens() bool {
 	return u.InputTokens > 0 || u.OutputTokens > 0 ||
 		u.CacheCreationInputTokens > 0 || u.CacheReadInputTokens > 0 ||
 		u.CacheCreation5mTokens > 0 || u.CacheCreation1hTokens > 0 ||
-		u.ImageOutputTokens > 0
+		u.ImageOutputTokens > 0 || u.WebSearchRequests > 0
 }
 
 // partialStreamUsageResult 在流式转发中途出错时，把已观测到 usage 的部分结果包装为
@@ -776,6 +780,7 @@ func partialStreamUsageResult(c *gin.Context, resp *http.Response, streamResult 
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  streamResult.firstTokenMs,
 		ClientDisconnect:              streamResult.clientDisconnect,
+		SearchCount:                   streamResult.usage.WebSearchRequests,
 	}
 }
 
@@ -1318,6 +1323,8 @@ type sseUsagePatch struct {
 	hasCacheCreation5m       bool
 	cacheCreation1hTokens    int
 	hasCacheCreation1h       bool
+	webSearchRequests        int
+	hasWebSearchRequests     bool
 }
 
 func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePatch {
@@ -1361,6 +1368,10 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 				patch.hasCacheCreation1h = true
 			}
 		}
+		if v, exists := mapServerToolWebSearchRequests(usageObj); exists {
+			patch.webSearchRequests = v
+			patch.hasWebSearchRequests = true
+		}
 		return patch
 
 	case "message_delta":
@@ -1403,10 +1414,31 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 				patch.hasCacheCreation1h = true
 			}
 		}
+		if v, exists := mapServerToolWebSearchRequests(usageObj); exists {
+			patch.webSearchRequests = v
+			patch.hasWebSearchRequests = true
+		}
 		return patch
 	}
 
 	return nil
+}
+
+// mapServerToolWebSearchRequests 从 map 形式的 usage 对象里读取
+// server_tool_use.web_search_requests（按次计费的内置检索调用数）。
+func mapServerToolWebSearchRequests(usageObj map[string]any) (int, bool) {
+	serverToolUse, ok := usageObj["server_tool_use"].(map[string]any)
+	if !ok || len(serverToolUse) == 0 {
+		return 0, false
+	}
+	v, exists := parseSSEUsageInt(serverToolUse["web_search_requests"])
+	if !exists {
+		return 0, false
+	}
+	if v < 0 {
+		v = 0
+	}
+	return v, true
 }
 
 // sseDeltaReportsPositiveCacheUsage reports whether a message_delta usage
@@ -1455,6 +1487,11 @@ func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
 	}
 	if patch.hasCacheCreation1h {
 		usage.CacheCreation1hTokens = patch.cacheCreation1hTokens
+	}
+	// 累计值取最大，避免 message_start 的较小值覆盖 message_delta 的最终值，
+	// 也避免重复事件被累加成 N 倍。
+	if patch.hasWebSearchRequests && patch.webSearchRequests > usage.WebSearchRequests {
+		usage.WebSearchRequests = patch.webSearchRequests
 	}
 }
 

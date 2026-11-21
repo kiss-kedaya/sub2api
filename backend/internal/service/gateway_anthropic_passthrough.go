@@ -333,6 +333,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		FirstTokenMs:                  firstTokenMs,
 		ClientDisconnect:              clientDisconnect,
 		NonBillableUpstreamError:      nonBillableUpstreamError,
+		SearchCount:                   usage.WebSearchRequests,
 	}, nil
 }
 
@@ -890,6 +891,7 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 				usage.CacheCreation5mTokens = int(cc5m.Int())
 				usage.CacheCreation1hTokens = int(cc1h.Int())
 			}
+			mergeAnthropicWebSearchRequests(usage, msgUsage)
 		}
 	case "message_delta":
 		deltaUsage := parsed.Get("usage")
@@ -926,6 +928,7 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 			if cc1h.Exists() {
 				usage.CacheCreation1hTokens = int(cc1h.Int())
 			}
+			mergeAnthropicWebSearchRequests(usage, deltaUsage)
 		}
 	}
 
@@ -959,6 +962,7 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 	if parsed.Get("type").String() == "message_start" {
 		usageNode = parsed.Get("message.usage")
 	}
+	mergeAnthropicWebSearchRequests(usage, usageNode)
 	normalizeAnthropicCompatiblePromptUsage(usageNode, usage)
 }
 
@@ -1041,6 +1045,46 @@ func normalizeAnthropicCompatiblePromptUsage(usageNode gjson.Result, usage *Clau
 	return true
 }
 
+// anthropicServerToolWebSearchRequests 从一段 usage 节点里读取
+// server_tool_use.web_search_requests。
+//
+// 该字段是 Anthropic 内置检索工具（web_search）的累计调用次数，是 usage 里唯一
+// 能支撑按次计费的来源。返回 (次数, 是否出现)，出现但为负数时按 0 处理，避免
+// 上游脏数据把计费打成负数。
+func anthropicServerToolWebSearchRequests(usageNode gjson.Result) (int, bool) {
+	if !usageNode.Exists() || !usageNode.IsObject() {
+		return 0, false
+	}
+	node := usageNode.Get("server_tool_use.web_search_requests")
+	if !node.Exists() || node.Type == gjson.Null {
+		return 0, false
+	}
+	n := int(node.Int())
+	if n < 0 {
+		n = 0
+	}
+	return n, true
+}
+
+// mergeAnthropicWebSearchRequests 把一段 usage 节点里的
+// server_tool_use.web_search_requests 合并进 ClaudeUsage。
+//
+// 流式场景下 message_start 与 message_delta 都可能带这个字段，且它表示累计次数，
+// 因此取观测到的最大值：先到的较小值不会覆盖后到的完整值，重复上报也不会被
+// 重复累加成 N 倍（直接 '+' 会把 message_start + message_delta 算成两倍）。
+func mergeAnthropicWebSearchRequests(usage *ClaudeUsage, usageNode gjson.Result) {
+	if usage == nil {
+		return
+	}
+	n, ok := anthropicServerToolWebSearchRequests(usageNode)
+	if !ok {
+		return
+	}
+	if n > usage.WebSearchRequests {
+		usage.WebSearchRequests = n
+	}
+}
+
 func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 	usage := &ClaudeUsage{}
 	if len(body) == 0 {
@@ -1071,6 +1115,9 @@ func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 		if cached := usageNode.Get("cached_tokens").Int(); cached > 0 {
 			usage.CacheReadInputTokens = int(cached)
 		}
+	}
+	if n, ok := anthropicServerToolWebSearchRequests(usageNode); ok {
+		usage.WebSearchRequests = n
 	}
 	normalizeAnthropicCompatiblePromptUsage(usageNode, usage)
 	return usage
