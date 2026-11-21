@@ -59,7 +59,7 @@ func fillIncompleteStreamUsage(usage *OpenAIUsage, outputEstimate int, requestBo
 	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 &&
 		usage.CacheCreationInputTokens == 0 && usage.ImageInputTokens == 0 {
 		if inputTokens, err := estimateIncompleteResponsesInput(requestBody); err == nil && inputTokens > 0 {
-			split := splitIncompleteInput(inputTokens)
+			split := splitOpenAIIncompleteInput(inputTokens)
 			usage.InputTokens = split.Total
 			usage.CacheReadInputTokens = split.CacheRead
 			usage.CacheReadEstimated = true
@@ -72,21 +72,30 @@ func fillIncompleteStreamUsage(usage *OpenAIUsage, outputEstimate int, requestBo
 // applyIncompleteOpenAIStreamUsage fills the stream result's usage from the
 // estimates when the stream ended without a terminal frame.
 //
-// Input is billed once the upstream had accepted the request and the client then
-// left, or whenever output was produced. An upstream break that produced nothing
-// stays free. Replayable failover errors are skipped: those attempts are dropped by
-// preserveOpenAIStreamingResultOnError and the retry is billed on its own.
+// Input is billed once the upstream accepted the request, even when no output was
+// produced: an abnormal end does not refund the prompt (new-api bills the merged
+// prompt at the plain input price), so treating it as free would leave the operator
+// absorbing the cost. Output is billed only for what was really produced.
+// Replayable failover errors are skipped, except the ones marked
+// StreamEndedWithoutTerminal: there the upstream accepted the request and then
+// closed the stream without a terminal frame, so it may already have billed it, and
+// the handler bills the estimate only if no retry succeeds (issue #456).
 func applyIncompleteOpenAIStreamUsage(account *Account, result *openaiStreamingResult, requestBody []byte, model string, streamErr error) {
 	if streamErr == nil || result == nil || result.usage == nil || !result.incompleteStream {
 		return
 	}
 	var failoverErr *UpstreamFailoverError
-	if errors.As(streamErr, &failoverErr) {
+	isFailover := errors.As(streamErr, &failoverErr)
+	streamEndedWithoutTerminal := isFailover && failoverErr.StreamEndedWithoutTerminal
+	if isFailover && !streamEndedWithoutTerminal {
 		return
 	}
-	if !result.clientDisconnect && result.incompleteOutputTokens <= 0 {
-		return
-	}
+	// Every other call here ended without a usage report after the upstream accepted
+	// the request. The input that was sent is billed from the request shape even when
+	// no output was produced: an abnormal upstream end does not refund the prompt
+	// (new-api bills the merged prompt at the plain input price), so treating it as
+	// free would leave the operator absorbing the cost (issue #456). Output is billed
+	// only for what was really produced.
 	outputTokens, inputTokens := fillIncompleteStreamUsage(result.usage, result.incompleteOutputTokens, requestBody)
 	if outputTokens == 0 && inputTokens == 0 {
 		return
@@ -101,9 +110,10 @@ func applyIncompleteOpenAIStreamUsage(account *Account, result *openaiStreamingR
 		zap.String("model", strings.TrimSpace(model)),
 		zap.String("response_id", result.responseID),
 		zap.Bool("client_disconnect", result.clientDisconnect),
+		zap.Bool("stream_ended_without_terminal", streamEndedWithoutTerminal),
 		zap.Int("estimated_output_tokens", outputTokens),
 		zap.Int("estimated_input_tokens", inputTokens),
-		zap.Int("estimated_cache_read_tokens", incompleteCacheReadTokens(inputTokens)),
+		zap.Int("estimated_cache_read_tokens", openAIIncompleteCacheReadTokens(inputTokens)),
 		zap.Error(streamErr),
 	).Warn("openai_usage.incomplete_stream_estimated")
 }

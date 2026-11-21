@@ -67,7 +67,7 @@ func TestOpenAIForward_ClientLeavesAfterDispatchIsBilledForInput(t *testing.T) {
 			require.Equal(t, stream, got.result.Stream)
 			require.Greater(t, got.result.Usage.InputTokens, 0)
 			require.Zero(t, got.result.Usage.OutputTokens)
-			require.Equal(t, incompleteCacheReadTokens(got.result.Usage.InputTokens), got.result.Usage.CacheReadInputTokens)
+			require.Equal(t, openAIIncompleteCacheReadTokens(got.result.Usage.InputTokens), got.result.Usage.CacheReadInputTokens)
 			require.True(t, got.result.Usage.CacheReadEstimated)
 			select {
 			case <-closed:

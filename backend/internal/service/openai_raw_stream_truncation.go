@@ -96,6 +96,10 @@ func newOpenAIRawStreamTruncatedFailoverError(
 		StatusCode:      http.StatusBadGateway,
 		ResponseBody:    openAIRawStreamTruncatedErrorBody(cause),
 		ResponseHeaders: headers,
+		// The upstream accepted the request and then ended the stream without any
+		// terminal chunk. It may already have billed the prompt, so the handler keeps
+		// this attempt's estimate and settles it only when no retry succeeds (#456).
+		StreamEndedWithoutTerminal: true,
 	}
 }
 

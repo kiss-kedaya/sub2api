@@ -798,13 +798,18 @@ func TestForwardAsRawChatCompletions_EmptyStreamBeforeOutputTriggersFailover(t *
 	}
 
 	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
-	require.Nil(t, result)
 	var failoverErr *UpstreamFailoverError
 	require.True(t, errors.As(err, &failoverErr))
 	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
 	require.Equal(t, OpenAIUpstreamStreamTruncatedCode,
 		gjson.GetBytes(failoverErr.ResponseBody, "error.code").String())
 	require.True(t, failoverErr.ShouldRetryNextAccount())
+	// The upstream accepted the request and may already have billed it: the attempt
+	// keeps an input estimate for the handler to settle when no retry succeeds (#456).
+	require.True(t, failoverErr.StreamEndedWithoutTerminal)
+	require.NotNil(t, result)
+	require.Greater(t, result.Usage.InputTokens, 0)
+	require.Zero(t, result.Usage.OutputTokens)
 	require.False(t, c.Writer.Written(), "换号重试前不得提交 200 响应头")
 	require.Empty(t, rec.Body.String())
 }
@@ -1229,10 +1234,13 @@ func TestForwardAsRawChatCompletions_TruncatedBeforeOutputTriggersFailover(t *te
 	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
 	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
 	require.Error(t, err)
-	require.Nil(t, result)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, OpenAIUpstreamStreamTruncatedCode, gjson.GetBytes(failoverErr.ResponseBody, "error.code").String())
+	require.True(t, failoverErr.StreamEndedWithoutTerminal)
+	require.NotNil(t, result, "an accepted request must not be dropped for free")
+	require.Greater(t, result.Usage.InputTokens, 0)
+	require.Zero(t, result.Usage.OutputTokens)
 	require.False(t, c.Writer.Written())
 }
 

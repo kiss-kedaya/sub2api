@@ -87,7 +87,12 @@ func TestOpenAIGatewayService_Forward_StreamErrorPreservesPartialUsage(t *testin
 	require.Contains(t, recorder.Body.String(), "partial")
 }
 
-func TestOpenAIGatewayService_Forward_PreOutputFailoverDropsPartialUsage(t *testing.T) {
+// An EOF before any client-visible output is replayable, but the upstream accepted
+// the request and may already have billed it (new-api bills the merged prompt at the
+// plain input price on an abnormal end). The attempt keeps an input estimate that the
+// handler settles only if no retry succeeds, so the call is not dropped for free
+// while a successful retry still bills once (issue #456).
+func TestOpenAIGatewayService_Forward_PreOutputFailoverRetainsInputEstimate(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","instructions":"answer","input":"hello","stream":true}`)
 	c, recorder := newOpenAIPartialUsageContext(t, body)
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
@@ -103,7 +108,14 @@ func TestOpenAIGatewayService_Forward_PreOutputFailoverDropsPartialUsage(t *test
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	require.Nil(t, result, "a replayable attempt must not expose partial usage")
+	require.True(t, failoverErr.StreamEndedWithoutTerminal, "the attempt stays replayable")
+	require.NotNil(t, result, "an accepted request must not be dropped for free")
+	// The response.created frame reported input_tokens=13, and a reported input is
+	// authoritative: it is never replaced or re-split by an estimate.
+	require.Equal(t, 13, result.Usage.InputTokens)
+	require.Zero(t, result.Usage.OutputTokens)
+	require.Zero(t, result.Usage.CacheReadInputTokens, "no cache discount is invented")
+	require.False(t, result.Usage.CacheReadEstimated)
 	require.Empty(t, recorder.Body.String())
 }
 
@@ -163,11 +175,22 @@ func TestPreserveOpenAIStreamingResultOnError_DropsFailoverAndZeroUsage(t *testi
 	result := &OpenAIForwardResult{Usage: OpenAIUsage{InputTokens: 1}}
 	kept, err := preserveOpenAIStreamingResultOnError(result, &UpstreamFailoverError{StatusCode: http.StatusBadGateway})
 	require.Error(t, err)
-	require.Nil(t, kept)
+	require.Nil(t, kept, "a plain replayable failure is billed by its retry, never twice")
 
 	kept, err = preserveOpenAIStreamingResultOnError(&OpenAIForwardResult{}, errors.New("stream read error"))
 	require.Error(t, err)
 	require.Nil(t, kept)
+
+	// A stream the upstream ended without a terminal frame keeps its estimate: the
+	// attempt may already be billed upstream, and the handler drops it when a retry
+	// succeeds (issue #456).
+	kept, err = preserveOpenAIStreamingResultOnError(
+		&OpenAIForwardResult{Usage: OpenAIUsage{InputTokens: 7}},
+		&UpstreamFailoverError{StatusCode: http.StatusOK, StreamEndedWithoutTerminal: true},
+	)
+	require.Error(t, err)
+	require.NotNil(t, kept)
+	require.Equal(t, 7, kept.Usage.InputTokens)
 }
 
 // TestPreserveOpenAIStreamingResultOnError_KeepsTopUpAbort 证明流式补扣失败主动中止

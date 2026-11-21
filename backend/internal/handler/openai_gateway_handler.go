@@ -738,6 +738,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	var passthroughFailoverState openAIPassthroughFailoverState
 	accountSlotBusySeen := false
+	// 可重放尝试的已观测用量：重试成功则丢弃，穷尽/中止则补记（issue #456）。
+	retainedUsage := &retainedOpenAIUsage{}
 	// 生图意图的 /v1/responses 请求必须调度到确实支持 Responses API 的账号，否则
 	// 会在 forward 阶段被静默降级为无法生图的 Chat Completions 直转（#4417）。
 	// 仅对 OpenAI 平台生效：Grok 生图走独立的 forwardGrokResponses 路径，不应被过滤。
@@ -779,6 +781,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
+	// Registered after the preauthorization refund defer so it runs first (LIFO):
+	// billing hands the hold to the usage task before the refund can release it. It
+	// also covers every exit path that does not settle inline.
+	defer retainedUsage.settle(nil)
 	if balanceGuard != nil {
 		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
 	}
@@ -975,7 +981,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			service.SetOpsLatencyMs(c, service.OpsTimeToFirstTokenMsKey, int64(*result.FirstTokenMs))
 		}
 		// #5148 对齐：错误返回携带的部分 result（流中断前上游已计量的 usage）照常
-		// 入账；failover 错误恒定 result=nil，不会重复计费。
+		// 入账。#456 起「上游接受后无终止帧结束」的可重放尝试也会带回估算 result，
+		// 由 retainedUsage 在重试成功时丢弃、穷尽时补记，同一逻辑请求只计一次。
 		submitResponsesUsage := func(res *service.OpenAIForwardResult) {
 			if res == nil {
 				return
@@ -1022,6 +1029,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		if err != nil {
 			if h.handleGrokModerationRefusal(c, apiKey, account, sessionHashBody, reqModel, reqStream, result, err, submitResponsesUsage) {
+				retainedUsage.discard()
 				return
 			}
 			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionHash, account, err)
@@ -1030,7 +1038,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					zap.Int64("account_id", account.ID),
 					zap.Error(err),
 				)
-				submitResponsesUsage(result)
+				retainedUsage.settle(openAISettleUsage(result, submitResponsesUsage))
 				// A client that left before anything was written is classified 499, and
 				// a compact heartbeat is stopped, exactly as for a result-less disconnect.
 				failoverClientGone(c)
@@ -1041,7 +1049,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					zap.Int64("account_id", account.ID),
 					zap.Error(err),
 				)
-				submitResponsesUsage(result)
+				retainedUsage.settle(openAISettleUsage(result, submitResponsesUsage))
 				return
 			}
 			if result != nil && result.ImageCount > 0 {
@@ -1054,7 +1062,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					if failoverClientGone(c) {
-						submitResponsesUsage(result)
+						retainedUsage.settle(openAISettleUsage(result, submitResponsesUsage))
 						reqLog.Info("openai.failover_aborted_client_disconnected",
 							zap.Int64("account_id", account.ID),
 							zap.Int("upstream_status", failoverErr.StatusCode),
@@ -1063,7 +1071,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					}
 					if !openAIForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
 						h.gatewayService.ObserveOpenAIAccountHealthFailure(c.Request.Context(), account, err)
-						submitResponsesUsage(result)
+						retainedUsage.settle(openAISettleUsage(result, submitResponsesUsage))
 						h.handleFailoverExhausted(c, failoverErr, true)
 						return
 					}
@@ -1086,8 +1094,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
 								zap.Duration("retry_delay", retryDelay),
 							)
+							retainedUsage.retain(openAISettleUsage(result, submitResponsesUsage))
 							select {
 							case <-c.Request.Context().Done():
+								retainedUsage.settle(nil)
 								return
 							case <-time.After(retryDelay):
 							}
@@ -1098,7 +1108,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, nil), false, nil, err)
 					}
 					if !shouldRetryNext {
-						submitResponsesUsage(result)
+						retainedUsage.settle(openAISettleUsage(result, submitResponsesUsage))
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -1107,13 +1117,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 					lastFailoverErr = failoverErr
 					if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
-						submitResponsesUsage(result)
+						retainedUsage.settle(openAISettleUsage(result, submitResponsesUsage))
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
 					switchCount++
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
-						submitResponsesUsage(result)
+						retainedUsage.settle(openAISettleUsage(result, submitResponsesUsage))
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -1134,6 +1144,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						failoverSwitchFields = append(failoverSwitchFields, zap.Int64p("proxy_id", account.ProxyID))
 					}
 					reqLog.Warn("openai.upstream_failover_switching", failoverSwitchFields...)
+					retainedUsage.retain(openAISettleUsage(result, submitResponsesUsage))
 					continue
 				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result), false, nil, err)
@@ -1147,7 +1158,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					zap.Bool("fallback_error_response_written", wroteFallback),
 					zap.Bool("upstream_error_response_already_written", upstreamErrorAlreadyCommunicated),
 				}
-				submitResponsesUsage(result)
+				retainedUsage.settle(openAISettleUsage(result, submitResponsesUsage))
 				logGatewayForwardFailureWithWarn(reqLog, c, "openai.forward_failed", err, shouldLogOpenAIForwardFailureAsWarn(c, wroteFallback), fields...)
 				return
 			}
@@ -1166,7 +1177,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 
 		// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
-		submitResponsesUsage(result)
+		retainedUsage.settle(openAISettleUsage(result, submitResponsesUsage))
 		reqLog.Debug("openai.request_completed",
 			zap.Int64("account_id", account.ID),
 			zap.Int("switch_count", switchCount),
@@ -1511,6 +1522,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	effectiveMappedModel := preferredMappedModel
 	accountSlotBusySeen := false
+	// 可重放尝试的已观测用量：重试成功则丢弃，穷尽/中止则补记（issue #456）。
+	retainedUsage := &retainedOpenAIUsage{}
 
 	// 分组利润控制：Messages 文本入口同样请求级装门并固定 pricingAt。
 	msgPricingCtx := c.Request.Context()
@@ -1533,6 +1546,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	defer func() { deferBalancePreauthorizationRefund(reqLog, balanceGuard) }()
+	// Registered after the preauthorization refund defer so it runs first (LIFO):
+	// billing hands the hold to the usage task before the refund can release it. It
+	// also covers every exit path that does not settle inline.
+	defer retainedUsage.settle(nil)
 	if balanceGuard != nil {
 		c.Request = c.Request.WithContext(service.ContextWithBalancePreauthorizationGuard(c.Request.Context(), balanceGuard))
 	}
@@ -1678,7 +1695,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		}
 		// Forward 与错误一起返回的部分结果：流中断/客户端断开排水前上游已计量的
 		// usage 照常入账，避免上游已产生消耗的请求完全漏记（#5148，对齐 anthropic
-		// 网关同名修复）。failover 错误恒定 result=nil，不会重复计费。
+		// 网关同名修复）。无终止帧结束的可重放尝试同样带回估算 result（#456），由
+		// retainedUsage 保证重试成功时丢弃、穷尽时补记，同一逻辑请求只计一次。
 		submitMessagesUsage := func(res *service.OpenAIForwardResult) {
 			if res == nil {
 				return
@@ -1724,6 +1742,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		}
 		if err != nil {
 			if h.handleGrokModerationRefusal(c, apiKey, account, body, reqModel, reqStream, result, err, submitMessagesUsage) {
+				retainedUsage.discard()
 				return
 			}
 			h.gatewayService.InvalidateUpstreamAffinity(c.Request.Context(), apiKey.GroupID, sessionHash, account, err)
@@ -1737,7 +1756,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					if failoverClientGone(c) {
-						submitMessagesUsage(result)
+						retainedUsage.settle(openAISettleUsage(result, submitMessagesUsage))
 						reqLog.Info("openai_messages.failover_aborted_client_disconnected",
 							zap.Int64("account_id", account.ID),
 							zap.Int("upstream_status", failoverErr.StatusCode),
@@ -1747,7 +1766,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeForward ||
 						service.IsOpenAIStreamSSEKeepaliveArmed(c) {
 						h.gatewayService.ObserveOpenAIAccountHealthFailure(c.Request.Context(), account, err)
-						submitMessagesUsage(result)
+						retainedUsage.settle(openAISettleUsage(result, submitMessagesUsage))
 						h.handleAnthropicFailoverExhausted(c, failoverErr, true)
 						return
 					}
@@ -1765,8 +1784,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 								zap.Int("retry_count", sameAccountRetryCount[account.ID]),
 								zap.Duration("retry_delay", retryDelay),
 							)
+							retainedUsage.retain(openAISettleUsage(result, submitMessagesUsage))
 							select {
 							case <-c.Request.Context().Done():
+								retainedUsage.settle(nil)
 								return
 							case <-time.After(retryDelay):
 							}
@@ -1777,7 +1798,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, nil), false, nil, err)
 					}
 					if !shouldRetryNext {
-						submitMessagesUsage(result)
+						retainedUsage.settle(openAISettleUsage(result, submitMessagesUsage))
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -1786,13 +1807,13 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 					lastFailoverErr = failoverErr
 					if !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
-						submitMessagesUsage(result)
+						retainedUsage.settle(openAISettleUsage(result, submitMessagesUsage))
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
 					switchCount++
 					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount, &oauth429FailoverState) {
-						submitMessagesUsage(result)
+						retainedUsage.settle(openAISettleUsage(result, submitMessagesUsage))
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -1802,6 +1823,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						zap.Int("switch_count", switchCount),
 						zap.Int("max_switches", maxAccountSwitches),
 					)
+					retainedUsage.retain(openAISettleUsage(result, submitMessagesUsage))
 					continue
 				}
 				if result != nil && result.ClientDisconnect {
@@ -1811,7 +1833,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					)
 					// 断开排水期间上游已计量的 usage 必须入账（此前直接 return 丢弃，
 					// payg 上游照常计费而平台漏记）。
-					submitMessagesUsage(result)
+					retainedUsage.settle(openAISettleUsage(result, submitMessagesUsage))
 					return
 				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, result), false, nil, err)
@@ -1821,7 +1843,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					zap.Bool("fallback_error_response_written", wroteFallback),
 					zap.Error(err),
 				)
-				submitMessagesUsage(result)
+				retainedUsage.settle(openAISettleUsage(result, submitMessagesUsage))
 				return
 			}
 		}
@@ -1832,7 +1854,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, result), true, nil)
 		}
 
-		submitMessagesUsage(result)
+		retainedUsage.settle(openAISettleUsage(result, submitMessagesUsage))
 		reqLog.Debug("openai_messages.request_completed",
 			zap.Int64("account_id", account.ID),
 			zap.Int("switch_count", switchCount),

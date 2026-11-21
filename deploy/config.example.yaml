@@ -1232,6 +1232,14 @@ billing:
   # Set to 0 to only require balance > 0.
   # 余额计费请求转发前要求的保守最小余额；设为 0 则仅要求余额 > 0。
   minimum_balance_reserve: 0.000001
+  # Share (0-100) of an estimated input priced as cache read when an OpenAI-family
+  # stream ends without a usage report (client disconnect / upstream EOF / mid-stream
+  # break). Default 0: never invent a cache discount — matches the upstream new-api
+  # abnormal-end fallback, which bills the whole prompt at the plain input price.
+  # Set 95 to restore the pre-#456 heuristic.
+  # 无 usage 的 OpenAI 流式异常结束按请求体估算输入时的缓存读占比。0 = 不臆造缓存
+  # 折扣（与上游 new-api 异常结束回退一致，避免运营方承担差额）；95 = #456 旧口径。
+  openai_incomplete_input_cache_read_percent: 0
   # Cache TTL (seconds) for per-user × per-platform quota records
   # 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口
   user_platform_quota_cache_ttl_seconds: 86400

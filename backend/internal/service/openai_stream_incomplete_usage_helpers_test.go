@@ -56,7 +56,7 @@ func TestFillIncompleteStreamUsage(t *testing.T) {
 		require.Greater(t, in, 0)
 		require.Equal(t, 10, usage.OutputTokens)
 		require.Equal(t, in, usage.InputTokens, "InputTokens stays the total, as OpenAI reports it")
-		require.Equal(t, in*95/100, usage.CacheReadInputTokens, "95% of the estimated input is priced as cache read")
+		require.Zero(t, usage.CacheReadInputTokens, "an estimate never invents a cache discount")
 		require.Less(t, usage.CacheReadInputTokens, usage.InputTokens, "some input must stay at the normal price")
 		require.Zero(t, usage.CacheCreationInputTokens)
 		require.True(t, usage.CacheReadEstimated, "an estimated cache share must be marked so a missing cache price bills as input")
@@ -100,7 +100,7 @@ func TestFillIncompleteStreamUsage(t *testing.T) {
 		require.Zero(t, usage.OutputTokens)
 		require.Greater(t, in, 0)
 		require.Equal(t, in, usage.InputTokens)
-		require.Equal(t, in*95/100, usage.CacheReadInputTokens)
+		require.Zero(t, usage.CacheReadInputTokens)
 	})
 	t.Run("nil usage is safe", func(t *testing.T) {
 		out, in := fillIncompleteStreamUsage(nil, 10, body)
@@ -128,7 +128,7 @@ func TestApplyIncompleteOpenAIStreamUsage(t *testing.T) {
 		applyIncompleteOpenAIStreamUsage(&Account{ID: 1}, result, body, "gpt-5.1", streamErr)
 		require.Equal(t, 10, result.usage.OutputTokens)
 		require.Greater(t, result.usage.InputTokens, 0)
-		require.Equal(t, incompleteCacheReadTokens(result.usage.InputTokens), result.usage.CacheReadInputTokens)
+		require.Equal(t, openAIIncompleteCacheReadTokens(result.usage.InputTokens), result.usage.CacheReadInputTokens)
 	})
 	t.Run("no error means a terminal frame was handled elsewhere", func(t *testing.T) {
 		result := newResult()
@@ -141,17 +141,39 @@ func TestApplyIncompleteOpenAIStreamUsage(t *testing.T) {
 		applyIncompleteOpenAIStreamUsage(&Account{ID: 1}, result, body, "gpt-5.1", streamErr)
 		require.Equal(t, OpenAIUsage{}, *result.usage)
 	})
-	t.Run("replayable failover attempts are never estimated", func(t *testing.T) {
+	t.Run("unmarked replayable failover attempts are never estimated", func(t *testing.T) {
 		result := newResult()
 		result.clientDisconnect = true
 		applyIncompleteOpenAIStreamUsage(&Account{ID: 1}, result, body, "gpt-5.1", &UpstreamFailoverError{StatusCode: http.StatusBadGateway})
 		require.Equal(t, OpenAIUsage{}, *result.usage)
 	})
-	t.Run("an upstream break that produced nothing stays free", func(t *testing.T) {
+	t.Run("a stream the upstream ended without a terminal frame bills its input estimate", func(t *testing.T) {
+		result := newResult()
+		// The upstream produced nothing visible before the EOF; new-api may still have
+		// billed the accepted request, so the input estimate is kept for the handler.
+		result.incompleteOutputTokens = 0
+		applyIncompleteOpenAIStreamUsage(&Account{ID: 1}, result, body, "gpt-5.1",
+			&UpstreamFailoverError{StatusCode: http.StatusOK, StreamEndedWithoutTerminal: true})
+		require.Zero(t, result.usage.OutputTokens)
+		require.Greater(t, result.usage.InputTokens, 0, "accepted request input is billed")
+		require.Zero(t, result.usage.CacheReadInputTokens)
+		require.True(t, result.usage.CacheReadEstimated)
+	})
+	t.Run("the configured share lowers a marked estimate", func(t *testing.T) {
+		withOpenAIIncompleteInputCacheReadPercent(t, 95)
+		result := newResult()
+		applyIncompleteOpenAIStreamUsage(&Account{ID: 1}, result, body, "gpt-5.1",
+			&UpstreamFailoverError{StatusCode: http.StatusOK, StreamEndedWithoutTerminal: true})
+		require.Greater(t, result.usage.InputTokens, 0)
+		require.Equal(t, openAIIncompleteCacheReadTokens(result.usage.InputTokens), result.usage.CacheReadInputTokens)
+	})
+	t.Run("an upstream break that produced nothing still bills the accepted input", func(t *testing.T) {
 		result := newResult()
 		result.incompleteOutputTokens = 0
 		applyIncompleteOpenAIStreamUsage(&Account{ID: 1}, result, body, "gpt-5.1", errors.New("boom"))
-		require.Equal(t, OpenAIUsage{}, *result.usage)
+		require.Zero(t, result.usage.OutputTokens)
+		require.Greater(t, result.usage.InputTokens, 0, "an abnormal upstream end does not refund the prompt")
+		require.Zero(t, result.usage.CacheReadInputTokens)
 	})
 	t.Run("a client that left before any output is billed for its input only", func(t *testing.T) {
 		result := newResult()
@@ -160,7 +182,7 @@ func TestApplyIncompleteOpenAIStreamUsage(t *testing.T) {
 		applyIncompleteOpenAIStreamUsage(&Account{ID: 1}, result, body, "gpt-5.1", streamErr)
 		require.Zero(t, result.usage.OutputTokens)
 		require.Greater(t, result.usage.InputTokens, 0)
-		require.Equal(t, incompleteCacheReadTokens(result.usage.InputTokens), result.usage.CacheReadInputTokens)
+		require.Equal(t, openAIIncompleteCacheReadTokens(result.usage.InputTokens), result.usage.CacheReadInputTokens)
 	})
 	t.Run("reported usage survives a client that left", func(t *testing.T) {
 		result := newResult()
@@ -239,6 +261,6 @@ func TestOpenAIGatewayService_GrokIncompleteStreamIsEstimated(t *testing.T) {
 	t.Logf("usage=%+v", result.Usage)
 	require.Equal(t, estimateTokensForText(incompleteStreamDeltaOneText+incompleteStreamDeltaTwoText), result.Usage.OutputTokens)
 	require.Greater(t, result.Usage.InputTokens, 0)
-	require.Equal(t, incompleteCacheReadTokens(result.Usage.InputTokens), result.Usage.CacheReadInputTokens)
+	require.Equal(t, openAIIncompleteCacheReadTokens(result.Usage.InputTokens), result.Usage.CacheReadInputTokens)
 	require.Equal(t, "rid-grok-incomplete", result.RequestID)
 }

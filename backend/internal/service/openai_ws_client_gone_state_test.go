@@ -169,7 +169,7 @@ func TestProxyResponsesWebSocketFromClient_ClientGoneMidTurnDropsConnectionAndEs
 	require.Equal(t, estimateTokensForText("Once upon a time a quick brown fox sat down at a keyboard."), result.Usage.OutputTokens,
 		"output is estimated from everything the upstream had produced")
 	require.Positive(t, result.Usage.InputTokens, "input is estimated from the request")
-	require.Equal(t, incompleteCacheReadTokens(result.Usage.InputTokens), result.Usage.CacheReadInputTokens)
+	require.Equal(t, openAIIncompleteCacheReadTokens(result.Usage.InputTokens), result.Usage.CacheReadInputTokens)
 	require.True(t, result.Usage.CacheReadEstimated)
 
 	require.Equal(t, []bool{true}, run.closedWhenSettled, "the upstream is closed before the turn is settled, not after")

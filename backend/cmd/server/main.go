@@ -245,6 +245,9 @@ func runMainServer() {
 
 	// 协议转换层的 max_output_tokens 下限来自配置；启动时注入一次。
 	apicompat.SetMinOutputTokens(cfg.Gateway.MinOutputTokens)
+	// 无 usage 的 OpenAI 流式异常结束按请求体估算输入时的缓存读占比：
+	// 0 = 不臆造缓存折扣，与上游 new-api 异常结束回退口径对齐（issue #456）。
+	service.SetOpenAIIncompleteInputCacheReadPercent(cfg.Billing.OpenAIIncompleteInputCacheReadPercent)
 	if err := logger.Init(logger.OptionsFromConfig(cfg.Log)); err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}

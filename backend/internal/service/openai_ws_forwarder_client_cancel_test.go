@@ -86,7 +86,7 @@ func TestForwardOpenAIWSV2_ClientCancellationClosesUpstreamAndEstimates(t *testi
 	require.NotContains(t, writer.body.String(), "response.failed")
 
 	require.Positive(t, result.Usage.InputTokens, "input is estimated from the request body")
-	require.Equal(t, incompleteCacheReadTokens(result.Usage.InputTokens), result.Usage.CacheReadInputTokens)
+	require.Equal(t, openAIIncompleteCacheReadTokens(result.Usage.InputTokens), result.Usage.CacheReadInputTokens)
 	require.True(t, result.Usage.CacheReadEstimated)
 	require.Equal(t, estimateTokensForText("partial"), result.Usage.OutputTokens, "output is estimated from the streamed content")
 

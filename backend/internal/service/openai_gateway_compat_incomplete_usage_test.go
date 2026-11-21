@@ -32,7 +32,7 @@ func TestApplyCompatIncompleteUsage(t *testing.T) {
 	account := &Account{ID: 7}
 	wantTotal := estimateRequestInputTokens([]byte(compatTestRequestBody))
 	require.Greater(t, wantTotal, 0)
-	wantSplit := splitIncompleteInput(wantTotal)
+	wantSplit := splitOpenAIIncompleteInput(wantTotal)
 
 	tests := []struct {
 		name  string
@@ -42,7 +42,7 @@ func TestApplyCompatIncompleteUsage(t *testing.T) {
 		want  OpenAIUsage
 	}{
 		{
-			name:  "client gone, nothing produced: input only, 95% as cache read",
+			name:  "client gone, nothing produced: input only, no invented cache discount",
 			stash: account,
 			in:    compatIncompleteUsage{ClientGone: true},
 			want:  OpenAIUsage{InputTokens: wantSplit.Total, CacheReadInputTokens: wantSplit.CacheRead, CacheReadEstimated: true},
@@ -54,10 +54,10 @@ func TestApplyCompatIncompleteUsage(t *testing.T) {
 			want:  OpenAIUsage{InputTokens: wantSplit.Total, CacheReadInputTokens: wantSplit.CacheRead, CacheReadEstimated: true, OutputTokens: 27},
 		},
 		{
-			name:  "client attached and nothing produced stays free",
+			name:  "client attached and nothing produced bills the accepted input",
 			stash: account,
 			in:    compatIncompleteUsage{OutputEstimate: 0},
-			want:  OpenAIUsage{},
+			want:  OpenAIUsage{InputTokens: wantSplit.Total, CacheReadInputTokens: wantSplit.CacheRead, CacheReadEstimated: true},
 		},
 		{
 			name:  "client attached but output produced is billed",
@@ -76,6 +76,14 @@ func TestApplyCompatIncompleteUsage(t *testing.T) {
 			stash: account,
 			in:    compatIncompleteUsage{OutputEstimate: 27, Cause: errors.Join(errors.New("x"), &UpstreamFailoverError{StatusCode: 502})},
 			want:  OpenAIUsage{},
+		},
+		{
+			name:  "a stream the upstream ended without a terminal frame keeps its input estimate",
+			stash: account,
+			in: compatIncompleteUsage{
+				Cause: &UpstreamFailoverError{StatusCode: http.StatusOK, StreamEndedWithoutTerminal: true},
+			},
+			want: OpenAIUsage{InputTokens: wantSplit.Total, CacheReadInputTokens: wantSplit.CacheRead, CacheReadEstimated: true},
 		},
 		{
 			name: "no stashed request body: nothing is invented for the input",

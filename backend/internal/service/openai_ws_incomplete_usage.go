@@ -12,9 +12,9 @@ import (
 // client leaves while the turn is still running, the upstream is closed on the spot
 // and that event never arrives, so the turn would be recorded with zero usage. The
 // billing policy for that case (output estimated from what the upstream produced,
-// input from the request with 95% priced as cache read, nothing the upstream really
-// reported is overwritten) is shared with the SSE path: this file applies it to a WS
-// turn.
+// input from the request at the configured cache read share, nothing the upstream
+// really reported is overwritten) is shared with the SSE path: this file applies it
+// to a WS turn.
 
 // incompleteOpenAIWSTurn names a turn that ended without a terminal event, for the
 // estimate log line.
@@ -57,6 +57,6 @@ func applyIncompleteOpenAIWSTurnUsage(
 		zap.Bool("client_disconnect", true),
 		zap.Int("estimated_output_tokens", outputTokens),
 		zap.Int("estimated_input_tokens", inputTokens),
-		zap.Int("estimated_cache_read_tokens", incompleteCacheReadTokens(inputTokens)),
+		zap.Int("estimated_cache_read_tokens", openAIIncompleteCacheReadTokens(inputTokens)),
 	).Warn("openai_usage.incomplete_ws_turn_estimated")
 }
