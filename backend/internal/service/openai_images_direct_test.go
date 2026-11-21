@@ -228,7 +228,7 @@ func TestGPTImage26PricingFallbackUsesImageCacheRate(t *testing.T) {
 	}
 }
 
-func TestComputeTokenBreakdown_ImageCacheReadUsesImageCacheRate(t *testing.T) {
+func TestComputeTokenBreakdown_ImageCacheReadUsesStandardCacheRate(t *testing.T) {
 	svc := NewBillingService(&config.Config{}, nil)
 	pricing := &ModelPricing{
 		InputPricePerToken:          5e-6,
@@ -250,10 +250,13 @@ func TestComputeTokenBreakdown_ImageCacheReadUsesImageCacheRate(t *testing.T) {
 
 	cost := svc.computeTokenBreakdown(pricing, tokens, 1.0, "", false)
 
-	require.InDelta(t, float64(40)*2e-6, cost.CacheReadCost, 1e-15, "cached image tokens use the image cache rate")
-	require.InDelta(t, float64(60)*8e-6, cost.ImageInputCost, 1e-15)
-	require.InDelta(t, float64(40)*5e-6, cost.InputCost, 1e-15)
-	require.InDelta(t, float64(10)*30e-6, cost.ImageOutputCost, 1e-15)
+	// token 计费不再区分图片/文本单价（2026-11-21）：缓存读全部按常规定价，
+	// 输入/输出全部按输入价/输出价计，图片费用字段恒为 0。
+	require.InDelta(t, float64(40)*1.25e-6, cost.CacheReadCost, 1e-15)
+	require.Zero(t, cost.ImageInputCost)
+	require.InDelta(t, float64(100)*5e-6, cost.InputCost, 1e-15)
+	require.Zero(t, cost.ImageOutputCost)
+	require.InDelta(t, float64(10)*10e-6, cost.OutputCost, 1e-15)
 }
 
 func TestOpenAIGatewayServiceForwardImages_OAuthGPTImage26UsesDirectEndpoint(t *testing.T) {

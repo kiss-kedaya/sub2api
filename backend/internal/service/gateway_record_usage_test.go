@@ -371,12 +371,12 @@ func TestGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *
 	require.Equal(t, 3.0, usageRepo.lastLog.RateMultiplier)
 
 	textInput := 1000 * 3e-6
-	textOutput := 500 * 15e-6
-	imageOutput := 100 * 15e-6
-	expectedActual := (textInput + textOutput + imageOutput) * 3.0
+	// 全部输出 token 按输出价计；image token 拆分不再参与计费。
+	output := 600 * 15e-6
+	expectedActual := (textInput + output) * 3.0
 
-	require.InDelta(t, textInput+textOutput+imageOutput, usageRepo.lastLog.TotalCost, 1e-12)
-	require.InDelta(t, imageOutput, usageRepo.lastLog.ImageOutputCost, 1e-12)
+	require.InDelta(t, textInput+output, usageRepo.lastLog.TotalCost, 1e-12)
+	require.InDelta(t, 0.0, usageRepo.lastLog.ImageOutputCost, 1e-12)
 	require.InDelta(t, expectedActual, usageRepo.lastLog.ActualCost, 1e-12)
 	require.InDelta(t, expectedActual, userRepo.lastAmount, 1e-12)
 }
