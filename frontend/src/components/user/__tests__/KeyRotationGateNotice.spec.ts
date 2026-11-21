@@ -68,16 +68,16 @@ describe('KeyRotationGateNotice', () => {
     expect(action.attributes('href')).toBe('/keys')
   })
 
-  it('shows the cutoff, active key count and pending key count', () => {
+  it('shows the active key count and pending key count but never the cutoff time', () => {
     const wrapper = mountNotice()
     const text = wrapper.text()
 
-    expect(text).toContain('keyRotationGate.cutoffLabel')
     expect(text).toContain('keyRotationGate.activeKeysLabel')
     expect(text).toContain('keyRotationGate.pendingKeysLabel')
     expect(text).toContain('3')
     expect(text).toContain('2')
-    // 2026-11-21T00:00:00+08:00 is rendered in the runtime locale, not raw.
+    // The incident remediation card must not expose the internal cutoff instant.
+    expect(text).not.toContain('keyRotationGate.cutoffLabel')
     expect(text).not.toContain('2026-11-21T00:00:00+08:00')
   })
 
@@ -94,9 +94,9 @@ describe('KeyRotationGateNotice', () => {
     expect(wrapper.text()).not.toContain('keyRotationGate.pendingKeysLabel')
   })
 
-  it('shows an unparsable cutoff verbatim instead of dropping it', () => {
+  it('does not render any cutoff value even when the backend still returns one', () => {
     const wrapper = mountNotice({ status: { ...status, cutoff: 'not-a-date' } })
-    expect(wrapper.text()).toContain('not-a-date')
+    expect(wrapper.text()).not.toContain('not-a-date')
   })
 
   it('ships the exact Chinese remediation copy promised by the incident requirement', () => {
@@ -105,5 +105,12 @@ describe('KeyRotationGateNotice', () => {
     )
     expect(zh.keyRotationGate.action).toBe('前往 API 密钥')
     expect(en.keyRotationGate.action).toBe('Go to API Keys')
+  })
+
+  it('drops the cutoff label from both locales', () => {
+    const zhGate = zh.keyRotationGate as Record<string, unknown>
+    const enGate = en.keyRotationGate as Record<string, unknown>
+    expect(zhGate.cutoffLabel).toBeUndefined()
+    expect(enGate.cutoffLabel).toBeUndefined()
   })
 })

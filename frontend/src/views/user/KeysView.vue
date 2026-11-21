@@ -4,6 +4,26 @@
       <template #filters>
         <div class="flex flex-col gap-3">
           <TwoFactorSuggestionBanner storage-key="keys" />
+          <!-- 一键处理：直接把待整改的 Key 收拢成一屏，逐把轮换或加白名单 -->
+          <div
+            v-if="showRotationOnly"
+            class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-50"
+            data-test="keys-rotation-filter"
+          >
+            <span class="flex items-center gap-2">
+              <UIcon name="i-lucide-shield-alert" class="size-4 shrink-0" aria-hidden="true" />
+              {{ t('keys.rotationFilterHint', { count: rotationOnlyRows.length }) }}
+            </span>
+            <UButton
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              data-test="keys-rotation-show-all"
+              @click="stopRotationRemediation"
+            >
+              {{ t('keys.rotationShowAll') }}
+            </UButton>
+          </div>
           <div class="flex flex-wrap items-center gap-2">
             <SearchInput
               v-model="filterSearch"
@@ -37,8 +57,30 @@
         <UserPageHeader flush :title="t('keys.title')">
           <template #badge>
             <UBadge color="neutral" variant="subtle" class="tabular-nums" data-test="key-count">{{ pagination.total }}</UBadge>
+            <!-- 与充值/兑换门禁同源的待整改汇总（覆盖所有分页） -->
+            <UBadge
+              v-if="pendingRotationCount > 0"
+              color="warning"
+              variant="subtle"
+              icon="i-lucide-shield-alert"
+              class="tabular-nums"
+              data-test="keys-rotation-count"
+              :title="t('keys.rotationPendingHint')"
+            >
+              {{ t('keys.rotationPendingSummary', { count: pendingRotationCount }) }}
+            </UBadge>
           </template>
           <template #actions>
+            <UButton
+              v-if="pendingRotationCount > 0"
+              color="warning"
+              variant="outline"
+              icon="i-lucide-list-checks"
+              data-test="keys-rotation-process"
+              @click="startRotationRemediation"
+            >
+              {{ t('keys.rotationPendingAction') }}
+            </UButton>
             <UButton
               v-if="selectedKeyCount > 0"
               color="error"
@@ -107,8 +149,8 @@
       <template #table>
         <DataTable
           :columns="columns"
-          :data="apiKeys"
-          :loading="loading"
+          :data="tableRows"
+          :loading="loading || rotationOnlyLoading"
           :server-side-sort="true"
           :selectable="true"
           :row-key="keyRowId"
@@ -141,6 +183,43 @@
                   :title="t('keys.ipRestrictionEnabled')"
                 />
               </div>
+              <!-- 待整改：充值/兑换门禁与列表共用同一判定，角标在整改成功后立即消失。 -->
+              <div v-if="row.needs_rotation" class="flex flex-wrap items-center gap-1.5">
+                <span
+                  class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring ring-inset ring-amber-300 dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/40"
+                  data-test="key-needs-rotation-badge"
+                >
+                  <UIcon name="i-lucide-shield-alert" class="size-3.5 shrink-0" aria-hidden="true" />
+                  {{ t('keys.rotationBadge') }}
+                </span>
+                <span v-if="rotationReasonText(row)" class="text-[11px] text-amber-700 dark:text-amber-300" data-test="key-needs-rotation-reason">
+                  {{ rotationReasonText(row) }}
+                </span>
+                <button
+                  type="button"
+                  class="key-risk-rotate"
+                  :disabled="rotatingKeyId === row.id"
+                  :title="t('keys.riskRotateHint')"
+                  data-test="key-needs-rotation-rotate"
+                  @click="rotateKeyValue(row)"
+                >
+                  <UIcon
+                    name="i-lucide-refresh-cw"
+                    :class="['size-3.5', rotatingKeyId === row.id ? 'animate-spin' : '']"
+                  />
+                  <span>{{ t('keys.rotationFixByRotate') }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="key-risk-rotate"
+                  :title="t('keys.rotationFixByWhitelistHint')"
+                  data-test="key-needs-rotation-whitelist"
+                  @click="editKey(row)"
+                >
+                  <UIcon name="i-lucide-network" class="size-3.5" />
+                  <span>{{ t('keys.rotationFixByWhitelist') }}</span>
+                </button>
+              </div>
               <!-- Gateway risk control disabled this key: state the reason and offer the
                    one-click rotation that restores it. -->
               <div v-if="row.risk_disabled" class="flex flex-wrap items-center gap-1.5">
@@ -153,7 +232,7 @@
                   class="key-risk-rotate"
                   :disabled="rotatingKeyId === row.id"
                   :title="t('keys.riskRotateHint')"
-                  @click="rotateRiskKey(row)"
+                  @click="rotateKeyValue(row)"
                 >
                   <UIcon
                     name="i-lucide-refresh-cw"
@@ -385,6 +464,12 @@
 
           <template #empty>
             <EmptyState
+              v-if="showRotationOnly"
+              :title="t('keys.rotationNoneTitle')"
+              :description="t('keys.rotationNoneDescription')"
+            />
+            <EmptyState
+              v-else
               :title="t('keys.noKeysYet')"
               :description="t('keys.createFirstKey')"
               :action-text="t('keys.createKey')"
@@ -397,7 +482,7 @@
       <template #pagination>
         <Pagination
           class="signal-pagination"
-          v-if="pagination.total > 0"
+          v-if="!showRotationOnly && pagination.total > 0"
           :page="pagination.page"
           :total="pagination.total"
           :page-size="pagination.page_size"
@@ -1222,7 +1307,7 @@ const concurrencyHint = (row: Pick<ApiKey, 'concurrency_limit'>) => {
   const limit = row.concurrency_limit
   return limit ? t('keys.currentConcurrencyHint', { limit }) : t('keys.currentConcurrencyNoLimitHint')
 }
-import { keysAPI, authAPI, usageAPI, userGroupsAPI, endpointsAPI } from '@/api'
+import { keysAPI, authAPI, usageAPI, userGroupsAPI, endpointsAPI, keyRotationGateAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import DataTable from '@/components/common/DataTable.vue'
@@ -1403,6 +1488,7 @@ const handleBulkEditApplied = async (result: { updated: number; failed: number }
     appStore.showError(t('keys.bulkEdit.appliedPartial', { updated: result.updated, failed: result.failed }))
   }
   await loadApiKeys()
+  void syncRotationRemediation()
 }
 const keyRowId = (row: ApiKey) => row.id
 const groups = ref<Group[]>([])
@@ -1439,6 +1525,117 @@ const sortState = ref({
 const filterSearch = ref('')
 const filterStatus = ref('')
 const filterGroupId = ref<string | number>('')
+
+// ---- 待整改（与充值/兑换门禁同源）----
+// 汇总优先用门禁状态接口（覆盖所有分页）；接口不可用时退化为当前页行数。
+const rotationSummaryPending = ref<number | null>(null)
+const pagePendingRotationCount = computed(
+  () => apiKeys.value.filter((key) => key.needs_rotation === true).length
+)
+const pendingRotationCount = computed(() => {
+  const server = rotationSummaryPending.value
+  return typeof server === 'number' && server >= 0 ? server : pagePendingRotationCount.value
+})
+
+// 一键处理：一次拉回当前筛选下的密钥（后端单页上限 1000），只显示待整改的行。
+const showRotationOnly = ref(false)
+const rotationOnlyRows = ref<ApiKey[]>([])
+const rotationOnlyLoading = ref(false)
+
+const tableRows = computed(() => (showRotationOnly.value ? rotationOnlyRows.value : apiKeys.value))
+
+// 待整改原因只做分类展示，判定本身完全由后端 needs_rotation 决定。
+const rotationReasonText = (row: ApiKey): string => {
+  const reasons = row.rotation_reasons ?? []
+  const parts: string[] = []
+  if (reasons.includes('created_before_cutoff')) parts.push(t('keys.rotationReasonCreatedBeforeCutoff'))
+  if (reasons.includes('no_ip_allowlist')) parts.push(t('keys.rotationReasonNoIPAllowlist'))
+  return parts.join(' · ')
+}
+
+const activeListFilters = () => {
+  const filters: {
+    search?: string
+    status?: string
+    group_id?: number | string
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
+  } = {}
+  if (filterSearch.value) filters.search = filterSearch.value
+  if (filterStatus.value) filters.status = filterStatus.value
+  if (filterGroupId.value !== '') filters.group_id = filterGroupId.value
+  filters.sort_by = sortState.value.sort_by
+  filters.sort_order = sortState.value.sort_order
+  return filters
+}
+
+const loadRotationSummary = async () => {
+  const api = keyRotationGateAPI as
+    | { getStatus?: () => Promise<{ pending_key_count?: number }> }
+    | undefined
+  if (!api || typeof api.getStatus !== 'function') return
+  try {
+    const status = await api.getStatus()
+    if (status && typeof status.pending_key_count === 'number') {
+      rotationSummaryPending.value = status.pending_key_count
+    }
+  } catch {
+    // 门禁状态读失败不影响密钥页；行内角标仍来自每行的 needs_rotation。
+  }
+}
+
+const fetchRotationOnlyRows = async (): Promise<ApiKey[]> => {
+  // Walk the filtered pages until every pending key is collected: the backend
+  // may clamp page_size below the requested 1000 (admin table settings).
+  const collected: ApiKey[] = []
+  const pageSize = 1000
+  for (let page = 1; page <= 40; page += 1) {
+    const response = await keysAPI.list(page, pageSize, activeListFilters())
+    collected.push(...response.items.filter((key) => key.needs_rotation === true))
+    const pages = typeof response.pages === 'number' ? response.pages : 1
+    if (page >= pages || response.items.length === 0) break
+  }
+  return collected
+}
+
+const startRotationRemediation = async () => {
+  showRotationOnly.value = true
+  rotationOnlyLoading.value = true
+  try {
+    rotationOnlyRows.value = await fetchRotationOnlyRows()
+    if (rotationOnlyRows.value.length === 0) {
+      appStore.showSuccess(t('keys.rotationAllClear'))
+      showRotationOnly.value = false
+    }
+  } catch {
+    showRotationOnly.value = false
+    appStore.showError(t('keys.failedToLoad'))
+  } finally {
+    rotationOnlyLoading.value = false
+  }
+}
+
+const stopRotationRemediation = async () => {
+  showRotationOnly.value = false
+  rotationOnlyRows.value = []
+  await loadApiKeys()
+}
+
+// 整改动作成功后：刷新汇总数字；如果正处在"只看待整改"视图里，同步收拢剩余行。
+const syncRotationRemediation = async () => {
+  void loadRotationSummary()
+  if (!showRotationOnly.value) return
+  try {
+    rotationOnlyRows.value = await fetchRotationOnlyRows()
+    if (rotationOnlyRows.value.length === 0) {
+      appStore.showSuccess(t('keys.rotationAllClear'))
+      showRotationOnly.value = false
+      await loadApiKeys()
+    }
+  } catch {
+    // 保留当前行，下一次操作或刷新会纠正。
+  }
+}
 
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
@@ -1791,21 +1988,7 @@ const loadApiKeys = async () => {
   const { signal } = controller
   loading.value = true
   try {
-    // Build filters
-    const filters: {
-      search?: string
-      status?: string
-      group_id?: number | string
-      sort_by?: string
-      sort_order?: 'asc' | 'desc'
-    } = {}
-    if (filterSearch.value) filters.search = filterSearch.value
-    if (filterStatus.value) filters.status = filterStatus.value
-    if (filterGroupId.value !== '') filters.group_id = filterGroupId.value
-    filters.sort_by = sortState.value.sort_by
-    filters.sort_order = sortState.value.sort_order
-
-    const response = await keysAPI.list(pagination.value.page, pagination.value.page_size, filters, {
+    const response = await keysAPI.list(pagination.value.page, pagination.value.page_size, activeListFilters(), {
       signal
     })
     if (signal.aborted) return
@@ -1963,9 +2146,10 @@ const editKey = (key: ApiKey) => {
   showEditModal.value = true
 }
 
-// 风控停用的 key 一键轮换：生成新 key 值，旧值立即失效，key 恢复 active。
+// 轮换一把 key 的值：旧值立即失效，成功回执里带回新明文。
 // 走的是既有 PUT /keys/:id 更新流程（regenerate_key），不新增后端路由。
-const rotateRiskKey = async (key: ApiKey) => {
+// 风控停用的 key（risk_disabled）和待整改的 key（needs_rotation）共用这条路径。
+const rotateKeyValue = async (key: ApiKey) => {
   if (rotatingKeyId.value !== null) return
   rotatingKeyId.value = key.id
   try {
@@ -1975,6 +2159,8 @@ const rotateRiskKey = async (key: ApiKey) => {
     // 旧 key 已立刻失效，新明文必须当场给用户，否则这把 key 就废了。
     openSecretDialog(rotatedMasked as ApiKey, rotatedSecret)
     appStore.showSuccess(t('keys.riskRotateSuccess'))
+    // 轮换即整改：角标就地消失，门禁汇总数量同步减少。
+    await syncRotationRemediation()
   } catch (error) {
     appStore.showError(t('keys.riskRotateFailed'))
   } finally {
@@ -1996,6 +2182,8 @@ const toggleKeyStatus = async (key: ApiKey) => {
     appStore.showSuccess(
       newStatus === 'active' ? t('keys.keyEnabledSuccess') : t('keys.keyDisabledSuccess')
     )
+    // 启用/停用会改变这把 Key 是否参与门禁，汇总数量随之刷新。
+    void syncRotationRemediation()
   } catch (error) {
     appStore.showError(t('keys.failedToUpdateStatus'))
   }
@@ -2118,6 +2306,9 @@ const removeKeysLocally = (ids: number[]): RemovedKeySnapshot[] => {
   })
   if (removed.length === 0) return removed
   apiKeys.value = apiKeys.value.filter((key) => !idSet.has(key.id))
+  if (rotationOnlyRows.value.some((key) => idSet.has(key.id))) {
+    rotationOnlyRows.value = rotationOnlyRows.value.filter((key) => !idSet.has(key.id))
+  }
   removed.forEach((snapshot) => {
     delete usageStats.value[snapshot.key.id]
   })
@@ -2134,6 +2325,13 @@ const restoreRemovedKeys = (removed: RemovedKeySnapshot[]) => {
     if (snapshot.usage) usageStats.value[snapshot.key.id] = snapshot.usage
   }
   apiKeys.value = next
+  // 待整改视图里删除失败的行也要放回去，否则角标汇总会和列表对不上。
+  const rotationExtras = removed
+    .map((snapshot) => snapshot.key)
+    .filter((key) => key.needs_rotation && !rotationOnlyRows.value.some((row) => row.id === key.id))
+  if (rotationExtras.length > 0) {
+    rotationOnlyRows.value = [...rotationOnlyRows.value, ...rotationExtras]
+  }
 }
 
 /**
@@ -2206,6 +2404,17 @@ const mergeKeyLocally = (updated: ApiKey | null | undefined): ApiKey | null => {
   }
   apiKeys.value[index] = merged
   if (selectedKey.value?.id === merged.id) selectedKey.value = merged
+  // 「只看待整改」视图里同一把 key 也要跟着变：整改完成的立即移出列表。
+  const rotationIndex = rotationOnlyRows.value.findIndex((key) => key.id === merged.id)
+  if (rotationIndex !== -1) {
+    const nextRotationRows = [...rotationOnlyRows.value]
+    if (merged.needs_rotation) {
+      nextRotationRows[rotationIndex] = merged
+    } else {
+      nextRotationRows.splice(rotationIndex, 1)
+    }
+    rotationOnlyRows.value = nextRotationRows
+  }
   return merged
 }
 
@@ -2315,6 +2524,8 @@ const handleSubmit = async () => {
       const updated = await keysAPI.update(selectedKey.value.id, updates)
       mergeKeyLocally(updated)
       appStore.showSuccess(t('keys.keyUpdatedSuccess'))
+      // 编辑里可能刚补了 IP 白名单：待整改角标与汇总数量要立刻刷新。
+      await syncRotationRemediation()
     } else {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
       const created = await keysAPI.create(
@@ -2377,6 +2588,7 @@ const handleDelete = async () => {
     await keysAPI.delete(key.id)
     appStore.showSuccess(t('keys.keyDeletedSuccess'))
     await backfillPageIfEmpty()
+    void syncRotationRemediation()
   } catch (error: any) {
     // 优先使用后端返回的错误消息，提供更具体的错误信息给用户
     restoreRemovedKeys(removed)
@@ -2412,6 +2624,7 @@ const handleBulkDelete = async () => {
       appStore.showError(t('keys.failedToDelete'))
     }
     await backfillPageIfEmpty()
+    void syncRotationRemediation()
   } catch (error) {
     restoreRemovedKeys(removed)
     applyTotalDelta(removed.length)
@@ -2658,6 +2871,7 @@ function formatResetTime(resetAt: string | null): string {
 onMounted(() => {
   loadSavedColumns()
   loadApiKeys()
+  void loadRotationSummary()
   loadGroups()
   loadUserGroupRates()
   loadPublicSettings()

@@ -76,11 +76,54 @@ func IsKeyRotationCompliant(key APIKey, cutoff time.Time) bool {
 	if hasNonEmptyIPWhitelist(key.IPWhitelist) {
 		return true
 	}
+	return !keyRotationIssuedAt(key).Before(cutoff)
+}
+
+// keyRotationIssuedAt is when the currently valid credential was issued: the
+// later of creation and the last rotation. A metadata edit does not move it.
+func keyRotationIssuedAt(key APIKey) time.Time {
 	issuedAt := key.CreatedAt
 	if key.KeyRotatedAt != nil && key.KeyRotatedAt.After(issuedAt) {
 		issuedAt = *key.KeyRotatedAt
 	}
-	return !issuedAt.Before(cutoff)
+	return issuedAt
+}
+
+// KeyRotationKeyReason* classify why one active key still needs remediation.
+// A key the gate blocks always satisfies both: it predates the cutoff and has
+// no usable IP allowlist.
+const (
+	KeyRotationKeyReasonCreatedBeforeCutoff = "created_before_cutoff"
+	KeyRotationKeyReasonNoIPAllowlist       = "no_ip_allowlist"
+)
+
+// KeyRotationKeyAssessment is the single-key verdict the console uses to badge
+// rows on /keys and to count how many keys still need work.
+type KeyRotationKeyAssessment struct {
+	NeedsRotation bool
+	Reasons       []string
+}
+
+// AssessKeyRotation decides whether one key is a credential the recharge gate
+// is still waiting on. It deliberately reuses IsKeyRotationCompliant instead of
+// re-implementing the predicate, and only active keys participate because the
+// gate lists active keys only (a disabled key cannot be abused through the
+// gateway and must never be badged as pending).
+func AssessKeyRotation(key APIKey, enabled bool, cutoff time.Time) KeyRotationKeyAssessment {
+	if !enabled || key.Status != StatusAPIKeyActive {
+		return KeyRotationKeyAssessment{}
+	}
+	if IsKeyRotationCompliant(key, cutoff) {
+		return KeyRotationKeyAssessment{}
+	}
+	reasons := make([]string, 0, 2)
+	if keyRotationIssuedAt(key).Before(cutoff) {
+		reasons = append(reasons, KeyRotationKeyReasonCreatedBeforeCutoff)
+	}
+	if !hasNonEmptyIPWhitelist(key.IPWhitelist) {
+		reasons = append(reasons, KeyRotationKeyReasonNoIPAllowlist)
+	}
+	return KeyRotationKeyAssessment{NeedsRotation: true, Reasons: reasons}
 }
 
 func hasNonEmptyIPWhitelist(entries []string) bool {

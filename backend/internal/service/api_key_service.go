@@ -743,6 +743,28 @@ func (s *APIKeyService) ListActiveKeysByUser(ctx context.Context, userID int64) 
 	return keys, nil
 }
 
+// AnnotateKeyRotation fills the read-time NeedsRotation / RotationReasons
+// fields from the same predicate the recharge gate uses (gate switch + cutoff +
+// creation/rotation time + IP allowlist, active keys only). Every key response
+// shown to the user must go through it so the /keys badges and the gate card
+// can never disagree.
+func (s *APIKeyService) AnnotateKeyRotation(key *APIKey) {
+	if s == nil || key == nil || s.cfg == nil {
+		return
+	}
+	enabled, cutoff := s.cfg.KeyRotationGateSettings()
+	assessment := AssessKeyRotation(*key, enabled, cutoff)
+	key.NeedsRotation = assessment.NeedsRotation
+	key.RotationReasons = assessment.Reasons
+}
+
+// AnnotateKeyRotations is the slice form of AnnotateKeyRotation.
+func (s *APIKeyService) AnnotateKeyRotations(keys []APIKey) {
+	for i := range keys {
+		s.AnnotateKeyRotation(&keys[i])
+	}
+}
+
 func (s *APIKeyService) listByCurrentConcurrency(ctx context.Context, userID int64, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error) {
 	repo, ok := s.apiKeyRepo.(apiKeyAllByUserIDLister)
 	if !ok {

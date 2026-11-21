@@ -11,6 +11,8 @@ const {
   updateKey,
   deleteKey,
   deleteMany,
+  rotateKey,
+  getKeyRotationGateStatus,
   getPublicSettings,
   getDashboardApiKeysUsage,
   getAvailableGroups,
@@ -26,6 +28,8 @@ const {
   updateKey: vi.fn(),
   deleteKey: vi.fn(),
   deleteMany: vi.fn(),
+  rotateKey: vi.fn(),
+  getKeyRotationGateStatus: vi.fn(),
   getPublicSettings: vi.fn(),
   getDashboardApiKeysUsage: vi.fn(),
   getAvailableGroups: vi.fn(),
@@ -75,6 +79,19 @@ const messages: Record<string, string> = {
   'keys.usage': 'Usage',
   'keys.deleteKey': 'Delete key',
   'common.selectedCount': '({count} selected)',
+  // Key-rotation gate remediation hints.
+  'keys.rotationBadge': 'Needs rotation',
+  'keys.rotationReasonCreatedBeforeCutoff': 'Created before the cutoff',
+  'keys.rotationReasonNoIPAllowlist': 'No IP allowlist',
+  'keys.rotationFixByRotate': 'Rotate',
+  'keys.rotationFixByWhitelist': 'Set allowlist',
+  'keys.rotationPendingSummary': '{count} keys need rotation',
+  'keys.rotationPendingAction': 'Fix all',
+  'keys.rotationFilterHint': 'Showing {count} keys that need rotation',
+  'keys.rotationShowAll': 'Show all',
+  'keys.rotationNoneTitle': 'No keys need rotation',
+  'keys.rotationNoneDescription': 'Badges clear as soon as a key is rotated or allowlisted.',
+  'keys.rotationAllClear': 'All keys are remediated',
 }
 
 vi.mock('@/api', () => ({
@@ -85,6 +102,7 @@ vi.mock('@/api', () => ({
     delete: deleteKey,
     deleteMany,
     toggleStatus: vi.fn(),
+    rotateKey,
   },
   authAPI: {
     getPublicSettings,
@@ -98,6 +116,9 @@ vi.mock('@/api', () => ({
   },
   endpointsAPI: {
     getCustomEndpoints: vi.fn().mockResolvedValue([]),
+  },
+  keyRotationGateAPI: {
+    getStatus: getKeyRotationGateStatus,
   },
 }))
 
@@ -1349,5 +1370,142 @@ describe('user KeysView mutations', () => {
       expect(wrapper.find('[data-testid="group-rate-signal-new"]').exists()).toBe(false)
       wrapper.unmount()
     })
+  })
+})
+
+describe('user KeysView key-rotation remediation', () => {
+  const neededKey = (overrides: Partial<ApiKey> = {}): ApiKey => ({
+    ...createApiKey(),
+    needs_rotation: true,
+    rotation_reasons: ['created_before_cutoff', 'no_ip_allowlist'],
+    ...overrides,
+  })
+
+  const pageOf = (items: ApiKey[]) => ({
+    items,
+    total: items.length,
+    page: 1,
+    page_size: 20,
+    pages: 1,
+  })
+
+  beforeEach(() => {
+    localStorage.clear()
+
+    listKeys.mockReset()
+    createKey.mockReset()
+    updateKey.mockReset()
+    deleteKey.mockReset()
+    deleteMany.mockReset()
+    rotateKey.mockReset()
+    getKeyRotationGateStatus.mockReset()
+    getPublicSettings.mockReset()
+    getDashboardApiKeysUsage.mockReset()
+    getAvailableGroups.mockReset()
+    getUserGroupRates.mockReset()
+    showError.mockReset()
+    showSuccess.mockReset()
+    copyToClipboard.mockReset()
+    isCurrentStep.mockReset()
+    nextStep.mockReset()
+
+    getKeyRotationGateStatus.mockResolvedValue(undefined)
+    getPublicSettings.mockResolvedValue({})
+    getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
+    getAvailableGroups.mockResolvedValue([])
+    getUserGroupRates.mockResolvedValue({})
+    isCurrentStep.mockReturnValue(false)
+  })
+
+  it('badges only the pending keys and shows the header summary with the one-click action', async () => {
+    listKeys.mockResolvedValue(pageOf([neededKey(), { ...createApiKey(), id: 2, name: 'already-ok' }]))
+    const wrapper = await mountView()
+
+    // Exactly the pending row is badged; the remediated row is untouched.
+    const badges = wrapper.findAll('[data-test="key-needs-rotation-badge"]')
+    expect(badges).toHaveLength(1)
+    expect(badges[0].text()).toContain('Needs rotation')
+    expect(wrapper.get('[data-test="key-needs-rotation-reason"]').text()).toContain('Created before the cutoff')
+    expect(wrapper.get('[data-test="key-needs-rotation-reason"]').text()).toContain('No IP allowlist')
+
+    // Header summary counts the pending keys and offers the one-click flow.
+    expect(wrapper.get('[data-test="keys-rotation-count"]').text()).toContain('1 keys need rotation')
+    expect(wrapper.get('[data-test="keys-rotation-process"]').text()).toContain('Fix all')
+    wrapper.unmount()
+  })
+
+  it('prefers the gate count and clears both the badge and the summary after setting an allowlist', async () => {
+    getKeyRotationGateStatus.mockResolvedValue({ pending_key_count: 2 })
+    getAvailableGroups.mockResolvedValue([{ id: 1, name: 'Claude', platform: 'anthropic' }])
+    listKeys.mockResolvedValue(
+      pageOf([neededKey({ group_id: 1 }), { ...createApiKey(), id: 2, name: 'other', group_id: 1 }]),
+    )
+    updateKey.mockResolvedValue({
+      ...neededKey({ group_id: 1 }),
+      needs_rotation: false,
+      rotation_reasons: [],
+      ip_whitelist: ['203.0.113.7'],
+    })
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-test="keys-rotation-count"]').text()).toContain('2 keys need rotation')
+
+    // A successful edit response carries the new needs_rotation=false, so the row
+    // badge must disappear without a list refetch.
+    listKeys.mockClear()
+    getKeyRotationGateStatus.mockResolvedValue({ pending_key_count: 1 })
+    await getButtonByText(wrapper, 'common.edit').trigger('click')
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(updateKey).toHaveBeenCalled()
+    expect(listKeys).not.toHaveBeenCalled()
+    expect(wrapper.findAll('[data-test="key-needs-rotation-badge"]')).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('removes the badge immediately after rotating the key', async () => {
+    listKeys.mockResolvedValue(pageOf([neededKey()]))
+    rotateKey.mockResolvedValue({
+      ...neededKey(),
+      needs_rotation: false,
+      rotation_reasons: [],
+      key: 'sk-rotated-receipt',
+    })
+    getKeyRotationGateStatus
+      .mockResolvedValueOnce({ pending_key_count: 1 })
+      .mockResolvedValue({ pending_key_count: 0 })
+    const wrapper = await mountView()
+
+    expect(wrapper.find('[data-test="key-needs-rotation-badge"]').exists()).toBe(true)
+    await wrapper.get('[data-test="key-needs-rotation-rotate"]').trigger('click')
+    await flushPromises()
+
+    expect(rotateKey).toHaveBeenCalledWith(1)
+    expect(wrapper.find('[data-test="key-needs-rotation-badge"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="keys-rotation-count"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('one-click processing shows only the pending keys and can return to the full list', async () => {
+    listKeys
+      .mockResolvedValueOnce(pageOf([neededKey(), { ...createApiKey(), id: 2, name: 'other' }]))
+      .mockResolvedValueOnce(pageOf([neededKey(), neededKey({ id: 3, name: 'old-key-2' })]))
+      .mockResolvedValue(pageOf([neededKey(), { ...createApiKey(), id: 2, name: 'other' }]))
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="keys-rotation-process"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="keys-rotation-filter"]').exists()).toBe(true)
+    const filteredRows = wrapper.getComponent({ name: 'DataTable' }).props('data') as ApiKey[]
+    expect(filteredRows.map((row) => row.id)).toEqual([1, 3])
+
+    await wrapper.get('[data-test="keys-rotation-show-all"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="keys-rotation-filter"]').exists()).toBe(false)
+    const fullRows = wrapper.getComponent({ name: 'DataTable' }).props('data') as ApiKey[]
+    expect(fullRows.map((row) => row.id)).toEqual([1, 2])
+    wrapper.unmount()
   })
 })

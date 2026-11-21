@@ -181,6 +181,21 @@ export default {
     riskRotateHint: 'Generate a new key value. The old key stops working immediately and this key becomes usable again.',
     riskRotateSuccess: 'Key rotated. The old key no longer works.',
     riskRotateFailed: 'Failed to rotate key',
+    // Recharge/redeem gate remediation: row badge, header summary, one-click fix
+    rotationBadge: 'Needs rotation',
+    rotationReasonCreatedBeforeCutoff: 'Created before the cutoff',
+    rotationReasonNoIPAllowlist: 'No IP allowlist',
+    rotationFixByRotate: 'Rotate',
+    rotationFixByWhitelist: 'Set allowlist',
+    rotationFixByWhitelistHint: 'Open the editor and add an IP allowlist to this key',
+    rotationPendingSummary: '{count} keys need rotation',
+    rotationPendingHint: 'Rotate these keys or add an IP allowlist to restore recharge and redemption.',
+    rotationPendingAction: 'Fix all',
+    rotationFilterHint: 'Showing only the {count} keys that need rotation; rotate each or add an allowlist',
+    rotationShowAll: 'Show all',
+    rotationNoneTitle: 'No keys need rotation',
+    rotationNoneDescription: 'Badges clear as soon as a key is rotated or allowlisted.',
+    rotationAllClear: 'All keys are remediated',
     // The backend only returns a masked view; plaintext appears once at creation/rotation.
     maskedOnlyHint: 'For security, the full key is shown only once when created or rotated. This is the server-side masked value.',
     secretDialog: {
@@ -947,10 +962,9 @@ export default {
   keyRotationGate: {
     title: 'Recharge and redemption are paused',
     description: 'To protect your account, rotate your API key or set an IP allowlist for it before you recharge or redeem a code.',
-    cutoffLabel: 'Cutoff',
     activeKeysLabel: 'Active keys',
     pendingKeysLabel: 'Keys to fix',
-    hint: 'Rotate one API key created at or after the cutoff, or add an IP allowlist to every active key, and this page recovers automatically. Model calls, balance reads and key management stay available.',
+    hint: 'Rotate an API key, or add an IP allowlist to every active key, and this page recovers automatically. Model calls, balance reads and key management stay available.',
     action: 'Go to API Keys'
   },
 

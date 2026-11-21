@@ -182,6 +182,8 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// 与充值/兑换门禁同源标注「待整改」，让 /keys 列表能直接标出要处理的 Key。
+	h.apiKeyService.AnnotateKeyRotations(keys)
 
 	out := make([]dto.APIKey, 0, len(keys))
 	for i := range keys {
@@ -217,6 +219,7 @@ func (h *APIKeyHandler) GetByID(c *gin.Context) {
 		return
 	}
 
+	h.apiKeyService.AnnotateKeyRotation(key)
 	response.Success(c, dto.APIKeyFromService(key))
 }
 
@@ -272,6 +275,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		if err != nil {
 			return nil, err
 		}
+		h.apiKeyService.AnnotateKeyRotation(key)
 		first = dto.APIKeySecretFromService(key)
 		return &first.APIKey, nil // Only this masked form goes into the retry journal.
 	})
@@ -364,6 +368,9 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// 轮换/加白名单成功后，回执必须立刻反映整改结果（needs_rotation=false），
+	// 前端才能就地撤掉角标而不用等下一次列表刷新。
+	h.apiKeyService.AnnotateKeyRotation(key)
 
 	// 轮换是明文 key 的另一次（也是唯一另一次）回执：旧值立刻失效，
 	// 用户必须当场拿到新值。普通编辑只回脱敏视图。

@@ -843,6 +843,11 @@ export interface ApiKey {
   risk_disabled?: boolean
   risk_hit_ip?: string | null
   risk_hit_at?: string | null
+  // 与充值/兑换门禁同源的待整改标记：启用中、创建/轮换时间早于门槛且没有
+  // IP 白名单的 Key 为 true；旧服务不返回该字段时按 false 处理。
+  needs_rotation?: boolean
+  // 待整改原因分类：created_before_cutoff / no_ip_allowlist。
+  rotation_reasons?: string[]
 }
 
 /**
