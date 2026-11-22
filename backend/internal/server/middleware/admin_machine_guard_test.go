@@ -29,7 +29,7 @@ func machineGuardRouter(settings *service.SettingService, register func(admin *g
 	return r
 }
 
-// 旧版全权 key 默认拒绝：卡密列表（明文 code）这类敏感只读接口绝不能被机器凭据读到。
+// 旧版全权 key 默认拒绝：优惠码列表（明文 code）这类敏感只读接口绝不能被机器凭据读到。
 func TestLegacyAdminKeyDefaultDeniedOnSensitiveRoute(t *testing.T) {
 	const legacyKey = "admin-legacy-machine-key"
 	settings := service.NewSettingService(fakeSettingRepo{values: map[string]string{
@@ -37,13 +37,13 @@ func TestLegacyAdminKeyDefaultDeniedOnSensitiveRoute(t *testing.T) {
 	}}, nil)
 	called := false
 	r := machineGuardRouter(settings, func(admin *gin.RouterGroup) {
-		admin.GET("/redeem-codes", func(c *gin.Context) {
+		admin.GET("/promo-codes", func(c *gin.Context) {
 			called = true
 			c.JSON(http.StatusOK, gin.H{"items": []string{"PLAINTEXT-CODE"}})
 		})
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/redeem-codes", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/promo-codes", nil)
 	req.Header.Set("x-api-key", legacyKey)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -170,12 +170,12 @@ func TestScopedAdminKeyCannotPassStepUpOnSensitiveRoute(t *testing.T) {
 		c.Set(string(ContextKeyUser), AuthSubject{UserID: 9})
 		c.Next()
 	})
-	r.GET("/api/v1/admin/redeem-codes", gin.HandlerFunc(realStepUp), func(c *gin.Context) {
+	r.GET("/api/v1/admin/promo-codes", gin.HandlerFunc(realStepUp), func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/admin/redeem-codes", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/admin/promo-codes", nil))
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), "STEP_UP_ADMIN_API_KEY_FORBIDDEN")
 	require.False(t, strings.Contains(w.Body.String(), "STEP_UP_REQUIRED"))
@@ -235,12 +235,12 @@ func TestScopedAdminKeySensitiveDenialIsAudited(t *testing.T) {
 		c.Next()
 	})
 	admin.Use(gin.HandlerFunc(NewAuditLogMiddleware(audit)))
-	admin.GET("/redeem-codes", gin.HandlerFunc(realStepUp), func(c *gin.Context) {
+	admin.GET("/promo-codes", gin.HandlerFunc(realStepUp), func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
 
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/admin/redeem-codes", nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/admin/promo-codes", nil))
 	require.Equal(t, http.StatusForbidden, w.Code)
 	audit.Stop()
 

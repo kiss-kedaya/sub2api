@@ -4,15 +4,15 @@ package adminroutepolicy
 
 import "testing"
 
-// 卡密/优惠码是「返回即秘密」的资源：任何方法（含 GET）都必须是
+// 优惠码是「返回即秘密」的资源：任何方法（含 GET）都必须是
 // step_up_required。这是「只读所以不用 2FA」口径被废弃后的硬约束。
+// 卡密读模型已改为掩码（见 TestRedeemCodeReadsAreMaskedAndSecretFree），
+// 但卡密写操作仍是「返回/改变可兑价值」的动作，必须 step-up。
 // 代理与上游渠道不在其中：读模型已掩码，只有明文导出/密钥 reveal 与写操作要求 2FA。
 func TestSecretReturningResourcesRequireStepUpForEveryMethod(t *testing.T) {
 	for _, path := range []string{
-		"/api/v1/admin/redeem-codes",
-		"/api/v1/admin/redeem-codes/1",
-		"/api/v1/admin/redeem-codes/stats",
 		"/api/v1/admin/promo-codes",
+		"/api/v1/admin/promo-codes/1",
 	} {
 		for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
 			resolved, ok := Resolve(method, path)
@@ -25,6 +25,22 @@ func TestSecretReturningResourcesRequireStepUpForEveryMethod(t *testing.T) {
 			if resolved.Resource == ResourceNone {
 				t.Fatalf("%s %s 必须标注敏感资源", method, path)
 			}
+		}
+	}
+	// 卡密写操作继续要求 step-up（生成即产出可兑价值）。
+	for _, route := range []struct{ method, path string }{
+		{"POST", "/api/v1/admin/redeem-codes/generate"},
+		{"POST", "/api/v1/admin/redeem-codes/create-and-redeem"},
+		{"POST", "/api/v1/admin/redeem-codes/batch-update"},
+		{"DELETE", "/api/v1/admin/redeem-codes/1"},
+		{"POST", "/api/v1/admin/redeem-codes/1/expire"},
+	} {
+		resolved, ok := Resolve(route.method, route.path)
+		if !ok {
+			t.Fatalf("%s %s 未归类", route.method, route.path)
+		}
+		if resolved.Class != ClassStepUpRequired || resolved.Resource != ResourceRedeemCodes {
+			t.Fatalf("%s %s 必须要求 step-up（卡密可兑价值），实际 %s/%s", route.method, route.path, resolved.Class, resolved.Resource)
 		}
 	}
 }
@@ -337,11 +353,157 @@ func TestAccountConnectivityTestIsSecretFreeWhileCredentialAccessStaysGated(t *t
 		{"GET", "/api/v1/admin/accounts/data"},
 		{"POST", "/api/v1/admin/accounts"},
 		{"POST", "/api/v1/admin/accounts/batch"},
-		{"PUT", "/api/v1/admin/accounts/1"},
+		{"PUT", "/api/v1/admin/accounts/:id"},
 		{"DELETE", "/api/v1/admin/accounts/1"},
 	} {
 		if !IsStepUpRequired(route.method, route.path) {
 			t.Fatalf("%s %s 必须继续保持 step-up（本次只放开连通性测试）", route.method, route.path)
+		}
+	}
+}
+
+// 卡密读模型已硬化为「永远只回掩码」：列表/详情/统计不再要求 step-up（页面
+// 加载与对账查询不该弹 TOTP），但批量导出、写操作、机器凭据访问仍受限制。
+// 这是 2026-11 2FA 触发矩阵复核里最大的一处「只读 GET 被误归类」修正。
+func TestRedeemCodeReadsAreMaskedAndSecretFree(t *testing.T) {
+	for _, path := range []string{
+		"/api/v1/admin/redeem-codes",
+		"/api/v1/admin/redeem-codes/:id",
+		"/api/v1/admin/redeem-codes/stats",
+	} {
+		resolved, ok := Resolve("GET", path)
+		if !ok {
+			t.Fatalf("GET %s 未归类", path)
+		}
+		if resolved.Class != ClassSecretFree || resolved.Reason != ReasonRedeemCodeReadsMasked {
+			t.Fatalf("GET %s 应为 secret_free/%s，实际 %s/%s", path, ReasonRedeemCodeReadsMasked, resolved.Class, resolved.Reason)
+		}
+		if IsStepUpRequired("GET", path) {
+			t.Fatalf("GET %s 不应再要求 step-up", path)
+		}
+		if IsMachineAllowlisted("GET", path) {
+			t.Fatalf("GET %s 不得进入机器白名单（成批业务元数据仍要求人只会话）", path)
+		}
+	}
+	// 批量 CSV 导出仍按导出类动作保留 step-up。
+	exported, ok := Resolve("GET", "/api/v1/admin/redeem-codes/export")
+	if !ok || exported.Class != ClassStepUpRequired || exported.Reason != ReasonRedeemCodeExport {
+		t.Fatalf("GET /api/v1/admin/redeem-codes/export 必须要求 step-up（批量导出），实际 %+v ok=%v", exported, ok)
+	}
+}
+
+// 优惠码使用记录不含 code 本身，属于只读低风险；优惠码列表/详情仍回明文可兑
+// 值，必须保持 step-up。这条精确豁免由 maskedReadExact 在敏感前缀之前命中。
+func TestPromoCodeUsageReadIsSecretFreeWhileCodeReadsStayGated(t *testing.T) {
+	usages, ok := Resolve("GET", "/api/v1/admin/promo-codes/:id/usages")
+	if !ok || usages.Class != ClassSecretFree || usages.Reason != ReasonPromoUsageReadsNoCode {
+		t.Fatalf("GET /api/v1/admin/promo-codes/:id/usages 应为 secret_free/%s，实际 %+v ok=%v", ReasonPromoUsageReadsNoCode, usages, ok)
+	}
+	for _, path := range []string{"/api/v1/admin/promo-codes", "/api/v1/admin/promo-codes/:id"} {
+		resolved, ok := Resolve("GET", path)
+		if !ok || resolved.Class != ClassStepUpRequired {
+			t.Fatalf("GET %s 必须保持 step-up（返回明文优惠码），实际 %+v ok=%v", path, resolved, ok)
+		}
+	}
+}
+
+// 本轮放开的一批「探测/预览/聚合」动作：必须是 secret_free、理由非空、不要求
+// step-up。任何一条回退成 step-up 都会让对应 UI 按钮重新弹 TOTP。
+func TestLowRiskAdminProbesAreSecretFree(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		reason Reason
+	}{
+		{"POST", "/api/v1/admin/proxies/:id/test", ReasonProxyConnectivityTest},
+		{"POST", "/api/v1/admin/proxies/:id/quality-check", ReasonProxyConnectivityTest},
+		{"POST", "/api/v1/admin/accounts/check-mixed-channel", ReasonAccountBindingPreflight},
+		{"POST", "/api/v1/admin/accounts/:id/schedulable-timers/preview", ReasonAccountTimerPreview},
+		{"POST", "/api/v1/admin/accounts/:id/ollama-cloud-usage/refresh", ReasonAccountUsageAggregate},
+		{"POST", "/api/v1/admin/upstream-monitor/channels/:id/announcements/sync", ReasonChannelAnnouncementSync},
+		{"POST", "/api/v1/admin/settings/test-smtp", ReasonSMTPConnectivityTest},
+		{"POST", "/api/v1/admin/settings/web-search-emulation/test", ReasonWebSearchEmulationProbe},
+		{"POST", "/api/v1/admin/settings/ip-risk/check", ReasonIPRiskPreflightCheck},
+	}
+	for _, tc := range cases {
+		resolved, ok := Resolve(tc.method, tc.path)
+		if !ok {
+			t.Fatalf("%s %s 未归类", tc.method, tc.path)
+		}
+		if resolved.Class != ClassSecretFree || resolved.Reason != tc.reason {
+			t.Fatalf("%s %s 应为 secret_free/%s，实际 %s/%s", tc.method, tc.path, tc.reason, resolved.Class, resolved.Reason)
+		}
+		if resolved.Resource != ResourceNone {
+			t.Fatalf("%s %s 已放开却仍标注敏感资源 %s", tc.method, tc.path, resolved.Resource)
+		}
+		if IsStepUpRequired(tc.method, tc.path) {
+			t.Fatalf("%s %s 不应再要求 step-up", tc.method, tc.path)
+		}
+		if IsMachineAllowlisted(tc.method, tc.path) {
+			t.Fatalf("%s %s 不得进入机器白名单", tc.method, tc.path)
+		}
+	}
+}
+
+// 放开探测动作不得顺带放开同族的写操作、凭据回读、导出、资金与安全配置。
+// 这是「放开」批次的边界，任何越界都会在 CI 变红。
+func TestLowRiskAdminProbesDoNotCrossSensitiveBoundaries(t *testing.T) {
+	for _, route := range []struct{ method, path string }{
+		// 凭据回读 / 导出 / debug dump / S3 凭证
+		{"GET", "/api/v1/admin/accounts/:id/credential"},
+		{"GET", "/api/v1/admin/accounts/data"},
+		{"GET", "/api/v1/admin/proxies/data"},
+		{"GET", "/api/v1/admin/backups/s3-config"},
+		{"GET", "/api/v1/admin/debug-dumps/:name"},
+		{"GET", "/api/v1/admin/users/:id/api-keys"},
+		{"GET", "/api/v1/admin/groups/:id/api-keys"},
+		// 账号写操作与「刷新类写操作」：refresh 会换上游 token，auto-sync 会改模型映射
+		{"PUT", "/api/v1/admin/accounts/:id"},
+		{"POST", "/api/v1/admin/accounts"},
+		{"POST", "/api/v1/admin/accounts/batch"},
+		{"POST", "/api/v1/admin/accounts/:id/refresh"},
+		{"POST", "/api/v1/admin/accounts/:id/model-whitelist-auto-sync/run"},
+		// 上游模型目录同步会写库（upstream_models），预览接受请求体 base_url+api_key
+		// 做任意出站（SSRF 面），二者都不属于「只读/低风险」，必须保持 step-up。
+		{"POST", "/api/v1/admin/accounts/:id/models/sync-upstream"},
+		{"POST", "/api/v1/admin/accounts/models/sync-upstream-preview"},
+		// 代理写操作
+		{"POST", "/api/v1/admin/proxies"},
+		{"PUT", "/api/v1/admin/proxies/:id"},
+		// 资金 / 权限 / 安全配置
+		{"POST", "/api/v1/admin/users/:id/balance"},
+		{"POST", "/api/v1/admin/users"},
+		{"POST", "/api/v1/admin/subscriptions/assign"},
+		{"PUT", "/api/v1/admin/settings"},
+		{"POST", "/api/v1/admin/settings/send-test-email"},
+		{"POST", "/api/v1/admin/settings/admin-api-keys"},
+		{"PUT", "/api/v1/admin/payment/config"},
+		{"POST", "/api/v1/admin/payment/orders/:id/refund"},
+		{"POST", "/api/v1/admin/system/update"},
+		{"POST", "/api/v1/admin/redeem-codes/generate"},
+		{"GET", "/api/v1/admin/redeem-codes/export"},
+	} {
+		if !IsStepUpRequired(route.method, route.path) {
+			t.Fatalf("%s %s 属于敏感边界，必须保持 step-up", route.method, route.path)
+		}
+	}
+}
+
+// maskedReadExact 的形状约束：只放 GET 只读、必须 secret_free 且带理由；
+// 且这些路由不得进入机器白名单（成批业务元数据只允许人只会话）。
+func TestMaskedReadExactEntriesShape(t *testing.T) {
+	if len(maskedReadExact) == 0 {
+		t.Fatal("maskedReadExact 不能为空")
+	}
+	for _, entry := range maskedReadExact {
+		if entry.method != "GET" {
+			t.Fatalf("maskedReadExact 只用于只读 GET，实际 %s %s", entry.method, entry.path)
+		}
+		if entry.res.Class != ClassSecretFree || entry.res.Reason == "" || entry.res.Rule == "" {
+			t.Fatalf("maskedReadExact 条目必须带理由/规则的 secret_free: %s", entry.path)
+		}
+		if IsMachineAllowlisted(entry.method, entry.path) {
+			t.Fatalf("maskedReadExact 条目不得进入机器白名单: %s", entry.path)
 		}
 	}
 }
