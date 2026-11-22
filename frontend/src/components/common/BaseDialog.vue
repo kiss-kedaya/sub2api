@@ -168,7 +168,7 @@ const widthClasses: Record<DialogWidth, string> = {
 // centring: a resting transform would make the panel the containing block of `position: fixed`
 // content inside it.
 const modalUi = computed(() => ({
-  content: `base-dialog-panel relative inset-auto translate-none w-full max-h-[95vh] sm:max-h-[90vh] ${widthClasses[props.width]}`,
+  content: `base-dialog-panel relative inset-auto translate-none w-full max-h-[95dvh] sm:max-h-[90dvh] ${widthClasses[props.width]}`,
   header: ['base-dialog-header', props.showCloseButton && 'pe-14 sm:pe-14'].filter(Boolean).join(' '),
   body: 'base-dialog-body',
   footer: 'base-dialog-footer justify-end gap-2'

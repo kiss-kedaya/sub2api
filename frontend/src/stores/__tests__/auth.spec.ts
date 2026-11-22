@@ -172,6 +172,20 @@ describe('useAuthStore', () => {
       })
     })
 
+    it('统一登录协议：第二步同时提交邮箱+密码，服务端重新校验凭据', async () => {
+      mockLogin2FA.mockResolvedValue(fakeAuthResponse)
+      const store = useAuthStore()
+
+      await store.login2FA('temp-123', '654321', 'test@example.com', 'correct-horse')
+
+      expect(mockLogin2FA).toHaveBeenCalledWith({
+        temp_token: 'temp-123',
+        totp_code: '654321',
+        email: 'test@example.com',
+        password: 'correct-horse',
+      })
+    })
+
     it('2FA 验证失败时清除状态并抛出错误', async () => {
       mockLogin2FA.mockRejectedValue(new Error('Invalid TOTP'))
       const store = useAuthStore()

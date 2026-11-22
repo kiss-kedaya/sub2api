@@ -12,7 +12,35 @@
       </div>
       <template v-else>
         <KeyRotationRiskAckBanner v-if="riskAckActive" :status="keyRotationStatus" class="mb-4" />
-        <div v-if="loading" class="card deposit-view__empty" role="status"><LoadingSpinner /></div>
+        <!-- 首屏骨架：地址/二维码和右侧说明的版式先占位，避免白屏后整块跳变。 -->
+        <div
+          v-if="loading"
+          class="deposit-view__layout"
+          role="status"
+          aria-busy="true"
+          :aria-label="t('common.loading')"
+          data-testid="deposit-skeleton"
+        >
+          <section class="card deposit-view__funding">
+            <div class="mb-4 flex items-center justify-between gap-3">
+              <div class="h-5 w-40 animate-pulse rounded bg-elevated/60"></div>
+              <div class="h-8 w-24 animate-pulse rounded bg-elevated/60"></div>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div v-for="i in 4" :key="i" class="h-14 animate-pulse rounded-md bg-elevated/60"></div>
+            </div>
+            <div class="mt-5 h-40 animate-pulse rounded-md bg-elevated/60 sm:h-48"></div>
+            <div class="mt-4 h-10 animate-pulse rounded-md bg-elevated/60"></div>
+          </section>
+          <aside class="card deposit-view__guide">
+            <div class="h-5 w-28 animate-pulse rounded bg-elevated/60"></div>
+            <div class="mt-3 h-4 w-full animate-pulse rounded bg-elevated/60"></div>
+            <div class="mt-2 h-4 w-2/3 animate-pulse rounded bg-elevated/60"></div>
+            <div class="mt-5 space-y-3">
+              <div v-for="i in 3" :key="i" class="h-12 animate-pulse rounded-md bg-elevated/60"></div>
+            </div>
+          </aside>
+        </div>
         <div v-else-if="loadError" class="card deposit-view__empty" role="alert">
           <strong>{{ t('deposit.loadFailed') }}</strong>
           <p>{{ t('deposit.loadFailedHint') }}</p>
@@ -216,7 +244,6 @@ import QRCode from 'qrcode'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
-import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
 import KeyRotationRiskAckBanner from '@/components/user/KeyRotationRiskAckBanner.vue'
 import {
@@ -792,7 +819,7 @@ onUnmounted(() => {
 .deposit-view__step { color: var(--signal-muted, #8c99a6); font: .75rem ui-monospace, monospace; }
 .deposit-view__chains { display: flex; flex-wrap: wrap; gap: .5rem; }
 .deposit-view__chain { display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: .3rem; min-height: 2.5rem; padding: .55rem .875rem; border: 1px solid var(--ui-border-accented); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
-.deposit-view__chain:hover { background: var(--signal-accent-soft, #0891b212); }
+.deposit-view__chain:focus-visible { outline: 2px solid var(--signal-accent, #0891b2); outline-offset: 2px; }
 .deposit-view__chain--active { border-color: var(--signal-accent, #0891b2); background: var(--signal-accent-soft, #0891b218); font-weight: 600; }
 .deposit-view__chain-head { display: inline-flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
 /* 每个网络卡片下的到账预估，跟着徽标一起回答「多久到」。 */
@@ -804,7 +831,7 @@ onUnmounted(() => {
 .deposit-view__instant-rule { margin-top: .75rem; padding: .625rem .75rem; border: 1px solid #0891b233; border-radius: .5rem; background: #0891b208; color: var(--signal-muted, #64748b); font-size: .75rem; line-height: 1.7; }
 .deposit-view__assets { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
 .deposit-view__asset { display: inline-flex; align-items: center; justify-content: center; min-height: 2.25rem; padding: .45rem .75rem; border: 1px solid var(--ui-border); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
-.deposit-view__asset:hover { background: var(--signal-accent-soft, #0891b212); }
+.deposit-view__asset:focus-visible { outline: 2px solid var(--signal-accent, #0891b2); outline-offset: 2px; }
 .deposit-view__asset--active { border-color: var(--signal-accent, #0891b2); background: var(--signal-accent-soft, #0891b218); font-weight: 600; }
 .deposit-view__token { padding: .15rem .5rem; border-radius: .375rem; border: 1px solid #10b98145; background: #10b98112; color: #10b981; font-size: .6875rem; font-weight: 600; }
 .deposit-view__address-block { display: grid; grid-template-columns: 12.5rem minmax(0, 1fr); gap: 1.25rem; align-items: start; }
@@ -836,7 +863,7 @@ onUnmounted(() => {
 .deposit-view__hash { min-width: 0; word-break: break-all; white-space: normal; font: .75rem/1.6 ui-monospace, monospace; }
 a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: underline; text-underline-offset: .15rem; }
 .deposit-view__hash-copy { flex: 0 0 auto; padding: .25rem; border-radius: .25rem; color: var(--signal-muted, #64748b); }
-.deposit-view__hash-copy:hover, .deposit-view__hash-copy:focus-visible { color: var(--signal-accent, #0891b2); outline: 2px solid currentColor; outline-offset: 2px; }
+.deposit-view__hash-copy:focus-visible { color: var(--signal-accent, #0891b2); outline: 2px solid currentColor; outline-offset: 2px; }
 .deposit-view__history-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
 .deposit-view__table-wrap { max-width: 100%; overflow-x: auto; }
 .deposit-view__table { width: 100%; border-collapse: collapse; text-align: left; }
@@ -877,7 +904,8 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
 .deposit-view button:focus-visible { outline: 2px solid var(--signal-accent, #0891b2); outline-offset: 3px; }
 @media (max-width: 1100px) { .deposit-view__layout { grid-template-columns: minmax(0, 1fr); } .deposit-view__terms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; } }
 @media (max-width: 640px) {
-  .deposit-view { padding: 1rem .75rem; }
+  /* 底部安全区：iPhone 上最后一屏内容 / 复制按钮不被 Home 指示条压住。 */
+  .deposit-view { padding: 1rem .75rem calc(1rem + env(safe-area-inset-bottom)); }
   .deposit-view__live { display: none; }
   .deposit-view__funding, .deposit-view__guide, .deposit-view__history { padding: 1.125rem; border-radius: .875rem; }
   .deposit-view__chains { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -899,6 +927,12 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
   .deposit-view__table td.deposit-view__status { min-width: 0; }
   .deposit-view__progress { max-width: none; }
   .deposit-view__pending { padding: .75rem .875rem; }
+}
+/* 触屏上 :hover 会「粘」在上一次点过的元素上；悬停反馈只在真有指针的设备生效。 */
+@media (hover: hover) and (pointer: fine) {
+  .deposit-view__chain:hover { background: var(--signal-accent-soft, #0891b212); }
+  .deposit-view__asset:hover { background: var(--signal-accent-soft, #0891b212); }
+  .deposit-view__hash-copy:hover { color: var(--signal-accent, #0891b2); outline: 2px solid currentColor; outline-offset: 2px; }
 }
 @media (prefers-reduced-motion: reduce) { .deposit-view__chain, .deposit-view__progress-fill { transition: none; } .deposit-view__pending-dot { animation: none; } }
 </style>

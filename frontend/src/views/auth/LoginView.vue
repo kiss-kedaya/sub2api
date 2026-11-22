@@ -584,7 +584,9 @@ async function handleLogin(): Promise<void> {
     if (isTotp2FARequired(response)) {
       const totpResponse = response as TotpLoginResponse
       totpTempToken.value = totpResponse.temp_token || ''
-      totpUserEmailMasked.value = totpResponse.user_email_masked || ''
+      // 统一登录响应下服务端不再回显账号信息时，用当前输入的邮箱在前端脱敏，
+      // 两条路径（凭据错误 / 真正需要 2FA）展示完全一致。
+      totpUserEmailMasked.value = totpResponse.user_email_masked || maskLoginEmail(formData.email)
       show2FAModal.value = true
       isLoading.value = false
       return
@@ -699,13 +701,28 @@ async function handleOAuthStart(request: OAuthLoginStart): Promise<void> {
 
 // ==================== 2FA Handlers ====================
 
+// maskLoginEmail 与服务端 service.MaskEmail 保持同一规则：
+// 只在本地兜底展示，服务端没有回显掩码邮箱时不让弹窗缺行。
+function maskLoginEmail(email: string): string {
+  const trimmed = (email || '').trim()
+  if (trimmed.length < 3) return ''
+  const at = trimmed.indexOf('@')
+  if (at < 1) return trimmed.slice(0, 1) + '***'
+  const local = trimmed.slice(0, at)
+  const domain = trimmed.slice(at)
+  if (local.length <= 2) return local.slice(0, 1) + '***' + domain
+  return local.slice(0, 1) + '***' + local.slice(-1) + domain
+}
+
 async function handle2FAVerify(code: string): Promise<void> {
   if (totpModalRef.value) {
     totpModalRef.value.setVerifying(true)
   }
 
   try {
-    await authStore.login2FA(totpTempToken.value, code)
+    // 统一登录协议：第二步同时提交「动态码 + 邮箱 + 密码」，服务端重新校验凭据，
+    // 密码错误与需要 2FA 在第一步的响应完全一致，凭据错误统一在这一步报错。
+    await authStore.login2FA(totpTempToken.value, code, formData.email, formData.password)
 
     // 成功即清：清空前端账号维度尝试计数
     totpModalRef.value?.resetLimit?.()
@@ -724,10 +741,18 @@ async function handle2FAVerify(code: string): Promise<void> {
     }
     const err = error as {
       message?: string
+      reason?: string
       retryAfter?: string | number
       response?: { data?: { message?: string }; headers?: Record<string, string> }
     }
-    const message = err.response?.data?.message || err.message || t('profile.totp.loginFailed')
+    // 第二步同时校验「动态码 + 邮箱 + 密码」：服务端已把「密码/邮箱错误」与
+    // 「动态码错误」统一成 INVALID_CREDENTIALS，这里不再按 reason 区分文案，
+    // 一律展示同一条提示，避免把「密码是否正确」暴露成可区分的错误文案。
+    // 旧版后端可能仍返回 TOTP_INVALID_CODE，同样落到统一提示。
+    const message =
+      err.reason === 'INVALID_CREDENTIALS' || err.reason === 'TOTP_INVALID_CODE'
+        ? t('profile.totp.loginInvalidCredentials')
+        : err.response?.data?.message || err.message || t('profile.totp.loginFailed')
     // 服务端 429 的 Retry-After 优先于本地计数（网络层已把 header 解出为 retryAfter）。
     const retryAfterSeconds = Number(err.retryAfter ?? err.response?.headers?.['retry-after'] ?? 0) || 0
 

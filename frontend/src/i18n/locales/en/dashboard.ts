@@ -1217,6 +1217,8 @@ export default {
       loginRateLimited: 'Too many attempts, please try again in {seconds}s',
       loginHint: 'Enter the 6-digit code from your authenticator app',
       loginFailed: 'Verification failed, please try again',
+      loginInvalidCredentials:
+        'Email, password, or code is incorrect. Please try again; accounts without two-factor authentication should cancel and re-enter the password.',
       // New translations for email verification
       verifyEmailFirst: 'Please verify your email first',
       verifyPasswordFirst: 'Please verify your identity first',

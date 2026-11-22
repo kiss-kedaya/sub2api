@@ -1,5 +1,12 @@
 <template>
-  <div class="auth-paper relative flex min-h-screen items-center justify-center overflow-hidden p-4">
+  <!--
+    min-h-svh: `100vh` is the tallest viewport (browser chrome collapsed), so on a phone
+    the page is taller than the visible area before any content loads.
+    overflow-x-hidden + top alignment: a login card with OAuth buttons can be taller than
+    the viewport; `overflow-hidden` + `items-center` used to clip its top edge and make it
+    unreachable. Vertical scrolling stays available, horizontal stays clipped for the art.
+  -->
+  <div class="auth-paper relative flex min-h-svh items-start justify-center overflow-x-hidden p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:items-center">
     <!-- Background: plain white paper by day; the night background and grid are unchanged -->
     <div
       class="absolute inset-0 hidden bg-linear-to-br/srgb dark:block dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"

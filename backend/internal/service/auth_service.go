@@ -584,12 +584,19 @@ func (s *AuthService) IsEmailVerifyEnabled(ctx context.Context) bool {
 	return s.settingService.IsEmailVerifyEnabled(ctx)
 }
 
+// loginTimingDummyHash 是「账号不存在」时用来做等成本 bcrypt 比对的占位哈希。
+// 它对应一个随机口令，不属于任何账号，只用于抹平登录响应时间差（防账号枚举）。
+const loginTimingDummyHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+
 // Login 用户登录，返回JWT token
 func (s *AuthService) Login(ctx context.Context, email, password string) (string, *User, error) {
 	// 查找用户
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
+			// 防时序枚举：账号不存在时也执行一次与真实校验等成本的 bcrypt，
+			// 响应时间不随账号是否存在变化（登录响应体已统一，见 handler.Login）。
+			s.EqualizePasswordTiming(password)
 			return "", nil, ErrInvalidCredentials
 		}
 		// 记录数据库错误但不暴露给用户
@@ -1588,6 +1595,12 @@ func (s *AuthService) HashPassword(password string) (string, error) {
 func (s *AuthService) CheckPassword(password, hashedPassword string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
 	return err == nil
+}
+
+// EqualizePasswordTiming 执行一次等成本的 bcrypt 比对，用于「账号不存在」分支
+// 抹平响应时间差。结果固定为 false，不参与任何判断。
+func (s *AuthService) EqualizePasswordTiming(password string) {
+	_ = bcrypt.CompareHashAndPassword([]byte(loginTimingDummyHash), []byte(password))
 }
 
 // RefreshToken 刷新token

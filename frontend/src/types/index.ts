@@ -2635,6 +2635,10 @@ export interface TotpLoginResponse {
 export interface TotpLogin2FARequest {
   temp_token: string
   totp_code: string
+  // 统一登录协议（两步验证）：第二步同时回传邮箱+密码，服务端重新校验凭据。
+  // 老版本后端只读 temp_token/totp_code，多传字段不影响兼容。
+  email?: string
+  password?: string
 }
 
 // ==================== Scheduled Test Types ====================

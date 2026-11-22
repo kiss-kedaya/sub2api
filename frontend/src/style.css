@@ -1282,3 +1282,19 @@ html[data-theme-switching]::view-transition-new(root) {
     corner-shape: squircle;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Mobile hardening: touch-sized viewports only.
+
+   1. iOS Safari zooms the whole page when a focused form control has
+      font-size < 16px. The shared `.input` utility is 14px (text-sm), so the
+      profile / TOTP-setup / deposit forms would jump on focus. The auth pages
+      already opt into 16px via auth-quiet.css; this covers the rest.
+   2. Unlayered so it wins over the `text-sm` bundled into the utility; desktop
+      keeps the compact 14px control.
+--------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+  .input {
+    font-size: 16px;
+  }
+}

@@ -13,7 +13,21 @@
         @granularityChange="loadCharts"
         @refresh="refreshAll"
       />
-      <div v-if="loading && !stats" class="flex justify-center py-10"><LoadingSpinner /></div>
+      <!-- Skeleton while the first stats payload is in flight: the dashboard used to sit on a
+           bare spinner and then snap the whole page in at once. -->
+      <div
+        v-if="loading && !stats"
+        class="flex flex-col gap-4"
+        role="status"
+        :aria-label="t('common.loading')"
+        data-testid="dashboard-skeleton"
+      >
+        <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
+          <div v-for="i in 4" :key="i" class="h-28 animate-pulse rounded-lg bg-elevated/60 ring ring-default"></div>
+        </div>
+        <div class="h-64 animate-pulse rounded-lg bg-elevated/60 ring ring-default"></div>
+        <div class="h-48 animate-pulse rounded-lg bg-elevated/60 ring ring-default"></div>
+      </div>
       <UAlert
         v-if="statsError"
         role="alert"
@@ -148,9 +162,11 @@ let disposed = false
 let chartsRequest: AbortController | undefined
 let recentRequest: AbortController | undefined
 
-const startDate = ref(formatDateLocalInput(new Date(Date.now() - 6 * 86400000)))
+// 默认时间窗 24 小时（原 7 天）：首屏只拉一天的数据，按小时聚合。
+// 后端 date_range + granularity=hour 已支持，前端显式传参，不改查询语义。
+const startDate = ref(formatDateLocalInput(new Date(Date.now() - 86400000)))
 const endDate = ref(formatDateLocalInput(new Date()))
-const granularity = ref('day')
+const granularity = ref('hour')
 const granularityItems = computed(() => [
   { value: 'day', label: t('dashboard.day') },
   { value: 'hour', label: t('dashboard.hour') },

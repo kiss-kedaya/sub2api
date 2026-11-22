@@ -3456,9 +3456,13 @@ onUnmounted(() => {
 .key-row-action { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px 6px; border-radius: 6px; color: var(--ui-text-muted); font-size: 11px; line-height: 14px; white-space: nowrap; transition: background-color 150ms ease, color 150ms ease; }
 .key-row-action:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
 .key-row-action:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
-.key-row-action--danger:hover { background: color-mix(in srgb, var(--ui-error) 10%, transparent); color: var(--ui-error); }
 .key-risk-rotate { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--ui-warning) 45%, transparent); color: color-mix(in srgb, var(--ui-warning) 90%, var(--ui-text)); font-size: 11px; line-height: 16px; white-space: nowrap; transition: background-color 150ms ease, color 150ms ease; }
-.key-risk-rotate:hover { background: color-mix(in srgb, var(--ui-warning) 12%, transparent); color: var(--ui-warning); }
+/* 触屏设备的 :hover 会粘在最后点过的按钮上；悬停反馈只在指针设备生效。 */
+@media (hover: hover) and (pointer: fine) {
+  .key-row-action:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
+  .key-row-action--danger:hover { background: color-mix(in srgb, var(--ui-error) 10%, transparent); color: var(--ui-error); }
+  .key-risk-rotate:hover { background: color-mix(in srgb, var(--ui-warning) 12%, transparent); color: var(--ui-warning); }
+}
 .key-risk-rotate:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
 .key-risk-rotate:disabled { opacity: 0.6; cursor: progress; }
 @media (prefers-reduced-motion: reduce) { .key-risk-rotate { transition: none; } }
