@@ -61,6 +61,11 @@ const (
 	// step_up_required reasons
 	ReasonUpstreamCredentials Reason = "upstream_account_credentials"
 	ReasonRedeemCodes         Reason = "redeem_code_secrets"
+	// ReasonRedeemCodeExport covers the bulk CSV export. The CSV itself is now
+	// masked metadata (code prefix/mask + accounting columns), but a single
+	// request still walks up to 10000 business records off the box, so it keeps
+	// the same step-up bar as the backup exports.
+	ReasonRedeemCodeExport    Reason = "redeem_code_bulk_export_metadata"
 	ReasonPromoCodes          Reason = "promo_code_grant_value"
 	ReasonProxyPasswords      Reason = "proxy_passwords"
 	ReasonChannelKeys         Reason = "channel_upstream_keys"
@@ -128,6 +133,19 @@ const (
 	// testing unusable. Credential reads (GET /:id/credential) and exports
 	// (GET /data) stay step-up gated.
 	ReasonAccountConnectivityTest Reason = "account_connectivity_test_no_secret"
+	// The following reasons cover the 2026-11 "2FA trigger matrix" pass: admin
+	// actions that look alarming by resource name but only probe, aggregate or
+	// preview, and whose response never carries secret material.
+	ReasonProxyConnectivityTest     Reason = "proxy_connectivity_and_quality_test_no_secret"
+	ReasonAccountBindingPreflight   Reason = "account_binding_preflight_check_no_secret"
+	ReasonAccountTimerPreview       Reason = "account_schedulable_timer_preview_no_secret"
+	ReasonUpstreamModelCatalogProbe Reason = "upstream_model_catalog_probe_no_secret"
+	ReasonChannelAnnouncementSync   Reason = "channel_announcement_sync_counters_no_secret"
+	ReasonSMTPConnectivityTest      Reason = "smtp_connectivity_test_no_secret"
+	ReasonWebSearchEmulationProbe   Reason = "web_search_emulation_probe_no_secret"
+	ReasonIPRiskPreflightCheck      Reason = "ip_risk_preflight_check_no_secret"
+	ReasonRedeemCodeReadsMasked     Reason = "redeem_code_reads_return_masked_values_only"
+	ReasonPromoUsageReadsNoCode     Reason = "promo_usage_reads_exclude_grant_code"
 )
 
 // Resource names the sensitive resource family a step-up route protects.
@@ -237,6 +255,10 @@ var stepUpExact = []exactRule{
 	// 代理明文导出（用户名/密码/完整 URL）。代理列表/详情/统计的密码已掩码，
 	// 不再因为「代理」这个资源名整片要求 2FA（见 free:proxies）。
 	{method: "GET", path: "/api/v1/admin/proxies/data", res: Resolved{ClassStepUpRequired, ReasonProxyPasswords, ResourceProxies, "exact:proxies.data"}},
+	// 卡密批量导出：CSV 已改为掩码 + 前缀 + 对账元数据（不含明文代码），但一次最多
+	// 带走 1 万条业务凭据元数据，与备份导出同口径保留 step-up。列表/详情/统计只回
+	// 掩码且不再是一万条全量，已改为 secret_free，见 maskedReadExact。
+	{method: "GET", path: "/api/v1/admin/redeem-codes/export", res: Resolved{ClassStepUpRequired, ReasonRedeemCodeExport, ResourceRedeemCodes, "exact:redeem-codes.export"}},
 	// 备份下载与 S3 凭证读取
 	{method: "GET", path: "/api/v1/admin/backups/:id/download-url", res: Resolved{ClassStepUpRequired, ReasonBackupSecrets, ResourceBackups, "exact:backups.download"}},
 	{method: "GET", path: "/api/v1/admin/backups/s3-config", res: Resolved{ClassStepUpRequired, ReasonBackupSecrets, ResourceBackups, "exact:backups.s3-config"}},
@@ -301,6 +323,40 @@ var secretFreeExact = []exactRule{
 	// 批量测试每点一次弹一次码。凭据回读（GET /:id/credential）与导出（GET /data）
 	// 仍保持 step-up，见 stepUpExact。
 	{method: "POST", path: "/api/v1/admin/accounts/:id/test", res: Resolved{ClassSecretFree, ReasonAccountConnectivityTest, ResourceNone, "exact:accounts.connectivity-test"}},
+	// ── 2026-11 2FA 触发必要性复核（低风险探测/聚合/预览）──────────────────────
+	// 以下 POST 动作只是「用既有配置打一次连接、算一次预览、回一类聚合数字」，
+	// 响应里没有凭据/密码/密钥/卡密明文，也不动钱、不改权限、不改安全配置。
+	// 管理端把它们做成逐行按钮或页面加载自动动作，要求 TOTP 会让正常运营每点
+	// 一次弹一次码。写操作、凭据回读、导出与安全配置保存仍保持 step-up。
+	//
+	// 代理连通性测试与质量检测：用库内代理 URL 探测出口 IP/延迟/目标可达性，
+	// 只回 success/延迟/出口地区，不回代理用户名密码。
+	{method: "POST", path: "/api/v1/admin/proxies/:id/test", res: Resolved{ClassSecretFree, ReasonProxyConnectivityTest, ResourceNone, "exact:proxies.connectivity-test"}},
+	{method: "POST", path: "/api/v1/admin/proxies/:id/quality-check", res: Resolved{ClassSecretFree, ReasonProxyConnectivityTest, ResourceNone, "exact:proxies.quality-check"}},
+	// 绑定账号前的混合渠道预检：纯计算，只回 has_risk/风险详情。
+	{method: "POST", path: "/api/v1/admin/accounts/check-mixed-channel", res: Resolved{ClassSecretFree, ReasonAccountBindingPreflight, ResourceNone, "exact:accounts.check-mixed-channel"}},
+	// 可调度定时器预览：按请求参数回算执行时间（execute_at/local_date/local_time），
+	// 不落库、不改账号状态。
+	{method: "POST", path: "/api/v1/admin/accounts/:id/schedulable-timers/preview", res: Resolved{ClassSecretFree, ReasonAccountTimerPreview, ResourceNone, "exact:accounts.schedulable-timer-preview"}},
+	// Ollama Cloud 用量刷新：用库内会话抓官方用量，响应是脱敏后的用量窗口
+	// （used_percent/reset_at/model/request 数），不含 session/HTML/凭据。
+	{method: "POST", path: "/api/v1/admin/accounts/:id/ollama-cloud-usage/refresh", res: Resolved{ClassSecretFree, ReasonAccountUsageAggregate, ResourceNone, "exact:accounts.ollama-usage-refresh"}},
+	// 上游模型目录探测：用库内凭据（或请求内一次性凭据）拉上游 /models，
+	// 只回模型名/元数据/告警，不回传凭据；不写账号配置（auto-sync 才写，仍 gated）。
+	{method: "POST", path: "/api/v1/admin/accounts/:id/models/sync-upstream", res: Resolved{ClassSecretFree, ReasonUpstreamModelCatalogProbe, ResourceNone, "exact:accounts.sync-upstream-models"}},
+	{method: "POST", path: "/api/v1/admin/accounts/models/sync-upstream-preview", res: Resolved{ClassSecretFree, ReasonUpstreamModelCatalogProbe, ResourceNone, "exact:accounts.sync-upstream-models-preview"}},
+	// 上游渠道公告同步：用库内渠道会话拉公告并 upsert，响应只有 fetched/added/
+	// updated/unread 计数，不回渠道密码/子密钥/会话。
+	{method: "POST", path: "/api/v1/admin/upstream-monitor/channels/:id/announcements/sync", res: Resolved{ClassSecretFree, ReasonChannelAnnouncementSync, ResourceNone, "exact:upstream-monitor.announcements-sync"}},
+	// SMTP 连通性测试：只回 "SMTP connection successful" 或分类后的失败文案
+	// （不回显 host:port/源端口/拒绝细节），不含 SMTP 密码。真正发信仍由
+	// /settings/send-test-email 承担并保持 step-up（可被滥用发信）。
+	{method: "POST", path: "/api/v1/admin/settings/test-smtp", res: Resolved{ClassSecretFree, ReasonSMTPConnectivityTest, ResourceNone, "exact:settings.test-smtp"}},
+	// Web Search 模拟测试：用已保存的搜索配置跑一次查询，只回 provider/query/
+	// results，不含 provider api_key。
+	{method: "POST", path: "/api/v1/admin/settings/web-search-emulation/test", res: Resolved{ClassSecretFree, ReasonWebSearchEmulationProbe, ResourceNone, "exact:settings.web-search-test"}},
+	// IP 风控预检：只回该 IP 的风险判定明细，不改封禁状态、不回任何密钥。
+	{method: "POST", path: "/api/v1/admin/settings/ip-risk/check", res: Resolved{ClassSecretFree, ReasonIPRiskPreflightCheck, ResourceNone, "exact:settings.ip-risk-check"}},
 }
 
 // providerCredentialPrefixes are upstream provider OAuth families: POST/PUT/
@@ -313,16 +369,47 @@ var providerCredentialPrefixes = []string{
 	"/api/v1/admin/grok/",
 }
 
+// maskedReadExact releases read-only GET routes that belong to a resource family
+// which used to return plaintext secrets, but whose current read model only
+// returns masked values, aggregates or metadata. It is checked BEFORE
+// sensitiveResources/family rules, so a family prefix can no longer gate the
+// whole family when the read model itself was hardened.
+//
+// Rules for adding an entry:
+//  1. it must be a GET that returns no credential, no redeem/grant code
+//     plaintext and no derivable secret;
+//  2. the handler that used to return plaintext must have been changed first
+//     (see dto.RedeemCode.Code, which is now always a mask);
+//  3. machine credentials stay denied: these routes are NOT machine_allowlisted,
+//     and the bulk-read ones keep middleware.ForbidMachineCredentials.
+var maskedReadExact = []exactRule{
+	// 卡密列表 / 详情 / 统计：dto.RedeemCode.Code 永远是掩码（前 4 位 + ****），
+	// 明文只在 POST /generate 的当次回执里出现一次；/stats 目前是 501，不返回
+	// 任何财务数字。人只会话读这三条不再弹 TOTP（路由层已挂机器凭据禁止）。
+	{method: "GET", path: "/api/v1/admin/redeem-codes", res: Resolved{ClassSecretFree, ReasonRedeemCodeReadsMasked, ResourceNone, "exact:redeem-codes.masked-read"}},
+	{method: "GET", path: "/api/v1/admin/redeem-codes/:id", res: Resolved{ClassSecretFree, ReasonRedeemCodeReadsMasked, ResourceNone, "exact:redeem-codes.masked-read-one"}},
+	{method: "GET", path: "/api/v1/admin/redeem-codes/stats", res: Resolved{ClassSecretFree, ReasonRedeemCodeReadsMasked, ResourceNone, "exact:redeem-codes.masked-stats"}},
+	// 优惠码使用记录只回 user/bonus/used_at，不含优惠码本身（DTO 没有 code 字段），
+	// 因此不构成可兑换价值；优惠码列表/详情仍回明文 code，继续留在 step-up。
+	{method: "GET", path: "/api/v1/admin/promo-codes/:id/usages", res: Resolved{ClassSecretFree, ReasonPromoUsageReadsNoCode, ResourceNone, "exact:promo-codes.usages"}},
+}
+
 // sensitiveResources are path prefixes where EVERY method (GET included) is
 // step-up required because the resource itself returns secret material:
-// redeem codes and promo grant codes. This is the structural answer to
+// promo grant codes. This is the structural answer to
 // "只读所以不用 2FA".
+//
+// Redeem codes used to live here too, but the 2026-11 hardening turned the
+// admin read model into masked values only (only the one-shot generate receipt
+// carries plaintext) and the bulk export is pinned separately in stepUpExact.
+// Keeping the whole prefix gated would fire a TOTP prompt on every page load of
+// the redeem-code list, which is exactly the misclassification this matrix
+// fixes. Writes stay gated, see mutating:redeem-codes.
 //
 // Proxies and upstream channels deliberately do not live here: their read
 // models mask passwords / upstream keys (#497 and channel DTO json:"-"), so
 // only the plaintext export / reveal POST and the write methods need step-up.
 var sensitiveResources = []prefixRule{
-	{prefix: "/api/v1/admin/redeem-codes", methods: anyMethod(), res: Resolved{ClassStepUpRequired, ReasonRedeemCodes, ResourceRedeemCodes, "prefix:redeem-codes"}},
 	{prefix: "/api/v1/admin/promo-codes", methods: anyMethod(), res: Resolved{ClassStepUpRequired, ReasonPromoCodes, ResourcePromoCodes, "prefix:promo-codes"}},
 }
 
@@ -332,6 +419,9 @@ var sensitiveResources = []prefixRule{
 // Every non-read method is step-up required.
 var sensitiveMutatingResources = []prefixRule{
 	{prefix: "/api/v1/admin/accounts", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonUpstreamCredentials, ResourceUpstreamAccounts, "mutating:accounts"}},
+	// 卡密写操作（生成即产出可兑价值、固定码直发、改值/改状态/改过期、删除）
+	// 全部保留 step-up；读已改为掩码，见 maskedReadExact。
+	{prefix: "/api/v1/admin/redeem-codes", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonRedeemCodes, ResourceRedeemCodes, "mutating:redeem-codes"}},
 	// 代理写操作可以设置/替换明文密码，必须 step-up；读操作已掩码，见 free:proxies。
 	{prefix: "/api/v1/admin/proxies", methods: mutatingMethods(), res: Resolved{ClassStepUpRequired, ReasonProxyPasswords, ResourceProxies, "mutating:proxies"}},
 	// 渠道写操作与「查看 API Key 明文」的 reveal POST 会持有上游密钥，必须 step-up；
@@ -423,7 +513,7 @@ var stepUpReadRuleJustifications = map[string]string{
 	"exact:backups.s3-config":   "GET returns the S3 object-storage credentials",
 	"exact:debug-dumps.payload": "GET returns captured request/response bodies",
 	"exact:proxies.data":        "GET exports proxy username/password in plaintext",
-	"prefix:redeem-codes":       "read model returns redeem code plaintext",
+	"exact:redeem-codes.export": "GET streams up to 10000 business records as CSV (masked, but bulk)",
 	"prefix:promo-codes":        "read model returns promo grant values",
 }
 
@@ -437,11 +527,12 @@ func StepUpReadRuleJustification(rule string) (string, bool) {
 
 // Resolve classifies an admin route.
 //
-// Precedence: machine allowlist (exact) → step-up exact → sensitive resource
-// (any method) → secret-free exact (read-only POST batch reads) → sensitive
-// mutating resource (non-GET) → provider credential mutation → secret-free
-// family. Only routes outside /api/v1/admin are returned as unknown; every
-// admin route must match.
+// Precedence: machine allowlist (exact) → step-up exact → masked read exact
+// (hardened read model of a formerly sensitive family) → sensitive resource
+// (any method) → secret-free exact (read-only POST probes/batch reads) →
+// sensitive mutating resource (non-GET) → provider credential mutation →
+// secret-free family. Only routes outside /api/v1/admin are returned as
+// unknown; every admin route must match.
 func Resolve(method, fullPath string) (Resolved, bool) {
 	method = strings.ToUpper(strings.TrimSpace(method))
 	if !strings.HasPrefix(fullPath, "/api/v1/admin") {
@@ -455,6 +546,11 @@ func Resolve(method, fullPath string) (Resolved, bool) {
 	for i := range stepUpExact {
 		if stepUpExact[i].method == method && stepUpExact[i].path == fullPath {
 			return stepUpExact[i].res, true
+		}
+	}
+	for i := range maskedReadExact {
+		if maskedReadExact[i].method == method && maskedReadExact[i].path == fullPath {
+			return maskedReadExact[i].res, true
 		}
 	}
 	for i := range sensitiveResources {

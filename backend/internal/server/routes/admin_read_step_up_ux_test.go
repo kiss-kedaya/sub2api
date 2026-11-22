@@ -53,6 +53,9 @@ func pageLoadReadRoutes() []adminroutepolicy.Route {
 		{Method: http.MethodGet, Path: "/api/v1/admin/groups"},
 		{Method: http.MethodGet, Path: "/api/v1/admin/settings"},
 		{Method: http.MethodGet, Path: "/api/v1/admin/dashboard/stats"},
+		// 卡密页首屏：读模型只回掩码，不得因为「资源名敏感」整页弹 TOTP。
+		{Method: http.MethodGet, Path: "/api/v1/admin/redeem-codes"},
+		{Method: http.MethodGet, Path: "/api/v1/admin/redeem-codes/stats"},
 	}
 }
 
@@ -139,13 +142,12 @@ func TestAdminGetStepUpRoutesStaySecretOnly(t *testing.T) {
 		"GET /api/v1/admin/groups/:id/api-keys":      {},
 		"GET /api/v1/admin/proxies/data":             {},
 		"GET /api/v1/admin/users/:id/api-keys":       {},
-		"GET /api/v1/admin/promo-codes":              {},
-		"GET /api/v1/admin/promo-codes/:id":          {},
-		"GET /api/v1/admin/promo-codes/:id/usages":   {},
-		"GET /api/v1/admin/redeem-codes":             {},
-		"GET /api/v1/admin/redeem-codes/:id":         {},
-		"GET /api/v1/admin/redeem-codes/export":      {},
-		"GET /api/v1/admin/redeem-codes/stats":       {},
+		// 优惠码列表/详情仍回明文 code（可兑值），保持 step-up；使用记录不回 code，
+		// 已放开（见 TestLowRiskAdminProbesAreSecretFree）。
+		"GET /api/v1/admin/promo-codes":     {},
+		"GET /api/v1/admin/promo-codes/:id": {},
+		// 卡密读模型已改为掩码：列表/详情/统计放开；批量 CSV 导出仍 step-up。
+		"GET /api/v1/admin/redeem-codes/export": {},
 	}
 
 	router := buildFullAdminRouteTree(t, stepUpProbe())

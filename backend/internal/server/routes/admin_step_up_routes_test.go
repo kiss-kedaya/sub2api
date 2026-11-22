@@ -156,7 +156,7 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		{http.MethodPost, "/api/v1/admin/redeem-codes/batch-delete", "admin"},
 		{http.MethodPost, "/api/v1/admin/redeem-codes/batch-update", "admin"},
 		{http.MethodPost, "/api/v1/admin/redeem-codes/1/expire", "admin"},
-		// 导出会一次性带走最多 1 万条明文卡密
+		// 批量导出一次带走最多 1 万条业务凭据元数据（CSV 已是掩码，但仍属导出类）
 		{http.MethodGet, "/api/v1/admin/redeem-codes/export", "admin"},
 		// 优惠码携带赠送余额
 		{http.MethodPost, "/api/v1/admin/promo-codes", "admin"},
@@ -203,14 +203,10 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		// 退款与退款确认
 		{http.MethodPost, "/api/v1/admin/payment/orders/1/refund", "payment"},
 		{http.MethodPost, "/api/v1/admin/payment/orders/1/refund/query", "payment"},
-		// 敏感资源的只读接口同样是敏感读：卡密列表/详情（明文 code）、代理明文
-		// 导出、上游渠道/账号（上游凭证）、系统设置（渠道密钥）等。
+		// 敏感资源的只读接口同样是敏感读：卡密（读模型已掩码，见下方只读列表）、
+		// 代理明文导出、上游渠道/账号（上游凭证）、系统设置（渠道密钥）等。
 		// 「只读所以不用 2FA」的口径已废弃，这些路由仍要求 step-up（机器凭据一律 403）。
 		// 注意：代理列表/详情/统计的密码已在 #497 改掩码，属于下方的只读豁免列表。
-		{http.MethodGet, "/api/v1/admin/redeem-codes", "admin"},
-		{http.MethodGet, "/api/v1/admin/redeem-codes/1", "admin"},
-		{http.MethodGet, "/api/v1/admin/redeem-codes/stats", "admin"},
-		// 代理只有明文导出与写操作要求 step-up；列表/详情密码已掩码（见下方只读列表）。
 		{http.MethodGet, "/api/v1/admin/proxies/data", "admin"},
 		{http.MethodPost, "/api/v1/admin/proxies", "admin"},
 		{http.MethodPut, "/api/v1/admin/proxies/1", "admin"},
@@ -270,6 +266,11 @@ func readOnlyStepUpRoutes() []stepUpRouteCase {
 		{http.MethodGet, "/api/v1/admin/plugins", "admin"},
 		{http.MethodGet, "/api/v1/admin/request-captures", "admin"},
 		{http.MethodGet, "/api/v1/admin/debug-dumps", "admin"},
+		// 卡密读模型已硬化为掩码：列表/详情/统计只读且不再要求 TOTP，
+		// 但机器凭据仍被 middleware.ForbidMachineCredentials 拒绝。
+		{http.MethodGet, "/api/v1/admin/redeem-codes", "admin"},
+		{http.MethodGet, "/api/v1/admin/redeem-codes/1", "admin"},
+		{http.MethodGet, "/api/v1/admin/redeem-codes/stats", "admin"},
 	}
 }
 
@@ -402,53 +403,10 @@ func TestReadOnlyRedeemRoutesRejectAdminAPIKeyMachineCredential(t *testing.T) {
 	}
 }
 
-// sensitiveRedeemReadRoutes 是返回卡密秘密的只读接口（#489 审计 B-2 的绕过点）。
-// 「只读所以不用 2FA」口径已废弃：任何方法（含 GET）都要求真人 JWT + step-up，
-// 机器凭据（旧版全权 x-api-key 与 adm_sc_ 受限密钥）一律 403。
-func sensitiveRedeemReadRoutes() []stepUpRouteCase {
-	return []stepUpRouteCase{
-		{http.MethodGet, "/api/v1/admin/redeem-codes", "admin"},
-		{http.MethodGet, "/api/v1/admin/redeem-codes/stats", "admin"},
-		{http.MethodGet, "/api/v1/admin/redeem-codes/1", "admin"},
-	}
-}
-
-// 机器凭据访问卡密只读接口被拒：敏感资源由 step-up 门控统一拒绝机器身份。
-func TestSensitiveRedeemReadRoutesRejectAdminAPIKeyMachineCredential(t *testing.T) {
-	// 开启 step-up：敏感只读接口由统一门控拒绝机器凭据（与写操作同一错误码）。
-	settings := stepUpRouteSettings(map[string]string{service.SettingKeyStepUpEnabled: "true"})
-	realStepUp := middleware.NewStepUpAuthMiddleware(nil, nil, settings)
-	router := buildAdminRouteProbeRouter(t, realStepUp, service.AuditAuthMethodAdminAPIKey)
-	for _, tc := range sensitiveRedeemReadRoutes() {
-		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
-			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
-			// 只读敏感接口与写操作使用同一错误码，前端统一弹 TOTP / 提示机器凭据被禁。
-			require.Contains(t, w.Body.String(), "STEP_UP_ADMIN_API_KEY_FORBIDDEN")
-		})
-	}
-}
-
-// 人只会话读卡密只读接口同样要求 step-up：未验证时 403 STEP_UP_REQUIRED，
-// 完成 TOTP 后放行。
-func TestSensitiveRedeemReadRoutesRequireStepUpForHumans(t *testing.T) {
-	router := buildAdminRouteProbeRouter(t, stepUpProbe(), service.AuditAuthMethodJWT)
-	for _, tc := range sensitiveRedeemReadRoutes() {
-		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
-			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
-			require.Contains(t, w.Body.String(), "STEP_UP_REQUIRED")
-
-			w = httptest.NewRecorder()
-			req := httptest.NewRequest(tc.method, tc.path, nil)
-			req.Header.Set(stepUpProbeHeader, "1")
-			router.ServeHTTP(w, req)
-			require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
-		})
-	}
-}
+// 卡密只读接口（列表/详情/统计）在 2026-11 2FA 触发矩阵复核后归为
+// secret_free：读模型只回掩码，人只会话直接读、不再弹 TOTP；机器凭据仍被
+// ForbidMachineCredentials 拒绝（见 TestReadOnlyRedeemRoutesRejectAdminAPIKeyMachineCredential）。
+// 批量导出 GET /redeem-codes/export 仍在上面的 sensitiveStepUpRoutes 里。
 
 // stepUpConsistencyUserRepo 是只实现 GetByID 的用户仓储桩（其余方法由嵌入的
 // service.UserRepository 接口提供，本测试不会调用）。
