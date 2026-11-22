@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"errors"
 	"html"
 	"log/slog"
 	"strings"
@@ -9,6 +8,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 
 	"github.com/gin-gonic/gin"
 )
@@ -68,6 +68,14 @@ func (h *SettingHandler) TestSMTPConnection(c *gin.Context) {
 		return
 	}
 
+	// 私网/环回/云元数据等出站目标一律拒绝：SMTP 测试等于一个任意 host:port
+	// 的 TCP 探测原语。字面量与域名解析结果都校验，DNS 失败/超时按拒绝处理。
+	if err := urlvalidator.ValidateOutboundHost(c.Request.Context(), req.SMTPHost, false); err != nil {
+		slog.Warn("admin_smtp_target_blocked", "host", req.SMTPHost, "port", req.SMTPPort)
+		response.BadRequest(c, smtpTestPublicMessage(err))
+		return
+	}
+
 	config := &service.SMTPConfig{
 		Host:     req.SMTPHost,
 		Port:     req.SMTPPort,
@@ -90,12 +98,11 @@ func (h *SettingHandler) TestSMTPConnection(c *gin.Context) {
 	response.Success(c, gin.H{"message": "SMTP connection successful"})
 }
 
-// smtpTestPublicMessage 把内部错误压成对外可说的分类。
-// 刻意不含主机名、端口、源端口、拒绝/超时的区分。
+// smtpTestPublicMessage 把内部错误压成对外可说的**单一**分类。
+// 刻意不含主机名、端口、源端口，也不区分「策略拒绝 / 解析失败 / 拒绝连接 /
+// 鉴权失败」——这些差异合起来就是内网 host:port 是否存在、是否开放的预言机。
 func smtpTestPublicMessage(err error) string {
-	if errors.Is(err, service.ErrSMTPTargetBlocked) {
-		return "SMTP connection test failed: target not allowed"
-	}
+	_ = err
 	return "SMTP connection test failed: unable to connect or authenticate"
 }
 
@@ -155,6 +162,14 @@ func (h *SettingHandler) SendTestEmail(c *gin.Context) {
 	}
 	if req.SMTPHost == "" {
 		response.BadRequest(c, "SMTP host is required")
+		return
+	}
+
+	// 私网/环回/云元数据等出站目标一律拒绝：SMTP 测试等于一个任意 host:port
+	// 的 TCP 探测原语。字面量与域名解析结果都校验，DNS 失败/超时按拒绝处理。
+	if err := urlvalidator.ValidateOutboundHost(c.Request.Context(), req.SMTPHost, false); err != nil {
+		slog.Warn("admin_smtp_target_blocked", "host", req.SMTPHost, "port", req.SMTPPort)
+		response.BadRequest(c, smtpTestPublicMessage(err))
 		return
 	}
 

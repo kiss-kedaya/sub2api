@@ -48,10 +48,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	secretEncryptor, err := repository.NewAESEncryptor(configConfig)
-	if err != nil {
-		return nil, err
-	}
 	userRepository := repository.NewUserRepository(client, db)
 	redeemCodeRepository := repository.NewRedeemCodeRepository(client)
 	redisClient := repository.ProvideRedis(configConfig)
@@ -59,7 +55,11 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	scopedAdminKeyRepository := repository.NewScopedAdminKeyRepository(db)
 	settingRepository := repository.NewSettingRepository(client)
 	groupRepository := repository.NewGroupRepository(client, db)
-	proxyRepository := repository.NewProxyRepository(client, db)
+	secretEncryptor, err := repository.NewAESEncryptor(configConfig)
+	if err != nil {
+		return nil, err
+	}
+	proxyRepository := repository.ProvideManagedProxyRepository(client, db, secretEncryptor)
 	settingCacheInvalidationBus := repository.NewSettingCacheInvalidationBus(redisClient)
 	settingService := service.ProvideSettingService(scopedAdminKeyRepository, settingRepository, groupRepository, proxyRepository, configConfig, settingCacheInvalidationBus)
 	emailCache := repository.NewEmailCache(redisClient)
@@ -75,7 +75,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	billingCache := repository.NewBillingCache(redisClient)
 	userSubscriptionRepository := repository.NewUserSubscriptionRepository(client)
 	apiKeyRepository := repository.NewAPIKeyRepository(client, db)
-	apiKeySecretRepository := repository.NewAPIKeySecretRepository(db)
 	userRPMCache := repository.NewUserRPMCache(redisClient)
 	userGroupRateRepository := repository.NewUserGroupRateRepository(db)
 	userPlatformQuotaRepository := repository.NewUserPlatformQuotaRepository(client)
@@ -84,7 +83,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	apiKeyCache := repository.NewAPIKeyCache(redisClient)
 	concurrencyCache := repository.ProvideConcurrencyCache(redisClient, configConfig)
 	schedulerCache := repository.ProvideSchedulerCache(redisClient, configConfig)
-	accountRepository := repository.NewAccountRepository(client, db, schedulerCache)
+	accountRepository := repository.ProvideManagedAccountRepository(client, db, schedulerCache, secretEncryptor)
 	concurrencyService := service.ProvideConcurrencyService(concurrencyCache, accountRepository, configConfig)
 	timingWheelService, err := service.ProvideTimingWheelService()
 	if err != nil {
@@ -92,7 +91,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	}
 	deferredService := service.ProvideDeferredService(accountRepository, apiKeyRepository, timingWheelService)
 	apiKeyService := service.ProvideAPIKeyService(apiKeyRepository, userRepository, groupRepository, userSubscriptionRepository, userGroupRateRepository, apiKeyCache, configConfig, billingCacheService, concurrencyService, deferredService)
-	apiKeySecretService := service.NewAPIKeySecretService(apiKeyRepository, apiKeySecretRepository)
 	apiKeyAuthCacheInvalidator := service.ProvideAPIKeyAuthCacheInvalidator(apiKeyService)
 	promoService := service.NewPromoService(promoCodeRepository, userRepository, billingCacheService, client, apiKeyAuthCacheInvalidator)
 	subscriptionService := service.NewSubscriptionService(groupRepository, userSubscriptionRepository, billingCacheService, client, configConfig)
@@ -109,6 +107,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	userAttributeService := service.NewUserAttributeService(userAttributeDefinitionRepository, userAttributeValueRepository)
 	authHandler := handler.NewAuthHandler(configConfig, authService, userService, settingService, promoService, redeemService, totpService, userAttributeService)
 	userHandler := handler.ProvideUserHandler(userService, authService, emailService, emailCache, affiliateService, serviceUserPlatformQuotaRepository, totpService)
+	apiKeySecretRepository := repository.NewAPIKeySecretRepository(db)
+	apiKeySecretService := service.NewAPIKeySecretService(apiKeyRepository, apiKeySecretRepository)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService, apiKeySecretService)
 	usageLogRepository := repository.NewUsageLogRepository(client, db, redisClient, configConfig)
 	usageService := service.NewUsageService(usageLogRepository, userRepository, client, apiKeyAuthCacheInvalidator)
@@ -322,7 +322,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	stateStore := repository.NewExcelBPSStateRepository(db, secretEncryptor)
 	excelBPSChannel := service.NewExcelBPSChannel(excelGrantService, stateStore)
 	excelGrantHandler := handler.ProvideExcelGrantHandler(excelGrantService, excelBPSChannel, openAIGatewayService, totpService, userService)
-	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, openAIOAuthHandler, geminiOAuthHandler, antigravityOAuthHandler, grokOAuthHandler, cnProviderHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, pluginHandler, adminAPIKeyHandler, scheduledTestHandler, channelHandler, channelMonitorHandler, channelMonitorRequestTemplateHandler, contentModerationHandler, promptAdminHandler, paymentHandler, affiliateHandler, complianceHandler, auditLogHandler, groupQualityCheckHandler, upstreamBillingProbeService, ollamaCloudUsageService, settingService, claudeResetCreditService, accountOpsHandler, mihomoHandler, credentialGuardHandler, opsAutomationHandler, excelGrantHandler)
+	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, openAIOAuthHandler, geminiOAuthHandler, antigravityOAuthHandler, grokOAuthHandler, cnProviderHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, pluginHandler, adminAPIKeyHandler, scheduledTestHandler, channelHandler, channelMonitorHandler, channelMonitorRequestTemplateHandler, contentModerationHandler, promptAdminHandler, paymentHandler, affiliateHandler, complianceHandler, auditLogHandler, groupQualityCheckHandler, upstreamBillingProbeService, ollamaCloudUsageService, settingService, claudeResetCreditService, accountOpsHandler, mihomoHandler, credentialGuardHandler, opsAutomationHandler, excelGrantHandler, totpService, userService)
 	usageRecordWorkerPool := service.NewUsageRecordWorkerPool(configConfig)
 	balancePreauthorizationService := service.NewBalancePreauthorizationService(configConfig, billingService, billingCacheService, usageBillingRepository)
 	userMsgQueueCache := repository.NewUserMsgQueueCache(redisClient)

@@ -897,6 +897,11 @@ type URLAllowlistConfig struct {
 	AllowPrivateHosts bool     `mapstructure:"allow_private_hosts"`
 	// 关闭 URL 白名单校验时，是否允许 http URL（默认只允许 https）
 	AllowInsecureHTTP bool `mapstructure:"allow_insecure_http"`
+	// UpstreamChannelAllowPrivateHosts 显式允许管理员把「上游渠道站点地址」
+	// 与验证码节点填成私网/环回地址（默认 false）。
+	// 上游渠道会被服务端主动请求，允许内网地址等于开了一个内网探测/请求原语；
+	// 只有确实在内网部署中转站点时才应打开。
+	UpstreamChannelAllowPrivateHosts bool `mapstructure:"upstream_channel_allow_private_hosts"`
 }
 
 type ResponseHeaderConfig struct {
@@ -2337,6 +2342,9 @@ func setDefaults() {
 	})
 	viper.SetDefault("security.url_allowlist.crs_hosts", []string{})
 	viper.SetDefault("security.url_allowlist.allow_private_hosts", true)
+	// 上游渠道站点地址默认禁止私网：老部署若确实指向内网，需显式打开
+	// security.url_allowlist.upstream_channel_allow_private_hosts。
+	viper.SetDefault("security.url_allowlist.upstream_channel_allow_private_hosts", false)
 	viper.SetDefault("security.url_allowlist.allow_insecure_http", true)
 	viper.SetDefault("security.response_headers.enabled", true)
 	viper.SetDefault("security.response_headers.additional_allowed", []string{})

@@ -218,6 +218,18 @@ func (s *ImageStorageSettingService) TestConnection(ctx context.Context, in Imag
 	if !cfg.IsConfigured() {
 		return ErrImageStorageIncomplete
 	}
+	// 入口校验：endpoint 是管理员任意填写的出站目标，测试连接只允许公网。
+	// 复用备份配置时校验的是最终生效的 endpoint。
+	if endpoint := strings.TrimSpace(cfg.Endpoint); endpoint != "" {
+		normalized, err := validateAdminOutboundTarget(ctx, endpoint)
+		if err != nil {
+			return err
+		}
+		cfg.Endpoint = normalized
+	}
+	// 与备份的"测试连接"一致：真正建连时注入安全客户端（拨号期 IP 校验 +
+	// 重定向到私网拒绝），堵住预校验与连接之间的 TOCTOU。
+	ctx = WithObjectStoreHTTPClient(ctx, newAdminOutboundHTTPClient())
 	if _, err := s.factory(ctx, cfg); err != nil {
 		return err
 	}

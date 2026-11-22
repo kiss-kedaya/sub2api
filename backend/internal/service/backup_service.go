@@ -394,6 +394,16 @@ func (s *BackupService) UpdateS3Config(ctx context.Context, cfg BackupS3Config) 
 }
 
 func (s *BackupService) TestS3Connection(ctx context.Context, cfg BackupS3Config) error {
+	// 入口校验：endpoint 由管理员任意填写，属于出站目标，必须只允许公网。
+	// 字面量私网、解析到私网、DNS 失败统一拒绝，且不把细节回显给前端。
+	if endpoint := strings.TrimSpace(cfg.Endpoint); endpoint != "" {
+		normalized, err := validateAdminOutboundTarget(ctx, endpoint)
+		if err != nil {
+			return err
+		}
+		cfg.Endpoint = normalized
+	}
+
 	// 如果没提供 secret，用已保存的
 	if cfg.SecretAccessKey == "" {
 		old, _ := s.loadS3Config(ctx)
@@ -406,6 +416,9 @@ func (s *BackupService) TestS3Connection(ctx context.Context, cfg BackupS3Config
 		return fmt.Errorf("incomplete S3 config: bucket, access_key_id, secret_access_key are required")
 	}
 
+	// 测试连接是管理员的探测原语：真正发请求时再做一次「连接前解析 IP 校验」
+	// 与「重定向到私网拒绝」，堵住预校验与实际连接之间的 TOCTOU。
+	ctx = WithObjectStoreHTTPClient(ctx, newAdminOutboundHTTPClient())
 	store, err := s.storeFactory(ctx, &cfg)
 	if err != nil {
 		return err

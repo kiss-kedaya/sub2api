@@ -792,6 +792,13 @@ func (s *ContentModerationService) TestAPIKeys(ctx context.Context, input TestCo
 		}
 	}
 	cfg.normalize()
+	// 管理面测试入口：base_url 由管理员任意填写，属出站目标，只允许公网。
+	// 字面量私网 / 解析到私网 / DNS 失败统一拒绝，且不把细节回显给前端。
+	if _, err := validateAdminOutboundTarget(ctx, cfg.BaseURL); err != nil {
+		return nil, infraerrors.BadRequest("CONTENT_MODERATION_BASE_URL_NOT_ALLOWED", "内容审计 Base URL 不被允许：仅允许公网可达地址")
+	}
+	// 真正发测试请求时注入安全客户端：连接前解析 IP 校验 + 重定向到私网拒绝。
+	ctx = WithAdminOutboundHTTPClient(ctx, newAdminOutboundHTTPClient())
 	testInput, imageCount, err := buildModerationTestInput(input.Prompt, input.Images)
 	if err != nil {
 		return nil, err
@@ -1843,6 +1850,10 @@ const contentModerationProxyURLCacheTTL = time.Minute
 // 代理解析/构建失败直接返回错误，绝不回退直连（避免 IP 关联风险）。
 func (s *ContentModerationService) moderationHTTPClient(ctx context.Context, cfg *ContentModerationConfig) (*http.Client, error) {
 	if cfg == nil || cfg.ProxyID == nil {
+		// 管理面测试入口注入的安全客户端优先：它带拨号期 IP 校验与重定向守卫。
+		if injected := adminOutboundHTTPClientFromContext(ctx); injected != nil {
+			return injected, nil
+		}
 		if s.httpClient == nil {
 			return http.DefaultClient, nil
 		}

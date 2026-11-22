@@ -86,7 +86,8 @@ func TestPromptAuditProbeUsesSingleVersionSegment(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL+"/claude/v1", "temporary-token")})
+	allowPrivate := true
+	result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL+"/claude/v1", "temporary-token"), AllowPrivateEndpoints: &allowPrivate})
 	require.True(t, result.OK)
 	require.Zero(t, modelPathHits.Load())
 }
@@ -115,7 +116,7 @@ func TestOpenAICompatibleScannerRequestContract(t *testing.T) {
 	}))
 	defer server.Close()
 	scanner := NewOpenAICompatibleScanner()
-	result, err := scanner.Scan(context.Background(), ActiveEndpoint{ID: "one", BaseURL: server.URL, Model: DefaultGuardModel, Token: "token", TimeoutMS: 1000}, "hello", AllScannerIDs)
+	result, err := scanner.Scan(context.Background(), ActiveEndpoint{AllowPrivateEndpoints: true, ID: "one", BaseURL: server.URL, Model: DefaultGuardModel, Token: "token", TimeoutMS: 1000}, "hello", AllScannerIDs)
 	require.NoError(t, err)
 	require.Equal(t, EventPass, result.Decision)
 }
@@ -127,14 +128,14 @@ func TestOpenAICompatibleScannerFollowsRedirectAndRejectsOversize(t *testing.T) 
 	defer target.Close()
 	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, http.StatusFound) }))
 	defer redirect.Close()
-	result, err := NewOpenAICompatibleScanner().Scan(context.Background(), ActiveEndpoint{ID: "redirect", BaseURL: redirect.URL, Model: DefaultGuardModel, TimeoutMS: 1000}, "hello", AllScannerIDs)
+	result, err := NewOpenAICompatibleScanner().Scan(context.Background(), ActiveEndpoint{AllowPrivateEndpoints: true, ID: "redirect", BaseURL: redirect.URL, Model: DefaultGuardModel, TimeoutMS: 1000}, "hello", AllScannerIDs)
 	require.NoError(t, err)
 	require.Equal(t, EventPass, result.Decision)
 	oversize := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(strings.Repeat("x", int(maxGuardResponseBytes)+1)))
 	}))
 	defer oversize.Close()
-	_, err = NewOpenAICompatibleScanner().Scan(context.Background(), ActiveEndpoint{ID: "large", BaseURL: oversize.URL, Model: DefaultGuardModel, TimeoutMS: 1000}, "hello", AllScannerIDs)
+	_, err = NewOpenAICompatibleScanner().Scan(context.Background(), ActiveEndpoint{AllowPrivateEndpoints: true, ID: "large", BaseURL: oversize.URL, Model: DefaultGuardModel, TimeoutMS: 1000}, "hello", AllScannerIDs)
 	require.Error(t, err)
 }
 
@@ -156,7 +157,7 @@ func TestOpenAICompatibleScannerClassifiesHTTPConnectionAndTimeoutFailures(t *te
 				w.WriteHeader(tt.status)
 			}))
 			defer server.Close()
-			_, err := NewOpenAICompatibleScanner().Scan(context.Background(), ActiveEndpoint{ID: "status", BaseURL: server.URL, Model: DefaultGuardModel, TimeoutMS: 1000}, "hello", AllScannerIDs)
+			_, err := NewOpenAICompatibleScanner().Scan(context.Background(), ActiveEndpoint{AllowPrivateEndpoints: true, ID: "status", BaseURL: server.URL, Model: DefaultGuardModel, TimeoutMS: 1000}, "hello", AllScannerIDs)
 			var guardErr *GuardError
 			require.ErrorAs(t, err, &guardErr)
 			require.Equal(t, ErrorCodeUnavailable, guardErr.Code)
@@ -169,7 +170,7 @@ func TestOpenAICompatibleScannerClassifiesHTTPConnectionAndTimeoutFailures(t *te
 	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	closedURL := closed.URL
 	closed.Close()
-	_, err := NewOpenAICompatibleScanner().Scan(context.Background(), ActiveEndpoint{ID: "closed", BaseURL: closedURL, Model: DefaultGuardModel, TimeoutMS: 100}, "hello", AllScannerIDs)
+	_, err := NewOpenAICompatibleScanner().Scan(context.Background(), ActiveEndpoint{AllowPrivateEndpoints: true, ID: "closed", BaseURL: closedURL, Model: DefaultGuardModel, TimeoutMS: 100}, "hello", AllScannerIDs)
 	var connectionErr *GuardError
 	require.ErrorAs(t, err, &connectionErr)
 	require.True(t, connectionErr.Retryable)
@@ -179,7 +180,7 @@ func TestOpenAICompatibleScannerClassifiesHTTPConnectionAndTimeoutFailures(t *te
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer timeout.Close()
-	_, err = NewOpenAICompatibleScanner().Scan(context.Background(), ActiveEndpoint{ID: "timeout", BaseURL: timeout.URL, Model: DefaultGuardModel, TimeoutMS: 20}, "hello", AllScannerIDs)
+	_, err = NewOpenAICompatibleScanner().Scan(context.Background(), ActiveEndpoint{AllowPrivateEndpoints: true, ID: "timeout", BaseURL: timeout.URL, Model: DefaultGuardModel, TimeoutMS: 20}, "hello", AllScannerIDs)
 	var timeoutErr *GuardError
 	require.ErrorAs(t, err, &timeoutErr)
 	require.True(t, timeoutErr.Retryable)
@@ -198,7 +199,8 @@ func TestPromptAuditProbeModelsFallbackAndResponseSafety(t *testing.T) {
 			chatCalls.Add(1)
 		}))
 		defer server.Close()
-		result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token")})
+		allowPrivate := true
+		result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token"), AllowPrivateEndpoints: &allowPrivate})
 		require.True(t, result.OK)
 		require.True(t, result.TokenApplied)
 		require.Equal(t, http.StatusOK, result.HTTPStatus)
@@ -216,7 +218,8 @@ func TestPromptAuditProbeModelsFallbackAndResponseSafety(t *testing.T) {
 			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Safety: Safe\nCategories: None"}}]}`))
 		}))
 		defer server.Close()
-		result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token")})
+		allowPrivate := true
+		result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token"), AllowPrivateEndpoints: &allowPrivate})
 		require.True(t, result.OK)
 		require.Equal(t, int64(1), chatCalls.Load())
 	})
@@ -230,7 +233,8 @@ func TestPromptAuditProbeModelsFallbackAndResponseSafety(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 		}))
 		defer server.Close()
-		result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token")})
+		allowPrivate := true
+		result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token"), AllowPrivateEndpoints: &allowPrivate})
 		require.False(t, result.OK)
 		require.Equal(t, ErrorCodeUnavailable, result.ErrorCode)
 		require.Equal(t, http.StatusUnauthorized, result.HTTPStatus)
@@ -246,7 +250,8 @@ func TestPromptAuditProbeModelsFallbackAndResponseSafety(t *testing.T) {
 			_, _ = w.Write([]byte(strings.Repeat("x", int(maxGuardResponseBytes)+1)))
 		}))
 		defer server.Close()
-		result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token")})
+		allowPrivate := true
+		result := newProbeTestService().Probe(context.Background(), ProbeRequest{Endpoint: probeEndpoint(server.URL, "temporary-token"), AllowPrivateEndpoints: &allowPrivate})
 		require.False(t, result.OK)
 		require.Equal(t, "response_too_large", result.ErrorCode)
 		require.Zero(t, chatCalls.Load())
@@ -262,14 +267,14 @@ func TestResolveProbeEndpointReusesTokenOnlyForMatchingBaseURL(t *testing.T) {
 
 	matched, applied, err := service.resolveProbeEndpoint(UpdateEndpoint{
 		ID: "guard-1", BaseURL: "https://guard.example.com/v1", TimeoutMS: 1000, InputLimit: 1024,
-	})
+	}, false)
 	require.NoError(t, err)
 	require.True(t, applied)
 	require.Equal(t, "STORED_GUARD_TOKEN", matched.Token)
 
 	mismatched, applied, err := service.resolveProbeEndpoint(UpdateEndpoint{
 		ID: "guard-1", BaseURL: "https://attacker.example.com", TimeoutMS: 1000, InputLimit: 1024,
-	})
+	}, false)
 	require.NoError(t, err)
 	require.False(t, applied)
 	require.Empty(t, mismatched.Token)

@@ -24,6 +24,10 @@ import (
 // 而生产默认拒绝私网/回环（见 smtpCheckDialAddr）。
 func TestMain(m *testing.M) {
 	SetSMTPAllowPrivateTargetsForTest(true)
+	// 管理面出站校验同样放行本机回环：风控"测试 Key"等用例用 httptest 本地
+	// 服务验证业务语义；出站安全策略本身由 urlvalidator 与 admin_ssrf_entry_test
+	// 显式覆盖（后者会自行关闭本开关）。
+	restoreAdminOutbound := SetAdminOutboundAllowPrivateForTest(true)
 	// Keep catalogue tests deterministic: the curated catalogue is fetched from
 	// GitHub by default, and a reachable network must not change assertions
 	// about models.dev sources. Individual tests seed their own source.
@@ -36,6 +40,7 @@ func TestMain(m *testing.M) {
 		_ = os.Unsetenv("SUB2API_MODEL_CATALOG_URL")
 	}
 	SetSMTPAllowPrivateTargetsForTest(false)
+	restoreAdminOutbound()
 	os.Exit(code)
 }
 

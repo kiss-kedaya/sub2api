@@ -69,6 +69,7 @@ func newDeepSeekBalanceProbeAccount() *Account {
 }
 
 func TestCNProviderBalanceService_DeepSeekInvalidBalancePayloadDoesNotBecomeZero(t *testing.T) {
+	stubOutboundResolver(t, "93.184.216.34")
 	tests := []struct {
 		name      string
 		body      string
@@ -110,6 +111,7 @@ func TestCNProviderBalanceService_DeepSeekInvalidBalancePayloadDoesNotBecomeZero
 }
 
 func TestCNProviderBalanceService_DeepSeekValidZeroBalanceRemainsSuccessful(t *testing.T) {
+	stubOutboundResolver(t, "93.184.216.34")
 	repo := &cnBalanceProbeRepo{account: newDeepSeekBalanceProbeAccount()}
 	upstream := &cnBalanceResponseUpstream{
 		statusCode: http.StatusOK,

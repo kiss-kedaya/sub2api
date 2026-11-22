@@ -220,7 +220,7 @@ func TestPromptAdminRejectsInvalidEventIDsTimesAndPagination(t *testing.T) {
 }
 
 func validHandlerUpdateRequest(token string) UpdateConfigRequest {
-	return UpdateConfigRequest{
+	return UpdateConfigRequest{AllowPrivateEndpoints: true,
 		ExpectedConfigVersion: 7,
 		Strategy:              "priority",
 		WorkerCount:           1,

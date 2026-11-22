@@ -56,3 +56,17 @@ func TestSendTestEmailRequestPreservesUseTLSOmissionSemantics(t *testing.T) {
 	require.True(t, resolveSMTPUseTLS(omitted.SMTPUseTLS, saved))
 	require.False(t, resolveSMTPUseTLS(explicitFalse.SMTPUseTLS, saved))
 }
+
+// 对外错误必须是固定分类：不能把 host/port、也不能把「策略拒绝 / 解析失败 /
+// 拒绝连接」的差异带出去，否则等于给了一个内网 host:port 状态预言机。
+func TestSMTPTestFailureMessageDoesNotLeakTargetDetails(t *testing.T) {
+	for _, err := range []error{
+		service.ErrSMTPTargetBlocked,
+		service.ErrEmailNotConfigured,
+	} {
+		message := smtpTestPublicMessage(err)
+		require.Equal(t, "SMTP connection test failed: unable to connect or authenticate", message)
+		require.NotContains(t, message, "127.0.0.1")
+		require.NotContains(t, message, "target not allowed")
+	}
+}

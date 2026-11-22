@@ -73,9 +73,14 @@ func (h *PromptAdminHandler) ProbeEndpoint(c *gin.Context) {
 	if result.OK {
 		status = "success"
 	}
+	private := false
+	if request.AllowPrivateEndpoints != nil {
+		private = *request.AllowPrivateEndpoints
+	}
 	setPromptAdminAudit(c, status, result.ErrorCode, map[string]any{
 		"guard_endpoint_id": request.Endpoint.ID, "http_status": result.HTTPStatus,
 		"latency_ms": result.LatencyMS, "token_applied": result.TokenApplied, "retryable": result.Retryable,
+		"allow_private_endpoints": private,
 	})
 	response.Success(c, result)
 }
@@ -235,7 +240,7 @@ func configAuditFields(request UpdateConfigRequest, saved *PublicConfig) map[str
 		"blocking_latest_turn_only": request.BlockingLatestTurnOnly,
 		"config_version":            version, "endpoint_count": len(request.Endpoints),
 		"scanner_count": len(request.Scanners), "all_groups": request.AllGroups,
-		"group_count": len(request.GroupIDs),
+		"group_count": len(request.GroupIDs), "allow_private_endpoints": request.AllowPrivateEndpoints,
 	}
 }
 

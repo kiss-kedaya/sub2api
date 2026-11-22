@@ -1,0 +1,83 @@
+package securityaudit
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// 审计节点探测（POST /admin/prompt-audit/endpoints/probe）此前注释里明确
+// “允许私网”。现在默认必须拒绝私网，只有显式 allow_private_endpoints 才放行。
+
+func TestPromptProbeRejectsPrivateEndpointByDefault(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"` + DefaultGuardModel + `"}]}`))
+	}))
+	defer server.Close()
+
+	result := newProbeTestService().Probe(context.Background(), ProbeRequest{
+		Endpoint: probeEndpoint(server.URL, "temporary-token"),
+	})
+	require.False(t, result.OK)
+	require.Equal(t, "endpoint_unsafe", result.ErrorCode)
+	require.NotContains(t, result.Message, "127.0.0.1")
+	require.NotContains(t, result.Message, server.URL)
+}
+
+func TestPromptProbeRejectsPrivateLiteralEvenWithWhitespace(t *testing.T) {
+	for _, baseURL := range []string{
+		"http://127.0.0.1:8080",
+		"http://10.0.0.5:8080",
+		"http://169.254.169.254",
+		"http://[::1]:8080",
+	} {
+		result := newProbeTestService().Probe(context.Background(), ProbeRequest{
+			Endpoint: probeEndpoint(baseURL, "temporary-token"),
+		})
+		require.False(t, result.OK, baseURL)
+		require.Equal(t, "endpoint_unsafe", result.ErrorCode, baseURL)
+	}
+}
+
+func TestPromptProbeAllowsPrivateEndpointWithExplicitSwitch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"` + DefaultGuardModel + `"}]}`))
+	}))
+	defer server.Close()
+	allowPrivate := true
+
+	result := newProbeTestService().Probe(context.Background(), ProbeRequest{
+		Endpoint:              probeEndpoint(server.URL, "temporary-token"),
+		AllowPrivateEndpoints: &allowPrivate,
+	})
+	require.True(t, result.OK, result.Message)
+}
+
+// 保存配置时：未打开开关不得写入私网字面量；打开开关后才允许。
+func TestPromptAuditSaveRejectsPrivateEndpointWithoutSwitch(t *testing.T) {
+	manager := &ConfigManager{encryptor: prefixEncryptor{}, encryptionKeyConfigured: true}
+	request := UpdateConfigRequest{
+		ExpectedConfigVersion: 1, Strategy: "priority", WorkerCount: 1, QueueCapacity: 10,
+		Scanners: []string{"PII"}, AllGroups: true,
+		Endpoints: []UpdateEndpoint{{
+			ID: "one", Name: "One", Protocol: "openai_compatible",
+			BaseURL: "http://127.0.0.1:8080", TimeoutMS: 1000, InputLimit: 1000,
+		}},
+	}
+	_, err := manager.buildNextStorage(DefaultStorageConfig(), request, 9)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "allow_private_endpoints")
+
+	request.AllowPrivateEndpoints = true
+	storage, err := manager.buildNextStorage(DefaultStorageConfig(), request, 9)
+	require.NoError(t, err)
+	require.True(t, storage.AllowPrivateEndpoints)
+
+	active, err := ActiveFromStorage(storage, true, prefixEncryptor{})
+	require.NoError(t, err)
+	require.True(t, active.AllowPrivateEndpoints)
+	require.True(t, active.Endpoints[0].AllowPrivateEndpoints)
+}

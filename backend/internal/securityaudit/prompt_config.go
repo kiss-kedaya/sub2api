@@ -75,10 +75,13 @@ type storageConfig struct {
 	AllGroups              bool              `json:"all_groups"`
 	GroupIDs               []int64           `json:"group_ids"`
 	Endpoints              []StorageEndpoint `json:"endpoints"`
-	ConfigVersion          int64             `json:"config_version"`
-	UpdatedAt              time.Time         `json:"updated_at"`
-	UpdatedBy              int64             `json:"updated_by"`
-	ChangeSummary          string            `json:"change_summary"`
+	// AllowPrivateEndpoints 显式允许把审计节点指向私网（默认 false）。
+	// 打开后运行时会放行私网目标；保存时也只在打开时才接受私网字面量地址。
+	AllowPrivateEndpoints bool      `json:"allow_private_endpoints"`
+	ConfigVersion         int64     `json:"config_version"`
+	UpdatedAt             time.Time `json:"updated_at"`
+	UpdatedBy             int64     `json:"updated_by"`
+	ChangeSummary         string    `json:"change_summary"`
 }
 
 type ActiveEndpoint struct {
@@ -91,6 +94,9 @@ type ActiveEndpoint struct {
 	TimeoutMS  int
 	InputLimit int
 	Enabled    bool
+	// AllowPrivateEndpoints 是审计模块的显式放行开关：默认 false 时
+	// 私网/环回/云元数据目标一律拒绝（字面量 + 解析 + 拨号期 + 重定向）。
+	AllowPrivateEndpoints bool
 	// TokenInvalid marks an endpoint whose persisted token ciphertext cannot be
 	// decrypted with the current encryption key (key changed or auto-generated
 	// on restart). The endpoint is kept visible for admins but excluded from
@@ -100,6 +106,7 @@ type ActiveEndpoint struct {
 
 type ActiveConfig struct {
 	RiskControlEnabled     bool
+	AllowPrivateEndpoints  bool
 	Enabled                bool
 	BlockingEnabled        bool
 	BlockingLatestTurnOnly bool
@@ -175,6 +182,8 @@ type UpdateConfigRequest struct {
 	AllGroups              bool             `json:"all_groups"`
 	GroupIDs               []int64          `json:"group_ids"`
 	Endpoints              []UpdateEndpoint `json:"endpoints"`
+	// AllowPrivateEndpoints 显式放行私网审计节点；默认 false。
+	AllowPrivateEndpoints bool `json:"allow_private_endpoints"`
 }
 
 func DefaultStorageConfig() storageConfig {
@@ -422,7 +431,8 @@ func PublicFromStorage(cfg storageConfig, riskControlEnabled bool, invalidTokenE
 
 func ActiveFromStorage(cfg storageConfig, riskControlEnabled bool, encryptor SecretEncryptor) (ActiveConfig, error) {
 	active := ActiveConfig{
-		RiskControlEnabled: riskControlEnabled, Enabled: cfg.Enabled, BlockingEnabled: cfg.BlockingEnabled,
+		RiskControlEnabled: riskControlEnabled, AllowPrivateEndpoints: cfg.AllowPrivateEndpoints,
+		Enabled: cfg.Enabled, BlockingEnabled: cfg.BlockingEnabled,
 		BlockingLatestTurnOnly: cfg.BlockingLatestTurnOnly,
 		StorePassEvents:        cfg.StorePassEvents, Strategy: cfg.Strategy, WorkerCount: cfg.WorkerCount,
 		QueueCapacity: cfg.QueueCapacity, Scanners: append([]string(nil), cfg.Scanners...), AllGroups: cfg.AllGroups,
@@ -453,6 +463,7 @@ func ActiveFromStorage(cfg storageConfig, riskControlEnabled bool, encryptor Sec
 			ID: ep.ID, Name: ep.Name, Protocol: ep.Protocol, BaseURL: ep.BaseURL, Model: ep.Model,
 			Token: token, TimeoutMS: ep.TimeoutMS, InputLimit: ep.InputLimit,
 			Enabled: ep.Enabled && !tokenInvalid, TokenInvalid: tokenInvalid,
+			AllowPrivateEndpoints: cfg.AllowPrivateEndpoints,
 		})
 	}
 	return active, nil

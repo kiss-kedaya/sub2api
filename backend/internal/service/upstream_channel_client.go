@@ -14,7 +14,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 // UpstreamChannelClient speaks the public sub2api user API of a managed
@@ -240,6 +243,11 @@ type UpstreamChannelClient struct {
 	// urlCheck vets (and normalizes) the site address before every request. Nil
 	// means no outbound policy is wired, which is how the tests run.
 	urlCheck func(string) (string, error)
+	// allowPrivateTargets mirrors the operator's explicit switch. When false
+	// (default) the transport validates the resolved IP at connect time, so a
+	// host name that passes the pre-request check cannot rebind to a private
+	// address between check and dial.
+	allowPrivateTargets atomic.Bool
 }
 
 // NewUpstreamChannelClient builds a client.
@@ -251,6 +259,14 @@ func NewUpstreamChannelClient() *UpstreamChannelClient {
 func (c *UpstreamChannelClient) SetURLCheck(check func(string) (string, error)) {
 	if c != nil {
 		c.urlCheck = check
+	}
+}
+
+// SetPrivateTargetsAllowed 设置是否允许连接私网目标。
+// 默认 false：连接的 IP 会在拨号前被校验，堵住 DNS rebinding。
+func (c *UpstreamChannelClient) SetPrivateTargetsAllowed(allow bool) {
+	if c != nil {
+		c.allowPrivateTargets.Store(allow)
 	}
 }
 
@@ -268,6 +284,11 @@ func (c *UpstreamChannelClient) httpClient(proxyURL string) (*http.Client, error
 		ResponseHeaderTimeout: 20 * time.Second,
 		MaxIdleConnsPerHost:   4,
 		IdleConnTimeout:       60 * time.Second,
+	}
+	if !c.allowPrivateTargets.Load() {
+		// 连接前按解析后的 IP 校验；代理模式下目的地由代理解析，无法在本地
+		// 校验，因此只在直连时启用。
+		transport.DialContext = urlvalidator.NewSafeDialContext(urlvalidator.OutboundPolicy{})
 	}
 	if proxy := strings.TrimSpace(proxyURL); proxy != "" {
 		parsed, err := url.Parse(proxy)
