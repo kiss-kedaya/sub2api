@@ -116,10 +116,14 @@ func (r *settingRepository) loadSetting(ctx context.Context, key string) (*servi
 		}
 		return nil, false, err
 	}
+	value, err := decodeSettingValue(m.Key, m.Value)
+	if err != nil {
+		return nil, false, err
+	}
 	return &service.Setting{
 		ID:        m.ID,
 		Key:       m.Key,
-		Value:     m.Value,
+		Value:     value,
 		UpdatedAt: m.UpdatedAt,
 	}, true, nil
 }
@@ -201,11 +205,15 @@ func (r *settingRepository) GetValue(ctx context.Context, key string) (string, e
 }
 
 func (r *settingRepository) Set(ctx context.Context, key, value string) error {
+	encoded, err := encodeSettingValue(key, value)
+	if err != nil {
+		return err
+	}
 	now := time.Now()
-	err := r.client.Setting.
+	err = r.client.Setting.
 		Create().
 		SetKey(key).
-		SetValue(value).
+		SetValue(encoded).
 		SetUpdatedAt(now).
 		OnConflictColumns(setting.FieldKey).
 		UpdateNewValues().
@@ -221,9 +229,44 @@ func (r *settingRepository) Set(ctx context.Context, key, value string) error {
 // replicas cannot replace changes made after the caller's uncached read.
 // For an absent key the unique constraint makes initialization atomic too.
 func (r *settingRepository) CompareAndSwapValue(ctx context.Context, key string, expected *string, value string) (bool, error) {
+	encoded, err := encodeSettingValue(key, value)
+	if err != nil {
+		return false, err
+	}
 	now := time.Now()
+	// 敏感键的库内可能是密文：明文 expected 无法直接做等值 WHERE。
+	// 改为「读原始值 + 解密比较 + 以原始值作为条件」保持同一条条件写语义。
+	if expected != nil && settingValueEncryptedAtRest(key) {
+		raw, found, rawErr := r.settingRawValue(ctx, key)
+		if rawErr != nil {
+			return false, rawErr
+		}
+		if !found {
+			r.invalidateKeyCache(key)
+			r.invalidateAllCache()
+			return false, nil
+		}
+		current, decErr := decodeSettingValue(key, raw)
+		if decErr != nil {
+			return false, decErr
+		}
+		if current != *expected {
+			r.invalidateKeyCache(key)
+			r.invalidateAllCache()
+			return false, nil
+		}
+		count, updateErr := r.client.Setting.Update().
+			Where(setting.KeyEQ(key), setting.ValueEQ(raw)).
+			SetValue(encoded).SetUpdatedAt(now).Save(ctx)
+		if updateErr != nil {
+			return false, updateErr
+		}
+		r.invalidateKeyCache(key)
+		r.invalidateAllCache()
+		return count == 1, nil
+	}
 	if expected == nil {
-		_, err := r.client.Setting.Create().SetKey(key).SetValue(value).SetUpdatedAt(now).
+		_, err := r.client.Setting.Create().SetKey(key).SetValue(encoded).SetUpdatedAt(now).
 			OnConflictColumns(setting.FieldKey).DoNothing().ID(ctx)
 		if errors.Is(err, sql.ErrNoRows) {
 			r.invalidateKeyCache(key)
@@ -235,7 +278,7 @@ func (r *settingRepository) CompareAndSwapValue(ctx context.Context, key string,
 		}
 	} else {
 		count, err := r.client.Setting.Update().Where(setting.KeyEQ(key), setting.ValueEQ(*expected)).
-			SetValue(value).SetUpdatedAt(now).Save(ctx)
+			SetValue(encoded).SetUpdatedAt(now).Save(ctx)
 		if err != nil {
 			return false, err
 		}
@@ -300,10 +343,14 @@ func (r *settingRepository) GetMultiple(ctx context.Context, keys []string) (map
 		now := time.Now().Add(settingCacheTTL).UnixNano()
 		found := make(map[string]struct{}, len(settings))
 		for _, m := range settings {
-			values[m.Key] = m.Value
+			value, decErr := decodeSettingValue(m.Key, m.Value)
+			if decErr != nil {
+				return nil, decErr
+			}
+			values[m.Key] = value
 			found[m.Key] = struct{}{}
 			r.storeKeyCacheIfVersion(m.Key, settingCacheEntry{
-				setting:   &service.Setting{ID: m.ID, Key: m.Key, Value: m.Value, UpdatedAt: m.UpdatedAt},
+				setting:   &service.Setting{ID: m.ID, Key: m.Key, Value: value, UpdatedAt: m.UpdatedAt},
 				found:     true,
 				expiresAt: now,
 			}, flightVersion)
@@ -352,7 +399,11 @@ func (r *settingRepository) SetMultiple(ctx context.Context, settings map[string
 	now := time.Now()
 	builders := make([]*ent.SettingCreate, 0, len(settings))
 	for key, value := range settings {
-		builders = append(builders, r.client.Setting.Create().SetKey(key).SetValue(value).SetUpdatedAt(now))
+		encoded, encErr := encodeSettingValue(key, value)
+		if encErr != nil {
+			return encErr
+		}
+		builders = append(builders, r.client.Setting.Create().SetKey(key).SetValue(encoded).SetUpdatedAt(now))
 	}
 	err := r.client.Setting.
 		CreateBulk(builders...).
@@ -401,7 +452,11 @@ func (r *settingRepository) GetAll(ctx context.Context) (map[string]string, erro
 		}
 		values := make(map[string]string, len(settings))
 		for _, s := range settings {
-			values[s.Key] = s.Value
+			value, decErr := decodeSettingValue(s.Key, s.Value)
+			if decErr != nil {
+				return nil, decErr
+			}
+			values[s.Key] = value
 		}
 		r.storeAllCacheIfVersion(&settingAllCacheEntry{
 			values:    values,

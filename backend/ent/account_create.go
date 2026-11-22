@@ -105,6 +105,20 @@ func (_c *AccountCreate) SetCredentials(v map[string]interface{}) *AccountCreate
 	return _c
 }
 
+// SetCredentialsCipher sets the "credentials_cipher" field.
+func (_c *AccountCreate) SetCredentialsCipher(v string) *AccountCreate {
+	_c.mutation.SetCredentialsCipher(v)
+	return _c
+}
+
+// SetNillableCredentialsCipher sets the "credentials_cipher" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableCredentialsCipher(v *string) *AccountCreate {
+	if v != nil {
+		_c.SetCredentialsCipher(*v)
+	}
+	return _c
+}
+
 // SetExtra sets the "extra" field.
 func (_c *AccountCreate) SetExtra(v map[string]interface{}) *AccountCreate {
 	_c.mutation.SetExtra(v)
@@ -717,6 +731,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 		_spec.SetField(account.FieldCredentials, field.TypeJSON, value)
 		_node.Credentials = value
 	}
+	if value, ok := _c.mutation.CredentialsCipher(); ok {
+		_spec.SetField(account.FieldCredentialsCipher, field.TypeString, value)
+		_node.CredentialsCipher = &value
+	}
 	if value, ok := _c.mutation.Extra(); ok {
 		_spec.SetField(account.FieldExtra, field.TypeJSON, value)
 		_node.Extra = value
@@ -1032,6 +1050,24 @@ func (u *AccountUpsert) SetCredentials(v map[string]interface{}) *AccountUpsert 
 // UpdateCredentials sets the "credentials" field to the value that was provided on create.
 func (u *AccountUpsert) UpdateCredentials() *AccountUpsert {
 	u.SetExcluded(account.FieldCredentials)
+	return u
+}
+
+// SetCredentialsCipher sets the "credentials_cipher" field.
+func (u *AccountUpsert) SetCredentialsCipher(v string) *AccountUpsert {
+	u.Set(account.FieldCredentialsCipher, v)
+	return u
+}
+
+// UpdateCredentialsCipher sets the "credentials_cipher" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateCredentialsCipher() *AccountUpsert {
+	u.SetExcluded(account.FieldCredentialsCipher)
+	return u
+}
+
+// ClearCredentialsCipher clears the value of the "credentials_cipher" field.
+func (u *AccountUpsert) ClearCredentialsCipher() *AccountUpsert {
+	u.SetNull(account.FieldCredentialsCipher)
 	return u
 }
 
@@ -1585,6 +1621,27 @@ func (u *AccountUpsertOne) SetCredentials(v map[string]interface{}) *AccountUpse
 func (u *AccountUpsertOne) UpdateCredentials() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateCredentials()
+	})
+}
+
+// SetCredentialsCipher sets the "credentials_cipher" field.
+func (u *AccountUpsertOne) SetCredentialsCipher(v string) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetCredentialsCipher(v)
+	})
+}
+
+// UpdateCredentialsCipher sets the "credentials_cipher" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateCredentialsCipher() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateCredentialsCipher()
+	})
+}
+
+// ClearCredentialsCipher clears the value of the "credentials_cipher" field.
+func (u *AccountUpsertOne) ClearCredentialsCipher() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearCredentialsCipher()
 	})
 }
 
@@ -2370,6 +2427,27 @@ func (u *AccountUpsertBulk) SetCredentials(v map[string]interface{}) *AccountUps
 func (u *AccountUpsertBulk) UpdateCredentials() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateCredentials()
+	})
+}
+
+// SetCredentialsCipher sets the "credentials_cipher" field.
+func (u *AccountUpsertBulk) SetCredentialsCipher(v string) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetCredentialsCipher(v)
+	})
+}
+
+// UpdateCredentialsCipher sets the "credentials_cipher" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateCredentialsCipher() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateCredentialsCipher()
+	})
+}
+
+// ClearCredentialsCipher clears the value of the "credentials_cipher" field.
+func (u *AccountUpsertBulk) ClearCredentialsCipher() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearCredentialsCipher()
 	})
 }
 

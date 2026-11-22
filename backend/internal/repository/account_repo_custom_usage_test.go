@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"entgo.io/ent/dialect"
@@ -30,12 +29,10 @@ func TestAccountCustomUsageLockedEditPreservesCurrentManagedFields(t *testing.T)
 				Credentials: map[string]any{"api_key": "gateway-key", service.CustomUsageCredentialsKey: map[string]any{"api_key": "old-private-key"}},
 				Extra:       map[string]any{"ordinary_setting": true, service.CustomUsageExtraKey: map[string]any{"enabled": false}},
 			}
-			payload, err := json.Marshal(account.Credentials)
-			require.NoError(t, err)
 			mock.ExpectQuery(`(?s)SELECT.*credentials -> 'custom_usage_secrets'.*FOR NO KEY UPDATE`).
-				WithArgs(int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, string(payload), nil).
-				WillReturnRows(sqlmock.NewRows([]string{"identity", "ollama_identity", "proxy", "enabled", "rate_sync", "snapshot", "session", "auto", "ollama_snapshot", "current_extra", "custom_usage_secrets"}).
-					AddRow(false, false, true, nil, nil, nil, nil, nil, nil, currentExtra, currentSecrets))
+				WithArgs(int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, mustCredentialsCASParam(t, account.Credentials), nil).
+				WillReturnRows(sqlmock.NewRows([]string{"identity", "ollama_identity", "proxy", "enabled", "rate_sync", "snapshot", "session", "auto", "ollama_snapshot", "current_extra", "custom_usage_secrets", "sealed", "credentials_cipher"}).
+					AddRow(false, false, true, nil, nil, nil, nil, nil, nil, currentExtra, currentSecrets, false, ""))
 			extra, err := lockAndMergeAccountProbeExtra(context.Background(), client, account, nil, nil)
 			require.NoError(t, err)
 			require.Equal(t, true, extra["ordinary_setting"])
@@ -62,8 +59,8 @@ func TestAccountCustomUsageBulkUpdateUsesAtomicComparison(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, count)
 	require.Len(t, executor.execQueries, 1)
-	require.Contains(t, executor.execQueries[0], "AND type = 'apikey' AND credentials = $3::jsonb")
+	require.Contains(t, executor.execQueries[0], "AND type = 'apikey' AND credentials = (CASE WHEN credentials ? '_sealed'")
 	require.Contains(t, executor.execQueries[0], "COALESCE(extra -> 'custom_usage_config', 'null'::jsonb) = $4::jsonb")
-	require.Equal(t, []byte(`{"api_key":"gateway-key"}`), executor.execArgs[0][2])
+	require.Equal(t, mustCredentialsCASParam(t, map[string]any{"api_key": "gateway-key"}), executor.execArgs[0][2])
 	require.Equal(t, []byte(`null`), executor.execArgs[0][3])
 }

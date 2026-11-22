@@ -105,15 +105,23 @@ func (r *credentialGuardRepository) Complete(ctx context.Context, row *service.C
 	return err
 }
 func (r *credentialGuardRepository) PersistCredentials(ctx context.Context, row *service.CredentialGuardRecord, a *service.Account, credentials map[string]any) (bool, error) {
-	expected, err := json.Marshal(a.Credentials)
+	expected, err := credentialsCASParam(a.Credentials)
 	if err != nil {
 		return false, err
 	}
-	next, err := json.Marshal(credentials)
+	next, err := credentialsCASParam(credentials)
 	if err != nil {
 		return false, err
 	}
-	result, err := r.db.ExecContext(ctx, `WITH changed AS (UPDATE accounts a SET credentials=$4::jsonb,updated_at=NOW() WHERE a.id=$1 AND a.deleted_at IS NULL AND a.platform='openai' AND a.type='oauth' AND a.status='active' AND a.schedulable=TRUE AND a.credentials=$2::jsonb AND a.proxy_id IS NOT DISTINCT FROM $3 AND EXISTS(SELECT 1 FROM credential_guard_accounts g WHERE g.account_id=a.id AND g.revision=$5 AND g.lease=$6 AND g.lease_until>NOW()) RETURNING a.id) INSERT INTO scheduler_outbox(event_type,account_id,group_id,payload) SELECT $7,id,NULL,NULL FROM changed`, a.ID, string(expected), a.ProxyID, string(next), row.Revision, row.Lease, service.SchedulerOutboxEventAccountChanged)
+	ciphertext, err := credentialsCipherForStorage(credentials)
+	if err != nil {
+		return false, err
+	}
+	var credentialsCipher any
+	if ciphertext != "" {
+		credentialsCipher = ciphertext
+	}
+	result, err := r.db.ExecContext(ctx, `WITH changed AS (UPDATE accounts a SET `+credentialsCASWriteSQL("a.credentials", "$4", "$8")+`,updated_at=NOW() WHERE a.id=$1 AND a.deleted_at IS NULL AND a.platform='openai' AND a.type='oauth' AND a.status='active' AND a.schedulable=TRUE AND a.credentials=`+credentialsCASMatchSQL("a.credentials", "$2")+` AND a.proxy_id IS NOT DISTINCT FROM $3 AND EXISTS(SELECT 1 FROM credential_guard_accounts g WHERE g.account_id=a.id AND g.revision=$5 AND g.lease=$6 AND g.lease_until>NOW()) RETURNING a.id) INSERT INTO scheduler_outbox(event_type,account_id,group_id,payload) SELECT $7,id,NULL,NULL FROM changed`, a.ID, expected, a.ProxyID, next, row.Revision, row.Lease, service.SchedulerOutboxEventAccountChanged, credentialsCipher)
 	if err != nil {
 		return false, err
 	}

@@ -17,9 +17,11 @@ import (
 	"time"
 
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
+	"github.com/Wei-Shaw/sub2api/internal/atrestmigrate"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/atrest"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -92,17 +94,35 @@ func main() {
 	logger.InitBootstrap()
 	defer logger.Sync()
 
+	// at-rest 密钥只来自部署环境变量 SUB2API_ATREST_KEY（hex/base64 32 字节）。
+	// 未配置时只读兼容：读明文、拒绝加密写入；配置了非法值则直接启动失败。
+	if _, err := atrest.ConfigureFromEnv(); err != nil {
+		log.Fatalf("Invalid %s: %v", atrest.KeyEnv, err)
+	}
+
 	// Parse command line flags
 	setupMode := flag.Bool("setup", false, "Run setup wizard in CLI mode")
 	showVersion := flag.Bool("version", false, "Show version information")
 	migrateOnly := flag.Bool("migrate-only", false, "Apply database migrations and exit")
 	checkMigrations := flag.Bool("check-migrations", false, "Validate database migrations without changing schema and exit")
+	atRestMigrate := flag.Bool("atrest-migrate", false, "Encrypt plaintext credentials/proxy passwords/settings at rest in batches and exit")
+	atRestVerify := flag.Bool("atrest-verify", false, "Read-only report of remaining plaintext at-rest rows and exit")
+	atRestTables := flag.String("atrest-tables", atrestmigrate.DefaultTables, "Comma-separated tables for -atrest-migrate/-atrest-verify (accounts,proxies,settings)")
+	atRestBatch := flag.Int("atrest-batch", atrestmigrate.DefaultBatchSize, "Rows per batch for -atrest-migrate")
+	atRestDryRun := flag.Bool("atrest-dry-run", true, "Only count rows for -atrest-migrate; set =false to write (dry-run by default)")
 	resetAdmin2FA := flag.Bool("reset-admin-2fa", false, "Recover a forgotten administrator TOTP configuration and exit")
 	issueAdmin2FACode := flag.Bool("issue-admin-2fa-code", false, "Issue a one-time administrator TOTP disable authorization code and exit")
 	resetAdminUserID := flag.Int64("user-id", 0, "Administrator user ID for -reset-admin-2fa or -issue-admin-2fa-code")
 	confirmAdmin2FAReset := flag.Bool("confirm", false, "Confirm administrator TOTP recovery or TOTP installation key export")
 	exportTOTPKey := flag.Bool("export-totp-key", false, "Print the transitional database TOTP installation key and the environment migration steps, then exit")
 	flag.Parse()
+	if *atRestMigrate || *atRestVerify {
+		if *atRestMigrate && *atRestVerify {
+			log.Fatal("-atrest-migrate and -atrest-verify are mutually exclusive")
+		}
+		runAtRestCommand(*atRestMigrate, *atRestVerify, *atRestTables, *atRestBatch, *atRestDryRun)
+		return
+	}
 	if handled, err := dispatchTOTPKeyExport(flag.CommandLine, *exportTOTPKey, *confirmAdmin2FAReset, runTOTPKeyExportCommand); handled {
 		if err != nil {
 			log.Fatal(err)

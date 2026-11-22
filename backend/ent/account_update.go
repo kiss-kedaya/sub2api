@@ -125,6 +125,26 @@ func (_u *AccountUpdate) SetCredentials(v map[string]interface{}) *AccountUpdate
 	return _u
 }
 
+// SetCredentialsCipher sets the "credentials_cipher" field.
+func (_u *AccountUpdate) SetCredentialsCipher(v string) *AccountUpdate {
+	_u.mutation.SetCredentialsCipher(v)
+	return _u
+}
+
+// SetNillableCredentialsCipher sets the "credentials_cipher" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableCredentialsCipher(v *string) *AccountUpdate {
+	if v != nil {
+		_u.SetCredentialsCipher(*v)
+	}
+	return _u
+}
+
+// ClearCredentialsCipher clears the value of the "credentials_cipher" field.
+func (_u *AccountUpdate) ClearCredentialsCipher() *AccountUpdate {
+	_u.mutation.ClearCredentialsCipher()
+	return _u
+}
+
 // SetExtra sets the "extra" field.
 func (_u *AccountUpdate) SetExtra(v map[string]interface{}) *AccountUpdate {
 	_u.mutation.SetExtra(v)
@@ -829,6 +849,12 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Credentials(); ok {
 		_spec.SetField(account.FieldCredentials, field.TypeJSON, value)
 	}
+	if value, ok := _u.mutation.CredentialsCipher(); ok {
+		_spec.SetField(account.FieldCredentialsCipher, field.TypeString, value)
+	}
+	if _u.mutation.CredentialsCipherCleared() {
+		_spec.ClearField(account.FieldCredentialsCipher, field.TypeString)
+	}
 	if value, ok := _u.mutation.Extra(); ok {
 		_spec.SetField(account.FieldExtra, field.TypeJSON, value)
 	}
@@ -1262,6 +1288,26 @@ func (_u *AccountUpdateOne) SetNillableType(v *string) *AccountUpdateOne {
 // SetCredentials sets the "credentials" field.
 func (_u *AccountUpdateOne) SetCredentials(v map[string]interface{}) *AccountUpdateOne {
 	_u.mutation.SetCredentials(v)
+	return _u
+}
+
+// SetCredentialsCipher sets the "credentials_cipher" field.
+func (_u *AccountUpdateOne) SetCredentialsCipher(v string) *AccountUpdateOne {
+	_u.mutation.SetCredentialsCipher(v)
+	return _u
+}
+
+// SetNillableCredentialsCipher sets the "credentials_cipher" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableCredentialsCipher(v *string) *AccountUpdateOne {
+	if v != nil {
+		_u.SetCredentialsCipher(*v)
+	}
+	return _u
+}
+
+// ClearCredentialsCipher clears the value of the "credentials_cipher" field.
+func (_u *AccountUpdateOne) ClearCredentialsCipher() *AccountUpdateOne {
+	_u.mutation.ClearCredentialsCipher()
 	return _u
 }
 
@@ -1998,6 +2044,12 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if value, ok := _u.mutation.Credentials(); ok {
 		_spec.SetField(account.FieldCredentials, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.CredentialsCipher(); ok {
+		_spec.SetField(account.FieldCredentialsCipher, field.TypeString, value)
+	}
+	if _u.mutation.CredentialsCipherCleared() {
+		_spec.ClearField(account.FieldCredentialsCipher, field.TypeString)
 	}
 	if value, ok := _u.mutation.Extra(); ok {
 		_spec.SetField(account.FieldExtra, field.TypeJSON, value)

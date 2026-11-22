@@ -3,12 +3,14 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/atrest"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -45,8 +47,18 @@ func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) er
 	if proxyIn.Username != "" {
 		builder.SetUsername(proxyIn.Username)
 	}
-	if proxyIn.Password != "" {
-		builder.SetPassword(proxyIn.Password)
+	// 新代理没有回滚历史：配置 at-rest 密钥时直接封存明文列。
+	passwordPlain, passwordCipher, err := proxyPasswordForStorage(proxyIn.Password, true)
+	if err != nil {
+		return err
+	}
+	if passwordPlain != "" {
+		builder.SetPassword(passwordPlain)
+	} else if proxyIn.Password != "" {
+		builder.SetPassword("")
+	}
+	if passwordCipher != "" {
+		builder.SetPasswordCipher(passwordCipher)
 	}
 	if proxyIn.ExpiresAt != nil {
 		builder.SetExpiresAt(*proxyIn.ExpiresAt)
@@ -70,7 +82,7 @@ func (r *proxyRepository) GetByID(ctx context.Context, id int64) (*service.Proxy
 		}
 		return nil, err
 	}
-	return proxyEntityToService(m), nil
+	return proxyEntityToService(m)
 }
 
 func (r *proxyRepository) ListByIDs(ctx context.Context, ids []int64) ([]service.Proxy, error) {
@@ -87,7 +99,11 @@ func (r *proxyRepository) ListByIDs(ctx context.Context, ids []int64) ([]service
 
 	out := make([]service.Proxy, 0, len(proxies))
 	for i := range proxies {
-		out = append(out, *proxyEntityToService(proxies[i]))
+		converted, convErr := proxyEntityToService(proxies[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		out = append(out, *converted)
 	}
 	return out, nil
 }
@@ -143,8 +159,40 @@ func proxyProbeIdentityFromService(proxyIn *service.Proxy) proxyProbeIdentity {
 	}
 }
 
+// proxyPasswordForStorage 计算代理密码在库内的两种表示：
+//   - plain：明文列值（历史行/双写期保留，旧二进制可读）；
+//   - cipher：password_cipher 值（enc:v2:，密钥未配置时为空）。
+//
+// 已有密文形态（托管代理的 enc:managed:v1:）原样保留在明文列：那是既有托管
+// 功能依赖的线格式，不能被再次加密，否则上层 decorator 无法解码。
+// sealNew=true 时新行直接封存（plain 置空）。
+func proxyPasswordForStorage(password string, sealNew bool) (plain, cipher string, err error) {
+	if password == "" {
+		return "", "", nil
+	}
+	if strings.HasPrefix(password, "enc:") {
+		return password, "", nil
+	}
+	if !atrest.Enabled() {
+		return password, "", nil
+	}
+	ciphertext, err := atrest.EncryptString(password)
+	if err != nil {
+		return "", "", fmt.Errorf("encrypt proxy password: %w", err)
+	}
+	if sealNew {
+		return "", ciphertext, nil
+	}
+	return password, ciphertext, nil
+}
+
+// proxyPasswordCipherEncrypted 报告库内该代理是否已有 at-rest 密文（封存状态）。
+func proxyPasswordCipherEncrypted(ciphertext string) bool {
+	return strings.TrimSpace(ciphertext) != ""
+}
+
 func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.Client, proxyIn *service.Proxy) (*dbent.Proxy, error) {
-	currentIdentity, err := lockProxyProbeIdentity(ctx, client, proxyIn.ID)
+	currentIdentity, sealed, err := lockProxyProbeIdentity(ctx, client, proxyIn.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -162,9 +210,32 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 		builder.ClearUsername()
 	}
 	if proxyIn.Password != "" {
-		builder.SetPassword(proxyIn.Password)
+		if strings.HasPrefix(proxyIn.Password, "enc:") {
+			// 托管代理的既有密文线格式原样落明文列，由上层 decorator 解码。
+			builder.SetPassword(proxyIn.Password)
+			if atrest.Enabled() {
+				builder.ClearPasswordCipher()
+			}
+		} else if atrest.Enabled() {
+			ciphertext, encErr := atrest.EncryptString(proxyIn.Password)
+			if encErr != nil {
+				return nil, encErr
+			}
+			builder.SetPasswordCipher(ciphertext)
+			// 已封存行保持封存；未封存行双写明文，旧二进制仍可回滚读取。
+			if sealed {
+				builder.SetPassword("")
+			} else {
+				builder.SetPassword(proxyIn.Password)
+			}
+		} else {
+			builder.SetPassword(proxyIn.Password)
+		}
 	} else {
 		builder.ClearPassword()
+		if atrest.Enabled() {
+			builder.ClearPasswordCipher()
+		}
 	}
 	if proxyIn.ExpiresAt != nil {
 		builder.SetExpiresAt(*proxyIn.ExpiresAt)
@@ -197,28 +268,38 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 	return updated, nil
 }
 
-func lockProxyProbeIdentity(ctx context.Context, client *dbent.Client, proxyID int64) (proxyProbeIdentity, error) {
+func lockProxyProbeIdentity(ctx context.Context, client *dbent.Client, proxyID int64) (proxyProbeIdentity, bool, error) {
 	rows, err := client.QueryContext(ctx, `
-		SELECT protocol, host, port, COALESCE(username, ''), COALESCE(password, ''), status
+		SELECT protocol, host, port, COALESCE(username, ''), COALESCE(password, ''), COALESCE(password_cipher, ''), status
 		FROM proxies
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
 	`, proxyID)
 	if err != nil {
-		return proxyProbeIdentity{}, err
+		return proxyProbeIdentity{}, false, err
 	}
 	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
-			return proxyProbeIdentity{}, err
+			return proxyProbeIdentity{}, false, err
 		}
-		return proxyProbeIdentity{}, service.ErrProxyNotFound
+		return proxyProbeIdentity{}, false, service.ErrProxyNotFound
 	}
-	var identity proxyProbeIdentity
-	if err := rows.Scan(&identity.protocol, &identity.host, &identity.port, &identity.username, &identity.password, &identity.status); err != nil {
-		return proxyProbeIdentity{}, err
+	var (
+		identity   proxyProbeIdentity
+		ciphertext string
+	)
+	if err := rows.Scan(&identity.protocol, &identity.host, &identity.port, &identity.username, &identity.password, &ciphertext, &identity.status); err != nil {
+		return proxyProbeIdentity{}, false, err
 	}
-	return identity, rows.Err()
+	if proxyPasswordCipherEncrypted(ciphertext) {
+		plain, decErr := atrest.DecryptString(ciphertext)
+		if decErr != nil {
+			return proxyProbeIdentity{}, true, fmt.Errorf("proxy %d password cannot be decrypted: %w", proxyID, decErr)
+		}
+		identity.password = plain
+	}
+	return identity, proxyPasswordCipherEncrypted(ciphertext), rows.Err()
 }
 
 func invalidateProxyProbeSnapshots(ctx context.Context, exec sqlExecutor, proxyID int64) ([]int64, error) {
@@ -314,7 +395,11 @@ func (r *proxyRepository) ListWithFilters(ctx context.Context, params pagination
 
 	outProxies := make([]service.Proxy, 0, len(proxies))
 	for i := range proxies {
-		outProxies = append(outProxies, *proxyEntityToService(proxies[i]))
+		converted, convErr := proxyEntityToService(proxies[i])
+		if convErr != nil {
+			return nil, nil, convErr
+		}
+		outProxies = append(outProxies, *converted)
 	}
 
 	return outProxies, paginationResultFromTotal(int64(total), params), nil
@@ -392,7 +477,10 @@ func (r *proxyRepository) buildProxyWithAccountCountResult(ctx context.Context, 
 
 	result := make([]service.ProxyWithAccountCount, 0, len(proxies))
 	for i := range proxies {
-		proxyOut := proxyEntityToService(proxies[i])
+		proxyOut, convErr := proxyEntityToService(proxies[i])
+		if convErr != nil {
+			return nil, nil, convErr
+		}
 		if proxyOut == nil {
 			continue
 		}
@@ -444,13 +532,36 @@ func (r *proxyRepository) ListActive(ctx context.Context) ([]service.Proxy, erro
 	}
 	outProxies := make([]service.Proxy, 0, len(proxies))
 	for i := range proxies {
-		outProxies = append(outProxies, *proxyEntityToService(proxies[i]))
+		converted, convErr := proxyEntityToService(proxies[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		outProxies = append(outProxies, *converted)
 	}
 	return outProxies, nil
 }
 
 // ExistsByHostPortAuth checks if a proxy with the same host, port, username, and password exists
 func (r *proxyRepository) ExistsByHostPortAuth(ctx context.Context, host string, port int, username, password string) (bool, error) {
+	// at-rest 封存行的明文密码列是空的，等值查询会漏判重复；改为解密后比较。
+	if atrest.Enabled() {
+		candidates, err := r.client.Proxy.Query().
+			Where(proxy.HostEQ(host), proxy.PortEQ(port)).
+			All(ctx)
+		if err != nil {
+			return false, err
+		}
+		for _, m := range candidates {
+			candidate, convErr := proxyEntityToService(m)
+			if convErr != nil {
+				return false, convErr
+			}
+			if candidate.Username == username && candidate.Password == password {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
 	q := r.client.Proxy.Query().
 		Where(proxy.HostEQ(host), proxy.PortEQ(port))
 
@@ -566,7 +677,10 @@ func (r *proxyRepository) ListActiveWithAccountCount(ctx context.Context) ([]ser
 	// Build result with account counts
 	result := make([]service.ProxyWithAccountCount, 0, len(proxies))
 	for i := range proxies {
-		proxyOut := proxyEntityToService(proxies[i])
+		proxyOut, convErr := proxyEntityToService(proxies[i])
+		if convErr != nil {
+			return nil, convErr
+		}
 		if proxyOut == nil {
 			continue
 		}
@@ -579,9 +693,9 @@ func (r *proxyRepository) ListActiveWithAccountCount(ctx context.Context) ([]ser
 	return result, nil
 }
 
-func proxyEntityToService(m *dbent.Proxy) *service.Proxy {
+func proxyEntityToService(m *dbent.Proxy) (*service.Proxy, error) {
 	if m == nil {
-		return nil
+		return nil, nil
 	}
 	out := &service.Proxy{
 		ID:             m.ID,
@@ -600,10 +714,34 @@ func proxyEntityToService(m *dbent.Proxy) *service.Proxy {
 	if m.Username != nil {
 		out.Username = *m.Username
 	}
-	if m.Password != nil {
-		out.Password = *m.Password
+	password, err := proxyPasswordFromEntity(m)
+	if err != nil {
+		return nil, err
 	}
-	return out
+	out.Password = password
+	return out, nil
+}
+
+// proxyPasswordFromEntity 返回代理密码：password_cipher 优先（解密失败 fail-closed），
+// 否则回退历史明文/托管代理密文（enc:managed:v1: 由上层 decorator 解码）。
+func proxyPasswordFromEntity(m *dbent.Proxy) (string, error) {
+	if m == nil {
+		return "", nil
+	}
+	ciphertext := derefString(m.PasswordCipher)
+	if strings.TrimSpace(ciphertext) != "" {
+		plain, err := atrest.DecryptString(ciphertext)
+		if err != nil {
+			logger.LegacyPrintf("repository.proxy",
+				"[AtRest] password_cipher decrypt failed: proxy=%d err=%v", m.ID, err)
+			return "", fmt.Errorf("proxy %d password cannot be decrypted: %w", m.ID, err)
+		}
+		return plain, nil
+	}
+	if m.Password != nil {
+		return *m.Password, nil
+	}
+	return "", nil
 }
 
 func applyProxyEntityToService(dst *service.Proxy, src *dbent.Proxy) {
@@ -623,7 +761,11 @@ func (r *proxyRepository) ListAllForFallback(ctx context.Context) ([]service.Pro
 	}
 	out := make([]service.Proxy, 0, len(proxies))
 	for i := range proxies {
-		out = append(out, *proxyEntityToService(proxies[i]))
+		converted, convErr := proxyEntityToService(proxies[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		out = append(out, *converted)
 	}
 	return out, nil
 }

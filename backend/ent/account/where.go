@@ -90,6 +90,11 @@ func Type(v string) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldType, v))
 }
 
+// CredentialsCipher applies equality check predicate on the "credentials_cipher" field. It's identical to CredentialsCipherEQ.
+func CredentialsCipher(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldCredentialsCipher, v))
+}
+
 // ProxyID applies equality check predicate on the "proxy_id" field. It's identical to ProxyIDEQ.
 func ProxyID(v int64) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldProxyID, v))
@@ -593,6 +598,81 @@ func TypeEqualFold(v string) predicate.Account {
 // TypeContainsFold applies the ContainsFold predicate on the "type" field.
 func TypeContainsFold(v string) predicate.Account {
 	return predicate.Account(sql.FieldContainsFold(FieldType, v))
+}
+
+// CredentialsCipherEQ applies the EQ predicate on the "credentials_cipher" field.
+func CredentialsCipherEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldCredentialsCipher, v))
+}
+
+// CredentialsCipherNEQ applies the NEQ predicate on the "credentials_cipher" field.
+func CredentialsCipherNEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldCredentialsCipher, v))
+}
+
+// CredentialsCipherIn applies the In predicate on the "credentials_cipher" field.
+func CredentialsCipherIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldCredentialsCipher, vs...))
+}
+
+// CredentialsCipherNotIn applies the NotIn predicate on the "credentials_cipher" field.
+func CredentialsCipherNotIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldCredentialsCipher, vs...))
+}
+
+// CredentialsCipherGT applies the GT predicate on the "credentials_cipher" field.
+func CredentialsCipherGT(v string) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldCredentialsCipher, v))
+}
+
+// CredentialsCipherGTE applies the GTE predicate on the "credentials_cipher" field.
+func CredentialsCipherGTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldCredentialsCipher, v))
+}
+
+// CredentialsCipherLT applies the LT predicate on the "credentials_cipher" field.
+func CredentialsCipherLT(v string) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldCredentialsCipher, v))
+}
+
+// CredentialsCipherLTE applies the LTE predicate on the "credentials_cipher" field.
+func CredentialsCipherLTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldCredentialsCipher, v))
+}
+
+// CredentialsCipherContains applies the Contains predicate on the "credentials_cipher" field.
+func CredentialsCipherContains(v string) predicate.Account {
+	return predicate.Account(sql.FieldContains(FieldCredentialsCipher, v))
+}
+
+// CredentialsCipherHasPrefix applies the HasPrefix predicate on the "credentials_cipher" field.
+func CredentialsCipherHasPrefix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasPrefix(FieldCredentialsCipher, v))
+}
+
+// CredentialsCipherHasSuffix applies the HasSuffix predicate on the "credentials_cipher" field.
+func CredentialsCipherHasSuffix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasSuffix(FieldCredentialsCipher, v))
+}
+
+// CredentialsCipherIsNil applies the IsNil predicate on the "credentials_cipher" field.
+func CredentialsCipherIsNil() predicate.Account {
+	return predicate.Account(sql.FieldIsNull(FieldCredentialsCipher))
+}
+
+// CredentialsCipherNotNil applies the NotNil predicate on the "credentials_cipher" field.
+func CredentialsCipherNotNil() predicate.Account {
+	return predicate.Account(sql.FieldNotNull(FieldCredentialsCipher))
+}
+
+// CredentialsCipherEqualFold applies the EqualFold predicate on the "credentials_cipher" field.
+func CredentialsCipherEqualFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldEqualFold(FieldCredentialsCipher, v))
+}
+
+// CredentialsCipherContainsFold applies the ContainsFold predicate on the "credentials_cipher" field.
+func CredentialsCipherContainsFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldContainsFold(FieldCredentialsCipher, v))
 }
 
 // ProxyIDEQ applies the EQ predicate on the "proxy_id" field.

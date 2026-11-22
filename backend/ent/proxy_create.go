@@ -117,6 +117,20 @@ func (_c *ProxyCreate) SetNillablePassword(v *string) *ProxyCreate {
 	return _c
 }
 
+// SetPasswordCipher sets the "password_cipher" field.
+func (_c *ProxyCreate) SetPasswordCipher(v string) *ProxyCreate {
+	_c.mutation.SetPasswordCipher(v)
+	return _c
+}
+
+// SetNillablePasswordCipher sets the "password_cipher" field if the given value is not nil.
+func (_c *ProxyCreate) SetNillablePasswordCipher(v *string) *ProxyCreate {
+	if v != nil {
+		_c.SetPasswordCipher(*v)
+	}
+	return _c
+}
+
 // SetStatus sets the "status" field.
 func (_c *ProxyCreate) SetStatus(v string) *ProxyCreate {
 	_c.mutation.SetStatus(v)
@@ -415,6 +429,10 @@ func (_c *ProxyCreate) createSpec() (*Proxy, *sqlgraph.CreateSpec) {
 		_spec.SetField(proxy.FieldPassword, field.TypeString, value)
 		_node.Password = &value
 	}
+	if value, ok := _c.mutation.PasswordCipher(); ok {
+		_spec.SetField(proxy.FieldPasswordCipher, field.TypeString, value)
+		_node.PasswordCipher = &value
+	}
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(proxy.FieldStatus, field.TypeString, value)
 		_node.Status = value
@@ -649,6 +667,24 @@ func (u *ProxyUpsert) UpdatePassword() *ProxyUpsert {
 // ClearPassword clears the value of the "password" field.
 func (u *ProxyUpsert) ClearPassword() *ProxyUpsert {
 	u.SetNull(proxy.FieldPassword)
+	return u
+}
+
+// SetPasswordCipher sets the "password_cipher" field.
+func (u *ProxyUpsert) SetPasswordCipher(v string) *ProxyUpsert {
+	u.Set(proxy.FieldPasswordCipher, v)
+	return u
+}
+
+// UpdatePasswordCipher sets the "password_cipher" field to the value that was provided on create.
+func (u *ProxyUpsert) UpdatePasswordCipher() *ProxyUpsert {
+	u.SetExcluded(proxy.FieldPasswordCipher)
+	return u
+}
+
+// ClearPasswordCipher clears the value of the "password_cipher" field.
+func (u *ProxyUpsert) ClearPasswordCipher() *ProxyUpsert {
+	u.SetNull(proxy.FieldPasswordCipher)
 	return u
 }
 
@@ -912,6 +948,27 @@ func (u *ProxyUpsertOne) UpdatePassword() *ProxyUpsertOne {
 func (u *ProxyUpsertOne) ClearPassword() *ProxyUpsertOne {
 	return u.Update(func(s *ProxyUpsert) {
 		s.ClearPassword()
+	})
+}
+
+// SetPasswordCipher sets the "password_cipher" field.
+func (u *ProxyUpsertOne) SetPasswordCipher(v string) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetPasswordCipher(v)
+	})
+}
+
+// UpdatePasswordCipher sets the "password_cipher" field to the value that was provided on create.
+func (u *ProxyUpsertOne) UpdatePasswordCipher() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdatePasswordCipher()
+	})
+}
+
+// ClearPasswordCipher clears the value of the "password_cipher" field.
+func (u *ProxyUpsertOne) ClearPasswordCipher() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearPasswordCipher()
 	})
 }
 
@@ -1354,6 +1411,27 @@ func (u *ProxyUpsertBulk) UpdatePassword() *ProxyUpsertBulk {
 func (u *ProxyUpsertBulk) ClearPassword() *ProxyUpsertBulk {
 	return u.Update(func(s *ProxyUpsert) {
 		s.ClearPassword()
+	})
+}
+
+// SetPasswordCipher sets the "password_cipher" field.
+func (u *ProxyUpsertBulk) SetPasswordCipher(v string) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetPasswordCipher(v)
+	})
+}
+
+// UpdatePasswordCipher sets the "password_cipher" field to the value that was provided on create.
+func (u *ProxyUpsertBulk) UpdatePasswordCipher() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdatePasswordCipher()
+	})
+}
+
+// ClearPasswordCipher clears the value of the "password_cipher" field.
+func (u *ProxyUpsertBulk) ClearPasswordCipher() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearPasswordCipher()
 	})
 }
 

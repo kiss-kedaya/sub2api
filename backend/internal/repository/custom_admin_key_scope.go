@@ -177,17 +177,31 @@ func (r *accountRepository) ScopedAdminCodexCandidates(ctx context.Context, iden
 			Where(dbaccount.Or(scope...), match).Order(dbaccount.ByID(entsql.OrderDesc())).Limit(1).
 			Select(dbaccount.FieldID).Aggregate(func(s *entsql.Selector) string {
 			c := s.C(dbaccount.FieldCredentials)
-			return "jsonb_build_object('chatgpt_account_id', " + c + "->'chatgpt_account_id', 'chatgpt_user_id', " + c + "->'chatgpt_user_id', 'email', " + c + "->'email', 'access_token', " + c + "->'access_token') AS credentials"
+			cipherColumn := s.C(dbaccount.FieldCredentialsCipher)
+			return "jsonb_build_object('chatgpt_account_id', " + c + "->'chatgpt_account_id', 'chatgpt_user_id', " + c + "->'chatgpt_user_id', 'email', " + c + "->'email', 'access_token', " + c + "->'access_token', 'credentials_cipher', COALESCE(" + cipherColumn + ", '')) AS credentials"
 		}).Scan(ctx, &rows)
 		if err != nil {
 			return nil, err
 		}
 		if len(rows) != 0 {
-			var credentials map[string]any
-			if err := json.Unmarshal(rows[0].Credentials, &credentials); err != nil {
+			var projected map[string]any
+			if err := json.Unmarshal(rows[0].Credentials, &projected); err != nil {
 				return nil, err
 			}
-			return []service.Account{{ID: rows[0].ID, Credentials: credentials}}, nil
+			ciphertext, _ := projected["credentials_cipher"].(string)
+			delete(projected, "credentials_cipher")
+			if strings.TrimSpace(ciphertext) != "" {
+				// at-rest 封存行：access_token 已从明文列删除，用密文副本还原
+				// 同样的身份字段，保持导入匹配语义不变。
+				decrypted, decErr := decryptCredentialsCipher(ciphertext)
+				if decErr != nil {
+					return nil, decErr
+				}
+				for key := range projected {
+					projected[key] = decrypted[key]
+				}
+			}
+			return []service.Account{{ID: rows[0].ID, Credentials: projected}}, nil
 		}
 	}
 	return []service.Account{}, nil
@@ -234,7 +248,10 @@ func scopedCodexIdentityPredicates(identity service.ScopedCodexIdentity) []dbpre
 		}
 	}
 	if !identity.AgentIdentity && token != "" {
-		predicates = append(predicates, match(access+" = ?", token))
+		// 历史明支行按明文 access_token 匹配；at-rest 封存行按不可逆身份摘要匹配。
+		predicates = append(predicates, match(
+			"("+access+" = ? OR COALESCE(\"accounts\".\"credentials\"->>'_id_access_token', '') = ?)",
+			token, SealedIdentityDigest("access_token", token)))
 	}
 	if accountID != "" && (identity.AgentIdentity || !identity.AccessTokenOnly) {
 		if userID == "" {

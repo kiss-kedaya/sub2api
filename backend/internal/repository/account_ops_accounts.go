@@ -21,6 +21,7 @@ func (r *accountRepository) ListAccountOpsSnapshots(ctx context.Context, ids []i
 	}
 	rows, err := query.Select(dbaccount.FieldID, dbaccount.FieldName,
 		dbaccount.FieldPlatform, dbaccount.FieldType, dbaccount.FieldCredentials,
+		dbaccount.FieldCredentialsCipher,
 		dbaccount.FieldExtra, dbaccount.FieldSessionWindowEnd,
 		dbaccount.FieldStatus, dbaccount.FieldSchedulable).All(ctx)
 	if err != nil {
@@ -28,7 +29,14 @@ func (r *accountRepository) ListAccountOpsSnapshots(ctx context.Context, ids []i
 	}
 	accounts := make([]service.Account, 0, len(rows))
 	for _, row := range rows {
-		accounts = append(accounts, *accountEntityToService(row))
+		account, convErr := accountEntityToService(row)
+		if convErr != nil {
+			return nil, convErr
+		}
+		if account == nil {
+			continue
+		}
+		accounts = append(accounts, *account)
 	}
 	return accounts, nil
 }
