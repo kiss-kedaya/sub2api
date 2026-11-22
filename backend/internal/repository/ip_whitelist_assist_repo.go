@@ -14,10 +14,21 @@ import (
 const (
 	// ipWhitelistAssistWindow is how far back "recent" client IPs are read.
 	ipWhitelistAssistWindow = 30 * 24 * time.Hour
-	// ipWhitelistAssistScanLimit caps the rows aggregated per request. The
-	// (user_id, started_at DESC) / (actor_user_id, created_at DESC) indexes make
-	// the inner ORDER BY + LIMIT an index scan instead of a full-table scan.
+	// ipWhitelistAssistScanLimit caps the rows aggregated per request for the
+	// audit_logs fallback. The (actor_user_id, created_at DESC) index makes the
+	// inner ORDER BY + LIMIT an index scan instead of a full-table scan.
 	ipWhitelistAssistScanLimit = 20000
+)
+
+// Per-source budgets. Each source gets its own deadline that is independent of
+// the caller's deadline: one slow query must never burn the other source's
+// budget. Before this split a 4.5s request_connection_traces scan consumed the
+// whole shared budget, the follow-up audit_logs query started with an already
+// cancelled context, and the "常用 IP" card rendered empty even though the user
+// had thousands of recorded addresses.
+var (
+	ipWhitelistAssistTraceBudget = 900 * time.Millisecond
+	ipWhitelistAssistAuditBudget = 900 * time.Millisecond
 )
 
 type ipWhitelistAssistRepository struct {
@@ -61,20 +72,20 @@ func (r *ipWhitelistAssistRepository) ListRecentClientIPs(ctx context.Context, u
 }
 
 func (r *ipWhitelistAssistRepository) listFromTraces(ctx context.Context, userID int64, since time.Time, limit int) ([]service.RecentClientIP, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	// WithoutCancel keeps the per-source deadline authoritative: the caller's
+	// budget may already be exhausted by an earlier source, and the fallback
+	// must still run. Both queries are bounded reads on an indexed path.
+	traceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ipWhitelistAssistTraceBudget)
+	defer cancel()
+	rows, err := r.db.QueryContext(traceCtx, `
 		SELECT client_ip, COUNT(*) AS request_count
-		FROM (
-			SELECT client_ip
-			FROM request_connection_traces
-			WHERE user_id = $1
-			  AND started_at >= $2
-			  AND COALESCE(client_ip, '') <> ''
-			ORDER BY started_at DESC
-			LIMIT $3
-		) recent
+		FROM request_connection_traces
+		WHERE user_id = $1
+		  AND started_at >= $2
+		  AND COALESCE(client_ip, '') <> ''
 		GROUP BY client_ip
 		ORDER BY request_count DESC, client_ip ASC
-		LIMIT $4`, userID, since, ipWhitelistAssistScanLimit, limit)
+		LIMIT $3`, userID, since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +94,9 @@ func (r *ipWhitelistAssistRepository) listFromTraces(ctx context.Context, userID
 }
 
 func (r *ipWhitelistAssistRepository) listFromAuditLogs(ctx context.Context, userID int64, since time.Time, limit int) ([]service.RecentClientIP, error) {
-	rows, err := r.db.QueryContext(ctx, `
+	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ipWhitelistAssistAuditBudget)
+	defer cancel()
+	rows, err := r.db.QueryContext(auditCtx, `
 		SELECT client_ip, COUNT(*) AS request_count
 		FROM (
 			SELECT client_ip
