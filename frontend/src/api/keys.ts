@@ -4,7 +4,15 @@
  */
 
 import { apiClient } from './client'
-import type { ApiKey, ApiKeySecret, ApiKeyUpdateResult, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
+import type {
+  ApiKey,
+  ApiKeySecret,
+  ApiKeySecretSeal,
+  ApiKeyUpdateResult,
+  CreateApiKeyRequest,
+  UpdateApiKeyRequest,
+  PaginatedResponse,
+} from '@/types'
 
 /** Only the initial create response includes the plaintext key. */
 type ApiKeyCreateResult = ApiKey & Partial<Pick<ApiKeySecret, 'key'>>
@@ -231,6 +239,35 @@ export async function rotateKey(id: number): Promise<ApiKeySecret> {
   return update(id, { regenerate_key: true }) as Promise<ApiKeySecret>
 }
 
+/**
+ * Save / replace the local ciphertext that lets the user view this key later.
+ *
+ * The browser encrypts the plaintext with the login password before calling
+ * this; the server never sees the password or the plaintext.
+ * `PUT /api/v1/user/api-keys/:id/secret-seal`
+ */
+export async function putSecretSeal(id: number, seal: ApiKeySecretSeal): Promise<void> {
+  await apiClient.put(`/user/api-keys/${id}/secret-seal`, seal)
+}
+
+/**
+ * Fetch the opaque ciphertext for local decryption.
+ * `GET /api/v1/user/api-keys/:id/secret-seal`
+ * Rejects with `reason: 'API_KEY_SECRET_NOT_FOUND'` (HTTP 404) when nothing was saved.
+ */
+export async function getSecretSeal(id: number): Promise<ApiKeySecretSeal> {
+  const { data } = await apiClient.get<ApiKeySecretSeal>(`/user/api-keys/${id}/secret-seal`)
+  return data
+}
+
+/**
+ * Drop the saved ciphertext so the key can no longer be viewed later.
+ * `DELETE /api/v1/user/api-keys/:id/secret-seal`
+ */
+export async function deleteSecretSeal(id: number): Promise<void> {
+  await apiClient.delete(`/user/api-keys/${id}/secret-seal`)
+}
+
 export const keysAPI = {
 	getConcurrencyQueue,
   list,
@@ -242,7 +279,10 @@ export const keysAPI = {
   toggleStatus,
   blockDatacenterIPs,
   getIPWhitelistAssist,
-  rotateKey
+  rotateKey,
+  putSecretSeal,
+  getSecretSeal,
+  deleteSecretSeal,
 }
 
 export default keysAPI

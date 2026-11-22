@@ -13,6 +13,25 @@ vi.mock('@/composables/useClipboard', () => ({
   }),
 }))
 
+const { putSecretSeal, sealApiKey } = vi.hoisted(() => ({
+  putSecretSeal: vi.fn().mockResolvedValue(undefined),
+  sealApiKey: vi.fn(),
+}))
+
+vi.mock('@/api', () => ({
+  keysAPI: {
+    putSecretSeal,
+  },
+}))
+
+vi.mock('@/utils/apikeySeal', async () => {
+  const actual = await vi.importActual<typeof import('@/utils/apikeySeal')>('@/utils/apikeySeal')
+  return {
+    ...actual,
+    sealApiKey,
+  }
+})
+
 const messages: Record<string, string> = {
   'keys.secretDialog.title': 'Plaintext key (shown once)',
   'keys.secretDialog.description': 'The server will not return the plaintext again.',
@@ -24,6 +43,15 @@ const messages: Record<string, string> = {
   'keys.secretDialog.use': 'Use key',
   'keys.secretDialog.importCcs': 'Import to CCS',
   'keys.secretDialog.done': 'Done',
+  'keys.seal.optIn': 'Allow viewing this key later with my login password',
+  'keys.seal.optInHint': 'The key is encrypted locally; the server stores only ciphertext.',
+  'keys.seal.passwordLabel': 'Login password',
+  'keys.seal.passwordHint': 'Used only for local encryption.',
+  'keys.seal.passwordRequired': 'Enter your login password, or uncheck the option.',
+  'keys.seal.failed': 'Wrong password or save failed; you can retry later.',
+  'keys.seal.unsupported': 'This browser does not support WebCrypto.',
+  'keys.seal.later': 'Later',
+  'keys.seal.unavailable': 'This account has no usable login password, so this option is unavailable.',
 }
 
 vi.mock('vue-i18n', async () => {
@@ -74,10 +102,10 @@ const createApiKey = (): ApiKey => ({
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-const mountDialog = async (): Promise<VueWrapper> => {
+const mountDialog = async (props: Record<string, unknown> = {}): Promise<VueWrapper> => {
   const wrapper = mount(ApiKeySecretDialog, {
     attachTo: document.body,
-    props: { show: true, secret: SECRET, apiKey: createApiKey() },
+    props: { show: true, secret: SECRET, apiKey: createApiKey(), ...props },
     global: {
       stubs: { teleport: true, Icon: true },
     },
@@ -97,6 +125,9 @@ describe('ApiKeySecretDialog minimum display window', () => {
   beforeEach(() => {
     copyToClipboard.mockClear()
     copyToClipboard.mockResolvedValue(true)
+    putSecretSeal.mockClear()
+    putSecretSeal.mockResolvedValue(undefined)
+    sealApiKey.mockReset()
     localStorage.clear()
     sessionStorage.clear()
   })
@@ -214,5 +245,97 @@ describe('ApiKeySecretDialog minimum display window', () => {
       .join('\n')
 
     expect(stored).not.toContain(SECRET)
+  })
+})
+
+describe('ApiKeySecretDialog password-encrypted opt-in', () => {
+  const SEAL_PAYLOAD = {
+    version: 1 as const,
+    kdf: { algo: 'PBKDF2-SHA256' as const, iterations: 310000, salt: 'c2FsdA==' },
+    sealed: 'c2VhbGVk',
+  }
+
+  beforeEach(() => {
+    copyToClipboard.mockClear()
+    copyToClipboard.mockResolvedValue(true)
+    putSecretSeal.mockClear()
+    putSecretSeal.mockResolvedValue(undefined)
+    sealApiKey.mockReset()
+    sealApiKey.mockResolvedValue(SEAL_PAYLOAD)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('offers a checked opt-in by default for accounts with a login password', async () => {
+    const wrapper = await mountDialog({ canSeal: true })
+    expect(wrapper.get('[data-test="api-key-seal-optin"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="api-key-seal-checkbox"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.get('[data-test="api-key-seal-password"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('hides the opt-in and explains why when the account has no login password', async () => {
+    const wrapper = await mountDialog({ canSeal: false })
+    expect(wrapper.find('[data-test="api-key-seal-optin"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="api-key-seal-unavailable"]').text()).toBe(
+      'This account has no usable login password, so this option is unavailable.',
+    )
+    wrapper.unmount()
+  })
+
+  it('requires a password before closing a checked opt-in', async () => {
+    const wrapper = await mountDialog({ canSeal: true })
+    await sleep(1100)
+    await nextTick()
+
+    await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="api-key-seal-error"]').text()).toBe(
+      'Enter your login password, or uncheck the option.',
+    )
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(sealApiKey).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('seals locally, saves the ciphertext and reports the sealed row', async () => {
+    const wrapper = await mountDialog({ canSeal: true })
+    await sleep(1100)
+    await nextTick()
+
+    await wrapper.get('[data-test="api-key-seal-password"]').setValue('correct horse')
+    await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+    await flushPromises()
+
+    // The password only reaches the local KDF; the server receives the ciphertext envelope.
+    expect(sealApiKey).toHaveBeenCalledWith(SECRET, 'correct horse')
+    expect(putSecretSeal).toHaveBeenCalledWith(1, SEAL_PAYLOAD)
+    expect(wrapper.emitted('sealed')).toHaveLength(1)
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('shows a retryable error when saving the ciphertext fails and lets the user postpone', async () => {
+    putSecretSeal.mockRejectedValueOnce({ status: 500, message: 'boom' })
+    const wrapper = await mountDialog({ canSeal: true })
+    await sleep(1100)
+    await nextTick()
+
+    await wrapper.get('[data-test="api-key-seal-password"]').setValue('whatever')
+    await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+    await flushPromises()
+
+    const error = wrapper.get('[data-test="api-key-seal-error"]')
+    expect(error.attributes('role')).toBe('alert')
+    expect(error.text()).toBe('Wrong password or save failed; you can retry later.')
+    expect(wrapper.emitted('close')).toBeUndefined()
+
+    await wrapper.get('[data-test="api-key-seal-later"]').trigger('click')
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    expect(wrapper.emitted('sealed')).toBeUndefined()
+    wrapper.unmount()
   })
 })
