@@ -955,8 +955,14 @@ func TestLoadDefaultJWTAccessTokenExpireMinutes(t *testing.T) {
 	if cfg.JWT.ExpireHour != 24 {
 		t.Fatalf("JWT.ExpireHour = %d, want 24", cfg.JWT.ExpireHour)
 	}
-	if cfg.JWT.AccessTokenExpireMinutes != 0 {
-		t.Fatalf("JWT.AccessTokenExpireMinutes = %d, want 0", cfg.JWT.AccessTokenExpireMinutes)
+	if cfg.JWT.AccessTokenExpireMinutes != 60 {
+		t.Fatalf("JWT.AccessTokenExpireMinutes = %d, want 60", cfg.JWT.AccessTokenExpireMinutes)
+	}
+	if cfg.Security.SessionBindingMode != SessionBindingModeLoose {
+		t.Fatalf("Security.SessionBindingMode = %q, want %q", cfg.Security.SessionBindingMode, SessionBindingModeLoose)
+	}
+	if !cfg.Security.OAuthCodeExchangeEnabled {
+		t.Fatal("Security.OAuthCodeExchangeEnabled = false, want true")
 	}
 }
 

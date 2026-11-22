@@ -10,6 +10,7 @@ const mockGetCurrentUser = vi.fn()
 const mockGetBffAuthSession = vi.fn()
 const mockRegister = vi.fn()
 const mockRefreshToken = vi.fn()
+const mockRevokeAllSessions = vi.fn()
 
 vi.mock('@/api', () => ({
   authAPI: {
@@ -20,6 +21,7 @@ vi.mock('@/api', () => ({
     getBffAuthSession: (...args: any[]) => mockGetBffAuthSession(...args),
     register: (...args: any[]) => mockRegister(...args),
     refreshToken: (...args: any[]) => mockRefreshToken(...args),
+    revokeAllSessions: (...args: any[]) => mockRevokeAllSessions(...args),
   },
   isTotp2FARequired: (response: any) => response?.requires_2fa === true,
 }))
@@ -69,6 +71,7 @@ describe('useAuthStore', () => {
     localStorage.clear()
     vi.useFakeTimers()
     vi.clearAllMocks()
+    mockRevokeAllSessions.mockReset()
   })
 
   afterEach(() => {
@@ -201,6 +204,53 @@ describe('useAuthStore', () => {
       expect(localStorage.getItem('auth_user')).toBeNull()
       expect(localStorage.getItem('refresh_token')).toBeNull()
       expect(localStorage.getItem('token_expires_at')).toBeNull()
+    })
+
+    it('默认先撤销所有设备会话，再清本地凭据', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      mockLogout.mockResolvedValue(undefined)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      await store.logout()
+
+      expect(mockRevokeAllSessions).toHaveBeenCalledTimes(1)
+      expect(mockLogout).toHaveBeenCalledTimes(1)
+      // 先撤销（让 access token 立即失效），再调用单会话登出。
+      expect(mockRevokeAllSessions.mock.invocationCallOrder[0]).toBeLessThan(
+        mockLogout.mock.invocationCallOrder[0]
+      )
+    })
+
+    it('清空全部 auth/oauth localStorage 与会话标记，避免共享浏览器残留', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      mockLogout.mockResolvedValue(undefined)
+      localStorage.setItem('oauth_aff_code', 'AFF123')
+      localStorage.setItem('pending_auth_session', '{"provider":"github"}')
+      sessionStorage.setItem('email_oauth_pending_provider', 'github')
+      sessionStorage.setItem('auth_expired', '1')
+
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+      await store.logout()
+
+      expect(localStorage.getItem('oauth_aff_code')).toBeNull()
+      expect(localStorage.getItem('pending_auth_session')).toBeNull()
+      expect(sessionStorage.getItem('email_oauth_pending_provider')).toBeNull()
+      expect(sessionStorage.getItem('auth_expired')).toBeNull()
+    })
+
+    it('撤销全部会话失败时仍然完成本地登出', async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      mockLogout.mockResolvedValue(undefined)
+      mockRevokeAllSessions.mockRejectedValue(new Error('network down'))
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+
+      await store.logout()
+
+      expect(store.isAuthenticated).toBe(false)
+      expect(localStorage.getItem('auth_token')).toBeNull()
     })
   })
 

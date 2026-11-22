@@ -163,6 +163,27 @@ security:
   # 关闭 enabled 即完全恢复原行为。
   # Environment / 环境变量: SECURITY_KEY_ROTATION_GATE_ENABLED=false
   key_rotation_gate_enabled: true
+  # Session binding fingerprint mode. The fingerprint binds a login session to
+  # the client network + User-Agent it was created on; a mismatch revokes the
+  # session family (access token + refresh tokens) and forces a new login.
+  #   off    - disable binding entirely (emergency rollback switch)
+  #   loose  - compare IPv4 /24 or IPv6 /64 + UA (default; tolerates mobile IP drift)
+  #   strict - compare full IP + UA (any change invalidates the session)
+  # Refresh tokens are always checked when the mode is not off; the admin
+  # setting session_binding_enabled additionally checks every access token.
+  # 会话绑定指纹模式：off 关闭（回滚开关）；loose 按 IPv4 /24、IPv6 /64 + UA 比较（默认，
+  # 容忍移动网络换 IP）；strict 完整 IP + UA。非 off 时 refresh 始终校验绑定；
+  # 后台 session_binding_enabled 开关还控制每次请求的 access token 校验。
+  # Environment / 环境变量: SECURITY_SESSION_BINDING_MODE=strict
+  session_binding_mode: loose
+  # GitHub / Google OAuth callbacks redirect with a single-use 60-second code
+  # instead of putting access/refresh tokens in the URL fragment. The frontend
+  # exchanges it via POST /api/v1/auth/oauth/exchange. Set false to roll back
+  # to the legacy fragment flow for one release.
+  # GitHub / Google 回调改为只下发一次性 60 秒 code（前端 POST /api/v1/auth/oauth/exchange
+  # 兑换令牌），令牌不再进入 URL。设为 false 可回滚到旧的 fragment 方案（保留一个版本）。
+  # Environment / 环境变量: SECURITY_OAUTH_CODE_EXCHANGE_ENABLED=false
+  oauth_code_exchange_enabled: true
   # RFC3339 instant. Active keys created before this time are treated as
   # potentially leaked. Keep the offset (+08:00 below) explicit.
   # 门槛时间（RFC3339）。早于此刻创建且仍在启用中的 Key 视为可能已泄露。
@@ -1029,11 +1050,11 @@ jwt:
   # Token expiration time in hours (max 168)
   # 令牌过期时间（小时，最大 168）
   expire_hour: 24
-  # Access Token 过期时间（分钟）
+  # Access Token 过期时间（分钟，默认 60）
   # 优先级说明：
-  # - >0: 按分钟生效（优先于 expire_hour）
-  # - =0: 回退使用 expire_hour
-  access_token_expire_minutes: 0
+  # - >0: 按分钟生效（优先于 expire_hour），默认 60 分钟
+  # - =0: 回退使用 expire_hour（仅为显式回退旧行为保留）
+  access_token_expire_minutes: 60
 
 # =============================================================================
 # TOTP (2FA) Configuration

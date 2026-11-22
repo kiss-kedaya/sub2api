@@ -16,7 +16,17 @@ const (
 	refreshTokenKeyPrefix   = "refresh_token:"
 	userRefreshTokensPrefix = "user_refresh_tokens:"
 	tokenFamilyPrefix       = "token_family:"
+	oauthLoginCodeKeyPrefix = "oauth:login-code:"
 )
+
+// consumeOAuthLoginCodeScript 原子地读取并删除一次性登录码，保证同一码
+// 只可能被兑换一次（并发请求也只有一个能拿到值）。
+var consumeOAuthLoginCodeScript = redis.NewScript(`
+local value = redis.call('GET', KEYS[1])
+if not value then return false end
+redis.call('DEL', KEYS[1])
+return value
+`)
 
 // refreshTokenKey generates the Redis key for a refresh token.
 func refreshTokenKey(tokenHash string) string {
@@ -209,3 +219,36 @@ func (c *refreshTokenCache) AccessTokensRevokedBefore(ctx context.Context, userI
 	}
 	return parsed, nil
 }
+
+// StoreOAuthLoginCode 写入一次性 OAuth 登录码（只存哈希），ttl 到点自动过期。
+func (c *refreshTokenCache) StoreOAuthLoginCode(ctx context.Context, codeHash string, data *service.OAuthLoginCodeData, ttl time.Duration) error {
+	if c == nil || c.rdb == nil || codeHash == "" || data == nil || ttl <= 0 {
+		return service.ErrOAuthLoginCodeNotFound
+	}
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal oauth login code: %w", err)
+	}
+	return c.rdb.Set(ctx, oauthLoginCodeKeyPrefix+codeHash, payload, ttl).Err()
+}
+
+// ConsumeOAuthLoginCode 原子地读取并删除一次性 OAuth 登录码。
+func (c *refreshTokenCache) ConsumeOAuthLoginCode(ctx context.Context, codeHash string) (*service.OAuthLoginCodeData, error) {
+	if c == nil || c.rdb == nil || codeHash == "" {
+		return nil, service.ErrOAuthLoginCodeNotFound
+	}
+	raw, err := consumeOAuthLoginCodeScript.Run(ctx, c.rdb, []string{oauthLoginCodeKeyPrefix + codeHash}).Text()
+	if errors.Is(err, redis.Nil) {
+		return nil, service.ErrOAuthLoginCodeNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var data service.OAuthLoginCodeData
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		return nil, fmt.Errorf("unmarshal oauth login code: %w", err)
+	}
+	return &data, nil
+}
+
+var _ service.OAuthLoginCodeStore = (*refreshTokenCache)(nil)

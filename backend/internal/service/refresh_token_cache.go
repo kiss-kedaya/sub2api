@@ -16,11 +16,27 @@ type RefreshTokenData struct {
 	TokenVersion int64  `json:"token_version"`          // 用于检测密码更改后的Token失效
 	FamilyID     string `json:"family_id"`              // Token家族ID，用于防重放攻击
 	BindingHash  string `json:"binding_hash,omitempty"` // 会话指纹哈希（IP+UA），会话绑定开启时校验
+	// SessionStartedAt 是该登录会话首次签发的时间。每次轮换都继承同一个值，
+	// 会话绝对寿命上限 = SessionStartedAt + jwt.refresh_token_expire_days；
+	// 超过上限必须重新登录，避免 refresh token 无限滑动续期。旧数据为空时
+	// 视为以 CreatedAt 为起点（升级兼容，不延长也不会缩短既有会话）。
+	SessionStartedAt time.Time `json:"session_started_at,omitempty"`
 	// Consumed 标记该 Token 已因轮换被消费。轮换时保留一条短 TTL 墓碑，
 	// 用于再次收到同一 Token 时识别重放并撤销整个 family。
 	Consumed  bool      `json:"consumed,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// SessionStart 返回会话首次签发时间，兼容升级前没有 session_started_at 的旧数据。
+func (d *RefreshTokenData) SessionStart() time.Time {
+	if d == nil {
+		return time.Time{}
+	}
+	if !d.SessionStartedAt.IsZero() {
+		return d.SessionStartedAt
+	}
+	return d.CreatedAt
 }
 
 // RefreshTokenCache 管理Refresh Token的Redis缓存

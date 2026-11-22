@@ -13,6 +13,7 @@ const {
   login2FAMock,
   copyToClipboardMock,
   exchangePendingOAuthCompletionMock,
+  exchangeOAuthLoginCodeMock,
   apiPostMock,
 } = vi.hoisted(() => ({
   routeState: {
@@ -33,6 +34,7 @@ const {
   login2FAMock: vi.fn(),
   copyToClipboardMock: vi.fn(),
   exchangePendingOAuthCompletionMock: vi.fn(),
+  exchangeOAuthLoginCodeMock: vi.fn(),
   apiPostMock: vi.fn(),
 }))
 
@@ -72,6 +74,7 @@ vi.mock('@/api/auth', async () => {
   return {
     ...actual,
     exchangePendingOAuthCompletion: (...args: any[]) => exchangePendingOAuthCompletionMock(...args),
+    exchangeOAuthLoginCode: (...args: any[]) => exchangeOAuthLoginCodeMock(...args),
     persistOAuthTokenContext: vi.fn(),
   }
 })
@@ -102,6 +105,7 @@ describe('OAuthCallbackView', () => {
     login2FAMock.mockReset()
     copyToClipboardMock.mockReset()
     exchangePendingOAuthCompletionMock.mockReset()
+    exchangeOAuthLoginCodeMock.mockReset()
     apiPostMock.mockReset()
     window.sessionStorage.clear()
     vi.spyOn(window.history, 'replaceState').mockImplementation(() => {})
@@ -325,5 +329,73 @@ describe('OAuthCallbackView', () => {
 
     expect(login2FAMock).toHaveBeenCalledWith('temp-abc', '123456')
     expect(routerReplaceMock).toHaveBeenCalledWith('/dashboard')
+  })
+
+  it('exchanges the single-use oauth code after stripping the fragment', async () => {
+    routeState.path = '/auth/oauth/callback'
+    Object.assign(locationState.current, {
+      href: 'http://localhost/auth/oauth/callback?source=oauth#code=one-time-code&redirect=%2Fkeys',
+      hash: '#code=one-time-code&redirect=%2Fkeys',
+      pathname: '/auth/oauth/callback',
+      search: '?source=oauth',
+    })
+    exchangeOAuthLoginCodeMock.mockResolvedValue({
+      access_token: 'exchanged-access',
+      refresh_token: 'exchanged-refresh',
+      expires_in: 3600,
+      token_type: 'Bearer',
+      redirect: '/keys',
+    })
+
+    mount(OAuthCallbackView)
+    await vi.dynamicImportSettled()
+
+    // 一次性 code 先出 URL，再兑换；兑换请求里不能再带 code 以外的令牌。
+    expect(window.history.replaceState).toHaveBeenCalledWith(
+      window.history.state,
+      '',
+      '/auth/oauth/callback?source=oauth'
+    )
+    expect(exchangeOAuthLoginCodeMock).toHaveBeenCalledWith('one-time-code')
+    expect(setTokenMock).toHaveBeenCalledWith('exchanged-access')
+    expect(routerReplaceMock).toHaveBeenCalledWith('/keys')
+  })
+
+  it('shows a recoverable error when the one-time code exchange fails', async () => {
+    routeState.path = '/auth/oauth/callback'
+    Object.assign(locationState.current, {
+      href: 'http://localhost/auth/oauth/callback#code=expired-code',
+      hash: '#code=expired-code',
+      pathname: '/auth/oauth/callback',
+      search: '',
+    })
+    exchangeOAuthLoginCodeMock.mockRejectedValue(new Error('oauth login code is invalid or expired'))
+
+    const wrapper = mount(OAuthCallbackView)
+    await vi.dynamicImportSettled()
+
+    expect(setTokenMock).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('auth.oauth.invalidCallbackTitle')
+  })
+
+  it('keeps accepting the legacy fragment token pair for one release', async () => {
+    routeState.path = '/auth/oauth/callback'
+    Object.assign(locationState.current, {
+      href: 'http://localhost/auth/oauth/callback#access_token=legacy-access&refresh_token=legacy-refresh&expires_in=3600&redirect=%2Fdashboard',
+      hash: '#access_token=legacy-access&refresh_token=legacy-refresh&expires_in=3600&redirect=%2Fdashboard',
+      pathname: '/auth/oauth/callback',
+      search: '',
+    })
+
+    mount(OAuthCallbackView)
+    await vi.dynamicImportSettled()
+
+    expect(exchangeOAuthLoginCodeMock).not.toHaveBeenCalled()
+    expect(setTokenMock).toHaveBeenCalledWith('legacy-access')
+    expect(window.history.replaceState).toHaveBeenCalledWith(
+      window.history.state,
+      '',
+      '/auth/oauth/callback'
+    )
   })
 })

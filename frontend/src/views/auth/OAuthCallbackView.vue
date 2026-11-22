@@ -194,6 +194,7 @@ import { useAppStore, useAuthStore } from '@/stores'
 import { apiClient } from '@/api/client'
 import { buildApiUrl } from '@/api/url'
 import {
+  exchangeOAuthLoginCode,
   exchangePendingOAuthCompletion,
   isOAuthLoginCompletion,
   persistOAuthTokenContext,
@@ -489,6 +490,7 @@ onMounted(async () => {
     return
   }
   const tokenResponse = readTokenResponse(params)
+  const oneTimeCode = params.get('code')?.trim() || ''
   const fragmentError = params.get('error') || ''
   const fragmentErrorDescription =
     params.get('error_description') || params.get('error_message') || ''
@@ -496,6 +498,30 @@ onMounted(async () => {
   if (fragmentError) {
     callbackError.value = fragmentErrorDescription || fragmentError
     invalidCallback.value = true
+    return
+  }
+  // New flow: the backend only put a single-use, 60-second code in the URL.
+  // Exchange it immediately (the fragment was already cleared above) and never
+  // keep the code in history / screenshots any longer than this request.
+  if (oneTimeCode) {
+    isProcessing.value = true
+    try {
+      const exchanged = await exchangeOAuthLoginCode(oneTimeCode)
+      await finalizeTokenResponse(
+        {
+          access_token: exchanged.access_token,
+          refresh_token: exchanged.refresh_token,
+          expires_in: exchanged.expires_in,
+          token_type: exchanged.token_type
+        },
+        exchanged.redirect || params.get('redirect') || '/dashboard'
+      )
+    } catch (error: unknown) {
+      const message = (error as { message?: string })?.message || t('auth.loginFailed')
+      callbackError.value = message
+      invalidCallback.value = true
+      isProcessing.value = false
+    }
     return
   }
   if (!tokenResponse) {
