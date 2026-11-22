@@ -141,6 +141,11 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"hot_wallet_evm_old": {}, "hot_wallet_evm_new": {},
 	"hot_wallet_solana_old": {}, "hot_wallet_solana_new": {},
 	"changed": {}, "locked": {}, "lock_created": {},
+	// 五分钟 2FA 凭证（two-factor grant）审计：只记签发/使用/拒绝、scope、
+	// 拒绝原因、剩余秒数与 IP/UA 不可逆指纹；token 明文永远不进审计。
+	"two_factor_grant": {}, "two_factor_grant_scope": {},
+	"two_factor_grant_reason": {}, "two_factor_grant_remaining_seconds": {},
+	"two_factor_grant_ip_hash": {}, "two_factor_grant_ua_hash": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.

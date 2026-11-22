@@ -488,6 +488,9 @@ func (s *TotpService) Disable(ctx context.Context, userID int64, _, _ string, to
 	if err := disabler.DisableTotpWithExpectedRole(ctx, userID, user.Role, user.TotpSecretEncrypted); err != nil {
 		return fmt.Errorf("disable totp: %w", err)
 	}
+	// 关闭 2FA 后该用户全部 5 分钟 2FA 凭证立即作废（不能在 2FA 状态已变更后
+	// 继续用旧凭证跳过本应重新验证的流程）。
+	s.revokeTwoFactorGrantsQuietly(ctx, userID)
 
 	return nil
 }
@@ -514,6 +517,8 @@ func (s *TotpService) DisableWithServerAuthorization(ctx context.Context, userID
 	if err := disabler.DisableTotpWithExpectedRole(ctx, userID, verified.Role, verified.TotpSecretEncrypted); err != nil {
 		return fmt.Errorf("disable totp: %w", err)
 	}
+	// 服务端恢复码重置 2FA 同样立即撤销全部 5 分钟凭证。
+	s.revokeTwoFactorGrantsQuietly(ctx, userID)
 	return nil
 }
 

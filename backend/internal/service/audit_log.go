@@ -77,6 +77,12 @@ const (
 	AuditActionOAuthPending      = "auth.oauth.pending"
 	AuditActionPasskeyLoginBegin = "auth.login.passkey.begin"
 	AuditActionLogin2FAChallenge = "auth.login.2fa.challenge"
+	// 五分钟 2FA 凭证（two-factor grant）审计动作：
+	//   - grant_used：本次密码登录因为「5 分钟内已验证过 2FA」而跳过动态码；
+	//   - grant_rejected：浏览器带了凭证但已失效/不匹配/存储不可用，本次退回动态码挑战。
+	// 落库记录里只出现 user/ip_hash/ua_hash/剩余秒数/拒绝原因，绝不出现凭证 token。
+	AuditActionLogin2FAGrantUsed     = "auth.login.2fa.grant_used"
+	AuditActionLogin2FAGrantRejected = "auth.login.2fa.grant_rejected"
 
 	// 认证事件结果（写入 audit_logs.extra.result）。
 	AuditResultSuccess         = "success"

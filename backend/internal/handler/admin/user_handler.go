@@ -544,6 +544,14 @@ func (h *UserHandler) Update(c *gin.Context) {
 		return
 	}
 
+	// 管理员改密 / 启停账号 / 改角色后，目标的 5 分钟 2FA 凭证必须立即作废，
+	// 否则旧凭证能在安全状态已变更后继续跳过动态码（最多 5 分钟窗口）。
+	if req.Password != "" ||
+		(req.Status != "" && req.Status != target.Status) ||
+		(req.Role != "" && req.Role != target.Role) {
+		h.revokeTwoFactorGrants(c, userID)
+	}
+
 	response.Success(c, dto.UserFromServiceAdmin(user))
 }
 
@@ -631,8 +639,22 @@ func (h *UserHandler) Delete(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// 删除账号等同于永久下线：清掉全部 5 分钟 2FA 凭证。
+	h.revokeTwoFactorGrants(c, userID)
 
 	response.Success(c, gin.H{"message": "User deleted successfully"})
+}
+
+// revokeTwoFactorGrants 撤销目标用户全部未过期的 5 分钟 2FA 凭证。
+// 撤销失败不回滚已完成的安全状态变更，但必须留日志（窗口最多 5 分钟）。
+func (h *UserHandler) revokeTwoFactorGrants(c *gin.Context, userID int64) {
+	if h == nil || h.totpService == nil || userID <= 0 || c == nil {
+		return
+	}
+	if err := h.totpService.RevokeTwoFactorGrantsForUser(c.Request.Context(), userID); err != nil {
+		slog.Warn("revoke two-factor grants after admin security change failed",
+			"user_id", userID, "error", err)
+	}
 }
 
 // UpdateBalance handles updating user balance

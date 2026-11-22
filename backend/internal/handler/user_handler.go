@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,9 @@ type UserHandler struct {
 	affiliateService      *service.AffiliateService
 	userPlatformQuotaRepo service.UserPlatformQuotaRepository
 	cfAllowlist           *service.CFAllowlistService
+	// totpService 用于「校验当前密码」类入口的 5 分钟 2FA 凭证门控。
+	// 由 wire 装配（ProvideUserHandler）；为 nil 时保持门控引入前的行为。
+	totpService *service.TotpService
 }
 
 // NewUserHandler creates a new UserHandler
@@ -43,6 +47,29 @@ func NewUserHandler(
 		affiliateService:      affiliateService,
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
 	}
+}
+
+// SetTotpService 注入 5 分钟 2FA 凭证门控所需的 TOTP 服务。
+func (h *UserHandler) SetTotpService(totpService *service.TotpService) {
+	if h == nil {
+		return
+	}
+	h.totpService = totpService
+}
+
+// requirePasswordVerificationTwoFactor 对「校验当前密码」类入口做 5 分钟 2FA
+// 凭证门控：启用 TOTP 的账号必须有有效凭证，否则返回 403 STEP_UP_REQUIRED，
+// 由前端复用全局 TOTP 对话框完成 /user/totp/step-up 后重试。
+func (h *UserHandler) requirePasswordVerificationTwoFactor(c *gin.Context, userID int64) bool {
+	if h == nil || h.totpService == nil || h.userService == nil {
+		return true
+	}
+	user, err := h.userService.GetByID(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return false
+	}
+	return requirePasswordVerificationGrant(c, h.totpService, user)
 }
 
 // GetMyPlatformQuotas GET /user/platform-quotas
@@ -137,6 +164,8 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 // ChangePassword handles changing user password
 // POST /api/v1/users/me/password
 func (h *UserHandler) ChangePassword(c *gin.Context) {
+	// 密码类响应不缓存（与 2FA 凭证相关的 Cookie 只下发给当前浏览器）。
+	c.Header("Cache-Control", "no-store")
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
@@ -153,11 +182,25 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		CurrentPassword: req.OldPassword,
 		NewPassword:     req.NewPassword,
 	}
+	// 校验当前密码属于「试密码」入口：启用 TOTP 的账号必须先持有 5 分钟内
+	// 的 2FA 凭证（或现场完成一次动态码），防止仅凭密码校验接口做口令探测。
+	if !h.requirePasswordVerificationTwoFactor(c, subject.UserID) {
+		return
+	}
 	err := h.userService.ChangePassword(c.Request.Context(), subject.UserID, svcReq)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
+
+	// 密码已变更：该用户全部未过期的 2FA 凭证立即作废，本浏览器的 Cookie 一并清掉。
+	if h.totpService != nil {
+		if err := h.totpService.RevokeTwoFactorGrantsForUser(c.Request.Context(), subject.UserID); err != nil {
+			slog.Warn("revoke two-factor grants after password change failed",
+				"user_id", subject.UserID, "error", err)
+		}
+	}
+	clearTwoFactorGrantCookie(c)
 
 	response.Success(c, gin.H{"message": "Password changed successfully"})
 }
@@ -339,6 +382,8 @@ func (h *UserHandler) StartIdentityBinding(c *gin.Context) {
 // BindEmailIdentity verifies and binds a local email identity for the current user.
 // POST /api/v1/user/account-bindings/email
 func (h *UserHandler) BindEmailIdentity(c *gin.Context) {
+	// 响应含登录身份变更结果，禁止缓存。
+	c.Header("Cache-Control", "no-store")
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
@@ -355,6 +400,12 @@ func (h *UserHandler) BindEmailIdentity(c *gin.Context) {
 		return
 	}
 
+	// 绑定/更换登录邮箱需要校验当前密码（首次绑定则是设置密码），属于
+	// 「试密码」入口：启用 TOTP 的账号必须先持有 5 分钟内的 2FA 凭证。
+	if !h.requirePasswordVerificationTwoFactor(c, subject.UserID) {
+		return
+	}
+
 	updatedUser, err := h.authService.BindEmailIdentity(
 		c.Request.Context(),
 		subject.UserID,
@@ -366,6 +417,15 @@ func (h *UserHandler) BindEmailIdentity(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+
+	// 邮箱绑定/更换会重写登录身份与密码哈希：该用户全部 2FA 凭证立即作废。
+	if h.totpService != nil {
+		if err := h.totpService.RevokeTwoFactorGrantsForUser(c.Request.Context(), subject.UserID); err != nil {
+			slog.Warn("revoke two-factor grants after email binding failed",
+				"user_id", subject.UserID, "error", err)
+		}
+	}
+	clearTwoFactorGrantCookie(c)
 
 	profileResp, err := h.buildUserProfileResponse(c.Request.Context(), subject.UserID, updatedUser)
 	if err != nil {

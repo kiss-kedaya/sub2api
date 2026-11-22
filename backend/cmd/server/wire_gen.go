@@ -108,7 +108,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	userAttributeValueRepository := repository.NewUserAttributeValueRepository(client)
 	userAttributeService := service.NewUserAttributeService(userAttributeDefinitionRepository, userAttributeValueRepository)
 	authHandler := handler.NewAuthHandler(configConfig, authService, userService, settingService, promoService, redeemService, totpService, userAttributeService)
-	userHandler := handler.NewUserHandler(userService, authService, emailService, emailCache, affiliateService, serviceUserPlatformQuotaRepository)
+	userHandler := handler.ProvideUserHandler(userService, authService, emailService, emailCache, affiliateService, serviceUserPlatformQuotaRepository, totpService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService, apiKeySecretService)
 	usageLogRepository := repository.NewUsageLogRepository(client, db, redisClient, configConfig)
 	usageService := service.NewUsageService(usageLogRepository, userRepository, client, apiKeyAuthCacheInvalidator)

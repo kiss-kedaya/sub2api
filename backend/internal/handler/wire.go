@@ -291,11 +291,29 @@ func ProvideHandlers(
 	}
 }
 
+// ProvideUserHandler creates the user handler and injects the five-minute
+// two-factor grant gate used by password-verification entries (change password /
+// bind email). Keeping NewUserHandler's signature unchanged preserves the many
+// tests that construct it directly.
+func ProvideUserHandler(
+	userService *service.UserService,
+	authService *service.AuthService,
+	emailService *service.EmailService,
+	emailCache service.EmailCache,
+	affiliateService *service.AffiliateService,
+	userPlatformQuotaRepo service.UserPlatformQuotaRepository,
+	totpService *service.TotpService,
+) *UserHandler {
+	h := NewUserHandler(userService, authService, emailService, emailCache, affiliateService, userPlatformQuotaRepo)
+	h.SetTotpService(totpService)
+	return h
+}
+
 // ProviderSet is the Wire provider set for all handlers
 var ProviderSet = wire.NewSet(
 	// Top-level handlers
 	NewAuthHandler,
-	NewUserHandler,
+	ProvideUserHandler,
 	NewAPIKeyHandler,
 	NewUsageHandler,
 	NewRedeemHandler,

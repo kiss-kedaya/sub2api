@@ -245,6 +245,8 @@ type TotpStepUpResponse struct {
 // StepUp 敏感操作二次验证：校验 TOTP 码并为当前会话授予一段时间的 step-up 权限。
 // POST /api/v1/user/totp/step-up
 func (h *TotpHandler) StepUp(c *gin.Context) {
+	// 响应包含新的 2FA 凭证 Cookie，禁止缓存。
+	c.Header("Cache-Control", "no-store")
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		response.Unauthorized(c, "User not authenticated")
@@ -269,6 +271,10 @@ func (h *TotpHandler) StepUp(c *gin.Context) {
 		return
 	}
 	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, subject.UserID)
+
+	// 敏感操作 step-up 也是「一次动态码校验成功」：按同一契约下发 5 分钟不透明
+	// 凭证，之后密码登录 / 密码校验入口可以凭它免动态码（scope 记为 password）。
+	issueTwoFactorGrant(c, h.totpService, subject.UserID, service.TwoFactorGrantScopePassword)
 
 	response.Success(c, TotpStepUpResponse{
 		Verified:  true,

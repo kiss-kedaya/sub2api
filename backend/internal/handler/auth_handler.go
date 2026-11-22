@@ -270,6 +270,8 @@ func (h *AuthHandler) SendVerifyCode(c *gin.Context) {
 // Login handles user login
 // POST /api/v1/auth/login
 func (h *AuthHandler) Login(c *gin.Context) {
+	// 登录响应包含令牌/挑战，任何中间层都不得缓存。
+	c.Header("Cache-Control", "no-store")
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
@@ -302,6 +304,24 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	// 这里不能用 IsTotpEnabled —— 它在设置读取失败时返回 false，会让密码登录
 	// 在设置存储抖动时静默跳过已启用账号的二次验证。
 	if h.totpService != nil && h.settingSvc.LoginRequiresTOTP(c.Request.Context(), user) {
+		// 五分钟 2FA 凭证：同一账号在同一客户端（IP+UA）上刚刚通过了动态码，
+		// 窗口内只输密码即可直接签发会话——老板要的「5 分钟内登录不再需要二次
+		// 验证」。凭证过期/绑定不匹配/Redis 不可用时一律退回下面的动态码挑战，
+		// 所以这里不存在 fail-open 分支。
+		if grant := consumeTwoFactorGrant(c, h.totpService, user.ID); grant != nil {
+			// 审计动作单独命名，便于统计「有多少登录是靠 5 分钟凭证跳过的」。
+			middleware2.SetAuditAction(c, service.AuditActionLogin2FAGrantUsed)
+			markAuthAuditSuccess(c, user.ID, user.Email)
+			h.recordSuccessfulLogin(c, user.ID)
+			h.respondWithTokenPair(c, user)
+			return
+		}
+		// 浏览器确实带了凭证但被拒：动作改为 grant_rejected，并保留挑战下发的
+		// requires_2fa 标记。没带凭证属于正常首次挑战，不记成拒绝。
+		if readTwoFactorGrantCookie(c) != "" {
+			middleware2.SetAuditAction(c, service.AuditActionLogin2FAGrantRejected)
+		}
+
 		// Create a temporary login session for 2FA
 		tempToken, err := h.totpService.CreateLoginSession(c.Request.Context(), user.ID, user.Email)
 		if err != nil {
@@ -340,6 +360,8 @@ type Login2FARequest struct {
 // Login2FA completes the login with 2FA verification
 // POST /api/v1/auth/login/2fa
 func (h *AuthHandler) Login2FA(c *gin.Context) {
+	// 二次验证响应会签发令牌 / 下发新的 2FA 凭证 Cookie，禁止任何缓存。
+	c.Header("Cache-Control", "no-store")
 	var req Login2FARequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
@@ -477,6 +499,11 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 	if session.PendingOAuthBind == nil {
 		h.recordSuccessfulLogin(c, user.ID)
 	}
+
+	// 任一次动态码校验成功都要下发 5 分钟不透明凭证：之后同客户端 5 分钟内的
+	// 密码登录 / 密码校验不再要求动态码。Cookie 由服务端 HttpOnly 下发，
+	// 响应 body 不回显 token。
+	issueTwoFactorGrant(c, h.totpService, user.ID, service.TwoFactorGrantScopeLogin)
 
 	h.respondWithTokenPair(c, user)
 }
@@ -825,6 +852,8 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	}
 	h.consumePendingOAuthSessionOnLogout(c)
 	clearOAuthLogoutCookies(c)
+	// 登出后这个浏览器不应该再持有「5 分钟内免 2FA」的凭证。
+	clearTwoFactorGrantCookie(c)
 
 	response.Success(c, LogoutResponse{
 		Message: "Logged out successfully",
@@ -850,6 +879,17 @@ func (h *AuthHandler) RevokeAllSessions(c *gin.Context) {
 		response.InternalError(c, "Failed to revoke sessions")
 		return
 	}
+
+	// 强制下线/撤销全部会话必须同时清掉该用户全部 2FA 凭证：否则被撤销的
+	// 会话在 5 分钟窗口内还能用旧凭证跳过动态码重新登录。撤销失败不改变
+	// 已完成的会话撤销结果，但必须留日志，窗口最多只剩 5 分钟。
+	if h.totpService != nil {
+		if err := h.totpService.RevokeTwoFactorGrantsForUser(c.Request.Context(), subject.UserID); err != nil {
+			slog.Warn("revoke two-factor grants after session revocation failed",
+				"user_id", subject.UserID, "error", err)
+		}
+	}
+	clearTwoFactorGrantCookie(c)
 
 	response.Success(c, RevokeAllSessionsResponse{
 		Message: "All sessions have been revoked. Please log in again.",
