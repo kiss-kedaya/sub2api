@@ -410,6 +410,31 @@ type Login2FARequest struct {
 	Password string `json:"password"`
 }
 
+// respondLogin2FACredentialOrCodeFailure 统一第二步「凭据错误 / 动态码错误」的
+// 对外响应：一律 INVALID_CREDENTIALS，真实原因只写服务端日志与审计。
+//
+// 真实 2FA 账号「密码正确、动态码错误」若返回 TOTP_INVALID_CODE，而「密码错误」
+// 返回 INVALID_CREDENTIALS，第二步就重新变成密码有效性 oracle；两类失败必须
+// 不可区分。
+func respondLogin2FACredentialOrCodeFailure(c *gin.Context, err error) {
+	if err != nil {
+		slog.Warn("login_2fa_credential_or_code_rejected",
+			"reason", infraerrors.Reason(err),
+			"error", err)
+	}
+	markAuthAuditFailureFromError(c, err)
+	response.ErrorFrom(c, service.ErrInvalidCredentials)
+}
+
+// isLogin2FACredentialOrCodeFailure 判断错误是否属于「第二步凭据/动态码不正确」。
+// 只覆盖码本身无效/已被重放的错误：限速、TOTP 服务不可用等基础设施错误仍按
+// 原错误码返回，不能把 5xx/429 误报成「密码错误」。
+func isLogin2FACredentialOrCodeFailure(err error) bool {
+	return errors.Is(err, service.ErrTotpInvalidCode) ||
+		errors.Is(err, service.ErrTotpCodeReplayed) ||
+		errors.Is(err, service.ErrCryptoTotpReplayed)
+}
+
 // Login2FA completes the login with 2FA verification
 // POST /api/v1/auth/login/2fa
 func (h *AuthHandler) Login2FA(c *gin.Context) {
@@ -464,14 +489,21 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 	// 统一登录协议：新前端在第二步同时回传邮箱+密码，这里重新校验一次凭据，
 	// 让「凭据错误」在第二步统一以 INVALID_CREDENTIALS 返回（老客户端不传密码，
 	// 走第一步已经验证过的会话，保持兼容）。
+	//
+	// 密码复核固定使用 temp_token 会话里的邮箱，请求里的 email 只做一致性校验。
+	// 否则持有自己账号会话的人可以替换 email，拿任意邮箱做密码校验，绕过按邮箱
+	// 维度做的限速与审计。不一致时与「凭据错误」返回完全相同的错误。
 	if req.Password != "" {
-		verifyEmail := session.Email
-		if strings.TrimSpace(req.Email) != "" {
-			verifyEmail = strings.TrimSpace(req.Email)
+		if reqEmail := strings.TrimSpace(req.Email); reqEmail != "" &&
+			!strings.EqualFold(reqEmail, strings.TrimSpace(session.Email)) {
+			slog.Warn("login_2fa_email_mismatch", "user_id", session.UserID)
+			markAuthAuditFailureFromError(c, service.ErrInvalidCredentials)
+			response.ErrorFrom(c, service.ErrInvalidCredentials)
+			return
 		}
-		if _, _, err := h.authService.Login(c.Request.Context(), verifyEmail, req.Password); err != nil {
+		if _, _, err := h.authService.Login(c.Request.Context(), strings.TrimSpace(session.Email), req.Password); err != nil {
 			if errors.Is(err, service.ErrInvalidCredentials) {
-				response.ErrorFrom(c, service.ErrInvalidCredentials)
+				respondLogin2FACredentialOrCodeFailure(c, err)
 				return
 			}
 			response.ErrorFrom(c, err)
@@ -494,6 +526,11 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		slog.Debug("login_2fa_verify_failed",
 			"user_id", session.UserID,
 			"error", err)
+		// 动态码错误与密码错误对外必须同码：真实原因只落日志/审计。
+		if isLogin2FACredentialOrCodeFailure(err) {
+			respondLogin2FACredentialOrCodeFailure(c, err)
+			return
+		}
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -573,6 +610,11 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 
 	// Consume only after every login/binding check has passed.
 	if err := h.totpService.ConsumeLoginCode(c.Request.Context(), session.UserID, counter, req.TotpCode); err != nil {
+		// 重放的动态码同样属于「码不正确」，对外与密码错误同码。
+		if isLogin2FACredentialOrCodeFailure(err) {
+			respondLogin2FACredentialOrCodeFailure(c, err)
+			return
+		}
 		response.ErrorFrom(c, err)
 		return
 	}

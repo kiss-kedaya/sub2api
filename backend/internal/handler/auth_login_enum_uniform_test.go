@@ -16,23 +16,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// loginEnumUserRepo 只认识一个已知账号，其它邮箱一律 not found：
+// loginEnumUserRepo 只认识已知账号，其它邮箱一律 not found：
 // 用来把「账号不存在」「密码错误」「需要 2FA」三条路径放在同一张桌子上对比。
 type loginEnumUserRepo struct {
 	service.UserRepository
-	user *service.User
+	user  *service.User
+	users []*service.User
+}
+
+func (r *loginEnumUserRepo) knownUsers() []*service.User {
+	if len(r.users) > 0 {
+		return r.users
+	}
+	if r.user != nil {
+		return []*service.User{r.user}
+	}
+	return nil
 }
 
 func (r *loginEnumUserRepo) GetByEmail(_ context.Context, email string) (*service.User, error) {
-	if r.user != nil && strings.EqualFold(strings.TrimSpace(email), r.user.Email) {
-		return r.user, nil
+	for _, user := range r.knownUsers() {
+		if strings.EqualFold(strings.TrimSpace(email), user.Email) {
+			return user, nil
+		}
 	}
 	return nil, service.ErrUserNotFound
 }
 
 func (r *loginEnumUserRepo) GetByID(_ context.Context, id int64) (*service.User, error) {
-	if r.user != nil && r.user.ID == id {
-		return r.user, nil
+	for _, user := range r.knownUsers() {
+		if user.ID == id {
+			return user, nil
+		}
 	}
 	return nil, service.ErrUserNotFound
 }
@@ -178,4 +193,99 @@ func TestPasswordLoginChallengeIsByteIdenticalAcrossCredentials(t *testing.T) {
 	okW := post2FA(existingRouter2FA, needs2FAResp.Data.TempToken, user.Email, "correct-password", code)
 	require.Equal(t, http.StatusOK, okW.Code, okW.Body.String())
 	require.Contains(t, okW.Body.String(), "access_token")
+}
+
+// 第二步的失败响应不得泄露密码是否正确：真实 2FA 账号「密码正确、动态码错误」
+// 与「密码错误」必须返回同一个错误码（INVALID_CREDENTIALS），否则第二步又变成
+// 密码有效性 oracle。
+func TestLogin2FASecondStepDoesNotLeakPasswordValidity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	user, secret, _ := newTwoFactorGrantTestUser(t, 7, "correct-password", true)
+	handler := newLoginEnumHandler(t, &loginEnumUserRepo{user: user}, newTwoFactorGrantCacheStub())
+
+	router := gin.New()
+	router.POST("/api/v1/auth/login", handler.Login)
+	router.POST("/api/v1/auth/login/2fa", handler.Login2FA)
+
+	// 与当前时间窗相隔 2 小时的合法格式动态码：保证判为「码错误」而不抖动。
+	wrongCode, err := totp.GenerateCode(secret, time.Now().Add(-2*time.Hour))
+	require.NoError(t, err)
+
+	post2FA := func(tempToken, email, password, code string) (*httptest.ResponseRecorder, string) {
+		payload, err := json.Marshal(map[string]string{
+			"temp_token": tempToken,
+			"totp_code":  code,
+			"email":      email,
+			"password":   password,
+		})
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/2fa", strings.NewReader(string(payload)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		var body struct {
+			Code   int    `json:"code"`
+			Reason string `json:"reason"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
+		return w, body.Reason
+	}
+
+	// 密码正确 -> 真 2FA 挑战；第二步密码正确、动态码错误。
+	_, okResp := postLoginEnum(t, router, user.Email, "correct-password")
+	require.True(t, okResp.Data.Requires2FA)
+	wrongCodeW, wrongCodeReason := post2FA(okResp.Data.TempToken, user.Email, "correct-password", wrongCode)
+	require.Equal(t, http.StatusUnauthorized, wrongCodeW.Code, wrongCodeW.Body.String())
+	require.Equal(t, "INVALID_CREDENTIALS", wrongCodeReason)
+	require.NotContains(t, wrongCodeW.Body.String(), "TOTP_INVALID_CODE")
+
+	// 密码错误 -> 统一挑战；第二步密码仍然错误。
+	_, badResp := postLoginEnum(t, router, user.Email, "wrong-password")
+	require.True(t, badResp.Data.Requires2FA)
+	wrongPassW, wrongPassReason := post2FA(badResp.Data.TempToken, user.Email, "wrong-password", wrongCode)
+	require.Equal(t, http.StatusUnauthorized, wrongPassW.Code, wrongPassW.Body.String())
+	require.Equal(t, "INVALID_CREDENTIALS", wrongPassReason)
+
+	// 两种失败对客户端完全不可区分：响应体逐字节一致。
+	require.Equal(t, wrongPassW.Body.String(), wrongCodeW.Body.String())
+}
+
+// 第二步的密码复核固定用 temp_token 会话里的邮箱：请求里换邮箱直接按统一错误
+// 拒绝，不能持自己的会话替任意邮箱做密码校验（绕过邮箱维度限速）。
+func TestLogin2FASecondStepRejectsEmailMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	alice, aliceSecret, _ := newTwoFactorGrantTestUser(t, 7, "alice-password", true)
+	bob, _, _ := newTwoFactorGrantTestUser(t, 8, "bob-password", true)
+	handler := newLoginEnumHandler(t, &loginEnumUserRepo{users: []*service.User{alice, bob}}, newTwoFactorGrantCacheStub())
+
+	router := gin.New()
+	router.POST("/api/v1/auth/login", handler.Login)
+	router.POST("/api/v1/auth/login/2fa", handler.Login2FA)
+
+	// 用 alice 自己的凭据拿到真 2FA 挑战。
+	_, aliceChallenge := postLoginEnum(t, router, alice.Email, "alice-password")
+	require.True(t, aliceChallenge.Data.Requires2FA)
+
+	// 与当前时间窗相隔 2 小时的动态码，保证不是「码错误」掩盖了邮箱不一致。
+	staleCode, err := totp.GenerateCode(aliceSecret, time.Now().Add(-2*time.Hour))
+	require.NoError(t, err)
+
+	payload, err := json.Marshal(map[string]string{
+		"temp_token": aliceChallenge.Data.TempToken,
+		"totp_code":  staleCode,
+		// 请求里换成 bob 的邮箱+bob 的正确密码：旧实现会先拿 bob 的邮箱去校验
+		// 密码，从而把「bob 的密码是否正确」暴露成可区分的错误码。
+		"email":    bob.Email,
+		"password": "bob-password",
+	})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/2fa", strings.NewReader(string(payload)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "INVALID_CREDENTIALS")
+	require.NotContains(t, w.Body.String(), "access_token")
+	require.NotContains(t, w.Body.String(), "TOTP_INVALID_CODE")
 }

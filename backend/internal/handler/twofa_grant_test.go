@@ -391,6 +391,7 @@ func TestLoginRequiresTOTPWhenTwoFactorGrantInvalid(t *testing.T) {
 	// 有效凭证仍然可用（排除测试自身把全部路径都判死）。
 	r := gin.New()
 	r.POST("/api/v1/auth/login", h.Login)
+	r.POST("/api/v1/auth/login/2fa", h.Login2FA)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(loginRequestBody(user.Email, "correct-password")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "grant-test-agent")
@@ -411,6 +412,30 @@ func TestLoginRequiresTOTPWhenTwoFactorGrantInvalid(t *testing.T) {
 	require.Equal(t, http.StatusOK, wrongW.Code)
 	require.True(t, strings.Contains(wrongW.Body.String(), `"requires_2fa":true`), wrongW.Body.String())
 	require.NotContains(t, wrongW.Body.String(), "access_token")
+
+	// 第二步用错误密码：必须与「动态码错误」返回同一个码（INVALID_CREDENTIALS），
+	// 不得回 TOTP_INVALID_CODE 之类可区分密码正确性的错误。
+	var wrongChallenge struct {
+		Data struct {
+			TempToken string `json:"temp_token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wrongW.Body.Bytes(), &wrongChallenge), wrongW.Body.String())
+	require.NotEmpty(t, wrongChallenge.Data.TempToken)
+	step2Payload, err := json.Marshal(map[string]string{
+		"temp_token": wrongChallenge.Data.TempToken,
+		"totp_code":  "123456",
+		"email":      user.Email,
+		"password":   "wrong-password",
+	})
+	require.NoError(t, err)
+	step2Req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/2fa", strings.NewReader(string(step2Payload)))
+	step2Req.Header.Set("Content-Type", "application/json")
+	step2W := httptest.NewRecorder()
+	r.ServeHTTP(step2W, step2Req)
+	require.Equal(t, http.StatusUnauthorized, step2W.Code, step2W.Body.String())
+	require.Contains(t, step2W.Body.String(), "INVALID_CREDENTIALS")
+	require.NotContains(t, step2W.Body.String(), "TOTP_INVALID_CODE")
 }
 
 func TestLoginRequiresTOTPFailsClosedWhenGrantStoreUnavailable(t *testing.T) {

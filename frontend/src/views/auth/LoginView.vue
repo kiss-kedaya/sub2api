@@ -745,15 +745,14 @@ async function handle2FAVerify(code: string): Promise<void> {
       retryAfter?: string | number
       response?: { data?: { message?: string }; headers?: Record<string, string> }
     }
-    // 第二步同时校验「动态码 + 邮箱 + 密码」：INVALID_CREDENTIALS 表示
-    // 动态码错误或密码已变更，给一条同时覆盖两种可能的提示，避免把
-    // 「账号是否存在/密码是否正确」暴露成可区分的错误文案。
+    // 第二步同时校验「动态码 + 邮箱 + 密码」：服务端已把「密码/邮箱错误」与
+    // 「动态码错误」统一成 INVALID_CREDENTIALS，这里不再按 reason 区分文案，
+    // 一律展示同一条提示，避免把「密码是否正确」暴露成可区分的错误文案。
+    // 旧版后端可能仍返回 TOTP_INVALID_CODE，同样落到统一提示。
     const message =
-      err.reason === 'INVALID_CREDENTIALS'
+      err.reason === 'INVALID_CREDENTIALS' || err.reason === 'TOTP_INVALID_CODE'
         ? t('profile.totp.loginInvalidCredentials')
-        : err.reason === 'TOTP_INVALID_CODE'
-          ? t('profile.totp.verifyFailed')
-          : err.response?.data?.message || err.message || t('profile.totp.loginFailed')
+        : err.response?.data?.message || err.message || t('profile.totp.loginFailed')
     // 服务端 429 的 Retry-After 优先于本地计数（网络层已把 header 解出为 retryAfter）。
     const retryAfterSeconds = Number(err.retryAfter ?? err.response?.headers?.['retry-after'] ?? 0) || 0
 
