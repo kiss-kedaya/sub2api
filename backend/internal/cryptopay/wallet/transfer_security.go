@@ -90,6 +90,16 @@ func (m *Manager) SecurityWatchEVMAddresses(ctx context.Context) ([]string, erro
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	tx, err := m.currentVaultTx(ctx)
+	// A v3 vault sealed behind recovery shards cannot derive index-zero
+	// addresses, but the watch list itself does not need key material: it is an
+	// authenticated snapshot of public chain addresses plus the gas wallet that
+	// shard setup persisted. Watching a wallet on-chain needs only its address,
+	// so keep the outflow guard alive in the locked steady state instead of
+	// degrading monitoring (and, before this, stalling deposit scanning).
+	seedless := errors.Is(err, ErrSignerShareRequired)
+	if seedless {
+		tx, err = m.db.BeginTx(ctx, nil)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -109,12 +119,21 @@ func (m *Manager) SecurityWatchEVMAddresses(ctx context.Context) ([]string, erro
 			}
 		}
 	}
-	for _, deriver := range []*Deriver{m.deposit, m.hot} {
-		_, address, err := deriver.EVMKey(0)
-		if err != nil {
-			return nil, ErrVaultUnavailable
+	if seedless {
+		// Both seeds are unreachable without a recovery share. The hot wallet
+		// address is the same public value the admin console already shows; it
+		// is written next to shard A at setup time and needs no data key.
+		if hot, ok := m.cachedHotAddresses(ctx); ok && hot.EVM != "" {
+			seen[strings.ToLower(hot.EVM)] = true
 		}
-		seen[strings.ToLower(address.Hex())] = true
+	} else {
+		for _, deriver := range []*Deriver{m.deposit, m.hot} {
+			_, address, err := deriver.EVMKey(0)
+			if err != nil {
+				return nil, ErrVaultUnavailable
+			}
+			seen[strings.ToLower(address.Hex())] = true
+		}
 	}
 	out := make([]string, 0, len(seen))
 	for address := range seen {
