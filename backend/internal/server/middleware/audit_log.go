@@ -135,6 +135,8 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"matched_count": {}, "snapshot_max_id": {}, "filter_hash": {}, "confirm": {},
 	// 受限管理员密钥身份（认证中间件写入，用于在完整审计记录中定位具体密钥）。
 	"admin_key_id": {}, "admin_key_name": {},
+	// 浏览器端封存密文的操作只记录「哪把 Key」，不记录密文 / KDF 参数。
+	"api_key_id": {}, "api_key_prefix": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.
@@ -203,6 +205,9 @@ var auditSensitiveReads = map[string]string{
 	"GET /api/v1/admin/groups/:id/api-keys":                                   "admin.groups.api_keys.read",
 	"GET /api/v1/admin/backups/s3-config":                                     "admin.backups.s3_config.read",
 	"GET /api/v1/admin/data-management/s3/config":                             "admin.data_management.s3_config.read",
+	// 查看 API Key 的浏览器端封存密文是一条敏感读：它把（加密后的）凭据交回前端，
+	// 必须留痕，用户事后也能在审计里看到自己何时被读取过。
+	"GET /api/v1/user/api-keys/:id/secret-seal": service.AuditActionAPIKeySecretFetch,
 }
 
 // auditActionOverrides 变更类请求的动作名精确映射（未命中时自动推导）。
@@ -243,6 +248,10 @@ var auditActionOverrides = map[string]string{
 	"POST /api/v1/admin/prompt-audit/events/batch-delete":        "admin.prompt_audit.events.batch_delete",
 	"POST /api/v1/admin/prompt-audit/events/delete-preview":      "admin.prompt_audit.events.delete_preview",
 	"POST /api/v1/admin/prompt-audit/events/delete-by-filter":    "admin.prompt_audit.events.filter_delete",
+	// 浏览器端封存密文的写操作：只留「存/删了哪把 Key」，请求体（含密文与 salt）
+	// 整体不入审计库，见 auditBodyOmittedRoutes。
+	"PUT /api/v1/user/api-keys/:id/secret-seal":    service.AuditActionAPIKeySecretSeal,
+	"DELETE /api/v1/user/api-keys/:id/secret-seal": service.AuditActionAPIKeySecretDelete,
 }
 
 // auditAuthEventMeta 第三方登录 / 2FA 认证事件的审计元数据。
@@ -443,6 +452,8 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	"POST /api/v1/admin/prompt-audit/events/batch-delete":       {},
 	"POST /api/v1/admin/prompt-audit/events/delete-preview":     {},
 	"POST /api/v1/admin/prompt-audit/events/delete-by-filter":   {},
+	// 封存密文的请求体是「密文 + salt」，审计只记 Key 标识，绝不落这些字节。
+	"PUT /api/v1/user/api-keys/:id/secret-seal": {},
 }
 
 // NewAuditLogMiddleware 创建审计中间件。

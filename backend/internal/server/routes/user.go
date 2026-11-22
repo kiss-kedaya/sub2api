@@ -52,6 +52,11 @@ func RegisterUserRoutes(
 			user.POST("/account-bindings/email", h.User.BindEmailIdentity)
 			user.DELETE("/account-bindings/:provider", h.User.UnbindIdentity)
 			user.POST("/auth-identities/bind/start", h.User.StartIdentityBinding)
+			// 浏览器端封存 API Key 密文：服务端只存取，不解密、不接触密码。
+			// PUT 限制 8KB 请求体；GET 另有每用户 20 次/分钟的固定限流。
+			user.PUT("/api-keys/:id/secret-seal", middleware.RequestBodyLimit(service.APIKeySecretMaxBodyBytes), h.APIKey.PutSecretSeal)
+			user.GET("/api-keys/:id/secret-seal", panelRateLimiter.SecretSealRead(), h.APIKey.GetSecretSeal)
+			user.DELETE("/api-keys/:id/secret-seal", h.APIKey.DeleteSecretSeal)
 			user.GET("/api-keys/:id/usage/daily", panelRateLimiter.Heavy(), h.Usage.GetMyAPIKeyDailyUsage)
 			user.GET("/api-keys/:id/usage", panelRateLimiter.Heavy(), h.Usage.GetMyAPIKeyUsage)
 			user.GET("/platform-quotas", h.User.GetMyPlatformQuotas)

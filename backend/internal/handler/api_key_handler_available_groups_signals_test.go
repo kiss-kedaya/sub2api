@@ -80,7 +80,7 @@ func getAvailableGroupsPayload(t *testing.T, repo *availableGroupsRepoStub, rate
 		rateRepo = availableGroupsRateRepoStub{rates: rates}
 	}
 	svc := service.NewAPIKeyService(nil, availableGroupsUserRepoStub{}, repo, availableGroupsSubRepoStub{}, rateRepo, nil, nil)
-	h := NewAPIKeyHandler(svc)
+	h := NewAPIKeyHandler(svc, nil)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

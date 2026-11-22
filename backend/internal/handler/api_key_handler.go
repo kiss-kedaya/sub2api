@@ -22,12 +22,17 @@ import (
 // APIKeyHandler handles API key-related requests
 type APIKeyHandler struct {
 	apiKeyService *service.APIKeyService
+	// secretService 只负责浏览器端封存密文的存取（服务器不解密）。
+	// 旧测试/嵌入方可以传 nil，此时列表与详情不暴露 has_sealed_secret 之外的
+	// 任何行为，也不会访问新表。
+	secretService *service.APIKeySecretService
 }
 
 // NewAPIKeyHandler creates a new APIKeyHandler
-func NewAPIKeyHandler(apiKeyService *service.APIKeyService) *APIKeyHandler {
+func NewAPIKeyHandler(apiKeyService *service.APIKeyService, secretService *service.APIKeySecretService) *APIKeyHandler {
 	return &APIKeyHandler{
 		apiKeyService: apiKeyService,
+		secretService: secretService,
 	}
 }
 
@@ -189,6 +194,8 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 	for i := range keys {
 		out = append(out, *dto.APIKeyFromService(&keys[i]))
 	}
+	// has_sealed_secret 只做布尔标注（批量一次查询），密文本体不出现在列表里。
+	h.attachSealedSecretPresence(c.Request.Context(), subject.UserID, keys, out)
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
@@ -220,7 +227,9 @@ func (h *APIKeyHandler) GetByID(c *gin.Context) {
 	}
 
 	h.apiKeyService.AnnotateKeyRotation(key)
-	response.Success(c, dto.APIKeyFromService(key))
+	out := dto.APIKeyFromService(key)
+	h.annotateSealedSecretPresence(c.Request.Context(), subject.UserID, key.ID, out)
+	response.Success(c, out)
 }
 
 // Create handles creating a new API key
@@ -375,10 +384,13 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	// 轮换是明文 key 的另一次（也是唯一另一次）回执：旧值立刻失效，
 	// 用户必须当场拿到新值。普通编辑只回脱敏视图。
 	if req.RegenerateKey {
+		// 轮换在同一事务里删掉了旧密文，has_sealed_secret 保持 false。
 		response.Success(c, dto.APIKeySecretFromService(key))
 		return
 	}
-	response.Success(c, dto.APIKeyFromService(key))
+	out := dto.APIKeyFromService(key)
+	h.annotateSealedSecretPresence(c.Request.Context(), subject.UserID, key.ID, out)
+	response.Success(c, out)
 }
 
 // Delete handles deleting an API key

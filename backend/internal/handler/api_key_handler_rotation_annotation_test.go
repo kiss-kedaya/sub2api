@@ -51,7 +51,7 @@ func TestAPIKeyListExposesNeedsRotation(t *testing.T) {
 		{ID: 4, UserID: 7, Status: service.StatusAPIKeyInactive, KeyPrefix: "sk-off", CreatedAt: old},
 	}}
 	router := gin.New()
-	router.GET("/keys", withUserSubject(7), NewAPIKeyHandler(service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg)).List)
+	router.GET("/keys", withUserSubject(7), NewAPIKeyHandler(service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg), nil).List)
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/keys", nil))

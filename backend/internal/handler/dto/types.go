@@ -83,6 +83,9 @@ type APIKey struct {
 	// NeedsRotation 为 true 时表示这把启用中的 Key 仍在充值/兑换门禁的待整改
 	// 名单里（创建/轮换时间早于门槛且没有 IP 白名单）。判定与门禁同源。
 	NeedsRotation bool `json:"needs_rotation"`
+	// HasSealedSecret 表示这把 Key 有浏览器端封存的密文，用户可以在输入登录
+	// 密码后重新查看明文。它只暴露布尔值：密文本体只有 GET secret-seal 才能取。
+	HasSealedSecret bool `json:"has_sealed_secret"`
 	// RotationReasons 是待整改原因分类：created_before_cutoff / no_ip_allowlist。
 	RotationReasons []string `json:"rotation_reasons,omitempty"`
 	// CurrentConcurrency is the real-time active request count for this API key.

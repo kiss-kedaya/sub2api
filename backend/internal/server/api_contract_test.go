@@ -306,6 +306,7 @@ func TestAPIContracts(t *testing.T) {
 					"auto_block_datacenter_ips": false,
 					"risk_disabled": false,
 					"needs_rotation": false,
+					"has_sealed_secret": false,
 					"usage_5h": 0,
 					"usage_1d": 0,
 					"usage_7d": 0,
@@ -364,6 +365,7 @@ func TestAPIContracts(t *testing.T) {
 							"auto_block_datacenter_ips": false,
 							"risk_disabled": false,
 							"needs_rotation": false,
+							"has_sealed_secret": false,
 							"usage_5h": 0,
 							"usage_1d": 0,
 							"usage_7d": 0,
@@ -1576,7 +1578,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 
 	adminService := service.NewAdminService(nil, userRepo, groupRepo, &accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	authHandler := handler.NewAuthHandler(cfg, nil, userService, settingService, nil, redeemService, nil, nil)
-	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
+	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService, nil)
 	usageHandler := handler.NewUsageHandler(usageService, apiKeyService, nil, nil)
 	adminSettingHandler := adminhandler.NewSettingHandler(settingService, nil, nil, nil, nil, nil, nil)
 	adminAccountHandler := adminhandler.NewAccountHandler(adminService, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)

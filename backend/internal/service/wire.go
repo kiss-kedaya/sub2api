@@ -900,6 +900,7 @@ var ProviderSet = wire.NewSet(
 	NewPasskeyService,
 	NewUserService,
 	ProvideAPIKeyService,
+	NewAPIKeySecretService,
 	NewKeyRotationGateService,
 	NewKeyRotationRiskAckService,
 	NewIPWhitelistAssistService,

@@ -47,7 +47,7 @@ func TestAPIKeyCreateReplaysOnlyMaskedReceipt(t *testing.T) {
 	t.Cleanup(func() { service.SetDefaultIdempotencyCoordinator(previous) })
 	keys := &apiKeyCreateReceiptRepo{}
 	svc := service.NewAPIKeyService(keys, availableGroupsUserRepoStub{}, nil, nil, nil, nil, &config.Config{})
-	handler := NewAPIKeyHandler(svc)
+	handler := NewAPIKeyHandler(svc, nil)
 	router := gin.New()
 	router.POST("/keys", withUserSubject(7), handler.Create)
 

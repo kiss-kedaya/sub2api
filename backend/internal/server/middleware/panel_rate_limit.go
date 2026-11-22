@@ -60,6 +60,41 @@ func (p *PanelRateLimiter) Heavy() gin.HandlerFunc {
 	return p.userScoped("heavy", func(s service.PanelRateLimitSettings) int { return s.HeavyRPM })
 }
 
+// apiKeySecretReadRPM 是 GET /user/api-keys/:id/secret-seal 的固定限流：
+// 每用户每分钟 20 次。这个接口会把加密后的凭据交给浏览器，加上限流是为了
+// 避免它被当成「暴力验证登录密码」的辅助通道（密码派生只在浏览器发生，
+// 服务端能做的就是控制密文的可取次数）。
+const apiKeySecretReadRPM = 20
+
+// SecretSealRead 浏览器端封存密文读取的固定档按用户限流。
+// 与 Global/Heavy 不同，这里不读面板限流设置：这是一条安全护栏，
+// 应当始终存在；底层 Redis 出错时仍然 fail-open（保护措施不能反过来打挂面板）。
+func (p *PanelRateLimiter) SecretSealRead() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if p == nil || p.limiter == nil {
+			c.Next()
+			return
+		}
+		subject, ok := GetAuthSubjectFromContext(c)
+		if !ok || subject.UserID <= 0 {
+			c.Next()
+			return
+		}
+		key := "panel:api_key_secret:user:" + strconv.FormatInt(subject.UserID, 10)
+		result, err := p.limiter.Allow(c.Request.Context(), key, apiKeySecretReadRPM, panelRateLimitWindow)
+		if err != nil {
+			slog.Warn("api key secret rate limit check failed, allowing request", "error", err)
+			c.Next()
+			return
+		}
+		if !result.Allowed {
+			abortPanelRateLimited(c, result.RetryAfter)
+			return
+		}
+		c.Next()
+	}
+}
+
 func (p *PanelRateLimiter) userScoped(scope string, limitOf func(service.PanelRateLimitSettings) int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if p == nil || p.limiter == nil || p.settingService == nil {
