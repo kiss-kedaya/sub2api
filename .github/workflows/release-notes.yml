@@ -1,0 +1,80 @@
+name: Release Notes
+
+# 手动生成发版说明，只上传 artifact 供人工核对：
+#   - 不提交文件、不打 tag、不改 GitHub Release（没有 --publish）
+#   - 权限只有 contents:read + pull-requests:read
+#
+# 使用：Actions → Release Notes → Run workflow，填 version（如 2.3.153）。
+# 规范见 docs/agents/release-notes.md。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '目标版本号（不含 v），例如 2.3.153'
+        required: true
+        type: string
+      from:
+        description: '起始 tag，留空则自动取上一个 tag'
+        required: false
+        type: string
+      to:
+        description: '结束 ref，留空则用 HEAD'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: release-notes-${{ inputs.version }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: Generate notes (read-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout (full history for tag/diff)
+        uses: actions/checkout@v6
+        with:
+          # 需要完整历史与 tag：区间 diff、git describe、merge commit 祖先判断都依赖它
+          fetch-depth: 0
+
+      - name: Generate release notes
+        env:
+          # 只读 token：读取本仓库 PR 与 Release 信息，不写任何东西
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          FROM_REF: ${{ inputs.from }}
+          TO_REF: ${{ inputs.to }}
+        run: |
+          set -euo pipefail
+          args=("$VERSION")
+          if [ -n "$FROM_REF" ]; then args+=(--from "$FROM_REF"); fi
+          if [ -n "$TO_REF" ]; then args+=(--to "$TO_REF"); fi
+          bash scripts/release/gen-release-notes.sh "${args[@]}"
+
+      - name: Show generated notes in job summary
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          notes="docs/release-notes/v${VERSION}.md"
+          {
+            echo '## Release notes preview'
+            echo ''
+            echo '```markdown'
+            cat "$notes"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload notes artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes-v${{ inputs.version }}
+          path: docs/release-notes/v${{ inputs.version }}.md
+          if-no-files-found: error
+          retention-days: 7
