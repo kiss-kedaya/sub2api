@@ -52,6 +52,11 @@ const (
 	ReasonChannelMonitorAggr  Reason = "read_only_channel_monitor_aggregate"
 	ReasonUsageTrafficAggr    Reason = "read_only_usage_traffic_aggregate"
 	ReasonAccountAvailability Reason = "read_only_account_availability_aggregate"
+	// ReasonUpstreamBillingProbe covers the on-demand upstream declared-rate
+	// probe. It returns public rate numbers (never credentials), and the admin
+	// console fires it from a per-row refresh button that must not ask for a
+	// TOTP grant on every click.
+	ReasonUpstreamBillingProbe Reason = "upstream_declared_rate_probe_no_secret"
 
 	// step_up_required reasons
 	ReasonUpstreamCredentials Reason = "upstream_account_credentials"
@@ -272,6 +277,11 @@ var secretFreeExact = []exactRule{
 	// 自定义用量读取：账号列表滚动时自动查询/批量拉缓存，只回用量数字，不含上游凭证。
 	{method: "POST", path: "/api/v1/admin/accounts/:id/custom-usage-query", res: Resolved{ClassSecretFree, ReasonAccountUsageAggregate, ResourceNone, "exact:accounts.custom-usage-query"}},
 	{method: "POST", path: "/api/v1/admin/accounts/custom-usage-batch", res: Resolved{ClassSecretFree, ReasonAccountUsageAggregate, ResourceNone, "exact:accounts.custom-usage-batch"}},
+	// 上游声明倍率刷新：只返回公开的倍率数字，不返回上游凭证；账号列表每行一个
+	// 刷新按钮，要求 2FA 会让正常运营点一次弹一次。
+	{method: "POST", path: "/api/v1/admin/accounts/upstream-billing-probe/batch", res: Resolved{ClassSecretFree, ReasonUpstreamBillingProbe, ResourceNone, "exact:accounts.upstream-billing-probe"}},
+	// 单行「上游声明倍率」刷新按钮走的是这条；同样只回公开倍率数字。
+	{method: "POST", path: "/api/v1/admin/accounts/:id/upstream-billing-probe", res: Resolved{ClassSecretFree, ReasonUpstreamBillingProbe, ResourceNone, "exact:accounts.upstream-billing-probe-one"}},
 }
 
 // providerCredentialPrefixes are upstream provider OAuth families: POST/PUT/
