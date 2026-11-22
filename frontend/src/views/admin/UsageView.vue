@@ -94,7 +94,8 @@
           </button>
         </div>
 
-        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :observer="isObserver" :mode="activeTab" class="usage-filter-panel" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel()" @export-csv="exportToExcel('csv')">
+        <!-- 手动查询：面板编辑只改 draftFilters 草稿，点「查询」才复制成 filters 并发请求 -->
+        <UsageFilters v-model="draftFilters" ref="usageFiltersRef" flat :observer="isObserver" :mode="activeTab" class="usage-filter-panel" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @query="queryFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel()" @export-csv="exportToExcel('csv')">
           <template #after-reset>
             <div v-if="activeTab !== 'ranking'" class="relative" ref="columnDropdownRef">
               <button
@@ -316,6 +317,7 @@ const handleUserClick = async (userId: number) => {
 // that user and jump to the usage-detail tab so the drill-down is visible.
 const handleRankingSelectUser = (userId: number, email: string) => {
   filters.value = { ...filters.value, user_id: userId }
+  draftFilters.value = { ...draftFilters.value, user_id: userId }
   usageFiltersRef.value?.setUserKeyword?.(email || '')
   activeTab.value = 'usage'
   applyFilters()
@@ -347,7 +349,11 @@ const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
 }
 const defaultRange = getLast24HoursRangeDates()
 const startDate = ref(defaultRange.start); const endDate = ref(defaultRange.end)
-const filters = ref<AdminUsageQueryParams>({ user_id: undefined, model: undefined, group_id: undefined, request_type: undefined, native_compaction_v2: null, billing_type: null, start_date: startDate.value, end_date: endDate.value })
+const buildInitialFilters = (): AdminUsageQueryParams => ({ user_id: undefined, model: undefined, group_id: undefined, request_type: undefined, native_compaction_v2: null, billing_type: null, start_date: startDate.value, end_date: endDate.value })
+// filters = 已生效条件（表格/统计/图表/导出/清理都只读它）；draftFilters = 面板草稿。
+// 面板上的每次改动只落草稿，点「查询」才复制成 filters 并请求，避免改一个条件就打一轮接口。
+const filters = ref<AdminUsageQueryParams>(buildInitialFilters())
+const draftFilters = ref<AdminUsageQueryParams>(buildInitialFilters())
 const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0 })
 const sortState = reactive({
   sort_by: 'created_at',
@@ -384,6 +390,7 @@ const applyRouteQueryFilters = () => {
     start_date: startDate.value,
     end_date: endDate.value
   }
+  draftFilters.value = { ...filters.value }
   granularity.value = getGranularityForRange(startDate.value, endDate.value)
 }
 
@@ -414,8 +421,14 @@ const loadRouteUserFilterLabel = async () => {
 const onDateRangeChange = (range: { startDate: string; endDate: string; preset: string | null }) => {
   startDate.value = range.startDate
   endDate.value = range.endDate
+  // 时间范围是独立的即时控件（页头也有同款），切换即生效；草稿只同步日期，不影响其它未提交的草稿条件。
   filters.value = {
     ...filters.value,
+    start_date: range.startDate,
+    end_date: range.endDate
+  }
+  draftFilters.value = {
+    ...draftFilters.value,
     start_date: range.startDate,
     end_date: range.endDate
   }
@@ -633,6 +646,16 @@ const loadChartData = async () => {
     groupStats.value = snapshot.groups || []
   } catch (error) { console.error('Failed to load chart data:', error) } finally { if (seq === chartReqSeq) chartsLoading.value = false }
 }
+// 「查询」按钮 / 筛选输入框回车：把草稿整份复制为生效条件（新对象，之后再改草稿不会污染已生效值），
+// 由 applyFilters 重置分页并只发一轮请求。
+const queryFilters = () => {
+  filters.value = {
+    ...draftFilters.value,
+    start_date: startDate.value,
+    end_date: endDate.value
+  }
+  applyFilters()
+}
 const applyFilters = () => {
   pagination.page = 1
   invalidateModelStatsCache()
@@ -649,6 +672,7 @@ const applyFilters = () => {
 }
 const handleRequestIdClick = (requestID: string) => {
   filters.value.request_id = '=' + requestID
+  draftFilters.value.request_id = '=' + requestID
   pagination.page = 1
   loadLogs()
 }
@@ -664,6 +688,7 @@ const refreshData = () => {
     startDate.value = presetRange.startDate
     endDate.value = presetRange.endDate
     filters.value = { ...filters.value, start_date: presetRange.startDate, end_date: presetRange.endDate }
+    draftFilters.value = { ...draftFilters.value, start_date: presetRange.startDate, end_date: presetRange.endDate }
     pagination.page = 1
   }
   invalidateModelStatsCache()
@@ -679,7 +704,10 @@ const resetFilters = () => {
   const range = getLast24HoursRangeDates()
   startDate.value = range.start
   endDate.value = range.end
-  filters.value = { start_date: startDate.value, end_date: endDate.value, request_type: undefined, native_compaction_v2: null, billing_type: null, billing_mode: undefined }
+  const defaults: AdminUsageQueryParams = { start_date: startDate.value, end_date: endDate.value, request_type: undefined, native_compaction_v2: null, billing_type: null, billing_mode: undefined }
+  // 重置同时清空草稿和已生效条件，然后立即按默认条件查询。
+  filters.value = { ...defaults }
+  draftFilters.value = { ...defaults }
   granularity.value = getGranularityForRange(startDate.value, endDate.value)
   applyFilters()
 }

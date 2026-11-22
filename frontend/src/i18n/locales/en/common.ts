@@ -33,6 +33,7 @@ export default {
     update: 'Update',
     confirm: 'Confirm',
     reset: 'Reset',
+    query: 'Query',
     search: 'Search',
     filter: 'Filter',
     export: 'Export',

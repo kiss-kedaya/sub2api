@@ -1,39 +1,48 @@
 <template>
   <div :class="flat ? 'p-4 sm:p-6' : 'card p-6'">
-    <!-- Toolbar: left filters (multi-line) + right actions -->
-    <div class="flex flex-wrap items-end justify-between gap-4">
-      <!-- Left: filters (allowed to wrap to multiple rows) -->
-      <div class="flex flex-1 flex-wrap items-end gap-4">
-        <div class="w-full sm:w-auto" data-testid="usage-date-range-filter">
-          <label class="input-label">{{ t('admin.dashboard.timeRange') }}</label>
-          <DateRangePicker
-            ref="dateRangeRef"
-            include-time
-            :start-date="startDate"
-            :end-date="endDate"
-            @change="onDateRangeChange"
-          />
-        </div>
-        <div v-if="!observer" class="w-full sm:w-auto sm:min-w-[220px]">
-          <label class="input-label">{{ t('admin.usage.requestId') }}</label>
+    <!-- 筛选字段：桌面 3 列 / 平板 2 列 / 手机 1 列。
+         编辑只写本地草稿（v-model 对象），不触发查询；点「查询」才把草稿交给父级生效。 -->
+    <div class="usage-filter-grid grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2 xl:grid-cols-3" data-testid="usage-filter-grid">
+      <div class="usage-filter-field flex min-w-0 flex-col text-left" data-testid="usage-date-range-filter">
+        <label class="input-label">{{ t('admin.dashboard.timeRange') }}</label>
+        <DateRangePicker
+          ref="dateRangeRef"
+          include-time
+          class="w-full"
+          :start-date="startDate"
+          :end-date="endDate"
+          @change="onDateRangeChange"
+        />
+      </div>
+      <div v-if="!observer" class="usage-filter-field flex min-w-0 flex-col">
+        <label class="input-label">{{ t('admin.usage.requestId') }}</label>
+        <input
+          v-model="filters.request_id"
+          type="text"
+          class="input"
+          data-testid="usage-request-id"
+          :placeholder="t('usage.requestIdPlaceholder')"
+          @keyup.enter="emitQuery"
+        />
+      </div>
+      <template v-if="observer">
+        <div v-for="filter in observerIdFilters" :key="filter.key" class="usage-filter-field flex min-w-0 flex-col">
+          <label :for="`observer-${filter.key}`" class="input-label">{{ t(filter.label) }} ID</label>
           <input
-            v-model="filters.request_id"
-            type="text"
+            :id="`observer-${filter.key}`"
+            v-model.number="filters[filter.key]"
+            type="number"
+            min="1"
+            step="1"
             class="input"
-            :placeholder="t('usage.requestIdPlaceholder')"
-            @change="emitChange"
-            @keyup.enter="emitChange"
+            @keyup.enter="emitQuery"
           />
         </div>
-        <template v-if="observer">
-          <div v-for="filter in observerIdFilters" :key="filter.key" class="w-full sm:w-36">
-            <label :for="`observer-${filter.key}`" class="input-label">{{ t(filter.label) }} ID</label>
-            <input :id="`observer-${filter.key}`" v-model.number="filters[filter.key]" type="number" min="1" step="1" class="input" @change="emitChange" />
-          </div>
-        </template>
-        <!-- User Search -->
-        <div v-if="!observer" ref="userSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
-          <label class="input-label">{{ t('admin.usage.userFilter') }}</label>
+      </template>
+      <!-- User Search -->
+      <div v-if="!observer" ref="userSearchRef" class="usage-filter-field usage-filter-dropdown flex min-w-0 flex-col">
+        <label class="input-label">{{ t('admin.usage.userFilter') }}</label>
+        <div class="relative min-w-0">
           <input
             v-model="userKeyword"
             type="text"
@@ -41,12 +50,13 @@
             :placeholder="t('admin.usage.searchUserPlaceholder')"
             @input="debounceUserSearch"
             @focus="showUserDropdown = true"
+            @keyup.enter="emitQuery"
           />
           <button
             v-if="filters.user_id"
             type="button"
             @click="clearUser"
-            class="absolute right-2 top-9 text-gray-400"
+            class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400"
             aria-label="Clear user filter"
           >
             ✕
@@ -67,10 +77,12 @@
             </button>
           </div>
         </div>
+      </div>
 
-        <!-- API Key Search -->
-        <div v-if="!observer" ref="apiKeySearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
-          <label class="input-label">{{ t('usage.apiKeyFilter') }}</label>
+      <!-- API Key Search -->
+      <div v-if="!observer" ref="apiKeySearchRef" class="usage-filter-field usage-filter-dropdown flex min-w-0 flex-col">
+        <label class="input-label">{{ t('usage.apiKeyFilter') }}</label>
+        <div class="relative min-w-0">
           <input
             v-model="apiKeyKeyword"
             type="text"
@@ -78,12 +90,13 @@
             :placeholder="t('admin.usage.searchApiKeyPlaceholder')"
             @input="debounceApiKeySearch"
             @focus="onApiKeyFocus"
+            @keyup.enter="emitQuery"
           />
           <button
             v-if="filters.api_key_id"
             type="button"
-            @click="onClearApiKey"
-            class="absolute right-2 top-9 text-gray-400"
+            @click="clearApiKey"
+            class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400"
             aria-label="Clear API key filter"
           >
             ✕
@@ -104,16 +117,18 @@
             </button>
           </div>
         </div>
+      </div>
 
-        <!-- Model Filter -->
-        <div class="w-full sm:w-auto sm:min-w-[220px]">
-          <label class="input-label">{{ t('usage.model') }}</label>
-          <Select v-model="filters.model" :options="modelOptions" searchable @change="emitChange" />
-        </div>
+      <!-- Model Filter -->
+      <div class="usage-filter-field flex min-w-0 flex-col">
+        <label class="input-label">{{ t('usage.model') }}</label>
+        <Select v-model="filters.model" :options="modelOptions" searchable class="w-full" />
+      </div>
 
-        <!-- Account Filter -->
-        <div v-if="!observer" ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
-          <label class="input-label">{{ t('admin.usage.account') }}</label>
+      <!-- Account Filter -->
+      <div v-if="!observer" ref="accountSearchRef" class="usage-filter-field usage-filter-dropdown flex min-w-0 flex-col">
+        <label class="input-label">{{ t('admin.usage.account') }}</label>
+        <div class="relative min-w-0">
           <input
             v-model="accountKeyword"
             type="text"
@@ -121,12 +136,13 @@
             :placeholder="t('admin.usage.searchAccountPlaceholder')"
             @input="debounceAccountSearch"
             @focus="showAccountDropdown = true"
+            @keyup.enter="emitQuery"
           />
           <button
             v-if="filters.account_id"
             type="button"
             @click="clearAccount"
-            class="absolute right-2 top-9 text-gray-400"
+            class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400"
             aria-label="Clear account filter"
           >
             ✕
@@ -147,83 +163,89 @@
             </button>
           </div>
         </div>
-
-        <!-- Request Type Filter (usage only) -->
-        <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('usage.type') }}</label>
-          <Select v-model="filters.request_type" :options="requestTypeOptions" @change="emitChange" />
-        </div>
-
-        <!-- Native compaction is independent of the transport request type. -->
-        <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('usage.compactionFilter') }}</label>
-          <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="emitChange" />
-        </div>
-
-        <!-- Billing Type Filter (usage only) -->
-        <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[200px]">
-          <label class="input-label">{{ t('admin.usage.billingType') }}</label>
-          <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="emitChange" />
-        </div>
-
-        <!-- Billing Mode Filter (usage only；用户排行的 user-breakdown 接口不支持该维度) -->
-        <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[200px]">
-          <label class="input-label">{{ t('admin.usage.billingMode') }}</label>
-          <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="emitChange" />
-        </div>
-
-        <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[220px]">
-          <label class="input-label">{{ t('admin.usage.upstreamModelAudit') }}</label>
-          <Select v-model="filters.upstream_model_mismatch" :options="upstreamModelMismatchOptions" @change="emitChange" />
-        </div>
-
-        <!-- Error Phase Filter (errors only) -->
-        <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('admin.ops.errorLog.type') }}</label>
-          <Select v-model="filters.error_phase" :options="errorPhaseOptions" @change="emitChange" />
-        </div>
-
-        <!-- Error Category Filter (errors only) -->
-        <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('usage.errors.category') }}</label>
-          <Select v-model="filters.error_category" :options="errorCategoryOptions" @change="emitChange" />
-        </div>
-
-        <!-- Status Code Filter (errors only) -->
-        <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('admin.ops.errorLog.status') }}</label>
-          <Select v-model="filters.status_code" :options="statusCodeOptions" @change="emitChange" />
-        </div>
-
-        <!-- Group Filter -->
-        <div v-if="!observer" class="w-full sm:w-auto sm:min-w-[200px]">
-          <label class="input-label">{{ t('admin.usage.group') }}</label>
-          <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitChange" />
-        </div>
-
       </div>
 
-      <!-- Right: actions -->
-      <div v-if="showActions" class="flex w-full flex-wrap items-center justify-end gap-3 sm:w-auto">
-        <button type="button" @click="$emit('refresh')" class="btn btn-secondary">
-          {{ t('common.refresh') }}
-        </button>
-        <button type="button" @click="$emit('reset')" class="btn btn-secondary">
-          {{ t('common.reset') }}
-        </button>
-        <slot name="after-reset" />
-        <template v-if="mode === 'usage' && !observer">
-          <button type="button" @click="$emit('cleanup')" class="btn btn-danger">
-            {{ t('admin.usage.cleanup.button') }}
-          </button>
-          <button type="button" @click="$emit('export')" :disabled="exporting" class="btn btn-primary">
-            {{ t('usage.exportExcel') }}
-          </button>
-          <button type="button" @click="$emit('export-csv')" :disabled="exporting" class="btn btn-secondary">
-            {{ t('usage.exportCsv') }}
-          </button>
-        </template>
+      <!-- Request Type Filter (usage only) -->
+      <div v-if="mode !== 'errors'" class="usage-filter-field flex min-w-0 flex-col">
+        <label class="input-label">{{ t('usage.type') }}</label>
+        <Select v-model="filters.request_type" :options="requestTypeOptions" class="w-full" />
       </div>
+
+      <!-- Native compaction is independent of the transport request type. -->
+      <div v-if="mode !== 'errors'" class="usage-filter-field flex min-w-0 flex-col">
+        <label class="input-label">{{ t('usage.compactionFilter') }}</label>
+        <Select v-model="filters.native_compaction_v2" :options="compactionOptions" class="w-full" />
+      </div>
+
+      <!-- Billing Type Filter (usage only) -->
+      <div v-if="mode !== 'errors'" class="usage-filter-field flex min-w-0 flex-col">
+        <label class="input-label">{{ t('admin.usage.billingType') }}</label>
+        <Select v-model="filters.billing_type" :options="billingTypeOptions" class="w-full" />
+      </div>
+
+      <!-- Billing Mode Filter (usage only；用户排行的 user-breakdown 接口不支持该维度) -->
+      <div v-if="mode === 'usage'" class="usage-filter-field flex min-w-0 flex-col">
+        <label class="input-label">{{ t('admin.usage.billingMode') }}</label>
+        <Select v-model="filters.billing_mode" :options="billingModeOptions" class="w-full" />
+      </div>
+
+      <div v-if="mode === 'usage'" class="usage-filter-field flex min-w-0 flex-col">
+        <label class="input-label">{{ t('admin.usage.upstreamModelAudit') }}</label>
+        <Select v-model="filters.upstream_model_mismatch" :options="upstreamModelMismatchOptions" class="w-full" />
+      </div>
+
+      <!-- Error Phase Filter (errors only) -->
+      <div v-if="mode === 'errors'" class="usage-filter-field flex min-w-0 flex-col">
+        <label class="input-label">{{ t('admin.ops.errorLog.type') }}</label>
+        <Select v-model="filters.error_phase" :options="errorPhaseOptions" class="w-full" />
+      </div>
+
+      <!-- Error Category Filter (errors only) -->
+      <div v-if="mode === 'errors'" class="usage-filter-field flex min-w-0 flex-col">
+        <label class="input-label">{{ t('usage.errors.category') }}</label>
+        <Select v-model="filters.error_category" :options="errorCategoryOptions" class="w-full" />
+      </div>
+
+      <!-- Status Code Filter (errors only) -->
+      <div v-if="mode === 'errors'" class="usage-filter-field flex min-w-0 flex-col">
+        <label class="input-label">{{ t('admin.ops.errorLog.status') }}</label>
+        <Select v-model="filters.status_code" :options="statusCodeOptions" class="w-full" />
+      </div>
+
+      <!-- Group Filter -->
+      <div v-if="!observer" class="usage-filter-field flex min-w-0 flex-col">
+        <label class="input-label">{{ t('admin.usage.group') }}</label>
+        <Select v-model="filters.group_id" :options="groupOptions" searchable class="w-full" />
+      </div>
+    </div>
+
+    <!-- 操作栏独立一行，靠右；查询为主按钮，导出/刷新等为次按钮 -->
+    <div
+      v-if="showActions"
+      class="usage-filter-actions mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-gray-200 pt-4 dark:border-dark-700"
+      data-testid="usage-filter-actions"
+    >
+      <button type="button" data-testid="usage-filter-query" class="btn btn-primary" @click="emitQuery">
+        {{ t('common.query') }}
+      </button>
+      <button type="button" data-testid="usage-filter-reset" class="btn btn-secondary" @click="$emit('reset')">
+        {{ t('common.reset') }}
+      </button>
+      <button type="button" data-testid="usage-filter-refresh" class="btn btn-secondary" @click="$emit('refresh')">
+        {{ t('common.refresh') }}
+      </button>
+      <slot name="after-reset" />
+      <template v-if="mode === 'usage' && !observer">
+        <button type="button" data-testid="usage-filter-cleanup" @click="$emit('cleanup')" class="btn btn-danger">
+          {{ t('admin.usage.cleanup.button') }}
+        </button>
+        <button type="button" data-testid="usage-filter-export-excel" @click="$emit('export')" :disabled="exporting" class="btn btn-secondary">
+          {{ t('usage.exportExcel') }}
+        </button>
+        <button type="button" data-testid="usage-filter-export-csv" @click="$emit('export-csv')" :disabled="exporting" class="btn btn-secondary">
+          {{ t('usage.exportCsv') }}
+        </button>
+      </template>
     </div>
   </div>
 </template>
@@ -263,12 +285,13 @@ const props = withDefaults(defineProps<Props>(), {
   flat: false,
   observer: false
 })
+// 手动查询：编辑只改草稿（modelValue），不发请求；'query' 由父级应用草稿并查询。
 const emit = defineEmits([
   'update:modelValue',
   'update:startDate',
   'update:endDate',
   'date-range-change',
-  'change',
+  'query',
   'refresh',
   'reset',
   'export',
@@ -380,7 +403,8 @@ const upstreamModelMismatchOptions = ref<SelectOption[]>([
   { value: false, label: t('admin.usage.upstreamModelMatchedOnly') }
 ])
 
-const emitChange = () => emit('change')
+// 点「查询」或在筛选输入框内回车：把草稿交给父级应用（父级负责重置分页并只发一次请求）。
+const emitQuery = () => emit('query')
 
 const clearPendingUserSearch = () => {
   if (userSearchTimeout) {
@@ -443,8 +467,6 @@ const selectUser = async (u: SimpleUser) => {
   } catch {
     apiKeyResults.value = []
   }
-
-  emitChange()
 }
 
 const clearUser = () => {
@@ -454,14 +476,12 @@ const clearUser = () => {
   showUserDropdown.value = false
   filters.value.user_id = undefined
   clearApiKey()
-  emitChange()
 }
 
 const selectApiKey = (k: SimpleApiKey) => {
   apiKeyKeyword.value = k.name || String(k.id)
   showApiKeyDropdown.value = false
   filters.value.api_key_id = k.id
-  emitChange()
 }
 
 const clearApiKey = () => {
@@ -469,11 +489,6 @@ const clearApiKey = () => {
   apiKeyResults.value = []
   showApiKeyDropdown.value = false
   filters.value.api_key_id = undefined
-}
-
-const onClearApiKey = () => {
-  clearApiKey()
-  emitChange()
 }
 
 const debounceAccountSearch = () => {
@@ -497,7 +512,6 @@ const selectAccount = (a: SimpleAccount) => {
   accountKeyword.value = a.name
   showAccountDropdown.value = false
   filters.value.account_id = a.id
-  emitChange()
 }
 
 const clearAccount = () => {
@@ -505,7 +519,6 @@ const clearAccount = () => {
   accountResults.value = []
   showAccountDropdown.value = false
   filters.value.account_id = undefined
-  emitChange()
 }
 
 const onApiKeyFocus = () => {
@@ -612,3 +625,26 @@ const refreshActivePreset = (): { startDate: string; endDate: string } | null =>
 
 defineExpose({ getUserSearchRevision, setUserKeyword, refreshActivePreset })
 </script>
+
+<style scoped>
+/* 同一行的输入框 / 下拉框 / 日期范围触发器统一高度，避免控件参差。 */
+.usage-filter-grid {
+  --usage-filter-control-height: 2.625rem;
+}
+
+.usage-filter-field :deep(.input),
+.usage-filter-field :deep([data-slot='base']),
+.usage-filter-field :deep([data-test='date-range-trigger']) {
+  min-height: var(--usage-filter-control-height);
+}
+
+@media (max-width: 639px) {
+  .usage-filter-actions {
+    justify-content: stretch;
+  }
+
+  .usage-filter-actions > * {
+    flex: 1 1 auto;
+  }
+}
+</style>
