@@ -1490,6 +1490,13 @@ func isReservedEmail(email string) bool {
 		strings.HasSuffix(normalized, DingTalkConnectSyntheticEmailDomain)
 }
 
+// IsSyntheticConnectEmail 报告邮箱是否为第三方 OAuth/SSO 登录时内部生成的
+// 占位地址（@*-connect.invalid）。这类地址没有真实收件箱，不能用于登录或
+// 密码找回，因此后台在判断「改邮箱是否等于转移账号控制权」时需要区分。
+func IsSyntheticConnectEmail(email string) bool {
+	return isReservedEmail(email)
+}
+
 // GenerateToken 生成JWT access token
 // 使用新的access_token_expire_minutes配置项（如果配置了），否则回退到expire_hour。
 // 会话指纹（IP/UA）从 ctx 中提取（由 HTTP 入口中间件注入），缺失时生成不带绑定的 token。

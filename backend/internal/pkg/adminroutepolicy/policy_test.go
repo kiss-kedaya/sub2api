@@ -273,6 +273,30 @@ func TestReadStepUpRulesAreJustified(t *testing.T) {
 	}
 }
 
+// 建号可携带初始余额与授权分组：未挂 step-up 时等于凭空发钱/授权。
+// 注册表必须把 POST /api/v1/admin/users 归为 step_up_required，
+// 且不能被 free:users 家族吞掉。
+func TestUserCreationRequiresStepUp(t *testing.T) {
+	resolved, ok := Resolve("POST", "/api/v1/admin/users")
+	if !ok {
+		t.Fatal("POST /api/v1/admin/users 未归类")
+	}
+	if resolved.Class != ClassStepUpRequired {
+		t.Fatalf("POST /api/v1/admin/users 必须要求 step-up，实际 %s/%s", resolved.Class, resolved.Reason)
+	}
+	if resolved.Reason != ReasonRevenueOperations {
+		t.Fatalf("建号理由应为 %s（余额/授权写入），实际 %s", ReasonRevenueOperations, resolved.Reason)
+	}
+	if resolved.Resource == ResourceNone {
+		t.Fatal("POST /api/v1/admin/users 必须标注敏感资源")
+	}
+	// 其它用户管理读接口保持 secret_free，避免页面加载弹 TOTP。
+	read, ok := Resolve("GET", "/api/v1/admin/users")
+	if !ok || read.Class != ClassSecretFree {
+		t.Fatalf("GET /api/v1/admin/users 应保持 secret_free，实际 %+v ok=%v", read, ok)
+	}
+}
+
 // secretFreeExact 是只读 POST 批量的豁免清单：必须真的 secret_free、理由非空，
 // 且不能借豁免把敏感写操作放过去。
 func TestSecretFreeExactEntriesAreReadOnlyAggregates(t *testing.T) {

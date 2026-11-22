@@ -421,6 +421,9 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers, s
 		// 绑定第三方登录身份等于给目标账号增加一条登录路径（对管理员账号是持久化后门），
 		// 与改密码/改角色同级：要求 step-up 2FA，机器凭据一律拒绝。
 		users.POST("/:id/auth-identities", gin.HandlerFunc(stepUpAuth), h.Admin.User.BindAuthIdentity)
+		// 建号可携带初始余额与授权分组：由集中注册表 adminroutepolicy 的
+		// step_up_required 规则统一门控（fail-closed），handler 内再按请求体
+		// 是否含非零余额/授权分组做一层条件校验。不要在路由文件里另加分类常量。
 		users.POST("", h.Admin.User.Create)
 		users.PUT("/:id", h.Admin.User.Update)
 		// 删除用户属不可逆敏感操作：要求 step-up 二次验证（机器凭据返回 403）。

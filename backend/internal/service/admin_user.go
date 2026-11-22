@@ -122,6 +122,12 @@ func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInpu
 	if err := validateUserSchedulingLimits(&input.Concurrency, &input.RPMLimit); err != nil {
 		return nil, err
 	}
+	// 建号不允许直接写余额：余额变更必须走 UpdateUserBalance（step-up + 余额流水），
+	// 否则一个可绕过 step-up 的建号接口就能凭空增加可用余额且不留任何流水。
+	// 显式 0 仍允许（用于覆盖系统默认初始余额），不产生金额。
+	if input.Balance != nil && *input.Balance != 0 {
+		return nil, infraerrors.BadRequest("INVALID_INPUT", "建号不写余额，请用余额调整接口")
+	}
 	balance := 0.0
 	if input.Balance != nil {
 		balance = *input.Balance

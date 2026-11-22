@@ -145,7 +145,11 @@ export async function create(userData: {
   username?: string
   notes?: string
   role?: 'admin' | 'user'
-  balance?: number
+  /**
+   * 建号不允许写非零余额（后端会 400）：余额调整走 updateBalance（step-up + 流水）。
+   * 显式 0 仍允许，用于覆盖系统默认初始余额。
+   */
+  balance?: 0
   concurrency?: number
   rpm_limit?: number
   allowed_groups?: number[] | null

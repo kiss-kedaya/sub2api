@@ -572,6 +572,8 @@ export default {
       noUsersYet: '暂无用户',
       createFirstUser: '创建您的第一个用户以开始使用系统',
       userCreated: '用户创建成功',
+      initialBalanceNote: '建号时设置初始余额',
+      createInitialBalanceFailed: '用户已创建，但初始余额设置失败，请到该用户的余额调整页手动补上',
       userUpdated: '用户更新成功',
       userDeleted: '用户删除成功',
       userEnabled: '用户已启用',
