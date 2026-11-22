@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   getDepositInfo: vi.fn(), getDepositHistory: vi.fn(), getDepositNetworkStatus: vi.fn(),
   apiGet: vi.fn(), copy: vi.fn(), refreshUser: vi.fn(), showSuccess: vi.fn()
 }))
+// Site-wide public settings the page reads (the only source of the support contact).
+const appStoreState = vi.hoisted(() => ({ contactInfo: '' }))
 vi.mock('@/api/client', () => ({ apiClient: { get: mocks.apiGet } }))
 vi.mock('@/api/crypto', () => ({
   getDepositInfo: mocks.getDepositInfo, getDepositHistory: mocks.getDepositHistory,
@@ -14,7 +16,12 @@ vi.mock('@/api/crypto', () => ({
 }))
 vi.mock('@/composables/useClipboard', () => ({ useClipboard: () => ({ copyToClipboard: mocks.copy }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ refreshUser: mocks.refreshUser }) }))
-vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess }) }))
+vi.mock('@/stores/app', () => ({
+  useAppStore: () => ({
+    showSuccess: mocks.showSuccess,
+    get contactInfo() { return appStoreState.contactInfo }
+  })
+}))
 vi.mock('qrcode', () => ({ default: { toCanvas: vi.fn().mockResolvedValue(undefined) } }))
 // Params are echoed so assertions can see what each message was given.
 vi.mock('vue-i18n', async (original) => ({
@@ -87,6 +94,7 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  appStoreState.contactInfo = ''
   mocks.getDepositHistory.mockReset()
   mocks.getDepositNetworkStatus.mockReset().mockResolvedValue([])
   mocks.refreshUser.mockResolvedValue(undefined)
@@ -585,7 +593,7 @@ describe('user deposit confirmation progress', () => {
     expect(wrapper.findAll('.deposit-view__pending-list li').map(li => li.text())).toEqual(['10 USDT · BSC (BEP20) · 2/3'])
   })
 
-  it('keeps the plain status when the backend sends no confirmation fields or a zero target', async () => {
+  it('keeps a counter-free "confirming" line when the backend sends no confirmation fields or a zero target', async () => {
     mocks.getDepositHistory.mockResolvedValue([
       pendingRow(),
       pendingRow({ tx_hash: hash, confirmations: 1, required_confirmations: 0 })
@@ -593,7 +601,10 @@ describe('user deposit confirmation progress', () => {
     const wrapper = render()
     await flushPromises()
     expect(wrapper.findAll('.deposit-view__badge--pending').map(b => b.text())).toEqual(['deposit.statusConfirming', 'deposit.statusConfirming'])
-    expect(wrapper.find('.deposit-view__progress').exists()).toBe(false)
+    // 缺确认数只给「已扫描到，确认中」：不编 n/m，也不画进度条。
+    expect(wrapper.findAll('.deposit-view__progress-text').map(text => text.text()))
+      .toEqual(['deposit.confirmPending', 'deposit.confirmPending'])
+    expect(wrapper.find('[role="progressbar"]').exists()).toBe(false)
     expect(wrapper.findAll('.deposit-view__pending-list li').map(li => li.text())).toEqual(['10 USDT · BSC (BEP20)', '10 USDT · BSC (BEP20)'])
   })
 
@@ -1050,5 +1061,364 @@ describe('user deposit history: instant credit state', () => {
     expect(wrapper.get('[data-testid="deposit-revoke-reason"]').text()).toBe(
       'deposit.revokeReasonGeneric {"code":"reorg_new_reason"}'
     )
+  })
+})
+
+describe('user deposit confirmation progress: in-flight states', () => {
+  it('shows the confirmation depth of a provisional credit without calling it pending', async () => {
+    mocks.getDepositHistory.mockResolvedValue([
+      {
+        chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'provisional',
+        credited: 67, credited_known: true, confirmations: 1, required_confirmations: 3,
+        created_at: '2026-01-01T00:00:00Z'
+      }
+    ])
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="deposit-progress-text-provisional"]').text())
+      .toBe('deposit.provisionalProgress {"done":1,"required":3,"remaining":2}')
+    const bar = wrapper.get('[role="progressbar"]')
+    expect(bar.attributes('aria-valuenow')).toBe('1')
+    expect(bar.attributes('aria-valuemax')).toBe('3')
+    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('width: 33%')
+    // 临时入账的说明还在：进度条不能把「可能被回滚」这件事挤掉。
+    expect(wrapper.get('[data-testid="deposit-provisional-hint"]').text()).toBe('deposit.provisionalHint')
+  })
+
+  it('falls back to a counter-free provisional line when no counters are sent', async () => {
+    mocks.getDepositHistory.mockResolvedValue([
+      {
+        chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'provisional',
+        credited: 67, credited_known: true, created_at: '2026-01-01T00:00:00Z'
+      }
+    ])
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="deposit-progress-text-provisional"]').text())
+      .toBe('deposit.provisionalConfirming')
+    expect(wrapper.find('[role="progressbar"]').exists()).toBe(false)
+  })
+
+  it('does not draw a progress line for finalized rows', async () => {
+    mocks.getDepositHistory.mockResolvedValue([
+      { chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'credited', credited: 67, confirmations: 3, required_confirmations: 3, created_at: '2026-01-01T00:00:00Z' }
+    ])
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.find('.deposit-view__progress').exists()).toBe(false)
+  })
+})
+
+describe('user deposit amount pre-check', () => {
+  const bscAddress = '0x' + '12'.repeat(20)
+  const amount = (wrapper: ReturnType<typeof render>) => wrapper.get('[data-testid="deposit-amount-input"]')
+  const copyButton = (wrapper: ReturnType<typeof render>) =>
+    wrapper.get('.deposit-view__copy').element as HTMLButtonElement
+
+  async function typeAmount(wrapper: ReturnType<typeof render>, value: string) {
+    await amount(wrapper).setValue(value)
+  }
+
+  function usdtInfo(overrides: Record<string, unknown> = {}) {
+    return {
+      enabled: true,
+      chains: [{ chain: 'bsc', address: bscAddress, tokens: ['USDT'] }],
+      rate: 6.7, min_amount: 1, max_amount: 0,
+      ...overrides
+    }
+  }
+
+  it('does not gate anything before the user declares an amount', async () => {
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+
+    expect(amount(wrapper).attributes('aria-invalid')).toBe('false')
+    expect(wrapper.get('[data-testid="deposit-amount-hint"]').text())
+      .toBe('deposit.amountHintMin {"min":"1","unit":"USDT"}')
+    expect(wrapper.find('[data-testid="deposit-amount-error"]').exists()).toBe(false)
+    expect(copyButton(wrapper).disabled).toBe(false)
+    await wrapper.get('.deposit-view__copy').trigger('click')
+    expect(mocks.copy).toHaveBeenCalledWith(bscAddress)
+  })
+
+  it('warns immediately when the amount is below the minimum and blocks the transfer action', async () => {
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+
+    await typeAmount(wrapper, '0.5')
+    expect(wrapper.get('[data-testid="deposit-amount-error"]').text())
+      .toBe('deposit.amountBelowMin {"min":"1","unit":"USDT"}')
+    expect(amount(wrapper).attributes('aria-invalid')).toBe('true')
+    expect(copyButton(wrapper).disabled).toBe(true)
+    expect(wrapper.get('[data-testid="deposit-copy-blocked"]').text()).toBe('deposit.copyBlockedByAmount')
+
+    // 即使绕过禁用态触发 click，也不会把地址交出去。
+    await wrapper.get('.deposit-view__copy').trigger('click')
+    expect(mocks.copy).not.toHaveBeenCalled()
+  })
+
+  it('accepts exactly the minimum and shows the estimated credit', async () => {
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+
+    await typeAmount(wrapper, '1')
+    expect(wrapper.find('[data-testid="deposit-amount-error"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="deposit-amount-hint"]').text()).toBe('deposit.amountWithinRange')
+    expect(wrapper.get('[data-testid="deposit-amount-credit"]').text())
+      .toBe('deposit.amountEstimateCredit {"credit":"6.7"}')
+    expect(copyButton(wrapper).disabled).toBe(false)
+  })
+
+  it('warns above the per-transfer cap and accepts exactly the cap', async () => {
+    mocks.getDepositInfo.mockResolvedValue(usdtInfo({ max_amount: 100 }))
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+
+    await typeAmount(wrapper, '100')
+    expect(wrapper.find('[data-testid="deposit-amount-error"]').exists()).toBe(false)
+    await typeAmount(wrapper, '100.01')
+    expect(wrapper.get('[data-testid="deposit-amount-error"]').text())
+      .toBe('deposit.amountAboveMax {"max":"100","unit":"USDT"}')
+    expect(copyButton(wrapper).disabled).toBe(true)
+  })
+
+  it('rejects text and zero immediately with a readable error', async () => {
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+
+    await typeAmount(wrapper, 'abc')
+    expect(wrapper.get('[data-testid="deposit-amount-error"]').text()).toBe('deposit.amountInvalid')
+    await typeAmount(wrapper, '0')
+    expect(wrapper.get('[data-testid="deposit-amount-error"]').text()).toBe('deposit.amountInvalid')
+    expect(copyButton(wrapper).disabled).toBe(true)
+  })
+
+  it('prefers the explicit credit_min_amount / credit_max_amount fields', async () => {
+    mocks.getDepositInfo.mockResolvedValue(usdtInfo({ min_amount: 1, credit_min_amount: 5, credit_max_amount: 500 }))
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+
+    await typeAmount(wrapper, '2')
+    expect(wrapper.get('[data-testid="deposit-amount-error"]').text())
+      .toBe('deposit.amountBelowMin {"min":"5","unit":"USDT"}')
+  })
+
+  it('performs no validation at all when the deployment exposes no thresholds', async () => {
+    mocks.getDepositInfo.mockResolvedValue(usdtInfo({ min_amount: 0, max_amount: 0 }))
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="deposit-amount-hint"]').text()).toBe('deposit.amountNoLimit')
+    await typeAmount(wrapper, '999999')
+    expect(wrapper.find('[data-testid="deposit-amount-error"]').exists()).toBe(false)
+    expect(copyButton(wrapper).disabled).toBe(false)
+  })
+
+  it('compares a market-priced coin by USD notional using the display quote', async () => {
+    mocks.getDepositInfo.mockResolvedValue({
+      enabled: true,
+      chains: [{
+        chain: 'ethereum', address: '0x' + '34'.repeat(20), tokens: ['ETH', 'USDT'],
+        assets: [
+          { symbol: 'ETH', native: true, market_priced: true, rate: null, reference_price_usd: '3210.12' },
+          { symbol: 'USDT', native: false, market_priced: false, rate: 6.7 }
+        ]
+      }],
+      min_amount: 0.001, max_amount: 10000
+    })
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+
+    // 稳定币默认选中；切到 ETH 后限额按美元名义价值比较。
+    await wrapper.findAll('.deposit-view__asset')[1].trigger('click')
+    await typeAmount(wrapper, '0.0000003')
+    expect(wrapper.get('[data-testid="deposit-amount-error"]').text())
+      .toBe('deposit.amountBelowMin {"min":"0.001","unit":"USD"}')
+    expect(copyButton(wrapper).disabled).toBe(true)
+
+    await typeAmount(wrapper, '1')
+    expect(wrapper.find('[data-testid="deposit-amount-error"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="deposit-amount-notional"]').text())
+      .toBe('deposit.amountEstimateMarket {"usd":"3210.12"}')
+  })
+
+  it('degrades to an explanation instead of a rejection when no market quote exists', async () => {
+    mocks.getDepositInfo.mockResolvedValue({
+      enabled: true,
+      chains: [{
+        chain: 'ethereum', address: '0x' + '34'.repeat(20), tokens: ['ETH'],
+        assets: [{ symbol: 'ETH', native: true, market_priced: true, rate: null }]
+      }],
+      min_amount: 0.001, max_amount: 10000
+    })
+    mocks.getDepositHistory.mockResolvedValue([])
+    const wrapper = render()
+    await flushPromises()
+
+    await typeAmount(wrapper, '0.5')
+    expect(wrapper.get('[data-testid="deposit-amount-hint"]').text()).toBe('deposit.amountUnverifiable')
+    expect(wrapper.find('[data-testid="deposit-amount-error"]').exists()).toBe(false)
+    expect(copyButton(wrapper).disabled).toBe(false)
+  })
+})
+
+describe('user deposit history filters', () => {
+  const isoDaysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+
+  function historyRow(status: string, hashValue: string, daysAgo: number) {
+    return {
+      chain: 'bsc', tx_hash: hashValue, token: 'USDT', amount: '10',
+      status, credited: status === 'credited' ? 67 : 0, created_at: isoDaysAgo(daysAgo)
+    }
+  }
+
+  beforeEach(() => {
+    mocks.getDepositHistory.mockResolvedValue([
+      historyRow('credited', '0x' + 'a1'.repeat(32), 1),
+      historyRow('provisional', '0x' + 'b2'.repeat(32), 2),
+      historyRow('revoked', '0x' + 'c3'.repeat(32), 3),
+      historyRow('ignored', '0x' + 'd4'.repeat(32), 40),
+      historyRow('pending', '0x' + 'e5'.repeat(32), 1),
+    ])
+  })
+
+  const tableRows = (wrapper: ReturnType<typeof render>) => wrapper.findAll('tbody tr')
+
+  it('filters by status locally without re-reading the API', async () => {
+    const wrapper = render()
+    await flushPromises()
+    expect(tableRows(wrapper)).toHaveLength(5)
+
+    await wrapper.get('[data-testid="deposit-filter-status-revoked"]').trigger('click')
+    expect(tableRows(wrapper)).toHaveLength(1)
+    expect(tableRows(wrapper)[0].text()).toContain('0x' + 'c3'.repeat(32))
+    expect(wrapper.get('[data-testid="deposit-filter-status-revoked"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('[data-testid="deposit-filter-note"]').text())
+      .toBe('deposit.filterResult {"n":1,"total":5}')
+    // 本地过滤：不重新请求、不打断 5 秒轮询节奏。
+    expect(mocks.getDepositHistory).toHaveBeenCalledOnce()
+  })
+
+  it('filters by time range and combines it with the status', async () => {
+    const wrapper = render()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="deposit-filter-range-7d"]').trigger('click')
+    // 40 天前那条被时间范围挡掉，其余 4 条保留。
+    expect(tableRows(wrapper)).toHaveLength(4)
+    expect(wrapper.get('.deposit-view__history').text()).not.toContain('0x' + 'd4'.repeat(32))
+
+    await wrapper.get('[data-testid="deposit-filter-status-credited"]').trigger('click')
+    expect(tableRows(wrapper)).toHaveLength(1)
+    expect(tableRows(wrapper)[0].text()).toContain('0x' + 'a1'.repeat(32))
+
+    await wrapper.get('[data-testid="deposit-filter-status-provisional"]').trigger('click')
+    expect(tableRows(wrapper)).toHaveLength(1)
+    expect(tableRows(wrapper)[0].text()).toContain('0x' + 'b2'.repeat(32))
+  })
+
+  it('shows an empty state with a reset action when nothing matches', async () => {
+    const wrapper = render()
+    await flushPromises()
+
+    // 已忽略那笔在 40 天前，加上 7 天范围就一条都不剩。
+    await wrapper.get('[data-testid="deposit-filter-status-ignored"]').trigger('click')
+    await wrapper.get('[data-testid="deposit-filter-range-7d"]').trigger('click')
+    expect(tableRows(wrapper)).toHaveLength(0)
+    expect(wrapper.get('[data-testid="deposit-no-filtered-history"]').text()).toContain('deposit.noFilteredHistory')
+    expect(wrapper.get('[data-testid="deposit-filter-note"]').text())
+      .toBe('deposit.filterResult {"n":0,"total":5}')
+
+    await wrapper.get('[data-testid="deposit-reset-filters"]').trigger('click')
+    expect(tableRows(wrapper)).toHaveLength(5)
+    expect(wrapper.find('[data-testid="deposit-filter-note"]').exists()).toBe(false)
+  })
+
+  it('says the list is capped at the most recent 50 rows when the page is full', async () => {
+    mocks.getDepositHistory.mockResolvedValue(
+      Array.from({ length: 50 }, (_, index) => historyRow('credited', '0x' + (index % 10).toString().repeat(64), 1))
+    )
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="deposit-history-limit"]').text())
+      .toBe('deposit.historyLimitHint {"n":50}')
+    // 只有 49 条时不提示上限，免得以为记录被截断。
+    mocks.getDepositHistory.mockResolvedValue(
+      Array.from({ length: 49 }, (_, index) => historyRow('credited', '0x' + (index % 10).toString().repeat(64), 1))
+    )
+    await wrapper.get('.deposit-view__history-head button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="deposit-history-limit"]').exists()).toBe(false)
+  })
+})
+
+describe('user deposit revoked support entry', () => {
+  const revoked = {
+    chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'revoked',
+    credited: 0, credited_known: false, revoked_at: '2026-01-01T00:00:30Z',
+    revoke_reason: 'reorg_noncanonical_block', created_at: '2026-01-01T00:00:00Z'
+  }
+
+  it('links to the site-wide support contact when it is a URL', async () => {
+    appStoreState.contactInfo = 'https://t.me/kedaya_help'
+    mocks.getDepositHistory.mockResolvedValue([revoked])
+    const wrapper = render()
+    await flushPromises()
+
+    const link = wrapper.get('[data-testid="deposit-support-link"]')
+    expect(link.attributes('href')).toBe('https://t.me/kedaya_help')
+    expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('rel')).toBe('noopener noreferrer')
+    expect(link.text()).toBe('deposit.revokedSupportAction')
+    expect(wrapper.find('[data-testid="deposit-support-copy"]').exists()).toBe(false)
+  })
+
+  it('offers a copy action for a free-text contact such as QQ', async () => {
+    appStoreState.contactInfo = 'QQ: 123456789'
+    mocks.copy.mockResolvedValue(true)
+    mocks.getDepositHistory.mockResolvedValue([revoked])
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="deposit-support-link"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="deposit-support-copy"]').text()).toBe('deposit.revokedSupportAction')
+    expect(wrapper.get('.deposit-view__support').text()).toContain('QQ: 123456789')
+
+    await wrapper.get('[data-testid="deposit-support-copy"]').trigger('click')
+    await flushPromises()
+    expect(mocks.copy).toHaveBeenCalledWith('QQ: 123456789')
+    expect(wrapper.get('[data-testid="deposit-support-copied"]').text()).toBe('deposit.supportCopied')
+  })
+
+  it('explains what to do when no support contact is configured', async () => {
+    mocks.getDepositHistory.mockResolvedValue([revoked])
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.get('.deposit-view__support').text()).toBe('deposit.supportUnavailable')
+    expect(wrapper.find('[data-testid="deposit-support-link"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="deposit-support-copy"]').exists()).toBe(false)
+    // 已回滚的原因和提示不能被客服入口挤掉。
+    expect(wrapper.get('[data-testid="deposit-revoke-reason"]').text()).toBe('deposit.revokeReasonReorgNoncanonical')
+    expect(wrapper.get('[data-testid="deposit-revoked-hint"]').text()).toBe('deposit.revokedHint')
+  })
+
+  it('does not render the support entry for non-revoked rows', async () => {
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.find('.deposit-view__support').exists()).toBe(false)
   })
 })

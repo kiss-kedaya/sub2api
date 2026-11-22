@@ -93,9 +93,19 @@
                 {{ assetLabel(asset) }}
               </button>
             </div>
+            <!-- 02 金额预检：先让用户报出要转多少，范围外当场拦住，别等钱转出去才发现不入账。 -->
+            <div v-if="current" class="deposit-view__amount-check">
+              <div class="deposit-view__section-head deposit-view__section-head--amount">
+                <span class="deposit-view__step">02</span>
+                <h2>{{ t('deposit.amountCheckTitle') }}</h2>
+                <span class="deposit-view__section-note">{{ t('deposit.amountCheckHint') }}</span>
+              </div>
+              <DepositAmountField v-model="amountInput" :check="amountCheck" :unit="selectedSymbol || 'USDT'"
+                :limit-unit="limitUnit" :rate="selectedFixedRate" :disabled="networkTransferBlocked" />
+            </div>
             <template v-if="current && !networkTransferBlocked">
               <div class="deposit-view__section-head deposit-view__section-head--address">
-                <span class="deposit-view__step">02</span>
+                <span class="deposit-view__step">03</span>
                 <h2>{{ t('deposit.transferToAddress') }}</h2>
                 <span v-for="tk in current.tokens" :key="tk" class="deposit-view__token">{{ tk }}</span>
               </div>
@@ -110,9 +120,12 @@
                 <div class="deposit-view__address-info">
                   <span class="deposit-view__label">{{ t('deposit.yourAddress') }} · {{ chainLabel(current.chain) }}</span>
                   <code class="deposit-view__address">{{ current.address }}</code>
-                  <button type="button" class="btn btn-primary deposit-view__copy" @click="copyAddress">
+                  <button type="button" class="btn btn-primary deposit-view__copy" :disabled="amountBlocksTransfer"
+                    :title="amountBlocksTransfer ? t('deposit.copyBlockedByAmount') : undefined" @click="copyAddress">
                     {{ copied ? t('deposit.copied') : t('deposit.copyAddress') }}
                   </button>
+                  <p v-if="amountBlocksTransfer" class="deposit-view__copy-warning" role="status"
+                    data-testid="deposit-copy-blocked">{{ t('deposit.copyBlockedByAmount') }}</p>
                   <p class="deposit-view__copy-status" role="status" aria-live="polite">{{ copyError ? t('deposit.copyFailed') : t('deposit.exclusiveNotice') }}</p>
                 </div>
               </div>
@@ -172,6 +185,15 @@
             </button>
           </div>
           <p v-if="historyError" class="deposit-view__history-error" role="alert">{{ t('deposit.historyFailed') }}</p>
+          <!-- 本地筛选：只重排已加载的记录，不重新请求、不影响 5 秒自动刷新。 -->
+          <DepositHistoryFilters v-if="history.length" v-model:status="statusFilter" v-model:range="timeRange" />
+          <p v-if="history.length && filtersActive" class="deposit-view__filter-note" data-testid="deposit-filter-note">
+            {{ t('deposit.filterResult', { n: displayRows.length, total: history.length }) }}
+          </p>
+          <!-- 后端只返回最近 50 条且不分页：筛选范围要说清楚，别让人以为更早的记录没了。 -->
+          <p v-if="history.length >= HISTORY_PAGE_LIMIT" class="deposit-view__filter-note" data-testid="deposit-history-limit">
+            {{ t('deposit.historyLimitHint', { n: history.length }) }}
+          </p>
           <div v-if="pendingRows.length" class="deposit-view__pending" role="status">
             <span class="deposit-view__pending-dot" aria-hidden="true"></span>
             <div class="deposit-view__pending-body">
@@ -184,11 +206,11 @@
               </p>
             </div>
           </div>
-          <div v-if="history.length" class="deposit-view__table-wrap">
+          <div v-if="displayRows.length" class="deposit-view__table-wrap">
             <table class="deposit-view__table">
               <thead><tr><th>{{ t('deposit.chain') }}</th><th>{{ t('deposit.amount') }}</th><th>{{ t('deposit.credited') }}</th><th>{{ t('common.status') }}</th><th>{{ t('deposit.txHash') }}</th><th>{{ t('deposit.time') }}</th></tr></thead>
               <tbody>
-                <tr v-for="({ row, progress }, i) in rows" :key="row.tx_hash + '-' + i">
+                <tr v-for="({ row, progress }, i) in displayRows" :key="row.tx_hash + '-' + i">
                   <td :data-label="t('deposit.chain')">{{ chainLabel(row.chain) }}</td>
                   <td :data-label="t('deposit.amount')" class="deposit-view__number">{{ row.amount }} <span class="deposit-view__muted">{{ row.token }}</span></td>
                   <td :data-label="t('deposit.credited')" class="deposit-view__number">
@@ -201,10 +223,23 @@
                     <span v-else-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason, row.token === 'native', row.status) }}</span>
                     <span v-if="row.status === 'revoked'" class="deposit-view__reason deposit-view__reason--revoked" data-testid="deposit-revoked-hint">{{ t('deposit.revokedHint') }}</span>
                     <span v-else-if="row.status === 'provisional'" class="deposit-view__hint" data-testid="deposit-provisional-hint">{{ t('deposit.provisionalHint') }}</span>
-                    <div v-if="progress" class="deposit-view__progress">
-                      <span class="deposit-view__progress-text">{{ progressText(progress) }}</span>
-                      <span class="deposit-view__progress-track" role="progressbar" aria-valuemin="0"
-                        :aria-valuemax="progress.required" :aria-valuenow="progress.done" :aria-label="progressText(progress)">
+                    <!-- 回滚后的下一步：能点就点。地址/邮箱直接开客服，纯文本联系方式就复制，没配就直说。 -->
+                    <span v-if="row.status === 'revoked'" class="deposit-view__support">
+                      <a v-if="supportLink" :href="supportLink" target="_blank" rel="noopener noreferrer"
+                        class="deposit-view__support-action" data-testid="deposit-support-link">{{ t('deposit.revokedSupportAction') }}</a>
+                      <template v-else-if="contactInfo">
+                        <button type="button" class="deposit-view__support-action" data-testid="deposit-support-copy"
+                          @click="copySupportContact">{{ t('deposit.revokedSupportAction') }}</button>
+                        <span class="deposit-view__support-contact">{{ contactInfo }}</span>
+                        <span v-if="supportCopied" class="deposit-view__support-copied" role="status"
+                          data-testid="deposit-support-copied">{{ t('deposit.supportCopied') }}</span>
+                      </template>
+                      <template v-else>{{ t('deposit.supportUnavailable') }}</template>
+                    </span>
+                    <div v-if="isConfirmingRow(row)" class="deposit-view__progress">
+                      <span class="deposit-view__progress-text" :data-testid="'deposit-progress-text-' + row.status">{{ progressText(row, progress) }}</span>
+                      <span v-if="progress" class="deposit-view__progress-track" role="progressbar" aria-valuemin="0"
+                        :aria-valuemax="progress.required" :aria-valuenow="progress.done" :aria-label="progressText(row, progress)">
                         <span class="deposit-view__progress-fill" :style="{ width: progress.percent + '%' }"></span>
                       </span>
                     </div>
@@ -227,6 +262,14 @@
               </tbody>
             </table>
           </div>
+          <div v-else-if="history.length && filtersActive && !loading && !refreshingHistory" class="deposit-view__empty"
+            data-testid="deposit-no-filtered-history">
+            <strong>{{ t('deposit.noFilteredHistory') }}</strong>
+            <p>{{ t('deposit.noFilteredHistoryHint') }}</p>
+            <button type="button" class="btn btn-secondary" data-testid="deposit-reset-filters" @click="resetFilters">
+              {{ t('deposit.resetFilters') }}
+            </button>
+          </div>
           <div v-else-if="!loading && !refreshingHistory && !historyError" class="deposit-view__empty">
             <strong>{{ t('deposit.noHistory') }}</strong>
             <p v-if="info?.enabled">{{ t('deposit.noHistoryHint') }}</p>
@@ -246,6 +289,8 @@ import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
 import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
 import KeyRotationRiskAckBanner from '@/components/user/KeyRotationRiskAckBanner.vue'
+import DepositAmountField from '@/components/deposit/DepositAmountField.vue'
+import DepositHistoryFilters from '@/components/deposit/DepositHistoryFilters.vue'
 import {
   getDepositHistory, getDepositInfo, getDepositNetworkStatus,
   type DepositChain, type DepositInfo, type DepositNetworkState, type DepositNetworkStatus, type DepositRecord,
@@ -256,7 +301,17 @@ import { useKeyRotationGate } from '@/composables/useKeyRotationGate'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { explorerTxURL } from '@/utils/cryptoExplorer'
+import { depositAmountLimits, validateDepositAmount, type DepositAmountCheck } from '@/utils/depositAmount'
 import { depositRevokeReasonCopy } from '@/utils/depositRevoke'
+import { supportContactHref } from '@/utils/depositSupport'
+import {
+  confirmationProgress, depositProgressCopy, isConfirmingDeposit,
+  type ConfirmationProgress,
+} from '@/utils/depositProgress'
+import {
+  filterDepositHistory, isDepositFilterActive,
+  type DepositStatusFilter, type DepositTimeRange,
+} from '@/utils/depositHistoryFilter'
 import {
   cardEtaText, etaNoticeText, networkBadge, networkStateOf, parseEtaSeconds, pruneNetworkStatuses,
   type DepositNetworkBadge,
@@ -281,13 +336,9 @@ const riskAckActive = computed(
 // unmounted views schedule nothing.
 const HISTORY_POLL_MS = 5000
 const PENDING_SUMMARY_LIMIT = 3
-
-interface ConfirmationProgress {
-  done: number
-  required: number
-  remaining: number
-  percent: number
-}
+// The history endpoint returns the most recent 50 rows and is not paginated;
+// the local filters therefore only ever see those rows.
+const HISTORY_PAGE_LIMIT = 50
 
 interface HistoryRow {
   row: DepositRecord
@@ -445,6 +496,32 @@ const referencePrice = computed(() => {
 
 const limitUnit = computed(() => (selectedMarketPriced.value ? 'USD' : rateUnit.value))
 
+// ---- 金额预检 ----
+// The user declares what they are about to send so an amount the backend would
+// never credit is caught before the money leaves the wallet. Thresholds come
+// from deposit-info only: a deployment that exposes none performs no check
+// (never a hard-coded default that could reject a legitimate transfer).
+const amountInput = ref('')
+const amountLimits = computed(() => depositAmountLimits(info.value))
+// The market quote is display-only: without it a market-priced amount cannot be
+// converted to USD notional, so its range check degrades to "unverifiable".
+const referencePriceUsd = computed<number | null>(() => {
+  const raw = referencePrice.value
+  if (!raw) return null
+  const price = Number(raw)
+  return Number.isFinite(price) && price > 0 ? price : null
+})
+const amountCheck = computed<DepositAmountCheck>(() =>
+  validateDepositAmount(amountInput.value, amountLimits.value, {
+    marketPriced: selectedMarketPriced.value,
+    priceUsd: referencePriceUsd.value
+  })
+)
+// Invalid/out-of-range amount blocks the page's transfer action (copying the
+// address is how this page hands the transfer to the wallet). An empty field
+// means "no amount declared" and keeps the page working exactly as before.
+const amountBlocksTransfer = computed(() => Boolean(current.value) && amountCheck.value.blocked)
+
 function assetLabel(asset: AssetOption): string {
   if (!asset.native) return asset.symbol
   return `${asset.symbol} (${nativeNetworkLabel(selectedChain.value)})`
@@ -463,25 +540,58 @@ function nativeNetworkLabel(chain: string): string {
   }
 }
 
-// Older backends send no confirmation fields, and a chain without a
-// confirmation target sends 0: both fall back to the plain status badge.
-function confirmationProgress(row: DepositRecord): ConfirmationProgress | null {
-  if (row.status !== 'pending') return null
-  const required = Math.floor(Number(row.required_confirmations))
-  const confirmations = Number(row.confirmations)
-  if (!Number.isFinite(required) || required <= 0 || !Number.isFinite(confirmations)) return null
-  const done = Math.min(Math.max(Math.floor(confirmations), 0), required)
-  return { done, required, remaining: required - done, percent: Math.round((done / required) * 100) }
+function rowProgress(row: DepositRecord): ConfirmationProgress | null {
+  return confirmationProgress(row)
 }
 
-function progressText(p: ConfirmationProgress): string {
-  return p.remaining > 0
-    ? t('deposit.confirmProgress', { done: p.done, required: p.required, remaining: p.remaining })
-    : t('deposit.confirmProgressDone', { done: p.done, required: p.required })
+// Both in-flight states (pending and provisional) get a progress line; a row
+// without counters still says "confirming" rather than inventing n/m.
+function isConfirmingRow(row: DepositRecord): boolean {
+  return isConfirmingDeposit(row.status)
 }
 
-const rows = computed<HistoryRow[]>(() => history.value.map(row => ({ row, progress: confirmationProgress(row) })))
+function progressText(row: DepositRecord, progress: ConfirmationProgress | null): string {
+  const copy = depositProgressCopy(row, progress)
+  return copy.params ? t(copy.key, copy.params) : t(copy.key)
+}
+
+const rows = computed<HistoryRow[]>(() => history.value.map(row => ({ row, progress: rowProgress(row) })))
 const pendingRows = computed(() => rows.value.filter(item => item.row.status === 'pending'))
+
+// ---- 充值记录本地筛选 ----
+// The history endpoint is not paginated (one page of recent rows), so the
+// filters run in the browser: they never trigger a request and never interrupt
+// the 5s refresh loop. If the list ever becomes paginated this becomes a
+// per-page filter, which is why the count hint already says "n of total".
+const statusFilter = ref<DepositStatusFilter>('all')
+const timeRange = ref<DepositTimeRange>('all')
+const filtersActive = computed(() => isDepositFilterActive(statusFilter.value, timeRange.value))
+const displayRows = computed<HistoryRow[]>(() => {
+  const visible = filterDepositHistory(history.value, statusFilter.value, timeRange.value)
+  return visible.map(row => ({ row, progress: rowProgress(row) }))
+})
+
+function resetFilters() {
+  statusFilter.value = 'all'
+  timeRange.value = 'all'
+}
+
+// ---- 回滚行的客服入口 ----
+// Reuse the site's only public contact field (same source as the user menu).
+// A URL/email/Telegram handle becomes a link; free text ("QQ: 123456789")
+// becomes a copy action, so the user always gets the value even without a URL.
+const contactInfo = computed(() => (appStore.contactInfo || '').trim())
+const supportLink = computed(() => supportContactHref(contactInfo.value))
+const supportCopied = ref(false)
+let supportCopiedTimer: ReturnType<typeof setTimeout> | null = null
+
+async function copySupportContact() {
+  if (!contactInfo.value) return
+  if (!(await copyToClipboard(contactInfo.value))) return
+  supportCopied.value = true
+  if (supportCopiedTimer) clearTimeout(supportCopiedTimer)
+  supportCopiedTimer = setTimeout(() => (supportCopied.value = false), 1800)
+}
 
 // One summary line per confirming deposit: "10 USDT · BSC (BEP20) · 2/3".
 function pendingLine(item: HistoryRow): string {
@@ -609,7 +719,8 @@ function statusText(status: string): string {
 }
 
 async function copyAddress() {
-  if (depositBlocked.value || networkTransferBlocked.value || !current.value) return
+  // 金额不在入账范围时不放行转账动作：这页「提交」就是把地址交给钱包。
+  if (amountBlocksTransfer.value || depositBlocked.value || networkTransferBlocked.value || !current.value) return
   copyError.value = false
   if (await copyToClipboard(current.value.address)) {
     copied.value = true
@@ -802,6 +913,7 @@ onUnmounted(() => {
   stopPolling()
   resetNetworkStatuses()
   if (copyTimer) clearTimeout(copyTimer)
+  if (supportCopiedTimer) clearTimeout(supportCopiedTimer)
 })
 </script>
 
@@ -833,6 +945,11 @@ onUnmounted(() => {
 .deposit-view__asset { display: inline-flex; align-items: center; justify-content: center; min-height: 2.25rem; padding: .45rem .75rem; border: 1px solid var(--ui-border); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
 .deposit-view__asset:focus-visible { outline: 2px solid var(--signal-accent, #0891b2); outline-offset: 2px; }
 .deposit-view__asset--active { border-color: var(--signal-accent, #0891b2); background: var(--signal-accent-soft, #0891b218); font-weight: 600; }
+/* 金额预检区：和地址区一样用上分隔线，但排在选币之后、地址之前。 */
+.deposit-view__amount-check { margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--signal-line, #64748b30); }
+.deposit-view__section-head--amount { flex-wrap: wrap; margin-bottom: .25rem; }
+.deposit-view__section-note { color: var(--signal-muted, #8c99a6); font-size: .6875rem; font-weight: 400; line-height: 1.5; }
+.deposit-view__copy-warning { margin-top: .5rem; color: #dc2626; font-size: .75rem; line-height: 1.6; }
 .deposit-view__token { padding: .15rem .5rem; border-radius: .375rem; border: 1px solid #10b98145; background: #10b98112; color: #10b981; font-size: .6875rem; font-weight: 600; }
 .deposit-view__address-block { display: grid; grid-template-columns: 12.5rem minmax(0, 1fr); gap: 1.25rem; align-items: start; }
 .deposit-view__qr-wrap { text-align: center; }
@@ -884,6 +1001,12 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
 .deposit-view__badge--ignored, .deposit-view__badge--reverted { background: #ef444412; border-color: #ef444430; color: #ef4444; }
 .deposit-view__reason { display: block; max-width: 21rem; margin-top: .4rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.6; }
 .deposit-view__reason--revoked { color: #dc2626; }
+/* 回滚行的客服入口：链接/按钮 + 纯文本联系方式的复制兜底。 */
+.deposit-view__support { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .5rem; max-width: 21rem; margin-top: .35rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.6; }
+.deposit-view__support-action { padding: 0; color: var(--signal-accent, #0891b2); font-size: .75rem; font-weight: 600; text-decoration: underline; text-underline-offset: .15rem; }
+.deposit-view__support-contact { color: inherit; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.deposit-view__support-copied { color: #10b981; }
+.deposit-view__filter-note { margin: -.25rem 0 1rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; }
 .deposit-view__hint { display: block; max-width: 21rem; margin-top: .4rem; color: #d97706; font-size: .75rem; line-height: 1.6; }
 .deposit-view__status { min-width: 9rem; }
 .deposit-view__progress { display: grid; gap: .35rem; max-width: 12rem; margin-top: .45rem; }

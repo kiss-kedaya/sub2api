@@ -41,8 +41,17 @@ export interface DepositInfo {
   // Deprecated: older backends send one asset-independent rate. New backends
   // send the rate per asset because native coins settle at market price.
   rate?: number
+  // Credit thresholds. `min_amount` / `max_amount` are the fields every
+  // backend sends; they are the same `credit_min_amount` /
+  // `credit_max_amount` configured in the admin panel.
   min_amount: number
   max_amount: number
+  // Optional aliases a newer backend may expose verbatim. The page prefers
+  // them when present and falls back to min_amount / max_amount otherwise; it
+  // never falls back to a hard-coded number, because a threshold invented by
+  // the client would reject deposits the backend would have credited.
+  credit_min_amount?: number | null
+  credit_max_amount?: number | null
 }
 
 // 'slow' is a moderate, still self-healing backlog; 'delayed' is a real delay.
