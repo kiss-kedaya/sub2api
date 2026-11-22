@@ -420,8 +420,6 @@ func TestLowRiskAdminProbesAreSecretFree(t *testing.T) {
 		{"POST", "/api/v1/admin/accounts/check-mixed-channel", ReasonAccountBindingPreflight},
 		{"POST", "/api/v1/admin/accounts/:id/schedulable-timers/preview", ReasonAccountTimerPreview},
 		{"POST", "/api/v1/admin/accounts/:id/ollama-cloud-usage/refresh", ReasonAccountUsageAggregate},
-		{"POST", "/api/v1/admin/accounts/:id/models/sync-upstream", ReasonUpstreamModelCatalogProbe},
-		{"POST", "/api/v1/admin/accounts/models/sync-upstream-preview", ReasonUpstreamModelCatalogProbe},
 		{"POST", "/api/v1/admin/upstream-monitor/channels/:id/announcements/sync", ReasonChannelAnnouncementSync},
 		{"POST", "/api/v1/admin/settings/test-smtp", ReasonSMTPConnectivityTest},
 		{"POST", "/api/v1/admin/settings/web-search-emulation/test", ReasonWebSearchEmulationProbe},
@@ -465,6 +463,10 @@ func TestLowRiskAdminProbesDoNotCrossSensitiveBoundaries(t *testing.T) {
 		{"POST", "/api/v1/admin/accounts/batch"},
 		{"POST", "/api/v1/admin/accounts/:id/refresh"},
 		{"POST", "/api/v1/admin/accounts/:id/model-whitelist-auto-sync/run"},
+		// 上游模型目录同步会写库（upstream_models），预览接受请求体 base_url+api_key
+		// 做任意出站（SSRF 面），二者都不属于「只读/低风险」，必须保持 step-up。
+		{"POST", "/api/v1/admin/accounts/:id/models/sync-upstream"},
+		{"POST", "/api/v1/admin/accounts/models/sync-upstream-preview"},
 		// 代理写操作
 		{"POST", "/api/v1/admin/proxies"},
 		{"PUT", "/api/v1/admin/proxies/:id"},

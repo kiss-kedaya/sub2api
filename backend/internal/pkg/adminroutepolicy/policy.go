@@ -136,16 +136,15 @@ const (
 	// The following reasons cover the 2026-11 "2FA trigger matrix" pass: admin
 	// actions that look alarming by resource name but only probe, aggregate or
 	// preview, and whose response never carries secret material.
-	ReasonProxyConnectivityTest     Reason = "proxy_connectivity_and_quality_test_no_secret"
-	ReasonAccountBindingPreflight   Reason = "account_binding_preflight_check_no_secret"
-	ReasonAccountTimerPreview       Reason = "account_schedulable_timer_preview_no_secret"
-	ReasonUpstreamModelCatalogProbe Reason = "upstream_model_catalog_probe_no_secret"
-	ReasonChannelAnnouncementSync   Reason = "channel_announcement_sync_counters_no_secret"
-	ReasonSMTPConnectivityTest      Reason = "smtp_connectivity_test_no_secret"
-	ReasonWebSearchEmulationProbe   Reason = "web_search_emulation_probe_no_secret"
-	ReasonIPRiskPreflightCheck      Reason = "ip_risk_preflight_check_no_secret"
-	ReasonRedeemCodeReadsMasked     Reason = "redeem_code_reads_return_masked_values_only"
-	ReasonPromoUsageReadsNoCode     Reason = "promo_usage_reads_exclude_grant_code"
+	ReasonProxyConnectivityTest   Reason = "proxy_connectivity_and_quality_test_no_secret"
+	ReasonAccountBindingPreflight Reason = "account_binding_preflight_check_no_secret"
+	ReasonAccountTimerPreview     Reason = "account_schedulable_timer_preview_no_secret"
+	ReasonChannelAnnouncementSync Reason = "channel_announcement_sync_counters_no_secret"
+	ReasonSMTPConnectivityTest    Reason = "smtp_connectivity_test_no_secret"
+	ReasonWebSearchEmulationProbe Reason = "web_search_emulation_probe_no_secret"
+	ReasonIPRiskPreflightCheck    Reason = "ip_risk_preflight_check_no_secret"
+	ReasonRedeemCodeReadsMasked   Reason = "redeem_code_reads_return_masked_values_only"
+	ReasonPromoUsageReadsNoCode   Reason = "promo_usage_reads_exclude_grant_code"
 )
 
 // Resource names the sensitive resource family a step-up route protects.
@@ -341,10 +340,12 @@ var secretFreeExact = []exactRule{
 	// Ollama Cloud 用量刷新：用库内会话抓官方用量，响应是脱敏后的用量窗口
 	// （used_percent/reset_at/model/request 数），不含 session/HTML/凭据。
 	{method: "POST", path: "/api/v1/admin/accounts/:id/ollama-cloud-usage/refresh", res: Resolved{ClassSecretFree, ReasonAccountUsageAggregate, ResourceNone, "exact:accounts.ollama-usage-refresh"}},
-	// 上游模型目录探测：用库内凭据（或请求内一次性凭据）拉上游 /models，
-	// 只回模型名/元数据/告警，不回传凭据；不写账号配置（auto-sync 才写，仍 gated）。
-	{method: "POST", path: "/api/v1/admin/accounts/:id/models/sync-upstream", res: Resolved{ClassSecretFree, ReasonUpstreamModelCatalogProbe, ResourceNone, "exact:accounts.sync-upstream-models"}},
-	{method: "POST", path: "/api/v1/admin/accounts/models/sync-upstream-preview", res: Resolved{ClassSecretFree, ReasonUpstreamModelCatalogProbe, ResourceNone, "exact:accounts.sync-upstream-models-preview"}},
+	// 上游模型目录同步/预览故意不在此清单：二者都不属于「只读/低风险」。
+	//   - POST /accounts/:id/models/sync-upstream 会通过 UpdateExtra 写库
+	//     （upstream_models），是配置写操作；
+	//   - POST /accounts/models/sync-upstream-preview 接受请求体里的 base_url+api_key
+	//     做任意出站预览（SSRF 面），并非纯计算。
+	// 因此两条都回落到 mutating:accounts 前缀规则，保持 step_up_required。
 	// 上游渠道公告同步：用库内渠道会话拉公告并 upsert，响应只有 fetched/added/
 	// updated/unread 计数，不回渠道密码/子密钥/会话。
 	{method: "POST", path: "/api/v1/admin/upstream-monitor/channels/:id/announcements/sync", res: Resolved{ClassSecretFree, ReasonChannelAnnouncementSync, ResourceNone, "exact:upstream-monitor.announcements-sync"}},

@@ -30,12 +30,10 @@ func lowRiskReleasedRoutes() []adminroutepolicy.Route {
 		// 代理探测
 		{Method: http.MethodPost, Path: "/api/v1/admin/proxies/:id/test"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/proxies/:id/quality-check"},
-		// 账号预检 / 预览 / 用量 / 模型目录探测
+		// 账号预检 / 预览 / 用量
 		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/check-mixed-channel"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/:id/schedulable-timers/preview"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/:id/ollama-cloud-usage/refresh"},
-		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/:id/models/sync-upstream"},
-		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/models/sync-upstream-preview"},
 		// 上游渠道公告元数据同步
 		{Method: http.MethodPost, Path: "/api/v1/admin/upstream-monitor/channels/:id/announcements/sync"},
 		// 设置页的测试/预检动作（真实发信、保存配置仍 step-up）
@@ -66,6 +64,10 @@ func sensitiveBoundaryRoutes() []adminroutepolicy.Route {
 		{Method: http.MethodPost, Path: "/api/v1/admin/subscriptions/assign"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/:id/refresh"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/:id/model-whitelist-auto-sync/run"},
+		// 上游模型目录同步会写库（upstream_models），预览接受 base_url+api_key 做
+		// 任意出站（SSRF 面）：不属于低风险探测，保持 step-up。
+		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/:id/models/sync-upstream"},
+		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/models/sync-upstream-preview"},
 		{Method: http.MethodPut, Path: "/api/v1/admin/payment/config"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/payment/orders/:id/refund"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/system/update"},

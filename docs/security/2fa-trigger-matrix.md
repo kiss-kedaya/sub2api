@@ -12,12 +12,14 @@
 | --- | ---: |
 | 管理面路由总数（`/api/v1/admin*`，含 payment 管理面） | 641 |
 | `machine_allowlisted` | 28 |
-| `secret_free` | 407 |
-| `step_up_required` | 206 |
-| 其中 step-up 按方法 | GET 11 / POST 114 / PUT 54 / DELETE 27 |
+| `secret_free` | 405 |
+| `step_up_required` | 208 |
+| 其中 step-up 按方法 | GET 11 / POST 116 / PUT 54 / DELETE 27 |
 
-本次把 15 条**低风险**管理面动作从 `step_up_required` 降到 `secret_free`（4 条只读 GET + 11 条探测/预览/聚合 POST），
+本次把 13 条**低风险**管理面动作从 `step_up_required` 降到 `secret_free`（4 条只读 GET + 9 条探测/预览/聚合 POST），
 没有放开任何「返回密钥 / 动钱 / 改权限 / 改安全配置」的接口；灰区 10 条列在 §5，等老板确认后再动。
+上游模型目录同步（会写库）与预览（接受任意 `base_url`+`api_key` 出站，SSRF 面）经复核**不属于低风险**，
+仍留在 `step_up_required`（见 §3 上游账号）。
 
 ## 1. 三个分类（policy.go）
 
@@ -40,7 +42,7 @@
 - **只读/低风险**：不持久化关键状态、不改配置，或只做一次探测/预览/聚合。
 - **建议**：`保持 2FA` / `放开`（本次已落地）/ `改为近期登录`（灰区候选，需产品确认后再实现中间档）。
 
-## 3. `step_up_required` 全量矩阵（206 条）
+## 3. `step_up_required` 全量矩阵（208 条）
 
 按资源族分组；同一族内的判定依据写在表前。**建议=保持 2FA 的条目本次全部未改动。**
 
@@ -75,9 +77,12 @@
 | `GET /api/v1/admin/promo-codes/:id` | 是 | 否 | 否 | 否 | 否 | 保持 2FA |
 | `PUT /api/v1/admin/promo-codes/:id` | 否 | 否 | 是 | 否 | 否 | 保持 2FA |
 
-### 上游账号（accounts）（46 条）
+### 上游账号（accounts）（48 条）
 
 建号/改号/导入/duplicate/refresh 会写入或轮换上游凭据（写密钥=是）；其余为账号状态/配置写。刷新 token 类列灰区。
+`POST /accounts/:id/models/sync-upstream` 会 `UpdateExtra` 写账号 `upstream_models`（配置写）；
+`POST /accounts/models/sync-upstream-preview` 接受请求体 `base_url`+`api_key` 做任意出站（SSRF 面）。
+两者均不属于「只读/低风险」，保持 2FA。
 
 | 方法+路径 | 读取密钥 | 写入密钥 | 动钱 | 改权限 | 只读/低风险 | 建议 |
 | --- | :---: | :---: | :---: | :---: | :---: | --- |
@@ -92,6 +97,7 @@
 | `POST /api/v1/admin/accounts/:id/duplicate` | 否 | 是 | 否 | 否 | 否 | 保持 2FA |
 | `PUT /api/v1/admin/accounts/:id/grok-media-eligibility` | 否 | 否 | 否 | 否 | 否 | 保持 2FA |
 | `POST /api/v1/admin/accounts/:id/model-whitelist-auto-sync/run` | 否 | 否 | 否 | 否 | 否 | 保持 2FA（会写账号模型映射，见灰区） |
+| `POST /api/v1/admin/accounts/:id/models/sync-upstream` | 否 | 否 | 否 | 否 | 否 | 保持 2FA（`UpdateExtra` 写 upstream_models，非只读） |
 | `PUT /api/v1/admin/accounts/:id/ollama-cloud-usage/auto-refresh` | 否 | 否 | 否 | 否 | 否 | 保持 2FA |
 | `DELETE /api/v1/admin/accounts/:id/ollama-cloud-usage/session` | 否 | 是 | 否 | 否 | 否 | 保持 2FA |
 | `PUT /api/v1/admin/accounts/:id/ollama-cloud-usage/session` | 否 | 是 | 否 | 否 | 否 | 保持 2FA |
@@ -122,6 +128,7 @@
 | `POST /api/v1/admin/accounts/generate-setup-token-url` | 否 | 否 | 否 | 否 | 否 | 保持 2FA |
 | `POST /api/v1/admin/accounts/import/codex-session` | 否 | 是 | 否 | 否 | 否 | 保持 2FA |
 | `POST /api/v1/admin/accounts/model-whitelist-auto-sync/run` | 否 | 否 | 否 | 否 | 否 | 保持 2FA（会写账号模型映射，见灰区） |
+| `POST /api/v1/admin/accounts/models/sync-upstream-preview` | 否 | 否 | 否 | 否 | 否 | 保持 2FA（接受 `base_url`+`api_key` 任意出站，SSRF 面） |
 | `PUT /api/v1/admin/accounts/ollama-cloud-usage/settings` | 否 | 否 | 否 | 否 | 否 | 保持 2FA |
 | `POST /api/v1/admin/accounts/setup-token-cookie-auth` | 否 | 是 | 否 | 否 | 否 | 保持 2FA |
 | `POST /api/v1/admin/accounts/sync/crs` | 否 | 是 | 否 | 否 | 否 | 保持 2FA |
@@ -392,7 +399,7 @@ relogin/配置写会碰凭据；probe 列灰区。
 | --- | :---: | :---: | :---: | :---: | :---: | --- |
 | `GET /api/v1/admin/debug-dumps/:name` | 是 | 否 | 否 | 否 | 否 | 保持 2FA |
 
-## 4. 本次放开（15 条，已落地）
+## 4. 本次放开（13 条，已落地）
 
 原则：**不返回密钥、不动钱、不改权限、不改安全配置**。所有条目仍不是 `machine_allowlisted`，
 机器凭据照旧默认拒绝；卡密只读三条另有 `middleware.ForbidMachineCredentials` 显式拦截。
@@ -408,8 +415,6 @@ relogin/配置写会碰凭据；probe 列灰区。
 | `POST /api/v1/admin/accounts/check-mixed-channel` | secret_free / account_binding_preflight_check_no_secret | 纯计算，只回 has_risk/风险详情 |
 | `POST /api/v1/admin/accounts/:id/schedulable-timers/preview` | secret_free / account_schedulable_timer_preview_no_secret | 只回算出的 execute_at/local_date/local_time，不落库 |
 | `POST /api/v1/admin/accounts/:id/ollama-cloud-usage/refresh` | secret_free / read_only_account_usage_aggregate | 响应为脱敏用量窗口（used_percent/reset_at/model 计数），不含 session/HTML |
-| `POST /api/v1/admin/accounts/:id/models/sync-upstream` | secret_free / upstream_model_catalog_probe_no_secret | 只回 `UpstreamModelCatalog`（模型名/元数据/告警），不回凭据、不写配置 |
-| `POST /api/v1/admin/accounts/models/sync-upstream-preview` | secret_free / upstream_model_catalog_probe_no_secret | 同上，预览不落库 |
 | `POST /api/v1/admin/upstream-monitor/channels/:id/announcements/sync` | secret_free / channel_announcement_sync_counters_no_secret | 响应只有 fetched/added/updated/unread 计数，无渠道密码/子密钥/会话 |
 | `POST /api/v1/admin/settings/test-smtp` | secret_free / smtp_connectivity_test_no_secret | 只回成功或分类失败文案（不回显 host:port），不含 SMTP 密码；发信仍走 send-test-email |
 | `POST /api/v1/admin/settings/web-search-emulation/test` | secret_free / web_search_emulation_probe_no_secret | 只回 provider/query/results，不含 provider api_key |
