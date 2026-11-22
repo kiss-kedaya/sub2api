@@ -250,6 +250,7 @@
     "POST /admin/settings/send-test-email :: src/api/admin/settings.ts#sendTestEmail",
     "POST /admin/settings/test-smtp :: src/api/admin/settings.ts#testSmtpConnection",
     "POST /admin/settings/web-search-emulation/test :: src/api/admin/settings.ts#testWebSearchEmulation",
+    "PUT /admin/settings/admin-auth-probe :: src/api/admin/settings.ts#updateAdminAuthProbeSettings",
     "PUT /admin/settings/beta-policy :: src/api/admin/settings.ts#updateBetaPolicySettings",
     "PUT /admin/settings/email-templates/${encodeURIComponent(event)}/${encodeURIComponent(locale)} :: src/api/admin/settings.ts#updateEmailTemplate",
     "PUT /admin/settings/overload-cooldown :: src/api/admin/settings.ts#updateOverloadCooldownSettings",
