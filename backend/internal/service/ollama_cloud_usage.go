@@ -1032,6 +1032,18 @@ func IsOllamaCloudUsageAccount(account *Account) bool {
 	return isOllamaCloudBaseURL(baseURL)
 }
 
+// IsOllamaCloudUsagePlatform 导出平台白名单，供 repository 在 Go 侧做与
+// SQL（ollamaCloudUsagePlatformsSQL）一致的判定。
+func IsOllamaCloudUsagePlatform(platform string) bool {
+	return isOllamaCloudUsagePlatform(platform)
+}
+
+// IsOllamaCloudBaseURL 导出 base_url 判定，供 repository 在 Go 侧做与
+// SQL（ollamaCloudBaseURLRegexSQL）一致的判定。
+func IsOllamaCloudBaseURL(raw string) bool {
+	return isOllamaCloudBaseURL(raw)
+}
+
 func isOllamaCloudBaseURL(raw string) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || strings.ContainsAny(raw, "?#") {

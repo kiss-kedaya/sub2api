@@ -7,6 +7,7 @@ import (
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/atrest"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -155,6 +156,15 @@ func (r *accountRepository) UpdateAccountModelMappingCAS(ctx context.Context, ac
 	}
 	if affected == 0 {
 		return false, nil
+	}
+	// at-rest：model_mapping 属于结构键，jsonb_set 会改明文列；密文列是读取的
+	// 权威副本，必须同事务刷新，否则下一次读取会把这次同步「抵消」。
+	if atrest.Enabled() {
+		if err := refreshAccountCredentialsCipher(queryCtx, queryExec, id, func(credentials map[string]any) {
+			credentials["model_mapping"] = next
+		}); err != nil {
+			return false, err
+		}
 	}
 	if outboxExec != nil {
 		if err := enqueueSchedulerOutbox(queryCtx, outboxExec, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {

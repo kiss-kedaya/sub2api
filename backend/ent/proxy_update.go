@@ -158,6 +158,26 @@ func (_u *ProxyUpdate) ClearPassword() *ProxyUpdate {
 	return _u
 }
 
+// SetPasswordCipher sets the "password_cipher" field.
+func (_u *ProxyUpdate) SetPasswordCipher(v string) *ProxyUpdate {
+	_u.mutation.SetPasswordCipher(v)
+	return _u
+}
+
+// SetNillablePasswordCipher sets the "password_cipher" field if the given value is not nil.
+func (_u *ProxyUpdate) SetNillablePasswordCipher(v *string) *ProxyUpdate {
+	if v != nil {
+		_u.SetPasswordCipher(*v)
+	}
+	return _u
+}
+
+// ClearPasswordCipher clears the value of the "password_cipher" field.
+func (_u *ProxyUpdate) ClearPasswordCipher() *ProxyUpdate {
+	_u.mutation.ClearPasswordCipher()
+	return _u
+}
+
 // SetStatus sets the "status" field.
 func (_u *ProxyUpdate) SetStatus(v string) *ProxyUpdate {
 	_u.mutation.SetStatus(v)
@@ -465,6 +485,12 @@ func (_u *ProxyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.PasswordCleared() {
 		_spec.ClearField(proxy.FieldPassword, field.TypeString)
 	}
+	if value, ok := _u.mutation.PasswordCipher(); ok {
+		_spec.SetField(proxy.FieldPasswordCipher, field.TypeString, value)
+	}
+	if _u.mutation.PasswordCipherCleared() {
+		_spec.ClearField(proxy.FieldPasswordCipher, field.TypeString)
+	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(proxy.FieldStatus, field.TypeString, value)
 	}
@@ -748,6 +774,26 @@ func (_u *ProxyUpdateOne) SetNillablePassword(v *string) *ProxyUpdateOne {
 // ClearPassword clears the value of the "password" field.
 func (_u *ProxyUpdateOne) ClearPassword() *ProxyUpdateOne {
 	_u.mutation.ClearPassword()
+	return _u
+}
+
+// SetPasswordCipher sets the "password_cipher" field.
+func (_u *ProxyUpdateOne) SetPasswordCipher(v string) *ProxyUpdateOne {
+	_u.mutation.SetPasswordCipher(v)
+	return _u
+}
+
+// SetNillablePasswordCipher sets the "password_cipher" field if the given value is not nil.
+func (_u *ProxyUpdateOne) SetNillablePasswordCipher(v *string) *ProxyUpdateOne {
+	if v != nil {
+		_u.SetPasswordCipher(*v)
+	}
+	return _u
+}
+
+// ClearPasswordCipher clears the value of the "password_cipher" field.
+func (_u *ProxyUpdateOne) ClearPasswordCipher() *ProxyUpdateOne {
+	_u.mutation.ClearPasswordCipher()
 	return _u
 }
 
@@ -1087,6 +1133,12 @@ func (_u *ProxyUpdateOne) sqlSave(ctx context.Context) (_node *Proxy, err error)
 	}
 	if _u.mutation.PasswordCleared() {
 		_spec.ClearField(proxy.FieldPassword, field.TypeString)
+	}
+	if value, ok := _u.mutation.PasswordCipher(); ok {
+		_spec.SetField(proxy.FieldPasswordCipher, field.TypeString, value)
+	}
+	if _u.mutation.PasswordCipherCleared() {
+		_spec.ClearField(proxy.FieldPasswordCipher, field.TypeString)
 	}
 	if value, ok := _u.mutation.Status(); ok {
 		_spec.SetField(proxy.FieldStatus, field.TypeString, value)

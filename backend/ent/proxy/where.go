@@ -100,6 +100,11 @@ func Password(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldPassword, v))
 }
 
+// PasswordCipher applies equality check predicate on the "password_cipher" field. It's identical to PasswordCipherEQ.
+func PasswordCipher(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldPasswordCipher, v))
+}
+
 // Status applies equality check predicate on the "status" field. It's identical to StatusEQ.
 func Status(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldStatus, v))
@@ -638,6 +643,81 @@ func PasswordEqualFold(v string) predicate.Proxy {
 // PasswordContainsFold applies the ContainsFold predicate on the "password" field.
 func PasswordContainsFold(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldContainsFold(FieldPassword, v))
+}
+
+// PasswordCipherEQ applies the EQ predicate on the "password_cipher" field.
+func PasswordCipherEQ(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldPasswordCipher, v))
+}
+
+// PasswordCipherNEQ applies the NEQ predicate on the "password_cipher" field.
+func PasswordCipherNEQ(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNEQ(FieldPasswordCipher, v))
+}
+
+// PasswordCipherIn applies the In predicate on the "password_cipher" field.
+func PasswordCipherIn(vs ...string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldIn(FieldPasswordCipher, vs...))
+}
+
+// PasswordCipherNotIn applies the NotIn predicate on the "password_cipher" field.
+func PasswordCipherNotIn(vs ...string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotIn(FieldPasswordCipher, vs...))
+}
+
+// PasswordCipherGT applies the GT predicate on the "password_cipher" field.
+func PasswordCipherGT(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGT(FieldPasswordCipher, v))
+}
+
+// PasswordCipherGTE applies the GTE predicate on the "password_cipher" field.
+func PasswordCipherGTE(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGTE(FieldPasswordCipher, v))
+}
+
+// PasswordCipherLT applies the LT predicate on the "password_cipher" field.
+func PasswordCipherLT(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLT(FieldPasswordCipher, v))
+}
+
+// PasswordCipherLTE applies the LTE predicate on the "password_cipher" field.
+func PasswordCipherLTE(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLTE(FieldPasswordCipher, v))
+}
+
+// PasswordCipherContains applies the Contains predicate on the "password_cipher" field.
+func PasswordCipherContains(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldContains(FieldPasswordCipher, v))
+}
+
+// PasswordCipherHasPrefix applies the HasPrefix predicate on the "password_cipher" field.
+func PasswordCipherHasPrefix(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldHasPrefix(FieldPasswordCipher, v))
+}
+
+// PasswordCipherHasSuffix applies the HasSuffix predicate on the "password_cipher" field.
+func PasswordCipherHasSuffix(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldHasSuffix(FieldPasswordCipher, v))
+}
+
+// PasswordCipherIsNil applies the IsNil predicate on the "password_cipher" field.
+func PasswordCipherIsNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldIsNull(FieldPasswordCipher))
+}
+
+// PasswordCipherNotNil applies the NotNil predicate on the "password_cipher" field.
+func PasswordCipherNotNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotNull(FieldPasswordCipher))
+}
+
+// PasswordCipherEqualFold applies the EqualFold predicate on the "password_cipher" field.
+func PasswordCipherEqualFold(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEqualFold(FieldPasswordCipher, v))
+}
+
+// PasswordCipherContainsFold applies the ContainsFold predicate on the "password_cipher" field.
+func PasswordCipherContainsFold(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldContainsFold(FieldPasswordCipher, v))
 }
 
 // StatusEQ applies the EQ predicate on the "status" field.

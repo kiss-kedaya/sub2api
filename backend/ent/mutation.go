@@ -2780,6 +2780,7 @@ type AccountMutation struct {
 	platform                    *string
 	_type                       *string
 	credentials                 *map[string]interface{}
+	credentials_cipher          *string
 	extra                       *map[string]interface{}
 	proxy_fallback_origin_id    *int64
 	addproxy_fallback_origin_id *int64
@@ -3235,6 +3236,55 @@ func (m *AccountMutation) OldCredentials(ctx context.Context) (v map[string]inte
 // ResetCredentials resets all changes to the "credentials" field.
 func (m *AccountMutation) ResetCredentials() {
 	m.credentials = nil
+}
+
+// SetCredentialsCipher sets the "credentials_cipher" field.
+func (m *AccountMutation) SetCredentialsCipher(s string) {
+	m.credentials_cipher = &s
+}
+
+// CredentialsCipher returns the value of the "credentials_cipher" field in the mutation.
+func (m *AccountMutation) CredentialsCipher() (r string, exists bool) {
+	v := m.credentials_cipher
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCredentialsCipher returns the old "credentials_cipher" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldCredentialsCipher(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCredentialsCipher is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCredentialsCipher requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCredentialsCipher: %w", err)
+	}
+	return oldValue.CredentialsCipher, nil
+}
+
+// ClearCredentialsCipher clears the value of the "credentials_cipher" field.
+func (m *AccountMutation) ClearCredentialsCipher() {
+	m.credentials_cipher = nil
+	m.clearedFields[account.FieldCredentialsCipher] = struct{}{}
+}
+
+// CredentialsCipherCleared returns if the "credentials_cipher" field was cleared in this mutation.
+func (m *AccountMutation) CredentialsCipherCleared() bool {
+	_, ok := m.clearedFields[account.FieldCredentialsCipher]
+	return ok
+}
+
+// ResetCredentialsCipher resets all changes to the "credentials_cipher" field.
+func (m *AccountMutation) ResetCredentialsCipher() {
+	m.credentials_cipher = nil
+	delete(m.clearedFields, account.FieldCredentialsCipher)
 }
 
 // SetExtra sets the "extra" field.
@@ -4625,7 +4675,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 31)
+	fields := make([]string, 0, 32)
 	if m.created_at != nil {
 		fields = append(fields, account.FieldCreatedAt)
 	}
@@ -4649,6 +4699,9 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.credentials != nil {
 		fields = append(fields, account.FieldCredentials)
+	}
+	if m.credentials_cipher != nil {
+		fields = append(fields, account.FieldCredentialsCipher)
 	}
 	if m.extra != nil {
 		fields = append(fields, account.FieldExtra)
@@ -4743,6 +4796,8 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.GetType()
 	case account.FieldCredentials:
 		return m.Credentials()
+	case account.FieldCredentialsCipher:
+		return m.CredentialsCipher()
 	case account.FieldExtra:
 		return m.Extra()
 	case account.FieldProxyID:
@@ -4814,6 +4869,8 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldType(ctx)
 	case account.FieldCredentials:
 		return m.OldCredentials(ctx)
+	case account.FieldCredentialsCipher:
+		return m.OldCredentialsCipher(ctx)
 	case account.FieldExtra:
 		return m.OldExtra(ctx)
 	case account.FieldProxyID:
@@ -4924,6 +4981,13 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCredentials(v)
+		return nil
+	case account.FieldCredentialsCipher:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCredentialsCipher(v)
 		return nil
 	case account.FieldExtra:
 		v, ok := value.(map[string]interface{})
@@ -5185,6 +5249,9 @@ func (m *AccountMutation) ClearedFields() []string {
 	if m.FieldCleared(account.FieldNotes) {
 		fields = append(fields, account.FieldNotes)
 	}
+	if m.FieldCleared(account.FieldCredentialsCipher) {
+		fields = append(fields, account.FieldCredentialsCipher)
+	}
 	if m.FieldCleared(account.FieldProxyID) {
 		fields = append(fields, account.FieldProxyID)
 	}
@@ -5249,6 +5316,9 @@ func (m *AccountMutation) ClearField(name string) error {
 		return nil
 	case account.FieldNotes:
 		m.ClearNotes()
+		return nil
+	case account.FieldCredentialsCipher:
+		m.ClearCredentialsCipher()
 		return nil
 	case account.FieldProxyID:
 		m.ClearProxyID()
@@ -5326,6 +5396,9 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldCredentials:
 		m.ResetCredentials()
+		return nil
+	case account.FieldCredentialsCipher:
+		m.ResetCredentialsCipher()
 		return nil
 	case account.FieldExtra:
 		m.ResetExtra()
@@ -39049,6 +39122,7 @@ type ProxyMutation struct {
 	addport                *int
 	username               *string
 	password               *string
+	password_cipher        *string
 	status                 *string
 	expires_at             *time.Time
 	fallback_mode          *string
@@ -39549,6 +39623,55 @@ func (m *ProxyMutation) ResetPassword() {
 	delete(m.clearedFields, proxy.FieldPassword)
 }
 
+// SetPasswordCipher sets the "password_cipher" field.
+func (m *ProxyMutation) SetPasswordCipher(s string) {
+	m.password_cipher = &s
+}
+
+// PasswordCipher returns the value of the "password_cipher" field in the mutation.
+func (m *ProxyMutation) PasswordCipher() (r string, exists bool) {
+	v := m.password_cipher
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPasswordCipher returns the old "password_cipher" field's value of the Proxy entity.
+// If the Proxy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProxyMutation) OldPasswordCipher(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPasswordCipher is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPasswordCipher requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPasswordCipher: %w", err)
+	}
+	return oldValue.PasswordCipher, nil
+}
+
+// ClearPasswordCipher clears the value of the "password_cipher" field.
+func (m *ProxyMutation) ClearPasswordCipher() {
+	m.password_cipher = nil
+	m.clearedFields[proxy.FieldPasswordCipher] = struct{}{}
+}
+
+// PasswordCipherCleared returns if the "password_cipher" field was cleared in this mutation.
+func (m *ProxyMutation) PasswordCipherCleared() bool {
+	_, ok := m.clearedFields[proxy.FieldPasswordCipher]
+	return ok
+}
+
+// ResetPasswordCipher resets all changes to the "password_cipher" field.
+func (m *ProxyMutation) ResetPasswordCipher() {
+	m.password_cipher = nil
+	delete(m.clearedFields, proxy.FieldPasswordCipher)
+}
+
 // SetStatus sets the "status" field.
 func (m *ProxyMutation) SetStatus(s string) {
 	m.status = &s
@@ -39944,7 +40067,7 @@ func (m *ProxyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProxyMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 15)
 	if m.created_at != nil {
 		fields = append(fields, proxy.FieldCreatedAt)
 	}
@@ -39971,6 +40094,9 @@ func (m *ProxyMutation) Fields() []string {
 	}
 	if m.password != nil {
 		fields = append(fields, proxy.FieldPassword)
+	}
+	if m.password_cipher != nil {
+		fields = append(fields, proxy.FieldPasswordCipher)
 	}
 	if m.status != nil {
 		fields = append(fields, proxy.FieldStatus)
@@ -40013,6 +40139,8 @@ func (m *ProxyMutation) Field(name string) (ent.Value, bool) {
 		return m.Username()
 	case proxy.FieldPassword:
 		return m.Password()
+	case proxy.FieldPasswordCipher:
+		return m.PasswordCipher()
 	case proxy.FieldStatus:
 		return m.Status()
 	case proxy.FieldExpiresAt:
@@ -40050,6 +40178,8 @@ func (m *ProxyMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldUsername(ctx)
 	case proxy.FieldPassword:
 		return m.OldPassword(ctx)
+	case proxy.FieldPasswordCipher:
+		return m.OldPasswordCipher(ctx)
 	case proxy.FieldStatus:
 		return m.OldStatus(ctx)
 	case proxy.FieldExpiresAt:
@@ -40131,6 +40261,13 @@ func (m *ProxyMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetPassword(v)
+		return nil
+	case proxy.FieldPasswordCipher:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPasswordCipher(v)
 		return nil
 	case proxy.FieldStatus:
 		v, ok := value.(string)
@@ -40233,6 +40370,9 @@ func (m *ProxyMutation) ClearedFields() []string {
 	if m.FieldCleared(proxy.FieldPassword) {
 		fields = append(fields, proxy.FieldPassword)
 	}
+	if m.FieldCleared(proxy.FieldPasswordCipher) {
+		fields = append(fields, proxy.FieldPasswordCipher)
+	}
 	if m.FieldCleared(proxy.FieldExpiresAt) {
 		fields = append(fields, proxy.FieldExpiresAt)
 	}
@@ -40261,6 +40401,9 @@ func (m *ProxyMutation) ClearField(name string) error {
 		return nil
 	case proxy.FieldPassword:
 		m.ClearPassword()
+		return nil
+	case proxy.FieldPasswordCipher:
+		m.ClearPasswordCipher()
 		return nil
 	case proxy.FieldExpiresAt:
 		m.ClearExpiresAt()
@@ -40302,6 +40445,9 @@ func (m *ProxyMutation) ResetField(name string) error {
 		return nil
 	case proxy.FieldPassword:
 		m.ResetPassword()
+		return nil
+	case proxy.FieldPasswordCipher:
+		m.ResetPasswordCipher()
 		return nil
 	case proxy.FieldStatus:
 		m.ResetStatus()

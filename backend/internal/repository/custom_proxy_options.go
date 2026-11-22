@@ -28,7 +28,11 @@ func (r *proxyRepository) ListOptions(ctx context.Context, params pagination.Pag
 	}
 	items := make([]service.Proxy, 0, len(records))
 	for _, record := range records {
-		items = append(items, *proxyEntityToService(record))
+		converted, convErr := proxyEntityToService(record)
+		if convErr != nil {
+			return nil, nil, convErr
+		}
+		items = append(items, *converted)
 	}
 	return items, paginationResultFromTotal(int64(total), params), nil
 }
@@ -50,7 +54,11 @@ func (r *proxyRepository) SampleOptions(ctx context.Context, search string) ([]s
 	}
 	items := make([]service.Proxy, 0, len(records))
 	for _, record := range records {
-		items = append(items, *proxyEntityToService(record))
+		converted, convErr := proxyEntityToService(record)
+		if convErr != nil {
+			return nil, 0, convErr
+		}
+		items = append(items, *converted)
 	}
 	return items, int64(total), nil
 }

@@ -32,6 +32,8 @@ const (
 	FieldType = "type"
 	// FieldCredentials holds the string denoting the credentials field in the database.
 	FieldCredentials = "credentials"
+	// FieldCredentialsCipher holds the string denoting the credentials_cipher field in the database.
+	FieldCredentialsCipher = "credentials_cipher"
 	// FieldExtra holds the string denoting the extra field in the database.
 	FieldExtra = "extra"
 	// FieldProxyID holds the string denoting the proxy_id field in the database.
@@ -139,6 +141,7 @@ var Columns = []string{
 	FieldPlatform,
 	FieldType,
 	FieldCredentials,
+	FieldCredentialsCipher,
 	FieldExtra,
 	FieldProxyID,
 	FieldProxyFallbackOriginID,
@@ -289,6 +292,11 @@ func ByPlatform(opts ...sql.OrderTermOption) OrderOption {
 // ByType orders the results by the type field.
 func ByType(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldType, opts...).ToFunc()
+}
+
+// ByCredentialsCipher orders the results by the credentials_cipher field.
+func ByCredentialsCipher(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCredentialsCipher, opts...).ToFunc()
 }
 
 // ByProxyID orders the results by the proxy_id field.

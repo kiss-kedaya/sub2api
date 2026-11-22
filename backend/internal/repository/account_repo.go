@@ -30,6 +30,7 @@ import (
 	dbproxy "github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/internal/accounttimer"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/atrest"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -194,12 +195,23 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 		return service.ErrAccountNilInput
 	}
 
+	// 新账号没有回滚历史：配置了 at-rest 密钥时直接封存明文列，避免迁移后
+	// 新建账号又留下明文。凭据若无法加密则整个创建失败（fail-closed）。
+	_, _, credentialsCipher, err := credentialsStorageParams(account.Credentials)
+	if err != nil {
+		return err
+	}
+	storedCredentials := normalizeJSONMap(account.Credentials)
+	if atrest.Enabled() {
+		storedCredentials = SealCredentials(account.Credentials)
+	}
+
 	builder := client.Account.Create().
 		SetName(account.Name).
 		SetNillableNotes(account.Notes).
 		SetPlatform(account.Platform).
 		SetType(account.Type).
-		SetCredentials(normalizeJSONMap(account.Credentials)).
+		SetCredentials(storedCredentials).
 		SetExtra(normalizeJSONMap(account.Extra)).
 		SetConcurrency(account.Concurrency).
 		SetPriority(account.Priority).
@@ -207,6 +219,9 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 		SetErrorMessage(account.ErrorMessage).
 		SetSchedulable(account.Schedulable).
 		SetAutoPauseOnExpired(account.AutoPauseOnExpired)
+	if cipher, ok := credentialsCipher.(string); ok && cipher != "" {
+		builder.SetCredentialsCipher(cipher)
+	}
 
 	if account.RateMultiplier != nil {
 		builder.SetRateMultiplier(*account.RateMultiplier)
@@ -589,14 +604,21 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 
 	outByID := make(map[int64]*service.Account, len(entAccounts))
 	for _, entAcc := range entAccounts {
-		out := accountEntityToService(entAcc)
+		out, convErr := accountEntityToService(entAcc)
+		if convErr != nil {
+			return nil, convErr
+		}
 		if out == nil {
 			continue
 		}
 
 		// Prefer the preloaded proxy edge when available.
 		if entAcc.Edges.Proxy != nil {
-			out.Proxy = proxyEntityToService(entAcc.Edges.Proxy)
+			proxyModel, convErr := proxyEntityToService(entAcc.Edges.Proxy)
+			if convErr != nil {
+				return nil, convErr
+			}
+			out.Proxy = proxyModel
 			if err := service.DecodeManagedProxyCredential(out.Proxy, r.proxySecretEncryptor); err != nil {
 				return nil, err
 			}
@@ -820,18 +842,44 @@ func (r *accountRepository) updateLockedAccount(
 		schedulable = false
 	}
 
+	// at-rest：保持在库的封存状态。未封存行继续写完整明文以保证旧二进制可读
+	// （回滚安全）；已封存行只写结构键 + 摘要，并把密文列刷新为最新快照。
+	sealedCredentials := false
+	credentialsCipher := any(nil)
+	if atrest.Enabled() {
+		var sealedErr error
+		sealedCredentials, sealedErr = accountCredentialsWriteState(ctx, client, account.ID)
+		if sealedErr != nil {
+			return nil, sealedErr
+		}
+		_, _, cipherValue, cipherErr := credentialsStorageParams(account.Credentials)
+		if cipherErr != nil {
+			return nil, cipherErr
+		}
+		if cipher, ok := cipherValue.(string); ok && cipher != "" {
+			credentialsCipher = cipher
+		}
+	}
+	storedCredentials := normalizeJSONMap(account.Credentials)
+	if sealedCredentials {
+		storedCredentials = SealCredentials(account.Credentials)
+	}
+
 	builder := client.Account.UpdateOneID(account.ID).
 		SetName(account.Name).
 		SetNillableNotes(account.Notes).
 		SetPlatform(account.Platform).
 		SetType(account.Type).
-		SetCredentials(normalizeJSONMap(account.Credentials)).
+		SetCredentials(storedCredentials).
 		SetExtra(extra).
 		SetConcurrency(account.Concurrency).
 		SetPriority(account.Priority).
 		SetStatus(account.Status).
 		SetErrorMessage(account.ErrorMessage).
 		SetAutoPauseOnExpired(account.AutoPauseOnExpired)
+	if cipher, ok := credentialsCipher.(string); ok && cipher != "" {
+		builder.SetCredentialsCipher(cipher)
+	}
 	// Ordinary settings saves must not replay a stale scheduling toggle.
 	if !accounttimer.PreserveSchedulable(ctx) || account.Status == service.StatusError {
 		builder.SetSchedulable(schedulable)
@@ -908,7 +956,7 @@ func lockAndMergeAccountProbeExtra(
 	explicitProbeEnabled *bool,
 	explicitRateSyncEnabled *bool,
 ) (map[string]any, error) {
-	credentials, err := json.Marshal(normalizeJSONMap(account.Credentials))
+	credentials, err := credentialsCASParam(account.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -916,20 +964,28 @@ func lockAndMergeAccountProbeExtra(
 	if account.ProxyID != nil {
 		proxyID = *account.ProxyID
 	}
+	// SQL 内同时兼容历史明文行与 at-rest 封存行：
+	//   * 封存行用 (_sealed_keys / _id_api_key) 判定身份；
+	//   * 参数按行状态从 {"plain":..,"sealed":..} 里取对应形态。
+	paramPlain := "($4::jsonb -> 'plain')"
+	paramSealed := "($4::jsonb -> 'sealed')"
+	storedIdentity := "(CASE WHEN credentials ? '_sealed' THEN credentials -> '_id_api_key' ELSE credentials -> 'api_key' END)"
+	paramIdentity := "(CASE WHEN credentials ? '_sealed' THEN " + paramSealed + " -> '_id_api_key' ELSE " + paramPlain + " -> 'api_key' END)"
+	paramBaseURL := "(CASE WHEN credentials ? '_sealed' THEN " + paramSealed + " ->> 'base_url' ELSE " + paramPlain + " ->> 'base_url' END)"
 	rows, err := client.QueryContext(ctx, `
 		SELECT
-			platform = $2
-			AND type = $3
-			AND credentials = $4::jsonb
-			AND proxy_id IS NOT DISTINCT FROM $5,
+			(CASE WHEN credentials ? '_sealed'
+				THEN credentials = `+paramSealed+`
+				ELSE credentials = `+paramPlain+`
+			END),
 			COALESCE(
 				platform IN (`+ollamaCloudUsagePlatformsSQL+`)
 				AND $2 IN (`+ollamaCloudUsagePlatformsSQL+`)
 				AND type = 'apikey'
 				AND $3 = 'apikey'
-				AND credentials -> 'api_key' IS NOT DISTINCT FROM $4::jsonb -> 'api_key'
+				AND `+storedIdentity+` IS NOT DISTINCT FROM `+paramIdentity+`
 				AND `+ollamaCloudBaseURLMatchesSQL("credentials ->> 'base_url'")+`
-				AND `+ollamaCloudBaseURLMatchesSQL("$4::jsonb ->> 'base_url'")+`,
+				AND `+ollamaCloudBaseURLMatchesSQL(paramBaseURL)+`,
 				false
 			),
 			proxy_id IS NOT DISTINCT FROM $5,
@@ -940,11 +996,13 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'ollama_cloud_usage_auto_refresh',
 			extra -> 'ollama_cloud_usage_snapshot',
 			COALESCE(extra, '{}'::jsonb),
-			credentials -> 'custom_usage_secrets'
+			credentials -> 'custom_usage_secrets',
+			(credentials ? '_sealed'),
+			COALESCE(credentials_cipher, '')
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
-	`, account.ID, account.Platform, account.Type, string(credentials), proxyID)
+	`, account.ID, account.Platform, account.Type, credentials, proxyID)
 	if err != nil {
 		return nil, err
 	}
@@ -968,6 +1026,8 @@ func lockAndMergeAccountProbeExtra(
 		currentOllamaSnapshot        []byte
 		currentExtraJSON             []byte
 		currentCustomUsageSecrets    []byte
+		currentSealedCredentials     bool
+		currentCredentialsCipher     string
 	)
 	if err := rows.Scan(
 		&identityUnchanged,
@@ -981,6 +1041,8 @@ func lockAndMergeAccountProbeExtra(
 		&currentOllamaSnapshot,
 		&currentExtraJSON,
 		&currentCustomUsageSecrets,
+		&currentSealedCredentials,
+		&currentCredentialsCipher,
 	); err != nil {
 		return nil, err
 	}
@@ -1012,6 +1074,21 @@ func lockAndMergeAccountProbeExtra(
 	delete(extra, service.CustomUsageExtraKey)
 	if currentConfig, exists := currentExtra[service.CustomUsageExtraKey]; exists {
 		extra[service.CustomUsageExtraKey] = currentConfig
+	}
+	if currentSealedCredentials && strings.TrimSpace(currentCredentialsCipher) != "" {
+		// 封存行的 credentials->'custom_usage_secrets' 已被删除；必须从密文副本
+		// 恢复，否则任何一次普通账号编辑都会把托管用量密钥静默清空。
+		decrypted, decErr := decryptCredentialsCipher(currentCredentialsCipher)
+		if decErr != nil {
+			return nil, decErr
+		}
+		if secret, ok := decrypted[service.CustomUsageCredentialsKey]; ok && secret != nil {
+			raw, marshalErr := json.Marshal(secret)
+			if marshalErr != nil {
+				return nil, marshalErr
+			}
+			currentCustomUsageSecrets = raw
+		}
 	}
 	managedSecrets, _, err := decodeAccountExtraJSON(currentCustomUsageSecrets)
 	if err != nil {
@@ -1121,6 +1198,11 @@ func decodeAccountExtraJSON(raw []byte) (any, bool, error) {
 }
 
 func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, credentials map[string]any) error {
+	// at-rest 模式下必须「读-改-写」：custom_usage_secrets 只存在于密文副本里，
+	// 原来的 SQL 内联合并会把它当不存在而静默清空；同时要按行状态保持封存。
+	if atrest.Enabled() {
+		return r.updateCredentialsAtRest(ctx, id, credentials)
+	}
 	payload, err := json.Marshal(normalizeJSONMap(credentials))
 	if err != nil {
 		return err
@@ -1203,6 +1285,155 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 	return nil
 }
 
+// updateCredentialsAtRest 是 at-rest 模式下的 UpdateCredentials：
+//  1. 锁行并读取「明文列 + 密文列 + extra」，用密文副本还原完整凭据；
+//  2. 保留托管 custom_usage_secrets（只存在于密文里）；
+//  3. 在 Go 侧复刻原 SQL 的探测快照失效条件；
+//  4. 按行现有状态写回：未封存行保留明文（回滚安全），封存行只写结构投影，
+//     两列同一次快照，密文列始终刷新。
+func (r *accountRepository) updateCredentialsAtRest(ctx context.Context, id int64, credentials map[string]any) error {
+	baseCtx := ctx
+	contextTx := dbent.TxFromContext(ctx)
+	client := r.client
+	var tx *dbent.Tx
+	if contextTx != nil {
+		client = contextTx.Client()
+	} else if r.client != nil {
+		var txErr error
+		tx, txErr = r.client.Tx(ctx)
+		if txErr != nil && !errors.Is(txErr, dbent.ErrTxStarted) {
+			return txErr
+		}
+		if tx != nil {
+			defer func() { _ = tx.Rollback() }()
+			ctx = dbent.NewTxContext(ctx, tx)
+			client = tx.Client()
+		}
+	}
+
+	var (
+		currentCredentialsJSON   []byte
+		currentCredentialsCipher string
+		currentSealed            bool
+		platform                 string
+		accountType              string
+		currentExtraJSON         []byte
+	)
+	rows, err := client.QueryContext(ctx, `
+		SELECT credentials,
+			COALESCE(credentials_cipher, ''),
+			(credentials ? '_sealed'),
+			platform,
+			type,
+			COALESCE(extra, '{}'::jsonb)
+		FROM accounts
+		WHERE id = $1 AND deleted_at IS NULL
+		FOR UPDATE
+	`, id)
+	if err != nil {
+		return err
+	}
+	if !rows.Next() {
+		rowsErr := rows.Err()
+		_ = rows.Close()
+		if rowsErr != nil {
+			return rowsErr
+		}
+		return service.ErrAccountNotFound
+	}
+	scanErr := rows.Scan(&currentCredentialsJSON, &currentCredentialsCipher, &currentSealed, &platform, &accountType, &currentExtraJSON)
+	_ = rows.Close()
+	if scanErr != nil {
+		return scanErr
+	}
+	currentCredentials, err := decodeCredentialsStored(currentCredentialsJSON, currentCredentialsCipher)
+	if err != nil {
+		return err
+	}
+
+	next := copyJSONMap(normalizeJSONMap(credentials))
+	delete(next, service.CustomUsageCredentialsKey)
+	if secret, ok := currentCredentials[service.CustomUsageCredentialsKey]; ok && secret != nil {
+		next[service.CustomUsageCredentialsKey] = secret
+	}
+
+	var currentExtra map[string]any
+	_ = json.Unmarshal(currentExtraJSON, &currentExtra)
+	if currentExtra == nil {
+		currentExtra = map[string]any{}
+	}
+	extra := currentExtra
+	extraChanged := false
+	if !credentialsJSONEqual(currentCredentials, next) {
+		if accountType == service.AccountTypeAPIKey && service.IsOllamaCloudUsagePlatform(platform) {
+			oldKey, _ := currentCredentials["api_key"].(string)
+			newKey, _ := next["api_key"].(string)
+			oldBaseURL, _ := currentCredentials["base_url"].(string)
+			newBaseURL, _ := next["base_url"].(string)
+			if oldKey != newKey || !(service.IsOllamaCloudBaseURL(oldBaseURL) && service.IsOllamaCloudBaseURL(newBaseURL)) {
+				extraChanged = true
+				for _, key := range []string{
+					service.UpstreamBillingProbeExtraKey,
+					service.OllamaCloudUsageSessionExtraKey,
+					service.OllamaCloudUsageAutoRefreshExtraKey,
+					service.OllamaCloudUsageSnapshotExtraKey,
+				} {
+					delete(extra, key)
+				}
+			}
+		} else if accountType == service.AccountTypeAPIKey {
+			extraChanged = true
+			delete(extra, service.UpstreamBillingProbeExtraKey)
+		}
+	}
+
+	plainJSON, sealedJSON, cipherValue, err := credentialsStorageParams(next)
+	if err != nil {
+		return err
+	}
+	storedJSON := plainJSON
+	if currentSealed {
+		storedJSON = sealedJSON
+	}
+	extraJSON := []byte(nil)
+	if extraChanged {
+		extraJSON, err = json.Marshal(extra)
+		if err != nil {
+			return err
+		}
+	}
+	result, err := client.ExecContext(ctx, `
+		UPDATE accounts
+		SET credentials = $1::jsonb,
+			credentials_cipher = COALESCE($2, credentials_cipher),
+			extra = CASE WHEN $3::boolean THEN $4::jsonb ELSE extra END,
+			updated_at = NOW()
+		WHERE id = $5 AND deleted_at IS NULL
+	`, storedJSON, cipherValue, extraChanged, extraJSON, id)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return service.ErrAccountNotFound
+	}
+	if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+		return err
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	if contextTx == nil {
+		r.syncSchedulerAccountSnapshot(baseCtx, id)
+	}
+	invalidateModelAvailabilityCachesAfterCommit(baseCtx)
+	return nil
+}
 func (r *accountRepository) Delete(ctx context.Context, id int64) error {
 	if scoped := r.accountTransactionScope(ctx); scoped != r {
 		return scoped.Delete(ctx, id)
@@ -1578,9 +1809,7 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 			AND type = 'oauth'`
 	}
 	if options.RequireRefreshToken {
-		query += `
-			AND credentials ? 'refresh_token'
-			AND btrim(credentials->>'refresh_token') <> ''`
+		query += refreshTokenPresentSQL("credentials")
 	}
 	if options.ExcludeRetryCooldown {
 		query += `
@@ -1733,6 +1962,10 @@ func (r *accountRepository) SetGrokCredentialErrorIfMatch(
 	snapshot service.GrokCredentialMutationSnapshot,
 	errorMsg string,
 ) (bool, error) {
+	credentialsParam, err := credentialsCASParamFromSnapshotJSON(snapshot.CredentialsJSON)
+	if err != nil {
+		return false, err
+	}
 	result, err := r.sql.ExecContext(ctx, `
 		WITH updated AS (
 		UPDATE accounts AS a
@@ -1750,7 +1983,7 @@ func (r *accountRepository) SetGrokCredentialErrorIfMatch(
 			AND (a.rate_limit_reset_at IS NULL OR a.rate_limit_reset_at <= NOW())
 			AND (a.overload_until IS NULL OR a.overload_until <= NOW())
 			AND (a.auto_pause_on_expired IS NOT TRUE OR a.expires_at IS NULL OR a.expires_at > NOW())
-			AND a.credentials = $7::jsonb
+			AND a.credentials = `+credentialsCASMatchSQL("a.credentials", "$7")+`
 			AND a.proxy_id IS NOT DISTINCT FROM $8
 			AND ($2 <> $9 OR (
 				a.proxy_id IS NOT NULL AND NOT EXISTS (
@@ -1762,7 +1995,7 @@ func (r *accountRepository) SetGrokCredentialErrorIfMatch(
 		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
 		SELECT $10, updated.id, NULL, NULL FROM updated
 	`, service.StatusError, errorMsg, id, service.StatusActive, service.PlatformGrok, service.AccountTypeOAuth,
-		snapshot.CredentialsJSON, snapshot.ProxyID, string(service.GrokCredentialReasonProxyInvalid),
+		credentialsParam, snapshot.ProxyID, string(service.GrokCredentialReasonProxyInvalid),
 		service.SchedulerOutboxEventAccountChanged)
 	if err != nil {
 		return false, err
@@ -1790,7 +2023,7 @@ func (r *accountRepository) SetGrokOAuthErrorIfCredentialsUnchanged(
 	if r == nil || r.sql == nil {
 		return false, errors.New("account repository SQL executor is not configured")
 	}
-	expectedJSON, err := json.Marshal(normalizeJSONMap(expectedCredentials))
+	expectedJSON, err := credentialsCASParam(expectedCredentials)
 	if err != nil {
 		return false, err
 	}
@@ -1806,8 +2039,8 @@ func (r *accountRepository) SetGrokOAuthErrorIfCredentialsUnchanged(
 			AND a.platform = $4
 			AND a.type = $5
 			AND a.status = $6
-			AND a.credentials = $7::jsonb
-			AND NULLIF(BTRIM(a.credentials->>'refresh_token'), '') IS NULL
+			AND a.credentials = `+credentialsCASMatchSQL("a.credentials", "$7")+`
+			AND `+refreshTokenAbsentSQL("a.credentials")+`
 		RETURNING a.id
 		)
 		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
@@ -1819,7 +2052,7 @@ func (r *accountRepository) SetGrokOAuthErrorIfCredentialsUnchanged(
 		service.PlatformGrok,
 		service.AccountTypeOAuth,
 		service.StatusActive,
-		string(expectedJSON),
+		expectedJSON,
 		service.SchedulerOutboxEventAccountChanged,
 	)
 	if err != nil {
@@ -1852,37 +2085,46 @@ func (r *accountRepository) UpdateGrokOAuthCredentialsIfUnchanged(
 	if r == nil || r.sql == nil {
 		return false, errors.New("account repository SQL executor is not configured")
 	}
-	expectedJSON, err := json.Marshal(normalizeJSONMap(expectedCredentials))
+	expectedJSON, err := credentialsCASParam(expectedCredentials)
 	if err != nil {
 		return false, err
 	}
-	credentialsJSON, err := json.Marshal(normalizeJSONMap(credentials))
+	credentialsJSON, err := credentialsCASParam(credentials)
 	if err != nil {
 		return false, err
+	}
+	ciphertext, err := credentialsCipherForStorage(credentials)
+	if err != nil {
+		return false, err
+	}
+	var credentialsCipher any
+	if ciphertext != "" {
+		credentialsCipher = ciphertext
 	}
 	result, err := r.sql.ExecContext(ctx, `
 		WITH updated AS (
 		UPDATE accounts AS a
-		SET credentials = $1::jsonb,
+		SET `+credentialsCASWriteSQL("a.credentials", "$1", "$8")+`,
 			updated_at = NOW()
 		WHERE a.id = $2
 			AND a.deleted_at IS NULL
 			AND a.platform = $3
 			AND a.type = $4
-			AND a.credentials = $5::jsonb
+			AND a.credentials = `+credentialsCASMatchSQL("a.credentials", "$5")+`
 			AND a.proxy_id IS NOT DISTINCT FROM $6
 		RETURNING a.id
 		)
 		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
 		SELECT $7, updated.id, NULL, NULL FROM updated
 	`,
-		string(credentialsJSON),
+		credentialsJSON,
 		id,
 		service.PlatformGrok,
 		service.AccountTypeOAuth,
-		string(expectedJSON),
+		expectedJSON,
 		expectedProxyID,
 		service.SchedulerOutboxEventAccountChanged,
+		credentialsCipher,
 	)
 	if err != nil {
 		return false, err
@@ -1913,7 +2155,7 @@ func (r *accountRepository) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(
 	if r == nil || r.sql == nil {
 		return false, errors.New("account repository SQL executor is not configured")
 	}
-	expectedJSON, err := json.Marshal(normalizeJSONMap(expectedCredentials))
+	expectedJSON, err := credentialsCASParam(expectedCredentials)
 	if err != nil {
 		return false, err
 	}
@@ -1929,7 +2171,7 @@ func (r *accountRepository) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(
 			AND a.platform = $4
 			AND a.type = $5
 			AND a.status = $6
-			AND a.credentials = $7::jsonb
+			AND a.credentials = `+credentialsCASMatchSQL("a.credentials", "$7")+`
 			AND a.proxy_id IS NOT DISTINCT FROM $8
 		RETURNING a.id
 		)
@@ -1942,7 +2184,7 @@ func (r *accountRepository) SetGrokOAuthRefreshErrorIfCredentialsUnchanged(
 		service.PlatformGrok,
 		service.AccountTypeOAuth,
 		service.StatusActive,
-		string(expectedJSON),
+		expectedJSON,
 		expectedProxyID,
 		service.SchedulerOutboxEventAccountChanged,
 	)
@@ -1975,7 +2217,7 @@ func (r *accountRepository) SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnc
 	if r == nil || r.sql == nil {
 		return false, errors.New("account repository SQL executor is not configured")
 	}
-	expectedJSON, err := json.Marshal(normalizeJSONMap(expectedCredentials))
+	expectedJSON, err := credentialsCASParam(expectedCredentials)
 	if err != nil {
 		return false, err
 	}
@@ -1990,7 +2232,7 @@ func (r *accountRepository) SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnc
 			AND a.platform = $4
 			AND a.type = $5
 			AND a.status = $6
-			AND a.credentials = $7::jsonb
+			AND a.credentials = `+credentialsCASMatchSQL("a.credentials", "$7")+`
 			AND a.proxy_id IS NOT DISTINCT FROM $8
 			AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until < $1)
 		RETURNING a.id
@@ -2004,7 +2246,7 @@ func (r *accountRepository) SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnc
 		service.PlatformGrok,
 		service.AccountTypeOAuth,
 		service.StatusActive,
-		string(expectedJSON),
+		expectedJSON,
 		expectedProxyID,
 		service.SchedulerOutboxEventAccountChanged,
 	)
@@ -2831,6 +3073,10 @@ func (r *accountRepository) SetGrokCredentialTempUnschedulableIfMatch(
 	until time.Time,
 	reason string,
 ) (bool, error) {
+	credentialsParam, err := credentialsCASParamFromSnapshotJSON(snapshot.CredentialsJSON)
+	if err != nil {
+		return false, err
+	}
 	result, err := r.sql.ExecContext(ctx, `
 		WITH updated AS (
 		UPDATE accounts AS a
@@ -2850,14 +3096,14 @@ func (r *accountRepository) SetGrokCredentialTempUnschedulableIfMatch(
 			AND (a.rate_limit_reset_at IS NULL OR a.rate_limit_reset_at <= NOW())
 			AND (a.overload_until IS NULL OR a.overload_until <= NOW())
 			AND (a.auto_pause_on_expired IS NOT TRUE OR a.expires_at IS NULL OR a.expires_at > NOW())
-			AND a.credentials = $7::jsonb
+			AND a.credentials = `+credentialsCASMatchSQL("a.credentials", "$7")+`
 			AND a.proxy_id IS NOT DISTINCT FROM $8
 		RETURNING a.id
 		)
 		INSERT INTO scheduler_outbox (event_type, account_id, group_id, payload)
 		SELECT $9, updated.id, NULL, NULL FROM updated
 	`, until, reason, id, service.StatusActive, service.PlatformGrok, service.AccountTypeOAuth,
-		snapshot.CredentialsJSON, snapshot.ProxyID, service.SchedulerOutboxEventAccountChanged)
+		credentialsParam, snapshot.ProxyID, service.SchedulerOutboxEventAccountChanged)
 	if err != nil {
 		return false, err
 	}
@@ -3186,7 +3432,7 @@ func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(
 	if err != nil {
 		return err
 	}
-	credentials, err := json.Marshal(account.Credentials)
+	credentials, err := credentialsCASParam(account.Credentials)
 	if err != nil {
 		return err
 	}
@@ -3241,7 +3487,7 @@ func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(
 		WHERE id = $2
 			AND platform = $3
 			AND type = $4
-			AND credentials = $5::jsonb
+			AND credentials = `+credentialsCASMatchSQL("credentials", "$5")+`
 			AND proxy_id IS NOT DISTINCT FROM $6
 			AND COALESCE(extra -> 'upstream_billing_probe', 'null'::jsonb) = $7::jsonb
 			AND COALESCE(extra -> 'upstream_billing_probe_enabled', 'null'::jsonb) = $8::jsonb
@@ -3358,9 +3604,228 @@ func ollamaCloudUsageSnapshotClearRequested(extra map[string]any) bool {
 	return ok && value == nil
 }
 
+// bulkMergeCredentialsAtRest 在 at-rest 模式下原子地把 credentials 补丁合并进
+// 每个账号：读取完整凭据（密文优先）→ 合并补丁 → 按行状态写回明文/封存投影，
+// 并刷新密文列。原 SQL 的 JSONB `||` 无法更新密文副本，也不能避免把明文敏感值
+// 写回封存行，因此这里改成逐行读-改-写。
+func (r *accountRepository) bulkMergeCredentialsAtRest(
+	ctx context.Context,
+	ids []int64,
+	patch map[string]any,
+	requireAPIKey bool,
+	customUsageExpected *service.AccountCustomUsageExpected,
+) (int64, error) {
+	if len(patch) == 0 {
+		return 0, nil
+	}
+	baseCtx := ctx
+	contextTx := dbent.TxFromContext(ctx)
+	client := r.client
+	var tx *dbent.Tx
+	if contextTx != nil {
+		client = contextTx.Client()
+	} else if r.client != nil {
+		var txErr error
+		tx, txErr = r.client.Tx(ctx)
+		if txErr != nil && !errors.Is(txErr, dbent.ErrTxStarted) {
+			return 0, txErr
+		}
+		if tx != nil {
+			defer func() { _ = tx.Rollback() }()
+			ctx = dbent.NewTxContext(ctx, tx)
+			client = tx.Client()
+		}
+	}
+
+	where := " WHERE id = ANY($1) AND deleted_at IS NULL"
+	args := []any{pq.Array(ids)}
+	if adminID, fullPool, scoped := service.AccountOwnerScopeDetail(ctx); scoped && !fullPool {
+		where += " AND created_by = $2"
+		args = append(args, adminID)
+	}
+	if requireAPIKey {
+		where += " AND type = 'apikey'"
+	}
+	rows, err := client.QueryContext(ctx, `
+		SELECT id, credentials, COALESCE(credentials_cipher, ''), (credentials ? '_sealed'),
+			platform, type, COALESCE(extra, '{}'::jsonb)
+		FROM accounts`+where+`
+		ORDER BY id
+		FOR UPDATE
+	`, args...)
+	if err != nil {
+		return 0, err
+	}
+	type restCredentialRow struct {
+		id          int64
+		credentials map[string]any
+		cipher      string
+		sealed      bool
+		platform    string
+		accountType string
+		extra       map[string]any
+	}
+	loaded := make([]restCredentialRow, 0, len(ids))
+	for rows.Next() {
+		var (
+			id          int64
+			plainJSON   []byte
+			cipher      string
+			sealed      bool
+			platform    string
+			accountType string
+			extraJSON   []byte
+		)
+		if err := rows.Scan(&id, &plainJSON, &cipher, &sealed, &platform, &accountType, &extraJSON); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		credentials, decErr := decodeCredentialsStored(plainJSON, cipher)
+		if decErr != nil {
+			_ = rows.Close()
+			return 0, decErr
+		}
+		var extra map[string]any
+		_ = json.Unmarshal(extraJSON, &extra)
+		if extra == nil {
+			extra = map[string]any{}
+		}
+		loaded = append(loaded, restCredentialRow{
+			id:          id,
+			credentials: credentials,
+			cipher:      cipher,
+			sealed:      sealed,
+			platform:    platform,
+			accountType: accountType,
+			extra:       extra,
+		})
+	}
+	rowErr := rows.Err()
+	_ = rows.Close()
+	if rowErr != nil {
+		return 0, rowErr
+	}
+
+	if customUsageExpected != nil {
+		if len(ids) != 1 || len(loaded) != 1 {
+			return 0, service.ErrCustomUsageConfig
+		}
+		row := loaded[0]
+		if row.accountType != service.AccountTypeAPIKey ||
+			!credentialsJSONEqual(row.credentials, customUsageExpected.Credentials) ||
+			!jsonSubvalueEqual(row.extra[service.CustomUsageExtraKey], customUsageExpected.Config) {
+			return 0, service.ErrCustomUsageConfig
+		}
+	}
+
+	changedIDs := make([]int64, 0, len(loaded))
+	for _, row := range loaded {
+		next := copyJSONMap(row.credentials)
+		for key, value := range patch {
+			next[key] = value
+		}
+		var extra map[string]any
+		extraChanged := false
+		if !credentialsJSONEqual(row.credentials, next) {
+			extra = row.extra
+			if row.accountType == service.AccountTypeAPIKey && service.IsOllamaCloudUsagePlatform(row.platform) {
+				oldKey, _ := row.credentials["api_key"].(string)
+				newKey, _ := next["api_key"].(string)
+				oldBaseURL, _ := row.credentials["base_url"].(string)
+				newBaseURL, _ := next["base_url"].(string)
+				if oldKey != newKey || !(service.IsOllamaCloudBaseURL(oldBaseURL) && service.IsOllamaCloudBaseURL(newBaseURL)) {
+					extraChanged = true
+					for _, key := range []string{
+						service.UpstreamBillingProbeExtraKey,
+						service.OllamaCloudUsageSessionExtraKey,
+						service.OllamaCloudUsageAutoRefreshExtraKey,
+						service.OllamaCloudUsageSnapshotExtraKey,
+					} {
+						delete(extra, key)
+					}
+				}
+			} else if row.accountType == service.AccountTypeAPIKey {
+				extraChanged = true
+				delete(extra, service.UpstreamBillingProbeExtraKey)
+			}
+		}
+		plainJSON, sealedJSON, cipherValue, err := credentialsStorageParams(next)
+		if err != nil {
+			return 0, err
+		}
+		storedJSON := plainJSON
+		if row.sealed {
+			storedJSON = sealedJSON
+		}
+		extraJSON := []byte(nil)
+		if extraChanged {
+			extraJSON, err = json.Marshal(extra)
+			if err != nil {
+				return 0, err
+			}
+		}
+		result, err := client.ExecContext(ctx, `
+			UPDATE accounts
+			SET credentials = $1::jsonb,
+				credentials_cipher = COALESCE($2, credentials_cipher),
+				extra = CASE WHEN $3::boolean THEN $4::jsonb ELSE extra END,
+				updated_at = NOW()
+			WHERE id = $5 AND deleted_at IS NULL
+		`, storedJSON, cipherValue, extraChanged, extraJSON, row.id)
+		if err != nil {
+			return 0, err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		if affected > 0 {
+			changedIDs = append(changedIDs, row.id)
+		}
+	}
+	if len(changedIDs) > 0 {
+		payload := map[string]any{"account_ids": changedIDs}
+		if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, payload); err != nil {
+			return 0, err
+		}
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+	}
+	if len(changedIDs) > 0 {
+		invalidateModelAvailabilityCachesAfterCommit(baseCtx)
+		r.invalidateModelAvailabilityCacheAfterCommit(baseCtx)
+	}
+	return int64(len(changedIDs)), nil
+}
+
 func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates service.AccountBulkUpdate) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
+	}
+	// at-rest：credentials 补丁必须「读-改-写」，否则 JSONB `||` 会把明文敏感值
+	// 写回封存行、密文副本过期。先单独处理 credentials，再让原 SQL 处理其它字段。
+	if atrest.Enabled() && len(updates.Credentials) > 0 {
+		credentialsPatch := updates.Credentials
+		customUsageExpected := updates.CustomUsageExpected
+		updates.Credentials = nil
+		updates.CustomUsageExpected = nil
+		affected, err := r.bulkMergeCredentialsAtRest(ctx, ids, credentialsPatch, updates.ProbeEnabled != nil, customUsageExpected)
+		if err != nil {
+			return 0, err
+		}
+		if len(updates.Extra) == 0 && updates.Name == nil && updates.ProxyID == nil && updates.Concurrency == nil &&
+			updates.Priority == nil && updates.RateMultiplier == nil && updates.LoadFactor == nil && updates.Status == nil &&
+			updates.Schedulable == nil && updates.ProbeEnabled == nil && !updates.EnsureCodexFingerprintSeed {
+			return affected, nil
+		}
+		restAffected, err := r.BulkUpdate(ctx, ids, updates)
+		if err != nil {
+			return 0, err
+		}
+		return restAffected, nil
 	}
 	updates.Extra = stripCodexFingerprintSeedFromExtraUpdate(updates.Extra)
 	_, manualScope := service.AccountOwnerScopeFromContext(ctx)
@@ -3533,7 +3998,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		if len(ids) != 1 {
 			return 0, service.ErrCustomUsageConfig
 		}
-		expectedCredentials, err := json.Marshal(normalizeJSONMap(updates.CustomUsageExpected.Credentials))
+		expectedCredentials, err := credentialsCASParam(normalizeJSONMap(updates.CustomUsageExpected.Credentials))
 		if err != nil {
 			return 0, err
 		}
@@ -3541,7 +4006,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		if err != nil {
 			return 0, err
 		}
-		whereClause += " AND type = 'apikey' AND credentials = $" + itoa(idx) + "::jsonb"
+		whereClause += " AND type = 'apikey' AND credentials = " + credentialsCASMatchSQL("credentials", "$"+itoa(idx))
 		args = append(args, expectedCredentials)
 		idx++
 		whereClause += " AND COALESCE(extra -> 'custom_usage_config', 'null'::jsonb) = $" + itoa(idx) + "::jsonb"
@@ -3752,7 +4217,10 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 
 	outAccounts := make([]service.Account, 0, len(accounts))
 	for _, acc := range accounts {
-		out := accountEntityToService(acc)
+		out, convErr := accountEntityToService(acc)
+		if convErr != nil {
+			return nil, convErr
+		}
 		if out == nil {
 			continue
 		}
@@ -3818,7 +4286,10 @@ func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64) (
 			return nil, err
 		}
 		for _, p := range proxies {
-			converted := proxyEntityToService(p)
+			converted, convErr := proxyEntityToService(p)
+			if convErr != nil {
+				return nil, convErr
+			}
 			if err := service.DecodeManagedProxyCredential(converted, r.proxySecretEncryptor); err != nil {
 				return nil, err
 			}
@@ -3980,20 +4451,25 @@ func buildSchedulerGroupPayload(groupIDs []int64) any {
 	return map[string]any{"group_ids": groupIDs}
 }
 
-func accountEntityToService(m *dbent.Account) *service.Account {
+func accountEntityToService(m *dbent.Account) (*service.Account, error) {
 	if m == nil {
-		return nil
+		return nil, nil
+	}
+
+	credentials, err := accountCredentialsFromEntity(m)
+	if err != nil {
+		return nil, err
 	}
 
 	rateMultiplier := m.RateMultiplier
 
-	return &service.Account{
+	out := &service.Account{
 		ID:                      m.ID,
 		Name:                    m.Name,
 		Notes:                   m.Notes,
 		Platform:                m.Platform,
 		Type:                    m.Type,
-		Credentials:             copyJSONMap(m.Credentials),
+		Credentials:             credentials,
 		Extra:                   copyJSONMap(m.Extra),
 		ProxyID:                 m.ProxyID,
 		ProxyFallbackOriginID:   m.ProxyFallbackOriginID,
@@ -4020,6 +4496,7 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		ParentAccountID:         m.ParentAccountID,
 		QuotaDimension:          string(m.QuotaDimension),
 	}
+	return out, nil
 }
 
 func normalizeJSONMap(in map[string]any) map[string]any {
@@ -4452,7 +4929,11 @@ func (r *accountRepository) ListShadowsByParent(ctx context.Context, parentID in
 	}
 	out := make([]*service.Account, 0, len(rows))
 	for _, m := range rows {
-		out = append(out, accountEntityToService(m))
+		account, convErr := accountEntityToService(m)
+		if convErr != nil {
+			return nil, convErr
+		}
+		out = append(out, account)
 	}
 	return out, nil
 }

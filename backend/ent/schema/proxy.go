@@ -4,6 +4,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 
 	"entgo.io/ent"
+	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/schema"
 	"entgo.io/ent/schema/edge"
@@ -53,6 +54,13 @@ func (Proxy) Fields() []ent.Field {
 			MaxLen(255).
 			Optional().
 			Nillable(),
+		// password_cipher: at-rest 密文（"enc:v2:" + base64(nonce||ct||tag)）。
+		// 读取时优先使用；为空表示历史明文行。-atrest-migrate 封存后本行
+		// password 明文会被清空，只有 password_cipher 保存密码。
+		field.String("password_cipher").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "text"}),
 		field.String("status").
 			MaxLen(20).
 			Default("active"),

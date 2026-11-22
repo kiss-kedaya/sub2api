@@ -114,13 +114,16 @@ func (r *excelGrantRepository) StoreGrant(ctx context.Context, id int64, revisio
 	defer func() { _ = tx.Rollback() }()
 	a := &service.Account{}
 	var credentials []byte
-	err = tx.QueryRowContext(ctx, `SELECT credentials,proxy_id FROM accounts WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, id).Scan(&credentials, &a.ProxyID)
+	var credentialsCipher string
+	err = tx.QueryRowContext(ctx, `SELECT credentials,COALESCE(credentials_cipher,''),proxy_id FROM accounts WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, id).Scan(&credentials, &credentialsCipher, &a.ProxyID)
 	if err != nil {
 		return false, err
 	}
-	if err = json.Unmarshal(credentials, &a.Credentials); err != nil {
+	decodedCredentials, err := decodeCredentialsStored(credentials, credentialsCipher)
+	if err != nil {
 		return false, err
 	}
+	a.Credentials = decodedCredentials
 	if service.ExcelGrantPrimaryHash(a) != primaryHash {
 		return false, nil
 	}

@@ -76,9 +76,21 @@ func (Account) Fields() []ent.Field {
 		// - api_key: {"api_key": "sk-xxx"}
 		// - oauth: {"access_token": "...", "refresh_token": "...", "expires_at": "..."}
 		// - cookie: {"session_key": "..."}
+		//
+		// at-rest 加密（2026-11）：敏感子键以 credentials_cipher 为权威副本；
+		// 本列在「双写期」保留完整明文以兼容旧二进制，-atrest-migrate 封存后
+		// 只保留结构键、" _sealed": true 与 SQL 需要的不透明身份摘要。
 		field.JSON("credentials", map[string]any{}).
 			Default(func() map[string]any { return map[string]any{} }).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
+
+		// credentials_cipher: 整段 credentials 的 at-rest 密文
+		// （"enc:v2:" + base64(nonce||AES-256-GCM ciphertext||tag)）。
+		// 读取时优先使用；为空表示尚未迁移的历史明文行。
+		field.String("credentials_cipher").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "text"}),
 
 		// extra: 扩展数据，存储平台特定的额外信息
 		// 如 CRS 账户的 crs_account_id、组织信息等
