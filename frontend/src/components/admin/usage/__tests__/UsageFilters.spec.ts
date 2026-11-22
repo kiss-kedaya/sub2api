@@ -40,8 +40,10 @@ const messages: Record<string, string> = {
   'admin.usage.allGroups': 'All Groups',
   'common.refresh': 'Refresh',
   'common.reset': 'Reset',
+  'common.query': 'Query',
   'admin.usage.cleanup.button': 'Cleanup',
   'usage.exportExcel': 'Export',
+  'usage.exportCsv': 'Export CSV',
 }
 
 // Mock vue-i18n
@@ -140,7 +142,9 @@ describe('UsageFilters date range', () => {
     expect(observer.findAll('button').some(button => ['Cleanup', 'Export'].includes(button.text()))).toBe(false)
     await observer.get('#observer-user_id').setValue('42')
     await observer.get('#observer-user_id').trigger('change')
-    expect(observer.emitted('change')).toBeDefined()
+    // 手动查询：改条件只更新草稿，不发请求、也不触发查询
+    expect(observer.props('modelValue').user_id).toBe(42)
+    expect(observer.emitted('query')).toBeUndefined()
     observer.unmount()
   })
   it('reuses the shared picker and emits only the applied range', async () => {
@@ -152,7 +156,8 @@ describe('UsageFilters date range', () => {
     picker.vm.$emit('change', range)
     await wrapper.vm.$nextTick()
     expect(wrapper.emitted('date-range-change')).toEqual([[range]])
-    expect(wrapper.emitted('change')).toBeUndefined()
+    // 时间范围是即时控件，但也不应额外触发「查询」
+    expect(wrapper.emitted('query')).toBeUndefined()
     await wrapper.setProps({ startDate: '2026-05-12', endDate: '2026-05-13' })
     expect(picker.props()).toMatchObject({ startDate: '2026-05-12', endDate: '2026-05-13' })
     wrapper.unmount()
@@ -209,18 +214,12 @@ describe('UsageFilters — user search dropdown', () => {
     const activeButton = buttons[activeIdx]
     expect(activeButton.text()).not.toContain('deleted')
 
-    // --- (c) Selection: clicking active user button sets filters.user_id ---
+    // --- (c) Selection: clicking active user button sets the draft user_id ---
     await activeButton.trigger('click')
     await flushPromises()
 
-    // The component emits 'update:modelValue' or modifies filters.user_id via toRef
-    // selectUser sets filters.value.user_id = u.id and emits 'change'
-    const changeEmits = wrapper.emitted('change')
-    expect(changeEmits).toBeTruthy()
-    expect(changeEmits!.length).toBeGreaterThan(0)
-
-    // Also confirm user_id was set by checking the emitted change came through
-    // (the component uses toRef so modelValue is mutated in place and 'change' is emitted)
+    // selectUser 只写草稿（modelValue 原地更新），不发查询；用户需点「查询」才生效
+    expect(wrapper.emitted('query')).toBeUndefined()
     expect(wrapper.props('modelValue').user_id).toBe(1)
   })
 
@@ -342,6 +341,158 @@ describe('UsageFilters — native compaction filter', () => {
     await wrapper.vm.$nextTick()
 
     expect(filters.native_compaction_v2).toBe(true)
-    expect(wrapper.emitted('change')).toBeTruthy()
+    expect(wrapper.emitted('query')).toBeUndefined()
+  })
+})
+
+// 布局重排 + 手动查询语义
+function mountWithActions(filters = defaultFilters(), extraProps: Record<string, unknown> = {}) {
+  return mount(UsageFilters, {
+    props: {
+      modelValue: filters,
+      exporting: false,
+      startDate: '2026-05-01',
+      endDate: '2026-05-28',
+      modelOptions: [],
+      ...extraProps,
+    },
+    global: {
+      stubs: {
+        Select: true,
+        Teleport: true,
+      },
+    },
+  })
+}
+
+describe('UsageFilters — 多列网格布局', () => {
+  it('lays fields out in a responsive grid: 1 column mobile / 2 tablet / 3 desktop', () => {
+    const wrapper = mountWithActions()
+    const grid = wrapper.get('[data-testid="usage-filter-grid"]')
+    expect(grid.classes()).toContain('grid')
+    expect(grid.classes()).toEqual(expect.arrayContaining([
+      'grid-cols-1',
+      'sm:grid-cols-2',
+      'xl:grid-cols-3',
+    ]))
+    // 每个筛选项：label 在上、控件占满整格
+    const field = wrapper.get('[data-testid="usage-date-range-filter"]')
+    expect(field.classes()).toEqual(expect.arrayContaining(['flex', 'flex-col', 'min-w-0']))
+    expect(field.find('label.input-label').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('renders one right-aligned action row with a primary query button and secondary actions', () => {
+    const wrapper = mountWithActions()
+    const actions = wrapper.get('[data-testid="usage-filter-actions"]')
+    expect(actions.classes()).toEqual(expect.arrayContaining(['flex', 'flex-wrap', 'justify-end', 'border-t']))
+
+    const query = wrapper.get('[data-testid="usage-filter-query"]')
+    expect(query.classes()).toContain('btn-primary')
+
+    for (const id of ['reset', 'refresh', 'export-excel', 'export-csv']) {
+      expect(wrapper.get(`[data-testid="usage-filter-${id}"]`).classes()).toContain('btn-secondary')
+    }
+    expect(wrapper.get('[data-testid="usage-filter-cleanup"]').classes()).toContain('btn-danger')
+    wrapper.unmount()
+  })
+
+  it('orders buttons: query → reset → refresh → column settings slot → cleanup → export excel → export csv', () => {
+    const wrapper = mount(UsageFilters, {
+      props: {
+        modelValue: defaultFilters(),
+        exporting: false,
+        startDate: '2026-05-01',
+        endDate: '2026-05-28',
+        modelOptions: [],
+      },
+      slots: { 'after-reset': '<button data-testid="usage-column-settings">columns</button>' },
+      global: { stubs: { Select: true, Teleport: true } },
+    })
+    const ids = Array.from(wrapper.get('[data-testid="usage-filter-actions"]').element.querySelectorAll('button'))
+      .map((el) => el.getAttribute('data-testid'))
+    expect(ids).toEqual([
+      'usage-filter-query',
+      'usage-filter-reset',
+      'usage-filter-refresh',
+      'usage-column-settings',
+      'usage-filter-cleanup',
+      'usage-filter-export-excel',
+      'usage-filter-export-csv',
+    ])
+    wrapper.unmount()
+  })
+
+  it('hides the action row when embedded without actions (cleanup dialog)', () => {
+    const wrapper = mountWithActions(defaultFilters(), { showActions: false })
+    expect(wrapper.find('[data-testid="usage-filter-actions"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+describe('UsageFilters — 手动查询', () => {
+  it('does not query when a filter is edited', async () => {
+    const filters = defaultFilters()
+    const wrapper = mountWithActions(filters)
+    const input = wrapper.get('[data-testid="usage-request-id"]')
+    await input.setValue('550e8400')
+    await input.trigger('input')
+    expect(filters.request_id).toBe('550e8400')
+    expect(wrapper.emitted('query')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('queries once with the draft when the query button is clicked', async () => {
+    const filters = defaultFilters()
+    const wrapper = mountWithActions(filters)
+    await wrapper.get('[data-testid="usage-request-id"]').setValue('=abc123')
+    await wrapper.get('[data-testid="usage-filter-query"]').trigger('click')
+    expect(wrapper.emitted('query')).toHaveLength(1)
+    expect(filters.request_id).toBe('=abc123')
+    wrapper.unmount()
+  })
+
+  it('treats Enter in a filter input as clicking query', async () => {
+    const wrapper = mountWithActions()
+    const input = wrapper.get('[data-testid="usage-request-id"]')
+    await input.setValue('^client:')
+    await input.trigger('keyup.enter')
+    expect(wrapper.emitted('query')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('treats Enter in an observer ID input as clicking query', async () => {
+    const wrapper = mountWithActions(defaultFilters(), { observer: true })
+    const input = wrapper.get('#observer-user_id')
+    await input.setValue('42')
+    await input.trigger('keyup.enter')
+    expect(wrapper.emitted('query')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('emits reset / refresh / cleanup / export / export-csv from the action row', async () => {
+    const wrapper = mountWithActions()
+    await wrapper.get('[data-testid="usage-filter-reset"]').trigger('click')
+    await wrapper.get('[data-testid="usage-filter-refresh"]').trigger('click')
+    await wrapper.get('[data-testid="usage-filter-cleanup"]').trigger('click')
+    await wrapper.get('[data-testid="usage-filter-export-excel"]').trigger('click')
+    await wrapper.get('[data-testid="usage-filter-export-csv"]').trigger('click')
+    expect(wrapper.emitted('reset')).toHaveLength(1)
+    expect(wrapper.emitted('refresh')).toHaveLength(1)
+    expect(wrapper.emitted('cleanup')).toHaveLength(1)
+    expect(wrapper.emitted('export')).toHaveLength(1)
+    expect(wrapper.emitted('export-csv')).toHaveLength(1)
+    // 这些动作本身都不应额外触发查询，避免重复请求
+    expect(wrapper.emitted('query')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('keeps observer ID edits as draft without emitting query', async () => {
+    const filters = defaultFilters()
+    const wrapper = mountWithActions(filters, { observer: true })
+    await wrapper.get('#observer-account_id').setValue('7')
+    expect(filters.account_id).toBe(7)
+    expect(wrapper.emitted('query')).toBeUndefined()
+    wrapper.unmount()
   })
 })

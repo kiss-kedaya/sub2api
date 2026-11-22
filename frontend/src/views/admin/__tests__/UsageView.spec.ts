@@ -115,6 +115,8 @@ vi.mock('vue-router', () => ({
 
 const AppLayoutStub = { template: '<div><slot /></div>' }
 const UsageFiltersStub = defineComponent({
+  props: { modelValue: { type: Object, default: () => ({}) } },
+  emits: ['update:modelValue', 'date-range-change', 'query', 'refresh', 'reset', 'export', 'export-csv', 'cleanup'],
   setup(_, { expose }) {
     const userKeyword = ref('')
     let userSearchRevision = 0
@@ -1009,6 +1011,142 @@ describe('admin UsageView refresh window', () => {
     expect(after.start_date).toBe(initial.start_date)
     expect(after.end_date).toBe(initial.end_date)
     expect(list).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+})
+
+// 手动查询：面板改动只落草稿，点「查询」/重置才请求；刷新、导出、清理只读已生效条件。
+describe('admin UsageView manual query', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    Object.keys(routeQuery).forEach((key) => delete routeQuery[key])
+    list.mockReset().mockResolvedValue({ items: [], total: 0, pages: 0 })
+    exportList.mockReset().mockResolvedValue({ items: [], total: 0, pages: 0 })
+    getStats.mockReset().mockResolvedValue({
+      total_requests: 0, total_input_tokens: 0, total_output_tokens: 0,
+      total_cache_tokens: 0, total_tokens: 0, total_cost: 0, total_actual_cost: 0, average_duration_ms: 0,
+    })
+    getSnapshotV2.mockReset().mockResolvedValue({ trend: [], models: [], groups: [] })
+    getModelStats.mockReset().mockResolvedValue({ models: [] })
+    listErrorLogs.mockReset().mockResolvedValue({ items: [], total: 0, pages: 0 })
+    getById.mockReset()
+    aoaToSheet.mockClear()
+    sheetAddAoa.mockClear()
+    saveAs.mockClear()
+    xlsxWrite.mockClear()
+  })
+
+  afterEach(() => {
+    Object.keys(routeQuery).forEach((key) => delete routeQuery[key])
+    vi.useRealTimers()
+  })
+
+  const mountView = async () => {
+    const wrapper = mountRouteFilteredUsageView()
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+    // 清掉挂载期请求，只看用户操作产生的请求
+    list.mockClear()
+    getStats.mockClear()
+    getSnapshotV2.mockClear()
+    getModelStats.mockClear()
+    return wrapper
+  }
+
+  it('keeps draft edits local and only requests after the query event', async () => {
+    const wrapper = await mountView()
+    const vm = wrapper.vm as any
+    const panel = wrapper.findComponent(UsageFiltersStub)
+    const draft = panel.props('modelValue') as Record<string, any>
+
+    draft.model = 'gpt-draft'
+    draft.billing_type = 1
+    await flushPromises()
+
+    expect(vm.filters.model).toBeUndefined()
+    expect(vm.filters.billing_type).toBeNull()
+    expect(list).not.toHaveBeenCalled()
+    expect(getStats).not.toHaveBeenCalled()
+    expect(getSnapshotV2).not.toHaveBeenCalled()
+    expect(getModelStats).not.toHaveBeenCalled()
+
+    vm.pagination.page = 4
+    panel.vm.$emit('query')
+    await flushPromises()
+
+    expect(list).toHaveBeenCalledTimes(1)
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1, model: 'gpt-draft', billing_type: 1 }),
+      expect.anything(),
+    )
+    expect(getStats).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-draft', billing_type: 1 }))
+    expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-draft' }))
+    expect(vm.filters.model).toBe('gpt-draft')
+    expect(vm.pagination.page).toBe(1)
+    wrapper.unmount()
+  })
+
+  it('reset clears the draft and immediately queries default conditions', async () => {
+    const wrapper = await mountView()
+    const vm = wrapper.vm as any
+    const panel = wrapper.findComponent(UsageFiltersStub)
+
+    ;(panel.props('modelValue') as Record<string, any>).model = 'stale-draft'
+    panel.vm.$emit('reset')
+    await flushPromises()
+
+    expect(vm.filters.model).toBeUndefined()
+    expect(vm.draftFilters.model).toBeUndefined()
+    const lastParams = list.mock.calls.at(-1)?.[0] ?? {}
+    expect(lastParams).toEqual(expect.objectContaining({ page: 1, billing_type: null }))
+    expect(lastParams.model).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('exports with applied filters, not unsaved draft values', async () => {
+    const wrapper = await mountView()
+    const vm = wrapper.vm as any
+    const panel = wrapper.findComponent(UsageFiltersStub)
+
+    ;(panel.props('modelValue') as Record<string, any>).model = 'draft-only'
+    await flushPromises()
+
+    await vm.exportToExcel()
+    await flushPromises()
+    expect(exportList).toHaveBeenCalledWith(
+      expect.not.objectContaining({ model: 'draft-only' }),
+      expect.anything(),
+    )
+
+    exportList.mockClear()
+    panel.vm.$emit('query')
+    await flushPromises()
+    await vm.exportToExcel()
+    await flushPromises()
+    expect(exportList).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'draft-only' }),
+      expect.anything(),
+    )
+    wrapper.unmount()
+  })
+
+  it('refreshes and cleans up with applied filters while a newer draft is pending', async () => {
+    const wrapper = await mountView()
+    const vm = wrapper.vm as any
+    const panel = wrapper.findComponent(UsageFiltersStub)
+
+    ;(panel.props('modelValue') as Record<string, any>).model = 'draft-only'
+    await flushPromises()
+
+    vm.refreshData()
+    await flushPromises()
+    expect(list).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ model: 'draft-only' }),
+      expect.anything(),
+    )
+
+    const cleanupDialog = wrapper.findComponent({ name: 'UsageCleanupDialog' })
+    expect(cleanupDialog.props('filters')).toEqual(expect.not.objectContaining({ model: 'draft-only' }))
     wrapper.unmount()
   })
 })

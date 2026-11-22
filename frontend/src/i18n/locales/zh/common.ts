@@ -33,6 +33,7 @@ export default {
     update: '更新',
     confirm: '确认',
     reset: '重置',
+    query: '查询',
     search: '搜索',
     filter: '筛选',
     export: '导出',
