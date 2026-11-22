@@ -844,8 +844,11 @@ func (r *accountRepository) updateLockedAccount(
 
 	// at-rest：保持在库的封存状态。未封存行继续写完整明文以保证旧二进制可读
 	// （回滚安全）；已封存行只写结构键 + 摘要，并把密文列刷新为最新快照。
+	// 总开关关闭（默认）时不写任何密文，并主动把 credentials_cipher 清成 NULL，
+	// 保证读路径拿到的是本次写入的明文。
 	sealedCredentials := false
 	credentialsCipher := any(nil)
+	clearCredentialsCipher := !atrest.Enabled()
 	if atrest.Enabled() {
 		var sealedErr error
 		sealedCredentials, sealedErr = accountCredentialsWriteState(ctx, client, account.ID)
@@ -879,6 +882,8 @@ func (r *accountRepository) updateLockedAccount(
 		SetAutoPauseOnExpired(account.AutoPauseOnExpired)
 	if cipher, ok := credentialsCipher.(string); ok && cipher != "" {
 		builder.SetCredentialsCipher(cipher)
+	} else if clearCredentialsCipher {
+		builder.ClearCredentialsCipher()
 	}
 	// Ordinary settings saves must not replay a stale scheduling toggle.
 	if !accounttimer.PreserveSchedulable(ctx) || account.Status == service.StatusError {
@@ -1200,6 +1205,8 @@ func decodeAccountExtraJSON(raw []byte) (any, bool, error) {
 func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, credentials map[string]any) error {
 	// at-rest 模式下必须「读-改-写」：custom_usage_secrets 只存在于密文副本里，
 	// 原来的 SQL 内联合并会把它当不存在而静默清空；同时要按行状态保持封存。
+	// 总开关关闭（默认）时走原来的明文 SQL，并顺带把 credentials_cipher 清成
+	// NULL，保证不留下「读路径看不到本次写入」的旧密文。
 	if atrest.Enabled() {
 		return r.updateCredentialsAtRest(ctx, id, credentials)
 	}
@@ -1232,6 +1239,9 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 				|| CASE WHEN credentials ? 'custom_usage_secrets'
 					THEN jsonb_build_object('custom_usage_secrets', credentials -> 'custom_usage_secrets')
 					ELSE '{}'::jsonb END,
+			-- 总开关关闭（默认）的写路径不产生密文：旧密文列一并清成 NULL，
+			-- 否则读路径（封存行密文优先）会拿旧密文覆盖本次写入。
+			credentials_cipher = NULL,
 			extra = CASE
 				-- 凭证整体未变化 ⇒ Ollama 组身份必然未变化；顶层 DISTINCT 守卫防止
 				-- 非 Ollama 账号的无变化持久化误清探测快照或重写 NULL extra。
@@ -3807,6 +3817,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	}
 	// at-rest：credentials 补丁必须「读-改-写」，否则 JSONB `||` 会把明文敏感值
 	// 写回封存行、密文副本过期。先单独处理 credentials，再让原 SQL 处理其它字段。
+	// 总开关关闭（默认）时不走这里，改由下方明文 SQL 顺带把密文列清成 NULL。
 	if atrest.Enabled() && len(updates.Credentials) > 0 {
 		credentialsPatch := updates.Credentials
 		customUsageExpected := updates.CustomUsageExpected
@@ -3909,6 +3920,9 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		}
 		credentialPlaceholder = "$" + itoa(idx)
 		setClauses = append(setClauses, "credentials = COALESCE(credentials, '{}'::jsonb) || "+credentialPlaceholder+"::jsonb")
+		// 总开关关闭（默认）的写路径不产生密文：清掉旧密文列，读路径才会
+		// 看到本次写入的明文（封存行读取时密文优先）。
+		setClauses = append(setClauses, "credentials_cipher = NULL")
 		args = append(args, payload)
 		idx++
 	}

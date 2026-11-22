@@ -16,8 +16,13 @@ import (
 
 // at-rest 加密（2026-11）的关键约定：
 //
-//  1. 权威副本是 accounts.credentials_cipher（enc:v2: 密文，整段 credentials JSON）与
-//     proxies.password_cipher。读取时密文优先，密文为空才回退历史明文列。
+//  0. 加密写入默认关闭：SUB2API_ATREST_ENABLED 未显式设为 true（或没有有效
+//     SUB2API_ATREST_KEY）时，所有写路径只写明文、credentials_cipher 保持 NULL。
+//     读取路径明文优先，历史 enc:v2: 密文只在有密钥时解密、无密钥时 fail-closed。
+//     开启前必须先跑真实网关请求验收（2026-11-22 全站 502 事故）。
+//  1. 开启后权威副本是 accounts.credentials_cipher（enc:v2: 密文，整段
+//     credentials JSON）与 proxies.password_cipher。封存行读取时密文优先，
+//     未封存（双写）行明文优先。
 //  2. 「双写期」写路径同时写明文列与密文列，旧二进制仍能读明文 → 回滚安全。
 //  3. `-atrest-migrate` 封存（seal）明文列：删除敏感子键，写入 "_sealed": true、
 //     "_sealed_keys"（敏感键名清单）以及 SQL 仍需要按值比较/分组的身份摘要
@@ -137,8 +142,8 @@ func SealedIdentityDigest(key, value string) string {
 }
 
 // credentialsCipherForStorage 返回整段凭据的 enc:v2: 密文。
-// 未配置 SUB2API_ATREST_KEY 时返回空字符串：写入保持历史明文行为，
-// 绝不写出无法解密的密文。
+// 总开关关闭（默认）或未配置 SUB2API_ATREST_KEY 时返回空字符串：写入保持
+// 历史明文行为、credentials_cipher 保持 NULL，绝不写出无法解密的密文。
 func credentialsCipherForStorage(credentials map[string]any) (string, error) {
 	if !atrest.Enabled() {
 		return "", nil
@@ -264,19 +269,41 @@ func decryptCredentialsCipher(ciphertext string) (map[string]any, error) {
 	return normalizeJSONMap(credentials), nil
 }
 
-// decodeCredentialsStored 从数据库读到的两列还原完整凭据：密文优先，否则明文。
-func decodeCredentialsStored(plainJSON []byte, ciphertext string) (map[string]any, error) {
-	if strings.TrimSpace(ciphertext) != "" {
-		return decryptCredentialsCipher(ciphertext)
-	}
+// decodePlainCredentials 解析明文列。usable 表示这份明文可以直接当业务值使用：
+// 非空且不是 -atrest-migrate 的封存投影（"\_sealed": true）。
+func decodePlainCredentials(plainJSON []byte) (map[string]any, bool, error) {
 	if len(plainJSON) == 0 || string(plainJSON) == "null" {
-		return map[string]any{}, nil
+		return map[string]any{}, false, nil
 	}
 	var credentials map[string]any
 	if err := json.Unmarshal(plainJSON, &credentials); err != nil {
-		return nil, fmt.Errorf("decode stored credentials: %w", err)
+		return nil, false, fmt.Errorf("decode stored credentials: %w", err)
 	}
-	return normalizeJSONMap(credentials), nil
+	normalized := normalizeJSONMap(credentials)
+	if len(normalized) == 0 || IsSealedCredentials(normalized) {
+		return normalized, false, nil
+	}
+	return normalized, true, nil
+}
+
+// decodeCredentialsStored 从数据库读到的两列还原完整凭据。
+//
+// 读取路径明文优先（2026-11-22 事故修复）：明文列有可用内容时直接返回明文，
+// 不再让「密文列存在但密钥缺失/失效」把请求绑死；只有封存行（明文列只剩结构
+// 键）或明文列为空时才解密 credentials_cipher，解密失败 fail-closed，绝不把
+// 密文当业务值返回。
+func decodeCredentialsStored(plainJSON []byte, ciphertext string) (map[string]any, error) {
+	plain, usable, err := decodePlainCredentials(plainJSON)
+	if err != nil {
+		return nil, err
+	}
+	if usable {
+		return plain, nil
+	}
+	if strings.TrimSpace(ciphertext) != "" {
+		return decryptCredentialsCipher(ciphertext)
+	}
+	return plain, nil
 }
 
 // credentialsJSONEqual 近似 jsonb 等值：Go map 序列化键有序，用于替代
@@ -294,23 +321,30 @@ func jsonSubvalueEqual(left, right any) bool {
 	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
 }
 
-// accountCredentialsFromEntity 返回账号的权威凭据：
-// 密文优先（解密失败 fail-closed），否则回退历史明文列。
+// accountCredentialsFromEntity 返回账号的权威凭据：明文优先，封存行才用密文。
+//
+// 2026-11-22 事故的直接原因就是读取「密文优先」：密文列存在但环境密钥被删除后
+// 网关读不到 api_key，全站 502。现在明文列有可用内容时直接返回明文；封存行
+// （明文列只有结构键）或明文为空时才解密，解密失败 fail-closed。
 func accountCredentialsFromEntity(m *dbent.Account) (map[string]any, error) {
 	if m == nil {
 		return nil, nil
 	}
-	ciphertext := derefString(m.CredentialsCipher)
-	if strings.TrimSpace(ciphertext) != "" {
-		credentials, err := decryptCredentialsCipher(ciphertext)
-		if err != nil {
-			logger.LegacyPrintf("repository.account",
-				"[AtRest] credentials_cipher decrypt failed: account=%d err=%v", m.ID, err)
-			return nil, fmt.Errorf("account %d credentials cannot be decrypted: %w", m.ID, err)
-		}
-		return credentials, nil
+	plain := copyJSONMap(normalizeJSONMap(m.Credentials))
+	if len(plain) > 0 && !IsSealedCredentials(plain) {
+		return plain, nil
 	}
-	return copyJSONMap(normalizeJSONMap(m.Credentials)), nil
+	ciphertext := derefString(m.CredentialsCipher)
+	if strings.TrimSpace(ciphertext) == "" {
+		return plain, nil
+	}
+	credentials, err := decryptCredentialsCipher(ciphertext)
+	if err != nil {
+		logger.LegacyPrintf("repository.account",
+			"[AtRest] credentials_cipher decrypt failed: account=%d err=%v", m.ID, err)
+		return nil, fmt.Errorf("account %d credentials cannot be decrypted: %w", m.ID, err)
+	}
+	return credentials, nil
 }
 
 // accountCredentialsWriteState 读取账号当前是否已封存（用于 ent 更新路径）。
@@ -326,8 +360,9 @@ func accountCredentialsWriteState(ctx context.Context, client *dbent.Client, id 
 }
 
 // refreshAccountCredentialsCipher 在「只改了 credentials 明文列」的写路径之后，
-// 同事务刷新 credentials_cipher。密文是读取的权威副本：不刷新会让这次结构键
-// 修改在下一次读取时被密文覆盖（模型白名单自动同步、jsonb_set 类更新）。
+// 同事务刷新 credentials_cipher。封存行读取时密文优先：不刷新会让这次结构键
+// 修改在下一次读取时被旧密文覆盖（模型白名单自动同步、jsonb_set 类更新）。
+// 总开关关闭时本函数不会被调用（写路径只写明文）。
 func refreshAccountCredentialsCipher(ctx context.Context, exec sqlExecutor, id int64, mutate func(map[string]any)) error {
 	rows, err := exec.QueryContext(ctx, `
 		SELECT credentials, COALESCE(credentials_cipher, '')

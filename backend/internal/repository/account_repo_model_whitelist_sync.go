@@ -132,10 +132,16 @@ func (r *accountRepository) UpdateAccountModelMappingCAS(ctx context.Context, ac
 		return false, errors.New("account repository does not support atomic scheduler outbox writes")
 	}
 
+	// 总开关关闭（默认）：本次只写明文，同时清掉旧密文列，避免封存行读取时
+	// 用旧密文覆盖这次 model_mapping 同步。开启时由下面的 refresh 同事务刷新密文。
+	cipherColumnClause := ""
+	if !atrest.Enabled() {
+		cipherColumnClause = "credentials_cipher = NULL,\n\t\t\t"
+	}
 	result, err := queryExec.ExecContext(queryCtx, `
 		UPDATE accounts
 		SET credentials = jsonb_set(COALESCE(credentials, '{}'::jsonb), '{model_mapping}', $1::jsonb, true),
-			updated_at = NOW()
+			`+cipherColumnClause+`updated_at = NOW()
 		WHERE id = $2
 			AND deleted_at IS NULL
 			AND status = 'active'
@@ -157,8 +163,9 @@ func (r *accountRepository) UpdateAccountModelMappingCAS(ctx context.Context, ac
 	if affected == 0 {
 		return false, nil
 	}
-	// at-rest：model_mapping 属于结构键，jsonb_set 会改明文列；密文列是读取的
-	// 权威副本，必须同事务刷新，否则下一次读取会把这次同步「抵消」。
+	// at-rest：model_mapping 属于结构键，jsonb_set 会改明文列；封存行的读取
+	// 走密文，因此开启 sealing 时必须同事务刷新，否则下一次读取会把这次同步
+	// 「抵消」。总开关关闭时上面已把密文列清成 NULL。
 	if atrest.Enabled() {
 		if err := refreshAccountCredentialsCipher(queryCtx, queryExec, id, func(credentials map[string]any) {
 			credentials["model_mapping"] = next

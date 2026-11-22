@@ -38,8 +38,9 @@ func IsSensitiveSettingKey(key string) bool {
 	return ok
 }
 
-// encodeSettingValue 把要落库的 settings 值编码：白名单键且配置了 at-rest
-// 密钥时写成 enc:v2: 密文；未配置密钥时保持明文（绝不写出无法解密的密文）。
+// encodeSettingValue 把要落库的 settings 值编码：白名单键且 sealing 开启
+// （SUB2API_ATREST_ENABLED=true 且密钥有效）时写成 enc:v2: 密文；默认关闭或
+// 未配置密钥时保持明文（绝不写出无法解密的密文）。
 func encodeSettingValue(key, value string) (string, error) {
 	if value == "" || !IsSensitiveSettingKey(key) || atrest.IsEncrypted(value) {
 		return value, nil
@@ -67,9 +68,12 @@ func decodeSettingValue(key, value string) (string, error) {
 	return plaintext, nil
 }
 
-// settingValueEncryptedAtRest 报告该键在当前实例上是否以密文落库。
+// settingValueEncryptedAtRest 报告该键在库内是否「可能是密文」，用于
+// CompareAndSwapValue 决定是否要读原始行再解密比较。
+// 判据是「加载到了可用密钥」而不是 sealing 开关：总开关关闭后，历史行仍可能
+// 是 enc:v2: 密文，CAS 必须按密文/明文两种形态都能比较。
 func settingValueEncryptedAtRest(key string) bool {
-	return IsSensitiveSettingKey(key) && atrest.Enabled()
+	return IsSensitiveSettingKey(key) && atrest.KeyConfigured()
 }
 
 // settingRawValue 读取 settings 表的原始值（不解密、不过缓存）。
