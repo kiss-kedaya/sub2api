@@ -165,6 +165,7 @@
     "PUT /admin/groups/${id}/composite-routes/${routeId} :: src/api/admin/groups.ts#updateCompositeRoute",
     "PUT /admin/groups/sort-order :: src/api/admin/groups.ts#updateSortOrder",
     "PUT /admin/groups/${id} :: src/api/admin/groups.ts#update",
+    "PUT /admin/settings/key-rotation-risk-ack :: src/api/admin/keyRotationRiskAck.ts#updateKeyRotationRiskAckSettings",
     "POST /admin/ops/system-logs/cleanup :: src/api/admin/ops.ts#cleanupSystemLogs",
     "POST /admin/ops/alert-rules :: src/api/admin/ops.ts#createAlertRule",
     "POST /admin/ops/alert-silences :: src/api/admin/ops.ts#createAlertSilence",

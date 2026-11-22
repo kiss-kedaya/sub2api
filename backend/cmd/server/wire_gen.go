@@ -360,8 +360,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	cryptoHandler := mainLocalCryptoRuntime.CryptoHandler
 	cryptoDepositHandler := mainLocalCryptoRuntime.CryptoDepositHandler
 	userBarkHandler := handler.NewUserBarkHandler(userBarkService, totpService, configConfig)
-	keyRotationGateService := service.NewKeyRotationGateService(apiKeyService, configConfig)
-	keyRotationHandler := handler.NewKeyRotationHandler(keyRotationGateService)
+	keyRotationRiskAckRepository := repository.NewKeyRotationRiskAckRepository(db)
+	keyRotationRiskAckService := service.NewKeyRotationRiskAckService(keyRotationRiskAckRepository, settingService)
+	keyRotationGateService := service.NewKeyRotationGateService(apiKeyService, configConfig, keyRotationRiskAckService)
+	keyRotationHandler := handler.NewKeyRotationHandler(keyRotationGateService, keyRotationRiskAckService, auditLogService)
 	ipWhitelistAssistRepository := repository.NewIPWhitelistAssistRepository(db)
 	ipWhitelistAssistService := service.NewIPWhitelistAssistService(ipWhitelistAssistRepository)
 	ipWhitelistAssistHandler := handler.NewIPWhitelistAssistHandler(ipWhitelistAssistService)

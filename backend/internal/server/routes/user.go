@@ -59,6 +59,9 @@ func RegisterUserRoutes(
 			// 用于在提交前展示整改提示卡片。该接口本身不拦截。
 			if h.KeyRotation != nil {
 				user.GET("/key-rotation-gate", h.KeyRotation.GetStatus)
+				// 显式风险确认：不愿轮换 Key / 加 IP 白名单的用户二次确认后
+				// 在有效期内继续充值/兑换（写入审计 KEY_ROTATION_RISK_ACK）。
+				user.POST("/security/key-rotation-risk-ack", h.KeyRotation.AcknowledgeRisk)
 			}
 
 			// 通知邮箱管理

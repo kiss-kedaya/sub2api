@@ -58,7 +58,7 @@ func newKeyRotationGateRouteEngine(t *testing.T) (*gin.Engine, *service.KeyRotat
 	}
 	gateService := service.NewKeyRotationGateService(&keyRotationGateRouteLister{keys: []service.APIKey{
 		{ID: 1, CreatedAt: cutoff.Add(-24 * time.Hour)},
-	}}, cfg)
+	}}, cfg, nil)
 	auditService := service.NewAuditLogService(&keyRotationGateAuditRepo{}, nil)
 	gateMiddleware := middleware.NewKeyRotationGateMiddleware(gateService, auditService)
 
@@ -71,7 +71,7 @@ func newKeyRotationGateRouteEngine(t *testing.T) (*gin.Engine, *service.KeyRotat
 
 	h := &handler.Handlers{
 		Redeem:      &handler.RedeemHandler{},
-		KeyRotation: handler.NewKeyRotationHandler(gateService),
+		KeyRotation: handler.NewKeyRotationHandler(gateService, nil, auditService),
 	}
 	cryptoHandler := handler.NewCryptoHandler(nil, settings, nil, nil, cfg)
 	depositHandler := handler.NewCryptoDepositHandler(nil)

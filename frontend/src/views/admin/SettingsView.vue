@@ -44,6 +44,7 @@
         <!-- Tab: Security — Admin API Key -->
         <div v-show="activeTab === 'security'" class="flex flex-col gap-4 sm:gap-6 lg:gap-12">
           <GatewayIPNoticeSettings />
+          <KeyRotationRiskAckSettings />
           <!-- 分权管理密钥：多 key、范围/过期/IP 白名单/撤销审计 -->
           <AdminAccessKeysSettings />
           <!-- Admin API Key Settings -->
@@ -7030,6 +7031,7 @@ import GitHubMark from "@/components/auth/GitHubMark.vue";
 import GoogleMark from "@/components/auth/GoogleMark.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
 import GatewayIPNoticeSettings from "@/views/admin/settings/GatewayIPNoticeSettings.vue";
+import KeyRotationRiskAckSettings from "@/views/admin/settings/KeyRotationRiskAckSettings.vue";
 import RegistrationEmailBlacklistEditor from "@/components/admin/settings/RegistrationEmailBlacklistEditor.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
 import { useClipboard } from "@/composables/useClipboard";

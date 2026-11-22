@@ -3,6 +3,22 @@ export default {
       search: {
         emailOAuth: '邮箱快捷登录',
       },
+      keyRotationRiskAck: {
+        title: '密钥轮换风险确认（继续充值）',
+        description:
+          '密钥泄漏门禁要求用户轮换 API Key 或设置 IP 白名单才能充值/兑换。开启后，用户可勾选「我已知晓风险，继续充值」，在有效期内放行充值/兑换；模型调用、查看余额与密钥管理本来就不受限。',
+        enabled: '允许用户显式确认风险后继续充值',
+        enabledHint:
+          '关闭后：用户不能再做风险确认，已写入的确认也立即失效（充值/兑换重新要求整改）。每次确认与每次放行都会写入审计日志（KEY_ROTATION_RISK_ACK / user.recharge.allowed_key_rotation_risk_ack）。',
+        hours: '风险确认有效期（小时）',
+        hoursHint:
+          '一次确认的有效时间，范围 1–720，默认 24。到期，或运维调整门禁 cutoff（新一轮事件）后，用户需要重新确认。',
+        invalidHours: '有效期必须是 1–720 之间的整数小时。',
+        auditHint:
+          '跳过是显式风险确认：有有效期、绑定确认当时的 cutoff、记录 IP / User-Agent，并写审计日志。用户确认后风险自负，无法用「不知道」追回扣费。',
+        retry: '重新加载',
+        saved: '密钥轮换风险确认设置已保存',
+      },
       gatewayIPNotice: {
         title: '指定 IP 提示与限流',
         description: '仅对列表中的来源 IP 添加对话提示，并按 IP 独立限制请求频率；同 IP 多账号共用 Key 时自动加入列表。',

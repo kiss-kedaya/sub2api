@@ -12,6 +12,7 @@ import ThemeCustomizer from "@/components/admin/theme/ThemeCustomizer.vue";
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 
 vi.mock('@/views/admin/settings/GatewayIPNoticeSettings.vue', () => ({ default: { template: '<div />' } }));
+vi.mock('@/views/admin/settings/KeyRotationRiskAckSettings.vue', () => ({ default: { template: '<div />' } }));
 
 const {
   getSettings,

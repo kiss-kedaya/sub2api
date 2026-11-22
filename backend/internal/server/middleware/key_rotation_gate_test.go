@@ -35,7 +35,7 @@ func newKeyRotationGateTestMiddleware(t *testing.T, lister service.KeyRotationAc
 		KeyRotationGateEnabled: true,
 		KeyRotationCutoff:      cutoff.Format(time.RFC3339),
 	}}
-	return NewKeyRotationGateMiddleware(service.NewKeyRotationGateService(lister, cfg), audit)
+	return NewKeyRotationGateMiddleware(service.NewKeyRotationGateService(lister, cfg, nil), audit)
 }
 
 func newKeyRotationGateTestRouter(t *testing.T, gate KeyRotationGateMiddleware, handler gin.HandlerFunc) *gin.Engine {
@@ -173,7 +173,7 @@ func TestKeyRotationGateDisabledAllowsEverything(t *testing.T) {
 		KeyRotationGateEnabled: false,
 		KeyRotationCutoff:      cutoff.Format(time.RFC3339),
 	}}
-	gate := NewKeyRotationGateMiddleware(service.NewKeyRotationGateService(lister, cfg), auditService)
+	gate := NewKeyRotationGateMiddleware(service.NewKeyRotationGateService(lister, cfg, nil), auditService)
 
 	handlerCalled := false
 	router := newKeyRotationGateTestRouter(t, gate, func(c *gin.Context) {

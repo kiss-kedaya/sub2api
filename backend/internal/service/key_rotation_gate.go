@@ -68,6 +68,16 @@ type KeyRotationGateStatus struct {
 	Message   string `json:"message,omitempty"`
 	// RemediationPath is the console route that lets the user rotate keys.
 	RemediationPath string `json:"remediation_path"`
+	// RiskAckEnabled / RiskAckHours mirror security.key_rotation_risk_ack_*.
+	// When enabled the console offers a secondary "known risk, continue" action
+	// so a user who refuses to rotate keys can still top up after an explicit
+	// acknowledgement.
+	RiskAckEnabled bool `json:"risk_ack_enabled"`
+	RiskAckHours   int  `json:"risk_ack_hours"`
+	// RiskAckExpiresAt is the end of the currently valid acknowledgement. Only
+	// set while such an acknowledgement exists (Required is then false with
+	// reason risk_acknowledged).
+	RiskAckExpiresAt *time.Time `json:"risk_ack_expires_at,omitempty"`
 }
 
 // IsKeyRotationCompliant reports whether the current credential was issued
@@ -139,12 +149,21 @@ func hasNonEmptyIPWhitelist(entries []string) bool {
 type KeyRotationGateService struct {
 	keys KeyRotationActiveKeyLister
 	cfg  *config.Config
+	// riskAcks validates the expiring "I know the risk" acknowledgement. Nil is
+	// allowed for tests / legacy wiring and simply means the skip is unavailable.
+	riskAcks *KeyRotationRiskAckService
 }
 
 // NewKeyRotationGateService builds the gate evaluator. *APIKeyService is bound to
 // KeyRotationActiveKeyLister in the wire provider set; tests inject stubs.
-func NewKeyRotationGateService(apiKeys KeyRotationActiveKeyLister, cfg *config.Config) *KeyRotationGateService {
-	return &KeyRotationGateService{keys: apiKeys, cfg: cfg}
+// riskAcks may be nil (unit tests, or a deployment without the acknowledgement
+// feature), in which case the risk-acknowledgement branch is skipped entirely.
+func NewKeyRotationGateService(
+	apiKeys KeyRotationActiveKeyLister,
+	cfg *config.Config,
+	riskAcks *KeyRotationRiskAckService,
+) *KeyRotationGateService {
+	return &KeyRotationGateService{keys: apiKeys, cfg: cfg, riskAcks: riskAcks}
 }
 
 // Settings returns the effective switch and cutoff.
@@ -164,6 +183,14 @@ func (s *KeyRotationGateService) Evaluate(ctx context.Context, userID int64) (*K
 		Cutoff:          cutoff.UTC(),
 		RemediationPath: KeyRotationRemediationPath,
 	}
+	// The acknowledgement settings are cheap (repository cache) and the console
+	// needs them to decide whether to offer the skip action, so always fill them.
+	riskAckSettings := DefaultKeyRotationRiskAckSettings()
+	if s != nil && s.riskAcks != nil {
+		riskAckSettings = s.riskAcks.Settings(ctx)
+	}
+	status.RiskAckEnabled = riskAckSettings.Enabled
+	status.RiskAckHours = riskAckSettings.Hours
 	if !enabled {
 		status.Reason = KeyRotationReasonDisabled
 		return status, nil
@@ -205,6 +232,23 @@ func (s *KeyRotationGateService) Evaluate(ctx context.Context, userID int64) (*K
 			status.Reason = KeyRotationReasonAllKeysAllowlist
 		}
 		return status, nil
+	}
+
+	// The user still has at least one possibly-leaked key. An explicit, unexpired
+	// and cutoff-matched acknowledgement lets them recharge anyway; it is audited
+	// when written and every gate pass is audited by the middleware.
+	if riskAckSettings.Enabled && s.riskAcks != nil {
+		ack, ackErr := s.riskAcks.HasValidRiskAck(ctx, userID, cutoff)
+		if ackErr != nil {
+			return nil, ackErr
+		}
+		if ack != nil {
+			expiresAt := ack.ExpiresAt.UTC()
+			status.Required = false
+			status.Reason = KeyRotationReasonRiskAcknowledged
+			status.RiskAckExpiresAt = &expiresAt
+			return status, nil
+		}
 	}
 
 	status.Required = true

@@ -5,6 +5,7 @@
 
       <!-- 密钥轮换门禁：未完成整改时兑换全链路（含历史读取）被后端 403 拦截 -->
       <KeyRotationGateNotice v-if="keyRotationRequired" :status="keyRotationStatus" />
+      <KeyRotationRiskAckBanner v-else-if="riskAckActive" :status="keyRotationStatus" />
       <TwoFactorSuggestionBanner storage-key="redeem" />
       <div class="grid grid-cols-1 divide-y divide-default overflow-hidden rounded-lg bg-default shadow-xs ring ring-default sm:grid-cols-[1.4fr_1fr] sm:divide-x sm:divide-y-0 dark:shadow-none">
         <div class="px-5 py-4 sm:px-6">
@@ -309,6 +310,7 @@ import type { RedeemCode } from '@/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
+import KeyRotationRiskAckBanner from '@/components/user/KeyRotationRiskAckBanner.vue'
 import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import { isKeyRotationRequiredError } from '@/api/keyRotationGate'
 import { useKeyRotationGate } from '@/composables/useKeyRotationGate'
@@ -320,6 +322,9 @@ const authStore = useAuthStore()
 const appStore = useAppStore()
 const subscriptionStore = useSubscriptionStore()
 const { required: keyRotationRequired, status: keyRotationStatus } = useKeyRotationGate()
+const riskAckActive = computed(
+  () => !keyRotationRequired.value && Boolean(keyRotationStatus.value?.risk_ack_expires_at)
+)
 
 const user = computed(() => authStore.user)
 

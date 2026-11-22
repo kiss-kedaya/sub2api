@@ -9,6 +9,7 @@
         <KeyRotationGateNotice :status="keyRotationStatus" />
       </template>
       <template v-else>
+        <KeyRotationRiskAckBanner v-if="riskAckActive" :status="keyRotationStatus" class="mb-4" />
         <TwoFactorSuggestionBanner
           v-if="paymentPhase === 'select'"
           storage-key="payment"
@@ -412,6 +413,7 @@ import { buildPaymentErrorToastMessage, describePaymentScenarioError } from './p
 import { buildEmbeddedUrl, detectTheme } from '@/utils/embedded-url'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
+import KeyRotationRiskAckBanner from '@/components/user/KeyRotationRiskAckBanner.vue'
 import { isKeyRotationRequiredError } from '@/api/keyRotationGate'
 import { useKeyRotationGate } from '@/composables/useKeyRotationGate'
 import TwoFactorSuggestionBanner from '@/components/user/TwoFactorSuggestionBanner.vue'
@@ -428,6 +430,9 @@ const subscriptionStore = useSubscriptionStore()
 const appStore = useAppStore()
 // 密钥轮换门禁：未完成整改时充值中心与订阅购买整体替换为整改卡片。
 const { required: keyRotationRequired, status: keyRotationStatus } = useKeyRotationGate()
+const riskAckActive = computed(
+  () => !keyRotationRequired.value && Boolean(keyRotationStatus.value?.risk_ack_expires_at)
+)
 // 管理员的支付页签布局保存在 /admin/payment/config：该接口已强制 step-up，这里负责弹码并重试。
 const stepUp = useStepUp()
 

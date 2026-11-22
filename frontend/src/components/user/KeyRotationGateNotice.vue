@@ -29,26 +29,47 @@
           {{ t('keyRotationGate.hint') }}
         </p>
 
-        <UButton
-          :to="remediationPath"
-          size="lg"
-          color="warning"
-          icon="i-lucide-key-round"
-          data-testid="key-rotation-gate-action"
-        >
-          {{ t('keyRotationGate.action') }}
-        </UButton>
+        <div class="flex flex-wrap items-center gap-2">
+          <UButton
+            :to="remediationPath"
+            size="lg"
+            color="warning"
+            icon="i-lucide-key-round"
+            data-testid="key-rotation-gate-action"
+          >
+            {{ t('keyRotationGate.action') }}
+          </UButton>
+          <!-- 次级动作：显式风险确认。故意用 ghost/neutral，不做成和整改按钮一样醒目。 -->
+          <UButton
+            v-if="riskAckEnabled"
+            size="sm"
+            color="neutral"
+            variant="ghost"
+            :loading="submitting"
+            :disabled="submitting"
+            data-testid="key-rotation-gate-risk-ack-action"
+            @click="acknowledgeRisk"
+          >
+            {{ submitting ? t('keyRotationGate.riskAckLoading') : t('keyRotationGate.riskAckAction') }}
+          </UButton>
+        </div>
+
+        <p v-if="riskAckError" class="text-xs leading-5 text-red-700 dark:text-red-300" role="alert" data-testid="key-rotation-gate-risk-ack-error">
+          {{ riskAckError }}
+        </p>
       </div>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import type { KeyRotationGateStatus } from '@/api/keyRotationGate'
+import { keyRotationGateAPI, type KeyRotationGateStatus } from '@/api/keyRotationGate'
 import { KEY_ROTATION_REMEDIATION_PATH } from '@/api/keyRotationGateCodes'
+import { confirm } from '@/composables/useConfirmation'
+import { ensureKeyRotationGate } from '@/composables/useKeyRotationGate'
 
 const props = defineProps<{
   status?: KeyRotationGateStatus | null
@@ -60,4 +81,37 @@ const remediationPath = computed(() => props.status?.remediation_path || KEY_ROT
 
 const activeCount = computed(() => props.status?.active_key_count ?? -1)
 const pendingCount = computed(() => props.status?.pending_key_count ?? 0)
+
+// 后端开关关闭（security.key_rotation_risk_ack_enabled=false）时不展示次级按钮。
+const riskAckEnabled = computed(() => props.status?.risk_ack_enabled === true)
+const submitting = ref(false)
+const riskAckError = ref('')
+
+/**
+ * 显式风险确认：先弹一次确认（说明 key 泄漏后他人可直接盗刷余额），
+ * 确认后才写确认记录并刷新全局门禁状态，页面随之恢复充值/兑换表单。
+ */
+async function acknowledgeRisk(): Promise<void> {
+  if (submitting.value) return
+  riskAckError.value = ''
+  const confirmed = await confirm({
+    title: t('keyRotationGate.riskAckConfirmTitle'),
+    message: t('keyRotationGate.riskAckConfirmMessage'),
+    confirmText: t('keyRotationGate.riskAckConfirm'),
+    cancelText: t('keyRotationGate.riskAckCancel'),
+    danger: true
+  })
+  if (!confirmed) return
+
+  submitting.value = true
+  try {
+    await keyRotationGateAPI.acknowledgeRisk()
+    await ensureKeyRotationGate(true)
+  } catch {
+    // 失败（含功能被关闭的 403）保持原拦截状态，并允许用户重试或去整改。
+    riskAckError.value = t('keyRotationGate.riskAckFailed')
+  } finally {
+    submitting.value = false
+  }
+}
 </script>

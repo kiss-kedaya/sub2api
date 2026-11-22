@@ -990,7 +990,17 @@ export default {
     activeKeysLabel: '启用中的 Key',
     pendingKeysLabel: '待整改 Key',
     hint: '更换一个新的 API Key，或为每个启用中的 Key 配置 IP 白名单，完成后本页自动恢复。模型调用、查看余额和密钥管理不受影响。',
-    action: '前往 API 密钥'
+    action: '前往 API 密钥',
+    riskAckAction: '我已知晓风险，继续充值',
+    riskAckConfirmTitle: '确认跳过整改？',
+    riskAckConfirmMessage:
+      '不轮换 API Key、不设置 IP 白名单时，一旦 Key 泄漏，他人可直接盗刷您的余额。风险由您自行承担，确认继续充值 / 兑换？',
+    riskAckConfirm: '确认继续',
+    riskAckCancel: '取消',
+    riskAckLoading: '处理中...',
+    riskAckFailed: '风险确认失败，请稍后重试，或先完成 API Key 整改。',
+    riskAckExpiry: '风险确认有效期至 {time}',
+    riskAckBanner: '建议尽快轮换 API Key 或设置 IP 白名单，到期后需要重新确认。'
   },
 
   // Redeem

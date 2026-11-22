@@ -35,7 +35,7 @@ func keyRotationTestConfig(t *testing.T, enabled bool, cutoff time.Time) *config
 func TestKeyRotationGateEvaluateDisabled(t *testing.T) {
 	cutoff := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
 	lister := &keyRotationListerStub{keys: []APIKey{{ID: 1, CreatedAt: cutoff.Add(-30 * 24 * time.Hour)}}}
-	gate := NewKeyRotationGateService(lister, keyRotationTestConfig(t, false, cutoff))
+	gate := NewKeyRotationGateService(lister, keyRotationTestConfig(t, false, cutoff), nil)
 
 	status, err := gate.Evaluate(context.Background(), 7)
 	require.NoError(t, err)
@@ -47,7 +47,7 @@ func TestKeyRotationGateEvaluateDisabled(t *testing.T) {
 
 func TestKeyRotationGateEvaluateNoActiveKeys(t *testing.T) {
 	cutoff := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
-	gate := NewKeyRotationGateService(&keyRotationListerStub{}, keyRotationTestConfig(t, true, cutoff))
+	gate := NewKeyRotationGateService(&keyRotationListerStub{}, keyRotationTestConfig(t, true, cutoff), nil)
 
 	status, err := gate.Evaluate(context.Background(), 7)
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestKeyRotationGateEvaluateAllKeysRotated(t *testing.T) {
 	gate := NewKeyRotationGateService(&keyRotationListerStub{keys: []APIKey{
 		{ID: 1, CreatedAt: cutoff}, // exactly at the cutoff counts as rotated
 		{ID: 2, CreatedAt: cutoff.Add(time.Hour)},
-	}}, keyRotationTestConfig(t, true, cutoff))
+	}}, keyRotationTestConfig(t, true, cutoff), nil)
 
 	status, err := gate.Evaluate(context.Background(), 7)
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestKeyRotationGateEvaluateAllKeysIPAllowlisted(t *testing.T) {
 	gate := NewKeyRotationGateService(&keyRotationListerStub{keys: []APIKey{
 		{ID: 1, CreatedAt: old, IPWhitelist: []string{"203.0.113.7"}},
 		{ID: 2, CreatedAt: old, IPWhitelist: []string{"10.0.0.0/8"}},
-	}}, keyRotationTestConfig(t, true, cutoff))
+	}}, keyRotationTestConfig(t, true, cutoff), nil)
 
 	status, err := gate.Evaluate(context.Background(), 7)
 	require.NoError(t, err)
@@ -94,7 +94,7 @@ func TestKeyRotationGateEvaluateRequiresRotation(t *testing.T) {
 	gate := NewKeyRotationGateService(&keyRotationListerStub{keys: []APIKey{
 		{ID: 1, CreatedAt: old},
 		{ID: 2, CreatedAt: old, IPWhitelist: []string{"   "}}, // blank entries are not an allowlist
-	}}, keyRotationTestConfig(t, true, cutoff))
+	}}, keyRotationTestConfig(t, true, cutoff), nil)
 
 	status, err := gate.Evaluate(context.Background(), 7)
 	require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestKeyRotationGateEvaluatePartiallyRotated(t *testing.T) {
 	gate := NewKeyRotationGateService(&keyRotationListerStub{keys: []APIKey{
 		{ID: 1, CreatedAt: cutoff.Add(-time.Hour)}, // still old, no allowlist
 		{ID: 2, CreatedAt: cutoff.Add(time.Hour)},  // rotated
-	}}, keyRotationTestConfig(t, true, cutoff))
+	}}, keyRotationTestConfig(t, true, cutoff), nil)
 
 	status, err := gate.Evaluate(context.Background(), 7)
 	require.NoError(t, err)
@@ -130,7 +130,7 @@ func TestKeyRotationGateEvaluateMixedButSafeKeys(t *testing.T) {
 	gate := NewKeyRotationGateService(&keyRotationListerStub{keys: []APIKey{
 		{ID: 1, CreatedAt: cutoff.Add(time.Hour)},
 		{ID: 2, CreatedAt: cutoff.Add(-time.Hour), IPWhitelist: []string{"192.0.2.10"}},
-	}}, keyRotationTestConfig(t, true, cutoff))
+	}}, keyRotationTestConfig(t, true, cutoff), nil)
 
 	status, err := gate.Evaluate(context.Background(), 7)
 	require.NoError(t, err)
@@ -184,7 +184,7 @@ func TestKeyRotationGateEvaluateRequireUser(t *testing.T) {
 	cutoff := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
 	gate := NewKeyRotationGateService(&keyRotationListerStub{keys: []APIKey{
 		{ID: 1, CreatedAt: cutoff.Add(-time.Hour)},
-	}}, keyRotationTestConfig(t, true, cutoff))
+	}}, keyRotationTestConfig(t, true, cutoff), nil)
 
 	status, blocked, err := gate.RequireUser(context.Background(), 7)
 	require.NoError(t, err)
@@ -196,7 +196,7 @@ func TestKeyRotationGateEvaluateRequireUser(t *testing.T) {
 func TestKeyRotationGateEvaluateListerError(t *testing.T) {
 	cutoff := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
 	lister := &keyRotationListerStub{err: errors.New("db is down")}
-	gate := NewKeyRotationGateService(lister, keyRotationTestConfig(t, true, cutoff))
+	gate := NewKeyRotationGateService(lister, keyRotationTestConfig(t, true, cutoff), nil)
 
 	status, err := gate.Evaluate(context.Background(), 7)
 	require.Error(t, err)
@@ -207,7 +207,7 @@ func TestKeyRotationGateEvaluateListerError(t *testing.T) {
 func TestKeyRotationGateEvaluateNilConfigDefaultsToEnabled(t *testing.T) {
 	// nil *config.Config must resolve to the documented defaults: gate on, cutoff
 	// 2026-11-21T00:00:00+08:00.
-	gate := NewKeyRotationGateService(nil, nil)
+	gate := NewKeyRotationGateService(nil, nil, nil)
 	enabled, cutoff := gate.Settings()
 	require.True(t, enabled)
 	require.True(t, cutoff.Equal(config.DefaultKeyRotationCutoffTime()))
