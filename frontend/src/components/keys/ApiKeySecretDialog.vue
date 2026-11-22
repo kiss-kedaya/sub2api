@@ -42,6 +42,53 @@
         />
       </div>
 
+      <!-- Opt-in: keep a password-encrypted copy on the server so this key can be
+           viewed again after a refresh. The password never leaves the browser. -->
+      <div
+        v-if="apiKey && canSeal"
+        class="space-y-2 rounded-lg border border-default p-3"
+        data-test="api-key-seal-optin"
+      >
+        <UCheckbox
+          v-model="sealEnabled"
+          :disabled="sealing"
+          data-test="api-key-seal-checkbox"
+          :label="t('keys.seal.optIn')"
+          :description="t('keys.seal.optInHint')"
+        />
+        <div v-if="sealEnabled" class="space-y-1.5 pl-6">
+          <label for="api-key-seal-password" class="block text-xs font-medium text-default">
+            {{ t('keys.seal.passwordLabel') }}
+          </label>
+          <UInput
+            id="api-key-seal-password"
+            v-model="sealPassword"
+            type="password"
+            autocomplete="current-password"
+            :disabled="sealing"
+            class="w-full"
+            data-test="api-key-seal-password"
+          />
+          <p class="text-xs text-muted">{{ t('keys.seal.passwordHint') }}</p>
+        </div>
+      </div>
+      <p
+        v-else-if="apiKey && !canSeal"
+        class="rounded-lg bg-gray-50 p-3 text-xs text-muted ring ring-inset ring-default dark:bg-dark-900"
+        data-test="api-key-seal-unavailable"
+      >
+        {{ t('keys.seal.unavailable') }}
+      </p>
+
+      <p
+        v-if="sealError"
+        class="text-xs text-red-600 dark:text-red-400"
+        role="alert"
+        data-test="api-key-seal-error"
+      >
+        {{ sealError }}
+      </p>
+
       <p
         v-if="!canClose"
         class="text-xs text-muted"
@@ -52,6 +99,14 @@
       </p>
 
       <div class="flex flex-wrap items-center justify-end gap-2">
+        <UButton
+          v-if="sealError && !sealed"
+          color="neutral"
+          variant="soft"
+          :label="t('keys.seal.later')"
+          data-test="api-key-seal-later"
+          @click="skipSeal"
+        />
         <UButton
           v-if="!hideCcsImport"
           color="neutral"
@@ -70,9 +125,10 @@
         <UButton
           color="primary"
           :label="t('keys.secretDialog.done')"
-          :disabled="!canClose"
+          :disabled="!canClose || sealing"
+          :loading="sealing"
           data-test="api-key-secret-done"
-          @click="requestClose"
+          @click="onDone"
         />
       </div>
     </div>
@@ -85,6 +141,8 @@ import { useI18n } from 'vue-i18n'
 import type { ApiKey } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { useClipboard } from '@/composables/useClipboard'
+import { keysAPI } from '@/api'
+import { ApiKeySealUnsupportedError, sealApiKey } from '@/utils/apikeySeal'
 
 /** The plaintext receipt is forced on screen for at least this long. */
 const MIN_VISIBLE_MS = 1000
@@ -95,11 +153,13 @@ const props = withDefaults(
     apiKey?: ApiKey | null
     secret: string
     hideCcsImport?: boolean
+    /** Account can type a login password (hidden for passwordless OAuth-only accounts). */
+    canSeal?: boolean
   }>(),
-  { apiKey: null, hideCcsImport: false },
+  { apiKey: null, hideCcsImport: false, canSeal: false },
 )
 
-const emit = defineEmits<{ close: []; use: []; 'import-ccs': [] }>()
+const emit = defineEmits<{ close: []; use: []; 'import-ccs': []; sealed: [] }>()
 
 const { t } = useI18n()
 const { copyToClipboard } = useClipboard()
@@ -127,8 +187,69 @@ const startVisibleWindow = () => {
   }, MIN_VISIBLE_MS)
 }
 
+// ---- "view again with login password" opt-in ---------------------------------
+const sealEnabled = ref(false)
+const sealPassword = ref('')
+const sealing = ref(false)
+const sealed = ref(false)
+const sealError = ref('')
+
+const resetSealState = () => {
+  sealEnabled.value = props.canSeal
+  sealPassword.value = ''
+  sealing.value = false
+  sealed.value = false
+  sealError.value = ''
+}
+
 const requestClose = () => {
   if (!canClose.value) return
+  // Header X / Escape / veil dismiss the receipt without sealing: the key still
+  // stays readable in this tab until refresh. Only "I've saved it" seals.
+  emit('close')
+}
+
+const onDone = () => {
+  if (!canClose.value) return
+  // A checked opt-in with a password must finish (or explicitly be postponed) first.
+  if (sealEnabled.value && !sealed.value) {
+    void saveSeal()
+    return
+  }
+  emit('close')
+}
+
+const saveSeal = async () => {
+  const id = props.apiKey?.id
+  if (!id) {
+    emit('close')
+    return
+  }
+  if (!sealPassword.value) {
+    sealError.value = t('keys.seal.passwordRequired')
+    return
+  }
+  sealing.value = true
+  sealError.value = ''
+  try {
+    const payload = await sealApiKey(props.secret, sealPassword.value)
+    await keysAPI.putSecretSeal(id, payload)
+    sealed.value = true
+    sealPassword.value = ''
+    emit('sealed')
+    emit('close')
+  } catch (error) {
+    // Encryption itself cannot validate the password; a failure here is either an
+    // unsupported browser or a save error. Let the user retry or postpone.
+    sealError.value =
+      error instanceof ApiKeySealUnsupportedError ? t('keys.seal.unsupported') : t('keys.seal.failed')
+  } finally {
+    sealing.value = false
+  }
+}
+
+const skipSeal = () => {
+  sealError.value = ''
   emit('close')
 }
 
@@ -136,6 +257,7 @@ watch(
   () => props.show,
   (show) => {
     if (show) {
+      resetSealState()
       startVisibleWindow()
     } else {
       // Closing drops the unlock timer; the next receipt starts a fresh window.
@@ -144,6 +266,13 @@ watch(
     }
   },
   { immediate: true },
+)
+
+watch(
+  () => props.canSeal,
+  (canSeal) => {
+    if (props.show) sealEnabled.value = canSeal
+  },
 )
 
 onUnmounted(clearUnlockTimer)

@@ -9,6 +9,7 @@ import { getAppRuntimeContext } from '@runtime/context'
 import { authAPI, isTotp2FARequired, passkeyAPI, type LoginResponse } from '@/api'
 import { clearUserDialogDrafts, setDialogDraftUserIdResolver } from '@/composables/useDialogDraft'
 import { resetKeyRotationGate } from '@/composables/useKeyRotationGate'
+import { useEphemeralKeyStore } from '@/stores/ephemeralKeys'
 import type {
   User,
   LoginRequest,
@@ -559,6 +560,8 @@ export const useAuthStore = defineStore('auth', () => {
     inflightRefresh = null
     // A key-rotation block belongs to one account; never carry it to the next user.
     resetKeyRotationGate()
+    // Created / rotated key plaintexts live in memory only; signing out drops them.
+    useEphemeralKeyStore().clear()
     // Stop auto-refresh
     stopAutoRefresh()
     // Stop token refresh

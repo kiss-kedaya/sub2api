@@ -849,6 +849,26 @@ export interface ApiKey {
   needs_rotation?: boolean
   // 待整改原因分类：created_before_cutoff / no_ip_allowlist。
   rotation_reasons?: string[]
+  // 是否已在服务端存有「用登录密码加密」的密文。旧服务不返回该字段时按 false 处理。
+  has_sealed_secret?: boolean
+}
+
+/** KDF 参数由浏览器生成，服务端原样保存，解密时下发给同一浏览器。 */
+export interface ApiKeySecretSealKdf {
+  algo: 'PBKDF2-SHA256'
+  iterations: number
+  /** base64(16-byte random salt) */
+  salt: string
+}
+
+/**
+ * 「以后用登录密码查看」的密文信封（服务端只存这一坨，看不到明文和密码）：
+ * sealed = base64(iv(12) || AES-256-GCM ciphertext || 16-byte tag)，明文是 sk-... key。
+ */
+export interface ApiKeySecretSeal {
+  version: 1
+  kdf: ApiKeySecretSealKdf
+  sealed: string
 }
 
 /**

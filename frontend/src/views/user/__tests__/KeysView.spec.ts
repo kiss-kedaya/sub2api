@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { createPinia, setActivePinia } from 'pinia'
+import { useEphemeralKeyStore } from '@/stores/ephemeralKeys'
 
 import type { ApiKey } from '@/types'
 import KeysView from '../KeysView.vue'
@@ -92,6 +94,15 @@ const messages: Record<string, string> = {
   'keys.rotationNoneTitle': 'No keys need rotation',
   'keys.rotationNoneDescription': 'Badges clear as soon as a key is rotated or allowlisted.',
   'keys.rotationAllClear': 'All keys are remediated',
+  'keys.copyKey': 'Copy key',
+  'keys.ephemeralHint': 'Created in this tab; copy the full key now.',
+  'keys.sealedHint': 'Password-encrypted copy saved.',
+  'keys.maskedOnlyHint': 'Server-side masked value.',
+  'keys.noSeal.title': 'This key cannot be recovered',
+  'keys.noSeal.message': 'This key was created without the opt-in; rotate a new key.',
+  'keys.noSeal.rotate': 'Rotate a new key',
+  'keys.seal.optIn': 'Allow viewing this key later with my login password',
+  'keys.seal.passwordLabel': 'Login password',
 }
 
 vi.mock('@/api', () => ({
@@ -137,6 +148,12 @@ vi.mock('@/stores/onboarding', () => ({
   useOnboardingStore: () => ({
     isCurrentStep,
     nextStep,
+  }),
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    user: null,
   }),
 }))
 
@@ -314,6 +331,11 @@ const UseKeyModalStub = {
   `,
 }
 
+// The ephemeral-plaintext store needs an active Pinia; the other stores are mocked.
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
+
 const mountView = async () => {
   const wrapper = mount(KeysView, {
     global: {
@@ -441,22 +463,26 @@ describe('user KeysView column settings', () => {
 
   it('renders the server-masked key and never builds the mask in the frontend', async () => {
     const wrapper = await mountView()
-    expect(wrapper.get('[data-test="key-cell"]').text()).toBe('sk-test-****-key')
+    expect(wrapper.get('[data-test="key-value"]').text()).toBe('sk-test-****-key')
     expect(wrapper.text()).not.toContain('sk-test-key')
     wrapper.unmount()
   })
 
-  it('renders no copy or save action next to the masked key in the list', async () => {
+  it('offers a copy action next to the masked key and explains when the key cannot be recovered', async () => {
     const wrapper = await mountView()
     const keyCell = wrapper.get('[data-test="key-cell"]')
-    // The cell is plain server-masked text: no per-row copy/save button.
-    expect(keyCell.find('button').exists()).toBe(false)
-    expect(keyCell.find('[data-test="icon"]').exists()).toBe(false)
-    expect(keyCell.text()).toBe('sk-test-****-key')
+    // The cell is the server-masked value; the copy button never reveals more than the row knows.
+    expect(keyCell.get('[data-test="key-value"]').text()).toBe('sk-test-****-key')
+    const copyButton = keyCell.get('[data-test="key-copy"]')
+    expect(copyButton.attributes('aria-label')).toBe('Copy key')
+
     expect(copyToClipboard).not.toHaveBeenCalled()
-    // No bulk copy/export entry appears anywhere on the page either.
-    expect(wrapper.findAll('button').map((button) => button.text()).join('|')).not.toMatch(/copy|save|export/i)
-    expect(wrapper.findAll('[data-test="icon"]').map((icon) => icon.text())).not.toContain('i-lucide-copy')
+    // No ciphertext was saved for this key: copying first explains that rotation is the only way.
+    await copyButton.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="confirm-dialog"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="confirm-message"]').text()).toBe('This key was created without the opt-in; rotate a new key.')
+    expect(copyToClipboard).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -492,14 +518,13 @@ describe('user KeysView column settings', () => {
     await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
     await flushPromises()
 
-    // Closing drops the plaintext from component state and the DOM...
+    // Closing drops the plaintext from the dialog...
     expect(wrapper.find('[data-test="api-key-secret-dialog"]').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain(secret)
-    // ...leaves the masked row in the list...
+    // ...but this key was created in this tab, so the row keeps the full value until refresh.
     const cells = wrapper.findAll('[data-test="key-cell"]').map((cell) => cell.text())
     expect(cells.length).toBeGreaterThan(0)
-    expect(cells.every((text) => text && !text.includes(secret))).toBe(true)
-    // ...and never writes the plaintext to browser storage.
+    expect(cells.some((text) => text.includes(secret))).toBe(true)
+    // The plaintext never reaches browser storage.
     expect(readBrowserStorage()).not.toContain(secret)
     wrapper.unmount()
   })
@@ -1022,7 +1047,7 @@ describe('user KeysView mutations', () => {
     wrapper.unmount()
   })
 
-  it('shows the first creation secret and inserts the masked key without refetching', async () => {
+  it('shows the first creation secret and inserts the key without refetching', async () => {
     getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
     const secret = 'fixture-only-creation-secret'
     createKey.mockResolvedValue({ ...createApiKey(), id: 99, name: 'new key', group_id: 3, group_ids: [3], key: secret })
@@ -1043,7 +1068,8 @@ describe('user KeysView mutations', () => {
     expect(wrapper.text()).toContain('DeepSeek')
     expect(wrapper.find('#key-form').exists()).toBe(false)
     expect(wrapper.get('[data-test="api-key-secret-value"]').text()).toBe(secret)
-    expect(wrapper.findAll('[data-test="key-cell"]').every((cell) => !cell.text().includes(secret))).toBe(true)
+    // The freshly created row is readable and copyable in this tab until a refresh.
+    expect(wrapper.findAll('[data-test="key-cell"]').some((cell) => cell.text().includes(secret))).toBe(true)
     expect(showSuccess).toHaveBeenCalledTimes(1)
     expect(showSuccess).toHaveBeenCalledWith('keys.keyCreatedSuccess')
     await getButtonByText(wrapper, 'keys.secretDialog.copy').trigger('click')
@@ -1078,7 +1104,7 @@ describe('user KeysView mutations', () => {
       expect(wrapper.text()).toContain(listedKey.name)
       expect(wrapper.text()).not.toContain(replayedKey.name)
       expect(wrapper.get('[data-test="key-status"]').text()).toBe('Inactive')
-      expect(wrapper.get('[data-test="key-cell"]').text()).toBe(listedKey.key_masked)
+      expect(wrapper.get('[data-test="key-value"]').text()).toBe(listedKey.key_masked)
       expect(wrapper.get('[data-test="key-count"]').text()).toBe('1')
       expect(listKeys).toHaveBeenCalledTimes(1)
       expect(wrapper.find('#key-form').exists()).toBe(false)
@@ -1094,7 +1120,7 @@ describe('user KeysView mutations', () => {
       expect(wrapper.findAll('[data-test="key-cell"]')).toHaveLength(1)
       expect(wrapper.text()).toContain(latestKey.name)
       expect(wrapper.get('[data-test="key-status"]').text()).toBe('Inactive')
-      expect(wrapper.get('[data-test="key-cell"]').text()).toBe(latestKey.key_masked)
+      expect(wrapper.get('[data-test="key-value"]').text()).toBe(latestKey.key_masked)
       expect(wrapper.get('[data-test="key-count"]').text()).toBe('1')
     } finally {
       wrapper.unmount()
@@ -1651,6 +1677,94 @@ describe('user KeysView key-rotation remediation', () => {
     expect(wrapper.find('[data-test="keys-rotation-filter"]').exists()).toBe(false)
     const fullRows = wrapper.getComponent({ name: 'DataTable' }).props('data') as ApiKey[]
     expect(fullRows.map((row) => row.id)).toEqual([1, 2])
+    wrapper.unmount()
+  })
+})
+
+describe('user KeysView ephemeral and sealed keys', () => {
+  const pageOf = (items: ApiKey[]) => ({
+    items,
+    total: items.length,
+    page: 1,
+    page_size: 20,
+    pages: 1,
+  })
+
+  beforeEach(() => {
+    localStorage.clear()
+
+    listKeys.mockReset()
+    createKey.mockReset()
+    updateKey.mockReset()
+    deleteKey.mockReset()
+    deleteMany.mockReset()
+    rotateKey.mockReset()
+    getKeyRotationGateStatus.mockReset()
+    getPublicSettings.mockReset()
+    getDashboardApiKeysUsage.mockReset()
+    getAvailableGroups.mockReset()
+    getUserGroupRates.mockReset()
+    showError.mockReset()
+    showSuccess.mockReset()
+    copyToClipboard.mockReset()
+    isCurrentStep.mockReset()
+    nextStep.mockReset()
+
+    getKeyRotationGateStatus.mockResolvedValue(undefined)
+    getPublicSettings.mockResolvedValue({})
+    getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
+    getAvailableGroups.mockResolvedValue([])
+    getUserGroupRates.mockResolvedValue({})
+    isCurrentStep.mockReturnValue(false)
+    copyToClipboard.mockResolvedValue(true)
+  })
+
+  it('swaps the mask for the full key in this tab and copies the full value', async () => {
+    listKeys.mockResolvedValue(pageOf([createApiKey()]))
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-test="key-value"]').text()).toBe('sk-test-****-key')
+
+    useEphemeralKeyStore().remember(1, 'sk-fixture-full')
+    await nextTick()
+
+    expect(wrapper.get('[data-test="key-value"]').text()).toBe('sk-fixture-full')
+    await wrapper.get('[data-test="key-copy"]').trigger('click')
+    await flushPromises()
+    expect(copyToClipboard).toHaveBeenCalledWith('sk-fixture-full')
+    wrapper.unmount()
+  })
+
+  it('asks for the login password instead of copying when only the ciphertext exists', async () => {
+    listKeys.mockResolvedValue(pageOf([{ ...createApiKey(), has_sealed_secret: true }]))
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="key-copy"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="api-key-reveal-dialog"]').exists()).toBe(true)
+    expect(copyToClipboard).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('shows the rotated key in the row and copies it right away', async () => {
+    listKeys.mockResolvedValue(pageOf([{ ...createApiKey(), needs_rotation: true }]))
+    rotateKey.mockResolvedValue({
+      ...createApiKey(),
+      needs_rotation: false,
+      rotation_reasons: [],
+      key: 'sk-rotated-fresh',
+    })
+    getKeyRotationGateStatus.mockResolvedValue({ pending_key_count: 0 })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="key-needs-rotation-rotate"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="key-value"]').text()).toBe('sk-rotated-fresh')
+    await wrapper.get('[data-test="key-copy"]').trigger('click')
+    await flushPromises()
+    expect(copyToClipboard).toHaveBeenCalledWith('sk-rotated-fresh')
     wrapper.unmount()
   })
 })

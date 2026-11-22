@@ -196,19 +196,59 @@ export default {
     rotationNoneTitle: 'No keys need rotation',
     rotationNoneDescription: 'Badges clear as soon as a key is rotated or allowlisted.',
     rotationAllClear: 'All keys are remediated',
-    // The backend only returns a masked view; plaintext appears once at creation/rotation.
-    maskedOnlyHint: 'For security, the full key is shown only once when created or rotated. This is the server-side masked value.',
+    // The backend only returns a masked view; plaintext appears at creation/rotation and later only via local decryption.
+    maskedOnlyHint: 'For security, this is the server-side masked value. Keys created with "allow viewing later with my login password" can be decrypted locally after clicking copy.',
     secretDialog: {
-      title: 'Plaintext key (shown once)',
-      description: 'The server will not return the plaintext again.',
-      saveNotice: 'Copy and store it now. Once this dialog closes or the page reloads, the plaintext can no longer be retrieved; if lost, rotate the key.',
-      cannotViewAgain: 'After closing you cannot view it again, and it cannot be recovered from the list or details. If lost, rotate the key.',
+      title: 'Plaintext key (save it now)',
+      description: 'The server will not return the plaintext again. To view it after a refresh, encrypt it locally with your login password below.',
+      saveNotice: 'Copy and store it now. Without the \"view later with my login password\" option below, the plaintext cannot be retrieved after this dialog closes or the page reloads; if lost, rotate the key.',
+      cannotViewAgain: 'Without the opt-in, it cannot be recovered from the list or details after closing. With the opt-in, you can decrypt it locally with your login password after a refresh.',
       waitHint: 'Copy and save the key first. This dialog unlocks after at least 1 second so the key is on screen.',
       copy: 'Copy key',
       copied: 'Copied',
       use: 'Use key',
       importCcs: 'Import to CCS',
       done: "I've saved it"
+    },
+    copyKey: 'Copy key',
+    ephemeralHint: 'This key was created or rotated in this tab, so the full value can be copied now. After a refresh you need your login password to view it.',
+    sealedHint: 'A password-encrypted copy is saved; click copy and enter your login password to decrypt it locally.',
+    // "View later" option in the receipt: the password only participates locally.
+    seal: {
+      optIn: 'Allow viewing this key later with my login password',
+      optInHint: 'The key is encrypted with your login password in this browser; the server stores only the ciphertext. The password is never sent to the server.',
+      passwordLabel: 'Login password',
+      passwordHint: 'The password is used only for local encryption. If you forget it you cannot view this key again (you can rotate a new one at any time).',
+      passwordRequired: 'Enter your login password, or uncheck "Allow viewing this key later with my login password".',
+      failed: 'Wrong password or save failed; you can retry later. The password is only used for local encryption, and forgetting it means the key can no longer be viewed.',
+      unsupported: 'This browser does not support WebCrypto, so the key cannot be encrypted safely. Try another browser.',
+      later: 'Later',
+      unavailable: 'This account was created through a third-party sign-in and has no usable login password, so password-encrypted viewing is not available. Bind an email and set a password first.'
+    },
+    // View after refresh: fetch the ciphertext, decrypt locally.
+    reveal: {
+      title: 'Enter your login password to view the key',
+      description: 'Decryption happens in this browser. The password is never sent to the server or stored.',
+      passwordLabel: 'Login password',
+      passwordHint: 'Valid for this view only: the decrypted key stays in memory and must be entered again next time.',
+      submit: 'Decrypt locally',
+      cancel: 'Cancel',
+      done: 'Done',
+      copy: 'Copy',
+      copied: 'Copied',
+      onlyThisTime: 'Shown this time only: the key exists in this page\'s memory and is cleared when the dialog closes.',
+      wrongPassword: 'Wrong password: this key cannot be decrypted. Make sure you entered your login password.',
+      unsupported: 'This browser does not support WebCrypto, so the key cannot be decrypted locally.',
+      broken: 'The saved ciphertext is damaged or incompatible and cannot be decrypted; rotate a new key.',
+      notFound: 'The server has no ciphertext for this key, so the plaintext cannot be recovered. Rotate a new key.',
+      failed: 'Could not read or decrypt the key. Try again later.',
+      rotate: 'Rotate a new key'
+    },
+    // Created without the opt-in: no ciphertext, rotate is the only path.
+    noSeal: {
+      title: 'This key cannot be recovered',
+      message: 'This key was created without "allow viewing later with my login password", and the server holds no ciphertext, so the plaintext cannot be shown again. Rotate a new key; the old one stops working immediately.',
+      rotate: 'Rotate a new key'
     },
     clickToChangeGroup: 'Click to change group',
     groupChangedSuccess: 'Group changed successfully',

@@ -164,11 +164,26 @@
           </template>
 
           <template #cell-key="{ row }">
-            <!-- 明文不再回读：直接展示后端给的 key_masked，前端不做任何截断/拼接。 -->
-            <code
-              class="rounded-md bg-elevated px-1.5 py-0.5 font-mono text-xs text-default ring ring-inset ring-default"
-              :title="t('keys.maskedOnlyHint')"
-            >{{ row.key_masked || row.key_prefix || '-' }}</code>
+            <!-- 本标签页创建/轮换过的 key 在内存里还是明文，直接显示完整值；否则只显示
+                 后端口径的 key_masked，绝不由前端拼截。复制按钮对本行始终可用。 -->
+            <div class="flex items-center gap-1.5">
+              <code
+                class="min-w-0 break-all rounded-md bg-elevated px-1.5 py-0.5 font-mono text-xs text-default ring ring-inset ring-default"
+                :title="keyCellHint(row)"
+                data-test="key-value"
+              >{{ keyDisplayValue(row) }}</code>
+              <UButton
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                :icon="copiedKeyId === row.id ? 'i-lucide-check' : 'i-lucide-copy'"
+                :aria-label="t('keys.copyKey')"
+                :title="t('keys.copyKey')"
+                class="shrink-0"
+                data-test="key-copy"
+                @click.stop="copyRowKey(row)"
+              />
+            </div>
           </template>
 
           <template #cell-name="{ value, row }">
@@ -1158,15 +1173,37 @@
       @assign-group="assignGroupForRevealedKey"
     />
 
-    <!-- 明文密钥只展示这一次：复制、使用引导、导入 CCS 都从这里进入 -->
+    <!-- 明文密钥只展示这一次：复制、使用引导、导入 CCS 都从这里进入。
+         同时在这里让用户用登录密码把 key 加密后存到服务端，刷新后才能再查看。 -->
     <ApiKeySecretDialog
       :show="showSecretDialog"
       :api-key="secretRow"
       :secret="secretPlaintext"
       :hide-ccs-import="!!publicSettings?.hide_ccs_import_button"
+      :can-seal="canSealKeys"
       @close="closeSecretDialog"
       @use="useRevealedKey"
       @import-ccs="importRevealedToCcswitch"
+      @sealed="markKeySealedLocally"
+    />
+
+    <!-- 刷新后查看 key：只在浏览器本地用登录密码解密服务端密文 -->
+    <RevealApiKeyDialog
+      :show="showRevealDialog"
+      :api-key="revealRow"
+      @close="closeRevealDialog"
+      @rotate="rotateFromReveal"
+    />
+
+    <!-- 创建时没启用后续查看：说明无法找回，只能轮换 -->
+    <ConfirmDialog
+      :show="showNoSealDialog"
+      :title="t('keys.noSeal.title')"
+      :message="t('keys.noSeal.message')"
+      :confirm-text="t('keys.noSeal.rotate')"
+      :cancel-text="t('common.cancel')"
+      @confirm="rotateFromNoSeal"
+      @cancel="closeNoSealDialog"
     />
 
     <!-- CCS import: pick platform + model, then open ccswitch:// deeplink -->
@@ -1306,9 +1343,12 @@ import '@/styles/console-workspace.css'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
+	import { useAuthStore } from '@/stores/auth'
+	import { useEphemeralKeyStore } from '@/stores/ephemeralKeys'
 import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
 import IpWhitelistAssist from '@/components/keys/IpWhitelistAssist.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
+import { useClipboard } from '@/composables/useClipboard'
 
 const { t } = useI18n()
 
@@ -1326,6 +1366,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import BaseDialog from '@/components/common/BaseDialog.vue'
 	import KeyUsageDialog from '@/components/user/KeyUsageDialog.vue'
 	import ApiKeySecretDialog from '@/components/keys/ApiKeySecretDialog.vue'
+	import RevealApiKeyDialog from '@/components/keys/RevealApiKeyDialog.vue'
 	import TwoFactorSuggestionBanner from '@/components/user/TwoFactorSuggestionBanner.vue'
 	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 	import EmptyState from '@/components/common/EmptyState.vue'
@@ -1346,6 +1387,7 @@ import type { Column } from '@/components/common/types'
 import type { GroupSignalSource } from '@/utils/groupRateSignals'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
+import { accountLacksLoginPassword } from '@/utils/accountPassword'
 import { rateLimitWindows, RATE_LIMIT_BAR_CLASS, RATE_LIMIT_TEXT_CLASS } from '@/utils/keyRateLimits'
 import { platformBadgeLightClass } from '@/utils/platformColors'
 import {
@@ -1387,6 +1429,12 @@ interface GroupOption {
 
 const appStore = useAppStore()
 const onboardingStore = useOnboardingStore()
+const authStore = useAuthStore()
+// 本标签页创建/轮换得到的明文只放内存，刷新或登出即失效。
+const ephemeralKeys = useEphemeralKeyStore()
+const { copyToClipboard } = useClipboard()
+// 第三方创建且没有邮箱/密码的账号无法用登录密码派生密钥，隐藏该选项。
+const canSealKeys = computed(() => !!authStore.user && !accountLacksLoginPassword(authStore.user))
 
 const allColumns = computed<Column[]>(() => [
   { key: 'name', label: t('common.name'), sortable: true },
@@ -1701,6 +1749,15 @@ const groupSelectorKeyId = ref<number | null>(null)
 const secretPlaintext = ref('')
 const secretRow = ref<ApiKey | null>(null)
 const showSecretDialog = ref(false)
+// 刷新后查看：带密文的 key 先输入登录密码，再在浏览器本地解密。
+const showRevealDialog = ref(false)
+const revealRow = ref<ApiKey | null>(null)
+// 创建时没启用「以后查看」的 key：只能提示轮换。
+const showNoSealDialog = ref(false)
+const noSealRow = ref<ApiKey | null>(null)
+// 列表复制成功后的短暂打勾状态。
+const copiedKeyId = ref<number | null>(null)
+let copiedKeyTimer: ReturnType<typeof setTimeout> | null = null
 const useKeyPlaintext = ref('')
 // Group health dots, keyed by group id. Loaded lazily the first time a picker
 // opens and cached for a minute, so the key page never pays for it up front.
@@ -2101,6 +2158,75 @@ const closeSecretDialog = () => {
   secretRow.value = null
 }
 
+// 内存里有明文就显示完整 key，否则显示后端给的掩码（前端不做截断/拼接）。
+const keyDisplayValue = (row: ApiKey): string =>
+  ephemeralKeys.recall(row.id) ?? (row.key_masked || row.key_prefix || '-')
+
+const keyCellHint = (row: ApiKey): string => {
+  if (ephemeralKeys.has(row.id)) return t('keys.ephemeralHint')
+  if (row.has_sealed_secret) return t('keys.sealedHint')
+  return t('keys.maskedOnlyHint')
+}
+
+const flashCopiedKey = (id: number) => {
+  copiedKeyId.value = id
+  if (copiedKeyTimer) clearTimeout(copiedKeyTimer)
+  copiedKeyTimer = setTimeout(() => {
+    copiedKeyTimer = null
+    copiedKeyId.value = null
+  }, 1500)
+}
+
+/**
+ * 列表复制入口：
+ *  - 本标签页创建/轮换过 → 内存明文直接复制；
+ *  - 服务端存了密文 → 弹密码框，本地解密后再复制；
+ *  - 都没有 → 说明无法找回，只能轮换。
+ */
+const copyRowKey = async (row: ApiKey) => {
+  const plaintext = ephemeralKeys.recall(row.id)
+  if (plaintext) {
+    const ok = await copyToClipboard(plaintext)
+    if (ok) flashCopiedKey(row.id)
+    return
+  }
+  if (row.has_sealed_secret) {
+    revealRow.value = row
+    showRevealDialog.value = true
+    return
+  }
+  noSealRow.value = row
+  showNoSealDialog.value = true
+}
+
+const closeRevealDialog = () => {
+  showRevealDialog.value = false
+  revealRow.value = null
+}
+
+const rotateFromReveal = () => {
+  const row = revealRow.value
+  closeRevealDialog()
+  if (row) void rotateKeyValue(row)
+}
+
+const closeNoSealDialog = () => {
+  showNoSealDialog.value = false
+  noSealRow.value = null
+}
+
+const rotateFromNoSeal = () => {
+  const row = noSealRow.value
+  closeNoSealDialog()
+  if (row) void rotateKeyValue(row)
+}
+
+// 密文保存成功后只更新这一行，避免整页重新拉取。
+const markKeySealedLocally = () => {
+  const row = secretRow.value
+  if (row) mergeKeyLocally({ ...row, has_sealed_secret: true })
+}
+
 const openUseKeyModal = (key: ApiKey, secret: string) => {
   selectedKey.value = key
   useKeyPlaintext.value = secret
@@ -2208,6 +2334,9 @@ const rotateKeyValue = async (key: ApiKey) => {
     const updated = await keysAPI.rotateKey(key.id)
     const { key: rotatedSecret, ...rotatedMasked } = updated
     const merged = mergeKeyLocally(rotatedMasked as ApiKey)
+    // 轮换后旧明文立即作废：先删掉内存里的旧条目，再用新明文覆盖同一 id。
+    ephemeralKeys.forget(key.id)
+    if (rotatedSecret) ephemeralKeys.remember(key.id, rotatedSecret)
     // 旧 key 已立刻失效，新明文必须当场给用户，否则这把 key 就废了。
     // 回执行同样要带分组，否则立刻点「使用密钥」会被误判成无分组。
     openSecretDialog(merged ?? resolveKeyGroupRow(rotatedMasked as ApiKey), rotatedSecret)
@@ -2600,6 +2729,8 @@ const handleSubmit = async () => {
       const { key: createdSecret, ...createdMasked } = created
       if (createdSecret) {
         const createdRow = insertKeyLocally(createdMasked)
+        // 本标签页内一直能查看/复制这把 key：明文只进内存，刷新即失效。
+        ephemeralKeys.remember(createdMasked.id, createdSecret)
         appStore.showSuccess(t('keys.keyCreatedSuccess'))
         // 回执弹窗拿补齐分组后的行：立刻点「使用密钥」时平台/分组都在。
         openSecretDialog(createdRow ?? createdMasked, createdSecret)
@@ -2645,6 +2776,7 @@ const handleDelete = async () => {
 
   try {
     await keysAPI.delete(key.id)
+    ephemeralKeys.forget(key.id)
     appStore.showSuccess(t('keys.keyDeletedSuccess'))
     await backfillPageIfEmpty()
     void syncRotationRemediation()
@@ -2673,6 +2805,7 @@ const handleBulkDelete = async () => {
   try {
     const result = await keysAPI.deleteMany(ids)
     if (result.failed.length === 0) {
+      result.succeeded.forEach((id) => ephemeralKeys.forget(id))
       appStore.showSuccess(t('common.deleted'))
     } else {
       // Only the failures go back into the table.
@@ -2680,6 +2813,7 @@ const handleBulkDelete = async () => {
       const failedRows = removed.filter((snapshot) => failedIds.has(snapshot.key.id))
       restoreRemovedKeys(failedRows)
       applyTotalDelta(failedRows.length)
+      ids.filter((id) => !failedIds.has(id)).forEach((id) => ephemeralKeys.forget(id))
       appStore.showError(t('keys.failedToDelete'))
     }
     await backfillPageIfEmpty()
@@ -2942,6 +3076,7 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('click', closeGroupSelector)
   if (resetTimer) clearInterval(resetTimer)
+  if (copiedKeyTimer) clearTimeout(copiedKeyTimer)
   ccsModelsAbort?.abort()
 })
 </script>
