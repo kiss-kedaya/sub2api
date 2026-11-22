@@ -29,6 +29,17 @@
       </UAlert>
       <template v-if="stats">
         <UserDashboardStats section="summary" :stats="stats" :balance="user?.balance || 0" :is-simple="authStore.isSimpleMode" />
+        <!-- 负余额 = 临时入账被链上回滚 + 已消费，余额口径保持为负，这里只解释原因。 -->
+        <UAlert
+          v-if="isNegativeBalance"
+          color="warning"
+          variant="subtle"
+          orientation="horizontal"
+          icon="i-lucide-triangle-alert"
+          :title="t('redeem.negativeBalanceTitle')"
+          :description="t('redeem.negativeBalanceNotice')"
+          data-testid="dashboard-negative-balance"
+        />
         <UserDashboardQuickActions />
         <UserDashboardCharts :loading="loadingCharts" :error="chartsError" :trend="trendData" @refresh="loadCharts" />
         <UserDashboardModels :models="modelStats" :start-date="startDate" :end-date="endDate" :loading="loadingCharts" :error="chartsError" />
@@ -113,6 +124,9 @@ import UserDashboardQuickActions from '@/components/user/dashboard/UserDashboard
 const { t } = useI18n()
 const authStore = useAuthStore()
 const user = computed(() => authStore.user)
+// The balance may legitimately be negative after a provisional credit is
+// clawed back; show the explanation instead of treating it as a display bug.
+const isNegativeBalance = computed(() => (user.value?.balance ?? 0) < 0)
 const stats = ref<UserStatsType | null>(null)
 const trendData = ref<TrendDataPoint[]>([])
 const modelStats = ref<ModelStat[]>([])

@@ -1074,6 +1074,11 @@ export default {
     balanceAddedAffiliate: 'Balance Added (Affiliate Transfer)',
     balanceAddedAdmin: 'Balance Added (Admin)',
     balanceDeductedAdmin: 'Balance Deducted (Admin)',
+    balanceRevokedCrypto: 'Balance Deducted (On-chain deposit reversed)',
+    // A negative balance means a provisional credit was rolled back after the
+    // balance was already spent; explain it instead of letting it look like an error.
+    negativeBalanceTitle: 'Your balance is negative',
+    negativeBalanceNotice: 'An on-chain deposit was credited provisionally and then automatically rolled back because the transfer was not finally confirmed. The part you already used is recorded as a negative balance and will be offset by your next top-up.',
     concurrencyAddedRedeem: 'Concurrency Added (Redeem)',
     concurrencyAddedAdmin: 'Concurrency Added (Admin)',
     concurrencyReducedAdmin: 'Concurrency Reduced (Admin)',

@@ -58,6 +58,7 @@
           <div class="shrink-0 text-right">
             <p :class="['text-sm font-semibold tabular-nums', getValueColor(item)]">{{ formatValue(item) }}</p>
             <p v-if="isAdminType(item.type)" class="text-xs text-dimmed">{{ t('redeem.adminAdjustment') }}</p>
+            <p v-else-if="isCryptoRevokeType(item.type)" class="max-w-56 truncate font-mono text-xs text-error" :title="item.source_ref || ''">{{ item.source_ref || t('redeem.balanceRevokedCrypto') }}</p>
             <p v-else class="font-mono text-xs text-dimmed">{{ item.code }}</p>
           </div>
         </li>
@@ -103,6 +104,7 @@ const typeOptions = computed(() => [
   { value: 'payment_balance', label: t('admin.users.typeCryptoBalance') },
   { value: 'affiliate_balance', label: t('admin.users.typeAffiliateBalance') },
   { value: 'admin_balance', label: t('admin.users.typeAdminBalance') },
+  { value: 'crypto_revoke', label: t('admin.users.typeCryptoRevoke') },
   { value: 'concurrency', label: t('admin.users.typeConcurrency') },
   { value: 'admin_concurrency', label: t('admin.users.typeAdminConcurrency') },
   { value: 'subscription', label: t('admin.users.typeSubscription') }
@@ -147,8 +149,11 @@ const loadHistory = async (page: number) => {
 // Helper: check if admin type
 const isAdminType = (type: string) => type === 'admin_balance' || type === 'admin_concurrency'
 
-// Helper: check if balance type (includes admin_balance)
-const isBalanceType = (type: string) => type === 'balance' || type === 'payment_balance' || type === 'admin_balance' || type === 'affiliate_balance'
+// Helper: chain-deposit claw-back ledger row (negative, server-written)
+const isCryptoRevokeType = (type: string) => type === 'crypto_revoke'
+
+// Helper: check if balance type (includes admin_balance / affiliate / chain revoke)
+const isBalanceType = (type: string) => type === 'balance' || type === 'payment_balance' || type === 'admin_balance' || type === 'affiliate_balance' || type === 'crypto_revoke'
 
 // Helper: check if subscription type
 const isSubscriptionType = (type: string) => type === 'subscription'
@@ -188,6 +193,8 @@ const getItemTitle = (item: BalanceHistoryItem) => {
       return t('redeem.balanceAddedAffiliate')
     case 'admin_balance':
       return item.value >= 0 ? t('redeem.balanceAddedAdmin') : t('redeem.balanceDeductedAdmin')
+    case 'crypto_revoke':
+      return t('redeem.balanceRevokedCrypto')
     case 'concurrency':
       return t('redeem.concurrencyAddedRedeem')
     case 'admin_concurrency':
@@ -202,8 +209,9 @@ const getItemTitle = (item: BalanceHistoryItem) => {
 // Format display value
 const formatValue = (item: BalanceHistoryItem) => {
   if (isBalanceType(item.type)) {
-    const sign = item.value >= 0 ? '+' : ''
-    return `${sign}$${item.value.toFixed(2)}`
+    // Negative rows read as "-$4.70" (chain claw-back), not "$-4.70".
+    const sign = item.value >= 0 ? '+' : '-'
+    return `${sign}$${Math.abs(item.value).toFixed(2)}`
   }
   if (isSubscriptionType(item.type)) {
     const days = item.validity_days || Math.round(item.value)

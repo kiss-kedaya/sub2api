@@ -629,6 +629,10 @@ type AdminRedeemCode struct {
 	RedeemCode
 
 	Notes string `json:"notes"`
+	// SourceRef 是合成流水行的结构化来源引用（当前只有链上充值扣回：
+	// crypto_deposit:<deposit_id>:<chain>:<tx_hash>:<log_index>）。
+	// 它是审计/对账指针，不是凭据；真实卡密行不带。
+	SourceRef string `json:"source_ref,omitempty"`
 }
 
 type NullableTimeField struct {

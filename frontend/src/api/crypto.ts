@@ -82,6 +82,14 @@ export interface DepositRecord {
   confirmations?: number
   required_confirmations?: number
   block_number?: number
+  // Instant-credit state. The backend rewrites `status` to "provisional" while a
+  // 0-confirmation credit is still inside the risk window, and to "revoked" once
+  // the chain invalidated it and the credit was clawed back. Older backends omit
+  // these fields, so they are optional.
+  provisional?: boolean
+  credited_at?: string
+  revoked_at?: string
+  revoke_reason?: string
 }
 
 export async function getDepositInfo(): Promise<DepositInfo> {

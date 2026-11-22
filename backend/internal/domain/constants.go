@@ -68,9 +68,14 @@ const (
 	// RedeemTypePaymentBalance is reserved for server-side payment fulfillment.
 	// Public redemption must never allow users to claim these deterministic codes.
 	RedeemTypePaymentBalance = "payment_balance"
-	RedeemTypeConcurrency    = "concurrency"
-	RedeemTypeSubscription   = "subscription"
-	RedeemTypeInvitation     = "invitation"
+	// RedeemTypeCryptoRevoke is the negative balance-ledger row written when an
+	// instant (provisional) crypto deposit credit is clawed back after a chain
+	// reorg/revert. It is server-written only, never redeemable, and carries a
+	// negative value so it can never be counted as a recharge.
+	RedeemTypeCryptoRevoke = "crypto_revoke"
+	RedeemTypeConcurrency  = "concurrency"
+	RedeemTypeSubscription = "subscription"
+	RedeemTypeInvitation   = "invitation"
 )
 
 // PromoCode status constants

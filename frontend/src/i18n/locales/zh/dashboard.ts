@@ -1078,6 +1078,10 @@ export default {
     balanceAddedAffiliate: '余额充值（返利转入）',
     balanceAddedAdmin: '余额充值（管理员）',
     balanceDeductedAdmin: '余额扣除（管理员）',
+    balanceRevokedCrypto: '余额扣回（链上充值回滚）',
+    // 负余额是「临时入账被链上回滚 + 已消费」的结果，必须说清楚，避免用户以为系统乱扣。
+    negativeBalanceTitle: '当前余额为负',
+    negativeBalanceNotice: '此前有一笔链上充值被临时入账，随后因交易未被最终确认而自动回滚；你已经使用的部分会记成负余额，下次充值到账时会优先抵扣。',
     concurrencyAddedRedeem: '并发增加（兑换）',
     concurrencyAddedAdmin: '并发增加（管理员）',
     concurrencyReducedAdmin: '并发减少（管理员）',

@@ -307,6 +307,9 @@ export interface BalanceHistoryItem {
   group_id: number | null
   validity_days: number
   notes: string
+  // Synthetic ledger rows only (crypto_revoke): structured pointer back to the
+  // chain deposit, e.g. crypto_deposit:<deposit_id>:<chain>:<tx_hash>:<log_index>.
+  source_ref?: string
   user?: { id: number; email: string } | null
   group?: { id: number; name: string } | null
 }

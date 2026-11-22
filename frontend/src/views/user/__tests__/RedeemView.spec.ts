@@ -512,3 +512,60 @@ describe('RedeemView key rotation gate', () => {
     expect(showError).not.toHaveBeenCalledWith('redeem.historyLoadFailed')
   })
 })
+
+describe('RedeemView balance history and negative balance', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    for (const request of [redeem, getHistory, refreshUser, fetchActiveSubscriptions]) request.mockReset()
+    if (authStoreState.instance) authStoreState.instance.user = { balance: 10, concurrency: 2 }
+    redeem.mockResolvedValue({ type: 'balance', value: 20, id: 1, code: 'REDEEM-CODE', status: 'used' })
+    getHistory.mockResolvedValue({ items: [], total: 0 })
+    refreshUser.mockImplementation(async () => authStoreState.instance.user)
+    fetchActiveSubscriptions.mockResolvedValue([])
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    for (const wrapper of mountedWrappers.splice(0)) wrapper.unmount()
+    vi.restoreAllMocks()
+  })
+
+  it('explains a negative balance instead of leaving a bare minus sign', async () => {
+    authStoreState.instance.user = { balance: -4.7, concurrency: 2 }
+
+    const wrapper = mountRedeemView()
+    await flushPromises()
+
+    const notice = wrapper.get('[data-testid="negative-balance-notice"]')
+    expect(notice.text()).toContain('redeem.negativeBalanceTitle')
+    expect(notice.text()).toContain('redeem.negativeBalanceNotice')
+  })
+
+  it('does not show the negative-balance notice for a normal balance', async () => {
+    const wrapper = mountRedeemView()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="negative-balance-notice"]').exists()).toBe(false)
+  })
+
+  it('shows a chain claw-back as a negative balance row with its reason, not as a redeem code', async () => {
+    getHistory.mockResolvedValueOnce({
+      total: 1,
+      items: [{
+        id: 9, code: '****', type: 'crypto_revoke', value: -6.7, status: 'used',
+        used_at: '2026-11-22T10:00:30Z', created_at: '2026-11-22T10:00:30Z',
+        notes: '链上充值未最终确认已回滚'
+      }]
+    })
+
+    const wrapper = mountRedeemView()
+    await flushPromises()
+
+    const history = wrapper.get('[data-testid="redeem-history"]')
+    expect(history.text()).toContain('redeem.balanceRevokedCrypto')
+    expect(history.text()).toContain('-$6.70')
+    expect(history.text()).toContain('链上充值未最终确认已回滚')
+    // The synthetic ledger row has no redeem code; never render a bare mask.
+    expect(history.text()).not.toContain('****')
+  })
+})

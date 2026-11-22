@@ -168,7 +168,11 @@
                     <template v-else>{{ showsCreditedAmount(row) ? fmtCredited(row.credited) : '—' }}</template>
                   </td>
                   <td :data-label="t('common.status')" class="deposit-view__status">
-                    <span class="deposit-view__badge" :class="'deposit-view__badge--' + statusTone(row)">{{ statusLabel(row) }}</span><span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason, row.token === 'native', row.status) }}</span>
+                    <span class="deposit-view__badge" :class="'deposit-view__badge--' + statusTone(row)">{{ statusLabel(row) }}</span>
+                    <span v-if="revokeReasonText(row)" class="deposit-view__reason deposit-view__reason--revoked" data-testid="deposit-revoke-reason">{{ revokeReasonText(row) }}</span>
+                    <span v-else-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason, row.token === 'native', row.status) }}</span>
+                    <span v-if="row.status === 'revoked'" class="deposit-view__reason deposit-view__reason--revoked" data-testid="deposit-revoked-hint">{{ t('deposit.revokedHint') }}</span>
+                    <span v-else-if="row.status === 'provisional'" class="deposit-view__hint" data-testid="deposit-provisional-hint">{{ t('deposit.provisionalHint') }}</span>
                     <div v-if="progress" class="deposit-view__progress">
                       <span class="deposit-view__progress-text">{{ progressText(progress) }}</span>
                       <span class="deposit-view__progress-track" role="progressbar" aria-valuemin="0"
@@ -225,6 +229,7 @@ import { useKeyRotationGate } from '@/composables/useKeyRotationGate'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { explorerTxURL } from '@/utils/cryptoExplorer'
+import { depositRevokeReasonCopy } from '@/utils/depositRevoke'
 import {
   cardEtaText, etaNoticeText, networkBadge, networkStateOf, parseEtaSeconds, pruneNetworkStatuses,
   type DepositNetworkBadge,
@@ -513,6 +518,15 @@ function showsCreditedAmount(row: DepositRecord): boolean {
 
 function statusLabel(row: DepositRecord): string {
   return creditUnderReview(row) ? t('deposit.statusReconciliation') : statusText(row.status)
+}
+
+// A revoked credit carries the machine reason in revoke_reason; translate it
+// instead of printing the raw code. Empty when the backend omits the field
+// (older instances), so the plain status wording remains readable.
+function revokeReasonText(row: DepositRecord): string {
+  if (!row.revoke_reason) return ''
+  const copy = depositRevokeReasonCopy(row.revoke_reason)
+  return copy.params ? t(copy.key, copy.params) : t(copy.key)
 }
 
 // Badge tone is the CSS modifier. Every status keeps its own tone so the new
@@ -842,6 +856,8 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
 .deposit-view__badge--revoked { background: #ef444412; border-color: #ef444430; color: #ef4444; }
 .deposit-view__badge--ignored, .deposit-view__badge--reverted { background: #ef444412; border-color: #ef444430; color: #ef4444; }
 .deposit-view__reason { display: block; max-width: 21rem; margin-top: .4rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.6; }
+.deposit-view__reason--revoked { color: #dc2626; }
+.deposit-view__hint { display: block; max-width: 21rem; margin-top: .4rem; color: #d97706; font-size: .75rem; line-height: 1.6; }
 .deposit-view__status { min-width: 9rem; }
 .deposit-view__progress { display: grid; gap: .35rem; max-width: 12rem; margin-top: .45rem; }
 .deposit-view__progress-text { color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }

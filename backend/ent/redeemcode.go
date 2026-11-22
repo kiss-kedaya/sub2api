@@ -37,6 +37,8 @@ type RedeemCode struct {
 	UsedAt *time.Time `json:"used_at,omitempty"`
 	// Notes holds the value of the "notes" field.
 	Notes *string `json:"notes,omitempty"`
+	// Opaque source reference for synthetic ledger rows (crypto deposit revocation)
+	SourceRef string `json:"source_ref,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// ExpiresAt holds the value of the "expires_at" field.
@@ -93,7 +95,7 @@ func (*RedeemCode) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case redeemcode.FieldID, redeemcode.FieldUsedBy, redeemcode.FieldGroupID, redeemcode.FieldValidityDays:
 			values[i] = new(sql.NullInt64)
-		case redeemcode.FieldCode, redeemcode.FieldCodeHash, redeemcode.FieldCodePrefix, redeemcode.FieldType, redeemcode.FieldStatus, redeemcode.FieldNotes:
+		case redeemcode.FieldCode, redeemcode.FieldCodeHash, redeemcode.FieldCodePrefix, redeemcode.FieldType, redeemcode.FieldStatus, redeemcode.FieldNotes, redeemcode.FieldSourceRef:
 			values[i] = new(sql.NullString)
 		case redeemcode.FieldUsedAt, redeemcode.FieldCreatedAt, redeemcode.FieldExpiresAt:
 			values[i] = new(sql.NullTime)
@@ -174,6 +176,12 @@ func (_m *RedeemCode) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.Notes = new(string)
 				*_m.Notes = value.String
+			}
+		case redeemcode.FieldSourceRef:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field source_ref", values[i])
+			} else if value.Valid {
+				_m.SourceRef = value.String
 			}
 		case redeemcode.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -279,6 +287,9 @@ func (_m *RedeemCode) String() string {
 		builder.WriteString("notes=")
 		builder.WriteString(*v)
 	}
+	builder.WriteString(", ")
+	builder.WriteString("source_ref=")
+	builder.WriteString(_m.SourceRef)
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

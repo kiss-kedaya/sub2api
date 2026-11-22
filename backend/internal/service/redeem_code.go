@@ -32,8 +32,14 @@ type RedeemCode struct {
 	ValidityDays int
 
 	// SyntheticCode 标记「不是真实卡密、只是凑历史展示行」的记录（当前只有
-	// 代理返利流水用 AFF-<id> 合成行）。这类值不是凭据，展示时不需要掩码。
+	// 代理返利流水用 AFF-<id> 合成行、链上充值回滚用 crypto_revoke 流水）。
+	// 这类值不是凭据，展示时不需要掩码。
 	SyntheticCode bool
+
+	// SourceRef 是合成流水行的结构化来源引用，例如
+	// crypto_deposit:<deposit_id>:<chain>:<tx_hash>:<log_index>。
+	// 真实卡密行为空；它不是凭据，只用于财务/审计反查。
+	SourceRef string
 
 	User  *User
 	Group *Group

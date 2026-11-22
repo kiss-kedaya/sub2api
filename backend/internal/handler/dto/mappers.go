@@ -744,6 +744,7 @@ func RedeemCodeFromServiceAdmin(rc *service.RedeemCode) *AdminRedeemCode {
 	return &AdminRedeemCode{
 		RedeemCode: redeemCodeFromServiceBase(rc),
 		Notes:      rc.Notes,
+		SourceRef:  rc.SourceRef,
 	}
 }
 
@@ -799,8 +800,9 @@ func redeemCodeFromServiceBase(rc *service.RedeemCode) RedeemCode {
 	}
 
 	// For admin_balance/admin_concurrency types, include notes so users can see
-	// why they were charged or credited by admin
-	if (rc.Type == "admin_balance" || rc.Type == "admin_concurrency") && rc.Notes != "" {
+	// why they were charged or credited by admin. crypto_revoke rows use notes as
+	// the human-readable reversal reason in the user's own balance history.
+	if (rc.Type == service.RedeemTypeCryptoRevoke || rc.Type == "admin_balance" || rc.Type == "admin_concurrency") && rc.Notes != "" {
 		out.Notes = &rc.Notes
 	}
 

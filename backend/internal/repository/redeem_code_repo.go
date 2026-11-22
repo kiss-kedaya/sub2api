@@ -37,7 +37,7 @@ func (r *redeemCodeRepository) Create(ctx context.Context, code *service.RedeemC
 		return errors.New("redeem code hash is required")
 	}
 	client := clientFromContext(ctx, r.client)
-	created, err := client.RedeemCode.Create().
+	create := client.RedeemCode.Create().
 		SetType(code.Type).
 		SetValue(code.Value).
 		SetStatus(code.Status).
@@ -48,8 +48,12 @@ func (r *redeemCodeRepository) Create(ctx context.Context, code *service.RedeemC
 		SetNillableExpiresAt(code.ExpiresAt).
 		SetNillableUsedBy(code.UsedBy).
 		SetNillableUsedAt(code.UsedAt).
-		SetNillableGroupID(code.GroupID).
-		Save(ctx)
+		SetNillableGroupID(code.GroupID)
+	// 合成流水行（链上充值扣回）带来源引用；真实卡密留空。
+	if code.SourceRef != "" {
+		create.SetSourceRef(code.SourceRef)
+	}
+	created, err := create.Save(ctx)
 	if err != nil {
 		return err
 	}
@@ -84,6 +88,9 @@ func (r *redeemCodeRepository) CreateBatch(ctx context.Context, codes []service.
 			SetNillableUsedBy(c.UsedBy).
 			SetNillableUsedAt(c.UsedAt).
 			SetNillableGroupID(c.GroupID)
+		if c.SourceRef != "" {
+			b.SetSourceRef(c.SourceRef)
+		}
 		builders = append(builders, b)
 	}
 
@@ -162,7 +169,11 @@ func (r *redeemCodeRepository) List(ctx context.Context, params pagination.Pagin
 }
 
 func (r *redeemCodeRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, codeType, status, search string) ([]service.RedeemCode, *pagination.PaginationResult, error) {
-	q := r.client.RedeemCode.Query()
+	// crypto_revoke 是链上充值扣回时写的负向余额流水行，不是卡密：后台
+	// 「卡密管理/导出」必须把它排除，否则会出现「一条 -$X 的已使用卡密」。
+	// 用户/后台的余额明细走 ListByUserPaginated，不受这里影响。
+	q := r.client.RedeemCode.Query().
+		Where(redeemcode.TypeNEQ(service.RedeemTypeCryptoRevoke))
 
 	if codeType != "" {
 		q = q.Where(redeemcode.TypeEQ(codeType))
@@ -514,6 +525,7 @@ func redeemCodeEntityToService(m *dbent.RedeemCode) *service.RedeemCode {
 		UsedBy:       m.UsedBy,
 		UsedAt:       m.UsedAt,
 		Notes:        derefString(m.Notes),
+		SourceRef:    m.SourceRef,
 		CreatedAt:    m.CreatedAt,
 		ExpiresAt:    m.ExpiresAt,
 		GroupID:      m.GroupID,

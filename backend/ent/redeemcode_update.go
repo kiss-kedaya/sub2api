@@ -199,6 +199,26 @@ func (_u *RedeemCodeUpdate) ClearNotes() *RedeemCodeUpdate {
 	return _u
 }
 
+// SetSourceRef sets the "source_ref" field.
+func (_u *RedeemCodeUpdate) SetSourceRef(v string) *RedeemCodeUpdate {
+	_u.mutation.SetSourceRef(v)
+	return _u
+}
+
+// SetNillableSourceRef sets the "source_ref" field if the given value is not nil.
+func (_u *RedeemCodeUpdate) SetNillableSourceRef(v *string) *RedeemCodeUpdate {
+	if v != nil {
+		_u.SetSourceRef(*v)
+	}
+	return _u
+}
+
+// ClearSourceRef clears the value of the "source_ref" field.
+func (_u *RedeemCodeUpdate) ClearSourceRef() *RedeemCodeUpdate {
+	_u.mutation.ClearSourceRef()
+	return _u
+}
+
 // SetExpiresAt sets the "expires_at" field.
 func (_u *RedeemCodeUpdate) SetExpiresAt(v time.Time) *RedeemCodeUpdate {
 	_u.mutation.SetExpiresAt(v)
@@ -355,6 +375,11 @@ func (_u *RedeemCodeUpdate) check() error {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.status": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.SourceRef(); ok {
+		if err := redeemcode.SourceRefValidator(v); err != nil {
+			return &ValidationError{Name: "source_ref", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.source_ref": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -411,6 +436,12 @@ func (_u *RedeemCodeUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 	}
 	if _u.mutation.NotesCleared() {
 		_spec.ClearField(redeemcode.FieldNotes, field.TypeString)
+	}
+	if value, ok := _u.mutation.SourceRef(); ok {
+		_spec.SetField(redeemcode.FieldSourceRef, field.TypeString, value)
+	}
+	if _u.mutation.SourceRefCleared() {
+		_spec.ClearField(redeemcode.FieldSourceRef, field.TypeString)
 	}
 	if value, ok := _u.mutation.ExpiresAt(); ok {
 		_spec.SetField(redeemcode.FieldExpiresAt, field.TypeTime, value)
@@ -671,6 +702,26 @@ func (_u *RedeemCodeUpdateOne) ClearNotes() *RedeemCodeUpdateOne {
 	return _u
 }
 
+// SetSourceRef sets the "source_ref" field.
+func (_u *RedeemCodeUpdateOne) SetSourceRef(v string) *RedeemCodeUpdateOne {
+	_u.mutation.SetSourceRef(v)
+	return _u
+}
+
+// SetNillableSourceRef sets the "source_ref" field if the given value is not nil.
+func (_u *RedeemCodeUpdateOne) SetNillableSourceRef(v *string) *RedeemCodeUpdateOne {
+	if v != nil {
+		_u.SetSourceRef(*v)
+	}
+	return _u
+}
+
+// ClearSourceRef clears the value of the "source_ref" field.
+func (_u *RedeemCodeUpdateOne) ClearSourceRef() *RedeemCodeUpdateOne {
+	_u.mutation.ClearSourceRef()
+	return _u
+}
+
 // SetExpiresAt sets the "expires_at" field.
 func (_u *RedeemCodeUpdateOne) SetExpiresAt(v time.Time) *RedeemCodeUpdateOne {
 	_u.mutation.SetExpiresAt(v)
@@ -840,6 +891,11 @@ func (_u *RedeemCodeUpdateOne) check() error {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.status": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.SourceRef(); ok {
+		if err := redeemcode.SourceRefValidator(v); err != nil {
+			return &ValidationError{Name: "source_ref", err: fmt.Errorf(`ent: validator failed for field "RedeemCode.source_ref": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -913,6 +969,12 @@ func (_u *RedeemCodeUpdateOne) sqlSave(ctx context.Context) (_node *RedeemCode, 
 	}
 	if _u.mutation.NotesCleared() {
 		_spec.ClearField(redeemcode.FieldNotes, field.TypeString)
+	}
+	if value, ok := _u.mutation.SourceRef(); ok {
+		_spec.SetField(redeemcode.FieldSourceRef, field.TypeString, value)
+	}
+	if _u.mutation.SourceRefCleared() {
+		_spec.ClearField(redeemcode.FieldSourceRef, field.TypeString)
 	}
 	if value, ok := _u.mutation.ExpiresAt(); ok {
 		_spec.SetField(redeemcode.FieldExpiresAt, field.TypeTime, value)
