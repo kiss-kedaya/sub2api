@@ -35,6 +35,7 @@
             :invalid="!!errorMessage"
             aria-describedby="crypto-security-code-hint"
             :disabled="busy"
+            :autofocus="false"
             @complete="submitCode"
             required
           />

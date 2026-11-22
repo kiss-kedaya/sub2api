@@ -71,6 +71,7 @@
             :label="t('admin.crypto.signer.wizard.authTitle')"
             :invalid="totpInvalid"
             :disabled="busy"
+            :autofocus="false"
             @complete="onTotpComplete"
           />
           <UAlert v-if="authError" role="alert" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="authError" />
