@@ -49,8 +49,14 @@
           </span>
         </div>
 
-        <!-- Step 1: account. Panes stay mounted so field values survive navigation. -->
-        <div class="auth-step-pane" :data-pane-state="paneState('account')">
+        <!-- Step 1: account. Panes stay mounted so field values survive navigation.
+             Invitation / promo codes live on this step too, so the flow is only
+             "account -> verify" (or a single step when neither is required). -->
+        <div
+          class="auth-step-pane"
+          data-testid="register-account-pane"
+          :data-pane-state="paneState('account')"
+        >
         <!-- Email Input -->
         <div>
           <label for="email" class="input-label">
@@ -105,10 +111,7 @@
           </p>
         </div>
 
-        </div>
-
-        <!-- Step 2: invitation / promo, only when one of those fields exists -->
-        <div v-if="hasDetailsStep" class="auth-step-pane" :data-pane-state="paneState('details')">
+        <!-- Invitation / promo codes: same fields as before, now on the account step -->
         <!-- Invitation Code Input (Required when enabled) -->
         <div v-if="invitationCodeEnabled">
           <label for="invitation_code" class="input-label">
@@ -157,7 +160,7 @@
         <div v-else-if="affiliateEnabled" data-testid="affiliate-invitation-field">
           <label for="affiliate_code" class="input-label">
             {{ t('auth.invitationCodeLabel') }}
-            <span class="ml-1 text-xs font-normal text-gray-400 dark:text-dark-500">({{ t('common.optional') }})</span>
+            <span class="ml-1 text-xs font-normal text-muted">({{ t('common.optional') }})</span>
           </label>
           <div class="relative">
             <input
@@ -175,7 +178,7 @@
         <div v-if="promoCodeEnabled">
           <label for="promo_code" class="input-label">
             {{ t('auth.promoCodeLabel') }}
-            <span class="ml-1 text-xs font-normal text-gray-400 dark:text-dark-500">({{ t('common.optional') }})</span>
+            <span class="ml-1 text-xs font-normal text-muted">({{ t('common.optional') }})</span>
           </label>
           <div class="relative">
             <input
@@ -218,8 +221,16 @@
 
         </div>
 
-        <!-- Step 3: verification / agreement, only when one of those is required -->
-        <div v-if="hasVerifyStep" class="auth-step-pane" :data-pane-state="paneState('verify')">
+        <!-- Step 2: verification / agreement, only when one of those is required.
+             The agreement is always rendered inline here (even in modal mode) so the
+             step can never be blank: previously a modal-mode agreement with captcha
+             disabled left this pane completely empty. -->
+        <div
+          v-if="hasVerifyStep"
+          class="auth-step-pane"
+          data-testid="register-verify-pane"
+          :data-pane-state="paneState('verify')"
+        >
         <!-- Turnstile Widget -->
         <div v-if="captchaEnabled" data-testid="registration-turnstile">
           <TurnstileWidget
@@ -239,17 +250,21 @@
           />
         </div>
 
-        <LoginAgreementPrompt
-          v-if="loginAgreementEnabled"
-          :accepted="agreementAccepted"
-          :documents="loginAgreementDocuments"
-          :mode="loginAgreementMode"
-          :updated-at="loginAgreementUpdatedAt"
-          :visible="showAgreementModal"
-          @accept="acceptLoginAgreement"
-          @reject="rejectLoginAgreement"
-          @open="showAgreementModal = true"
-        />
+        <!-- Agreement confirmation: sentence + document links + checkbox.
+             Forced to the inline checkbox layout regardless of the admin's
+             mode, because the modal-only layout renders no page content. -->
+        <div v-if="loginAgreementEnabled" data-testid="registration-agreement">
+          <LoginAgreementPrompt
+            :accepted="agreementAccepted"
+            :documents="loginAgreementDocuments"
+            mode="checkbox"
+            :updated-at="loginAgreementUpdatedAt"
+            :visible="showAgreementModal"
+            @accept="acceptLoginAgreement"
+            @reject="rejectLoginAgreement"
+            @open="showAgreementModal = true"
+          />
+        </div>
         </div>
 
         <!-- Footer: Back pinned left, primary action pinned right -->
@@ -485,15 +500,13 @@ const captchaEnabled = computed(
 )
 
 // ==================== Quiet step flow ====================
-// Each step only asks for the fields it owns; a step is skipped entirely when it
-// would have no field, so the indicator never shows an empty pane.
-const hasDetailsStep = computed(
-  () => invitationCodeEnabled.value || affiliateEnabled.value || promoCodeEnabled.value
-)
+// At most two steps: the account step also owns the invitation / promo fields, and
+// acceptance / verification is the only thing that adds a second page. A step is
+// skipped entirely when it would have no field, so the indicator never shows an
+// empty pane.
 const hasVerifyStep = computed(() => captchaEnabled.value || loginAgreementEnabled.value)
 const stepKeys = computed<string[]>(() => {
   const keys = ['account']
-  if (hasDetailsStep.value) keys.push('details')
   if (hasVerifyStep.value) keys.push('verify')
   return keys
 })
@@ -552,8 +565,9 @@ function goToStep(nextIndex: number): void {
 
 function goNext(): void {
   if (isLastStep.value) return
-  const scope = currentStepKey.value === 'account' ? 'account' : 'details'
-  if (!validateForm(scope)) return
+  // Leaving the account step validates every field it owns, including the
+  // required invitation code that used to live on its own step.
+  if (!validateForm('account')) return
   goToStep(stepIndex.value + 1)
 }
 
@@ -1026,7 +1040,7 @@ function buildEmailSuffixNotAllowedMessage(): string {
   })
 }
 
-function validateForm(scope: 'account' | 'details' | 'full' = 'full'): boolean {
+function validateForm(scope: 'account' | 'full' = 'full'): boolean {
   // Reset errors
   errors.email = ''
   errors.password = ''
@@ -1077,8 +1091,9 @@ function validateForm(scope: 'account' | 'details' | 'full' = 'full'): boolean {
     isValid = false
   }
 
-  // Invitation code validation (required when enabled)
-  if (scope !== 'account' && invitationCodeEnabled.value) {
+  // Invitation code validation (required when enabled). The field sits on the
+  // account step, so it is validated both when leaving that step and on submit.
+  if (invitationCodeEnabled.value) {
     if (!formData.invitation_code.trim()) {
       errors.invitation_code = t('auth.invitationCodeRequired')
       isValid = false
