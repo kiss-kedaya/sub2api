@@ -26,6 +26,7 @@ import (
 	"time"
 
 	xdraw "golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -39,6 +40,7 @@ var (
 	ErrAvatarInvalid            = infraerrors.BadRequest("AVATAR_INVALID", "avatar must be a valid image data URL or http(s) URL")
 	ErrAvatarTooLarge           = infraerrors.BadRequest("AVATAR_TOO_LARGE", "avatar image must be 100KB or smaller")
 	ErrAvatarNotImage           = infraerrors.BadRequest("AVATAR_NOT_IMAGE", "avatar content must be an image")
+	ErrAvatarUnsupportedType    = infraerrors.BadRequest("AVATAR_UNSUPPORTED_TYPE", "avatar must be a PNG, JPEG or WebP image")
 	ErrIdentityProviderInvalid  = infraerrors.BadRequest("IDENTITY_PROVIDER_INVALID", "identity provider is invalid")
 	ErrIdentityRedirectInvalid  = infraerrors.BadRequest("IDENTITY_REDIRECT_INVALID", "identity redirect path is invalid")
 	ErrIdentityUnbindLastMethod = infraerrors.Conflict(
@@ -65,6 +67,95 @@ var (
 	avatarScaleSteps   = []float64{1, 0.92, 0.84, 0.76, 0.68, 0.6, 0.52, 0.44, 0.36}
 	avatarQualitySteps = []int{88, 80, 72, 64, 56, 48, 40, 32}
 )
+
+// allowedUserAvatarContentTypes 是 user_avatars 唯一允许落库的图片类型。
+// 明确排除 image/svg+xml：SVG 可以内嵌 <script>/onload，一旦被当图片内联渲染
+// 或以后改成 v-html/object/iframe 展示，就是存储型 XSS。GIF/BMP 等同样不收，
+// 统一要求 PNG/JPEG/WebP。
+var allowedUserAvatarContentTypes = map[string]struct{}{
+	"image/png":  {},
+	"image/jpeg": {},
+	"image/webp": {},
+}
+
+// normalizeAvatarContentType 取 MIME 主体并转小写：`Image/SVG+XML; charset=utf-8`
+// 与 `image/svg+xml` 必须判定为同一类型，不能靠前缀 image/ 放行。
+func normalizeAvatarContentType(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if i := strings.IndexByte(value, ';'); i >= 0 {
+		value = strings.TrimSpace(value[:i])
+	}
+	return value
+}
+
+func isAllowedUserAvatarContentType(value string) bool {
+	_, ok := allowedUserAvatarContentTypes[normalizeAvatarContentType(value)]
+	return ok
+}
+
+// detectUserAvatarImageMIME 用真实字节判断图片类型，防止声明 image/png 但内容
+// 是 SVG/HTML 的伪造上传。只返回白名单内的 MIME。
+func detectUserAvatarImageMIME(decoded []byte) (string, error) {
+	if len(decoded) == 0 {
+		return "", ErrAvatarNotImage
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(decoded))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		return "", ErrAvatarNotImage
+	}
+	switch format {
+	case "png":
+		return "image/png", nil
+	case "jpeg":
+		return "image/jpeg", nil
+	case "webp":
+		return "image/webp", nil
+	default:
+		return "", ErrAvatarUnsupportedType
+	}
+}
+
+// isSupportedStoredUserAvatar 判断库里读出的头像还能不能回给前端。
+// 存量行可能是 image/svg+xml 的 data URL，读取时降级为默认头像而不是 500。
+func isSupportedStoredUserAvatar(avatar *UserAvatar) bool {
+	if avatar == nil {
+		return false
+	}
+	rawURL := strings.TrimSpace(avatar.URL)
+	if rawURL == "" {
+		return false
+	}
+	contentType := normalizeAvatarContentType(avatar.ContentType)
+	if contentType != "" && !isAllowedUserAvatarContentType(contentType) {
+		return false
+	}
+	lowerURL := strings.ToLower(rawURL)
+	if strings.HasPrefix(lowerURL, "data:") {
+		media, _, ok := strings.Cut(strings.TrimPrefix(lowerURL, "data:"), ",")
+		if !ok {
+			return false
+		}
+		mime := normalizeAvatarContentType(media)
+		if !isAllowedUserAvatarContentType(mime) {
+			return false
+		}
+		return contentType == "" || contentType == mime
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed == nil {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return false
+	}
+	if strings.TrimSpace(parsed.Host) == "" {
+		return false
+	}
+	// 远端头像即使不给 MIME，*.svg 也按 SVG 处理（SVG 能内嵌脚本）。
+	path := strings.ToLower(strings.TrimSpace(parsed.Path))
+	return !strings.HasSuffix(path, ".svg") && !strings.HasSuffix(path, ".svgz")
+}
 
 // UserListFilters contains all filter options for listing users
 type UserListFilters struct {
@@ -567,9 +658,13 @@ func (s *UserService) updateProfile(ctx context.Context, userID int64, req Updat
 	}
 
 	if req.Username != nil {
-		// 用户名是首个存储型 XSS 的入口（PUT /api/v1/user）：非登录字段，收紧字符集并限长；
-		// 与当前值相同（存量脏数据回填）或清空时不校验，避免历史用户被卡住。
-		username := strings.TrimSpace(*req.Username)
+		// 用户名是首个存储型 XSS 的入口（PUT /api/v1/user）：非登录字段，入库前先按
+		// 统一规则清洗成纯文本，再收紧字符集并限长；与当前值相同（存量脏数据回填）
+		// 或清空时不校验，避免历史用户被卡住，但清洗后的值仍会覆盖脏数据。
+		username, err := sanitizeUsernameInput(*req.Username, user.Username)
+		if err != nil {
+			return nil, oldConcurrency, err
+		}
 		if username != "" && username != user.Username {
 			if err := ValidateUsername(username); err != nil {
 				return nil, oldConcurrency, err
@@ -672,6 +767,11 @@ func normalizeUserAvatarInput(raw string) (UpsertUserAvatarInput, error) {
 	if strings.TrimSpace(parsed.Host) == "" {
 		return UpsertUserAvatarInput{}, ErrAvatarInvalid
 	}
+	// 远端 URL 无法预知服务器返回的 MIME，但 *.svg 明确是 SVG，直接拒绝。
+	path := strings.ToLower(strings.TrimSpace(parsed.Path))
+	if strings.HasSuffix(path, ".svg") || strings.HasSuffix(path, ".svgz") {
+		return UpsertUserAvatarInput{}, ErrAvatarUnsupportedType
+	}
 
 	return UpsertUserAvatarInput{
 		StorageProvider: "remote_url",
@@ -696,9 +796,14 @@ func normalizeInlineUserAvatarInput(raw string) (UpsertUserAvatarInput, error) {
 		return UpsertUserAvatarInput{}, ErrAvatarInvalid
 	}
 
-	contentType := strings.TrimSpace(meta[:len(meta)-len(";base64")])
-	if contentType == "" || !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+	contentType := meta[:len(meta)-len(";base64")]
+	declaredType := normalizeAvatarContentType(contentType)
+	if declaredType == "" {
 		return UpsertUserAvatarInput{}, ErrAvatarNotImage
+	}
+	if !isAllowedUserAvatarContentType(declaredType) {
+		// 显式拒绝 image/svg+xml 等类型，并把可选项写进错误信息。
+		return UpsertUserAvatarInput{}, ErrAvatarUnsupportedType
 	}
 
 	decoded, err := base64.StdEncoding.DecodeString(encoded)
@@ -707,6 +812,16 @@ func normalizeInlineUserAvatarInput(raw string) (UpsertUserAvatarInput, error) {
 	}
 	if len(decoded) > maxInlineAvatarBytes {
 		return UpsertUserAvatarInput{}, ErrAvatarTooLarge
+	}
+
+	// 以真实字节为准覆盖声明类型：声明的 image/png 必须真的能按 PNG/JPEG/WebP
+	// 解码，否则拒绝（防止用 SVG/HTML 字节伪装成图片落库）。
+	contentType, err = detectUserAvatarImageMIME(decoded)
+	if err != nil {
+		return UpsertUserAvatarInput{}, err
+	}
+	if contentType != declaredType {
+		raw = "data:" + contentType + ";base64," + encoded
 	}
 
 	if len(decoded) > targetAvatarBytes {
@@ -728,6 +843,10 @@ func normalizeInlineUserAvatarInput(raw string) (UpsertUserAvatarInput, error) {
 }
 
 func compressInlineAvatar(decoded []byte) ([]byte, string, error) {
+	// 解码同时校验真实图片类型：只能重压白名单内的格式。
+	if _, err := detectUserAvatarImageMIME(decoded); err != nil {
+		return nil, "", err
+	}
 	src, _, err := image.Decode(bytes.NewReader(decoded))
 	if err != nil {
 		return nil, "", ErrAvatarInvalid
@@ -1210,6 +1329,14 @@ func (s *UserService) hydrateUserAvatar(ctx context.Context, user *User) error {
 	avatar, err := s.userRepo.GetUserAvatar(ctx, user.ID)
 	if err != nil {
 		return err
+	}
+	if avatar != nil && !isSupportedStoredUserAvatar(avatar) {
+		// 存量脏头像（例如 image/svg+xml 的 data URL）降级为默认头像：
+		// 不回前端、也不因为一行历史数据把资料接口打成 500。
+		slog.Warn("ignoring unsupported stored user avatar",
+			"user_id", user.ID,
+			"content_type", avatar.ContentType)
+		avatar = nil
 	}
 	applyUserAvatar(user, avatar)
 	return nil

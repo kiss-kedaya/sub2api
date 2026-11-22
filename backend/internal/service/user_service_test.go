@@ -819,7 +819,7 @@ func TestNewUserService_FieldsAssignment(t *testing.T) {
 }
 
 func TestUpdateProfile_StoresInlineAvatarWithinLimit(t *testing.T) {
-	raw := []byte("small-avatar")
+	raw := testPNGBytes(t)
 	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(raw)
 	expectedSum := sha256.Sum256(raw)
 	repo := &mockUserRepo{
@@ -1012,4 +1012,14 @@ func TestGetProfile_HydratesAvatarFromRepository(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://cdn.example.com/profile.png", user.AvatarURL)
 	require.Equal(t, "remote_url", user.AvatarSource)
+}
+
+// testPNGBytes 生成一张 1x1 真 PNG，用于头像入库测试。
+// 入库前会按真实字节校验图片类型，假字节（如 "small-avatar"）应被拒绝。
+func testPNGBytes(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, img))
+	return buf.Bytes()
 }

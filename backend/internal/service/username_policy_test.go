@@ -49,7 +49,8 @@ func TestSanitizeUsername(t *testing.T) {
 	require.Equal(t, "", SanitizeUsername(""))
 	require.Equal(t, "", SanitizeUsername("  "))
 	require.Equal(t, "John Doe", SanitizeUsername(" John Doe "))
-	require.Equal(t, "bTomb", SanitizeUsername("<b>Tom</b>"))
+	// 先剥标签再过滤字符：第三方昵称里的 HTML 不能变成 "bTomb" 这种残留。
+	require.Equal(t, "Tom", SanitizeUsername("<b>Tom</b>"))
 	require.Equal(t, "赵四", SanitizeUsername("赵四"))
 	require.Equal(t, strings.Repeat("a", MaxUsernameRunes), SanitizeUsername(strings.Repeat("a", MaxUsernameRunes+10)))
 	// 过滤后只剩空白/标点则视为空，调用方保持原用户名。
