@@ -40,10 +40,9 @@ type CryptoHandler struct {
 	privateKeyExporter cryptoAddressPrivateKeyExporter
 	operationNotifier  cryptoWalletOperationNotifier
 	depositConfirmer   cryptoDepositConfirmer
-	// signer and sweepGate are optional test seams. In production they are left
-	// nil and the concrete cryptopay.Service is used through its interfaces.
-	signer    cryptoSignerService
-	sweepGate cryptoSweepGateReader
+	// signer is an optional test seam. In production it is left nil and the
+	// concrete cryptopay.Service is used through its interface.
+	signer cryptoSignerService
 }
 
 func NewCryptoHandler(addressService *addresses.Service, settings *service.SettingService, cryptoSvc *cryptopay.Service, totpService *service.TotpService, cfg *config.Config) *CryptoHandler {
