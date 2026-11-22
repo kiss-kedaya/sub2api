@@ -14,6 +14,8 @@ import (
 
 // runAtRestCommand 执行 `sub2api -atrest-migrate` / `-atrest-verify`：
 // 只连 PostgreSQL，不启动应用、Redis、worker，职责单一可审计。
+// 写库前提：SUB2API_ATREST_ENABLED=true 且 SUB2API_ATREST_KEY 有效；
+// 总开关默认关闭（默认部署不会产生任何新密文）。开启前必须先跑真实网关请求验收。
 func runAtRestCommand(migrate, verify bool, tablesRaw string, batchSize int, dryRun bool) {
 	cfg, err := config.LoadForBootstrap()
 	if err != nil {

@@ -50,6 +50,21 @@ func TestRunRefusesMigrateWithoutKey(t *testing.T) {
 	_, err := Run(context.Background(), db, Options{Tables: []string{TableAccounts}, BatchSize: 10})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), atrest.KeyEnv)
+	require.Contains(t, err.Error(), atrest.EnabledEnv)
+}
+
+// 总开关默认关闭：仅配置有效密钥也必须拒绝写库，否则「把密钥加回环境」
+// 又会自动加密（2026-11-22 事故根因）。
+func TestRunRefusesMigrateWhenSealingDisabledEvenWithKey(t *testing.T) {
+	cipher, err := atrest.New(migrateTestKeyHex)
+	require.NoError(t, err)
+	atrest.Configure(cipher)
+	atrest.SetSealingEnabled(false)
+	t.Cleanup(atrest.Reset)
+	db, _ := newMigrateTestDB(t)
+	_, err = Run(context.Background(), db, Options{Tables: []string{TableAccounts}, BatchSize: 10})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), atrest.EnabledEnv)
 }
 
 func TestDryRunStatsWithoutWrites(t *testing.T) {

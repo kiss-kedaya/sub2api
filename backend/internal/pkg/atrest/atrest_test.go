@@ -181,31 +181,107 @@ func TestDisabledCipher_RefusesEncryptedWrite(t *testing.T) {
 func TestConfigureFromEnv(t *testing.T) {
 	t.Cleanup(func() { Reset() })
 
+	// 默认：两个环境变量都没有 → 关闭 sealing，也没有解密密钥。
+	t.Setenv(EnabledEnv, "")
 	t.Setenv(KeyEnv, "")
 	Reset()
 	c, err := ConfigureFromEnv()
 	if err != nil {
-		t.Fatalf("unset key should not error: %v", err)
+		t.Fatalf("empty env should not error: %v", err)
 	}
-	if c != nil || Enabled() {
-		t.Fatalf("unset key should stay disabled")
+	if c != nil || Enabled() || KeyConfigured() {
+		t.Fatalf("default (no env) must keep sealing disabled and load no key")
 	}
 
+	// 只有有效密钥、没有显式开关 → 默认关闭：能解密历史密文，但不写新密文。
 	t.Setenv(KeyEnv, testKeyHex)
 	c, err = ConfigureFromEnv()
 	if err != nil {
-		t.Fatalf("valid key: %v", err)
+		t.Fatalf("valid key with switch off should not error: %v", err)
 	}
-	if c == nil || !Enabled() {
-		t.Fatalf("valid key should enable encryption")
+	if c == nil || !KeyConfigured() {
+		t.Fatalf("valid key should load decryption capability")
+	}
+	if Enabled() {
+		t.Fatalf("sealing must stay disabled unless %s=true", EnabledEnv)
 	}
 	if len(KeyFingerprint()) != 16 {
 		t.Fatalf("fingerprint = %q", KeyFingerprint())
 	}
+	if _, err := EncryptString("sk-secret"); !errors.Is(err, ErrSealingDisabled) {
+		t.Fatalf("package EncryptString must refuse when sealing is disabled, got %v", err)
+	}
+	ciphertext, err := c.EncryptString("sk-historical")
+	if err != nil {
+		t.Fatalf("raw cipher primitive: %v", err)
+	}
+	if got, err := DecryptString(ciphertext); err != nil || got != "sk-historical" {
+		t.Fatalf("historical ciphertext must still decrypt with switch off: got %q err %v", got, err)
+	}
 
+	// 显式 true + 有效密钥 → 允许加密写入。
+	t.Setenv(EnabledEnv, "true")
+	c, err = ConfigureFromEnv()
+	if err != nil {
+		t.Fatalf("explicit true with valid key: %v", err)
+	}
+	if c == nil || !Enabled() {
+		t.Fatalf("explicit true with valid key must enable sealing")
+	}
+	if _, err := EncryptString("sk-new"); err != nil {
+		t.Fatalf("sealing enabled must encrypt: %v", err)
+	}
+
+	// 非法密钥：开关关闭时忽略（不阻断启动），开关开启时必须报错。
+	t.Setenv(EnabledEnv, "")
 	t.Setenv(KeyEnv, "not-a-key")
+	if _, err := ConfigureFromEnv(); err != nil {
+		t.Fatalf("invalid key must be tolerated while sealing is disabled: %v", err)
+	}
+	if KeyConfigured() || Enabled() {
+		t.Fatalf("invalid key must not load decryption capability")
+	}
+
+	t.Setenv(EnabledEnv, "true")
 	if _, err := ConfigureFromEnv(); err == nil {
-		t.Fatalf("invalid key must fail")
+		t.Fatalf("invalid key must fail when sealing is requested")
+	}
+
+	// 开关开启但没有密钥：必须启动失败，不能静默降级成明文。
+	t.Setenv(KeyEnv, "")
+	if _, err := ConfigureFromEnv(); err == nil {
+		t.Fatalf("sealing requested without a key must fail")
+	}
+
+	// 开关只接受 true/false，拼错必须报错而不是被当成开启。
+	t.Setenv(KeyEnv, testKeyHex)
+	for _, raw := range []string{"1", "yes", "on"} {
+		t.Setenv(EnabledEnv, raw)
+		if _, err := ConfigureFromEnv(); err == nil {
+			t.Fatalf("%s=%q must be rejected", EnabledEnv, raw)
+		}
+	}
+}
+
+func TestResetClearsSealingAndKey(t *testing.T) {
+	Configure(mustCipher(t, testKeyHex))
+	if !Enabled() || !KeyConfigured() {
+		t.Fatalf("Configure(cipher) must enable sealing for tests")
+	}
+	Reset()
+	if Enabled() || KeyConfigured() {
+		t.Fatalf("Reset must clear sealing and key")
+	}
+}
+
+func TestDecryptString_FailsClosedWithoutKey(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+	if got, err := DecryptString("plain-legacy"); err != nil || got != "plain-legacy" {
+		t.Fatalf("plaintext must pass through without key: got %q err %v", got, err)
+	}
+	if _, err := DecryptString("enc:v2:AAAA"); !errors.Is(err, ErrNoKey) {
+		t.Fatalf("ciphertext without key must fail closed, got %v", err)
 	}
 }
 

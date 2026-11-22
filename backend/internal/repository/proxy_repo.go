@@ -47,7 +47,8 @@ func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) er
 	if proxyIn.Username != "" {
 		builder.SetUsername(proxyIn.Username)
 	}
-	// 新代理没有回滚历史：配置 at-rest 密钥时直接封存明文列。
+	// 新代理没有回滚历史：sealing 开启时直接封存明文列；默认关闭时只写明文，
+	// password_cipher 保持 NULL。
 	passwordPlain, passwordCipher, err := proxyPasswordForStorage(proxyIn.Password, true)
 	if err != nil {
 		return err
@@ -160,12 +161,12 @@ func proxyProbeIdentityFromService(proxyIn *service.Proxy) proxyProbeIdentity {
 }
 
 // proxyPasswordForStorage 计算代理密码在库内的两种表示：
-//   - plain：明文列值（历史行/双写期保留，旧二进制可读）；
-//   - cipher：password_cipher 值（enc:v2:，密钥未配置时为空）。
+//   - plain：明文列值（默认关闭时就是唯一副本；双写期保留，旧二进制可读）；
+//   - cipher：password_cipher 值（enc:v2:；默认关闭或密钥无效时为空）。
 //
 // 已有密文形态（托管代理的 enc:managed:v1:）原样保留在明文列：那是既有托管
 // 功能依赖的线格式，不能被再次加密，否则上层 decorator 无法解码。
-// sealNew=true 时新行直接封存（plain 置空）。
+// sealNew=true 时新行在 sealing 开启时直接封存（plain 置空）。
 func proxyPasswordForStorage(password string, sealNew bool) (plain, cipher string, err error) {
 	if password == "" {
 		return "", "", nil
@@ -211,11 +212,10 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 	}
 	if proxyIn.Password != "" {
 		if strings.HasPrefix(proxyIn.Password, "enc:") {
-			// 托管代理的既有密文线格式原样落明文列，由上层 decorator 解码。
+			// 托管代理的既有密文线格式原样落明文列，由上层 decorator 解码；
+			// 之前的 at-rest 密文列必须清掉，否则读路径会拿旧密文覆盖。
 			builder.SetPassword(proxyIn.Password)
-			if atrest.Enabled() {
-				builder.ClearPasswordCipher()
-			}
+			builder.ClearPasswordCipher()
 		} else if atrest.Enabled() {
 			ciphertext, encErr := atrest.EncryptString(proxyIn.Password)
 			if encErr != nil {
@@ -229,13 +229,13 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 				builder.SetPassword(proxyIn.Password)
 			}
 		} else {
+			// 总开关关闭（默认）：只写明文，password_cipher 清成 NULL。
 			builder.SetPassword(proxyIn.Password)
+			builder.ClearPasswordCipher()
 		}
 	} else {
 		builder.ClearPassword()
-		if atrest.Enabled() {
-			builder.ClearPasswordCipher()
-		}
+		builder.ClearPasswordCipher()
 	}
 	if proxyIn.ExpiresAt != nil {
 		builder.SetExpiresAt(*proxyIn.ExpiresAt)
@@ -292,7 +292,9 @@ func lockProxyProbeIdentity(ctx context.Context, client *dbent.Client, proxyID i
 	if err := rows.Scan(&identity.protocol, &identity.host, &identity.port, &identity.username, &identity.password, &ciphertext, &identity.status); err != nil {
 		return proxyProbeIdentity{}, false, err
 	}
-	if proxyPasswordCipherEncrypted(ciphertext) {
+	// 明文密码列有值就是本次比对的业务值（默认关闭/双写期）；只有明文列为空
+	// （封存行）才需要解密，避免「有明文但密钥缺失」把代理编辑整体打死。
+	if strings.TrimSpace(identity.password) == "" && proxyPasswordCipherEncrypted(ciphertext) {
 		plain, decErr := atrest.DecryptString(ciphertext)
 		if decErr != nil {
 			return proxyProbeIdentity{}, true, fmt.Errorf("proxy %d password cannot be decrypted: %w", proxyID, decErr)
@@ -543,8 +545,10 @@ func (r *proxyRepository) ListActive(ctx context.Context) ([]service.Proxy, erro
 
 // ExistsByHostPortAuth checks if a proxy with the same host, port, username, and password exists
 func (r *proxyRepository) ExistsByHostPortAuth(ctx context.Context, host string, port int, username, password string) (bool, error) {
-	// at-rest 封存行的明文密码列是空的，等值查询会漏判重复；改为解密后比较。
-	if atrest.Enabled() {
+	// 有密钥时库内可能有 at-rest 密文（含总开关关闭但历史行仍是密文的情况），
+	// 明文等值查询会漏判重复；改为读回明文后比较。没有密钥时密文行读不出来，
+	// 也就只能按明文列比较。
+	if atrest.KeyConfigured() {
 		candidates, err := r.client.Proxy.Query().
 			Where(proxy.HostEQ(host), proxy.PortEQ(port)).
 			All(ctx)
@@ -722,11 +726,20 @@ func proxyEntityToService(m *dbent.Proxy) (*service.Proxy, error) {
 	return out, nil
 }
 
-// proxyPasswordFromEntity 返回代理密码：password_cipher 优先（解密失败 fail-closed），
-// 否则回退历史明文/托管代理密文（enc:managed:v1: 由上层 decorator 解码）。
+// proxyPasswordFromEntity 返回代理密码：明文列有值优先（默认关闭时唯一副本、
+// 双写期也是完整副本），明文列为空时才用 password_cipher 解密；解密失败
+// fail-closed，绝不把密文当密码返回。托管代理的 enc:managed:v1: 线格式由上层
+// decorator 解码，这里原样返回。
+//
+// 2026-11-22 事故的直接原因是读取「密文优先」：密码列有明文、密文列存在但密钥
+// 缺失时请求直接失败。这里改为明文优先后，双写行在无密钥时仍可用，只有真正
+// 只剩密文的封存行才会 fail-closed。
 func proxyPasswordFromEntity(m *dbent.Proxy) (string, error) {
 	if m == nil {
 		return "", nil
+	}
+	if m.Password != nil && strings.TrimSpace(*m.Password) != "" {
+		return *m.Password, nil
 	}
 	ciphertext := derefString(m.PasswordCipher)
 	if strings.TrimSpace(ciphertext) != "" {

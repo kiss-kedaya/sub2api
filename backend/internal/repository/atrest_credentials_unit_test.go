@@ -14,13 +14,21 @@ const repositoryAtRestKeyHex = "aabbccddeeff00112233445566778899aabbccddeeff0011
 
 func configureRepositoryAtRest(t *testing.T) {
 	t.Helper()
+	configureRepositoryAtRestSealing(t, true)
+}
+
+// configureRepositoryAtRestSealing 注入密钥并按需打开/关闭 sealing 总开关。
+// sealing=false 对应「配置了密钥但 SUB2API_ATREST_ENABLED 未开」的只读兼容态。
+func configureRepositoryAtRestSealing(t *testing.T, sealing bool) {
+	t.Helper()
 	cipher, err := atrest.New(repositoryAtRestKeyHex)
 	require.NoError(t, err)
 	atrest.Configure(cipher)
+	atrest.SetSealingEnabled(sealing)
 	t.Cleanup(atrest.Reset)
 }
 
-func TestAccountCredentialsFromEntity_PrefersCipherOverPlaintext(t *testing.T) {
+func TestAccountCredentialsFromEntity_PrefersPlaintextOverCipher(t *testing.T) {
 	configureRepositoryAtRest(t)
 	authoritative := map[string]any{"api_key": "sk-cipher", "base_url": "https://cipher.example.com"}
 	plain, err := json.Marshal(authoritative)
@@ -28,14 +36,31 @@ func TestAccountCredentialsFromEntity_PrefersCipherOverPlaintext(t *testing.T) {
 	ciphertext, err := atrest.EncryptString(string(plain))
 	require.NoError(t, err)
 
+	// 双写行：两列都是完整副本，明文优先（这是 2026-11-22 事故的读取修复）。
 	entity := &dbent.Account{
 		ID:                1,
-		Credentials:       map[string]any{"api_key": "sk-stale-plain"},
+		Credentials:       map[string]any{"api_key": "sk-plain", "base_url": "https://plain.example.com"},
 		CredentialsCipher: &ciphertext,
 	}
 	credentials, err := accountCredentialsFromEntity(entity)
 	require.NoError(t, err)
-	require.Equal(t, authoritative, credentials)
+	require.Equal(t, "sk-plain", credentials["api_key"])
+	require.Equal(t, "https://plain.example.com", credentials["base_url"])
+}
+
+func TestAccountCredentialsFromEntity_UsesCipherForSealedRows(t *testing.T) {
+	configureRepositoryAtRest(t)
+	authoritative := map[string]any{"api_key": "sk-cipher", "base_url": "https://cipher.example.com"}
+	plain, err := json.Marshal(authoritative)
+	require.NoError(t, err)
+	ciphertext, err := atrest.EncryptString(string(plain))
+	require.NoError(t, err)
+
+	sealed := SealCredentials(map[string]any{"api_key": "sk-cipher", "base_url": "https://cipher.example.com"})
+	entity := &dbent.Account{ID: 5, Credentials: sealed, CredentialsCipher: &ciphertext}
+	credentials, err := accountCredentialsFromEntity(entity)
+	require.NoError(t, err)
+	require.Equal(t, "sk-cipher", credentials["api_key"])
 }
 
 func TestAccountCredentialsFromEntity_FallsBackToPlaintext(t *testing.T) {
@@ -46,14 +71,46 @@ func TestAccountCredentialsFromEntity_FallsBackToPlaintext(t *testing.T) {
 	require.Equal(t, "sk-legacy", credentials["api_key"])
 }
 
+// 回归 2026-11-22：双写行在环境密钥被删除后仍必须能读到明文 api_key，
+// 否则网关全站 502。
+func TestAccountCredentialsFromEntity_DualWriteRowSurvivesMissingKey(t *testing.T) {
+	atrest.Reset()
+	t.Cleanup(atrest.Reset)
+	ciphertext := "enc:v2:AAAA"
+	entity := &dbent.Account{
+		ID:                6,
+		Credentials:       map[string]any{"api_key": "sk-plain"},
+		CredentialsCipher: &ciphertext,
+	}
+	credentials, err := accountCredentialsFromEntity(entity)
+	require.NoError(t, err)
+	require.Equal(t, "sk-plain", credentials["api_key"], "plaintext must win over undecryptable cipher")
+}
+
 func TestAccountCredentialsFromEntity_FailsClosedWhenKeyMissing(t *testing.T) {
 	atrest.Reset()
 	t.Cleanup(atrest.Reset)
 	ciphertext := "enc:v2:AAAA"
-	entity := &dbent.Account{ID: 3, Credentials: map[string]any{"api_key": "should-not-be-used"}, CredentialsCipher: &ciphertext}
+	// 封存行：明文列只剩结构键，敏感值只在密文里 → 无密钥必须 fail-closed。
+	entity := &dbent.Account{
+		ID:                3,
+		Credentials:       map[string]any{"_sealed": true, "base_url": "https://api.example.com"},
+		CredentialsCipher: &ciphertext,
+	}
 	_, err := accountCredentialsFromEntity(entity)
 	require.Error(t, err)
 	require.ErrorIs(t, err, atrest.ErrNoKey)
+}
+
+func TestAccountCredentialsFromEntity_DecryptsHistoricalCipherWhenSealingDisabled(t *testing.T) {
+	configureRepositoryAtRestSealing(t, false)
+	ciphertext, err := atrest.Current().EncryptString(`{"api_key":"sk-historical"}`)
+	require.NoError(t, err)
+	sealed := SealCredentials(map[string]any{"api_key": "sk-historical"})
+	entity := &dbent.Account{ID: 7, Credentials: sealed, CredentialsCipher: &ciphertext}
+	credentials, err := accountCredentialsFromEntity(entity)
+	require.NoError(t, err)
+	require.Equal(t, "sk-historical", credentials["api_key"])
 }
 
 func TestAccountCredentialsFromEntity_FailsClosedOnWrongKey(t *testing.T) {
@@ -135,13 +192,21 @@ func TestCredentialsCASParam_WrapsPlainAndSealed(t *testing.T) {
 	require.Contains(t, match, "$7::jsonb -> 'plain'")
 }
 
-func TestCredentialsCipherForStorage_FollowsKeyConfiguration(t *testing.T) {
+func TestCredentialsCipherForStorage_FollowsSealingSwitch(t *testing.T) {
+	// 默认（无 env）：不产生密文。
 	atrest.Reset()
 	t.Cleanup(atrest.Reset)
 	ciphertext, err := credentialsCipherForStorage(map[string]any{"api_key": "sk-x"})
 	require.NoError(t, err)
-	require.Empty(t, ciphertext, "no key must never produce ciphertext")
+	require.Empty(t, ciphertext, "default must never produce ciphertext")
 
+	// 只有密钥、总开关关闭：仍然不产生密文（只保留解密能力）。
+	configureRepositoryAtRestSealing(t, false)
+	ciphertext, err = credentialsCipherForStorage(map[string]any{"api_key": "sk-x"})
+	require.NoError(t, err)
+	require.Empty(t, ciphertext, "key without SUB2API_ATREST_ENABLED=true must not seal")
+
+	// 显式开启 sealing：走原加密路径。
 	configureRepositoryAtRest(t)
 	ciphertext, err = credentialsCipherForStorage(map[string]any{"api_key": "sk-x"})
 	require.NoError(t, err)
@@ -149,6 +214,27 @@ func TestCredentialsCipherForStorage_FollowsKeyConfiguration(t *testing.T) {
 	plain, err := atrest.DecryptString(ciphertext)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"api_key":"sk-x"}`, plain)
+}
+
+// 默认关闭时写路径必须落在明文、不产生任何密文；这是防止「密钥被加回环境
+// 又自动加密」的核心回归。
+func TestWritePathsStayPlaintextByDefault(t *testing.T) {
+	atrest.Reset()
+	t.Cleanup(atrest.Reset)
+
+	plainJSON, _, cipher, err := credentialsStorageParams(map[string]any{"api_key": "sk-x"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"api_key":"sk-x"}`, plainJSON, "unsealed row keeps full plaintext")
+	require.Nil(t, cipher, "credentials_cipher must stay NULL by default")
+
+	plain, proxyCipher, err := proxyPasswordForStorage("proxy-pass", true)
+	require.NoError(t, err)
+	require.Equal(t, "proxy-pass", plain)
+	require.Empty(t, proxyCipher, "password_cipher must stay NULL by default")
+
+	encoded, err := encodeSettingValue("smtp_password", "smtp-secret")
+	require.NoError(t, err)
+	require.Equal(t, "smtp-secret", encoded, "settings stay plaintext by default")
 }
 
 func TestRefreshTokenPredicatesCoverSealedRows(t *testing.T) {
@@ -166,7 +252,16 @@ func TestDecodeCredentialsStored(t *testing.T) {
 	configureRepositoryAtRest(t)
 	ciphertext, err := atrest.EncryptString(`{"api_key":"sk-cipher"}`)
 	require.NoError(t, err)
-	credentials, err := decodeCredentialsStored([]byte(`{"api_key":"ignored"}`), ciphertext)
+
+	// 双写行：明文优先（2026-11-22 事故修复）。
+	credentials, err := decodeCredentialsStored([]byte(`{"api_key":"sk-plain"}`), ciphertext)
+	require.NoError(t, err)
+	require.Equal(t, "sk-plain", credentials["api_key"])
+
+	// 封存行：明文只剩结构键，必须解密。
+	sealed, err := json.Marshal(SealCredentials(map[string]any{"api_key": "sk-cipher"}))
+	require.NoError(t, err)
+	credentials, err = decodeCredentialsStored(sealed, ciphertext)
 	require.NoError(t, err)
 	require.Equal(t, "sk-cipher", credentials["api_key"])
 
@@ -184,10 +279,18 @@ func TestProxyPasswordFromEntity(t *testing.T) {
 	require.NoError(t, err)
 	plaintextPassword := "legacy-pass"
 
-	sealed := &dbent.Proxy{ID: 1, PasswordCipher: &ciphertext, Password: &plaintextPassword}
-	password, err := proxyPasswordFromEntity(sealed)
+	// 双写行：明文优先，无密钥时也不会因为密文拖死读取。
+	dualWrite := &dbent.Proxy{ID: 1, PasswordCipher: &ciphertext, Password: &plaintextPassword}
+	password, err := proxyPasswordFromEntity(dualWrite)
 	require.NoError(t, err)
-	require.Equal(t, "proxy-pass", password, "cipher column wins")
+	require.Equal(t, "legacy-pass", password, "plaintext column wins on dual-write rows")
+
+	// 封存行：明文列为空，走密文解密。
+	empty := ""
+	sealedRow := &dbent.Proxy{ID: 4, PasswordCipher: &ciphertext, Password: &empty}
+	password, err = proxyPasswordFromEntity(sealedRow)
+	require.NoError(t, err)
+	require.Equal(t, "proxy-pass", password, "cipher is used when plaintext column is empty")
 
 	legacy := &dbent.Proxy{ID: 2, Password: &plaintextPassword}
 	password, err = proxyPasswordFromEntity(legacy)
@@ -200,12 +303,16 @@ func TestProxyPasswordFromEntity(t *testing.T) {
 	require.Equal(t, "enc:managed:v1:abc", password, "managed ciphertext is decoded by the decorator")
 
 	atrest.Reset()
-	_, err = proxyPasswordFromEntity(sealed)
+	password, err = proxyPasswordFromEntity(dualWrite)
+	require.NoError(t, err)
+	require.Equal(t, "legacy-pass", password, "dual-write row must survive a missing key")
+	_, err = proxyPasswordFromEntity(sealedRow)
 	require.Error(t, err)
 	require.ErrorIs(t, err, atrest.ErrNoKey)
 }
 
 func TestProxyPasswordForStorage(t *testing.T) {
+	// 默认：明文进 password，password_cipher 为空（NULL）。
 	atrest.Reset()
 	t.Cleanup(atrest.Reset)
 	plain, cipher, err := proxyPasswordForStorage("pass", true)
@@ -213,6 +320,14 @@ func TestProxyPasswordForStorage(t *testing.T) {
 	require.Equal(t, "pass", plain)
 	require.Empty(t, cipher)
 
+	// 有密钥但总开关关闭：仍只写明文。
+	configureRepositoryAtRestSealing(t, false)
+	plain, cipher, err = proxyPasswordForStorage("pass", true)
+	require.NoError(t, err)
+	require.Equal(t, "pass", plain)
+	require.Empty(t, cipher, "key without sealing switch must not produce ciphertext")
+
+	// sealing 开启：走原加密路径。
 	configureRepositoryAtRest(t)
 	plain, cipher, err = proxyPasswordForStorage("pass", true)
 	require.NoError(t, err)
@@ -231,16 +346,24 @@ func TestProxyPasswordForStorage(t *testing.T) {
 }
 
 func TestSettingValueCodec(t *testing.T) {
+	// 默认：保持明文。
 	atrest.Reset()
 	t.Cleanup(atrest.Reset)
 	encoded, err := encodeSettingValue("smtp_password", "smtp-secret")
 	require.NoError(t, err)
-	require.Equal(t, "smtp-secret", encoded, "no key keeps legacy plaintext")
+	require.Equal(t, "smtp-secret", encoded, "default keeps legacy plaintext")
 
 	if !IsSensitiveSettingKey("smtp_password") || IsSensitiveSettingKey("some_toggle") {
 		t.Fatalf("sensitive setting key whitelist is wrong")
 	}
 
+	// 只有密钥、总开关关闭：仍保持明文。
+	configureRepositoryAtRestSealing(t, false)
+	encoded, err = encodeSettingValue("smtp_password", "smtp-secret")
+	require.NoError(t, err)
+	require.Equal(t, "smtp-secret", encoded, "key without sealing switch must not encrypt settings")
+
+	// sealing 开启：走原加密路径。
 	configureRepositoryAtRest(t)
 	encoded, err = encodeSettingValue("smtp_password", "smtp-secret")
 	require.NoError(t, err)
@@ -258,6 +381,16 @@ func TestSettingValueCodec(t *testing.T) {
 	// 密文无法解密时 fail-closed，绝不返回密文。
 	_, err = decodeSettingValue("smtp_password", "enc:v2:broken")
 	require.Error(t, err)
+}
+
+// 总开关关闭但密钥仍在时，历史 enc:v2: 设置值必须仍能解密（读取路径与开关解耦）。
+func TestSettingValueDecodesHistoricalCipherWhenSealingDisabled(t *testing.T) {
+	configureRepositoryAtRestSealing(t, false)
+	ciphertext, err := atrest.Current().EncryptString("smtp-historical")
+	require.NoError(t, err)
+	decoded, err := decodeSettingValue("smtp_password", ciphertext)
+	require.NoError(t, err)
+	require.Equal(t, "smtp-historical", decoded)
 }
 
 func TestSettingSensitiveKeyListMatchesServiceContract(t *testing.T) {

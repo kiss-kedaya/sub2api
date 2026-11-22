@@ -94,10 +94,13 @@ func main() {
 	logger.InitBootstrap()
 	defer logger.Sync()
 
-	// at-rest 密钥只来自部署环境变量 SUB2API_ATREST_KEY（hex/base64 32 字节）。
-	// 未配置时只读兼容：读明文、拒绝加密写入；配置了非法值则直接启动失败。
+	// at-rest 加密写入由 SUB2API_ATREST_ENABLED 控制，默认 false（关闭）：
+	// 只有显式设为 "true" 且 SUB2API_ATREST_KEY 有效时才允许写密文。
+	// 读取路径与开关无关：历史 enc:v2: 密文在加载到有效密钥时仍能解密，
+	// 没有密钥时 fail-closed（绝不把密文当业务值返回）。
+	// 开启前必须先跑真实网关请求验收（2026-11-22 上游 api_key 读不到导致全站 502）。
 	if _, err := atrest.ConfigureFromEnv(); err != nil {
-		log.Fatalf("Invalid %s: %v", atrest.KeyEnv, err)
+		log.Fatalf("Invalid at-rest configuration (check %s / %s): %v", atrest.EnabledEnv, atrest.KeyEnv, err)
 	}
 
 	// Parse command line flags

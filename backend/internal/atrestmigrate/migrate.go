@@ -3,10 +3,13 @@
 //
 // 安全约束（2026-11 事故教训）：
 //   - 只由新版二进制的显式 CLI 触发，不在启动时自动执行；
+//   - 写入前必须同时满足 SUB2API_ATREST_ENABLED=true 与有效 SUB2API_ATREST_KEY；
+//     总开关默认关闭，仅配置密钥不会让迁移或业务写入产生密文；
 //   - 默认先 dry-run 统计，显式 -atrest-dry-run=false 才写库；
 //   - 每行先做「加密 → 解密回读」一致性校验，任何失败立即停止并报告已处理数量；
 //   - 幂等：密文已存在的行跳过，重复执行不会二次加密；
-//   - 批量 200 行/批、批间 sleep 200ms，避免长时间锁表影响线上请求。
+//   - 批量 200 行/批、批间 sleep 200ms，避免长时间锁表影响线上请求；
+//   - 开启前必须先跑真实网关请求验收（2026-11-22 上游 api_key 读不到导致全站 502）。
 package atrestmigrate
 
 import (
@@ -117,7 +120,7 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Result, error) {
 		opts.Tables = parsed
 	}
 	if !opts.DryRun && !opts.Verify && !atrest.Enabled() {
-		return nil, fmt.Errorf("%s is not configured: refusing to run an encryption migration without the deployment key", atrest.KeyEnv)
+		return nil, fmt.Errorf("at-rest sealing is disabled: set %s=true and configure a valid %s before running an encryption migration", atrest.EnabledEnv, atrest.KeyEnv)
 	}
 
 	started := time.Now()
