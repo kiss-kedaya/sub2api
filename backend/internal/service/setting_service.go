@@ -220,8 +220,12 @@ type SettingService struct {
 
 	// panelRateLimitCache 面板 API 限流配置进程内缓存（*cachedPanelRateLimitSettings）。
 	// 面板每个认证请求都会读取，禁止在热路径上直接访问 DB。
-	panelRateLimitCache  atomic.Value
-	panelRateLimitSF     singleflight.Group
+	panelRateLimitCache atomic.Value
+	panelRateLimitSF    singleflight.Group
+	// adminAuthProbeCache 管理端 401/403 探测告警配置（*cachedAdminAuthProbeSettings）。
+	// 鉴权失败路径每请求都会读取，同样禁止直连 DB。
+	adminAuthProbeCache  atomic.Value
+	adminAuthProbeSF     singleflight.Group
 	tablePaginationCache atomic.Pointer[cachedTablePaginationLimits]
 	tablePaginationMu    sync.Mutex
 

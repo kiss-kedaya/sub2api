@@ -25,6 +25,11 @@ linters:
             - "!**/internal/service/ops_metrics_collector.go"
             - "!**/internal/service/ops_scheduled_report_service.go"
             - "!**/internal/service/wire.go"
+            # 管理端 401/403 探测计数直接写 Redis（按来源 IP 的 hash/set），
+            # 与上面 ops_* 采集器同类；把它下沉到 repository 只会让鉴权失败
+            # 路径多一层依赖，理由不成立。
+            - "!**/internal/service/admin_auth_probe.go"
+            - "!**/internal/service/admin_auth_probe_test.go"
           deny:
             - pkg: github.com/Wei-Shaw/sub2api/internal/repository
               desc: "service must not import repository"

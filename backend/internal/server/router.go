@@ -258,7 +258,23 @@ func registerRoutes(
 	routes.RegisterAuthRoutes(v1, h, jwtAuth, auditLog, redisClient, settingService, panelRateLimiter)
 	routes.RegisterUserRoutes(v1, h, jwtAuth, auditLog, keyRotationGate, settingService, panelRateLimiter)
 	routes.RegisterModelPlazaRoutes(v1, h, optionalJWTAuth, settingService, panelRateLimiter)
-	routes.RegisterAdminRoutes(v1, h, adminAuth, auditLog, stepUpAuth, settingService, panelRateLimiter)
+	// 管理端 401/403 探测告警：Redis 轻量计数 + 复用 ops_alert 事件/审计日志。
+	// 依赖不齐（无 Redis / 无设置服务）时保持 nil，鉴权路径完全不受影响。
+	var adminAuthProbe *service.AdminAuthProbeMonitor
+	if redisClient != nil && settingService != nil {
+		var auditRecorder service.AdminAuthProbeAuditRecorder
+		if h != nil && h.Admin != nil && h.Admin.AuditLog != nil {
+			if auditService := h.Admin.AuditLog.AuditService(); auditService != nil {
+				auditRecorder = auditService
+			}
+		}
+		var alertWriter service.AdminAuthProbeAlertWriter
+		if opsService != nil {
+			alertWriter = opsService
+		}
+		adminAuthProbe = service.NewAdminAuthProbeMonitor(redisClient, settingService, alertWriter, auditRecorder)
+	}
+	routes.RegisterAdminRoutes(v1, h, adminAuth, auditLog, stepUpAuth, settingService, panelRateLimiter, adminAuthProbe)
 	// 旧版全权管理员 API Key 只保留读取与使用；启动时提示迁移，避免遗忘。
 	go routes.MigrateAndWarnLegacyAdminAPIKey(settingService)
 	routes.RegisterGatewayRoutes(r, h, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient)

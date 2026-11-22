@@ -1807,6 +1807,28 @@ export default {
         onlyFailed: '只看失败',
         showAll: '查看全部',
         skippedMismatch: '该账号没有这个模型',
+        concurrencyLimit: '并发上限',
+        concurrencyHint: '同时测试的模型数量，默认 3；太大会给上游和面板带来压力。',
+        cancelRow: '取消',
+        failure: {
+          auth: {
+            label: 'Key/权限',
+            hint: '上游返回 4xx：Key 失效、无权限或额度不足，去账号页换 Key 或补权限。'
+          },
+          rate_limit: {
+            label: '限流 429',
+            hint: '被上游限流：稍后重试，或先换一只号，避免同一账号继续打。'
+          },
+          network: {
+            label: '网络/超时',
+            hint: '网络超时或连接失败：检查该账号的代理和上游连通性。'
+          },
+          other: {
+            label: '其他',
+            hint: '其他错误：展开看上游原始返回，或到账号页核对配置。'
+          },
+          fixAccount: '去账号页处理'
+        },
         catalogFailed: '读取模型列表失败'
       },
       retry: '重试',

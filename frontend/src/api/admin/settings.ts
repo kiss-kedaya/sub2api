@@ -1400,6 +1400,33 @@ export async function updatePanelRateLimitSettings(
   return data;
 }
 
+// ==================== Admin 401/403 Probe Alert Settings ====================
+
+export interface AdminAuthProbeSettings {
+  enabled: boolean;
+  threshold: number;
+  distinct_paths: number;
+  window_minutes: number;
+  cooldown_minutes: number;
+}
+
+export async function getAdminAuthProbeSettings(): Promise<AdminAuthProbeSettings> {
+  const { data } = await apiClient.get<AdminAuthProbeSettings>(
+    "/admin/settings/admin-auth-probe",
+  );
+  return data;
+}
+
+export async function updateAdminAuthProbeSettings(
+  settings: AdminAuthProbeSettings,
+): Promise<AdminAuthProbeSettings> {
+  const { data } = await apiClient.put<AdminAuthProbeSettings>(
+    "/admin/settings/admin-auth-probe",
+    settings,
+  );
+  return data;
+}
+
 // ==================== Stream Timeout Settings ====================
 
 /**
@@ -1636,6 +1663,8 @@ export const settingsAPI = {
   updateRegistrationEmailBlacklist,
   getPanelRateLimitSettings,
   updatePanelRateLimitSettings,
+  getAdminAuthProbeSettings,
+  updateAdminAuthProbeSettings,
   getStreamTimeoutSettings,
   updateStreamTimeoutSettings,
   getRectifierSettings,

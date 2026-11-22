@@ -48,6 +48,11 @@ const (
 	AuditActionSessionBindingMismatch = "auth.session_binding.mismatch"
 	AuditActionStepUpVerify           = "auth.step_up.verify"
 	AuditActionAuditLogClear          = "admin.audit_log.clear"
+	// AuditActionAdminAuthProbeAlert is written when the admin 401/403 probe
+	// detector crosses its threshold for one source IP. The row carries only
+	// IP, user-agent prefix, hit paths and status-code counts — never header
+	// values or credentials.
+	AuditActionAdminAuthProbeAlert = "admin.auth_probe.alert"
 	// AuditActionRechargeBlockedKeyRotation is written by the key-rotation gate
 	// whenever it rejects a redeem-code, payment-order or crypto-deposit request.
 	// It records user_id / client IP / request path so the operator can measure

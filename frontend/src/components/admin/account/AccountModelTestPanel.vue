@@ -18,6 +18,19 @@
           />
         </label>
         <UCheckbox v-model="includeMedia" class="model-test-option" :disabled="anyRunning" :label="t('admin.accounts.batchTest.includeMedia')" />
+        <label v-if="variant !== 'single'" class="model-test-concurrency">
+          <span>{{ t('admin.accounts.batchTest.concurrencyLimit') }}</span>
+          <select
+            v-model.number="concurrency"
+            class="model-test-concurrency-select"
+            :disabled="anyRunning"
+            :aria-label="t('admin.accounts.batchTest.concurrencyLimit')"
+            :title="t('admin.accounts.batchTest.concurrencyHint')"
+            data-test="test-concurrency"
+          >
+            <option v-for="item in concurrencyItems" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+        </label>
       </div>
     </div>
 
@@ -35,7 +48,15 @@
     </div>
 
     <div v-if="counts.success + counts.failed + counts.running + counts.skipped > 0" class="model-test-progress">
-      <div class="model-test-progress-bar">
+      <div
+        class="model-test-progress-bar"
+        role="progressbar"
+        :aria-valuemin="0"
+        :aria-valuemax="rows.length"
+        :aria-valuenow="completedCount"
+        :aria-label="summaryLabel"
+        data-test="test-progress"
+      >
         <span class="is-success" :style="{ width: progressSuccessPct }" />
         <span class="is-failed" :style="{ width: progressFailedPct }" />
       </div>
@@ -44,7 +65,7 @@
         <span class="model-test-counter is-failed"><i />{{ counts.failed }} {{ t('admin.accounts.batchTest.failed') }}</span>
         <span v-if="counts.running" class="model-test-counter is-running"><i />{{ counts.running }} {{ t('admin.accounts.batchTest.running') }}</span>
         <span v-if="counts.skipped" class="model-test-counter"><i />{{ counts.skipped }} {{ t('admin.accounts.batchTest.skipped') }}</span>
-        <span class="model-test-completed">{{ counts.success + counts.failed + counts.skipped }} / {{ rows.length }}</span>
+        <span class="model-test-completed" data-test="test-progress-count">{{ completedCount }} / {{ rows.length }} · {{ progressPct }}%</span>
       </div>
     </div>
 
@@ -86,6 +107,24 @@
                 :class="`is-${row.original.status}`"
                 :data-test="`test-output-${row.original.accountId}-${row.original.modelId}`"
               >{{ resultPreview(row.original) }}</p>
+              <div
+                v-if="failureKind(row.original)"
+                class="model-test-failure"
+                :class="`is-${failureKind(row.original)}`"
+                :data-test="`test-failure-${row.original.accountId}-${row.original.modelId}`"
+              >
+                <span class="model-test-failure-badge">{{ failureLabel(row.original) }}</span>
+                <p class="model-test-failure-hint">{{ failureHint(row.original) }}</p>
+                <UButton
+                  color="neutral"
+                  variant="link"
+                  size="xs"
+                  class="p-0 model-test-failure-action"
+                  :data-test="`test-failure-fix-${row.original.accountId}-${row.original.modelId}`"
+                  :label="t('admin.accounts.batchTest.failure.fixAccount')"
+                  @click="goToAccount(row.original)"
+                />
+              </div>
               <div v-if="row.original.images.length > 0" class="model-test-media">
                 <img
                   v-for="(image, index) in row.original.images"
@@ -117,11 +156,21 @@
         </template>
         <template #actions-cell="{ row }">
           <UButton
+            v-if="row.original.status === 'running'"
+            color="error"
+            variant="subtle"
+            size="xs"
+            :data-test="cancelRowTestId(row.original)"
+            :label="t('admin.accounts.batchTest.cancelRow')"
+            @click="cancelRow(row.original)"
+          />
+          <UButton
+            v-else
             color="neutral"
             variant="outline"
             size="xs"
             :data-test="rowTestId(row.original)"
-            :disabled="running || row.original.status === 'running' || row.original.catalogFailed"
+            :disabled="running || row.original.catalogFailed"
             :label="t('admin.accounts.batchTest.testThis')"
             @click="testOne(row.original)"
           />
@@ -147,25 +196,34 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import type { TableColumn } from '@nuxt/ui'
 import { adminAPI } from '@/api/admin'
 import Icon from '@/components/icons/Icon.vue'
 import type { ClaudeModel } from '@/types'
 import {
+  ACCOUNT_MODEL_TEST_CONCURRENCY_OPTIONS,
+  AccountModelTestHTTPError,
+  DEFAULT_ACCOUNT_MODEL_TEST_CONCURRENCY,
   applyAccountModelTestEvent,
   buildAccountModelTestBody,
+  buildAccountEditLocation,
+  classifyAccountModelTestFailure,
   createAccountModelTestOutput,
   formatAccountModelTestDuration,
   isMediaHeavyModel,
   runWithConcurrency,
   streamAccountModelTest,
   summarizeAccountModelTestOutput,
+  type AccountModelTestFailureKind,
   type AccountModelTestOutput,
   type BatchTestAccount
 } from '@/utils/accountModelTest'
 
 type RowStatus = 'idle' | 'running' | 'success' | 'failed' | 'skipped'
 type TestScope = 'all' | 'selected'
+
+const CONCURRENCY_STORAGE_KEY = 'sub2api.accountModelTest.concurrency'
 
 interface ModelTestRow extends AccountModelTestOutput {
   key: string
@@ -178,6 +236,8 @@ interface ModelTestRow extends AccountModelTestOutput {
   selected: boolean
   expanded: boolean
   catalogFailed?: boolean
+  /** HTTP 层失败的上游状态码，仅用于失败原因归类，不写进测试协议。 */
+  failureStatus?: number
 }
 
 const props = withDefaults(defineProps<{
@@ -190,18 +250,33 @@ const props = withDefaults(defineProps<{
 })
 
 const { t } = useI18n()
+const router = useRouter()
+
+const loadConcurrencyPreference = (): number => {
+  try {
+    const parsed = Number(localStorage.getItem(CONCURRENCY_STORAGE_KEY))
+    if ((ACCOUNT_MODEL_TEST_CONCURRENCY_OPTIONS as readonly number[]).includes(parsed)) return parsed
+  } catch {
+    // localStorage 不可用（隐私模式/测试桩）时退回默认并发。
+  }
+  return DEFAULT_ACCOUNT_MODEL_TEST_CONCURRENCY
+}
 
 const modelQuery = ref('')
 const includeMedia = ref(props.variant === 'single')
 const onlyFailed = ref(false)
 const running = ref(false)
 const catalogLoading = ref(false)
+const concurrency = ref(loadConcurrencyPreference())
 const rows = ref<ModelTestRow[]>([])
 const catalogByAccount = ref<Record<number, ClaudeModel[]>>({})
 const catalogErrors = ref<Record<number, string>>({})
 const previewImageUrl = ref('')
 
-let abortController: AbortController | null = null
+// 批量任务只控制「下一行能不能开跑」；每行另有自己的 AbortController，
+// 这样单个模型可以独立取消，不会误伤同批其它请求。
+let runAbortController: AbortController | null = null
+const rowControllers = new Map<string, AbortController>()
 let loadVersion = 0
 const catalogLoads = new Map<number, Promise<ClaudeModel[]>>()
 
@@ -264,6 +339,17 @@ const summaryLabel = computed(() =>
 
 const progressSuccessPct = computed(() => percent(counts.value.success, rows.value.length))
 const progressFailedPct = computed(() => percent(counts.value.failed + counts.value.skipped, rows.value.length))
+const completedCount = computed(
+  () => counts.value.success + counts.value.failed + counts.value.skipped
+)
+const progressPct = computed(() => {
+  if (!rows.value.length) return 0
+  return Math.round((completedCount.value / rows.value.length) * 100)
+})
+const concurrencyItems = ACCOUNT_MODEL_TEST_CONCURRENCY_OPTIONS.map((value) => ({
+  label: String(value),
+  value
+}))
 
 const selectedVisible = computed(() => visibleRows.value.filter((row) => row.selected))
 const allVisibleSelected = computed(
@@ -294,6 +380,30 @@ const statusLabel = (status: RowStatus) => {
   if (status === 'idle') return t('admin.accounts.batchTest.notTested')
   return t(`admin.accounts.batchTest.${status}`)
 }
+
+// 失败原因归类：只影响展示与跳转，不改测试协议。
+const failureKind = (row: ModelTestRow): AccountModelTestFailureKind | null => {
+  if (row.status !== 'failed' || row.catalogFailed) return null
+  return classifyAccountModelTestFailure({ error: row.error, status: row.failureStatus })
+}
+
+const failureLabel = (row: ModelTestRow) => {
+  const kind = failureKind(row)
+  return kind ? t(`admin.accounts.batchTest.failure.${kind}.label`) : ''
+}
+
+const failureHint = (row: ModelTestRow) => {
+  const kind = failureKind(row)
+  return kind ? t(`admin.accounts.batchTest.failure.${kind}.hint`) : ''
+}
+
+const goToAccount = (row: ModelTestRow) => {
+  if (!router) return
+  void router.push(buildAccountEditLocation(row.accountId))
+}
+
+const cancelRowTestId = (row: ModelTestRow) =>
+  props.variant === 'single' ? `cancel-row-${row.modelId}` : `cancel-row-${row.accountId}-${row.modelId}`
 
 const resultPreview = (row: ModelTestRow) => {
   if (row.status === 'idle') return '-'
@@ -356,16 +466,26 @@ const resetForm = () => {
 }
 
 const stopRun = () => {
-  if (abortController) {
-    abortController.abort()
-    abortController = null
-  }
+  runAbortController?.abort()
+  runAbortController = null
+  for (const controller of rowControllers.values()) controller.abort()
+  rowControllers.clear()
   running.value = false
   for (const row of rows.value) {
     if (row.status === 'running') {
       resetOutput(row)
       row.status = 'idle'
     }
+  }
+}
+
+const cancelRow = (row: ModelTestRow) => {
+  const controller = rowControllers.get(row.key)
+  controller?.abort()
+  rowControllers.delete(row.key)
+  if (row.status === 'running') {
+    resetOutput(row)
+    row.status = 'idle'
   }
 }
 
@@ -445,6 +565,14 @@ watch(includeMedia, () => {
   if (props.show && !anyRunning.value) syncRowsFromCatalog()
 })
 
+watch(concurrency, (value) => {
+  try {
+    localStorage.setItem(CONCURRENCY_STORAGE_KEY, String(value))
+  } catch {
+    // 存不下就只对本次会话生效，不影响测试。
+  }
+})
+
 const resetOutput = (row: ModelTestRow) => {
   const fresh = createAccountModelTestOutput()
   row.output = fresh.output
@@ -455,10 +583,20 @@ const resetOutput = (row: ModelTestRow) => {
   row.videos = []
   row.durationMs = undefined
   row.expanded = false
+  row.failureStatus = undefined
 }
 
-const runRow = async (row: ModelTestRow, signal: AbortSignal) => {
-  if (signal.aborted || row.status === 'skipped' || row.catalogFailed) return
+const runRow = async (row: ModelTestRow, parentSignal?: AbortSignal) => {
+  if (row.status === 'skipped' || row.catalogFailed) return
+  if (parentSignal?.aborted) return
+
+  // 每行一个控制器：批量运行只负责调度，单行取消不牵连同批其它模型。
+  const controller = new AbortController()
+  const signal = controller.signal
+  const abortFromParent = () => controller.abort()
+  parentSignal?.addEventListener('abort', abortFromParent, { once: true })
+  rowControllers.set(row.key, controller)
+
   resetOutput(row)
   row.status = 'running'
   const started = performance.now()
@@ -482,7 +620,11 @@ const runRow = async (row: ModelTestRow, signal: AbortSignal) => {
     row.durationMs = Math.round(performance.now() - started)
     row.status = 'failed'
     row.success = false
+    row.failureStatus = error instanceof AccountModelTestHTTPError ? error.status : undefined
     row.error = error instanceof Error ? error.message : t('common.unknownError')
+  } finally {
+    parentSignal?.removeEventListener('abort', abortFromParent)
+    if (rowControllers.get(row.key) === controller) rowControllers.delete(row.key)
   }
 }
 
@@ -496,34 +638,34 @@ const startRun = async (scope: TestScope) => {
   if (jobs.length === 0) return
   running.value = true
   onlyFailed.value = false
-  abortController = new AbortController()
-  const signal = abortController.signal
+  const controller = new AbortController()
+  runAbortController = controller
+  const signal = controller.signal
   try {
-    await runWithConcurrency(jobs, jobs.length, async (row) => {
-      await runRow(row, signal)
-    }, signal)
+    await runWithConcurrency(
+      jobs,
+      concurrency.value,
+      async (row) => {
+        await runRow(row, signal)
+      },
+      signal
+    )
   } catch (error) {
     if (!(error instanceof DOMException && error.name === 'AbortError')) throw error
   } finally {
-    if (abortController?.signal === signal) {
+    if (runAbortController === controller) {
       running.value = false
-      abortController = null
+      runAbortController = null
     }
   }
 }
 
 const testOne = async (row: ModelTestRow) => {
   if (!props.show || running.value || row.status === 'running' || row.catalogFailed) return
-  if (!abortController) abortController = new AbortController()
-  const signal = abortController.signal
   try {
-    await runRow(row, signal)
+    await runRow(row)
   } catch (error) {
     if (!(error instanceof DOMException && error.name === 'AbortError')) throw error
-  } finally {
-    if (abortController?.signal === signal && !running.value && !rows.value.some((item) => item.status === 'running')) {
-      abortController = null
-    }
   }
 }
 
@@ -547,7 +689,8 @@ onBeforeUnmount(() => {
 defineExpose({
   startRun,
   testOne,
-  stopRun
+  stopRun,
+  cancelRow
 })
 </script>
 
@@ -562,6 +705,10 @@ defineExpose({
 .model-test-search-wrap:focus-within { border-color: var(--test-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--test-accent) 12%, transparent); }
 .model-test-search { min-height: 36px; width: 170px; min-width: 0; padding: 0; border: 0; outline: none; box-shadow: none; background: transparent; color: var(--signal-text); font-size: 12px; }
 .model-test-option { display: flex; align-items: center; gap: 7px; color: var(--signal-muted); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.model-test-concurrency { display: flex; align-items: center; gap: 7px; color: var(--signal-muted); font-size: 12px; white-space: nowrap; }
+.model-test-concurrency-select { height: 30px; min-width: 64px; padding: 0 7px; border: 1px solid var(--signal-line); border-radius: 8px; background: var(--signal-surface); color: var(--signal-text); font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.model-test-concurrency-select:disabled { opacity: .5; cursor: not-allowed; }
+.model-test-concurrency-select:focus-visible { outline: 2px solid var(--test-accent); outline-offset: 2px; }
 .model-test input[type=checkbox] { width: 14px; height: 14px; accent-color: var(--test-accent); cursor: pointer; }
 .model-test-actions { gap: 8px; }
 .model-test-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 13px; border: 1px solid var(--signal-line); border-radius: 9px; background: var(--signal-surface); color: var(--signal-text); font-size: 12px; font-weight: 600; white-space: nowrap; transition: background 180ms ease, border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease; }
@@ -613,6 +760,20 @@ defineExpose({
 .model-test-result-text { margin: 0; line-height: 1.65; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
 .model-test-result-text.is-failed { color: var(--test-failed); }
 .model-test-result .model-test-text-btn { padding: 0; min-height: 26px; font-size: 11px; }
+.model-test-failure { display: grid; gap: 4px; margin-top: 8px; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--signal-line); background: var(--signal-bg); }
+.model-test-failure-badge { justify-self: start; padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 600; letter-spacing: .01em; }
+.model-test-failure-hint { margin: 0; font-size: 11px; line-height: 1.55; color: var(--signal-muted); }
+.model-test-failure-action { justify-self: start; }
+.model-test-failure.is-auth { border-color: color-mix(in srgb, var(--test-failed) 22%, var(--signal-line)); background: color-mix(in srgb, var(--test-failed) 6%, transparent); }
+.model-test-failure.is-auth .model-test-failure-badge { color: var(--test-failed); background: color-mix(in srgb, var(--test-failed) 14%, transparent); }
+.model-test-failure.is-rate-limit { border-color: color-mix(in srgb, #d97706 24%, var(--signal-line)); background: color-mix(in srgb, #d97706 6%, transparent); }
+.model-test-failure.is-rate-limit .model-test-failure-badge { color: #b45309; background: color-mix(in srgb, #d97706 14%, transparent); }
+.model-test-failure.is-network { border-color: color-mix(in srgb, #2563eb 22%, var(--signal-line)); background: color-mix(in srgb, #2563eb 6%, transparent); }
+.model-test-failure.is-network .model-test-failure-badge { color: #1d4ed8; background: color-mix(in srgb, #2563eb 12%, transparent); }
+.model-test-failure.is-other { border-color: var(--signal-line); }
+.model-test-failure.is-other .model-test-failure-badge { color: var(--signal-muted); background: color-mix(in srgb, var(--signal-muted) 12%, transparent); }
+:global(.dark .model-test-failure.is-rate-limit .model-test-failure-badge) { color: #fbbf24; }
+:global(.dark .model-test-failure.is-network .model-test-failure-badge) { color: #93c5fd; }
 .model-test-disclosure { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 220ms ease, opacity 220ms ease; }
 .model-test-disclosure.is-open { grid-template-rows: 1fr; opacity: 1; }
 .model-test-disclosure > div { overflow: hidden; min-height: 0; }

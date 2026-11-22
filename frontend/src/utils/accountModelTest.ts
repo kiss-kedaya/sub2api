@@ -39,6 +39,74 @@ export interface StreamAccountModelTestOptions {
   onEvent: (event: AccountModelTestEvent) => void
 }
 
+/** 模型测试默认并发上限：一次最多同时打 3 个模型，避免点「测试全部」把上游和面板一起打爆。 */
+export const DEFAULT_ACCOUNT_MODEL_TEST_CONCURRENCY = 3
+
+/** 工具栏可选并发档位。默认 3，最大 10，避免误选过大值把上游打满。 */
+export const ACCOUNT_MODEL_TEST_CONCURRENCY_OPTIONS = [1, 2, 3, 4, 5, 8, 10] as const
+
+export type AccountModelTestFailureKind = 'auth' | 'rate_limit' | 'network' | 'other'
+
+/** HTTP 层失败带上游状态码，供失败原因归类使用（SSE 失败只有错误文本）。 */
+export class AccountModelTestHTTPError extends Error {
+  readonly status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'AccountModelTestHTTPError'
+    this.status = status
+  }
+}
+
+/**
+ * 把一次模型测试失败归到 4 类里。判定顺序很重要：
+ * 429 → 网络/超时 → 其余 4xx（Key/权限）→ 其他（5xx、解析、未知）。
+ * 文本判定兜底 SSE 错误事件：那里只有上游返回的错误串，没有独立状态码字段。
+ */
+export function classifyAccountModelTestFailure(input: {
+  error?: string
+  status?: number
+}): AccountModelTestFailureKind {
+  const status = input.status
+  const text = (input.error || '').toLowerCase()
+
+  if (status === 429 || /\b429\b|rate.?limit|too many requests|resource_exhausted/.test(text)) {
+    return 'rate_limit'
+  }
+  if (
+    status === 408 ||
+    /timeout|timed out|etimedout|deadline exceeded|econnreset|econnrefused|connection reset|connection refused|broken pipe|no route to host|network error|fetch failed|socket hang up|tls handshake|no response body|stream ended before completion|eai_again|dns lookup/.test(
+      text
+    )
+  ) {
+    return 'network'
+  }
+  if (
+    (status !== undefined && status >= 400 && status < 500) ||
+    /\b40[1-9]\b|\b4[0-9]{2}\b|unauthorized|forbidden|invalid api key|invalid_api_key|api key|permission|credential|insufficient_quota|quota exceeded|authentication/.test(
+      text
+    )
+  ) {
+    return 'auth'
+  }
+  return 'other'
+}
+
+export interface AccountModelTestEditLocation {
+  path: string
+  query: Record<string, string>
+}
+
+/** 账号编辑深链：AccountsView 监听 ?account= 并直接打开编辑弹窗。 */
+export function buildAccountEditLocation(accountId: number): AccountModelTestEditLocation {
+  return { path: '/admin/accounts', query: { account: String(accountId) } }
+}
+
+/** 渠道编辑深链：ChannelsView 监听 ?channel= 并直接打开编辑弹窗（渠道维度复用）。 */
+export function buildChannelEditLocation(channelId: number): AccountModelTestEditLocation {
+  return { path: '/admin/channels', query: { channel: String(channelId) } }
+}
+
 export interface BatchTestAccount {
   id: number
   name: string
@@ -226,7 +294,10 @@ export async function streamAccountModelTest(opts: StreamAccountModelTestOptions
       message = ''
     }
     checkAborted()
-    throw new Error([`HTTP ${response.status}`, message].filter(Boolean).join(': '))
+    throw new AccountModelTestHTTPError(
+      response.status,
+      [`HTTP ${response.status}`, message].filter(Boolean).join(': ')
+    )
   }
 
   const reader = response.body?.getReader()

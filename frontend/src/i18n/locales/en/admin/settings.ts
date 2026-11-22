@@ -321,6 +321,27 @@ export default {
         saved: 'Panel rate limit settings saved',
         saveFailed: 'Failed to save panel rate limit settings'
       },
+      adminAuthProbe: {
+        title: 'Admin 401/403 probe alerts',
+        description:
+          'Counts admin authentication failures per source IP; an ops alert is written only when both the failure total and the distinct-path thresholds are reached, so expired admin sessions no longer cause false positives',
+        privacyNote: 'Events only contain the source IP, the first 64 user-agent characters, hit paths and status-code counts. No token, cookie or header values are recorded.',
+        enabled: 'Enable probe alerts',
+        enabledHint: 'Enabled by default. When disabled, no Redis counters or alert events are written.',
+        threshold: 'Failure threshold',
+        thresholdHint: 'Alert when one source IP collects this many 401/403 responses inside the window AND hits the distinct-path threshold. Default 30.',
+        distinctPaths: 'Distinct path threshold',
+        distinctPathsHint: 'Alert when one source IP hits this many different admin routes inside the window AND reaches the failure threshold. Default 10.',
+        windowMinutes: 'Counting window',
+        windowMinutesHint: 'Length of the sliding Redis counting window. Default 5 minutes.',
+        cooldownMinutes: 'Alert cooldown',
+        cooldownMinutesHint: 'How long to suppress repeated events for the same IP. Default 5 minutes.',
+        times: 'times',
+        pathsUnit: 'paths',
+        minutesUnit: 'min',
+        saved: 'Admin probe alert settings saved',
+        saveFailed: 'Failed to save admin probe alert settings'
+      },
       turnstile: {
         title: 'Cloudflare Turnstile',
         description: 'Bot protection for login and registration',

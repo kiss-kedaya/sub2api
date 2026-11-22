@@ -112,7 +112,7 @@ describe('AccountBatchTestModal', () => {
     })
   })
 
-  it('多账号多模型会同时发出全部请求并展示返回', async () => {
+  it('多账号多模型默认最多并发 3 个，不会被一次全部打出去', async () => {
     getAvailableModels.mockResolvedValue([
       { id: 'gpt-5.4', display_name: 'GPT-5.4' },
       { id: 'gpt-5.3', display_name: 'GPT-5.3' }
@@ -137,16 +137,47 @@ describe('AccountBatchTestModal', () => {
     await flushPromises()
     await wrapper.get('[data-test="test-all-models"]').trigger('click')
     await vi.waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledTimes(3)
+    })
+    expect(peak).toBe(3)
+
+    releases.splice(0, 3).forEach((release) => release())
+    await vi.waitFor(() => {
       expect(global.fetch).toHaveBeenCalledTimes(4)
     })
-    expect(peak).toBe(4)
+    expect(peak).toBe(3)
 
-    releases.forEach((release) => release())
+    releases.splice(0).forEach((release) => release())
     await flushPromises()
     await vi.waitFor(() => {
       expect(wrapper.get('[data-test="test-output-11-gpt-5.4"]').text()).toContain('hello gpt-5.4')
       expect(wrapper.get('[data-test="test-output-11-gpt-5.3"]').text()).toContain('hello gpt-5.3')
     })
+  })
+
+  it('并发上限可调：改成 2 后同时只发 2 个请求', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'gpt-5.4', display_name: 'GPT-5.4' },
+      { id: 'gpt-5.3', display_name: 'GPT-5.3' }
+    ])
+    const releases: Array<() => void> = []
+    const fetchMock = vi.fn((_url: string, request: RequestInit) => new Promise<Response>((resolve) => {
+      releases.push(() => resolve(createStreamResponse(JSON.parse(String(request.body)).model_id)))
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountModal()
+    await flushPromises()
+    await wrapper.get('[data-test="test-concurrency"]').setValue('2')
+    await wrapper.get('[data-test="test-all-models"]').trigger('click')
+    await flushPromises()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(releases).toHaveLength(2)
+    releases.splice(0).forEach((release) => release())
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(4)
+    })
+    releases.splice(0).forEach((release) => release())
+    await flushPromises()
   })
 
   it('测试选中只打勾上的模型', async () => {
@@ -164,7 +195,7 @@ describe('AccountBatchTestModal', () => {
     expect(JSON.parse(request.body)).toEqual({ model_id: 'gpt-5.4', prompt: '', mode: 'default' })
   })
 
-  it('搜索只显示一行时测全仍同时发出全部账号全部模型', async () => {
+  it('搜索只显示一行时测全仍按并发上限跑完所有账号所有模型', async () => {
     const models = Array.from({ length: 8 }, (_, index) => ({ id: 'gpt-' + index, display_name: 'GPT ' + index }))
     getAvailableModels.mockResolvedValue(models)
     const releases: Array<() => void> = []
@@ -179,16 +210,27 @@ describe('AccountBatchTestModal', () => {
     expect(wrapper.findAll('tbody tr')).toHaveLength(2)
     await wrapper.get('[data-test="test-all-models"]').trigger('click')
     await flushPromises()
-    expect(fetchMock).toHaveBeenCalledTimes(16)
+
+    // 默认并发 3：先只有 3 个请求在飞，放行后再续下一批，直到 16 个都发完。
+    let guard = 0
+    while (fetchMock.mock.calls.length < 16) {
+      expect(guard++).toBeLessThan(16)
+      const pending = releases.splice(0)
+      expect(pending.length).toBeGreaterThan(0)
+      pending.forEach((release) => release())
+      await flushPromises()
+    }
     const actualJobs = fetchMock.mock.calls.map(([url, request]) => ({
       accountId: Number(url.match(/accounts\/(\d+)\/test/)?.[1]),
       modelId: JSON.parse(String(request.body)).model_id
     }))
     expect(actualJobs).toEqual([11, 12].flatMap((accountId) => models.map(({ id }) => ({ accountId, modelId: id }))))
-    releases.forEach((release) => release())
+    releases.splice(0).forEach((release) => release())
     await flushPromises()
     await wrapper.get('input[type="search"]').setValue('')
-    expect(wrapper.findAll('tbody tr.is-success')).toHaveLength(16)
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('tbody tr.is-success')).toHaveLength(16)
+    })
   })
 
   it('搜索隐藏已勾选模型后测选中不漏项也不扩大范围', async () => {

@@ -571,8 +571,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { fetchPaginatedItems } from '@/utils/paginatedItems'
@@ -601,6 +602,8 @@ import { useKeyedDebouncedSearch } from '@/composables/useKeyedDebouncedSearch'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const route = useRoute()
+const router = useRouter()
 
 // Web Search global enabled state (loaded once on mount)
 const webSearchGlobalEnabled = ref(false)
@@ -1408,6 +1411,34 @@ async function openEditDialog(channel: Channel) {
 
   showDialog.value = true
 }
+
+// 渠道编辑深链：/admin/channels?channel=<id> 直接打开编辑弹窗。
+// 模型测试结果按账号维度跳转；这里预留给渠道维度复用（同一条路由约定）。
+const parseChannelQueryId = (value: unknown): number | null => {
+  const raw = Array.isArray(value) ? value[0] : value
+  const id = Number(raw)
+  return Number.isInteger(id) && id > 0 ? id : null
+}
+
+async function consumeChannelEditQuery() {
+  if (!route) return
+  const id = parseChannelQueryId(route.query.channel)
+  if (!id) return
+  const query = { ...route.query }
+  delete query.channel
+  void router?.replace({ path: route.path, query })
+  try {
+    const known =
+      channels.value.find((item) => item.id === id) ||
+      allChannelsForConflict.value.find((item) => item.id === id)
+    const channel = known || (await adminAPI.channels.getById(id))
+    await openEditDialog(channel)
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, t('admin.channels.loadError', 'Failed to load channels')))
+  }
+}
+
+watch(() => route?.query?.channel, () => { void consumeChannelEditQuery() }, { immediate: true })
 
 /** Distribute flat channel-level rules into the matching platform section based on group_ids */
 function distributeRulesToPlatforms(apiRules: AccountStatsPricingRule[]) {

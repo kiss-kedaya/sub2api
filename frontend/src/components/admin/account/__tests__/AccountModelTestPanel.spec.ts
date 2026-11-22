@@ -6,8 +6,13 @@ import type { AccountModelTestEvent, BatchTestAccount } from '@/utils/accountMod
 enableAutoUnmount(afterEach)
 
 const { getAvailableModels } = vi.hoisted(() => ({ getAvailableModels: vi.fn() }))
+const { routerPush } = vi.hoisted(() => ({ routerPush: vi.fn() }))
 
 vi.mock('@/api/admin', () => ({ adminAPI: { accounts: { getAvailableModels } } }))
+vi.mock('vue-router', async () => {
+  const actual = await vi.importActual<typeof import('vue-router')>('vue-router')
+  return { ...actual, useRouter: () => ({ push: routerPush }) }
+})
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
@@ -40,6 +45,25 @@ function createAbortIgnoringStream(initial: AccountModelTestEvent[] = []) {
   }
 }
 
+function createCompletedStream(events: AccountModelTestEvent[]) {
+  const encoded = new TextEncoder().encode(events.map((event) => 'data: ' + JSON.stringify(event) + '\n\n').join(''))
+  const read = vi.fn().mockResolvedValueOnce({ done: false, value: encoded }).mockResolvedValue({ done: true })
+  const reader = { read, cancel: vi.fn().mockResolvedValue(undefined), releaseLock: vi.fn() }
+  return { response: { ok: true, body: { getReader: () => reader } } as unknown as Response, reader }
+}
+
+function createPendingFetch() {
+  const signals: AbortSignal[] = []
+  const releases: Array<() => void> = []
+  const fetchMock = vi.fn((_url: string, init: RequestInit) => {
+    if (init.signal) signals.push(init.signal)
+    return new Promise<Response>((resolve) => {
+      releases.push(() => resolve(createCompletedStream([{ type: 'test_complete', success: true }]).response))
+    })
+  })
+  return { fetchMock, signals, releases }
+}
+
 const firstAccount = { id: 11, name: 'OpenAI A', platform: 'openai', type: 'apikey' }
 const secondAccount = { id: 12, name: 'OpenAI B', platform: 'openai', type: 'apikey' }
 const model = { id: 'gpt-one', display_name: 'GPT One' }
@@ -51,6 +75,7 @@ function mountPanel(accounts: BatchTestAccount[] = [firstAccount]) {
 describe('AccountModelTestPanel race regressions', () => {
   beforeEach(() => {
     getAvailableModels.mockReset().mockResolvedValue([model])
+    routerPush.mockReset()
     vi.stubGlobal('localStorage', { getItem: () => 'test-token' })
     vi.stubGlobal('fetch', vi.fn())
   })
@@ -226,5 +251,73 @@ describe('AccountModelTestPanel race regressions', () => {
     expect(wrapper.find('[data-test="row-test-11-gpt-one"]').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('gpt-stale')
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('整体进度显示 n/m 与百分比，成功后计数正确', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      createCompletedStream([
+        { type: 'content', text: 'ok' },
+        { type: 'test_complete', success: true }
+      ]).response
+    )
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.get('[data-test="test-all-models"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="test-progress"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="test-progress-count"]').text()).toBe('1 / 1 · 100%')
+    expect(wrapper.findAll('tbody tr.is-success')).toHaveLength(1)
+  })
+
+  it('批量运行时可单独取消某一行，不影响同批其它模型', async () => {
+    getAvailableModels.mockResolvedValue([
+      { id: 'gpt-a', display_name: 'A' },
+      { id: 'gpt-b', display_name: 'B' }
+    ])
+    const pending = createPendingFetch()
+    vi.stubGlobal('fetch', pending.fetchMock)
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.get('[data-test="test-all-models"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('tbody tr.is-running')).toHaveLength(2)
+
+    await wrapper.get('[data-test="cancel-row-11-gpt-a"]').trigger('click')
+    expect(pending.signals[0]?.aborted).toBe(true)
+    expect(pending.signals[1]?.aborted).toBe(false)
+    expect(wrapper.findAll('tbody tr.is-running')).toHaveLength(1)
+    expect(wrapper.find('[data-test="cancel-row-11-gpt-b"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="row-test-11-gpt-a"]').exists()).toBe(true)
+  })
+
+  it('上游 401 归为 Key/权限失败并给出账号编辑深链', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ message: 'invalid api key' })
+    }))
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.get('[data-test="test-all-models"]').trigger('click')
+    await flushPromises()
+    const failure = wrapper.get('[data-test="test-failure-11-gpt-one"]')
+    expect(failure.classes()).toContain('is-auth')
+    expect(failure.text()).toContain('admin.accounts.batchTest.failure.auth.label')
+    await wrapper.get('[data-test="test-failure-fix-11-gpt-one"]').trigger('click')
+    expect(routerPush).toHaveBeenCalledWith({ path: '/admin/accounts', query: { account: '11' } })
+  })
+
+  it.each([
+    ['429', { type: 'error', error: 'HTTP 429: too many requests' }, 'rate_limit'],
+    ['timeout', { type: 'error', error: 'upstream timeout while waiting for headers' }, 'network'],
+    ['5xx', { type: 'error', error: 'HTTP 500: upstream exploded' }, 'other']
+  ] as const)('%s 失败归类为 %s', async (_label, event, kind) => {
+    vi.mocked(fetch).mockResolvedValueOnce(createCompletedStream([event]).response)
+    const wrapper = mountPanel()
+    await flushPromises()
+    await wrapper.get('[data-test="test-all-models"]').trigger('click')
+    await flushPromises()
+    const failure = wrapper.get('[data-test="test-failure-11-gpt-one"]')
+    expect(failure.classes()).toContain(`is-${kind}`)
   })
 })
