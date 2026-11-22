@@ -717,23 +717,28 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		req.TencentCaptchaRegion = service.TencentCaptchaRegionCN
 	}
 
-	// Turnstile 参数验证
-	if req.TurnstileEnabled {
-		// 检查必填字段
+	// Turnstile 参数验证：site key 与 secret key 语义一致——只有「本次请求显式提交了
+	// 空值（清空意图）」或「未提交且库里也没有」才算缺失；未提交但库里已有值则回退
+	// 到 previousSettings 并继续使用。管理后台读取设置时不回显 secret key，site key
+	// 也可能在部分保存请求里被省略，两者都不能因此被误判为「未配置」而拒绝整次保存。
+	if turnstileEnabled {
+		if _, sent := sentFields["turnstile_site_key"]; !sent {
+			req.TurnstileSiteKey = previousSettings.TurnstileSiteKey
+		}
+		if _, sent := sentFields["turnstile_secret_key"]; !sent {
+			req.TurnstileSecretKey = previousSettings.TurnstileSecretKey
+		}
 		if req.TurnstileSiteKey == "" {
 			response.BadRequest(c, "Turnstile Site Key is required when enabled")
 			return
 		}
-		// 如果未提供 secret key，使用已保存的值（留空保留当前值）
 		if req.TurnstileSecretKey == "" {
-			if previousSettings.TurnstileSecretKey == "" {
-				response.BadRequest(c, "Turnstile Secret Key is required when enabled")
-				return
-			}
-			req.TurnstileSecretKey = previousSettings.TurnstileSecretKey
+			response.BadRequest(c, "Turnstile Secret Key is required when enabled")
+			return
 		}
 
-		// 当 site_key 或 secret_key 任一变化时验证（避免配置错误导致无法登录）
+		// 当 site_key 或 secret_key 实际发生变化（回退后再比较）时验证，
+		// 避免每次保存都打 Cloudflare 校验接口。
 		siteKeyChanged := previousSettings.TurnstileSiteKey != req.TurnstileSiteKey
 		secretKeyChanged := previousSettings.TurnstileSecretKey != req.TurnstileSecretKey
 		if siteKeyChanged || secretKeyChanged {
