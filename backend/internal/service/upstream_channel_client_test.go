@@ -12,6 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newLocalUpstreamChannelClient 用于单元测试：本文件的服务器都是 127.0.0.1
+// 的 httptest，拨号期私网拦截默认会拒绝；生产路径的拦截由 urlvalidator 测试覆盖。
+func newLocalUpstreamChannelClient() *UpstreamChannelClient {
+	client := NewUpstreamChannelClient()
+	client.SetPrivateTargetsAllowed(true)
+	return client
+}
+
 func upstreamTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(handler)
@@ -44,7 +52,7 @@ func TestUpstreamChannelClientLogin(t *testing.T) {
 		})
 	})
 
-	client := NewUpstreamChannelClient()
+	client := newLocalUpstreamChannelClient()
 	session, err := client.Login(context.Background(), server.URL, "ops@example.com", "secret", "", "")
 	require.NoError(t, err)
 	require.Equal(t, "access-1", session.AccessToken)
@@ -57,7 +65,7 @@ func TestUpstreamChannelClientLoginRequires2FA(t *testing.T) {
 		writeJSON(w, http.StatusOK, map[string]any{"code": 0, "data": map[string]any{"requires_2fa": true}})
 	})
 
-	client := NewUpstreamChannelClient()
+	client := newLocalUpstreamChannelClient()
 	_, err := client.Login(context.Background(), server.URL, "ops@example.com", "secret", "", "")
 	require.ErrorIs(t, err, ErrUpstreamChannelRequires2FA)
 }
@@ -67,7 +75,7 @@ func TestUpstreamChannelClientLoginErrorEnvelope(t *testing.T) {
 		writeJSON(w, http.StatusOK, map[string]any{"code": 1001, "message": "invalid credentials"})
 	})
 
-	client := NewUpstreamChannelClient()
+	client := newLocalUpstreamChannelClient()
 	_, err := client.Login(context.Background(), server.URL, "ops@example.com", "wrong", "", "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid credentials")
@@ -78,7 +86,7 @@ func TestUpstreamChannelClientHTTPErrorSurfacesMessage(t *testing.T) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"code": 401, "message": "token expired"})
 	})
 
-	client := NewUpstreamChannelClient()
+	client := newLocalUpstreamChannelClient()
 	_, err := client.Balance(context.Background(), server.URL, "", &UpstreamChannelSession{AccessToken: "x"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "401")
@@ -96,7 +104,7 @@ func TestUpstreamChannelClientBalanceFallsBackToProfile(t *testing.T) {
 		}
 	})
 
-	client := NewUpstreamChannelClient()
+	client := newLocalUpstreamChannelClient()
 	balance, err := client.Balance(context.Background(), server.URL, "", &UpstreamChannelSession{AccessToken: "x"})
 	require.NoError(t, err)
 	require.Equal(t, 42.5, balance)
@@ -112,7 +120,7 @@ func TestUpstreamChannelClientAnnouncements(t *testing.T) {
 		})
 	})
 
-	client := NewUpstreamChannelClient()
+	client := newLocalUpstreamChannelClient()
 	items, err := client.Announcements(context.Background(), server.URL, "", &UpstreamChannelSession{AccessToken: "token"})
 	require.NoError(t, err)
 	require.Len(t, items, 2)
@@ -143,7 +151,7 @@ func TestUpstreamChannelClientListAPIKeys(t *testing.T) {
 		}
 	})
 
-	client := NewUpstreamChannelClient()
+	client := newLocalUpstreamChannelClient()
 	page, err := client.ListAPIKeys(context.Background(), server.URL, "", &UpstreamChannelSession{AccessToken: "token"}, UpstreamAPIKeyQuery{
 		Page: 1, PageSize: 20, Status: "disabled",
 	})
@@ -181,7 +189,7 @@ func TestUpstreamChannelClientRechargeInfoAndOrder(t *testing.T) {
 		}
 	})
 
-	client := NewUpstreamChannelClient()
+	client := newLocalUpstreamChannelClient()
 	session := &UpstreamChannelSession{AccessToken: "token"}
 
 	info, err := client.RechargeInfo(context.Background(), server.URL, "", session)
@@ -213,7 +221,7 @@ func TestUpstreamChannelClientRechargeInfoAndOrder(t *testing.T) {
 }
 
 func TestUpstreamChannelClientRejectsBadPaymentInput(t *testing.T) {
-	client := NewUpstreamChannelClient()
+	client := newLocalUpstreamChannelClient()
 	session := &UpstreamChannelSession{AccessToken: "token"}
 
 	_, err := client.CreateRecharge(context.Background(), "https://example.com", "", session, UpstreamRechargeRequest{Amount: 0, PaymentMethod: "alipay"})
@@ -238,7 +246,7 @@ func TestUpstreamChannelClientRedeem(t *testing.T) {
 		})
 	})
 
-	client := NewUpstreamChannelClient()
+	client := newLocalUpstreamChannelClient()
 	result, err := client.Redeem(context.Background(), server.URL, "", &UpstreamChannelSession{AccessToken: "token"}, " CODE-1 ")
 	require.NoError(t, err)
 	require.Equal(t, "兑换成功", result.Message)
@@ -256,7 +264,7 @@ func TestUpstreamChannelClientPublicSettings(t *testing.T) {
 		writeJSON(w, http.StatusOK, map[string]any{"turnstile_enabled": true, "turnstile_site_key": "site-key"})
 	})
 
-	client := NewUpstreamChannelClient()
+	client := newLocalUpstreamChannelClient()
 	enabled, key, err := client.PublicSettings(context.Background(), server.URL, "")
 	require.NoError(t, err)
 	require.True(t, enabled)

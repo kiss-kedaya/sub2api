@@ -147,6 +147,11 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		// 查看用户/分组的 API Key 列表（key 前缀、掩码与绑定关系）
 		{http.MethodGet, "/api/v1/admin/users/1/api-keys", "admin"},
 		{http.MethodGet, "/api/v1/admin/groups/1/api-keys", "admin"},
+		// 管理面出站探测入口：S3/图床"测试连接"、风控"测试 Key"会以服务端身份
+		// 向管理员填写的任意地址发请求（SSRF 探测原语），与改配置同级。
+		{http.MethodPost, "/api/v1/admin/backups/s3-config/test", "admin"},
+		{http.MethodPost, "/api/v1/admin/backups/image-storage/test", "admin"},
+		{http.MethodPost, "/api/v1/admin/risk-control/api-keys/test", "admin"},
 		// 上游失败 dump 的正文含客户端请求体与上游响应体
 		{http.MethodGet, "/api/v1/admin/debug-dumps/1", "admin"},
 		// 卡密（兑换码）：生成/固定码直发/改值/作废/删除都会产出或改变可兑价值

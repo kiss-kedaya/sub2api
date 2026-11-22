@@ -30,6 +30,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -70,6 +71,9 @@ type AccountHandler struct {
 	modelWhitelistAutoSync  *service.ModelWhitelistAutoSyncService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
 	codexTicketSettings     *service.SettingService
+	totpService             *service.TotpService
+	userService             *service.UserService
+	settingService          *service.SettingService
 	cfg                     *config.Config
 }
 
@@ -85,6 +89,14 @@ func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUs
 // SetCodexTicketSettings supplies the live policy without mutating shared config.
 func (h *AccountHandler) SetCodexTicketSettings(settings *service.SettingService) {
 	h.codexTicketSettings = settings
+}
+
+// SetStepUpDependencies wires the step-up 2FA gate used by conditional checks
+// (e.g. changing an account's base_url / api_base_urls).
+func (h *AccountHandler) SetStepUpDependencies(totp *service.TotpService, users *service.UserService, settings *service.SettingService) {
+	h.totpService = totp
+	h.userService = users
+	h.settingService = settings
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -1170,6 +1182,23 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
+	// base_url / api_base_urls 是服务端主动出站的目标地址：改到内网等于把账号
+	// 变成内网请求代理。只有真实变更才要求 step-up，普通编辑不打断。
+	var outboundChange *accountOutboundCredentialChange
+	if credentialsTouchOutbound(req.Credentials) {
+		existing, loadErr := h.adminService.GetAccount(c.Request.Context(), accountID)
+		if loadErr != nil {
+			response.ErrorFrom(c, loadErr)
+			return
+		}
+		outboundChange = detectAccountOutboundChange(existing.Credentials, req.Credentials)
+		if outboundChange != nil {
+			if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
+				return
+			}
+		}
+	}
+
 	account, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
 		Name:                  req.Name,
 		Notes:                 req.Notes,
@@ -1203,6 +1232,11 @@ func (h *AccountHandler) Update(c *gin.Context) {
 
 		response.ErrorFrom(c, err)
 		return
+	}
+
+	if outboundChange != nil {
+		// 审计里记录旧/新地址（不含任何密钥），便于事后追溯是否改向内网。
+		middleware.SetAuditExtra(c, outboundChange.auditFields())
 	}
 
 	// OpenAI APIKey: credentials 修改后重新探测上游能力（base_url/api_key 可能变更）。
@@ -2352,6 +2386,19 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	if err := service.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+
+	// 批量改 credentials 同样能改写 base_url / api_base_urls：要求 step-up，
+	// 否则单条更新上的门控可以绕过。
+	if credentialsTouchOutbound(req.Credentials) {
+		if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
+			return
+		}
+		middleware.SetAuditExtra(c, map[string]any{
+			"changed":                   true,
+			"account_base_url_new":      truncateAddress(normalizeOutboundAddress(req.Credentials[credentialKeyBaseURL])),
+			"account_api_base_urls_new": summarizeAPIBaseURLs(req.Credentials[credentialKeyAPIBaseURLs]),
+		})
 	}
 
 	// 确定是否跳过混合渠道检查

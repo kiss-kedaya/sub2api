@@ -23,6 +23,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 var (
@@ -303,6 +304,10 @@ func smtpDialer() *net.Dialer {
 }
 
 // smtpCheckDialAddr 校验即将连接的 host:port。
+//
+// IP 判定复用 urlvalidator.IsPublicNetIP（全仓唯一封禁清单）：标准库的
+// IsPrivate/IsLoopback 覆盖不到 CGNAT、保留段、文档段等，SMTP 测试入口
+// 曾因此把 100.100.100.200 这类云元数据地址当作公网放行。
 func smtpCheckDialAddr(address string) error {
 	if smtpAllowPrivateTargets.Load() {
 		return nil
@@ -312,7 +317,7 @@ func smtpCheckDialAddr(address string) error {
 		return err
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		if isPrivateIP(ip) {
+		if !urlvalidator.IsPublicNetIP(ip) {
 			return errSMTPSecurityBlocked
 		}
 		return nil
@@ -328,7 +333,7 @@ func smtpCheckDialAddr(address string) error {
 		return errSMTPSecurityBlocked
 	}
 	for _, a := range addrs {
-		if isPrivateIP(a.IP) {
+		if !urlvalidator.IsPublicNetIP(a.IP) {
 			return errSMTPSecurityBlocked
 		}
 	}

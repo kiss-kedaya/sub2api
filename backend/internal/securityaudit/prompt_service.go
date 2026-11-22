@@ -227,11 +227,15 @@ func (s *PromptService) Runtime(ctx context.Context) RuntimeSnapshot {
 
 type ProbeRequest struct {
 	Endpoint UpdateEndpoint `json:"endpoint"`
+	// AllowPrivateEndpoints 是探测入口的显式放行开关：默认 false 时私网/
+	// 环回/云元数据目标一律拒绝。不传时沿用已保存配置里的全局开关。
+	AllowPrivateEndpoints *bool `json:"allow_private_endpoints"`
 }
 
 func (s *PromptService) Probe(ctx context.Context, request ProbeRequest) ProbeResult {
 	started := s.clock.Now()
-	endpoint, tokenApplied, err := s.resolveProbeEndpoint(request.Endpoint)
+	allowPrivate := s.probeAllowPrivateEndpoints(request.AllowPrivateEndpoints)
+	endpoint, tokenApplied, err := s.resolveProbeEndpoint(request.Endpoint, allowPrivate)
 	if err != nil {
 		return s.finishProbe(request.Endpoint.ID, started, ProbeResult{Status: "failed", ErrorCode: "endpoint_invalid", Message: "审计节点配置无效"})
 	}
@@ -311,7 +315,19 @@ func modelsResponseReady(body []byte, model string) bool {
 	return false
 }
 
-func (s *PromptService) resolveProbeEndpoint(input UpdateEndpoint) (ActiveEndpoint, bool, error) {
+// probeAllowPrivateEndpoints 解析探测请求的私网放行开关：
+// 请求显式传值优先，否则沿用已保存配置的全局开关（默认 false）。
+func (s *PromptService) probeAllowPrivateEndpoints(requested *bool) bool {
+	if requested != nil {
+		return *requested
+	}
+	if cfg, ok := s.config.Active(); ok {
+		return cfg.AllowPrivateEndpoints
+	}
+	return false
+}
+
+func (s *PromptService) resolveProbeEndpoint(input UpdateEndpoint, allowPrivate bool) (ActiveEndpoint, bool, error) {
 	baseURL, err := NormalizeBaseURL(input.BaseURL)
 	if err != nil {
 		return ActiveEndpoint{}, false, err
@@ -356,7 +372,7 @@ func (s *PromptService) resolveProbeEndpoint(input UpdateEndpoint) (ActiveEndpoi
 	if err := validateStorageConfig(storage); err != nil {
 		return ActiveEndpoint{}, false, err
 	}
-	return ActiveEndpoint{ID: storage.Endpoints[0].ID, Name: storage.Endpoints[0].Name, Protocol: "openai_compatible", BaseURL: baseURL, Model: model, Token: token, TimeoutMS: timeout, InputLimit: limit, Enabled: true}, token != "", nil
+	return ActiveEndpoint{ID: storage.Endpoints[0].ID, Name: storage.Endpoints[0].Name, Protocol: "openai_compatible", BaseURL: baseURL, Model: model, Token: token, TimeoutMS: timeout, InputLimit: limit, Enabled: true, AllowPrivateEndpoints: allowPrivate}, token != "", nil
 }
 
 func (s *PromptService) finishProbe(id string, started time.Time, result ProbeResult) ProbeResult {

@@ -165,6 +165,20 @@ func (s *UpstreamChannelService) SetOutboundURLPolicy(cfg *config.Config) {
 	s.client.SetURLCheck(func(raw string) (string, error) {
 		return ValidateOperatorOutboundURL(cfg, "upstream site", raw)
 	})
+	// 只有管理员显式打开开关时才允许连私网；否则拨号前按解析后的 IP 校验。
+	s.client.SetPrivateTargetsAllowed(outboundPolicyAllowsPrivateTargets(cfg))
+}
+
+// outboundPolicyAllowsPrivateTargets 反映管理员是否显式放行私网出站目标。
+func outboundPolicyAllowsPrivateTargets(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	allowlist := cfg.Security.URLAllowlist
+	if allowlist.Enabled {
+		return allowlist.AllowPrivateHosts
+	}
+	return allowlist.UpstreamChannelAllowPrivateHosts
 }
 
 // checkOutboundURL returns raw unchanged when no policy is wired.

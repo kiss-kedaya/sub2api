@@ -350,7 +350,8 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 	}
 	next := storageConfig{
 		Enabled: req.Enabled, BlockingEnabled: req.BlockingEnabled, BlockingLatestTurnOnly: req.BlockingLatestTurnOnly, StorePassEvents: req.StorePassEvents,
-		Strategy: strings.TrimSpace(req.Strategy), WorkerCount: req.WorkerCount,
+		AllowPrivateEndpoints: req.AllowPrivateEndpoints,
+		Strategy:              strings.TrimSpace(req.Strategy), WorkerCount: req.WorkerCount,
 		QueueCapacity: req.QueueCapacity, Scanners: append([]string(nil), req.Scanners...),
 		AllGroups: req.AllGroups, GroupIDs: append([]int64(nil), req.GroupIDs...),
 		ConfigVersion: current.ConfigVersion, UpdatedBy: actorID,
@@ -386,6 +387,11 @@ func (m *ConfigManager) buildNextStorage(current storageConfig, req UpdateConfig
 		next.Endpoints = append(next.Endpoints, stored)
 	}
 	normalizeStorageConfig(&next)
+	// 保存时先拦字面量私网/环回（不需要 DNS，避免保存依赖网络）；
+	// 解析到私网的兜底由运行期/探测的连接前校验负责。
+	if err := validateEndpointHostsAllowed(next.Endpoints, next.AllowPrivateEndpoints); err != nil {
+		return storageConfig{}, err
+	}
 	if err := validateStorageConfig(next); err != nil {
 		return storageConfig{}, err
 	}

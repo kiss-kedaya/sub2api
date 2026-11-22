@@ -4,13 +4,36 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/stretchr/testify/require"
 )
+
+// stubOutboundResolver 固定 DNS 解析结果，避免单元测试依赖真实网络。
+func stubOutboundResolver(t *testing.T, ips ...string) {
+	t.Helper()
+	addrs := make([]netip.Addr, 0, len(ips))
+	for _, raw := range ips {
+		addrs = append(addrs, netip.MustParseAddr(raw))
+	}
+	restore := urlvalidator.SetResolveOutboundHostForTest(func(context.Context, string) ([]netip.Addr, error) {
+		return addrs, nil
+	})
+	t.Cleanup(restore)
+}
+
+func stubOutboundResolverError(t *testing.T) {
+	t.Helper()
+	restore := urlvalidator.SetResolveOutboundHostForTest(func(context.Context, string) ([]netip.Addr, error) {
+		return nil, errors.New("dns timeout")
+	})
+	t.Cleanup(restore)
+}
 
 func outboundPolicyConfig(allow config.URLAllowlistConfig) *config.Config {
 	return &config.Config{Security: config.SecurityConfig{URLAllowlist: allow}}
@@ -59,7 +82,8 @@ func TestValidateOperatorOutboundURLNeedsAHostListWhenTheAllowlistIsOn(t *testin
 	require.ErrorContains(t, err, "allowlist is not configured")
 }
 
-func TestValidateOperatorOutboundURLFormatOnlyWhenTheAllowlistIsOff(t *testing.T) {
+func TestValidateOperatorOutboundURLFormatAndOutboundTargetWhenTheAllowlistIsOff(t *testing.T) {
+	stubOutboundResolver(t, "93.184.216.34")
 	off := outboundPolicyConfig(config.URLAllowlistConfig{})
 
 	got, err := ValidateOperatorOutboundURL(off, "upstream site", "https://any.example.net/")
@@ -84,12 +108,34 @@ func TestValidateOperatorOutboundURLFormatOnlyWhenTheAllowlistIsOff(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, "http://any.example.net", got)
 
-	// No config at all behaves like the allowlist being off.
+	// No config at all behaves like the allowlist being off, including the
+	// default-deny for private/loopback targets.
 	got, err = ValidateOperatorOutboundURL(nil, "upstream site", "https://any.example.net")
 	require.NoError(t, err)
 	require.Equal(t, "https://any.example.net", got)
 	_, err = ValidateOperatorOutboundURL(nil, "upstream site", "http://any.example.net")
 	require.Error(t, err)
+	_, err = ValidateOperatorOutboundURL(nil, "upstream site", "https://127.0.0.1:8402")
+	require.ErrorContains(t, err, "upstream site target rejected by URL security policy")
+
+	// 私网字面量默认拒绝；显式开关打开后才放行。
+	_, err = ValidateOperatorOutboundURL(off, "upstream site", "https://10.0.0.5")
+	require.ErrorContains(t, err, "upstream site target rejected by URL security policy")
+	privateAllowed := outboundPolicyConfig(config.URLAllowlistConfig{AllowInsecureHTTP: true, UpstreamChannelAllowPrivateHosts: true})
+	got, err = ValidateOperatorOutboundURL(privateAllowed, "upstream site", "http://10.0.0.5:9000/")
+	require.NoError(t, err)
+	require.Equal(t, "http://10.0.0.5:9000", got)
+
+	// 解析到私网的域名同样拒绝（不依赖字面量）。
+	privateResolved := outboundPolicyConfig(config.URLAllowlistConfig{})
+	stubOutboundResolver(t, "10.1.2.3")
+	_, err = ValidateOperatorOutboundURL(privateResolved, "upstream site", "https://rebind.example.net")
+	require.ErrorContains(t, err, "upstream site target rejected by URL security policy")
+
+	// DNS 失败/超时按拒绝处理。
+	stubOutboundResolverError(t)
+	_, err = ValidateOperatorOutboundURL(off, "upstream site", "https://unresolvable.example.net")
+	require.ErrorContains(t, err, "upstream site target rejected by URL security policy")
 }
 
 func TestValidateOperatorOutboundURLNamesWhatItWasChecking(t *testing.T) {
@@ -204,6 +250,8 @@ func TestUpstreamChannelClientChecksTheAddressBeforeEveryRequest(t *testing.T) {
 		})
 	})
 	client := NewUpstreamChannelClient()
+	// 本测试用本地 httptest 服务；拨号期私网拦截由 outboundPolicyAllowsPrivateTargets 控制。
+	client.SetPrivateTargetsAllowed(true)
 
 	client.SetURLCheck(func(string) (string, error) {
 		return "", errors.New("upstream site target rejected by URL security policy")

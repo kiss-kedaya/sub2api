@@ -209,6 +209,15 @@ security:
     # Allow http:// URLs when allowlist is disabled (default: true; set to false to require https)
     # 白名单禁用时是否允许 http:// URL（默认: true，设为 false 则仅允许 https）
     allow_insecure_http: true
+    # Allow administrators to save private/loopback addresses as managed upstream
+    # channel site URLs (default: false). The server actively calls these
+    # addresses, so enabling this opens an internal request primitive; only set
+    # it when the upstream relay actually lives on the internal network.
+    # 允许管理员把"上游渠道站点地址/验证码节点"填成私网或环回地址（默认 false）。
+    # 服务端会主动请求这些地址，打开等于开放内网请求能力；仅当上游中转确实
+    # 部署在内网时才设为 true。
+    # Environment / 环境变量: SECURITY_URL_ALLOWLIST_UPSTREAM_CHANNEL_ALLOW_PRIVATE_HOSTS=true
+    upstream_channel_allow_private_hosts: false
   response_headers:
     # Enable configurable response header filtering (default: true)
     # 启用可配置的响应头过滤（默认启用，过滤上游敏感响应头）

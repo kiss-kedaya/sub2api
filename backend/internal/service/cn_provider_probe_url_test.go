@@ -42,12 +42,21 @@ func TestCNValidateProbeURL_AllowlistPolicy(t *testing.T) {
 	_, err = cnValidateProbeURL(cfg, "http://169.254.169.254/latest/meta-data")
 	require.Error(t, err)
 
-	// 白名单关闭：仅格式校验，任意 https 主机放行。
-	formatOnly, err := cnValidateProbeURL(&config.Config{
+	// 白名单关闭：格式校验 + 出站目标校验（公网 https 主机放行）。
+	formatOnlyCfg := &config.Config{
 		Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}},
-	}, "https://relay.attacker.example/v1/usages")
+	}
+	stubOutboundResolver(t, "93.184.216.34")
+	formatOnly, err := cnValidateProbeURL(formatOnlyCfg, "https://relay.attacker.example/v1/usages")
 	require.NoError(t, err)
 	require.Equal(t, "https://relay.attacker.example/v1/usages", formatOnly)
+
+	// 白名单关闭不再等于"随便填"：私网字面量与解析到私网的域名都拒绝。
+	_, err = cnValidateProbeURL(formatOnlyCfg, "https://10.0.0.5/v1/usages")
+	require.Error(t, err)
+	stubOutboundResolver(t, "10.1.2.3")
+	_, err = cnValidateProbeURL(formatOnlyCfg, "https://relay.internal.example/v1/usages")
+	require.Error(t, err)
 }
 
 // recordingHTTPUpstream 断言探测被策略拒绝时没有任何上游请求发出。

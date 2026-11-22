@@ -57,11 +57,14 @@ func ProvideAdminHandlers(
 	credentialGuard *admin.CredentialGuardHandler,
 	opsAutomation *admin.OpsAutomationHandler,
 	excelGrant *admin.ExcelGrantHandler,
+	totpService *service.TotpService,
+	userService *service.UserService,
 ) *AdminHandlers {
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	accountHandler.SetCodexTicketSettings(settingService)
 	accountHandler.SetClaudeResetCreditService(claudeResetCredits)
+	accountHandler.SetStepUpDependencies(totpService, userService, settingService)
 	return &AdminHandlers{
 		DebugDump:              admin.NewDebugDumpHandler(),
 		ExcelGrant:             excelGrant,

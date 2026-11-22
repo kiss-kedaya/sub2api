@@ -223,7 +223,7 @@ func RegisterAdminRoutes(
 		registerChannelMonitorV2Routes(admin, h, settingService)
 
 		// 风控中心
-		registerContentModerationRoutes(admin, h)
+		registerContentModerationRoutes(admin, h, stepUpAuth)
 
 		// 独立提示词输入审计
 		registerPromptAuditRoutes(admin, h)
@@ -280,12 +280,14 @@ func registerAdminComplianceRoutes(admin *gin.RouterGroup, h *handler.Handlers) 
 	}
 }
 
-func registerContentModerationRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+func registerContentModerationRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	risk := admin.Group("/risk-control")
 	{
 		risk.GET("/config", h.Admin.ContentModeration.GetConfig)
 		risk.PUT("/config", h.Admin.ContentModeration.UpdateConfig)
-		risk.POST("/api-keys/test", h.Admin.ContentModeration.TestAPIKeys)
+		// 测试入口会用服务端身份向任意 base_url 发请求：本身就是一个出站探测
+		// 原语，和改配置同级，必须 step-up（机器凭据一律 403）。
+		risk.POST("/api-keys/test", gin.HandlerFunc(stepUpAuth), h.Admin.ContentModeration.TestAPIKeys)
 		risk.GET("/status", h.Admin.ContentModeration.GetStatus)
 		risk.GET("/logs", h.Admin.ContentModeration.ListLogs)
 		risk.POST("/users/:user_id/unban", h.Admin.ContentModeration.UnbanUser)
@@ -828,13 +830,16 @@ func registerBackupRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAut
 		backup.GET("/s3-config", h.Admin.Backup.GetS3Config)
 		// 修改 S3 目标可将数据库备份外泄——要求 step-up 2FA
 		backup.PUT("/s3-config", gin.HandlerFunc(stepUpAuth), h.Admin.Backup.UpdateS3Config)
-		backup.POST("/s3-config/test", h.Admin.Backup.TestS3Connection)
+		// 测试连接会以服务端身份向管理员填写的 endpoint 发请求（S3 探测原语），
+		// 与改配置同级：要求 step-up 2FA。
+		backup.POST("/s3-config/test", gin.HandlerFunc(stepUpAuth), h.Admin.Backup.TestS3Connection)
 
 		// 异步生图对象存储配置（与备份共用 S3 客户端，可直接复用备份凭证）
 		backup.GET("/image-storage", h.Admin.Backup.GetImageStorageConfig)
 		// 同 S3 配置：改写对象存储目标可将生成内容导向外部账号——要求 step-up 2FA
 		backup.PUT("/image-storage", gin.HandlerFunc(stepUpAuth), h.Admin.Backup.UpdateImageStorageConfig)
-		backup.POST("/image-storage/test", h.Admin.Backup.TestImageStorageConnection)
+		// 同上：图床"测试连接"也是任意出站目标探测入口。
+		backup.POST("/image-storage/test", gin.HandlerFunc(stepUpAuth), h.Admin.Backup.TestImageStorageConnection)
 
 		// 定时备份配置
 		backup.GET("/schedule", h.Admin.Backup.GetSchedule)

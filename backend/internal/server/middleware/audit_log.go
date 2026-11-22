@@ -146,6 +146,10 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"two_factor_grant": {}, "two_factor_grant_scope": {},
 	"two_factor_grant_reason": {}, "two_factor_grant_remaining_seconds": {},
 	"two_factor_grant_ip_hash": {}, "two_factor_grant_ua_hash": {},
+	// 管理面出站目标（审计节点 / 账号 base_url）变更：只记地址与显式开关，
+	// 不记 token / 密码。
+	"allow_private_endpoints": {}, "account_base_url_old": {}, "account_base_url_new": {},
+	"account_api_base_urls_changed": {}, "account_api_base_urls_old": {}, "account_api_base_urls_new": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.
