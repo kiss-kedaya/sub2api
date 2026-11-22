@@ -141,7 +141,10 @@ func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInpu
 		return nil, err
 	}
 
-	username := strings.TrimSpace(input.Username)
+	username, err := sanitizeUsernameInput(input.Username, "")
+	if err != nil {
+		return nil, err
+	}
 	if username != "" {
 		if err := ValidateUsername(username); err != nil {
 			return nil, err
@@ -259,8 +262,11 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 	}
 
 	if input.Username != nil {
-		// 与用户侧同口径：管理员也不能写入标记字符或超长用户名。
-		username := strings.TrimSpace(*input.Username)
+		// 与用户侧同口径：管理员也不能写入标记字符或超长用户名，入库前先统一清洗。
+		username, err := sanitizeUsernameInput(*input.Username, user.Username)
+		if err != nil {
+			return nil, err
+		}
 		if username != "" {
 			if err := ValidateUsername(username); err != nil {
 				return nil, err

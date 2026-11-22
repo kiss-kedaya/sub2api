@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"html"
 	"math"
 	"sort"
 	"strconv"
@@ -19,9 +18,24 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	"github.com/Wei-Shaw/sub2api/internal/util/textsanitize"
 	"github.com/dgraph-io/ristretto"
 	"golang.org/x/sync/singleflight"
 )
+
+// maxAPIKeyNameRunes 与 api_keys.name VARCHAR(100) 对齐；超长直接截断而不是让
+// PostgreSQL 抛 22001（500）。
+const maxAPIKeyNameRunes = 100
+
+// normalizeAPIKeyName 把密钥名称清洗成纯文本；用户只提交了标记时给一个可读的
+// 兜底名，避免管理面出现空白行。api_keys.name 会进列表、通知和邮件。
+func normalizeAPIKeyName(raw string) string {
+	name := textsanitize.PlainTextMax(raw, maxAPIKeyNameRunes)
+	if name == "" && strings.TrimSpace(raw) != "" {
+		return "API Key"
+	}
+	return name
+}
 
 var (
 	ErrAPIKeyNotFound  = infraerrors.NotFound("API_KEY_NOT_FOUND", "api key not found")
@@ -683,7 +697,7 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 	apiKey := &APIKey{
 		UserID:           userID,
 		Key:              key,
-		Name:             html.EscapeString(req.Name),
+		Name:             normalizeAPIKeyName(req.Name),
 		GroupID:          req.GroupID,
 		Status:           StatusActive,
 		IPWhitelist:      req.IPWhitelist,
@@ -1056,7 +1070,7 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 
 	// 更新字段
 	if req.Name != nil {
-		apiKey.Name = html.EscapeString(*req.Name)
+		apiKey.Name = normalizeAPIKeyName(*req.Name)
 		fields.Name = true
 	}
 

@@ -14,6 +14,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/util/textsanitize"
 	"github.com/google/uuid"
 )
 
@@ -262,6 +263,11 @@ func (s *TicketService) Create(ctx context.Context, actor TicketActor, in Create
 	if actor.Admin {
 		return nil, ticketInvalid("create tickets through the user route")
 	}
+	// 工单标题/正文入库前统一清洗成纯文本：存量的 <img onerror> / <svg onload>
+	// payload 就是从这里写进去的，前端一旦改成 Markdown/v-html 立刻变存储型 XSS。
+	// 清洗必须发生在 request_hash 之前，保证同一份请求的幂等哈希稳定。
+	in.Subject = textsanitize.PlainText(in.Subject)
+	in.Content = textsanitize.PlainText(in.Content)
 	if !ticketText(in.Subject, 160) || !ticketText(in.Content, 10000) || !ticketCategory(in.Category) || !ticketPriority(in.Priority) ||
 		!utf8.ValidString(in.Contact) || utf8.RuneCountInString(in.Contact) > 200 || strings.ContainsRune(in.Contact, 0) {
 		return nil, ticketInvalid("subject/content or category/priority is invalid")
@@ -294,11 +300,12 @@ func (s *TicketService) CreateForUser(ctx context.Context, actor TicketActor, in
 	if !actor.Admin {
 		return nil, infraerrors.Forbidden("FORBIDDEN", "admin access required")
 	}
-	subject := strings.TrimSpace(in.Subject)
+	subject := textsanitize.PlainText(in.Subject)
 	if subject == "" {
 		subject = "客服消息"
 	}
-	if in.UserID <= 0 || !ticketText(subject, 160) || !ticketText(in.Content, 10000) {
+	content := textsanitize.PlainText(in.Content)
+	if in.UserID <= 0 || !ticketText(subject, 160) || !ticketText(content, 10000) {
 		return nil, ticketInvalid("user, subject or content is invalid")
 	}
 	target, err := s.users.GetByID(ctx, in.UserID)
@@ -308,7 +315,7 @@ func (s *TicketService) CreateForUser(ctx context.Context, actor TicketActor, in
 	if target == nil || target.DeletedAt != nil || !target.IsActive() {
 		return nil, ticketInvalid("target user is not active")
 	}
-	id, err := s.repo.CreateForUser(ctx, actor, target.ID, subject, in.Content)
+	id, err := s.repo.CreateForUser(ctx, actor, target.ID, subject, content)
 	if err != nil {
 		return nil, err
 	}
@@ -320,6 +327,8 @@ func (s *TicketService) Reply(ctx context.Context, actor TicketActor, id int64, 
 	if err := s.authorize(ctx, actor); err != nil {
 		return nil, err
 	}
+	// 回复与新建走同一套入库清洗，管理员和用户回复都不能带标记进库。
+	in.Content = textsanitize.PlainText(in.Content)
 	if id <= 0 || !ticketText(in.Content, 10000) {
 		return nil, ticketInvalid("content must contain 1-10000 characters")
 	}
