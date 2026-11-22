@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
@@ -16,19 +17,14 @@ func TestIPWhitelistAssistRepositoryPrefersConnectionTraces(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT client_ip, COUNT(*) AS request_count
-		FROM (
-			SELECT client_ip
-			FROM request_connection_traces
-			WHERE user_id = $1
-			  AND started_at >= $2
-			  AND COALESCE(client_ip, '') <> ''
-			ORDER BY started_at DESC
-			LIMIT $3
-		) recent
+		FROM request_connection_traces
+		WHERE user_id = $1
+		  AND started_at >= $2
+		  AND COALESCE(client_ip, '') <> ''
 		GROUP BY client_ip
 		ORDER BY request_count DESC, client_ip ASC
-		LIMIT $4`)).
-		WithArgs(int64(42), sqlmock.AnyArg(), ipWhitelistAssistScanLimit, 5).
+		LIMIT $3`)).
+		WithArgs(int64(42), sqlmock.AnyArg(), 5).
 		WillReturnRows(sqlmock.NewRows([]string{"client_ip", "request_count"}).
 			AddRow("203.0.113.7", 12).
 			AddRow("198.51.100.9", 3))
@@ -49,7 +45,7 @@ func TestIPWhitelistAssistRepositoryFallsBackToAuditLogsWhenEmpty(t *testing.T) 
 	t.Cleanup(func() { _ = db.Close() })
 
 	mock.ExpectQuery("FROM request_connection_traces").
-		WithArgs(int64(42), sqlmock.AnyArg(), ipWhitelistAssistScanLimit, 5).
+		WithArgs(int64(42), sqlmock.AnyArg(), 5).
 		WillReturnRows(sqlmock.NewRows([]string{"client_ip", "request_count"}))
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT client_ip, COUNT(*) AS request_count
@@ -83,7 +79,7 @@ func TestIPWhitelistAssistRepositoryFallsBackToAuditLogsOnTraceError(t *testing.
 	t.Cleanup(func() { _ = db.Close() })
 
 	mock.ExpectQuery("FROM request_connection_traces").
-		WithArgs(int64(42), sqlmock.AnyArg(), ipWhitelistAssistScanLimit, 5).
+		WithArgs(int64(42), sqlmock.AnyArg(), 5).
 		WillReturnError(&sqlTestTimeoutError{})
 	mock.ExpectQuery("FROM audit_logs").
 		WithArgs(int64(42), sqlmock.AnyArg(), ipWhitelistAssistScanLimit, 5).
@@ -94,6 +90,40 @@ func TestIPWhitelistAssistRepositoryFallsBackToAuditLogsOnTraceError(t *testing.
 	ips, err := repo.ListRecentClientIPs(context.Background(), 42, 5)
 	require.NoError(t, err)
 	require.Len(t, ips, 1)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestIPWhitelistAssistRepositoryAuditFallbackSurvivesSlowTraces(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Reproduces the production failure: the traces scan is slower than its
+	// budget. The audit fallback must still run with a live deadline instead of
+	// inheriting the expired one and rendering an empty "常用 IP" card.
+	prevTrace, prevAudit := ipWhitelistAssistTraceBudget, ipWhitelistAssistAuditBudget
+	ipWhitelistAssistTraceBudget = 20 * time.Millisecond
+	ipWhitelistAssistAuditBudget = 500 * time.Millisecond
+	t.Cleanup(func() {
+		ipWhitelistAssistTraceBudget, ipWhitelistAssistAuditBudget = prevTrace, prevAudit
+	})
+
+	mock.ExpectQuery("FROM request_connection_traces").
+		WithArgs(int64(42), sqlmock.AnyArg(), 5).
+		WillDelayFor(200 * time.Millisecond).
+		WillReturnRows(sqlmock.NewRows([]string{"client_ip", "request_count"}).
+			AddRow("203.0.113.9", 1))
+	mock.ExpectQuery("FROM audit_logs").
+		WithArgs(int64(42), sqlmock.AnyArg(), ipWhitelistAssistScanLimit, 5).
+		WillReturnRows(sqlmock.NewRows([]string{"client_ip", "request_count"}).
+			AddRow("198.51.100.7", 9))
+
+	repo := NewIPWhitelistAssistRepository(db)
+	ips, err := repo.ListRecentClientIPs(context.Background(), 42, 5)
+	require.NoError(t, err)
+	require.Len(t, ips, 1)
+	require.Equal(t, "198.51.100.7", ips[0].IP)
+	require.Equal(t, 9, ips[0].Count)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -132,7 +162,7 @@ func TestIPWhitelistAssistRepositoryDropsNonIPValues(t *testing.T) {
 	// that are not plain addresses (legacy host:port, hostnames) must not be
 	// handed to the UI even if they exist in the trace table.
 	mock.ExpectQuery("FROM request_connection_traces").
-		WithArgs(int64(42), sqlmock.AnyArg(), ipWhitelistAssistScanLimit, 5).
+		WithArgs(int64(42), sqlmock.AnyArg(), 5).
 		WillReturnRows(sqlmock.NewRows([]string{"client_ip", "request_count"}).
 			AddRow("192.0.2.44", 7).
 			AddRow("192.0.2.44:443", 3).
