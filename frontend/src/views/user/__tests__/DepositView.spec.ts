@@ -303,7 +303,7 @@ describe('user deposit network status', () => {
     expect(mocks.getDepositNetworkStatus).toHaveBeenCalledOnce()
   })
 
-  it('restores transfer actions on fresh available status without changing the selected network', async () => {
+  it('re-reads the switched network in the background and restores its actions', async () => {
     mocks.getDepositInfo.mockResolvedValueOnce({
       enabled: true,
       chains: [
@@ -318,19 +318,47 @@ describe('user deposit network status', () => {
     mocks.copy.mockResolvedValueOnce(true)
     const wrapper = render()
     await flushPromises()
+
     const base = wrapper.findAll('.deposit-view__chain')[1]
     await base.trigger('click')
-    expect(readStatus(wrapper)).toBe('deposit.networkStatus.paused')
-    expect(wrapper.find('.deposit-view__address-block').exists()).toBe(false)
-
-    await wrapper.get('.deposit-view__network-refresh').trigger('click')
     await flushPromises()
+    // Switching network refreshes that network once, so the user does not have
+    // to press refresh to get an up-to-date answer.
+    expect(mocks.getDepositNetworkStatus).toHaveBeenCalledTimes(2)
     expect(base.attributes('aria-pressed')).toBe('true')
     expect(readStatus(wrapper)).toBe('deposit.networkStatus.available')
     expectTransferActions(wrapper, baseAddress)
     expect(QRCode.toCanvas).toHaveBeenLastCalledWith(wrapper.get('canvas').element, baseAddress, expect.any(Object))
     await wrapper.get('.deposit-view__copy').trigger('click')
     expect(mocks.copy).toHaveBeenCalledWith(baseAddress)
+    expect(mocks.getDepositInfo).toHaveBeenCalledOnce()
+  })
+
+  it('restores transfer actions after a manual refresh without changing the selected network', async () => {
+    mocks.getDepositInfo.mockResolvedValueOnce({
+      enabled: true,
+      chains: [
+        { chain: 'bsc', address: bscAddress, tokens: ['USDT'] },
+        { chain: 'base', address: baseAddress, tokens: ['USDT'] },
+      ],
+      min_amount: 1, max_amount: 0
+    })
+    mocks.getDepositNetworkStatus.mockResolvedValue([{ chain: 'base', status: 'paused', expires_at: expiresSoon() }])
+    const wrapper = render()
+    await flushPromises()
+
+    const base = wrapper.findAll('.deposit-view__chain')[1]
+    await base.trigger('click')
+    await flushPromises()
+    expect(readStatus(wrapper)).toBe('deposit.networkStatus.paused')
+    expect(wrapper.find('.deposit-view__address-block').exists()).toBe(false)
+
+    mocks.getDepositNetworkStatus.mockResolvedValue([{ chain: 'base', status: 'available', expires_at: expiresSoon() }])
+    await wrapper.get('.deposit-view__network-refresh').trigger('click')
+    await flushPromises()
+    expect(base.attributes('aria-pressed')).toBe('true')
+    expect(readStatus(wrapper)).toBe('deposit.networkStatus.available')
+    expectTransferActions(wrapper, baseAddress)
     expect(mocks.getDepositInfo).toHaveBeenCalledOnce()
   })
 
@@ -349,6 +377,140 @@ describe('user deposit network status', () => {
     expect(mocks.apiGet).toHaveBeenLastCalledWith('/crypto/deposit-network-status', { signal: expect.any(AbortSignal) })
     expect(readStatus(wrapper)).toBe('deposit.networkStatus.' + state)
     expect(wrapper.find('.deposit-view__address-block').exists()).toBe(state === 'unknown')
+  })
+
+  it('shows the arrival estimate on the badge, under each network card and in the top notice', async () => {
+    mocks.getDepositInfo.mockResolvedValueOnce({
+      enabled: true,
+      chains: [
+        { chain: 'bsc', address: bscAddress, tokens: ['USDT'] },
+        { chain: 'base', address: baseAddress, tokens: ['USDT'] },
+      ],
+      min_amount: 1, max_amount: 0
+    })
+    mocks.getDepositNetworkStatus.mockResolvedValueOnce([
+      { chain: 'bsc', status: 'available', eta_seconds: 35, expires_at: expiresSoon() },
+      { chain: 'base', status: 'slow', eta_seconds: 200, expires_at: expiresSoon() },
+    ])
+    const wrapper = render()
+    await flushPromises()
+
+    const [bscCard, baseCard] = wrapper.findAll('.deposit-view__chain')
+    // 正常网络：徽标给「约 35 秒到账」，绝不出现「延迟」。
+    expect(bscCard.get('.deposit-view__network-status').text()).toContain('deposit.networkStatusDetail.availableEta')
+    expect(bscCard.get('.deposit-view__network-status').text()).toContain('deposit.eta.seconds')
+    expect(bscCard.get('.deposit-view__chain-eta').text()).toContain('deposit.eta.card')
+    expect(baseCard.get('.deposit-view__network-status').text()).toContain('deposit.networkStatusDetail.slowEta')
+    expect(baseCard.get('.deposit-view__chain-eta').text()).toContain('deposit.eta.card')
+    expect(wrapper.get('.deposit-view__eta-notice').text()).toContain('deposit.eta.notice')
+    expect(wrapper.find('.deposit-view__network-notice').exists()).toBe(false)
+  })
+
+  it('switches the copy to instant credit for an instant-credit network', async () => {
+    mocks.getDepositInfo.mockResolvedValueOnce({
+      enabled: true,
+      chains: [{ chain: 'bsc', address: bscAddress, tokens: ['USDT'], instant_credit: true, eta_seconds: 35 }],
+      min_amount: 1, max_amount: 0
+    })
+    mocks.getDepositNetworkStatus.mockResolvedValueOnce([
+      { chain: 'bsc', status: 'available', eta_seconds: 35, expires_at: expiresSoon() },
+    ])
+    const wrapper = render()
+    await flushPromises()
+
+    const card = wrapper.get('.deposit-view__chain')
+    expect(card.get('.deposit-view__network-status').text()).toContain('deposit.networkStatusDetail.availableInstant')
+    expect(card.get('.deposit-view__chain-eta').text()).toContain('deposit.eta.cardInstant')
+    // 即时入账必须说清「失败会回滚」。
+    expect(wrapper.get('.deposit-view__eta-notice').text()).toContain('deposit.instantCreditNotice')
+    expect(wrapper.get('[data-testid="deposit-instant-credit-rule"]').text()).toContain('deposit.instantCreditRule')
+  })
+
+  it('treats an expired status as unknown instead of keeping its delay alarm or estimate', async () => {
+    mocks.getDepositInfo.mockResolvedValueOnce({
+      enabled: true,
+      chains: [{ chain: 'bsc', address: bscAddress, tokens: ['USDT'], instant_credit: true, eta_seconds: 480 }],
+      min_amount: 1, max_amount: 0
+    })
+    mocks.getDepositNetworkStatus.mockResolvedValueOnce([
+      { chain: 'bsc', status: 'delayed', eta_seconds: 480, expires_at: new Date(Date.now() - 1000).toISOString() },
+    ])
+    const wrapper = render()
+    await flushPromises()
+
+    expect(readStatus(wrapper)).toBe('deposit.networkStatus.unknown')
+    // deposit-info 里还有 eta/instant_credit，但状态过期就不能拿来当结论。
+    expect(wrapper.find('.deposit-view__chain-eta').exists()).toBe(false)
+    expect(wrapper.find('.deposit-view__eta-notice').exists()).toBe(false)
+    expect(wrapper.find('.deposit-view__network-notice').exists()).toBe(false)
+    expectTransferActions(wrapper, bscAddress)
+  })
+
+  it('re-reads the status when the window regains focus and stays silent on failure', async () => {
+    const wrapper = render()
+    await flushPromises()
+    expect(mocks.getDepositNetworkStatus).toHaveBeenCalledOnce()
+
+    mocks.getDepositNetworkStatus.mockResolvedValueOnce([
+      { chain: 'bsc', status: 'available', eta_seconds: 35, expires_at: expiresSoon() },
+    ])
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(mocks.getDepositNetworkStatus).toHaveBeenCalledTimes(2)
+    expect(readStatus(wrapper)).toContain('deposit.networkStatusDetail.availableEta')
+
+    // A failed refresh is silent and keeps the observations that are still
+    // within their expiry: a transient outage must not flash "checking".
+    mocks.getDepositNetworkStatus.mockRejectedValueOnce({ status: 503 })
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(mocks.getDepositNetworkStatus).toHaveBeenCalledTimes(3)
+    expect(readStatus(wrapper)).toContain('deposit.networkStatusDetail.availableEta')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expectTransferActions(wrapper, bscAddress)
+
+    // An empty read is not evidence that every network went unknown either.
+    mocks.getDepositNetworkStatus.mockResolvedValueOnce([])
+    window.dispatchEvent(new Event('focus'))
+    await flushPromises()
+    expect(readStatus(wrapper)).toContain('deposit.networkStatusDetail.availableEta')
+  })
+})
+
+describe('user deposit instant-credit history', () => {
+  it('labels a provisional credit and a rollback with their own badge and reason', async () => {
+    mocks.getDepositHistory.mockResolvedValue([
+      { chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'provisional', credited: 67, created_at: '2026-01-01T00:00:00Z' },
+      {
+        chain: 'bsc', tx_hash: otherHash, token: 'USDT', amount: '12', status: 'revoked', credited: 0,
+        created_at: '2026-01-02T00:00:00Z', reason: 'reorg_rollback'
+      },
+    ])
+    const wrapper = render()
+    await flushPromises()
+
+    const badges = wrapper.findAll('.deposit-view__badge')
+    expect(badges[0].text()).toBe('deposit.statusProvisional')
+    expect(badges[0].classes()).toContain('deposit-view__badge--provisional')
+    expect(badges[1].text()).toBe('deposit.statusRevoked')
+    expect(badges[1].classes()).toContain('deposit-view__badge--revoked')
+    // 回滚原因单独一套文案：不能说成「未入账」，那笔钱曾经入过账。
+    expect(wrapper.get('.deposit-view__reason').text()).toContain('deposit.reasonRevoked')
+
+    const rows = wrapper.findAll('tbody tr')
+    // 临时入账的余额已经加上，所以显示金额；已回滚的那笔不算入账。
+    expect(rows[0].get('td:nth-child(3)').text()).toBe('67')
+    expect(rows[1].get('td:nth-child(3)').text()).toBe('—')
+    expect(wrapper.text()).not.toContain('deposit.creditUnknown')
+  })
+
+  it('keeps older records without the provisional/revoked states working', async () => {
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.findAll('.deposit-view__badge').map(badge => badge.text()))
+      .toEqual(['deposit.statusCredited', 'deposit.statusConfirming'])
+    expect(wrapper.find('.deposit-view__reason').exists()).toBe(false)
   })
 })
 

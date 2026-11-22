@@ -25,6 +25,14 @@ export interface DepositChain {
   // Older backends send only `tokens`; the view then treats every entry as an
   // ERC-20 token so it keeps working unchanged.
   assets?: DepositAsset[]
+  // Seconds until a transfer on this chain is credited. Absent on backends
+  // that predate the ETA contract; the page then shows no estimate instead of
+  // inventing one.
+  eta_seconds?: number | null
+  // The chain credits as soon as the transfer is detected, and rolls that
+  // credit back if the transaction ultimately fails. Absent means "unknown",
+  // which is rendered as the regular confirmed-credit flow.
+  instant_credit?: boolean
 }
 
 export interface DepositInfo {
@@ -48,6 +56,14 @@ export interface DepositNetworkStatus {
   status: DepositNetworkState
   observed_at?: string
   expires_at?: string
+  // Seconds until the chain's backlog is cleared, when the backend can measure
+  // it. Only positive values are meaningful; everything else is "no estimate".
+  eta_seconds?: number
+  // How far the scanner trails the chain head, in seconds.
+  backlog_seconds?: number
+  // Confirmations a transfer needs on this chain, for transparency. Zero means
+  // the chain credits on detection.
+  required_confirmations?: number
 }
 
 export interface DepositRecord {
@@ -77,6 +93,13 @@ function isDepositNetworkState(value: unknown): value is DepositNetworkState {
   return DEPOSIT_NETWORK_STATES.some(status => status === value)
 }
 
+// Optional numeric evidence. A malformed field must not discard the whole row:
+// the status is still usable, only the estimate is lost.
+function optionalNumber(value: unknown): number | undefined {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : Number.NaN
+  return Number.isFinite(n) ? n : undefined
+}
+
 export async function getDepositNetworkStatus(signal?: AbortSignal): Promise<DepositNetworkStatus[]> {
   const { data } = await apiClient.get<unknown>('/crypto/deposit-network-status', { signal })
   // Crypto's legacy envelope leaves `data` in place; the standard API envelope is
@@ -91,10 +114,20 @@ export async function getDepositNetworkStatus(signal?: AbortSignal): Promise<Dep
         typeof network.chain !== 'string' || !network.chain || !('status' in network) ||
         !isDepositNetworkState(network.status)) continue
 
-    const expires_at = 'expires_at' in network ? network.expires_at : undefined
-    if (expires_at !== undefined && typeof expires_at !== 'string') continue
+    // `null` is how some encoders spell "absent"; both mean no expiry evidence.
+    const raw_expires_at = 'expires_at' in network ? network.expires_at : undefined
+    if (raw_expires_at !== undefined && raw_expires_at !== null && typeof raw_expires_at !== 'string') continue
+    const expires_at = typeof raw_expires_at === 'string' ? raw_expires_at : undefined
     const observed_at = 'observed_at' in network && typeof network.observed_at === 'string' ? network.observed_at : undefined
-    statuses.push({ chain: network.chain, status: network.status, observed_at, expires_at })
+    statuses.push({
+      chain: network.chain,
+      status: network.status,
+      observed_at,
+      expires_at,
+      eta_seconds: 'eta_seconds' in network ? optionalNumber(network.eta_seconds) : undefined,
+      backlog_seconds: 'backlog_seconds' in network ? optionalNumber(network.backlog_seconds) : undefined,
+      required_confirmations: 'required_confirmations' in network ? optionalNumber(network.required_confirmations) : undefined
+    })
   }
   return statuses
 }
