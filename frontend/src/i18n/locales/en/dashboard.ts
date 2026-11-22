@@ -213,6 +213,46 @@ export default {
     copyKey: 'Copy key',
     ephemeralHint: 'This key was created or rotated in this tab, so the full value can be copied now. After a refresh you need your login password to view it.',
     sealedHint: 'A password-encrypted copy is saved; click copy and enter your login password to decrypt it locally.',
+    // Floating "copy it again" bar shown for 5 minutes after create/rotate (not a modal).
+    ephemeralBar: {
+      title: 'New key created — copy it again within 5 minutes',
+      hint: 'The plaintext lives only in this tab’s memory and disappears after {minutes} minutes or when you leave this page.',
+      copy: 'Copy new key'
+    },
+    // One-screen overview line on every key row.
+    overview: {
+      column: 'Overview',
+      calls24h: 'Last 24h',
+      ipWhitelist: 'IP allowlist · {count}',
+      ipBlacklist: 'IP blocklist · {count}',
+      ipBoth: 'Allow {whitelist} / Block {blacklist}',
+      ipOpen: 'No IP restriction',
+      expiresAt: 'Expires {date}',
+      neverExpires: 'Never expires'
+    },
+    // Bulk rotation: confirm, per-item status, copy all, per-item re-seal.
+    batchRotate: {
+      entry: 'Bulk rotate',
+      title: 'Bulk rotate keys',
+      confirm: 'Rotate the selected {count} keys? The old keys stop working immediately and each new plaintext is shown only once in the result.',
+      confirmAction: 'Rotate now',
+      resultTitle: 'Bulk rotation result',
+      summary: '{succeeded} rotated, {failed} failed',
+      copyAll: 'Copy all',
+      itemOk: 'Rotated',
+      itemFailed: 'Failed',
+      itemSealed: 'Re-encrypted and saved',
+      itemSealFailed: 'Re-encryption failed',
+      sealOptIn: 'Re-save these new keys with my login password',
+      sealHint: 'Rotation deletes the old ciphertext. Re-saves each key locally encrypted; one failure does not block the others.',
+      sealAction: 'Re-save ({count})',
+      sealSummary: 'Saved {sealed}, failed {failed}',
+      success: 'Rotated {count} keys; the old keys are already invalid',
+      partial: '{failed} keys failed to rotate; the rest are live',
+      failed: 'Bulk rotation failed',
+      sealSuccess: 'Re-encrypted and saved {count} keys',
+      sealPartial: 'Re-save partially failed: {sealed} saved, {failed} failed'
+    },
     // "View later" option in the receipt: the password only participates locally.
     seal: {
       optIn: 'Allow viewing this key later with my login password',

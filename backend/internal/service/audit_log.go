@@ -66,6 +66,12 @@ const (
 	// source. The affected user did not act, so the evidence lives in extra and
 	// actor_user_id stays empty: this row records an automated system action.
 	AuditActionAPIKeyAutoDisableIPSharing = "system.api_key.auto_disable.ip_sharing"
+	// AuditActionAPIKeyRotate is written for both the single-key rotation
+	// (PUT /keys/:id with regenerate_key) and the batch rotation
+	// (POST /keys/batch-rotate). Single requests carry rotate=true; batch
+	// requests carry batch=true plus requested/succeeded/failed counts.
+	// The plaintext key never enters the audit row.
+	AuditActionAPIKeyRotate = "api_key.rotate"
 
 	// 第三方登录（OAuth / 扫码 / 设备登录）与 2FA 挑战的固定动作名。
 	// 与 AuditAuthMethodOAuth / AuditAuthMethodPasskey 配套，让「哪个渠道、

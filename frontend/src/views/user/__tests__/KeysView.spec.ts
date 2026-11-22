@@ -14,6 +14,10 @@ const {
   deleteKey,
   deleteMany,
   rotateKey,
+  batchRotateKeys,
+  getOverview,
+  putSecretSeal,
+  sealApiKey,
   getKeyRotationGateStatus,
   getPublicSettings,
   getDashboardApiKeysUsage,
@@ -24,6 +28,7 @@ const {
   copyToClipboard,
   isCurrentStep,
   nextStep,
+  authUser,
 } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   createKey: vi.fn(),
@@ -31,6 +36,10 @@ const {
   deleteKey: vi.fn(),
   deleteMany: vi.fn(),
   rotateKey: vi.fn(),
+  batchRotateKeys: vi.fn(),
+  getOverview: vi.fn(),
+  putSecretSeal: vi.fn(),
+  sealApiKey: vi.fn(),
   getKeyRotationGateStatus: vi.fn(),
   getPublicSettings: vi.fn(),
   getDashboardApiKeysUsage: vi.fn(),
@@ -41,6 +50,7 @@ const {
   copyToClipboard: vi.fn(),
   isCurrentStep: vi.fn(),
   nextStep: vi.fn(),
+  authUser: { value: null as null | { id: number; email: string } },
 }))
 
 const messages: Record<string, string> = {
@@ -98,6 +108,37 @@ const messages: Record<string, string> = {
   'keys.ephemeralHint': 'Created in this tab; copy the full key now.',
   'keys.sealedHint': 'Password-encrypted copy saved.',
   'keys.maskedOnlyHint': 'Server-side masked value.',
+  'keys.ephemeralBar.title': 'New key created — copy it again within 5 minutes',
+  'keys.ephemeralBar.hint': 'Plaintext lives in this tab only for {minutes} minutes.',
+  'keys.ephemeralBar.copy': 'Copy new key',
+  'keys.overview.column': 'Overview',
+  'keys.overview.calls24h': 'Last 24h',
+  'keys.overview.ipWhitelist': 'IP allowlist · {count}',
+  'keys.overview.ipBlacklist': 'IP blocklist · {count}',
+  'keys.overview.ipBoth': 'Allow {whitelist} / Block {blacklist}',
+  'keys.overview.ipOpen': 'No IP restriction',
+  'keys.overview.expiresAt': 'Expires {date}',
+  'keys.overview.neverExpires': 'Never expires',
+  'keys.batchRotate.entry': 'Bulk rotate',
+  'keys.batchRotate.title': 'Bulk rotate keys',
+  'keys.batchRotate.confirm': 'Rotate {count} keys? Old keys stop working immediately.',
+  'keys.batchRotate.confirmAction': 'Rotate now',
+  'keys.batchRotate.resultTitle': 'Bulk rotation result',
+  'keys.batchRotate.summary': '{succeeded} rotated, {failed} failed',
+  'keys.batchRotate.copyAll': 'Copy all',
+  'keys.batchRotate.itemOk': 'Rotated',
+  'keys.batchRotate.itemFailed': 'Failed',
+  'keys.batchRotate.itemSealed': 'Re-encrypted and saved',
+  'keys.batchRotate.itemSealFailed': 'Re-encryption failed',
+  'keys.batchRotate.sealOptIn': 'Re-save with my login password',
+  'keys.batchRotate.sealHint': 'Rotation deletes the old ciphertext.',
+  'keys.batchRotate.sealAction': 'Re-save ({count})',
+  'keys.batchRotate.sealSummary': 'Saved {sealed}, failed {failed}',
+  'keys.batchRotate.success': 'Rotated {count} keys; old keys are invalid',
+  'keys.batchRotate.partial': '{failed} keys failed to rotate',
+  'keys.batchRotate.failed': 'Bulk rotation failed',
+  'keys.batchRotate.sealSuccess': 'Re-encrypted and saved {count} keys',
+  'keys.batchRotate.sealPartial': 'Re-save partially failed: {sealed} saved, {failed} failed',
   'keys.noSeal.title': 'This key cannot be recovered',
   'keys.noSeal.message': 'This key was created without the opt-in; rotate a new key.',
   'keys.noSeal.rotate': 'Rotate a new key',
@@ -114,6 +155,9 @@ vi.mock('@/api', () => ({
     deleteMany,
     toggleStatus: vi.fn(),
     rotateKey,
+    batchRotateKeys,
+    getOverview,
+    putSecretSeal,
   },
   authAPI: {
     getPublicSettings,
@@ -132,6 +176,14 @@ vi.mock('@/api', () => ({
     getStatus: getKeyRotationGateStatus,
   },
 }))
+
+vi.mock('@/utils/apikeySeal', async () => {
+  const actual = await vi.importActual<typeof import('@/utils/apikeySeal')>('@/utils/apikeySeal')
+  return {
+    ...actual,
+    sealApiKey,
+  }
+})
 
 vi.mock('@/features/channel-monitor-v2/groupStatusDot', () => ({
   loadGroupStatusClasses: vi.fn().mockResolvedValue({}),
@@ -153,7 +205,7 @@ vi.mock('@/stores/onboarding', () => ({
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
-    user: null,
+    user: authUser.value,
   }),
 }))
 
@@ -262,6 +314,7 @@ const DataTableStub = {
         <div data-test="current-concurrency">
           <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
         </div>
+        <div data-test="key-overview-cell"><slot name="cell-overview" :row="row" /></div>
         <div
           v-if="columns.some((col) => col.key === 'last_used_ip')"
           data-test="last-used-ip"
@@ -334,6 +387,16 @@ const UseKeyModalStub = {
 // The ephemeral-plaintext store needs an active Pinia; the other stores are mocked.
 beforeEach(() => {
   setActivePinia(createPinia())
+  // New batch/overview calls are secondary: default them to empty so every
+  // existing test keeps its original assertion surface.
+  authUser.value = null
+  batchRotateKeys.mockReset()
+  batchRotateKeys.mockResolvedValue({ results: [], requested_count: 0, succeeded_count: 0, failed_count: 0 })
+  getOverview.mockReset()
+  getOverview.mockResolvedValue({ items: [], window_hours: 24 })
+  putSecretSeal.mockReset()
+  putSecretSeal.mockResolvedValue(undefined)
+  sealApiKey.mockReset()
 })
 
 const mountView = async () => {
@@ -782,6 +845,7 @@ describe('user KeysView column settings', () => {
       'group',
       'current_concurrency',
       'usage',
+      'overview',
       'expires_at',
       'status',
       'created_at',
@@ -848,6 +912,7 @@ describe('user KeysView column settings', () => {
       'key',
       'current_concurrency',
       'usage',
+      'overview',
       'rate_limit',
       'expires_at',
       'status',
@@ -1765,6 +1830,200 @@ describe('user KeysView ephemeral and sealed keys', () => {
     await wrapper.get('[data-test="key-copy"]').trigger('click')
     await flushPromises()
     expect(copyToClipboard).toHaveBeenCalledWith('sk-rotated-fresh')
+    wrapper.unmount()
+  })
+})
+
+describe('user KeysView batch rotation, overview and ephemeral bar', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+
+    listKeys.mockReset()
+    createKey.mockReset()
+    putSecretSeal.mockReset()
+    putSecretSeal.mockResolvedValue(undefined)
+    sealApiKey.mockReset()
+    getPublicSettings.mockReset()
+    getDashboardApiKeysUsage.mockReset()
+    getAvailableGroups.mockReset()
+    getUserGroupRates.mockReset()
+    showError.mockReset()
+    showSuccess.mockReset()
+    copyToClipboard.mockReset()
+    copyToClipboard.mockResolvedValue(true)
+    isCurrentStep.mockReset()
+    nextStep.mockReset()
+    batchRotateKeys.mockReset()
+    batchRotateKeys.mockResolvedValue({ results: [], requested_count: 0, succeeded_count: 0, failed_count: 0 })
+    getOverview.mockReset()
+    getOverview.mockResolvedValue({ items: [], window_hours: 24 })
+
+    listKeys.mockResolvedValue({
+      items: [createApiKey()],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    getPublicSettings.mockResolvedValue({})
+    getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
+    getAvailableGroups.mockResolvedValue([])
+    getUserGroupRates.mockResolvedValue({})
+    isCurrentStep.mockReturnValue(false)
+  })
+
+  it('renders the 24h calls/cost, expiry and IP allowlist status from one batched cover', async () => {
+    listKeys.mockResolvedValue({
+      items: [
+        {
+          ...createApiKey(),
+          ip_whitelist: ['1.2.3.4', '5.6.7.8'],
+          expires_at: '2027-01-01T00:00:00Z',
+        },
+      ],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    getOverview.mockResolvedValue({
+      items: [{ id: 1, requests_24h: 42, cost_24h: 0.1234 }],
+      window_hours: 24,
+    })
+
+    const wrapper = await mountView()
+    await flushPromises()
+
+    expect(getOverview).toHaveBeenCalledWith([1])
+    const cell = wrapper.get('[data-test="key-overview-cell"]')
+    expect(cell.get('[data-test="key-overview-calls"]').text()).toBe('42')
+    expect(cell.get('[data-test="key-overview-cost"]').text()).toBe('$0.1234')
+    expect(cell.get('[data-test="key-overview-ip"]').text()).toContain('IP allowlist · 2')
+    expect(cell.get('[data-test="key-overview-expiry"]').text()).toContain('Expires')
+    wrapper.unmount()
+  })
+
+  it('rotates selected keys in bulk, stores each plaintext in memory and copies all', async () => {
+    listKeys.mockResolvedValue({
+      items: [createApiKey(), { ...createApiKey(), id: 2, name: 'second-key' }],
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    batchRotateKeys.mockResolvedValue({
+      results: [
+        { id: 1, status: 'ok', key: 'rotated-one-fixture-secret' },
+        { id: 2, status: 'failed', error_code: 'API_KEY_ROTATE_FAILED' },
+      ],
+      requested_count: 2,
+      succeeded_count: 1,
+      failed_count: 1,
+    })
+
+    const wrapper = await mountView()
+    await wrapper.get('[data-test="select-all"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="keys-bulk-rotate"]').trigger('click')
+    await nextTick()
+
+    // 二次确认必须说明旧 Key 立即失效。
+    const confirm = wrapper.get('[data-test="confirm-dialog"]')
+    expect(confirm.text()).toContain('Rotate 2 keys?')
+    expect(confirm.text()).toContain('Old keys stop working immediately')
+
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+
+    expect(batchRotateKeys).toHaveBeenCalledWith([1, 2])
+    expect(useEphemeralKeyStore().recall(1)).toBe('rotated-one-fixture-secret')
+
+    const result = wrapper.get('[data-test="batch-rotate-result"]')
+    expect(result.text()).toContain('1 rotated, 1 failed')
+    expect(result.text()).toContain('rotated-one-fixture-secret')
+    expect(wrapper.get('[data-test="batch-rotate-result-2"]').text()).toContain('API_KEY_ROTATE_FAILED')
+
+    await wrapper.get('[data-test="batch-rotate-copy-all"]').trigger('click')
+    await flushPromises()
+    expect(copyToClipboard).toHaveBeenCalledWith('test-key: rotated-one-fixture-secret')
+    wrapper.unmount()
+  })
+
+  it('re-seals rotated keys one by one and reports per-item seal status', async () => {
+    authUser.value = { id: 1, email: 'user@example.com' }
+    listKeys.mockResolvedValue({
+      items: [{ ...createApiKey(), has_sealed_secret: true }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    batchRotateKeys.mockResolvedValue({
+      results: [{ id: 1, status: 'ok', key: 'rotated-sealed-fixture-secret' }],
+      requested_count: 1,
+      succeeded_count: 1,
+      failed_count: 0,
+    })
+    const seal = {
+      version: 1 as const,
+      kdf: { algo: 'PBKDF2-SHA256' as const, iterations: 310000, salt: 'c2FsdA==' },
+      sealed: 'c2VhbGVk',
+    }
+    sealApiKey.mockResolvedValue(seal)
+    putSecretSeal.mockResolvedValue(undefined)
+
+    const wrapper = await mountView()
+    await wrapper.get('[data-test="select-all"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="keys-bulk-rotate"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="batch-rotate-seal"]').exists()).toBe(true)
+    await wrapper.get('[data-test="batch-rotate-seal-password"]').setValue('hunter2')
+    await wrapper.get('[data-test="batch-rotate-seal-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(sealApiKey).toHaveBeenCalledWith('rotated-sealed-fixture-secret', 'hunter2')
+    expect(putSecretSeal).toHaveBeenCalledWith(1, seal)
+    expect(wrapper.get('[data-test="batch-rotate-seal-summary"]').text()).toContain('Saved 1')
+    wrapper.unmount()
+  })
+
+  it('shows the five-minute re-copy bar after creation and copies from the in-memory store', async () => {
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
+    createKey.mockResolvedValue({
+      ...createApiKey(),
+      id: 77,
+      name: 'once key',
+      group_id: 3,
+      group_ids: [3],
+      key: 'live-bar-fixture-secret',
+    })
+
+    const wrapper = await mountView()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('[data-tour="key-form-name"]').setValue('once key')
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+    await nextTick()
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    // 浮条不是 modal：创建成功后就出现在页面右下角，明文只从内存 store 取。
+    const bar = wrapper.get('[data-test="ephemeral-key-bar"]')
+    expect(bar.text()).toContain('New key created — copy it again within 5 minutes')
+    expect(useEphemeralKeyStore().recall(77)).toBe('live-bar-fixture-secret')
+    expect(readBrowserStorage()).not.toContain('live-bar-fixture-secret')
+
+    await wrapper.get('[data-test="ephemeral-key-copy"]').trigger('click')
+    await flushPromises()
+    expect(copyToClipboard).toHaveBeenCalledWith('live-bar-fixture-secret')
+
+    await wrapper.get('[data-test="ephemeral-key-close"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('[data-test="ephemeral-key-bar"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

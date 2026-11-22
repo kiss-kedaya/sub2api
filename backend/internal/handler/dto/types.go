@@ -120,8 +120,15 @@ type APIKey struct {
 	Group *Group `json:"group,omitempty"`
 }
 
-// APIKeySecret 是「密钥明文唯一一次出口」的响应模型：只在创建（POST /api/v1/keys）
-// 与轮换（PUT /api/v1/keys/:id 且 regenerate_key=true）的当次响应里使用。
+// APIKeyUsageOverview 是一屏概览里「近 24h」的批量统计项。
+// 只对 Key 的所有者返回，且只有计数与用户口径费用，不含账号成本/模型/IP。
+type APIKeyUsageOverview struct {
+	ID          int64   `json:"id"`
+	Requests24h int64   `json:"requests_24h"`
+	Cost24h     float64 `json:"cost_24h"`
+}
+
+// APIKeySecret 是「密钥明文唯一一次出口」的响应模型：只在创建（POST /api/v1/keys）// 与轮换（PUT /api/v1/keys/:id 且 regenerate_key=true）的当次响应里使用。
 // 其它任何接口都必须返回 APIKey（只含 key_prefix / key_masked）。
 // 新代码不要复用这个类型，除非确实是"刚刚生成/替换了凭据"的那一次回执。
 type APIKeySecret struct {
