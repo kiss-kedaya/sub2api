@@ -233,9 +233,12 @@ export async function getBarkSettings(): Promise<BarkSettings> {
 /**
  * Omit the key to retain the existing ciphertext; an empty key clears it.
  */
-export async function updateBarkSettings(deviceKey: string | undefined, enabled: boolean, totpCode: string): Promise<void> {
+export async function updateBarkSettings(deviceKey: string | undefined, enabled: boolean): Promise<void> {
+  // No TOTP header: the server intentionally keeps this endpoint step-up free
+  // (the key only routes this user's own notifications, is encrypted at rest and
+  // the original device is notified before the change applies).
   const request = {
-    headers: { 'X-Bark-TOTP': totpCode, 'Cache-Control': 'no-store', Pragma: 'no-cache' },
+    headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' },
     _retry: true
   }
   await apiClient.put('/user/bark', { ...(deviceKey === undefined ? {} : { device_key: deviceKey }), enabled }, request)
