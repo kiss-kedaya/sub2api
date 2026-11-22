@@ -362,6 +362,14 @@ type BatchAPIKeyUsageStats struct {
 	TotalActualCost float64 `json:"total_actual_cost"`
 }
 
+// APIKeyUsage24h is the rolling 24-hour overview for one API key.
+// It is produced by a single grouped query over usage_logs (no per-key N+1)
+// and is only exposed to the key's owner.
+type APIKeyUsage24h struct {
+	Requests int64   `json:"requests"`
+	Cost     float64 `json:"cost"`
+}
+
 // AccountUsageHistory represents daily usage history for an account
 type AccountUsageHistory struct {
 	Date       string  `json:"date"`

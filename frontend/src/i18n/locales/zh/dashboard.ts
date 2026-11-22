@@ -213,6 +213,46 @@ export default {
     copyKey: '复制密钥',
     ephemeralHint: '本标签页刚创建或轮换过这把 Key，可以直接复制完整密钥；刷新页面后需要输入登录密码才能查看。',
     sealedHint: '已用登录密码加密保存，点击复制后输入登录密码即可在本地解密查看。',
+    // 创建/轮换成功后右下角的「再复制一次」浮条（5 分钟，不是 modal）。
+    ephemeralBar: {
+      title: '新 Key 已创建，5 分钟内可再次复制',
+      hint: '明文只保存在当前标签页内存中，{minutes} 分钟后或离开本页即消失。',
+      copy: '复制新 Key'
+    },
+    // 每条 Key 行的「一屏概览」。
+    overview: {
+      column: '概览',
+      calls24h: '近 24h',
+      ipWhitelist: 'IP 白名单 {count} 条',
+      ipBlacklist: 'IP 黑名单 {count} 条',
+      ipBoth: '白名单 {whitelist} / 黑名单 {blacklist} 条',
+      ipOpen: '未限制 IP',
+      expiresAt: '到期 {date}',
+      neverExpires: '永不过期'
+    },
+    // 批量轮换：二次确认、逐条结果、一键全部复制、逐条重新封存。
+    batchRotate: {
+      entry: '批量轮换',
+      title: '批量轮换密钥',
+      confirm: '将轮换选中的 {count} 个 Key：旧 Key 会立即失效，新明文只在结果页出现一次。确定继续？',
+      confirmAction: '确认轮换',
+      resultTitle: '批量轮换结果',
+      summary: '成功 {succeeded} 条，失败 {failed} 条',
+      copyAll: '一键复制全部',
+      itemOk: '已轮换',
+      itemFailed: '失败',
+      itemSealed: '已重新加密保存',
+      itemSealFailed: '重新加密保存失败',
+      sealOptIn: '用登录密码重新保存这批新 Key',
+      sealHint: '轮换会删除旧密文；勾选后逐条重新用登录密码加密保存，单条失败不影响其他条。',
+      sealAction: '重新保存（{count} 条）',
+      sealSummary: '已保存 {sealed} 条，失败 {failed} 条',
+      success: '已轮换 {count} 个 Key，旧 Key 已立即失效',
+      partial: '{failed} 个 Key 轮换失败，其余已生效',
+      failed: '批量轮换失败',
+      sealSuccess: '已重新加密保存 {count} 个 Key',
+      sealPartial: '重新保存部分失败：成功 {sealed} 条，失败 {failed} 条'
+    },
     // 创建/轮换回执里的「以后可查看」选项：密码只在浏览器本地参与加密。
     seal: {
       optIn: '允许以后用登录密码查看此 Key',

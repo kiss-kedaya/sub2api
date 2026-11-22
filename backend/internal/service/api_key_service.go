@@ -1232,6 +1232,73 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	return apiKey, nil
 }
 
+// MaxBatchRotateAPIKeys 是单次批量轮换允许的最大条数。上限同时限制
+// 单次请求的数据库事务数与响应体大小（每条都要回一次明文）。
+const MaxBatchRotateAPIKeys = 50
+
+// BatchRotateAPIKeyItem 是批量轮换中单条 Key 的结果。
+// 成功时 Key 携带本次轮换产生的新明文（唯一一次）；失败时 Err 说明原因。
+type BatchRotateAPIKeyItem struct {
+	ID  int64
+	Key string
+	Err error
+}
+
+// BatchRotate 批量轮换当前用户自己名下的 API Key。
+//
+// 安全边界：
+//   - 只轮换 userID 本人、未删除的 Key。任一 id 不属于本人/不存在时整批
+//     返回 ErrAPIKeyNotFound（404），不产生任何副作用——既避免越权，也避免
+//     “部分 id 猜中”变成可枚举的信号。
+//   - 单次上限 MaxBatchRotateAPIKeys，去重后计算。
+//   - 每条复用 Update(RegenerateKey) 的既有原子路径：新哈希、api_key_hashes、
+//     key_prefix、清空明文列、删除封存密文都在同一个数据库事务里完成。
+//   - 每条各自一个事务、单独失败：一条失败不影响其他条，结果逐条返回状态；
+//     调用方（handler）据此写审计并保证明文只出现在响应里一次。
+func (s *APIKeyService) BatchRotate(ctx context.Context, userID int64, ids []int64) ([]BatchRotateAPIKeyItem, error) {
+	unique := make([]int64, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			return nil, infraerrors.BadRequest("API_KEY_BATCH_ROTATE_INVALID_ID", "api key ids must be positive")
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return nil, infraerrors.BadRequest("API_KEY_BATCH_ROTATE_EMPTY", "ids is required")
+	}
+	if len(unique) > MaxBatchRotateAPIKeys {
+		return nil, infraerrors.BadRequest(
+			"API_KEY_BATCH_ROTATE_TOO_MANY",
+			fmt.Sprintf("at most %d api keys can be rotated per request", MaxBatchRotateAPIKeys),
+		)
+	}
+	owned, err := s.VerifyOwnership(ctx, userID, unique)
+	if err != nil {
+		return nil, err
+	}
+	if len(owned) != len(unique) {
+		return nil, ErrAPIKeyNotFound
+	}
+
+	results := make([]BatchRotateAPIKeyItem, 0, len(unique))
+	for _, id := range unique {
+		item := BatchRotateAPIKeyItem{ID: id}
+		key, err := s.Update(ctx, id, userID, UpdateAPIKeyRequest{RegenerateKey: true})
+		if err != nil {
+			item.Err = err
+		} else {
+			item.Key = key.Key
+		}
+		results = append(results, item)
+	}
+	return results, nil
+}
+
 // Delete 删除API Key
 func (s *APIKeyService) Delete(ctx context.Context, id int64, userID int64) error {
 	credential, ownerID, err := s.apiKeyRepo.GetKeyHashAndOwnerID(ctx, id)

@@ -480,6 +480,49 @@ func (s *UsageService) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs [
 	return stats, nil
 }
 
+// apiKeysUsage24hRepository is implemented by repositories that can answer the
+// rolling 24h per-key overview in one grouped query. Kept as a narrow interface
+// so the main UsageLogRepository (and its many test stubs) stays unchanged.
+type apiKeysUsage24hRepository interface {
+	GetAPIKeysUsage24h(ctx context.Context, apiKeyIDs []int64, since time.Time) (map[int64]usagestats.APIKeyUsage24h, error)
+}
+
+// GetAPIKeysUsage24h returns the rolling 24h calls and billed cost for several
+// API keys. Callers must verify that every key belongs to the requesting user
+// first; this method only aggregates counters.
+//
+// Production repositories implement the single grouped query; lightweight
+// embedders fall back to the per-key aggregate so they keep working unchanged.
+func (s *UsageService) GetAPIKeysUsage24h(ctx context.Context, apiKeyIDs []int64, now time.Time) (map[int64]usagestats.APIKeyUsage24h, error) {
+	result := make(map[int64]usagestats.APIKeyUsage24h, len(apiKeyIDs))
+	if len(apiKeyIDs) == 0 {
+		return result, nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if batch, ok := s.usageRepo.(apiKeysUsage24hRepository); ok {
+		stats, err := batch.GetAPIKeysUsage24h(ctx, apiKeyIDs, now.Add(-24*time.Hour))
+		if err != nil {
+			return nil, fmt.Errorf("get api keys usage 24h: %w", err)
+		}
+		return stats, nil
+	}
+	since := now.Add(-24 * time.Hour)
+	for _, id := range apiKeyIDs {
+		stats, err := s.usageRepo.GetAPIKeyStatsAggregated(ctx, id, since, now)
+		if err != nil {
+			return nil, fmt.Errorf("get api key usage 24h: %w", err)
+		}
+		if stats == nil {
+			result[id] = usagestats.APIKeyUsage24h{}
+			continue
+		}
+		result[id] = usagestats.APIKeyUsage24h{Requests: stats.TotalRequests, Cost: stats.TotalActualCost}
+	}
+	return result, nil
+}
+
 // ListWithFilters lists usage logs with admin filters.
 func (s *UsageService) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters usagestats.UsageLogFilters) ([]UsageLog, *pagination.PaginationResult, error) {
 	logs, result, err := s.usageRepo.ListWithFilters(ctx, params, filters)

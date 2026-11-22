@@ -104,6 +104,18 @@
               <span class="ml-1 tabular-nums opacity-70">{{ selectedKeyCount }}</span>
             </UButton>
             <UButton
+              v-if="selectedKeyCount > 0"
+              color="warning"
+              variant="outline"
+              icon="i-lucide-refresh-cw"
+              :loading="batchRotateRunning"
+              data-test="keys-bulk-rotate"
+              @click="openBatchRotate"
+            >
+              {{ t('keys.batchRotate.entry') }}
+              <span class="ml-1 tabular-nums opacity-70">{{ selectedKeyCount }}</span>
+            </UButton>
+            <UButton
               color="neutral"
               variant="outline"
               icon="i-lucide-refresh-cw"
@@ -381,6 +393,34 @@
                 <UIcon name="i-lucide-chart-no-axes-column" class="size-3.5" />
                 {{ t('keys.usageDialog.open') }}
               </button>
+            </div>
+          </template>
+
+          <template #cell-overview="{ row }">
+            <!-- 一屏概览：近 24h 调用/消耗（批量接口）+ 到期时间 + IP 白名单状态。 -->
+            <div class="space-y-1 text-sm" data-test="key-overview">
+              <div class="flex items-center gap-1.5">
+                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.overview.calls24h') }}:</span>
+                <span class="font-medium tabular-nums text-gray-900 dark:text-white" data-test="key-overview-calls">
+                  {{ overviewFor(row).requests_24h.toLocaleString() }}
+                </span>
+                <span class="text-gray-400">/</span>
+                <span class="font-medium tabular-nums text-gray-900 dark:text-white" data-test="key-overview-cost">
+                  ${{ overviewFor(row).cost_24h.toFixed(4) }}
+                </span>
+              </div>
+              <div class="text-xs" :class="overviewIPStatus(row).tone" data-test="key-overview-ip">
+                {{ overviewIPStatus(row).text }}
+              </div>
+              <div
+                class="text-xs"
+                :class="row.expires_at && new Date(row.expires_at) < new Date() ? 'text-red-500 dark:text-red-400' : 'text-gray-400 dark:text-gray-500'"
+                data-test="key-overview-expiry"
+              >
+                {{ row.expires_at
+                  ? t('keys.overview.expiresAt', { date: formatDateTime(row.expires_at) })
+                  : t('keys.overview.neverExpires') }}
+              </div>
             </div>
           </template>
 
@@ -1132,6 +1172,134 @@
       @applied="handleBulkEditApplied"
     />
 
+    <!-- Bulk Rotate: 二次确认，明确旧 Key 立即失效。 -->
+    <ConfirmDialog
+      :show="showBatchRotateDialog"
+      :title="t('keys.batchRotate.title')"
+      :message="t('keys.batchRotate.confirm', { count: selectedKeyCount })"
+      :confirm-text="t('keys.batchRotate.confirmAction')"
+      :cancel-text="t('common.cancel')"
+      :danger="true"
+      @confirm="handleBatchRotate"
+      @cancel="showBatchRotateDialog = false"
+    />
+
+    <!-- Bulk Rotate result: 逐条状态 + 一键全部复制 + 逐条重新封存。 -->
+    <BaseDialog
+      :show="showBatchRotateResult"
+      :title="t('keys.batchRotate.resultTitle')"
+      width="wide"
+      @close="closeBatchRotateResult"
+    >
+      <div v-if="batchRotateResult" class="space-y-4" data-test="batch-rotate-result">
+        <div class="flex flex-wrap items-center gap-2 text-sm">
+          <span class="font-medium">{{ t('keys.batchRotate.summary', {
+            succeeded: batchRotateResult.succeeded_count,
+            failed: batchRotateResult.failed_count
+          }) }}</span>
+          <UButton
+            v-if="batchRotateOkItems.length > 0"
+            color="primary"
+            size="xs"
+            :icon="batchRotateCopiedAll ? 'i-lucide-check' : 'i-lucide-copy'"
+            :label="batchRotateCopiedAll ? t('common.copied') : t('keys.batchRotate.copyAll')"
+            data-test="batch-rotate-copy-all"
+            @click="copyAllRotatedKeys"
+          />
+        </div>
+
+        <div class="max-h-72 space-y-2 overflow-y-auto">
+          <div
+            v-for="item in batchRotateResult.results"
+            :key="item.id"
+            class="rounded-lg border border-default p-2.5 text-sm"
+            :data-test="`batch-rotate-result-${item.id}`"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-medium">{{ batchRotateNames[item.id] ?? `#${item.id}` }}</span>
+              <span
+                :class="['text-xs font-semibold', item.status === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400']"
+              >
+                {{ item.status === 'ok' ? t('keys.batchRotate.itemOk') : t('keys.batchRotate.itemFailed') }}
+              </span>
+            </div>
+            <code
+              v-if="item.status === 'ok' && item.key"
+              class="mt-1 block break-all rounded bg-elevated px-1.5 py-0.5 font-mono text-xs"
+              data-test="batch-rotate-plaintext"
+            >{{ item.key }}</code>
+            <p v-else class="mt-1 text-xs text-muted">{{ item.error_code || t('keys.batchRotate.failed') }}</p>
+            <p
+              v-if="batchRotateSealStatus[item.id]"
+              class="mt-1 text-xs"
+              :class="batchRotateSealStatus[item.id] === 'sealed' ? 'text-emerald-600' : 'text-red-600'"
+              data-test="batch-rotate-seal-status"
+            >
+              {{ batchRotateSealStatus[item.id] === 'sealed' ? t('keys.batchRotate.itemSealed') : t('keys.batchRotate.itemSealFailed') }}
+            </p>
+          </div>
+        </div>
+
+        <!-- 轮换删除了旧密文：原本用登录密码封存过的 Key 可以在这里逐条重新封存。 -->
+        <div
+          v-if="canSealKeys && batchRotateSealTargets.length > 0 && batchRotateOkItems.length > 0"
+          class="space-y-2 rounded-lg border border-default p-3"
+          data-test="batch-rotate-seal"
+        >
+          <UCheckbox
+            v-model="batchRotateSealEnabled"
+            :disabled="batchRotateSealing"
+            :label="t('keys.batchRotate.sealOptIn')"
+            :description="t('keys.batchRotate.sealHint')"
+            data-test="batch-rotate-seal-checkbox"
+          />
+          <div v-if="batchRotateSealEnabled" class="space-y-1.5 pl-6">
+            <label for="batch-rotate-seal-password" class="block text-xs font-medium text-default">
+              {{ t('keys.seal.passwordLabel') }}
+            </label>
+            <UInput
+              id="batch-rotate-seal-password"
+              v-model="batchRotateSealPassword"
+              type="password"
+              autocomplete="current-password"
+              :disabled="batchRotateSealing"
+              class="w-full"
+              data-test="batch-rotate-seal-password"
+            />
+            <div class="flex flex-wrap items-center gap-2">
+              <UButton
+                color="neutral"
+                variant="soft"
+                size="xs"
+                :loading="batchRotateSealing"
+                :disabled="batchRotateSealing"
+                :label="t('keys.batchRotate.sealAction', { count: batchRotateSealableIds.length })"
+                data-test="batch-rotate-seal-submit"
+                @click="resealRotatedKeys"
+              />
+              <span
+                v-if="batchRotateSealStatus && Object.keys(batchRotateSealStatus).length > 0"
+                class="text-xs text-muted"
+                data-test="batch-rotate-seal-summary"
+              >
+                {{ t('keys.batchRotate.sealSummary', {
+                  sealed: batchRotateSealSummary.sealed,
+                  failed: batchRotateSealSummary.failed
+                }) }}
+              </span>
+            </div>
+          </div>
+          <p v-if="batchRotateSealError" class="text-xs text-red-600" role="alert" data-test="batch-rotate-seal-error">
+            {{ batchRotateSealError }}
+          </p>
+        </div>
+
+        <div class="flex justify-end">
+          <UButton color="primary" :label="t('keys.secretDialog.done')" data-test="batch-rotate-done" @click="closeBatchRotateResult" />
+        </div>
+      </div>
+    </BaseDialog>
+
     <!-- Reset Quota Confirmation Dialog -->
     <ConfirmDialog
       :show="showResetQuotaDialog"
@@ -1334,6 +1502,13 @@
         </div>
       </div>
     </Teleport>
+    <!-- 创建/轮换后 5 分钟内的「再复制一次」浮条（不是 modal）；明文只从内存 store 取。 -->
+    <EphemeralKeyBanner
+      v-if="ephemeralBarKeyId !== null"
+      :key="ephemeralBarKeyId"
+      :key-id="ephemeralBarKeyId"
+      @expired="ephemeralBarKeyId = null"
+    />
   </AppLayout>
 </template>
 
@@ -1366,6 +1541,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import BaseDialog from '@/components/common/BaseDialog.vue'
 	import KeyUsageDialog from '@/components/user/KeyUsageDialog.vue'
 	import ApiKeySecretDialog from '@/components/keys/ApiKeySecretDialog.vue'
+	import EphemeralKeyBanner from '@/components/keys/EphemeralKeyBanner.vue'
 	import RevealApiKeyDialog from '@/components/keys/RevealApiKeyDialog.vue'
 	import TwoFactorSuggestionBanner from '@/components/user/TwoFactorSuggestionBanner.vue'
 	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -1383,6 +1559,8 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import PlatformIcon from '@/components/common/PlatformIcon.vue'
 	import UserPageHeader from '@/components/user/UserPageHeader.vue'
 	import type { ApiKey, CustomEndpoint, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
+import type { BatchRotateKeyItem, BatchRotateKeysResult, ApiKeyOverview24h } from '@/api/keys'
+import { sealApiKey } from '@/utils/apikeySeal'
 import type { Column } from '@/components/common/types'
 import type { GroupSignalSource } from '@/utils/groupRateSignals'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
@@ -1443,6 +1621,7 @@ const allColumns = computed<Column[]>(() => [
   { key: 'group', label: t('keys.group'), sortable: false },
   { key: 'current_concurrency', label: t('keys.currentConcurrency'), sortable: true },
   { key: 'usage', label: t('keys.usage'), sortable: false },
+  { key: 'overview', label: t('keys.overview.column'), sortable: false },
   { key: 'rate_limit', label: t('keys.rateLimitColumn'), sortable: false },
   { key: 'expires_at', label: t('keys.expiresAt'), sortable: true },
   { key: 'status', label: t('common.status'), sortable: true },
@@ -1537,6 +1716,19 @@ const selectedKeyIds = ref<Array<string | number>>([])
 const showBulkDeleteDialog = ref(false)
 const showBulkEditDialog = ref(false)
 
+// 批量轮换：二次确认（旧 Key 立即失效）→ 逐条结果 → 一键全部复制 → 逐条重新封存。
+const showBatchRotateDialog = ref(false)
+const batchRotateRunning = ref(false)
+const batchRotateResult = ref<BatchRotateKeysResult | null>(null)
+const showBatchRotateResult = ref(false)
+const batchRotateNames = ref<Record<number, string>>({})
+const batchRotateCopiedAll = ref(false)
+const batchRotateSealEnabled = ref(false)
+const batchRotateSealPassword = ref('')
+const batchRotateSealing = ref(false)
+const batchRotateSealError = ref('')
+const batchRotateSealStatus = ref<Record<number, 'sealed' | 'failed' | 'skipped'>>({})
+
 // A bulk edit never touches a row we cannot see: reload the current page after
 // the modal reports back, so group moves and status flips are visible at once.
 const handleBulkEditApplied = async (result: { updated: number; failed: number }) => {
@@ -1561,6 +1753,10 @@ const submitting = ref(false)
 const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
+// 近 24h 概览（调用次数 / 消耗额度）按 Key id 索引，来自一次批量接口。
+const keyOverview = ref<Record<number, ApiKeyOverview24h>>({})
+// 「再复制一次」浮条：只记当前展示的 Key id，明文永远从内存 store 取。
+const ephemeralBarKeyId = ref<number | null>(null)
 const showUsageDialog = ref(false)
 const usageDialogKey = ref<ApiKey | null>(null)
 const openUsageDialog = (key: ApiKey) => {
@@ -2096,6 +2292,22 @@ const loadApiKeys = async () => {
           console.error('Failed to load usage stats:', e)
         }
       }
+      // 一屏概览的近 24h 调用/消耗：一次批量查询，按 id 合并回列表行。
+      try {
+        const overviewResponse = await keysAPI.getOverview(keyIds)
+        if (signal.aborted) return
+        const next: Record<number, ApiKeyOverview24h> = {}
+        overviewResponse.items.forEach((item) => {
+          next[item.id] = item
+        })
+        keyOverview.value = next
+      } catch (e) {
+        if (!isAbortError(e)) {
+          console.error('Failed to load key overview:', e)
+        }
+      }
+    } else {
+      keyOverview.value = {}
     }
   } catch (error) {
     if (isAbortError(error)) {
@@ -2166,6 +2378,35 @@ const keyCellHint = (row: ApiKey): string => {
   if (ephemeralKeys.has(row.id)) return t('keys.ephemeralHint')
   if (row.has_sealed_secret) return t('keys.sealedHint')
   return t('keys.maskedOnlyHint')
+}
+
+// 一屏概览：近 24h 调用/消耗来自一次批量接口；到期时间与 IP 白名单状态
+// 直接读列表行自身字段，不再为每行发请求。
+const overviewFor = (row: ApiKey): ApiKeyOverview24h =>
+  keyOverview.value[row.id] ?? { id: row.id, requests_24h: 0, cost_24h: 0 }
+
+const overviewIPStatus = (row: ApiKey): { text: string; tone: string } => {
+  const whitelist = row.ip_whitelist?.length ?? 0
+  const blacklist = row.ip_blacklist?.length ?? 0
+  if (whitelist > 0 && blacklist > 0) {
+    return {
+      text: t('keys.overview.ipBoth', { whitelist, blacklist }),
+      tone: 'text-blue-600 dark:text-blue-400'
+    }
+  }
+  if (whitelist > 0) {
+    return {
+      text: t('keys.overview.ipWhitelist', { count: whitelist }),
+      tone: 'text-blue-600 dark:text-blue-400'
+    }
+  }
+  if (blacklist > 0) {
+    return {
+      text: t('keys.overview.ipBlacklist', { count: blacklist }),
+      tone: 'text-amber-600 dark:text-amber-400'
+    }
+  }
+  return { text: t('keys.overview.ipOpen'), tone: 'text-gray-400 dark:text-gray-500' }
 }
 
 const flashCopiedKey = (id: number) => {
@@ -2337,6 +2578,7 @@ const rotateKeyValue = async (key: ApiKey) => {
     // 轮换后旧明文立即作废：先删掉内存里的旧条目，再用新明文覆盖同一 id。
     ephemeralKeys.forget(key.id)
     if (rotatedSecret) ephemeralKeys.remember(key.id, rotatedSecret)
+    if (rotatedSecret) ephemeralBarKeyId.value = key.id
     // 旧 key 已立刻失效，新明文必须当场给用户，否则这把 key 就废了。
     // 回执行同样要带分组，否则立刻点「使用密钥」会被误判成无分组。
     openSecretDialog(merged ?? resolveKeyGroupRow(rotatedMasked as ApiKey), rotatedSecret)
@@ -2731,6 +2973,8 @@ const handleSubmit = async () => {
         const createdRow = insertKeyLocally(createdMasked)
         // 本标签页内一直能查看/复制这把 key：明文只进内存，刷新即失效。
         ephemeralKeys.remember(createdMasked.id, createdSecret)
+        // 关闭回执弹窗后仍能在 5 分钟内从右下角浮条再复制一次。
+        ephemeralBarKeyId.value = createdMasked.id
         appStore.showSuccess(t('keys.keyCreatedSuccess'))
         // 回执弹窗拿补齐分组后的行：立刻点「使用密钥」时平台/分组都在。
         openSecretDialog(createdRow ?? createdMasked, createdSecret)
@@ -2786,6 +3030,132 @@ const handleDelete = async () => {
     applyTotalDelta(removed.length)
     const errorMsg = error?.response?.data?.detail || error?.message || t('keys.failedToDelete')
     appStore.showError(errorMsg)
+  }
+}
+
+// 批量轮换成功后：成功条目（带新明文）与需要重新封存的条目。
+const batchRotateOkItems = computed<BatchRotateKeyItem[]>(
+  () => batchRotateResult.value?.results.filter((item) => item.status === 'ok' && !!item.key) ?? []
+)
+const batchRotateSealTargets = ref<number[]>([])
+const batchRotateSealableIds = computed(() =>
+  batchRotateOkItems.value
+    .filter((item) => batchRotateSealTargets.value.includes(item.id))
+    .map((item) => item.id)
+)
+const batchRotateSealSummary = computed(() => {
+  const statuses = Object.values(batchRotateSealStatus.value)
+  return {
+    sealed: statuses.filter((value) => value === 'sealed').length,
+    failed: statuses.filter((value) => value === 'failed').length
+  }
+})
+
+const openBatchRotate = () => {
+  if (selectedKeyCount.value === 0 || batchRotateRunning.value) return
+  const ids = selectedKeyIds.value.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+  const rows = tableRows.value.filter((row) => ids.includes(row.id))
+  batchRotateNames.value = Object.fromEntries(rows.map((row) => [row.id, row.name]))
+  // 只有原本用登录密码封存过的 Key 才需要「再封存一次」：轮换在同一事务里
+  // 删掉了旧密文，用户如果不重新封存，刷新后就再也看不到新明文。
+  batchRotateSealTargets.value = canSealKeys.value
+    ? rows.filter((row) => row.has_sealed_secret).map((row) => row.id)
+    : []
+  batchRotateSealEnabled.value = batchRotateSealTargets.value.length > 0
+  batchRotateSealPassword.value = ''
+  batchRotateSealStatus.value = {}
+  batchRotateSealError.value = ''
+  batchRotateResult.value = null
+  batchRotateCopiedAll.value = false
+  showBatchRotateResult.value = false
+  showBatchRotateDialog.value = true
+}
+
+const closeBatchRotateResult = () => {
+  showBatchRotateResult.value = false
+  batchRotateResult.value = null
+  batchRotateSealPassword.value = ''
+  batchRotateSealStatus.value = {}
+  batchRotateSealError.value = ''
+  batchRotateCopiedAll.value = false
+}
+
+const handleBatchRotate = async () => {
+  const ids = selectedKeyIds.value.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+  showBatchRotateDialog.value = false
+  if (ids.length === 0 || batchRotateRunning.value) return
+  batchRotateRunning.value = true
+  try {
+    const result = await keysAPI.batchRotateKeys(ids)
+    batchRotateResult.value = result
+    // 成功条目的新明文只进内存 store（与单条轮换一致），刷新/登出即失效。
+    result.results.forEach((item) => {
+      if (item.status === 'ok' && item.key) ephemeralKeys.remember(item.id, item.key)
+    })
+    showBatchRotateResult.value = true
+    if (result.succeeded_count > 0) {
+      const firstOk = result.results.find((item) => item.status === 'ok' && item.key)
+      if (firstOk) ephemeralBarKeyId.value = firstOk.id
+      appStore.showSuccess(t('keys.batchRotate.success', { count: result.succeeded_count }))
+    }
+    if (result.failed_count > 0) {
+      appStore.showError(t('keys.batchRotate.partial', { failed: result.failed_count }))
+    }
+    selectedKeyIds.value = []
+    await loadApiKeys()
+    void syncRotationRemediation()
+  } catch (error: any) {
+    const detail = error?.response?.data?.detail || t('keys.batchRotate.failed')
+    appStore.showError(detail)
+  } finally {
+    batchRotateRunning.value = false
+  }
+}
+
+const copyAllRotatedKeys = async () => {
+  const items = batchRotateOkItems.value
+  if (items.length === 0) return
+  const text = items
+    .map((item) => `${batchRotateNames.value[item.id] ?? `#${item.id}`}: ${item.key}`)
+    .join('\n')
+  const ok = await copyToClipboard(text)
+  if (!ok) return
+  batchRotateCopiedAll.value = true
+  setTimeout(() => {
+    batchRotateCopiedAll.value = false
+  }, 2000)
+}
+
+// 「再走一次封存流程」：逐条加密+上传，单条失败不阻塞其他条，结果给逐条状态。
+const resealRotatedKeys = async () => {
+  if (!canSealKeys.value || batchRotateSealing.value) return
+  const targets = batchRotateOkItems.value.filter(
+    (item) => batchRotateSealableIds.value.includes(item.id) && !!item.key
+  )
+  if (targets.length === 0) return
+  if (!batchRotateSealPassword.value) {
+    batchRotateSealError.value = t('keys.seal.passwordRequired')
+    return
+  }
+  batchRotateSealing.value = true
+  batchRotateSealError.value = ''
+  const status: Record<number, 'sealed' | 'failed' | 'skipped'> = {}
+  for (const item of targets) {
+    try {
+      const payload = await sealApiKey(item.key!, batchRotateSealPassword.value)
+      await keysAPI.putSecretSeal(item.id, payload)
+      status[item.id] = 'sealed'
+    } catch {
+      status[item.id] = 'failed'
+    }
+  }
+  batchRotateSealStatus.value = status
+  batchRotateSealing.value = false
+  const sealedCount = Object.values(status).filter((value) => value === 'sealed').length
+  if (sealedCount === targets.length) {
+    appStore.showSuccess(t('keys.batchRotate.sealSuccess', { count: sealedCount }))
+  } else {
+    appStore.showError(t('keys.batchRotate.sealPartial', { sealed: sealedCount, failed: targets.length - sealedCount }))
   }
 }
 

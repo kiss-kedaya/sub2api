@@ -113,6 +113,10 @@ func RegisterUserRoutes(
 		{
 			keys.GET("", h.APIKey.List)
 			keys.GET("/concurrency", h.APIKey.GetConcurrencyQueue)
+			// 一屏概览：近 24h 调用次数 / 消耗额度，一次批量查询，避免逐行 N+1。
+			keys.GET("/overview", panelRateLimiter.Heavy(), h.Usage.GetAPIKeysOverview)
+			// 批量轮换：仅本人 Key、单次上限 50、逐条事务、逐条状态。
+			keys.POST("/batch-rotate", h.APIKey.BatchRotate)
 			keys.GET("/:id", h.APIKey.GetByID)
 			keys.POST("", h.APIKey.Create)
 			keys.PUT("/:id", h.APIKey.Update)

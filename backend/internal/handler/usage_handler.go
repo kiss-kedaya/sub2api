@@ -908,6 +908,90 @@ func (h *UsageHandler) GetMyAPIKeyUsage(c *gin.Context) {
 	})
 }
 
+// maxAPIKeyOverviewIDs 是一次概览请求允许的最大 Key 数。
+const maxAPIKeyOverviewIDs = 100
+
+// GetAPIKeysOverview 返回当前用户若干把 Key 的近 24h 调用次数与消耗额度。
+//
+// GET /api/v1/keys/overview?ids=1,2,3
+//
+// 契约：
+//   - ids 为逗号分隔的 Key ID，去重后 1..100 条；
+//   - 仅本人、未删除的 Key。任一条不属于本人/不存在 → 整批 404（不泄露是否存在）；
+//   - 一次分组聚合查询返回全部计数，避免每行一次 N+1；
+//   - 响应：{"items":[{"id":1,"requests_24h":12,"cost_24h":0.1234}],"window_hours":24}。
+//   - 只回计数与用户口径费用；账号成本、模型、IP 等不外泄。
+func (h *UsageHandler) GetAPIKeysOverview(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if h.apiKeyService == nil || h.usageService == nil {
+		response.InternalError(c, "Usage service is not configured")
+		return
+	}
+
+	raw := strings.TrimSpace(c.Query("ids"))
+	if raw == "" {
+		response.BadRequest(c, "ids is required")
+		return
+	}
+	seen := make(map[int64]struct{})
+	ids := make([]int64, 0, 8)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil || id <= 0 {
+			response.BadRequest(c, "Invalid api key id: "+part)
+			return
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		response.BadRequest(c, "ids is required")
+		return
+	}
+	if len(ids) > maxAPIKeyOverviewIDs {
+		response.BadRequest(c, "At most 100 api key ids are allowed per request")
+		return
+	}
+
+	owned, err := h.apiKeyService.VerifyOwnership(c.Request.Context(), subject.UserID, ids)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if len(owned) != len(ids) {
+		// 失败关闭：不区分「不存在」与「别人的 Key」。
+		response.NotFound(c, "API key not found")
+		return
+	}
+
+	stats, err := h.usageService.GetAPIKeysUsage24h(c.Request.Context(), ids, time.Now())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	items := make([]dto.APIKeyUsageOverview, 0, len(ids))
+	for _, id := range ids {
+		item := dto.APIKeyUsageOverview{ID: id}
+		if stat, ok := stats[id]; ok {
+			item.Requests24h = stat.Requests
+			item.Cost24h = stat.Cost
+		}
+		items = append(items, item)
+	}
+	response.Success(c, gin.H{"items": items, "window_hours": 24})
+}
+
 func queryInflightOnly(c *gin.Context) bool {
 	value, err := strconv.ParseBool(strings.TrimSpace(c.Query("inflight_only")))
 	return err == nil && value

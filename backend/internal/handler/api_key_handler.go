@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -384,6 +385,15 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	// 轮换是明文 key 的另一次（也是唯一另一次）回执：旧值立刻失效，
 	// 用户必须当场拿到新值。普通编辑只回脱敏视图。
 	if req.RegenerateKey {
+		// 单条轮换与批量轮换共用一个审计动作名，批量请求额外带 batch=true。
+		// 审计只记 Key 身份与计数，明文 key 永远不写进 audit_logs。
+		middleware2.SetAuditAction(c, service.AuditActionAPIKeyRotate)
+		middleware2.SetAuditExtra(c, map[string]any{
+			"batch":          false,
+			"rotate":         true,
+			"api_key_id":     key.ID,
+			"api_key_prefix": key.DisplayPrefix(),
+		})
 		// 轮换在同一事务里删掉了旧密文，has_sealed_secret 保持 false。
 		response.Success(c, dto.APIKeySecretFromService(key))
 		return
@@ -391,6 +401,85 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	out := dto.APIKeyFromService(key)
 	h.annotateSealedSecretPresence(c.Request.Context(), subject.UserID, key.ID, out)
 	response.Success(c, out)
+}
+
+// BatchRotateAPIKeysRequest 是批量轮换的请求体。
+type BatchRotateAPIKeysRequest struct {
+	IDs []int64 `json:"ids" binding:"required"`
+}
+
+// BatchRotateAPIKeyItem 是批量轮换的单条结果。
+//
+// 成功时 key 是本次轮换产生的新明文，只在这一次响应里出现（和单条轮换的
+// 回执一样）；失败时 status=failed 并带 error_code，不会阻断其他条。
+type BatchRotateAPIKeyItem struct {
+	ID        int64  `json:"id"`
+	Status    string `json:"status"`
+	Key       string `json:"key,omitempty"`
+	ErrorCode string `json:"error_code,omitempty"`
+}
+
+// BatchRotate 批量轮换当前用户自己的 API Key。
+// POST /api/v1/keys/batch-rotate
+//
+// 契约（与前端约定）：
+//   - body: {"ids": [1,2,3]}，去重后 1..50 条；
+//   - 仅本人、未删除的 Key。任一条不属于本人/不存在 → 整批 404，不轮换任何一条；
+//   - 逐条轮换、逐条成败：一条失败不影响其他条；
+//   - 每条成功回一次新明文 key（唯一一次），旧 key 立即失效；
+//   - 审计动作 api_key.rotate，带 batch=true 与 requested/succeeded/failed 计数。
+func (h *APIKeyHandler) BatchRotate(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	var req BatchRotateAPIKeysRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	c.Header("Cache-Control", "no-store")
+	results, err := h.apiKeyService.BatchRotate(c.Request.Context(), subject.UserID, req.IDs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	out := make([]BatchRotateAPIKeyItem, 0, len(results))
+	succeeded := 0
+	for _, item := range results {
+		entry := BatchRotateAPIKeyItem{ID: item.ID, Status: "failed"}
+		if item.Err != nil {
+			entry.ErrorCode = infraerrors.Reason(item.Err)
+			if entry.ErrorCode == "" {
+				entry.ErrorCode = "API_KEY_ROTATE_FAILED"
+			}
+		} else {
+			entry.Status = "ok"
+			entry.Key = item.Key
+			succeeded++
+		}
+		out = append(out, entry)
+	}
+	failed := len(out) - succeeded
+
+	middleware2.SetAuditAction(c, service.AuditActionAPIKeyRotate)
+	middleware2.SetAuditExtra(c, map[string]any{
+		"batch":           true,
+		"rotate":          true,
+		"requested_count": len(out),
+		"succeeded_count": succeeded,
+		"failed_count":    failed,
+	})
+	response.Success(c, gin.H{
+		"results":         out,
+		"requested_count": len(out),
+		"succeeded_count": succeeded,
+		"failed_count":    failed,
+	})
 }
 
 // Delete handles deleting an API key

@@ -268,6 +268,64 @@ export async function deleteSecretSeal(id: number): Promise<void> {
   await apiClient.delete(`/user/api-keys/${id}/secret-seal`)
 }
 
+/**
+ * Rotate several keys in one round trip.
+ *
+ * `POST /api/v1/keys/batch-rotate` only accepts the caller's own keys (a foreign
+ * or missing id fails the whole request with 404), caps the batch at 50 ids and
+ * rotates each key in its own transaction. Every successful item carries the new
+ * plaintext exactly once; failures carry an `error_code` and never block the
+ * other items.
+ */
+export interface BatchRotateKeyItem {
+  id: number
+  status: 'ok' | 'failed'
+  /** New plaintext, present only for `status === 'ok'`. Never persisted. */
+  key?: string
+  error_code?: string
+}
+
+export interface BatchRotateKeysResult {
+  results: BatchRotateKeyItem[]
+  requested_count: number
+  succeeded_count: number
+  failed_count: number
+}
+
+export async function batchRotateKeys(ids: number[]): Promise<BatchRotateKeysResult> {
+  const unique = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))]
+  const { data } = await apiClient.post<BatchRotateKeysResult>('/keys/batch-rotate', { ids: unique })
+  return data
+}
+
+/** Rolling 24h overview for one key (owner-only, no cost/model/IP breakdown). */
+export interface ApiKeyOverview24h {
+  id: number
+  requests_24h: number
+  cost_24h: number
+}
+
+export interface ApiKeysOverviewResponse {
+  items: ApiKeyOverview24h[]
+  window_hours: number
+}
+
+/**
+ * One batched aggregate for a page of keys.
+ *
+ * `GET /api/v1/keys/overview?ids=1,2,3` returns 24h call counts and billed cost
+ * for the caller's own keys in a single grouped query, so a table row never
+ * triggers its own aggregate request (N+1).
+ */
+export async function getOverview(ids: number[]): Promise<ApiKeysOverviewResponse> {
+  const unique = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))]
+  if (unique.length === 0) return { items: [], window_hours: 24 }
+  const { data } = await apiClient.get<ApiKeysOverviewResponse>('/keys/overview', {
+    params: { ids: unique.join(',') },
+  })
+  return data
+}
+
 export const keysAPI = {
 	getConcurrencyQueue,
   list,
@@ -280,6 +338,8 @@ export const keysAPI = {
   blockDatacenterIPs,
   getIPWhitelistAssist,
   rotateKey,
+  batchRotateKeys,
+  getOverview,
   putSecretSeal,
   getSecretSeal,
   deleteSecretSeal,

@@ -1544,3 +1544,49 @@ func (r *usageLogRepository) getAccountStatsBreakdown(ctx context.Context, accou
 
 	return out, nil
 }
+
+// GetAPIKeysUsage24h returns a rolling-window overview (request count and the
+// user-billed actual cost) for several API keys in one grouped query.
+//
+// Callers must verify ownership of every id first: the query is keyed by
+// api_key_id only. The single statement is what keeps a page of keys from
+// turning into one aggregate query per row (N+1).
+func (r *usageLogRepository) GetAPIKeysUsage24h(ctx context.Context, apiKeyIDs []int64, since time.Time) (map[int64]usagestats.APIKeyUsage24h, error) {
+	ids := normalizePositiveInt64IDs(apiKeyIDs)
+	out := make(map[int64]usagestats.APIKeyUsage24h, len(ids))
+	for _, id := range ids {
+		out[id] = usagestats.APIKeyUsage24h{}
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	const query = `
+		SELECT
+			api_key_id,
+			COUNT(*) as requests,
+			COALESCE(SUM(actual_cost), 0) as actual_cost
+		FROM usage_logs
+		WHERE api_key_id = ANY($1)
+		  AND created_at >= $2
+		GROUP BY api_key_id
+	`
+	rows, err := r.sql.QueryContext(ctx, query, pq.Array(ids), since)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var apiKeyID int64
+		var item usagestats.APIKeyUsage24h
+		if err := rows.Scan(&apiKeyID, &item.Requests, &item.Cost); err != nil {
+			return nil, err
+		}
+		if _, ok := out[apiKeyID]; ok {
+			out[apiKeyID] = item
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
