@@ -24,6 +24,7 @@
         class="crypto-view__signer"
         @change="onSignerStatusChange"
         @open-sweep="openSweepUnlock"
+        @unlocked="onSignerUnlocked"
       />
 
       <UCollapsible v-show="!routed || section === 'overview'" class="crypto-view__notifications" :unmount-on-hide="false">
@@ -422,13 +423,47 @@
               <UButton color="neutral" variant="outline" icon="i-lucide-list-checks" @click="loadSweepPlan">{{ t('admin.crypto.loadPlan') }}</UButton>
               <UButton color="neutral" variant="outline" icon="i-lucide-flask-conical" :disabled="sweeping" @click="doSweep(true)">{{ t('admin.crypto.sweepDryRun') }}</UButton>
               <UButton
+                ref="sweepRunButton"
+                data-testid="crypto-sweep-run"
                 icon="i-lucide-arrow-up-from-line"
                 :disabled="sweeping || !sweepReady"
-                :title="sweepReady ? '' : !walletOk ? t('admin.crypto.walletUnavailable') : !walletLoaded ? t('admin.crypto.hotAddressLocked') : t('admin.crypto.walletNotReady')"
+                :title="sweepBlockedTitle"
                 @click="requestSweep"
               >{{ t('admin.crypto.sweepRun') }}</UButton>
             </div>
-            <UAlert v-if="signerLocked" role="status" color="warning" variant="subtle" icon="i-lucide-lock" :title="t('admin.crypto.signer.locked')" :description="t('admin.crypto.signer.lockedHint')" data-testid="crypto-sweep-signer-locked" />
+            <!-- Readiness is a backend verdict; show the exact blocking reason
+                 inline instead of leaving a disabled button with no explanation. -->
+            <UAlert
+              v-if="!sweepReady && signerLocked"
+              role="status"
+              color="warning"
+              variant="subtle"
+              :icon="signerWindowExpired ? 'i-lucide-timer-off' : 'i-lucide-lock'"
+              :title="signerWindowExpired ? t('admin.crypto.sweepUnlockWindowExpired') : t('admin.crypto.signer.locked')"
+              :description="t('admin.crypto.sweepGate.signerLocked')"
+              :actions="[{ label: t('admin.crypto.sweepUnlockCta'), color: 'warning', variant: 'solid', onClick: () => openSweepUnlock() }]"
+              data-testid="crypto-sweep-signer-locked"
+            />
+            <UAlert
+              v-else-if="!sweepReady && sweepBlockedDescription"
+              role="alert"
+              color="warning"
+              variant="subtle"
+              icon="i-lucide-triangle-alert"
+              :title="t('admin.crypto.sweepGate.blockedTitle')"
+              :description="sweepBlockedDescription"
+              data-testid="crypto-sweep-gate-blocked"
+            />
+            <UAlert
+              v-else-if="signerUnlockRemaining > 0"
+              role="status"
+              color="success"
+              variant="subtle"
+              icon="i-lucide-timer"
+              :title="t('admin.crypto.sweepUnlockWindow', { time: signerUnlockLabel })"
+              :description="t('admin.crypto.sweepUnlockFocusHint')"
+              data-testid="crypto-sweep-unlock-window"
+            />
             <CryptoGasWalletPanel class="crypto-view__gas-funding" :available="walletCanDerive" :chains="loadedSnapshot?.chains ?? []" :revision="gasWalletRevision" />
             <UAlert v-if="activeSweep && !activeSweep.finished" color="info" variant="subtle" icon="i-lucide-loader-circle" :title="t('admin.crypto.sweepRunning')" :description="t('admin.crypto.sweepRunningHint')" />
             <UAlert v-if="sweepRunError" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :title="sweepRunError" />
@@ -689,7 +724,8 @@
   </AppLayout>
 </template>
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
+import { computed, getCurrentInstance, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
+import type { Router } from 'vue-router'
 import { revealActiveNavItem } from '@/utils/revealActiveNavItem'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -731,6 +767,7 @@ import {
   getPoolStatus,
   getWalletStatus,
   getSweepPlan,
+  getSweepReadiness,
   listAllAddresses,
   listDepositsPaged,
   confirmDeposits,
@@ -762,6 +799,7 @@ import {
   type BlockedSweep,
   type SweepSummary,
   type SweepRun,
+  type SweepGate,
   type WalletSecurityStatus,
   type WalletOperationAction,
   type CryptoVerification
@@ -1077,6 +1115,9 @@ const walletSecurityLocked = ref(false)
 // v3 vault state from the signer shard setup (PR #519 contract).
 const walletSignerLocked = ref(false)
 const signerStatus = ref<SignerShardStatus | null>(null)
+// Backend-owned sweep readiness (GET /admin/crypto/sweep/readiness). Null means
+// the endpoint is unavailable (older backend/spec) and the local fallback runs.
+const sweepGate = ref<SweepGate | null>(null)
 const signerCrypto = ref<SignerCrypto | null>(null)
 const sweepUnlockOpen = ref(false)
 const signerLocked = computed(() => signerStatus.value?.locked === true || walletSignerLocked.value)
@@ -1100,12 +1141,77 @@ const hotMnemonic = ref('')
 
 // A real sweep needs a destination. Without one the backend refuses anyway;
 // blocking here stops the operator before they wonder why nothing happened.
-const sweepReady = computed(() => {
-  if (!walletReady.value) return false
+const sweepDestinationConfigured = computed(() => {
   const hot = config.value?.hot_wallet_evm?.trim() ?? ''
   if (!hot) return false
   return hot.replace(/^0x/i, '').replace(/0/g, '') !== ''
 })
+// Fallback used only when the readiness endpoint is unavailable: the old local
+// derivation, so an older backend still gets a working (if less precise) page.
+const sweepGateFallbackReady = computed(() => walletReady.value && sweepDestinationConfigured.value)
+const sweepGateReason = computed(() => sweepGate.value?.reason ?? '')
+const sweepGateReasonKey = computed(() => {
+  switch (sweepGateReason.value) {
+    case 'wallet_unavailable': return 'admin.crypto.sweepGate.walletUnavailable'
+    case 'destination_missing': return 'admin.crypto.sweepGate.destinationMissing'
+    case 'destination_mismatch': return 'admin.crypto.sweepGate.destinationMismatch'
+    case 'destination_invalid': return 'admin.crypto.sweepGate.destinationInvalid'
+    case 'channel_disabled': return 'admin.crypto.sweepGate.channelDisabled'
+    case 'security_locked': return 'admin.crypto.sweepGate.securityLocked'
+    case 'wallet_not_ready': return 'admin.crypto.sweepGate.walletNotReady'
+    case 'signer_locked': return 'admin.crypto.sweepGate.signerLocked'
+    default: return 'admin.crypto.sweepGate.walletNotReady'
+  }
+})
+const sweepReady = computed(() => sweepGate.value ? sweepGate.value.ready : sweepGateFallbackReady.value)
+const sweepBlockedDescription = computed(() => {
+  if (sweepGate.value) {
+    return sweepGate.value.ready ? '' : t(sweepGateReasonKey.value)
+  }
+  // Pre-readiness-endpoint fallback wording (matches the old tooltip).
+  if (sweepGateFallbackReady.value) return ''
+  return !walletOk.value
+    ? t('admin.crypto.walletUnavailable')
+    : !walletLoaded.value
+      ? t('admin.crypto.hotAddressLocked')
+      : t('admin.crypto.walletNotReady')
+})
+const sweepBlockedTitle = computed(() => (sweepReady.value ? '' : sweepBlockedDescription.value))
+
+// The signer window is published by the backend (signer/status.unlocked_until).
+// Count down locally only against that deadline; when it lapses the state is
+// re-read so the button goes back to disabled on its own.
+const unlockClock = ref(Date.now())
+let unlockTicker: ReturnType<typeof setInterval> | null = null
+const signerUnlockUntilMs = computed(() => {
+  const raw = signerStatus.value?.unlocked_until ?? sweepGate.value?.signer_unlocked_until
+  if (!raw) return 0
+  const parsed = Date.parse(raw)
+  return Number.isFinite(parsed) ? parsed : 0
+})
+const signerUnlockRemaining = computed(() => {
+  if (!signerUnlockUntilMs.value) return 0
+  return Math.max(0, Math.ceil((signerUnlockUntilMs.value - unlockClock.value) / 1000))
+})
+const signerUnlockLabel = computed(() => {
+  const total = signerUnlockRemaining.value
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+})
+const signerWindowExpired = ref(false)
+watch(signerUnlockRemaining, (remaining, previous) => {
+  if (previous > 0 && remaining === 0) {
+    // The 15-minute lease ran out: the signer is sealed again.
+    signerWindowExpired.value = true
+    void refreshSweepState()
+  } else if (remaining > 0) {
+    signerWindowExpired.value = false
+  }
+})
+
+// UButton instance ref; used to focus 执行归集 right after an unlock.
+const sweepRunButton = ref<{ $el?: HTMLElement } | null>(null)
+let disposed = false
+const routerInstance = getCurrentInstance()?.appContext.config.globalProperties.$router as Router | undefined
 
 const sweepConfirmMessage = computed(() =>
   t('admin.crypto.sweepConfirmMessage', {
@@ -1691,7 +1797,8 @@ async function runUnlockedSweep(share: string, totpCode: string): Promise<SweepA
 function onUnlockedSweepCompleted(): void {
   walletSignerLocked.value = false
   if (signerStatus.value) signerStatus.value = { ...signerStatus.value, locked: false }
-  void loadWalletStatus()
+  signerWindowExpired.value = false
+  void refreshSweepState().then(() => focusSweepRunButton())
 }
 
 // A released failure no longer holds its address, so the normal sweep run is
@@ -1853,6 +1960,33 @@ async function loadWalletStatus() {
   }
 }
 
+// The backend owns the "can I sweep" verdict; keep wallet/status and the gate
+// in step so the button and its reason never disagree.
+async function loadSweepGate() {
+  try {
+    const gate = await getSweepReadiness()
+    // Only a well-formed verdict replaces the local fallback; a spec/mock or an
+    // older backend must not accidentally make the button unusable.
+    sweepGate.value = gate && typeof gate.ready === 'boolean' ? gate : null
+  } catch {
+    // Older backend or a transient read failure: keep the local fallback.
+    sweepGate.value = null
+  }
+}
+
+async function refreshSweepState() {
+  await Promise.all([loadWalletStatus(), loadSweepGate()])
+}
+
+// Focus 执行归集 after an unlock so the operator lands on the enabled action.
+async function focusSweepRunButton() {
+  await nextTick()
+  const element = sweepRunButton.value?.$el
+  if (!element || typeof element.focus !== 'function') return
+  element.focus()
+  if (typeof element.scrollIntoView === 'function') element.scrollIntoView({ block: 'center' })
+}
+
 function updateWalletSecurityState(state: WalletSecurityStatus) {
   walletSecurityLocked.value = state.locked || state.deposits_paused
   if (walletSecurityLocked.value) reflectSecurityChannelPause()
@@ -1861,6 +1995,33 @@ function updateWalletSecurityState(state: WalletSecurityStatus) {
 function onSignerStatusChange(next: SignerShardStatus) {
   signerStatus.value = next
   walletSignerLocked.value = next.locked
+  // A verify+unlock changes both the signer and the sweep gate.
+  void loadSweepGate()
+}
+
+/**
+ * Verify+unlock succeeded on the signer panel. Refresh the sweep gate, jump to
+ * the sweep panel (routed mode) and focus the now-enabled run button.
+ */
+async function onSignerUnlocked(next: SignerShardStatus): Promise<void> {
+  signerStatus.value = next
+  walletSignerLocked.value = next.locked
+  signerWindowExpired.value = false
+  await refreshSweepState()
+  appStore.showSuccess(t('admin.crypto.signer.unlockDone'))
+  if (!routed) {
+    switchTab('sweep')
+    await focusSweepRunButton()
+    return
+  }
+  const current = routerInstance?.currentRoute.value
+  if (!routerInstance || current?.name === 'AdminCryptoSweeps') {
+    await focusSweepRunButton()
+    return
+  }
+  // The sub-page switch remounts this view, so the focus request travels as an
+  // explicit route intent instead of local state.
+  void routerInstance.push({ name: 'AdminCryptoSweeps', query: { ...current?.query, unlock: 'ready' } })
 }
 
 /**
@@ -1884,11 +2045,67 @@ function ensureSignerCrypto(): boolean {
   }
 }
 
-function openSweepUnlock(): void {
-  if (routed) section.value = 'sweep'
-  else switchTab('sweep')
+function openUnlockDialog(): void {
   if (!ensureSignerCrypto()) return
   sweepUnlockOpen.value = true
+}
+
+// Drop the one-shot route intent so a refresh, a back/forward step or a second
+// click cannot replay the unlock dialog.
+function stripUnlockIntent(): void {
+  if (!routerInstance) return
+  const current = routerInstance.currentRoute.value
+  if (String(current.query.unlock ?? '') === '') return
+  const { unlock: _unlock, ...rest } = current.query
+  void routerInstance.replace({ name: current.name ?? undefined, query: rest, hash: current.hash })
+}
+
+/**
+ * Opens the signer unlock flow.
+ *
+ * Routing is the trap that made 「去解锁并归集」 a dead end: each crypto
+ * sub-page is its own route with its own page key, so switching to
+ * /admin/crypto/sweeps remounts the view and silently drops any local
+ * "dialog open" flag. The intent therefore travels in the URL and the sweeps
+ * route consumes it on mount.
+ */
+function openSweepUnlock(): void {
+  if (!routed) {
+    switchTab('sweep')
+    openUnlockDialog()
+    return
+  }
+  if (!routerInstance) return
+  const current = routerInstance.currentRoute.value
+  if (current.name === 'AdminCryptoSweeps') {
+    // Already on the sweep page and still mounted: open locally.
+    openUnlockDialog()
+    return
+  }
+  const query = { ...current.query, unlock: '1' }
+  void routerInstance.push({ name: 'AdminCryptoSweeps', query }).then(() => {
+    // If the view was remounted (production), the next instance consumes the
+    // intent; if it was reused (specs, keep-alive), open it here.
+    if (disposed) return
+    openUnlockDialog()
+    stripUnlockIntent()
+  })
+}
+
+/**
+ * Runs on mount: consumes `?unlock=1` (open the shard dialog) or
+ * `?unlock=ready` (signer just unlocked, focus 执行归集).
+ */
+async function consumeUnlockIntent(): Promise<void> {
+  if (!routerInstance) return
+  const intent = String(routerInstance.currentRoute.value.query.unlock ?? '')
+  if (!intent) return
+  stripUnlockIntent()
+  if (intent === 'ready') {
+    await focusSweepRunButton()
+    return
+  }
+  if (signerLocked.value) openUnlockDialog()
 }
 
 function describeCryptoUnavailable(reason: string | null): string {
@@ -1910,7 +2127,7 @@ function reflectSecurityChannelPause() {
 
 async function onWalletSecurityRecovered() {
   reflectSecurityChannelPause()
-  await loadWalletStatus()
+  await refreshSweepState()
 }
 
 // Derive the Gas wallet addresses in the main service and fill the destination.
@@ -2075,11 +2292,20 @@ async function submitDepositConfirm(note: string) {
 // Sub-page routes drive the tab panels; the overview keeps the addresses panel ready behind it.
 watch(section, value => { if (routed && value !== 'overview' && value !== activeTab.value) switchTab(value) }, { immediate: true })
 
-onMounted(() => {
+onMounted(async () => {
   void loadConfig()
   // The default tab is addresses, so load it without waiting for a click.
   void loadAddresses()
-  // The lock badge lives in the config tab but reflects live state.
-  void loadWalletStatus()
+  // The lock badge lives in the config tab but reflects live state; the sweep
+  // gate is what enables 执行归集 and names the blocking reason.
+  await refreshSweepState()
+  await consumeUnlockIntent()
+  unlockTicker = setInterval(() => { unlockClock.value = Date.now() }, 1000)
+})
+
+onUnmounted(() => {
+  disposed = true
+  if (unlockTicker) clearInterval(unlockTicker)
+  unlockTicker = null
 })
 </script>

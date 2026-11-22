@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/wallet/shards"
@@ -204,6 +205,38 @@ func TestUnlockSignerThenLockZeroesKeyAndSeeds(t *testing.T) {
 	require.Nil(t, m.deposit)
 	require.Nil(t, m.hot)
 	m.mu.Unlock()
+}
+
+// The console renders the 15-minute signer window from ShardStatus. Publishing
+// only the deadline (never the key) is what lets the run button enable after a
+// verify+unlock and disable again on its own when the lease ends.
+func TestShardStatusReportsBoundedUnlockWindow(t *testing.T) {
+	m, mock, fixture := shardTestManager(t)
+	expectShareAttempts(mock, 0)
+	expectSettingValue(mock, fixture.record)
+	expectSettingValue(mock, fixture.vaultRaw)
+	require.NoError(t, m.UnlockSigner(context.Background(), fixture.shareB))
+
+	expectSettingValue(mock, fixture.vaultRaw)
+	expectSettingValue(mock, fixture.record)
+	status, err := m.ShardStatus(context.Background())
+	require.NoError(t, err)
+	require.False(t, status.Locked)
+	require.NotEmpty(t, status.UnlockedUntil)
+	deadline, err := time.Parse(time.RFC3339, status.UnlockedUntil)
+	require.NoError(t, err)
+	require.WithinDuration(t, time.Now().Add(dataKeyLease), deadline, time.Minute)
+	require.Greater(t, status.UnlockLeaseSeconds, 0)
+	require.LessOrEqual(t, status.UnlockLeaseSeconds, int(dataKeyLease/time.Second))
+
+	m.LockSigner()
+	expectSettingValue(mock, fixture.vaultRaw)
+	expectSettingValue(mock, fixture.record)
+	locked, err := m.ShardStatus(context.Background())
+	require.NoError(t, err)
+	require.True(t, locked.Locked)
+	require.Empty(t, locked.UnlockedUntil)
+	require.Zero(t, locked.UnlockLeaseSeconds)
 }
 
 func TestLockedV3VaultRequiresShareForSeedAccess(t *testing.T) {

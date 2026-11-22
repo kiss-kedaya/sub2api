@@ -36,6 +36,14 @@ export interface SignerShardStatus {
   total?: number
   vault_version: number
   locked: boolean
+  /**
+   * RFC3339 end of the resident data-key window. Present only while a recovery
+   * share has unlocked the signer; the console shows the remaining time and
+   * disables the sweep button again when it lapses.
+   */
+  unlocked_until?: string
+  /** Same window as whole seconds remaining, immune to client clock skew. */
+  unlock_lease_seconds?: number
   auto_enabled: boolean
   created_at?: string
   created_by?: number
@@ -103,6 +111,19 @@ export async function verifySignerShare(share: string, totpCode: string): Promis
     timeout: 30_000
   })
   return unwrap<{ valid: true }>(data)
+}
+
+/**
+ * Verifies a recovery share and keeps the data key resident for the bounded
+ * 15-minute lease, so the sweep button works right away. Requires a freshly
+ * typed code (not the five-minute grant): the request body carries it.
+ */
+export async function unlockSignerWithShare(share: string, totpCode: string): Promise<SignerShardStatus> {
+  const { data } = await apiClient.post('/admin/crypto/signer/unlock', { share, totp_code: totpCode }, {
+    headers: { ...NO_STORE_HEADERS },
+    timeout: 30_000
+  })
+  return unwrap<SignerShardStatus>(data)
 }
 
 export async function setSignerAutoSweep(payload: SignerAutoSweepPayload): Promise<SignerShardStatus> {

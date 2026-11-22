@@ -118,7 +118,7 @@ import ShareInputPanel from '@/components/crypto/signer/ShareInputPanel.vue'
 import type { SignerCrypto } from '@/utils/signer/cryptoProvider'
 import type { ShardShare } from '@/utils/signer/shardFormat'
 import { isRateLimitedError, signerErrorI18nKey } from '@/utils/signer/errors'
-import { verifySignerShare } from '@/api/admin/cryptoSigner'
+import { unlockSignerWithShare, type SignerShardStatus } from '@/api/admin/cryptoSigner'
 import type { SweepAuditInfo } from '@/utils/signer/audit'
 
 const props = withDefaults(defineProps<{
@@ -137,6 +137,11 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (event: 'close'): void
   (event: 'completed', audit: SweepAuditInfo): void
+  /**
+   * Verify mode succeeded and the signer is now unlocked for the bounded
+   * window. The page uses this to refresh its sweep gate immediately.
+   */
+  (event: 'unlocked', status: SignerShardStatus): void
 }>()
 
 const { t } = useI18n()
@@ -169,12 +174,15 @@ async function submit(): Promise<void> {
   stage.value = 'running'
   try {
     if (props.mode === 'verify') {
-      await verifySignerShare(shareText.value, totpCode.value)
+      // Verification alone does not keep the key resident (the vault stays
+      // locked); this is the one-click "verify and unlock" the panel promises.
+      const status = await unlockSignerWithShare(shareText.value, totpCode.value)
       audit.value = {
         addresses: 0, planned: 0, swept: 0, failed: 0, amountUsd: null,
         txHashes: [], status: 'verified', dryRun: false
       }
       stage.value = 'audit'
+      emit('unlocked', status)
     } else if (props.runSweep) {
       audit.value = await props.runSweep(shareText.value, totpCode.value)
       stage.value = 'audit'

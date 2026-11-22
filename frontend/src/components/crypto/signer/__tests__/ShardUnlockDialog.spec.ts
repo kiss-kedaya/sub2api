@@ -6,8 +6,8 @@ import vectors from '@/utils/signer/__tests__/fixtures/goInteropVectors.json'
 import { detectSignerCrypto } from '@/utils/signer/cryptoProvider'
 import ShardUnlockDialog from '../ShardUnlockDialog.vue'
 
-const api = vi.hoisted(() => ({ verifySignerShare: vi.fn() }))
-vi.mock('@/api/admin/cryptoSigner', () => ({ verifySignerShare: api.verifySignerShare }))
+const api = vi.hoisted(() => ({ unlockSignerWithShare: vi.fn() }))
+vi.mock('@/api/admin/cryptoSigner', () => ({ unlockSignerWithShare: api.unlockSignerWithShare }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 enableAutoUnmount(afterEach)
 
@@ -102,13 +102,22 @@ describe('signer unlock dialog (sweep + verify)', () => {
     expect(wrapper.text()).toContain('admin.crypto.signer.unlock.rateLimited')
   })
 
-  it('verifies a share in verify mode using the fresh-code header', async () => {
-    api.verifySignerShare.mockResolvedValue({ valid: true })
+  it('verifies and unlocks in verify mode, emitting the bounded window', async () => {
+    const status = {
+      configured: true,
+      vault_version: 3,
+      locked: false,
+      unlocked_until: '2026-11-23T01:15:00Z',
+      unlock_lease_seconds: 899,
+      auto_enabled: false
+    }
+    api.unlockSignerWithShare.mockResolvedValue(status)
     const wrapper = await render({ mode: 'verify' })
     await fill(wrapper)
     await wrapper.get('[data-testid="shard-unlock-submit"]').trigger('click')
     await flushPromises()
-    expect(api.verifySignerShare).toHaveBeenCalledWith(share.replace(/-/g, ''), '123456')
+    expect(api.unlockSignerWithShare).toHaveBeenCalledWith(share.replace(/-/g, ''), '123456')
     expect(wrapper.text()).toContain('admin.crypto.signer.unlock.verifySuccess')
+    expect(wrapper.emitted('unlocked')?.[0]?.[0]).toMatchObject({ locked: false, unlocked_until: '2026-11-23T01:15:00Z' })
   })
 })

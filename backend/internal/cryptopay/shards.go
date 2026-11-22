@@ -123,6 +123,39 @@ func (s *Service) VerifySignerShare(ctx context.Context, share string) error {
 	return verifyErr
 }
 
+// UnlockSignerWindow reconstructs the data key from an operator share and keeps
+// it resident for the bounded data-key lease (dataKeyLease, 15 minutes).
+//
+// Verification alone is deliberately not enough to make the sweep button work:
+// VerifySignerShare clears the key again, so the vault stays locked. This is the
+// explicit "verify and unlock" step the console offers, so the operator types a
+// share once and can then run the sweep from the normal button. The lease is a
+// hard cap, a process restart locks the signer again, and the key is never
+// written anywhere - the share is only combined in memory.
+func (s *Service) UnlockSignerWindow(ctx context.Context, share string) (*wallet.ShardStatus, error) {
+	manager, err := s.walletManager()
+	if err != nil {
+		return nil, err
+	}
+	// Serialised with sweep runs: a sweep must not clear the key between this
+	// unlock and the status read below.
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
+	if err := manager.UnlockSigner(ctx, share); err != nil {
+		return nil, err
+	}
+	status, err := manager.ShardStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	detail := map[string]any{"source": "operator_share", "manual": true}
+	if deadline, ok := manager.SignerLeaseDeadline(); ok {
+		detail["lease_expires_at"] = deadline.Format(time.RFC3339)
+	}
+	s.NotifyEvent(ctx, EventSignerUnlock, detail)
+	return status, nil
+}
+
 // signerVerifyReason maps the wallet sentinels to stable, secret-free reasons.
 func signerVerifyReason(err error) string {
 	switch {
