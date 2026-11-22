@@ -328,7 +328,12 @@ func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fiel
 			if err := r.updateFields(ctx, exec, key, fields); err != nil {
 				return err
 			}
-			return r.upsertAPIKeyHash(ctx, exec, key.ID, key.KeyHash, key.KeyPrefix)
+			if err := r.upsertAPIKeyHash(ctx, exec, key.ID, key.KeyHash, key.KeyPrefix); err != nil {
+				return err
+			}
+			// 轮换后旧明文已经失效，浏览器端封存的旧密文也必须同时清掉；
+			// 新密文由前端拿到新明文后重新封装（服务端不生成任何东西）。
+			return deleteAPIKeySecretRow(ctx, exec, key.ID)
 		})
 	}
 
@@ -487,7 +492,10 @@ func (r *apiKeyRepository) Delete(ctx context.Context, id int64) error {
 		}
 		return service.ErrAPIKeyNotFound
 	}
-	return r.deleteAPIKeyHash(ctx, client, id)
+	if err := r.deleteAPIKeyHash(ctx, client, id); err != nil {
+		return err
+	}
+	return deleteAPIKeySecretRow(ctx, client, id)
 }
 
 // DeleteWithAudit keeps the legacy method name for rolling-upgrade compatibility.
@@ -546,7 +554,10 @@ func (r *apiKeyRepository) deleteWithTombstone(ctx context.Context, exec *dbent.
 		}
 		return service.ErrAPIKeyNotFound
 	}
-	return r.deleteAPIKeyHash(ctx, exec, id)
+	if err := r.deleteAPIKeyHash(ctx, exec, id); err != nil {
+		return err
+	}
+	return deleteAPIKeySecretRow(ctx, exec, id)
 }
 
 func (r *apiKeyRepository) apiKeyListByUserIDQuery(userID int64, filters service.APIKeyListFilters) *dbent.APIKeyQuery {

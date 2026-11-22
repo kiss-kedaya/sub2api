@@ -61,6 +61,20 @@ func newAPIKeyRepoSQLite(t *testing.T) (*apiKeyRepository, *dbent.Client) {
 	)`)
 	require.NoError(t, err)
 
+	// api_key_secrets（迁移 335）同样是原生 DDL 表：轮换 / 删除要在同一事务里
+	// 丢弃浏览器端封存的密文，SQLite 单测补一份等价表结构。
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS api_key_secrets (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		api_key_id INTEGER NOT NULL UNIQUE,
+		user_id INTEGER NOT NULL,
+		version INTEGER NOT NULL DEFAULT 1,
+		kdf TEXT NOT NULL,
+		sealed TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL
+	)`)
+	require.NoError(t, err)
+
 	return &apiKeyRepository{client: client, sql: db}, client
 }
 
@@ -113,19 +127,19 @@ func TestAPIKeyRepositoryListByUserIDAttachesLastUsedIP(t *testing.T) {
 
 	withLogs := &service.APIKey{
 		UserID: user.ID,
-		Key:    "sk-list-last-used-ip-logs",
+		Key:    "sk-demo-list-last-used-ip-logs",
 		Name:   "With Logs",
 		Status: service.StatusActive,
 	}
 	emptyOnly := &service.APIKey{
 		UserID: user.ID,
-		Key:    "sk-list-last-used-ip-empty",
+		Key:    "sk-demo-list-last-used-ip-empty",
 		Name:   "Empty Only",
 		Status: service.StatusActive,
 	}
 	noLogs := &service.APIKey{
 		UserID: user.ID,
-		Key:    "sk-list-last-used-ip-none",
+		Key:    "sk-demo-list-last-used-ip-none",
 		Name:   "No Logs",
 		Status: service.StatusActive,
 	}
@@ -227,7 +241,7 @@ func TestAPIKeyRepository_UpdateLastUsedDeletedKey(t *testing.T) {
 
 	key := &service.APIKey{
 		UserID: user.ID,
-		Key:    "sk-update-last-used-deleted",
+		Key:    "sk-demo-update-last-used-deleted",
 		Name:   "UpdateLastUsedDeleted",
 		Status: service.StatusActive,
 	}
@@ -245,7 +259,7 @@ func TestAPIKeyRepository_UpdateLastUsedDBError(t *testing.T) {
 
 	key := &service.APIKey{
 		UserID: user.ID,
-		Key:    "sk-update-last-used-db-error",
+		Key:    "sk-demo-update-last-used-db-error",
 		Name:   "UpdateLastUsedDBError",
 		Status: service.StatusActive,
 	}
