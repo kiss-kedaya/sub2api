@@ -29,6 +29,13 @@
         <UBadge v-if="status.configured" :color="status.locked ? 'error' : 'success'" variant="subtle" icon="i-lucide-lock">
           {{ t(status.locked ? 'admin.crypto.signer.locked' : 'admin.crypto.signer.unlocked') }}
         </UBadge>
+        <UBadge
+          v-if="unlocked"
+          color="success"
+          variant="subtle"
+          icon="i-lucide-timer"
+          data-testid="signer-unlock-countdown"
+        >{{ t('admin.crypto.signer.unlockWindow', { time: unlockRemainingLabel }) }}</UBadge>
         <UBadge v-if="status.configured" color="neutral" variant="subtle">
           {{ status.scheme ?? 'shamir-gf256' }} · {{ status.threshold ?? 2 }}-of-{{ status.total ?? 3 }}
         </UBadge>
@@ -56,6 +63,15 @@
           :title="t('admin.crypto.signer.locked')"
           :description="t('admin.crypto.signer.lockedHint')"
           :actions="[{ label: t('admin.crypto.signer.goUnlock'), color: 'warning', variant: 'solid', onClick: () => emit('open-sweep') }]"
+        />
+        <UAlert
+          v-else-if="unlocked"
+          color="success"
+          variant="subtle"
+          icon="i-lucide-timer"
+          :title="t('admin.crypto.signer.unlocked')"
+          :description="t('admin.crypto.signer.unlockedHint')"
+          data-testid="signer-unlocked-notice"
         />
         <dl class="grid gap-2 text-sm sm:grid-cols-[9rem_minmax(0,1fr)]">
           <dt class="text-muted">{{ t('admin.crypto.signer.vaultVersion') }}</dt>
@@ -127,12 +143,13 @@
       :crypto="crypto"
       :locked="status?.locked ?? false"
       @close="verifyOpen = false"
+      @unlocked="onUnlocked"
     />
   </UPageCard>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ShardUnlockDialog from '@/components/crypto/signer/ShardUnlockDialog.vue'
 import SignerShardSetupWizard from '@/components/crypto/signer/SignerShardSetupWizard.vue'
@@ -154,6 +171,8 @@ import { useAppStore } from '@/stores/app'
 const emit = defineEmits<{
   (event: 'change', status: SignerShardStatus): void
   (event: 'open-sweep'): void
+  /** A verify+unlock succeeded: the parent should refresh the sweep gate. */
+  (event: 'unlocked', status: SignerShardStatus): void
 }>()
 
 const { t } = useI18n()
@@ -169,6 +188,33 @@ const verifyOpen = ref(false)
 const crypto = ref<SignerCrypto | null>(null)
 const cryptoUnavailable = ref<SignerCryptoUnavailableCode | null>(null)
 const cryptoReady = computed(() => crypto.value !== null)
+
+// The data key stays resident for a bounded window on the server. Rendering the
+// remaining time (not a locally invented 15:00) is what keeps the sweep gate
+// and this badge in agreement once the operator unlocks.
+const unlockClock = ref(Date.now())
+let unlockTicker: ReturnType<typeof setInterval> | null = null
+const unlockedUntilMs = computed(() => {
+  const raw = status.value?.unlocked_until
+  if (!raw) return 0
+  const parsed = Date.parse(raw)
+  return Number.isFinite(parsed) ? parsed : 0
+})
+const unlockRemainingSeconds = computed(() => {
+  if (!unlockedUntilMs.value) return 0
+  return Math.max(0, Math.ceil((unlockedUntilMs.value - unlockClock.value) / 1000))
+})
+const unlocked = computed(() => {
+  if (!status.value || status.value.locked) return false
+  // v2 vaults are not lease-based; only a published deadline is time-limited.
+  return unlockedUntilMs.value === 0 || unlockRemainingSeconds.value > 0
+})
+const unlockRemainingLabel = computed(() => {
+  const total = unlockRemainingSeconds.value
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+})
 
 const cryptoUnavailableKey = computed(() => (cryptoUnavailable.value === 'insecure-context'
   ? 'admin.crypto.signer.insecureContext'
@@ -228,6 +274,23 @@ async function onWizardCompleted(next: SignerShardStatus): Promise<void> {
   await refresh()
 }
 
+// Verify+unlock succeeded: publish the unlocked status at once so the sweep
+// page can enable its run button without a manual refresh, then re-read the
+// authoritative status (the lease may already be a few seconds shorter).
+async function onUnlocked(next: SignerShardStatus): Promise<void> {
+  status.value = next
+  emit('change', next)
+  emit('unlocked', next)
+  appStore.showSuccess(t('admin.crypto.signer.unlockDone'))
+  await refresh()
+}
+
+watch(unlockRemainingSeconds, (remaining, previous) => {
+  // The lease just ran out: re-read the signer so the panel flips back to the
+  // locked state instead of showing a frozen "0:00" window.
+  if (previous > 0 && remaining === 0) void refresh()
+})
+
 function formatTime(value?: string): string {
   if (!value) return '—'
   const date = new Date(value)
@@ -237,5 +300,11 @@ function formatTime(value?: string): string {
 onMounted(() => {
   probeCrypto()
   void refresh()
+  unlockTicker = setInterval(() => { unlockClock.value = Date.now() }, 1000)
+})
+
+onUnmounted(() => {
+  if (unlockTicker) clearInterval(unlockTicker)
+  unlockTicker = null
 })
 </script>

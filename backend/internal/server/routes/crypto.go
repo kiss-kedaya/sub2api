@@ -65,6 +65,7 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.POST("/addresses/:id/rotate", cryptoHandler.AdminRotateAddress)
 		crypto.POST("/addresses/:id/export-private-key", cryptoHandler.AdminExportAddressPrivateKey)
 		crypto.GET("/sweep/plan", cryptoHandler.AdminSweepPlan)
+		crypto.GET("/sweep/readiness", cryptoHandler.AdminSweepReadiness)
 		crypto.POST("/sweep/run", cryptoHandler.AdminRunSweep)
 		crypto.GET("/sweep/runs", cryptoHandler.AdminSweepRuns)
 		crypto.GET("/sweep/runs/:id", cryptoHandler.AdminSweepRunStatus)
@@ -96,6 +97,9 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.POST("/signer/setup", cryptoHandler.AdminSignerSetup)
 		crypto.POST("/signer/resplit", cryptoHandler.AdminSignerResplit)
 		crypto.POST("/signer/verify-share", cryptoHandler.AdminSignerVerifyShare)
+		// Unlocking keeps the data key resident only for the bounded 15-minute
+		// lease; it still requires a recovery share plus a freshly typed code.
+		crypto.POST("/signer/unlock", cryptoHandler.AdminSignerUnlock)
 		crypto.POST("/signer/auto-sweep", cryptoHandler.AdminSignerAutoSweep)
 		// Moving a pinned sweep destination is deliberately not part of the
 		// generic config save: it needs a fresh code, the risk phrase and an

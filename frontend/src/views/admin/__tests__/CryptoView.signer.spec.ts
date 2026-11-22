@@ -37,14 +37,19 @@ const config = () => ({
 })
 
 let walletStatus: Record<string, unknown>
+// The backend-owned readiness verdict; the page renders this instead of
+// deriving "can I sweep?" from wallet/status.ready on its own.
+let sweepGate: Record<string, unknown>
 
 beforeEach(() => {
   vi.resetAllMocks()
   localStorage.setItem('auth_token', 'test-administrator-jwt-session')
   walletStatus = { ok: true, configured: true, ready: true, enabled: true }
+  sweepGate = { ready: true, attemptable: true, reason: '', wallet_ok: true, wallet_ready: true, channel_enabled: true, destination_configured: true, destination_locked: true }
   mocks.get.mockImplementation(async (path: string) => {
     if (path === '/user/bark') return { data: { data: { configured: true, enabled: true } } }
     if (path.endsWith('/security/status')) return { data: { enabled: true, feature_enabled: true, can_setup: true } }
+    if (path.endsWith('/sweep/readiness')) return { data: { data: { ...sweepGate } } }
     let data: unknown = []
     if (path.endsWith('/config')) data = { ...config(), rpc: {}, rpc_configured: ['bsc'] }
     if (path.endsWith('/addresses')) data = { items: [], total: 0, summary: { address_count: 0, deposit_count: 0, credited_total: 0, swept_total: 0 } }
@@ -82,22 +87,41 @@ async function sweepTab(wrapper: VueWrapper) {
 }
 
 describe('sweep unlock entry when the v3 vault signer is locked', () => {
-  it('shows the locked banner and routes the run button to the shard dialog without starting a sweep', async () => {
+  beforeEach(() => {
+    // A locked v3 vault reports ready=false by design: the seeds cannot be
+    // loaded without the data key. The gate still marks the run button
+    // attemptable so a click can open the unlock dialog.
     walletStatus = {
       ok: true,
       configured: true,
-      ready: true,
+      ready: false,
       enabled: true,
       signer_locked: true,
       shards: { configured: true, vault_version: 3, locked: true, auto_enabled: false }
     }
+    sweepGate = {
+      ready: false,
+      attemptable: true,
+      reason: 'signer_locked',
+      wallet_ok: true,
+      wallet_ready: false,
+      channel_enabled: true,
+      signer_locked: true,
+      destination_configured: true,
+      destination_locked: true
+    }
+  })
+
+  it('disables the run button while locked, explains why and offers the unlock CTA', async () => {
     const wrapper = await render()
     await sweepTab(wrapper)
 
     expect(wrapper.find('[data-testid="crypto-sweep-signer-locked"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="unlock-dialog"]').exists()).toBe(false)
+    expect(button(wrapper, 'admin.crypto.sweepRun').attributes('disabled')).toBeDefined()
 
-    await button(wrapper, 'admin.crypto.sweepRun').trigger('click')
+    const cta = button(wrapper, 'admin.crypto.sweepUnlockCta')
+    await cta.trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-testid="unlock-dialog"]').exists()).toBe(true)
     expect(mocks.post.mock.calls.filter(([path]) => String(path).endsWith('/sweep/run'))).toHaveLength(0)
@@ -105,6 +129,7 @@ describe('sweep unlock entry when the v3 vault signer is locked', () => {
 
   it('keeps the ordinary verification flow when the signer is not locked', async () => {
     walletStatus = { ok: true, configured: true, ready: true, enabled: true, signer_locked: false }
+    sweepGate = { ready: true, attemptable: true, reason: '', wallet_ok: true, wallet_ready: true, channel_enabled: true, signer_locked: false, destination_configured: true, destination_locked: true }
     const wrapper = await render()
     await sweepTab(wrapper)
     expect(wrapper.find('[data-testid="crypto-sweep-signer-locked"]').exists()).toBe(false)

@@ -224,6 +224,47 @@ export async function getSweepPlan(): Promise<SweepPlan> {
   return data.data
 }
 
+/**
+ * Stable reason codes for a blocked real sweep. The backend owns the verdict
+ * (one function, one order); the console only maps these to copy.
+ */
+export type SweepGateReason =
+  | ''
+  | 'wallet_unavailable'
+  | 'destination_missing'
+  | 'destination_mismatch'
+  | 'destination_invalid'
+  | 'channel_disabled'
+  | 'security_locked'
+  | 'signer_locked'
+  | 'wallet_not_ready'
+
+/**
+ * GET /admin/crypto/sweep/readiness — the single backend judgement of whether
+ * 执行归集 may run. `ready` is false when a prerequisite is missing and
+ * `reason` names the one the operator should fix first.
+ */
+export interface SweepGate {
+  ready: boolean
+  reason: SweepGateReason
+  channel_enabled: boolean
+  wallet_ok: boolean
+  wallet_ready: boolean
+  signer_locked: boolean
+  security_locked: boolean
+  destination_configured: boolean
+  destination_locked: boolean
+  /** RFC3339 end of the 15-minute resident data-key window; empty when locked. */
+  signer_unlocked_until?: string
+}
+
+export async function getSweepReadiness(): Promise<SweepGate> {
+  const { data } = await apiClient.get('/admin/crypto/sweep/readiness', {
+    headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' }
+  })
+  return data.data
+}
+
 // runSweep executes the sweep. dryRun defaults to true server-side; the
 // caller must pass dryRun=false to move funds. A vault sealed with a browser
 // data key (v3) requires a recovery share in the body.

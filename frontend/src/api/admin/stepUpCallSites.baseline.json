@@ -120,6 +120,7 @@
     "POST /admin/crypto/signer/resplit :: src/api/admin/cryptoSigner.ts#resplitSignerShards",
     "POST /admin/crypto/signer/auto-sweep :: src/api/admin/cryptoSigner.ts#setSignerAutoSweep",
     "POST /admin/crypto/signer/setup :: src/api/admin/cryptoSigner.ts#setupSignerShards",
+    "POST /admin/crypto/signer/unlock :: src/api/admin/cryptoSigner.ts#unlockSignerWithShare",
     "POST /admin/crypto/signer/verify-share :: src/api/admin/cryptoSigner.ts#verifySignerShare",
     "POST /admin/accounts/custom-usage-batch :: src/api/admin/customUsage.ts#getCachedUsage",
     "POST /admin/dashboard/api-keys-usage :: src/api/admin/dashboard.ts#getBatchApiKeysUsage",

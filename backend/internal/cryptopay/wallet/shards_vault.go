@@ -61,10 +61,18 @@ type ShardStatus struct {
 	Total        int    `json:"total,omitempty"`
 	VaultVersion int    `json:"vault_version"`
 	Locked       bool   `json:"locked"`
-	AutoEnabled  bool   `json:"auto_enabled"`
-	CreatedAt    string `json:"created_at,omitempty"`
-	CreatedBy    int64  `json:"created_by,omitempty"`
-	UpdatedAt    string `json:"updated_at,omitempty"`
+	// UnlockedUntil is the RFC3339 instant at which the resident data key stops
+	// being usable. It is present only while an operator share has unlocked the
+	// signer inside the bounded data-key lease, so the console can show the
+	// remaining window instead of guessing. No share material is ever exposed.
+	UnlockedUntil string `json:"unlocked_until,omitempty"`
+	// UnlockLeaseSeconds is the same window as whole seconds remaining. Clients
+	// use it for a countdown that cannot be thrown off by clock skew.
+	UnlockLeaseSeconds int    `json:"unlock_lease_seconds,omitempty"`
+	AutoEnabled        bool   `json:"auto_enabled"`
+	CreatedAt          string `json:"created_at,omitempty"`
+	CreatedBy          int64  `json:"created_by,omitempty"`
+	UpdatedAt          string `json:"updated_at,omitempty"`
 	// Commitment is a salted SHA-256 of the data key. It is public: the
 	// browser uses it to verify that a recovery share belongs to this wallet,
 	// and it cannot be inverted into the key.
@@ -488,6 +496,16 @@ func (m *Manager) shardStatusLocked(ctx context.Context) (*ShardStatus, error) {
 		status.Commitment = record.Commitment
 	}
 	status.Locked = version == 3 && !m.dataKeyUsable()
+	// A resident data key is a bounded unlock window, not a permanent state.
+	// Publishing the deadline lets the console show how long the operator can
+	// still sweep without re-entering a share, and lock the button again when it
+	// runs out. Only the deadline is public; the key itself never leaves memory.
+	if !status.Locked && m.dataKeyUsable() {
+		status.UnlockedUntil = m.dataKeyDeadline.UTC().Format(time.RFC3339)
+		if remaining := time.Until(m.dataKeyDeadline); remaining > 0 {
+			status.UnlockLeaseSeconds = int(remaining.Seconds())
+		}
+	}
 	return status, nil
 }
 

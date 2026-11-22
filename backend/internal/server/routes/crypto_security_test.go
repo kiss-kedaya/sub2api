@@ -633,8 +633,10 @@ func TestCryptoAdminPrivateConfigResponseIsNotCacheable(t *testing.T) {
 // The shard endpoints added for the Shamir 2-of-3 signer are NOT that surface:
 // they only accept share A (the server never sees B/C), require an explicit
 // migration call plus a fresh TOTP, and the data key is held by the browser.
-// Signing still goes through the documented sweep/export calls that require a
-// recovery share; there is no "unlock the vault forever" endpoint.
+// /signer/unlock is the one explicit unlock call, and it is bounded: it needs
+// the operator share B/C plus a freshly typed code, keeps the reconstructed key
+// only for the 15-minute data-key lease, and a restart seals the vault again.
+// There is no "unlock the vault forever" endpoint.
 func TestCryptoStandaloneSignerSurfaceHasBeenRemoved(t *testing.T) {
 	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
 	h := newCryptoRouteHarness(t, activeCryptoAdmin())
@@ -645,6 +647,7 @@ func TestCryptoStandaloneSignerSurfaceHasBeenRemoved(t *testing.T) {
 		"/api/v1/admin/crypto/signer/setup":             true,
 		"/api/v1/admin/crypto/signer/resplit":           true,
 		"/api/v1/admin/crypto/signer/verify-share":      true,
+		"/api/v1/admin/crypto/signer/unlock":            true,
 		"/api/v1/admin/crypto/signer/auto-sweep":        true,
 		"/api/v1/admin/crypto/signer/sweep-destination": true,
 	}
@@ -654,8 +657,11 @@ func TestCryptoStandaloneSignerSurfaceHasBeenRemoved(t *testing.T) {
 		}
 		require.NotContains(t, route.Path, "/crypto/sign/")
 	}
+	// Unlock exists but a harness without a configured wallet refuses it; it is
+	// never a naked "unlock" that would return 200 with nothing else in place.
+	unlock := cryptoRouteRequest(h.router, http.MethodPost, "/api/v1/admin/crypto/signer/unlock", "", nil, "127.0.0.1:1234", "localhost")
+	require.Equal(t, http.StatusServiceUnavailable, unlock.Code, unlock.Body.String())
 	for _, path := range []string{
-		"/api/v1/admin/crypto/signer/unlock",
 		"/api/v1/admin/crypto/signer/backup",
 		"/api/v1/admin/crypto/sign/evm",
 	} {

@@ -522,6 +522,9 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 
 // ValidateSweepReady reports why a real sweep cannot run yet. Empty is the
 // expected first-run state; the message tells the operator what to set.
+//
+// The returned sentinels are used by the admin readiness endpoint to map the
+// block to a stable reason code; the console never re-derives this by itself.
 func (cfg CryptoConfig) ValidateSweepReady() error {
 	// A settings row that no longer matches the pinned destination means either
 	// a direct database edit or a rollback that bypassed the dedicated endpoint.
@@ -532,13 +535,20 @@ func (cfg CryptoConfig) ValidateSweepReady() error {
 	}
 	hot := strings.TrimSpace(cfg.HotWalletEVM)
 	if hot == "" {
-		return fmt.Errorf("sweep disabled: set the EVM hot wallet (receiving address) first")
+		return errSweepReadyDestinationMissing
 	}
 	if !validEVMAddress(hot) {
-		return fmt.Errorf("sweep disabled: the EVM hot wallet is not a valid 0x-prefixed 20-byte address")
+		return errSweepReadyDestinationInvalid
 	}
 	return nil
 }
+
+// errSweepReadyDestinationMissing / errSweepReadyDestinationInvalid let the
+// readiness endpoint classify a blocked sweep without matching on message text.
+var (
+	errSweepReadyDestinationMissing = errors.New("sweep disabled: set the EVM hot wallet (receiving address) first")
+	errSweepReadyDestinationInvalid = errors.New("sweep disabled: the EVM hot wallet is not a valid 0x-prefixed 20-byte address")
+)
 
 // isZeroAddress catches the all-zero placeholder: sending funds there burns
 // them, and an unset field often round-trips as 0x000…0 rather than "".

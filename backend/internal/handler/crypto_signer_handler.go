@@ -48,11 +48,15 @@ type cryptoSignerService interface {
 	SetupSignerShards(context.Context, cryptopay.SignerSetupRequest) (*wallet.ShardStatus, error)
 	ResplitSignerShards(context.Context, cryptopay.SignerSetupRequest) (*wallet.ShardStatus, error)
 	VerifySignerShare(context.Context, string) error
+	UnlockSignerWindow(context.Context, string) (*wallet.ShardStatus, error)
 	EnableAutoSweep(context.Context, string) (*wallet.ShardStatus, error)
 	DisableAutoSweep(context.Context) (*wallet.ShardStatus, error)
 }
 
 func (h *CryptoHandler) signerService() (cryptoSignerService, bool) {
+	if h.signer != nil {
+		return h.signer, true
+	}
 	service, ok := any(h.service).(cryptoSignerService)
 	return service, ok && h.service != nil
 }
@@ -230,6 +234,38 @@ func (h *CryptoHandler) AdminSignerVerifyShare(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"valid": true}})
+}
+
+// AdminSignerUnlock verifies a recovery share and keeps the data key resident
+// for the bounded 15-minute lease, so the operator can unlock once and then run
+// the sweep from the normal run button. It requires a freshly typed code (the
+// 5-minute grant is not enough) because it turns signing power on.
+func (h *CryptoHandler) AdminSignerUnlock(c *gin.Context) {
+	cryptoVaultHeaders(c)
+	signer, ok := h.signerService()
+	if !ok {
+		response.Error(c, http.StatusServiceUnavailable, "wallet signer unavailable")
+		return
+	}
+	var request struct {
+		TotpCode string `json:"totp_code"`
+		Share    string `json:"share"`
+	}
+	if !decodeCryptoRequest(c, &request, 8<<10, "invalid signer unlock request") {
+		return
+	}
+	defer func() { request.Share = "" }()
+	if !h.requireFreshSignerTOTP(c, request.TotpCode) {
+		return
+	}
+	status, err := signer.UnlockSignerWindow(cryptoAuditContext(c), strings.TrimSpace(request.Share))
+	if writeCryptoSignerError(c, err) {
+		return
+	}
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": status})
 }
 
 // AdminSignerResplit replaces share A after a browser-side re-split. The old
