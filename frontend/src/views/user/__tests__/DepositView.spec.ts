@@ -994,3 +994,61 @@ describe('user deposit key rotation gate', () => {
     expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('user deposit history: instant credit state', () => {
+  it('marks a provisional row and explains that the credit can still be rolled back', async () => {
+    fakeTimers()
+    mocks.getDepositHistory.mockResolvedValueOnce([
+      {
+        chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'provisional',
+        credited: 67, credited_known: true, provisional: true, credited_at: '2026-01-01T00:00:01Z',
+        created_at: '2026-01-01T00:00:00Z'
+      }
+    ])
+    const wrapper = render()
+    await flushPromises()
+
+    const history = wrapper.get('.deposit-view__history')
+    expect(history.text()).toContain('deposit.statusProvisional')
+    expect(wrapper.get('[data-testid="deposit-provisional-hint"]').text()).toBe('deposit.provisionalHint')
+    // A provisional credit already moved the balance, so the amount is shown.
+    expect(history.text()).toContain('67')
+    expect(wrapper.find('[data-testid="deposit-revoked-hint"]').exists()).toBe(false)
+  })
+
+  it('marks a revoked row, translates the reason and tells the user to contact support', async () => {
+    fakeTimers()
+    mocks.getDepositHistory.mockResolvedValueOnce([
+      {
+        chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'revoked',
+        credited: 0, credited_known: false, provisional: true,
+        revoked_at: '2026-01-01T00:00:30Z', revoke_reason: 'reorg_noncanonical_block',
+        created_at: '2026-01-01T00:00:00Z'
+      }
+    ])
+    const wrapper = render()
+    await flushPromises()
+
+    const history = wrapper.get('.deposit-view__history')
+    expect(history.text()).toContain('deposit.statusRevoked')
+    expect(wrapper.get('[data-testid="deposit-revoke-reason"]').text()).toBe('deposit.revokeReasonReorgNoncanonical')
+    expect(wrapper.get('[data-testid="deposit-revoked-hint"]').text()).toBe('deposit.revokedHint')
+    expect(history.text()).not.toContain('deposit.provisionalHint')
+  })
+
+  it('renders an unknown revoke reason as a readable fallback instead of a raw machine code', async () => {
+    fakeTimers()
+    mocks.getDepositHistory.mockResolvedValueOnce([
+      {
+        chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'revoked',
+        revoked_at: '2026-01-01T00:00:30Z', revoke_reason: 'reorg_new_reason', created_at: '2026-01-01T00:00:00Z'
+      }
+    ])
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="deposit-revoke-reason"]').text()).toBe(
+      'deposit.revokeReasonGeneric {"code":"reorg_new_reason"}'
+    )
+  })
+})

@@ -17,8 +17,8 @@ func TestUserDepositHistoryReturnsFullTransactionHashForCaller(t *testing.T) {
 	hash := "0x" + strings.Repeat("ab", 32)
 	mock.ExpectQuery(`(?s)SELECT d.chain, d.tx_hash,.*WHERE a.user_id = \$1.*ORDER BY d.id DESC LIMIT \$2`).
 		WithArgs(int64(42), 50).
-		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id", "block_number", "confirmations"}).
-			AddRow("bsc", hash, "0xtoken", "10", "credited", "", time.Now(), 67, 2, 10, 101, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id", "block_number", "confirmations", "provisional", "credited_at", "revoked_at", "revoke_reason"}).
+			AddRow("bsc", hash, "0xtoken", "10", "credited", "", time.Now(), 67, 2, 10, 101, 0, false, nil, nil, ""))
 	s := &Service{db: db}
 	rows, err := s.UserDepositHistory(t.Context(), 42, 50)
 	require.NoError(t, err)
@@ -38,8 +38,8 @@ func TestDepositHistoryKeepsActualOrderAmountAfterRateChange(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	mock.ExpectQuery(`(?s)COALESCE\(o.amount, 0\).*LEFT JOIN payment_orders`).
 		WithArgs(int64(1), 50).
-		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id", "block_number", "confirmations"}).
-			AddRow("bsc", "0xfixture", "0xtoken", "10.000000000000000000", "credited", "", time.Now(), 67, 2, 10, 101, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id", "block_number", "confirmations", "provisional", "credited_at", "revoked_at", "revoke_reason"}).
+			AddRow("bsc", "0xfixture", "0xtoken", "10.000000000000000000", "credited", "", time.Now(), 67, 2, 10, 101, 0, false, nil, nil, ""))
 	s := &Service{db: db, config: CryptoConfig{CreditMultiplier: 6}}
 	rows, err := s.UserDepositHistory(t.Context(), 1, 50)
 	require.NoError(t, err)
@@ -55,8 +55,8 @@ func TestLegacyHistoryResolvesOriginalOrderInOneBatch(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 	mock.ExpectQuery(`(?s)COALESCE\(o.amount, 0\).*LEFT JOIN payment_orders`).WithArgs(int64(1), 50).
-		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id", "block_number", "confirmations"}).
-			AddRow("bsc", "0xlegacy", "0xtoken", "10", "credited", "", time.Now(), 0, 0, nil, 101, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id", "block_number", "confirmations", "provisional", "credited_at", "revoked_at", "revoke_reason"}).
+			AddRow("bsc", "0xlegacy", "0xtoken", "10", "credited", "", time.Now(), 0, 0, nil, 101, 0, false, nil, nil, ""))
 	_, identity := depositOrderIdentity("bsc", "0xlegacy", 0)
 	mock.ExpectQuery(`SELECT out_trade_no, amount FROM payment_orders`).WithArgs(int64(1), identity).
 		WillReturnRows(sqlmock.NewRows([]string{"out_trade_no", "amount"}).AddRow(identity, 67))
@@ -120,4 +120,39 @@ func TestListDepositsExportPageStartsWithNewestRecord(t *testing.T) {
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
+}
+
+// Instant credits reach the user's own history as "provisional" until final
+// confirmation, and as "revoked" once the chain invalidated them. The UI keys
+// its badges off this status instead of re-deriving it from ledger columns.
+func TestUserDepositHistoryDerivesProvisionalAndRevokedStatus(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	created := time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)
+	creditedAt := created.Add(2 * time.Second)
+	revokedAt := created.Add(30 * time.Second)
+	mock.ExpectQuery(`(?s)SELECT d.chain, d.tx_hash,.*provisional.*WHERE a.user_id = \$1.*ORDER BY d.id DESC LIMIT \$2`).
+		WithArgs(int64(7), 50).
+		WillReturnRows(sqlmock.NewRows([]string{"chain", "tx_hash", "token", "amount", "status", "reason", "created_at", "credited", "log_index", "order_id", "block_number", "confirmations", "provisional", "credited_at", "revoked_at", "revoke_reason"}).
+			AddRow("bsc", "0xprov", "0xtoken", "10", "credited", "", created, 67, 2, 10, 101, 0, true, creditedAt, nil, "").
+			AddRow("bsc", "0xrev", "0xtoken", "10", "reverted", "", created, 0, 3, nil, 101, 0, true, creditedAt, revokedAt, "reorg_noncanonical_block"))
+
+	s := &Service{db: db}
+	rows, err := s.UserDepositHistory(t.Context(), 7, 50)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+
+	require.Equal(t, userDepositStatusProvisional, rows[0].Status)
+	require.True(t, rows[0].Provisional)
+	require.Equal(t, creditedAt.Format(time.RFC3339), rows[0].CreditedAt)
+	require.Empty(t, rows[0].RevokedAt)
+	require.Equal(t, 67.0, rows[0].Credited)
+
+	require.Equal(t, userDepositStatusRevoked, rows[1].Status)
+	require.True(t, rows[1].Provisional)
+	require.Equal(t, "reorg_noncanonical_block", rows[1].RevokeReason)
+	require.Equal(t, revokedAt.Format(time.RFC3339), rows[1].RevokedAt)
+	require.Zero(t, rows[1].Credited, "a revoked credit must not show as credited")
+	require.NoError(t, mock.ExpectationsWereMet())
 }

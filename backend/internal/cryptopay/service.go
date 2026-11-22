@@ -1817,7 +1817,24 @@ type UserDepositRecord struct {
 	BlockNumber           uint64 `json:"block_number"`
 	Confirmations         int    `json:"confirmations"`
 	RequiredConfirmations int    `json:"required_confirmations"`
+	// Instant-credit reconciliation state. Provisional marks a credit that was
+	// added at 0 confirmations and is still inside the risk window; RevokedAt
+	// marks one the chain later invalidated and that was automatically clawed
+	// back. Status is rewritten to "provisional" / "revoked" so clients do not
+	// have to re-derive the user-facing wording from internal ledger columns.
+	Provisional  bool   `json:"provisional"`
+	CreditedAt   string `json:"credited_at,omitempty"`
+	RevokedAt    string `json:"revoked_at,omitempty"`
+	RevokeReason string `json:"revoke_reason,omitempty"`
 }
+
+// User-facing deposit statuses derived from the instant-credit flags. The raw
+// ledger keeps status='credited' + provisional and status='reverted' +
+// revoked_at; users only need to know "临时入账" and "已回滚".
+const (
+	userDepositStatusProvisional = "provisional"
+	userDepositStatusRevoked     = "revoked"
+)
 
 // ownWalletAddresses returns the operator's wallet addresses lowercased for
 // comparison. A lookup failure is reported as an empty list: the deposit list
@@ -1850,7 +1867,8 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 	// recorded before the scanner learned to skip them are filtered here.
 	query := `
 		SELECT d.chain, d.tx_hash, d.token, d.amount::text, d.status, d.reason, d.created_at,
-		       COALESCE(o.amount, 0), d.log_index, d.order_id, d.block_number, d.confirmations
+		       COALESCE(o.amount, 0), d.log_index, d.order_id, d.block_number, d.confirmations,
+		       d.provisional, d.credited_at, d.revoked_at, COALESCE(d.revoke_reason, '')
 		  FROM deposit_transactions d
 		  JOIN deposit_addresses a ON
 		       (a.chain = 'evm' AND d.chain <> 'solana' AND lower(a.address) = lower(d.to_address))
@@ -1882,9 +1900,17 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 		var created time.Time
 		var logIndex int
 		var orderID sql.NullInt64
+		var creditedAt, revokedAt sql.NullTime
+		var provisional bool
+		var revokeReason string
 		if err := rows.Scan(&r.Chain, &r.TxHash, &r.Token, &r.Amount, &r.Status, &r.Reason, &created, &r.Credited, &logIndex, &orderID,
-			&r.BlockNumber, &r.Confirmations); err != nil {
+			&r.BlockNumber, &r.Confirmations, &provisional, &creditedAt, &revokedAt, &revokeReason); err != nil {
 			return nil, err
+		}
+		r.Provisional = provisional
+		r.RevokeReason = revokeReason
+		if creditedAt.Valid {
+			r.CreditedAt = creditedAt.Time.UTC().Format(time.RFC3339)
 		}
 		r.RequiredConfirmations = required[r.Chain]
 		if r.Status == "credited" && r.Confirmations < r.RequiredConfirmations {
@@ -1908,6 +1934,15 @@ func (s *Service) UserDepositHistory(ctx context.Context, userID int64, limit in
 		} else if !orderID.Valid {
 			_, identity := depositOrderIdentity(r.Chain, r.TxHash, logIndex)
 			legacy[identity] = append(legacy[identity], len(out))
+		}
+		// Derive the user-facing state after the raw ledger status has been used
+		// above: a revoked credit is no longer "credited" to the user, and a
+		// provisional one already moved the balance but is not final yet.
+		if revokedAt.Valid {
+			r.RevokedAt = revokedAt.Time.UTC().Format(time.RFC3339)
+			r.Status = userDepositStatusRevoked
+		} else if r.Status == "credited" && r.Provisional {
+			r.Status = userDepositStatusProvisional
 		}
 		out = append(out, r)
 	}

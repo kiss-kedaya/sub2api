@@ -78,6 +78,15 @@ export interface DepositRecord {
   native_price_usd?: string
   native_price_at?: string
   native_price_source?: string
+  // Instant-credit reconciliation state. provisional = balance was credited at
+  // 0 confirmations and is still inside the risk window; revoked_at non-empty =
+  // the credit was clawed back and revoke_reason says why. Older backends omit
+  // these fields, so the table must degrade to the plain status.
+  provisional?: boolean
+  provisional_amount?: number
+  credited_at?: string
+  revoked_at?: string
+  revoke_reason?: string
 }
 
 export interface SweepPlan {
@@ -444,6 +453,10 @@ export interface DepositSummary {
   pending: number
   ignored: number
   amount: number
+  // Instant-credit counters. provisional = credits still inside the risk
+  // window; revoked = credits that were clawed back (a subset of reverted).
+  provisional?: number
+  revoked?: number
 }
 
 // listDepositsPaged returns one page of the deposit ledger plus whole-set
@@ -459,7 +472,7 @@ export async function listDepositsPaged(
   })
   return {
     items: data.data?.items ?? [],
-    summary: data.data?.summary ?? { total: 0, credited: 0, pending: 0, ignored: 0, amount: 0 }
+    summary: data.data?.summary ?? { total: 0, credited: 0, pending: 0, ignored: 0, amount: 0, provisional: 0, revoked: 0 }
   }
 }
 

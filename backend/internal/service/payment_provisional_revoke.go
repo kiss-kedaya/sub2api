@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 )
@@ -39,12 +40,28 @@ type ProvisionalRevocationResult struct {
 	// deposit honestly cannot be recovered from a user who already spent it;
 	// the deficit is recorded instead of retried forever.
 	Negative bool
+	// LedgerID is the redeem_codes row id of the negative, user-visible balance
+	// ledger entry written in the same transaction (0 when nothing was deducted,
+	// e.g. the account was deleted).
+	LedgerID int64
 }
 
 // auditDepositProvisionalRevoked is the payment audit action written for every
 // automatic claw-back, so the reversal is traceable next to the original
 // recharge order.
 const auditDepositProvisionalRevoked = "DEPOSIT_PROVISIONAL_REVOKED"
+
+// provisionalRevokeLedgerNotes is the user-visible reason on the balance ledger
+// row. The machine reason (reorg_noncanonical_block/...) stays on the deposit
+// row and in payment_audit_logs; the ledger only has to be understandable.
+const provisionalRevokeLedgerNotes = "链上充值未最终确认已回滚"
+
+// provisionalRevokeSourceRef builds the structured pointer from the ledger row
+// back to the chain deposit it reverses. It is indexed for audit lookups, not
+// shown to users (the notes field carries the readable sentence).
+func provisionalRevokeSourceRef(depositID int64, chain, txHash string, logIndex int) string {
+	return fmt.Sprintf("crypto_deposit:%d:%s:%s:%d", depositID, chain, txHash, logIndex)
+}
 
 // RevokeProvisionalDepositCredit deducts an instant deposit credit exactly once.
 //
@@ -116,9 +133,10 @@ func (s *PaymentService) RevokeProvisionalDepositCredit(ctx context.Context, in 
 	// 2. The frozen payment order is the only trustworthy amount: it is exactly
 	//    what fulfillment added to the balance, even if the chain re-priced the
 	//    deposit or the multiplier changed afterwards.
+	var depositID sql.NullInt64
 	var orderID, userID sql.NullInt64
 	var amount sql.NullFloat64
-	infoRows, err := client.QueryContext(txCtx, `SELECT d.order_id, o.user_id, o.amount
+	infoRows, err := client.QueryContext(txCtx, `SELECT d.id, d.order_id, o.user_id, o.amount
 		  FROM deposit_transactions d
 		  LEFT JOIN payment_orders o ON o.id = d.order_id
 		 WHERE d.chain = $1 AND d.tx_hash = $2 AND d.log_index = $3`,
@@ -127,7 +145,7 @@ func (s *PaymentService) RevokeProvisionalDepositCredit(ctx context.Context, in 
 		return nil, fmt.Errorf("provisional revocation: read credited order: %w", err)
 	}
 	if infoRows.Next() {
-		err = infoRows.Scan(&orderID, &userID, &amount)
+		err = infoRows.Scan(&depositID, &orderID, &userID, &amount)
 	}
 	if scanErr := infoRows.Err(); err == nil {
 		err = scanErr
@@ -191,7 +209,34 @@ func (s *PaymentService) RevokeProvisionalDepositCredit(ctx context.Context, in 
 			"chain", chain, "tx", txHash, "log_index", in.LogIndex, "user_id", userID.Int64)
 	}
 
-	// 4. Audit trail next to the original recharge order.
+	// 4. User-visible balance ledger entry. The balance UPDATE above is invisible
+	//    in "使用记录 / 余额明细" on its own; without this row the user sees a
+	//    recharge but no matching deduction. It reuses redeem_codes (the same
+	//    table the user's balance history reads) with a negative value and a
+	//    server-only type, so the two sides always reconcile.
+	//
+	//    This is a synthetic ledger row, not a redeem code: no code/hash/prefix
+	//    is written (the row is not redeemable) and source_ref points back to the
+	//    chain deposit for audit. Only write it when the deduction actually
+	//    happened (deleted users have no balance to explain).
+	if deducted > 0 {
+		now := time.Now()
+		ledger, err := tx.RedeemCode.Create().
+			SetType(RedeemTypeCryptoRevoke).
+			SetValue(-amount.Float64).
+			SetStatus(StatusUsed).
+			SetUsedBy(userID.Int64).
+			SetUsedAt(now).
+			SetNotes(provisionalRevokeLedgerNotes).
+			SetSourceRef(provisionalRevokeSourceRef(depositID.Int64, chain, txHash, in.LogIndex)).
+			Save(txCtx)
+		if err != nil {
+			return nil, fmt.Errorf("provisional revocation: write balance ledger: %w", err)
+		}
+		result.LedgerID = ledger.ID
+	}
+
+	// 5. Audit trail next to the original recharge order.
 	detail, err := json.Marshal(map[string]any{
 		"chain":            chain,
 		"tx_hash":          txHash,

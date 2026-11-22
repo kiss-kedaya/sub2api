@@ -589,7 +589,18 @@
                 <span v-else class="text-muted">—</span>
               </template>
               <template #status-cell="{ row }">
-                <UBadge :color="statusColor(row.original.status)" variant="subtle">{{ statusLabel(row.original.status) }}</UBadge>
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <UBadge :color="statusColor(row.original.status)" variant="subtle">{{ statusLabel(row.original.status) }}</UBadge>
+                  <UBadge v-if="isDepositProvisional(row.original)" color="warning" variant="subtle" :title="t('deposit.provisionalHint')" data-testid="deposit-provisional-badge">{{ t('deposit.statusProvisional') }}</UBadge>
+                  <UBadge v-if="isDepositRevoked(row.original)" color="error" variant="subtle" data-testid="deposit-revoked-badge">{{ t('deposit.statusRevoked') }}</UBadge>
+                </div>
+                <p v-if="isDepositRevoked(row.original)" class="mt-1 max-w-56 text-xs text-error" data-testid="deposit-revoked-reason">
+                  {{ depositRevokeReason(row.original) }}
+                </p>
+              </template>
+              <template #credited_at-cell="{ row }">
+                <span v-if="row.original.credited_at" class="whitespace-nowrap text-muted">{{ fmtTime(row.original.credited_at) }}</span>
+                <span v-else class="text-muted">—</span>
               </template>
               <template #tx_hash-cell="{ row }">
                 <ULink
@@ -711,6 +722,7 @@ import { useAddressOwners } from '@/composables/useAddressOwners'
 import { useSweepRecords } from '@/composables/useSweepRecords'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { explorerTxURL } from '@/utils/cryptoExplorer'
+import { depositRevokeReasonCopy } from '@/utils/depositRevoke'
 import {
   getCryptoConfig,
   getCryptoConfigPrivate,
@@ -979,6 +991,7 @@ const depositTableColumns = computed<TableColumn<DepositRecord>[]>(() => [
   { accessorKey: 'native_price_usd', header: t('admin.crypto.nativePrice') },
   { accessorKey: 'native_price_at', header: t('admin.crypto.nativePriceAt') },
   { accessorKey: 'status', header: t('common.status') },
+  { accessorKey: 'credited_at', header: t('admin.crypto.depCreditedAt') },
   { accessorKey: 'tx_hash', header: 'TX' },
   { accessorKey: 'created_at', header: t('admin.crypto.colTime') }
 ])
@@ -1017,7 +1030,7 @@ const pendingChannelEnabled = ref(false)
 const pendingSweepAuto = ref(false)
 
 const deposits = ref<DepositRecord[]>([])
-const depositSummary = ref<DepositSummary>({ total: 0, credited: 0, pending: 0, ignored: 0, amount: 0 })
+const depositSummary = ref<DepositSummary>({ total: 0, credited: 0, pending: 0, ignored: 0, amount: 0, provisional: 0, revoked: 0 })
 const depositChain = ref('')
 const depositStatus = ref('')
 const depositPage = ref(1)
@@ -1157,6 +1170,24 @@ function statusColor(status: string): 'success' | 'warning' | 'error' | 'neutral
   return 'neutral'
 }
 
+// Instant-credit state for one deposit row. provisional=true without a
+// revocation means the balance was credited at 0 confirmations and is still
+// inside the risk window; revoked_at means the chain invalidated it and the
+// credit was clawed back. Older backends omit both fields: degrade to nothing.
+function isDepositProvisional(row: DepositRecord): boolean {
+  return Boolean(row.provisional) && !row.revoked_at
+}
+
+function isDepositRevoked(row: DepositRecord): boolean {
+  return Boolean(row.revoked_at)
+}
+
+function depositRevokeReason(row: DepositRecord): string {
+  if (!row.revoked_at) return ''
+  const copy = depositRevokeReasonCopy(row.revoke_reason)
+  return copy.params ? t(copy.key, copy.params) : t(copy.key)
+}
+
 const addressStats = computed(() => [
   { label: 'admin.crypto.statAddresses', icon: 'i-lucide-wallet-cards', value: addressSummary.value.address_count },
   { label: 'admin.crypto.statDeposits', icon: 'i-lucide-inbox', value: addressSummary.value.deposit_count },
@@ -1169,7 +1200,11 @@ const depositStats = computed(() => [
   { label: 'admin.crypto.depCredited', icon: 'i-lucide-circle-check', value: depositSummary.value.credited },
   { label: 'admin.crypto.depPending', icon: 'i-lucide-hourglass', value: depositSummary.value.pending },
   { label: 'admin.crypto.depIgnored', icon: 'i-lucide-circle-alert', value: depositSummary.value.ignored },
-  { label: 'admin.crypto.depAmount', icon: 'i-lucide-coins', value: fmtAmount(depositSummary.value.amount) }
+  { label: 'admin.crypto.depAmount', icon: 'i-lucide-coins', value: fmtAmount(depositSummary.value.amount) },
+  // Instant-credit risk window: a nonzero provisional count means money is out
+  // before final confirmation; revoked counts the claw-backs (subset of reverted).
+  { label: 'admin.crypto.depProvisional', icon: 'i-lucide-timer', value: depositSummary.value.provisional ?? 0 },
+  { label: 'admin.crypto.depRevoked', icon: 'i-lucide-undo-2', value: depositSummary.value.revoked ?? 0 }
 ])
 
 // --- RPC endpoint table -------------------------------------------------

@@ -104,3 +104,29 @@ describe('UserBalanceHistoryModal request ordering', () => {
     expect(wrapper.find('.animate-spin').exists()).toBe(false)
   })
 })
+
+describe('UserBalanceHistoryModal chain claw-back ledger rows', () => {
+  it('labels a crypto_revoke row as a negative chain claw-back and exposes its audit source', async () => {
+    mocks.getUserBalanceHistory.mockResolvedValueOnce({
+      total: 1,
+      total_recharged: 0,
+      items: [{
+        id: 7, code: '****', type: 'crypto_revoke', value: -6.7, status: 'used',
+        used_at: '2026-11-22T10:05:00Z', created_at: '2026-11-22T10:05:00Z',
+        notes: '链上充值未最终确认已回滚',
+        source_ref: 'crypto_deposit:12:bsc:0xabc:1'
+      }]
+    })
+    const wrapper = await openDialog()
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('redeem.balanceRevokedCrypto')
+    // Negative amounts read as -$6.70, never $-6.70.
+    expect(text).toContain('-$6.70')
+    expect(text).not.toContain('$-6.70')
+    expect(text).toContain('链上充值未最终确认已回滚')
+    expect(text).toContain('crypto_deposit:12:bsc:0xabc:1')
+    expect(text).not.toContain('****')
+  })
+})

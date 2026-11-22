@@ -22,6 +22,18 @@
         </div>
       </div>
 
+      <!-- 负余额不是系统乱扣：临时入账被链上回滚 + 已消费才会为负，必须说清楚。
+           不引入欠款迁移，余额口径保持为负。 -->
+      <UAlert
+        v-if="isNegativeBalance"
+        color="error"
+        variant="subtle"
+        icon="i-lucide-triangle-alert"
+        :title="t('redeem.negativeBalanceTitle')"
+        :description="t('redeem.negativeBalanceNotice')"
+        data-testid="negative-balance-notice"
+      />
+
       <!-- Redeem Form -->
       <section v-if="!keyRotationRequired" class="rounded-lg bg-default p-5 shadow-xs ring ring-default sm:p-6 dark:shadow-none">
         <form @submit.prevent="handleRedeem" class="space-y-5">
@@ -182,12 +194,12 @@
                   {{ formatHistoryValue(item) }}
                 </p>
                 <p
-                  v-if="!isAdminAdjustment(item.type)"
+                  v-if="!isAdminAdjustment(item.type) && !isRevokeType(item.type)"
                   class="font-mono text-xs text-dimmed"
                 >
                   {{ item.code }}
                 </p>
-                <p v-else class="text-xs text-dimmed">
+                <p v-else-if="isAdminAdjustment(item.type)" class="text-xs text-dimmed">
                   {{ t('redeem.adminAdjustment') }}
                 </p>
                 <!-- Display notes for admin adjustments -->
@@ -327,6 +339,8 @@ const riskAckActive = computed(
 )
 
 const user = computed(() => authStore.user)
+// 允许余额为负（临时入账被回滚后用户已消费的部分）；这里只负责解释，不改口径。
+const isNegativeBalance = computed(() => (user.value?.balance ?? 0) < 0)
 
 const redeemCode = ref('')
 const submitting = ref(false)
@@ -354,7 +368,8 @@ const contactInfo = ref('')
 
 // Helper functions for history display
 const isBalanceType = (type: string) => {
-  return type === 'balance' || type === 'admin_balance'
+  // crypto_revoke 是链上充值回滚时补写的负向余额流水，展示口径与余额一致。
+  return type === 'balance' || type === 'admin_balance' || type === 'payment_balance' || type === 'affiliate_balance' || type === 'crypto_revoke'
 }
 
 const isSubscriptionType = (type: string) => {
@@ -365,11 +380,19 @@ const isAdminAdjustment = (type: string) => {
   return type === 'admin_balance' || type === 'admin_concurrency'
 }
 
+const isRevokeType = (type: string) => type === 'crypto_revoke'
+
 const getHistoryItemTitle = (item: RedeemHistoryItem) => {
   if (item.type === 'balance') {
     return t('redeem.balanceAddedRedeem')
+  } else if (item.type === 'payment_balance') {
+    return t('redeem.balanceAddedCrypto')
+  } else if (item.type === 'affiliate_balance') {
+    return t('redeem.balanceAddedAffiliate')
   } else if (item.type === 'admin_balance') {
     return item.value >= 0 ? t('redeem.balanceAddedAdmin') : t('redeem.balanceDeductedAdmin')
+  } else if (item.type === 'crypto_revoke') {
+    return t('redeem.balanceRevokedCrypto')
   } else if (item.type === 'concurrency') {
     return t('redeem.concurrencyAddedRedeem')
   } else if (item.type === 'admin_concurrency') {
@@ -382,8 +405,9 @@ const getHistoryItemTitle = (item: RedeemHistoryItem) => {
 
 const formatHistoryValue = (item: RedeemHistoryItem) => {
   if (isBalanceType(item.type)) {
-    const sign = item.value >= 0 ? '+' : ''
-    return `${sign}$${item.value.toFixed(2)}`
+    // Negative rows (admin deduction / chain revoke) read as "-$4.70", never "$-4.70".
+    const sign = item.value >= 0 ? '+' : '-'
+    return `${sign}$${Math.abs(item.value).toFixed(2)}`
   } else if (isSubscriptionType(item.type)) {
     // 订阅类型显示有效天数和分组名称
     const days = item.validity_days || Math.round(item.value)

@@ -100,6 +100,11 @@ func Notes(v string) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldEQ(FieldNotes, v))
 }
 
+// SourceRef applies equality check predicate on the "source_ref" field. It's identical to SourceRefEQ.
+func SourceRef(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEQ(FieldSourceRef, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldEQ(FieldCreatedAt, v))
@@ -668,6 +673,81 @@ func NotesEqualFold(v string) predicate.RedeemCode {
 // NotesContainsFold applies the ContainsFold predicate on the "notes" field.
 func NotesContainsFold(v string) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldContainsFold(FieldNotes, v))
+}
+
+// SourceRefEQ applies the EQ predicate on the "source_ref" field.
+func SourceRefEQ(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEQ(FieldSourceRef, v))
+}
+
+// SourceRefNEQ applies the NEQ predicate on the "source_ref" field.
+func SourceRefNEQ(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNEQ(FieldSourceRef, v))
+}
+
+// SourceRefIn applies the In predicate on the "source_ref" field.
+func SourceRefIn(vs ...string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldIn(FieldSourceRef, vs...))
+}
+
+// SourceRefNotIn applies the NotIn predicate on the "source_ref" field.
+func SourceRefNotIn(vs ...string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNotIn(FieldSourceRef, vs...))
+}
+
+// SourceRefGT applies the GT predicate on the "source_ref" field.
+func SourceRefGT(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldGT(FieldSourceRef, v))
+}
+
+// SourceRefGTE applies the GTE predicate on the "source_ref" field.
+func SourceRefGTE(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldGTE(FieldSourceRef, v))
+}
+
+// SourceRefLT applies the LT predicate on the "source_ref" field.
+func SourceRefLT(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldLT(FieldSourceRef, v))
+}
+
+// SourceRefLTE applies the LTE predicate on the "source_ref" field.
+func SourceRefLTE(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldLTE(FieldSourceRef, v))
+}
+
+// SourceRefContains applies the Contains predicate on the "source_ref" field.
+func SourceRefContains(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldContains(FieldSourceRef, v))
+}
+
+// SourceRefHasPrefix applies the HasPrefix predicate on the "source_ref" field.
+func SourceRefHasPrefix(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldHasPrefix(FieldSourceRef, v))
+}
+
+// SourceRefHasSuffix applies the HasSuffix predicate on the "source_ref" field.
+func SourceRefHasSuffix(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldHasSuffix(FieldSourceRef, v))
+}
+
+// SourceRefIsNil applies the IsNil predicate on the "source_ref" field.
+func SourceRefIsNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldIsNull(FieldSourceRef))
+}
+
+// SourceRefNotNil applies the NotNil predicate on the "source_ref" field.
+func SourceRefNotNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNotNull(FieldSourceRef))
+}
+
+// SourceRefEqualFold applies the EqualFold predicate on the "source_ref" field.
+func SourceRefEqualFold(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldEqualFold(FieldSourceRef, v))
+}
+
+// SourceRefContainsFold applies the ContainsFold predicate on the "source_ref" field.
+func SourceRefContainsFold(v string) predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldContainsFold(FieldSourceRef, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

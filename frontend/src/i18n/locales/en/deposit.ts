@@ -106,6 +106,13 @@ export default {
     reasonUnknown: 'This address is not a deposit address',
     reasonOther: 'Not credited (reason code: {code})',
     reasonRevoked: 'Provisional credit rolled back (reason code: {code})',
+    // Revocation reasons are machine codes in the ledger; translate them for users.
+    revokeReasonReorgNoncanonical: 'The block containing this transfer was reorganized away before final confirmation',
+    revokeReasonReceiptMissing: 'The transaction receipt disappeared before final confirmation',
+    revokeReasonReceiptReverted: 'The transaction reverted on-chain and was rolled back',
+    revokeReasonGeneric: 'Not finally confirmed (reason code: {code})',
+    provisionalHint: 'The transfer was detected and credited provisionally; the credit can be rolled back until it is finally confirmed.',
+    revokedHint: 'This transfer was not finally confirmed. If you were charged, please contact support.',
     statusCredited: 'Credited',
     statusPending: 'Pending',
     statusConfirming: 'Confirming',

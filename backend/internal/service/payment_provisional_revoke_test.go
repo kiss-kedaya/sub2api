@@ -44,6 +44,7 @@ func newProvisionalRevokeEnv(t *testing.T, balance, credited float64) *provision
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(entsql.OpenDB(dialect.SQLite, db))))
 	t.Cleanup(func() { _ = client.Close() })
 	_, err = db.Exec(`CREATE TABLE deposit_transactions (
+		id INTEGER PRIMARY KEY,
 		chain TEXT NOT NULL, tx_hash TEXT NOT NULL, log_index INTEGER NOT NULL,
 		order_id INTEGER, status TEXT NOT NULL,
 		provisional INTEGER NOT NULL DEFAULT 0,
@@ -109,6 +110,40 @@ func (e *provisionalRevokeEnv) revoke() (*ProvisionalRevocationResult, error) {
 	})
 }
 
+func (e *provisionalRevokeEnv) depositID(t *testing.T) int64 {
+	t.Helper()
+	var id int64
+	require.NoError(t, e.db.QueryRow(`SELECT id FROM deposit_transactions WHERE chain = $1 AND tx_hash = $2 AND log_index = $3`,
+		e.chain, e.txHash, e.logIdx).Scan(&id))
+	return id
+}
+
+type revokeLedgerRow struct {
+	userID    int64
+	codeType  string
+	value     float64
+	notes     string
+	sourceRef string
+	status    string
+	codeHash  sql.NullString
+}
+
+func (e *provisionalRevokeEnv) userLedger(t *testing.T) []revokeLedgerRow {
+	t.Helper()
+	rows, err := e.db.Query(`SELECT used_by, type, CAST(value AS REAL), COALESCE(notes,''), COALESCE(source_ref,''), status, code_hash
+		FROM redeem_codes WHERE type = 'crypto_revoke' ORDER BY id`)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var out []revokeLedgerRow
+	for rows.Next() {
+		var row revokeLedgerRow
+		require.NoError(t, rows.Scan(&row.userID, &row.codeType, &row.value, &row.notes, &row.sourceRef, &row.status, &row.codeHash))
+		out = append(out, row)
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
 // The claw-back must deduct exactly the frozen credited amount once, persist the
 // revocation on the deposit row, and write an audit trail.
 func TestRevokeProvisionalDepositCreditDeductsExactlyOnce(t *testing.T) {
@@ -137,6 +172,20 @@ func TestRevokeProvisionalDepositCreditDeductsExactlyOnce(t *testing.T) {
 	require.NoError(t, env.db.QueryRow(`SELECT COUNT(*) FROM payment_audit_logs WHERE action = 'DEPOSIT_PROVISIONAL_REVOKED'`).Scan(&audits))
 	require.Equal(t, 1, audits)
 
+	// The deduction must be visible in the user's balance history ("使用记录 /
+	// 余额明细"): one negative crypto_revoke row pointing back at the deposit,
+	// written with the same transaction as the balance change.
+	ledger := env.userLedger(t)
+	require.Len(t, ledger, 1)
+	require.Equal(t, env.userID, ledger[0].userID)
+	require.Equal(t, RedeemTypeCryptoRevoke, ledger[0].codeType)
+	require.InDelta(t, -6.7, ledger[0].value, 1e-9)
+	require.Equal(t, "链上充值未最终确认已回滚", ledger[0].notes)
+	require.Contains(t, ledger[0].sourceRef, fmt.Sprintf("crypto_deposit:%d:bsc:", env.depositID(t)))
+	require.Contains(t, ledger[0].sourceRef, env.txHash)
+	require.Equal(t, StatusUsed, ledger[0].status)
+	require.False(t, ledger[0].codeHash.Valid, "a synthetic ledger row must not carry a code hash")
+
 	// Second attempt: same identity, same pass, another instance. No money moves.
 	second, err := env.revoke()
 	require.NoError(t, err)
@@ -144,6 +193,7 @@ func TestRevokeProvisionalDepositCreditDeductsExactlyOnce(t *testing.T) {
 	require.InDelta(t, 3.3, env.balance(t), 1e-9)
 	require.NoError(t, env.db.QueryRow(`SELECT COUNT(*) FROM payment_audit_logs WHERE action = 'DEPOSIT_PROVISIONAL_REVOKED'`).Scan(&audits))
 	require.Equal(t, 1, audits)
+	require.Len(t, env.userLedger(t), 1, "the ledger row is written exactly once")
 }
 
 // A user who already spent the provisional credit may go negative: the money
@@ -158,6 +208,12 @@ func TestRevokeProvisionalDepositCreditAllowsNegativeBalance(t *testing.T) {
 	require.True(t, result.BalanceAfterKnown)
 	require.InDelta(t, -4.7, result.BalanceAfter, 1e-9)
 	require.InDelta(t, -4.7, env.balance(t), 1e-9)
+	// A negative balance still gets the same negative ledger row: the user can
+	// see why the balance went below zero instead of only seeing a smaller number.
+	require.NotZero(t, result.LedgerID)
+	ledger := env.userLedger(t)
+	require.Len(t, ledger, 1)
+	require.InDelta(t, -6.7, ledger[0].value, 1e-9)
 }
 
 // A confirmation-gated (non-provisional) reorg must keep the manual path: the

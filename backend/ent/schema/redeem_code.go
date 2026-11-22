@@ -75,6 +75,14 @@ func (RedeemCode) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
+		// source_ref 是合成流水行的来源引用（当前只有链上充值回滚：
+		// crypto_deposit:<deposit_id>:<chain>:<tx_hash>:<log_index>）。
+		// 它不是卡密凭据，只是让财务/审计能从「余额明细」的一行反查到
+		// deposit_transactions 里的同一笔链上入账。真实卡密行留空。
+		field.String("source_ref").
+			MaxLen(160).
+			Optional().
+			Comment("Opaque source reference for synthetic ledger rows (crypto deposit revocation)"),
 		field.Time("created_at").
 			Immutable().
 			Default(time.Now).

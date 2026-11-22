@@ -690,6 +690,7 @@ export default {
       allTypes: 'All Types',
       typeBalance: 'Balance (Redeem)',
       typeCryptoBalance: 'Balance (Crypto Deposit)',
+      typeCryptoRevoke: 'Balance (Crypto deposit reversed)',
       typeAffiliateBalance: 'Balance (Affiliate Transfer)',
       typeAdminBalance: 'Balance (Admin)',
       typeConcurrency: 'Concurrency (Redeem)',

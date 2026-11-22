@@ -104,6 +104,13 @@ export default {
     reasonUnknown: '该地址不是充值地址',
     reasonOther: '未入账（原因码：{code}）',
     reasonRevoked: '临时入账已回滚（原因码：{code}）',
+    // 回滚原因：扫链侧写的是机器码，用户侧必须翻译成人话。
+    revokeReasonReorgNoncanonical: '交易所在区块被链上重组，未最终确认',
+    revokeReasonReceiptMissing: '交易回执丢失，无法最终确认',
+    revokeReasonReceiptReverted: '交易执行失败，已被链上回滚',
+    revokeReasonGeneric: '未被最终确认（原因码：{code}）',
+    provisionalHint: '已检测到转账并临时入账；最终确认前该笔入账可能被自动回滚。',
+    revokedHint: '该笔转账未被最终确认，如已扣款请联系客服。',
     statusCredited: '已入账',
     statusPending: '待确认',
     statusConfirming: '入账中',
