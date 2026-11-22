@@ -2524,6 +2524,10 @@ type oauthPendingFlowTestHandlerOptions struct {
 	totpCache          service.TotpCache
 	totpEncryptor      service.SecretEncryptor
 	userRepoOptions    oauthPendingFlowUserRepoOptions
+	// refreshTokenCache optionally replaces the default empty stub; tests that
+	// need a Redis-backed capability (e.g. one-time OAuth login codes) inject
+	// a stub implementing both interfaces.
+	refreshTokenCache service.RefreshTokenCache
 }
 
 func newOAuthPendingFlowTestHandlerWithDependencies(
@@ -2628,11 +2632,15 @@ CREATE TABLE IF NOT EXISTS user_affiliates (
 			},
 		}, options.emailCache)
 	}
+	refreshTokenCache := service.RefreshTokenCache(&oauthPendingFlowRefreshTokenCacheStub{})
+	if options.refreshTokenCache != nil {
+		refreshTokenCache = options.refreshTokenCache
+	}
 	authSvc := service.NewAuthService(
 		client,
 		userRepo,
 		redeemRepo,
-		&oauthPendingFlowRefreshTokenCacheStub{},
+		refreshTokenCache,
 		cfg,
 		settingSvc,
 		emailService,

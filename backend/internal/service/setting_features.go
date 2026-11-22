@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
 )
 
 // GetConfiguredCustomEndpoints returns the admin-configured custom endpoints.
@@ -261,15 +263,45 @@ func (s *SettingService) IsTotpEncryptionKeyConfigured() bool {
 	return s != nil && s.cfg != nil && s.cfg.Totp.HasPersistentEncryptionKey()
 }
 
-// IsSessionBindingEnabled 检查会话 IP/UA 绑定是否启用（默认关闭）。
-// 开启时会话与登录时的 IP/User-Agent 绑定，任一变化立即失效并撤销该会话。
-// 默认关闭：移动网络/多出口 IP 场景下 IP 频繁变化会导致登录后立即掉线。
+// IsSessionBindingEnabled 检查会话 IP/UA 绑定是否启用（默认开启）。
+// 开启时会话与登录时的 IP/User-Agent 绑定，指纹变化立即失效并撤销该会话。
+// 显式写入 "false" 可关闭；移动网络/多出口 IP 场景可配合
+// security.session_binding_mode=loose（默认）放宽到网段级别。
 func (s *SettingService) IsSessionBindingEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
 	value, err := s.settingRepo.GetValue(ctx, SettingKeySessionBindingEnabled)
 	if err != nil {
-		return false // 默认关闭
+		if errors.Is(err, ErrSettingNotFound) {
+			return true // 缺省开启；只有管理员显式关闭才失效
+		}
+		return false
 	}
-	return value == "true"
+	return value != "false"
+}
+
+// SessionBindingMode 返回会话绑定指纹的计算模式（security.session_binding_mode）。
+// 配置缺失时按 strict 处理，保证测试与旧部署行为不变；生产默认值由 config 注入为 loose。
+func (s *SettingService) SessionBindingMode() string {
+	if s == nil || s.cfg == nil {
+		return config.SessionBindingModeStrict
+	}
+	mode := strings.ToLower(strings.TrimSpace(s.cfg.Security.SessionBindingMode))
+	switch mode {
+	case config.SessionBindingModeOff, config.SessionBindingModeLoose, config.SessionBindingModeStrict:
+		return mode
+	default:
+		return config.SessionBindingModeStrict
+	}
+}
+
+// SessionBindingHash 按当前配置模式计算会话指纹哈希，供中间件与签发路径复用。
+func (s *SettingService) SessionBindingHash(binding *SessionBinding) string {
+	if binding == nil {
+		return ""
+	}
+	return binding.HashForMode(s.SessionBindingMode())
 }
 
 // IsStepUpEnabled 检查敏感操作 step-up 2FA 门控是否启用（默认关闭）。

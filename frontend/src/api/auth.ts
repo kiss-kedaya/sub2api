@@ -364,6 +364,24 @@ export async function revokeAllSessions(): Promise<{ message: string }> {
 }
 
 /**
+ * Exchange the single-use OAuth login code for a token pair.
+ *
+ * GitHub / Google callbacks redirect with `#code=...` instead of putting
+ * access/refresh tokens in the URL fragment. The code is valid for 60 seconds
+ * and can be consumed exactly once, so the callback view must exchange it
+ * immediately and clear the fragment first.
+ */
+export interface OAuthCodeExchangeResponse extends OAuthTokenResponse {
+  provider?: string
+  redirect?: string
+}
+
+export async function exchangeOAuthLoginCode(code: string): Promise<OAuthCodeExchangeResponse> {
+  const { data } = await apiClient.post<OAuthCodeExchangeResponse>('/auth/oauth/exchange', { code })
+  return data
+}
+
+/**
  * Check if user is authenticated
  * @returns True if user has valid token
  */
@@ -728,6 +746,7 @@ export const authAPI = {
   resetPassword,
   refreshToken,
   revokeAllSessions,
+  exchangeOAuthLoginCode,
   getPendingOAuthBindLoginKind,
   isPendingOAuthCreateAccountRequired,
   hasPendingOAuthSuggestedProfile,

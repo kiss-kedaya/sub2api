@@ -115,8 +115,8 @@ func TestUpdateSettingsStepUpNoTransitionSkipsGate(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Empty(t, repo.values[service.SettingKeyStepUpEnabled], "same-value saves must not write the security switch")
-	// 会话 IP/UA 绑定默认关闭：未显式提交时持久化 false。
-	require.Equal(t, "false", repo.values[service.SettingKeySessionBindingEnabled])
+	// 会话 IP/UA 绑定默认开启：未显式提交时持久化为 true。
+	require.Equal(t, "true", repo.values[service.SettingKeySessionBindingEnabled])
 }
 
 // 保持开启（true→true）：不触发转换校验，常规保存不被打断。
@@ -146,15 +146,15 @@ func TestUpdateSettingsOmittedSecuritySwitchesKeepStoredValues(t *testing.T) {
 	require.Equal(t, "true", repo.values[service.SettingKeySessionBindingEnabled])
 }
 
-// 省略字段在开关本就关闭时同样保持关闭（默认值路径）。
-func TestUpdateSettingsOmittedSecuritySwitchesKeepDisabled(t *testing.T) {
+// 省略字段时同样采用默认值（默认开启）。
+func TestUpdateSettingsOmittedSecuritySwitchesUseDefaults(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
 
 	rec := doUpdateSettings(t, h, map[string]any{"registration_enabled": true}, nil)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Empty(t, repo.values[service.SettingKeyStepUpEnabled])
-	require.Equal(t, "false", repo.values[service.SettingKeySessionBindingEnabled])
+	require.Equal(t, "true", repo.values[service.SettingKeySessionBindingEnabled])
 }
 
 func TestUpdateSettingsForwardedClientIPHeadersOmittedPreservesAndEmptyClears(t *testing.T) {

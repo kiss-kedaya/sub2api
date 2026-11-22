@@ -28,6 +28,17 @@ const (
 	DatabaseMigrationModeValidate = "validate"
 )
 
+// 会话绑定指纹（security.session_binding_mode）允许的取值。
+// 绑定指纹用于把会话限制在签发时的客户端网络环境上：
+//   - off: 不计算也不校验绑定（仅作为回滚开关）；
+//   - loose: IPv4 按 /24、IPv6 按 /64 归一后与 User-Agent 一起哈希（默认，容忍同一网段内的 IP 漂移）；
+//   - strict: 完整 IP 与 User-Agent 一起哈希（任意变化即失效）。
+const (
+	SessionBindingModeOff    = "off"
+	SessionBindingModeLoose  = "loose"
+	SessionBindingModeStrict = "strict"
+)
+
 // DefaultKeyRotationCutoff is the default value of security.key_rotation_cutoff.
 // Active API keys created before this instant are treated as potentially leaked
 // by the key-rotation gate and must be rotated (or put behind an IP allowlist)
@@ -767,6 +778,16 @@ type SecurityConfig struct {
 	// KeyRotationCutoff is the RFC3339 instant that separates "possibly leaked"
 	// API keys from rotated ones. Defaults to config.DefaultKeyRotationCutoff.
 	KeyRotationCutoff string `mapstructure:"key_rotation_cutoff"`
+	// SessionBindingMode controls how the session binding fingerprint is
+	// computed and whether it is enforced at all. See SessionBindingMode*
+	// constants. Defaults to "loose"; set "off" to roll the binding back.
+	SessionBindingMode string `mapstructure:"session_binding_mode"`
+	// OAuthCodeExchangeEnabled makes the GitHub / Google OAuth callbacks
+	// redirect the browser with a single-use, 60-second code instead of
+	// putting the access / refresh tokens in the URL fragment. The frontend
+	// exchanges the code through POST /api/v1/auth/oauth/exchange. Defaults to
+	// true; set false to fall back to the legacy fragment flow for one release.
+	OAuthCodeExchangeEnabled bool `mapstructure:"oauth_code_exchange_enabled"`
 	// AuthSubjectPlaintextDualWrite keeps writing the legacy plaintext subject
 	// columns (auth_identities.provider_subject, auth_identity_channels.channel_subject,
 	// pending_auth_sessions.provider_subject) next to the keyed blind index.
@@ -782,6 +803,30 @@ type SecurityConfig struct {
 	HoneypotExemptNets            []string                                   `mapstructure:"honeypot_exempt_nets" json:"-" yaml:"-"`
 	ForwardedClientIPHeaders      []string                                   `mapstructure:"forwarded_client_ip_headers" json:"forwarded_client_ip_headers" yaml:"forwarded_client_ip_headers"`
 	forwardedClientIPSettingsLive *atomic.Pointer[ForwardedClientIPSettings] `mapstructure:"-" json:"-" yaml:"-"`
+}
+
+// NormalizeSessionBindingMode 归一化并校验 security.session_binding_mode。
+func NormalizeSessionBindingMode(mode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", SessionBindingModeLoose:
+		return SessionBindingModeLoose, nil
+	case SessionBindingModeOff:
+		return SessionBindingModeOff, nil
+	case SessionBindingModeStrict:
+		return SessionBindingModeStrict, nil
+	default:
+		return "", fmt.Errorf("security.session_binding_mode must be one of: off, loose, strict")
+	}
+}
+
+// SessionBindingLoose 报告会话指纹是否按网段归一（loose 模式）。
+func (c *Config) SessionBindingLoose() bool {
+	return c != nil && strings.EqualFold(strings.TrimSpace(c.Security.SessionBindingMode), SessionBindingModeLoose)
+}
+
+// SessionBindingDisabled 报告会话绑定是否被显式关闭。
+func (c *Config) SessionBindingDisabled() bool {
+	return c != nil && strings.EqualFold(strings.TrimSpace(c.Security.SessionBindingMode), SessionBindingModeOff)
 }
 
 func NormalizeForwardedClientIPHeaders(headers []string) ([]string, error) {
@@ -1857,10 +1902,12 @@ type JWTConfig struct {
 	Secret     string `mapstructure:"secret"`
 	ExpireHour int    `mapstructure:"expire_hour"`
 	// AccessTokenExpireMinutes: Access Token有效期（分钟）
-	// - >0: 使用分钟配置（优先级高于 ExpireHour）
-	// - =0: 回退使用 ExpireHour（向后兼容旧配置）
+	// - >0: 使用分钟配置（优先级高于 ExpireHour），默认 60 分钟
+	// - =0: 回退使用 ExpireHour（仅用于显式回退的旧配置）
 	AccessTokenExpireMinutes int `mapstructure:"access_token_expire_minutes"`
-	// RefreshTokenExpireDays: Refresh Token有效期（天），默认30天
+	// RefreshTokenExpireDays: Refresh Token有效期（天），默认30天。
+	// 该值同时是单个登录会话的绝对寿命上限：每次轮换都会继承首次签发时间
+	// （session_started_at），超过该天数必须重新登录，避免无限滑动续期。
 	RefreshTokenExpireDays int `mapstructure:"refresh_token_expire_days"`
 	// RefreshWindowMinutes: 刷新窗口（分钟），在Access Token过期前多久开始允许刷新
 	RefreshWindowMinutes int `mapstructure:"refresh_window_minutes"`
@@ -2354,6 +2401,8 @@ func setDefaults() {
 	viper.SetDefault("security.proxy_probe.insecure_skip_verify", false)
 	viper.SetDefault("security.trust_forwarded_ip_for_api_key_acl", true)
 	viper.SetDefault("security.key_rotation_gate_enabled", true)
+	viper.SetDefault("security.session_binding_mode", SessionBindingModeLoose)
+	viper.SetDefault("security.oauth_code_exchange_enabled", true)
 	// 第三方身份 subject 明文双写默认关闭：新行只落 keyed 盲索引 + 前缀。
 	// 读取路径仍保留明文回退，回填前的历史行不受影响。
 	viper.SetDefault("security.auth_subject_plaintext_dual_write", false)
@@ -2585,9 +2634,9 @@ func setDefaults() {
 	// JWT
 	viper.SetDefault("jwt.secret", "")
 	viper.SetDefault("jwt.expire_hour", 24)
-	viper.SetDefault("jwt.access_token_expire_minutes", 0) // 0 表示回退到 expire_hour
-	viper.SetDefault("jwt.refresh_token_expire_days", 30)  // 30天Refresh Token有效期
-	viper.SetDefault("jwt.refresh_window_minutes", 2)      // 过期前2分钟开始允许刷新
+	viper.SetDefault("jwt.access_token_expire_minutes", 60) // 默认 60 分钟；显式设为 0 才回退到 expire_hour
+	viper.SetDefault("jwt.refresh_token_expire_days", 30)   // 30天Refresh Token有效期（同时是会话绝对寿命上限）
+	viper.SetDefault("jwt.refresh_window_minutes", 2)       // 过期前2分钟开始允许刷新
 
 	// TOTP
 	viper.SetDefault("totp.encryption_key", "")
@@ -3019,6 +3068,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("security.key_rotation_cutoff must be an RFC3339 timestamp: %w", err)
 	}
 	c.Security.KeyRotationCutoff = keyRotationCutoff
+	sessionBindingMode, err := NormalizeSessionBindingMode(c.Security.SessionBindingMode)
+	if err != nil {
+		return err
+	}
+	c.Security.SessionBindingMode = sessionBindingMode
 	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
 	if err != nil {
 		return fmt.Errorf("security.forwarded_client_ip_headers: %w", err)

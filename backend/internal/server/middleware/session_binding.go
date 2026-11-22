@@ -59,8 +59,9 @@ func SecurityClientIP(c *gin.Context) string {
 // 指纹不匹配时：撤销该会话家族的所有 refresh token、写入审计安全事件、返回 401。
 // 返回 false 表示请求已被中断。
 //
-// 兼容性：claims.BindingHash 为空（功能上线前签发的旧 token）时放行，
-// 该会话在下一次 refresh 轮转时会自动获得绑定。
+// 兼容性：claims.BindingVersion == 0（本特性上线前签发的旧 token）时放行，
+// 该会话在下一次 refresh 轮转时会自动获得新版本指纹；BindingHash 为空
+// （security.session_binding_mode=off）时也不校验。
 func enforceSessionBinding(
 	c *gin.Context,
 	authService *service.AuthService,
@@ -71,11 +72,11 @@ func enforceSessionBinding(
 	if settingService == nil || !settingService.IsSessionBindingEnabled(c.Request.Context()) {
 		return true
 	}
-	if claims == nil || claims.BindingHash == "" {
+	if claims == nil || claims.BindingHash == "" || claims.BindingVersion <= 0 {
 		return true
 	}
 	binding := requestSessionBinding(c)
-	current := binding.Hash()
+	current := settingService.SessionBindingHash(binding)
 	if current == "" || current == claims.BindingHash {
 		return true
 	}

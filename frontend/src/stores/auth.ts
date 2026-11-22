@@ -24,6 +24,11 @@ const REFRESH_TOKEN_KEY = 'refresh_token'
 const TOKEN_EXPIRES_AT_KEY = 'token_expires_at' // 存储过期时间戳而非有效期
 const PENDING_AUTH_SESSION_KEY = 'pending_auth_session'
 const AUTO_REFRESH_INTERVAL = 90 * 1000 // idle-tab refresh; the dedupe below covers navigation bursts
+// Every localStorage key that carries auth / OAuth state. Sign-out sweeps all of
+// them (plus the auth_* / oauth_* prefixes) so a shared browser never inherits a
+// half-authenticated state from the previous session.
+const AUTH_STORAGE_KEY_PREFIXES = ['auth_', 'oauth_']
+const AUTH_SESSION_STORAGE_KEYS = ['email_oauth_pending_provider', 'auth_expired', 'register_data']
 // /auth/me is the busiest API call in the app (about a quarter of API traffic),
 // and several views call refreshUser() on mount. One backend answer may be
 // reused for this long; callers that just changed money pass force.
@@ -82,6 +87,38 @@ function persistPendingAuthSession(session: PendingAuthSessionSummary): void {
 function clearPendingAuthSessionStorage(): void {
   if (typeof localStorage === 'undefined') return
   localStorage.removeItem(PENDING_AUTH_SESSION_KEY)
+}
+
+/**
+ * Remove every persisted auth artefact (tokens, user snapshot, pending OAuth
+ * session, affiliate/oauth markers) and the corresponding sessionStorage keys.
+ * `preservePendingAuthSession` keeps the pending OAuth session alive, which is
+ * needed when a login attempt fails but the OAuth flow should continue.
+ */
+function clearPersistedAuthStorage(options?: { preservePendingAuthSession?: boolean }): void {
+  const preservePending = options?.preservePendingAuthSession === true
+  if (typeof localStorage !== 'undefined') {
+    const keysToRemove: string[] = []
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i)
+      if (!key) continue
+      if (preservePending && key === PENDING_AUTH_SESSION_KEY) continue
+      if (AUTH_STORAGE_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+        keysToRemove.push(key)
+      }
+    }
+    keysToRemove.forEach((key) => localStorage.removeItem(key))
+    ;['auth_token', 'auth_user', 'refresh_token', 'token_expires_at'].forEach((key) =>
+      localStorage.removeItem(key)
+    )
+    if (!preservePending) {
+      localStorage.removeItem(PENDING_AUTH_SESSION_KEY)
+      localStorage.removeItem('affiliate_referral_code')
+    }
+  }
+  if (typeof sessionStorage !== 'undefined') {
+    AUTH_SESSION_STORAGE_KEYS.forEach((key) => sessionStorage.removeItem(key))
+  }
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -484,15 +521,31 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * User logout
-   * Clears all authentication state and persisted data
+   * User logout.
+   *
+   * Default: revoke every session of this account before clearing the local
+   * state. That is the only way a leaked/planted refresh token (for example
+   * from an XSS that ran once) stops working immediately instead of surviving
+   * the sign-out on another device. The per-session logout endpoint is still
+   * called afterwards to clear server-side OAuth / crypto-grant state.
    */
-  async function logout(): Promise<void> {
+  async function logout(options?: { revokeAllDevices?: boolean }): Promise<void> {
     // Signing out drops this account's dialog drafts too, so a shared browser never shows
     // the previous operator's half-typed form to the next one.
     const signingOutUserId = user.value?.id ?? null
+    const revokeAllDevices = options?.revokeAllDevices !== false
+    if (revokeAllDevices) {
+      try {
+        // Server-side this also records an access-token revocation cutoff, so the
+        // current JWT stops working before it expires (60 minutes by default).
+        await authAPI.revokeAllSessions()
+      } catch (err) {
+        // 撤销全部会话失败（网络/5xx/未登录）不应阻止本地登出。
+        console.warn('Revoke-all-sessions failed, continuing local sign-out', err)
+      }
+    }
     try {
-      // Call API logout (revokes refresh token on server)
+      // Call API logout (revokes this refresh token on server)
       await authAPI.logout()
     } catch (err) {
       // 服务端吊销失败（网络/5xx/超时）不应阻止本地登出，否则用户点了退出仍处于登录态。
@@ -572,12 +625,7 @@ export const useAuthStore = defineStore('auth', () => {
     refreshTokenValue.value = null
     tokenExpiresAt.value = null
     user.value = null
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(AUTH_TOKEN_KEY)
-      localStorage.removeItem(AUTH_USER_KEY)
-      localStorage.removeItem(REFRESH_TOKEN_KEY)
-      localStorage.removeItem(TOKEN_EXPIRES_AT_KEY)
-    }
+    clearPersistedAuthStorage(options)
 
     if (options?.preservePendingAuthSession) {
       pendingAuthSession.value = getPersistedPendingAuthSession()
@@ -585,7 +633,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     pendingAuthSession.value = null
-    clearPendingAuthSessionStorage()
   }
 
   // ==================== Return Store API ====================

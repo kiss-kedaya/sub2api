@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -308,6 +309,52 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 	}
 
 	markAuthAuditSuccess(c, user.ID, user.Email)
+	h.redirectEmailOAuthSession(c, provider, frontendCallback, redirectTo, tokenPair, user)
+}
+
+// emailOAuthCodeExchangeEnabled 报告是否启用「OAuth 回调只下发一次性 code」。
+// 默认开启；security.oauth_code_exchange_enabled=false 或 Redis 未配置时
+// 退回旧的 fragment 令牌方案（保留一个版本的兼容窗口，便于回滚）。
+func (h *AuthHandler) emailOAuthCodeExchangeEnabled() bool {
+	if h == nil || h.cfg == nil || h.authService == nil {
+		return false
+	}
+	return h.cfg.Security.OAuthCodeExchangeEnabled && h.authService.OAuthCodeExchangeAvailable()
+}
+
+// redirectEmailOAuthSession 把已认证的会话交回前端。
+// 默认路径：URL fragment 里只放一次性 code（60 秒、只能兑换一次），前端立刻
+// POST /api/v1/auth/oauth/exchange 换取令牌并清理 URL，令牌不再进入浏览历史、
+// Referer 或前端日志。兼容路径：创建 code 失败时退回旧的 fragment 令牌方案，
+// 避免因为一次性码存储故障把所有人挡在登录门外。
+func (h *AuthHandler) redirectEmailOAuthSession(
+	c *gin.Context,
+	provider string,
+	frontendCallback string,
+	redirectTo string,
+	tokenPair *service.TokenPair,
+	user *service.User,
+) {
+	if h.emailOAuthCodeExchangeEnabled() && user != nil {
+		code, err := h.authService.CreateOAuthLoginCode(c.Request.Context(), user.ID, provider, redirectTo)
+		if err == nil && code != "" {
+			// 回调路径已生成过令牌对；改用 code 后它们不会被下发，立即撤销，
+			// 避免在 Redis 里留下永远到不了浏览器的 refresh token。
+			if tokenPair != nil {
+				_ = h.authService.RevokeRefreshToken(c.Request.Context(), tokenPair.RefreshToken)
+			}
+			fragment := url.Values{}
+			fragment.Set("code", code)
+			fragment.Set("redirect", redirectTo)
+			redirectWithFragment(c, frontendCallback, fragment)
+			return
+		}
+		slog.Warn("oauth code exchange unavailable, falling back to fragment tokens", "error", err)
+	}
+	if tokenPair == nil {
+		redirectOAuthError(c, frontendCallback, "session_error", "failed to issue session", "")
+		return
+	}
 	fragment := url.Values{}
 	fragment.Set("access_token", tokenPair.AccessToken)
 	fragment.Set("refresh_token", tokenPair.RefreshToken)
@@ -315,6 +362,65 @@ func (h *AuthHandler) emailOAuthCallbackWithProfile(
 	fragment.Set("token_type", "Bearer")
 	fragment.Set("redirect", redirectTo)
 	redirectWithFragment(c, frontendCallback, fragment)
+}
+
+// OAuthCodeExchangeRequest 是一次性登录码兑换请求。
+type OAuthCodeExchangeRequest struct {
+	Code string `json:"code" binding:"required"`
+}
+
+// OAuthCodeExchangeResponse 是一次性登录码兑换结果，字段与登录响应保持一致。
+type OAuthCodeExchangeResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
+	TokenType    string `json:"token_type"`
+	Provider     string `json:"provider,omitempty"`
+	Redirect     string `json:"redirect,omitempty"`
+}
+
+// OAuthCodeExchange 用 OAuth 回调下发的一次性 code 换取令牌对。
+// POST /api/v1/auth/oauth/exchange
+//
+// 安全属性：
+//   - code 60 秒过期，Redis GET+DEL 原子消费，重复兑换返回 OAUTH_CODE_INVALID；
+//   - 令牌在此请求的会话指纹（IP/UA）下签发，回调页与兑换请求必须来自同一浏览器；
+//   - 不在响应里返回用户资料，前端拿到令牌后再走 /auth/me（保持既有登录流程）。
+func (h *AuthHandler) OAuthCodeExchange(c *gin.Context) {
+	var req OAuthCodeExchangeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	ctx := c.Request.Context()
+	codeData, err := h.authService.ConsumeOAuthLoginCode(ctx, req.Code)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	user, err := h.authService.GetActiveUserForLogin(ctx, codeData.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if err := h.ensureBackendModeAllowsUser(ctx, user); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	tokenPair, err := h.authService.GenerateTokenPair(ctx, user, "")
+	if err != nil {
+		slog.Error("failed to issue session for oauth code exchange", "error", err)
+		response.ErrorFrom(c, service.ErrServiceUnavailable)
+		return
+	}
+	response.Success(c, OAuthCodeExchangeResponse{
+		AccessToken:  tokenPair.AccessToken,
+		RefreshToken: tokenPair.RefreshToken,
+		ExpiresIn:    tokenPair.ExpiresIn,
+		TokenType:    "Bearer",
+		Provider:     codeData.Provider,
+		Redirect:     codeData.RedirectTo,
+	})
 }
 
 // redirectEmailOAuthTOTPChallenge 为已启用 TOTP 的已有账号签发一次性 2FA 登录会话，

@@ -38,8 +38,11 @@ var (
 	ErrRefreshTokenExpired = infraerrors.Unauthorized("REFRESH_TOKEN_EXPIRED", "refresh token has expired")
 	// ErrRefreshTokenReuse 表示已消费（已轮换）的 Refresh Token 被再次使用：
 	// 按标准 OAuth 实践撤销整个 token family，合法端需要重新登录。
-	ErrRefreshTokenReuse            = infraerrors.Unauthorized("REFRESH_TOKEN_REUSE", "refresh token has already been used; the session has been revoked")
-	ErrRefreshTokenReused           = infraerrors.Unauthorized("REFRESH_TOKEN_REUSED", "refresh token has been reused")
+	ErrRefreshTokenReuse  = infraerrors.Unauthorized("REFRESH_TOKEN_REUSE", "refresh token has already been used; the session has been revoked")
+	ErrRefreshTokenReused = infraerrors.Unauthorized("REFRESH_TOKEN_REUSED", "refresh token has been reused")
+	// ErrRefreshTokenSessionExpired 表示该登录会话已达绝对寿命上限
+	// （首次签发时间 + jwt.refresh_token_expire_days），必须重新登录。
+	ErrRefreshTokenSessionExpired   = infraerrors.Unauthorized("REFRESH_TOKEN_SESSION_EXPIRED", "session lifetime exceeded, please login again")
 	ErrEmailVerifyRequired          = infraerrors.BadRequest("EMAIL_VERIFY_REQUIRED", "email verification is required")
 	ErrEmailSuffixNotAllowed        = infraerrors.BadRequest("EMAIL_SUFFIX_NOT_ALLOWED", "email suffix is not allowed")
 	ErrEmailFormatInvalid           = infraerrors.BadRequest("EMAIL_FORMAT_INVALID", "email format is invalid")
@@ -79,6 +82,10 @@ type JWTClaims struct {
 	SessionID string `json:"sid,omitempty"`
 	// BindingHash 会话指纹哈希（IP+UA），会话绑定开启时校验；空值表示旧 token（平滑升级）。
 	BindingHash string `json:"bnd,omitempty"`
+	// BindingVersion 会话指纹版本。0/缺失表示本特性上线前签发的旧 token，中间件
+	// 不做绑定校验（否则升级瞬间所有既有会话会因指纹算法差异被踢下线）；
+	// >=1 表示按 security.session_binding_mode 计算的指纹，需要强制校验。
+	BindingVersion int `json:"bfv,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -1497,16 +1504,30 @@ func IsSyntheticConnectEmail(email string) bool {
 	return isReservedEmail(email)
 }
 
+// sessionBindingHash 按 security.session_binding_mode 计算当前请求的会话指纹哈希。
+// mode=off 时返回空串（完全不绑定）；其余模式把 IP/UA 绑定写入 access/refresh token，
+// 由中间件与 refresh 路径校验。配置缺失时按 strict 处理（兼容旧部署与测试）。
+func (s *AuthService) sessionBindingHash(ctx context.Context) string {
+	if s == nil || s.cfg == nil || s.cfg.SessionBindingDisabled() {
+		return ""
+	}
+	return SessionBindingFromContext(ctx).HashForMode(s.cfg.Security.SessionBindingMode)
+}
+
 // GenerateToken 生成JWT access token
-// 使用新的access_token_expire_minutes配置项（如果配置了），否则回退到expire_hour。
+// 使用新的access_token_expire_minutes配置项（默认60分钟），显式配置为0时回退到expire_hour。
 // 会话指纹（IP/UA）从 ctx 中提取（由 HTTP 入口中间件注入），缺失时生成不带绑定的 token。
 func (s *AuthService) GenerateToken(ctx context.Context, user *User) (string, error) {
 	sessionID, err := randomHexString(8)
 	if err != nil {
 		return "", fmt.Errorf("generate session id: %w", err)
 	}
-	return s.generateAccessToken(user, sessionID, sessionBindingHashFromContext(ctx))
+	return s.generateAccessToken(user, sessionID, s.sessionBindingHash(ctx))
 }
+
+// sessionBindingVersion 是当前签发 token 时写入的会话指纹版本。
+// 老 token 没有该字段（版本 0），中间件据此跳过校验以平滑升级。
+const sessionBindingVersion = 1
 
 // generateAccessToken 生成带会话 ID 与绑定指纹的 access token。
 func (s *AuthService) generateAccessToken(user *User, sessionID, bindingHash string) (string, error) {
@@ -1531,6 +1552,9 @@ func (s *AuthService) generateAccessToken(user *User, sessionID, bindingHash str
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
 		},
+	}
+	if bindingHash != "" {
+		claims.BindingVersion = sessionBindingVersion
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -1596,8 +1620,10 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldTokenString string) (
 	}
 
 	// 会话绑定检查：指纹变化的旧 token 不允许换发新 token。
-	if s.settingService != nil && s.settingService.IsSessionBindingEnabled(ctx) && claims.BindingHash != "" {
-		if current := sessionBindingHashFromContext(ctx); current != "" && current != claims.BindingHash {
+	// refresh 路径始终校验绑定（不再受后台 session_binding_enabled 开关控制），
+	// 只有 security.session_binding_mode=off 才整体关闭。
+	if s.cfg != nil && !s.cfg.SessionBindingDisabled() && claims.BindingHash != "" {
+		if current := s.sessionBindingHash(ctx); current != "" && current != claims.BindingHash {
 			_ = s.RevokeSessionFamily(ctx, claims.SessionID)
 			return "", ErrSessionBindingMismatch
 		}
@@ -1776,9 +1802,17 @@ type TokenPairWithUser struct {
 	UserRole string
 }
 
-// GenerateTokenPair 生成Access Token和Refresh Token对
+// GenerateTokenPair 生成Access Token和Refresh Token对（新会话）。
 // familyID: 可选的Token家族ID，用于Token轮转时保持家族关系
 func (s *AuthService) GenerateTokenPair(ctx context.Context, user *User, familyID string) (*TokenPair, error) {
+	return s.GenerateTokenPairForSession(ctx, user, familyID, time.Time{})
+}
+
+// GenerateTokenPairForSession 生成Access Token和Refresh Token对，并显式指定
+// 该登录会话的首次签发时间（sessionStartedAt）。轮换 refresh token 时必须
+// 传入原会话的 SessionStart，使会话绝对寿命上限不会被滑动续期绕过；
+// 传零值表示这是一次全新的登录。
+func (s *AuthService) GenerateTokenPairForSession(ctx context.Context, user *User, familyID string, sessionStartedAt time.Time) (*TokenPair, error) {
 	// 检查 refreshTokenCache 是否可用
 	if s.refreshTokenCache == nil {
 		return nil, errors.New("refresh token cache not configured")
@@ -1795,13 +1829,13 @@ func (s *AuthService) GenerateTokenPair(ctx context.Context, user *User, familyI
 	}
 
 	// 生成Access Token（携带会话ID与绑定指纹）
-	accessToken, err := s.generateAccessToken(user, familyID, sessionBindingHashFromContext(ctx))
+	accessToken, err := s.generateAccessToken(user, familyID, s.sessionBindingHash(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
 	}
 
 	// 生成Refresh Token
-	refreshToken, err := s.generateRefreshToken(ctx, user, familyID)
+	refreshToken, err := s.generateRefreshToken(ctx, user, familyID, sessionStartedAt)
 	if err != nil {
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
@@ -1813,8 +1847,22 @@ func (s *AuthService) GenerateTokenPair(ctx context.Context, user *User, familyI
 	}, nil
 }
 
-// generateRefreshToken 生成并存储Refresh Token
-func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, familyID string) (string, error) {
+// refreshTokenMaxLifetime 返回登录会话的绝对寿命上限。
+// 配置校验保证生产环境 jwt.refresh_token_expire_days > 0；这里对 0 做防御性
+// 回退（30 天），避免测试或未走完整配置校验的调用方生成 0 TTL 的会话。
+func (s *AuthService) refreshTokenMaxLifetime() time.Duration {
+	days := 30
+	if s != nil && s.cfg != nil && s.cfg.JWT.RefreshTokenExpireDays > 0 {
+		days = s.cfg.JWT.RefreshTokenExpireDays
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
+
+// generateRefreshToken 生成并存储Refresh Token。
+// sessionStartedAt 是会话首次签发时间：refresh token 的有效期不会超过
+// sessionStartedAt + jwt.refresh_token_expire_days，因此轮换只是换凭证，
+// 不会把会话寿命无限延长。零值表示新会话，以当前时刻为起点。
+func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, familyID string, sessionStartedAt time.Time) (string, error) {
 	// 生成随机Token
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
@@ -1835,15 +1883,24 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 	}
 
 	now := time.Now()
-	ttl := time.Duration(s.cfg.JWT.RefreshTokenExpireDays) * 24 * time.Hour
+	maxLifetime := s.refreshTokenMaxLifetime()
+	if sessionStartedAt.IsZero() {
+		sessionStartedAt = now
+	}
+	expiresAt := sessionStartedAt.Add(maxLifetime)
+	if !now.Before(expiresAt) {
+		return "", ErrRefreshTokenSessionExpired
+	}
+	ttl := time.Until(expiresAt)
 
 	data := &RefreshTokenData{
-		UserID:       user.ID,
-		TokenVersion: resolvedTokenVersion(user),
-		FamilyID:     familyID,
-		BindingHash:  sessionBindingHashFromContext(ctx),
-		CreatedAt:    now,
-		ExpiresAt:    now.Add(ttl),
+		UserID:           user.ID,
+		TokenVersion:     resolvedTokenVersion(user),
+		FamilyID:         familyID,
+		BindingHash:      s.sessionBindingHash(ctx),
+		SessionStartedAt: sessionStartedAt,
+		CreatedAt:        now,
+		ExpiresAt:        expiresAt,
 	}
 
 	// 存储Token数据
@@ -1910,6 +1967,15 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 		return nil, ErrRefreshTokenExpired
 	}
 
+	// 会话绝对寿命上限：轮换不能把会话无限续期。首次签发时间（旧数据回退到
+	// CreatedAt）+ refresh_token_expire_days 到期后必须重新登录。
+	maxLifetime := s.refreshTokenMaxLifetime()
+	if time.Now().After(data.SessionStart().Add(maxLifetime)) {
+		_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
+		logger.LegacyPrintf("service.auth", "[Auth] Refresh session reached absolute lifetime: user_id=%d family=%s", data.UserID, data.FamilyID)
+		return nil, ErrRefreshTokenSessionExpired
+	}
+
 	// 获取用户信息
 	user, err := s.userRepo.GetByID(ctx, data.UserID)
 	if err != nil {
@@ -1936,10 +2002,15 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 		return nil, ErrTokenRevoked
 	}
 
-	// 会话绑定检查：IP/UA 任一变化即撤销整个会话家族。
-	// data.BindingHash 为空表示功能开启前签发的旧会话，放行并在轮转时补齐绑定。
-	if s.settingService != nil && s.settingService.IsSessionBindingEnabled(ctx) && data.BindingHash != "" {
-		if current := sessionBindingHashFromContext(ctx); current != "" && current != data.BindingHash {
+	// 会话绑定检查：IP/UA 指纹变化即撤销整个会话家族。
+	// refresh 路径始终校验绑定（不再受后台 session_binding_enabled 开关控制），
+	// 只有 security.session_binding_mode=off 才整体关闭；mode=loose（默认）只比较
+	// 网段，避免移动网络/多出口 IP 的正常漂移把用户踢下线。
+	// 兼容：data.BindingHash 为空表示绑定上线前签发的旧会话，放行并在轮转时补齐绑定。
+	// 旧数据没有 SessionStartedAt，指纹是按升级前的严格算法写入的；升级到 loose
+	// 模式后直接比对会误杀全部存量会话，因此旧会话放行一次，轮换后写入新指纹。
+	if s.cfg != nil && !s.cfg.SessionBindingDisabled() && data.BindingHash != "" && !data.SessionStartedAt.IsZero() {
+		if current := s.sessionBindingHash(ctx); current != "" && current != data.BindingHash {
 			_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
 			logger.LegacyPrintf("service.auth", "[Auth] Session binding mismatch on refresh for user %d, family revoked", data.UserID)
 			return nil, ErrSessionBindingMismatch
@@ -1962,8 +2033,8 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to delete old refresh token: %v", err)
 	}
 
-	// 生成新的Token对，保持同一个家族ID
-	pair, err := s.GenerateTokenPair(ctx, user, data.FamilyID)
+	// 生成新的Token对，保持同一个家族ID与首次签发时间（绝对寿命上限不随轮换延长）
+	pair, err := s.GenerateTokenPairForSession(ctx, user, data.FamilyID, data.SessionStart())
 	if err != nil {
 		return nil, err
 	}
