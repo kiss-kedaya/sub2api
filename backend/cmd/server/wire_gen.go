@@ -358,7 +358,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	batchImageHandler := handler.ProvideBatchImageHandler(batchImagePublicService, batchImageDownloadService, batchImageCleanupService, openAIGatewayHandler)
 	cnProviderBalanceCheckService := service.ProvideCNProviderBalanceCheckService(accountRepository, cnProviderBalanceService, cnProviderQuotaService, configConfig)
 	userBarkService := provideNotificationRuntime(db, secretEncryptor, balanceNotifyService, cnProviderBalanceCheckService)
-	mainLocalCryptoRuntime := provideLocalCryptoRuntime(configConfig, db, client, settingService, paymentService, userBarkService, totpService, redisClient)
+	mainLocalCryptoRuntime := provideLocalCryptoRuntime(configConfig, db, client, settingService, paymentService, userBarkService, totpService, emailService, redisClient)
 	cryptoHandler := mainLocalCryptoRuntime.CryptoHandler
 	cryptoDepositHandler := mainLocalCryptoRuntime.CryptoDepositHandler
 	userBarkHandler := handler.NewUserBarkHandler(userBarkService, totpService, configConfig)

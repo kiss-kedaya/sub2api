@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/addresses"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/ledger"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/nativeprice"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/notify"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/scanner"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/sweeper"
@@ -342,6 +343,10 @@ type Service struct {
 	// Keep notification delivery independent of configuration publication.
 	pushMu sync.RWMutex
 	push   PushNotifier
+	// events delivers best-effort "someone touched the wallet" messages to the
+	// operator's webhook/email. Optional and never blocks an operation.
+	eventsMu sync.RWMutex
+	events   notify.Notifier
 	// sweepMu serialises sweep runs: the manual admin trigger and the
 	// scheduler must never send the same funds twice.
 	sweepMu sync.Mutex
@@ -1049,10 +1054,21 @@ func (s *Service) runSweepLocked(ctx context.Context, dryRun, manual bool, chain
 		// Notify on the common result path: manual runs, scheduled sweeps and
 		// resumption of already-signed jobs must report the same failures.
 		// Notification errors never replace the actual transaction outcome.
-		defer func() { s.reportSweepFailure(ctx, summary, err) }()
+		defer func() {
+			s.reportSweepFailure(ctx, summary, err)
+			s.reportSweepExecuted(ctx, summary, err)
+		}()
 	}
 	if !dryRun {
 		if err := mode.CheckWritable(); err != nil {
+			return nil, err
+		}
+		// The config API already refuses to move a pinned destination; this is
+		// the runtime counterpart for a settings row edited directly (the threat
+		// model is a host compromise). A mismatch stops the run before a single
+		// transaction is signed, and the existing failure notifier tells the
+		// operator.
+		if err := s.Config().EnforceSweepDestinationLock(); err != nil {
 			return nil, err
 		}
 		if s.wallet != nil {

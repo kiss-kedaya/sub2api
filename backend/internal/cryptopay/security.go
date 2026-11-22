@@ -445,4 +445,12 @@ func (s *Service) Close() {
 	if s.wallet != nil {
 		s.wallet.Close()
 	}
+	// The notification dispatcher owns a background worker; close it so the
+	// process can exit promptly. Closing twice is safe.
+	s.eventsMu.RLock()
+	notifier := s.events
+	s.eventsMu.RUnlock()
+	if closer, ok := notifier.(interface{ Close() }); ok {
+		closer.Close()
+	}
 }

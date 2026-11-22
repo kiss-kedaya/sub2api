@@ -13,7 +13,7 @@ func TestDelegatePaymentsSkipsLocalPaymentRuntime(t *testing.T) {
 		Totp:   config.TotpConfig{EncryptionKeyConfigured: true},
 	}
 	// The detached role must return before touching any of these dependencies.
-	runtime := provideLocalCryptoRuntime(cfg, nil, nil, nil, nil, nil, nil, nil)
+	runtime := provideLocalCryptoRuntime(cfg, nil, nil, nil, nil, nil, nil, nil, nil)
 	if runtime.CryptoService != nil || runtime.CryptoHandler != nil || runtime.CryptoDepositHandler != nil {
 		t.Fatal("local wallet and crypto handlers were constructed on the gateway")
 	}

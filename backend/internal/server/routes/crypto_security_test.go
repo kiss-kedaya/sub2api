@@ -640,12 +640,13 @@ func TestCryptoStandaloneSignerSurfaceHasBeenRemoved(t *testing.T) {
 	h := newCryptoRouteHarness(t, activeCryptoAdmin())
 
 	allowedShardRoutes := map[string]bool{
-		"/api/v1/admin/crypto/signer/status":       true,
-		"/api/v1/admin/crypto/signer/risk-notice":  true,
-		"/api/v1/admin/crypto/signer/setup":        true,
-		"/api/v1/admin/crypto/signer/resplit":      true,
-		"/api/v1/admin/crypto/signer/verify-share": true,
-		"/api/v1/admin/crypto/signer/auto-sweep":   true,
+		"/api/v1/admin/crypto/signer/status":            true,
+		"/api/v1/admin/crypto/signer/risk-notice":       true,
+		"/api/v1/admin/crypto/signer/setup":             true,
+		"/api/v1/admin/crypto/signer/resplit":           true,
+		"/api/v1/admin/crypto/signer/verify-share":      true,
+		"/api/v1/admin/crypto/signer/auto-sweep":        true,
+		"/api/v1/admin/crypto/signer/sweep-destination": true,
 	}
 	for _, route := range h.router.Routes() {
 		if strings.Contains(route.Path, "/crypto/signer/") {
@@ -661,6 +662,20 @@ func TestCryptoStandaloneSignerSurfaceHasBeenRemoved(t *testing.T) {
 		response := cryptoRouteRequest(h.router, http.MethodPost, path, "", nil, "127.0.0.1:1234", "localhost")
 		require.Equal(t, http.StatusNotFound, response.Code, path)
 	}
+}
+
+func TestCryptoSweepDestinationRouteRequiresVerifiedAcknowledgement(t *testing.T) {
+	t.Setenv("CRYPTO_INSTANCE_ENABLED", "true")
+	h := newCryptoRouteHarness(t, activeCryptoAdmin())
+	// The dedicated destination-change route is registered inside the same
+	// crypto admin group, so it inherits the JWT/HTTPS/operator guards but must
+	// still refuse an unacknowledged request before touching any config.
+	response := cryptoRouteRequestBody(h.router, http.MethodPost, "/api/v1/admin/crypto/signer/sweep-destination", `{}`, "", nil, "127.0.0.1:1234", "localhost")
+	requireCryptoReason(t, response, http.StatusBadRequest, "CRYPTO_SIGNER_RISK_ACK_REQUIRED")
+
+	// An insecure transport is refused before the body is even looked at.
+	insecure := cryptoRouteRequestBody(h.router, http.MethodPost, "/api/v1/admin/crypto/signer/sweep-destination", `{}`, "", nil, "203.0.113.9:443", "kedaya.ai")
+	requireCryptoReason(t, insecure, http.StatusForbidden, "CRYPTO_HTTPS_REQUIRED")
 }
 
 func TestCryptoSensitiveAdminReadsRequireSecureTransport(t *testing.T) {

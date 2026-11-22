@@ -97,6 +97,10 @@ func RegisterCryptoAdminRoutes(admin *gin.RouterGroup, cryptoHandler *handler.Cr
 		crypto.POST("/signer/resplit", cryptoHandler.AdminSignerResplit)
 		crypto.POST("/signer/verify-share", cryptoHandler.AdminSignerVerifyShare)
 		crypto.POST("/signer/auto-sweep", cryptoHandler.AdminSignerAutoSweep)
+		// Moving a pinned sweep destination is deliberately not part of the
+		// generic config save: it needs a fresh code, the risk phrase and an
+		// explicit acknowledgement, and it is the only audited destination path.
+		crypto.POST("/signer/sweep-destination", cryptoHandler.AdminUpdateSweepDestination)
 		crypto.POST("/rpc/test", cryptoHandler.AdminTestRPC)
 		crypto.GET("/rpc/candidates", cryptoHandler.AdminChainlistCandidates)
 		crypto.POST("/rpc/auto-pick", cryptoHandler.AdminAutoPickRPC)
