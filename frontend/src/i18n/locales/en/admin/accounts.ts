@@ -1748,6 +1748,28 @@ export default {
         onlyFailed: 'Failed only',
         showAll: 'Show all',
         skippedMismatch: 'This account does not have that model',
+        concurrencyLimit: 'Concurrency',
+        concurrencyHint: 'How many models run at once. Default is 3; a higher value puts more load on the upstream and the admin panel.',
+        cancelRow: 'Cancel',
+        failure: {
+          auth: {
+            label: 'Key / permission',
+            hint: 'Upstream returned 4xx: the key is invalid, lacks permission, or is out of quota. Open the account page to replace the key or grant access.'
+          },
+          rate_limit: {
+            label: 'Rate limited (429)',
+            hint: 'The upstream is rate limiting this account. Retry later, or switch to another account instead of hammering the same one.'
+          },
+          network: {
+            label: 'Network / timeout',
+            hint: 'The request timed out or the connection failed. Check this account\'s proxy and upstream reachability.'
+          },
+          other: {
+            label: 'Other',
+            hint: 'Other error: expand the output for the raw upstream message, or check the account configuration.'
+          },
+          fixAccount: 'Open account page'
+        },
         catalogFailed: 'Failed to load model list'
       },
       testing: 'Testing...',

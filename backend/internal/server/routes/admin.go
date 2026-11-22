@@ -10,7 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterAdminRoutes 注册管理员路由
+// RegisterAdminRoutes 注册管理员路由。
+//
+// adminAuthProbes 为可选的 401/403 探测监视器（variadic 保持既有测试/调用方
+// 签名不变）：传入时挂到 adminAuth 之前做轻量计数，不传时行为与之前完全一致。
 func RegisterAdminRoutes(
 	v1 *gin.RouterGroup,
 	h *handler.Handlers,
@@ -19,11 +22,21 @@ func RegisterAdminRoutes(
 	stepUpAuth middleware.StepUpAuthMiddleware,
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
+	adminAuthProbes ...*service.AdminAuthProbeMonitor,
 ) {
 	// 插件 UI 使用短时能力 URL，仅提供经过安装校验的静态资源。
 	v1.GET("/plugin-ui/:token/*path", h.Admin.Plugin.ServeUIAsset)
 
 	admin := v1.Group("/admin")
+	var adminAuthProbe *service.AdminAuthProbeMonitor
+	if len(adminAuthProbes) > 0 {
+		adminAuthProbe = adminAuthProbes[0]
+	}
+	// 401/403 探测计数必须挂在 adminAuth 之前：先 c.Next() 才能拿到 Abort 后的状态码。
+	// 它只做 Redis 计数，阈值命中后复用 ops_alert 写事件，不改变鉴权结果。
+	if adminAuthProbe != nil {
+		admin.Use(middleware.AdminAuthProbeMonitor(adminAuthProbe))
+	}
 	admin.Use(gin.HandlerFunc(adminAuth))
 	// 面板全局按用户限流（默认管理员豁免，可在系统设置中关闭豁免）
 	admin.Use(panelRateLimiter.Global())
@@ -772,6 +785,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpA
 		// 面板 API 限流配置
 		adminSettings.GET("/panel-rate-limit", h.Admin.Setting.GetPanelRateLimitSettings)
 		adminSettings.PUT("/panel-rate-limit", h.Admin.Setting.UpdatePanelRateLimitSettings)
+		// 管理端 401/403 探测告警配置（阈值/窗口/开关）
+		adminSettings.GET("/admin-auth-probe", h.Admin.Setting.GetAdminAuthProbeSettings)
+		adminSettings.PUT("/admin-auth-probe", h.Admin.Setting.UpdateAdminAuthProbeSettings)
 		adminSettings.GET("/gateway-ip-notice", h.Admin.Setting.GetGatewayIPNotice)
 		adminSettings.PUT("/gateway-ip-notice", h.Admin.Setting.UpdateGatewayIPNotice)
 		// 密钥轮换门禁的风险确认跳过（开关 + 有效期），用户侧充值/兑换页的次级按钮依赖它。

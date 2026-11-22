@@ -494,7 +494,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, toRaw, watch, defineAsyncComponent } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import SchedulableTimerControl from '@/components/account/SchedulableTimerControl.vue'
@@ -576,6 +576,7 @@ import { confirm } from '@/composables/useConfirmation'
 const { t } = useI18n({ useScope: 'local', messages: { zh: { admin: { accounts: { timer: timerZh } } }, en: { admin: { accounts: { timer: timerEn } } } } })
 const appStore = useAppStore()
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 
 const proxies = ref<AccountProxy[]>([])
@@ -2001,7 +2002,7 @@ const openDetail = (a: AccountListItem) => { detailAccountId.value = a.id }
 // Open the dialog first, then resolve the detail payload. A slow GET must never
 // leave the click looking ignored; the modal renders its own skeleton.
 let editRequestSeq = 0
-const handleEdit = async (a: AccountListItem) => {
+const handleEdit = async (a: Pick<AccountListItem, 'id'>) => {
   const seq = ++editRequestSeq
   // A hover/focus prefetch is already in memory: open straight into the form.
   const prefetched = takePrefetchedAccountDetail(a.id)
@@ -2030,6 +2031,26 @@ const closeEditModal = () => {
   edAccLoading.value = false
   edAcc.value = null
 }
+
+// 模型测试失败后从批量弹窗跳过来：/admin/accounts?account=<id> 直接打开编辑弹窗。
+// 只认一个正整数 ID，处理完立刻把参数从地址栏清掉，刷新/后退不会反复弹窗。
+const parseAccountQueryId = (value: unknown): number | null => {
+  const raw = Array.isArray(value) ? value[0] : value
+  const id = Number(raw)
+  return Number.isInteger(id) && id > 0 ? id : null
+}
+
+const consumeAccountEditQuery = () => {
+  if (!route) return
+  const id = parseAccountQueryId(route.query.account)
+  if (!id) return
+  const query = { ...route.query }
+  delete query.account
+  void router?.replace({ path: route.path, query })
+  void handleEdit({ id })
+}
+
+watch(() => route?.query?.account, consumeAccountEditQuery, { immediate: true })
 const openMenu = (a: Account, e: MouseEvent) => {
   menu.acc = a
   const target = e.currentTarget as HTMLElement

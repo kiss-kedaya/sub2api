@@ -1349,6 +1349,137 @@
             </SettingPanel>
           </SettingsSection>
 
+          <!-- Admin 401/403 Probe Alert Settings -->
+          <SettingsSection
+            id="settings-admin-auth-probe"
+            :title="t('admin.settings.adminAuthProbe.title')"
+            :description="t('admin.settings.adminAuthProbe.description')"
+            :loading="adminAuthProbeLoading"
+          >
+            <template #actions>
+              <UButton
+                :loading="adminAuthProbeSaving"
+                data-testid="admin-auth-probe-save"
+                @click="saveAdminAuthProbeSettings"
+                :disabled="adminAuthProbeSaving"
+              >
+                {{ adminAuthProbeSaving ? t("common.saving") : t("common.save") }}
+              </UButton>
+            </template>
+            <SettingPanel hide-summary>
+              <UAlert
+                color="warning"
+                variant="subtle"
+                icon="i-lucide-shield-alert"
+                :description="t('admin.settings.adminAuthProbe.privacyNote')"
+              />
+              <SettingGroup>
+                <SettingRow
+                  :label="t('admin.settings.adminAuthProbe.enabled')"
+                  :hint="t('admin.settings.adminAuthProbe.enabledHint')"
+                  :on="adminAuthProbeForm.enabled">
+                  <template #control>
+                    <Toggle v-model="adminAuthProbeForm.enabled" data-testid="admin-auth-probe-enabled" />
+                  </template>
+                </SettingRow>
+                <template v-if="adminAuthProbeForm.enabled">
+                  <SettingRow
+                    :label="t('admin.settings.adminAuthProbe.threshold')"
+                    :hint="t('admin.settings.adminAuthProbe.thresholdHint')"
+                    :on="true"
+                    :in-summary="false"
+                    persistent-summary
+                    :summary="String(adminAuthProbeForm.threshold)">
+                    <template #fields>
+                      <div class="flex items-center gap-2">
+                        <UInput
+                          v-model.number="adminAuthProbeForm.threshold"
+                          data-testid="admin-auth-probe-threshold"
+                          type="number"
+                          min="1"
+                          max="100000"
+                          class="w-32"
+                        />
+                        <span class="text-sm text-muted">
+                          {{ t("admin.settings.adminAuthProbe.times") }}
+                        </span>
+                      </div>
+                    </template>
+                  </SettingRow>
+                  <SettingRow
+                    :label="t('admin.settings.adminAuthProbe.distinctPaths')"
+                    :hint="t('admin.settings.adminAuthProbe.distinctPathsHint')"
+                    :on="true"
+                    :in-summary="false"
+                    persistent-summary
+                    :summary="String(adminAuthProbeForm.distinct_paths)">
+                    <template #fields>
+                      <div class="flex items-center gap-2">
+                        <UInput
+                          v-model.number="adminAuthProbeForm.distinct_paths"
+                          data-testid="admin-auth-probe-distinct-paths"
+                          type="number"
+                          min="1"
+                          max="10000"
+                          class="w-32"
+                        />
+                        <span class="text-sm text-muted">
+                          {{ t("admin.settings.adminAuthProbe.pathsUnit") }}
+                        </span>
+                      </div>
+                    </template>
+                  </SettingRow>
+                  <SettingRow
+                    :label="t('admin.settings.adminAuthProbe.windowMinutes')"
+                    :hint="t('admin.settings.adminAuthProbe.windowMinutesHint')"
+                    :on="true"
+                    :in-summary="false"
+                    persistent-summary
+                    :summary="String(adminAuthProbeForm.window_minutes)">
+                    <template #fields>
+                      <div class="flex items-center gap-2">
+                        <UInput
+                          v-model.number="adminAuthProbeForm.window_minutes"
+                          data-testid="admin-auth-probe-window-minutes"
+                          type="number"
+                          min="1"
+                          max="1440"
+                          class="w-32"
+                        />
+                        <span class="text-sm text-muted">
+                          {{ t("admin.settings.adminAuthProbe.minutesUnit") }}
+                        </span>
+                      </div>
+                    </template>
+                  </SettingRow>
+                  <SettingRow
+                    :label="t('admin.settings.adminAuthProbe.cooldownMinutes')"
+                    :hint="t('admin.settings.adminAuthProbe.cooldownMinutesHint')"
+                    :on="true"
+                    :in-summary="false"
+                    persistent-summary
+                    :summary="String(adminAuthProbeForm.cooldown_minutes)">
+                    <template #fields>
+                      <div class="flex items-center gap-2">
+                        <UInput
+                          v-model.number="adminAuthProbeForm.cooldown_minutes"
+                          data-testid="admin-auth-probe-cooldown-minutes"
+                          type="number"
+                          min="1"
+                          max="1440"
+                          class="w-32"
+                        />
+                        <span class="text-sm text-muted">
+                          {{ t("admin.settings.adminAuthProbe.minutesUnit") }}
+                        </span>
+                      </div>
+                    </template>
+                  </SettingRow>
+                </template>
+              </SettingGroup>
+            </SettingPanel>
+          </SettingsSection>
+
           <!-- 人机验证 Settings -->
           <SettingsSection
             id="settings-captcha"
@@ -7257,6 +7388,17 @@ const panelRateLimitForm = reactive({
   public_ip_rpm: 300,
 });
 
+// Admin 401/403 探测告警 状态
+const adminAuthProbeLoading = ref(true);
+const adminAuthProbeSaving = ref(false);
+const adminAuthProbeForm = reactive({
+  enabled: true,
+  threshold: 20,
+  distinct_paths: 5,
+  window_minutes: 5,
+  cooldown_minutes: 5,
+});
+
 // Stream Timeout 状态
 const streamTimeoutLoading = ref(true);
 const streamTimeoutSaving = ref(false);
@@ -10269,6 +10411,43 @@ async function savePanelRateLimitSettings() {
   }
 }
 
+// Admin 401/403 探测告警方法
+async function loadAdminAuthProbeSettings() {
+  adminAuthProbeLoading.value = true;
+  try {
+    const settings = await adminAPI.settings.getAdminAuthProbeSettings();
+    Object.assign(adminAuthProbeForm, settings);
+  } catch (_error: unknown) {
+    // Silent fail - settings will use defaults
+  } finally {
+    adminAuthProbeLoading.value = false;
+  }
+}
+
+async function saveAdminAuthProbeSettings() {
+  adminAuthProbeSaving.value = true;
+  try {
+    const updated = await adminAPI.settings.updateAdminAuthProbeSettings({
+      enabled: adminAuthProbeForm.enabled,
+      threshold: adminAuthProbeForm.threshold,
+      distinct_paths: adminAuthProbeForm.distinct_paths,
+      window_minutes: adminAuthProbeForm.window_minutes,
+      cooldown_minutes: adminAuthProbeForm.cooldown_minutes,
+    });
+    Object.assign(adminAuthProbeForm, updated);
+    appStore.showSuccess(t("admin.settings.adminAuthProbe.saved"));
+  } catch (error: unknown) {
+    appStore.showError(
+      extractApiErrorMessage(
+        error,
+        t("admin.settings.adminAuthProbe.saveFailed"),
+      ),
+    );
+  } finally {
+    adminAuthProbeSaving.value = false;
+  }
+}
+
 // Rate Limit Cooldown (429) 方法
 async function loadRateLimit429CooldownSettings() {
   rateLimit429CooldownLoading.value = true;
@@ -10998,6 +11177,7 @@ onMounted(() => {
   loadOverloadCooldownSettings();
   loadRateLimit429CooldownSettings();
   loadPanelRateLimitSettings();
+  loadAdminAuthProbeSettings();
   loadStreamTimeoutSettings();
   loadRectifierSettings();
   loadBetaPolicySettings();

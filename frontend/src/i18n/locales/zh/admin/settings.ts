@@ -321,6 +321,26 @@ export default {
         saved: '面板接口限流配置已保存',
         saveFailed: '保存面板接口限流配置失败'
       },
+      adminAuthProbe: {
+        title: '管理端 401/403 探测告警',
+        description: '按来源 IP 统计管理端鉴权失败，超过阈值写一条 ops 告警事件，便于发现授权渗透/暴力探测',
+        privacyNote: '事件只记录来源 IP、User-Agent 前 64 字符、命中路径和状态码统计，不记录任何 token、Cookie 或 header 值。',
+        enabled: '启用探测告警',
+        enabledHint: '默认开启；关闭后不再写入任何 Redis 计数或告警事件。',
+        threshold: '失败次数阈值',
+        thresholdHint: '同一来源 IP 在窗口内收到的 401/403 总数达到该值即告警，默认 20。',
+        distinctPaths: '不同路径阈值',
+        distinctPathsHint: '同一来源 IP 在窗口内命中的不同管理端路径数达到该值即告警，默认 5。',
+        windowMinutes: '统计窗口',
+        windowMinutesHint: 'Redis 计数的滑动窗口长度，默认 5 分钟。',
+        cooldownMinutes: '告警冷却',
+        cooldownMinutesHint: '同一 IP 触发后多久内不重复写事件，默认 5 分钟。',
+        times: '次',
+        pathsUnit: '个路径',
+        minutesUnit: '分钟',
+        saved: '管理端探测告警配置已保存',
+        saveFailed: '保存管理端探测告警配置失败'
+      },
       turnstile: {
         title: 'Cloudflare Turnstile',
         description: '登录和注册的机器人防护',
