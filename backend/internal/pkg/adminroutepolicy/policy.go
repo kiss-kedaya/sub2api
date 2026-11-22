@@ -120,6 +120,14 @@ const (
 	ReasonProxyReadsRedacted       Reason = "proxy_reads_redact_passwords"
 	ReasonChannelReadsRedacted     Reason = "channel_reads_redact_upstream_keys"
 	ReasonAccountUsageAggregate    Reason = "read_only_account_usage_aggregate"
+	// ReasonAccountConnectivityTest covers the admin "test" action on an
+	// upstream account: it dials the upstream with the stored credential and
+	// streams back connectivity / model-availability results. It never returns
+	// the credential itself, and the console fires one request per model in the
+	// "测试设置 / 测试全部" panel, so a TOTP prompt per click would make batch
+	// testing unusable. Credential reads (GET /:id/credential) and exports
+	// (GET /data) stay step-up gated.
+	ReasonAccountConnectivityTest Reason = "account_connectivity_test_no_secret"
 )
 
 // Resource names the sensitive resource family a step-up route protects.
@@ -270,11 +278,13 @@ var stepUpExact = []exactRule{
 	{method: "POST", path: "/api/v1/admin/system/restart", res: Resolved{ClassStepUpRequired, ReasonHostLifecycleWrite, ResourceRevenueOperations, "exact:system.restart"}},
 }
 
-// secretFreeExact pins read-only routes that are implemented with a POST verb
-// (batch read APIs). Without an exact entry the mutating-resource rule below
-// would classify them as step_up_required, which turns every page load that
-// batches aggregates into a TOTP prompt. They must not return secret material:
-// only already-redacted account usage/statistics aggregates belong here.
+// secretFreeExact pins read-only routes and non-mutating probe actions that are
+// implemented with a POST verb (batch read APIs, connectivity tests). Without an
+// exact entry the mutating-resource rule below would classify them as
+// step_up_required, which turns every page load that batches aggregates (or
+// every model click in the admin test panel) into a TOTP prompt. They must not
+// return secret material: only already-redacted account usage/statistics
+// aggregates and connectivity/model-availability probe results belong here.
 var secretFreeExact = []exactRule{
 	{method: "POST", path: "/api/v1/admin/accounts/today-stats/batch", res: Resolved{ClassSecretFree, ReasonAccountUsageAggregate, ResourceNone, "exact:accounts.today-stats-batch"}},
 	{method: "POST", path: "/api/v1/admin/accounts/usage/batch", res: Resolved{ClassSecretFree, ReasonAccountUsageAggregate, ResourceNone, "exact:accounts.usage-batch"}},
@@ -286,6 +296,11 @@ var secretFreeExact = []exactRule{
 	{method: "POST", path: "/api/v1/admin/accounts/upstream-billing-probe/batch", res: Resolved{ClassSecretFree, ReasonUpstreamBillingProbe, ResourceNone, "exact:accounts.upstream-billing-probe"}},
 	// 单行「上游声明倍率」刷新按钮走的是这条；同样只回公开倍率数字。
 	{method: "POST", path: "/api/v1/admin/accounts/:id/upstream-billing-probe", res: Resolved{ClassSecretFree, ReasonUpstreamBillingProbe, ResourceNone, "exact:accounts.upstream-billing-probe-one"}},
+	// 账号连通性/模型可用性测试：用库内凭据打上游，只返回测试状态与上游响应，
+	// 不回传凭据。管理端「测试设置」按模型逐个点「测试/测试全部」，要求 2FA 会让
+	// 批量测试每点一次弹一次码。凭据回读（GET /:id/credential）与导出（GET /data）
+	// 仍保持 step-up，见 stepUpExact。
+	{method: "POST", path: "/api/v1/admin/accounts/:id/test", res: Resolved{ClassSecretFree, ReasonAccountConnectivityTest, ResourceNone, "exact:accounts.connectivity-test"}},
 }
 
 // providerCredentialPrefixes are upstream provider OAuth families: POST/PUT/
