@@ -6,6 +6,8 @@ const {
   getPublicSettingsMock,
   registerMock,
   showErrorMock,
+  showSuccessMock,
+  sendVerifyCodeMock,
   pushMock,
   verifyActionMock,
   appStoreMock
@@ -13,12 +15,14 @@ const {
   getPublicSettingsMock: vi.fn(),
   registerMock: vi.fn(),
   showErrorMock: vi.fn(),
+  showSuccessMock: vi.fn(),
+  sendVerifyCodeMock: vi.fn(),
   pushMock: vi.fn(),
   verifyActionMock: vi.fn(),
   appStoreMock: {
     cachedPublicSettings: null as { promo_code_enabled?: boolean } | null,
     showError: (...args: unknown[]) => showErrorMock(...args),
-    showSuccess: vi.fn(),
+    showSuccess: (...args: unknown[]) => showSuccessMock(...args),
     showWarning: vi.fn()
   }
 }))
@@ -69,7 +73,8 @@ vi.mock('@/api/auth', async () => {
   const actual = await vi.importActual<typeof import('@/api/auth')>('@/api/auth')
   return {
     ...actual,
-    getPublicSettings: (...args: unknown[]) => getPublicSettingsMock(...args)
+    getPublicSettings: (...args: unknown[]) => getPublicSettingsMock(...args),
+    sendVerifyCode: (...args: unknown[]) => sendVerifyCodeMock(...args)
   }
 })
 
@@ -588,6 +593,181 @@ describe('RegisterView verify step pane content', () => {
     expect(turnstile.element.parentElement).toBe(pane.element)
     expect(agreement.element.parentElement).toBe(pane.element)
     expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+})
+
+// 老板要求：邮箱验证不再跳转到独立页，而是作为注册卡片里的最后一步。
+describe('RegisterView in-card email verification', () => {
+  const emailVerifySettings = {
+    ...publicSettings,
+    affiliate_enabled: false,
+    turnstile_enabled: false,
+    login_agreement_enabled: false,
+    email_verify_enabled: true
+  }
+
+  beforeEach(() => {
+    getPublicSettingsMock.mockReset()
+    registerMock.mockReset()
+    showErrorMock.mockReset()
+    showSuccessMock.mockReset()
+    sendVerifyCodeMock.mockReset()
+    pushMock.mockReset()
+    appStoreMock.cachedPublicSettings = null
+    sessionStorage.clear()
+    localStorage.clear()
+    getPublicSettingsMock.mockResolvedValue(publicSettings)
+    sendVerifyCodeMock.mockResolvedValue({ countdown: 60 })
+    registerMock.mockResolvedValue({})
+  })
+
+  async function enterEmailVerifyStep(wrapper: ReturnType<typeof mountRegister>): Promise<void> {
+    await flushPromises()
+    await wrapper.get('#email').setValue('user@example.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await clickStepAction(wrapper)
+    await flushPromises()
+    await flushPromises()
+  }
+
+  it('moves into the in-card verification step instead of the standalone page', async () => {
+    getPublicSettingsMock.mockResolvedValue(emailVerifySettings)
+
+    const wrapper = mountRegister()
+    await enterEmailVerifyStep(wrapper)
+
+    const pane = wrapper.get('[data-testid="register-email-verify-pane"]')
+    expect(pane.attributes('data-pane-state')).toBe('active')
+    expect(pane.text()).toContain('auth.verifyYourEmail')
+    expect(pane.text()).toContain('user@example.com')
+    expect(pane.get('#code').exists()).toBe(true)
+    // 账号 + 邮箱验证 = 2 步
+    expect(wrapper.findAll('.auth-step-dot')).toHaveLength(2)
+    expect(sendVerifyCodeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'user@example.com' })
+    )
+    expect(pushMock).not.toHaveBeenCalledWith('/email-verify')
+    wrapper.unmount()
+  })
+
+  it('creates the account with the 6-digit code and redirects to the dashboard', async () => {
+    getPublicSettingsMock.mockResolvedValue(emailVerifySettings)
+
+    const wrapper = mountRegister()
+    await enterEmailVerifyStep(wrapper)
+
+    await wrapper.get('#code').setValue('123456')
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(registerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'user@example.com',
+        password: 'secret-123',
+        verify_code: '123456'
+      })
+    )
+    expect(showSuccessMock).toHaveBeenCalled()
+    expect(pushMock).toHaveBeenCalledWith('/dashboard')
+    wrapper.unmount()
+  })
+
+  it('shows the countdown and resends the code after it expires', async () => {
+    getPublicSettingsMock.mockResolvedValue(emailVerifySettings)
+    sendVerifyCodeMock.mockResolvedValueOnce({ countdown: 0 }).mockResolvedValue({ countdown: 60 })
+
+    const wrapper = mountRegister()
+    await enterEmailVerifyStep(wrapper)
+
+    const resendButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('auth.resendCode'))
+    expect(resendButton).toBeTruthy()
+
+    await resendButton!.trigger('click')
+    await flushPromises()
+
+    expect(sendVerifyCodeMock).toHaveBeenCalledTimes(2)
+    const countdownButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('auth.resendCountdown'))
+    expect(countdownButton?.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('keeps the entered code, sent state and countdown when going back to the account step', async () => {
+    getPublicSettingsMock.mockResolvedValue(emailVerifySettings)
+
+    const wrapper = mountRegister()
+    await enterEmailVerifyStep(wrapper)
+    await wrapper.get('#code').setValue('123456')
+
+    await wrapper.get('.auth-step-back').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="register-account-pane"]').attributes('data-pane-state')).toBe('active')
+
+    await clickStepAction(wrapper)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="register-email-verify-pane"]').attributes('data-pane-state')).toBe('active')
+    expect((wrapper.get('#code').element as HTMLInputElement).value).toBe('123456')
+    expect(wrapper.text()).toContain('auth.codeSentSuccess')
+    // 数据没变，不重新发码
+    expect(sendVerifyCodeMock).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('keeps the agreement step before the email verification step (3 steps)', async () => {
+    getPublicSettingsMock.mockResolvedValue({
+      ...emailVerifySettings,
+      login_agreement_enabled: true,
+      login_agreement_mode: 'checkbox',
+      login_agreement_updated_at: '2026-03-31',
+      login_agreement_documents: [{ id: 'terms', title: 'Terms of Service', content_md: '# Terms' }]
+    })
+
+    const wrapper = mountRegister({ realAgreementPrompt: true })
+    await flushPromises()
+    await wrapper.get('#email').setValue('user@example.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await clickStepAction(wrapper)
+    await flushPromises()
+
+    // 账号 -> 协议 -> 邮箱验证
+    expect(wrapper.findAll('.auth-step-dot')).toHaveLength(3)
+    expect(wrapper.get('[data-testid="register-verify-pane"]').attributes('data-pane-state')).toBe('active')
+    const continueButton = wrapper.get('.auth-step-footer .btn-primary')
+    expect(continueButton.attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-testid="registration-agreement"] input[type="checkbox"]').setValue(true)
+    expect(continueButton.attributes('disabled')).toBeUndefined()
+
+    await continueButton.trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="register-email-verify-pane"]').attributes('data-pane-state')).toBe('active')
+    wrapper.unmount()
+  })
+
+  it('resends the code for a changed email after returning to edit it', async () => {
+    getPublicSettingsMock.mockResolvedValue(emailVerifySettings)
+
+    const wrapper = mountRegister()
+    await enterEmailVerifyStep(wrapper)
+
+    await wrapper.get('.auth-step-back').trigger('click')
+    await flushPromises()
+    await wrapper.get('#email').setValue('other@example.com')
+    await clickStepAction(wrapper)
+    await flushPromises()
+    await flushPromises()
+
+    expect(sendVerifyCodeMock).toHaveBeenCalledTimes(2)
+    expect(sendVerifyCodeMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ email: 'other@example.com' })
+    )
+    expect(wrapper.get('[data-testid="register-email-verify-pane"]').text()).toContain('other@example.com')
     wrapper.unmount()
   })
 })
