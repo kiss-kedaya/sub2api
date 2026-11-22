@@ -213,6 +213,11 @@ func (s *Service) checkWalletSecurity(ctx context.Context) error {
 
 func (s *Service) checkWalletActivity(ctx context.Context) error {
 	if err := s.checkWalletSecurity(ctx); err != nil {
+		if errors.Is(err, wallet.ErrSignerShareRequired) {
+			// Same steady state as scanWalletOutflows: no key means no outflow
+			// guard, but deposits must keep crediting.
+			return nil
+		}
 		return err
 	}
 	if s.securityPaused.Load() {
@@ -247,6 +252,15 @@ func (s *Service) scanWalletOutflows(ctx context.Context, evm *scanner.EVMScanne
 	}
 	watch, err := s.wallet.SecurityWatchEVMAddresses(ctx)
 	if err != nil {
+		if errors.Is(err, wallet.ErrSignerShareRequired) {
+			// A v3 vault sealed behind recovery shards is a supported steady
+			// state: the watch list needs derived addresses and therefore a
+			// data key, but the chain still has to be scanned. Failing the range
+			// here froze the deposit cursor for hours after the first shard
+			// migration. Skip the outflow guard until the operator unlocks; the
+			// signing path independently refuses to broadcast with no key.
+			return nil
+		}
 		return err
 	}
 	transfers, err := evm.ScanOutgoingRange(ctx, chain.Chain, from, to, chain.Tokens, watch)
