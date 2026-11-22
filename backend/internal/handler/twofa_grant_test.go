@@ -399,14 +399,18 @@ func TestLoginRequiresTOTPWhenTwoFactorGrantInvalid(t *testing.T) {
 	r.ServeHTTP(w, req)
 	require.Contains(t, w.Body.String(), "access_token")
 
-	// 密码错误时凭证不能绕过密码校验。
+	// 密码错误时凭证不能绕过密码校验；统一登录协议下这一步返回与
+	// 「需要 2FA」完全相同的挑战结构（不泄露密码对错），第二步才报
+	// INVALID_CREDENTIALS。
 	wrongReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(loginRequestBody(user.Email, "wrong-password")))
 	wrongReq.Header.Set("Content-Type", "application/json")
 	wrongReq.Header.Set("User-Agent", "grant-test-agent")
 	wrongReq.AddCookie(&http.Cookie{Name: service.TwoFactorGrantCookieName, Value: valid.Token})
 	wrongW := httptest.NewRecorder()
 	r.ServeHTTP(wrongW, wrongReq)
-	require.Equal(t, http.StatusUnauthorized, wrongW.Code)
+	require.Equal(t, http.StatusOK, wrongW.Code)
+	require.True(t, strings.Contains(wrongW.Body.String(), `"requires_2fa":true`), wrongW.Body.String())
+	require.NotContains(t, wrongW.Body.String(), "access_token")
 }
 
 func TestLoginRequiresTOTPFailsClosedWhenGrantStoreUnavailable(t *testing.T) {

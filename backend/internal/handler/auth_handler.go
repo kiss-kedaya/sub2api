@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"log/slog"
 	"strings"
@@ -288,6 +290,19 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if err != nil {
 		// 审计：失败也登记被尝试账号的邮箱指纹（不含明文），便于反查撞库。
 		markAuthAuditEmail(c, req.Email)
+		// 统一登录响应（安全 + 体验）：
+		// 「账号不存在」「密码错误」与下面「密码正确但需要 2FA」返回完全相同的挑战结构，
+		// 响应体里没有任何可以区分两种情况的字段，避免登录接口被当作账号枚举 /
+		// 密码有效性探测的 oracle。凭据错误延后到 /auth/login/2fa 统一返回
+		// INVALID_CREDENTIALS（见 Login2FA）。
+		// TOTP 服务不可用时无法下发挑战，退回旧行为（仅测试/异常部署会出现）。
+		if errors.Is(err, service.ErrInvalidCredentials) && h.totpService != nil {
+			// 响应是 200 挑战，但审计必须仍按「凭据错误」记失败，否则撞库/爆破
+			// 在审计里会显示成成功登录。
+			markAuthAuditFailureFromError(c, err)
+			h.createLoginChallenge(c, 0, req.Email)
+			return
+		}
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -322,20 +337,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			middleware2.SetAuditAction(c, service.AuditActionLogin2FAGrantRejected)
 		}
 
-		// Create a temporary login session for 2FA
-		tempToken, err := h.totpService.CreateLoginSession(c.Request.Context(), user.ID, user.Email)
-		if err != nil {
-			response.InternalError(c, "Failed to create 2FA session")
-			return
-		}
-
 		// 审计：2FA 挑战下发（此时尚未签发会话，2FA 绕过尝试靠这条反查）。
 		markAuthAuditChallenge(c, user.ID, user.Email)
-		response.Success(c, TotpLoginResponse{
-			Requires2FA:     true,
-			TempToken:       tempToken,
-			UserEmailMasked: service.MaskEmail(user.Email),
-		})
+		// 与「凭据错误」下发同一结构（见上面的错误分支），客户端无法据此判断
+		// 账号是否存在、密码是否正确。邮箱掩码用请求里的邮箱计算，两条路径一致。
+		h.createLoginChallenge(c, user.ID, req.Email)
 		return
 	}
 
@@ -351,10 +357,57 @@ type TotpLoginResponse struct {
 	UserEmailMasked string `json:"user_email_masked,omitempty"`
 }
 
+// createLoginChallenge 下发统一的「第二步校验」挑战，并保证响应体与
+// 「凭据错误」路径逐字节一致（除随机 temp_token 取值外）。
+//
+// userID > 0  ：第一步密码已验证通过，等待动态码；
+// userID <= 0 ：第一步没有拿到有效凭据（账号不存在 / 密码错误），第二步只会
+// 统一返回 INVALID_CREDENTIALS，不暴露账号是否存在。
+//
+// 邮箱掩码一律按请求里的邮箱计算，不读库里的真实邮箱，避免大小写/别名差异
+// 让两条路径的响应出现字节差异。
+func (h *AuthHandler) createLoginChallenge(c *gin.Context, userID int64, email string) {
+	if h.totpService == nil {
+		response.InternalError(c, "Failed to create 2FA session")
+		return
+	}
+	tempToken, err := h.totpService.CreateLoginSession(c.Request.Context(), userID, email)
+	if err != nil {
+		slog.Warn("create login challenge session failed", "error", err)
+		response.InternalError(c, "Failed to create 2FA session")
+		return
+	}
+	response.Success(c, TotpLoginResponse{
+		Requires2FA:     true,
+		TempToken:       tempToken,
+		UserEmailMasked: service.MaskEmail(email),
+	})
+}
+
+// loginChallengeRateLimitKey 为「凭据无效」的统一挑战生成限速键。
+//
+// 这类挑战没有真实用户 ID，但第二步同样允许提交动态码，必须限速，否则
+// 「先猜密码、再提交随机动态码看错误码」就变成密码有效性探测。键取邮箱的
+// 稳定散列并强制放在高位区间（>= 2^40），避免和真实自增用户 ID 撞车——
+// ReserveAccountTOTPAttempt 只接受正数用户 ID。
+func loginChallengeRateLimitKey(email string) int64 {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
+	key := int64(binary.BigEndian.Uint64(sum[:8]) & 0x3fffffffffffffff)
+	const minDecoyKey = int64(1) << 40
+	if key < minDecoyKey {
+		key |= minDecoyKey
+	}
+	return key
+}
+
 // Login2FARequest represents the 2FA login request
 type Login2FARequest struct {
 	TempToken string `json:"temp_token" binding:"required"`
 	TotpCode  string `json:"totp_code" binding:"required,len=6"`
+	// 统一登录协议：第二步同时回传邮箱+密码，服务端按需重新校验。
+	// 老客户端（OAuth 回调流程）只传 temp_token+totp_code，仍然兼容。
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 // Login2FA completes the login with 2FA verification
@@ -391,6 +444,40 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		"email", session.Email)
 	// 审计：2FA 验证请求也登记被验证账号的邮箱指纹（不含明文）。
 	markAuthAuditEmail(c, session.Email)
+
+	// 第一步下发的「凭据无效」统一挑战：第二步必然失败，统一返回
+	// INVALID_CREDENTIALS（与真实 2FA 账号「密码已验证、动态码错误」区分开，
+	// 也不暴露账号是否存在）。账号维度限速用邮箱散列做键，避免被拿来当
+	// 密码有效性探测的快速通道。
+	if session.UserID <= 0 {
+		decoyKey := loginChallengeRateLimitKey(session.Email)
+		if _, ok := checkTwoFactorRateLimit(c, h.twoFactorLimiter, decoyKey); !ok {
+			return
+		}
+		// 等成本校验：不存在账号时也跑一次 bcrypt，响应时间不随账号是否存在变化。
+		h.authService.EqualizePasswordTiming(req.Password)
+		_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
+		response.ErrorFrom(c, service.ErrInvalidCredentials)
+		return
+	}
+
+	// 统一登录协议：新前端在第二步同时回传邮箱+密码，这里重新校验一次凭据，
+	// 让「凭据错误」在第二步统一以 INVALID_CREDENTIALS 返回（老客户端不传密码，
+	// 走第一步已经验证过的会话，保持兼容）。
+	if req.Password != "" {
+		verifyEmail := session.Email
+		if strings.TrimSpace(req.Email) != "" {
+			verifyEmail = strings.TrimSpace(req.Email)
+		}
+		if _, _, err := h.authService.Login(c.Request.Context(), verifyEmail, req.Password); err != nil {
+			if errors.Is(err, service.ErrInvalidCredentials) {
+				response.ErrorFrom(c, service.ErrInvalidCredentials)
+				return
+			}
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
 
 	// 账号维度限速：同一账号 60 秒滚动窗口内最多 5 次 2FA 校验尝试。
 	// 超限 429 + Retry-After；限流存储故障 fail-closed（只影响 2FA 校验）。

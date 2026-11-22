@@ -297,12 +297,19 @@ export const useAuthStore = defineStore('auth', () => {
    * Complete login with 2FA code
    * @param tempToken - Temporary token from initial login
    * @param totpCode - 6-digit TOTP code
+   * @param email - Email of the account (unified two-step login protocol)
+   * @param password - Password of the account, re-checked server-side in step 2
    * @returns Promise resolving to the authenticated user
    * @throws Error if 2FA verification fails
    */
-  async function login2FA(tempToken: string, totpCode: string): Promise<User> {
+  async function login2FA(tempToken: string, totpCode: string, email?: string, password?: string): Promise<User> {
     try {
-      const response = await authAPI.login2FA({ temp_token: tempToken, totp_code: totpCode })
+      const response = await authAPI.login2FA({
+        temp_token: tempToken,
+        totp_code: totpCode,
+        ...(email ? { email } : {}),
+        ...(password ? { password } : {})
+      })
       setAuthFromResponse(response)
       return user.value!
     } catch (error) {
