@@ -9,8 +9,28 @@ export default {
       delayed: '到账延迟',
       paused: '充值暂停',
       stalled: '处理异常',
-      unknown: '状态未知',
+      // 没有新鲜证据不等于出问题：只说明还在检测，不吓用户。
+      unknown: '状态检测中',
     },
+    // 徽标上的到账时间。有预估时间时把时间拼进来，别让用户再去别处找。
+    networkStatusDetail: {
+      availableEta: '可充值 · 约 {time}到账',
+      availableInstant: '可充值 · 即时到账',
+      slowEta: '网络较慢 · 约 {time}到账',
+      delayedEta: '到账延迟 · 预计 {time}',
+    },
+    // 时长单位。90 秒以内说秒，超过说分钟，超过 30 分钟不再给精确数字。
+    eta: {
+      seconds: '{n} 秒',
+      minutes: '{n} 分钟',
+      overThirtyMinutes: '30+ 分钟',
+      card: '预计 {time}到账',
+      cardInstant: '即时到账',
+      notice: '预计 {time}到账',
+    },
+    // 即时入账的链：先入账、失败回滚。必须让用户知道余额可能被撤回。
+    instantCreditNotice: '检测到转账后立即入账；若交易最终失败会自动回滚，请以完成确认为准。',
+    instantCreditRule: '即时入账：扫链识别到转账后立即计入余额；若交易最终失败、被重组或回滚，该笔入账会自动撤销。',
     networkStatusHint: {
       slow: '{network} 网络确认较慢，到账时间会比平时稍长。已转账可在下方查看充值记录。',
       delayed: '{network} 的充值扫描暂时落后，到账会延迟。已转账可在下方查看充值记录。',
@@ -83,9 +103,13 @@ export default {
     reasonUnassigned: '该地址未绑定用户，未入账',
     reasonUnknown: '该地址不是充值地址',
     reasonOther: '未入账（原因码：{code}）',
+    reasonRevoked: '临时入账已回滚（原因码：{code}）',
     statusCredited: '已入账',
     statusPending: '待确认',
     statusConfirming: '入账中',
+    // 临时入账：余额已先加上，失败会回滚；已回滚：那笔入账已被撤销。
+    statusProvisional: '临时入账',
+    statusRevoked: '已回滚',
     statusIgnored: '未入账',
     statusReverted: '交易异常',
     statusOther: '状态：{code}'

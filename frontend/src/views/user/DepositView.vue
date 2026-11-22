@@ -33,16 +33,23 @@
               </button>
             </div>
             <div class="deposit-view__chains" :aria-label="t('deposit.chain')">
-              <button v-for="c in info.chains" :key="c.chain" type="button" class="deposit-view__chain"
+              <button v-for="c in chainOptions" :key="c.chain" type="button" class="deposit-view__chain"
                 :class="{ 'deposit-view__chain--active': selectedChain === c.chain }"
-                :aria-pressed="selectedChain === c.chain" @click="selectedChain = c.chain">
-                <span class="deposit-view__network-dot" aria-hidden="true"></span>
-                {{ chainLabel(c.chain) }}
-                <UBadge class="deposit-view__network-status" size="xs" variant="subtle"
-                  :color="networkBadgeColor(c.chain)">
-                  {{ t('deposit.networkStatus.' + networkState(c.chain)) }}
-                </UBadge>
+                :aria-pressed="selectedChain === c.chain" @click="selectChain(c.chain)">
+                <span class="deposit-view__chain-head">
+                  <span class="deposit-view__network-dot" aria-hidden="true"></span>
+                  {{ c.label }}
+                  <UBadge class="deposit-view__network-status" size="xs" variant="subtle"
+                    :color="c.badge.color">
+                    {{ c.badge.text }}
+                  </UBadge>
+                </span>
+                <span v-if="c.eta" class="deposit-view__chain-eta">{{ c.eta }}</span>
               </button>
+            </div>
+            <div v-if="current && etaNotice" class="deposit-view__eta-notice" role="status">
+              <span class="deposit-view__eta-mark" aria-hidden="true">i</span>
+              <p>{{ etaNotice }}</p>
             </div>
             <div v-if="current && selectedNetworkNotice" class="deposit-view__network-notice" role="status">
               <span class="deposit-view__notice-mark" aria-hidden="true">!</span>
@@ -115,6 +122,9 @@
             <p v-if="selectedMarketPriced && referencePrice" class="deposit-view__reference">
               {{ t('deposit.referencePrice', { price: '$' + referencePrice }) }}
             </p>
+            <p v-if="selectedInstantCredit" class="deposit-view__instant-rule" data-testid="deposit-instant-credit-rule">
+              {{ t('deposit.instantCreditRule') }}
+            </p>
             <div class="deposit-view__confirmation">
               <span class="deposit-view__confirmation-dot" aria-hidden="true"></span>
               <div><strong>{{ t('deposit.autoCredit') }}</strong><p>{{ t('deposit.confirmationHint') }}</p></div>
@@ -153,11 +163,11 @@
                   <td :data-label="t('deposit.chain')">{{ chainLabel(row.chain) }}</td>
                   <td :data-label="t('deposit.amount')" class="deposit-view__number">{{ row.amount }} <span class="deposit-view__muted">{{ row.token }}</span></td>
                   <td :data-label="t('deposit.credited')" class="deposit-view__number">
-                    <UBadge v-if="row.status === 'credited' && !hasKnownCredit(row)" color="warning" variant="subtle" :title="t('deposit.creditUnknownHint')" data-testid="deposit-credit-unknown">{{ t('deposit.creditUnknown') }}</UBadge>
-                    <template v-else>{{ row.status === 'credited' ? fmtCredited(row.credited) : '—' }}</template>
+                    <UBadge v-if="creditUnderReview(row)" color="warning" variant="subtle" :title="t('deposit.creditUnknownHint')" data-testid="deposit-credit-unknown">{{ t('deposit.creditUnknown') }}</UBadge>
+                    <template v-else>{{ showsCreditedAmount(row) ? fmtCredited(row.credited) : '—' }}</template>
                   </td>
                   <td :data-label="t('common.status')" class="deposit-view__status">
-                    <span class="deposit-view__badge" :class="'deposit-view__badge--' + (row.status === 'credited' && !hasKnownCredit(row) ? 'pending' : row.status)">{{ row.status === 'credited' && !hasKnownCredit(row) ? t('deposit.statusReconciliation') : statusText(row.status) }}</span><span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason, row.token === 'native') }}</span>
+                    <span class="deposit-view__badge" :class="'deposit-view__badge--' + statusTone(row)">{{ statusLabel(row) }}</span><span v-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason, row.token === 'native', row.status) }}</span>
                     <div v-if="progress" class="deposit-view__progress">
                       <span class="deposit-view__progress-text">{{ progressText(progress) }}</span>
                       <span class="deposit-view__progress-track" role="progressbar" aria-valuemin="0"
@@ -213,6 +223,10 @@ import { useKeyRotationGate } from '@/composables/useKeyRotationGate'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { explorerTxURL } from '@/utils/cryptoExplorer'
+import {
+  cardEtaText, etaNoticeText, networkBadge, networkStateOf, parseEtaSeconds, pruneNetworkStatuses,
+  type DepositNetworkBadge,
+} from '@/utils/depositNetwork'
 
 const { t } = useI18n()
 const { copyToClipboard } = useClipboard()
@@ -278,15 +292,53 @@ const current = computed(() => info.value?.chains.find((c) => c.chain === select
 const networkStatuses = shallowRef<DepositNetworkStatus[]>([])
 const networkStatusRequest = shallowRef<AbortController | null>(null)
 let networkExpiryTimer: ReturnType<typeof setTimeout> | null = null
-const networkStates = computed(() => new Map<string, DepositNetworkState>(
-  networkStatuses.value.map(({ chain, status }) => [chain, status])
-))
+// Only rows the backend still vouches for: an expired row is not evidence and
+// must not keep a "delayed" badge on screen. Maps keep the template lookups O(1).
+const networkStatusByChain = computed<Map<string, DepositNetworkStatus>>(() =>
+  new Map(networkStatuses.value.map(row => [row.chain, row]))
+)
 
-function networkState(chain: string): DepositNetworkState {
-  return networkStates.value.get(chain) ?? 'unknown'
+function chainInfo(chain: string): DepositChain | undefined {
+  return info.value?.chains.find(c => c.chain === chain)
 }
 
+function networkState(chain: string): DepositNetworkState {
+  return networkStateOf(networkStatusByChain.value, chain)
+}
+
+// The fresh status row is the primary estimate; deposit-info repeats the same
+// field so a backend that only reports it there still gets a badge.
+function networkEta(chain: string): number | null {
+  return parseEtaSeconds(networkStatusByChain.value.get(chain)?.eta_seconds)
+    ?? parseEtaSeconds(chainInfo(chain)?.eta_seconds)
+}
+
+function instantCredit(chain: string): boolean {
+  return chainInfo(chain)?.instant_credit === true
+}
+
+function networkView(chain: string) {
+  return { state: networkState(chain), etaSeconds: networkEta(chain), instantCredit: instantCredit(chain) }
+}
+
+interface ChainOption {
+  chain: string
+  label: string
+  badge: DepositNetworkBadge
+  eta: string | null
+}
+
+// One entry per network card: name, accuracy badge and the arrival estimate.
+const chainOptions = computed<ChainOption[]>(() => (info.value?.chains ?? []).map(c => {
+  const view = networkView(c.chain)
+  return { chain: c.chain, label: chainLabel(c.chain), badge: networkBadge(view, t), eta: cardEtaText(view, t) }
+}))
+
 const selectedNetworkState = computed(() => networkState(selectedChain.value))
+const selectedInstantCredit = computed(() => instantCredit(selectedChain.value))
+// Top notice: the arrival estimate normally, the instant-credit rule for a chain
+// that credits on detection and can roll that credit back.
+const etaNotice = computed(() => etaNoticeText(networkView(selectedChain.value), t))
 const networkTransferBlocked = computed(() =>
   selectedNetworkState.value === 'paused' || selectedNetworkState.value === 'stalled'
 )
@@ -296,9 +348,14 @@ const NOTICE_STATES: readonly DepositNetworkState[] = ['slow', 'delayed', 'pause
 const selectedNetworkNotice = computed<DepositNetworkState | null>(() =>
   NOTICE_STATES.includes(selectedNetworkState.value) ? selectedNetworkState.value : null
 )
-function networkBadgeColor(chain: string): 'success' | 'warning' | 'neutral' {
-  const state = networkState(chain)
-  return state === 'available' ? 'success' : state === 'unknown' ? 'neutral' : 'warning'
+
+// Switching network changes which chain the page is about, so its freshness
+// matters. The refresh is silent: a failed read leaves the previous, still
+// unexpired observations in place.
+function selectChain(chain: string) {
+  if (chain === selectedChain.value) return
+  selectedChain.value = chain
+  void refreshNetworkStatuses()
 }
 
 // A backend that predates native-coin support sends only `tokens`. Those are
@@ -438,8 +495,31 @@ function hasKnownCredit(row: DepositRecord): boolean {
   return row.credited_known !== false && Number.isFinite(row.credited) && row.credited > 0
 }
 
+// A credited row without a trustworthy amount is "under review", not "zero".
+function creditUnderReview(row: DepositRecord): boolean {
+  return row.status === 'credited' && !hasKnownCredit(row)
+}
+
+// A provisional credit already moved the balance even though the transfer is
+// not final, so it shows its amount. A revoked credit was withdrawn: no amount.
+function showsCreditedAmount(row: DepositRecord): boolean {
+  return row.status === 'credited' || row.status === 'provisional'
+}
+
+function statusLabel(row: DepositRecord): string {
+  return creditUnderReview(row) ? t('deposit.statusReconciliation') : statusText(row.status)
+}
+
+// Badge tone is the CSS modifier. Every status keeps its own tone so the new
+// provisional/revoked states get a distinct colour without a second table.
+function statusTone(row: DepositRecord): string {
+  return creditUnderReview(row) ? 'pending' : row.status
+}
+
 // History stays readable without deposit-info, so omit thresholds we don't have.
-function reasonText(code: string, nativeAsset = false): string {
+// `status` only changes the fallback wording: a rolled-back credit was once
+// credited, so its unknown reason must not read as "not credited".
+function reasonText(code: string, nativeAsset = false, status = ''): string {
   const limits = info.value?.enabled ? info.value : null
   switch (code) {
     case 'below_min':
@@ -454,7 +534,9 @@ function reasonText(code: string, nativeAsset = false): string {
       return t('deposit.reasonUnknown')
     default:
       // A new backend code must never surface as a bare machine string.
-      return t('deposit.reasonOther', { code })
+      return status === 'revoked'
+        ? t('deposit.reasonRevoked', { code })
+        : t('deposit.reasonOther', { code })
   }
 }
 
@@ -465,6 +547,12 @@ function statusText(status: string): string {
       return t('deposit.statusCredited')
     case 'pending':
       return t('deposit.statusConfirming')
+    // Instant-credit chains: the balance is credited before the transfer is
+    // final, and withdrawn again if the transaction ultimately fails.
+    case 'provisional':
+      return t('deposit.statusProvisional')
+    case 'revoked':
+      return t('deposit.statusRevoked')
     case 'ignored':
       return t('deposit.statusIgnored')
     case 'reverted':
@@ -542,24 +630,29 @@ async function refreshHistory() {
   }
 }
 
+// Replace the observations with the ones that are still fresh, and arm a timer
+// that drops them the moment they expire — locally, even while another read is
+// pending or no read ever succeeds again. A stale "delayed" badge must never
+// outlive its own evidence.
 function applyNetworkStatuses(next: DepositNetworkStatus[]) {
   if (networkExpiryTimer !== null) clearTimeout(networkExpiryTimer)
   networkExpiryTimer = null
   const now = Date.now()
-  let nextExpiry = Infinity
-  networkStatuses.value = next.filter(({ status, expires_at }) => {
-    if (expires_at === undefined) return status === 'unknown'
-    const expiry = Date.parse(expires_at)
-    if (!(expiry > now)) return false
-    nextExpiry = Math.min(nextExpiry, expiry)
-    return true
-  })
-  // Expiration is local, even while another read is pending or no read succeeds.
-  if (Number.isFinite(nextExpiry)) {
+  const pruned = pruneNetworkStatuses(next, now)
+  networkStatuses.value = pruned.rows
+  if (pruned.nextExpiry !== null) {
     networkExpiryTimer = setTimeout(
-      () => applyNetworkStatuses(networkStatuses.value), Math.min(nextExpiry - now, 2_147_483_647)
+      () => applyNetworkStatuses(networkStatuses.value), Math.min(pruned.nextExpiry - now, 2_147_483_647)
     )
   }
+}
+
+// An empty read is not evidence that every network went unknown (a refresh is
+// best-effort and must stay silent on failure): keep the last observations until
+// their own expiry retires them, so a hiccup cannot flash the page back to
+// "checking". An authoritative row for a chain always replaces it.
+function acceptNetworkStatuses(next: DepositNetworkStatus[]) {
+  applyNetworkStatuses(next.length ? next : networkStatuses.value)
 }
 
 async function refreshNetworkStatuses() {
@@ -568,14 +661,24 @@ async function refreshNetworkStatuses() {
   networkStatusRequest.value = request
   try {
     const next = await getDepositNetworkStatus(request.signal)
-    if (!disposed && !depositBlocked.value && !request.signal.aborted) applyNetworkStatuses(next)
+    if (!disposed && !depositBlocked.value && !request.signal.aborted) acceptNetworkStatuses(next)
   } catch (error) {
     if (disposed || request.signal.aborted) return
     if (isKeyRotationRequiredError(error)) keyRotationDenied.value = true
-    else applyNetworkStatuses([])
+    // A background refresh that fails is silent: the existing observations keep
+    // running until their expiry, and the user is never told a working network
+    // is delayed because one read failed.
+    else applyNetworkStatuses(networkStatuses.value)
   } finally {
     if (networkStatusRequest.value === request) networkStatusRequest.value = null
   }
+}
+
+// Window focus is the cheapest signal that the user came back to the page, so
+// the badge is re-read once without a poll. Failures stay silent.
+function onWindowFocus() {
+  if (document.visibilityState === 'hidden') return
+  void refreshNetworkStatuses()
 }
 
 function resetNetworkStatuses() {
@@ -642,12 +745,14 @@ watch([current, qrCanvas], () => {
 
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange)
+  window.addEventListener('focus', onWindowFocus)
   void load()
 })
 
 onUnmounted(() => {
   disposed = true
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('focus', onWindowFocus)
   stopPolling()
   resetNetworkStatuses()
   if (copyTimer) clearTimeout(copyTimer)
@@ -667,11 +772,17 @@ onUnmounted(() => {
 .deposit-view__section-head--address { padding-top: 1.25rem; margin-top: 1.5rem; border-top: 1px solid var(--signal-line, #64748b30); }
 .deposit-view__step { color: var(--signal-muted, #8c99a6); font: .75rem ui-monospace, monospace; }
 .deposit-view__chains { display: flex; flex-wrap: wrap; gap: .5rem; }
-.deposit-view__chain { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 2.5rem; padding: .55rem .875rem; border: 1px solid var(--ui-border-accented); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
+.deposit-view__chain { display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: .3rem; min-height: 2.5rem; padding: .55rem .875rem; border: 1px solid var(--ui-border-accented); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
 .deposit-view__chain:hover { background: var(--signal-accent-soft, #0891b212); }
 .deposit-view__chain--active { border-color: var(--signal-accent, #0891b2); background: var(--signal-accent-soft, #0891b218); font-weight: 600; }
+.deposit-view__chain-head { display: inline-flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+/* 每个网络卡片下的到账预估，跟着徽标一起回答「多久到」。 */
+.deposit-view__chain-eta { color: var(--signal-muted, #8c99a6); font-size: .6875rem; font-weight: 400; line-height: 1.4; }
 .deposit-view__network-dot { width: .375rem; height: .375rem; flex-shrink: 0; border-radius: 50%; background: var(--signal-muted, #8c99a6); }
 .deposit-view__chain--active .deposit-view__network-dot { background: var(--signal-accent, #0891b2); }
+.deposit-view__eta-notice { display: flex; gap: .625rem; align-items: flex-start; padding: .75rem 1rem; margin-top: .75rem; border: 1px solid #0891b233; border-radius: .625rem; background: #0891b20a; font-size: .75rem; line-height: 1.7; }
+.deposit-view__eta-mark { display: grid; place-items: center; width: 1rem; height: 1rem; flex-shrink: 0; margin-top: .15rem; border: 1px solid #0891b2; border-radius: 50%; color: #0891b2; font-size: .6875rem; font-weight: 700; }
+.deposit-view__instant-rule { margin-top: .75rem; padding: .625rem .75rem; border: 1px solid #0891b233; border-radius: .5rem; background: #0891b208; color: var(--signal-muted, #64748b); font-size: .75rem; line-height: 1.7; }
 .deposit-view__assets { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
 .deposit-view__asset { display: inline-flex; align-items: center; justify-content: center; min-height: 2.25rem; padding: .45rem .75rem; border: 1px solid var(--ui-border); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
 .deposit-view__asset:hover { background: var(--signal-accent-soft, #0891b212); }
@@ -720,6 +831,10 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
 .deposit-view__badge { display: inline-flex; padding: .2rem .5rem; border: 1px solid transparent; border-radius: .375rem; font-size: .6875rem; background: #64748b18; }
 .deposit-view__badge--credited { background: #10b98112; border-color: #10b98130; color: #10b981; }
 .deposit-view__badge--pending { background: #d9770612; border-color: #d9770630; color: #d97706; }
+/* 临时入账：钱已先到账，但交易未最终确认。 */
+.deposit-view__badge--provisional { background: #d9770612; border-color: #d9770630; color: #d97706; }
+/* 已回滚：那笔临时入账被撤销。 */
+.deposit-view__badge--revoked { background: #ef444412; border-color: #ef444430; color: #ef4444; }
 .deposit-view__badge--ignored, .deposit-view__badge--reverted { background: #ef444412; border-color: #ef444430; color: #ef4444; }
 .deposit-view__reason { display: block; max-width: 21rem; margin-top: .4rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.6; }
 .deposit-view__status { min-width: 9rem; }

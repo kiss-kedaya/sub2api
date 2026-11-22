@@ -9,8 +9,29 @@ export default {
       delayed: 'Delayed',
       paused: 'Paused',
       stalled: 'Processing issue',
-      unknown: 'Status unknown',
+      // Missing evidence is not a problem: say we are still checking.
+      unknown: 'Checking status',
     },
+    // The badge carries the arrival time, so users do not have to look elsewhere.
+    networkStatusDetail: {
+      availableEta: 'Available · about {time} to credit',
+      availableInstant: 'Available · credited instantly',
+      slowEta: 'Slower network · about {time} to credit',
+      delayedEta: 'Delayed · ETA {time}',
+    },
+    // Duration units: seconds under 90s, then minutes, capped past 30 minutes.
+    eta: {
+      seconds: '{n}s',
+      minutes: '{n} min',
+      overThirtyMinutes: '30+ min',
+      card: 'About {time} to credit',
+      cardInstant: 'Credited instantly',
+      notice: 'About {time} to credit',
+    },
+    // Instant-credit chains credit first and roll back on failure; the user must
+    // know the balance can be withdrawn.
+    instantCreditNotice: 'Credited as soon as the transfer is detected. If the transaction ultimately fails, the credit is rolled back automatically; the final confirmation is authoritative.',
+    instantCreditRule: 'Instant credit: the balance is updated as soon as the transfer is detected. If the transaction ultimately fails, is reorganized, or is rolled back, that credit is withdrawn automatically.',
     networkStatusHint: {
       slow: '{network} is confirming transfers slower than usual, so crediting may take a little longer. You can check your deposit history below.',
       delayed: 'Deposit scanning for {network} is behind, so crediting will be late. You can check your deposit history below.',
@@ -84,9 +105,13 @@ export default {
     reasonUnassigned: 'This address is not bound to a user — not credited',
     reasonUnknown: 'This address is not a deposit address',
     reasonOther: 'Not credited (reason code: {code})',
+    reasonRevoked: 'Provisional credit rolled back (reason code: {code})',
     statusCredited: 'Credited',
     statusPending: 'Pending',
     statusConfirming: 'Confirming',
+    // Provisional: balance added early and withdrawn if the transfer fails.
+    statusProvisional: 'Temporarily credited',
+    statusRevoked: 'Rolled back',
     statusIgnored: 'Ignored',
     statusReverted: 'Transaction needs review',
     statusOther: 'Status: {code}'
