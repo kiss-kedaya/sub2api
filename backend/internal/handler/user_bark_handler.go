@@ -20,7 +20,10 @@ import (
 // write-only from the client's perspective: reads return only whether a key
 // is configured, never the key itself.
 type UserBarkHandler struct {
-	service  *notify.UserBarkService
+	service *notify.UserBarkService
+	// verifier is kept wired so callers/tests do not churn, but updates no
+	// longer consult it: see UpdateBarkSettings for the layered protection that
+	// replaced the per-save TOTP prompt.
 	verifier interface {
 		VerifyFreshCode(context.Context, int64, string) error
 	}
@@ -74,19 +77,15 @@ func (h *UserBarkHandler) UpdateBarkSettings(c *gin.Context) {
 		response.ErrorWithDetails(c, http.StatusForbidden, "HTTPS is required to change notification settings", "BARK_HTTPS_REQUIRED", nil)
 		return
 	}
-	codes := c.Request.Header.Values("X-Bark-TOTP")
-	code := ""
-	if len(codes) == 1 {
-		code = codes[0]
-	}
-	if h.verifier == nil {
-		response.ErrorFrom(c, service.ErrTotpUnavailable)
-		return
-	}
-	if err := h.verifier.VerifyFreshCode(c.Request.Context(), subject.UserID, code); err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
+	// No TOTP step-up here on purpose. The Bark device key only decides where
+	// THIS user's own push notifications go; it grants no balance, credential or
+	// admin capability. Forcing a fresh code made the settings page unusable for
+	// ordinary users, so protection is layered differently:
+	//   - the key is encrypted at rest and never returned to the client;
+	//   - a change is announced on the ORIGINAL device first, and the update is
+	//     refused when that original notification cannot be delivered
+	//     (ErrBarkOriginalNotificationFailed), so a silent redirect is impossible;
+	//   - HTTPS is required to submit it.
 	err := h.service.UpdateSettings(c.Request.Context(), subject.UserID, req.DeviceKey, *req.Enabled)
 	if err != nil {
 		if errors.Is(err, notify.ErrBarkKeyRequired) || errors.Is(err, notify.ErrBarkInvalidKey) {

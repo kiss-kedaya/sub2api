@@ -13,10 +13,6 @@
         <p>{{ loadError }}</p>
         <button type="button" class="btn btn-secondary btn-sm mt-2" :disabled="loading" @click="refresh">{{ t('common.refresh') }}</button>
       </div>
-      <p v-if="needsTotp" role="alert" class="text-sm text-amber-700 dark:text-amber-300">
-        {{ t('profile.bark.totpRequired') }}
-        <a href="/profile" class="underline">{{ t('profile.bark.configureTotp') }}</a>
-      </p>
       <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('profile.bark.changeVerificationHint') }}</p>
       <div class="flex items-center gap-2 text-sm">
         <span
@@ -66,7 +62,6 @@
         </button>
       </div>
     </div>
-    <TotpStepUpDialog :controller="stepUp" :verify="verifyChange" :hint="t('profile.bark.verifyChangeHint')" />
   </div>
 </template>
 
@@ -75,9 +70,6 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { userAPI, type BarkSettings } from '@/api/user'
-import { totpAPI } from '@/api'
-import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
-import { useStepUp } from '@/composables/useStepUp'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
 const { t } = useI18n()
@@ -90,9 +82,6 @@ const enabled = ref(false)
 const saving = ref(false)
 const loading = ref(true)
 const loadError = ref('')
-const needsTotp = ref(false)
-const stepUp = useStepUp()
-let pendingChange: { key: string | undefined; enabled: boolean } | null = null
 let disposed = false
 
 async function refresh() {
@@ -110,40 +99,22 @@ async function refresh() {
 onMounted(refresh)
 onUnmounted(() => {
   disposed = true
-  pendingChange = null
   deviceKey.value = ''
-  stepUp.onCancel()
 })
-
-async function verifyChange(code: string) {
-  const change = pendingChange
-  if (!change || disposed) throw new Error(t('common.error'))
-  await userAPI.updateBarkSettings(change.key, change.enabled, code)
-}
 
 async function requestChange(key: string | undefined, nextEnabled: boolean, successKey: string) {
   saving.value = true
-  needsTotp.value = false
   try {
-    const totp = await totpAPI.getStatus()
-    if (disposed) return
-    if (totp.enabled !== true) {
-      needsTotp.value = true
-      appStore.showError(t('profile.bark.totpRequired'))
-      return
-    }
-    pendingChange = { key, enabled: nextEnabled }
-    const verified = await stepUp.prompt()
-    if (!verified || disposed) return
-    // The dialog's verifier already performed the single authenticated PUT.
-    // Never resend the update after it consumes the fresh TOTP code.
+    // The backend keeps this endpoint step-up free: the Bark key only controls
+    // where this user's own notifications go, it is encrypted at rest, and the
+    // original device is notified before the change is applied.
+    await userAPI.updateBarkSettings(key, nextEnabled)
     deviceKey.value = ''
     await refresh()
     if (!disposed) appStore.showSuccess(t(successKey))
   } catch (err: unknown) {
     if (!disposed) appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {
-    pendingChange = null
     saving.value = false
   }
 }
