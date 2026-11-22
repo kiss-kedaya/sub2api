@@ -134,15 +134,21 @@ func TestManualScanSkipsHeadObservation(t *testing.T) {
 	}
 }
 
-func TestHeadObservationRunsBeforeSecurityScan(t *testing.T) {
+// Instant credit can move the balance from a 0-confirmation block, so the head
+// security window must be scanned BEFORE the head observation that may credit.
+// The previous order (observe first, security later) would let a credited
+// deposit outrun the outflow-security check.
+func TestHeadObservationRunsAfterSecurityScan(t *testing.T) {
 	tr := headTransfer()
 	fixture := newRPCFixture(tr)
 	w, mock, handler := workerFixture(t, fixture)
 	w.liveProgress = true
 	securityErr := errors.New("security window unavailable")
+	securityRan := false
 	w.SetSecurityGuards(nil, func(context.Context, *EVMScanner, *rpc.Pool, ChainConfig, uint64, uint64) error {
-		if fixture.callCount("eth_getLogs") == 0 {
-			t.Fatal("security scan ran before the low-latency deposit observation")
+		securityRan = true
+		if len(handler.pending)+len(handler.processed) != 0 {
+			t.Fatal("head observation ran before the security scan")
 		}
 		return securityErr
 	})
@@ -151,8 +157,8 @@ func TestHeadObservationRunsBeforeSecurityScan(t *testing.T) {
 	mock.ExpectQuery(`SELECT last_block`).WithArgs("bsc").
 		WillReturnRows(sqlmock.NewRows([]string{"last_block"}).AddRow(105))
 	err := w.scanChainFrom(t.Context(), w.chains[0], 0)
-	if !errors.Is(err, securityErr) {
-		t.Fatalf("security failure was lost: %v", err)
+	if !securityRan || !errors.Is(err, securityErr) {
+		t.Fatalf("security window missing or failure lost: ran=%t err=%v", securityRan, err)
 	}
 	if len(handler.pending) != 1 || len(handler.processed) != 0 {
 		t.Fatalf("head observation must persist pending only: pending=%d credited=%d", len(handler.pending), len(handler.processed))

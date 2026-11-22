@@ -86,7 +86,8 @@ func TestCreditedRecheckWindowStartsAtOrderCompletion(t *testing.T) {
 					from_address TEXT DEFAULT 'from', to_address TEXT DEFAULT 'to', token TEXT DEFAULT 'token',
 					amount TEXT DEFAULT '1', block_number INTEGER DEFAULT 101, block_hash TEXT DEFAULT 'block',
 					reason TEXT, status TEXT, created_at TEXT, last_attempt_at TEXT, order_id INTEGER,
-					native_price_usd TEXT, native_price_at TEXT, native_price_source TEXT)`,
+					native_price_usd TEXT, native_price_at TEXT, native_price_source TEXT,
+					provisional INTEGER NOT NULL DEFAULT 0, credited_at TEXT, revoked_at TEXT, revoke_reason TEXT)`,
 			} {
 				if _, err := db.ExecContext(t.Context(), schema); err != nil {
 					t.Fatal(err)

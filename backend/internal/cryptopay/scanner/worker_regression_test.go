@@ -165,12 +165,12 @@ func (f *rpcFixture) callCount(method string) int {
 
 func observationRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{"chain", "tx_hash", "log_index", "from_address", "to_address", "token",
-		"amount", "block_number", "block_hash", "reason"})
+		"amount", "block_number", "block_hash", "reason", "provisional"})
 }
 
 func expectObservation(mock sqlmock.Sqlmock, tr Transfer, amount, reason string) {
 	mock.ExpectQuery(`FROM deposit_transactions`).WillReturnRows(observationRows().AddRow(
-		tr.Chain, tr.TxHash, tr.LogIndex, tr.From, tr.To, tr.Token, amount, tr.BlockNumber, tr.BlockHash, reason))
+		tr.Chain, tr.TxHash, tr.LogIndex, tr.From, tr.To, tr.Token, amount, tr.BlockNumber, tr.BlockHash, reason, false))
 }
 
 func expectObservationUpdate(mock sqlmock.Sqlmock, tr Transfer, oldStatus, oldReason, status, reason string) *sqlmock.ExpectedExec {
@@ -701,7 +701,7 @@ func TestDisabledChainRowsRotateOutOfTheRecheckPage(t *testing.T) {
 	firstPage := observationRows()
 	for index := 0; index < 200; index++ {
 		tx := fmt.Sprintf("disabled-tx-%d", index)
-		firstPage.AddRow("polygon", tx, 0, tr.From, tr.To, tr.Token, "1", 101, tr.BlockHash, "")
+		firstPage.AddRow("polygon", tx, 0, tr.From, tr.To, tr.Token, "1", 101, tr.BlockHash, "", false)
 	}
 	mock.ExpectQuery(`(?s)ORDER BY COALESCE\(d.last_attempt_at, d.created_at\), d.id.*LIMIT 200`).WillReturnRows(firstPage)
 	for index := 0; index < 200; index++ {

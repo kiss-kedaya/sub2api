@@ -48,6 +48,7 @@ func nativeDepositDB(t *testing.T) *sql.DB {
 			status TEXT DEFAULT 'pending', order_id INTEGER, reason TEXT,
 			created_at TEXT DEFAULT CURRENT_TIMESTAMP, last_attempt_at TEXT,
 			native_price_usd TEXT, native_price_at TIMESTAMP, native_price_source TEXT,
+			provisional INTEGER NOT NULL DEFAULT 0, credited_at TIMESTAMP, revoked_at TIMESTAMP, revoke_reason TEXT,
 			UNIQUE(chain, tx_hash, log_index))`,
 		`CREATE TABLE payment_orders (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

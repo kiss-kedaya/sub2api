@@ -87,6 +87,56 @@ func depositBacklogChainTime(chain string, blocks uint64) time.Duration {
 	return time.Duration(blocks) * interval
 }
 
+// ETA model. The scanner polls every 5s, so even a fully caught-up network pays
+// one scan period before a transfer is seen. The rest is waiting:
+//
+//	instant credit : backlog + scan period
+//	final credit   : confirmations × block time + backlog + scan period
+//
+// The result is ceiled to whole seconds and clamped so a stuck cursor cannot
+// publish an hour-long "estimate" and an empty backlog cannot publish zero.
+const (
+	depositScanPeriod = 5 * time.Second
+	depositETAFloor   = 5 * time.Second
+	depositETACeiling = 30 * time.Minute
+)
+
+// depositBacklogSeconds measures how far the durable cursor lags the confirmed
+// head in chain time. ok=false means this pass could not prove the distance
+// (no cursor yet, unmeasurable chain, or a rewind), and callers must publish
+// null rather than a fabricated number.
+func depositBacklogSeconds(o scanner.DepositScanObservation) (int64, bool) {
+	if !o.CanMeasure || o.ConfirmedHead == 0 || o.Cursor == 0 || o.Cursor > o.ConfirmedHead {
+		return 0, false
+	}
+	seconds := int64(math.Ceil(depositBacklogChainTime(o.Chain, o.ConfirmedHead-o.Cursor).Seconds()))
+	return seconds, true
+}
+
+// depositETA estimates the normal-path time to credit. backlogSeconds must be a
+// real measurement; a nil backlog yields a nil ETA.
+func depositETA(chain string, confirmations int64, instant bool, backlogSeconds *int64) *int64 {
+	if backlogSeconds == nil || confirmations < 0 {
+		return nil
+	}
+	wait := depositScanPeriod + time.Duration(*backlogSeconds)*time.Second
+	if !instant {
+		interval := depositChainBlockTime[chain]
+		if interval <= 0 {
+			interval = depositChainBlockTimeDefault
+		}
+		wait += time.Duration(confirmations) * interval
+	}
+	if wait < depositETAFloor {
+		wait = depositETAFloor
+	}
+	if wait > depositETACeiling {
+		wait = depositETACeiling
+	}
+	seconds := int64(math.Ceil(wait.Seconds()))
+	return &seconds
+}
+
 // DepositNetworkStatusReport is the customer-safe chain status read model.
 type DepositNetworkStatusReport struct {
 	Networks []DepositNetworkStatusRow `json:"networks"`
@@ -98,6 +148,19 @@ type DepositNetworkStatusRow struct {
 	Status     string     `json:"status"`
 	ObservedAt *time.Time `json:"observed_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	// BacklogSeconds is how far the scanner cursor sits behind the confirmed
+	// head, measured in chain time. Null when this instance has no fresh
+	// measurement: an absent number is honest, a guessed one is not.
+	BacklogSeconds *int64 `json:"backlog_seconds"`
+	// EtaSeconds is the normal-path time from "network accepts the transfer" to
+	// "balance credited". Null when it cannot be computed from fresh data.
+	EtaSeconds *int64 `json:"eta_seconds"`
+	// RequiredConfirmations is the configured final depth for this network.
+	// Null only when the stored config is unreadable.
+	RequiredConfirmations *int64 `json:"required_confirmations"`
+	// InstantCredit reports whether this network currently credits on first
+	// detection (0 confirmations) instead of waiting for final depth.
+	InstantCredit bool `json:"instant_credit"`
 }
 
 type networkStatusSnapshot struct {
@@ -105,6 +168,10 @@ type networkStatusSnapshot struct {
 	ObservedMS  int64  `json:"at"`
 	EvidenceMS  int64  `json:"since"`
 	Fingerprint string `json:"config"`
+	// BacklogSec is the durable cursor's distance from the confirmed head in
+	// chain time; BacklogKnown is false when this pass could not measure it.
+	BacklogSec   int64 `json:"backlog_sec,omitempty"`
+	BacklogKnown bool  `json:"backlog_known,omitempty"`
 }
 
 type networkStatusStore interface {
@@ -146,7 +213,8 @@ func (m *depositNetworkMonitor) observer(fingerprint string) func(scanner.Deposi
 			history[o.Chain] = state
 		}
 		status, since := state.observe(o)
-		snapshot := networkStatusSnapshot{Status: status, ObservedMS: o.At.UnixMilli(), EvidenceMS: since.UnixMilli(), Fingerprint: fingerprint}
+		backlog, backlogKnown := depositBacklogSeconds(o)
+		snapshot := networkStatusSnapshot{Status: status, ObservedMS: o.At.UnixMilli(), EvidenceMS: since.UnixMilli(), Fingerprint: fingerprint, BacklogSec: backlog, BacklogKnown: backlogKnown}
 		select {
 		case slot <- struct{}{}:
 			go func() {
@@ -243,6 +311,24 @@ type networkStatusPolicy struct {
 	explicitChains bool
 	updatedAt      time.Time
 	fingerprint    string
+	// confirmations / instantCredit describe the credit rules the ETA and the
+	// instant-credit column are derived from; they travel with the fingerprint,
+	// so a config edit invalidates old observations instead of mixing them.
+	confirmations map[string]int
+	instantCredit bool
+}
+
+// requiredConfirmations returns the configured final depth for a network. A
+// chain missing from the stored config falls back to the shipped default so a
+// not-yet-enabled network still reports a truthful depth.
+func (p networkStatusPolicy) requiredConfirmations(chain string) (int64, bool) {
+	if depth, ok := p.confirmations[chain]; ok {
+		return int64(depth), true
+	}
+	if depth, ok := DefaultCryptoConfig().Confirmations[chain]; ok {
+		return int64(depth), true
+	}
+	return 0, false
 }
 
 func decodeNetworkStatusPolicy(raw string, updatedAt time.Time) (networkStatusPolicy, bool) {
@@ -267,7 +353,15 @@ func decodeNetworkStatusPolicy(raw string, updatedAt time.Time) (networkStatusPo
 	if err != nil {
 		return networkStatusPolicy{}, false
 	}
-	return networkStatusPolicy{enabled: *saved.Enabled, chains: cfg.Chains, explicitChains: saved.Chains != nil, updatedAt: updatedAt, fingerprint: fingerprint}, true
+	return networkStatusPolicy{
+		enabled:        *saved.Enabled,
+		chains:         cfg.Chains,
+		explicitChains: saved.Chains != nil,
+		updatedAt:      updatedAt,
+		fingerprint:    fingerprint,
+		confirmations:  cfg.Confirmations,
+		instantCredit:  cfg.InstantCreditOn(),
+	}, true
 }
 
 // DepositNetworkStatus reads the site policy and shared observations, without
@@ -305,15 +399,32 @@ func (s *Service) DepositNetworkStatus(ctx context.Context) DepositNetworkStatus
 	now := clock().UTC()
 	for i := range report.Networks {
 		row := &report.Networks[i]
+		required, requiredKnown := policy.requiredConfirmations(row.Chain)
+		if requiredKnown {
+			row.RequiredConfirmations = &required
+		}
+		row.InstantCredit = policy.instantCredit
 		listed := slices.Contains(policy.chains, row.Chain)
 		if !policy.enabled || (policy.explicitChains && !listed) {
 			row.setStatus(depositStatusPaused, now)
-		} else if listed {
-			snap := snapshots[row.Chain]
-			if at, fresh := snap.fresh(policy, now); fresh {
-				row.setStatus(snap.Status, at)
-			}
+			continue
 		}
+		if !listed {
+			continue
+		}
+		snap := snapshots[row.Chain]
+		at, fresh := snap.fresh(policy, now)
+		if !fresh {
+			continue
+		}
+		row.setStatus(snap.Status, at)
+		if !snap.BacklogKnown || !requiredKnown {
+			// Missing evidence stays null rather than becoming a guess.
+			continue
+		}
+		backlog := snap.BacklogSec
+		row.BacklogSeconds = &backlog
+		row.EtaSeconds = depositETA(row.Chain, required, row.InstantCredit, &backlog)
 	}
 	return report
 }

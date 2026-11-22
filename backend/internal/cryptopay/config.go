@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/nativeprice"
 	"maps"
+	"math"
 	"net/url"
 	"slices"
 	"strings"
@@ -94,7 +95,23 @@ type CryptoConfig struct {
 	HotWalletSolana      string             `json:"hot_wallet_solana"`
 
 	// Confirmations required before crediting, per chain.
+	//
+	// With instant credit on these become the FINAL depth: the balance lands on
+	// the first verified observation and these confirmations only promote the
+	// provisional credit to final (no second balance movement). With instant
+	// credit off they gate the credit exactly as before.
 	Confirmations map[string]int `json:"confirmations"`
+
+	// InstantCreditEnabled credits a deposit as soon as the first observation
+	// is verified on the canonical chain, i.e. at 0 confirmations. A reorg or a
+	// failed/replaced transaction then automatically revokes the credited
+	// amount. Pointer-typed on purpose: a config stored before this switch
+	// existed must default to ON, and a plain bool would read as OFF.
+	InstantCreditEnabled *bool `json:"instant_credit_enabled,omitempty"`
+	// InstantCreditMinAmount is the credited-amount floor (USD, the same unit
+	// as the balance credit) for the instant path. A transfer below it keeps
+	// the confirmation-gated path. 0 means every amount is eligible.
+	InstantCreditMinAmount float64 `json:"instant_credit_min_amount"`
 
 	// ScanRange caps the block span of one eth_getLogs call per chain.
 	// Providers enforce different limits (some public X Layer endpoints cap
@@ -167,6 +184,11 @@ func DefaultCryptoConfig() CryptoConfig {
 			ChainArbitrum: 5, ChainBase: 5, ChainXLayer: 5,
 			ChainSolana: 1,
 		},
+		// Instant credit is the shipped default (the whole point of the
+		// feature); the switch exists so an operator can fall back to the old
+		// confirmation-gated behaviour with one config write. 0 = no floor.
+		InstantCreditEnabled:   boolPtr(true),
+		InstantCreditMinAmount: 0,
 		// Conservative spans that every known public endpoint accepts:
 		// X Layer's public RPC rejects anything over 100 blocks.
 		ScanRange: map[string]int{
@@ -188,6 +210,16 @@ func DefaultCryptoConfig() CryptoConfig {
 		NativePollSeconds: DefaultNativePollSeconds,
 		ExplorerAPIURL:    DefaultExplorerAPIURLs(),
 	}
+}
+
+// boolPtr returns a pointer to v; used for tri-state config switches whose
+// zero value must be distinguishable from "not configured".
+func boolPtr(v bool) *bool { return &v }
+
+// InstantCreditOn reports whether deposits are credited before finality. A
+// config that predates the switch (nil) reads as ON, matching the default.
+func (cfg CryptoConfig) InstantCreditOn() bool {
+	return cfg.InstantCreditEnabled == nil || *cfg.InstantCreditEnabled
 }
 
 // DefaultExplorerAPIURLs returns the Etherscan v2 account-API roots. Both
@@ -397,6 +429,16 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	if cfg.CreditMultiplier <= 0 {
 		cfg.CreditMultiplier = def.CreditMultiplier
 	}
+	// A stored config from before the instant-credit switch has no key; JSON
+	// leaves the pointer nil, which must mean "the shipped default", never OFF.
+	if cfg.InstantCreditEnabled == nil {
+		cfg.InstantCreditEnabled = def.InstantCreditEnabled
+	}
+	if cfg.InstantCreditMinAmount < 0 || math.IsNaN(cfg.InstantCreditMinAmount) || math.IsInf(cfg.InstantCreditMinAmount, 0) {
+		// A negative / non-finite floor is a typo, not "credit nothing": it
+		// would otherwise block every deposit and stall the whole channel.
+		cfg.InstantCreditMinAmount = 0
+	}
 	// The native price feed is the only external dependency of crediting. An
 	// empty value means "use the public default"; anything else must be an
 	// absolute http(s) endpoint so a typo fails at config load, not silently
@@ -583,29 +625,31 @@ func SaveConfig(ctx context.Context, store SettingStore, cfg CryptoConfig) error
 // sent" (keep the stored value) from "sent as empty" (clear it), so a client
 // that omits keys can never zero the configuration by accident.
 type CryptoConfigPatch struct {
-	Enabled              *bool                         `json:"enabled"`
-	Chains               *[]string                     `json:"chains"`
-	RPC                  *map[string]string            `json:"rpc"`
-	RPCLimits            *map[string]RPCEndpointLimits `json:"rpc_limits"`
-	RPCThrottleMs        *int                          `json:"rpc_throttle_ms"`
-	SweepGlobalThreshold *float64                      `json:"sweep_global_threshold"`
-	SweepMinPerAddress   *map[string]float64           `json:"sweep_min_per_address"`
-	GasTopUp             *map[string]float64           `json:"gas_topup"`
-	HotWalletEVM         *string                       `json:"hot_wallet_evm"`
-	HotWalletSolana      *string                       `json:"hot_wallet_solana"`
-	Confirmations        *map[string]int               `json:"confirmations"`
-	ScanRange            *map[string]int               `json:"scan_range"`
-	ScanConcurrency      *map[string]int               `json:"scan_concurrency"`
-	CreditMinAmount      *float64                      `json:"credit_min_amount"`
-	CreditMaxAmount      *float64                      `json:"credit_max_amount"`
-	CreditMultiplier     *float64                      `json:"credit_multiplier"`
-	NativePriceURL       *string                       `json:"native_price_url"`
-	HotIndex             *uint32                       `json:"hot_index"`
-	SweepAuto            *bool                         `json:"sweep_auto"`
-	NativeScan           *string                       `json:"native_scan"`
-	NativePollSeconds    *int                          `json:"native_poll_seconds"`
-	ExplorerAPIKey       *string                       `json:"explorer_api_key"`
-	ExplorerAPIURL       *map[string]string            `json:"explorer_api_url"`
+	Enabled                *bool                         `json:"enabled"`
+	Chains                 *[]string                     `json:"chains"`
+	RPC                    *map[string]string            `json:"rpc"`
+	RPCLimits              *map[string]RPCEndpointLimits `json:"rpc_limits"`
+	RPCThrottleMs          *int                          `json:"rpc_throttle_ms"`
+	SweepGlobalThreshold   *float64                      `json:"sweep_global_threshold"`
+	SweepMinPerAddress     *map[string]float64           `json:"sweep_min_per_address"`
+	GasTopUp               *map[string]float64           `json:"gas_topup"`
+	HotWalletEVM           *string                       `json:"hot_wallet_evm"`
+	HotWalletSolana        *string                       `json:"hot_wallet_solana"`
+	Confirmations          *map[string]int               `json:"confirmations"`
+	InstantCreditEnabled   *bool                         `json:"instant_credit_enabled"`
+	InstantCreditMinAmount *float64                      `json:"instant_credit_min_amount"`
+	ScanRange              *map[string]int               `json:"scan_range"`
+	ScanConcurrency        *map[string]int               `json:"scan_concurrency"`
+	CreditMinAmount        *float64                      `json:"credit_min_amount"`
+	CreditMaxAmount        *float64                      `json:"credit_max_amount"`
+	CreditMultiplier       *float64                      `json:"credit_multiplier"`
+	NativePriceURL         *string                       `json:"native_price_url"`
+	HotIndex               *uint32                       `json:"hot_index"`
+	SweepAuto              *bool                         `json:"sweep_auto"`
+	NativeScan             *string                       `json:"native_scan"`
+	NativePollSeconds      *int                          `json:"native_poll_seconds"`
+	ExplorerAPIKey         *string                       `json:"explorer_api_key"`
+	ExplorerAPIURL         *map[string]string            `json:"explorer_api_url"`
 }
 
 // Apply overlays the patch onto base, leaving omitted fields untouched.
@@ -643,6 +687,13 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	}
 	if p.Confirmations != nil {
 		out.Confirmations = *p.Confirmations
+	}
+	if p.InstantCreditEnabled != nil {
+		// Copy the value: the patch struct may be reused by the caller.
+		out.InstantCreditEnabled = boolPtr(*p.InstantCreditEnabled)
+	}
+	if p.InstantCreditMinAmount != nil {
+		out.InstantCreditMinAmount = *p.InstantCreditMinAmount
 	}
 	if p.ScanRange != nil {
 		out.ScanRange = *p.ScanRange

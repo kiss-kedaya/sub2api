@@ -38,7 +38,7 @@ func TestRecheckCreditedSkipsChainsWithoutPool(t *testing.T) {
 
 	mock.ExpectQuery(`FROM deposit_transactions`).
 		WillReturnRows(observationRows().
-			AddRow("bsc", "0xdead", 0, "from", "to", "token", "1", 100, "0xblock", ""))
+			AddRow("bsc", "0xdead", 0, "from", "to", "token", "1", 100, "0xblock", "", false))
 	mock.ExpectExec(`UPDATE deposit_transactions`).
 		WithArgs("credited", "", "bsc", "0xdead", 0, "credited", "").
 		WillReturnResult(sqlmock.NewResult(0, 1))

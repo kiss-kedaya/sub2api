@@ -97,8 +97,8 @@ func TestPendingReconcileSlowFirstReceiptRotatesAndCreditsNextRow(t *testing.T) 
 	// pass, cancel its UPDATE too, and remain first on every subsequent pass.
 	mock.ExpectQuery(`(?s)WHERE status = 'pending'.*ORDER BY COALESCE\(last_attempt_at, created_at\), id.*LIMIT 50`).
 		WillReturnRows(observationRows().
-			AddRow(slow.Chain, slow.TxHash, slow.LogIndex, slow.From, slow.To, slow.Token, "1", slow.BlockNumber, slow.BlockHash, "").
-			AddRow(good.Chain, good.TxHash, good.LogIndex, good.From, good.To, good.Token, "1", good.BlockNumber, good.BlockHash, ""))
+			AddRow(slow.Chain, slow.TxHash, slow.LogIndex, slow.From, slow.To, slow.Token, "1", slow.BlockNumber, slow.BlockHash, "", false).
+			AddRow(good.Chain, good.TxHash, good.LogIndex, good.From, good.To, good.Token, "1", good.BlockNumber, good.BlockHash, "", false))
 	expectObservationUpdate(mock, slow, "pending", "", "pending", "").
 		WillDelayFor(20 * time.Millisecond).WillReturnResult(sqlmock.NewResult(0, 1))
 	expectObservationUpdate(mock, good, "pending", "", "pending", "").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -124,7 +124,7 @@ func TestPendingReconcileSlowFirstReceiptRotatesAndCreditsNextRow(t *testing.T) 
 	fixture.good = third
 	fixture.mu.Unlock()
 	mock.ExpectQuery(`(?s)WHERE status = 'pending'.*ORDER BY COALESCE\(last_attempt_at, created_at\), id.*LIMIT 50`).
-		WillReturnRows(observationRows().AddRow(third.Chain, third.TxHash, third.LogIndex, third.From, third.To, third.Token, "1", third.BlockNumber, third.BlockHash, ""))
+		WillReturnRows(observationRows().AddRow(third.Chain, third.TxHash, third.LogIndex, third.From, third.To, third.Token, "1", third.BlockNumber, third.BlockHash, "", false))
 	expectObservationUpdate(mock, third, "pending", "", "pending", "").WillReturnResult(sqlmock.NewResult(0, 1))
 	if err := worker.retryPending(t.Context()); err != nil {
 		t.Fatal("next ordered page could not make progress", err)

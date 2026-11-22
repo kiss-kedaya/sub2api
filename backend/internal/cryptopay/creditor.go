@@ -28,6 +28,7 @@ import (
 type DepositCreditor struct {
 	entClient *dbent.Client
 	db        *sql.DB
+	payments  *service.PaymentService
 	fulfill   func(context.Context, int64) error
 	// bark is optional: deployments without user notifications leave it nil
 	// and every send is a no-op (the client is nil-safe).
@@ -35,7 +36,7 @@ type DepositCreditor struct {
 }
 
 func NewDepositCreditor(entClient *dbent.Client, payments *service.PaymentService, db *sql.DB) *DepositCreditor {
-	return &DepositCreditor{entClient: entClient, db: db, fulfill: payments.ExecuteBalanceFulfillment}
+	return &DepositCreditor{entClient: entClient, db: db, payments: payments, fulfill: payments.ExecuteBalanceFulfillment}
 }
 
 // SetBarkNotifier wires the per-user push channel used when a deposit is
@@ -242,4 +243,44 @@ func (c *DepositCreditor) resume(ctx context.Context, req ledger.CreditRequest, 
 		}
 	}
 	return nil
+}
+
+// RevokeProvisionalDeposit claws back an instant (provisional) credit after the
+// chain invalidated the transaction (reorg, revert, replacement or a missing
+// receipt). Returns revoked=true only when this call is the one that clawed the
+// balance back (or the identity had already been revoked, which is a no-op).
+// A false result leaves the deposit credited for the legacy manual-
+// reconciliation path: never deduct money we cannot attribute to a frozen order.
+func (c *DepositCreditor) RevokeProvisionalDeposit(ctx context.Context, chain, txHash string, logIndex int, reason string) (bool, error) {
+	if c == nil || c.payments == nil {
+		return false, nil
+	}
+	if err := mode.CheckWritable(); err != nil {
+		return false, err
+	}
+	result, err := c.payments.RevokeProvisionalDepositCredit(ctx, service.ProvisionalDepositRevocation{
+		Chain:        chain,
+		TxHash:       txHash,
+		LogIndex:     logIndex,
+		RevokeReason: reason,
+	})
+	if err != nil {
+		return false, err
+	}
+	if result == nil || !result.Revoked {
+		return false, nil
+	}
+	// Notify after the balance moved; a push that arrives first would send the
+	// user looking at a balance that has not changed yet.
+	if c.bark != nil && result.UserID > 0 {
+		body := fmt.Sprintf("一笔充值未最终确认，已回滚 %.3f（%s）。请重新转账或联系客服", result.Amount, strings.ToLower(txHash))
+		if err := c.bark.SendToUser(ctx, result.UserID, bark.Notification{
+			Title: "充值回滚",
+			Body:  body,
+			Group: "deposit",
+		}); err != nil {
+			slog.Warn("[cryptopay] provisional revoke push failed", "user", result.UserID, "error", err)
+		}
+	}
+	return true, nil
 }

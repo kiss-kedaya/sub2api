@@ -84,6 +84,13 @@ type Ledger struct {
 	maxAmount  float64
 	multiplier float64
 	pricer     NativePricer
+	// instantCreditEnabled credits a verified-but-unfinal observation at once
+	// (0-confirmation provisional credit). false restores the confirmation-
+	// gated behaviour exactly.
+	instantCreditEnabled bool
+	// instantCreditMinAmount is the credited-USD floor for the instant path.
+	// Below it the deposit waits for confirmations even when the switch is on.
+	instantCreditMinAmount float64
 	// onUnmatched reports a transfer that reached one of our addresses but
 	// could not be credited (too small, or the address is unassigned).
 	// Operators need this: it is usually a mistyped deposit or a probe.
@@ -140,6 +147,25 @@ func (l *Ledger) SetNativePricer(p NativePricer) {
 	l.pricer = p
 }
 
+// SetInstantCredit configures the provisional-credit switch. minAmount is the
+// credited-USD floor: a deposit below it keeps the confirmation-gated path.
+func (l *Ledger) SetInstantCredit(enabled bool, minAmount float64) {
+	l.instantCreditEnabled = enabled
+	if minAmount < 0 {
+		minAmount = 0
+	}
+	l.instantCreditMinAmount = minAmount
+}
+
+// instantCreditEligible reports whether a verified-but-unfinal observation may
+// be credited now instead of waiting for confirmations.
+func (l *Ledger) instantCreditEligible(creditUSDT float64) bool {
+	if !l.instantCreditEnabled {
+		return false
+	}
+	return l.instantCreditMinAmount <= 0 || creditUSDT >= l.instantCreditMinAmount
+}
+
 // notifyUnmatched fires the alert without letting a notifier failure affect
 // the ledger: recording the deposit matters more than the push.
 func (l *Ledger) notifyUnmatched(ctx context.Context, t scanner.Transfer, reason string) {
@@ -150,8 +176,29 @@ func (l *Ledger) notifyUnmatched(ctx context.Context, t scanner.Transfer, reason
 }
 
 // Process handles one observed transfer. Returns credited=true when a
-// balance was added.
+// balance was added. It is the final-credit entry point: the scanner only calls
+// it once the transfer reached the chain's final confirmation depth.
 func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) (credited bool, err error) {
+	return l.process(ctx, t, decimals, false)
+}
+
+// ProcessProvisional credits a transfer that the scanner verified on the
+// canonical chain but has not reached finality on: the balance moves at 0
+// confirmations and the row is marked provisional, so a later reorg or failed
+// transaction can revoke exactly this credit once and blacklist the identity.
+//
+// When instant credit is disabled, or the credited amount is below
+// instant_credit_min_amount, the observation is recorded as pending instead and
+// the confirmation-gated path credits it later. Returns credited=true only when
+// a balance was added now.
+func (l *Ledger) ProcessProvisional(ctx context.Context, t scanner.Transfer, decimals int) (bool, error) {
+	if !l.instantCreditEnabled {
+		return false, l.ProcessPending(ctx, t, decimals)
+	}
+	return l.process(ctx, t, decimals, true)
+}
+
+func (l *Ledger) process(ctx context.Context, t scanner.Transfer, decimals int, provisional bool) (credited bool, err error) {
 	if err := mode.CheckWritable(); err != nil {
 		return false, err
 	}
@@ -168,6 +215,10 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 	if err != nil {
 		return false, err
 	}
+	// Status is the permanent blacklist: a revoked provisional credit stays
+	// "reverted" (revoked_at set) and every terminal status short-circuits below,
+	// so a re-observed or re-mined copy of the same identity can never mint a
+	// second balance.
 	switch state.status {
 	case "credited", "ignored", "reverted", "dead_letter":
 		return false, nil
@@ -178,7 +229,7 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 			}
 			// The order amount was frozen at the first settlement, so a retry
 			// after this point can never re-price the deposit.
-			return l.credit(ctx, t, decimals, state.userID.Int64, state.credit.Float64, nil)
+			return l.credit(ctx, t, decimals, state.userID.Int64, state.credit.Float64, nil, provisional)
 		}
 	case "": // New observation.
 	default:
@@ -198,7 +249,7 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 	// observed at credit time, and never by the asset-independent multiplier
 	// alone (1 ETH must not be booked as 1 USDT).
 	if t.Token == scanner.NativeToken {
-		return l.processNative(ctx, t, decimals, state)
+		return l.processNative(ctx, t, decimals, state, provisional)
 	}
 
 	// Stablecoin path: unchanged. A token amount is already a USD amount, so
@@ -229,6 +280,15 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 	creditAmount := amountDecimal.Mul(decimal.NewFromFloat(l.multiplier)).Round(3)
 	creditUSDT, _ := creditAmount.Float64()
 
+	// Below the instant-credit floor the deposit keeps the old behaviour: it is
+	// recorded now and credited when the scanner observes finality.
+	if provisional && !l.instantCreditEligible(creditUSDT) {
+		if _, err := l.insertPending(ctx, t, decimals); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
 	status, err := l.insertPending(ctx, t, decimals)
 	if err != nil {
 		return false, err
@@ -244,7 +304,7 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 		return false, fmt.Errorf("unexpected deposit status %q", status)
 	}
 
-	credited, err = l.credit(ctx, t, decimals, userID, creditUSDT, nil)
+	credited, err = l.credit(ctx, t, decimals, userID, creditUSDT, nil, provisional)
 	if errors.Is(err, ErrReorgedDuplicateTransfer) {
 		const reason = "reorg_duplicate_credit_manual_review"
 		if recordErr := l.record(ctx, t, "reverted", decimals, reason); recordErr != nil {
@@ -265,7 +325,7 @@ func (l *Ledger) Process(ctx context.Context, t scanner.Transfer, decimals int) 
 //     replays with the same price while it is still fresh; an order freezes
 //     the settled amount permanently;
 //   - any failure returns an error and leaves the row pending, never credited.
-func (l *Ledger) processNative(ctx context.Context, t scanner.Transfer, decimals int, state depositState) (bool, error) {
+func (l *Ledger) processNative(ctx context.Context, t scanner.Transfer, decimals int, state depositState, provisional bool) (bool, error) {
 	status, err := l.insertPending(ctx, t, decimals)
 	if err != nil {
 		return false, err
@@ -326,6 +386,11 @@ func (l *Ledger) processNative(ctx context.Context, t scanner.Transfer, decimals
 		// not silently drop funds: keep the row pending for an operator.
 		return false, fmt.Errorf("native credit is below balance precision")
 	}
+	// Below the instant-credit floor the deposit waits for finality; the row is
+	// already pending and a later Process re-uses the persisted price.
+	if provisional && !l.instantCreditEligible(creditUSDT) {
+		return false, nil
+	}
 	slog.Info("[cryptopay] native deposit priced",
 		"chain", t.Chain,
 		"tx", t.TxHash,
@@ -337,7 +402,7 @@ func (l *Ledger) processNative(ctx context.Context, t scanner.Transfer, decimals
 		"price_source", quote.Source,
 		"credit_usdt", creditUSDT)
 
-	credited, err := l.credit(ctx, t, decimals, userID, creditUSDT, &quote)
+	credited, err := l.credit(ctx, t, decimals, userID, creditUSDT, &quote, provisional)
 	if errors.Is(err, ErrReorgedDuplicateTransfer) {
 		const reason = "reorg_duplicate_credit_manual_review"
 		if recordErr := l.record(ctx, t, "reverted", decimals, reason); recordErr != nil {
@@ -472,7 +537,7 @@ func (l *Ledger) existingDeposit(ctx context.Context, t scanner.Transfer) (depos
 	return state, nil
 }
 
-func (l *Ledger) credit(ctx context.Context, t scanner.Transfer, decimals int, userID int64, creditUSDT float64, quote *nativeprice.Quote) (bool, error) {
+func (l *Ledger) credit(ctx context.Context, t scanner.Transfer, decimals int, userID int64, creditUSDT float64, quote *nativeprice.Quote, provisional bool) (bool, error) {
 	req := CreditRequest{
 		UserID:     userID,
 		Chain:      t.Chain,
@@ -504,9 +569,12 @@ func (l *Ledger) credit(ctx context.Context, t scanner.Transfer, decimals int, u
 		return false, fmt.Errorf("credit deposit: %w", err)
 	}
 	result, err := l.db.ExecContext(ctx,
-		`UPDATE deposit_transactions SET status = 'credited'
-		 WHERE chain = $1 AND tx_hash = $2 AND log_index = $3 AND status = 'pending'`,
-		t.Chain, t.TxHash, t.LogIndex)
+		`UPDATE deposit_transactions
+		    SET status = 'credited',
+		        provisional = provisional OR $4,
+		        credited_at = COALESCE(credited_at, CURRENT_TIMESTAMP)
+		  WHERE chain = $1 AND tx_hash = $2 AND log_index = $3 AND status = 'pending'`,
+		t.Chain, t.TxHash, t.LogIndex, provisional)
 	if err != nil {
 		return false, fmt.Errorf("mark credited: %w", err)
 	}
