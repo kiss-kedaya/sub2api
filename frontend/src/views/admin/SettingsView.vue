@@ -7393,8 +7393,8 @@ const adminAuthProbeLoading = ref(true);
 const adminAuthProbeSaving = ref(false);
 const adminAuthProbeForm = reactive({
   enabled: true,
-  threshold: 20,
-  distinct_paths: 5,
+  threshold: 30,
+  distinct_paths: 10,
   window_minutes: 5,
   cooldown_minutes: 5,
 });

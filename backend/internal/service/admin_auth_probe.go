@@ -169,7 +169,11 @@ func (m *AdminAuthProbeMonitor) RecordAdminAuthFailure(ctx context.Context, inpu
 	} else {
 		status403 = statusCmd.Val()
 	}
-	if total < int64(settings.Threshold) && pathCount < int64(settings.DistinctPaths) {
+	// 触发条件是「AND」：窗口内 401/403 总数达到阈值 **且** 命中不同路径数达到
+	// 阈值。只看总量会被管理员 token 过期后一次页面加载（同时打多个 admin 接口）
+	// 误触发；只看路径数则「扫 5 个路径」就报警，同样噪声太大。两个维度同时满足
+	// 才像真实的批量探测。
+	if total < int64(settings.Threshold) || pathCount < int64(settings.DistinctPaths) {
 		return false
 	}
 

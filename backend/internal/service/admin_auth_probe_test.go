@@ -112,7 +112,7 @@ func recordProbeFailure(monitor *AdminAuthProbeMonitor, ip, path string, status 
 func TestAdminAuthProbe_FiresAtThreshold(t *testing.T) {
 	settings := *DefaultAdminAuthProbeSettings()
 	settings.Threshold = 3
-	settings.DistinctPaths = 100
+	settings.DistinctPaths = 2
 	monitor, writer, audit := newProbeMonitor(t, settings)
 
 	for i := 0; i < 2; i++ {
@@ -127,7 +127,8 @@ func TestAdminAuthProbe_FiresAtThreshold(t *testing.T) {
 		t.Fatalf("expected no audit entry below threshold, got %d", len(entries))
 	}
 
-	if !recordProbeFailure(monitor, "203.0.113.9", "/api/v1/admin/users", 403) {
+	// 第三次失败同时满足「总数 ≥3」与「不同路径 ≥2」，应当告警。
+	if !recordProbeFailure(monitor, "203.0.113.9", "/api/v1/admin/accounts", 403) {
 		t.Fatal("threshold hit must fire an alert")
 	}
 	entries := audit.snapshot()
@@ -138,7 +139,7 @@ func TestAdminAuthProbe_FiresAtThreshold(t *testing.T) {
 	if entry.Action != AuditActionAdminAuthProbeAlert {
 		t.Fatalf("unexpected audit action %q", entry.Action)
 	}
-	if entry.ClientIP != "203.0.113.9" || entry.Path != "/api/v1/admin/users" || entry.StatusCode != 403 {
+	if entry.ClientIP != "203.0.113.9" || entry.Path != "/api/v1/admin/accounts" || entry.StatusCode != 403 {
 		t.Fatalf("audit entry missing observed fields: %+v", entry)
 	}
 	if entry.UserAgent != "probe-agent/1.0" {
@@ -160,14 +161,14 @@ func TestAdminAuthProbe_FiresAtThreshold(t *testing.T) {
 	if dimensions["client_ip"] != "203.0.113.9" {
 		t.Fatalf("event dimensions client_ip = %v", dimensions["client_ip"])
 	}
-	if dimensions["failure_count"] != int64(3) || dimensions["distinct_paths"] != int64(1) {
+	if dimensions["failure_count"] != int64(3) || dimensions["distinct_paths"] != int64(2) {
 		t.Fatalf("event dimensions counts = %v / %v", dimensions["failure_count"], dimensions["distinct_paths"])
 	}
 	if dimensions["status_401"] != int64(2) || dimensions["status_403"] != int64(1) {
 		t.Fatalf("event dimensions statuses = %v / %v", dimensions["status_401"], dimensions["status_403"])
 	}
 	paths, ok := dimensions["paths"].([]string)
-	if !ok || len(paths) != 1 || paths[0] != "/api/v1/admin/users" {
+	if !ok || len(paths) != 2 {
 		t.Fatalf("event dimensions paths = %#v", dimensions["paths"])
 	}
 	if _, leaked := dimensions["authorization"]; leaked {
@@ -175,19 +176,69 @@ func TestAdminAuthProbe_FiresAtThreshold(t *testing.T) {
 	}
 }
 
-func TestAdminAuthProbe_FiresOnDistinctPaths(t *testing.T) {
+// 总数已达到阈值、但不同路径数没到：不告警。管理员 token 过期后一次页面加载
+// 会连续打多个 admin 接口，总量容易冲过阈值，但路径数通常远低于 10。
+func TestAdminAuthProbe_TotalAloneDoesNotFire(t *testing.T) {
 	settings := *DefaultAdminAuthProbeSettings()
-	settings.Threshold = 1000
+	settings.Threshold = 5
+	settings.DistinctPaths = 10
+	monitor, writer, audit := newProbeMonitor(t, settings)
+
+	for i := 0; i < 20; i++ {
+		if recordProbeFailure(monitor, "203.0.113.14", "/api/v1/admin/dashboard/stats", 401) {
+			t.Fatalf("failure %d: total alone must not fire when distinct paths < 10", i+1)
+		}
+	}
+	if events := writer.eventsSnapshot(); len(events) != 0 {
+		t.Fatalf("expected no alert from total alone, got %d", len(events))
+	}
+	if entries := audit.snapshot(); len(entries) != 0 {
+		t.Fatalf("expected no audit entry from total alone, got %d", len(entries))
+	}
+}
+
+// 不同路径数已达到阈值、但总数没到：同样不告警。避免「扫几个 admin 路径」
+// 就被当成批量探测。
+func TestAdminAuthProbe_DistinctPathsAloneDoNotFire(t *testing.T) {
+	settings := *DefaultAdminAuthProbeSettings()
+	settings.Threshold = 30
+	settings.DistinctPaths = 3
+	monitor, writer, audit := newProbeMonitor(t, settings)
+
+	for _, path := range []string{"/api/v1/admin/users", "/api/v1/admin/accounts", "/api/v1/admin/settings"} {
+		if recordProbeFailure(monitor, "203.0.113.15", path, 403) {
+			t.Fatalf("path %s: distinct paths alone must not fire when total < 30", path)
+		}
+	}
+	if events := writer.eventsSnapshot(); len(events) != 0 {
+		t.Fatalf("expected no alert from distinct paths alone, got %d", len(events))
+	}
+	if entries := audit.snapshot(); len(entries) != 0 {
+		t.Fatalf("expected no audit entry from distinct paths alone, got %d", len(entries))
+	}
+}
+
+// 只有两个维度同时达标才告警：先凑够路径数、再凑够总数。
+func TestAdminAuthProbe_RequiresBothCountAndDistinctPaths(t *testing.T) {
+	settings := *DefaultAdminAuthProbeSettings()
+	settings.Threshold = 5
 	settings.DistinctPaths = 3
 	monitor, writer, _ := newProbeMonitor(t, settings)
 
 	recordProbeFailure(monitor, "203.0.113.10", "/api/v1/admin/users", 401)
 	recordProbeFailure(monitor, "203.0.113.10", "/api/v1/admin/accounts", 403)
+	recordProbeFailure(monitor, "203.0.113.10", "/api/v1/admin/settings", 401)
 	if events := writer.eventsSnapshot(); len(events) != 0 {
-		t.Fatalf("two distinct paths must not fire with distinct_paths=3, got %d", len(events))
+		t.Fatalf("three paths but only three failures must not fire with threshold=5, got %d", len(events))
 	}
-	if !recordProbeFailure(monitor, "203.0.113.10", "/api/v1/admin/settings", 401) {
-		t.Fatal("third distinct path must fire an alert")
+
+	recordProbeFailure(monitor, "203.0.113.10", "/api/v1/admin/users", 403)
+	if events := writer.eventsSnapshot(); len(events) != 0 {
+		t.Fatalf("four failures must stay below threshold=5, got %d", len(events))
+	}
+
+	if !recordProbeFailure(monitor, "203.0.113.10", "/api/v1/admin/accounts", 401) {
+		t.Fatal("both thresholds reached must fire an alert")
 	}
 	events := waitProbeEvents(t, writer, 1)
 	if len(events) != 1 {
@@ -195,6 +246,9 @@ func TestAdminAuthProbe_FiresOnDistinctPaths(t *testing.T) {
 	}
 	if events[0].Dimensions["distinct_paths"] != int64(3) {
 		t.Fatalf("distinct_paths = %v", events[0].Dimensions["distinct_paths"])
+	}
+	if events[0].Dimensions["failure_count"] != int64(5) {
+		t.Fatalf("failure_count = %v", events[0].Dimensions["failure_count"])
 	}
 }
 
@@ -218,7 +272,7 @@ func TestAdminAuthProbe_DisabledDoesNotTouchRedis(t *testing.T) {
 func TestAdminAuthProbe_DedupesWithinCooldown(t *testing.T) {
 	settings := *DefaultAdminAuthProbeSettings()
 	settings.Threshold = 2
-	settings.DistinctPaths = 100
+	settings.DistinctPaths = 1
 	monitor, writer, audit := newProbeMonitor(t, settings)
 
 	recordProbeFailure(monitor, "203.0.113.12", "/api/v1/admin/users", 401)
@@ -243,6 +297,7 @@ func TestAdminAuthProbe_DedupesWithinCooldown(t *testing.T) {
 func TestAdminAuthProbe_TruncatesUserAgentAndStripsQuery(t *testing.T) {
 	settings := *DefaultAdminAuthProbeSettings()
 	settings.Threshold = 1
+	settings.DistinctPaths = 1
 	monitor, _, audit := newProbeMonitor(t, settings)
 
 	longUA := strings.Repeat("u", 200)
@@ -291,7 +346,7 @@ func TestNormalizeAdminProbeIP(t *testing.T) {
 
 func TestAdminAuthProbeSettings_DefaultsAndNormalize(t *testing.T) {
 	defaults := DefaultAdminAuthProbeSettings()
-	if !defaults.Enabled || defaults.Threshold != 20 || defaults.DistinctPaths != 5 || defaults.WindowMinutes != 5 {
+	if !defaults.Enabled || defaults.Threshold != 30 || defaults.DistinctPaths != 10 || defaults.WindowMinutes != 5 {
 		t.Fatalf("unexpected defaults: %+v", defaults)
 	}
 	normalized := AdminAuthProbeSettings{}
@@ -373,7 +428,7 @@ func TestAdminAuthProbeSettings_PersistAndCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get default: %v", err)
 	}
-	if !settings.Enabled || settings.Threshold != 20 {
+	if !settings.Enabled || settings.Threshold != 30 {
 		t.Fatalf("unexpected defaults: %+v", settings)
 	}
 

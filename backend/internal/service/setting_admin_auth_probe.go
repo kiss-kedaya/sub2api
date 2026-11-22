@@ -14,8 +14,11 @@ import (
 //
 // 计数本身走 Redis（按来源 IP 维度），这里只控制开关和阈值：
 //   - Enabled：默认开启。关闭后中间件仍然不做任何 Redis 写入。
-//   - Threshold：窗口内同一 IP 的 401/403 总数达到该值即告警，默认 20。
-//   - DistinctPaths：窗口内同一 IP 命中的不同 admin 路由数达到该值即告警，默认 5。
+//   - Threshold：窗口内同一 IP 的 401/403 总数达到该值（并且不同路径数也达到
+//     DistinctPaths）才告警，默认 30。
+//   - DistinctPaths：窗口内同一 IP 命中的不同 admin 路由数达到该值（并且总失败
+//     数也达到 Threshold）才告警，默认 10。两个条件是 AND，避免管理员 token
+//     过期后一次页面加载或少量路径探测就误报。
 //   - WindowMinutes / CooldownMinutes：计数窗口与告警去重窗口，默认 5 分钟。
 //
 // 阈值故意做成设置项而不是常量：正常管理员敲错路径/会话过期也会产生 401/403，
@@ -44,12 +47,13 @@ type cachedAdminAuthProbeSettings struct {
 	expiresAt int64 // unix nano
 }
 
-// DefaultAdminAuthProbeSettings 返回默认配置：开启、5 分钟内 20 次或 5 个不同路径告警。
+// DefaultAdminAuthProbeSettings 返回默认配置：开启，5 分钟内 401/403 总数 ≥30
+// 且不同路径 ≥10 才告警。
 func DefaultAdminAuthProbeSettings() *AdminAuthProbeSettings {
 	return &AdminAuthProbeSettings{
 		Enabled:         true,
-		Threshold:       20,
-		DistinctPaths:   5,
+		Threshold:       30,
+		DistinctPaths:   10,
 		WindowMinutes:   5,
 		CooldownMinutes: 5,
 	}

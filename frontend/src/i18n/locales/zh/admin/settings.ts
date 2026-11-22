@@ -323,14 +323,15 @@ export default {
       },
       adminAuthProbe: {
         title: '管理端 401/403 探测告警',
-        description: '按来源 IP 统计管理端鉴权失败，超过阈值写一条 ops 告警事件，便于发现授权渗透/暴力探测',
+        description:
+          '按来源 IP 统计管理端鉴权失败；只有「失败总数」和「不同路径数」两个阈值同时达到时才写一条 ops 告警事件，避免管理员会话过期造成误报',
         privacyNote: '事件只记录来源 IP、User-Agent 前 64 字符、命中路径和状态码统计，不记录任何 token、Cookie 或 header 值。',
         enabled: '启用探测告警',
         enabledHint: '默认开启；关闭后不再写入任何 Redis 计数或告警事件。',
         threshold: '失败次数阈值',
-        thresholdHint: '同一来源 IP 在窗口内收到的 401/403 总数达到该值即告警，默认 20。',
+        thresholdHint: '同一来源 IP 在窗口内收到的 401/403 总数达到该值，且不同路径数也达到阈值时才告警，默认 30。',
         distinctPaths: '不同路径阈值',
-        distinctPathsHint: '同一来源 IP 在窗口内命中的不同管理端路径数达到该值即告警，默认 5。',
+        distinctPathsHint: '同一来源 IP 在窗口内命中的不同管理端路径数达到该值，且失败总数也达到阈值时才告警，默认 10。',
         windowMinutes: '统计窗口',
         windowMinutesHint: 'Redis 计数的滑动窗口长度，默认 5 分钟。',
         cooldownMinutes: '告警冷却',
