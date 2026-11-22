@@ -6,6 +6,8 @@ const {
   getPublicSettingsMock,
   registerMock,
   showErrorMock,
+  showSuccessMock,
+  sendVerifyCodeMock,
   pushMock,
   verifyActionMock,
   appStoreMock
@@ -13,12 +15,14 @@ const {
   getPublicSettingsMock: vi.fn(),
   registerMock: vi.fn(),
   showErrorMock: vi.fn(),
+  showSuccessMock: vi.fn(),
+  sendVerifyCodeMock: vi.fn(),
   pushMock: vi.fn(),
   verifyActionMock: vi.fn(),
   appStoreMock: {
     cachedPublicSettings: null as { promo_code_enabled?: boolean } | null,
     showError: (...args: unknown[]) => showErrorMock(...args),
-    showSuccess: vi.fn(),
+    showSuccess: (...args: unknown[]) => showSuccessMock(...args),
     showWarning: vi.fn()
   }
 }))
@@ -69,13 +73,17 @@ vi.mock('@/api/auth', async () => {
   const actual = await vi.importActual<typeof import('@/api/auth')>('@/api/auth')
   return {
     ...actual,
-    getPublicSettings: (...args: unknown[]) => getPublicSettingsMock(...args)
+    getPublicSettings: (...args: unknown[]) => getPublicSettingsMock(...args),
+    sendVerifyCode: (...args: unknown[]) => sendVerifyCodeMock(...args)
   }
 })
 
-function mountRegister() {
+function mountRegister(options: { realAgreementPrompt?: boolean } = {}) {
   return mount(RegisterView, {
     global: {
+      // The real LoginAgreementPrompt renders document titles through RouterLink,
+      // so the stub must keep its default slot content for these specs.
+      renderStubDefaultSlot: options.realAgreementPrompt === true,
       stubs: {
         AuthLayout: { template: '<div><slot /><slot name="footer" /></div>' },
         Icon: true,
@@ -83,7 +91,7 @@ function mountRegister() {
           template: '<div data-testid="turnstile-widget" />',
           methods: { verifyAction: verifyActionMock, reset: vi.fn() }
         },
-        LoginAgreementPrompt: true,
+        LoginAgreementPrompt: options.realAgreementPrompt ? false : true,
         EmailOAuthButtons: true,
         LinuxDoOAuthSection: true,
         WechatOAuthSection: true,
@@ -93,6 +101,24 @@ function mountRegister() {
       }
     }
   })
+}
+
+async function clickStepAction(wrapper: ReturnType<typeof mountRegister>): Promise<void> {
+  await wrapper.get('.auth-step-footer .btn-primary').trigger('click')
+  await flushPromises()
+}
+
+async function reachVerifyStep(wrapper: ReturnType<typeof mountRegister>): Promise<void> {
+  await wrapper.get('#email').setValue('user@example.com')
+  await wrapper.get('#password').setValue('secret-123')
+  // account -> verify is a single swap (prefers-reduced-motion is mocked as
+  // true, so the step transition is synchronous). Loop defensively so the helper
+  // does not depend on how many panes the flow currently has.
+  let guard = 0
+  while (!wrapper.find('button[type="submit"]').exists() && guard < 4) {
+    await clickStepAction(wrapper)
+    guard += 1
+  }
 }
 
 describe('RegisterView invitation layout', () => {
@@ -157,11 +183,13 @@ describe('RegisterView invitation layout', () => {
     expect(wrapper.find('#promo_code').exists()).toBe(true)
   })
 
-  it('keeps the optional affiliate invitation field before Turnstile', async () => {
+  it('keeps the optional affiliate invitation field on the first (account) step, before Turnstile', async () => {
     const wrapper = mountRegister()
     await flushPromises()
 
-    const invitationField = wrapper.get('[data-testid="affiliate-invitation-field"]')
+    // 邀请码合并进第 1 步：不再是独立的一步。
+    const accountPane = wrapper.get('[data-testid="register-account-pane"]')
+    const invitationField = accountPane.get('[data-testid="affiliate-invitation-field"]')
     const turnstile = wrapper.get('[data-testid="registration-turnstile"]')
 
     expect(invitationField.get('input').attributes('id')).toBe('affiliate_code')
@@ -170,6 +198,9 @@ describe('RegisterView invitation layout', () => {
       invitationField.element.compareDocumentPosition(turnstile.element) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
+    // 账号 + 验证 = 2 步，没有额外的邀请码步
+    expect(wrapper.findAll('.auth-step-dot')).toHaveLength(2)
+    expect(wrapper.find('[data-pane-state="details"]').exists()).toBe(false)
   })
 
   it('uses the mandatory invitation field without duplicating the affiliate field', async () => {
@@ -182,7 +213,57 @@ describe('RegisterView invitation layout', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="affiliate-invitation-field"]').exists()).toBe(false)
-    expect(wrapper.get('#invitation_code').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="register-account-pane"]').get('#invitation_code').exists()).toBe(true)
+    // 账号（含邀请码）+ 验证
+    expect(wrapper.findAll('.auth-step-dot')).toHaveLength(2)
+  })
+
+  it('collapses to a single step when invitation/promo is enabled but no verify step is required', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      ...publicSettings,
+      turnstile_enabled: false,
+      login_agreement_enabled: false,
+      invitation_code_enabled: false,
+      affiliate_enabled: true,
+      promo_code_enabled: true
+    })
+
+    const wrapper = mountRegister()
+    await flushPromises()
+
+    const accountPane = wrapper.get('[data-testid="register-account-pane"]')
+    expect(accountPane.get('#affiliate_code').exists()).toBe(true)
+    expect(accountPane.get('#promo_code').exists()).toBe(true)
+    // 只有一步：不显示第 N 步/进度点/上一步
+    expect(wrapper.find('[data-testid="register-step-head"]').exists()).toBe(false)
+    expect(wrapper.findAll('.auth-step-dot')).toHaveLength(0)
+    expect(wrapper.find('.auth-step-back').exists()).toBe(false)
+    expect(wrapper.get('button[type="submit"]').exists()).toBe(true)
+  })
+
+  it('keeps promo-code field on step 1 while the verify step is still a separate page', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      ...publicSettings,
+      turnstile_enabled: true,
+      turnstile_site_key: 'site-key',
+      promo_code_enabled: true
+    })
+
+    const wrapper = mountRegister()
+    await flushPromises()
+
+    expect(wrapper.findAll('.auth-step-dot')).toHaveLength(2)
+    const accountPane = wrapper.get('[data-testid="register-account-pane"]')
+    expect(accountPane.get('#promo_code').exists()).toBe(true)
+    // 账号步还不是最后一步，footer 主按钮是「继续」
+    expect(wrapper.find('button[type="submit"]').exists()).toBe(false)
+
+    await wrapper.get('#email').setValue('user@example.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await clickStepAction(wrapper)
+
+    expect(wrapper.get('[data-testid="register-verify-pane"]').attributes('data-pane-state')).toBe('active')
+    expect(wrapper.get('[data-testid="register-account-pane"]').attributes('data-pane-state')).toBe('idle')
   })
 
   it('submits a non-whitelist email domain so the backend can enforce its registration quota', async () => {
@@ -371,6 +452,322 @@ describe('RegisterView login agreement gate', () => {
     await flushPromises()
 
     expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+})
+
+// 线上回归：agreement-only（验证码全关）时验证步只剩 Turnstile（不渲染）
+// 和 modal 模式的 LoginAgreementPrompt（内容在弹窗里），页面整块空白。
+describe('RegisterView verify step pane content', () => {
+  const agreementDocuments = [
+    { id: 'terms', title: 'Terms of Service', content_md: '# Terms' },
+    { id: 'privacy', title: 'Privacy Policy', content_md: '# Privacy' }
+  ]
+
+  // Two pages now: account (which also owns the invitation fields) + verify.
+  const agreementOnlySettings = {
+    ...publicSettings,
+    affiliate_enabled: true,
+    turnstile_enabled: false,
+    login_agreement_enabled: true,
+    login_agreement_mode: 'modal',
+    login_agreement_updated_at: '2026-03-31',
+    login_agreement_documents: agreementDocuments
+  }
+
+  const captchaOnlySettings = {
+    ...publicSettings,
+    affiliate_enabled: true,
+    turnstile_enabled: true,
+    turnstile_site_key: 'site-key',
+    login_agreement_enabled: false
+  }
+
+  const captchaAndAgreementSettings = {
+    ...agreementOnlySettings,
+    turnstile_enabled: true,
+    turnstile_site_key: 'site-key'
+  }
+
+  beforeEach(() => {
+    getPublicSettingsMock.mockReset()
+    registerMock.mockReset()
+    showErrorMock.mockReset()
+    pushMock.mockReset()
+    appStoreMock.cachedPublicSettings = null
+    localStorage.removeItem('sub2api_login_agreement_consent')
+    getPublicSettingsMock.mockResolvedValue(publicSettings)
+  })
+
+  it.each(['modal', 'checkbox'])(
+    'renders the agreement sentence, document links and checkbox on the verify step (agreement-only, %s mode)',
+    async (mode) => {
+      getPublicSettingsMock.mockResolvedValueOnce({
+        ...agreementOnlySettings,
+        login_agreement_mode: mode
+      })
+
+      const wrapper = mountRegister({ realAgreementPrompt: true })
+      await flushPromises()
+      await reachVerifyStep(wrapper)
+
+      const pane = wrapper.get('[data-testid="register-verify-pane"]')
+      expect(pane.attributes('data-pane-state')).toBe('active')
+      // 验证码全关：验证步不得出现 Turnstile 容器
+      expect(pane.find('[data-testid="registration-turnstile"]').exists()).toBe(false)
+
+      const agreement = pane.get('[data-testid="registration-agreement"]')
+      expect(agreement.text()).toContain('legal.loginAgreementPrompt.checkboxPrefix')
+      expect(agreement.text()).toContain('Terms of Service')
+      expect(agreement.text()).toContain('Privacy Policy')
+      expect(agreement.findAll('router-link-stub')).toHaveLength(2)
+
+      const checkbox = agreement.get('input[type="checkbox"]')
+      expect((checkbox.element as HTMLInputElement).checked).toBe(false)
+      // 未勾选时「继续/注册」按钮禁用（沿用现有 agreementGateActive 校验）
+      expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+
+      await checkbox.setValue(true)
+
+      expect((checkbox.element as HTMLInputElement).checked).toBe(true)
+      // 勾选后仍留在验证步，内容不消失
+      expect(wrapper.find('[data-testid="registration-agreement"]').exists()).toBe(true)
+      expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+      expect(JSON.parse(localStorage.getItem('sub2api_login_agreement_consent') || '{}').revision)
+        .toBe('2026-03-31:terms:Terms of Service|privacy:Privacy Policy')
+      wrapper.unmount()
+    }
+  )
+
+  // 生产表现为空白的原因之一：条款已在弹窗里同意过（localStorage 有记录），
+  // modal 模式不再渲染任何页面内容。修复后仍需显示勾选行。
+  it('keeps the agreement row visible when the consent was already stored (modal mode)', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce(agreementOnlySettings)
+    localStorage.setItem(
+      'sub2api_login_agreement_consent',
+      JSON.stringify({ revision: '2026-03-31:terms:Terms of Service|privacy:Privacy Policy' })
+    )
+
+    const wrapper = mountRegister({ realAgreementPrompt: true })
+    await flushPromises()
+    await reachVerifyStep(wrapper)
+
+    const agreement = wrapper.get('[data-testid="registration-agreement"]')
+    expect(agreement.text()).toContain('Terms of Service')
+    expect((agreement.get('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
+    expect(agreement.isVisible()).toBe(true)
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('still renders the Turnstile container when only a captcha is required', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce(captchaOnlySettings)
+
+    const wrapper = mountRegister({ realAgreementPrompt: true })
+    await flushPromises()
+    await reachVerifyStep(wrapper)
+
+    const pane = wrapper.get('[data-testid="register-verify-pane"]')
+    expect(pane.get('[data-testid="registration-turnstile"]').exists()).toBe(true)
+    expect(pane.find('[data-testid="registration-agreement"]').exists()).toBe(false)
+    expect(pane.find('[data-testid="turnstile-widget"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('stacks the captcha above the agreement when both are required', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce(captchaAndAgreementSettings)
+
+    const wrapper = mountRegister({ realAgreementPrompt: true })
+    await flushPromises()
+    await reachVerifyStep(wrapper)
+
+    const pane = wrapper.get('[data-testid="register-verify-pane"]')
+    const turnstile = pane.get('[data-testid="registration-turnstile"]')
+    const agreement = pane.get('[data-testid="registration-agreement"]')
+
+    expect(
+      turnstile.element.compareDocumentPosition(agreement.element) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    // 两者都是 verify pane 的直接子元素：竖向排列，间距由 .auth-step-pane > * + * 统一
+    expect(turnstile.element.parentElement).toBe(pane.element)
+    expect(agreement.element.parentElement).toBe(pane.element)
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+})
+
+// 老板要求：邮箱验证不再跳转到独立页，而是作为注册卡片里的最后一步。
+describe('RegisterView in-card email verification', () => {
+  const emailVerifySettings = {
+    ...publicSettings,
+    affiliate_enabled: false,
+    turnstile_enabled: false,
+    login_agreement_enabled: false,
+    email_verify_enabled: true
+  }
+
+  beforeEach(() => {
+    getPublicSettingsMock.mockReset()
+    registerMock.mockReset()
+    showErrorMock.mockReset()
+    showSuccessMock.mockReset()
+    sendVerifyCodeMock.mockReset()
+    pushMock.mockReset()
+    appStoreMock.cachedPublicSettings = null
+    sessionStorage.clear()
+    localStorage.clear()
+    getPublicSettingsMock.mockResolvedValue(publicSettings)
+    sendVerifyCodeMock.mockResolvedValue({ countdown: 60 })
+    registerMock.mockResolvedValue({})
+  })
+
+  async function enterEmailVerifyStep(wrapper: ReturnType<typeof mountRegister>): Promise<void> {
+    await flushPromises()
+    await wrapper.get('#email').setValue('user@example.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await clickStepAction(wrapper)
+    await flushPromises()
+    await flushPromises()
+  }
+
+  it('moves into the in-card verification step instead of the standalone page', async () => {
+    getPublicSettingsMock.mockResolvedValue(emailVerifySettings)
+
+    const wrapper = mountRegister()
+    await enterEmailVerifyStep(wrapper)
+
+    const pane = wrapper.get('[data-testid="register-email-verify-pane"]')
+    expect(pane.attributes('data-pane-state')).toBe('active')
+    expect(pane.text()).toContain('auth.verifyYourEmail')
+    expect(pane.text()).toContain('user@example.com')
+    expect(pane.get('#code').exists()).toBe(true)
+    // 账号 + 邮箱验证 = 2 步
+    expect(wrapper.findAll('.auth-step-dot')).toHaveLength(2)
+    expect(sendVerifyCodeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'user@example.com' })
+    )
+    expect(pushMock).not.toHaveBeenCalledWith('/email-verify')
+    wrapper.unmount()
+  })
+
+  it('creates the account with the 6-digit code and redirects to the dashboard', async () => {
+    getPublicSettingsMock.mockResolvedValue(emailVerifySettings)
+
+    const wrapper = mountRegister()
+    await enterEmailVerifyStep(wrapper)
+
+    await wrapper.get('#code').setValue('123456')
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(registerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'user@example.com',
+        password: 'secret-123',
+        verify_code: '123456'
+      })
+    )
+    expect(showSuccessMock).toHaveBeenCalled()
+    expect(pushMock).toHaveBeenCalledWith('/dashboard')
+    wrapper.unmount()
+  })
+
+  it('shows the countdown and resends the code after it expires', async () => {
+    getPublicSettingsMock.mockResolvedValue(emailVerifySettings)
+    sendVerifyCodeMock.mockResolvedValueOnce({ countdown: 0 }).mockResolvedValue({ countdown: 60 })
+
+    const wrapper = mountRegister()
+    await enterEmailVerifyStep(wrapper)
+
+    const resendButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('auth.resendCode'))
+    expect(resendButton).toBeTruthy()
+
+    await resendButton!.trigger('click')
+    await flushPromises()
+
+    expect(sendVerifyCodeMock).toHaveBeenCalledTimes(2)
+    const countdownButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('auth.resendCountdown'))
+    expect(countdownButton?.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('keeps the entered code, sent state and countdown when going back to the account step', async () => {
+    getPublicSettingsMock.mockResolvedValue(emailVerifySettings)
+
+    const wrapper = mountRegister()
+    await enterEmailVerifyStep(wrapper)
+    await wrapper.get('#code').setValue('123456')
+
+    await wrapper.get('.auth-step-back').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="register-account-pane"]').attributes('data-pane-state')).toBe('active')
+
+    await clickStepAction(wrapper)
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="register-email-verify-pane"]').attributes('data-pane-state')).toBe('active')
+    expect((wrapper.get('#code').element as HTMLInputElement).value).toBe('123456')
+    expect(wrapper.text()).toContain('auth.codeSentSuccess')
+    // 数据没变，不重新发码
+    expect(sendVerifyCodeMock).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('keeps the agreement step before the email verification step (3 steps)', async () => {
+    getPublicSettingsMock.mockResolvedValue({
+      ...emailVerifySettings,
+      login_agreement_enabled: true,
+      login_agreement_mode: 'checkbox',
+      login_agreement_updated_at: '2026-03-31',
+      login_agreement_documents: [{ id: 'terms', title: 'Terms of Service', content_md: '# Terms' }]
+    })
+
+    const wrapper = mountRegister({ realAgreementPrompt: true })
+    await flushPromises()
+    await wrapper.get('#email').setValue('user@example.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await clickStepAction(wrapper)
+    await flushPromises()
+
+    // 账号 -> 协议 -> 邮箱验证
+    expect(wrapper.findAll('.auth-step-dot')).toHaveLength(3)
+    expect(wrapper.get('[data-testid="register-verify-pane"]').attributes('data-pane-state')).toBe('active')
+    const continueButton = wrapper.get('.auth-step-footer .btn-primary')
+    expect(continueButton.attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-testid="registration-agreement"] input[type="checkbox"]').setValue(true)
+    expect(continueButton.attributes('disabled')).toBeUndefined()
+
+    await continueButton.trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.get('[data-testid="register-email-verify-pane"]').attributes('data-pane-state')).toBe('active')
+    wrapper.unmount()
+  })
+
+  it('resends the code for a changed email after returning to edit it', async () => {
+    getPublicSettingsMock.mockResolvedValue(emailVerifySettings)
+
+    const wrapper = mountRegister()
+    await enterEmailVerifyStep(wrapper)
+
+    await wrapper.get('.auth-step-back').trigger('click')
+    await flushPromises()
+    await wrapper.get('#email').setValue('other@example.com')
+    await clickStepAction(wrapper)
+    await flushPromises()
+    await flushPromises()
+
+    expect(sendVerifyCodeMock).toHaveBeenCalledTimes(2)
+    expect(sendVerifyCodeMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ email: 'other@example.com' })
+    )
+    expect(wrapper.get('[data-testid="register-email-verify-pane"]').text()).toContain('other@example.com')
     wrapper.unmount()
   })
 })

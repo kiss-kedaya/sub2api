@@ -27,7 +27,7 @@
       </div>
 
       <!-- Registration Form -->
-      <form v-else @submit.prevent="handleRegister" class="space-y-5">
+      <form v-else @submit.prevent="handleFormSubmit" class="space-y-5">
         <!-- Step head: "Step N of M" on the left, dotted progress on the right -->
         <div v-if="totalSteps > 1" class="auth-step-head" data-testid="register-step-head">
           <span class="auth-step-label">{{ stepLabel }}</span>
@@ -49,8 +49,14 @@
           </span>
         </div>
 
-        <!-- Step 1: account. Panes stay mounted so field values survive navigation. -->
-        <div class="auth-step-pane" :data-pane-state="paneState('account')">
+        <!-- Step 1: account. Panes stay mounted so field values survive navigation.
+             Invitation / promo codes live on this step too, so the flow is only
+             "account -> verify" (or a single step when neither is required). -->
+        <div
+          class="auth-step-pane"
+          data-testid="register-account-pane"
+          :data-pane-state="paneState('account')"
+        >
         <!-- Email Input -->
         <div>
           <label for="email" class="input-label">
@@ -105,10 +111,7 @@
           </p>
         </div>
 
-        </div>
-
-        <!-- Step 2: invitation / promo, only when one of those fields exists -->
-        <div v-if="hasDetailsStep" class="auth-step-pane" :data-pane-state="paneState('details')">
+        <!-- Invitation / promo codes: same fields as before, now on the account step -->
         <!-- Invitation Code Input (Required when enabled) -->
         <div v-if="invitationCodeEnabled">
           <label for="invitation_code" class="input-label">
@@ -157,7 +160,7 @@
         <div v-else-if="affiliateEnabled" data-testid="affiliate-invitation-field">
           <label for="affiliate_code" class="input-label">
             {{ t('auth.invitationCodeLabel') }}
-            <span class="ml-1 text-xs font-normal text-gray-400 dark:text-dark-500">({{ t('common.optional') }})</span>
+            <span class="ml-1 text-xs font-normal text-muted">({{ t('common.optional') }})</span>
           </label>
           <div class="relative">
             <input
@@ -175,7 +178,7 @@
         <div v-if="promoCodeEnabled">
           <label for="promo_code" class="input-label">
             {{ t('auth.promoCodeLabel') }}
-            <span class="ml-1 text-xs font-normal text-gray-400 dark:text-dark-500">({{ t('common.optional') }})</span>
+            <span class="ml-1 text-xs font-normal text-muted">({{ t('common.optional') }})</span>
           </label>
           <div class="relative">
             <input
@@ -218,8 +221,16 @@
 
         </div>
 
-        <!-- Step 3: verification / agreement, only when one of those is required -->
-        <div v-if="hasVerifyStep" class="auth-step-pane" :data-pane-state="paneState('verify')">
+        <!-- Step 2: verification / agreement, only when one of those is required.
+             The agreement is always rendered inline here (even in modal mode) so the
+             step can never be blank: previously a modal-mode agreement with captcha
+             disabled left this pane completely empty. -->
+        <div
+          v-if="hasVerifyStep"
+          class="auth-step-pane"
+          data-testid="register-verify-pane"
+          :data-pane-state="paneState('verify')"
+        >
         <!-- Turnstile Widget -->
         <div v-if="captchaEnabled" data-testid="registration-turnstile">
           <TurnstileWidget
@@ -239,17 +250,38 @@
           />
         </div>
 
-        <LoginAgreementPrompt
-          v-if="loginAgreementEnabled"
-          :accepted="agreementAccepted"
-          :documents="loginAgreementDocuments"
-          :mode="loginAgreementMode"
-          :updated-at="loginAgreementUpdatedAt"
-          :visible="showAgreementModal"
-          @accept="acceptLoginAgreement"
-          @reject="rejectLoginAgreement"
-          @open="showAgreementModal = true"
-        />
+        <!-- Agreement confirmation: sentence + document links + checkbox.
+             Forced to the inline checkbox layout regardless of the admin's
+             mode, because the modal-only layout renders no page content. -->
+        <div v-if="loginAgreementEnabled" data-testid="registration-agreement">
+          <LoginAgreementPrompt
+            :accepted="agreementAccepted"
+            :documents="loginAgreementDocuments"
+            mode="checkbox"
+            :updated-at="loginAgreementUpdatedAt"
+            :visible="showAgreementModal"
+            @accept="acceptLoginAgreement"
+            @reject="rejectLoginAgreement"
+            @open="showAgreementModal = true"
+          />
+        </div>
+        </div>
+
+        <!-- Step 3: email verification, kept inside the card instead of a jump to
+             /email-verify. The card is shared with the standalone route and stays
+             mounted, so going back to edit the email keeps the sent/countdown state. -->
+        <div
+          v-if="emailVerifyEnabled"
+          class="auth-step-pane"
+          data-testid="register-email-verify-pane"
+          :data-pane-state="paneState('verify_email')"
+        >
+          <EmailVerifyCard
+            v-if="emailVerifyReady"
+            ref="emailVerifyCardRef"
+            embedded
+            :restart-key="emailVerifyRestartKey"
+          />
         </div>
 
         <!-- Footer: Back pinned left, primary action pinned right -->
@@ -269,10 +301,13 @@
             v-if="!isLastStep"
             type="button"
             class="btn btn-primary ml-auto px-5"
+            :disabled="agreementGateActive && currentStepKey === 'verify'"
             @click="goNext"
           >
             {{ t('auth.continue') }}
           </button>
+          <!-- The verification step owns its own "验证并创建账户" button inside the card. -->
+          <span v-else-if="currentStepKey === 'verify_email'" />
           <button
             v-else
             type="submit"
@@ -372,6 +407,7 @@ import OidcOAuthSection from '@/components/auth/OidcOAuthSection.vue'
 import WechatOAuthSection from '@/components/auth/WechatOAuthSection.vue'
 import EmailOAuthButtons from '@/components/auth/EmailOAuthButtons.vue'
 import LoginAgreementPrompt from '@/components/auth/LoginAgreementPrompt.vue'
+import EmailVerifyCard from '@/components/auth/EmailVerifyCard.vue'
 import Icon from '@/components/icons/Icon.vue'
 import TurnstileWidget from '@/components/CaptchaChallenge.vue'
 import { useAuthStore, useAppStore } from '@/stores'
@@ -398,7 +434,7 @@ import {
   loadAffiliateReferralCode,
   resolveAffiliateReferralCode
 } from '@/utils/oauthAffiliate'
-import type { LoginAgreementDocument } from '@/types'
+import type { LoginAgreementDocument, RegisterRequest } from '@/types'
 
 const { t, locale } = useI18n()
 const LOGIN_AGREEMENT_STORAGE_KEY = 'sub2api_login_agreement_consent'
@@ -463,6 +499,12 @@ const loginAgreementDocuments = ref<LoginAgreementDocument[]>([])
 const agreementAccepted = ref<boolean>(false)
 const showAgreementModal = ref<boolean>(false)
 
+// In-card email verification step (email_verify_enabled)
+const emailVerifyReady = ref<boolean>(false)
+const emailVerifyRestartKey = ref<number>(0)
+const emailVerifySignature = ref<string>('')
+const emailVerifyCardRef = ref<InstanceType<typeof EmailVerifyCard> | null>(null)
+
 // Turnstile
 const turnstileRef = ref<InstanceType<typeof TurnstileWidget> | null>(null)
 const turnstileToken = ref<string>('')
@@ -485,16 +527,14 @@ const captchaEnabled = computed(
 )
 
 // ==================== Quiet step flow ====================
-// Each step only asks for the fields it owns; a step is skipped entirely when it
-// would have no field, so the indicator never shows an empty pane.
-const hasDetailsStep = computed(
-  () => invitationCodeEnabled.value || affiliateEnabled.value || promoCodeEnabled.value
-)
+// The account step also owns the invitation / promo fields, acceptance /
+// verification adds one page, and email verification adds the final in-card
+// page. A step is skipped entirely when it would have no field.
 const hasVerifyStep = computed(() => captchaEnabled.value || loginAgreementEnabled.value)
 const stepKeys = computed<string[]>(() => {
   const keys = ['account']
-  if (hasDetailsStep.value) keys.push('details')
   if (hasVerifyStep.value) keys.push('verify')
+  if (emailVerifyEnabled.value) keys.push('verify_email')
   return keys
 })
 const totalSteps = computed(() => stepKeys.value.length)
@@ -550,11 +590,78 @@ function goToStep(nextIndex: number): void {
   }, STEP_EXIT_MS)
 }
 
-function goNext(): void {
+async function goNext(): Promise<void> {
   if (isLastStep.value) return
-  const scope = currentStepKey.value === 'account' ? 'account' : 'details'
-  if (!validateForm(scope)) return
+  const nextKey = stepKeys.value[stepIndex.value + 1]
+  // Reaching the email verification page needs the full submission checks
+  // (agreement consent + captcha token), not just the account fields.
+  if (!validateForm(nextKey === 'verify_email' ? 'full' : 'account')) return
+  if (nextKey === 'verify_email') {
+    await beginEmailVerification()
+    return
+  }
   goToStep(stepIndex.value + 1)
+}
+
+function buildRegistrationPayload(): RegisterRequest {
+  const affCode = formData.aff_code.trim() || loadAffiliateReferralCode()
+  if (affCode) {
+    formData.aff_code = affCode
+  }
+  return {
+    email: formData.email,
+    password: formData.password,
+    turnstile_token:
+      turnstileEnabled.value || aliyunCaptchaEnabled.value ? turnstileToken.value : undefined,
+    tencent_captcha_ticket: tencentCaptchaEnabled.value ? turnstileToken.value : undefined,
+    tencent_captcha_randstr: tencentCaptchaEnabled.value ? tencentCaptchaRandstr.value : undefined,
+    promo_code: formData.promo_code || undefined,
+    invitation_code: formData.invitation_code || undefined,
+    ...(affCode ? { aff_code: affCode } : {})
+  }
+}
+
+// Only user-editable fields matter for "same data, keep the sent code/countdown".
+function emailVerificationSignature(): string {
+  return JSON.stringify([
+    formData.email,
+    formData.password,
+    formData.promo_code,
+    formData.invitation_code,
+    formData.aff_code
+  ])
+}
+
+// Hand the account data to the shared verification card and move to its step.
+// The card stays mounted, so going back and returning with the same data keeps
+// the sent state and countdown; changed data restarts the send for the new email.
+async function beginEmailVerification(options: { requestProof?: boolean } = {}): Promise<void> {
+  if (!emailVerifyEnabled.value) return
+  if (options.requestProof !== false && !(await acquireActionProof())) return
+  sessionStorage.setItem('register_data', JSON.stringify(buildRegistrationPayload()))
+  const signature = emailVerificationSignature()
+  if (!emailVerifyReady.value) {
+    emailVerifySignature.value = signature
+    emailVerifyReady.value = true
+  } else if (signature !== emailVerifySignature.value) {
+    emailVerifySignature.value = signature
+    emailVerifyRestartKey.value += 1
+  }
+  goToStep(stepKeys.value.indexOf('verify_email'))
+}
+
+// The card owns the submit button on the verification step; Enter and the outer
+// form submit are routed to it.
+function handleFormSubmit(): void {
+  if (currentStepKey.value === 'verify_email') {
+    void emailVerifyCardRef.value?.submit()
+    return
+  }
+  if (!isLastStep.value) {
+    void goNext()
+    return
+  }
+  void handleRegister()
 }
 
 function goBack(): void {
@@ -1026,7 +1133,7 @@ function buildEmailSuffixNotAllowedMessage(): string {
   })
 }
 
-function validateForm(scope: 'account' | 'details' | 'full' = 'full'): boolean {
+function validateForm(scope: 'account' | 'full' = 'full'): boolean {
   // Reset errors
   errors.email = ''
   errors.password = ''
@@ -1077,8 +1184,9 @@ function validateForm(scope: 'account' | 'details' | 'full' = 'full'): boolean {
     isValid = false
   }
 
-  // Invitation code validation (required when enabled)
-  if (scope !== 'account' && invitationCodeEnabled.value) {
+  // Invitation code validation (required when enabled). The field sits on the
+  // account step, so it is validated both when leaving that step and on submit.
+  if (invitationCodeEnabled.value) {
     if (!formData.invitation_code.trim()) {
       errors.invitation_code = t('auth.invitationCodeRequired')
       isValid = false
@@ -1150,46 +1258,14 @@ async function handleRegister(): Promise<void> {
   isLoading.value = true
 
   try {
-    const affCode = formData.aff_code.trim() || loadAffiliateReferralCode()
-    if (affCode) {
-      formData.aff_code = affCode
-    }
-
-    // If email verification is enabled, redirect to verification page
+    // Email verification is rendered as the in-card final step; never register
+    // without the code (the submit button is not reachable here, but fail safe).
     if (emailVerifyEnabled.value) {
-      // Store registration data in sessionStorage
-      sessionStorage.setItem(
-        'register_data',
-        JSON.stringify({
-          email: formData.email,
-          password: formData.password,
-          turnstile_token:
-            turnstileEnabled.value || aliyunCaptchaEnabled.value ? turnstileToken.value : undefined,
-          tencent_captcha_ticket: tencentCaptchaEnabled.value ? turnstileToken.value : undefined,
-          tencent_captcha_randstr: tencentCaptchaEnabled.value ? tencentCaptchaRandstr.value : undefined,
-          promo_code: formData.promo_code || undefined,
-          invitation_code: formData.invitation_code || undefined,
-          ...(affCode ? { aff_code: affCode } : {})
-        })
-      )
-
-      // Navigate to email verification page
-      await router.push('/email-verify')
+      await beginEmailVerification({ requestProof: false })
       return
     }
 
-    // Otherwise, directly register
-    await authStore.register({
-      email: formData.email,
-      password: formData.password,
-      turnstile_token:
-        turnstileEnabled.value || aliyunCaptchaEnabled.value ? turnstileToken.value : undefined,
-      tencent_captcha_ticket: tencentCaptchaEnabled.value ? turnstileToken.value : undefined,
-      tencent_captcha_randstr: tencentCaptchaEnabled.value ? tencentCaptchaRandstr.value : undefined,
-      promo_code: formData.promo_code || undefined,
-      invitation_code: formData.invitation_code || undefined,
-      ...(affCode ? { aff_code: affCode } : {})
-    })
+    await authStore.register(buildRegistrationPayload())
     clearAffiliateReferralCode()
 
     // Show success toast

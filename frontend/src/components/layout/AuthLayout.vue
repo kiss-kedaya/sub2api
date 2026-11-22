@@ -29,10 +29,14 @@
           >
             <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
           </div>
-          <h1 class="text-gradient text-2xl font-semibold">
+          <!-- Brand text must stay readable in both themes: use the semantic text
+               tokens instead of a hardcoded colour. The old scoped title style
+               painted the site name transparent and it could vanish on the dark
+               auth background. -->
+          <h1 class="text-2xl font-semibold text-highlighted">
             {{ siteName }}
           </h1>
-          <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
+          <p class="mt-1 text-sm text-muted">
             {{ siteSubtitle }}
           </p>
         </template>
@@ -48,12 +52,12 @@
         <slot name="footer" />
       </div>
 
-      <div class="mt-5 text-gray-400 dark:text-dark-500">
+      <div class="mt-5 text-muted">
         <LegalFooterLinks />
       </div>
 
       <!-- Copyright -->
-      <div class="mt-8 text-center text-xs text-gray-400 dark:text-dark-500">
+      <div class="mt-8 text-center text-xs text-muted">
         &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
       </div>
     </div>
@@ -85,15 +89,6 @@ onMounted(() => {
 
 <style scoped>
 @reference "../../style.css";
-/* Plain ink title by day; the night keeps its rose gradient. */
-.text-gradient {
-  color: #171717;
-}
-
-:global(html.dark) .text-gradient {
-  @apply bg-linear-to-r/srgb from-primary-600 to-primary-500 bg-clip-text text-transparent;
-}
-
 .auth-grid {
   background-image:
     linear-gradient(rgba(58, 83, 117, 0.07) 1px, transparent 1px),
