@@ -297,9 +297,9 @@ func TestUserCreationRequiresStepUp(t *testing.T) {
 	}
 }
 
-// secretFreeExact 是只读 POST 批量的豁免清单：必须真的 secret_free、理由非空，
-// 且不能借豁免把敏感写操作放过去。
-func TestSecretFreeExactEntriesAreReadOnlyAggregates(t *testing.T) {
+// secretFreeExact 是只读 POST 批量查询与非敏感探测动作的豁免清单：必须真的
+// secret_free、理由非空，且不能借豁免把敏感写操作放过去。
+func TestSecretFreeExactEntriesExposeNoSecrets(t *testing.T) {
 	if len(secretFreeExact) == 0 {
 		t.Fatal("secretFreeExact 不能为空：页面加载的批量只读聚合需要在这里登记")
 	}
@@ -309,6 +309,39 @@ func TestSecretFreeExactEntriesAreReadOnlyAggregates(t *testing.T) {
 		}
 		if entry.res.Class != ClassSecretFree || entry.res.Reason == "" {
 			t.Fatalf("secretFreeExact 条目必须带理由的 secret_free: %s", entry.path)
+		}
+	}
+}
+
+// 上游账号「测试」是连通性/模型可用性探测：用库内凭据打上游，只回测试状态，
+// 不回传凭据。管理端「测试设置」会按模型逐个点测试，要求 2FA 会让批量测试不可用。
+// 边界：凭据回读、导出与账号写操作必须继续保持 step-up。
+func TestAccountConnectivityTestIsSecretFreeWhileCredentialAccessStaysGated(t *testing.T) {
+	resolved, ok := Resolve("POST", "/api/v1/admin/accounts/:id/test")
+	if !ok {
+		t.Fatal("POST /api/v1/admin/accounts/:id/test 未归类（运行时按 step-up fail-closed）")
+	}
+	if resolved.Class != ClassSecretFree || resolved.Reason != ReasonAccountConnectivityTest {
+		t.Fatalf("账号测试应为 secret_free/%s，实际 %s/%s", ReasonAccountConnectivityTest, resolved.Class, resolved.Reason)
+	}
+	if resolved.Resource != ResourceNone {
+		t.Fatalf("账号测试不持有敏感资源，实际 %s", resolved.Resource)
+	}
+	if IsStepUpRequired("POST", "/api/v1/admin/accounts/:id/test") {
+		t.Fatal("账号测试不得要求 step-up")
+	}
+
+	// 只放开「测试」：凭据读取/导出与账号写操作仍必须 step-up。
+	for _, route := range []struct{ method, path string }{
+		{"GET", "/api/v1/admin/accounts/:id/credential"},
+		{"GET", "/api/v1/admin/accounts/data"},
+		{"POST", "/api/v1/admin/accounts"},
+		{"POST", "/api/v1/admin/accounts/batch"},
+		{"PUT", "/api/v1/admin/accounts/1"},
+		{"DELETE", "/api/v1/admin/accounts/1"},
+	} {
+		if !IsStepUpRequired(route.method, route.path) {
+			t.Fatalf("%s %s 必须继续保持 step-up（本次只放开连通性测试）", route.method, route.path)
 		}
 	}
 }
