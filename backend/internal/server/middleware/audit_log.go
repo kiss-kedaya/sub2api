@@ -137,6 +137,10 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"admin_key_id": {}, "admin_key_name": {},
 	// 浏览器端封存密文的操作只记录「哪把 Key」，不记录密文 / KDF 参数。
 	"api_key_id": {}, "api_key_prefix": {},
+	// 归集目标地址变更（仅地址，绝不含 TOTP 码或风险短语）。
+	"hot_wallet_evm_old": {}, "hot_wallet_evm_new": {},
+	"hot_wallet_solana_old": {}, "hot_wallet_solana_new": {},
+	"changed": {}, "locked": {}, "lock_created": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.

@@ -160,6 +160,17 @@ func (h *CryptoHandler) AdminGetConfig(c *gin.Context) {
 	// withheld from the public view too.
 	cfg.ExplorerAPIKey = ""
 	cfg.ExplorerAPIURL = nil
+	// The notification webhook URL embeds the receiver's bearer key (for Bark
+	// it is the device key in the path). The public settings view returns it
+	// blank and keeps only the non-secret channel switches; the fresh-2FA
+	// private view returns the real value. The console saves a diff, so a blank
+	// webhook_url in a save payload clears the channel only when explicitly
+	// intended.
+	if cfg.Notify != nil && cfg.Notify.WebhookURL != "" {
+		masked := *cfg.Notify
+		masked.WebhookURL = ""
+		cfg.Notify = &masked
+	}
 	cryptoNoStore(c)
 	c.JSON(http.StatusOK, gin.H{"data": struct {
 		cryptopay.CryptoConfig
@@ -200,6 +211,16 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 	merged, err = cryptopay.NormalizeConfig(merged)
 	if err != nil {
 		response.BadRequest(c, "Invalid crypto configuration")
+		return
+	}
+	// The sweep destination is pinned once the signer shards exist. A host
+	// compromise that rewrites settings.crypto.config must not be able to move
+	// it through this ordinary save path: it has to pass the dedicated
+	// endpoint, which demands a fresh authenticator code and the risk phrase.
+	// This check runs before the step-up gate so the rejection is a clearly
+	// coded 409 rather than a generic second-factor prompt.
+	if err := merged.EnforceSweepDestinationLock(); err != nil {
+		response.ErrorFrom(c, err)
 		return
 	}
 	// A locked wallet must be recovered before the channel is switched back on.

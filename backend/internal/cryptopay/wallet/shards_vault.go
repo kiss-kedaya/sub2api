@@ -430,6 +430,18 @@ func (m *Manager) SignerLocked(ctx context.Context) (bool, error) {
 	return !m.dataKeyUsable(), nil
 }
 
+// SignerLeaseDeadline reports when the resident data key stops being usable.
+// The lease is a hard upper bound, not a session: operators get notified when a
+// manual sweep unlocks the vault so they know how long the window lasts.
+func (m *Manager) SignerLeaseDeadline() (time.Time, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.dataKeyUsable() {
+		return time.Time{}, false
+	}
+	return m.dataKeyDeadline.UTC(), true
+}
+
 // Unseal runs fn with the data key available. The key and cached seeds are
 // cleared the moment fn returns, including on panic.
 func (m *Manager) Unseal(ctx context.Context, share string, fn func(context.Context) error) (err error) {

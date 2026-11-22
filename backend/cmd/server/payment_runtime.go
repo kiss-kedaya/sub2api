@@ -29,7 +29,7 @@ type localCryptoRuntime struct {
 	CryptoDepositHandler *handler.CryptoDepositHandler
 }
 
-func provideLocalCryptoRuntime(cfg *config.Config, db *sql.DB, client *ent.Client, settings *service.SettingService, payments *service.PaymentService, bark *notify.UserBarkService, totp *service.TotpService, rdb *redis.Client) localCryptoRuntime {
+func provideLocalCryptoRuntime(cfg *config.Config, db *sql.DB, client *ent.Client, settings *service.SettingService, payments *service.PaymentService, bark *notify.UserBarkService, totp *service.TotpService, email *service.EmailService, rdb *redis.Client) localCryptoRuntime {
 	// The normal constructor checks shared wallet state synchronously, even
 	// when this process delegates chain scanning. Skip construction entirely.
 	if cfg.Server.DelegatePayments {
@@ -40,6 +40,9 @@ func provideLocalCryptoRuntime(cfg *config.Config, db *sql.DB, client *ent.Clien
 	creditor.SetBarkNotifier(bark)
 	runtime := cryptopay.NewService(db, settings, creditor, addresses, cfg, rdb)
 	runtime.SetPushNotifier(notify.NewOwnerPushAdapter(bark, 1))
+	// Operator notifications (webhook/email) are best effort and wired from the
+	// same crypto.config row the sweep destination lives in.
+	runtime.SetEventNotifier(cryptopay.NewEventNotifier(settings, email))
 	payments.SetDepositAddressResolver(runtime)
 	return localCryptoRuntime{CryptoService: runtime, CryptoHandler: handler.NewCryptoHandler(addresses, settings, runtime, totp, cfg), CryptoDepositHandler: handler.NewCryptoDepositHandler(runtime)}
 }

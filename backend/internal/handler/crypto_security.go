@@ -43,10 +43,12 @@ func (h *CryptoHandler) CryptoAdminSecurity(c *gin.Context) {
 	verify := c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/security/verify")
 	intent := c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/security/operation-intent")
 	configPatch := c.Request.Method == http.MethodPut && strings.HasSuffix(path, "/crypto/config")
-	// Shard setup/re-split/auto-sweep verify a freshly typed authenticator code
-	// in the request body; a five-minute grant is not accepted for these.
+	// Shard setup/re-split/auto-sweep and the pinned-destination override verify
+	// a freshly typed authenticator code in the request body; a five-minute
+	// grant is not accepted for these.
 	signerFresh := c.Request.Method == http.MethodPost &&
-		(strings.HasSuffix(path, "/signer/setup") || strings.HasSuffix(path, "/signer/resplit") || strings.HasSuffix(path, "/signer/auto-sweep"))
+		(strings.HasSuffix(path, "/signer/setup") || strings.HasSuffix(path, "/signer/resplit") ||
+			strings.HasSuffix(path, "/signer/auto-sweep") || strings.HasSuffix(path, "/signer/sweep-destination"))
 	// A cursor-forward scan is idempotent and uses the normal receipt,
 	// confirmation and ledger path. Keep administrator JWT, HTTPS, instance and
 	// read-only guards, but do not require a second factor just to retry it.

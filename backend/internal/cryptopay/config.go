@@ -161,7 +161,36 @@ type CryptoConfig struct {
 	// ExplorerAPIURL overrides the account-API root per chain (no query
 	// string). The v2 endpoints receive chainid from the client.
 	ExplorerAPIURL map[string]string `json:"explorer_api_url"`
+
+	// SweepDestinationLock pins the sweep destination that was in force when
+	// the browser-held signer shards were created. Without it, an attacker who
+	// owns the host can rewrite hot_wallet_evm/hot_wallet_solana in settings and
+	// the next sweep sends every deposit to the attacker's address. The lock
+	// turns that silent rewrite into a 409; changing it requires the dedicated
+	// sweep-destination endpoint with 2FA and the risk phrase.
+	SweepDestinationLock *SweepDestinationLock `json:"sweep_destination_lock,omitempty"`
+
+	// Notify delivers a best-effort message for every sensitive wallet action.
+	// Optional and disabled by default: channels are operator-managed and never
+	// hard-coded in the repository.
+	Notify *CryptoNotifyConfig `json:"notify,omitempty"`
 }
+
+// CryptoNotifyConfig is the operator-managed notification channel set.
+type CryptoNotifyConfig struct {
+	Enabled bool `json:"enabled"`
+	// WebhookURL receives one HTTP POST with a JSON body. A Bark device URL
+	// (https://api.day.app/<device-key>) works because the payload also carries
+	// the title/body fields Bark expects.
+	WebhookURL string `json:"webhook_url,omitempty"`
+	// Email reuses the gateway's existing SMTP configuration. Empty disables
+	// the email channel.
+	Email string `json:"email,omitempty"`
+}
+
+// maxNotifyURLBytes bounds the webhook URL so a mistyped config cannot push a
+// megabytes-long value into the settings row.
+const maxNotifyURLBytes = 2048
 
 // DefaultCryptoConfig returns the disabled default with sane thresholds.
 func DefaultCryptoConfig() CryptoConfig {
@@ -482,12 +511,25 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 			cfg.GasTopUp[chain] = 0
 		}
 	}
+	if err := normalizeSweepDestinationLock(&cfg); err != nil {
+		return cfg, err
+	}
+	if err := normalizeNotifyConfig(&cfg); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }
 
 // ValidateSweepReady reports why a real sweep cannot run yet. Empty is the
 // expected first-run state; the message tells the operator what to set.
 func (cfg CryptoConfig) ValidateSweepReady() error {
+	// A settings row that no longer matches the pinned destination means either
+	// a direct database edit or a rollback that bypassed the dedicated endpoint.
+	// Sweeping is exactly how that difference turns into stolen deposits, so it
+	// must refuse instead of "just using the new address".
+	if err := cfg.EnforceSweepDestinationLock(); err != nil {
+		return fmt.Errorf("sweep disabled: %w", err)
+	}
 	hot := strings.TrimSpace(cfg.HotWalletEVM)
 	if hot == "" {
 		return fmt.Errorf("sweep disabled: set the EVM hot wallet (receiving address) first")
@@ -650,6 +692,13 @@ type CryptoConfigPatch struct {
 	NativePollSeconds      *int                          `json:"native_poll_seconds"`
 	ExplorerAPIKey         *string                       `json:"explorer_api_key"`
 	ExplorerAPIURL         *map[string]string            `json:"explorer_api_url"`
+	// Notify replaces the whole notification channel set when present. The
+	// webhook URL is a bearer secret (it embeds the Bark device key), so the
+	// public config view returns it blank; the console must send only changed
+	// fields, otherwise an empty string disables the webhook.
+	Notify *CryptoNotifyConfig `json:"notify"`
+	// SweepDestinationLock is deliberately absent: callers must not be able to
+	// write the lock through the generic config endpoint.
 }
 
 // Apply overlays the patch onto base, leaving omitted fields untouched.
@@ -730,6 +779,9 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	}
 	if p.ExplorerAPIURL != nil {
 		out.ExplorerAPIURL = *p.ExplorerAPIURL
+	}
+	if p.Notify != nil {
+		out.Notify = p.Notify
 	}
 	return out
 }
