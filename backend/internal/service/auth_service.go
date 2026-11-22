@@ -1099,6 +1099,11 @@ func (s *AuthService) shouldApplyEmailFirstBindDefaults(
 	identity *dbent.AuthIdentity,
 	created bool,
 ) bool {
+	// ensureEmailAuthIdentity 在没有 ent client / 保留邮箱时返回 (nil,false)；
+	// 这里必须先挡住 nil，否则成功登录的回填路径会空指针。
+	if identity == nil {
+		return false
+	}
 	source := emailAuthIdentitySource(identity.Metadata)
 	if source == "auth_service_login_backfill" {
 		return false
