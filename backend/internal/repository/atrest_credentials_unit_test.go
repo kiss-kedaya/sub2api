@@ -194,7 +194,7 @@ func TestProxyPasswordFromEntity(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "legacy-pass", password)
 
-	managed := &dbent.Proxy{ID: 3, Password: stringPtr("enc:managed:v1:abc")}
+	managed := &dbent.Proxy{ID: 3, Password: atrestStringPtr("enc:managed:v1:abc")}
 	password, err = proxyPasswordFromEntity(managed)
 	require.NoError(t, err)
 	require.Equal(t, "enc:managed:v1:abc", password, "managed ciphertext is decoded by the decorator")
@@ -282,4 +282,4 @@ func mustJSON(t *testing.T, value any) string {
 	return string(raw)
 }
 
-func stringPtr(value string) *string { return &value }
+func atrestStringPtr(value string) *string { return &value }

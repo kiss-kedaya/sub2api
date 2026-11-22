@@ -518,10 +518,6 @@ func migrateSettings(ctx context.Context, db *sql.DB, opts Options) (TableResult
 	return stats, nil
 }
 
-func sensitiveSettingKeys() []string {
-	return repository.SensitiveSettingKeys
-}
-
 // ── shared ──────────────────────────────────────────────────────────────────
 
 func sealedCredentials(credentials map[string]any) bool {

@@ -131,14 +131,6 @@ func refreshTokenAbsentSQL(column string) string {
 
 // sealedIdentityExpr 返回「按值比较/分组用的身份表达式」：历史明支行取明文
 // api_key/access_token，封存行取域分离摘要。两种形态都可用于等值比较与分组，
-// 但同一个查询里两侧必须使用同一形态。
-func sealedIdentityExpr(column, key string) string {
-	return `CASE WHEN ` + column + ` ? '` + sealedCredentialsMarker + `'
-				THEN ` + column + `->>'_id_` + key + `'
-				ELSE ` + column + `->>'` + key + `'
-			END`
-}
-
 // SealedIdentityDigest 提供给 SQL 参数使用：返回封存投影中该键的摘要。
 func SealedIdentityDigest(key, value string) string {
 	return sealedIdentityValueDigest(key, value)
@@ -236,14 +228,6 @@ func credentialsCASParamFromSnapshotJSON(snapshotJSON string) (string, error) {
 // credentialsCASMatchSQL 生成「库内 credentials 与 CAS 参数相等」的 SQL 谓词。
 // column 为列表达式（如 "a.credentials"），placeholder 为 $N。
 func credentialsCASMatchSQL(column, placeholder string) string {
-	return `(CASE WHEN ` + column + ` ? '` + sealedCredentialsMarker + `'
-			THEN (` + placeholder + `::jsonb -> 'sealed')
-			ELSE (` + placeholder + `::jsonb -> 'plain')
-		END)`
-}
-
-// credentialsCASReadSQL 生成按行状态读取 CAS 参数中对应表示的 JSONB 表达式。
-func credentialsCASReadSQL(column, placeholder string) string {
 	return `(CASE WHEN ` + column + ` ? '` + sealedCredentialsMarker + `'
 			THEN (` + placeholder + `::jsonb -> 'sealed')
 			ELSE (` + placeholder + `::jsonb -> 'plain')

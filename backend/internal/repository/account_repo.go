@@ -1370,7 +1370,7 @@ func (r *accountRepository) updateCredentialsAtRest(ctx context.Context, id int6
 			newKey, _ := next["api_key"].(string)
 			oldBaseURL, _ := currentCredentials["base_url"].(string)
 			newBaseURL, _ := next["base_url"].(string)
-			if oldKey != newKey || !(service.IsOllamaCloudBaseURL(oldBaseURL) && service.IsOllamaCloudBaseURL(newBaseURL)) {
+			if oldKey != newKey || !service.IsOllamaCloudBaseURL(oldBaseURL) || !service.IsOllamaCloudBaseURL(newBaseURL) {
 				extraChanged = true
 				for _, key := range []string{
 					service.UpstreamBillingProbeExtraKey,
@@ -3733,7 +3733,7 @@ func (r *accountRepository) bulkMergeCredentialsAtRest(
 				newKey, _ := next["api_key"].(string)
 				oldBaseURL, _ := row.credentials["base_url"].(string)
 				newBaseURL, _ := next["base_url"].(string)
-				if oldKey != newKey || !(service.IsOllamaCloudBaseURL(oldBaseURL) && service.IsOllamaCloudBaseURL(newBaseURL)) {
+				if oldKey != newKey || !service.IsOllamaCloudBaseURL(oldBaseURL) || !service.IsOllamaCloudBaseURL(newBaseURL) {
 					extraChanged = true
 					for _, key := range []string{
 						service.UpstreamBillingProbeExtraKey,
