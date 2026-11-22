@@ -83,14 +83,14 @@ func stripControlAndInvisible(s string) string {
 	for _, r := range s {
 		switch {
 		case r == '\n' || r == '\t':
-			b.WriteRune(r)
+			_, _ = b.WriteRune(r)
 		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
 			// C0/C1/DEL: drop.
 		case unicode.Is(unicode.Cf, r):
 			// U+200B..U+200F, U+202A..U+202E, U+2060..U+2064, U+FEFF, ...
 			// 零宽与双向覆写字符：drop.
 		default:
-			b.WriteRune(r)
+			_, _ = b.WriteRune(r)
 		}
 	}
 	return b.String()
@@ -112,13 +112,13 @@ func stripTags(s string) string {
 	for i := 0; i < len(s); {
 		c := s[i]
 		if c != '<' {
-			b.WriteByte(c)
+			_ = b.WriteByte(c)
 			i++
 			continue
 		}
 		end, isTag := scanTagEnd(s, i)
 		if !isTag {
-			b.WriteByte(c)
+			_ = b.WriteByte(c)
 			i++
 			continue
 		}
@@ -184,7 +184,7 @@ func stripDangerousSchemes(s string) string {
 				continue
 			}
 		}
-		b.WriteRune(runes[i])
+		_, _ = b.WriteRune(runes[i])
 		i++
 	}
 	return b.String()
