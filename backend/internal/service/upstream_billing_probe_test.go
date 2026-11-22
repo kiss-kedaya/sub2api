@@ -260,7 +260,7 @@ func TestAccountTestValidateUpstreamBaseURLRejectsPrivateTargets(t *testing.T) {
 	svc := &AccountTestService{cfg: cfg}
 
 	for _, raw := range []string{
-		"http://127.0.0.1:17778",
+		"http://127.0.0.1:8080",
 		"http://localhost:8080/v1",
 		"http://172.17.0.1:80",
 		"http://169.254.169.254/latest/meta-data",

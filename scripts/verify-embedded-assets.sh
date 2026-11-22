@@ -3,7 +3,7 @@
 # An instance whose frontend is incomplete returns 200 for "/" and for the entry
 # script, then 404s on the first lazy route (white screen).
 #
-# Usage: scripts/verify-embedded-assets.sh http://10.254.0.2:18532 [--timeout 10]
+# Usage: scripts/verify-embedded-assets.sh http://127.0.0.1:8080 [--timeout 10]
 set -euo pipefail
 
 usage() {
