@@ -234,7 +234,11 @@ var stepUpExact = []exactRule{
 	{method: "GET", path: "/api/v1/admin/backups/s3-config", res: Resolved{ClassStepUpRequired, ReasonBackupSecrets, ResourceBackups, "exact:backups.s3-config"}},
 	// 上游失败 dump 正文
 	{method: "GET", path: "/api/v1/admin/debug-dumps/:name", res: Resolved{ClassStepUpRequired, ReasonDebugDumps, ResourceDebugDumps, "exact:debug-dumps.payload"}},
-	// 用户删号/改余额/新增登录身份
+	// 用户删号/建号/改余额/新增登录身份
+	// 建号会按请求体写入初始余额与授权分组：绕过 step-up 等于凭空发钱与授权。
+	// 任何建号都要求真人 2FA；余额写入本身已由 service 拒绝，必须走带流水与
+	// step-up 的 POST /api/v1/admin/users/:id/balance。
+	{method: "POST", path: "/api/v1/admin/users", res: Resolved{ClassStepUpRequired, ReasonRevenueOperations, ResourceRevenueOperations, "exact:users.create"}},
 	{method: "DELETE", path: "/api/v1/admin/users/:id", res: Resolved{ClassStepUpRequired, ReasonRevenueOperations, ResourceRevenueOperations, "exact:users.delete"}},
 	{method: "POST", path: "/api/v1/admin/users/:id/balance", res: Resolved{ClassStepUpRequired, ReasonRevenueOperations, ResourceRevenueOperations, "exact:users.balance"}},
 	{method: "POST", path: "/api/v1/admin/users/:id/auth-identities", res: Resolved{ClassStepUpRequired, ReasonRevenueOperations, ResourceRevenueOperations, "exact:users.auth-identities"}},

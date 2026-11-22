@@ -100,7 +100,7 @@ func TestUserHandlerEndpoints(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	createBody := map[string]any{"email": "new@example.com", "password": "pass123", "balance": 1, "concurrency": 2}
+	createBody := map[string]any{"email": "new@example.com", "password": "pass123", "concurrency": 2}
 	body, _ = json.Marshal(createBody)
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/admin/users", bytes.NewReader(body))
@@ -108,7 +108,7 @@ func TestUserHandlerEndpoints(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	updateBody := map[string]any{"email": "updated@example.com"}
+	updateBody := map[string]any{"notes": "updated"}
 	body, _ = json.Marshal(updateBody)
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPut, "/api/v1/admin/users/1", bytes.NewReader(body))

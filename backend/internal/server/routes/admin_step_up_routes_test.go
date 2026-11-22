@@ -138,8 +138,9 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 	return []stepUpRouteCase{
 		// 系统设置（含支付/邮件/注册等敏感配置）
 		{http.MethodPut, "/api/v1/admin/settings", "admin"},
-		// 删号、改余额
+		// 删号、建号、改余额
 		{http.MethodDelete, "/api/v1/admin/users/1", "admin"},
+		{http.MethodPost, "/api/v1/admin/users", "admin"},
 		{http.MethodPost, "/api/v1/admin/users/1/balance", "admin"},
 		// 给账号绑定第三方登录身份（会新增一条登录路径）
 		{http.MethodPost, "/api/v1/admin/users/1/auth-identities", "admin"},

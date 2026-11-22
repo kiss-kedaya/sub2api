@@ -8,20 +8,19 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAdminService_CreateUser_Success(t *testing.T) {
 	repo := &userRepoStub{nextID: 10}
 	svc := &adminServiceImpl{userRepo: repo}
-	balance := 12.5
 
 	input := &CreateUserInput{
 		Email:         "user@test.com",
 		Password:      "strong-pass",
 		Username:      "tester",
 		Notes:         "note",
-		Balance:       &balance,
 		Concurrency:   7,
 		AllowedGroups: []int64{3, 5},
 	}
@@ -33,7 +32,7 @@ func TestAdminService_CreateUser_Success(t *testing.T) {
 	require.Equal(t, input.Email, user.Email)
 	require.Equal(t, input.Username, user.Username)
 	require.Equal(t, input.Notes, user.Notes)
-	require.Equal(t, balance, user.Balance)
+	require.Equal(t, 0.0, user.Balance)
 	require.Equal(t, input.Concurrency, user.Concurrency)
 	require.Equal(t, input.AllowedGroups, user.AllowedGroups)
 	require.Equal(t, RoleUser, user.Role)
@@ -41,6 +40,27 @@ func TestAdminService_CreateUser_Success(t *testing.T) {
 	require.True(t, user.CheckPassword(input.Password))
 	require.Len(t, repo.created, 1)
 	require.Equal(t, user, repo.created[0])
+}
+
+// 建号接口不允许直接写非零余额：余额调整必须走 UpdateUserBalance
+// （step-up + 余额流水），否则建号即可绕过 step-up 凭空加钱且不留流水。
+func TestAdminService_CreateUser_RejectsExplicitNonZeroBalance(t *testing.T) {
+	repo := &userRepoStub{nextID: 13}
+	svc := &adminServiceImpl{userRepo: repo}
+	balance := 12.5
+
+	_, err := svc.CreateUser(context.Background(), &CreateUserInput{
+		Email:    "balance@test.com",
+		Password: "strong-pass",
+		Balance:  &balance,
+	})
+
+	require.Error(t, err)
+	require.Equal(t, 400, infraerrors.Code(err))
+	require.Equal(t, "INVALID_INPUT", infraerrors.Reason(err))
+	require.Contains(t, infraerrors.Message(err), "建号不写余额")
+	require.Contains(t, infraerrors.Message(err), "余额调整接口")
+	require.Empty(t, repo.created, "被拒绝的建号不得落库")
 }
 
 func TestAdminService_CreateUser_UsesDefaultBalanceWhenBalanceOmitted(t *testing.T) {

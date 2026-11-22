@@ -63,7 +63,9 @@ func TestUpdateUserKeepAdminRoleSkipsStepUp(t *testing.T) {
 func TestUpdateUserRegularRoleSkipsStepUp(t *testing.T) {
 	router, _ := setupRoleStepUpRouter(t)
 
-	rec := doJSON(t, router, http.MethodPut, "/api/v1/admin/users/1", map[string]any{"role": "user", "email": "u@example.com"})
+	// 邮箱保持不变：普通用户改邮箱已由 TestUpdateNormalUserEmailRequiresStepUp
+	// 单独覆盖，这里只验证「角色不变」不触发门控。
+	rec := doJSON(t, router, http.MethodPut, "/api/v1/admin/users/1", map[string]any{"role": "user", "email": "user@example.com"})
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 

@@ -418,8 +418,11 @@ func (h *UserHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// 创建管理员账号属权限敏感操作：需最近完成 step-up 2FA 验证。
-	if req.Role == service.RoleAdmin {
+	// 建号属敏感操作：请求体携带非零余额或授权分组时，即使目标只是普通用户，
+	// 也要求最近完成 step-up 2FA（否则建号即绕过 step-up 发钱/授权）。
+	// 路由层集中注册表已对 POST /admin/users 统一要求 step-up（fail-closed），
+	// 这里按请求内容再做一层，避免将来绕过注册表直接挂 handler。
+	if req.Role == service.RoleAdmin || createUserWritesSensitiveFields(&req) {
 		if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
 			return
 		}
@@ -444,6 +447,19 @@ func (h *UserHandler) Create(c *gin.Context) {
 	}
 
 	response.Success(c, dto.UserFromServiceAdmin(user))
+}
+
+// createUserWritesSensitiveFields 判断建号请求是否携带权限/资金敏感字段。
+// 余额只允许显式 0（覆盖系统默认初始余额，不产生金额）；非零余额必须走
+// POST /admin/users/:id/balance（step-up + 余额流水），service 会直接拒绝。
+func createUserWritesSensitiveFields(req *CreateUserRequest) bool {
+	if req == nil {
+		return false
+	}
+	if req.Balance != nil && *req.Balance != 0 {
+		return true
+	}
+	return len(req.AllowedGroups) > 0
 }
 
 // Update handles updating a user
@@ -484,18 +500,22 @@ func (h *UserHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// 管理员账号的邮箱是登录身份与密码找回的接收地址：改它等同于把账号控制权
-	// 转移到新的邮箱，因此与改密码同级，也要 step-up；普通用户资料编辑不受影响。
-	if email := strings.TrimSpace(req.Email); email != "" && target.Role == service.RoleAdmin && !strings.EqualFold(email, strings.TrimSpace(target.Email)) {
+	// 邮箱是登录身份与密码找回的接收地址：改它等于把账号控制权转移到新邮箱，
+	// 攻击者「改邮箱 → 忘记密码」即可接管账号。管理员账号一律要求 step-up；
+	// 普通真人账号（真实邮箱）同样要求。第三方 OAuth 合成邮箱（@*-connect.invalid）
+	// 没有真实收件箱，改邮箱属于补全登录身份，不触发，避免打断首次绑定。
+	stepUpEnforced := false
+	if userEmailChangeRequested(target, req.Email) &&
+		(target.Role == service.RoleAdmin || !service.IsSyntheticConnectEmail(target.Email)) {
 		if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
 			return
 		}
+		stepUpEnforced = true
 	}
 
 	// 降级管理员会移除其管理员 TOTP 保护，必须校验操作者的动态码授权。
 	// 不受全局 step-up 开关影响；批准标记只由此处设置，不接受请求绑定。
 	totpDemotionApproved := false
-	stepUpEnforced := false
 	if req.Role == service.RoleUser && target.Role == service.RoleAdmin {
 		if !middleware.EnforceStepUpAlways(c, h.totpService, h.userService) {
 			return
@@ -545,6 +565,19 @@ func (h *UserHandler) Update(c *gin.Context) {
 	}
 
 	response.Success(c, dto.UserFromServiceAdmin(user))
+}
+
+// userEmailChangeRequested 判断请求是否真的要把目标账号邮箱改成另一个地址。
+// 前端编辑表单会回传未修改的 email，因此必须按「值是否变化」判断。
+func userEmailChangeRequested(target *service.User, requestedEmail string) bool {
+	email := strings.TrimSpace(requestedEmail)
+	if email == "" {
+		return false
+	}
+	if target == nil {
+		return true
+	}
+	return !strings.EqualFold(email, strings.TrimSpace(target.Email))
 }
 
 // updateUserRequiresStepUp 判断一次管理员用户更新是否改动了敏感字段。

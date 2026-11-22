@@ -594,6 +594,8 @@ export default {
       noUsersYet: 'No users yet',
       createFirstUser: 'Create your first user to get started.',
       userCreated: 'User created successfully',
+      initialBalanceNote: 'Initial balance set when creating the account',
+      createInitialBalanceFailed: 'User created, but the initial balance could not be set. Please adjust it from the user balance page.',
       userUpdated: 'User updated successfully',
       userDeleted: 'User deleted successfully',
       userEnabled: 'User enabled successfully',

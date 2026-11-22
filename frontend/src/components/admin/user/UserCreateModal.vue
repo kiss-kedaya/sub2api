@@ -89,14 +89,35 @@ const submit = async () => {
   }
   loading.value = true
   try {
-    const { balance: rawBalance, ...rest } = { ...form }
-    const balance = String(rawBalance).trim()
-    const payload: typeof rest & { balance?: number } = { ...rest }
-    if (balance !== '') {
-      payload.balance = Number(balance)
+    // 建号不再直接携带非零余额：后端拒绝这类请求（避免绕过 step-up 发钱且无流水）。
+    // 显式 0 仍随建号提交，用于覆盖系统默认初始余额；非零余额在创建成功后走
+    // 带 step-up 与余额流水的 POST /admin/users/:id/balance，交互保持不变。
+    const { balance: rawBalance, ...createPayload } = { ...form }
+    const balanceText = String(rawBalance).trim()
+    let desiredBalance: number | null = null
+    if (balanceText !== '') {
+      const parsed = Number(balanceText)
+      if (Number.isFinite(parsed)) desiredBalance = parsed
     }
-    // 创建管理员属敏感操作：后端返回 STEP_UP_REQUIRED 时弹 TOTP 验证并重试
-    await stepUp.run(() => adminAPI.users.create(payload))
+    const payload: Parameters<typeof adminAPI.users.create>[0] = { ...createPayload }
+    if (desiredBalance === 0) payload.balance = 0
+    // 建号属敏感操作：后端返回 STEP_UP_REQUIRED 时弹 TOTP 验证并重试
+    const created = await stepUp.run(() => adminAPI.users.create(payload))
+
+    if (desiredBalance !== null && desiredBalance !== 0) {
+      try {
+        const note = t('admin.users.initialBalanceNote')
+        await stepUp.run(() => adminAPI.users.updateBalance(created.id, desiredBalance as number, 'set', note))
+      } catch (balanceError: any) {
+        // 用户已创建成功，只是初始余额没写进去：明确提示去余额页补齐，避免误判为建号失败。
+        if (!isStepUpCancelled(balanceError)) {
+          appStore.showError(balanceError?.message || t('admin.users.createInitialBalanceFailed'))
+        }
+        emit('success'); emit('close')
+        return
+      }
+    }
+
     appStore.showSuccess(t('admin.users.userCreated'))
     emit('success'); emit('close')
   } catch (e: any) {
