@@ -59,7 +59,15 @@ func TestDepositNetworkStatusRoute(t *testing.T) {
 	for _, network := range body.Data.Networks {
 		chain, _ := network["chain"].(string)
 		require.True(t, cryptopay.IsEVMChain(chain))
-		require.Equal(t, map[string]any{"chain": chain, "status": "unknown"}, network)
+		require.Equal(t, chain, network["chain"])
+		require.Equal(t, "unknown", network["status"])
+		// Without a database or a shared measurement the optional ETA fields
+		// stay null and the switch stays at its zero value: an honest blank,
+		// never a fabricated number.
+		require.Nil(t, network["eta_seconds"])
+		require.Nil(t, network["backlog_seconds"])
+		require.Nil(t, network["required_confirmations"])
+		require.Equal(t, false, network["instant_credit"])
 	}
 	require.Equal(t, http.StatusUnauthorized, request("", "").Code)
 	require.Equal(t, http.StatusForbidden, request("Bearer test", "required").Code)

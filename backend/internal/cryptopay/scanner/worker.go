@@ -96,9 +96,13 @@ type Worker struct {
 	done      chan struct{}
 	// onReorg reports a credited deposit whose block was reorged away. The
 	// money already moved in our ledger, so a human must reconcile it.
-	onReorg       func(chain, txHash string)
-	beforePass    func(context.Context) error
-	securityRange func(context.Context, *EVMScanner, *rpc.Pool, ChainConfig, uint64, uint64) error
+	onReorg func(chain, txHash string)
+	// onProvisionalRevoke is tried before onReorg for a credited->reverted
+	// transition: an instant credit is clawed back automatically (once), while
+	// a confirmation-gated credit still needs manual reconciliation.
+	onProvisionalRevoke func(ctx context.Context, chain, txHash string, logIndex int, reason string) (bool, error)
+	beforePass          func(context.Context) error
+	securityRange       func(context.Context, *EVMScanner, *rpc.Pool, ChainConfig, uint64, uint64) error
 	// Live workers replay a bounded recent range to recover late RPC log
 	// indexing and recipient assignments racing the ordinary cursor snapshot.
 	recentReplay bool
@@ -429,6 +433,23 @@ func (w *Worker) SetReorgNotifier(fn func(chain, txHash string)) {
 	if w != nil {
 		w.onReorg = fn
 	}
+}
+
+// SetProvisionalRevokeNotifier wires the automatic claw-back performed when an
+// instant (0-confirmation) credit is invalidated by a reorg or a failed /
+// replaced transaction. The callback is idempotent and owns the only balance
+// movement: returning true means the credit was revoked (or already had been)
+// and the legacy admin-only alert must not fire again.
+func (w *Worker) SetProvisionalRevokeNotifier(fn func(ctx context.Context, chain, txHash string, logIndex int, reason string) (bool, error)) {
+	if w != nil {
+		w.onProvisionalRevoke = fn
+	}
+}
+
+// provisionalCreditHandler is implemented by a ledger that supports instant
+// credit. A worker without it keeps the confirmation-gated behaviour.
+type provisionalCreditHandler interface {
+	ProcessProvisional(ctx context.Context, t Transfer, decimals int) (bool, error)
 }
 
 // NewWorker builds the scan loop. addresses returns the watched recipient
@@ -963,13 +984,10 @@ func (w *Worker) scanChainObserved(ctx context.Context, chain ChainConfig, manua
 	}
 	slog.Info("[cryptopay] scan tick", "chain", chain.Chain, "head", head, "confirmations", chain.Confirmations)
 	w.noteHead(chain.Chain, head)
-	if snapshot == nil && w.liveProgress && manualFromBlock == 0 && w.handler != nil {
-		// Recording pending deposits does not move the cursor or credit funds,
-		// so do this before the slower security sweep of the chain head.
-		if err := w.observeHead(ctx, pool, chain, head); err != nil {
-			w.reportObserveFailure(&scanStageError{chain: chain.Chain, stage: "observe", to: head, err: err})
-		}
-	}
+	// The head security window runs before head observation: instant credit
+	// moves the balance from a 0-confirmation block, so the block must first
+	// have passed the outflow-security scan. A security failure still records
+	// the deposit as pending (no funds move) and the confirmation path owns it.
 	if w.securityRange != nil && head > 0 {
 		// Security incidents do not wait for deposit finality. Examine a
 		// bounded head window even when the credited-deposit cursor is caught
@@ -990,6 +1008,14 @@ func (w *Worker) scanChainObserved(ctx context.Context, chain ChainConfig, manua
 			defer func() { scanErr = errors.Join(headErr, scanErr) }()
 		} else {
 			w.markSecurityCovered(chain.Chain, head-span+1, head)
+		}
+	}
+	if snapshot == nil && w.liveProgress && manualFromBlock == 0 && w.handler != nil {
+		// Recording pending deposits does not move the cursor; the security
+		// window above already decided whether a fresh observation may be
+		// credited instantly.
+		if err := w.observeHead(ctx, pool, chain, head); err != nil {
+			w.reportObserveFailure(&scanStageError{chain: chain.Chain, stage: "observe", to: head, err: err})
 		}
 	}
 	if head <= chain.Confirmations {
@@ -1221,6 +1247,64 @@ func (w *Worker) ProcessObservedTransfer(ctx context.Context, chain ChainConfig,
 	return w.processTransfer(ctx, pool, chain, transfer, decimals)
 }
 
+// creditProvisional hands an already-verified, not-yet-final transfer to the
+// ledger's instant-credit entry point. handled=false means the deposit handler
+// has no instant-credit support and the caller must keep the pending path.
+func (w *Worker) creditProvisional(ctx context.Context, chain ChainConfig, transfer Transfer, decimals int) (credited bool, handled bool, err error) {
+	handler, ok := w.handler.(provisionalCreditHandler)
+	if !ok {
+		return false, false, nil
+	}
+	credited, err = handler.ProcessProvisional(ctx, transfer, decimals)
+	return credited, true, err
+}
+
+// verifyAndCreditProvisional is the head-observation path: the transfer was
+// only just discovered, so it must be proven on the canonical chain before any
+// balance moves. A verification failure is not evidence against the deposit;
+// the row stays pending and the confirmation-gated retry path owns it.
+func (w *Worker) verifyAndCreditProvisional(ctx context.Context, pool *rpc.Pool, chain ChainConfig, transfer Transfer, decimals int) (credited bool, handled bool, err error) {
+	if _, ok := w.handler.(provisionalCreditHandler); !ok {
+		return false, false, nil
+	}
+	verifyCtx := ctx
+	if deadline, ok := ctx.Deadline(); ok {
+		// Leave time to persist the trigger state if the RPC is slow.
+		var cancel context.CancelFunc
+		verifyCtx, cancel = context.WithDeadline(ctx, deadline.Add(-500*time.Millisecond))
+		defer cancel()
+	}
+	receipt, verifyErr := VerifyTransaction(verifyCtx, pool, transfer.TxHash)
+	if verifyErr == nil {
+		verifyErr = verifyCanonicalBlock(verifyCtx, pool, receipt)
+	}
+	if verifyErr == nil {
+		if transfer.Native {
+			verifyErr = verifyNativeTransfer(verifyCtx, pool, transfer, receipt)
+		} else {
+			verifyErr = verifyReceiptTransfer(transfer, receipt)
+		}
+	}
+	if verifyErr != nil {
+		return false, true, nil
+	}
+	return w.creditProvisional(ctx, chain, transfer, decimals)
+}
+
+// finalizeProvisional promotes an instant credit once its transaction reached
+// finality. No balance moves: the amount already landed at detection time, so
+// only the risk-window recheck stops. Best effort; a failure just means the row
+// is rechecked again on a later pass.
+func (w *Worker) finalizeProvisional(ctx context.Context, chain ChainConfig, p depositObservation) {
+	if _, err := w.db.ExecContext(ctx, `UPDATE deposit_transactions
+		SET provisional = FALSE, confirmations = $4
+		WHERE chain = $1 AND tx_hash = $2 AND log_index = $3
+		  AND status = 'credited' AND provisional`,
+		p.chain, p.txHash, p.logIndex, int64(chain.Confirmations)); err != nil {
+		slog.Warn("[cryptopay] provisional credit not finalized", "chain", p.chain, "tx", p.txHash, "log_index", p.logIndex, "cause", rpc.SafeError(err))
+	}
+}
+
 // An already durable observation is handled by the rotating pending/reorg
 // queues. Compare its complete identity, including block hash and amount,
 // before avoiding repeated network checks in an overlapping range.
@@ -1267,6 +1351,22 @@ func (w *Worker) processTransfer(ctx context.Context, pool *rpc.Pool, chain Chai
 	final := false
 	if verifyErr == nil {
 		final, verifyErr = transactionIsFinalForChain(verifyCtx, pool, chain.Chain, receipt.BlockNumber, chain.Confirmations)
+	}
+	if verifyErr == nil && !final {
+		// Instant credit: the receipt, canonical block and transfer identity
+		// above are already proven, so the balance may land now. The ledger
+		// decides eligibility (switch + amount floor) and records the row as
+		// pending when it is not eligible; either way the observation is durable.
+		credited, handled, creditErr := w.creditProvisional(ctx, chain, transfer, decimals)
+		if creditErr != nil {
+			return fmt.Errorf("instant credit %s/%s/%d: %w", transfer.Chain, transfer.TxHash, transfer.LogIndex, creditErr)
+		}
+		if handled {
+			if credited {
+				w.markCreditedConfirmations(ctx, chain, transfer)
+			}
+			return nil
+		}
 	}
 	if verifyErr != nil || !final {
 		if err := w.handler.ProcessPending(ctx, transfer, decimals); err != nil {
@@ -1383,6 +1483,21 @@ func (w *Worker) observeHead(ctx context.Context, pool *rpc.Pool, chain ChainCon
 			if err := w.handler.ProcessPending(ctx, transfer, decimals); err != nil {
 				errs = append(errs, fmt.Errorf("observe pending %s/%s/%d: %w", transfer.Chain, transfer.TxHash, transfer.LogIndex, err))
 				continue
+			}
+			// Instant credit needs a proven receipt and a security-scanned
+			// block. The caller runs the head security window before this
+			// observation pass, so coverage is already recorded when it
+			// succeeded; a transient security failure leaves the row pending.
+			if w.securityRange == nil || w.securityCovered(chain.Chain, transfer.BlockNumber) {
+				credited, _, creditErr := w.verifyAndCreditProvisional(ctx, pool, chain, transfer, decimals)
+				if creditErr != nil {
+					errs = append(errs, fmt.Errorf("observe instant credit %s/%s/%d: %w", transfer.Chain, transfer.TxHash, transfer.LogIndex, creditErr))
+					continue
+				}
+				if credited {
+					w.markCreditedConfirmations(ctx, chain, transfer)
+					continue
+				}
 			}
 		}
 		if err := w.updatePendingConfirmations(ctx, transfer.Chain, transfer.TxHash, transfer.LogIndex,

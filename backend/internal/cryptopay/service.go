@@ -561,6 +561,10 @@ func (s *Service) applyConfigLocked(ctx context.Context, cfg CryptoConfig, finge
 	led := ledger.New(s.db, s.creditor, newAddressResolver(s.addresses),
 		cfg.CreditMinAmount, cfg.CreditMaxAmount, cfg.CreditMultiplier)
 	led.SetNativePricer(priceProvider)
+	// Instant credit: the first verified observation lands the balance and a
+	// reorg/failed transaction revokes exactly that credit. Disabled = the
+	// previous confirmation-gated behaviour, unchanged.
+	led.SetInstantCredit(cfg.InstantCreditOn(), cfg.InstantCreditMinAmount)
 	// Funds that arrived but could not be credited are usually a mistyped
 	// deposit or a probe: tell the operator instead of leaving it in a table.
 	led.SetUnmatchedNotifier(func(ctx context.Context, t scanner.Transfer, reason string) {
@@ -628,6 +632,41 @@ func (s *Service) applyConfigLocked(ctx context.Context, cfg CryptoConfig, finge
 			"deposit"); err != nil {
 			slog.Warn("[cryptopay] reorg push failed", "error", err)
 		}
+	})
+	// Instant credits are clawed back automatically when the chain invalidates
+	// them (reorg, revert, replacement, missing receipt). A confirmation-gated
+	// credit keeps the manual-reconciliation alert above. Errors are returned to
+	// the scanner so the row stays credited and the claw-back is retried on the
+	// next pass instead of being silently skipped.
+	s.worker.SetProvisionalRevokeNotifier(func(ctx context.Context, chain, txHash string, logIndex int, reason string) (bool, error) {
+		revoker, ok := s.creditor.(interface {
+			RevokeProvisionalDeposit(ctx context.Context, chain, txHash string, logIndex int, reason string) (bool, error)
+		})
+		if !ok {
+			return false, nil
+		}
+		revoked, err := revoker.RevokeProvisionalDeposit(ctx, chain, txHash, logIndex, reason)
+		if err != nil {
+			slog.Error("[cryptopay] provisional credit revoke failed; will retry",
+				"chain", chain, "tx", txHash, "log_index", logIndex, "reason", reason, "cause", err)
+			return false, err
+		}
+		if !revoked {
+			return false, nil
+		}
+		slog.Warn("[cryptopay] instant deposit credit revoked",
+			"chain", chain, "tx", txHash, "log_index", logIndex, "reason", reason)
+		push := s.getPushNotifier()
+		if push == nil {
+			return true, nil
+		}
+		if err := push.PushToAdmins(ctx, "链上回滚：即时入账已扣回",
+			fmt.Sprintf("%s 的交易 %s 未最终确认（%s），已自动扣回临时入账，请核对",
+				chainDisplayName(chain), shortAddr(txHash), reason),
+			"deposit"); err != nil {
+			slog.Warn("[cryptopay] provisional revoke push failed", "error", err)
+		}
+		return true, nil
 	})
 	if cryptoWorkersAllowed() {
 		s.worker.Start()
@@ -1349,6 +1388,16 @@ type DepositRecord struct {
 	NativePriceUSD    string `json:"native_price_usd,omitempty"`
 	NativePriceAt     string `json:"native_price_at,omitempty"`
 	NativePriceSource string `json:"native_price_source,omitempty"`
+	// Instant-credit reconciliation state. provisional=true with revoked_at
+	// empty means the balance was credited at 0 confirmations and is still
+	// inside the risk window; revoked_at non-empty means it was clawed back and
+	// revoke_reason says why. ProvisionalAmount is the frozen credited amount
+	// from the linked payment order.
+	Provisional       bool    `json:"provisional"`
+	ProvisionalAmount float64 `json:"provisional_amount,omitempty"`
+	CreditedAt        string  `json:"credited_at,omitempty"`
+	RevokedAt         string  `json:"revoked_at,omitempty"`
+	RevokeReason      string  `json:"revoke_reason,omitempty"`
 }
 
 // scanDepositPrice fills the native settlement fields from nullable columns.
@@ -1361,6 +1410,35 @@ func (r *DepositRecord) scanDepositPrice(priceUSD sql.NullString, priceAt sql.Nu
 	r.NativePriceSource = source.String
 }
 
+// scanDepositRecord reads one admin deposit row. The column list is shared by
+// the paged list, the unpaged list and the CSV export, so the instant-credit
+// reconciliation fields cannot appear in one surface but not another.
+func scanDepositRecord(rows *sql.Rows) (DepositRecord, error) {
+	var r DepositRecord
+	var created time.Time
+	var priceUSD, source sql.NullString
+	var priceAt, creditedAt, revokedAt sql.NullTime
+	var revokeReason string
+	if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
+		&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created,
+		&priceUSD, &priceAt, &source, &r.Provisional, &r.ProvisionalAmount,
+		&creditedAt, &revokedAt, &revokeReason); err != nil {
+		return r, err
+	}
+	r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
+	r.Amount = trimDecimalZeros(r.Amount)
+	r.CreatedAt = created.UTC().Format(time.RFC3339)
+	r.scanDepositPrice(priceUSD, priceAt, source)
+	if creditedAt.Valid {
+		r.CreditedAt = creditedAt.Time.UTC().Format(time.RFC3339)
+	}
+	if revokedAt.Valid {
+		r.RevokedAt = revokedAt.Time.UTC().Format(time.RFC3339)
+	}
+	r.RevokeReason = revokeReason
+	return r, nil
+}
+
 // ListDeposits returns recent deposit observations, optionally filtered.
 func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit int) ([]DepositRecord, error) {
 	if limit <= 0 || limit > 500 {
@@ -1368,7 +1446,10 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 	}
 	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
 		       token, amount::text, status, reason, created_at,
-		       COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at, COALESCE(native_price_source, '')
+		       COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at, COALESCE(native_price_source, ''),
+		       provisional,
+		       COALESCE((SELECT o.amount FROM payment_orders o WHERE o.id = deposit_transactions.order_id), 0) AS provisional_amount,
+		       credited_at, revoked_at, COALESCE(revoke_reason, '')
 	            FROM deposit_transactions WHERE 1=1`
 	args := []any{}
 	if chain != "" {
@@ -1387,21 +1468,10 @@ func (s *Service) ListDeposits(ctx context.Context, chain, status string, limit 
 	defer func() { _ = rows.Close() }()
 	var out []DepositRecord
 	for rows.Next() {
-		var r DepositRecord
-		var created time.Time
-		var priceUSD sql.NullString
-		var priceAt sql.NullTime
-		var source sql.NullString
-		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
-			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created,
-			&priceUSD, &priceAt, &source); err != nil {
+		r, err := scanDepositRecord(rows)
+		if err != nil {
 			return nil, err
 		}
-		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
-		r.Amount = trimDecimalZeros(r.Amount)
-		r.Amount = trimDecimalZeros(r.Amount)
-		r.CreatedAt = created.UTC().Format(time.RFC3339)
-		r.scanDepositPrice(priceUSD, priceAt, source)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -1414,6 +1484,11 @@ type DepositSummary struct {
 	Pending  int64   `json:"pending"`
 	Ignored  int64   `json:"ignored"`
 	Amount   float64 `json:"amount"`
+	// Provisional counts instant credits still inside the 0-confirmation risk
+	// window; Revoked counts credits that were clawed back (a subset of the
+	// reverted rows). Operators watch both when investigating a chain incident.
+	Provisional int64 `json:"provisional"`
+	Revoked     int64 `json:"revoked"`
 }
 
 // ListDepositsPaged returns a page plus whole-set counters. The console needs
@@ -1439,16 +1514,22 @@ func (s *Service) ListDepositsPaged(ctx context.Context, chain, status string, l
 		       COUNT(*) FILTER (WHERE status = 'credited'),
 		       COUNT(*) FILTER (WHERE status = 'pending'),
 		       COUNT(*) FILTER (WHERE status = 'ignored'),
-		       COALESCE(SUM(amount) FILTER (WHERE status = 'credited'), 0)
+		       COALESCE(SUM(amount) FILTER (WHERE status = 'credited'), 0),
+		       COUNT(*) FILTER (WHERE status = 'credited' AND provisional),
+		       COUNT(*) FILTER (WHERE revoked_at IS NOT NULL)
 		  FROM deposit_transactions`+where, args...).
-		Scan(&summary.Total, &summary.Credited, &summary.Pending, &summary.Ignored, &summary.Amount)
+		Scan(&summary.Total, &summary.Credited, &summary.Pending, &summary.Ignored, &summary.Amount,
+			&summary.Provisional, &summary.Revoked)
 	if err != nil {
 		return nil, nil, fmt.Errorf("deposit summary: %w", err)
 	}
 
 	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
 	                 token, amount::text, status, reason, created_at,
-	                 COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at, COALESCE(native_price_source, '')
+	                 COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at, COALESCE(native_price_source, ''),
+	                 provisional,
+	                 COALESCE((SELECT o.amount FROM payment_orders o WHERE o.id = deposit_transactions.order_id), 0) AS provisional_amount,
+	                 credited_at, revoked_at, COALESCE(revoke_reason, '')
 	            FROM deposit_transactions` + where +
 		fmt.Sprintf(" ORDER BY id DESC LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
 	rows, err := s.db.QueryContext(ctx, query, append(args, limit, offset)...)
@@ -1458,21 +1539,10 @@ func (s *Service) ListDepositsPaged(ctx context.Context, chain, status string, l
 	defer func() { _ = rows.Close() }()
 	var out []DepositRecord
 	for rows.Next() {
-		var r DepositRecord
-		var created time.Time
-		var priceUSD sql.NullString
-		var priceAt sql.NullTime
-		var source sql.NullString
-		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
-			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created,
-			&priceUSD, &priceAt, &source); err != nil {
+		r, err := scanDepositRecord(rows)
+		if err != nil {
 			return nil, nil, err
 		}
-		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
-		r.Amount = trimDecimalZeros(r.Amount)
-		r.Amount = trimDecimalZeros(r.Amount)
-		r.CreatedAt = created.UTC().Format(time.RFC3339)
-		r.scanDepositPrice(priceUSD, priceAt, source)
 		out = append(out, r)
 	}
 	return out, &summary, rows.Err()
@@ -1503,7 +1573,10 @@ func (s *Service) ListDepositsExportPage(ctx context.Context, chain, status stri
 	args = append(args, limit)
 	query := `SELECT id, chain, tx_hash, log_index, from_address, to_address,
 	                 token, amount::text, status, reason, created_at,
-	                 COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at, COALESCE(native_price_source, '')
+	                 COALESCE(CAST(native_price_usd AS TEXT), ''), native_price_at, COALESCE(native_price_source, ''),
+	                 provisional,
+	                 COALESCE((SELECT o.amount FROM payment_orders o WHERE o.id = deposit_transactions.order_id), 0) AS provisional_amount,
+	                 credited_at, revoked_at, COALESCE(revoke_reason, '')
 	            FROM deposit_transactions` + where +
 		fmt.Sprintf(" ORDER BY id DESC LIMIT $%d", len(args))
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -1513,20 +1586,10 @@ func (s *Service) ListDepositsExportPage(ctx context.Context, chain, status stri
 	defer func() { _ = rows.Close() }()
 	var out []DepositRecord
 	for rows.Next() {
-		var r DepositRecord
-		var created time.Time
-		var priceUSD sql.NullString
-		var priceAt sql.NullTime
-		var source sql.NullString
-		if err := rows.Scan(&r.ID, &r.Chain, &r.TxHash, &r.LogIndex, &r.FromAddress,
-			&r.ToAddress, &r.Token, &r.Amount, &r.Status, &r.Reason, &created,
-			&priceUSD, &priceAt, &source); err != nil {
+		r, err := scanDepositRecord(rows)
+		if err != nil {
 			return nil, err
 		}
-		r.TokenSymbol = tokenSymbol(r.Chain, r.Token)
-		r.Amount = trimDecimalZeros(r.Amount)
-		r.CreatedAt = created.UTC().Format(time.RFC3339)
-		r.scanDepositPrice(priceUSD, priceAt, source)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -1579,6 +1642,14 @@ type DepositChain struct {
 	// alongside Tokens so an older client that only reads Tokens still shows
 	// every accepted symbol.
 	Assets []DepositAsset `json:"assets"`
+	// EtaSeconds is the normal-path time to credit on this network, from the
+	// same live measurement the network-status endpoint publishes. Null when
+	// there is no fresh measurement; clients must render an unknown rather than
+	// substitute a guess.
+	EtaSeconds *int64 `json:"eta_seconds"`
+	// InstantCredit reports whether this network credits on first detection
+	// (0 confirmations) instead of waiting for the configured final depth.
+	InstantCredit bool `json:"instant_credit"`
 }
 
 // nativeReferencePriceTimeout caps the whole "about $X" decoration pass, so a
@@ -1598,7 +1669,31 @@ func (s *Service) DepositInfo(ctx context.Context, userID int64) (*DepositInfo, 
 	}
 	info := buildDepositInfo(cfg, assigned)
 	s.attachNativeReferencePrices(ctx, info)
+	// ETA decoration is best effort: a missing measurement leaves the field
+	// null, and the page must render without it.
+	s.attachDepositETAs(ctx, info)
 	return info, nil
+}
+
+// attachDepositETAs decorates the deposit page with the same normal-path ETA
+// the network-status endpoint computes, so both surfaces tell one story.
+func (s *Service) attachDepositETAs(ctx context.Context, info *DepositInfo) {
+	if s == nil || info == nil || len(info.Chains) == 0 {
+		return
+	}
+	report := s.DepositNetworkStatus(ctx)
+	byChain := make(map[string]int64, len(report.Networks))
+	for _, row := range report.Networks {
+		if row.EtaSeconds != nil {
+			byChain[row.Chain] = *row.EtaSeconds
+		}
+	}
+	for i := range info.Chains {
+		if eta, ok := byChain[info.Chains[i].Chain]; ok {
+			value := eta
+			info.Chains[i].EtaSeconds = &value
+		}
+	}
 }
 
 // buildDepositInfo renders the public deposit page from config alone. Kept
@@ -1643,7 +1738,13 @@ func buildDepositInfo(cfg CryptoConfig, assigned map[string]string) *DepositInfo
 		if len(symbols) == 0 {
 			continue
 		}
-		info.Chains = append(info.Chains, DepositChain{Chain: chain, Address: address, Tokens: symbols, Assets: assets})
+		info.Chains = append(info.Chains, DepositChain{
+			Chain:         chain,
+			Address:       address,
+			Tokens:        symbols,
+			Assets:        assets,
+			InstantCredit: cfg.InstantCreditOn(),
+		})
 	}
 	return info
 }

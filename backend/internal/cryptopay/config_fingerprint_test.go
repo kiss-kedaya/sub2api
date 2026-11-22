@@ -65,6 +65,13 @@ func mutateFingerprintField(t *testing.T, value reflect.Value) {
 		value.SetMapIndex(reflect.ValueOf("changed").Convert(value.Type().Key()), entry)
 	case reflect.Struct:
 		mutateFingerprintField(t, value.Field(0))
+	case reflect.Pointer:
+		// Tri-state config switches (e.g. instant_credit_enabled) are pointers
+		// so "absent" stays distinguishable from an explicit false.
+		if value.IsNil() {
+			value.Set(reflect.New(value.Type().Elem()))
+		}
+		mutateFingerprintField(t, value.Elem())
 	default:
 		t.Fatalf("add a fingerprint mutation for %s", value.Type())
 	}

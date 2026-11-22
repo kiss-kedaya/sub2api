@@ -32,7 +32,9 @@ func newCreditTest(t *testing.T) (*DepositCreditor, ledger.CreditRequest) {
 	_, err = db.Exec(`CREATE TABLE deposit_transactions (
 		chain TEXT, tx_hash TEXT, log_index INTEGER, order_id INTEGER,
 		from_address TEXT, to_address TEXT, token TEXT, amount NUMERIC,
-		status TEXT, block_hash TEXT DEFAULT 'original-block', UNIQUE(chain, tx_hash, log_index))`)
+		status TEXT, block_hash TEXT DEFAULT 'original-block',
+		provisional INTEGER NOT NULL DEFAULT 0, credited_at TIMESTAMP, revoked_at TIMESTAMP, revoke_reason TEXT,
+		UNIQUE(chain, tx_hash, log_index))`)
 	require.NoError(t, err)
 	u, err := client.User.Create().SetEmail("credit@example.invalid").SetPasswordHash("test-only").Save(t.Context())
 	require.NoError(t, err)

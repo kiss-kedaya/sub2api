@@ -38,6 +38,10 @@ type depositObservation struct {
 	logIndex                                          int
 	blockNumber                                       uint64
 	reason, status                                    string
+	// provisional marks a credited row that is still inside the 0-confirmation
+	// risk window: it is finalized once finality is reached and clawed back if
+	// the chain invalidates it.
+	provisional bool
 }
 
 // Close the result set before RPC/UPDATE work, including with a one-connection
@@ -47,7 +51,7 @@ func readObservations(rows *sql.Rows, status string) ([]depositObservation, erro
 	for rows.Next() {
 		p := depositObservation{status: status}
 		if err := rows.Scan(&p.chain, &p.txHash, &p.logIndex, &p.from, &p.to, &p.token,
-			&p.amount, &p.blockNumber, &p.blockHash, &p.reason); err != nil {
+			&p.amount, &p.blockNumber, &p.blockHash, &p.reason, &p.provisional); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -81,12 +85,13 @@ func (w *Worker) recheckCredited(ctx context.Context, scope ...string) error {
 	}
 	rows, err := w.db.QueryContext(ctx, `
 		SELECT d.chain, d.tx_hash, d.log_index, d.from_address, d.to_address, d.token,
-		       d.amount::text, d.block_number, d.block_hash, d.reason
+		       d.amount::text, d.block_number, d.block_hash, d.reason, d.provisional
 		  FROM deposit_transactions d
 		  LEFT JOIN payment_orders o ON o.id = d.order_id
 		 WHERE d.status = 'credited'
 		   AND (COALESCE(o.completed_at, d.created_at) > NOW() - INTERVAL '1 hour'
-		        OR d.reason LIKE 'reorg_missing_receipt:%')`+filter+`
+		        OR d.reason LIKE 'reorg_missing_receipt:%'
+		        OR d.provisional)`+filter+`
 		 ORDER BY COALESCE(d.last_attempt_at, d.created_at), d.id
 		 LIMIT 200`, args...)
 	if err != nil {
@@ -113,7 +118,7 @@ func (w *Worker) retryPending(ctx context.Context, scope ...string) error {
 	}
 	rows, err := w.db.QueryContext(ctx, `
 		SELECT chain, tx_hash, log_index, from_address, to_address, token,
-		       amount::text, block_number, block_hash, reason
+		       amount::text, block_number, block_hash, reason, provisional
 		  FROM deposit_transactions
 		 WHERE status = 'pending'
 		   AND (last_attempt_at IS NULL OR last_attempt_at < NOW() -
@@ -396,6 +401,15 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 							status, reason, verifyErr = "reverted", "reorg_transfer_changed", nil
 						}
 					}
+					if verifyErr == nil && p.status == "credited" && p.provisional {
+						// A provisional credit becomes final once the chain
+						// reaches final depth. No balance moves here: the amount
+						// already landed at detection time and finalization only
+						// ends the risk-window recheck.
+						if final, finalErr := transactionIsFinalForChain(rpcCtx, pool, chain.Chain, receipt.BlockNumber, chain.Confirmations); finalErr == nil && final {
+							w.finalizeProvisional(ctx, chain, p)
+						}
+					}
 					if verifyErr == nil && p.status == "pending" {
 						final, err := transactionIsFinalForChain(rpcCtx, pool, chain.Chain, receipt.BlockNumber, chain.Confirmations)
 						verifyErr = err
@@ -434,8 +448,46 @@ func (w *Worker) reconcile(ctx context.Context, observations []depositObservatio
 							}
 							continue
 						}
+						if err == nil && !final && !reincluded && w.securityCovered(chain.Chain, transfer.BlockNumber) {
+							// Instant credit: verified on the canonical chain but
+							// not final yet. The ledger credits now (provisional)
+							// or records pending when the switch/floor says to
+							// wait; either way this row stays durable.
+							cancelObservation()
+							credited, handled, creditErr := w.creditProvisional(ctx, chain, transfer, decimals)
+							if creditErr != nil {
+								errs = append(errs, fmt.Errorf("provisional credit %s/%s/%d: %w", p.chain, p.txHash, p.logIndex, creditErr))
+								continue
+							}
+							if credited {
+								w.markCreditedConfirmations(ctx, chain, transfer)
+								continue
+							}
+							if handled {
+								// Not eligible or already recorded as pending by
+								// the ledger; the normal path below rotates the
+								// retry clock.
+								_ = handled
+							}
+						}
 					}
 				}
+			}
+		}
+		// A provisional credit that the chain invalidated is clawed back
+		// automatically (exactly once). Only a non-provisional credit, or a
+		// provisional one the revoker declined, still needs the manual-
+		// reconciliation alert. A successful claw-back wrote its own terminal
+		// status, so updateObservation below must not run for it.
+		if verifyErr == nil && p.status == "credited" && p.provisional && status == "reverted" && w.onProvisionalRevoke != nil {
+			cancelObservation()
+			revoked, revokeErr := w.onProvisionalRevoke(ctx, p.chain, p.txHash, p.logIndex, reason)
+			if revokeErr != nil {
+				errs = append(errs, fmt.Errorf("revoke provisional %s/%s/%d: %w", p.chain, p.txHash, p.logIndex, revokeErr))
+				continue
+			}
+			if revoked {
+				continue
 			}
 		}
 		cancelObservation()

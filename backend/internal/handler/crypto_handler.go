@@ -417,7 +417,8 @@ func writeCryptoDepositCSV(ctx context.Context, output io.Writer, fetch func(con
 		return err
 	}
 	w := csv.NewWriter(output)
-	if err := w.Write([]string{"id", "chain", "tx_hash", "log_index", "from", "to", "token", "amount", "status", "created_at"}); err != nil {
+	if err := w.Write([]string{"id", "chain", "tx_hash", "log_index", "from", "to", "token", "amount", "status", "created_at",
+		"provisional", "provisional_amount", "credited_at", "revoked_at", "revoke_reason"}); err != nil {
 		return err
 	}
 	const pageSize = 200
@@ -440,6 +441,8 @@ func writeCryptoDepositCSV(ctx context.Context, output io.Writer, fetch func(con
 				csvCell(strconv.FormatInt(r.ID, 10)), csvCell(r.Chain), csvCell(r.TxHash),
 				strconv.Itoa(r.LogIndex), csvCell(r.FromAddress), csvCell(r.ToAddress),
 				csvCell(r.Token), csvCell(r.Amount), csvCell(r.Status), csvCell(r.CreatedAt),
+				strconv.FormatBool(r.Provisional), csvCell(strconv.FormatFloat(r.ProvisionalAmount, 'f', -1, 64)),
+				csvCell(r.CreditedAt), csvCell(r.RevokedAt), csvCell(r.RevokeReason),
 			}); err != nil {
 				return err
 			}
