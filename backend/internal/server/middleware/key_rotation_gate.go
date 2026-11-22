@@ -52,6 +52,9 @@ func NewKeyRotationGateMiddleware(
 			return
 		}
 		if !blocked {
+			if status != nil && status.Reason == service.KeyRotationReasonRiskAcknowledged {
+				recordKeyRotationRiskAckAllowAudit(c, subject.UserID, status, auditService)
+			}
 			c.Next()
 			return
 		}
@@ -125,4 +128,56 @@ func recordKeyRotationBlockedAudit(
 		entry.RequestID = requestID
 	}
 	auditService.Record(entry)
+}
+
+// recordKeyRotationRiskAckAllowAudit 写入一条「靠风险确认放行」的审计。
+//
+// 充值/兑换本身很稀疏，这条记录让运维能反查每一次「没整改也充值成功」：
+// 谁、从哪个 IP、确认的有效期到什么时候、当时 pending 的 key 有几把。
+// 写完跳过通用审计，避免同一请求出现两条不同 action 的记录。
+func recordKeyRotationRiskAckAllowAudit(
+	c *gin.Context,
+	userID int64,
+	status *service.KeyRotationGateStatus,
+	auditService *service.AuditLogService,
+) {
+	if auditService == nil || status == nil || status.RiskAckExpiresAt == nil {
+		return
+	}
+	uid := userID
+	authMethod := c.GetString("auth_method")
+	if authMethod == "" {
+		authMethod = service.AuditAuthMethodJWT
+	}
+	fullPath := c.FullPath()
+	if fullPath == "" {
+		fullPath = c.Request.URL.Path
+	}
+	ip := SecurityClientIP(c)
+	entry := &service.AuditLog{
+		CreatedAt:   time.Now().UTC(),
+		Action:      service.AuditActionRechargeAllowedRiskAck,
+		Method:      c.Request.Method,
+		Path:        fullPath,
+		ClientIP:    ip,
+		UserAgent:   c.Request.UserAgent(),
+		StatusCode:  http.StatusOK,
+		ActorUserID: &uid,
+		AuthMethod:  authMethod,
+		Extra: map[string]any{
+			"user_id":             uid,
+			"ip":                  ip,
+			"path":                c.Request.URL.Path,
+			"reason":              status.Reason,
+			"risk_ack_expires_at": status.RiskAckExpiresAt.UTC().Format(time.RFC3339),
+			"active_key_count":    status.ActiveKeyCount,
+			"pending_key_count":   status.PendingKeyCount,
+			"cutoff":              status.Cutoff.Format(time.RFC3339),
+		},
+	}
+	if requestID, ok := c.Request.Context().Value(ctxkey.RequestID).(string); ok {
+		entry.RequestID = requestID
+	}
+	auditService.Record(entry)
+	SkipAudit(c)
 }

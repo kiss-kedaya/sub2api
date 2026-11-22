@@ -53,6 +53,14 @@ const (
 	// It records user_id / client IP / request path so the operator can measure
 	// the remediation rate after the key-leak incident.
 	AuditActionRechargeBlockedKeyRotation = "user.recharge.blocked_key_rotation"
+	// AuditActionKeyRotationRiskAck is written when a user explicitly acknowledges
+	// the key-leak risk (KEY_ROTATION_RISK_ACK) instead of rotating keys or
+	// adding IP allowlists. extra carries expires_at and the cutoff snapshot.
+	AuditActionKeyRotationRiskAck = "KEY_ROTATION_RISK_ACK"
+	// AuditActionRechargeAllowedRiskAck is written by the gate middleware when a
+	// recharge/redeem request passes only because of a valid risk
+	// acknowledgement, so the operator can reconstruct every "skipped" top-up.
+	AuditActionRechargeAllowedRiskAck = "user.recharge.allowed_key_rotation_risk_ack"
 	// AuditActionAPIKeyAutoDisableIPSharing is written by the gateway IP-sharing
 	// risk control when it disables the keys it observed behind one shared
 	// source. The affected user did not act, so the evidence lives in extra and

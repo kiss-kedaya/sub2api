@@ -11,6 +11,7 @@
         <KeyRotationGateNotice :status="keyRotationStatus" />
       </div>
       <template v-else>
+        <KeyRotationRiskAckBanner v-if="riskAckActive" :status="keyRotationStatus" class="mb-4" />
         <div v-if="loading" class="card deposit-view__empty" role="status"><LoadingSpinner /></div>
         <div v-else-if="loadError" class="card deposit-view__empty" role="alert">
           <strong>{{ t('deposit.loadFailed') }}</strong>
@@ -203,6 +204,7 @@ import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
+import KeyRotationRiskAckBanner from '@/components/user/KeyRotationRiskAckBanner.vue'
 import {
   getDepositHistory, getDepositInfo, getDepositNetworkStatus,
   type DepositChain, type DepositInfo, type DepositNetworkState, type DepositNetworkStatus, type DepositRecord,
@@ -223,6 +225,9 @@ const { required: keyRotationRequired, status: keyRotationStatus } = useKeyRotat
 // An explicit denial must survive an older shared status read finishing afterwards.
 const keyRotationDenied = ref(false)
 const depositBlocked = computed(() => keyRotationRequired.value || keyRotationDenied.value)
+const riskAckActive = computed(
+  () => !keyRotationRequired.value && Boolean(keyRotationStatus.value?.risk_ack_expires_at)
+)
 
 // A transfer can be mined between two reads, so the page keeps one cadence
 // whether or not anything is already confirming. Five seconds is short enough

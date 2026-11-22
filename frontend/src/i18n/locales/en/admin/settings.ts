@@ -3,6 +3,22 @@ export default {
       search: {
         emailOAuth: 'Email OAuth sign-in',
       },
+      keyRotationRiskAck: {
+        title: 'Key-rotation risk acknowledgement (continue recharging)',
+        description:
+          'The key-leak gate requires users to rotate API keys or add IP allowlists before recharging/redeeming. When enabled, a user can explicitly acknowledge the risk and continue for a limited time. Model calls, balance reads and key management are never gated.',
+        enabled: 'Allow users to acknowledge the risk and continue recharging',
+        enabledHint:
+          'When off, users can no longer acknowledge the risk and existing acknowledgements stop working immediately (recharge/redeem requires remediation again). Every acknowledgement and every gate pass is audited (KEY_ROTATION_RISK_ACK / user.recharge.allowed_key_rotation_risk_ack).',
+        hours: 'Acknowledgement lifetime (hours)',
+        hoursHint:
+          'How long one acknowledgement lasts, 1–720, default 24. After it expires, or after the gate cutoff changes (a new incident), the user must acknowledge again.',
+        invalidHours: 'The lifetime must be an integer number of hours between 1 and 720.',
+        auditHint:
+          'Skipping is an explicit, auditable risk acknowledgement: it expires, is bound to the current cutoff, records IP / User-Agent, and writes audit entries. The user owns the risk afterwards.',
+        retry: 'Reload',
+        saved: 'Key-rotation risk acknowledgement settings saved',
+      },
       gatewayIPNotice: {
         title: 'IP notices and rate limits',
         description: 'Add conversation notices and independent request limits only for the listed source IPs. IPs shared by several accounts are added automatically.',

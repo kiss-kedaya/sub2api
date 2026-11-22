@@ -771,6 +771,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpA
 		adminSettings.PUT("/panel-rate-limit", h.Admin.Setting.UpdatePanelRateLimitSettings)
 		adminSettings.GET("/gateway-ip-notice", h.Admin.Setting.GetGatewayIPNotice)
 		adminSettings.PUT("/gateway-ip-notice", h.Admin.Setting.UpdateGatewayIPNotice)
+		// 密钥轮换门禁的风险确认跳过（开关 + 有效期），用户侧充值/兑换页的次级按钮依赖它。
+		adminSettings.GET("/key-rotation-risk-ack", h.Admin.Setting.GetKeyRotationRiskAckSettings)
+		adminSettings.PUT("/key-rotation-risk-ack", h.Admin.Setting.UpdateKeyRotationRiskAckSettings)
 		// 站点主题（主色/中性色/圆角/字体/默认明暗）
 		adminSettings.GET("/theme", h.Admin.Setting.GetSiteTheme)
 		adminSettings.PUT("/theme", h.Admin.Setting.UpdateSiteTheme)

@@ -100,7 +100,7 @@ func TestAssessKeyRotationAgreesWithGate(t *testing.T) {
 		{ID: 3, Status: StatusAPIKeyActive, CreatedAt: old, IPWhitelist: []string{"198.51.100.9"}},
 		{ID: 4, Status: StatusAPIKeyActive, CreatedAt: old, IPWhitelist: []string{}},
 	}
-	gate := NewKeyRotationGateService(&keyRotationListerStub{keys: keys}, keyRotationTestConfig(t, true, cutoff))
+	gate := NewKeyRotationGateService(&keyRotationListerStub{keys: keys}, keyRotationTestConfig(t, true, cutoff), nil)
 	status, err := gate.Evaluate(context.Background(), 7)
 	require.NoError(t, err)
 	require.True(t, status.Required)
