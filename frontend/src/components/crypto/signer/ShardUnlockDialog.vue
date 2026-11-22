@@ -35,6 +35,7 @@
             :label="t('admin.crypto.signer.unlock.totpLabel')"
             :invalid="!!errorMessage"
             :disabled="running"
+            :autofocus="false"
           />
           <p class="text-xs text-muted">{{ t('admin.crypto.signer.unlock.totpHint') }}</p>
         </div>

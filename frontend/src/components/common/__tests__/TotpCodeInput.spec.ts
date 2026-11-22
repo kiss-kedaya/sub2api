@@ -14,6 +14,28 @@ function render() {
 }
 
 describe('shared six-cell authenticator input', () => {
+
+  it('stays a real, tappable text field on iOS (no opacity-0 overlay, no swallowed touch)', async () => {
+    const wrapper = render()
+    await flushPromises()
+    const input = wrapper.get('input')
+    // opacity-0 makes Mobile Safari treat the overlay as "not a text field", so a
+    // tap opens and immediately dismisses the keyboard. Transparency must come
+    // from the text/caret color instead.
+    expect(input.classes()).not.toContain('opacity-0')
+    expect(input.classes()).toContain('text-transparent')
+    expect(input.attributes('enterkeyhint')).toBe('done')
+
+    const target = input.element as HTMLInputElement
+    const event = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 })
+    Object.defineProperty(event, 'clientX', { value: 0 })
+    target.getBoundingClientRect = () => ({ left: 0, width: 120, top: 0, bottom: 48, height: 48, right: 120, x: 0, y: 0, toJSON: () => ({}) } as DOMRect)
+    target.dispatchEvent(event)
+    await flushPromises()
+    // preventDefault on pointerdown kills the iOS keyboard gesture.
+    expect(event.defaultPrevented).toBe(false)
+  })
+
   it('provides one labelled autofill field and focuses it when opened', async () => {
     const wrapper = render()
     await flushPromises()

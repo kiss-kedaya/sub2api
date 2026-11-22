@@ -6,6 +6,7 @@
       :value="modelValue"
       type="text"
       inputmode="numeric"
+      enterkeyhint="done"
       autocomplete="one-time-code"
       autocapitalize="off"
       :spellcheck="false"
@@ -14,7 +15,7 @@
       :aria-label="label"
       :aria-invalid="invalid || undefined"
       :disabled="disabled"
-      class="absolute inset-0 z-10 h-full w-full cursor-text opacity-0 disabled:cursor-not-allowed"
+      class="absolute inset-0 z-10 h-full w-full cursor-text bg-transparent text-transparent caret-transparent opacity-100 disabled:cursor-not-allowed"
       @input="handleInput"
       @paste="handlePaste"
       @focus="syncSelection"
@@ -101,10 +102,21 @@ function handlePaste(event: ClipboardEvent) {
 
 function handlePointerDown(event: PointerEvent) {
   if (props.disabled || event.button !== 0) return
-  event.preventDefault()
-  const bounds = input.value?.getBoundingClientRect()
-  if (!bounds?.width) return focus()
-  focus(Math.max(0, Math.min(5, Math.floor((event.clientX - bounds.left) / (bounds.width / 6)))))
+  // Never preventDefault here: Mobile Safari treats a prevented pointer/touch
+  // default as "no user gesture" and immediately dismisses the keyboard, which
+  // makes the six-cell field impossible to type into on iOS. Let the native
+  // tap focus the field, then align the caret with the tapped cell afterwards.
+  if (!input.value) return
+  const bounds = input.value.getBoundingClientRect()
+  const target = document.activeElement === input.value
+  nextTick(() => {
+    if (!input.value || !bounds.width) return
+    if (!target) return
+    const index = Math.max(0, Math.min(5, Math.floor((event.clientX - bounds.left) / (bounds.width / 6))))
+    const position = Math.min(index, props.modelValue.length)
+    input.value.setSelectionRange(position, position)
+    syncSelection()
+  })
 }
 
 watch(() => props.modelValue, () => nextTick(syncSelection))
