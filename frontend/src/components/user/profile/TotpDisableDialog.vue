@@ -1,6 +1,6 @@
 <template>
   <div class="fixed inset-0 z-50 overflow-y-auto" @click.self="handleClose">
-    <div class="flex min-h-full items-center justify-center p-4">
+    <div class="flex min-h-full items-start justify-center p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:items-center">
       <div class="fixed inset-0 bg-black/50 transition-opacity" @click="handleClose"></div>
 
       <div class="relative w-full max-w-md transform rounded-xl bg-white p-6 shadow-xl dark:bg-dark-800">
