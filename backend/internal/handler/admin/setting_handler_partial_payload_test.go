@@ -24,6 +24,10 @@ func TestUpdateSettingsPartialPayloadKeepsUnsentKeys(t *testing.T) {
 		service.SettingKeySMTPHost:         "smtp.example.com",
 		service.SettingKeySMTPFrom:         "noreply@example.com",
 		service.SettingKeyTurnstileEnabled: "true",
+		// 已启用的人机验证必须有完整的 site/secret，否则整次保存会被参数校验拒绝，
+		// 与本用例要验证的「未提交字段保持原值」无关。
+		service.SettingKeyTurnstileSiteKey:   "site-key",
+		service.SettingKeyTurnstileSecretKey: "turnstile-secret",
 	})
 
 	rec := doUpdateSettings(t, h, map[string]any{"risk_control_enabled": true}, nil)
