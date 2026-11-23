@@ -188,3 +188,52 @@ func TestResponsesToAnthropicBridge_CodexShapedBodyHasOnlyAnthropicTopLevelKeys(
 		require.False(t, gjson.GetBytes(merged, "reasoning").Exists(), "raw reasoning object must never be forwarded to Anthropic")
 	}
 }
+
+// 透明账号（PassthroughUnmappedFields）：账号级显式选择，转换器不认识的顶层字段
+// （含未来新增的未知字段）与原始 reasoning 全部原样带给上游，由上游自行处理。
+func TestResponsesToAnthropicRequestWithPassthrough_TransparentOptionForwardsEveryUnmappedKey(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-opus-5-5",
+		"input":"hi",
+		"reasoning":{"effort":"none"},
+		"previous_response_id":"resp_prev_1",
+		"store":true,
+		"include":["reasoning.encrypted_content"],
+		"metadata":{"trace":"abc"},
+		"prompt_cache_key":"cache-key-1",
+		"brand_new_field":{"nested":1},
+		"null_field":null,
+		"bad.key":"dropped"
+	}`)
+	var req ResponsesRequest
+	require.NoError(t, json.Unmarshal(body, &req))
+
+	converted, fields, err := ResponsesToAnthropicRequestWithPassthrough(&req, body,
+		&ResponsesToAnthropicOptions{PassthroughReasoning: true, PassthroughUnmappedFields: true})
+	require.NoError(t, err)
+	require.Nil(t, converted.Thinking, "transparent accounts never get a synthesized thinking block")
+	require.Nil(t, converted.OutputConfig, "transparent accounts never get a synthesized output_config")
+
+	for key, want := range map[string]string{
+		"reasoning":            `{"effort":"none"}`,
+		"previous_response_id": `"resp_prev_1"`,
+		"store":                "true",
+		"include":              `["reasoning.encrypted_content"]`,
+		"metadata":             `{"trace":"abc"}`,
+		"prompt_cache_key":     `"cache-key-1"`,
+		"brand_new_field":      `{"nested":1}`,
+	} {
+		require.Contains(t, fields, key, "transparent account must forward %q", key)
+		require.JSONEq(t, want, string(fields[key]))
+	}
+	for _, key := range []string{"model", "input", "null_field", "bad.key"} {
+		_, present := fields[key]
+		require.False(t, present, "%q must never be forwarded", key)
+	}
+
+	// 不开 PassthroughUnmappedFields 时，同一份请求体只剩白名单键（这里没有，所以为空）。
+	_, defaultFields, err := ResponsesToAnthropicRequestWithPassthrough(&req, body,
+		&ResponsesToAnthropicOptions{PassthroughReasoning: true})
+	require.NoError(t, err)
+	require.Empty(t, defaultFields)
+}

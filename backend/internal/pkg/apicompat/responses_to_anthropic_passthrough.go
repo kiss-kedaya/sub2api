@@ -10,13 +10,13 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Responses→Anthropic 的顶层字段透传（白名单）。
+// Responses→Anthropic 的顶层字段透传。
 //
 // 背景：OpenAI Responses 客户端（Codex 等）会携带一批 Anthropic Messages 没有
 // 对应字段的顶层参数（previous_response_id、store、include、parallel_tool_calls、
 // text、prompt_cache_key、reasoning、metadata 任意键、service_tier 取值等）。
 //
-// 为什么只放行白名单、不能「其余全部原样附上」：Anthropic Messages 的请求体按
+// 默认只放行白名单，不能「其余全部原样附上」：Anthropic Messages 的请求体按
 // extra='forbid' 校验，未知顶层键直接 400 "xxx: Extra inputs are not permitted"，
 // 并且这类 400 属于客户端错误，网关不会换号、不会换组、不会重试，最终原样回给用户。
 // 仓库自己已经踩过同类事故（见 gateway_request.go 里
@@ -30,6 +30,11 @@ import (
 // stream 等），其余顶层字段默认丢弃（与 2.3.153 的类型化结构体行为一致），只有
 // 下面白名单里「Anthropic Messages 自己就认识、且不改变计费」的键才原样附上。
 // 需要放行新键时只改 anthropicPassthroughTopLevelKeys 并补测试。
+//
+// 例外（显式开启）：ResponsesToAnthropicOptions.PassthroughUnmappedFields。调用方
+// 对「透明账号」（accounts.extra.anthropic_passthrough，语义就是「只替换认证、不改写
+// 请求」，上游是宽容的中转）打开它，此时全部未映射顶层键原样附上，交给上游处理。
+// 这是账号级选择，不是全局默认。
 //
 // 注意：本文件只处理请求体顶层的「未映射字段」；tools 数组里的未知工具类型由
 // convertResponsesToAnthropicTools 的 default 分支负责原样保留，input 项内部的
@@ -77,6 +82,15 @@ var anthropicPassthroughTopLevelKeys = map[string]struct{}{
 // keys that cannot be expressed as a simple JSON path segment are dropped
 // defensively — never a reason to reject the request.
 func ResponsesUnsupportedPassthroughFields(rawBody []byte) map[string]json.RawMessage {
+	return collectResponsesPassthroughFields(rawBody, false, false)
+}
+
+// collectResponsesPassthroughFields is the shared collector. all=false keeps only
+// anthropicPassthroughTopLevelKeys; all=true (transparent accounts) keeps every
+// unmapped key. passthroughReasoning only matters with all=true: the bridge does
+// not synthesize thinking/output_config then, so the raw `reasoning` object is
+// forwarded like any other unmapped field.
+func collectResponsesPassthroughFields(rawBody []byte, passthroughReasoning, all bool) map[string]json.RawMessage {
 	rawBody = []byte(strings.TrimSpace(string(rawBody)))
 	if len(rawBody) == 0 || !gjson.ValidBytes(rawBody) || !gjson.ParseBytes(rawBody).IsObject() {
 		return nil
@@ -88,10 +102,14 @@ func ResponsesUnsupportedPassthroughFields(rawBody []byte) map[string]json.RawMe
 	fields := make(map[string]json.RawMessage, len(raw))
 	for key, value := range raw {
 		if _, converted := responsesFieldConvertedByBridge[key]; converted {
-			continue
+			if !all || !passthroughReasoning || key != "reasoning" {
+				continue
+			}
 		}
-		if _, allowed := anthropicPassthroughTopLevelKeys[key]; !allowed {
-			continue
+		if !all {
+			if _, allowed := anthropicPassthroughTopLevelKeys[key]; !allowed {
+				continue
+			}
 		}
 		if !isPassthroughAnthropicTopLevelKey(key) {
 			continue

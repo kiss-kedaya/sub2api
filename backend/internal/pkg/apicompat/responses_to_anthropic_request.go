@@ -13,14 +13,20 @@ import (
 // PassthroughReasoning stops the converter from synthesizing Anthropic
 // thinking/output_config fields out of reasoning.effort (the gateway must not
 // rewrite user parameters such as `reasoning.effort="none"` into something the
-// client never asked for). The raw `reasoning` object itself is NOT forwarded:
-// it is not an Anthropic Messages field and the upstream rejects it with 400
-// "reasoning: Extra inputs are not permitted" (see
-// anthropicPassthroughTopLevelKeys), so with this switch on the effort simply
-// has no effect on an Anthropic upstream.
+// client never asked for). The raw `reasoning` object is forwarded only together
+// with PassthroughUnmappedFields; on its own the switch just means the effort has
+// no effect on the upstream, because `reasoning` is not an Anthropic Messages field
+// and a strict upstream rejects it with 400 "reasoning: Extra inputs are not permitted".
+//
+// PassthroughUnmappedFields forwards every top-level field the bridge does not map
+// (store, include, prompt_cache_key, metadata, ...) instead of only the Anthropic
+// allow-list. Only set it for transparent accounts (accounts.extra.anthropic_passthrough,
+// "only swap the auth"): a strict upstream answers 400 and the gateway never
+// retries or fails over a 400, so it must not be the global default.
 type ResponsesToAnthropicOptions struct {
-	PreserveReasoningText bool
-	PassthroughReasoning  bool
+	PreserveReasoningText     bool
+	PassthroughReasoning      bool
+	PassthroughUnmappedFields bool
 }
 
 // ResponsesToAnthropicRequest converts a Responses API request into an
@@ -46,6 +52,9 @@ func ResponsesToAnthropicRequestWithPassthrough(
 	converted, err := ResponsesToAnthropicRequestWithOptions(req, opts)
 	if err != nil {
 		return nil, nil, err
+	}
+	if opts != nil && opts.PassthroughUnmappedFields {
+		return converted, collectResponsesPassthroughFields(rawBody, opts.PassthroughReasoning, true), nil
 	}
 	return converted, ResponsesUnsupportedPassthroughFields(rawBody), nil
 }
