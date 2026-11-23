@@ -48,6 +48,7 @@ const messages: Record<string, string> = {
   'keys.reveal.copied': 'Copied',
   'keys.reveal.onlyThisTime': 'Shown this time only.',
   'keys.reveal.wrongPassword': 'Wrong password: this key cannot be decrypted.',
+  'keys.factor.passwordRateLimited': 'Too many incorrect password attempts. Please wait a minute and try again.',
   'keys.reveal.notFound': 'The server has no ciphertext for this key.',
   'keys.reveal.broken': 'The saved ciphertext is damaged or incompatible.',
   'keys.reveal.failed': 'Could not read or decrypt the key.',
@@ -259,6 +260,21 @@ describe('RevealApiKeyDialog three-way identity verification', () => {
 
     expect(wrapper.get('[data-test="api-key-reveal-error"]').text()).toBe(
       'Wrong password: this key cannot be decrypted.',
+    )
+    expect(getSecretSeal).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('tells the user to wait when the password attempts for the account are used up', async () => {
+    authorizeReveal.mockRejectedValue({ status: 429, reason: 'VERIFY_PASSWORD_RATE_LIMITED' })
+    const wrapper = await mountDialog()
+
+    await wrapper.get('[data-test="key-factor-password-input"]').setValue('whatever')
+    await submit(wrapper)
+    await waitForSelector(wrapper, '[data-test="api-key-reveal-error"]')
+
+    expect(wrapper.get('[data-test="api-key-reveal-error"]').text()).toBe(
+      'Too many incorrect password attempts. Please wait a minute and try again.',
     )
     expect(getSecretSeal).not.toHaveBeenCalled()
     wrapper.unmount()

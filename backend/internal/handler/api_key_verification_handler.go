@@ -3,6 +3,7 @@ package handler
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -197,7 +198,7 @@ func (h *APIKeyHandler) AuthorizeReveal(c *gin.Context) {
 	grant, err := svc.AuthorizeReveal(c.Request.Context(), subject.UserID, keyID, *input)
 	if err != nil {
 		setVerificationAudit(c, nil, auditVerificationRejected, infraerrors.Reason(err))
-		response.ErrorFrom(c, err)
+		respondVerificationError(c, err)
 		return
 	}
 	setVerificationAudit(c, &service.APIKeyVerificationResult{Factor: grant.Factor}, auditVerificationVerified, "")
@@ -207,6 +208,15 @@ func (h *APIKeyHandler) AuthorizeReveal(c *gin.Context) {
 		Factor:    grant.Factor,
 		ExpiresIn: grant.ExpiresIn,
 	})
+}
+
+// respondVerificationError 写身份校验失败的响应；账号维度的密码失败预算用尽（429）时
+// 补 Retry-After，前端据此提示多久后可以再试。
+func respondVerificationError(c *gin.Context, err error) {
+	if seconds := service.RetryAfterSecondsFromError(err); seconds > 0 {
+		c.Header("Retry-After", strconv.Itoa(seconds))
+	}
+	response.ErrorFrom(c, err)
 }
 
 // setVerificationAudit 给当前审计记录补因子与结果：

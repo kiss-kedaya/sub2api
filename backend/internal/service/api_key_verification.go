@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,7 +32,8 @@ import (
 //     再次查看时必须用同一因子重新授权，成功后才签发 5 分钟一次性 reveal grant。
 //
 // 安全边界：
-//   - 密码只做 bcrypt 比对，不落库、不落日志、不进审计；
+//   - 密码只做 bcrypt 比对，不落库、不落日志、不进审计；比对前先过按用户的失败预算
+//     （60 秒内最多 5 次，成功清零，见 checkLoginPassword），所有入口共用一份；
 //   - TOTP 走现有校验器（自带每用户失败预算）；
 //   - Passkey 走现有 assertion 流程，成功后签发一次性票据（Redis，5 分钟）；
 //   - reveal grant 只存 SHA-256 摘要，按 user+key+factor 绑定，一次性消费；
@@ -69,6 +71,10 @@ var (
 	// ErrAPIKeyPasswordInvalid 登录密码错误（创建 / 封存 / 二次查看）。
 	ErrAPIKeyPasswordInvalid = infraerrors.BadRequest(
 		"VERIFY_PASSWORD_INVALID", "password is incorrect")
+	// ErrAPIKeyPasswordRateLimited 该账号短时间内密码校验失败过多（按用户的失败预算已用尽）。
+	// 带 retry_after 元数据（秒），handler 据此写 Retry-After。
+	ErrAPIKeyPasswordRateLimited = infraerrors.TooManyRequests(
+		"VERIFY_PASSWORD_RATE_LIMITED", "too many password verification attempts, please try again later")
 	// ErrAPIKeyTOTPInvalid 动态验证码错误或已失效。
 	ErrAPIKeyTOTPInvalid = infraerrors.BadRequest(
 		"VERIFY_TOTP_INVALID", "dynamic code is incorrect")
@@ -199,6 +205,19 @@ type APIKeyVerificationStore interface {
 	ConsumeAPIKeyPasskeyTicket(ctx context.Context, digest string) (*APIKeyPasskeyVerificationRecord, error)
 }
 
+// APIKeyPasswordAttemptLimiter 是登录密码因子「按用户」的失败预算端口。
+//
+// 生产实现是 middleware.TwoFactorRateLimiter（Redis 滑动窗口，60 秒内最多 5 次），
+// 与登录 2FA / step-up / Passkey step-up 共用同一个账号预算：连续失败有上限、校验成功
+// 即清零、维度是用户 ID 而不是 IP。未装配（nil）时不做预算，保持装配前的行为。
+type APIKeyPasswordAttemptLimiter interface {
+	// Check 记录一次密码尝试；allowed=false 表示预算已用尽（retryAfter 为最早一次尝试
+	// 离开窗口的剩余时间）；err 表示存储故障，调用方必须 fail-closed。
+	Check(ctx context.Context, userID int64) (allowed bool, retryAfter time.Duration, err error)
+	// Reset 在密码校验成功后清零该用户的计数。
+	Reset(ctx context.Context, userID int64)
+}
+
 // APIKeyVerificationService 是创建 / 二次查看 API Key 的身份校验服务。
 type APIKeyVerificationService struct {
 	userRepo   UserRepository
@@ -208,6 +227,16 @@ type APIKeyVerificationService struct {
 	passkeys   *PasskeyService
 	cache      TotpCache
 	store      APIKeyVerificationStore
+	// passwordLimiter 是密码因子的按用户失败预算；启动时由 router 注入一次，之后只读。
+	passwordLimiter APIKeyPasswordAttemptLimiter
+}
+
+// SetPasswordAttemptLimiter 注入密码因子的失败预算（router 装配，启动期调用一次）。
+func (s *APIKeyVerificationService) SetPasswordAttemptLimiter(limiter APIKeyPasswordAttemptLimiter) {
+	if s == nil {
+		return
+	}
+	s.passwordLimiter = limiter
 }
 
 // NewAPIKeyVerificationService 创建身份校验服务。
@@ -422,10 +451,49 @@ func (s *APIKeyVerificationService) VerifyForSeal(ctx context.Context, userID in
 	if !apiKeyPasswordKnownByUser(user) {
 		return ErrAPIKeyFactorUnavailable
 	}
+	return s.checkLoginPassword(ctx, user, password)
+}
+
+// checkLoginPassword 是登录密码的唯一比对入口（创建 / 轮换 / 封存 / 二次查看共用）：
+// 先走按用户的失败预算，再做 bcrypt，成功后清零。
+//
+// 顺序是刻意的：预算用尽时不做 bcrypt，所以持会话者即使猜对也只会拿到 429，
+// 不能把任何一个校验入口当成「不限次数的密码 oracle」；同一个用户的所有入口共用一份预算。
+// 预算存储故障 fail-closed（VERIFY_UNAVAILABLE），与本文件其余校验一致。
+func (s *APIKeyVerificationService) checkLoginPassword(ctx context.Context, user *User, password string) error {
+	if strings.TrimSpace(password) == "" {
+		// 空口令没有任何猜测价值，不消耗预算。
+		return ErrAPIKeyPasswordInvalid
+	}
+	limiter := s.passwordLimiter
+	if limiter != nil {
+		allowed, retryAfter, err := limiter.Check(ctx, user.ID)
+		if err != nil {
+			return ErrAPIKeyVerificationUnavailable
+		}
+		if !allowed {
+			return apiKeyPasswordRateLimited(retryAfter)
+		}
+	}
 	if !user.CheckPassword(password) {
 		return ErrAPIKeyPasswordInvalid
 	}
+	if limiter != nil {
+		limiter.Reset(ctx, user.ID)
+	}
 	return nil
+}
+
+// apiKeyPasswordRateLimited 生成带 retry_after（向上取整的秒数）的 429。
+func apiKeyPasswordRateLimited(retryAfter time.Duration) error {
+	if retryAfter <= 0 {
+		retryAfter = time.Minute
+	}
+	seconds := int64(retryAfter / time.Second)
+	if retryAfter%time.Second > 0 {
+		seconds++
+	}
+	return ErrAPIKeyPasswordRateLimited.WithMetadata(map[string]string{"retry_after": strconv.FormatInt(seconds, 10)})
 }
 
 // AuthorizeReveal 为「再次查看 Key 明文」做身份校验并签发 5 分钟一次性 grant。
@@ -598,8 +666,8 @@ func (s *APIKeyVerificationService) verifyFactor(
 		if !apiKeyPasswordKnownByUser(user) {
 			return nil, ErrAPIKeyFactorUnavailable
 		}
-		if strings.TrimSpace(in.Password) == "" || !user.CheckPassword(in.Password) {
-			return nil, ErrAPIKeyPasswordInvalid
+		if err := s.checkLoginPassword(ctx, user, in.Password); err != nil {
+			return nil, err
 		}
 	case APIKeyFactorTOTP:
 		if s.totp == nil || !user.TotpEnabled {

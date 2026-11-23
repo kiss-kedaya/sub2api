@@ -290,6 +290,8 @@ export default {
       passkeyRequired: 'Verify with Passkey first.',
       factorUnavailable: 'This verification method is currently unavailable.',
       passwordInvalid: 'The password is incorrect. Enter your current login password.',
+      // Too many wrong passwords for this account: the server stops comparing (even a correct one) for about a minute.
+      passwordRateLimited: 'Too many incorrect password attempts. Please wait a minute and try again.',
       totpInvalid: 'The dynamic code is incorrect. Please re-enter it.',
     },
     createStep: {

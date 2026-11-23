@@ -50,6 +50,7 @@ const messages: Record<string, string> = {
   'keys.seal.passwordRequired': 'Enter your login password, or uncheck the option.',
   'keys.seal.failed': 'Wrong password or save failed; you can retry later.',
   'keys.seal.wrongPassword': 'The login password is incorrect; this key cannot be sealed for later viewing.',
+  'keys.factor.passwordRateLimited': 'Too many incorrect password attempts. Please wait a minute and try again.',
   'keys.seal.unsupported': 'This browser does not support WebCrypto.',
   'keys.seal.later': 'Later',
   'keys.seal.unavailable': 'This account has no usable login password, so this option is unavailable.',
@@ -359,6 +360,26 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
 
     await wrapper.get('[data-test="api-key-seal-later"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('tells the user to wait (not "wrong password") when the password attempts are used up', async () => {
+    putSecretSeal.mockRejectedValueOnce({ status: 429, reason: 'VERIFY_PASSWORD_RATE_LIMITED' })
+    const wrapper = await mountDialog({ canSeal: true })
+    await sleep(1100)
+    await nextTick()
+
+    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="api-key-seal-password"]').setValue('correct horse')
+    await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+    await flushPromises()
+
+    const error = wrapper.get('[data-test="api-key-seal-error"]')
+    expect(error.attributes('role')).toBe('alert')
+    expect(error.text()).toBe('Too many incorrect password attempts. Please wait a minute and try again.')
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.emitted('sealed')).toBeUndefined()
     wrapper.unmount()
   })
 

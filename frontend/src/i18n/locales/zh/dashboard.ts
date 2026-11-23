@@ -289,6 +289,8 @@ export default {
       passkeyRequired: '请先完成 Passkey 验证。',
       factorUnavailable: '该验证方式当前不可用。',
       passwordInvalid: '密码不正确，请重新输入当前登录密码。',
+      // 同一账号短时间内密码输错太多次：服务端不再比对口令（连输对的也不认），约 1 分钟后恢复。
+      passwordRateLimited: '密码输错次数过多，请等 1 分钟后再试。',
       totpInvalid: '验证码错误，请重新输入。',
     },
     createStep: {

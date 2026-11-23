@@ -93,6 +93,7 @@ func (s *handlerVerifyStore) ConsumeAPIKeyPasskeyTicket(_ context.Context, diges
 
 type handlerVerificationEngine struct {
 	router      *gin.Engine
+	handler     *APIKeyHandler
 	createRepo  *apiKeyCreateReceiptRepo
 	secretStore *handlerSecretStore
 	store       *handlerVerifyStore
@@ -124,11 +125,14 @@ func newHandlerVerificationEngine(t *testing.T, user *service.User) *handlerVeri
 	r.Use(withUserSubject(7))
 	r.GET("/user/security/verification-factors", h.GetVerificationFactors)
 	r.POST("/keys", h.Create)
+	r.PUT("/keys/:id", h.Update)
+	r.POST("/keys/batch-rotate", h.BatchRotate)
 	r.PUT("/user/api-keys/:id/secret-seal", middleware2.RequestBodyLimit(service.APIKeySecretMaxBodyBytes), h.PutSecretSeal)
 	r.GET("/user/api-keys/:id/secret-seal", h.GetSecretSeal)
 	r.POST("/user/api-keys/:id/reveal-authorize", h.AuthorizeReveal)
 	return &handlerVerificationEngine{
 		router:      router,
+		handler:     h,
 		createRepo:  createRepo,
 		secretStore: secretStore,
 		store:       verifyStore,

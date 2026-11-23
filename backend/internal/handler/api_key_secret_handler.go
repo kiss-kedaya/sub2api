@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -92,8 +93,8 @@ func (h *APIKeyHandler) PutSecretSeal(c *gin.Context) {
 			return
 		}
 		if err := h.verificationService.VerifyForSeal(c.Request.Context(), subject.UserID, req.Password); err != nil {
-			setVerificationAudit(c, nil, auditVerificationRejected, "VERIFY_PASSWORD_INVALID")
-			response.ErrorFrom(c, err)
+			setVerificationAudit(c, nil, auditVerificationRejected, infraerrors.Reason(err))
+			respondVerificationError(c, err)
 			return
 		}
 		if authFactor == "" {

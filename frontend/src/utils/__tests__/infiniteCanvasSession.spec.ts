@@ -437,6 +437,27 @@ describe('ensureInfiniteCanvasApiKey', () => {
       expect(rotate).toHaveBeenCalledWith(7, verification)
     })
 
+    // 三类账号的校验材料形状不同（密码 / TOTP 码 / Passkey 一次性票据），创建和轮换都必须原样交给接口：
+    // 码和票据都是一次性的，这里既不能改、不能缓存，也不能在失败后用同一份再试一次。
+    it.each([
+      { name: 'password', payload: { method: 'password' as const, password: 'fixture-password' } },
+      { name: 'TOTP', payload: { method: 'totp' as const, totp_code: '123456' } },
+      { name: 'Passkey', payload: { method: 'passkey' as const, passkey_session_token: 'fixture-ticket' } },
+    ])('hands the $name verification to create and to rotate unchanged', async ({ payload }) => {
+      getAvailableGroups.mockResolvedValue([group(4)])
+      list.mockResolvedValue({ items: [] })
+      create.mockResolvedValue(secretKey({ group_id: 4, group_ids: [4] }, 'sk-new'))
+      await ensureInfiniteCanvasApiKey({ list, create, getAvailableGroups }, { createIfMissing: true, verification: payload })
+      expect(create.mock.calls[0][10]).toEqual({ idempotencyKey: expect.any(String), verification: payload })
+
+      __resetInfiniteCanvasSecretsForTests()
+      list.mockResolvedValue({ items: [key({ id: 7 })] })
+      rotate.mockResolvedValue(secretKey({ id: 7 }, 'sk-rotated'))
+      await ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { allowRotate: true, verification: payload })
+      expect(rotate).toHaveBeenCalledTimes(1)
+      expect(rotate).toHaveBeenCalledWith(7, payload)
+    })
+
     it('never rotates just because a verification payload is present', async () => {
       list.mockResolvedValue({ items: [key({ id: 7 })] })
       await expect(ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { verification }))
@@ -447,6 +468,8 @@ describe('ensureInfiniteCanvasApiKey', () => {
     it.each([
       'VERIFY_REQUIRED',
       'VERIFY_PASSWORD_INVALID',
+      // 同一账号密码输错次数用尽（429）：和其它校验失败同一类，页面据此留在确认卡上提示稍后再试。
+      'VERIFY_PASSWORD_RATE_LIMITED',
       'VERIFY_TOTP_INVALID',
       'VERIFY_PASSKEY_FAILED',
       'VERIFY_FACTOR_UNAVAILABLE',

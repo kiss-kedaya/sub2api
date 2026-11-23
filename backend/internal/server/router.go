@@ -32,6 +32,32 @@ var upstreamMonitorStarted atomic.Bool
 // router setup in tests.
 var upstreamChannelStarted atomic.Bool
 
+// configureAccountVerificationBudgets 装配账号维度的校验失败预算（Redis 滑动窗口，60 秒内
+// 最多 5 次，成功清零，按用户 ID 而不是 IP）：
+//   - 2FA 桶：/auth/login/2fa、/user/totp/step-up、/user/totp/enable、/user/totp/disable、
+//     Passkey step-up；
+//   - API Key 登录密码因子的独立桶：创建 / 轮换 / 封存 / 二次查看里的密码校验。
+//
+// 抽成函数是为了能单测「装配没漏接」；redisClient 为 nil（单机 / 单测）时什么都不装配。
+func configureAccountVerificationBudgets(handlers *handler.Handlers, redisClient *redis.Client) {
+	if redisClient == nil || handlers == nil {
+		return
+	}
+	twoFactorLimiter := middleware2.NewTwoFactorRateLimiter(redisClient)
+	if handlers.Auth != nil {
+		handlers.Auth.SetTwoFactorRateLimiter(twoFactorLimiter)
+	}
+	if handlers.Totp != nil {
+		handlers.Totp.SetTwoFactorRateLimiter(twoFactorLimiter)
+	}
+	if handlers.Passkey != nil {
+		handlers.Passkey.SetTwoFactorRateLimiter(twoFactorLimiter)
+	}
+	if handlers.APIKey != nil {
+		handlers.APIKey.SetPasswordAttemptLimiter(middleware2.NewAPIKeyPasswordRateLimiter(redisClient))
+	}
+}
+
 // SetupRouter 配置路由器中间件和路由
 func SetupRouter(
 	r *gin.Engine,
@@ -57,20 +83,7 @@ func SetupRouter(
 		r.Use(middleware2.DelegatedPaymentRoutesGuard())
 	}
 	adminhandler.ConfigureReportCacheRedis(redisClient)
-	// 账号维度 2FA 校验限速（60s 滚动窗口 5 次，Redis 共享计数）。
-	// 覆盖 /auth/login/2fa、/user/totp/step-up、/user/totp/enable、/user/totp/disable。
-	if redisClient != nil && handlers != nil {
-		twoFactorLimiter := middleware2.NewTwoFactorRateLimiter(redisClient)
-		if handlers.Auth != nil {
-			handlers.Auth.SetTwoFactorRateLimiter(twoFactorLimiter)
-		}
-		if handlers.Totp != nil {
-			handlers.Totp.SetTwoFactorRateLimiter(twoFactorLimiter)
-		}
-		if handlers.Passkey != nil {
-			handlers.Passkey.SetTwoFactorRateLimiter(twoFactorLimiter)
-		}
-	}
+	configureAccountVerificationBudgets(handlers, redisClient)
 	if handlers.Admin != nil && handlers.Admin.Setting != nil && settingService != nil {
 		regional, err := service.NewServerlessRouting(settingService, db, redisClient, cfg)
 		if err != nil {
