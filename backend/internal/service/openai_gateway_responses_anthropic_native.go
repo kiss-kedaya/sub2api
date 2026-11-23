@@ -63,11 +63,13 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	}
 	clientStream := responsesReq.Stream
 
-	// 3. Convert Responses → Anthropic，并保留未映射顶层字段供透传。
+	// 3. Convert Responses → Anthropic。国产 Anthropic 协议端点（DeepSeek / Kimi / 智谱 /
+	// MiniMax）保持 2.3.153 的转换口径：reasoning.effort 映射成 thinking/output_config，
+	// 只放行 Anthropic 白名单顶层键，其余未映射字段丢弃。整包透传是透明账号
+	// （accounts.extra.anthropic_passthrough，仅 Anthropic API Key）的账号级选择，见
+	// ForwardAsResponses。
 	anthropicReq, passthroughFields, err := apicompat.ResponsesToAnthropicRequestWithPassthrough(&responsesReq, adaptedBody, &apicompat.ResponsesToAnthropicOptions{
 		PreserveReasoningText: account.Platform == PlatformDeepseek,
-		// 同 /v1/responses→Anthropic：不改写用户 reasoning 参数，原样带给上游。
-		PassthroughReasoning: true,
 	})
 	if err != nil {
 		writeResponsesError(c, http.StatusBadRequest, "invalid_request_error", "Failed to convert request")

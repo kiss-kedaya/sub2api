@@ -69,14 +69,20 @@ func (s *GatewayService) ForwardAsResponses(
 	originalModel := responsesReq.Model
 	clientStream := responsesReq.Stream
 
-	// 3. Convert Responses → Anthropic，并收集转换器不认识的顶层字段。
-	// 这些字段（previous_response_id、store、include、内置工具外的扩展参数、未来新
-	// 字段等）按「透传优先」原样并入转换后的请求体，交给上游忽略或自行处理，
-	// 不再在反序列化阶段静默丢弃；只有无法安全表达为 JSON 顶层键的异常键名才丢弃。
-	// 透传优先：除跨协议必需的最小映射外，不在网关层改写用户参数。
-	// reasoning 原样带给上游（不合成 thinking/output_config），上游拒绝就原样报错。
+	// 3. Convert Responses → Anthropic，并收集要原样并入请求体的顶层字段。
+	//
+	// 透明账号（accounts.extra.anthropic_passthrough：只替换认证、不改写请求，上游是
+	// 宽容的中转）按「透传优先」：转换器不认识的顶层字段（previous_response_id、store、
+	// include、prompt_cache_key……）全部原样并入，reasoning 也原样带给上游（不合成
+	// thinking/output_config），上游拒绝就原样报错。
+	//
+	// 其余账号（OAuth / Vertex / 官方或未知上游的 API Key）保持 2.3.153 的转换口径：
+	// reasoning.effort 映射成 thinking/output_config，未映射字段丢弃，只放行 Anthropic
+	// 白名单键。原因：Anthropic 官方对未知顶层字段返回 400，且 400 不换号、不重试。
+	transparent := account.IsAnthropicAPIKeyPassthroughEnabled()
 	anthropicReq, passthroughFields, err := apicompat.ResponsesToAnthropicRequestWithPassthrough(&responsesReq, adaptedBody, &apicompat.ResponsesToAnthropicOptions{
-		PassthroughReasoning: true,
+		PassthroughReasoning:      transparent,
+		PassthroughUnmappedFields: transparent,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("convert responses to anthropic: %w", err)
@@ -949,10 +955,21 @@ func mergeInboundQueryParams(upstreamReq *http.Request, c *gin.Context) {
 	upstreamReq.URL.RawQuery = current.Encode()
 }
 
+// convertedUpstreamErrorRawBodyMax caps how much of a non-JSON upstream body
+// (for example a relay's HTML error page) may be used as the client-facing
+// message when the upstream gave no error.message at all.
+const convertedUpstreamErrorRawBodyMax = 512
+
 // writeConvertedUpstreamError forwards a non-failover Anthropic upstream error to
 // an OpenAI Responses client while preserving the upstream status code, error
 // code/type and error text. It is a transport/envelope adaptation only: the
 // message is never replaced with a generic "Upstream request failed" string.
+//
+// The text is still redacted at this client boundary (clientprivacy.Text): the
+// upstream's own wording is kept, but upstream hosts/IPs/URLs, account or proxy
+// identifiers, e-mail addresses and echoed credentials ("Incorrect API key
+// provided: sk-…") must never reach the end user — that is what hides which
+// relay/provider sits behind the gateway.
 func writeConvertedUpstreamError(c *gin.Context, statusCode int, respBody []byte) {
 	errorType := strings.TrimSpace(gjson.GetBytes(respBody, "error.type").String())
 	errorCode := strings.TrimSpace(gjson.GetBytes(respBody, "error.code").String())
@@ -961,7 +978,7 @@ func writeConvertedUpstreamError(c *gin.Context, statusCode int, respBody []byte
 		message = strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 	}
 	if message == "" {
-		message = strings.TrimSpace(string(respBody))
+		message = truncateString(strings.TrimSpace(string(respBody)), convertedUpstreamErrorRawBodyMax)
 	}
 	if errorCode == "" {
 		errorCode = errorType
@@ -969,5 +986,5 @@ func writeConvertedUpstreamError(c *gin.Context, statusCode int, respBody []byte
 	if errorCode == "" {
 		errorCode = "upstream_error"
 	}
-	writeResponsesError(c, mapUpstreamStatusCode(statusCode), errorCode, message)
+	writeResponsesError(c, mapUpstreamStatusCode(statusCode), sanitizeUpstreamErrorMessage(errorCode), sanitizeUpstreamErrorMessage(message))
 }
