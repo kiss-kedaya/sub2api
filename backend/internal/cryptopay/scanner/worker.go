@@ -23,6 +23,14 @@ import (
 // Shared by every scanner instance; distinct from the sweeper's CRYPTOSW key.
 const scanLockKey int64 = 0x43525950544f5343
 
+// GuardScanLockKey is the advisory lock of the idle-chain wallet guard scan
+// ("CRYPTOSG"). The guard scans only chains that are NOT scanned for deposits,
+// with its own cursors and no deposit handler, so it never needs to exclude the
+// deposit scan. Sharing one lock made a guard iteration that kept failing on a
+// dead chain hold the global lock back to back and starve the deposit scan of
+// every chain (pg_locks showed it held 96% of the time).
+const GuardScanLockKey int64 = 0x43525950544f5347
+
 // A lagging chain yields between bounded batches so other chains and other
 // instances get regular turns. Durable progress always ends at a completed
 // batch; the next pass starts at precisely the next unscanned block.
@@ -115,6 +123,9 @@ type Worker struct {
 	// chainPause paces the retries of a chain whose forward scan keeps failing
 	// without moving its cursor. Guarded by replayMu.
 	chainPause map[string]*chainPause
+	// lockKey is the advisory lock this worker's passes take; zero means the
+	// shared scanLockKey. Set before Start and never changed afterwards.
+	lockKey int64
 	// liveProgress enables the head observation window and the confirmation
 	// counter writes. Production workers (positive interval) turn it on.
 	liveProgress        bool
@@ -1002,8 +1013,9 @@ func (w *Worker) tryScanLock(ctx context.Context) (func() error, error) {
 	// Raw with ErrBadConn closes the physical session rather than pooling it.
 	// This also releases a lock acquired before a response was lost or invalid.
 	discard := func() { _ = conn.Raw(func(any) error { return driver.ErrBadConn }) }
+	key := w.advisoryLockKey()
 	var locked bool
-	if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, scanLockKey).Scan(&locked); err != nil {
+	if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, key).Scan(&locked); err != nil {
 		discard()
 		return nil, fmt.Errorf("acquire scanner lock: %w", err)
 	}
@@ -1015,7 +1027,7 @@ func (w *Worker) tryScanLock(ctx context.Context) (func() error, error) {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		var unlocked bool
-		err := conn.QueryRowContext(cleanup, `SELECT pg_advisory_unlock($1)`, scanLockKey).Scan(&unlocked)
+		err := conn.QueryRowContext(cleanup, `SELECT pg_advisory_unlock($1)`, key).Scan(&unlocked)
 		if err != nil || !unlocked {
 			discard() // Never pool a session whose lock state is uncertain.
 			if err == nil {
@@ -1025,6 +1037,20 @@ func (w *Worker) tryScanLock(ctx context.Context) (func() error, error) {
 		}
 		return conn.Close()
 	}, nil
+}
+
+// SetScanLockKey makes this worker's passes take key instead of the shared
+// deposit-scan lock. Only the idle wallet guard uses it (GuardScanLockKey).
+func (w *Worker) SetScanLockKey(key int64) { w.lockKey = key }
+
+// LockKey is the advisory lock this worker's passes take.
+func (w *Worker) LockKey() int64 { return w.advisoryLockKey() }
+
+func (w *Worker) advisoryLockKey() int64 {
+	if w.lockKey != 0 {
+		return w.lockKey
+	}
+	return scanLockKey
 }
 
 // effectiveMaxRange clamps the configured span to what the chain's RPC pool

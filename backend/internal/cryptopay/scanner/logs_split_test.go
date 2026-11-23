@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -151,9 +152,15 @@ func TestGetLogsSplitHasRequestBudgetAndReturnsError(t *testing.T) {
 }
 
 func TestGetLogsDoesNotSplitRateLimitedQueriesAndKeepsSuccessfulBatches(t *testing.T) {
+	noRetryDelay(t)
 	recipients := splitRecipients(batchSize + 1)
 	transfer := splitLog(0, 105, recipients[0])
-	var calls atomic.Int64
+	limitedTopic := padTopic(recipients[batchSize]) // the one address of the second batch
+	var (
+		mu                  sync.Mutex
+		okCalls, limitCalls int
+		limitedRanges       = map[string]int{}
+	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Params []getLogsParams `json:"params"`
@@ -163,24 +170,82 @@ func TestGetLogsDoesNotSplitRateLimitedQueriesAndKeepsSuccessfulBatches(t *testi
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		call := calls.Add(1)
+		filter := request.Params[0]
 		w.Header().Set("Content-Type", "application/json")
-		if call == 2 {
+		if len(filter.Topics) > 2 && len(filter.Topics[2]) > 0 && filter.Topics[2][0] == limitedTopic {
+			mu.Lock()
+			limitCalls++
+			limitedRanges[filter.FromBlock+"-"+filter.ToBlock]++
+			mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1,
 				"error": map[string]any{"code": 429, "message": "rate limited"}})
 			return
 		}
+		mu.Lock()
+		okCalls++
+		mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": []evmLog{transfer}})
 	}))
 	t.Cleanup(server.Close)
 
 	transfers, err := NewEVMScanner(rpc.NewPoolWithHTTPClient(server.URL, server.Client())).ScanRange(
 		t.Context(), "bsc", 100, 110, []string{splitToken}, recipients)
-	if err == nil || calls.Load() != 2 {
-		t.Fatalf("rate limit should fail once without splitting: calls=%d err=%v", calls.Load(), err)
+	mu.Lock()
+	defer mu.Unlock()
+	if err == nil {
+		t.Fatal("a batch that stays rate limited must fail the range")
+	}
+	// Rate limits are never split: every request for the limited batch asks for the
+	// SAME block range. The only extra requests are the bounded whole-batch re-runs.
+	if len(limitedRanges) != 1 || limitCalls != 1+maxBatchRetryRounds {
+		t.Fatalf("rate limit must be re-run (not split) at most %d times: calls=%d ranges=%v", maxBatchRetryRounds, limitCalls, limitedRanges)
+	}
+	if okCalls != 1 {
+		t.Fatalf("the healthy batch must be asked exactly once, got %d", okCalls)
 	}
 	if len(transfers) != 1 || transfers[0].TxHash != transfer.TxHash {
 		t.Fatalf("successful address batch was lost after another batch was rate limited: %+v", transfers)
+	}
+}
+
+// ...and when the second try succeeds, the range completes with every transfer.
+func TestGetLogsRateLimitedBatchSucceedsOnReRun(t *testing.T) {
+	noRetryDelay(t)
+	recipients := splitRecipients(batchSize + 1)
+	first := splitLog(0, 105, recipients[0])
+	second := splitLog(1, 106, recipients[batchSize])
+	limitedTopic := padTopic(recipients[batchSize])
+	var limitedCalls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Params []getLogsParams `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Params) != 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		filter := request.Params[0]
+		w.Header().Set("Content-Type", "application/json")
+		if len(filter.Topics) > 2 && len(filter.Topics[2]) > 0 && filter.Topics[2][0] == limitedTopic {
+			if limitedCalls.Add(1) == 1 {
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1,
+					"error": map[string]any{"code": 429, "message": "rate limited"}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": []evmLog{second}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "result": []evmLog{first}})
+	}))
+	t.Cleanup(server.Close)
+
+	transfers, err := NewEVMScanner(rpc.NewPoolWithHTTPClient(server.URL, server.Client())).ScanRange(
+		t.Context(), "bsc", 100, 110, []string{splitToken}, recipients)
+	if err != nil {
+		t.Fatalf("the re-run succeeded, so the range must complete: %v", err)
+	}
+	if len(transfers) != 2 || transfers[0].TxHash != first.TxHash || transfers[1].TxHash != second.TxHash {
+		t.Fatalf("every batch's transfers must be present, in batch order: %+v", transfers)
 	}
 }
 
