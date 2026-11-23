@@ -1,7 +1,10 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -66,15 +69,49 @@ func (p *PanelRateLimiter) Heavy() gin.HandlerFunc {
 // 服务端能做的就是控制密文的可取次数）。
 const apiKeySecretReadRPM = 20
 
-// apiKeyVerificationRPM 是创建 Key / 二次查看授权 / Passkey 校验接口的固定限流：
+// apiKeySecretWriteRPM 是 PUT /user/api-keys/:id/secret-seal 的固定限流：每用户每分钟 60 次。
+// 封存要带登录密码做 bcrypt 比对，但批量轮换后连续封存最多 50 把是正常用法，
+// 套用创建档的 10 次/分钟会让第 11 把起永远封不上。口令猜测由按用户的失败预算
+// （每分钟最多 5 次错误，见 service.APIKeyPasswordAttemptLimiter）兜底，这里只是请求量上限。
+const apiKeySecretWriteRPM = 60
+
+// apiKeyVerificationRPM 是创建 Key / 轮换 / 二次查看授权 / Passkey 校验接口的固定限流：
 // 每用户每分钟 10 次。这些接口要验证登录密码（bcrypt）与动态码，放开等于提供
 // 一个在线爆破入口；10 次/分钟足够正常用户，也把猜测成本压住。
 const apiKeyVerificationRPM = 10
 
-// KeyVerification 是「创建 / 二次查看 API Key 的三选一身份校验」固定档按用户限流。
+// keyUpdatePeekLimit 是判定 regenerate_key 时最多预读的请求体字节数。
+const keyUpdatePeekLimit = 1 << 20
+
+// KeyVerification 是「创建 / 轮换 / 二次查看 API Key 的三选一身份校验」固定档按用户限流。
 // 与面板限流设置无关：这是密码/动态码校验入口的安全护栏，始终存在；
 // 底层 Redis 出错时 fail-open（保护措施不能反过来打挂面板）。
 func (p *PanelRateLimiter) KeyVerification() gin.HandlerFunc {
+	return p.fixedUserTier("api_key_verify", apiKeyVerificationRPM, nil)
+}
+
+// KeyVerificationOnRotation 与 KeyVerification 同档同桶（每用户共用 10 次/分钟），
+// 但只给带 regenerate_key=true 的 PUT /keys/:id 计数：改名 / 启停 / 配额这类高频编辑
+// 不下发明文，不能被这个档位挡住。
+func (p *PanelRateLimiter) KeyVerificationOnRotation() gin.HandlerFunc {
+	return p.fixedUserTier("api_key_verify", apiKeyVerificationRPM, requestRegeneratesKey)
+}
+
+// SecretSealRead 浏览器端封存密文读取的固定档按用户限流。
+// 与 Global/Heavy 不同，这里不读面板限流设置：这是一条安全护栏，
+// 应当始终存在；底层 Redis 出错时仍然 fail-open（保护措施不能反过来打挂面板）。
+func (p *PanelRateLimiter) SecretSealRead() gin.HandlerFunc {
+	return p.fixedUserTier("api_key_secret", apiKeySecretReadRPM, nil)
+}
+
+// SecretSealWrite 浏览器端封存密文写入（PUT，带登录密码校验）的固定档按用户限流。
+func (p *PanelRateLimiter) SecretSealWrite() gin.HandlerFunc {
+	return p.fixedUserTier("api_key_secret_write", apiKeySecretWriteRPM, nil)
+}
+
+// fixedUserTier 是「固定档按用户限流」的公共实现：不读面板限流设置、始终存在；
+// 没有认证主体时放行；底层 Redis 出错时 fail-open。counts 非 nil 时只给返回 true 的请求计数。
+func (p *PanelRateLimiter) fixedUserTier(bucket string, rpm int, counts func(*gin.Context) bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if p == nil || p.limiter == nil {
 			c.Next()
@@ -85,10 +122,14 @@ func (p *PanelRateLimiter) KeyVerification() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		key := "panel:api_key_verify:user:" + strconv.FormatInt(subject.UserID, 10)
-		result, err := p.limiter.Allow(c.Request.Context(), key, apiKeyVerificationRPM, panelRateLimitWindow)
+		if counts != nil && !counts(c) {
+			c.Next()
+			return
+		}
+		key := "panel:" + bucket + ":user:" + strconv.FormatInt(subject.UserID, 10)
+		result, err := p.limiter.Allow(c.Request.Context(), key, rpm, panelRateLimitWindow)
 		if err != nil {
-			slog.Warn("api key verification rate limit check failed, allowing request", "error", err)
+			slog.Warn("panel fixed-tier rate limit check failed, allowing request", "bucket", bucket, "error", err)
 			c.Next()
 			return
 		}
@@ -100,33 +141,32 @@ func (p *PanelRateLimiter) KeyVerification() gin.HandlerFunc {
 	}
 }
 
-// SecretSealRead 浏览器端封存密文读取的固定档按用户限流。
-// 与 Global/Heavy 不同，这里不读面板限流设置：这是一条安全护栏，
-// 应当始终存在；底层 Redis 出错时仍然 fail-open（保护措施不能反过来打挂面板）。
-func (p *PanelRateLimiter) SecretSealRead() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if p == nil || p.limiter == nil {
-			c.Next()
-			return
-		}
-		subject, ok := GetAuthSubjectFromContext(c)
-		if !ok || subject.UserID <= 0 {
-			c.Next()
-			return
-		}
-		key := "panel:api_key_secret:user:" + strconv.FormatInt(subject.UserID, 10)
-		result, err := p.limiter.Allow(c.Request.Context(), key, apiKeySecretReadRPM, panelRateLimitWindow)
-		if err != nil {
-			slog.Warn("api key secret rate limit check failed, allowing request", "error", err)
-			c.Next()
-			return
-		}
-		if !result.Allowed {
-			abortPanelRateLimited(c, result.RetryAfter)
-			return
-		}
-		c.Next()
+// requestRegeneratesKey 报告 PUT /keys/:id 的请求体是否带 regenerate_key=true。
+//
+// 只为决定「要不要计入身份校验限流档」而预读请求体，读完立刻原样拼回（handler 与审计
+// 照常解析）。无法证明「不是轮换」的请求（超过预读上限、读取失败）按轮换计数：宁可多计，
+// 也不让大请求体绕过限流；JSON 本身不合法的请求 handler 会按 400 拒绝，不计数。
+//
+// 解码口径必须和 handler 的 ShouldBindJSON 完全一致：只解码第一个 JSON 值，后面多出来的
+// 字节不算错。用 json.Unmarshal 的话，「合法 JSON 后面拼一段垃圾」会在这里判错而不计数，
+// handler 却照常解码并轮换——等于给限流开了后门。
+func requestRegeneratesKey(c *gin.Context) bool {
+	orig := c.Request.Body
+	if orig == nil || orig == http.NoBody {
+		return false
 	}
+	raw, err := io.ReadAll(io.LimitReader(orig, keyUpdatePeekLimit+1))
+	c.Request.Body = &restoredBody{Reader: io.MultiReader(bytes.NewReader(raw), orig), closer: orig}
+	if err != nil || len(raw) > keyUpdatePeekLimit {
+		return true
+	}
+	var probe struct {
+		RegenerateKey bool `json:"regenerate_key"`
+	}
+	if json.NewDecoder(bytes.NewReader(raw)).Decode(&probe) != nil {
+		return false
+	}
+	return probe.RegenerateKey
 }
 
 func (p *PanelRateLimiter) userScoped(scope string, limitOf func(service.PanelRateLimitSettings) int) gin.HandlerFunc {
