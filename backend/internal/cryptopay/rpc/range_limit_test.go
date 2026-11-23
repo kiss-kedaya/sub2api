@@ -364,3 +364,35 @@ func TestHTTPRangeRejectionIsReportedAsSplittableRemoteFailure(t *testing.T) {
 		t.Fatalf("SafeError must keep the fixed reason, got %q", got)
 	}
 }
+
+// N concurrent calls that hit one rate limit are one event. Counting them N times
+// pushed the cooldown from seconds to the two minute cap in a single burst, so a
+// node that merely disliked a burst was written off for minutes.
+func TestConcurrentFailuresOfOneBurstAreOneCooldownStep(t *testing.T) {
+	tracker := newEndpointHealthTracker()
+	now := time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)
+	nowFunc = func() time.Time { return now }
+	t.Cleanup(func() { nowFunc = time.Now })
+	rateLimited := &Failure{Kind: "http", HTTPStatus: 429}
+	const endpoint = "https://node.example"
+
+	for i := 0; i < 5; i++ { // the five batches of one scan stage, all rejected together
+		tracker.fail(endpoint, rateLimited)
+	}
+	tracker.mu.Lock()
+	failures, until := tracker.states[endpoint].failures, tracker.states[endpoint].until
+	tracker.mu.Unlock()
+	if failures != 1 || !until.Equal(now.Add(transientEndpointCooldown)) {
+		t.Fatalf("one burst must be one step: failures=%d cooldown=%v", failures, until.Sub(now))
+	}
+
+	// A failure after the cooldown lapsed is the next step (doubling), as before.
+	now = now.Add(transientEndpointCooldown + time.Second)
+	tracker.fail(endpoint, rateLimited)
+	tracker.mu.Lock()
+	failures, until = tracker.states[endpoint].failures, tracker.states[endpoint].until
+	tracker.mu.Unlock()
+	if failures != 2 || !until.Equal(now.Add(2*transientEndpointCooldown)) {
+		t.Fatalf("second event must double the cooldown: failures=%d cooldown=%v", failures, until.Sub(now))
+	}
+}

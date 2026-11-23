@@ -89,6 +89,13 @@ func (t *endpointHealthTracker) fail(endpoint string, err error) {
 		state = &endpointHealth{}
 		t.states[endpoint] = state
 	}
+	if nowFunc().Before(state.until) {
+		// The endpoint is already cooling down: this failure belongs to a call that
+		// started before the cooldown. A burst of N concurrent calls hitting one
+		// rate limit is one event, not N, and counting it N times would push the
+		// cooldown from seconds to the two minute cap in a single burst.
+		return
+	}
 	state.failures++
 	limit := maxEndpointCooldown
 	if cooldown > limit {

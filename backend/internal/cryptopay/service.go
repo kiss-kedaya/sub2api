@@ -399,14 +399,29 @@ func NewService(
 // startup and after every admin config save.
 func (s *Service) Reload(ctx context.Context) { s.reload(ctx) }
 
+// defaultRPCThrottle is the pacing used when the operator configured none.
+//
+// One scan stage fires its address batches at the same instant. A public node
+// that tolerates a few requests per second answers that burst with 429, and the
+// pool's cooldown then ends for every waiting caller at the same instant too, so
+// the next burst is rejected the same way and the cooldown only grows: a livelock
+// the node itself never asked for. Spacing call starts breaks it; 150ms is about
+// seven requests per second per endpoint, far below any provider's published
+// limit and cheap for a scan pass that takes seconds.
+//
+// A variable so this package's tests, which share one process and one global
+// throttle registry, can run unpaced (see rpc_throttle_default_test.go).
+var defaultRPCThrottle = 150 * time.Millisecond
+
 // applyRPCThrottle publishes the configured pacing so every endpoint waits its
-// turn instead of firing together. Zero clears it.
+// turn instead of firing together. Unset (zero) uses defaultRPCThrottle; the
+// admin API rejects negative values, so set 1 to all but disable pacing.
 func applyRPCThrottle(cfg CryptoConfig) {
-	ms := cfg.RPCThrottleMs
-	if ms < 0 {
-		ms = 0
+	interval := time.Duration(cfg.RPCThrottleMs) * time.Millisecond
+	if cfg.RPCThrottleMs <= 0 {
+		interval = defaultRPCThrottle
 	}
-	rpc.SetEndpointThrottleInterval(time.Duration(ms) * time.Millisecond)
+	rpc.SetEndpointThrottleInterval(interval)
 }
 
 func (s *Service) reload(ctx context.Context) {
