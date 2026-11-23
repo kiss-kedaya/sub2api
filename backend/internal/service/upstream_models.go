@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -635,16 +636,30 @@ func (s *AccountTestService) fetchModelsDevMetadata(
 	return metadata, nil
 }
 
+// fetchModelsDevRegistry returns the process-wide models.dev snapshot, fetching
+// it when the cached copy is missing or older than modelsDevRegistryTTL.
+//
+// The fetch is shared (singleflight) and a failed attempt is remembered for
+// modelMetadataRegistryRetryDelay: a catalogue outage can never turn into one
+// HTTP request per account in a whitelist runner cycle, and concurrent callers
+// never install competing snapshots.
 func (s *AccountTestService) fetchModelsDevRegistry(ctx context.Context, account *Account) (map[string]modelsDevProvider, error) {
 	now := time.Now()
-	s.modelMetadataRegistryMu.Lock()
-	if len(s.modelMetadataRegistry) > 0 && now.Sub(s.modelMetadataRegistryAt) < modelsDevRegistryTTL {
-		cached := s.modelMetadataRegistry
-		s.modelMetadataRegistryMu.Unlock()
-		return cached, nil
+	registry, registryAt := s.modelsDevRegistrySnapshot()
+	if len(registry) > 0 && now.Sub(registryAt) < modelsDevRegistryTTL {
+		return registry, nil
 	}
-	s.modelMetadataRegistryMu.Unlock()
+	refreshed, _, err := s.refreshModelsDevRegistry(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	return refreshed, nil
+}
 
+// fetchModelsDevRegistryNetwork performs one models.dev fetch and installs the
+// parsed registry as the process-wide snapshot. Callers decide whether a fetch
+// is due; this helper never consults the cache.
+func (s *AccountTestService) fetchModelsDevRegistryNetwork(ctx context.Context, account *Account, fetchedAt time.Time) (map[string]modelsDevProvider, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsDevRegistryURL, nil)
 	if err != nil {
 		return nil, err
@@ -675,9 +690,365 @@ func (s *AccountTestService) fetchModelsDevRegistry(ctx context.Context, account
 
 	s.modelMetadataRegistryMu.Lock()
 	s.modelMetadataRegistry = registry
-	s.modelMetadataRegistryAt = now
+	s.modelMetadataRegistryAt = fetchedAt
 	s.modelMetadataRegistryMu.Unlock()
 	return registry, nil
+}
+
+// UpstreamModelMetadataRefreshResult describes one best-effort metadata refresh
+// performed after the account's model whitelist changed.
+type UpstreamModelMetadataRefreshResult struct {
+	// Models is the number of model keys in the snapshot after the refresh.
+	Models int `json:"models"`
+	// Enriched is the number of keys that carry usable catalogue metadata.
+	Enriched int `json:"enriched"`
+	// Added is the number of freshly whitelisted models the snapshot gained.
+	Added int `json:"added"`
+	// RegistryFetched reports whether a models.dev fetch was attempted.
+	RegistryFetched bool `json:"registry_fetched"`
+	// RegistryError is a non-fatal catalogue refresh failure kept for logging.
+	RegistryError string `json:"registry_error,omitempty"`
+}
+
+// RefreshUpstreamModelMetadata rebuilds extra.upstream_model_metadata so its keys
+// cover the account's current whitelist (plus concrete model_mapping targets).
+//
+// The live upstream model list is intentionally not fetched again: the caller
+// already has it, and a second /models request would make the whitelist sync
+// slower and non-idempotent. Only catalogue metadata is resolved here.
+//
+// A models.dev refresh happens at most once per call, and only when the
+// in-memory registry is missing or older than modelsDevRegistryTTL, or when
+// models that were just added to the whitelist are absent from an already-aged
+// registry snapshot (bounded by modelMetadataRegistryRetryDelay). A failed
+// refresh keeps the previous catalogue and the previous metadata: models the
+// catalogue cannot resolve still get an ID-only entry, so the metadata map can
+// never become narrower than the whitelist it describes.
+//
+// Only a local persistence/configuration failure is returned as an error.
+// Catalogue failures are reported in the result for logging and must never
+// block the whitelist write that already happened.
+func (s *AccountTestService) RefreshUpstreamModelMetadata(
+	ctx context.Context,
+	account *Account,
+	modelIDs []string,
+) (UpstreamModelMetadataRefreshResult, error) {
+	var result UpstreamModelMetadataRefreshResult
+	if s == nil || account == nil || account.ID <= 0 {
+		return result, fmt.Errorf("model metadata refresh requires a persisted account")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	fresh := account
+	if s.accountRepo != nil {
+		if loaded, err := s.accountRepo.GetByID(ctx, account.ID); err == nil && loaded != nil {
+			fresh = loaded
+		}
+	}
+	requested := dedupeAndSortModelIDs(append(append([]string(nil), modelIDs...), configuredUpstreamModelsForCapabilitySync(fresh)...))
+	if len(requested) == 0 {
+		return result, nil
+	}
+	previous := fresh.GetUpstreamModelMetadataSnapshot()
+	now := time.Now()
+
+	registry, registryAt := s.modelsDevRegistrySnapshot()
+	newModelIDs := upstreamModelMetadataUncoveredIDs(requested, previous)
+	refreshDue := s.modelsDevRegistryRefreshDue(now, fresh, newModelIDs, registry, registryAt)
+	if refreshDue {
+		refreshed, fetched, err := s.refreshModelsDevRegistry(ctx, fresh)
+		result.RegistryFetched = fetched
+		if err != nil {
+			result.RegistryError = err.Error()
+			slog.Warn("upstream model metadata registry refresh failed during whitelist sync",
+				"account_id", account.ID,
+				"platform", upstreamModelSyncPlatform(fresh),
+				"error", err,
+			)
+		}
+		if refreshed != nil {
+			registry = refreshed
+		}
+	}
+
+	metadata, previous, source := resolveUpstreamModelMetadataOverlay(fresh, requested, registry, previous)
+
+	if upstreamModelMetadataFromRegistry(metadata, registry, fresh) {
+		source = ModelMetadataSourceModelsDev
+	} else if source == "" || source == "upstream" {
+		source = ModelMetadataSourceBuiltin
+	}
+
+	snapshotStale := previous == nil || upstreamModelMetadataSnapshotStale(previous, now)
+	stampSyncedAt := false
+	switch {
+	case refreshDue && result.RegistryFetched && result.RegistryError == "":
+		stampSyncedAt = true
+	case !refreshDue && snapshotStale:
+		// The in-memory catalogue is current, so rebuilding the account snapshot
+		// from it is enough to record a fresh synced_at without a network fetch.
+		stampSyncedAt = true
+	}
+	modelsChanged := previous == nil || !reflect.DeepEqual(metadata, previous.Models)
+	if !modelsChanged && !stampSyncedAt {
+		result.Models = len(metadata)
+		result.Enriched = enrichedUpstreamModelMetadataCount(metadata)
+		return result, nil
+	}
+
+	syncedAt := ""
+	if previous != nil {
+		syncedAt = previous.SyncedAt
+	}
+	if stampSyncedAt || strings.TrimSpace(syncedAt) == "" {
+		syncedAt = now.UTC().Format(time.RFC3339)
+	}
+	snapshot := UpstreamModelMetadataSnapshot{
+		Source:   source,
+		SyncedAt: syncedAt,
+		Models:   metadata,
+	}
+	if s.accountRepo == nil {
+		return result, newUpstreamModelSyncInternalError("Failed to save upstream model metadata", fmt.Errorf("account repository is not configured"))
+	}
+	if err := s.accountRepo.UpdateExtra(ctx, fresh.ID, map[string]any{UpstreamModelMetadataExtraKey: snapshot}); err != nil {
+		return result, newUpstreamModelSyncInternalError("Failed to save upstream model metadata", err)
+	}
+	fresh.SetUpstreamModelMetadataSnapshot(snapshot)
+	if account != fresh {
+		// Keep the caller's copy in sync when the repository returned a clone; the
+		// whitelist runner holds this object for the rest of the cycle.
+		account.SetUpstreamModelMetadataSnapshot(snapshot)
+	}
+	result.Models = len(metadata)
+	result.Enriched = enrichedUpstreamModelMetadataCount(metadata)
+	result.Added = len(upstreamModelMetadataUncoveredIDs(requested, previous))
+	return result, nil
+}
+
+// resolveUpstreamModelMetadataOverlay builds the account metadata map for the
+// requested model IDs, preferring previously persisted values and filling gaps
+// from models.dev and the built-in catalogues.
+//
+// The result is an overlay, never a replacement: every ID that already had an
+// entry keeps it, and every requested ID appears in the returned map. IDs that
+// neither catalogue nor the previous snapshot knows get an ID-only entry, so a
+// consumer can tell "no metadata" apart from "model missing".
+func resolveUpstreamModelMetadataOverlay(
+	account *Account,
+	requested []string,
+	registry map[string]modelsDevProvider,
+	previous *UpstreamModelMetadataSnapshot,
+) (map[string]UpstreamModelMetadata, *UpstreamModelMetadataSnapshot, string) {
+	metadata := make(map[string]UpstreamModelMetadata, len(requested))
+	if previous != nil {
+		for modelID, entry := range previous.Models {
+			metadata[modelID] = entry
+		}
+	}
+	source := ""
+	if previous != nil {
+		source = previous.Source
+	}
+	builtinContributed := false
+	if len(registry) > 0 {
+		for _, modelID := range requested {
+			model, found := lookupModelsDevModel(registry, account, modelID)
+			if !found {
+				continue
+			}
+			entry := upstreamMetadataFromModelsDevModel(modelID, model)
+			if !upstreamModelMetadataIsUseful(entry) {
+				continue
+			}
+			merged, _ := mergeUpstreamModelMetadata(metadata[modelID], entry)
+			if strings.TrimSpace(merged.ID) == "" {
+				merged.ID = modelID
+			}
+			metadata[modelID] = merged
+		}
+	}
+	for modelID, fallback := range builtinDeepSeekModelMetadataForIDs(requested) {
+		merged, changed := mergeUpstreamModelMetadata(metadata[modelID], fallback)
+		if strings.TrimSpace(merged.ID) == "" {
+			merged.ID = modelID
+		}
+		metadata[modelID] = merged
+		if changed {
+			builtinContributed = true
+		}
+	}
+	for modelID, fallback := range builtinCatalogModelMetadataForIDs(requested) {
+		merged, changed := mergeUpstreamModelMetadata(metadata[modelID], fallback)
+		if strings.TrimSpace(merged.ID) == "" {
+			merged.ID = modelID
+		}
+		metadata[modelID] = merged
+		if changed {
+			builtinContributed = true
+		}
+	}
+	inheritUpstreamModelVariantMetadata(metadata, requested)
+
+	// Keep a key for every requested model even when neither models.dev nor the
+	// built-in catalogue knows it. Consumers treat an ID-only entry as "no
+	// metadata known" instead of the model silently disappearing from the map.
+	for _, modelID := range requested {
+		if _, ok := metadata[modelID]; ok {
+			continue
+		}
+		metadata[modelID] = UpstreamModelMetadata{ID: modelID}
+	}
+	if builtinContributed && (source == "" || source == "upstream") {
+		source = ModelMetadataSourceBuiltin
+	}
+	return metadata, previous, source
+}
+
+// upstreamModelMetadataFromRegistry reports whether any requested model still
+// carries values that only models.dev could have supplied.
+func upstreamModelMetadataFromRegistry(
+	metadata map[string]UpstreamModelMetadata,
+	registry map[string]modelsDevProvider,
+	account *Account,
+) bool {
+	if len(registry) == 0 {
+		return false
+	}
+	for modelID, entry := range metadata {
+		if !upstreamModelMetadataIsUseful(entry) {
+			continue
+		}
+		if _, found := lookupModelsDevModel(registry, account, modelID); found {
+			return true
+		}
+	}
+	return false
+}
+
+// modelsDevRegistrySnapshot returns the current in-memory catalogue snapshot.
+// The map itself is never mutated after publication, so callers may read it
+// without holding the mutex.
+func (s *AccountTestService) modelsDevRegistrySnapshot() (map[string]modelsDevProvider, time.Time) {
+	if s == nil {
+		return nil, time.Time{}
+	}
+	s.modelMetadataRegistryMu.Lock()
+	defer s.modelMetadataRegistryMu.Unlock()
+	return s.modelMetadataRegistry, s.modelMetadataRegistryAt
+}
+
+// modelsDevRegistryRefreshDue reports whether the catalogue snapshot must be
+// re-fetched before resolving the given newly whitelisted models.
+func (s *AccountTestService) modelsDevRegistryRefreshDue(
+	now time.Time,
+	account *Account,
+	newModelIDs []string,
+	registry map[string]modelsDevProvider,
+	registryAt time.Time,
+) bool {
+	if len(registry) == 0 {
+		return true
+	}
+	age := now.Sub(registryAt)
+	if age >= modelsDevRegistryTTL {
+		return true
+	}
+	if len(newModelIDs) == 0 || age < modelMetadataRegistryRetryDelay {
+		return false
+	}
+	for _, modelID := range newModelIDs {
+		if _, found := lookupModelsDevModel(registry, account, modelID); !found {
+			return true
+		}
+	}
+	return false
+}
+
+// refreshModelsDevRegistry performs at most one shared models.dev fetch. The
+// attempt time is recorded at the start, so a catalogue outage cannot turn every
+// account in a runner cycle into an HTTP request, and a success clears it so the
+// next TTL window fetches again.
+//
+// It reports fetched=false when a previous attempt is still inside the retry
+// delay; the returned registry is then the last good snapshot (possibly nil).
+// A caller-supplied context never cancels the shared fetch for other callers:
+// the fetch runs on a bounded context derived from ctx only for values.
+func (s *AccountTestService) refreshModelsDevRegistry(ctx context.Context, account *Account) (map[string]modelsDevProvider, bool, error) {
+	now := time.Now()
+	s.modelMetadataRegistryMu.Lock()
+	if !s.modelMetadataRegistryLastAttempt.IsZero() && now.Sub(s.modelMetadataRegistryLastAttempt) < modelMetadataRegistryRetryDelay {
+		cached := s.modelMetadataRegistry
+		s.modelMetadataRegistryMu.Unlock()
+		return cached, false, nil
+	}
+	s.modelMetadataRegistryLastAttempt = now
+	s.modelMetadataRegistryMu.Unlock()
+
+	// The winning caller drives the fetch on its own context; everyone that
+	// arrives while it runs joins the same call and receives the same outcome.
+	value, err, _ := s.modelMetadataRegistryFetchOnce.Do("models.dev", func() (any, error) {
+		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), modelMetadataRegistryTimeout)
+		defer cancel()
+		fetched, fetchErr := s.fetchModelsDevRegistryNetwork(fetchCtx, account, time.Now())
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		s.modelMetadataRegistryMu.Lock()
+		s.modelMetadataRegistryLastAttempt = time.Time{}
+		s.modelMetadataRegistryMu.Unlock()
+		return fetched, nil
+	})
+	if err != nil {
+		return nil, true, err
+	}
+	registry, _ := value.(map[string]modelsDevProvider)
+	if len(registry) == 0 {
+		return nil, true, fmt.Errorf("model metadata registry is empty")
+	}
+	return registry, true, nil
+}
+
+// upstreamModelMetadataUncoveredIDs returns the requested model IDs that the
+// account snapshot does not cover yet.
+func upstreamModelMetadataUncoveredIDs(modelIDs []string, snapshot *UpstreamModelMetadataSnapshot) []string {
+	uncovered := make([]string, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			continue
+		}
+		if snapshot != nil {
+			if _, ok := snapshot.Models[modelID]; ok {
+				continue
+			}
+		}
+		uncovered = append(uncovered, modelID)
+	}
+	return uncovered
+}
+
+func upstreamModelMetadataSnapshotStale(snapshot *UpstreamModelMetadataSnapshot, now time.Time) bool {
+	if snapshot == nil {
+		return true
+	}
+	syncedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(snapshot.SyncedAt))
+	if err != nil {
+		return true
+	}
+	return now.Sub(syncedAt) >= modelsDevRegistryTTL
+}
+
+func enrichedUpstreamModelMetadataCount(models map[string]UpstreamModelMetadata) int {
+	count := 0
+	for _, entry := range models {
+		if upstreamModelMetadataIsUseful(entry) {
+			count++
+		}
+	}
+	return count
 }
 
 func upstreamMetadataFromModelsDevModel(modelID string, model modelsDevModel) UpstreamModelMetadata {
