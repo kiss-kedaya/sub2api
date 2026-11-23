@@ -231,15 +231,85 @@ func TestBackupService_CreateBackup_DefaultRecordAndUploadAreUnchanged(t *testin
 
 func TestCreateCompressedBackupFile_PartialSnapshotUsesFastestGzip(t *testing.T) {
 	isolateTempDir(t)
-	svc := newCriticalTestService(newMockSettingRepo(), stringDumper(knownDump), newMockObjectStore(),
-		config.BackupConfig{ExcludeTableData: []string{"public.big_table"}})
+	identity := newAgeIdentity(t)
+	svc := newCriticalTestService(newMockSettingRepo(), stringDumper(knownDump), newMockObjectStore(), config.BackupConfig{
+		ExcludeTableData: []string{"public.big_table"},
+		AgeRecipients:    recipientsOf(identity),
+	})
 
 	path, _, err := svc.createCompressedBackupFile(context.Background())
 	require.NoError(t, err)
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 
-	require.Equal(t, byte(gzipXFLBestSpeed), raw[8])
+	inner := decryptArchive(t, raw, identity)
+	require.Equal(t, byte(gzipXFLBestSpeed), inner[8])
+	require.Equal(t, knownDump, string(gunzipBytes(t, inner)))
+}
+
+// ─── a critical snapshot is never plaintext ───
+
+// A critical snapshot holds users, API keys and upstream credentials. Without a
+// usable recipient the backup must fail before pg_dump starts, not fall back to a
+// plaintext upload.
+func TestCreateCompressedBackupFile_CriticalSnapshotWithoutRecipientFailsClosed(t *testing.T) {
+	tests := []struct {
+		name       string
+		recipients []string
+		wantErr    string
+	}{
+		{name: "unset", recipients: nil, wantErr: ErrBackupCriticalNeedsRecipient.Error()},
+		{name: "empty list", recipients: []string{}, wantErr: ErrBackupCriticalNeedsRecipient.Error()},
+		{name: "blank entry", recipients: []string{"  "}, wantErr: "not a valid age X25519 public key"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := isolateTempDir(t)
+			dumper := stringDumper(knownDump)
+			svc := newCriticalTestService(newMockSettingRepo(), dumper, newMockObjectStore(), config.BackupConfig{
+				ExcludeTableData: []string{"public.example_log_table"},
+				AgeRecipients:    tt.recipients,
+			})
+
+			path, size, err := svc.createCompressedBackupFile(context.Background())
+
+			require.ErrorContains(t, err, tt.wantErr)
+			require.Empty(t, path)
+			require.Zero(t, size)
+			require.Zero(t, dumper.dumpCalls, "pg_dump must not even start")
+			requireDirEmpty(t, dir)
+		})
+	}
+}
+
+func TestBackupService_CreateBackup_CriticalSnapshotWithoutRecipientUploadsNothing(t *testing.T) {
+	dir := isolateTempDir(t)
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	store := &contentTypeStore{mockObjectStore: newMockObjectStore()}
+	dumper := stringDumper(knownDump)
+	svc := newCriticalTestService(repo, dumper, store, config.BackupConfig{ExcludeTableData: []string{"public.example_log_table"}})
+
+	record, err := svc.CreateBackup(context.Background(), "scheduled", 14)
+
+	require.ErrorIs(t, err, ErrBackupCriticalNeedsRecipient)
+	require.Equal(t, "failed", record.Status)
+	require.Contains(t, record.ErrorMsg, "backup.age_recipients")
+	require.Zero(t, dumper.dumpCalls)
+	require.Empty(t, store.objects, "no plaintext object may reach the bucket")
+	requireDirEmpty(t, dir)
+}
+
+// Encryption stays optional for a whole-database backup: only critical snapshots
+// are forced to carry a recipient.
+func TestCreateCompressedBackupFile_WholeDatabaseBackupStaysPlaintextWithoutRecipient(t *testing.T) {
+	isolateTempDir(t)
+	svc := newCriticalTestService(newMockSettingRepo(), stringDumper(knownDump), newMockObjectStore(), config.BackupConfig{})
+
+	path, _, err := svc.createCompressedBackupFile(context.Background())
+	require.NoError(t, err)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
 	require.Equal(t, knownDump, string(gunzipBytes(t, raw)))
 }
 
@@ -345,7 +415,7 @@ func TestCreateCompressedBackupFile_SizeLimitAbortsEarlyAndCleansUp(t *testing.T
 		encrypt bool // the limit counts the bytes on disk, i.e. after encryption
 	}{
 		{name: "plain"},
-		{name: "critical snapshot", exclude: []string{"public.t"}},
+		{name: "critical snapshot", exclude: []string{"public.t"}, encrypt: true}, // a critical snapshot is always encrypted
 		{name: "encrypted", encrypt: true},
 	}
 	for _, tt := range tests {
@@ -526,8 +596,9 @@ func TestBackupService_BackupModesRecordScopeEncryptionAndContentType(t *testing
 		wantSuffix      string
 		wantContentType string
 	}{
+		// There is no "critical without encryption" mode: a critical snapshot is
+		// always encrypted (see ErrBackupCriticalNeedsRecipient).
 		{name: "default", wantSuffix: ".sql.gz", wantContentType: "application/gzip"},
-		{name: "critical only", exclude: []string{"public.t"}, wantScope: "critical", wantSuffix: ".sql.gz", wantContentType: "application/gzip"},
 		{name: "encrypted only", encrypted: true, wantSuffix: ".sql.gz.age", wantContentType: "application/octet-stream"},
 		{name: "critical and encrypted", exclude: []string{"public.t"}, encrypted: true, wantScope: "critical", wantSuffix: ".sql.gz.age", wantContentType: "application/octet-stream"},
 	}

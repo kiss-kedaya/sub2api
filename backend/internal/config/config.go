@@ -369,6 +369,14 @@ func (b *BackupConfig) normalizeAndValidate() error {
 	if b.MaxArchiveBytes < 0 {
 		return fmt.Errorf("backup.max_archive_bytes must be non-negative")
 	}
+	// A critical snapshot carries users, API keys and upstream credentials, so it
+	// must never be uploaded as plaintext. An empty list (a misspelt variable name,
+	// a secret injected as an empty string, only blanks and separators) is refused
+	// here instead of being read as "encryption off"; the backup service checks it
+	// again right before pg_dump starts.
+	if len(b.ExcludeTableData) > 0 && len(b.AgeRecipients) == 0 {
+		return fmt.Errorf("backup.age_recipients must hold at least one age X25519 public key when backup.exclude_table_data is set")
+	}
 	return nil
 }
 

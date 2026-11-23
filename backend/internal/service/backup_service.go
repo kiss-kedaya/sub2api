@@ -77,6 +77,12 @@ var (
 	// by hand into an empty database.
 	ErrBackupRestoreUnsupported = infraerrors.BadRequest("BACKUP_RESTORE_UNSUPPORTED", "partial or encrypted snapshots must be restored manually into an empty database")
 
+	// ErrBackupCriticalNeedsRecipient is returned, before pg_dump starts, for a
+	// critical snapshot that has no age recipient: it holds users, API keys and
+	// upstream credentials and is never uploaded in plaintext. Whole-database
+	// backups keep their optional encryption.
+	ErrBackupCriticalNeedsRecipient = errors.New("a critical snapshot is never stored in plaintext: backup.age_recipients needs at least one age X25519 public key")
+
 	// ErrBackupArchiveTooLarge is wrapped by the error returned when the archive
 	// on disk grows past the size limit: backup.max_archive_bytes, or the built-in
 	// limit of a critical snapshot that has none. The wrapping error says which.
@@ -910,6 +916,10 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 	recipients, err := parseAgeRecipients(s.backupCfg.AgeRecipients)
 	if err != nil {
 		return "", 0, err
+	}
+	// Fail closed: no recipient must never turn a critical snapshot into plaintext.
+	if s.backupScope() != "" && len(recipients) == 0 {
+		return "", 0, ErrBackupCriticalNeedsRecipient
 	}
 
 	// Cancelling this context kills pg_dump at once when the copy aborts (size

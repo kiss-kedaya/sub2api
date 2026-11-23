@@ -152,7 +152,55 @@ func TestLoadRejectsInvalidBackupConfigFromEnv(t *testing.T) {
 	}
 }
 
+// A critical snapshot (exclude_table_data set) holds users, API keys and upstream
+// credentials, so a missing recipient list must stop startup instead of silently
+// meaning "upload plaintext". Every way an operator can end up with an empty list
+// is covered, including a misspelt variable name.
+func TestLoadBackupConfigRejectsCriticalSnapshotWithoutRecipients(t *testing.T) {
+	public, _ := newTestAgeRecipient(t)
+
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{name: "recipients unset", env: nil},
+		{name: "recipients empty string", env: map[string]string{"BACKUP_AGE_RECIPIENTS": ""}},
+		{name: "recipients only blanks", env: map[string]string{"BACKUP_AGE_RECIPIENTS": "   "}},
+		{name: "recipients only separators", env: map[string]string{"BACKUP_AGE_RECIPIENTS": " , ,, "}},
+		{name: "misspelt variable name", env: map[string]string{"BACKUP_AGE_RECIPIENT": public}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			t.Setenv("BACKUP_EXCLUDE_TABLE_DATA", "public.example_log_table")
+			for key, value := range tt.env {
+				t.Setenv(key, value)
+			}
+
+			cfg, err := Load()
+
+			require.Nil(t, cfg)
+			require.ErrorContains(t, err, "backup.age_recipients")
+			require.NotContains(t, err.Error(), "example_log_table", "the error names the key, not the configured values")
+			require.NotContains(t, err.Error(), public)
+		})
+	}
+}
+
+// Encryption stays optional for a whole-database backup.
+func TestLoadBackupConfigAllowsWholeDatabaseWithoutRecipients(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("BACKUP_MAX_ARCHIVE_BYTES", "1048576")
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	require.Empty(t, cfg.Backup.ExcludeTableData)
+	require.Empty(t, cfg.Backup.AgeRecipients)
+}
+
 func TestValidateBackupExcludeTablePattern(t *testing.T) {
+	public, _ := newTestAgeRecipient(t)
 	valid := []string{"t", "public.t", "_t1", "Schema_1.Table_2", "a.b"}
 	invalid := []string{
 		"public.table-a",  // dash
@@ -178,6 +226,7 @@ func TestValidateBackupExcludeTablePattern(t *testing.T) {
 			cfg, err := Load()
 			require.NoError(t, err)
 			cfg.Backup.ExcludeTableData = []string{value}
+			cfg.Backup.AgeRecipients = []string{public}
 			require.NoError(t, cfg.Validate())
 		})
 	}
@@ -187,6 +236,7 @@ func TestValidateBackupExcludeTablePattern(t *testing.T) {
 			cfg, err := Load()
 			require.NoError(t, err)
 			cfg.Backup.ExcludeTableData = []string{value}
+			cfg.Backup.AgeRecipients = []string{public}
 			require.ErrorContains(t, cfg.Validate(), "backup.exclude_table_data[0]")
 		})
 	}
