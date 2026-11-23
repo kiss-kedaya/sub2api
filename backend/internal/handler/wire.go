@@ -312,6 +312,23 @@ func ProvideUserHandler(
 	return h
 }
 
+// ProvidePasskeyHandler creates the passkey handler and injects the five-minute
+// two-factor grant gate used for passkey enrollment and revocation. Accounts
+// without TOTP are unaffected; TOTP accounts must complete step-up first.
+// Keeping NewPasskeyHandler's signature unchanged preserves direct construction
+// in tests.
+func ProvidePasskeyHandler(
+	passkeys *service.PasskeyService,
+	authService *service.AuthService,
+	settingService *service.SettingService,
+	totpService *service.TotpService,
+	userService *service.UserService,
+) *PasskeyHandler {
+	h := NewPasskeyHandler(passkeys, authService, settingService)
+	h.SetStepUpDependencies(totpService, userService)
+	return h
+}
+
 // ProviderSet is the Wire provider set for all handlers
 var ProviderSet = wire.NewSet(
 	// Top-level handlers
@@ -328,7 +345,7 @@ var ProviderSet = wire.NewSet(
 	ProvideGatewayHandler,
 	ProvideOpenAIGatewayHandler,
 	NewTotpHandler,
-	NewPasskeyHandler,
+	ProvidePasskeyHandler,
 	ProvideSettingHandler,
 	NewPaymentHandler,
 	NewPaymentWebhookHandler,

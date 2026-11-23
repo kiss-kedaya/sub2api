@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -23,12 +25,38 @@ const (
 	maxPasskeyNameLength       = 100
 )
 
+// WebAuthn 错误码按「能不能给用户一个可执行的解释」拆分：
+//   - PASSKEY_CHALLENGE_EXPIRED：Redis 里没有这次 ceremony 的会话（过期 / 已用过 / 落到
+//     了不共享 session 存储的实例），用户重新点一次即可；
+//   - PASSKEY_CHALLENGE_MISMATCH：响应里的 challenge 与会话记录不一致；
+//   - PASSKEY_ORIGIN_MISMATCH / PASSKEY_RP_ID_MISMATCH：站点域名或 RP ID 与
+//     webauthn.rp_id / webauthn.rp_origins 配置不一致（部署问题，需要运维处理）；
+//   - PASSKEY_VERIFICATION_FAILED：其余签名 / 认证器数据校验失败。
+//
+// 这些错误一律 400（请求里的 ceremony 数据无效），刻意不用 401：前端 api client 把
+// 401 当作「会话过期」，会先刷新 token、重放请求，甚至清空登录态跳登录页。
+// challenge 是一次性的，重放必然失败，401 只会把「认证器/站点配置问题」变成
+// 「被踢下线」，用户看不到真正原因。
 var (
 	ErrPasskeysDisabled = infraerrors.Forbidden("PASSKEY_DISABLED", "passkey authentication is not enabled")
 	ErrPasskeyNotFound  = infraerrors.NotFound("PASSKEY_NOT_FOUND", "passkey not found")
 	ErrPasskeyExists    = infraerrors.Conflict("PASSKEY_ALREADY_EXISTS", "this passkey is already registered")
-	ErrPasskeySession   = infraerrors.BadRequest("PASSKEY_SESSION_INVALID", "passkey session is invalid or expired")
-	ErrPasskeyVerify    = infraerrors.Unauthorized("PASSKEY_VERIFICATION_FAILED", "passkey verification failed")
+	// ErrPasskeySession 表示 session_token 格式非法、流程类型或用户与 JWT 不匹配。
+	ErrPasskeySession = infraerrors.BadRequest("PASSKEY_SESSION_INVALID", "passkey session is invalid")
+	// ErrPasskeySessionExpired 表示这次 ceremony 的临时会话已过期或已经被消费（一次性）。
+	ErrPasskeySessionExpired = infraerrors.BadRequest(
+		"PASSKEY_CHALLENGE_EXPIRED", "passkey challenge has expired or was already used; please try again")
+	// ErrPasskeyChallengeMismatch 表示认证器响应的 challenge 与会话记录不一致。
+	ErrPasskeyChallengeMismatch = infraerrors.BadRequest(
+		"PASSKEY_CHALLENGE_MISMATCH", "passkey challenge does not match the pending registration")
+	// ErrPasskeyOriginMismatch 表示浏览器上报的 origin 不在 webauthn.rp_origins 里。
+	ErrPasskeyOriginMismatch = infraerrors.BadRequest(
+		"PASSKEY_ORIGIN_MISMATCH", "this site origin is not allowed by the WebAuthn relying party configuration")
+	// ErrPasskeyRPIDMismatch 表示认证器绑定的 RP ID 与 webauthn.rp_id 不一致。
+	ErrPasskeyRPIDMismatch = infraerrors.BadRequest(
+		"PASSKEY_RP_ID_MISMATCH", "this passkey is bound to a different relying party ID")
+	// ErrPasskeyVerify 是其余 WebAuthn 校验失败（签名、认证器数据等）的兜底错误。
+	ErrPasskeyVerify = infraerrors.BadRequest("PASSKEY_VERIFICATION_FAILED", "passkey verification failed")
 )
 
 // PasskeyCredentialRecord is the persistence representation used by the
@@ -165,6 +193,33 @@ func verifyPasskeyPassword(user *User, password string) error {
 	return nil
 }
 
+// classifyPasskeyVerificationError 把 go-webauthn 的协议错误映射成可区分的机器码，
+// 让前端能提示「challenge 过期 / 站点域名不匹配 / 校验失败」，也让运维仅凭 400 响应
+// 里的 reason 就能判断是部署配置问题（origin/RP ID）还是认证器响应问题。
+// 原始错误只写 warn 日志：里面只有 challenge/RP 哈希等一次性材料，不含凭据。
+func classifyPasskeyVerificationError(flow string, userID int64, err error) error {
+	if err == nil {
+		return nil
+	}
+	slog.Warn("passkey verification failed", "flow", flow, "user_id", userID, "error", err)
+
+	var protocolErr *protocol.Error
+	if errors.As(err, &protocolErr) {
+		detail := strings.ToLower(protocolErr.Details + " " + protocolErr.DevInfo)
+		switch {
+		case strings.Contains(detail, "origin"):
+			return ErrPasskeyOriginMismatch
+		case strings.Contains(detail, "rp hash mismatch"), strings.Contains(detail, "rpidhash"):
+			return ErrPasskeyRPIDMismatch
+		case strings.Contains(detail, "session has expired"):
+			return ErrPasskeySessionExpired
+		case strings.Contains(detail, "challenge"):
+			return ErrPasskeyChallengeMismatch
+		}
+	}
+	return ErrPasskeyVerify
+}
+
 func (s *PasskeyService) BeginRegistration(
 	ctx context.Context,
 	userID int64,
@@ -247,7 +302,7 @@ func (s *PasskeyService) FinishRegistration(
 	}
 	credential, err := s.webAuthn.FinishRegistration(waUser, session.WebAuthn, request)
 	if err != nil {
-		return nil, ErrPasskeyVerify
+		return nil, classifyPasskeyVerificationError(passkeySessionRegistration, userID, err)
 	}
 
 	record, err := s.repo.Create(ctx, &PasskeyCredentialRecord{
@@ -314,7 +369,7 @@ func (s *PasskeyService) FinishLogin(
 
 	validatedUser, credential, err := s.webAuthn.FinishPasskeyLogin(handler, session.WebAuthn, request)
 	if err != nil {
-		return nil, ErrPasskeyVerify
+		return nil, classifyPasskeyVerificationError(passkeySessionLogin, 0, err)
 	}
 	waUser, ok := validatedUser.(*passkeyUser)
 	if !ok || waUser.account == nil {

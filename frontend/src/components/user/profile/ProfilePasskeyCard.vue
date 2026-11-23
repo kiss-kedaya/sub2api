@@ -33,6 +33,12 @@
           class="mb-5 flex flex-col gap-3 rounded-lg border border-gray-200 p-4 dark:border-dark-700"
           @submit.prevent="addPasskey"
         >
+          <p
+            v-if="totpEnabled"
+            class="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          >
+            {{ t('profile.passkey.stepUpHint') }}
+          </p>
           <div class="grid gap-3 sm:grid-cols-2">
             <div>
               <label for="passkey-name" class="input-label">{{ t('profile.passkey.name') }}</label>
@@ -74,8 +80,22 @@
         </div>
 
         <div
+          v-else-if="loadError"
+          class="flex flex-col items-center gap-3 rounded-lg border border-red-200 px-4 py-6 text-center dark:border-red-900/40"
+          data-testid="passkey-load-error"
+        >
+          <p class="text-sm text-red-600 dark:text-red-300">
+            {{ t('profile.passkey.loadFailed') }}
+          </p>
+          <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="loadCredentials">
+            {{ t('profile.passkey.retry') }}
+          </button>
+        </div>
+
+        <div
           v-else-if="credentials.length === 0"
           class="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-500 dark:border-dark-700 dark:text-gray-400"
+          data-testid="passkey-empty"
         >
           {{ t('profile.passkey.empty') }}
         </div>
@@ -142,6 +162,12 @@
           <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
             {{ t('profile.passkey.deleteConfirm', { name: deleteTarget.name }) }}
           </p>
+          <p
+            v-if="totpEnabled"
+            class="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          >
+            {{ t('profile.passkey.stepUpHint') }}
+          </p>
           <form class="mt-4 space-y-4" @submit.prevent="confirmDelete">
             <div>
               <label for="passkey-delete-password" class="input-label">{{
@@ -179,7 +205,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { passkeyAPI, type PasskeyCredentialSummary } from '@/api'
+import { passkeyAPI, totpAPI, type PasskeyCredentialSummary } from '@/api'
 import { Icon } from '@/components/icons'
 import { useAppStore } from '@/stores/app'
 
@@ -189,7 +215,10 @@ const { t } = useI18n()
 const appStore = useAppStore()
 // Keep the server and first hydration render identical; WebAuthn is browser-only.
 const supported = ref(false)
+// 账号自身的 TOTP 状态只用于提示「创建/删除前要输动态码」，门禁在服务端。
+const totpEnabled = ref(false)
 const loading = ref(false)
+const loadError = ref(false)
 const busy = ref(false)
 const showAddForm = ref(false)
 const newName = ref('')
@@ -198,28 +227,67 @@ const deleteTarget = ref<PasskeyCredentialSummary | null>(null)
 const deletePassword = ref('')
 const credentials = ref<PasskeyCredentialSummary[]>([])
 
-// apiClient 拦截器把错误规范化为 { code, reason, message }；
-// 透出后端消息（如密码错误），否则回退到通用文案。
-function extractErrorMessage(error: unknown, fallback: string): string {
-  const message = (error as { message?: string }).message
+// 后端 WebAuthn 错误码 → 用户能看懂的文案。其余错误回退到 message/通用文案，
+// 绝不静默：老板实测过「手机提示保存成功、页面没任何反馈」的那种失败必须可见。
+const PASSKEY_ERROR_KEYS: Record<string, string> = {
+  PASSKEY_CHALLENGE_EXPIRED: 'profile.passkey.challengeExpired',
+  PASSKEY_SESSION_INVALID: 'profile.passkey.challengeExpired',
+  PASSKEY_CHALLENGE_MISMATCH: 'profile.passkey.challengeMismatch',
+  PASSKEY_ORIGIN_MISMATCH: 'profile.passkey.originMismatch',
+  PASSKEY_RP_ID_MISMATCH: 'profile.passkey.rpIdMismatch',
+  PASSKEY_VERIFICATION_FAILED: 'profile.passkey.verificationFailed',
+  PASSWORD_REQUIRED: 'profile.passkey.passwordRequired',
+  PASSWORD_INCORRECT: 'profile.passkey.passwordIncorrect',
+  STEP_UP_REQUIRED: 'profile.passkey.stepUpRequired',
+  STEP_UP_CANCELLED: 'profile.passkey.stepUpCancelled'
+}
+
+interface PasskeyErrorLike {
+  code?: string | number
+  reason?: string
+  message?: string
+}
+
+function passkeyErrorReason(error: unknown): string {
+  const candidate = error as PasskeyErrorLike | null
+  const reasonCandidates = [candidate?.reason, typeof candidate?.code === 'string' ? candidate.code : '']
+  for (const reason of reasonCandidates) {
+    if (typeof reason === 'string' && Object.prototype.hasOwnProperty.call(PASSKEY_ERROR_KEYS, reason)) {
+      return reason
+    }
+  }
+  return ''
+}
+
+// apiClient 拦截器把错误规范化为 { code, reason, message }；优先按机器码展示
+// 具体原因，其次透出后端 message，最后回退通用文案。
+function passkeyErrorMessage(error: unknown, fallback: string): string {
+  const reason = passkeyErrorReason(error)
+  if (reason) return t(PASSKEY_ERROR_KEYS[reason])
+  const message = (error as PasskeyErrorLike | null)?.message
   return typeof message === 'string' && message.length > 0 ? message : fallback
 }
 
 async function loadCredentials(): Promise<void> {
   if (!props.enabled) {
     credentials.value = []
+    loadError.value = false
     return
   }
   loading.value = true
+  loadError.value = false
   try {
     credentials.value = await passkeyAPI.list()
   } catch (error) {
-    // 字符串错误码在 reason 字段（code 是数字状态码）；
-    // 设置变更竞态下后端仍可能返回 PASSKEY_DISABLED，静默处理
-    const reason = (error as { reason?: string }).reason
-    if (reason !== 'PASSKEY_DISABLED') {
-      appStore.showError(t('profile.passkey.loadFailed'))
+    // 设置变更竞态下后端仍可能返回 PASSKEY_DISABLED，按空列表静默处理
+    const reason = (error as PasskeyErrorLike | null)?.reason
+    if (reason === 'PASSKEY_DISABLED') {
+      credentials.value = []
+      return
     }
+    // 加载失败与「确实没有 Passkey」必须区分：前者给错误文案 + 重试按钮。
+    credentials.value = []
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -232,10 +300,15 @@ async function addPasskey(): Promise<void> {
     await passkeyAPI.register(newName.value.trim(), newPassword.value)
     appStore.showSuccess(t('profile.passkey.added'))
     cancelAdd()
+    // 立即重新拉列表，避免「提示成功但列表还是空的」。
     await loadCredentials()
   } catch (error) {
-    if (!(error instanceof DOMException && error.name === 'NotAllowedError')) {
-      appStore.showError(extractErrorMessage(error, t('profile.passkey.addFailed')))
+    if (error instanceof DOMException && error.name === 'NotAllowedError') {
+      // 用户取消 / 设备没完成：OS 可能已经生成了凭据，但服务器没有收到 finish，
+      // 必须明确提示「未保存」，不能像以前一样静默。
+      appStore.showWarning(t('profile.passkey.cancelled'))
+    } else {
+      appStore.showError(passkeyErrorMessage(error, t('profile.passkey.addFailed')))
     }
   } finally {
     busy.value = false
@@ -256,8 +329,8 @@ async function renamePasskey(credential: PasskeyCredentialSummary): Promise<void
     await passkeyAPI.rename(credential.id, name)
     credential.name = name
     appStore.showSuccess(t('profile.passkey.renamed'))
-  } catch {
-    appStore.showError(t('profile.passkey.renameFailed'))
+  } catch (error) {
+    appStore.showError(passkeyErrorMessage(error, t('profile.passkey.renameFailed')))
   } finally {
     busy.value = false
   }
@@ -282,11 +355,24 @@ async function confirmDelete(): Promise<void> {
     credentials.value = credentials.value.filter((item) => item.id !== credential.id)
     appStore.showSuccess(t('profile.passkey.deleted'))
     closeDeleteDialog()
+    // 以服务端列表为准，避免多端并发删除/新增后本地列表过期。
+    await loadCredentials()
   } catch (error) {
-    // 密码错误等失败保持对话框打开，允许重试
-    appStore.showError(extractErrorMessage(error, t('profile.passkey.deleteFailed')))
+    // 密码错误 / 需要 2FA 等失败保持对话框打开，允许重试
+    appStore.showError(passkeyErrorMessage(error, t('profile.passkey.deleteFailed')))
   } finally {
     busy.value = false
+  }
+}
+
+async function loadTotpStatus(): Promise<void> {
+  if (!props.enabled) return
+  try {
+    const status = await totpAPI.getStatus()
+    totpEnabled.value = status?.enabled === true
+  } catch {
+    // 2FA 状态读不到时只是少一个提示，不影响 Passkey 操作（门禁在服务端）。
+    totpEnabled.value = false
   }
 }
 
@@ -301,12 +387,14 @@ function formatDate(value: string): string {
 onMounted(() => {
   supported.value = passkeyAPI.isSupported()
   void loadCredentials()
+  void loadTotpStatus()
 })
 
 watch(
   () => props.enabled,
   () => {
     void loadCredentials()
+    void loadTotpStatus()
   }
 )
 </script>
