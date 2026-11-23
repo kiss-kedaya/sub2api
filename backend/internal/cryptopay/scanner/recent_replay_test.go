@@ -344,3 +344,40 @@ func TestRecordedOverlapStillUsesIndependentPendingAndReorgValidation(t *testing
 		})
 	}
 }
+
+// The head security window failing means the RPC pool cannot serve even one small
+// query right now. Replaying the recent overlap then waits for the next pass so
+// the scarce provider quota goes to the deposit range that moves the cursor. The
+// overlap boundary was made durable before the forward cursor moved, so skipping
+// the run only postpones it: nothing is lost and nothing is marked complete.
+func TestRecentReplayWaitsWhenHeadSecurityWindowFailed(t *testing.T) {
+	fixture := newRPCFixture(testTransfer())
+	worker, mock, _ := workerFixture(t, fixture)
+	worker.recentReplay = true
+	headWindowFailure := errors.New("head security window unavailable")
+	var replayRanges []string
+	worker.SetSecurityGuards(nil, func(_ context.Context, _ *EVMScanner, _ *rpc.Pool, _ ChainConfig, from, to uint64) error {
+		if from == 1 && to == 50 {
+			replayRanges = append(replayRanges, "replay")
+		}
+		if to == 110 { // the head window of this fixture (head=110)
+			return headWindowFailure
+		}
+		return nil
+	})
+	mock.ExpectQuery(`SELECT last_block`).WithArgs("bsc").WillReturnRows(sqlmock.NewRows([]string{"last_block"}).AddRow(102))
+	expectReplayLoad(t, mock, nil, time.Time{})
+	// The overlap boundary is still pinned durably before the forward cursor moves.
+	expectReplaySave(mock, recentReplayState{Through: 102, Next: 1, After: -1}).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO crypto_scan_cursors`).WithArgs("bsc", int64(105)).WillReturnResult(sqlmock.NewResult(0, 1))
+	err := worker.scanChain(t.Context(), worker.chains[0])
+	if !errors.Is(err, headWindowFailure) {
+		t.Fatalf("the head window failure must stay visible, got %v", err)
+	}
+	if len(replayRanges) != 0 {
+		t.Fatal("replay ran on a pass whose head security window failed")
+	}
+	if !worker.replayedAt["bsc"].IsZero() {
+		t.Fatal("a skipped replay must not be marked complete")
+	}
+}

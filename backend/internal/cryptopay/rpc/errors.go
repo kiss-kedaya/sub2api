@@ -2,9 +2,11 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -25,7 +27,17 @@ type Failure struct {
 	// Host is the endpoint hostname (no scheme, path, query or credentials) that
 	// produced the failure, so a scan failure can name a node without writing a
 	// configured URL.
-	Host       string
+	Host string
+	// SpanLimit is the largest eth_getLogs block span the node said it accepts,
+	// parsed from its rejection text. Zero means the node named no limit. The
+	// pool remembers it per endpoint so an oversized query goes to a node that
+	// can serve it instead of being re-sent to the one that just refused it.
+	SpanLimit uint64
+	// Quota is set when an HTTP 402/429/503 answer says the provider's daily or
+	// monthly allowance (or prepaid balance) is used up. Waiting seconds cannot
+	// help: the pool keeps that endpoint out of rotation for much longer than an
+	// ordinary rate limit instead of spending a request on it for every call.
+	Quota      bool
 	contextErr error
 }
 
@@ -221,10 +233,15 @@ var remoteReasons = []struct{ needle, reason string }{
 	{"execution reverted", "execution reverted"},
 	{"rate limit", "rate limited"},
 	{"too many requests", "rate limited"},
-	{"block range", "query range or result limit exceeded"},
-	{"query returned more than", "query range or result limit exceeded"},
-	{"response size exceeded", "query range or result limit exceeded"},
+	{"block range", ReasonRangeLimit},
+	{"query returned more than", ReasonRangeLimit},
+	{"response size exceeded", ReasonRangeLimit},
 }
+
+// ReasonRangeLimit is the fixed phrase for a node refusing an eth_getLogs query
+// because its block range or result size is too large. It is the one rejection
+// the scanner answers by splitting the query, so it must stay a stable string.
+const ReasonRangeLimit = "query range or result limit exceeded"
 
 func classifyRemote(message string) string {
 	lowered := strings.ToLower(message)
@@ -233,7 +250,123 @@ func classifyRemote(message string) string {
 			return candidate.reason
 		}
 	}
+	// Providers word the range limit in many ways ("ranges over 100 blocks",
+	// "requested range is over limit of 100", "limited to 0 - 50 blocks range").
+	// The needles above only know the common ones; a number next to a range or
+	// block phrase is the other tell-tale.
+	if _, ok := rangeLimitFromMessage(message); ok {
+		return ReasonRangeLimit
+	}
 	return ""
+}
+
+// rangeLimitPatterns pull the permitted block span out of a node's rejection.
+// Every pattern needs a range/blocks phrase next to the number, so an unrelated
+// number in an error ("429", "10 requests per second") is never mistaken for a
+// span. A trailing k/K multiplies by one thousand ("up to a 2K block range").
+var rangeLimitPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)ranges? (?:over|above|greater than|larger than|exceeding) (\d[\d,]*)(k)?\s*blocks?`),
+	regexp.MustCompile(`(?i)range (?:is )?(?:over|above|greater than|larger than|exceeds?) (?:the )?(?:limit|max(?:imum)?)(?: of)?:? (\d[\d,]*)(k)?`),
+	regexp.MustCompile(`(?i)limited to (?:\d+ ?- ?)?(\d[\d,]*)(k)?\s*blocks?`),
+	regexp.MustCompile(`(?i)(?:up to|at most|no more than|maximum of|max of) (?:a )?(\d[\d,]*)(k)?[ -]?blocks?`),
+	regexp.MustCompile(`(?i)block range[^0-9]{0,30}(\d[\d,]*)(k)?`),
+}
+
+// Anything outside this window is a parse accident, not a provider limit: a
+// span of a few blocks would make the scanner crawl, and one past a million
+// blocks is no limit at all.
+const (
+	minLearnedSpan = 10
+	maxLearnedSpan = 1_000_000
+)
+
+// rangeLimitFromMessage returns the block span a node says it accepts.
+func rangeLimitFromMessage(message string) (uint64, bool) {
+	for _, pattern := range rangeLimitPatterns {
+		match := pattern.FindStringSubmatch(message)
+		if match == nil {
+			continue
+		}
+		digits := strings.ReplaceAll(match[1], ",", "")
+		value, err := strconv.ParseUint(digits, 10, 64)
+		if err != nil {
+			continue
+		}
+		if len(match) > 2 && match[2] != "" {
+			value *= 1000
+		}
+		if value >= minLearnedSpan && value <= maxLearnedSpan {
+			return value, true
+		}
+	}
+	return 0, false
+}
+
+// SpanLimitOf returns the block span a node named when it refused err's
+// request, or zero.
+func SpanLimitOf(err error) uint64 {
+	var failure *Failure
+	if errors.As(err, &failure) {
+		return failure.SpanLimit
+	}
+	return 0
+}
+
+// quotaPattern recognises "the allowance is used up" wording. It is only applied
+// to HTTP 402/429/503 answers, never to a JSON-RPC error of a transaction
+// ("insufficient funds for gas" is a wallet problem, not a provider quota).
+var quotaPattern = regexp.MustCompile(`(?i)\b(?:daily|monthly|quota|ceiling|insufficient (?:ru|balance|credits?)|out of (?:credits?|requests?)|credits? (?:exhausted|depleted)|payment required|plan limit|capacity limit)\b`)
+
+// annotateFromErrorBody fills a failure from the body of a non-200 answer. Only
+// the sanitised Detail() ever leaves the process; Error() stays a fixed phrase.
+func annotateFromErrorBody(failure *Failure, body []byte) {
+	text := strings.TrimSpace(string(body))
+	if text == "" {
+		return
+	}
+	code := 0
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) == nil && len(envelope.Error) > 0 {
+		var nested struct {
+			Code    json.Number `json:"code"`
+			Message string      `json:"message"`
+		}
+		if json.Unmarshal(envelope.Error, &nested) == nil && nested.Message != "" {
+			text = nested.Message
+			if value, err := strconv.Atoi(nested.Code.String()); err == nil {
+				code = value
+			}
+		} else {
+			var plain string
+			if json.Unmarshal(envelope.Error, &plain) == nil && plain != "" {
+				text = plain
+			}
+		}
+	}
+	if len(text) > 512 {
+		text = text[:512]
+	}
+	failure.Message = text
+	failure.Reason = classifyRemote(text)
+	if limit, ok := rangeLimitFromMessage(text); ok {
+		failure.SpanLimit = limit
+	}
+	switch failure.HTTPStatus {
+	case 402, 429, 503:
+		failure.Quota = quotaPattern.MatchString(text)
+	}
+	if failure.Reason == ReasonRangeLimit && failure.Kind == "http" {
+		// The provider refused the query's size and said so: that is a request
+		// rejection the scanner answers by splitting, not an outage. Report it
+		// like the JSON-RPC range errors other nodes return (code -32005 on BSC).
+		failure.Kind = "remote"
+		failure.RPCCode = code
+		if failure.RPCCode == 0 {
+			failure.RPCCode = -32602
+		}
+	}
 }
 
 // IsAlreadyKnown reports whether err is a node saying it already holds the

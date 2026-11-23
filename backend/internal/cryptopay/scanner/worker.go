@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"math/rand"
 	"net/http"
 	"regexp"
 	"sort"
@@ -111,6 +112,9 @@ type Worker struct {
 	failureAt    time.Time
 	// Per-chain report limiter: one slow chain must not hide another's errors.
 	chainFailureAt map[string]time.Time
+	// chainPause paces the retries of a chain whose forward scan keeps failing
+	// without moving its cursor. Guarded by replayMu.
+	chainPause map[string]*chainPause
 	// liveProgress enables the head observation window and the confirmation
 	// counter writes. Production workers (positive interval) turn it on.
 	liveProgress        bool
@@ -133,9 +137,13 @@ type Worker struct {
 type chainCoverage struct {
 	cursor    uint64
 	hasCursor bool
-	ranges    [][2]uint64
-	head      uint64
-	hasHead   bool
+	// startCursor is the first durable cursor this pass saw, so the pass can tell
+	// afterwards whether the chain moved forward at all.
+	startCursor uint64
+	hasStart    bool
+	ranges      [][2]uint64
+	head        uint64
+	hasHead     bool
 }
 
 type chainHeadSnapshot struct {
@@ -166,6 +174,17 @@ func (w *Worker) noteCursor(chain string, cursor uint64) {
 	defer w.replayMu.Unlock()
 	c := w.chainCoverageLocked(chain)
 	c.cursor, c.hasCursor = cursor, true
+	if !c.hasStart {
+		c.startCursor, c.hasStart = cursor, true
+	}
+}
+
+// cursorAdvanced reports whether the durable cursor of chain moved during this pass.
+func (w *Worker) cursorAdvanced(chain string) bool {
+	w.replayMu.Lock()
+	defer w.replayMu.Unlock()
+	c := w.coverage[chain]
+	return c != nil && c.hasStart && c.hasCursor && c.cursor > c.startCursor
 }
 
 func (w *Worker) noteHead(chain string, head uint64) {
@@ -305,6 +324,9 @@ func (e *scanStageError) logAttrs() []any {
 		}
 		if failure.RPCCode != 0 {
 			attrs = append(attrs, "rpc_code", failure.RPCCode)
+		}
+		if failure.Quota {
+			attrs = append(attrs, "quota_exhausted", true)
 		}
 		if errors.Is(failure, context.DeadlineExceeded) {
 			attrs = append(attrs, "timeout", true)
@@ -544,6 +566,110 @@ func (w *Worker) run(ctx context.Context) {
 	}
 }
 
+// periodicPassKey marks the context of a timer-driven pass. Only those passes
+// are paced by a chain's failure backoff: a manual scan or backfill is an
+// operator asking to try now, and always runs.
+type periodicPassKey struct{}
+
+func isPeriodicPass(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(periodicPassKey{}) != nil
+}
+
+// chainPause is the retry gate of one chain after consecutive failed passes.
+type chainPause struct {
+	failures int
+	next     time.Time
+}
+
+// maxChainPause caps how long a failing chain is left alone between attempts.
+const maxChainPause = time.Minute
+
+// chainPauseDelay is how long a chain waits before its next timer-driven pass
+// after `failures` consecutive passes that failed without moving the cursor.
+//
+// Why it exists: a pass costs dozens of eth_getLogs calls (every stage walks all
+// watched addresses in batches) and every failing call is tried on each node of
+// the pool, one tick (5s) after the last. Public RPC providers meter daily
+// requests, so a chain that cannot make progress retries itself out of every
+// free allowance within hours and then stays down until the provider resets
+// the counter - the half-day Polygon stalls. Spacing the retries keeps the
+// allowance for the moment the nodes recover.
+//
+// The first failure is not delayed: scanAll already repeats a rate-limited pass
+// once after a short wait, and a single blip should cost one retry, not a pause.
+func chainPauseDelay(failures int, interval time.Duration) time.Duration {
+	if failures <= 1 {
+		return 0
+	}
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	// failures=2 waits one interval, then 2x, 4x, ... up to the cap.
+	delay := interval
+	for i := 2; i < failures && delay < maxChainPause; i++ {
+		delay *= 2
+	}
+	if delay > maxChainPause {
+		delay = maxChainPause
+	}
+	// +-20% so chains that failed together do not retry in lockstep.
+	jitter := time.Duration(rand.Int63n(int64(delay)/5*2+1)) - delay/5
+	return delay + jitter
+}
+
+// chainPaused reports whether a timer-driven pass should skip chain for now.
+func (w *Worker) chainPaused(chain string, now time.Time) bool {
+	w.replayMu.Lock()
+	defer w.replayMu.Unlock()
+	st := w.chainPause[chain]
+	return st != nil && now.Before(st.next)
+}
+
+// forwardStageFailed reports whether err contains a failure that stops the
+// forward cursor: the head lookup or the deposit range itself. Security,
+// observe, replay and live-window failures leave the cursor free to move.
+func forwardStageFailed(err error) bool {
+	byChain := make(map[string][]*scanStageError)
+	var other []error
+	collectScanFailures(err, byChain, &other)
+	for _, failures := range byChain {
+		for _, failure := range failures {
+			switch failure.stage {
+			case "head", "deposit":
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// noteChainPass records the outcome of one timer-driven pass of chain. A pass
+// that moved the cursor, or failed only in stages that do not hold it back,
+// clears the pause; one that failed to move it extends the pause.
+func (w *Worker) noteChainPass(chain string, scanErr error, now time.Time) {
+	blocked := scanErr != nil && forwardStageFailed(scanErr) && !w.cursorAdvanced(chain)
+	w.replayMu.Lock()
+	defer w.replayMu.Unlock()
+	if !blocked {
+		delete(w.chainPause, chain)
+		return
+	}
+	if w.chainPause == nil {
+		w.chainPause = make(map[string]*chainPause)
+	}
+	st := w.chainPause[chain]
+	if st == nil {
+		st = &chainPause{}
+		w.chainPause[chain] = st
+	}
+	st.failures++
+	st.next = now.Add(chainPauseDelay(st.failures, w.interval))
+	if st.failures == 2 || st.failures%10 == 0 {
+		slog.Warn("[cryptopay] chain scan keeps failing; pacing its retries to spare the RPC allowance",
+			"chain", chain, "consecutive_failures", st.failures, "next_attempt_in", st.next.Sub(now).Round(time.Second).String())
+	}
+}
+
 // scanPassDeadline bounds one whole pass. Without it a single hung RPC call
 // keeps the pass (and therefore the scan session lock) forever, every later
 // tick answers ErrScanBusy, and the chain stops advancing until the process is
@@ -557,6 +683,7 @@ func (w *Worker) scanAll(parent context.Context) {
 	}
 	ctx, cancel := context.WithTimeout(parent, scanPassDeadline)
 	defer cancel()
+	ctx = context.WithValue(ctx, periodicPassKey{}, true)
 	if err := w.runPeriodicPass(ctx); err != nil && !errors.Is(err, ErrScanBusy) && !errors.Is(err, mode.ErrReadOnly) && parent.Err() == nil {
 		// A node rate limit says nothing about the block range: the same pass
 		// succeeds once the burst has drained. Waiting out one backoff keeps the
@@ -782,7 +909,12 @@ func (w *Worker) runOnceFrom(ctx context.Context, fromBlock, periodicRound uint6
 	}
 	// Discover new payments before rotating historical receipt/reorg checks.
 	// Maintenance has its own bounded budget and must not delay fresh deposits.
+	periodic := isPeriodicPass(ctx)
 	for _, chain := range chains {
+		if periodic && w.chainPaused(chain.Chain, time.Now()) {
+			slog.Debug("[cryptopay] chain scan paused after repeated failures", "chain", chain.Chain)
+			continue
+		}
 		var scanErr error
 		var snapshot *chainHeadSnapshot
 		if chain.Chain == "bsc" {
@@ -797,6 +929,9 @@ func (w *Worker) runOnceFrom(ctx context.Context, fromBlock, periodicRound uint6
 			}
 		} else {
 			scanErr = w.scanChainFromSnapshot(ctx, chain, fromBlock, snapshot)
+		}
+		if periodic {
+			w.noteChainPass(chain.Chain, scanErr, time.Now())
 		}
 		if scanErr != nil {
 			err = errors.Join(err, fmt.Errorf("scan %s: %w", chain.Chain, scanErr))
@@ -988,6 +1123,16 @@ func (w *Worker) scanChainObserved(ctx context.Context, chain ChainConfig, manua
 	// moves the balance from a 0-confirmation block, so the block must first
 	// have passed the outflow-security scan. A security failure still records
 	// the deposit as pending (no funds move) and the confirmation path owns it.
+	// degraded is set when the head security window failed this pass: the RPC
+	// pool cannot currently serve even that one small query. Replaying the recent
+	// overlap then waits for the next pass, so the scarce provider quota goes to
+	// the deposit range that moves the cursor. Public providers cap daily
+	// requests; a pass that spends them on auxiliary scans while the cursor
+	// stalls is how a chain stays down for hours after the quota resets. Head
+	// observation is NOT shed: users must still see the pending deposit even
+	// while the security window is unavailable (see
+	// TestHeadObservationRunsAfterSecurityScan).
+	degraded := false
 	if w.securityRange != nil && head > 0 {
 		// Security incidents do not wait for deposit finality. Examine a
 		// bounded head window even when the credited-deposit cursor is caught
@@ -1006,6 +1151,7 @@ func (w *Worker) scanChainObserved(ctx context.Context, chain ChainConfig, manua
 			// progress. The failure stays in the result for manual callers.
 			headErr := stageErr(chain.Chain, "security", head-span+1, head, err)
 			defer func() { scanErr = errors.Join(headErr, scanErr) }()
+			degraded = true
 		} else {
 			w.markSecurityCovered(chain.Chain, head-span+1, head)
 		}
@@ -1095,10 +1241,12 @@ func (w *Worker) scanChainObserved(ctx context.Context, chain ChainConfig, manua
 			// moves. Once saved, failures cannot move that independent boundary.
 			return stageErr(chain.Chain, "replay", 0, 0, err)
 		}
-		if state != nil {
+		if state != nil && !degraded {
 			defer func() {
 				// A slow or dense overlap has its own budget and checkpoint. It
-				// neither steals the forward budget nor blocks new deposits.
+				// neither steals the forward budget nor blocks new deposits. The
+				// boundary was made durable above, so skipping the run on a
+				// degraded pass only postpones it.
 				replayErr := w.replayRecentRange(parent, scanner, pool, chain, state, maxRange, recipients)
 				scanErr = errors.Join(scanErr, stageErr(chain.Chain, "replay", state.Next, state.Through, replayErr))
 			}()
