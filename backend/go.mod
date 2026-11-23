@@ -4,6 +4,7 @@ go 1.26.11
 
 require (
 	entgo.io/ent v0.14.5
+	filippo.io/age v1.2.1
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/alibabacloud-go/captcha-20230305 v1.1.3
 	github.com/alibabacloud-go/darabonba-openapi/v2 v2.1.13

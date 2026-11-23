@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -20,17 +21,74 @@ import (
 // PgDumper implements service.DBDumper using pg_dump/psql
 type PgDumper struct {
 	cfg            *config.DatabaseConfig
+	backup         config.BackupConfig
 	db             *sql.DB
 	commandContext func(context.Context, string, ...string) *exec.Cmd
+	// niceAvailable reports whether pg_dump should run under nice(1). Nil means
+	// "on Linux when nice is on PATH"; tests inject a fixed answer.
+	niceAvailable func() bool
 }
 
 // NewPgDumper creates a new PgDumper
 func NewPgDumper(cfg *config.Config, db *sql.DB) service.DBDumper {
 	return &PgDumper{
 		cfg:            &cfg.Database,
+		backup:         cfg.Backup,
 		db:             db,
 		commandContext: exec.CommandContext,
 	}
+}
+
+// pgDumpLockWaitTimeout bounds how long a partial dump waits for table locks, so
+// a stuck DDL cannot hold the backup (and the migration advisory lock) forever.
+const pgDumpLockWaitTimeout = "30s"
+
+// pgDumpCommand returns the program and arguments for pg_dump.
+//
+// Without backup.exclude_table_data this is the original full dump, argument for
+// argument. With it, the dump is a partial snapshot: every table's schema is kept
+// but the listed tables' rows are skipped. --clean/--if-exists are deliberately
+// dropped there: replaying such a snapshot into a live database must fail on the
+// first "already exists" and roll back under --single-transaction, rather than
+// DROP the very tables whose data the snapshot does not contain.
+func (d *PgDumper) pgDumpCommand() (string, []string) {
+	args := []string{
+		"-h", d.cfg.Host,
+		"-p", fmt.Sprintf("%d", d.cfg.Port),
+		"-U", d.cfg.User,
+		"-d", d.cfg.DBName,
+		"--no-owner",
+		"--no-acl",
+	}
+	name := "pg_dump"
+	if d.backup.PgDumpPath != "" {
+		name = d.backup.PgDumpPath
+	}
+
+	if len(d.backup.ExcludeTableData) == 0 {
+		return name, append(args, "--clean", "--if-exists")
+	}
+	for _, table := range d.backup.ExcludeTableData {
+		args = append(args, "--exclude-table-data="+table)
+	}
+	args = append(args, "--lock-wait-timeout="+pgDumpLockWaitTimeout)
+
+	// A scheduled snapshot should not compete with request traffic for CPU.
+	if d.useNice() {
+		return "nice", append([]string{"-n", "19", name}, args...)
+	}
+	return name, args
+}
+
+func (d *PgDumper) useNice() bool {
+	if d.niceAvailable != nil {
+		return d.niceAvailable()
+	}
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	_, err := exec.LookPath("nice")
+	return err == nil
 }
 
 // Dump executes pg_dump and returns a streaming reader of the output
@@ -52,22 +110,13 @@ func (d *PgDumper) Dump(ctx context.Context) (io.ReadCloser, error) {
 		return releaseBackupMigrationLock(lockConn)
 	}
 
-	args := []string{
-		"-h", d.cfg.Host,
-		"-p", fmt.Sprintf("%d", d.cfg.Port),
-		"-U", d.cfg.User,
-		"-d", d.cfg.DBName,
-		"--no-owner",
-		"--no-acl",
-		"--clean",
-		"--if-exists",
-	}
+	name, args := d.pgDumpCommand()
 
 	commandContext := d.commandContext
 	if commandContext == nil {
 		commandContext = exec.CommandContext
 	}
-	cmd := commandContext(ctx, "pg_dump", args...)
+	cmd := commandContext(ctx, name, args...)
 	if d.cfg.Password != "" {
 		cmd.Env = append(cmd.Environ(), "PGPASSWORD="+d.cfg.Password)
 	}

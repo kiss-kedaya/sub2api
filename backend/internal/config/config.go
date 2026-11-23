@@ -10,10 +10,12 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"filippo.io/age"
 	"github.com/spf13/viper"
 	"golang.org/x/net/http/httpguts"
 )
@@ -128,6 +130,7 @@ type Config struct {
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
+	Backup                  BackupConfig                  `mapstructure:"backup"`
 	Plugins                 PluginConfig                  `mapstructure:"plugins"`
 }
 
@@ -313,6 +316,58 @@ func (c *ImageStorageConfig) MissingCredentialKeys() []string {
 		missing = append(missing, "image_storage.secret_access_key")
 	}
 	return missing
+}
+
+// BackupConfig tunes the built-in database backup. Every field defaults to its
+// zero value, which keeps the original behaviour: a full pg_dump --clean
+// --if-exists, default gzip, no encryption, no size limit.
+type BackupConfig struct {
+	// PgDumpPath overrides the pg_dump executable; empty resolves "pg_dump" via PATH.
+	PgDumpPath string `mapstructure:"pg_dump_path"`
+	// ExcludeTableData lists tables (name or schema.name) whose rows are not
+	// dumped while their schema still is. A non-empty list switches the backup to
+	// the partial "critical snapshot" mode.
+	ExcludeTableData []string `mapstructure:"exclude_table_data"`
+	// AgeRecipients are age X25519 public keys (age1...). When set, the archive is
+	// encrypted to them before it leaves the host; when unset nothing is encrypted.
+	AgeRecipients []string `mapstructure:"age_recipients"`
+	// MaxArchiveBytes aborts a backup whose archive on disk (after compression and
+	// encryption) grows past this size. 0 means no limit.
+	MaxArchiveBytes int64 `mapstructure:"max_archive_bytes"`
+}
+
+// backupExcludeTablePattern only admits "table" or "schema.table" made of plain
+// identifier characters: no wildcards, quotes, dashes or spaces, so a value can
+// never be read by pg_dump as anything but a literal table name.
+var backupExcludeTablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$`)
+
+// normalizeAndValidate trims the values and rejects anything unsafe. Error
+// messages carry only the key and entry index, never the offending value: an
+// age private key pasted into age_recipients must not end up in a log.
+func (b *BackupConfig) normalizeAndValidate() error {
+	b.PgDumpPath = strings.TrimSpace(b.PgDumpPath)
+	b.ExcludeTableData = normalizeStringSlice(b.ExcludeTableData)
+	b.AgeRecipients = normalizeStringSlice(b.AgeRecipients)
+
+	// The path becomes an argument of nice(1) in partial mode, so a leading dash
+	// would be parsed as a nice option.
+	if strings.HasPrefix(b.PgDumpPath, "-") {
+		return fmt.Errorf("backup.pg_dump_path must not start with '-'")
+	}
+	for i, table := range b.ExcludeTableData {
+		if !backupExcludeTablePattern.MatchString(table) {
+			return fmt.Errorf("backup.exclude_table_data[%d] must be a table or schema.table name using only letters, digits and underscores", i)
+		}
+	}
+	for i, recipient := range b.AgeRecipients {
+		if _, err := age.ParseX25519Recipient(recipient); err != nil {
+			return fmt.Errorf("backup.age_recipients[%d] is not a valid age X25519 public key", i)
+		}
+	}
+	if b.MaxArchiveBytes < 0 {
+		return fmt.Errorf("backup.max_archive_bytes must be non-negative")
+	}
+	return nil
 }
 
 type LinuxDoConnectConfig struct {
@@ -2611,6 +2666,13 @@ func setDefaults() {
 	viper.SetDefault("image_storage.secret_access_key", "")
 	viper.SetDefault("image_storage.public_base_url", "")
 
+	// Built-in backup. All zero = original behaviour. Every key must be registered
+	// here or BACKUP_* environment variables are silently ignored by viper.
+	viper.SetDefault("backup.pg_dump_path", "")
+	viper.SetDefault("backup.exclude_table_data", []string{})
+	viper.SetDefault("backup.age_recipients", []string{})
+	viper.SetDefault("backup.max_archive_bytes", int64(0))
+
 	// Ops (vNext)
 	viper.SetDefault("ops.enabled", true)
 	viper.SetDefault("ops.use_preaggregated_tables", true)
@@ -3084,6 +3146,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("security.proxy_probe.urls: %w", err)
 	}
 	c.Security.ProxyProbe.URLs = proxyProbeURLs
+	if err := c.Backup.normalizeAndValidate(); err != nil {
+		return err
+	}
 	if c.Plugins.MaxUploadBytes <= 0 || c.Plugins.MaxUploadBytes > 1024*1024*1024 {
 		return fmt.Errorf("plugins.max_upload_bytes must be between 1 and 1073741824")
 	}
