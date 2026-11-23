@@ -117,13 +117,14 @@ func (f *rpcFixture) pool(t *testing.T) *rpc.Pool {
 				f.logRanges = append(f.logRanges, filter)
 			}
 		}
+		httpFail, rpcFail := f.httpFail, f.fail
 		f.mu.Unlock()
-		if key == f.httpFail {
+		if key == httpFail {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if key == f.fail {
+		if key == rpcFail {
 			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": 1,
 				"error": map[string]any{"code": -32000, "message": "fixture RPC unavailable"}})
 			return
