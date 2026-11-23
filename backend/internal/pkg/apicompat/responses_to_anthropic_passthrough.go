@@ -72,7 +72,7 @@ func responsesUnsupportedPassthroughFields(rawBody []byte, passthroughReasoning 
 	fields := make(map[string]json.RawMessage, len(raw))
 	for key, value := range raw {
 		if _, converted := responsesFieldConvertedByBridge[key]; converted {
-			if !(passthroughReasoning && key == "reasoning") {
+			if !passthroughReasoning || key != "reasoning" {
 				continue
 			}
 		}

@@ -93,7 +93,7 @@ func ResponsesToAnthropicRequestWithOptions(req *ResponsesRequest, opts *Respons
 
 	// reasoning.effort → output_config.effort + thinking。透传模式下不合成任何
 	// thinking/output_config：用户参数必须原样到达上游，不在网关层被改写。
-	if !(opts != nil && opts.PassthroughReasoning) && req.Reasoning != nil && req.Reasoning.Effort != "" {
+	if (opts == nil || !opts.PassthroughReasoning) && req.Reasoning != nil && req.Reasoning.Effort != "" {
 		effort := mapResponsesEffortToAnthropic(req.Reasoning.Effort)
 		switch effort {
 		case "none", "off", "disabled":
