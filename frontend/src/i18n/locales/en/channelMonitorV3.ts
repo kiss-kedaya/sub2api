@@ -19,6 +19,7 @@ export default {
     userRate: 'User rate',
     unknownGroup: 'Unknown group',
     timelineTooltip: '{time} · Availability {availability} · Cache {cache} · First token {ttft}',
+    cacheBlackLegend: 'Cache rate < 30% is treated as unavailable (black bar)',
     emptyTitle: 'No channel data',
     emptyDescription: 'There is no passive-monitor data for this time range yet',
     platformSection: '{platform}',

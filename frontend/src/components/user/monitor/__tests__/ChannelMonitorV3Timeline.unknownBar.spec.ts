@@ -80,15 +80,91 @@ describe('ChannelMonitorV3Timeline unknown bars', () => {
   })
 
   it('keeps true low availability on the black band', () => {
+    // cache_rate stays 0 here; the black colour now follows the cache rate.
+    const low = bucket('critical', 0.8, '2026-09-11T12:00:00Z')
+    low.metrics = { ...low.metrics, cache_rate: 0.9 }
     const wrapper = mount(ChannelMonitorV3Timeline, {
       props: {
-        buckets: [bucket('critical', 0.8, '2026-09-11T12:00:00Z')],
+        buckets: [low],
         countdownSeconds: 0,
         length: 1,
       },
     })
+    expect(wrapper.get('.v3-soft-glass-bar').classes()).toContain('bg-gray-950')
+  })
+})
+
+describe('ChannelMonitorV3Timeline black cache bars', () => {
+  function bucketWithCache(overall: MonitorHealth['overall'], cacheRate: number, errorRate = 0): MonitorMatrixBucket {
+    return {
+      bucket_start: '2026-09-11T12:00:00Z',
+      metrics: { ...metrics(errorRate), cache_rate: cacheRate },
+      health: health(overall),
+    }
+  }
+
+  it('paints a bar black when the cache rate is 0%', () => {
+    const wrapper = mount(ChannelMonitorV3Timeline, {
+      props: { buckets: [bucketWithCache('healthy', 0)], countdownSeconds: 0, length: 1 },
+    })
     const bar = wrapper.get('.v3-soft-glass-bar')
-    expect(bar.classes()).toContain('bg-gray-950')
+    expect(bar.classes()).toContain('bg-black')
+    expect(bar.classes()).not.toContain('bg-emerald-600')
+    wrapper.unmount()
+  })
+
+  it.each([0.05, 0.299])('paints a bar black at a %s cache rate', (cacheRate) => {
+    const wrapper = mount(ChannelMonitorV3Timeline, {
+      props: { buckets: [bucketWithCache('healthy', cacheRate)], countdownSeconds: 0, length: 1 },
+    })
+    expect(wrapper.get('.v3-soft-glass-bar').classes()).toContain('bg-black')
+    wrapper.unmount()
+  })
+
+  it('ignores availability when the cache rate is low', () => {
+    // 80% error rate used to force the black band on its own; now the low cache
+    // rate has to produce black even when availability is perfect.
+    const perfect = mount(ChannelMonitorV3Timeline, {
+      props: { buckets: [bucketWithCache('healthy', 0, 0)], countdownSeconds: 0, length: 1 },
+    })
+    expect(perfect.get('.v3-soft-glass-bar').classes()).toContain('bg-black')
+    perfect.unmount()
+
+    const bad = mount(ChannelMonitorV3Timeline, {
+      props: { buckets: [bucketWithCache('critical', 0.9, 0.8)], countdownSeconds: 0, length: 1 },
+    })
+    // High cache rate keeps the old availability rule untouched.
+    expect(bad.get('.v3-soft-glass-bar').classes()).toContain('bg-gray-950')
+    bad.unmount()
+  })
+
+  it.each([0.3, 0.301])('keeps the availability colour at a %s cache rate', (cacheRate) => {
+    const wrapper = mount(ChannelMonitorV3Timeline, {
+      props: { buckets: [bucketWithCache('healthy', cacheRate)], countdownSeconds: 0, length: 1 },
+    })
+    const bar = wrapper.get('.v3-soft-glass-bar')
+    expect(bar.classes()).toContain('bg-emerald-600')
+    expect(bar.classes()).not.toContain('bg-black')
+    wrapper.unmount()
+  })
+
+  it('keeps the grey no-data style for an unknown bucket with a 0% cache rate', () => {
+    const wrapper = mount(ChannelMonitorV3Timeline, {
+      props: { buckets: [bucketWithCache('unknown', 0)], countdownSeconds: 0, length: 1 },
+    })
+    const bar = wrapper.get('.v3-soft-glass-bar')
+    expect(bar.classes()).toContain('bg-gray-300')
+    expect(bar.classes()).not.toContain('bg-black')
+    wrapper.unmount()
+  })
+
+  it('renders the cache black-bar legend', () => {
+    const wrapper = mount(ChannelMonitorV3Timeline, {
+      props: { buckets: [], countdownSeconds: 0, length: 1 },
+    })
+    const legend = wrapper.get('[data-testid="cache-black-legend"]')
+    expect(legend.text()).toBe('channelMonitorV3.cacheBlackLegend')
+    wrapper.unmount()
   })
 })
 
@@ -157,7 +233,8 @@ describe('ChannelMonitorV3Timeline time alignment', () => {
 
   it('keeps the newer bucket when two timestamps round to the same slot', () => {
     const newer = bucket('critical', 0.8, anchorBucketStart)
-    const older = bucket('healthy', 0, '2026-11-17T11:59:30Z')
+    newer.metrics = { ...newer.metrics, cache_rate: 0.9 }
+    const older = (() => { const b = bucket('healthy', 0, '2026-11-17T11:59:30Z'); b.metrics = { ...b.metrics, cache_rate: 0.9 }; return b })()
     const wrapper = mountTimeline([newer, older])
     expect(occupiedSlots(wrapper)).toEqual([17])
     expect(wrapper.get('.v3-soft-glass-bar').classes()).toContain('bg-gray-950')
