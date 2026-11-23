@@ -97,7 +97,7 @@ func TestHeadObservationPersistsSuccessfulBatchesDespiteRateLimit(t *testing.T) 
 		}
 		call := calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		if call == 2 {
+		if call >= 2 { // the first request answers; the other batch stays rate limited
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
@@ -105,14 +105,17 @@ func TestHeadObservationPersistsSuccessfulBatchesDespiteRateLimit(t *testing.T) 
 	}))
 	t.Cleanup(server.Close)
 
+	noRetryDelay(t)
 	w, mock, handler := workerFixture(t, newRPCFixture(tr))
 	w.pools["bsc"] = rpc.NewPoolWithHTTPClient(server.URL, server.Client())
 	w.addresses = func(context.Context, string) ([]string, error) { return recipients, nil }
 	mock.ExpectExec(`(?s)UPDATE deposit_transactions SET confirmations = \$1.*status = 'pending'`).
 		WithArgs(int64(2), "bsc", tr.TxHash, tr.LogIndex).WillReturnResult(sqlmock.NewResult(0, 1))
 	err := w.observeHead(t.Context(), w.pools["bsc"], w.chains[0], 110)
-	if err == nil || calls.Load() != 2 {
-		t.Fatalf("expected one partial scan error without retry storm: calls=%d err=%v", calls.Load(), err)
+	// One batch answered, the other stayed rate limited: it is re-run a bounded
+	// number of times (first try + maxBatchRetryRounds), never in a storm.
+	if want := int64(1 + 1 + maxBatchRetryRounds); err == nil || calls.Load() != want {
+		t.Fatalf("expected one partial scan error after bounded re-runs (%d requests): calls=%d err=%v", want, calls.Load(), err)
 	}
 	if len(handler.pending) != 1 || len(handler.processed) != 0 {
 		t.Fatalf("successful batch must be displayed as pending only: pending=%d credited=%d", len(handler.pending), len(handler.processed))

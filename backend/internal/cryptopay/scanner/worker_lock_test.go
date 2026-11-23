@@ -29,6 +29,7 @@ type scannerMockPG struct {
 	acquire, release *scannerPGReply
 	beforeWork       func(context.Context, string) error
 	openErr          error
+	key              int64 // expected advisory key; zero means the shared deposit-scan key
 }
 
 type scannerPGReply struct {
@@ -93,8 +94,12 @@ func (c *scannerPGConn) QueryContext(ctx context.Context, query string, args []d
 		return nil, err
 	}
 	if strings.Contains(query, "pg_try_advisory_lock") || strings.Contains(query, "pg_advisory_unlock") {
-		// Keep this literal independent of scanLockKey to catch a wrong key.
-		if len(args) != 1 || args[0].Value != int64(0x43525950544f5343) {
+		// Keep these literals independent of scanLockKey to catch a wrong key.
+		wantKey := int64(0x43525950544f5343)
+		if c.pg.key != 0 {
+			wantKey = c.pg.key
+		}
+		if len(args) != 1 || args[0].Value != wantKey {
 			return nil, fmt.Errorf("unexpected scanner advisory key: %v", args)
 		}
 		p := c.pg

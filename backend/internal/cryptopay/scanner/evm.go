@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"math/rand"
 	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 )
@@ -53,6 +55,59 @@ var scanBatchConcurrency = 8
 // next pass repeats the same burst. Chains with several nodes still run at
 // scanBatchConcurrency.
 var scanBatchesPerEndpoint = 4
+
+// maxBatchRetryRounds is how many extra rounds one scanRange spends re-running
+// ONLY the address batches that failed on a transient error.
+//
+// A range is complete only when every one of its address batches succeeded, and a
+// chain with a few thousand watched addresses has a dozen of them. Public nodes
+// answer a burst of simultaneous getLogs calls with 429 for a few of them; with no
+// retry one rejected batch failed the whole range, the next pass redid ALL the
+// batches in the same burst, and a chain could go hours without finishing a range
+// (Polygon on 2026-11-24: success per range = (1-p)^13). Re-running just the
+// failed batches after a short wait, with fewer in flight each round, turns that
+// into a handful of extra requests.
+//
+// Retries happen only when part of the range succeeded: that is the evidence the
+// pool is answering and merely throttling the burst. A range where every batch
+// failed means an outage or an exhausted allowance; waiting inside the call would
+// only lengthen the pass (which holds the scan lock) and spend more requests, so
+// the next pass and the chain's own backoff handle it.
+const maxBatchRetryRounds = 3
+
+// batchRetryDelay is the wait before retry round `round` (0-based): about 0.5s,
+// 1s, 2s, jittered. A var so tests do not sleep.
+var batchRetryDelay = func(round int) time.Duration {
+	delay := (500 * time.Millisecond) << round
+	return delay/2 + time.Duration(rand.Int63n(int64(delay/2)+1))
+}
+
+// retryableBatchFailure reports whether a failed batch is worth asking again right
+// away: a rate limit, a 5xx or a timeout. Anything else (an invalid response, a
+// rejected range that splitting could not fix, an exhausted daily quota) would
+// fail the same way, so retrying it only spends requests.
+func retryableBatchFailure(err error) bool {
+	var failure *rpc.Failure
+	if !errors.As(err, &failure) || failure.Quota {
+		return false
+	}
+	if failure.IsTransient() {
+		return true
+	}
+	return failure.Kind == "remote" && failure.Reason == "rate limited"
+}
+
+// sleepOrDone waits for d or for ctx, and reports whether the full wait elapsed.
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
 
 // scanWorkers is how many address batches of one scanRange may be in flight.
 func (s *EVMScanner) scanWorkers() int {
@@ -139,7 +194,7 @@ func (s *EVMScanner) scanRange(ctx context.Context, chain string, fromBlock, toB
 	budget := newGetLogsBudget(maxGetLogsSplitRequests)
 	witness := newSyncWitness(s.pool)
 	results := make([]batchResult, (len(recipients)+batchSize-1)/batchSize)
-	runBatches(ctx, len(results), s.scanWorkers(), func(index int) {
+	scanBatch := func(index int) {
 		start := index * batchSize
 		end := min(start+batchSize, len(recipients))
 		result := batchResult{done: true}
@@ -149,7 +204,31 @@ func (s *EVMScanner) scanRange(ctx context.Context, chain string, fromBlock, toB
 			result.transfers = logsToTransfers(chain, logs, recipientSet, outgoing)
 		}
 		results[index] = result
-	})
+	}
+	workers := s.scanWorkers()
+	runBatches(ctx, len(results), workers, scanBatch)
+	// Re-run only the batches that failed transiently, a little later and with fewer
+	// requests in flight each round. A batch that succeeds replaces its failure; a
+	// batch that is not re-run keeps its error, so nothing is ever reported scanned
+	// that was not. The shared budget above still caps the extra getLogs requests.
+	for round := 0; round < maxBatchRetryRounds && ctx.Err() == nil; round++ {
+		var failed []int
+		answered := false
+		for index, result := range results {
+			switch {
+			case !result.done:
+			case result.err == nil:
+				answered = true
+			case retryableBatchFailure(result.err):
+				failed = append(failed, index)
+			}
+		}
+		if !answered || len(failed) == 0 || !sleepOrDone(ctx, batchRetryDelay(round)) {
+			break
+		}
+		workers = max(workers/2, 1)
+		runBatches(ctx, len(failed), workers, func(i int) { scanBatch(failed[i]) })
+	}
 
 	// Assemble strictly by batch index, so neither the transfer order nor the
 	// joined error order depends on which request finished first.
