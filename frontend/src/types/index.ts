@@ -977,6 +977,8 @@ export interface UpdateApiKeyRequest {
   auto_block_datacenter_ips?: boolean
   // 轮换密钥：重新生成 key 值，旧值立即失效；被风控停用的 key 恢复可用。
   regenerate_key?: boolean
+  // 本次编辑会下发明文（regenerate_key=true）时的三选一身份校验载荷。
+  verification?: ApiKeyVerificationPayload
 }
 
 export interface CreateGroupRequest {

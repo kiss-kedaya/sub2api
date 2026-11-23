@@ -77,12 +77,15 @@ const (
 	// requests carry batch=true plus requested/succeeded/failed counts.
 	// The plaintext key never enters the audit row.
 	AuditActionAPIKeyRotate = "api_key.rotate"
+	// AuditActionAPIKeyUpdate 是编辑 Key（PUT /keys/:id 且未轮换）的动作名。
+	// 名字沿用审计中间件按路由自动推导的值。
 	// API Key 三选一身份校验（密码 / TOTP / Passkey）审计动作。
 	// 创建 / 二次查看的校验结果写在主审计记录的 extra 里（api_key_verification /
 	// api_key_auth_factor）；这里只固定「Passkey 校验」与「二次查看授权」两个
 	// 独立动作名，便于按动作检索。密码、动态码、断言、grant 明文永远不进审计。
 	AuditActionAPIKeyPasskeyVerify   = "api_key.verify.passkey"
 	AuditActionAPIKeyRevealAuthorize = "api_key.reveal.authorize"
+	AuditActionAPIKeyUpdate          = "api_key.update"
 
 	// 第三方登录（OAuth / 扫码 / 设备登录）与 2FA 挑战的固定动作名。
 	// 与 AuditAuthMethodOAuth / AuditAuthMethodPasskey 配套，让「哪个渠道、

@@ -230,12 +230,21 @@ export default {
       expiresAt: 'Expires {date}',
       neverExpires: 'Never expires'
     },
+    // Single-key rotation: the old key dies immediately and the new plaintext
+    // is shown once; identity must be verified before the plaintext is issued.
+    rotateVerify: {
+      title: 'Identity verification',
+      hint: 'Rotating "{name}" invalidates the old key immediately and returns the new plaintext, so verify your identity first.',
+      confirm: 'Verify and rotate',
+    },
     // Bulk rotation: confirm, per-item status, copy all, per-item re-seal.
     batchRotate: {
       entry: 'Bulk rotate',
       title: 'Bulk rotate keys',
       confirm: 'Rotate the selected {count} keys? The old keys stop working immediately and each new plaintext is shown only once in the result.',
       confirmAction: 'Rotate now',
+      verifyTitle: 'Identity verification',
+      verifyHint: 'Bulk rotation returns the new plaintext of {count} keys, so verify your identity first.',
       resultTitle: 'Bulk rotation result',
       summary: '{succeeded} rotated, {failed} failed',
       copyAll: 'Copy all',

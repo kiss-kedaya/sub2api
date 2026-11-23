@@ -31,6 +31,12 @@ var (
 	ErrIdempotencyRetryBackoff   = infraerrors.Conflict("IDEMPOTENCY_RETRY_BACKOFF", "idempotent request is in retry backoff window")
 	ErrIdempotencyStoreUnavail   = infraerrors.ServiceUnavailable("IDEMPOTENCY_STORE_UNAVAILABLE", "idempotency store unavailable")
 	ErrIdempotencyInvalidPayload = infraerrors.BadRequest("IDEMPOTENCY_PAYLOAD_INVALID", "failed to normalize request payload")
+	// ErrIdempotencyReplayForbidden 表示 Idempotency-Key 命中了历史成功回执，
+	// 但本次请求无权复用（ReplayGuard 判定为否：例如它没有重新完成身份校验）。
+	// 返回 400 让调用方按普通业务错误处理：绝不把存储响应交出去。
+	ErrIdempotencyReplayForbidden = infraerrors.BadRequest(
+		"IDEMPOTENCY_REPLAY_FORBIDDEN",
+		"this idempotency key already has a result that cannot be replayed; retry with a fresh request")
 )
 
 type IdempotencyRecord struct {
@@ -89,6 +95,11 @@ type IdempotencyExecuteOptions struct {
 	RequireKey             bool
 	MaxStoredResponseLen   int
 	PreserveStoredResponse bool
+	// ReplayGuard 在「命中已成功的存储回执」时被调用：返回 false 表示本次
+	// 请求不允许复用历史回执（例如它没有重新完成身份校验），此时协调器
+	// 不会把存储响应交出去，而是抛 ErrIdempotencyReplayForbidden。
+	// nil 表示不做额外判定（既有调用方行为不变）。
+	ReplayGuard func() (bool, error)
 }
 
 type IdempotencyExecuteResult struct {
@@ -351,6 +362,17 @@ func (c *IdempotencyCoordinator) Execute(
 		if !reclaimedByExpired {
 			switch existing.Status {
 			case IdempotencyStatusSucceeded:
+				if opts.ReplayGuard != nil {
+					allowed, guardErr := opts.ReplayGuard()
+					if guardErr != nil {
+						return nil, guardErr
+					}
+					if !allowed {
+						recordIdempotencyConflict(opts.Route, opts.Scope, map[string]string{"reason": "replay_guard_rejected"})
+						logIdempotencyAudit(opts.Route, opts.Scope, keyHash, "succeeded->replay_rejected", false, nil)
+						return nil, ErrIdempotencyReplayForbidden
+					}
+				}
 				data, parseErr := c.decodeStoredResponse(existing.ResponseBody)
 				if parseErr != nil {
 					RecordIdempotencyStoreUnavailable(opts.Route, opts.Scope, "decode_stored_response_error")

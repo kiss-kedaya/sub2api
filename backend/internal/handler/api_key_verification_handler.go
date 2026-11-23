@@ -241,12 +241,20 @@ func annotateKeyShowVerification(c *gin.Context, method string) {
 	setVerificationAudit(c, &service.APIKeyVerificationResult{Factor: method}, auditVerificationVerified, "")
 }
 
-// keyVerificationGuard 在真正创建 Key 前做身份校验。
+// keyVerificationGuard 在真正下发 / 变更 Key 明文前做身份校验。
 //
 // 账号存在可用因子 → 必须带 verification 且校验通过；一个可用因子都没有
 // （OAuth-only 且未绑 2FA）→ 放行并在审计里记 skipped_no_factor，这类账号
-// 只能创建时一次性显示明文（无登录密码可用于本地派生密钥）。
-func (h *APIKeyHandler) keyVerificationGuard(c *gin.Context, userID int64, verification *apiKeyVerificationRequest) (string, error) {
+// 只能一次性显示明文（无登录密码可用于本地派生密钥）。
+//
+// 创建（POST /keys）与批量轮换（POST /keys/batch-rotate）走 VerifyForCreate；
+// 会回执明文的编辑（PUT /keys/:id）走 VerifyForKeyEdit（先判归属再校验）。
+// apiKeyID<=0 表示「还没有 Key」（创建路径）。
+func (h *APIKeyHandler) keyVerificationGuard(
+	c *gin.Context,
+	userID, apiKeyID int64,
+	verification *apiKeyVerificationRequest,
+) (string, error) {
 	if h == nil || h.verificationService == nil {
 		// 非 wire 装配的旧测试 / 嵌入方：跳过校验，保持既有行为。
 		return "", nil
@@ -254,7 +262,15 @@ func (h *APIKeyHandler) keyVerificationGuard(c *gin.Context, userID int64, verif
 	if userID <= 0 {
 		return "", service.ErrAPIKeyVerificationUnavailable
 	}
-	result, err := h.verificationService.VerifyForCreate(c.Request.Context(), userID, verification.toService())
+	var (
+		result *service.APIKeyVerificationResult
+		err    error
+	)
+	if apiKeyID > 0 {
+		result, err = h.verificationService.VerifyForKeyEdit(c.Request.Context(), userID, apiKeyID, verification.toService())
+	} else {
+		result, err = h.verificationService.VerifyForCreate(c.Request.Context(), userID, verification.toService())
+	}
 	if err != nil {
 		setVerificationAudit(c, nil, auditVerificationRejected, infraerrors.Reason(err))
 		return "", err
@@ -263,7 +279,19 @@ func (h *APIKeyHandler) keyVerificationGuard(c *gin.Context, userID int64, verif
 	if result != nil {
 		method = result.Factor
 	}
+	// 成功（含 skipped_no_factor 的放行）才打标记：幂等中间件只认「本请求
+	// 已经过校验」的瞬时重放，历史回执 / 跨请求重放一律重新校验。
+	c.Set(service.ApiKeyVerificationGuardPassedKey, true)
 	return method, nil
+}
+
+// keyUpdateEmitsPlaintext 报告这次编辑是否会回执明文 Key。
+//
+// PUT /keys/:id 唯一的明文回执是 regenerate_key=true：轮换出新明文、旧值
+// 立刻失效。改名 / 配额 / 白名单等编辑只回脱敏视图，不下发明文，因此不要求
+// 身份校验（这类高频操作不能每次弹 TOTP）。
+func keyUpdateEmitsPlaintext(req UpdateAPIKeyRequest) bool {
+	return req.RegenerateKey
 }
 
 // keyVerificationGrantHeader 是二次查看密文时携带 grant 的请求头名。
