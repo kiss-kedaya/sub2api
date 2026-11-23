@@ -383,6 +383,50 @@ func TestAccountConnectivityTestIsSecretFreeWhileCredentialAccessStaysGated(t *t
 	}
 }
 
+// 上游模型目录同步/预览只搬模型元数据：同步把模型能力快照写入 accounts.extra
+// （模型 ID/上下文/模态等公开元数据），预览不落库；两条都不得回凭据、不得改
+// 账号配置/权限/资金。这是「模型白名单 → 同步上游模型被 2FA 误杀」的回归断言。
+func TestUpstreamModelCatalogSyncIsSecretFreeWhileAccountSecretsStayGated(t *testing.T) {
+	for _, tc := range []struct {
+		path   string
+		reason Reason
+	}{
+		{"/api/v1/admin/accounts/:id/models/sync-upstream", ReasonUpstreamModelCatalogSync},
+		{"/api/v1/admin/accounts/models/sync-upstream-preview", ReasonUpstreamModelCatalogPreview},
+	} {
+		resolved, ok := Resolve("POST", tc.path)
+		if !ok {
+			t.Fatalf("POST %s 未归类（运行时按 step-up fail-closed）", tc.path)
+		}
+		if resolved.Class != ClassSecretFree || resolved.Reason != tc.reason {
+			t.Fatalf("POST %s 应为 secret_free/%s，实际 %s/%s", tc.path, tc.reason, resolved.Class, resolved.Reason)
+		}
+		if resolved.Resource != ResourceNone {
+			t.Fatalf("POST %s 不持有敏感资源，实际 %s", tc.path, resolved.Resource)
+		}
+		if IsStepUpRequired("POST", tc.path) {
+			t.Fatalf("POST %s 不应再要求 step-up", tc.path)
+		}
+		// 仍然只允许真人会话调用：不能顺带进机器白名单。
+		if IsMachineAllowlisted("POST", tc.path) {
+			t.Fatalf("POST %s 不得进入机器白名单（机器凭据无法完成 2FA）", tc.path)
+		}
+	}
+
+	// 同族的账号写操作/凭据回读/导出继续保持 step-up。
+	for _, route := range []struct{ method, path string }{
+		{"GET", "/api/v1/admin/accounts/:id/credential"},
+		{"GET", "/api/v1/admin/accounts/data"},
+		{"PUT", "/api/v1/admin/accounts/:id"},
+		{"POST", "/api/v1/admin/accounts/:id/refresh"},
+		{"POST", "/api/v1/admin/accounts/:id/model-whitelist-auto-sync/run"},
+	} {
+		if !IsStepUpRequired(route.method, route.path) {
+			t.Fatalf("%s %s 必须继续保持 step-up", route.method, route.path)
+		}
+	}
+}
+
 // 卡密读模型已硬化为「永远只回掩码」：列表/详情/统计不再要求 step-up（页面
 // 加载与对账查询不该弹 TOTP），但批量导出、写操作、机器凭据访问仍受限制。
 // 这是 2026-11 2FA 触发矩阵复核里最大的一处「只读 GET 被误归类」修正。
@@ -441,10 +485,16 @@ func TestLowRiskAdminProbesAreSecretFree(t *testing.T) {
 		{"POST", "/api/v1/admin/accounts/check-mixed-channel", ReasonAccountBindingPreflight},
 		{"POST", "/api/v1/admin/accounts/:id/schedulable-timers/preview", ReasonAccountTimerPreview},
 		{"POST", "/api/v1/admin/accounts/:id/ollama-cloud-usage/refresh", ReasonAccountUsageAggregate},
+		// 「模型限制 → 模型白名单」的两个同步按钮：只拉上游模型元数据/一次预览，
+		// 同步仅写 accounts.extra[upstream_models] 模型能力快照（公开元数据）。
+		{"POST", "/api/v1/admin/accounts/:id/models/sync-upstream", ReasonUpstreamModelCatalogSync},
+		{"POST", "/api/v1/admin/accounts/models/sync-upstream-preview", ReasonUpstreamModelCatalogPreview},
 		{"POST", "/api/v1/admin/upstream-monitor/channels/:id/announcements/sync", ReasonChannelAnnouncementSync},
 		{"POST", "/api/v1/admin/settings/test-smtp", ReasonSMTPConnectivityTest},
 		{"POST", "/api/v1/admin/settings/web-search-emulation/test", ReasonWebSearchEmulationProbe},
 		{"POST", "/api/v1/admin/settings/ip-risk/check", ReasonIPRiskPreflightCheck},
+		// 邮件模板预览：内存渲染未保存的模板，不写库/不出站/不碰密钥。
+		{"POST", "/api/v1/admin/settings/email-template-preview", ReasonEmailTemplatePreview},
 	}
 	for _, tc := range cases {
 		resolved, ok := Resolve(tc.method, tc.path)
@@ -484,10 +534,10 @@ func TestLowRiskAdminProbesDoNotCrossSensitiveBoundaries(t *testing.T) {
 		{"POST", "/api/v1/admin/accounts/batch"},
 		{"POST", "/api/v1/admin/accounts/:id/refresh"},
 		{"POST", "/api/v1/admin/accounts/:id/model-whitelist-auto-sync/run"},
-		// 上游模型目录同步会写库（upstream_models），预览接受请求体 base_url+api_key
-		// 做任意出站（SSRF 面），二者都不属于「只读/低风险」，必须保持 step-up。
-		{"POST", "/api/v1/admin/accounts/:id/models/sync-upstream"},
-		{"POST", "/api/v1/admin/accounts/models/sync-upstream-preview"},
+		// CRS 同步/预览会用请求体里的 base_url + 账号密码做真实出站登录，并返回
+		// CRS 账号元数据：属于「管理员可指向任意地址的外部系统读取」，保持 step-up。
+		{"POST", "/api/v1/admin/accounts/sync/crs"},
+		{"POST", "/api/v1/admin/accounts/sync/crs/preview"},
 		// 代理写操作
 		{"POST", "/api/v1/admin/proxies"},
 		{"PUT", "/api/v1/admin/proxies/:id"},

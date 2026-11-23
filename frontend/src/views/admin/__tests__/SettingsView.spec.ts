@@ -887,7 +887,7 @@ describe("admin SettingsView payment visible method controls", () => {
     formOf(wrapper).site_name = "Step Up Site";
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
-    await openTotpStepUpDialog(wrapper).get('button').trigger("click");
+    await openTotpStepUpDialog(wrapper).get('[data-testid="stepup-cancel"]').trigger("click");
     await flushPromises();
     expect(updateSettings).toHaveBeenCalledTimes(1);
     expect(verifyStepUp).not.toHaveBeenCalled();
@@ -1662,7 +1662,7 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.get(".provider-save-stub").trigger("click");
     await flushPromises();
 
-    await openTotpStepUpDialog(wrapper).get("button").trigger("click");
+    await openTotpStepUpDialog(wrapper).get('[data-testid="stepup-cancel"]').trigger("click");
     await flushPromises();
 
     expect(updateProvider).toHaveBeenCalledTimes(1);

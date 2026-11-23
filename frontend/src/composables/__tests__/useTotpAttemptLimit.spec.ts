@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useTotpAttemptLimit } from '../useTotpAttemptLimit'
+import { TOTP_ATTEMPT_LIMIT, useTotpAttemptLimit } from '../useTotpAttemptLimit'
 
 const BASE_TIME = new Date('2026-11-21T03:00:00Z').getTime()
 
@@ -66,6 +66,21 @@ describe('useTotpAttemptLimit', () => {
     limit.applyServerRetryAfter(0)
     limit.applyServerRetryAfter(Number.NaN)
     expect(limit.canSubmit.value).toBe(true)
+    limit.stopTimer()
+  })
+
+  it('reports remaining attempts inside the rolling window', () => {
+    const limit = useTotpAttemptLimit({ accountKey: () => 'user@example.com' })
+    expect(limit.remainingAttempts.value).toBe(TOTP_ATTEMPT_LIMIT)
+    expect(limit.recordAttempt()).toBe(true)
+    expect(limit.remainingAttempts.value).toBe(TOTP_ATTEMPT_LIMIT - 1)
+    expect(limit.recordAttempt()).toBe(true)
+    expect(limit.remainingAttempts.value).toBe(TOTP_ATTEMPT_LIMIT - 2)
+
+    // 滚动窗口过去后重新计数（refresh 也会在下次提交时自动触发）。
+    vi.advanceTimersByTime(61_000)
+    limit.refresh()
+    expect(limit.remainingAttempts.value).toBe(TOTP_ATTEMPT_LIMIT)
     limit.stopTimer()
   })
 
