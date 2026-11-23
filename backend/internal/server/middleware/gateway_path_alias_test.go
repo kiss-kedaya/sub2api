@@ -81,11 +81,11 @@ func newGatewayPathAliasTestRouter() (*gin.Engine, *[]gatewayPathAliasSeen) {
 	router.GET("/antigravity/v1/models", record)
 	router.GET("/antigravity/v1beta/models", record)
 	router.POST("/antigravity/v1beta/models/*modelAction", record)
-	// /backend-api/codex 前缀（版本段与非版本段并存）
+	// /backend-api/codex 前缀（真实路由**不带**版本段，与生产路由表一致：
+	// /backend-api/codex/responses、/backend-api/codex/models …）
 	router.GET("/backend-api/codex/models", record)
 	router.POST("/backend-api/codex/realtime/calls", record)
 	router.POST("/backend-api/codex/responses", record)
-	router.POST("/backend-api/codex/v1/responses", record)
 	// 反证用：这些路径必须原样透传，不能被规范化。
 	trap := func(status int) gin.HandlerFunc {
 		return func(c *gin.Context) {
@@ -146,7 +146,14 @@ func TestGatewayRouteIndexSupportsExpectedPrefixes(t *testing.T) {
 	// 根前缀是 ""（/v1/messages、/v1beta/models …），/antigravity、/backend-api/codex 各自独立。
 	require.Greater(t, index.gatewayVersionRootCount(""), 0)
 	require.Greater(t, index.gatewayVersionRootCount("/antigravity"), 0)
-	require.Greater(t, index.gatewayVersionRootCount("/backend-api/codex"), 0)
+	// /backend-api/codex 的真实路由不带版本段（生产路由表里没有
+	// /backend-api/codex/v1/responses），所以它不是版本根，而是“无版本段前缀族”。
+	require.Zero(t, index.gatewayVersionRootCount("/backend-api/codex"))
+	require.False(t, index.isVersionlessPrefixFamily(""), "根前缀不能整段剥版本段")
+	require.False(t, index.isVersionlessPrefixFamily("antigravity"), "/antigravity 有带版本段的真实路由")
+	require.False(t, index.isVersionlessPrefixFamily("v1"), "/v1 是版本段本身")
+	require.True(t, index.isVersionlessPrefixFamily("backend-api/codex"))
+	require.False(t, index.isVersionlessPrefixFamily("backend-api"), "/backend-api 自己没挂无版本段模板")
 	// /antigravity/v1beta 本身不是版本根（那是别人多写一层的形态）。
 	require.Zero(t, index.gatewayVersionRootCount("/antigravity/v1beta"))
 }
@@ -197,11 +204,14 @@ func TestGatewayPathAliasFoldsRepeatedVersionSegmentsAfterPrefix(t *testing.T) {
 		{"/antigravity/v1/v1/v1/messages", "/antigravity/v1/messages", "/antigravity/v1", 3, `{"model":"gemini-3-pro"}`},
 		{"/antigravity/v1beta/v1beta/models", "/antigravity/v1beta/models", "/antigravity/v1beta", 2, ``},
 		{"/antigravity/v1beta/models", "", "", 0, ``},
-		// /backend-api/codex 前缀。
-		{"/backend-api/codex/v1/v1/responses", "/backend-api/codex/v1/responses", "/backend-api/codex/v1", 2, `{"model":"gpt-5"}`},
-		{"/backend-api/codex/v1/v1/v1/responses", "/backend-api/codex/v1/responses", "/backend-api/codex/v1", 3, `{"model":"gpt-5"}`},
+		// /backend-api/codex 前缀：真实路由不带版本段，多写的任意个版本段都剥掉。
+		{"/backend-api/codex/v1/v1/responses", "/backend-api/codex/responses", "/backend-api/codex/v1", 2, `{"model":"gpt-5"}`},
+		{"/backend-api/codex/v1/v1/v1/responses", "/backend-api/codex/responses", "/backend-api/codex/v1", 3, `{"model":"gpt-5"}`},
+		// 只写一遍版本段（真实路由不带版本段）：
+		{"/backend-api/codex/v1/responses", "/backend-api/codex/responses", "/backend-api/codex/v1", 1, `{"model":"gpt-5"}`},
+		{"/backend-api/codex/v1beta/responses", "/backend-api/codex/responses", "/backend-api/codex/v1beta", 1, `{"model":"gpt-5"}`},
 
-		{"/backend-api/codex/v1/responses", "", "", 0, `{"model":"gpt-5"}`},
+		{"/backend-api/codex/responses", "", "", 0, `{"model":"gpt-5"}`},
 	}
 	for _, tc := range cases {
 		t.Run(strings.ReplaceAll(tc.path, "/", "_"), func(t *testing.T) {
@@ -288,7 +298,8 @@ func TestGatewayPathAliasAddsMissingVersionPrefix(t *testing.T) {
 		{http.MethodGet, "/models", "/v1/models", ""},
 		// 带前缀的裸路径
 		{http.MethodPost, "/antigravity/messages", "/antigravity/v1/messages", "/antigravity"},
-		{http.MethodGet, "/antigravity/models", "/antigravity/v1/models", "/antigravity"},
+		// /antigravity/models 是真实路由（直接透传），不能被补成 /antigravity/v1/models；
+		// 见 TestGatewayPathAliasDoesNotRewriteRealRoutes。
 	}
 	for _, tc := range cases {
 		router, seen := newGatewayPathAliasTestRouter()
@@ -483,7 +494,7 @@ func TestGatewayPathAliasRouteClassification(t *testing.T) {
 		{http.MethodGet, "/v1beta/models"},
 		{http.MethodPost, "/antigravity/v1/messages"},
 		{http.MethodGet, "/antigravity/v1beta/models"},
-		{http.MethodPost, "/backend-api/codex/v1/responses"},
+		{http.MethodPost, "/backend-api/codex/responses"},
 		{http.MethodGet, "/messages"},
 		{http.MethodPost, "/chat/completions"},
 	} {
@@ -498,5 +509,100 @@ func TestGatewayPathAliasRouteClassification(t *testing.T) {
 	} {
 		require.False(t, matchGatewayRoute(index, tc.method, tc.path),
 			"非网关路径 %s %s 不能进入网关索引", tc.method, tc.path)
+	}
+}
+
+// TestGatewayPathAliasDoesNotRewriteRealRoutes 保护“原路径命中就不动”：
+// /antigravity/models、/attributes 这类真实路由必须原样透传，不能被补成带版本段的路径。
+func TestGatewayPathAliasDoesNotRewriteRealRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/antigravity/models"},
+		{http.MethodGet, "/antigravity/models?x=1"},
+	} {
+		router, seen := newGatewayPathAliasTestRouter()
+		handler := GatewayPathAlias(router)
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, "path=%q", tc.path)
+		require.Len(t, *seen, 1, "path=%q", tc.path)
+		require.Equal(t, strings.SplitN(tc.path, "?", 2)[0], (*seen)[0].Path, "path=%q 是真实路由，不能被改写", tc.path)
+	}
+}
+
+// TestGatewayPathAliasAntigravityInsertsVersionOnlyWhenUnique 对应需求 R2：
+// 裸路径未命中任何真实路由、但补上版本段后唯一命中一条模板时才补。
+func TestGatewayPathAliasAntigravityInsertsVersionOnlyWhenUnique(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	seen := make([]string, 0, 4)
+	record := func(c *gin.Context) {
+		seen = append(seen, c.Request.URL.Path)
+		c.Status(http.StatusOK)
+	}
+	// 模仿“只有 v1 下挂了 models/:model”的真实路由形态。
+	router.GET("/antigravity/models", record)
+	router.GET("/antigravity/v1/models/:model", record)
+	handler := GatewayPathAlias(router)
+
+	req := httptest.NewRequest(http.MethodGet, "/antigravity/models/gemini-3-pro?x=1", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, []string{"/antigravity/v1/models/gemini-3-pro"}, seen, "唯一命中时应补 /v1")
+
+	// 同一条模板在 v1 与 v1beta 下都存在时命中两条，保守规则：保持原样 404。
+	routerDup := gin.New()
+	routerDup.GET("/antigravity/v1/models/:model", record)
+	routerDup.GET("/antigravity/v1beta/models/:model", record)
+	seen = seen[:0]
+	w = httptest.NewRecorder()
+	GatewayPathAlias(routerDup).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/antigravity/models/xxx", nil))
+	require.Equal(t, http.StatusNotFound, w.Code, "命中多条时不能猜用户的版本族（实际命中 %v）", seen)
+	require.Empty(t, seen)
+
+	// 零条命中时同样保持原样 404。
+	w = httptest.NewRecorder()
+	GatewayPathAlias(routerDup).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/antigravity/definitely-not-a-route", nil))
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.Empty(t, seen)
+}
+
+// TestGatewayPathAliasCodexPrefixStripsAnyVersionCount 对应需求 R1：
+// /backend-api/codex 下多写的任意个版本段都整段剥掉并命中 /backend-api/codex/responses。
+func TestGatewayPathAliasCodexPrefixStripsAnyVersionCount(t *testing.T) {
+	cases := []struct {
+		path       string
+		wantPath   string
+		wantPrefix string
+		wantDupes  int
+	}{
+		{"/backend-api/codex/v1/responses", "/backend-api/codex/responses", "/backend-api/codex/v1", 1},
+		{"/backend-api/codex/v1/v1/responses", "/backend-api/codex/responses", "/backend-api/codex/v1", 2},
+		{"/backend-api/codex/v1/v1/v1/responses", "/backend-api/codex/responses", "/backend-api/codex/v1", 3},
+		{"/backend-api/codex/v1beta/responses", "/backend-api/codex/responses", "/backend-api/codex/v1beta", 1},
+		{"/backend-api/codex/v1beta/v1beta/responses", "/backend-api/codex/responses", "/backend-api/codex/v1beta", 2},
+	}
+	for _, tc := range cases {
+		t.Run(strings.ReplaceAll(tc.path, "/", "_"), func(t *testing.T) {
+			router, seen := newGatewayPathAliasTestRouter()
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(`{"model":"gpt-5"}`))
+			w := httptest.NewRecorder()
+			GatewayPathAlias(router).ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code, "path=%q", tc.path)
+			require.Len(t, *seen, 1, "path=%q", tc.path)
+			got := (*seen)[0]
+			require.Equal(t, tc.wantPath, got.Path, "path=%q", tc.path)
+			require.True(t, got.HasAlias, "path=%q 应注入规范化信息", tc.path)
+			require.Equal(t, PathAliasRuleDuplicateVersionPrefix, got.AliasRule, "path=%q", tc.path)
+			require.Equal(t, tc.wantPrefix, got.AliasPref, "path=%q", tc.path)
+			require.Equal(t, tc.wantDupes, got.AliasDupes, "path=%q", tc.path)
+			require.Equal(t, `{"model":"gpt-5"}`, got.Body, "body 必须原样保留")
+		})
 	}
 }

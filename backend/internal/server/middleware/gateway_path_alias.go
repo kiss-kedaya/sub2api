@@ -13,20 +13,30 @@ import (
 )
 
 // 本文件在 gin 路由匹配之前规范化网关协议路径，容忍客户端把 Base URL 填错。
-// 路由表推导（受支持前缀、版本段位置）与匹配逻辑在 gateway_path_index.go。
+// 路由表推导（受支持前缀、版本段位置、模板集合）与匹配逻辑在 gateway_path_index.go，
+// “手写版本片段”的折叠/剥离在 gateway_path_strip.go。
 //
 //  1. 重复版本段折叠：任意受支持前缀（根、/antigravity、/backend-api/codex …）之后
 //     连续重复的同一族版本段折叠成一个：
 //     /v1/v1/messages、/v1/v1/v1/messages、/antigravity/v1/v1/messages、
-//     /antigravity/v1beta/v1beta/models、/backend-api/codex/v1/v1/responses …；
-//     不同族（/v1/v1beta）绝不折叠，/v1beta 永远不会变成 /v1。
-//  2. 缺版本段补齐：根前缀与各前缀之后漏写版本段的路径补上，且必须真实命中路由：
+//     /antigravity/v1beta/v1beta/models …；不同族（/v1/v1beta）绝不折叠，
+//     /v1beta 永远不会变成 /v1。
+//  2. 无版本段前缀族剥离任意个版本段：/backend-api/codex 的真实路由本身不带版本段
+//     （/backend-api/codex/responses），所以该族里客户端手写的版本段（一个或多个、
+//     v1 或 v1beta）全部剥掉：/backend-api/codex/v1/responses、
+//     /backend-api/codex/v1/v1/responses、/backend-api/codex/v1beta/responses、
+//     /backend-api/codex/v1/v1/v1/responses → /backend-api/codex/responses。
+//  3. 缺版本段补齐：根前缀与各前缀之后漏写版本段的路径补上，且必须真实命中路由：
 //     /messages → /v1/messages、/chat/completions → /v1/chat/completions、
-//     /antigravity/messages → /antigravity/v1/messages。
+//     /antigravity/messages → /antigravity/v1/messages。带版本段前缀族（/antigravity）
+//     的补版本段是保守的：只有**原路径完全未命中任何路由**、且补一个版本段后
+//     **唯一命中一条模板**时才补（/antigravity/models/xxx → 唯一命中
+//     /antigravity/v1beta/models/:model）；命中多条或零条一律保持原样 404。
 //
 // 规范写法（/v1/messages、/v1beta/models、/antigravity/v1beta/models、
-// /backend-api/codex/responses）一个字节都不改；/api/v1/*、/admin/*、静态资源、
-// /health、SPA 页面（/usage、/dashboard …）也不会被改写。
+// /backend-api/codex/responses）一个字节都不改；真实路由（/antigravity/models）也
+// 一个字节都不改；/api/v1/*、/admin/*、静态资源、/health、SPA 页面（/usage、
+// /dashboard …）同样不会被改写。
 //
 // 规范化只修改 URL.Path，query string、header、body、HTTP method 全部保持原样；
 // 重写之后仍然交给同一个 gin 路由 + 同一套中间件链处理，因此鉴权、限流、计费、
@@ -70,6 +80,10 @@ type gatewayPathAliasInfo struct {
 	Prefix            string
 	Version           string
 	DuplicatePrefixes int
+	// VersionlessPrefix 为 true 表示这次是把“该前缀族不存在版本段”的多写版本段
+	// 整段剥掉了（/backend-api/codex/v1/v1/responses → /backend-api/codex/responses），
+	// 而不是折叠成单个版本段（/antigravity/v1/v1/messages → /antigravity/v1/messages）。
+	VersionlessPrefix bool
 }
 
 type gatewayPathAliasContextKey struct{}
@@ -229,6 +243,7 @@ func logGatewayPathNormalized(ctx context.Context, r *http.Request, info gateway
 		zap.String("normalized_path", info.Normalized),
 		zap.Int("duplicate_version_segments", info.DuplicatePrefixes),
 		zap.Int("duplicate_v1_prefixes", duplicateV1Prefixes),
+		zap.Bool("versionless_prefix", info.VersionlessPrefix),
 		zap.String("method", method),
 		zap.String("remote_addr", remoteAddr),
 		zap.String("user_agent", truncateGatewayLogField(userAgent, 256)),

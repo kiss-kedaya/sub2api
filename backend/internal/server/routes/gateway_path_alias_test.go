@@ -346,8 +346,10 @@ func TestGatewayPathAliasNeverFoldsV1BetaIntoV1(t *testing.T) {
 }
 
 // TestGatewayPathAliasCodexPrefixNormalizedFormsPassThrough 确认 /backend-api/codex 前缀
-// 下的规范写法不被改写：它本身就带端点、没有版本段，属于合规路径（应为 401 而不是 404），
-// 而“多写一层 /v1”的写法不在本修复范围内（保持 404，不改语义）。
+// 下的规范写法不被改写：它本身就带端点、没有版本段，属于合规路径（应为 401 而不是 404）。
+// 多写版本段的写法（/backend-api/codex/v1/responses、/v1/v1/responses …）属于
+// “真实路由不带版本段的前缀族”规则：整段剥掉后命中 /backend-api/codex/responses，
+// 同样是 401（见 TestGatewayPathAliasCodexVersionlessPrefixStripsAnyVersionSegments）。
 func TestGatewayPathAliasCodexPrefixNormalizedFormsPassThrough(t *testing.T) {
 	router, probe := newGatewayPathAliasRoutesRouter(t)
 	handlerUnderTest := servermiddleware.GatewayPathAlias(router)
@@ -368,16 +370,162 @@ func TestGatewayPathAliasCodexPrefixNormalizedFormsPassThrough(t *testing.T) {
 		require.Equal(t, http.StatusUnauthorized, w.Code, "path=%q 应命中网关鉴权", tc.path)
 		require.Equal(t, tc.path, probe.last(t).Path, "path=%q 不能被改写", tc.path)
 	}
+}
 
-	for _, path := range []string{
-		"/backend-api/codex/v1/v1/responses",
-		"/backend-api/codex/v1/responses",
-	} {
-		probe.reset()
-		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
-		w := httptest.NewRecorder()
-		handlerUnderTest.ServeHTTP(w, req)
-		require.Equal(t, http.StatusNotFound, w.Code, "path=%q 不在本次修复范围，保持原语义", path)
-		require.Empty(t, probe.seen, "path=%q 不应命中鉴权", path)
+// TestGatewayPathAliasCodexVersionlessPrefixStripsAnyVersionSegments 对应需求 R1：
+// /backend-api/codex 的真实路由不带版本段（/backend-api/codex/responses），所以客户端
+// 多写的任意个版本段都整段剥掉，必须进鉴权（401）而不是 404。
+func TestGatewayPathAliasCodexVersionlessPrefixStripsAnyVersionSegments(t *testing.T) {
+	router, probe := newGatewayPathAliasRoutesRouter(t)
+	handlerUnderTest := servermiddleware.GatewayPathAlias(router)
+
+	body := `{"model":"gpt-5","stream":true}`
+	cases := []struct {
+		method    string
+		path      string
+		canonical string
+	}{
+		{http.MethodPost, "/backend-api/codex/responses", "/backend-api/codex/responses"},
+		{http.MethodPost, "/backend-api/codex/v1/responses", "/backend-api/codex/responses"},
+		{http.MethodPost, "/backend-api/codex/v1/v1/responses", "/backend-api/codex/responses"},
+		{http.MethodPost, "/backend-api/codex/v1/v1/v1/responses", "/backend-api/codex/responses"},
+		{http.MethodPost, "/backend-api/codex/v1beta/responses", "/backend-api/codex/responses"},
+		{http.MethodGet, "/backend-api/codex/v1/models", "/backend-api/codex/models"},
+		{http.MethodGet, "/backend-api/codex/v1beta/v1beta/models", "/backend-api/codex/models"},
+		// /responses 的 catch-all 子路径同样保留。
+		{http.MethodPost, "/backend-api/codex/v1/responses/input_items", "/backend-api/codex/responses/input_items"},
 	}
+	for _, tc := range cases {
+		t.Run(strings.ReplaceAll(tc.path, "/", "_"), func(t *testing.T) {
+			probe.reset()
+			requestPath := tc.path + "?trace=%2Fabc&stream=true"
+			var requestBody io.Reader
+			if tc.method == http.MethodPost {
+				requestBody = strings.NewReader(body)
+			}
+			req := httptest.NewRequest(tc.method, requestPath, requestBody)
+			req.Header.Set("X-Client-Base-Url", "https://kedaya.ai"+tc.path)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			handlerUnderTest.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusUnauthorized, w.Code,
+				"method=%s path=%q 应进入鉴权返回 401（而不是 404）", tc.method, tc.path)
+			seen := probe.last(t)
+			require.Equal(t, tc.method, seen.Method, "HTTP method 必须保留")
+			require.Equal(t, tc.canonical, seen.Path, "path=%q 应规范化为 %q", tc.path, tc.canonical)
+			require.Equal(t, "trace=%2Fabc&stream=true", seen.RawQuery, "query string 必须原样保留")
+			require.Equal(t, "https://kedaya.ai"+tc.path, seen.Header, "header 必须原样保留")
+			if tc.method == http.MethodPost {
+				require.Equal(t, body, seen.Body, "body 必须原样保留")
+			}
+		})
+	}
+}
+
+// TestGatewayPathAliasAntigravityExactRouteNotRewritten 对应需求 R2 的“原路径命中就不动”：
+// /antigravity/models 是真实路由，必须原样透传（401），不能补成 /antigravity/v1/models。
+// 真实路由表里 /antigravity 下没有裸的 /antigravity/models/:model，所以 /antigravity/models/xxx
+// 保持 404（保守规则：只有补版本段能唯一命中时才补）。
+func TestGatewayPathAliasAntigravityExactRouteNotRewritten(t *testing.T) {
+	router, probe := newGatewayPathAliasRoutesRouter(t)
+	handlerUnderTest := servermiddleware.GatewayPathAlias(router)
+
+	// /antigravity/models 是真实路由，命中后由 regional 中间件先返回 401（而不是 404，
+	// 也不是被补成 /antigravity/v1/models）。这里只需要断言“没有被重写成带版本段的
+	// 路径”：如果被重写，鉴权探针会看到 /antigravity/v1/models。
+	probe.reset()
+	w := httptest.NewRecorder()
+	handlerUnderTest.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/antigravity/models?x=1", nil))
+	require.Equal(t, http.StatusUnauthorized, w.Code, "/antigravity/models 是真实路由，应命中路由而不是 404")
+	for _, seen := range probe.seen {
+		require.Equal(t, "/antigravity/models", seen.Path, "/antigravity/models 不能被改写")
+		require.Equal(t, "x=1", seen.RawQuery, "query string 必须原样保留")
+	}
+
+	// R2（补版本段）：生产路由表里没有 /antigravity/models/:model，但唯一存在
+	// /antigravity/v1beta/models/:model，所以 /antigravity/models/xxx 补上版本段后
+	// 命中 /antigravity/v1beta/models/xxx，必须进鉴权（401）而不是 404。
+	// 注意 /antigravity：v1 下只有 /antigravity/v1/models（无 :model），v1beta 下才有
+	// :model，所以这里只命中一条模板。
+	probe.reset()
+	w = httptest.NewRecorder()
+	handlerUnderTest.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/antigravity/models/gemini-3-pro", nil))
+	require.Equal(t, http.StatusUnauthorized, w.Code,
+		"/antigravity/models/gemini-3-pro 应补版本段后命中 /antigravity/v1beta/models/:model 并进入鉴权")
+	for _, seen := range probe.seen {
+		require.Equal(t, "/antigravity/v1beta/models/gemini-3-pro", seen.Path, "应补成唯一命中的版本族")
+	}
+
+	// 反例：命中多条模板时保持原样 404。生产路由表里 /antigravity/v1beta/models 与
+	// /antigravity/v1beta/models/:model 都存在，且没有裸的 /antigravity/models/:model，
+	// 这里构造 /antigravity/v1beta/models 之外再验证“未知端点不补”。
+	probe.reset()
+	w = httptest.NewRecorder()
+	handlerUnderTest.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/antigravity/definitely-not-a-route", nil))
+	require.Equal(t, http.StatusNotFound, w.Code, "未知端点不能凭空补版本段")
+	require.Empty(t, probe.seen)
+}
+
+// TestGatewayPathAliasDiagnosticsAndSafetyBoundariesUnchanged 覆盖反例：诊断 JSON 格式、
+// 非网关路径、/v1beta 不折成 /v1、/api/v1/* 不改写。
+func TestGatewayPathAliasDiagnosticsAndSafetyBoundariesUnchanged(t *testing.T) {
+	router, probe := newGatewayPathAliasRoutesRouter(t)
+	router.GET("/api/v1/admin/users", func(c *gin.Context) { c.String(http.StatusOK, "admin-api") })
+	handlerUnderTest := servermiddleware.GatewayPathAlias(router)
+
+	// 反例 1：/v1beta 不能被折成 /v1（不同族绝不折叠）。
+	for _, path := range []string{"/v1beta/models", "/antigravity/v1beta/models"} {
+		probe.reset()
+		w := httptest.NewRecorder()
+		handlerUnderTest.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusUnauthorized, w.Code, "path=%q 应命中网关路由", path)
+		for _, seen := range probe.seen {
+			require.Equal(t, path, seen.Path, "path=%q 不能被改写", path)
+		}
+	}
+	// 反例 2：/api/v1/* 一律不改写。
+	probe.reset()
+	w := httptest.NewRecorder()
+	handlerUnderTest.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/v1/admin/x", nil))
+	require.Equal(t, http.StatusNotFound, w.Code, "/api/v1/v1/admin/x 不能命中任何网关路由")
+	probe.reset()
+	w = httptest.NewRecorder()
+	handlerUnderTest.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "admin-api", w.Body.String(), "/api/v1/* 必须原样透传")
+	require.Empty(t, probe.seen, "/api/v1/* 不能进网关鉴权")
+
+	// 反例 3：未知路径仍 404，且诊断 JSON 格式不变。
+	probe.reset()
+	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/v1/v1/definitely-not-a-route", strings.NewReader(`{}`))
+	req.Host = "kedaya.ai"
+	handlerUnderTest.ServeHTTP(w, req)
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.Contains(t, w.Header().Get("Content-Type"), "application/json")
+	require.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+	var payload struct {
+		Error struct {
+			Type           string `json:"type"`
+			Code           string `json:"code"`
+			Message        string `json:"message"`
+			Hint           string `json:"hint"`
+			OriginalPath   string `json:"original_path"`
+			NormalizedPath string `json:"normalized_path"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &payload))
+	require.Equal(t, "invalid_request_error", payload.Error.Type)
+	require.Equal(t, "gateway_path_not_found", payload.Error.Code)
+	require.Contains(t, payload.Error.Hint, "Base URL")
+	require.Equal(t, "/v1/v1/v1/definitely-not-a-route", payload.Error.OriginalPath)
+	require.Equal(t, "/v1/definitely-not-a-route", payload.Error.NormalizedPath)
+
+	// 反例 4：codex 前缀下的未知端点不会被凭空补/剥成别的路由。
+	probe.reset()
+	w = httptest.NewRecorder()
+	handlerUnderTest.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/backend-api/codex/v1/definitely-not-a-route", strings.NewReader(`{}`)))
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.Empty(t, probe.seen, "未知端点不能进入鉴权")
 }
