@@ -146,13 +146,52 @@ func TestNoteChainPassIgnoresFailuresThatLeftTheCursorFree(t *testing.T) {
 	if _, paused := progressed.forwardPause("polygon", now); paused {
 		t.Fatal("a pass that advanced the cursor must not be treated as a stall")
 	}
-	// a failed head lookup is a stall even though no coverage exists
+	// a failed head lookup says nothing about the forward scan: the pass never reached it
 	blind := &Worker{interval: 5 * time.Second}
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 6; i++ {
 		blind.noteChainPass(ChainConfig{Chain: "polygon", Confirmations: 5}, stageErr("polygon", "head", 0, 0, errors.New("no head")), now)
 	}
-	if _, paused := blind.forwardPause("polygon", now); !paused {
-		t.Fatal("a chain that cannot even read its head is stalled")
+	if _, paused := blind.forwardPause("polygon", now); paused {
+		t.Fatal("head lookup failures alone must never pause the forward scan")
+	}
+}
+
+// The Polygon incident: a rate limited head call about once a minute renewed the
+// pause on every tick, so the pause never lapsed and the forward scan - which the
+// head stage does not feed - starved for hours. A failed head lookup is neutral: it
+// must leave an active pause exactly as it is and let it lapse on schedule.
+func TestHeadLookupFailuresDoNotRenewAnActivePause(t *testing.T) {
+	w := &Worker{interval: 5 * time.Second}
+	chain := chainAt(w, 1000, 100)
+	now := time.Date(2026, 11, 24, 2, 0, 0, 0, time.UTC)
+	stalled := stageErr("polygon", "deposit", 101, 200, errors.New("rpc down"))
+	w.noteChainPass(chain, stalled, now)
+	w.noteChainPass(chain, stalled, now)
+	w.replayMu.Lock()
+	before := *w.chainPause["polygon"]
+	w.replayMu.Unlock()
+
+	for i := 0; i < 30; i++ {
+		headFailure := stageErr("polygon", "head", 0, 0, errors.New("HTTP 429"))
+		w.noteChainPass(chain, headFailure, now.Add(time.Duration(i)*time.Second))
+		w.noteChainPass(chain, errors.Join(headFailure, stageErr("polygon", "observe", 0, 0, errors.New("429"))), now.Add(time.Duration(i)*time.Second))
+	}
+	w.replayMu.Lock()
+	after := *w.chainPause["polygon"]
+	w.replayMu.Unlock()
+	if after != before {
+		t.Fatalf("head lookup failures changed the pause: %+v -> %+v", before, after)
+	}
+	if _, paused := w.forwardPause("polygon", before.next.Add(time.Millisecond)); paused {
+		t.Fatal("the pause must lapse on schedule however often the head lookup fails meanwhile")
+	}
+	// a real forward stall after the pause lapsed still counts, as before
+	w.noteChainPass(chain, stalled, before.next.Add(time.Second))
+	w.replayMu.Lock()
+	renewed := *w.chainPause["polygon"]
+	w.replayMu.Unlock()
+	if renewed.failures != before.failures+1 {
+		t.Fatalf("a genuine forward stall must still extend the streak: %+v -> %+v", before, renewed)
 	}
 }
 
