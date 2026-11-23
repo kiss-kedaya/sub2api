@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
@@ -77,6 +77,7 @@ const messages: Record<string, string> = {
   'keys.smartRoutingRoute': 'Route',
   'keys.smartRoutingEmpty': 'No groups added yet',
   'keys.smartRoutingChangeInEditor': 'Edit smart-routing keys in the dialog',
+  'admin.groups.rateLabel': 'Rate',
   'keys.clickToChangeGroup': 'Click to change group',
   'keys.id': 'ID',
   'keys.currentConcurrency': 'Current Concurrency',
@@ -399,34 +400,54 @@ beforeEach(() => {
   sealApiKey.mockReset()
 })
 
-const mountView = async () => {
+// Default stubs keep every existing assertion's surface unchanged. Rich-row tests
+// below mount the same view without the Select/GroupOptionItem/GroupBadge stubs.
+const baseStubs = {
+  AppLayout: AppLayoutStub,
+  TablePageLayout: TablePageLayoutStub,
+  DataTable: DataTableStub,
+  Pagination: PaginationStub,
+  BaseDialog: {
+    props: ['show'],
+    template: '<div v-if="show"><slot /><slot name="footer" /></div>',
+  },
+  ConfirmDialog: ConfirmDialogStub,
+  EmptyState: true,
+  Select: SelectStub,
+  SearchInput: SearchInputStub,
+  Icon: IconStub,
+  UseKeyModal: UseKeyModalStub,
+  EndpointPopover: true,
+  GroupBadge: { props: ['name'], template: '<span data-test="group-badge">{{ name }}</span>' },
+  GroupOptionItem: true,
+  Teleport: true,
+}
+
+const mountViewWithStubs = async (stubs: Record<string, any>) => {
   const wrapper = mount(KeysView, {
     global: {
-      stubs: {
-        AppLayout: AppLayoutStub,
-        TablePageLayout: TablePageLayoutStub,
-        DataTable: DataTableStub,
-        Pagination: PaginationStub,
-        BaseDialog: {
-          props: ['show'],
-          template: '<div v-if="show"><slot /><slot name="footer" /></div>',
-        },
-        ConfirmDialog: ConfirmDialogStub,
-        EmptyState: true,
-        Select: SelectStub,
-        SearchInput: SearchInputStub,
-        Icon: IconStub,
-        UseKeyModal: UseKeyModalStub,
-        EndpointPopover: true,
-        GroupBadge: { props: ['name'], template: '<span data-test="group-badge">{{ name }}</span>' },
-        GroupOptionItem: true,
-        Teleport: true,
-      },
+      stubs,
     },
   })
   await flushPromises()
   await nextTick()
   return wrapper
+}
+
+const mountView = () => mountViewWithStubs(baseStubs)
+
+// 智能路由「添加分组」的富样式行只能靠真实的 Select + GroupOptionItem + GroupBadge
+// 渲染验证；其余组件继续用默认 stub，保持挂载成本与断言面不变。Teleport 也必须用真的，
+// 否则下拉内容会被渲染在原地而不是 body 里。
+const richGroupRowStubs = () => {
+  const {
+    Select: _Select,
+    GroupOptionItem: _GroupOptionItem,
+    GroupBadge: _GroupBadge,
+    Teleport: _Teleport,
+    ...stubs
+  } = baseStubs
+  return stubs
 }
 
 const visibleColumnKeys = (wrapper: VueWrapper) =>
@@ -992,6 +1013,207 @@ describe('user KeysView column settings', () => {
     )
   })
 })
+
+describe('user KeysView smart-routing add dropdown rich rows', () => {
+  // 与截图一致：倍率 0.05x/0.8x/1.2x + 灰色小字描述；最后一项缺倍率/描述用于降级验证。
+  const richGroups = [
+    { id: 1, name: 'Claude 官方', platform: 'anthropic', rate_multiplier: 1.2, description: 'Claude 官方号池 酒馆用' },
+    { id: 2, name: 'GPT free', platform: 'openai', rate_multiplier: 0.8, description: '弱智 free号 酒馆用 不建议vibecoding' },
+    { id: 3, name: 'GPT 小号', platform: 'openai', rate_multiplier: 0.05, description: '免费号池 仅供测试' },
+    { id: 4, name: 'Plain OpenAI', platform: 'openai' },
+  ]
+
+  beforeEach(() => {
+    localStorage.clear()
+
+    listKeys.mockReset()
+    createKey.mockReset()
+    updateKey.mockReset()
+    deleteKey.mockReset()
+    deleteMany.mockReset()
+    getPublicSettings.mockReset()
+    getDashboardApiKeysUsage.mockReset()
+    getAvailableGroups.mockReset()
+    getUserGroupRates.mockReset()
+    showError.mockReset()
+    showSuccess.mockReset()
+    copyToClipboard.mockReset()
+    isCurrentStep.mockReset()
+    nextStep.mockReset()
+
+    listKeys.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
+    createKey.mockResolvedValue({ ...createApiKey(), key: 'rich-row-fixture-secret' })
+    getPublicSettings.mockResolvedValue({})
+    getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
+    getAvailableGroups.mockResolvedValue(richGroups)
+    getUserGroupRates.mockResolvedValue({})
+    isCurrentStep.mockReturnValue(false)
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  const openCreateForm = async (wrapper: VueWrapper) => {
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('[data-test="key-smart-routing"]').trigger('click')
+    await nextTick()
+    await wrapper.get('input[name="key-provider"][value="openai"]').setValue()
+    await nextTick()
+    return wrapper
+  }
+
+  const openSmartRouteAdd = async (wrapper: VueWrapper) => {
+    await wrapper.get('[data-test="smart-route-add"] button').trigger('click')
+    await nextTick()
+    const dropdown = document.body.querySelector<HTMLElement>('.select-dropdown-portal')
+    if (!dropdown) throw new Error('smart-routing add dropdown did not open')
+    return dropdown
+  }
+
+  const optionRows = (dropdown: HTMLElement) =>
+    [...dropdown.querySelectorAll<HTMLElement>('[role="option"]')]
+
+  it('renders platform icon, rate pill and description like the normal group picker', async () => {
+    const wrapper = await mountViewWithStubs(richGroupRowStubs())
+    await openCreateForm(wrapper)
+
+    const dropdown = await openSmartRouteAdd(wrapper)
+    const rows = optionRows(dropdown)
+    expect(rows).toHaveLength(3)
+
+    const gptRow = rows.find((row) => row.textContent?.includes('GPT free'))
+    expect(gptRow).toBeDefined()
+    // 平台图标：复用 GroupBadge 里的 PlatformIcon
+    expect(gptRow!.querySelector('svg.platform-icon--openai')).not.toBeNull()
+    // 右侧倍率徽标与灰色小字描述
+    expect(gptRow!.textContent).toContain('0.8x')
+    expect(gptRow!.textContent).toContain('Rate')
+    expect(gptRow!.querySelector('.line-clamp-3')?.textContent?.trim())
+      .toBe('弱智 free号 酒馆用 不建议vibecoding')
+    // 候选行都是未选中态
+    expect(gptRow!.getAttribute('aria-selected')).toBe('false')
+
+    wrapper.unmount()
+  })
+
+  it('keeps the normal group picker rich and marks the picked row as selected', async () => {
+    const wrapper = await mountViewWithStubs(richGroupRowStubs())
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await wrapper.get('input[name="key-provider"][value="openai"]').setValue()
+    await nextTick()
+
+    await wrapper.get('[data-tour="key-form-group"] button').trigger('click')
+    await nextTick()
+    const dropdown = document.body.querySelector<HTMLElement>('.select-dropdown-portal')
+    if (!dropdown) throw new Error('normal group dropdown did not open')
+    const gptRow = [...dropdown.querySelectorAll<HTMLElement>('[role="option"]')]
+      .find((row) => row.textContent?.includes('GPT free'))
+    expect(gptRow).toBeDefined()
+    expect(gptRow!.querySelector('svg.platform-icon--openai')).not.toBeNull()
+    expect(gptRow!.textContent).toContain('0.8x')
+    expect(gptRow!.querySelector('.line-clamp-3')?.textContent?.trim())
+      .toBe('弱智 free号 酒馆用 不建议vibecoding')
+    gptRow!.click()
+    await nextTick()
+    await flushPromises()
+    expect(wrapper.get('[data-tour="key-form-group"]').text()).toContain('GPT free')
+
+    // 重新打开：已选中行是选中态并带勾选标记，未选中行没有。
+    await wrapper.get('[data-tour="key-form-group"] button').trigger('click')
+    await nextTick()
+    const reopened = document.body.querySelector<HTMLElement>('.select-dropdown-portal')
+    if (!reopened) throw new Error('normal group dropdown did not reopen')
+    const rows = [...reopened.querySelectorAll<HTMLElement>('[role="option"]')]
+    const pickedRow = rows.find((row) => row.textContent?.includes('GPT free'))!
+    expect(pickedRow.getAttribute('aria-selected')).toBe('true')
+    expect(pickedRow.querySelector('svg.h-4.w-4')).not.toBeNull()
+    expect(rows.find((row) => row.textContent?.includes('GPT 小号'))!
+      .querySelector('svg.h-4.w-4')).toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('keeps search filtering over names and descriptions of the rich rows', async () => {
+    const wrapper = await mountViewWithStubs(richGroupRowStubs())
+    await openCreateForm(wrapper)
+    const dropdown = await openSmartRouteAdd(wrapper)
+
+    const search = dropdown.querySelector<HTMLInputElement>('.select-search-input')
+    expect(search).not.toBeNull()
+    const typeQuery = async (query: string) => {
+      search!.value = query
+      search!.dispatchEvent(new Event('input'))
+      await nextTick()
+    }
+
+    // 命中描述里的关键词
+    await typeQuery('vibecoding')
+    let rows = optionRows(dropdown)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].textContent).toContain('GPT free')
+    expect(rows[0].querySelector('svg.platform-icon--openai')).not.toBeNull()
+
+    // 命中分组名
+    await typeQuery('小号')
+    rows = optionRows(dropdown)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].textContent).toContain('GPT 小号')
+
+    wrapper.unmount()
+  })
+
+  it('adds the clicked rich row, hides it from candidates and keeps the added order', async () => {
+    const wrapper = await mountViewWithStubs(richGroupRowStubs())
+    await openCreateForm(wrapper)
+    await wrapper.get('[data-tour="key-form-name"]').setValue('Rich routed key')
+
+    let dropdown = await openSmartRouteAdd(wrapper)
+    const gptRow = optionRows(dropdown).find((row) => row.textContent?.includes('GPT free'))
+    expect(gptRow).toBeDefined()
+    gptRow!.click()
+    await nextTick()
+    await flushPromises()
+    expect(wrapper.get('[data-test="smart-route-primary"]').text()).toContain('GPT free')
+
+    // 已加入的分组不再出现在「添加分组」候选里；再次点击的新分组排在后面。
+    dropdown = await openSmartRouteAdd(wrapper)
+    const remaining = optionRows(dropdown)
+    expect(remaining.map((row) => row.textContent).join('|')).not.toContain('GPT free')
+    const smallRow = remaining.find((row) => row.textContent?.includes('GPT 小号'))
+    expect(smallRow).toBeDefined()
+    smallRow!.click()
+    await nextTick()
+    await flushPromises()
+    expect(wrapper.get('[data-test="smart-routes-toggle"]').text()).toContain('Other routes (1)')
+
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    expect(createKey).toHaveBeenCalled()
+    const [name, groupId, , , , , , , groupIds] = createKey.mock.calls[0]
+    expect(name).toBe('Rich routed key')
+    expect(groupId).toBe(2)
+    expect(groupIds).toEqual([2, 3])
+
+    wrapper.unmount()
+  })
+
+  it('degrades safely when a group has no rate multiplier or description', async () => {
+    const wrapper = await mountViewWithStubs(richGroupRowStubs())
+    await openCreateForm(wrapper)
+
+    const dropdown = await openSmartRouteAdd(wrapper)
+    const plainRow = optionRows(dropdown).find((row) => row.textContent?.includes('Plain OpenAI'))
+    expect(plainRow).toBeDefined()
+    expect(plainRow!.querySelector('svg.platform-icon--openai')).not.toBeNull()
+    // 没有倍率就不画徽标，没有描述就不画第二行
+    expect(plainRow!.textContent).not.toMatch(/\d+x/)
+    expect(plainRow!.querySelector('.line-clamp-3')).toBeNull()
+
+    wrapper.unmount()
+  })
+})
+
 describe('user KeysView mutations', () => {
   beforeEach(() => {
     localStorage.clear()
