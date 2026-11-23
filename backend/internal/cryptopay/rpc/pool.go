@@ -287,10 +287,15 @@ func (p *Pool) CallEndpoint(ctx context.Context, method string, params any) (jso
 			if narrowed := intersectEndpoints(candidates, capable); len(narrowed) > 0 {
 				candidates = narrowed
 			} else {
-				// Everything that could serve it is cooling down. Probe those
-				// anyway, as eligible() does when the whole pool is cooling:
-				// asking a node that may have recovered beats failing the call.
-				candidates = capable
+				// Every node that can serve a query this wide is cooling down (a rate
+				// limit, a spent quota) while the healthy ones only take narrower ones.
+				// (When the whole pool is cooling, eligible() already returned all of it,
+				// so the capable nodes would have been kept above.) Do not probe the
+				// cooling nodes: that returns their hard error, which the scanner cannot
+				// act on, keeps them rate limited and defeats the quota cooldown. Say the
+				// query is too wide instead; the scanner splits it into pieces the
+				// healthy nodes accept, which is what happened before limits were learned.
+				return nil, "", fmt.Errorf("all rpc endpoints failed: %w", rangeLimitFailure(health.widestLimit(candidates)))
 			}
 		}
 		start := int(p.next.Add(1)-1) % len(candidates)
