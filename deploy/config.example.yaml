@@ -1471,6 +1471,14 @@ backup:
   # 跳过数据的表，写 "表名" 或 "schema.表名"（仅字母/数字/下划线，不支持通配符）。
   # 非空即关键表快照模式：不带 --clean/--if-exists、--lock-wait-timeout=30s、最快 gzip，
   # Linux 上有 nice 时 pg_dump 以 nice -n 19 运行。
+  # Write each name as pg_dump sees it (an unquoted name is lower-cased). pg_dump does
+  # NOT complain about an entry that matches no table, and the children of a
+  # partitioned or inherited table are NOT covered by their parent: list every child.
+  # The entries in effect are logged at startup; max_archive_bytes below is the safety
+  # net for a wrong list.
+  # 名称按 pg_dump 的口径写（不加引号的名称会转小写）。pg_dump 对匹配不到任何表的条目不报错；
+  # 分区表 / 继承表的子表不会被父表的条目覆盖，需逐个列出。生效的条目会在启动时写进日志；
+  # 清单写错时由下面的 max_archive_bytes 兜底。
   # Example / 示例: ["public.example_log_table", "public.example_event_table"]
   exclude_table_data: []
   # age X25519 public keys (age1...). When set, the archive is encrypted to them
@@ -1481,6 +1489,10 @@ backup:
   # Example / 示例: ["age1<your-age-public-key>"]
   age_recipients: []
   # Abort and delete the archive once it exceeds this many bytes on disk (after
-  # compression and encryption). 0 = no limit.
-  # 归档（压缩、加密之后）落盘超过该字节数即中止并清理。0 表示不限制。
+  # compression and encryption). 0 = no limit for a whole-database backup; for a
+  # critical snapshot 0 means the built-in default of 10 GiB (10737418240), so a wrong
+  # exclude list cannot fill the disk. Set a larger value if the snapshot really is bigger.
+  # 归档（压缩、加密之后）落盘超过该字节数即中止并清理。整库备份 0 表示不限制；
+  # 关键表快照 0 表示使用内置默认上限 10 GiB（10737418240），避免排除清单写错时写满磁盘；
+  # 快照确实更大时请显式调大。
   max_archive_bytes: 0

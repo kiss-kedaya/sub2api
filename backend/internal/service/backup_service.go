@@ -39,6 +39,14 @@ const (
 	// every table's schema is present but the excluded tables' rows are not.
 	backupScopeCritical = "critical"
 
+	// defaultCriticalMaxArchiveBytes bounds a critical snapshot when the operator
+	// set no backup.max_archive_bytes. pg_dump does not complain about an exclude
+	// entry that matches nothing (a misspelt name, or the children of a partitioned
+	// table), and the archive is staged on local disk before it is uploaded, so an
+	// unbounded snapshot would keep writing until the disk fills up. A
+	// whole-database backup, which has no exclude list, keeps its "no limit".
+	defaultCriticalMaxArchiveBytes int64 = 10 << 30
+
 	// backupScheduledLeaderLockKey gates the scheduled full-database backup so
 	// that only one instance in a clustered deployment performs the
 	// dump-and-upload each cycle. Without it every instance runs the cron
@@ -70,8 +78,9 @@ var (
 	ErrBackupRestoreUnsupported = infraerrors.BadRequest("BACKUP_RESTORE_UNSUPPORTED", "partial or encrypted snapshots must be restored manually into an empty database")
 
 	// ErrBackupArchiveTooLarge is wrapped by the error returned when the archive
-	// on disk grows past backup.max_archive_bytes.
-	ErrBackupArchiveTooLarge = errors.New("backup archive exceeds the configured size limit")
+	// on disk grows past the size limit: backup.max_archive_bytes, or the built-in
+	// limit of a critical snapshot that has none. The wrapping error says which.
+	ErrBackupArchiveTooLarge = errors.New("backup archive exceeds the size limit")
 
 	// ErrSecretEncryptionKeyNotConfigured prevents storing an S3 credential
 	// before startup has initialized a persistent installation encryption key.
@@ -218,6 +227,10 @@ type BackupService struct {
 	// ageEncrypt wraps the archive sink in an age encrypting writer; tests swap it
 	// to force an encryptor failure.
 	ageEncrypt func(io.Writer, ...age.Recipient) (io.WriteCloser, error)
+
+	// criticalMaxArchiveBytes is the size limit of a critical snapshot that has no
+	// explicit backup.max_archive_bytes; tests inject a smaller value.
+	criticalMaxArchiveBytes int64
 }
 
 func NewBackupService(
@@ -241,6 +254,7 @@ func NewBackupService(
 		partSizeBytes:           defaultBackupPartSizeBytes,
 		instanceID:              uuid.NewString(),
 		ageEncrypt:              age.Encrypt,
+		criticalMaxArchiveBytes: defaultCriticalMaxArchiveBytes,
 	}
 }
 
@@ -257,6 +271,26 @@ func (s *BackupService) backupScope() string {
 // recipient turns encryption on; there is no plaintext fallback.
 func (s *BackupService) backupEncrypted() bool {
 	return len(s.backupCfg.AgeRecipients) > 0
+}
+
+// archiveLimit is the byte limit for the archive on disk: the configured value,
+// else the built-in limit of a critical snapshot, else 0 (no limit). builtin is
+// true only for the second case.
+func (s *BackupService) archiveLimit() (limit int64, builtin bool) {
+	if s.backupCfg.MaxArchiveBytes > 0 {
+		return s.backupCfg.MaxArchiveBytes, false
+	}
+	if s.backupScope() != "" {
+		return s.criticalMaxArchiveBytes, true
+	}
+	return 0, false
+}
+
+// nonDefaultBackup reports whether the operator opted into any backup.* setting
+// that changes how a backup runs. Anything new that touches the host outside a
+// backup run stays off while this is false.
+func (s *BackupService) nonDefaultBackup() bool {
+	return s.backupScope() != "" || s.backupEncrypted() || s.backupCfg.MaxArchiveBytes > 0
 }
 
 // backupFileName names the archive; the .age suffix tells a human (and the
@@ -316,17 +350,24 @@ func (s *BackupService) Start() {
 }
 
 // logSnapshotMode announces a non-default backup configuration once at startup.
-// It reports a count, a flag and a size only: never table names, recipients or
-// paths. Nothing is logged for the default whole-database backup.
+// It lists the table entries that will really be passed to pg_dump (pg_dump
+// ignores an entry that matches nothing, so this is the one place a misspelt name
+// shows up), and otherwise reports flags and a size only: never recipients or
+// paths. max_archive_bytes is the limit actually applied, so a critical snapshot
+// without an explicit value shows the built-in one. Nothing is logged for the
+// default whole-database backup.
 func (s *BackupService) logSnapshotMode(l *zap.Logger) {
-	if s.backupScope() == "" && !s.backupEncrypted() && s.backupCfg.MaxArchiveBytes <= 0 {
+	if !s.nonDefaultBackup() {
 		return
 	}
-	l.Info("[Backup] snapshot mode enabled",
+	limit, _ := s.archiveLimit()
+	l.Info("[Backup] non-default backup settings in effect",
 		zap.String("component", "service.backup"),
+		zap.Bool("critical", s.backupScope() != ""),
+		zap.Strings("exclude_table_data", s.backupCfg.ExcludeTableData),
 		zap.Int("excluded_tables", len(s.backupCfg.ExcludeTableData)),
 		zap.Bool("encrypted", s.backupEncrypted()),
-		zap.Int64("max_archive_bytes", s.backupCfg.MaxArchiveBytes),
+		zap.Int64("max_archive_bytes", limit),
 	)
 }
 
@@ -890,7 +931,8 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 	}
 	archivePath := archive.Name()
 
-	sink := &limitedArchiveWriter{w: archive, limit: s.backupCfg.MaxArchiveBytes}
+	limit, builtinLimit := s.archiveLimit()
+	sink := &limitedArchiveWriter{w: archive, limit: limit, builtin: builtinLimit}
 	copyErr := s.writeBackupArchive(sink, dumpReader, recipients)
 	if copyErr != nil {
 		cancelDump()
@@ -966,6 +1008,7 @@ func parseAgeRecipients(keys []string) ([]age.Recipient, error) {
 type limitedArchiveWriter struct {
 	w       io.Writer
 	limit   int64
+	builtin bool // limit is the built-in one of a critical snapshot, not backup.max_archive_bytes
 	written int64
 	err     error
 }
@@ -977,7 +1020,11 @@ func (l *limitedArchiveWriter) Write(p []byte) (int, error) {
 	n, err := l.w.Write(p)
 	l.written += int64(n)
 	if err == nil && l.limit > 0 && l.written > l.limit {
-		err = fmt.Errorf("%w: limit %d bytes, written %d bytes", ErrBackupArchiveTooLarge, l.limit, l.written)
+		source := "backup.max_archive_bytes"
+		if l.builtin {
+			source = "built-in default for a critical snapshot; set backup.max_archive_bytes to change it"
+		}
+		err = fmt.Errorf("%w: limit %d bytes (%s), written %d bytes", ErrBackupArchiveTooLarge, l.limit, source, l.written)
 	}
 	l.err = err
 	return n, err

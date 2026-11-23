@@ -364,6 +364,8 @@ func TestCreateCompressedBackupFile_SizeLimitAbortsEarlyAndCleansUp(t *testing.T
 			// (c) sentinel error, message with limit and written bytes, file gone.
 			require.ErrorIs(t, err, ErrBackupArchiveTooLarge)
 			require.ErrorContains(t, err, "limit 4096 bytes")
+			require.ErrorContains(t, err, "backup.max_archive_bytes")
+			require.NotContains(t, err.Error(), "built-in", "an explicit limit is not the built-in one")
 			require.ErrorContains(t, err, "written ")
 			require.Empty(t, path)
 			require.Zero(t, size)
@@ -430,6 +432,87 @@ func TestBackupService_CreateBackup_SizeLimitFailsRecordAndUploadsNothing(t *tes
 	require.Contains(t, record.ErrorMsg, "size limit")
 	require.Empty(t, store.objects, "nothing may be uploaded")
 	requireDirEmpty(t, dir)
+}
+
+// ─── built-in limit of a critical snapshot ───
+
+// pg_dump ignores an exclude entry that matches nothing (a misspelt name, the
+// children of a partitioned table), so a critical snapshot with a wrong list would
+// stage the whole database on local disk. Without an explicit limit it gets one.
+func TestBackupService_ArchiveLimit(t *testing.T) {
+	exclude := []string{"public.t"}
+	tests := []struct {
+		name        string
+		backup      config.BackupConfig
+		wantLimit   int64
+		wantBuiltin bool
+	}{
+		{name: "whole database, nothing set", backup: config.BackupConfig{}},
+		{name: "whole database, explicit limit", backup: config.BackupConfig{MaxArchiveBytes: 5}, wantLimit: 5},
+		{name: "critical snapshot, nothing set", backup: config.BackupConfig{ExcludeTableData: exclude},
+			wantLimit: defaultCriticalMaxArchiveBytes, wantBuiltin: true},
+		{name: "critical snapshot, explicit limit", backup: config.BackupConfig{ExcludeTableData: exclude, MaxArchiveBytes: 5}, wantLimit: 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newCriticalTestService(newMockSettingRepo(), stringDumper(""), newMockObjectStore(), tt.backup)
+			limit, builtin := svc.archiveLimit()
+			require.Equal(t, tt.wantLimit, limit)
+			require.Equal(t, tt.wantBuiltin, builtin)
+		})
+	}
+	require.Equal(t, int64(10<<30), defaultCriticalMaxArchiveBytes, "the documented default is 10 GiB")
+}
+
+func TestCreateCompressedBackupFile_CriticalSnapshotStopsAtTheBuiltInLimit(t *testing.T) {
+	dir := isolateTempDir(t)
+	data := randomBytes(t, 4<<20) // incompressible, far larger than the limit
+	source := &countingReader{r: bytes.NewReader(data)}
+	dumper := &streamDumper{source: func() io.Reader { return source }}
+	svc := newCriticalTestService(newMockSettingRepo(), dumper, newMockObjectStore(), config.BackupConfig{
+		ExcludeTableData: []string{"public.t"},
+		AgeRecipients:    recipientsOf(newAgeIdentity(t)),
+	})
+	svc.criticalMaxArchiveBytes = 4096 // no backup.max_archive_bytes: only the built-in limit is in force
+
+	path, size, err := svc.createCompressedBackupFile(context.Background())
+
+	require.ErrorIs(t, err, ErrBackupArchiveTooLarge)
+	require.ErrorContains(t, err, "limit 4096 bytes")
+	require.ErrorContains(t, err, "built-in default", "the message names which limit was hit")
+	require.ErrorContains(t, err, "backup.max_archive_bytes", "and how to change it")
+	require.Empty(t, path)
+	require.Zero(t, size)
+	requireDirEmpty(t, dir)
+	require.Less(t, source.n, int64(len(data))/2, "the copy must stop soon after the limit is crossed")
+	require.True(t, dumper.closed)
+}
+
+func TestCreateCompressedBackupFile_ExplicitLimitReplacesTheBuiltInOne(t *testing.T) {
+	isolateTempDir(t)
+	svc := newCriticalTestService(newMockSettingRepo(), stringDumper(knownDump), newMockObjectStore(), config.BackupConfig{
+		ExcludeTableData: []string{"public.t"},
+		AgeRecipients:    recipientsOf(newAgeIdentity(t)),
+		MaxArchiveBytes:  1 << 30,
+	})
+	svc.criticalMaxArchiveBytes = 16 // would reject any archive if it still applied
+
+	path, _, err := svc.createCompressedBackupFile(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, cleanupBackupFiles(path))
+}
+
+func TestCreateCompressedBackupFile_WholeDatabaseBackupStaysUnlimited(t *testing.T) {
+	isolateTempDir(t)
+	data := randomBytes(t, 1<<20)
+	dumper := &streamDumper{source: func() io.Reader { return bytes.NewReader(data) }}
+	svc := newCriticalTestService(newMockSettingRepo(), dumper, newMockObjectStore(), config.BackupConfig{})
+	svc.criticalMaxArchiveBytes = 16 // only a critical snapshot may ever be bound by it
+
+	path, size, err := svc.createCompressedBackupFile(context.Background())
+	require.NoError(t, err, "a whole-database backup keeps its \"no limit\"")
+	require.Greater(t, size, int64(len(data))/2)
+	require.NoError(t, cleanupBackupFiles(path))
 }
 
 // ─── records, names and upload content type ───
@@ -657,7 +740,7 @@ func TestBackupService_RestoreStillWorksForWholeDatabaseBackups(t *testing.T) {
 func TestBackupService_LogSnapshotMode(t *testing.T) {
 	identity := newAgeIdentity(t)
 	recipient := recipientsOf(identity)[0]
-	secretTable := "public.secret_table_name"
+	tableName := "public.example_log_table"
 	secretPath := "/opt/secret/location/pg_dump"
 
 	observe := func(backup config.BackupConfig) []observer.LoggedEntry {
@@ -671,18 +754,22 @@ func TestBackupService_LogSnapshotMode(t *testing.T) {
 		require.Empty(t, observe(config.BackupConfig{PgDumpPath: secretPath}))
 	})
 
-	t.Run("snapshot mode logs counts, flag and limit only", func(t *testing.T) {
+	t.Run("critical snapshot logs the entries in effect, flags and the limit applied", func(t *testing.T) {
 		entries := observe(config.BackupConfig{
 			PgDumpPath:       secretPath,
-			ExcludeTableData: []string{secretTable, "other_table"},
+			ExcludeTableData: []string{tableName, "other_table"},
 			AgeRecipients:    []string{recipient},
 			MaxArchiveBytes:  1 << 30,
 		})
 		require.Len(t, entries, 1)
 		entry := entries[0]
 		require.Equal(t, zapcore.InfoLevel, entry.Level)
+		require.Equal(t, "[Backup] non-default backup settings in effect", entry.Message)
 
 		fields := entry.ContextMap()
+		require.Equal(t, true, fields["critical"])
+		require.Equal(t, []any{tableName, "other_table"}, fields["exclude_table_data"],
+			"the entries pg_dump will really get: the one place a misspelt name shows up")
 		require.Equal(t, int64(2), fields["excluded_tables"])
 		require.Equal(t, true, fields["encrypted"])
 		require.Equal(t, int64(1<<30), fields["max_archive_bytes"])
@@ -691,9 +778,24 @@ func TestBackupService_LogSnapshotMode(t *testing.T) {
 		for key, value := range fields {
 			rendered += " " + key + "=" + fmt.Sprint(value)
 		}
-		for _, secret := range []string{secretTable, "other_table", secretPath, recipient, "age1"} {
-			require.NotContains(t, rendered, secret)
+		for _, secret := range []string{secretPath, recipient, "age1"} {
+			require.NotContains(t, rendered, secret, "recipients and paths never reach the log")
 		}
+	})
+
+	t.Run("a critical snapshot without an explicit limit logs the built-in one", func(t *testing.T) {
+		entries := observe(config.BackupConfig{ExcludeTableData: []string{"t"}})
+		require.Len(t, entries, 1)
+		require.Equal(t, defaultCriticalMaxArchiveBytes, entries[0].ContextMap()["max_archive_bytes"])
+	})
+
+	t.Run("a whole-database backup with only encryption is not called critical", func(t *testing.T) {
+		entries := observe(config.BackupConfig{AgeRecipients: []string{recipient}})
+		require.Len(t, entries, 1)
+		fields := entries[0].ContextMap()
+		require.Equal(t, false, fields["critical"])
+		require.Equal(t, int64(0), fields["excluded_tables"])
+		require.Equal(t, int64(0), fields["max_archive_bytes"], "no limit applies")
 	})
 
 	t.Run("each setting alone is announced", func(t *testing.T) {

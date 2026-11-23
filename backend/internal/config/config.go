@@ -337,8 +337,10 @@ type BackupConfig struct {
 }
 
 // backupExcludeTablePattern only admits "table" or "schema.table" made of plain
-// identifier characters: no wildcards, quotes, dashes or spaces, so a value can
-// never be read by pg_dump as anything but a literal table name.
+// identifier characters: no wildcards, quotes, dashes or spaces. pg_dump still
+// folds an unquoted name to lower case and silently ignores an entry that matches
+// no table (a partitioned table's children included), so a size limit, not this
+// pattern, is what bounds a snapshot whose exclude list is wrong.
 var backupExcludeTablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$`)
 
 // normalizeAndValidate trims the values and rejects anything unsafe. Error
