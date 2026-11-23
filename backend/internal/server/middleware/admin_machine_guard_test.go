@@ -254,3 +254,47 @@ func TestScopedAdminKeySensitiveDenialIsAudited(t *testing.T) {
 	require.Equal(t, "scoped", entry.Extra["credential_kind"])
 	require.Equal(t, http.StatusForbidden, entry.StatusCode)
 }
+
+// 2026-11-23 放开的低风险写接口（上游模型目录同步/预览、邮件模板预览）同样
+// 不允许机器凭据：放开的是「真人会话不再弹 TOTP」，不是「把写接口开给 x-api-key」。
+// 这些路由没有进 machine_allowlisted，认证层必须默认拒绝且不进业务 handler。
+func TestReleasedLowRiskWriteRoutesRejectMachineCredential(t *testing.T) {
+	const legacyKey = "admin-legacy-machine-key"
+	settings := service.NewSettingService(fakeSettingRepo{values: map[string]string{
+		service.SettingKeyAdminAPIKey: legacyKey,
+	}}, nil)
+
+	called := false
+	r := machineGuardRouter(settings, func(admin *gin.RouterGroup) {
+		admin.POST("/accounts/:id/models/sync-upstream", func(c *gin.Context) {
+			called = true
+			c.Status(http.StatusNoContent)
+		})
+		admin.POST("/accounts/models/sync-upstream-preview", func(c *gin.Context) {
+			called = true
+			c.Status(http.StatusNoContent)
+		})
+		admin.POST("/settings/email-template-preview", func(c *gin.Context) {
+			called = true
+			c.Status(http.StatusNoContent)
+		})
+	})
+
+	for _, path := range []string{
+		"/api/v1/admin/accounts/1/models/sync-upstream",
+		"/api/v1/admin/accounts/models/sync-upstream-preview",
+		"/api/v1/admin/settings/email-template-preview",
+	} {
+		t.Run(path, func(t *testing.T) {
+			called = false
+			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}"))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("x-api-key", legacyKey)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			require.Contains(t, w.Body.String(), "STEP_UP_ADMIN_API_KEY_FORBIDDEN")
+			require.False(t, called, "机器凭据不得进入业务 handler")
+		})
+	}
+}

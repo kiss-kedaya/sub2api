@@ -28,6 +28,7 @@
         :label="t('profile.totp.enterCode')"
         :disabled="verifying || !canSubmit"
         @complete="submit"
+        @keydown.enter.prevent="submitCode"
       />
       <!-- 账号维度限速：60 秒窗口内第 6 次提交或服务端 429 后禁用并倒计时 -->
       <p
@@ -37,29 +38,55 @@
       >
         {{ t('stepUp.rateLimited', { seconds: remainingSeconds }) }}
       </p>
-      <div v-if="verifying" class="mt-3 flex items-center justify-center gap-2 text-sm text-muted">
-        <UIcon name="i-lucide-loader-circle" class="size-4 animate-spin" />
-        {{ t('common.verifying') }}
-      </div>
+      <p
+        v-else-if="attemptsRemainingText"
+        class="mt-3 text-center text-sm text-muted"
+        data-testid="stepup-attempts-remaining"
+      >
+        {{ attemptsRemainingText }}
+      </p>
+      <!-- 永远展示确认按钮：输满 6 位自动提交之外，保留可点击/可回车提交的入口。 -->
+      <UButton
+        class="mt-3"
+        color="primary"
+        block
+        :label="t('stepUp.verify')"
+        data-testid="stepup-totp-submit"
+        :disabled="!canSubmitTotp"
+        :loading="verifying"
+        @click="submitCode"
+      />
+      <UButton
+        v-if="passkeyOptionVisible"
+        class="mt-2"
+        color="neutral"
+        variant="subtle"
+        block
+        :label="t('stepUp.usePasskey')"
+        data-testid="stepup-use-passkey"
+        :disabled="verifying"
+        @click="switchFactor('passkey')"
+      />
     </div>
 
     <!-- Passkey 因子 -->
     <div v-else class="mb-6">
-      <div
-        v-if="!passkeySupported"
-        class="rounded-lg bg-amber-50 p-3 text-sm text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
-        data-testid="stepup-passkey-unsupported"
-      >
-        {{ t('stepUp.passkeyUnsupported') }}
-      </div>
-      <div v-else class="space-y-3">
+      <div class="space-y-3">
         <div
-          v-if="passkeyError"
+          v-if="!passkeySupported"
+          class="rounded-lg bg-amber-50 p-3 text-sm text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          data-testid="stepup-passkey-unsupported"
+        >
+          {{ t('stepUp.passkeyUnsupported') }}
+        </div>
+        <div
+          v-else-if="passkeyError"
           class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300"
           data-testid="stepup-passkey-error"
         >
           {{ passkeyError }}
         </div>
+        <!-- 确认按钮永远存在：不支持/等待时置灰，而不是只剩「取消」。 -->
         <button
           type="button"
           class="btn btn-primary w-full"
@@ -70,6 +97,17 @@
           {{ verifying ? t('stepUp.passkeyVerifying') : t('stepUp.passkeyVerify') }}
         </button>
       </div>
+      <UButton
+        v-if="totpOptionVisible"
+        class="mt-2"
+        color="neutral"
+        variant="subtle"
+        block
+        :label="t('stepUp.useTotp')"
+        data-testid="stepup-use-totp"
+        :disabled="verifying"
+        @click="switchFactor('totp')"
+      />
     </div>
 
     <UButton
@@ -77,6 +115,7 @@
       variant="subtle"
       block
       :label="t('common.cancel')"
+      data-testid="stepup-cancel"
       :disabled="busy"
       @click="handleCancel"
     />
@@ -121,6 +160,8 @@ const code = ref('')
 const codeInput = ref<InstanceType<typeof TotpCodeInput> | null>(null)
 const phase = ref<StepUpFactor>('totp')
 const requiredFactors = ref<StepUpFactor[]>(['totp'])
+const verifiedFactors = ref<StepUpFactor[]>([])
+const attemptFeedback = ref(false)
 const passkeySupported = ref(false)
 const passkeyError = ref('')
 
@@ -137,12 +178,41 @@ const hintText = computed(() => {
 })
 const progressText = computed(() => {
   if (activeFactors.value.length < 2) return ''
-  if (phase.value === 'passkey') return t('stepUp.totpVerifiedContinuePasskey')
-  return t('stepUp.twoFactorProgress', { current: t('stepUp.factorTotp'), next: t('stepUp.factorPasskey') })
+  if (phase.value === 'passkey') {
+    return hasVerified('totp')
+      ? t('stepUp.totpVerifiedContinuePasskey')
+      : t('stepUp.twoFactorProgress', {
+          current: t('stepUp.factorPasskey'),
+          next: t('stepUp.factorTotp')
+        })
+  }
+  return hasVerified('passkey')
+    ? t('stepUp.passkeyVerifiedContinueTotp')
+    : t('stepUp.twoFactorProgress', {
+        current: t('stepUp.factorTotp'),
+        next: t('stepUp.factorPasskey')
+      })
+})
+
+/** 显式「验证」按钮：TOTP 必须满 6 位、未在验证中且未被限速才可点。 */
+const canSubmitTotp = computed(
+  () => phase.value === 'totp' && !verifying.value && canSubmit.value && /^[0-9]{6}$/.test(code.value)
+)
+/** 绑定 Passkey 的账号在 TOTP 阶段并列展示「用 Passkey 验证」(先验哪个因子可自选)。 */
+const passkeyOptionVisible = computed(
+  () => phase.value === 'totp' && activeFactors.value.includes('passkey') && !hasVerified('passkey')
+)
+/** 双因子账号先验完 Passkey 后，仍可用「用 TOTP 验证」切回动态码阶段。 */
+const totpOptionVisible = computed(
+  () => phase.value === 'passkey' && activeFactors.value.includes('totp') && !hasVerified('totp')
+)
+const attemptsRemainingText = computed(() => {
+  if (!attemptFeedback.value || remainingSeconds.value > 0 || remainingAttempts.value <= 0) return ''
+  return t('stepUp.attemptsRemaining', { count: remainingAttempts.value })
 })
 
 // 同一账号 60 秒滚动窗口最多 5 次校验提交；服务端 429 时按 Retry-After 继续禁用。
-const { canSubmit, remainingSeconds, recordAttempt, applyServerRetryAfter, reset } =
+const { canSubmit, remainingSeconds, remainingAttempts, recordAttempt, applyServerRetryAfter, reset } =
   useTotpAttemptLimit({ accountKey: currentAccountKey })
 
 // Focus the first cell whenever the dialog opens.
@@ -150,8 +220,7 @@ watch(
   () => props.controller.visible.value,
   (open) => {
     if (open) {
-      resetInputs()
-      passkeyError.value = ''
+      resetState()
       passkeySupported.value = passkeyAPI.isSupported()
       void loadPolicy()
     }
@@ -160,7 +229,8 @@ watch(
 
 /**
  * 读取当前账号必须完成的因子，决定弹窗阶段：
- * 只绑 TOTP → TOTP；只绑 Passkey → Passkey；两者都绑 → 先 TOTP 后 Passkey。
+ * 只绑 TOTP → TOTP；只绑 Passkey → Passkey；两者都绑 → 两个因子都要通过
+ * （服务端要求全部已绑定因子各持有效 step-up 凭证，顺序可自选，默认先 TOTP）。
  * 读取失败时按 TOTP 兜底（与旧行为一致），不因策略接口抖动卡死用户。
  */
 async function loadPolicy(): Promise<void> {
@@ -188,27 +258,63 @@ async function loadPolicy(): Promise<void> {
   }
 }
 
+function hasVerified(factor: StepUpFactor): boolean {
+  return verifiedFactors.value.includes(factor)
+}
+
+function markVerified(factor: StepUpFactor): void {
+  if (!verifiedFactors.value.includes(factor)) {
+    verifiedFactors.value = [...verifiedFactors.value, factor]
+  }
+}
+
+/** 重置整次挑战状态（弹窗每次打开时调用）。 */
+function resetState(): void {
+  code.value = ''
+  verifying.value = false
+  attemptFeedback.value = false
+  verifiedFactors.value = []
+  passkeyError.value = ''
+}
+
+/** 手动切换当前要验证的因子；已完成的因子不再切换。 */
+function switchFactor(factor: StepUpFactor): void {
+  if (verifying.value || phase.value === factor || hasVerified(factor)) return
+  if (!activeFactors.value.includes(factor)) return
+  phase.value = factor
+  passkeyError.value = ''
+  attemptFeedback.value = false
+  if (factor === 'totp') nextTick(() => codeInput.value?.focus())
+}
+
+/** 「验证」按钮 / Enter 键入口：语义等同输满 6 位后的自动提交。 */
+function submitCode(): void {
+  void submit(code.value)
+}
+
 async function submit(otp: string) {
   if (phase.value !== 'totp' || !props.controller.visible.value || verifying.value || !canSubmit.value) return
   if (!/^[0-9]{6}$/.test(otp)) return
   // 本地账号维度计数：60 秒窗口第 6 次提交直接拦下（服务端仍有同样限速）。
   if (!recordAttempt()) return
   verifying.value = true
+  attemptFeedback.value = false
   try {
     if (props.verify) await props.verify(otp)
     else await totpAPI.stepUp(otp)
     reset()
     resetInputs()
-    // 两者都绑定时 TOTP 只是第一个因子：继续 Passkey 阶段，全部通过才重试原请求。
-    if (activeFactors.value.includes('passkey')) {
+    verifying.value = false
+    markVerified('totp')
+    // 两者都绑定时 TOTP 只是其中一个因子：继续 Passkey 阶段，全部通过才重试原请求。
+    if (activeFactors.value.includes('passkey') && !hasVerified('passkey')) {
       phase.value = 'passkey'
-      verifying.value = false
       return
     }
-    verifying.value = false
     props.controller.onVerified()
   } catch (err: any) {
     verifying.value = false
+    attemptFeedback.value = true
     const retryAfterSeconds = Number(err?.retryAfter) || 0
     if (retryAfterSeconds > 0) applyServerRetryAfter(retryAfterSeconds)
     appStore.showError(err?.message || t('stepUp.verifyFailed'))
@@ -219,7 +325,7 @@ async function submit(otp: string) {
   }
 }
 
-/** Passkey 阶段：浏览器断言成功后，两个因子才算全部通过。 */
+/** Passkey 阶段：浏览器断言成功后，所有绑定的因子才全部通过。 */
 async function submitPasskey() {
   if (phase.value !== 'passkey' || verifying.value) return
   if (!passkeySupported.value) {
@@ -231,6 +337,13 @@ async function submitPasskey() {
   try {
     await passkeyAPI.stepUp()
     verifying.value = false
+    markVerified('passkey')
+    // 先验 Passkey 的双因子账号还要继续 TOTP，不能提前关闭弹窗。
+    if (activeFactors.value.includes('totp') && !hasVerified('totp')) {
+      phase.value = 'totp'
+      nextTick(() => codeInput.value?.focus())
+      return
+    }
     props.controller.onVerified()
   } catch (err: any) {
     verifying.value = false
@@ -244,8 +357,6 @@ async function submitPasskey() {
 
 function resetInputs() {
   code.value = ''
-  verifying.value = false
-  passkeyError.value = ''
 }
 
 function handleCancel() {

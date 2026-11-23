@@ -36,6 +36,7 @@ function mountDialog() {
 
 describe('场景 A：账号同时绑定 TOTP 与 Passkey', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     mocks.passkeySupported = true
     mocks.getPolicy.mockResolvedValue({ required_factors: ['totp', 'passkey'], step_up_enabled: true })
   })
@@ -88,6 +89,7 @@ describe('场景 A：账号同时绑定 TOTP 与 Passkey', () => {
 
 describe('场景 B：账号只绑定 Passkey', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     mocks.passkeySupported = true
     mocks.getPolicy.mockResolvedValue({ required_factors: ['passkey'], step_up_enabled: true })
   })
@@ -110,24 +112,68 @@ describe('场景 B：账号只绑定 Passkey', () => {
 
 describe('场景 C：浏览器不支持 Passkey 的降级提示', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     mocks.passkeySupported = false
     mocks.getPolicy.mockResolvedValue({ required_factors: ['passkey'], step_up_enabled: true })
   })
   afterEach(() => vi.resetAllMocks())
 
-  it('展示降级文案并禁用验证按钮', async () => {
+  it('展示降级文案，确认按钮仍在但不可点（不会只剩「取消」）', async () => {
     const { controller, wrapper } = mountDialog()
     await flushPromises()
 
     expect(wrapper.find('[data-testid="stepup-passkey-unsupported"]').exists()).toBe(true)
-    // 不支持时只展示降级文案，不渲染可点击的验证按钮（无法完成验证，只能取消）。
-    expect(wrapper.find('[data-testid="stepup-passkey-verify"]').exists()).toBe(false)
+    const submit = wrapper.get('[data-testid="stepup-passkey-verify"]')
+    expect(submit.attributes('disabled')).toBeDefined()
     expect(controller.visible.value).toBe(true)
   })
 })
 
-describe('场景 D：策略接口失败时按 TOTP 兜底（旧行为）', () => {
+describe('场景 D：账号同时绑定 TOTP 与 Passkey 时可任选先验证 Passkey', () => {
   beforeEach(() => {
+    sessionStorage.clear()
+    mocks.passkeySupported = true
+    mocks.getPolicy.mockResolvedValue({ required_factors: ['totp', 'passkey'], step_up_enabled: true })
+  })
+  afterEach(() => vi.resetAllMocks())
+
+  it('TOTP 阶段并列展示「用 Passkey 验证」，先 Passkey 再 TOTP 才算完成', async () => {
+    mocks.stepUp.mockResolvedValue({ verified: true })
+    mocks.passkeyStepUp.mockResolvedValue({ verified: true, factor: 'passkey' })
+    const { controller, wrapper } = mountDialog()
+    await flushPromises()
+
+    // 两个因子都绑定时，TOTP 阶段就能看到并行的 Passkey 选项。
+    const usePasskey = wrapper.get('[data-testid="stepup-use-passkey"]')
+    expect(usePasskey.text()).toContain('stepUp.usePasskey')
+    await usePasskey.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('input[autocomplete="one-time-code"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="stepup-passkey-verify"]').exists()).toBe(true)
+    // 还没验 TOTP，仍可切回 TOTP 阶段。
+    expect(wrapper.find('[data-testid="stepup-use-totp"]').exists()).toBe(true)
+
+    await wrapper.get('[data-testid="stepup-passkey-verify"]').trigger('click')
+    await flushPromises()
+
+    // Passkey 通过后不能直接关闭：TOTP 因子还没完成。
+    expect(mocks.passkeyStepUp).toHaveBeenCalledOnce()
+    expect(controller.visible.value).toBe(true)
+    expect(wrapper.find('input[autocomplete="one-time-code"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('stepUp.passkeyVerifiedContinueTotp')
+
+    await wrapper.getComponent(TotpCodeInput).vm.$emit('complete', '012345')
+    await flushPromises()
+
+    expect(mocks.stepUp).toHaveBeenCalledWith('012345')
+    expect(controller.visible.value).toBe(false)
+  })
+})
+
+describe('场景 E：策略接口失败时按 TOTP 兜底（旧行为）', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
     mocks.passkeySupported = true
     mocks.getPolicy.mockRejectedValue(new Error('policy unavailable'))
   })

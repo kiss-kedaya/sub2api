@@ -100,6 +100,17 @@ export function useTotpAttemptLimit(options: TotpAttemptLimitOptions) {
   /** 是否允许提交（服务端 429 或本地窗口内的第 6 次都会被拦下）。 */
   const canSubmit = computed(() => remainingSeconds.value <= 0)
 
+  /**
+   * 当前 60 秒窗口内还剩几次提交机会。用于验证失败后的「还可尝试 N 次」提示；
+   * 依赖 remainingSeconds，窗口滚动后即使没有新提交也会自动重算。
+   */
+  const remainingAttempts = computed(() => {
+    void remainingSeconds.value
+    const current = now()
+    const used = timestamps.value.filter((t) => current - t < TOTP_ATTEMPT_WINDOW_MS).length
+    return Math.max(0, TOTP_ATTEMPT_LIMIT - used)
+  })
+
   /** 记录一次提交；被限速时返回 false，调用方不要发请求。 */
   function recordAttempt(): boolean {
     refresh()
@@ -142,6 +153,7 @@ export function useTotpAttemptLimit(options: TotpAttemptLimitOptions) {
   return {
     canSubmit,
     remainingSeconds,
+    remainingAttempts,
     recordAttempt,
     applyServerRetryAfter,
     reset,

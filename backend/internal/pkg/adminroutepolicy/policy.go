@@ -133,6 +133,28 @@ const (
 	// testing unusable. Credential reads (GET /:id/credential) and exports
 	// (GET /data) stay step-up gated.
 	ReasonAccountConnectivityTest Reason = "account_connectivity_test_no_secret"
+	// ReasonUpstreamModelCatalogSync covers the admin "同步最新支持模型" button on
+	// an upstream account. The handler fetches the live model list from the
+	// account's configured upstream (outbound target goes through the same URL
+	// allowlist / private-host guard as the connectivity test), enriches missing
+	// capability fields from the public models.dev registry and persists only a
+	// model-catalog snapshot under accounts.extra[upstream_models]. It never
+	// reads or returns a credential, never moves money and never changes account
+	// permissions; the response carries model IDs plus public capability
+	// metadata. The mutation (POST) is audited by the audit middleware.
+	ReasonUpstreamModelCatalogSync Reason = "upstream_model_catalog_metadata_sync_no_secret"
+	// ReasonUpstreamModelCatalogPreview covers the "同步上游模型" preview fired
+	// while creating/editing an account. It uses the not-yet-saved credentials
+	// from the request body for one upstream /models call, validates base_url
+	// through the same allowlist / private-host guard, writes nothing (temp
+	// account id is 0, so no snapshot is persisted) and returns model IDs plus
+	// public capability metadata only.
+	ReasonUpstreamModelCatalogPreview Reason = "upstream_model_catalog_preview_no_secret"
+	// ReasonEmailTemplatePreview covers the notification email template preview:
+	// it renders the unsaved subject/HTML with sample variables in memory and
+	// returns the rendered subject/HTML. No DB write, no outbound request and no
+	// credential material is involved.
+	ReasonEmailTemplatePreview Reason = "email_template_preview_no_secret"
 	// The following reasons cover the 2026-11 "2FA trigger matrix" pass: admin
 	// actions that look alarming by resource name but only probe, aggregate or
 	// preview, and whose response never carries secret material.
@@ -340,12 +362,22 @@ var secretFreeExact = []exactRule{
 	// Ollama Cloud 用量刷新：用库内会话抓官方用量，响应是脱敏后的用量窗口
 	// （used_percent/reset_at/model/request 数），不含 session/HTML/凭据。
 	{method: "POST", path: "/api/v1/admin/accounts/:id/ollama-cloud-usage/refresh", res: Resolved{ClassSecretFree, ReasonAccountUsageAggregate, ResourceNone, "exact:accounts.ollama-usage-refresh"}},
-	// 上游模型目录同步/预览故意不在此清单：二者都不属于「只读/低风险」。
-	//   - POST /accounts/:id/models/sync-upstream 会通过 UpdateExtra 写库
-	//     （upstream_models），是配置写操作；
-	//   - POST /accounts/models/sync-upstream-preview 接受请求体里的 base_url+api_key
-	//     做任意出站预览（SSRF 面），并非纯计算。
-	// 因此两条都回落到 mutating:accounts 前缀规则，保持 step_up_required。
+	// 上游模型目录同步/预览（管理端「模型限制 → 模型白名单」的「同步最新支持模型 /
+	// 同步上游模型」按钮）：只拉上游 /models 列表，再用 models.dev 公开注册表补齐
+	// 上下文/模态等能力元数据。
+	//   - sync-upstream 的唯一写库动作是把模型能力快照写回
+	//     accounts.extra[upstream_models]（模型 ID/上下文/模态等公开元数据，不含
+	//     凭据、价格或权限）；
+	//   - sync-upstream-preview 用表单里尚未保存的凭据打一次上游 /models，临时账号
+	//     ID=0，不落库、不改账号配置。
+	// 二者 base_url 都走 validateUpstreamBaseURL（urlvalidator allowlist + 私网拦截），
+	// 与已放开的「账号测试」同一出站校验口径；响应只有模型列表与公开元数据。
+	// 每次点击都要求 TOTP 会让「配模型白名单」变成不可用的逐次弹码，属误伤。
+	// 凭据回读（GET /:id/credential）、账号导出（GET /data）、账号写操作
+	// （PUT /:id、batch-update-credentials 等）仍由 stepUpExact /
+	// mutating:accounts 保持 step_up_required。
+	{method: "POST", path: "/api/v1/admin/accounts/:id/models/sync-upstream", res: Resolved{ClassSecretFree, ReasonUpstreamModelCatalogSync, ResourceNone, "exact:accounts.sync-upstream-models"}},
+	{method: "POST", path: "/api/v1/admin/accounts/models/sync-upstream-preview", res: Resolved{ClassSecretFree, ReasonUpstreamModelCatalogPreview, ResourceNone, "exact:accounts.sync-upstream-models-preview"}},
 	// 上游渠道公告同步：用库内渠道会话拉公告并 upsert，响应只有 fetched/added/
 	// updated/unread 计数，不回渠道密码/子密钥/会话。
 	{method: "POST", path: "/api/v1/admin/upstream-monitor/channels/:id/announcements/sync", res: Resolved{ClassSecretFree, ReasonChannelAnnouncementSync, ResourceNone, "exact:upstream-monitor.announcements-sync"}},
@@ -358,6 +390,9 @@ var secretFreeExact = []exactRule{
 	{method: "POST", path: "/api/v1/admin/settings/web-search-emulation/test", res: Resolved{ClassSecretFree, ReasonWebSearchEmulationProbe, ResourceNone, "exact:settings.web-search-test"}},
 	// IP 风控预检：只回该 IP 的风险判定明细，不改封禁状态、不回任何密钥。
 	{method: "POST", path: "/api/v1/admin/settings/ip-risk/check", res: Resolved{ClassSecretFree, ReasonIPRiskPreflightCheck, ResourceNone, "exact:settings.ip-risk-check"}},
+	// 邮件模板预览：用未保存的 subject/HTML 与示例变量在内存渲染并回渲染结果，
+	// 不写库、不出站、不接触任何密钥；保存模板（PUT）与发送测试邮件仍 step-up。
+	{method: "POST", path: "/api/v1/admin/settings/email-template-preview", res: Resolved{ClassSecretFree, ReasonEmailTemplatePreview, ResourceNone, "exact:settings.email-template-preview"}},
 }
 
 // providerCredentialPrefixes are upstream provider OAuth families: POST/PUT/
