@@ -71,6 +71,8 @@ const usageLogsUpstreamRequestIDIndex = "idx_usage_logs_upstream_request_id"
 const usageLogsDashboardCoveringIndexesMigration = "317_usage_logs_dashboard_covering_indexes_notx.sql"
 const usageLogsUserCreatedDimsIndex = "idx_usage_logs_user_created_dims"
 const usageLogsAPIKeyCreatedStatsIndex = "idx_usage_logs_api_key_created_stats"
+const opsErrorLogs5xxTimeSourceIndexMigration = "338_ops_error_logs_5xx_time_index_notx.sql"
+const opsErrorLogs5xxTimeSourceIndex = "idx_ops_error_logs_5xx_time_source"
 
 type migrationChecksumCompatibilityRule struct {
 	fileChecksum       string
@@ -481,6 +483,10 @@ func prepareNonTransactionalMigration(ctx context.Context, db migrationConnectio
 			}
 		}
 		return nil
+	case opsErrorLogs5xxTimeSourceIndexMigration:
+		// CONCURRENTLY 建索引中断会留下 invalid index，重跑前先清掉，
+		// 否则 IF NOT EXISTS 会跳过、索引永远不可用。
+		return dropInvalidIndexIfPresent(ctx, db, opsErrorLogs5xxTimeSourceIndex)
 	default:
 		return nil
 	}

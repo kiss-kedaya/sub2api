@@ -209,6 +209,44 @@ func TestOpsAlertRuleValidation(t *testing.T) {
 
 	require.True(t, isPercentOrRateMetric("error_rate"))
 	require.False(t, isPercentOrRateMetric("concurrency_queue_depth"))
+	// 5xx 分源指标是条数/倍数，不是百分比：阈值允许 >100，不能被百分比校验拦住。
+	require.False(t, isPercentOrRateMetric(service.OpsMetricGateway5xx))
+	require.False(t, isPercentOrRateMetric(service.OpsMetricUpstream5xx))
+	require.False(t, isPercentOrRateMetric(service.OpsMetricUpstream5xxSpike))
+}
+
+// 5xx 分源指标必须能作为告警规则的 metric_type 保存，且阈值按计数/倍数校验。
+func TestOpsAlertRuleValidation_Error5xxMetrics(t *testing.T) {
+	tests := []struct {
+		name       string
+		metricType string
+		threshold  string
+		wantErr    bool
+	}{
+		{name: "gateway_5xx 计数阈值", metricType: service.OpsMetricGateway5xx, threshold: "500"},
+		{name: "upstream_5xx 硬顶阈值", metricType: service.OpsMetricUpstream5xx, threshold: "30000"},
+		{name: "upstream_5xx_spike_ratio 倍数阈值", metricType: service.OpsMetricUpstream5xxSpike, threshold: "3"},
+		{name: "未知指标仍拒绝", metricType: "not_a_metric", threshold: "1", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			raw := map[string]json.RawMessage{
+				"name":        json.RawMessage(`"5xx 规则"`),
+				"metric_type": json.RawMessage(`"` + tt.metricType + `"`),
+				"operator":    json.RawMessage(`">"`),
+				"threshold":   json.RawMessage(tt.threshold),
+			}
+			validated, err := validateOpsAlertRulePayload(raw)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.metricType, validated.MetricType)
+		})
+	}
 }
 
 func TestOpsWSHelpers(t *testing.T) {
