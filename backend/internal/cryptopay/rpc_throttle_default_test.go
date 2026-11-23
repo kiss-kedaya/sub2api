@@ -1,48 +1,36 @@
 package cryptopay
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 )
 
-func init() {
-	// Every test in this package shares one process and one global throttle
-	// registry; production's default pacing would make each of them wait on every
-	// call. They run unpaced, as they did before the default existed, and the test
-	// below puts the production default back for its own duration.
-	defaultRPCThrottle = 0
-}
-
-// An operator who never touched rpc_throttle_ms still gets paced calls: unpaced,
-// one scan stage fires its batches together, the provider answers 429, and the
-// pool's cooldown then releases every waiting caller at the same instant again.
-func TestApplyRPCThrottleUsesDefaultPacingWhenUnset(t *testing.T) {
-	production := defaultRPCThrottle
-	defaultRPCThrottle = 150 * time.Millisecond
-	t.Cleanup(func() {
-		defaultRPCThrottle = production
-		rpc.SetEndpointThrottleInterval(0)
-	})
-	second := func(endpoint string) time.Duration {
-		throttle := rpc.ThrottleFor(endpoint)
-		if throttle == nil {
-			t.Fatal("this configuration must pace calls")
-		}
-		_ = throttle.Wait(context.Background())
-		start := time.Now()
-		_ = throttle.Wait(context.Background())
-		return time.Since(start)
-	}
+// Pacing is opt-in. Pacing every call by default once made a stage over 13 address
+// batches take 2.4s instead of 5ms, kept the idle wallet guard scan holding the
+// global scan lock back to back, and stopped BSC, Ethereum and Polygon from
+// advancing. An operator who set nothing must get no pacing at all.
+func TestUnsetRPCThrottleMeansNoPacing(t *testing.T) {
+	t.Cleanup(func() { rpc.SetEndpointThrottleInterval(0) })
 
 	applyRPCThrottle(CryptoConfig{})
-	if got := second("https://unset.example"); got < 100*time.Millisecond {
-		t.Fatalf("unset config must pace by default (about %v), second call waited %v", defaultRPCThrottle, got)
+	if rpc.ThrottleFor("https://unset.example") != nil {
+		t.Fatal("an unset rpc_throttle_ms must not pace calls")
 	}
-	applyRPCThrottle(CryptoConfig{RPCThrottleMs: 1})
-	if got := second("https://explicit.example"); got > 50*time.Millisecond {
-		t.Fatalf("an explicit 1ms setting must all but disable pacing, second call waited %v", got)
+	applyRPCThrottle(CryptoConfig{RPCThrottleMs: -5})
+	if rpc.ThrottleFor("https://negative.example") != nil {
+		t.Fatal("a negative value must not pace calls")
+	}
+	applyRPCThrottle(CryptoConfig{RPCThrottleMs: 40})
+	throttle := rpc.ThrottleFor("https://explicit.example")
+	if throttle == nil {
+		t.Fatal("an explicit value must pace calls")
+	}
+	_ = throttle.Wait(t.Context())
+	start := time.Now()
+	_ = throttle.Wait(t.Context())
+	if got := time.Since(start); got < 30*time.Millisecond {
+		t.Fatalf("an explicit 40ms setting must space calls, second call waited %v", got)
 	}
 }
