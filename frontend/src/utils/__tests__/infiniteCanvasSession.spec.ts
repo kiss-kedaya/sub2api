@@ -123,7 +123,22 @@ describe('ensureInfiniteCanvasApiKey', () => {
     expect(session).toMatchObject({ apiKey: 'sk-many', created: true, groupIds: ids })
   })
 
-  it('rereads a redacted creation replay and rotates only the matching usable canvas key', async () => {
+  it('does not rotate on a redacted creation replay until the user consents', async () => {
+    localStorage.setItem('auth_user', JSON.stringify({ id: 1 }))
+    getAvailableGroups.mockResolvedValue([group(2)])
+    const current = { id: 7, group_id: 9, group_ids: [9] }
+    list.mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [key({ id: 8 }), key(current)] })
+    create.mockResolvedValue(key({ id: 7 }))
+
+    await expect(ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { createIfMissing: true }))
+      .rejects.toMatchObject({ code: 'rotation-required', rotationTarget: { keyId: 7, groupCount: 1 } })
+
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(rotate).not.toHaveBeenCalled()
+  })
+
+  it('rereads a redacted creation replay and rotates only the matching usable canvas key after consent', async () => {
     localStorage.setItem('auth_user', JSON.stringify({ id: 1 }))
     getAvailableGroups.mockResolvedValue([group(2)])
     const current = { id: 7, group_id: 9, group_ids: [9] }
@@ -132,7 +147,10 @@ describe('ensureInfiniteCanvasApiKey', () => {
     create.mockResolvedValue(key({ id: 7 }))
     rotate.mockResolvedValue(secretKey(current, 'fixture-only-rotated-secret'))
 
-    const session = await ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { createIfMissing: true })
+    const session = await ensureInfiniteCanvasApiKey(
+      { list, create, rotate, getAvailableGroups },
+      { createIfMissing: true, allowRotate: true },
+    )
 
     expect(list).toHaveBeenCalledTimes(2)
     expect(create).toHaveBeenCalledTimes(1)
@@ -198,13 +216,45 @@ describe('ensureInfiniteCanvasApiKey', () => {
     expect(second.apiKey).toBe('sk-new')
   })
 
-  it('reuses the named key without changing its routing groups', async () => {
+  it('never rotates or creates merely because the canvas is entered without a cached plaintext', async () => {
+    getAvailableGroups.mockResolvedValue([group(4), group(1)])
+    list.mockResolvedValue({ items: [key({ id: 7, group_ids: [2, 5], key_masked: 'sk-abcd****wxyz' })] })
+
+    const error = await ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }).catch((e) => e)
+
+    expect(error).toBeInstanceOf(InfiniteCanvasSetupError)
+    expect(error.code).toBe('rotation-required')
+    // 界面只拿到掩码和分组数，用来告诉用户要轮换的是哪一把。
+    expect(error.rotationTarget).toEqual({ keyId: 7, keyMasked: 'sk-abcd****wxyz', groupCount: 2 })
+    expect(rotate).not.toHaveBeenCalled()
+    expect(create).not.toHaveBeenCalled()
+    expect(getAvailableGroups).not.toHaveBeenCalled()
+  })
+
+  it('keeps asking on every later entry until the user consents (a refresh never rotates)', async () => {
+    list.mockResolvedValue({ items: [key({ id: 7 })] })
+    const client = { list, create, rotate, getAvailableGroups }
+
+    for (let i = 0; i < 3; i += 1) {
+      await expect(ensureInfiniteCanvasApiKey(client)).rejects.toMatchObject({ code: 'rotation-required' })
+    }
+    expect(rotate).not.toHaveBeenCalled()
+  })
+
+  it('reports a missing key instead of rotating when the client cannot rotate at all', async () => {
+    list.mockResolvedValue({ items: [key({ id: 7 })] })
+    await expect(ensureInfiniteCanvasApiKey({ list, create, getAvailableGroups }))
+      .rejects.toMatchObject({ code: 'missing-key' })
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('reuses the named key without changing its routing groups once the user consents to rotation', async () => {
     getAvailableGroups.mockResolvedValue([group(4), group(1)])
     list.mockResolvedValue({ items: [key({ id: 7, group_ids: [2] })] })
-    // 列表不再返回明文：进入画布时对这把画布专用 key 做一次就地轮换拿新明文。
+    // 列表不再返回明文：用户在界面上确认后，才对这把画布专用 key 做一次就地轮换拿新明文。
     rotate.mockResolvedValue(secretKey({ id: 7, group_ids: [2] }, 'sk-rotated'))
 
-    const session = await ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups })
+    const session = await ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { allowRotate: true })
 
     expect(create).not.toHaveBeenCalled()
     expect(rotate).toHaveBeenCalledWith(7)
@@ -222,12 +272,43 @@ describe('ensureInfiniteCanvasApiKey', () => {
     rotate.mockResolvedValue(secretKey({ id: 7, group_ids: [2] }, 'sk-rotated'))
 
     const client = { list, create, rotate, getAvailableGroups }
-    const first = await ensureInfiniteCanvasApiKey(client)
+    const first = await ensureInfiniteCanvasApiKey(client, { allowRotate: true })
+    // 同一页面生命周期内已经有明文：再次进入既不再询问，也不会再轮换。
     const second = await ensureInfiniteCanvasApiKey(client)
 
     expect(rotate).toHaveBeenCalledTimes(1)
     expect(first.apiKey).toBe('sk-rotated')
     expect(second.apiKey).toBe('sk-rotated')
+  })
+
+  it('rotates once for concurrent confirmations (a double click)', async () => {
+    list.mockResolvedValue({ items: [key({ id: 7 })] })
+    rotate.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return secretKey({ id: 7 }, 'sk-rotated-once')
+    })
+    const client = { list, create, rotate, getAvailableGroups }
+
+    const [first, second] = await Promise.all([
+      ensureInfiniteCanvasApiKey(client, { allowRotate: true }),
+      ensureInfiniteCanvasApiKey(client, { allowRotate: true }),
+    ])
+
+    expect(rotate).toHaveBeenCalledTimes(1)
+    expect(first.apiKey).toBe('sk-rotated-once')
+    expect(second.apiKey).toBe('sk-rotated-once')
+  })
+
+  it('rotates the canvas key found at confirmation time, not the one shown earlier', async () => {
+    list.mockResolvedValueOnce({ items: [key({ id: 7 })] })
+      .mockResolvedValueOnce({ items: [key({ id: 9 }), key({ id: 7 })] })
+    rotate.mockResolvedValue(secretKey({ id: 9 }, 'sk-newest'))
+    const client = { list, create, rotate, getAvailableGroups }
+
+    await expect(ensureInfiniteCanvasApiKey(client)).rejects.toMatchObject({ code: 'rotation-required', rotationTarget: { keyId: 7 } })
+    await ensureInfiniteCanvasApiKey(client, { allowRotate: true })
+
+    expect(rotate.mock.calls).toEqual([[9]])
   })
 
   it.each([
@@ -241,7 +322,7 @@ describe('ensureInfiniteCanvasApiKey', () => {
     rotate.mockResolvedValueOnce(secretKey(original, 'fixture-before-rotation'))
       .mockResolvedValueOnce(secretKey({ ...original, key_rotated_at: '2026-01-01T00:00:00.123458Z' }, 'fixture-after-recovery'))
     const client = { list, create, rotate, getAvailableGroups }
-    await ensureInfiniteCanvasApiKey(client)
+    await ensureInfiniteCanvasApiKey(client, { allowRotate: true })
 
     if (replay) {
       list.mockResolvedValueOnce({ items: [] })
@@ -250,7 +331,7 @@ describe('ensureInfiniteCanvasApiKey', () => {
     }
     list.mockResolvedValueOnce({ items: [rotatedElsewhere] })
 
-    const session = await ensureInfiniteCanvasApiKey(client, { createIfMissing: replay })
+    const session = await ensureInfiniteCanvasApiKey(client, { createIfMissing: replay, allowRotate: true })
 
     expect(session).toMatchObject({ keyId: 7, apiKey: 'fixture-after-recovery', created: false, rotated: true })
     expect(rotate.mock.calls).toEqual([[7], [7]])
@@ -270,7 +351,7 @@ describe('ensureInfiniteCanvasApiKey', () => {
     })
     rotate.mockResolvedValueOnce(secretKey(original, 'fixture-unchanged'))
     const client = { list, create, rotate, getAvailableGroups }
-    await ensureInfiniteCanvasApiKey(client)
+    await ensureInfiniteCanvasApiKey(client, { allowRotate: true })
 
     await expect(ensureInfiniteCanvasApiKey(client))
       .resolves.toMatchObject({ apiKey: 'fixture-unchanged', groupIds: [9], rotated: false })
@@ -284,9 +365,14 @@ describe('ensureInfiniteCanvasApiKey', () => {
     rotate.mockResolvedValueOnce(secretKey(original, 'fixture-original'))
       .mockResolvedValueOnce(secretKey(changedMask, 'fixture-legacy-recovery'))
     const client = { list, create, rotate, getAvailableGroups }
-    await ensureInfiniteCanvasApiKey(client)
+    await ensureInfiniteCanvasApiKey(client, { allowRotate: true })
 
-    await expect(ensureInfiniteCanvasApiKey(client))
+    // 掩码变了说明别处轮换过：缓存作废，但没有用户确认就不再自动轮换。
+    list.mockResolvedValueOnce({ items: [changedMask] })
+    await expect(ensureInfiniteCanvasApiKey(client)).rejects.toMatchObject({ code: 'rotation-required' })
+    expect(rotate).toHaveBeenCalledTimes(1)
+
+    await expect(ensureInfiniteCanvasApiKey(client, { allowRotate: true }))
       .resolves.toMatchObject({ apiKey: 'fixture-legacy-recovery', rotated: true })
     expect(rotate.mock.calls).toEqual([[7], [7]])
   })
@@ -297,9 +383,9 @@ describe('ensureInfiniteCanvasApiKey', () => {
     list.mockResolvedValueOnce({ items: [original] }).mockResolvedValueOnce({ items: [rotated] })
     rotate.mockResolvedValueOnce(secretKey(original, 'fixture-original')).mockResolvedValueOnce(rotated)
     const client = { list, create, rotate, getAvailableGroups }
-    await ensureInfiniteCanvasApiKey(client)
+    await ensureInfiniteCanvasApiKey(client, { allowRotate: true })
 
-    await expect(ensureInfiniteCanvasApiKey(client)).rejects.toMatchObject({ code: 'missing-key' })
+    await expect(ensureInfiniteCanvasApiKey(client, { allowRotate: true })).rejects.toMatchObject({ code: 'missing-key' })
     expect(rotate.mock.calls).toEqual([[7], [7]])
     expect(create).not.toHaveBeenCalled()
   })
@@ -307,17 +393,102 @@ describe('ensureInfiniteCanvasApiKey', () => {
   it('does not reuse a cached credential belonging to a different owner', async () => {
     const firstOwner = key({ id: 7, user_id: 1 })
     const secondOwner = { ...firstOwner, user_id: 2 }
-    list.mockResolvedValueOnce({ items: [firstOwner] }).mockResolvedValueOnce({ items: [secondOwner] })
+    list.mockResolvedValueOnce({ items: [firstOwner] })
+      .mockResolvedValueOnce({ items: [secondOwner] })
+      .mockResolvedValueOnce({ items: [secondOwner] })
     rotate.mockResolvedValueOnce(secretKey(firstOwner, 'fixture-first-owner'))
       .mockResolvedValueOnce(secretKey(secondOwner, 'fixture-second-owner'))
     const client = { list, create, rotate, getAvailableGroups }
     localStorage.setItem('auth_user', JSON.stringify({ id: 1 }))
-    await ensureInfiniteCanvasApiKey(client)
+    await ensureInfiniteCanvasApiKey(client, { allowRotate: true })
 
+    // 换了账号：第一个账号的明文不能复用，也不能替第二个账号自动轮换。
     localStorage.setItem('auth_user', JSON.stringify({ id: 2 }))
-    await expect(ensureInfiniteCanvasApiKey(client))
+    await expect(ensureInfiniteCanvasApiKey(client)).rejects.toMatchObject({ code: 'rotation-required' })
+    expect(rotate.mock.calls).toEqual([[7]])
+
+    await expect(ensureInfiniteCanvasApiKey(client, { allowRotate: true }))
       .resolves.toMatchObject({ apiKey: 'fixture-second-owner', rotated: true })
     expect(rotate.mock.calls).toEqual([[7], [7]])
+  })
+
+  describe('identity verification (key creation and rotation hand out plaintext)', () => {
+    const verification = { method: 'password' as const, password: 'fixture-password' }
+
+    it('forwards the verification to create and does not add the key when there is none', async () => {
+      getAvailableGroups.mockResolvedValue([group(4)])
+      list.mockResolvedValue({ items: [] })
+      create.mockResolvedValue(secretKey({ group_id: 4, group_ids: [4] }, 'sk-new'))
+
+      await ensureInfiniteCanvasApiKey({ list, create, getAvailableGroups }, { createIfMissing: true, verification })
+      expect(create.mock.calls[0][10]).toEqual({ idempotencyKey: expect.any(String), verification })
+
+      create.mockClear()
+      await ensureInfiniteCanvasApiKey({ list, create, getAvailableGroups }, { createIfMissing: true })
+      expect(Object.keys(create.mock.calls[0][10])).toEqual(['idempotencyKey'])
+    })
+
+    it('forwards the verification to the confirmed rotation', async () => {
+      list.mockResolvedValue({ items: [key({ id: 7 })] })
+      rotate.mockResolvedValue(secretKey({ id: 7 }, 'sk-rotated'))
+
+      await ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { allowRotate: true, verification })
+
+      expect(rotate).toHaveBeenCalledWith(7, verification)
+    })
+
+    it('never rotates just because a verification payload is present', async () => {
+      list.mockResolvedValue({ items: [key({ id: 7 })] })
+      await expect(ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { verification }))
+        .rejects.toMatchObject({ code: 'rotation-required' })
+      expect(rotate).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      'VERIFY_REQUIRED',
+      'VERIFY_PASSWORD_INVALID',
+      'VERIFY_TOTP_INVALID',
+      'VERIFY_PASSKEY_FAILED',
+      'VERIFY_FACTOR_UNAVAILABLE',
+    ])('reports %s as a verification failure and does not retry or fall back', async (reason) => {
+      list.mockResolvedValue({ items: [key({ id: 7 })] })
+      rotate.mockRejectedValue(Object.assign(new Error('rejected'), { reason }))
+
+      await expect(ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { allowRotate: true, verification }))
+        .rejects.toMatchObject({ code: 'verification-failed', reason })
+      expect(rotate).toHaveBeenCalledTimes(1)
+      expect(create).not.toHaveBeenCalled()
+    })
+
+    it('reports a rejected creation verification the same way and never recreates the key', async () => {
+      getAvailableGroups.mockResolvedValue([group(4)])
+      list.mockResolvedValue({ items: [] })
+      create.mockRejectedValue(Object.assign(new Error('rejected'), { reason: 'VERIFY_TOTP_INVALID' }))
+
+      await expect(ensureInfiniteCanvasApiKey({ list, create, getAvailableGroups }, { createIfMissing: true, verification: { method: 'totp', totp_code: '123456' } }))
+        .rejects.toMatchObject({ code: 'verification-failed', reason: 'VERIFY_TOTP_INVALID' })
+      expect(create).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not mistake an ordinary server error for a verification failure', async () => {
+      list.mockResolvedValue({ items: [key({ id: 7 })] })
+      rotate.mockRejectedValue(Object.assign(new Error('boom'), { reason: 'INTERNAL_ERROR' }))
+
+      await expect(ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { allowRotate: true }))
+        .rejects.toMatchObject({ code: 'request-failed' })
+    })
+
+    it('does not keep the secret material anywhere after the call', async () => {
+      list.mockResolvedValue({ items: [key({ id: 7 })] })
+      rotate.mockResolvedValue(secretKey({ id: 7 }, 'sk-rotated'))
+      await ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups }, { allowRotate: true, verification })
+
+      // 下一次进入（没有 verification）既不复用也不回放这份校验材料：明文缓存命中，rotate 不会再被调用。
+      await ensureInfiniteCanvasApiKey({ list, create, rotate, getAvailableGroups })
+      expect(rotate).toHaveBeenCalledTimes(1)
+      expect(JSON.stringify(localStorage)).not.toContain('fixture-password')
+      expect(JSON.stringify(sessionStorage)).not.toContain('fixture-password')
+    })
   })
 
   it('fails when the user has no bindable groups', async () => {
@@ -358,10 +529,10 @@ describe('ensureInfiniteCanvasApiKey', () => {
     rotate.mockResolvedValue(secretKey({ user_id: 2 }, 'sk-second-user'))
     const client = { list, create, rotate, getAvailableGroups }
     localStorage.setItem('auth_user', JSON.stringify({ id: 1 }))
-    const oldSession = ensureInfiniteCanvasApiKey(client)
+    const oldSession = ensureInfiniteCanvasApiKey(client, { allowRotate: true })
     const oldRejection = expect(oldSession).rejects.toMatchObject({ code: 'request-failed' })
     localStorage.setItem('auth_user', JSON.stringify({ id: 2 }))
-    const newSession = await ensureInfiniteCanvasApiKey(client)
+    const newSession = await ensureInfiniteCanvasApiKey(client, { allowRotate: true })
     finishOldList({ items: [key({ user_id: 1 })] })
     await oldRejection
     expect(newSession.apiKey).toBe('sk-second-user')

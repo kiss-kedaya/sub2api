@@ -89,6 +89,14 @@ export default {
     manageKeys: 'Manage API keys',
     keyCreated: 'Created a smart-routing API key for Infinite Canvas',
     groupsTruncated: 'Smart routing bound every available group.',
+    rotateTitle: 'Regenerate the “Infinite Canvas” key?',
+    rotateBody: 'A key’s secret is shown only once, when it is created or rotated, and cannot be recovered after a page refresh. Entering the canvas needs a freshly generated key. Rotating invalidates the old key immediately, so update any other app that uses it. Choosing “Not now” changes no key.',
+    rotateTarget: 'Key to rotate: {key} ({count} groups bound)',
+    rotateConfirm: 'Rotate and enter canvas',
+    rotateCancel: 'Not now',
+    keyRotated: 'The “Infinite Canvas” key was rotated; the old key no longer works',
+    verifyHint: 'To protect your account, verify your identity before a new key is issued.',
+    verifyLoading: 'Loading verification methods…',
   },
 
   // Custom Page (iframe embed)
