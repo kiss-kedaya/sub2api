@@ -154,8 +154,11 @@ type BackupRecord struct {
 }
 
 // restoreUnsupported reports whether the in-app restore must refuse this record.
+// The .age suffix is a second signal for a record whose flags were lost: a build
+// that predates them rewrites the whole record list without Scope and Encrypted.
 func (r *BackupRecord) restoreUnsupported() bool {
-	return r.Encrypted || r.Scope == backupScopeCritical
+	return r.Encrypted || r.Scope == backupScopeCritical ||
+		strings.HasSuffix(r.FileName, ".age") || strings.HasSuffix(r.S3Key, ".age")
 }
 
 // BackupDownloadPart 描述一个可下载的备份分卷。

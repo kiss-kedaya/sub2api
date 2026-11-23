@@ -579,6 +579,58 @@ func TestBackupService_RestoreRefusesPartialAndEncryptedSnapshots(t *testing.T) 
 	}
 }
 
+// A build that predates scope/encrypted (a rollback, or a mixed-version rollout)
+// reads and rewrites the whole record list without them. The archive name still
+// says .age, and that alone must keep the in-app restore away from psql.
+func TestBackupService_RestoreRefusesEncryptedSnapshotWhoseFlagsWereLost(t *testing.T) {
+	isolateTempDir(t)
+	repo := newMockSettingRepo()
+	seedS3Config(t, repo)
+	store := newMockObjectStore()
+	dumper := stringDumper(knownDump)
+	svc := newCriticalTestService(repo, dumper, store, config.BackupConfig{
+		ExcludeTableData: []string{"public.t"},
+		AgeRecipients:    recipientsOf(newAgeIdentity(t)),
+	})
+	record, err := svc.CreateBackup(context.Background(), "manual", 14)
+	require.NoError(t, err)
+	require.True(t, record.Encrypted)
+	require.Equal(t, backupScopeCritical, record.Scope)
+
+	raw, err := repo.GetValue(context.Background(), settingKeyBackupRecords)
+	require.NoError(t, err)
+	var stored []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+	for _, entry := range stored {
+		delete(entry, "scope")
+		delete(entry, "encrypted")
+	}
+	rewritten, err := json.Marshal(stored)
+	require.NoError(t, err)
+	require.NoError(t, repo.Set(context.Background(), settingKeyBackupRecords, string(rewritten)))
+
+	after, err := svc.GetBackupRecord(context.Background(), record.ID)
+	require.NoError(t, err)
+	require.Empty(t, after.Scope, "precondition: the flags are gone")
+	require.False(t, after.Encrypted, "precondition: the flags are gone")
+
+	require.ErrorIs(t, svc.RestoreBackup(context.Background(), record.ID), ErrBackupRestoreUnsupported)
+	started, err := svc.StartRestore(context.Background(), record.ID)
+	require.ErrorIs(t, err, ErrBackupRestoreUnsupported)
+	require.Nil(t, started)
+	svc.executeRestore(after, store)
+	require.Zero(t, dumper.restoreCalls, "psql must never be reached")
+}
+
+func TestBackupRecord_RestoreUnsupportedReadsTheAgeSuffix(t *testing.T) {
+	require.True(t, (&BackupRecord{FileName: "db_20261123_120000.sql.gz.age", S3Key: "backups/a.sql.gz"}).restoreUnsupported(),
+		"the file name alone must be enough")
+	require.True(t, (&BackupRecord{FileName: "a.sql.gz", S3Key: "backups/db_20261123_120000.sql.gz.age"}).restoreUnsupported(),
+		"the object key alone must be enough")
+	require.False(t, (&BackupRecord{FileName: "a.sql.gz", S3Key: "backups/a.sql.gz"}).restoreUnsupported(),
+		"a plain whole-database backup stays restorable")
+}
+
 func TestBackupService_RestoreStillWorksForWholeDatabaseBackups(t *testing.T) {
 	isolateTempDir(t)
 	repo := newMockSettingRepo()
