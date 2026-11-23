@@ -28,6 +28,7 @@ Compared with upstream, this tree is built around a production site that already
 - **Usage dashboard** — 30-day window with hourly rollup when data exists, otherwise a direct `usage_logs` fallback.
 - **Operator controls** — connection timelines, scoped payload capture, cache tests, traffic reports, notifications, channel drilldowns, and managed proxies, with opt-in automation and provider channels. See the [operator capability guide](docs/operator-capabilities.md).
 - **Gateway reliability** — WebSocket client-close is not treated as account failure; oversized passthrough can fall back to HTTP bridge; Spark 429 stays model-scoped; failed forwards release session slots immediately.
+- **Base URL tolerance** — an Anthropic-style bare host or an OpenAI-style `/v1` base both work; duplicated prefixes (`/v1/v1/messages`) and missing prefixes (`/messages`) are folded/expanded by the server, with auth, rate limits, billing and logs identical to the canonical path. Per-client setup table: [docs/gateway-base-url.md](docs/gateway-base-url.md).
 - **Nuxt UI frontend** — Vue pages use `@nuxt/ui` inside a Vite SPA. The complete UI is embedded in the Go binary; no Node, Nitro or BFF service is required.
 - **Ops-safe upgrades** — production `DATABASE_MIGRATION_MODE=validate` on the live process; schema changes are applied out of band. Version is a single file: `backend/cmd/server/VERSION`. GitHub Releases fire only on semantic `v*` tags.
 

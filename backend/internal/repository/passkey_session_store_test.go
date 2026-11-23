@@ -111,7 +111,9 @@ func TestPasskeySessionStoreRejectsMalformedOrMismatchedSessions(t *testing.T) {
 	mismatched := newTestPasskeySession("login", 0)
 	payload, marshalErr := json.Marshal(mismatched)
 	require.NoError(t, marshalErr)
-	setCmd := instanceB.(*passkeySessionStore).redis.Set(ctx, passkeySessionKey(token), payload, time.Minute)
+	storeB, ok := instanceB.(*passkeySessionStore)
+	require.True(t, ok)
+	setCmd := storeB.redis.Set(ctx, passkeySessionKey(token), payload, time.Minute)
 	require.NoError(t, setCmd.Err())
 
 	_, err = instanceB.Consume(ctx, token)
@@ -142,7 +144,9 @@ func TestPasskeySessionStoreConsumesLegacyTokenDuringRollout(t *testing.T) {
 	require.Len(t, legacyToken, 43)
 	payload, err := json.Marshal(newTestPasskeySession("registration", 42))
 	require.NoError(t, err)
-	legacyCmd := instanceA.(*passkeySessionStore).redis.Set(
+	storeA, ok := instanceA.(*passkeySessionStore)
+	require.True(t, ok)
+	legacyCmd := storeA.redis.Set(
 		ctx, passkeySessionKey(legacyToken), payload, time.Minute)
 	require.NoError(t, legacyCmd.Err())
 

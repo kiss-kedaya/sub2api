@@ -62,6 +62,17 @@ func Logger() gin.HandlerFunc {
 			zap.String("method", method),
 			zap.String("path", path),
 		}
+		// 网关路径被规范化过（重复 /v1 折叠、或裸路径补 /v1）时补充原始路径，
+		// 便于按 original_path 统计用户 Base URL 的填法。
+		if aliasInfo, ok := gatewayPathAliasInfoFromContext(c.Request.Context()); ok {
+			fields = append(fields,
+				zap.String("gateway_original_path", aliasInfo.Original),
+				zap.String("gateway_path_alias_rule", string(aliasInfo.Rule)),
+			)
+			if aliasInfo.DuplicatePrefixes > 1 {
+				fields = append(fields, zap.Int("duplicate_v1_prefixes", aliasInfo.DuplicatePrefixes))
+			}
+		}
 		if rejected {
 			fields = append(fields,
 				zap.String("ingress_reject_reason", string(reason)),

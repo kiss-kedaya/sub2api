@@ -201,6 +201,7 @@ docs/*
 !docs/account-notifications-channel-operations.md
 !docs/regional-gateway-routing.md
 !docs/copilot-sdk-codex.md
+!docs/gateway-base-url.md
 .serena/
 .codex/
 frontend/coverage/
