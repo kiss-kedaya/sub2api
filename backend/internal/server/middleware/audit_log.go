@@ -498,6 +498,13 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	// assertion / 票据），键级脱敏之外再整体不入库，避免新增字段名漏网。
 	"POST /api/v1/user/api-keys/:id/reveal-authorize":  {},
 	"POST /api/v1/user/security/passkey/verify/finish": {},
+	// 双因子策略（#561）新增的两个 Passkey finish 接口，当时漏登记：请求体里的
+	// credential 是完整的 WebAuthn assertion（authenticatorData / clientDataJSON /
+	// signature），这些字段名不在键级脱敏清单里，不整体省略就会原样落进
+	// audit_logs.request_body。login/2fa/passkey/finish 同时登记在 auditAuthEvents，
+	// 认证事件分支本来就会省略 body，这里是纵深防御，防止以后调整认证事件表时回退。
+	"POST /api/v1/user/step-up/passkey/finish":   {},
+	"POST /api/v1/auth/login/2fa/passkey/finish": {},
 	// 封存密文的读回接口是 GET，本身没有请求体；显式登记为「无可记录体」，
 	// 防止以后给 GET 加 body 或在 Omit 清单里被当成漏项。
 	"GET /api/v1/user/api-keys/:id/secret-seal": {},
