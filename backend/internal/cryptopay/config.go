@@ -83,8 +83,9 @@ type CryptoConfig struct {
 	// RPCThrottleMs paces calls to each endpoint. Public providers rate-limit
 	// per endpoint and the scanner is bursty: one pass fires several batches per
 	// chain across several chains. Without pacing a burst gets 429 and, because
-	// the pool rotates on failure, the next endpoint is burned too. Zero (unset)
-	// uses the default pacing (150ms); 1 all but disables it.
+	// the pool rotates on failure, the next endpoint is burned too. Zero
+	// disables pacing and keeps the previous behaviour. Keep it small: a scan pass
+	// is hundreds of calls, and every call waits its turn.
 	RPCThrottleMs int `json:"rpc_throttle_ms,omitempty"`
 
 	// Sweep settings.

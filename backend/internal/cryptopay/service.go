@@ -399,29 +399,22 @@ func NewService(
 // startup and after every admin config save.
 func (s *Service) Reload(ctx context.Context) { s.reload(ctx) }
 
-// defaultRPCThrottle is the pacing used when the operator configured none.
-//
-// One scan stage fires its address batches at the same instant. A public node
-// that tolerates a few requests per second answers that burst with 429, and the
-// pool's cooldown then ends for every waiting caller at the same instant too, so
-// the next burst is rejected the same way and the cooldown only grows: a livelock
-// the node itself never asked for. Spacing call starts breaks it; 150ms is about
-// seven requests per second per endpoint, far below any provider's published
-// limit and cheap for a scan pass that takes seconds.
-//
-// A variable so this package's tests, which share one process and one global
-// throttle registry, can run unpaced (see rpc_throttle_default_test.go).
-var defaultRPCThrottle = 150 * time.Millisecond
-
 // applyRPCThrottle publishes the configured pacing so every endpoint waits its
-// turn instead of firing together. Unset (zero) uses defaultRPCThrottle; the
-// admin API rejects negative values, so set 1 to all but disable pacing.
+// turn instead of firing together. Zero (unset) clears it: no pacing.
+//
+// Deliberately NOT paced by default. A scan pass is hundreds of eth_getLogs calls
+// (address batches x stages x chains); a 150ms spacing per endpoint made a single
+// stage over 13 batches take 2.4s instead of 5ms, stretched the idle wallet guard
+// scan - which holds the global scan lock - past its 5s tick, and starved the
+// deposit scan of the lock: BSC, Ethereum and Polygon all stopped advancing
+// (2026-11-24, reverted within 14 minutes). Opt in per deployment with a small
+// rpc_throttle_ms if a provider needs it.
 func applyRPCThrottle(cfg CryptoConfig) {
-	interval := time.Duration(cfg.RPCThrottleMs) * time.Millisecond
-	if cfg.RPCThrottleMs <= 0 {
-		interval = defaultRPCThrottle
+	ms := cfg.RPCThrottleMs
+	if ms < 0 {
+		ms = 0
 	}
-	rpc.SetEndpointThrottleInterval(interval)
+	rpc.SetEndpointThrottleInterval(time.Duration(ms) * time.Millisecond)
 }
 
 func (s *Service) reload(ctx context.Context) {
