@@ -82,7 +82,10 @@ describe('wallet security panel and recovery', () => {
     const wrapper = render()
     await flushPromises()
     mocks.get.mockRejectedValueOnce(new Error('status unavailable'))
-    await wrapper.get('[data-testid="wallet-security-refresh"]').trigger('click')
+    // The card-level refresh button is gone: the overview owns one merged
+    // "refresh status and statistics" control and calls this exposed loader.
+    expect(wrapper.find('[data-testid="wallet-security-refresh"]').exists()).toBe(false)
+    await (wrapper.vm as unknown as { refresh: () => Promise<void> }).refresh()
     await flushPromises()
     expect(wrapper.text()).toContain('admin.crypto.walletSecurityLocked')
     expect(wrapper.get('[role="alert"]').text()).toContain('status unavailable')
