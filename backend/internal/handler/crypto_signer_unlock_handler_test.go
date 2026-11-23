@@ -100,7 +100,6 @@ func TestAdminSignerUnlockMapsARejectedShareToAStableCode(t *testing.T) {
 // fakeSweepGate answers with a canned verdict so the handler contract (shape,
 // cache headers, unavailable service) is pinned without a live wallet.
 type fakeSweepGate struct {
-	cryptoSweepGateReader
 	gate *cryptopay.SweepGate
 	err  error
 }
