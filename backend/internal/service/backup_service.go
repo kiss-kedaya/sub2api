@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -50,6 +51,11 @@ const (
 	// unbounded snapshot would keep writing until the disk fills up. A
 	// whole-database backup, which has no exclude list, keeps its "no limit".
 	defaultCriticalMaxArchiveBytes int64 = 10 << 30
+
+	// A staged archive older than staleBackupFileAge was left behind by a process
+	// that died mid-backup (a backup is bounded by a 30 minute context).
+	staleBackupFilePrefix = "sub2api-backup-"
+	staleBackupFileAge    = 2 * time.Hour
 
 	// backupScheduledLeaderLockKey gates the scheduled full-database backup so
 	// that only one instance in a clustered deployment performs the
@@ -348,6 +354,9 @@ func (s *BackupService) Start() {
 		return
 	}
 	s.logSnapshotMode(logger.L())
+	if s.nonDefaultBackup() {
+		s.sweepStaleBackupFiles(time.Now())
+	}
 	s.cronSched = cron.New()
 	s.cronSched.Start()
 
@@ -389,6 +398,37 @@ func (s *BackupService) logSnapshotMode(l *zap.Logger) {
 		zap.Bool("encrypted", s.backupEncrypted()),
 		zap.Int64("max_archive_bytes", limit),
 	)
+}
+
+// sweepStaleBackupFiles removes staged archives (and split parts) that a killed
+// process left in the temp directory: a deploy that SIGKILLs the process during a
+// backup otherwise strands a file as large as the archive. Only regular files with
+// the staging prefix that are older than staleBackupFileAge are touched. It only
+// runs for a non-default backup configuration, so a default install is unchanged.
+func (s *BackupService) sweepStaleBackupFiles(now time.Time) int {
+	dir := os.TempDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), staleBackupFilePrefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() || now.Sub(info.ModTime()) < staleBackupFileAge {
+			continue
+		}
+		if os.Remove(filepath.Join(dir, entry.Name())) == nil {
+			removed++
+		}
+	}
+	if removed > 0 {
+		logger.L().Info("[Backup] removed stale staged archives",
+			zap.String("component", "service.backup"), zap.Int("removed", removed))
+	}
+	return removed
 }
 
 // recoverStaleRecords 启动时将孤立的 running 记录标记为 failed，并清理已上传对象。
