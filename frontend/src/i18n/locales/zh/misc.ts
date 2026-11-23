@@ -87,6 +87,14 @@ export default {
     manageKeys: '管理 API 密钥',
     keyCreated: '已为无限画布创建智能路由 API 密钥',
     groupsTruncated: '智能路由已按可用分组全部绑定。',
+    rotateTitle: '要重新生成「Infinite Canvas」密钥吗？',
+    rotateBody: '密钥明文只在创建或轮换时显示一次，刷新页面后无法找回，所以进入无限画布需要一把重新生成的密钥。轮换后旧密钥会立即失效，如果你在其他软件里使用了这把密钥，需要换成新的。选择「暂不进入」不会改动任何密钥。',
+    rotateTarget: '将被轮换的密钥：{key}（已绑定 {count} 个分组）',
+    rotateConfirm: '轮换并进入画布',
+    rotateCancel: '暂不进入',
+    keyRotated: '已轮换「Infinite Canvas」密钥，旧密钥已失效',
+    verifyHint: '为保护账号，生成新密钥前需要先验证你的身份。',
+    verifyLoading: '正在加载可用的验证方式…',
   },
 
   // Custom Page (iframe embed)
