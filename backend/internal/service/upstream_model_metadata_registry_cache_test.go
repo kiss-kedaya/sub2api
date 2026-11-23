@@ -159,7 +159,6 @@ func TestRefreshUpstreamModelMetadataBacksOffAfterRegistryFailure(t *testing.T) 
 		}
 		require.False(t, result.RegistryFetched, "a recent failure must not be retried per account")
 		require.Empty(t, result.RegistryError)
-		err = nil
 	}
 	require.Equal(t, 1, upstream.callCount(), "only the first failure may reach models.dev")
 }
