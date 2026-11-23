@@ -56,6 +56,7 @@
         <USwitch
           id="bark-enabled"
           v-model="enabled"
+          size="xl"
           :disabled="loading || saving || !!loadError"
           data-test="bark-enabled"
         />

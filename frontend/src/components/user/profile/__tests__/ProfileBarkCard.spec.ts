@@ -21,6 +21,16 @@ beforeEach(() => {
 })
 
 describe('shared Bark configuration card', () => {
+  it('renders the enable control as a Nuxt UI switch, not a hand-rolled checkbox', async () => {
+    const wrapper = render()
+    await flushPromises()
+    const control = wrapper.get('[role="switch"]')
+    expect(control.attributes('aria-checked')).toBe('true')
+    expect(control.attributes('data-slot')).toBe('base')
+    expect(control.classes().join(' ')).toContain('data-[state=checked]:bg-primary')
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+  })
+
   it('shows the wallet title while keeping the saved key private and blank', async () => {
     const wrapper = render({ title: 'Wallet security', description: 'Primary operator only' })
     await flushPromises()

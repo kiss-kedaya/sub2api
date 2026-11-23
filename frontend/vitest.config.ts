@@ -3,17 +3,14 @@ import { resolve } from 'path'
 import vue from '@vitejs/plugin-vue'
 import ui from '@nuxt/ui/vite'
 import { searchForWorkspaceRoot } from 'vite'
+import { nuxtUiOptions } from './nuxt-ui.config'
 
 export default defineConfig({
   plugins: [
     vue(),
-    // Same Nuxt UI options as vite.config.ts, so specs can mount U* components and composables.
-    ui({
-      colorMode: false,
-      ui: { colors: { primary: 'neutral', neutral: 'neutral' } },
-      icon: { clientBundle: { scan: true } },
-      components: { globs: [] }
-    })
+    // Same Nuxt UI options as vite.config.ts (shared module), so specs can mount U*
+    // components and assert the real theme instead of a test-only copy.
+    ui(nuxtUiOptions)
   ],
   resolve: {
     alias: {

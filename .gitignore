@@ -81,6 +81,8 @@ frontend/components.d.ts
 *.tsbuildinfo
 vite.config.d.ts
 vite.config.js.timestamp-*
+nuxt-ui.config.d.ts
+nuxt-ui.config.js
 
 # 日志
 npm-debug.log*

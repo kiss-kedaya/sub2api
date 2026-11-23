@@ -99,9 +99,17 @@
           <p class="text-sm text-red-600 dark:text-red-300">
             {{ t('profile.passkey.loadFailed') }}
           </p>
-          <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="loadCredentials">
+          <UButton
+            type="button"
+            color="neutral"
+            variant="outline"
+            size="sm"
+            :disabled="busy"
+            data-test="passkey-retry"
+            @click="loadCredentials"
+          >
             {{ t('profile.passkey.retry') }}
-          </button>
+          </UButton>
         </div>
 
         <div
