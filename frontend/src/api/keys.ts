@@ -6,9 +6,14 @@
 import { apiClient } from './client'
 import type {
   ApiKey,
+  ApiKeyPasskeyVerificationBegin,
+  ApiKeyPasskeyVerificationTicket,
+  ApiKeyRevealGrant,
   ApiKeySecret,
   ApiKeySecretSeal,
   ApiKeyUpdateResult,
+  ApiKeyVerificationFactors,
+  ApiKeyVerificationPayload,
   CreateApiKeyRequest,
   UpdateApiKeyRequest,
   PaginatedResponse,
@@ -81,13 +86,21 @@ export async function create(
   rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number },
   groupIds?: number[],
   anthropicCacheTtlMode?: 'inherit' | 'off' | '1h' | '5m',
-  options?: { idempotencyKey?: string; deepseekToolInjectionEnabled?: boolean; concurrencyLimit?: number; autoBlockDatacenterIPs?: boolean }
+  options?: {
+    idempotencyKey?: string
+    deepseekToolInjectionEnabled?: boolean
+    concurrencyLimit?: number
+    autoBlockDatacenterIPs?: boolean
+    /** 三选一身份校验；账号存在可用因子时服务端强制要求。 */
+    verification?: ApiKeyVerificationPayload
+  }
 ): Promise<ApiKeyCreateResult> {
   const payload: CreateApiKeyRequest = {
     name,
     deepseek_tool_injection_enabled: options?.deepseekToolInjectionEnabled ?? true,
   }
   if (options?.autoBlockDatacenterIPs) payload.auto_block_datacenter_ips = true
+  if (options?.verification) payload.verification = options.verification
   if (options?.concurrencyLimit !== undefined && options.concurrencyLimit > 0) payload.concurrency_limit = options.concurrencyLimit
   if (groupId !== undefined) {
     payload.group_id = groupId
@@ -246,8 +259,22 @@ export async function rotateKey(id: number): Promise<ApiKeySecret> {
  * this; the server never sees the password or the plaintext.
  * `PUT /api/v1/user/api-keys/:id/secret-seal`
  */
-export async function putSecretSeal(id: number, seal: ApiKeySecretSeal): Promise<void> {
-  await apiClient.put(`/user/api-keys/${id}/secret-seal`, seal)
+export interface PutSecretSealOptions {
+  /** 登录密码：服务端只做 bcrypt 校验，确认封存用的确实是登录密码。 */
+  password?: string
+  /** 本次封存授权的因子（创建时的三选一），二次查看要求同一因子。 */
+  authFactor?: string
+}
+
+export async function putSecretSeal(
+  id: number,
+  seal: ApiKeySecretSeal,
+  options?: PutSecretSealOptions,
+): Promise<void> {
+  const body: Record<string, unknown> = { ...seal }
+  if (options?.password) body.password = options.password
+  if (options?.authFactor) body.auth_factor = options.authFactor
+  await apiClient.put(`/user/api-keys/${id}/secret-seal`, body)
 }
 
 /**
@@ -255,8 +282,57 @@ export async function putSecretSeal(id: number, seal: ApiKeySecretSeal): Promise
  * `GET /api/v1/user/api-keys/:id/secret-seal`
  * Rejects with `reason: 'API_KEY_SECRET_NOT_FOUND'` (HTTP 404) when nothing was saved.
  */
-export async function getSecretSeal(id: number): Promise<ApiKeySecretSeal> {
-  const { data } = await apiClient.get<ApiKeySecretSeal>(`/user/api-keys/${id}/secret-seal`)
+export async function getSecretSeal(id: number, grant: string): Promise<ApiKeySecretSeal> {
+  const { data } = await apiClient.get<ApiKeySecretSeal>(`/user/api-keys/${id}/secret-seal`, {
+    headers: { 'X-Reveal-Grant': grant },
+  })
+  return data
+}
+
+/**
+ * 三选一身份校验：当前账号实际可用的因子。
+ * `GET /api/v1/user/security/verification-factors`
+ */
+export async function getVerificationFactors(): Promise<ApiKeyVerificationFactors> {
+  const { data } = await apiClient.get<ApiKeyVerificationFactors>('/user/security/verification-factors')
+  return data
+}
+
+/** Passkey 校验挑战（创建 / 二次查看 API Key 用，与登录 2FA、step-up 分开）。 */
+export async function beginKeyPasskeyVerification(): Promise<ApiKeyPasskeyVerificationBegin> {
+  const { data } = await apiClient.post<ApiKeyPasskeyVerificationBegin>(
+    '/user/security/passkey/verify/begin',
+  )
+  return data
+}
+
+/**
+ * 完成一次 Passkey 断言并换取 5 分钟一次性票据；票据再作为
+ * `verification.passkey_session_token` 提交给创建 / 二次查看授权接口。
+ */
+export async function finishKeyPasskeyVerification(
+  sessionToken: string,
+  credential: Record<string, unknown>,
+): Promise<ApiKeyPasskeyVerificationTicket> {
+  const { data } = await apiClient.post<ApiKeyPasskeyVerificationTicket>(
+    '/user/security/passkey/verify/finish',
+    { session_token: sessionToken, credential },
+  )
+  return data
+}
+
+/**
+ * 二次查看授权：用创建时的同一因子完成身份校验，换取 5 分钟一次性 reveal grant。
+ * `POST /api/v1/user/api-keys/:id/reveal-authorize`
+ */
+export async function authorizeReveal(
+  id: number,
+  verification: ApiKeyVerificationPayload,
+): Promise<ApiKeyRevealGrant> {
+  const { data } = await apiClient.post<ApiKeyRevealGrant>(
+    `/user/api-keys/${id}/reveal-authorize`,
+    verification,
+  )
   return data
 }
 
@@ -340,6 +416,10 @@ export const keysAPI = {
   rotateKey,
   batchRotateKeys,
   getOverview,
+  getVerificationFactors,
+  beginKeyPasskeyVerification,
+  finishKeyPasskeyVerification,
+  authorizeReveal,
   putSecretSeal,
   getSecretSeal,
   deleteSecretSeal,

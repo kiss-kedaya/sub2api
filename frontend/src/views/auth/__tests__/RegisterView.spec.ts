@@ -771,3 +771,22 @@ describe('RegisterView in-card email verification', () => {
     wrapper.unmount()
   })
 })
+
+describe('RegisterView autofill contract', () => {
+  it('marks the register form as a standard new-credential form', async () => {
+    const wrapper = mountRegister()
+    await flushPromises()
+
+    const forms = wrapper.findAll('form')
+    expect(forms.length).toBeGreaterThan(0)
+    expect(forms[0].attributes('autocomplete')).toBe('on')
+
+    const email = wrapper.get('#email')
+    expect(email.attributes('name')).toBe('email')
+    expect(email.attributes('autocomplete')).toBe('username')
+
+    const password = wrapper.get('#password')
+    expect(password.attributes('name')).toBe('password')
+    expect(password.attributes('autocomplete')).toBe('new-password')
+  })
+})

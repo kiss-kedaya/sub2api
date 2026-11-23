@@ -253,6 +253,44 @@ export default {
       sealSuccess: '已重新加密保存 {count} 个 Key',
       sealPartial: '重新保存部分失败：成功 {sealed} 条，失败 {failed} 条'
     },
+    // 三选一身份校验（登录密码 / TOTP / Passkey）：创建与二次查看共用。
+    factor: {
+      description: '创建或查看密钥属于敏感操作，请先完成一次身份验证。',
+      methodLabel: '验证方式',
+      methodPassword: '登录密码',
+      methodTotp: '动态验证码',
+      methodPasskey: 'Passkey',
+      preferred: '推荐',
+      passwordLabel: '登录密码',
+      passwordPlaceholder: '请输入登录密码',
+      passwordHint: '密码只用于本次身份校验，不会保存在服务端。',
+      decryptPasswordLabel: '登录密码（用于本地解密）',
+      decryptPasswordHint: '解密在浏览器本地完成，密码不会发送到服务器。',
+      totpLabel: '6 位动态验证码',
+      totpPlaceholder: '请输入 6 位验证码',
+      passkeyHint: '使用本设备已绑定的 Passkey 完成验证，验证结果 5 分钟内有效。',
+      passkeyVerify: '验证 Passkey',
+      passkeyReverify: '重新验证 Passkey',
+      passkeyVerified: '已验证，{seconds} 秒内有效',
+      passkeyUnsupported: '当前浏览器或设备不支持 Passkey，请改用其它验证方式。',
+      passkeyFailed: 'Passkey 验证失败，请重试。',
+      unavailable: '当前账号没有可用的验证方式，请联系管理员。',
+      requiredAll: '请先完成身份验证。',
+      passwordRequired: '请输入登录密码。',
+      totpRequired: '请输入 6 位动态验证码。',
+      passkeyRequired: '请先完成 Passkey 验证。',
+      factorUnavailable: '该验证方式当前不可用。',
+      passwordInvalid: '密码不正确，请重新输入当前登录密码。',
+      totpInvalid: '验证码错误，请重新输入。',
+    },
+    createStep: {
+      details: '填写信息',
+      verify: '身份验证',
+      next: '下一步',
+      back: '上一步',
+      verifyHint: '为保护账号安全，创建密钥前需要完成一次身份验证。',
+      verifyFailed: '身份验证未通过，请重新确认。'
+    },
     // 创建/轮换回执里的「以后可查看」选项：密码只在浏览器本地参与加密。
     seal: {
       optIn: '允许以后用登录密码查看此 Key',
@@ -262,6 +300,7 @@ export default {
       passwordRequired: '请输入登录密码，或取消勾选「允许以后用登录密码查看此 Key」。',
       failed: '密码错误或保存失败，可稍后重试。密码仅用于本地加密，忘记密码将无法恢复查看能力。',
       unsupported: '当前浏览器不支持 WebCrypto，无法安全加密保存；请更换浏览器后重试。',
+      wrongPassword: '登录密码不正确，无法保存「以后可查看」。请确认输入的是当前登录密码。',
       later: '稍后再说',
       unavailable: '当前账号由第三方登录创建且没有可用的登录密码，无法使用「登录密码加密查看」，因此不提供该选项。请先绑定邮箱并设置密码。'
     },
@@ -282,7 +321,13 @@ export default {
       broken: '保存的密文已损坏或格式不兼容，无法解密；可以轮换生成新 Key。',
       notFound: '服务端没有这把 Key 的密文，无法找回明文。请轮换生成新 Key。',
       failed: '读取或解密失败，请稍后重试。',
-      rotate: '轮换生成新 Key'
+      rotate: '轮换生成新 Key',
+      factorsLoading: '正在读取可用的验证方式…',
+      wrongTotp: '验证码错误，请重新输入。',
+      passkeyFailed: 'Passkey 验证失败，请重试。',
+      reverify: '身份验证已过期，请重新验证。',
+      factorMismatch: '这把 Key 创建时使用的是「{factor}」验证，请使用同一方式重新验证。',
+      factorUnavailable: '这把 Key 创建时使用的「{factor}」验证当前不可用，无法再查看明文；可以轮换生成新 Key。'
     },
     // 创建时没启用「以后查看」：没有密文，只能轮换。
     noSeal: {

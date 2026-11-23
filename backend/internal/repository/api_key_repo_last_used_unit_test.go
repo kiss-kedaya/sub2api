@@ -70,6 +70,7 @@ func newAPIKeyRepoSQLite(t *testing.T) (*apiKeyRepository, *dbent.Client) {
 		version INTEGER NOT NULL DEFAULT 1,
 		kdf TEXT NOT NULL,
 		sealed TEXT NOT NULL,
+		auth_factor TEXT,
 		created_at TIMESTAMP NOT NULL,
 		updated_at TIMESTAMP NOT NULL
 	)`)

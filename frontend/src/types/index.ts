@@ -851,6 +851,56 @@ export interface ApiKey {
   rotation_reasons?: string[]
   // 是否已在服务端存有「用登录密码加密」的密文。旧服务不返回该字段时按 false 处理。
   has_sealed_secret?: boolean
+  // 封存时授权的因子（password/totp/passkey）；空/缺省表示旧密文，查看时不限制因子。
+  seal_auth_factor?: ApiKeyVerificationMethod | ''
+}
+
+/**
+ * API Key 三选一身份校验因子：登录密码 / TOTP / Passkey。
+ *
+ * - 创建 Key 前必须完成一次（账号存在可用因子时）；
+ * - 「以后还能查看」的密文会记录当时用的因子，再次查看必须用同一因子；
+ * - 可用性以服务端 `GET /user/security/verification-factors` 为准，前端只渲染可用项。
+ */
+export type ApiKeyVerificationMethod = 'password' | 'totp' | 'passkey'
+
+export interface ApiKeyVerificationFactors {
+  password_available: boolean
+  totp_enabled: boolean
+  passkey_count: number
+  /** 推荐因子：passkey > totp > password；一个都不可用时为空串。 */
+  preferred: ApiKeyVerificationMethod | ''
+  /** 可用因子（顺序即展示顺序）。 */
+  available_methods: ApiKeyVerificationMethod[]
+  /** 是否支持「以后还能查看」：本地解密必须用登录密码派生密钥。 */
+  seal_available: boolean
+}
+
+/** 创建 Key / 二次查看时的身份校验载荷。 */
+export interface ApiKeyVerificationPayload {
+  method: ApiKeyVerificationMethod
+  password?: string
+  totp_code?: string
+  /** Passkey 校验成功后的 5 分钟一次性票据（通过 verify/finish 获取）。 */
+  passkey_session_token?: string
+}
+
+export interface ApiKeyPasskeyVerificationBegin {
+  session_token: string
+  options: { publicKey: Record<string, unknown> }
+}
+
+export interface ApiKeyPasskeyVerificationTicket {
+  passkey_session_token: string
+  factor: ApiKeyVerificationMethod
+  expires_in: number
+}
+
+/** 二次查看授权回执：grant 只回一次，5 分钟一次性，随 GET secret-seal 头发送。 */
+export interface ApiKeyRevealGrant {
+  grant: string
+  factor: ApiKeyVerificationMethod
+  expires_in: number
 }
 
 /** KDF 参数由浏览器生成，服务端原样保存，解密时下发给同一浏览器。 */
@@ -898,6 +948,8 @@ export interface CreateApiKeyRequest {
   anthropic_cache_ttl_mode?: 'inherit' | 'off' | '1h' | '5m'
   deepseek_tool_injection_enabled?: boolean
   auto_block_datacenter_ips?: boolean
+  /** 创建前的三选一身份校验；账号存在可用因子时必填。 */
+  verification?: ApiKeyVerificationPayload
 }
 
 export interface UpdateApiKeyRequest {

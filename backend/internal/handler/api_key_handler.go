@@ -27,6 +27,19 @@ type APIKeyHandler struct {
 	// 旧测试/嵌入方可以传 nil，此时列表与详情不暴露 has_sealed_secret 之外的
 	// 任何行为，也不会访问新表。
 	secretService *service.APIKeySecretService
+	// verificationService 是创建 / 二次查看的三选一身份校验（密码 / TOTP / Passkey）。
+	// 由 ProvideAPIKeyHandler 注入；nil 时旧测试与嵌入方行为不变（不强制校验），
+	// 生产装配必定非 nil。
+	verificationService *service.APIKeyVerificationService
+}
+
+// SetVerificationService 注入身份校验服务（wire 装配使用）。
+// 保持 NewAPIKeyHandler 的签名不变，避免大量既有测试构造点改动。
+func (h *APIKeyHandler) SetVerificationService(verificationService *service.APIKeyVerificationService) {
+	if h == nil {
+		return
+	}
+	h.verificationService = verificationService
 }
 
 // NewAPIKeyHandler creates a new APIKeyHandler
@@ -82,6 +95,9 @@ type CreateAPIKeyRequest struct {
 	DeepSeekToolInjectionEnabled *bool  `json:"deepseek_tool_injection_enabled"`
 	// AutoBlockDatacenterIPs 打开后由后台定时任务把机房/代理 IP 追加进黑名单。
 	AutoBlockDatacenterIPs bool `json:"auto_block_datacenter_ips"`
+	// Verification 创建前的三选一身份校验（登录密码 / TOTP / Passkey）。
+	// 账号存在可用因子时必填；校验失败直接 400，不允许创建 Key。
+	Verification *apiKeyVerificationRequest `json:"verification"`
 }
 
 // UpdateAPIKeyRequest represents the update API key request payload
@@ -279,13 +295,22 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	svcReq.AutoBlockDatacenterIPs = req.AutoBlockDatacenterIPs
 
 	c.Header("Cache-Control", "no-store")
+	// 幂等指纹不能包含身份校验材料（密码 / 动态码 / Passkey 票据）：指纹会落库，
+	// 带密码的哈希等于给拖库者一个离线爆破目标。校验材料只在本次请求内使用。
+	idempotencyPayload := req
+	idempotencyPayload.Verification = nil
 	var first *dto.APIKeySecret
-	result := runUserIdempotentJSON(c, "user.api_keys.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
+	result := runUserIdempotentJSON(c, "user.api_keys.create", idempotencyPayload, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
+		verifiedMethod, err := h.keyVerificationGuard(c, subject.UserID, req.Verification)
+		if err != nil {
+			return nil, err
+		}
 		key, err := h.apiKeyService.Create(ctx, subject.UserID, svcReq)
 		if err != nil {
 			return nil, err
 		}
 		h.apiKeyService.AnnotateKeyRotation(key)
+		annotateKeyShowVerification(c, verifiedMethod)
 		first = dto.APIKeySecretFromService(key)
 		return &first.APIKey, nil // Only this masked form goes into the retry journal.
 	})
