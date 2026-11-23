@@ -61,10 +61,12 @@ func NewPoolWithHTTPClient(endpoints string, client *http.Client) *Pool {
 // Snapshot atomically captures endpoints and their verification provenance.
 // In-flight work cannot combine an automatic list with a newer manual policy.
 func (p *Pool) Snapshot() *Pool {
+	health := p.healthTracker() // before the read lock: it takes the write lock
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	snapshot := NewPoolWithHTTPClient(strings.Join(p.endpoints, ","), p.client)
 	snapshot.verification = p.verification
+	snapshot.health = health
 	snapshot.chainID.Store(p.chainID.Load())
 	return snapshot
 }
@@ -72,11 +74,17 @@ func (p *Pool) Snapshot() *Pool {
 // WithEndpoints takes an independent endpoint snapshot while retaining the
 // original transport, including public-address validation and DNS pinning.
 func (p *Pool) WithEndpoints(endpoints string) *Pool {
+	health := p.healthTracker()
 	p.mu.RLock()
 	policy := p.verification
 	p.mu.RUnlock()
 	snapshot := NewPoolWithHTTPClient(endpoints, p.client)
 	snapshot.verification = policy // immutable policy, including for single-node verification
+	// One health record per endpoint for the life of the worker. Every scan pass
+	// derives its own pool; with a tracker per derived pool a node that just said
+	// "daily limit reached" was forgotten at the next pass (five seconds later)
+	// and asked again, and so were the span limits the pool had learned.
+	snapshot.health = health
 	snapshot.chainID.Store(p.chainID.Load())
 	return snapshot
 }
@@ -491,12 +499,11 @@ func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any)
 	if decoded.Error != nil {
 		// Keep the node's text only as a sanitised diagnostic: Error() stays a
 		// fixed phrase so a durable record can never carry endpoint credentials.
-		failure := &Failure{Kind: "remote", RPCCode: decoded.Error.Code,
-			Reason: classifyRemote(decoded.Error.Message), Message: decoded.Error.Message, Host: host}
-		if limit, ok := rangeLimitFromMessage(decoded.Error.Message); ok {
-			failure.SpanLimit = limit
-		}
-		return nil, failure
+		// The node controls this text: bound it before anything runs over it.
+		message := truncateNodeMessage(decoded.Error.Message)
+		reason, limit := classifyRemoteDetail(message)
+		return nil, &Failure{Kind: "remote", RPCCode: decoded.Error.Code,
+			Reason: reason, Message: message, Host: host, SpanLimit: limit}
 	}
 	if method == "eth_getLogs" && !validLogsResult(decoded.Result) {
 		return nil, &Failure{Kind: "response", Host: host}

@@ -396,3 +396,89 @@ func TestConcurrentFailuresOfOneBurstAreOneCooldownStep(t *testing.T) {
 		t.Fatalf("second event must double the cooldown: failures=%d cooldown=%v", failures, until.Sub(now))
 	}
 }
+
+// Everything in a node's reply is node-controlled. Classification patterns run
+// over it, so an unbounded message turned one reply into seconds of CPU; the text
+// is cut to 512 bytes before anything looks at it.
+func TestNodeErrorTextIsBoundedBeforeClassification(t *testing.T) {
+	shrinkRetryDelays(t)
+	var hits atomic.Int32
+	huge := strings.Repeat("x", 6<<20)
+	srv := jsonErrorNode(200, `{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"`+huge+`"}}`, &hits)
+	defer srv.Close()
+	pool := NewPoolWithHTTPClient(srv.URL, srv.Client())
+	start := time.Now()
+	_, err := pool.Call(context.Background(), "eth_blockNumber", nil)
+	var failure *Failure
+	if !errors.As(err, &failure) || failure.Kind != "remote" {
+		t.Fatalf("expected a remote failure, got %v", err)
+	}
+	if len(failure.Message) > maxNodeMessageBytes {
+		t.Fatalf("node text must be bounded, kept %d bytes", len(failure.Message))
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("classifying a huge reply took %v", took)
+	}
+}
+
+// A provider's HTTP error page can echo the request URL, API key included. The
+// text is used to classify the failure and then dropped: only the fixed phrase,
+// the numbers and the flag survive, so there is nothing for a log line to leak.
+func TestHTTPErrorTextIsNeverKeptOnTheFailure(t *testing.T) {
+	shrinkRetryDelays(t)
+	var hits atomic.Int32
+	echoed := "Insufficient RU balance for " + strings.Join([]string{"https://node.example/v2", "0123456789abcdef0123456789abcdef"}, "/")
+	srv := jsonErrorNode(503, `{"error":{"code":10007,"message":"`+echoed+`"}}`, &hits)
+	defer srv.Close()
+	pool := NewPoolWithHTTPClient(srv.URL, srv.Client())
+	_, err := pool.Call(context.Background(), "eth_blockNumber", nil)
+	var failure *Failure
+	if !errors.As(err, &failure) || failure.Kind != "http" || failure.HTTPStatus != 503 {
+		t.Fatalf("expected the 503, got %v", err)
+	}
+	if !failure.Quota {
+		t.Fatal("the quota flag is the whole point of reading the body")
+	}
+	if failure.Message != "" || failure.Detail() != "" {
+		t.Fatalf("the provider's text must not survive on the failure: message=%q detail=%q", failure.Message, failure.Detail())
+	}
+}
+
+// Every scan pass derives its own pool from the worker's. If each derived pool
+// starts with an empty health record, a node that just said "daily limit
+// reached" is forgotten five seconds later and asked again, forever.
+func TestDerivedPoolsShareEndpointHealth(t *testing.T) {
+	shrinkRetryDelays(t)
+	var deadHits, goodHits atomic.Int32
+	dead := jsonErrorNode(429, `{"error":{"code":-32003,"message":"daily request limit reached"}}`, &deadHits)
+	defer dead.Close()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		goodHits.Add(1)
+		jsonRPCSuccess(w)
+	}))
+	defer good.Close()
+	list := dead.URL + "," + good.URL
+	parent := NewPoolWithHTTPClient(list, dead.Client())
+	for i := 0; i < 4; i++ { // the first pass finds out
+		if _, err := parent.Call(context.Background(), "eth_blockNumber", nil); err != nil {
+			t.Fatalf("parent call %d: %v", i, err)
+		}
+	}
+	if got := deadHits.Load(); got != 1 {
+		t.Fatalf("setup: the dead node should have been asked once, saw %d", got)
+	}
+	for name, derive := range map[string]func() *Pool{
+		"Snapshot":      parent.Snapshot,
+		"WithEndpoints": func() *Pool { return parent.WithEndpoints(list) },
+		"WithChainID":   func() *Pool { return parent.WithChainID(137) },
+	} {
+		for i := 0; i < 4; i++ { // later passes must not ask it again
+			if _, err := derive().Call(context.Background(), "eth_blockNumber", nil); err != nil {
+				t.Fatalf("%s call %d: %v", name, i, err)
+			}
+		}
+		if got := deadHits.Load(); got != 1 {
+			t.Fatalf("%s forgot the cooldown: the dead node was asked again (%d requests)", name, got)
+		}
+	}
+}
