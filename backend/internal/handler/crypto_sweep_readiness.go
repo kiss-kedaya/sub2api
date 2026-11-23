@@ -18,6 +18,9 @@ type cryptoSweepGateReader interface {
 }
 
 func (h *CryptoHandler) sweepGateReader() (cryptoSweepGateReader, bool) {
+	if h.sweepGate != nil {
+		return h.sweepGate, true
+	}
 	reader, ok := any(h.service).(cryptoSweepGateReader)
 	return reader, ok && h.service != nil
 }
