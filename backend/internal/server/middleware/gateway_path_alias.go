@@ -36,10 +36,6 @@ import (
 // 所以 /api/v1/*、/admin/*、/assets/* 等静态资源、/health 探针和 SPA 页面路由
 // 不会被误伤。
 
-// gatewayVersionPrefix 是折叠/补齐默认使用的版本段（只在日志与提示文案里用，
-// 真正的候选版本段由路由表推导）。
-const gatewayVersionPrefix = "/v1"
-
 // gatewayVersionSegmentPrefix 是协议版本段的公共前缀（匹配 v1 / v1beta …，不含 v2）。
 const gatewayVersionSegmentPrefix = "v1"
 
@@ -104,49 +100,6 @@ func isGatewayVersionSegment(segment string) bool {
 		}
 	}
 	return true
-}
-
-// foldGatewayVersionSegments 折叠 path 里连续的重复版本段。
-//
-// 返回折叠后的路径、被折叠掉的最长连续版本段个数（没有重复时是 1，路径里没有版本段时是 0）
-// 和最长那一段连续版本段的第一个版本段（"v1" / "v1beta"，没有时是空串）。
-//
-// 只有“同一族”的重复才算重复：/v1/v1beta 的版本段并不相同，不折叠；
-// /v1beta/v1beta/v1 折叠成 /v1beta/v1（这是真实的 Gemini 缓存内容路径：
-// /v1beta/cachedContents 里的 cacheID 就叫 "v1"... 之类，仍按最小改动处理）。
-func foldGatewayVersionSegments(path string) (string, int, string) {
-	if path == "" || !strings.HasPrefix(path, "/") {
-		return path, 0, ""
-	}
-	segments := strings.Split(path, "/")
-	// segments[0] 恒为空串（路径以 / 开头）。
-	rebuilt := make([]string, 0, len(segments))
-	maxRun := 0
-	runFamily := ""
-	i := 1
-	for i < len(segments) {
-		segment := segments[i]
-		if !isGatewayVersionSegment(segment) {
-			rebuilt = append(rebuilt, segment)
-			i++
-			continue
-		}
-		runLength := 1
-		for i+1 < len(segments) && segments[i+1] == segment {
-			runLength++
-			i++
-		}
-		i++
-		rebuilt = append(rebuilt, segment)
-		if runLength > maxRun {
-			maxRun = runLength
-			runFamily = segment
-		}
-	}
-	if maxRun < 2 {
-		return path, maxRun, ""
-	}
-	return "/" + strings.Join(rebuilt, "/"), maxRun, runFamily
 }
 
 func isExcludedBareGatewayPath(path string) bool {
