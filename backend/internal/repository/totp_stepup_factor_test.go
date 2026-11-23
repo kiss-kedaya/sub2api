@@ -50,6 +50,33 @@ func TestStepUpGrantFactorsAreIsolated(t *testing.T) {
 	require.False(t, granted)
 }
 
+// break-glass 重置 2FA 靠 TotpStepUpGrantKeys 枚举授权键：它必须与 SetStepUpGrant 实际
+// 写入的每个因子键一一对应，并保留旧布局键（滚动发布期间旧二进制仍按旧布局读写）。
+func TestTotpStepUpGrantKeysCoverEveryWrittenKeyAndLegacyLayout(t *testing.T) {
+	cache, client, _ := newStepUpGrantTestCache(t)
+	ctx := context.Background()
+
+	for _, factor := range service.AllFactors() {
+		require.NoError(t, cache.SetStepUpGrant(ctx, 42, "session-a", factor, service.StepUpGrantTTL))
+	}
+	// 旧二进制按旧布局（没有因子维度）写入的授权。
+	require.NoError(t, client.Set(ctx, "totp:stepup:42:session-a", "1", service.StepUpGrantTTL).Err())
+	// 别的会话 / 别的用户的授权不能被枚举进来。
+	require.NoError(t, cache.SetStepUpGrant(ctx, 42, "session-b", service.FactorTOTP, service.StepUpGrantTTL))
+	require.NoError(t, cache.SetStepUpGrant(ctx, 43, "session-a", service.FactorTOTP, service.StepUpGrantTTL))
+
+	keys := TotpStepUpGrantKeys(42, "session-a")
+	written, err := client.Keys(ctx, "totp:stepup:42:*session-a").Result()
+	require.NoError(t, err)
+	require.ElementsMatch(t, written, keys, "撤销键必须与实际写入的键一一对应")
+	// 键布局是新旧二进制共享的线上契约：改动它必须同时评估 break-glass 撤销。
+	require.ElementsMatch(t, []string{
+		"totp:stepup:42:totp:session-a",
+		"totp:stepup:42:passkey:session-a",
+		"totp:stepup:42:session-a",
+	}, keys)
+}
+
 // 非法因子不写也不读（fail-closed）。
 func TestStepUpGrantRejectsInvalidFactor(t *testing.T) {
 	cache, _, _ := newStepUpGrantTestCache(t)

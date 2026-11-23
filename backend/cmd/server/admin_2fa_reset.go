@@ -184,10 +184,13 @@ func clearAdmin2FAResetSessionsWithCache(ctx context.Context, cache service.Refr
 	ownedHashes := make([]string, 0, len(hashes))
 	// Legacy sessions use u<id>; current sessions use refresh-token family IDs.
 	// Discover only this user's indexed sessions. Never scan the Redis database.
+	// Step-up grants are stored per session and per factor; the repository expands
+	// each session key into every factor's key (and the pre-factor layout), so the
+	// key format is defined in exactly one place.
+	sessionKeys := []string{fmt.Sprintf("u%d", userID)}
 	keys := map[string]struct{}{
-		fmt.Sprintf("totp:stepup:%d:u%d", userID, userID): {},
-		fmt.Sprintf("totp:setup:%d", userID):              {},
-		fmt.Sprintf("totp:attempts:%d", userID):           {},
+		fmt.Sprintf("totp:setup:%d", userID):    {},
+		fmt.Sprintf("totp:attempts:%d", userID): {},
 	}
 	for _, hash := range hashes {
 		data, err := cache.GetRefreshToken(ctx, hash)
@@ -206,7 +209,12 @@ func clearAdmin2FAResetSessionsWithCache(ctx context.Context, cache service.Refr
 		}
 		ownedHashes = append(ownedHashes, hash)
 		if data.FamilyID != "" {
-			keys[fmt.Sprintf("totp:stepup:%d:%s", userID, data.FamilyID)] = struct{}{}
+			sessionKeys = append(sessionKeys, data.FamilyID)
+		}
+	}
+	for _, sessionKey := range sessionKeys {
+		for _, key := range repository.TotpStepUpGrantKeys(userID, sessionKey) {
+			keys[key] = struct{}{}
 		}
 	}
 	var revokeErr error

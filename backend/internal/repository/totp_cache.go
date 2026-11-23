@@ -245,6 +245,24 @@ func totpStepUpKey(userID int64, sessionKey string, factor service.Factor) strin
 	return fmt.Sprintf("%s%d:%s:%s", totpStepUpKeyPrefix, userID, factor, sessionKey)
 }
 
+// totpStepUpLegacyKey 是 #561 之前的旧布局（没有因子维度）。滚动发布期间旧二进制
+// 仍按它读写授权，所以撤销时必须一并删除。
+func totpStepUpLegacyKey(userID int64, sessionKey string) string {
+	return fmt.Sprintf("%s%d:%s", totpStepUpKeyPrefix, userID, sessionKey)
+}
+
+// TotpStepUpGrantKeys 列出某用户在某个会话下全部可能存在的 step-up 授权键：
+// 每个受支持因子各一枚，外加旧布局键。break-glass 重置 2FA 用它撤销授权：
+// 只能按会话键枚举，不能 SCAN Redis；键格式因此只在本文件定义一份。
+func TotpStepUpGrantKeys(userID int64, sessionKey string) []string {
+	factors := service.AllFactors()
+	keys := make([]string, 0, len(factors)+1)
+	for _, factor := range factors {
+		keys = append(keys, totpStepUpKey(userID, sessionKey, factor))
+	}
+	return append(keys, totpStepUpLegacyKey(userID, sessionKey))
+}
+
 // SetStepUpGrant 记录一次某因子的 step-up 验证通过（sudo 窗口），绑定用户+会话+因子。
 func (c *TotpCache) SetStepUpGrant(ctx context.Context, userID int64, sessionKey string, factor service.Factor, ttl time.Duration) error {
 	if !factor.Valid() || userID <= 0 || sessionKey == "" {

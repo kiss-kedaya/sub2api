@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -52,9 +53,19 @@ var ErrTwoFactorPasskeyUnavailable = infraerrors.Forbidden(
 	"TWO_FACTOR_PASSKEY_UNAVAILABLE",
 	"Passkey verification is required for this account but passkeys are currently unavailable")
 
+// allFactors 是受支持因子的唯一清单。Valid 由它派生，因此「能写进 Redis 的因子」
+// 必然出现在 AllFactors 里——break-glass 重置 2FA 靠它枚举并撤销每个因子的
+// step-up 授权键，新增因子只改这一处就不会漏撤销。
+var allFactors = [...]Factor{FactorTOTP, FactorPasskey}
+
+// AllFactors 返回全部受支持的因子（副本，调用方可随意修改）。
+func AllFactors() []Factor {
+	return append([]Factor(nil), allFactors[:]...)
+}
+
 // Valid 报告因子是否是受支持的取值。
 func (f Factor) Valid() bool {
-	return f == FactorTOTP || f == FactorPasskey
+	return slices.Contains(allFactors[:], f)
 }
 
 // String 返回审计/接口使用的稳定字符串。

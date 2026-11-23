@@ -183,3 +183,20 @@ func TestFactorHelpers(t *testing.T) {
 	// 固定挑战顺序：即使输入乱序也先 TOTP 后 Passkey。
 	require.Equal(t, []Factor{FactorTOTP, FactorPasskey}, sortFactorsForChallenge([]Factor{FactorPasskey, FactorTOTP}))
 }
+
+// AllFactors 是 Valid 的唯一数据源：break-glass 重置 2FA 按它枚举 step-up 授权键，
+// 清单漏一个因子就会留下撤销不掉的授权。
+func TestAllFactorsIsTheSingleSourceOfValidFactors(t *testing.T) {
+	require.Equal(t, []Factor{FactorTOTP, FactorPasskey}, AllFactors())
+	for _, factor := range AllFactors() {
+		require.True(t, factor.Valid(), "factor=%s", factor)
+	}
+	require.False(t, Factor("sms").Valid())
+	require.False(t, Factor("").Valid())
+
+	// 返回的是副本：调用方改动不能污染全局清单。
+	mutated := AllFactors()
+	mutated[0] = Factor("sms")
+	require.Equal(t, []Factor{FactorTOTP, FactorPasskey}, AllFactors())
+	require.True(t, FactorTOTP.Valid())
+}
