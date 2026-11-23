@@ -227,7 +227,9 @@ func TestBatchRotateAuditsSkippedNoFactor(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	// 校验通过 / 放行两种路径的审计标签由 annotateKeyShowVerification 统一写入，
 	// 这里直接验证它的语义：空因子 → skipped_no_factor。
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	auditRec := httptest.NewRecorder()
+	ctx, auditRouter := gin.CreateTestContext(auditRec)
+	require.NotNil(t, auditRouter)
 	annotateKeyShowVerification(ctx, "")
 	value, ok := ctx.Get("audit_extra")
 	require.True(t, ok)
@@ -392,7 +394,8 @@ func TestIdempotencyCoordinatorRejectsGuardedReplay(t *testing.T) {
 func TestAuditExtraCarriesVerificationOutcome(t *testing.T) {
 	// 无法用真实审计库时，验证 guard 写入的审计字段集合：拒绝时只有机器码，
 	// 不出现密码 / 动态码 / Passkey 票据。
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c, auditEngine := gin.CreateTestContext(httptest.NewRecorder())
+	require.NotNil(t, auditEngine)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(""))
 	setVerificationAudit(c, nil, auditVerificationRejected, "VERIFY_PASSWORD_INVALID")
 	raw, err := json.Marshal(mustAuditExtra(c))
@@ -427,7 +430,11 @@ func errorsIsCode(err error, target error) bool {
 }
 
 func middlewareAuditAllows(key string) bool {
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c, whitelistEngine := gin.CreateTestContext(httptest.NewRecorder())
+	if whitelistEngine == nil {
+		return false
+	}
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(""))
 	middleware2.SetAuditExtra(c, map[string]any{key: "x"})
 	value, ok := c.Get("audit_extra")
 	if !ok {
