@@ -247,6 +247,9 @@ type BackupService struct {
 	// criticalMaxArchiveBytes is the size limit of a critical snapshot that has no
 	// explicit backup.max_archive_bytes; tests inject a smaller value.
 	criticalMaxArchiveBytes int64
+
+	// createArchiveFile creates the staged archive; tests swap it to make Close fail.
+	createArchiveFile func(pattern string) (backupArchiveFile, error)
 }
 
 func NewBackupService(
@@ -271,6 +274,7 @@ func NewBackupService(
 		instanceID:              uuid.NewString(),
 		ageEncrypt:              age.Encrypt,
 		criticalMaxArchiveBytes: defaultCriticalMaxArchiveBytes,
+		createArchiveFile:       createStagedArchive,
 	}
 }
 
@@ -955,7 +959,7 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 	if len(recipients) > 0 {
 		pattern += ".age"
 	}
-	archive, err := os.CreateTemp("", pattern)
+	archive, err := s.createArchiveFile(pattern)
 	if err != nil {
 		_ = dumpReader.Close()
 		return "", 0, "", fmt.Errorf("create backup archive: %w", err)
@@ -986,6 +990,21 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 		return "", 0, "", fmt.Errorf("stat backup archive: %w", err)
 	}
 	return archivePath, info.Size(), hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+// backupArchiveFile is the staged archive. It is an *os.File in production; tests
+// wrap it to make Close fail.
+type backupArchiveFile interface {
+	io.WriteCloser
+	Name() string
+}
+
+func createStagedArchive(pattern string) (backupArchiveFile, error) {
+	file, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
 }
 
 // recordedDigest is the digest a record stores. Only a non-default backup records

@@ -111,6 +111,7 @@ type streamDumper struct {
 
 	dumpCalls      int
 	closed         bool
+	closeErr       error // what the reader's Close reports, like pg_dump's exit status
 	ctxErrAtClose  error
 	dumpCtx        context.Context
 	restoreCalls   int
@@ -137,7 +138,7 @@ type streamDumperReader struct {
 func (r *streamDumperReader) Close() error {
 	r.owner.closed = true
 	r.owner.ctxErrAtClose = r.owner.dumpCtx.Err()
-	return nil
+	return r.owner.closeErr
 }
 
 func stringDumper(content string) *streamDumper {
@@ -182,10 +183,15 @@ func recipientsOf(identities ...*age.X25519Identity) []string {
 
 func TestCreateCompressedBackupFile_DefaultIsPlainGzipAtDefaultLevel(t *testing.T) {
 	dir := isolateTempDir(t)
-	svc := newCriticalTestService(newMockSettingRepo(), stringDumper(knownDump), newMockObjectStore(), config.BackupConfig{})
+	dumper := stringDumper(knownDump)
+	svc := newCriticalTestService(newMockSettingRepo(), dumper, newMockObjectStore(), config.BackupConfig{})
 
 	path, size, _, err := svc.createCompressedBackupFile(context.Background())
 	require.NoError(t, err)
+	// pg_dump has just written EOF and may not have exited yet: cancelling its
+	// context before Close would kill a healthy dump and fail a good backup.
+	require.True(t, dumper.closed)
+	require.NoError(t, dumper.ctxErrAtClose, "the dump context must still be alive when the reader is closed")
 	require.True(t, strings.HasSuffix(path, ".sql.gz"), "temp archive keeps the legacy suffix: %s", path)
 
 	raw, err := os.ReadFile(path)
