@@ -739,7 +739,12 @@
               :search-placeholder="t('keys.searchGroup')"
               data-test="smart-route-add"
               @update:model-value="addSmartRoute"
-            />
+            >
+              <!-- 候选分组与普通分组下拉共用同一套富样式行：平台图标 + 分组名 + 倍率徽标 + 描述。 -->
+              <template #option="{ option, selected }">
+                <GroupOptionItem v-bind="groupOptionRowProps(option as unknown as GroupOption, selected)" />
+              </template>
+            </Select>
             <p v-if="formData.group_ids.length === 0" class="text-xs text-muted">{{ t('keys.smartRoutingEmpty') }}</p>
           </div>
           <Select
@@ -767,22 +772,7 @@
               <span v-else class="text-dimmed">{{ t('keys.selectGroup') }}</span>
             </template>
             <template #option="{ option, selected }">
-              <GroupOptionItem
-                :name="(option as unknown as GroupOption).label"
-                :platform="(option as unknown as GroupOption).platform"
-                :subscription-type="(option as unknown as GroupOption).subscriptionType"
-                :rate-multiplier="(option as unknown as GroupOption).rate"
-                :user-rate-multiplier="(option as unknown as GroupOption).userRate"
-                :peak-rate-enabled="(option as unknown as GroupOption).peakRateEnabled"
-                :peak-start="(option as unknown as GroupOption).peakStart"
-                :peak-end="(option as unknown as GroupOption).peakEnd"
-                :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
-                :description="(option as unknown as GroupOption).description"
-                :signals="(option as unknown as GroupOption).signals"
-                :show-rate-change="(option as unknown as GroupOption).showRateChange"
-                :status-class="groupStatusClasses[(option as unknown as GroupOption).value] ?? null"
-                :selected="selected"
-              />
+              <GroupOptionItem v-bind="groupOptionRowProps(option as unknown as GroupOption, selected)" />
             </template>
           </Select>
           <p
@@ -2092,6 +2082,28 @@ const groupOptions = computed(() =>
 )
 
 const groupOptionById = (id: number) => groupOptions.value.find((opt) => opt.value === id)
+
+/**
+ * Select 的 #option 槽给到的是这条分组选项的原始记录（groupOptions 的条目）。
+ * 普通分组下拉和智能路由的「添加分组」必须画成同一行：复用 GroupOptionItem
+ * 的富样式（平台图标 + 分组名 + 倍率徽标 + 描述），只在这里做一次字段映射。
+ */
+const groupOptionRowProps = (option: GroupOption, selected: boolean) => ({
+  name: option.label,
+  platform: option.platform,
+  subscriptionType: option.subscriptionType,
+  rateMultiplier: option.rate,
+  userRateMultiplier: option.userRate,
+  peakRateEnabled: option.peakRateEnabled,
+  peakStart: option.peakStart,
+  peakEnd: option.peakEnd,
+  peakRateMultiplier: option.peakRateMultiplier,
+  description: option.description,
+  signals: option.signals,
+  showRateChange: option.showRateChange,
+  statusClass: groupStatusClasses.value[option.value] ?? null,
+  selected
+})
 
 // DeepSeek 工具注入只对 DeepSeek 平台的分组有意义：非该平台隐藏开关，
 // 后端也只在 DeepSeek 账号上执行注入。
