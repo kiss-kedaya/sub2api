@@ -328,6 +328,9 @@ func (e *scanStageError) logAttrs() []any {
 		if failure.Quota {
 			attrs = append(attrs, "quota_exhausted", true)
 		}
+		if failure.SpanLimit != 0 {
+			attrs = append(attrs, "span_limit", failure.SpanLimit)
+		}
 		if errors.Is(failure, context.DeadlineExceeded) {
 			attrs = append(attrs, "timeout", true)
 		}

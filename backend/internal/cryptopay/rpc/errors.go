@@ -244,20 +244,42 @@ var remoteReasons = []struct{ needle, reason string }{
 const ReasonRangeLimit = "query range or result limit exceeded"
 
 func classifyRemote(message string) string {
+	reason, _ := classifyRemoteDetail(message)
+	return reason
+}
+
+// maxNodeMessageBytes bounds the node text that is ever classified or kept. A
+// node controls the whole response, and every classification pattern runs over
+// it: an unbounded message turned one reply into seconds of CPU.
+const maxNodeMessageBytes = 512
+
+// truncateNodeMessage cuts a node's text to maxNodeMessageBytes on a rune boundary.
+func truncateNodeMessage(message string) string {
+	if len(message) <= maxNodeMessageBytes {
+		return message
+	}
+	return strings.ToValidUTF8(message[:maxNodeMessageBytes], "")
+}
+
+// classifyRemoteDetail is classifyRemote plus the block span the node stated, if
+// any, found in one pass over the (bounded) text.
+func classifyRemoteDetail(message string) (string, uint64) {
+	message = truncateNodeMessage(message)
+	limit, hasLimit := rangeLimitFromMessage(message)
 	lowered := strings.ToLower(message)
 	for _, candidate := range remoteReasons {
 		if strings.Contains(lowered, candidate.needle) {
-			return candidate.reason
+			return candidate.reason, limit
 		}
 	}
 	// Providers word the range limit in many ways ("ranges over 100 blocks",
 	// "requested range is over limit of 100", "limited to 0 - 50 blocks range").
 	// The needles above only know the common ones; a number next to a range or
 	// block phrase is the other tell-tale.
-	if _, ok := rangeLimitFromMessage(message); ok {
-		return ReasonRangeLimit
+	if hasLimit {
+		return ReasonRangeLimit, limit
 	}
-	return ""
+	return "", 0
 }
 
 // rangeLimitPatterns pull the permitted block span out of a node's rejection.
@@ -345,14 +367,14 @@ func annotateFromErrorBody(failure *Failure, body []byte) {
 			}
 		}
 	}
-	if len(text) > 512 {
-		text = text[:512]
-	}
-	failure.Message = text
-	failure.Reason = classifyRemote(text)
-	if limit, ok := rangeLimitFromMessage(text); ok {
-		failure.SpanLimit = limit
-	}
+	// The node's own words are used to classify and then dropped: an HTTP error
+	// page can echo the request URL, API key included, and nothing in this process
+	// can promise to redact every spelling of that before it reaches a log. What
+	// survives is a fixed phrase from remoteReasons, a number and a flag.
+	text = truncateNodeMessage(text)
+	reason, limit := classifyRemoteDetail(text)
+	failure.Reason = reason
+	failure.SpanLimit = limit
 	switch failure.HTTPStatus {
 	case 402, 429, 503:
 		failure.Quota = quotaPattern.MatchString(text)
