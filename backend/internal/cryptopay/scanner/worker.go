@@ -681,7 +681,7 @@ func (w *Worker) forwardStalled(chain ChainConfig) bool {
 	if c.startCursor >= c.head-chain.Confirmations {
 		return false // nothing was waiting
 	}
-	return !(c.hasCursor && c.cursor > c.startCursor)
+	return !c.hasCursor || c.cursor <= c.startCursor
 }
 
 // noteChainPass records the outcome of one timer-driven pass of chain. A pass

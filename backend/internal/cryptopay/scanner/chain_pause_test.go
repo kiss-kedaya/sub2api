@@ -221,17 +221,6 @@ func TestSkippedForwardAttemptsDoNotChangeThePause(t *testing.T) {
 	}
 }
 
-func countSteps(pg *scannerMockPG, step string) int {
-	_, _, events, _ := pg.snapshot()
-	n := 0
-	for _, event := range events {
-		if event.step == step {
-			n++
-		}
-	}
-	return n
-}
-
 // End to end through the real pass loop. A chain whose forward scan keeps failing
 // without moving the cursor stops spending requests on the forward batches, but
 // its head stage still runs every pass and says so, manual scans always run, and
