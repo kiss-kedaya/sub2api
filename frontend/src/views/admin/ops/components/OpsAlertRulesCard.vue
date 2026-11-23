@@ -197,6 +197,31 @@ const metricDefinitions = computed(() => {
       recommendedThreshold: 1,
       unit: '%'
     },
+    // 5xx 分源计数：上游透传与网关自产分开，避免上游抖动误报网关故障。
+    {
+      type: 'gateway_5xx',
+      group: 'system',
+      label: t('admin.ops.alertRules.metrics.gateway5xx'),
+      description: t('admin.ops.alertRules.metricDescriptions.gateway5xx'),
+      recommendedOperator: '>',
+      recommendedThreshold: 500
+    },
+    {
+      type: 'upstream_5xx',
+      group: 'system',
+      label: t('admin.ops.alertRules.metrics.upstream5xx'),
+      description: t('admin.ops.alertRules.metricDescriptions.upstream5xx'),
+      recommendedOperator: '>',
+      recommendedThreshold: 30000
+    },
+    {
+      type: 'upstream_5xx_spike_ratio',
+      group: 'system',
+      label: t('admin.ops.alertRules.metrics.upstream5xxSpikeRatio'),
+      description: t('admin.ops.alertRules.metricDescriptions.upstream5xxSpikeRatio'),
+      recommendedOperator: '>',
+      recommendedThreshold: 3
+    },
     {
       type: 'cpu_usage_percent',
       group: 'system',

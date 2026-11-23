@@ -20,6 +20,11 @@ var validOpsAlertMetricTypes = []string{
 	"success_rate",
 	"error_rate",
 	"upstream_error_rate",
+	// 5xx 分源计数：gateway_5xx 只统计网关自产，upstream_5xx 统计上游透传，
+	// upstream_5xx_spike_ratio 是上游 5xx 相对 30 分钟中位数的突增倍数。
+	service.OpsMetricGateway5xx,
+	service.OpsMetricUpstream5xx,
+	service.OpsMetricUpstream5xxSpike,
 	"cpu_usage_percent",
 	"memory_usage_percent",
 	"concurrency_queue_depth",

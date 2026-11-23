@@ -16,6 +16,7 @@ type opsRepoMock struct {
 	InsertSystemLogCleanupAuditFn func(ctx context.Context, input *OpsSystemLogCleanupAudit) error
 	GetBillingAnomalySnapshotFn   func(ctx context.Context, start, end time.Time) (*BillingAnomalySnapshot, error)
 	GetLatencyPercentilesFn       func(ctx context.Context, filter *OpsDashboardFilter, start, end time.Time) (*OpsLatencyPercentiles, error)
+	CountErrorLogs5xxBySourceFn   func(ctx context.Context, start, end time.Time, bucketSeconds int, platform string, groupID *int64) ([]*OpsError5xxBucket, error)
 }
 
 func (m *opsRepoMock) InsertErrorLog(ctx context.Context, input *OpsInsertErrorLogInput) (int64, error) {
@@ -207,6 +208,13 @@ func (m *opsRepoMock) GetLatencyPercentiles(ctx context.Context, filter *OpsDash
 		return m.GetLatencyPercentilesFn(ctx, filter, start, end)
 	}
 	return &OpsLatencyPercentiles{}, nil
+}
+
+func (m *opsRepoMock) CountErrorLogs5xxBySource(ctx context.Context, start, end time.Time, bucketSeconds int, platform string, groupID *int64) ([]*OpsError5xxBucket, error) {
+	if m.CountErrorLogs5xxBySourceFn != nil {
+		return m.CountErrorLogs5xxBySourceFn(ctx, start, end, bucketSeconds, platform, groupID)
+	}
+	return []*OpsError5xxBucket{{BucketStart: start}}, nil
 }
 
 var _ OpsRepository = (*opsRepoMock)(nil)

@@ -33,6 +33,11 @@ type OpsRepository interface {
 	InsertSystemMetrics(ctx context.Context, input *OpsInsertSystemMetricsInput) error
 	GetLatestSystemMetrics(ctx context.Context, windowMinutes int) (*OpsSystemMetricsSnapshot, error)
 
+	// CountErrorLogs5xxBySource 只读聚合 ops_error_logs 的 5xx 分源计数。
+	// 返回按 bucketSeconds 分桶、从 start 到 end（左闭右开）的计数序列，
+	// 缺失桶补零。上游透传（error_source=upstream_http）与网关自产分开统计。
+	CountErrorLogs5xxBySource(ctx context.Context, start, end time.Time, bucketSeconds int, platform string, groupID *int64) ([]*OpsError5xxBucket, error)
+
 	UpsertJobHeartbeat(ctx context.Context, input *OpsUpsertJobHeartbeatInput) error
 	ListJobHeartbeats(ctx context.Context) ([]*OpsJobHeartbeat, error)
 

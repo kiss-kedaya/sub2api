@@ -49,6 +49,11 @@ type OpsAlertEvaluatorService struct {
 	mu         sync.Mutex
 	ruleStates map[int64]*opsAlertRuleState
 
+	// metricDetails 保存本轮 5xx 分源指标的口径提示（按规则 id），
+	// 供告警事件文案使用：区分【网关自身 5xx】与【上游 503 透传】并带
+	// error_source 分布。随 ruleStates 一起清理，避免规则删除后泄漏。
+	metricDetails map[int64]string
+
 	emailLimiter *slidingWindowLimiter
 
 	skipLogMu sync.Mutex
@@ -75,15 +80,16 @@ func NewOpsAlertEvaluatorService(
 	proxyRepo ProxyRepository,
 ) *OpsAlertEvaluatorService {
 	return &OpsAlertEvaluatorService{
-		opsService:   opsService,
-		opsRepo:      opsRepo,
-		emailService: emailService,
-		proxyRepo:    proxyRepo,
-		redisClient:  redisClient,
-		cfg:          cfg,
-		instanceID:   uuid.NewString(),
-		ruleStates:   map[int64]*opsAlertRuleState{},
-		emailLimiter: newSlidingWindowLimiter(0, time.Hour),
+		opsService:    opsService,
+		opsRepo:       opsRepo,
+		emailService:  emailService,
+		proxyRepo:     proxyRepo,
+		redisClient:   redisClient,
+		cfg:           cfg,
+		instanceID:    uuid.NewString(),
+		ruleStates:    map[int64]*opsAlertRuleState{},
+		metricDetails: map[int64]string{},
+		emailLimiter:  newSlidingWindowLimiter(0, time.Hour),
 	}
 }
 
@@ -280,7 +286,7 @@ func (s *OpsAlertEvaluatorService) evaluateOnce(interval time.Duration) {
 				Severity:       strings.TrimSpace(rule.Severity),
 				Status:         OpsAlertStatusFiring,
 				Title:          fmt.Sprintf("%s: %s", strings.TrimSpace(rule.Severity), strings.TrimSpace(rule.Name)),
-				Description:    buildOpsAlertDescription(rule, metricValue, windowMinutes, scopePlatform, scopeGroupID),
+				Description:    buildOpsAlertDescriptionWithDetail(rule, metricValue, windowMinutes, scopePlatform, scopeGroupID, s.takeMetricDetail(rule.ID)),
 				MetricValue:    float64Ptr(metricValue),
 				ThresholdValue: float64Ptr(rule.Threshold),
 				Dimensions:     buildOpsAlertDimensions(scopePlatform, scopeGroupID),
@@ -331,8 +337,37 @@ func (s *OpsAlertEvaluatorService) pruneRuleStates(rules []*OpsAlertRule) {
 	for id := range s.ruleStates {
 		if _, ok := live[id]; !ok {
 			delete(s.ruleStates, id)
+			delete(s.metricDetails, id)
 		}
 	}
+}
+
+func (s *OpsAlertEvaluatorService) setMetricDetail(ruleID int64, detail string) {
+	if s == nil || ruleID <= 0 {
+		return
+	}
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.metricDetails == nil {
+		s.metricDetails = map[int64]string{}
+	}
+	s.metricDetails[ruleID] = detail
+}
+
+// takeMetricDetail 取出并清空本轮指标的口径提示，保证只用于当次事件。
+func (s *OpsAlertEvaluatorService) takeMetricDetail(ruleID int64) string {
+	if s == nil || ruleID <= 0 {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	detail := s.metricDetails[ruleID]
+	delete(s.metricDetails, ruleID)
+	return detail
 }
 
 func (s *OpsAlertEvaluatorService) resetRuleState(ruleID int64, now time.Time) {
@@ -348,6 +383,8 @@ func (s *OpsAlertEvaluatorService) resetRuleState(ruleID int64, now time.Time) {
 	}
 	state.LastEvaluatedAt = now
 	state.ConsecutiveBreaches = 0
+	// 指标不可用（查询失败/窗口非法）时不保留旧口径提示，避免事件文案串味。
+	delete(s.metricDetails, ruleID)
 }
 
 func (s *OpsAlertEvaluatorService) updateRuleBreaches(ruleID int64, now time.Time, interval time.Duration, breached bool) int {
@@ -472,6 +509,12 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 		OpsMetricBillingZeroCostRequestsDelta,
 		OpsMetricBillingNegativeBalanceUsersDelta:
 		return s.computeBillingAnomalyMetric(ctx, rule, start, end)
+	}
+
+	// 5xx 分源计数指标：只读 ops_error_logs 聚合，不走 dashboard overview。
+	// gateway_5xx 只统计网关自产，upstream_5xx 统计上游透传（渠道健康趋势）。
+	if isOpsError5xxMetricType(rule.MetricType) {
+		return s.computeError5xxMetric(ctx, rule, start, end, platform, groupID)
 	}
 
 	switch strings.TrimSpace(rule.MetricType) {
@@ -646,6 +689,69 @@ func (s *OpsAlertEvaluatorService) computeRuleMetric(
 	default:
 		return 0, false
 	}
+}
+
+// computeError5xxMetric 计算 5xx 分源指标（只读聚合）。
+//
+// 指标定义：
+//   - gateway_5xx：窗口内 status_code>=500 且 error_source<>upstream_http 的条数；
+//   - upstream_5xx：窗口内 status_code>=500 且 error_source=upstream_http 的条数；
+//   - upstream_5xx_spike_ratio：当前 5 分钟桶上游 5xx / 前 30 分钟中位数的倍数。
+//
+// 评估器有 45s 预算，这里对窗口做封顶；桶数上限防止规则被配成超大窗口。
+func (s *OpsAlertEvaluatorService) computeError5xxMetric(
+	ctx context.Context,
+	rule *OpsAlertRule,
+	start, end time.Time,
+	platform string,
+	groupID *int64,
+) (float64, bool) {
+	if s == nil || s.opsRepo == nil || rule == nil {
+		return 0, false
+	}
+	if !end.After(start) {
+		return 0, false
+	}
+
+	metricType := strings.TrimSpace(rule.MetricType)
+	bucketSeconds := int(end.Sub(start).Seconds())
+	bucketCount := 1
+	if metricType == OpsMetricUpstream5xxSpike {
+		bucketSeconds = opsError5xxSpikeBucketSeconds
+		bucketCount = 1 + opsError5xxSpikeBaselineBucket
+	} else {
+		// 计数指标：整个规则窗口作为一个桶；窗口过大时按上限截断（保留最近一段）。
+		if end.Sub(start) > opsError5xxMaxWindow {
+			start = end.Add(-opsError5xxMaxWindow)
+			bucketSeconds = int(end.Sub(start).Seconds())
+		}
+	}
+
+	if bucketSeconds < opsError5xxMinBucketSecond {
+		return 0, false
+	}
+	if bucketCount <= 0 {
+		return 0, false
+	}
+	if bucketCount > opsError5xxMaxBuckets {
+		bucketCount = opsError5xxMaxBuckets
+	}
+	rangeStart := end.Add(-time.Duration(bucketCount*bucketSeconds) * time.Second)
+
+	buckets, err := s.opsRepo.CountErrorLogs5xxBySource(ctx, rangeStart, end, bucketSeconds, platform, groupID)
+	if err != nil {
+		logger.LegacyPrintf("service.ops_alert_evaluator",
+			"[OpsAlertEvaluator] 5xx source split query failed (metric=%q): %v", metricType, err)
+		return 0, false
+	}
+
+	value, ok := opsError5xxMetricValue(metricType, buckets)
+	if !ok {
+		return 0, false
+	}
+	// 口径提示随事件文案落库，区分「网关自身 5xx」与「上游 503 透传」。
+	s.setMetricDetail(rule.ID, opsError5xxMetricDetail(metricType, buckets))
+	return value, true
 }
 
 // computeBillingAnomalyMetric 计算计费看门狗指标。
@@ -900,6 +1006,22 @@ func buildOpsAlertDescription(rule *OpsAlertRule, value float64, windowMinutes i
 		windowMinutes,
 		strings.TrimSpace(scope),
 	)
+}
+
+// buildOpsAlertDescriptionWithDetail 在通用指标描述前拼上口径提示。
+//
+// 5xx 分源指标的 detail 以【网关自身 5xx】/【上游 503 透传】开头并带
+// error_source 分布，值班人员先看到归属再看到数值。
+func buildOpsAlertDescriptionWithDetail(rule *OpsAlertRule, value float64, windowMinutes int, platform string, groupID *int64, detail string) string {
+	description := buildOpsAlertDescription(rule, value, windowMinutes, platform, groupID)
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return description
+	}
+	if description == "" {
+		return detail
+	}
+	return detail + "；" + description
 }
 
 func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runtimeCfg *OpsAlertRuntimeSettings, rule *OpsAlertRule, event *OpsAlertEvent) bool {
