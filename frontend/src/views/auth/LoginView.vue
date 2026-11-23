@@ -200,14 +200,24 @@
     </template>
   </AuthLayout>
 
-  <!-- 2FA Modal -->
+  <!-- 双因子第二步：TOTP 因子 -->
   <TotpLoginModal
-    v-if="show2FAModal"
+    v-if="loginChallenge && loginChallenge.nextFactor === 'totp'"
     ref="totpModalRef"
-    :temp-token="totpTempToken"
-    :user-email-masked="totpUserEmailMasked"
+    :temp-token="loginChallenge.tempToken"
+    :user-email-masked="loginChallenge.userEmailMasked"
     :account-key="formData.email"
     @verify="handle2FAVerify"
+    @cancel="handle2FACancel"
+  />
+
+  <!-- 双因子第二步：Passkey 因子（账号绑定了 Passkey 时） -->
+  <PasskeyLoginModal
+    v-if="loginChallenge && loginChallenge.nextFactor === 'passkey'"
+    :supported="passkeySupported"
+    :verifying="passkeyVerifying"
+    :user-email-masked="loginChallenge.userEmailMasked"
+    @verify="handlePasskeyFactor"
     @cancel="handle2FACancel"
   />
 </template>
@@ -224,9 +234,11 @@ import WechatOAuthSection from '@/components/auth/WechatOAuthSection.vue'
 import EmailOAuthButtons from '@/components/auth/EmailOAuthButtons.vue'
 import LoginAgreementPrompt from '@/components/auth/LoginAgreementPrompt.vue'
 import TotpLoginModal from '@/components/auth/TotpLoginModal.vue'
+import PasskeyLoginModal from '@/components/auth/PasskeyLoginModal.vue'
 import Icon from '@/components/icons/Icon.vue'
 import TurnstileWidget from '@/components/CaptchaChallenge.vue'
 import { useAuthStore, useAppStore } from '@/stores'
+import { passkeyAPI } from '@/api/passkey'
 import {
   buildOAuthLoginStartURL,
   getPublicSettings,
@@ -311,11 +323,37 @@ const captchaEnabled = computed(
     (turnstileEnabled.value && Boolean(turnstileSiteKey.value)) || actionCaptchaEnabled.value
 )
 
-// 2FA state
-const show2FAModal = ref<boolean>(false)
-const totpTempToken = ref<string>('')
-const totpUserEmailMasked = ref<string>('')
+// 双因子登录挑战：服务端按账号已绑定因子下发 required_factors / next_factor。
+type LoginFactor = 'totp' | 'passkey'
+interface LoginFactorChallenge {
+  tempToken: string
+  requiredFactors: string[]
+  passedFactors: string[]
+  nextFactor: LoginFactor
+  userEmailMasked: string
+  passkeySessionToken: string
+  passkeyOptions?: { publicKey: Record<string, unknown> }
+}
+const loginChallenge = ref<LoginFactorChallenge | null>(null)
+const passkeyVerifying = ref<boolean>(false)
+const passkeySupported = computed(() => passkeyAPI.isSupported())
 const totpModalRef = ref<InstanceType<typeof TotpLoginModal> | null>(null)
+
+/** 把后端登录挑战转成前端状态机（缺字段时按 TOTP 单因子兼容旧后端）。 */
+function applyLoginChallenge(response: TotpLoginResponse): void {
+  const required = response.required_factors?.length ? response.required_factors : ['totp']
+  const passed = response.passed_factors ?? []
+  const next = response.next_factor || required.find((factor) => !passed.includes(factor)) || 'totp'
+  loginChallenge.value = {
+    tempToken: response.temp_token || '',
+    requiredFactors: required,
+    passedFactors: passed,
+    nextFactor: next === 'passkey' ? 'passkey' : 'totp',
+    userEmailMasked: response.user_email_masked || maskLoginEmail(formData.email),
+    passkeySessionToken: response.passkey_session_token || '',
+    passkeyOptions: response.passkey_options
+  }
+}
 
 const formData = reactive({
   email: '',
@@ -580,25 +618,15 @@ async function handleLogin(): Promise<void> {
         : undefined
     })
 
-    // Check if 2FA is required
+    // 双因子策略：密码通过后按账号已绑定因子继续挑战
+    // （只绑 TOTP → TOTP；只绑 Passkey → Passkey；两者都绑 → 先 TOTP 后 Passkey）。
     if (isTotp2FARequired(response)) {
-      const totpResponse = response as TotpLoginResponse
-      totpTempToken.value = totpResponse.temp_token || ''
-      // 统一登录响应下服务端不再回显账号信息时，用当前输入的邮箱在前端脱敏，
-      // 两条路径（凭据错误 / 真正需要 2FA）展示完全一致。
-      totpUserEmailMasked.value = totpResponse.user_email_masked || maskLoginEmail(formData.email)
-      show2FAModal.value = true
+      applyLoginChallenge(response as TotpLoginResponse)
       isLoading.value = false
       return
     }
 
-    // Show success toast
-    clearAllAffiliateReferralCodes()
-    appStore.showSuccess(t('auth.loginSuccess'))
-
-    // Redirect to dashboard or intended route
-    const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
-    await pushOrReload(router, redirectTo)
+    await finishLoginSuccess()
   } catch (error: unknown) {
     if (isChunkLoadError(error)) {
       recoverFromChunkLoadError((router.currentRoute.value.query.redirect as string) || '/dashboard')
@@ -714,29 +742,44 @@ function maskLoginEmail(email: string): string {
   return local.slice(0, 1) + '***' + local.slice(-1) + domain
 }
 
+const loginRedirect = (): string =>
+  (router.currentRoute.value.query.redirect as string) || '/dashboard'
+
+/** 全部因子通过后：清挑战、提示成功、跳转目标页。 */
+async function finishLoginSuccess(): Promise<void> {
+  loginChallenge.value = null
+  clearAllAffiliateReferralCodes()
+  appStore.showSuccess(t('auth.loginSuccess'))
+  await pushOrReload(router, loginRedirect())
+}
+
 async function handle2FAVerify(code: string): Promise<void> {
-  if (totpModalRef.value) {
-    totpModalRef.value.setVerifying(true)
-  }
+  const challenge = loginChallenge.value
+  if (!challenge) return
+  totpModalRef.value?.setVerifying(true)
 
   try {
     // 统一登录协议：第二步同时提交「动态码 + 邮箱 + 密码」，服务端重新校验凭据，
     // 密码错误与需要 2FA 在第一步的响应完全一致，凭据错误统一在这一步报错。
-    await authStore.login2FA(totpTempToken.value, code, formData.email, formData.password)
+    const response = await authStore.login2FA(
+      challenge.tempToken,
+      code,
+      formData.email,
+      formData.password
+    )
+    if (isTotp2FARequired(response)) {
+      // 两者都绑定：TOTP 通过后进入 Passkey 因子，仍不签发令牌。
+      applyLoginChallenge(response as TotpLoginResponse)
+      totpModalRef.value?.setVerifying(false)
+      return
+    }
 
     // 成功即清：清空前端账号维度尝试计数
     totpModalRef.value?.resetLimit?.()
-    // Close modal and show success
-    show2FAModal.value = false
-    clearAllAffiliateReferralCodes()
-    appStore.showSuccess(t('auth.loginSuccess'))
-
-    // Redirect to dashboard or intended route
-    const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
-    await pushOrReload(router, redirectTo)
+    await finishLoginSuccess()
   } catch (error: unknown) {
     if (isChunkLoadError(error)) {
-      recoverFromChunkLoadError((router.currentRoute.value.query.redirect as string) || '/dashboard')
+      recoverFromChunkLoadError(loginRedirect())
       return
     }
     const err = error as {
@@ -763,10 +806,45 @@ async function handle2FAVerify(code: string): Promise<void> {
   }
 }
 
+/** Passkey 因子：浏览器断言 → 提交后端；全部因子通过才签发令牌。 */
+async function handlePasskeyFactor(): Promise<void> {
+  const challenge = loginChallenge.value
+  if (!challenge) return
+  if (!passkeySupported.value) {
+    appStore.showError(t('auth.passkeyUnsupported'))
+    return
+  }
+  if (!challenge.passkeyOptions) {
+    appStore.showError(t('auth.passkeyFailed'))
+    return
+  }
+  passkeyVerifying.value = true
+  try {
+    const credential = await passkeyAPI.acceptLoginChallenge(challenge.passkeyOptions)
+    await authStore.login2FAPasskeyFinish(
+      challenge.tempToken,
+      challenge.passkeySessionToken,
+      credential
+    )
+    await finishLoginSuccess()
+  } catch (error: unknown) {
+    if (isChunkLoadError(error)) {
+      recoverFromChunkLoadError(loginRedirect())
+      return
+    }
+    const fallback =
+      error instanceof DOMException && error.name === 'NotAllowedError'
+        ? t('auth.passkeyCancelled')
+        : t('auth.passkeyFailed')
+    appStore.showError(extractI18nErrorMessage(error, t, 'auth.errors', fallback))
+  } finally {
+    passkeyVerifying.value = false
+  }
+}
+
 function handle2FACancel(): void {
-  show2FAModal.value = false
-  totpTempToken.value = ''
-  totpUserEmailMasked.value = ''
+  loginChallenge.value = null
+  passkeyVerifying.value = false
 }
 </script>
 

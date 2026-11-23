@@ -239,18 +239,26 @@ func (c *TotpCache) ReleaseCryptoValue(ctx context.Context, key, value string) e
 	return cryptoTotpReleaseScript.Run(ctx, c.rdb, []string{key}, value).Err()
 }
 
-func totpStepUpKey(userID int64, sessionKey string) string {
-	return fmt.Sprintf("%s%d:%s", totpStepUpKeyPrefix, userID, sessionKey)
+// totpStepUpKey 按「用户 + 会话 + 因子」隔离 step-up 授权：
+// 同一会话里 TOTP 与 Passkey 各有一枚 5 分钟授权，互不覆盖。
+func totpStepUpKey(userID int64, sessionKey string, factor service.Factor) string {
+	return fmt.Sprintf("%s%d:%s:%s", totpStepUpKeyPrefix, userID, factor, sessionKey)
 }
 
-// SetStepUpGrant 记录一次 step-up 验证通过（sudo 窗口），绑定用户+会话。
-func (c *TotpCache) SetStepUpGrant(ctx context.Context, userID int64, sessionKey string, ttl time.Duration) error {
-	return c.rdb.Set(ctx, totpStepUpKey(userID, sessionKey), "1", ttl).Err()
+// SetStepUpGrant 记录一次某因子的 step-up 验证通过（sudo 窗口），绑定用户+会话+因子。
+func (c *TotpCache) SetStepUpGrant(ctx context.Context, userID int64, sessionKey string, factor service.Factor, ttl time.Duration) error {
+	if !factor.Valid() || userID <= 0 || sessionKey == "" {
+		return fmt.Errorf("invalid step-up grant")
+	}
+	return c.rdb.Set(ctx, totpStepUpKey(userID, sessionKey, factor), "1", ttl).Err()
 }
 
-// HasStepUpGrant 检查 step-up 授权是否仍在有效期内。
-func (c *TotpCache) HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error) {
-	_, err := c.rdb.Get(ctx, totpStepUpKey(userID, sessionKey)).Result()
+// HasStepUpGrant 检查某因子的 step-up 授权是否仍在有效期内。
+func (c *TotpCache) HasStepUpGrant(ctx context.Context, userID int64, sessionKey string, factor service.Factor) (bool, error) {
+	if !factor.Valid() {
+		return false, fmt.Errorf("invalid step-up factor")
+	}
+	_, err := c.rdb.Get(ctx, totpStepUpKey(userID, sessionKey, factor)).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return false, nil
@@ -265,8 +273,11 @@ func (c *TotpCache) HasStepUpGrant(ctx context.Context, userID int64, sessionKey
 // 门控用它向响应头回传「还剩多少秒免授权」，所以必须读真实 TTL，不能拿
 // StepUpGrantTTL 常量代替。key 不存在 → (0, false, nil)。PTTL 对没有过期时间
 // 的 key 返回 -1：这种异常状态同样按「无授权」处理（fail-closed），绝不放行。
-func (c *TotpCache) StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string) (time.Duration, bool, error) {
-	ttl, err := c.rdb.PTTL(ctx, totpStepUpKey(userID, sessionKey)).Result()
+func (c *TotpCache) StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string, factor service.Factor) (time.Duration, bool, error) {
+	if !factor.Valid() {
+		return 0, false, fmt.Errorf("invalid step-up factor")
+	}
+	ttl, err := c.rdb.PTTL(ctx, totpStepUpKey(userID, sessionKey, factor)).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return 0, false, nil

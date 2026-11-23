@@ -44,7 +44,7 @@ func setupCreateUserStepUpRouter(t *testing.T, h createStepUpHarness) (*gin.Engi
 	}}
 	cache := &globalTotpGrantCache{grants: map[globalTotpGrantKey]bool{}}
 	if h.grant {
-		require.NoError(t, cache.SetStepUpGrant(context.Background(), 42, "stepup-session", service.StepUpGrantTTL))
+		require.NoError(t, cache.SetStepUpGrant(context.Background(), 42, "stepup-session", service.FactorTOTP, service.StepUpGrantTTL))
 	}
 	settings := service.NewSettingService(&settingHandlerRepoStub{values: map[string]string{
 		service.SettingKeyTotpEnabled:   "true",

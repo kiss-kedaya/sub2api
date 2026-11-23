@@ -2630,6 +2630,28 @@ export interface TotpLoginResponse {
   requires_2fa: boolean
   temp_token?: string
   user_email_masked?: string
+  /** 本次登录必须全部完成的因子（顺序：totp,passkey）。 */
+  required_factors?: string[]
+  /** 已经完成的因子（5 分钟凭证跳过或前一步已通过）。 */
+  passed_factors?: string[]
+  /** 下一步要验证的因子。 */
+  next_factor?: string
+  /** next_factor=passkey 时下发：WebAuthn assertion 会话与选项。 */
+  passkey_session_token?: string
+  passkey_options?: { publicKey: Record<string, unknown> }
+}
+
+export interface TotpLogin2FAPasskeyFinishRequest {
+  temp_token: string
+  session_token: string
+  credential: Record<string, unknown>
+}
+
+export interface TwoFactorPolicy {
+  required_factors: string[]
+  totp_enabled: boolean
+  passkey_bound: boolean
+  step_up_enabled: boolean
 }
 
 export interface TotpLogin2FARequest {

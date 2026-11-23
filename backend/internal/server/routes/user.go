@@ -94,8 +94,18 @@ func RegisterUserRoutes(
 				totp.POST("/setup", h.Totp.InitiateSetup)
 				totp.POST("/enable", h.Totp.Enable)
 				totp.POST("/disable", h.Totp.Disable)
-				// 敏感操作二次验证：授予当前会话一段时间的 step-up 权限
+				// 敏感操作二次验证：授予当前会话一段时间的 TOTP 因子 step-up 权限
 				totp.POST("/step-up", h.Totp.StepUp)
+			}
+
+			// 双因子策略：前端弹窗前读取「该账号必须完成哪些因子」。
+			user.GET("/2fa/policy", h.Totp.GetPolicy)
+
+			// 敏感操作 Passkey step-up：与 /user/totp/step-up 平行的 Passkey 因子入口。
+			stepUp := user.Group("/step-up")
+			{
+				stepUp.POST("/passkey/begin", h.Passkey.StepUpBegin)
+				stepUp.POST("/passkey/finish", h.Passkey.StepUpFinish)
 			}
 
 			passkeys := user.Group("/passkeys")

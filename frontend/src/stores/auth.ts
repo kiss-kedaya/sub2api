@@ -339,13 +339,45 @@ export const useAuthStore = defineStore('auth', () => {
    * @returns Promise resolving to the authenticated user
    * @throws Error if 2FA verification fails
    */
-  async function login2FA(tempToken: string, totpCode: string, email?: string, password?: string): Promise<User> {
+  async function login2FA(
+    tempToken: string,
+    totpCode: string,
+    email?: string,
+    password?: string
+  ): Promise<LoginResponse> {
     try {
       const response = await authAPI.login2FA({
         temp_token: tempToken,
         totp_code: totpCode,
         ...(email ? { email } : {}),
         ...(password ? { password } : {})
+      })
+      // 双因子：TOTP 通过后若还要求 Passkey，服务端继续返回挑战、不签发令牌。
+      if (isTotp2FARequired(response)) {
+        return response
+      }
+      setAuthFromResponse(response)
+      return response
+    } catch (error) {
+      clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+      throw error
+    }
+  }
+
+  /**
+   * 双因子登录第二步（Passkey 因子）：账号同时绑定 TOTP+Passkey 时，
+   * TOTP 通过后由本方法完成 Passkey assertion，服务端签发令牌。
+   */
+  async function login2FAPasskeyFinish(
+    tempToken: string,
+    passkeySessionToken: string,
+    credential: Record<string, unknown>
+  ): Promise<User> {
+    try {
+      const response = await authAPI.login2FAPasskeyFinish({
+        temp_token: tempToken,
+        session_token: passkeySessionToken,
+        credential
       })
       setAuthFromResponse(response)
       return user.value!
@@ -663,6 +695,7 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     loginWithPasskey,
     login2FA,
+    login2FAPasskeyFinish,
     register,
     setToken,
     adoptCookieSession,

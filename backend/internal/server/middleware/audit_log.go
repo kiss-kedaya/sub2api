@@ -148,6 +148,10 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"two_factor_grant": {}, "two_factor_grant_scope": {},
 	"two_factor_grant_reason": {}, "two_factor_grant_remaining_seconds": {},
 	"two_factor_grant_ip_hash": {}, "two_factor_grant_ua_hash": {},
+	// 双因子策略（TOTP / Passkey）编排审计：只记录因子名与缺失因子，
+	// 不记录任何凭证、动态码、断言或 challenge。
+	"two_factor_grant_factor": {}, "two_factor_missing_factors": {},
+	"two_factor_required_factors": {}, "two_factor_next_factor": {},
 	// 管理面出站目标（审计节点 / 账号 base_url）变更：只记地址与显式开关，
 	// 不记 token / 密码。
 	"allow_private_endpoints": {}, "account_base_url_old": {}, "account_base_url_new": {},
@@ -245,10 +249,13 @@ var auditActionOverrides = map[string]string{
 	"POST /api/v1/admin/crypto/rpc/auto-pick":                    "admin.crypto.rpc.auto_pick",
 	"POST /api/v1/auth/login":                                    service.AuditActionLogin,
 	"POST /api/v1/auth/login/2fa":                                service.AuditActionLogin2FA,
+	"POST /api/v1/auth/login/2fa/passkey/finish":                 service.AuditActionLogin2FA,
 	"POST /api/v1/auth/passkey/login/finish":                     service.AuditActionLogin,
 	"POST /api/v1/auth/register":                                 service.AuditActionRegister,
 	"POST /api/v1/auth/refresh":                                  service.AuditActionTokenRefresh,
 	"POST /api/v1/user/totp/step-up":                             service.AuditActionStepUpVerify,
+	"POST /api/v1/user/step-up/passkey/finish":                   service.AuditActionStepUpVerify,
+	"POST /api/v1/user/step-up/passkey/begin":                    service.AuditActionStepUpVerify,
 	"POST /api/v1/admin/audit-logs/clear":                        service.AuditActionAuditLogClear,
 	"POST /api/v1/admin/accounts/data":                           "admin.accounts.import",
 	"POST /api/v1/admin/backups":                                 "admin.backups.create",
@@ -289,9 +296,10 @@ type auditAuthEventMeta struct {
 // 由审计中间件统一落一条结构化记录（result / reason / provider / flow / email_hash）。
 var auditAuthEvents = map[string]auditAuthEventMeta{
 	// 密码 / 邮箱登录与 2FA 挑战
-	"POST /api/v1/auth/login":     {Action: service.AuditActionLogin, AuthMethod: service.AuditAuthMethodPassword, Provider: "password", Flow: "password"},
-	"POST /api/v1/auth/login/2fa": {Action: service.AuditActionLogin2FA, AuthMethod: service.AuditAuthMethodPassword, Provider: "totp", Flow: "two_factor"},
-	"POST /api/v1/auth/register":  {Action: service.AuditActionRegister, AuthMethod: service.AuditAuthMethodPassword, Provider: "password", Flow: "email_register"},
+	"POST /api/v1/auth/login":                    {Action: service.AuditActionLogin, AuthMethod: service.AuditAuthMethodPassword, Provider: "password", Flow: "password"},
+	"POST /api/v1/auth/login/2fa":                {Action: service.AuditActionLogin2FA, AuthMethod: service.AuditAuthMethodPassword, Provider: "totp", Flow: "two_factor"},
+	"POST /api/v1/auth/login/2fa/passkey/finish": {Action: service.AuditActionLogin2FA, AuthMethod: service.AuditAuthMethodPassword, Provider: "passkey", Flow: "two_factor"},
+	"POST /api/v1/auth/register":                 {Action: service.AuditActionRegister, AuthMethod: service.AuditAuthMethodPassword, Provider: "password", Flow: "email_register"},
 
 	// Passkey（WebAuthn）登录
 	"POST /api/v1/auth/passkey/login/begin": {

@@ -3595,15 +3595,15 @@ func (s *oauthPendingFlowTotpCacheStub) ClearVerifyAttempts(_ context.Context, u
 	return nil
 }
 
-func (s *oauthPendingFlowTotpCacheStub) SetStepUpGrant(_ context.Context, _ int64, _ string, _ time.Duration) error {
+func (s *oauthPendingFlowTotpCacheStub) SetStepUpGrant(_ context.Context, _ int64, _ string, _ service.Factor, _ time.Duration) error {
 	return nil
 }
 
-func (s *oauthPendingFlowTotpCacheStub) HasStepUpGrant(_ context.Context, _ int64, _ string) (bool, error) {
+func (s *oauthPendingFlowTotpCacheStub) HasStepUpGrant(_ context.Context, _ int64, _ string, _ service.Factor) (bool, error) {
 	return false, nil
 }
 
-func (s *oauthPendingFlowTotpCacheStub) StepUpGrantRemaining(_ context.Context, _ int64, _ string) (time.Duration, bool, error) {
+func (s *oauthPendingFlowTotpCacheStub) StepUpGrantRemaining(_ context.Context, _ int64, _ string, _ service.Factor) (time.Duration, bool, error) {
 	return 0, false, nil
 }
 

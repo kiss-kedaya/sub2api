@@ -436,11 +436,11 @@ type stepUpConsistencyGrantCache struct {
 	remaining time.Duration
 }
 
-func (c *stepUpConsistencyGrantCache) HasStepUpGrant(context.Context, int64, string) (bool, error) {
+func (c *stepUpConsistencyGrantCache) HasStepUpGrant(context.Context, int64, string, service.Factor) (bool, error) {
 	return c.granted, nil
 }
 
-func (c *stepUpConsistencyGrantCache) StepUpGrantRemaining(context.Context, int64, string) (time.Duration, bool, error) {
+func (c *stepUpConsistencyGrantCache) StepUpGrantRemaining(context.Context, int64, string, service.Factor) (time.Duration, bool, error) {
 	if !c.granted {
 		return 0, false, nil
 	}

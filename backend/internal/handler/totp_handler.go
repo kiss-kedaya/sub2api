@@ -242,6 +242,48 @@ type TotpStepUpResponse struct {
 	ExpiresIn int64 `json:"expires_in"`
 }
 
+// TwoFactorPolicyResponse 返回当前账号「已绑定因子」及 step-up 需要的因子。
+//
+// 前端全局 step-up 对话框据此决定依次弹哪些验证（先 TOTP、后 Passkey），
+// 两个都要求时必须两个都通过才重试原请求。
+type TwoFactorPolicyResponse struct {
+	// RequiredFactors 已绑定、因此 step-up 必须全部满足的因子（顺序：totp,passkey）。
+	RequiredFactors []string `json:"required_factors"`
+	// TotpEnabled 是否启用了 TOTP（与 required_factors 中的 totp 一致）。
+	TotpEnabled bool `json:"totp_enabled"`
+	// PasskeyBound 是否至少绑定了一枚 Passkey。
+	PasskeyBound bool `json:"passkey_bound"`
+	// StepUpEnabled 全局 step-up 开关（关闭时风险操作不需要二次验证）。
+	StepUpEnabled bool `json:"step_up_enabled"`
+}
+
+// GetPolicy 返回当前账号的双因子策略（需要认证）。
+// GET /api/v1/user/2fa/policy
+func (h *TotpHandler) GetPolicy(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	factors, err := h.totpService.RequiredFactors(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, service.ErrTwoFactorPolicyUnavailable)
+		return
+	}
+	stepUpEnabled := true
+	if h.totpService != nil {
+		if enabled, err := h.totpService.StepUpEnabled(c.Request.Context()); err == nil {
+			stepUpEnabled = enabled
+		}
+	}
+	response.Success(c, TwoFactorPolicyResponse{
+		RequiredFactors: service.FactorStrings(factors),
+		TotpEnabled:     service.HasFactor(factors, service.FactorTOTP),
+		PasskeyBound:    service.HasFactor(factors, service.FactorPasskey),
+		StepUpEnabled:   stepUpEnabled,
+	})
+}
+
 // StepUp 敏感操作二次验证：校验 TOTP 码并为当前会话授予一段时间的 step-up 权限。
 // POST /api/v1/user/totp/step-up
 func (h *TotpHandler) StepUp(c *gin.Context) {
@@ -272,9 +314,10 @@ func (h *TotpHandler) StepUp(c *gin.Context) {
 	}
 	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, subject.UserID)
 
-	// 敏感操作 step-up 也是「一次动态码校验成功」：按同一契约下发 5 分钟不透明
-	// 凭证，之后密码登录 / 密码校验入口可以凭它免动态码（scope 记为 password）。
-	issueTwoFactorGrant(c, h.totpService, subject.UserID, service.TwoFactorGrantScopePassword)
+	// 敏感操作 step-up 也是「一次验证成功」：按同一契约下发 5 分钟不透明
+	// 凭证（因子=TOTP），之后密码登录 / 密码校验入口可以凭它免 TOTP
+	// （scope 记为 password）。
+	issueTwoFactorGrant(c, h.totpService, subject.UserID, service.TwoFactorGrantScopePassword, service.FactorTOTP)
 
 	response.Success(c, TotpStepUpResponse{
 		Verified:  true,

@@ -25,11 +25,11 @@ type stubStepUpGrantChecker struct {
 	remainingErr     error
 }
 
-func (s stubStepUpGrantChecker) HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error) {
+func (s stubStepUpGrantChecker) HasStepUpGrant(ctx context.Context, userID int64, sessionKey string, _ service.Factor) (bool, error) {
 	return s.granted, s.err
 }
 
-func (s stubStepUpGrantChecker) StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string) (time.Duration, bool, error) {
+func (s stubStepUpGrantChecker) StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string, _ service.Factor) (time.Duration, bool, error) {
 	if s.remainingErr != nil {
 		return 0, false, s.remainingErr
 	}

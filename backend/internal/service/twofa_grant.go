@@ -43,6 +43,11 @@ const (
 	TwoFactorGrantScopeLogin    = "login"
 	TwoFactorGrantScopePassword = "password"
 
+	// TwoFactorPasskeyGrantCookieName 承载 Passkey 因子凭证的 HttpOnly Cookie 名。
+	// TOTP 因子继续使用历史 Cookie 名（TwoFactorGrantCookieName），每个因子
+	// 各自一枚 5 分钟凭证、各自独立过期——两者都要求时必须两枚都有效。
+	TwoFactorPasskeyGrantCookieName = "sub2_2fa_passkey_grant"
+
 	// 凭证校验的每用户/IP 限速：60 秒滚动窗口最多 10 次。
 	twoFactorGrantVerifyLimit  = 10
 	twoFactorGrantVerifyWindow = time.Minute
@@ -84,8 +89,11 @@ const (
 // 这里没有 token、没有 TOTP 种子、没有密码：token 只以 SHA-256 摘要作为 key，
 // 记录本身即使泄露也只能看出「某用户在某 IP/UA 指纹上于某时刻签了一个凭证」。
 type TwoFactorGrantRecord struct {
-	UserID    int64  `json:"user_id"`
-	Scope     string `json:"scope"`
+	UserID int64  `json:"user_id"`
+	Scope  string `json:"scope"`
+	// Factor 记录本凭证由哪个因子签发（totp / passkey）。校验时必须匹配，
+	// 防止 TOTP 凭证被当成 Passkey 凭证复用（反之亦然）。
+	Factor    string `json:"factor"`
 	IPHash    string `json:"ip_hash"`
 	UAHash    string `json:"ua_hash"`
 	IssuedAt  int64  `json:"issued_at"`
@@ -122,6 +130,7 @@ type TwoFactorGrant struct {
 	// 重签后的新凭证，也可能是继续有效的旧凭证）。
 	Token     string
 	Scope     string
+	Factor    Factor
 	ExpiresAt time.Time
 	Remaining time.Duration
 }
@@ -201,21 +210,27 @@ func validTwoFactorGrantScope(scope string) bool {
 	return scope == TwoFactorGrantScopeLogin || scope == TwoFactorGrantScopePassword
 }
 
-// IssueTwoFactorGrant 在任一次动态码校验成功后签发不透明凭证。
+func validTwoFactorGrantFactor(factor Factor) bool {
+	return factor.Valid()
+}
+
+// IssueTwoFactorGrant 在任一次动态码 / Passkey 校验成功后签发不透明凭证。
 //
-// userID 必须来自刚刚完成 TOTP 校验的账号；binding 必须来自本次请求的可信客户端
-// 指纹。返回的错误只用于日志/审计，不得回显细节给前端。
+// userID 必须来自刚刚完成对应因子校验的账号；factor 必须是本次实际验证的因子；
+// binding 必须来自本次请求的可信客户端指纹。返回的错误只用于日志/审计，
+// 不得回显细节给前端。
 func (s *TotpService) IssueTwoFactorGrant(
 	ctx context.Context,
 	userID int64,
 	scope string,
+	factor Factor,
 	binding TwoFactorGrantBinding,
 ) (*TwoFactorGrant, error) {
-	if userID <= 0 || !validTwoFactorGrantScope(scope) {
+	if userID <= 0 || !validTwoFactorGrantScope(scope) || !validTwoFactorGrantFactor(factor) {
 		return nil, ErrTwoFactorGrantUnavailable
 	}
 	if strings.TrimSpace(binding.IP) == "" {
-		// 没有可信客户端 IP 时无法绑定，宁可让用户重新输码也不签发弱凭证。
+		// 没有可信客户端 IP 时无法绑定，宁可让用户重新验证也不签发弱凭证。
 		return nil, ErrTwoFactorGrantUnavailable
 	}
 	store, err := s.twoFactorGrantStore()
@@ -230,6 +245,7 @@ func (s *TotpService) IssueTwoFactorGrant(
 	record := &TwoFactorGrantRecord{
 		UserID:    userID,
 		Scope:     scope,
+		Factor:    string(factor),
 		IPHash:    binding.ipHash(),
 		UAHash:    binding.uaHash(),
 		IssuedAt:  now.Unix(),
@@ -247,17 +263,19 @@ func (s *TotpService) IssueTwoFactorGrant(
 }
 
 // ConsumeTwoFactorGrant 校验浏览器带来的凭证，成功时按需重签一次并返回
-// 应该写回 Cookie 的取新值。
+// 应该写回 Cookie 的取新值。factor 必须是调用方本次要校验的因子：凭证里记录
+// 的因子不匹配时按「未知凭证」拒绝（跨因子复用 fail-closed）。
 //
-// 校验顺序刻意固定：限速 → 摘要读取 → 用户绑定 → IP/UA 绑定 → 时间窗。
-// 任何一步失败都返回错误，调用方必须 fail-closed（要求重新输动态码）。
+// 校验顺序刻意固定：限速 → 摘要读取 → 用户绑定 → 因子 → IP/UA 绑定 → 时间窗。
+// 任何一步失败都返回错误，调用方必须 fail-closed（要求重新验证）。
 func (s *TotpService) ConsumeTwoFactorGrant(
 	ctx context.Context,
 	token string,
 	userID int64,
+	factor Factor,
 	binding TwoFactorGrantBinding,
 ) (*TwoFactorGrant, error) {
-	if userID <= 0 {
+	if userID <= 0 || !validTwoFactorGrantFactor(factor) {
 		return nil, errTwoFactorGrantUnknown
 	}
 	token = strings.TrimSpace(token)
@@ -292,6 +310,10 @@ func (s *TotpService) ConsumeTwoFactorGrant(
 	if record.UserID != userID {
 		return nil, errTwoFactorGrantUser
 	}
+	if record.Factor != string(factor) {
+		// 因子不匹配按未知凭证处理：不给攻击者「这张凭证属于另一个因子」的信号。
+		return nil, errTwoFactorGrantUnknown
+	}
 	if subtle.ConstantTimeCompare([]byte(record.IPHash), []byte(binding.ipHash())) != 1 ||
 		subtle.ConstantTimeCompare([]byte(record.UAHash), []byte(binding.uaHash())) != 1 {
 		return nil, errTwoFactorGrantBinding
@@ -306,10 +328,15 @@ func (s *TotpService) ConsumeTwoFactorGrant(
 	if !validTwoFactorGrantScope(record.Scope) {
 		return nil, errTwoFactorGrantUnknown
 	}
+	recordFactor, ok := FactorFromString(record.Factor)
+	if !ok {
+		return nil, errTwoFactorGrantUnknown
+	}
 
 	result := &TwoFactorGrant{
 		Token:     token,
 		Scope:     record.Scope,
+		Factor:    recordFactor,
 		ExpiresAt: expiresAt,
 		Remaining: time.Until(expiresAt),
 	}

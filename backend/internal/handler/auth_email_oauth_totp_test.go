@@ -54,15 +54,15 @@ func (s *totpCacheStub) GetVerifyAttempts(context.Context, int64) (int, error) {
 
 func (s *totpCacheStub) ClearVerifyAttempts(context.Context, int64) error { return nil }
 
-func (s *totpCacheStub) SetStepUpGrant(context.Context, int64, string, time.Duration) error {
+func (s *totpCacheStub) SetStepUpGrant(context.Context, int64, string, service.Factor, time.Duration) error {
 	return nil
 }
 
-func (s *totpCacheStub) HasStepUpGrant(context.Context, int64, string) (bool, error) {
+func (s *totpCacheStub) HasStepUpGrant(context.Context, int64, string, service.Factor) (bool, error) {
 	return true, nil
 }
 
-func (s *totpCacheStub) StepUpGrantRemaining(context.Context, int64, string) (time.Duration, bool, error) {
+func (s *totpCacheStub) StepUpGrantRemaining(context.Context, int64, string, service.Factor) (time.Duration, bool, error) {
 	return 4 * time.Minute, true, nil
 }
 

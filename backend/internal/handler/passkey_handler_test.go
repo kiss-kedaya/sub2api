@@ -276,7 +276,7 @@ func (f *passkeyGateFixture) issueStepUpGrant(t *testing.T, ginContext *gin.Cont
 		UserAgent: ginContext.GetHeader("User-Agent"),
 	}
 	grant, err := f.totp.IssueTwoFactorGrant(
-		ginContext.Request.Context(), f.user.ID, service.TwoFactorGrantScopePassword, binding)
+		ginContext.Request.Context(), f.user.ID, service.TwoFactorGrantScopePassword, service.FactorTOTP, binding)
 	require.NoError(t, err)
 	require.NotEmpty(t, grant.Token)
 	ginContext.Request.AddCookie(&http.Cookie{Name: service.TwoFactorGrantCookieName, Value: grant.Token})

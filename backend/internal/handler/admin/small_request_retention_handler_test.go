@@ -24,12 +24,12 @@ func (*smallStepUpUserRepo) GetByID(context.Context, int64) (*service.User, erro
 
 type smallStepUpCache struct{ service.TotpCache }
 
-func (*smallStepUpCache) HasStepUpGrant(context.Context, int64, string) (bool, error) {
+func (*smallStepUpCache) HasStepUpGrant(context.Context, int64, string, service.Factor) (bool, error) {
 	return false, nil
 }
 
 // 无授权的桩：门控不会走到剩余时间读取，返回 false 才能保持「不放行」语义。
-func (*smallStepUpCache) StepUpGrantRemaining(context.Context, int64, string) (time.Duration, bool, error) {
+func (*smallStepUpCache) StepUpGrantRemaining(context.Context, int64, string, service.Factor) (time.Duration, bool, error) {
 	return 0, false, nil
 }
 
