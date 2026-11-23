@@ -5,7 +5,6 @@
         <template v-if="loadedSnapshot" #actions>
           <div class="crypto-view__header-status flex flex-wrap items-center gap-2">
             <UBadge :color="loadedSnapshot.enabled && !walletSecurityLocked ? 'success' : 'neutral'" variant="subtle">{{ t(loadedSnapshot.enabled && !walletSecurityLocked ? 'admin.crypto.channelActive' : 'admin.crypto.channelPaused') }}</UBadge>
-            <UBadge :color="walletReady ? 'success' : 'warning'" variant="subtle">{{ t(walletStateLabel) }}</UBadge>
             <CryptoGrantStatus />
           </div>
         </template>
@@ -18,13 +17,25 @@
         </template>
       </PageToolbar>
 
-      <CryptoWalletSecurityPanel v-show="!routed || section === 'overview'" class="crypto-view__security" @change="updateWalletSecurityState" @recovered="onWalletSecurityRecovered" />
+      <!-- Wallet / security monitor / signer in one strip. Abnormal segments turn
+           red and carry the entry that fixes them; minor facts live in the cards. -->
+      <CryptoOverviewStatusBar
+        v-if="!routed || section === 'overview'"
+        :segments="overviewSegments"
+        :refreshing="refreshingOverview"
+        @refresh="refreshOverview"
+        @segment-action="onOverviewSegmentAction"
+      />
+
+      <CryptoWalletSecurityPanel ref="walletSecurityPanel" v-show="!routed || section === 'overview'" class="crypto-view__security" @change="updateWalletSecurityState" @recovered="onWalletSecurityRecovered" />
       <SignerShardsPanel
+        ref="signerShardsPanel"
         v-show="!routed || section === 'overview'"
         class="crypto-view__signer"
         @change="onSignerStatusChange"
         @open-sweep="openSweepUnlock"
         @unlocked="onSignerUnlocked"
+        @expired="onSignerWindowExpired"
       />
 
       <UCollapsible v-show="!routed || section === 'overview'" class="crypto-view__notifications" :unmount-on-hide="false">
@@ -42,6 +53,22 @@
         <UPageGrid class="gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <UPageCard v-for="entry in overviewEntries" :key="entry.section" :icon="entry.icon" :title="entry.label" :to="sectionTo(entry.section)" variant="subtle" :ui="{ leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25' }" />
         </UPageGrid>
+        <!-- Two primary exits: run a sweep (carrying the unlock intent when the
+             signer is locked) or inspect the deposit addresses. -->
+        <div class="flex flex-wrap justify-end gap-2 pt-1" data-testid="crypto-overview-actions">
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-wallet"
+            :to="sectionTo('addresses')"
+            data-testid="overview-view-addresses"
+          >{{ t('admin.crypto.overview.viewAddresses') }}</UButton>
+          <UButton
+            icon="i-lucide-arrow-up-from-line"
+            :to="overviewSweepTarget"
+            data-testid="overview-run-sweep"
+          >{{ t('admin.crypto.sweepRun') }}</UButton>
+        </div>
       </div>
 
       <UAlert v-if="operationIntentError" role="alert" class="crypto-view__intent-error" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="operationIntentError" />
@@ -124,6 +151,17 @@
                   <UAlert v-if="walletCanDerive && !walletReady" role="status" color="warning" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.crypto.walletNotReady')" />
                   <template v-if="!walletConfigured">
                     <USeparator />
+                    <!-- Empty state: numbered setup steps instead of a wall of
+                         disabled export/import controls. -->
+                    <div class="rounded-lg border border-default p-3" data-testid="crypto-wallet-setup-steps">
+                      <p class="text-sm font-medium text-highlighted">{{ t('admin.crypto.walletSetupStepsTitle') }}</p>
+                      <ol class="mt-2 grid gap-1.5 text-sm text-muted">
+                        <li v-for="(step, index) in walletSetupSteps" :key="step" class="flex gap-2">
+                          <span class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">{{ index + 1 }}</span>
+                          <span>{{ t(step) }}</span>
+                        </li>
+                      </ol>
+                    </div>
                     <UAlert color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="t('admin.crypto.walletInitWarning')" />
                     <UFormField :label="t('admin.crypto.depositMnemonic')" :description="t('admin.crypto.depositMnemonicImpact')">
                       <UInput id="crypto-deposit-mnemonic" v-model="depositMnemonic" type="password" autocomplete="off" spellcheck="false" class="mt-2 w-full" />
@@ -434,13 +472,13 @@
             <!-- Readiness is a backend verdict; show the exact blocking reason
                  inline instead of leaving a disabled button with no explanation. -->
             <UAlert
-              v-if="!sweepReady && signerLocked"
+              v-if="!sweepReady && signerEffectivelyLocked"
               role="status"
               color="warning"
               variant="subtle"
-              :icon="signerWindowExpired ? 'i-lucide-timer-off' : 'i-lucide-lock'"
-              :title="signerWindowExpired ? t('admin.crypto.sweepUnlockWindowExpired') : t('admin.crypto.signer.locked')"
-              :description="t('admin.crypto.sweepGate.signerLocked')"
+              :icon="windowExpiredVisible ? 'i-lucide-timer-off' : 'i-lucide-lock'"
+              :title="windowExpiredVisible ? t('admin.crypto.signer.lockedExpired') : t('admin.crypto.signer.locked')"
+              :description="windowExpiredVisible ? t('admin.crypto.sweepUnlockWindowExpired') : t('admin.crypto.sweepGate.signerLocked')"
               :actions="[{ label: t('admin.crypto.sweepUnlockCta'), color: 'warning', variant: 'solid', onClick: () => openSweepUnlock() }]"
               data-testid="crypto-sweep-signer-locked"
             />
@@ -740,6 +778,8 @@ import CryptoGrantStatus from '@/components/crypto/CryptoGrantStatus.vue'
 import CryptoMnemonicsDialog from '@/components/crypto/CryptoMnemonicsDialog.vue'
 import CryptoPrivateKeyDialog from '@/components/crypto/CryptoPrivateKeyDialog.vue'
 import CryptoWalletSecurityPanel from '@/components/crypto/CryptoWalletSecurityPanel.vue'
+import CryptoOverviewStatusBar from '@/components/crypto/CryptoOverviewStatusBar.vue'
+import type { OverviewStatusId, OverviewStatusSegment } from '@/components/crypto/overviewStatus'
 import SignerShardsPanel from '@/components/crypto/signer/SignerShardsPanel.vue'
 import ShardUnlockDialog from '@/components/crypto/signer/ShardUnlockDialog.vue'
 import CryptoGasWalletPanel from '@/components/crypto/CryptoGasWalletPanel.vue'
@@ -1112,6 +1152,8 @@ const walletLoaded = ref(false)
 const walletChannelEnabled = ref(false)
 const walletOk = ref(false)
 const walletSecurityLocked = ref(false)
+// Last security-monitor snapshot, kept for the merged overview status strip.
+const walletSecurityStatus = ref<WalletSecurityStatus | null>(null)
 // v3 vault state from the signer shard setup (PR #519 contract).
 const walletSignerLocked = ref(false)
 const signerStatus = ref<SignerShardStatus | null>(null)
@@ -1120,6 +1162,11 @@ const signerStatus = ref<SignerShardStatus | null>(null)
 const sweepGate = ref<SweepGate | null>(null)
 const signerCrypto = ref<SignerCrypto | null>(null)
 const sweepUnlockOpen = ref(false)
+// Detail cards expose their loaders so the single overview refresh can update
+// them together with the page statistics.
+const walletSecurityPanel = ref<{ refresh?: () => Promise<void> } | null>(null)
+const signerShardsPanel = ref<{ refresh?: () => Promise<void> } | null>(null)
+const refreshingOverview = ref(false)
 const signerLocked = computed(() => signerStatus.value?.locked === true || walletSignerLocked.value)
 const walletCanDerive = computed(() => walletOk.value && walletLoaded.value && !walletSecurityLocked.value)
 const walletReady = computed(() => walletCanDerive.value && walletChannelEnabled.value)
@@ -1207,6 +1254,117 @@ watch(signerUnlockRemaining, (remaining, previous) => {
     signerWindowExpired.value = false
   }
 })
+
+// A lease that lapsed on this page means the signer is already locked, even
+// before the next status read confirms it. Badges, the sweep gate alert and the
+// overview CTA all key off these two computeds so they can never disagree.
+const signerWindowExpiredNow = computed(() => !signerLocked.value && signerUnlockUntilMs.value > 0 && signerUnlockRemaining.value === 0)
+const signerEffectivelyLocked = computed(() => signerLocked.value || signerWindowExpiredNow.value)
+const windowExpiredVisible = computed(() => signerWindowExpired.value || signerWindowExpiredNow.value)
+const securityMonitoringHealthy = computed(() => !!walletSecurityStatus.value
+  && walletSecurityStatus.value.enabled
+  && !walletSecurityStatus.value.deposits_paused
+  && !walletSecurityLocked.value)
+const signerHealthy = computed(() => !!signerStatus.value?.configured && !signerEffectivelyLocked.value)
+const overviewSweepTarget = computed(() => (signerEffectivelyLocked.value
+  ? { name: 'AdminCryptoSweeps', query: { unlock: '1' } }
+  : { name: 'AdminCryptoSweeps' }))
+const securityHintKey = computed(() => {
+  if (!walletSecurityStatus.value) return 'admin.crypto.overview.statusUnknown'
+  if (walletSecurityLocked.value) return 'admin.crypto.walletSecurityLocked'
+  if (walletSecurityStatus.value.deposits_paused) return 'admin.crypto.walletSecurityDepositsPaused'
+  if (!walletSecurityStatus.value.enabled) return 'admin.crypto.walletSecurityDisabled'
+  return 'admin.crypto.walletSecurityMonitoring'
+})
+const signerHintKey = computed(() => {
+  if (!signerStatus.value?.configured) return 'admin.crypto.signer.notConfiguredTitle'
+  if (windowExpiredVisible.value) return 'admin.crypto.signer.lockedExpired'
+  if (signerLocked.value) return 'admin.crypto.signer.locked'
+  return 'admin.crypto.signer.unlocked'
+})
+const overviewSegments = computed<OverviewStatusSegment[]>(() => [
+  {
+    id: 'wallet',
+    ok: walletReady.value,
+    titleKey: 'admin.crypto.overview.walletSegment',
+    hintKey: walletReady.value ? 'admin.crypto.walletReady' : walletStateLabel.value,
+    actionLabel: 'admin.crypto.overview.walletAction'
+  },
+  {
+    id: 'security',
+    ok: securityMonitoringHealthy.value,
+    titleKey: 'admin.crypto.overview.securitySegment',
+    hintKey: securityHintKey.value,
+    actionLabel: 'admin.crypto.overview.securityAction'
+  },
+  {
+    id: 'signer',
+    ok: signerHealthy.value,
+    titleKey: 'admin.crypto.overview.signerSegment',
+    hintKey: signerHintKey.value,
+    actionLabel: 'admin.crypto.overview.signerAction'
+  }
+])
+const walletSetupSteps = [
+  'admin.crypto.walletSetupStep1',
+  'admin.crypto.walletSetupStep2',
+  'admin.crypto.walletSetupStep3'
+] as const
+
+function goSection(target: CryptoSection): void {
+  if (routed) section.value = target
+  else switchTab(target)
+}
+
+function scrollToDetail(selector: string): void {
+  const element = document.querySelector(selector)
+  if (!element || typeof (element as HTMLElement).scrollIntoView !== 'function') return
+  ;(element as HTMLElement).scrollIntoView({ block: 'center' })
+}
+
+function onOverviewSegmentAction(id: OverviewStatusId): void {
+  if (id === 'wallet') {
+    goSection('config')
+    return
+  }
+  if (id === 'security') {
+    scrollToDetail('.crypto-view__security')
+    return
+  }
+  // A configured signer is fixed by unlocking it; an unconfigured one first
+  // needs the setup card, which is right below on the overview.
+  if (signerStatus.value?.configured) {
+    openSweepUnlock()
+    return
+  }
+  scrollToDetail('.crypto-view__signer')
+}
+
+/**
+ * The single overview refresh: status sources (wallet, security monitor,
+ * signer, sweep readiness) plus the address/deposit statistics in one click.
+ */
+async function refreshOverview(): Promise<void> {
+  if (refreshingOverview.value) return
+  refreshingOverview.value = true
+  try {
+    await Promise.allSettled([
+      refreshSweepState(),
+      walletSecurityPanel.value?.refresh?.(),
+      signerShardsPanel.value?.refresh?.(),
+      loadAddresses(),
+      loadDeposits()
+    ])
+  } finally {
+    refreshingOverview.value = false
+  }
+}
+
+// The card re-reads the signer by itself; here only the page-level flag has to
+// follow so the sweep gate wording turns into "window expired" immediately.
+function onSignerWindowExpired(): void {
+  signerWindowExpired.value = true
+}
 
 // UButton instance ref; used to focus 执行归集 right after an unlock.
 const sweepRunButton = ref<{ $el?: HTMLElement } | null>(null)
@@ -1988,6 +2146,7 @@ async function focusSweepRunButton() {
 }
 
 function updateWalletSecurityState(state: WalletSecurityStatus) {
+  walletSecurityStatus.value = state
   walletSecurityLocked.value = state.locked || state.deposits_paused
   if (walletSecurityLocked.value) reflectSecurityChannelPause()
 }
@@ -2008,7 +2167,7 @@ async function onSignerUnlocked(next: SignerShardStatus): Promise<void> {
   walletSignerLocked.value = next.locked
   signerWindowExpired.value = false
   await refreshSweepState()
-  appStore.showSuccess(t('admin.crypto.signer.unlockDone'))
+  // The signer card already raised the unlock toast; do not double-toast here.
   if (!routed) {
     switchTab('sweep')
     await focusSweepRunButton()
@@ -2105,7 +2264,7 @@ async function consumeUnlockIntent(): Promise<void> {
     await focusSweepRunButton()
     return
   }
-  if (signerLocked.value) openUnlockDialog()
+  if (signerEffectivelyLocked.value) openUnlockDialog()
 }
 
 function describeCryptoUnavailable(reason: string | null): string {

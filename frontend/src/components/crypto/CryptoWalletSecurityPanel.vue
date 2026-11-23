@@ -1,14 +1,9 @@
 <template>
   <section class="wallet-security" aria-labelledby="wallet-security-title">
     <UPageCard variant="subtle" :ui="{ container: 'gap-y-3' }">
-      <div class="flex items-start justify-between gap-4">
-        <div class="min-w-0">
-          <h2 id="wallet-security-title" class="text-base font-semibold text-highlighted">{{ t('admin.crypto.walletSecurityTitle') }}</h2>
-          <p class="wallet-security__hint mt-1 text-sm text-muted">{{ t('admin.crypto.walletSecurityScope') }}</p>
-        </div>
-        <UButton color="neutral" variant="outline" size="sm" class="shrink-0" data-testid="wallet-security-refresh" :disabled="loading || recovering" @click="refresh">
-          {{ loading ? t('common.loading') : t('common.refresh') }}
-        </UButton>
+      <div class="min-w-0">
+        <h2 id="wallet-security-title" class="text-base font-semibold text-highlighted">{{ t('admin.crypto.walletSecurityTitle') }}</h2>
+        <p class="wallet-security__hint mt-1 text-sm text-muted">{{ t('admin.crypto.walletSecurityScope') }}</p>
       </div>
       <p v-if="!status && loading" role="status" class="text-sm text-muted">{{ t('common.loading') }}</p>
       <UAlert v-if="error" role="alert" class="wallet-security__error" color="error" variant="subtle" icon="i-lucide-circle-alert" :title="error" />
@@ -171,5 +166,9 @@ onUnmounted(() => {
   securityDialog.value?.forceClose()
   confirmation.value = ''
 })
+
+// The overview page owns the single refresh control; the panel exposes its
+// loader so that one click updates this status too.
+defineExpose({ refresh })
 </script>
 
