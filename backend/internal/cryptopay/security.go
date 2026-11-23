@@ -90,7 +90,7 @@ func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
 		return nil
 	}
 	worker := scanner.NewWorker(s.db, pools, chains, scanner.NewNamespacedCursorStore(s.db, "wallet-security:"), nil, func(context.Context, string) ([]string, error) { return nil, nil }, 5*time.Second, 2000)
-	worker.SetSecurityGuards(s.checkWalletSecurity, s.scanWalletOutflows)
+	worker.SetSecurityGuards(s.scanWalletSecurityGuard, s.scanWalletOutflows)
 	guardErr := worker.RunGuardScan(ctx)
 	// ERC-20 outflows are covered by the block guard above; a native spend has
 	// no log, so the same idle window must poll the hot wallet through the
@@ -211,6 +211,42 @@ func (s *Service) checkWalletSecurity(ctx context.Context) error {
 	return err
 }
 
+// scanWalletSecurityGuard is the security guard for the deposit scan path only.
+//
+// It differs from checkWalletSecurity in exactly one case: a v3 vault sealed
+// behind recovery shards (ErrSignerShareRequired). That is a supported steady
+// state, not an incident — the watch list and the deposit assignments are read
+// from the authenticated DB snapshot, so scanning an inbound range needs no key
+// material at all. Treating it as a security failure re-froze the deposit
+// cursor: the scan pass failed in the security stage on the very first block
+// range after the cursor, so the cursor could never advance and the chain fell
+// permanently behind (production BSC sat at one block for hours while the chain
+// grew ~133 blocks/min).
+//
+// A real security incident (status.Locked) still blocks the range, and the
+// signing path independently refuses to broadcast with no data key, so nothing
+// unsafe becomes reachable here.
+func (s *Service) scanWalletSecurityGuard(ctx context.Context) error {
+	return forgiveSealedVault(s.checkWalletSecurity(ctx))
+}
+
+// forgiveSealedVault maps the sealed-vault steady state to success and passes
+// every other result through unchanged. Kept separate from the DB-backed guard
+// so the rule is testable without fabricating the whole security snapshot load.
+func forgiveSealedVault(err error) error {
+	if isSealedVaultSteadyState(err) {
+		return nil
+	}
+	return err
+}
+
+// isSealedVaultSteadyState reports whether err is the one condition the deposit
+// scan may ignore. It is deliberately narrow: every other error — a real
+// security incident included — keeps blocking the scan.
+func isSealedVaultSteadyState(err error) bool {
+	return err != nil && errors.Is(err, wallet.ErrSignerShareRequired)
+}
+
 func (s *Service) checkWalletActivity(ctx context.Context) error {
 	if err := s.checkWalletSecurity(ctx); err != nil {
 		if errors.Is(err, wallet.ErrSignerShareRequired) {
@@ -247,7 +283,8 @@ func (s *Service) validateWalletAssignment(ctx context.Context, row addresses.As
 // scanWalletOutflows is shared by live windows, contiguous catch-up and manual
 // backfills. RPC errors stop cursor advancement; they never prove an incident.
 func (s *Service) scanWalletOutflows(ctx context.Context, evm *scanner.EVMScanner, pool *rpc.Pool, chain scanner.ChainConfig, from, to uint64) error {
-	if err := s.checkWalletSecurity(ctx); err != nil {
+	// A sealed v3 vault must not fail the range; see scanWalletSecurityGuard.
+	if err := s.scanWalletSecurityGuard(ctx); err != nil {
 		return err
 	}
 	watch, err := s.wallet.SecurityWatchEVMAddresses(ctx)
@@ -287,6 +324,17 @@ func (s *Service) scanWalletOutflows(ctx context.Context, evm *scanner.EVMScanne
 		}
 		authorized, err := s.wallet.AuthorizedTokenTransfer(ctx, chain.Chain, chainID, transfer.TxHash, transfer.From, transfer.To, transfer.Token, transfer.Amount.String())
 		if err != nil {
+			if isSealedVaultSteadyState(err) {
+				// Verifying one observed outflow needs the signer audit table and
+				// therefore an open vault. A sealed v3 vault cannot answer it, and
+				// letting that abort the range froze the deposit cursor exactly as
+				// the guard above used to: one outflow in the scanned range was
+				// enough to stop every later deposit from crediting. Skip the
+				// verdict for this transfer instead of failing the block range; the
+				// outflow stays on-chain and is re-judged once the operator
+				// unlocks, and signing still refuses to broadcast with no key.
+				continue
+			}
 			return err
 		}
 		if authorized {
@@ -308,7 +356,8 @@ func (s *Service) scanWalletOutflows(ctx context.Context, evm *scanner.EVMScanne
 // addresses is the gas top-up the sweeper signs from the hot wallet, so it is
 // internal movement, not theft.
 func (s *Service) scanNativeOutflow(ctx context.Context, chain scanner.ChainConfig, transfer scanner.Transfer) error {
-	if err := s.checkWalletSecurity(ctx); err != nil {
+	// A sealed v3 vault must not abort the address poll that feeds deposits.
+	if err := s.scanWalletSecurityGuard(ctx); err != nil {
 		return err
 	}
 	if transfer.Amount == nil || transfer.Amount.Sign() <= 0 || !transfer.Native {
@@ -316,12 +365,18 @@ func (s *Service) scanNativeOutflow(ctx context.Context, chain scanner.ChainConf
 	}
 	watch, err := s.wallet.SecurityWatchEVMAddresses(ctx)
 	if err != nil {
+		if isSealedVaultSteadyState(err) {
+			return nil
+		}
 		return err
 	}
 	chainID := cryptoSecurityChainID(chain.Chain)
 	authorized, err := s.wallet.AuthorizedTokenTransfer(ctx, chain.Chain, chainID, transfer.TxHash,
 		transfer.From, transfer.To, scanner.NativeToken, transfer.Amount.String())
 	if err != nil {
+		if isSealedVaultSteadyState(err) {
+			return nil
+		}
 		return err
 	}
 	if !nativeOutflowVerdict(transfer, watch, authorized) {
