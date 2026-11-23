@@ -8,7 +8,7 @@
 --   1) 把 DB 里历史/别名 metric_type 归一到 gateway_5xx / upstream_5xx；
 --   2) 给已存在但描述为空的 5xx 规则补口径文案（不动 operator / threshold /
 --      severity / enabled / filters，阈值仍由运维决定）；
---   3) 种子两条 5xx 告警规则（网关自身 P1 + 上游透传观察 P3）。
+--   3) 种子三条 5xx 告警规则（网关自身 P1 + 上游突增 P3 + 上游硬顶 P2 观察）。
 --      已存在同名规则时 DO NOTHING，不覆盖运维改过的阈值。
 --
 -- 指标口径（数据源 ops_error_logs，只读聚合，不写任何表）
