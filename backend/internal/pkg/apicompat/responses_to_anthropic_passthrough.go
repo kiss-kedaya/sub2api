@@ -10,18 +10,26 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Responses→Anthropic 的「透传优先」策略。
+// Responses→Anthropic 的顶层字段透传（白名单）。
 //
-// 背景：OpenAI Responses 客户端（Codex 等）与新 SDK 会携带一批 Anthropic
-// Messages 没有对应字段的顶层参数（previous_response_id、store、include、
-// parallel_tool_calls、text、prompt_cache_key 等），以及未来新增的未知字段。
-// 历史转换只把能映射的字段写进 AnthropicRequest，其余在反序列化阶段静默丢弃；
-// 用户侧表现为「转换链少参数」，很难归因。
+// 背景：OpenAI Responses 客户端（Codex 等）会携带一批 Anthropic Messages 没有
+// 对应字段的顶层参数（previous_response_id、store、include、parallel_tool_calls、
+// text、prompt_cache_key、reasoning、metadata 任意键、service_tier 取值等）。
 //
-// 现在改为：转换器负责字段映射（input/instructions → messages/system、
+// 为什么只放行白名单、不能「其余全部原样附上」：Anthropic Messages 的请求体按
+// extra='forbid' 校验，未知顶层键直接 400 "xxx: Extra inputs are not permitted"，
+// 并且这类 400 属于客户端错误，网关不会换号、不会换组、不会重试，最终原样回给用户。
+// 仓库自己已经踩过同类事故（见 gateway_request.go 里
+// sanitizeAnthropicBodyForBetaTokens 的说明：context_management / fallbacks /
+// thinking.block_binding / output_config 缺 beta 时「所有模型 400」）。Codex 的
+// 每个请求几乎都带 store/include/parallel_tool_calls/prompt_cache_key/reasoning，
+// 全量透传等于让「Responses 入站 → Anthropic 上游」整条链路对严格上游整体失败。
+//
+// 所以：转换器负责字段映射（input/instructions → messages/system、
 // max_output_tokens → max_tokens、function tools → anthropic tools、tool_choice、
-// stream 等），其余顶层字段原样附在转换后的请求体上，交给上游按自己的策略处理
-// （上游忽略即忽略）。只有无法安全表达为 JSON 顶层键的异常键名才降级丢弃。
+// stream 等），其余顶层字段默认丢弃（与 2.3.153 的类型化结构体行为一致），只有
+// 下面白名单里「Anthropic Messages 自己就认识、且不改变计费」的键才原样附上。
+// 需要放行新键时只改 anthropicPassthroughTopLevelKeys 并补测试。
 //
 // 注意：本文件只处理请求体顶层的「未映射字段」；tools 数组里的未知工具类型由
 // convertResponsesToAnthropicTools 的 default 分支负责原样保留，input 项内部的
@@ -44,8 +52,24 @@ var responsesFieldConvertedByBridge = map[string]struct{}{
 	"cache_control":     {},
 }
 
+// anthropicPassthroughTopLevelKeys 是允许从 Responses 请求体原样带给 Anthropic
+// 上游的顶层键。只放 Anthropic Messages 本身定义的、不改变计费档位的参数：
+//   - top_k / stop_sequences：采样与停止序列，Anthropic 原生字段。
+//
+// 刻意不放：reasoning / store / include / parallel_tool_calls / prompt_cache_key /
+// previous_response_id / text / truncation / user / background 等 OpenAI 专属键
+// （严格上游会 400）；metadata（Anthropic 只认 metadata.user_id，Responses 的任意键会 400）；
+// service_tier / speed / inference_geo / container / mcp_servers（会改变上游计费或
+// 能力档位，而桥路径不做对应的计费与 beta 策略处理）。
+var anthropicPassthroughTopLevelKeys = map[string]struct{}{
+	"top_k":          {},
+	"stop_sequences": {},
+}
+
 // ResponsesUnsupportedPassthroughFields returns the top-level request fields the
-// Responses→Anthropic bridge does not map and therefore forwards verbatim.
+// Responses→Anthropic bridge does not map but Anthropic Messages itself defines
+// (see anthropicPassthroughTopLevelKeys), which are therefore forwarded verbatim.
+// Every other unmapped field is dropped, exactly like the typed conversion did.
 //
 // rawBody is the client Responses body (after any legacy normalization). The
 // returned map is keyed by JSON object key and safe to merge back with
@@ -53,14 +77,6 @@ var responsesFieldConvertedByBridge = map[string]struct{}{
 // keys that cannot be expressed as a simple JSON path segment are dropped
 // defensively — never a reason to reject the request.
 func ResponsesUnsupportedPassthroughFields(rawBody []byte) map[string]json.RawMessage {
-	return responsesUnsupportedPassthroughFields(rawBody, false)
-}
-
-// responsesUnsupportedPassthroughFields is ResponsesUnsupportedPassthroughFields
-// with an explicit reasoning passthrough switch. When passthroughReasoning is
-// true the bridge does not synthesize thinking/output_config, so the raw
-// `reasoning` object must be forwarded like any other unmapped field.
-func responsesUnsupportedPassthroughFields(rawBody []byte, passthroughReasoning bool) map[string]json.RawMessage {
 	rawBody = []byte(strings.TrimSpace(string(rawBody)))
 	if len(rawBody) == 0 || !gjson.ValidBytes(rawBody) || !gjson.ParseBytes(rawBody).IsObject() {
 		return nil
@@ -72,9 +88,10 @@ func responsesUnsupportedPassthroughFields(rawBody []byte, passthroughReasoning 
 	fields := make(map[string]json.RawMessage, len(raw))
 	for key, value := range raw {
 		if _, converted := responsesFieldConvertedByBridge[key]; converted {
-			if !passthroughReasoning || key != "reasoning" {
-				continue
-			}
+			continue
+		}
+		if _, allowed := anthropicPassthroughTopLevelKeys[key]; !allowed {
+			continue
 		}
 		if !isPassthroughAnthropicTopLevelKey(key) {
 			continue

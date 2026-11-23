@@ -10,11 +10,14 @@ import (
 // Callers must set PreserveReasoningText only after resolving the concrete target
 // platform (for example DeepSeek), not from a client model alias.
 //
-// PassthroughReasoning keeps the client's `reasoning` object verbatim instead of
-// synthesizing Anthropic thinking/output_config fields out of reasoning.effort.
-// The anthropic bridge enables it: the gateway must not rewrite user parameters
-// (for example `reasoning.effort="none"`). Upstream then decides — and if it
-// rejects the field, its status/body are returned to the client unchanged.
+// PassthroughReasoning stops the converter from synthesizing Anthropic
+// thinking/output_config fields out of reasoning.effort (the gateway must not
+// rewrite user parameters such as `reasoning.effort="none"` into something the
+// client never asked for). The raw `reasoning` object itself is NOT forwarded:
+// it is not an Anthropic Messages field and the upstream rejects it with 400
+// "reasoning: Extra inputs are not permitted" (see
+// anthropicPassthroughTopLevelKeys), so with this switch on the effort simply
+// has no effect on an Anthropic upstream.
 type ResponsesToAnthropicOptions struct {
 	PreserveReasoningText bool
 	PassthroughReasoning  bool
@@ -29,10 +32,12 @@ func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, erro
 }
 
 // ResponsesToAnthropicRequestWithPassthrough converts a Responses request and
-// also reports the top-level fields the bridge does not map, so callers can
-// forward them verbatim after marshaling the Anthropic request. rawBody is the
-// client Responses body used to parse req; it is only read for passthrough, the
-// conversion itself follows ResponsesToAnthropicRequestWithOptions semantics.
+// also reports the unmapped top-level fields that Anthropic Messages itself
+// defines (allow-list, see anthropicPassthroughTopLevelKeys), so callers can
+// forward them verbatim after marshaling the Anthropic request. All other
+// unmapped fields are dropped. rawBody is the client Responses body used to
+// parse req; it is only read for passthrough, the conversion itself follows
+// ResponsesToAnthropicRequestWithOptions semantics.
 func ResponsesToAnthropicRequestWithPassthrough(
 	req *ResponsesRequest,
 	rawBody []byte,
@@ -42,8 +47,7 @@ func ResponsesToAnthropicRequestWithPassthrough(
 	if err != nil {
 		return nil, nil, err
 	}
-	passthroughReasoning := opts != nil && opts.PassthroughReasoning
-	return converted, responsesUnsupportedPassthroughFields(rawBody, passthroughReasoning), nil
+	return converted, ResponsesUnsupportedPassthroughFields(rawBody), nil
 }
 
 // ResponsesToAnthropicRequestWithOptions is ResponsesToAnthropicRequest with

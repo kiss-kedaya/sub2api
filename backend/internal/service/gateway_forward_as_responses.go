@@ -949,10 +949,21 @@ func mergeInboundQueryParams(upstreamReq *http.Request, c *gin.Context) {
 	upstreamReq.URL.RawQuery = current.Encode()
 }
 
+// convertedUpstreamErrorRawBodyMax caps how much of a non-JSON upstream body
+// (for example a relay's HTML error page) may be used as the client-facing
+// message when the upstream gave no error.message at all.
+const convertedUpstreamErrorRawBodyMax = 512
+
 // writeConvertedUpstreamError forwards a non-failover Anthropic upstream error to
 // an OpenAI Responses client while preserving the upstream status code, error
 // code/type and error text. It is a transport/envelope adaptation only: the
 // message is never replaced with a generic "Upstream request failed" string.
+//
+// The text is still redacted at this client boundary (clientprivacy.Text): the
+// upstream's own wording is kept, but upstream hosts/IPs/URLs, account or proxy
+// identifiers, e-mail addresses and echoed credentials ("Incorrect API key
+// provided: sk-…") must never reach the end user — that is what hides which
+// relay/provider sits behind the gateway.
 func writeConvertedUpstreamError(c *gin.Context, statusCode int, respBody []byte) {
 	errorType := strings.TrimSpace(gjson.GetBytes(respBody, "error.type").String())
 	errorCode := strings.TrimSpace(gjson.GetBytes(respBody, "error.code").String())
@@ -961,7 +972,7 @@ func writeConvertedUpstreamError(c *gin.Context, statusCode int, respBody []byte
 		message = strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 	}
 	if message == "" {
-		message = strings.TrimSpace(string(respBody))
+		message = truncateString(strings.TrimSpace(string(respBody)), convertedUpstreamErrorRawBodyMax)
 	}
 	if errorCode == "" {
 		errorCode = errorType
@@ -969,5 +980,5 @@ func writeConvertedUpstreamError(c *gin.Context, statusCode int, respBody []byte
 	if errorCode == "" {
 		errorCode = "upstream_error"
 	}
-	writeResponsesError(c, mapUpstreamStatusCode(statusCode), errorCode, message)
+	writeResponsesError(c, mapUpstreamStatusCode(statusCode), sanitizeUpstreamErrorMessage(errorCode), sanitizeUpstreamErrorMessage(message))
 }
