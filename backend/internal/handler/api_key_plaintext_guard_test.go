@@ -233,7 +233,8 @@ func TestBatchRotateAuditsSkippedNoFactor(t *testing.T) {
 	annotateKeyShowVerification(ctx, "")
 	value, ok := ctx.Get("audit_extra")
 	require.True(t, ok)
-	fields := value.(map[string]any)
+	fields, ok := value.(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, auditVerificationSkipped, fields["api_key_verification"])
 	_, hasFactor := fields["api_key_auth_factor"]
 	require.False(t, hasFactor, "skipped_no_factor must not claim a factor")
