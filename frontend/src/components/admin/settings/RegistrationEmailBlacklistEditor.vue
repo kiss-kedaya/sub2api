@@ -12,7 +12,7 @@
           <span v-if="loading" class="text-gray-500 dark:text-gray-400">{{ t('common.loading') }}</span>
           <span v-else-if="loadError" class="text-red-600 dark:text-red-400">
             {{ t('admin.settings.registration.emailBlacklist.loadFailed') }}
-            <button type="button" class="ml-2 underline" @click="load">{{ t('admin.settings.registration.emailBlacklist.retry') }}</button>
+            <UButton variant="link" size="xs" class="ml-2 p-0 underline" @click="load">{{ t('admin.settings.registration.emailBlacklist.retry') }}</UButton>
           </span>
           <span v-else class="text-gray-700 dark:text-gray-300">
             {{ t('admin.settings.registration.emailBlacklist.count', { count: formatCount(savedEmails.length) }) }}
@@ -20,25 +20,28 @@
         </p>
       </div>
       <div class="flex shrink-0 gap-2">
-        <button
+        <UButton
           type="button"
-          class="btn btn-secondary btn-sm"
+          color="neutral"
+          variant="outline"
+          size="sm"
+          icon="i-lucide-search"
           :disabled="loading || loadError || savedEmails.length === 0 || checking"
+          :loading="checking"
           data-testid="email-blacklist-check"
           @click="checkRegisteredUsers(savedEmails)"
         >
-          <Icon name="search" size="sm" class="mr-1" />
           {{ t('admin.settings.registration.emailBlacklist.checkUsers') }}
-        </button>
-        <button
+        </UButton>
+        <UButton
           type="button"
-          class="btn btn-primary btn-sm"
+          size="sm"
           :disabled="loading || loadError || checking"
           data-testid="email-blacklist-edit"
           @click="openEditor"
         >
           {{ t('admin.settings.registration.emailBlacklist.edit') }}
-        </button>
+        </UButton>
       </div>
     </div>
 
@@ -54,25 +57,27 @@
           <label class="text-sm font-medium text-gray-700 dark:text-gray-300" for="email-blacklist-bulk">
             {{ t('admin.settings.registration.emailBlacklist.bulkLabel') }}
           </label>
-          <textarea
+          <UTextarea
             id="email-blacklist-bulk"
             v-model="bulkInput"
-            rows="5"
-            class="input mt-2 w-full font-mono text-sm"
+            :rows="5"
+            class="mt-2 w-full font-mono"
             :placeholder="t('admin.settings.registration.emailBlacklist.bulkPlaceholder')"
             data-testid="email-blacklist-bulk-input"
           />
           <div class="mt-2 flex flex-wrap items-center gap-3">
-            <button
+            <UButton
               type="button"
-              class="btn btn-secondary btn-sm"
+              color="neutral"
+              variant="outline"
+              size="sm"
+              icon="i-lucide-plus"
               :disabled="!bulkInput.trim()"
               data-testid="email-blacklist-bulk-add"
               @click="addBulk"
             >
-              <Icon name="plus" size="sm" class="mr-1" />
               {{ t('admin.settings.registration.emailBlacklist.bulkAdd') }}
-            </button>
+            </UButton>
             <span v-if="addResult" class="text-sm text-gray-600 dark:text-gray-400" data-testid="email-blacklist-add-result">
               {{
                 t('admin.settings.registration.emailBlacklist.addResult', {
@@ -114,22 +119,25 @@
               </span>
             </div>
             <div class="flex items-center gap-2">
-              <input
+              <UInput
                 v-model="search"
                 type="search"
-                class="input w-full text-sm sm:w-64"
+                class="w-full sm:w-64"
                 :placeholder="t('admin.settings.registration.emailBlacklist.searchPlaceholder')"
                 data-testid="email-blacklist-search"
               />
-              <button
+              <UButton
                 type="button"
-                class="btn btn-secondary btn-sm shrink-0"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                class="shrink-0"
                 :disabled="draft.length === 0"
                 data-testid="email-blacklist-clear"
                 @click="clearDraft"
               >
                 {{ t('admin.settings.registration.emailBlacklist.clear') }}
-              </button>
+              </UButton>
             </div>
           </div>
 
@@ -149,22 +157,28 @@
               >
                 <span class="min-w-0 truncate font-mono text-sm text-gray-800 dark:text-gray-200" :title="email">
                   {{ email }}
-                  <span
+                  <UBadge
                     v-if="!savedSet.has(email)"
-                    class="ml-2 rounded bg-primary-50 px-1.5 py-0.5 font-sans text-xs text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
+                    color="primary"
+                    variant="subtle"
+                    size="sm"
+                    class="ml-2 font-sans"
                   >
                     {{ t('admin.settings.registration.emailBlacklist.newTag') }}
-                  </span>
+                  </UBadge>
                 </span>
-                <button
+                <UButton
                   type="button"
-                  class="shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-dark-700 dark:hover:text-red-400"
+                  color="error"
+                  variant="ghost"
+                  size="xs"
+                  square
+                  icon="i-lucide-x"
+                  class="shrink-0"
                   :title="t('admin.settings.registration.emailBlacklist.remove')"
                   :aria-label="t('admin.settings.registration.emailBlacklist.remove')"
                   @click="removeEmail(email)"
-                >
-                  <Icon name="x" size="sm" />
-                </button>
+                />
               </li>
             </ul>
           </div>
@@ -179,18 +193,18 @@
 
       <template #footer>
         <div class="flex justify-end gap-3">
-          <button type="button" class="btn btn-secondary" :disabled="saving" @click="closeEditor">
+          <UButton type="button" color="neutral" variant="outline" :disabled="saving" @click="closeEditor">
             {{ t('common.cancel') }}
-          </button>
-          <button
+          </UButton>
+          <UButton
             type="button"
-            class="btn btn-primary"
             :disabled="saving || !dirty || draft.length > maxEntries"
+            :loading="saving"
             data-testid="email-blacklist-save"
             @click="save"
           >
             {{ saving ? t('common.saving') : t('admin.settings.registration.emailBlacklist.save') }}
-          </button>
+          </UButton>
         </div>
       </template>
     </BaseDialog>
@@ -236,18 +250,19 @@
       </div>
       <template #footer>
         <div class="flex justify-end gap-3">
-          <button type="button" class="btn btn-secondary" :disabled="disabling" @click="closeDisableDialog">
+          <UButton type="button" color="neutral" variant="outline" :disabled="disabling" @click="closeDisableDialog">
             {{ t('admin.settings.registration.emailBlacklist.disableLater') }}
-          </button>
-          <button
+          </UButton>
+          <UButton
             type="button"
-            class="btn btn-danger"
+            color="error"
             :disabled="disabling"
+            :loading="disabling"
             data-testid="email-blacklist-disable-confirm"
             @click="disableMatchedUsers"
           >
             {{ t('admin.settings.registration.emailBlacklist.disableConfirm', { count: formatCount(matchedUsers.length) }) }}
-          </button>
+          </UButton>
         </div>
       </template>
     </BaseDialog>
@@ -261,7 +276,6 @@ import { adminAPI } from '@/api'
 import type { BlacklistedEmailUser } from '@/api/admin/users'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { mergeIntoBlacklist, parseBlacklistInput } from '@/utils/registrationEmailBlacklist'
