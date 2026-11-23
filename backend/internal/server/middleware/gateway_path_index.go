@@ -226,16 +226,6 @@ func splitGatewayPathSegments(path string) []string {
 	return strings.Split(trimmed, "/")
 }
 
-// gatewayPrefixCut 返回路径里“前缀”覆盖到的段数：从第 0 段开始连续匹配受支持前缀段，
-// 最多到倒数第二段（最后一段一定是协议端点）。
-func (idx gatewayRouteIndex) gatewayPrefixCut(segments []string) int {
-	cut := 0
-	for cut < len(segments)-1 && idx.prefixSegments[segments[cut]] {
-		cut++
-	}
-	return cut
-}
-
 // gatewayVersionRootCount 返回前缀下面“版本段 + 端点”模板的条数。
 func (idx gatewayRouteIndex) gatewayVersionRootCount(prefix string) int {
 	return idx.versionPrefix[strings.Trim(prefix, "/")]
@@ -468,37 +458,6 @@ func (idx gatewayRouteIndex) gatewayCanonicalMissingVersionPath(method, path str
 		return gatewayPathAliasInfo{}, false
 	}
 	return matched[0], true
-}
-
-// forceGatewayMissingVersionPath 在“已经确认要改写”的场景里直接对 normalized 插版本段：
-// 只用来把折叠后的结果归并出用户真正想调的路径，仍然要求结果真实命中路由。
-func (idx gatewayRouteIndex) forceGatewayMissingVersionPath(method, path string) (gatewayPathAliasInfo, bool) {
-	segments := splitGatewayPathSegments(path)
-	if len(segments) == 0 {
-		return gatewayPathAliasInfo{}, false
-	}
-	for cut := 0; cut < len(segments); cut++ {
-		if cut > maxGatewayPrefixDepth {
-			break
-		}
-		headSegments := segments[:cut]
-		tailSegments := segments[cut:]
-		families := append([]string{gatewayVersionSegmentPrefix}, gatewayVersionFamilies("/"+strings.Join(tailSegments, "/"))...)
-		for _, family := range families {
-			candidate := "/" + strings.Join(append(append(append([]string{}, headSegments...), family), tailSegments...), "/")
-			if isExcludedBareGatewayPath(candidate) || !matchGatewayRoute(idx, method, candidate) {
-				continue
-			}
-			return gatewayPathAliasInfo{
-				Original:   path,
-				Normalized: candidate,
-				Rule:       PathAliasRuleMissingVersionPrefix,
-				Prefix:     gatewayPrefixLabel(headSegments),
-				Version:    family,
-			}, true
-		}
-	}
-	return gatewayPathAliasInfo{}, false
 }
 
 // gatewayMissingVersionPath 在每个“版本段可能被漏写”的位置插一个版本段：
