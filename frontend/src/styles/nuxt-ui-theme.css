@@ -56,3 +56,15 @@
   --app-shadow-popover: 0 4px 10px -5px rgb(0 0 0 / 0.25), 0 14px 32px -14px rgb(0 0 0 / 0.38);
   --app-shadow-dialog: 0 10px 24px -12px rgb(0 0 0 / 0.3), 0 28px 64px -24px rgb(0 0 0 / 0.45);
 }
+
+/*
+  Switch knob: Nuxt UI paints it with `bg-default` plus a shadow. In the light theme that is a
+  white knob on the neutral-200 track (the shadow supplies the edge); in the ink night theme
+  `bg-default` resolves to #211e25, which is only ~1.3:1 against the unchecked `--ui-bg-accented`
+  (#3a3441) track and loses the shadow too. Paint the knob with the inverted surface (#fff4f8 in
+  this theme) so the off state keeps a visible edge; the checked state keeps ink-on-primary.
+  Scoped to the switch's own thumb slot so sliders and other `thumb` slots are untouched.
+*/
+.dark [role='switch'] [data-slot='thumb'] {
+  background-color: var(--ui-bg-inverted);
+}

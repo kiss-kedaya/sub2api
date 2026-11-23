@@ -9,15 +9,15 @@
           {{ t('profile.passkey.description') }}
         </p>
       </div>
-      <button
+      <UButton
         v-if="enabled && supported && !showAddForm"
         type="button"
-        class="btn btn-primary"
         :disabled="busy"
+        data-test="passkey-add"
         @click="showAddForm = true"
       >
         {{ t('profile.passkey.add') }}
-      </button>
+      </UButton>
     </div>
 
     <div class="p-5 sm:p-6">
@@ -36,10 +36,10 @@
           <div class="grid gap-3 sm:grid-cols-2">
             <div>
               <label for="passkey-name" class="input-label">{{ t('profile.passkey.name') }}</label>
-              <input
+              <UInput
                 id="passkey-name"
                 v-model="newName"
-                class="input"
+                class="w-full"
                 maxlength="100"
                 :placeholder="t('profile.passkey.namePlaceholder')"
                 autofocus
@@ -49,23 +49,35 @@
               <label for="passkey-add-password" class="input-label">{{
                 t('profile.currentPassword')
               }}</label>
-              <input
+              <UInput
                 id="passkey-add-password"
                 v-model="newPassword"
                 type="password"
                 autocomplete="current-password"
-                class="input"
+                class="w-full"
                 :placeholder="t('profile.passkey.passwordPlaceholder')"
               />
             </div>
           </div>
           <div class="flex justify-end gap-2">
-            <button type="button" class="btn btn-secondary" :disabled="busy" @click="cancelAdd">
+            <UButton
+              type="button"
+              color="neutral"
+              variant="outline"
+              :disabled="busy"
+              data-test="passkey-cancel-add"
+              @click="cancelAdd"
+            >
               {{ t('common.cancel') }}
-            </button>
-            <button type="submit" class="btn btn-primary" :disabled="busy || newPassword.length === 0">
+            </UButton>
+            <UButton
+              type="submit"
+              :disabled="busy || newPassword.length === 0"
+              :loading="busy"
+              data-test="passkey-continue"
+            >
               {{ busy ? t('common.processing') : t('profile.passkey.continue') }}
-            </button>
+            </UButton>
           </div>
         </form>
 
@@ -92,12 +104,15 @@
                 <p class="truncate font-medium text-gray-900 dark:text-white">
                   {{ credential.name }}
                 </p>
-                <span
+                <UBadge
                   v-if="credential.backup"
-                  class="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700 dark:bg-green-900/30 dark:text-green-300"
+                  color="success"
+                  variant="subtle"
+                  size="sm"
+                  class="rounded-full"
                 >
                   {{ t('profile.passkey.synced') }}
-                </span>
+                </UBadge>
               </div>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 {{ t('profile.passkey.createdAt', { date: formatDate(credential.created_at) }) }}
@@ -107,22 +122,26 @@
               </p>
             </div>
             <div class="flex shrink-0 gap-2">
-              <button
+              <UButton
                 type="button"
-                class="btn btn-secondary btn-sm"
+                color="neutral"
+                variant="outline"
+                size="sm"
                 :disabled="busy"
                 @click="renamePasskey(credential)"
               >
                 {{ t('common.edit') }}
-              </button>
-              <button
+              </UButton>
+              <UButton
                 type="button"
-                class="btn btn-ghost btn-sm text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/30"
+                color="error"
+                variant="ghost"
+                size="sm"
                 :disabled="busy"
                 @click="deletePasskey(credential)"
               >
                 {{ t('common.delete') }}
-              </button>
+              </UButton>
             </div>
           </div>
         </div>
@@ -147,27 +166,29 @@
               <label for="passkey-delete-password" class="input-label">{{
                 t('profile.currentPassword')
               }}</label>
-              <input
+              <UInput
                 id="passkey-delete-password"
                 v-model="deletePassword"
                 type="password"
                 autocomplete="current-password"
-                class="input"
+                class="w-full"
                 :placeholder="t('profile.passkey.passwordPlaceholder')"
                 autofocus
               />
             </div>
             <div class="flex justify-end gap-3">
-              <button type="button" class="btn btn-secondary" :disabled="busy" @click="closeDeleteDialog">
+              <UButton type="button" color="neutral" variant="outline" :disabled="busy" data-test="passkey-delete-cancel" @click="closeDeleteDialog">
                 {{ t('common.cancel') }}
-              </button>
-              <button
+              </UButton>
+              <UButton
                 type="submit"
-                class="btn btn-danger"
+                color="error"
                 :disabled="busy || deletePassword.length === 0"
+                :loading="busy"
+                data-test="passkey-delete-confirm"
               >
                 {{ busy ? t('common.processing') : t('common.delete') }}
-              </button>
+              </UButton>
             </div>
           </form>
         </div>

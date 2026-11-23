@@ -19,19 +19,19 @@
           <label for="username" class="input-label">
             {{ t('profile.username') }}
           </label>
-          <input
+          <UInput
             id="username"
             v-model="username"
             type="text"
-            class="input"
+            class="w-full"
             :placeholder="t('profile.enterUsername')"
           />
         </div>
 
         <div class="flex justify-end pt-4">
-          <button type="submit" :disabled="loading" class="btn btn-primary">
+          <UButton type="submit" :disabled="loading" :loading="loading">
             {{ loading ? t('profile.updating') : t('profile.updateProfile') }}
-          </button>
+          </UButton>
         </div>
       </form>
     </div>

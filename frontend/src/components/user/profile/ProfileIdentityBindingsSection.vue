@@ -47,16 +47,18 @@
                 <h3 class="font-medium text-gray-900 dark:text-white">
                   {{ item.label }}
                 </h3>
-                <span
+                <UBadge
                   :data-testid="`profile-binding-${item.provider}-status`"
-                  :class="['badge', item.bound ? 'badge-success' : 'badge-gray']"
+                  :color="item.bound ? 'success' : 'neutral'"
+                  variant="subtle"
+                  size="sm"
                 >
                   {{
                     item.bound
                       ? t('profile.authBindings.status.bound')
                       : t('profile.authBindings.status.notBound')
                   }}
-                </span>
+                </UBadge>
               </div>
 
               <p
@@ -89,18 +91,20 @@
                 data-testid="profile-binding-email-form"
                 class="grid gap-2 sm:grid-cols-[minmax(0,1.4fr)_auto]"
               >
-                <input
+                <UInput
                   v-model.trim="emailBindingForm.email"
                   data-testid="profile-binding-email-input"
                   type="email"
-                  class="input"
+                  class="w-full"
                   :placeholder="t('profile.authBindings.emailPlaceholder')"
                   :disabled="isSendingEmailCode || isBindingEmail"
                 />
-                <button
+                <UButton
                   data-testid="profile-binding-email-send-code"
                   type="button"
-                  class="btn btn-secondary btn-sm"
+                  color="neutral"
+                  variant="outline"
+                  size="sm"
                   :disabled="isSendingEmailCode || isBindingEmail"
                   @click="sendEmailCode"
                 >
@@ -109,29 +113,30 @@
                       ? t('common.loading')
                       : t('profile.authBindings.sendCodeAction')
                   }}
-                </button>
-                <input
+                </UButton>
+                <UInput
                   v-model.trim="emailBindingForm.verifyCode"
                   data-testid="profile-binding-email-code-input"
                   type="text"
                   inputmode="numeric"
                   maxlength="6"
-                  class="input"
+                  class="w-full"
                   :placeholder="t('profile.authBindings.codePlaceholder')"
                   :disabled="isBindingEmail"
                 />
-                <input
+                <UInput
                   v-model="emailBindingForm.password"
                   data-testid="profile-binding-email-password-input"
                   type="password"
-                  class="input"
+                  class="w-full"
                   :placeholder="emailPasswordPlaceholder"
                   :disabled="isBindingEmail"
                 />
-                <button
+                <UButton
                   data-testid="profile-binding-email-submit"
                   type="button"
-                  class="btn btn-primary btn-sm sm:col-span-2"
+                  size="sm"
+                  class="sm:col-span-2"
                   :disabled="isBindingEmail"
                   @click="bindEmail"
                 >
@@ -140,17 +145,19 @@
                       ? t('common.loading')
                       : emailSubmitActionLabel
                   }}
-                </button>
+                </UButton>
               </div>
             </div>
           </div>
 
           <div class="flex shrink-0 flex-wrap items-center gap-3">
-            <button
+            <UButton
               v-if="item.provider === 'email' && compact"
               data-testid="profile-binding-email-toggle"
               type="button"
-              class="btn btn-secondary btn-sm"
+              color="neutral"
+              variant="outline"
+              size="sm"
               @click="toggleEmailForm"
             >
               {{
@@ -158,22 +165,25 @@
                   ? t('profile.authBindings.hideEmailFormAction')
                   : t('profile.authBindings.manageEmailAction')
               }}
-            </button>
-            <button
+            </UButton>
+            <UButton
               v-if="item.canBind"
               :data-testid="`profile-binding-${item.provider}-action`"
               type="button"
-              class="btn btn-primary btn-sm"
+              size="sm"
               @click="startBinding(item.provider)"
             >
               {{ t('profile.authBindings.bindAction', { providerName: item.label }) }}
-            </button>
-            <button
+            </UButton>
+            <UButton
               v-if="item.canUnbind"
               :data-testid="`profile-binding-${item.provider}-unbind`"
               type="button"
-              class="btn btn-secondary btn-sm"
+              color="neutral"
+              variant="outline"
+              size="sm"
               :disabled="unbindingProvider === item.provider"
+              :loading="unbindingProvider === item.provider"
               @click="handleUnbindForItem(item.provider, item.label)"
             >
               {{
@@ -181,7 +191,7 @@
                   ? t('common.loading')
                   : t('profile.authBindings.unbindAction')
               }}
-            </button>
+            </UButton>
           </div>
         </div>
       </div>

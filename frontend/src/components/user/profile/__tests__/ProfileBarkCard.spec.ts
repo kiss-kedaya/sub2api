@@ -35,8 +35,8 @@ describe('shared Bark configuration card', () => {
   it('saves a toggle with no key field so the existing encrypted key is retained', async () => {
     const wrapper = render()
     await flushPromises()
-    await wrapper.get('input[type="checkbox"]').setValue(false)
-    await wrapper.get('.btn-primary').trigger('click')
+    await wrapper.get('[data-test="bark-enabled"]').trigger('click')
+    await wrapper.get('[data-test="bark-save"]').trigger('click')
     await flushPromises()
     expect(mocks.put).toHaveBeenCalledWith('/user/bark', { enabled: false }, {
       _retry: true, headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' }
@@ -49,8 +49,8 @@ describe('shared Bark configuration card', () => {
   it('does not ask for a 2FA code when saving', async () => {
     const wrapper = render()
     await flushPromises()
-    await wrapper.get('input[type="checkbox"]').setValue(false)
-    await wrapper.get('.btn-primary').trigger('click')
+    await wrapper.get('[data-test="bark-enabled"]').trigger('click')
+    await wrapper.get('[data-test="bark-save"]').trigger('click')
     await flushPromises()
     // No one-time-code input and no TOTP status lookup: saving must be direct.
     expect(wrapper.find('input[autocomplete="one-time-code"]').exists()).toBe(false)
@@ -62,7 +62,7 @@ describe('shared Bark configuration card', () => {
     const wrapper = render()
     await flushPromises()
     await wrapper.get('#bark-device-key').setValue('fixture-device-key')
-    await wrapper.get('.btn-primary').trigger('click')
+    await wrapper.get('[data-test="bark-save"]').trigger('click')
     await flushPromises()
     expect(mocks.put).toHaveBeenCalledWith('/user/bark', { device_key: 'fixture-device-key', enabled: true }, expect.objectContaining({ headers: expect.objectContaining({ 'Cache-Control': 'no-store' }) }))
     expect((wrapper.get('#bark-device-key').element as HTMLInputElement).value).toBe('')
@@ -71,7 +71,7 @@ describe('shared Bark configuration card', () => {
   it('clears the saved key only through the explicit clear action', async () => {
     const wrapper = render()
     await flushPromises()
-    const clear = wrapper.findAll('button').find(button => button.text() === 'profile.bark.clear')!
+    const clear = wrapper.get('[data-test="bark-clear"]')
     await clear.trigger('click')
     await flushPromises()
     expect(mocks.put).toHaveBeenCalledWith('/user/bark', { device_key: '', enabled: false }, expect.objectContaining({ headers: expect.objectContaining({ 'Cache-Control': 'no-store' }) }))
@@ -84,7 +84,7 @@ describe('shared Bark configuration card', () => {
     expect(wrapper.text()).toContain('profile.bark.loadFailed')
     expect(wrapper.get('#bark-device-key').attributes('disabled')).toBeDefined()
     mocks.get.mockResolvedValue({ data: { data: { configured: true, enabled: true } } })
-    await wrapper.get('.btn-secondary').trigger('click')
+    await wrapper.get('[data-test="bark-refresh"]').trigger('click')
     await flushPromises()
     expect(wrapper.get('#bark-device-key').attributes('disabled')).toBeUndefined()
   })
@@ -93,10 +93,10 @@ describe('shared Bark configuration card', () => {
     mocks.put.mockRejectedValueOnce(new Error('BARK_ORIGINAL_NOTIFICATION_FAILED'))
     const wrapper = render()
     await flushPromises()
-    await wrapper.get('input[type="checkbox"]').setValue(false)
-    await wrapper.get('.btn-primary').trigger('click')
+    await wrapper.get('[data-test="bark-enabled"]').trigger('click')
+    await wrapper.get('[data-test="bark-save"]').trigger('click')
     await flushPromises()
     expect(mocks.showError).toHaveBeenCalled()
-    expect(wrapper.get('input[type="checkbox"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-test="bark-enabled"]').attributes('disabled')).toBeUndefined()
   })
 })

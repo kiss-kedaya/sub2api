@@ -11,11 +11,13 @@
     <div class="space-y-6 p-5 sm:p-6">
       <!-- Enable toggle -->
       <div class="flex items-center justify-between">
-        <label class="input-label mb-0">{{ t('profile.balanceNotify.enabled') }}</label>
-        <label class="relative inline-flex items-center cursor-pointer">
-          <input type="checkbox" v-model="notifyEnabled" @change="handleToggle" class="sr-only peer" />
-          <div class="w-11 h-6 bg-gray-200 peer-focus:outline-hidden peer-focus:ring-4 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-transform dark:after:border-gray-600 peer-checked:bg-primary-600"></div>
-        </label>
+        <label for="balance-notify-enabled" class="input-label mb-0">{{ t('profile.balanceNotify.enabled') }}</label>
+        <USwitch
+          id="balance-notify-enabled"
+          v-model="notifyEnabled"
+          data-test="balance-notify-enabled"
+          @update:model-value="handleToggle"
+        />
       </div>
 
       <template v-if="notifyEnabled">
@@ -27,21 +29,25 @@
           </label>
           <div class="flex items-center gap-2">
             <span class="text-gray-500">$</span>
-            <input
+            <UInput
               v-model.number="customThreshold"
               type="number"
               min="0"
               step="0.01"
-              class="input flex-1"
+              class="flex-1"
               :placeholder="systemDefaultThreshold > 0 ? `${t('profile.balanceNotify.systemDefault')} $${systemDefaultThreshold}` : t('profile.balanceNotify.thresholdPlaceholder')"
             />
-            <button
-              @click="handleThresholdUpdate"
+            <UButton
+              type="button"
+              size="sm"
+              class="whitespace-nowrap"
               :disabled="savingThreshold"
-              class="btn btn-primary btn-sm whitespace-nowrap"
+              :loading="savingThreshold"
+              data-test="balance-notify-save-threshold"
+              @click="handleThresholdUpdate"
             >
               {{ savingThreshold ? t('common.saving') : t('common.save') }}
-            </button>
+            </UButton>
           </div>
         </div>
 
@@ -55,10 +61,12 @@
             <div v-for="(entry, idx) in emailEntries" :key="`${entry.primary ? 'primary' : entry.email}-${idx}`"
               class="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-dark-700 rounded-lg">
               <div class="flex items-center gap-2 min-w-0 flex-1">
-                <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                  <input type="checkbox" :checked="!entry.disabled" @change="handleEmailToggle(entry)" class="sr-only peer" />
-                  <div class="w-9 h-5 bg-gray-200 peer-focus:outline-hidden rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-transform dark:after:border-gray-500 peer-checked:bg-primary-600"></div>
-                </label>
+                <USwitch
+                  :model-value="!entry.disabled"
+                  class="shrink-0"
+                  :aria-label="`${t('profile.balanceNotify.enabled')} ${entry.email}`"
+                  @update:model-value="handleEmailToggle(entry)"
+                />
                 <span class="text-sm text-gray-700 dark:text-gray-300 truncate">{{ entry.email }}</span>
                 <span v-if="entry.primary" class="text-xs text-primary-600 dark:text-primary-400 shrink-0">{{ t('profile.balanceNotify.primaryEmail') }}</span>
               </div>
@@ -66,35 +74,35 @@
                 <template v-if="!entry.verified">
                   <!-- Inline verify flow for saved unverified emails -->
                   <template v-if="verifyingEmail === entry.email">
-                    <input
+                    <UInput
                       v-model="verifyCode"
                       type="text"
                       maxlength="6"
-                      class="w-20 rounded-sm border border-gray-300 px-2 py-1 text-xs dark:border-dark-500 dark:bg-dark-700"
+                      class="w-24"
                       :placeholder="t('profile.balanceNotify.codePlaceholder')"
                     />
-                    <button @click="verifySavedEmail(entry.email)" :disabled="!verifyCode || verifyCode.length !== 6 || verifyingSaved" class="text-xs text-primary-600 hover:text-primary-700">
+                    <UButton variant="link" size="xs" class="p-0" :disabled="!verifyCode || verifyCode.length !== 6 || verifyingSaved" @click="verifySavedEmail(entry.email)">
                       {{ t('profile.balanceNotify.verify') }}
-                    </button>
+                    </UButton>
                     <span v-if="verifyCountdown > 0" class="text-xs text-gray-400">{{ verifyCountdown }}s</span>
-                    <button v-else @click="sendCodeForSaved(entry.email)" :disabled="sendingSavedCode" class="text-xs text-gray-500 hover:text-gray-700">
+                    <UButton v-else variant="link" size="xs" color="neutral" class="p-0" :disabled="sendingSavedCode" @click="sendCodeForSaved(entry.email)">
                       {{ t('profile.balanceNotify.resend') }}
-                    </button>
-                    <button @click="verifyingEmail = ''" class="text-xs text-gray-400 hover:text-gray-600">
+                    </UButton>
+                    <UButton variant="link" size="xs" color="neutral" class="p-0" @click="verifyingEmail = ''">
                       {{ t('common.cancel') }}
-                    </button>
+                    </UButton>
                   </template>
                   <template v-else>
-                    <button @click="sendCodeForSaved(entry.email)" :disabled="sendingSavedCode" class="text-xs text-primary-600 hover:text-primary-700">
+                    <UButton variant="link" size="xs" class="p-0" :disabled="sendingSavedCode" @click="sendCodeForSaved(entry.email)">
                       {{ t('profile.balanceNotify.verify') }}
-                    </button>
+                    </UButton>
                     <span class="text-xs text-yellow-500">{{ t('profile.balanceNotify.unverified') }}</span>
                   </template>
                 </template>
                 <span v-else class="text-xs text-green-500">{{ t('profile.balanceNotify.verified') }}</span>
-                <button v-if="!entry.primary" @click="handleRemoveEmail(entry.email)" class="text-red-500 hover:text-red-700 text-xs">
+                <UButton v-if="!entry.primary" variant="link" size="xs" color="error" class="p-0" @click="handleRemoveEmail(entry.email)">
                   {{ t('profile.balanceNotify.removeEmail') }}
-                </button>
+                </UButton>
               </div>
             </div>
           </div>
@@ -105,48 +113,52 @@
               class="flex items-center gap-2 px-3 py-2 bg-yellow-50 dark:bg-yellow-900/10 rounded-lg border border-yellow-200 dark:border-yellow-800">
               <span class="flex-1 text-sm text-gray-700 dark:text-gray-300">{{ pe.email }}</span>
               <div v-if="!pe.codeSent" class="flex items-center gap-1">
-                <button @click="sendCodeFor(idx)" :disabled="pe.sending" class="text-xs text-primary-600 hover:text-primary-700">
+                <UButton variant="link" size="xs" class="p-0" :disabled="pe.sending" @click="sendCodeFor(idx)">
                   {{ t('profile.balanceNotify.sendCode') }}
-                </button>
-                <button @click="pendingEmails.splice(idx, 1)" class="text-xs text-red-500 hover:text-red-700 ml-1">
+                </UButton>
+                <UButton variant="link" size="xs" color="error" class="p-0 ml-1" @click="pendingEmails.splice(idx, 1)">
                   {{ t('profile.balanceNotify.removeEmail') }}
-                </button>
+                </UButton>
               </div>
               <div v-else class="flex items-center gap-1">
-                <input
+                <UInput
                   v-model="pe.code"
                   type="text"
                   maxlength="6"
-                  class="w-20 rounded-sm border border-gray-300 px-2 py-1 text-xs dark:border-dark-500 dark:bg-dark-700"
+                  class="w-24"
                   :placeholder="t('profile.balanceNotify.codePlaceholder')"
                 />
-                <button @click="verifyPending(idx)" :disabled="!pe.code || pe.code.length !== 6 || pe.verifying" class="text-xs text-primary-600 hover:text-primary-700">
+                <UButton variant="link" size="xs" class="p-0" :disabled="!pe.code || pe.code.length !== 6 || pe.verifying" @click="verifyPending(idx)">
                   {{ t('profile.balanceNotify.verify') }}
-                </button>
+                </UButton>
                 <span v-if="pe.countdown > 0" class="text-xs text-gray-400">{{ pe.countdown }}s</span>
-                <button v-else @click="sendCodeFor(idx)" :disabled="pe.sending" class="text-xs text-gray-500 hover:text-gray-700">
+                <UButton v-else variant="link" size="xs" color="neutral" class="p-0" :disabled="pe.sending" @click="sendCodeFor(idx)">
                   {{ t('profile.balanceNotify.resend') }}
-                </button>
+                </UButton>
               </div>
             </div>
           </div>
 
           <!-- Add new email input (hidden when at limit) -->
           <div v-if="canAddMore" class="flex gap-2">
-            <input
+            <UInput
               v-model="newEmail"
               type="email"
-              class="input flex-1"
+              class="flex-1"
               :placeholder="t('profile.balanceNotify.emailPlaceholder')"
               @keyup.enter="addPendingEmail"
             />
-            <button
-              @click="addPendingEmail"
+            <UButton
+              type="button"
+              color="neutral"
+              variant="outline"
+              class="whitespace-nowrap"
               :disabled="!newEmail"
-              class="btn btn-secondary whitespace-nowrap"
+              data-test="balance-notify-add-email"
+              @click="addPendingEmail"
             >
               {{ t('common.add') }}
-            </button>
+            </UButton>
           </div>
           <p v-else class="text-xs text-gray-400">
             {{ t('profile.balanceNotify.maxEmailsReached') }}
