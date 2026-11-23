@@ -129,6 +129,16 @@ var renamedMigrations = map[string]renamedMigration{
 		checksum:     "2676ba9f5647644f4888dbf7d34c9124cd9a972077544014898995268b3db326",
 		fileChecksum: "74d96335e1360f846ecd758b51223e770fe74dd3b65aeae308fce1022a5537ad",
 	},
+	// 337 已随 #564 发版并在现网执行过。随后发现它不处理「本来就叫
+	// gateway_5xx」的标准名存量规则（网关告警会静默），修法、种子改名与
+	// 会话级超时统一放进 339_ops_error_5xx_rule_reconcile.sql，337 本身只改名
+	// 不改内容：内容未变，已执行过 337 的库按历史名字核对 checksum 后直接跳过。
+	// 之后 339（新文件名）自动补跑，两边都执行也不会重复处置同一批规则。
+	"337_ops_error_5xx_split_v2.sql": {
+		previousName: "337_ops_error_5xx_split.sql",
+		checksum:     "41921cc53bf2184206a6aaedf20e2d8a7ae64b3eafcef75d1ff1a609d1bfa090",
+		fileChecksum: "1391ceeae4f3a7a26754b1ae6d7ea037e65fba7484e83c89c57c8b793727a7cb",
+	},
 }
 
 func (r renamedMigration) checkHistory(name, recordedChecksum string) error {
