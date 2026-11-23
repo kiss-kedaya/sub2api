@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"math/rand"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,9 +32,8 @@ func (s *Service) securityMonitor(ctx context.Context) {
 		case <-ticker.C:
 			checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			err := s.checkWalletSecurity(checkCtx)
-			if err == nil && idle.due(time.Now()) {
-				err = s.scanIdleWalletSecurity(checkCtx)
-				idle.note(err, time.Now())
+			if err == nil {
+				err = s.scanIdleWalletSecurity(checkCtx, &idle)
 			}
 			cancel()
 			if err != nil && !errors.Is(err, wallet.ErrWalletNotConfigured) && !errors.Is(err, wallet.ErrSecurityLocked) {
@@ -61,15 +61,24 @@ func newIdleGuardWorker(db *sql.DB, pools map[string]*rpc.Pool, chains []scanner
 	return worker
 }
 
-// idleGuardPacer spaces the idle-chain guard scan after consecutive failures.
+// idleGuardPacer spaces the guard scan of EACH idle chain after its own
+// consecutive failures.
 //
 // The guard scans every chain that is not scanned for deposits. One of them (an
 // old plasma entry whose three free RPC nodes all answer 403/429) had failed on
 // every tick for sixteen days: ~150 requests each, every five seconds, against
 // providers that were already refusing us, while holding a database session. A
-// failing guard cannot detect anything anyway, so it backs off (5s, 10s, ... up
-// to five minutes) and resumes at full cadence on its first success.
+// failing chain cannot detect anything anyway, so it backs off (5s, 10s, ... up to
+// five minutes) and resumes at full cadence on its first success. The state is per
+// chain: a healthy idle chain keeps its five second cadence however long another
+// one has been dead, because the guard exists to notice an unauthorised outflow
+// from a hot wallet and must not be delayed by somebody else's outage. The zero
+// value is ready to use; it is only ever touched by the security monitor goroutine.
 type idleGuardPacer struct {
+	chains map[string]*idleGuardState
+}
+
+type idleGuardState struct {
 	failures int
 	next     time.Time
 }
@@ -79,32 +88,64 @@ const (
 	idleGuardMaxDelay  = 5 * time.Minute
 )
 
-func (p *idleGuardPacer) due(now time.Time) bool { return !now.Before(p.next) }
+func (p *idleGuardPacer) due(chain string, now time.Time) bool {
+	st := p.chains[chain]
+	return st == nil || !now.Before(st.next)
+}
 
-// note records the outcome of one guard iteration. Another instance holding the
-// guard lock is neither a success nor a failure of the chains.
-func (p *idleGuardPacer) note(err error, now time.Time) {
+// dueChains returns the chains whose guard scan is due now, those with the fewest
+// consecutive failures first, so a chain that is probably about to fail slowly
+// cannot eat the tick's time budget ahead of the healthy ones.
+func (p *idleGuardPacer) dueChains(chains []scanner.ChainConfig, now time.Time) []scanner.ChainConfig {
+	out := make([]scanner.ChainConfig, 0, len(chains))
+	for _, chain := range chains {
+		if p.due(chain.Chain, now) {
+			out = append(out, chain)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return p.failuresOf(out[i].Chain) < p.failuresOf(out[j].Chain) })
+	return out
+}
+
+func (p *idleGuardPacer) failuresOf(chain string) int {
+	if st := p.chains[chain]; st != nil {
+		return st.failures
+	}
+	return 0
+}
+
+// note records the outcome of one guard iteration of chain. Another instance
+// holding the guard lock is neither a success nor a failure of the chain.
+func (p *idleGuardPacer) note(chain string, err error, now time.Time) {
 	switch {
 	case err == nil:
-		p.failures, p.next = 0, time.Time{}
+		delete(p.chains, chain)
 	case errors.Is(err, scanner.ErrScanBusy):
 		// nothing was attempted; leave the state as it is
 	default:
-		p.failures++
+		if p.chains == nil {
+			p.chains = make(map[string]*idleGuardState)
+		}
+		st := p.chains[chain]
+		if st == nil {
+			st = &idleGuardState{}
+			p.chains[chain] = st
+		}
+		st.failures++
 		delay := idleGuardBaseDelay
-		for i := 1; i < p.failures && delay < idleGuardMaxDelay; i++ {
+		for i := 1; i < st.failures && delay < idleGuardMaxDelay; i++ {
 			delay *= 2
 		}
 		delay = min(delay, idleGuardMaxDelay)
 		jitter := time.Duration(rand.Int63n(int64(delay)/5*2+1)) - delay/5 // +-20%
-		p.next = now.Add(delay + jitter)
+		st.next = now.Add(delay + jitter)
 	}
 }
 
 // Existing wallet balances remain protected after recharge is turned off.
 // Reuse the scanner's batching, canonical verification and global lock, while
 // keeping an independent cursor and no deposit handler/recipient list.
-func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
+func (s *Service) scanIdleWalletSecurity(ctx context.Context, pacer *idleGuardPacer) error {
 	s.mu.RLock()
 	active := s.worker != nil && s.config.Enabled && !s.securityPaused.Load()
 	runtimePools := maps.Clone(s.pools)
@@ -143,14 +184,28 @@ func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
 	if len(chains) == 0 {
 		return nil
 	}
-	worker := newIdleGuardWorker(s.db, pools, chains)
-	worker.SetSecurityGuards(s.scanWalletSecurityGuard, s.scanWalletOutflows)
-	guardErr := worker.RunGuardScan(ctx)
-	// ERC-20 outflows are covered by the block guard above; a native spend has
+	// One guard worker per chain that is due: a chain whose nodes keep refusing us
+	// is backed off on its own and must not delay the others (see idleGuardPacer).
+	// Each runs under the guard lock in turn, healthiest chain first.
+	now := time.Now()
+	duePools := map[string]*rpc.Pool{}
+	var guardErrs []error
+	for _, chain := range pacer.dueChains(chains, now) {
+		duePools[chain.Chain] = pools[chain.Chain]
+		worker := newIdleGuardWorker(s.db, map[string]*rpc.Pool{chain.Chain: pools[chain.Chain]}, []scanner.ChainConfig{chain})
+		worker.SetSecurityGuards(s.scanWalletSecurityGuard, s.scanWalletOutflows)
+		err := worker.RunGuardScan(ctx)
+		pacer.note(chain.Chain, err, time.Now())
+		if err != nil {
+			guardErrs = append(guardErrs, err)
+		}
+	}
+	// ERC-20 outflows are covered by the block guards above; a native spend has
 	// no log, so the same idle window must poll the hot wallet through the
-	// address API or a drained ETH/BNB balance stays silent.
-	nativeErr := s.pollNativeOutflowsIdle(ctx, cfg, pools)
-	return errors.Join(guardErr, nativeErr)
+	// address API or a drained ETH/BNB balance stays silent. It paces itself
+	// (NativePollSeconds) and only looks at the chains that are due.
+	nativeErr := s.pollNativeOutflowsIdle(ctx, cfg, duePools)
+	return errors.Join(append(guardErrs, nativeErr)...)
 }
 
 // SettingKeySecurityPauseMarker stores the lock episode that already applied
