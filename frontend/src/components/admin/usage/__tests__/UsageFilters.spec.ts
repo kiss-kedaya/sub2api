@@ -32,17 +32,39 @@ const messages: Record<string, string> = {
   'admin.usage.billingModeToken': 'Token',
   'admin.usage.billingModePerRequest': 'Per Request',
   'admin.usage.billingModeImage': 'Image',
-	'admin.usage.upstreamModelAudit': 'Upstream model audit',
-	'admin.usage.allUpstreamModelAudit': 'All response model states',
-	'admin.usage.upstreamModelMismatchOnly': 'Mismatched only',
-	'admin.usage.upstreamModelMatchedOnly': 'Matched only',
+  'admin.usage.upstreamModelAudit': 'Upstream model audit',
+  'admin.usage.allUpstreamModelAudit': 'All response model states',
+  'admin.usage.upstreamModelMismatchOnly': 'Mismatched only',
+  'admin.usage.upstreamModelMatchedOnly': 'Matched only',
   'admin.usage.group': 'Group',
   'admin.usage.allGroups': 'All Groups',
+  'admin.usage.requestId': 'Request ID',
+  'usage.requestIdPlaceholder': 'Request/upstream ID',
+  'admin.dashboard.timeRange': 'Time Range',
+  'admin.usage.filters.title': 'Filters',
+  'admin.usage.filters.activeCount': '{count} active',
+  'admin.usage.filters.advanced': 'Advanced filters',
+  'admin.usage.filters.groupRequest': 'Request',
+  'admin.usage.filters.groupBilling': 'Billing',
+  'admin.usage.filters.groupScope': 'Scope',
+  'admin.usage.filters.search': 'Search',
+  'admin.usage.filters.requestIdHint': 'Fragment match by default',
+  'admin.usage.filters.compactionHint': 'Regular vs compaction',
+  'admin.usage.filters.upstreamModelAuditHint': 'Compare response model',
+  'admin.usage.filters.clearUser': 'Clear user filter',
+  'admin.usage.filters.clearApiKey': 'Clear API key filter',
+  'admin.usage.filters.clearAccount': 'Clear account filter',
+  'admin.usage.filters.anonymousIdPlaceholder': 'ID',
   'common.refresh': 'Refresh',
   'common.reset': 'Reset',
-  'common.query': 'Query',
+  'common.cancel': 'Cancel',
+  'common.more': 'More',
   'admin.usage.cleanup.button': 'Cleanup',
-  'usage.exportExcel': 'Export',
+  'admin.usage.cleanup.confirmTitle': 'Confirm Cleanup',
+  'admin.usage.cleanup.confirmMessage': 'Cleanup cannot be undone.',
+  'admin.usage.cleanup.confirmSubmit': 'Confirm Cleanup',
+  'admin.usage.cleanup.warning': 'Cleanup is irreversible.',
+  'usage.exportExcel': 'Export Excel',
   'usage.exportCsv': 'Export CSV',
 }
 
@@ -52,7 +74,12 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => messages[key] ?? key,
+      t: (key: string, params?: Record<string, unknown>) => {
+        const raw = messages[key] ?? key
+        return params
+          ? raw.replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? ''))
+          : raw
+      },
       locale: { value: 'en' },
     }),
   }
@@ -87,29 +114,51 @@ const defaultFilters = () => ({
   native_compaction_v2: null,
   billing_type: null,
   billing_mode: null,
-	upstream_model_mismatch: null,
+  upstream_model_mismatch: null,
   group_id: null,
   start_date: '',
   end_date: '',
 })
 
-function mountFilters(filters = defaultFilters()) {
+// 每个筛选项都是一个 UFormField；label / 描述都由它统一渲染，
+// 所以用统一加在 label 上的 class 来数「字段」。
+const BASE_FIELD_SELECTOR = '[data-testid="usage-filters-field"]'
+
+// 只实现 v-model（update:modelValue），不实现 change：筛选卡自己不转发 change，
+// 改动只落草稿，由「查询」提交。
+const SelectStub = {
+  name: 'Select',
+  props: ['modelValue', 'options', 'searchable'],
+  emits: ['update:modelValue'],
+  template: '<div class="select-stub" />',
+}
+
+function mountFilters(filters = defaultFilters(), extraProps: Record<string, unknown> = {}) {
   return mount(UsageFilters, {
     props: {
       modelValue: filters,
       exporting: false,
       startDate: '2026-05-01',
       endDate: '2026-05-28',
-      showActions: false,
       modelOptions: [],
+      ...extraProps,
     },
     global: {
       stubs: {
-        Select: true,
+        Select: SelectStub,
         Teleport: true,
       },
     },
   })
+}
+
+/**
+ * 高级区默认收起（手机）、桌面展开；这一区用的是 Nuxt UI 折叠动画，在 jsdom 里
+ * 收起/展开的 DOM 时序不稳定，所以需要高级区字段的用例统一在挂载时就撑开。
+ */
+function mountFiltersExpanded(filters = defaultFilters(), extraProps: Record<string, unknown> = {}) {
+  window.innerWidth = 1440
+  return mountFilters(filters, extraProps)
 }
 
 function deferred<T>() {
@@ -123,40 +172,45 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+/** Find the filter field (UFormField) whose label text matches, then return its wrapper. */
+function fieldByLabel(wrapper: ReturnType<typeof mountFilters>, label: string) {
+  const field = wrapper.findAll(BASE_FIELD_SELECTOR).find((node) => {
+    const labelEl = node.find('label')
+    return labelEl.exists() && labelEl.text() === label
+  })
+  if (!field) throw new Error(`field not found: ${label}`)
+  return field
+}
+
 describe('UsageFilters date range', () => {
   it('lets observers filter anonymous IDs without loading identities or exposing cleanup/export', async () => {
     vi.clearAllMocks()
-    const wrapper = mountFilters()
-    wrapper.unmount()
-    vi.clearAllMocks()
-    const observer = mount(UsageFilters, {
-      props: { modelValue: defaultFilters(), exporting: false, startDate: '2026-05-01', endDate: '2026-05-28', observer: true },
-      global: { stubs: { Select: true, Teleport: true } },
-    })
+    const observer = mountFilters(defaultFilters(), { observer: true })
     await flushPromises()
     expect(mockGroupsList).not.toHaveBeenCalled()
     expect(mockSearchUsers).not.toHaveBeenCalled()
     expect(mockSearchApiKeys).not.toHaveBeenCalled()
     expect(mockAccountsList).not.toHaveBeenCalled()
-    expect(observer.find('.usage-filter-dropdown').exists()).toBe(false)
-    expect(observer.findAll('button').some(button => ['Cleanup', 'Export'].includes(button.text()))).toBe(false)
+    expect(observer.find('[data-testid="usage-filter-user-options"]').exists()).toBe(false)
+    expect(observer.findAll('button').some(button => ['Cleanup', 'Export Excel', 'Export CSV'].includes(button.text()))).toBe(false)
+    // 观察者只按匿名 ID 过滤：四个 ID 输入在高级区，改值是草稿，回车才是「查询」
     await observer.get('#observer-user_id').setValue('42')
-    await observer.get('#observer-user_id').trigger('change')
-    // 手动查询：改条件只更新草稿，不发请求、也不触发查询
-    expect(observer.props('modelValue').user_id).toBe(42)
+    expect((observer.props('modelValue') as any).user_id).toBe(42)
     expect(observer.emitted('query')).toBeUndefined()
+    await observer.get('#observer-user_id').trigger('keyup.enter')
+    expect(observer.emitted('query')).toHaveLength(1)
     observer.unmount()
   })
+
   it('reuses the shared picker and emits only the applied range', async () => {
     const wrapper = mountFilters()
     const picker = wrapper.findComponent(DateRangePicker)
-    expect(wrapper.find('[data-testid="usage-date-range-filter"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="usage-filters-field"][data-field="date"]').exists()).toBe(true)
     expect(picker.props()).toMatchObject({ startDate: '2026-05-01', endDate: '2026-05-28' })
     const range = { startDate: '2026-05-10', endDate: '2026-05-11', preset: null }
     picker.vm.$emit('change', range)
     await wrapper.vm.$nextTick()
     expect(wrapper.emitted('date-range-change')).toEqual([[range]])
-    // 时间范围是即时控件，但也不应额外触发「查询」
     expect(wrapper.emitted('query')).toBeUndefined()
     await wrapper.setProps({ startDate: '2026-05-12', endDate: '2026-05-13' })
     expect(picker.props()).toMatchObject({ startDate: '2026-05-12', endDate: '2026-05-13' })
@@ -164,8 +218,189 @@ describe('UsageFilters date range', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// 重构后的信息层级：常用 4 项 + 高级筛选折叠 + 分组 + 操作条主次
+// ---------------------------------------------------------------------------
+describe('UsageFilters — 常用筛选与高级筛选', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    mockSearchUsers.mockReset()
+    mockSearchApiKeys.mockResolvedValue([])
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('keeps only the 4 common filters in the first row', () => {
+    const wrapper = mountFilters()
+    const common = wrapper.get('[data-testid="usage-filters-common"]')
+    // 常用区恰好 4 个 UFormField：时间范围 / 用户 / API 密钥 / 模型
+    expect(common.findAll(BASE_FIELD_SELECTOR)).toHaveLength(4)
+    expect(common.text()).toContain('Time Range')
+    expect(common.text()).toContain('User')
+    expect(common.text()).toContain('API Key')
+    expect(common.text()).toContain('Model')
+    // 桌面 4 列、平板 2 列、手机 1 列
+    expect(common.classes()).toEqual(expect.arrayContaining(['grid', 'gap-x-3', 'sm:grid-cols-2', 'xl:grid-cols-4']))
+    wrapper.unmount()
+  })
+
+  it('collapses the remaining filters into an advanced area grouped by request / billing / scope', async () => {
+    const wrapper = mountFilters()
+    // 桌面端高级区默认展开（窄屏默认收起，见移动端用例）
+    // 展开状态由组件状态驱动（jsdom 不计算 display，所以断言状态而不是 isVisible）
+    expect((wrapper.vm as any).advancedOpen).toBe(true)
+    expect(wrapper.get('[data-testid="usage-filters-advanced-toggle"]').attributes('aria-expanded')).toBe('true')
+    const advanced = wrapper.get('[data-testid="usage-filters-advanced"]')
+    // 高级区：平板 2 列、桌面 3 列
+    expect(advanced.classes()).toEqual(expect.arrayContaining(['sm:grid-cols-2', 'xl:grid-cols-3']))
+    // 三组语义分组
+    expect(wrapper.get('[data-testid="usage-filters-group-request"]').text()).toContain('Request')
+    expect(wrapper.get('[data-testid="usage-filters-group-billing"]').text()).toContain('Billing')
+    expect(wrapper.get('[data-testid="usage-filters-group-scope"]').text()).toContain('Scope')
+    // 不常用项都在高级区：请求 ID / 类型 / 计费类型 / 计费模式 / 上游模型审计 / 账户 / 分组
+    const advancedText = advanced.text()
+    for (const label of ['Request ID', 'Type', 'Billing Type', 'Billing Mode', 'Upstream model audit', 'Account', 'Group']) {
+      expect(advancedText).toContain(label)
+    }
+    wrapper.unmount()
+  })
+
+  it('toggles the advanced area from the header button', async () => {
+    const wrapper = mountFilters()
+    const toggle = wrapper.get('[data-testid="usage-filters-advanced-toggle"]')
+    expect((wrapper.vm as any).advancedOpen).toBe(true)
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    await toggle.trigger('click')
+    expect((wrapper.vm as any).advancedOpen).toBe(false)
+    await toggle.trigger('click')
+    expect((wrapper.vm as any).advancedOpen).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('uses UFormField for labels instead of hand-rolled label.input-label', () => {
+    const wrapper = mountFilters()
+    // 改前是 <label class="input-label">，现在标签与描述由 UFormField 统一渲染
+    expect(wrapper.find('label.input-label').exists()).toBe(false)
+    expect(wrapper.findAll(BASE_FIELD_SELECTOR).length).toBeGreaterThan(10)
+    // 搜索类输入统一前置图标
+    expect(wrapper.get('[data-testid="usage-filters-common"] input[type="text"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows an active-filter count in the header', async () => {
+    const filters = defaultFilters()
+    filters.billing_type = 1
+    const wrapper = mountFilters(filters)
+    expect(wrapper.get('[data-testid="usage-filters-active-count"]').text()).toContain('1 active')
+    wrapper.unmount()
+  })
+})
+
+describe('UsageFilters — 操作条主次', () => {
+  it('orders actions: search (primary) → reset → refresh → more → cleanup on the right', () => {
+    const wrapper = mountFilters()
+    const actions = wrapper.get('[data-testid="usage-filters-actions"]')
+    const order = Array.from(actions.element.querySelectorAll('[data-testid]'))
+      .map((el) => el.getAttribute('data-testid'))
+      .filter((id): id is string => !!id && id.startsWith('usage-filters-'))
+    const searchIdx = order.indexOf('usage-filters-search')
+    const resetIdx = order.indexOf('usage-filters-reset')
+    const refreshIdx = order.indexOf('usage-filters-refresh')
+    const moreIdx = order.indexOf('usage-filters-more')
+    const cleanupIdx = order.indexOf('usage-filters-cleanup')
+    expect(searchIdx).toBeGreaterThanOrEqual(0)
+    expect(searchIdx).toBeLessThan(resetIdx)
+    expect(resetIdx).toBeLessThan(refreshIdx)
+    expect(refreshIdx).toBeLessThan(moreIdx)
+    expect(moreIdx).toBeLessThan(cleanupIdx)
+    // 查询是主操作（UButton 默认 primary），重置/刷新是次级 outline
+    expect(wrapper.get('[data-testid="usage-filters-search"]').classes()).toContain('bg-primary')
+    expect(wrapper.get('[data-testid="usage-filters-reset"]').classes()).toContain('ring-accented')
+    // 清理是危险操作，单独放在右侧
+    expect(wrapper.get('[data-testid="usage-filters-cleanup"]').classes().join(' ')).toContain('text-error')
+    expect(cleanupIdx).toBeGreaterThan(0)
+  })
+
+  it('keeps export actions in the more menu, not in the top-level action row', () => {
+    const wrapper = mountFilters()
+    const actions = wrapper.get('[data-testid="usage-filters-actions"]')
+    expect(actions.text()).not.toContain('Export Excel')
+    expect(actions.text()).not.toContain('Export CSV')
+    // 更多菜单项由页面注入的列设置 + 两个导出组成
+    const items = (wrapper.vm as any).moreMenuItems as Array<Array<{ label: string }>>
+    const labels = items.flat().map((item) => item.label)
+    expect(labels).toEqual(['Export Excel', 'Export CSV'])
+    wrapper.unmount()
+  })
+
+  it('hides the action row when embedded without actions (cleanup dialog)', () => {
+    const wrapper = mountFilters(defaultFilters(), { showActions: false })
+    expect(wrapper.find('[data-testid="usage-filters-actions"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('hides cleanup and exports for the ranking tab and for observers', () => {
+    const ranking = mountFilters(defaultFilters(), { mode: 'ranking' })
+    expect(ranking.find('[data-testid="usage-filters-cleanup"]').exists()).toBe(false)
+    expect((ranking.vm as any).moreMenuItems.flat().map((item: { label: string }) => item.label))
+      .not.toContain('Export Excel')
+    ranking.unmount()
+
+    const observer = mountFilters(defaultFilters(), { observer: true })
+    expect(observer.find('[data-testid="usage-filters-cleanup"]').exists()).toBe(false)
+    observer.unmount()
+  })
+})
+
+describe('UsageFilters — 清理二次确认', () => {
+  it('asks for confirmation before emitting cleanup', async () => {
+    const wrapper = mountFilters()
+    await wrapper.get('[data-testid="usage-filters-cleanup"]').trigger('click')
+    // 第一次点只开确认弹窗，不触发清理
+    expect(wrapper.emitted('cleanup')).toBeUndefined()
+    await flushPromises()
+    const confirm = wrapper.get('[data-testid="usage-filters-cleanup-confirm-button"]')
+    await confirm.trigger('click')
+    expect(wrapper.emitted('cleanup')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('does not emit cleanup when the confirmation is cancelled', async () => {
+    const wrapper = mountFilters()
+    await wrapper.get('[data-testid="usage-filters-cleanup"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="usage-filters-cleanup-cancel"]').trigger('click')
+    expect(wrapper.emitted('cleanup')).toBeUndefined()
+    wrapper.unmount()
+  })
+})
+
+describe('UsageFilters — 移动端折叠默认收起', () => {
+  const originalWidth = window.innerWidth
+  afterEach(() => {
+    window.innerWidth = originalWidth
+  })
+
+  it('keeps the advanced area collapsed by default on a phone-width viewport', () => {
+    window.innerWidth = 390
+    const wrapper = mountFilters()
+    expect((wrapper.vm as any).advancedOpen).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('expands the advanced area by default on a desktop viewport', () => {
+    const wrapper = mountFilters()
+    expect((wrapper.vm as any).advancedOpen).toBe(true)
+    wrapper.unmount()
+  })
+})
+
 describe('UsageFilters — user search dropdown', () => {
   beforeEach(() => {
+    // UFormField 对第一个有错误的字段会 scrollIntoView，jsdom 没实现
+    Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {})
     vi.useFakeTimers()
     mockSearchUsers.mockReset()
     mockSearchApiKeys.mockResolvedValue([])
@@ -182,24 +417,22 @@ describe('UsageFilters — user search dropdown', () => {
       { id: 1, email: 'active@test.com', deleted: false },
     ])
 
-    const wrapper = mountFilters()
+    const wrapper = mountFiltersExpanded()
 
     // Trigger focus (sets showUserDropdown = true) then input (fires debounceUserSearch)
-    const input = wrapper.find('.usage-filter-dropdown input[type="text"]')
-    await input.trigger('focus')
-    await input.setValue('test')
-    await input.trigger('input')
+    const userInput = fieldByLabel(wrapper, 'User').get('input[type="text"]')
+    await userInput.trigger('focus')
+    await userInput.setValue('test')
+    await userInput.trigger('input')
 
     // Advance debounce timer (300ms) then flush the resolved promise
     vi.advanceTimersByTime(300)
     await flushPromises()
 
     // --- (b) Sort: active user should appear BEFORE deleted user ---
-    // Check the underlying component state via rendered DOM order
-    const buttons = wrapper.findAll('.usage-filter-dropdown button[type="button"]')
+    const buttons = wrapper.findAll('[data-testid="usage-filter-user-options"] button')
     const emailTexts = buttons.map((b) => b.text())
 
-    // active@test.com should be listed first
     const activeIdx = emailTexts.findIndex((t) => t.includes('active@test.com'))
     const deletedIdx = emailTexts.findIndex((t) => t.includes('gone@test.com'))
     expect(activeIdx).toBeGreaterThanOrEqual(0)
@@ -207,20 +440,16 @@ describe('UsageFilters — user search dropdown', () => {
     expect(activeIdx).toBeLessThan(deletedIdx)
 
     // --- (a) Label: deleted user's button shows the badge text ---
-    const deletedButton = buttons[deletedIdx]
-    expect(deletedButton.text()).toContain('deleted')
+    expect(buttons[deletedIdx].text()).toContain('deleted')
+    expect(buttons[activeIdx].text()).not.toContain('deleted')
 
-    // active user's button does NOT show the badge text
-    const activeButton = buttons[activeIdx]
-    expect(activeButton.text()).not.toContain('deleted')
-
-    // --- (c) Selection: clicking active user button sets the draft user_id ---
-    await activeButton.trigger('click')
+    // --- (c) Selection: clicking active user button sets filters.user_id ---
+    await buttons[activeIdx].trigger('click')
     await flushPromises()
-
-    // selectUser 只写草稿（modelValue 原地更新），不发查询；用户需点「查询」才生效
-    expect(wrapper.emitted('query')).toBeUndefined()
     expect(wrapper.props('modelValue').user_id).toBe(1)
+    // 选人后自动带出该用户的密钥候选，且不自动查询（手动点「查询」才生效）
+    expect(mockSearchApiKeys).toHaveBeenCalledWith(1, '')
+    expect(wrapper.emitted('query')).toBeUndefined()
   })
 
   it('keeps results from the latest user search when responses arrive out of order', async () => {
@@ -230,15 +459,15 @@ describe('UsageFilters — user search dropdown', () => {
       .mockImplementationOnce(() => firstSearch.promise)
       .mockImplementationOnce(() => secondSearch.promise)
 
-    const wrapper = mountFilters()
-    const input = wrapper.find('.usage-filter-dropdown input[type="text"]')
-    await input.trigger('focus')
+    const wrapper = mountFiltersExpanded()
+    const userInput = fieldByLabel(wrapper, 'User').get('input')
+    await userInput.trigger('focus')
 
-    await input.setValue('a')
+    await userInput.setValue('a')
     vi.advanceTimersByTime(300)
     await flushPromises()
 
-    await input.setValue('ab')
+    await userInput.setValue('ab')
     vi.advanceTimersByTime(300)
     await flushPromises()
 
@@ -256,21 +485,33 @@ describe('UsageFilters — user search dropdown', () => {
     const pendingSearch = deferred<Array<{ id: number; email: string; deleted: boolean }>>()
     mockSearchUsers.mockImplementationOnce(() => pendingSearch.promise)
 
-    const wrapper = mountFilters()
-    const input = wrapper.find('.usage-filter-dropdown input[type="text"]')
-    await input.trigger('focus')
+    const wrapper = mountFiltersExpanded()
+    const userInput = fieldByLabel(wrapper, 'User').get('input')
+    await userInput.trigger('focus')
 
-    await input.setValue('stale')
+    await userInput.setValue('stale')
     vi.advanceTimersByTime(300)
     await flushPromises()
 
-    await input.setValue('')
+    await userInput.setValue('')
     vi.advanceTimersByTime(300)
     await flushPromises()
 
     pendingSearch.resolve([{ id: 3, email: 'stale@test.com', deleted: false }])
     await flushPromises()
     expect(wrapper.text()).not.toContain('stale@test.com')
+  })
+
+  it('clears the selected user and its API key from the trailing clear button', async () => {
+    const filters = defaultFilters()
+    filters.user_id = 1
+    filters.api_key_id = 9
+    const wrapper = mountFilters(filters)
+    const clear = wrapper.get('[data-testid="usage-filter-clear-user"]')
+    await clear.trigger('click')
+    expect(filters.user_id).toBeUndefined()
+    expect(filters.api_key_id).toBeUndefined()
+    wrapper.unmount()
   })
 })
 
@@ -283,46 +524,21 @@ describe('UsageFilters — model options come from prop (no dup request)', () =>
   afterEach(() => { vi.useRealTimers() })
 
   it('does not call dashboard.getModelStats on mount and renders model options from prop', async () => {
-    const wrapper = mount(UsageFilters, {
-      props: {
-        modelValue: defaultFilters(),
-        exporting: false,
-        startDate: '2026-05-01',
-        endDate: '2026-05-28',
-        showActions: false,
-        modelOptions: ['claude-3', 'gpt-4o'],
-      },
-      global: { stubs: { Select: true, Teleport: true } },
-    })
+    const wrapper = mountFilters(defaultFilters(), { modelOptions: ['claude-3', 'gpt-4o'] })
     await flushPromises()
 
     expect(mockGetModelStats).not.toHaveBeenCalled()
 
     const opts = (wrapper.vm as any).modelOptions as Array<{ value: string | null; label: string }>
     expect(opts.map((o) => o.value)).toEqual([null, 'claude-3', 'gpt-4o'])
+    wrapper.unmount()
   })
 })
 
 describe('UsageFilters — native compaction filter', () => {
   it('offers only All/Compaction and emits the independent boolean filter', async () => {
-    const SelectStub = {
-      name: 'Select',
-      props: ['modelValue', 'options'],
-      emits: ['update:modelValue', 'change'],
-      template: '<div />',
-    }
     const filters = defaultFilters()
-    const wrapper = mount(UsageFilters, {
-      props: {
-        modelValue: filters,
-        exporting: false,
-        startDate: '2026-05-01',
-        endDate: '2026-05-28',
-        showActions: false,
-        modelOptions: [],
-      },
-      global: { stubs: { Select: SelectStub, Teleport: true } },
-    })
+    const wrapper = mountFilters(filters)
 
     const compactionSelect = wrapper.findAllComponents(SelectStub).find((select: any) =>
       (select.props('options') as Array<{ value: unknown }>).some((option) => option.value === true)
@@ -332,109 +548,33 @@ describe('UsageFilters — native compaction filter', () => {
       { value: null, label: 'All Requests' },
       { value: true, label: 'Compaction Only' },
     ])
+    // 刻意不提供 false：「全部」本身就是“不过滤”，false 没有意义
     expect(compactionSelect!.props('options')).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ value: false })])
     )
 
     compactionSelect!.vm.$emit('update:modelValue', true)
-    compactionSelect!.vm.$emit('change')
     await wrapper.vm.$nextTick()
 
+    // 改值只落草稿；查询由「查询」按钮 / 回车触发
     expect(filters.native_compaction_v2).toBe(true)
     expect(wrapper.emitted('query')).toBeUndefined()
-  })
-})
-
-// 布局重排 + 手动查询语义
-function mountWithActions(filters = defaultFilters(), extraProps: Record<string, unknown> = {}) {
-  return mount(UsageFilters, {
-    props: {
-      modelValue: filters,
-      exporting: false,
-      startDate: '2026-05-01',
-      endDate: '2026-05-28',
-      modelOptions: [],
-      ...extraProps,
-    },
-    global: {
-      stubs: {
-        Select: true,
-        Teleport: true,
-      },
-    },
-  })
-}
-
-describe('UsageFilters — 多列网格布局', () => {
-  it('lays fields out in a responsive grid: 1 column mobile / 2 tablet / 3 desktop', () => {
-    const wrapper = mountWithActions()
-    const grid = wrapper.get('[data-testid="usage-filter-grid"]')
-    expect(grid.classes()).toContain('grid')
-    expect(grid.classes()).toEqual(expect.arrayContaining([
-      'grid-cols-1',
-      'sm:grid-cols-2',
-      'xl:grid-cols-3',
-    ]))
-    // 每个筛选项：label 在上、控件占满整格
-    const field = wrapper.get('[data-testid="usage-date-range-filter"]')
-    expect(field.classes()).toEqual(expect.arrayContaining(['flex', 'flex-col', 'min-w-0']))
-    expect(field.find('label.input-label').exists()).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('renders one right-aligned action row with a primary query button and secondary actions', () => {
-    const wrapper = mountWithActions()
-    const actions = wrapper.get('[data-testid="usage-filter-actions"]')
-    expect(actions.classes()).toEqual(expect.arrayContaining(['flex', 'flex-wrap', 'justify-end', 'border-t']))
-
-    const query = wrapper.get('[data-testid="usage-filter-query"]')
-    expect(query.classes()).toContain('btn-primary')
-
-    for (const id of ['reset', 'refresh', 'export-excel', 'export-csv']) {
-      expect(wrapper.get(`[data-testid="usage-filter-${id}"]`).classes()).toContain('btn-secondary')
-    }
-    expect(wrapper.get('[data-testid="usage-filter-cleanup"]').classes()).toContain('btn-danger')
-    wrapper.unmount()
-  })
-
-  it('orders buttons: query → reset → refresh → column settings slot → cleanup → export excel → export csv', () => {
-    const wrapper = mount(UsageFilters, {
-      props: {
-        modelValue: defaultFilters(),
-        exporting: false,
-        startDate: '2026-05-01',
-        endDate: '2026-05-28',
-        modelOptions: [],
-      },
-      slots: { 'after-reset': '<button data-testid="usage-column-settings">columns</button>' },
-      global: { stubs: { Select: true, Teleport: true } },
-    })
-    const ids = Array.from(wrapper.get('[data-testid="usage-filter-actions"]').element.querySelectorAll('button'))
-      .map((el) => el.getAttribute('data-testid'))
-    expect(ids).toEqual([
-      'usage-filter-query',
-      'usage-filter-reset',
-      'usage-filter-refresh',
-      'usage-column-settings',
-      'usage-filter-cleanup',
-      'usage-filter-export-excel',
-      'usage-filter-export-csv',
-    ])
-    wrapper.unmount()
-  })
-
-  it('hides the action row when embedded without actions (cleanup dialog)', () => {
-    const wrapper = mountWithActions(defaultFilters(), { showActions: false })
-    expect(wrapper.find('[data-testid="usage-filter-actions"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })
 
+// ---------------------------------------------------------------------------
+// 手动查询：所有筛选参数的组装与改前完全一致，只是提交时机从「改即查」变成「点查询」
+// ---------------------------------------------------------------------------
 describe('UsageFilters — 手动查询', () => {
+  // 高级区（含请求 ID）在测试里以桌面视口挂载，挂载即展开
+  const mountExpanded = async (filters = defaultFilters(), extraProps: Record<string, unknown> = {}) =>
+    mountFiltersExpanded(filters, extraProps)
+
   it('does not query when a filter is edited', async () => {
     const filters = defaultFilters()
-    const wrapper = mountWithActions(filters)
-    const input = wrapper.get('[data-testid="usage-request-id"]')
+    const wrapper = await mountExpanded(filters)
+    const input = fieldByLabel(wrapper, 'Request ID').get('input')
     await input.setValue('550e8400')
     await input.trigger('input')
     expect(filters.request_id).toBe('550e8400')
@@ -442,57 +582,81 @@ describe('UsageFilters — 手动查询', () => {
     wrapper.unmount()
   })
 
-  it('queries once with the draft when the query button is clicked', async () => {
+  it('queries once with the draft when the search button is clicked', async () => {
     const filters = defaultFilters()
-    const wrapper = mountWithActions(filters)
-    await wrapper.get('[data-testid="usage-request-id"]').setValue('=abc123')
-    await wrapper.get('[data-testid="usage-filter-query"]').trigger('click')
+    const wrapper = await mountExpanded(filters)
+    await fieldByLabel(wrapper, 'Request ID').get('input').setValue('=abc123')
+    await wrapper.get('[data-testid="usage-filters-search"]').trigger('click')
     expect(wrapper.emitted('query')).toHaveLength(1)
     expect(filters.request_id).toBe('=abc123')
     wrapper.unmount()
   })
 
-  it('treats Enter in a filter input as clicking query', async () => {
-    const wrapper = mountWithActions()
-    const input = wrapper.get('[data-testid="usage-request-id"]')
+  it('treats Enter in a filter input as clicking search', async () => {
+    const wrapper = await mountExpanded()
+    const input = fieldByLabel(wrapper, 'Request ID').get('input')
     await input.setValue('^client:')
     await input.trigger('keyup.enter')
     expect(wrapper.emitted('query')).toHaveLength(1)
     wrapper.unmount()
   })
 
-  it('treats Enter in an observer ID input as clicking query', async () => {
-    const wrapper = mountWithActions(defaultFilters(), { observer: true })
-    const input = wrapper.get('#observer-user_id')
-    await input.setValue('42')
-    await input.trigger('keyup.enter')
-    expect(wrapper.emitted('query')).toHaveLength(1)
+  it('keeps every filter parameter on the draft object (parameter set unchanged)', async () => {
+    const filters = defaultFilters()
+    const wrapper = await mountExpanded(filters)
+
+    // select 类筛选：改值即写草稿
+    const selects = wrapper.findAllComponents(SelectStub)
+    // 按序号显式指定下拉：0=模型 1=类型 2=请求类别 3=计费类型 4=计费模式 5=上游模型审计 6=分组
+    // （不要按 option 值反查：0/false、true 会在多个下拉里同时出现）
+    const selectAt = (index: number) => selects[index]
+    selectAt(1).vm.$emit('update:modelValue', 'stream')
+    selectAt(3).vm.$emit('update:modelValue', 0)
+    selectAt(4).vm.$emit('update:modelValue', 'token')
+    selectAt(5).vm.$emit('update:modelValue', true)
+    // 模型下拉是 searchable 的，可直接落任意模型名（选项来自 prop）
+    selectAt(0).vm.$emit('update:modelValue', 'claude-3')
+    await wrapper.vm.$nextTick()
+
+    expect(filters).toMatchObject({
+      request_type: 'stream',
+      billing_type: 0,
+      billing_mode: 'token',
+      upstream_model_mismatch: true,
+      model: 'claude-3',
+    })
+    // 未改动的参数保持默认值，不被新组件擅自赋值
+    expect(filters.group_id).toBeNull()
+    expect(filters.account_id).toBeUndefined()
     wrapper.unmount()
   })
 
-  it('emits reset / refresh / cleanup / export / export-csv from the action row', async () => {
-    const wrapper = mountWithActions()
-    await wrapper.get('[data-testid="usage-filter-reset"]').trigger('click')
-    await wrapper.get('[data-testid="usage-filter-refresh"]').trigger('click')
-    await wrapper.get('[data-testid="usage-filter-cleanup"]').trigger('click')
-    await wrapper.get('[data-testid="usage-filter-export-excel"]').trigger('click')
-    await wrapper.get('[data-testid="usage-filter-export-csv"]').trigger('click')
+  it('emits reset / refresh from the action row without triggering a query', async () => {
+    const wrapper = mountFilters()
+    await wrapper.get('[data-testid="usage-filters-reset"]').trigger('click')
+    await wrapper.get('[data-testid="usage-filters-refresh"]').trigger('click')
     expect(wrapper.emitted('reset')).toHaveLength(1)
     expect(wrapper.emitted('refresh')).toHaveLength(1)
-    expect(wrapper.emitted('cleanup')).toHaveLength(1)
-    expect(wrapper.emitted('export')).toHaveLength(1)
-    expect(wrapper.emitted('export-csv')).toHaveLength(1)
-    // 这些动作本身都不应额外触发查询，避免重复请求
     expect(wrapper.emitted('query')).toBeUndefined()
     wrapper.unmount()
   })
 
   it('keeps observer ID edits as draft without emitting query', async () => {
     const filters = defaultFilters()
-    const wrapper = mountWithActions(filters, { observer: true })
+    const wrapper = await mountExpanded(filters, { observer: true })
     await wrapper.get('#observer-account_id').setValue('7')
     expect(filters.account_id).toBe(7)
     expect(wrapper.emitted('query')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('forwards the page column menu into the more menu', () => {
+    const columnMenuItems = [{ label: 'Request ID', type: 'checkbox' as const, checked: false }]
+    const wrapper = mountFilters(defaultFilters(), { columnMenuItems })
+    const groups = (wrapper.vm as any).moreMenuItems as Array<Array<{ label: string }>>
+    expect(groups[0].map((item) => item.label)).toEqual(['Request ID'])
+    // 导出仍在第二组
+    expect(groups[1].map((item) => item.label)).toEqual(['Export Excel', 'Export CSV'])
     wrapper.unmount()
   })
 })

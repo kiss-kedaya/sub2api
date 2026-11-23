@@ -153,8 +153,20 @@ vi.mock('vue-router', () => ({
 const layoutStub = { template: '<div><slot /></div>' }
 const chartStub = { template: '<div />' }
 const iconStub = { template: '<span />' }
+// 列设置现在是筛选卡「更多」菜单里的一项，由 UsageFilters 渲染 columnMenuItems。
 const adminFiltersStub = defineComponent({
-  template: '<div><slot name="after-reset" /></div>',
+  props: ['columnMenuItems'],
+  template: `
+    <div>
+      <button
+        v-for="item in columnMenuItems || []"
+        :key="item.value"
+        :data-testid="'usage-column-toggle-' + item.value"
+        @click="item.onUpdateChecked?.()"
+      >{{ item.label }}</button>
+      <slot name="after-reset" />
+    </div>
+  `,
 })
 
 const emptyStats = {
@@ -286,7 +298,6 @@ describe('usage reasoning effort page display', () => {
 
     expect(wrapper.find('[data-testid="reasoning-effort-cell"]').exists()).toBe(false)
 
-    await wrapper.get('[data-testid="usage-column-settings"]').trigger('click')
     await wrapper.get('[data-testid="usage-column-toggle-reasoning_effort"]').trigger('click')
     await flushPromises()
 
@@ -319,7 +330,6 @@ describe('usage reasoning effort page display', () => {
     })
     await flushPromises()
 
-    await wrapper.get('[data-testid="usage-column-settings"]').trigger('click')
     await wrapper.get('[data-testid="usage-column-toggle-reasoning_effort"]').trigger('click')
     await flushPromises()
 

@@ -631,6 +631,22 @@ export default {
           cost: '费用'
         }
       },
+      filters: {
+        title: '筛选',
+        activeCount: '已生效 {count} 项',
+        advanced: '高级筛选',
+        groupRequest: '请求',
+        groupBilling: '计费',
+        groupScope: '范围',
+        search: '查询',
+        requestIdHint: '默认片段搜索；=完整ID 精确；^前缀 查找',
+        compactionHint: '区分普通请求与原生压缩请求',
+        upstreamModelAuditHint: '核对上游返回模型与请求模型是否一致',
+        clearUser: '清除用户筛选',
+        clearApiKey: '清除密钥筛选',
+        clearAccount: '清除账户筛选',
+        anonymousIdPlaceholder: 'ID',
+      },
       cleanup: {
         button: '清理',
         title: '清理使用记录',

@@ -634,6 +634,22 @@ export default {
           cost: 'Cost'
         }
       },
+      filters: {
+        title: 'Filters',
+        activeCount: '{count} active',
+        advanced: 'Advanced filters',
+        groupRequest: 'Request',
+        groupBilling: 'Billing',
+        groupScope: 'Scope',
+        search: 'Search',
+        requestIdHint: 'Fragment match by default; =exact ID; ^prefix match',
+        compactionHint: 'Tell regular requests from native compaction ones',
+        upstreamModelAuditHint: 'Check the upstream response model against the requested one',
+        clearUser: 'Clear user filter',
+        clearApiKey: 'Clear API key filter',
+        clearAccount: 'Clear account filter',
+        anonymousIdPlaceholder: 'ID',
+      },
       cleanup: {
         button: 'Cleanup',
         title: 'Cleanup Usage Records',
