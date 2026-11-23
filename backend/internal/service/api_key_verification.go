@@ -494,6 +494,23 @@ func (s *APIKeyVerificationService) VerifyForSeal(ctx context.Context, userID in
 	return s.checkLoginPassword(ctx, user, password)
 }
 
+// VerifyForLegacySeal 处理「封存请求既没带 password 也没带 auth_factor」的旧客户端兼容分支。
+//
+// 这个分支不能是无校验的后门：持会话者不带任何校验材料就能覆盖已封存的密文，还把 auth_factor
+// 清成 NULL（NULL 代表「改造前的旧密文」，二次查看不再限制因子）。所以账号存在可用因子时它也必须
+// 走校验：旧客户端提供不了校验材料，只能被拒（VERIFY_REQUIRED），升级到新前端后带登录密码封存即可；
+// 账号没有任何可用因子（第三方注册且未绑 2FA）时保持放行，与创建 Key 是同一条语义。
+func (s *APIKeyVerificationService) VerifyForLegacySeal(ctx context.Context, userID int64) error {
+	factors, err := s.Factors(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if factors.Available() {
+		return ErrAPIKeyVerificationRequired
+	}
+	return nil
+}
+
 // checkLoginPassword 是登录密码的唯一比对入口（创建 / 轮换 / 封存 / 二次查看共用）：
 // 先走按用户的失败预算，再做 bcrypt，成功后清零。
 //

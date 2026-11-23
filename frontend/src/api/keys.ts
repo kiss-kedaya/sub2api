@@ -262,7 +262,10 @@ export async function rotateKey(
  * Save / replace the local ciphertext that lets the user view this key later.
  *
  * The browser encrypts the plaintext with the login password before calling
- * this; the server never sees the password or the plaintext.
+ * this, so the request carries the ciphertext, not the key. The login password
+ * is also sent in the same request body (over TLS) so the server can bcrypt-check
+ * it — a wrong password would make the key undecryptable later; the server never
+ * stores, logs or audits it.
  * `PUT /api/v1/user/api-keys/:id/secret-seal`
  */
 export interface PutSecretSealOptions {

@@ -62,7 +62,8 @@ func RegisterUserRoutes(
 			user.POST("/security/passkey/verify/begin", panelRateLimiter.KeyVerification(), h.APIKey.BeginKeyPasskeyVerification)
 			user.POST("/security/passkey/verify/finish", panelRateLimiter.KeyVerification(), h.APIKey.FinishKeyPasskeyVerification)
 			user.POST("/api-keys/:id/reveal-authorize", panelRateLimiter.KeyVerification(), h.APIKey.AuthorizeReveal)
-			// 浏览器端封存 API Key 密文：服务端只存取，不解密、不接触密码。
+			// 浏览器端封存 API Key 密文：服务端只存取、不解密；封存请求会带登录密码，只用于 bcrypt 校验
+			// （见 api_key_secret_handler.go），不落库、不进日志、不进审计。
 			// PUT 限制 8KB 请求体并在封存前校验登录密码（每用户 60 次/分钟，另有按用户的
 			// 密码失败预算兜底口令猜测）；GET 需要 reveal grant，另有每用户 20 次/分钟的固定限流。
 			user.PUT("/api-keys/:id/secret-seal", panelRateLimiter.SecretSealWrite(), middleware.RequestBodyLimit(service.APIKeySecretMaxBodyBytes), h.APIKey.PutSecretSeal)
