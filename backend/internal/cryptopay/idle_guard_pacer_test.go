@@ -40,6 +40,30 @@ func TestIdleGuardPacerBacksOffExponentiallyAndCaps(t *testing.T) {
 	}
 }
 
+// The jitter is random, so a cap that is off by a doubling (320s instead of 300s) only
+// shows on some draws. Draw many times, including absurd failure counts: the delay
+// must stay inside five minutes +-20% and must never overflow into a negative or
+// zero wait (which would make the guard hammer a dead provider again).
+func TestIdleGuardPacerDelayNeverExceedsTheCap(t *testing.T) {
+	now := time.Date(2026, 11, 24, 4, 0, 0, 0, time.UTC)
+	for _, failures := range []int{7, 8, 30, 100000} {
+		for draw := 0; draw < 300; draw++ {
+			var p idleGuardPacer
+			for i := 1; i < failures && i < 12; i++ { // walk up to the cap cheaply
+				p.note("plasma", errors.New("down"), now)
+			}
+			if failures > 12 {
+				p.chains["plasma"].failures = failures - 1 // as if it had failed that many times
+			}
+			p.note("plasma", errors.New("down"), now)
+			got := p.chains["plasma"].next.Sub(now)
+			if got < idleGuardMaxDelay-idleGuardMaxDelay/5 || got > idleGuardMaxDelay+idleGuardMaxDelay/5 {
+				t.Fatalf("failures=%d draw=%d: delay %v is outside 5min +-20%%", failures, draw, got)
+			}
+		}
+	}
+}
+
 func TestIdleGuardPacerFirstSuccessResumesFullCadence(t *testing.T) {
 	var p idleGuardPacer
 	now := time.Now()
