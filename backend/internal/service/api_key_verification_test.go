@@ -21,6 +21,10 @@ type apiKeyVerifyUserRepoStub struct {
 	UserRepository
 	user *User
 	err  error
+	// identities / identitiesErr / identityLookups：第三方注册账号判「是否设置过本地密码」时查的认证身份。
+	identities      []UserAuthIdentityRecord
+	identitiesErr   error
+	identityLookups int
 }
 
 func (r *apiKeyVerifyUserRepoStub) GetByID(context.Context, int64) (*User, error) {
@@ -28,6 +32,14 @@ func (r *apiKeyVerifyUserRepoStub) GetByID(context.Context, int64) (*User, error
 		return nil, r.err
 	}
 	return r.user, nil
+}
+
+func (r *apiKeyVerifyUserRepoStub) ListUserAuthIdentities(context.Context, int64) ([]UserAuthIdentityRecord, error) {
+	r.identityLookups++
+	if r.identitiesErr != nil {
+		return nil, r.identitiesErr
+	}
+	return r.identities, nil
 }
 
 type apiKeyVerifyKeyRepoStub struct {

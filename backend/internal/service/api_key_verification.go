@@ -275,23 +275,55 @@ func (s *APIKeyVerificationService) verificationStore() (APIKeyVerificationStore
 	return s.store, nil
 }
 
-// resolveUserFactorSource 报告账号是否「知道自己的登录密码」。
-//
-// 说明：sub2api 的 users.password_hash 是 NOT NULL，OAuth 注册会自动塞一个
-// 随机密码，所以「有 hash」不等于「用户知道密码」。这里按注册来源判定：
-// GitHub / Google / OIDC / LinuxDo / 钉钉 / 微信 注册的账号视为密码不可用，
-// 邮箱注册（含邀请码）视为可用。该判定只影响「展示与可选性」，不会绕过任何
-// 校验；密码校验仍以 bcrypt 比对为准。
-func apiKeyPasswordKnownByUser(user *User) bool {
-	if user == nil || strings.TrimSpace(user.PasswordHash) == "" {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(user.SignupSource)) {
+// apiKeyEmailBindIdentitySource 是 AuthService.BindEmailIdentity 写在邮箱身份
+// metadata.source 里的值（见 auth_email_binding.go）。api_key_verification_email_bind_test.go
+// 里的集成用例用真实的绑定流程钉住这个值：改了一边，另一边的测试会红。
+const apiKeyEmailBindIdentitySource = "auth_service_email_bind"
+
+// apiKeyOAuthSignupSource 报告注册来源是否「第三方登录注册」（这类账号注册时由系统塞了随机口令）。
+func apiKeyOAuthSignupSource(signupSource string) bool {
+	switch strings.ToLower(strings.TrimSpace(signupSource)) {
 	case "github", "google", "oidc", "linuxdo", "wechat", "dingtalk", "oauth":
-		return false
-	default:
 		return true
+	default:
+		return false
 	}
+}
+
+// passwordKnownByUser 报告账号是否「知道自己的登录密码」。
+//
+// users.password_hash 是 NOT NULL，第三方登录注册会自动塞一个随机口令，所以「有 hash」不等于
+// 「用户知道密码」：
+//   - 邮箱注册（signup_source 为空 / email）：知道；
+//   - 第三方登录注册：只有用户之后亲手设过本地密码才算知道。仓库里没有「设置过本地密码」的显式
+//     标记（这里也不新加列），唯一可靠的持久化证据是绑定邮箱——BindEmailIdentity 必须提交新密码
+//     （换绑还要先验旧密码），并留下来源为 auth_service_email_bind 的邮箱身份。
+//     user_repo_create / user_repo_update / auth_service_login_backfill / auth_service_dual_write
+//     是任何用户创建或登录时都会写的，不能当证据：拿它们当证据，会把只有随机口令的账号判成
+//     「知道密码」，进而要求它输入一个根本不存在的口令，创建 Key 被永久卡死；
+//   - 其余途径（找回密码重置、第三方注册当场设的密码）没有任何痕迹，保守按「不知道」处理：
+//     这只会让该用户少一个可选因子，不会让账号失去校验，也不会把只有随机口令的账号锁在创建 Key 之外。
+//
+// 该判定只影响「展示与可选性」以及「有没有可用因子」，密码校验本身仍以 bcrypt 比对为准。
+// 查证据失败时返回错误（调用方 fail-closed），而不是退回「没有密码因子」：那样一个设过密码、又没有
+// 其它因子的账号会在数据库抖动时被判成「没有任何可用因子」而放行创建。
+func (s *APIKeyVerificationService) passwordKnownByUser(ctx context.Context, user *User) (bool, error) {
+	if user == nil || strings.TrimSpace(user.PasswordHash) == "" {
+		return false, nil
+	}
+	if !apiKeyOAuthSignupSource(user.SignupSource) {
+		return true, nil
+	}
+	records, err := s.userRepo.ListUserAuthIdentities(ctx, user.ID)
+	if err != nil {
+		return false, fmt.Errorf("list auth identities for api key verification: %w", err)
+	}
+	for _, record := range filterUserAuthIdentities(records, "email") {
+		if firstStringIdentityValue(record.Metadata, "source") == apiKeyEmailBindIdentitySource {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // passkeyCount 返回当前账号已绑定的 Passkey 数量（服务未启用时为 0）。
@@ -330,7 +362,10 @@ func (s *APIKeyVerificationService) factorsForUser(ctx context.Context, user *Us
 	if s == nil || user == nil {
 		return nil, ErrAPIKeyVerificationUnavailable
 	}
-	passwordAvailable := apiKeyPasswordKnownByUser(user)
+	passwordAvailable, err := s.passwordKnownByUser(ctx, user)
+	if err != nil {
+		return nil, err
+	}
 	totpEnabled := user.TotpEnabled
 	count, err := s.passkeyCount(ctx, user.ID)
 	if err != nil {
@@ -449,7 +484,11 @@ func (s *APIKeyVerificationService) VerifyForSeal(ctx context.Context, userID in
 	if user == nil {
 		return ErrAPIKeyVerificationUnavailable
 	}
-	if !apiKeyPasswordKnownByUser(user) {
+	known, err := s.passwordKnownByUser(ctx, user)
+	if err != nil {
+		return err
+	}
+	if !known {
 		return ErrAPIKeyFactorUnavailable
 	}
 	return s.checkLoginPassword(ctx, user, password)
@@ -664,7 +703,8 @@ func (s *APIKeyVerificationService) verifyFactor(
 	}
 	switch in.Method {
 	case APIKeyFactorPassword:
-		if !apiKeyPasswordKnownByUser(user) {
+		// factors 已经按 passwordKnownByUser 算过（上面的 methodAvailable），这里不再查第二遍。
+		if !factors.PasswordAvailable {
 			return nil, ErrAPIKeyFactorUnavailable
 		}
 		if err := s.checkLoginPassword(ctx, user, in.Password); err != nil {

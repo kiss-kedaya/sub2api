@@ -55,14 +55,14 @@ type accountTypeEngine struct {
 	store  *handlerVerifyStore
 }
 
-func newAccountTypeEngine(t *testing.T, user *service.User, passkeyCount int, idempotencyRepo service.IdempotencyRepository) *accountTypeEngine {
+func newAccountTypeEngine(t *testing.T, user *service.User, passkeyCount int, idempotencyRepo service.IdempotencyRepository, identities ...service.UserAuthIdentityRecord) *accountTypeEngine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
 	keys := newPlaintextGuardKeyRepo()
 	apiKeyService := service.NewAPIKeyService(keys, availableGroupsUserRepoStub{}, nil, nil, nil, nil, &config.Config{})
 	store := newHandlerVerifyStore()
-	users := &handlerVerifyUserRepo{user: user}
+	users := &handlerVerifyUserRepo{user: user, identities: identities}
 	totpService := service.NewTotpService(users, accountTypeTOTPEncryptor{}, store, nil, nil, nil)
 	passkeys, err := service.NewPasskeyService(&config.Config{WebAuthn: config.WebAuthnConfig{
 		Enabled:       true,
@@ -247,6 +247,50 @@ func TestKeyCreateAndRotateForAnAccountWithoutAnyFactor(t *testing.T) {
 	_, current, _ := totpCodesForThreeSteps(t)
 	rec = doJSON(engine.router, http.MethodPost, "/api/v1/keys", totpBody(`"name":"canvas",`, current), nil)
 	require.Equal(t, "VERIFY_FACTOR_UNAVAILABLE", plaintextGuardReason(t, rec))
+}
+
+// 审计 F16：第三方登录注册、之后在资料页绑定邮箱并设置了本地密码的账号，原先因为「按注册来源判断」
+// 永远没有密码因子。现在按「是否真的设置过本地密码」判断：这类账号创建 / 轮换要用密码校验；
+// 而只有系统随机口令的第三方账号（身份表里只有创建 / 登录时写的邮箱身份）仍然没有因子、照常放行。
+func TestKeyCreateForAThirdPartyAccountThatSetALocalPassword(t *testing.T) {
+	bound := service.UserAuthIdentityRecord{ProviderType: "email", ProviderKey: "email", Metadata: map[string]any{"source": "auth_service_email_bind"}}
+	created := service.UserAuthIdentityRecord{ProviderType: "email", ProviderKey: "email", Metadata: map[string]any{"source": "user_repo_create"}}
+
+	t.Run("bound an email with a password", func(t *testing.T) {
+		user := accountTypeUser(t, false)
+		require.NoError(t, user.SetPassword("chosen-password"))
+		engine := newAccountTypeEngine(t, user, 0, nil, created, bound)
+
+		rec := doJSON(engine.router, http.MethodGet, "/api/v1/user/security/verification-factors", "", nil)
+		require.Contains(t, rec.Body.String(), `"password_available":true`)
+		require.Contains(t, rec.Body.String(), `"seal_available":true`)
+		require.Contains(t, rec.Body.String(), `"available_methods":["password"]`)
+
+		// 现在有了密码因子：创建 / 轮换不带校验被拒，带对密码才通过。
+		rec = doJSON(engine.router, http.MethodPost, "/api/v1/keys", `{"name":"canvas"}`, nil)
+		require.Equal(t, "VERIFY_REQUIRED", plaintextGuardReason(t, rec))
+		rec = doJSON(engine.router, http.MethodPut, "/api/v1/keys/1", `{"regenerate_key":true}`, nil)
+		require.Equal(t, "VERIFY_REQUIRED", plaintextGuardReason(t, rec))
+		rec = doJSON(engine.router, http.MethodPost, "/api/v1/keys",
+			`{"name":"canvas","verification":{"method":"password","password":"wrong-password"}}`, nil)
+		require.Equal(t, "VERIFY_PASSWORD_INVALID", plaintextGuardReason(t, rec))
+		require.Zero(t, engine.keys.guardCreateCount())
+		rec = doJSON(engine.router, http.MethodPost, "/api/v1/keys",
+			`{"name":"canvas","verification":{"method":"password","password":"chosen-password"}}`, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.NotEmpty(t, plaintextGuardBodyKey(t, rec))
+	})
+
+	t.Run("only the system-generated password", func(t *testing.T) {
+		engine := newAccountTypeEngine(t, accountTypeUser(t, false), 0, nil, created)
+
+		rec := doJSON(engine.router, http.MethodGet, "/api/v1/user/security/verification-factors", "", nil)
+		require.Contains(t, rec.Body.String(), `"password_available":false`)
+		require.Contains(t, rec.Body.String(), `"available_methods":[]`)
+		rec = doJSON(engine.router, http.MethodPost, "/api/v1/keys", `{"name":"canvas"}`, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.NotEmpty(t, plaintextGuardBodyKey(t, rec))
+	})
 }
 
 // 创建走幂等：重放同一个 Idempotency-Key 必须重新校验。TOTP 账号的码只能用一次，

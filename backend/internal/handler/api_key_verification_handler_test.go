@@ -25,6 +25,8 @@ import (
 type handlerVerifyUserRepo struct {
 	service.UserRepository
 	user *service.User
+	// identities：第三方注册账号判「是否设置过本地密码」时查的认证身份（默认没有）。
+	identities []service.UserAuthIdentityRecord
 }
 
 func (r *handlerVerifyUserRepo) GetByID(_ context.Context, id int64) (*service.User, error) {
@@ -32,6 +34,10 @@ func (r *handlerVerifyUserRepo) GetByID(_ context.Context, id int64) (*service.U
 		return nil, service.ErrUserNotFound
 	}
 	return r.user, nil
+}
+
+func (r *handlerVerifyUserRepo) ListUserAuthIdentities(context.Context, int64) ([]service.UserAuthIdentityRecord, error) {
+	return r.identities, nil
 }
 
 // handlerVerifyStore 同时实现 TotpCache（嵌入占位）与 APIKeyVerificationStore。
