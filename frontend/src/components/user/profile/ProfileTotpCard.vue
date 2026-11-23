@@ -48,13 +48,15 @@
             </p>
           </div>
         </div>
-        <button
+        <UButton
           type="button"
-          class="btn btn-outline-danger"
+          color="error"
+          variant="outline"
+          data-test="totp-disable"
           @click="showDisableDialog = true"
         >
           {{ t('profile.totp.disable') }}
-        </button>
+        </UButton>
       </div>
 
       <!-- 2FA Not Enabled -->
@@ -74,13 +76,13 @@
             </p>
           </div>
         </div>
-        <button
+        <UButton
           type="button"
-          class="btn btn-primary"
+          data-test="totp-enable"
           @click="showSetupModal = true"
         >
           {{ t('profile.totp.enable') }}
-        </button>
+        </UButton>
       </div>
     </div>
 

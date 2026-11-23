@@ -11,7 +11,19 @@
     <div class="space-y-6 p-5 sm:p-6">
       <div v-if="loadError" role="alert" class="text-sm text-red-600 dark:text-red-400">
         <p>{{ loadError }}</p>
-        <button type="button" class="btn btn-secondary btn-sm mt-2" :disabled="loading" @click="refresh">{{ t('common.refresh') }}</button>
+        <UButton
+          type="button"
+          color="neutral"
+          variant="outline"
+          size="sm"
+          class="mt-2"
+          :disabled="loading"
+          :loading="loading"
+          data-test="bark-refresh"
+          @click="refresh"
+        >
+          {{ t('common.refresh') }}
+        </UButton>
       </div>
       <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('profile.bark.changeVerificationHint') }}</p>
       <div class="flex items-center gap-2 text-sm">
@@ -26,40 +38,52 @@
 
       <div>
         <label for="bark-device-key" class="input-label">{{ t('profile.bark.deviceKey') }}</label>
-        <input
+        <UInput
           id="bark-device-key"
           v-model="deviceKey"
           type="password"
           autocomplete="off"
           spellcheck="false"
           :disabled="loading || saving || !!loadError"
-          class="input"
+          class="w-full"
           :placeholder="t('profile.bark.deviceKeyPlaceholder')"
         />
         <p class="mt-1 text-xs text-gray-400">{{ t(status.configured ? 'profile.bark.keepKeyHint' : 'profile.bark.deviceKeyHint') }}</p>
       </div>
 
       <div class="flex items-center justify-between">
-        <label class="input-label mb-0">{{ t('profile.bark.enabled') }}</label>
-        <label class="relative inline-flex items-center cursor-pointer">
-          <input type="checkbox" v-model="enabled" :disabled="loading || saving || !!loadError" class="sr-only peer" :aria-label="t('profile.bark.enabled')" />
-          <div class="w-11 h-6 bg-gray-200 peer-focus:outline-hidden peer-focus:ring-4 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-transform dark:after:border-gray-600 peer-checked:bg-primary-600"></div>
-        </label>
+        <label for="bark-enabled" class="input-label mb-0">{{ t('profile.bark.enabled') }}</label>
+        <USwitch
+          id="bark-enabled"
+          v-model="enabled"
+          :disabled="loading || saving || !!loadError"
+          data-test="bark-enabled"
+        />
       </div>
 
       <div class="flex items-center gap-2">
-        <button type="button" class="btn btn-primary btn-sm" :disabled="loading || saving || !!loadError || (!deviceKey.trim() && !status.configured)" @click="save">
+        <UButton
+          type="button"
+          size="sm"
+          :disabled="loading || saving || !!loadError || (!deviceKey.trim() && !status.configured)"
+          :loading="saving"
+          data-test="bark-save"
+          @click="save"
+        >
           {{ saving ? t('common.saving') : t('profile.bark.save') }}
-        </button>
-        <button
+        </UButton>
+        <UButton
           v-if="status.configured"
           type="button"
-          class="btn btn-secondary btn-sm"
+          color="neutral"
+          variant="outline"
+          size="sm"
           :disabled="loading || saving || !!loadError"
+          data-test="bark-clear"
           @click="clear"
         >
           {{ t('profile.bark.clear') }}
-        </button>
+        </UButton>
       </div>
     </div>
   </div>

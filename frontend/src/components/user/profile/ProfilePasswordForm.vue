@@ -19,13 +19,13 @@
           <label for="old_password" class="input-label">
             {{ t('profile.currentPassword') }}
           </label>
-          <input
+          <UInput
             id="old_password"
             v-model="form.old_password"
             type="password"
             required
             autocomplete="current-password"
-            class="input"
+            class="w-full"
           />
         </div>
 
@@ -33,13 +33,13 @@
           <label for="new_password" class="input-label">
             {{ t('profile.newPassword') }}
           </label>
-          <input
+          <UInput
             id="new_password"
             v-model="form.new_password"
             type="password"
             required
             autocomplete="new-password"
-            class="input"
+            class="w-full"
           />
           <p class="input-hint">
             {{ t('profile.passwordHint') }}
@@ -50,20 +50,20 @@
           <label for="confirm_password" class="input-label">
             {{ t('profile.confirmNewPassword') }}
           </label>
-          <input
+          <UInput
             id="confirm_password"
             v-model="form.confirm_password"
             type="password"
             required
             autocomplete="new-password"
-            class="input"
+            class="w-full"
           />
         </div>
 
         <div class="flex justify-end pt-4">
-          <button type="submit" :disabled="loading" class="btn btn-primary">
+          <UButton type="submit" :disabled="loading" :loading="loading">
             {{ loading ? t('profile.changingPassword') : t('profile.changePasswordButton') }}
-          </button>
+          </UButton>
         </div>
       </form>
     </div>
