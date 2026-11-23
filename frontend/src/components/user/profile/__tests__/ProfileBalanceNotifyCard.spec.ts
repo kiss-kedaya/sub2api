@@ -2,14 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import ProfileBalanceNotifyCard from '../ProfileBalanceNotifyCard.vue'
 
-const { sendNotifyEmailCode, verifyNotifyEmail, getProfile } = vi.hoisted(() => ({
+const { sendNotifyEmailCode, verifyNotifyEmail, getProfile, updateProfile, toggleNotifyEmail } = vi.hoisted(() => ({
   sendNotifyEmailCode: vi.fn(),
   verifyNotifyEmail: vi.fn(),
-  getProfile: vi.fn()
+  getProfile: vi.fn(),
+  updateProfile: vi.fn(),
+  toggleNotifyEmail: vi.fn()
 }))
 
 vi.mock('@/api', () => ({
-  userAPI: { sendNotifyEmailCode, verifyNotifyEmail, getProfile }
+  userAPI: { sendNotifyEmailCode, verifyNotifyEmail, getProfile, updateProfile, toggleNotifyEmail }
 }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: null }) }))
 vi.mock('@/stores/app', () => ({
@@ -37,11 +39,45 @@ describe('ProfileBalanceNotifyCard', () => {
     vi.resetAllMocks()
     sendNotifyEmailCode.mockResolvedValue({})
     getProfile.mockResolvedValue({ balance_notify_extra_emails: [] })
+    updateProfile.mockResolvedValue({ balance_notify_enabled: false })
   })
 
   afterEach(() => {
     vi.clearAllTimers()
     vi.useRealTimers()
+  })
+
+  it('renders both switch surfaces as Nuxt UI switches, not hand-rolled checkboxes', async () => {
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, extraEmails: [{ email: 'a@example.com', disabled: false, verified: true, primary: false }], systemDefaultThreshold: 5, userEmail: '' }
+    })
+    const switches = wrapper.findAll('[role="switch"]')
+    expect(switches).toHaveLength(2)
+    expect(switches.map(item => item.attributes('aria-checked'))).toEqual(['true', 'true'])
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+    expect(switches[0]!.classes().join(' ')).toContain('data-[state=checked]:bg-primary')
+  })
+
+  it('persists the enable switch through updateProfile and reverts the switch on failure', async () => {
+    updateProfile.mockRejectedValueOnce(new Error('boom'))
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, extraEmails: [], systemDefaultThreshold: 5, userEmail: '' }
+    })
+    await wrapper.findAll('[role="switch"]')[0]!.trigger('click')
+    await flushPromises()
+    expect(updateProfile).toHaveBeenCalledWith({ balance_notify_enabled: false })
+    expect(wrapper.findAll('[role="switch"]')[0]!.attributes('aria-checked')).toBe('true')
+  })
+
+  it('disables an extra email through the switch model and stores the returned list', async () => {
+    toggleNotifyEmail.mockResolvedValue({ balance_notify_extra_emails: [{ email: 'a@example.com', disabled: true, verified: true, primary: false }] })
+    const wrapper = mount(ProfileBalanceNotifyCard, {
+      props: { enabled: true, threshold: null, extraEmails: [{ email: 'a@example.com', disabled: false, verified: true, primary: false }], systemDefaultThreshold: 5, userEmail: '' }
+    })
+    expect(wrapper.text()).toContain('a@example.com')
+    await wrapper.findAll('[role="switch"]')[1]!.trigger('click')
+    await flushPromises()
+    expect(toggleNotifyEmail).toHaveBeenCalledWith('a@example.com', true)
   })
 
   it.each([0, 1])('removes only verified emails when request %i finishes first', async (first) => {

@@ -3,6 +3,7 @@ import vue from '@vitejs/plugin-vue'
 import ui from '@nuxt/ui/vite'
 import checker from 'vite-plugin-checker'
 import { resolve } from 'path'
+import { nuxtUiOptions } from './nuxt-ui.config'
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -94,13 +95,9 @@ export default defineConfig(({ mode }) => {
       // Nuxt UI in Vue mode; also registers @tailwindcss/vite. Light/dark stays with the app
       // (`.dark` on <html> from localStorage `theme`), so Nuxt UI's color-mode plugin is off.
       // Icons are bundled from @iconify-json/* at build time (see src/plugins/nuxtUi.ts).
-      ui({
-        colorMode: false,
-        ui: { colors: { primary: 'neutral', neutral: 'neutral' } },
-        icon: { clientBundle: { scan: true } },
-        // Only Nuxt UI's U* components are auto-registered; app components stay explicit imports.
-        components: { globs: [] }
-      }),
+      // The theme (incl. the switch state matrix) is shared with vitest.config.ts via
+      // nuxt-ui.config.ts, so specs assert the classes production actually ships.
+      ui(nuxtUiOptions),
       checker({
         vueTsc: true
       }),

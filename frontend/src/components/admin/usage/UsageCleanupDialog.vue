@@ -208,7 +208,7 @@ const statusClass = (status: string) => {
     failed: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-200',
     canceled: 'bg-gray-200 text-gray-600 dark:bg-dark-600 dark:text-gray-300'
   }
-  return map[status] || 'bg-gray-100 text-gray-600'
+  return map[status] || 'bg-elevated text-muted'
 }
 
 const formatDateTime = (value?: string | null) => {
