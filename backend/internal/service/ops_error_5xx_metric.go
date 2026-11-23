@@ -32,9 +32,6 @@ const (
 	// OpsMetricUpstream5xxSpike 上游 5xx 相对 30 分钟中位数的突增倍数（观察类）。
 	OpsMetricUpstream5xxSpike = "upstream_5xx_spike_ratio"
 
-	// opsError5xxUpstreamSource 是 ops_error_logs.error_source 中「上游透传」的标准值。
-	opsError5xxUpstreamSource = "upstream_http"
-
 	// 突增观察固定用 5 分钟桶 × 前 6 个桶（30 分钟）做基线。
 	opsError5xxSpikeBucketSeconds  = 300
 	opsError5xxSpikeBaselineBucket = 6
