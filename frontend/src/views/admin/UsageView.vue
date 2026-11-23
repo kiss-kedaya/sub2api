@@ -94,47 +94,30 @@
           </button>
         </div>
 
-        <!-- 手动查询：面板编辑只改 draftFilters 草稿，点「查询」才复制成 filters 并发请求 -->
-        <UsageFilters v-model="draftFilters" ref="usageFiltersRef" flat :observer="isObserver" :mode="activeTab" class="usage-filter-panel" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @date-range-change="onDateRangeChange" @query="queryFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel()" @export-csv="exportToExcel('csv')">
-          <template #after-reset>
-            <div v-if="activeTab !== 'ranking'" class="relative" ref="columnDropdownRef">
-              <button
-                data-testid="usage-column-settings"
-                @click="showColumnDropdown = !showColumnDropdown"
-                class="btn btn-secondary px-2 md:px-3"
-                :title="t('admin.users.columnSettings')"
-              >
-                <svg class="h-4 w-4 md:mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v12.75c0 .621.504 1.125 1.125 1.125z" />
-                </svg>
-                <span class="hidden md:inline">{{ t('admin.users.columnSettings') }}</span>
-              </button>
-              <div
-                v-if="showColumnDropdown"
-                class="admin-menu absolute right-0 top-full z-50 mt-1 max-h-80 w-48 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-dark-600 dark:bg-dark-800"
-              >
-                <button
-                  v-for="col in currentToggleableColumns"
-                  :key="col.key"
-                  :data-testid="`usage-column-toggle-${col.key}`"
-                  @click="toggleCurrentColumn(col.key)"
-                  class="admin-menu-item flex w-full items-center justify-between px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
-                >
-                  <span>{{ col.label }}</span>
-                  <Icon
-                    v-if="isCurrentColumnVisible(col.key)"
-                    name="check"
-                    size="sm"
-                    class="text-primary-500"
-                    :stroke-width="2"
-                  />
-                </button>
-              </div>
-            </div>
-          </template>
-        </UsageFilters>
-
-        <p v-if="activeTab === 'usage' && !isObserver" class="mb-3 text-xs text-gray-500 dark:text-gray-400">请求 ID / 上游 ID：默认片段搜索；=完整ID 精确查找；^前缀 查找。点击表格 ID 可精确筛选。短片段请限定在 24 小时内。</p>
+        <!--
+          手动查询：面板上的改动只落 draftFilters 草稿，点「查询」（或输入框回车）才复制成
+          filters 并请求，避免改一个条件就打一轮接口。时间范围是页面级即时控件，切换即生效。
+        -->
+        <UsageFilters
+          v-model="draftFilters"
+          ref="usageFiltersRef"
+          flat
+          :observer="isObserver"
+          :mode="activeTab"
+          :column-menu-items="columnMenuItems"
+          class="usage-filter-panel"
+          :start-date="startDate"
+          :end-date="endDate"
+          :exporting="exporting"
+          :model-options="modelNameOptions"
+          @date-range-change="onDateRangeChange"
+          @query="queryFilters"
+          @refresh="refreshData"
+          @reset="resetFilters"
+          @cleanup="openCleanupDialog"
+          @export="exportToExcel()"
+          @export-csv="exportToExcel('csv')"
+        />
         <div v-show="activeTab === 'usage'" class="usage-detail-content">
           <InflightUsagePanel
             :open="inflightOpen"
@@ -226,6 +209,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import type { DropdownMenuItem } from '@nuxt/ui'
 import { useI18n } from 'vue-i18n'
 import { saveAs } from 'file-saver'
 import { useRoute } from 'vue-router'
@@ -654,6 +638,8 @@ const queryFilters = () => {
     start_date: startDate.value,
     end_date: endDate.value
   }
+  // 查询后草稿与生效条件保持一致（下拉框清空值等归一化后回写，避免表单和结果对不上）。
+  draftFilters.value = { ...filters.value }
   applyFilters()
 }
 const applyFilters = () => {
@@ -1052,14 +1038,20 @@ const onErrPage = (p: number) => { errPage.value = p; loadAdminErrors() }
 const onErrPageSize = (s: number) => { errPageSize.value = s; errPage.value = 1; loadAdminErrors() }
 const openError = (id: number) => { selectedErrorId.value = id; showErrorModal.value = true }
 
-const showColumnDropdown = ref(false)
-const columnDropdownRef = ref<HTMLElement | null>(null)
-
-const handleColumnClickOutside = (event: MouseEvent) => {
-  if (columnDropdownRef.value && !columnDropdownRef.value.contains(event.target as HTMLElement)) {
-    showColumnDropdown.value = false
-  }
-}
+// 列设置收进筛选卡的「更多」菜单（UsageFilters 渲染），默认显示全部列（行为与改前一致）。
+const columnMenuItems = computed<DropdownMenuItem[]>(() => (
+  activeTab.value === 'ranking'
+    ? []
+    : currentToggleableColumns.value.map((column) => ({
+        label: column.label,
+        // value 只用于测试桩定位菜单项；Nuxt UI 会忽略未知字段
+        value: column.key,
+        type: 'checkbox' as const,
+        checked: isCurrentColumnVisible(column.key),
+        onUpdateChecked: () => toggleCurrentColumn(column.key),
+        onSelect: (event: Event) => event.preventDefault(),
+      }))
+))
 
 onMounted(() => {
   applyRouteQueryFilters()
@@ -1072,9 +1064,8 @@ onMounted(() => {
   }, 120)
   loadSavedColumns()
   loadSavedErrColumns()
-  document.addEventListener('click', handleColumnClickOutside)
 })
-onUnmounted(() => { abortController?.abort(); exportAbortController?.abort(); document.removeEventListener('click', handleColumnClickOutside) })
+onUnmounted(() => { abortController?.abort(); exportAbortController?.abort() })
 
 watch(modelDistributionSource, (source) => {
   void loadModelStats(source)

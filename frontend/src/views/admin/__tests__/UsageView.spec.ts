@@ -114,8 +114,13 @@ vi.mock('vue-router', () => ({
 }))
 
 const AppLayoutStub = { template: '<div><slot /></div>' }
+// 列设置现在是筛选卡「更多」菜单里的一项：页面通过 columnMenuItems 交给 UsageFilters 渲染。
+// 桩把这些菜单项画成 usage-column-toggle-<key> 按钮，测试点它就是真实的切换列。
 const UsageFiltersStub = defineComponent({
-  props: { modelValue: { type: Object, default: () => ({}) } },
+  props: {
+    modelValue: { type: Object, default: () => ({}) },
+    columnMenuItems: { type: Array, default: () => [] },
+  },
   emits: ['update:modelValue', 'date-range-change', 'query', 'refresh', 'reset', 'export', 'export-csv', 'cleanup'],
   setup(_, { expose }) {
     const userKeyword = ref('')
@@ -131,7 +136,18 @@ const UsageFiltersStub = defineComponent({
     })
     return { userKeyword }
   },
-  template: '<div><span data-test="user-filter-label">{{ userKeyword }}</span><slot name="after-reset" /></div>',
+  template: `
+    <div>
+      <span data-test="user-filter-label">{{ userKeyword }}</span>
+      <button
+        v-for="item in columnMenuItems"
+        :key="item.value"
+        :data-testid="'usage-column-toggle-' + item.value"
+        @click="item.onUpdateChecked?.()"
+      >{{ item.label }}</button>
+      <slot name="after-reset" />
+    </div>
+  `,
 })
 const UsageTableStub = {
   props: ['columns'],
@@ -624,10 +640,7 @@ describe('admin UsageView request ID column visibility', () => {
       expect.arrayContaining([expect.objectContaining({ key: 'request_id' })]),
     )
 
-    await wrapper.get('button[title="admin.users.columnSettings"]').trigger('click')
-    const requestIdToggle = wrapper.findAll('button').find((button) => button.text() === 'Request ID')
-    expect(requestIdToggle).toBeDefined()
-    await requestIdToggle!.trigger('click')
+    await wrapper.get('[data-testid="usage-column-toggle-request_id"]').trigger('click')
 
     expect(usageTable.props('columns')).toEqual(
       expect.arrayContaining([expect.objectContaining({ key: 'request_id', label: 'Request ID' })]),
@@ -669,10 +682,7 @@ describe('admin UsageView request ID column visibility', () => {
       expect.arrayContaining([expect.objectContaining({ key: 'upstream_request_id' })]),
     )
 
-    await wrapper.get('button[title="admin.users.columnSettings"]').trigger('click')
-    const upstreamToggle = wrapper.findAll('button').find((button) => button.text() === 'Upstream ID')
-    expect(upstreamToggle).toBeDefined()
-    await upstreamToggle!.trigger('click')
+    await wrapper.get('[data-testid="usage-column-toggle-upstream_request_id"]').trigger('click')
 
     expect(usageTable.props('columns')).toEqual(
       expect.arrayContaining([expect.objectContaining({ key: 'upstream_request_id', label: 'Upstream ID' })]),
