@@ -1,38 +1,85 @@
 package handler
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
 // 审计 A-P1-06：密码因子没有「按用户」的失败预算，持会话者可以对 secret-seal 的 PUT
-// （以及创建 / 轮换 / 二次查看）在线猜登录密码。这里用真实的账号预算实现
-// （middleware.TwoFactorRateLimiter + miniredis，60 秒内最多 5 次，成功清零）跑 HTTP 全链路。
+// （以及创建 / 轮换 / 二次查看）在线猜登录密码。
+//
+// 这里测的是 handler 的接线：预算耗尽 → 429 + Retry-After、成功 → Reset、按用户记账、
+// 五个入口共用、存储故障 fail-closed。预算本身用内存假实现（handler 包按 depguard 不能 import redis）；
+// 真正走 Redis 滑动窗口的部分（60 秒 5 次、成功清零、按用户、与 2FA 桶独立）在
+// internal/server/middleware 与 internal/server 的测试里。
+
+// fakePasswordBudget 是 service.APIKeyPasswordAttemptLimiter 的内存实现：
+// 每个用户最多 max 次尝试，放行的尝试才记账（与真实的滑动窗口一致），Reset 清零。
+type fakePasswordBudget struct {
+	mu     sync.Mutex
+	max    int
+	retry  time.Duration
+	err    error
+	used   map[int64]int
+	resets []int64
+}
+
+func newFakePasswordBudget(max int) *fakePasswordBudget {
+	return &fakePasswordBudget{max: max, retry: 42 * time.Second, used: map[int64]int{}}
+}
+
+func (b *fakePasswordBudget) Check(_ context.Context, userID int64) (bool, time.Duration, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.err != nil {
+		return false, 0, b.err
+	}
+	if b.used[userID] >= b.max {
+		return false, b.retry, nil
+	}
+	b.used[userID]++
+	return true, 0, nil
+}
+
+func (b *fakePasswordBudget) Reset(_ context.Context, userID int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.used, userID)
+	b.resets = append(b.resets, userID)
+}
+
+func (b *fakePasswordBudget) usedBy(userID int64) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.used[userID]
+}
+
+func (b *fakePasswordBudget) resetCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.resets)
+}
 
 type passwordBudgetEnv struct {
 	*handlerVerificationEngine
-	redis *miniredis.Miniredis
+	budget *fakePasswordBudget
 }
 
 func newPasswordBudgetEnv(t *testing.T) *passwordBudgetEnv {
 	t.Helper()
 	engine := newHandlerVerificationEngine(t, handlerVerificationUser(t))
-	redisServer := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-	// 与生产装配（router.configureAccountVerificationBudgets）同一个构造函数：独立的密码桶。
-	engine.handler.SetPasswordAttemptLimiter(middleware2.NewAPIKeyPasswordRateLimiter(client))
+	budget := newFakePasswordBudget(5)
+	engine.handler.SetPasswordAttemptLimiter(budget)
 	// 创建走幂等协调器（生产装配必有）：校验失败的错误要经它回到客户端，Retry-After 也在那一路写出。
 	previous := service.DefaultIdempotencyCoordinator()
 	service.SetDefaultIdempotencyCoordinator(service.NewIdempotencyCoordinator(newUserMemoryIdempotencyRepoStub(), service.DefaultIdempotencyConfig()))
@@ -43,7 +90,7 @@ func newPasswordBudgetEnv(t *testing.T) *passwordBudgetEnv {
 		KDF:    []byte(`{"algo":"PBKDF2-SHA256","iterations":310000,"salt":"MDEyMzQ1Njc4OWFiY2RlZg=="}`),
 		Sealed: "c2VhbGVk",
 	}
-	return &passwordBudgetEnv{handlerVerificationEngine: engine, redis: redisServer}
+	return &passwordBudgetEnv{handlerVerificationEngine: engine, budget: budget}
 }
 
 // passwordEntries 是全部走密码因子的入口；每个函数用给定口令发一次请求。
@@ -83,11 +130,12 @@ func TestSecretSealPasswordGuessingIsBoundedPerUser(t *testing.T) {
 	env := newPasswordBudgetEnv(t)
 	seal := env.passwordEntries(t)["seal"]
 
-	// 前 5 次错误口令照常报 VERIFY_PASSWORD_INVALID。
+	// 前 5 次错误口令照常报 VERIFY_PASSWORD_INVALID，每次都记在当前用户（7）名下。
 	for i := 1; i <= 5; i++ {
 		rec := seal("wrong-password")
 		require.Equal(t, http.StatusBadRequest, rec.Code, "guess %d: %s", i, rec.Body.String())
 		require.Equal(t, "VERIFY_PASSWORD_INVALID", handlerVerificationErrorReason(t, rec))
+		require.Equal(t, i, env.budget.usedBy(7))
 	}
 
 	// 第 6 次起 429 + Retry-After，而且连正确口令也不再被确认：不是「限流后的 oracle」。
@@ -95,72 +143,11 @@ func TestSecretSealPasswordGuessingIsBoundedPerUser(t *testing.T) {
 		rec := seal(password)
 		require.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
 		require.Equal(t, "VERIFY_PASSWORD_RATE_LIMITED", handlerVerificationErrorReason(t, rec))
-		retryAfter, err := strconv.Atoi(rec.Header().Get("Retry-After"))
-		require.NoError(t, err, "Retry-After must be set")
-		require.Greater(t, retryAfter, 0)
-		require.LessOrEqual(t, retryAfter, 60)
+		require.Equal(t, "42", rec.Header().Get("Retry-After"), "Retry-After carries the limiter's remaining window")
 	}
 	require.Equal(t, "c2VhbGVk", env.secretStore.rows[1].Sealed, "a blocked correct password must not overwrite the sealed secret")
-
-	// 预算按用户记账（不是 IP / 不是入口）：Redis 里只有 user 7 这一个账号维度的密码桶，
-	// 而且不碰 2FA 的桶。
-	var budgetKeys, twoFactorKeys []string
-	for _, key := range env.redis.Keys() {
-		if strings.Contains(key, "api_key_password:verify:user:") {
-			budgetKeys = append(budgetKeys, key)
-		}
-		if strings.Contains(key, "2fa:verify:user:") {
-			twoFactorKeys = append(twoFactorKeys, key)
-		}
-	}
-	require.Len(t, budgetKeys, 1)
-	require.True(t, strings.HasSuffix(budgetKeys[0], "api_key_password:verify:user:7"), budgetKeys[0])
-	require.Empty(t, twoFactorKeys, "password guesses must not consume the account's 2FA budget")
-}
-
-// spendTwoFactorAttempts 手工消耗账号 2FA 预算的 n 次尝试。
-// 滑动窗口脚本用纳秒时间戳当 ZSET 成员；Windows 开发机上系统时钟一个刻度可以长达十几毫秒，
-// 紧挨着的两次尝试会得到同一个成员而被去重，所以这里每次之间隔开一点（Linux 上不会发生）。
-func spendTwoFactorAttempts(t *testing.T, limiter *middleware2.TwoFactorRateLimiter, n int) {
-	t.Helper()
-	for i := 0; i < n; i++ {
-		allowed, _, err := limiter.Check(t.Context(), 7)
-		require.NoError(t, err)
-		require.True(t, allowed, "2FA attempt %d should still be inside the budget", i+1)
-		time.Sleep(25 * time.Millisecond)
-	}
-}
-
-// 密码因子的预算和账号的 2FA 预算互相独立：密码校验成功不能给 TOTP 猜码续命，
-// 密码猜错也不能把账号的登录 2FA 锁住。
-func TestPasswordBudgetDoesNotTouchTheTwoFactorBudget(t *testing.T) {
-	env := newPasswordBudgetEnv(t)
-	seal := env.passwordEntries(t)["seal"]
-	client := redis.NewClient(&redis.Options{Addr: env.redis.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-	twoFactor := middleware2.NewTwoFactorRateLimiter(client)
-
-	// 账号的 2FA 已经失败了 4 次。
-	spendTwoFactorAttempts(t, twoFactor, 4)
-	// 密码校验成功（成功即清零）：只能清密码的桶。
-	require.Equal(t, http.StatusOK, seal("correct-password").Code)
-	spendTwoFactorAttempts(t, twoFactor, 1) // 第 5 次：仍在预算内
-	allowed, _, err := twoFactor.Check(t.Context(), 7)
-	require.NoError(t, err)
-	require.False(t, allowed, "a password success must not refill the 2FA guess budget")
-
-	// 反过来：密码预算被刷满，账号的 2FA 预算照样可用。
-	env2 := newPasswordBudgetEnv(t)
-	seal2 := env2.passwordEntries(t)["seal"]
-	for i := 0; i < 6; i++ {
-		seal2("wrong-password")
-	}
-	require.Equal(t, http.StatusTooManyRequests, seal2("correct-password").Code)
-	client2 := redis.NewClient(&redis.Options{Addr: env2.redis.Addr()})
-	t.Cleanup(func() { _ = client2.Close() })
-	allowed, _, err = middleware2.NewTwoFactorRateLimiter(client2).Check(t.Context(), 7)
-	require.NoError(t, err)
-	require.True(t, allowed, "an exhausted password budget must not lock the account's 2FA")
+	require.Zero(t, env.budget.resetCount(), "a blocked attempt is not a success")
+	require.Equal(t, map[int64]int{7: 5}, env.budget.used, "only the authenticated user is charged")
 }
 
 func TestPasswordBudgetIsSharedByEveryVerificationEntry(t *testing.T) {
@@ -186,7 +173,7 @@ func TestPasswordBudgetIsSharedByEveryVerificationEntry(t *testing.T) {
 			rec := entries[target]("correct-password")
 			require.Equal(t, http.StatusTooManyRequests, rec.Code, "%s must share the per-user budget: %s", target, rec.Body.String())
 			require.Equal(t, "VERIFY_PASSWORD_RATE_LIMITED", handlerVerificationErrorReason(t, rec))
-			require.NotEmpty(t, rec.Header().Get("Retry-After"))
+			require.Equal(t, "42", rec.Header().Get("Retry-After"), "%s must write Retry-After", target)
 			require.Zero(t, env.createRepo.calls, "a rate limited attempt must not create a key")
 		})
 	}
@@ -196,20 +183,26 @@ func TestPasswordBudgetClearsOnSuccess(t *testing.T) {
 	env := newPasswordBudgetEnv(t)
 	seal := env.passwordEntries(t)["seal"]
 
-	for round := 0; round < 3; round++ {
+	for round := 1; round <= 3; round++ {
 		for i := 1; i <= 4; i++ {
 			rec := seal("wrong-password")
 			require.Equal(t, http.StatusBadRequest, rec.Code, "round %d guess %d: %s", round, i, rec.Body.String())
 		}
+		require.Equal(t, 4, env.budget.usedBy(7))
 		// 正确口令成功即清零：预算只数「连续」失败。
 		rec := seal("correct-password")
 		require.Equal(t, http.StatusOK, rec.Code, "round %d: %s", round, rec.Body.String())
+		require.Equal(t, round, env.budget.resetCount())
+		require.Zero(t, env.budget.usedBy(7), "success clears the user's failures")
 	}
 	// 清零之后又是一整份预算：5 次错误仍是 400，第 6 次才 429。
 	for i := 1; i <= 5; i++ {
 		require.Equal(t, http.StatusBadRequest, seal("wrong-password").Code, "guess %d", i)
 	}
 	require.Equal(t, http.StatusTooManyRequests, seal("wrong-password").Code)
+
+	// 失败本身不清零。
+	require.Equal(t, 3, env.budget.resetCount())
 }
 
 func TestBatchSealOfFiftyKeysIsNotBlockedByThePasswordBudget(t *testing.T) {
@@ -221,18 +214,20 @@ func TestBatchSealOfFiftyKeysIsNotBlockedByThePasswordBudget(t *testing.T) {
 		rec := seal("correct-password")
 		require.Equal(t, http.StatusOK, rec.Code, "seal %d: %s", i, rec.Body.String())
 	}
+	require.Equal(t, 50, env.budget.resetCount())
 }
 
 func TestPasswordBudgetFailsClosedWhenTheStoreIsDown(t *testing.T) {
 	env := newPasswordBudgetEnv(t)
 	seal := env.passwordEntries(t)["seal"]
-	env.redis.Close()
+	env.budget.err = errors.New("redis down")
 
 	// 预算存储不可用时拒绝校验（fail-closed），而不是退回「不限次数的 oracle」。
 	rec := seal("correct-password")
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
 	require.Equal(t, "VERIFY_UNAVAILABLE", handlerVerificationErrorReason(t, rec))
 	require.Equal(t, "c2VhbGVk", env.secretStore.rows[1].Sealed)
+	require.Zero(t, env.budget.resetCount())
 }
 
 func TestWithoutPasswordBudgetBehaviourIsUnchanged(t *testing.T) {
@@ -247,7 +242,7 @@ func TestWithoutPasswordBudgetBehaviourIsUnchanged(t *testing.T) {
 
 func TestSetPasswordAttemptLimiterIsNilSafe(t *testing.T) {
 	var nilHandler *APIKeyHandler
-	nilHandler.SetPasswordAttemptLimiter(nil)
+	nilHandler.SetPasswordAttemptLimiter(newFakePasswordBudget(5))
 	// 校验服务未装配：什么都不做，不 panic。
-	NewAPIKeyHandler(nil, nil).SetPasswordAttemptLimiter(middleware2.NewTwoFactorRateLimiter(nil))
+	NewAPIKeyHandler(nil, nil).SetPasswordAttemptLimiter(newFakePasswordBudget(5))
 }

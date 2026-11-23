@@ -41,6 +41,11 @@ func TestAPIKeyPasswordKnownByUserMatrix(t *testing.T) {
 
 		// 第三方登录注册：默认不知道（随机口令）。
 		{name: "github without any identity", signup: "github", want: false, wantLookups: 1},
+		{name: "google without any identity", signup: "google", want: false, wantLookups: 1},
+		{name: "oidc without any identity", signup: "oidc", want: false, wantLookups: 1},
+		{name: "linuxdo without any identity", signup: "linuxdo", want: false, wantLookups: 1},
+		{name: "wechat without any identity", signup: "wechat", want: false, wantLookups: 1},
+		{name: "dingtalk without any identity", signup: "dingtalk", want: false, wantLookups: 1},
 		{name: "oauth alias source", signup: "oauth", want: false, wantLookups: 1},
 
 		// 之后绑定邮箱并设置了本地密码：知道，各个第三方来源一视同仁，来源写法大小写 / 空白不敏感。
