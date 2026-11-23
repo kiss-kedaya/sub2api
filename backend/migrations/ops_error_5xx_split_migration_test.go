@@ -13,7 +13,7 @@ import (
 //   - 种子规则用 ON CONFLICT (name) DO NOTHING，重跑不重复插入；
 //   - 不删除、不 truncate 任何规则。
 func TestOpsError5xxSplitMigration(t *testing.T) {
-	content, err := FS.ReadFile("337_ops_error_5xx_split.sql")
+	content, err := FS.ReadFile("337_ops_error_5xx_split_v2.sql")
 	require.NoError(t, err)
 
 	sql := strings.Join(strings.Fields(string(content)), " ")
@@ -87,8 +87,8 @@ func TestOpsError5xxSplitMigrationsAreEmbeddedInOrder(t *testing.T) {
 	}
 	sort.Strings(names)
 
-	index337 := indexOf(names, "337_ops_error_5xx_split.sql")
-	require.GreaterOrEqual(t, index337, 0, "337 必须被 embed 进二进制")
+	index337 := indexOf(names, "337_ops_error_5xx_split_v2.sql")
+	require.GreaterOrEqual(t, index337, 0, "337 必须被 embed 进二进制（#564 后改名 v2，内容不变）")
 	index338 := indexOf(names, "338_ops_error_logs_5xx_time_index_notx.sql")
 	require.Greater(t, index338, index337, "338 必须排在 337 之后")
 

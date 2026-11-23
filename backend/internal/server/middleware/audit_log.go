@@ -498,6 +498,9 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	// assertion / 票据），键级脱敏之外再整体不入库，避免新增字段名漏网。
 	"POST /api/v1/user/api-keys/:id/reveal-authorize":  {},
 	"POST /api/v1/user/security/passkey/verify/finish": {},
+	// 封存密文的读回接口是 GET，本身没有请求体；显式登记为「无可记录体」，
+	// 防止以后给 GET 加 body 或在 Omit 清单里被当成漏项。
+	"GET /api/v1/user/api-keys/:id/secret-seal": {},
 }
 
 // NewAuditLogMiddleware 创建审计中间件。
@@ -674,6 +677,11 @@ func (b *restoredBody) Close() error { return b.closer.Close() }
 func MaskedRequestCredential(c *gin.Context) string {
 	if len(c.Request.Header.Values("X-Crypto-Grant")) > 0 {
 		return "x-crypto-grant <redacted>"
+	}
+	// X-Reveal-Grant 是「二次查看 API Key 明文」的 5 分钟一次性授权票据，
+	// 等价于一次性凭证：一旦落进 audit_logs 就等于长期留存一份可用票据。
+	if len(c.Request.Header.Values("X-Reveal-Grant")) > 0 {
+		return "x-reveal-grant <redacted>"
 	}
 	if len(c.Request.Header.Values("X-Bark-TOTP")) > 0 {
 		return "x-bark-totp <redacted>"
