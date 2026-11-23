@@ -1,6 +1,7 @@
 package cryptopay
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -166,5 +167,68 @@ func TestIdleGuardWorkerTakesItsOwnAdvisoryLock(t *testing.T) {
 	deposit := scanner.NewWorker(nil, nil, nil, nil, nil, nil, 5*time.Second, 2000)
 	if deposit.LockKey() == worker.LockKey() {
 		t.Fatal("the deposit scan and the idle guard must hold different locks")
+	}
+}
+
+func guardChains(names ...string) []scanner.ChainConfig {
+	out := make([]scanner.ChainConfig, 0, len(names))
+	for _, name := range names {
+		out = append(out, scanner.ChainConfig{Chain: name})
+	}
+	return out
+}
+
+// One tick, several idle chains: a chain that hangs is cut off by ITS OWN deadline
+// and backed off, and the chains behind it still run in the same tick with a live
+// context. Without the per-chain deadline the hung chain would use the whole tick
+// and everything behind it would run on an expired context.
+func TestIdleGuardTickGivesEveryChainItsOwnBudget(t *testing.T) {
+	old := idleGuardChainBudget
+	idleGuardChainBudget = 60 * time.Millisecond
+	t.Cleanup(func() { idleGuardChainBudget = old })
+
+	var pacer idleGuardPacer
+	ran := map[string]bool{}
+	tick, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	errs := runIdleGuardChains(tick, &pacer, guardChains("plasma", "base", "xlayer"), func(ctx context.Context, chain scanner.ChainConfig) error {
+		ran[chain.Chain] = true
+		if chain.Chain == "plasma" {
+			<-ctx.Done() // a node that never answers
+			return ctx.Err()
+		}
+		return nil
+	})
+	if !ran["plasma"] || !ran["base"] || !ran["xlayer"] {
+		t.Fatalf("every due chain must run in the tick: %v", ran)
+	}
+	if len(errs) != 1 {
+		t.Fatalf("only the hung chain failed, got %v", errs)
+	}
+	if pacer.failuresOf("plasma") != 1 || pacer.failuresOf("base") != 0 || pacer.failuresOf("xlayer") != 0 {
+		t.Fatalf("the hung chain is backed off by its own deadline, the others are clean: plasma=%d base=%d xlayer=%d",
+			pacer.failuresOf("plasma"), pacer.failuresOf("base"), pacer.failuresOf("xlayer"))
+	}
+}
+
+// When the tick itself has run out, what a chain returned is not its fault: it must
+// not be backed off for it, and the chains not reached are left for the next tick.
+func TestIdleGuardExpiredTickDoesNotBlameTheChain(t *testing.T) {
+	var pacer idleGuardPacer
+	tick, cancel := context.WithCancel(context.Background())
+	ran := map[string]int{}
+	errs := runIdleGuardChains(tick, &pacer, guardChains("base", "xlayer", "arbitrum"), func(ctx context.Context, chain scanner.ChainConfig) error {
+		ran[chain.Chain]++
+		cancel() // the tick's budget ends while the first chain is working
+		return ctx.Err()
+	})
+	if ran["base"] != 1 || ran["xlayer"] != 0 || ran["arbitrum"] != 0 {
+		t.Fatalf("after the tick expired no further chain may start: %v", ran)
+	}
+	if pacer.failuresOf("base") != 0 {
+		t.Fatalf("an expired tick must not count as the chain's failure, got %d", pacer.failuresOf("base"))
+	}
+	if len(errs) != 1 {
+		t.Fatalf("the error is still reported for the log, got %v", errs)
 	}
 }

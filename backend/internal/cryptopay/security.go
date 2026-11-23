@@ -187,25 +187,48 @@ func (s *Service) scanIdleWalletSecurity(ctx context.Context, pacer *idleGuardPa
 	// One guard worker per chain that is due: a chain whose nodes keep refusing us
 	// is backed off on its own and must not delay the others (see idleGuardPacer).
 	// Each runs under the guard lock in turn, healthiest chain first.
-	now := time.Now()
-	duePools := map[string]*rpc.Pool{}
-	var guardErrs []error
-	for _, chain := range pacer.dueChains(chains, now) {
-		duePools[chain.Chain] = pools[chain.Chain]
+	guardErrs := runIdleGuardChains(ctx, pacer, chains, func(ctx context.Context, chain scanner.ChainConfig) error {
 		worker := newIdleGuardWorker(s.db, map[string]*rpc.Pool{chain.Chain: pools[chain.Chain]}, []scanner.ChainConfig{chain})
 		worker.SetSecurityGuards(s.scanWalletSecurityGuard, s.scanWalletOutflows)
-		err := worker.RunGuardScan(ctx)
-		pacer.note(chain.Chain, err, time.Now())
-		if err != nil {
-			guardErrs = append(guardErrs, err)
-		}
-	}
+		return worker.RunGuardScan(ctx)
+	})
 	// ERC-20 outflows are covered by the block guards above; a native spend has
 	// no log, so the same idle window must poll the hot wallet through the
 	// address API or a drained ETH/BNB balance stays silent. It paces itself
-	// (NativePollSeconds) and only looks at the chains that are due.
-	nativeErr := s.pollNativeOutflowsIdle(ctx, cfg, duePools)
+	// (NativePollSeconds) and is independent of a chain's log-scan backoff: it
+	// reads the explorer's address API, so a chain whose log scan is backed off
+	// must not also lose its native check for the rest of the interval.
+	nativeErr := s.pollNativeOutflowsIdle(ctx, cfg, pools)
 	return errors.Join(append(guardErrs, nativeErr)...)
+}
+
+// idleGuardChainBudget is the slice of one security tick a single idle chain may use.
+// The tick as a whole is bounded (15s); without a per-chain bound a chain that hangs
+// takes all of it, the chains behind it run on an expired context and look failed.
+var idleGuardChainBudget = 10 * time.Second
+
+// runIdleGuardChains runs scan for every idle chain whose backoff has elapsed and
+// feeds the outcome back to the pacer. A chain gets its own deadline, so one that
+// hangs is cut off and backed off by itself. When the tick's own context has expired
+// the outcome says nothing about the chain (it may simply have been starved), so it
+// is not recorded and the chains not yet reached wait for the next tick.
+func runIdleGuardChains(ctx context.Context, pacer *idleGuardPacer, chains []scanner.ChainConfig, scan func(context.Context, scanner.ChainConfig) error) []error {
+	var errs []error
+	for _, chain := range pacer.dueChains(chains, time.Now()) {
+		if ctx.Err() != nil {
+			break
+		}
+		chainCtx, cancel := context.WithTimeout(ctx, idleGuardChainBudget)
+		err := scan(chainCtx, chain)
+		cancel()
+		if ctx.Err() == nil {
+			pacer.note(chain.Chain, err, time.Now())
+		}
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
 }
 
 // SettingKeySecurityPauseMarker stores the lock episode that already applied
