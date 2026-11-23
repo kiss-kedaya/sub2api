@@ -86,17 +86,35 @@ func isGatewayRouteSegments(segments []string) bool {
 //     /antigravity/v1/{endpoint} …）去掉末尾段后的路径 → 条数。判断“补一个版本段
 //     会不会真的命中”时用；
 //   - prefixSegments：网关路由里“根之后、协议端点之前”的固定段（v1、antigravity、
-//     backend-api、codex …）。受支持前缀由它推导，不写死。
+//     backend-api、codex …）。受支持前缀由它推导，不写死；
+//   - versionlessPrefix：真实模板里**没有**版本段的前缀族 → 去掉版本段后的模板集合
+//     （/backend-api/codex → {"responses"、"models" …}）。该族真实路由不带版本段，
+//     所以客户端多写的任意个版本段都可以剥掉；
+//   - versionedPrefix：真实模板里**带**版本段的前缀族 → 去掉版本段后的模板集合
+//     （/antigravity → {"models"、"messages/count_tokens" …}）。只有“原路径完全
+//     未命中任何路由”、且补版本段后**唯一**命中一条模板时才补（见
+//     gatewayCanonicalMissingVersionPath）。
+//
+// 两个模板集合都只收绝对固定段（不含 :param / *catchall），路径参数与 catch-all
+// 参与匹配时按 gin 语义放宽，但仍要求方法一致。
 type gatewayRouteIndex struct {
-	routes         []gatewayRoutePattern
-	versionPrefix  map[string]int
-	prefixSegments map[string]bool
+	routes            []gatewayRoutePattern
+	versionPrefix     map[string]int
+	prefixSegments    map[string]bool
+	versionlessPrefix map[string]map[string]bool
+	versionedPrefix   map[string]map[string]bool
+	// versionlessFamily 是“确认可以整段剥版本段”的前缀族（见
+	// gatewayVersionlessPrefixes）：有直接挂着的无版本段模板、且没有以它为前缀的
+	// 带版本段模板。建索引后算一次。
+	versionlessFamily map[string]bool
 }
 
 func newGatewayRouteIndex(router *gin.Engine) gatewayRouteIndex {
 	index := gatewayRouteIndex{
-		versionPrefix:  make(map[string]int),
-		prefixSegments: make(map[string]bool),
+		versionPrefix:     make(map[string]int),
+		prefixSegments:    make(map[string]bool),
+		versionlessPrefix: make(map[string]map[string]bool),
+		versionedPrefix:   make(map[string]map[string]bool),
 	}
 	if router == nil {
 		return index
@@ -112,11 +130,77 @@ func newGatewayRouteIndex(router *gin.Engine) gatewayRouteIndex {
 		}
 		index.routes = append(index.routes, gatewayRoutePattern{method: route.Method, segments: segments})
 		index.collectPrefixSegments(segments)
+		index.collectVersionTemplates(segments)
 		if len(segments) >= 2 && isGatewayVersionSegment(segments[len(segments)-2]) {
 			index.versionPrefix[strings.Join(segments[:len(segments)-2], "/")]++
 		}
 	}
+	index.versionlessFamily = index.gatewayVersionlessPrefixes()
 	return index
+}
+
+// collectVersionTemplates 把一条路由登记进“无版本段前缀族 / 带版本段前缀族”：
+//
+//	/backend-api/codex/responses            → 无版本段族  backend-api/codex → responses
+//	/antigravity/v1/messages                → 带版本段族  antigravity/v1    → messages
+//	/antigravity/v1beta/models/:model       → 路径参数，不进模板集合（只允许整条模板都
+//	                                          是固定段时才参与“补版本段”判断，避免
+//	                                          /antigravity/models/任意值 被放宽补成
+//	                                          /antigravity/v1/models/任意值）
+//	/v1/messages                            → 带版本段族  v1                → messages
+//
+// 前缀族只取“根之后、第一个版本段/协议端点之前”的固定段；/v1/images/batches 这类
+// 带版本段模板的前缀族是 "v1"、模板是 "images/batches"，与真实路由一一对应。
+func (idx gatewayRouteIndex) collectVersionTemplates(segments []string) {
+	versionAt := -1
+	for i, segment := range segments {
+		if isGatewayVersionSegment(segment) {
+			versionAt = i
+			break
+		}
+		if strings.ContainsAny(segment, ":*") || gatewayEndpointSegments[segment] || i == len(segments)-1 {
+			break
+		}
+	}
+	if versionAt >= 0 {
+		// 带版本段：前缀族 = 版本段之前固定段 + 版本段本身；模板 = 其后的全部段。
+		family := strings.Join(segments[:versionAt+1], "/")
+		registerGatewayTemplate(idx.versionedPrefix, family, segments[versionAt+1:])
+		return
+	}
+	// 无版本段：前缀族 = 协议端点之前的全部固定段；模板 = 其后的全部段。
+	endpointAt := -1
+	for i, segment := range segments {
+		if strings.ContainsAny(segment, ":*") {
+			break
+		}
+		if gatewayEndpointSegments[segment] {
+			endpointAt = i
+			break
+		}
+	}
+	if endpointAt <= 0 {
+		// 根路径（/messages 这种没有前缀段）或完全没有端点段：不登记。
+		return
+	}
+	registerGatewayTemplate(idx.versionlessPrefix, strings.Join(segments[:endpointAt], "/"), segments[endpointAt:])
+}
+
+// registerGatewayTemplate 登记一条模板，family 为前缀族、tail 为端点之后的段。
+//
+// 与“补/剥版本段”的匹配无关地保留路径参数：内置模板匹配按 gin 语义
+// （matchGatewayRouteSegments）放宽 :param / *catchall，真正要不要改写由调用方用
+// matchGatewayRoute 再校验一次；这里只做“命中了几条模板”的计数。
+func registerGatewayTemplate(target map[string]map[string]bool, family string, tail []string) {
+	if family == "" || len(tail) == 0 {
+		return
+	}
+	templates, ok := target[family]
+	if !ok {
+		templates = make(map[string]bool)
+		target[family] = templates
+	}
+	templates[strings.Join(tail, "/")] = true
 }
 
 // collectPrefixSegments 收集一条路由里可以用作前缀的固定段：
@@ -158,11 +242,15 @@ func (idx gatewayRouteIndex) gatewayVersionRootCount(prefix string) int {
 }
 
 // isRootBareGatewayPath 判断路径是不是根前缀下的裸协议路径（/messages、
-// /responses、/chat/completions、/messages/count_tokens …）：不以版本段开头，
-// 且最后一段是协议端点。
+// /responses、/chat/completions、/messages/count_tokens …）：不以版本段开头、
+// 第一段不是受支持的前缀段（/antigravity/models 是 /antigravity 前缀下的路径，
+// 不是根裸路径），且最后一段是协议端点。
 func (idx gatewayRouteIndex) isRootBareGatewayPath(path string) bool {
 	segments := splitGatewayPathSegments(path)
 	if len(segments) == 0 || isGatewayVersionSegment(segments[0]) {
+		return false
+	}
+	if idx.prefixSegments[segments[0]] {
 		return false
 	}
 	if gatewayEndpointSegments[segments[len(segments)-1]] {
@@ -233,91 +321,157 @@ func gatewayVersionFamilies(rest string) []string {
 
 // canonicalGatewayPath 计算规范化后的路径，ok=false 表示不需要/不能规范化。
 //
-// 只做两件事，结果都必须真实命中已注册路由（method 也要一致）：
+// 只做三件事，结果都必须真实命中已注册路由（method 也要一致）：
 //
 //  1. 重复版本段折叠（任意前缀之后）：/v1/v1/messages、/antigravity/v1/v1/messages、
 //     /antigravity/v1beta/v1beta/models、/backend-api/codex/v1/v1/responses …
 //     连续重复的同一族版本段折叠成一个；不同族（/v1/v1beta）绝不折叠。
-//  2. 缺版本段补齐：在前缀（根 / 每个受支持前缀段）之后插一个版本段，
-//     /messages → /v1/messages、/chat/completions → /v1/chat/completions、
-//     /antigravity/messages → /antigravity/v1/messages、
-//     /backend-api/codex/responses → /backend-api/codex/v1/responses。
+//  2. 无版本段前缀族剥离版本段：/backend-api/codex 下的真实路由本来就不带版本段
+//     （/backend-api/codex/responses），所以该族里客户端多写的**任意个**版本段都剥掉：
+//     /backend-api/codex/v1/responses、/backend-api/codex/v1/v1/responses、
+//     /backend-api/codex/v1beta/responses … 全部 → /backend-api/codex/responses。
+//     只剥长度 1（/v1）或 2（/v1beta、/v1alpha …）的版本片段，/backend-api 里的连字符
+//     段永远不算版本段。剥完必须命中该族的无版本段模板。
+//  3. 缺版本段补齐（含给带版本段前缀族补版本段）：在前缀（根 / 每个受支持前缀段）
+//     之后插一个版本段，/messages → /v1/messages、/chat/completions →
+//     /v1/chat/completions、/antigravity/messages → /antigravity/v1/messages。
 //     根前缀只接受裸协议路径，/dashboard、/api/v1/* 不会被改写。
 //
-// 规范写法（/v1/messages、/antigravity/v1beta/models、/v1beta/models）折叠前后
-// 完全一致，一个字节都不动。
+// 规范写法（/v1/messages、/antigravity/v1beta/models、/v1beta/models、
+// /backend-api/codex/responses）处理前后完全一致，一个字节都不动。
 func (idx gatewayRouteIndex) canonicalGatewayPath(method, path string) (gatewayPathAliasInfo, bool) {
 	segments := splitGatewayPathSegments(path)
 	if len(segments) == 0 {
 		return gatewayPathAliasInfo{}, false
 	}
-
-	// 规则 1：重复版本段折叠。
-	mustFold := false
-	for _, segment := range segments {
-		if isGatewayVersionSegment(segment) {
-			mustFold = true
-			break
-		}
-	}
-	if mustFold {
-		folded := make([]string, 0, len(segments))
-		family := ""
-		runLength := 0
-		foldAt := -1
-		for i := 0; i < len(segments); {
-			segment := segments[i]
-			if !isGatewayVersionSegment(segment) {
-				folded = append(folded, segment)
-				i++
-				continue
-			}
-			run := 1
-			for i+run < len(segments) && segments[i+run] == segment {
-				run++
-			}
-			if run >= 2 && runLength < run {
-				runLength = run
-				family = segment
-				foldAt = len(folded)
-			}
-			folded = append(folded, segment)
-			i += run
-		}
-		if runLength >= 2 {
-			normalized := "/" + strings.Join(folded, "/")
-			info := gatewayPathAliasInfo{
-				Original:          path,
-				Normalized:        normalized,
-				Rule:              PathAliasRuleDuplicateVersionPrefix,
-				Prefix:            "/" + strings.Join(folded[:foldAt+1], "/"),
-				Version:           family,
-				DuplicatePrefixes: runLength,
-			}
-			if matchGatewayRoute(idx, method, normalized) {
-				return info, true
-			}
-			// 折叠后的路径还缺版本段（/backend-api/codex/v1/v1/responses →
-			// /backend-api/codex/v1/responses 不存在，但 /backend-api/codex/responses
-			// 存在）：把用户的真实意图（多写了一层版本段）继续归到折叠规则上。
-			if relocated, ok := idx.forceGatewayMissingVersionPath(method, normalized); ok {
-				relocated.Original = path
-				relocated.Rule = PathAliasRuleDuplicateVersionPrefix
-				relocated.Version = family
-				relocated.DuplicatePrefixes = runLength
-				return relocated, true
-			}
-			return info, false
-		}
+	if !pathHasVersionSegment(segments) {
+		// 没有版本段可剥，只有“补缺失版本段”这条路。
+		return idx.gatewayMissingVersionPath(method, path)
 	}
 
-	// 规则 2：补缺失的版本段。
+	// 规则 1 + 2：先尝试剥掉手写的版本片段（重复的折叠成一个，无版本段前缀族全剥）。
+	if info, ok := idx.stripGatewayVersionPath(method, segments); ok {
+		return info, true
+	}
+	if diagnostic, ok := unmatchedDuplicateVersionInfo(segments); ok {
+		// 折叠后仍然不存在的 /v1/v1/* 子路径：返回折叠结果，交给上层返回 JSON 诊断。
+		return diagnostic, false
+	}
+
+	// 规则 3：补缺失的版本段（原路径带版本段时只走保守的“补前缀”路径）。
 	return idx.gatewayMissingVersionPath(method, path)
 }
 
+// gatewayVersionlessPrefixes 返回真正“无版本段前缀族”的集合：
+//
+//	/backend-api/codex 有害真实路由 /backend-api/codex/responses，
+//	且没有任何 /backend-api/codex/v1/... 这类带版本段的真实路由 → 可以剥版本段；
+//	/antigravity 有 /antigravity/models，但还有 /antigravity/v1/messages 这类带版本段
+//	的真实路由 → 不是“无版本段前缀族”，绝不整段剥版本段。
+func (idx gatewayRouteIndex) gatewayVersionlessPrefixes() map[string]bool {
+	prefixes := make(map[string]bool, len(idx.versionlessPrefix))
+	for prefix := range idx.versionlessPrefix {
+		if idx.isVersionlessPrefixFamily(prefix) {
+			prefixes[prefix] = true
+		}
+	}
+	return prefixes
+}
+
+// isVersionlessPrefixFamily 判断 prefix 是不是“真实路由不带版本段的前缀族”：
+// 有直接挂在它下面的无版本段模板（/backend-api/codex/responses），**并且**没有
+// 以它自己为前缀的带版本段模板（/antigravity/v1/models 的前缀族是 antigravity/v1，
+// 说明 /antigravity 这个族带版本段）。只有这样的前缀族才允许把手写的版本段整段剥掉。
+//
+// 前缀段用 "a/b" 拼接。
+func (idx gatewayRouteIndex) isVersionlessPrefixFamily(prefix string) bool {
+	if prefix == "" || idx.versionlessFamily != nil {
+		return idx.versionlessFamily[prefix]
+	}
+	if _, ok := idx.versionlessPrefix[prefix]; !ok {
+		return false
+	}
+	for family := range idx.versionedPrefix {
+		if family == prefix || strings.HasPrefix(family, prefix+"/") {
+			return false
+		}
+	}
+	return true
+}
+
+// gatewayTemplateMatches 判断 tail 是否命中该前缀族下的至少一条模板。模板里可能带
+// 路径参数（/models/:model），这里按 gin 语义匹配：:param 吃掉一段、*catchall 吃掉
+// 至少一段且必须在末尾。
+func gatewayTemplateMatches(templates map[string]bool, tail string) bool {
+	actual := splitGatewayPathSegments(tail)
+	if len(actual) == 0 {
+		return false
+	}
+	for template := range templates {
+		if matchGatewayRouteSegments(splitGatewayPathSegments(template), actual) {
+			return true
+		}
+	}
+	return false
+}
+
+// gatewayCanonicalMissingVersionPath 是“补版本段”的保守入口（需求 R2）：
+//
+// 只有当**原路径完全未命中任何网关路由**、**补一个版本段只命中一条模板**时才补，
+// 命中多条或零条都保持原样交给 gin（继续 404）。这样 /antigravity/models/:model
+// 如果只存在 /antigravity/v1/models/:model，/antigravity/models/xxx 会补成
+// /antigravity/v1/models/xxx；而 /antigravity 下同时在 v1 与 v1beta 里挂了
+// models 时保持原样，不猜用户的意图。
+func (idx gatewayRouteIndex) gatewayCanonicalMissingVersionPath(method, path string) (gatewayPathAliasInfo, bool) {
+	segments := splitGatewayPathSegments(path)
+	if len(segments) == 0 || pathHasVersionSegment(segments) {
+		return gatewayPathAliasInfo{}, false
+	}
+	if matchGatewayRoute(idx, method, path) {
+		// 原路径本来就命中真实路由（/antigravity/models），一个字节都不动。
+		return gatewayPathAliasInfo{}, false
+	}
+	matched := make([]gatewayPathAliasInfo, 0, len(idx.versionedPrefix))
+	for versionFamily, templates := range idx.versionedPrefix {
+		versionSegments := splitGatewayPathSegments(versionFamily)
+		if len(versionSegments) < 2 {
+			continue
+		}
+		// 族名 antigravity/v1 拆成：“前缀” antigravity + “版本段” v1。
+		prefixText := strings.Join(versionSegments[:len(versionSegments)-1], "/")
+		versionText := versionSegments[len(versionSegments)-1]
+		prefixSegments := splitGatewayPathSegments(prefixText)
+		if len(prefixSegments) == 0 || len(segments) <= len(prefixSegments) {
+			continue
+		}
+		// 路径必须以这个前缀开头，剩下的是“没写版本段”的尾部。
+		if strings.Join(segments[:len(prefixSegments)], "/") != prefixText {
+			continue
+		}
+		tail := strings.Join(segments[len(prefixSegments):], "/")
+		if !gatewayTemplateMatches(templates, tail) {
+			continue
+		}
+		normalized := "/" + versionFamily + "/" + tail
+		if isExcludedBareGatewayPath(normalized) || !matchGatewayRoute(idx, method, normalized) {
+			continue
+		}
+		matched = append(matched, gatewayPathAliasInfo{
+			Original:   path,
+			Normalized: normalized,
+			Rule:       PathAliasRuleMissingVersionPrefix,
+			Prefix:     gatewayPrefixLabel(prefixSegments),
+			Version:    versionText,
+		})
+	}
+	if len(matched) != 1 {
+		return gatewayPathAliasInfo{}, false
+	}
+	return matched[0], true
+}
+
 // forceGatewayMissingVersionPath 在“已经确认要改写”的场景里直接对 normalized 插版本段：
-// 只用来把折叠后的结果（/backend-api/codex/v1/v1/responses →）归并出用户真正想调
-// 的路径，仍然要求结果真实命中路由。
+// 只用来把折叠后的结果归并出用户真正想调的路径，仍然要求结果真实命中路由。
 func (idx gatewayRouteIndex) forceGatewayMissingVersionPath(method, path string) (gatewayPathAliasInfo, bool) {
 	segments := splitGatewayPathSegments(path)
 	if len(segments) == 0 {
@@ -351,32 +505,39 @@ func (idx gatewayRouteIndex) forceGatewayMissingVersionPath(method, path string)
 //
 //	位置 0：根前缀之后（/messages → /v1/messages、/chat/completions → /v1/chat/completions）
 //	位置 1..：每个受支持前缀段之后（/antigravity/messages → /antigravity/v1/messages、
-//	         /backend-api/codex/responses → /backend-api/codex/v1/responses）
+//	         /backend-api/codex/responses → /backend-api/codex/v1/models）
 //
 // 插完必须真实命中路由才算数，所以 /antigravity/media、/dashboard、/api/v1/* 都保持原样。
 // 已经带版本段的路径（/v1/v1beta/models、/v1beta/models）也原样交给 gin。
+//
+// 带版本段前缀族的“补版本段”（/antigravity/models/:model → /antigravity/v1/models/:model）
+// 只走保守入口 gatewayCanonicalMissingVersionPath：原路径必须完全未命中、且补完只命中
+// 一条模板；这里的位置循环只负责“前缀位置 + v1”这种历史行为。
 func (idx gatewayRouteIndex) gatewayMissingVersionPath(method, path string) (gatewayPathAliasInfo, bool) {
 	segments := splitGatewayPathSegments(path)
 	if len(segments) == 0 || pathHasVersionSegment(segments) {
 		return gatewayPathAliasInfo{}, false
 	}
-	rootBare := idx.isRootBareGatewayPath(path)
-	limit := idx.gatewayPrefixCut(segments)
-	if rootBare {
-		// 根前缀只对裸协议路径生效：先试位置 0（/messages → /v1/messages），
-		// 再试各前缀位置（/antigravity/models 的规范路径是 /antigravity/v1/models）。
+	// 原路径本来就是真实路由时一个字节都不改。根前缀例外：/messages 也注册了裸
+	// 路由，但它属于“历史裸别名”，规范路径仍然是 /v1/messages（/messages/count_tokens
+	// 必须补成 /v1/messages/count_tokens，与历史行为一致）。
+	if !idx.isRootBareGatewayPath(path) && matchGatewayRoute(idx, method, path) {
+		return gatewayPathAliasInfo{}, false
+	}
+	if info, ok := idx.gatewayCanonicalMissingVersionPath(method, path); ok {
+		return info, true
+	}
+	if idx.isRootBareGatewayPath(path) {
+		// 根前缀只对裸协议路径生效（/messages → /v1/messages）。
 		if relocated, ok := idx.insertVersionAt(method, path, segments, 0); ok {
 			return relocated, true
 		}
+		return gatewayPathAliasInfo{}, false
 	}
-	for cut := 1; cut <= limit; cut++ {
-		if !idx.prefixSegments[segments[cut-1]] {
-			continue
-		}
-		if relocated, ok := idx.insertVersionAt(method, path, segments, cut); ok {
-			return relocated, true
-		}
-	}
+	// 带前缀的路径（/antigravity/*）只走保守规则：原路径必须完全未命中、补上
+	// 版本段后必须唯一命中一条模板（见 gatewayCanonicalMissingVersionPath）。
+	// 不做“每个前缀段后面都插一个版本段”的枚举，避免 /antigravity/models/xxx
+	// 同时在 v1 与 v1beta 下挂着时随便挑一个版本族。
 	return gatewayPathAliasInfo{}, false
 }
 
