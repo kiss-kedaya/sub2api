@@ -176,11 +176,13 @@
           </template>
 
           <template #cell-key="{ row }">
-            <!-- 本标签页创建/轮换过的 key 在内存里还是明文，直接显示完整值；否则只显示
-                 后端口径的 key_masked，绝不由前端拼截。复制按钮对本行始终可用。 -->
-            <div class="flex items-center gap-1.5">
+            <!-- 列表单元格永远只渲染后端掩码：内存里的明文绝不进表格，避免超长 Key
+                 撑宽列、撑高行。本标签页创建/轮换过的完整明文仍可通过右侧复制按钮
+                 或右下角「再复制一次」浮条取用（见 copyRowKey / EphemeralKeyBanner）。
+                 掩码等宽、单行截断，列宽/行高因此与其它行保持一致。 -->
+            <div class="flex max-w-[12.5rem] items-center gap-1.5" data-test="key-cell-content">
               <code
-                class="min-w-0 break-all rounded-md bg-elevated px-1.5 py-0.5 font-mono text-xs text-default ring ring-inset ring-default"
+                class="key-mask min-w-0 truncate rounded-md bg-elevated px-1.5 py-0.5 font-mono text-xs text-default ring ring-inset ring-default"
                 :title="keyCellHint(row)"
                 data-test="key-value"
               >{{ keyDisplayValue(row) }}</code>
@@ -2382,9 +2384,13 @@ const closeSecretDialog = () => {
   secretRow.value = null
 }
 
-// 内存里有明文就显示完整 key，否则显示后端给的掩码（前端不做截断/拼接）。
-const keyDisplayValue = (row: ApiKey): string =>
-  ephemeralKeys.recall(row.id) ?? (row.key_masked || row.key_prefix || '-')
+// 列表列只展示后端口径的掩码：优先 key_masked；老数据只剩前缀时补「****」。
+// 内存里的明文（ephemeralKeys）绝不进表格，只用于复制按钮 / 浮条 / 回执弹窗。
+const keyDisplayValue = (row: ApiKey): string => {
+  if (row.key_masked) return row.key_masked
+  if (row.key_prefix) return `${row.key_prefix}****`
+  return '-'
+}
 
 const keyCellHint = (row: ApiKey): string => {
   if (ephemeralKeys.has(row.id)) return t('keys.ephemeralHint')

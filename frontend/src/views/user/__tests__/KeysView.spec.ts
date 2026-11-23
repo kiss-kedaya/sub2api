@@ -298,7 +298,7 @@ const DataTableStub = {
       <button data-test="sort-current-concurrency" @click="$emit('sort', 'current_concurrency', 'asc')">
         Sort Current Concurrency
       </button>
-      <div v-for="row in data" :key="row.id">
+      <div v-for="row in data" :key="row.id" :data-row-id="row.id">
         <div
           v-if="columns.some((col) => col.key === 'id')"
           data-test="key-id"
@@ -604,10 +604,15 @@ describe('user KeysView column settings', () => {
 
     // Closing drops the plaintext from the dialog...
     expect(wrapper.find('[data-test="api-key-secret-dialog"]').exists()).toBe(false)
-    // ...but this key was created in this tab, so the row keeps the full value until refresh.
+    // ...and the row only ever shows the mask: the in-memory plaintext never enters the table.
     const cells = wrapper.findAll('[data-test="key-cell"]').map((cell) => cell.text())
     expect(cells.length).toBeGreaterThan(0)
-    expect(cells.some((text) => text.includes(secret))).toBe(true)
+    expect(cells.some((text) => text.includes(secret))).toBe(false)
+    expect(cells.some((text) => text.includes('sk-test-****-key'))).toBe(true)
+    // The full value is still copyable from the row while this tab stays open.
+    await wrapper.get('[data-row-id="77"]').get('[data-test="key-copy"]').trigger('click')
+    await flushPromises()
+    expect(copyToClipboard).toHaveBeenCalledWith(secret)
     // The plaintext never reaches browser storage.
     expect(readBrowserStorage()).not.toContain(secret)
     wrapper.unmount()
@@ -1355,8 +1360,11 @@ describe('user KeysView mutations', () => {
     expect(wrapper.text()).toContain('DeepSeek')
     expect(wrapper.find('#key-form').exists()).toBe(false)
     expect(wrapper.get('[data-test="api-key-secret-value"]').text()).toBe(secret)
-    // The freshly created row is readable and copyable in this tab until a refresh.
-    expect(wrapper.findAll('[data-test="key-cell"]').some((cell) => cell.text().includes(secret))).toBe(true)
+    // 列表行只保留掩码；明文只在回执弹窗与内存 store 里（可复制），绝不进表格。
+    const createdRowCells = wrapper.findAll('[data-test="key-cell"]')
+    expect(createdRowCells.length).toBe(2)
+    expect(createdRowCells.some((cell) => cell.text().includes(secret))).toBe(false)
+    expect(createdRowCells.every((cell) => cell.text().includes('sk-test-****-key'))).toBe(true)
     expect(showSuccess).toHaveBeenCalledTimes(1)
     expect(showSuccess).toHaveBeenCalledWith('keys.keyCreatedSuccess')
     await getButtonByText(wrapper, 'keys.secretDialog.copy').trigger('click')
@@ -2006,7 +2014,7 @@ describe('user KeysView ephemeral and sealed keys', () => {
     copyToClipboard.mockResolvedValue(true)
   })
 
-  it('swaps the mask for the full key in this tab and copies the full value', async () => {
+  it('keeps the server mask in the row when the tab holds the plaintext, and still copies it', async () => {
     listKeys.mockResolvedValue(pageOf([createApiKey()]))
     const wrapper = await mountView()
 
@@ -2015,10 +2023,18 @@ describe('user KeysView ephemeral and sealed keys', () => {
     useEphemeralKeyStore().remember(1, 'sk-fixture-full')
     await nextTick()
 
-    expect(wrapper.get('[data-test="key-value"]').text()).toBe('sk-fixture-full')
+    // 内存里的明文绝不进表格：行内始终是后端掩码，超长 Key 不会把行撑宽。
+    expect(wrapper.get('[data-test="key-value"]').text()).toBe('sk-test-****-key')
+    expect(wrapper.text()).not.toContain('sk-fixture-full')
+    expect(wrapper.get('[data-test="key-value"]').attributes('title')).toBe(
+      'Created in this tab; copy the full key now.'
+    )
+
+    // 复制按钮仍从内存 store 取完整明文，并切到「已复制」的勾选态。
     await wrapper.get('[data-test="key-copy"]').trigger('click')
     await flushPromises()
     expect(copyToClipboard).toHaveBeenCalledWith('sk-fixture-full')
+    expect(wrapper.get('[data-test="key-copy"]').html()).toContain('i-lucide-check')
     wrapper.unmount()
   })
 
@@ -2034,7 +2050,7 @@ describe('user KeysView ephemeral and sealed keys', () => {
     wrapper.unmount()
   })
 
-  it('shows the rotated key in the row and copies it right away', async () => {
+  it('keeps the mask after rotating in this tab and copies the rotated plaintext', async () => {
     listKeys.mockResolvedValue(pageOf([{ ...createApiKey(), needs_rotation: true }]))
     rotateKey.mockResolvedValue({
       ...createApiKey(),
@@ -2048,10 +2064,57 @@ describe('user KeysView ephemeral and sealed keys', () => {
     await wrapper.get('[data-test="key-needs-rotation-rotate"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('[data-test="key-value"]').text()).toBe('sk-rotated-fresh')
+    // 回执弹窗里才有明文；列表行仍只渲染后端口径的掩码。
+    expect(wrapper.get('[data-test="key-value"]').text()).toBe('sk-test-****-key')
+    expect(wrapper.get('[data-test="key-cell"]').text()).not.toContain('sk-rotated-fresh')
     await wrapper.get('[data-test="key-copy"]').trigger('click')
     await flushPromises()
     expect(copyToClipboard).toHaveBeenCalledWith('sk-rotated-fresh')
+    wrapper.unmount()
+  })
+
+  it('always renders a uniform mask instead of the full plaintext, including after a refresh', async () => {
+    listKeys.mockResolvedValue(pageOf([createApiKey()]))
+    const first = await mountView()
+    useEphemeralKeyStore().remember(1, 'sk-refresh-fixture')
+    await nextTick()
+
+    // 本标签页内：行内仍是掩码，明文只在内存 store / 复制按钮里。
+    expect(first.get('[data-test="key-value"]').text()).toBe('sk-test-****-key')
+    expect(first.text()).not.toContain('sk-refresh-fixture')
+    first.unmount()
+
+    // 刷新页面 = 新的 Pinia 实例：明文不落任何浏览器存储，列表仍显示同一掩码。
+    setActivePinia(createPinia())
+    const second = await mountView()
+    expect(second.get('[data-test="key-value"]').text()).toBe('sk-test-****-key')
+    expect(second.get('[data-test="key-value"]').text()).toMatch(/^sk-.+\*{4}/)
+    expect(second.text()).not.toContain('sk-refresh-fixture')
+    expect(readBrowserStorage()).not.toContain('sk-refresh-fixture')
+    second.unmount()
+  })
+
+  it('falls back to prefix + **** for legacy rows without a server mask', async () => {
+    listKeys.mockResolvedValue(pageOf([{ ...createApiKey(), key_masked: '', key_prefix: 'sk-legacy-' }]))
+    const wrapper = await mountView()
+
+    expect(wrapper.get('[data-test="key-value"]').text()).toBe('sk-legacy-****')
+    wrapper.unmount()
+  })
+
+  it('keeps long mask values on one line without widening the column', async () => {
+    const longMask = `sk-${'a'.repeat(60)}****${'b'.repeat(4)}`
+    listKeys.mockResolvedValue(pageOf([{ ...createApiKey(), key_masked: longMask }]))
+    const wrapper = await mountView()
+
+    const value = wrapper.get('[data-test="key-value"]')
+    expect(value.text()).toBe(longMask)
+    // 等宽 + 单行截断：超长内容不换行，也不会把列撑宽。
+    expect(value.classes()).toContain('font-mono')
+    expect(value.classes()).toContain('truncate')
+    expect(value.classes()).not.toContain('break-all')
+    expect(wrapper.get('[data-test="key-cell-content"]').classes()).toContain('max-w-[12.5rem]')
+    expect(wrapper.get('[data-test="key-copy"]').classes()).toContain('shrink-0')
     wrapper.unmount()
   })
 })
