@@ -1001,6 +1001,9 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 	}
 	archive, err := s.createArchiveFile(pattern)
 	if err != nil {
+		// Close waits for pg_dump to exit; if it is still waiting for a table lock
+		// that could take the whole lock timeout (or forever for a whole dump).
+		cancelDump()
 		_ = dumpReader.Close()
 		return "", 0, "", fmt.Errorf("create backup archive: %w", err)
 	}

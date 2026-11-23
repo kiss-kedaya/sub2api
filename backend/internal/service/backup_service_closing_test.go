@@ -133,3 +133,23 @@ func TestBackupService_StartBackup_DumpExitFailureEndsAsAFailedRecord(t *testing
 	require.Empty(t, store.objects)
 	requireDirEmpty(t, dir)
 }
+
+// When the staging file cannot be created, pg_dump may still be waiting for a table
+// lock. Close waits for the process, so its context has to be cancelled first.
+func TestCreateCompressedBackupFile_StagingFailureCancelsPgDumpBeforeClosingIt(t *testing.T) {
+	dir := isolateTempDir(t)
+	dumper := stringDumper(knownDump)
+	svc := newCriticalTestService(newMockSettingRepo(), dumper, newMockObjectStore(), config.BackupConfig{})
+	svc.createArchiveFile = func(string) (backupArchiveFile, error) { return nil, errors.New("no space left on device") }
+
+	path, size, digest, err := svc.createCompressedBackupFile(context.Background())
+
+	require.ErrorContains(t, err, "create backup archive")
+	require.ErrorContains(t, err, "no space left on device")
+	require.Empty(t, path)
+	require.Zero(t, size)
+	require.Empty(t, digest)
+	require.True(t, dumper.closed, "the dump reader must still be closed")
+	require.ErrorIs(t, dumper.ctxErrAtClose, context.Canceled, "pg_dump must be told to stop before Close waits for it")
+	requireDirEmpty(t, dir)
+}
