@@ -113,7 +113,10 @@ func configureTrustedProxies(r *gin.Engine, cfg config.ServerConfig) {
 
 // ProvideHTTPServer 提供 HTTP 服务器
 func ProvideHTTPServer(cfg *config.Config, router *gin.Engine) *http.Server {
-	httpHandler := http.Handler(router)
+	// 在 gin 路由匹配之前规范化网关协议路径：任意个重复 /v1 折叠成一个，
+	// 漏写 /v1 的裸协议路径补齐到 /v1 下。重写后的请求仍走同一个 /v1 路由与
+	// 中间件链，鉴权/限流/计费/日志与直接请求规范路径一致。
+	httpHandler := middleware2.GatewayPathAlias(router)
 	server := &http.Server{
 		Addr:           cfg.Server.Address(),
 		Handler:        httpHandler,

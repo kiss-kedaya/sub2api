@@ -28,6 +28,7 @@
 - **用量看板**：近 30 天；有小时汇总就走 rollup，没有再回 `usage_logs`。
 - **诊断与运维**：连接时间线、限时请求采集、缓存测试、流量统计、账号通知、渠道下钻和独立代理管理；自动化与专项通道按需开启。见 [运维能力与配置边界](docs/operator-capabilities.md)。
 - **网关可靠性**：客户端正常关 WS 不计账号故障；过大透传可走 HTTP bridge；Spark 429 只限该模型；转发失败立刻释放会话槽。
+- **Base URL 容错**：Anthropic 系填裸域名、OpenAI 系填 `/v1` 都可以；重复写多个 `/v1`（如 `/v1/v1/messages`）或完全不带 `/v1`（如 `/messages`）会被服务端自动折叠/补齐，鉴权、限流、计费与日志和规范路径一致。各客户端填法见 [docs/gateway-base-url.md](docs/gateway-base-url.md)。
 - **Nuxt UI 前端**：Vue 页面使用 `@nuxt/ui` 组件，运行方式为 Vite SPA。完整前端嵌入 Go 二进制，无需启动 Node、Nitro 或 BFF 服务。
 - **升级纪律**：线上主进程 `DATABASE_MIGRATION_MODE=validate`，迁移单独做。版本号只写在 `backend/cmd/server/VERSION`。GitHub Release 只在推语义化 `v*` 标签时触发。
 
