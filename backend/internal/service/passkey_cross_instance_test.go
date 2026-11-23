@@ -15,10 +15,10 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/repository"
+	"github.com/Wei-Shaw/sub2api/internal/repository" //nolint:depguard // cross-instance Redis test needs the concrete store
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9" //nolint:depguard // cross-instance Redis test needs the concrete store
 	"github.com/stretchr/testify/require"
 )
 
@@ -308,8 +308,9 @@ func cborEncodeAttestationObject(authData []byte) []byte {
 // {1: 2, 3: -7, -1: 1, -2: x, -3: y}
 func cborEncodeCOSEKey(t *testing.T, publicKey *ecdsa.PublicKey) []byte {
 	t.Helper()
-	x := publicKey.X.FillBytes(make([]byte, 32))
-	y := publicKey.Y.FillBytes(make([]byte, 32))
+	raw, err := publicKey.Bytes() // 0x04 || X || Y (uncompressed P-256 point)
+	require.NoError(t, err)
+	x, y := raw[1:33], raw[33:]
 
 	out := cborEncodeHead(5, 5)
 	out = append(out, cborEncodeUint(1)...)
