@@ -230,12 +230,20 @@ export default {
       expiresAt: '到期 {date}',
       neverExpires: '永不过期'
     },
+    // 单条轮换：旧 Key 立即失效，新明文只出现一次；下发明文前先做身份校验。
+    rotateVerify: {
+      title: '身份验证',
+      hint: '轮换「{name}」会立即作废旧 Key 并下发新明文，请先完成一次身份验证。',
+      confirm: '验证并轮换',
+    },
     // 批量轮换：二次确认、逐条结果、一键全部复制、逐条重新封存。
     batchRotate: {
       entry: '批量轮换',
       title: '批量轮换密钥',
       confirm: '将轮换选中的 {count} 个 Key：旧 Key 会立即失效，新明文只在结果页出现一次。确定继续？',
       confirmAction: '确认轮换',
+      verifyTitle: '身份验证',
+      verifyHint: '批量轮换会下发 {count} 个 Key 的新明文，请先完成一次身份验证。',
       resultTitle: '批量轮换结果',
       summary: '成功 {succeeded} 条，失败 {failed} 条',
       copyAll: '一键复制全部',

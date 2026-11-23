@@ -247,9 +247,15 @@ export async function getIPWhitelistAssist(): Promise<IPWhitelistAssistResponse>
  * and reactivates a key that the gateway risk control disabled. The old key
  * stops authenticating immediately.
  */
-export async function rotateKey(id: number): Promise<ApiKeySecret> {
+export async function rotateKey(
+  id: number,
+  verification?: ApiKeyVerificationPayload,
+): Promise<ApiKeySecret> {
   // regenerate_key 让服务端在这一次响应里返回新明文，之后列表只回 key_masked。
-  return update(id, { regenerate_key: true }) as Promise<ApiKeySecret>
+  // 明文回执与创建同级，账号有可用因子时服务端要求三选一身份校验。
+  const updates: UpdateApiKeyRequest = { regenerate_key: true }
+  if (verification) updates.verification = verification
+  return update(id, updates) as Promise<ApiKeySecret>
 }
 
 /**
@@ -352,6 +358,11 @@ export async function deleteSecretSeal(id: number): Promise<void> {
  * rotates each key in its own transaction. Every successful item carries the new
  * plaintext exactly once; failures carry an `error_code` and never block the
  * other items.
+ *
+ * The batch emits plaintext, so it is gated exactly like creation: the caller
+ * must prove identity (password / TOTP / passkey) first. The backend answers
+ * 400 `VERIFY_REQUIRED` when the account has an available factor and the
+ * request carries no verification.
  */
 export interface BatchRotateKeyItem {
   id: number
@@ -368,9 +379,14 @@ export interface BatchRotateKeysResult {
   failed_count: number
 }
 
-export async function batchRotateKeys(ids: number[]): Promise<BatchRotateKeysResult> {
+export async function batchRotateKeys(
+  ids: number[],
+  verification?: ApiKeyVerificationPayload,
+): Promise<BatchRotateKeysResult> {
   const unique = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))]
-  const { data } = await apiClient.post<BatchRotateKeysResult>('/keys/batch-rotate', { ids: unique })
+  const body: { ids: number[]; verification?: ApiKeyVerificationPayload } = { ids: unique }
+  if (verification) body.verification = verification
+  const { data } = await apiClient.post<BatchRotateKeysResult>('/keys/batch-rotate', body)
   return data
 }
 

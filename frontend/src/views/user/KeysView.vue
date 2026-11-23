@@ -1235,9 +1235,100 @@
       :confirm-text="t('keys.batchRotate.confirmAction')"
       :cancel-text="t('common.cancel')"
       :danger="true"
-      @confirm="handleBatchRotate"
+      @confirm="openBatchRotateVerification"
       @cancel="showBatchRotateDialog = false"
     />
+
+    <!-- Bulk Rotate 身份校验：批量轮换会下发每把 Key 的新明文，与创建同级，
+         必须先完成三选一校验；一个可用因子都没有时直接跳过本步。 -->
+    <BaseDialog
+      :show="showBatchRotateVerifyDialog"
+      :title="t('keys.batchRotate.verifyTitle')"
+      @close="cancelBatchRotateVerification"
+    >
+      <div class="space-y-3" data-test="batch-rotate-verification">
+        <p class="text-sm text-muted">{{ t('keys.batchRotate.verifyHint', { count: selectedKeyCount }) }}</p>
+        <div
+          v-if="batchRotateFactorsLoading"
+          class="rounded-lg bg-gray-50 p-3 text-xs text-muted ring ring-inset ring-default dark:bg-dark-900"
+          data-test="batch-rotate-factors-loading"
+        >
+          {{ t('keys.reveal.factorsLoading') }}
+        </div>
+        <KeyFactorVerification
+          v-else
+          ref="batchRotateVerificationRef"
+          :factors="batchRotateFactors"
+          mode="create"
+          :loading="batchRotateRunning"
+        />
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <UButton
+            color="neutral"
+            variant="outline"
+            size="lg"
+            :disabled="batchRotateRunning"
+            data-test="batch-rotate-verify-cancel"
+            @click="cancelBatchRotateVerification"
+          >
+            {{ t('common.cancel') }}
+          </UButton>
+          <UButton
+            color="primary"
+            size="lg"
+            :loading="batchRotateRunning"
+            :disabled="batchRotateRunning || batchRotateFactorsLoading"
+            data-test="batch-rotate-verify-submit"
+            @click="confirmBatchRotateWithVerification"
+          >
+            {{ t('keys.batchRotate.confirmAction') }}
+          </UButton>
+        </div>
+      </template>
+    </BaseDialog>
+
+    <!-- 单条轮换身份校验：轮换会下发新明文，与创建同级必须先完成三选一校验。 -->
+    <BaseDialog
+      :show="showRotateVerifyDialog"
+      :title="t('keys.rotateVerify.title')"
+      @close="cancelRotateVerification"
+    >
+      <div class="space-y-3" data-test="rotate-verification">
+        <p class="text-sm text-muted">
+          {{ t('keys.rotateVerify.hint', { name: rotateVerifyTarget?.name ?? '' }) }}
+        </p>
+        <div
+          v-if="rotateVerifyLoading"
+          class="rounded-lg bg-gray-50 p-3 text-xs text-muted ring ring-inset ring-default dark:bg-dark-900"
+          data-test="rotate-factors-loading"
+        >
+          {{ t('keys.reveal.factorsLoading') }}
+        </div>
+        <KeyFactorVerification
+          v-else
+          ref="rotateVerificationRef"
+          :factors="verificationFactors"
+          mode="create"
+        />
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <UButton color="neutral" variant="outline" size="lg" @click="cancelRotateVerification">
+            {{ t('common.cancel') }}
+          </UButton>
+          <UButton
+            color="primary"
+            size="lg"
+            data-test="rotate-verify-submit"
+            @click="confirmRotateVerification"
+          >
+            {{ t('keys.rotateVerify.confirm') }}
+          </UButton>
+        </div>
+      </template>
+    </BaseDialog>
 
     <!-- Bulk Rotate result: 逐条状态 + 一键全部复制 + 逐条重新封存。 -->
     <BaseDialog
@@ -1776,6 +1867,19 @@ const showBulkEditDialog = ref(false)
 // 批量轮换：二次确认（旧 Key 立即失效）→ 逐条结果 → 一键全部复制 → 逐条重新封存。
 const showBatchRotateDialog = ref(false)
 const batchRotateRunning = ref(false)
+// 批量轮换的身份校验步：轮换会下发新明文，与创建同级必须三选一校验。
+const showBatchRotateVerifyDialog = ref(false)
+const batchRotateFactors = ref<ApiKeyVerificationFactors | null>(null)
+const batchRotateFactorsLoading = ref(false)
+const batchRotateVerificationPayload = ref<ApiKeyVerificationPayload | null>(null)
+const batchRotateVerificationRef = ref<InstanceType<typeof KeyFactorVerification> | null>(null)
+// 单条轮换的身份校验步（轮换即下发明文，与创建同级）。
+const showRotateVerifyDialog = ref(false)
+const rotateVerifyTarget = ref<ApiKey | null>(null)
+const rotateVerifyLoading = ref(false)
+const rotateVerifyPayload = ref<ApiKeyVerificationPayload | null>(null)
+const rotateVerificationRef = ref<InstanceType<typeof KeyFactorVerification> | null>(null)
+let rotateVerifyResolve: ((payload: ApiKeyVerificationPayload | null) => void) | null = null
 const batchRotateResult = ref<BatchRotateKeysResult | null>(null)
 const showBatchRotateResult = ref(false)
 const batchRotateNames = ref<Record<number, string>>({})
@@ -1982,7 +2086,7 @@ const openCreateModal = () => {
   void loadVerificationFactors()
 }
 
-const loadVerificationFactors = async () => {
+const loadVerificationFactors = async (): Promise<ApiKeyVerificationFactors> => {
   verificationFactorsLoading.value = true
   try {
     verificationFactors.value = await keysAPI.getVerificationFactors()
@@ -2000,6 +2104,7 @@ const loadVerificationFactors = async () => {
   } finally {
     verificationFactorsLoading.value = false
   }
+  return verificationFactors.value as ApiKeyVerificationFactors
 }
 
 /** 第一步 → 第二步：先做与提交相同的必填校验，通过后进入身份校验。 */
@@ -2708,11 +2813,18 @@ const editKey = (key: ApiKey) => {
 // 轮换一把 key 的值：旧值立即失效，成功回执里带回新明文。
 // 走的是既有 PUT /keys/:id 更新流程（regenerate_key），不新增后端路由。
 // 风控停用的 key（risk_disabled）和待整改的 key（needs_rotation）共用这条路径。
+// 轮换与创建同级会下发明文，所以账号有可用因子时先过三选一身份校验。
 const rotateKeyValue = async (key: ApiKey) => {
   if (rotatingKeyId.value !== null) return
   rotatingKeyId.value = key.id
   try {
-    const updated = await keysAPI.rotateKey(key.id)
+    const verification = await requestKeyRotateVerification()
+    if (verification === null) {
+      // 用户在校验弹窗点了取消：不轮换（旧 Key 保持原样）。
+      return
+    }
+    const payload = verification === ROTATE_VERIFY_NO_FACTOR ? undefined : verification
+    const updated = await keysAPI.rotateKey(key.id, payload)
     const { key: rotatedSecret, ...rotatedMasked } = updated
     const merged = mergeKeyLocally(rotatedMasked as ApiKey)
     // 轮换后旧明文立即作废：先删掉内存里的旧条目，再用新明文覆盖同一 id。
@@ -2725,11 +2837,47 @@ const rotateKeyValue = async (key: ApiKey) => {
     appStore.showSuccess(t('keys.riskRotateSuccess'))
     // 轮换即整改：角标就地消失，门禁汇总数量同步减少。
     await syncRotationRemediation()
-  } catch (error) {
-    appStore.showError(t('keys.riskRotateFailed'))
+  } catch (error: any) {
+    const detail = error?.reason
+      ? createVerificationErrorText(error.reason)
+      : t('keys.riskRotateFailed')
+    appStore.showError(detail)
   } finally {
     rotatingKeyId.value = null
   }
+}
+
+const ROTATE_VERIFY_NO_FACTOR = 'no-factor'
+
+/** 单条轮换的身份校验：有可用因子时弹校验步；返回 null 表示用户取消。 */
+const requestKeyRotateVerification = async (): Promise<ApiKeyVerificationPayload | null | 'no-factor'> => {
+  rotateVerifyLoading.value = true
+  const factors = await loadVerificationFactors()
+  rotateVerifyLoading.value = false
+  if (factors.available_methods.length === 0) {
+    // 没有可用因子：服务端显式放行（skipped_no_factor），不弹校验步。
+    return 'no-factor'
+  }
+  rotateVerifyPayload.value = null
+  showRotateVerifyDialog.value = true
+  return await new Promise<ApiKeyVerificationPayload | null>((resolve) => {
+    rotateVerifyResolve = resolve
+  })
+}
+
+const confirmRotateVerification = () => {
+  const built = rotateVerificationRef.value?.buildVerification() ?? null
+  if (!built) return
+  rotateVerifyPayload.value = built
+  showRotateVerifyDialog.value = false
+  rotateVerifyResolve?.(built)
+  rotateVerifyResolve = null
+}
+
+const cancelRotateVerification = () => {
+  showRotateVerifyDialog.value = false
+  rotateVerifyResolve?.(null)
+  rotateVerifyResolve = null
 }
 
 const toggleKeyStatus = async (key: ApiKey) => {
@@ -3163,23 +3311,17 @@ const handleSubmit = async () => {
     // 身份校验失败要显示具体原因（密码不正确 / 验证码错误 / Passkey 失败），
     // 不能笼统提示「保存失败」让用户猜。
     const reason = error?.reason
-    const errorMsg =
-      reason === 'VERIFY_PASSWORD_INVALID'
-        ? t('keys.factor.passwordInvalid')
-        : reason === 'VERIFY_TOTP_INVALID'
-          ? t('keys.factor.totpInvalid')
-          : reason === 'VERIFY_PASSKEY_FAILED'
-            ? t('keys.factor.passkeyFailed')
-            : reason === 'VERIFY_FACTOR_UNAVAILABLE'
-              ? t('keys.factor.unavailable')
-              : reason === 'VERIFY_REQUIRED'
-                ? t('keys.factor.requiredAll')
-                : reason === 'API_KEY_TOO_PREDICTABLE'
-                  ? t('keys.customKeyTooPredictable')
-                  : reason === 'API_KEY_GROUP_REQUIRED'
-                    // 实例里已有可分配分组（但当前账号没拿到）：明确告诉用户去要分组，别以为是前端坏了。
-                    ? t('keys.groupRequiredByServer')
-                    : error.response?.data?.detail || t('keys.failedToSave')
+    const verifiedReason = reason === 'VERIFY_PASSWORD_INVALID' || reason === 'VERIFY_TOTP_INVALID'
+      || reason === 'VERIFY_PASSKEY_FAILED' || reason === 'VERIFY_FACTOR_UNAVAILABLE'
+      || reason === 'VERIFY_REQUIRED'
+    const errorMsg = verifiedReason
+      ? createVerificationErrorText(reason)
+      : reason === 'API_KEY_TOO_PREDICTABLE'
+        ? t('keys.customKeyTooPredictable')
+        : reason === 'API_KEY_GROUP_REQUIRED'
+          // 实例里已有可分配分组（但当前账号没拿到）：明确告诉用户去要分组，别以为是前端坏了。
+          ? t('keys.groupRequiredByServer')
+          : error.response?.data?.detail || t('keys.failedToSave')
     appStore.showError(errorMsg)
     // Don't advance tour on error
   } finally {
@@ -3264,13 +3406,30 @@ const closeBatchRotateResult = () => {
   batchRotateCopiedAll.value = false
 }
 
+/** 身份校验失败原因 → 可直接展示的文案（创建与批量轮换共用）。 */
+const createVerificationErrorText = (reason?: string): string =>
+  reason === 'VERIFY_PASSWORD_INVALID'
+    ? t('keys.factor.passwordInvalid')
+    : reason === 'VERIFY_TOTP_INVALID'
+      ? t('keys.factor.totpInvalid')
+      : reason === 'VERIFY_PASSKEY_FAILED'
+        ? t('keys.factor.passkeyFailed')
+        : reason === 'VERIFY_FACTOR_UNAVAILABLE'
+          ? t('keys.factor.unavailable')
+          : reason === 'VERIFY_REQUIRED'
+            ? t('keys.factor.requiredAll')
+            : t('keys.batchRotate.failed')
+
 const handleBatchRotate = async () => {
   const ids = selectedKeyIds.value.map((id) => Number(id)).filter((id) => Number.isFinite(id))
-  showBatchRotateDialog.value = false
   if (ids.length === 0 || batchRotateRunning.value) return
   batchRotateRunning.value = true
   try {
-    const result = await keysAPI.batchRotateKeys(ids)
+    // 批量轮换会一次性下发每把 Key 的新明文，和创建 Key 同级：当前步骤里
+    // 拿到的三选一校验载荷必须一并提交。账号没有任何可用因子时
+    // batchRotateFactors 为空，服务端会显式放行并记 skipped_no_factor。
+    const verification = batchRotateVerificationPayload.value ?? verificationPayload.value
+    const result = await keysAPI.batchRotateKeys(ids, verification ?? undefined)
     batchRotateResult.value = result
     // 成功条目的新明文只进内存 store（与单条轮换一致），刷新/登出即失效。
     result.results.forEach((item) => {
@@ -3289,11 +3448,48 @@ const handleBatchRotate = async () => {
     await loadApiKeys()
     void syncRotationRemediation()
   } catch (error: any) {
-    const detail = error?.response?.data?.detail || t('keys.batchRotate.failed')
+    const detail = error?.reason
+      ? createVerificationErrorText(error.reason)
+      : error?.response?.data?.detail || t('keys.batchRotate.failed')
     appStore.showError(detail)
   } finally {
     batchRotateRunning.value = false
   }
+}
+
+/** 确认批量轮换：账号有可用因子时先进身份校验步，否则直接轮换。 */
+const openBatchRotateVerification = async () => {
+  showBatchRotateDialog.value = false
+  batchRotateVerificationPayload.value = null
+  batchRotateFactorsLoading.value = true
+  showBatchRotateVerifyDialog.value = true
+  const factors = await loadVerificationFactors()
+  batchRotateFactors.value = factors
+  batchRotateFactorsLoading.value = false
+  // 一个可用因子都没有：服务端会显式放行（skipped_no_factor），不弹校验步。
+  if (factors.available_methods.length === 0) {
+    await handleBatchRotate()
+  }
+}
+
+const cancelBatchRotateVerification = () => {
+  if (batchRotateRunning.value) return
+  showBatchRotateVerifyDialog.value = false
+  batchRotateVerificationPayload.value = null
+  batchRotateFactors.value = null
+}
+
+const confirmBatchRotateWithVerification = async () => {
+  if (batchRotateFactorsLoading.value) return
+  if ((batchRotateFactors.value?.available_methods.length ?? 0) === 0) {
+    await handleBatchRotate()
+    return
+  }
+  const built = batchRotateVerificationRef.value?.buildVerification() ?? null
+  if (!built) return
+  batchRotateVerificationPayload.value = built
+  showBatchRotateVerifyDialog.value = false
+  await handleBatchRotate()
 }
 
 const copyAllRotatedKeys = async () => {

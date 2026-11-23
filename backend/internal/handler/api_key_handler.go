@@ -127,6 +127,11 @@ type UpdateAPIKeyRequest struct {
 	AutoBlockDatacenterIPs *bool `json:"auto_block_datacenter_ips"`
 	// RegenerateKey 轮换密钥：生成新的 key 值，旧值立刻失效。
 	RegenerateKey bool `json:"regenerate_key"`
+	// Verification 本次编辑会下发 / 变更明文时的三选一身份校验（登录密码 /
+	// TOTP / Passkey）。只有 regenerate_key=true 时才必填；改名 / 配额 /
+	// 白名单等不下发明文的编辑不要求校验。服务端不接受在这一路径上改写
+	// 密钥值本身（不存在 custom_key 字段），避免多一条下发 / 变更明文的入口。
+	Verification *apiKeyVerificationRequest `json:"verification"`
 }
 
 func validAPIKeyLimit(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 }
@@ -295,13 +300,30 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	svcReq.AutoBlockDatacenterIPs = req.AutoBlockDatacenterIPs
 
 	c.Header("Cache-Control", "no-store")
-	// 幂等指纹不能包含身份校验材料（密码 / 动态码 / Passkey 票据）：指纹会落库，
+	// 幂等指纹不含身份校验材料（密码 / 动态码 / Passkey 票据）：指纹会落库，
 	// 带密码的哈希等于给拖库者一个离线爆破目标。校验材料只在本次请求内使用。
+	//
+	// 但指纹不含校验材料 ≠ 重放可以不校验：命中历史成功回执时（24 小时内同一个
+	// Idempotency-Key），中间件会用本请求的 c.Get(ApiKeyVerificationGuardPassedKey)
+	// 判断「本次请求是否真的过了校验」——没过就返回 VERIFY_REQUIRED，绝不直接
+	// 复用存储响应。见 idempotency_helper.go。
 	idempotencyPayload := req
 	idempotencyPayload.Verification = nil
 	var first *dto.APIKeySecret
-	result := runUserIdempotentJSON(c, "user.api_keys.create", idempotencyPayload, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		verifiedMethod, err := h.keyVerificationGuard(c, subject.UserID, req.Verification)
+	result := runUserIdempotentJSONWithReplayGate(c, "user.api_keys.create", idempotencyPayload, service.DefaultWriteIdempotencyTTL(), func() (bool, error) {
+		// 命中历史成功回执时问一句：本次请求真的过过身份校验吗？
+		//   - 是（guard 已在本请求内打过标记）：瞬时重放，可以复用回执；
+		//   - 否：24 小时内换一个连接重放同一个 Idempotency-Key，必须重新校验，
+		//     没带校验材料 → 400 VERIFY_REQUIRED，绝不返回存储响应。
+		if c.GetBool(service.ApiKeyVerificationGuardPassedKey) {
+			return true, nil
+		}
+		if _, err := h.keyVerificationGuard(c, subject.UserID, 0, req.Verification); err != nil {
+			return false, err
+		}
+		return true, nil
+	}, func(ctx context.Context) (any, error) {
+		verifiedMethod, err := h.keyVerificationGuard(c, subject.UserID, 0, req.Verification)
 		if err != nil {
 			return nil, err
 		}
@@ -398,6 +420,20 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		}
 	}
 
+	// 审计：轮换（regenerate_key）会下发新明文，编辑类请求也统一记录动作名。
+	// 审计只记 Key 身份与计数，明文 key 永远不写进 audit_logs。
+	// 轮换成功后会改成 api_key.rotate（与批量轮换同动作名），这里先标编辑。
+	middleware2.SetAuditAction(c, service.AuditActionAPIKeyUpdate)
+	// 轮到「下发 / 变更明文」的编辑必须先过三选一身份校验，且校验放在真正
+	// 轮换之前：没校验通过就一步都不动，旧 key 也不会被悄悄换掉。
+	if keyUpdateEmitsPlaintext(req) {
+		verifiedMethod, verr := h.keyVerificationGuard(c, subject.UserID, keyID, req.Verification)
+		if verr != nil {
+			response.ErrorFrom(c, verr)
+			return
+		}
+		annotateKeyShowVerification(c, verifiedMethod)
+	}
 	key, err := h.apiKeyService.Update(c.Request.Context(), keyID, subject.UserID, svcReq)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -406,7 +442,6 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	// 轮换/加白名单成功后，回执必须立刻反映整改结果（needs_rotation=false），
 	// 前端才能就地撤掉角标而不用等下一次列表刷新。
 	h.apiKeyService.AnnotateKeyRotation(key)
-
 	// 轮换是明文 key 的另一次（也是唯一另一次）回执：旧值立刻失效，
 	// 用户必须当场拿到新值。普通编辑只回脱敏视图。
 	if req.RegenerateKey {
@@ -431,6 +466,10 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 // BatchRotateAPIKeysRequest 是批量轮换的请求体。
 type BatchRotateAPIKeysRequest struct {
 	IDs []int64 `json:"ids" binding:"required"`
+	// Verification 批量轮换会为每把 Key 下发新明文，因此与创建 Key 一样必须
+	// 先完成三选一身份校验（登录密码 / TOTP / Passkey）。账号没有任何可用
+	// 因子时放行并在审计里记 skipped_no_factor。
+	Verification *apiKeyVerificationRequest `json:"verification"`
 }
 
 // BatchRotateAPIKeyItem 是批量轮换的单条结果。
@@ -467,6 +506,13 @@ func (h *APIKeyHandler) BatchRotate(c *gin.Context) {
 	}
 
 	c.Header("Cache-Control", "no-store")
+	// 批量轮换会把每把 Key 的新明文一次性下发，是与「创建」同级的明文输出口，
+	// 必须同样要求三选一身份校验：没校验通过就一条都不轮换（审计记 rejected）。
+	verifiedMethod, verifyErr := h.keyVerificationGuard(c, subject.UserID, 0, req.Verification)
+	if verifyErr != nil {
+		response.ErrorFrom(c, verifyErr)
+		return
+	}
 	results, err := h.apiKeyService.BatchRotate(c.Request.Context(), subject.UserID, req.IDs)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -492,6 +538,7 @@ func (h *APIKeyHandler) BatchRotate(c *gin.Context) {
 	failed := len(out) - succeeded
 
 	middleware2.SetAuditAction(c, service.AuditActionAPIKeyRotate)
+	annotateKeyShowVerification(c, verifiedMethod)
 	middleware2.SetAuditExtra(c, map[string]any{
 		"batch":           true,
 		"rotate":          true,

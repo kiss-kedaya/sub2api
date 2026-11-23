@@ -1994,6 +1994,8 @@ describe('user KeysView key-rotation remediation', () => {
   })
 
   it('removes the badge immediately after rotating the key', async () => {
+    // 轮换会下发新明文：账号有可用因子时必须先过身份校验，这里给出无因子账号
+    // 直接轮换；「有因子必须先校验」由下面的专项用例覆盖。
     listKeys.mockResolvedValue(pageOf([neededKey()]))
     rotateKey.mockResolvedValue({
       ...neededKey(),
@@ -2010,9 +2012,70 @@ describe('user KeysView key-rotation remediation', () => {
     await wrapper.get('[data-test="key-needs-rotation-rotate"]').trigger('click')
     await flushPromises()
 
-    expect(rotateKey).toHaveBeenCalledWith(1)
+    expect(rotateKey).toHaveBeenCalledWith(1, undefined)
     expect(wrapper.find('[data-test="key-needs-rotation-badge"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="keys-rotation-count"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('账号有可用因子时，单条轮换必须先过身份校验再带 verification 轮换', async () => {
+    listKeys.mockResolvedValue(pageOf([neededKey()]))
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: 'password',
+      available_methods: ['password'],
+      seal_available: true,
+    })
+    rotateKey.mockResolvedValue({
+      ...neededKey(),
+      needs_rotation: false,
+      rotation_reasons: [],
+      key: 'sk-rotated-verified',
+    })
+    getKeyRotationGateStatus.mockResolvedValue({ pending_key_count: 0 })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="key-needs-rotation-rotate"]').trigger('click')
+    await flushPromises()
+
+    // 还没校验：一次都不能轮换（旧 Key 不能被悄悄换掉）。
+    expect(rotateKey).not.toHaveBeenCalled()
+    const dialog = wrapper.get('[data-test="rotate-verification"]')
+    expect(dialog.exists()).toBe(true)
+
+    await dialog.get('[data-test="key-factor-password-input"]').setValue('correct horse')
+    await wrapper.get('[data-test="rotate-verify-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(rotateKey).toHaveBeenCalledWith(1, { method: 'password', password: 'correct horse' })
+    wrapper.unmount()
+  })
+
+  it('单条轮换的校验被服务端拒绝时给出具体原因', async () => {
+    listKeys.mockResolvedValue(pageOf([neededKey()]))
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: 'password',
+      available_methods: ['password'],
+      seal_available: true,
+    })
+    rotateKey.mockRejectedValue({ reason: 'VERIFY_PASSWORD_INVALID' })
+    getKeyRotationGateStatus.mockResolvedValue({ pending_key_count: 0 })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="key-needs-rotation-rotate"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="rotate-verification"] [data-test="key-factor-password-input"]').setValue('wrong')
+    await wrapper.get('[data-test="rotate-verify-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith(
+      'The password is incorrect. Enter your current login password.',
+    )
     wrapper.unmount()
   })
 
@@ -2284,7 +2347,9 @@ describe('user KeysView batch rotation, overview and ephemeral bar', () => {
     await wrapper.get('[data-test="confirm-ok"]').trigger('click')
     await flushPromises()
 
-    expect(batchRotateKeys).toHaveBeenCalledWith([1, 2])
+    // accounts without any factor: the backend explicitly allows it and the
+    // plaintext is still shown exactly once.
+    expect(batchRotateKeys).toHaveBeenCalledWith([1, 2], undefined)
     expect(useEphemeralKeyStore().recall(1)).toBe('rotated-one-fixture-secret')
 
     const result = wrapper.get('[data-test="batch-rotate-result"]')
@@ -2295,6 +2360,80 @@ describe('user KeysView batch rotation, overview and ephemeral bar', () => {
     await wrapper.get('[data-test="batch-rotate-copy-all"]').trigger('click')
     await flushPromises()
     expect(copyToClipboard).toHaveBeenCalledWith('test-key: rotated-one-fixture-secret')
+    wrapper.unmount()
+  })
+
+  it('账号有可用因子时，批量轮换必须先过身份校验再带 verification 提交', async () => {
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: 'password',
+      available_methods: ['password'],
+      seal_available: true,
+    })
+    listKeys.mockResolvedValue({
+      items: [createApiKey(), { ...createApiKey(), id: 2, name: 'second-key' }],
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    batchRotateKeys.mockResolvedValue({
+      results: [{ id: 1, status: 'ok', key: 'rotated-verified-secret' }],
+      requested_count: 2,
+      succeeded_count: 1,
+      failed_count: 1,
+    })
+
+    const wrapper = await mountView()
+    await wrapper.get('[data-test="select-all"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="keys-bulk-rotate"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+
+    // 确认后不能立刻轮换：先出身份校验步，旧 Key 一把都不能被换掉。
+    expect(batchRotateKeys).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="batch-rotate-verification"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="batch-rotate-verification"] [data-test="key-factor-password-input"]')
+      .setValue('correct horse')
+    await wrapper.get('[data-test="batch-rotate-verify-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(batchRotateKeys).toHaveBeenCalledWith([1, 2], { method: 'password', password: 'correct horse' })
+    expect(useEphemeralKeyStore().recall(1)).toBe('rotated-verified-secret')
+    wrapper.unmount()
+  })
+
+  it('批量轮换校验被拒绝时提示具体原因，且一次都不轮换', async () => {
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: 'password',
+      available_methods: ['password'],
+      seal_available: true,
+    })
+    listKeys.mockResolvedValue({ items: [createApiKey()], total: 1, page: 1, page_size: 20, pages: 1 })
+    batchRotateKeys.mockRejectedValue({ reason: 'VERIFY_REQUIRED' })
+
+    const wrapper = await mountView()
+    await wrapper.get('[data-test="select-all"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="keys-bulk-rotate"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="batch-rotate-verification"] [data-test="key-factor-password-input"]')
+      .setValue('correct horse')
+    await wrapper.get('[data-test="batch-rotate-verify-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(batchRotateKeys).toHaveBeenCalledTimes(1)
+    expect(showError).toHaveBeenCalledWith('Complete identity verification first.')
     wrapper.unmount()
   })
 

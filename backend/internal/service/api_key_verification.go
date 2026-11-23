@@ -36,6 +36,13 @@ import (
 //   - Passkey 走现有 assertion 流程，成功后签发一次性票据（Redis，5 分钟）；
 //   - reveal grant 只存 SHA-256 摘要，按 user+key+factor 绑定，一次性消费；
 //   - 所有失败统一 fail-closed：不创建 Key / 不下发密文。
+//
+// ApiKeyVerificationGuardedKey 是 handler 写在 gin.Context 上的「本请求已完成
+// 身份校验」标记。幂等中间件用它判断「同一次请求的瞬时重放」可以安全复用
+// 回执；没有这个标记的重放（例如 24 小时内换一个连接重放同一个
+// Idempotency-Key）一律返回 VERIFY_REQUIRED，不允许跳过校验。
+const ApiKeyVerificationGuardPassedKey = "api_key_verification_guard_passed"
+
 const (
 	// APIKeyFactorPassword 登录密码因子。
 	APIKeyFactorPassword = "password"
@@ -323,12 +330,50 @@ func (s *APIKeyVerificationService) factorsForUser(ctx context.Context, user *Us
 	}, nil
 }
 
-// VerifyForCreate 是创建 API Key 的身份校验。
+// VerifyForCreate 是创建 / 变更 API Key 明文的身份校验。
 //
 // 返回本次实际使用的因子；账号一个可用因子都没有时（OAuth-only 且未绑 2FA）
 // 放行并返回空串——这类账号本来就不允许「以后查看」，创建时一次性显示明文，
 // 不引入第二个解密材料。存在可用因子时未带校验直接 400，不允许创建。
+//
+// 所有会下发 / 变更明文的入口都必须走这里：创建（POST /keys）、批量轮换
+// （POST /keys/batch-rotate）、把密钥回滚成旧值的编辑（PUT /keys/:id）。
+// 其余编辑（改名、改配额、换分组、加白名单等）不下发明文，不要求校验。
 func (s *APIKeyVerificationService) VerifyForCreate(ctx context.Context, userID int64, in *APIKeyVerificationInput) (*APIKeyVerificationResult, error) {
+	if s == nil || s.userRepo == nil || userID <= 0 {
+		return nil, ErrAPIKeyVerificationUnavailable
+	}
+	return s.verifyForUser(ctx, userID, in)
+}
+
+// VerifyForKeyEdit 是「会回执明文」的编辑（PUT /keys/:id）的身份校验。
+//
+// 与创建同语义，额外要求：先确认这把 Key 属于该用户，否则按 404 处理，
+// 避免在身份校验前泄露「这个 ID 存在」。只有本次请求真的会产生明文回执
+// （regenerate_key=true，或带 custom_key 时调用方负责判定）才调用本方法。
+func (s *APIKeyVerificationService) VerifyForKeyEdit(
+	ctx context.Context,
+	userID, apiKeyID int64,
+	in *APIKeyVerificationInput,
+) (*APIKeyVerificationResult, error) {
+	if s == nil || s.apiKeyRepo == nil || userID <= 0 {
+		return nil, ErrAPIKeyVerificationUnavailable
+	}
+	if apiKeyID <= 0 {
+		return nil, ErrAPIKeyNotFound
+	}
+	key, err := s.apiKeyRepo.GetByID(ctx, apiKeyID)
+	if err != nil {
+		return nil, err
+	}
+	if key == nil || key.UserID != userID {
+		return nil, ErrAPIKeyNotFound
+	}
+	return s.VerifyForCreate(ctx, userID, in)
+}
+
+// verifyForUser 是校验的核心实现（创建与编辑共用）。
+func (s *APIKeyVerificationService) verifyForUser(ctx context.Context, userID int64, in *APIKeyVerificationInput) (*APIKeyVerificationResult, error) {
 	if s == nil || s.userRepo == nil || userID <= 0 {
 		return nil, ErrAPIKeyVerificationUnavailable
 	}
