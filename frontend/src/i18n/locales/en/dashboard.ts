@@ -292,7 +292,8 @@ export default {
       passwordInvalid: 'The password is incorrect. Enter your current login password.',
       // Too many wrong passwords for this account: the server stops comparing (even a correct one) for about a minute.
       passwordRateLimited: 'Too many incorrect password attempts. Please wait a minute and try again.',
-      totpInvalid: 'The dynamic code is incorrect. Please re-enter it.',
+      // A dynamic code works once: one that just signed you in or verified you cannot be reused until the next code appears.
+      totpInvalid: 'The dynamic code is incorrect or was already used. Wait for the next code to appear and enter it.',
     },
     createStep: {
       details: 'Details',
@@ -334,7 +335,7 @@ export default {
       failed: 'Could not read or decrypt the key. Try again later.',
       rotate: 'Rotate a new key',
       factorsLoading: 'Loading available verification methods…',
-      wrongTotp: 'The dynamic code is incorrect. Please re-enter it.',
+      wrongTotp: 'The dynamic code is incorrect or was already used. Wait for the next code to appear and enter it.',
       passkeyFailed: 'Passkey verification failed. Please retry.',
       reverify: 'Verification expired. Please verify again.',
       factorMismatch: 'This key was sealed with "{factor}" verification; use the same method again.',

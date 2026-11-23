@@ -291,7 +291,8 @@ export default {
       passwordInvalid: '密码不正确，请重新输入当前登录密码。',
       // 同一账号短时间内密码输错太多次：服务端不再比对口令（连输对的也不认），约 1 分钟后恢复。
       passwordRateLimited: '密码输错次数过多，请等 1 分钟后再试。',
-      totpInvalid: '验证码错误，请重新输入。',
+      // 动态码只能用一次：刚用它登录或校验过的码，在下一个码出现之前不能再用。
+      totpInvalid: '验证码错误或已被使用过，请等下一个验证码出现后再输入。',
     },
     createStep: {
       details: '填写信息',
@@ -333,7 +334,7 @@ export default {
       failed: '读取或解密失败，请稍后重试。',
       rotate: '轮换生成新 Key',
       factorsLoading: '正在读取可用的验证方式…',
-      wrongTotp: '验证码错误，请重新输入。',
+      wrongTotp: '验证码错误或已被使用过，请等下一个验证码出现后再输入。',
       passkeyFailed: 'Passkey 验证失败，请重试。',
       reverify: '身份验证已过期，请重新验证。',
       factorMismatch: '这把 Key 创建时使用的是「{factor}」验证，请使用同一方式重新验证。',

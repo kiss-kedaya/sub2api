@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -63,13 +64,32 @@ type apiKeyVerifyStoreStub struct {
 	mu      sync.Mutex
 	grants  map[string]*APIKeyRevealGrantRecord
 	tickets map[string]*APIKeyPasskeyVerificationRecord
+	// usedCodes 复刻 Redis SETNX 重放标记（按用户 + 摘要）；markErr 模拟标记存储故障。
+	usedCodes map[string]bool
+	markErr   error
 }
 
 func newAPIKeyVerifyStoreStub() *apiKeyVerifyStoreStub {
 	return &apiKeyVerifyStoreStub{
-		grants:  map[string]*APIKeyRevealGrantRecord{},
-		tickets: map[string]*APIKeyPasskeyVerificationRecord{},
+		grants:    map[string]*APIKeyRevealGrantRecord{},
+		tickets:   map[string]*APIKeyPasskeyVerificationRecord{},
+		usedCodes: map[string]bool{},
 	}
+}
+
+// MarkLoginCodeUsed 与 repository.TotpCache 同语义：第一次写入返回 true，同一个摘要再写返回 false。
+func (s *apiKeyVerifyStoreStub) MarkLoginCodeUsed(_ context.Context, userID int64, digest string, _ time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.markErr != nil {
+		return false, s.markErr
+	}
+	key := fmt.Sprintf("%d:%s", userID, digest)
+	if s.usedCodes[key] {
+		return false, nil
+	}
+	s.usedCodes[key] = true
+	return true, nil
 }
 
 func (s *apiKeyVerifyStoreStub) SaveAPIKeyRevealGrant(_ context.Context, digest string, record *APIKeyRevealGrantRecord, _ time.Duration) error {

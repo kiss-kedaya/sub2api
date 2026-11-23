@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -40,13 +41,36 @@ type handlerVerifyStore struct {
 	mu      sync.Mutex
 	grants  map[string]*service.APIKeyRevealGrantRecord
 	tickets map[string]*service.APIKeyPasskeyVerificationRecord
+	// usedCodes 复刻 Redis SETNX 的 TOTP 重放标记（按用户 + 摘要）。
+	usedCodes map[string]bool
 }
 
 func newHandlerVerifyStore() *handlerVerifyStore {
 	return &handlerVerifyStore{
-		grants:  map[string]*service.APIKeyRevealGrantRecord{},
-		tickets: map[string]*service.APIKeyPasskeyVerificationRecord{},
+		grants:    map[string]*service.APIKeyRevealGrantRecord{},
+		tickets:   map[string]*service.APIKeyPasskeyVerificationRecord{},
+		usedCodes: map[string]bool{},
 	}
+}
+
+// TotpService 校验动态码用到的缓存方法：失败计数用不到（始终未超限），重放标记按 SETNX 语义。
+func (s *handlerVerifyStore) GetVerifyAttempts(context.Context, int64) (int, error) { return 0, nil }
+
+func (s *handlerVerifyStore) IncrementVerifyAttempts(context.Context, int64) (int, error) {
+	return 1, nil
+}
+
+func (s *handlerVerifyStore) ClearVerifyAttempts(context.Context, int64) error { return nil }
+
+func (s *handlerVerifyStore) MarkLoginCodeUsed(_ context.Context, userID int64, digest string, _ time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := strconv.FormatInt(userID, 10) + ":" + digest
+	if s.usedCodes[key] {
+		return false, nil
+	}
+	s.usedCodes[key] = true
+	return true, nil
 }
 
 func (s *handlerVerifyStore) SaveAPIKeyRevealGrant(_ context.Context, digest string, record *service.APIKeyRevealGrantRecord, _ time.Duration) error {

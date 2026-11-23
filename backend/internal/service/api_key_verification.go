@@ -34,7 +34,8 @@ import (
 // 安全边界：
 //   - 密码只做 bcrypt 比对，不落库、不落日志、不进审计；比对前先过按用户的失败预算
 //     （60 秒内最多 5 次，成功清零，见 checkLoginPassword），所有入口共用一份；
-//   - TOTP 走现有校验器（自带每用户失败预算）；
+//   - TOTP 走现有校验器（自带每用户失败预算），且一个码只能用一次（VerifyCodeOnce，
+//     与登录共用同一个重放标记）；
 //   - Passkey 走现有 assertion 流程，成功后签发一次性票据（Redis，5 分钟）；
 //   - reveal grant 只存 SHA-256 摘要，按 user+key+factor 绑定，一次性消费；
 //   - 所有失败统一 fail-closed：不创建 Key / 不下发密文。
@@ -676,8 +677,18 @@ func (s *APIKeyVerificationService) verifyFactor(
 		if in.TOTPCode == "" {
 			return nil, ErrAPIKeyTOTPInvalid
 		}
-		if err := s.totp.VerifyCode(ctx, user.ID, in.TOTPCode); err != nil {
-			// 校验器把「未开启 / 无密钥 / 尝试过多」也归类为错误：对调用方统一
+		// 动态码只能用一次：校验通过的同一个（时间步, 码）在窗口内不能再用第二次，
+		// 否则被旁观 / 钓鱼拿到的码能在 90 秒内反复下发 Key 明文。consume 拿到的是真正匹配上的
+		// 时间步（不是请求时钟所在的步），所以跨 30 秒边界也不能把同一个码用两遍。
+		//
+		// consume 用 ConsumeLoginCode：与登录共用同一个重放标记，登录用过的码不能再拿来校验、
+		// 反过来也一样；启用了支付校验的部署上它还会一并占用支付的重放标记，保持 VerifyCode 对
+		// 管理员原有的约束（同一个码不能既用于校验又用于资金操作）。
+		code := in.TOTPCode
+		if err := s.totp.VerifyCodeOnce(ctx, user.ID, code, func(counter int64) error {
+			return s.totp.ConsumeLoginCode(ctx, user.ID, counter, code)
+		}); err != nil {
+			// 校验器把「未开启 / 无密钥 / 尝试过多 / 码已被使用」也归类为错误：对调用方统一
 			// 按验证码错误返回，不泄露账号的 TOTP 配置细节。
 			return nil, ErrAPIKeyTOTPInvalid
 		}
