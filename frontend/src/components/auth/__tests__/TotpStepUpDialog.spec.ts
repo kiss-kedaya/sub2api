@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, reactive } from 'vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -37,15 +37,30 @@ const InitiatingDialog = defineComponent({
   `
 })
 
-const mocks = vi.hoisted(() => ({ create: vi.fn(), stepUp: vi.fn(), showError: vi.fn(), showSuccess: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  create: vi.fn(),
+  stepUp: vi.fn(),
+  getPolicy: vi.fn(),
+  passkeyStepUp: vi.fn(),
+  showError: vi.fn(),
+  showSuccess: vi.fn()
+}))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/api/admin', () => ({ adminAPI: { users: { create: mocks.create } } }))
-vi.mock('@/api', () => ({ totpAPI: { stepUp: mocks.stepUp } }))
+vi.mock('@/api', () => ({
+  totpAPI: { stepUp: mocks.stepUp, getTwoFactorPolicy: mocks.getPolicy }
+}))
+vi.mock('@/api/passkey', () => ({
+  passkeyAPI: { isSupported: () => false, stepUp: mocks.passkeyStepUp }
+}))
 vi.mock('@/stores', () => ({ useAppStore: () => mocks }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => mocks }))
 enableAutoUnmount(afterEach)
 
 describe('step-up above the initiating user dialog', () => {
+  beforeEach(() => {
+    mocks.getPolicy.mockResolvedValue({ required_factors: ['totp'], step_up_enabled: true })
+  })
   afterEach(() => { vi.resetAllMocks() })
 
   it('opens above user creation, retains the form, and retries only after verification', async () => {

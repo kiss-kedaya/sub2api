@@ -888,6 +888,23 @@ func ProvideAPIKeyService(
 }
 
 // ProviderSet is the Wire provider set for all services
+// ProvideTotpService 在原有构造之后注入 Passkey 凭据仓库：双因子因子策略
+// （RequiredFactors）需要判断用户是否绑定了 Passkey。NewTotpService 的签名
+// 保持不变，避免大量既有测试构造点改动。
+func ProvideTotpService(
+	userRepo UserRepository,
+	encryptor SecretEncryptor,
+	cache TotpCache,
+	settingService *SettingService,
+	emailService *EmailService,
+	emailQueueService *EmailQueueService,
+	passkeys PasskeyRepository,
+) *TotpService {
+	svc := NewTotpService(userRepo, encryptor, cache, settingService, emailService, emailQueueService)
+	svc.SetPasskeyRepository(passkeys)
+	return svc
+}
+
 var ProviderSet = wire.NewSet(
 	NewExcelGrantService,
 	NewExcelBPSChannel,
@@ -1007,7 +1024,7 @@ var ProviderSet = wire.NewSet(
 	NewGrokQuotaFetcher,
 	NewUserAttributeService,
 	NewUsageCache,
-	NewTotpService,
+	ProvideTotpService,
 	NewErrorPassthroughService,
 	NewTLSFingerprintProfileService,
 	NewPluginManager,

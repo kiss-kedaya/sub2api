@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -24,14 +25,24 @@ const (
 	StepUpSkippedHeader = "X-StepUp-Skipped"
 	// StepUpRemainingHeader 回传剩余免授权秒数（向下取整）。
 	StepUpRemainingHeader = "X-StepUp-Remaining"
+	// StepUpFactorsHeader 回传本次通过校验的因子列表（逗号分隔，如 totp,passkey），
+	// 便于前端/排障确认「多因子是否都已满足」。
+	StepUpFactorsHeader = "X-StepUp-Factors"
 )
 
-// stepUpGrantChecker 抽象 TOTP step-up 授权检查能力（由 TotpService 实现）。
+// stepUpGrantChecker 抽象按因子校验 step-up 授权的能力（由 TotpService 实现）。
 type stepUpGrantChecker interface {
-	HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error)
-	// StepUpGrantRemaining 读剩余窗口，用于回传 X-StepUp-Remaining。
+	HasStepUpGrant(ctx context.Context, userID int64, sessionKey string, factor service.Factor) (bool, error)
+	// StepUpGrantRemaining 读某因子的剩余窗口，用于回传 X-StepUp-Remaining。
 	// 返回 false 表示读的瞬间授权已失效（按未授权处理）。
-	StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string) (time.Duration, bool, error)
+	StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string, factor service.Factor) (time.Duration, bool, error)
+}
+
+// stepUpFactorReader 抽象「用户已绑定因子」判定（由 TotpService 实现）。
+// 生产装配的 *service.TotpService 永远实现；测试替身未实现时退化为
+// 「只要求 TOTP」的旧语义（与门控引入时一致）。
+type stepUpFactorReader interface {
+	RequiredFactors(ctx context.Context, userID int64) ([]service.Factor, error)
 }
 
 // stepUpUserReader 抽象用户读取能力（检查 TOTP 是否启用）。
@@ -185,45 +196,92 @@ func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader s
 		AbortWithError(c, 500, "INTERNAL_ERROR", "Failed to load user")
 		return false
 	}
-	if !user.TotpEnabled {
+
+	// 因子策略：TOTP / Passkey 是否绑定由统一判定入口决定。
+	// 读取失败 fail-closed（不能因为存储错误把已绑定因子当成不存在）。
+	factors, err := requiredStepUpFactors(c, grantChecker, user)
+	if err != nil {
+		AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
+		return false
+	}
+	if len(factors) == 0 {
 		AbortWithError(c, 403, "STEP_UP_TOTP_NOT_ENABLED",
-			"This operation requires two-factor authentication; please enable TOTP first")
+			"This operation requires two-factor authentication; please enable TOTP or register a passkey first")
 		return false
 	}
 
 	sessionKey := StepUpSessionKey(c, subject.UserID)
-	granted, err := grantChecker.HasStepUpGrant(c.Request.Context(), subject.UserID, sessionKey)
-	if err != nil {
-		// 安全门控故障时选择 fail-closed。
-		AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
-		return false
-	}
-	if !granted {
-		AbortWithError(c, 403, "STEP_UP_REQUIRED",
-			"This operation requires recent two-factor verification")
-		return false
+	// 所有已绑定因子都必须各有一枚有效授权：漏一个即 fail-closed，
+	// 绝不允许用另一个因子的凭证降级通过。
+	var minRemaining time.Duration
+	remainingKnown := false
+	for _, factor := range factors {
+		granted, err := grantChecker.HasStepUpGrant(c.Request.Context(), subject.UserID, sessionKey, factor)
+		if err != nil {
+			// 安全门控故障时选择 fail-closed。
+			AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
+			return false
+		}
+		if !granted {
+			// 审计里记录缺哪个因子（标量，不含任何凭证材料）。
+			SetAuditExtra(c, map[string]any{"two_factor_missing_factors": factor.String()})
+			AbortWithError(c, 403, "STEP_UP_REQUIRED",
+				"This operation requires recent two-factor verification")
+			return false
+		}
+		remaining, ok, err := grantChecker.StepUpGrantRemaining(c.Request.Context(), subject.UserID, sessionKey, factor)
+		if err != nil {
+			// 安全门控故障时选择 fail-closed：读不到剩余窗口就不放行。
+			AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
+			return false
+		}
+		if !ok {
+			// 授权在 Has 与 Remaining 两次读取之间过期：按未验证处理，让前端重新验证。
+			SetAuditExtra(c, map[string]any{"two_factor_missing_factors": factor.String()})
+			AbortWithError(c, 403, "STEP_UP_REQUIRED",
+				"This operation requires recent two-factor verification")
+			return false
+		}
+		if !remainingKnown || remaining < minRemaining {
+			minRemaining = remaining
+			remainingKnown = true
+		}
 	}
 
 	// 走到这里说明本次敏感操作「本来该要验证码，但因为 5 分钟窗口还有效而跳过」。
 	// 必须把这件事显式回传，不能静默跳过：前端右下角据此展示剩余免授权倒计时。
-	remaining, ok, err := grantChecker.StepUpGrantRemaining(c.Request.Context(), subject.UserID, sessionKey)
-	if err != nil {
-		// 安全门控故障时选择 fail-closed：读不到剩余窗口就不放行。
-		AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
-		return false
-	}
-	if !ok {
-		// 授权在 Has 与 Remaining 两次读取之间过期：按未验证处理，让前端重新弹码。
-		AbortWithError(c, 403, "STEP_UP_REQUIRED",
-			"This operation requires recent two-factor verification")
-		return false
-	}
-	remainingSeconds := int64(remaining / time.Second)
+	// 多因子时取最早过期的那个因子的剩余时间（窗口在第一个因子过期时失效）。
+	remainingSeconds := int64(minRemaining / time.Second)
 	if remainingSeconds < 0 {
 		remainingSeconds = 0
 	}
 	c.Header(StepUpSkippedHeader, "1")
 	c.Header(StepUpRemainingHeader, strconv.FormatInt(remainingSeconds, 10))
+	c.Header(StepUpFactorsHeader, joinFactors(factors))
 
 	return true
+}
+
+// requiredStepUpFactors 读取用户必须验证的因子。
+// 读取失败返回错误（调用方 fail-closed）。
+func requiredStepUpFactors(c *gin.Context, grantChecker stepUpGrantChecker, user *service.User) ([]service.Factor, error) {
+	if reader, ok := grantChecker.(stepUpFactorReader); ok {
+		return reader.RequiredFactors(c.Request.Context(), user.ID)
+	}
+	// 兼容没有实现因子判定的测试替身 / 旧装配：退化为「只要求 TOTP」。
+	if user != nil && user.TotpEnabled {
+		return []service.Factor{service.FactorTOTP}, nil
+	}
+	return nil, nil
+}
+
+func joinFactors(factors []service.Factor) string {
+	if len(factors) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(factors))
+	for _, factor := range factors {
+		parts = append(parts, factor.String())
+	}
+	return strings.Join(parts, ",")
 }

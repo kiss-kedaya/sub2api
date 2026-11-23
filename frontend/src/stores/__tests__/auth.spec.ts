@@ -161,11 +161,11 @@ describe('useAuthStore', () => {
       mockLogin2FA.mockResolvedValue(fakeAuthResponse)
       const store = useAuthStore()
 
-      const user = await store.login2FA('temp-123', '654321')
+      const response = await store.login2FA('temp-123', '654321')
 
       expect(store.token).toBe('test-token-123')
       expect(store.user).toEqual(fakeUser)
-      expect(user).toEqual(fakeUser)
+      expect(response).toEqual(fakeAuthResponse)
       expect(mockLogin2FA).toHaveBeenCalledWith({
         temp_token: 'temp-123',
         totp_code: '654321',

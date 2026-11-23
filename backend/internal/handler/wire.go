@@ -312,11 +312,30 @@ func ProvideUserHandler(
 	return h
 }
 
-// ProvidePasskeyHandler creates the passkey handler and injects the five-minute
-// two-factor grant gate used for passkey enrollment and revocation. Accounts
-// without TOTP are unaffected; TOTP accounts must complete step-up first.
-// Keeping NewPasskeyHandler's signature unchanged preserves direct construction
-// in tests.
+// ProvideAuthHandler 在原有构造之后注入 Passkey 服务：密码登录的双因子
+// 编排需要 Passkey assertion 挑战/校验。NewAuthHandler 的签名保持不变，
+// 避免大量既有测试构造点改动。
+func ProvideAuthHandler(
+	cfg *config.Config,
+	authService *service.AuthService,
+	userService *service.UserService,
+	settingService *service.SettingService,
+	promoService *service.PromoService,
+	redeemService *service.RedeemService,
+	totpService *service.TotpService,
+	userAttributeService *service.UserAttributeService,
+	passkeys *service.PasskeyService,
+) *AuthHandler {
+	h := NewAuthHandler(cfg, authService, userService, settingService, promoService, redeemService, totpService, userAttributeService)
+	h.SetPasskeyService(passkeys)
+	return h
+}
+
+// ProvidePasskeyHandler 在原有构造之后注入 TotpService/UserService：
+//   - Passkey step-up 需要写入 Passkey 因子的 5 分钟授权并签发同格式不透明凭证；
+//   - Passkey 创建/删除需要 5 分钟双因子门禁（账号未绑定 2FA 因子时不受影响）。
+//
+// NewPasskeyHandler 的签名保持不变，避免大量既有测试构造点改动。
 func ProvidePasskeyHandler(
 	passkeys *service.PasskeyService,
 	authService *service.AuthService,
@@ -326,13 +345,14 @@ func ProvidePasskeyHandler(
 ) *PasskeyHandler {
 	h := NewPasskeyHandler(passkeys, authService, settingService)
 	h.SetStepUpDependencies(totpService, userService)
+	h.SetTotpService(totpService)
 	return h
 }
 
 // ProviderSet is the Wire provider set for all handlers
 var ProviderSet = wire.NewSet(
 	// Top-level handlers
-	NewAuthHandler,
+	ProvideAuthHandler,
 	ProvideUserHandler,
 	NewAPIKeyHandler,
 	NewUsageHandler,

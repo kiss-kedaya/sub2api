@@ -96,7 +96,7 @@ func TestUpdateUserPasswordStepUpGrantMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r, cache := newPasswordStepUpRouter(t, true, tc.authMode)
 			if tc.granted {
-				require.NoError(t, cache.SetStepUpGrant(context.Background(), 42, "stepup-session", service.StepUpGrantTTL))
+				require.NoError(t, cache.SetStepUpGrant(context.Background(), 42, "stepup-session", service.FactorTOTP, service.StepUpGrantTTL))
 			}
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/users/1", bytes.NewReader([]byte(passwordStepUpBody)))

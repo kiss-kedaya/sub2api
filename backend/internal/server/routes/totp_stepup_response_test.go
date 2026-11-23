@@ -60,7 +60,7 @@ func TestStepUpEndpointIssuesFiveMinuteWindow(t *testing.T) {
 	require.WithinDuration(t, before.Add(5*time.Minute), time.Unix(envelope.Data.ExpiresAt, 0), 5*time.Second)
 
 	// Redis 里的真实 TTL 也是 5 分钟，而不是只改了响应体。
-	remaining, ok, err := cache.StepUpGrantRemaining(context.Background(), user.ID, "session-a")
+	remaining, ok, err := cache.StepUpGrantRemaining(context.Background(), user.ID, "session-a", service.FactorTOTP)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Greater(t, remaining, 4*time.Minute+59*time.Second)

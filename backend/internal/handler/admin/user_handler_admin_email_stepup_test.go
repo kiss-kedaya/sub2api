@@ -94,7 +94,7 @@ func TestUpdateAdminUserEmailRequiresStepUp(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r, cache := newAdminEmailStepUpRouter(t, true, tc.authMode)
 			if tc.granted {
-				require.NoError(t, cache.SetStepUpGrant(context.Background(), 42, "stepup-session", service.StepUpGrantTTL))
+				require.NoError(t, cache.SetStepUpGrant(context.Background(), 42, "stepup-session", service.FactorTOTP, service.StepUpGrantTTL))
 			}
 			rec := updateUserEmail(t, r, tc.body)
 			require.Equal(t, tc.wantCode, rec.Code, rec.Body.String())
@@ -121,7 +121,7 @@ func TestUpdateNormalUserEmailWithGrantSucceeds(t *testing.T) {
 	r, cache := newUpdateEmailStepUpRouter(t, service.User{
 		ID: 1, Email: "plain-user@example.com", Role: service.RoleUser, Status: service.StatusActive,
 	}, true, service.AuditAuthMethodJWT)
-	require.NoError(t, cache.SetStepUpGrant(context.Background(), 42, "stepup-session", service.StepUpGrantTTL))
+	require.NoError(t, cache.SetStepUpGrant(context.Background(), 42, "stepup-session", service.FactorTOTP, service.StepUpGrantTTL))
 
 	rec := updateUserEmail(t, r, `{"email":"new-plain@example.com"}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())

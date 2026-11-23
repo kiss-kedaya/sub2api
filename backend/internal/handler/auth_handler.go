@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -30,6 +31,8 @@ type AuthHandler struct {
 	redeemService        *service.RedeemService
 	totpService          *service.TotpService
 	userAttributeService *service.UserAttributeService
+	// passkeys 供密码登录第二步的 Passkey 因子挑战/校验使用。
+	passkeys *service.PasskeyService
 	// twoFactorLimiter 按账号维度限制 2FA 校验尝试（60s 滚动窗口 5 次）。
 	twoFactorLimiter twoFactorRateLimiter
 
@@ -122,7 +125,19 @@ func ensureLoginUserActive(user *service.User) error {
 // 如果 Token 对生成失败，回退到只返回 Access Token（向后兼容）
 // SetTwoFactorRateLimiter 注入账号维度 2FA 限速器（由 router 装配）。
 func (h *AuthHandler) SetTwoFactorRateLimiter(limiter twoFactorRateLimiter) {
+	if h == nil {
+		return
+	}
 	h.twoFactorLimiter = limiter
+}
+
+// SetPasskeyService 注入 Passkey 因子服务（由 wire 在装配后调用）。
+// 保持 NewAuthHandler 签名不变，避免大量既有测试构造点改动。
+func (h *AuthHandler) SetPasskeyService(passkeys *service.PasskeyService) {
+	if h == nil {
+		return
+	}
+	h.passkeys = passkeys
 }
 
 func (h *AuthHandler) respondWithTokenPair(c *gin.Context, user *service.User) {
@@ -313,36 +328,55 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Check if TOTP 2FA is enabled for this user.
-	// 统一走 SettingService.LoginRequiresTOTP：功能开关读取失败时 fail-closed
-	// （要求动态码），与第三方 OAuth / passkey / pending OAuth 兑换同一口径。
-	// 这里不能用 IsTotpEnabled —— 它在设置读取失败时返回 false，会让密码登录
-	// 在设置存储抖动时静默跳过已启用账号的二次验证。
-	if h.totpService != nil && h.settingSvc.LoginRequiresTOTP(c.Request.Context(), user) {
-		// 五分钟 2FA 凭证：同一账号在同一客户端（IP+UA）上刚刚通过了动态码，
-		// 窗口内只输密码即可直接签发会话——老板要的「5 分钟内登录不再需要二次
-		// 验证」。凭证过期/绑定不匹配/Redis 不可用时一律退回下面的动态码挑战，
-		// 所以这里不存在 fail-open 分支。
-		if grant := consumeTwoFactorGrant(c, h.totpService, user.ID); grant != nil {
-			// 审计动作单独命名，便于统计「有多少登录是靠 5 分钟凭证跳过的」。
-			middleware2.SetAuditAction(c, service.AuditActionLogin2FAGrantUsed)
-			markAuthAuditSuccess(c, user.ID, user.Email)
-			h.recordSuccessfulLogin(c, user.ID)
-			h.respondWithTokenPair(c, user)
+	// 双因子因子策略（唯一入口：TotpService.LoginRequiredFactors）：
+	//   - 只绑 TOTP    → 密码 + TOTP（现状不变，全局 TOTP 开关语义沿用）；
+	//   - 只绑 Passkey → 密码 + Passkey；
+	//   - 两者都绑     → 密码 + TOTP + Passkey（顺序固定先 TOTP 后 Passkey）。
+	// 策略读取失败一律 fail-closed，不允许静默降级成单因子/无因子。
+	if h.totpService != nil {
+		factors, err := h.totpService.LoginRequiredFactors(c.Request.Context(), user)
+		if err != nil {
+			slog.Error("load login two-factor policy failed", "user_id", user.ID, "error", err)
+			response.ErrorFrom(c, service.ErrTwoFactorPolicyUnavailable)
 			return
 		}
-		// 浏览器确实带了凭证但被拒：动作改为 grant_rejected，并保留挑战下发的
-		// requires_2fa 标记。没带凭证属于正常首次挑战，不记成拒绝。
-		if readTwoFactorGrantCookie(c) != "" {
-			middleware2.SetAuditAction(c, service.AuditActionLogin2FAGrantRejected)
-		}
+		if len(factors) > 0 {
+			// 5 分钟因子凭证：同一账号在同一客户端（IP+UA）上刚刚通过过某个
+			// 因子，窗口内该因子免重复验证。凭证过期/绑定不匹配/Redis 不可用时
+			// 一律退回该因子的挑战，不存在 fail-open 分支。
+			satisfied := consumeAllTwoFactorGrants(c, h.totpService, user.ID, factors)
+			missing := service.MissingFactors(factors, satisfied)
+			if len(missing) == 0 {
+				// 审计动作单独命名，便于统计「有多少登录是靠 5 分钟凭证跳过的」。
+				middleware2.SetAuditAction(c, service.AuditActionLogin2FAGrantUsed)
+				markAuthAuditSuccess(c, user.ID, user.Email)
+				h.recordSuccessfulLogin(c, user.ID)
+				h.respondWithTokenPair(c, user)
+				return
+			}
+			// 浏览器确实带了某因子凭证但被拒：动作改为 grant_rejected，
+			// 并保留挑战下发的 requires_2fa 标记。没带凭证属于正常首次挑战。
+			for _, factor := range missing {
+				if readTwoFactorGrantCookie(c, factor) != "" {
+					middleware2.SetAuditAction(c, service.AuditActionLogin2FAGrantRejected)
+					break
+				}
+			}
 
-		// 审计：2FA 挑战下发（此时尚未签发会话，2FA 绕过尝试靠这条反查）。
-		markAuthAuditChallenge(c, user.ID, user.Email)
-		// 与「凭据错误」下发同一结构（见上面的错误分支），客户端无法据此判断
-		// 账号是否存在、密码是否正确。邮箱掩码用请求里的邮箱计算，两条路径一致。
-		h.createLoginChallenge(c, user.ID, req.Email)
-		return
+			// 审计：2FA 挑战下发（此时尚未签发会话，2FA 绕过尝试靠这条反查）。
+			markAuthAuditChallenge(c, user.ID, user.Email)
+			tempToken, err := h.totpService.CreateLoginSessionForFactors(
+				c.Request.Context(), user.ID, req.Email, factors, satisfied)
+			if err != nil {
+				slog.Warn("create login challenge session failed", "error", err)
+				response.InternalError(c, "Failed to create 2FA session")
+				return
+			}
+			// 与「凭据错误」下发同一响应结构（见上面的错误分支），客户端无法据此
+			// 判断账号是否存在、密码是否正确。邮箱掩码用请求里的邮箱计算。
+			h.respondLoginFactorChallenge(c, tempToken, user, req.Email, factors, satisfied, missing)
+			return
+		}
 	}
 
 	h.recordSuccessfulLogin(c, user.ID)
@@ -355,14 +389,25 @@ type TotpLoginResponse struct {
 	Requires2FA     bool   `json:"requires_2fa"`
 	TempToken       string `json:"temp_token,omitempty"`
 	UserEmailMasked string `json:"user_email_masked,omitempty"`
+	// RequiredFactors 本次登录必须全部完成的因子（顺序：totp,passkey）。
+	RequiredFactors []string `json:"required_factors,omitempty"`
+	// PassedFactors 已经完成的因子（第一步用 5 分钟凭证跳过，或前一步已通过）。
+	PassedFactors []string `json:"passed_factors,omitempty"`
+	// NextFactor 下一步要验证的因子：totp 或 passkey，前端据此弹对应对话框。
+	NextFactor string `json:"next_factor,omitempty"`
+	// PasskeySessionToken / PasskeyOptions 仅当 NextFactor=passkey 时下发：
+	// 前端用 navigator.credentials.get 完成 assertion 后调用
+	// POST /auth/login/2fa/passkey/finish。
+	PasskeySessionToken string `json:"passkey_session_token,omitempty"`
+	PasskeyOptions      any    `json:"passkey_options,omitempty"`
 }
 
-// createLoginChallenge 下发统一的「第二步校验」挑战，并保证响应体与
-// 「凭据错误」路径逐字节一致（除随机 temp_token 取值外）。
+// createLoginChallenge 下发统一的「第二步校验」挑战（凭据错误路径），并保证
+// 响应体与真实「只缺 TOTP」账号的挑战逐字节一致（除随机 temp_token 取值外）。
 //
-// userID > 0  ：第一步密码已验证通过，等待动态码；
-// userID <= 0 ：第一步没有拿到有效凭据（账号不存在 / 密码错误），第二步只会
-// 统一返回 INVALID_CREDENTIALS，不暴露账号是否存在。
+// userID <= 0：第一步没有拿到有效凭据（账号不存在 / 密码错误），第二步只会
+// 统一返回 INVALID_CREDENTIALS，不暴露账号是否存在。因此这里按最常见的
+// TOTP 单因子形态下发挑战，不查询真实用户。
 //
 // 邮箱掩码一律按请求里的邮箱计算，不读库里的真实邮箱，避免大小写/别名差异
 // 让两条路径的响应出现字节差异。
@@ -381,7 +426,58 @@ func (h *AuthHandler) createLoginChallenge(c *gin.Context, userID int64, email s
 		Requires2FA:     true,
 		TempToken:       tempToken,
 		UserEmailMasked: service.MaskEmail(email),
+		RequiredFactors: []string{service.FactorTOTP.String()},
+		NextFactor:      service.FactorTOTP.String(),
 	})
+}
+
+// respondLoginFactorChallenge 下发「按因子挑战」的第二步响应：
+// 缺失因子里的第一个就是下一步。若下一步是 Passkey，同时生成 assertion
+// 挑战（challenge 存 Redis，5 分钟一次性），前端拿 options 调
+// navigator.credentials.get。
+//
+// 失败一律 fail-closed：Passkey 服务不可用 / 生成挑战失败时不签发任何令牌，
+// 也不会退回「只验 TOTP」。
+func (h *AuthHandler) respondLoginFactorChallenge(
+	c *gin.Context,
+	tempToken string,
+	user *service.User,
+	email string,
+	required, passed, missing []service.Factor,
+) {
+	if len(missing) == 0 {
+		response.InternalError(c, "Missing two-factor challenge")
+		return
+	}
+	next := missing[0]
+	resp := TotpLoginResponse{
+		Requires2FA:     true,
+		TempToken:       tempToken,
+		UserEmailMasked: service.MaskEmail(email),
+		RequiredFactors: service.FactorStrings(required),
+		PassedFactors:   service.FactorStrings(passed),
+		NextFactor:      next.String(),
+	}
+	middleware2.SetAuditExtra(c, map[string]any{
+		"two_factor_required_factors": strings.Join(service.FactorStrings(required), ","),
+		"two_factor_next_factor":      next.String(),
+	})
+	if next == service.FactorPasskey {
+		if user == nil || h.passkeys == nil {
+			response.ErrorFrom(c, service.ErrTwoFactorPasskeyUnavailable)
+			return
+		}
+		assertion, sessionToken, err := h.passkeys.BeginLoginForUser(
+			c.Request.Context(), user.ID, service.PasskeySessionKindLogin2FA)
+		if err != nil {
+			slog.Warn("begin login passkey assertion failed", "user_id", user.ID, "error", err)
+			response.ErrorFrom(c, err)
+			return
+		}
+		resp.PasskeySessionToken = sessionToken
+		resp.PasskeyOptions = assertion
+	}
+	response.Success(c, resp)
 }
 
 // loginChallengeRateLimitKey 为「凭据无效」的统一挑战生成限速键。
@@ -622,18 +718,131 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 	// 成功验证后清空账号维度计数（成功即清）。
 	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, session.UserID)
 
-	// Delete the login session (only after all checks pass)
+	// 因子编排：TOTP 通过后，若账号还绑定了 Passkey，必须继续完成 Passkey
+	// 断言才签发令牌。漏一个因子一律 fail-closed（不下发令牌、不降级）。
+	if session.PendingOAuthBind == nil && len(session.RequiredFactors) > 0 {
+		updated, err := h.totpService.MarkLoginFactorPassed(
+			c.Request.Context(), req.TempToken, service.FactorTOTP)
+		if err != nil {
+			slog.Warn("mark login factor passed failed", "user_id", session.UserID, "error", err)
+			response.ErrorFrom(c, service.ErrTwoFactorPolicyUnavailable)
+			return
+		}
+		// TOTP 验证成功也要下发该因子的 5 分钟不透明凭证（scope=login）：
+		// 完成 Passkey 期间/之后同客户端的登录与密码校验可免重复 TOTP。
+		issueTwoFactorGrant(c, h.totpService, session.UserID, service.TwoFactorGrantScopeLogin, service.FactorTOTP)
+		missing := service.LoginSessionMissingFactors(updated)
+		if len(missing) > 0 {
+			// 还缺 Passkey：保持登录会话（不删除），返回下一因子的挑战。
+			if user, err = h.userService.GetByID(c.Request.Context(), session.UserID); err != nil {
+				response.ErrorFrom(c, err)
+				return
+			}
+			h.respondLoginFactorChallenge(
+				c, req.TempToken, user, session.Email, updated.RequiredFactors, updated.PassedFactors, missing)
+			return
+		}
+		_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
+		h.recordSuccessfulLogin(c, user.ID)
+		h.respondWithTokenPair(c, user)
+		return
+	}
+
+	// 历史流程（OAuth pending bind 兑换 / 没有因子状态的旧会话）：保持原行为，
+	// 只校验 TOTP。新登录一律走上面的因子编排。
 	_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
 
 	if session.PendingOAuthBind == nil {
 		h.recordSuccessfulLogin(c, user.ID)
 	}
 
-	// 任一次动态码校验成功都要下发 5 分钟不透明凭证：之后同客户端 5 分钟内的
-	// 密码登录 / 密码校验不再要求动态码。Cookie 由服务端 HttpOnly 下发，
-	// 响应 body 不回显 token。
-	issueTwoFactorGrant(c, h.totpService, user.ID, service.TwoFactorGrantScopeLogin)
+	// 任一次动态码校验成功都要下发 TOTP 因子的 5 分钟不透明凭证：之后同客户端
+	// 5 分钟内的密码登录 / 密码校验不再要求动态码。Cookie 由服务端 HttpOnly
+	// 下发，响应 body 不回显 token。
+	issueTwoFactorGrant(c, h.totpService, user.ID, service.TwoFactorGrantScopeLogin, service.FactorTOTP)
 
+	h.respondWithTokenPair(c, user)
+}
+
+// Login2FAPasskeyFinishRequest 是密码登录第二步 Passkey 因子完成请求。
+type Login2FAPasskeyFinishRequest struct {
+	TempToken    string          `json:"temp_token" binding:"required"`
+	SessionToken string          `json:"session_token" binding:"required"`
+	Credential   json.RawMessage `json:"credential" binding:"required"`
+}
+
+// Login2FAPasskeyFinish 完成密码登录的 Passkey 因子（双因子策略第二步）。
+//
+// 前置条件：Login2FA 已通过 TOTP 并返回 next_factor=passkey + passkey_options，
+// 且登录会话里的 TOTP 因子已完成。校验通过后检查 RequiredFactors 是否全部完成，
+// 只有全部完成才签发登录令牌（fail-closed）。
+//
+// POST /api/v1/auth/login/2fa/passkey/finish
+func (h *AuthHandler) Login2FAPasskeyFinish(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	var req Login2FAPasskeyFinishRequest
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Credential) == 0 {
+		response.BadRequest(c, "Invalid passkey response")
+		return
+	}
+	if h.totpService == nil || h.passkeys == nil {
+		response.ErrorFrom(c, service.ErrTwoFactorPasskeyUnavailable)
+		return
+	}
+	session, err := h.totpService.GetLoginSession(c.Request.Context(), req.TempToken)
+	if err != nil || session == nil || session.UserID <= 0 {
+		response.BadRequest(c, "Invalid or expired 2FA session")
+		return
+	}
+	// 只有「密码登录 + 需要 Passkey 因子」的会话能走本接口：
+	// OAuth pending bind 会话 / 没要求 Passkey 的会话一律拒绝（fail-closed）。
+	if session.PendingOAuthBind != nil || !service.HasFactor(session.RequiredFactors, service.FactorPasskey) {
+		response.BadRequest(c, "No passkey step is required for this login session")
+		return
+	}
+	attemptCtx, ok := checkTwoFactorRateLimit(c, h.twoFactorLimiter, session.UserID)
+	if !ok {
+		return
+	}
+	credentialRequest := cloneRequestWithJSON(c.Request, req.Credential)
+	user, err := h.passkeys.FinishLoginForUser(
+		attemptCtx,
+		session.UserID,
+		service.PasskeySessionKindLogin2FA,
+		req.SessionToken,
+		credentialRequest,
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if err := ensureLoginUserActive(user); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if err := h.ensureBackendModeAllowsUser(c.Request.Context(), user); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	updated, err := h.totpService.MarkLoginFactorPassed(
+		c.Request.Context(), req.TempToken, service.FactorPasskey)
+	if err != nil {
+		response.ErrorFrom(c, service.ErrTwoFactorPolicyUnavailable)
+		return
+	}
+	// TOTP 因子必须在同一会话里已经完成；任何缺失都不签发令牌。
+	if missing := service.LoginSessionMissingFactors(updated); len(missing) > 0 {
+		_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
+		markAuthAuditFailureFromError(c, service.ErrInvalidCredentials)
+		response.ErrorFrom(c, infraerrors.Forbidden(
+			"TWO_FACTOR_FACTORS_INCOMPLETE", "all required two-factor steps must be completed"))
+		return
+	}
+	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, session.UserID)
+	_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
+	issueTwoFactorGrant(c, h.totpService, user.ID, service.TwoFactorGrantScopeLogin, service.FactorPasskey)
+	middleware2.SetAuditAction(c, service.AuditActionLogin2FA)
+	h.recordSuccessfulLogin(c, user.ID)
 	h.respondWithTokenPair(c, user)
 }
 
@@ -982,7 +1191,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	h.consumePendingOAuthSessionOnLogout(c)
 	clearOAuthLogoutCookies(c)
 	// 登出后这个浏览器不应该再持有「5 分钟内免 2FA」的凭证。
-	clearTwoFactorGrantCookie(c)
+	clearAllTwoFactorGrantCookies(c)
 
 	response.Success(c, LogoutResponse{
 		Message: "Logged out successfully",
@@ -1018,7 +1227,7 @@ func (h *AuthHandler) RevokeAllSessions(c *gin.Context) {
 				"user_id", subject.UserID, "error", err)
 		}
 	}
-	clearTwoFactorGrantCookie(c)
+	clearAllTwoFactorGrantCookies(c)
 
 	response.Success(c, RevokeAllSessionsResponse{
 		Message: "All sessions have been revoked. Please log in again.",

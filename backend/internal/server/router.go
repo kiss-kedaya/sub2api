@@ -67,6 +67,9 @@ func SetupRouter(
 		if handlers.Totp != nil {
 			handlers.Totp.SetTwoFactorRateLimiter(twoFactorLimiter)
 		}
+		if handlers.Passkey != nil {
+			handlers.Passkey.SetTwoFactorRateLimiter(twoFactorLimiter)
+		}
 	}
 	if handlers.Admin != nil && handlers.Admin.Setting != nil && settingService != nil {
 		regional, err := service.NewServerlessRouting(settingService, db, redisClient, cfg)

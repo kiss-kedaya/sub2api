@@ -735,10 +735,15 @@ async function handleSubmitTotpChallenge() {
 
   isSubmitting.value = true
   try {
-    const completion = await login2FA({
+    const completionResponse = await login2FA({
       temp_token: totpTempToken.value,
       totp_code: code
     })
+    if (!('access_token' in completionResponse)) {
+      // OAuth / pending-bind 流程不会要求第二个因子；拿到挑战说明策略异常，fail-closed。
+      throw new Error('unexpected two-factor challenge')
+    }
+    const completion = completionResponse
     await authStore.setToken(completion.access_token)
     clearAllAffiliateReferralCodes()
     appStore.showSuccess(t('auth.loginSuccess'))

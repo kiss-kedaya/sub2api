@@ -45,12 +45,13 @@ type TotpCache interface {
 	GetVerifyAttempts(ctx context.Context, userID int64) (int, error)
 	ClearVerifyAttempts(ctx context.Context, userID int64) error
 
-	// Step-up grant methods (敏感操作免授权窗口)
-	SetStepUpGrant(ctx context.Context, userID int64, sessionKey string, ttl time.Duration) error
-	HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error)
-	// StepUpGrantRemaining 返回当前会话 step-up 授权的剩余有效期。
+	// Step-up grant methods (敏感操作免授权窗口)，按因子隔离：
+	// 每个因子（totp / passkey）各自一枚 5 分钟授权，两者都要求时必须都有效。
+	SetStepUpGrant(ctx context.Context, userID int64, sessionKey string, factor Factor, ttl time.Duration) error
+	HasStepUpGrant(ctx context.Context, userID int64, sessionKey string, factor Factor) (bool, error)
+	// StepUpGrantRemaining 返回当前会话某因子 step-up 授权的剩余有效期。
 	// 第二个返回值为 false 表示没有有效授权（key 不存在或已过期）。
-	StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string) (time.Duration, bool, error)
+	StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string, factor Factor) (time.Duration, bool, error)
 
 	// MarkLoginCodeUsed 记录一次成功登录使用的 TOTP 码（独立于支付/敏感操作
 	// 重放标记）。返回 false 表示该码已被使用过（重放）。codeDigest 是
@@ -80,6 +81,10 @@ type TotpLoginSession struct {
 	Email            string
 	TokenExpiry      time.Time
 	PendingOAuthBind *PendingOAuthBindLoginSession `json:"pending_oauth_bind,omitempty"`
+	// RequiredFactors / PassedFactors 记录本次登录必须完成的因子与已经完成的因子。
+	// 空值表示历史流程（OAuth pending 兑换等）仍按「只校验 TOTP」处理。
+	RequiredFactors []Factor `json:"required_factors,omitempty"`
+	PassedFactors   []Factor `json:"passed_factors,omitempty"`
 }
 
 type PendingOAuthBindLoginSession struct {
@@ -122,6 +127,9 @@ type TotpService struct {
 	emailService      *EmailService
 	emailQueueService *EmailQueueService
 	cryptoSecurity    *CryptoSecurityService
+	// passkeys 用于判定「用户是否绑定了 Passkey 因子」。装配缺失时为 nil：
+	// 视为该部署没有 Passkey 因子（旧部署行为），登录/step-up 只要求 TOTP。
+	passkeys PasskeyRepository
 }
 
 // NewTotpService creates a new TOTP service
@@ -691,27 +699,45 @@ func validateTotpCode(code, secret string, now time.Time) (int64, bool) {
 // 展示倒计时，不允许再出现「静默跳过 2FA」的体验。
 const StepUpGrantTTL = 5 * time.Minute
 
-// VerifyStepUp 校验 TOTP 码并授予当前会话一段时间的 step-up 权限。
-// 返回授权有效期，供前端展示/设置提醒。
+// VerifyStepUp 校验 TOTP 码并授予当前会话一段时间的 TOTP 因子 step-up 权限。
+// 返回授权有效期，供前端展示/设置提醒。Passkey 因子走 GrantStepUpForFactor。
 func (s *TotpService) VerifyStepUp(ctx context.Context, userID int64, sessionKey, code string) (time.Duration, error) {
 	if err := s.VerifyCode(ctx, userID, code); err != nil {
 		return 0, err
 	}
-	if err := s.cache.SetStepUpGrant(ctx, userID, sessionKey, StepUpGrantTTL); err != nil {
+	if err := s.cache.SetStepUpGrant(ctx, userID, sessionKey, FactorTOTP, StepUpGrantTTL); err != nil {
 		return 0, fmt.Errorf("store step-up grant: %w", err)
 	}
 	return StepUpGrantTTL, nil
 }
 
-// HasStepUpGrant 检查当前会话是否在 step-up 有效期内。
-func (s *TotpService) HasStepUpGrant(ctx context.Context, userID int64, sessionKey string) (bool, error) {
-	return s.cache.HasStepUpGrant(ctx, userID, sessionKey)
+// GrantStepUpForFactor 在某个因子已完成验证后写入该因子的 5 分钟 step-up 授权。
+// 目前由 Passkey step-up 断言校验成功后调用；TOTP 走 VerifyStepUp。
+func (s *TotpService) GrantStepUpForFactor(ctx context.Context, userID int64, sessionKey string, factor Factor) (time.Duration, error) {
+	if s == nil || userID <= 0 || strings.TrimSpace(sessionKey) == "" || !factor.Valid() {
+		return 0, ErrTotpUnavailable
+	}
+	if err := s.cache.SetStepUpGrant(ctx, userID, sessionKey, factor, StepUpGrantTTL); err != nil {
+		return 0, fmt.Errorf("store step-up grant: %w", err)
+	}
+	return StepUpGrantTTL, nil
 }
 
-// StepUpGrantRemaining 返回当前会话 step-up 授权的剩余时间，供门控在「跳过
-// 验证码」时回传 X-StepUp-Remaining。无授权时第二个返回值为 false。
-func (s *TotpService) StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string) (time.Duration, bool, error) {
-	return s.cache.StepUpGrantRemaining(ctx, userID, sessionKey)
+// HasStepUpGrant 检查当前会话某因子的 step-up 授权是否仍在有效期内。
+func (s *TotpService) HasStepUpGrant(ctx context.Context, userID int64, sessionKey string, factor Factor) (bool, error) {
+	if !factor.Valid() {
+		return false, fmt.Errorf("invalid step-up factor")
+	}
+	return s.cache.HasStepUpGrant(ctx, userID, sessionKey, factor)
+}
+
+// StepUpGrantRemaining 返回当前会话某因子 step-up 授权的剩余时间，供门控在
+// 「跳过验证码」时回传 X-StepUp-Remaining。无授权时第二个返回值为 false。
+func (s *TotpService) StepUpGrantRemaining(ctx context.Context, userID int64, sessionKey string, factor Factor) (time.Duration, bool, error) {
+	if !factor.Valid() {
+		return 0, false, fmt.Errorf("invalid step-up factor")
+	}
+	return s.cache.StepUpGrantRemaining(ctx, userID, sessionKey, factor)
 }
 
 // CreateLoginSession creates a temporary login session for 2FA
@@ -768,6 +794,78 @@ func (s *TotpService) GetLoginSession(ctx context.Context, tempToken string) (*T
 // DeleteLoginSession deletes a login session
 func (s *TotpService) DeleteLoginSession(ctx context.Context, tempToken string) error {
 	return s.cache.DeleteLoginSession(ctx, tempToken)
+}
+
+// CreateLoginSessionForFactors 创建带因子状态的临时登录会话。
+//
+// required 是本次登录必须完成的因子（按 TOTP → Passkey 顺序），passed 是
+// 第一步就已经用 5 分钟凭证跳过的因子。之后每完成一个因子调用
+// MarkLoginFactorPassed 推进会话状态；全部 required ⊆ passed 才允许签发令牌。
+func (s *TotpService) CreateLoginSessionForFactors(
+	ctx context.Context,
+	userID int64,
+	email string,
+	required, passed []Factor,
+) (string, error) {
+	if userID <= 0 {
+		return "", fmt.Errorf("invalid login session user")
+	}
+	tempToken, err := generateRandomToken(32)
+	if err != nil {
+		return "", fmt.Errorf("generate temp token: %w", err)
+	}
+	session := &TotpLoginSession{
+		UserID:          userID,
+		Email:           email,
+		TokenExpiry:     time.Now().Add(totpLoginTTL),
+		RequiredFactors: sortFactorsForChallenge(required),
+		PassedFactors:   append([]Factor(nil), sortFactorsForChallenge(passed)...),
+	}
+	if err := s.cache.SetLoginSession(ctx, tempToken, session, totpLoginTTL); err != nil {
+		return "", fmt.Errorf("store login session: %w", err)
+	}
+	return tempToken, nil
+}
+
+// MarkLoginFactorPassed 在登录会话里记录一个因子已通过，保持绝对过期时间不变。
+// 返回更新后的会话（调用方据此判断是否还缺因子）。
+func (s *TotpService) MarkLoginFactorPassed(
+	ctx context.Context,
+	tempToken string,
+	factor Factor,
+) (*TotpLoginSession, error) {
+	if !factor.Valid() {
+		return nil, fmt.Errorf("invalid login session factor")
+	}
+	session, err := s.cache.GetLoginSession(ctx, tempToken)
+	if err != nil {
+		return nil, fmt.Errorf("load login session: %w", err)
+	}
+	if session == nil {
+		return nil, ErrTotpUnavailable
+	}
+	if !HasFactor(session.RequiredFactors, factor) {
+		return nil, fmt.Errorf("login session does not require factor %s", factor)
+	}
+	if !HasFactor(session.PassedFactors, factor) {
+		session.PassedFactors = append(session.PassedFactors, factor)
+	}
+	ttl := time.Until(session.TokenExpiry)
+	if ttl <= 0 {
+		return nil, ErrTotpUnavailable
+	}
+	if err := s.cache.SetLoginSession(ctx, tempToken, session, ttl); err != nil {
+		return nil, fmt.Errorf("store login session: %w", err)
+	}
+	return session, nil
+}
+
+// LoginSessionMissingFactors 返回登录会话还缺哪些因子（保持 required 顺序）。
+func LoginSessionMissingFactors(session *TotpLoginSession) []Factor {
+	if session == nil {
+		return nil
+	}
+	return MissingFactors(session.RequiredFactors, session.PassedFactors)
 }
 
 // IsTotpEnabledForUser checks if TOTP is enabled for a specific user

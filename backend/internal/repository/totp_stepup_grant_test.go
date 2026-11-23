@@ -28,13 +28,13 @@ func TestStepUpGrantTTLIsFiveMinutes(t *testing.T) {
 
 	cache, _, _ := newStepUpGrantTestCache(t)
 	ctx := context.Background()
-	require.NoError(t, cache.SetStepUpGrant(ctx, 42, "session-a", service.StepUpGrantTTL))
+	require.NoError(t, cache.SetStepUpGrant(ctx, 42, "session-a", service.FactorTOTP, service.StepUpGrantTTL))
 
-	granted, err := cache.HasStepUpGrant(ctx, 42, "session-a")
+	granted, err := cache.HasStepUpGrant(ctx, 42, "session-a", service.FactorTOTP)
 	require.NoError(t, err)
 	require.True(t, granted)
 
-	remaining, ok, err := cache.StepUpGrantRemaining(ctx, 42, "session-a")
+	remaining, ok, err := cache.StepUpGrantRemaining(ctx, 42, "session-a", service.FactorTOTP)
 	require.NoError(t, err)
 	require.True(t, ok, "刚签发的授权必须能读到剩余时间")
 	require.Greater(t, remaining, 4*time.Minute+59*time.Second)
@@ -45,14 +45,14 @@ func TestStepUpGrantTTLIsFiveMinutes(t *testing.T) {
 func TestStepUpGrantStillValidAtFourFiftyNine(t *testing.T) {
 	cache, _, server := newStepUpGrantTestCache(t)
 	ctx := context.Background()
-	require.NoError(t, cache.SetStepUpGrant(ctx, 42, "session-a", service.StepUpGrantTTL))
+	require.NoError(t, cache.SetStepUpGrant(ctx, 42, "session-a", service.FactorTOTP, service.StepUpGrantTTL))
 	server.FastForward(4*time.Minute + 59*time.Second)
 
-	granted, err := cache.HasStepUpGrant(ctx, 42, "session-a")
+	granted, err := cache.HasStepUpGrant(ctx, 42, "session-a", service.FactorTOTP)
 	require.NoError(t, err)
 	require.True(t, granted, "4:59 时授权仍然有效")
 
-	remaining, ok, err := cache.StepUpGrantRemaining(ctx, 42, "session-a")
+	remaining, ok, err := cache.StepUpGrantRemaining(ctx, 42, "session-a", service.FactorTOTP)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Greater(t, remaining, time.Duration(0))
@@ -63,14 +63,14 @@ func TestStepUpGrantStillValidAtFourFiftyNine(t *testing.T) {
 func TestStepUpGrantInvalidAfterFiveMinutesOneSecond(t *testing.T) {
 	cache, _, server := newStepUpGrantTestCache(t)
 	ctx := context.Background()
-	require.NoError(t, cache.SetStepUpGrant(ctx, 42, "session-a", service.StepUpGrantTTL))
+	require.NoError(t, cache.SetStepUpGrant(ctx, 42, "session-a", service.FactorTOTP, service.StepUpGrantTTL))
 	server.FastForward(5*time.Minute + time.Second)
 
-	granted, err := cache.HasStepUpGrant(ctx, 42, "session-a")
+	granted, err := cache.HasStepUpGrant(ctx, 42, "session-a", service.FactorTOTP)
 	require.NoError(t, err)
 	require.False(t, granted, "5:01 时授权必须失效")
 
-	_, ok, err := cache.StepUpGrantRemaining(ctx, 42, "session-a")
+	_, ok, err := cache.StepUpGrantRemaining(ctx, 42, "session-a", service.FactorTOTP)
 	require.NoError(t, err)
 	require.False(t, ok)
 }
@@ -79,10 +79,10 @@ func TestStepUpGrantInvalidAfterFiveMinutesOneSecond(t *testing.T) {
 func TestStepUpGrantRemainingCountsDown(t *testing.T) {
 	cache, _, server := newStepUpGrantTestCache(t)
 	ctx := context.Background()
-	require.NoError(t, cache.SetStepUpGrant(ctx, 42, "session-a", service.StepUpGrantTTL))
+	require.NoError(t, cache.SetStepUpGrant(ctx, 42, "session-a", service.FactorTOTP, service.StepUpGrantTTL))
 
 	server.FastForward(time.Minute)
-	remaining, ok, err := cache.StepUpGrantRemaining(ctx, 42, "session-a")
+	remaining, ok, err := cache.StepUpGrantRemaining(ctx, 42, "session-a", service.FactorTOTP)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Greater(t, remaining, 3*time.Minute+59*time.Second)
@@ -92,7 +92,7 @@ func TestStepUpGrantRemainingCountsDown(t *testing.T) {
 // 没有授权时读不到剩余时间（前端不应显示跳过提示）。
 func TestStepUpGrantRemainingMissing(t *testing.T) {
 	cache, _, _ := newStepUpGrantTestCache(t)
-	remaining, ok, err := cache.StepUpGrantRemaining(context.Background(), 42, "session-a")
+	remaining, ok, err := cache.StepUpGrantRemaining(context.Background(), 42, "session-a", service.FactorTOTP)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Zero(t, remaining)
@@ -102,13 +102,13 @@ func TestStepUpGrantRemainingMissing(t *testing.T) {
 func TestStepUpGrantRemainingIsSessionBound(t *testing.T) {
 	cache, _, _ := newStepUpGrantTestCache(t)
 	ctx := context.Background()
-	require.NoError(t, cache.SetStepUpGrant(ctx, 42, "session-a", service.StepUpGrantTTL))
+	require.NoError(t, cache.SetStepUpGrant(ctx, 42, "session-a", service.FactorTOTP, service.StepUpGrantTTL))
 
-	_, ok, err := cache.StepUpGrantRemaining(ctx, 42, "session-b")
+	_, ok, err := cache.StepUpGrantRemaining(ctx, 42, "session-b", service.FactorTOTP)
 	require.NoError(t, err)
 	require.False(t, ok, "另一个会话不能看到该授权")
 
-	_, ok, err = cache.StepUpGrantRemaining(ctx, 43, "session-a")
+	_, ok, err = cache.StepUpGrantRemaining(ctx, 43, "session-a", service.FactorTOTP)
 	require.NoError(t, err)
 	require.False(t, ok, "另一个用户不能看到该授权")
 }
@@ -119,13 +119,13 @@ func TestStepUpGrantRemainingRejectsNonExpiringKey(t *testing.T) {
 	cache, client, _ := newStepUpGrantTestCache(t)
 	ctx := context.Background()
 
-	require.NoError(t, client.Set(ctx, totpStepUpKey(42, "session-a"), "1", 0).Err())
+	require.NoError(t, client.Set(ctx, totpStepUpKey(42, "session-a", service.FactorTOTP), "1", 0).Err())
 
-	exists, err := cache.HasStepUpGrant(ctx, 42, "session-a")
+	exists, err := cache.HasStepUpGrant(ctx, 42, "session-a", service.FactorTOTP)
 	require.NoError(t, err)
 	require.True(t, exists)
 
-	_, ok, err := cache.StepUpGrantRemaining(ctx, 42, "session-a")
+	_, ok, err := cache.StepUpGrantRemaining(ctx, 42, "session-a", service.FactorTOTP)
 	require.NoError(t, err)
 	require.False(t, ok, "无 TTL 的 key 不能当作有效授权")
 }

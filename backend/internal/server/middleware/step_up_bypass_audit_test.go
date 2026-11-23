@@ -127,11 +127,11 @@ type auditSessionBoundChecker struct {
 	remaining    time.Duration
 }
 
-func (c auditSessionBoundChecker) HasStepUpGrant(_ context.Context, _ int64, sessionKey string) (bool, error) {
+func (c auditSessionBoundChecker) HasStepUpGrant(_ context.Context, _ int64, sessionKey string, _ service.Factor) (bool, error) {
 	return sessionKey == c.boundSession, nil
 }
 
-func (c auditSessionBoundChecker) StepUpGrantRemaining(_ context.Context, _ int64, sessionKey string) (time.Duration, bool, error) {
+func (c auditSessionBoundChecker) StepUpGrantRemaining(_ context.Context, _ int64, sessionKey string, _ service.Factor) (time.Duration, bool, error) {
 	if sessionKey != c.boundSession {
 		return 0, false, nil
 	}

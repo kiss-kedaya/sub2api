@@ -200,7 +200,7 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 				"user_id", subject.UserID, "error", err)
 		}
 	}
-	clearTwoFactorGrantCookie(c)
+	clearAllTwoFactorGrantCookies(c)
 
 	response.Success(c, gin.H{"message": "Password changed successfully"})
 }
@@ -425,7 +425,7 @@ func (h *UserHandler) BindEmailIdentity(c *gin.Context) {
 				"user_id", subject.UserID, "error", err)
 		}
 	}
-	clearTwoFactorGrantCookie(c)
+	clearAllTwoFactorGrantCookies(c)
 
 	profileResp, err := h.buildUserProfileResponse(c.Request.Context(), subject.UserID, updatedUser)
 	if err != nil {

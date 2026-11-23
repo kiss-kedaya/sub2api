@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -21,11 +22,13 @@ type PasskeyHandler struct {
 	passkeys    *service.PasskeyService
 	authService *service.AuthService
 	settingSvc  *service.SettingService
-	// totpService / userService 用于 Passkey 创建/删除的 5 分钟 2FA step-up 门禁：
-	// 账号开启 TOTP 时必须先通过动态码（复用全局 TOTP 对话框与 grant Cookie），
-	// 未开启 TOTP 的账号不受额外限制。为 nil 时保持门禁引入前的行为（测试替身兼容）。
+	// totpService 提供按因子的 5 分钟 step-up 授权（Passkey 因子）与凭证签发，
+	// 同时驱动 Passkey 创建/删除的 2FA 门禁（账号开启 TOTP 时必须先过 step-up）。
 	totpService *service.TotpService
+	// userService 提供账号信息，供 Passkey 创建/删除门禁判断因子绑定情况。
 	userService *service.UserService
+	// twoFactorLimiter 按账号维度限制 2FA 校验尝试（60s 滚动窗口 5 次）。
+	twoFactorLimiter twoFactorRateLimiter
 }
 
 func NewPasskeyHandler(
@@ -48,6 +51,22 @@ func (h *PasskeyHandler) SetStepUpDependencies(totpService *service.TotpService,
 	}
 	h.totpService = totpService
 	h.userService = userService
+}
+
+// SetTotpService 注入 Passkey step-up 所需的 TOTP/因子策略服务。
+func (h *PasskeyHandler) SetTotpService(totpService *service.TotpService) {
+	if h == nil {
+		return
+	}
+	h.totpService = totpService
+}
+
+// SetTwoFactorRateLimiter 注入账号维度 2FA 限速器（由 router 装配）。
+func (h *PasskeyHandler) SetTwoFactorRateLimiter(limiter twoFactorRateLimiter) {
+	if h == nil {
+		return
+	}
+	h.twoFactorLimiter = limiter
 }
 
 type passkeyOptionsResponse struct {
@@ -245,10 +264,10 @@ func (h *PasskeyHandler) Delete(c *gin.Context) {
 }
 
 // requirePasskeyMutationStepUp 是 Passkey 创建/删除的 2FA 门禁：
-//   - 账号未开启 TOTP：直接放行（不额外要求）；
-//   - 账号开启 TOTP：Cookie 里有 5 分钟内的有效 grant → 放行并重签；
-//     没有 → 403 STEP_UP_REQUIRED，前端全局 TOTP 对话框完成 /user/totp/step-up
-//     后自动重试本次请求。
+//   - 账号未绑定任何 2FA 因子：直接放行（不额外要求）；
+//   - 已绑定 TOTP / Passkey 因子：必须持有全部已绑定因子各自有效的 5 分钟 grant；
+//     缺任一因子 → 403 STEP_UP_REQUIRED，前端全局双因子对话框完成
+//     /user/totp/step-up 或 /user/step-up/passkey/finish 后自动重试本次请求。
 //
 // totpService 或 userService 未装配时保持旧行为（放行），避免非 wire 装配的调用方
 // （测试、脚本）被意外阻断。
@@ -262,6 +281,95 @@ func (h *PasskeyHandler) requirePasskeyMutationStepUp(c *gin.Context, userID int
 		return false
 	}
 	return requirePasswordVerificationGrant(c, h.totpService, user)
+}
+
+// passkeyStepUpResponse 是 Passkey step-up 验证成功的响应。
+// 结构与 TOTP step-up 保持一致（verified + 绝对/剩余秒数），前端共用倒计时。
+type passkeyStepUpResponse struct {
+	Verified  bool   `json:"verified"`
+	Factor    string `json:"factor"`
+	ExpiresAt int64  `json:"expires_at"`
+	ExpiresIn int64  `json:"expires_in"`
+}
+
+// StepUpBegin 为已登录会话生成 Passkey assertion 挑战（敏感操作 step-up）。
+// POST /api/v1/user/step-up/passkey/begin
+func (h *PasskeyHandler) StepUpBegin(c *gin.Context) {
+	if !h.requirePasskeysEnabled(c) {
+		return
+	}
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if h.totpService == nil {
+		response.ErrorFrom(c, service.ErrTwoFactorPasskeyUnavailable)
+		return
+	}
+	assertion, token, err := h.passkeys.BeginLoginForUser(
+		c.Request.Context(), subject.UserID, service.PasskeySessionKindStepUp)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, passkeyOptionsResponse{SessionToken: token, Options: assertion})
+}
+
+// StepUpFinish 校验 Passkey assertion，成功后：
+//  1. 为当前会话写入 Passkey 因子的 5 分钟 step-up 授权（与 TOTP 授权同格式，
+//     但按因子隔离）；
+//  2. 下发 Passkey 因子的 5 分钟不透明凭证 Cookie（scope=password），供
+//     「校验当前密码」类入口复用；
+//  3. 返回与 TOTP step-up 对齐的到期时间。
+//
+// POST /api/v1/user/step-up/passkey/finish
+func (h *PasskeyHandler) StepUpFinish(c *gin.Context) {
+	if !h.requirePasskeysEnabled(c) {
+		return
+	}
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	req, valid := bindPasskeyFinishRequest(c)
+	if !valid {
+		return
+	}
+	attemptCtx, ok := checkTwoFactorRateLimit(c, h.twoFactorLimiter, subject.UserID)
+	if !ok {
+		return
+	}
+	credentialRequest := cloneRequestWithJSON(c.Request, req.Credential)
+	user, err := h.passkeys.FinishLoginForUser(
+		attemptCtx,
+		subject.UserID,
+		service.PasskeySessionKindStepUp,
+		req.SessionToken,
+		credentialRequest,
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, subject.UserID)
+
+	sessionKey := middleware2.StepUpSessionKey(c, subject.UserID)
+	ttl, err := h.totpService.GrantStepUpForFactor(
+		c.Request.Context(), subject.UserID, sessionKey, service.FactorPasskey)
+	if err != nil {
+		response.ErrorFrom(c, service.ErrTotpUnavailable)
+		return
+	}
+	markRequestFactor(c, service.FactorPasskey)
+	issueTwoFactorGrant(c, h.totpService, user.ID, service.TwoFactorGrantScopePassword, service.FactorPasskey)
+	response.Success(c, passkeyStepUpResponse{
+		Verified:  true,
+		Factor:    service.FactorPasskey.String(),
+		ExpiresAt: time.Now().Add(ttl).Unix(),
+		ExpiresIn: int64(ttl / time.Second),
+	})
 }
 
 func (h *PasskeyHandler) requirePasskeysEnabled(c *gin.Context) bool {

@@ -63,7 +63,7 @@ type totpDemotionGrantCache struct {
 	checkedSessionID string
 }
 
-func (c *totpDemotionGrantCache) HasStepUpGrant(_ context.Context, userID int64, sessionKey string) (bool, error) {
+func (c *totpDemotionGrantCache) HasStepUpGrant(_ context.Context, userID int64, sessionKey string, _ service.Factor) (bool, error) {
 	c.checks++
 	c.checkedUserID = userID
 	c.checkedSessionID = sessionKey
@@ -72,7 +72,7 @@ func (c *totpDemotionGrantCache) HasStepUpGrant(_ context.Context, userID int64,
 
 // StepUpGrantRemaining 镜像 HasStepUpGrant 的授权判定（不参与 checks 计数，
 // 因为门控在授权通过后还会读一次剩余时间用于 X-StepUp-Remaining 响应头）。
-func (c *totpDemotionGrantCache) StepUpGrantRemaining(_ context.Context, userID int64, sessionKey string) (time.Duration, bool, error) {
+func (c *totpDemotionGrantCache) StepUpGrantRemaining(_ context.Context, userID int64, sessionKey string, _ service.Factor) (time.Duration, bool, error) {
 	if c.err != nil {
 		return 0, false, c.err
 	}

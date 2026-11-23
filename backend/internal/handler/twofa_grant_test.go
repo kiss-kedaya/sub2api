@@ -123,7 +123,7 @@ func (c *twoFactorGrantCacheStub) IncrementVerifyAttempts(context.Context, int64
 	return 1, nil
 }
 func (c *twoFactorGrantCacheStub) ClearVerifyAttempts(context.Context, int64) error { return nil }
-func (c *twoFactorGrantCacheStub) SetStepUpGrant(context.Context, int64, string, time.Duration) error {
+func (c *twoFactorGrantCacheStub) SetStepUpGrant(context.Context, int64, string, service.Factor, time.Duration) error {
 	return nil
 }
 func (c *twoFactorGrantCacheStub) MarkLoginCodeUsed(context.Context, int64, string, time.Duration) (bool, error) {
@@ -253,7 +253,7 @@ func TestLoginSkipsTOTPWithValidTwoFactorGrant(t *testing.T) {
 
 	// 用与请求一致的绑定材料签发凭证（IP 来自 httptest 默认 RemoteAddr）。
 	binding := service.TwoFactorGrantBinding{IP: "192.0.2.1", UserAgent: "grant-test-agent"}
-	grant, err := totpSvc.IssueTwoFactorGrant(context.Background(), user.ID, service.TwoFactorGrantScopeLogin, binding)
+	grant, err := totpSvc.IssueTwoFactorGrant(context.Background(), user.ID, service.TwoFactorGrantScopeLogin, service.FactorTOTP, binding)
 	require.NoError(t, err)
 
 	var auditAction string
@@ -332,20 +332,20 @@ func TestLoginRequiresTOTPWhenTwoFactorGrantInvalid(t *testing.T) {
 	h, totpSvc, _ := newTwoFactorGrantAuthHandler(t, newTwoFactorGrantTestConfig(), repo, cache, user, encryptor)
 
 	binding := service.TwoFactorGrantBinding{IP: "192.0.2.1", UserAgent: "grant-test-agent"}
-	valid, err := totpSvc.IssueTwoFactorGrant(context.Background(), user.ID, service.TwoFactorGrantScopeLogin, binding)
+	valid, err := totpSvc.IssueTwoFactorGrant(context.Background(), user.ID, service.TwoFactorGrantScopeLogin, service.FactorTOTP, binding)
 	require.NoError(t, err)
 
 	// 另一个用户的凭证。
-	otherUserGrant, err := totpSvc.IssueTwoFactorGrant(context.Background(), 99, service.TwoFactorGrantScopeLogin, binding)
+	otherUserGrant, err := totpSvc.IssueTwoFactorGrant(context.Background(), 99, service.TwoFactorGrantScopeLogin, service.FactorTOTP, binding)
 	require.NoError(t, err)
 
 	// 指纹不匹配的凭证。
-	otherUA, err := totpSvc.IssueTwoFactorGrant(context.Background(), user.ID, service.TwoFactorGrantScopeLogin,
+	otherUA, err := totpSvc.IssueTwoFactorGrant(context.Background(), user.ID, service.TwoFactorGrantScopeLogin, service.FactorTOTP,
 		service.TwoFactorGrantBinding{IP: "192.0.2.1", UserAgent: "another-agent"})
 	require.NoError(t, err)
 
 	// 过期凭证。
-	expired, err := totpSvc.IssueTwoFactorGrant(context.Background(), user.ID, service.TwoFactorGrantScopeLogin, binding)
+	expired, err := totpSvc.IssueTwoFactorGrant(context.Background(), user.ID, service.TwoFactorGrantScopeLogin, service.FactorTOTP, binding)
 	require.NoError(t, err)
 	digest := twoFactorGrantDigestForHandlerTest(expired.Token)
 	cache.records[digest].IssuedAt = time.Now().Add(-6 * time.Minute).Unix()
@@ -445,7 +445,7 @@ func TestLoginRequiresTOTPFailsClosedWhenGrantStoreUnavailable(t *testing.T) {
 	cache := newTwoFactorGrantCacheStub()
 	cache.failLoad = true
 	h, totpSvc, _ := newTwoFactorGrantAuthHandler(t, newTwoFactorGrantTestConfig(), repo, cache, user, encryptor)
-	grant, err := totpSvc.IssueTwoFactorGrant(context.Background(), user.ID, service.TwoFactorGrantScopeLogin,
+	grant, err := totpSvc.IssueTwoFactorGrant(context.Background(), user.ID, service.TwoFactorGrantScopeLogin, service.FactorTOTP,
 		service.TwoFactorGrantBinding{IP: "192.0.2.1", UserAgent: "grant-test-agent"})
 	require.NoError(t, err)
 	cache.failLoad = true
@@ -633,7 +633,7 @@ func TestTwoFactorGrantCookieAttributes(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
-	setTwoFactorGrantCookie(c, grant)
+	setTwoFactorGrantCookie(c, service.FactorTOTP, grant)
 	cookies := w.Result().Cookies()
 	require.Len(t, cookies, 1)
 	require.Equal(t, service.TwoFactorGrantCookieName, cookies[0].Name)

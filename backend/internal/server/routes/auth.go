@@ -41,6 +41,11 @@ func RegisterAuthRoutes(
 		auth.POST("/login/2fa", rateLimiter.LimitWithOptions("auth-login-2fa", 20, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,
 		}), h.Auth.Login2FA)
+		// 密码登录第二因子（Passkey assertion）：仅在账号同时绑定了 TOTP+Passkey
+		// 时使用；漏一个因子不签发令牌（fail-closed）。
+		auth.POST("/login/2fa/passkey/finish", rateLimiter.LimitWithOptions("auth-login-2fa-passkey", 20, time.Minute, middleware.RateLimitOptions{
+			FailureMode: middleware.RateLimitFailClose,
+		}), h.Auth.Login2FAPasskeyFinish)
 		auth.POST("/passkey/login/begin", rateLimiter.LimitWithOptions("passkey-login-begin", 20, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,
 		}), h.Passkey.BeginLogin)

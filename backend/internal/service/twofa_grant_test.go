@@ -116,7 +116,7 @@ func TestTwoFactorGrantIssueIsOpaqueAndHashed(t *testing.T) {
 	cache := newTwoFactorGrantTestCache()
 	svc := newTwoFactorGrantTestService(t, cache)
 
-	grant, err := svc.IssueTwoFactorGrant(context.Background(), 42, TwoFactorGrantScopeLogin, twoFactorGrantTestBinding())
+	grant, err := svc.IssueTwoFactorGrant(context.Background(), 42, TwoFactorGrantScopeLogin, FactorTOTP, twoFactorGrantTestBinding())
 	require.NoError(t, err)
 	require.NotEmpty(t, grant.Token)
 	require.Equal(t, TwoFactorGrantScopeLogin, grant.Scope)
@@ -144,18 +144,18 @@ func TestTwoFactorGrantConsumeBindsUserAndClient(t *testing.T) {
 	cache := newTwoFactorGrantTestCache()
 	svc := newTwoFactorGrantTestService(t, cache)
 	ctx := context.Background()
-	grant, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopePassword, twoFactorGrantTestBinding())
+	grant, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopePassword, FactorTOTP, twoFactorGrantTestBinding())
 	require.NoError(t, err)
 
 	// 用户不匹配。
-	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 43, twoFactorGrantTestBinding())
+	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 43, FactorTOTP, twoFactorGrantTestBinding())
 	require.ErrorIs(t, err, errTwoFactorGrantUser)
 	require.Equal(t, TwoFactorGrantReasonUserMismatch, TwoFactorGrantRejectReason(err))
 
 	// IP 不匹配。
 	wrongIP := twoFactorGrantTestBinding()
 	wrongIP.IP = "203.0.113.8"
-	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, wrongIP)
+	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, FactorTOTP, wrongIP)
 	require.ErrorIs(t, err, errTwoFactorGrantBinding)
 	require.Equal(t, TwoFactorGrantReasonBindingMismatch, TwoFactorGrantRejectReason(err))
 	require.True(t, IsTwoFactorGrantExpiredOrMismatched(err))
@@ -163,11 +163,11 @@ func TestTwoFactorGrantConsumeBindsUserAndClient(t *testing.T) {
 	// UA 不匹配。
 	wrongUA := twoFactorGrantTestBinding()
 	wrongUA.UserAgent = "another-agent"
-	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, wrongUA)
+	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, FactorTOTP, wrongUA)
 	require.ErrorIs(t, err, errTwoFactorGrantBinding)
 
 	// 正确绑定才通过。
-	used, err := svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, twoFactorGrantTestBinding())
+	used, err := svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, FactorTOTP, twoFactorGrantTestBinding())
 	require.NoError(t, err)
 	require.Equal(t, TwoFactorGrantScopePassword, used.Scope)
 	require.Greater(t, used.Remaining, 4*time.Minute)
@@ -178,7 +178,7 @@ func TestTwoFactorGrantFixedFiveMinuteWindow(t *testing.T) {
 	cache := newTwoFactorGrantTestCache()
 	svc := newTwoFactorGrantTestService(t, cache)
 	ctx := context.Background()
-	grant, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, twoFactorGrantTestBinding())
+	grant, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, FactorTOTP, twoFactorGrantTestBinding())
 	require.NoError(t, err)
 
 	// 模拟 5:01 之后（测试替身不会自己过期，直接改记录的绝对到期时间）。
@@ -186,7 +186,7 @@ func TestTwoFactorGrantFixedFiveMinuteWindow(t *testing.T) {
 	cache.records[digest].IssuedAt = time.Now().Add(-6 * time.Minute).Unix()
 	cache.records[digest].ExpiresAt = time.Now().Add(-time.Second).Unix()
 
-	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, twoFactorGrantTestBinding())
+	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, FactorTOTP, twoFactorGrantTestBinding())
 	require.ErrorIs(t, err, errTwoFactorGrantExpired)
 	require.Equal(t, TwoFactorGrantReasonExpired, TwoFactorGrantRejectReason(err))
 	require.True(t, IsTwoFactorGrantExpiredOrMismatched(err))
@@ -197,11 +197,11 @@ func TestTwoFactorGrantReissueOnceWithoutExtendingExpiry(t *testing.T) {
 	cache := newTwoFactorGrantTestCache()
 	svc := newTwoFactorGrantTestService(t, cache)
 	ctx := context.Background()
-	grant, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, twoFactorGrantTestBinding())
+	grant, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, FactorTOTP, twoFactorGrantTestBinding())
 	require.NoError(t, err)
 	firstExpiry := time.Unix(cache.records[twoFactorGrantDigest(grant.Token)].ExpiresAt, 0)
 
-	used, err := svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, twoFactorGrantTestBinding())
+	used, err := svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, FactorTOTP, twoFactorGrantTestBinding())
 	require.NoError(t, err)
 	require.NotEqual(t, grant.Token, used.Token, "第一次成功校验必须重签一次并替换 Cookie")
 	require.Equal(t, firstExpiry, used.ExpiresAt, "重签不得延长绝对到期时间")
@@ -212,13 +212,13 @@ func TestTwoFactorGrantReissueOnceWithoutExtendingExpiry(t *testing.T) {
 	require.Equal(t, firstExpiry.Unix(), rotatedRecord.ExpiresAt)
 
 	// 第二次使用：不再重签，token 保持原样。
-	again, err := svc.ConsumeTwoFactorGrant(ctx, used.Token, 42, twoFactorGrantTestBinding())
+	again, err := svc.ConsumeTwoFactorGrant(ctx, used.Token, 42, FactorTOTP, twoFactorGrantTestBinding())
 	require.NoError(t, err)
 	require.Equal(t, used.Token, again.Token)
 	require.Equal(t, firstExpiry, again.ExpiresAt)
 
 	// 旧 token 在重签后已被删除，重放旧 cookie 必须失败。
-	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, twoFactorGrantTestBinding())
+	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, FactorTOTP, twoFactorGrantTestBinding())
 	require.ErrorIs(t, err, errTwoFactorGrantUnknown)
 }
 
@@ -226,19 +226,19 @@ func TestTwoFactorGrantRejectsTamperedRecord(t *testing.T) {
 	cache := newTwoFactorGrantTestCache()
 	svc := newTwoFactorGrantTestService(t, cache)
 	ctx := context.Background()
-	grant, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, twoFactorGrantTestBinding())
+	grant, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, FactorTOTP, twoFactorGrantTestBinding())
 	require.NoError(t, err)
 	digest := twoFactorGrantDigest(grant.Token)
 
 	// 记录声明的窗口超过 5 分钟：视为损坏，fail-closed。
 	cache.records[digest].ExpiresAt = cache.records[digest].IssuedAt + int64(10*time.Minute/time.Second)
-	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, twoFactorGrantTestBinding())
+	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, FactorTOTP, twoFactorGrantTestBinding())
 	require.ErrorIs(t, err, errTwoFactorGrantExpired)
 
 	cache.records[digest].IssuedAt = time.Now().Add(-2 * time.Minute).Unix()
 	cache.records[digest].ExpiresAt = time.Now().Add(time.Minute).Unix()
 	cache.records[digest].Scope = "admin"
-	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, twoFactorGrantTestBinding())
+	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, FactorTOTP, twoFactorGrantTestBinding())
 	require.ErrorIs(t, err, errTwoFactorGrantUnknown)
 }
 
@@ -250,9 +250,9 @@ func TestTwoFactorGrantFailsClosedWhenStoreUnavailable(t *testing.T) {
 	// 测试替身没有实现凭证存储端口。
 	plain := &plainTotpCacheForGrantTests{}
 	svc := newTwoFactorGrantTestService(t, plain)
-	_, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, binding)
+	_, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, FactorTOTP, binding)
 	require.ErrorIs(t, err, ErrTwoFactorGrantUnavailable)
-	_, err = svc.ConsumeTwoFactorGrant(ctx, "opaque-token", 42, binding)
+	_, err = svc.ConsumeTwoFactorGrant(ctx, "opaque-token", 42, FactorTOTP, binding)
 	require.ErrorIs(t, err, ErrTwoFactorGrantUnavailable)
 	require.Equal(t, TwoFactorGrantReasonRedisUnavailable, TwoFactorGrantRejectReason(err))
 
@@ -260,23 +260,23 @@ func TestTwoFactorGrantFailsClosedWhenStoreUnavailable(t *testing.T) {
 	failingLoad := newTwoFactorGrantTestCache()
 	failingLoad.failLoad = true
 	svc = newTwoFactorGrantTestService(t, failingLoad)
-	_, err = svc.ConsumeTwoFactorGrant(ctx, "opaque-token", 42, binding)
+	_, err = svc.ConsumeTwoFactorGrant(ctx, "opaque-token", 42, FactorTOTP, binding)
 	require.ErrorIs(t, err, ErrTwoFactorGrantUnavailable)
 
 	// 写失败（签发）。
 	failingSave := newTwoFactorGrantTestCache()
 	failingSave.failSave = true
 	svc = newTwoFactorGrantTestService(t, failingSave)
-	_, err = svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, binding)
+	_, err = svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, FactorTOTP, binding)
 	require.ErrorIs(t, err, ErrTwoFactorGrantUnavailable)
 
 	// 重签写失败同样 fail-closed。
 	okCache := newTwoFactorGrantTestCache()
 	svc = newTwoFactorGrantTestService(t, okCache)
-	grant, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, binding)
+	grant, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, FactorTOTP, binding)
 	require.NoError(t, err)
 	okCache.failSave = true
-	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, binding)
+	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, FactorTOTP, binding)
 	require.ErrorIs(t, err, ErrTwoFactorGrantUnavailable)
 }
 
@@ -285,7 +285,7 @@ func TestTwoFactorGrantVerifyRateLimitedPerUserAndIP(t *testing.T) {
 	cache := newTwoFactorGrantTestCache()
 	svc := newTwoFactorGrantTestService(t, cache)
 	ctx := context.Background()
-	grant, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, twoFactorGrantTestBinding())
+	grant, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, FactorTOTP, twoFactorGrantTestBinding())
 	require.NoError(t, err)
 
 	binding := twoFactorGrantTestBinding()
@@ -293,7 +293,7 @@ func TestTwoFactorGrantVerifyRateLimitedPerUserAndIP(t *testing.T) {
 	rateKey := twoFactorGrantRateKeyForTest(42, ipHash)
 	cache.attempts[rateKey] = twoFactorGrantVerifyLimit
 
-	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, binding)
+	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, FactorTOTP, binding)
 	require.ErrorIs(t, err, errTwoFactorGrantRateLimited)
 	require.Equal(t, TwoFactorGrantReasonRateLimited, TwoFactorGrantRejectReason(err))
 	require.False(t, IsTwoFactorGrantExpiredOrMismatched(err), "限速不能清 Cookie")
@@ -301,7 +301,7 @@ func TestTwoFactorGrantVerifyRateLimitedPerUserAndIP(t *testing.T) {
 	// 另一个 IP 的计数互不影响。
 	otherBinding := binding
 	otherBinding.IP = "203.0.113.9"
-	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, otherBinding)
+	_, err = svc.ConsumeTwoFactorGrant(ctx, grant.Token, 42, FactorTOTP, otherBinding)
 	require.ErrorIs(t, err, errTwoFactorGrantBinding, "先通过限速，再因绑定不匹配被拒")
 }
 
@@ -311,20 +311,20 @@ func TestTwoFactorGrantRejectsMissingOrOversizedToken(t *testing.T) {
 	ctx := context.Background()
 	binding := twoFactorGrantTestBinding()
 
-	_, err := svc.ConsumeTwoFactorGrant(ctx, "", 42, binding)
+	_, err := svc.ConsumeTwoFactorGrant(ctx, "", 42, FactorTOTP, binding)
 	require.ErrorIs(t, err, errTwoFactorGrantUnknown)
-	_, err = svc.ConsumeTwoFactorGrant(ctx, "token", 0, binding)
+	_, err = svc.ConsumeTwoFactorGrant(ctx, "token", 0, FactorTOTP, binding)
 	require.ErrorIs(t, err, errTwoFactorGrantUnknown)
 
 	oversized := make([]byte, twoFactorGrantMaxTokenLen+1)
 	for i := range oversized {
 		oversized[i] = 'a'
 	}
-	_, err = svc.ConsumeTwoFactorGrant(ctx, string(oversized), 42, binding)
+	_, err = svc.ConsumeTwoFactorGrant(ctx, string(oversized), 42, FactorTOTP, binding)
 	require.ErrorIs(t, err, errTwoFactorGrantUnknown)
 
 	// 没有可信 IP 不签发（不能退化成无绑定凭证）。
-	_, err = svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, TwoFactorGrantBinding{UserAgent: "ua"})
+	_, err = svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, FactorTOTP, TwoFactorGrantBinding{UserAgent: "ua"})
 	require.ErrorIs(t, err, ErrTwoFactorGrantUnavailable)
 }
 
@@ -333,10 +333,10 @@ func TestTwoFactorGrantRevokeForUser(t *testing.T) {
 	svc := newTwoFactorGrantTestService(t, cache)
 	ctx := context.Background()
 	for i := 0; i < 2; i++ {
-		_, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, twoFactorGrantTestBinding())
+		_, err := svc.IssueTwoFactorGrant(ctx, 42, TwoFactorGrantScopeLogin, FactorTOTP, twoFactorGrantTestBinding())
 		require.NoError(t, err)
 	}
-	_, err := svc.IssueTwoFactorGrant(ctx, 43, TwoFactorGrantScopeLogin, twoFactorGrantTestBinding())
+	_, err := svc.IssueTwoFactorGrant(ctx, 43, TwoFactorGrantScopeLogin, FactorTOTP, twoFactorGrantTestBinding())
 	require.NoError(t, err)
 
 	require.NoError(t, svc.RevokeTwoFactorGrantsForUser(ctx, 42))

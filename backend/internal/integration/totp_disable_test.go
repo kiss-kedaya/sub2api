@@ -99,7 +99,7 @@ func TestAdminTotpHTTPEnableWithoutServerApprovalAndDisableWithCurrentTotp(t *te
 	require.True(t, users.user.TotpEnabled)
 	// A cached step-up grant and the correct password still cannot replace the
 	// actual authenticator code on the personal disable endpoint.
-	require.NoError(t, cache.SetStepUpGrant(context.Background(), 42, "admin-session", service.StepUpGrantTTL))
+	require.NoError(t, cache.SetStepUpGrant(context.Background(), 42, "admin-session", service.FactorTOTP, service.StepUpGrantTTL))
 	for _, payload := range []map[string]string{
 		{"password": "correct-password", "email_code": "654321"},
 		{"server_code": strings.Repeat("a", 64)},

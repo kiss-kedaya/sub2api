@@ -25,6 +25,18 @@ const (
 	maxPasskeyNameLength       = 100
 )
 
+// Passkey 因子编排使用的 ceremony 类型（与 passwordless 登录区分）：
+//   - login_2fa：密码登录第二步的 Passkey assertion（登录会话绑定用户）；
+//   - step_up：已登录会话的敏感操作 step-up assertion。
+//
+// 两者都校验 UserID，防止 A 用户的 ceremony token 被 B 用户使用。
+const (
+	// PasskeySessionKindLogin2FA 密码登录双因子编排的 Passkey ceremony。
+	PasskeySessionKindLogin2FA = "login_2fa"
+	// PasskeySessionKindStepUp 敏感操作 step-up 的 Passkey ceremony。
+	PasskeySessionKindStepUp = "step_up"
+)
+
 // WebAuthn 错误码按「能不能给用户一个可执行的解释」拆分：
 //   - PASSKEY_CHALLENGE_EXPIRED：Redis 里没有这次 ceremony 的会话（过期 / 已用过 / 落到
 //     了不共享 session 存储的实例），用户重新点一次即可；
@@ -379,6 +391,109 @@ func (s *PasskeyService) FinishLogin(
 		return nil, err
 	}
 	return waUser.account, nil
+}
+
+// BeginLoginForUser 为「已知用户」的 Passkey 因子验证生成 assertion 挑战。
+//
+// 用于密码登录第二步（FactorPasskey）与敏感操作 step-up：与 passwordless
+// 登录不同，这里必须指定用户，且 challenge 会话绑定 (kind, userID)，防止
+// ceremony token 被其他用户复用。challenge 存 Redis（PasskeySessionStore），
+// 5 分钟过期、一次性消费。
+func (s *PasskeyService) BeginLoginForUser(
+	ctx context.Context,
+	userID int64,
+	kind string,
+) (assertion *protocol.CredentialAssertion, sessionToken string, err error) {
+	if err = s.requireEnabled(); err != nil {
+		return nil, "", err
+	}
+	if kind != PasskeySessionKindLogin2FA && kind != PasskeySessionKindStepUp {
+		return nil, "", ErrPasskeySession
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, "", err
+	}
+	if user == nil || !user.IsActive() {
+		return nil, "", ErrUserNotActive
+	}
+	handle, err := s.repo.GetUserHandle(ctx, userID)
+	if err != nil {
+		// 没有 user handle 说明账号从未注册过 Passkey：按未绑定处理。
+		return nil, "", ErrPasskeyNotFound
+	}
+	waUser, err := s.loadWebAuthnUser(ctx, user, handle)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(waUser.credentials) == 0 {
+		return nil, "", ErrPasskeyNotFound
+	}
+	assertion, session, err := s.webAuthn.BeginLogin(
+		waUser,
+		webauthn.WithUserVerification(protocol.VerificationRequired),
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("begin passkey assertion: %w", err)
+	}
+	sessionToken, err = s.sessions.Store(ctx, &PasskeySession{
+		Kind:     kind,
+		UserID:   userID,
+		WebAuthn: *session,
+	}, passkeySessionTTL)
+	if err != nil {
+		return nil, "", err
+	}
+	return assertion, sessionToken, nil
+}
+
+// FinishLoginForUser 校验「已知用户」的 Passkey assertion。
+// 成功返回账号并更新凭据的 last_used/counter；kind/userID 与会话不符返回
+// ErrPasskeySession（fail-closed），签名/challenge/origin 失败沿用 #558 的
+// classifyPasskeyVerificationError，返回可区分的 PASSKEY_* 错误码。
+func (s *PasskeyService) FinishLoginForUser(
+	ctx context.Context,
+	userID int64,
+	kind string,
+	sessionToken string,
+	request *http.Request,
+) (*User, error) {
+	if err := s.requireEnabled(); err != nil {
+		return nil, err
+	}
+	if kind != PasskeySessionKindLogin2FA && kind != PasskeySessionKindStepUp {
+		return nil, ErrPasskeySession
+	}
+	session, err := s.sessions.Consume(ctx, sessionToken)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil || session.Kind != kind || session.UserID != userID {
+		return nil, ErrPasskeySession
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil || !user.IsActive() {
+		return nil, ErrUserNotActive
+	}
+	handle, err := s.repo.GetUserHandle(ctx, userID)
+	if err != nil {
+		return nil, ErrPasskeyVerify
+	}
+	waUser, err := s.loadWebAuthnUser(ctx, user, handle)
+	if err != nil {
+		return nil, err
+	}
+	credential, err := s.webAuthn.FinishLogin(waUser, session.WebAuthn, request)
+	if err != nil {
+		return nil, classifyPasskeyVerificationError(kind, userID, err)
+	}
+	if err := s.repo.UpdateCredential(ctx, userID, credential, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+	return user, nil
 }
 
 func (s *PasskeyService) List(ctx context.Context, userID int64) ([]PasskeyCredentialSummary, error) {

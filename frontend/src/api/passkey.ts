@@ -62,7 +62,11 @@ function creationOptionsFromJSON(
   return options as unknown as PublicKeyCredentialCreationOptions
 }
 
-function requestOptionsFromJSON(
+/**
+ * 把后端返回的 WebAuthn 请求选项（JSON）转成浏览器 API 需要的 ArrayBuffer 结构。
+ * 登录第二步（TOTP 通过后）与 Passkey step-up 共用。
+ */
+export function requestOptionsFromJSON(
   value: Record<string, unknown>
 ): PublicKeyCredentialRequestOptions {
   const options = { ...value } as Record<string, unknown>
@@ -92,7 +96,7 @@ function serializeRegistrationCredential(credential: PublicKeyCredential): Recor
   }
 }
 
-function serializeAssertionCredential(credential: PublicKeyCredential): Record<string, unknown> {
+export function serializeAssertionCredential(credential: PublicKeyCredential): Record<string, unknown> {
   const response = credential.response as AuthenticatorAssertionResponse
   return {
     id: credential.id,
@@ -163,11 +167,56 @@ async function remove(id: number, password: string): Promise<void> {
   await apiClient.delete(`/user/passkeys/${id}`, { data: { password } })
 }
 
+/** 双因子登录第二步：用后端下发的 assertion 选项完成一次 WebAuthn 断言。 */
+async function acceptLoginChallenge(
+  options: { publicKey: Record<string, unknown> }
+): Promise<Record<string, unknown>> {
+  requirePasskeySupport()
+  const credential = await navigator.credentials.get({
+    publicKey: requestOptionsFromJSON(options.publicKey)
+  })
+  if (!(credential instanceof PublicKeyCredential)) {
+    throw new Error('Passkey sign-in was cancelled')
+  }
+  return serializeAssertionCredential(credential)
+}
+
+export interface PasskeyStepUpResponse {
+  verified: boolean
+  factor: string
+  expires_at: number
+  expires_in: number
+}
+
+/**
+ * 敏感操作 Passkey step-up：生成 assertion 挑战 → 浏览器断言 → 服务端验证。
+ * 成功后服务端写入 Passkey 因子的 5 分钟 step-up 授权与不透明凭证 Cookie。
+ */
+async function stepUp(): Promise<PasskeyStepUpResponse> {
+  requirePasskeySupport()
+  const { data: begin } = await apiClient.post<CeremonyOptionsResponse>(
+    '/user/step-up/passkey/begin'
+  )
+  const credential = await navigator.credentials.get({
+    publicKey: requestOptionsFromJSON(begin.options.publicKey)
+  })
+  if (!(credential instanceof PublicKeyCredential)) {
+    throw new Error('Passkey verification was cancelled')
+  }
+  const { data } = await apiClient.post<PasskeyStepUpResponse>('/user/step-up/passkey/finish', {
+    session_token: begin.session_token,
+    credential: serializeAssertionCredential(credential)
+  })
+  return data
+}
+
 export const passkeyAPI = {
   isSupported,
   login,
   register,
   list,
   rename,
-  remove
+  remove,
+  acceptLoginChallenge,
+  stepUp
 }

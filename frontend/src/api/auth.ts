@@ -17,7 +17,8 @@ import type {
   PublicSettings,
   ActionCaptchaRequestProof,
   TotpLoginResponse,
-  TotpLogin2FARequest
+  TotpLogin2FARequest,
+  TotpLogin2FAPasskeyFinishRequest
 } from '@/types'
 
 /**
@@ -164,10 +165,30 @@ export async function login(credentials: LoginRequest): Promise<LoginResponse> {
  * @param request - Temp token and TOTP code
  * @returns Authentication response with token and user data
  */
-export async function login2FA(request: TotpLogin2FARequest): Promise<AuthResponse> {
-  const { data } = await apiClient.post<AuthResponse>('/auth/login/2fa', request)
+export async function login2FA(request: TotpLogin2FARequest): Promise<LoginResponse> {
+  const { data } = await apiClient.post<LoginResponse>('/auth/login/2fa', request)
+  if (!isTotp2FARequired(data)) {
+    persistAuthData(data)
+  }
+  return data
+}
 
-  // Store token and user data
+/**
+ * Complete the Passkey factor of a two-factor password login.
+ *
+ * Only used when the login challenge reports next_factor=passkey（账号同时绑定
+ * TOTP+Passkey，且 TOTP 已通过）。全部因子完成后服务端才签发令牌。
+ */
+export async function login2FAPasskeyFinish(
+  request: TotpLogin2FAPasskeyFinishRequest
+): Promise<AuthResponse> {
+  const { data } = await apiClient.post<AuthResponse>('/auth/login/2fa/passkey/finish', request)
+  persistAuthData(data)
+  return data
+}
+
+/** 把 AuthResponse 里的令牌/用户写进本地存储（不改变 store 状态）。 */
+function persistAuthData(data: AuthResponse): void {
   setAuthToken(data.access_token)
   if (data.refresh_token) {
     setRefreshToken(data.refresh_token)
@@ -176,8 +197,6 @@ export async function login2FA(request: TotpLogin2FARequest): Promise<AuthRespon
     setTokenExpiresAt(data.expires_in)
   }
   persistAuthUser(data.user)
-
-  return data
 }
 
 /**
@@ -724,6 +743,7 @@ export async function exchangePendingOAuthCompletion(
 export const authAPI = {
   login,
   login2FA,
+  login2FAPasskeyFinish,
   isTotp2FARequired,
   register,
   getCurrentUser,

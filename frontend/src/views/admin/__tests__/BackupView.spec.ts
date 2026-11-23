@@ -54,6 +54,12 @@ vi.mock('@/composables/useStepUp', () => ({
 }))
 
 vi.mock('vue-i18n', () => ({
+  createI18n: () => ({
+    global: {
+      t: (key: string, params?: Record<string, unknown>) =>
+        params?.index === undefined ? key : `${key}:${params.index}`,
+    },
+  }),
   useI18n: () => ({
     t: (key: string, params?: Record<string, unknown>) =>
       params?.index === undefined ? key : `${key}:${params.index}`,

@@ -45,19 +45,19 @@ type globalTotpGrantCache struct {
 	checks int
 }
 
-func (c *globalTotpGrantCache) SetStepUpGrant(_ context.Context, userID int64, sessionKey string, _ time.Duration) error {
+func (c *globalTotpGrantCache) SetStepUpGrant(_ context.Context, userID int64, sessionKey string, _ service.Factor, _ time.Duration) error {
 	c.grants[globalTotpGrantKey{userID: userID, sessionKey: sessionKey}] = true
 	return nil
 }
 
-func (c *globalTotpGrantCache) HasStepUpGrant(_ context.Context, userID int64, sessionKey string) (bool, error) {
+func (c *globalTotpGrantCache) HasStepUpGrant(_ context.Context, userID int64, sessionKey string, _ service.Factor) (bool, error) {
 	c.checks++
 	return c.grants[globalTotpGrantKey{userID: userID, sessionKey: sessionKey}], c.err
 }
 
 // StepUpGrantRemaining 镜像 HasStepUpGrant 的授权判定（不计入 checks：
 // 授权通过后门控还会读一次剩余时间用于 X-StepUp-Remaining）。
-func (c *globalTotpGrantCache) StepUpGrantRemaining(_ context.Context, userID int64, sessionKey string) (time.Duration, bool, error) {
+func (c *globalTotpGrantCache) StepUpGrantRemaining(_ context.Context, userID int64, sessionKey string, _ service.Factor) (time.Duration, bool, error) {
 	if c.err != nil {
 		return 0, false, c.err
 	}
@@ -142,7 +142,7 @@ func TestUpdateSettingsGlobalTotpDisableRequiresCurrentActorGrant(t *testing.T) 
 				t.Run(actor.name, func(t *testing.T) {
 					h, repo, cache := newGlobalTotpTestHandler(t, transition.totpEnabled, transition.stepUpEnabled, actor.totpEnabled)
 					if actor.grantUserID != 0 {
-						require.NoError(t, cache.SetStepUpGrant(context.Background(), actor.grantUserID, actor.grantSession, service.StepUpGrantTTL))
+						require.NoError(t, cache.SetStepUpGrant(context.Background(), actor.grantUserID, actor.grantSession, service.FactorTOTP, service.StepUpGrantTTL))
 					}
 					if actor.cacheError {
 						cache.err = errors.New("step-up cache unavailable")
