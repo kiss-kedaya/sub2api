@@ -112,7 +112,9 @@ func (idx gatewayRouteIndex) stripGatewayVersionPath(method string, segments []s
 			// 每个 (variant, spec) 只从左到右扫一遍：命中一段连续的版本片段后整段跳过，
 			// 不再从片段内部的每个位置各数一遍。这一步发生在鉴权之前，/v1 重复上千次时
 			// 逐位置重扫是 O(N²)（8KB 路径约 0.4s CPU）。片段内部起点的候选只会把多余的
-			// 版本段留在改写结果里，路由表里没有连续两个版本段的路由，不会命中，丢掉无损。
+			// 版本段留在改写结果里，而路由表里没有连续两个版本段的路由，不会命中，所以丢掉它们
+			// 对生产路由表无损（独立差分 48.7 万条路径：版本段 ≤16 时只有通配尾路由上 ≥4 个混合族版本段的
+			// 极端写法 4 行不同——旧版折叠、新版不改写直接 404，可接受）。
 			for start := 0; start < len(segments); {
 				run, length := matchGatewayVersionRun(segments, start, spec)
 				if run == 0 {
