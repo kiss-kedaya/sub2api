@@ -184,7 +184,7 @@ func TestCreateCompressedBackupFile_DefaultIsPlainGzipAtDefaultLevel(t *testing.
 	dir := isolateTempDir(t)
 	svc := newCriticalTestService(newMockSettingRepo(), stringDumper(knownDump), newMockObjectStore(), config.BackupConfig{})
 
-	path, size, err := svc.createCompressedBackupFile(context.Background())
+	path, size, _, err := svc.createCompressedBackupFile(context.Background())
 	require.NoError(t, err)
 	require.True(t, strings.HasSuffix(path, ".sql.gz"), "temp archive keeps the legacy suffix: %s", path)
 
@@ -225,6 +225,8 @@ func TestBackupService_CreateBackup_DefaultRecordAndUploadAreUnchanged(t *testin
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), `"scope"`)
 	require.NotContains(t, string(encoded), `"encrypted"`)
+	require.NotContains(t, string(encoded), `"sha256"`)
+	require.Empty(t, record.SHA256)
 }
 
 // ─── partial snapshots ───
@@ -237,7 +239,7 @@ func TestCreateCompressedBackupFile_PartialSnapshotUsesFastestGzip(t *testing.T)
 		AgeRecipients:    recipientsOf(identity),
 	})
 
-	path, _, err := svc.createCompressedBackupFile(context.Background())
+	path, _, _, err := svc.createCompressedBackupFile(context.Background())
 	require.NoError(t, err)
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -271,7 +273,7 @@ func TestCreateCompressedBackupFile_CriticalSnapshotWithoutRecipientFailsClosed(
 				AgeRecipients:    tt.recipients,
 			})
 
-			path, size, err := svc.createCompressedBackupFile(context.Background())
+			path, size, _, err := svc.createCompressedBackupFile(context.Background())
 
 			require.ErrorContains(t, err, tt.wantErr)
 			require.Empty(t, path)
@@ -306,7 +308,7 @@ func TestCreateCompressedBackupFile_WholeDatabaseBackupStaysPlaintextWithoutReci
 	isolateTempDir(t)
 	svc := newCriticalTestService(newMockSettingRepo(), stringDumper(knownDump), newMockObjectStore(), config.BackupConfig{})
 
-	path, _, err := svc.createCompressedBackupFile(context.Background())
+	path, _, _, err := svc.createCompressedBackupFile(context.Background())
 	require.NoError(t, err)
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -333,7 +335,7 @@ func TestCreateCompressedBackupFile_EncryptsForEveryRecipient(t *testing.T) {
 				AgeRecipients:    recipientsOf(first, second),
 			})
 
-			path, size, err := svc.createCompressedBackupFile(context.Background())
+			path, size, _, err := svc.createCompressedBackupFile(context.Background())
 			require.NoError(t, err)
 			require.True(t, strings.HasSuffix(path, ".sql.gz.age"), path)
 
@@ -374,7 +376,7 @@ func TestCreateCompressedBackupFile_EncryptorFailureLeavesNoPlaintext(t *testing
 		return nil, errors.New("encryptor unavailable")
 	}
 
-	path, size, err := svc.createCompressedBackupFile(context.Background())
+	path, size, _, err := svc.createCompressedBackupFile(context.Background())
 
 	// (d) fail closed: an error, no archive, and not a single dump byte was
 	// compressed or written anywhere.
@@ -394,7 +396,7 @@ func TestCreateCompressedBackupFile_InvalidRecipientFailsBeforeDumping(t *testin
 		AgeRecipients: []string{badKey},
 	})
 
-	path, _, err := svc.createCompressedBackupFile(context.Background())
+	path, _, _, err := svc.createCompressedBackupFile(context.Background())
 
 	require.Error(t, err)
 	require.Empty(t, path)
@@ -429,7 +431,7 @@ func TestCreateCompressedBackupFile_SizeLimitAbortsEarlyAndCleansUp(t *testing.T
 			dumper := &streamDumper{source: func() io.Reader { return source }}
 			svc := newCriticalTestService(newMockSettingRepo(), dumper, newMockObjectStore(), backup)
 
-			path, size, err := svc.createCompressedBackupFile(context.Background())
+			path, size, _, err := svc.createCompressedBackupFile(context.Background())
 
 			// (c) sentinel error, message with limit and written bytes, file gone.
 			require.ErrorIs(t, err, ErrBackupArchiveTooLarge)
@@ -457,17 +459,17 @@ func TestCreateCompressedBackupFile_SizeLimitBoundary(t *testing.T) {
 			config.BackupConfig{MaxArchiveBytes: limit})
 	}
 
-	path, exact, err := newService(0).createCompressedBackupFile(context.Background())
+	path, exact, _, err := newService(0).createCompressedBackupFile(context.Background())
 	require.NoError(t, err, "0 means unlimited")
 	require.NoError(t, cleanupBackupFiles(path))
 	require.Greater(t, exact, int64(0))
 
-	path, size, err := newService(exact).createCompressedBackupFile(context.Background())
+	path, size, _, err := newService(exact).createCompressedBackupFile(context.Background())
 	require.NoError(t, err, "an archive of exactly the limit is allowed")
 	require.Equal(t, exact, size)
 	require.NoError(t, cleanupBackupFiles(path))
 
-	_, _, err = newService(exact - 1).createCompressedBackupFile(context.Background())
+	_, _, _, err = newService(exact - 1).createCompressedBackupFile(context.Background())
 	require.ErrorIs(t, err, ErrBackupArchiveTooLarge)
 }
 
@@ -545,7 +547,7 @@ func TestCreateCompressedBackupFile_CriticalSnapshotStopsAtTheBuiltInLimit(t *te
 	})
 	svc.criticalMaxArchiveBytes = 4096 // no backup.max_archive_bytes: only the built-in limit is in force
 
-	path, size, err := svc.createCompressedBackupFile(context.Background())
+	path, size, _, err := svc.createCompressedBackupFile(context.Background())
 
 	require.ErrorIs(t, err, ErrBackupArchiveTooLarge)
 	require.ErrorContains(t, err, "limit 4096 bytes")
@@ -567,7 +569,7 @@ func TestCreateCompressedBackupFile_ExplicitLimitReplacesTheBuiltInOne(t *testin
 	})
 	svc.criticalMaxArchiveBytes = 16 // would reject any archive if it still applied
 
-	path, _, err := svc.createCompressedBackupFile(context.Background())
+	path, _, _, err := svc.createCompressedBackupFile(context.Background())
 	require.NoError(t, err)
 	require.NoError(t, cleanupBackupFiles(path))
 }
@@ -579,7 +581,7 @@ func TestCreateCompressedBackupFile_WholeDatabaseBackupStaysUnlimited(t *testing
 	svc := newCriticalTestService(newMockSettingRepo(), dumper, newMockObjectStore(), config.BackupConfig{})
 	svc.criticalMaxArchiveBytes = 16 // only a critical snapshot may ever be bound by it
 
-	path, size, err := svc.createCompressedBackupFile(context.Background())
+	path, size, _, err := svc.createCompressedBackupFile(context.Background())
 	require.NoError(t, err, "a whole-database backup keeps its \"no limit\"")
 	require.Greater(t, size, int64(len(data))/2)
 	require.NoError(t, cleanupBackupFiles(path))

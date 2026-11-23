@@ -170,6 +170,12 @@ type BackupRecord struct {
 	Scope string `json:"scope,omitempty"`
 	// Encrypted marks an age-encrypted archive instead of plain gzip.
 	Encrypted bool `json:"encrypted,omitempty"`
+	// SHA256 is the digest of the archive as written to disk: the age ciphertext
+	// when encrypted, the whole archive (not a part) when it was split. It is only
+	// recorded for non-default backups, so a default record stays byte-identical.
+	// The record lives in the database, not in the bucket, so an object fetched for
+	// a manual restore can be checked against it.
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 // restoreUnsupported reports whether the in-app restore must refuse this record.
@@ -755,7 +761,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 		ExpiresAt:   expiresAt,
 	}
 
-	archivePath, sizeBytes, err := s.createCompressedBackupFile(ctx)
+	archivePath, sizeBytes, digest, err := s.createCompressedBackupFile(ctx)
 	if err != nil {
 		record.Status = "failed"
 		record.ErrorMsg = err.Error()
@@ -765,6 +771,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 	}
 	defer func() { _ = cleanupBackupFiles(archivePath) }()
 	record.SizeBytes = sizeBytes
+	record.SHA256 = s.recordedDigest(digest)
 	if err := s.saveRecord(ctx, record); err != nil {
 		return nil, fmt.Errorf("save initial record: %w", err)
 	}
@@ -887,7 +894,7 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	// 阶段1: pg_dump -> gzip 临时文件
 	record.Progress = "dumping"
 	_ = s.saveRecord(ctx, record)
-	archivePath, sizeBytes, err := s.createCompressedBackupFile(ctx)
+	archivePath, sizeBytes, digest, err := s.createCompressedBackupFile(ctx)
 	if err != nil {
 		record.Status = "failed"
 		record.ErrorMsg = err.Error()
@@ -898,6 +905,7 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	}
 	defer func() { _ = cleanupBackupFiles(archivePath) }()
 	record.SizeBytes = sizeBytes
+	record.SHA256 = s.recordedDigest(digest)
 
 	// 阶段2: 单对象或分卷上传
 	record.Progress = "uploading"
@@ -920,16 +928,19 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	}
 }
 
-func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string, int64, error) {
+// createCompressedBackupFile stages the archive on local disk and returns its path,
+// its size and the SHA-256 (hex) of the bytes written. The digest is computed while
+// writing, so the file is not read a second time.
+func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string, int64, string, error) {
 	// Resolve the recipients before pg_dump starts or anything touches the disk:
 	// a bad key must fail the backup, never degrade it into a plaintext archive.
 	recipients, err := parseAgeRecipients(s.backupCfg.AgeRecipients)
 	if err != nil {
-		return "", 0, err
+		return "", 0, "", err
 	}
 	// Fail closed: no recipient must never turn a critical snapshot into plaintext.
 	if s.backupScope() != "" && len(recipients) == 0 {
-		return "", 0, ErrBackupCriticalNeedsRecipient
+		return "", 0, "", ErrBackupCriticalNeedsRecipient
 	}
 
 	// Cancelling this context kills pg_dump at once when the copy aborts (size
@@ -938,7 +949,7 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 	defer cancelDump()
 	dumpReader, err := s.dumper.Dump(dumpCtx)
 	if err != nil {
-		return "", 0, fmt.Errorf("pg_dump: %w", err)
+		return "", 0, "", fmt.Errorf("pg_dump: %w", err)
 	}
 	pattern := "sub2api-backup-*.sql.gz"
 	if len(recipients) > 0 {
@@ -947,12 +958,13 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 	archive, err := os.CreateTemp("", pattern)
 	if err != nil {
 		_ = dumpReader.Close()
-		return "", 0, fmt.Errorf("create backup archive: %w", err)
+		return "", 0, "", fmt.Errorf("create backup archive: %w", err)
 	}
 	archivePath := archive.Name()
 
 	limit, builtinLimit := s.archiveLimit()
-	sink := &limitedArchiveWriter{w: archive, limit: limit, builtin: builtinLimit}
+	digest := sha256.New()
+	sink := &limitedArchiveWriter{w: io.MultiWriter(archive, digest), limit: limit, builtin: builtinLimit}
 	copyErr := s.writeBackupArchive(sink, dumpReader, recipients)
 	if copyErr != nil {
 		cancelDump()
@@ -965,15 +977,24 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 	}
 	if copyErr != nil {
 		_ = cleanupBackupFiles(archivePath)
-		return "", 0, fmt.Errorf("gzip/dump failed: %w", copyErr)
+		return "", 0, "", fmt.Errorf("gzip/dump failed: %w", copyErr)
 	}
 
 	info, err := os.Stat(archivePath)
 	if err != nil {
 		_ = cleanupBackupFiles(archivePath)
-		return "", 0, fmt.Errorf("stat backup archive: %w", err)
+		return "", 0, "", fmt.Errorf("stat backup archive: %w", err)
 	}
-	return archivePath, info.Size(), nil
+	return archivePath, info.Size(), hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+// recordedDigest is the digest a record stores. Only a non-default backup records
+// one, so a default whole-database record stays byte-identical to before.
+func (s *BackupService) recordedDigest(digest string) string {
+	if s.nonDefaultBackup() {
+		return digest
+	}
+	return ""
 }
 
 // writeBackupArchive streams src through gzip into dst, with an age encryptor

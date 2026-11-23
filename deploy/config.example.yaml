@@ -1457,9 +1457,16 @@ image_storage:
 # enough to take often. Such snapshots, and any encrypted archive, are rejected by
 # the in-app restore: restore them by hand into an empty database
 # (decrypt with `age -d -i <identity-file>`, then gunzip, then psql).
+# Before decrypting, check the object: `sha256sum <archive>` must equal the "sha256"
+# of its backup record (GET /api/v1/admin/backups). The record lives in the database,
+# not in the bucket, so a swapped object is caught; for a split archive, join the
+# parts in order first. Records of default whole-database backups carry no sha256.
 # 关键表快照：exclude_table_data 保留所有表结构但不导出所列大表（日志类）的数据，
 # 归档体积小、可高频执行。此类快照以及任何加密归档都不能用页面里的“恢复”，
 # 需手动恢复到空库（age -d -i <identity-file> 解密，再 gunzip，再 psql）。
+# 解密前先校验：`sha256sum <归档>` 必须与备份记录里的 "sha256" 一致（GET /api/v1/admin/backups）。
+# 记录存在数据库而不在桶里，所以桶里的对象被替换能被发现；分卷归档先按顺序拼接再校验。
+# 默认的整库备份记录不带 sha256。
 backup:
   # pg_dump executable. Empty = "pg_dump" from PATH.
   # pg_dump 可执行文件路径，留空则取 PATH 中的 pg_dump
