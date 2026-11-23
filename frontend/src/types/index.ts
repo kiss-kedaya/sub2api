@@ -809,6 +809,11 @@ export interface ApiKey {
   name: string
   group_id: number | null
   group_ids?: number[]
+  // 管理端列表用的分组路由模式（后端按 CandidateGroupIDs 计算）：none / single / smart。
+  // 旧服务不返回这三个字段时，前端回退到 group_ids 自行判定，不能白屏。
+  route_mode?: 'none' | 'single' | 'smart'
+  route_group_count?: number
+  is_smart_routing?: boolean
   status: 'active' | 'inactive' | 'quota_exhausted' | 'expired'
   ip_whitelist: string[]
   ip_blacklist: string[]

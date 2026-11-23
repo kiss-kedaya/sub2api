@@ -156,6 +156,12 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	// 不记 token / 密码。
 	"allow_private_endpoints": {}, "account_base_url_old": {}, "account_base_url_new": {},
 	"account_api_base_urls_changed": {}, "account_api_base_urls_old": {}, "account_api_base_urls_new": {},
+	// 用户分组配置（专属倍率 / 可用分组 / 限制公开分组）变更：只记分组 ID、
+	// 倍率数字与开关的旧/新值；请求体与账号敏感信息不经过这个通道。
+	"target_user_id":       {},
+	"user_group_rates_old": {}, "user_group_rates_new": {}, "user_group_rates_changed": {},
+	"user_allowed_groups_old": {}, "user_allowed_groups_new": {}, "user_allowed_groups_changed": {},
+	"user_restrict_public_groups_old": {}, "user_restrict_public_groups_new": {}, "user_restrict_public_groups_changed": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.
@@ -177,7 +183,9 @@ func SetAuditExtra(c *gin.Context, fields map[string]any) {
 			continue
 		}
 		if text, ok := value.(string); ok {
-			value = truncateAuditExtraString(text, 128)
+			// 512 字符：用户分组 ID / 倍率旧新值这类允许的摘要可能超过 128
+			// （一次改几十个分组也是合法操作），但仍远小于任何请求体。
+			value = truncateAuditExtraString(text, 512)
 		}
 		current[key] = value
 	}

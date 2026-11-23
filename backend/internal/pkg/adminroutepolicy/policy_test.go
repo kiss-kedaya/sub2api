@@ -153,6 +153,27 @@ func TestCredentialRevealingReadsRequireStepUp(t *testing.T) {
 	}
 }
 
+// 改 Key 分组 = 改这把 Key 的可用分组/路由授权，和凭据回读同级要求 step-up；
+// replace-group 会批量迁移用户的 Key 所属分组，同样是权限变更。
+// 这两条是「管理员改用户 Key 分组必须二次验证」的后端契约，不允许退化成 secret_free。
+func TestUserAPIKeyGroupWritesRequireStepUp(t *testing.T) {
+	for _, route := range []struct{ method, path string }{
+		{"PUT", "/api/v1/admin/api-keys/:id"},
+		{"POST", "/api/v1/admin/users/:id/replace-group"},
+	} {
+		resolved, ok := Resolve(route.method, route.path)
+		if !ok {
+			t.Fatalf("%s %s 未归类", route.method, route.path)
+		}
+		if resolved.Class != ClassStepUpRequired {
+			t.Fatalf("%s %s 必须要求 step-up，实际 %s/%s", route.method, route.path, resolved.Class, resolved.Reason)
+		}
+		if IsMachineAllowlisted(route.method, route.path) {
+			t.Fatalf("%s %s 不得进入机器白名单", route.method, route.path)
+		}
+	}
+}
+
 // 资源列表若明确脱敏（不返回秘密），归类为 secret_free 并必须给出理由；
 // 其写操作仍然要求 step-up。
 func TestRedactedResourceReadsAreSecretFreeButWritesAreGated(t *testing.T) {
