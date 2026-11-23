@@ -35,6 +35,10 @@ const (
 	maxBackupRecords           = 100
 	backupObjectCleanupTimeout = 2 * time.Minute
 
+	// maxBackupRetainCount is the largest retain_count the record list can honour:
+	// one slot is always taken by the backup in flight.
+	maxBackupRetainCount = maxBackupRecords - 1
+
 	// backupScopeCritical marks a snapshot taken with backup.exclude_table_data:
 	// every table's schema is present but the excluded tables' rows are not.
 	backupScopeCritical = "critical"
@@ -582,6 +586,12 @@ func (s *BackupService) UpdateSchedule(ctx context.Context, cfg BackupScheduleCo
 		if _, err := parser.Parse(cfg.CronExpr); err != nil {
 			return nil, infraerrors.BadRequest("INVALID_CRON", fmt.Sprintf("invalid cron expression: %v", err))
 		}
+	}
+	// A schedule that keeps more completed backups than the record list can hold
+	// would push the oldest ones out of the list. A disabled schedule never runs,
+	// so it may still carry an old value and must stay switchable off.
+	if cfg.Enabled && cfg.RetainCount > maxBackupRetainCount {
+		return nil, infraerrors.BadRequest("INVALID_RETENTION", fmt.Sprintf("retain_count must be at most %d", maxBackupRetainCount))
 	}
 
 	data, err := json.Marshal(cfg)
@@ -1599,12 +1609,60 @@ func (s *BackupService) saveRecord(ctx context.Context, record *BackupRecord) er
 		records = append(records, *record)
 	}
 
-	// 限制记录数量
-	if len(records) > maxBackupRecords {
-		records = records[len(records)-maxBackupRecords:]
+	return s.saveRecordsLocked(ctx, s.trimRecordsLocked(records))
+}
+
+// trimRecordsLocked keeps the record list within maxBackupRecords. The oldest
+// records go first and failed ones before completed ones: a failed record owns no
+// object (its upload was rolled back), but a completed record is the only handle
+// on an object in the bucket, so it is dropped only after that object is deleted.
+// A completed record whose object cannot be deleted stays in the list, because an
+// object nobody can see can never be cleaned up; the next save retries it. Running
+// and pending records are never dropped. The caller holds recordsMu.
+func (s *BackupService) trimRecordsLocked(records []BackupRecord) []BackupRecord {
+	excess := len(records) - maxBackupRecords
+	if excess <= 0 {
+		return records
 	}
 
-	return s.saveRecordsLocked(ctx, records)
+	// By start time, not by position: cleanupOldBackups stores the list newest first.
+	order := make([]int, len(records))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return records[order[a]].StartedAt < records[order[b]].StartedAt })
+
+	ctx, cancel := context.WithTimeout(context.Background(), backupObjectCleanupTimeout)
+	defer cancel()
+	drop := make(map[int]bool, excess)
+	for _, status := range []string{"failed", "completed"} {
+		for _, i := range order {
+			if excess == 0 {
+				break
+			}
+			if records[i].Status != status {
+				continue
+			}
+			if status == "completed" {
+				if err := s.deleteBackupObjects(ctx, &records[i]); err != nil {
+					logger.LegacyPrintf("service.backup", "[Backup] 记录数已达上限，但备份 %s 的对象删除失败，保留记录待下次重试: %v", records[i].ID, err)
+					continue
+				}
+			}
+			drop[i] = true
+			excess--
+		}
+	}
+	if len(drop) == 0 {
+		return records
+	}
+	kept := make([]BackupRecord, 0, len(records)-len(drop))
+	for i := range records {
+		if !drop[i] {
+			kept = append(kept, records[i])
+		}
+	}
+	return kept
 }
 
 func (s *BackupService) cleanupOldBackups(ctx context.Context, schedule *BackupScheduleConfig) error {

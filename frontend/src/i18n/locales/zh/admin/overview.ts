@@ -127,7 +127,7 @@ export default {
         retainDays: '备份过期天数',
         retainDaysHint: '备份文件超过此天数后自动删除，0 = 永不过期',
         retainCount: '最大保留份数',
-        retainCountHint: '最多保留的备份数量，0 = 不限制',
+        retainCountHint: '最多保留的备份数量（上限 99），0 = 不限制',
         saved: '定时备份配置已保存'
       },
       operations: {
