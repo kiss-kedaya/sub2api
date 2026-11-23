@@ -2,10 +2,12 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -564,6 +566,11 @@ func (h *UserHandler) Update(c *gin.Context) {
 		return
 	}
 
+	// 分组配置（专属倍率 / 可用分组 / 限制公开分组）变更属改钱改权限：审计里
+	// 必须能回溯旧值与新值。只记分组 ID 与倍率数字；SetAuditExtra 走键白名单，
+	// 请求体里的密码、邮箱等敏感值不会进入这条摘要。
+	setUserGroupConfigAuditExtra(c, target, req)
+
 	// 管理员改密 / 启停账号 / 改角色后，目标的 5 分钟 2FA 凭证必须立即作废，
 	// 否则旧凭证能在安全状态已变更后继续跳过动态码（最多 5 分钟窗口）。
 	if req.Password != "" ||
@@ -656,6 +663,128 @@ func groupRatesChangedForStepUp(current map[int64]float64, next map[int64]*float
 		}
 	}
 	return false
+}
+
+// setUserGroupConfigAuditExtra 把本次用户更新里真实发生的分组配置变更写进审计摘要。
+//
+// 用户分组配置弹窗同时能改「专属倍率」（直接决定实付价格）与「可用分组/限制公开
+// 分组」（直接改变访问权限）。只有 step-up 门控、不落旧/新值时，事后无法对账
+// 「这次保存到底把谁的价格改成了多少」，所以这里补一份前后值摘要：只含分组 ID、
+// 倍率数字与开关，均为非敏感标量；请求体（可能含密码/邮箱）不经过这里。
+func setUserGroupConfigAuditExtra(c *gin.Context, target *service.User, req UpdateUserRequest) {
+	if c == nil || target == nil {
+		return
+	}
+	fields := map[string]any{"target_user_id": target.ID}
+
+	if req.GroupRates != nil {
+		nextRates := effectiveUserGroupRates(target.GroupRates, req.GroupRates)
+		oldChanged, newChanged := changedUserGroupRates(target.GroupRates, nextRates)
+		if len(newChanged) > 0 {
+			fields["user_group_rates_old"] = marshalAuditJSON(oldChanged)
+			fields["user_group_rates_new"] = marshalAuditJSON(newChanged)
+			fields["user_group_rates_changed"] = len(newChanged)
+		}
+	}
+
+	if req.AllowedGroups != nil && !sameInt64SetForStepUp(*req.AllowedGroups, target.AllowedGroups) {
+		fields["user_allowed_groups_old"] = compactAuditGroupIDs(target.AllowedGroups)
+		fields["user_allowed_groups_new"] = compactAuditGroupIDs(*req.AllowedGroups)
+		fields["user_allowed_groups_changed"] = true
+	}
+
+	if req.RestrictPublicGroups != nil && *req.RestrictPublicGroups != target.RestrictPublicGroups {
+		fields["user_restrict_public_groups_old"] = target.RestrictPublicGroups
+		fields["user_restrict_public_groups_new"] = *req.RestrictPublicGroups
+		fields["user_restrict_public_groups_changed"] = true
+	}
+
+	// target_user_id 之外的键都只在真实变更时写入；没有变更就不留噪声。
+	if len(fields) > 1 {
+		middleware.SetAuditExtra(c, fields)
+	}
+}
+
+// effectiveUserGroupRates 复刻 SyncUserGroupRates 的语义计算保存后的倍率表：
+// nil 表示不修改；空 map 表示清空该用户全部专属倍率；非空 map 逐分组写入或删除。
+func effectiveUserGroupRates(current map[int64]float64, next map[int64]*float64) map[int64]float64 {
+	out := make(map[int64]float64, len(current))
+	for groupID, rate := range current {
+		out[groupID] = rate
+	}
+	if next == nil {
+		return out
+	}
+	if len(next) == 0 {
+		return map[int64]float64{}
+	}
+	for groupID, rate := range next {
+		if rate == nil {
+			delete(out, groupID)
+			continue
+		}
+		out[groupID] = *rate
+	}
+	return out
+}
+
+// changedUserGroupRates 返回新旧倍率表之间真实变化的条目。
+// old 只含原本有旧值的分组；new 中 nil 表示该分组的专属倍率被删除。
+func changedUserGroupRates(current, next map[int64]float64) (oldChanged map[int64]float64, newChanged map[int64]*float64) {
+	oldChanged = map[int64]float64{}
+	newChanged = map[int64]*float64{}
+	for groupID, rate := range next {
+		oldRate, existed := current[groupID]
+		if existed && oldRate == rate {
+			continue
+		}
+		value := rate
+		newChanged[groupID] = &value
+		if existed {
+			oldChanged[groupID] = oldRate
+		}
+	}
+	for groupID, oldRate := range current {
+		if _, exists := next[groupID]; exists {
+			continue
+		}
+		oldChanged[groupID] = oldRate
+		newChanged[groupID] = nil
+	}
+	return oldChanged, newChanged
+}
+
+// marshalAuditJSON 把变更摘要压成稳定 JSON 字符串（encoding/json 对 map key
+// 排序）。审计 extra 只接受标量，不能直接塞 map。
+func marshalAuditJSON(value any) string {
+	if value == nil {
+		return ""
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// compactAuditGroupIDs 把分组 ID 列表压成 "2,3,7" 形式的稳定字符串（去重、
+// 升序、跳过非法 ID）。审计只记分组 ID，不记分组名和用户可读信息。
+func compactAuditGroupIDs(ids []int64) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	sorted := append([]int64(nil), ids...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	parts := make([]string, 0, len(sorted))
+	var last int64 = -1
+	for _, id := range sorted {
+		if id <= 0 || id == last {
+			continue
+		}
+		last = id
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	return strings.Join(parts, ",")
 }
 
 // Delete handles deleting a user

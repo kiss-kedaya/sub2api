@@ -32,7 +32,15 @@
                 :content="{ align: 'start' }"
                 @update:open="(open: boolean) => (open ? openGroupSelector(key) : closeGroupSelector())"
               >
-                <UButton color="neutral" variant="ghost" size="xs" class="-mx-1" :disabled="updatingKeyIds.has(key.id)">
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  class="-mx-1"
+                  data-test="key-group-picker"
+                  :disabled="updatingKeyIds.has(key.id)"
+                  :title="keyRouteMode(key) === 'smart' ? t('admin.users.smartRoutingChangeHint') : undefined"
+                >
                   <GroupBadge
                     v-if="key.group_id && key.group"
                     :name="key.group.name"
@@ -55,6 +63,7 @@
                       :variant="!key.group_id ? 'soft' : 'ghost'"
                       block
                       class="justify-start"
+                      data-test="key-group-option-none"
                       :trailing-icon="!key.group_id ? 'i-lucide-check' : undefined"
                       @click="changeGroup(key, null)"
                     >
@@ -67,6 +76,7 @@
                       :variant="key.group_id === group.id ? 'soft' : 'ghost'"
                       block
                       class="justify-between"
+                      :data-test="`key-group-option-${group.id}`"
                       @click="changeGroup(key, group.id)"
                     >
                       <GroupOptionItem
@@ -85,6 +95,24 @@
                   </div>
                 </template>
               </UPopover>
+              <!-- 路由模式：单分组 / 智能路由（顺序回退的候选分组）。后端字段优先，
+                   旧服务不返回时回退用 group_ids 判定，样式沿用普通分组行的徽章。 -->
+              <UBadge
+                v-if="keyRouteMode(key) === 'smart'"
+                color="primary"
+                variant="subtle"
+                size="sm"
+                data-test="key-route-mode-smart"
+                :label="t('admin.users.routeModeSmart', { count: keyRouteCount(key) - 1 })"
+              />
+              <UBadge
+                v-else-if="keyRouteMode(key) === 'single'"
+                color="neutral"
+                variant="subtle"
+                size="sm"
+                data-test="key-route-mode-single"
+                :label="t('admin.users.routeModeSingle')"
+              />
             </div>
             <span>{{ t('admin.users.columns.created') }}: {{ formatDateTime(key.created_at) }}</span>
           </div>
@@ -120,6 +148,7 @@ import {
   useStepUp,
   isStepUpBlocked,
   isStepUpCancelled,
+  isStepUpUnavailable,
   stepUpBlockReason,
 } from '@/composables/useStepUp'
 
@@ -216,13 +245,55 @@ const closeGroupSelector = () => {
   groupSelectorKeyId.value = null
 }
 
+/**
+ * 候选分组数量：后端 route_group_count 优先；旧服务不返回时按 group_ids 去重，
+ * 再回退到 group_id。判定口径与后端 service.APIKey.RouteGroupCount 一致。
+ */
+const keyRouteCount = (key: ApiKey): number => {
+  if (typeof key.route_group_count === 'number') return key.route_group_count
+  const valid = new Set((key.group_ids ?? []).filter((id) => id > 0))
+  if (valid.size > 0) return valid.size
+  return key.group_id ? 1 : 0
+}
+
+/** 单分组 / 智能路由 / 无分组：后端字段优先，旧服务回退本地判定。 */
+const keyRouteMode = (key: ApiKey): 'none' | 'single' | 'smart' => {
+  if (key.route_mode) return key.route_mode
+  if (key.is_smart_routing) return 'smart'
+  const count = keyRouteCount(key)
+  if (count > 1) return 'smart'
+  return count === 1 ? 'single' : 'none'
+}
+
+/** 敏感操作失败的统一提示：取消/因子不可用/服务不可用都给可读文案，不弹后端英文原文。 */
+const reportGroupActionError = (error: unknown) => {
+  if (isStepUpCancelled(error)) {
+    appStore.showInfo(t('stepUp.cancelled'))
+    return
+  }
+  if (isStepUpBlocked(error) || isStepUpUnavailable(error)) {
+    const reason = stepUpBlockReason(error)
+    appStore.showError(
+      reason === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+        ? t('stepUp.adminApiKeyForbidden')
+        : reason === 'STEP_UP_UNAVAILABLE'
+          ? t('stepUp.unavailable')
+          : t('stepUp.notEnabled')
+    )
+    return
+  }
+  appStore.showError(t('admin.users.groupChangeFailed'))
+}
+
 const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
   closeGroupSelector()
   if (key.group_id === newGroupId || (!key.group_id && newGroupId === null)) return
 
   updatingKeyIds.value.add(key.id)
   try {
-    const result = await adminAPI.apiKeys.updateApiKeyGroup(key.id, newGroupId)
+    // 改 Key 分组 = 改可用分组/路由授权：后端要求 step-up 2FA。这里显式走
+    // useStepUp，验证取消或因子不可用时不会提交，并给出明确提示。
+    const result = await stepUp.run(() => adminAPI.apiKeys.updateApiKeyGroup(key.id, newGroupId))
     // Update local data
     const idx = apiKeys.value.findIndex((k) => k.id === key.id)
     if (idx !== -1) {
@@ -233,8 +304,8 @@ const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
     } else {
       appStore.showSuccess(t('admin.users.groupChangedSuccess'))
     }
-  } catch (error: any) {
-    appStore.showError(error?.message || t('admin.users.groupChangeFailed'))
+  } catch (error) {
+    reportGroupActionError(error)
   } finally {
     updatingKeyIds.value.delete(key.id)
   }

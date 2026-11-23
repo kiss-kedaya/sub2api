@@ -61,25 +61,33 @@ type AdminUser struct {
 // 这里刻意不存在 Key 字段：脱敏发生在 DTO 边界，任何映射疏漏都无法
 // 把明文塞进响应。
 type APIKey struct {
-	ConcurrencyLimit int        `json:"concurrency_limit"`
-	ID               int64      `json:"id"`
-	UserID           int64      `json:"user_id"`
-	KeyPrefix        string     `json:"key_prefix"`
-	KeyMasked        string     `json:"key_masked"`
-	Name             string     `json:"name"`
-	GroupID          *int64     `json:"group_id"`
-	GroupIDs         []int64    `json:"group_ids,omitempty"`
-	Status           string     `json:"status"`
-	IPWhitelist      []string   `json:"ip_whitelist"`
-	IPBlacklist      []string   `json:"ip_blacklist"`
-	LastUsedAt       *time.Time `json:"last_used_at"`
-	LastUsedIP       *string    `json:"last_used_ip"`
-	Quota            float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
-	QuotaUsed        float64    `json:"quota_used"` // Used quota amount in USD
-	ExpiresAt        *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
-	KeyRotatedAt     *time.Time `json:"key_rotated_at,omitempty"` // Last successful credential replacement, not a metadata edit.
+	ConcurrencyLimit int     `json:"concurrency_limit"`
+	ID               int64   `json:"id"`
+	UserID           int64   `json:"user_id"`
+	KeyPrefix        string  `json:"key_prefix"`
+	KeyMasked        string  `json:"key_masked"`
+	Name             string  `json:"name"`
+	GroupID          *int64  `json:"group_id"`
+	GroupIDs         []int64 `json:"group_ids,omitempty"`
+	// RouteMode 是管理端列表展示用的分组路由模式：none / single / smart。
+	// 判定与网关选路同源（service.APIKey.RouteMode → CandidateGroupIDs），
+	// 前端不再自己数 group_ids，旧服务缺字段时前端回退到 group_ids。
+	RouteMode string `json:"route_mode"`
+	// RouteGroupCount 是去重后的候选分组数量（主分组 + 备用路由）。
+	RouteGroupCount int `json:"route_group_count"`
+	// IsSmartRouting 等价于 route_mode == smart，保留布尔字段方便徽章直接渲染。
+	IsSmartRouting bool       `json:"is_smart_routing"`
+	Status         string     `json:"status"`
+	IPWhitelist    []string   `json:"ip_whitelist"`
+	IPBlacklist    []string   `json:"ip_blacklist"`
+	LastUsedAt     *time.Time `json:"last_used_at"`
+	LastUsedIP     *string    `json:"last_used_ip"`
+	Quota          float64    `json:"quota"`      // Quota limit in USD (0 = unlimited)
+	QuotaUsed      float64    `json:"quota_used"` // Used quota amount in USD
+	ExpiresAt      *time.Time `json:"expires_at"` // Expiration time (nil = never expires)
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	KeyRotatedAt   *time.Time `json:"key_rotated_at,omitempty"` // Last successful credential replacement, not a metadata edit.
 	// NeedsRotation 为 true 时表示这把启用中的 Key 仍在充值/兑换门禁的待整改
 	// 名单里（创建/轮换时间早于门槛且没有 IP 白名单）。判定与门禁同源。
 	NeedsRotation bool `json:"needs_rotation"`
