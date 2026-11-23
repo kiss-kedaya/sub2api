@@ -3,7 +3,6 @@ package scanner
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -34,11 +33,11 @@ func TestChainPauseDelayGrowsAndIsCapped(t *testing.T) {
 		}
 	}
 	if got := chainPauseDelay(3, 0); got == 0 {
-		t.Fatal("a worker without an interval still paces failing chains")
+		t.Fatal("a worker without an interval still paces stalled chains")
 	}
 }
 
-func TestForwardStageFailedOnlyCountsStagesThatHoldTheCursor(t *testing.T) {
+func TestHeadStageFailedOnlyMatchesTheHeadLookup(t *testing.T) {
 	boom := errors.New("boom")
 	for _, tc := range []struct {
 		name string
@@ -46,66 +45,140 @@ func TestForwardStageFailedOnlyCountsStagesThatHoldTheCursor(t *testing.T) {
 		want bool
 	}{
 		{"nil", nil, false},
-		{"deposit", stageErr("polygon", "deposit", 1, 2, boom), true},
 		{"head", stageErr("polygon", "head", 0, 0, boom), true},
-		{"untagged error is a deposit-stage failure after tagStage", tagStage("polygon", "deposit", boom), true},
-		{"security head window only", stageErr("polygon", "security", 1, 2, boom), false},
-		{"observe only", stageErr("polygon", "observe", 1, 2, boom), false},
-		{"replay only", stageErr("polygon", "replay", 1, 2, boom), false},
-		{"live window only", stageErr("polygon", "live", 1, 2, boom), false},
-		{"security plus deposit", errors.Join(stageErr("polygon", "security", 1, 2, boom), stageErr("polygon", "deposit", 3, 4, boom)), true},
+		{"head joined with others", errors.Join(stageErr("polygon", "security", 1, 2, boom), stageErr("polygon", "head", 0, 0, boom)), true},
+		{"deposit", stageErr("polygon", "deposit", 1, 2, boom), false},
+		{"security", stageErr("polygon", "security", 1, 2, boom), false},
 	} {
-		if got := forwardStageFailed(tc.err); got != tc.want {
-			t.Errorf("%s: forwardStageFailed = %v, want %v", tc.name, got, tc.want)
+		if got := headStageFailed(tc.err); got != tc.want {
+			t.Errorf("%s: headStageFailed = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }
 
-func TestNoteChainPassPausesOnlyAfterRepeatedStalls(t *testing.T) {
-	w := &Worker{interval: 5 * time.Second}
-	now := time.Date(2026, 11, 24, 2, 0, 0, 0, time.UTC)
-	stalled := stageErr("polygon", "deposit", 1, 2, errors.New("rpc down"))
+// chainAt builds the per-pass coverage a scan of `polygon` leaves behind: the
+// cursor it started from and the head it saw.
+func chainAt(w *Worker, head, startCursor uint64) ChainConfig {
+	w.noteHead("polygon", head)
+	w.noteCursor("polygon", startCursor)
+	return ChainConfig{Chain: "polygon", Confirmations: 5}
+}
 
-	w.noteChainPass("polygon", stalled, now)
-	if w.chainPaused("polygon", now) {
-		t.Fatal("one failure must not pause the chain")
+func TestForwardStalledNeedsPendingWorkAndNoProgress(t *testing.T) {
+	w := &Worker{}
+	chain := chainAt(w, 1000, 100) // confirmed head 995, cursor 100: 895 blocks waiting
+	if !w.forwardStalled(chain) {
+		t.Fatal("blocks were waiting and the cursor did not move")
 	}
-	w.noteChainPass("polygon", stalled, now)
-	if !w.chainPaused("polygon", now) {
+	w.noteCursor("polygon", 150) // the pass moved it, then failed later
+	if w.forwardStalled(chain) {
+		t.Fatal("a pass that advanced the cursor is progress, not a stall")
+	}
+
+	caughtUp := &Worker{}
+	chain = chainAt(caughtUp, 1000, 995) // nothing beyond the cursor
+	if caughtUp.forwardStalled(chain) {
+		t.Fatal("a caught-up chain has nothing to stall on")
+	}
+
+	blind := &Worker{} // never learned its head or cursor this pass
+	if blind.forwardStalled(ChainConfig{Chain: "polygon", Confirmations: 5}) {
+		t.Fatal("without evidence of waiting work there is no stall")
+	}
+}
+
+func TestNoteChainPassPausesAfterRepeatedStallsOnly(t *testing.T) {
+	w := &Worker{interval: 5 * time.Second}
+	chain := chainAt(w, 1000, 100)
+	now := time.Date(2026, 11, 24, 2, 0, 0, 0, time.UTC)
+	stalled := stageErr("polygon", "deposit", 101, 200, errors.New("rpc down"))
+
+	w.noteChainPass(chain, stalled, now)
+	if _, paused := w.forwardPause("polygon", now); paused {
+		t.Fatal("one stall must not pause the forward scan")
+	}
+	w.noteChainPass(chain, stalled, now)
+	if _, paused := w.forwardPause("polygon", now); !paused {
 		t.Fatal("the second consecutive stall must pause it")
 	}
-	if w.chainPaused("polygon", now.Add(2*time.Minute)) {
+	if _, paused := w.forwardPause("polygon", now.Add(2*time.Minute)); paused {
 		t.Fatal("a pause is bounded by the cap and must lapse")
 	}
-	if w.chainPaused("bsc", now) {
+	if _, paused := w.forwardPause("bsc", now); paused {
 		t.Fatal("pausing one chain must not touch another")
 	}
-	// recovery clears the streak completely, so the next failure starts from zero again
-	w.noteChainPass("polygon", nil, now)
-	w.noteChainPass("polygon", stalled, now)
-	if w.chainPaused("polygon", now) {
-		t.Fatal("a successful pass must reset the failure streak")
+	// A batch-level security failure that holds the cursor is a stall too, whatever its stage label says.
+	other := &Worker{interval: 5 * time.Second}
+	chain = chainAt(other, 1000, 100)
+	for i := 0; i < 2; i++ {
+		other.noteChainPass(chain, stageErr("polygon", "security", 101, 200, errors.New("guard unavailable")), now)
+	}
+	if _, paused := other.forwardPause("polygon", now); !paused {
+		t.Fatal("a security-stage failure that froze the cursor must pause the chain")
+	}
+	// recovery clears the streak completely, so the next stall starts from zero again
+	w.noteChainPass(chain, nil, now)
+	w.noteChainPass(chain, stalled, now)
+	if _, paused := w.forwardPause("polygon", now); paused {
+		t.Fatal("a successful pass must reset the stall streak")
 	}
 }
 
 func TestNoteChainPassIgnoresFailuresThatLeftTheCursorFree(t *testing.T) {
-	w := &Worker{interval: 5 * time.Second}
 	now := time.Now()
+	// caught up: head-window and replay failures are not a stall
+	w := &Worker{interval: 5 * time.Second}
+	chain := chainAt(w, 1000, 995)
 	for i := 0; i < 6; i++ {
-		w.noteChainPass("polygon", stageErr("polygon", "replay", 1, 2, errors.New("late replay failed")), now)
-		w.noteChainPass("polygon", stageErr("polygon", "security", 1, 2, errors.New("head window failed")), now)
+		w.noteChainPass(chain, stageErr("polygon", "replay", 1, 2, errors.New("late replay failed")), now)
+		w.noteChainPass(chain, stageErr("polygon", "security", 1, 2, errors.New("head window failed")), now)
 	}
-	if w.chainPaused("polygon", now) {
-		t.Fatal("failures outside the forward stages must never pause a chain")
+	if _, paused := w.forwardPause("polygon", now); paused {
+		t.Fatal("failures on a chain with nothing to move must never pause it")
 	}
-	// a pass that fails late but already moved the cursor is progress, not a stall
-	w.noteCursor("polygon", 100)
-	w.noteCursor("polygon", 150)
+	// work was waiting but the pass moved the cursor before failing: progress
+	progressed := &Worker{interval: 5 * time.Second}
+	chain = chainAt(progressed, 1000, 100)
+	progressed.noteCursor("polygon", 300)
 	for i := 0; i < 6; i++ {
-		w.noteChainPass("polygon", stageErr("polygon", "deposit", 151, 200, errors.New("timed out after progress")), now)
+		progressed.noteChainPass(chain, stageErr("polygon", "deposit", 301, 400, errors.New("timed out after progress")), now)
 	}
-	if w.chainPaused("polygon", now) {
+	if _, paused := progressed.forwardPause("polygon", now); paused {
 		t.Fatal("a pass that advanced the cursor must not be treated as a stall")
+	}
+	// a failed head lookup is a stall even though no coverage exists
+	blind := &Worker{interval: 5 * time.Second}
+	for i := 0; i < 2; i++ {
+		blind.noteChainPass(ChainConfig{Chain: "polygon", Confirmations: 5}, stageErr("polygon", "head", 0, 0, errors.New("no head")), now)
+	}
+	if _, paused := blind.forwardPause("polygon", now); !paused {
+		t.Fatal("a chain that cannot even read its head is stalled")
+	}
+}
+
+// A pass whose forward scan was skipped on purpose made no attempt: it must not
+// count as one more failure (that would run the delay up to the cap within five
+// ticks) and must not clear the pause either.
+func TestSkippedForwardAttemptsDoNotChangeThePause(t *testing.T) {
+	w := &Worker{interval: 5 * time.Second}
+	chain := chainAt(w, 1000, 100)
+	now := time.Date(2026, 11, 24, 2, 0, 0, 0, time.UTC)
+	stalled := stageErr("polygon", "deposit", 101, 200, errors.New("rpc down"))
+	w.noteChainPass(chain, stalled, now)
+	w.noteChainPass(chain, stalled, now)
+	w.replayMu.Lock()
+	before := *w.chainPause["polygon"]
+	w.replayMu.Unlock()
+
+	skipped := stageErr("polygon", "deposit", 101, 995, &chainPausedError{failures: 2, wait: 3 * time.Second})
+	for i := 0; i < 10; i++ {
+		w.noteChainPass(chain, skipped, now.Add(time.Duration(i)*time.Second))
+	}
+	w.replayMu.Lock()
+	after := *w.chainPause["polygon"]
+	w.replayMu.Unlock()
+	if after != before {
+		t.Fatalf("skipped attempts changed the pause: %+v -> %+v", before, after)
 	}
 }
 
@@ -120,63 +193,73 @@ func countSteps(pg *scannerMockPG, step string) int {
 	return n
 }
 
-// End to end through the real pass loop: timer-driven passes of a chain that
-// cannot move its cursor back off, manual scans never do, recovery resets it.
-func TestTimerPassesBackOffAStalledChainButManualScansAlwaysRun(t *testing.T) {
-	var failCursor atomic.Bool
-	failCursor.Store(true)
-	pg := &scannerMockPG{beforeWork: func(_ context.Context, step string) error {
-		if step == "load cursor" && failCursor.Load() {
-			return errors.New("injected cursor failure")
-		}
-		return nil
-	}}
-	w, _ := scannerLockFixture(t, pg)
+// End to end through the real pass loop. A chain whose forward scan keeps failing
+// without moving the cursor stops spending requests on the forward batches, but
+// its head stage still runs every pass and says so, manual scans always run, and
+// one healthy pass resets everything.
+func TestStalledForwardScanBacksOffWhileHeadStageAndManualScansKeepRunning(t *testing.T) {
+	pg := &scannerMockPG{}
+	w, fixture := scannerLockFixture(t, pg)
+	setFailure := func(method string) {
+		fixture.mu.Lock()
+		fixture.httpFail = method
+		fixture.mu.Unlock()
+	}
+	setFailure("eth_getLogs") // every forward batch is answered with HTTP 503
 	timer := context.WithValue(t.Context(), periodicPassKey{}, true)
 
 	for i := 0; i < 2; i++ {
 		if err := w.RunOnce(timer); err == nil {
-			t.Fatal("the injected failure must surface")
+			t.Fatal("the failing forward scan must surface")
 		}
 	}
-	if got := countSteps(pg, "load cursor"); got != 2 {
-		t.Fatalf("both early passes must try the chain, cursor loads=%d", got)
+	logsWhileStalling := fixture.callCount("eth_getLogs")
+	if logsWhileStalling == 0 {
+		t.Fatal("the first attempts must really try the forward batches")
 	}
-	if !w.chainPaused("bsc", time.Now()) {
-		t.Fatal("two stalled passes must pause the chain")
+	if _, paused := w.forwardPause("bsc", time.Now()); !paused {
+		t.Fatal("two stalled passes must pause the forward scan")
 	}
 
-	// A timer pass now skips the chain entirely: no cursor read, no RPC.
-	if err := w.RunOnce(timer); err != nil {
-		t.Fatalf("a pass that skips the paused chain has nothing to fail: %v", err)
+	// A timer pass now skips the forward batches - no more getLogs - but still
+	// reads the head and reports the skipped attempt, so the chain stays visible
+	// as failing instead of going quiet.
+	headsBefore := fixture.callCount("eth_blockNumber")
+	err := w.RunOnce(timer)
+	var skipped *chainPausedError
+	if !errors.As(err, &skipped) {
+		t.Fatalf("a skipped forward attempt must be reported, got %v", err)
 	}
-	if got := countSteps(pg, "load cursor"); got != 2 {
-		t.Fatalf("a paused chain must not be scanned by timer passes, cursor loads=%d", got)
+	if got := fixture.callCount("eth_getLogs"); got != logsWhileStalling {
+		t.Fatalf("a paused forward scan must not spend getLogs requests: %d -> %d", logsWhileStalling, got)
+	}
+	if fixture.callCount("eth_blockNumber") <= headsBefore {
+		t.Fatal("the head stage must keep running while the forward scan waits")
 	}
 
 	// A manual scan is an operator asking to try now.
 	if err := w.RunOnce(t.Context()); err == nil {
-		t.Fatal("the manual scan runs and hits the injected failure")
+		t.Fatal("the manual scan runs and hits the failure")
 	}
-	if got := countSteps(pg, "load cursor"); got != 3 {
-		t.Fatalf("manual scans must bypass the pause, cursor loads=%d", got)
+	if got := fixture.callCount("eth_getLogs"); got <= logsWhileStalling {
+		t.Fatalf("manual scans must bypass the pause: getLogs %d -> %d", logsWhileStalling, got)
 	}
 
-	// Once the pause lapses and the chain is healthy again, one pass clears everything.
-	failCursor.Store(false)
+	// Once the pause lapses and the node answers again, one pass clears everything.
+	setFailure("")
 	w.replayMu.Lock()
 	w.chainPause["bsc"].next = time.Now().Add(-time.Second)
 	w.replayMu.Unlock()
 	if err := w.RunOnce(timer); err != nil {
 		t.Fatalf("healthy pass: %v", err)
 	}
-	if w.chainPaused("bsc", time.Now()) {
+	if _, paused := w.forwardPause("bsc", time.Now()); paused {
 		t.Fatal("a successful pass must clear the pause")
 	}
 	w.replayMu.Lock()
-	_, stillTracked := w.chainPause["bsc"]
+	_, tracked := w.chainPause["bsc"]
 	w.replayMu.Unlock()
-	if stillTracked {
-		t.Fatal("a successful pass must drop the chain's failure record")
+	if tracked {
+		t.Fatal("a successful pass must drop the chain's stall record")
 	}
 }
