@@ -307,6 +307,7 @@ export default {
     sendCode: 'Send code',
     clickToResend: 'Click to resend code',
     resendCode: 'Resend verification code',
+    didntReceiveCode: "Didn't get it?",
     sendCodeDesc: "We'll send a verification code to",
     codeSentSuccess: 'Verification code sent! Please check your inbox.',
     verifying: 'Verifying...',

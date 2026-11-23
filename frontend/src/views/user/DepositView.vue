@@ -174,107 +174,106 @@
           </aside>
         </div>
 
-        <section class="card deposit-view__history">
-          <div class="deposit-view__history-head">
-            <div>
-              <h2>{{ t('deposit.history') }}</h2>
-              <p v-if="canPollHistory" class="deposit-view__desc">{{ pendingRows.length ? t('deposit.autoRefreshPending') : t('deposit.autoRefresh') }}</p>
+        <!-- 记录区：Nuxt UI 的共享 TransactionListCard（收入/支出/回滚语义在组件里统一）。
+             明细（原因、回滚提示、客服入口、确认进度、交易哈希）走 item-details 插槽，
+             临时入账/回滚状态不丢。 -->
+        <TransactionListCard
+          class="deposit-view__history"
+          :title="t('deposit.history')"
+          :subtitle="canPollHistory ? (pendingRows.length ? t('deposit.autoRefreshPending') : t('deposit.autoRefresh')) : ''"
+          :items="historyItems"
+          :loading="loading || refreshingHistory"
+          :skeleton-rows="3"
+          :empty-icon="filtersActive ? 'i-lucide-filter-x' : 'i-lucide-wallet-minimal'"
+          :empty-title="filtersActive ? t('deposit.noFilteredHistory') : t('deposit.noHistory')"
+          :empty-description="filtersActive ? t('deposit.noFilteredHistoryHint') : (info?.enabled ? t('deposit.noHistoryHint') : '')"
+          :empty-test-id="filtersActive ? 'deposit-no-filtered-history' : 'deposit-no-history'"
+          :loading-label="t('common.loading')"
+          test-id="deposit-history-card"
+        >
+          <template #actions>
+            <div class="deposit-view__history-head">
+              <UButton
+                color="neutral"
+                variant="outline"
+                size="sm"
+                icon="i-lucide-refresh-ccw"
+                :loading="loading || refreshingHistory"
+                :label="loading || refreshingHistory ? t('common.loading') : t('common.refresh')"
+                @click="refreshHistory"
+              />
             </div>
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="loading || refreshingHistory" @click="refreshHistory">
-              {{ loading || refreshingHistory ? t('common.loading') : t('common.refresh') }}
-            </button>
-          </div>
-          <p v-if="historyError" class="deposit-view__history-error" role="alert">{{ t('deposit.historyFailed') }}</p>
-          <!-- 本地筛选：只重排已加载的记录，不重新请求、不影响 5 秒自动刷新。 -->
-          <DepositHistoryFilters v-if="history.length" v-model:status="statusFilter" v-model:range="timeRange" />
-          <p v-if="history.length && filtersActive" class="deposit-view__filter-note" data-testid="deposit-filter-note">
-            {{ t('deposit.filterResult', { n: displayRows.length, total: history.length }) }}
-          </p>
-          <!-- 后端只返回最近 50 条且不分页：筛选范围要说清楚，别让人以为更早的记录没了。 -->
-          <p v-if="history.length >= HISTORY_PAGE_LIMIT" class="deposit-view__filter-note" data-testid="deposit-history-limit">
-            {{ t('deposit.historyLimitHint', { n: history.length }) }}
-          </p>
-          <div v-if="pendingRows.length" class="deposit-view__pending" role="status">
-            <span class="deposit-view__pending-dot" aria-hidden="true"></span>
-            <div class="deposit-view__pending-body">
-              <strong>{{ t('deposit.pendingSummary', { n: pendingRows.length }) }}</strong>
-              <ul class="deposit-view__pending-list">
-                <li v-for="(item, i) in pendingRows.slice(0, PENDING_SUMMARY_LIMIT)" :key="item.row.tx_hash + '-' + i">{{ pendingLine(item) }}</li>
-              </ul>
-              <p v-if="pendingRows.length > PENDING_SUMMARY_LIMIT" class="deposit-view__pending-more">
-                {{ t('deposit.pendingMore', { n: pendingRows.length - PENDING_SUMMARY_LIMIT }) }}
-              </p>
+          </template>
+
+          <template #toolbar>
+            <p v-if="historyError" class="deposit-view__history-error" role="alert">{{ t('deposit.historyFailed') }}</p>
+            <!-- 本地筛选：只重排已加载的记录，不重新请求、不影响 5 秒自动刷新。 -->
+            <DepositHistoryFilters v-if="history.length" v-model:status="statusFilter" v-model:range="timeRange" />
+            <p v-if="history.length && filtersActive" class="deposit-view__filter-note" data-testid="deposit-filter-note">
+              {{ t('deposit.filterResult', { n: displayRows.length, total: history.length }) }}
+            </p>
+            <!-- 后端只返回最近 50 条且不分页：筛选范围要说清楚，别让人以为更早的记录没了。 -->
+            <p v-if="history.length >= HISTORY_PAGE_LIMIT" class="deposit-view__filter-note" data-testid="deposit-history-limit">
+              {{ t('deposit.historyLimitHint', { n: history.length }) }}
+            </p>
+            <div v-if="pendingRows.length" class="deposit-view__pending" role="status">
+              <span class="deposit-view__pending-dot" aria-hidden="true"></span>
+              <div class="deposit-view__pending-body">
+                <strong>{{ t('deposit.pendingSummary', { n: pendingRows.length }) }}</strong>
+                <ul class="deposit-view__pending-list">
+                  <li v-for="(item, i) in pendingRows.slice(0, PENDING_SUMMARY_LIMIT)" :key="item.row.tx_hash + '-' + i">{{ pendingLine(item) }}</li>
+                </ul>
+                <p v-if="pendingRows.length > PENDING_SUMMARY_LIMIT" class="deposit-view__pending-more">
+                  {{ t('deposit.pendingMore', { n: pendingRows.length - PENDING_SUMMARY_LIMIT }) }}
+                </p>
+              </div>
             </div>
-          </div>
-          <div v-if="displayRows.length" class="deposit-view__table-wrap">
-            <table class="deposit-view__table">
-              <thead><tr><th>{{ t('deposit.chain') }}</th><th>{{ t('deposit.amount') }}</th><th>{{ t('deposit.credited') }}</th><th>{{ t('common.status') }}</th><th>{{ t('deposit.txHash') }}</th><th>{{ t('deposit.time') }}</th></tr></thead>
-              <tbody>
-                <tr v-for="({ row, progress }, i) in displayRows" :key="row.tx_hash + '-' + i">
-                  <td :data-label="t('deposit.chain')">{{ chainLabel(row.chain) }}</td>
-                  <td :data-label="t('deposit.amount')" class="deposit-view__number">{{ row.amount }} <span class="deposit-view__muted">{{ row.token }}</span></td>
-                  <td :data-label="t('deposit.credited')" class="deposit-view__number">
-                    <UBadge v-if="creditUnderReview(row)" color="warning" variant="subtle" :title="t('deposit.creditUnknownHint')" data-testid="deposit-credit-unknown">{{ t('deposit.creditUnknown') }}</UBadge>
-                    <template v-else>{{ showsCreditedAmount(row) ? fmtCredited(row.credited) : '—' }}</template>
-                  </td>
-                  <td :data-label="t('common.status')" class="deposit-view__status">
-                    <span class="deposit-view__badge" :class="'deposit-view__badge--' + statusTone(row)">{{ statusLabel(row) }}</span>
-                    <span v-if="revokeReasonText(row)" class="deposit-view__reason deposit-view__reason--revoked" data-testid="deposit-revoke-reason">{{ revokeReasonText(row) }}</span>
-                    <span v-else-if="row.reason" class="deposit-view__reason">{{ reasonText(row.reason, row.token === 'native', row.status) }}</span>
-                    <span v-if="row.status === 'revoked'" class="deposit-view__reason deposit-view__reason--revoked" data-testid="deposit-revoked-hint">{{ t('deposit.revokedHint') }}</span>
-                    <span v-else-if="row.status === 'provisional'" class="deposit-view__hint" data-testid="deposit-provisional-hint">{{ t('deposit.provisionalHint') }}</span>
-                    <!-- 回滚后的下一步：能点就点。地址/邮箱直接开客服，纯文本联系方式就复制，没配就直说。 -->
-                    <span v-if="row.status === 'revoked'" class="deposit-view__support">
-                      <a v-if="supportLink" :href="supportLink" target="_blank" rel="noopener noreferrer"
-                        class="deposit-view__support-action" data-testid="deposit-support-link">{{ t('deposit.revokedSupportAction') }}</a>
-                      <template v-else-if="contactInfo">
-                        <button type="button" class="deposit-view__support-action" data-testid="deposit-support-copy"
-                          @click="copySupportContact">{{ t('deposit.revokedSupportAction') }}</button>
-                        <span class="deposit-view__support-contact">{{ contactInfo }}</span>
-                        <span v-if="supportCopied" class="deposit-view__support-copied" role="status"
-                          data-testid="deposit-support-copied">{{ t('deposit.supportCopied') }}</span>
-                      </template>
-                      <template v-else>{{ t('deposit.supportUnavailable') }}</template>
-                    </span>
-                    <div v-if="isConfirmingRow(row)" class="deposit-view__progress">
-                      <span class="deposit-view__progress-text" :data-testid="'deposit-progress-text-' + row.status">{{ progressText(row, progress) }}</span>
-                      <span v-if="progress" class="deposit-view__progress-track" role="progressbar" aria-valuemin="0"
-                        :aria-valuemax="progress.required" :aria-valuenow="progress.done" :aria-label="progressText(row, progress)">
-                        <span class="deposit-view__progress-fill" :style="{ width: progress.percent + '%' }"></span>
-                      </span>
-                    </div>
-                  </td>
-                  <td :data-label="t('deposit.txHash')" class="deposit-view__transaction">
-                    <div v-if="row.tx_hash" class="deposit-view__hash-row">
-                      <a v-if="explorerTxURL(row.chain, row.tx_hash)" :href="explorerTxURL(row.chain, row.tx_hash)"
-                        target="_blank" rel="noopener noreferrer" class="deposit-view__hash"
-                        :aria-label="t('deposit.viewTransaction', { hash: row.tx_hash })">{{ row.tx_hash }}</a>
-                      <code v-else class="deposit-view__hash">{{ row.tx_hash }}</code>
-                      <button type="button" class="deposit-view__hash-copy" :aria-label="t('deposit.copyTxHash')"
-                        :title="t('deposit.copyTxHash')" @click="copyToClipboard(row.tx_hash)">
-                        <Icon name="copy" size="sm" />
-                      </button>
-                    </div>
-                    <span v-else class="deposit-view__muted">—</span>
-                  </td>
-                  <td :data-label="t('deposit.time')" class="deposit-view__time">{{ formatTime(row.created_at) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-else-if="history.length && filtersActive && !loading && !refreshingHistory" class="deposit-view__empty"
-            data-testid="deposit-no-filtered-history">
-            <strong>{{ t('deposit.noFilteredHistory') }}</strong>
-            <p>{{ t('deposit.noFilteredHistoryHint') }}</p>
-            <button type="button" class="btn btn-secondary" data-testid="deposit-reset-filters" @click="resetFilters">
-              {{ t('deposit.resetFilters') }}
-            </button>
-          </div>
-          <div v-else-if="!loading && !refreshingHistory && !historyError" class="deposit-view__empty">
-            <strong>{{ t('deposit.noHistory') }}</strong>
-            <p v-if="info?.enabled">{{ t('deposit.noHistoryHint') }}</p>
-          </div>
-        </section>
+          </template>
+
+          <template #item-details="{ item }">
+            <span v-if="creditUnderReview(item.row)" class="deposit-view__status" data-testid="deposit-credit-under-review">{{ statusLabel(item.row) }}</span>
+            <span v-if="revokeReasonText(item.row)" class="deposit-view__reason deposit-view__reason--revoked" data-testid="deposit-revoke-reason">{{ revokeReasonText(item.row) }}</span>
+            <span v-else-if="item.row.reason" class="deposit-view__reason">{{ reasonText(item.row.reason, item.row.token === 'native', item.row.status) }}</span>
+            <span v-if="item.row.status === 'revoked'" class="deposit-view__reason deposit-view__reason--revoked" data-testid="deposit-revoked-hint">{{ t('deposit.revokedHint') }}</span>
+            <span v-else-if="item.row.status === 'provisional'" class="deposit-view__hint" data-testid="deposit-provisional-hint">{{ t('deposit.provisionalHint') }}</span>
+            <!-- 回滚后的下一步：能点就点。地址/邮箱直接开客服，纯文本联系方式就复制，没配就直说。 -->
+            <span v-if="item.row.status === 'revoked'" class="deposit-view__support">
+              <a v-if="supportLink" :href="supportLink" target="_blank" rel="noopener noreferrer"
+                class="deposit-view__support-action" data-testid="deposit-support-link">{{ t('deposit.revokedSupportAction') }}</a>
+              <template v-else-if="contactInfo">
+                <button type="button" class="deposit-view__support-action" data-testid="deposit-support-copy"
+                  @click="copySupportContact">{{ t('deposit.revokedSupportAction') }}</button>
+                <span class="deposit-view__support-contact">{{ contactInfo }}</span>
+                <span v-if="supportCopied" class="deposit-view__support-copied" role="status"
+                  data-testid="deposit-support-copied">{{ t('deposit.supportCopied') }}</span>
+              </template>
+              <template v-else>{{ t('deposit.supportUnavailable') }}</template>
+            </span>
+            <div v-if="isConfirmingRow(item.row)" class="deposit-view__progress">
+              <span class="deposit-view__progress-text" :data-testid="'deposit-progress-text-' + item.row.status">{{ progressText(item.row, item.progress) }}</span>
+              <span v-if="item.progress" class="deposit-view__progress-track" role="progressbar" aria-valuemin="0"
+                :aria-valuemax="item.progress.required" :aria-valuenow="item.progress.done" :aria-label="progressText(item.row, item.progress)">
+                <span class="deposit-view__progress-fill" :style="{ width: item.progress.percent + '%' }"></span>
+              </span>
+            </div>
+            <div v-if="item.row.tx_hash" class="deposit-view__transaction">
+              <div class="deposit-view__hash-row">
+                <a v-if="explorerTxURL(item.row.chain, item.row.tx_hash)" :href="explorerTxURL(item.row.chain, item.row.tx_hash)"
+                  target="_blank" rel="noopener noreferrer" class="deposit-view__hash"
+                  :aria-label="t('deposit.viewTransaction', { hash: item.row.tx_hash })">{{ item.row.tx_hash }}</a>
+                <code v-else class="deposit-view__hash">{{ item.row.tx_hash }}</code>
+                <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-copy" square
+                  class="deposit-view__hash-copy" :aria-label="t('deposit.copyTxHash')" :title="t('deposit.copyTxHash')"
+                  @click="copyToClipboard(item.row.tx_hash)" />
+              </div>
+            </div>
+          </template>
+
+          <template v-if="filtersActive" #empty-actions>
+            <UButton color="neutral" variant="outline" size="sm" data-testid="deposit-reset-filters"
+              :label="t('deposit.resetFilters')" @click="resetFilters" />
+          </template>
+        </TransactionListCard>
       </template>
     </div>
   </AppLayout>
@@ -291,6 +290,8 @@ import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
 import KeyRotationRiskAckBanner from '@/components/user/KeyRotationRiskAckBanner.vue'
 import DepositAmountField from '@/components/deposit/DepositAmountField.vue'
 import DepositHistoryFilters from '@/components/deposit/DepositHistoryFilters.vue'
+import TransactionListCard from '@/components/common/TransactionListCard.vue'
+import type { TransactionItem, TransactionStatus, TransactionTone } from '@/components/common/transactionList'
 import {
   getDepositHistory, getDepositInfo, getDepositNetworkStatus,
   type DepositChain, type DepositInfo, type DepositNetworkState, type DepositNetworkStatus, type DepositRecord,
@@ -576,6 +577,58 @@ function resetFilters() {
   timeRange.value = 'all'
 }
 
+// ---- 记录列表行 ----
+// 充值记录映射成共享 TransactionListCard 的行模型：右列只放「余额」语义的金额，
+// 收入(绿)/支出(墨色)/回滚(玫红)三色由 tone 决定；待确认或未入账的行不放金额，
+// 只保留状态徽标和明细，避免把「10 USDT」误读成已到账余额。
+interface DepositHistoryItem extends TransactionItem {
+  row: DepositRecord
+  progress: ConfirmationProgress | null
+}
+
+function historyTone(row: DepositRecord): TransactionTone {
+  if (row.status === 'revoked') return 'reversal'
+  if (row.status === 'provisional') return 'positive'
+  if (row.status === 'pending' || creditUnderReview(row)) return 'pending'
+  if (row.status === 'credited') return 'positive'
+  return 'neutral'
+}
+
+function historyStatus(row: DepositRecord): TransactionStatus | undefined {
+  if (row.status === 'credited' && !creditUnderReview(row)) return undefined
+  if (creditUnderReview(row)) {
+    return { label: t('deposit.creditUnknown'), color: 'warning', testId: 'deposit-credit-unknown' }
+  }
+  const color: TransactionStatus['color'] =
+    row.status === 'revoked' ? 'error'
+      : row.status === 'pending' || row.status === 'provisional' ? 'warning'
+        : 'neutral'
+  return { label: statusLabel(row), color, testId: 'deposit-history-status' }
+}
+
+function toHistoryItem({ row, progress }: HistoryRow): DepositHistoryItem {
+  // 已回滚的行只有在原始入账金额可信时才显示 -$X；未知就是未知，不编 0。
+  const creditedAmount =
+    (row.status === 'credited' || row.status === 'provisional' || row.status === 'revoked') && hasKnownCredit(row)
+      ? fmtCredited(row.credited)
+      : undefined
+  return {
+    id: depositKey(row),
+    title: `${t(row.status === 'revoked' ? 'deposit.historyRowReversal' : 'deposit.historyRowDeposit')} · ${chainLabel(row.chain)}`,
+    subtitle: `${row.amount} ${row.token} · ${formatTime(row.created_at)}`,
+    type: row.status === 'revoked' ? 'reversal' : 'chain',
+    amount: creditedAmount,
+    amountPrefix: creditedAmount ? '$' : undefined,
+    tone: historyTone(row),
+    status: historyStatus(row),
+    testId: 'deposit-history-row',
+    row,
+    progress
+  }
+}
+
+const historyItems = computed<DepositHistoryItem[]>(() => displayRows.value.map(toHistoryItem))
+
 // ---- 回滚行的客服入口 ----
 // Reuse the site's only public contact field (same source as the user menu).
 // A URL/email/Telegram handle becomes a link; free text ("QQ: 123456789")
@@ -647,12 +700,6 @@ function creditUnderReview(row: DepositRecord): boolean {
   return row.status === 'credited' && !hasKnownCredit(row)
 }
 
-// A provisional credit already moved the balance even though the transfer is
-// not final, so it shows its amount. A revoked credit was withdrawn: no amount.
-function showsCreditedAmount(row: DepositRecord): boolean {
-  return row.status === 'credited' || row.status === 'provisional'
-}
-
 function statusLabel(row: DepositRecord): string {
   return creditUnderReview(row) ? t('deposit.statusReconciliation') : statusText(row.status)
 }
@@ -664,12 +711,6 @@ function revokeReasonText(row: DepositRecord): string {
   if (!row.revoke_reason) return ''
   const copy = depositRevokeReasonCopy(row.revoke_reason)
   return copy.params ? t(copy.key, copy.params) : t(copy.key)
-}
-
-// Badge tone is the CSS modifier. Every status keeps its own tone so the new
-// provisional/revoked states get a distinct colour without a second table.
-function statusTone(row: DepositRecord): string {
-  return creditUnderReview(row) ? 'pending' : row.status
 }
 
 // History stays readable without deposit-info, so omit thresholds we don't have.
@@ -921,8 +962,8 @@ onUnmounted(() => {
 .deposit-view { width: 100%; max-width: 76rem; margin: 0 auto; padding: clamp(1rem, 2.4vw, 2rem); color: var(--signal-text, inherit); }
 .deposit-view__header { margin-bottom: 1.5rem; }
 .deposit-view__layout { display: grid; grid-template-columns: minmax(0, 1fr) 18rem; gap: 1.25rem; align-items: start; }
-.deposit-view__funding, .deposit-view__guide, .deposit-view__history { min-width: 0; border: 1px solid var(--ui-border); border-radius: 8px; padding: 1.5rem; background: var(--ui-bg); box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .deposit-view__funding, .dark .deposit-view__guide, .dark .deposit-view__history { box-shadow: none; }
+.deposit-view__funding, .deposit-view__guide { min-width: 0; border: 1px solid var(--ui-border); border-radius: 8px; padding: 1.5rem; background: var(--ui-bg); box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05); }
+.dark .deposit-view__funding, .dark .deposit-view__guide { box-shadow: none; }
 .deposit-view h2 { font-size: .9375rem; line-height: 1.5; font-weight: 650; }
 .deposit-view__section-head { display: flex; align-items: center; gap: .625rem; margin-bottom: 1rem; }
 .deposit-view__section-head--network { flex-wrap: wrap; }
@@ -975,40 +1016,23 @@ onUnmounted(() => {
 .deposit-view__confirmation strong { font-size: .8125rem; font-weight: 600; }
 .deposit-view__confirmation p { margin-top: .4rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.7; }
 .deposit-view__history { margin-top: 1.25rem; }
-.deposit-view__transaction { min-width: 14rem; max-width: 24rem; }
+/* 记录行明细：哈希、原因、进度都挂在共享列表行的 item-details 插槽里。 */
+.deposit-view__transaction { max-width: 24rem; margin-top: .5rem; }
 .deposit-view__hash-row { display: flex; align-items: flex-start; gap: .5rem; }
 .deposit-view__hash { min-width: 0; word-break: break-all; white-space: normal; font: .75rem/1.6 ui-monospace, monospace; }
 a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: underline; text-underline-offset: .15rem; }
-.deposit-view__hash-copy { flex: 0 0 auto; padding: .25rem; border-radius: .25rem; color: var(--signal-muted, #64748b); }
-.deposit-view__hash-copy:focus-visible { color: var(--signal-accent, #0891b2); outline: 2px solid currentColor; outline-offset: 2px; }
-.deposit-view__history-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
-.deposit-view__table-wrap { max-width: 100%; overflow-x: auto; }
-.deposit-view__table { width: 100%; border-collapse: collapse; text-align: left; }
-.deposit-view__table th { color: var(--signal-muted, #8c99a6); font-size: .6875rem; font-weight: 500; background: #64748b08; }
-.deposit-view__table th, .deposit-view__table td { padding: .875rem .75rem; border-bottom: 1px solid var(--signal-line, #64748b25); }
-.deposit-view__table td { font-size: .8125rem; }
-.deposit-view__table tr:last-child td { border-bottom: 0; }
-.deposit-view__number { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.deposit-view__time { color: var(--signal-muted, #8c99a6); white-space: nowrap; font-size: .75rem !important; }
-.deposit-view__muted { color: var(--signal-muted, #8c99a6); font-size: .75rem; }
-.deposit-view__badge { display: inline-flex; padding: .2rem .5rem; border: 1px solid transparent; border-radius: .375rem; font-size: .6875rem; background: #64748b18; }
-.deposit-view__badge--credited { background: #10b98112; border-color: #10b98130; color: #10b981; }
-.deposit-view__badge--pending { background: #d9770612; border-color: #d9770630; color: #d97706; }
-/* 临时入账：钱已先到账，但交易未最终确认。 */
-.deposit-view__badge--provisional { background: #d9770612; border-color: #d9770630; color: #d97706; }
-/* 已回滚：那笔临时入账被撤销。 */
-.deposit-view__badge--revoked { background: #ef444412; border-color: #ef444430; color: #ef4444; }
-.deposit-view__badge--ignored, .deposit-view__badge--reverted { background: #ef444412; border-color: #ef444430; color: #ef4444; }
+.deposit-view__hash-copy { flex: 0 0 auto; }
+.deposit-view__history-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
 .deposit-view__reason { display: block; max-width: 21rem; margin-top: .4rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.6; }
-.deposit-view__reason--revoked { color: #dc2626; }
+.deposit-view__reason--revoked { color: var(--app-amount-reversal); }
 /* 回滚行的客服入口：链接/按钮 + 纯文本联系方式的复制兜底。 */
 .deposit-view__support { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .5rem; max-width: 21rem; margin-top: .35rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.6; }
 .deposit-view__support-action { padding: 0; color: var(--signal-accent, #0891b2); font-size: .75rem; font-weight: 600; text-decoration: underline; text-underline-offset: .15rem; }
 .deposit-view__support-contact { color: inherit; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.deposit-view__support-copied { color: #10b981; }
-.deposit-view__filter-note { margin: -.25rem 0 1rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; }
-.deposit-view__hint { display: block; max-width: 21rem; margin-top: .4rem; color: #d97706; font-size: .75rem; line-height: 1.6; }
-.deposit-view__status { min-width: 9rem; }
+.deposit-view__support-copied { color: var(--app-amount-positive); }
+.deposit-view__filter-note { margin: 0 0 .75rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; }
+.deposit-view__hint { display: block; max-width: 21rem; margin-top: .4rem; color: var(--app-amount-pending); font-size: .75rem; line-height: 1.6; }
+.deposit-view__status { display: block; max-width: 21rem; margin-top: .4rem; color: var(--app-amount-pending); font-size: .75rem; line-height: 1.6; }
 .deposit-view__progress { display: grid; gap: .35rem; max-width: 12rem; margin-top: .45rem; }
 .deposit-view__progress-text { color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .deposit-view__progress-track { display: block; height: .25rem; border-radius: 99px; background: #d9770624; overflow: hidden; }
@@ -1030,7 +1054,7 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
   /* 底部安全区：iPhone 上最后一屏内容 / 复制按钮不被 Home 指示条压住。 */
   .deposit-view { padding: 1rem .75rem calc(1rem + env(safe-area-inset-bottom)); }
   .deposit-view__live { display: none; }
-  .deposit-view__funding, .deposit-view__guide, .deposit-view__history { padding: 1.125rem; border-radius: .875rem; }
+  .deposit-view__funding, .deposit-view__guide { padding: 1.125rem; border-radius: .875rem; }
   .deposit-view__chains { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .deposit-view__chain { padding: .65rem .4rem; font-size: .75rem; }
   .deposit-view__assets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1039,15 +1063,7 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
   .deposit-view__terms { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .deposit-view__terms > div { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
   .deposit-view__terms dd { margin-top: 0; font-size: 1rem; text-align: right; }
-  .deposit-view__table, .deposit-view__table tbody { display: block; }
-  .deposit-view__table thead { display: none; }
-  .deposit-view__table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .875rem; padding: 1rem 0; border-top: 1px solid var(--signal-line, #64748b30); }
-  .deposit-view__table td { display: block; padding: 0; border: 0; min-width: 0; }
-  .deposit-view__table td::before { content: attr(data-label); display: block; margin-bottom: .35rem; color: var(--signal-muted, #8c99a6); font-size: .6875rem; }
-  .deposit-view__table td:first-child, .deposit-view__table td:last-child { grid-column: 1 / -1; }
-  .deposit-view__table td:nth-child(4) { grid-column: 1 / -1; }
-  .deposit-view__table td.deposit-view__transaction { grid-column: 1 / -1; min-width: 0; max-width: none; }
-  .deposit-view__table td.deposit-view__status { min-width: 0; }
+  .deposit-view__transaction { max-width: none; }
   .deposit-view__progress { max-width: none; }
   .deposit-view__pending { padding: .75rem .875rem; }
 }
@@ -1055,7 +1071,7 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
 @media (hover: hover) and (pointer: fine) {
   .deposit-view__chain:hover { background: var(--signal-accent-soft, #0891b212); }
   .deposit-view__asset:hover { background: var(--signal-accent-soft, #0891b212); }
-  .deposit-view__hash-copy:hover { color: var(--signal-accent, #0891b2); outline: 2px solid currentColor; outline-offset: 2px; }
+  .deposit-view__hash-copy:hover { color: var(--signal-accent, #0891b2); }
 }
 @media (prefers-reduced-motion: reduce) { .deposit-view__chain, .deposit-view__progress-fill { transition: none; } .deposit-view__pending-dot { animation: none; } }
 </style>

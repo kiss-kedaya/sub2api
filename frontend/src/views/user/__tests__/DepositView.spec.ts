@@ -497,18 +497,17 @@ describe('user deposit instant-credit history', () => {
     const wrapper = render()
     await flushPromises()
 
-    const badges = wrapper.findAll('.deposit-view__badge')
-    expect(badges[0].text()).toBe('deposit.statusProvisional')
-    expect(badges[0].classes()).toContain('deposit-view__badge--provisional')
-    expect(badges[1].text()).toBe('deposit.statusRevoked')
-    expect(badges[1].classes()).toContain('deposit-view__badge--revoked')
+    // 行色语义：临时入账算收入(绿)，回滚算撤销(玫红)，徽标各自保留状态文案。
+    const rows = wrapper.findAll('[data-testid="deposit-history-row"]')
+    expect(rows.map(row => row.attributes('data-tone'))).toEqual(['positive', 'reversal'])
+    expect(rows[0].get('[data-testid="deposit-history-status"]').text()).toBe('deposit.statusProvisional')
+    expect(rows[1].get('[data-testid="deposit-history-status"]').text()).toBe('deposit.statusRevoked')
     // 回滚原因单独一套文案：不能说成「未入账」，那笔钱曾经入过账。
     expect(wrapper.get('.deposit-view__reason').text()).toContain('deposit.reasonRevoked')
 
-    const rows = wrapper.findAll('tbody tr')
-    // 临时入账的余额已经加上，所以显示金额；已回滚的那笔不算入账。
-    expect(rows[0].get('td:nth-child(3)').text()).toBe('67')
-    expect(rows[1].get('td:nth-child(3)').text()).toBe('—')
+    // 临时入账的余额已经加上，所以显示金额；已回滚且金额未知的那笔不算入账。
+    expect(rows[0].get('[data-testid="transaction-amount"]').text()).toBe('+$67')
+    expect(rows[1].get('[data-testid="transaction-amount"]').text()).toBe('—')
     expect(wrapper.text()).not.toContain('deposit.creditUnknown')
   })
 
@@ -516,8 +515,11 @@ describe('user deposit instant-credit history', () => {
     const wrapper = render()
     await flushPromises()
 
-    expect(wrapper.findAll('.deposit-view__badge').map(badge => badge.text()))
-      .toEqual(['deposit.statusCredited', 'deposit.statusConfirming'])
+    const rows = wrapper.findAll('[data-testid="deposit-history-row"]')
+    expect(rows.map(row => row.attributes('data-tone'))).toEqual(['positive', 'pending'])
+    // 已入账的绿字本身就说明状态，只有待确认/临时/回滚才挂徽标。
+    expect(wrapper.findAll('[data-testid="deposit-history-status"]').map(badge => badge.text()))
+      .toEqual(['deposit.statusConfirming'])
     expect(wrapper.find('.deposit-view__reason').exists()).toBe(false)
   })
 })
@@ -529,7 +531,8 @@ describe('user deposit history transaction hashes', () => {
     await flushPromises()
     expect(wrapper.get('[data-testid="deposit-credit-unknown"]').text()).toBe('deposit.creditUnknown')
     expect(wrapper.get('.deposit-view__status').text()).toContain('deposit.statusReconciliation')
-    expect(wrapper.get('td:nth-child(3)').text()).not.toBe('0')
+    // 金额未知时右列是占位符，不会把 0 当成已入账金额。
+    expect(wrapper.get('[data-testid="transaction-amount"]').text()).toBe('—')
     expect(wrapper.text()).not.toContain('deposit.statusCredited')
     expect(mocks.showSuccess).not.toHaveBeenCalled()
   })
@@ -539,7 +542,7 @@ describe('user deposit history transaction hashes', () => {
     mocks.getDepositHistory.mockResolvedValue([{ chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10', status: 'credited', credited: 67, created_at: '2026-01-01T00:00:00Z' }])
     const wrapper = render()
     await flushPromises()
-    expect(wrapper.get('td:nth-child(3)').text()).toBe('67')
+    expect(wrapper.get('[data-testid="transaction-amount"]').text()).toBe('+$67')
     expect(wrapper.find('[data-testid="deposit-credit-unknown"]').exists()).toBe(false)
   })
 
@@ -554,7 +557,8 @@ describe('user deposit history transaction hashes', () => {
     ])
     expect(hashes[0].attributes('rel')).toBe('noopener noreferrer')
     expect(hashes[0].attributes('target')).toBe('_blank')
-    expect(wrapper.get('th:nth-child(5)').text()).toBe('deposit.txHash')
+    // 记录行内保留完整哈希，右列只放金额语义。
+    expect(wrapper.findAll('[data-testid="deposit-history-row"]')).toHaveLength(2)
   })
 
   it('copies the full selected transaction hash rather than its shortened label or deposit address', async () => {
@@ -583,7 +587,7 @@ describe('user deposit confirmation progress', () => {
     mocks.getDepositHistory.mockResolvedValue([pendingRow({ confirmations: 2, required_confirmations: 3, block_number: 123 })])
     const wrapper = render()
     await flushPromises()
-    expect(wrapper.get('.deposit-view__badge--pending').text()).toBe('deposit.statusConfirming')
+    expect(wrapper.get('[data-testid="deposit-history-status"]').text()).toBe('deposit.statusConfirming')
     expect(wrapper.get('.deposit-view__progress-text').text()).toBe('deposit.confirmProgress {"done":2,"required":3,"remaining":1}')
     const bar = wrapper.get('[role="progressbar"]')
     expect(bar.attributes('aria-valuenow')).toBe('2')
@@ -600,7 +604,7 @@ describe('user deposit confirmation progress', () => {
     ])
     const wrapper = render()
     await flushPromises()
-    expect(wrapper.findAll('.deposit-view__badge--pending').map(b => b.text())).toEqual(['deposit.statusConfirming', 'deposit.statusConfirming'])
+    expect(wrapper.findAll('[data-testid="deposit-history-status"]').map(b => b.text())).toEqual(['deposit.statusConfirming', 'deposit.statusConfirming'])
     // 缺确认数只给「已扫描到，确认中」：不编 n/m，也不画进度条。
     expect(wrapper.findAll('.deposit-view__progress-text').map(text => text.text()))
       .toEqual(['deposit.confirmPending', 'deposit.confirmPending'])
@@ -1293,7 +1297,7 @@ describe('user deposit history filters', () => {
     ])
   })
 
-  const tableRows = (wrapper: ReturnType<typeof render>) => wrapper.findAll('tbody tr')
+  const tableRows = (wrapper: ReturnType<typeof render>) => wrapper.findAll('[data-testid="deposit-history-row"]')
 
   it('filters by status locally without re-reading the API', async () => {
     const wrapper = render()

@@ -711,7 +711,13 @@ describe('RegisterView in-card email verification', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-testid="register-email-verify-pane"]').attributes('data-pane-state')).toBe('active')
-    expect((wrapper.get('#code').element as HTMLInputElement).value).toBe('123456')
+    // Both the pane's verification field and the shared segmented code input hold
+    // the code now; read it back from the digit cells instead of a single input.
+    const digits = wrapper
+      .findAll('[data-testid^="verification-code-digit-"]')
+      .map(input => (input.element as HTMLInputElement).value)
+      .join('')
+    expect(digits).toBe('123456')
     expect(wrapper.text()).toContain('auth.codeSentSuccess')
     // 数据没变，不重新发码
     expect(sendVerifyCodeMock).toHaveBeenCalledTimes(1)

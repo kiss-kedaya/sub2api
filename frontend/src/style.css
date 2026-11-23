@@ -612,6 +612,81 @@ html[data-theme-switching]::view-transition-new(root) {
   @apply text-red-600 dark:text-red-400;
 }
 
+/* ============ Shared record / ledger patterns ============ */
+/* One card shell for record lists: same edge, radius and quiet depth everywhere.
+   Prefer this over re-declaring border + radius + shadow per page. */
+@utility surface-card {
+  @apply card;
+  box-shadow: var(--app-shadow-card);
+}
+
+/* Hairlines between records. A list owns its own dividers so the card does not. */
+@utility record-divide {
+  @apply divide-y divide-default;
+}
+
+/* Circular icon plate at the start of a record row. */
+@utility icon-orb {
+  @apply flex size-9 shrink-0 items-center justify-center rounded-full;
+  background-color: var(--ui-bg-elevated);
+  color: var(--ui-text-muted);
+}
+
+/* Ledger tones. Each tone is self-contained so utilities never fight each other. */
+@utility icon-orb-positive {
+  @apply icon-orb;
+  background-color: color-mix(in oklab, var(--app-amount-positive) 14%, transparent);
+  color: var(--app-amount-positive);
+}
+
+@utility icon-orb-negative {
+  @apply icon-orb;
+  background-color: var(--ui-bg-elevated);
+  color: var(--ui-text-highlighted);
+}
+
+@utility icon-orb-reversal {
+  @apply icon-orb;
+  background-color: color-mix(in oklab, var(--app-amount-reversal) 14%, transparent);
+  color: var(--app-amount-reversal);
+}
+
+@utility icon-orb-pending {
+  @apply icon-orb;
+  background-color: var(--ui-bg-elevated);
+  color: var(--app-amount-pending);
+}
+
+@utility icon-orb-neutral {
+  @apply icon-orb;
+}
+
+/* Icon plate used by stat / page-card leads (was copied into every admin view). */
+@utility icon-orb-primary {
+  @apply rounded-full bg-primary/10 p-2.5 text-primary ring ring-inset ring-primary/25;
+}
+
+/* Signed amounts: the sign and the colour carry the meaning, the digits stay quiet. */
+@utility amount {
+  @apply font-semibold tabular-nums whitespace-nowrap;
+}
+
+@utility amount-positive {
+  color: var(--app-amount-positive);
+}
+
+@utility amount-negative {
+  color: var(--app-amount-negative);
+}
+
+@utility amount-reversal {
+  color: var(--app-amount-reversal);
+}
+
+@utility amount-pending {
+  color: var(--app-amount-pending);
+}
+
 @utility table-container {
   /* ============ 表格样式 ============ */
   @apply overflow-x-auto rounded-lg border border-default;

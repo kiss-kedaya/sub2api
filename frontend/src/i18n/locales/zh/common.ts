@@ -306,6 +306,7 @@ export default {
     sendCode: '发送验证码',
     clickToResend: '点击重新发送验证码',
     resendCode: '重新发送验证码',
+    didntReceiveCode: '没收到？',
     sendCodeDesc: '我们将发送验证码到',
     codeSentSuccess: '验证码已发送！请查收您的邮箱。',
     verifying: '验证中...',
