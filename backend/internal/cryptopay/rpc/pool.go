@@ -61,10 +61,12 @@ func NewPoolWithHTTPClient(endpoints string, client *http.Client) *Pool {
 // Snapshot atomically captures endpoints and their verification provenance.
 // In-flight work cannot combine an automatic list with a newer manual policy.
 func (p *Pool) Snapshot() *Pool {
+	health := p.healthTracker() // before the read lock: it takes the write lock
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	snapshot := NewPoolWithHTTPClient(strings.Join(p.endpoints, ","), p.client)
 	snapshot.verification = p.verification
+	snapshot.health = health
 	snapshot.chainID.Store(p.chainID.Load())
 	return snapshot
 }
@@ -72,11 +74,17 @@ func (p *Pool) Snapshot() *Pool {
 // WithEndpoints takes an independent endpoint snapshot while retaining the
 // original transport, including public-address validation and DNS pinning.
 func (p *Pool) WithEndpoints(endpoints string) *Pool {
+	health := p.healthTracker()
 	p.mu.RLock()
 	policy := p.verification
 	p.mu.RUnlock()
 	snapshot := NewPoolWithHTTPClient(endpoints, p.client)
 	snapshot.verification = policy // immutable policy, including for single-node verification
+	// One health record per endpoint for the life of the worker. Every scan pass
+	// derives its own pool; with a tracker per derived pool a node that just said
+	// "daily limit reached" was forgotten at the next pass (five seconds later)
+	// and asked again, and so were the span limits the pool had learned.
+	snapshot.health = health
 	snapshot.chainID.Store(p.chainID.Load())
 	return snapshot
 }
@@ -255,9 +263,41 @@ func (p *Pool) CallEndpoint(ctx context.Context, method string, params any) (jso
 		return nil, "", fmt.Errorf("no rpc endpoints configured")
 	}
 	health := p.healthTracker()
-	var lastErr error
+	// An eth_getLogs span some endpoints are known to refuse. Public providers cap
+	// it differently (50, 100, 1000 blocks) and answer with HTTP 400 or a JSON-RPC
+	// error; sending the same oversized query to each of them in turn costs a
+	// full round-trip per node and, once the healthy ones are rate limited, ends
+	// the call on whichever refused last. Remember the limits, route around them.
+	span, hasSpan := getLogsSpan(method, params)
+	// lastHardErr is the last failure that is not a range rejection: an outage, a
+	// rate limit, a quota. It is what the caller must see when the call fails, so
+	// a node's "range too wide" can never mask the real reason nobody answered.
+	var lastErr, lastHardErr error
+	sawRangeLimit := false
 	for round := 0; round < maxCallRounds; round++ {
 		candidates := health.eligible(endpoints)
+		if hasSpan {
+			capable := health.capableOfSpan(endpoints, span)
+			if len(capable) == 0 {
+				// Every configured endpoint is known to refuse a query this wide.
+				// Say so as the splittable failure it is rather than burning a
+				// request on each of them to hear it again.
+				return nil, "", fmt.Errorf("all rpc endpoints failed: %w", rangeLimitFailure(health.widestLimit(endpoints)))
+			}
+			if narrowed := intersectEndpoints(candidates, capable); len(narrowed) > 0 {
+				candidates = narrowed
+			} else {
+				// Every node that can serve a query this wide is cooling down (a rate
+				// limit, a spent quota) while the healthy ones only take narrower ones.
+				// (When the whole pool is cooling, eligible() already returned all of it,
+				// so the capable nodes would have been kept above.) Do not probe the
+				// cooling nodes: that returns their hard error, which the scanner cannot
+				// act on, keeps them rate limited and defeats the quota cooldown. Say the
+				// query is too wide instead; the scanner splits it into pieces the
+				// healthy nodes accept, which is what happened before limits were learned.
+				return nil, "", fmt.Errorf("all rpc endpoints failed: %w", rangeLimitFailure(health.widestLimit(candidates)))
+			}
+		}
 		start := int(p.next.Add(1)-1) % len(candidates)
 		for i := 0; i < len(candidates); i++ {
 			endpoint := candidates[(start+i)%len(candidates)]
@@ -270,6 +310,14 @@ func (p *Pool) CallEndpoint(ctx context.Context, method string, params any) (jso
 				return result, endpoint, nil
 			}
 			health.fail(endpoint, err)
+			if isRangeLimitFailure(err) {
+				sawRangeLimit = true
+				if limit := SpanLimitOf(err); hasSpan && limit > 0 && limit < span {
+					health.learnSpan(endpoint, limit)
+				}
+			} else {
+				lastHardErr = err
+			}
 			lastErr = err
 			if ctx.Err() != nil {
 				return nil, "", fmt.Errorf("all rpc endpoints failed: %w", lastErr)
@@ -282,7 +330,66 @@ func (p *Pool) CallEndpoint(ctx context.Context, method string, params any) (jso
 			break
 		}
 	}
+	switch {
+	case lastHardErr != nil:
+		return nil, "", fmt.Errorf("all rpc endpoints failed: %w", lastHardErr)
+	case sawRangeLimit && hasSpan:
+		// Nobody answered and every refusal was about the query's size: a
+		// narrower query can succeed, so report the splittable cause.
+		return nil, "", fmt.Errorf("all rpc endpoints failed: %w", rangeLimitFailure(health.widestLimit(endpoints)))
+	}
 	return nil, "", fmt.Errorf("all rpc endpoints failed: %w", lastErr)
+}
+
+// isRangeLimitFailure reports a node refusing a query because of its size.
+func isRangeLimitFailure(err error) bool {
+	var failure *Failure
+	return errors.As(err, &failure) && (failure.SpanLimit > 0 || failure.Reason == ReasonRangeLimit)
+}
+
+// rangeLimitFailure is what a pool reports when only a narrower query can
+// succeed. It carries no node text, so it is safe for every durable record.
+func rangeLimitFailure(limit uint64) *Failure {
+	return &Failure{Kind: "remote", RPCCode: -32602, Reason: ReasonRangeLimit, SpanLimit: limit}
+}
+
+// intersectEndpoints keeps the members of a, in a's order, that are also in b.
+func intersectEndpoints(a, b []string) []string {
+	in := make(map[string]struct{}, len(b))
+	for _, endpoint := range b {
+		in[endpoint] = struct{}{}
+	}
+	out := make([]string, 0, len(a))
+	for _, endpoint := range a {
+		if _, ok := in[endpoint]; ok {
+			out = append(out, endpoint)
+		}
+	}
+	return out
+}
+
+// getLogsSpan returns the block span of an eth_getLogs request.
+func getLogsSpan(method string, params any) (uint64, bool) {
+	if method != "eth_getLogs" {
+		return 0, false
+	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return 0, false
+	}
+	var args []struct {
+		FromBlock string `json:"fromBlock"`
+		ToBlock   string `json:"toBlock"`
+	}
+	if json.Unmarshal(raw, &args) != nil || len(args) == 0 {
+		return 0, false
+	}
+	from, fromErr := hexutil.DecodeUint64(args[0].FromBlock)
+	to, toErr := hexutil.DecodeUint64(args[0].ToBlock)
+	if fromErr != nil || toErr != nil || to < from {
+		return 0, false
+	}
+	return to - from + 1, true
 }
 
 // EndpointHead reads eth_blockNumber from exactly one endpoint, without
@@ -376,8 +483,19 @@ func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return nil, &Failure{Kind: "http", HTTPStatus: resp.StatusCode, Host: host}
+		failure := &Failure{Kind: "http", HTTPStatus: resp.StatusCode, Host: host}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		// Providers refuse an oversized eth_getLogs with HTTP 400/413/422 and say
+		// the limit in the body ("ranges over 100 blocks are not supported on
+		// free plan"), and answer 402/429/503 when the daily allowance or the
+		// prepaid balance is gone ("daily request limit reached", "Insufficient RU
+		// balance"). Keep what they said: the pool learns limits and quota from it.
+		switch resp.StatusCode {
+		case http.StatusBadRequest, http.StatusPaymentRequired, http.StatusRequestEntityTooLarge,
+			http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusServiceUnavailable:
+			annotateFromErrorBody(failure, body)
+		}
+		return nil, failure
 	}
 	var decoded rpcResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&decoded); err != nil {
@@ -386,8 +504,11 @@ func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any)
 	if decoded.Error != nil {
 		// Keep the node's text only as a sanitised diagnostic: Error() stays a
 		// fixed phrase so a durable record can never carry endpoint credentials.
+		// The node controls this text: bound it before anything runs over it.
+		message := truncateNodeMessage(decoded.Error.Message)
+		reason, limit := classifyRemoteDetail(message)
 		return nil, &Failure{Kind: "remote", RPCCode: decoded.Error.Code,
-			Reason: classifyRemote(decoded.Error.Message), Message: decoded.Error.Message, Host: host}
+			Reason: reason, Message: message, Host: host, SpanLimit: limit}
 	}
 	if method == "eth_getLogs" && !validLogsResult(decoded.Result) {
 		return nil, &Failure{Kind: "response", Host: host}

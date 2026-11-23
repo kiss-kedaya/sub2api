@@ -187,6 +187,57 @@ func verifyChain(ctx context.Context, pool *rpc.Pool, chain string) error {
 	return nil
 }
 
+// An endpoint's proof that it serves the configured chain is remembered for a
+// few minutes. verifiedChainPool runs on every scan pass (every five seconds,
+// several times per chain), and without this each run probed every configured
+// endpoint again: dozens of eth_chainId requests a minute per chain, counted
+// against the provider's daily allowance like any other call, for an answer that
+// never changes. A failed probe is remembered only briefly, so a node that was
+// merely busy is asked again within a pass or two and a dead one is not asked
+// on every pass.
+const (
+	chainProofTTL     = 5 * time.Minute
+	chainProofFailTTL = 10 * time.Second
+)
+
+// proofClock is a seam for tests.
+var proofClock = time.Now
+
+type chainProof struct {
+	err   error // nil: proved to serve the chain
+	until time.Time
+}
+
+var chainProofs = struct {
+	sync.Mutex
+	byKey map[string]chainProof
+}{byKey: make(map[string]chainProof)}
+
+func chainProofKey(chain, endpoint string) string { return chain + "|" + endpoint }
+
+func cachedChainProof(chain, endpoint string) (chainProof, bool) {
+	chainProofs.Lock()
+	defer chainProofs.Unlock()
+	proof, ok := chainProofs.byKey[chainProofKey(chain, endpoint)]
+	if !ok || !proofClock().Before(proof.until) {
+		return chainProof{}, false
+	}
+	return proof, true
+}
+
+func storeChainProof(chain, endpoint string, err error) {
+	ttl := chainProofTTL
+	if err != nil {
+		ttl = chainProofFailTTL
+	}
+	chainProofs.Lock()
+	defer chainProofs.Unlock()
+	if len(chainProofs.byKey) > 4096 { // endpoints come from config; this is only a backstop
+		chainProofs.byKey = make(map[string]chainProof)
+	}
+	chainProofs.byKey[chainProofKey(chain, endpoint)] = chainProof{err: err, until: proofClock().Add(ttl)}
+}
+
 // Pool.Call rotates endpoints for every request. Checking chainId on just
 // one request cannot authenticate a receipt fetched from another endpoint.
 // Build an isolated pool containing only endpoints verified for this chain;
@@ -207,10 +258,18 @@ func verifiedChainPool(ctx context.Context, pool *rpc.Pool, chain string) (*rpc.
 			for index := range jobs {
 				errs[index] = verifyChain(probe, pool.WithEndpoints(configured[index]), chain)
 				verified[index] = errs[index] == nil
+				if probe.Err() == nil { // an answer cut short by our own deadline proves nothing
+					storeChainProof(chain, configured[index], errs[index])
+				}
 			}
 		}()
 	}
 	for index := range configured {
+		if proof, ok := cachedChainProof(chain, configured[index]); ok {
+			errs[index] = proof.err
+			verified[index] = proof.err == nil
+			continue
+		}
 		select {
 		case jobs <- index:
 		case <-probe.Done():

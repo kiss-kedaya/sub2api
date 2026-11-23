@@ -84,7 +84,8 @@ type CryptoConfig struct {
 	// per endpoint and the scanner is bursty: one pass fires several batches per
 	// chain across several chains. Without pacing a burst gets 429 and, because
 	// the pool rotates on failure, the next endpoint is burned too. Zero
-	// disables pacing and keeps the previous behaviour.
+	// disables pacing and keeps the previous behaviour. Keep it small: a scan pass
+	// is hundreds of calls, and every call waits its turn.
 	RPCThrottleMs int `json:"rpc_throttle_ms,omitempty"`
 
 	// Sweep settings.

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math/rand"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 func (s *Service) securityMonitor(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	var idle idleGuardPacer
 	for {
 		select {
 		case <-ctx.Done():
@@ -30,7 +33,7 @@ func (s *Service) securityMonitor(ctx context.Context) {
 			checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			err := s.checkWalletSecurity(checkCtx)
 			if err == nil {
-				err = s.scanIdleWalletSecurity(checkCtx)
+				err = s.scanIdleWalletSecurity(checkCtx, &idle)
 			}
 			cancel()
 			if err != nil && !errors.Is(err, wallet.ErrWalletNotConfigured) && !errors.Is(err, wallet.ErrSecurityLocked) {
@@ -47,10 +50,102 @@ func (s *Service) securityMonitor(ctx context.Context) {
 	}
 }
 
+// newIdleGuardWorker builds the worker of the idle-chain guard scan: its own
+// "wallet-security:" cursors, no deposit handler and no recipients, and its own
+// advisory lock (scanner.GuardScanLockKey), so it can never starve the deposit scan
+// of the shared lock.
+func newIdleGuardWorker(db *sql.DB, pools map[string]*rpc.Pool, chains []scanner.ChainConfig) *scanner.Worker {
+	worker := scanner.NewWorker(db, pools, chains, scanner.NewNamespacedCursorStore(db, "wallet-security:"), nil,
+		func(context.Context, string) ([]string, error) { return nil, nil }, 5*time.Second, 2000)
+	worker.SetScanLockKey(scanner.GuardScanLockKey)
+	return worker
+}
+
+// idleGuardPacer spaces the guard scan of EACH idle chain after its own
+// consecutive failures.
+//
+// The guard scans every chain that is not scanned for deposits. One of them (an
+// old plasma entry whose three free RPC nodes all answer 403/429) had failed on
+// every tick for sixteen days: ~150 requests each, every five seconds, against
+// providers that were already refusing us, while holding a database session. A
+// failing chain cannot detect anything anyway, so it backs off (5s, 10s, ... up to
+// five minutes) and resumes at full cadence on its first success. The state is per
+// chain: a healthy idle chain keeps its five second cadence however long another
+// one has been dead, because the guard exists to notice an unauthorised outflow
+// from a hot wallet and must not be delayed by somebody else's outage. The zero
+// value is ready to use; it is only ever touched by the security monitor goroutine.
+type idleGuardPacer struct {
+	chains map[string]*idleGuardState
+}
+
+type idleGuardState struct {
+	failures int
+	next     time.Time
+}
+
+const (
+	idleGuardBaseDelay = 5 * time.Second
+	idleGuardMaxDelay  = 5 * time.Minute
+)
+
+func (p *idleGuardPacer) due(chain string, now time.Time) bool {
+	st := p.chains[chain]
+	return st == nil || !now.Before(st.next)
+}
+
+// dueChains returns the chains whose guard scan is due now, those with the fewest
+// consecutive failures first, so a chain that is probably about to fail slowly
+// cannot eat the tick's time budget ahead of the healthy ones.
+func (p *idleGuardPacer) dueChains(chains []scanner.ChainConfig, now time.Time) []scanner.ChainConfig {
+	out := make([]scanner.ChainConfig, 0, len(chains))
+	for _, chain := range chains {
+		if p.due(chain.Chain, now) {
+			out = append(out, chain)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return p.failuresOf(out[i].Chain) < p.failuresOf(out[j].Chain) })
+	return out
+}
+
+func (p *idleGuardPacer) failuresOf(chain string) int {
+	if st := p.chains[chain]; st != nil {
+		return st.failures
+	}
+	return 0
+}
+
+// note records the outcome of one guard iteration of chain. Another instance
+// holding the guard lock is neither a success nor a failure of the chain.
+func (p *idleGuardPacer) note(chain string, err error, now time.Time) {
+	switch {
+	case err == nil:
+		delete(p.chains, chain)
+	case errors.Is(err, scanner.ErrScanBusy):
+		// nothing was attempted; leave the state as it is
+	default:
+		if p.chains == nil {
+			p.chains = make(map[string]*idleGuardState)
+		}
+		st := p.chains[chain]
+		if st == nil {
+			st = &idleGuardState{}
+			p.chains[chain] = st
+		}
+		st.failures++
+		delay := idleGuardBaseDelay
+		for i := 1; i < st.failures && delay < idleGuardMaxDelay; i++ {
+			delay *= 2
+		}
+		delay = min(delay, idleGuardMaxDelay)
+		jitter := time.Duration(rand.Int63n(int64(delay)/5*2+1)) - delay/5 // +-20%
+		st.next = now.Add(delay + jitter)
+	}
+}
+
 // Existing wallet balances remain protected after recharge is turned off.
 // Reuse the scanner's batching, canonical verification and global lock, while
 // keeping an independent cursor and no deposit handler/recipient list.
-func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
+func (s *Service) scanIdleWalletSecurity(ctx context.Context, pacer *idleGuardPacer) error {
 	s.mu.RLock()
 	active := s.worker != nil && s.config.Enabled && !s.securityPaused.Load()
 	runtimePools := maps.Clone(s.pools)
@@ -89,14 +184,51 @@ func (s *Service) scanIdleWalletSecurity(ctx context.Context) error {
 	if len(chains) == 0 {
 		return nil
 	}
-	worker := scanner.NewWorker(s.db, pools, chains, scanner.NewNamespacedCursorStore(s.db, "wallet-security:"), nil, func(context.Context, string) ([]string, error) { return nil, nil }, 5*time.Second, 2000)
-	worker.SetSecurityGuards(s.scanWalletSecurityGuard, s.scanWalletOutflows)
-	guardErr := worker.RunGuardScan(ctx)
-	// ERC-20 outflows are covered by the block guard above; a native spend has
+	// One guard worker per chain that is due: a chain whose nodes keep refusing us
+	// is backed off on its own and must not delay the others (see idleGuardPacer).
+	// Each runs under the guard lock in turn, healthiest chain first.
+	guardErrs := runIdleGuardChains(ctx, pacer, chains, func(ctx context.Context, chain scanner.ChainConfig) error {
+		worker := newIdleGuardWorker(s.db, map[string]*rpc.Pool{chain.Chain: pools[chain.Chain]}, []scanner.ChainConfig{chain})
+		worker.SetSecurityGuards(s.scanWalletSecurityGuard, s.scanWalletOutflows)
+		return worker.RunGuardScan(ctx)
+	})
+	// ERC-20 outflows are covered by the block guards above; a native spend has
 	// no log, so the same idle window must poll the hot wallet through the
-	// address API or a drained ETH/BNB balance stays silent.
+	// address API or a drained ETH/BNB balance stays silent. It paces itself
+	// (NativePollSeconds) and is independent of a chain's log-scan backoff: it
+	// reads the explorer's address API, so a chain whose log scan is backed off
+	// must not also lose its native check for the rest of the interval.
 	nativeErr := s.pollNativeOutflowsIdle(ctx, cfg, pools)
-	return errors.Join(guardErr, nativeErr)
+	return errors.Join(append(guardErrs, nativeErr)...)
+}
+
+// idleGuardChainBudget is the slice of one security tick a single idle chain may use.
+// The tick as a whole is bounded (15s); without a per-chain bound a chain that hangs
+// takes all of it, the chains behind it run on an expired context and look failed.
+var idleGuardChainBudget = 10 * time.Second
+
+// runIdleGuardChains runs scan for every idle chain whose backoff has elapsed and
+// feeds the outcome back to the pacer. A chain gets its own deadline, so one that
+// hangs is cut off and backed off by itself. When the tick's own context has expired
+// the outcome says nothing about the chain (it may simply have been starved), so it
+// is not recorded and the chains not yet reached wait for the next tick.
+func runIdleGuardChains(ctx context.Context, pacer *idleGuardPacer, chains []scanner.ChainConfig, scan func(context.Context, scanner.ChainConfig) error) []error {
+	var errs []error
+	for _, chain := range pacer.dueChains(chains, time.Now()) {
+		if ctx.Err() != nil {
+			break
+		}
+		chainCtx, cancel := context.WithTimeout(ctx, idleGuardChainBudget)
+		err := scan(chainCtx, chain)
+		cancel()
+		if ctx.Err() == nil {
+			pacer.note(chain.Chain, err, time.Now())
+		}
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
 }
 
 // SettingKeySecurityPauseMarker stores the lock episode that already applied

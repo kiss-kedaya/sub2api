@@ -400,7 +400,15 @@ func NewService(
 func (s *Service) Reload(ctx context.Context) { s.reload(ctx) }
 
 // applyRPCThrottle publishes the configured pacing so every endpoint waits its
-// turn instead of firing together. Zero clears it.
+// turn instead of firing together. Zero (unset) clears it: no pacing.
+//
+// Deliberately NOT paced by default. A scan pass is hundreds of eth_getLogs calls
+// (address batches x stages x chains); a 150ms spacing per endpoint made a single
+// stage over 13 batches take 2.4s instead of 5ms, stretched the idle wallet guard
+// scan - which holds the global scan lock - past its 5s tick, and starved the
+// deposit scan of the lock: BSC, Ethereum and Polygon all stopped advancing
+// (2026-11-24, reverted within 14 minutes). Opt in per deployment with a small
+// rpc_throttle_ms if a provider needs it.
 func applyRPCThrottle(cfg CryptoConfig) {
 	ms := cfg.RPCThrottleMs
 	if ms < 0 {

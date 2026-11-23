@@ -62,8 +62,10 @@ func TestManualConfirmBatchSummaryCountsAndKeepsRequestOrder(t *testing.T) {
 	require.Equal(t, 3*67.0, e.balance(t), "three distinct deposits credited, the reverted one is not")
 	require.Equal(t, 3, e.orders(t))
 	require.Equal(t, "pending", e.status(t, bad))
-	// One chain-id probe serves the whole batch, not one per id.
-	require.Equal(t, probesBefore+1, e.chain.callCount("eth_chainId"))
+	// At most one chain-id probe serves the whole batch, never one per id. Zero is
+	// fine: an endpoint that proved its chain a moment ago (the confirmation above)
+	// is not asked again for a few minutes.
+	require.LessOrEqual(t, e.chain.callCount("eth_chainId"), probesBefore+1)
 }
 
 // The lock is a convenience, not the safety property. With no lock at all, a
