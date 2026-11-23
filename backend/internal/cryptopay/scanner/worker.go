@@ -190,14 +190,6 @@ func (w *Worker) noteCursor(chain string, cursor uint64) {
 	}
 }
 
-// cursorAdvanced reports whether the durable cursor of chain moved during this pass.
-func (w *Worker) cursorAdvanced(chain string) bool {
-	w.replayMu.Lock()
-	defer w.replayMu.Unlock()
-	c := w.coverage[chain]
-	return c != nil && c.hasStart && c.hasCursor && c.cursor > c.startCursor
-}
-
 func (w *Worker) noteHead(chain string, head uint64) {
 	w.replayMu.Lock()
 	defer w.replayMu.Unlock()
@@ -695,13 +687,22 @@ func (w *Worker) forwardStalled(chain ChainConfig) bool {
 // noteChainPass records the outcome of one timer-driven pass of chain. A pass
 // that moved the cursor, found nothing to move, or failed in stages that leave
 // the cursor free clears the pause; one that needed to move it and could not
-// extends the pause. A pass whose forward scan was itself skipped is neither.
+// extends the pause. A pass whose forward scan was itself skipped, or that never
+// got past the head lookup, is neither.
 func (w *Worker) noteChainPass(chain ChainConfig, scanErr error, now time.Time) {
 	var skipped *chainPausedError
 	if errors.As(scanErr, &skipped) {
 		return
 	}
-	blocked := scanErr != nil && (headStageFailed(scanErr) || w.forwardStalled(chain))
+	// A pass that could not even read the chain head never reached the forward scan,
+	// and the head stage is not paced by this gate. It says nothing about the forward
+	// scan: counting it as a stall renewed the pause on every rate limited head call
+	// (about one a minute on the free Polygon nodes), so the pause never lapsed and the
+	// forward scan starved for hours. Leave the pause exactly as it is.
+	if scanErr != nil && headStageFailed(scanErr) {
+		return
+	}
+	blocked := scanErr != nil && w.forwardStalled(chain)
 	w.replayMu.Lock()
 	defer w.replayMu.Unlock()
 	if !blocked {
