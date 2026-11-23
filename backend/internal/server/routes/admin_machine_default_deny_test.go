@@ -83,6 +83,34 @@ func TestLegacyMachineCredentialCannotReadRedeemCodeReads(t *testing.T) {
 	}
 }
 
+// 管理员改 Key 分组 / 用户分组配置都是写操作：机器凭据（旧版 x-api-key 与
+// 受限 adm_sc_ 密钥）不能调用，必须由真人 2FA 会话完成。认证层的默认拒绝先于
+// step-up 门控生效，因此这里断言 403 STEP_UP_ADMIN_API_KEY_FORBIDDEN。
+func TestLegacyMachineCredentialCannotWriteUserKeyGroups(t *testing.T) {
+	settings := stepUpRouteSettings(map[string]string{
+		service.SettingKeyAdminAPIKey: "admin-legacy-machine-key",
+	})
+	router := buildMachineCredentialRouter(t, settings)
+
+	for _, route := range []struct{ method, path string }{
+		// 管理端改单个 Key 分组
+		{http.MethodPut, "/api/v1/admin/api-keys/1"},
+		// 管理端改用户所属分组（会批量迁移该用户的 Key）
+		{http.MethodPost, "/api/v1/admin/users/1/replace-group"},
+		// 管理端改用户分组配置（专属倍率 / 可用分组）
+		{http.MethodPut, "/api/v1/admin/users/1"},
+	} {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			req := httptest.NewRequest(route.method, route.path, nil)
+			req.Header.Set("X-API-Key", "admin-legacy-machine-key")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			require.Contains(t, w.Body.String(), "STEP_UP_ADMIN_API_KEY_FORBIDDEN")
+		})
+	}
+}
+
 // 白名单（只读统计聚合）仍允许机器凭据，避免把自动化监控一刀切死。
 // 这里用真实 adminAuth 验证认证层判定；dashboard stats 的 handler 为 nil，
 // 放行后会在 handler 阶段 panic，因此只断言响应不是 403 门控错误。

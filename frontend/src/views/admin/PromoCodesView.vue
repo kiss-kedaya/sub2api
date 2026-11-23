@@ -189,7 +189,7 @@
                 <p class="text-xs text-muted">{{ formatDateTime(usage.used_at) }}</p>
               </div>
             </div>
-            <span class="text-sm font-medium tabular-nums text-success">+${{ usage.bonus_amount.toFixed(2) }}</span>
+            <span class="amount amount-positive text-sm">+${{ usage.bonus_amount.toFixed(2) }}</span>
           </li>
         </ul>
         <div v-if="usagesTotal > usagesPageSize" class="mt-4">

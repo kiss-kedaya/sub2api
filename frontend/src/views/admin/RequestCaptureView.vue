@@ -242,7 +242,7 @@ const tabs = computed(() => [
   { label: t('admin.requestCapture.tabs.settings'), value: 'settings', icon: 'i-lucide-settings-2' },
 ])
 const navItems = computed(() => tabs.value.map(item => ({ label: item.label, icon: item.icon, to: sectionTo(item.value as 'tasks' | 'settings' | 'small') })))
-const statCardUi = { container: 'gap-y-1.5', wrapper: 'items-start', leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25', title: 'font-normal text-muted text-xs uppercase' }
+const statCardUi = { container: 'gap-y-1.5', wrapper: 'items-start', leading: 'icon-orb-primary', title: 'font-normal text-muted text-xs uppercase' }
 const statCards = computed(() => stats.value ? [
   { key: 'instance', icon: 'i-lucide-server', label: t('admin.requestCapture.instance'), value: stats.value.instance_id || '—' },
   { key: 'used', icon: 'i-lucide-hard-drive', label: t('admin.requestCapture.used'), value: bytes(stats.value.used_bytes) },

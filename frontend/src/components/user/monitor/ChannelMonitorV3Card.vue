@@ -17,7 +17,7 @@
     <div class="channel-signal-card__metrics mt-5 grid grid-cols-3 gap-2">
       <div class="channel-signal-card__metric rounded-2xl border border-slate-200/80 bg-slate-50/85 p-3 dark:border-dark-700/50 dark:bg-dark-900/40">
         <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{{ t('channelMonitorV3.cacheRate') }}</div>
-        <div class="mt-1.5 font-mono text-lg font-bold tabular-nums text-gray-900 dark:text-gray-100">{{ cacheRate }}</div>
+        <div class="mt-1.5 font-mono text-lg font-bold tabular-nums" :class="cacheRateClass">{{ cacheRate }}</div>
       </div>
       <div class="channel-signal-card__metric rounded-2xl border border-slate-200/80 bg-slate-50/85 p-3 dark:border-dark-700/50 dark:bg-dark-900/40">
         <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{{ t('channelMonitorV3.successRate') }}</div>
@@ -49,7 +49,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitorMatrixRow } from '@/api/channelMonitorV2'
-import { availabilityTextClass, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
+import { availabilityTextClass, cacheTextClass, formatMonitorMs, formatMonitorPercent } from '@/features/channel-monitor-v2/monitorFormat'
 import type { GroupSignalSource } from '@/utils/groupRateSignals'
 import { providerGradient, useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import GroupRateSignals from '@/components/common/GroupRateSignals.vue'
@@ -85,6 +85,7 @@ const latestBucket = computed(() => [...props.row.buckets]
   .at(-1))
 const latestMetrics = computed(() => latestBucket.value?.metrics ?? props.row.metrics)
 const cacheRate = computed(() => formatMonitorPercent(latestMetrics.value.cache_rate))
+const cacheRateClass = computed(() => cacheTextClass(latestMetrics.value.cache_rate))
 const availabilityPercent = computed(() => (1 - latestMetrics.value.error_rate) * 100)
 const successRate = computed(() => formatMonitorPercent(availabilityPercent.value / 100))
 const availabilityClass = computed(() => availabilityTextClass(availabilityPercent.value))

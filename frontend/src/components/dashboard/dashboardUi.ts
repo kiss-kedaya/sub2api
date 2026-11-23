@@ -23,7 +23,7 @@ export const statCardUi = {
   // whether or not a tile has a sub line.
   container: 'gap-y-1.5 content-start',
   wrapper: 'flex-none items-start',
-  leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25',
+  leading: 'icon-orb-primary',
   title: 'font-normal text-muted text-xs uppercase',
 }
 

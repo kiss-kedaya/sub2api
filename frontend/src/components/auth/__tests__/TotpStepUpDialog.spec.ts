@@ -59,6 +59,7 @@ enableAutoUnmount(afterEach)
 
 describe('step-up above the initiating user dialog', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     mocks.getPolicy.mockResolvedValue({ required_factors: ['totp'], step_up_enabled: true })
   })
   afterEach(() => { vi.resetAllMocks() })
@@ -122,6 +123,71 @@ describe('step-up above the initiating user dialog', () => {
     await flushPromises()
     expect(mocks.stepUp).toHaveBeenCalledTimes(2)
     expect(controller.visible.value).toBe(false)
+  })
+
+  it('always renders an explicit verify button and submits a 6-digit code on click', async () => {
+    mocks.stepUp.mockResolvedValue({ verified: true })
+    const controller = useStepUp()
+    controller.visible.value = true
+    const wrapper = mount(TotpStepUpDialog, { props: { controller }, global: { stubs: { teleport: true } } })
+    await flushPromises()
+
+    // 只绑 TOTP 时不应出现 Passkey 选项。
+    expect(wrapper.find('[data-testid="stepup-use-passkey"]').exists()).toBe(false)
+    // 确认按钮永远存在：空输入时置灰，而不是只剩「取消」。
+    expect(wrapper.get('[data-testid="stepup-totp-submit"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.getComponent(TotpCodeInput).vm.$emit('update:modelValue', '01234')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="stepup-totp-submit"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.getComponent(TotpCodeInput).vm.$emit('update:modelValue', '012345')
+    await flushPromises()
+    // 只改 v-model 不等于自动提交（complete 事件才是），按钮此时可点。
+    expect(mocks.stepUp).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="stepup-totp-submit"]').attributes('disabled')).toBeUndefined()
+
+    await wrapper.get('[data-testid="stepup-totp-submit"]').trigger('click')
+    await flushPromises()
+    expect(mocks.stepUp).toHaveBeenCalledWith('012345')
+    expect(controller.visible.value).toBe(false)
+  })
+
+  it('submits a 6-digit code on Enter', async () => {
+    mocks.stepUp.mockResolvedValue({ verified: true })
+    const controller = useStepUp()
+    controller.visible.value = true
+    const wrapper = mount(TotpStepUpDialog, { props: { controller }, global: { stubs: { teleport: true } } })
+    await flushPromises()
+
+    await wrapper.getComponent(TotpCodeInput).vm.$emit('update:modelValue', '654321')
+    await flushPromises()
+    expect(mocks.stepUp).not.toHaveBeenCalled()
+
+    await wrapper.get('input[autocomplete="one-time-code"]').trigger('keydown.enter')
+    await flushPromises()
+    expect(mocks.stepUp).toHaveBeenCalledWith('654321')
+    expect(controller.visible.value).toBe(false)
+  })
+
+  it('clears the input and reports remaining attempts after a failed verification', async () => {
+    mocks.stepUp.mockRejectedValue({ message: 'Invalid code' })
+    const controller = useStepUp()
+    controller.visible.value = true
+    const wrapper = mount(TotpStepUpDialog, { props: { controller }, global: { stubs: { teleport: true } } })
+    await flushPromises()
+
+    await wrapper.getComponent(TotpCodeInput).vm.$emit('update:modelValue', '111111')
+    await flushPromises()
+    await wrapper.get('[data-testid="stepup-totp-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.showError).toHaveBeenCalledWith('Invalid code')
+    expect(controller.visible.value).toBe(true)
+    expect(wrapper.get('input[autocomplete="one-time-code"]').element).toHaveProperty('value', '')
+    const attempts = wrapper.find('[data-testid="stepup-attempts-remaining"]')
+    expect(attempts.exists()).toBe(true)
+    expect(attempts.text()).toContain('stepUp.attemptsRemaining')
   })
 
   it('uses a supplied verifier once without consuming the code through the default step-up endpoint', async () => {

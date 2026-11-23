@@ -1,36 +1,38 @@
 <template>
-  <div class="space-y-4">
-    <button type="button" :disabled="buttonDisabled" class="btn btn-secondary w-full" @click="startLogin">
+  <!--
+    WeChat sign-in. The availability rules stay here (native / in-app browser /
+    configured mode); the button surface comes from SocialLoginButtons.
+  -->
+  <SocialLoginButtons
+    :providers="providers"
+    :disabled="buttonDisabled"
+    :divider="showDivider"
+    :divider-label="t('auth.oauthOrContinue')"
+    @select="startLogin"
+  >
+    <template #icon-wechat>
       <span
-        class="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-100 text-xs font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-300"
+        class="inline-flex size-5 items-center justify-center rounded-full bg-green-100 text-xs font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-300"
+        aria-hidden="true"
+      >W</span>
+    </template>
+    <template v-if="disabledHint" #footer>
+      <p
+        data-testid="wechat-oauth-hint"
+        class="text-sm text-amber-600 dark:text-amber-400"
       >
-        W
-      </span>
-      {{ t('auth.oidc.signIn', { providerName }) }}
-    </button>
-
-    <p
-      v-if="disabledHint"
-      data-testid="wechat-oauth-hint"
-      class="text-sm text-amber-600 dark:text-amber-400"
-    >
-      {{ disabledHint }}
-    </p>
-
-    <div v-if="showDivider" class="flex items-center gap-3">
-      <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-      <span class="text-xs text-gray-500 dark:text-dark-400">
-        {{ t('auth.oauthOrContinue') }}
-      </span>
-      <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-    </div>
-  </div>
+        {{ disabledHint }}
+      </p>
+    </template>
+  </SocialLoginButtons>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import SocialLoginButtons from '@/components/common/SocialLoginButtons.vue'
+import type { SocialLoginProvider } from '@/components/common/socialLogin'
 import { resolveWeChatOAuthStart, type OAuthLoginStart } from '@/api/auth'
 import { useAppStore } from '@/stores'
 import { resolveAffiliateReferralCode, storeOAuthAffiliateCode } from '@/utils/oauthAffiliate'
@@ -77,6 +79,12 @@ const disabledHint = computed(() => {
       return ''
   }
 })
+
+const providers = computed<SocialLoginProvider[]>(() => [{
+  id: 'wechat',
+  label: t('auth.oidc.signIn', { providerName: providerName.value }),
+  ariaLabel: t('auth.oidc.signIn', { providerName: providerName.value })
+}])
 
 onMounted(() => {
   if (!appStore.cachedPublicSettings && !appStore.publicSettingsLoaded) {

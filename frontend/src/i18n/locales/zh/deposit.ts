@@ -110,6 +110,9 @@ export default {
     rateNotice: '入账汇率：稳定币按 1 USDT = {rate} 余额单位；ETH、BNB 等原生币按到账时刻市价结算。',
     minNotice: '最小入账金额：稳定币为 {min} USDT；原生币按等值美元（{min} USD）计算。',
     history: '我的充值记录',
+    // 记录行标题：一行只讲「哪类事 + 哪个网络」，金额在右侧单独成列。
+    historyRowDeposit: '链上充值',
+    historyRowReversal: '充值回滚',
     amount: '金额',
     credited: '入账',
     creditUnknown: '金额待核账',

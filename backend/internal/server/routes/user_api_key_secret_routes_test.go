@@ -38,6 +38,13 @@ func TestUserAPIKeySecretSealRoutesRegistered(t *testing.T) {
 		http.MethodPut + " /api/v1/user/api-keys/:id/secret-seal",
 		http.MethodGet + " /api/v1/user/api-keys/:id/secret-seal",
 		http.MethodDelete + " /api/v1/user/api-keys/:id/secret-seal",
+		// 三选一身份校验（密码 / TOTP / Passkey）：
+		// 因子列表、Passkey 校验挑战、二次查看授权。
+		http.MethodGet + " /api/v1/user/security/verification-factors",
+		http.MethodPost + " /api/v1/user/security/passkey/verify/begin",
+		http.MethodPost + " /api/v1/user/security/passkey/verify/finish",
+		http.MethodPost + " /api/v1/user/api-keys/:id/reveal-authorize",
+		http.MethodPost + " /api/v1/keys",
 	} {
 		require.Contains(t, registered, want)
 	}

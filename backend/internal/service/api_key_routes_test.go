@@ -16,6 +16,30 @@ func TestCandidateGroupIDs(t *testing.T) {
 	require.Equal(t, []int64{7}, plain.CandidateGroupIDs())
 }
 
+// 管理端「智能路由 / 单分组」徽章与网关选路共用同一判定：
+// 去重后的候选分组多于一个才算智能路由，绝不能前端自己数 group_ids。
+func TestAPIKeyRouteMode(t *testing.T) {
+	require.Equal(t, APIKeyRouteModeNone, (*APIKey)(nil).RouteMode())
+	require.Equal(t, 0, (*APIKey)(nil).RouteGroupCount())
+	require.False(t, (*APIKey)(nil).IsSmartRouting())
+
+	id := int64(7)
+	require.Equal(t, APIKeyRouteModeSingle, (&APIKey{GroupID: &id}).RouteMode())
+	require.Equal(t, 1, (&APIKey{GroupID: &id}).RouteGroupCount())
+	require.False(t, (&APIKey{GroupID: &id}).IsSmartRouting())
+
+	// 候选列表重复项去重后只有一个分组时仍是单分组。
+	require.Equal(t, APIKeyRouteModeSingle, (&APIKey{GroupID: &id, RouteGroupIDs: []int64{7, 7}}).RouteMode())
+
+	smart := &APIKey{GroupID: &id, RouteGroupIDs: []int64{7, 8, 8, 9}}
+	require.Equal(t, APIKeyRouteModeSmart, smart.RouteMode())
+	require.True(t, smart.IsSmartRouting())
+	require.Equal(t, 3, smart.RouteGroupCount())
+
+	// 非法候选值被 CandidateGroupIDs 过滤后没有任何有效分组 → none。
+	require.Equal(t, APIKeyRouteModeNone, (&APIKey{RouteGroupIDs: []int64{0, -1}}).RouteMode())
+}
+
 func TestUsesRequestTargetPlatform(t *testing.T) {
 	id := int64(7)
 	require.False(t, (*APIKey)(nil).UsesRequestTargetPlatform())

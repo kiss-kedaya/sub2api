@@ -38,6 +38,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
+	"golang.org/x/sync/singleflight"
 )
 
 // sseDataPrefix matches SSE data lines with optional whitespace after colon.
@@ -154,23 +155,25 @@ func normalizeGrokAccountTestMode(mode string) string {
 
 // AccountTestService handles account testing operations
 type AccountTestService struct {
-	accountRepo               AccountRepository
-	geminiTokenProvider       *GeminiTokenProvider
-	claudeTokenProvider       *ClaudeTokenProvider
-	grokTokenProvider         *GrokTokenProvider
-	antigravityGatewayService *AntigravityGatewayService
-	httpUpstream              HTTPUpstream
-	cfg                       *config.Config
-	settingService            *SettingService
-	tlsFPProfileService       *TLSFingerprintProfileService
-	modelMetadataRegistryMu   sync.Mutex
-	modelMetadataRegistry     map[string]modelsDevProvider
-	modelMetadataRegistryAt   time.Time
-	pluginManager             *PluginManager
-	openaiGatewayService      *OpenAIGatewayService
-	agentIdentityTaskMu       sync.Mutex
-	agentIdentityWS           agentIdentityWSConnectionInvalidator
-	codexQuotaOverdraft       *CodexQuotaOverdraftCoordinator
+	accountRepo                      AccountRepository
+	geminiTokenProvider              *GeminiTokenProvider
+	claudeTokenProvider              *ClaudeTokenProvider
+	grokTokenProvider                *GrokTokenProvider
+	antigravityGatewayService        *AntigravityGatewayService
+	httpUpstream                     HTTPUpstream
+	cfg                              *config.Config
+	settingService                   *SettingService
+	tlsFPProfileService              *TLSFingerprintProfileService
+	modelMetadataRegistryMu          sync.Mutex
+	modelMetadataRegistry            map[string]modelsDevProvider
+	modelMetadataRegistryAt          time.Time
+	modelMetadataRegistryLastAttempt time.Time
+	modelMetadataRegistryFetchOnce   singleflight.Group
+	pluginManager                    *PluginManager
+	openaiGatewayService             *OpenAIGatewayService
+	agentIdentityTaskMu              sync.Mutex
+	agentIdentityWS                  agentIdentityWSConnectionInvalidator
+	codexQuotaOverdraft              *CodexQuotaOverdraftCoordinator
 	// grokWSDialer is optional; realtime account tests use the default OpenAI-style
 	// WS dialer when nil (supports proxy + coder/websocket handshake).
 	grokWSDialer openAIWSClientDialer

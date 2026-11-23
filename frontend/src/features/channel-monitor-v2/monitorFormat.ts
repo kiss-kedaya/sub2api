@@ -101,6 +101,43 @@ export function availabilityTextClass(value: number | null | undefined): string 
   return 'text-emerald-800 dark:text-emerald-300'
 }
 
+/**
+ * Cache hit rate below this percentage marks the channel state bar as black.
+ *
+ * Owner rule: a cache rate under 30% means the group is unusable, and that
+ * single condition decides the bar colour. Availability, error rate and TTFT
+ * must never be consulted for this decision. Unknown (null/undefined) samples
+ * keep the existing grey "no data" style and are not black.
+ */
+export const CACHE_BLACK_BAR_THRESHOLD_PERCENT = 30
+
+/** True when a cache rate (a 0..1 fraction, as sent by the API) is below 30%. */
+export function isLowCacheRate(value: number | null | undefined): boolean {
+  if (value == null) return false
+  const percent = Number(value) * 100
+  if (!Number.isFinite(percent)) return false
+  return percent < CACHE_BLACK_BAR_THRESHOLD_PERCENT
+}
+
+/** Timeline bar colour: black for a low cache rate, the availability band otherwise. */
+export function monitorBarClass(
+  cacheRate: number | null | undefined,
+  availabilityPercent: number | null | undefined,
+): string {
+  if (isLowCacheRate(cacheRate)) return 'bg-black'
+  return availabilityBarClass(availabilityPercent)
+}
+
+/**
+ * Card cache-rate number colour: a low rate is black (white in dark mode so it
+ * stays readable on the dark card surface). Any other value keeps the neutral
+ * colour the card used before this rule existed.
+ */
+export function cacheTextClass(value: number | null | undefined): string {
+  if (isLowCacheRate(value)) return 'text-black dark:text-white'
+  return 'text-gray-900 dark:text-gray-100'
+}
+
 export function formatMonitorMs(value: number | null | undefined): string {
   if (value == null) return '-'
   return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`

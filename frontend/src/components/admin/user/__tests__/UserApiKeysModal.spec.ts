@@ -3,20 +3,42 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import UserApiKeysModal from '../UserApiKeysModal.vue'
 import type { AdminUser } from '@/types'
 
-const { getKeys } = vi.hoisted(() => ({ getKeys: vi.fn() }))
+const { getKeys, getAllGroups, updateGroup, showSuccess, showError, showInfo } = vi.hoisted(() => ({
+  getKeys: vi.fn(),
+  getAllGroups: vi.fn(),
+  updateGroup: vi.fn(),
+  showSuccess: vi.fn(),
+  showError: vi.fn(),
+  showInfo: vi.fn(),
+}))
 vi.mock('@/api/admin', () => ({ adminAPI: {
-  users: { getUserApiKeys: getKeys }, groups: { getAll: vi.fn().mockResolvedValue([]) },
+  users: { getUserApiKeys: getKeys },
+  groups: { getAll: getAllGroups },
+  apiKeys: { updateApiKeyGroup: updateGroup },
 } }))
-vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn() }) }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError, showSuccess, showInfo }) }))
 vi.mock('@/utils/format', () => ({ formatDateTime: (value: string) => value }))
-// step-up 弹窗会拉 @/api（依赖 i18n 实例），本用例只验证列表门控，直接桩掉弹窗。
-vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { template: '<div />' } }))
+// step-up 弹窗会拉 @/api（依赖 i18n 实例），桩成两个按钮模拟「验证通过 / 取消」。
+vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({
+  default: {
+    props: ['controller'],
+    template:
+      '<div><button data-test="totp-verify" @click="controller.onVerified()">verify</button>' +
+      '<button data-test="totp-cancel" @click="controller.onCancel()">cancel</button></div>',
+  },
+}))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 enableAutoUnmount(afterEach)
 beforeEach(() => {
   localStorage.clear()
   delete window.__APP_CONFIG__
   getKeys.mockReset()
+  getAllGroups.mockReset()
+  getAllGroups.mockResolvedValue([])
+  updateGroup.mockReset()
+  showSuccess.mockReset()
+  showError.mockReset()
+  showInfo.mockReset()
   vi.spyOn(console, 'error').mockImplementation(() => {})
 })
 afterEach(() => vi.restoreAllMocks())
@@ -37,6 +59,8 @@ async function open() {
     global: { stubs: {
       BaseDialog: { props: ['show'], template: '<div v-if="show"><slot /></div>' },
       GroupBadge: true, GroupOptionItem: true,
+      // 分组下拉内容常驻渲染，便于直接点击选项验证 step-up 流程。
+      UPopover: { template: '<div><slot /><slot name="content" /></div>' },
       Select: {
         props: ['modelValue', 'options'],
         template: `<select :value="modelValue" @change="$emit('update:model-value', $event.target.value)"><option v-for="option in options" :value="option.value">{{ option.label }}</option></select>`,
@@ -166,5 +190,138 @@ describe('user API key pagination', () => {
     await flushPromises()
     expect(getKeys).toHaveBeenLastCalledWith(1, 2, 10)
     expect(wrapper.text()).toContain('next-capped-page')
+  })
+})
+
+// ── 管理端 Key 列表：智能路由 / 单分组徽章 ──────────────────────────────────
+function keyRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 1,
+    user_id: 1,
+    name: 'key-one',
+    key_prefix: 'sk-example',
+    key_masked: 'sk-example****-test',
+    status: 'active',
+    created_at: '2026-09-20',
+    group_id: null,
+    ...overrides,
+  }
+}
+
+function pageOf(items: unknown[]) {
+  return { items, total: items.length, page: 1, page_size: 20, pages: 1 }
+}
+
+function stepUpError(code: string) {
+  return Object.assign(new Error(code), { code })
+}
+
+describe('user API key route mode badge', () => {
+  it('renders smart routing badge with the extra route count from the backend fields', async () => {
+    getKeys.mockResolvedValue(pageOf([keyRow({
+      group_id: 1,
+      group: { id: 1, name: 'Group One', platform: 'anthropic' },
+      group_ids: [1, 2, 3],
+      route_mode: 'smart',
+      route_group_count: 3,
+      is_smart_routing: true,
+    })]))
+    const wrapper = await open(); await flushPromises()
+    expect(wrapper.find('[data-test="key-route-mode-smart"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="key-route-mode-smart"]').text()).toContain('admin.users.routeModeSmart')
+    expect(wrapper.find('[data-test="key-route-mode-single"]').exists()).toBe(false)
+  })
+
+  it('falls back to group_ids when an older server omits route_mode fields', async () => {
+    getKeys.mockResolvedValue(pageOf([keyRow({
+      group_id: 1,
+      group: { id: 1, name: 'Group One', platform: 'anthropic' },
+      group_ids: [1, 2],
+    })]))
+    const wrapper = await open(); await flushPromises()
+    expect(wrapper.find('[data-test="key-route-mode-smart"]').exists()).toBe(true)
+  })
+
+  it('renders the single-group badge for a key bound to one group', async () => {
+    getKeys.mockResolvedValue(pageOf([keyRow({
+      group_id: 2,
+      group: { id: 2, name: 'Group Two', platform: 'openai' },
+      group_ids: [2],
+      route_mode: 'single',
+      route_group_count: 1,
+      is_smart_routing: false,
+    })]))
+    const wrapper = await open(); await flushPromises()
+    expect(wrapper.find('[data-test="key-route-mode-single"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="key-route-mode-smart"]').exists()).toBe(false)
+  })
+
+  it('renders no route badge when the key has no group', async () => {
+    getKeys.mockResolvedValue(pageOf([keyRow()]))
+    const wrapper = await open(); await flushPromises()
+    expect(wrapper.find('[data-test="key-route-mode-smart"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="key-route-mode-single"]').exists()).toBe(false)
+  })
+})
+
+// ── 管理端改 Key 分组：必须二次验证后才提交 ─────────────────────────────────
+describe('user API key group change step-up', () => {
+  beforeEach(() => {
+    getAllGroups.mockResolvedValue([{ id: 2, name: 'Group Two', platform: 'openai', status: 'active' }])
+  })
+
+  it('prompts step-up before submitting and retries once verified', async () => {
+    getKeys.mockResolvedValue(pageOf([keyRow()]))
+    updateGroup
+      .mockRejectedValueOnce(stepUpError('STEP_UP_REQUIRED'))
+      .mockResolvedValueOnce({ api_key: keyRow({ group_id: 2 }), auto_granted_group_access: false })
+
+    const wrapper = await open(); await flushPromises()
+    // 不直接 await：changeGroup 会停在 step-up 对话框上，等操作者输入验证码。
+    const pending = (wrapper.vm as any).changeGroup((wrapper.vm as any).apiKeys[0], 2)
+    await flushPromises()
+
+    // 第一次已被 step-up 拒绝，此时还没有提交成功。
+    expect(updateGroup).toHaveBeenCalledTimes(1)
+    expect(showSuccess).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-test="totp-verify"]').trigger('click')
+    await pending
+    await flushPromises()
+
+    expect(updateGroup).toHaveBeenCalledTimes(2)
+    expect(updateGroup).toHaveBeenLastCalledWith(1, 2)
+    expect(showSuccess).toHaveBeenCalledWith('admin.users.groupChangedSuccess')
+    expect(showError).not.toHaveBeenCalled()
+  })
+
+  it('does not submit when the operator cancels the step-up dialog', async () => {
+    getKeys.mockResolvedValue(pageOf([keyRow()]))
+    updateGroup.mockRejectedValue(stepUpError('STEP_UP_REQUIRED'))
+
+    const wrapper = await open(); await flushPromises()
+    const pending = (wrapper.vm as any).changeGroup((wrapper.vm as any).apiKeys[0], 2)
+    await flushPromises()
+    await wrapper.get('[data-test="totp-cancel"]').trigger('click')
+    await pending
+    await flushPromises()
+
+    expect(updateGroup).toHaveBeenCalledTimes(1)
+    expect(showInfo).toHaveBeenCalledWith('stepUp.cancelled')
+    expect(showError).not.toHaveBeenCalled()
+    expect(showSuccess).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a clear error when the operator has no usable second factor', async () => {
+    getKeys.mockResolvedValue(pageOf([keyRow()]))
+    updateGroup.mockRejectedValue(stepUpError('STEP_UP_TOTP_NOT_ENABLED'))
+
+    const wrapper = await open(); await flushPromises()
+    await (wrapper.vm as any).changeGroup((wrapper.vm as any).apiKeys[0], 2)
+    await flushPromises()
+
+    expect(updateGroup).toHaveBeenCalledTimes(1)
+    expect(showError).toHaveBeenCalledWith('stepUp.notEnabled')
+    expect(showSuccess).not.toHaveBeenCalled()
   })
 })

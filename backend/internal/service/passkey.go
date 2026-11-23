@@ -35,7 +35,19 @@ const (
 	PasskeySessionKindLogin2FA = "login_2fa"
 	// PasskeySessionKindStepUp 敏感操作 step-up 的 Passkey ceremony。
 	PasskeySessionKindStepUp = "step_up"
+	// PasskeySessionKindKeyVerify API Key 创建 / 二次查看的三选一身份校验 ceremony。
+	// 与 step_up 分开：它只签发「一次性的 Key 校验票据」，不写 5 分钟 step-up 授权，
+	// 避免一次 Key 查看把账号的其它敏感操作窗口一起打开。
+	PasskeySessionKindKeyVerify = "key_verify"
 )
+
+// passkeySessionKindFinalize 报告某个 ceremony 类型是否允许用于
+// authenticated-user 的 assertion（登录 2FA / step-up / API Key 校验）。
+func passkeySessionKindFinalize(kind string) bool {
+	return kind == PasskeySessionKindLogin2FA ||
+		kind == PasskeySessionKindStepUp ||
+		kind == PasskeySessionKindKeyVerify
+}
 
 // WebAuthn 错误码按「能不能给用户一个可执行的解释」拆分：
 //   - PASSKEY_CHALLENGE_EXPIRED：Redis 里没有这次 ceremony 的会话（过期 / 已用过 / 落到
@@ -407,7 +419,7 @@ func (s *PasskeyService) BeginLoginForUser(
 	if err = s.requireEnabled(); err != nil {
 		return nil, "", err
 	}
-	if kind != PasskeySessionKindLogin2FA && kind != PasskeySessionKindStepUp {
+	if !passkeySessionKindFinalize(kind) {
 		return nil, "", ErrPasskeySession
 	}
 	user, err := s.userRepo.GetByID(ctx, userID)
@@ -461,7 +473,7 @@ func (s *PasskeyService) FinishLoginForUser(
 	if err := s.requireEnabled(); err != nil {
 		return nil, err
 	}
-	if kind != PasskeySessionKindLogin2FA && kind != PasskeySessionKindStepUp {
+	if !passkeySessionKindFinalize(kind) {
 		return nil, ErrPasskeySession
 	}
 	session, err := s.sessions.Consume(ctx, sessionToken)

@@ -67,14 +67,18 @@ type APIKeySecretKDF struct {
 //
 // KDF 用 json.RawMessage 保存以便原样回给前端（不重新序列化，避免字段顺序、
 // 数字精度等细节发生变化导致前端解不开）。
+//
+// AuthFactor 记录「创建时用哪个因子授权封存」（password / totp / passkey），
+// 二次查看时必须用同一因子重新授权；NULL/空串表示本次改造前封存的旧密文。
 type APIKeySecret struct {
-	APIKeyID  int64
-	UserID    int64
-	Version   int
-	KDF       json.RawMessage
-	Sealed    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	APIKeyID   int64
+	UserID     int64
+	Version    int
+	KDF        json.RawMessage
+	Sealed     string
+	AuthFactor string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // APIKeySecretSealInput 是 PUT secret-seal 的已解析请求体。
@@ -82,6 +86,9 @@ type APIKeySecretSealInput struct {
 	Version int
 	KDF     json.RawMessage
 	Sealed  string
+	// AuthFactor 本次封存授权使用的因子（password/totp/passkey）。
+	// 空串表示旧客户端：按兼容处理，不记录因子（查看时不限制因子）。
+	AuthFactor string
 }
 
 // APIKeySecretRepository 是 api_key_secrets 的持久化端口。
@@ -95,9 +102,10 @@ type APIKeySecretRepository interface {
 	GetByAPIKeyID(ctx context.Context, apiKeyID, userID int64) (*APIKeySecret, error)
 	// DeleteByAPIKeyID 删除密文；不存在时同样返回 nil（幂等）。
 	DeleteByAPIKeyID(ctx context.Context, apiKeyID, userID int64) error
-	// ListPresenceByAPIKeyIDs 返回这批 Key 中哪些已经封存过密文。
-	// 列表接口只用它算 has_sealed_secret，读取不到密文本体。
-	ListPresenceByAPIKeyIDs(ctx context.Context, userID int64, apiKeyIDs []int64) (map[int64]struct{}, error)
+	// ListPresenceByAPIKeyIDs 返回这批 Key 中哪些已经封存过密文，以及各自的
+	// 授权因子（空串 = 旧密文）。列表接口只用它算 has_sealed_secret /
+	// seal_auth_factor，读取不到密文本体。
+	ListPresenceByAPIKeyIDs(ctx context.Context, userID int64, apiKeyIDs []int64) (map[int64]string, error)
 }
 
 // APIKeySecretService 是「只存/取密文」的服务。
@@ -130,6 +138,7 @@ func (s *APIKeySecretService) Seal(ctx context.Context, userID, apiKeyID int64, 
 	}
 	secret.APIKeyID = key.ID
 	secret.UserID = userID
+	secret.AuthFactor = NormalizeAPIKeyAuthFactor(in.AuthFactor)
 	if err := s.secretRepo.Upsert(ctx, secret); err != nil {
 		return nil, fmt.Errorf("upsert api key secret: %w", err)
 	}
@@ -163,10 +172,11 @@ func (s *APIKeySecretService) Delete(ctx context.Context, userID, apiKeyID int64
 	return key, nil
 }
 
-// Presence 批量返回这批 Key 中哪些已有封存密文，供列表计算 has_sealed_secret。
-func (s *APIKeySecretService) Presence(ctx context.Context, userID int64, apiKeyIDs []int64) (map[int64]struct{}, error) {
+// Presence 批量返回这批 Key 中哪些已有封存密文，以及各自的授权因子。
+// 供列表计算 has_sealed_secret / seal_auth_factor。
+func (s *APIKeySecretService) Presence(ctx context.Context, userID int64, apiKeyIDs []int64) (map[int64]string, error) {
 	if s == nil || s.secretRepo == nil || len(apiKeyIDs) == 0 {
-		return map[int64]struct{}{}, nil
+		return map[int64]string{}, nil
 	}
 	return s.secretRepo.ListPresenceByAPIKeyIDs(ctx, userID, apiKeyIDs)
 }

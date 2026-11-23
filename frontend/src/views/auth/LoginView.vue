@@ -11,7 +11,9 @@
         </p>
       </div>
       <!-- Login Form -->
-      <form @submit.prevent="handleLogin" class="space-y-5">
+      <!-- 标准登录表单：显式 on + username/current-password 语义，
+           让密码管理器只在登录页填账号密码，不要串到其它页面。 -->
+      <form autocomplete="on" @submit.prevent="handleLogin" class="space-y-5">
         <!-- Email Input -->
         <div>
           <label for="email" class="input-label">
@@ -20,11 +22,12 @@
           <div class="relative">
             <input
               id="email"
+              name="email"
               v-model="formData.email"
               type="email"
               required
               autofocus
-              autocomplete="email"
+              autocomplete="username"
               :disabled="authActionDisabled"
               class="input"
               :class="{ 'input-error': errors.email }"
@@ -41,6 +44,7 @@
           <div class="relative">
             <input
               id="password"
+              name="password"
               v-model="formData.password"
               :type="showPassword ? 'text' : 'password'"
               required

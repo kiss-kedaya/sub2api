@@ -63,11 +63,11 @@ func (s *secretTestStore) DeleteByAPIKeyID(_ context.Context, apiKeyID, userID i
 	return nil
 }
 
-func (s *secretTestStore) ListPresenceByAPIKeyIDs(_ context.Context, userID int64, apiKeyIDs []int64) (map[int64]struct{}, error) {
-	out := map[int64]struct{}{}
+func (s *secretTestStore) ListPresenceByAPIKeyIDs(_ context.Context, userID int64, apiKeyIDs []int64) (map[int64]string, error) {
+	out := map[int64]string{}
 	for _, id := range apiKeyIDs {
 		if row, ok := s.rows[id]; ok && row.UserID == userID {
-			out[id] = struct{}{}
+			out[id] = row.AuthFactor
 		}
 	}
 	return out, nil

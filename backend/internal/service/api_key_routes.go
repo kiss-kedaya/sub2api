@@ -44,6 +44,41 @@ func (k *APIKey) CandidateGroupIDs() []int64 {
 	return nil
 }
 
+// API Key 分组路由模式。管理端列表用它把「单分组」和「智能路由」两种绑定
+// 显式区分开，前端不再自行推导（前端只能看到 group_ids，旧服务可能不返回）。
+const (
+	// APIKeyRouteModeNone 表示这把 Key 没有绑定任何分组。
+	APIKeyRouteModeNone = "none"
+	// APIKeyRouteModeSingle 表示只有一个候选分组（普通单分组 Key）。
+	APIKeyRouteModeSingle = "single"
+	// APIKeyRouteModeSmart 表示按顺序回退的智能路由 Key（候选分组 > 1）。
+	APIKeyRouteModeSmart = "smart"
+)
+
+// RouteGroupCount 返回候选分组数量（去重后）。
+// 判定复用 CandidateGroupIDs：智能路由候选列表优先，为空时回退到 GroupID，
+// 与网关选路使用完全相同的口径，避免管理端和实际路由出现两套判定。
+func (k *APIKey) RouteGroupCount() int {
+	return len(k.CandidateGroupIDs())
+}
+
+// IsSmartRouting 报告这把 Key 是否为智能路由（候选分组多于一个）。
+func (k *APIKey) IsSmartRouting() bool {
+	return k.RouteGroupCount() > 1
+}
+
+// RouteMode 返回管理端展示用的路由模式：none / single / smart。
+func (k *APIKey) RouteMode() string {
+	switch count := k.RouteGroupCount(); {
+	case count <= 0:
+		return APIKeyRouteModeNone
+	case count == 1:
+		return APIKeyRouteModeSingle
+	default:
+		return APIKeyRouteModeSmart
+	}
+}
+
 // UsesRequestTargetPlatform reports whether this key should dispatch and
 // schedule from the requested model rather than the primary group's platform.
 // Composite groups already do this; smart-routing keys with more than one

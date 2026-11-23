@@ -15,7 +15,8 @@ import (
 
 // lowRiskReleasedRoutes 是 2026-11「2FA 触发必要性矩阵」复核后放开的一批管理面
 // 动作：只做探测/预览/聚合或返回掩码读模型，响应不含凭据/密码/密钥/卡密明文，
-// 不动钱、不改权限、不改安全配置。
+// 不动钱、不改权限、不改安全配置。2026-11-23 追加：上游模型目录同步/预览（只搬
+// 模型元数据）与邮件模板预览（内存渲染，不写库/不出站）。
 //
 // 放开理由逐条记录在 adminroutepolicy 的 Reason 常量与 docs/security/2fa-trigger-matrix.md。
 // 这份清单是运行时回归断言：任何一条被重新归类为 step_up_required，页面按钮就会
@@ -34,12 +35,18 @@ func lowRiskReleasedRoutes() []adminroutepolicy.Route {
 		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/check-mixed-channel"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/:id/schedulable-timers/preview"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/:id/ollama-cloud-usage/refresh"},
+		// 上游模型目录同步 / 预览（「模型限制 → 模型白名单」同步按钮）：只搬模型
+		// 元数据，同步仅写 accounts.extra[upstream_models] 能力快照，预览不落库。
+		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/:id/models/sync-upstream"},
+		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/models/sync-upstream-preview"},
 		// 上游渠道公告元数据同步
 		{Method: http.MethodPost, Path: "/api/v1/admin/upstream-monitor/channels/:id/announcements/sync"},
 		// 设置页的测试/预检动作（真实发信、保存配置仍 step-up）
 		{Method: http.MethodPost, Path: "/api/v1/admin/settings/test-smtp"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/settings/web-search-emulation/test"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/settings/ip-risk/check"},
+		// 邮件模板预览：内存渲染未保存模板，不写库/不出站/不碰密钥
+		{Method: http.MethodPost, Path: "/api/v1/admin/settings/email-template-preview"},
 	}
 }
 
@@ -64,10 +71,11 @@ func sensitiveBoundaryRoutes() []adminroutepolicy.Route {
 		{Method: http.MethodPost, Path: "/api/v1/admin/subscriptions/assign"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/:id/refresh"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/:id/model-whitelist-auto-sync/run"},
-		// 上游模型目录同步会写库（upstream_models），预览接受 base_url+api_key 做
-		// 任意出站（SSRF 面）：不属于低风险探测，保持 step-up。
-		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/:id/models/sync-upstream"},
-		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/models/sync-upstream-preview"},
+		// CRS 同步/预览会拿请求体里的 base_url + 账号密码做真实出站登录，并把
+		// CRS 账号元数据带回管理面：属于「管理员可指向任意地址的外部系统读取」，
+		// 与 S3/图床「测试连接」同级，保持 step-up。
+		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/sync/crs"},
+		{Method: http.MethodPost, Path: "/api/v1/admin/accounts/sync/crs/preview"},
 		{Method: http.MethodPut, Path: "/api/v1/admin/payment/config"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/payment/orders/:id/refund"},
 		{Method: http.MethodPost, Path: "/api/v1/admin/system/update"},

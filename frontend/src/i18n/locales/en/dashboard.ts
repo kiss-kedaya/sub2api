@@ -253,6 +253,44 @@ export default {
       sealSuccess: 'Re-encrypted and saved {count} keys',
       sealPartial: 'Re-save partially failed: {sealed} saved, {failed} failed'
     },
+    // Three-way identity verification (password / TOTP / Passkey) shared by create + reveal.
+    factor: {
+      description: 'Creating or viewing a key is sensitive: verify your identity once first.',
+      methodLabel: 'Verification method',
+      methodPassword: 'Login password',
+      methodTotp: 'Dynamic code',
+      methodPasskey: 'Passkey',
+      preferred: 'Recommended',
+      passwordLabel: 'Login password',
+      passwordPlaceholder: 'Enter your login password',
+      passwordHint: 'The password is only used for this verification and is never stored on the server.',
+      decryptPasswordLabel: 'Login password (for local decryption)',
+      decryptPasswordHint: 'Decryption happens in this browser; the password is never sent to the server.',
+      totpLabel: '6-digit dynamic code',
+      totpPlaceholder: 'Enter the 6-digit code',
+      passkeyHint: 'Verify with a passkey bound to this device; the result is valid for 5 minutes.',
+      passkeyVerify: 'Verify with Passkey',
+      passkeyReverify: 'Verify Passkey again',
+      passkeyVerified: 'Verified, valid for {seconds}s',
+      passkeyUnsupported: 'This browser or device does not support passkeys; use another method.',
+      passkeyFailed: 'Passkey verification failed. Please retry.',
+      unavailable: 'No verification method is available for this account. Contact an administrator.',
+      requiredAll: 'Complete identity verification first.',
+      passwordRequired: 'Enter your login password.',
+      totpRequired: 'Enter the 6-digit dynamic code.',
+      passkeyRequired: 'Verify with Passkey first.',
+      factorUnavailable: 'This verification method is currently unavailable.',
+      passwordInvalid: 'The password is incorrect. Enter your current login password.',
+      totpInvalid: 'The dynamic code is incorrect. Please re-enter it.',
+    },
+    createStep: {
+      details: 'Details',
+      verify: 'Verification',
+      next: 'Next',
+      back: 'Back',
+      verifyHint: 'To protect your account, verify your identity once before creating a key.',
+      verifyFailed: 'Identity verification failed. Please check and retry.'
+    },
     // "View later" option in the receipt: the password only participates locally.
     seal: {
       optIn: 'Allow viewing this key later with my login password',
@@ -262,6 +300,7 @@ export default {
       passwordRequired: 'Enter your login password, or uncheck "Allow viewing this key later with my login password".',
       failed: 'Wrong password or save failed; you can retry later. The password is only used for local encryption, and forgetting it means the key can no longer be viewed.',
       unsupported: 'This browser does not support WebCrypto, so the key cannot be encrypted safely. Try another browser.',
+      wrongPassword: 'The login password is incorrect, so "view later" cannot be saved. Enter your current login password.',
       later: 'Later',
       unavailable: 'This account was created through a third-party sign-in and has no usable login password, so password-encrypted viewing is not available. Bind an email and set a password first.'
     },
@@ -282,7 +321,13 @@ export default {
       broken: 'The saved ciphertext is damaged or incompatible and cannot be decrypted; rotate a new key.',
       notFound: 'The server has no ciphertext for this key, so the plaintext cannot be recovered. Rotate a new key.',
       failed: 'Could not read or decrypt the key. Try again later.',
-      rotate: 'Rotate a new key'
+      rotate: 'Rotate a new key',
+      factorsLoading: 'Loading available verification methods…',
+      wrongTotp: 'The dynamic code is incorrect. Please re-enter it.',
+      passkeyFailed: 'Passkey verification failed. Please retry.',
+      reverify: 'Verification expired. Please verify again.',
+      factorMismatch: 'This key was sealed with "{factor}" verification; use the same method again.',
+      factorUnavailable: 'The "{factor}" method used when this key was created is unavailable, so the plaintext cannot be revealed. Rotate a new key.'
     },
     // Created without the opt-in: no ciphertext, rotate is the only path.
     noSeal: {

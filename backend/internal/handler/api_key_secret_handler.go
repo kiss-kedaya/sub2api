@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -24,10 +25,16 @@ import (
 // 服务端只做存取：不生成密钥、不接触密码、不解密。密文的加解密全部发生在浏览器。
 
 // apiKeySecretSealRequest 是 PUT 的请求体。kdf 原样保存，salt 就在里面。
+//
+// Password 只在服务端做 bcrypt 比对（确认封存用的确实是登录密码，否则以后
+// 解密必然失败），不落库、不进日志、不进审计。AuthFactor 记录本次封存由哪个
+// 因子授权（创建时的三选一），二次查看时要求同一因子。
 type apiKeySecretSealRequest struct {
-	Version int             `json:"version"`
-	KDF     json.RawMessage `json:"kdf"`
-	Sealed  string          `json:"sealed"`
+	Version    int             `json:"version"`
+	KDF        json.RawMessage `json:"kdf"`
+	Sealed     string          `json:"sealed"`
+	AuthFactor string          `json:"auth_factor"`
+	Password   string          `json:"password"`
 }
 
 // apiKeySecretResponse 是 GET 的响应体；只回密封材料，不回任何服务端派生数据。
@@ -71,10 +78,35 @@ func (h *APIKeyHandler) PutSecretSeal(c *gin.Context) {
 		return
 	}
 
+	authFactor := strings.ToLower(strings.TrimSpace(req.AuthFactor))
+	if authFactor != "" && !service.APIKeyVerificationMethodValid(authFactor) {
+		response.ErrorFrom(c, service.ErrAPIKeySecretInvalid)
+		return
+	}
+	// 旧客户端没有 password / auth_factor 字段：保持兼容放行（不记录因子），
+	// 新客户端两个字段必带，封存前先验证登录密码，避免「创建成功、以后解不开」。
+	legacySeal := authFactor == "" && strings.TrimSpace(req.Password) == ""
+	if !legacySeal {
+		if h.verificationService == nil {
+			response.ErrorFrom(c, service.ErrAPIKeyVerificationUnavailable)
+			return
+		}
+		if err := h.verificationService.VerifyForSeal(c.Request.Context(), subject.UserID, req.Password); err != nil {
+			setVerificationAudit(c, nil, auditVerificationRejected, "VERIFY_PASSWORD_INVALID")
+			response.ErrorFrom(c, err)
+			return
+		}
+		if authFactor == "" {
+			authFactor = service.APIKeyFactorPassword
+		}
+		setVerificationAudit(c, &service.APIKeyVerificationResult{Factor: authFactor}, auditVerificationVerified, "")
+	}
+
 	key, err := h.secretService.Seal(c.Request.Context(), subject.UserID, keyID, service.APIKeySecretSealInput{
-		Version: req.Version,
-		KDF:     req.KDF,
-		Sealed:  req.Sealed,
+		Version:    req.Version,
+		KDF:        req.KDF,
+		Sealed:     req.Sealed,
+		AuthFactor: authFactor,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -105,6 +137,11 @@ func (h *APIKeyHandler) GetSecretSeal(c *gin.Context) {
 	secret, key, err := h.secretService.Get(c.Request.Context(), subject.UserID, keyID)
 	if err != nil {
 		response.ErrorFrom(c, err)
+		return
+	}
+	// 二次查看必须先用同一因子完成身份校验，拿到 5 分钟一次性 grant；
+	// 没有 grant / grant 过期 / 已被用过 → 403，前端重新弹校验。
+	if _, ok := h.consumeRevealGrant(c, subject.UserID, keyID); !ok {
 		return
 	}
 	setSecretSealAudit(c, service.AuditActionAPIKeySecretFetch, key)
@@ -179,7 +216,11 @@ func (h *APIKeyHandler) annotateSealedSecretPresence(ctx context.Context, userID
 		slog.Warn("api key sealed secret presence check failed", "user_id", userID, "api_key_id", keyID, "error", err)
 		return
 	}
-	_, out.HasSealedSecret = present[keyID]
+	factor, ok := present[keyID]
+	out.HasSealedSecret = ok
+	if ok {
+		out.SealAuthFactor = factor
+	}
 }
 
 // attachSealedSecretPresence 给列表批量填 has_sealed_secret（一次查询，避免 N+1）。
@@ -197,8 +238,9 @@ func (h *APIKeyHandler) attachSealedSecretPresence(ctx context.Context, userID i
 		return
 	}
 	for i := range out {
-		if _, ok := present[out[i].ID]; ok {
+		if factor, ok := present[out[i].ID]; ok {
 			out[i].HasSealedSecret = true
+			out[i].SealAuthFactor = factor
 		}
 	}
 }

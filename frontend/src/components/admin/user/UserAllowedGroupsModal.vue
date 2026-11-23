@@ -278,7 +278,8 @@ const handleSave = async () => {
     emit('close')
   } catch (error: any) {
     if (isStepUpCancelled(error)) {
-      // 用户主动取消二次验证：保持弹窗打开。
+      // 用户主动取消二次验证：保持弹窗打开，并明确告知这次保存没有执行。
+      appStore.showInfo(t('stepUp.cancelled'))
     } else if (isStepUpBlocked(error)) {
       appStore.showError(
         stepUpBlockReason(error) === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'

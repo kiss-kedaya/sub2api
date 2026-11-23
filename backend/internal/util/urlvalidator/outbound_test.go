@@ -12,35 +12,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func withFakeResolver(t *testing.T, ips ...string) {
+// fakeResolverContext 把一个固定 DNS 结果挂到 ctx 上，供出站校验在本用例内
+// 使用。返回的 ctx 只在本用例里传递，不读写任何包级变量，所以用例可以
+// 安全地 t.Parallel()：这是取代「SetResolveOutboundHostForTest + 全局还原」
+// 的注入方式（后者并行时会互相覆盖，曾导致 CI 间歇失败）。
+func fakeResolverContext(t *testing.T, ips ...string) context.Context {
 	t.Helper()
 	addrs := make([]netip.Addr, 0, len(ips))
 	for _, raw := range ips {
 		addrs = append(addrs, netip.MustParseAddr(raw))
 	}
-	restore := SetResolveOutboundHostForTest(func(context.Context, string) ([]netip.Addr, error) {
+	return WithResolver(context.Background(), func(context.Context, string) ([]netip.Addr, error) {
 		return addrs, nil
 	})
-	t.Cleanup(restore)
 }
 
-func withFailingResolver(t *testing.T) {
+// failingResolverContext 同上，但让解析失败（模拟 DNS 超时/不存在）。
+func failingResolverContext(t *testing.T) context.Context {
 	t.Helper()
-	restore := SetResolveOutboundHostForTest(func(context.Context, string) ([]netip.Addr, error) {
+	return WithResolver(context.Background(), func(context.Context, string) ([]netip.Addr, error) {
 		return nil, errors.New("dns timeout")
 	})
-	t.Cleanup(restore)
 }
 
 func TestValidateOutboundURLPublicTargetPasses(t *testing.T) {
 	t.Parallel()
-	withFakeResolver(t, "93.184.216.34")
+	ctx := fakeResolverContext(t, "93.184.216.34")
 
-	got, err := ValidateOutboundURL(context.Background(), " https://api.example.com/v1/ ", OutboundPolicy{})
+	got, err := ValidateOutboundURL(ctx, " https://api.example.com/v1/ ", OutboundPolicy{})
 	require.NoError(t, err)
 	require.Equal(t, "https://api.example.com/v1", got)
 
-	got, err = ValidateOutboundURL(context.Background(), "https://8.8.8.8/v1", OutboundPolicy{})
+	got, err = ValidateOutboundURL(ctx, "https://8.8.8.8/v1", OutboundPolicy{})
 	require.NoError(t, err)
 	require.Equal(t, "https://8.8.8.8/v1", got)
 }
@@ -62,17 +65,17 @@ func TestValidateOutboundURLRejectsPrivateLiterals(t *testing.T) {
 
 func TestValidateOutboundURLRejectsResolvedPrivateAddress(t *testing.T) {
 	t.Parallel()
-	withFakeResolver(t, "93.184.216.34", "10.0.0.7")
+	ctx := fakeResolverContext(t, "93.184.216.34", "10.0.0.7")
 
-	_, err := ValidateOutboundURL(context.Background(), "https://rebind.example.com/", OutboundPolicy{})
+	_, err := ValidateOutboundURL(ctx, "https://rebind.example.com/", OutboundPolicy{})
 	require.ErrorIs(t, err, ErrOutboundTargetNotAllowed)
 }
 
 func TestValidateOutboundURLRejectsDNSFailure(t *testing.T) {
 	t.Parallel()
-	withFailingResolver(t)
+	ctx := failingResolverContext(t)
 
-	_, err := ValidateOutboundURL(context.Background(), "https://unresolvable.example.com/", OutboundPolicy{})
+	_, err := ValidateOutboundURL(ctx, "https://unresolvable.example.com/", OutboundPolicy{})
 	require.ErrorIs(t, err, ErrOutboundTargetNotAllowed)
 }
 
@@ -98,19 +101,24 @@ func TestValidateOutboundHostRejectsSpecialUseLiterals(t *testing.T) {
 		"198.18.0.1",      // benchmarking
 		"169.254.169.254", // link-local metadata
 		"localhost",
-		"metadata.google.internal", // 解析失败即拒绝
 	} {
 		require.ErrorIs(t, ValidateOutboundHost(context.Background(), host, false), ErrOutboundTargetNotAllowed, host)
 	}
 	require.NoError(t, ValidateOutboundHost(context.Background(), "8.8.8.8", false))
 	require.NoError(t, ValidateOutboundHost(context.Background(), "100.100.100.200", true))
+
+	// 域名解析失败/超时一律拒绝：用注入的失败解析器固定结果，不依赖真实 DNS，
+	// 也不改全局解析器（本用例与其它用例都可并行）。
+	failingCtx := failingResolverContext(t)
+	require.ErrorIs(t, ValidateOutboundHost(failingCtx, "metadata.google.internal", false), ErrOutboundTargetNotAllowed)
+	require.ErrorIs(t, ValidateOutboundHost(failingCtx, "unresolvable.example.com", false), ErrOutboundTargetNotAllowed)
 }
 
 func TestValidateOutboundURLRequiresHTTPSByDefault(t *testing.T) {
 	t.Parallel()
-	withFakeResolver(t, "93.184.216.34")
+	ctx := fakeResolverContext(t, "93.184.216.34")
 
-	_, err := ValidateOutboundURL(context.Background(), "http://api.example.com/", OutboundPolicy{})
+	_, err := ValidateOutboundURL(ctx, "http://api.example.com/", OutboundPolicy{})
 	require.ErrorIs(t, err, ErrOutboundTargetNotAllowed)
 }
 
@@ -121,12 +129,12 @@ func TestRedirectGuardRejectsPrivateRedirect(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "https://127.0.0.1/internal", nil)
 	require.ErrorIs(t, guard(req, []*http.Request{{}}), ErrOutboundTargetNotAllowed)
 
-	withFakeResolver(t, "10.20.30.40")
 	req = httptest.NewRequest(http.MethodGet, "https://rebind.example.com/internal", nil)
+	req = req.WithContext(fakeResolverContext(t, "10.20.30.40"))
 	require.ErrorIs(t, guard(req, []*http.Request{{}}), ErrOutboundTargetNotAllowed)
 
-	withFakeResolver(t, "93.184.216.34")
 	req = httptest.NewRequest(http.MethodGet, "https://api.example.com/next", nil)
+	req = req.WithContext(fakeResolverContext(t, "93.184.216.34"))
 	require.NoError(t, guard(req, []*http.Request{{}}))
 }
 
@@ -149,8 +157,11 @@ func TestSafeHTTPClientRejectsPrivateDial(t *testing.T) {
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 
+	// 注入解析器锁死 DNS 结果，避免依赖真实解析：默认策略下裸 IP 拨号前必须被拒。
 	blocked := NewSafeHTTPClient(OutboundPolicy{}, HTTPClientOptions{})
-	_, err = blocked.Get(server.URL)
+	req, err := http.NewRequestWithContext(fakeResolverContext(t, "127.0.0.1"), http.MethodGet, server.URL, nil)
+	require.NoError(t, err)
+	_, err = blocked.Do(req)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrOutboundTargetNotAllowed) || isConnRefused(err), "unexpected error: %v", err)
 }
@@ -170,7 +181,11 @@ func TestSafeHTTPClientBlocksRedirectToPrivate(t *testing.T) {
 	// 但重定向守卫用默认策略（拒绝私网），以此锁定「重定向到私网被拒」。
 	client := NewSafeHTTPClient(OutboundPolicy{AllowPrivate: true}, HTTPClientOptions{})
 	client.CheckRedirect = NewRedirectGuard(OutboundPolicy{})
-	_, err := client.Get(redirector.URL)
+	// 起始请求本身也注入解析器：重定向守卫跟随请求 ctx 判断，结果只取决于用例内
+	// 的假解析器，不受并行用例或真实 DNS 影响。
+	req, err := http.NewRequestWithContext(fakeResolverContext(t, "93.184.216.34"), http.MethodGet, redirector.URL, nil)
+	require.NoError(t, err)
+	_, err = client.Do(req)
 	require.Error(t, err)
 	require.True(t, IsOutboundTargetRejected(err), "unexpected error: %v", err)
 }

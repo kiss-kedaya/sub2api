@@ -60,11 +60,17 @@
           <label for="api-key-seal-password" class="block text-xs font-medium text-default">
             {{ t('keys.seal.passwordLabel') }}
           </label>
+          <!-- 浏览器自动填充串扰修复：这是「本地加密口令」不是登录表单，
+               用 new-password + 非凭据 name + 密码管理器忽略标记，避免把账号
+               填进本页搜索框 / Key 名称框。 -->
           <UInput
             id="api-key-seal-password"
             v-model="sealPassword"
             type="password"
-            autocomplete="current-password"
+            name="apikey-seal-passphrase"
+            autocomplete="new-password"
+            data-lpignore="true"
+            data-1p-ignore="true"
             :disabled="sealing"
             class="w-full"
             data-test="api-key-seal-password"
@@ -155,8 +161,10 @@ const props = withDefaults(
     hideCcsImport?: boolean
     /** Account can type a login password (hidden for passwordless OAuth-only accounts). */
     canSeal?: boolean
+    /** 创建这次 Key 时使用的身份校验因子；封存密文时原样记录，二次查看要求同一因子。 */
+    authFactor?: string
   }>(),
-  { apiKey: null, hideCcsImport: false, canSeal: false },
+  { apiKey: null, hideCcsImport: false, canSeal: false, authFactor: '' },
 )
 
 const emit = defineEmits<{ close: []; use: []; 'import-ccs': []; sealed: [] }>()
@@ -195,7 +203,9 @@ const sealed = ref(false)
 const sealError = ref('')
 
 const resetSealState = () => {
-  sealEnabled.value = props.canSeal
+  // 默认不勾选：密码框只在用户主动选择「以后可查看」时渲染，
+  // 避免 Key 列表页常驻 password 输入框触发浏览器自动填充。
+  sealEnabled.value = false
   sealPassword.value = ''
   sealing.value = false
   sealed.value = false
@@ -233,16 +243,30 @@ const saveSeal = async () => {
   sealError.value = ''
   try {
     const payload = await sealApiKey(props.secret, sealPassword.value)
-    await keysAPI.putSecretSeal(id, payload)
+    // 服务端会先 bcrypt 校验登录密码，再保存密文：密码错了以后就再也解不开，
+    // 所以这里必须让它成为一次显式失败，而不是「保存成功、以后才报错」。
+    await keysAPI.putSecretSeal(id, payload, {
+      password: sealPassword.value,
+      authFactor: props.authFactor || 'password',
+    })
     sealed.value = true
     sealPassword.value = ''
     emit('sealed')
     emit('close')
   } catch (error) {
-    // Encryption itself cannot validate the password; a failure here is either an
-    // unsupported browser or a save error. Let the user retry or postpone.
-    sealError.value =
-      error instanceof ApiKeySealUnsupportedError ? t('keys.seal.unsupported') : t('keys.seal.failed')
+    // 密码错误有细分机器码；其它失败按浏览器不支持 / 保存失败处理，可重试或稍后再说。
+    const reason =
+      error && typeof error === 'object'
+        ? String((error as Record<string, unknown>).reason ?? '')
+        : ''
+    if (reason === 'VERIFY_PASSWORD_INVALID') {
+      sealError.value = t('keys.seal.wrongPassword')
+    } else if (reason === 'VERIFY_FACTOR_UNAVAILABLE') {
+      sealError.value = t('keys.seal.unavailable')
+    } else {
+      sealError.value =
+        error instanceof ApiKeySealUnsupportedError ? t('keys.seal.unsupported') : t('keys.seal.failed')
+    }
   } finally {
     sealing.value = false
   }
@@ -271,7 +295,7 @@ watch(
 watch(
   () => props.canSeal,
   (canSeal) => {
-    if (props.show) sealEnabled.value = canSeal
+    if (!canSeal) sealEnabled.value = false
   },
 )
 

@@ -20,17 +20,18 @@ import (
 // 的写路径共用同一个事务执行器，而不是绕开事务另起一条连接。
 const (
 	upsertAPIKeySecretSQL = `
-INSERT INTO api_key_secrets (api_key_id, user_id, version, kdf, sealed, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $6)
+INSERT INTO api_key_secrets (api_key_id, user_id, version, kdf, sealed, auth_factor, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $7)
 ON CONFLICT (api_key_id) DO UPDATE
 SET user_id = EXCLUDED.user_id,
     version = EXCLUDED.version,
     kdf = EXCLUDED.kdf,
     sealed = EXCLUDED.sealed,
+    auth_factor = EXCLUDED.auth_factor,
     updated_at = EXCLUDED.updated_at`
 
 	getAPIKeySecretSQL = `
-SELECT version, kdf, sealed, created_at, updated_at
+SELECT version, kdf, sealed, COALESCE(auth_factor, ''), created_at, updated_at
 FROM api_key_secrets
 WHERE api_key_id = $1 AND user_id = $2`
 
@@ -56,7 +57,8 @@ func (r *apiKeySecretRepository) Upsert(ctx context.Context, secret *service.API
 	}
 	now := time.Now()
 	if _, err := r.db.ExecContext(ctx, upsertAPIKeySecretSQL,
-		secret.APIKeyID, secret.UserID, secret.Version, string(secret.KDF), secret.Sealed, now); err != nil {
+		secret.APIKeyID, secret.UserID, secret.Version, string(secret.KDF), secret.Sealed,
+		service.NormalizeAPIKeyAuthFactor(secret.AuthFactor), now); err != nil {
 		return fmt.Errorf("upsert api key secret: %w", err)
 	}
 	secret.CreatedAt = now
@@ -71,14 +73,15 @@ func (r *apiKeySecretRepository) GetByAPIKeyID(ctx context.Context, apiKeyID, us
 		return nil, service.ErrAPIKeySecretNotFound
 	}
 	var (
-		version   int
-		kdf       []byte
-		sealed    string
-		createdAt time.Time
-		updatedAt time.Time
+		version    int
+		kdf        []byte
+		sealed     string
+		authFactor string
+		createdAt  time.Time
+		updatedAt  time.Time
 	)
 	err := r.db.QueryRowContext(ctx, getAPIKeySecretSQL, apiKeyID, userID).
-		Scan(&version, &kdf, &sealed, &createdAt, &updatedAt)
+		Scan(&version, &kdf, &sealed, &authFactor, &createdAt, &updatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, service.ErrAPIKeySecretNotFound
@@ -86,13 +89,14 @@ func (r *apiKeySecretRepository) GetByAPIKeyID(ctx context.Context, apiKeyID, us
 		return nil, fmt.Errorf("get api key secret: %w", err)
 	}
 	return &service.APIKeySecret{
-		APIKeyID:  apiKeyID,
-		UserID:    userID,
-		Version:   version,
-		KDF:       append(json.RawMessage(nil), kdf...),
-		Sealed:    sealed,
-		CreatedAt: createdAt,
-		UpdatedAt: updatedAt,
+		APIKeyID:   apiKeyID,
+		UserID:     userID,
+		Version:    version,
+		KDF:        append(json.RawMessage(nil), kdf...),
+		Sealed:     sealed,
+		AuthFactor: authFactor,
+		CreatedAt:  createdAt,
+		UpdatedAt:  updatedAt,
 	}, nil
 }
 
@@ -107,10 +111,10 @@ func (r *apiKeySecretRepository) DeleteByAPIKeyID(ctx context.Context, apiKeyID,
 	return nil
 }
 
-// ListPresenceByAPIKeyIDs 返回这批 Key 中已封存密文的 ID 集合。
-// 只查 api_key_id，不把 sealed / kdf 带进列表响应路径。
-func (r *apiKeySecretRepository) ListPresenceByAPIKeyIDs(ctx context.Context, userID int64, apiKeyIDs []int64) (map[int64]struct{}, error) {
-	out := make(map[int64]struct{}, len(apiKeyIDs))
+// ListPresenceByAPIKeyIDs 返回这批 Key 中已封存密文的 ID → 授权因子。
+// 只查 api_key_id 与 auth_factor 元数据，不把 sealed / kdf 带进列表响应路径。
+func (r *apiKeySecretRepository) ListPresenceByAPIKeyIDs(ctx context.Context, userID int64, apiKeyIDs []int64) (map[int64]string, error) {
+	out := make(map[int64]string, len(apiKeyIDs))
 	if r == nil || r.db == nil || userID <= 0 || len(apiKeyIDs) == 0 {
 		return out, nil
 	}
@@ -123,7 +127,7 @@ func (r *apiKeySecretRepository) ListPresenceByAPIKeyIDs(ctx context.Context, us
 		placeholders = append(placeholders, fmt.Sprintf("$%d", i+2))
 		args = append(args, id)
 	}
-	query := `SELECT api_key_id FROM api_key_secrets WHERE user_id = $1 AND api_key_id IN (` +
+	query := `SELECT api_key_id, COALESCE(auth_factor, '') FROM api_key_secrets WHERE user_id = $1 AND api_key_id IN (` +
 		strings.Join(placeholders, ", ") + `)`
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -131,11 +135,14 @@ func (r *apiKeySecretRepository) ListPresenceByAPIKeyIDs(ctx context.Context, us
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var (
+			id     int64
+			factor string
+		)
+		if err := rows.Scan(&id, &factor); err != nil {
 			return nil, fmt.Errorf("scan api key secret presence: %w", err)
 		}
-		out[id] = struct{}{}
+		out[id] = factor
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate api key secret presence: %w", err)

@@ -66,6 +66,40 @@ func (p *PanelRateLimiter) Heavy() gin.HandlerFunc {
 // 服务端能做的就是控制密文的可取次数）。
 const apiKeySecretReadRPM = 20
 
+// apiKeyVerificationRPM 是创建 Key / 二次查看授权 / Passkey 校验接口的固定限流：
+// 每用户每分钟 10 次。这些接口要验证登录密码（bcrypt）与动态码，放开等于提供
+// 一个在线爆破入口；10 次/分钟足够正常用户，也把猜测成本压住。
+const apiKeyVerificationRPM = 10
+
+// KeyVerification 是「创建 / 二次查看 API Key 的三选一身份校验」固定档按用户限流。
+// 与面板限流设置无关：这是密码/动态码校验入口的安全护栏，始终存在；
+// 底层 Redis 出错时 fail-open（保护措施不能反过来打挂面板）。
+func (p *PanelRateLimiter) KeyVerification() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if p == nil || p.limiter == nil {
+			c.Next()
+			return
+		}
+		subject, ok := GetAuthSubjectFromContext(c)
+		if !ok || subject.UserID <= 0 {
+			c.Next()
+			return
+		}
+		key := "panel:api_key_verify:user:" + strconv.FormatInt(subject.UserID, 10)
+		result, err := p.limiter.Allow(c.Request.Context(), key, apiKeyVerificationRPM, panelRateLimitWindow)
+		if err != nil {
+			slog.Warn("api key verification rate limit check failed, allowing request", "error", err)
+			c.Next()
+			return
+		}
+		if !result.Allowed {
+			abortPanelRateLimited(c, result.RetryAfter)
+			return
+		}
+		c.Next()
+	}
+}
+
 // SecretSealRead 浏览器端封存密文读取的固定档按用户限流。
 // 与 Global/Heavy 不同，这里不读面板限流设置：这是一条安全护栏，
 // 应当始终存在；底层 Redis 出错时仍然 fail-open（保护措施不能反过来打挂面板）。

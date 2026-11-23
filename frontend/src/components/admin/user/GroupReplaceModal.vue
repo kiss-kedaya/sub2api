@@ -35,6 +35,9 @@
       </div>
     </template>
   </BaseDialog>
+
+  <!-- 替换分组会批量迁移用户的 Key 所属分组：后端要求 step-up 2FA 时弹码并重试 -->
+  <TotpStepUpDialog :controller="stepUp" />
 </template>
 
 <script setup lang="ts">
@@ -44,6 +47,14 @@ import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import type { AdminUser, AdminGroup } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import {
+  useStepUp,
+  isStepUpCancelled,
+  isStepUpBlocked,
+  isStepUpUnavailable,
+  stepUpBlockReason,
+} from '@/composables/useStepUp'
 
 interface Props {
   show: boolean
@@ -59,6 +70,8 @@ const appStore = useAppStore()
 
 const selectedGroupId = ref<number | null>(null)
 const submitting = ref(false)
+// 替换分组会批量迁移该用户的 Key 绑定，后端按 step-up 敏感写操作门控。
+const stepUp = useStepUp()
 
 // 可选的专属标准分组（排除当前 oldGroup）
 const availableGroups = computed(() => {
@@ -84,12 +97,31 @@ const handleReplace = async () => {
   submitting.value = true
 
   try {
-    const result = await adminAPI.users.replaceGroup(props.user.id, props.oldGroup.id, selectedGroupId.value)
+    // 后端要求 step-up 时弹全局 TOTP 对话框并自动重试一次；取消验证则不会提交。
+    const result = await stepUp.run(() =>
+      adminAPI.users.replaceGroup(props.user!.id, props.oldGroup!.id, selectedGroupId.value!)
+    )
     appStore.showSuccess(t('admin.users.replaceGroupSuccess', { count: result.migrated_keys }))
     emit('success')
     emit('close')
   } catch (error) {
+    if (isStepUpCancelled(error)) {
+      appStore.showInfo(t('stepUp.cancelled'))
+      return
+    }
+    if (isStepUpBlocked(error) || isStepUpUnavailable(error)) {
+      const reason = stepUpBlockReason(error)
+      appStore.showError(
+        reason === 'STEP_UP_ADMIN_API_KEY_FORBIDDEN'
+          ? t('stepUp.adminApiKeyForbidden')
+          : reason === 'STEP_UP_UNAVAILABLE'
+            ? t('stepUp.unavailable')
+            : t('stepUp.notEnabled')
+      )
+      return
+    }
     console.error('Failed to replace group:', error)
+    appStore.showError(t('admin.users.replaceGroupFailed'))
   } finally {
     submitting.value = false
   }

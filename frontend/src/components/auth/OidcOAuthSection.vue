@@ -1,28 +1,29 @@
 <template>
-  <div class="space-y-4">
-    <button type="button" :disabled="disabled" class="btn btn-secondary w-full" @click="startLogin">
+  <!-- Generic OIDC sign-in: provider name decides the label, initials the mark. -->
+  <SocialLoginButtons
+    :providers="providers"
+    :disabled="disabled"
+    :divider="showDivider"
+    :divider-label="t('auth.oauthOrContinue')"
+    @select="startLogin"
+  >
+    <template #icon-oidc>
       <span
-        class="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-primary-100 text-xs font-semibold text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
+        class="inline-flex size-5 items-center justify-center rounded-full bg-primary-100 text-xs font-semibold text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
+        aria-hidden="true"
       >
         {{ providerInitial }}
       </span>
-      {{ t('auth.oidc.signIn', { providerName: normalizedProviderName }) }}
-    </button>
-
-    <div v-if="showDivider" class="flex items-center gap-3">
-      <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-      <span class="text-xs text-gray-500 dark:text-dark-400">
-        {{ t('auth.oauthOrContinue') }}
-      </span>
-      <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-    </div>
-  </div>
+    </template>
+  </SocialLoginButtons>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import SocialLoginButtons from '@/components/common/SocialLoginButtons.vue'
+import type { SocialLoginProvider } from '@/components/common/socialLogin'
 import type { OAuthLoginStart } from '@/api/auth'
 import { resolveAffiliateReferralCode, storeOAuthAffiliateCode } from '@/utils/oauthAffiliate'
 
@@ -48,6 +49,12 @@ const normalizedProviderName = computed(() => {
 })
 
 const providerInitial = computed(() => normalizedProviderName.value.charAt(0).toUpperCase() || 'O')
+
+const providers = computed<SocialLoginProvider[]>(() => [{
+  id: 'oidc',
+  label: t('auth.oidc.signIn', { providerName: normalizedProviderName.value }),
+  ariaLabel: t('auth.oidc.signIn', { providerName: normalizedProviderName.value })
+}])
 
 function startLogin(): void {
   const redirectTo = (route.query.redirect as string) || '/dashboard'
