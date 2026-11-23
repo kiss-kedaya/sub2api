@@ -172,3 +172,60 @@ describe('ChannelMonitorV3Card freshness and rate signals', () => {
     wrapper.unmount()
   })
 })
+
+describe('ChannelMonitorV3Card low cache rate', () => {
+  function mountWithCache(cacheRate: number) {
+    const base = row('healthy')
+    const cacheMetrics = { ...base.metrics, cache_rate: cacheRate }
+    base.metrics = cacheMetrics
+    base.buckets = [{ bucket_start: '2026-09-09T12:00:00Z', metrics: cacheMetrics, health: health('healthy') }]
+    return mount(ChannelMonitorV3Card, {
+      props: { row: base, countdownSeconds: 0, timelineLength: 12 },
+      global: { stubs: { ProviderIcon: true, ChannelMonitorV3Timeline: true } },
+    })
+  }
+
+  function cacheCell(wrapper: ReturnType<typeof mountWithCache>) {
+    return wrapper.get('.channel-signal-card__metrics .channel-signal-card__metric')
+  }
+
+  // The cache number is the second child (label first, then the value).
+  function cacheValue(wrapper: ReturnType<typeof mountWithCache>) {
+    return cacheCell(wrapper).findAll('div')[1]
+  }
+
+  it('paints the cache-rate number black at 0%', () => {
+    const wrapper = mountWithCache(0)
+    expect(cacheCell(wrapper).text()).toContain('0.00%')
+    expect(cacheValue(wrapper).classes()).toContain('text-black')
+    wrapper.unmount()
+  })
+
+  it('paints the cache-rate number black at 29.9%', () => {
+    const wrapper = mountWithCache(0.299)
+    expect(cacheValue(wrapper).classes()).toContain('text-black')
+    wrapper.unmount()
+  })
+
+  it('paints the cache-rate number black at 5%', () => {
+    const wrapper = mountWithCache(0.05)
+    expect(cacheValue(wrapper).classes()).toContain('text-black')
+    wrapper.unmount()
+  })
+
+  it('keeps the neutral colour at exactly 30%', () => {
+    const wrapper = mountWithCache(0.3)
+    const classes = cacheValue(wrapper).classes()
+    expect(classes).toContain('text-gray-900')
+    expect(classes).not.toContain('text-black')
+    wrapper.unmount()
+  })
+
+  it('keeps the neutral colour above the threshold', () => {
+    const wrapper = mountWithCache(0.301)
+    const classes = cacheValue(wrapper).classes()
+    expect(classes).toContain('text-gray-900')
+    expect(classes).not.toContain('text-black')
+    wrapper.unmount()
+  })
+})
