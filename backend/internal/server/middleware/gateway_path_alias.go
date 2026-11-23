@@ -92,6 +92,22 @@ func withGatewayPathAliasInfo(ctx context.Context, info gatewayPathAliasInfo) co
 	return context.WithValue(ctx, gatewayPathAliasContextKey{}, info)
 }
 
+// gatewayPathDiagnosticContextKey 标记“折叠后仍不存在”的请求：别名层只在 context 里留下
+// 诊断信息，请求原样交给 gin，404 JSON 由 gin 的 404 链末端输出（见 gatewayPathNotFoundDiagnostic）。
+type gatewayPathDiagnosticContextKey struct{}
+
+func withGatewayPathDiagnostic(ctx context.Context, info gatewayPathAliasInfo) context.Context {
+	return context.WithValue(ctx, gatewayPathDiagnosticContextKey{}, info)
+}
+
+func gatewayPathDiagnosticFromContext(ctx context.Context) (gatewayPathAliasInfo, bool) {
+	if ctx == nil {
+		return gatewayPathAliasInfo{}, false
+	}
+	info, ok := ctx.Value(gatewayPathDiagnosticContextKey{}).(gatewayPathAliasInfo)
+	return info, ok
+}
+
 // gatewayPathAliasInfoFromContext 读取路径规范化信息，由 Logger() 写入访问日志。
 func gatewayPathAliasInfoFromContext(ctx context.Context) (gatewayPathAliasInfo, bool) {
 	if ctx == nil {
@@ -132,10 +148,15 @@ func isExcludedBareGatewayPath(path string) bool {
 //
 // router 必须已经注册完所有路由（ProvideHTTPServer 在 registerRoutes 之后才被调用）；
 // 索引在启动时算一次即可。
+//
+// 这里会给 router 追加一个全局中间件（gatewayPathNotFoundDiagnostic）。gin 的路由 handler 链
+// 在注册路由那一刻就定型，所以路由注册完之后再 Use 的中间件只会进入 404/405 链：命中路由的请求
+// 完全不受影响，未命中的请求先走完前面的全局中间件再到它。
 func GatewayPathAlias(router *gin.Engine) http.Handler {
 	var next http.Handler
 	if router != nil {
 		next = router
+		router.Use(gatewayPathNotFoundDiagnostic)
 	} else {
 		next = http.NotFoundHandler()
 	}
@@ -159,13 +180,16 @@ func (h *gatewayPathAliasHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 
 	info, ok := h.index.canonicalGatewayPath(r.Method, path)
 	if !ok {
-		// 折叠后仍然不存在的版本根路径（/v1/v1/typo…）返回带 Base URL 提示的
-		// JSON 诊断；GET/POST 是协议客户端的调用方式，OPTIONS（CORS 预检）、HEAD
-		// 等方法原样交给 gin，避免破坏浏览器行为。带前缀的拼写错误同样交给
-		// gin 原样 404，不扩散诊断面。
+		// 折叠后仍然不存在的版本根路径（/v1/v1/typo…）要给带 Base URL 提示的 JSON 诊断；
+		// GET/POST 是协议客户端的调用方式，OPTIONS（CORS 预检）、HEAD 等方法不诊断，避免
+		// 破坏浏览器行为。带前缀的拼写错误同样不诊断，不扩散诊断面。
+		//
+		// 诊断不在 gin 之外直接响应：这里只在 context 里留下信息，请求原样进 gin，404 JSON 由
+		// gin 404 链末端的 gatewayPathNotFoundDiagnostic 输出。这样 Recovery、ipRisk、
+		// Honeypot、访问日志对这类请求照常生效（/v1/v1/../../.env 这类扫描器路径会被 Honeypot
+		// 拦下并封禁，被封 IP 也拿不到诊断）。
 		if gatewayUnmatchedDiagnostic(info) && (r.Method == http.MethodGet || r.Method == http.MethodPost) {
-			h.writeUnmatchedDiagnostic(w, r, info)
-			return
+			r = r.WithContext(withGatewayPathDiagnostic(r.Context(), info))
 		}
 		h.next.ServeHTTP(w, r)
 		return
@@ -187,9 +211,22 @@ func (h *gatewayPathAliasHandler) rewriteAndServe(w http.ResponseWriter, r *http
 	h.next.ServeHTTP(w, rewritten)
 }
 
-// writeUnmatchedDiagnostic 对折叠后仍然不存在的 /v1/v1/* 子路径返回 JSON 诊断，
-// 避免用户只看到空 404 而不知道是 Base URL 多写了一层 /v1。
-func (h *gatewayPathAliasHandler) writeUnmatchedDiagnostic(w http.ResponseWriter, r *http.Request, info gatewayPathAliasInfo) {
+// gatewayPathNotFoundDiagnostic 在 gin 的 404 链末端对折叠后仍然不存在的 /v1/v1/* 子路径
+// 返回 JSON 诊断，避免用户只看到空 404 而不知道是 Base URL 多写了一层 /v1。
+// 只处理别名层打过标记、且确实走到 404 链的请求；其它请求原样继续（405 链、已被前面中间件
+// 响应的请求都不碰）。
+func gatewayPathNotFoundDiagnostic(c *gin.Context) {
+	info, ok := gatewayPathDiagnosticFromContext(c.Request.Context())
+	if !ok || c.Writer.Written() || c.Writer.Status() != http.StatusNotFound {
+		c.Next()
+		return
+	}
+	writeUnmatchedDiagnostic(c.Writer, c.Request, info)
+	c.Abort()
+}
+
+// writeUnmatchedDiagnostic 输出 gateway_path_not_found 诊断 JSON（404）。
+func writeUnmatchedDiagnostic(w http.ResponseWriter, r *http.Request, info gatewayPathAliasInfo) {
 	host := sanitizeGatewayHost(r)
 	hint := fmt.Sprintf(
 		"Base URL 请填写 https://%s（Anthropic SDK / Claude Code 推荐）或 https://%s/v1（OpenAI SDK 推荐）；"+

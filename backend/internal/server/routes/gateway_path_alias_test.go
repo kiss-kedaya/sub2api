@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -528,4 +529,18 @@ func TestGatewayPathAliasDiagnosticsAndSafetyBoundariesUnchanged(t *testing.T) {
 	handlerUnderTest.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/backend-api/codex/v1/definitely-not-a-route", strings.NewReader(`{}`)))
 	require.Equal(t, http.StatusNotFound, w.Code)
 	require.Empty(t, probe.seen, "未知端点不能进入鉴权")
+}
+
+// TestEveryRegisteredGatewayRouteIsAGatewayBusinessPath 钉住别名索引依赖的前提：别名索引只收
+// ipnotice.IsGatewayBusinessPath 认可的网关族路由（面板路由里 usage、models 之类的端点词不能混进来），
+// 所以 RegisterGatewayRoutes 注册的每一条路由都必须被这份清单覆盖。新增网关路由（尤其是根别名）
+// 忘了登记会在这里失败；否则它既不会被别名层容忍，也不会被 IP 共享检测统计。
+func TestEveryRegisteredGatewayRouteIsAGatewayBusinessPath(t *testing.T) {
+	router, _ := newGatewayPathAliasRoutesRouter(t)
+	registered := router.Routes()
+	require.NotEmpty(t, registered)
+	for _, route := range registered {
+		require.True(t, ipnotice.IsGatewayBusinessPath(route.Path),
+			"%s %s 不在 ipnotice.IsGatewayBusinessPath 的网关前缀/根别名清单里，请补登记", route.Method, route.Path)
+	}
 }

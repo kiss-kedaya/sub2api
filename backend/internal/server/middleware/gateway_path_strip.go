@@ -109,9 +109,14 @@ func (idx gatewayRouteIndex) stripGatewayVersionPath(method string, segments []s
 	var candidates []gatewayStripCandidate
 	for variant := 1; variant <= maxGatewayVersionFamilySteps; variant++ {
 		for _, spec := range gatewayVersionSpecs(variant) {
-			for start := 0; start < len(segments); start++ {
+			// 每个 (variant, spec) 只从左到右扫一遍：命中一段连续的版本片段后整段跳过，
+			// 不再从片段内部的每个位置各数一遍。这一步发生在鉴权之前，/v1 重复上千次时
+			// 逐位置重扫是 O(N²)（8KB 路径约 0.4s CPU）。片段内部起点的候选只会把多余的
+			// 版本段留在改写结果里，路由表里没有连续两个版本段的路由，不会命中，丢掉无损。
+			for start := 0; start < len(segments); {
 				run, length := matchGatewayVersionRun(segments, start, spec)
 				if run == 0 {
+					start++
 					continue
 				}
 				if run >= 2 {
@@ -120,6 +125,7 @@ func (idx gatewayRouteIndex) stripGatewayVersionPath(method string, segments []s
 						start: start, end: start + length, spec: spec, run: run, mode: foldToOne,
 						replace: []string{spec.family},
 					})
+					start += length
 					continue
 				}
 				// 没有重复的版本段（只写了一遍）：无版本段前缀族可以整段剥掉。
@@ -127,12 +133,12 @@ func (idx gatewayRouteIndex) stripGatewayVersionPath(method string, segments []s
 				// responses 里三段的 v1 是一起剥掉的）；片段后面必须紧跟端点，避免
 				// 把 /v1/v1/messages 里第一个 v1 当成“没有重复”的版本片段剥掉。
 				whole := scanVersionFamilyRun(segments, start)
-				if whole == 0 || start+whole >= len(segments) || isGatewayVersionSegment(segments[start+whole]) {
-					continue
+				if whole != 0 && start+whole < len(segments) && !isGatewayVersionSegment(segments[start+whole]) {
+					candidates = append(candidates, gatewayStripCandidate{
+						start: start, end: start + whole, spec: spec, run: whole / len(spec.segments), mode: stripAll,
+					})
 				}
-				candidates = append(candidates, gatewayStripCandidate{
-					start: start, end: start + whole, spec: spec, run: whole / len(spec.segments), mode: stripAll,
-				})
+				start += max(length, whole, 1)
 			}
 		}
 	}
@@ -141,7 +147,7 @@ func (idx gatewayRouteIndex) stripGatewayVersionPath(method string, segments []s
 		if candidate.mode == stripAll {
 			continue
 		}
-		if _, ok := idx.applyStripCandidate(method, segments, candidate); ok {
+		if idx.applyStripCandidate(method, segments, candidate) {
 			return idx.stripInfo(segments, candidate, false), true
 		}
 	}
@@ -158,26 +164,23 @@ func (idx gatewayRouteIndex) stripGatewayVersionPath(method string, segments []s
 		if candidate.end < len(segments) && isGatewayVersionSegment(segments[candidate.end]) {
 			continue
 		}
-		if _, ok := idx.applyStripCandidate(method, segments, candidate); ok {
+		if idx.applyStripCandidate(method, segments, candidate) {
 			return idx.stripInfo(segments, candidate, true), true
 		}
 	}
 	return gatewayPathAliasInfo{}, false
 }
 
-// applyStripCandidate 按候选改写路径并校验是否命中路由。
-func (idx gatewayRouteIndex) applyStripCandidate(method string, segments []string, candidate gatewayStripCandidate) (string, bool) {
+// applyStripCandidate 按候选改写路径并校验是否命中路由。直接在段数组上匹配，
+// 不把整条路径 Join 成字符串再 Split 回来（每个候选各一次，路径越长越贵）。
+func (idx gatewayRouteIndex) applyStripCandidate(method string, segments []string, candidate gatewayStripCandidate) bool {
 	normalizedSegments := make([]string, 0, len(segments))
 	normalizedSegments = append(normalizedSegments, segments[:candidate.start]...)
 	normalizedSegments = append(normalizedSegments, candidate.replace...)
 	normalizedSegments = append(normalizedSegments, segments[candidate.end:]...)
-	normalized := "/" + strings.Join(normalizedSegments, "/")
 	// 注意：这里不复用 isExcludedBareGatewayPath——/v1/usage、/v1/sub2api/* 的排除
 	// 只作用于“补缺失版本段”，显式写了 /v1/v1/usage 的重复前缀仍然要折叠并命中。
-	if !matchGatewayRoute(idx, method, normalized) {
-		return "", false
-	}
-	return normalized, true
+	return matchGatewayRouteParts(idx, method, normalizedSegments)
 }
 
 // stripInfo 组装诊断信息。

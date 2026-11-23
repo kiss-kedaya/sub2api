@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
 	"github.com/gin-gonic/gin"
 )
 
@@ -22,15 +23,21 @@ const maxGatewayPrefixDepth = 4
 // maxGatewayVersionFamilySteps 限制单次请求里尝试拼接的版本段族个数。
 const maxGatewayVersionFamilySteps = 2
 
+// maxGatewayVersionSegments 是一条路径里允许出现的版本段（/v1、/v1beta …）个数上限。
+// 合法写法最多 2~3 个（Base URL 已带 /v1，客户端又拼了 /v1/messages），16 已经远超真实需要。
+// 超过的路径不进入任何折叠/剥离循环，原样交给 gin（404）：别名改写发生在鉴权之前，
+// 重复上千个 /v1 的匿名请求不该换来成倍的 CPU。
+const maxGatewayVersionSegments = 16
+
 // gatewayEndpointSegments 是网关协议路由的末尾固定段集合。
 //
 // 判断“一条注册路由是不是网关路由”本来最可靠的是看 handler 链，但 gin v1.9 的
 // Routes() 只返回 method + path，DebugPrintRouteFunc 又只在 DEBUG 模式触发，生产
 // （ReleaseMode）里拿不到链。所以这里用路由表结构判断：网关协议路由的路径里一定有
-// 协议端点段（messages、responses、chat、models、videos …），面板 API 与静态资源不会命中。
+// 协议端点段（messages、responses、chat、models、videos …）。
 //
-// 新增网关路由时如果引入新的端点名，测试
-// TestGatewayPathAliasCoversEveryGatewayEndpoint 会提醒在集合里补上。
+// 只看端点词不够：面板 API 里同样有 usage、models 这类词（/api/v1/admin/usage），
+// 所以 newGatewayRouteIndex 还要求路径属于网关族（ipnotice.IsGatewayBusinessPath）。
 var gatewayEndpointSegments = map[string]bool{
 	"messages":       true,
 	"count_tokens":   true,
@@ -122,6 +129,13 @@ func newGatewayRouteIndex(router *gin.Engine) gatewayRouteIndex {
 	for _, route := range router.Routes() {
 		// gin 不会为 GET 自动注册 HEAD；HEAD 请求交给 gin 默认行为即可。
 		if route.Method == http.MethodHead {
+			continue
+		}
+		// 只收网关族路由：管理/用户面板挂在 /api/v1 下，路径里也会有 usage、models 等端点词，
+		// 但它们不是网关协议路径，不能成为别名的改写目标（改写后鉴权虽然照常生效，
+		// 别名索引也不该吃面板前缀）。网关族的判定与 IP 共享检测共用同一份清单
+		// （网关前缀 + 根别名），不在这里另维护一套字符串。
+		if !ipnotice.IsGatewayBusinessPath(route.Path) {
 			continue
 		}
 		segments := splitGatewayPathSegments(route.Path)
@@ -256,7 +270,12 @@ func matchGatewayRoute(index gatewayRouteIndex, method, path string) bool {
 	if path == "/" {
 		return false
 	}
-	actual := splitGatewayPathSegments(path)
+	return matchGatewayRouteParts(index, method, splitGatewayPathSegments(path))
+}
+
+// matchGatewayRouteParts 是 matchGatewayRoute 的段数组版本：调用方手里已经有拆好的
+// 段时直接匹配，避免 Join 再 Split 一遍。
+func matchGatewayRouteParts(index gatewayRouteIndex, method string, actual []string) bool {
 	if len(actual) == 0 {
 		return false
 	}
@@ -329,14 +348,21 @@ func gatewayVersionFamilies(rest string) []string {
 //
 // 规范写法（/v1/messages、/antigravity/v1beta/models、/v1beta/models、
 // /backend-api/codex/responses）处理前后完全一致，一个字节都不动。
+// 版本段超过 maxGatewayVersionSegments 个的路径一律不处理，原样透传。
 func (idx gatewayRouteIndex) canonicalGatewayPath(method, path string) (gatewayPathAliasInfo, bool) {
 	segments := splitGatewayPathSegments(path)
 	if len(segments) == 0 {
 		return gatewayPathAliasInfo{}, false
 	}
-	if !pathHasVersionSegment(segments) {
+	versionSegments := countGatewayVersionSegments(segments)
+	if versionSegments == 0 {
 		// 没有版本段可剥，只有“补缺失版本段”这条路。
 		return idx.gatewayMissingVersionPath(method, path)
+	}
+	if versionSegments > maxGatewayVersionSegments {
+		// 版本段多到不可能是填错 Base URL（见 maxGatewayVersionSegments）：既不改写也不诊断，
+		// 原样交给 gin 404。补版本段那条路对已带版本段的路径本来就返回 false，这里直接收口。
+		return gatewayPathAliasInfo{}, false
 	}
 
 	// 规则 1 + 2：先尝试剥掉手写的版本片段（重复的折叠成一个，无版本段前缀族全剥）。
@@ -530,6 +556,17 @@ func gatewayPrefixLabel(headSegments []string) string {
 		return ""
 	}
 	return "/" + strings.Join(headSegments, "/")
+}
+
+// countGatewayVersionSegments 统计路径里版本段的个数。
+func countGatewayVersionSegments(segments []string) int {
+	count := 0
+	for _, segment := range segments {
+		if isGatewayVersionSegment(segment) {
+			count++
+		}
+	}
+	return count
 }
 
 // pathHasVersionSegment 判断路径里是否出现过版本段。

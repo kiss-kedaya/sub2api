@@ -98,6 +98,12 @@ func newGatewayPathAliasTestRouter() (*gin.Engine, *[]gatewayPathAliasSeen) {
 	}
 	router.GET("/api/v1/admin/users", trap(http.StatusTeapot))
 	router.GET("/api/v1/admin/dashboard", trap(http.StatusTeapot))
+	// 面板/管理 API 里同样有 usage、models 这类端点词（生产路由表里有 20 多条），
+	// 但它们不是网关协议路由，不能进别名索引，更不能成为别名的改写目标。
+	router.GET("/api/v1/admin/usage", trap(http.StatusTeapot))
+	router.GET("/api/v1/user/usage", trap(http.StatusTeapot))
+	router.GET("/api/v1/admin/accounts/:id/usage", trap(http.StatusTeapot))
+	router.POST("/api/v1/admin/models/metadata/sync", trap(http.StatusTeapot))
 	router.GET("/assets/index-abc.js", trap(http.StatusTeapot))
 	router.GET("/health", trap(http.StatusTeapot))
 	router.GET("/usage", trap(http.StatusTeapot))
@@ -495,7 +501,6 @@ func TestGatewayPathAliasRouteClassification(t *testing.T) {
 		{http.MethodPost, "/antigravity/v1/messages"},
 		{http.MethodGet, "/antigravity/v1beta/models"},
 		{http.MethodPost, "/backend-api/codex/responses"},
-		{http.MethodGet, "/messages"},
 		{http.MethodPost, "/chat/completions"},
 	} {
 		require.True(t, matchGatewayRoute(index, tc.method, tc.path),
@@ -506,6 +511,9 @@ func TestGatewayPathAliasRouteClassification(t *testing.T) {
 		{http.MethodGet, "/assets/index-abc.js"},
 		{http.MethodGet, "/health"},
 		{http.MethodGet, "/dashboard"},
+		// 面板路径里带端点词也不算网关路由（见 TestGatewayRouteIndexOnlyCollectsGatewayRoutes）。
+		{http.MethodGet, "/api/v1/admin/usage"},
+		{http.MethodPost, "/api/v1/admin/models/metadata/sync"},
 	} {
 		require.False(t, matchGatewayRoute(index, tc.method, tc.path),
 			"非网关路径 %s %s 不能进入网关索引", tc.method, tc.path)
