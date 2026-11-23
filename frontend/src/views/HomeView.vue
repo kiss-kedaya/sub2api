@@ -99,334 +99,280 @@
   <!-- Default Home Page -->
   <div
     v-else
-    class="home-surface relative flex min-h-screen flex-col overflow-hidden"
-    :class="{ 'home-surface--dark': isDark }"
+    data-testid="default-home"
+    class="relative flex min-h-screen flex-col bg-default text-default"
   >
-    <!-- Background Decorations -->
-    <div class="home-grid pointer-events-none absolute inset-0"></div>
+    <!-- Background decoration: a static hairline grid that fades out below the hero. -->
+    <div class="home-grid pointer-events-none absolute inset-0" aria-hidden="true"></div>
 
     <!-- Header -->
-    <header class="relative z-20 px-6 py-4">
-      <nav class="mx-auto flex max-w-6xl items-center justify-between">
-        <!-- Logo -->
-        <div class="flex items-center">
-          <div class="h-10 w-10 overflow-hidden rounded-xl shadow-md">
-            <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
-          </div>
-        </div>
+    <header class="relative z-20 px-4 py-4 sm:px-6">
+      <nav class="mx-auto flex max-w-6xl items-center justify-between gap-3">
+        <router-link
+          to="/home"
+          class="flex min-w-0 items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          <span
+            class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-default bg-elevated"
+          >
+            <img :src="siteLogo || '/logo.svg'" alt="" class="h-full w-full object-contain" />
+          </span>
+          <span class="min-w-0 truncate text-sm font-semibold text-highlighted">{{ siteName }}</span>
+        </router-link>
 
-        <!-- Nav Actions -->
-        <div class="flex items-center gap-3">
-          <!-- Language Switcher -->
+        <div class="flex shrink-0 items-center gap-1 sm:gap-2">
           <LocaleSwitcher />
 
-          <!-- Doc Link -->
           <a
             v-if="docUrl"
             :href="docUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+            class="hidden h-9 w-9 items-center justify-center rounded-md text-muted transition-colors hover:bg-elevated hover:text-highlighted sm:flex"
             :title="t('home.viewDocs')"
+            :aria-label="t('home.viewDocs')"
           >
             <Icon name="book" size="md" />
           </a>
 
-          <!-- Model Plaza Link -->
           <router-link
             v-if="showModelPlazaEntry"
             to="/model-plaza"
-            class="inline-flex items-center gap-1.5 rounded-lg p-2 text-sm text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+            class="hidden h-9 items-center gap-1.5 rounded-md px-2 text-sm text-muted transition-colors hover:bg-elevated hover:text-highlighted sm:flex"
             :title="t('nav.modelPlaza')"
           >
             <Icon name="grid" size="md" />
-            <span class="hidden sm:inline">{{ t('nav.modelPlaza') }}</span>
+            <span class="hidden md:inline">{{ t('nav.modelPlaza') }}</span>
           </router-link>
 
-          <!-- Theme Toggle -->
-          <button
-            @click="toggleTheme"
-            class="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+          <UButton
+            color="neutral"
+            variant="ghost"
+            size="md"
+            square
+            :icon="isDark ? 'i-lucide-sun' : 'i-lucide-moon'"
             :title="isDark ? t('home.switchToLight') : t('home.switchToDark')"
-          >
-            <Icon v-if="isDark" name="sun" size="md" />
-            <Icon v-else name="moon" size="md" />
-          </button>
+            :aria-label="isDark ? t('home.switchToLight') : t('home.switchToDark')"
+            @click="toggleTheme"
+          />
 
-          <!-- Login / Dashboard Button -->
-          <router-link
-            v-if="isAuthenticated"
-            :to="dashboardPath"
-            class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white py-1 pl-1 pr-2.5 transition-colors hover:border-gray-300 hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-800 dark:hover:border-dark-600 dark:hover:bg-dark-700"
+          <UButton
+            data-testid="home-header-cta"
+            :to="headerCta.to"
+            size="md"
+            color="neutral"
+            :variant="isAuthenticated ? 'solid' : 'outline'"
+            class="ml-0.5 shrink-0"
           >
-            <span
-              class="flex h-5 w-5 items-center justify-center rounded-md bg-primary-600 text-[10px] font-semibold text-white"
-            >
-              {{ userInitial }}
-            </span>
-            <span class="text-xs font-medium text-gray-700 dark:text-dark-200">{{ t('home.dashboard') }}</span>
-            <svg
-              class="h-3 w-3 text-gray-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25"
-              />
-            </svg>
-          </router-link>
-          <router-link
-            v-else
-            to="/login"
-            class="inline-flex items-center rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:border-gray-300 hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-800 dark:text-dark-200 dark:hover:border-dark-600 dark:hover:bg-dark-700"
-          >
-            {{ t('home.login') }}
-          </router-link>
+            {{ headerCta.label }}
+          </UButton>
         </div>
       </nav>
     </header>
 
     <!-- Main Content -->
-    <main class="relative z-10 flex-1 px-6 py-16">
-      <div class="mx-auto max-w-6xl">
-        <!-- Hero Section - Left/Right Layout -->
-        <div class="mb-12 flex flex-col items-center justify-between gap-12 lg:flex-row lg:gap-16">
-          <!-- Left: Text Content -->
-          <div class="flex-1 text-center lg:text-left">
-            <h1
-              class="mb-4 text-4xl font-bold text-gray-900 dark:text-white md:text-5xl lg:text-6xl"
+    <main class="relative z-10 flex-1 px-4 sm:px-6">
+      <!-- Hero: one sentence, two ways in. -->
+      <section data-testid="home-hero" class="mx-auto max-w-3xl pt-14 text-center sm:pt-24">
+        <h1
+          class="text-balance text-3xl font-semibold leading-[1.15] tracking-tight text-highlighted sm:text-4xl md:text-5xl"
+        >
+          {{ t('home.heroSubtitle') }}
+        </h1>
+        <p class="mx-auto mt-4 max-w-xl text-pretty text-base leading-7 text-muted sm:mt-5 sm:text-lg">
+          {{ heroDescription }}
+        </p>
+        <div class="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
+          <UButton
+            data-testid="home-hero-cta"
+            :to="primaryCta.to"
+            size="lg"
+            color="neutral"
+            variant="solid"
+            trailing-icon="i-lucide-arrow-right"
+            class="min-h-11 justify-center px-5 font-medium"
+          >
+            {{ primaryCta.label }}
+          </UButton>
+          <UButton
+            data-testid="home-hero-docs"
+            :to="docsLink.to"
+            :target="docsLink.external ? '_blank' : undefined"
+            :rel="docsLink.external ? 'noopener noreferrer' : undefined"
+            size="lg"
+            color="neutral"
+            variant="outline"
+            class="min-h-11 justify-center px-5"
+          >
+            {{ t('home.viewDocs') }}
+          </UButton>
+        </div>
+      </section>
+
+      <!-- Key figures + supported platforms. Cards render only for data the APIs actually returned. -->
+      <section data-testid="home-status" class="mx-auto mt-14 max-w-4xl sm:mt-16">
+        <div v-if="stats.length">
+          <h2 id="home-stats-title" class="text-sm font-semibold text-highlighted">{{ t('home.stats.title') }}</h2>
+
+          <ul data-testid="home-stats" class="mt-3 flex flex-wrap gap-3">
+            <UCard
+              v-for="stat in stats"
+              :key="stat.key"
+              as="li"
+              :ui="{ root: 'w-[calc(50%-0.375rem)] min-w-0 bg-elevated sm:w-52', body: 'px-4 py-4' }"
             >
-              {{ siteName }}
-            </h1>
-            <p class="mb-8 text-lg text-gray-600 dark:text-dark-300 md:text-xl">
-              {{ siteSubtitle }}
-            </p>
-
-            <!-- CTA Button -->
-            <div>
-              <router-link
-                :to="isAuthenticated ? dashboardPath : '/login'"
-                class="btn btn-primary px-8 py-3 text-base shadow-lg shadow-primary-500/30"
+              <span data-stat-label class="block text-xs font-medium text-toned">{{ stat.label }}</span>
+              <span
+                data-stat-value
+                class="mt-1.5 block truncate text-2xl font-semibold tabular-nums tracking-tight text-highlighted"
               >
-                {{ isAuthenticated ? t('home.goToDashboard') : t('home.getStarted') }}
-                <Icon name="arrowRight" size="md" class="ml-2" :stroke-width="2" />
-              </router-link>
-            </div>
-          </div>
+                {{ stat.value }}
+              </span>
+            </UCard>
+          </ul>
+        </div>
 
-          <!-- Right: Terminal Animation -->
-          <div class="flex flex-1 justify-center lg:justify-end">
-            <div class="terminal-container">
-              <div class="terminal-window">
-                <!-- Window header -->
-                <div class="terminal-header">
-                  <div class="terminal-buttons">
-                    <span class="btn-close"></span>
-                    <span class="btn-minimize"></span>
-                    <span class="btn-maximize"></span>
-                  </div>
-                  <span class="terminal-title">terminal</span>
-                </div>
-                <!-- Terminal content -->
-                <div class="terminal-body">
-                  <div class="code-line line-1">
-                    <span class="code-prompt">$</span>
-                    <span class="code-cmd">curl</span>
-                    <span class="code-flag">-X POST</span>
-                    <span class="code-url">/v1/messages</span>
-                  </div>
-                  <div class="code-line line-2">
-                    <span class="code-comment"># Routing to upstream...</span>
-                  </div>
-                  <div class="code-line line-3">
-                    <span class="code-success">200 OK</span>
-                    <span class="code-response">{ "content": "Hello!" }</span>
-                  </div>
-                  <div class="code-line line-4">
-                    <span class="code-prompt">$</span>
-                    <span class="cursor"></span>
-                  </div>
-                </div>
+        <div :class="stats.length ? 'mt-8' : ''">
+          <h2 id="home-providers-title" class="text-xs font-medium text-muted">{{ t('home.providers.title') }}</h2>
+          <ul data-testid="home-provider-list" class="mt-2.5 flex flex-wrap gap-2">
+            <li
+              v-for="provider in providers"
+              :key="provider.key"
+              class="inline-flex items-center gap-1.5 rounded-full border border-default bg-elevated py-1.5 pl-2.5 pr-3"
+            >
+              <PlatformIcon v-if="provider.platform" :platform="provider.platform" size="md" />
+              <Icon v-else name="plus" size="sm" class="text-dimmed" />
+              <span class="text-sm font-medium text-toned">{{ provider.name }}</span>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Quick start: three steps, vertical flow so it never reads as a feature-card row. -->
+      <section
+        data-testid="home-quickstart"
+        class="mx-auto mt-16 max-w-4xl pb-20"
+        aria-labelledby="home-quickstart-title"
+      >
+        <h2 id="home-quickstart-title" class="text-xl font-semibold tracking-tight text-highlighted">
+          {{ t('home.quickStart.title') }}
+        </h2>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-muted">
+          {{ t('home.quickStart.description') }}
+        </p>
+
+        <ol class="mt-8 border-t border-default">
+          <!-- Step 1: create a key -->
+          <li class="grid gap-3 border-b border-default py-6 sm:grid-cols-[3.5rem_minmax(0,1fr)] sm:gap-4">
+            <span class="font-mono text-sm tabular-nums text-muted" aria-hidden="true">01</span>
+            <div class="min-w-0">
+              <h3 class="text-base font-semibold text-highlighted">
+                {{ t('home.quickStart.createKey.title') }}
+              </h3>
+              <p class="mt-1.5 text-sm leading-6 text-muted">
+                {{ t('home.quickStart.createKey.description') }}
+              </p>
+              <div class="mt-4">
+                <UButton
+                  data-testid="home-key-action"
+                  :to="keyAction.to"
+                  size="md"
+                  color="neutral"
+                  variant="outline"
+                  leading-icon="i-lucide-key-round"
+                >
+                  {{ keyAction.label }}
+                </UButton>
               </div>
             </div>
-          </div>
-        </div>
+          </li>
 
-        <!-- Feature Tags - Centered -->
-        <div class="mb-12 flex flex-wrap items-center justify-center gap-4 md:gap-6">
-          <div
-            class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-xs backdrop-blur-xs dark:border-dark-700/50 dark:bg-dark-800/80"
-          >
-            <Icon name="swap" size="sm" class="text-primary-500" />
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{
-              t('home.tags.subscriptionToApi')
-            }}</span>
-          </div>
-          <div
-            class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-xs backdrop-blur-xs dark:border-dark-700/50 dark:bg-dark-800/80"
-          >
-            <Icon name="shield" size="sm" class="text-primary-500" />
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{
-              t('home.tags.stickySession')
-            }}</span>
-          </div>
-          <div
-            class="inline-flex items-center gap-2.5 rounded-full border border-gray-200/50 bg-white/80 px-5 py-2.5 shadow-xs backdrop-blur-xs dark:border-dark-700/50 dark:bg-dark-800/80"
-          >
-            <Icon name="chart" size="sm" class="text-primary-500" />
-            <span class="text-sm font-medium text-gray-700 dark:text-dark-200">{{
-              t('home.tags.realtimeBilling')
-            }}</span>
-          </div>
-        </div>
-
-        <!-- Features Grid -->
-        <div class="mb-12 grid gap-6 md:grid-cols-3">
-          <!-- Feature 1: Unified Gateway -->
-          <div
-            class="group rounded-xl border border-gray-200 bg-white/75 p-6 transition-[border-color,box-shadow] duration-300 hover:border-gray-300 hover:shadow-lg hover:shadow-gray-200/50 dark:border-dark-700 dark:bg-dark-800/70 dark:hover:border-dark-600 dark:hover:shadow-black/20"
-          >
-            <div
-              class="home-feature-mark home-feature-mark--blue"
-            >
-              <Icon name="server" size="lg" class="text-white" />
+          <!-- Step 2: point the SDK at the base URL -->
+          <li class="grid gap-3 border-b border-default py-6 sm:grid-cols-[3.5rem_minmax(0,1fr)] sm:gap-4">
+            <span class="font-mono text-sm tabular-nums text-muted" aria-hidden="true">02</span>
+            <div class="min-w-0">
+              <h3 class="text-base font-semibold text-highlighted">
+                {{ t('home.quickStart.config.title') }}
+              </h3>
+              <p class="mt-1.5 text-sm leading-6 text-muted">
+                {{ t('home.quickStart.config.description') }}
+              </p>
+              <div class="mt-4 overflow-hidden rounded-lg border border-default bg-muted">
+                <div class="flex items-center justify-between gap-2 border-b border-default py-1 pl-3 pr-1">
+                  <span class="truncate font-mono text-[11px] text-muted">base_url</span>
+                  <UButton
+                    data-testid="home-copy-base-url"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    :icon="copiedField === 'baseUrl' ? 'i-lucide-check' : 'i-lucide-copy'"
+                    :aria-label="copiedField === 'baseUrl' ? t('common.copied') : t('common.copy')"
+                    @click="copyExample('baseUrl', sdkBaseUrl)"
+                  >
+                    <span aria-live="polite">{{ copiedField === 'baseUrl' ? t('common.copied') : t('common.copy') }}</span>
+                  </UButton>
+                </div>
+                <pre data-testid="home-base-url-example" class="overflow-x-auto px-3 py-3 font-mono text-[13px] leading-6 text-toned"><code>{{ sdkBaseUrl }}</code></pre>
+              </div>
             </div>
-            <h3 class="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
-              {{ t('home.features.unifiedGateway') }}
-            </h3>
-            <p class="text-sm leading-relaxed text-gray-600 dark:text-dark-400">
-              {{ t('home.features.unifiedGatewayDesc') }}
-            </p>
-          </div>
+          </li>
 
-          <!-- Feature 2: Account Pool -->
-          <div
-            class="group rounded-xl border border-gray-200 bg-white/75 p-6 transition-[border-color,box-shadow] duration-300 hover:border-gray-300 hover:shadow-lg hover:shadow-gray-200/50 dark:border-dark-700 dark:bg-dark-800/70 dark:hover:border-dark-600 dark:hover:shadow-black/20"
-          >
-            <div
-              class="home-feature-mark home-feature-mark--green"
-            >
-              <svg
-                class="h-6 w-6 text-white"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                stroke-width="1.5"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"
-                />
-              </svg>
+          <!-- Step 3: send the first request -->
+          <li class="grid gap-3 border-b border-default py-6 sm:grid-cols-[3.5rem_minmax(0,1fr)] sm:gap-4">
+            <span class="font-mono text-sm tabular-nums text-muted" aria-hidden="true">03</span>
+            <div class="min-w-0">
+              <h3 class="text-base font-semibold text-highlighted">
+                {{ t('home.quickStart.request.title') }}
+              </h3>
+              <p class="mt-1.5 text-sm leading-6 text-muted">
+                {{ t('home.quickStart.request.description') }}
+              </p>
+              <div class="mt-4 overflow-hidden rounded-lg border border-default bg-muted">
+                <div class="flex items-center justify-between gap-2 border-b border-default py-1 pl-3 pr-1">
+                  <span class="truncate font-mono text-[11px] text-muted">curl</span>
+                  <UButton
+                    data-testid="home-copy-request"
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    :icon="copiedField === 'request' ? 'i-lucide-check' : 'i-lucide-copy'"
+                    :aria-label="copiedField === 'request' ? t('common.copied') : t('common.copy')"
+                    @click="copyExample('request', requestExample)"
+                  >
+                    <span aria-live="polite">{{ copiedField === 'request' ? t('common.copied') : t('common.copy') }}</span>
+                  </UButton>
+                </div>
+                <pre data-testid="home-request-example" class="overflow-x-auto px-3 py-3 font-mono text-[13px] leading-6 text-toned"><code>{{ requestExample }}</code></pre>
+              </div>
+              <div class="mt-4">
+                <UButton
+                  data-testid="home-docs-link"
+                  :to="docsLink.to"
+                  :target="docsLink.external ? '_blank' : undefined"
+                  :rel="docsLink.external ? 'noopener noreferrer' : undefined"
+                  color="neutral"
+                  variant="link"
+                  size="sm"
+                  trailing-icon="i-lucide-arrow-up-right"
+                  class="px-0"
+                >
+                  {{ t('home.quickStart.request.docs') }}
+                </UButton>
+              </div>
             </div>
-            <h3 class="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
-              {{ t('home.features.multiAccount') }}
-            </h3>
-            <p class="text-sm leading-relaxed text-gray-600 dark:text-dark-400">
-              {{ t('home.features.multiAccountDesc') }}
-            </p>
-          </div>
-
-          <!-- Feature 3: Billing & Quota -->
-          <div
-            class="group rounded-xl border border-gray-200 bg-white/75 p-6 transition-[border-color,box-shadow] duration-300 hover:border-gray-300 hover:shadow-lg hover:shadow-gray-200/50 dark:border-dark-700 dark:bg-dark-800/70 dark:hover:border-dark-600 dark:hover:shadow-black/20"
-          >
-            <div
-              class="home-feature-mark home-feature-mark--violet"
-            >
-              <svg
-                class="h-6 w-6 text-white"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                stroke-width="1.5"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z"
-                />
-              </svg>
-            </div>
-            <h3 class="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
-              {{ t('home.features.balanceQuota') }}
-            </h3>
-            <p class="text-sm leading-relaxed text-gray-600 dark:text-dark-400">
-              {{ t('home.features.balanceQuotaDesc') }}
-            </p>
-          </div>
-        </div>
-
-        <!-- Supported Providers -->
-        <div class="home-provider-heading mb-7 text-center">
-          <h2 class="mb-2 text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">
-            {{ t('home.providers.title') }}
-          </h2>
-          <p class="text-sm text-gray-500 dark:text-dark-400">
-            {{ t('home.providers.description') }}
-          </p>
-        </div>
-
-        <div class="home-provider-list mb-16 flex flex-wrap items-stretch justify-center gap-3">
-          <!-- Claude - Supported -->
-          <div
-            class="home-provider-item home-provider-item--claude"
-          >
-            <PlatformIcon platform="anthropic" size="lg" class="home-provider-icon" />
-            <span class="home-provider-name">{{ t('home.providers.claude') }}</span>
-            <span class="home-provider-status"><span class="home-provider-dot"></span>{{ t('home.providers.supported') }}</span>
-          </div>
-          <!-- GPT - Supported -->
-          <div
-            class="home-provider-item home-provider-item--openai"
-          >
-            <PlatformIcon platform="openai" size="lg" class="home-provider-icon" />
-            <span class="home-provider-name">GPT</span>
-            <span class="home-provider-status"><span class="home-provider-dot"></span>{{ t('home.providers.supported') }}</span>
-          </div>
-          <!-- Gemini - Supported -->
-          <div
-            class="home-provider-item home-provider-item--gemini"
-          >
-            <PlatformIcon platform="gemini" size="lg" class="home-provider-icon" />
-            <span class="home-provider-name">{{ t('home.providers.gemini') }}</span>
-            <span class="home-provider-status"><span class="home-provider-dot"></span>{{ t('home.providers.supported') }}</span>
-          </div>
-          <!-- Antigravity - Supported -->
-          <div
-            class="home-provider-item home-provider-item--antigravity"
-          >
-            <PlatformIcon platform="antigravity" size="lg" class="home-provider-icon" />
-            <span class="home-provider-name">{{ t('home.providers.antigravity') }}</span>
-            <span class="home-provider-status"><span class="home-provider-dot"></span>{{ t('home.providers.supported') }}</span>
-          </div>
-          <!-- More - Coming Soon -->
-          <div
-            class="home-provider-item home-provider-item--more"
-          >
-            <Icon name="plus" size="lg" class="home-provider-icon" />
-            <span class="home-provider-name">{{ t('home.providers.more') }}</span>
-            <span class="home-provider-status">{{ t('home.providers.soon') }}</span>
-          </div>
-        </div>
-      </div>
+          </li>
+        </ol>
+      </section>
     </main>
 
     <!-- Footer -->
-    <footer class="relative z-10 border-t border-gray-200/50 px-6 py-8 dark:border-dark-800/50">
-      <div
-        class="mx-auto flex max-w-6xl flex-col items-center justify-center gap-4 text-center"
-      >
-        <p class="max-w-3xl text-xs leading-6 text-gray-500 dark:text-dark-400">
+    <footer class="relative z-10 border-t border-default px-4 py-8 sm:px-6">
+      <div class="mx-auto flex max-w-6xl flex-col items-center gap-4 text-center">
+        <p class="max-w-3xl text-xs leading-6 text-muted">
           {{ t('home.footer.riskStrip') }}
         </p>
         <LegalFooterLinks />
-        <p class="text-sm text-gray-500 dark:text-dark-400">
+        <p class="text-xs text-muted">
           &copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}
         </p>
         <div class="flex items-center gap-4">
@@ -435,7 +381,7 @@
             :href="docUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="text-sm text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-white"
+            class="text-xs text-muted transition-colors hover:text-highlighted"
           >
             {{ t('home.docs') }}
           </a>
@@ -443,7 +389,7 @@
             :href="githubUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="text-sm text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-white"
+            class="text-xs text-muted transition-colors hover:text-highlighted"
           >
             GitHub
           </a>
@@ -454,10 +400,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import { toggleColorMode, useSiteColorMode } from '@/composables/useSiteTheme'
+import { useClipboard } from '@/composables/useClipboard'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
@@ -466,7 +413,10 @@ import { sanitizeUrl } from '@/utils/url'
 import { sanitizeHtml } from '@/utils/sanitize'
 import { resolveDocsUrl } from '@/utils/docsUrl'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
+import { formatCurrency, formatNumber } from '@/utils/format'
+import { getModelPlaza, type ModelPlazaResponse } from '@/api/modelPlaza'
 import { PROJECT_GITHUB_URL } from '@/constants/project'
+import type { GroupPlatform } from '@/types'
 
 const { t } = useI18n()
 
@@ -508,14 +458,161 @@ const showModelPlazaEntry = computed(
 )
 const isAdmin = computed(() => authStore.isAdmin)
 const dashboardPath = computed(() => isAdmin.value ? '/admin/dashboard' : '/dashboard')
-const userInitial = computed(() => {
-  const user = authStore.user
-  if (!user || !user.email) return ''
-  return user.email.charAt(0).toUpperCase()
-})
+const registrationEnabled = computed(() => appStore.cachedPublicSettings?.registration_enabled === true)
 
 // Current year for footer
 const currentYear = computed(() => new Date().getFullYear())
+
+// Hero copy: the product promise is the heading, and the admin-configured subtitle carries the
+// detail. When the subtitle repeats the promise verbatim (a copy/paste in site settings), fall
+// back to the generic one-liner instead of printing the same sentence twice.
+const heroDescription = computed(() => {
+  const subtitle = siteSubtitle.value.trim()
+  if (subtitle && subtitle !== t('home.heroSubtitle')) return subtitle
+  return t('home.heroDescription')
+})
+
+// One primary action per state: visitors start an account, signed-in users return to the console.
+const primaryCta = computed(() => {
+  if (isAuthenticated.value) return { to: dashboardPath.value, label: t('home.goToDashboard') }
+  return registrationEnabled.value
+    ? { to: '/register', label: t('home.getStarted') }
+    : { to: '/login', label: t('home.login') }
+})
+const headerCta = computed(() => isAuthenticated.value
+  ? { to: dashboardPath.value, label: t('home.goToDashboard') }
+  : { to: '/login', label: t('home.login') })
+const keyAction = computed(() => isAuthenticated.value
+  ? { to: '/keys', label: t('home.quickStart.createKey.openKeys') }
+  : primaryCta.value)
+// Docs target: resolveDocsUrl already falls back to the built-in docs page.
+const docsLink = computed(() => {
+  const to = docUrl.value
+  return { to, external: /^https?:\/\//i.test(to) }
+})
+
+// API examples follow this site: the admin-configured endpoint when set, otherwise the current origin.
+const endpointBase = computed(() => {
+  const configured = (appStore.apiBaseUrl || appStore.cachedPublicSettings?.api_base_url || '').trim()
+  if (configured) return configured.replace(/\/+$/, '')
+  if (typeof window !== 'undefined') return window.location.origin.replace(/\/+$/, '')
+  return ''
+})
+const sdkBaseUrl = computed(() => {
+  const base = endpointBase.value
+  if (!base) return ''
+  return base.endsWith('/v1') ? base : `${base}/v1`
+})
+
+// Model plaza doubles as the public source for model/platform counts. It is only fetched when
+// the feature is on and anonymous visitors are allowed to read it; any failure simply hides the
+// figures instead of inventing them.
+const plaza = ref<ModelPlazaResponse | null>(null)
+let plazaRequested = false
+
+async function loadPlazaStats() {
+  if (plazaRequested || !modelPlazaEnabled.value) return
+  if (!isAuthenticated.value && modelPlazaRequiresAuth.value) return
+  plazaRequested = true
+  try {
+    plaza.value = await getModelPlaza()
+  } catch {
+    plaza.value = null
+  }
+}
+
+const plazaTotals = computed(() => {
+  const models = new Set<string>()
+  const platforms = new Set<string>()
+  const groups = plaza.value?.groups ?? []
+  for (const group of groups) {
+    if (group.platform) platforms.add(group.platform)
+    for (const model of group.models ?? []) {
+      if (model.name) models.add(model.name)
+    }
+  }
+  return { models: models.size, platforms: platforms.size, groups: groups.length }
+})
+
+const exampleModelId = computed(() => {
+  for (const group of plaza.value?.groups ?? []) {
+    const model = group.models?.[0]?.name
+    if (model) return model
+  }
+  return 'YOUR_MODEL_ID'
+})
+
+interface HomeStat {
+  key: 'models' | 'platforms' | 'groups' | 'balance'
+  label: string
+  value: string
+}
+
+/** Only figures backed by a real API response; an unavailable source contributes no card. */
+const stats = computed<HomeStat[]>(() => {
+  const items: HomeStat[] = []
+  if (plaza.value) {
+    items.push(
+      { key: 'models', label: t('home.stats.models'), value: formatNumber(plazaTotals.value.models) },
+      { key: 'platforms', label: t('home.stats.platforms'), value: formatNumber(plazaTotals.value.platforms) },
+    )
+    if (isAuthenticated.value) {
+      items.push({ key: 'groups', label: t('home.stats.groups'), value: formatNumber(plazaTotals.value.groups) })
+    }
+  }
+  const balance = authStore.user?.balance
+  if (isAuthenticated.value && typeof balance === 'number') {
+    items.push({ key: 'balance', label: t('home.stats.balance'), value: formatCurrency(balance) })
+  }
+  return items
+})
+
+const providers = computed<Array<{ key: string; platform: GroupPlatform | null; name: string }>>(() => [
+  { key: 'claude', platform: 'anthropic', name: t('home.providers.claude') },
+  { key: 'gpt', platform: 'openai', name: 'GPT' },
+  { key: 'gemini', platform: 'gemini', name: t('home.providers.gemini') },
+  { key: 'antigravity', platform: 'antigravity', name: t('home.providers.antigravity') },
+  { key: 'more', platform: null, name: t('home.providers.more') },
+])
+
+// First request example: real field names, the site's real endpoint, and a model ID that this
+// site actually lists when the plaza is available.
+const requestExample = computed(() => {
+  const base = endpointBase.value
+  if (!base) return ''
+  const body = JSON.stringify({
+    model: exampleModelId.value,
+    messages: [{ role: 'user', content: 'Hello!' }],
+  })
+  return [
+    `curl ${base}/v1/chat/completions \\`,
+    '  -H "Authorization: Bearer $API_KEY" \\',
+    '  -H "Content-Type: application/json" \\',
+    `  -d '${body}'`,
+  ].join('\n')
+})
+
+// Copy feedback lives on the button itself (icon + label) so it is visible without a toast in
+// the corner; useClipboard also surfaces the site's standard success toast.
+const { copyToClipboard } = useClipboard()
+const copiedField = ref<'' | 'baseUrl' | 'request'>('')
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
+
+async function copyExample(field: 'baseUrl' | 'request', text: string) {
+  if (!text) return
+  const ok = await copyToClipboard(text)
+  if (!ok) return
+  copiedField.value = field
+  if (copiedTimer) clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => {
+    copiedField.value = ''
+    copiedTimer = null
+  }, 2000)
+}
+
+onUnmounted(() => {
+  if (copiedTimer) clearTimeout(copiedTimer)
+})
 
 // Toggle theme: the shared switch cross-fades the page and flips the class inside that transition, so follow it.
 const colorMode = useSiteColorMode()
@@ -547,328 +644,28 @@ onMounted(() => {
   if (!appStore.publicSettingsLoaded) {
     appStore.fetchPublicSettings()
   }
+
+  void loadPlazaStats()
+})
+
+// Settings may arrive after mount (no injected config); fetch the figures once the flag is known.
+watch(modelPlazaEnabled, (enabled) => {
+  if (enabled) void loadPlazaStats()
 })
 </script>
 
 <style scoped>
-:global(html) { background: #f6f8fb; }
-:global(html.dark) { background: #10151e; }
-
-.home-surface {
-  background: #f7f9fc;
-  color: #172033;
-}
-
+/*
+  The only decoration on the page: a static hairline grid that fades below the hero.
+  Colours come from the Nuxt UI border token, so it follows the light theme and the plum
+  night theme, and the Appearance setting, without a second palette to maintain.
+*/
 .home-grid {
   background-image:
-    linear-gradient(rgba(58, 83, 117, 0.075) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(58, 83, 117, 0.075) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: linear-gradient(to bottom, black 0%, rgba(0, 0, 0, 0.56) 52%, transparent 100%);
-  opacity: 0.72;
-}
-
-.home-provider-heading {
-  position: relative;
-}
-
-.home-provider-heading::before,
-.home-provider-heading::after {
-  position: absolute;
-  top: 50%;
-  width: min(18vw, 180px);
-  height: 1px;
-  content: '';
-  background: #d7dee9;
-}
-
-.home-provider-heading::before {
-  right: calc(50% + 190px);
-}
-
-.home-provider-heading::after {
-  left: calc(50% + 190px);
-}
-
-.home-provider-item {
-  display: inline-flex;
-  min-width: 154px;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid #dbe3ee;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.82);
-  padding: 12px 14px;
-  box-shadow: 0 1px 2px rgba(30, 45, 70, 0.04);
-  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
-}
-
-.home-provider-item:hover {
-  border-color: #a9b9cf;
-  box-shadow: 0 10px 24px rgba(30, 45, 70, 0.09);
-  transform: translateY(-2px);
-}
-
-.home-provider-icon {
-  width: 22px;
-  height: 22px;
-}
-
-.home-provider-item--claude .home-provider-icon { color: #e87535; }
-.home-provider-item--openai .home-provider-icon { color: #159b68; }
-.home-provider-item--gemini .home-provider-icon { color: #4b74d9; }
-.home-provider-item--antigravity .home-provider-icon { color: #e64d78; }
-.home-provider-item--more { color: #7b8798; background: rgba(255, 255, 255, 0.48); }
-
-.home-feature-mark {
-  display: flex;
-  width: 40px;
-  height: 40px;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 18px;
-  border: 1px solid currentColor;
-  border-radius: 10px;
-  box-shadow: none;
-}
-
-.home-feature-mark--blue { color: #2d70c9; background: #eaf2ff; }
-.home-feature-mark--green { color: #23845d; background: #e9f7f0; }
-.home-feature-mark--violet { color: #7652b4; background: #f0ebfb; }
-
-.home-provider-name {
-  color: #26344a;
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.home-provider-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: auto;
-  color: #6e7b8e;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.home-provider-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #32ae78;
-}
-
-.home-surface--dark {
-  background: #10151e;
-  color: #e7edf5;
-}
-
-.home-surface--dark .home-grid {
-  background-image:
-    linear-gradient(rgba(145, 169, 201, 0.11) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(145, 169, 201, 0.11) 1px, transparent 1px);
-  opacity: 0.66;
-}
-
-.home-surface--dark .home-provider-heading::before,
-.home-surface--dark .home-provider-heading::after {
-  background: #2b3748;
-}
-
-.home-surface--dark .home-provider-item {
-  border-color: #2a3749;
-  background: rgba(23, 31, 43, 0.88);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
-}
-
-.home-surface--dark .home-provider-item:hover {
-  border-color: #50627a;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
-}
-
-.home-surface--dark .home-provider-item--more {
-  background: rgba(23, 31, 43, 0.5);
-}
-
-.home-surface--dark .home-feature-mark--blue { color: #83b7ff; background: #1b304d; }
-.home-surface--dark .home-feature-mark--green { color: #72d1a4; background: #17372c; }
-.home-surface--dark .home-feature-mark--violet { color: #c1a4ee; background: #2d2344; }
-
-.home-surface--dark .home-provider-name { color: #e3eaf4; }
-.home-surface--dark .home-provider-status { color: #9aa9bb; }
-
-@media (prefers-reduced-motion: reduce) {
-  .home-provider-item { transition: none; }
-}
-
-@media (max-width: 640px) {
-  .home-provider-heading::before,
-  .home-provider-heading::after { display: none; }
-
-  .home-provider-item {
-    min-width: min(154px, calc(50vw - 26px));
-    padding-inline: 11px;
-  }
-}
-
-/* Terminal Container */
-.terminal-container {
-  position: relative;
-  display: inline-block;
-}
-
-/* Terminal Window */
-.terminal-window {
-  width: 420px;
-  background: #172131;
-  border: 1px solid #2d4058;
-  border-radius: 10px;
-  box-shadow:
-    0 18px 34px -18px rgba(15, 28, 46, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  overflow: hidden;
-  transform: translateY(0);
-  transition: transform 0.3s ease;
-}
-
-.terminal-window:hover {
-  transform: translateY(-3px);
-}
-
-/* Terminal Header */
-.terminal-header {
-  display: flex;
-  align-items: center;
-  padding: 12px 16px;
-  background: #1b2a3e;
-  border-bottom: 1px solid #2d4058;
-}
-
-.terminal-buttons {
-  display: flex;
-  gap: 8px;
-}
-
-.terminal-buttons span {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-}
-
-.btn-close {
-  background: #ef4444;
-}
-.btn-minimize {
-  background: #eab308;
-}
-.btn-maximize {
-  background: #22c55e;
-}
-
-.terminal-title {
-  flex: 1;
-  text-align: center;
-  font-size: 12px;
-  font-family: ui-monospace, monospace;
-  color: #64748b;
-  margin-right: 52px;
-}
-
-/* Terminal Body */
-.terminal-body {
-  padding: 20px 24px;
-  font-family: ui-monospace, 'Fira Code', monospace;
-  font-size: 14px;
-  line-height: 2;
-}
-
-.code-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  opacity: 0;
-  animation: line-appear 0.5s ease forwards;
-}
-
-.line-1 {
-  animation-delay: 0.3s;
-}
-.line-2 {
-  animation-delay: 1s;
-}
-.line-3 {
-  animation-delay: 1.8s;
-}
-.line-4 {
-  animation-delay: 2.5s;
-}
-
-@keyframes line-appear {
-  from {
-    opacity: 0;
-    transform: translateY(5px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.code-prompt {
-  color: #22c55e;
-  font-weight: bold;
-}
-.code-cmd {
-  color: #38bdf8;
-}
-.code-flag {
-  color: #a78bfa;
-}
-.code-url {
-  color: #14b8a6;
-}
-.code-comment {
-  color: #64748b;
-  font-style: italic;
-}
-.code-success {
-  color: #22c55e;
-  background: rgba(34, 197, 94, 0.15);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-weight: 600;
-}
-.code-response {
-  color: #fbbf24;
-}
-
-/* Blinking Cursor */
-.cursor {
-  display: inline-block;
-  width: 8px;
-  height: 16px;
-  background: #22c55e;
-  animation: blink 1s step-end infinite;
-}
-
-@keyframes blink {
-  0%,
-  50% {
-    opacity: 1;
-  }
-  51%,
-  100% {
-    opacity: 0;
-  }
-}
-
-/* Dark mode adjustments */
-:deep(.dark) .terminal-window {
-  box-shadow:
-    0 18px 34px -18px rgba(0, 0, 0, 0.7),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    linear-gradient(color-mix(in oklab, var(--ui-border) 62%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--ui-border) 62%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 90% 55% at 50% 0%, #000 30%, transparent 78%);
+  opacity: 0.55;
 }
 </style>
