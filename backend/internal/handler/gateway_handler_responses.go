@@ -45,6 +45,20 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		zap.Any("group_id", apiKey.GroupID),
 	)
 
+	// 协议族准入：本 handler 只服务「入站 OpenAI Responses、上游 Anthropic」
+	// 的跨协议族场景（Anthropic / Antigravity 平台分组、或 composite 解析到
+	// anthropic）。分组关闭跨协议转换时必须在入口返回 400 PROTOCOL_MISMATCH，
+	// 带上 path/group_platform/hint；否则会先做账号调度，把「协议根本不可能被
+	// 服务」错误地表现成可重试的 503 no available accounts。
+	if protocolMismatchApplies(c, apiKey) {
+		reqLog.Warn("gateway.responses.protocol_mismatch",
+			zap.String("path", c.Request.URL.Path),
+			zap.String("group_platform", effectiveAPIKeyPlatform(c, apiKey)),
+		)
+		writeProtocolMismatchError(c, c.Request.URL.Path, effectiveAPIKeyPlatform(c, apiKey))
+		return
+	}
+
 	// Read request body
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
@@ -260,7 +274,16 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				}
 				message := cls.Message
 				if !cls.ModelNotFound {
-					message = "No available accounts: " + err.Error()
+					// 真实无候选时把「协议/平台是否匹配、转换开关状态」一并返回：
+					// 客户端与运维能立刻区分「没号/全忙」与「协议入口配错」。
+					message = "No available accounts: " + err.Error() + " [" +
+						service.SelectionFailureProtocolDiagnostics(c, apiKey, c.Request.URL.Path) + "]"
+				}
+				if cls.Code != "" {
+					// MODEL_NOT_AVAILABLE 等稳定机器码：客户端据此判定是配置问题
+					// 而非瞬时容量，避免对 503 无脑重试。
+					h.responsesErrorResponseWithTypeAndCode(c, cls.Status, cls.ErrType, cls.Code, message)
+					return
 				}
 				h.responsesErrorResponse(c, cls.Status, cls.ErrType, message)
 				return
@@ -474,6 +497,27 @@ func (h *GatewayHandler) responsesErrorResponse(c *gin.Context, status int, code
 	}
 	c.JSON(status, gin.H{
 		"error": gin.H{
+			"code":    code,
+			"message": message,
+		},
+	})
+}
+
+// responsesErrorResponseWithTypeAndCode writes an OpenAI Responses error that
+// keeps both the Anthropic/OpenAI-style type and a stable machine code such as
+// MODEL_NOT_AVAILABLE. It mirrors responsesErrorResponse's keepalive handling so
+// a stream committed by the pre-header keepalive still terminates with one
+// protocol-valid frame instead of appending JSON.
+func (h *GatewayHandler) responsesErrorResponseWithTypeAndCode(c *gin.Context, status int, errType, code, message string) {
+	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
+		if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) < 0 {
+			h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, true)
+		}
+		return
+	}
+	c.JSON(status, gin.H{
+		"error": gin.H{
+			"type":    errType,
 			"code":    code,
 			"message": message,
 		},

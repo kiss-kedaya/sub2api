@@ -36,9 +36,11 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	startTime := time.Now()
 
 	// 分组级跨协议转换开关：Anthropic 平台分组收到 OpenAI 协议族请求（CC 入站），
-	// 必须经 CC→Responses→Anthropic 转换链。默认关闭时返回可诊断的 400。
+	// 必须经 CC→Responses→Anthropic 转换链。关闭时返回携带 path/group_platform/
+	// hint 的 400 PROTOCOL_MISMATCH，与 /v1/responses 同一份对外语义。
 	if !CrossProtocolConversionAllowed(getAPIKeyFromContext(c)) {
-		writeChatCompletionsError(c, http.StatusBadRequest, crossProtocolDisabledCode, crossProtocolDisabledMessage)
+		path, platform := inboundProtocolMismatchCoordinates(c, "/v1/chat/completions")
+		WriteProtocolMismatchError(c, path, platform)
 		return nil, CrossProtocolConversionError{}
 	}
 

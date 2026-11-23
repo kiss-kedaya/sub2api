@@ -4,6 +4,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -358,4 +359,87 @@ func TestClassifySelectionFailureError_StillUpgradesNonModelNotFoundFallback(t *
 	require.Equal(t, http.StatusTooManyRequests, got.Status)
 	require.Equal(t, "rate_limit_error", got.ErrType)
 	require.False(t, got.ModelNotFound)
+}
+
+// 模型层无账号支持：404 + 稳定机器码 MODEL_NOT_AVAILABLE，并列出分组当前能服务的
+// 模型（来自调度/账号模型映射，不用 upstream_model_metadata）。
+func TestClassifyNoAccountError_ModelNotAvailable_CodeAndAvailableModels(t *testing.T) {
+	c := newTestGinContextWithRequest()
+	fd := &fakeDiagnoser{resp: service.ModelAvailabilityDiagnosis{
+		HasAccountsInPool: true,
+		HasModelSupport:   false,
+		AvailableModels:   []string{"claude-sonnet-4-5", "claude-haiku-4-5"},
+	}}
+	apiKey := &service.APIKey{GroupID: ptrInt64(118)}
+
+	cls := classifyNoAccountErrorFromGin(c, fd, apiKey, "claude-opus-9", "claude-opus-9", service.PlatformAnthropic)
+
+	require.Equal(t, http.StatusNotFound, cls.Status)
+	require.Equal(t, "model_not_found", cls.ErrType)
+	require.Equal(t, "MODEL_NOT_AVAILABLE", cls.Code)
+	require.True(t, cls.ModelNotFound)
+	require.Contains(t, cls.Message, "claude-opus-9")
+	require.Contains(t, cls.Message, "claude-sonnet-4-5")
+	require.Contains(t, cls.Message, "claude-haiku-4-5")
+}
+
+func TestClassifyNoAccountError_ModelNotAvailable_NoConfiguredModels(t *testing.T) {
+	c := newTestGinContextWithRequest()
+	fd := &fakeDiagnoser{resp: service.ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: false}}
+	apiKey := &service.APIKey{GroupID: ptrInt64(118)}
+
+	cls := classifyNoAccountErrorFromGin(c, fd, apiKey, "claude-opus-9", "claude-opus-9", service.PlatformAnthropic)
+
+	require.Equal(t, "MODEL_NOT_AVAILABLE", cls.Code)
+	require.Contains(t, cls.Message, "claude-opus-9")
+	require.Contains(t, cls.Message, "没有可用的模型配置")
+}
+
+// 协议不匹配：400 PROTOCOL_MISMATCH，body 带 path / group_platform / hint。
+func TestWriteProtocolMismatchError_BodyFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	writeProtocolMismatchError(c, "/v1/responses", service.PlatformAnthropic)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	var payload struct {
+		Error struct {
+			Type          string `json:"type"`
+			Code          string `json:"code"`
+			Message       string `json:"message"`
+			Path          string `json:"path"`
+			GroupPlatform string `json:"group_platform"`
+			Hint          string `json:"hint"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Equal(t, "invalid_request_error", payload.Error.Type)
+	require.Equal(t, "PROTOCOL_MISMATCH", payload.Error.Code)
+	require.Equal(t, "/v1/responses", payload.Error.Path)
+	require.Equal(t, service.PlatformAnthropic, payload.Error.GroupPlatform)
+	require.Contains(t, payload.Error.Message, "跨协议转换")
+	require.Contains(t, payload.Error.Hint, "/v1/messages")
+}
+
+// 真实无候选（协议/平台匹配、转换开启）时仍返回 503，但诊断信息必须带上
+// 协议族、分组平台与转换开关状态，便于区分"没号/全忙"与"入口配错"。
+func TestSelectionFailureProtocolDiagnostics_AnthropicGroupResponsesIngress(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	groupID := int64(118)
+	apiKey := &service.APIKey{GroupID: &groupID, Group: &service.Group{ID: groupID, Platform: service.PlatformAnthropic, CrossProtocolConversionEnabled: true}}
+
+	diag := service.SelectionFailureProtocolDiagnostics(c, apiKey, "/v1/responses")
+
+	require.Contains(t, diag, "inbound=/v1/responses")
+	require.Contains(t, diag, "inbound_family=openai")
+	require.Contains(t, diag, "group_platform=anthropic")
+	require.Contains(t, diag, "protocol_family_match=false")
+	require.Contains(t, diag, "cross_protocol_conversion=true")
+	require.Contains(t, diag, "servable_via_conversion=true")
 }

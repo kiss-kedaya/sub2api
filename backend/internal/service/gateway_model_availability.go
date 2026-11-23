@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -21,6 +22,45 @@ type ModelAvailabilityDiagnosis struct {
 	// HasModelSupport is true if at least one account's model mapping admits
 	// the requested model.
 	HasModelSupport bool
+	// AvailableModels is a best-effort, sorted, deduplicated and capped list of
+	// public model names advertised by the pool's model mappings. It is filled
+	// only when the pool exists but no account admits the requested model, so
+	// the error message can tell the caller what the group can serve instead of
+	// leaving them with a bare "no available accounts".
+	AvailableModels []string
+}
+
+// maxDiagnosedAvailableModels caps AvailableModels so an error body stays
+// readable when a group advertises hundreds of aliases.
+const maxDiagnosedAvailableModels = 20
+
+// collectAvailableModelKeys records mapping keys (public model names/patterns)
+// from the diagnosis candidate pool. Accounts with an empty mapping accept any
+// model, so HasModelSupport short-circuits before this matters; callers still
+// guard because persisted rows can be inconsistent.
+func collectAvailableModelKeys(accounts []Account) []string {
+	set := make(map[string]struct{})
+	for i := range accounts {
+		for key := range accounts[i].GetModelMapping() {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			set[key] = struct{}{}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	models := make([]string, 0, len(set))
+	for model := range set {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	if len(models) > maxDiagnosedAvailableModels {
+		models = models[:maxDiagnosedAvailableModels]
+	}
+	return models
 }
 
 // ModelAvailabilityDiagnoser is implemented by gateway services that can
@@ -100,15 +140,20 @@ func (s *GatewayService) DiagnoseModelAvailabilityForPlatform(
 	}
 
 	diag := ModelAvailabilityDiagnosis{}
+	eligible := make([]Account, 0, len(accounts))
 	for i := range accounts {
 		if useMixed && accounts[i].Platform == PlatformAntigravity && !accounts[i].IsMixedSchedulingEnabled() {
 			continue
 		}
+		eligible = append(eligible, accounts[i])
 		diag.HasAccountsInPool = true
 		if s.isModelSupportedByAccountWithContext(ctx, &accounts[i], requestedModel) {
 			diag.HasModelSupport = true
 			return diag
 		}
+	}
+	if diag.HasAccountsInPool {
+		diag.AvailableModels = collectAvailableModelKeys(eligible)
 	}
 	return diag
 }
@@ -135,15 +180,20 @@ func diagnoseModelAvailabilityFromSchedulerSnapshot(
 	}
 	diag := ModelAvailabilityDiagnosis{}
 	useMixed := platform == PlatformAnthropic || platform == PlatformGemini
+	eligible := make([]Account, 0, len(accounts))
 	for i := range accounts {
 		if useMixed && accounts[i].Platform == PlatformAntigravity && !accounts[i].IsMixedSchedulingEnabled() {
 			continue
 		}
+		eligible = append(eligible, accounts[i])
 		diag.HasAccountsInPool = true
 		if accounts[i].IsModelSupported(requestedModel) {
 			diag.HasModelSupport = true
 			return diag
 		}
+	}
+	if diag.HasAccountsInPool {
+		diag.AvailableModels = collectAvailableModelKeys(eligible)
 	}
 	return diag
 }

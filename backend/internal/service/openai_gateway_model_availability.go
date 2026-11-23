@@ -68,5 +68,8 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 			return diag
 		}
 	}
+	if diag.HasAccountsInPool {
+		diag.AvailableModels = collectAvailableModelKeys(accounts)
+	}
 	return diag
 }

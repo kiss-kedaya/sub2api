@@ -45,6 +45,17 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		zap.Any("group_id", apiKey.GroupID),
 	)
 
+	// 协议族准入：同 Responses handler。Chat Completions 入站落在非 OpenAI
+	// 平台分组时必然需要跨协议族转换；分组关闭时入口即 400 PROTOCOL_MISMATCH。
+	if protocolMismatchApplies(c, apiKey) {
+		reqLog.Warn("gateway.chat_completions.protocol_mismatch",
+			zap.String("path", c.Request.URL.Path),
+			zap.String("group_platform", effectiveAPIKeyPlatform(c, apiKey)),
+		)
+		writeProtocolMismatchError(c, c.Request.URL.Path, effectiveAPIKeyPlatform(c, apiKey))
+		return
+	}
+
 	// Read request body
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
@@ -260,7 +271,12 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				}
 				message := cls.Message
 				if !cls.ModelNotFound {
-					message = "No available accounts: " + err.Error()
+					message = "No available accounts: " + err.Error() + " [" +
+						service.SelectionFailureProtocolDiagnostics(c, apiKey, c.Request.URL.Path) + "]"
+				}
+				if cls.Code != "" {
+					h.chatCompletionsErrorResponseWithCode(c, cls.Status, cls.ErrType, cls.Code, message)
+					return
 				}
 				h.chatCompletionsErrorResponse(c, cls.Status, cls.ErrType, message)
 				return
@@ -489,6 +505,25 @@ func (h *GatewayHandler) chatCompletionsErrorResponse(c *gin.Context, status int
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"type":    errType,
+			"message": message,
+		},
+	})
+}
+
+// chatCompletionsErrorResponseWithCode writes an OpenAI Chat Completions error
+// carrying a stable machine code (for example MODEL_NOT_AVAILABLE) next to the
+// standard type/message pair.
+func (h *GatewayHandler) chatCompletionsErrorResponseWithCode(c *gin.Context, status int, errType, code, message string) {
+	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
+		if service.OpenAICompactKeepaliveAdjustedWrittenSize(c) < 0 {
+			h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, true)
+		}
+		return
+	}
+	c.JSON(status, gin.H{
+		"error": gin.H{
+			"type":    errType,
+			"code":    code,
 			"message": message,
 		},
 	})

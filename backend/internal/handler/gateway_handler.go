@@ -451,7 +451,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					)
 					message := cls.Message
 					if !cls.ModelNotFound {
-						message = "No available accounts: " + err.Error()
+						message = "No available accounts: " + err.Error() + " [" +
+							service.SelectionFailureProtocolDiagnostics(c, apiKey, c.Request.URL.Path) + "]"
+					}
+					if cls.Code != "" {
+						h.handleStreamingAwareErrorWithCode(c, cls.Status, cls.ErrType, cls.Code, message, streamStarted)
+						return
 					}
 					h.handleStreamingAwareError(c, cls.Status, cls.ErrType, message, streamStarted)
 					return
@@ -809,7 +814,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					)
 					message := cls.Message
 					if !cls.ModelNotFound {
-						message = "No available accounts: " + err.Error()
+						message = "No available accounts: " + err.Error() + " [" +
+							service.SelectionFailureProtocolDiagnostics(c, apiKey, c.Request.URL.Path) + "]"
+					}
+					if cls.Code != "" {
+						h.handleStreamingAwareErrorWithCode(c, cls.Status, cls.ErrType, cls.Code, message, streamStarted)
+						return
 					}
 					h.handleStreamingAwareError(c, cls.Status, cls.ErrType, message, streamStarted)
 					return
