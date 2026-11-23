@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +18,29 @@ func TestNormalizePasskeyName(t *testing.T) {
 
 	longName := strings.Repeat("密", maxPasskeyNameLength+10)
 	require.Len(t, []rune(normalizePasskeyName(longName)), maxPasskeyNameLength)
+}
+
+// 校验失败要能分清是 challenge 过期、challenge 不匹配、origin 不匹配还是 RP ID
+// 不匹配：前端据此提示，运维据此判断是站点配置问题还是认证器响应问题。
+func TestClassifyPasskeyVerificationError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want error
+	}{
+		{"origin mismatch", protocol.ErrVerification.WithDetails("Error validating origin"), ErrPasskeyOriginMismatch},
+		{"rpid mismatch", protocol.ErrVerification.WithInfo("RP Hash mismatch. Expected aa and Received bb"), ErrPasskeyRPIDMismatch},
+		{"challenge mismatch", protocol.ErrVerification.WithDetails("Error validating challenge"), ErrPasskeyChallengeMismatch},
+		{"session expired", protocol.ErrBadRequest.WithDetails("Session has Expired"), ErrPasskeySessionExpired},
+		{"generic failure", protocol.ErrParsingData.WithInfo("Parse error for Registration"), ErrPasskeyVerify},
+		{"non protocol error", context.DeadlineExceeded, ErrPasskeyVerify},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.ErrorIs(t, classifyPasskeyVerificationError("registration", 42, testCase.err), testCase.want)
+		})
+	}
+	require.NoError(t, classifyPasskeyVerificationError("registration", 42, nil))
 }
 
 func TestPasskeySummaryReportsCurrentBackupState(t *testing.T) {

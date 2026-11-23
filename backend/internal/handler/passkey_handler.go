@@ -21,6 +21,11 @@ type PasskeyHandler struct {
 	passkeys    *service.PasskeyService
 	authService *service.AuthService
 	settingSvc  *service.SettingService
+	// totpService / userService 用于 Passkey 创建/删除的 5 分钟 2FA step-up 门禁：
+	// 账号开启 TOTP 时必须先通过动态码（复用全局 TOTP 对话框与 grant Cookie），
+	// 未开启 TOTP 的账号不受额外限制。为 nil 时保持门禁引入前的行为（测试替身兼容）。
+	totpService *service.TotpService
+	userService *service.UserService
 }
 
 func NewPasskeyHandler(
@@ -33,6 +38,16 @@ func NewPasskeyHandler(
 		authService: authService,
 		settingSvc:  settingService,
 	}
+}
+
+// SetStepUpDependencies 注入 Passkey 创建/删除门禁所需的 TOTP 服务与用户查询。
+// 由 wire 装配（ProvidePasskeyHandler）；为 nil 时门禁放行，保持既有测试可直接构造。
+func (h *PasskeyHandler) SetStepUpDependencies(totpService *service.TotpService, userService *service.UserService) {
+	if h == nil {
+		return
+	}
+	h.totpService = totpService
+	h.userService = userService
 }
 
 type passkeyOptionsResponse struct {
@@ -141,6 +156,11 @@ func (h *PasskeyHandler) BeginRegistration(c *gin.Context) {
 		response.Unauthorized(c, "User not authenticated")
 		return
 	}
+	// 创建 Passkey 是可长期接管账号的敏感操作：账号开启 TOTP 时必须先过 step-up，
+	// 未开启 TOTP 的账号不额外要求（与「校验当前密码」类入口同一口径）。
+	if !h.requirePasskeyMutationStepUp(c, subject.UserID) {
+		return
+	}
 	creation, token, err := h.passkeys.BeginRegistration(c.Request.Context(), subject.UserID, bindPasskeyPassword(c))
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -213,11 +233,35 @@ func (h *PasskeyHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// 删除 Passkey 同样是敏感操作：开启 TOTP 的账号必须先过 step-up。
+	if !h.requirePasskeyMutationStepUp(c, subject.UserID) {
+		return
+	}
 	if err := h.passkeys.Delete(c.Request.Context(), subject.UserID, credentialID, bindPasskeyPassword(c)); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 	response.Success(c, gin.H{"success": true})
+}
+
+// requirePasskeyMutationStepUp 是 Passkey 创建/删除的 2FA 门禁：
+//   - 账号未开启 TOTP：直接放行（不额外要求）；
+//   - 账号开启 TOTP：Cookie 里有 5 分钟内的有效 grant → 放行并重签；
+//     没有 → 403 STEP_UP_REQUIRED，前端全局 TOTP 对话框完成 /user/totp/step-up
+//     后自动重试本次请求。
+//
+// totpService 或 userService 未装配时保持旧行为（放行），避免非 wire 装配的调用方
+// （测试、脚本）被意外阻断。
+func (h *PasskeyHandler) requirePasskeyMutationStepUp(c *gin.Context, userID int64) bool {
+	if h == nil || h.totpService == nil || h.userService == nil || userID <= 0 {
+		return true
+	}
+	user, err := h.userService.GetByID(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return false
+	}
+	return requirePasswordVerificationGrant(c, h.totpService, user)
 }
 
 func (h *PasskeyHandler) requirePasskeysEnabled(c *gin.Context) bool {
