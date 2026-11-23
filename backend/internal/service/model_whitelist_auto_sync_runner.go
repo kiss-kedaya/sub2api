@@ -37,6 +37,9 @@ const (
 	modelWhitelistAutoSyncMaxManualIDs  = 20
 	modelWhitelistAutoSyncBackoffBase   = 5 * time.Minute
 	modelWhitelistAutoSyncBackoffMax    = 6 * time.Hour
+	// modelWhitelistMetadataRefreshTimeout bounds the post-apply metadata refresh
+	// so a slow models.dev catalogue never holds the whitelist runner.
+	modelWhitelistMetadataRefreshTimeout = 25 * time.Second
 )
 
 // ErrModelWhitelistAutoSyncUnavailable is returned when the runner has no
@@ -117,6 +120,13 @@ func (s *ModelWhitelistAutoSyncService) fetchRetryBackoffUnit() time.Duration {
 
 type modelWhitelistFetcher interface {
 	FetchUpstreamSupportedModels(context.Context, *Account) ([]string, error)
+}
+
+// modelWhitelistMetadataRefresher keeps the per-account model metadata snapshot
+// aligned with the whitelist the runner just applied. *AccountTestService
+// implements it; the optional assertion keeps lightweight test fakes working.
+type modelWhitelistMetadataRefresher interface {
+	RefreshUpstreamModelMetadata(context.Context, *Account, []string) (UpstreamModelMetadataRefreshResult, error)
 }
 
 type modelWhitelistAutoSyncDueLister interface {
@@ -499,7 +509,36 @@ func (s *ModelWhitelistAutoSyncService) syncAccount(ctx context.Context, account
 	if err := s.writeState(ctx, account.ID, &state); err != nil {
 		logger.LegacyPrintf("service.model_whitelist_auto_sync", "account_id=%d state_write_failed: %v", account.ID, err)
 	}
+	s.refreshMetadataAfterWhitelistSync(ctx, current, models)
 	return result, nil
+}
+
+// refreshMetadataAfterWhitelistSync keeps extra.upstream_model_metadata in step
+// with the freshly applied model whitelist. It is strictly best effort: the
+// whitelist write and the next run have already been persisted, so a catalogue
+// or persistence failure is only logged and can never roll back or delay the
+// whitelist application or the schedule.
+func (s *ModelWhitelistAutoSyncService) refreshMetadataAfterWhitelistSync(ctx context.Context, account *Account, models []string) {
+	if s == nil || account == nil {
+		return
+	}
+	refresher, ok := s.accountTestService.(modelWhitelistMetadataRefresher)
+	if !ok {
+		return
+	}
+	refreshCtx, cancel := context.WithTimeout(ctx, modelWhitelistMetadataRefreshTimeout)
+	defer cancel()
+	refreshResult, err := refresher.RefreshUpstreamModelMetadata(refreshCtx, account, models)
+	if err != nil {
+		logger.LegacyPrintf("service.model_whitelist_auto_sync",
+			"account_id=%d metadata_refresh_failed: %s", account.ID, safeModelWhitelistError(err))
+		return
+	}
+	if refreshResult.RegistryError != "" {
+		logger.LegacyPrintf("service.model_whitelist_auto_sync",
+			"account_id=%d metadata_refresh_degraded: models=%d enriched=%d registry_error=%s",
+			account.ID, refreshResult.Models, refreshResult.Enriched, refreshResult.RegistryError)
+	}
 }
 
 func cloneMap(input map[string]any) map[string]any {
