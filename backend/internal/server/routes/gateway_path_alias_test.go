@@ -261,3 +261,123 @@ func TestGatewayPathAliasUnmatchedDuplicatedPrefixReturnsJSON(t *testing.T) {
 	require.Equal(t, "/v1/v1/v1/definitely-not-a-route", payload.Error.OriginalPath)
 	require.Equal(t, "/v1/definitely-not-a-route", payload.Error.NormalizedPath)
 }
+
+// TestGatewayPathAliasPrefixedDuplicatedVersionSegmentsHitAuthentication 是本次修复的
+// 主用例：带前缀路由（/antigravity、/backend-api/codex）重复写版本段时必须折叠成
+// 规范路径并进入鉴权（401），不能直接 404。
+func TestGatewayPathAliasPrefixedDuplicatedVersionSegmentsHitAuthentication(t *testing.T) {
+	router, probe := newGatewayPathAliasRoutesRouter(t)
+	handlerUnderTest := servermiddleware.GatewayPathAlias(router)
+
+	body := `{"model":"claude-opus-5","max_tokens":16,"stream":false}`
+	cases := []struct {
+		method    string
+		path      string
+		canonical string
+	}{
+		// 题设 P1：/antigravity/v1/messages 正常 401，重复写版本段原先 404
+		{http.MethodPost, "/antigravity/v1/messages", "/antigravity/v1/messages"},
+		{http.MethodPost, "/antigravity/v1/v1/messages", "/antigravity/v1/messages"},
+		{http.MethodPost, "/antigravity/v1/v1/v1/messages", "/antigravity/v1/messages"},
+		{http.MethodPost, "/antigravity/v1/v1/messages/count_tokens", "/antigravity/v1/messages/count_tokens"},
+		{http.MethodPost, "/antigravity/v1/v1/v1/messages/count_tokens", "/antigravity/v1/messages/count_tokens"},
+		{http.MethodGet, "/antigravity/v1/models", "/antigravity/v1/models"},
+		{http.MethodGet, "/antigravity/v1/v1/models", "/antigravity/v1/models"},
+		{http.MethodGet, "/antigravity/v1/usage", "/antigravity/v1/usage"},
+		{http.MethodGet, "/antigravity/v1/v1/usage", "/antigravity/v1/usage"},
+		// /backend-api/codex 前缀：规范写法本身就是 /backend-api/codex/responses，
+		// 没有“重复版本段”可折叠，必须原样透传给 gin（不是 Base URL 填错的情形）。
+		{http.MethodPost, "/backend-api/codex/responses", "/backend-api/codex/responses"},
+		{http.MethodGet, "/backend-api/codex/models", "/backend-api/codex/models"},
+	}
+	for _, tc := range cases {
+		t.Run(strings.ReplaceAll(tc.path, "/", "_"), func(t *testing.T) {
+			probe.reset()
+			requestPath := tc.path + "?beta=1&trace=%2Fabc"
+			var requestBody io.Reader
+			if tc.method == http.MethodPost {
+				requestBody = strings.NewReader(body)
+			}
+			req := httptest.NewRequest(tc.method, requestPath, requestBody)
+			req.Header.Set("X-Client-Base-Url", "https://kedaya.ai"+tc.path)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			handlerUnderTest.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusUnauthorized, w.Code,
+				"method=%s path=%q 应命中网关路由进入鉴权并返回 401（而不是 404）", tc.method, tc.path)
+			seen := probe.last(t)
+			require.Equal(t, tc.method, seen.Method, "path=%q", tc.path)
+			require.Equal(t, tc.canonical, seen.Path, "path=%q 应规范化为 %q", tc.path, tc.canonical)
+			require.Equal(t, "beta=1&trace=%2Fabc", seen.RawQuery, "query string 必须原样保留")
+			require.Equal(t, "https://kedaya.ai"+tc.path, seen.Header, "header 必须原样保留")
+			if tc.method == http.MethodPost {
+				require.Equal(t, body, seen.Body, "body 必须原样保留")
+			}
+		})
+	}
+}
+
+// TestGatewayPathAliasNeverFoldsV1BetaIntoV1 反例：/v1beta 不是 /v1 的重复写，
+// 任何前缀下的 v1beta 段都不能被折叠掉或折成 /v1。
+func TestGatewayPathAliasNeverFoldsV1BetaIntoV1(t *testing.T) {
+	router, probe := newGatewayPathAliasRoutesRouter(t)
+	handlerUnderTest := servermiddleware.GatewayPathAlias(router)
+
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/antigravity/v1beta/models/*modelAction"},
+		{http.MethodPost, "/v1beta/v1beta/models/gemini-3-pro:generateContent"},
+		{http.MethodPost, "/antigravity/v1beta/v1beta/models/gemini-3-pro:generateContent"},
+		{http.MethodGet, "/antigravity/v1/v1beta/models"},
+		{http.MethodGet, "/v1/v1beta/models"},
+	} {
+		probe.reset()
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
+		w := httptest.NewRecorder()
+		handlerUnderTest.ServeHTTP(w, req)
+
+		for _, seen := range probe.seen {
+			require.NotContains(t, seen.Path, "/v1/models", "path=%q 不能被折成 /v1 路径", tc.path)
+			require.NotEqual(t, "/v1beta/models", strings.TrimPrefix(seen.Path, ""), "path=%q", tc.path)
+		}
+		require.NotContains(t, w.Body.String(), "gateway_path_not_found", "path=%q 不应触发诊断", tc.path)
+	}
+}
+
+// TestGatewayPathAliasCodexPrefixNormalizedFormsPassThrough 确认 /backend-api/codex 前缀
+// 下的规范写法不被改写：它本身就带端点、没有版本段，属于合规路径（应为 401 而不是 404），
+// 而“多写一层 /v1”的写法不在本修复范围内（保持 404，不改语义）。
+func TestGatewayPathAliasCodexPrefixNormalizedFormsPassThrough(t *testing.T) {
+	router, probe := newGatewayPathAliasRoutesRouter(t)
+	handlerUnderTest := servermiddleware.GatewayPathAlias(router)
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/backend-api/codex/responses"},
+		{http.MethodGet, "/backend-api/codex/models"},
+	}
+	for _, tc := range cases {
+		probe.reset()
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
+		w := httptest.NewRecorder()
+		handlerUnderTest.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusUnauthorized, w.Code, "path=%q 应命中网关鉴权", tc.path)
+		require.Equal(t, tc.path, probe.last(t).Path, "path=%q 不能被改写", tc.path)
+	}
+
+	for _, path := range []string{
+		"/backend-api/codex/v1/v1/responses",
+		"/backend-api/codex/v1/responses",
+	} {
+		probe.reset()
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		w := httptest.NewRecorder()
+		handlerUnderTest.ServeHTTP(w, req)
+		require.Equal(t, http.StatusNotFound, w.Code, "path=%q 不在本次修复范围，保持原语义", path)
+		require.Empty(t, probe.seen, "path=%q 不应命中鉴权", path)
+	}
+}

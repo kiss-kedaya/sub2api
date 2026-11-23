@@ -12,27 +12,39 @@ import (
 	"go.uber.org/zap"
 )
 
-// 本文件在 gin 路由匹配之前规范化网关协议路径，容忍客户端把 Base URL 填错：
+// 本文件在 gin 路由匹配之前规范化网关协议路径，容忍客户端把 Base URL 填错。
+// 路由表推导（受支持前缀、版本段位置）与匹配逻辑在 gateway_path_index.go。
 //
-//  1. 重复的 /v1 前缀折叠成一个：/v1/v1/messages、/v1/v1/v1/messages …
-//     → /v1/messages，前缀个数不设上限；
-//  2. 漏写 /v1 的裸协议路径补齐到 /v1 下：/messages → /v1/messages。
+//  1. 重复版本段折叠：任意受支持前缀（根、/antigravity、/backend-api/codex …）之后
+//     连续重复的同一族版本段折叠成一个：
+//     /v1/v1/messages、/v1/v1/v1/messages、/antigravity/v1/v1/messages、
+//     /antigravity/v1beta/v1beta/models、/backend-api/codex/v1/v1/responses …；
+//     不同族（/v1/v1beta）绝不折叠，/v1beta 永远不会变成 /v1。
+//  2. 缺版本段补齐：根前缀与各前缀之后漏写版本段的路径补上，且必须真实命中路由：
+//     /messages → /v1/messages、/chat/completions → /v1/chat/completions、
+//     /antigravity/messages → /antigravity/v1/messages。
+//
+// 规范写法（/v1/messages、/v1beta/models、/antigravity/v1beta/models、
+// /backend-api/codex/responses）一个字节都不改；/api/v1/*、/admin/*、静态资源、
+// /health、SPA 页面（/usage、/dashboard …）也不会被改写。
 //
 // 规范化只修改 URL.Path，query string、header、body、HTTP method 全部保持原样；
 // 重写之后仍然交给同一个 gin 路由 + 同一套中间件链处理，因此鉴权、限流、计费、
 // 访问日志与直接请求规范路径完全一致，不需要第二套路由或第二套中间件。
 //
-// 只有规范化结果确实命中已注册的 /v1 路由（method 也要一致）时才会重写，
+// 只有规范化结果确实命中已注册的网关路由（method 也要一致）时才会重写，
 // 所以 /api/v1/*、/admin/*、/assets/* 等静态资源、/health 探针和 SPA 页面路由
 // 不会被误伤。
 
-const gatewayVersionPrefix = "/v1"
+// gatewayVersionSegmentPrefix 是协议版本段的公共前缀（匹配 v1 / v1beta …，不含 v2）。
+const gatewayVersionSegmentPrefix = "v1"
 
 // PathAliasRule 描述一次网关路径规范化采用的规则。
 type PathAliasRule string
 
 const (
-	// PathAliasRuleDuplicateVersionPrefix 表示请求把 /v1 写了多遍（/v1/v1/...），已折叠成一个。
+	// PathAliasRuleDuplicateVersionPrefix 表示路径里重复写了同一族版本段
+	// （/v1/v1/...、/antigravity/v1beta/v1beta/...），已折叠成一个。
 	PathAliasRuleDuplicateVersionPrefix PathAliasRule = "duplicate_version_prefix"
 	// PathAliasRuleMissingVersionPrefix 表示请求没有带 /v1（/messages），已补齐到 /v1 下。
 	PathAliasRuleMissingVersionPrefix PathAliasRule = "missing_version_prefix"
@@ -55,6 +67,8 @@ type gatewayPathAliasInfo struct {
 	Original          string
 	Normalized        string
 	Rule              PathAliasRule
+	Prefix            string
+	Version           string
 	DuplicatePrefixes int
 }
 
@@ -73,40 +87,19 @@ func gatewayPathAliasInfoFromContext(ctx context.Context) (gatewayPathAliasInfo,
 	return info, ok
 }
 
-// FoldDuplicateVersionPrefix 计算把重复的 /v1 前缀折叠成一个之后的结果。
-//
-// 返回值 count 表示请求实际携带的连续 /v1 前缀个数：0 表示路径没有以 /v1 开头，
-// 1 表示写法本来就规范。只有 count >= 2 时 folded 才与 path 不同。
-func FoldDuplicateVersionPrefix(path string) (folded string, count int) {
-	if path == gatewayVersionPrefix {
-		return path, 1
+// isGatewayVersionSegment 判断一个路径段是不是协议版本段（v1、v1beta、v1alpha、v1/v1）。
+// 只认小写，且必须以 v1 开头："v12"、"v2"、"v1x" 都不算，避免把模型名或
+// 业务段当成版本段去折叠。
+func isGatewayVersionSegment(segment string) bool {
+	if !strings.HasPrefix(segment, gatewayVersionSegmentPrefix) {
+		return false
 	}
-	if !strings.HasPrefix(path, gatewayVersionPrefix+"/") {
-		return path, 0
+	for _, ch := range segment[len(gatewayVersionSegmentPrefix):] {
+		if ch < 'a' || ch > 'z' {
+			return false
+		}
 	}
-	rest := path[len(gatewayVersionPrefix):]
-	count = 1
-	for rest == gatewayVersionPrefix || strings.HasPrefix(rest, gatewayVersionPrefix+"/") {
-		rest = rest[len(gatewayVersionPrefix):]
-		count++
-	}
-	if count == 1 {
-		return path, 1
-	}
-	return gatewayVersionPrefix + rest, count
-}
-
-// canonicalizeMissingVersionPrefix 把没有 /v1 前缀的路径补成 /v1/* 候选。
-// 第二个返回值表示是否是一个可以补前缀的候选路径（不代表该路径真实存在）。
-func canonicalizeMissingVersionPrefix(path string) (string, bool) {
-	if path == "" || path == "/" || !strings.HasPrefix(path, "/") {
-		return "", false
-	}
-	if path == gatewayVersionPrefix || strings.HasPrefix(path, gatewayVersionPrefix+"/") {
-		return "", false
-	}
-	// /v1beta/... 属于 Gemini 原生 API（前缀是 /v1beta，不是 /v1），不要碰。
-	return gatewayVersionPrefix + path, true
+	return true
 }
 
 func isExcludedBareGatewayPath(path string) bool {
@@ -118,87 +111,13 @@ func isExcludedBareGatewayPath(path string) bool {
 	return false
 }
 
-// gatewayRoutePattern 是已注册 /v1 路由的一条模式（method + 路径模板）。
-type gatewayRoutePattern struct {
-	method   string
-	segments []string
-}
-
-// gatewayRouteIndex 按 "method#路径第二段" 给 /v1 路由分桶，避免每个非网关请求
-// （静态资源、SPA 页面、/api/v1 管理接口）都遍历完整路由表。
-type gatewayRouteIndex map[string][]gatewayRoutePattern
-
-func newGatewayRouteIndex(router *gin.Engine) gatewayRouteIndex {
-	index := make(gatewayRouteIndex)
-	if router == nil {
-		return index
-	}
-	for _, route := range router.Routes() {
-		if route.Path != gatewayVersionPrefix && !strings.HasPrefix(route.Path, gatewayVersionPrefix+"/") {
-			continue
-		}
-		if route.Method == http.MethodHead {
-			// gin 不会为 GET 自动注册 HEAD；HEAD 请求交给 gin 默认行为即可。
-			continue
-		}
-		segments := splitGatewayPathSegments(route.Path)
-		if len(segments) < 2 {
-			continue
-		}
-		key := route.Method + "#" + segments[1]
-		index[key] = append(index[key], gatewayRoutePattern{method: route.Method, segments: segments})
-	}
-	return index
-}
-
-func splitGatewayPathSegments(path string) []string {
-	trimmed := strings.Trim(path, "/")
-	if trimmed == "" {
-		return nil
-	}
-	return strings.Split(trimmed, "/")
-}
-
-// matchGatewayRoute 判断 method + path 是否会被某条已注册的 /v1 路由命中。
-// 匹配只用于"要不要重写"的决策，宽松一点无害：真正响应仍由 gin 内部路由树决定。
-func matchGatewayRoute(index gatewayRouteIndex, method, path string) bool {
-	actual := splitGatewayPathSegments(path)
-	if len(actual) < 2 || actual[0] != strings.TrimPrefix(gatewayVersionPrefix, "/") {
-		return false
-	}
-	patterns := index[method+"#"+actual[1]]
-	for _, pattern := range patterns {
-		if matchGatewayRouteSegments(pattern.segments, actual) {
-			return true
-		}
-	}
-	return false
-}
-
-func matchGatewayRouteSegments(pattern, actual []string) bool {
-	for i, segment := range pattern {
-		if strings.HasPrefix(segment, "*") {
-			// gin 的 catch-all 段（如 /responses/*subpath）至少要吃掉一段实际路径。
-			return len(actual) > i
-		}
-		if i >= len(actual) {
-			return false
-		}
-		if strings.HasPrefix(segment, ":") {
-			// 路径参数（:model、:task_id 等）匹配任意单段。
-			continue
-		}
-		if segment != actual[i] {
-			return false
-		}
-	}
-	return len(actual) == len(pattern)
-}
-
 // GatewayPathAlias 包装 gin 引擎，在路由匹配之前规范化网关协议路径。
 //
 // 返回的 http.Handler 应作为 HTTP server 的最终 handler 使用（见 ProvideHTTPServer），
-// 这样规范化发生在 gin 路由之前，重写后的请求仍由原来的 /v1 路由与中间件链处理。
+// 这样规范化发生在 gin 路由之前，重写后的请求仍由原来的网关路由与中间件链处理。
+//
+// router 必须已经注册完所有路由（ProvideHTTPServer 在 registerRoutes 之后才被调用）；
+// 索引在启动时算一次即可。
 func GatewayPathAlias(router *gin.Engine) http.Handler {
 	var next http.Handler
 	if router != nil {
@@ -224,41 +143,20 @@ func (h *gatewayPathAliasHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	}
 	path := r.URL.Path
 
-	// 规则 1：重复 /v1 前缀折叠成一个（个数不设上限）。
-	if folded, count := FoldDuplicateVersionPrefix(path); count >= 2 {
-		info := gatewayPathAliasInfo{
-			Original:          path,
-			Normalized:        folded,
-			Rule:              PathAliasRuleDuplicateVersionPrefix,
-			DuplicatePrefixes: count,
-		}
-		if !matchGatewayRoute(h.index, r.Method, folded) {
-			// GET/POST 是协议客户端的调用方式，返回带提示的 JSON 诊断；
-			// OPTIONS（CORS 预检）、HEAD 等方法原样交给 gin，避免破坏浏览器行为。
-			if r.Method == http.MethodGet || r.Method == http.MethodPost {
-				h.writeUnmatchedDiagnostic(w, r, info)
-				return
-			}
-			h.next.ServeHTTP(w, r)
+	info, ok := h.index.canonicalGatewayPath(r.Method, path)
+	if !ok {
+		// 折叠后仍然不存在的版本根路径（/v1/v1/typo…）返回带 Base URL 提示的
+		// JSON 诊断；GET/POST 是协议客户端的调用方式，OPTIONS（CORS 预检）、HEAD
+		// 等方法原样交给 gin，避免破坏浏览器行为。带前缀的拼写错误同样交给
+		// gin 原样 404，不扩散诊断面。
+		if gatewayUnmatchedDiagnostic(info) && (r.Method == http.MethodGet || r.Method == http.MethodPost) {
+			h.writeUnmatchedDiagnostic(w, r, info)
 			return
 		}
-		h.rewriteAndServe(w, r, info)
+		h.next.ServeHTTP(w, r)
 		return
 	}
-
-	// 规则 2：漏写 /v1 的裸协议路径补齐到 /v1 下。
-	if candidate, ok := canonicalizeMissingVersionPrefix(path); ok &&
-		!isExcludedBareGatewayPath(candidate) &&
-		matchGatewayRoute(h.index, r.Method, candidate) {
-		h.rewriteAndServe(w, r, gatewayPathAliasInfo{
-			Original:   path,
-			Normalized: candidate,
-			Rule:       PathAliasRuleMissingVersionPrefix,
-		})
-		return
-	}
-
-	h.next.ServeHTTP(w, r)
+	h.rewriteAndServe(w, r, info)
 }
 
 func (h *gatewayPathAliasHandler) rewriteAndServe(w http.ResponseWriter, r *http.Request, info gatewayPathAliasInfo) {
@@ -313,12 +211,24 @@ func logGatewayPathNormalized(ctx context.Context, r *http.Request, info gateway
 		userAgent = r.UserAgent()
 		remoteAddr = r.RemoteAddr
 	}
+	prefix := info.Prefix
+	if prefix == "" {
+		prefix = "/"
+	}
+	// 兼容旧看板：根前缀的重复版本段等价于原来的"重复 /v1 前缀数"，其它前缀填 0。
+	duplicateV1Prefixes := 0
+	if info.Prefix == "" {
+		duplicateV1Prefixes = info.DuplicatePrefixes
+	}
 	logger.FromContext(ctx).Info("gateway base url path normalized",
 		zap.String("component", "gateway.path_alias"),
 		zap.String("rule", string(info.Rule)),
+		zap.String("gateway_prefix", prefix),
+		zap.String("gateway_version", info.Version),
 		zap.String("original_path", info.Original),
 		zap.String("normalized_path", info.Normalized),
-		zap.Int("duplicate_v1_prefixes", info.DuplicatePrefixes),
+		zap.Int("duplicate_version_segments", info.DuplicatePrefixes),
+		zap.Int("duplicate_v1_prefixes", duplicateV1Prefixes),
 		zap.String("method", method),
 		zap.String("remote_addr", remoteAddr),
 		zap.String("user_agent", truncateGatewayLogField(userAgent, 256)),
