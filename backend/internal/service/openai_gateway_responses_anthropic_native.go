@@ -63,9 +63,11 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	}
 	clientStream := responsesReq.Stream
 
-	// 3. Convert Responses → Anthropic
-	anthropicReq, err := apicompat.ResponsesToAnthropicRequestWithOptions(&responsesReq, &apicompat.ResponsesToAnthropicOptions{
+	// 3. Convert Responses → Anthropic，并保留未映射顶层字段供透传。
+	anthropicReq, passthroughFields, err := apicompat.ResponsesToAnthropicRequestWithPassthrough(&responsesReq, adaptedBody, &apicompat.ResponsesToAnthropicOptions{
 		PreserveReasoningText: account.Platform == PlatformDeepseek,
+		// 同 /v1/responses→Anthropic：不改写用户 reasoning 参数，原样带给上游。
+		PassthroughReasoning: true,
 	})
 	if err != nil {
 		writeResponsesError(c, http.StatusBadRequest, "invalid_request_error", "Failed to convert request")
@@ -97,6 +99,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	if err != nil {
 		return nil, fmt.Errorf("marshal anthropic request: %w", err)
 	}
+	anthropicBody = mergeResponsesPassthroughFieldsBestEffort(anthropicBody, passthroughFields)
 
 	// 与 /v1/messages 直通路径相同的 pre-filter。
 	anthropicBody = StripEmptyTextBlocks(anthropicBody)

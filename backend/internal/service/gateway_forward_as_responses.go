@@ -39,9 +39,11 @@ func (s *GatewayService) ForwardAsResponses(
 
 	// 分组级跨协议转换开关：Anthropic 平台分组收到 /v1/responses（OpenAI 协议族），
 	// 必须经 Responses→Anthropic 转换链。与 ForwardAsChatCompletions 同口径：
-	// 关闭时返回可诊断的 400，不静默转换。
+	// 关闭时返回携带 path/group_platform/hint 的 400 PROTOCOL_MISMATCH，不静默转换，
+	// 也不再落到「无可用账号」的 503。
 	if !CrossProtocolConversionAllowed(getAPIKeyFromContext(c)) {
-		writeResponsesError(c, http.StatusBadRequest, crossProtocolDisabledCode, crossProtocolDisabledMessage)
+		path, platform := inboundProtocolMismatchCoordinates(c, "/v1/responses")
+		WriteProtocolMismatchError(c, path, platform)
 		return nil, CrossProtocolConversionError{}
 	}
 
@@ -67,8 +69,15 @@ func (s *GatewayService) ForwardAsResponses(
 	originalModel := responsesReq.Model
 	clientStream := responsesReq.Stream
 
-	// 3. Convert Responses → Anthropic
-	anthropicReq, err := apicompat.ResponsesToAnthropicRequest(&responsesReq)
+	// 3. Convert Responses → Anthropic，并收集转换器不认识的顶层字段。
+	// 这些字段（previous_response_id、store、include、内置工具外的扩展参数、未来新
+	// 字段等）按「透传优先」原样并入转换后的请求体，交给上游忽略或自行处理，
+	// 不再在反序列化阶段静默丢弃；只有无法安全表达为 JSON 顶层键的异常键名才丢弃。
+	// 透传优先：除跨协议必需的最小映射外，不在网关层改写用户参数。
+	// reasoning 原样带给上游（不合成 thinking/output_config），上游拒绝就原样报错。
+	anthropicReq, passthroughFields, err := apicompat.ResponsesToAnthropicRequestWithPassthrough(&responsesReq, adaptedBody, &apicompat.ResponsesToAnthropicOptions{
+		PassthroughReasoning: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("convert responses to anthropic: %w", err)
 	}
@@ -110,6 +119,8 @@ func (s *GatewayService) ForwardAsResponses(
 	if err != nil {
 		return nil, fmt.Errorf("marshal anthropic request: %w", err)
 	}
+	// 5b. 未映射的 Responses 顶层字段原样透传（转换结果优先，不覆盖 messages 等）。
+	anthropicBody = mergeResponsesPassthroughFieldsBestEffort(anthropicBody, passthroughFields)
 
 	// 6. Apply Claude Code mimicry for OAuth accounts (non-Claude-Code endpoints).
 	// OpenAI Responses 协议进来的请求永远不是 Claude Code 客户端，所以对 OAuth 账号
@@ -160,6 +171,10 @@ func (s *GatewayService) ForwardAsResponses(
 	if err != nil {
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
+	// 入站 query string 原样透传（转换不改 query）：仅补齐上游 URL 里没有的键，
+	// 不覆盖 buildUpstreamRequest 已写入的 ?beta=true。客户端自定义的
+	// 诊断/幂等参数因此能到上游，而不是在协议转换时被静默丢掉。
+	mergeInboundQueryParams(upstreamReq, c)
 
 	// 11. Send request
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
@@ -218,9 +233,12 @@ func (s *GatewayService) ForwardAsResponses(
 			}
 		}
 
-		// Non-failover error: return Responses-formatted error to client
+		// Non-failover error: 上游状态码、错误码与错误文本原样透传。只做协议
+		// envelope 的必要搬运（Anthropic error.type → Responses error.code），
+		// 不把上游的 "Unsupported value: 'none'" 之类改写成统一的
+		// "Upstream request failed"，客户端才能看到真实原因。
 		defer GuardUpstreamFinancialError(c, resp.StatusCode, respBody)()
-		writeResponsesError(c, mapUpstreamStatusCode(resp.StatusCode), "server_error", upstreamMsg)
+		writeConvertedUpstreamError(c, resp.StatusCode, respBody)
 		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 	}
 
@@ -881,4 +899,75 @@ func mapUpstreamStatusCode(code int) int {
 		return code
 	}
 	return http.StatusBadGateway
+}
+
+// mergeResponsesPassthroughFieldsBestEffort merges the Responses top-level
+// fields the bridge does not map into the converted Anthropic body. Merging is
+// additive and conversion results win; a merge failure must never fail the
+// request (the worst case is the previous behavior: the field is dropped).
+func mergeResponsesPassthroughFieldsBestEffort(body []byte, fields map[string]json.RawMessage) []byte {
+	if len(fields) == 0 {
+		return body
+	}
+	merged, err := apicompat.MergeResponsesPassthroughFields(body, fields)
+	if err != nil {
+		logger.L().Debug("responses passthrough fields merge skipped",
+			zap.Int("field_count", len(fields)),
+			zap.Error(err),
+		)
+		return body
+	}
+	return merged
+}
+
+// mergeInboundQueryParams applies the inbound query string to the converted
+// upstream request without overriding parameters the upstream URL already sets
+// (for example beta=true). Query parameters are part of the passthrough
+// contract: a protocol bridge must not silently drop client-supplied params.
+func mergeInboundQueryParams(upstreamReq *http.Request, c *gin.Context) {
+	if upstreamReq == nil || upstreamReq.URL == nil || c == nil || c.Request == nil || c.Request.URL == nil {
+		return
+	}
+	inbound := c.Request.URL.Query()
+	if len(inbound) == 0 {
+		return
+	}
+	current := upstreamReq.URL.Query()
+	changed := false
+	for key, values := range inbound {
+		if _, exists := current[key]; exists {
+			continue
+		}
+		if len(values) > 0 {
+			current[key] = values
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	upstreamReq.URL.RawQuery = current.Encode()
+}
+
+// writeConvertedUpstreamError forwards a non-failover Anthropic upstream error to
+// an OpenAI Responses client while preserving the upstream status code, error
+// code/type and error text. It is a transport/envelope adaptation only: the
+// message is never replaced with a generic "Upstream request failed" string.
+func writeConvertedUpstreamError(c *gin.Context, statusCode int, respBody []byte) {
+	errorType := strings.TrimSpace(gjson.GetBytes(respBody, "error.type").String())
+	errorCode := strings.TrimSpace(gjson.GetBytes(respBody, "error.code").String())
+	message := strings.TrimSpace(gjson.GetBytes(respBody, "error.message").String())
+	if message == "" {
+		message = strings.TrimSpace(extractUpstreamErrorMessage(respBody))
+	}
+	if message == "" {
+		message = strings.TrimSpace(string(respBody))
+	}
+	if errorCode == "" {
+		errorCode = errorType
+	}
+	if errorCode == "" {
+		errorCode = "upstream_error"
+	}
+	writeResponsesError(c, mapUpstreamStatusCode(statusCode), errorCode, message)
 }

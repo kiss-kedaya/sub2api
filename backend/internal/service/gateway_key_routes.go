@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
@@ -98,6 +101,7 @@ func (s *GatewayService) selectAccountAlongKeyRoutesOnce(ctx context.Context, ap
 	for candidate, ok := routes.next(); ok; candidate, ok = routes.next() {
 		routed := candidate.key
 		if !groupUsableForRequest(routed.Group, platform, requestedModel, candidate.catalog.platforms) {
+			routes.recordSkip(keyRouteSkipPlatformMismatch)
 			continue
 		}
 		routeCtx := ContextWithAPIKeyRoute(ctx, routed)
@@ -118,6 +122,16 @@ func (s *GatewayService) selectAccountAlongKeyRoutesOnce(ctx context.Context, ap
 	}
 	if lastErr == nil {
 		lastErr = routes.err
+	}
+	// 路由层把候选组全部过滤时此前返回裸 ErrNoAvailableAccounts，线上只能看到
+	// "No available accounts: no available accounts"。这里补上每个候选被过滤的
+	// 原因摘要；selection 层返回的裸 no-available 也一并带上。
+	if summary := routes.skipSummary(); summary != "" {
+		if lastErr == nil {
+			lastErr = fmt.Errorf("%w (%s)", ErrNoAvailableAccounts, summary)
+		} else if errors.Is(lastErr, ErrNoAvailableAccounts) && !strings.Contains(lastErr.Error(), "filtered:") {
+			lastErr = fmt.Errorf("%w (%s)", lastErr, summary)
+		}
 	}
 	if lastErr == nil {
 		lastErr = ErrNoAvailableAccounts

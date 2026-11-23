@@ -15,6 +15,11 @@ const modelsListCatalogMarker = "*"
 type groupModelsCatalog struct {
 	byPlatform map[string][]string
 	platforms  map[string]struct{}
+	// passthrough is true when at least one schedulable account in the group
+	// only replaces auth and forwards any model (OpenAI / Anthropic
+	// "passthrough"). Such a group must never be skipped by the smart-route
+	// catalog gate: its model catalog is unknown by design, not an allowlist.
+	passthrough bool
 }
 
 func modelsListCatalogCacheKey(groupID *int64) string {
@@ -132,6 +137,16 @@ func (s *GatewayService) buildGroupModelsCatalog(ctx context.Context, groupID *i
 	return loadGroupModelsCatalogFromStore(ctx, s.accountRepo, s.schedulerSnapshot, groupID)
 }
 
+// accountPassthroughsAllModels reports whether the account only replaces auth
+// credentials and forwards the requested model regardless of any stale
+// model_mapping (OpenAI or Anthropic auto-passthrough semantics).
+func accountPassthroughsAllModels(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	return account.IsOpenAIPassthroughEnabled() || account.IsAnthropicAPIKeyPassthroughEnabled()
+}
+
 func loadGroupModelsCatalogFromStore(ctx context.Context, repo AccountRepository, snapshot *SchedulerSnapshotService, groupID *int64) groupModelsCatalog {
 	cat := groupModelsCatalog{
 		byPlatform: make(map[string][]string, len(groupCatalogPlatforms())),
@@ -148,6 +163,9 @@ func loadGroupModelsCatalogFromStore(ctx context.Context, repo AccountRepository
 		for i := range accounts {
 			if platform := strings.TrimSpace(accounts[i].Platform); platform != "" {
 				cat.platforms[platform] = struct{}{}
+			}
+			if accountPassthroughsAllModels(&accounts[i]) {
+				cat.passthrough = true
 			}
 		}
 	}
@@ -191,6 +209,12 @@ func modelsFromSchedulableAccounts(accounts []Account, platform string) []string
 			continue
 		}
 		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() {
+			return nil
+		}
+		// Anthropic auto-passthrough likewise only swaps credentials: its stale
+		// model_mapping (often a partial upstream sync) must not become a closed
+		// allowlist that hides the group from smart-route candidates.
+		if platform == PlatformAnthropic && acc.IsAnthropicAPIKeyPassthroughEnabled() {
 			return nil
 		}
 		for model := range acc.GetModelMapping() {

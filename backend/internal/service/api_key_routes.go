@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -476,6 +477,50 @@ type apiKeyRouteIterator struct {
 	nextCandidate     int
 	siblingHasPresent bool
 	err               error
+	// skipReasons counts why candidate groups were dropped before account
+	// selection. It turns the bare "no available accounts" routing error into a
+	// diagnosable one ("filtered: catalog_model_absent=1 platform_mismatch=1").
+	skipReasons map[string]int
+}
+
+// keyRouteSkipReasons 是路由层候选被过滤原因的分类常量。
+const (
+	keyRouteSkipUnauthorized      = "unauthorized"
+	keyRouteSkipModelNotAllowed   = "model_not_in_group_allowlist"
+	keyRouteSkipChannelRestricted = "channel_mapping_restricted"
+	keyRouteSkipCatalogAbsent     = "catalog_model_absent"
+	keyRouteSkipCatalogUnknown    = "catalog_unknown_with_sibling"
+	keyRouteSkipPlatformMismatch  = "platform_mismatch"
+	keyRouteSkipHydrateFailed     = "group_hydrate_failed"
+)
+
+func (r *apiKeyRouteIterator) recordSkip(reason string) {
+	if r == nil || reason == "" {
+		return
+	}
+	if r.skipReasons == nil {
+		r.skipReasons = make(map[string]int)
+	}
+	r.skipReasons[reason]++
+}
+
+// skipSummary renders the collected skip counts in a stable order.
+func (r *apiKeyRouteIterator) skipSummary() string {
+	if r == nil || len(r.skipReasons) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(r.skipReasons))
+	total := 0
+	for reason, count := range r.skipReasons {
+		keys = append(keys, reason)
+		total += count
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, reason := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", reason, r.skipReasons[reason]))
+	}
+	return fmt.Sprintf("routes_skipped=%d filtered: %s", total, strings.Join(parts, " "))
 }
 
 func newAPIKeyRouteIterator(ctx context.Context, apiKey *APIKey, groupIDs []int64, requestedModel string,
@@ -508,13 +553,21 @@ func (r *apiKeyRouteIterator) next() (apiKeyRouteCandidate, bool) {
 		candidate := r.candidates[r.nextCandidate]
 		r.nextCandidate++
 		if !candidate.key.Group.CustomModelsListEnabled() {
-			if candidate.presence == groupCatalogModelUnknown {
+			// 透传账号（OpenAI / Anthropic auto-passthrough）只替换认证、可服务任意
+			// 模型，它的账号映射目录天然不完整：不能按「目录没有该模型」把整组跳过。
+			if !candidate.catalog.passthrough && candidate.presence == groupCatalogModelUnknown {
 				for !r.siblingHasPresent && r.loadNext() {
 				}
 			}
-			if skipKeyRouteForCatalog(candidate.presence, r.siblingHasPresent) &&
+			if !candidate.catalog.passthrough &&
+				skipKeyRouteForCatalog(candidate.presence, r.siblingHasPresent) &&
 				(r.siblingHasPresent ||
 					!groupPassthroughsRequestedModel(candidate.key.Group, r.requestedModel, candidate.catalog.platforms)) {
+				if candidate.presence == groupCatalogModelUnknown {
+					r.recordSkip(keyRouteSkipCatalogUnknown)
+				} else {
+					r.recordSkip(keyRouteSkipCatalogAbsent)
+				}
 				continue
 			}
 		}
@@ -529,6 +582,7 @@ func (r *apiKeyRouteIterator) loadNext() bool {
 		r.nextGroup++
 		routed, err := r.hydrate(r.ctx, r.apiKey, groupID)
 		if err != nil {
+			r.recordSkip(keyRouteSkipHydrateFailed)
 			r.err = err
 			continue
 		}
@@ -536,12 +590,14 @@ func (r *apiKeyRouteIterator) loadNext() bool {
 		// fallback is an official group-level redirect and must not be rejected
 		// again as if it were directly bound to the key.
 		if !apiKeyRouteGroupAllowed(routed) {
+			r.recordSkip(keyRouteSkipUnauthorized)
 			if securityPenaltyConstraint(r.ctx) != nil {
 				r.err = ErrSecurityPenaltyGroupRestricted
 			}
 			continue
 		}
 		if !groupAllowsRequestedModel(routed.Group, r.requestedModel) {
+			r.recordSkip(keyRouteSkipModelNotAllowed)
 			continue
 		}
 		if r.resolveCandidate != nil {
@@ -564,6 +620,7 @@ func (r *apiKeyRouteIterator) loadNext() bool {
 		routeCtx := ContextWithAPIKeyRoute(r.ctx, routed)
 		mapping, restricted := r.resolveMapping(routeCtx, routed.GroupID, r.requestedModel)
 		if restricted {
+			r.recordSkip(keyRouteSkipChannelRestricted)
 			continue
 		}
 		model := mapping.MappedModel

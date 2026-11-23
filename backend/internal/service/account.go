@@ -1008,6 +1008,15 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 	if a.IsOpenAIPassthroughEnabled() {
 		return true
 	}
+	// Anthropic 自动透传（api_key + extra.anthropic_passthrough=true）与 OpenAI 透传
+	// 同义：仅替换认证头，模型语义完全交给上游。账号从"白名单模式"切到透传后，
+	// credentials 里常残留旧的非空 model_mapping；若继续拿它当候选白名单，就会把
+	// 透传账号排除出候选集，表现为入站 /v1/messages 正常、/v1/responses 转换路径
+	// 却 503 "no available accounts"（分组内明明有账号）。映射改写仍由转发阶段的
+	// GetMappedModel 负责，这里只放行候选资格。
+	if a.IsAnthropicAPIKeyPassthroughEnabled() {
+		return true
+	}
 	// Empty Grok mapping is rewritten to DefaultModelMapping, which would
 	// otherwise become a closed allowlist. Passthrough unlisted grok-* only
 	// when the operator did not set an explicit mapping; a listed mapping

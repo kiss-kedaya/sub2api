@@ -31,11 +31,44 @@ import (
 type noAccountErrorClassification struct {
 	Status  int
 	ErrType string
+	// Code is the protocol-level machine code surfaced to clients. It stays
+	// empty for generic capacity errors and is set to MODEL_NOT_AVAILABLE when
+	// the pool exists but no account can serve the requested model, so clients
+	// and operators can tell a configuration mistake from transient capacity.
+	Code    string
 	Message string
 	// ModelNotFound also acts as the existing non-capacity routing flag. A
 	// plan-gated model uses it to prevent handlers from replacing the precise
 	// 403 with a generic retryable capacity message.
 	ModelNotFound bool
+}
+
+// modelNotAvailableCode is the stable machine code for "the group has accounts
+// but none of them supports the requested model".
+const modelNotAvailableCode = "MODEL_NOT_AVAILABLE"
+
+// modelNotAvailableMessage renders the user-facing MODEL_NOT_AVAILABLE text.
+// availableModels comes from ModelAvailabilityDiagnosis and lists the public
+// aliases the group can actually serve, so a client asking for a model that
+// only exists in the group-level allowlist (but in no account mapping) gets an
+// actionable message instead of a retryable 503.
+func modelNotAvailableMessage(displayModel string, availableModels []string) string {
+	displayModel = strings.TrimSpace(displayModel)
+	if displayModel == "" {
+		displayModel = "unknown"
+	}
+	if len(availableModels) == 0 {
+		return fmt.Sprintf("分组内没有账号支持模型 %q（当前分组没有可用的模型配置）", displayModel)
+	}
+	quoted := make([]string, 0, len(availableModels))
+	for _, model := range availableModels {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		quoted = append(quoted, fmt.Sprintf("%q", model))
+	}
+	return fmt.Sprintf("分组内没有账号支持模型 %q（当前可用：%s）", displayModel, strings.Join(quoted, ", "))
 }
 
 var selectionModelRateLimitedPattern = regexp.MustCompile(`(?:model_rate_limited|rate_limited)=(\d+)`)
@@ -120,11 +153,15 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 	if unsupported == pool {
 		message := fallback.Message
 		if strings.TrimSpace(message) == "" || message == "Service temporarily unavailable" {
-			message = "The requested model is not supported by any currently configured upstream account."
+			// 正常路径下 classifyNoAccountError 已经用数据库诊断给出带可用模型
+			// 列表的精确文案（此时 fallback.ModelNotFound=true 会在上面提前返回）。
+			// 走到这里说明调度快照与持久化配置不一致，给一句可操作的兜底。
+			message = "分组内没有账号支持该模型，请检查账号模型映射与分组模型白名单"
 		}
 		return noAccountErrorClassification{
 			Status:        http.StatusNotFound,
 			ErrType:       "model_not_found",
+			Code:          modelNotAvailableCode,
 			Message:       message,
 			ModelNotFound: true,
 		}
@@ -194,9 +231,13 @@ func classifyNoAccountError(
 	result := diag.DiagnoseModelAvailabilityForPlatform(ctx, apiKey.GroupID, routingModel, platform)
 	if result.HasAccountsInPool && !result.HasModelSupport {
 		return noAccountErrorClassification{
-			Status:        http.StatusNotFound,
-			ErrType:       "model_not_found",
-			Message:       fmt.Sprintf("Model %q is not supported by any configured account in this group", displayModel),
+			Status:  http.StatusNotFound,
+			ErrType: "model_not_found",
+			Code:    modelNotAvailableCode,
+			Message: modelNotAvailableMessage(displayModel, result.AvailableModels),
+			// Keep the 404 model_not_found classification: callers gate the
+			// retryable 503 path on ModelNotFound, and a model that no
+			// account can serve must not be retried.
 			ModelNotFound: true,
 		}
 	}

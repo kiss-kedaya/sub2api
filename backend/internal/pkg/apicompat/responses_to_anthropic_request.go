@@ -6,11 +6,18 @@ import (
 	"strings"
 )
 
-// ResponsesToAnthropicOptions gates provider-specific reasoning replay.
+// ResponsesToAnthropicOptions gates provider-specific conversion behavior.
 // Callers must set PreserveReasoningText only after resolving the concrete target
 // platform (for example DeepSeek), not from a client model alias.
+//
+// PassthroughReasoning keeps the client's `reasoning` object verbatim instead of
+// synthesizing Anthropic thinking/output_config fields out of reasoning.effort.
+// The anthropic bridge enables it: the gateway must not rewrite user parameters
+// (for example `reasoning.effort="none"`). Upstream then decides — and if it
+// rejects the field, its status/body are returned to the client unchanged.
 type ResponsesToAnthropicOptions struct {
 	PreserveReasoningText bool
+	PassthroughReasoning  bool
 }
 
 // ResponsesToAnthropicRequest converts a Responses API request into an
@@ -19,6 +26,24 @@ type ResponsesToAnthropicOptions struct {
 // by converting them to the native /v1/messages format before forwarding upstream.
 func ResponsesToAnthropicRequest(req *ResponsesRequest) (*AnthropicRequest, error) {
 	return ResponsesToAnthropicRequestWithOptions(req, nil)
+}
+
+// ResponsesToAnthropicRequestWithPassthrough converts a Responses request and
+// also reports the top-level fields the bridge does not map, so callers can
+// forward them verbatim after marshaling the Anthropic request. rawBody is the
+// client Responses body used to parse req; it is only read for passthrough, the
+// conversion itself follows ResponsesToAnthropicRequestWithOptions semantics.
+func ResponsesToAnthropicRequestWithPassthrough(
+	req *ResponsesRequest,
+	rawBody []byte,
+	opts *ResponsesToAnthropicOptions,
+) (*AnthropicRequest, map[string]json.RawMessage, error) {
+	converted, err := ResponsesToAnthropicRequestWithOptions(req, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	passthroughReasoning := opts != nil && opts.PassthroughReasoning
+	return converted, responsesUnsupportedPassthroughFields(rawBody, passthroughReasoning), nil
 }
 
 // ResponsesToAnthropicRequestWithOptions is ResponsesToAnthropicRequest with
@@ -66,8 +91,9 @@ func ResponsesToAnthropicRequestWithOptions(req *ResponsesRequest, opts *Respons
 		out.ToolChoice = tc
 	}
 
-	// reasoning.effort → output_config.effort + thinking
-	if req.Reasoning != nil && req.Reasoning.Effort != "" {
+	// reasoning.effort → output_config.effort + thinking。透传模式下不合成任何
+	// thinking/output_config：用户参数必须原样到达上游，不在网关层被改写。
+	if (opts == nil || !opts.PassthroughReasoning) && req.Reasoning != nil && req.Reasoning.Effort != "" {
 		effort := mapResponsesEffortToAnthropic(req.Reasoning.Effort)
 		switch effort {
 		case "none", "off", "disabled":

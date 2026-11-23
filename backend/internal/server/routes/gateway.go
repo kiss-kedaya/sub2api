@@ -93,15 +93,10 @@ func RegisterGatewayRoutes(
 	rejectConflictingFields := middleware.RejectConflictingRequestFields()
 
 	isOpenAIResponsesCompatibleGatewayPlatform := func(c *gin.Context) bool {
-		switch getGroupPlatform(c) {
-		case service.PlatformOpenAI, service.PlatformGrok,
-			service.PlatformKimi, service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax,
-			service.PlatformCline, service.PlatformCommandCode:
-			// 国产 OpenAI 兼容供应商与 openai/grok 一样经 OpenAI 网关转发。
-			return true
-		default:
-			return false
-		}
+		// 国产 OpenAI 兼容供应商与 openai/grok 一样经 OpenAI 网关转发。
+		// 判定集中在 service.IsOpenAIResponsesCompatibleGatewayPlatform，路由与测试
+		// 共用同一份平台集合，避免「新增平台只改一处」的漂移。
+		return service.IsOpenAIResponsesCompatibleGatewayPlatform(getGroupPlatform(c))
 	}
 	countTokensHandler := func(c *gin.Context) {
 		switch getGroupPlatform(c) {
