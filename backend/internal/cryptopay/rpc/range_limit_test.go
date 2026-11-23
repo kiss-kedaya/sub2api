@@ -482,3 +482,87 @@ func TestDerivedPoolsShareEndpointHealth(t *testing.T) {
 		}
 	}
 }
+
+// The only nodes able to serve a wide query are cooling down (a spent quota or a
+// rate limit) while the healthy one takes narrow queries only. Probing the cooling
+// nodes anyway returned THEIR hard error - not something the scanner can split on -
+// so the chain froze, and every probe kept the node rate limited and defeated its
+// quota cooldown. The pool must report the query as too wide instead.
+func TestWideQueryIsReportedSplittableWhenEveryCapableNodeIsCooling(t *testing.T) {
+	shrinkRetryDelays(t)
+	now := time.Date(2026, 11, 24, 6, 0, 0, 0, time.UTC)
+	nowFunc = func() time.Time { return now }
+	t.Cleanup(func() { nowFunc = time.Now })
+
+	var narrowHits, wideHits atomic.Int32
+	narrow := rangeLimitedNode(100, &narrowHits)
+	defer narrow.Close()
+	wide := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wideHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":[]}`)) // it could serve the wide query - once its cooldown is over
+	}))
+	defer wide.Close()
+	pool := NewPoolWithHTTPClient(narrow.URL+","+wide.URL, narrow.Client())
+	endpoints := pool.Endpoints()
+	health := pool.healthTracker()
+	health.learnSpan(endpoints[0], 100)
+	health.fail(endpoints[1], &Failure{Kind: "http", HTTPStatus: 429, Quota: true})
+
+	_, _, err := pool.CallEndpoint(context.Background(), "eth_getLogs", getLogsParamsFor(1, 1000))
+	var failure *Failure
+	if err == nil || !errors.As(err, &failure) || failure.Reason != ReasonRangeLimit || failure.SpanLimit != 100 {
+		t.Fatalf("a wide query with every capable node cooling must be the splittable failure carrying the healthy limit (100), got %v", err)
+	}
+	if narrowHits.Load() != 0 || wideHits.Load() != 0 {
+		t.Fatalf("no request may be spent on it: narrow=%d wide=%d", narrowHits.Load(), wideHits.Load())
+	}
+	// the pieces the scanner splits it into are served by the healthy node, and the
+	// cooling one is still left alone
+	if _, _, err := pool.CallEndpoint(context.Background(), "eth_getLogs", getLogsParamsFor(1, 100)); err != nil {
+		t.Fatalf("a query inside the healthy node's limit must succeed: %v", err)
+	}
+	if wideHits.Load() != 0 {
+		t.Fatalf("the cooling node must not be probed while a healthy one can serve the call, saw %d", wideHits.Load())
+	}
+	// once the cooldown is over the wide query goes to the capable node again
+	now = now.Add(16 * time.Minute)
+	if _, _, err := pool.CallEndpoint(context.Background(), "eth_getLogs", getLogsParamsFor(1, 1000)); err != nil {
+		t.Fatalf("after the cooldown the capable node serves the wide query: %v", err)
+	}
+	if wideHits.Load() != 1 {
+		t.Fatalf("the recovered node should have served exactly that call, saw %d", wideHits.Load())
+	}
+}
+
+// When the WHOLE pool is cooling nothing is healthy to fall back on: the capable
+// nodes are probed (a node that may have recovered beats failing the call).
+func TestWideQueryProbesCapableNodesWhenTheWholePoolIsCooling(t *testing.T) {
+	shrinkRetryDelays(t)
+	now := time.Date(2026, 11, 24, 6, 0, 0, 0, time.UTC)
+	nowFunc = func() time.Time { return now }
+	t.Cleanup(func() { nowFunc = time.Now })
+
+	var narrowHits, wideHits atomic.Int32
+	narrow := rangeLimitedNode(100, &narrowHits)
+	defer narrow.Close()
+	wide := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wideHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":[]}`))
+	}))
+	defer wide.Close()
+	pool := NewPoolWithHTTPClient(narrow.URL+","+wide.URL, narrow.Client())
+	endpoints := pool.Endpoints()
+	health := pool.healthTracker()
+	health.learnSpan(endpoints[0], 100)
+	health.fail(endpoints[0], &Failure{Kind: "http", HTTPStatus: 429})
+	health.fail(endpoints[1], &Failure{Kind: "http", HTTPStatus: 429})
+
+	if _, _, err := pool.CallEndpoint(context.Background(), "eth_getLogs", getLogsParamsFor(1, 1000)); err != nil {
+		t.Fatalf("with the whole pool cooling the capable node must be tried: %v", err)
+	}
+	if wideHits.Load() != 1 || narrowHits.Load() != 0 {
+		t.Fatalf("exactly the capable node should be asked: narrow=%d wide=%d", narrowHits.Load(), wideHits.Load())
+	}
+}
