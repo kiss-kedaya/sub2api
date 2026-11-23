@@ -47,7 +47,14 @@ const (
 )
 
 // resolveOutboundHost 是测试可替换的解析入口；生产默认用系统解析器。
-var resolveOutboundHost = func(ctx context.Context, host string) ([]netip.Addr, error) {
+//
+// 它只能通过 SetResolveOutboundHostForTest 在测试里整体替换，替换是
+// 进程级全局状态。测试用注入版（WithResolver）从下面 contextResolver
+// 取值，不改这里，因此可继续 t.Parallel()。
+var resolveOutboundHost = systemResolveOutboundHost
+
+// systemResolveOutboundHost 是生产默认解析器（系统 DNS）。
+func systemResolveOutboundHost(ctx context.Context, host string) ([]netip.Addr, error) {
 	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 	if err != nil {
 		return nil, err
@@ -63,8 +70,50 @@ var resolveOutboundHost = func(ctx context.Context, host string) ([]netip.Addr, 
 	return addrs, nil
 }
 
+// resolverKey 是 context 中承载解析器的键（私有类型，不会被外部撞键）。
+type resolverKey struct{}
+
+// contextResolver 是「per-call 注入解析器」的入口，也是 resolveOutboundHost
+// 实际执行的实现：context 里没有注入的解析器时退回系统解析器。
+//
+// 出站校验的三层（URL 校验、重定向守卫、拨号前校验）都走这里，测试只需
+// 给 ctx 挂一个假解析器，就能锁死 DNS 结果，且不碰任何包级变量——这样
+// 多个 t.Parallel() 用例、甚至不同包的测试并发跑也不会互相覆盖。
+func contextResolver(ctx context.Context, host string) ([]netip.Addr, error) {
+	if ctx != nil {
+		if fn, ok := ctx.Value(resolverKey{}).(Resolver); ok && fn != nil {
+			return fn(ctx, host)
+		}
+	}
+	if fn := resolveOutboundHost; fn != nil {
+		return fn(ctx, host)
+	}
+	return nil, errors.New("no resolver configured")
+}
+
+// Resolver 是出站校验使用的 DNS 解析函数签名。
+type Resolver = func(ctx context.Context, host string) ([]netip.Addr, error)
+
+// WithResolver 返回一个把解析器固定为 fn 的 context：本次调用链里所有出站
+// 校验（含重定向守卫、拨号前校验）都按 fn 的结果判断，不读系统 DNS。
+//
+// 这是测试首选的注入方式（fn 为 nil 时视为未注入）。生产代码只应在明确
+// 需要指定解析器时使用；语义等同于把出站地址判断交给调用方指定的来源。
+func WithResolver(ctx context.Context, fn func(ctx context.Context, host string) ([]netip.Addr, error)) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if fn == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, resolverKey{}, Resolver(fn))
+}
+
 // SetResolveOutboundHostForTest 仅供单元测试替换解析实现，返回还原函数。
-// 生产代码不得调用：替换后出站校验会按测试提供的地址判断。
+//
+// 注意：这是进程级全局状态，并行用例之间会互相覆盖（曾导致 CI 间歇失败）。
+// 新测试请改用 WithResolver 做 per-call 注入；只有必须验证「默认解析器」行为
+// 的用例才在这里替换，且这类用例不得 t.Parallel()。
 func SetResolveOutboundHostForTest(fn func(ctx context.Context, host string) ([]netip.Addr, error)) func() {
 	previous := resolveOutboundHost
 	if fn != nil {
@@ -130,7 +179,7 @@ func validateResolvedHostAllowed(ctx context.Context, host string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, outboundResolveTimeout)
 	defer cancel()
-	addrs, err := resolveOutboundHost(ctx, host)
+	addrs, err := contextResolver(ctx, host)
 	if err != nil || len(addrs) == 0 {
 		// 解析失败、超时、空结果一律拒绝，且不区分原因。
 		return ErrOutboundTargetNotAllowed
@@ -237,7 +286,7 @@ func safeOutboundDialContext(dialer *net.Dialer) func(ctx context.Context, netwo
 			}
 			return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
 		}
-		ips, err := resolveOutboundHost(ctx, host)
+		ips, err := contextResolver(ctx, host)
 		if err != nil || len(ips) == 0 {
 			return nil, ErrOutboundTargetNotAllowed
 		}
