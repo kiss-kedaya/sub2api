@@ -9,7 +9,7 @@
     @close="handleCancel"
   >
     <div class="mb-6 text-center">
-      <div class="mx-auto flex size-12 items-center justify-center rounded-full bg-primary/10 ring ring-inset ring-primary/25">
+      <div class="icon-orb-primary mx-auto flex size-12 items-center justify-center">
         <UIcon :name="phase === 'passkey' ? 'i-lucide-fingerprint' : 'i-lucide-lock-keyhole'" class="size-6 text-primary" />
       </div>
       <p class="mt-3 text-sm text-muted">

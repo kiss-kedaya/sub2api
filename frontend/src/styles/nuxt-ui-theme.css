@@ -21,6 +21,21 @@
   --app-shadow-card: 0 1px 2px rgb(35 24 32 / 0.035), 0 4px 12px -8px rgb(35 24 32 / 0.14);
   --app-shadow-popover: 0 3px 8px -4px rgb(35 24 32 / 0.12), 0 12px 28px -12px rgb(35 24 32 / 0.18);
   --app-shadow-dialog: 0 8px 20px -10px rgb(35 24 32 / 0.16), 0 24px 64px -24px rgb(35 24 32 / 0.22);
+
+  /*
+    Ledger semantics (record rows). Pinned here instead of reusing --ui-success /
+    --ui-error: those follow the admin's appearance palette, and a "credited" row
+    must stay green even when the theme's success colour is re-pointed. Light
+    values clear 4.5:1 against the white card; dark values are the ink theme's
+    own mint/rose contrast tokens.
+  */
+  --app-amount-positive: #15803d;
+  --app-amount-negative: var(--ui-text-highlighted);
+  --app-amount-reversal: #b91c1c;
+  --app-amount-pending: #6b7280;
+  /* Control outline on the quiet auth surfaces: the default ring-accented is
+     ~2.5:1 on ink and the "or continue with" buttons are the only edge they have. */
+  --app-control-border: var(--ui-border-accented);
 }
 
 .dark {
@@ -55,6 +70,14 @@
   --app-shadow-card: 0 1px 2px rgb(0 0 0 / 0.12), 0 5px 14px -9px rgb(0 0 0 / 0.3);
   --app-shadow-popover: 0 4px 10px -5px rgb(0 0 0 / 0.25), 0 14px 32px -14px rgb(0 0 0 / 0.38);
   --app-shadow-dialog: 0 10px 24px -12px rgb(0 0 0 / 0.3), 0 28px 64px -24px rgb(0 0 0 / 0.45);
+
+  /* Ink-theme ledger tones: 9.8:1, 13.9:1, 7.8:1 and 8.6:1 against --ui-bg. */
+  --app-amount-positive: #9bd4b3;
+  --app-amount-negative: var(--ui-text-highlighted);
+  --app-amount-reversal: #e3a0aa;
+  --app-amount-pending: #c9b6c2;
+  /* 4.2:1 against the #211e25 card, so the social buttons keep a visible edge. */
+  --app-control-border: #8a7b95;
 }
 
 /*

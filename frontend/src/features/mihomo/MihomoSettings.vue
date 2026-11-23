@@ -351,7 +351,7 @@ const nodeColumns = computed(() => [
 ])
 // Stats strip: the kernel card plus 0-2 warm-pool cards, joined like the template's HomeStats.
 const statGridClass = computed(() => ['sm:grid-cols-1 lg:grid-cols-1', 'sm:grid-cols-2 lg:grid-cols-2', 'sm:grid-cols-2 lg:grid-cols-3'][warmPools.value.length])
-const statUi = { container: 'gap-y-1.5', wrapper: 'items-start', leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25', title: 'font-normal text-muted text-xs uppercase' }
+const statUi = { container: 'gap-y-1.5', wrapper: 'items-start', leading: 'icon-orb-primary', title: 'font-normal text-muted text-xs uppercase' }
 // USelect rejects '' as an item value: "all" filters use a sentinel that maps back to ''.
 const ALL = '__all__'
 const nodeStateFilter = computed({ get: () => nodeState.value || ALL, set: (value: string) => { nodeState.value = value === ALL ? '' : value } })

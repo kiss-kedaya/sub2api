@@ -51,6 +51,8 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({
     push: pushMock,
   }),
+  // Nuxt UI 的 UButton 内部用 ULink 包裹；Link 需要读当前路由来判断 active。
+  useRoute: () => ({ query: {}, path: '/email-verify' }),
 }))
 
 vi.mock('vue-i18n', () => ({

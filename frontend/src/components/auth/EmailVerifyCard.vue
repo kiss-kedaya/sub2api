@@ -1,7 +1,10 @@
 <template>
   <div class="space-y-6">
-    <!-- Title -->
+    <!-- Title + shield: the card answers "which account is being verified" first. -->
     <div class="text-center">
+      <div class="icon-orb-primary mx-auto mb-3 flex size-12 items-center justify-center" aria-hidden="true">
+        <UIcon name="i-lucide-shield-check" class="size-6" />
+      </div>
       <h2 class="auth-heading">
         {{ t('auth.verifyYourEmail') }}
       </h2>
@@ -34,26 +37,46 @@
       class="space-y-5"
       @submit.prevent="handleVerify"
     >
-      <!-- Verification Code Input -->
-      <div>
-        <label for="code" class="input-label text-center">
-          {{ t('auth.verificationCode') }}
-        </label>
-        <input
-          id="code"
-          v-model="verifyCode"
-          type="text"
-          required
-          autocomplete="one-time-code"
-          inputmode="numeric"
-          maxlength="6"
-          :disabled="isLoading"
-          class="input py-3 text-center font-mono text-xl tracking-[0.5em]"
-          :class="{ 'input-error': errors.code }"
-          placeholder="000000"
-        />
-        <p class="input-hint text-center">{{ t('auth.verificationCodeHint') }}</p>
-      </div>
+      <!-- Verification Code Input: six segmented cells, auto-advance, auto-verify. -->
+      <VerificationCodeInput
+        v-model="verifyCode"
+        input-id="code"
+        :length="6"
+        :disabled="isLoading"
+        :invalid="Boolean(errors.code)"
+        :label="t('auth.verificationCode')"
+        :hint="t('auth.verificationCodeHint')"
+        :auto-submit="canAutoSubmitCode"
+        autocomplete="one-time-code"
+        @complete="onCodeComplete"
+        @submit="handleVerify"
+      >
+        <template #footer>
+          <div class="flex flex-wrap items-center justify-center gap-x-1.5 text-xs text-muted">
+            <span>{{ t('auth.didntReceiveCode') }}</span>
+            <UButton
+              v-if="countdown > 0"
+              color="neutral"
+              variant="link"
+              size="xs"
+              disabled
+              :label="t('auth.resendCountdown', { countdown })"
+              data-testid="resend-countdown"
+            />
+            <UButton
+              v-else
+              color="primary"
+              variant="link"
+              size="xs"
+              :loading="isSendingCode"
+              :disabled="isSendingCode || (turnstileEnabled && showResendTurnstile && !resendTurnstileToken)"
+              :label="resendLabel"
+              data-testid="resend-code"
+              @click="handleResendCode"
+            />
+          </div>
+        </template>
+      </VerificationCodeInput>
 
       <!-- Code Status -->
       <div
@@ -109,62 +132,17 @@
         />
       </div>
 
-      <!-- Submit Button -->
-      <button
+      <!-- Submit Button (the code field also submits itself once all 6 digits are in) -->
+      <UButton
         type="submit"
+        block
+        size="lg"
+        icon="i-lucide-check-circle"
+        :loading="isLoading"
         :disabled="isLoading || !verifyCode || (pendingOAuthCreateTurnstileRequired && !createAccountTurnstileToken)"
-        class="btn btn-primary w-full"
-      >
-        <svg
-          v-if="isLoading"
-          class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
-          fill="none"
-          viewBox="0 0 24 24"
-        >
-          <circle
-            class="opacity-25"
-            cx="12"
-            cy="12"
-            r="10"
-            stroke="currentColor"
-            stroke-width="4"
-          ></circle>
-          <path
-            class="opacity-75"
-            fill="currentColor"
-            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-          ></path>
-        </svg>
-        <Icon v-else name="checkCircle" size="md" class="mr-2" />
-        {{ isLoading ? t('auth.verifying') : t('auth.verifyAndCreate') }}
-      </button>
-
-      <!-- Resend Code -->
-      <div class="text-center">
-        <button
-          v-if="countdown > 0"
-          type="button"
-          disabled
-          class="cursor-not-allowed text-sm text-gray-400 dark:text-dark-500"
-        >
-          {{ t('auth.resendCountdown', { countdown }) }}
-        </button>
-        <button
-          v-else
-          type="button"
-          @click="handleResendCode"
-          :disabled="
-            isSendingCode || (turnstileEnabled && showResendTurnstile && !resendTurnstileToken)
-          "
-          class="text-sm text-primary-600 transition-colors hover:text-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:text-primary-400 dark:hover:text-primary-300"
-        >
-          <span v-if="isSendingCode">{{ t('auth.sendingCode') }}</span>
-          <span v-else-if="captchaEnabled && !showResendTurnstile">
-            {{ t('auth.clickToResend') }}
-          </span>
-          <span v-else>{{ t('auth.resendCode') }}</span>
-        </button>
-      </div>
+        :label="isLoading ? t('auth.verifying') : t('auth.verifyAndCreate')"
+        data-testid="email-verify-submit"
+      />
     </component>
   </div>
 </template>
@@ -175,6 +153,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import TurnstileWidget from '@/components/CaptchaChallenge.vue'
+import VerificationCodeInput from '@/components/auth/VerificationCodeInput.vue'
 import { useAuthStore, useAppStore } from '@/stores'
 import {
   persistOAuthTokenContext,
@@ -318,6 +297,30 @@ const pendingOAuthCreateTurnstileRequired = computed(
 const pendingOAuthCreateCaptchaEnabled = computed(
   () => isPendingOAuthFlow() && captchaEnabled.value
 )
+
+// The segmented field verifies as soon as the sixth digit lands, but only when
+// verification can run without popping a captcha challenge the user did not ask
+// for: a pending-OAuth create-account captcha is acquired from the submit action.
+const pendingCreateActionCaptcha = computed(() => isPendingOAuthFlow() && actionCaptchaEnabled.value)
+const canAutoSubmitCode = computed(
+  () =>
+    !isLoading.value &&
+    !pendingCreateActionCaptcha.value &&
+    !(pendingOAuthCreateTurnstileRequired.value && !createAccountTurnstileToken.value)
+)
+
+// Resend label depends on the captcha mode: an action captcha needs one click
+// first, the staged Turnstile needs its widget completed.
+const resendLabel = computed(() => {
+  if (isSendingCode.value) return t('auth.sendingCode')
+  if (captchaEnabled.value && !showResendTurnstile.value) return t('auth.clickToResend')
+  return t('auth.resendCode')
+})
+
+function onCodeComplete(): void {
+  // Typing again after a failed verify clears the stale "code required" state.
+  errors.value.code = ''
+}
 
 watch(validationToastMessage, (value, previousValue) => {
   if (value && value !== previousValue) {

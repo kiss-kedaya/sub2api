@@ -113,6 +113,9 @@ export default {
     rateNotice: 'Credit rate: 1 USDT = {rate} balance units for stablecoins. Native coins such as ETH and BNB settle at the market price when the deposit is credited.',
     minNotice: 'Minimum credit: {min} USDT for stablecoins, or the equivalent {min} USD for native coins.',
     history: 'Your deposits',
+    // Row title: what happened + on which network; the amount lives in its own column.
+    historyRowDeposit: 'On-chain deposit',
+    historyRowReversal: 'Deposit reversed',
     amount: 'Amount',
     credited: 'Credited',
     creditUnknown: 'Amount under review',

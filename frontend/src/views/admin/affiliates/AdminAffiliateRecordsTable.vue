@@ -393,7 +393,7 @@ const AmountText = defineComponent({
   setup(amountProps) {
     return () => h('span', {
       class: amountProps.strong
-        ? 'font-semibold tabular-nums text-success'
+        ? 'amount amount-positive'
         : 'tabular-nums text-highlighted',
     }, `$${formatAmount(amountProps.value)}`)
   },

@@ -245,6 +245,105 @@ Empty state placeholder with icon, message, and optional action button.
 />
 ```
 
+## Shared record / auth patterns
+
+Three patterns were extracted because the same markup and colour decisions had
+been copied into several pages. Reach for these before writing a new list, code
+field or OAuth button. All of them read the Nuxt UI theme tokens, so a light /
+dark switch needs no per-page CSS.
+
+### TransactionListCard.vue + TransactionList.vue
+
+The "recent records" card: title + subtitle, one row per record (round icon
+plate, title/subtitle, signed amount on the right), hairline dividers, empty
+state, loading skeleton. `TransactionList` is the bare list for dialogs.
+
+Row model (`transactionList.ts`): `{ id, title, subtitle?, icon?, type?,
+amount?, amountPrefix?, amountSuffix?, amountSign?, tone?, status?, meta?,
+testId? }`. The tone decides both the sign and the colour:
+
+| tone       | amount        | meaning                                   |
+| ---------- | ------------- | ----------------------------------------- |
+| `positive` | green, `+$X`  | money arrived                             |
+| `negative` | ink, `-$X`    | money left the account                    |
+| `reversal` | rose, `-$X`   | an earlier credit was rolled back         |
+| `pending`  | muted, no sign| not settled yet                           |
+| `neutral`  | muted, no sign| no balance effect (e.g. day counts)       |
+
+Props: `title`, `subtitle`, `items`, `loading`, `skeletonRows`, `emptyTitle`,
+`emptyDescription`, `emptyTestId`, `emptyIcon`, `loadingLabel`, `testId`,
+`interactive` (rows clickable → `select` event).
+Slots: `actions` (header right), `toolbar` (above rows), `item-details`
+(per-row extra lines), `empty-actions`, `footer`.
+
+```vue
+<TransactionListCard
+  :title="t('deposit.history')"
+  :subtitle="t('deposit.autoRefresh')"
+  :items="historyItems"
+  :loading="loading"
+  :empty-title="t('deposit.noHistory')"
+  @empty-actions="resetFilters"
+>
+  <template #actions><UButton :label="t('common.refresh')" @click="refresh" /></template>
+  <template #item-details="{ item }"><span>{{ item.row.revoke_reason }}</span></template>
+</TransactionListCard>
+```
+
+### SocialLoginButtons.vue
+
+Provider-list driven sign-in buttons: full-width, quiet raised surface, left
+brand mark, centred label, 10px gaps, one shared radius. Multi-colour marks are
+passed through the dynamic `#icon-<id>` slot; a single-glyph brand can just set
+`icon` to a UIcon name.
+
+Props: `providers: { id, label, icon?, ariaLabel?, disabled?, testId? }[]`,
+`disabled`, `divider`, `dividerLabel`, `columns: 1 | 2`.
+Events: `select` (provider id). Slots: `#icon-<provider id>`, `footer`.
+
+```vue
+<SocialLoginButtons :providers="providers" divider :divider-label="t('auth.oauthOrContinue')" @select="startLogin">
+  <template #icon-google><GoogleMark class="size-5" /></template>
+</SocialLoginButtons>
+```
+
+### VerificationCodeInput.vue (auth)
+
+Segmented one-time-code field: one input per digit, optional dot between the
+halves, digits only, auto-advance, Backspace walk-back, whole-code paste /
+iOS autofill distribution, `complete` on completion and `submit` when
+`autoSubmit` is on (emitted only on the transition to a complete code).
+The page keeps send/verify/countdown logic in the `footer` slot.
+
+Props: `modelValue`, `length`, `separator`, `separatorAfter`, `autoSubmit`,
+`disabled`, `invalid`, `label`, `hint`, `errorText`, `autocomplete`, `inputId`,
+`testId`. Events: `update:modelValue`, `complete`, `submit`.
+
+```vue
+<VerificationCodeInput
+  v-model="code"
+  input-id="code"
+  :label="t('auth.verificationCode')"
+  :auto-submit="canAutoSubmit"
+  @submit="handleVerify"
+>
+  <template #footer><UButton variant="link" :label="t('auth.resendCode')" @click="resend" /></template>
+</VerificationCodeInput>
+```
+
+### Semantic utilities (`src/style.css`, tokens in `src/styles/nuxt-ui-theme.css`)
+
+Do not re-declare these by hand in a page; use the class:
+
+- `surface-card` — legacy card shell (`.card` + the quiet `--app-shadow-card` depth).
+- `record-divide` — hairline dividers owned by a record list.
+- `icon-orb`, `icon-orb-positive|negative|reversal|pending|neutral` — round icon plate.
+- `icon-orb-primary` — stat/page-card lead plate (replaces the old
+  `p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25` literal).
+- `amount`, `amount-positive`, `amount-negative`, `amount-reversal`, `amount-pending`
+  — signed amount colours backed by `--app-amount-*` (light values clear 4.5:1,
+  ink values 7.8:1+ against the card).
+
 ## Import
 
 You can import components individually:

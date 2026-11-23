@@ -51,7 +51,7 @@
       <div v-if="routed && section === 'overview'" class="flex flex-col gap-3">
         <p class="text-sm text-muted">{{ t('admin.crypto.overviewHint') }}</p>
         <UPageGrid class="gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <UPageCard v-for="entry in overviewEntries" :key="entry.section" :icon="entry.icon" :title="entry.label" :to="sectionTo(entry.section)" variant="subtle" :ui="{ leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25' }" />
+          <UPageCard v-for="entry in overviewEntries" :key="entry.section" :icon="entry.icon" :title="entry.label" :to="sectionTo(entry.section)" variant="subtle" :ui="{ leading: 'icon-orb-primary' }" />
         </UPageGrid>
         <!-- Two primary exits: run a sweep (carrying the unlock intent when the
              signer is locked) or inspect the deposit addresses. -->
@@ -1004,7 +1004,7 @@ const tableUi = {
 const statCardUi = {
   container: 'gap-y-1.5',
   wrapper: 'items-start',
-  leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25',
+  leading: 'icon-orb-primary',
   title: 'font-normal text-muted text-xs uppercase'
 }
 

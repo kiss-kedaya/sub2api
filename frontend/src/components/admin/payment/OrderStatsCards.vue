@@ -10,7 +10,7 @@
       :ui="{
         container: 'gap-y-1.5',
         wrapper: 'items-start',
-        leading: 'p-2.5 rounded-full bg-primary/10 ring ring-inset ring-primary/25',
+        leading: 'icon-orb-primary',
         title: 'font-normal text-muted text-xs uppercase'
       }"
       class="first:rounded-l-lg last:rounded-r-lg lg:rounded-none"

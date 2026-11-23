@@ -98,7 +98,7 @@ describe('EmailOAuthButtons', () => {
     expect(wrapper.get('button').text()).toContain('使用 GitHub 登录')
   })
 
-  it('uses compact labels and two columns when GitHub and Google are both enabled', () => {
+  it('stacks compact labels when GitHub and Google are both enabled', () => {
     const wrapper = mount(EmailOAuthButtons, {
       props: {
         githubEnabled: true,
@@ -112,7 +112,9 @@ describe('EmailOAuthButtons', () => {
       },
     })
 
-    expect(wrapper.find('.grid').classes()).toContain('sm:grid-cols-2')
+    // 认证参考稿是一列全宽按钮，两列只在调用方显式传 columns=2 时出现。
+    expect(wrapper.find('.grid').classes()).toContain('grid-cols-1')
+    expect(wrapper.find('.grid').classes()).not.toContain('sm:grid-cols-2')
     const buttons = wrapper.findAll('button')
     expect(buttons).toHaveLength(2)
     expect(buttons[0].text()).toContain('GitHub')

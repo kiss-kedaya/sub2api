@@ -41,28 +41,9 @@
       </div>
       <p v-else-if="history.length === 0" class="py-8 text-center text-sm text-muted">{{ t('admin.users.noBalanceHistory') }}</p>
 
-      <ul v-else class="max-h-112 divide-y divide-default overflow-y-auto border-y border-default">
-        <li v-for="item in history" :key="item.id" class="flex items-start justify-between gap-3 py-3">
-          <div class="flex min-w-0 items-start gap-3">
-            <span :class="['flex size-8 shrink-0 items-center justify-center rounded-full', getIconBg(item)]">
-              <UIcon :name="getIconName(item)" :class="['size-4', getIconColor(item)]" />
-            </span>
-            <div class="min-w-0">
-              <p class="text-sm font-medium text-highlighted">{{ getItemTitle(item) }}</p>
-              <p v-if="item.notes" class="mt-0.5 text-xs text-muted" :title="item.notes">
-                {{ item.notes.length > 60 ? item.notes.substring(0, 55) + '...' : item.notes }}
-              </p>
-              <p class="mt-0.5 text-xs text-dimmed">{{ formatDateTime(item.used_at || item.created_at) }}</p>
-            </div>
-          </div>
-          <div class="shrink-0 text-right">
-            <p :class="['text-sm font-semibold tabular-nums', getValueColor(item)]">{{ formatValue(item) }}</p>
-            <p v-if="isAdminType(item.type)" class="text-xs text-dimmed">{{ t('redeem.adminAdjustment') }}</p>
-            <p v-else-if="isCryptoRevokeType(item.type)" class="max-w-56 truncate font-mono text-xs text-error" :title="item.source_ref || ''">{{ item.source_ref || t('redeem.balanceRevokedCrypto') }}</p>
-            <p v-else class="font-mono text-xs text-dimmed">{{ item.code }}</p>
-          </div>
-        </li>
-      </ul>
+      <div v-else class="max-h-112 overflow-y-auto border-y border-default">
+        <TransactionList :items="transactionItems" />
+      </div>
 
       <div v-if="totalPages > 1" class="flex items-center justify-center gap-2 pt-2">
         <UButton color="neutral" variant="outline" size="sm" :disabled="currentPage <= 1" :label="t('pagination.previous')" @click="loadHistory(currentPage - 1)" />
@@ -81,6 +62,8 @@ import { formatDateTime } from '@/utils/format'
 import type { AdminUser } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
+import TransactionList from '@/components/common/TransactionList.vue'
+import type { TransactionItem, TransactionTone } from '@/components/common/transactionList'
 
 const props = defineProps<{ show: boolean; user: AdminUser | null; hideActions?: boolean }>()
 const emit = defineEmits(['close', 'deposit', 'withdraw'])
@@ -165,23 +148,6 @@ const getIconName = (item: BalanceHistoryItem) => {
   return 'i-lucide-zap' // concurrency
 }
 
-// Icon background color
-const getIconBg = (item: BalanceHistoryItem) => {
-  if (isBalanceType(item.type)) return item.value >= 0 ? 'bg-success/10' : 'bg-error/10'
-  if (isSubscriptionType(item.type)) return 'bg-primary/10'
-  return item.value >= 0 ? 'bg-info/10' : 'bg-warning/10'
-}
-
-// Icon text color
-const getIconColor = (item: BalanceHistoryItem) => getValueColor(item)
-
-// Value text color
-const getValueColor = (item: BalanceHistoryItem) => {
-  if (isBalanceType(item.type)) return item.value >= 0 ? 'text-success' : 'text-error'
-  if (isSubscriptionType(item.type)) return 'text-primary'
-  return item.value >= 0 ? 'text-info' : 'text-warning'
-}
-
 // Item title
 const getItemTitle = (item: BalanceHistoryItem) => {
   switch (item.type) {
@@ -206,20 +172,43 @@ const getItemTitle = (item: BalanceHistoryItem) => {
   }
 }
 
-// Format display value
-const formatValue = (item: BalanceHistoryItem) => {
-  if (isBalanceType(item.type)) {
-    // Negative rows read as "-$4.70" (chain claw-back), not "$-4.70".
-    const sign = item.value >= 0 ? '+' : '-'
-    return `${sign}$${Math.abs(item.value).toFixed(2)}`
-  }
+// A ledger row is signed by its tone, so the amount here is the bare magnitude.
+const formatLedgerAmount = (item: BalanceHistoryItem): string | number => {
+  if (isBalanceType(item.type)) return Math.abs(item.value).toFixed(2)
   if (isSubscriptionType(item.type)) {
     const days = item.validity_days || Math.round(item.value)
     const groupName = item.group?.name || ''
     return groupName ? `${days}d - ${groupName}` : `${days}d`
   }
-  // concurrency types
-  const sign = item.value >= 0 ? '+' : ''
-  return `${sign}${item.value}`
+  return Math.abs(item.value)
 }
+
+const ledgerTone = (item: BalanceHistoryItem): TransactionTone => {
+  if (isSubscriptionType(item.type)) return 'neutral'
+  if (isCryptoRevokeType(item.type)) return 'reversal'
+  return item.value >= 0 ? 'positive' : 'negative'
+}
+
+// The dialog is the second consumer of the shared record row: same icon plate,
+// same signed-amount colours, same empty/loading states as the user ledger.
+const transactionItems = computed<TransactionItem[]>(() => history.value.map(item => {
+  const notes = item.notes ? (item.notes.length > 60 ? item.notes.substring(0, 55) + '...' : item.notes) : ''
+  const meta = isAdminType(item.type)
+    ? t('redeem.adminAdjustment')
+    : isCryptoRevokeType(item.type)
+      ? (item.source_ref || t('redeem.balanceRevokedCrypto'))
+      : item.code
+  const subscription = isSubscriptionType(item.type)
+  return {
+    id: item.id,
+    icon: getIconName(item),
+    title: getItemTitle(item),
+    subtitle: [notes, formatDateTime(item.used_at || item.created_at)].filter(Boolean).join(' · '),
+    amount: formatLedgerAmount(item),
+    amountPrefix: subscription ? undefined : (isBalanceType(item.type) ? '$' : undefined),
+    amountSign: subscription ? '' : undefined,
+    tone: ledgerTone(item),
+    meta
+  }
+}))
 </script>

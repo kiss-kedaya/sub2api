@@ -1,14 +1,18 @@
 <template>
-  <div class="space-y-4">
-    <button type="button" :disabled="disabled" class="btn btn-secondary w-full" @click="startLogin">
+  <!-- DingTalk sign-in shares the auth button surface (SocialLoginButtons). -->
+  <SocialLoginButtons
+    :providers="providers"
+    :disabled="disabled"
+    :divider="showDivider"
+    :divider-label="t('auth.oauthOrContinue')"
+    @select="startLogin"
+  >
+    <template #icon-dingtalk>
       <svg
-        class="icon mr-2"
         viewBox="0 0 24 24"
         xmlns="http://www.w3.org/2000/svg"
-        width="20"
-        height="20"
+        class="size-5"
         aria-hidden="true"
-        style="flex-shrink: 0"
       >
         <circle cx="12" cy="12" r="12" fill="#1677FF" />
         <text
@@ -21,22 +25,16 @@
           text-anchor="middle"
         >D</text>
       </svg>
-      {{ t('auth.dingtalk.signIn') }}
-    </button>
-
-    <div v-if="showDivider" class="flex items-center gap-3">
-      <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-      <span class="text-xs text-gray-500 dark:text-dark-400">
-        {{ t('auth.oauthOrContinue') }}
-      </span>
-      <div class="h-px flex-1 bg-gray-200 dark:bg-dark-700"></div>
-    </div>
-  </div>
+    </template>
+  </SocialLoginButtons>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import SocialLoginButtons from '@/components/common/SocialLoginButtons.vue'
+import type { SocialLoginProvider } from '@/components/common/socialLogin'
 import type { OAuthLoginStart } from '@/api/auth'
 import { resolveAffiliateReferralCode, storeOAuthAffiliateCode } from '@/utils/oauthAffiliate'
 
@@ -53,6 +51,12 @@ const emit = defineEmits<{
 
 const route = useRoute()
 const { t } = useI18n()
+
+const providers = computed<SocialLoginProvider[]>(() => [{
+  id: 'dingtalk',
+  label: t('auth.dingtalk.signIn'),
+  ariaLabel: t('auth.dingtalk.signIn')
+}])
 
 function startLogin(): void {
   const redirectTo = (route.query.redirect as string) || '/dashboard'

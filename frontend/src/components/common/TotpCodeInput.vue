@@ -40,6 +40,7 @@
 
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue'
+import { normalizeOtpDigits } from '@/utils/otp'
 
 defineOptions({ inheritAttrs: false })
 
@@ -60,7 +61,8 @@ const focused = ref(false)
 const activeIndex = ref(0)
 
 function digits(value: string) {
-  return value.replace(/[０-９]/g, digit => String.fromCharCode(digit.charCodeAt(0) - 0xfee0)).replace(/[^0-9]/g, '')
+  // Shared with the email verification field: full-width digits fold to ASCII.
+  return normalizeOtpDigits(value)
 }
 
 function syncSelection() {
