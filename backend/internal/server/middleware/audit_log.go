@@ -151,6 +151,9 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	// 双因子策略（TOTP / Passkey）编排审计：只记录因子名与缺失因子，
 	// 不记录任何凭证、动态码、断言或 challenge。
 	"two_factor_grant_factor": {}, "two_factor_missing_factors": {},
+	// API Key 三选一身份校验（密码 / TOTP / Passkey）审计：只记录因子名、
+	// 校验结果与失败机器码；密码 / 动态码 / 断言 / 票据 / grant 明文一律不入库。
+	"api_key_auth_factor": {}, "api_key_verification": {}, "api_key_verification_reason": {},
 	"two_factor_required_factors": {}, "two_factor_next_factor": {},
 	// 管理面出站目标（审计节点 / 账号 base_url）变更：只记地址与显式开关，
 	// 不记 token / 密码。
@@ -282,6 +285,11 @@ var auditActionOverrides = map[string]string{
 	// 整体不入审计库，见 auditBodyOmittedRoutes。
 	"PUT /api/v1/user/api-keys/:id/secret-seal":    service.AuditActionAPIKeySecretSeal,
 	"DELETE /api/v1/user/api-keys/:id/secret-seal": service.AuditActionAPIKeySecretDelete,
+	// API Key 三选一身份校验：Passkey 挑战/校验与二次查看授权单独成动作，
+	// 便于在审计里按动作检索（结果与因子写在 extra）。
+	"POST /api/v1/user/security/passkey/verify/begin":  service.AuditActionAPIKeyPasskeyVerify,
+	"POST /api/v1/user/security/passkey/verify/finish": service.AuditActionAPIKeyPasskeyVerify,
+	"POST /api/v1/user/api-keys/:id/reveal-authorize":  service.AuditActionAPIKeyRevealAuthorize,
 }
 
 // auditAuthEventMeta 第三方登录 / 2FA 认证事件的审计元数据。
@@ -483,8 +491,13 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	"POST /api/v1/admin/prompt-audit/events/batch-delete":       {},
 	"POST /api/v1/admin/prompt-audit/events/delete-preview":     {},
 	"POST /api/v1/admin/prompt-audit/events/delete-by-filter":   {},
-	// 封存密文的请求体是「密文 + salt」，审计只记 Key 标识，绝不落这些字节。
+	// 封存密文的请求体是「密文 + salt + 登录密码」，审计只记 Key 标识与因子，
+	// 绝不落这些字节。
 	"PUT /api/v1/user/api-keys/:id/secret-seal": {},
+	// 二次查看授权与 Passkey 校验的请求体几乎全部是凭据（密码 / 动态码 /
+	// assertion / 票据），键级脱敏之外再整体不入库，避免新增字段名漏网。
+	"POST /api/v1/user/api-keys/:id/reveal-authorize":  {},
+	"POST /api/v1/user/security/passkey/verify/finish": {},
 }
 
 // NewAuditLogMiddleware 创建审计中间件。

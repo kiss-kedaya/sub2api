@@ -18,6 +18,11 @@ const {
   getOverview,
   putSecretSeal,
   sealApiKey,
+  getVerificationFactors,
+  authorizeReveal,
+  getSecretSeal,
+  beginKeyPasskeyVerification,
+  finishKeyPasskeyVerification,
   getKeyRotationGateStatus,
   getPublicSettings,
   getDashboardApiKeysUsage,
@@ -40,6 +45,11 @@ const {
   getOverview: vi.fn(),
   putSecretSeal: vi.fn(),
   sealApiKey: vi.fn(),
+  getVerificationFactors: vi.fn(),
+  authorizeReveal: vi.fn(),
+  getSecretSeal: vi.fn(),
+  beginKeyPasskeyVerification: vi.fn(),
+  finishKeyPasskeyVerification: vi.fn(),
   getKeyRotationGateStatus: vi.fn(),
   getPublicSettings: vi.fn(),
   getDashboardApiKeysUsage: vi.fn(),
@@ -64,6 +74,38 @@ const messages: Record<string, string> = {
   'keys.allStatus': 'All Status',
   'keys.columnSettings': 'Column Settings',
   'keys.createKey': 'Create API Key',
+  'keys.createStep.details': 'Details',
+  'keys.createStep.verify': 'Verification',
+  'keys.createStep.next': 'Next',
+  'keys.createStep.back': 'Back',
+  'keys.createStep.verifyHint': 'Verify your identity once before creating a key.',
+  'keys.factor.description': 'Verify your identity once.',
+  'keys.factor.methodLabel': 'Verification method',
+  'keys.factor.methodPassword': 'Login password',
+  'keys.factor.methodTotp': 'Dynamic code',
+  'keys.factor.methodPasskey': 'Passkey',
+  'keys.factor.preferred': 'Recommended',
+  'keys.factor.passwordLabel': 'Login password',
+  'keys.factor.passwordPlaceholder': 'Enter your login password',
+  'keys.factor.passwordHint': 'Only used for this verification.',
+  'keys.factor.decryptPasswordLabel': 'Login password (for local decryption)',
+  'keys.factor.decryptPasswordHint': 'Decryption happens in this browser.',
+  'keys.factor.totpLabel': '6-digit dynamic code',
+  'keys.factor.totpPlaceholder': 'Enter the 6-digit code',
+  'keys.factor.passkeyHint': 'Verify with a passkey bound to this device.',
+  'keys.factor.passkeyVerify': 'Verify with Passkey',
+  'keys.factor.passkeyReverify': 'Verify Passkey again',
+  'keys.factor.passkeyVerified': 'Verified, valid for {seconds}s',
+  'keys.factor.passkeyUnsupported': 'This browser or device does not support passkeys.',
+  'keys.factor.passkeyFailed': 'Passkey verification failed. Please retry.',
+  'keys.factor.unavailable': 'No verification method is available for this account.',
+  'keys.factor.requiredAll': 'Complete identity verification first.',
+  'keys.factor.passwordRequired': 'Enter your login password.',
+  'keys.factor.totpRequired': 'Enter the 6-digit dynamic code.',
+  'keys.factor.passkeyRequired': 'Verify with Passkey first.',
+  'keys.factor.factorUnavailable': 'This verification method is currently unavailable.',
+  'keys.factor.passwordInvalid': 'The password is incorrect. Enter your current login password.',
+  'keys.failedToSave': 'Failed to save',
   'keys.created': 'Created',
   'keys.expiresAt': 'Expires',
   'keys.group': 'Group',
@@ -159,6 +201,11 @@ vi.mock('@/api', () => ({
     batchRotateKeys,
     getOverview,
     putSecretSeal,
+    getVerificationFactors,
+    authorizeReveal,
+    getSecretSeal,
+    beginKeyPasskeyVerification,
+    finishKeyPasskeyVerification,
   },
   authAPI: {
     getPublicSettings,
@@ -398,6 +445,22 @@ beforeEach(() => {
   putSecretSeal.mockReset()
   putSecretSeal.mockResolvedValue(undefined)
   sealApiKey.mockReset()
+  getVerificationFactors.mockReset()
+  getVerificationFactors.mockResolvedValue({
+    password_available: false,
+    totp_enabled: false,
+    passkey_count: 0,
+    preferred: '',
+    available_methods: [],
+    seal_available: false,
+  })
+  authorizeReveal.mockReset()
+  getSecretSeal.mockReset()
+  beginKeyPasskeyVerification.mockReset()
+  finishKeyPasskeyVerification.mockReset()
+  createKey.mockReset()
+  showError.mockReset()
+  showSuccess.mockReset()
 })
 
 // Default stubs keep every existing assertion's surface unchanged. Rich-row tests
@@ -2272,7 +2335,11 @@ describe('user KeysView batch rotation, overview and ephemeral bar', () => {
     await flushPromises()
 
     expect(sealApiKey).toHaveBeenCalledWith('rotated-sealed-fixture-secret', 'hunter2')
-    expect(putSecretSeal).toHaveBeenCalledWith(1, seal)
+    // 重新封存同样要让服务端校验登录密码，并记录授权因子。
+    expect(putSecretSeal).toHaveBeenCalledWith(1, seal, {
+      password: 'hunter2',
+      authFactor: 'password',
+    })
     expect(wrapper.get('[data-test="batch-rotate-seal-summary"]').text()).toContain('Saved 1')
     wrapper.unmount()
   })
@@ -2309,6 +2376,117 @@ describe('user KeysView batch rotation, overview and ephemeral bar', () => {
     await wrapper.get('[data-test="ephemeral-key-close"]').trigger('click')
     await nextTick()
     expect(wrapper.find('[data-test="ephemeral-key-bar"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+describe('user KeysView 创建身份校验（三选一）', () => {
+  const openCreateAndFill = async (name = 'verified key') => {
+    const wrapper = await mountView()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-tour="key-form-name"]').setValue(name)
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+    await nextTick()
+    return wrapper
+  }
+
+  it('第一步只推进到身份校验，不创建 Key', async () => {
+    authUser.value = { id: 1, email: 'user@example.com' }
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: 'password',
+      available_methods: ['password'],
+      seal_available: true,
+    })
+    const wrapper = await openCreateAndFill()
+
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(createKey).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="key-create-verification"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="key-create-steps"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="key-create-next"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('第二步密码校验通过后带 verification 创建 Key', async () => {
+    authUser.value = { id: 1, email: 'user@example.com' }
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: 'password',
+      available_methods: ['password'],
+      seal_available: true,
+    })
+    createKey.mockResolvedValue({ ...createApiKey(), key: 'sk-verified-fixture' })
+    const wrapper = await openCreateAndFill()
+
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    await wrapper.get('[data-test="key-factor-password-input"]').setValue('correct horse')
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(createKey).toHaveBeenCalledTimes(1)
+    const options = createKey.mock.calls[0][10] as Record<string, any>
+    expect(options.verification).toEqual({ method: 'password', password: 'correct horse' })
+    expect(showSuccess).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('密码错误时直接提示「密码不正确」，不显示笼统保存失败', async () => {
+    authUser.value = { id: 1, email: 'user@example.com' }
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: 'password',
+      available_methods: ['password'],
+      seal_available: true,
+    })
+    createKey.mockRejectedValue({ reason: 'VERIFY_PASSWORD_INVALID' })
+    const wrapper = await openCreateAndFill()
+
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    await wrapper.get('[data-test="key-factor-password-input"]').setValue('wrong')
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith(
+      'The password is incorrect. Enter your current login password.',
+    )
+    wrapper.unmount()
+  })
+
+  it('账号没有任何可用因子时跳过校验，直接创建（仅一次性显示）', async () => {
+    authUser.value = { id: 1, email: 'user@example.com' }
+    createKey.mockResolvedValue({ ...createApiKey(), key: 'sk-one-time-fixture' })
+    const wrapper = await openCreateAndFill('one time key')
+
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(createKey).toHaveBeenCalledTimes(1)
+    const options = createKey.mock.calls[0][10] as Record<string, any>
+    expect(options.verification).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('Key 名称输入框使用非凭据 name 与 autocomplete=off，避免自动填充串扰', async () => {
+    const wrapper = await mountView()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await flushPromises()
+    const name = wrapper.get('[data-tour="key-form-name"]')
+    expect(name.attributes('name')).toBe('api-key-name')
+    expect(name.attributes('autocomplete')).toBe('off')
+    expect(name.attributes('data-lpignore')).toBe('true')
+    expect(name.attributes('data-1p-ignore')).toBe('true')
     wrapper.unmount()
   })
 })

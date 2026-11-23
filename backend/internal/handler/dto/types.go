@@ -94,6 +94,9 @@ type APIKey struct {
 	// HasSealedSecret 表示这把 Key 有浏览器端封存的密文，用户可以在输入登录
 	// 密码后重新查看明文。它只暴露布尔值：密文本体只有 GET secret-seal 才能取。
 	HasSealedSecret bool `json:"has_sealed_secret"`
+	// SealAuthFactor 是封存时授权的因子（password/totp/passkey）；空串表示
+	// 改造前的旧密文（无因子记录，查看时不限制因子）。前端据此预选同一因子。
+	SealAuthFactor string `json:"seal_auth_factor,omitempty"`
 	// RotationReasons 是待整改原因分类：created_before_cutoff / no_ip_allowlist。
 	RotationReasons []string `json:"rotation_reasons,omitempty"`
 	// CurrentConcurrency is the real-time active request count for this API key.

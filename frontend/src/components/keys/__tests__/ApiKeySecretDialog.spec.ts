@@ -49,6 +49,7 @@ const messages: Record<string, string> = {
   'keys.seal.passwordHint': 'Used only for local encryption.',
   'keys.seal.passwordRequired': 'Enter your login password, or uncheck the option.',
   'keys.seal.failed': 'Wrong password or save failed; you can retry later.',
+  'keys.seal.wrongPassword': 'The login password is incorrect; this key cannot be sealed for later viewing.',
   'keys.seal.unsupported': 'This browser does not support WebCrypto.',
   'keys.seal.later': 'Later',
   'keys.seal.unavailable': 'This account has no usable login password, so this option is unavailable.',
@@ -268,11 +269,21 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     vi.restoreAllMocks()
   })
 
-  it('offers a checked opt-in by default for accounts with a login password', async () => {
+  // 自动填充串扰修复：回执弹窗默认不渲染密码框，只有用户主动勾选
+  // 「允许以后查看」时才出现，且使用 new-password + 非凭据 name + 密码管理器忽略标记。
+  it('renders the opt-in unchecked and only shows the password field after opting in', async () => {
     const wrapper = await mountDialog({ canSeal: true })
     expect(wrapper.get('[data-test="api-key-seal-optin"]').exists()).toBe(true)
-    expect(wrapper.get('[data-test="api-key-seal-checkbox"]').attributes('aria-checked')).toBe('true')
-    expect(wrapper.get('[data-test="api-key-seal-password"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="api-key-seal-checkbox"]').attributes('aria-checked')).toBe('false')
+    expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
+
+    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
+    await flushPromises()
+    const password = wrapper.get('[data-test="api-key-seal-password"]')
+    expect(password.attributes('autocomplete')).toBe('new-password')
+    expect(password.attributes('name')).toBe('apikey-seal-passphrase')
+    expect(password.attributes('data-lpignore')).toBe('true')
+    expect(password.attributes('data-1p-ignore')).toBe('true')
     wrapper.unmount()
   })
 
@@ -290,6 +301,8 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     await sleep(1100)
     await nextTick()
 
+    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
+    await flushPromises()
     await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
     await flushPromises()
 
@@ -301,19 +314,50 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     wrapper.unmount()
   })
 
-  it('seals locally, saves the ciphertext and reports the sealed row', async () => {
-    const wrapper = await mountDialog({ canSeal: true })
+  it('seals locally, verifies the password server-side and reports the sealed row', async () => {
+    const wrapper = await mountDialog({ canSeal: true, authFactor: 'totp' })
     await sleep(1100)
     await nextTick()
 
+    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
+    await flushPromises()
     await wrapper.get('[data-test="api-key-seal-password"]').setValue('correct horse')
     await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
     await flushPromises()
 
-    // The password only reaches the local KDF; the server receives the ciphertext envelope.
+    // 密码只参与本地 KDF，同时随封存请求发给服务端做 bcrypt 校验；
+    // 授权因子来自创建时选择的方式，二次查看要求同一因子。
     expect(sealApiKey).toHaveBeenCalledWith(SECRET, 'correct horse')
-    expect(putSecretSeal).toHaveBeenCalledWith(1, SEAL_PAYLOAD)
+    expect(putSecretSeal).toHaveBeenCalledWith(1, SEAL_PAYLOAD, {
+      password: 'correct horse',
+      authFactor: 'totp',
+    })
     expect(wrapper.emitted('sealed')).toHaveLength(1)
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('shows a specific error and keeps the dialog open when the login password is wrong', async () => {
+    putSecretSeal.mockRejectedValueOnce({ status: 400, reason: 'VERIFY_PASSWORD_INVALID' })
+    const wrapper = await mountDialog({ canSeal: true })
+    await sleep(1100)
+    await nextTick()
+
+    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="api-key-seal-password"]').setValue('wrong password')
+    await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+    await flushPromises()
+
+    const error = wrapper.get('[data-test="api-key-seal-error"]')
+    expect(error.attributes('role')).toBe('alert')
+    expect(error.text()).toBe(
+      'The login password is incorrect; this key cannot be sealed for later viewing.',
+    )
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.emitted('sealed')).toBeUndefined()
+
+    await wrapper.get('[data-test="api-key-seal-later"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
     wrapper.unmount()
   })
@@ -324,6 +368,8 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     await sleep(1100)
     await nextTick()
 
+    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
+    await flushPromises()
     await wrapper.get('[data-test="api-key-seal-password"]').setValue('whatever')
     await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
     await flushPromises()

@@ -116,3 +116,22 @@ describe('LoginView registration entry', () => {
     expect(wrapper.text()).not.toContain('auth.signUp')
   })
 })
+
+describe('LoginView autofill contract', () => {
+  it('marks the login form as a standard credential form', async () => {
+    const wrapper = mountLogin()
+    await flushPromises()
+
+    const form = wrapper.get('form')
+    expect(form.attributes('autocomplete')).toBe('on')
+
+    const email = wrapper.get('#email')
+    expect(email.attributes('name')).toBe('email')
+    // 密码管理器以 username 语义识别账号字段，避免自动填充串到其它输入框。
+    expect(email.attributes('autocomplete')).toBe('username')
+
+    const password = wrapper.get('#password')
+    expect(password.attributes('name')).toBe('password')
+    expect(password.attributes('autocomplete')).toBe('current-password')
+  })
+})

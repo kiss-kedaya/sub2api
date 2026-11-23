@@ -151,7 +151,7 @@
                 </button>
               </div>
             </div>
-            <UButton icon="i-lucide-plus" data-tour="keys-create-btn" @click="showCreateModal = true">
+            <UButton icon="i-lucide-plus" data-tour="keys-create-btn" @click="openCreateModal">
               {{ t('keys.createKey') }}
             </UButton>
           </template>
@@ -530,7 +530,7 @@
               :title="t('keys.noKeysYet')"
               :description="t('keys.createFirstKey')"
               :action-text="t('keys.createKey')"
-              @action="showCreateModal = true"
+              @action="openCreateModal"
             />
           </template>
         </DataTable>
@@ -557,10 +557,29 @@
       @close="closeModals"
     >
       <form id="key-form" @submit.prevent="handleSubmit" class="space-y-5">
+        <!-- 创建分两步：填信息 → 身份校验；编辑保持原有单页流程。 -->
+        <div v-show="showEditModal || createStep === 1" class="space-y-5">
+          <div
+            v-if="showCreateFlow"
+            class="flex items-center gap-2 text-xs font-medium"
+            data-test="key-create-steps"
+          >
+            <span :class="createStep === 1 ? 'text-highlighted' : 'text-muted'">
+              1. {{ t('keys.createStep.details') }}
+            </span>
+            <UIcon name="i-lucide-chevron-right" class="size-3 text-muted" />
+            <span :class="createStep === 2 ? 'text-highlighted' : 'text-muted'">
+              2. {{ t('keys.createStep.verify') }}
+            </span>
+          </div>
         <UFormField :label="t('keys.nameLabel')" required size="lg">
           <UInput
             v-model="formData.name"
             type="text"
+            name="api-key-name"
+            autocomplete="off"
+            data-lpignore="true"
+            data-1p-ignore="true"
             required
             size="lg" :ui="{ base: 'py-[11px]' }"
             class="w-full"
@@ -1105,6 +1124,27 @@
             </div>
           </div>
         </div>
+        </div>
+
+        <!-- 第二步：按服务端返回的可用因子渲染密码 / TOTP / Passkey，
+             只显示该账号真实可用的选项；一个都没有时直接跳过本步。 -->
+        <div v-if="isCreateVerificationStep" class="space-y-3" data-test="key-create-verification">
+          <p class="text-sm text-muted">{{ t('keys.createStep.verifyHint') }}</p>
+          <div
+            v-if="verificationFactorsLoading"
+            class="rounded-lg bg-gray-50 p-3 text-xs text-muted ring ring-inset ring-default dark:bg-dark-900"
+            data-test="key-create-factors-loading"
+          >
+            {{ t('keys.reveal.factorsLoading') }}
+          </div>
+          <KeyFactorVerification
+            v-else
+            ref="createVerificationRef"
+            :factors="verificationFactors"
+            mode="create"
+            :loading="submitting"
+          />
+        </div>
       </form>
       <template #footer>
         <div class="flex justify-end gap-2">
@@ -1112,11 +1152,34 @@
             {{ t('common.cancel') }}
           </UButton>
           <UButton
+            v-if="isCreateVerificationStep"
+            type="button"
+            color="neutral"
+            variant="outline"
+            size="lg"
+            :disabled="submitting"
+            data-test="key-create-back"
+            @click="backToCreateDetails"
+          >
+            {{ t('keys.createStep.back') }}
+          </UButton>
+          <UButton
+            v-if="showCreateFlow && createStep === 1 && requiresCreateVerification"
+            type="button"
+            size="lg"
+            :disabled="submitting || verificationFactorsLoading"
+            data-test="key-create-next"
+            @click="goToCreateVerification"
+          >
+            {{ t('keys.createStep.next') }}
+          </UButton>
+          <UButton
+            v-else
             form="key-form"
             type="submit"
             size="lg"
             :loading="submitting"
-            :disabled="submitting"
+            :disabled="submitting || verificationFactorsLoading || (isCreateVerificationStep && !requiresCreateVerification)"
             data-tour="key-form-submit"
           >
             {{
@@ -1340,7 +1403,8 @@
       :api-key="secretRow"
       :secret="secretPlaintext"
       :hide-ccs-import="!!publicSettings?.hide_ccs_import_button"
-      :can-seal="canSealKeys"
+      :can-seal="sealAvailableForCreate"
+      :auth-factor="createAuthFactor"
       @close="closeSecretDialog"
       @use="useRevealedKey"
       @import-ccs="importRevealedToCcswitch"
@@ -1549,8 +1613,9 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import { loadGroupStatusClasses } from '@/features/channel-monitor-v2/groupStatusDot'
 	import GroupRateSignals from '@/components/common/GroupRateSignals.vue'
 	import PlatformIcon from '@/components/common/PlatformIcon.vue'
+	import KeyFactorVerification from '@/components/keys/KeyFactorVerification.vue'
 	import UserPageHeader from '@/components/user/UserPageHeader.vue'
-	import type { ApiKey, CustomEndpoint, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
+	import type { ApiKey, ApiKeyVerificationFactors, ApiKeyVerificationPayload, CustomEndpoint, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
 import type { BatchRotateKeyItem, BatchRotateKeysResult, ApiKeyOverview24h } from '@/api/keys'
 import { sealApiKey } from '@/utils/apikeySeal'
 import type { Column } from '@/components/common/types'
@@ -1890,6 +1955,62 @@ const syncRotationRemediation = async () => {
 
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
+// 创建 Key 的三选一身份校验（密码 / TOTP / Passkey）：第二步按实际绑定的因子渲染。
+const createStep = ref<1 | 2>(1)
+const verificationFactors = ref<ApiKeyVerificationFactors | null>(null)
+const verificationFactorsLoading = ref(false)
+const verificationPayload = ref<ApiKeyVerificationPayload | null>(null)
+const createAuthFactor = ref('')
+const createVerificationRef = ref<InstanceType<typeof KeyFactorVerification> | null>(null)
+const showCreateFlow = computed(() => showCreateModal.value && !showEditModal.value)
+const isCreateVerificationStep = computed(() => showCreateFlow.value && createStep.value === 2)
+const requiresCreateVerification = computed(
+  () => (verificationFactors.value?.available_methods.length ?? 0) > 0,
+)
+// 「以后可查看」以服务端判定为准（本地解密必须知道登录密码），旧接口缺字段时回退本地判断。
+const sealAvailableForCreate = computed(
+  () => verificationFactors.value?.seal_available ?? canSealKeys.value,
+)
+
+/** 打开创建弹窗：重置步骤并拉取该账号真实可用的验证因子。 */
+const openCreateModal = () => {
+  createStep.value = 1
+  verificationPayload.value = null
+  createAuthFactor.value = ''
+  createVerificationRef.value?.reset()
+  showCreateModal.value = true
+  void loadVerificationFactors()
+}
+
+const loadVerificationFactors = async () => {
+  verificationFactorsLoading.value = true
+  try {
+    verificationFactors.value = await keysAPI.getVerificationFactors()
+  } catch {
+    // 接口临时不可用时回退到「有登录密码才显示密码方式」：服务端仍然会强制校验，
+    // 这里只决定前端展示，不能因为一次抖动把创建流程整个堵死。
+    verificationFactors.value = {
+      password_available: canSealKeys.value,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: canSealKeys.value ? 'password' : '',
+      available_methods: canSealKeys.value ? ['password'] : [],
+      seal_available: canSealKeys.value,
+    }
+  } finally {
+    verificationFactorsLoading.value = false
+  }
+}
+
+/** 第一步 → 第二步：先做与提交相同的必填校验，通过后进入身份校验。 */
+const goToCreateVerification = () => {
+  if (!validateCreateBasics()) return
+  createStep.value = 2
+}
+
+const backToCreateDetails = () => {
+  createStep.value = 1
+}
 const showDeleteDialog = ref(false)
 const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
@@ -2382,6 +2503,7 @@ const closeSecretDialog = () => {
   showSecretDialog.value = false
   secretPlaintext.value = ''
   secretRow.value = null
+  createAuthFactor.value = ''
 }
 
 // 列表列只展示后端口径的掩码：优先 key_masked；老数据只剩前缀时补「****」。
@@ -2876,7 +2998,8 @@ const insertKeyLocally = (created: ApiKey | null | undefined): ApiKey | null => 
   return createdRow
 }
 
-const handleSubmit = async () => {
+/** 创建 / 编辑共用的必填校验；顺带归一化分组字段。 */
+const validateCreateBasics = (): boolean => {
   // 分组是默认必选项：只有确认「当前账号一个可绑定分组都没有」时才允许建无分组 key。
   // 无分组 key 不能路由任何请求，不能因为分组还没加载完就静默放行。
   const canCreateWithoutGroup = groupsLoaded.value && !hasAvailableGroups.value
@@ -2884,26 +3007,48 @@ const handleSubmit = async () => {
     if (formData.value.group_ids.length === 0) {
       if (!canCreateWithoutGroup) {
         appStore.showError(t('keys.groupRequired'))
-        return
+        return false
       }
     } else {
       formData.value.group_id = formData.value.group_ids[0] ?? null
     }
   } else if (formData.value.group_id === null && !canCreateWithoutGroup) {
     appStore.showError(t('keys.groupRequired'))
-    return
+    return false
   }
 
   // Validate custom key if enabled
   if (!showEditModal.value && formData.value.use_custom_key) {
     if (!formData.value.custom_key) {
       appStore.showError(t('keys.customKeyRequired'))
-      return
+      return false
     }
     if (customKeyError.value) {
       appStore.showError(customKeyError.value)
+      return false
+    }
+  }
+  return true
+}
+
+const handleSubmit = async () => {
+  if (!validateCreateBasics()) return
+
+  // 创建 Key 前必须完成一次身份校验：第一步只负责推进到校验步；
+  // 第二步拿到真实载荷（密码 / TOTP / Passkey 票据）后才会真正提交。
+  // 账号一个可用因子都没有时（OAuth-only 且未绑 2FA）跳过，但仍只做一次性显示。
+  let verification: ApiKeyVerificationPayload | undefined
+  if (showCreateFlow.value && requiresCreateVerification.value) {
+    if (createStep.value !== 2) {
+      createStep.value = 2
       return
     }
+    const built = createVerificationRef.value?.buildVerification() ?? null
+    if (!built) return
+    verification = built
+    verificationPayload.value = built
+  } else {
+    verificationPayload.value = null
   }
 
   // Parse IP lists only if IP restriction is enabled
@@ -2983,7 +3128,12 @@ const handleSubmit = async () => {
         rateLimitData,
         formData.value.smart_routing ? formData.value.group_ids : undefined,
         formData.value.anthropic_cache_ttl_mode,
-        { deepseekToolInjectionEnabled: formData.value.deepseek_tool_injection_enabled, autoBlockDatacenterIPs: formData.value.enable_ip_restriction && formData.value.auto_block_datacenter_ips, ...(formData.value.concurrency_limit > 0 ? { concurrencyLimit: formData.value.concurrency_limit } : {}) }
+        {
+          deepseekToolInjectionEnabled: formData.value.deepseek_tool_injection_enabled,
+          autoBlockDatacenterIPs: formData.value.enable_ip_restriction && formData.value.auto_block_datacenter_ips,
+          ...(formData.value.concurrency_limit > 0 ? { concurrencyLimit: formData.value.concurrency_limit } : {}),
+          ...(verification ? { verification } : {}),
+        }
       )
       // 明文只在当次响应里：列表行只放脱敏视图，明文交给回执弹窗。
       const { key: createdSecret, ...createdMasked } = created
@@ -2993,6 +3143,8 @@ const handleSubmit = async () => {
         ephemeralKeys.remember(createdMasked.id, createdSecret)
         // 关闭回执弹窗后仍能在 5 分钟内从右下角浮条再复制一次。
         ephemeralBarKeyId.value = createdMasked.id
+        // 记录本次身份校验因子：封存密文时原样上报，二次查看要求同一因子。
+        createAuthFactor.value = verification?.method ?? ''
         appStore.showSuccess(t('keys.keyCreatedSuccess'))
         // 回执弹窗拿补齐分组后的行：立刻点「使用密钥」时平台/分组都在。
         openSecretDialog(createdRow ?? createdMasked, createdSecret)
@@ -3008,12 +3160,26 @@ const handleSubmit = async () => {
     }
     closeModals()
   } catch (error: any) {
-    const errorMsg = error?.reason === 'API_KEY_TOO_PREDICTABLE'
-      ? t('keys.customKeyTooPredictable')
-      : error?.reason === 'API_KEY_GROUP_REQUIRED'
-        // 实例里已有可分配分组（但当前账号没拿到）：明确告诉用户去要分组，别以为是前端坏了。
-        ? t('keys.groupRequiredByServer')
-        : error.response?.data?.detail || t('keys.failedToSave')
+    // 身份校验失败要显示具体原因（密码不正确 / 验证码错误 / Passkey 失败），
+    // 不能笼统提示「保存失败」让用户猜。
+    const reason = error?.reason
+    const errorMsg =
+      reason === 'VERIFY_PASSWORD_INVALID'
+        ? t('keys.factor.passwordInvalid')
+        : reason === 'VERIFY_TOTP_INVALID'
+          ? t('keys.factor.totpInvalid')
+          : reason === 'VERIFY_PASSKEY_FAILED'
+            ? t('keys.factor.passkeyFailed')
+            : reason === 'VERIFY_FACTOR_UNAVAILABLE'
+              ? t('keys.factor.unavailable')
+              : reason === 'VERIFY_REQUIRED'
+                ? t('keys.factor.requiredAll')
+                : reason === 'API_KEY_TOO_PREDICTABLE'
+                  ? t('keys.customKeyTooPredictable')
+                  : reason === 'API_KEY_GROUP_REQUIRED'
+                    // 实例里已有可分配分组（但当前账号没拿到）：明确告诉用户去要分组，别以为是前端坏了。
+                    ? t('keys.groupRequiredByServer')
+                    : error.response?.data?.detail || t('keys.failedToSave')
     appStore.showError(errorMsg)
     // Don't advance tour on error
   } finally {
@@ -3161,7 +3327,10 @@ const resealRotatedKeys = async () => {
   for (const item of targets) {
     try {
       const payload = await sealApiKey(item.key!, batchRotateSealPassword.value)
-      await keysAPI.putSecretSeal(item.id, payload)
+      await keysAPI.putSecretSeal(item.id, payload, {
+        password: batchRotateSealPassword.value,
+        authFactor: 'password',
+      })
       status[item.id] = 'sealed'
     } catch {
       status[item.id] = 'failed'
@@ -3218,6 +3387,11 @@ const closeModals = () => {
   selectedKeyProvider.value = null
   showCreateModal.value = false
   showEditModal.value = false
+  createStep.value = 1
+  // 保留 verificationFactors：回执弹窗紧接着要用 seal_available 决定是否展示
+  // 「以后可查看」；下次打开创建弹窗会重新拉取。
+  verificationPayload.value = null
+  createVerificationRef.value = null
   selectedKey.value = null
   formData.value = {
     name: '',

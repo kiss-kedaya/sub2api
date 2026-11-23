@@ -27,7 +27,8 @@
       </div>
 
       <!-- Registration Form -->
-      <form v-else @submit.prevent="handleFormSubmit" class="space-y-5">
+      <!-- 标准注册表单：显式 on + username/new-password 语义，避免自动填充串到其它页面。 -->
+      <form v-else autocomplete="on" @submit.prevent="handleFormSubmit" class="space-y-5">
         <!-- Step head: "Step N of M" on the left, dotted progress on the right -->
         <div v-if="totalSteps > 1" class="auth-step-head" data-testid="register-step-head">
           <span class="auth-step-label">{{ stepLabel }}</span>
@@ -65,12 +66,13 @@
           <div class="relative">
             <input
               id="email"
+              name="email"
               v-model="formData.email"
               type="email"
               maxlength="254"
               required
               autofocus
-              autocomplete="email"
+              autocomplete="username"
               :disabled="registrationFieldsDisabled"
               class="input"
               :class="{ 'input-error': errors.email }"
@@ -87,6 +89,7 @@
           <div class="relative">
             <input
               id="password"
+              name="password"
               v-model="formData.password"
               :type="showPassword ? 'text' : 'password'"
               required

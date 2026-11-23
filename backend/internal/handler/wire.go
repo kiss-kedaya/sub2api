@@ -349,12 +349,28 @@ func ProvidePasskeyHandler(
 	return h
 }
 
+// ProvideAPIKeyHandler 在原有构造之后注入三选一身份校验服务：
+//   - 创建 Key 前必须完成 密码 / TOTP / Passkey 之一；
+//   - 二次查看封存密文前的 reveal-authorize 与 grant 校验；
+//   - Passkey 校验挑战与一次性票据。
+//
+// NewAPIKeyHandler 的签名保持不变，避免大量既有测试构造点改动。
+func ProvideAPIKeyHandler(
+	apiKeyService *service.APIKeyService,
+	secretService *service.APIKeySecretService,
+	verificationService *service.APIKeyVerificationService,
+) *APIKeyHandler {
+	h := NewAPIKeyHandler(apiKeyService, secretService)
+	h.SetVerificationService(verificationService)
+	return h
+}
+
 // ProviderSet is the Wire provider set for all handlers
 var ProviderSet = wire.NewSet(
 	// Top-level handlers
 	ProvideAuthHandler,
 	ProvideUserHandler,
-	NewAPIKeyHandler,
+	ProvideAPIKeyHandler,
 	NewUsageHandler,
 	NewRedeemHandler,
 	NewSubscriptionHandler,

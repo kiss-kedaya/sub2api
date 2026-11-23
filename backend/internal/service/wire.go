@@ -918,6 +918,7 @@ var ProviderSet = wire.NewSet(
 	NewUserService,
 	ProvideAPIKeyService,
 	NewAPIKeySecretService,
+	NewAPIKeyVerificationService,
 	NewKeyRotationGateService,
 	NewKeyRotationRiskAckService,
 	NewIPWhitelistAssistService,
