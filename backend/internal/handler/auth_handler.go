@@ -305,16 +305,18 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if err != nil {
 		// 审计：失败也登记被尝试账号的邮箱指纹（不含明文），便于反查撞库。
 		markAuthAuditEmail(c, req.Email)
+		markAuthAuditFailureFromError(c, err)
 		// 统一登录响应（安全 + 体验）：
 		// 「账号不存在」「密码错误」与下面「密码正确但需要 2FA」返回完全相同的挑战结构，
 		// 响应体里没有任何可以区分两种情况的字段，避免登录接口被当作账号枚举 /
 		// 密码有效性探测的 oracle。凭据错误延后到 /auth/login/2fa 统一返回
 		// INVALID_CREDENTIALS（见 Login2FA）。
-		// TOTP 服务不可用时无法下发挑战，退回旧行为（仅测试/异常部署会出现）。
-		if errors.Is(err, service.ErrInvalidCredentials) && h.totpService != nil {
+		// 全站关闭 TOTP 登录验证时，不会有真实的 TOTP 登录挑战。
+		// 读取设置失败时沿用统一挑战，保持与已绑定账号的登录策略一致。
+		if errors.Is(err, service.ErrInvalidCredentials) && h.totpService != nil &&
+			h.settingSvc.LoginTOTPEnabled(c.Request.Context()) {
 			// 响应是 200 挑战，但审计必须仍按「凭据错误」记失败，否则撞库/爆破
 			// 在审计里会显示成成功登录。
-			markAuthAuditFailureFromError(c, err)
 			h.createLoginChallenge(c, 0, req.Email)
 			return
 		}

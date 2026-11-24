@@ -194,10 +194,13 @@ func (s *SettingService) IsTotpEnabled(ctx context.Context) bool {
 // 密码登录、第三方邮箱 OAuth 登录、passkey/pending OAuth 兑换必须共用同一口径，
 // 避免某条登录入口漏掉二次验证。设置读取失败时 fail-closed（要求动态码）。
 func (s *SettingService) LoginRequiresTOTP(ctx context.Context, user *User) bool {
-	if s == nil || user == nil || !user.TotpEnabled {
-		return false
-	}
-	if s.settingRepo == nil {
+	return s != nil && user != nil && user.TotpEnabled && s.LoginTOTPEnabled(ctx)
+}
+
+// LoginTOTPEnabled reports whether password login may require an authenticator code.
+// On a settings read failure, keep issuing the same challenge for valid and invalid credentials.
+func (s *SettingService) LoginTOTPEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
 		return true
 	}
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyTotpEnabled)
