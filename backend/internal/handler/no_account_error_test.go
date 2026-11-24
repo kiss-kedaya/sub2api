@@ -370,7 +370,9 @@ func TestClassifyNoAccountError_ModelNotAvailable_CodeAndAvailableModels(t *test
 		HasModelSupport:   false,
 		AvailableModels:   []string{"claude-sonnet-4-5", "claude-haiku-4-5"},
 	}}
-	apiKey := &service.APIKey{GroupID: ptrInt64(118)}
+	// 只有确认了请求所属分组（Group 已加载且 ID 与 GroupID 一致）才会列出可用模型，
+	// 并按该分组的模型白名单过滤；这里分组没有白名单，列表原样展示。
+	apiKey := &service.APIKey{GroupID: ptrInt64(118), Group: &service.Group{ID: 118, Platform: service.PlatformAnthropic}}
 
 	cls := classifyNoAccountErrorFromGin(c, fd, apiKey, "claude-opus-9", "claude-opus-9", service.PlatformAnthropic)
 

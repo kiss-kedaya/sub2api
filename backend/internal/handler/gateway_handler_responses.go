@@ -273,13 +273,15 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				}
-				message := cls.Message
-				if !cls.ModelNotFound {
-					// 真实无候选时把「协议/平台是否匹配、转换开关状态」一并返回：
-					// 客户端与运维能立刻区分「没号/全忙」与「协议入口配错」。
-					message = "No available accounts: " + err.Error() + " [" +
-						service.SelectionFailureProtocolDiagnostics(c, apiKey, c.Request.URL.Path) + "]"
-				}
+				// 调度内部诊断（分组/池计数/协议与转换开关）只进日志，客户端只看稳定文案；
+				// 运维用同一 request id 在日志里区分「没号/全忙」与「协议入口配错」。
+				reqLog.Warn("gateway.responses.select_account_no_available",
+					zap.Int64p("group_id", apiKey.GroupID),
+					zap.Bool("model_not_found", cls.ModelNotFound),
+					zap.String("protocol_diagnostics", service.SelectionFailureProtocolDiagnostics(c, apiKey, c.Request.URL.Path)),
+					zap.Error(err),
+				)
+				message := clientNoAccountMessage(cls)
 				if cls.Code != "" {
 					// MODEL_NOT_AVAILABLE 等稳定机器码：客户端据此判定是配置问题
 					// 而非瞬时容量，避免对 503 无脑重试。
