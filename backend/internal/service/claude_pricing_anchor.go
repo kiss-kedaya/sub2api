@@ -2,10 +2,14 @@ package service
 
 // Claude 模型计费锚点校正。
 //
-// 修复前：请求计费锚定「key 主组」（apiKey.Group / apiKey.GroupID）——倍率取主组
-// RateMultiplier、单价取主组渠道价。当一个非 Claude 分组（如 0.12 倍率的 grok 组
-// group#25）通过 /v1/messages 收到 claude-* 请求时，这条链路会把组内 Grok 档价
-// 与 0.12 倍率套到真实打到 Claude 上游的 Claude 模型上，实测低计 8.4~13.9 倍。
+// 请求计费锚定「key 主组」（apiKey.Group / apiKey.GroupID）——倍率取主组
+// RateMultiplier、单价取主组渠道价。当一个非 Anthropic 分组为 Claude 族计费模型
+// 配了供应商目录价时，这条链路会把那档价和该分组的倍率套到 Claude 模型上。
+//
+// 不属于本校正的情形：Grok 分组经 /v1/messages 的 messages 分发收到 claude-* 名字时，
+// 名字会先被映射成该分组自己的 Grok 模型（openai_messages_dispatch.go），由 Grok
+// 账号服务，计费模型就是那个 Grok 模型，按 Grok 价 × 分组倍率结算是对的——响应里
+// 回显的 claude 名只是客户端写的名字。该口径由 grok_dispatch_billing_pin_test.go 固定。
 //
 // 修复口径（只纠正跨目录/跨平台错配，不改正常场景）：
 //   - 触发条件（全部满足才算错配）：

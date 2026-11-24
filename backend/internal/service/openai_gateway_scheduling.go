@@ -1228,6 +1228,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	// claude_model_admission_gate.go）：claude-* 落到 grok/CN 供应商上游、
 	// 且分组未开启跨协议转换时不可选，与 /v1/chat/completions 的
 	// 404 model_not_found 口径一致。platform 即本入口 override 后的实际上游平台。
+	// 注意：目前没有读取方（见 claude_model_admission_gate.go 顶部说明），这一行暂不起作用。
 	ctx = WithSchedulerClaudeModelGate(ctx, platform, requestedModel)
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
