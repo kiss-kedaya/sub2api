@@ -281,10 +281,11 @@ func (s *GatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Context,
 		if unsupported > 0 && strings.TrimSpace(requestedModel) != "" {
 			return nil, noAvailableAccountsDueToModelSupport(requestedModel, unsupported)
 		}
-		// 平台/分组维度没有任何可调度账号：把 group/platform/model 带进错误，
+		// 平台/分组维度没有任何可调度账号：把 group/platform/model 带进错误文本，
 		// 避免线上只看到裸 "no available accounts" 无法判断是哪一层过滤掉了账号。
-		return nil, fmt.Errorf("%w (group=%v platform=%s model=%s schedulable_accounts=0)",
-			ErrNoAvailableAccounts, derefGroupID(groupID), platform, requestedModel)
+		// 模型名由调用方控制，只放在括号外；本分支没有逐账号计数，分类走 503。
+		return nil, noAvailableAccountsDetail(requestedModel,
+			fmt.Sprintf("group=%v platform=%s schedulable_accounts=0", derefGroupID(groupID), platform))
 	}
 	ctx = s.withWindowCostPrefetch(ctx, accounts)
 	ctx = s.withRPMPrefetch(ctx, accounts)
@@ -764,12 +765,7 @@ func (s *GatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Context,
 		// 候选被逐账号过滤光了：带上每个过滤原因的计数（平台/模型/调度/配额等），
 		// handler 据此能区分「模型不支持」「平台不匹配」「全忙/限流」。
 		stats := s.logDetailedSelectionFailure(ctx, groupID, sessionHash, requestedModel, platform, accounts, excludedIDs, useMixed)
-		if strings.TrimSpace(requestedModel) != "" {
-			return nil, fmt.Errorf("%w supporting model: %s (group=%v platform=%s %s)",
-				ErrNoAvailableAccounts, requestedModel, derefGroupID(groupID), platform, summarizeSelectionFailureStats(stats))
-		}
-		return nil, fmt.Errorf("%w (group=%v platform=%s %s)",
-			ErrNoAvailableAccounts, derefGroupID(groupID), platform, summarizeSelectionFailureStats(stats))
+		return nil, noAvailableAccountsFromStats(requestedModel, fmt.Sprintf("group=%v platform=%s", derefGroupID(groupID), platform), stats)
 	}
 
 	accountLoads := make([]AccountWithConcurrency, 0, len(candidates))
@@ -858,8 +854,9 @@ func (s *GatewayService) selectAccountWithLoadAwarenessOnce(ctx context.Context,
 		})
 	}
 	// 等待队列也放不下（会话/候选择尽）：同样附带分组/平台与候选数，禁止裸错误。
-	return nil, fmt.Errorf("%w (group=%v platform=%s model=%s candidates=%d wait_plan_exhausted=true)",
-		ErrNoAvailableAccounts, derefGroupID(groupID), platform, requestedModel, len(candidates))
+	// 模型名放括号外；这里是容量耗尽而非模型判决，没有计数，分类走 503。
+	return nil, noAvailableAccountsDetail(requestedModel,
+		fmt.Sprintf("group=%v platform=%s candidates=%d wait_plan_exhausted=true", derefGroupID(groupID), platform, len(candidates)))
 }
 
 func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates []*Account, groupID *int64, sessionHash string, preferOAuth bool) (*AccountSelectionResult, bool, error) {
@@ -2632,7 +2629,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 	if selected == nil {
 		stats := s.logDetailedSelectionFailure(ctx, groupID, sessionHash, requestedModel, platform, accounts, excludedIDs, false)
 		if requestedModel != "" {
-			return nil, fmt.Errorf("%w supporting model: %s (%s)", ErrNoAvailableAccounts, requestedModel, summarizeSelectionFailureStats(stats))
+			return nil, noAvailableAccountsFromStats(requestedModel, "", stats)
 		}
 		return nil, ErrNoAvailableAccounts
 	}
@@ -2899,7 +2896,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 	if selected == nil {
 		stats := s.logDetailedSelectionFailure(ctx, groupID, sessionHash, requestedModel, nativePlatform, accounts, excludedIDs, true)
 		if requestedModel != "" {
-			return nil, fmt.Errorf("%w supporting model: %s (%s)", ErrNoAvailableAccounts, requestedModel, summarizeSelectionFailureStats(stats))
+			return nil, noAvailableAccountsFromStats(requestedModel, "", stats)
 		}
 		return nil, ErrNoAvailableAccounts
 	}
@@ -3084,10 +3081,21 @@ func appendSelectionFailureRateSample(samples []string, accountID int64, remaini
 	return append(samples, fmt.Sprintf("%d(%s)", accountID, remaining))
 }
 
+// failureCounts is the structured counterpart of summarizeSelectionFailureStats:
+// the pool size and the per-model verdict counters the handler classifies from.
+func (stats selectionFailureStats) failureCounts() SelectionFailureCounts {
+	pool := stats.Total
+	if pool <= 0 {
+		pool = stats.Eligible + stats.Excluded + stats.Unschedulable + stats.PlatformFiltered +
+			stats.ModelUnsupported + stats.ModelRateLimited + stats.ProfitThreshold + stats.ProfitInvalidRate
+	}
+	return SelectionFailureCounts{Pool: pool, ModelNotSupported: stats.ModelUnsupported, ModelRateLimited: stats.ModelRateLimited}
+}
+
+// summarizeSelectionFailureStats renders the per-reason counters for logs and
+// ops. The trailing pool= / model_not_supported= / model_rate_limited= fields
+// mirror failureCounts() for readers of the text; classification never parses it.
 func summarizeSelectionFailureStats(stats selectionFailureStats) string {
-	// 末尾追加 handler 共用的分类器字段（pool= / model_not_supported=）：线上
-	// "No available accounts" 只有带上这两项，classifySelectionFailureError 才能
-	// 把「分组内没有任何账号支持该模型」判成 404 MODEL_NOT_AVAILABLE，而不是笼统 503。
 	summary := fmt.Sprintf(
 		"total=%d eligible=%d excluded=%d unschedulable=%d platform_filtered=%d model_unsupported=%d model_rate_limited=%d profit_threshold=%d profit_invalid_account_rate=%d",
 		stats.Total,
@@ -3100,14 +3108,9 @@ func summarizeSelectionFailureStats(stats selectionFailureStats) string {
 		stats.ProfitThreshold,
 		stats.ProfitInvalidRate,
 	)
-	pool := stats.Total
-	if pool <= 0 {
-		pool = stats.Eligible + stats.Excluded + stats.Unschedulable + stats.PlatformFiltered +
-			stats.ModelUnsupported + stats.ModelRateLimited + stats.ProfitThreshold + stats.ProfitInvalidRate
-	}
-	if pool > 0 {
+	if counts := stats.failureCounts(); counts.Pool > 0 {
 		summary += fmt.Sprintf(" pool=%d model_not_supported=%d model_rate_limited=%d",
-			pool, stats.ModelUnsupported, stats.ModelRateLimited)
+			counts.Pool, counts.ModelNotSupported, counts.ModelRateLimited)
 	}
 	return summary
 }

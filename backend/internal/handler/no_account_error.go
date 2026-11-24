@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -111,38 +109,11 @@ func groupVisibleModels(apiKey *service.APIKey, models []string) []string {
 	return apiKey.Group.ModelAllowlist.FilterForListing(models)
 }
 
-var selectionModelRateLimitedPattern = regexp.MustCompile(`(?:model_rate_limited|rate_limited)=(\d+)`)
-var selectionPoolPattern = regexp.MustCompile(`pool=(\d+)`)
-var selectionModelNotSupportedPattern = regexp.MustCompile(`model_not_supported=(\d+)`)
-var selectionModelPlanGatedPattern = regexp.MustCompile(`model_plan_gated=(\d+)`)
-
-func selectionFailureCount(pattern *regexp.Regexp, message string) int {
-	match := pattern.FindStringSubmatch(strings.ToLower(message))
-	if len(match) != 2 {
-		return 0
-	}
-	count, err := strconv.Atoi(match[1])
-	if err != nil || count <= 0 {
-		return 0
-	}
-	return count
-}
-
-func selectionFailureDetails(message string) string {
-	message = strings.TrimSpace(message)
-	if !strings.HasSuffix(message, ")") {
-		return ""
-	}
-	start := strings.LastIndex(message, "(")
-	if start < 0 || start+1 >= len(message)-1 {
-		return ""
-	}
-	return message[start+1 : len(message)-1]
-}
-
-// classifySelectionFailureError uses the scheduler-owned diagnostic suffix to
-// distinguish real model rate limits from deterministic upstream model or plan
-// rejection. It never parses the user-controlled model portion of the error.
+// classifySelectionFailureError uses the scheduler's structured counters
+// (service.SelectionFailureCounts, read with errors.As) to distinguish real model
+// rate limits from deterministic upstream model or plan rejection. It never
+// parses the error text: that text embeds the caller-controlled model name and
+// the route-level skip summary, so a verdict read from it could be forged or lost.
 func classifySelectionFailureError(err error, fallback noAccountErrorClassification) noAccountErrorClassification {
 	if err == nil {
 		return fallback
@@ -164,11 +135,11 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 	if fallback.ModelNotFound {
 		return fallback
 	}
-	details := selectionFailureDetails(err.Error())
-	if details == "" {
+	counts, ok := service.SelectionFailureCountsFromError(err)
+	if !ok {
 		return fallback
 	}
-	if selectionFailureCount(selectionModelRateLimitedPattern, details) > 0 {
+	if counts.ModelRateLimited > 0 {
 		return noAccountErrorClassification{
 			Status:  http.StatusTooManyRequests,
 			ErrType: "rate_limit_error",
@@ -176,9 +147,7 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 		}
 	}
 
-	pool := selectionFailureCount(selectionPoolPattern, details)
-	unsupported := selectionFailureCount(selectionModelNotSupportedPattern, details)
-	planGated := selectionFailureCount(selectionModelPlanGatedPattern, details)
+	pool, unsupported, planGated := counts.Pool, counts.ModelNotSupported, counts.ModelPlanGated
 	if pool <= 0 || unsupported+planGated < pool {
 		return fallback
 	}
