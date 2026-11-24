@@ -4,6 +4,8 @@ import (
 	"context"
 	"net"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 // SSRF 防护 helper：
@@ -111,6 +113,15 @@ func isPrivateOrLoopbackHost(ctx context.Context, hostname string) (bool, error)
 		}
 	}
 	return false, nil
+}
+
+// outboundHostIsPublic 判断管理员填写的出站主机能否访问：已知元数据/回环主机名、
+// 非公网字面量 IP、解析到任何非公网地址，以及解析失败/超时/空结果，一律不能。
+//
+// 账号测试/模型同步、CRS 同步、DeepSeek 自填搜索地址共用这一处判定。此前这三处是
+// `isPrivateOrLoopbackHost(...)` 返回 `err == nil && blocked` 才拒绝，解析失败等于放行。
+func outboundHostIsPublic(ctx context.Context, host string) bool {
+	return !isBlockedHostname(host) && urlvalidator.ValidateOutboundHost(ctx, host, false) == nil
 }
 
 // safeDialContext 在真实 dial 前再次校验目标 IP，防止 DNS rebinding。

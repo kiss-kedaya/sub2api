@@ -299,12 +299,10 @@ func (s *AccountTestService) validateUpstreamBaseURL(raw string) (string, error)
 		// 指到 127.0.0.1 / 172.17.0.1 然后点测试」——测试端点会把对方响应体
 		// 回显到 SSE 并落库到 error_message，构成反射型 SSRF + 端口预言机。
 		// 账号测试/计费探测的目标由账号凭证决定，必须无条件拒绝私网。
-		// 统一走管理面出站校验：字面量私网、解析到私网、解析失败/超时/空结果一律拒绝
-		// （此前解析失败会放行，等于把 DNS 故障当成通行证），错误文案固定、不带解析细节。
-		if !s.accountTestPrivateTargetsAllowed() {
-			if err := urlvalidator.ValidateOutboundHost(context.Background(), hostOfURL(normalized), false); err != nil {
-				return "", errTestTargetNotAllowed
-			}
+		// 字面量私网、解析到私网、解析失败/超时/空结果一律拒绝（此前解析失败会放行，
+		// 等于把 DNS 故障当成通行证），错误文案固定、不带解析细节。
+		if !s.accountTestPrivateTargetsAllowed() && !outboundHostIsPublic(context.Background(), hostOfURL(normalized)) {
+			return "", errTestTargetNotAllowed
 		}
 		return normalized, nil
 	}
