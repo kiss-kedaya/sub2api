@@ -384,7 +384,8 @@ const DataTableStub = {
 
 const SelectStub = {
   name: 'Select',
-  props: ['modelValue', 'options'],
+  // `error` mirrors the real Select's prop (red colour + highlight ring); the stub only needs to accept it.
+  props: ['modelValue', 'options', 'error'],
   emits: ['update:modelValue'],
   template: '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"></select>',
 }
@@ -738,8 +739,10 @@ describe('user KeysView column settings', () => {
     expect(groupSelect.props('modelValue')).toBeNull()
     expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([2])
     await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
     expect(createKey).not.toHaveBeenCalled()
-    expect(showError).toHaveBeenCalledWith('keys.groupRequired')
+    // 必填提示改为就地标红，不再弹吐司。
+    expect(wrapper.get('[data-test="key-field-group"]').text()).toContain('keys.groupRequired')
     await wrapper.get('input[name="key-provider"][value="other"]').setValue()
     expect(groupSelect.props('options').map((option: { value: number }) => option.value)).toEqual([3, 4])
     groupSelect.vm.$emit('update:modelValue', 3)
@@ -2953,6 +2956,193 @@ describe('user KeysView 创建弹窗（Quiet 流程）与页面过期守卫', ()
     await flushPromises()
     expect(advancedHidden(wrapper)).toBe(true)
     wrapper.unmount()
+  })
+
+  describe('必填项：名称和分组没填就不能进下一步，并高亮未完成项', () => {
+    const nameField = (wrapper: VueWrapper) => wrapper.get('[data-test="key-field-name"]')
+    const groupField = (wrapper: VueWrapper) => wrapper.get('[data-test="key-field-group"]')
+
+    it('刚打开的空表单不标红；点「下一步」后名称和分组同时标红并留在第一步', async () => {
+      const wrapper = await openCreate()
+      expect(nameField(wrapper).text()).not.toContain('keys.nameRequired')
+      expect(groupField(wrapper).text()).not.toContain('keys.groupRequired')
+
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-test="key-create-steps"]').text()).toContain('Step 1 of 2')
+      expect(nameField(wrapper).text()).toContain('keys.nameRequired')
+      expect(groupField(wrapper).text()).toContain('keys.groupRequired')
+      expect(wrapper.get('[data-tour="key-form-name"]').attributes('aria-invalid')).toBe('true')
+      expect(createKey).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('名称只有空白也算没填；填好名称后名称的红色立刻消失，分组仍标红', async () => {
+      const wrapper = await openCreate()
+      await wrapper.get('[data-tour="key-form-name"]').setValue('   ')
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+      expect(nameField(wrapper).text()).toContain('keys.nameRequired')
+
+      await wrapper.get('[data-tour="key-form-name"]').setValue('my key')
+      await flushPromises()
+      expect(nameField(wrapper).text()).not.toContain('keys.nameRequired')
+      expect(groupField(wrapper).text()).toContain('keys.groupRequired')
+      wrapper.unmount()
+    })
+
+    it('名称填了、分组没选：只标红分组，仍不能进下一步', async () => {
+      const wrapper = await openCreate()
+      await wrapper.get('[data-tour="key-form-name"]').setValue('only name')
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-test="key-create-steps"]').text()).toContain('Step 1 of 2')
+      expect(nameField(wrapper).text()).not.toContain('keys.nameRequired')
+      expect(groupField(wrapper).text()).toContain('keys.groupRequired')
+      wrapper.unmount()
+    })
+
+    it('分组选好之后红色立刻消失，再点「下一步」才进第二步', async () => {
+      const wrapper = await openCreate()
+      await wrapper.get('[data-tour="key-form-name"]').setValue('both')
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+      expect(groupField(wrapper).text()).toContain('keys.groupRequired')
+
+      wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+      expect(groupField(wrapper).text()).not.toContain('keys.groupRequired')
+
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.get('[data-test="key-create-steps"]').text()).toContain('Step 2 of 2')
+      wrapper.unmount()
+    })
+
+    it('每次被拦下都会重放一次抖动（连续点两次也再提示一次）', async () => {
+      const wrapper = await openCreate()
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+      expect(nameField(wrapper).classes()).toContain('key-field-nudge')
+
+      // 动画靠「先摘后挂」重放：第二次点击期间类名必须真的被摘掉过一次，浏览器才会重新播放。
+      const seen: boolean[] = []
+      const el = nameField(wrapper).element
+      const observer = new MutationObserver(() => seen.push(el.classList.contains('key-field-nudge')))
+      observer.observe(el, { attributes: true, attributeFilter: ['class'] })
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+      observer.disconnect()
+      expect(seen).toContain(false)
+      expect(nameField(wrapper).classes()).toContain('key-field-nudge')
+      wrapper.unmount()
+    })
+
+    it('分组已选、名称没填：只标红名称，留在第一步（名称检查不能被分组掩盖）', async () => {
+      const wrapper = await openCreate()
+      wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-test="key-create-steps"]').text()).toContain('Step 1 of 2')
+      expect(nameField(wrapper).text()).toContain('keys.nameRequired')
+      expect(groupField(wrapper).text()).not.toContain('keys.groupRequired')
+      wrapper.unmount()
+    })
+
+    it('智能路由开着、一条路由都没加：同样算没选分组', async () => {
+      const wrapper = await openCreate()
+      await wrapper.get('[data-tour="key-form-name"]').setValue('smart')
+      await wrapper.get('[data-test="key-smart-routing"]').trigger('click')
+      await nextTick()
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-test="key-create-steps"]').text()).toContain('Step 1 of 2')
+      expect(groupField(wrapper).text()).toContain('keys.groupRequired')
+      expect(createKey).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('智能路由下以「路由列表」为准：加了一条再删掉，列表空了就算没选分组', async () => {
+      const wrapper = await openCreate()
+      await wrapper.get('[data-tour="key-form-name"]').setValue('smart')
+      await wrapper.get('[data-test="key-smart-routing"]').trigger('click')
+      await nextTick()
+      wrapper.getComponent('[data-test="smart-route-add"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+      // 删掉唯一的主路由（真实按钮）：路由列表回到空。
+      await wrapper.get('[data-test="smart-route-primary-remove"]').trigger('click')
+      await nextTick()
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-test="key-create-steps"]').text()).toContain('Step 1 of 2')
+      expect(groupField(wrapper).text()).toContain('keys.groupRequired')
+      expect(createKey).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('不经过 closeModals 直接再点「创建密钥」：旧的红色提示同样被清掉', async () => {
+      const wrapper = await openCreate()
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+      expect(nameField(wrapper).text()).toContain('keys.nameRequired')
+
+      await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+      await flushPromises()
+      expect(nameField(wrapper).text()).not.toContain('keys.nameRequired')
+      expect(groupField(wrapper).text()).not.toContain('keys.groupRequired')
+      wrapper.unmount()
+    })
+
+    it('分组选择框带上红色错误状态（不只是下面的文字）', async () => {
+      const wrapper = await openCreate()
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.getComponent('[data-tour="key-form-group"]').props('error')).toBe(true)
+
+      wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+      expect(wrapper.getComponent('[data-tour="key-form-group"]').props('error')).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('关掉再重新打开：上一次的红色提示不会留着', async () => {
+      const wrapper = await openCreate()
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+      expect(nameField(wrapper).text()).toContain('keys.nameRequired')
+
+      // 关闭后（弹窗已卸掉内容之前的那一刻）状态就必须已清空：不依赖「下次打开时再清」。
+      await wrapper.get('[data-test="key-create-cancel"]').trigger('click')
+      const afterClose = wrapper.vm as unknown as { attemptedSubmit?: boolean }
+      expect(afterClose.attemptedSubmit).toBeFalsy()
+
+      await flushPromises()
+      await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+      await flushPromises()
+      expect(nameField(wrapper).text()).not.toContain('keys.nameRequired')
+      expect(groupField(wrapper).text()).not.toContain('keys.groupRequired')
+      wrapper.unmount()
+    })
+
+    it('不需要二次校验的账号：直接点「创建」同样被拦下并标红，不会发请求', async () => {
+      getVerificationFactors.mockResolvedValue({
+        password_available: true, totp_enabled: false, passkey_count: 0, preferred: 'password',
+        available_methods: ['password'], seal_available: true, create_verification_required: false,
+      })
+      const wrapper = await openCreate()
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+      expect(createKey).not.toHaveBeenCalled()
+      expect(nameField(wrapper).text()).toContain('keys.nameRequired')
+      expect(groupField(wrapper).text()).toContain('keys.groupRequired')
+      wrapper.unmount()
+    })
   })
 
   it('第二步：步骤头走到 2/2，说明换成身份校验，页脚变成「上一步 + 创建」，且能退回第一步', async () => {

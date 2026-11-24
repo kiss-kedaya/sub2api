@@ -142,6 +142,7 @@ export default {
     disable: 'Disable',
     nameLabel: 'Name',
     namePlaceholder: 'My API Key',
+    nameRequired: 'Enter a name for this key',
     groupLabel: 'Group',
     providerLabel: 'Provider',
     providerCN: 'Chinese models',

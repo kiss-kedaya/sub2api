@@ -142,6 +142,7 @@ export default {
     disable: '禁用',
     nameLabel: '名称',
     namePlaceholder: '我的 API 密钥',
+    nameRequired: '请输入密钥名称',
     groupLabel: '分组',
     providerLabel: '厂商',
     providerCN: '国产模型',
