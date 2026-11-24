@@ -238,6 +238,7 @@ func TestAPIKeyVerificationFactorAvailability(t *testing.T) {
 	require.Equal(t, APIKeyFactorTOTP, factors.Preferred)
 	require.Equal(t, []string{APIKeyFactorTOTP, APIKeyFactorPassword}, factors.AvailableMethods)
 	require.True(t, factors.SealAvailable)
+	require.True(t, factors.CreateVerificationRequired, "开了 TOTP：创建必须先校验")
 
 	// OAuth-only（GitHub 注册）：密码字段虽然有随机 hash，但用户不知道密码 →
 	// 不可选、也不能封存（本地解密必须用登录密码）。
@@ -249,6 +250,7 @@ func TestAPIKeyVerificationFactorAvailability(t *testing.T) {
 	require.False(t, factors.PasswordAvailable)
 	require.False(t, factors.SealAvailable)
 	require.False(t, factors.Available())
+	require.False(t, factors.CreateVerificationRequired)
 	require.Empty(t, factors.Preferred)
 
 	// 一个因子都没有的账号：创建时不需要校验（一次性显示明文），
@@ -300,6 +302,52 @@ func TestAPIKeyVerificationCreateMatrix(t *testing.T) {
 	require.Equal(t, APIKeyFactorTOTP, result.Factor)
 	_, err = svc.VerifyForCreate(ctx, user.ID, &APIKeyVerificationInput{Method: APIKeyFactorTOTP, TOTPCode: "000000"})
 	require.ErrorIs(t, err, ErrAPIKeyTOTPInvalid)
+}
+
+// 创建 / 轮换 Key 只对开了 TOTP 或绑了 Passkey 的账号强制校验。只有登录密码的账号（邮箱注册没开 2FA，
+// 或第三方注册后设过本地密码）不再被卡在输密码上——第三方登录的用户常常根本不记得密码。
+func TestAPIKeyVerificationCreateOnlyForcedWhenStrongerFactorEnabled(t *testing.T) {
+	ctx := context.Background()
+
+	// 只有登录密码：密码仍然可选（二次查看 / 以后可查看要用），但创建不强制。
+	user := apiKeyVerifyTestUser(t, "correct-password")
+	svc, _, _ := newAPIKeyVerificationTestService(t, user, apiKeyVerifyTestKey(nil), nil, "")
+	factors, err := svc.Factors(ctx, user.ID)
+	require.NoError(t, err)
+	require.True(t, factors.PasswordAvailable)
+	require.Equal(t, []string{APIKeyFactorPassword}, factors.AvailableMethods)
+	require.True(t, factors.SealAvailable)
+	require.False(t, factors.CreateVerificationRequired)
+
+	// 不带校验（nil / 空因子）：放行，不记因子（一次性显示明文）。
+	for _, in := range []*APIKeyVerificationInput{nil, {}, {Method: "  "}} {
+		result, err := svc.VerifyForCreate(ctx, user.ID, in)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Empty(t, result.Factor)
+	}
+	// 轮换 / 回滚旧值（VerifyForKeyEdit）与创建同一条规则。
+	result, err := svc.VerifyForKeyEdit(ctx, user.ID, 42, nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Factor)
+
+	// 「不强制」不等于「带了也不看」：更新前打开的旧页面仍会带密码来，错的拒绝、对的通过。
+	_, err = svc.VerifyForCreate(ctx, user.ID, &APIKeyVerificationInput{Method: APIKeyFactorPassword, Password: "wrong-password"})
+	require.ErrorIs(t, err, ErrAPIKeyPasswordInvalid)
+	result, err = svc.VerifyForCreate(ctx, user.ID, &APIKeyVerificationInput{Method: APIKeyFactorPassword, Password: "correct-password"})
+	require.NoError(t, err)
+	require.Equal(t, APIKeyFactorPassword, result.Factor)
+
+	// 开了 TOTP：创建必须校验（用户自己选择的更高安全级别）。
+	totpUser := apiKeyVerifyTestUser(t, "correct-password")
+	totpSvc, _, _ := newAPIKeyVerificationTestService(t, totpUser, apiKeyVerifyTestKey(nil), nil, "JBSWY3DPEHPK3PXP")
+	factors, err = totpSvc.Factors(ctx, totpUser.ID)
+	require.NoError(t, err)
+	require.True(t, factors.CreateVerificationRequired)
+	_, err = totpSvc.VerifyForCreate(ctx, totpUser.ID, nil)
+	require.ErrorIs(t, err, ErrAPIKeyVerificationRequired)
+	_, err = totpSvc.VerifyForKeyEdit(ctx, totpUser.ID, 42, nil)
+	require.ErrorIs(t, err, ErrAPIKeyVerificationRequired)
 }
 
 func TestAPIKeyVerificationSealPassword(t *testing.T) {

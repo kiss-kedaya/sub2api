@@ -2060,6 +2060,56 @@ describe('user KeysView key-rotation remediation', () => {
     wrapper.unmount()
   })
 
+  it('只有登录密码的账号，单条轮换不弹校验、直接带空 verification 轮换', async () => {
+    listKeys.mockResolvedValue(pageOf([neededKey()]))
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: 'password',
+      available_methods: ['password'],
+      seal_available: true,
+      create_verification_required: false,
+    })
+    rotateKey.mockResolvedValue({
+      ...neededKey(),
+      needs_rotation: false,
+      rotation_reasons: [],
+      key: 'sk-rotated-no-password',
+    })
+    getKeyRotationGateStatus.mockResolvedValue({ pending_key_count: 0 })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="key-needs-rotation-rotate"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="rotate-verification"]').exists()).toBe(false)
+    expect(rotateKey).toHaveBeenCalledWith(1, undefined)
+    wrapper.unmount()
+  })
+
+  it('开了 TOTP 的账号，单条轮换仍然先过身份校验', async () => {
+    listKeys.mockResolvedValue(pageOf([neededKey()]))
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: true,
+      passkey_count: 0,
+      preferred: 'totp',
+      available_methods: ['totp', 'password'],
+      seal_available: true,
+      create_verification_required: true,
+    })
+    getKeyRotationGateStatus.mockResolvedValue({ pending_key_count: 0 })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="key-needs-rotation-rotate"]').trigger('click')
+    await flushPromises()
+
+    expect(rotateKey).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="rotate-verification"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('单条轮换的校验被服务端拒绝时给出具体原因', async () => {
     listKeys.mockResolvedValue(pageOf([neededKey()]))
     getVerificationFactors.mockResolvedValue({
@@ -2367,6 +2417,43 @@ describe('user KeysView batch rotation, overview and ephemeral bar', () => {
     await wrapper.get('[data-test="batch-rotate-copy-all"]').trigger('click')
     await flushPromises()
     expect(copyToClipboard).toHaveBeenCalledWith('test-key: rotated-one-fixture-secret')
+    wrapper.unmount()
+  })
+
+  it('只有登录密码的账号，批量轮换确认后直接轮换，不弹身份校验', async () => {
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: 'password',
+      available_methods: ['password'],
+      seal_available: true,
+      create_verification_required: false,
+    })
+    listKeys.mockResolvedValue({
+      items: [createApiKey(), { ...createApiKey(), id: 2, name: 'second-key' }],
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    batchRotateKeys.mockResolvedValue({
+      results: [{ id: 1, status: 'ok', key: 'rotated-no-password' }],
+      requested_count: 2,
+      succeeded_count: 1,
+      failed_count: 1,
+    })
+
+    const wrapper = await mountView()
+    await wrapper.get('[data-test="select-all"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="keys-bulk-rotate"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="batch-rotate-verification"]').exists()).toBe(false)
+    expect(batchRotateKeys).toHaveBeenCalledWith([1, 2], undefined)
     wrapper.unmount()
   })
 
@@ -2735,6 +2822,8 @@ describe('user KeysView 创建身份校验（三选一）', () => {
 })
 
 describe('user KeysView 创建弹窗（Quiet 流程）与页面过期守卫', () => {
+  // 老服务端的口径（响应里没有 create_verification_required）：有任何可用因子都强制校验。
+  // 新服务端「只有开了 TOTP / Passkey 才强制」的行为见下面的「创建不再强制登录密码」。
   const passwordFactors = {
     password_available: true,
     totp_enabled: false,
@@ -2898,6 +2987,95 @@ describe('user KeysView 创建弹窗（Quiet 流程）与页面过期守卫', ()
     expect(wrapper.find('[data-test="key-create-footer"]').exists()).toBe(false)
     expect(wrapper.find('[data-tour="key-form-submit"]').exists()).toBe(true)
     wrapper.unmount()
+  })
+
+  describe('创建不再强制登录密码', () => {
+    // 新服务端：只有登录密码（含用 Google / GitHub 登录的用户）→ 不强制；开了 TOTP / Passkey → 强制。
+    const passwordOnly = { ...passwordFactors, create_verification_required: false }
+    const totpAccount = {
+      password_available: true,
+      totp_enabled: true,
+      passkey_count: 0,
+      preferred: 'totp',
+      available_methods: ['totp', 'password'],
+      seal_available: true,
+      create_verification_required: true,
+    }
+
+    const fillAndSubmit = async (wrapper: VueWrapper) => {
+      await wrapper.get('[data-tour="key-form-name"]').setValue('no password key')
+      wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+    }
+    const lastCreateOptions = () => (createKey.mock.calls.at(-1)?.at(-1) ?? {}) as Record<string, unknown>
+
+    it('只有登录密码的账号：没有步骤头、没有「下一步」、没有密码框，填完直接创建且不带 verification', async () => {
+      getVerificationFactors.mockResolvedValue(passwordOnly)
+      createKey.mockResolvedValue({ ...createApiKey(), id: 77, group_id: 3, group_ids: [3], key: 'sk-direct' })
+      const wrapper = await openCreate()
+
+      expect(wrapper.find('[data-test="key-create-steps"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="key-create-next"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="key-factor-password-input"]').exists()).toBe(false)
+      expect(dialogDescription(wrapper)).toBe('Name the key and pick a route to create it.')
+
+      await fillAndSubmit(wrapper)
+
+      expect(createKey).toHaveBeenCalledTimes(1)
+      expect(lastCreateOptions()).not.toHaveProperty('verification')
+      expect(wrapper.find('[data-test="key-factor-password-input"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('开了 TOTP 的账号：仍然分两步，第一步不会直接创建，第二步默认走 TOTP 而不是强制密码', async () => {
+      getVerificationFactors.mockResolvedValue(totpAccount)
+      const wrapper = await openCreate()
+      expect(wrapper.get('[data-test="key-create-steps"]').text()).toContain('Step 1 of 2')
+
+      await wrapper.get('[data-tour="key-form-name"]').setValue('2fa key')
+      wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+      await wrapper.get('[data-test="key-create-next"]').trigger('click')
+      await flushPromises()
+
+      expect(createKey).not.toHaveBeenCalled()
+      expect(wrapper.get('[data-test="key-create-steps"]').text()).toContain('Step 2 of 2')
+      expect(wrapper.find('[data-test="key-factor-totp-input"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="key-factor-password-input"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('因子接口失败：不把人拦在输密码这一步，直接单步创建', async () => {
+      getVerificationFactors.mockRejectedValue(new Error('network'))
+      createKey.mockResolvedValue({ ...createApiKey(), id: 78, group_id: 3, group_ids: [3], key: 'sk-fallback' })
+      const wrapper = await openCreate()
+
+      expect(wrapper.find('[data-test="key-create-steps"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="key-create-next"]').exists()).toBe(false)
+      await fillAndSubmit(wrapper)
+
+      expect(createKey).toHaveBeenCalledTimes(1)
+      expect(lastCreateOptions()).not.toHaveProperty('verification')
+      wrapper.unmount()
+    })
+
+    it('因子还在加载时也不闪出步骤头（绝大多数账号根本没有校验这一步）', async () => {
+      getVerificationFactors.mockReturnValue(new Promise(() => {}))
+      const wrapper = await openCreate()
+
+      expect(wrapper.find('[data-test="key-create-steps"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('老服务端（响应里没有这个字段）：仍按「有可用因子就强制」，密码账号继续走两步', async () => {
+      getVerificationFactors.mockResolvedValue(passwordFactors)
+      const wrapper = await openCreate()
+      expect(wrapper.get('[data-test="key-create-steps"]').text()).toContain('Step 1 of 2')
+      expect(wrapper.find('[data-test="key-create-next"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
   })
 
   describe('页面是旧版本', () => {

@@ -879,6 +879,12 @@ export interface ApiKeyVerificationFactors {
   available_methods: ApiKeyVerificationMethod[]
   /** 是否支持「以后还能查看」：本地解密必须用登录密码派生密钥。 */
   seal_available: boolean
+  /**
+   * 创建 / 轮换 Key 前是否必须先过一次身份校验（服务端判定）：只有开了 TOTP 或绑了 Passkey 的账号才强制，
+   * 只有登录密码的账号（含用 Google / GitHub 登录的用户）不强制。旧服务端没有这个字段：
+   * 前端按「有任何可用因子就强制」处理（见 utils/apiKeyVerification.ts）。
+   */
+  create_verification_required?: boolean
 }
 
 /** 创建 Key / 二次查看时的身份校验载荷。 */

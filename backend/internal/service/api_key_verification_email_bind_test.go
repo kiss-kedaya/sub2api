@@ -65,7 +65,7 @@ func TestAPIKeyPasswordFactorBecomesAvailableAfterARealEmailBind(t *testing.T) {
 	_, err = authSvc.BindEmailIdentity(ctx, userID, "bound@example.com", "123456", "new-password")
 	require.NoError(t, err)
 
-	// 绑定后：密码因子可用，可以「以后可查看」，创建要求校验，且认的是用户刚设的密码。
+	// 绑定后：密码因子可用，可以「以后可查看」，认的是用户刚设的密码。
 	after, err := verification.Factors(ctx, userID)
 	require.NoError(t, err)
 	require.True(t, after.PasswordAvailable)
@@ -74,8 +74,17 @@ func TestAPIKeyPasswordFactorBecomesAvailableAfterARealEmailBind(t *testing.T) {
 	require.Equal(t, service.APIKeyFactorPassword, after.Preferred)
 	require.NoError(t, verification.VerifyForSeal(ctx, userID, "new-password"))
 	require.ErrorIs(t, verification.VerifyForSeal(ctx, userID, "random-placeholder-hash"), service.ErrAPIKeyPasswordInvalid)
-	_, err = verification.VerifyForCreate(ctx, userID, nil)
-	require.ErrorIs(t, err, service.ErrAPIKeyVerificationRequired)
+
+	// 只有登录密码（没开 TOTP、没绑 Passkey）不再强制创建时校验：不带校验直接放行；
+	// 带了密码（更新前打开的旧页面）照常按密码真验证，错的拒绝、对的通过。
+	require.False(t, after.CreateVerificationRequired)
+	skipped, err := verification.VerifyForCreate(ctx, userID, nil)
+	require.NoError(t, err)
+	require.Empty(t, skipped.Factor)
+	_, err = verification.VerifyForCreate(ctx, userID, &service.APIKeyVerificationInput{
+		Method: service.APIKeyFactorPassword, Password: "random-placeholder-hash",
+	})
+	require.ErrorIs(t, err, service.ErrAPIKeyPasswordInvalid)
 	verified, err := verification.VerifyForCreate(ctx, userID, &service.APIKeyVerificationInput{
 		Method: service.APIKeyFactorPassword, Password: "new-password",
 	})

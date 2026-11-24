@@ -115,6 +115,7 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import KeyFactorVerification from '@/components/keys/KeyFactorVerification.vue'
+import { needsKeyVerification } from '@/utils/apiKeyVerification'
 import { keysAPI } from '@/api'
 import { useAppStore } from '@/stores'
 import type { ApiKeyVerificationFactors, ApiKeyVerificationPayload } from '@/types'
@@ -143,7 +144,7 @@ const embedUrl = ref('')
 let disposed = false
 
 // 账号没有任何可用因子时服务端显式放行，这里不展示校验步骤。
-const needsVerification = computed(() => (factors.value?.available_methods.length ?? 0) > 0)
+const needsVerification = computed(() => needsKeyVerification(factors.value))
 
 const errorMessage = computed(() => {
   if (errorCode.value === 'no-groups') return t('infiniteCanvas.noGroups')

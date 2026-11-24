@@ -558,10 +558,11 @@
       @close="closeModals"
     >
       <form id="key-form" @submit.prevent="handleSubmit" class="space-y-5">
-        <!-- 创建分两步：填信息 → 身份校验；编辑保持原有单页流程。
-             Quiet 步骤头（和注册页同一套）两步都显示；原来的文字面包屑放在第一步容器里，第二步就看不到了。 -->
+        <!-- 创建：开了 TOTP / Passkey 的账号分两步（填信息 → 身份校验），其余账号只有一步，直接创建；
+             编辑保持原有单页流程。Quiet 步骤头（和注册页同一套）两步都显示；原来的文字面包屑放在第一步容器里，
+             第二步就看不到了。步骤头只在确认需要校验之后才出现：绝大多数账号不需要，不能让它每次先闪一下再消失。 -->
         <QuietStepHead
-          v-if="showCreateFlow && (verificationFactorsLoading || requiresCreateVerification)"
+          v-if="showCreateFlow && requiresCreateVerification"
           :current="createStep"
           :total="2"
           :label="t('auth.stepProgress', { current: createStep, total: 2 })"
@@ -1751,6 +1752,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import GroupRateSignals from '@/components/common/GroupRateSignals.vue'
 	import PlatformIcon from '@/components/common/PlatformIcon.vue'
 	import KeyFactorVerification from '@/components/keys/KeyFactorVerification.vue'
+	import { needsKeyVerification } from '@/utils/apiKeyVerification'
 	import UserPageHeader from '@/components/user/UserPageHeader.vue'
 	import type { ApiKey, ApiKeyVerificationFactors, ApiKeyVerificationPayload, CustomEndpoint, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
 import type { BatchRotateKeyItem, BatchRotateKeysResult, ApiKeyOverview24h } from '@/api/keys'
@@ -2128,9 +2130,9 @@ const quietPrimaryUi = {
 }
 const appUpdate = useAppUpdate()
 const isCreateVerificationStep = computed(() => showCreateFlow.value && createStep.value === 2)
-const requiresCreateVerification = computed(
-  () => (verificationFactors.value?.available_methods.length ?? 0) > 0,
-)
+// 只有开了 TOTP / 绑了 Passkey 的账号才有校验这一步；只有登录密码的账号（含 Google / GitHub 登录的用户）
+// 直接创建，不再被卡在输密码上。口径以服务端为准，见 utils/apiKeyVerification.ts。
+const requiresCreateVerification = computed(() => needsKeyVerification(verificationFactors.value))
 // 「以后可查看」以服务端判定为准（本地解密必须知道登录密码），旧接口缺字段时回退本地判断。
 const sealAvailableForCreate = computed(
   () => verificationFactors.value?.seal_available ?? canSealKeys.value,
@@ -2161,8 +2163,9 @@ const loadVerificationFactors = async (): Promise<ApiKeyVerificationFactors> => 
   try {
     verificationFactors.value = await keysAPI.getVerificationFactors()
   } catch {
-    // 接口临时不可用时回退到「有登录密码才显示密码方式」：服务端仍然会强制校验，
-    // 这里只决定前端展示，不能因为一次抖动把创建流程整个堵死。
+    // 接口临时不可用时：服务端仍然是校验的唯一依据，这里只决定前端展示，不能因为一次抖动
+    // 把创建流程整个堵死，更不能再把所有人拦在输密码这一步。开了 TOTP / Passkey 的账号如果
+    // 恰好撞上这次抖动，服务端会拒绝并给出带刷新指引的提示，重新打开弹窗即可。
     verificationFactors.value = {
       password_available: canSealKeys.value,
       totp_enabled: false,
@@ -2170,6 +2173,7 @@ const loadVerificationFactors = async (): Promise<ApiKeyVerificationFactors> => 
       preferred: canSealKeys.value ? 'password' : '',
       available_methods: canSealKeys.value ? ['password'] : [],
       seal_available: canSealKeys.value,
+      create_verification_required: false,
     }
   } finally {
     verificationFactorsLoading.value = false
@@ -2924,8 +2928,8 @@ const requestKeyRotateVerification = async (): Promise<ApiKeyVerificationPayload
   rotateVerifyLoading.value = true
   const factors = await loadVerificationFactors()
   rotateVerifyLoading.value = false
-  if (factors.available_methods.length === 0) {
-    // 没有可用因子：服务端显式放行（skipped_no_factor），不弹校验步。
+  if (!needsKeyVerification(factors)) {
+    // 不需要校验（没开 TOTP / Passkey）：服务端显式放行（skipped_no_factor），不弹校验步。
     return 'no-factor'
   }
   rotateVerifyPayload.value = null
@@ -3534,19 +3538,22 @@ const handleBatchRotate = async () => {
   }
 }
 
-/** 确认批量轮换：账号有可用因子时先进身份校验步，否则直接轮换。 */
+/** 确认批量轮换：账号开了 TOTP / Passkey 时先进身份校验步，否则直接轮换。 */
 const openBatchRotateVerification = async () => {
   showBatchRotateDialog.value = false
   batchRotateVerificationPayload.value = null
   batchRotateFactorsLoading.value = true
-  showBatchRotateVerifyDialog.value = true
   const factors = await loadVerificationFactors()
   batchRotateFactors.value = factors
   batchRotateFactorsLoading.value = false
-  // 一个可用因子都没有：服务端会显式放行（skipped_no_factor），不弹校验步。
-  if (factors.available_methods.length === 0) {
+  // 不需要校验（没开 TOTP / Passkey，绝大多数账号）：根本不弹校验对话框，直接轮换，服务端显式放行
+  // （skipped_no_factor）。校验对话框只在确认需要之后才打开：先打开再收起，用户会看到一闪而过的
+  // 「验证身份」；而且这条路径上它从不被关闭，会一直留在结果弹窗后面。
+  if (!needsKeyVerification(factors)) {
     await handleBatchRotate()
+    return
   }
+  showBatchRotateVerifyDialog.value = true
 }
 
 const cancelBatchRotateVerification = () => {
@@ -3558,10 +3565,7 @@ const cancelBatchRotateVerification = () => {
 
 const confirmBatchRotateWithVerification = async () => {
   if (batchRotateFactorsLoading.value) return
-  if ((batchRotateFactors.value?.available_methods.length ?? 0) === 0) {
-    await handleBatchRotate()
-    return
-  }
+  // 这个对话框只在确认需要校验之后才会打开（openBatchRotateVerification），这里不会遇到「不需要校验」。
   const built = batchRotateVerificationRef.value?.buildVerification() ?? null
   if (!built) return
   batchRotateVerificationPayload.value = built

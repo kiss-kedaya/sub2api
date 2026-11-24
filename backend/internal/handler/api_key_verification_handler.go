@@ -28,6 +28,8 @@ import (
 // auditVerificationOutcome 是审计里 api_key_verification 的取值。
 const (
 	auditVerificationVerified = "verified"
+	// auditVerificationSkipped 创建 / 轮换时没有做身份校验：账号没有任何可用因子，或只有登录密码
+	// （没开 TOTP、没绑 Passkey，不强制）。字符串保持原样，审计看板按它过滤。
 	auditVerificationSkipped  = "skipped_no_factor"
 	auditVerificationRejected = "rejected"
 )
