@@ -1,4 +1,4 @@
-export type DocsCategory = 'start' | 'guides' | 'media' | 'integrations' | 'reference'
+export type DocsCategory = 'start' | 'guides' | 'media' | 'integrations' | 'account' | 'reference'
 export type DocsLanguage = 'curl' | 'python' | 'node' | 'json' | 'toml' | 'shell'
 
 export interface DocsField {
@@ -8,9 +8,17 @@ export interface DocsField {
   description: string
 }
 
+export interface DocsEndpoint {
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  path: string
+  // apiKey: sent with an API key like model requests. session: sent with the login token the web console uses.
+  auth: 'apiKey' | 'session'
+}
+
 export interface DocsSection {
   id: string
   title: string
+  endpoint?: DocsEndpoint
   paragraphs?: string[]
   note?: string
   fields?: DocsField[]
@@ -47,6 +55,14 @@ function requestExamples(origin: string, path: string, payload: Record<string, u
     curl: `curl ${origin}${path} \\\n  ${headers} \\\n  -H "Content-Type: application/json" \\\n  -d '${body}'`,
     python: `import os\nimport requests\n\nresponse = requests.post(\n    "${origin}${path}",\n    headers={${anthropic ? '"x-api-key": os.environ["API_KEY"], "anthropic-version": "2023-06-01"' : '"Authorization": "Bearer " + os.environ["API_KEY"]'}},\n    json=${JSON.stringify(payload, null, 4).replace(/\btrue\b/g, 'True').replace(/\bfalse\b/g, 'False').replace(/\bnull\b/g, 'None')},\n    timeout=3600,\n)\nresponse.raise_for_status()\nprint(response.json())`,
     node: `const response = await fetch("${origin}${path}", {\n  method: "POST",\n  headers: {\n    ${anthropic ? '"x-api-key": process.env.API_KEY,\n    "anthropic-version": "2023-06-01",' : 'Authorization: \x60Bearer \x24{process.env.API_KEY}\x60,'}\n    "Content-Type": "application/json",\n  },\n  body: JSON.stringify(${body}),\n});\nif (!response.ok) throw new Error(\x60HTTP \x24{response.status}\x60);\nconsole.log(await response.json());`,
+  }
+}
+
+function getExamples(origin: string, path: string): Partial<Record<DocsLanguage, string>> {
+  return {
+    curl: `curl ${origin}${path} \\\n  -H "Authorization: Bearer $API_KEY"`,
+    python: `import os\nimport requests\n\nresponse = requests.get(\n    "${origin}${path}",\n    headers={"Authorization": "Bearer " + os.environ["API_KEY"]},\n    timeout=30,\n)\nresponse.raise_for_status()\nprint(response.json())`,
+    node: `const response = await fetch("${origin}${path}", {\n  headers: { Authorization: \x60Bearer \x24{process.env.API_KEY}\x60 },\n});\nif (!response.ok) throw new Error(\x60HTTP \x24{response.status}\x60);\nconsole.log(await response.json());`,
   }
 }
 
@@ -327,6 +343,152 @@ print(response.json())`,
       id: 'claude-code', category: 'integrations', title: l('接入 Claude Code', 'Connect Claude Code'), description: l('使用 Anthropic Messages 入口与本站密钥。', 'Use the Anthropic Messages endpoint and a site API key.'), sections: [
         { id: 'claude-environment', title: l('环境变量', 'Environment variables'), paragraphs: [l('ANTHROPIC_BASE_URL 填站点根地址，客户端会追加 /v1/messages。模型必须在该密钥可用范围内，且分组允许 messages 入口。', 'Set ANTHROPIC_BASE_URL to the site origin; the client appends /v1/messages. Select an authorized model, and ensure the group permits the messages endpoint.')], examples: { shell: `export ANTHROPIC_BASE_URL="${origin}"\nexport ANTHROPIC_AUTH_TOKEN="YOUR_API_KEY"\nexport ANTHROPIC_MODEL="YOUR_MODEL_ID"\nclaude` } },
         { id: 'claude-cache', title: l('缓存与请求结构', 'Caching and request structure'), paragraphs: [l('客户端发送的 cache_control 标记应保留。不要为了缓存随意更改工具顺序、系统消息或历史内容；缓存命中与上游支持、前缀稳定性及本站现有开关有关。', 'Preserve client-provided cache_control markers. Avoid changing tool ordering, system messages, or history solely to force caching. Cache hits depend on provider support, stable prefixes, and this site’s existing configuration.')] },
+      ],
+    },
+    {
+      id: 'key-self-service', category: 'account', title: l('用密钥查询自身信息', 'Key self-service API'),
+      description: l('只用 API 密钥就能读：密钥状态与额度、可用分组与倍率、今日与近期用量。', 'Read with only an API key: key status and limits, usable groups and their multipliers, and recent usage.'),
+      sections: [
+        {
+          id: 'key-info-overview', title: l('概览', 'Overview'),
+          paragraphs: [
+            l('三个只读接口，使用与模型请求相同的 API 密钥（Authorization: Bearer 或 x-api-key）。它们只回答「这把密钥是什么、做过什么」，不返回密钥明文、IP 名单、钱包或订阅余额，也不返回账号、渠道或上游成本。', 'Three read-only endpoints that use the same API key as model requests (Authorization: Bearer or x-api-key). They only answer what this key is and what it has done: no key plaintext, IP lists, wallet or subscription balance, accounts, channels or upstream cost.'),
+            l('已过期或额度用完的密钥也可以查询，并会说明原因；已停用的密钥、被停用的账号、不在 IP 白名单内的请求仍会被拒绝。查询不会刷新密钥的「最近使用」时间。', 'A key that is expired or out of quota can still ask, and the response says why. A switched-off key, a disabled account, or a request from an IP outside the key’s allow-list is still refused. Asking does not refresh the key’s last-used time.'),
+          ],
+          fields: [
+            { name: 'GET /v1/sub2api/key', type: l('密钥', 'key'), description: l('密钥本身：状态、是否可用及原因、到期、额度、限速窗口、绑定分组。', 'The key itself: status, whether it is usable and why not, expiry, quota, rate-limit windows, bound groups.') },
+            { name: 'GET /v1/sub2api/groups', type: l('分组', 'groups'), description: l('这把密钥已路由的分组，以及该用户还能绑定的分组：状态与实际支付的倍率。', 'The groups this key routes to, plus the ones its owner may still bind: state and the multiplier actually paid.') },
+            { name: 'GET /v1/sub2api/usage', type: l('用量', 'usage'), description: l('这把密钥的今日、近 7 天、本月与自选区间用量。', 'This key’s usage today, over the last 7 days, this month and a range you choose.') },
+          ],
+          examples: getExamples(origin, '/v1/sub2api/key'),
+        },
+        {
+          id: 'key-info-key', title: l('密钥本身', 'The key'),
+          endpoint: { method: 'GET', path: '/v1/sub2api/key', auth: 'apiKey' },
+          fields: [
+            { name: 'status', type: 'string', description: l('active、inactive、quota_exhausted 或 expired。', 'active, inactive, quota_exhausted or expired.') },
+            { name: 'is_usable', type: 'boolean', description: l('现在用这把密钥发请求，是否会因为密钥自身的原因被拒绝。', 'Whether a request made with this key right now would be refused for a reason about the key itself.') },
+            { name: 'unusable_cause', type: 'string', description: l('is_usable 为 false 时出现：expired、quota_exhausted、disabled、no_group 或 group_unavailable。', 'Present when is_usable is false: expired, quota_exhausted, disabled, no_group or group_unavailable.') },
+            { name: 'quota', type: 'object', description: l('limited、limit、used、remaining，单位 USD；没有额度上限时不含 limit 与 remaining。', 'limited, limit, used, remaining, in USD. Without a quota cap, limit and remaining are absent.') },
+            { name: 'rate_limits', type: 'array', description: l('只列出配置了的 5h、1d、7d 窗口：limit、used、remaining、window_start、reset_at。', 'Only the windows that are configured (5h, 1d, 7d): limit, used, remaining, window_start, reset_at.') },
+            { name: 'expires_at / days_until_expiry', type: 'time / number', description: l('不会过期的密钥 expires_at 为 null，且没有 days_until_expiry。', 'A key that never expires has expires_at null and no days_until_expiry.') },
+            { name: 'route_mode / groups', type: 'string / array', description: l('none、single 或 smart；groups 按路由顺序列出 id、name、platform、status、primary。', 'none, single or smart; groups lists id, name, platform, status and primary in routing order.') },
+            { name: 'key_prefix', type: 'string', description: l('只有展示用前缀，用来认出是哪一把密钥。', 'A display prefix only, enough to recognise which key it is.') },
+          ],
+          examples: { json: JSON.stringify({ object: 'sub2api.key', schema_version: 1, id: 12, name: 'ci-bot', key_prefix: 'sk-a1b2c', status: 'active', is_usable: true, created_at: '2026-11-01T08:00:00Z', expires_at: null, quota: { limited: true, limit: 20, used: 3.2, remaining: 16.8, unit: 'USD' }, rate_limits: [{ window: '5h', limit: 2, used: 0.4, remaining: 1.6, window_start: '2026-11-24T09:12:00Z', reset_at: '2026-11-24T14:12:00Z' }], route_mode: 'single', groups: [{ id: 3, name: 'Claude', platform: 'anthropic', status: 'active', primary: true }], concurrency_limit: 0, observed_at: '2026-11-24T10:00:00Z' }, null, 2) },
+        },
+        {
+          id: 'key-info-groups', title: l('可用分组与倍率', 'Groups and multipliers'),
+          endpoint: { method: 'GET', path: '/v1/sub2api/groups', auth: 'apiKey' },
+          fields: [
+            { name: 'bound_to_key / primary', type: 'boolean', description: l('bound_to_key 为 true 的是这把密钥路由到的分组，primary 是其中的第一个；其余是该用户还能绑定的分组。', 'bound_to_key marks the groups this key routes to, primary the first of them; the rest are groups the owner may still bind.') },
+            { name: 'status', type: 'string', description: l('分组当前状态；不是 active 的分组不会接收请求。', 'The group’s current state. A group that is not active does not receive requests.') },
+            { name: 'rate_multiplier', type: 'number', description: l('分组的基础倍率。', 'The group’s base multiplier.') },
+            { name: 'user_rate_multiplier', type: 'number', description: l('账号在该分组上的专属倍率，仅在与基础倍率不同时出现。', 'The account’s personal multiplier for the group; present only when it differs from the base one.') },
+            { name: 'resolved_rate_multiplier', type: 'number', description: l('实际按此计费的倍率（已含专属倍率）。', 'The multiplier actually billed with (personal rate included).') },
+            { name: 'effective_rate_multiplier', type: 'number', description: l('此刻生效的倍率：已含专属倍率与高峰倍率。', 'The multiplier in force right now: personal rate and the peak factor included.') },
+            { name: 'peak_*', type: 'object', description: l('启用高峰倍率时给出 peak_start、peak_end、peak_rate_multiplier，时间按响应里的 timezone。', 'When a peak factor is enabled: peak_start, peak_end and peak_rate_multiplier, in the response timezone.') },
+          ],
+          examples: getExamples(origin, '/v1/sub2api/groups'),
+        },
+        {
+          id: 'key-info-usage', title: l('用量', 'Usage'),
+          endpoint: { method: 'GET', path: '/v1/sub2api/usage', auth: 'apiKey' },
+          fields: [
+            { name: 'start_date / end_date', type: 'YYYY-MM-DD', description: l('自选区间，含首尾两天，最长 90 天；不传则只返回固定的三段。', 'A range of your own, both days included, at most 90 days. Without them only the three fixed blocks are returned.') },
+            { name: 'timezone', type: 'string', description: l('如 Asia/Shanghai，决定「今日」从何时算起；无效时用站点时区。', 'For example Asia/Shanghai; decides when "today" starts. An invalid value falls back to the site timezone.') },
+            { name: 'daily', type: '1 | true', description: l('同时返回按日的序列：默认近 7 天，指定了区间则为该区间。', 'Also return a per-day series: the last 7 days by default, or your range when one is given.') },
+            { name: 'today / last_7_days / this_month / range', type: 'object', description: l('requests、各类 token、cost（标准价）与 actual_cost（实际扣费），不含账号成本。', 'requests, the token counts, cost (list price) and actual_cost (what was charged); no account cost.') },
+            { name: 'partial', type: 'array', description: l('某个统计块没能在时限内算出来时，这里写出它的名字，该块不会被当成 0 返回。', 'When a block could not be computed in time its name is listed here; it is left out instead of being reported as zero.') },
+          ],
+          examples: getExamples(origin, '/v1/sub2api/usage?start_date=2026-11-01&end_date=2026-11-07&daily=1'),
+        },
+        {
+          id: 'key-info-limits', title: l('限流与错误', 'Limits and errors'),
+          paragraphs: [
+            l('每把密钥在每个接口上每分钟最多 30 次，三个接口各有独立计数；状态栏每几秒轮询一次不会触顶。超出时返回 429，带 Retry-After（秒）与 code: key_info_rate_limited，等待后重试即可。', 'Each key may call each endpoint 30 times a minute, with separate counters for the three. A status bar polling every few seconds stays far below that. Beyond it the response is 429 with Retry-After (seconds) and code key_info_rate_limited; wait and retry.'),
+            l('常见状态：401 密钥缺失、无效或已停用；403 来源 IP 不在该密钥的白名单内，或所属分组已停用；404 站点以简易模式运行，不提供此信息。', 'Common statuses: 401 for a missing, invalid or switched-off key; 403 when the source IP is outside the key’s allow-list or its group is disabled; 404 when the site runs in simple mode and does not offer this information.'),
+          ],
+        },
+      ],
+    },
+    {
+      id: 'manage-keys', category: 'account', title: l('管理 API 密钥（控制台接口）', 'Manage API keys (console API)'),
+      description: l('网页控制台用来创建、查看、修改与轮换密钥的接口，使用登录令牌，不使用 API 密钥。', 'The endpoints the web console uses to create, list, change and rotate keys. They take a login token, not an API key.'),
+      sections: [
+        {
+          id: 'console-auth', title: l('先看这个：登录令牌', 'Read this first: the login token'),
+          paragraphs: [
+            l('这些接口属于账号，不属于某把 API 密钥：请求头用登录后得到的 access_token（Authorization: Bearer），API 密钥不能调用它们。令牌默认约 60 分钟有效，用登录时一并返回的 refresh_token 调用 POST /api/v1/auth/refresh 续期。', 'These endpoints belong to your account, not to an API key: send the access_token you receive when you sign in (Authorization: Bearer). An API key cannot call them. The token lasts about 60 minutes by default; renew it with the refresh_token from the same response through POST /api/v1/auth/refresh.'),
+            l('本站登录带人机验证，开启了 TOTP 或 Passkey 的账号还要多一步，所以无人值守的脚本通常拿不到令牌。需要自动化时，优先用「用密钥查询自身信息」的三个接口；创建与轮换密钥请在控制台里做。登录令牌的权限远大于 API 密钥，不要写进代码仓库或日志。', 'Sign-in on this site includes a human check, and accounts with TOTP or a Passkey have one more step, so an unattended script usually cannot obtain a token. For automation prefer the three key self-service endpoints, and create or rotate keys in the console. A login token is far more powerful than an API key: keep it out of repositories and logs.'),
+          ],
+          note: l('响应统一为 {"code":0,"message":"success","data":…}；出错时 code 非 0，reason 给出机器可读的原因（例如 VERIFY_REQUIRED）。列表接口的 data 是 {items,total,page,page_size,pages}。网关里的 /v1/sub2api/* 接口用的是另一种错误格式（type 与 error 对象），见上一页。', 'Responses share one envelope: {"code":0,"message":"success","data":…}. On failure code is non-zero and reason carries a machine-readable cause such as VERIFY_REQUIRED. List endpoints return {items,total,page,page_size,pages} in data. The /v1/sub2api/* gateway endpoints use a different error format (a type and an error object); see the previous page.'),
+          examples: {
+            shell: `curl ${origin}/api/v1/keys?page=1&page_size=20 \\\n  -H "Authorization: Bearer $ACCESS_TOKEN"`,
+          },
+        },
+        {
+          id: 'console-list', title: l('查看密钥', 'List and read keys'),
+          endpoint: { method: 'GET', path: '/api/v1/keys', auth: 'session' },
+          fields: [
+            { name: 'GET /api/v1/keys', type: l('列表', 'list'), description: l('查询参数 page、page_size、sort_by、sort_order、search（最长 100 字符）、status、group_id。', 'Query: page, page_size, sort_by, sort_order, search (up to 100 characters), status, group_id.') },
+            { name: 'GET /api/v1/keys/:id', type: l('单个', 'one'), description: l('只能读自己的密钥；别人的返回 404。', 'Your own keys only; someone else’s returns 404.') },
+            { name: 'GET /api/v1/keys/overview?ids=1,2,3', type: l('概览', 'overview'), description: l('一次最多 100 把：近 24 小时的 requests_24h 与 cost_24h。', 'Up to 100 keys at once: requests_24h and cost_24h over the last 24 hours.') },
+            { name: 'GET /api/v1/user/api-keys/:id/usage', type: l('用量', 'usage'), description: l('单把密钥的今日与区间汇总，另有 /usage/daily 给出按日序列；区间最长 90 天。', 'Today and range totals for one key; /usage/daily gives the per-day series. Ranges are limited to 90 days.') },
+            { name: 'key_masked / key_prefix', type: 'string', description: l('列表里只有脱敏后的密钥，明文只在创建或轮换的那次响应里出现一次。', 'Lists carry only a masked key. The plaintext appears once, in the response that creates or rotates it.') },
+          ],
+        },
+        {
+          id: 'console-create', title: l('创建密钥', 'Create a key'),
+          endpoint: { method: 'POST', path: '/api/v1/keys', auth: 'session' },
+          paragraphs: [
+            l('只有 name 必填。group_id 选一个分组，group_ids 按顺序给出多个分组即为智能路由。账号开了 TOTP 或绑定了 Passkey 时，请求里要带 verification；只有登录密码的账号不需要。', 'Only name is required. group_id picks one group; group_ids lists several in order for smart routing. When the account has TOTP or a Passkey the request must carry verification; an account with only a password does not need it.'),
+            l('带上 Idempotency-Key 请求头可以安全重试：24 小时内重放同一个值，返回的是不含明文的记录，不会再造一把密钥。', 'Send an Idempotency-Key header to retry safely: replaying the same value within 24 hours returns the record without the plaintext and does not create another key.'),
+          ],
+          fields: [
+            { name: 'name', type: 'string', required: true, description: l('密钥名称。', 'The key’s name.') },
+            { name: 'group_id / group_ids', type: 'number / number[]', description: l('绑定的分组；group_ids 的顺序就是路由顺序。站点已有可用分组时必须绑定至少一个。', 'Bound group(s); the order of group_ids is the routing order. At least one is required once the site has usable groups.') },
+            { name: 'custom_key', type: 'string', description: l('自定义密钥值：至少 16 个字符，只能用字母、数字、下划线和连字符，且不能是容易猜到的模式；不传由站点生成。', 'A key value of your own: at least 16 characters, letters, digits, underscore and hyphen only, and not a predictable pattern. Generated by the site when omitted.') },
+            { name: 'quota', type: 'number', description: l('总额度上限（USD），0 为不限。', 'Total spend cap in USD; 0 means unlimited.') },
+            { name: 'rate_limit_5h / rate_limit_1d / rate_limit_7d', type: 'number', description: l('各窗口花费上限（USD），0 为不限。', 'Spend cap per window in USD; 0 means unlimited.') },
+            { name: 'expires_in_days', type: 'number', description: l('多少天后过期，必须大于 0；不传则不过期。', 'Days until it expires, greater than 0; omit for never.') },
+            { name: 'ip_whitelist / ip_blacklist', type: 'string[]', description: l('IP 或 CIDR 列表。', 'Lists of IPs or CIDR ranges.') },
+            { name: 'concurrency_limit', type: 'number', description: l('并发上限，0 为不限。', 'Concurrency cap; 0 means unlimited.') },
+            { name: 'anthropic_cache_ttl_mode', type: 'string', description: l('inherit、off、1h 或 5m。', 'inherit, off, 1h or 5m.') },
+            { name: 'verification', type: 'object', description: l('{"method":"password|totp|passkey"}，再加 password、totp_code 或 passkey_session_token 中对应的一项。', '{"method":"password|totp|passkey"} plus the matching password, totp_code or passkey_session_token.') },
+          ],
+          examples: { shell: `curl -X POST ${origin}/api/v1/keys \\\n  -H "Authorization: Bearer $ACCESS_TOKEN" \\\n  -H "Idempotency-Key: $(uuidgen)" \\\n  -H "Content-Type: application/json" \\\n  -d '${JSON.stringify({ name: 'ci-bot', group_id: 3, quota: 20, expires_in_days: 30 })}'` },
+        },
+        {
+          id: 'console-update', title: l('修改、轮换与删除', 'Change, rotate and delete'),
+          endpoint: { method: 'PUT', path: '/api/v1/keys/:id', auth: 'session' },
+          fields: [
+            { name: 'PUT /api/v1/keys/:id', type: l('修改', 'update'), description: l('只发要改的字段：name、status（active 或 inactive）、group_id、group_ids、quota、expires_at（ISO 8601）、各限速、ip_whitelist 与 ip_blacklist（空数组表示清空）、reset_quota、reset_rate_limit_usage。', 'Send only what changes: name, status (active or inactive), group_id, group_ids, quota, expires_at (ISO 8601), the rate limits, ip_whitelist and ip_blacklist (an empty array clears), reset_quota, reset_rate_limit_usage.') },
+            { name: 'regenerate_key', type: 'boolean', description: l('设为 true 轮换密钥：旧值立刻失效，新明文在这次响应里出现一次；和创建一样需要 verification。', 'Set to true to rotate: the old value stops working at once and the new plaintext appears once in this response. Requires verification, like creation.') },
+            { name: 'POST /api/v1/keys/batch-rotate', type: l('批量轮换', 'batch rotate'), description: l('{"ids":[…],"verification":{…}}，一次最多 50 把，逐把返回 ok 或 failed 与 error_code；一把都没通过校验就一把都不轮换。', '{"ids":[…],"verification":{…}}, up to 50 keys; each comes back ok or failed with an error_code. Without a passing verification nothing is rotated.') },
+            { name: 'DELETE /api/v1/keys/:id', type: l('删除', 'delete'), description: l('删除后密钥立刻失效，无法恢复。', 'The key stops working at once and cannot be restored.') },
+            { name: 'POST /api/v1/keys/:id/block-datacenter-ips', type: l('机房 IP', 'datacenter IPs'), description: l('把这把密钥最近使用过的机房与代理 IP 加入黑名单。', 'Adds the datacenter and proxy IPs this key was recently used from to its deny-list.') },
+          ],
+        },
+        {
+          id: 'console-groups', title: l('可用分组与倍率', 'Groups and rates'),
+          endpoint: { method: 'GET', path: '/api/v1/groups/available', auth: 'session' },
+          fields: [
+            { name: 'GET /api/v1/groups/available', type: l('分组', 'groups'), description: l('当前账号可以绑定的分组，含状态、基础倍率与高峰倍率设置。', 'The groups this account may bind, with state, base multiplier and peak settings.') },
+            { name: 'GET /api/v1/groups/rates', type: l('专属倍率', 'personal rates'), description: l('{分组 id: 倍率}，只列出账号有专属倍率的分组。', '{group id: multiplier}, only for groups where the account has a personal rate.') },
+            { name: 'GET /api/v1/user/security/verification-factors', type: l('校验方式', 'verification'), description: l('这个账号现在可用的校验方式，以及创建与轮换密钥前是否必须校验（create_verification_required）。', 'The verification methods this account can use now, and whether creating or rotating a key requires one (create_verification_required).') },
+          ],
+        },
+        {
+          id: 'console-errors', title: l('错误与限流', 'Errors and limits'),
+          fields: [
+            { name: 'VERIFY_REQUIRED', type: '400', description: l('账号需要身份校验，但请求里没有带 verification。', 'The account requires verification and the request carried none.') },
+            { name: 'VERIFY_PASSWORD_INVALID / VERIFY_TOTP_INVALID / VERIFY_PASSKEY_FAILED', type: '400', description: l('校验材料不正确。', 'The verification material is wrong.') },
+            { name: 'VERIFY_FACTOR_UNAVAILABLE / VERIFY_FACTOR_MISMATCH', type: '400', description: l('这个账号没有该校验方式，或与已有授权的方式不一致。', 'The account does not have that method, or it does not match the one already authorised.') },
+            { name: 'VERIFY_PASSWORD_RATE_LIMITED', type: '429', description: l('密码错误次数过多，按 Retry-After 等待。', 'Too many wrong passwords; wait for Retry-After.') },
+            { name: 'RATE_LIMITED', type: '429', description: l('超过账号级限流，默认每分钟 240 次，统计类接口 60 次，创建与轮换另有每分钟 10 次；管理员可以调整。', 'Account-level limit exceeded: by default 240 a minute overall, 60 for statistics endpoints, and 10 a minute for create and rotate. An administrator can change these.') },
+          ],
+        },
       ],
     },
     {
