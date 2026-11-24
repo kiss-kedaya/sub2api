@@ -3,26 +3,24 @@
     :show="show"
     :title="t('keys.secretDialog.title')"
     :description="t('keys.secretDialog.description')"
-    width="wide"
+    width="normal"
     :close-on-click-outside="canClose"
     :close-on-escape="canClose"
     :close-button-disabled="!canClose"
     @close="requestClose"
   >
-    <div class="space-y-4" data-test="api-key-secret-dialog" :data-can-close="canClose ? 'true' : 'false'">
-      <div
-        class="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-900/20"
-      >
-        <UIcon name="i-lucide-triangle-alert" class="mt-0.5 size-5 shrink-0 text-amber-500" />
-        <div class="space-y-1 text-sm text-amber-900 dark:text-amber-100">
-          <p>{{ t('keys.secretDialog.saveNotice') }}</p>
-          <p>{{ t('keys.secretDialog.cannotViewAgain') }}</p>
-        </div>
-      </div>
+    <!-- One short line under the title says the only thing that matters: shown once, copy it now. -->
+    <template #description>
+      <span class="inline-flex items-center gap-1.5" data-test="api-key-secret-notice">
+        <UIcon name="i-lucide-triangle-alert" class="size-3.5 shrink-0 text-amber-500" aria-hidden="true" />
+        {{ t('keys.secretDialog.description') }}
+      </span>
+    </template>
 
-      <div v-if="apiKey" class="text-sm text-muted">
-        <span class="font-medium text-highlighted">{{ apiKey.name }}</span>
-        <span v-if="apiKey.key_masked" class="ml-2 font-mono text-xs">{{ apiKey.key_masked }}</span>
+    <div class="space-y-3" data-test="api-key-secret-dialog" :data-can-close="canClose ? 'true' : 'false'">
+      <div v-if="apiKey" class="flex min-w-0 items-center gap-2 text-sm">
+        <UIcon name="i-lucide-key-round" class="size-4 shrink-0 text-dimmed" aria-hidden="true" />
+        <span class="truncate font-medium text-highlighted" data-test="api-key-secret-name">{{ apiKey.name }}</span>
       </div>
 
       <div class="flex items-start gap-2 rounded-lg bg-gray-50 p-3 ring ring-inset ring-default dark:bg-dark-900">
@@ -42,113 +40,140 @@
         />
       </div>
 
-      <!-- Opt-in: keep a password-encrypted copy on the server so this key can be
-           viewed again after a refresh. The password never leaves the browser. -->
-      <div
-        v-if="apiKey && canSeal"
-        class="space-y-2 rounded-lg border border-default p-3"
-        data-test="api-key-seal-optin"
-      >
-        <UCheckbox
-          v-model="sealEnabled"
-          :disabled="sealing"
-          data-test="api-key-seal-checkbox"
-          :label="t('keys.seal.optIn')"
-          :description="t('keys.seal.optInHint')"
-        />
-        <div v-if="sealEnabled" class="space-y-1.5 pl-6">
-          <label for="api-key-seal-password" class="block text-xs font-medium text-default">
-            {{ t('keys.seal.passwordLabel') }}
-          </label>
-          <!-- 浏览器自动填充串扰修复：这是「本地加密口令」不是登录表单，
-               用 new-password + 非凭据 name + 密码管理器忽略标记，避免把账号
-               填进本页搜索框 / Key 名称框。 -->
+      <!-- Opt-in: keep a password-encrypted copy on the server so this key can be viewed again after a
+           refresh. A single switch; the explanation sits behind the (i) button instead of on screen. When the
+           login password was already typed to create or rotate this key it is reused from memory, so the user
+           is never asked twice. Accounts without a usable login password (third-party sign-in) do not see the
+           row at all: a control they cannot use needs no explaining. -->
+      <div v-if="apiKey && canSeal" class="space-y-2" data-test="api-key-seal-optin">
+        <div class="flex min-h-8 items-center gap-2">
+          <UIcon name="i-lucide-lock-keyhole" class="size-4 shrink-0 text-dimmed" aria-hidden="true" />
+          <label for="api-key-seal-switch" class="cursor-pointer text-sm text-default">{{ t('keys.seal.optIn') }}</label>
+          <button
+            type="button"
+            class="seal-info"
+            :aria-expanded="hintOpen ? 'true' : 'false'"
+            aria-controls="api-key-seal-hint"
+            :aria-label="t('keys.seal.info')"
+            data-test="api-key-seal-info"
+            @click="hintOpen = !hintOpen"
+          >
+            <UIcon name="i-lucide-info" class="size-3.5" aria-hidden="true" />
+          </button>
+          <Toggle
+            id="api-key-seal-switch"
+            v-model="sealEnabled"
+            class="ml-auto"
+            :disabled="sealing"
+            :aria-label="t('keys.seal.optIn')"
+            data-test="api-key-seal-checkbox"
+          />
+        </div>
+        <p v-show="hintOpen" id="api-key-seal-hint" class="text-xs leading-5 text-muted" data-test="api-key-seal-hint">
+          {{ t('keys.seal.optInHint') }}
+        </p>
+
+        <Transition name="seal-field">
           <UInput
+            v-if="sealEnabled && !hasVerifiedPassword"
             id="api-key-seal-password"
+            ref="passwordInput"
             v-model="sealPassword"
             type="password"
             name="apikey-seal-passphrase"
             autocomplete="new-password"
             data-lpignore="true"
             data-1p-ignore="true"
+            icon="i-lucide-key-round"
+            :placeholder="t('keys.seal.passwordLabel')"
+            :aria-label="t('keys.seal.passwordLabel')"
             :disabled="sealing"
             class="w-full"
             data-test="api-key-seal-password"
+            @keydown.enter.prevent="onDone"
           />
-          <p class="text-xs text-muted">{{ t('keys.seal.passwordHint') }}</p>
-        </div>
+        </Transition>
       </div>
-      <p
-        v-else-if="apiKey && !canSeal"
-        class="rounded-lg bg-gray-50 p-3 text-xs text-muted ring ring-inset ring-default dark:bg-dark-900"
-        data-test="api-key-seal-unavailable"
-      >
-        {{ t('keys.seal.unavailable') }}
-      </p>
 
       <p
         v-if="sealError"
-        class="text-xs text-red-600 dark:text-red-400"
+        class="flex items-center gap-1.5 text-xs text-error"
         role="alert"
         data-test="api-key-seal-error"
       >
+        <UIcon name="i-lucide-circle-alert" class="size-3.5 shrink-0" aria-hidden="true" />
         {{ sealError }}
       </p>
 
+      <!-- Spoken only: the visible cue is the disabled button for the first second. -->
       <p
         v-if="!canClose"
-        class="text-xs text-muted"
+        class="sr-only"
         data-test="api-key-secret-wait-hint"
         role="status"
       >
         {{ t('keys.secretDialog.waitHint') }}
       </p>
-
-      <div class="flex flex-wrap items-center justify-end gap-2">
-        <UButton
-          v-if="sealError && !sealed"
-          color="neutral"
-          variant="soft"
-          :label="t('keys.seal.later')"
-          data-test="api-key-seal-later"
-          @click="skipSeal"
-        />
-        <UButton
-          v-if="!hideCcsImport"
-          color="neutral"
-          variant="soft"
-          icon="i-lucide-upload"
-          :label="t('keys.secretDialog.importCcs')"
-          @click="emit('import-ccs')"
-        />
-        <UButton
-          color="neutral"
-          variant="soft"
-          icon="i-lucide-square-terminal"
-          :label="t('keys.secretDialog.use')"
-          @click="emit('use')"
-        />
-        <UButton
-          color="primary"
-          :label="t('keys.secretDialog.done')"
-          :disabled="!canClose || sealing"
-          :loading="sealing"
-          data-test="api-key-secret-done"
-          @click="onDone"
-        />
-      </div>
     </div>
+
+    <template #footer>
+      <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2" data-test="api-key-secret-footer">
+        <div class="flex items-center gap-1">
+          <UButton
+            v-if="!hideCcsImport"
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            icon="i-lucide-upload"
+            :label="t('keys.secretDialog.importCcs')"
+            data-test="api-key-secret-import-ccs"
+            @click="emit('import-ccs')"
+          />
+          <UButton
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            icon="i-lucide-square-terminal"
+            :label="t('keys.secretDialog.use')"
+            data-test="api-key-secret-use"
+            @click="emit('use')"
+          />
+        </div>
+        <div class="flex items-center gap-2">
+          <UButton
+            v-if="sealError && !sealed"
+            color="neutral"
+            variant="ghost"
+            :label="t('keys.seal.later')"
+            data-test="api-key-seal-later"
+            @click="skipSeal"
+          />
+          <UButton
+            color="primary"
+            :ui="quietPrimaryUi"
+            icon="i-lucide-check"
+            :label="t('keys.secretDialog.done')"
+            :disabled="!canClose || sealing"
+            :loading="sealing"
+            data-test="api-key-secret-done"
+            @click="onDone"
+          />
+        </div>
+      </div>
+    </template>
   </BaseDialog>
 </template>
 
 <script setup lang="ts">
-import { onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { ApiKey } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Toggle from '@/components/common/Toggle.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import { keysAPI } from '@/api'
 import { ApiKeySealUnsupportedError, sealApiKey } from '@/utils/apikeySeal'
+import { quietPrimaryUi } from './quietUi'
 
 /** The plaintext receipt is forced on screen for at least this long. */
 const MIN_VISIBLE_MS = 1000
@@ -163,8 +188,14 @@ const props = withDefaults(
     canSeal?: boolean
     /** 创建这次 Key 时使用的身份校验因子；封存密文时原样记录，二次查看要求同一因子。 */
     authFactor?: string
+    /**
+     * The login password the user already typed (and the server already checked) to create or rotate this
+     * key. Used for "view later" so the user is not asked for the same password a second time. Memory only:
+     * it is never rendered or stored, and the parent clears it when the receipt closes.
+     */
+    verifiedPassword?: string
   }>(),
-  { apiKey: null, hideCcsImport: false, canSeal: false, authFactor: '' },
+  { apiKey: null, hideCcsImport: false, canSeal: false, authFactor: '', verifiedPassword: '' },
 )
 
 const emit = defineEmits<{ close: []; use: []; 'import-ccs': []; sealed: [] }>()
@@ -201,6 +232,14 @@ const sealPassword = ref('')
 const sealing = ref(false)
 const sealed = ref(false)
 const sealError = ref('')
+const hintOpen = ref(false)
+// The remembered password was refused (it should never be, but a password can change between the two steps):
+// stop reusing it and let the user type it.
+const typeItInstead = ref(false)
+const passwordInput = ref<{ inputRef?: HTMLInputElement | null } | null>(null)
+
+// The password for "view later" is already known: no field, nothing to type.
+const hasVerifiedPassword = computed(() => props.verifiedPassword !== '' && !typeItInstead.value)
 
 const resetSealState = () => {
   // 默认不勾选：密码框只在用户主动选择「以后可查看」时渲染，
@@ -210,6 +249,8 @@ const resetSealState = () => {
   sealing.value = false
   sealed.value = false
   sealError.value = ''
+  hintOpen.value = false
+  typeItInstead.value = false
 }
 
 const requestClose = () => {
@@ -221,7 +262,7 @@ const requestClose = () => {
 
 const onDone = () => {
   if (!canClose.value) return
-  // A checked opt-in with a password must finish (or explicitly be postponed) first.
+  // A checked opt-in must finish (or explicitly be postponed) first.
   if (sealEnabled.value && !sealed.value) {
     void saveSeal()
     return
@@ -235,18 +276,19 @@ const saveSeal = async () => {
     emit('close')
     return
   }
-  if (!sealPassword.value) {
+  const password = hasVerifiedPassword.value ? props.verifiedPassword : sealPassword.value
+  if (!password) {
     sealError.value = t('keys.seal.passwordRequired')
     return
   }
   sealing.value = true
   sealError.value = ''
   try {
-    const payload = await sealApiKey(props.secret, sealPassword.value)
+    const payload = await sealApiKey(props.secret, password)
     // 服务端会先 bcrypt 校验登录密码，再保存密文：密码错了以后就再也解不开，
     // 所以这里必须让它成为一次显式失败，而不是「保存成功、以后才报错」。
     await keysAPI.putSecretSeal(id, payload, {
-      password: sealPassword.value,
+      password,
       authFactor: props.authFactor || 'password',
     })
     sealed.value = true
@@ -261,6 +303,11 @@ const saveSeal = async () => {
         : ''
     if (reason === 'VERIFY_PASSWORD_INVALID') {
       sealError.value = t('keys.seal.wrongPassword')
+      if (hasVerifiedPassword.value) {
+        typeItInstead.value = true
+        await nextTick()
+        passwordInput.value?.inputRef?.focus()
+      }
     } else if (reason === 'VERIFY_PASSWORD_RATE_LIMITED') {
       sealError.value = t('keys.factor.passwordRateLimited')
     } else if (reason === 'VERIFY_FACTOR_UNAVAILABLE') {
@@ -301,6 +348,17 @@ watch(
   },
 )
 
+// Turning the switch on puts the cursor straight into the password field (when there is one).
+watch(sealEnabled, async (enabled) => {
+  if (!enabled) {
+    sealError.value = ''
+    return
+  }
+  if (hasVerifiedPassword.value) return
+  await nextTick()
+  passwordInput.value?.inputRef?.focus()
+})
+
 onUnmounted(clearUnlockTimer)
 
 watch(
@@ -321,3 +379,53 @@ const copySecret = async () => {
   }
 }
 </script>
+
+<style scoped>
+/* The (i) button: a quiet round target; the explanation it opens is one sentence. */
+.seal-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  color: var(--ui-text-dimmed);
+  transition: color 120ms ease-out, background-color 120ms ease-out;
+}
+
+.seal-info:hover,
+.seal-info[aria-expanded='true'] {
+  color: var(--ui-text-toned);
+  background: var(--ui-bg-elevated);
+}
+
+.seal-info:focus-visible {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 1px;
+}
+
+/* The password field slides in a few pixels and fades; transform + opacity only. */
+.seal-field-enter-active,
+.seal-field-leave-active {
+  transition: opacity 160ms cubic-bezier(0.23, 1, 0.32, 1), transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.seal-field-enter-from,
+.seal-field-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seal-field-enter-active,
+  .seal-field-leave-active,
+  .seal-info {
+    transition: none;
+  }
+
+  .seal-field-enter-from,
+  .seal-field-leave-to {
+    transform: none;
+  }
+}
+</style>

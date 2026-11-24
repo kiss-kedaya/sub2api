@@ -2060,6 +2060,47 @@ describe('user KeysView key-rotation remediation', () => {
     wrapper.unmount()
   })
 
+  it('轮换时输过登录密码：回执里「以后可查看」直接用它，不再要第二遍', async () => {
+    listKeys.mockResolvedValue(pageOf([neededKey()]))
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: 'password',
+      available_methods: ['password'],
+      seal_available: true,
+      create_verification_required: true,
+    })
+    rotateKey.mockResolvedValue({ ...neededKey(), needs_rotation: false, rotation_reasons: [], key: 'sk-rotated-reuse' })
+    getKeyRotationGateStatus.mockResolvedValue({ pending_key_count: 0 })
+    const seal = { version: 1, kdf: { algo: 'PBKDF2-SHA256', iterations: 310000, salt: 'c2FsdA==' }, sealed: 'c2VhbGVk' }
+    sealApiKey.mockResolvedValue(seal)
+    putSecretSeal.mockResolvedValue(undefined)
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="key-needs-rotation-rotate"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="rotate-verification"] [data-test="key-factor-password-input"]').setValue('typed-for-rotation')
+    await wrapper.get('[data-test="rotate-verify-submit"]').trigger('click')
+    await flushPromises()
+
+    // The receipt is up; the switch is there, the password field is not.
+    expect(wrapper.find('[data-test="api-key-secret-dialog"]').exists()).toBe(true)
+    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
+
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    await nextTick()
+    await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+    await flushPromises()
+
+    expect(sealApiKey).toHaveBeenCalledWith('sk-rotated-reuse', 'typed-for-rotation')
+    expect(putSecretSeal).toHaveBeenCalledWith(1, seal, { password: 'typed-for-rotation', authFactor: 'password' })
+    expect(wrapper.find('[data-test="api-key-secret-dialog"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('只有登录密码的账号，单条轮换不弹校验、直接带空 verification 轮换', async () => {
     listKeys.mockResolvedValue(pageOf([neededKey()]))
     getVerificationFactors.mockResolvedValue({
@@ -3067,6 +3108,125 @@ describe('user KeysView 创建弹窗（Quiet 流程）与页面过期守卫', ()
 
       expect(wrapper.find('[data-test="key-create-steps"]').exists()).toBe(false)
       wrapper.unmount()
+    })
+
+    describe('创建后回执里的「以后可查看」', () => {
+      const seal = { version: 1, kdf: { algo: 'PBKDF2-SHA256', iterations: 310000, salt: 'c2FsdA==' }, sealed: 'c2VhbGVk' }
+
+      beforeEach(() => {
+        sealApiKey.mockReset()
+        sealApiKey.mockResolvedValue(seal)
+        putSecretSeal.mockReset()
+        putSecretSeal.mockResolvedValue(undefined)
+      })
+
+      const fillName = async (wrapper: VueWrapper, name: string) => {
+        await wrapper.get('[data-tour="key-form-name"]').setValue(name)
+        wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+        await nextTick()
+      }
+      const finishReceipt = async (wrapper: VueWrapper) => {
+        await new Promise((resolve) => setTimeout(resolve, 1100))
+        await nextTick()
+        await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+        await flushPromises()
+      }
+
+      it('创建时输过登录密码（要校验的账号选了密码）：开关一点即可，不再要第二遍密码', async () => {
+        getVerificationFactors.mockResolvedValue({ ...passwordFactors, create_verification_required: true })
+        createKey.mockResolvedValue({ ...createApiKey(), id: 77, group_id: 3, group_ids: [3], key: 'sk-typed-once-key' })
+        const wrapper = await openCreate()
+        await fillName(wrapper, 'typed once')
+        await wrapper.get('[data-test="key-create-next"]').trigger('click')
+        await flushPromises()
+        await wrapper.get('[data-test="key-factor-password-input"]').setValue('typed-once')
+        await wrapper.get('#key-form').trigger('submit')
+        await flushPromises()
+
+        expect(createKey).toHaveBeenCalledTimes(1)
+        expect(lastCreateOptions()).toMatchObject({ verification: { method: 'password', password: 'typed-once' } })
+
+        await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
+        await flushPromises()
+        expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
+
+        await finishReceipt(wrapper)
+        expect(sealApiKey).toHaveBeenCalledWith('sk-typed-once-key', 'typed-once')
+        expect(putSecretSeal).toHaveBeenCalledWith(77, seal, { password: 'typed-once', authFactor: 'password' })
+        // Memory only: not in the page, not in the browser's storage.
+        expect(wrapper.html()).not.toContain('typed-once')
+        expect(readBrowserStorage()).not.toContain('typed-once')
+        wrapper.unmount()
+      })
+
+      it('创建时没输过密码（只有登录密码的账号）：想要「以后可查看」才在这里输一次', async () => {
+        getVerificationFactors.mockResolvedValue({ ...passwordFactors, create_verification_required: false })
+        createKey.mockResolvedValue({ ...createApiKey(), id: 78, group_id: 3, group_ids: [3], key: 'sk-no-password-key' })
+        const wrapper = await openCreate()
+        await fillName(wrapper, 'no password')
+        await wrapper.get('#key-form').trigger('submit')
+        await flushPromises()
+        expect(lastCreateOptions()).not.toHaveProperty('verification')
+
+        // Declining costs nothing: the receipt just closes.
+        expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
+        await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
+        await flushPromises()
+        // This is the only place the password is asked, and only because the user asked for "view later".
+        const field = wrapper.get('[data-test="api-key-seal-password"]')
+        await field.setValue('typed-here')
+
+        await finishReceipt(wrapper)
+        expect(sealApiKey).toHaveBeenCalledWith('sk-no-password-key', 'typed-here')
+        expect(putSecretSeal).toHaveBeenCalledWith(78, seal, { password: 'typed-here', authFactor: 'password' })
+        wrapper.unmount()
+      })
+
+      it('回执一关，记住的登录密码就从内存里清掉（不等下一把 Key 来覆盖）', async () => {
+        getVerificationFactors.mockResolvedValue({ ...passwordFactors, create_verification_required: true })
+        createKey.mockResolvedValue({ ...createApiKey(), id: 81, group_id: 3, group_ids: [3], key: 'sk-clear-key' })
+        const wrapper = await openCreate()
+        await fillName(wrapper, 'clear me')
+        await wrapper.get('[data-test="key-create-next"]').trigger('click')
+        await flushPromises()
+        await wrapper.get('[data-test="key-factor-password-input"]').setValue('typed-once')
+        await wrapper.get('#key-form').trigger('submit')
+        await flushPromises()
+
+        const held = () => (wrapper.vm as unknown as { receiptVerifiedPassword: string }).receiptVerifiedPassword
+        expect(held()).toBe('typed-once')
+
+        await finishReceipt(wrapper)
+        expect(held()).toBe('')
+        wrapper.unmount()
+      })
+
+      it('上一把 Key 回执里记住的密码不会带到下一把 Key', async () => {
+        getVerificationFactors.mockResolvedValue({ ...passwordFactors, create_verification_required: true })
+        createKey.mockResolvedValueOnce({ ...createApiKey(), id: 79, group_id: 3, group_ids: [3], key: 'sk-first-key' })
+        const wrapper = await openCreate()
+        await fillName(wrapper, 'first')
+        await wrapper.get('[data-test="key-create-next"]').trigger('click')
+        await flushPromises()
+        await wrapper.get('[data-test="key-factor-password-input"]').setValue('typed-once')
+        await wrapper.get('#key-form').trigger('submit')
+        await flushPromises()
+        await finishReceipt(wrapper)
+
+        // Second key, this time created by an account that is not asked (server says so): nothing is remembered.
+        getVerificationFactors.mockResolvedValue({ ...passwordFactors, create_verification_required: false })
+        createKey.mockResolvedValueOnce({ ...createApiKey(), id: 80, group_id: 3, group_ids: [3], key: 'sk-second-key' })
+        await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+        await flushPromises()
+        await fillName(wrapper, 'second')
+        await wrapper.get('#key-form').trigger('submit')
+        await flushPromises()
+
+        await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
+        await flushPromises()
+        expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(true)
+        wrapper.unmount()
+      })
     })
 
     it('老服务端（响应里没有这个字段）：仍按「有可用因子就强制」，密码账号继续走两步', async () => {

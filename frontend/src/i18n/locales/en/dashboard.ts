@@ -199,12 +199,10 @@ export default {
     // The backend only returns a masked view; plaintext appears at creation/rotation and later only via local decryption.
     maskedOnlyHint: 'For security, this is the server-side masked value. Keys created with "allow viewing later with my login password" can be decrypted locally after clicking copy.',
     secretDialog: {
-      title: 'Plaintext key (save it now)',
-      description: 'The server will not return the plaintext again. To view it after a refresh, encrypt it locally with your login password below.',
-      saveNotice: 'Copy and store it now. Without the \"view later with my login password\" option below, the plaintext cannot be retrieved after this dialog closes or the page reloads; if lost, rotate the key.',
-      cannotViewAgain: 'Without the opt-in, it cannot be recovered from the list or details after closing. With the opt-in, you can decrypt it locally with your login password after a refresh.',
-      waitHint: 'Copy and save the key first. This dialog unlocks after at least 1 second so the key is on screen.',
-      copy: 'Copy key',
+      title: 'Save your key',
+      description: 'Shown once. Copy it now.',
+      waitHint: 'Copy and save the key first',
+      copy: 'Copy',
       copied: 'Copied',
       use: 'Use key',
       importCcs: 'Import to CCS',
@@ -308,16 +306,16 @@ export default {
     },
     // "View later" option in the receipt: the password only participates locally.
     seal: {
-      optIn: 'Allow viewing this key later with my login password',
-      optInHint: 'The key is encrypted with your login password in this browser; the server stores only the ciphertext. When you save, the login password is sent to the server once to verify your identity and is then discarded, never stored.',
+      optIn: 'View later',
+      optInHint: 'Encrypted in this browser with your login password; the server keeps only the ciphertext. Forget the password and the key cannot be viewed again; you can rotate a new one anytime.',
+      info: 'Details',
       passwordLabel: 'Login password',
-      passwordHint: 'The password is used only for local encryption. If you forget it you cannot view this key again (you can rotate a new one at any time).',
-      passwordRequired: 'Enter your login password, or uncheck "Allow viewing this key later with my login password".',
-      failed: 'Wrong password or save failed; you can retry later. The password is only used for local encryption, and forgetting it means the key can no longer be viewed.',
-      unsupported: 'This browser does not support WebCrypto, so the key cannot be encrypted safely. Try another browser.',
-      wrongPassword: 'The login password is incorrect, so "view later" cannot be saved. Enter your current login password.',
+      passwordRequired: 'Enter your login password',
+      failed: 'Could not save. Try again later.',
+      unsupported: 'This browser cannot encrypt the key',
+      wrongPassword: 'Incorrect login password',
       later: 'Later',
-      unavailable: 'This account was created through a third-party sign-in and has no usable login password, so password-encrypted viewing is not available. Bind an email and set a password first.'
+      unavailable: 'Bind an email and set a login password first'
     },
     // View after refresh: fetch the ciphertext, decrypt locally.
     reveal: {
