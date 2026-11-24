@@ -759,6 +759,19 @@ func (s *APIKeyService) instanceHasActiveGroups(ctx context.Context) (bool, erro
 	return len(groups) > 0, nil
 }
 
+// ListActiveGroups 返回全部启用中的分组（只读，不按用户过滤）。Key 自助查询接口用它把 Key 绑定的
+// 备用分组解析成名称与状态；调用方负责缓存，不要在请求热路径上逐次调用。
+func (s *APIKeyService) ListActiveGroups(ctx context.Context) ([]Group, error) {
+	if s == nil || s.groupRepo == nil {
+		return nil, nil
+	}
+	groups, err := s.groupRepo.ListActive(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list active groups: %w", err)
+	}
+	return groups, nil
+}
+
 // List 获取用户的API Key列表
 func (s *APIKeyService) List(ctx context.Context, userID int64, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error) {
 	if normalizedAPIKeySortBy(params.SortBy) == apiKeySortCurrentConcurrency {
