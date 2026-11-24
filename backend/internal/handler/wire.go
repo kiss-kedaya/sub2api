@@ -186,6 +186,15 @@ func ProvideSystemHandler(updateService *service.UpdateService, lockService *ser
 
 // ProvideSettingHandler creates SettingHandler with version from BuildInfo
 func ProvideSettingHandler(settingService *service.SettingService, buildInfo BuildInfo, notificationEmailService *service.NotificationEmailService, userService *service.UserService) *SettingHandler {
+	// The entry HTML embeds window.__APP_CONFIG__ built by the settings service,
+	// while /settings/public answers from this handler. Nothing ever told the
+	// service which release it belongs to, so the embedded copy always said "" and
+	// a browser could not tell which release its page came from (the stale-page
+	// check in the frontend stays off without it). This is the one place that has
+	// both the service and the version.
+	if settingService != nil {
+		settingService.SetVersion(buildInfo.Version)
+	}
 	h := NewSettingHandler(settingService, buildInfo.Version)
 	h.SetUserService(userService)
 	h.SetNotificationEmailService(notificationEmailService)

@@ -8,7 +8,9 @@ import {
   POLL_INTERVAL_MS,
   RELOAD_COOLDOWN_MS,
   RELOAD_KEY,
+  compareVersions,
   createAppUpdate,
+  fetchIdentityFromServer,
   isStale,
   readEntryHash,
   type AppUpdateDeps,
@@ -102,6 +104,116 @@ describe('isStale', () => {
   it('falls back to the version number when an entry hash is unavailable', () => {
     expect(isStale(OLD, { version: '2.3.157', entry: '' })).toBe(true)
     expect(isStale({ version: '2.3.156', entry: '' }, NEW)).toBe(true)
+  })
+})
+
+describe('isStale during a rolling release', () => {
+  it('is not stale when the server is OLDER than the page (the balancer sent us to the machine not upgraded yet)', () => {
+    // page loaded from the new machine, the poll lands on the old one
+    expect(isStale(NEW, OLD)).toBe(false)
+    expect(isStale(NEW, { version: OLD.version, entry: '' })).toBe(false)
+  })
+
+  it('compares numerically, not as text: 2.3.10 is newer than 2.3.9', () => {
+    expect(isStale({ version: '2.3.9', entry: 'a' }, { version: '2.3.10', entry: 'b' })).toBe(true)
+    expect(isStale({ version: '2.3.10', entry: 'b' }, { version: '2.3.9', entry: 'a' })).toBe(false)
+  })
+
+  it('falls back to "different means stale" when a version cannot be parsed', () => {
+    expect(isStale({ version: 'dev', entry: 'a' }, { version: '2.3.158', entry: 'b' })).toBe(true)
+    expect(isStale({ version: '2.3.158', entry: '' }, { version: 'nightly', entry: '' })).toBe(true)
+  })
+})
+
+describe('compareVersions', () => {
+  it('orders by number per segment', () => {
+    expect(compareVersions('2.3.158', '2.3.157')).toBeGreaterThan(0)
+    expect(compareVersions('2.3.157', '2.3.158')).toBeLessThan(0)
+    expect(compareVersions('2.3.158', '2.3.158')).toBe(0)
+    expect(compareVersions('2.10.0', '2.9.9')).toBeGreaterThan(0)
+  })
+
+  it('treats a missing segment as 0 and ignores a leading v and a suffix', () => {
+    expect(compareVersions('2.3', '2.3.0')).toBe(0)
+    expect(compareVersions('v2.3.158', '2.3.158')).toBe(0)
+    expect(compareVersions('2.3.158-rc1', '2.3.158')).toBe(0)
+    expect(compareVersions('2.4', '2.3.99')).toBeGreaterThan(0)
+  })
+
+  it('looks at every segment of the longer version', () => {
+    expect(compareVersions('2.3.1', '2.3')).toBeGreaterThan(0)
+    expect(compareVersions('2.3', '2.3.1')).toBeLessThan(0)
+  })
+
+  it('returns null when either side is not a version', () => {
+    expect(compareVersions('', '2.3.158')).toBeNull()
+    expect(compareVersions('2.3.158', 'dev')).toBeNull()
+  })
+})
+
+describe('fetchIdentityFromServer', () => {
+  const json = (body: unknown, ok = true) => ({ ok, json: async () => body, text: async () => '' })
+  const html = (src: string, ok = true) => ({
+    ok,
+    json: async () => ({}),
+    text: async () => `<html><script type="module" crossorigin src="${src}"></script></html>`,
+  })
+  const known: BuildIdentity = { version: '2.3.157', entry: 'AAAA1111' }
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reads the version from /settings/public and skips the page when it is unchanged', async () => {
+    fetchMock.mockResolvedValueOnce(json({ code: 0, data: { version: '2.3.157' } }))
+    await expect(fetchIdentityFromServer(known)).resolves.toEqual(known)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/settings/public')
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ cache: 'no-store' })
+  })
+
+  it('does not read the page when the server is older than this page (rolling release)', async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { version: '2.3.156' } }))
+    await expect(fetchIdentityFromServer(known)).resolves.toEqual({ version: '2.3.156', entry: known.entry })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads the entry hash from the page when the server is newer', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json({ data: { version: '2.3.158' } }))
+      .mockResolvedValueOnce(html('/assets/index-BBBB2222.js'))
+    await expect(fetchIdentityFromServer(known)).resolves.toEqual({ version: '2.3.158', entry: 'BBBB2222' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(String(fetchMock.mock.calls[1][0])).toMatch(/^\/\?_=\d+$/)
+  })
+
+  it('keeps the new version with an empty hash when the page cannot be read', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json({ data: { version: '2.3.158' } }))
+      .mockResolvedValueOnce(html('/assets/index-BBBB2222.js', false))
+    await expect(fetchIdentityFromServer(known)).resolves.toEqual({ version: '2.3.158', entry: '' })
+  })
+
+  it('answers null for a non-200 without reading anything else, even if the body looks newer', async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { version: '2.3.158' } }, false))
+    await expect(fetchIdentityFromServer(known)).resolves.toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('answers null for an empty version without reading the page', async () => {
+    fetchMock.mockResolvedValueOnce(json({ data: { version: '' } }))
+    await expect(fetchIdentityFromServer(known)).resolves.toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('answers null (not stale) on a network error', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('offline'))
+    await expect(fetchIdentityFromServer(known)).resolves.toBeNull()
   })
 })
 

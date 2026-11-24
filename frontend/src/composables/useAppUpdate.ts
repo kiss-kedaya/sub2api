@@ -10,9 +10,11 @@
  *    以及入口脚本的哈希（/assets/index-<hash>.js）。必须在 main.ts 刷新配置之前记下，所以在本模块
  *    被导入时就取一次。
  * 2. 定时（5 分钟）、切回标签页、恢复联网时，读一次 /settings/public 的版本号。
- * 3. 版本号不同时再读一次 `/` 的入口脚本哈希：只有前端文件真的变了才算「需要刷新」，
+ * 3. 服务端版本比页面新时再读一次 `/` 的入口脚本哈希：只有前端文件真的变了才算「需要刷新」，
  *    纯后端发版不会打扰用户。读不到哈希时按版本号判断。
- * 4. 灰度（金丝雀）期间两台后端会给出不同版本：同一个「过期」结果隔一会儿再确认一次才算数。
+ * 4. 灰度（金丝雀）/ 滚动发版期间两台后端会给出不同版本：服务端比页面旧不算过期（页面刚从新的那台
+ *    加载、请求又落到旧的那台）；同一个「过期」结果还要隔一会儿再确认一次才算数。
+ * 5. 页面里没有注入版本号（开发环境、旧后端）就没有可比较的对象，整个探测不工作、也不会误报。
  *
  * 刷新方式：
  * - 顶部常驻提示（AppUpdateBanner）；
@@ -71,10 +73,33 @@ export interface AppUpdate {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
-/** 前端文件真的变了才算过期；读不到哈希时退回按版本号判断。 */
+/**
+ * 比较两个版本号：a 比 b 新返回正数，一样返回 0，旧返回负数；任一解析不了返回 null。
+ * 按数字逐段比（2.3.9 < 2.3.10），前导 v 和 -rc1 之类的后缀忽略，缺的段当 0。
+ */
+export function compareVersions(a: string, b: string): number | null {
+  const parse = (v: string) => /^v?(\d+(?:\.\d+)*)/.exec(v.trim())?.[1].split('.').map(Number)
+  const pa = parse(a)
+  const pb = parse(b)
+  if (!pa || !pb) return null
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+/**
+ * 服务端比这个页面新、并且前端文件真的变了，才算过期。
+ * - 灰度 / 滚动发版期间负载均衡还会把请求发给旧的那台：服务端版本比页面旧时，页面不算过期，
+ *   否则刚加载到新页面的用户会被误提示、整页重载回旧版本。
+ * - 读不到哈希时退回按版本号判断；版本号解析不了时退回「不一样就算」。
+ */
 export function isStale(known: BuildIdentity, latest: BuildIdentity): boolean {
   if (!known.version || !latest.version) return false
   if (known.version === latest.version) return false
+  const order = compareVersions(latest.version, known.version)
+  if (order !== null && order <= 0) return false
   if (known.entry && latest.entry) return known.entry !== latest.entry
   return true
 }
@@ -183,7 +208,7 @@ export function createAppUpdate(deps: AppUpdateDeps): AppUpdate {
 }
 
 /** 读服务端当前的版本与入口哈希。任何失败都返回 null，绝不抛出。 */
-async function fetchIdentityFromServer(known: BuildIdentity): Promise<BuildIdentity | null> {
+export async function fetchIdentityFromServer(known: BuildIdentity): Promise<BuildIdentity | null> {
   const bust = `_=${Date.now()}`
   try {
     const res = await fetch(`${buildApiUrl('/settings/public')}?${bust}`, {
@@ -195,9 +220,13 @@ async function fetchIdentityFromServer(known: BuildIdentity): Promise<BuildIdent
     const body = (await res.json()) as { data?: { version?: unknown }; version?: unknown }
     const version = String(body?.data?.version ?? body?.version ?? '')
     if (!version) return null
-    if (version === known.version) return { version, entry: known.entry }
+    // 一样新、或服务端比页面旧（灰度期间被发到旧的那台）：不用再读入口哈希。
+    const order = compareVersions(version, known.version)
+    if (version === known.version || (order !== null && order <= 0)) {
+      return { version, entry: known.entry }
+    }
 
-    // 版本号变了：再看入口脚本哈希，前端文件没变（纯后端发版）就不打扰用户。
+    // 服务端更新：再看入口脚本哈希，前端文件没变（纯后端发版）就不打扰用户。
     const page = await fetch(`/?${bust}`, {
       cache: 'no-store',
       credentials: 'same-origin',
