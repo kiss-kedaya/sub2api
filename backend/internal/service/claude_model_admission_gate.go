@@ -56,7 +56,6 @@ func claudeModelAdmission(model, platform string, group *Group, account *Account
 	return !upstreamPlatformServesClaudeFamily(upstreamPlatform)
 }
 
-
 // shouldGateClaudeModel 报告该模型是否需要统一“能否被该上游服务”的口径。
 func shouldGateClaudeModel(model string) bool {
 	return isClaudeModel(model)

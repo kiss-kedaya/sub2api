@@ -367,4 +367,3 @@ func claudeBillingModelCandidatesForGroup(group *Group, models []string) []strin
 	}
 	return models
 }
-

@@ -57,7 +57,6 @@ func upstreamAccountServesClaudeFamily(account *Account) bool {
 	return upstreamPlatformServesClaudeFamily(account.Platform)
 }
 
-
 // modelFamily isClaudeModel 报告请求模型是否属于 Claude（Anthropic）模型族。
 // 复用 DetectModelPlatform 的唯一判定口径：claude-* / anthropic.claude-* /
 // 以及 provider 前缀形式（anthropic/xxx、claude/xxx）。
@@ -65,7 +64,6 @@ func isClaudeModel(model string) bool {
 	detected, ok := DetectModelPlatform(model)
 	return ok && detected == PlatformAnthropic
 }
-
 
 // crossProtocolAllowsClaudeOnUpstream 报告分组是否显式允许跨协议转换，
 // 从而允许 claude-* 请求落到非 Anthropic 上游账号。分组未加载视为不允许
