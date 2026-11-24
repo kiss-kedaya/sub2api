@@ -44,13 +44,11 @@ const messages: Record<string, string> = {
   'admin.usage.filters.title': 'Filters',
   'admin.usage.filters.activeCount': '{count} active',
   'admin.usage.filters.advanced': 'Advanced filters',
-  'admin.usage.filters.groupRequest': 'Request',
-  'admin.usage.filters.groupBilling': 'Billing',
-  'admin.usage.filters.groupScope': 'Scope',
   'admin.usage.filters.search': 'Search',
-  'admin.usage.filters.requestIdHint': 'Fragment match by default',
-  'admin.usage.filters.compactionHint': 'Regular vs compaction',
-  'admin.usage.filters.upstreamModelAuditHint': 'Compare response model',
+  'admin.usage.filters.requestIdHint': 'Fragment ok, =exact ^prefix',
+  'admin.usage.filters.requestIdPlaceholder': 'Request or upstream ID',
+  'common.noOptionsFound': 'No options found',
+  'admin.usage.filters.upstreamModelAuditHint': 'Requested vs upstream model',
   'admin.usage.filters.clearUser': 'Clear user filter',
   'admin.usage.filters.clearApiKey': 'Clear API key filter',
   'admin.usage.filters.clearAccount': 'Clear account filter',
@@ -242,28 +240,57 @@ describe('UsageFilters — 常用筛选与高级筛选', () => {
     expect(common.text()).toContain('API Key')
     expect(common.text()).toContain('Model')
     // 桌面 4 列、平板 2 列、手机 1 列
-    expect(common.classes()).toEqual(expect.arrayContaining(['grid', 'gap-x-3', 'sm:grid-cols-2', 'xl:grid-cols-4']))
+    expect(common.classes()).toEqual(expect.arrayContaining(['grid', 'gap-x-4', 'sm:grid-cols-2', 'xl:grid-cols-4']))
     wrapper.unmount()
   })
 
-  it('collapses the remaining filters into an advanced area grouped by request / billing / scope', async () => {
+  it('lays the remaining filters out in one flat grid, without group legends', async () => {
     const wrapper = mountFilters()
     // 桌面端高级区默认展开（窄屏默认收起，见移动端用例）
     // 展开状态由组件状态驱动（jsdom 不计算 display，所以断言状态而不是 isVisible）
     expect((wrapper.vm as any).advancedOpen).toBe(true)
     expect(wrapper.get('[data-testid="usage-filters-advanced-toggle"]').attributes('aria-expanded')).toBe('true')
     const advanced = wrapper.get('[data-testid="usage-filters-advanced"]')
-    // 高级区：平板 2 列、桌面 3 列
-    expect(advanced.classes()).toEqual(expect.arrayContaining(['sm:grid-cols-2', 'xl:grid-cols-3']))
-    // 三组语义分组
-    expect(wrapper.get('[data-testid="usage-filters-group-request"]').text()).toContain('Request')
-    expect(wrapper.get('[data-testid="usage-filters-group-billing"]').text()).toContain('Billing')
-    expect(wrapper.get('[data-testid="usage-filters-group-scope"]').text()).toContain('Scope')
-    // 不常用项都在高级区：请求 ID / 类型 / 计费类型 / 计费模式 / 上游模型审计 / 账户 / 分组
+    // 和常用区同一套网格：平板 2 列、桌面 4 列，列对得上
+    expect(advanced.classes()).toEqual(expect.arrayContaining(['grid', 'sm:grid-cols-2', 'xl:grid-cols-4']))
+    // 字段名本身就是标签：整个筛选卡里都不再有「请求 / 计费 / 范围」分组小标题
+    expect(wrapper.find('legend').exists()).toBe(false)
+    expect(wrapper.find('fieldset').exists()).toBe(false)
+    // 用量明细：8 个高级字段正好铺满两行（4 + 4）
+    expect(advanced.findAll(BASE_FIELD_SELECTOR)).toHaveLength(8)
     const advancedText = advanced.text()
-    for (const label of ['Request ID', 'Type', 'Billing Type', 'Billing Mode', 'Upstream model audit', 'Account', 'Group']) {
+    for (const label of ['Request ID', 'Type', 'Request Kind', 'Billing Type', 'Billing Mode', 'Upstream model audit', 'Account', 'Group']) {
       expect(advancedText).toContain(label)
     }
+    wrapper.unmount()
+  })
+
+  it('shows 6 advanced fields in the errors tab and none of the billing ones', () => {
+    const wrapper = mountFilters(defaultFilters(), { mode: 'errors' })
+    const advanced = wrapper.get('[data-testid="usage-filters-advanced"]')
+    expect(advanced.findAll(BASE_FIELD_SELECTOR)).toHaveLength(6)
+    expect(advanced.text()).not.toContain('Billing')
+    wrapper.unmount()
+  })
+
+  it('does not clip the search result lists: the card is overflow-visible', () => {
+    const wrapper = mountFilters()
+    const card = wrapper.get('[data-testid="usage-filters-card"]')
+    // 高级区收起时卡片很矮；overflow-hidden 会把下拉裁成一行半
+    expect(card.classes()).toContain('overflow-visible')
+    expect(card.classes()).not.toContain('overflow-hidden')
+    wrapper.unmount()
+  })
+
+  it('puts syntax help on the label row instead of a second line under the label', () => {
+    const wrapper = mountFilters()
+    const requestId = fieldByLabel(wrapper, 'Request ID')
+    expect(requestId.text()).toContain('Fragment ok, =exact ^prefix')
+    // 提示和标签是同一行里的兄弟节点（UFormField 的 hint），不是标签下面单起一行的 description
+    const hint = requestId.findAll('*').find((node) => node.text() === 'Fragment ok, =exact ^prefix' && node.element.children.length === 0)!
+    expect(Array.from(hint.element.parentElement!.children).some((child) => child.tagName === 'LABEL')).toBe(true)
+    // 提示、占位符各管一件事：占位符不再重复语法
+    expect(requestId.get('input').attributes('placeholder')).toBe('Request or upstream ID')
     wrapper.unmount()
   })
 
@@ -658,5 +685,137 @@ describe('UsageFilters — 手动查询', () => {
     // 导出仍在第二组
     expect(groups[1].map((item) => item.label)).toEqual(['Export Excel', 'Export CSV'])
     wrapper.unmount()
+  })
+})
+
+describe('UsageFilters — 「不限」的显示', () => {
+  it('reads unset filters as the "All …" placeholder, whether the value is undefined or null', () => {
+    // 页面里 model / group_id / request_type 初始是 undefined，billing_type 初始是 null：界面上应一致
+    const filters = { ...defaultFilters(), model: undefined, group_id: undefined, request_type: undefined } as any
+    const wrapper = mountFilters(filters)
+    const selects = wrapper.findAllComponents({ name: 'Select' })
+    expect(selects).toHaveLength(7)
+    for (const select of selects) {
+      expect(select.props('modelValue')).toBeUndefined()
+      expect(select.attributes('placeholder')).toMatch(/^All /)
+    }
+    wrapper.unmount()
+  })
+
+  it('keeps real values visible and writes the picked option back as before', () => {
+    const filters = defaultFilters() as any
+    filters.model = 'claude-opus-4-5'
+    const wrapper = mountFilters(filters)
+    const model = wrapper.findAllComponents({ name: 'Select' }).find((s) => s.attributes('placeholder') === 'All Models')!
+    expect(model.props('modelValue')).toBe('claude-opus-4-5')
+    model.vm.$emit('update:modelValue', 'gpt-5.1')
+    expect((wrapper.props('modelValue') as any).model).toBe('gpt-5.1')
+    // 选回「全部」仍然写 null，页面拼查询参数的口径不变
+    model.vm.$emit('update:modelValue', null)
+    expect((wrapper.props('modelValue') as any).model).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('keeps the "Advanced filters" text next to the count badge', () => {
+    const filters = defaultFilters() as any
+    filters.billing_type = 1
+    const wrapper = mountFilters(filters)
+    const toggle = wrapper.get('[data-testid="usage-filters-advanced-toggle"]')
+    // UButton 有默认插槽时不渲染 label：改前有高级条件时按钮上只剩一个数字
+    expect(toggle.text()).toContain('Advanced filters')
+    expect(wrapper.get('[data-testid="usage-filters-advanced-count"]').text()).toBe('1')
+    wrapper.unmount()
+  })
+})
+
+describe('UsageFilters — 搜索下拉的输入与收起', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {})
+    vi.useFakeTimers()
+    mockSearchUsers.mockReset()
+    mockSearchApiKeys.mockResolvedValue([])
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function typeIntoUserSearch(value: string) {
+    mockSearchUsers.mockResolvedValue([{ id: 1, email: 'a@test.com', deleted: false }])
+    const wrapper = mountFiltersExpanded()
+    const input = fieldByLabel(wrapper, 'User').get('input')
+    await input.trigger('focus')
+    // 只发 input，不发 change：真实键入时 change 要等失焦 / 回车才来
+    ;(input.element as HTMLInputElement).value = value
+    await input.trigger('input')
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+    return { wrapper, input }
+  }
+
+  it('searches while typing, without waiting for blur or Enter', async () => {
+    const { wrapper } = await typeIntoUserSearch('a')
+    // 拿的是刚键入的值，而不是 v-model 还没写入时的旧值
+    expect(mockSearchUsers).toHaveBeenCalledWith('a')
+    expect(wrapper.get('[data-testid="usage-filter-user-options"]').text()).toContain('a@test.com')
+    wrapper.unmount()
+  })
+
+  it('closes the list on a press outside the field, and reopens it on focus', async () => {
+    const { wrapper, input } = await typeIntoUserSearch('a')
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('[data-testid="usage-filter-user-options"]').exists()).toBe(false)
+    await input.trigger('focus')
+    expect(wrapper.find('[data-testid="usage-filter-user-options"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('closes the list on Escape', async () => {
+    const { wrapper, input } = await typeIntoUserSearch('a')
+    await input.trigger('keydown', { key: 'Escape' })
+    expect(wrapper.find('[data-testid="usage-filter-user-options"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('says so when a search finds nothing, instead of letting the list vanish', async () => {
+    mockSearchUsers.mockResolvedValue([])
+    const wrapper = mountFiltersExpanded()
+    const input = fieldByLabel(wrapper, 'User').get('input')
+    await input.trigger('focus')
+    ;(input.element as HTMLInputElement).value = 'zzz'
+    await input.trigger('input')
+    // 搜索还在防抖 / 进行中：不能先闪一下「无匹配」
+    expect(wrapper.find('[data-testid="usage-filter-user-empty"]').exists()).toBe(false)
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+    expect(wrapper.get('[data-testid="usage-filter-user-empty"]').text()).toBe('No options found')
+    wrapper.unmount()
+  })
+
+  it('does not call a selected user a failed search when the list is empty', async () => {
+    const filters = defaultFilters() as any
+    filters.user_id = 5
+    const wrapper = mountFiltersExpanded(filters)
+    ;(wrapper.vm as any).setUserKeyword('picked@test.com')
+    await fieldByLabel(wrapper, 'User').get('input').trigger('focus')
+    // 关键字是选中项的名字，不是一次落空的搜索
+    expect(wrapper.find('[data-testid="usage-filter-user-empty"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('lets a truncated result be read in full on hover', async () => {
+    const { wrapper } = await typeIntoUserSearch('a')
+    const label = wrapper.get('[data-testid="usage-filter-user-options"] span.truncate')
+    expect(label.attributes('title')).toBe('a@test.com')
+    wrapper.unmount()
+  })
+
+  it('stops listening for outside presses once unmounted', async () => {
+    const removeSpy = vi.spyOn(document, 'removeEventListener')
+    const { wrapper } = await typeIntoUserSearch('a')
+    wrapper.unmount()
+    expect(removeSpy).toHaveBeenCalledWith('pointerdown', expect.any(Function))
+    removeSpy.mockRestore()
   })
 })

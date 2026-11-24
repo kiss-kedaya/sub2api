@@ -69,6 +69,19 @@ describe('DateRangePicker', () => {
     expect(wrapper.text()).toContain('Last 24 Hours')
   })
 
+  it('keeps a long custom range readable on hover through a title', async () => {
+    const wrapper = mount(DateRangePicker, {
+      props: { startDate: '2026-05-01T00:00:00', endDate: '2026-05-28T23:59:59', includeTime: true },
+      global: { stubs: { Icon: true } }
+    })
+    await wrapper.vm.$nextTick()
+
+    // 自定义时间范围很长，窄列里会被截断；完整文本要能靠悬停读到
+    const label = wrapper.get('[data-test="date-range-trigger"] span.truncate')
+    expect(label.text().length).toBeGreaterThan(20)
+    expect(label.attributes('title')).toBe(label.text())
+  })
+
   it('emits range updates with last24Hours preset when applied', async () => {
     const now = new Date()
     const today = formatLocalDate(now)
