@@ -144,7 +144,7 @@
                 <span class="ml-auto text-xs text-dimmed">#{{ u.id }}</span>
               </button>
               <p v-if="userResults.length === 0" class="px-3 py-2 text-sm text-muted" data-testid="usage-filter-user-empty">
-                {{ t('common.noOptionsFound') }}
+                {{ t('admin.usage.filters.noUser') }}
               </p>
             </div>
           </UFormField>
@@ -196,7 +196,7 @@
                 <span class="ml-auto text-xs text-dimmed">#{{ k.id }}</span>
               </button>
               <p v-if="apiKeyResults.length === 0" class="px-3 py-2 text-sm text-muted" data-testid="usage-filter-api-key-empty">
-                {{ t('common.noOptionsFound') }}
+                {{ t('admin.usage.filters.noApiKey') }}
               </p>
             </div>
           </UFormField>
@@ -359,7 +359,7 @@
                   <span class="ml-auto text-xs text-dimmed">#{{ a.id }}</span>
                 </button>
                 <p v-if="accountResults.length === 0" class="px-3 py-2 text-sm text-muted" data-testid="usage-filter-account-empty">
-                  {{ t('common.noOptionsFound') }}
+                  {{ t('admin.usage.filters.noAccount') }}
                 </p>
               </div>
             </UFormField>

@@ -645,6 +645,9 @@ export default {
         clearUser: 'Clear user filter',
         clearApiKey: 'Clear API key filter',
         clearAccount: 'Clear account filter',
+        noUser: 'No matching users. Try another email keyword.',
+        noApiKey: 'No matching API keys. Try another name.',
+        noAccount: 'No matching accounts. Try another name.',
         anonymousIdPlaceholder: 'ID',
       },
       cleanup: {

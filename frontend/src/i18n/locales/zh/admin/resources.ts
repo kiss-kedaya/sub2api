@@ -642,6 +642,9 @@ export default {
         clearUser: '清除用户筛选',
         clearApiKey: '清除密钥筛选',
         clearAccount: '清除账户筛选',
+        noUser: '没有匹配的用户，换个邮箱关键字试试',
+        noApiKey: '没有匹配的密钥，换个名称关键字试试',
+        noAccount: '没有匹配的账户，换个名称关键字试试',
         anonymousIdPlaceholder: 'ID',
       },
       cleanup: {

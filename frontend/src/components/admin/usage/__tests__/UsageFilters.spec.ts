@@ -47,7 +47,9 @@ const messages: Record<string, string> = {
   'admin.usage.filters.search': 'Search',
   'admin.usage.filters.requestIdHint': 'Fragment ok, =exact ^prefix',
   'admin.usage.filters.requestIdPlaceholder': 'Request or upstream ID',
-  'common.noOptionsFound': 'No options found',
+  'admin.usage.filters.noUser': 'No matching users. Try another email keyword.',
+  'admin.usage.filters.noApiKey': 'No matching API keys. Try another name.',
+  'admin.usage.filters.noAccount': 'No matching accounts. Try another name.',
   'admin.usage.filters.upstreamModelAuditHint': 'Requested vs upstream model',
   'admin.usage.filters.clearUser': 'Clear user filter',
   'admin.usage.filters.clearApiKey': 'Clear API key filter',
@@ -789,7 +791,7 @@ describe('UsageFilters — 搜索下拉的输入与收起', () => {
     expect(wrapper.find('[data-testid="usage-filter-user-empty"]').exists()).toBe(false)
     vi.advanceTimersByTime(300)
     await flushPromises()
-    expect(wrapper.get('[data-testid="usage-filter-user-empty"]').text()).toBe('No options found')
+    expect(wrapper.get('[data-testid="usage-filter-user-empty"]').text()).toBe('No matching users. Try another email keyword.')
     wrapper.unmount()
   })
 
