@@ -69,6 +69,41 @@ type PricingInput struct {
 // 1. 获取基础定价（LiteLLM → Fallback）
 // 2. 如果指定了 GroupID，查找渠道定价并覆盖
 func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) *ResolvedPricing {
+	// Claude 真价锚点：计费入口在发现「Claude 模型被非 Claude 分组渠道服务」时
+	// 会钉住实际计费分组与强制真价标记（见 claude_pricing_anchor.go）。
+	// 这里据此换分组查价，并在结果上丢弃供应商目录的渠道档价。
+	state, hasAnchor := claudeFallbackPricingStateFromContext(ctx)
+	query := input
+	if hasAnchor {
+		if state.group != nil {
+			query.Group = state.group
+			if state.group.ID > 0 {
+				gid := state.group.ID
+				query.GroupID = &gid
+			}
+		}
+	} else {
+		query.Group = resolvePricingGroup(ctx, &input)
+	}
+	resolved := r.resolveInternal(ctx, query)
+	if hasAnchor {
+		resolved = claudeFallbackOverrideResolved(state, resolved)
+	}
+	return resolved
+}
+
+// resolvePricingGroup 返回本请求应使用的定价分组：ctx 锚点优先，否则沿用入参。
+func resolvePricingGroup(ctx context.Context, input *PricingInput) *Group {
+	if state, ok := claudeFallbackPricingStateFromContext(ctx); ok && state.group != nil {
+		return state.group
+	}
+	if input != nil {
+		return input.Group
+	}
+	return nil
+}
+
+func (r *ModelPricingResolver) resolveInternal(ctx context.Context, input PricingInput) *ResolvedPricing {
 	longContextPricingEnabled := input.Group == nil || input.Group.LongContextPricingEnabled
 	if groupPricing := matchGroupModelPricing(input.Group, input.Model); groupPricing != nil {
 		// Group token cards only override the first-tier / flat rates.

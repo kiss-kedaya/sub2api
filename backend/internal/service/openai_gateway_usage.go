@@ -277,20 +277,40 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		result.Model,
 	)
 	billingModels = s.filterCNProviderBillingModelCandidates(ctx, account, apiKey, billingModels)
+	// Claude 模型跨目录错配校正（见 claude_pricing_anchor.go）：命中时把计费锚点
+	// 钉在 Claude 真价与实际计费分组，并改用承载 Claude 的上游分组倍率。
+	// 正常场景两个条件都不满足，以下分支全部跳过，计费结果逐位一致。
+	claudeGroup := claudeCatalogMispricingGroup(apiKey.Group, firstUsageBillingModel(billingModels))
+	if claudeGroup != nil {
+		billingModels = claudeBillingModelCandidatesForGroup(claudeGroup, billingModels)
+	}
 	serviceTier := ""
 	if result.ServiceTier != nil {
 		serviceTier = strings.TrimSpace(*result.ServiceTier)
 	}
 	longContextBillingGate := openAILongContextBillingGate(billingAccount)
+	billingCtx := ctx
+	billingMultiplier := multiplier
+	billingBaseMultiplier := baseMultiplier
+	if claudeGroup != nil {
+		model := firstUsageBillingModel(billingModels)
+		billingCtx = withClaudeFallbackPricingGroup(ctx, claudeGroup, model, true)
+		// 单价已经换成 Claude 真价：倍率也必须按承载 Claude 的 Anthropic 分组
+		// 解析，否则真价 × 供应商折扣率仍会低计。
+		if rebased := s.adjustClaudeFallbackMultiplier(ctx, user.ID, apiKey, claudeGroup, baseMultiplier); rebased != baseMultiplier {
+			billingMultiplier, imageMultiplier = computePeakAwareMultipliers(apiKey, rebased, pricingAt)
+			billingBaseMultiplier = rebased
+		}
+	}
 	cost, err = s.calculateOpenAIRecordUsageCost(
-		ctx,
+		billingCtx,
 		result,
 		apiKey,
 		billingModels,
-		multiplier,
+		billingMultiplier,
 		imageMultiplier,
 		videoMultiplier,
-		baseMultiplier,
+		billingBaseMultiplier,
 		tokens,
 		serviceTier,
 		longContextBillingGate,
