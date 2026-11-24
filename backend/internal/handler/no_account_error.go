@@ -49,23 +49,32 @@ const modelNotAvailableCode = "MODEL_NOT_AVAILABLE"
 // quotes, so the error body stays readable when a group advertises hundreds.
 const maxListedAvailableModels = 20
 
-// noAvailableAccountsMessage is the only text an API caller sees for a
-// capacity-type "no account" failure (503). The "No available accounts" prefix
-// is kept on purpose: the ops error filter, the ops phase classifier and the
-// channel-monitor taxonomy all key off it.
-const noAvailableAccountsMessage = "No available accounts for this request. Please retry later."
+// noAvailableAccountsMessage / noAvailableAccountsRateLimitedMessage are the only
+// texts an API caller sees for a capacity-type "no account" failure (503 / 429).
+// The "No available accounts" prefix is kept on purpose: the ops error filter,
+// the ops phase classifier and the channel-monitor taxonomy all key off it.
+const (
+	noAvailableAccountsMessage            = "No available accounts for this request. Please retry later."
+	noAvailableAccountsRateLimitedMessage = "No available accounts: all available accounts are currently rate-limited. Please retry later."
+)
 
 // clientNoAccountMessage renders the caller-facing text for a classified
 // "no account" failure. Scheduler internals (group id, pool counters, profit
 // gate, protocol and cross-protocol switches, the raw selection error) must
 // never be echoed to the client; handlers log them under the request id.
-// Verdicts the classifier owns (404 / 403 model verdicts, 429 rate limit,
-// security-penalty 403) already carry a client-safe Message and are kept as is.
+// Verdicts the classifier owns (404 / 403 model verdicts, security-penalty 403)
+// already carry a client-safe Message and are kept as is.
 func clientNoAccountMessage(cls noAccountErrorClassification) string {
-	if cls.Status == http.StatusServiceUnavailable && !cls.ModelNotFound {
+	switch {
+	case cls.ModelNotFound:
+		return cls.Message
+	case cls.Status == http.StatusServiceUnavailable:
 		return noAvailableAccountsMessage
+	case cls.Status == http.StatusTooManyRequests:
+		return noAvailableAccountsRateLimitedMessage
+	default:
+		return cls.Message
 	}
-	return cls.Message
 }
 
 // modelNotAvailableMessage renders the user-facing MODEL_NOT_AVAILABLE text.

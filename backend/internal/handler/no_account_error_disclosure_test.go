@@ -49,8 +49,14 @@ func TestClientNoAccountMessage(t *testing.T) {
 		require.Contains(t, strings.ToLower(got), "no available accounts")
 		requireNoSchedulerInternals(t, got)
 	})
+	t.Run("rate limited keeps the stable prefix and no internals", func(t *testing.T) {
+		got := clientNoAccountMessage(rateLimited)
+		require.Equal(t, noAvailableAccountsRateLimitedMessage, got)
+		require.Contains(t, strings.ToLower(got), "no available accounts")
+		requireNoSchedulerInternals(t, got)
+	})
 	t.Run("classifier-owned verdicts keep their own text", func(t *testing.T) {
-		for _, cls := range []noAccountErrorClassification{rateLimited, modelMissing, planGated, securityPenalty} {
+		for _, cls := range []noAccountErrorClassification{modelMissing, planGated, securityPenalty} {
 			require.Equal(t, cls.Message, clientNoAccountMessage(cls))
 		}
 	})

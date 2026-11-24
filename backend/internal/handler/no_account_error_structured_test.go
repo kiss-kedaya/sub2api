@@ -68,6 +68,14 @@ func TestClassifySelectionFailureError_StructuredCountsWinOverText(t *testing.T)
 	}
 }
 
+// 一部分账号不支持该模型、另一部分被套餐拦截：既不是纯 404 也不是纯 403，保持可重试的 503。
+func TestClassifySelectionFailureError_MixedDeterministicPoolStaysCapacityError(t *testing.T) {
+	err := selectionFailure("gpt-x", service.SelectionFailureCounts{Pool: 2, ModelNotSupported: 1, ModelPlanGated: 1},
+		"pool=2, filtered: model_not_supported=1 model_plan_gated=1")
+
+	require.Equal(t, noAccountFallback, classifySelectionFailureError(err, noAccountFallback))
+}
+
 // C-08：智能路由有候选组被跳过时，路由摘要成为错误文本的最后一个括号。
 // 分类必须仍然读到选号计数，不能静默退化成可重试的 503。
 func TestClassifySelectionFailureError_RouteSkipSummaryDoesNotHideVerdict(t *testing.T) {
