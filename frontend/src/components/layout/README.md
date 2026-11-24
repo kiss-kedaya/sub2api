@@ -19,7 +19,6 @@ The console frame is the Nuxt UI dashboard (Vue mode), laid out like the officia
 - The panel body is the scroll container, not the window. `panelScroll.ts` starts a new
   page at the top and restores the position on back / forward. Sticky elements count from
   the top of the body (inside its padding).
-- The sakura canvas (`InkSakura`) sits behind the frame and shows in empty areas.
 - Root classes `console-signal`, `signal-admin` (admin routes) and `signal-nav-collapsed`
   are kept for page styles.
 

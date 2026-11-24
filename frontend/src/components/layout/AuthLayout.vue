@@ -15,9 +15,6 @@
       <div class="auth-grid absolute inset-0"></div>
     </div>
 
-    <!-- Ink-wash sakura on the right, above the background and below the form -->
-    <InkSakura front />
-
     <!-- Content: brand above a centred card, as in Nuxt UI's auth pages -->
     <div class="relative z-10 w-full max-w-md">
       <!-- Logo/Brand -->
@@ -68,7 +65,6 @@
 import { computed, onMounted } from 'vue'
 import { useAppStore } from '@/stores'
 import LegalFooterLinks from '@/components/legal/LegalFooterLinks.vue'
-import InkSakura from './InkSakura.vue'
 import '@/styles/console-elevation.css'
 import '@/styles/auth-quiet.css'
 import { sanitizeUrl } from '@/utils/url'
