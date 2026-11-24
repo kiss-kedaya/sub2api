@@ -294,6 +294,57 @@ func TestUserUsageStatsUsesScopedFilters(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "endpoint_paths")
 }
 
+func TestUserUsageStatsPassesTheScopeAndNeverAsksForAccountCost(t *testing.T) {
+	tests := []struct {
+		query string
+		want  string
+	}{
+		{query: "", want: ""},
+		{query: "&scope=summary", want: usagestats.StatsScopeSummary},
+		{query: "&scope=endpoints", want: usagestats.StatsScopeEndpoints},
+		{query: "&scope=Summary", want: usagestats.StatsScopeSummary},
+	}
+	for _, tc := range tests {
+		t.Run(tc.query, func(t *testing.T) {
+			repo := &userUsageRepoCapture{}
+			router := newUserUsageRequestTypeTestRouter(repo)
+
+			req := httptest.NewRequest(http.MethodGet, "/usage/stats?start_date=2026-03-01&end_date=2026-03-02"+tc.query, nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Equal(t, tc.want, repo.statsFilters.StatsScope)
+			require.True(t, repo.statsFilters.OmitAccountCost, "users never see account cost, so the query must not read it")
+			require.Equal(t, int64(42), repo.statsFilters.UserID)
+		})
+	}
+}
+
+func TestUserUsageStatsRejectsAnUnknownScope(t *testing.T) {
+	repo := &userUsageRepoCapture{}
+	router := newUserUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/stats?start_date=2026-03-01&end_date=2026-03-02&scope=everything", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Zero(t, repo.statsFilters.UserID, "the aggregate must not run for a rejected request")
+}
+
+func TestUserUsageListAlsoLeavesAccountCostOut(t *testing.T) {
+	repo := &userUsageRepoCapture{}
+	router := newUserUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage?start_date=2026-03-01&end_date=2026-03-02", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.True(t, repo.listFilters.OmitAccountCost)
+}
+
 func TestUserUsageDashboardModelsOmitsAccountCost(t *testing.T) {
 	repo := &userUsageRepoCapture{
 		modelStats: []usagestats.ModelStat{{

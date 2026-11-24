@@ -1,7 +1,10 @@
 // Package usagestats provides types for usage statistics and reporting.
 package usagestats
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	ModelSourceRequested = "requested"
@@ -314,11 +317,40 @@ type UsageLogFilters struct {
 	EndTime               *time.Time
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
+	// OmitAccountCost leaves the account-cost expressions out of aggregate queries. User-facing endpoints never
+	// show account cost, and without those columns the user/group/time aggregates can be answered from the
+	// covering index idx_usage_logs_user_created_dims instead of visiting the table row by row.
+	OmitAccountCost bool
+	// StatsScope narrows GetStatsWithFilters: "" keeps the full answer (totals and endpoint breakdowns),
+	// StatsScopeSummary returns the totals only and StatsScopeEndpoints the inbound endpoint breakdown only.
+	// The two halves cost very different amounts (the totals can come from an index, the endpoint names cannot),
+	// so a page that wants both asks for them separately and shows the cheap one first.
+	StatsScope string
 	// CompactAssociations loads only display summaries for user/api key/account/group
 	// and skips subscriptions. Admin list endpoints should set this; user-facing
 	// endpoints keep the full association objects.
 	CompactAssociations bool
 	AccountNameOnly     bool
+}
+
+// Values of UsageLogFilters.StatsScope.
+const (
+	StatsScopeSummary   = "summary"
+	StatsScopeEndpoints = "endpoints"
+)
+
+// ParseStatsScope validates a client-supplied scope. The empty string is the default (everything).
+func ParseStatsScope(raw string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return "", true
+	case StatsScopeSummary:
+		return StatsScopeSummary, true
+	case StatsScopeEndpoints:
+		return StatsScopeEndpoints, true
+	default:
+		return "", false
+	}
 }
 
 // UsageStats represents usage statistics

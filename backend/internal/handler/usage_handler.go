@@ -220,6 +220,8 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 			BillingMode:        billingMode,
 			StartTime:          startPtr,
 			EndTime:            endPtr,
+			// Users never see account cost; leaving it out lets the aggregates use the covering index.
+			OmitAccountCost: true,
 		},
 		StartTime: derefTime(startPtr),
 		EndTime:   derefTime(endPtr),
@@ -436,6 +438,14 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// scope=summary returns the totals, scope=endpoints the endpoint breakdown; no scope returns both. The usage
+	// page asks for them separately so the cards do not wait for the part that has to read every row.
+	scope, validScope := usagestats.ParseStatsScope(c.Query("scope"))
+	if !validScope {
+		response.BadRequest(c, "Invalid scope, use summary or endpoints")
+		return
+	}
+	parsed.Filters.StatsScope = scope
 
 	stats, err := h.usageService.GetStatsWithFilters(c.Request.Context(), parsed.Filters)
 	if err != nil {

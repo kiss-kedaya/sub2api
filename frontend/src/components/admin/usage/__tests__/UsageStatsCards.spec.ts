@@ -109,3 +109,44 @@ describe('UsageStatsCards', () => {
     expect(tooltip?.classes()).not.toContain('-translate-x-1/2')
   })
 })
+
+
+describe('UsageStatsCards loading', () => {
+  const mountCards = (props: Record<string, unknown>) =>
+    mount(UsageStatsCards, { props: props as never, global: { stubs: { Icon: true } } })
+
+  it('shows placeholders, not zeros, while the first totals are on their way', () => {
+    const wrapper = mountCards({ stats: null, loading: true })
+
+    expect(wrapper.attributes('aria-busy')).toBe('true')
+    expect(wrapper.findAll('[aria-hidden="true"]').length).toBe(6)
+    const text = wrapper.text()
+    expect(text).not.toContain('$0.0000')
+    expect(text).not.toContain('0ms')
+    expect(text).not.toMatch(/\b0\b/)
+    // The labels stay, so the strip keeps its shape.
+    expect(text).toContain('Total Requests')
+    expect(text).toContain('Avg Duration')
+  })
+
+  it('keeps the numbers and dims them while a refresh is running', () => {
+    const wrapper = mountCards({ stats, loading: true })
+
+    expect(wrapper.attributes('aria-busy')).toBe('true')
+    expect(wrapper.classes()).toContain('opacity-60')
+    expect(wrapper.findAll('[aria-hidden="true"]').length).toBe(0)
+    expect(wrapper.text()).toContain('250ms')
+  })
+
+  it('is unchanged when nothing is loading, including the admin page that has no loading state', () => {
+    const idle = mountCards({ stats })
+    expect(idle.attributes('aria-busy')).toBeUndefined()
+    expect(idle.classes()).not.toContain('opacity-60')
+    expect(idle.text()).toContain('250ms')
+
+    const empty = mountCards({ stats: null })
+    expect(empty.attributes('aria-busy')).toBeUndefined()
+    expect(empty.findAll('[aria-hidden="true"]').length).toBe(0)
+    expect(empty.text()).toContain('$0.0000')
+  })
+})

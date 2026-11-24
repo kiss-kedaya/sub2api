@@ -928,6 +928,14 @@ func (r *usageLogRepository) getStatsWithFiltersRaw(ctx context.Context, filters
 		args = append(args, *filters.EndTime)
 	}
 
+	switch filters.StatsScope {
+	case usagestats.StatsScopeSummary:
+		return r.queryUsageStatsSummary(ctx, buildWhere(conditions), args, filters.OmitAccountCost)
+	case usagestats.StatsScopeEndpoints:
+		useAccountCost := filters.AccountID > 0 && filters.UserID == 0 && filters.APIKeyID == 0
+		return r.queryUsageStatsEndpoints(ctx, buildWhere(conditions), args, useAccountCost)
+	}
+
 	query := fmt.Sprintf(`
 		WITH scoped AS (
 			SELECT
@@ -1055,6 +1063,102 @@ func (r *usageLogRepository) getStatsWithFiltersRaw(ctx context.Context, filters
 	stats.TotalAccountCost = &totalAccountCost
 	stats.TotalTokens = stats.TotalInputTokens + stats.TotalOutputTokens + stats.TotalCacheTokens
 
+	return stats, nil
+}
+
+// queryUsageStatsSummary is the totals half of the usage stats. Everything it reads is a numeric column that
+// idx_usage_logs_user_created_dims carries (tokens, costs, duration), so for a user/group/time scope PostgreSQL
+// answers it from that index. omitAccountCost leaves the two columns that index does not carry out of the query.
+func (r *usageLogRepository) queryUsageStatsSummary(ctx context.Context, whereClause string, args []any, omitAccountCost bool) (*UsageStats, error) {
+	accountCostExpr := "COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0)"
+	if omitAccountCost {
+		accountCostExpr = "0::double precision"
+	}
+	query := fmt.Sprintf(`
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(input_tokens), 0),
+			COALESCE(SUM(output_tokens), 0),
+			COALESCE(SUM(cache_creation_tokens), 0),
+			COALESCE(SUM(cache_read_tokens), 0),
+			COALESCE(SUM(total_cost), 0),
+			COALESCE(SUM(actual_cost), 0),
+			%s,
+			COALESCE(AVG(duration_ms), 0)
+		FROM usage_logs
+		%s
+	`, accountCostExpr, whereClause)
+
+	var requests, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int64
+	var cost, actualCost, accountCost, averageDurationMs float64
+	if err := scanSingleRow(ctx, r.sql, query, args,
+		&requests, &inputTokens, &outputTokens, &cacheCreationTokens, &cacheReadTokens,
+		&cost, &actualCost, &accountCost, &averageDurationMs,
+	); err != nil {
+		return nil, err
+	}
+	stats := &UsageStats{
+		TotalRequests:            requests,
+		TotalInputTokens:         inputTokens,
+		TotalOutputTokens:        outputTokens,
+		TotalCacheCreationTokens: cacheCreationTokens,
+		TotalCacheReadTokens:     cacheReadTokens,
+		TotalCacheTokens:         cacheCreationTokens + cacheReadTokens,
+		TotalCost:                cost,
+		TotalActualCost:          actualCost,
+		TotalAccountCost:         &accountCost,
+		AverageDurationMs:        averageDurationMs,
+	}
+	stats.TotalTokens = stats.TotalInputTokens + stats.TotalOutputTokens + stats.TotalCacheTokens
+	return stats, nil
+}
+
+// queryUsageStatsEndpoints is the endpoint half of the usage stats: the inbound endpoint breakdown only (the
+// upstream endpoint and path breakdowns are admin-only and not computed). It needs the endpoint text of every row,
+// so it is the part that has to read the table.
+func (r *usageLogRepository) queryUsageStatsEndpoints(ctx context.Context, whereClause string, args []any, useAccountCost bool) (stats *UsageStats, err error) {
+	actualCostExpr := "COALESCE(SUM(actual_cost), 0)"
+	if useAccountCost {
+		actualCostExpr = "COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0)"
+	}
+	query := fmt.Sprintf(`
+		SELECT
+			COALESCE(NULLIF(TRIM(inbound_endpoint), ''), 'unknown') AS endpoint,
+			COUNT(*) AS requests,
+			COALESCE(SUM(input_tokens::bigint + output_tokens + cache_creation_tokens + cache_read_tokens), 0) AS total_tokens,
+			COALESCE(SUM(total_cost), 0) AS cost,
+			%s AS actual_cost
+		FROM usage_logs
+		%s
+		GROUP BY 1
+	`, actualCostExpr, whereClause)
+	rows, err := r.sql.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+			stats = nil
+		}
+	}()
+	stats = &UsageStats{}
+	for rows.Next() {
+		var row EndpointStat
+		if err := rows.Scan(&row.Endpoint, &row.Requests, &row.TotalTokens, &row.Cost, &row.ActualCost); err != nil {
+			return nil, err
+		}
+		stats.Endpoints = append(stats.Endpoints, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(stats.Endpoints, func(i, j int) bool {
+		if stats.Endpoints[i].Requests != stats.Endpoints[j].Requests {
+			return stats.Endpoints[i].Requests > stats.Endpoints[j].Requests
+		}
+		return stats.Endpoints[i].Endpoint < stats.Endpoints[j].Endpoint
+	})
 	return stats, nil
 }
 

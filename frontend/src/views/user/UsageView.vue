@@ -13,7 +13,7 @@
         the content used to slice the cache-detail popover that opens out of the 总 Token cell.
       -->
       <div class="usage-stats-strip rounded-lg shadow-xs ring ring-default dark:shadow-none">
-        <UsageStatsCards class="signal-usage-metrics" :stats="usageStats" :show-account-cost="false" :strike-standard-cost="true" />
+        <UsageStatsCards class="signal-usage-metrics" :stats="usageStats" :loading="statsLoading" :show-account-cost="false" :strike-standard-cost="true" />
       </div>
 
       <UCard class="shadow-xs dark:shadow-none" :ui="{ root: 'overflow-visible', body: 'p-3 sm:px-4 sm:py-3' }">
@@ -316,6 +316,7 @@ const endpointPathStats = ref<EndpointStat[]>([])
 const loading = ref(false)
 const chartsLoading = ref(false)
 const modelStatsLoading = ref(false)
+const statsLoading = ref(false)
 const endpointStatsLoading = ref(false)
 const exporting = ref(false)
 const exportWaiting = ref(false)
@@ -374,6 +375,7 @@ const applyErrorFilters = () => {
 
 let abortController: AbortController | null = null
 let chartReqSeq = 0
+let summaryReqSeq = 0
 let statsReqSeq = 0
 let modelStatsReqSeq = 0
 
@@ -561,25 +563,46 @@ const loadLogs = async (silent = false) => {
     if (!silent && abortController === controller) loading.value = false
   }
 }
-const loadStats = async () => {
+// The cards only need the totals, the endpoint chart needs the endpoint text of every row. Asking for them
+// separately lets the cards show up without waiting for the slow half.
+const loadSummary = async () => {
+  const seq = ++summaryReqSeq
+  statsLoading.value = true
+  try {
+    const stats = await usageAPI.getStats({ ...normalizedFilters.value, scope: 'summary' })
+    if (seq !== summaryReqSeq) return
+    usageStats.value = stats
+  } catch (error) {
+    if (seq !== summaryReqSeq) return
+    console.error('Failed to load usage summary:', error)
+  } finally {
+    if (seq === summaryReqSeq) statsLoading.value = false
+  }
+}
+
+const loadEndpointStats = async () => {
   const seq = ++statsReqSeq
   endpointStatsLoading.value = true
   try {
-    const stats = await usageAPI.getStats(normalizedFilters.value)
+    const stats = await usageAPI.getStats({ ...normalizedFilters.value, scope: 'endpoints' })
     if (seq !== statsReqSeq) return
-    usageStats.value = stats
     inboundEndpointStats.value = stats.endpoints || []
     upstreamEndpointStats.value = []
     endpointPathStats.value = []
   } catch (error) {
     if (seq !== statsReqSeq) return
-    console.error('Failed to load usage stats:', error)
+    console.error('Failed to load endpoint stats:', error)
     inboundEndpointStats.value = []
     upstreamEndpointStats.value = []
     endpointPathStats.value = []
   } finally {
     if (seq === statsReqSeq) endpointStatsLoading.value = false
   }
+}
+
+const loadStats = () => {
+  void loadSummary()
+  void loadEndpointStats()
 }
 
 const loadModelStats = async () => {
@@ -639,7 +662,7 @@ const refreshModelOptions = (models: ModelStat[]) => {
 const applyFilters = () => {
   pagination.page = 1
   void loadLogs()
-  void loadStats()
+  loadStats()
   void loadModelStats()
   void loadChartData()
   resetErrorRows()
@@ -657,7 +680,7 @@ const refreshData = () => {
   }
   void loadLogs()
   if (inflightOpen.value) void loadInflight(false)
-  void loadStats()
+  loadStats()
   void loadModelStats()
   void loadChartData()
   if (activeTab.value === 'errors') void loadErrors()

@@ -112,6 +112,8 @@ vi.mock('vue-i18n', async () => {
 
 const simpleStub = { template: '<div><slot /></div>' }
 const chartStub = { template: '<div />' }
+const statsCardsStub = { props: ['stats', 'loading'], template: '<div data-testid="stats-cards" />' }
+const endpointChartStub = { props: ['endpointStats', 'loading'], template: '<div data-testid="endpoint-chart" />' }
 const usageTableStub = {
   props: ['data', 'columns', 'showAccountBilling', 'showUpstreamEndpoint'],
   emits: ['sort', 'ipGeoBatchFailed'],
@@ -159,12 +161,12 @@ function mountUsageView() {
         Select: true,
         DateRangePicker: true,
         Icon: true,
-        UsageStatsCards: chartStub,
+        UsageStatsCards: statsCardsStub,
         UsageTable: usageTableStub,
         UserErrorRequestsTable: chartStub,
         ModelDistributionChart: chartStub,
         GroupDistributionChart: chartStub,
-        EndpointDistributionChart: chartStub,
+        EndpointDistributionChart: endpointChartStub,
         TokenUsageTrend: chartStub,
       },
     },
@@ -285,6 +287,84 @@ describe('user UsageView', () => {
     expect(list).toHaveBeenCalledTimes(1)
     expect(list).toHaveBeenCalledWith(1, 100)
     expect(getAvailable).toHaveBeenCalled()
+  })
+
+  it('asks for the totals and the endpoint breakdown separately, so the cards do not wait for the slow half', async () => {
+    mountUsageView()
+    await flushPromises()
+
+    const scopes = getStats.mock.calls.map(([params]) => (params as { scope?: string }).scope).sort()
+    expect(scopes).toEqual(['endpoints', 'summary'])
+    // Both carry the same filters.
+    const [first, second] = getStats.mock.calls.map(([params]) => params as Record<string, unknown>)
+    expect({ ...first, scope: undefined }).toEqual({ ...second, scope: undefined })
+  })
+
+  it('shows the totals as soon as they arrive, while the endpoint chart is still loading', async () => {
+    let finishEndpoints: (value: unknown) => void = () => {}
+    getStats.mockImplementation((params: { scope?: string }) => params.scope === 'endpoints'
+      ? new Promise((resolve) => { finishEndpoints = resolve })
+      : Promise.resolve({ total_requests: 7, total_tokens: 70, total_cost: 1, total_actual_cost: 1, average_duration_ms: 5 }))
+    const wrapper = mountUsageView()
+    await flushPromises()
+
+    const cards = wrapper.getComponent('[data-testid="stats-cards"]')
+    const chart = wrapper.getComponent('[data-testid="endpoint-chart"]')
+    expect(cards.props('loading')).toBe(false)
+    expect(cards.props('stats')).toMatchObject({ total_requests: 7 })
+    expect(chart.props('loading')).toBe(true)
+
+    finishEndpoints({ endpoints: [{ endpoint: '/v1/messages', requests: 7, total_tokens: 70, cost: 1, actual_cost: 1 }] })
+    await flushPromises()
+
+    expect(chart.props('loading')).toBe(false)
+    expect(chart.props('endpointStats')).toEqual([expect.objectContaining({ endpoint: '/v1/messages' })])
+    expect(cards.props('stats')).toMatchObject({ total_requests: 7 })
+    wrapper.unmount()
+  })
+
+  it('marks the cards as loading until the totals arrive, and ignores a slower answer for older filters', async () => {
+    const pending: Array<(value: unknown) => void> = []
+    getStats.mockImplementation((params: { scope?: string }) => params.scope === 'summary'
+      ? new Promise((resolve) => { pending.push(resolve) })
+      : Promise.resolve({ endpoints: [] }))
+    const wrapper = mountUsageView()
+    await flushPromises()
+    const cards = wrapper.getComponent('[data-testid="stats-cards"]')
+    expect(cards.props('loading')).toBe(true)
+    expect(cards.props('stats')).toBeNull()
+    // The endpoint chart does not wait for the totals either.
+    expect(wrapper.getComponent('[data-testid="endpoint-chart"]').props('loading')).toBe(false)
+
+    ;(wrapper.vm as any).applyFilters()
+    await flushPromises()
+    expect(pending).toHaveLength(2)
+
+    pending[1]({ total_requests: 2 }) // the newer request answers first
+    await flushPromises()
+    expect(cards.props('loading')).toBe(false)
+    expect(cards.props('stats')).toMatchObject({ total_requests: 2 })
+
+    pending[0]({ total_requests: 1 }) // the older one arrives late and must not win
+    await flushPromises()
+    expect(cards.props('stats')).toMatchObject({ total_requests: 2 })
+    expect(cards.props('loading')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('stops showing the loading placeholders when the totals request fails', async () => {
+    getStats.mockImplementation((params: { scope?: string }) => params.scope === 'summary'
+      ? Promise.reject(new Error('boom'))
+      : Promise.resolve({ endpoints: [] }))
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const wrapper = mountUsageView()
+    await flushPromises()
+
+    const cards = wrapper.getComponent('[data-testid="stats-cards"]')
+    expect(cards.props('loading')).toBe(false)
+    expect(error).toHaveBeenCalledWith('Failed to load usage summary:', expect.any(Error))
+    error.mockRestore()
+    wrapper.unmount()
   })
 
   it('includes API keys after the first page in both record filters and queries by the selected key', async () => {
