@@ -246,6 +246,7 @@ func RegisterGatewayRoutes(
 	gateway.Use(ipSharing)
 	gateway.Use(ipNotice)
 	gateway.GET("/sub2api/billing", h.Gateway.KeyBillingInfo)
+	registerKeySelfServiceRoutes(gateway, h, redisClient)
 	gateway.Use(groupModelAllowlist)
 	gateway.Use(rejectConflictingFields)
 	gateway.Use(compositeTarget)
