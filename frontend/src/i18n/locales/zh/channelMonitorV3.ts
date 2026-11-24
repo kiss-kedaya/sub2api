@@ -19,7 +19,6 @@ export default {
     userRate: '用户倍率',
     unknownGroup: '未知分组',
     timelineTooltip: '{time} · 可用率 {availability} · 缓存率 {cache} · 首 Token {ttft}',
-    cacheBlackLegend: '缓存率 < 30% 视为不可用（黑格）',
     emptyTitle: '暂无渠道数据',
     emptyDescription: '当前时间范围内还没有可展示的被动监控数据',
     platformSection: '{platform}',

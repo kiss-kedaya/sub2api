@@ -158,12 +158,14 @@ describe('ChannelMonitorV3Timeline black cache bars', () => {
     wrapper.unmount()
   })
 
-  it('renders the cache black-bar legend', () => {
+  // The black bars still exist (cache rate < 30%); the explanatory line above the bars was removed on purpose.
+  it('does not render an explanatory legend above the bars', () => {
     const wrapper = mount(ChannelMonitorV3Timeline, {
-      props: { buckets: [], countdownSeconds: 0, length: 1 },
+      props: { buckets: [bucketWithCache('healthy', 0.1)], countdownSeconds: 0, length: 1 },
     })
-    const legend = wrapper.get('[data-testid="cache-black-legend"]')
-    expect(legend.text()).toBe('channelMonitorV3.cacheBlackLegend')
+    expect(wrapper.find('[data-testid="cache-black-legend"]').exists()).toBe(false)
+    expect(wrapper.find('.channel-signal-timeline__cache-legend').exists()).toBe(false)
+    expect(wrapper.get('.v3-soft-glass-bar').classes()).toContain('bg-black')
     wrapper.unmount()
   })
 })

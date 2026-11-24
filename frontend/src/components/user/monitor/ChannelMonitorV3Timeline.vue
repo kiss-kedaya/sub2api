@@ -4,10 +4,6 @@
       <span>{{ t('monitorCommon.history60pts', { n: length }) }}</span>
       <span class="tabular-nums">{{ t('monitorCommon.nextUpdateIn', { n: countdownSeconds }) }}</span>
     </div>
-    <div class="channel-signal-timeline__cache-legend mb-2 flex items-center gap-1.5 text-[10px] text-gray-400" data-testid="cache-black-legend">
-      <span class="inline-block h-2 w-2 shrink-0 rounded-[2px] bg-black" aria-hidden="true" />
-      <span>{{ t('channelMonitorV3.cacheBlackLegend') }}</span>
-    </div>
 
     <div class="v3-timeline-bars" @mouseleave="clearHoveredBar">
       <div
