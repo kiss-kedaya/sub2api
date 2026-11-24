@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -177,9 +178,9 @@ func (s *GatewayService) ForwardAsResponses(
 	if err != nil {
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
-	// 入站 query string 原样透传（转换不改 query）：仅补齐上游 URL 里没有的键，
-	// 不覆盖 buildUpstreamRequest 已写入的 ?beta=true。客户端自定义的
-	// 诊断/幂等参数因此能到上游，而不是在协议转换时被静默丢掉。
+	// 入站 query 只放行白名单内的键（目前仅 beta），且不覆盖 buildUpstreamRequest
+	// 已写入的 ?beta=true；其余键（access_token、alt、key 等会改变上游鉴权或
+	// 响应形态的参数）一律丢弃，不原样带给上游。
 	mergeInboundQueryParams(upstreamReq, c)
 
 	// 11. Send request
@@ -926,33 +927,71 @@ func mergeResponsesPassthroughFieldsBestEffort(body []byte, fields map[string]js
 	return merged
 }
 
-// mergeInboundQueryParams applies the inbound query string to the converted
-// upstream request without overriding parameters the upstream URL already sets
-// (for example beta=true). Query parameters are part of the passthrough
-// contract: a protocol bridge must not silently drop client-supplied params.
+// forwardedInboundQueryKeys is the allow list of inbound query parameters the
+// Responses -> Anthropic bridge copies onto the upstream URL. The Messages
+// endpoint defines a single query parameter, beta (set by the Anthropic SDK and
+// Claude Code). Any other key a client puts on POST /v1/responses either means
+// something only to this gateway or steers the upstream (access_token, alt, key
+// and the like act as credentials or response-format switches at some
+// providers), so it is dropped. Keys match exactly (case-sensitive), as the
+// upstream would read them.
+var forwardedInboundQueryKeys = map[string]struct{}{"beta": {}}
+
+// deniedInboundQueryKeys is the defence-in-depth deny list: credential-like names
+// (compared case-insensitively, ignoring "-" and "_") never reach the upstream,
+// even if forwardedInboundQueryKeys is widened later.
+var deniedInboundQueryKeys = map[string]struct{}{
+	"key": {}, "apikey": {}, "xapikey": {}, "token": {}, "accesstoken": {}, "authtoken": {},
+	"idtoken": {}, "refreshtoken": {}, "bearer": {}, "authorization": {}, "auth": {},
+	"secret": {}, "clientsecret": {}, "password": {}, "signature": {}, "sig": {},
+}
+
+var queryKeyNormalizer = strings.NewReplacer("-", "", "_", "")
+
+const (
+	// maxInboundQueryKeys: a normal client sends a couple of query parameters.
+	// A request carrying more is not forwarded any of them.
+	maxInboundQueryKeys = 16
+	// maxForwardedQueryValueLen bounds the bytes of one forwarded value; a longer
+	// value is dropped, not truncated.
+	maxForwardedQueryValueLen = 64
+)
+
+func isCredentialQueryKey(key string) bool {
+	_, denied := deniedInboundQueryKeys[queryKeyNormalizer.Replace(strings.ToLower(key))]
+	return denied
+}
+
+// mergeInboundQueryParams copies the allow-listed inbound query parameters onto
+// the converted upstream request. A parameter the upstream URL already carries
+// (for example beta=true) is never overridden, the existing query string stays
+// byte-for-byte as built, and new parameters are appended in key order.
 func mergeInboundQueryParams(upstreamReq *http.Request, c *gin.Context) {
 	if upstreamReq == nil || upstreamReq.URL == nil || c == nil || c.Request == nil || c.Request.URL == nil {
 		return
 	}
 	inbound := c.Request.URL.Query()
-	if len(inbound) == 0 {
+	if len(inbound) == 0 || len(inbound) > maxInboundQueryKeys {
 		return
 	}
 	current := upstreamReq.URL.Query()
-	changed := false
+	extra := url.Values{}
 	for key, values := range inbound {
-		if _, exists := current[key]; exists {
+		if _, ok := forwardedInboundQueryKeys[key]; !ok || isCredentialQueryKey(key) {
 			continue
 		}
-		if len(values) > 0 {
-			current[key] = values
-			changed = true
+		if _, exists := current[key]; exists || len(values) == 0 || len(values[0]) > maxForwardedQueryValueLen {
+			continue
 		}
+		extra[key] = values[:1]
 	}
-	if !changed {
+	if len(extra) == 0 {
 		return
 	}
-	upstreamReq.URL.RawQuery = current.Encode()
+	if upstreamReq.URL.RawQuery != "" {
+		upstreamReq.URL.RawQuery += "&"
+	}
+	upstreamReq.URL.RawQuery += extra.Encode()
 }
 
 // convertedUpstreamErrorRawBodyMax caps how much of a non-JSON upstream body
