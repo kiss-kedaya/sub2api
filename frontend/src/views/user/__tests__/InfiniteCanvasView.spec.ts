@@ -138,6 +138,21 @@ describe('InfiniteCanvasView', () => {
       expect(showSuccess).toHaveBeenCalledTimes(1)
     })
 
+    it('creates without any verification for a password-only account (no forced login password)', async () => {
+      getVerificationFactors.mockResolvedValue({ ...PASSWORD_FACTOR, create_verification_required: false })
+      ensureInfiniteCanvasApiKey.mockRejectedValueOnce(await setupError('not-configured', 'none'))
+        .mockResolvedValueOnce({ apiKey: 'sk-new-canvas', created: true, groupIds: [2], keyId: 10, truncated: false })
+      const wrapper = mountView()
+      await flushPromises()
+      expect(wrapper.find('[data-testid="canvas-verification"]').exists()).toBe(false)
+
+      await wrapper.get('[data-testid="canvas-confirm-submit"]').trigger('click')
+      await flushPromises()
+
+      expect(ensureInfiniteCanvasApiKey).toHaveBeenLastCalledWith(undefined, { createIfMissing: true, allowRotate: false })
+      expect(wrapper.find('iframe').exists()).toBe(true)
+    })
+
     it('sends the identity verification when the account has an available factor', async () => {
       getVerificationFactors.mockResolvedValue(PASSWORD_FACTOR)
       buildVerification.mockReturnValue({ method: 'password', password: 'fixture-password' })

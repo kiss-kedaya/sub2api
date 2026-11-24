@@ -177,6 +177,14 @@ func handlerVerificationUser(t *testing.T) *service.User {
 	return user
 }
 
+// handlerVerificationTOTPUser 是开了 TOTP 的邮箱账号：创建 Key 只对开了 TOTP 或绑了 Passkey 的账号强制校验。
+func handlerVerificationTOTPUser(t *testing.T) *service.User {
+	t.Helper()
+	user := handlerVerificationUser(t)
+	user.TotpEnabled = true
+	return user
+}
+
 func handlerVerificationErrorReason(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 	var out struct {
@@ -225,6 +233,14 @@ func TestVerificationFactorsEndpoint(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"password_available":true`)
 	require.Contains(t, rec.Body.String(), `"preferred":"password"`)
 	require.Contains(t, rec.Body.String(), `"seal_available":true`)
+	// 只有登录密码：密码仍然可选（二次查看要用），但创建 Key 不强制校验。
+	require.Contains(t, rec.Body.String(), `"create_verification_required":false`)
+
+	// 开了 TOTP：创建 Key 必须先校验，前端据此决定要不要显示校验这一步。
+	engine = newHandlerVerificationEngine(t, handlerVerificationTOTPUser(t))
+	rec = doJSON(engine.router, http.MethodGet, "/api/v1/user/security/verification-factors", "", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"create_verification_required":true`)
 
 	// OAuth-only：密码不可用，也不能封存。
 	oauth := handlerVerificationUser(t)
@@ -235,10 +251,11 @@ func TestVerificationFactorsEndpoint(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"password_available":false`)
 	require.Contains(t, rec.Body.String(), `"seal_available":false`)
 	require.Contains(t, rec.Body.String(), `"available_methods":[]`)
+	require.Contains(t, rec.Body.String(), `"create_verification_required":false`)
 }
 
 func TestCreateKeyRequiresIdentityVerification(t *testing.T) {
-	engine := newHandlerVerificationEngine(t, handlerVerificationUser(t))
+	engine := newHandlerVerificationEngine(t, handlerVerificationTOTPUser(t))
 
 	// 1) 没有 verification：400 VERIFY_REQUIRED，且不会创建 Key。
 	rec := doJSON(engine.router, http.MethodPost, "/api/v1/keys", `{"name":"no-verify"}`, nil)

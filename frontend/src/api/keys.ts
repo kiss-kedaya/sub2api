@@ -364,8 +364,9 @@ export async function deleteSecretSeal(id: number): Promise<void> {
  *
  * The batch emits plaintext, so it is gated exactly like creation: the caller
  * must prove identity (password / TOTP / passkey) first. The backend answers
- * 400 `VERIFY_REQUIRED` when the account has an available factor and the
- * request carries no verification.
+ * 400 `VERIFY_REQUIRED` when the account has TOTP or a passkey enabled and the
+ * request carries no verification. An account with only a login password is not
+ * forced to verify (a verification it does send is still checked).
  */
 export interface BatchRotateKeyItem {
   id: number

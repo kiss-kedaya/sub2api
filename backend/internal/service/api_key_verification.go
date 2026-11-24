@@ -26,8 +26,12 @@ import (
 //  2. 创建 Key 这种能长期拿到调用凭据的动作太容易：会话被劫持即可静默建 Key。
 //
 // 本文件是唯一判定入口，落地两条规则：
-//   - 创建 Key 前必须完成一次身份校验，方式从账号**实际可用**的因子里三选一；
-//     可用性只认：登录密码可用 / 已开 TOTP / 已绑定 Passkey。
+//   - 创建 Key 前的身份校验，方式从账号**实际可用**的因子里三选一；可用性只认：
+//     登录密码可用 / 已开 TOTP / 已绑定 Passkey。**只有开了 TOTP 或绑了 Passkey 的账号
+//     才强制这一步**——这是用户自己选择的更高安全级别；只有登录密码的账号（含邮箱注册、
+//     用 Google / GitHub 登录的用户）不再被强制输入密码（见 APIKeyVerificationFactors.
+//     CreateVerificationRequired）。要求密码的是「以后还能再查看」的封存，那是创建后另外
+//     勾选的可选项，不是创建的前置条件。
 //   - 「以后还能再查看」的封存密文会记录本次授权因子（api_key_secrets.auth_factor），
 //     再次查看时必须用同一因子重新授权，成功后才签发 5 分钟一次性 reveal grant。
 //
@@ -123,6 +127,11 @@ type APIKeyVerificationFactors struct {
 	// SealAvailable 是否支持「以后还能查看」（本地解密必须用登录密码派生密钥，
 	// 无密码的 OAuth-only 账号只能创建时一次性显示）。
 	SealAvailable bool `json:"seal_available"`
+	// CreateVerificationRequired 创建 / 轮换 Key 前是否必须先通过一次身份校验：
+	// 只有已开 TOTP 或已绑定 Passkey 的账号才为 true。仅有登录密码的账号为 false——
+	// 不能再因为「有密码」就把人卡在创建这一步（第三方登录用户常常根本不记得密码）。
+	// AvailableMethods 仍然列出密码：二次查看（解封存密文）和已开 2FA 的账号三选一要用。
+	CreateVerificationRequired bool `json:"create_verification_required"`
 }
 
 // Available 报告是否存在至少一个可用因子。
@@ -401,14 +410,17 @@ func (s *APIKeyVerificationService) factorsForUser(ctx context.Context, user *Us
 		Preferred:         preferred,
 		AvailableMethods:  methods,
 		SealAvailable:     passwordAvailable,
+		// 只认用户自己开启的更强因子；登录密码单独存在时不强制（见字段注释）。
+		CreateVerificationRequired: count > 0 || totpEnabled,
 	}, nil
 }
 
 // VerifyForCreate 是创建 / 变更 API Key 明文的身份校验。
 //
-// 返回本次实际使用的因子；账号一个可用因子都没有时（OAuth-only 且未绑 2FA）
-// 放行并返回空串——这类账号本来就不允许「以后查看」，创建时一次性显示明文，
-// 不引入第二个解密材料。存在可用因子时未带校验直接 400，不允许创建。
+// 返回本次实际使用的因子；账号没有开启 TOTP、也没有绑定 Passkey 时（含只有登录密码的
+// 账号、OAuth-only 账号）放行并返回空串——创建时一次性显示明文，「以后还能查看」是创建后
+// 另外勾选的封存（那里才要登录密码）。账号开了 TOTP 或绑了 Passkey 时未带校验直接 400。
+// 请求里主动带了因子（旧页面的密码步骤等）时照常按因子真验证，错了就拒绝。
 //
 // 所有会下发 / 变更明文的入口都必须走这里：创建（POST /keys）、批量轮换
 // （POST /keys/batch-rotate）、把密钥回滚成旧值的编辑（PUT /keys/:id）。
@@ -463,9 +475,9 @@ func (s *APIKeyVerificationService) verifyForUser(ctx context.Context, userID in
 		return nil, err
 	}
 	if in == nil || strings.TrimSpace(in.Method) == "" {
-		// 账号没有任何可用因子（OAuth-only 且未绑 2FA）：允许创建，但只能
-		// 一次性显示明文；有可用因子时不带校验一律拒绝。
-		if !factors.Available() {
+		// 没开 TOTP、也没绑 Passkey：不强制校验（只有登录密码的账号、OAuth-only 账号都在这里），
+		// 创建时一次性显示明文；开了更强因子的账号不带校验一律拒绝。
+		if !factors.CreateVerificationRequired {
 			return &APIKeyVerificationResult{}, nil
 		}
 		return nil, ErrAPIKeyVerificationRequired

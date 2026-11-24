@@ -155,6 +155,16 @@ func plaintextGuardUser(t *testing.T) *service.User {
 	return user
 }
 
+// plaintextGuardTOTPUser 是开了 TOTP 的邮箱账号。创建 / 轮换 / 编辑明文只对开了 TOTP 或绑了 Passkey
+// 的账号强制身份校验；只有登录密码的账号不强制（见 APIKeyVerificationFactors.CreateVerificationRequired），
+// 所以「必须校验」的回归用例都用这个夹具，「不强制」的用例用 plaintextGuardUser。
+func plaintextGuardTOTPUser(t *testing.T) *service.User {
+	t.Helper()
+	user := plaintextGuardUser(t)
+	user.TotpEnabled = true
+	return user
+}
+
 // plaintextGuardBodyKey 取回执里的明文（创建 / 轮换 / 批量都用同一字段名）。
 func plaintextGuardBodyKey(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
@@ -179,9 +189,9 @@ func plaintextGuardReason(t *testing.T, rec *httptest.ResponseRecorder) string {
 // ---- 1. batch-rotate -------------------------------------------------------
 
 func TestBatchRotateRequiresIdentityVerification(t *testing.T) {
-	engine := newPlaintextGuardEngine(t, plaintextGuardUser(t), nil)
+	engine := newPlaintextGuardEngine(t, plaintextGuardTOTPUser(t), nil)
 
-	// 旧前端 / 脚本直接调用：账号有登录密码可用，必须 400 VERIFY_REQUIRED，
+	// 旧前端 / 脚本直接调用：账号开了 TOTP，必须 400 VERIFY_REQUIRED，
 	// 且一把都不能被轮换（旧 Key 不能被悄悄作废、新明文不能下发）。
 	rec := doJSON(engine.router, http.MethodPost, "/api/v1/keys/batch-rotate", `{"ids":[1]}`, nil)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
@@ -243,7 +253,7 @@ func TestBatchRotateAuditsSkippedNoFactor(t *testing.T) {
 // ---- 2. PUT /keys/:id ------------------------------------------------------
 
 func TestKeyUpdatePlaintextPathsRequireIdentityVerification(t *testing.T) {
-	engine := newPlaintextGuardEngine(t, plaintextGuardUser(t), nil)
+	engine := newPlaintextGuardEngine(t, plaintextGuardTOTPUser(t), nil)
 
 	// 轮换（regenerate_key）是 PUT 的明文回执：没有校验必须 400，且 Key 不动。
 	rec := doJSON(engine.router, http.MethodPut, "/api/v1/keys/1", `{"regenerate_key":true}`, nil)
@@ -302,7 +312,7 @@ func TestKeyUpdatePlaintextSkipsVerificationWhenNoFactorAvailable(t *testing.T) 
 
 func TestCreateIdempotentReplayCannotSkipVerification(t *testing.T) {
 	journal := newUserMemoryIdempotencyRepoStub()
-	engine := newPlaintextGuardEngine(t, plaintextGuardUser(t), journal)
+	engine := newPlaintextGuardEngine(t, plaintextGuardTOTPUser(t), journal)
 
 	call := func(verification string) *httptest.ResponseRecorder {
 		body := `{"name":"idem-fixture"}`
@@ -447,4 +457,43 @@ func middlewareAuditAllows(key string) bool {
 	}
 	_, present := fields[key]
 	return present
+}
+
+// ---- 4. 只有登录密码的账号不被强制 -----------------------------------------
+
+// 老板的决定：第三方登录（Google / GitHub）的用户常常根本不记得登录密码，创建 Key 不能再卡在输密码上。
+// 只有登录密码（没开 TOTP、没绑 Passkey）的账号，创建 / 轮换 / 批量轮换都不带校验直接放行；
+// 开了更强因子的账号仍然强制（见上面三组用例）。
+func TestPasswordOnlyAccountIsNotForcedToVerify(t *testing.T) {
+	engine := newPlaintextGuardEngine(t, plaintextGuardUser(t), nil)
+
+	rec := doJSON(engine.router, http.MethodPost, "/api/v1/keys", `{"name":"no-password-needed"}`, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"key":"sk-`)
+	require.Equal(t, 1, engine.keys.guardCreateCount())
+
+	rec = doJSON(engine.router, http.MethodPut, "/api/v1/keys/1", `{"regenerate_key":true}`, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"key":"`)
+
+	rec = doJSON(engine.router, http.MethodPost, "/api/v1/keys/batch-rotate", `{"ids":[1]}`, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"status":"ok"`)
+}
+
+// 「不强制」不等于「带了也不看」：更新前打开的旧页面还会带密码来，对了照常通过，
+// 错了照样拒绝，不能因为不强制就让错误的凭据蒙混过关。
+func TestPasswordOnlyAccountStillChecksAPasswordThatIsSent(t *testing.T) {
+	engine := newPlaintextGuardEngine(t, plaintextGuardUser(t), nil)
+
+	rec := doJSON(engine.router, http.MethodPost, "/api/v1/keys",
+		`{"name":"stale-page","verification":{"method":"password","password":"wrong-password"}}`, nil)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Equal(t, "VERIFY_PASSWORD_INVALID", plaintextGuardReason(t, rec))
+	require.Zero(t, engine.keys.guardCreateCount())
+
+	rec = doJSON(engine.router, http.MethodPost, "/api/v1/keys",
+		`{"name":"stale-page","verification":{"method":"password","password":"correct-password"}}`, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, 1, engine.keys.guardCreateCount())
 }

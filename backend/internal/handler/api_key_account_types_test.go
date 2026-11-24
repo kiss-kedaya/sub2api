@@ -250,8 +250,9 @@ func TestKeyCreateAndRotateForAnAccountWithoutAnyFactor(t *testing.T) {
 }
 
 // 审计 F16：第三方登录注册、之后在资料页绑定邮箱并设置了本地密码的账号，原先因为「按注册来源判断」
-// 永远没有密码因子。现在按「是否真的设置过本地密码」判断：这类账号创建 / 轮换要用密码校验；
-// 而只有系统随机口令的第三方账号（身份表里只有创建 / 登录时写的邮箱身份）仍然没有因子、照常放行。
+// 永远没有密码因子。现在按「是否真的设置过本地密码」判断：这类账号有密码因子（可选、也能「以后查看」），
+// 但创建 / 轮换不再强制输密码——只有开了 TOTP / Passkey 的账号才强制（第三方登录用户常常不记得密码）；
+// 只有系统随机口令的第三方账号（身份表里只有创建 / 登录时写的邮箱身份）没有因子，同样照常放行。
 func TestKeyCreateForAThirdPartyAccountThatSetALocalPassword(t *testing.T) {
 	bound := service.UserAuthIdentityRecord{ProviderType: "email", ProviderKey: "email", Metadata: map[string]any{"source": "auth_service_email_bind"}}
 	created := service.UserAuthIdentityRecord{ProviderType: "email", ProviderKey: "email", Metadata: map[string]any{"source": "user_repo_create"}}
@@ -265,20 +266,26 @@ func TestKeyCreateForAThirdPartyAccountThatSetALocalPassword(t *testing.T) {
 		require.Contains(t, rec.Body.String(), `"password_available":true`)
 		require.Contains(t, rec.Body.String(), `"seal_available":true`)
 		require.Contains(t, rec.Body.String(), `"available_methods":["password"]`)
+		require.Contains(t, rec.Body.String(), `"create_verification_required":false`)
 
-		// 现在有了密码因子：创建 / 轮换不带校验被拒，带对密码才通过。
+		// 有密码因子但不强制：创建 / 轮换不带校验直接通过。
 		rec = doJSON(engine.router, http.MethodPost, "/api/v1/keys", `{"name":"canvas"}`, nil)
-		require.Equal(t, "VERIFY_REQUIRED", plaintextGuardReason(t, rec))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.NotEmpty(t, plaintextGuardBodyKey(t, rec))
+		require.Equal(t, 1, engine.keys.guardCreateCount())
 		rec = doJSON(engine.router, http.MethodPut, "/api/v1/keys/1", `{"regenerate_key":true}`, nil)
-		require.Equal(t, "VERIFY_REQUIRED", plaintextGuardReason(t, rec))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		// 带了密码（更新前打开的旧页面）照常真验证：错的拒绝、对的通过。
 		rec = doJSON(engine.router, http.MethodPost, "/api/v1/keys",
 			`{"name":"canvas","verification":{"method":"password","password":"wrong-password"}}`, nil)
 		require.Equal(t, "VERIFY_PASSWORD_INVALID", plaintextGuardReason(t, rec))
-		require.Zero(t, engine.keys.guardCreateCount())
+		require.Equal(t, 1, engine.keys.guardCreateCount(), "a wrong password that is sent must not create a key")
 		rec = doJSON(engine.router, http.MethodPost, "/api/v1/keys",
 			`{"name":"canvas","verification":{"method":"password","password":"chosen-password"}}`, nil)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		require.NotEmpty(t, plaintextGuardBodyKey(t, rec))
+		require.Equal(t, 2, engine.keys.guardCreateCount())
 	})
 
 	t.Run("only the system-generated password", func(t *testing.T) {
