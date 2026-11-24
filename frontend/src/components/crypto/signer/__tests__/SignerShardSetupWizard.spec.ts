@@ -161,8 +161,13 @@ describe('signer shard setup wizard (end-to-end browser flow)', () => {
     await passAuthAndRisk(wrapper)
     const shares = await revealShares(wrapper)
     await goToConfirm(wrapper)
-    // Corrupt one character; the checksum makes it invalid before submission.
-    const corrupted = shares[0].slice(0, -1) + (shares[0].endsWith('A') ? 'B' : 'A')
+    // Corrupt one character; the checksum makes it invalid before submission. Change a character of the first data
+    // group, not the last one: base32 without padding can leave unused padding bits in the final character (1, 3 or 4
+    // of its 5 bits depending on the payload length), and then swapping it decodes to the very same bytes, so the
+    // checksum still matches and the submit goes through (roughly 1 run in 15 with random shares).
+    const bodyStart = shares[0].indexOf('-') + 1
+    const swap = shares[0][bodyStart] === 'A' ? 'B' : 'A'
+    const corrupted = shares[0].slice(0, bodyStart) + swap + shares[0].slice(bodyStart + 1)
     await fillSubmit(wrapper, corrupted)
     await wrapper.get('[data-testid="signer-wizard-submit"]').trigger('click')
     await flushPromises()
