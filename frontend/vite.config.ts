@@ -79,6 +79,42 @@ function injectPublicSettings(backendUrl: string): Plugin {
   }
 }
 
+/**
+ * Which modules does a FIRST page load have to download? Those the HTML entry reaches through static imports only; anything
+ * behind a dynamic `import()` (every route component, the Airwallex / Stripe / xlsx SDKs, modal bodies...) is fetched later.
+ *
+ * Used by `manualChunks` below to keep third-party code out of the one shared chunk every visitor downloads unless the first
+ * page needs it. The answer is computed once, from the module graph Rollup has already built.
+ */
+export type ChunkContext = {
+  getModuleInfo: (id: string) => { isEntry: boolean; importedIds: readonly string[] } | null
+  getModuleIds: () => IterableIterator<string>
+}
+
+export function createBootGraph() {
+  let boot: Set<string> | undefined
+  return (id: string, ctx: ChunkContext): boolean => {
+    if (!boot) {
+      boot = new Set<string>()
+      const queue: string[] = []
+      // tsconfig.node.json has no `target`, so `for...of` over an iterator does not type-check here: walk it by hand
+      const ids = ctx.getModuleIds()
+      for (let item = ids.next(); !item.done; item = ids.next()) {
+        if (ctx.getModuleInfo(item.value)?.isEntry) queue.push(item.value)
+      }
+      while (queue.length > 0) {
+        const current = queue.pop() as string
+        if (boot.has(current)) continue
+        boot.add(current)
+        for (const next of ctx.getModuleInfo(current)?.importedIds ?? []) queue.push(next)
+      }
+    }
+    return boot.has(id)
+  }
+}
+
+const isLoadedAtBoot = createBootGraph()
+
 export default defineConfig(({ mode }) => {
   if (mode === 'console-preview') {
     throw new Error('console-preview is local dev only; use pnpm run dev:console')
@@ -125,7 +161,7 @@ export default defineConfig(({ mode }) => {
          * 手动分包配置
          * 分离第三方库并按功能合并应用代码，避免循环依赖
          */
-        manualChunks(id: string) {
+        manualChunks(id: string, ctx: ChunkContext) {
           if (id.includes('node_modules')) {
             // Vue 核心库。按包根目录匹配：`/vue/` 子串还会命中 @iconify/vue、@unhead/vue
             // 和 @nuxt/ui 的 runtime/vue/，把它们拆进这个块后与 vendor-misc 互相引用，
@@ -167,7 +203,10 @@ export default defineConfig(({ mode }) => {
               return 'vendor-airwallex'
             }
 
-            // 其他小型第三方库合并
+            // 其他第三方库：只有「首屏会静态加载到」的才合进共享的 vendor-misc（哈希只随依赖变化，回访用户命中缓存）。
+            // 以前这里无条件合并，等于把所有路由（管理后台、签名工具、日期选择、二维码……）用到的第三方模块并集，
+            // 塞进每个访客打开任何页面都要下载的一个包；现在只被懒加载路由用到的模块留给 Rollup，跟着那些路由按需加载。
+            if (!isLoadedAtBoot(id, ctx)) return undefined
             return 'vendor-misc'
           }
 
