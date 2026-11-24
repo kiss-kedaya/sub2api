@@ -47,10 +47,11 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	// 协议族准入：本 handler 只服务「入站 OpenAI Responses、上游 Anthropic」
 	// 的跨协议族场景（Anthropic / Antigravity 平台分组、或 composite 解析到
-	// anthropic）。分组关闭跨协议转换时必须在入口返回 400 PROTOCOL_MISMATCH，
-	// 带上 path/group_platform/hint；否则会先做账号调度，把「协议根本不可能被
-	// 服务」错误地表现成可重试的 503 no available accounts。
-	if protocolMismatchApplies(c, apiKey) {
+	// anthropic）。Key 的所有候选分组都关闭跨协议转换时必须在入口返回 400
+	// PROTOCOL_MISMATCH，带上 path/group_platform/hint；否则会先做账号调度，把
+	// 「协议根本不可能被服务」错误地表现成可重试的 503 no available accounts。
+	// 智能路由 Key 只要后面还有开启转换的分组就放行选号，由选中的分组在转发时把关。
+	if h.protocolMismatchApplies(c, apiKey) {
 		reqLog.Warn("gateway.responses.protocol_mismatch",
 			zap.String("path", c.Request.URL.Path),
 			zap.String("group_platform", effectiveAPIKeyPlatform(c, apiKey)),

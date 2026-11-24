@@ -47,7 +47,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 
 	// 协议族准入：同 Responses handler。Chat Completions 入站落在非 OpenAI
 	// 平台分组时必然需要跨协议族转换；分组关闭时入口即 400 PROTOCOL_MISMATCH。
-	if protocolMismatchApplies(c, apiKey) {
+	if h.protocolMismatchApplies(c, apiKey) {
 		reqLog.Warn("gateway.chat_completions.protocol_mismatch",
 			zap.String("path", c.Request.URL.Path),
 			zap.String("group_platform", effectiveAPIKeyPlatform(c, apiKey)),
