@@ -187,7 +187,12 @@ type ContentModerationConfig struct {
 	ModelFilter          ContentModerationModelFilter                `json:"model_filter"`
 	// CyberPolicyExcludeFromBanCount 为 true 时，cyber_policy 命中不参与自动封号计数：
 	// 当次不判定封号，且历史 cyber 行在 CountFlaggedByUserSince 中被排除。
-	// 默认 false（计入，与历史行为一致；旧配置 JSON 无此字段时反序列化为 false）。
+	//
+	// 默认 true（2026-11-24 事故后改）：本站核心用户群大量做安全研究 / 渗透 / 逆向 / CTF，
+	// 上游模型分类器对这种正常业务输入是系统性误判（事故里 22 个付费用户半小时内被自动
+	// 封禁，命中分类全是 cyber_policy、highest_score=1.0、matched_keyword 为空）。
+	// 因此 cyber_policy 默认只做记录与提醒、不参与封号计数。旧配置 JSON 里没有这个字段时
+	// 也必须落到 true，见 parseContentModerationConfig 的显式缺省处理。
 	CyberPolicyExcludeFromBanCount bool `json:"cyber_policy_exclude_from_ban_count"`
 }
 
@@ -528,15 +533,20 @@ type ContentModerationHashCache interface {
 }
 
 type ContentModerationService struct {
-	securityPenalties        *SecurityPenaltyService
-	settingRepo              SettingRepository
-	repo                     ContentModerationRepository
-	hashCache                ContentModerationHashCache
-	groupRepo                GroupRepository
-	userRepo                 UserRepository
-	proxyRepo                ProxyRepository
-	authCacheInvalidator     APIKeyAuthCacheInvalidator
-	emailService             *EmailService
+	securityPenalties    *SecurityPenaltyService
+	settingRepo          SettingRepository
+	repo                 ContentModerationRepository
+	hashCache            ContentModerationHashCache
+	groupRepo            GroupRepository
+	userRepo             UserRepository
+	proxyRepo            ProxyRepository
+	authCacheInvalidator APIKeyAuthCacheInvalidator
+	emailService         *EmailService
+	opsService           *OpsService
+	// adminNotifier 自动封禁时的管理员通知出口；nil 表示用默认实现
+	// （ops 告警收件人 → 工单管理员邮箱 → 首个管理员账号），测试可替换。
+	adminNotifier            adminBanNotifierFunc
+	adminBanNotifyLimit      *slidingWindowLimiter
 	httpClient               *http.Client
 	moderationProxyCache     atomic.Pointer[moderationProxyURLCacheEntry]
 	asyncQueue               chan contentModerationTask
@@ -624,6 +634,7 @@ func NewContentModerationService(
 		workerCount:          maxContentModerationWorkerCount,
 		asyncQueue:           make(chan contentModerationTask, maxContentModerationQueueSize),
 		keyHealth:            make(map[string]*contentModerationKeyHealth),
+		adminBanNotifyLimit:  newSlidingWindowLimiter(contentModerationAdminBanNotifyLimitPerHour, time.Hour),
 	}
 	if settingRepo != nil && repo != nil && !BackgroundJobsDisabled() {
 		for i := 0; i < svc.workerCount; i++ {
@@ -733,6 +744,7 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 		return nil, err
 	}
 	cfg.normalize()
+	cfg.normalizeEnabledGates()
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal content moderation config: %w", err)
@@ -1542,11 +1554,37 @@ func parseContentModerationConfig(raw string) (*ContentModerationConfig, error) 
 	if err := json.Unmarshal([]byte(raw), cfg); err != nil {
 		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_CONFIG", "内容审计配置不是有效 JSON")
 	}
+	// cyber_policy_exclude_from_ban_count 缺省为 true（2026-11-24 事故后改）。
+	// 只有原始 JSON 里明确存在这个键、并且运营方主动写成 false 时才允许关闭排除。
+	// 老配置由完整序列化写盘，天然带这个键，所以老配置会被尊重为「计入」——
+	// 运维需要在后台显式打开该开关（或直接改 settings 行）才会切到新缺省。
+	// 之所以不靠 defaultContentModerationConfig 的初值：json.Unmarshal 会覆盖它。
+	cfg.CyberPolicyExcludeFromBanCount = true
+	if contentModerationConfigHasKey(raw, "cyber_policy_exclude_from_ban_count") {
+		var overrides struct {
+			CyberPolicyExcludeFromBanCount *bool `json:"cyber_policy_exclude_from_ban_count"`
+		}
+		if err := json.Unmarshal([]byte(raw), &overrides); err == nil && overrides.CyberPolicyExcludeFromBanCount != nil {
+			cfg.CyberPolicyExcludeFromBanCount = *overrides.CyberPolicyExcludeFromBanCount
+		}
+	}
 	cfg.normalize()
+	cfg.normalizeEnabledGates()
 	if !validModerationEngine(cfg.Engine) {
 		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_ENGINE", "内容审计引擎无效")
 	}
 	return cfg, nil
+}
+
+// contentModerationConfigHasKey 判断原始配置 JSON 顶层是否存在指定键。
+// 只在解析配置时调用（低频），多解一遍即可，不引入额外依赖。
+func contentModerationConfigHasKey(raw string, key string) bool {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+		return false
+	}
+	_, ok := probe[key]
+	return ok
 }
 
 func (s *ContentModerationService) loadRuntimeSnapshot(ctx context.Context) (*contentModerationRuntimeSnapshot, error) {
@@ -1696,6 +1734,7 @@ func (s *ContentModerationService) validateConfig(ctx context.Context, cfg *Cont
 		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_CONFIG", "内容审计配置不能为空")
 	}
 	cfg.normalize()
+	cfg.normalizeEnabledGates()
 	if !validModerationEngine(cfg.Engine) {
 		return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_ENGINE", "内容审计引擎无效")
 	}
@@ -1971,6 +2010,13 @@ func (s *ContentModerationService) applyFlaggedAccountSideEffects(ctx context.Co
 	if s == nil || cfg == nil || log == nil || !log.Flagged || log.UserID == nil || *log.UserID <= 0 {
 		return false
 	}
+	// 双保险之一：内容审核主开关关闭时不允许自动封禁（2026-11-24 事故，22 人误封）。
+	// 配置解析处已有归一化（normalizeEnabledGates），这里再挡一层是为了防止
+	// 调用方直接构造 ContentModerationConfig（测试、未来新增入口、误用 clone）绕过归一化。
+	// 注意必须放在统计违规次数之前：不封人就不该写 ViolationCount 影响后续判断。
+	if !cfg.Enabled {
+		return false
+	}
 	count := 1
 	if s.repo != nil && cfg.ViolationWindowHours > 0 {
 		since := time.Now().Add(-time.Duration(cfg.ViolationWindowHours) * time.Hour)
@@ -2001,10 +2047,233 @@ func (s *ContentModerationService) applyFlaggedAccountSideEffects(ctx context.Co
 				s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, *log.UserID)
 			}
 			autoBanJustApplied = true
+			// 自动封禁是高风险动作，必须让管理员立刻知道：事故里 22 人被误封
+			// 是事后才发现。通知里带够排查上下文（用户、分类、次数、阈值、模型）。
+			s.notifyAdminsAutoBan(ctx, cfg, log, user)
 		}
 		log.AutoBanned = true
 	}
 	return autoBanJustApplied
+}
+
+const (
+	// 自动封禁管理员通知：同一小时内最多 20 封，超出的只记 slog.Warn，
+	// 避免批量误封时把管理员邮箱打爆（事故里 30 分钟 22 封会正好压在这个上限以下）。
+	contentModerationAdminBanNotifyLimitPerHour = 20
+	contentModerationAdminBanNotifyTimeout      = 15 * time.Second
+)
+
+// adminBanNotification 是自动封禁管理员通知的载荷。
+type adminBanNotification struct {
+	UserID          int64
+	UserEmail       string
+	Username        string
+	Category        string
+	Score           float64
+	MatchedKeyword  string
+	ViolationCount  int
+	BanThreshold    int
+	WindowHours     int
+	Model           string
+	Endpoint        string
+	GroupName       string
+	APIKeyName      string
+	BannedAt        time.Time
+	RemediationHint string
+}
+
+// adminBanNotifierFunc 是管理员通知出口，测试用它替换真实发信。
+type adminBanNotifierFunc func(ctx context.Context, cfg *ContentModerationConfig, notification adminBanNotification) error
+
+// SetAdminBanNotifier 替换自动封禁管理员通知出口（仅测试/扩展用）。
+func (s *ContentModerationService) SetAdminBanNotifier(notifier adminBanNotifierFunc) {
+	if s == nil {
+		return
+	}
+	s.adminNotifier = notifier
+}
+
+// SetOpsService 注入 ops 服务：自动封禁管理员通知优先取 ops 告警收件人列表。
+func (s *ContentModerationService) SetOpsService(opsService *OpsService) {
+	if s == nil {
+		return
+	}
+	s.opsService = opsService
+}
+
+// notifyAdminsAutoBan 在自动封禁落地后通知管理员。
+// 复用项目已有的管理员通知通道，按优先级：
+//  1. ops 邮件通知的告警收件人（运维页面「邮件通知 → 告警收件人」）；
+//  2. 工单通知管理员邮箱（ticket_admin_email）；
+//  3. 首个管理员账号邮箱。
+//
+// 同时无条件写一条 slog.Warn 带完整上下文，保证纯日志侧也能告警。
+func (s *ContentModerationService) notifyAdminsAutoBan(ctx context.Context, cfg *ContentModerationConfig, log *ContentModerationLog, user *User) {
+	if s == nil || log == nil {
+		return
+	}
+	// 限流器可能为 nil（例如 localJevJudge 这类用复合字面量构造的旁路实例）。
+	if s.adminBanNotifyLimit != nil && !s.adminBanNotifyLimit.Allow(time.Now().UTC()) {
+		slog.Warn("content_moderation.autoban_admin_notify_limited",
+			"user_id", *log.UserID, "user_email", logredact.MaskEmail(log.UserEmail), "category", log.HighestCategory)
+		return
+	}
+	notification := adminBanNotification{
+		UserID:          *log.UserID,
+		UserEmail:       log.UserEmail,
+		Category:        defaultContentModerationString(log.HighestCategory, ContentModerationActionCyberPolicy),
+		Score:           log.HighestScore,
+		MatchedKeyword:  log.MatchedKeyword,
+		ViolationCount:  log.ViolationCount,
+		BanThreshold:    cfg.BanThreshold,
+		WindowHours:     cfg.ViolationWindowHours,
+		Model:           log.Model,
+		Endpoint:        log.Endpoint,
+		GroupName:       log.GroupName,
+		APIKeyName:      log.APIKeyName,
+		BannedAt:        time.Now().UTC(),
+		RemediationHint: "如需解封，请在后台用户管理中恢复该用户状态；若判定为分类器误报，请关闭自动封禁或确认 cyber_policy_exclude_from_ban_count=true。",
+	}
+	if user != nil {
+		notification.Username = user.Username
+		if strings.TrimSpace(notification.UserEmail) == "" {
+			notification.UserEmail = user.Email
+		}
+	}
+	// 日志侧永远先落地：邮件通道失败时这是唯一的告警证据。
+	slog.Warn("content_moderation.autoban_applied_admin_alert",
+		"user_id", notification.UserID,
+		"user_email", logredact.MaskEmail(notification.UserEmail),
+		"username", notification.Username,
+		"category", notification.Category,
+		"score", notification.Score,
+		"matched_keyword", notification.MatchedKeyword,
+		"violation_count", notification.ViolationCount,
+		"ban_threshold", notification.BanThreshold,
+		"window_hours", notification.WindowHours,
+		"model", notification.Model,
+		"endpoint", notification.Endpoint,
+		"group_name", notification.GroupName,
+	)
+
+	// 邮件异步发：自动封禁不能因为 SMTP 慢/卡住拖死请求路径。
+	notifier := s.adminNotifier
+	if notifier == nil {
+		if s.emailService == nil {
+			slog.Warn("content_moderation.autoban_admin_notify_skipped",
+				"reason", "email service not configured", "user_id", notification.UserID)
+			return
+		}
+		notifier = s.defaultAdminBanNotifier
+	}
+	go func() {
+		notifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), contentModerationAdminBanNotifyTimeout)
+		defer cancel()
+		if err := notifier(notifyCtx, cfg, notification); err != nil {
+			slog.Warn("content_moderation.autoban_admin_notify_failed",
+				"user_id", notification.UserID, "error", err)
+		}
+	}()
+}
+
+// defaultAdminBanNotifier 按「ops 告警收件人 → 工单管理员 → 首个管理员」的顺序发信。
+func (s *ContentModerationService) defaultAdminBanNotifier(ctx context.Context, cfg *ContentModerationConfig, notification adminBanNotification) error {
+	recipients, err := s.adminBanRecipients(ctx)
+	if err != nil {
+		return err
+	}
+	if len(recipients) == 0 {
+		return errors.New("no admin recipient configured")
+	}
+	siteName := s.siteName(ctx)
+	subject := fmt.Sprintf("[%s] 内容审核自动封禁告警 / auto-ban alert · user #%d", sanitizeEmailHeader(siteName), notification.UserID)
+	body := buildAutoBanAdminAlertEmailBody(siteName, cfg, notification)
+	var firstErr error
+	for _, to := range recipients {
+		if err := s.emailService.SendEmail(ctx, to, subject, body); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// adminBanRecipients 解析管理员通知收件人，去重且保持优先级顺序。
+func (s *ContentModerationService) adminBanRecipients(ctx context.Context) ([]string, error) {
+	out := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	add := func(addr string) {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			return
+		}
+		if _, err := parseSMTPAddress(addr, "recipient"); err != nil {
+			slog.Warn("content_moderation.autoban_admin_recipient_invalid")
+			return
+		}
+		key := strings.ToLower(addr)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, addr)
+	}
+	if s.opsService != nil {
+		if emailCfg, err := s.opsService.GetEmailNotificationConfig(ctx); err == nil && emailCfg != nil && emailCfg.Alert.Enabled {
+			for _, addr := range emailCfg.Alert.Recipients {
+				add(addr)
+			}
+		} else if err != nil {
+			slog.Warn("content_moderation.autoban_ops_recipients_failed", "error", err)
+		}
+	}
+	if s.settingRepo != nil {
+		if raw, err := s.settingRepo.GetValue(ctx, SettingKeyTicketAdminEmail); err == nil {
+			add(raw)
+		} else if !errors.Is(err, ErrSettingNotFound) {
+			slog.Warn("content_moderation.autoban_ticket_admin_email_failed", "error", err)
+		}
+	}
+	if len(out) == 0 && s.userRepo != nil {
+		admin, err := s.userRepo.GetFirstAdmin(ctx)
+		if err != nil {
+			return out, err
+		}
+		if admin != nil && admin.IsAdmin() {
+			add(admin.Email)
+		}
+	}
+	return out, nil
+}
+
+// buildAutoBanAdminAlertEmailBody 拼管理员告警邮件正文（纯文本，避免走模板占位符校验）。
+func buildAutoBanAdminAlertEmailBody(siteName string, cfg *ContentModerationConfig, n adminBanNotification) string {
+	maskedEmail := n.UserEmail
+	if trimmed := strings.TrimSpace(maskedEmail); trimmed != "" {
+		maskedEmail = logredact.MaskEmail(trimmed)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s 内容审核触发了自动封禁，请尽快人工复核。\n\n", siteName)
+	fmt.Fprintf(&b, "用户 ID：%d\n", n.UserID)
+	if n.Username != "" {
+		fmt.Fprintf(&b, "用户名：%s\n", n.Username)
+	}
+	fmt.Fprintf(&b, "用户邮箱：%s\n", defaultContentModerationString(maskedEmail, "-"))
+	fmt.Fprintf(&b, "触发分类：%s\n", defaultContentModerationString(n.Category, "-"))
+	fmt.Fprintf(&b, "最高分：%.2f\n", n.Score)
+	fmt.Fprintf(&b, "命中关键词：%s\n", defaultContentModerationString(n.MatchedKeyword, "（无，模型分类器判定）"))
+	fmt.Fprintf(&b, "违规次数：%d\n", n.ViolationCount)
+	fmt.Fprintf(&b, "触发阈值：%d\n", n.BanThreshold)
+	fmt.Fprintf(&b, "统计窗口：%d 小时\n", n.WindowHours)
+	fmt.Fprintf(&b, "最近命中模型：%s\n", defaultContentModerationString(n.Model, "-"))
+	fmt.Fprintf(&b, "端点：%s\n", defaultContentModerationString(n.Endpoint, "-"))
+	fmt.Fprintf(&b, "分组：%s\n", defaultContentModerationString(n.GroupName, "-"))
+	fmt.Fprintf(&b, "API Key：%s\n", defaultContentModerationString(n.APIKeyName, "-"))
+	fmt.Fprintf(&b, "封禁时间（UTC）：%s\n", n.BannedAt.Format(time.RFC3339))
+	if cfg != nil {
+		fmt.Fprintf(&b, "cyber_policy 计入封禁计数：%t\n", !cfg.CyberPolicyExcludeFromBanCount)
+	}
+	fmt.Fprintf(&b, "\n处理建议：%s\n", n.RemediationHint)
+	return b.String()
 }
 
 func (s *ContentModerationService) sendFlaggedNotificationSideEffects(ctx context.Context, cfg *ContentModerationConfig, log *ContentModerationLog, autoBanJustApplied bool) {
@@ -2165,7 +2434,8 @@ func defaultContentModerationConfig() *ContentModerationConfig {
 			Type:   ContentModerationModelFilterAll,
 			Models: []string{},
 		},
-		CyberPolicyExcludeFromBanCount: false,
+		// cyber_policy 默认不计入封号计数：安全研究流量被分类器系统性误判，见字段注释。
+		CyberPolicyExcludeFromBanCount: true,
 	}
 }
 
@@ -2273,6 +2543,27 @@ func (cfg *ContentModerationConfig) normalize() {
 	cfg.BlockedKeywords = normalizeBlockedKeywords(cfg.BlockedKeywords)
 	cfg.KeywordBlockingMode = normalizeKeywordBlockingMode(cfg.KeywordBlockingMode)
 	cfg.ModelFilter = normalizeContentModerationModelFilter(cfg.ModelFilter)
+}
+
+// normalizeEnabledGates 做「主开关联动」归一化（2026-11-24 事故后补，P0）。
+//
+// 事故背景：content_moderation_config 里 enabled=false（内容审核主开关关），
+// 但 auto_ban_enabled=true、ban_threshold=10、violation_window_hours=720，
+// 结果 2026-11-24 13:24-14:00 半小时内自动封禁了 22 个付费用户。
+// 根因是自动封禁的判断链只看 AutoBanEnabled，从不看 Enabled。
+//
+// 语义定死：内容审核主开关关闭时，自动封禁一律失效——配置里残留的
+// auto_ban_enabled=true 视为无效，下次保存配置时也会被一并写回 false。
+// 注意只联动自动封禁：EmailOnHit / 记录 / cyber_policy 提示邮件都不受影响。
+func (cfg *ContentModerationConfig) normalizeEnabledGates() {
+	if cfg == nil {
+		return
+	}
+	if !cfg.Enabled && cfg.AutoBanEnabled {
+		slog.Warn("content_moderation.autoban_forced_off_by_master_switch",
+			"reason", "enabled=false must override auto_ban_enabled=true (2026-11-24 incident)")
+		cfg.AutoBanEnabled = false
+	}
 }
 
 func (cfg *ContentModerationConfig) includesGroup(groupID *int64) bool {

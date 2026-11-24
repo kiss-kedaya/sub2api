@@ -84,7 +84,7 @@
     },
     {
       "path": "backend/internal/service/content_moderation_test.go",
-      "sha256": "e5e7cde121c4dc9e87b169b401423123ac8f5f6cac238ccc72702391905d1ef1",
+      "sha256": "b70982b7d2ac975fea0ecc29794fbc6f200414771bd228fa5d0e3dbd605f5ffe",
       "reason": "Audited synthetic credentials used only in isolated database, HTTP, or redaction tests."
     },
     {

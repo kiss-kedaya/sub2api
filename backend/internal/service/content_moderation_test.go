@@ -1541,6 +1541,8 @@ func TestContentModerationAutoBanSkipsAdminAccount(t *testing.T) {
 	})
 
 	cfg := defaultContentModerationConfig()
+	// 自动封禁的有效前提是内容审核主开关打开（enabled=false 强制失效，2026-11-24 事故）。
+	cfg.Enabled = true
 	cfg.BanThreshold = 2
 	cfg.ViolationWindowHours = 24
 
@@ -1568,6 +1570,8 @@ func TestContentModerationAutoBanSkipsAdminAccount(t *testing.T) {
 
 func TestContentModerationAutoBanDisablesRegularUserAtThreshold(t *testing.T) {
 	cfg := defaultContentModerationConfig()
+	// 自动封禁的有效前提是内容审核主开关打开（enabled=false 强制失效，2026-11-24 事故）。
+	cfg.Enabled = true
 	cfg.BanThreshold = 2
 	cfg.ViolationWindowHours = 24
 
@@ -1590,6 +1594,8 @@ func TestContentModerationAutoBanDisablesRegularUserAtThreshold(t *testing.T) {
 
 func TestContentModerationAdminBelowBanThresholdRecordsViolationOnly(t *testing.T) {
 	cfg := defaultContentModerationConfig()
+	// 自动封禁的有效前提是内容审核主开关打开（enabled=false 强制失效，2026-11-24 事故）。
+	cfg.Enabled = true
 	cfg.BanThreshold = 2
 	cfg.ViolationWindowHours = 24
 
@@ -1842,39 +1848,40 @@ func TestContentModerationUpdateConfig_CyberPolicyExcludeFromBanCount(t *testing
 	settingRepo := &contentModerationTestSettingRepo{values: map[string]string{}}
 	svc := NewContentModerationService(settingRepo, nil, nil, nil, nil, nil, nil, nil)
 
-	// 默认值必须是 false（计入，保持现状）
+	// 默认值必须是 true（2026-11-24 事故后改：cyber_policy 默认不计入封号计数，
+	// 安全研究流量被上游分类器系统性误判）
 	view, err := svc.GetConfig(context.Background())
 	require.NoError(t, err)
-	require.False(t, view.CyberPolicyExcludeFromBanCount, "默认必须计入封号计数")
+	require.True(t, view.CyberPolicyExcludeFromBanCount, "默认必须排除 cyber_policy 封号计数")
 
-	// 指针式部分更新为 true
-	exclude := true
+	// 指针式部分更新为 false（显式恢复计入）
+	exclude := false
 	view, err = svc.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{
 		CyberPolicyExcludeFromBanCount: &exclude,
 	})
 	require.NoError(t, err)
-	require.True(t, view.CyberPolicyExcludeFromBanCount)
+	require.False(t, view.CyberPolicyExcludeFromBanCount)
 
 	// 持久化 JSON 含字段
 	var saved ContentModerationConfig
 	require.NoError(t, json.Unmarshal([]byte(settingRepo.values[SettingKeyContentModerationConfig]), &saved))
-	require.True(t, saved.CyberPolicyExcludeFromBanCount)
+	require.False(t, saved.CyberPolicyExcludeFromBanCount)
 
 	// 二次读取（从持久化 JSON 反序列化）roundtrip
 	view, err = svc.GetConfig(context.Background())
 	require.NoError(t, err)
-	require.True(t, view.CyberPolicyExcludeFromBanCount)
+	require.False(t, view.CyberPolicyExcludeFromBanCount)
 
 	// 不传该字段的更新不得改动它（指针 nil = 保留）
 	view, err = svc.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{})
 	require.NoError(t, err)
-	require.True(t, view.CyberPolicyExcludeFromBanCount)
+	require.False(t, view.CyberPolicyExcludeFromBanCount)
 
-	// 主动回拨 false 必须生效（防止未来误加 if val 保护逻辑）
-	revert := false
+	// 主动回拨 true 必须生效（防止未来误加 if val 保护逻辑）
+	revert := true
 	view, err = svc.UpdateConfig(context.Background(), UpdateContentModerationConfigInput{
 		CyberPolicyExcludeFromBanCount: &revert,
 	})
 	require.NoError(t, err)
-	require.False(t, view.CyberPolicyExcludeFromBanCount)
+	require.True(t, view.CyberPolicyExcludeFromBanCount)
 }

@@ -99,6 +99,8 @@ func TestRecordCyberPolicyEvent_WritesLogWhenEnabled(t *testing.T) {
 	svc := NewContentModerationService(
 		&contentModerationTestSettingRepo{values: map[string]string{
 			SettingKeyRiskControlEnabled: "true",
+			// 本用例要断言「副作用/计数跑过」，所以显式把 cyber 排除关掉（默认已排除）。
+			SettingKeyContentModerationConfig: `{"enabled":true,"cyber_policy_exclude_from_ban_count":false}`,
 		}},
 		repo,
 		nil,
@@ -155,8 +157,9 @@ func TestRecordCyberPolicyEvent_WritesLogWhenEnabled(t *testing.T) {
 	// endpoint
 	require.Equal(t, "/v1/responses", log.Endpoint)
 
-	// violation count >= 1 (side-effects ran)
+	// cyber 显式计入封禁计数（exclude=false），副作用跑过 → 至少 1 次。
 	require.GreaterOrEqual(t, log.ViolationCount, 1)
+	require.False(t, log.AutoBanned)
 
 	// Error field should also contain the upstream body JSON
 	require.True(t, strings.Contains(log.Error, "cyber_policy") || strings.Contains(log.Error, "flagged"),
@@ -196,13 +199,34 @@ func TestRecordCyberPolicyEvent_RespectsContentModerationScope(t *testing.T) {
 			wantLogs: 0,
 		},
 		{
-			name:       "included group and model",
-			config:     `{"enabled":false,"mode":"off","sample_rate":0,"all_groups":false,"group_ids":[7],"model_filter":{"type":"include","models":["gpt-5"]},"ban_threshold":1}`,
+			name: "included group and model",
+			// 2026-11-24 事故前这里写的是 enabled=false 仍会封人；现在主开关关闭时
+			// 自动封禁强制失效，所以显式打开 enabled 才是「会被封」的合法场景。
+			// cyber 默认已排除出封禁计数，这里显式打开计入。
+			config:     `{"enabled":true,"mode":"pre_block","sample_rate":100,"all_groups":false,"group_ids":[7],"model_filter":{"type":"include","models":["gpt-5"]},"ban_threshold":1,"cyber_policy_exclude_from_ban_count":false}`,
 			groupID:    &groupID,
 			model:      "gpt-5",
 			wantCalls:  []bool{false},
 			wantLogs:   1,
 			wantBanned: true,
+		},
+		{
+			name: "master switch off never bans",
+			// cyber_policy 记录不受内容审核 Enabled 约束（风控中心照记），
+			// 但主开关关闭时绝不封人——事故根因回归锁。
+			config:     `{"enabled":false,"mode":"off","sample_rate":0,"all_groups":false,"group_ids":[7],"model_filter":{"type":"include","models":["gpt-5"]},"ban_threshold":1,"cyber_policy_exclude_from_ban_count":false}`,
+			groupID:    &groupID,
+			model:      "gpt-5",
+			wantLogs:   1,
+			wantBanned: false,
+		},
+		{
+			name:       "default config excludes cyber from ban",
+			config:     `{"enabled":true,"ban_threshold":1,"all_groups":true}`,
+			groupID:    &groupID,
+			model:      "gpt-5",
+			wantLogs:   1,
+			wantBanned: false,
 		},
 	}
 
@@ -312,6 +336,8 @@ func TestRecordCyberPolicyEvent_CreateLogBeforeEmail(t *testing.T) {
 	svc := NewContentModerationService(
 		&contentModerationTestSettingRepo{values: map[string]string{
 			SettingKeyRiskControlEnabled: "true",
+			// 本用例要断言「副作用跑过」，所以显式把 cyber 排除关掉（默认已排除）。
+			SettingKeyContentModerationConfig: `{"enabled":true,"cyber_policy_exclude_from_ban_count":false}`,
 		}},
 		repo,
 		nil,
@@ -378,13 +404,16 @@ func TestApplyFlaggedAccountSideEffects_PassesExcludeCyberFlag(t *testing.T) {
 	userID := int64(42)
 
 	cfgExclude := defaultContentModerationConfig()
+	// 主开关必须打开，否则入口守卫直接 return（2026-11-24 事故）。
+	cfgExclude.Enabled = true
 	cfgExclude.CyberPolicyExcludeFromBanCount = true
 	svc.applyFlaggedAccountSideEffects(context.Background(), cfgExclude, &ContentModerationLog{Flagged: true, UserID: &userID})
 
-	cfgDefault := defaultContentModerationConfig() // 默认 false
+	cfgDefault := defaultContentModerationConfig() // 默认 true（2026-11-24 事故后改）
+	cfgDefault.Enabled = true
 	svc.applyFlaggedAccountSideEffects(context.Background(), cfgDefault, &ContentModerationLog{Flagged: true, UserID: &userID})
 
-	require.Equal(t, []bool{true, false}, repo.snapshotCountCalls(),
+	require.Equal(t, []bool{true, true}, repo.snapshotCountCalls(),
 		"applyFlaggedAccountSideEffects 必须把 cfg.CyberPolicyExcludeFromBanCount 透传给 COUNT 查询")
 }
 
@@ -418,9 +447,12 @@ func TestRecordCyberPolicyEvent_ExcludeFromBanCount_SkipsBanJudgment(t *testing.
 
 func TestRecordCyberPolicyEvent_DefaultCountsTowardBan(t *testing.T) {
 	repo := &banCountArgsTestRepo{}
+	// 显式把 cyber 排除关掉：默认已改为排除（2026-11-24 事故），
+	// 显式关闭后才是「计入」的回归路径。
 	svc := NewContentModerationService(
 		&contentModerationTestSettingRepo{values: map[string]string{
-			SettingKeyRiskControlEnabled: "true",
+			SettingKeyRiskControlEnabled:      "true",
+			SettingKeyContentModerationConfig: `{"enabled":true,"cyber_policy_exclude_from_ban_count":false}`,
 		}},
 		repo, nil, nil, nil, nil, nil, nil,
 	)
@@ -435,8 +467,34 @@ func TestRecordCyberPolicyEvent_DefaultCountsTowardBan(t *testing.T) {
 	})
 
 	require.Equal(t, []bool{false}, repo.snapshotCountCalls(),
-		"默认配置必须执行计数查询且不排除 cyber 行")
+		"显式关闭排除后必须执行计数查询且不排除 cyber 行")
 	logs := repo.snapshotLogs()
 	require.Len(t, logs, 1)
-	require.GreaterOrEqual(t, logs[0].ViolationCount, 1, "默认路径行为不变（现状回归）")
+	require.GreaterOrEqual(t, logs[0].ViolationCount, 1, "显式计入路径行为不变")
+}
+
+// cyber 命中默认不计入封禁：即使 ban_threshold=1，也不得封人（2026-11-24 事故回归锁）。
+func TestRecordCyberPolicyEvent_DefaultExcludesCyberFromBan(t *testing.T) {
+	repo := &banCountArgsTestRepo{}
+	userRepo := &contentModerationTestUserRepo{user: &User{ID: 1, Role: RoleUser, Status: StatusActive}}
+	svc := NewContentModerationService(
+		&contentModerationTestSettingRepo{values: map[string]string{
+			SettingKeyRiskControlEnabled:      "true",
+			SettingKeyContentModerationConfig: `{"enabled":true,"ban_threshold":1}`,
+		}},
+		repo, nil, nil, userRepo, nil, nil, nil,
+	)
+
+	svc.RecordCyberPolicyEvent(context.Background(), CyberPolicyRecordInput{
+		UserID: 1, UserEmail: "u@x.com", Model: "gpt-5", Endpoint: "/v1/responses",
+		UpstreamMessage: "flagged", UpstreamStatus: 400,
+	})
+
+	require.Empty(t, repo.snapshotCountCalls(), "默认排除 cyber_policy 时不得执行封号计数查询")
+	require.Empty(t, userRepo.updated, "默认配置下 cyber_policy 命中不得封人")
+	require.Equal(t, StatusActive, userRepo.user.Status)
+	logs := repo.snapshotLogs()
+	require.Len(t, logs, 1, "风控日志仍要照记")
+	require.False(t, logs[0].AutoBanned)
+	require.Zero(t, logs[0].ViolationCount)
 }
