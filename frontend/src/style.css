@@ -1378,6 +1378,20 @@ html[data-theme-switching]::view-transition-new(root) {
   .input {
     corner-shape: squircle;
   }
+
+  /* Second audit round (admin pages and open overlays), same method as above:
+     - the onboarding tour popover (driver.js) and its keyboard hints: own CSS radius, and a bare <kbd> has no class;
+     - Nuxt UI tab triggers: their class list carries an indicator variant (`...:after:rounded-full`), and the generic
+       rule's substring test `[class*='rounded-full']` takes that for "this element is a pill". Match the exact token
+       instead, so a trigger that really is a pill (`rounded-full` on its own) is still left round;
+     - two page-level cards that set their own radius. */
+  .driver-popover,
+  .driver-popover kbd,
+  [role='tab']:not([class~='rounded-full']),
+  .usage-detail-content,
+  .setting-summary {
+    corner-shape: squircle;
+  }
 }
 
 /* ---------------------------------------------------------------------------
