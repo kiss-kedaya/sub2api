@@ -1356,6 +1356,28 @@ html[data-theme-switching]::view-transition-new(root) {
   select:not([class*='rounded-full']) {
     corner-shape: squircle;
   }
+
+  /* Components that set `border-radius` in their own CSS (sidebar logo, header balance, metric tiles,
+     tables, .btn-* utilities...) carry no `rounded-*` class, so the rule above never reached them and their
+     corners stayed circular next to squircle neighbours. The selector list is the set of classes the audit
+     (real Chrome, every console page, light + dark) found still circular; add a class here when a new
+     component sets its own radius. Pills and circles are NOT listed: a squircle makes them lose their round ends. */
+  .sidebar-logo,
+  .sidebar-brand-link,
+  .header-balance,
+  .signal-metric,
+  .signal-reading,
+  .usage-table,
+  .btn,
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost,
+  .btn-danger,
+  .btn-success,
+  .card,
+  .input {
+    corner-shape: squircle;
+  }
 }
 
 /* ---------------------------------------------------------------------------
