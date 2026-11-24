@@ -67,8 +67,15 @@ const (
 
 var (
 	// ErrAPIKeyVerificationRequired 账号存在可用因子但本次请求没有带身份校验。
+	//
+	// 现网这条几乎只会被「更新前就打开、一直没刷新」的旧页面触发：旧页面不认识这个错误码，
+	// 只会把 message 原样显示出来，所以文案要中英双语，并明确告诉人强制刷新。
+	// 新页面按 reason 走自己的文案（keys.factor.*），不会显示这一句。
 	ErrAPIKeyVerificationRequired = infraerrors.BadRequest(
-		"VERIFY_REQUIRED", "identity verification is required to create an api key")
+		"VERIFY_REQUIRED",
+		"Identity verification is required to create an API key. If this page was opened before the latest update, "+
+			"hard-refresh it (Ctrl+F5, or Cmd+Shift+R on Mac) and try again. / "+
+			"创建密钥需要先验证身份。如果这个页面是更新前打开的，请强制刷新（Ctrl+F5，Mac 用 Cmd+Shift+R）后重试。")
 	// ErrAPIKeyPasswordInvalid 登录密码错误（创建 / 封存 / 二次查看）。
 	ErrAPIKeyPasswordInvalid = infraerrors.BadRequest(
 		"VERIFY_PASSWORD_INVALID", "password is incorrect")

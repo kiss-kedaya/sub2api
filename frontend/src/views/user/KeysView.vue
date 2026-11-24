@@ -553,25 +553,24 @@
     <BaseDialog
       :show="showCreateModal || showEditModal"
       :title="showEditModal ? t('keys.editKey') : t('keys.createKey')"
+      :description="createDialogDescription"
       width="normal"
       @close="closeModals"
     >
       <form id="key-form" @submit.prevent="handleSubmit" class="space-y-5">
-        <!-- 创建分两步：填信息 → 身份校验；编辑保持原有单页流程。 -->
-        <div v-show="showEditModal || createStep === 1" class="space-y-5">
-          <div
-            v-if="showCreateFlow"
-            class="flex items-center gap-2 text-xs font-medium"
-            data-test="key-create-steps"
-          >
-            <span :class="createStep === 1 ? 'text-highlighted' : 'text-muted'">
-              1. {{ t('keys.createStep.details') }}
-            </span>
-            <UIcon name="i-lucide-chevron-right" class="size-3 text-muted" />
-            <span :class="createStep === 2 ? 'text-highlighted' : 'text-muted'">
-              2. {{ t('keys.createStep.verify') }}
-            </span>
-          </div>
+        <!-- 创建分两步：填信息 → 身份校验；编辑保持原有单页流程。
+             Quiet 步骤头（和注册页同一套）两步都显示；原来的文字面包屑放在第一步容器里，第二步就看不到了。 -->
+        <QuietStepHead
+          v-if="showCreateFlow && (verificationFactorsLoading || requiresCreateVerification)"
+          :current="createStep"
+          :total="2"
+          :label="t('auth.stepProgress', { current: createStep, total: 2 })"
+          data-test="key-create-steps"
+        />
+        <div
+          v-show="showEditModal || createStep === 1"
+          :class="['space-y-5', showCreateFlow ? 'key-step-pane' : '']"
+        >
         <UFormField :label="t('keys.nameLabel')" required size="lg">
           <UInput
             v-model="formData.name"
@@ -805,6 +804,31 @@
           </p>
         </UFormField>
 
+        <!-- 创建时只露出名称 / 提供商 / 分组，其余设置收进「更多设置」；编辑保持原样全部展开。
+             内容用 v-show 保持挂载：字段状态、校验和现有选择器都不受折叠影响。 -->
+        <button
+          v-if="!showEditModal"
+          type="button"
+          class="key-more-toggle"
+          :aria-expanded="createAdvancedOpen"
+          aria-controls="key-advanced-settings"
+          data-test="key-advanced-toggle"
+          @click="createAdvancedOpen = !createAdvancedOpen"
+        >
+          <UIcon
+            name="i-lucide-chevron-down"
+            class="key-more-chevron size-4 shrink-0"
+            :class="createAdvancedOpen ? 'rotate-180' : ''"
+          />
+          <span class="shrink-0 whitespace-nowrap font-medium text-highlighted">{{ t('keys.createStep.moreSettings') }}</span>
+          <span class="min-w-0 truncate text-muted">{{ t('keys.createStep.moreSettingsHint') }}</span>
+        </button>
+        <div
+          id="key-advanced-settings"
+          v-show="showEditModal || createAdvancedOpen"
+          class="space-y-5"
+          data-test="key-advanced-settings"
+        >
         <!-- Custom Key Section (only for create) -->
         <div v-if="!showEditModal" class="space-y-3">
           <div class="flex items-center justify-between gap-4">
@@ -1125,11 +1149,12 @@
           </div>
         </div>
         </div>
+        </div>
 
         <!-- 第二步：按服务端返回的可用因子渲染密码 / TOTP / Passkey，
-             只显示该账号真实可用的选项；一个都没有时直接跳过本步。 -->
-        <div v-if="isCreateVerificationStep" class="space-y-3" data-test="key-create-verification">
-          <p class="text-sm text-muted">{{ t('keys.createStep.verifyHint') }}</p>
+             只显示该账号真实可用的选项；一个都没有时直接跳过本步。
+             说明文字在对话框标题栏（createDialogDescription），这里不再重复一遍。 -->
+        <div v-if="isCreateVerificationStep" class="key-step-pane space-y-3" data-test="key-create-verification">
           <div
             v-if="verificationFactorsLoading"
             class="rounded-lg bg-gray-50 p-3 text-xs text-muted ring ring-inset ring-default dark:bg-dark-900"
@@ -1142,31 +1167,39 @@
             ref="createVerificationRef"
             :factors="verificationFactors"
             mode="create"
+            hide-description
             :loading="submitting"
           />
         </div>
       </form>
       <template #footer>
-        <div class="flex justify-end gap-2">
-          <UButton color="neutral" variant="outline" size="lg" @click="closeModals">
-            {{ t('common.cancel') }}
-          </UButton>
-          <UButton
+        <!-- 创建：Quiet 页脚——左边是安静的文字按钮（第一步取消 / 第二步返回），右边是主按钮。 -->
+        <div v-if="showCreateFlow" class="flex items-center justify-between gap-3" data-test="key-create-footer">
+          <button
             v-if="isCreateVerificationStep"
             type="button"
-            color="neutral"
-            variant="outline"
-            size="lg"
+            class="auth-step-back"
             :disabled="submitting"
             data-test="key-create-back"
             @click="backToCreateDetails"
           >
             {{ t('keys.createStep.back') }}
-          </UButton>
+          </button>
+          <button
+            v-else
+            type="button"
+            class="auth-step-back"
+            data-test="key-create-cancel"
+            @click="closeModals"
+          >
+            {{ t('common.cancel') }}
+          </button>
+
           <UButton
-            v-if="showCreateFlow && createStep === 1 && requiresCreateVerification"
+            v-if="createStep === 1 && requiresCreateVerification"
             type="button"
             size="lg"
+            :ui="quietPrimaryUi"
             :disabled="submitting || verificationFactorsLoading"
             data-test="key-create-next"
             @click="goToCreateVerification"
@@ -1178,17 +1211,28 @@
             form="key-form"
             type="submit"
             size="lg"
+            :ui="quietPrimaryUi"
             :loading="submitting"
             :disabled="submitting || verificationFactorsLoading || (isCreateVerificationStep && !requiresCreateVerification)"
             data-tour="key-form-submit"
           >
-            {{
-              submitting
-                ? t('keys.saving')
-                : showEditModal
-                  ? t('common.update')
-                  : t('common.create')
-            }}
+            {{ submitting ? t('keys.saving') : t('common.create') }}
+          </UButton>
+        </div>
+        <!-- 编辑：保持原有页脚 -->
+        <div v-else class="flex justify-end gap-2">
+          <UButton color="neutral" variant="outline" size="lg" @click="closeModals">
+            {{ t('common.cancel') }}
+          </UButton>
+          <UButton
+            form="key-form"
+            type="submit"
+            size="lg"
+            :loading="submitting"
+            :disabled="submitting || verificationFactorsLoading"
+            data-tour="key-form-submit"
+          >
+            {{ submitting ? t('keys.saving') : t('common.update') }}
           </UButton>
         </div>
       </template>
@@ -1671,6 +1715,7 @@ import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
 import IpWhitelistAssist from '@/components/keys/IpWhitelistAssist.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useClipboard } from '@/composables/useClipboard'
+import { useAppUpdate } from '@/composables/useAppUpdate'
 
 const { t } = useI18n()
 
@@ -1686,6 +1731,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import DataTable from '@/components/common/DataTable.vue'
 	import Pagination from '@/components/common/Pagination.vue'
 	import BaseDialog from '@/components/common/BaseDialog.vue'
+	import QuietStepHead from '@/components/common/QuietStepHead.vue'
 	import KeyUsageDialog from '@/components/user/KeyUsageDialog.vue'
 	import ApiKeySecretDialog from '@/components/keys/ApiKeySecretDialog.vue'
 	import EphemeralKeyBanner from '@/components/keys/EphemeralKeyBanner.vue'
@@ -2067,6 +2113,20 @@ const verificationPayload = ref<ApiKeyVerificationPayload | null>(null)
 const createAuthFactor = ref('')
 const createVerificationRef = ref<InstanceType<typeof KeyFactorVerification> | null>(null)
 const showCreateFlow = computed(() => showCreateModal.value && !showEditModal.value)
+// 创建时「更多设置」默认收起；编辑不折叠（见模板里的 key-advanced-settings）。
+const createAdvancedOpen = ref(false)
+// 标题栏下的一句话跟着步骤走；编辑弹窗没有。
+const createDialogDescription = computed(() => {
+  if (!showCreateFlow.value) return undefined
+  return isCreateVerificationStep.value
+    ? t('keys.createStep.verifyHint')
+    : t('keys.createStep.detailsHint')
+})
+// Quiet 主按钮：胶囊、36px 高、按下缩到 0.97（和注册页同一套数值）。
+const quietPrimaryUi = {
+  base: 'h-9 rounded-full px-5 text-[14px] font-medium transition-transform duration-150 ease-[cubic-bezier(0.25,0.46,0.45,0.94)] active:not-disabled:scale-[0.97]',
+}
+const appUpdate = useAppUpdate()
 const isCreateVerificationStep = computed(() => showCreateFlow.value && createStep.value === 2)
 const requiresCreateVerification = computed(
   () => (verificationFactors.value?.available_methods.length ?? 0) > 0,
@@ -2078,12 +2138,22 @@ const sealAvailableForCreate = computed(
 
 /** 打开创建弹窗：重置步骤并拉取该账号真实可用的验证因子。 */
 const openCreateModal = () => {
+  // 页面是更新前打开的、已经确认过期：旧代码调用升级过的创建接口只会失败，直接要求刷新。
+  if (appUpdate.updateAvailable.value) {
+    appUpdate.blockingOpen.value = true
+    return
+  }
   createStep.value = 1
+  createAdvancedOpen.value = false
   verificationPayload.value = null
   createAuthFactor.value = ''
   createVerificationRef.value?.reset()
   showCreateModal.value = true
   void loadVerificationFactors()
+  // 同时在后台做一次实时检查（不挡着弹窗弹出）：发现过期就收起这个弹窗，换成必须刷新的对话框。
+  void appUpdate.ensureFresh().then((fresh) => {
+    if (!fresh) closeModals()
+  })
 }
 
 const loadVerificationFactors = async (): Promise<ApiKeyVerificationFactors> => {
@@ -3180,6 +3250,11 @@ const validateCreateBasics = (): boolean => {
 }
 
 const handleSubmit = async () => {
+  // 填表期间页面被判定过期（部署了新版本）：不再发注定失败的请求。
+  if (showCreateFlow.value && appUpdate.updateAvailable.value) {
+    appUpdate.blockingOpen.value = true
+    return
+  }
   if (!validateCreateBasics()) return
 
   // 创建 Key 前必须完成一次身份校验：第一步只负责推进到校验步；
@@ -3591,6 +3666,7 @@ const handleBulkDelete = async () => {
 
 const closeModals = () => {
   smartRoutesOpen.value = false
+  createAdvancedOpen.value = false
   selectedKeyProvider.value = null
   showCreateModal.value = false
   showEditModal.value = false
@@ -3851,6 +3927,52 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 创建弹窗的 Quiet 细节：数值和注册页一致（auth-quiet.css），按下/展开都只动 transform + opacity。 */
+.key-more-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  padding-block: 0.25rem;
+  font-size: 14px;
+  text-align: left;
+  color: var(--ui-text-muted);
+  transition: color 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.key-more-toggle:hover {
+  color: var(--ui-text-highlighted);
+}
+
+.key-more-toggle:focus-visible {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 2px;
+}
+
+/* Tailwind v4 的 rotate-180 写的是独立的 rotate 属性，过渡要把它列出来。 */
+.key-more-chevron {
+  transition-property: transform, rotate;
+  transition-duration: 200ms;
+  transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* 步骤切换：新那一步淡入并上移 6px（关键帧来自 auth-quiet.css，display 从 none 变回来时会重放）。 */
+.key-step-pane {
+  animation: auth-step-in 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .key-step-pane {
+    animation: none;
+  }
+
+  .key-more-chevron,
+  .key-more-toggle {
+    transition: none;
+  }
+}
+
 /* Row actions: quiet ghost buttons, icon over a short label. */
 .key-row-action { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px 6px; border-radius: 6px; color: var(--ui-text-muted); font-size: 11px; line-height: 14px; white-space: nowrap; transition: background-color 150ms ease, color 150ms ease; }
 .key-row-action:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }

@@ -299,8 +299,11 @@ export default {
       verify: '身份验证',
       next: '下一步',
       back: '上一步',
+      detailsHint: '给密钥起个名字，选好线路就能创建。',
       verifyHint: '为保护账号安全，创建密钥前需要完成一次身份验证。',
-      verifyFailed: '身份验证未通过，请重新确认。'
+      verifyFailed: '身份验证未通过，请重新确认。',
+      moreSettings: '更多设置',
+      moreSettingsHint: '自定义 Key、IP 限制、额度、速率、过期时间'
     },
     // 创建/轮换回执里的「以后可查看」选项：密码只在浏览器本地参与加密。
     seal: {

@@ -518,5 +518,16 @@ export default {
     dismiss: 'Dismiss'
   },
 
+  // Stale-page detection: when a tab stays open across a release, prompt and force a refresh
+  // (see composables/useAppUpdate.ts)
+  appUpdate: {
+    available: 'A new version is available. Refresh to keep using the app normally.',
+    refresh: 'Refresh now',
+    dialogTitle: 'This page was updated. Please refresh first',
+    dialogDescription: 'You are on an older version of this page, so actions may fail or miss the latest features. Refreshing takes a second.',
+    dialogHint: 'Still seeing this after refreshing? Hard refresh: Ctrl+F5, or Cmd+Shift+R on Mac.',
+    dialogAction: 'Refresh page'
+  },
+
   // Dashboard
 }

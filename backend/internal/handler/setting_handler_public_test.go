@@ -175,3 +175,41 @@ func TestSettingHandler_GetPublicSettings_AllowsShortSharedCache(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, "public, max-age=30", recorder.Header().Get("Cache-Control"))
 }
+
+// The entry HTML carries window.__APP_CONFIG__ and the browser compares its
+// version against /settings/public to notice that its page is out of date. The
+// embedded copy used to be "" in production because nothing ever told the
+// settings service which release it belongs to, which silently disabled that
+// check. The wire provider is the one place that has both the service and the
+// build version.
+func TestProvideSettingHandler_EmbeddedConfigCarriesBuildVersion(t *testing.T) {
+	repo := &settingHandlerPublicRepoStub{values: map[string]string{}}
+	settings := service.NewSettingService(repo, &config.Config{})
+
+	h := ProvideSettingHandler(settings, BuildInfo{Version: "9.8.7"}, nil, nil)
+	require.NotNil(t, h)
+
+	payload, err := settings.GetPublicSettingsForInjection(context.Background())
+	require.NoError(t, err)
+	injected, ok := payload.(*service.PublicSettingsInjectionPayload)
+	require.True(t, ok, "unexpected payload type %T", payload)
+	require.Equal(t, "9.8.7", injected.Version)
+
+	// ...and it is the same value /settings/public reports, so the two can be compared.
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/settings/public", nil)
+	h.GetPublicSettings(c)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var resp struct {
+		Data struct {
+			Version string `json:"version"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.Equal(t, injected.Version, resp.Data.Version)
+}
+
+func TestProvideSettingHandler_ToleratesMissingSettingsService(t *testing.T) {
+	require.NotPanics(t, func() { ProvideSettingHandler(nil, BuildInfo{Version: "9.8.7"}, nil, nil) })
+}

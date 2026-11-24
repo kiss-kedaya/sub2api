@@ -300,8 +300,11 @@ export default {
       verify: 'Verification',
       next: 'Next',
       back: 'Back',
+      detailsHint: 'Name the key and pick a route to create it.',
       verifyHint: 'To protect your account, verify your identity once before creating a key.',
-      verifyFailed: 'Identity verification failed. Please check and retry.'
+      verifyFailed: 'Identity verification failed. Please check and retry.',
+      moreSettings: 'More settings',
+      moreSettingsHint: 'Custom key, IP rules, quota, rate limits, expiry'
     },
     // "View later" option in the receipt: the password only participates locally.
     seal: {
