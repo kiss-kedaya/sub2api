@@ -572,8 +572,16 @@
           v-show="showEditModal || createStep === 1"
           :class="['space-y-5', showCreateFlow ? 'key-step-pane' : '']"
         >
-        <UFormField :label="t('keys.nameLabel')" required size="lg">
+        <UFormField
+          :label="t('keys.nameLabel')"
+          required
+          size="lg"
+          :error="nameError"
+          :class="{ 'key-field-nudge': nudge && nameError }"
+          data-test="key-field-name"
+        >
           <UInput
+            ref="nameInputRef"
             v-model="formData.name"
             type="text"
             name="api-key-name"
@@ -581,6 +589,8 @@
             data-lpignore="true"
             data-1p-ignore="true"
             required
+            :color="nameError ? 'error' : undefined"
+            :highlight="!!nameError"
             size="lg" :ui="{ base: 'py-[11px]' }"
             class="w-full"
             :placeholder="t('keys.namePlaceholder')"
@@ -628,7 +638,14 @@
           </div>
         </fieldset>
 
-        <UFormField :label="t('keys.groupLabel')" size="lg">
+        <UFormField
+          :label="t('keys.groupLabel')"
+          :required="groupIsRequired"
+          size="lg"
+          :error="groupError"
+          :class="{ 'key-field-nudge': nudge && groupError }"
+          data-test="key-field-group"
+        >
           <template #hint>
             <USwitch
               v-model="formData.smart_routing"
@@ -756,6 +773,7 @@
               :model-value="null"
               :options="smartRoutingAddOptions"
               :placeholder="t('keys.smartRoutingAdd')"
+              :error="!!groupError"
               :searchable="true"
               :search-placeholder="t('keys.searchGroup')"
               data-test="smart-route-add"
@@ -773,6 +791,7 @@
             v-model="formData.group_id"
             :options="providerGroupOptions"
             :placeholder="t('keys.selectGroup')"
+            :error="!!groupError"
             :searchable="true"
             :search-placeholder="t('keys.searchGroup')"
             data-tour="key-form-group"
@@ -2149,6 +2168,7 @@ const openCreateModal = () => {
     return
   }
   createStep.value = 1
+  resetCreateValidation()
   createAdvancedOpen.value = false
   verificationPayload.value = null
   createAuthFactor.value = ''
@@ -3225,23 +3245,55 @@ const insertKeyLocally = (created: ApiKey | null | undefined): ApiKey | null => 
   return createdRow
 }
 
+/**
+ * 第一步的必填项：名称不能为空白，分组必须选（只有确认「当前账号一个可绑定分组都没有」时才允许建无分组 key，
+ * 分组还没加载完不算「没有」，不能静默放行）。「下一步」是 type="button"，不会触发浏览器的原生表单校验，
+ * 所以这两项必须在这里自己拦；错误在用户点过一次「下一步 / 创建」之后才亮，之后随输入实时消失。
+ */
+const groupIsRequired = computed(() => !(groupsLoaded.value && !hasAvailableGroups.value))
+const nameMissing = computed(() => formData.value.name.trim() === '')
+const groupMissing = computed(() => {
+  if (!groupIsRequired.value) return false
+  return formData.value.smart_routing ? formData.value.group_ids.length === 0 : formData.value.group_id === null
+})
+// 点过一次提交才开始标红：刚打开的空表单不该一片红。关弹窗 / 重新打开时清掉。
+const attemptedSubmit = ref(false)
+// 抖动动画的开关：每次被拦下都先摘后挂（中间隔一个 tick），所以连续点两次也会再抖一次。
+const nudge = ref(false)
+const nameError = computed(() => (attemptedSubmit.value && nameMissing.value ? t('keys.nameRequired') : undefined))
+const groupError = computed(() => (attemptedSubmit.value && groupMissing.value ? t('keys.groupRequired') : undefined))
+const nameInputRef = ref<{ inputRef?: HTMLInputElement | null } | null>(null)
+const resetCreateValidation = () => {
+  attemptedSubmit.value = false
+  nudge.value = false
+}
+
+/** 被拦下时：把页面带到第一个未完成项并聚焦；同时重放一次轻微的抖动（尊重「减少动态效果」）。 */
+const revealFirstMissingField = async () => {
+  attemptedSubmit.value = true
+  nudge.value = false
+  await nextTick()
+  nudge.value = true
+  const first = nameMissing.value
+    ? document.querySelector<HTMLElement>('[data-tour="key-form-name"]')
+    : document.querySelector<HTMLElement>('[data-test="key-field-group"] button, [data-tour="key-form-group"] button, [data-test="smart-route-add"] button')
+  first?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  first?.focus({ preventScroll: true })
+}
+
 /** 创建 / 编辑共用的必填校验；顺带归一化分组字段。 */
 const validateCreateBasics = (): boolean => {
-  // 分组是默认必选项：只有确认「当前账号一个可绑定分组都没有」时才允许建无分组 key。
-  // 无分组 key 不能路由任何请求，不能因为分组还没加载完就静默放行。
-  const canCreateWithoutGroup = groupsLoaded.value && !hasAvailableGroups.value
-  if (formData.value.smart_routing) {
-    if (formData.value.group_ids.length === 0) {
-      if (!canCreateWithoutGroup) {
-        appStore.showError(t('keys.groupRequired'))
-        return false
-      }
-    } else {
-      formData.value.group_id = formData.value.group_ids[0] ?? null
-    }
-  } else if (formData.value.group_id === null && !canCreateWithoutGroup) {
-    appStore.showError(t('keys.groupRequired'))
+  if (nameMissing.value) {
+    void revealFirstMissingField()
     return false
+  }
+  // 分组是默认必选项：无分组 key 不能路由任何请求。
+  if (groupMissing.value) {
+    void revealFirstMissingField()
+    return false
+  }
+  if (formData.value.smart_routing && formData.value.group_ids.length > 0) {
+    formData.value.group_id = formData.value.group_ids[0] ?? null
   }
 
   // Validate custom key if enabled
@@ -3675,6 +3727,7 @@ const handleBulkDelete = async () => {
 }
 
 const closeModals = () => {
+  resetCreateValidation()
   smartRoutesOpen.value = false
   createAdvancedOpen.value = false
   selectedKeyProvider.value = null
@@ -3972,8 +4025,22 @@ onUnmounted(() => {
   animation: auth-step-in 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
 }
 
+/* 必填项被拦下：那一格横向轻轻抖一下（只动 transform，约 320ms），红边和提示文字由组件自己的 error 状态负责。
+   类名在每次被拦下时先摘后挂，所以连续点两次也会再抖一次。 */
+.key-field-nudge {
+  animation: key-field-nudge 320ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+@keyframes key-field-nudge {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .key-step-pane {
+  .key-step-pane,
+  .key-field-nudge {
     animation: none;
   }
 
