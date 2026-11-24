@@ -843,6 +843,13 @@
           <span class="shrink-0 whitespace-nowrap font-medium text-highlighted">{{ t('keys.createStep.moreSettings') }}</span>
           <span class="min-w-0 truncate text-muted">{{ t('keys.createStep.moreSettingsHint') }}</span>
         </button>
+        <Transition
+          :css="false"
+          @enter="onAdvancedEnter"
+          @leave="onAdvancedLeave"
+          @enter-cancelled="cancelCollapseMotion"
+          @leave-cancelled="cancelCollapseMotion"
+        >
         <div
           id="key-advanced-settings"
           v-show="showEditModal || createAdvancedOpen"
@@ -1169,6 +1176,7 @@
           </div>
         </div>
         </div>
+        </Transition>
         </div>
 
         <!-- 第二步：按服务端返回的可用因子渲染密码 / TOTP / Passkey，
@@ -1732,6 +1740,7 @@ import '@/styles/console-workspace.css'
 	import { useOnboardingStore } from '@/stores/onboarding'
 	import { useAuthStore } from '@/stores/auth'
 	import { useEphemeralKeyStore } from '@/stores/ephemeralKeys'
+import { cancelCollapseMotion, collapseHeight, expandHeight } from '@/utils/collapseMotion'
 import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
 import IpWhitelistAssist from '@/components/keys/IpWhitelistAssist.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
@@ -2143,6 +2152,9 @@ const createVerificationRef = ref<InstanceType<typeof KeyFactorVerification> | n
 const showCreateFlow = computed(() => showCreateModal.value && !showEditModal.value)
 // 创建时「更多设置」默认收起；编辑不折叠（见模板里的 key-advanced-settings）。
 const createAdvancedOpen = ref(false)
+// 「更多设置」展开 / 收起的高度动画。编辑弹窗里它始终展开、弹窗关闭时的复位也不该再播一遍，所以这两种情况直接完成。
+const onAdvancedEnter = (el: Element, done: () => void) => (showEditModal.value || !showCreateModal.value ? done() : expandHeight(el, done))
+const onAdvancedLeave = (el: Element, done: () => void) => (showEditModal.value || !showCreateModal.value ? done() : collapseHeight(el, done))
 // 标题栏下的一句话跟着步骤走；编辑弹窗没有。
 const createDialogDescription = computed(() => {
   if (!showCreateFlow.value) return undefined
