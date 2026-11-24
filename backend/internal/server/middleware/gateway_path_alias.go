@@ -58,6 +58,9 @@ const (
 	PathAliasRuleDuplicateVersionPrefix PathAliasRule = "duplicate_version_prefix"
 	// PathAliasRuleMissingVersionPrefix 表示请求没有带 /v1（/messages），已补齐到 /v1 下。
 	PathAliasRuleMissingVersionPrefix PathAliasRule = "missing_version_prefix"
+	// PathAliasRuleCleanedSlashes 表示路径里有多余的斜杠（/v1//chat/completions、结尾的 /），
+	// 去掉之后命中了网关路由。Base URL 以 / 结尾、SDK 又拼上 /v1/... 就会得到这种路径。
+	PathAliasRuleCleanedSlashes PathAliasRule = "cleaned_slashes"
 )
 
 // gatewayBarePathExclusions 定义不参与"漏写 /v1 自动补齐"的网关路径。
@@ -180,6 +183,12 @@ func (h *gatewayPathAliasHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 
 	info, ok := h.index.canonicalGatewayPath(r.Method, path)
 	if !ok {
+		// 多余的斜杠要先于下面的诊断处理：/v1/v1//chat/completions 去掉斜杠、折叠 /v1 之后是真实路由，
+		// 不该拿到「路径不存在」的提示。
+		if cleaned, cleanedOK := h.index.canonicalCleanedGatewayPath(r.Method, path); cleanedOK {
+			h.rewriteAndServe(w, r, cleaned)
+			return
+		}
 		// 折叠后仍然不存在的版本根路径（/v1/v1/typo…）要给带 Base URL 提示的 JSON 诊断；
 		// GET/POST 是协议客户端的调用方式，OPTIONS（CORS 预检）、HEAD 等方法不诊断，避免
 		// 破坏浏览器行为。带前缀的拼写错误同样不诊断，不扩散诊断面。

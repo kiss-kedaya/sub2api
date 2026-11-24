@@ -462,6 +462,28 @@ describe('HomeView code examples', () => {
     expect(byTestId(configured, 'home-base-url-example').text()).toBe('https://api.example.com/v1')
   })
 
+  it('writes /v1 once in the curl example however the endpoint was configured', async () => {
+    // The admin setting is normally saved with its /v1 suffix; the example used to append another one.
+    for (const configured of ['https://api.example.com', 'https://api.example.com/', 'https://api.example.com/v1', 'https://api.example.com/v1/', 'https://api.example.com/v1/v1']) {
+      appStore.apiBaseUrl = configured
+      const wrapper = await mountHome()
+      const curl = byTestId(wrapper, 'home-request-example').text()
+
+      expect(curl, configured).toContain('curl https://api.example.com/v1/chat/completions')
+      expect(curl, configured).not.toContain('/v1/v1')
+      expect(byTestId(wrapper, 'home-base-url-example').text(), configured).toBe('https://api.example.com/v1')
+      wrapper.unmount()
+    }
+  })
+
+  it('reads the public setting when the store has no endpoint of its own', async () => {
+    appStore.apiBaseUrl = ''
+    const wrapper = await mountHome({ api_base_url: 'https://kedaya.example/v1' })
+
+    expect(byTestId(wrapper, 'home-request-example').text()).toContain('curl https://kedaya.example/v1/chat/completions')
+    expect(byTestId(wrapper, 'home-request-example').text()).not.toContain('/v1/v1')
+  })
+
   it('builds the curl example with real field names and a listed model', async () => {
     plazaApi.getModelPlaza.mockResolvedValue(plazaResponse())
 

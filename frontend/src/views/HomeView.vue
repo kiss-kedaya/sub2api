@@ -412,6 +412,7 @@ import LegalFooterLinks from '@/components/legal/LegalFooterLinks.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { sanitizeHtml } from '@/utils/sanitize'
 import { resolveDocsUrl } from '@/utils/docsUrl'
+import { apiSiteRoot } from '@/utils/apiBaseUrl'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { formatCurrency, formatNumber } from '@/utils/format'
 import { getModelPlaza, type ModelPlazaResponse } from '@/api/modelPlaza'
@@ -492,17 +493,15 @@ const docsLink = computed(() => {
 })
 
 // API examples follow this site: the admin-configured endpoint when set, otherwise the current origin.
+// The configured address is usually written with its /v1 suffix (OpenAI SDK style), so it is reduced to the
+// site root first and /v1 is appended exactly once below; building from it as-is produced .../v1/v1/chat/completions.
 const endpointBase = computed(() => {
-  const configured = (appStore.apiBaseUrl || appStore.cachedPublicSettings?.api_base_url || '').trim()
-  if (configured) return configured.replace(/\/+$/, '')
+  const configured = apiSiteRoot(appStore.apiBaseUrl || appStore.cachedPublicSettings?.api_base_url)
+  if (configured) return configured
   if (typeof window !== 'undefined') return window.location.origin.replace(/\/+$/, '')
   return ''
 })
-const sdkBaseUrl = computed(() => {
-  const base = endpointBase.value
-  if (!base) return ''
-  return base.endsWith('/v1') ? base : `${base}/v1`
-})
+const sdkBaseUrl = computed(() => (endpointBase.value ? `${endpointBase.value}/v1` : ''))
 
 // Model plaza doubles as the public source for model/platform counts. It is only fetched when
 // the feature is on and anonymous visitors are allowed to read it; any failure simply hides the

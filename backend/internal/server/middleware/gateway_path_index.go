@@ -378,6 +378,79 @@ func (idx gatewayRouteIndex) canonicalGatewayPath(method, path string) (gatewayP
 	return idx.gatewayMissingVersionPath(method, path)
 }
 
+// maxGatewayCleanPathBytes 是斜杠清理愿意处理的路径长度上限。清理发生在鉴权之前，
+// 合法的网关路径只有几十字节；更长的路径不可能是填错 Base URL，原样交给 gin，
+// 不为它做任何分配。
+const maxGatewayCleanPathBytes = 2048
+
+// collapseGatewaySlashes 去掉路径里的空段：/v1//chat/completions、//v1/chat/completions、
+// /v1/chat/completions/ 都变成 /v1/chat/completions。只处理斜杠——不改大小写（路径里的模型
+// ID 区分大小写），也不碰 "." / ".."。没有重复斜杠也没有结尾斜杠的路径原样返回。
+// 单趟线性扫描，不 Split：连续上千个斜杠的请求不会换来成倍的内存。
+func collapseGatewaySlashes(path string) string {
+	if len(path) < 2 || len(path) > maxGatewayCleanPathBytes {
+		return path
+	}
+	if !strings.Contains(path, "//") && !strings.HasSuffix(path, "/") {
+		return path
+	}
+	cleaned := make([]byte, 0, len(path))
+	previousSlash := false
+	for i := 0; i < len(path); i++ {
+		c := path[i]
+		if c == '/' {
+			if previousSlash {
+				continue
+			}
+			previousSlash = true
+		} else {
+			previousSlash = false
+		}
+		cleaned = append(cleaned, c)
+	}
+	if len(cleaned) > 1 && cleaned[len(cleaned)-1] == '/' {
+		cleaned = cleaned[:len(cleaned)-1]
+	}
+	return string(cleaned)
+}
+
+// canonicalCleanedGatewayPath 处理「路径本身没问题、只是多了斜杠」的请求（也包括斜杠之外还多写了 /v1
+// 或漏写 /v1 的）。去掉斜杠后必须真实命中已注册的网关路由才改写，所以面板页面、静态资源、
+// /health 这些路径不会被碰。ok=false 表示不需要或不能清理。
+func (idx gatewayRouteIndex) canonicalCleanedGatewayPath(method, path string) (gatewayPathAliasInfo, bool) {
+	cleaned := collapseGatewaySlashes(path)
+	if cleaned == path {
+		return gatewayPathAliasInfo{}, false
+	}
+	if info, ok := idx.canonicalGatewayPath(method, cleaned); ok {
+		// 日志里记原始路径，规范路径是折叠/补齐之后的结果。
+		info.Original = path
+		return info, true
+	}
+	if !matchGatewayRoute(idx, method, cleaned) {
+		return gatewayPathAliasInfo{}, false
+	}
+	segments := splitGatewayPathSegments(cleaned)
+	prefix := segments
+	version := ""
+	for i, segment := range segments {
+		if isGatewayVersionSegment(segment) {
+			prefix, version = segments[:i], segment
+			break
+		}
+	}
+	if version == "" {
+		prefix = nil
+	}
+	return gatewayPathAliasInfo{
+		Original:   path,
+		Normalized: cleaned,
+		Rule:       PathAliasRuleCleanedSlashes,
+		Prefix:     gatewayPrefixLabel(prefix),
+		Version:    version,
+	}, true
+}
+
 // gatewayVersionlessPrefixes 返回真正“无版本段前缀族”的集合：
 //
 //	/backend-api/codex 有害真实路由 /backend-api/codex/responses，
