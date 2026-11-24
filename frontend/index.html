@@ -10,6 +10,44 @@
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1b181f" />
     <meta name="color-scheme" content="light dark" />
+    <!-- First-load hairline: `#app` has no children until Vue mounts, so `:empty` means "not up yet". Pure CSS because the
+         production CSP blocks inline scripts; it fades in after 0.4 s so a fast load never shows it. Neutral grey on purpose:
+         the page behind it is still the default light canvas (the .dark class and brand colours are applied by JS later). -->
+    <style>
+      #app:empty::before,
+      #app:empty::after {
+        content: '';
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 2px;
+        z-index: 9999;
+        pointer-events: none;
+        color: #8a8a8a;
+        background: currentColor;
+        opacity: 0;
+        animation: boot-in 0.2s ease-out 0.4s forwards;
+      }
+      #app:empty::before {
+        width: 100%;
+        --boot-track: 0.16;
+      }
+      #app:empty::after {
+        width: 30%;
+        transform: translateX(-100%);
+        animation: boot-in 0.2s ease-out 0.4s forwards, boot-run 1.3s cubic-bezier(0.4, 0, 0.2, 1) 0.4s 20;
+      }
+      @keyframes boot-in {
+        to { opacity: var(--boot-track, 0.9); }
+      }
+      @keyframes boot-run {
+        to { transform: translateX(340%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #app:empty::after { display: none; }
+        #app:empty::before { --boot-track: 0.4; }
+      }
+    </style>
     <title>Sub2API - AI API Gateway</title>
   </head>
   <body>
