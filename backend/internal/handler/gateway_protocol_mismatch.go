@@ -23,9 +23,28 @@ func writeProtocolMismatchError(c *gin.Context, path, groupPlatform string) {
 // an OpenAI-family endpoint is the cross-protocol bridge this guard protects.
 // Other platforms keep their existing handlers/errors so type-safe, Gemini and
 // OpenAI groups are unaffected.
-func protocolMismatchApplies(c *gin.Context, apiKey *service.APIKey) bool {
+//
+// A smart-routing key tries its groups in the owner's order and the group that
+// finally supplies the account decides at forward time (ForwardAsResponses /
+// ForwardAsChatCompletions re-check the selected group). The primary group alone
+// therefore must not refuse the request before any group was tried: the guard
+// fires only when every candidate group forbids conversion. A candidate that
+// cannot be read counts as "may allow" so missing data never turns into a
+// non-retryable 400.
+func (h *GatewayHandler) protocolMismatchApplies(c *gin.Context, apiKey *service.APIKey) bool {
 	if service.CrossProtocolConversionAllowed(apiKey) {
 		return false
 	}
-	return effectiveAPIKeyPlatform(c, apiKey) == service.PlatformAnthropic
+	if effectiveAPIKeyPlatform(c, apiKey) != service.PlatformAnthropic {
+		return false
+	}
+	for _, groupID := range apiKey.CandidateGroupIDs() {
+		if apiKey.GroupID != nil && groupID == *apiKey.GroupID {
+			continue // the primary group was checked above
+		}
+		if group := h.gatewayService.GroupPolicyForRequest(c.Request.Context(), groupID); group == nil || group.CrossProtocolConversionEnabled {
+			return false
+		}
+	}
+	return true
 }
