@@ -59,7 +59,13 @@ func (u *syncUpstreamHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string,
 	return u.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
-func setupSyncUpstreamModelsRouter(adminSvc service.AdminService, upstream service.HTTPUpstream) *gin.Engine {
+func setupSyncUpstreamModelsRouter(t testing.TB, adminSvc service.AdminService, upstream service.HTTPUpstream) *gin.Engine {
+	t.Helper()
+	// 这些用例用不可解析的假域名（*.example.com）验证 handler 行为；账号测试/模型同步的
+	// 私网判定在解析失败时按拒绝处理，所以这里放行私网目标检查。出站 SSRF 策略本身由
+	// service 包的用例覆盖（upstream_model_sync_ssrf_test.go）。
+	service.SetAccountTestAllowPrivateTargetsForTest(true)
+	t.Cleanup(func() { service.SetAccountTestAllowPrivateTargetsForTest(false) })
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	accountTestSvc := service.NewAccountTestService(
@@ -344,7 +350,7 @@ func TestAccountHandlerSyncUpstreamModels_ConfigErrorReturnsBadRequest(t *testin
 			},
 		},
 	}
-	router := setupSyncUpstreamModelsRouter(svc, &syncUpstreamHTTPUpstream{})
+	router := setupSyncUpstreamModelsRouter(t, svc, &syncUpstreamHTTPUpstream{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/44/models/sync-upstream", nil)
@@ -375,7 +381,7 @@ func TestAccountHandlerSyncUpstreamModelsReturnsCapabilityMetadata(t *testing.T)
 			"context_window":256000
 		}]}`)),
 	}}
-	router := setupSyncUpstreamModelsRouter(svc, upstream)
+	router := setupSyncUpstreamModelsRouter(t, svc, upstream)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/48/models/sync-upstream", nil)
@@ -421,7 +427,7 @@ func TestAccountHandlerSyncUpstreamModelsPreviewUsesProvidedModelMapping(t *test
 			}`)),
 		},
 	}}
-	router := setupSyncUpstreamModelsRouter(newStubAdminService(), upstream)
+	router := setupSyncUpstreamModelsRouter(t, newStubAdminService(), upstream)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(
@@ -454,7 +460,7 @@ func TestAccountHandlerSyncUpstreamModelsPreviewGeminiCustomUsesOpenAIModels(t *
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"gemini-3.8-flash"}]}`)),
 	}}
-	router := setupSyncUpstreamModelsRouter(newStubAdminService(), &capturingSyncUpstream{inner: upstream, captured: &captured})
+	router := setupSyncUpstreamModelsRouter(t, newStubAdminService(), &capturingSyncUpstream{inner: upstream, captured: &captured})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(
@@ -488,7 +494,7 @@ func TestAccountHandlerSyncUpstreamModelsPreviewCloudflareUsesAccountID(t *testi
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(`{"success":true,"result":[{"name":"@cf/meta/llama-3.2-3b-instruct"}],"result_info":{"total_count":1,"count":1}}`)),
 	}}
-	router := setupSyncUpstreamModelsRouter(newStubAdminService(), &capturingSyncUpstream{inner: upstream, captured: &captured})
+	router := setupSyncUpstreamModelsRouter(t, newStubAdminService(), &capturingSyncUpstream{inner: upstream, captured: &captured})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(
@@ -516,7 +522,7 @@ func TestAccountHandlerSyncUpstreamModelsPreviewCloudflareUsesAccountID(t *testi
 }
 
 func TestAccountHandlerSyncUpstreamModelsPreviewCloudflareRequiresAccountID(t *testing.T) {
-	router := setupSyncUpstreamModelsRouter(newStubAdminService(), &syncUpstreamHTTPUpstream{})
+	router := setupSyncUpstreamModelsRouter(t, newStubAdminService(), &syncUpstreamHTTPUpstream{})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(
@@ -538,7 +544,7 @@ func TestAccountHandlerSyncUpstreamModelsPreviewGeminiCustomInfersOpenAIModelsWi
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"gemini-3.8-flash"}]}`)),
 	}}
-	router := setupSyncUpstreamModelsRouter(newStubAdminService(), &capturingSyncUpstream{inner: upstream, captured: &captured})
+	router := setupSyncUpstreamModelsRouter(t, newStubAdminService(), &capturingSyncUpstream{inner: upstream, captured: &captured})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(
@@ -575,6 +581,44 @@ func (u *capturingSyncUpstream) DoWithTLS(req *http.Request, proxyURL string, ac
 	return u.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
+// 审计 A-P1-04：默认策略（不放行私网）下，preview 指向内网/回环目标时请求在发出前就被拒，
+// 响应是固定文案：没有「状态码 + 响应片段」可回显，也不泄漏目标地址，对上游零调用。
+// 其余用例为了用不可解析的假域名而放行私网检查，这里显式恢复生产默认。
+func TestAccountHandlerSyncUpstreamModelsPreviewRejectsPrivateTargetsWithoutEcho(t *testing.T) {
+	privateHost := strings.Join([]string{"10", "20", "30", "40"}, ".")
+	metadataHost := strings.Join([]string{"169", "254", "169", "254"}, ".")
+	for name, baseURL := range map[string]string{
+		"private literal":      "https://" + privateHost + "/v1",
+		"private literal http": "http://" + privateHost + ":8080",
+		"cloud metadata":       "http://" + metadataHost + "/latest",
+		"localhost":            "http://localhost:9000",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var captured string
+			upstream := &capturingSyncUpstream{captured: &captured, inner: &syncUpstreamHTTPUpstream{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"internal-only-model"}]}`)),
+			}}}
+			router := setupSyncUpstreamModelsRouter(t, newStubAdminService(), upstream)
+			service.SetAccountTestAllowPrivateTargetsForTest(false)
+
+			body, err := json.Marshal(map[string]string{"platform": "openai", "type": "apikey", "base_url": baseURL, "api_key": "preview-key"})
+			require.NoError(t, err)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/models/sync-upstream-preview", strings.NewReader(string(body)))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+			require.Empty(t, captured, "a rejected target must not receive any request")
+			for _, leaked := range []string{privateHost, metadataHost, "localhost", "internal-only-model", "HTTP 2", "HTTP 4", "HTTP 5"} {
+				require.NotContains(t, rec.Body.String(), leaked)
+			}
+		})
+	}
+}
+
 func TestAccountHandlerSyncUpstreamModels_UpstreamErrorDoesNotExposeBody(t *testing.T) {
 	svc := &availableModelsAdminService{
 		stubAdminService: newStubAdminService(),
@@ -595,7 +639,7 @@ func TestAccountHandlerSyncUpstreamModels_UpstreamErrorDoesNotExposeBody(t *test
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(`{"error":"SECRET_TOKEN should not be exposed"}`)),
 	}}
-	router := setupSyncUpstreamModelsRouter(svc, upstream)
+	router := setupSyncUpstreamModelsRouter(t, svc, upstream)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/45/models/sync-upstream", nil)
@@ -634,7 +678,7 @@ func TestAccountHandlerSyncUpstreamModels_MetadataEnrichmentFailureReturnsWarnin
 			Body:       io.NopCloser(strings.NewReader(`{"error":"registry unavailable"}`)),
 		},
 	}}
-	router := setupSyncUpstreamModelsRouter(svc, upstream)
+	router := setupSyncUpstreamModelsRouter(t, svc, upstream)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/46/models/sync-upstream", nil)
