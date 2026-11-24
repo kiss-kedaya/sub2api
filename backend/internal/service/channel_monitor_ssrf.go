@@ -85,6 +85,10 @@ func isPrivateIP(ip net.IP) bool {
 // 任一 IP 落在私网/loopback 段即认为不安全。
 //
 // hostname 是 IP 字面量时也走同一路径。
+//
+// err != nil 表示无法判定（DNS 解析失败/超时）：调用方必须按「拒绝」处理，
+// 不能把 (false, err) 当成通过。管理员填写的出站目标请用
+// urlvalidator.ValidateOutboundHost，它已把解析失败统一按拒绝处理。
 func isPrivateOrLoopbackHost(ctx context.Context, hostname string) (bool, error) {
 	if isBlockedHostname(hostname) {
 		return true, nil

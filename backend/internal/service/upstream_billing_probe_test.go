@@ -270,10 +270,10 @@ func TestAccountTestValidateUpstreamBaseURLRejectsPrivateTargets(t *testing.T) {
 		require.ErrorIs(t, err, errTestTargetNotAllowed, "target %s must be rejected", raw)
 	}
 
-	// 公网地址仍可通过格式校验（这里不断言能出网，只断言没被策略拦）。
-	if _, err := svc.validateUpstreamBaseURL("https://api.example.com/v1"); err != nil {
-		require.NotErrorIs(t, err, errTestTargetNotAllowed, "public host must not be policy-blocked")
-	}
+	// 解析结果固定为公网地址（不依赖真实 DNS；解析失败现在按拒绝处理）：公网主机必须通过。
+	stubOutboundResolver(t, "93.184.216.34")
+	_, err := svc.validateUpstreamBaseURL("https://api.example.com/v1")
+	require.NoError(t, err, "public host must not be policy-blocked")
 }
 
 func TestUpstreamBillingProbeSettingsDefaultsAndValidation(t *testing.T) {

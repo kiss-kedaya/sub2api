@@ -1749,6 +1749,7 @@ func (s *AccountTestService) fetchUpstreamModelList(ctx context.Context, account
 	if err != nil {
 		return nil, nil, err
 	}
+	req = s.guardModelSyncRequest(req)
 
 	proxyURL := upstreamModelsProxyURL(account)
 	resp, err := s.doUpstreamModelsRequest(req, proxyURL, account)
@@ -2191,6 +2192,20 @@ func (s *AccountTestService) fetchAntigravityOAuthUpstreamModels(ctx context.Con
 		models = append(models, strings.TrimSpace(modelID))
 	}
 	return dedupeAndSortModelIDs(models), nil
+}
+
+// guardModelSyncRequest 给模型列表请求挂「仅公网 + 禁重定向」。
+//
+// 模型同步会带着 api_key 向 base_url 发 GET，preview 的 base_url 与 api_key 还直接来自请求体。
+// validateUpstreamBaseURL 只在构造请求时校验一次，挡不住公网主机 302 到内网/回环、
+// 也挡不住校验后 DNS 改指内网（rebinding）；这两个标记让共享出站客户端在请求前、拨号期校验，
+// 并且不跟随任何 3xx（凭据也不会被带到跳转目标）。
+// 管理员显式放行私网（allowlist 开启且 allow_private_hosts=true）时不挂，行为不变。
+func (s *AccountTestService) guardModelSyncRequest(req *http.Request) *http.Request {
+	if req == nil || s.accountTestPrivateTargetsAllowed() {
+		return req
+	}
+	return req.WithContext(WithHTTPUpstreamPublicHostsOnly(WithHTTPUpstreamRedirectsDisabled(req.Context())))
 }
 
 func (s *AccountTestService) doUpstreamModelsRequest(req *http.Request, proxyURL string, account *Account) (*http.Response, error) {
