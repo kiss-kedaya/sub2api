@@ -43,11 +43,16 @@
         @click="colorMode.toggle()"
       />
 
-      <!-- Balance; hover or focus shows available / frozen / total. -->
+      <!-- Balance; hover or focus shows available / frozen / total.
+           The ring around it shows the refresh: it flashes while the number is being fetched, then breathes
+           light green (see data-sync in the style block). -->
       <div
         v-if="user"
         class="header-balance group relative hidden items-center gap-1.5 sm:flex"
         tabindex="0"
+        :data-sync="balanceSync"
+        :aria-busy="balanceSync === 'loading'"
+        :style="{ '--balance-flash': `${FLASH_CYCLE_MS}ms` }"
         :aria-label="`${balanceAvailableText} ${formatHeaderMoney(availableBalance)}`"
       >
         <UIcon name="i-lucide-wallet" class="size-4 shrink-0 text-dimmed" />
@@ -93,6 +98,7 @@ import { useI18n } from 'vue-i18n'
 import { useLocale } from '@nuxt/ui/composables/useLocale'
 import { useAuthStore, useAppStore } from '@/stores'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
+import { FLASH_CYCLE_MS, useBalanceSyncIndicator } from '@/composables/useBalanceSyncIndicator'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import { useSiteColorMode } from '@/composables/useSiteTheme'
 import UserMenu from './UserMenu.vue'
@@ -109,6 +115,7 @@ const colorMode = useSiteColorMode()
 const frame = useDashboardFrame()
 
 const user = computed(() => authStore.user)
+const balanceSync = useBalanceSyncIndicator(() => authStore.userSyncState)
 const availableBalance = computed(() => Number(user.value?.balance || 0))
 const frozenBalance = computed(() => Number(user.value?.frozen_balance || 0))
 const totalBalance = computed(() => availableBalance.value + frozenBalance.value)
@@ -282,6 +289,72 @@ function formatHeaderMoney(value: number) {
 .console-navbar .header-balance:hover .header-balance-detail,
 .console-navbar .header-balance:focus-visible .header-balance-detail {
   display: block;
+}
+
+/* Sync light. A ring laid over the chip border; only its opacity is animated (composited, no repaint).
+   - data-sync="loading": the number is being fetched -> a quick flash in the theme colour.
+   - data-sync="fresh":   it is current -> a slow light-green breath.
+   - data-sync="failed":  the last fetch failed -> no ring, nothing claims the number is live.
+   The green is pinned (not --ui-success): it has to stay green when the admin re-points the palette. */
+.console-navbar .header-balance {
+  --balance-live: #4ade80;
+}
+
+.dark .console-navbar .header-balance {
+  --balance-live: #9bd4b3;
+}
+
+.console-navbar .header-balance::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.console-navbar .header-balance[data-sync='loading']::after {
+  box-shadow:
+    inset 0 0 0 1px var(--ui-primary),
+    0 0 10px 0 color-mix(in oklab, var(--ui-primary) 50%, transparent);
+  animation: balance-sync-flash var(--balance-flash, 700ms) ease-in-out infinite;
+}
+
+.console-navbar .header-balance[data-sync='fresh']::after {
+  box-shadow:
+    inset 0 0 0 1px var(--balance-live),
+    0 0 10px 0 color-mix(in oklab, var(--balance-live) 45%, transparent);
+  animation: balance-sync-breathe 3.6s ease-in-out infinite;
+}
+
+/* One flash cycle starts and ends at its quietest; the breathing starts there too, so the hand-over has no jump. */
+@keyframes balance-sync-flash {
+  0%,
+  100% {
+    opacity: 0.1;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes balance-sync-breathe {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+/* Reduced motion: no pulsing, the ring just stays on so the state is still readable. */
+@media (prefers-reduced-motion: reduce) {
+  .console-navbar .header-balance[data-sync='loading']::after,
+  .console-navbar .header-balance[data-sync='fresh']::after {
+    animation: none;
+    opacity: 0.7;
+  }
 }
 
 /* Phones (<=639px): the navbar keeps one row and the toolbar splits into two lines,

@@ -75,6 +75,8 @@ describe('useAuthStore', () => {
   })
 
   afterEach(() => {
+    // Auto refresh listens on window: drop this test's store so its listeners and timers do not leak into the next test.
+    useAuthStore().$dispose()
     vi.useRealTimers()
   })
 
@@ -517,6 +519,295 @@ describe('useAuthStore', () => {
       await Promise.all([store.refreshUser({ force: true }), store.refreshUser({ force: true })])
 
       expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // --- balance refresh: on focus, at a random 1-10 minute moment, and the sync state the header shows ---
+
+  describe('balance refresh', () => {
+    let random: ReturnType<typeof vi.spyOn> | null = null
+
+    const setVisibility = (state: 'visible' | 'hidden') => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => state === 'hidden' })
+    }
+
+    const signIn = async () => {
+      mockLogin.mockResolvedValue(fakeAuthResponse)
+      mockLogout.mockResolvedValue(undefined)
+      mockRevokeAllSessions.mockResolvedValue(undefined)
+      const store = useAuthStore()
+      await store.login({ email: 'test@example.com', password: '123456' })
+      mockGetCurrentUser.mockReset()
+      mockGetCurrentUser.mockResolvedValue({ data: { ...fakeUser, balance: 55 } })
+      return store
+    }
+
+    const focusWindow = () => window.dispatchEvent(new Event('focus'))
+    const showTab = () => document.dispatchEvent(new Event('visibilitychange'))
+
+    afterEach(() => {
+      random?.mockRestore()
+      random = null
+      Reflect.deleteProperty(document, 'visibilityState')
+      Reflect.deleteProperty(document, 'hidden')
+    })
+
+    describe('when the user comes back to the page', () => {
+      it('refreshes once as soon as the window is focused again', async () => {
+        const store = await signIn()
+
+        focusWindow()
+        await vi.advanceTimersByTimeAsync(0)
+
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+        expect(store.user?.balance).toBe(55)
+      })
+
+      it('also refreshes when a hidden tab is shown', async () => {
+        const store = await signIn()
+
+        setVisibility('visible')
+        showTab()
+        await vi.advanceTimersByTimeAsync(0)
+
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+        expect(store.user?.balance).toBe(55)
+      })
+
+      it('turns the burst of events one tab switch produces into a single request', async () => {
+        await signIn()
+
+        showTab()
+        focusWindow()
+        showTab()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+
+        // Still inside the short reuse window: switching back and forth does not hammer /auth/me.
+        await vi.advanceTimersByTimeAsync(3_000)
+        focusWindow()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+
+        // Once the window has passed, coming back refreshes again.
+        await vi.advanceTimersByTimeAsync(3_000)
+        focusWindow()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(2)
+      })
+
+      it('does not refresh while the tab is hidden', async () => {
+        await signIn()
+
+        setVisibility('hidden')
+        showTab()
+        focusWindow()
+        await vi.advanceTimersByTimeAsync(0)
+
+        expect(mockGetCurrentUser).not.toHaveBeenCalled()
+      })
+
+      it('stops listening once the user signs out', async () => {
+        const store = await signIn()
+
+        await store.logout()
+        focusWindow()
+        showTab()
+        await vi.advanceTimersByTimeAsync(0)
+
+        expect(mockGetCurrentUser).not.toHaveBeenCalled()
+      })
+
+      it('stops listening and polling when the store itself is disposed', async () => {
+        random = vi.spyOn(Math, 'random').mockReturnValue(0)
+        const store = await signIn()
+
+        store.$dispose()
+        focusWindow()
+        await vi.advanceTimersByTimeAsync(11 * 60_000)
+
+        expect(mockGetCurrentUser).not.toHaveBeenCalled()
+      })
+
+      it('stays quiet when the session is already gone but a focus event still arrives', async () => {
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        const store = await signIn()
+
+        store.token = null
+        focusWindow()
+        await vi.advanceTimersByTimeAsync(0)
+
+        expect(mockGetCurrentUser).not.toHaveBeenCalled()
+        expect(errors).not.toHaveBeenCalled()
+      })
+    })
+
+    describe('background refresh at a random 1-10 minute moment', () => {
+      it('waits at least a minute', async () => {
+        random = vi.spyOn(Math, 'random').mockReturnValue(0)
+        await signIn()
+
+        await vi.advanceTimersByTimeAsync(59_999)
+        expect(mockGetCurrentUser).not.toHaveBeenCalled()
+
+        await vi.advanceTimersByTimeAsync(1)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+      })
+
+      it('waits at most ten minutes', async () => {
+        random = vi.spyOn(Math, 'random').mockReturnValue(0.9999999999)
+        await signIn()
+
+        await vi.advanceTimersByTimeAsync(599_999)
+        expect(mockGetCurrentUser).not.toHaveBeenCalled()
+
+        await vi.advanceTimersByTimeAsync(1)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+      })
+
+      it('picks a fresh random delay every round', async () => {
+        random = vi.spyOn(Math, 'random').mockReturnValue(0)
+        await signIn()
+
+        // Every draw after this point is the longest wait, so the second round shows the delay was drawn again.
+        random.mockReturnValue(0.9999999999)
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+
+        await vi.advanceTimersByTimeAsync(599_999)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(2)
+      })
+
+      it('skips the request while the tab is hidden and carries on once it is shown', async () => {
+        random = vi.spyOn(Math, 'random').mockReturnValue(0)
+        await signIn()
+
+        setVisibility('hidden')
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(mockGetCurrentUser).not.toHaveBeenCalled()
+
+        setVisibility('visible')
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+      })
+
+      it('keeps going after a failed round', async () => {
+        random = vi.spyOn(Math, 'random').mockReturnValue(0)
+        vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        await signIn()
+        mockGetCurrentUser.mockRejectedValueOnce(new Error('network down'))
+
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(2)
+      })
+
+      it('measures the wait from the last refresh, whoever asked for it', async () => {
+        random = vi.spyOn(Math, 'random').mockReturnValue(0)
+        await signIn()
+
+        await vi.advanceTimersByTimeAsync(30_000)
+        focusWindow()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+
+        // The countdown restarted at the focus refresh: the original 60 s mark passes quietly...
+        await vi.advanceTimersByTimeAsync(30_000)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(1)
+        // ...and the next round comes a minute after the focus refresh.
+        await vi.advanceTimersByTimeAsync(30_000)
+        expect(mockGetCurrentUser).toHaveBeenCalledTimes(2)
+      })
+
+      it('stops once the user signs out', async () => {
+        random = vi.spyOn(Math, 'random').mockReturnValue(0)
+        const store = await signIn()
+
+        await store.logout()
+        await vi.advanceTimersByTimeAsync(11 * 60_000)
+
+        expect(mockGetCurrentUser).not.toHaveBeenCalled()
+      })
+    })
+
+    describe('userSyncState (what the balance chip shows)', () => {
+      it('is fresh by default', async () => {
+        const store = await signIn()
+        expect(store.userSyncState).toBe('fresh')
+      })
+
+      it('is loading while /auth/me is in flight and fresh once it answers', async () => {
+        const store = await signIn()
+        let answer!: (value: unknown) => void
+        mockGetCurrentUser.mockReturnValue(new Promise((resolve) => { answer = resolve }))
+
+        const pending = store.refreshUser({ force: true })
+        expect(store.userSyncState).toBe('loading')
+
+        answer({ data: { ...fakeUser, balance: 70 } })
+        await pending
+        expect(store.userSyncState).toBe('fresh')
+        expect(store.user?.balance).toBe(70)
+      })
+
+      it('is failed after a failed refresh and recovers on the next good one', async () => {
+        const store = await signIn()
+        mockGetCurrentUser.mockRejectedValueOnce(new Error('503'))
+
+        await expect(store.refreshUser({ force: true })).rejects.toThrow('503')
+        expect(store.userSyncState).toBe('failed')
+
+        await store.refreshUser({ force: true })
+        expect(store.userSyncState).toBe('fresh')
+      })
+
+      it('never shows loading for an answer that is reused instead of fetched', async () => {
+        const store = await signIn()
+        await store.refreshUser()
+        mockGetCurrentUser.mockClear()
+
+        const reused = store.refreshUser()
+        expect(store.userSyncState).toBe('fresh')
+        await reused
+        expect(mockGetCurrentUser).not.toHaveBeenCalled()
+      })
+
+      it('goes back to fresh on a 401 (the session is gone, so the chip disappears with it)', async () => {
+        const store = await signIn()
+        mockGetCurrentUser.mockRejectedValueOnce(Object.assign(new Error('unauthorized'), { status: 401 }))
+
+        await expect(store.refreshUser({ force: true })).rejects.toThrow('unauthorized')
+
+        expect(store.isAuthenticated).toBe(false)
+        expect(store.userSyncState).toBe('fresh')
+      })
+
+      it('is reset by signing out even while a request is still in flight', async () => {
+        const store = await signIn()
+        mockGetCurrentUser.mockReturnValue(new Promise(() => undefined))
+
+        void store.refreshUser({ force: true })
+        expect(store.userSyncState).toBe('loading')
+
+        await store.logout()
+        expect(store.userSyncState).toBe('fresh')
+      })
+
+      it('is reset by signing out', async () => {
+        const store = await signIn()
+        mockGetCurrentUser.mockRejectedValueOnce(new Error('503'))
+        await expect(store.refreshUser({ force: true })).rejects.toThrow('503')
+        expect(store.userSyncState).toBe('failed')
+
+        await store.logout()
+
+        expect(store.userSyncState).toBe('fresh')
+      })
     })
   })
 

@@ -4,7 +4,7 @@
  */
 
 import { defineStore } from 'pinia'
-import { ref, computed, readonly } from 'vue'
+import { ref, computed, readonly, onScopeDispose } from 'vue'
 import { getAppRuntimeContext } from '@runtime/context'
 import { authAPI, isTotp2FARequired, passkeyAPI, type LoginResponse } from '@/api'
 import { clearUserDialogDrafts, setDialogDraftUserIdResolver } from '@/composables/useDialogDraft'
@@ -23,7 +23,11 @@ const AUTH_USER_KEY = 'auth_user'
 const REFRESH_TOKEN_KEY = 'refresh_token'
 const TOKEN_EXPIRES_AT_KEY = 'token_expires_at' // 存储过期时间戳而非有效期
 const PENDING_AUTH_SESSION_KEY = 'pending_auth_session'
-const AUTO_REFRESH_INTERVAL = 90 * 1000 // idle-tab refresh; the dedupe below covers navigation bursts
+// Background refresh of the signed-in user (balance): one request at a random moment 1-10 minutes after
+// the previous one, so open tabs do not hit /auth/me in lockstep. Coming back to the page refreshes at once
+// (see refreshOnReturn), so the number is current whenever someone is actually looking at it.
+const AUTO_REFRESH_MIN_DELAY = 60 * 1000
+const AUTO_REFRESH_MAX_DELAY = 10 * 60 * 1000
 // Every localStorage key that carries auth / OAuth state. Sign-out sweeps all of
 // them (plus the auth_* / oauth_* prefixes) so a shared browser never inherits a
 // half-authenticated state from the previous session.
@@ -132,7 +136,12 @@ export const useAuthStore = defineStore('auth', () => {
   const tokenExpiresAt = ref<number | null>(null) // 过期时间戳（毫秒）
   const runMode = ref<'standard' | 'simple'>('standard')
   const pendingAuthSession = ref<PendingAuthSessionSummary | null>(null)
-  let refreshIntervalId: ReturnType<typeof setInterval> | null = null
+  let autoRefreshTimeoutId: ReturnType<typeof setTimeout> | null = null
+  let autoRefreshActive = false
+  // What the header's balance chip shows: a request in flight, or the last one failed (the number may be
+  // stale), otherwise fresh. Set only where a request is really sent, so a reused answer never flashes.
+  const userRefreshing = ref(false)
+  const userRefreshFailed = ref(false)
   let lastRefreshAt = 0
   let inflightRefresh: Promise<User> | null = null
   let tokenRefreshTimeoutId: ReturnType<typeof setTimeout> | null = null
@@ -156,6 +165,9 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isSimpleMode = computed(() => runMode.value === 'simple')
   const hasPendingAuthSession = computed(() => pendingAuthSession.value !== null)
+  const userSyncState = computed<'loading' | 'failed' | 'fresh'>(() =>
+    userRefreshing.value ? 'loading' : userRefreshFailed.value ? 'failed' : 'fresh'
+  )
 
   // ==================== Actions ====================
 
@@ -203,36 +215,72 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /**
-   * Start auto-refresh interval for user data
-   * Refreshes user data every 60 seconds
-   */
-  function startAutoRefresh(): void {
-    if (typeof window === 'undefined') return
-    // Clear existing interval if any
-    stopAutoRefresh()
+  /** A random delay in [1 min, 10 min]. */
+  function nextAutoRefreshDelay(): number {
+    return AUTO_REFRESH_MIN_DELAY + Math.floor(Math.random() * (AUTO_REFRESH_MAX_DELAY - AUTO_REFRESH_MIN_DELAY + 1))
+  }
 
-    refreshIntervalId = setInterval(() => {
-      // A hidden tab has no user looking at the balance; skip the poll entirely
-      // and let the first visible reload catch up.
+  /** (Re)start the countdown to the next background refresh; any earlier countdown is dropped. */
+  function armAutoRefresh(): void {
+    if (autoRefreshTimeoutId) clearTimeout(autoRefreshTimeoutId)
+    autoRefreshTimeoutId = setTimeout(() => {
+      autoRefreshTimeoutId = null
+      // Keep the chain going first: a hidden tab or a failed request must not end the polling.
+      armAutoRefresh()
+      // A hidden tab has no one looking at the balance; refreshOnReturn catches up when it is shown again.
       if (typeof document !== 'undefined' && document.hidden) return
       if (token.value || cookieSession.value) {
         refreshUser().catch((error) => {
           console.error('Auto-refresh user failed:', error)
         })
       }
-    }, AUTO_REFRESH_INTERVAL)
+    }, nextAutoRefreshDelay())
   }
 
   /**
-   * Stop auto-refresh interval
+   * The user came back to the page (tab shown, window focused): refresh once so the balance is current.
+   * refreshUser's own short reuse window collapses the burst of events one tab switch produces
+   * (visibilitychange and focus fire together) into a single request.
+   */
+  function refreshOnReturn(): void {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+    if (!token.value && !cookieSession.value) return
+    refreshUser().catch((error) => {
+      console.error('Refresh user on focus failed:', error)
+    })
+  }
+
+  /**
+   * Keep the signed-in user (balance) fresh: refresh when the user comes back to the page, and in the
+   * background at a random moment 1-10 minutes after the last refresh.
+   */
+  function startAutoRefresh(): void {
+    if (typeof window === 'undefined') return
+    // Clear existing timer and listeners if any
+    stopAutoRefresh()
+
+    autoRefreshActive = true
+    armAutoRefresh()
+    window.addEventListener('focus', refreshOnReturn)
+    document.addEventListener('visibilitychange', refreshOnReturn)
+  }
+
+  /**
+   * Stop auto-refresh
    */
   function stopAutoRefresh(): void {
-    if (refreshIntervalId) {
-      clearInterval(refreshIntervalId)
-      refreshIntervalId = null
+    autoRefreshActive = false
+    if (autoRefreshTimeoutId) {
+      clearTimeout(autoRefreshTimeoutId)
+      autoRefreshTimeoutId = null
+    }
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('focus', refreshOnReturn)
+      document.removeEventListener('visibilitychange', refreshOnReturn)
     }
   }
+  // The listeners live on window / document: a disposed store (hot reload, a test) must not leave them behind.
+  onScopeDispose(stopAutoRefresh)
 
   /**
    * Schedule proactive token refresh before expiry (based on expiry timestamp)
@@ -616,6 +664,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     inflightRefresh = (async () => {
+      userRefreshing.value = true
       try {
         const response = await authAPI.getCurrentUser()
         if (response.data.run_mode) {
@@ -624,6 +673,9 @@ export const useAuthStore = defineStore('auth', () => {
         const { run_mode: _run_mode, ...userData } = response.data
         user.value = userData
         lastRefreshAt = Date.now()
+        userRefreshFailed.value = false
+        // The next background refresh is measured from this one, whoever asked for it.
+        if (autoRefreshActive) armAutoRefresh()
 
         // Update localStorage
         if (!cookieSession.value && typeof localStorage !== 'undefined') localStorage.setItem(AUTH_USER_KEY, JSON.stringify(userData))
@@ -633,9 +685,12 @@ export const useAuthStore = defineStore('auth', () => {
         // If refresh fails with 401, clear auth state
         if ((error as { status?: number }).status === 401) {
           clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
+        } else {
+          userRefreshFailed.value = true
         }
         throw error
       } finally {
+        userRefreshing.value = false
         inflightRefresh = null
       }
     })()
@@ -650,6 +705,8 @@ export const useAuthStore = defineStore('auth', () => {
   function clearAuth(options?: { preservePendingAuthSession?: boolean }): void {
     lastRefreshAt = 0
     inflightRefresh = null
+    userRefreshing.value = false
+    userRefreshFailed.value = false
     // A key-rotation block belongs to one account; never carry it to the next user.
     resetKeyRotationGate()
     // Created / rotated key plaintexts live in memory only; signing out drops them.
@@ -690,6 +747,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAdminObserver,
     isSimpleMode,
     hasPendingAuthSession,
+    userSyncState,
 
     // Actions
     login,
