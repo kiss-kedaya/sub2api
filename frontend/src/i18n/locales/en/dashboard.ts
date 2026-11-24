@@ -306,7 +306,7 @@ export default {
     // "View later" option in the receipt: the password only participates locally.
     seal: {
       optIn: 'Allow viewing this key later with my login password',
-      optInHint: 'The key is encrypted with your login password in this browser; the server stores only the ciphertext. The password is never sent to the server.',
+      optInHint: 'The key is encrypted with your login password in this browser; the server stores only the ciphertext. When you save, the login password is sent to the server once to verify your identity and is then discarded, never stored.',
       passwordLabel: 'Login password',
       passwordHint: 'The password is used only for local encryption. If you forget it you cannot view this key again (you can rotate a new one at any time).',
       passwordRequired: 'Enter your login password, or uncheck "Allow viewing this key later with my login password".',
@@ -319,7 +319,7 @@ export default {
     // View after refresh: fetch the ciphertext, decrypt locally.
     reveal: {
       title: 'Enter your login password to view the key',
-      description: 'Decryption happens in this browser. The password is never sent to the server or stored.',
+      description: 'Decryption happens in this browser. If you verify with your login password, it is sent to the server once for verification and is not stored; with a one-time code or a passkey, the password is used only for local decryption and is never sent.',
       passwordLabel: 'Login password',
       passwordHint: 'Valid for this view only: the decrypted key stays in memory and must be entered again next time.',
       submit: 'Decrypt locally',
