@@ -52,9 +52,14 @@ const (
 	// whole-database backup, which has no exclude list, keeps its "no limit".
 	defaultCriticalMaxArchiveBytes int64 = 10 << 30
 
-	// A staged archive older than staleBackupFileAge was left behind by a process
-	// that died mid-backup (a backup is bounded by a 30 minute context).
-	staleBackupFilePrefix = "sub2api-backup-"
+	// Every file a backup stages in the temp directory (the archive, and its parts
+	// when it is split) starts with staleBackupFilePrefix, and the startup sweep
+	// only ever touches files that do. The prefix is one nobody types by hand: an
+	// operator's own sub2api-backup-<date>.sql.gz left in /tmp must survive a
+	// restart of a service that runs as root without a private /tmp.
+	// A staged file older than staleBackupFileAge was left behind by a process that
+	// died mid-backup (a backup is bounded by a 30 minute context).
+	staleBackupFilePrefix = "sub2api-backup-stage-"
 	staleBackupFileAge    = 2 * time.Hour
 
 	// backupScheduledLeaderLockKey gates the scheduled full-database backup so
@@ -403,8 +408,11 @@ func (s *BackupService) logSnapshotMode(l *zap.Logger) {
 // sweepStaleBackupFiles removes staged archives (and split parts) that a killed
 // process left in the temp directory: a deploy that SIGKILLs the process during a
 // backup otherwise strands a file as large as the archive. Only regular files with
-// the staging prefix that are older than staleBackupFileAge are touched. It only
-// runs for a non-default backup configuration, so a default install is unchanged.
+// the staging prefix (staleBackupFilePrefix) that are older than staleBackupFileAge
+// are touched: never a directory or a symlink, and never a file with a different
+// name, such as a dump an operator copied there by hand. Files left by builds that
+// staged under the earlier, shorter prefix are not swept. It only runs for a
+// non-default backup configuration, so a default install is unchanged.
 func (s *BackupService) sweepStaleBackupFiles(now time.Time) int {
 	dir := os.TempDir()
 	entries, err := os.ReadDir(dir)
@@ -995,7 +1003,7 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 	if err != nil {
 		return "", 0, "", fmt.Errorf("pg_dump: %w", err)
 	}
-	pattern := "sub2api-backup-*.sql.gz"
+	pattern := staleBackupFilePrefix + "*.sql.gz"
 	if len(recipients) > 0 {
 		pattern += ".age"
 	}
