@@ -160,6 +160,13 @@ export default defineConfig(({ mode }) => {
               return 'vendor-stripe'
             }
 
+            // Airwallex SDK 只在 /payment/airwallex 里 `await import()` 懒加载。不单列的话它会落进必载的
+            // vendor-misc，模块顶层代码随首屏一起执行：每个用户打开任何页面都会去 static.airwallex.com 和
+            // checkout.airwallex.com 多拉两份脚本（约 280 KB）。@airwallex/airtracker 是它的依赖，一起走。
+            if (id.includes('/@airwallex/')) {
+              return 'vendor-airwallex'
+            }
+
             // 其他小型第三方库合并
             return 'vendor-misc'
           }
