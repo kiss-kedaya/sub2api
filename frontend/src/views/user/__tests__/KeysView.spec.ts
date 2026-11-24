@@ -6,6 +6,7 @@ import { useEphemeralKeyStore } from '@/stores/ephemeralKeys'
 
 import type { ApiKey } from '@/types'
 import KeysView from '../KeysView.vue'
+import { useAppUpdate } from '@/composables/useAppUpdate'
 
 const {
   listKeys,
@@ -74,6 +75,10 @@ const messages: Record<string, string> = {
   'keys.allStatus': 'All Status',
   'keys.columnSettings': 'Column Settings',
   'keys.createKey': 'Create API Key',
+  'auth.stepProgress': 'Step {current} of {total}',
+  'keys.createStep.detailsHint': 'Name the key and pick a route to create it.',
+  'keys.createStep.moreSettings': 'More settings',
+  'keys.createStep.moreSettingsHint': 'Custom key, IP rules, quota, rate limits, expiry',
   'keys.createStep.details': 'Details',
   'keys.createStep.verify': 'Verification',
   'keys.createStep.next': 'Next',
@@ -2726,5 +2731,224 @@ describe('user KeysView 创建身份校验（三选一）', () => {
     expect(name.attributes('data-lpignore')).toBe('true')
     expect(name.attributes('data-1p-ignore')).toBe('true')
     wrapper.unmount()
+  })
+})
+
+describe('user KeysView 创建弹窗（Quiet 流程）与页面过期守卫', () => {
+  const passwordFactors = {
+    password_available: true,
+    totp_enabled: false,
+    passkey_count: 0,
+    preferred: 'password',
+    available_methods: ['password'],
+    seal_available: true,
+  }
+  const appUpdate = useAppUpdate()
+  // 只还原这里自己建的 spy：vi.restoreAllMocks() 会把前面用例遗留在其它 mock 上的返回值一并清掉。
+  let ensureFreshSpy: { mockRestore: () => void } | null = null
+  const resetUpdateState = () => {
+    appUpdate.updateAvailable.value = false
+    appUpdate.blockingOpen.value = false
+  }
+
+  beforeEach(() => {
+    window.localStorage.clear()
+    resetUpdateState()
+    authUser.value = { id: 1, email: 'user@example.com' }
+    getVerificationFactors.mockResolvedValue(passwordFactors)
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
+  })
+
+  afterEach(() => {
+    ensureFreshSpy?.mockRestore()
+    ensureFreshSpy = null
+    resetUpdateState()
+  })
+
+  const openCreate = async () => {
+    const wrapper = await mountView()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  const dialogDescription = (wrapper: VueWrapper) =>
+    wrapper.get('#key-form').element.closest('[description]')?.getAttribute('description') ?? null
+
+  const advancedHidden = (wrapper: VueWrapper) =>
+    (wrapper.get('[data-test="key-advanced-settings"]').element as HTMLElement).style.display === 'none'
+
+  it('第一步：Quiet 步骤头、一句话说明，只露出名称 / 提供商 / 分组，其余收进「更多设置」', async () => {
+    const wrapper = await openCreate()
+
+    expect(wrapper.get('[data-test="key-create-steps"]').text()).toContain('Step 1 of 2')
+    expect(dialogDescription(wrapper)).toBe('Name the key and pick a route to create it.')
+
+    expect(advancedHidden(wrapper)).toBe(true)
+    const toggle = wrapper.get('[data-test="key-advanced-toggle"]')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(toggle.attributes('aria-controls')).toBe('key-advanced-settings')
+    expect(toggle.text()).toContain('More settings')
+
+    // 页脚：左边取消，右边下一步；第一步没有「上一步」。
+    expect(wrapper.find('[data-test="key-create-cancel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="key-create-next"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="key-create-back"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('「更多设置」可以展开 / 收起，字段始终挂载（不影响校验和已有选择器）', async () => {
+    const wrapper = await openCreate()
+    const toggle = wrapper.get('[data-test="key-advanced-toggle"]')
+    expect(wrapper.find('#key-expiration-label').exists()).toBe(true)
+
+    await toggle.trigger('click')
+    expect(advancedHidden(wrapper)).toBe(false)
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+
+    await toggle.trigger('click')
+    expect(advancedHidden(wrapper)).toBe(true)
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    wrapper.unmount()
+  })
+
+  it('每次重新打开创建弹窗，「更多设置」都回到收起', async () => {
+    const wrapper = await openCreate()
+    await wrapper.get('[data-test="key-advanced-toggle"]').trigger('click')
+    expect(advancedHidden(wrapper)).toBe(false)
+
+    await wrapper.get('[data-test="key-create-cancel"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+    await flushPromises()
+    expect(advancedHidden(wrapper)).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('第二步：步骤头走到 2/2，说明换成身份校验，页脚变成「上一步 + 创建」，且能退回第一步', async () => {
+    const wrapper = await openCreate()
+    await wrapper.get('[data-tour="key-form-name"]').setValue('quiet key')
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+    await nextTick()
+
+    await wrapper.get('[data-test="key-create-next"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="key-create-steps"]').text()).toContain('Step 2 of 2')
+    expect(dialogDescription(wrapper)).toBe('Verify your identity once before creating a key.')
+    expect(wrapper.find('[data-test="key-create-verification"]').exists()).toBe(true)
+    // 说明在标题栏，组件自己的那一句不再重复。
+    expect(wrapper.get('[data-test="key-create-verification"]').text()).not.toContain('Verify your identity once.')
+    expect(wrapper.find('[data-test="key-create-back"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="key-create-cancel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="key-create-next"]').exists()).toBe(false)
+    expect(wrapper.find('[data-tour="key-form-submit"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="key-create-back"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="key-create-steps"]').text()).toContain('Step 1 of 2')
+    expect(wrapper.find('[data-test="key-create-next"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('密码框交给浏览器密码管理器：current-password + 隐藏的用户名', async () => {
+    const wrapper = await openCreate()
+    await wrapper.get('[data-tour="key-form-name"]').setValue('autofill key')
+    wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+    await nextTick()
+    await wrapper.get('[data-test="key-create-next"]').trigger('click')
+    await flushPromises()
+
+    const password = wrapper.get('[data-test="key-factor-password-input"]')
+    expect(password.attributes('autocomplete')).toBe('current-password')
+    expect(password.attributes('data-lpignore')).toBeUndefined()
+    const username = wrapper.get('[data-test="key-factor-username"]')
+    expect((username.element as HTMLInputElement).value).toBe('user@example.com')
+    wrapper.unmount()
+  })
+
+  it('账号没有任何可用因子：不显示步骤头，也只有一个「创建」按钮', async () => {
+    getVerificationFactors.mockResolvedValue({
+      password_available: false,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: '',
+      available_methods: [],
+      seal_available: false,
+    })
+    const wrapper = await openCreate()
+
+    expect(wrapper.find('[data-test="key-create-steps"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="key-create-next"]').exists()).toBe(false)
+    expect(wrapper.find('[data-tour="key-form-submit"]').exists()).toBe(true)
+    expect(dialogDescription(wrapper)).toBe('Name the key and pick a route to create it.')
+    wrapper.unmount()
+  })
+
+  it('编辑保持原样：所有设置展开、没有「更多设置」、没有步骤头', async () => {
+    const wrapper = await mountView()
+    const vm = wrapper.vm as unknown as { showEditModal: boolean }
+    vm.showEditModal = true
+    await nextTick()
+
+    expect(wrapper.find('[data-test="key-advanced-toggle"]').exists()).toBe(false)
+    expect(advancedHidden(wrapper)).toBe(false)
+    expect(wrapper.find('[data-test="key-create-steps"]').exists()).toBe(false)
+    expect(dialogDescription(wrapper)).toBeNull()
+    expect(wrapper.find('[data-test="key-create-footer"]').exists()).toBe(false)
+    expect(wrapper.find('[data-tour="key-form-submit"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  describe('页面是旧版本', () => {
+    it('已确认过期：点「创建」不再打开弹窗，改弹必须刷新的对话框', async () => {
+      appUpdate.updateAvailable.value = true
+      const wrapper = await mountView()
+      await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('#key-form').exists()).toBe(false)
+      expect(appUpdate.blockingOpen.value).toBe(true)
+      expect(getVerificationFactors).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('弹窗已经打开时后台实时检查发现过期：收起创建弹窗，换成必须刷新的对话框', async () => {
+      ensureFreshSpy = vi.spyOn(appUpdate, 'ensureFresh').mockImplementation(async () => {
+        appUpdate.blockingOpen.value = true
+        return false
+      })
+      const wrapper = await openCreate()
+
+      expect(wrapper.find('#key-form').exists()).toBe(false)
+      expect(appUpdate.blockingOpen.value).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('页面是最新的：照常打开，不弹刷新对话框', async () => {
+      const ensureFresh = vi.spyOn(appUpdate, 'ensureFresh').mockResolvedValue(true)
+      ensureFreshSpy = ensureFresh
+      const wrapper = await openCreate()
+
+      expect(ensureFresh).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('#key-form').exists()).toBe(true)
+      expect(appUpdate.blockingOpen.value).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('填表期间页面被判定过期：提交不再发请求，改弹必须刷新的对话框', async () => {
+      const wrapper = await openCreate()
+      await wrapper.get('[data-tour="key-form-name"]').setValue('stale key')
+      wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+
+      appUpdate.updateAvailable.value = true
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+
+      expect(createKey).not.toHaveBeenCalled()
+      expect(appUpdate.blockingOpen.value).toBe(true)
+      wrapper.unmount()
+    })
   })
 })

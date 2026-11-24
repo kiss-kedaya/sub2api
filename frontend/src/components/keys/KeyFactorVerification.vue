@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-4" data-test="key-factor-verification">
-    <p class="text-sm text-muted">{{ t('keys.factor.description') }}</p>
+    <p v-if="!hideDescription" class="text-sm text-muted">{{ t('keys.factor.description') }}</p>
 
     <fieldset v-if="availableMethods.length > 0">
       <legend class="mb-2 text-sm font-medium text-default">{{ t('keys.factor.methodLabel') }}</legend>
@@ -18,14 +18,28 @@
       <label for="key-factor-password" class="block text-sm font-medium text-default">
         {{ mode === 'reveal' ? t('keys.factor.decryptPasswordLabel') : t('keys.factor.passwordLabel') }}
       </label>
+      <!-- 浏览器密码管理器要「用户名 + 密码」成对出现才会自动填充：这里放一个看不见、只读的用户名字段。
+           密码只交给浏览器自己加密保存和填充，页面代码从不把它写进 localStorage / sessionStorage。 -->
+      <input
+        v-if="accountUsername"
+        type="text"
+        name="username"
+        autocomplete="username"
+        :value="accountUsername"
+        readonly
+        tabindex="-1"
+        aria-hidden="true"
+        class="sr-only"
+        data-test="key-factor-username"
+      />
       <UInput
         id="key-factor-password"
         v-model="password"
         type="password"
-        name="key-factor-password"
-        autocomplete="new-password"
-        data-lpignore="true"
-        data-1p-ignore="true"
+        name="password"
+        autocomplete="current-password"
+        size="lg"
+        :ui="{ base: 'py-[11px]' }"
         :disabled="disabled || loading"
         class="w-full"
         :placeholder="t('keys.factor.passwordPlaceholder')"
@@ -49,6 +63,8 @@
         autocomplete="one-time-code"
         data-lpignore="true"
         data-1p-ignore="true"
+        size="lg"
+        :ui="{ base: 'py-[11px]' }"
         :disabled="disabled || loading"
         class="w-full max-w-48"
         :placeholder="t('keys.factor.totpPlaceholder')"
@@ -92,14 +108,25 @@
       <label for="key-factor-decrypt-password" class="block text-sm font-medium text-default">
         {{ t('keys.factor.decryptPasswordLabel') }}
       </label>
+      <input
+        v-if="accountUsername"
+        type="text"
+        name="username"
+        autocomplete="username"
+        :value="accountUsername"
+        readonly
+        tabindex="-1"
+        aria-hidden="true"
+        class="sr-only"
+      />
       <UInput
         id="key-factor-decrypt-password"
         v-model="password"
         type="password"
-        name="key-factor-decrypt-password"
-        autocomplete="new-password"
-        data-lpignore="true"
-        data-1p-ignore="true"
+        name="password"
+        autocomplete="current-password"
+        size="lg"
+        :ui="{ base: 'py-[11px]' }"
         :disabled="disabled || loading"
         class="w-full"
         :placeholder="t('keys.factor.passwordPlaceholder')"
@@ -121,7 +148,9 @@
 
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
+import { getActivePinia } from 'pinia'
 import { useI18n } from 'vue-i18n'
+import { useAuthStore } from '@/stores/auth'
 import type {
   ApiKeyVerificationFactors,
   ApiKeyVerificationMethod,
@@ -138,10 +167,21 @@ const props = withDefaults(
     mode?: 'create' | 'reveal'
     /** 预选因子（二次查看时来自密文的 seal_auth_factor）。 */
     preferredFactor?: string
+    /** 隐藏顶部那句说明（创建对话框的标题栏已经写了同样的话）。 */
+    hideDescription?: boolean
+    /** 用于给密码管理器配对的用户名；不传时取当前登录账号的邮箱。 */
+    accountEmail?: string
     disabled?: boolean
     loading?: boolean
   }>(),
-  { mode: 'create', preferredFactor: '', disabled: false, loading: false },
+  {
+    mode: 'create',
+    preferredFactor: '',
+    hideDescription: false,
+    accountEmail: '',
+    disabled: false,
+    loading: false,
+  },
 )
 
 const { t } = useI18n()
@@ -155,6 +195,31 @@ const METHOD_LABEL_KEYS: Record<ApiKeyVerificationMethod, string> = {
 const availableMethods = computed<ApiKeyVerificationMethod[]>(
   () => props.factors?.available_methods ?? [],
 )
+
+// 只有 Pinia 已安装（真实应用）时才读登录状态；单测里直接挂载组件时没有，退回空串。
+const accountUsername = computed(
+  () => props.accountEmail || (getActivePinia() ? (useAuthStore().user?.email ?? '') : ''),
+)
+
+// 记住「上次用哪种方式验证」，下次默认选它。只存方式名（password / totp / passkey），
+// 绝不存密码：密码的保存和自动填充交给浏览器自己的密码管理器。
+const REMEMBERED_METHOD_KEY = 'sub2api.key_verify_method'
+
+const readRememberedMethod = (): string => {
+  try {
+    return window.localStorage.getItem(REMEMBERED_METHOD_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+const rememberMethod = (value: ApiKeyVerificationMethod) => {
+  try {
+    window.localStorage.setItem(REMEMBERED_METHOD_KEY, value)
+  } catch {
+    // 隐私模式 / 存储被禁用：只是少了一个便利，不影响验证。
+  }
+}
 
 const method = ref<ApiKeyVerificationMethod | undefined>(undefined)
 const password = ref('')
@@ -210,10 +275,10 @@ const applyDefaultMethod = () => {
     method.value = undefined
     return
   }
-  const wanted = props.preferredFactor || props.factors?.preferred || ''
-  method.value = available.includes(wanted as ApiKeyVerificationMethod)
-    ? (wanted as ApiKeyVerificationMethod)
-    : available[0]
+  // 优先级：调用方指定（二次查看必须沿用封存时的方式）> 上次用过的 > 服务端推荐 > 第一个可用。
+  const candidates = [props.preferredFactor, readRememberedMethod(), props.factors?.preferred ?? '']
+  const wanted = candidates.find((value) => available.includes(value as ApiKeyVerificationMethod))
+  method.value = (wanted as ApiKeyVerificationMethod | undefined) ?? available[0]
 }
 
 watch(
@@ -292,6 +357,7 @@ const buildVerification = (): ApiKeyVerificationPayload | null => {
       errorMessage.value = t('keys.factor.passwordRequired')
       return null
     }
+    rememberMethod('password')
     return { method: 'password', password: password.value }
   }
   if (selected === 'totp') {
@@ -300,12 +366,14 @@ const buildVerification = (): ApiKeyVerificationPayload | null => {
       errorMessage.value = t('keys.factor.totpRequired')
       return null
     }
+    rememberMethod('totp')
     return { method: 'totp', totp_code: code }
   }
   if (!passkeyToken.value) {
     errorMessage.value = t('keys.factor.passkeyRequired')
     return null
   }
+  rememberMethod('passkey')
   return { method: 'passkey', passkey_session_token: passkeyToken.value }
 }
 

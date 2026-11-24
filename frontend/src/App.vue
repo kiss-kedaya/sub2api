@@ -9,6 +9,9 @@ import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import ConfirmHost from '@/components/common/ConfirmHost.vue'
 import StepUpGate from '@/components/auth/StepUpGate.vue'
 import StepUpSkipNotice from '@/components/auth/StepUpSkipNotice.vue'
+import AppUpdateBanner from '@/components/common/AppUpdateBanner.vue'
+import AppUpdateDialog from '@/components/common/AppUpdateDialog.vue'
+import { useAppUpdate } from '@/composables/useAppUpdate'
 import { useAppStore, useAuthStore, useSubscriptionStore, useAnnouncementStore, useAdminComplianceStore, useAdminSettingsStore } from '@/stores'
 import { useTicketNotificationStore } from '@/stores/ticketNotifications'
 import { getSetupStatus } from '@/api/setup'
@@ -23,6 +26,9 @@ import { useClientAnchorNavigation } from '@/composables/useClientAnchorNavigati
 
 const router = useRouter()
 useClientAnchorNavigation(router)
+// 标签页开着不刷新会一直跑旧代码；发现服务端有新版前端就提示，并在下一次跳转时整页加载。
+const appUpdate = useAppUpdate()
+let stopAppUpdate: (() => void) | null = null
 const nuxtUiLocale = useNuxtUiLocale()
 const route = useRoute()
 const consoleShell = computed(() => isConsoleLayoutRoute(route.meta))
@@ -154,6 +160,8 @@ router.afterEach(() => {
 })
 
 onBeforeUnmount(() => {
+  stopAppUpdate?.()
+  stopAppUpdate = null
   if (typeof document === 'undefined') return
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('admin-compliance-required', onAdminComplianceRequired)
@@ -162,6 +170,8 @@ onBeforeUnmount(() => {
 onMounted(async () => {
   applyPlatformProfile()
   window.addEventListener('admin-compliance-required', onAdminComplianceRequired)
+  // 放在第一个 await 之前：下面「需要安装向导」的分支会提前 return。
+  stopAppUpdate = appUpdate.start(router)
 
   // Check if setup is needed
   try {
@@ -199,5 +209,8 @@ onMounted(async () => {
     <StepUpGate />
     <!-- 5 分钟免授权窗口内跳过 2FA 时，右下角展示「已跳过 + 剩余倒计时」 -->
     <StepUpSkipNotice />
+    <!-- 页面版本过期：底部提示条 + 敏感操作前的必须刷新对话框 -->
+    <AppUpdateBanner />
+    <AppUpdateDialog />
   </UApp>
 </template>

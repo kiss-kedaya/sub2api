@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/require"
 )
@@ -210,6 +211,18 @@ func apiKeyVerifyTestSecret(authFactor string) *APIKeySecret {
 }
 
 // ---- 因子可用性 -----------------------------------------------------------
+
+// 旧页面（更新前打开、一直没刷新）不认识 VERIFY_REQUIRED，只会把 message 原样显示：
+// 错误码与状态码不能变（新页面按 reason 走自己的文案），文案必须带强制刷新指引，且中英双语。
+func TestAPIKeyVerificationRequiredTellsStalePagesToRefresh(t *testing.T) {
+	require.Equal(t, 400, infraerrors.Code(ErrAPIKeyVerificationRequired))
+	require.Equal(t, "VERIFY_REQUIRED", infraerrors.Reason(ErrAPIKeyVerificationRequired))
+
+	message := infraerrors.Message(ErrAPIKeyVerificationRequired)
+	require.Contains(t, message, "Ctrl+F5", "英文部分要给出强制刷新的按键")
+	require.Contains(t, message, "强制刷新", "中文部分要告诉旧页面的用户去刷新")
+	require.Contains(t, message, "verification", "仍然要说清楚原因是需要身份验证")
+}
 
 func TestAPIKeyVerificationFactorAvailability(t *testing.T) {
 	ctx := context.Background()

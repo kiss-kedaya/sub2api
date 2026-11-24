@@ -517,5 +517,15 @@ export default {
     dismiss: '不再提示'
   },
 
+  // 页面版本探测：标签页开着不刷新时，提示并强制刷新（见 composables/useAppUpdate.ts）
+  appUpdate: {
+    available: '发现新版本，刷新后才能继续正常使用',
+    refresh: '立即刷新',
+    dialogTitle: '页面已更新，请先刷新',
+    dialogDescription: '你打开的是旧版本页面，继续操作可能失败或看不到最新功能。刷新只需要一秒。',
+    dialogHint: '刷新后仍看到这条？请强制刷新：Ctrl+F5，Mac 用 Cmd+Shift+R。',
+    dialogAction: '刷新页面'
+  },
+
   // Dashboard
 }
