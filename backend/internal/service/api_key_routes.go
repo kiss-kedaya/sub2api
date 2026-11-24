@@ -284,6 +284,8 @@ func groupPassthroughsRequestedModel(group *Group, requestedModel string, schedu
 		isClaudeModel(requestedModel) {
 		// 同上：该模型族只能由 Anthropic 系上游服务，而唯一可调度平台是
 		// grok/CN 供应商且分组未开跨协议转换 → 不能当作“透传可用”。
+		// 注意：目前不可达——claude 模型的 detected 恒为 anthropic，不会同时是
+		// OpenAI 兼容平台；这里不起作用，别当成已有的拦截。
 		return false
 	}
 	_, ok = schedulable[detected]

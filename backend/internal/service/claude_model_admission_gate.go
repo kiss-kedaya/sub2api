@@ -2,8 +2,14 @@ package service
 
 // Claude 模型跨平台准入闸门。
 //
-// 漏洞复现（第三方 + 生产库确认）：0.12 倍率的 Grok 分组 Key（group#25）通过
-// Anthropic /v1/messages 入口请求 claude-opus-4-8 / claude-sonnet-4-5：
+// 现状（务必先读）：本闸门目前没有生产调用方。schedulerClaudeGateAllows /
+// claudeModelAdmission 只在测试里被调用；WithSchedulerClaudeModelGate 只把值放进
+// ctx，没有任何地方读取。另外 Grok 分组走 messages 分发时，调度拿到的模型名已经是
+// 分发后的 Grok 模型（见 api_key_routes.go / openai_key_routes.go 的候选模型），不是
+// claude 名，闸门即使接上也不会触发。接入调度之前先确认这两点。
+//
+// 下面是写闸门时的背景。Grok 分组 Key 通过 Anthropic /v1/messages 入口请求
+// claude-opus-4-8 / claude-sonnet-4-5 时：
 //  1. /v1/messages 由路由按“分组平台”分派，grok 分组落到 OpenAI 兼容网关，其
 //     平台覆盖被钉成 grok，调度只在 grok 账号里找；
 //  2. Grok 账号空映射会被填入含 claude-* 通配的默认映射（xai.DefaultModelMapping，
