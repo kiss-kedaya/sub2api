@@ -208,9 +208,11 @@ type APIKeyVerificationStore interface {
 
 // APIKeyPasswordAttemptLimiter 是登录密码因子「按用户」的失败预算端口。
 //
-// 生产实现是 middleware.TwoFactorRateLimiter（Redis 滑动窗口，60 秒内最多 5 次），
-// 与登录 2FA / step-up / Passkey step-up 共用同一个账号预算：连续失败有上限、校验成功
-// 即清零、维度是用户 ID 而不是 IP。未装配（nil）时不做预算，保持装配前的行为。
+// 生产实现是 middleware.NewAPIKeyPasswordRateLimiter（Redis 滑动窗口，60 秒内最多 5 次，
+// 与登录 2FA / step-up 同一套实现），但使用**独立的计数桶**（key 前缀
+// api_key_password:verify:user:）：与 2FA 共桶的话，密码校验成功会清掉 2FA 的失败计数，
+// 持会话者也能靠故意输错密码把账号的登录 2FA 锁住一分钟。连续失败有上限、校验成功即清零、
+// 维度是用户 ID 而不是 IP。未装配（nil）时不做预算，保持装配前的行为。
 type APIKeyPasswordAttemptLimiter interface {
 	// Check 记录一次密码尝试；allowed=false 表示预算已用尽（retryAfter 为最早一次尝试
 	// 离开窗口的剩余时间）；err 表示存储故障，调用方必须 fail-closed。

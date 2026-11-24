@@ -42,8 +42,9 @@ func (h *APIKeyHandler) SetVerificationService(verificationService *service.APIK
 	h.verificationService = verificationService
 }
 
-// SetPasswordAttemptLimiter 把密码因子的按用户失败预算交给校验服务（router 装配，
-// 与登录 2FA 共用同一个账号预算）。校验服务未装配时什么都不做。
+// SetPasswordAttemptLimiter 把密码因子的按用户失败预算交给校验服务（router 装配）。
+// 它与登录 2FA 的预算是两个独立的计数桶（同一套 Redis 滑动窗口实现，key 前缀不同），
+// 互不清零、互不锁死。校验服务未装配时什么都不做。
 func (h *APIKeyHandler) SetPasswordAttemptLimiter(limiter service.APIKeyPasswordAttemptLimiter) {
 	if h == nil || h.verificationService == nil {
 		return
