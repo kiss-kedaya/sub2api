@@ -125,6 +125,24 @@
           {{ isLoading ? t('auth.signingIn') : t('auth.signIn') }}
         </button>
 
+        <div
+          v-if="loginChallenge?.nextFactor === 'totp' && !loginChallenge.showTotpCode"
+          class="space-y-2"
+        >
+          <p role="status" class="text-sm text-muted">
+            {{ t('auth.totpChallengeHint') }}
+          </p>
+          <button
+            type="button"
+            class="btn btn-secondary w-full"
+            data-testid="login-authenticator"
+            :disabled="authActionDisabled"
+            @click="loginChallenge.showTotpCode = true"
+          >
+            {{ t('auth.verifyWithAuthenticator') }}
+          </button>
+        </div>
+
         <LoginAgreementPrompt
           v-if="loginAgreementEnabled"
           :accepted="agreementAccepted"
@@ -206,7 +224,7 @@
 
   <!-- 双因子第二步：TOTP 因子 -->
   <TotpLoginModal
-    v-if="loginChallenge && loginChallenge.nextFactor === 'totp'"
+    v-if="loginChallenge?.nextFactor === 'totp' && loginChallenge.showTotpCode"
     ref="totpModalRef"
     :temp-token="loginChallenge.tempToken"
     :user-email-masked="loginChallenge.userEmailMasked"
@@ -334,6 +352,7 @@ interface LoginFactorChallenge {
   requiredFactors: string[]
   passedFactors: string[]
   nextFactor: LoginFactor
+  showTotpCode: boolean
   userEmailMasked: string
   passkeySessionToken: string
   passkeyOptions?: { publicKey: Record<string, unknown> }
@@ -353,6 +372,7 @@ function applyLoginChallenge(response: TotpLoginResponse): void {
     requiredFactors: required,
     passedFactors: passed,
     nextFactor: next === 'passkey' ? 'passkey' : 'totp',
+    showTotpCode: false,
     userEmailMasked: response.user_email_masked || maskLoginEmail(formData.email),
     passkeySessionToken: response.passkey_session_token || '',
     passkeyOptions: response.passkey_options
@@ -362,6 +382,10 @@ function applyLoginChallenge(response: TotpLoginResponse): void {
 const formData = reactive({
   email: '',
   password: ''
+})
+
+watch([() => formData.email, () => formData.password], () => {
+  loginChallenge.value = null
 })
 
 const errors = reactive({
@@ -595,8 +619,8 @@ function validateForm(): boolean {
 // ==================== Form Handlers ====================
 
 async function handleLogin(): Promise<void> {
-  // Clear previous error
   errorMessage.value = ''
+  loginChallenge.value = null
 
   // Validate form
   if (!validateForm()) {
@@ -622,8 +646,7 @@ async function handleLogin(): Promise<void> {
         : undefined
     })
 
-    // 双因子策略：密码通过后按账号已绑定因子继续挑战
-    // （只绑 TOTP → TOTP；只绑 Passkey → Passkey；两者都绑 → 先 TOTP 后 Passkey）。
+    // TOTP 挑战的响应也用于无效凭据，先显示可选的认证器入口。
     if (isTotp2FARequired(response)) {
       applyLoginChallenge(response as TotpLoginResponse)
       isLoading.value = false

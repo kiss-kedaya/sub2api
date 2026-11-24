@@ -48,7 +48,9 @@ vi.mock('vue-router', () => ({
 
 vi.mock('vue-i18n', () => ({
   createI18n: () => ({ global: { t: (key: string) => key } }),
-  useI18n: () => ({ t: (key: string) => key })
+  useI18n: () => ({
+    t: (key: string) => key === 'auth.errors.INVALID_CREDENTIALS' ? '邮箱或密码不正确，请重试。' : key
+  })
 }))
 
 vi.mock('@/stores', () => ({
@@ -190,8 +192,9 @@ describe('登录双因子流程（TOTP / Passkey 策略）', () => {
     const wrapper = mountLogin()
     await flushPromises()
     await submitCredentials(wrapper)
-    expect(wrapper.find('[data-testid="totp-verify"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="totp-verify"]').exists()).toBe(false)
 
+    await wrapper.get('[data-testid="login-authenticator"]').trigger('click')
     await wrapper.get('[data-testid="totp-verify"]').trigger('click')
     await flushPromises()
 
@@ -230,7 +233,7 @@ describe('登录双因子流程（TOTP / Passkey 策略）', () => {
     expect(mocks.push).not.toHaveBeenCalled()
   })
 
-  it('只绑 TOTP：保持原有 TOTP 单因子流程', async () => {
+  it('只绑 TOTP：主动选择认证器后完成验证', async () => {
     mocks.login.mockResolvedValue({
       requires_2fa: true,
       temp_token: 'temp-totp',
@@ -242,11 +245,47 @@ describe('登录双因子流程（TOTP / Passkey 策略）', () => {
     const wrapper = mountLogin()
     await flushPromises()
     await submitCredentials(wrapper)
-    expect(wrapper.find('[data-testid="totp-verify"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('auth.totpChallengeHint')
+    expect(wrapper.find('[data-testid="totp-verify"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="passkey-verify"]').exists()).toBe(false)
 
+    await wrapper.get('[data-testid="login-authenticator"]').trigger('click')
     await wrapper.get('[data-testid="totp-verify"]').trigger('click')
     await flushPromises()
     expect(mocks.push).toHaveBeenCalledWith('/dashboard')
+  })
+
+  it('收到统一挑战后，修改密码会收起验证入口并允许重新登录', async () => {
+    mocks.login
+      .mockResolvedValueOnce({ requires_2fa: true, temp_token: 'temp-challenge' })
+      .mockResolvedValueOnce({ id: 1 })
+
+    const wrapper = mountLogin()
+    await flushPromises()
+    await submitCredentials(wrapper)
+
+    expect(wrapper.find('[data-testid="login-authenticator"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="totp-verify"]').exists()).toBe(false)
+
+    await wrapper.get('input[type="password"]').setValue('updated-password')
+    expect(wrapper.find('[data-testid="login-authenticator"]').exists()).toBe(false)
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.login2FA).not.toHaveBeenCalled()
+    expect(mocks.push).toHaveBeenCalledWith('/dashboard')
+  })
+
+  it('全站关闭 TOTP 时提示邮箱或密码错误', async () => {
+    mocks.login.mockRejectedValue({ status: 401, reason: 'INVALID_CREDENTIALS' })
+
+    const wrapper = mountLogin()
+    await flushPromises()
+    await submitCredentials(wrapper)
+
+    expect(mocks.showError).toHaveBeenCalledWith('邮箱或密码不正确，请重试。')
+    expect(wrapper.find('[data-testid="login-authenticator"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="totp-verify"]').exists()).toBe(false)
+    expect(mocks.push).not.toHaveBeenCalled()
   })
 })

@@ -165,3 +165,45 @@ func TestPasswordLoginRequiresTOTPFailsClosedOnSettingReadError(t *testing.T) {
 		require.NotEmpty(t, resp.Data["access_token"])
 	})
 }
+
+func TestPasswordLoginFailureFollowsTOTPSetting(t *testing.T) {
+	user := newLoginTOTPUser("totp@example.com")
+	tests := []struct {
+		name       string
+		repo       *loginTOTPSettingRepo
+		wantStatus int
+	}{
+		{
+			name:       "disabled",
+			repo:       &loginTOTPSettingRepo{values: map[string]string{service.SettingKeyTotpEnabled: "false"}},
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "unset",
+			repo:       &loginTOTPSettingRepo{},
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "setting_read_error",
+			repo:       &loginTOTPSettingRepo{errKey: service.SettingKeyTotpEnabled},
+			wantStatus: http.StatusOK,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := newLoginTOTPTestRouter(t, tt.repo, user)
+			w, resp := postLoginEnum(t, router, user.Email, "wrong-password")
+			require.Equal(t, tt.wantStatus, w.Code, w.Body.String())
+			require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+			require.Empty(t, resp.Data.AccessToken)
+			if tt.wantStatus == http.StatusOK {
+				require.True(t, resp.Data.Requires2FA)
+				require.NotEmpty(t, resp.Data.TempToken)
+			} else {
+				require.Contains(t, w.Body.String(), `"reason":"INVALID_CREDENTIALS"`)
+				require.False(t, resp.Data.Requires2FA)
+				require.Empty(t, resp.Data.TempToken)
+			}
+		})
+	}
+}
