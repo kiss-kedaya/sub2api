@@ -146,6 +146,19 @@ describe('admin BackupView 分卷备份', () => {
     expect(document.body.textContent).not.toContain('admin.backup.actions.downloadParts')
   })
 
+  it('保留份数输入框的上限与后端一致', async () => {
+    listBackups.mockResolvedValue({ items: [] })
+
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    // 后端记录列表最多 100 条，其中一条留给正在执行的备份，所以保留份数最大 99。
+    const bounded = wrapper.findAll('input[type="number"][max="99"]')
+    expect(bounded).toHaveLength(1)
+    expect((bounded[0].element as HTMLInputElement).value).toBe('10')
+    expect(bounded[0].attributes('min')).toBe('0')
+  })
+
   it('运行中的备份不显示删除入口', async () => {
     listBackups.mockResolvedValue({
       items: [{ ...baseRecord('running'), status: 'running', progress: 'uploading' }],

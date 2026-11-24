@@ -58,7 +58,7 @@ func splitBackupFile(srcPath string, partSize int64) (parts []localBackupPart, e
 
 	remaining := info.Size()
 	for index := 1; remaining > 0; index++ {
-		partFile, createErr := os.CreateTemp("", "sub2api-backup-part-*")
+		partFile, createErr := os.CreateTemp("", staleBackupFilePrefix+"part-*")
 		if createErr != nil {
 			return nil, fmt.Errorf("create backup part: %w", createErr)
 		}

@@ -251,7 +251,7 @@
             :in-summary="false"
           >
             <template #control>
-                <UInput v-model.number="scheduleForm.retain_count" type="number" min="0" class="w-32" />
+                <UInput v-model.number="scheduleForm.retain_count" type="number" min="0" :max="MAX_RETAIN_COUNT" class="w-32" />
             </template>
           </SettingRow>
         </SettingGroup>
@@ -453,6 +453,9 @@ const savingImageStorage = ref(false)
 const testingImageStorage = ref(false)
 
 // Schedule config
+// Must match maxBackupRetainCount in the backend: the record list holds 100 entries
+// and one slot always belongs to the backup in flight.
+const MAX_RETAIN_COUNT = 99
 const scheduleForm = ref<BackupScheduleConfig>({
   enabled: false,
   cron_expr: '0 2 * * *',

@@ -11,14 +11,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
+	"go.uber.org/zap"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -32,6 +35,32 @@ const (
 
 	maxBackupRecords           = 100
 	backupObjectCleanupTimeout = 2 * time.Minute
+
+	// maxBackupRetainCount is the largest retain_count the record list can honour:
+	// one slot is always taken by the backup in flight.
+	maxBackupRetainCount = maxBackupRecords - 1
+
+	// backupScopeCritical marks a snapshot taken with backup.exclude_table_data:
+	// every table's schema is present but the excluded tables' rows are not.
+	backupScopeCritical = "critical"
+
+	// defaultCriticalMaxArchiveBytes bounds a critical snapshot when the operator
+	// set no backup.max_archive_bytes. pg_dump does not complain about an exclude
+	// entry that matches nothing (a misspelt name, or the children of a partitioned
+	// table), and the archive is staged on local disk before it is uploaded, so an
+	// unbounded snapshot would keep writing until the disk fills up. A
+	// whole-database backup, which has no exclude list, keeps its "no limit".
+	defaultCriticalMaxArchiveBytes int64 = 10 << 30
+
+	// Every file a backup stages in the temp directory (the archive, and its parts
+	// when it is split) starts with staleBackupFilePrefix, and the startup sweep
+	// only ever touches files that do. The prefix is one nobody types by hand: an
+	// operator's own sub2api-backup-<date>.sql.gz left in /tmp must survive a
+	// restart of a service that runs as root without a private /tmp.
+	// A staged file older than staleBackupFileAge was left behind by a process that
+	// died mid-backup (a backup is bounded by a 30 minute context).
+	staleBackupFilePrefix = "sub2api-backup-stage-"
+	staleBackupFileAge    = 2 * time.Hour
 
 	// backupScheduledLeaderLockKey gates the scheduled full-database backup so
 	// that only one instance in a clustered deployment performs the
@@ -56,6 +85,23 @@ var (
 	ErrRestoreInProgress     = infraerrors.Conflict("RESTORE_IN_PROGRESS", "a restore is already in progress")
 	ErrBackupRecordsCorrupt  = infraerrors.InternalServer("BACKUP_RECORDS_CORRUPT", "backup records data is corrupted")
 	ErrBackupS3ConfigCorrupt = infraerrors.InternalServer("BACKUP_S3_CONFIG_CORRUPT", "backup S3 config data is corrupted")
+
+	// ErrBackupRestoreUnsupported is returned for snapshots that the in-app
+	// restore must never replay: a partial (critical) snapshot lacks the data of
+	// the excluded tables, and an encrypted archive is not gzip. Both are restored
+	// by hand into an empty database.
+	ErrBackupRestoreUnsupported = infraerrors.BadRequest("BACKUP_RESTORE_UNSUPPORTED", "partial or encrypted snapshots must be restored manually into an empty database")
+
+	// ErrBackupCriticalNeedsRecipient is returned, before pg_dump starts, for a
+	// critical snapshot that has no age recipient: it holds users, API keys and
+	// upstream credentials and is never uploaded in plaintext. Whole-database
+	// backups keep their optional encryption.
+	ErrBackupCriticalNeedsRecipient = errors.New("a critical snapshot is never stored in plaintext: backup.age_recipients needs at least one age X25519 public key")
+
+	// ErrBackupArchiveTooLarge is wrapped by the error returned when the archive
+	// on disk grows past the size limit: backup.max_archive_bytes, or the built-in
+	// limit of a critical snapshot that has none. The wrapping error says which.
+	ErrBackupArchiveTooLarge = errors.New("backup archive exceeds the size limit")
 
 	// ErrSecretEncryptionKeyNotConfigured prevents storing an S3 credential
 	// before startup has initialized a persistent installation encryption key.
@@ -130,6 +176,25 @@ type BackupRecord struct {
 	RestoreStatus string       `json:"restore_status,omitempty"` // "", "running", "completed", "failed"
 	RestoreError  string       `json:"restore_error,omitempty"`
 	RestoredAt    string       `json:"restored_at,omitempty"`
+	// Scope is "critical" for a snapshot whose excluded tables carry no rows;
+	// empty means the whole database was dumped.
+	Scope string `json:"scope,omitempty"`
+	// Encrypted marks an age-encrypted archive instead of plain gzip.
+	Encrypted bool `json:"encrypted,omitempty"`
+	// SHA256 is the digest of the archive as written to disk: the age ciphertext
+	// when encrypted, the whole archive (not a part) when it was split. It is only
+	// recorded for non-default backups, so a default record stays byte-identical.
+	// The record lives in the database, not in the bucket, so an object fetched for
+	// a manual restore can be checked against it.
+	SHA256 string `json:"sha256,omitempty"`
+}
+
+// restoreUnsupported reports whether the in-app restore must refuse this record.
+// The .age suffix is a second signal for a record whose flags were lost: a build
+// that predates them rewrites the whole record list without Scope and Encrypted.
+func (r *BackupRecord) restoreUnsupported() bool {
+	return r.Encrypted || r.Scope == backupScopeCritical ||
+		strings.HasSuffix(r.FileName, ".age") || strings.HasSuffix(r.S3Key, ".age")
 }
 
 // BackupDownloadPart 描述一个可下载的备份分卷。
@@ -149,6 +214,7 @@ type BackupDownloadResponse struct {
 type BackupService struct {
 	settingRepo SettingRepository
 	dbCfg       *config.DatabaseConfig
+	backupCfg   config.BackupConfig
 	encryptor   SecretEncryptor
 	// encryptionKeyConfigured accepts an explicitly configured key or a stable
 	// installation key loaded by bootstrap. Temporary process keys cannot safely
@@ -184,6 +250,17 @@ type BackupService struct {
 	bgCtx         context.Context    // 所有后台操作的 parent context
 	bgCancel      context.CancelFunc // 取消所有活跃后台操作
 	partSizeBytes int64              // 分卷阈值；生产使用 4 GiB，测试可注入更小值
+
+	// ageEncrypt wraps the archive sink in an age encrypting writer; tests swap it
+	// to force an encryptor failure.
+	ageEncrypt func(io.Writer, ...age.Recipient) (io.WriteCloser, error)
+
+	// criticalMaxArchiveBytes is the size limit of a critical snapshot that has no
+	// explicit backup.max_archive_bytes; tests inject a smaller value.
+	criticalMaxArchiveBytes int64
+
+	// createArchiveFile creates the staged archive; tests swap it to make Close fail.
+	createArchiveFile func(pattern string) (backupArchiveFile, error)
 }
 
 func NewBackupService(
@@ -197,6 +274,7 @@ func NewBackupService(
 	return &BackupService{
 		settingRepo:             settingRepo,
 		dbCfg:                   &cfg.Database,
+		backupCfg:               cfg.Backup,
 		encryptor:               encryptor,
 		encryptionKeyConfigured: cfg.Totp.HasPersistentEncryptionKey(),
 		storeFactory:            storeFactory,
@@ -205,7 +283,63 @@ func NewBackupService(
 		bgCancel:                bgCancel,
 		partSizeBytes:           defaultBackupPartSizeBytes,
 		instanceID:              uuid.NewString(),
+		ageEncrypt:              age.Encrypt,
+		criticalMaxArchiveBytes: defaultCriticalMaxArchiveBytes,
+		createArchiveFile:       createStagedArchive,
 	}
+}
+
+// backupScope is recorded on every backup: "critical" when table data is
+// excluded, empty for a whole-database dump.
+func (s *BackupService) backupScope() string {
+	if len(s.backupCfg.ExcludeTableData) > 0 {
+		return backupScopeCritical
+	}
+	return ""
+}
+
+// backupEncrypted reports whether archives are age-encrypted. Any configured
+// recipient turns encryption on; there is no plaintext fallback.
+func (s *BackupService) backupEncrypted() bool {
+	return len(s.backupCfg.AgeRecipients) > 0
+}
+
+// archiveLimit is the byte limit for the archive on disk: the configured value,
+// else the built-in limit of a critical snapshot, else 0 (no limit). builtin is
+// true only for the second case.
+func (s *BackupService) archiveLimit() (limit int64, builtin bool) {
+	if s.backupCfg.MaxArchiveBytes > 0 {
+		return s.backupCfg.MaxArchiveBytes, false
+	}
+	if s.backupScope() != "" {
+		return s.criticalMaxArchiveBytes, true
+	}
+	return 0, false
+}
+
+// nonDefaultBackup reports whether the operator opted into any backup.* setting
+// that changes how a backup runs. Anything new that touches the host outside a
+// backup run stays off while this is false.
+func (s *BackupService) nonDefaultBackup() bool {
+	return s.backupScope() != "" || s.backupEncrypted() || s.backupCfg.MaxArchiveBytes > 0
+}
+
+// backupFileName names the archive; the .age suffix tells a human (and the
+// download link) that it is not plain gzip.
+func (s *BackupService) backupFileName(now time.Time) string {
+	name := fmt.Sprintf("%s_%s.sql.gz", s.dbCfg.DBName, now.Format("20060102_150405"))
+	if s.backupEncrypted() {
+		name += ".age"
+	}
+	return name
+}
+
+// backupContentType is the Content-Type of a single-object upload.
+func backupContentType(record *BackupRecord) string {
+	if record.Encrypted {
+		return "application/octet-stream"
+	}
+	return "application/gzip"
 }
 
 // SetLeaderLock injects the leader-lock cache and DB used to elect a single
@@ -223,6 +357,10 @@ func (s *BackupService) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
 func (s *BackupService) Start() {
 	if BackgroundJobsDisabled() {
 		return
+	}
+	s.logSnapshotMode(logger.L())
+	if s.nonDefaultBackup() {
+		s.sweepStaleBackupFiles(time.Now())
 	}
 	s.cronSched = cron.New()
 	s.cronSched.Start()
@@ -243,6 +381,62 @@ func (s *BackupService) Start() {
 			logger.LegacyPrintf("service.backup", "[Backup] 应用定时备份配置失败: %v", err)
 		}
 	}
+}
+
+// logSnapshotMode announces a non-default backup configuration once at startup.
+// It lists the table entries that will really be passed to pg_dump (pg_dump
+// ignores an entry that matches nothing, so this is the one place a misspelt name
+// shows up), and otherwise reports flags and a size only: never recipients or
+// paths. max_archive_bytes is the limit actually applied, so a critical snapshot
+// without an explicit value shows the built-in one. Nothing is logged for the
+// default whole-database backup.
+func (s *BackupService) logSnapshotMode(l *zap.Logger) {
+	if !s.nonDefaultBackup() {
+		return
+	}
+	limit, _ := s.archiveLimit()
+	l.Info("[Backup] non-default backup settings in effect",
+		zap.String("component", "service.backup"),
+		zap.Bool("critical", s.backupScope() != ""),
+		zap.Strings("exclude_table_data", s.backupCfg.ExcludeTableData),
+		zap.Int("excluded_tables", len(s.backupCfg.ExcludeTableData)),
+		zap.Bool("encrypted", s.backupEncrypted()),
+		zap.Int64("max_archive_bytes", limit),
+	)
+}
+
+// sweepStaleBackupFiles removes staged archives (and split parts) that a killed
+// process left in the temp directory: a deploy that SIGKILLs the process during a
+// backup otherwise strands a file as large as the archive. Only regular files with
+// the staging prefix (staleBackupFilePrefix) that are older than staleBackupFileAge
+// are touched: never a directory or a symlink, and never a file with a different
+// name, such as a dump an operator copied there by hand. Files left by builds that
+// staged under the earlier, shorter prefix are not swept. It only runs for a
+// non-default backup configuration, so a default install is unchanged.
+func (s *BackupService) sweepStaleBackupFiles(now time.Time) int {
+	dir := os.TempDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), staleBackupFilePrefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() || now.Sub(info.ModTime()) < staleBackupFileAge {
+			continue
+		}
+		if os.Remove(filepath.Join(dir, entry.Name())) == nil {
+			removed++
+		}
+	}
+	if removed > 0 {
+		logger.L().Info("[Backup] removed stale staged archives",
+			zap.String("component", "service.backup"), zap.Int("removed", removed))
+	}
+	return removed
 }
 
 // recoverStaleRecords 启动时将孤立的 running 记录标记为 failed，并清理已上传对象。
@@ -451,6 +645,12 @@ func (s *BackupService) UpdateSchedule(ctx context.Context, cfg BackupScheduleCo
 			return nil, infraerrors.BadRequest("INVALID_CRON", fmt.Sprintf("invalid cron expression: %v", err))
 		}
 	}
+	// A schedule that keeps more completed backups than the record list can hold
+	// would push the oldest ones out of the list. A disabled schedule never runs,
+	// so it may still carry an old value and must stay switchable off.
+	if cfg.Enabled && cfg.RetainCount > maxBackupRetainCount {
+		return nil, infraerrors.BadRequest("INVALID_RETENTION", fmt.Sprintf("retain_count must be at most %d", maxBackupRetainCount))
+	}
 
 	data, err := json.Marshal(cfg)
 	if err != nil {
@@ -592,7 +792,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 
 	now := time.Now()
 	backupID := uuid.New().String()[:8]
-	fileName := fmt.Sprintf("%s_%s.sql.gz", s.dbCfg.DBName, now.Format("20060102_150405"))
+	fileName := s.backupFileName(now)
 	s3Key := s.buildS3Key(s3Cfg, fileName)
 
 	var expiresAt string
@@ -604,6 +804,8 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 		ID:          backupID,
 		Status:      "running",
 		BackupType:  "postgres",
+		Scope:       s.backupScope(),
+		Encrypted:   s.backupEncrypted(),
 		FileName:    fileName,
 		S3Key:       s3Key,
 		TriggeredBy: triggeredBy,
@@ -611,7 +813,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 		ExpiresAt:   expiresAt,
 	}
 
-	archivePath, sizeBytes, err := s.createCompressedBackupFile(ctx)
+	archivePath, sizeBytes, digest, err := s.createCompressedBackupFile(ctx)
 	if err != nil {
 		record.Status = "failed"
 		record.ErrorMsg = err.Error()
@@ -621,6 +823,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 	}
 	defer func() { _ = cleanupBackupFiles(archivePath) }()
 	record.SizeBytes = sizeBytes
+	record.SHA256 = s.recordedDigest(digest)
 	if err := s.saveRecord(ctx, record); err != nil {
 		return nil, fmt.Errorf("save initial record: %w", err)
 	}
@@ -681,7 +884,7 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 
 	now := time.Now()
 	backupID := uuid.New().String()[:8]
-	fileName := fmt.Sprintf("%s_%s.sql.gz", s.dbCfg.DBName, now.Format("20060102_150405"))
+	fileName := s.backupFileName(now)
 	s3Key := s.buildS3Key(s3Cfg, fileName)
 
 	var expiresAt string
@@ -693,6 +896,8 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 		ID:          backupID,
 		Status:      "running",
 		BackupType:  "postgres",
+		Scope:       s.backupScope(),
+		Encrypted:   s.backupEncrypted(),
 		FileName:    fileName,
 		S3Key:       s3Key,
 		TriggeredBy: triggeredBy,
@@ -741,7 +946,7 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	// 阶段1: pg_dump -> gzip 临时文件
 	record.Progress = "dumping"
 	_ = s.saveRecord(ctx, record)
-	archivePath, sizeBytes, err := s.createCompressedBackupFile(ctx)
+	archivePath, sizeBytes, digest, err := s.createCompressedBackupFile(ctx)
 	if err != nil {
 		record.Status = "failed"
 		record.ErrorMsg = err.Error()
@@ -752,6 +957,7 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	}
 	defer func() { _ = cleanupBackupFiles(archivePath) }()
 	record.SizeBytes = sizeBytes
+	record.SHA256 = s.recordedDigest(digest)
 
 	// 阶段2: 单对象或分卷上传
 	record.Progress = "uploading"
@@ -774,22 +980,49 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	}
 }
 
-func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string, int64, error) {
-	dumpReader, err := s.dumper.Dump(ctx)
+// createCompressedBackupFile stages the archive on local disk and returns its path,
+// its size and the SHA-256 (hex) of the bytes written. The digest is computed while
+// writing, so the file is not read a second time.
+func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string, int64, string, error) {
+	// Resolve the recipients before pg_dump starts or anything touches the disk:
+	// a bad key must fail the backup, never degrade it into a plaintext archive.
+	recipients, err := parseAgeRecipients(s.backupCfg.AgeRecipients)
 	if err != nil {
-		return "", 0, fmt.Errorf("pg_dump: %w", err)
+		return "", 0, "", err
 	}
-	archive, err := os.CreateTemp("", "sub2api-backup-*.sql.gz")
+	// Fail closed: no recipient must never turn a critical snapshot into plaintext.
+	if s.backupScope() != "" && len(recipients) == 0 {
+		return "", 0, "", ErrBackupCriticalNeedsRecipient
+	}
+
+	// Cancelling this context kills pg_dump at once when the copy aborts (size
+	// limit, disk error) instead of waiting for it to hit the closed pipe.
+	dumpCtx, cancelDump := context.WithCancel(ctx)
+	defer cancelDump()
+	dumpReader, err := s.dumper.Dump(dumpCtx)
 	if err != nil {
+		return "", 0, "", fmt.Errorf("pg_dump: %w", err)
+	}
+	pattern := staleBackupFilePrefix + "*.sql.gz"
+	if len(recipients) > 0 {
+		pattern += ".age"
+	}
+	archive, err := s.createArchiveFile(pattern)
+	if err != nil {
+		// Close waits for pg_dump to exit; if it is still waiting for a table lock
+		// that could take the whole lock timeout (or forever for a whole dump).
+		cancelDump()
 		_ = dumpReader.Close()
-		return "", 0, fmt.Errorf("create backup archive: %w", err)
+		return "", 0, "", fmt.Errorf("create backup archive: %w", err)
 	}
 	archivePath := archive.Name()
 
-	gzWriter := gzip.NewWriter(archive)
-	_, copyErr := io.Copy(gzWriter, dumpReader)
-	if closeErr := gzWriter.Close(); copyErr == nil && closeErr != nil {
-		copyErr = closeErr
+	limit, builtinLimit := s.archiveLimit()
+	digest := sha256.New()
+	sink := &limitedArchiveWriter{w: io.MultiWriter(archive, digest), limit: limit, builtin: builtinLimit}
+	copyErr := s.writeBackupArchive(sink, dumpReader, recipients)
+	if copyErr != nil {
+		cancelDump()
 	}
 	if closeErr := dumpReader.Close(); copyErr == nil && closeErr != nil {
 		copyErr = closeErr
@@ -799,15 +1032,113 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 	}
 	if copyErr != nil {
 		_ = cleanupBackupFiles(archivePath)
-		return "", 0, fmt.Errorf("gzip/dump failed: %w", copyErr)
+		return "", 0, "", fmt.Errorf("gzip/dump failed: %w", copyErr)
 	}
 
 	info, err := os.Stat(archivePath)
 	if err != nil {
 		_ = cleanupBackupFiles(archivePath)
-		return "", 0, fmt.Errorf("stat backup archive: %w", err)
+		return "", 0, "", fmt.Errorf("stat backup archive: %w", err)
 	}
-	return archivePath, info.Size(), nil
+	return archivePath, info.Size(), hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+// backupArchiveFile is the staged archive. It is an *os.File in production; tests
+// wrap it to make Close fail.
+type backupArchiveFile interface {
+	io.WriteCloser
+	Name() string
+}
+
+func createStagedArchive(pattern string) (backupArchiveFile, error) {
+	file, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
+}
+
+// recordedDigest is the digest a record stores. Only a non-default backup records
+// one, so a default whole-database record stays byte-identical to before.
+func (s *BackupService) recordedDigest(digest string) string {
+	if s.nonDefaultBackup() {
+		return digest
+	}
+	return ""
+}
+
+// writeBackupArchive streams src through gzip into dst, with an age encryptor
+// in between when recipients are set (dump -> gzip -> age -> dst). Closers run
+// innermost first, so the gzip trailer and the age final chunk are both in dst
+// before the caller closes the file. A partial snapshot is re-taken often, so it
+// trades compression ratio for CPU; the whole-database dump keeps the default.
+func (s *BackupService) writeBackupArchive(dst io.Writer, src io.Reader, recipients []age.Recipient) (err error) {
+	out := dst
+	if len(recipients) > 0 {
+		enc, encErr := s.ageEncrypt(dst, recipients...)
+		if encErr != nil {
+			return fmt.Errorf("create age encryptor: %w", encErr)
+		}
+		defer func() {
+			if closeErr := enc.Close(); err == nil && closeErr != nil {
+				err = closeErr
+			}
+		}()
+		out = enc
+	}
+
+	level := gzip.DefaultCompression
+	if s.backupScope() != "" {
+		level = gzip.BestSpeed
+	}
+	gzWriter, _ := gzip.NewWriterLevel(out, level) // the error is only for an invalid level
+	_, err = io.Copy(gzWriter, src)
+	if closeErr := gzWriter.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	return err
+}
+
+// parseAgeRecipients turns configured age public keys into recipients. The key
+// text is left out of the error on purpose.
+func parseAgeRecipients(keys []string) ([]age.Recipient, error) {
+	recipients := make([]age.Recipient, 0, len(keys))
+	for i, key := range keys {
+		recipient, err := age.ParseX25519Recipient(strings.TrimSpace(key))
+		if err != nil {
+			return nil, fmt.Errorf("backup age recipient %d is not a valid age X25519 public key", i+1)
+		}
+		recipients = append(recipients, recipient)
+	}
+	return recipients, nil
+}
+
+// limitedArchiveWriter counts the bytes that reach the archive on disk and fails
+// the write that takes the total past limit (0 = unlimited). After the first
+// failure it refuses everything, so a trailing flush cannot keep growing the file.
+type limitedArchiveWriter struct {
+	w       io.Writer
+	limit   int64
+	builtin bool // limit is the built-in one of a critical snapshot, not backup.max_archive_bytes
+	written int64
+	err     error
+}
+
+func (l *limitedArchiveWriter) Write(p []byte) (int, error) {
+	if l.err != nil {
+		return 0, l.err
+	}
+	n, err := l.w.Write(p)
+	l.written += int64(n)
+	if err == nil && l.limit > 0 && l.written > l.limit {
+		source := "backup.max_archive_bytes"
+		if l.builtin {
+			source = "built-in default for a critical snapshot; set backup.max_archive_bytes to change it"
+		}
+		err = fmt.Errorf("%w: limit %d bytes (%s), written %d bytes", ErrBackupArchiveTooLarge, l.limit, source, l.written)
+	}
+	l.err = err
+	return n, err
 }
 
 func (s *BackupService) uploadBackupArchive(ctx context.Context, record *BackupRecord, objectStore BackupObjectStore, cfg *BackupS3Config, archivePath string) error {
@@ -820,7 +1151,7 @@ func (s *BackupService) uploadBackupArchive(ctx context.Context, record *BackupR
 		partSize = defaultBackupPartSizeBytes
 	}
 	if info.Size() <= partSize {
-		if _, err := objectStore.UploadFile(ctx, record.S3Key, archivePath, "application/gzip"); err != nil {
+		if _, err := objectStore.UploadFile(ctx, record.S3Key, archivePath, backupContentType(record)); err != nil {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), backupObjectCleanupTimeout)
 			cleanupErr := deleteBackupObjectKeys(cleanupCtx, objectStore, record)
 			cleanupCancel()
@@ -895,6 +1226,9 @@ func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) erro
 	if err != nil {
 		return err
 	}
+	if record.restoreUnsupported() {
+		return ErrBackupRestoreUnsupported
+	}
 	if record.Status != "completed" {
 		return infraerrors.BadRequest("BACKUP_NOT_COMPLETED", "can only restore from a completed backup")
 	}
@@ -967,6 +1301,9 @@ func (s *BackupService) StartRestore(ctx context.Context, backupID string) (*Bac
 	if err != nil {
 		return nil, err
 	}
+	if record.restoreUnsupported() {
+		return nil, ErrBackupRestoreUnsupported
+	}
 	if record.Status != "completed" {
 		return nil, infraerrors.BadRequest("BACKUP_NOT_COMPLETED", "can only restore from a completed backup")
 	}
@@ -1010,6 +1347,15 @@ func (s *BackupService) StartRestore(ctx context.Context, backupID string) (*Bac
 
 // executeRestore 后台执行恢复
 func (s *BackupService) executeRestore(record *BackupRecord, objectStore BackupObjectStore) {
+	// StartRestore already refused these; this is the last guard before psql, so a
+	// future caller of executeRestore cannot replay a partial or encrypted snapshot.
+	if record.restoreUnsupported() {
+		record.RestoreStatus = "failed"
+		record.RestoreError = ErrBackupRestoreUnsupported.Message
+		_ = s.saveRecord(context.Background(), record)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
 	defer cancel()
 
@@ -1354,12 +1700,60 @@ func (s *BackupService) saveRecord(ctx context.Context, record *BackupRecord) er
 		records = append(records, *record)
 	}
 
-	// 限制记录数量
-	if len(records) > maxBackupRecords {
-		records = records[len(records)-maxBackupRecords:]
+	return s.saveRecordsLocked(ctx, s.trimRecordsLocked(records))
+}
+
+// trimRecordsLocked keeps the record list within maxBackupRecords. The oldest
+// records go first and failed ones before completed ones: a failed record owns no
+// object (its upload was rolled back), but a completed record is the only handle
+// on an object in the bucket, so it is dropped only after that object is deleted.
+// A completed record whose object cannot be deleted stays in the list, because an
+// object nobody can see can never be cleaned up; the next save retries it. Running
+// and pending records are never dropped. The caller holds recordsMu.
+func (s *BackupService) trimRecordsLocked(records []BackupRecord) []BackupRecord {
+	excess := len(records) - maxBackupRecords
+	if excess <= 0 {
+		return records
 	}
 
-	return s.saveRecordsLocked(ctx, records)
+	// By start time, not by position: cleanupOldBackups stores the list newest first.
+	order := make([]int, len(records))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return records[order[a]].StartedAt < records[order[b]].StartedAt })
+
+	ctx, cancel := context.WithTimeout(context.Background(), backupObjectCleanupTimeout)
+	defer cancel()
+	drop := make(map[int]bool, excess)
+	for _, status := range []string{"failed", "completed"} {
+		for _, i := range order {
+			if excess == 0 {
+				break
+			}
+			if records[i].Status != status {
+				continue
+			}
+			if status == "completed" {
+				if err := s.deleteBackupObjects(ctx, &records[i]); err != nil {
+					logger.LegacyPrintf("service.backup", "[Backup] 记录数已达上限，但备份 %s 的对象删除失败，保留记录待下次重试: %v", records[i].ID, err)
+					continue
+				}
+			}
+			drop[i] = true
+			excess--
+		}
+	}
+	if len(drop) == 0 {
+		return records
+	}
+	kept := make([]BackupRecord, 0, len(records)-len(drop))
+	for i := range records {
+		if !drop[i] {
+			kept = append(kept, records[i])
+		}
+	}
+	return kept
 }
 
 func (s *BackupService) cleanupOldBackups(ctx context.Context, schedule *BackupScheduleConfig) error {

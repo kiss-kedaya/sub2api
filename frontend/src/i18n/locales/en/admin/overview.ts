@@ -127,7 +127,7 @@ export default {
         retainDays: 'Backup Expire Days',
         retainDaysHint: 'Backup files auto-delete after this many days, 0 = never expire',
         retainCount: 'Max Retain Count',
-        retainCountHint: 'Maximum number of backups to keep, 0 = unlimited',
+        retainCountHint: 'Maximum number of backups to keep (at most 99), 0 = unlimited',
         saved: 'Schedule configuration saved'
       },
       operations: {
