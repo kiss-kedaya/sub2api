@@ -23,8 +23,11 @@ func ProvideContentModerationWithPenalties(
 	invalidator APIKeyAuthCacheInvalidator,
 	email *EmailService,
 	penalties *SecurityPenaltyService,
+	opsService *OpsService,
 ) *ContentModerationService {
 	svc := NewContentModerationService(settings, repo, hashCache, groups, users, proxies, invalidator, email)
 	svc.SetSecurityPenalties(penalties)
+	// 自动封禁管理员通知优先复用 ops 告警收件人，见 notifyAdminsAutoBan。
+	svc.SetOpsService(opsService)
 	return svc
 }

@@ -214,7 +214,9 @@ func TestSecurityPenaltyOnlyExplicitEnforcementReplacesLegacyLoginBan(t *testing
 			m.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 1))
 			m.ExpectQuery("INSERT INTO security_penalty_events").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 			m.ExpectCommit()
-			svc.persistContentModerationLog(context.Background(), &ContentModerationConfig{AutoBanEnabled: true, BanThreshold: 1}, log, "", false, true)
+			// Enabled=true：2026-11-24 事故后，内容审核主开关关闭时自动封禁强制失效，
+			// 这里要验证的是「旧封禁路径确实会封人」，所以必须显式打开主开关。
+			svc.persistContentModerationLog(context.Background(), &ContentModerationConfig{Enabled: true, AutoBanEnabled: true, BanThreshold: 1}, log, "", false, true)
 			if observe {
 				require.Equal(t, StatusDisabled, users.user.Status)
 			} else {
