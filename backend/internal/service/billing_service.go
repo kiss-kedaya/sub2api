@@ -414,6 +414,13 @@ func NewBillingService(cfg *config.Config, pricingService *PricingService) *Bill
 	// 初始化硬编码回退价格（当动态价格不可用时使用）
 	s.initFallbackPricing()
 
+	// 登记全局定价解析器：Claude 真价锚点用它为被非 Claude 分组渠道服务的
+	// Claude 模型取官方价（见 claude_pricing_anchor.go），不依赖分组渠道档价。
+	claudeFallbackPricingTable.Store(s)
+	if s.pricingService != nil {
+		claudePricingFallbackResolver.Store(s)
+	}
+
 	return s
 }
 

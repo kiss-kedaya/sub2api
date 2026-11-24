@@ -112,13 +112,10 @@ func IsOpenAICompatibleUpstreamPlatform(platform string) bool {
 	return isOpenAICompatibleUpstreamPlatform(platform)
 }
 
-func isOpenAICompatibleUpstreamPlatform(platform string) bool {
-	switch strings.TrimSpace(platform) {
-	case PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformCline, PlatformCommandCode:
-		return true
-	default:
-		return false
-	}
+// isOpenAICompatibleUpstreamPlatform 委托给 openai_compatible_upstream_platforms.go
+// 的唯一名单，避免路由/调度/准入各维护一份平台 switch 而漂移。
+func isOpenAICompatibleUpstreamPlatform(p string) bool {
+	return openAICompatibleUpstreamPlatform(p)
 }
 
 func groupPlatformFitsRequest(groupPlatform, requestPlatform string) bool {
@@ -166,6 +163,15 @@ func groupUsableForRequest(group *Group, requestPlatform, model string, schedula
 		// OpenAI-type accounts in a Gemini/Claude-labeled group can serve
 		// OpenAI-compatible clients and the Anthropic messages bridge.
 		if isOpenAICompatibleUpstreamPlatform(platform) {
+			// Claude 模型例外：grok/CN 供应商等非 Anthropic 上游账号默认不能
+			// 服务 claude-*（否则 /v1/messages 会把 claude 请求转成 grok 上游，
+			// 与 /v1/chat/completions 的 404 判定不一致）。仅当分组显式开启
+			// 跨协议转换时才继续可用，逐账号准入由调度层的 Claude 闸门负责。
+			if !upstreamPlatformServesClaudeFamily(platform) &&
+				!crossProtocolAllowsClaudeOnUpstream(group) &&
+				isClaudeModel(model) {
+				continue
+			}
 			return true
 		}
 	}
@@ -271,6 +277,14 @@ func groupPassthroughsRequestedModel(group *Group, requestedModel string, schedu
 	}
 	if group != nil && (group.Platform == detected || group.Platform == PlatformComposite) {
 		return true
+	}
+	if isOpenAICompatibleUpstreamPlatform(detected) &&
+		!upstreamPlatformServesClaudeFamily(detected) &&
+		!crossProtocolAllowsClaudeOnUpstream(group) &&
+		isClaudeModel(requestedModel) {
+		// 同上：该模型族只能由 Anthropic 系上游服务，而唯一可调度平台是
+		// grok/CN 供应商且分组未开跨协议转换 → 不能当作“透传可用”。
+		return false
 	}
 	_, ok = schedulable[detected]
 	return ok

@@ -996,7 +996,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+			// 计费锚点：本请求实际使用的分组（选路后 apiKey 已替换为路由 key）。
+			// recordUsageCore 据此识别「Claude 模型被非 Claude 分组服务」的跨目录错配，
+			// 改按 Claude 真价与承载 Claude 的上游分组倍率计费。
+			billingGroup := apiKey.Group
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
+				if billingGroup != nil {
+					ctx = service.WithClaudePricingAnchor(ctx, billingGroup, false)
+				}
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
 					APIKey:             apiKey,

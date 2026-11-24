@@ -834,9 +834,16 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if s.cfg != nil {
 		multiplier = s.cfg.Default.RateMultiplier
 	}
+	// Claude 模型被非 Claude 分组渠道服务时，倍率改按承载 Claude 的上游分组解析，
+	// 避免把 grok/CN 供应商的折扣率（如 0.12）套到 Claude 上。
+	// 仅当 ctx 已钉住计费锚点或主组确实存在跨目录错配时生效；正常场景逐位一致。
+	billingGroup, billingGroupID, claudeFallback := s.resolveClaudeBillingAnchor(ctx, apiKey, forwardResultBillingModel(result.Model, result.UpstreamModel))
 	if apiKey.GroupID != nil && apiKey.Group != nil {
 		groupDefault := apiKey.Group.RateMultiplier
 		multiplier = s.ResolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, groupDefault)
+	}
+	if claudeFallback {
+		multiplier = s.adjustClaudeFallbackMultiplier(ctx, user.ID, apiKey, billingGroup, multiplier)
 	}
 	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。高峰因子按请求时刻现算，
 	// 不并入上面的 getUserGroupRateMultiplier，以免污染 user:group 倍率缓存。
@@ -867,6 +874,25 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, result.UpstreamModel, result.Model)
 	cacheStorageCost := s.cacheStorageCost(result, billingModel)
 
+	// Claude 模型被非 Claude 分组服务（跨协议转换）时，必须优先命中 Claude
+	// 真价，不能停在组内供应商档价上；同时把渠道价查询锚到实际计费分组。
+	claudeFallbackPricing := claudeCatalogMispricingGroup(billingGroup, billingModel) != nil
+	if claudeFallbackPricing {
+		if fallbackModel := s.claudeFallbackBillingModel(
+			claudeBillingFallbackCandidates(billingModel, result.Model, result.UpstreamModel, concreteBillingModel),
+		); fallbackModel != "" {
+			billingModel = fallbackModel
+		} else {
+			logger.LegacyPrintf("service.gateway",
+				"[Billing] no claude pricing for %q; keeping supplier catalog price (group=%d)",
+				billingModel, billingGroupIDOf(billingGroup))
+		}
+	}
+	billingCtx := ctx
+	if billingGroupID != nil && billingGroup != nil {
+		billingCtx = withClaudeFallbackPricingGroup(ctx, billingGroup, billingModel, claudeFallbackPricing)
+	}
+
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model
 	if input.OriginalModel != "" {
@@ -874,7 +900,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 
 	// 计算费用
-	cost := s.calculateRecordUsageCost(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, pricingAt)
+	cost := s.calculateRecordUsageCost(billingCtx, result, apiKey, billingModel, multiplier, imageMultiplier, pricingAt)
 	if result.ForcedBillingCost > 0 {
 		cost = &CostBreakdown{
 			TotalCost:   result.ForcedBillingCost,
@@ -892,9 +918,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		result.UpstreamResponseModelConflict,
 		result.ImageCount > 0 || result.AudioUsage != nil || result.OCRPages > 0 || result.SearchCount > 0 || result.CacheStorageTokenHours > 0,
 	); responseModel != "" && !strings.EqualFold(responseModel, strings.TrimSpace(billingModel)) {
-		if identified, responseChannelPriced := s.hasIdentifiedResponseModelPricing(ctx, responseModel, apiKey); identified {
-			responseCost := s.calculateRecordUsageCost(ctx, result, apiKey, responseModel, multiplier, imageMultiplier, pricingAt)
-			baselineChannelPriced := s.resolveChannelPricing(ctx, billingModel, apiKey) != nil
+		if identified, responseChannelPriced := s.hasIdentifiedResponseModelPricing(billingCtx, responseModel, apiKey); identified {
+			responseCost := s.calculateRecordUsageCost(billingCtx, result, apiKey, responseModel, multiplier, imageMultiplier, pricingAt)
+			baselineChannelPriced := s.resolveChannelPricing(billingCtx, billingModel, apiKey) != nil
 			if responseModelBillingAdoptable(cost, responseCost, baselineChannelPriced, responseChannelPriced) {
 				// billingModel 到此为止只是定价查表的入参，后续流程只消费 cost，
 				// 因此这里不改写它，改由日志记录实际生效的计费基准。
