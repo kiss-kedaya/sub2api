@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
@@ -125,11 +124,13 @@ func (s *GatewayService) selectAccountAlongKeyRoutesOnce(ctx context.Context, ap
 	}
 	// 路由层把候选组全部过滤时此前返回裸 ErrNoAvailableAccounts，线上只能看到
 	// "No available accounts: no available accounts"。这里补上每个候选被过滤的
-	// 原因摘要；selection 层返回的裸 no-available 也一并带上。
+	// 原因摘要；selection 层返回的裸 no-available 也一并带上。摘要只进错误文本
+	// （日志/ops）；用 %w 包装，lastErr 里的结构化计数（SelectionFailureCounts）
+	// 仍可被 errors.As 取到，分类不依赖文本末尾的括号。
 	if summary := routes.skipSummary(); summary != "" {
 		if lastErr == nil {
 			lastErr = fmt.Errorf("%w (%s)", ErrNoAvailableAccounts, summary)
-		} else if errors.Is(lastErr, ErrNoAvailableAccounts) && !strings.Contains(lastErr.Error(), "filtered:") {
+		} else if errors.Is(lastErr, ErrNoAvailableAccounts) {
 			lastErr = fmt.Errorf("%w (%s)", lastErr, summary)
 		}
 	}

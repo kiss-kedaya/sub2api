@@ -691,11 +691,13 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				}
-				message := cls.Message
-				if !cls.ModelNotFound {
-					message = "No available Gemini accounts: " + err.Error()
-				}
-				googleError(c, cls.Status, message)
+				// 调度内部诊断只进日志，客户端只看稳定文案（见 clientNoAccountMessage）。
+				reqLog.Warn("gemini.select_account_no_available",
+					zap.Int64p("group_id", apiKey.GroupID),
+					zap.Bool("model_not_found", cls.ModelNotFound),
+					zap.Error(err),
+				)
+				googleError(c, cls.Status, clientNoAccountMessage(cls))
 				return
 			}
 			action := fs.HandleSelectionExhausted(c.Request.Context())

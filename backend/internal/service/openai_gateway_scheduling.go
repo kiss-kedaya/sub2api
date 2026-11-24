@@ -316,13 +316,12 @@ func NormalizeOpenAICompatiblePlatform(platform string) string {
 
 // noAvailableOpenAISelectionError builds the standard "no account available" error
 // while preserving the legacy /responses/compact error when applicable.
-// details carries an optional machine-parseable exclusion summary (e.g.
-// "pool=2, filtered: quota_auto_pause_7d=1 runtime_blocked=1") appended in
-// parentheses. It is for server-side logs / ops diagnostics only: handlers
-// never forward this error text to OpenAI-platform clients (they respond with
-// the generic classification message). Callers that must preserve the legacy
-// message pass "".
-func noAvailableOpenAISelectionError(requestedModel string, compactBlocked bool, details string) error {
+// stats carries the exclusion counters: they travel in the structured part of the
+// error (SelectionFailureCounts) for the handler classifier, and are also rendered
+// into the text, e.g. "pool=2, filtered: quota_auto_pause_7d=1 runtime_blocked=1".
+// extra, when non-empty, is appended as a trailing marker. The text is for server
+// logs / ops diagnostics only: handlers never forward it to clients and never parse it.
+func noAvailableOpenAISelectionError(requestedModel string, compactBlocked bool, stats openAISelectionFilterStats, extra string) error {
 	if compactBlocked {
 		return ErrNoAvailableCompactAccounts
 	}
@@ -330,22 +329,8 @@ func noAvailableOpenAISelectionError(requestedModel string, compactBlocked bool,
 	if requestedModel != "" {
 		message = fmt.Sprintf("no available OpenAI accounts supporting model: %s", requestedModel)
 	}
-	if details != "" {
-		message += " (" + details + ")"
-	}
-	return openAINoAvailableSelectionError{message: message}
-}
-
-type openAINoAvailableSelectionError struct {
-	message string
-}
-
-func (e openAINoAvailableSelectionError) Error() string {
-	return e.message
-}
-
-func (e openAINoAvailableSelectionError) Unwrap() error {
-	return ErrNoAvailableAccounts
+	message += " (" + stats.summary(extra) + ")"
+	return NewSelectionFailureError(stats.failureCounts(), message)
 }
 
 // openAICompactSupportTier classifies an OpenAI-compatible account by compact capability.
@@ -1007,7 +992,7 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 	}
 
 	if selected == nil {
-		return nil, noAvailableOpenAISelectionError(requestedModel, compactBlocked, filterStats.summary(""))
+		return nil, noAvailableOpenAISelectionError(requestedModel, compactBlocked, filterStats, "")
 	}
 
 	hydrated, err := s.hydrateSelectedAccount(ctx, selected)
@@ -1295,7 +1280,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	}
 	accounts = applySchedulerFreshnessForRequest(ctx, s.accountRepo, s.schedulerSnapshot, accounts)
 	if len(accounts) == 0 {
-		return nil, noAvailableOpenAISelectionError(requestedModel, false, openAISelectionFilterStats{}.summary("freshness_unavailable"))
+		return nil, noAvailableOpenAISelectionError(requestedModel, false, openAISelectionFilterStats{}, "freshness_unavailable")
 	}
 
 	isExcluded := func(accountID int64) bool {
@@ -1444,7 +1429,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		}
 	}
 	if len(candidates) == 0 {
-		return nil, noAvailableOpenAISelectionError(requestedModel, false, filterStats.summary(""))
+		return nil, noAvailableOpenAISelectionError(requestedModel, false, filterStats, "")
 	}
 	rateOrder := openAILegacyUpstreamRateOrder{}
 	if preferLowUpstreamRate {

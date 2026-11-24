@@ -91,5 +91,5 @@ func noAvailableAccountsDueToModelSupport(requestedModel string, unsupportedCoun
 	if unsupportedCount > 0 {
 		stats.reasons = map[string]int{"model_not_supported": unsupportedCount}
 	}
-	return noAvailableOpenAISelectionError(requestedModel, false, stats.summary(""))
+	return noAvailableOpenAISelectionError(requestedModel, false, stats, "")
 }

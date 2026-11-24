@@ -269,11 +269,14 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				}
-				message := cls.Message
-				if !cls.ModelNotFound {
-					message = "No available accounts: " + err.Error() + " [" +
-						service.SelectionFailureProtocolDiagnostics(c, apiKey, c.Request.URL.Path) + "]"
-				}
+				// 调度内部诊断只进日志，客户端只看稳定文案（见 clientNoAccountMessage）。
+				reqLog.Warn("gateway.cc.select_account_no_available",
+					zap.Int64p("group_id", apiKey.GroupID),
+					zap.Bool("model_not_found", cls.ModelNotFound),
+					zap.String("protocol_diagnostics", service.SelectionFailureProtocolDiagnostics(c, apiKey, c.Request.URL.Path)),
+					zap.Error(err),
+				)
+				message := clientNoAccountMessage(cls)
 				if cls.Code != "" {
 					h.chatCompletionsErrorResponseWithCode(c, cls.Status, cls.ErrType, cls.Code, message)
 					return

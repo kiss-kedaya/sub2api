@@ -42,6 +42,13 @@ func (f *fakeDiagnoser) DiagnoseModelAvailabilityForPlatform(
 
 func ptrInt64(v int64) *int64 { return &v }
 
+// selectionFailure builds a scheduler-style "no available accounts" error the way
+// the scheduler does: the counters travel in the structured part, the text is
+// diagnostics only and is never parsed by the classifier.
+func selectionFailure(model string, counts service.SelectionFailureCounts, details string) error {
+	return service.NewSelectionFailureError(counts, "no available accounts supporting model: "+model+" ("+details+")")
+}
+
 // newTestGinContextWithRequest wraps the bare newTestGinContext helper
 // (defined in openai_gateway_cyber_test.go) by additionally attaching a stub
 // *http.Request so the classifier can extract c.Request.Context().
@@ -66,15 +73,17 @@ func TestClassifySelectionFailureError_RateLimitedPool(t *testing.T) {
 	fallback := noAccountErrorClassification{Status: http.StatusServiceUnavailable, ErrType: "api_error", Message: "Service temporarily unavailable"}
 
 	got := classifySelectionFailureError(
-		fmt.Errorf("no available accounts supporting model: gpt-5.6-sol (total=3 eligible=0 model_rate_limited=3)"),
+		selectionFailure("gpt-5.6-sol", service.SelectionFailureCounts{Pool: 3, ModelRateLimited: 3}, "total=3 eligible=0 model_rate_limited=3"),
 		fallback,
 	)
 
 	require.Equal(t, http.StatusTooManyRequests, got.Status)
 	require.Equal(t, "rate_limit_error", got.ErrType)
 	require.Contains(t, got.Message, "rate-limited")
-	require.Equal(t, fallback, classifySelectionFailureError(fmt.Errorf("model_rate_limited=0"), fallback))
+	require.Equal(t, fallback, classifySelectionFailureError(
+		selectionFailure("gpt-5.6-sol", service.SelectionFailureCounts{Pool: 3}, "model_rate_limited=0"), fallback))
 	require.Equal(t, fallback, classifySelectionFailureError(fmt.Errorf("no available accounts"), fallback))
+	require.Equal(t, fallback, classifySelectionFailureError(service.ErrNoAvailableAccounts, fallback))
 }
 
 func TestClassifySelectionFailureError_DeterministicModelCooldown(t *testing.T) {
@@ -82,7 +91,7 @@ func TestClassifySelectionFailureError_DeterministicModelCooldown(t *testing.T) 
 
 	t.Run("all upstream accounts reject the model", func(t *testing.T) {
 		got := classifySelectionFailureError(
-			fmt.Errorf("no available OpenAI accounts (pool=2, filtered: model_not_supported=2)"),
+			selectionFailure("gpt-x", service.SelectionFailureCounts{Pool: 2, ModelNotSupported: 2}, "pool=2, filtered: model_not_supported=2"),
 			fallback,
 		)
 		require.Equal(t, http.StatusNotFound, got.Status)
@@ -92,7 +101,7 @@ func TestClassifySelectionFailureError_DeterministicModelCooldown(t *testing.T) 
 
 	t.Run("all upstream plans gate the model", func(t *testing.T) {
 		got := classifySelectionFailureError(
-			fmt.Errorf("no available OpenAI accounts (pool=2, filtered: model_plan_gated=2)"),
+			selectionFailure("gpt-x", service.SelectionFailureCounts{Pool: 2, ModelPlanGated: 2}, "pool=2, filtered: model_plan_gated=2"),
 			fallback,
 		)
 		require.Equal(t, http.StatusForbidden, got.Status)
@@ -102,7 +111,7 @@ func TestClassifySelectionFailureError_DeterministicModelCooldown(t *testing.T) 
 
 	t.Run("partial deterministic exclusion remains a capacity error", func(t *testing.T) {
 		got := classifySelectionFailureError(
-			fmt.Errorf("no available OpenAI accounts (pool=2, filtered: excluded=1 model_not_supported=1)"),
+			selectionFailure("gpt-x", service.SelectionFailureCounts{Pool: 2, ModelNotSupported: 1}, "pool=2, filtered: excluded=1 model_not_supported=1"),
 			fallback,
 		)
 		require.Equal(t, fallback, got)
@@ -110,7 +119,7 @@ func TestClassifySelectionFailureError_DeterministicModelCooldown(t *testing.T) 
 
 	t.Run("requested model cannot inject a retry classification", func(t *testing.T) {
 		got := classifySelectionFailureError(
-			fmt.Errorf("no available OpenAI accounts supporting model: fake-model_rate_limited=99 (pool=1, filtered: model_not_supported=1)"),
+			selectionFailure("fake-model_rate_limited=99", service.SelectionFailureCounts{Pool: 1, ModelNotSupported: 1}, "pool=1, filtered: model_not_supported=1"),
 			fallback,
 		)
 		require.Equal(t, http.StatusNotFound, got.Status)
@@ -124,7 +133,7 @@ func TestClassifySelectionFailureErrorFromGin_MarksTerminalModelFailure(t *testi
 
 	got := classifySelectionFailureErrorFromGin(
 		c,
-		fmt.Errorf("no available OpenAI accounts (pool=1, filtered: model_plan_gated=1)"),
+		selectionFailure("gpt-x", service.SelectionFailureCounts{Pool: 1, ModelPlanGated: 1}, "pool=1, filtered: model_plan_gated=1"),
 		fallback,
 	)
 
@@ -309,8 +318,8 @@ func TestClassifySelectionFailureError_ModelNotFoundIsNotOverriddenByRateLimited
 	}
 
 	got := classifySelectionFailureError(
-		fmt.Errorf("no available OpenAI accounts supporting model: gpt-5.3-codex "+
-			"(pool=9, filtered: model_not_supported=8 model_rate_limited=1)"),
+		selectionFailure("gpt-5.3-codex", service.SelectionFailureCounts{Pool: 9, ModelNotSupported: 8, ModelRateLimited: 1},
+			"pool=9, filtered: model_not_supported=8 model_rate_limited=1"),
 		modelNotFound,
 	)
 
@@ -329,8 +338,8 @@ func TestClassifySelectionFailureError_CallSiteChainKeepsModelNotFoundAttributio
 
 	cls := classifyNoAccountErrorFromGin(c, fd, apiKey, "gpt-5.3-codex", "gpt-5.3-codex", service.PlatformOpenAI)
 	cls = classifySelectionFailureError(
-		fmt.Errorf("no available OpenAI accounts supporting model: gpt-5.3-codex "+
-			"(pool=9, filtered: model_not_supported=8 model_rate_limited=1)"),
+		selectionFailure("gpt-5.3-codex", service.SelectionFailureCounts{Pool: 9, ModelNotSupported: 8, ModelRateLimited: 1},
+			"pool=9, filtered: model_not_supported=8 model_rate_limited=1"),
 		cls,
 	)
 
@@ -352,7 +361,7 @@ func TestClassifySelectionFailureError_StillUpgradesNonModelNotFoundFallback(t *
 	}
 
 	got := classifySelectionFailureError(
-		fmt.Errorf("no available accounts supporting model: gpt-5.6-sol (total=3 eligible=0 model_rate_limited=3)"),
+		selectionFailure("gpt-5.6-sol", service.SelectionFailureCounts{Pool: 3, ModelRateLimited: 3}, "total=3 eligible=0 model_rate_limited=3"),
 		fallback,
 	)
 
@@ -370,7 +379,9 @@ func TestClassifyNoAccountError_ModelNotAvailable_CodeAndAvailableModels(t *test
 		HasModelSupport:   false,
 		AvailableModels:   []string{"claude-sonnet-4-5", "claude-haiku-4-5"},
 	}}
-	apiKey := &service.APIKey{GroupID: ptrInt64(118)}
+	// 只有确认了请求所属分组（Group 已加载且 ID 与 GroupID 一致）才会列出可用模型，
+	// 并按该分组的模型白名单过滤；这里分组没有白名单，列表原样展示。
+	apiKey := &service.APIKey{GroupID: ptrInt64(118), Group: &service.Group{ID: 118, Platform: service.PlatformAnthropic}}
 
 	cls := classifyNoAccountErrorFromGin(c, fd, apiKey, "claude-opus-9", "claude-opus-9", service.PlatformAnthropic)
 

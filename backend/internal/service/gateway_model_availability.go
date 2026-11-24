@@ -22,17 +22,14 @@ type ModelAvailabilityDiagnosis struct {
 	// HasModelSupport is true if at least one account's model mapping admits
 	// the requested model.
 	HasModelSupport bool
-	// AvailableModels is a best-effort, sorted, deduplicated and capped list of
-	// public model names advertised by the pool's model mappings. It is filled
-	// only when the pool exists but no account admits the requested model, so
-	// the error message can tell the caller what the group can serve instead of
-	// leaving them with a bare "no available accounts".
+	// AvailableModels is a best-effort, sorted and deduplicated list of the
+	// model mapping keys of every account in the pool. It is filled only when
+	// the pool exists but no account admits the requested model. It is NOT
+	// narrowed by the group model allowlist and NOT capped: callers must filter
+	// it to what the requesting group exposes (and cap it) before it reaches an
+	// API caller, otherwise it reveals aliases the allowlist hides.
 	AvailableModels []string
 }
-
-// maxDiagnosedAvailableModels caps AvailableModels so an error body stays
-// readable when a group advertises hundreds of aliases.
-const maxDiagnosedAvailableModels = 20
 
 // collectAvailableModelKeys records mapping keys (public model names/patterns)
 // from the diagnosis candidate pool. Accounts with an empty mapping accept any
@@ -57,9 +54,6 @@ func collectAvailableModelKeys(accounts []Account) []string {
 		models = append(models, model)
 	}
 	sort.Strings(models)
-	if len(models) > maxDiagnosedAvailableModels {
-		models = models[:maxDiagnosedAvailableModels]
-	}
 	return models
 }
 

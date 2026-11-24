@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -47,18 +45,47 @@ type noAccountErrorClassification struct {
 // but none of them supports the requested model".
 const modelNotAvailableCode = "MODEL_NOT_AVAILABLE"
 
+// maxListedAvailableModels caps how many aliases a MODEL_NOT_AVAILABLE message
+// quotes, so the error body stays readable when a group advertises hundreds.
+const maxListedAvailableModels = 20
+
+// noAvailableAccountsMessage / noAvailableAccountsRateLimitedMessage are the only
+// texts an API caller sees for a capacity-type "no account" failure (503 / 429).
+// The "No available accounts" prefix is kept on purpose: the ops error filter,
+// the ops phase classifier and the channel-monitor taxonomy all key off it.
+const (
+	noAvailableAccountsMessage            = "No available accounts for this request. Please retry later."
+	noAvailableAccountsRateLimitedMessage = "No available accounts: all available accounts are currently rate-limited. Please retry later."
+)
+
+// clientNoAccountMessage renders the caller-facing text for a classified
+// "no account" failure. Scheduler internals (group id, pool counters, profit
+// gate, protocol and cross-protocol switches, the raw selection error) must
+// never be echoed to the client; handlers log them under the request id.
+// Verdicts the classifier owns (404 / 403 model verdicts, security-penalty 403)
+// already carry a client-safe Message and are kept as is.
+func clientNoAccountMessage(cls noAccountErrorClassification) string {
+	switch {
+	case cls.ModelNotFound:
+		return cls.Message
+	case cls.Status == http.StatusServiceUnavailable:
+		return noAvailableAccountsMessage
+	case cls.Status == http.StatusTooManyRequests:
+		return noAvailableAccountsRateLimitedMessage
+	default:
+		return cls.Message
+	}
+}
+
 // modelNotAvailableMessage renders the user-facing MODEL_NOT_AVAILABLE text.
-// availableModels comes from ModelAvailabilityDiagnosis and lists the public
-// aliases the group can actually serve, so a client asking for a model that
-// only exists in the group-level allowlist (but in no account mapping) gets an
-// actionable message instead of a retryable 503.
+// availableModels comes from ModelAvailabilityDiagnosis, already narrowed to
+// what the caller's group exposes (see groupVisibleModels), so a client asking
+// for a model no account maps gets an actionable message instead of a
+// retryable 503.
 func modelNotAvailableMessage(displayModel string, availableModels []string) string {
 	displayModel = strings.TrimSpace(displayModel)
 	if displayModel == "" {
 		displayModel = "unknown"
-	}
-	if len(availableModels) == 0 {
-		return fmt.Sprintf("分组内没有账号支持模型 %q（当前分组没有可用的模型配置）", displayModel)
 	}
 	quoted := make([]string, 0, len(availableModels))
 	for _, model := range availableModels {
@@ -66,43 +93,36 @@ func modelNotAvailableMessage(displayModel string, availableModels []string) str
 		if model == "" {
 			continue
 		}
+		if len(quoted) == maxListedAvailableModels {
+			break
+		}
 		quoted = append(quoted, fmt.Sprintf("%q", model))
+	}
+	if len(quoted) == 0 {
+		return fmt.Sprintf("分组内没有账号支持模型 %q（当前分组没有可用的模型配置）", displayModel)
 	}
 	return fmt.Sprintf("分组内没有账号支持模型 %q（当前可用：%s）", displayModel, strings.Join(quoted, ", "))
 }
 
-var selectionModelRateLimitedPattern = regexp.MustCompile(`(?:model_rate_limited|rate_limited)=(\d+)`)
-var selectionPoolPattern = regexp.MustCompile(`pool=(\d+)`)
-var selectionModelNotSupportedPattern = regexp.MustCompile(`model_not_supported=(\d+)`)
-var selectionModelPlanGatedPattern = regexp.MustCompile(`model_plan_gated=(\d+)`)
-
-func selectionFailureCount(pattern *regexp.Regexp, message string) int {
-	match := pattern.FindStringSubmatch(strings.ToLower(message))
-	if len(match) != 2 {
-		return 0
+// groupVisibleModels narrows the account model_mapping aliases a 404 may quote
+// to what the key's group exposes. The diagnosis collects the mapping keys of
+// every eligible account in the pool, which is wider than the group model
+// allowlist: quoting it verbatim would reveal aliases the allowlist hides. It
+// applies the same FilterForListing rule as /v1/models. When the group the
+// diagnosis ran against cannot be established, no list is shown.
+func groupVisibleModels(apiKey *service.APIKey, models []string) []string {
+	if len(models) == 0 || apiKey == nil || apiKey.GroupID == nil ||
+		apiKey.Group == nil || apiKey.Group.ID != *apiKey.GroupID {
+		return nil
 	}
-	count, err := strconv.Atoi(match[1])
-	if err != nil || count <= 0 {
-		return 0
-	}
-	return count
+	return apiKey.Group.ModelAllowlist.FilterForListing(models)
 }
 
-func selectionFailureDetails(message string) string {
-	message = strings.TrimSpace(message)
-	if !strings.HasSuffix(message, ")") {
-		return ""
-	}
-	start := strings.LastIndex(message, "(")
-	if start < 0 || start+1 >= len(message)-1 {
-		return ""
-	}
-	return message[start+1 : len(message)-1]
-}
-
-// classifySelectionFailureError uses the scheduler-owned diagnostic suffix to
-// distinguish real model rate limits from deterministic upstream model or plan
-// rejection. It never parses the user-controlled model portion of the error.
+// classifySelectionFailureError uses the scheduler's structured counters
+// (service.SelectionFailureCounts, read with errors.As) to distinguish real model
+// rate limits from deterministic upstream model or plan rejection. It never
+// parses the error text: that text embeds the caller-controlled model name and
+// the route-level skip summary, so a verdict read from it could be forged or lost.
 func classifySelectionFailureError(err error, fallback noAccountErrorClassification) noAccountErrorClassification {
 	if err == nil {
 		return fallback
@@ -124,11 +144,11 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 	if fallback.ModelNotFound {
 		return fallback
 	}
-	details := selectionFailureDetails(err.Error())
-	if details == "" {
+	counts, ok := service.SelectionFailureCountsFromError(err)
+	if !ok {
 		return fallback
 	}
-	if selectionFailureCount(selectionModelRateLimitedPattern, details) > 0 {
+	if counts.ModelRateLimited > 0 {
 		return noAccountErrorClassification{
 			Status:  http.StatusTooManyRequests,
 			ErrType: "rate_limit_error",
@@ -136,9 +156,7 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 		}
 	}
 
-	pool := selectionFailureCount(selectionPoolPattern, details)
-	unsupported := selectionFailureCount(selectionModelNotSupportedPattern, details)
-	planGated := selectionFailureCount(selectionModelPlanGatedPattern, details)
+	pool, unsupported, planGated := counts.Pool, counts.ModelNotSupported, counts.ModelPlanGated
 	if pool <= 0 || unsupported+planGated < pool {
 		return fallback
 	}
@@ -155,8 +173,8 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 		if strings.TrimSpace(message) == "" || message == "Service temporarily unavailable" {
 			// 正常路径下 classifyNoAccountError 已经用数据库诊断给出带可用模型
 			// 列表的精确文案（此时 fallback.ModelNotFound=true 会在上面提前返回）。
-			// 走到这里说明调度快照与持久化配置不一致，给一句可操作的兜底。
-			message = "分组内没有账号支持该模型，请检查账号模型映射与分组模型白名单"
+			// 走到这里说明调度快照与持久化配置不一致，给一句不含内部细节的兜底。
+			message = "分组内没有账号支持该模型，请更换模型后重试"
 		}
 		return noAccountErrorClassification{
 			Status:        http.StatusNotFound,
@@ -234,7 +252,7 @@ func classifyNoAccountError(
 			Status:  http.StatusNotFound,
 			ErrType: "model_not_found",
 			Code:    modelNotAvailableCode,
-			Message: modelNotAvailableMessage(displayModel, result.AvailableModels),
+			Message: modelNotAvailableMessage(displayModel, groupVisibleModels(apiKey, result.AvailableModels)),
 			// Keep the 404 model_not_found classification: callers gate the
 			// retryable 503 path on ModelNotFound, and a model that no
 			// account can serve must not be retried.
