@@ -15,6 +15,8 @@ export default {
     type: '类型',
     description: '说明',
     required: '必填',
+    authApiKey: 'API 密钥',
+    authSession: '登录令牌',
     optional: '可选',
     copy: '复制代码',
     copied: '已复制',
@@ -23,6 +25,6 @@ export default {
     theme: '切换明暗主题',
     localSite: '当前站点',
     sidebarNote: '从第一条请求，到完整的工具工作流。',
-    category: { start: '开始使用', guides: 'API 指南', media: '图像与视频', integrations: '模型接入', reference: 'API 参考' },
+    category: { start: '开始使用', guides: 'API 指南', media: '图像与视频', integrations: '模型接入', account: '密钥与账号', reference: 'API 参考' },
   },
 }

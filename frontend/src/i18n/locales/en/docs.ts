@@ -15,6 +15,8 @@ export default {
     type: 'Type',
     description: 'Description',
     required: 'Required',
+    authApiKey: 'API key',
+    authSession: 'Login token',
     optional: 'Optional',
     copy: 'Copy code',
     copied: 'Copied',
@@ -23,6 +25,6 @@ export default {
     theme: 'Toggle color theme',
     localSite: 'Current site',
     sidebarNote: 'From your first request to a complete tool workflow.',
-    category: { start: 'Get started', guides: 'API guides', media: 'Image & video', integrations: 'Client setup', reference: 'API reference' },
+    category: { start: 'Get started', guides: 'API guides', media: 'Image & video', integrations: 'Client setup', account: 'Keys & account', reference: 'API reference' },
   },
 }

@@ -229,4 +229,91 @@ describe('public API documentation', () => {
       for (const snippet of examples) expect(snippet).not.toMatch(/sk-[A-Za-z0-9]/)
     }
   })
+
+  describe('key pages', () => {
+    const origin = 'https://example.test'
+    const pageOf = (locale: string, id: string) => resolveDocsPage(getApiDocs(locale, origin), id)
+
+    it('publishes the self-service and console key pages in both languages under their own category', () => {
+      for (const locale of ['zh', 'en']) {
+        for (const id of ['key-self-service', 'manage-keys']) {
+          const page = pageOf(locale, id)
+          expect(page.id, `${locale}:${id}`).toBe(id)
+          expect(page.category).toBe('account')
+          expect(page.sections.length).toBeGreaterThan(3)
+        }
+      }
+      expect(pageOf('zh', 'key-self-service').title).not.toBe(pageOf('en', 'key-self-service').title)
+    })
+
+    it('keeps the key pages ahead of the API reference and behind the client setup pages', () => {
+      const ids = getApiDocs('en', origin).map(page => page.id)
+      expect(ids.indexOf('claude-code')).toBeLessThan(ids.indexOf('key-self-service'))
+      expect(ids.indexOf('manage-keys')).toBeLessThan(ids.indexOf('chat-completions'))
+    })
+
+    it('documents the three key endpoints with runnable examples that use the site origin and send only the key', () => {
+      const page = pageOf('en', 'key-self-service')
+      const endpoints = page.sections.filter(section => section.endpoint).map(section => `${section.endpoint!.method} ${section.endpoint!.path}`)
+      expect(endpoints).toEqual(['GET /v1/sub2api/key', 'GET /v1/sub2api/groups', 'GET /v1/sub2api/usage'])
+      for (const section of page.sections.filter(entry => entry.endpoint)) expect(section.endpoint!.auth).toBe('apiKey')
+
+      const overview = page.sections[0].examples!
+      expect(Object.keys(overview)).toEqual(['curl', 'python', 'node'])
+      expect(overview.curl!.split('\n')).toEqual([`curl ${origin}/v1/sub2api/key \\`, '  -H "Authorization: Bearer $API_KEY"'])
+      expect(overview.python).toContain(`requests.get(\n    "${origin}/v1/sub2api/key"`)
+      expect(overview.node).toContain(`fetch("${origin}/v1/sub2api/key"`)
+      for (const snippet of Object.values(overview)) {
+        expect(snippet).not.toContain('/v1/v1')
+        expect(snippet).not.toMatch(/sk-[A-Za-z0-9]{8,}/)
+      }
+      const usage = page.sections.find(section => section.id === 'key-info-usage')!.examples!
+      expect(usage.curl).toContain('/v1/sub2api/usage?start_date=2026-11-01&end_date=2026-11-07&daily=1')
+    })
+
+    it('names the credential each console endpoint needs, and it is the login token', () => {
+      const page = pageOf('en', 'manage-keys')
+      const withEndpoint = page.sections.filter(section => section.endpoint)
+      expect(withEndpoint.length).toBeGreaterThanOrEqual(4)
+      for (const section of withEndpoint) {
+        expect(section.endpoint!.auth).toBe('session')
+        expect(section.endpoint!.path.startsWith('/api/v1/')).toBe(true)
+      }
+      const auth = JSON.stringify(page.sections[0])
+      expect(auth).toContain('access_token')
+      expect(auth).toContain('refresh_token')
+      expect(auth).toContain('cannot call them')
+      expect(auth).toContain('/api/v1/auth/refresh')
+    })
+
+    it('says plainly that an API key cannot call the console API, in both languages', () => {
+      expect(JSON.stringify(pageOf('zh', 'manage-keys').sections[0])).toContain('API 密钥不能调用它们')
+      expect(JSON.stringify(pageOf('en', 'manage-keys').sections[0])).toContain('An API key cannot call them')
+    })
+
+    it('gives anchors that are unique inside each page and links that stay inside the docs', () => {
+      const all = getApiDocs('en', origin)
+      const ids = new Set(all.map(page => page.id))
+      for (const id of ['key-self-service', 'manage-keys']) {
+        const page = resolveDocsPage(all, id)
+        expect(new Set(page.sections.map(section => section.id)).size).toBe(page.sections.length)
+        for (const section of page.sections) for (const link of section.links || []) if (link.page) expect(ids.has(link.page)).toBe(true)
+      }
+    })
+
+    it('does not document anything the endpoints are built to hold back', () => {
+      const text = JSON.stringify([pageOf('en', 'key-self-service'), pageOf('zh', 'key-self-service')])
+      // It may say these are NOT returned; it must not present them as response fields.
+      for (const field of ['"name":"balance"', '"name":"account_cost"', '"name":"last_used_ip"', '"name":"ip_whitelist"', '"name":"key"']) {
+        expect(text).not.toContain(field)
+      }
+      const example = pageOf('en', 'key-self-service').sections.find(section => section.id === 'key-info-key')!.examples!.json!
+      expect(Object.keys(JSON.parse(example))).not.toEqual(expect.arrayContaining(['key', 'balance', 'ip_whitelist', 'last_used_ip']))
+    })
+
+    it('states the real per-minute budget so the docs and the limiter cannot drift apart silently', () => {
+      expect(JSON.stringify(pageOf('en', 'key-self-service'))).toContain('30 times a minute')
+      expect(JSON.stringify(pageOf('zh', 'key-self-service'))).toContain('每分钟最多 30 次')
+    })
+  })
 })

@@ -35,7 +35,8 @@
         <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-2.5 text-slate-400" />
         <input v-model="search" data-testid="docs-search" type="search" class="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-hidden transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-dark-700 dark:bg-dark-900 dark:focus:ring-blue-900/30" :placeholder="t('docs.search')" :aria-label="t('docs.search')" />
       </label>
-      <nav class="mt-6 flex-1 space-y-7 overflow-y-auto pr-1">
+      <div class="docs-nav-wrap relative mt-6 min-h-0 flex-1" :class="{ 'docs-nav-more': navHasMore }">
+      <nav ref="navRef" class="h-full space-y-7 overflow-y-auto pr-1" @scroll.passive="updateNavCue">
         <div v-for="group in navigationGroups" :key="group.category">
           <h2 class="mb-2 px-2 text-xs font-semibold tracking-wide text-slate-900 dark:text-slate-100">{{ t(`docs.category.${group.category}`) }}</h2>
           <router-link v-for="entry in group.pages" :key="entry.id" :to="docLocation(entry.id)" class="mb-0.5 flex min-h-9 items-center rounded-lg px-2.5 py-2 text-[13px] leading-5" :class="entry.id === page.id ? 'bg-blue-50 font-medium text-blue-600 dark:bg-blue-500/10 dark:text-blue-400' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-dark-900 dark:hover:text-white'" :aria-current="entry.id === page.id ? 'page' : undefined" @click="mobileOpen = false">
@@ -44,9 +45,6 @@
         </div>
         <p v-if="!navigationGroups.length" class="px-2 text-sm text-slate-500">{{ t('docs.noResults') }}</p>
       </nav>
-      <div class="mt-5 flex items-center gap-2.5 border-t border-slate-100 pt-4 text-[11px] leading-5 text-slate-500 dark:border-dark-800">
-        <img :src="siteLogo || '/logo.svg'" alt="" class="h-8 w-8 object-contain" />
-        <span>{{ t('docs.sidebarNote') }}</span>
       </div>
     </aside>
 
@@ -63,6 +61,13 @@
             <h2 class="mb-4 text-xl font-semibold tracking-tight">
               <a :href="`#${section.id}`" class="group" @click.prevent="jumpTo(section.id)">{{ section.title }}<span class="ml-2 text-blue-400 opacity-0 transition group-hover:opacity-100" aria-hidden="true">#</span></a>
             </h2>
+            <div v-if="section.endpoint" class="docs-endpoint mb-4 flex flex-wrap items-center gap-2" :data-testid="`docs-endpoint-${section.id}`">
+              <span class="rounded-md px-2 py-1 font-mono text-[11px] font-semibold" :class="methodClass(section.endpoint.method)">{{ section.endpoint.method }}</span>
+              <code class="min-w-0 break-all rounded-md bg-slate-100 px-2 py-1 font-mono text-[12px] text-slate-700 dark:bg-dark-800 dark:text-slate-200">{{ section.endpoint.path }}</code>
+              <span class="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-[11px] text-slate-500 dark:border-dark-700 dark:text-slate-400">
+                <Icon :name="section.endpoint.auth === 'apiKey' ? 'key' : 'user'" size="xs" />{{ section.endpoint.auth === 'apiKey' ? t('docs.authApiKey') : t('docs.authSession') }}
+              </span>
+            </div>
             <p v-for="paragraph in section.paragraphs" :key="paragraph" class="my-3 text-sm leading-8 text-slate-600 dark:text-slate-300">{{ paragraph }}</p>
             <div v-if="section.note" class="my-5 flex gap-3 rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm leading-7 text-blue-700 dark:border-blue-800 dark:bg-blue-500/10 dark:text-blue-300">
               <Icon name="infoCircle" size="sm" class="mt-1 shrink-0" />
@@ -82,11 +87,11 @@
             </div>
 
             <div v-if="section.examples" class="docs-code my-5 overflow-hidden rounded-xl border border-slate-200 bg-[#f8f9fb] dark:border-dark-700 dark:bg-dark-900">
-              <div class="flex min-h-11 items-center justify-between gap-3 border-b border-slate-200 px-3 dark:border-dark-700">
+              <div class="flex min-h-12 items-center justify-between gap-3 border-b border-slate-200 px-3 dark:border-dark-700">
                 <div class="flex min-w-0 gap-1 overflow-x-auto" role="group" :aria-label="section.title">
-                  <button v-for="language in languages(section)" :key="language" type="button" class="rounded-md px-2.5 py-1.5 font-mono text-[11px] transition" :class="selectedLanguage(section) === language ? 'bg-white font-medium text-blue-600 shadow-xs dark:bg-dark-800 dark:text-blue-400' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'" :aria-pressed="selectedLanguage(section) === language" @click="selectedLanguages[section.id] = language">{{ languageLabels[language] }}</button>
+                  <button v-for="language in languages(section)" :key="language" type="button" class="min-h-9 rounded-md px-3 py-1.5 font-mono text-[11px] transition" :class="selectedLanguage(section) === language ? 'bg-white font-medium text-blue-600 shadow-xs dark:bg-dark-800 dark:text-blue-400' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'" :aria-pressed="selectedLanguage(section) === language" @click="selectedLanguages[section.id] = language">{{ languageLabels[language] }}</button>
                 </div>
-                <button type="button" :data-testid="`docs-copy-${section.id}`" class="inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-slate-500 hover:bg-white hover:text-slate-900 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-dark-800 dark:hover:text-white" :title="t('docs.copy')" :aria-label="t('docs.copy')" @click="copyExample(section)">
+                <button type="button" :data-testid="`docs-copy-${section.id}`" class="inline-flex min-h-9 min-w-9 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-slate-500 hover:bg-white hover:text-slate-900 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-dark-800 dark:hover:text-white" :title="t('docs.copy')" :aria-label="t('docs.copy')" @click="copyExample(section)">
                   <Icon :name="copiedSection === section.id ? 'check' : 'copy'" size="sm" />
                   <span class="hidden sm:inline">{{ copiedSection === section.id ? t('docs.copied') : t('docs.copy') }}</span>
                 </button>
@@ -146,10 +151,12 @@ const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appS
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const showModels = computed(() => appStore.cachedPublicSettings?.model_plaza_enabled === true)
 const consolePath = computed(() => !authStore.isAuthenticated ? '/login' : authStore.isAdminObserver ? '/admin/usage' : authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
-const categories: DocsCategory[] = ['start', 'guides', 'media', 'integrations', 'reference']
+const categories: DocsCategory[] = ['start', 'guides', 'media', 'integrations', 'account', 'reference']
 const search = ref('')
 const activeSection = ref('')
 const mobileOpen = ref(false)
+const navRef = ref<HTMLElement | null>(null)
+const navHasMore = ref(false)
 const wideQuery = typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)') : null
 const wideLayout = ref(wideQuery?.matches ?? true)
 const isDark = ref(typeof document !== 'undefined' && document.documentElement.classList.contains('dark'))
@@ -200,6 +207,34 @@ function toggleTheme() {
   toggleColorMode()
 }
 
+function methodClass(method: string): string {
+  switch (method) {
+    case 'GET': return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
+    case 'POST': return 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300'
+    case 'PUT': return 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300'
+    case 'DELETE': return 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300'
+    default: return 'bg-slate-100 text-slate-700 dark:bg-dark-800 dark:text-slate-200'
+  }
+}
+
+// A fade at the bottom of the sidebar says "there is more below" while the list is longer than the panel.
+function updateNavCue() {
+  const nav = navRef.value
+  navHasMore.value = !!nav && nav.scrollHeight - nav.scrollTop - nav.clientHeight > 4
+}
+
+// The entry for the page being read must be in view when the page opens, however far down the list it sits.
+function revealActiveEntry() {
+  const nav = navRef.value
+  const active = nav?.querySelector<HTMLElement>('[aria-current="page"]')
+  if (!nav || !active) { updateNavCue(); return }
+  const top = active.offsetTop - nav.offsetTop
+  if (top < nav.scrollTop || top + active.offsetHeight > nav.scrollTop + nav.clientHeight) {
+    nav.scrollTop = Math.max(0, top - nav.clientHeight / 2 + active.offsetHeight / 2)
+  }
+  updateNavCue()
+}
+
 function syncWideLayout(event: MediaQueryListEvent) { wideLayout.value = event.matches }
 function closeOnEscape(event: KeyboardEvent) { if (event.key === 'Escape') mobileOpen.value = false }
 
@@ -245,6 +280,11 @@ function observeSections() {
 watch(() => page.value.id, async () => {
   await nextTick()
   observeSections()
+  revealActiveEntry()
+})
+watch(navigationGroups, async () => {
+  await nextTick()
+  updateNavCue()
 })
 watch(() => route.query.page, async () => {
   mobileOpen.value = false
@@ -257,6 +297,7 @@ onMounted(() => {
   wideQuery?.addEventListener?.('change', syncWideLayout)
   document.addEventListener('keydown', closeOnEscape)
   observeSections()
+  revealActiveEntry()
   if (!appStore.publicSettingsLoaded) void appStore.fetchPublicSettings().catch(() => {})
   if (route.hash) document.getElementById(route.hash.slice(1))?.scrollIntoView({ block: 'start' })
 })
@@ -271,6 +312,19 @@ onBeforeUnmount(() => {
 <style scoped>
 .api-docs { font-family: ui-sans-serif, system-ui, sans-serif; }
 .docs-code pre { tab-size: 2; }
+/* Fade at the foot of the sidebar list while more entries are scrolled out of view. */
+.docs-nav-wrap::after {
+  content: '';
+  pointer-events: none;
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 32px;
+  background: linear-gradient(to bottom, transparent, var(--docs-sidebar-bg, #fff));
+  opacity: 0;
+  transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.docs-nav-wrap.docs-nav-more::after { opacity: 1; }
+:global(.dark) .docs-nav-wrap { --docs-sidebar-bg: var(--color-dark-950); }
 .docs-code code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 @media (prefers-reduced-motion: reduce) { .docs-sidebar { transition: none; } }
 </style>

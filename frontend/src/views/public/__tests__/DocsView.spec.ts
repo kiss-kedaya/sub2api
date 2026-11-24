@@ -175,9 +175,9 @@ describe('public API documentation page', () => {
     wrapper.unmount()
   })
 
-  it('places the image and video category between guides and client setup', async () => {
+  it('places the image and video category between guides and client setup, and the key pages before the reference', async () => {
     const { wrapper } = await openDocs()
-    expect(wrapper.findAll('.docs-category').map(link => link.text())).toEqual(['Get started', 'API guides', 'Image & video', 'Client setup', 'API reference'])
+    expect(wrapper.findAll('.docs-category').map(link => link.text())).toEqual(['Get started', 'API guides', 'Image & video', 'Client setup', 'Keys & account', 'API reference'])
     wrapper.unmount()
   })
 
@@ -268,6 +268,84 @@ describe('public API documentation page', () => {
 
     await search.setValue('')
     expect(sidebar()).toContain('Your first API request')
+    wrapper.unmount()
+  })
+
+  it('shows the method, path and who may call an endpoint, and names the right credential', async () => {
+    const { wrapper } = await openDocs('key-self-service')
+    const key = wrapper.get('[data-testid="docs-endpoint-key-info-key"]')
+    expect(key.text()).toContain('GET')
+    expect(key.text()).toContain('/v1/sub2api/key')
+    expect(key.text()).toContain('API key')
+    expect(key.text()).not.toContain('Login token')
+
+    await wrapper.vm.$router.push('/docs?page=manage-keys')
+    await flushPromises()
+    const create = wrapper.get('[data-testid="docs-endpoint-console-create"]')
+    expect(create.text()).toContain('POST')
+    expect(create.text()).toContain('/api/v1/keys')
+    expect(create.text()).toContain('Login token')
+    expect(create.text()).not.toContain('API key')
+    wrapper.unmount()
+  })
+
+  it('lists the key pages in the sidebar and finds them by what they document', async () => {
+    const { wrapper } = await openDocs()
+    const search = wrapper.get('[data-testid="docs-search"]')
+    const sidebar = () => wrapper.get('#docs-sidebar').text()
+    expect(sidebar()).toContain('Key self-service API')
+    expect(sidebar()).toContain('Manage API keys (console API)')
+
+    await search.setValue('batch-rotate')
+    expect(sidebar()).toContain('Manage API keys (console API)')
+    expect(sidebar()).not.toContain('Web fetch')
+
+    await search.setValue('key_info_rate_limited')
+    expect(sidebar()).toContain('Key self-service API')
+    wrapper.unmount()
+  })
+
+  it('does not repeat a marketing line under the navigation', async () => {
+    const { wrapper } = await openDocs()
+    expect(wrapper.get('#docs-sidebar').text()).not.toContain('From your first request to a complete tool workflow')
+    wrapper.unmount()
+  })
+
+  it('brings the entry of the page being read into view when the page opens deep in the list', async () => {
+    const { wrapper } = await openDocs('deepseek-ocr', { attachTo: true })
+    const nav = wrapper.get('#docs-sidebar nav').element as HTMLElement
+    // jsdom has no layout: give the list a geometry in which the active entry is far below the fold.
+    Object.defineProperty(nav, 'clientHeight', { configurable: true, value: 200 })
+    Object.defineProperty(nav, 'scrollHeight', { configurable: true, value: 900 })
+    const active = nav.querySelector<HTMLElement>('[aria-current="page"]')!
+    Object.defineProperty(active, 'offsetTop', { configurable: true, value: 800 })
+    Object.defineProperty(active, 'offsetHeight', { configurable: true, value: 36 })
+    Object.defineProperty(nav, 'offsetTop', { configurable: true, value: 0 })
+    nav.scrollTop = 0
+
+    await wrapper.vm.$router.push('/docs?page=deepseek-asr')
+    await flushPromises()
+    await wrapper.vm.$router.push('/docs?page=deepseek-ocr')
+    await flushPromises()
+
+    expect(nav.scrollTop).toBeGreaterThan(0)
+    wrapper.unmount()
+  })
+
+  it('shows a cue that more entries are below while the list is longer than the panel, and removes it at the end', async () => {
+    const { wrapper } = await openDocs('quick-start', { attachTo: true })
+    const nav = wrapper.get('#docs-sidebar nav').element as HTMLElement
+    const wrap = () => wrapper.get('.docs-nav-wrap')
+    Object.defineProperty(nav, 'clientHeight', { configurable: true, value: 300 })
+    Object.defineProperty(nav, 'scrollHeight', { configurable: true, value: 900 })
+
+    nav.scrollTop = 0
+    await wrapper.get('#docs-sidebar nav').trigger('scroll')
+    expect(wrap().classes()).toContain('docs-nav-more')
+
+    nav.scrollTop = 600
+    await wrapper.get('#docs-sidebar nav').trigger('scroll')
+    expect(wrap().classes()).not.toContain('docs-nav-more')
     wrapper.unmount()
   })
 })
