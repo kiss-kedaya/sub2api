@@ -368,11 +368,3 @@ func claudeBillingModelCandidatesForGroup(group *Group, models []string) []strin
 	return models
 }
 
-func claudeFirstBillingModel(models []string) string {
-	for _, model := range models {
-		if strings.TrimSpace(model) != "" {
-			return strings.TrimSpace(model)
-		}
-	}
-	return ""
-}

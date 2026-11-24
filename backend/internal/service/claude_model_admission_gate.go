@@ -56,10 +56,6 @@ func claudeModelAdmission(model, platform string, group *Group, account *Account
 	return !upstreamPlatformServesClaudeFamily(upstreamPlatform)
 }
 
-// claudeAdmissionBlocksAccount 是调度/诊断热路径的包装：语义与 claudeModelAdmission 相同。
-func claudeAdmissionBlocksAccount(model, platform string, group *Group, account *Account) bool {
-	return claudeModelAdmission(model, platform, group, account)
-}
 
 // shouldGateClaudeModel 报告该模型是否需要统一“能否被该上游服务”的口径。
 func shouldGateClaudeModel(model string) bool {

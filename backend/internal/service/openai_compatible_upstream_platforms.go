@@ -57,39 +57,6 @@ func upstreamAccountServesClaudeFamily(account *Account) bool {
 	return upstreamPlatformServesClaudeFamily(account.Platform)
 }
 
-// accountExplicitlyServesClaudeModel 报告账号是否【显式】声明支持该 Claude
-// 模型，用于“分组已开跨协议转换”的放行判定。
-//
-// 不能直接用 Account.IsModelSupported：Grok 账号的空映射由
-// xai.DefaultModelMapping 填充，而 grok_cross_client_model_map_enabled 默认开启，
-// 其中含 claude-* → grok 文本模型的通配映射，会把任何 claude-* 都判成“支持”，
-// 这正是本次漏洞被放行的原因之一。这里只认运维者在账号凭据里显式书写的
-// model_mapping（精确或通配），空映射/内置默认映射一律不算。
-func accountExplicitlyServesClaudeModel(account *Account, model string) bool {
-	if account == nil {
-		return false
-	}
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return false
-	}
-	if account.IsOpenAIPassthroughEnabled() || account.IsAnthropicAPIKeyPassthroughEnabled() {
-		return true
-	}
-	rawMapping, _ := account.Credentials["model_mapping"].(map[string]any)
-	if len(rawMapping) == 0 {
-		return false
-	}
-	mapping := account.GetModelMapping()
-	if len(mapping) == 0 {
-		return false
-	}
-	if mappingSupportsRequestedModel(mapping, model) {
-		return true
-	}
-	normalized := normalizeRequestedModelForLookup(account.Platform, model)
-	return normalized != model && mappingSupportsRequestedModel(mapping, normalized)
-}
 
 // modelFamily isClaudeModel 报告请求模型是否属于 Claude（Anthropic）模型族。
 // 复用 DetectModelPlatform 的唯一判定口径：claude-* / anthropic.claude-* /
@@ -99,23 +66,6 @@ func isClaudeModel(model string) bool {
 	return ok && detected == PlatformAnthropic
 }
 
-// upstreamPlatformsAllowClaudeModelGate 报告“该上游平台是否本就不能服务
-// claude-* 模型”：仅当模型是 Claude 族、且上游平台属于明确会拒收 Claude 的
-// 供应商平台（grok/CN 供应商/typeSafe）时成立。
-//
-// 平台为空、anthropic、openai（含透传）、gemini、antigravity、composite、unknown
-// 一律返回 false——这些平台要么本就能服务 Claude，要么无法在平台层预判，
-// 交给账号级 model_mapping 判定，避免误伤合法场景。
-func upstreamPlatformsAllowClaudeModelGate(upstreamPlatform, model string) bool {
-	if !isClaudeModel(model) {
-		return false
-	}
-	switch strings.TrimSpace(upstreamPlatform) {
-	case "":
-		return false
-	}
-	return !upstreamPlatformServesClaudeFamily(upstreamPlatform)
-}
 
 // crossProtocolAllowsClaudeOnUpstream 报告分组是否显式允许跨协议转换，
 // 从而允许 claude-* 请求落到非 Anthropic 上游账号。分组未加载视为不允许
