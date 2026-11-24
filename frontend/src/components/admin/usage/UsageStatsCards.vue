@@ -1,12 +1,19 @@
 <template>
-  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+  <div
+    class="grid grid-cols-2 gap-4 transition-opacity lg:grid-cols-4"
+    :class="{ 'opacity-60': refreshing }"
+    :aria-busy="loading || undefined"
+  >
     <div class="card p-4 flex items-center gap-3">
       <div class="usage-stat-icon rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30 text-blue-600">
         <Icon name="document" size="md" />
       </div>
       <div>
         <p class="text-xs font-medium text-gray-500">{{ t('usage.totalRequests') }}</p>
-        <p class="text-xl font-bold">{{ stats?.total_requests?.toLocaleString() || '0' }}</p>
+        <p class="text-xl font-bold">
+          <span v-if="pending" class="inline-block rounded-sm bg-elevated align-middle motion-safe:animate-pulse h-5 w-16" aria-hidden="true" />
+          <template v-else>{{ stats?.total_requests?.toLocaleString() || '0' }}</template>
+        </p>
         <p class="text-xs text-gray-400">{{ t('usage.inSelectedRange') }}</p>
       </div>
     </div>
@@ -14,8 +21,12 @@
       <div class="usage-stat-icon rounded-lg bg-amber-100 p-2 dark:bg-amber-900/30 text-amber-600"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" /></svg></div>
       <div>
         <p class="text-xs font-medium text-gray-500">{{ t('usage.totalTokens') }}</p>
-        <p class="text-xl font-bold">{{ formatTokens(stats?.total_tokens || 0) }}</p>
-        <p class="flex flex-wrap items-center gap-x-1 text-xs text-gray-500">
+        <p class="text-xl font-bold">
+          <span v-if="pending" class="inline-block rounded-sm bg-elevated align-middle motion-safe:animate-pulse h-5 w-16" aria-hidden="true" />
+          <template v-else>{{ formatTokens(stats?.total_tokens || 0) }}</template>
+        </p>
+        <p v-if="pending" class="text-xs"><span class="inline-block rounded-sm bg-elevated align-middle motion-safe:animate-pulse h-3 w-36" aria-hidden="true" /></p>
+        <p v-else class="flex flex-wrap items-center gap-x-1 text-xs text-gray-500">
           <span>{{ t('usage.in') }}: {{ formatTokens(stats?.total_input_tokens || 0) }}</span>
           <span>/</span>
           <span>{{ t('usage.out') }}: {{ formatTokens(stats?.total_output_tokens || 0) }}</span>
@@ -72,9 +83,11 @@
       <div class="min-w-0 flex-1">
         <p class="text-xs font-medium text-gray-500">{{ t('usage.totalCost') }}</p>
         <p class="text-xl font-bold text-green-600">
-          ${{ (stats?.total_actual_cost || 0).toFixed(4) }}
+          <span v-if="pending" class="inline-block rounded-sm bg-elevated align-middle motion-safe:animate-pulse h-5 w-20" aria-hidden="true" />
+          <template v-else>${{ (stats?.total_actual_cost || 0).toFixed(4) }}</template>
         </p>
-        <p class="text-xs text-gray-400">
+        <p v-if="pending" class="text-xs"><span class="inline-block rounded-sm bg-elevated align-middle motion-safe:animate-pulse h-3 w-24" aria-hidden="true" /></p>
+        <p v-else class="text-xs text-gray-400">
           <template v-if="showAccountCost && totalAccountCost != null">
             <span class="text-orange-500">{{ t('usage.accountCost') }} ${{ totalAccountCost.toFixed(4) }}</span>
             <span> · </span>
@@ -90,7 +103,13 @@
       <div class="usage-stat-icon rounded-lg bg-purple-100 p-2 dark:bg-purple-900/30 text-purple-600">
         <Icon name="clock" size="md" />
       </div>
-      <div><p class="text-xs font-medium text-gray-500">{{ t('usage.avgDuration') }}</p><p class="text-xl font-bold">{{ formatDuration(stats?.average_duration_ms || 0) }}</p></div>
+      <div>
+        <p class="text-xs font-medium text-gray-500">{{ t('usage.avgDuration') }}</p>
+        <p class="text-xl font-bold">
+          <span v-if="pending" class="inline-block rounded-sm bg-elevated align-middle motion-safe:animate-pulse h-5 w-14" aria-hidden="true" />
+          <template v-else>{{ formatDuration(stats?.average_duration_ms || 0) }}</template>
+        </p>
+      </div>
     </div>
   </div>
 </template>
@@ -106,9 +125,13 @@ const props = withDefaults(defineProps<{
   stats: (AdminUsageStatsResponse | UsageStatsResponse) | null
   showAccountCost?: boolean
   strikeStandardCost?: boolean
+  // While the totals are on their way: placeholders on the first load (no number to show yet, and a 0 would be
+  // a wrong one), dimmed numbers on a refresh.
+  loading?: boolean
 }>(), {
   showAccountCost: true,
   strikeStandardCost: false,
+  loading: false,
 })
 
 const { t } = useI18n()
@@ -117,6 +140,8 @@ const totalAccountCost = computed(() => {
   const stats = props.stats as (AdminUsageStatsResponse & { total_account_cost?: number }) | null
   return stats?.total_account_cost ?? null
 })
+const pending = computed(() => props.loading && !props.stats)
+const refreshing = computed(() => props.loading && !!props.stats)
 const showAccountCost = computed(() => props.showAccountCost)
 const strikeStandardCost = computed(() => props.strikeStandardCost)
 

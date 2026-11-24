@@ -45,3 +45,29 @@ func TestNormalizeModelSource(t *testing.T) {
 		})
 	}
 }
+
+func TestParseStatsScope(t *testing.T) {
+	tests := []struct {
+		raw    string
+		want   string
+		wantOK bool
+	}{
+		{raw: "", want: "", wantOK: true},
+		{raw: "  ", want: "", wantOK: true},
+		{raw: "summary", want: StatsScopeSummary, wantOK: true},
+		{raw: " Summary ", want: StatsScopeSummary, wantOK: true},
+		{raw: "ENDPOINTS", want: StatsScopeEndpoints, wantOK: true},
+		{raw: "all", want: "", wantOK: false},
+		{raw: "summary,endpoints", want: "", wantOK: false},
+		{raw: "summary; DROP TABLE usage_logs", want: "", wantOK: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.raw, func(t *testing.T) {
+			got, ok := ParseStatsScope(tc.raw)
+			if got != tc.want || ok != tc.wantOK {
+				t.Fatalf("ParseStatsScope(%q)=(%q,%v) want (%q,%v)", tc.raw, got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}

@@ -97,6 +97,10 @@ type usageFiltersFingerprint struct {
 	UpstreamModelMismatch *bool  `json:"upstream_model_mismatch,omitempty"`
 	StartTime             string `json:"start,omitempty"`
 	EndTime               string `json:"end,omitempty"`
+	// OmitAccountCost and StatsScope change the shape of the answer (account cost left at zero, only part of the
+	// stats), so they are part of the identity: an admin view must never be served a user-shaped entry.
+	OmitAccountCost bool   `json:"omit_account_cost,omitempty"`
+	StatsScope      string `json:"stats_scope,omitempty"`
 }
 
 func usageFiltersFingerprintOf(filters UsageLogFilters) *usageFiltersFingerprint {
@@ -114,6 +118,8 @@ func usageFiltersFingerprintOf(filters UsageLogFilters) *usageFiltersFingerprint
 		BillingType:           filters.BillingType,
 		BillingMode:           filters.BillingMode,
 		UpstreamModelMismatch: filters.UpstreamModelMismatch,
+		OmitAccountCost:       filters.OmitAccountCost,
+		StatsScope:            filters.StatsScope,
 		// ExactTotal/CompactAssociations/AccountNameOnly only affect list
 		// endpoints, never an aggregate, so they are intentionally omitted.
 	}

@@ -196,13 +196,19 @@ export async function query(
 }
 
 /**
+ * Which half of the stats to compute. The totals ('summary') come back quickly; the endpoint breakdown
+ * ('endpoints') has to read every row, so the usage page asks for them separately. No scope returns both.
+ */
+export type UsageStatsScope = 'summary' | 'endpoints'
+
+/**
  * Get usage statistics for a specific period
  * @param period - Supported period ('today', 'week', 'month'); use start_date/end_date for a custom range
  * @param apiKeyId - Optional API key ID filter
  * @returns Usage statistics
  */
 export async function getStats(
-  paramsOrPeriod: (UsageQueryParams & { period?: string; timezone?: string }) | string = 'today',
+  paramsOrPeriod: (UsageQueryParams & { period?: string; timezone?: string; scope?: UsageStatsScope }) | string = 'today',
   apiKeyId?: number
 ): Promise<UsageStatsResponse> {
   const params: Record<string, unknown> = typeof paramsOrPeriod === 'string'

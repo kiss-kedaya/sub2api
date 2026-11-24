@@ -635,19 +635,35 @@ func (r *usageLogRepository) GetGroupStatsWithFilters(ctx context.Context, start
 			return stats, nil
 		}
 	}
-	return r.getGroupStatsWithFilters(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, "", requestType, stream, billingType, "", nil, nil)
+	return r.getGroupStatsWithFilters(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, "", requestType, stream, billingType, "", nil, nil, false)
 }
 
 func (r *usageLogRepository) GetGroupStatsWithUsageFilters(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters) (results []usagestats.GroupStat, err error) {
-	if r.rollupReadEnabled.Load() {
-		if stats, covered, rollupErr := r.GetGroupStatsWithRollups(ctx, startTime, endTime, filters); rollupErr == nil && covered {
-			return stats, nil
+	// Cached like the other usage-page aggregates (60 s, one shared load per key): switching a filter back and
+	// forth, or two tabs, must not run the same aggregate again.
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "group_stats_usage_filters",
+		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+		Filters: usageFiltersFingerprintOf(filters),
+	}, func(ctx context.Context) ([]usagestats.GroupStat, error) {
+		if r.rollupReadEnabled.Load() {
+			if stats, covered, rollupErr := r.GetGroupStatsWithRollups(ctx, startTime, endTime, filters); rollupErr == nil && covered {
+				return stats, nil
+			}
 		}
-	}
-	return r.getGroupStatsWithFilters(ctx, startTime, endTime, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2)
+		return r.getGroupStatsWithFilters(ctx, startTime, endTime, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2, filters.OmitAccountCost)
+	})
 }
 
-func (r *usageLogRepository) getGroupStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8, billingMode string, upstreamModelMismatch *bool, nativeCompactionV2 *bool) (results []usagestats.GroupStat, err error) {
+// getGroupStatsWithFilters aggregates usage per group. omitAccountCost leaves the account-cost expression out
+// (it is selected as a constant 0): that is the only thing besides the group, token and cost columns this query
+// needs from the row, so for user/group/time scopes PostgreSQL can answer it from idx_usage_logs_user_created_dims
+// without a heap fetch per row. Measured on production data: 4.3 s with the expression, 0.14 s without.
+func (r *usageLogRepository) getGroupStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8, billingMode string, upstreamModelMismatch *bool, nativeCompactionV2 *bool, omitAccountCost bool) (results []usagestats.GroupStat, err error) {
+	accountCostExpr := "COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1)), 0) as account_cost"
+	if omitAccountCost {
+		accountCostExpr = "0::double precision as account_cost"
+	}
 	query := `
 		SELECT
 			COALESCE(ul.group_id, 0) as group_id,
@@ -656,7 +672,7 @@ func (r *usageLogRepository) getGroupStatsWithFilters(ctx context.Context, start
 			COALESCE(SUM(ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens), 0) as total_tokens,
 			COALESCE(SUM(ul.total_cost), 0) as cost,
 			COALESCE(SUM(ul.actual_cost), 0) as actual_cost,
-			COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1)), 0) as account_cost
+			` + accountCostExpr + `
 		FROM usage_logs ul
 		LEFT JOIN groups g ON g.id = ul.group_id
 		WHERE ul.created_at >= $1 AND ul.created_at < $2
