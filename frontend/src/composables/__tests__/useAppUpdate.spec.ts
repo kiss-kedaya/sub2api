@@ -61,7 +61,9 @@ function setup(overrides: Partial<AppUpdateDeps> = {}, answers: Array<BuildIdent
 }
 
 function fakeRouter() {
-  let guard: ((to: { fullPath: string }, from: { fullPath: string }) => unknown) | null = null
+  type Location = { fullPath: string; path: string }
+  let guard: ((to: Location, from: Location) => unknown) | null = null
+  const at = (fullPath: string): Location => ({ fullPath, path: fullPath.split(/[?#]/)[0] })
   const router = {
     beforeEach: (fn: typeof guard) => {
       guard = fn
@@ -72,7 +74,7 @@ function fakeRouter() {
   } as unknown as Router
   return {
     router,
-    navigateTo: (to: string, from = '/dashboard') => guard!({ fullPath: to }, { fullPath: from }),
+    navigateTo: (to: string, from = '/dashboard') => guard!(at(to), at(from)),
     hasGuard: () => guard !== null,
   }
 }
@@ -386,6 +388,23 @@ describe('createAppUpdate', () => {
       update.start(router)
       expect(navigateTo('/dashboard', '/dashboard')).toBe(true)
       expect(navigate).not.toHaveBeenCalled()
+    })
+
+    it('does not reload when only the query or hash changes on the same page (tabs, filters)', async () => {
+      const { update, navigate } = await flagged()
+      const { router, navigateTo } = fakeRouter()
+      update.start(router)
+      expect(navigateTo('/admin/ip-audit?tab=b', '/admin/ip-audit?tab=a')).toBe(true)
+      expect(navigateTo('/admin/ip-audit#top', '/admin/ip-audit')).toBe(true)
+      expect(navigate).not.toHaveBeenCalled()
+    })
+
+    it('still reloads when the page changes, even if the query string is the same', async () => {
+      const { update, navigate } = await flagged()
+      const { router, navigateTo } = fakeRouter()
+      update.start(router)
+      expect(navigateTo('/keys?tab=usage', '/dashboard?tab=usage')).toBe(false)
+      expect(navigate).toHaveBeenCalledWith('/keys?tab=usage')
     })
 
     it('does not reload again inside the cooldown, so a flapping server cannot loop the page', async () => {

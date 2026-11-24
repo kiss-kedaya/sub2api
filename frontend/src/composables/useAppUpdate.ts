@@ -179,7 +179,8 @@ export function createAppUpdate(deps: AppUpdateDeps): AppUpdate {
   const start = (router: Router): (() => void) => {
     const removeGuard = router.beforeEach((to, from) => {
       if (!updateAvailable.value) return true
-      if (to.fullPath === from.fullPath) return true
+      // 同一页面里只改查询串 / 锚点（切标签、改筛选）不算离开页面：整页加载会丢掉这页没保存的输入。
+      if (to.path === from.path) return true
       // 整页加载会替换这次 SPA 跳转；冷却中则照常跳转。
       return reloadForUpdate(to.fullPath) ? false : true
     })
