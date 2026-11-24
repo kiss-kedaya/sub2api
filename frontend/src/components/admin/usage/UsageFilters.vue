@@ -4,8 +4,9 @@
     :class="flat ? 'px-4 py-4 sm:px-6 sm:py-5' : 'card p-4 sm:p-5'"
     data-testid="usage-filters"
   >
+    <!-- overflow-visible：卡片本身没有可见边框，不需要裁切；留着 overflow-hidden 会把搜索下拉裁掉（高级区收起时卡片很矮，只剩一行半） -->
     <UCard
-      :ui="{ root: 'ring-0 bg-transparent', body: showActions ? 'p-0' : '' }"
+      :ui="{ root: 'ring-0 bg-transparent overflow-visible', body: showActions ? 'p-0 sm:p-0' : '' }"
       data-testid="usage-filters-card"
     >
       <!-- 标题栏：标题 + 已生效筛选数 + 高级筛选开关（Nuxt UI 折叠） -->
@@ -22,15 +23,17 @@
           />
         </div>
         <UButton
-          :label="t('admin.usage.filters.advanced')"
           color="neutral"
           variant="ghost"
           size="sm"
           trailing-icon="i-lucide-chevron-down"
           :aria-expanded="advancedOpen"
+          class="usage-filters-press"
           data-testid="usage-filters-advanced-toggle"
           @click="toggleAdvanced"
         >
+          <!-- 有默认插槽时 UButton 不再渲染 label，所以文字要和徽标一起写在插槽里（改前有高级条件时按钮只剩一个数字） -->
+          {{ t('admin.usage.filters.advanced') }}
           <UBadge
             v-if="advancedFilterCount > 0"
             :label="String(advancedFilterCount)"
@@ -49,7 +52,7 @@
       </div>
 
       <!-- 常用筛选：时间范围 / 用户 / API 密钥 / 模型（桌面 4 列、平板 2 列、手机 1 列） -->
-      <div class="mt-3 grid gap-x-3 gap-y-3 sm:grid-cols-2 xl:grid-cols-4" data-testid="usage-filters-common">
+      <div class="mt-3 grid gap-x-4 gap-y-3 sm:grid-cols-2 xl:grid-cols-4" data-testid="usage-filters-common">
         <UFormField
           v-bind="{ 'data-testid': 'usage-filters-field', 'data-field': 'date' }"
           :label="t('admin.dashboard.timeRange')"
@@ -89,7 +92,7 @@
         <template v-else>
           <!-- 用户：远程搜索 + 清除 -->
           <UFormField
-            v-bind="{ 'data-testid': FIELD_TESTID }"
+            v-bind="{ 'data-testid': FIELD_TESTID, 'data-usage-dropdown': 'user' }"
             :label="t('admin.usage.userFilter')"
             class="min-w-0"
             :ui="{ container: 'relative' }"
@@ -101,8 +104,9 @@
               :placeholder="t('admin.usage.searchUserPlaceholder')"
               class="w-full"
               :aria-label="t('admin.usage.userFilter')"
-              @change="debounceUserSearch"
+              @update:model-value="debounceUserSearch"
               @focus="showUserDropdown = true"
+              @keydown.esc="showUserDropdown = false"
             >
               <template v-if="filters.user_id" #trailing>
                 <UButton
@@ -118,7 +122,7 @@
               </template>
             </UInput>
             <div
-              v-if="showUserDropdown && userResults.length > 0"
+              v-if="showUserDropdown && (userResults.length > 0 || userNoMatch)"
               class="absolute inset-x-0 top-full z-50 mt-1 max-h-60 overflow-auto rounded-md border border-default bg-default py-1 shadow-lg"
               data-testid="usage-filter-user-options"
             >
@@ -129,7 +133,7 @@
                 class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-default hover:bg-elevated"
                 @click="selectUser(u)"
               >
-                <span class="min-w-0 truncate">{{ u.email }}</span>
+                <span class="min-w-0 truncate" :title="u.email">{{ u.email }}</span>
                 <UBadge
                   v-if="u.deleted"
                   :label="t('admin.usage.userDeletedBadge')"
@@ -139,12 +143,15 @@
                 />
                 <span class="ml-auto text-xs text-dimmed">#{{ u.id }}</span>
               </button>
+              <p v-if="userResults.length === 0" class="px-3 py-2 text-sm text-muted" data-testid="usage-filter-user-empty">
+                {{ t('admin.usage.filters.noUser') }}
+              </p>
             </div>
           </UFormField>
 
           <!-- API 密钥：选中用户后只列出该用户的密钥 -->
           <UFormField
-            v-bind="{ 'data-testid': FIELD_TESTID }"
+            v-bind="{ 'data-testid': FIELD_TESTID, 'data-usage-dropdown': 'apiKey' }"
             :label="t('usage.apiKeyFilter')"
             class="min-w-0"
             :ui="{ container: 'relative' }"
@@ -156,8 +163,9 @@
               :placeholder="t('admin.usage.searchApiKeyPlaceholder')"
               class="w-full"
               :aria-label="t('usage.apiKeyFilter')"
-              @change="debounceApiKeySearch"
+              @update:model-value="debounceApiKeySearch"
               @focus="onApiKeyFocus"
+              @keydown.esc="showApiKeyDropdown = false"
             >
               <template v-if="filters.api_key_id" #trailing>
                 <UButton
@@ -173,7 +181,7 @@
               </template>
             </UInput>
             <div
-              v-if="showApiKeyDropdown && apiKeyResults.length > 0"
+              v-if="showApiKeyDropdown && (apiKeyResults.length > 0 || apiKeyNoMatch)"
               class="absolute inset-x-0 top-full z-50 mt-1 max-h-60 overflow-auto rounded-md border border-default bg-default py-1 shadow-lg"
               data-testid="usage-filter-api-key-options"
             >
@@ -184,9 +192,12 @@
                 class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-default hover:bg-elevated"
                 @click="selectApiKey(k)"
               >
-                <span class="min-w-0 truncate">{{ k.name || `#${k.id}` }}</span>
+                <span class="min-w-0 truncate" :title="k.name || `#${k.id}`">{{ k.name || `#${k.id}` }}</span>
                 <span class="ml-auto text-xs text-dimmed">#{{ k.id }}</span>
               </button>
+              <p v-if="apiKeyResults.length === 0" class="px-3 py-2 text-sm text-muted" data-testid="usage-filter-api-key-empty">
+                {{ t('admin.usage.filters.noApiKey') }}
+              </p>
             </div>
           </UFormField>
         </template>
@@ -197,210 +208,192 @@
           :label="t('usage.model')"
           class="min-w-0"
         >
-          <Select v-model="filters.model" :options="modelOptions" searchable @change="emitQuery" />
+          <Select v-bind="field('model')" :options="modelOptions" :placeholder="allLabel(modelOptions)" searchable @change="emitQuery" />
         </UFormField>
       </div>
 
-      <!-- 高级筛选：按 请求 / 计费 / 范围 分组，桌面 3 列、平板 2 列、手机 1 列 -->
-      <UCollapsible v-model:open="advancedOpen" :unmount-on-hide="false">
-        <!-- 折叠区内容：桌面/平板展开，手机默认收起（外层只是一个容器，内层才是可折叠区） -->
-        <div data-testid="usage-filters-advanced-collapsible">
-        <div v-show="advancedOpen">
+      <!--
+        高级筛选：和常用项同一套网格（平板 2 列、桌面 4 列），不再分组、不加小标题——
+        字段名本身就是标签。展开只淡入，收起立即消失（系统响应要快）。
+      -->
+      <Transition name="usage-adv">
+        <div v-show="advancedOpen" class="mt-3" data-testid="usage-filters-advanced-collapsible">
           <div
-            class="mt-4 grid gap-x-5 gap-y-4 border-t border-default pt-4 sm:grid-cols-2 xl:grid-cols-3"
+            class="grid gap-x-4 gap-y-3 sm:grid-cols-2 xl:grid-cols-4"
             data-testid="usage-filters-advanced"
           >
-            <!-- 请求 -->
-            <fieldset class="min-w-0 space-y-3" data-testid="usage-filters-group-request">
-              <legend class="text-xs font-semibold uppercase tracking-wide text-dimmed">
-                {{ t('admin.usage.filters.groupRequest') }}
-              </legend>
-
-          <UFormField
-            v-bind="{ 'data-testid': FIELD_TESTID }"
-                v-if="!observer"
-                :label="t('admin.usage.requestId')"
-                :description="t('admin.usage.filters.requestIdHint')"
-                class="min-w-0"
-              >
-                <UInput
-                  v-model="filters.request_id"
-                  icon="i-lucide-hash"
-                  class="w-full"
-                  :placeholder="t('usage.requestIdPlaceholder')"
-                  @keyup.enter="emitQuery"
-                />
-              </UFormField>
-
-          <UFormField
-            v-bind="{ 'data-testid': FIELD_TESTID }"
-                v-if="mode !== 'errors'"
-                :label="t('usage.type')"
-                class="min-w-0"
-              >
-                <Select v-model="filters.request_type" :options="requestTypeOptions" @change="emitQuery" />
-              </UFormField>
-
-          <UFormField
-            v-bind="{ 'data-testid': FIELD_TESTID }"
-                v-if="mode !== 'errors'"
-                :label="t('usage.compactionFilter')"
-                :description="t('admin.usage.filters.compactionHint')"
-                class="min-w-0"
-              >
-                <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="emitQuery" />
-              </UFormField>
-
-              <template v-if="mode === 'errors'">
-          <UFormField
-            v-bind="{ 'data-testid': FIELD_TESTID }"
-            :label="t('admin.ops.errorLog.type')"
-            class="min-w-0"
-          >
-            <Select v-model="filters.error_phase" :options="errorPhaseOptions" @change="emitQuery" />
-                </UFormField>
-          <UFormField
-            v-bind="{ 'data-testid': FIELD_TESTID }"
-            :label="t('usage.errors.category')"
-            class="min-w-0"
-          >
-            <Select v-model="filters.error_category" :options="errorCategoryOptions" @change="emitQuery" />
-                </UFormField>
-          <UFormField
-            v-bind="{ 'data-testid': FIELD_TESTID }"
-            :label="t('admin.ops.errorLog.status')"
-            class="min-w-0"
-          >
-            <Select v-model="filters.status_code" :options="statusCodeOptions" @change="emitQuery" />
-                </UFormField>
-              </template>
-            </fieldset>
-
-            <!-- 计费 -->
-            <fieldset
-              v-if="mode !== 'errors'"
-              class="min-w-0 space-y-3"
-              data-testid="usage-filters-group-billing"
+            <UFormField
+              v-if="!observer"
+              v-bind="{ 'data-testid': FIELD_TESTID }"
+              :label="t('admin.usage.requestId')"
+              :hint="t('admin.usage.filters.requestIdHint')"
+              :ui="{ hint: 'text-xs text-dimmed' }"
+              class="min-w-0"
             >
-              <legend class="text-xs font-semibold uppercase tracking-wide text-dimmed">
-                {{ t('admin.usage.filters.groupBilling') }}
-              </legend>
+              <UInput
+                v-model="filters.request_id"
+                icon="i-lucide-hash"
+                class="w-full"
+                :placeholder="t('admin.usage.filters.requestIdPlaceholder')"
+                @keyup.enter="emitQuery"
+              />
+            </UFormField>
 
+            <UFormField
+              v-if="mode !== 'errors'"
+              v-bind="{ 'data-testid': FIELD_TESTID }"
+              :label="t('usage.type')"
+              class="min-w-0"
+            >
+              <Select v-bind="field('request_type')" :options="requestTypeOptions" :placeholder="allLabel(requestTypeOptions)" @change="emitQuery" />
+            </UFormField>
+
+            <UFormField
+              v-if="mode !== 'errors'"
+              v-bind="{ 'data-testid': FIELD_TESTID }"
+              :label="t('usage.compactionFilter')"
+              class="min-w-0"
+            >
+              <Select v-bind="field('native_compaction_v2')" :options="compactionOptions" :placeholder="allLabel(compactionOptions)" @change="emitQuery" />
+            </UFormField>
+
+            <template v-if="mode === 'errors'">
+              <UFormField
+                v-bind="{ 'data-testid': FIELD_TESTID }"
+                :label="t('admin.ops.errorLog.type')"
+                class="min-w-0"
+              >
+                <Select v-bind="field('error_phase')" :options="errorPhaseOptions" :placeholder="allLabel(errorPhaseOptions)" @change="emitQuery" />
+              </UFormField>
+              <UFormField
+                v-bind="{ 'data-testid': FIELD_TESTID }"
+                :label="t('usage.errors.category')"
+                class="min-w-0"
+              >
+                <Select v-bind="field('error_category')" :options="errorCategoryOptions" :placeholder="allLabel(errorCategoryOptions)" @change="emitQuery" />
+              </UFormField>
+              <UFormField
+                v-bind="{ 'data-testid': FIELD_TESTID }"
+                :label="t('admin.ops.errorLog.status')"
+                class="min-w-0"
+              >
+                <Select v-bind="field('status_code')" :options="statusCodeOptions" :placeholder="allLabel(statusCodeOptions)" @change="emitQuery" />
+              </UFormField>
+            </template>
+
+            <template v-if="mode !== 'errors'">
               <UFormField
                 v-bind="{ 'data-testid': FIELD_TESTID }"
                 :label="t('admin.usage.billingType')"
                 class="min-w-0"
               >
-                <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="emitQuery" />
+                <Select v-bind="field('billing_type')" :options="billingTypeOptions" :placeholder="allLabel(billingTypeOptions)" @change="emitQuery" />
               </UFormField>
 
               <!-- 用户排行的 user-breakdown 接口不支持计费模式维度 -->
               <UFormField
-                v-bind="{ 'data-testid': FIELD_TESTID }"
                 v-if="mode === 'usage'"
+                v-bind="{ 'data-testid': FIELD_TESTID }"
                 :label="t('admin.usage.billingMode')"
                 class="min-w-0"
               >
-                <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="emitQuery" />
+                <Select v-bind="field('billing_mode')" :options="billingModeOptions" :placeholder="allLabel(billingModeOptions)" @change="emitQuery" />
               </UFormField>
 
               <UFormField
-                v-bind="{ 'data-testid': FIELD_TESTID }"
                 v-if="mode === 'usage'"
+                v-bind="{ 'data-testid': FIELD_TESTID }"
                 :label="t('admin.usage.upstreamModelAudit')"
-                :description="t('admin.usage.filters.upstreamModelAuditHint')"
+                :hint="t('admin.usage.filters.upstreamModelAuditHint')"
+                :ui="{ hint: 'text-xs text-dimmed' }"
                 class="min-w-0"
               >
-                <Select v-model="filters.upstream_model_mismatch" :options="upstreamModelMismatchOptions" @change="emitQuery" />
+                <Select v-bind="field('upstream_model_mismatch')" :options="upstreamModelMismatchOptions" :placeholder="allLabel(upstreamModelMismatchOptions)" @change="emitQuery" />
               </UFormField>
-            </fieldset>
+            </template>
 
-            <!-- 范围 -->
-            <fieldset class="min-w-0 space-y-3" data-testid="usage-filters-group-scope">
-              <legend class="text-xs font-semibold uppercase tracking-wide text-dimmed">
-                {{ t('admin.usage.filters.groupScope') }}
-              </legend>
-
-          <UFormField
-            v-bind="{ 'data-testid': FIELD_TESTID }"
-            v-if="!observer"
-            :label="t('admin.usage.account')"
-            class="min-w-0"
-            :ui="{ container: 'relative' }"
-          >
-            <UInput
-                  v-model="accountKeyword"
-                  icon="i-lucide-server"
-                  :loading="accountSearching"
-                  :placeholder="t('admin.usage.searchAccountPlaceholder')"
-                  class="w-full"
-                  :aria-label="t('admin.usage.account')"
-                  @change="debounceAccountSearch"
-                  @focus="showAccountDropdown = true"
+            <UFormField
+              v-if="!observer"
+              v-bind="{ 'data-testid': FIELD_TESTID, 'data-usage-dropdown': 'account' }"
+              :label="t('admin.usage.account')"
+              class="min-w-0"
+              :ui="{ container: 'relative' }"
+            >
+              <UInput
+                v-model="accountKeyword"
+                icon="i-lucide-server"
+                :loading="accountSearching"
+                :placeholder="t('admin.usage.searchAccountPlaceholder')"
+                class="w-full"
+                :aria-label="t('admin.usage.account')"
+                @update:model-value="debounceAccountSearch"
+                @focus="showAccountDropdown = true"
+                @keydown.esc="showAccountDropdown = false"
+              >
+                <template v-if="filters.account_id" #trailing>
+                  <UButton
+                    icon="i-lucide-x"
+                    color="neutral"
+                    variant="link"
+                    size="xs"
+                    :padded="false"
+                    :aria-label="t('admin.usage.filters.clearAccount')"
+                    data-testid="usage-filter-clear-account"
+                    @click="clearAccount"
+                  />
+                </template>
+              </UInput>
+              <div
+                v-if="showAccountDropdown && (accountResults.length > 0 || accountNoMatch)"
+                class="absolute inset-x-0 top-full z-50 mt-1 max-h-60 overflow-auto rounded-md border border-default bg-default py-1 shadow-lg"
+                data-testid="usage-filter-account-options"
+              >
+                <button
+                  v-for="a in accountResults"
+                  :key="a.id"
+                  type="button"
+                  class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-default hover:bg-elevated"
+                  @click="selectAccount(a)"
                 >
-                  <template v-if="filters.account_id" #trailing>
-                    <UButton
-                      icon="i-lucide-x"
-                      color="neutral"
-                      variant="link"
-                      size="xs"
-                      :padded="false"
-                      :aria-label="t('admin.usage.filters.clearAccount')"
-                      data-testid="usage-filter-clear-account"
-                      @click="clearAccount"
-                    />
-                  </template>
-                </UInput>
-                <div
-                  v-if="showAccountDropdown && accountResults.length > 0"
-                  class="absolute inset-x-0 top-full z-50 mt-1 max-h-60 overflow-auto rounded-md border border-default bg-default py-1 shadow-lg"
-                  data-testid="usage-filter-account-options"
-                >
-                  <button
-                    v-for="a in accountResults"
-                    :key="a.id"
-                    type="button"
-                    class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-default hover:bg-elevated"
-                    @click="selectAccount(a)"
-                  >
-                    <span class="min-w-0 truncate">{{ a.name }}</span>
-                    <span class="ml-auto text-xs text-dimmed">#{{ a.id }}</span>
-                  </button>
-                </div>
-              </UFormField>
+                  <span class="min-w-0 truncate" :title="a.name">{{ a.name }}</span>
+                  <span class="ml-auto text-xs text-dimmed">#{{ a.id }}</span>
+                </button>
+                <p v-if="accountResults.length === 0" class="px-3 py-2 text-sm text-muted" data-testid="usage-filter-account-empty">
+                  {{ t('admin.usage.filters.noAccount') }}
+                </p>
+              </div>
+            </UFormField>
 
-          <UFormField
-            v-bind="{ 'data-testid': FIELD_TESTID }"
-            v-if="!observer"
-            :label="t('admin.usage.group')"
-            class="min-w-0"
-          >
-            <!-- 分组菜单复用 GroupOptionItem（平台徽章 + 描述），和其它页面的分组选择器一致 -->
-            <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitQuery">
-              <template v-if="groupOptionMeta.size" #option="{ option, selected }">
-                <GroupOptionItem
-                  v-if="groupMetaOf(option)"
-                  :name="String(option?.label ?? '')"
-                  :platform="groupMetaOf(option)!.platform"
-                  :subscription-type="groupMetaOf(option)!.subscriptionType ?? 'standard'"
-                  :description="groupMetaOf(option)!.description ?? null"
-                  :selected="selected"
-                />
-                <span v-else class="truncate text-sm">{{ option?.label }}</span>
-              </template>
-            </Select>
-          </UFormField>
-        </fieldset>
+            <UFormField
+              v-if="!observer"
+              v-bind="{ 'data-testid': FIELD_TESTID }"
+              :label="t('admin.usage.group')"
+              class="min-w-0"
+            >
+              <!-- 分组菜单复用 GroupOptionItem（平台徽章 + 描述），和其它页面的分组选择器一致 -->
+              <Select v-bind="field('group_id')" :options="groupOptions" :placeholder="allLabel(groupOptions)" searchable @change="emitQuery">
+                <template v-if="groupOptionMeta.size" #option="{ option, selected }">
+                  <GroupOptionItem
+                    v-if="groupMetaOf(option)"
+                    :name="String(option?.label ?? '')"
+                    :platform="groupMetaOf(option)!.platform"
+                    :subscription-type="groupMetaOf(option)!.subscriptionType ?? 'standard'"
+                    :description="groupMetaOf(option)!.description ?? null"
+                    :selected="selected"
+                  />
+                  <span v-else class="truncate text-sm">{{ option?.label }}</span>
+                </template>
+              </Select>
+            </UFormField>
           </div>
           <slot name="after-advanced" />
         </div>
-        </div>
-      </UCollapsible>
+      </Transition>
 
       <!-- 操作条：主操作 查询；次 重置/刷新；更多（列设置/导出）；危险 清理 独立右侧 -->
       <div
         v-if="showActions"
-        class="mt-4 flex flex-wrap items-center gap-2 border-t border-default pt-3"
+        class="usage-filters-actions usage-filters-press mt-4 flex flex-wrap items-center gap-2 border-t border-default pt-3"
         data-testid="usage-filters-actions"
       >
         <UButton
@@ -536,7 +529,8 @@ const emit = defineEmits([
   'cleanup'
 ])
 
-const ICON_TRANSITION = 'transition-transform duration-200 data-[state=open]:rotate-180'
+// 展开箭头：200ms，强 ease-out（内置 ease 起步偏软，点下去不像「立刻有反应」）
+const ICON_TRANSITION = 'transition-transform duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]'
 // 每个筛选项都是一个 UFormField，字段标记用 v-bind 透传到它的根节点（测试与样式都靠它找字段）。
 const FIELD_TESTID = 'usage-filters-field'
 
@@ -678,6 +672,19 @@ const moreMenuItems = computed<DropdownMenuItem[][]>(() => {
   return groups
 })
 
+// 这些筛选的默认值是 undefined（不是 null），下拉框按严格相等找选中项，找不到就显示「请选择」，
+// 读起来像必填。用各自第一项（value 为 null 的「全部…」）当占位，空值就读作「不限」。
+const allLabel = (options: SelectOption[]): string => String(options[0]?.label ?? '')
+
+// 「不限」在界面上统一读作淡色的「全部…」占位：值是 null（选过「全部」）或 undefined（还没动过）都一样，
+// 只有真有筛选值时才是亮色。写回时仍原样存下拉给的值，传给页面的查询参数不变。
+const field = (key: string) => ({
+  modelValue: filters.value[key] ?? undefined,
+  'onUpdate:modelValue': (value: unknown) => {
+    filters.value[key] = value
+  }
+})
+
 const modelOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('admin.usage.allModels') },
   ...(props.modelOptions ?? []).map((m) => ({ value: m, label: m })),
@@ -759,10 +766,11 @@ const clearPendingUserSearch = () => {
   userSearchSequence += 1
 }
 
-const debounceUserSearch = () => {
+// 绑在 update:model-value 上、直接用传进来的新值：不依赖 v-model 与本处理器谁先执行（先读 userKeyword 会慢一拍）。
+const debounceUserSearch = (value?: string | number | null) => {
   if (props.observer) return
   clearPendingUserSearch()
-  const query = userKeyword.value.trim()
+  const query = String(value ?? userKeyword.value).trim()
   if (!query) {
     userResults.value = []
     userSearching.value = false
@@ -890,6 +898,34 @@ const onApiKeyFocus = () => {
   }
 }
 
+// 搜索跑完、有关键字、却一条都没有：下拉里给一句「无匹配」，别让它直接消失（看起来像没反应）。
+// 已选中某一项时关键字是选中项的名字，不算一次落空的搜索。
+const userNoMatch = computed(
+  () => !!userKeyword.value.trim() && !userSearching.value && !filters.value.user_id && userResults.value.length === 0
+)
+const apiKeyNoMatch = computed(
+  () => !!apiKeyKeyword.value.trim() && !apiKeySearching.value && !filters.value.api_key_id && apiKeyResults.value.length === 0
+)
+const accountNoMatch = computed(
+  () => !!accountKeyword.value.trim() && !accountSearching.value && !filters.value.account_id && accountResults.value.length === 0
+)
+
+// 三个搜索下拉（用户 / API 密钥 / 账户）：点到各自字段之外就收起；Esc 在输入框上收起。
+// 改前只能选中一项才会关，点别处、按 Esc 都不行，列表会一直悬在表单上。
+const searchDropdowns = {
+  user: showUserDropdown,
+  apiKey: showApiKeyDropdown,
+  account: showAccountDropdown
+}
+const closeSearchDropdownsOutside = (event: PointerEvent) => {
+  const target = event.target as Element | null
+  for (const [key, open] of Object.entries(searchDropdowns)) {
+    if (open.value && !target?.closest?.(`[data-usage-dropdown="${key}"]`)) open.value = false
+  }
+}
+onMounted(() => document.addEventListener('pointerdown', closeSearchDropdownsOutside))
+onUnmounted(() => document.removeEventListener('pointerdown', closeSearchDropdownsOutside))
+
 onMounted(async () => {
   if (props.observer) return
   try {
@@ -982,3 +1018,45 @@ const refreshActivePreset = (): { startDate: string; endDate: string } | null =>
 
 defineExpose({ getUserSearchRevision, setUserKeyword, refreshActivePreset, advancedOpen })
 </script>
+
+<style scoped>
+.usage-filters {
+  --usage-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* 高级区展开：只动 opacity + transform，160ms 强 ease-out；收起不做过渡。 */
+.usage-adv-enter-active {
+  transition:
+    opacity 160ms var(--usage-ease-out),
+    transform 160ms var(--usage-ease-out);
+}
+.usage-adv-enter-from {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* 按下反馈：scale(0.97)。只给操作条里的按钮和「高级筛选」开关，不碰字段触发器。 */
+.usage-filters-press:is(button),
+.usage-filters-press :deep(button) {
+  transition-property: color, background-color, border-color, box-shadow, transform;
+  transition-duration: 160ms;
+  transition-timing-function: var(--usage-ease-out);
+}
+.usage-filters-press:is(button):not(:disabled):active,
+.usage-filters-press :deep(button:not(:disabled):active) {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-adv-enter-active {
+    transition: opacity 120ms linear;
+  }
+  .usage-adv-enter-from {
+    transform: none;
+  }
+  .usage-filters-press:is(button):not(:disabled):active,
+  .usage-filters-press :deep(button:not(:disabled):active) {
+    transform: none;
+  }
+}
+</style>

@@ -8,7 +8,7 @@
         class="group w-full max-w-full data-[state=open]:bg-elevated"
         data-test="date-range-trigger"
       >
-        <span class="truncate font-medium">{{ displayValue }}</span>
+        <span class="truncate font-medium" :title="displayValue">{{ displayValue }}</span>
         <template #trailing>
           <UIcon
             name="i-lucide-chevron-down"
