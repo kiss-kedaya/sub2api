@@ -4,7 +4,7 @@ import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import Toast from '@/components/common/Toast.vue'
 import NavigationProgress from '@/components/common/NavigationProgress.vue'
 import AdminComplianceDialog from '@/components/admin/AdminComplianceDialog.vue'
-import { resolveRouteDocumentTitle } from '@/router/title'
+import { applyDocumentTitle } from '@/router/documentTitle'
 import AnnouncementPopup from '@/components/common/AnnouncementPopup.vue'
 import ConfirmHost from '@/components/common/ConfirmHost.vue'
 import StepUpGate from '@/components/auth/StepUpGate.vue'
@@ -41,12 +41,7 @@ const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
 
 function updateDocumentTitle() {
-  if (typeof document === 'undefined') return
-  const customMenuItems = [
-    ...(appStore.cachedPublicSettings?.custom_menu_items ?? []),
-    ...(authStore.isAdmin ? adminSettingsStore.customMenuItems : []),
-  ]
-  document.title = resolveRouteDocumentTitle(route, appStore.siteName, customMenuItems)
+  applyDocumentTitle(route)
 }
 
 // main.ts applies the site theme before mounting. Apply it again when the public
