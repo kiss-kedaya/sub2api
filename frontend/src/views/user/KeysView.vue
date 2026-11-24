@@ -1541,6 +1541,7 @@
       :hide-ccs-import="!!publicSettings?.hide_ccs_import_button"
       :can-seal="sealAvailableForCreate"
       :auth-factor="createAuthFactor"
+      :verified-password="receiptVerifiedPassword"
       @close="closeSecretDialog"
       @use="useRevealedKey"
       @import-ccs="importRevealedToCcswitch"
@@ -1752,6 +1753,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import GroupRateSignals from '@/components/common/GroupRateSignals.vue'
 	import PlatformIcon from '@/components/common/PlatformIcon.vue'
 	import KeyFactorVerification from '@/components/keys/KeyFactorVerification.vue'
+	import { quietPrimaryUi } from '@/components/keys/quietUi'
 	import { needsKeyVerification } from '@/utils/apiKeyVerification'
 	import UserPageHeader from '@/components/user/UserPageHeader.vue'
 	import type { ApiKey, ApiKeyVerificationFactors, ApiKeyVerificationPayload, CustomEndpoint, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
@@ -2113,6 +2115,11 @@ const verificationFactors = ref<ApiKeyVerificationFactors | null>(null)
 const verificationFactorsLoading = ref(false)
 const verificationPayload = ref<ApiKeyVerificationPayload | null>(null)
 const createAuthFactor = ref('')
+// 这次创建 / 轮换里用户已经输入过（并且服务端已校验过）的登录密码：只在内存里，交给回执弹窗做「以后可查看」，
+// 免得再让用户输一遍；回执关闭时清空，不进任何存储。
+const receiptVerifiedPassword = ref('')
+const verifiedPasswordOf = (verification: ApiKeyVerificationPayload | string | null | undefined): string =>
+  typeof verification === 'object' && verification?.method === 'password' ? (verification.password ?? '') : ''
 const createVerificationRef = ref<InstanceType<typeof KeyFactorVerification> | null>(null)
 const showCreateFlow = computed(() => showCreateModal.value && !showEditModal.value)
 // 创建时「更多设置」默认收起；编辑不折叠（见模板里的 key-advanced-settings）。
@@ -2124,10 +2131,6 @@ const createDialogDescription = computed(() => {
     ? t('keys.createStep.verifyHint')
     : t('keys.createStep.detailsHint')
 })
-// Quiet 主按钮：胶囊、36px 高、按下缩到 0.97（和注册页同一套数值）。
-const quietPrimaryUi = {
-  base: 'h-9 rounded-full px-5 text-[14px] font-medium transition-transform duration-150 ease-[cubic-bezier(0.25,0.46,0.45,0.94)] active:not-disabled:scale-[0.97]',
-}
 const appUpdate = useAppUpdate()
 const isCreateVerificationStep = computed(() => showCreateFlow.value && createStep.value === 2)
 // 只有开了 TOTP / 绑了 Passkey 的账号才有校验这一步；只有登录密码的账号（含 Google / GitHub 登录的用户）
@@ -2683,6 +2686,7 @@ const closeSecretDialog = () => {
   secretPlaintext.value = ''
   secretRow.value = null
   createAuthFactor.value = ''
+  receiptVerifiedPassword.value = ''
 }
 
 // 列表列只展示后端口径的掩码：优先 key_masked；老数据只剩前缀时补「****」。
@@ -2907,6 +2911,7 @@ const rotateKeyValue = async (key: ApiKey) => {
     if (rotatedSecret) ephemeralBarKeyId.value = key.id
     // 旧 key 已立刻失效，新明文必须当场给用户，否则这把 key 就废了。
     // 回执行同样要带分组，否则立刻点「使用密钥」会被误判成无分组。
+    receiptVerifiedPassword.value = verifiedPasswordOf(verification)
     openSecretDialog(merged ?? resolveKeyGroupRow(rotatedMasked as ApiKey), rotatedSecret)
     appStore.showSuccess(t('keys.riskRotateSuccess'))
     // 轮换即整改：角标就地消失，门禁汇总数量同步减少。
@@ -3372,6 +3377,7 @@ const handleSubmit = async () => {
         ephemeralBarKeyId.value = createdMasked.id
         // 记录本次身份校验因子：封存密文时原样上报，二次查看要求同一因子。
         createAuthFactor.value = verification?.method ?? ''
+        receiptVerifiedPassword.value = verifiedPasswordOf(verification)
         appStore.showSuccess(t('keys.keyCreatedSuccess'))
         // 回执弹窗拿补齐分组后的行：立刻点「使用密钥」时平台/分组都在。
         openSecretDialog(createdRow ?? createdMasked, createdSecret)

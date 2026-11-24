@@ -33,27 +33,25 @@ vi.mock('@/utils/apikeySeal', async () => {
 })
 
 const messages: Record<string, string> = {
-  'keys.secretDialog.title': 'Plaintext key (shown once)',
-  'keys.secretDialog.description': 'The server will not return the plaintext again.',
-  'keys.secretDialog.saveNotice': 'Copy and store it now.',
-  'keys.secretDialog.cannotViewAgain': 'You cannot view it again after closing.',
-  'keys.secretDialog.waitHint': 'This dialog unlocks after at least 1 second.',
-  'keys.secretDialog.copy': 'Copy key',
+  'keys.secretDialog.title': 'Save your key',
+  'keys.secretDialog.description': 'Shown once. Copy it now.',
+  'keys.secretDialog.waitHint': 'Copy and save the key first',
+  'keys.secretDialog.copy': 'Copy',
   'keys.secretDialog.copied': 'Copied',
   'keys.secretDialog.use': 'Use key',
   'keys.secretDialog.importCcs': 'Import to CCS',
   'keys.secretDialog.done': 'Done',
-  'keys.seal.optIn': 'Allow viewing this key later with my login password',
-  'keys.seal.optInHint': 'The key is encrypted locally; the server stores only ciphertext.',
+  'keys.seal.optIn': 'View later',
+  'keys.seal.optInHint': 'Encrypted in this browser with your login password.',
+  'keys.seal.info': 'Details',
   'keys.seal.passwordLabel': 'Login password',
-  'keys.seal.passwordHint': 'Used only for local encryption.',
-  'keys.seal.passwordRequired': 'Enter your login password, or uncheck the option.',
-  'keys.seal.failed': 'Wrong password or save failed; you can retry later.',
-  'keys.seal.wrongPassword': 'The login password is incorrect; this key cannot be sealed for later viewing.',
+  'keys.seal.passwordRequired': 'Enter your login password',
+  'keys.seal.failed': 'Could not save. Try again later.',
+  'keys.seal.wrongPassword': 'Incorrect login password',
   'keys.factor.passwordRateLimited': 'Too many incorrect password attempts. Please wait a minute and try again.',
-  'keys.seal.unsupported': 'This browser does not support WebCrypto.',
+  'keys.seal.unsupported': 'This browser cannot encrypt the key',
   'keys.seal.later': 'Later',
-  'keys.seal.unavailable': 'This account has no usable login password, so this option is unavailable.',
+  'keys.seal.unavailable': 'Bind an email and set a login password first',
 }
 
 vi.mock('vue-i18n', async () => {
@@ -109,7 +107,8 @@ const mountDialog = async (props: Record<string, unknown> = {}): Promise<VueWrap
     attachTo: document.body,
     props: { show: true, secret: SECRET, apiKey: createApiKey(), ...props },
     global: {
-      stubs: { teleport: true, Icon: true },
+      // The password field fades in and out; stubbing Transition keeps "is the field there" synchronous.
+      stubs: { teleport: true, Icon: true, transition: true },
     },
   })
   await flushPromises()
@@ -118,6 +117,9 @@ const mountDialog = async (props: Record<string, unknown> = {}): Promise<VueWrap
 }
 
 const dialogBody = (wrapper: VueWrapper) => wrapper.get('[data-test="api-key-secret-dialog"]')
+const sealSwitch = (wrapper: VueWrapper) => wrapper.get('[data-test="api-key-seal-checkbox"]')
+const hintHidden = (wrapper: VueWrapper) =>
+  (wrapper.get('[data-test="api-key-seal-hint"]').element as HTMLElement).style.display === 'none'
 const doneButton = (wrapper: VueWrapper) => wrapper.get('[data-test="api-key-secret-done"]')
 const closeButton = (wrapper: VueWrapper) => wrapper.get('.base-dialog-header [data-slot="close"]')
 const clickNatively = (element: { element: Element }) =>
@@ -138,13 +140,47 @@ describe('ApiKeySecretDialog minimum display window', () => {
     vi.restoreAllMocks()
   })
 
-  it('shows the plaintext, the cannot-view-again notice and the wait hint on open', async () => {
+  it('shows the plaintext, one short notice and nothing else to read on open', async () => {
     const wrapper = await mountDialog()
 
     expect(wrapper.get('[data-test="api-key-secret-value"]').text()).toBe(SECRET)
-    expect(wrapper.text()).toContain('You cannot view it again after closing.')
-    expect(wrapper.get('[data-test="api-key-secret-wait-hint"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="api-key-secret-notice"]').text()).toBe('Shown once. Copy it now.')
     expect(dialogBody(wrapper).attributes('data-can-close')).toBe('false')
+  })
+
+  it('keeps the screen quiet: the key name, no masked copy of the key, no warning paragraphs', async () => {
+    const wrapper = await mountDialog({ canSeal: true })
+
+    expect(wrapper.get('[data-test="api-key-secret-name"]').text()).toBe('prod key')
+    // The full key is right there; the masked form of the same key would be pure noise.
+    expect(wrapper.text()).not.toContain('sk-once-****-6789')
+    // The old amber box and its two paragraphs are gone: nothing announces itself as an alert on open.
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.find('.bg-amber-50').exists()).toBe(false)
+    // The only explanation of "view later" is hidden until asked for.
+    expect(hintHidden(wrapper)).toBe(true)
+  })
+
+  it('leads with icons: the notice, the key name, the copy button and the footer actions', async () => {
+    const wrapper = await mountDialog({ canSeal: true })
+
+    // The suite stubs the icon component, so an icon is either a rendered <svg> or its stub.
+    const icons = (selector: string) => wrapper.get(selector).element.querySelectorAll('svg, icon-stub').length
+    expect(icons('[data-test="api-key-secret-notice"]')).toBeGreaterThan(0)
+    expect(icons('[data-test="api-key-secret-copy"]')).toBeGreaterThan(0)
+    expect(icons('[data-test="api-key-secret-use"]')).toBeGreaterThan(0)
+    expect(icons('[data-test="api-key-secret-import-ccs"]')).toBeGreaterThan(0)
+    expect(icons('[data-test="api-key-secret-done"]')).toBeGreaterThan(0)
+  })
+
+  it('shows the wait cue to screen readers only; sighted users just see the disabled button', async () => {
+    const wrapper = await mountDialog()
+
+    const hint = wrapper.get('[data-test="api-key-secret-wait-hint"]')
+    expect(hint.classes()).toContain('sr-only')
+    expect(hint.attributes('role')).toBe('status')
+    expect(hint.text()).toBe('Copy and save the key first')
+    expect(doneButton(wrapper).attributes('disabled')).toBeDefined()
   })
 
   it('blocks X, Escape, the veil and the footer close button during the first second', async () => {
@@ -270,46 +306,108 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     vi.restoreAllMocks()
   })
 
-  // 自动填充串扰修复：回执弹窗默认不渲染密码框，只有用户主动勾选
-  // 「允许以后查看」时才出现，且使用 new-password + 非凭据 name + 密码管理器忽略标记。
-  it('renders the opt-in unchecked and only shows the password field after opting in', async () => {
+  const unlock = async () => {
+    await sleep(1100)
+    await nextTick()
+  }
+  const switchOn = async (wrapper: VueWrapper) => {
+    await sealSwitch(wrapper).trigger('click')
+    await flushPromises()
+  }
+
+  // 自动填充串扰修复：回执弹窗默认不渲染密码框，只有用户主动打开
+  // 「以后可查看」时才出现，且使用 new-password + 非凭据 name + 密码管理器忽略标记。
+  it('renders the switch off and only shows the password field after switching it on', async () => {
     const wrapper = await mountDialog({ canSeal: true })
     expect(wrapper.get('[data-test="api-key-seal-optin"]').exists()).toBe(true)
-    expect(wrapper.get('[data-test="api-key-seal-checkbox"]').attributes('aria-checked')).toBe('false')
+    expect(sealSwitch(wrapper).attributes('role')).toBe('switch')
+    expect(sealSwitch(wrapper).attributes('aria-checked')).toBe('false')
     expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
 
-    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
-    await flushPromises()
+    await switchOn(wrapper)
+    expect(sealSwitch(wrapper).attributes('aria-checked')).toBe('true')
     const password = wrapper.get('[data-test="api-key-seal-password"]')
     expect(password.attributes('autocomplete')).toBe('new-password')
     expect(password.attributes('name')).toBe('apikey-seal-passphrase')
     expect(password.attributes('data-lpignore')).toBe('true')
     expect(password.attributes('data-1p-ignore')).toBe('true')
+    // No separate label paragraph: the placeholder and the aria-label say what it is.
+    expect(password.attributes('placeholder')).toBe('Login password')
+    expect(password.attributes('aria-label')).toBe('Login password')
     wrapper.unmount()
   })
 
-  it('hides the opt-in and explains why when the account has no login password', async () => {
-    const wrapper = await mountDialog({ canSeal: false })
-    expect(wrapper.find('[data-test="api-key-seal-optin"]').exists()).toBe(false)
-    expect(wrapper.get('[data-test="api-key-seal-unavailable"]').text()).toBe(
-      'This account has no usable login password, so this option is unavailable.',
-    )
-    wrapper.unmount()
-  })
-
-  it('requires a password before closing a checked opt-in', async () => {
+  it('puts the cursor in the password field as soon as the switch is on', async () => {
     const wrapper = await mountDialog({ canSeal: true })
-    await sleep(1100)
+
+    await switchOn(wrapper)
     await nextTick()
 
-    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
-    await flushPromises()
-    await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+    expect(document.activeElement).toBe(wrapper.get('[data-test="api-key-seal-password"]').element)
+    wrapper.unmount()
+  })
+
+  it('toggles from the label text as well as from the switch', async () => {
+    const wrapper = await mountDialog({ canSeal: true })
+
+    await wrapper.get('label[for="api-key-seal-switch"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('[data-test="api-key-seal-error"]').text()).toBe(
-      'Enter your login password, or uncheck the option.',
-    )
+    expect(sealSwitch(wrapper).attributes('aria-checked')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('keeps the explanation behind the (i) button, one sentence, opened on demand', async () => {
+    const wrapper = await mountDialog({ canSeal: true })
+    const info = wrapper.get('[data-test="api-key-seal-info"]')
+    expect(info.attributes('aria-label')).toBe('Details')
+    expect(info.attributes('aria-expanded')).toBe('false')
+    expect(hintHidden(wrapper)).toBe(true)
+
+    await info.trigger('click')
+    expect(info.attributes('aria-expanded')).toBe('true')
+    expect(hintHidden(wrapper)).toBe(false)
+    expect(wrapper.get('[data-test="api-key-seal-hint"]').text()).toBe('Encrypted in this browser with your login password.')
+
+    await info.trigger('click')
+    expect(hintHidden(wrapper)).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('does not show the row at all when the account has no login password', async () => {
+    const wrapper = await mountDialog({ canSeal: false })
+
+    expect(wrapper.find('[data-test="api-key-seal-optin"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="api-key-seal-checkbox"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="api-key-seal-info"]').exists()).toBe(false)
+    // Closing still works and never tries to seal.
+    await unlock()
+    await doneButton(wrapper).trigger('click')
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    expect(sealApiKey).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('ignores a remembered password when the account cannot seal', async () => {
+    const wrapper = await mountDialog({ canSeal: false, verifiedPassword: 'typed-once' })
+
+    expect(wrapper.find('[data-test="api-key-seal-optin"]').exists()).toBe(false)
+    await unlock()
+    await doneButton(wrapper).trigger('click')
+    expect(sealApiKey).not.toHaveBeenCalled()
+    expect(putSecretSeal).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('requires a password before sealing when none was typed earlier', async () => {
+    const wrapper = await mountDialog({ canSeal: true })
+    await unlock()
+
+    await switchOn(wrapper)
+    await doneButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="api-key-seal-error"]').text()).toBe('Enter your login password')
     expect(wrapper.emitted('close')).toBeUndefined()
     expect(sealApiKey).not.toHaveBeenCalled()
     wrapper.unmount()
@@ -317,13 +415,11 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
 
   it('seals locally, verifies the password server-side and reports the sealed row', async () => {
     const wrapper = await mountDialog({ canSeal: true, authFactor: 'totp' })
-    await sleep(1100)
-    await nextTick()
+    await unlock()
 
-    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
-    await flushPromises()
+    await switchOn(wrapper)
     await wrapper.get('[data-test="api-key-seal-password"]').setValue('correct horse')
-    await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+    await doneButton(wrapper).trigger('click')
     await flushPromises()
 
     // 密码只参与本地 KDF，同时随封存请求发给服务端做 bcrypt 校验；
@@ -338,23 +434,173 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     wrapper.unmount()
   })
 
+  it('saves on Enter in the password field, like pressing Done', async () => {
+    const wrapper = await mountDialog({ canSeal: true })
+    await unlock()
+
+    await switchOn(wrapper)
+    const field = wrapper.get('[data-test="api-key-seal-password"]')
+    await field.setValue('correct horse')
+    await field.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(putSecretSeal).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('does not save twice when Enter is pressed again while the first save is still running', async () => {
+    let finish!: () => void
+    putSecretSeal.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve }))
+    const wrapper = await mountDialog({ canSeal: true })
+    await unlock()
+
+    await switchOn(wrapper)
+    const field = wrapper.get('[data-test="api-key-seal-password"]')
+    await field.setValue('correct horse')
+    await field.trigger('keydown', { key: 'Enter' })
+    await field.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(putSecretSeal).toHaveBeenCalledTimes(1)
+    finish()
+    await flushPromises()
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('does not save on Enter while the receipt is still locked', async () => {
+    const wrapper = await mountDialog({ canSeal: true })
+
+    await switchOn(wrapper)
+    const field = wrapper.get('[data-test="api-key-seal-password"]')
+    await field.setValue('correct horse')
+    await field.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(putSecretSeal).not.toHaveBeenCalled()
+    expect(wrapper.emitted('close')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  describe('when the login password was already typed to create this key', () => {
+    it('asks for nothing more: no field, and Done seals with the remembered password', async () => {
+      const wrapper = await mountDialog({ canSeal: true, verifiedPassword: 'typed-once' })
+      await unlock()
+
+      await switchOn(wrapper)
+      expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
+
+      await doneButton(wrapper).trigger('click')
+      await flushPromises()
+
+      expect(sealApiKey).toHaveBeenCalledWith(SECRET, 'typed-once')
+      expect(putSecretSeal).toHaveBeenCalledWith(1, SEAL_PAYLOAD, { password: 'typed-once', authFactor: 'password' })
+      expect(wrapper.emitted('sealed')).toHaveLength(1)
+      expect(wrapper.emitted('close')).toHaveLength(1)
+      wrapper.unmount()
+    })
+
+    it('still lets the user decline: switch left off means nothing is sealed', async () => {
+      const wrapper = await mountDialog({ canSeal: true, verifiedPassword: 'typed-once' })
+      await unlock()
+
+      await doneButton(wrapper).trigger('click')
+      await flushPromises()
+
+      expect(sealApiKey).not.toHaveBeenCalled()
+      expect(putSecretSeal).not.toHaveBeenCalled()
+      expect(wrapper.emitted('close')).toHaveLength(1)
+      wrapper.unmount()
+    })
+
+    it('never renders or stores the remembered password', async () => {
+      const wrapper = await mountDialog({ canSeal: true, verifiedPassword: 'typed-once' })
+      await switchOn(wrapper)
+      await wrapper.get('[data-test="api-key-seal-info"]').trigger('click')
+
+      expect(wrapper.html()).not.toContain('typed-once')
+      const stored = [
+        ...Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)),
+        ...Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.key(index)),
+      ]
+        .filter((key): key is string => key !== null)
+        .map((key) => `${key}=${localStorage.getItem(key) ?? sessionStorage.getItem(key) ?? ''}`)
+        .join('\n')
+      expect(stored).not.toContain('typed-once')
+      wrapper.unmount()
+    })
+
+    it('hands over to typing if the server refuses the remembered password', async () => {
+      putSecretSeal.mockRejectedValueOnce({ status: 400, reason: 'VERIFY_PASSWORD_INVALID' })
+      const wrapper = await mountDialog({ canSeal: true, verifiedPassword: 'typed-once' })
+      await unlock()
+
+      await switchOn(wrapper)
+      await doneButton(wrapper).trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-test="api-key-seal-error"]').text()).toBe('Incorrect login password')
+      // The user can now type the right one instead of being stuck behind a field that is not there.
+      const field = wrapper.get('[data-test="api-key-seal-password"]')
+      expect(wrapper.emitted('close')).toBeUndefined()
+
+      await field.setValue('the right one')
+      await doneButton(wrapper).trigger('click')
+      await flushPromises()
+      expect(putSecretSeal).toHaveBeenLastCalledWith(1, SEAL_PAYLOAD, { password: 'the right one', authFactor: 'password' })
+      expect(wrapper.emitted('sealed')).toHaveLength(1)
+      wrapper.unmount()
+    })
+
+    it('goes back to reusing the password for the next key after having fallen back to typing', async () => {
+      putSecretSeal.mockRejectedValueOnce({ status: 400, reason: 'VERIFY_PASSWORD_INVALID' })
+      const wrapper = await mountDialog({ canSeal: true, verifiedPassword: 'typed-once' })
+      await unlock()
+      await switchOn(wrapper)
+      await doneButton(wrapper).trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(true)
+
+      await wrapper.setProps({ show: false })
+      await nextTick()
+      await wrapper.setProps({ show: true, secret: 'sk-second-xyz', verifiedPassword: 'typed-again' })
+      await nextTick()
+      await switchOn(wrapper)
+
+      expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('uses the remembered password again for the next receipt only if the parent passes it again', async () => {
+      const wrapper = await mountDialog({ canSeal: true, verifiedPassword: 'typed-once' })
+      await unlock()
+
+      await wrapper.setProps({ show: false, verifiedPassword: '' })
+      await nextTick()
+      await wrapper.setProps({ show: true, secret: 'sk-second-xyz' })
+      await nextTick()
+      await switchOn(wrapper)
+
+      // The parent cleared it: the user is asked, because the dialog kept nothing.
+      expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+  })
+
   it('shows a specific error and keeps the dialog open when the login password is wrong', async () => {
     putSecretSeal.mockRejectedValueOnce({ status: 400, reason: 'VERIFY_PASSWORD_INVALID' })
     const wrapper = await mountDialog({ canSeal: true })
-    await sleep(1100)
-    await nextTick()
+    await unlock()
 
-    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
-    await flushPromises()
+    await switchOn(wrapper)
     await wrapper.get('[data-test="api-key-seal-password"]').setValue('wrong password')
-    await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+    await doneButton(wrapper).trigger('click')
     await flushPromises()
 
     const error = wrapper.get('[data-test="api-key-seal-error"]')
     expect(error.attributes('role')).toBe('alert')
-    expect(error.text()).toBe(
-      'The login password is incorrect; this key cannot be sealed for later viewing.',
-    )
+    expect(error.text()).toBe('Incorrect login password')
     expect(wrapper.emitted('close')).toBeUndefined()
     expect(wrapper.emitted('sealed')).toBeUndefined()
 
@@ -366,13 +612,11 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
   it('tells the user to wait (not "wrong password") when the password attempts are used up', async () => {
     putSecretSeal.mockRejectedValueOnce({ status: 429, reason: 'VERIFY_PASSWORD_RATE_LIMITED' })
     const wrapper = await mountDialog({ canSeal: true })
-    await sleep(1100)
-    await nextTick()
+    await unlock()
 
-    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
-    await flushPromises()
+    await switchOn(wrapper)
     await wrapper.get('[data-test="api-key-seal-password"]').setValue('correct horse')
-    await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+    await doneButton(wrapper).trigger('click')
     await flushPromises()
 
     const error = wrapper.get('[data-test="api-key-seal-error"]')
@@ -386,23 +630,37 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
   it('shows a retryable error when saving the ciphertext fails and lets the user postpone', async () => {
     putSecretSeal.mockRejectedValueOnce({ status: 500, message: 'boom' })
     const wrapper = await mountDialog({ canSeal: true })
-    await sleep(1100)
-    await nextTick()
+    await unlock()
 
-    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
-    await flushPromises()
+    await switchOn(wrapper)
     await wrapper.get('[data-test="api-key-seal-password"]').setValue('whatever')
-    await wrapper.get('[data-test="api-key-secret-done"]').trigger('click')
+    await doneButton(wrapper).trigger('click')
     await flushPromises()
 
     const error = wrapper.get('[data-test="api-key-seal-error"]')
     expect(error.attributes('role')).toBe('alert')
-    expect(error.text()).toBe('Wrong password or save failed; you can retry later.')
+    expect(error.text()).toBe('Could not save. Try again later.')
     expect(wrapper.emitted('close')).toBeUndefined()
 
     await wrapper.get('[data-test="api-key-seal-later"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
     expect(wrapper.emitted('sealed')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('clears a stale error when the switch is turned off again', async () => {
+    putSecretSeal.mockRejectedValueOnce({ status: 500, message: 'boom' })
+    const wrapper = await mountDialog({ canSeal: true })
+    await unlock()
+
+    await switchOn(wrapper)
+    await wrapper.get('[data-test="api-key-seal-password"]').setValue('whatever')
+    await doneButton(wrapper).trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="api-key-seal-error"]').exists()).toBe(true)
+
+    await switchOn(wrapper) // off
+    expect(wrapper.find('[data-test="api-key-seal-error"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })
