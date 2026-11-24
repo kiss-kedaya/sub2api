@@ -4,6 +4,8 @@ import (
 	"context"
 	"net"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
 
 // SSRF 防护 helper：
@@ -85,6 +87,10 @@ func isPrivateIP(ip net.IP) bool {
 // 任一 IP 落在私网/loopback 段即认为不安全。
 //
 // hostname 是 IP 字面量时也走同一路径。
+//
+// err != nil 表示无法判定（DNS 解析失败/超时）：调用方必须按「拒绝」处理，
+// 不能把 (false, err) 当成通过。管理员填写的出站目标请用
+// urlvalidator.ValidateOutboundHost，它已把解析失败统一按拒绝处理。
 func isPrivateOrLoopbackHost(ctx context.Context, hostname string) (bool, error) {
 	if isBlockedHostname(hostname) {
 		return true, nil
@@ -107,6 +113,15 @@ func isPrivateOrLoopbackHost(ctx context.Context, hostname string) (bool, error)
 		}
 	}
 	return false, nil
+}
+
+// outboundHostIsPublic 判断管理员填写的出站主机能否访问：已知元数据/回环主机名、
+// 非公网字面量 IP、解析到任何非公网地址，以及解析失败/超时/空结果，一律不能。
+//
+// 账号测试/模型同步、CRS 同步、DeepSeek 自填搜索地址共用这一处判定。此前这三处是
+// `isPrivateOrLoopbackHost(...)` 返回 `err == nil && blocked` 才拒绝，解析失败等于放行。
+func outboundHostIsPublic(ctx context.Context, host string) bool {
+	return !isBlockedHostname(host) && urlvalidator.ValidateOutboundHost(ctx, host, false) == nil
 }
 
 // safeDialContext 在真实 dial 前再次校验目标 IP，防止 DNS rebinding。

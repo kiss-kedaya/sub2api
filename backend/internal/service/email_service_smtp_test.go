@@ -28,6 +28,10 @@ func TestMain(m *testing.M) {
 	// 服务验证业务语义；出站安全策略本身由 urlvalidator 与 admin_ssrf_entry_test
 	// 显式覆盖（后者会自行关闭本开关）。
 	restoreAdminOutbound := SetAdminOutboundAllowPrivateForTest(true)
+	// 账号测试/模型同步的私网校验同理：许多用例用不可解析的假域名（*.example.com）
+	// 或本机 httptest 服务，解析失败已按拒绝处理，所以默认放行；策略本身由
+	// 显式关闭本开关的用例覆盖（见 upstream_model_sync_ssrf_test.go）。
+	SetAccountTestAllowPrivateTargetsForTest(true)
 	// Keep catalogue tests deterministic: the curated catalogue is fetched from
 	// GitHub by default, and a reachable network must not change assertions
 	// about models.dev sources. Individual tests seed their own source.
@@ -40,6 +44,7 @@ func TestMain(m *testing.M) {
 		_ = os.Unsetenv("SUB2API_MODEL_CATALOG_URL")
 	}
 	SetSMTPAllowPrivateTargetsForTest(false)
+	SetAccountTestAllowPrivateTargetsForTest(false)
 	restoreAdminOutbound()
 	os.Exit(code)
 }

@@ -1371,6 +1371,23 @@ func newUpstreamDialer() *net.Dialer {
 	}
 }
 
+// publicHostsOnlyDialContext 让带 WithHTTPUpstreamPublicHostsOnly 标记的请求在「拨号期」也只能连公网。
+//
+// validateRequestHost 只在发请求前解析一次，Transport 建连时会再解析一次：两次解析之间
+// 域名被改指内网（DNS rebinding）时，前一次校验形同虚设。标记请求因此改走
+// urlvalidator.NewSafeDialContext——解析一次、要求全部地址为公网、再直接对已校验的 IP 拨号，
+// 不存在「校验一个地址、连接另一个地址」的窗口，失败只返回固定的 ErrOutboundTargetNotAllowed。
+// 未标记的请求原样走 base，行为不变。
+func publicHostsOnlyDialContext(base func(ctx context.Context, network, addr string) (net.Conn, error)) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	guarded := urlvalidator.NewSafeDialContext(urlvalidator.OutboundPolicy{})
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if service.HTTPUpstreamPublicHostsOnly(ctx) {
+			return guarded(ctx, network, addr)
+		}
+		return base(ctx, network, addr)
+	}
+}
+
 // buildUpstreamTransport 构建上游请求的 Transport
 // 使用配置文件中的连接池参数，支持生产环境调优
 //
@@ -1391,8 +1408,14 @@ func newUpstreamDialer() *net.Dialer {
 //   - IdleConnTimeout: 空闲连接超时（超时后关闭）
 //   - ResponseHeaderTimeout: 等待响应头超时（不影响流式传输）
 func buildUpstreamTransport(settings poolSettings, proxyURL *url.URL, protocolMode string) (*http.Transport, error) {
+	dial := newUpstreamDialer().DialContext
+	if proxyURL == nil {
+		// 直连时拨号目标就是请求目的地，可以在拨号期校验；经代理时拨号目标是代理本身、
+		// 目的地由代理解析，本地无从校验（仍保留请求前与重定向逐跳的主机校验）。
+		dial = publicHostsOnlyDialContext(dial)
+	}
 	transport := &http.Transport{
-		DialContext:           newUpstreamDialer().DialContext,
+		DialContext:           dial,
 		TLSHandshakeTimeout:   defaultUpstreamTLSHandshakeTimeout,
 		MaxIdleConns:          settings.maxIdleConns,
 		MaxIdleConnsPerHost:   settings.maxIdleConnsPerHost,
@@ -1496,7 +1519,7 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 	if proxyURL == nil {
 		// 直连：使用 TLSFingerprintDialer
 		slog.Debug("tls_fingerprint_transport_direct")
-		dialer := tlsfingerprint.NewDialer(profile, nil)
+		dialer := tlsfingerprint.NewDialer(profile, publicHostsOnlyDialContext((&net.Dialer{}).DialContext))
 		transport.DialTLSContext = dialer.DialTLSContext
 	} else {
 		scheme := strings.ToLower(proxyURL.Scheme)

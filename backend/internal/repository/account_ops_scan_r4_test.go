@@ -103,6 +103,10 @@ func TestR4RealProjectionScannerRefreshAndThreshold(t *testing.T) {
 	svc := service.NewAccountOpsService(nil, events, nil)
 	svc.SetNotificationDependencies(accounts, nil, false, "UTC")
 	upstream := &r4ScanHTTP{}
+	// 账号用 https://example.invalid 这种不可解析的假域名；私网判定在解析失败时按拒绝处理，
+	// 这里放行账号测试的私网目标检查（出站 SSRF 策略由 service 包的用例覆盖）。
+	service.SetAccountTestAllowPrivateTargetsForTest(true)
+	t.Cleanup(func() { service.SetAccountTestAllowPrivateTargetsForTest(false) })
 	testService := service.NewAccountTestService(accounts, nil, nil, nil, nil, upstream, &config.Config{}, nil)
 	probe := service.NewUpstreamBillingProbeService(accounts, testService, nil)
 	probe.SetAccountOpsService(svc)

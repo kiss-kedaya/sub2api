@@ -81,10 +81,10 @@ func (s *OpenAIGatewayService) forwardDeepSeekTools(
 	}
 	// 分组可以自填搜索服务地址，必须拒绝私网/回环目标：否则管理员（或被
 	// 篡改的分组配置）能把这条路径变成任意 host:port 的探测原语。
-	if group != nil && derefString(group.SearchProviderBaseURL) != "" && !accountTestAllowPrivateTargets.Load() {
-		if blocked, err := isPrivateOrLoopbackHost(ctx, hostOfURL(baseURL)); err == nil && blocked {
-			return nil, errTestTargetNotAllowed
-		}
+	// 解析失败/超时/空结果与解析到私网同样拒绝（此前解析失败会放行）。
+	if group != nil && derefString(group.SearchProviderBaseURL) != "" && !accountTestAllowPrivateTargets.Load() &&
+		!outboundHostIsPublic(ctx, hostOfURL(baseURL)) {
+		return nil, errTestTargetNotAllowed
 	}
 	if modelLabel == "" {
 		modelLabel = DeepSeekToolsLabelSearch

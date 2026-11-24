@@ -13,7 +13,11 @@ import (
 // urlvalidator 与 admin_ssrf_entry_test（unit 构建，显式关闭本开关）覆盖。
 func TestMain(m *testing.M) {
 	restore := SetAdminOutboundAllowPrivateForTest(true)
+	// 账号测试/模型同步的私网校验同理：解析失败按拒绝处理后，用不可解析假域名的用例
+	// 需要默认放行；策略本身由显式关闭本开关的用例覆盖。
+	SetAccountTestAllowPrivateTargetsForTest(true)
 	code := m.Run()
+	SetAccountTestAllowPrivateTargetsForTest(false)
 	restore()
 	os.Exit(code)
 }

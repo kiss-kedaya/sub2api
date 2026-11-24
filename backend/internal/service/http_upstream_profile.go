@@ -64,8 +64,10 @@ func HTTPUpstreamRedirectsDisabled(ctx context.Context) bool {
 
 // WithHTTPUpstreamPublicHostsOnly marks a request whose destination, and every
 // redirect hop after it, must resolve to a public address. The shared upstream
-// client enforces it regardless of the security.url_allowlist configuration;
-// use it for fetches whose URL comes from an untrusted upstream response.
+// client enforces it regardless of the security.url_allowlist configuration
+// (before the request, on every redirect hop and, for direct connections, again
+// when dialing, so a DNS answer that changes in between cannot reach a private
+// address); use it for fetches whose URL comes from an untrusted source.
 func WithHTTPUpstreamPublicHostsOnly(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()

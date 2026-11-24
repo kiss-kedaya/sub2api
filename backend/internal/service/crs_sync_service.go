@@ -244,10 +244,9 @@ func (s *CRSSyncService) fetchCRSExport(ctx context.Context, baseURL, username, 
 	// 否则 preview/sync 就成了任意 host:port 的 POST+GET 探测原语（并把
 	// 上游 status/body 原文回显）。这里与 AllowPrivateHosts 解耦——管理员
 	// 如需连内网 CRS，必须显式把该主机加进 crs_hosts 白名单。
-	if !crsHostExplicitlyAllowed(normalizedURL, s.cfg.Security.URLAllowlist.CRSHosts) {
-		if blocked, derr := isPrivateOrLoopbackHost(ctx, hostOfURL(normalizedURL)); derr == nil && blocked {
-			return nil, fmt.Errorf("crs base_url host is not allowed: %s", hostOfURL(normalizedURL))
-		}
+	// 解析失败/超时/空结果与解析到私网同样拒绝（此前解析失败会放行）。
+	if !crsHostExplicitlyAllowed(normalizedURL, s.cfg.Security.URLAllowlist.CRSHosts) && !outboundHostIsPublic(ctx, hostOfURL(normalizedURL)) {
+		return nil, fmt.Errorf("crs base_url host is not allowed: %s", hostOfURL(normalizedURL))
 	}
 	if strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" {
 		return nil, errors.New("username and password are required")
