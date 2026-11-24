@@ -66,23 +66,50 @@ export const compactTableUi = {
 const MODERN_COLOR = /^(oklch|oklab|lab|lch|color)\(/i
 
 function toHex(red: number, green: number, blue: number): string {
-  return `#${[red, green, blue].map((value) => Math.round(value).toString(16).padStart(2, '0')).join('')}`
+  const byte = (value: number) => Math.min(255, Math.max(0, Math.round(value))).toString(16).padStart(2, '0')
+  return `#${byte(red)}${byte(green)}${byte(blue)}`
 }
 
-/** Reads a CSS color as #rrggbb; Chart.js series need hex to add alpha suffixes. */
-function cssColorToHex(color: string): string | null {
-  const value = color.trim()
-  if (/^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase()
-  const rgb = value.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i)
-  if (rgb) return toHex(Number(rgb[1]), Number(rgb[2]), Number(rgb[3]))
-  if (!MODERN_COLOR.test(value)) return null
-  // The palettes are oklch: let a 1x1 canvas convert to sRGB bytes.
+/** `color(srgb 0.87 0.56 0.67)` -> #rrggbb. Out-of-gamut components clamp, like a canvas fill does. */
+function srgbFunctionToHex(value: string): string | null {
+  const match = value.match(/^color\(\s*srgb\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)/i)
+  if (!match) return null
+  return toHex(Number(match[1]) * 255, Number(match[2]) * 255, Number(match[3]) * 255)
+}
+
+/**
+ * Resolves oklch()/lab()/... to #rrggbb. The first way asks the style engine (`color-mix` in srgb makes
+ * getComputedStyle answer in sRGB) — no canvas, so no GPU readback. The 1x1 canvas stays as the last resort
+ * for engines that cannot mix: on a cold dashboard load its getImageData cost about 200 ms per color.
+ */
+function modernColorToHex(value: string): string | null {
+  const probe = document.createElement('span')
+  probe.style.cssText = `position:absolute;visibility:hidden;pointer-events:none;color:color-mix(in srgb, ${value} 100%, transparent)`
+  document.body.appendChild(probe)
+  const mixed = getComputedStyle(probe).color
+  probe.remove()
+  const fromStyle = srgbFunctionToHex(mixed) ?? mixed.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i)
+  if (typeof fromStyle === 'string') return fromStyle
+  if (fromStyle) return toHex(Number(fromStyle[1]), Number(fromStyle[2]), Number(fromStyle[3]))
+
   const context = document.createElement('canvas').getContext('2d')
   if (!context) return null
   context.fillStyle = value
   context.fillRect(0, 0, 1, 1)
   const [red, green, blue] = context.getImageData(0, 0, 1, 1).data
   return toHex(red, green, blue)
+}
+
+/** Reads a CSS color as #rrggbb; Chart.js series need hex to add alpha suffixes. */
+export function cssColorToHex(color: string): string | null {
+  const value = color.trim()
+  if (/^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase()
+  const rgb = value.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i)
+  if (rgb) return toHex(Number(rgb[1]), Number(rgb[2]), Number(rgb[3]))
+  const srgb = srgbFunctionToHex(value)
+  if (srgb) return srgb
+  if (!MODERN_COLOR.test(value)) return null
+  return modernColorToHex(value)
 }
 
 function readCssColor(variable: string): string | null {
