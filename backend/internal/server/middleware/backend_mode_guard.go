@@ -32,6 +32,10 @@ func backendModeAllowsAuthPath(path string) bool {
 	for _, suffix := range []string{
 		"/auth/login",
 		"/auth/login/2fa",
+		// Second factor of a password login for an account that has both TOTP and a Passkey. Without it an
+		// administrator with a Passkey cannot finish signing in while backend mode is on. The handler still
+		// admits administrators only (ensureBackendModeAllowsUser), like /auth/login and /auth/login/2fa.
+		"/auth/login/2fa/passkey/finish",
 		"/auth/passkey/login/begin",
 		"/auth/passkey/login/finish",
 		"/auth/logout",

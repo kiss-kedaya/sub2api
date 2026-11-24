@@ -186,6 +186,52 @@ func TestBackendModeAuthGuard(t *testing.T) {
 			path:       "/api/v1/auth/login/2fa",
 			wantStatus: http.StatusOK,
 		},
+		// 绑了 Passkey 的管理员：密码登录后的第二因子（Passkey assertion）走这条，漏放行会让他卡在登录最后一步。
+		// 该 handler 自己仍会按后台模式只放行管理员（ensureBackendModeAllowsUser）。
+		{
+			name:       "enabled_allows_login_2fa_passkey_finish",
+			enabled:    "true",
+			path:       "/api/v1/auth/login/2fa/passkey/finish",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "enabled_allows_login_2fa_passkey_finish_on_a_prefixed_mount",
+			enabled:    "true",
+			path:       "/auth/login/2fa/passkey/finish",
+			wantStatus: http.StatusOK,
+		},
+		// 放行表按后缀匹配：新增一项只能放行它自己，不能顺带放行邻居。
+		{
+			name:       "enabled_blocks_login_2fa_passkey_begin_lookalike",
+			enabled:    "true",
+			path:       "/api/v1/auth/login/2fa/passkey/begin",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			// 以同样的后缀结尾、但不是这条路由：放行的是 /auth/login/2fa/passkey/finish 本身，不是任意 …/passkey/finish。
+			name:       "enabled_blocks_another_route_that_ends_in_passkey_finish",
+			enabled:    "true",
+			path:       "/api/v1/auth/register/passkey/finish",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "enabled_blocks_a_nested_path_that_ends_in_2fa_passkey_finish",
+			enabled:    "true",
+			path:       "/api/v1/auth/register/login/2fa/passkey/finish",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "enabled_blocks_a_longer_path_that_only_contains_the_new_entry",
+			enabled:    "true",
+			path:       "/api/v1/auth/login/2fa/passkey/finish/extra",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "enabled_blocks_register_even_though_the_passkey_finish_is_allowed",
+			enabled:    "true",
+			path:       "/api/v1/auth/register",
+			wantStatus: http.StatusForbidden,
+		},
 		{
 			name:       "enabled_allows_logout",
 			enabled:    "true",
