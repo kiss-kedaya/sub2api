@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +25,8 @@ import (
 type handlerVerifyUserRepo struct {
 	service.UserRepository
 	user *service.User
+	// identities：第三方注册账号判「是否设置过本地密码」时查的认证身份（默认没有）。
+	identities []service.UserAuthIdentityRecord
 }
 
 func (r *handlerVerifyUserRepo) GetByID(_ context.Context, id int64) (*service.User, error) {
@@ -33,6 +36,10 @@ func (r *handlerVerifyUserRepo) GetByID(_ context.Context, id int64) (*service.U
 	return r.user, nil
 }
 
+func (r *handlerVerifyUserRepo) ListUserAuthIdentities(context.Context, int64) ([]service.UserAuthIdentityRecord, error) {
+	return r.identities, nil
+}
+
 // handlerVerifyStore 同时实现 TotpCache（嵌入占位）与 APIKeyVerificationStore。
 type handlerVerifyStore struct {
 	service.TotpCache
@@ -40,13 +47,36 @@ type handlerVerifyStore struct {
 	mu      sync.Mutex
 	grants  map[string]*service.APIKeyRevealGrantRecord
 	tickets map[string]*service.APIKeyPasskeyVerificationRecord
+	// usedCodes 复刻 Redis SETNX 的 TOTP 重放标记（按用户 + 摘要）。
+	usedCodes map[string]bool
 }
 
 func newHandlerVerifyStore() *handlerVerifyStore {
 	return &handlerVerifyStore{
-		grants:  map[string]*service.APIKeyRevealGrantRecord{},
-		tickets: map[string]*service.APIKeyPasskeyVerificationRecord{},
+		grants:    map[string]*service.APIKeyRevealGrantRecord{},
+		tickets:   map[string]*service.APIKeyPasskeyVerificationRecord{},
+		usedCodes: map[string]bool{},
 	}
+}
+
+// TotpService 校验动态码用到的缓存方法：失败计数用不到（始终未超限），重放标记按 SETNX 语义。
+func (s *handlerVerifyStore) GetVerifyAttempts(context.Context, int64) (int, error) { return 0, nil }
+
+func (s *handlerVerifyStore) IncrementVerifyAttempts(context.Context, int64) (int, error) {
+	return 1, nil
+}
+
+func (s *handlerVerifyStore) ClearVerifyAttempts(context.Context, int64) error { return nil }
+
+func (s *handlerVerifyStore) MarkLoginCodeUsed(_ context.Context, userID int64, digest string, _ time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := strconv.FormatInt(userID, 10) + ":" + digest
+	if s.usedCodes[key] {
+		return false, nil
+	}
+	s.usedCodes[key] = true
+	return true, nil
 }
 
 func (s *handlerVerifyStore) SaveAPIKeyRevealGrant(_ context.Context, digest string, record *service.APIKeyRevealGrantRecord, _ time.Duration) error {
@@ -93,6 +123,7 @@ func (s *handlerVerifyStore) ConsumeAPIKeyPasskeyTicket(_ context.Context, diges
 
 type handlerVerificationEngine struct {
 	router      *gin.Engine
+	handler     *APIKeyHandler
 	createRepo  *apiKeyCreateReceiptRepo
 	secretStore *handlerSecretStore
 	store       *handlerVerifyStore
@@ -124,11 +155,14 @@ func newHandlerVerificationEngine(t *testing.T, user *service.User) *handlerVeri
 	r.Use(withUserSubject(7))
 	r.GET("/user/security/verification-factors", h.GetVerificationFactors)
 	r.POST("/keys", h.Create)
+	r.PUT("/keys/:id", h.Update)
+	r.POST("/keys/batch-rotate", h.BatchRotate)
 	r.PUT("/user/api-keys/:id/secret-seal", middleware2.RequestBodyLimit(service.APIKeySecretMaxBodyBytes), h.PutSecretSeal)
 	r.GET("/user/api-keys/:id/secret-seal", h.GetSecretSeal)
 	r.POST("/user/api-keys/:id/reveal-authorize", h.AuthorizeReveal)
 	return &handlerVerificationEngine{
 		router:      router,
+		handler:     h,
 		createRepo:  createRepo,
 		secretStore: secretStore,
 		store:       verifyStore,

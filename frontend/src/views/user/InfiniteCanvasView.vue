@@ -160,6 +160,7 @@ function canvasLang(value: string): string {
 function verificationErrorText(reason?: string): string {
   switch (reason) {
     case 'VERIFY_PASSWORD_INVALID': return t('keys.factor.passwordInvalid')
+    case 'VERIFY_PASSWORD_RATE_LIMITED': return t('keys.factor.passwordRateLimited')
     case 'VERIFY_TOTP_INVALID': return t('keys.factor.totpInvalid')
     case 'VERIFY_PASSKEY_FAILED': return t('keys.factor.passkeyFailed')
     case 'VERIFY_FACTOR_UNAVAILABLE': return t('keys.factor.unavailable')

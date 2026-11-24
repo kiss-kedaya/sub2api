@@ -3313,7 +3313,7 @@ const handleSubmit = async () => {
     const reason = error?.reason
     const verifiedReason = reason === 'VERIFY_PASSWORD_INVALID' || reason === 'VERIFY_TOTP_INVALID'
       || reason === 'VERIFY_PASSKEY_FAILED' || reason === 'VERIFY_FACTOR_UNAVAILABLE'
-      || reason === 'VERIFY_REQUIRED'
+      || reason === 'VERIFY_REQUIRED' || reason === 'VERIFY_PASSWORD_RATE_LIMITED'
     const errorMsg = verifiedReason
       ? createVerificationErrorText(reason)
       : reason === 'API_KEY_TOO_PREDICTABLE'
@@ -3418,7 +3418,9 @@ const createVerificationErrorText = (reason?: string): string =>
           ? t('keys.factor.unavailable')
           : reason === 'VERIFY_REQUIRED'
             ? t('keys.factor.requiredAll')
-            : t('keys.batchRotate.failed')
+            : reason === 'VERIFY_PASSWORD_RATE_LIMITED'
+              ? t('keys.factor.passwordRateLimited')
+              : t('keys.batchRotate.failed')
 
 const handleBatchRotate = async () => {
   const ids = selectedKeyIds.value.map((id) => Number(id)).filter((id) => Number.isFinite(id))
@@ -3528,8 +3530,17 @@ const resealRotatedKeys = async () => {
         authFactor: 'password',
       })
       status[item.id] = 'sealed'
-    } catch {
+    } catch (error) {
       status[item.id] = 'failed'
+      // 登录密码不对 / 密码失败预算用尽：剩下的每一条都会同样失败，别再往下打——服务端按用户限制
+      // 密码输错的次数，把剩下的全打一遍只会把这个账号锁一分钟。
+      const reason = (error as { reason?: string } | null)?.reason
+      if (reason === 'VERIFY_PASSWORD_INVALID' || reason === 'VERIFY_PASSWORD_RATE_LIMITED') {
+        batchRotateSealError.value = reason === 'VERIFY_PASSWORD_INVALID'
+          ? t('keys.seal.wrongPassword')
+          : t('keys.factor.passwordRateLimited')
+        break
+      }
     }
   }
   batchRotateSealStatus.value = status

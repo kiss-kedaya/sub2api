@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,8 +32,10 @@ import (
 //     再次查看时必须用同一因子重新授权，成功后才签发 5 分钟一次性 reveal grant。
 //
 // 安全边界：
-//   - 密码只做 bcrypt 比对，不落库、不落日志、不进审计；
-//   - TOTP 走现有校验器（自带每用户失败预算）；
+//   - 密码只做 bcrypt 比对，不落库、不落日志、不进审计；比对前先过按用户的失败预算
+//     （60 秒内最多 5 次，成功清零，见 checkLoginPassword），所有入口共用一份；
+//   - TOTP 走现有校验器（自带每用户失败预算），且一个码只能用一次（VerifyCodeOnce，
+//     与登录共用同一个重放标记）；
 //   - Passkey 走现有 assertion 流程，成功后签发一次性票据（Redis，5 分钟）；
 //   - reveal grant 只存 SHA-256 摘要，按 user+key+factor 绑定，一次性消费；
 //   - 所有失败统一 fail-closed：不创建 Key / 不下发密文。
@@ -69,6 +72,10 @@ var (
 	// ErrAPIKeyPasswordInvalid 登录密码错误（创建 / 封存 / 二次查看）。
 	ErrAPIKeyPasswordInvalid = infraerrors.BadRequest(
 		"VERIFY_PASSWORD_INVALID", "password is incorrect")
+	// ErrAPIKeyPasswordRateLimited 该账号短时间内密码校验失败过多（按用户的失败预算已用尽）。
+	// 带 retry_after 元数据（秒），handler 据此写 Retry-After。
+	ErrAPIKeyPasswordRateLimited = infraerrors.TooManyRequests(
+		"VERIFY_PASSWORD_RATE_LIMITED", "too many password verification attempts, please try again later")
 	// ErrAPIKeyTOTPInvalid 动态验证码错误或已失效。
 	ErrAPIKeyTOTPInvalid = infraerrors.BadRequest(
 		"VERIFY_TOTP_INVALID", "dynamic code is incorrect")
@@ -199,6 +206,21 @@ type APIKeyVerificationStore interface {
 	ConsumeAPIKeyPasskeyTicket(ctx context.Context, digest string) (*APIKeyPasskeyVerificationRecord, error)
 }
 
+// APIKeyPasswordAttemptLimiter 是登录密码因子「按用户」的失败预算端口。
+//
+// 生产实现是 middleware.NewAPIKeyPasswordRateLimiter（Redis 滑动窗口，60 秒内最多 5 次，
+// 与登录 2FA / step-up 同一套实现），但使用**独立的计数桶**（key 前缀
+// api_key_password:verify:user:）：与 2FA 共桶的话，密码校验成功会清掉 2FA 的失败计数，
+// 持会话者也能靠故意输错密码把账号的登录 2FA 锁住一分钟。连续失败有上限、校验成功即清零、
+// 维度是用户 ID 而不是 IP。未装配（nil）时不做预算，保持装配前的行为。
+type APIKeyPasswordAttemptLimiter interface {
+	// Check 记录一次密码尝试；allowed=false 表示预算已用尽（retryAfter 为最早一次尝试
+	// 离开窗口的剩余时间）；err 表示存储故障，调用方必须 fail-closed。
+	Check(ctx context.Context, userID int64) (allowed bool, retryAfter time.Duration, err error)
+	// Reset 在密码校验成功后清零该用户的计数。
+	Reset(ctx context.Context, userID int64)
+}
+
 // APIKeyVerificationService 是创建 / 二次查看 API Key 的身份校验服务。
 type APIKeyVerificationService struct {
 	userRepo   UserRepository
@@ -208,6 +230,16 @@ type APIKeyVerificationService struct {
 	passkeys   *PasskeyService
 	cache      TotpCache
 	store      APIKeyVerificationStore
+	// passwordLimiter 是密码因子的按用户失败预算；启动时由 router 注入一次，之后只读。
+	passwordLimiter APIKeyPasswordAttemptLimiter
+}
+
+// SetPasswordAttemptLimiter 注入密码因子的失败预算（router 装配，启动期调用一次）。
+func (s *APIKeyVerificationService) SetPasswordAttemptLimiter(limiter APIKeyPasswordAttemptLimiter) {
+	if s == nil {
+		return
+	}
+	s.passwordLimiter = limiter
 }
 
 // NewAPIKeyVerificationService 创建身份校验服务。
@@ -245,23 +277,55 @@ func (s *APIKeyVerificationService) verificationStore() (APIKeyVerificationStore
 	return s.store, nil
 }
 
-// resolveUserFactorSource 报告账号是否「知道自己的登录密码」。
-//
-// 说明：sub2api 的 users.password_hash 是 NOT NULL，OAuth 注册会自动塞一个
-// 随机密码，所以「有 hash」不等于「用户知道密码」。这里按注册来源判定：
-// GitHub / Google / OIDC / LinuxDo / 钉钉 / 微信 注册的账号视为密码不可用，
-// 邮箱注册（含邀请码）视为可用。该判定只影响「展示与可选性」，不会绕过任何
-// 校验；密码校验仍以 bcrypt 比对为准。
-func apiKeyPasswordKnownByUser(user *User) bool {
-	if user == nil || strings.TrimSpace(user.PasswordHash) == "" {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(user.SignupSource)) {
+// apiKeyEmailBindIdentitySource 是 AuthService.BindEmailIdentity 写在邮箱身份
+// metadata.source 里的值（见 auth_email_binding.go）。api_key_verification_email_bind_test.go
+// 里的集成用例用真实的绑定流程钉住这个值：改了一边，另一边的测试会红。
+const apiKeyEmailBindIdentitySource = "auth_service_email_bind"
+
+// apiKeyOAuthSignupSource 报告注册来源是否「第三方登录注册」（这类账号注册时由系统塞了随机口令）。
+func apiKeyOAuthSignupSource(signupSource string) bool {
+	switch strings.ToLower(strings.TrimSpace(signupSource)) {
 	case "github", "google", "oidc", "linuxdo", "wechat", "dingtalk", "oauth":
-		return false
-	default:
 		return true
+	default:
+		return false
 	}
+}
+
+// passwordKnownByUser 报告账号是否「知道自己的登录密码」。
+//
+// users.password_hash 是 NOT NULL，第三方登录注册会自动塞一个随机口令，所以「有 hash」不等于
+// 「用户知道密码」：
+//   - 邮箱注册（signup_source 为空 / email）：知道；
+//   - 第三方登录注册：只有用户之后亲手设过本地密码才算知道。仓库里没有「设置过本地密码」的显式
+//     标记（这里也不新加列），唯一可靠的持久化证据是绑定邮箱——BindEmailIdentity 必须提交新密码
+//     （换绑还要先验旧密码），并留下来源为 auth_service_email_bind 的邮箱身份。
+//     user_repo_create / user_repo_update / auth_service_login_backfill / auth_service_dual_write
+//     是任何用户创建或登录时都会写的，不能当证据：拿它们当证据，会把只有随机口令的账号判成
+//     「知道密码」，进而要求它输入一个根本不存在的口令，创建 Key 被永久卡死；
+//   - 其余途径（找回密码重置、第三方注册当场设的密码）没有任何痕迹，保守按「不知道」处理：
+//     这只会让该用户少一个可选因子，不会让账号失去校验，也不会把只有随机口令的账号锁在创建 Key 之外。
+//
+// 该判定只影响「展示与可选性」以及「有没有可用因子」，密码校验本身仍以 bcrypt 比对为准。
+// 查证据失败时返回错误（调用方 fail-closed），而不是退回「没有密码因子」：那样一个设过密码、又没有
+// 其它因子的账号会在数据库抖动时被判成「没有任何可用因子」而放行创建。
+func (s *APIKeyVerificationService) passwordKnownByUser(ctx context.Context, user *User) (bool, error) {
+	if user == nil || strings.TrimSpace(user.PasswordHash) == "" {
+		return false, nil
+	}
+	if !apiKeyOAuthSignupSource(user.SignupSource) {
+		return true, nil
+	}
+	records, err := s.userRepo.ListUserAuthIdentities(ctx, user.ID)
+	if err != nil {
+		return false, fmt.Errorf("list auth identities for api key verification: %w", err)
+	}
+	for _, record := range filterUserAuthIdentities(records, "email") {
+		if firstStringIdentityValue(record.Metadata, "source") == apiKeyEmailBindIdentitySource {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // passkeyCount 返回当前账号已绑定的 Passkey 数量（服务未启用时为 0）。
@@ -300,7 +364,10 @@ func (s *APIKeyVerificationService) factorsForUser(ctx context.Context, user *Us
 	if s == nil || user == nil {
 		return nil, ErrAPIKeyVerificationUnavailable
 	}
-	passwordAvailable := apiKeyPasswordKnownByUser(user)
+	passwordAvailable, err := s.passwordKnownByUser(ctx, user)
+	if err != nil {
+		return nil, err
+	}
 	totpEnabled := user.TotpEnabled
 	count, err := s.passkeyCount(ctx, user.ID)
 	if err != nil {
@@ -419,13 +486,73 @@ func (s *APIKeyVerificationService) VerifyForSeal(ctx context.Context, userID in
 	if user == nil {
 		return ErrAPIKeyVerificationUnavailable
 	}
-	if !apiKeyPasswordKnownByUser(user) {
+	known, err := s.passwordKnownByUser(ctx, user)
+	if err != nil {
+		return err
+	}
+	if !known {
 		return ErrAPIKeyFactorUnavailable
+	}
+	return s.checkLoginPassword(ctx, user, password)
+}
+
+// VerifyForLegacySeal 处理「封存请求既没带 password 也没带 auth_factor」的旧客户端兼容分支。
+//
+// 这个分支不能是无校验的后门：持会话者不带任何校验材料就能覆盖已封存的密文，还把 auth_factor
+// 清成 NULL（NULL 代表「改造前的旧密文」，二次查看不再限制因子）。所以账号存在可用因子时它也必须
+// 走校验：旧客户端提供不了校验材料，只能被拒（VERIFY_REQUIRED），升级到新前端后带登录密码封存即可；
+// 账号没有任何可用因子（第三方注册且未绑 2FA）时保持放行，与创建 Key 是同一条语义。
+func (s *APIKeyVerificationService) VerifyForLegacySeal(ctx context.Context, userID int64) error {
+	factors, err := s.Factors(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if factors.Available() {
+		return ErrAPIKeyVerificationRequired
+	}
+	return nil
+}
+
+// checkLoginPassword 是登录密码的唯一比对入口（创建 / 轮换 / 封存 / 二次查看共用）：
+// 先走按用户的失败预算，再做 bcrypt，成功后清零。
+//
+// 顺序是刻意的：预算用尽时不做 bcrypt，所以持会话者即使猜对也只会拿到 429，
+// 不能把任何一个校验入口当成「不限次数的密码 oracle」；同一个用户的所有入口共用一份预算。
+// 预算存储故障 fail-closed（VERIFY_UNAVAILABLE），与本文件其余校验一致。
+func (s *APIKeyVerificationService) checkLoginPassword(ctx context.Context, user *User, password string) error {
+	if strings.TrimSpace(password) == "" {
+		// 空口令没有任何猜测价值，不消耗预算。
+		return ErrAPIKeyPasswordInvalid
+	}
+	limiter := s.passwordLimiter
+	if limiter != nil {
+		allowed, retryAfter, err := limiter.Check(ctx, user.ID)
+		if err != nil {
+			return ErrAPIKeyVerificationUnavailable
+		}
+		if !allowed {
+			return apiKeyPasswordRateLimited(retryAfter)
+		}
 	}
 	if !user.CheckPassword(password) {
 		return ErrAPIKeyPasswordInvalid
 	}
+	if limiter != nil {
+		limiter.Reset(ctx, user.ID)
+	}
 	return nil
+}
+
+// apiKeyPasswordRateLimited 生成带 retry_after（向上取整的秒数）的 429。
+func apiKeyPasswordRateLimited(retryAfter time.Duration) error {
+	if retryAfter <= 0 {
+		retryAfter = time.Minute
+	}
+	seconds := int64(retryAfter / time.Second)
+	if retryAfter%time.Second > 0 {
+		seconds++
+	}
+	return ErrAPIKeyPasswordRateLimited.WithMetadata(map[string]string{"retry_after": strconv.FormatInt(seconds, 10)})
 }
 
 // AuthorizeReveal 为「再次查看 Key 明文」做身份校验并签发 5 分钟一次性 grant。
@@ -595,11 +722,12 @@ func (s *APIKeyVerificationService) verifyFactor(
 	}
 	switch in.Method {
 	case APIKeyFactorPassword:
-		if !apiKeyPasswordKnownByUser(user) {
+		// factors 已经按 passwordKnownByUser 算过（上面的 methodAvailable），这里不再查第二遍。
+		if !factors.PasswordAvailable {
 			return nil, ErrAPIKeyFactorUnavailable
 		}
-		if strings.TrimSpace(in.Password) == "" || !user.CheckPassword(in.Password) {
-			return nil, ErrAPIKeyPasswordInvalid
+		if err := s.checkLoginPassword(ctx, user, in.Password); err != nil {
+			return nil, err
 		}
 	case APIKeyFactorTOTP:
 		if s.totp == nil || !user.TotpEnabled {
@@ -608,8 +736,18 @@ func (s *APIKeyVerificationService) verifyFactor(
 		if in.TOTPCode == "" {
 			return nil, ErrAPIKeyTOTPInvalid
 		}
-		if err := s.totp.VerifyCode(ctx, user.ID, in.TOTPCode); err != nil {
-			// 校验器把「未开启 / 无密钥 / 尝试过多」也归类为错误：对调用方统一
+		// 动态码只能用一次：校验通过的同一个（时间步, 码）在窗口内不能再用第二次，
+		// 否则被旁观 / 钓鱼拿到的码能在 90 秒内反复下发 Key 明文。consume 拿到的是真正匹配上的
+		// 时间步（不是请求时钟所在的步），所以跨 30 秒边界也不能把同一个码用两遍。
+		//
+		// consume 用 ConsumeLoginCode：与登录共用同一个重放标记，登录用过的码不能再拿来校验、
+		// 反过来也一样；启用了支付校验的部署上它还会一并占用支付的重放标记，保持 VerifyCode 对
+		// 管理员原有的约束（同一个码不能既用于校验又用于资金操作）。
+		code := in.TOTPCode
+		if err := s.totp.VerifyCodeOnce(ctx, user.ID, code, func(counter int64) error {
+			return s.totp.ConsumeLoginCode(ctx, user.ID, counter, code)
+		}); err != nil {
+			// 校验器把「未开启 / 无密钥 / 尝试过多 / 码已被使用」也归类为错误：对调用方统一
 			// 按验证码错误返回，不泄露账号的 TOTP 配置细节。
 			return nil, ErrAPIKeyTOTPInvalid
 		}

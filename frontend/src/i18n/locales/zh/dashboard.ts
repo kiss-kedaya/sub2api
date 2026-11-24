@@ -289,7 +289,10 @@ export default {
       passkeyRequired: '请先完成 Passkey 验证。',
       factorUnavailable: '该验证方式当前不可用。',
       passwordInvalid: '密码不正确，请重新输入当前登录密码。',
-      totpInvalid: '验证码错误，请重新输入。',
+      // 同一账号短时间内密码输错太多次：服务端不再比对口令（连输对的也不认），约 1 分钟后恢复。
+      passwordRateLimited: '密码输错次数过多，请等 1 分钟后再试。',
+      // 动态码只能用一次：刚用它登录或校验过的码，在下一个码出现之前不能再用。
+      totpInvalid: '验证码错误或已被使用过，请等下一个验证码出现后再输入。',
     },
     createStep: {
       details: '填写信息',
@@ -302,7 +305,7 @@ export default {
     // 创建/轮换回执里的「以后可查看」选项：密码只在浏览器本地参与加密。
     seal: {
       optIn: '允许以后用登录密码查看此 Key',
-      optInHint: '勾选后会在浏览器本地用登录密码加密这把 Key，服务端只保存密文。密码不会发送到服务器。',
+      optInHint: '勾选后会在浏览器本地用登录密码加密这把 Key，服务端只保存密文。保存时登录密码会随请求发给服务端做一次身份校验，校验后即丢弃、不会保存。',
       passwordLabel: '登录密码',
       passwordHint: '密码只用于本地加密，忘记密码将无法再查看这把 Key（可以随时轮换新 Key）。',
       passwordRequired: '请输入登录密码，或取消勾选「允许以后用登录密码查看此 Key」。',
@@ -315,7 +318,7 @@ export default {
     // 刷新后查看：先取服务端密文，再在本地解密。
     reveal: {
       title: '输入登录密码查看密钥',
-      description: '解密在浏览器本地完成，密码不会发送到服务器，也不会被保存。',
+      description: '解密在浏览器本地完成。用登录密码做身份校验时，密码会发给服务端校验一次，不会被保存；用动态验证码或 Passkey 校验时，密码只用于本地解密、不会发送。',
       passwordLabel: '登录密码',
       passwordHint: '仅本次有效：解密后的密钥只留在内存里，关闭后需要重新输入。',
       submit: '本地解密',
@@ -331,7 +334,7 @@ export default {
       failed: '读取或解密失败，请稍后重试。',
       rotate: '轮换生成新 Key',
       factorsLoading: '正在读取可用的验证方式…',
-      wrongTotp: '验证码错误，请重新输入。',
+      wrongTotp: '验证码错误或已被使用过，请等下一个验证码出现后再输入。',
       passkeyFailed: 'Passkey 验证失败，请重试。',
       reverify: '身份验证已过期，请重新验证。',
       factorMismatch: '这把 Key 创建时使用的是「{factor}」验证，请使用同一方式重新验证。',

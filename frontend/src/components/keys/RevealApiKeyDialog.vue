@@ -251,6 +251,8 @@ const submit = async () => {
       error.value = t('keys.reveal.notFound')
     } else if (reason === 'VERIFY_PASSWORD_INVALID') {
       error.value = t('keys.reveal.wrongPassword')
+    } else if (reason === 'VERIFY_PASSWORD_RATE_LIMITED') {
+      error.value = t('keys.factor.passwordRateLimited')
     } else if (reason === 'VERIFY_TOTP_INVALID') {
       error.value = t('keys.reveal.wrongTotp')
     } else if (reason === 'VERIFY_PASSKEY_FAILED') {

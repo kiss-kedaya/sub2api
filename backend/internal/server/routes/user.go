@@ -56,15 +56,17 @@ func RegisterUserRoutes(
 			//   - GET  factors            该账号实际可用的因子与推荐顺序；
 			//   - POST passkey verify /*  Passkey assertion → 一次性校验票据；
 			//   - POST reveal-authorize   二次查看授权 → 5 分钟一次性 reveal grant。
-			// 校验接口统一按用户 10 次/分钟限流，避免成为密码/动态码在线爆破入口。
+			// 校验接口统一按用户 10 次/分钟限流（创建 / 单条轮换 / 批量轮换 / 二次查看授权 /
+			// Passkey 校验共用一个桶），避免成为密码/动态码在线爆破入口。
 			user.GET("/security/verification-factors", h.APIKey.GetVerificationFactors)
 			user.POST("/security/passkey/verify/begin", panelRateLimiter.KeyVerification(), h.APIKey.BeginKeyPasskeyVerification)
 			user.POST("/security/passkey/verify/finish", panelRateLimiter.KeyVerification(), h.APIKey.FinishKeyPasskeyVerification)
 			user.POST("/api-keys/:id/reveal-authorize", panelRateLimiter.KeyVerification(), h.APIKey.AuthorizeReveal)
-			// 浏览器端封存 API Key 密文：服务端只存取，不解密、不接触密码。
-			// PUT 限制 8KB 请求体并在封存前校验登录密码；GET 需要 reveal grant，
-			// 另有每用户 20 次/分钟的固定限流。
-			user.PUT("/api-keys/:id/secret-seal", middleware.RequestBodyLimit(service.APIKeySecretMaxBodyBytes), h.APIKey.PutSecretSeal)
+			// 浏览器端封存 API Key 密文：服务端只存取、不解密；封存请求会带登录密码，只用于 bcrypt 校验
+			// （见 api_key_secret_handler.go），不落库、不进日志、不进审计。
+			// PUT 限制 8KB 请求体并在封存前校验登录密码（每用户 60 次/分钟，另有按用户的
+			// 密码失败预算兜底口令猜测）；GET 需要 reveal grant，另有每用户 20 次/分钟的固定限流。
+			user.PUT("/api-keys/:id/secret-seal", panelRateLimiter.SecretSealWrite(), middleware.RequestBodyLimit(service.APIKeySecretMaxBodyBytes), h.APIKey.PutSecretSeal)
 			user.GET("/api-keys/:id/secret-seal", panelRateLimiter.SecretSealRead(), h.APIKey.GetSecretSeal)
 			user.DELETE("/api-keys/:id/secret-seal", h.APIKey.DeleteSecretSeal)
 			user.GET("/api-keys/:id/usage/daily", panelRateLimiter.Heavy(), h.Usage.GetMyAPIKeyDailyUsage)
@@ -135,13 +137,16 @@ func RegisterUserRoutes(
 			keys.GET("/concurrency", h.APIKey.GetConcurrencyQueue)
 			// 一屏概览：近 24h 调用次数 / 消耗额度，一次批量查询，避免逐行 N+1。
 			keys.GET("/overview", panelRateLimiter.Heavy(), h.Usage.GetAPIKeysOverview)
-			// 批量轮换：仅本人 Key、单次上限 50、逐条事务、逐条状态。
-			keys.POST("/batch-rotate", h.APIKey.BatchRotate)
+			// 批量轮换：仅本人 Key、单次上限 50、逐条事务、逐条状态；
+			// 会下发每把 Key 的新明文，和创建同样要身份校验，同档限流。
+			keys.POST("/batch-rotate", panelRateLimiter.KeyVerification(), h.APIKey.BatchRotate)
 			keys.GET("/:id", h.APIKey.GetByID)
 			// 创建前必须完成一次身份校验（密码 / TOTP / Passkey 三选一），
 			// 校验接口同档限流；账号一个可用因子都没有时服务端放行一次性显示。
 			keys.POST("", panelRateLimiter.KeyVerification(), h.APIKey.Create)
-			keys.PUT("/:id", h.APIKey.Update)
+			// 单条轮换（regenerate_key=true）同样下发新明文：只有这类请求计入校验档的限流，
+			// 改名 / 启停 / 配额等不下发明文的编辑不受影响。
+			keys.PUT("/:id", panelRateLimiter.KeyVerificationOnRotation(), h.APIKey.Update)
 			keys.POST("/:id/block-datacenter-ips", h.APIKey.BlockDatacenterIPs)
 			keys.DELETE("/:id", h.APIKey.Delete)
 		}

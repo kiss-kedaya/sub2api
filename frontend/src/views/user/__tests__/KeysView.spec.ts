@@ -105,6 +105,8 @@ const messages: Record<string, string> = {
   'keys.factor.passkeyRequired': 'Verify with Passkey first.',
   'keys.factor.factorUnavailable': 'This verification method is currently unavailable.',
   'keys.factor.passwordInvalid': 'The password is incorrect. Enter your current login password.',
+  'keys.factor.passwordRateLimited': 'Too many incorrect password attempts. Please wait a minute and try again.',
+  'keys.seal.wrongPassword': 'The login password is incorrect, so "view later" cannot be saved.',
   'keys.failedToSave': 'Failed to save',
   'keys.created': 'Created',
   'keys.expiresAt': 'Expires',
@@ -2483,6 +2485,77 @@ describe('user KeysView batch rotation, overview and ephemeral bar', () => {
     wrapper.unmount()
   })
 
+  // 服务端按用户限制登录密码输错的次数：整批用同一个错密码把剩下的 Key 全打一遍，只会把账号锁一分钟。
+  describe('batch re-seal stops at the first password failure', () => {
+    const seal = {
+      version: 1 as const,
+      kdf: { algo: 'PBKDF2-SHA256' as const, iterations: 310000, salt: 'c2FsdA==' },
+      sealed: 'c2VhbGVk',
+    }
+    const rotateThreeSealedKeysAndSubmit = async (password: string) => {
+      authUser.value = { id: 1, email: 'user@example.com' }
+      listKeys.mockResolvedValue({
+        items: [1, 2, 3].map((id) => ({ ...createApiKey(), id, name: `key-${id}`, has_sealed_secret: true })),
+        total: 3,
+        page: 1,
+        page_size: 20,
+        pages: 1,
+      })
+      batchRotateKeys.mockResolvedValue({
+        results: [1, 2, 3].map((id) => ({ id, status: 'ok', key: `rotated-fixture-secret-${id}` })),
+        requested_count: 3,
+        succeeded_count: 3,
+        failed_count: 0,
+      })
+      sealApiKey.mockResolvedValue(seal)
+      const wrapper = await mountView()
+      await wrapper.get('[data-test="select-all"]').trigger('click')
+      await nextTick()
+      await wrapper.get('[data-test="keys-bulk-rotate"]').trigger('click')
+      await nextTick()
+      await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-test="batch-rotate-seal-password"]').setValue(password)
+      await wrapper.get('[data-test="batch-rotate-seal-submit"]').trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
+    it('wrong login password: one request, a specific message, nothing else attempted', async () => {
+      putSecretSeal.mockRejectedValue({ status: 400, reason: 'VERIFY_PASSWORD_INVALID' })
+      const wrapper = await rotateThreeSealedKeysAndSubmit('wrong')
+
+      expect(putSecretSeal).toHaveBeenCalledTimes(1)
+      expect(wrapper.get('[data-test="batch-rotate-seal-error"]').text()).toBe(
+        'The login password is incorrect, so "view later" cannot be saved.',
+      )
+      wrapper.unmount()
+    })
+
+    it('password budget used up part-way: keeps what was saved, stops, and says to wait', async () => {
+      putSecretSeal
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValue({ status: 429, reason: 'VERIFY_PASSWORD_RATE_LIMITED' })
+      const wrapper = await rotateThreeSealedKeysAndSubmit('hunter2')
+
+      expect(putSecretSeal).toHaveBeenCalledTimes(2)
+      expect(wrapper.get('[data-test="batch-rotate-seal-error"]').text()).toBe(
+        'Too many incorrect password attempts. Please wait a minute and try again.',
+      )
+      expect(wrapper.get('[data-test="batch-rotate-seal-summary"]').text()).toContain('Saved 1')
+      wrapper.unmount()
+    })
+
+    it('other failures keep the old behaviour: every key is still tried', async () => {
+      putSecretSeal.mockRejectedValue({ status: 500, message: 'boom' })
+      const wrapper = await rotateThreeSealedKeysAndSubmit('hunter2')
+
+      expect(putSecretSeal).toHaveBeenCalledTimes(3)
+      expect(wrapper.find('[data-test="batch-rotate-seal-error"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+  })
+
   it('shows the five-minute re-copy bar after creation and copies from the in-memory store', async () => {
     getAvailableGroups.mockResolvedValue([{ id: 3, name: 'DeepSeek', platform: 'deepseek' }])
     createKey.mockResolvedValue({
@@ -2600,6 +2673,32 @@ describe('user KeysView 创建身份校验（三选一）', () => {
     expect(showError).toHaveBeenCalledWith(
       'The password is incorrect. Enter your current login password.',
     )
+    wrapper.unmount()
+  })
+
+  it('密码输错次数用尽（429）时提示稍后再试，不显示笼统保存失败', async () => {
+    authUser.value = { id: 1, email: 'user@example.com' }
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: 'password',
+      available_methods: ['password'],
+      seal_available: true,
+    })
+    createKey.mockRejectedValue({ status: 429, reason: 'VERIFY_PASSWORD_RATE_LIMITED' })
+    const wrapper = await openCreateAndFill()
+
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+    await wrapper.get('[data-test="key-factor-password-input"]').setValue('whatever')
+    await wrapper.get('#key-form').trigger('submit')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith(
+      'Too many incorrect password attempts. Please wait a minute and try again.',
+    )
+    expect(showError).not.toHaveBeenCalledWith('Failed to save')
     wrapper.unmount()
   })
 

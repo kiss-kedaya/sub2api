@@ -261,6 +261,8 @@ const saveSeal = async () => {
         : ''
     if (reason === 'VERIFY_PASSWORD_INVALID') {
       sealError.value = t('keys.seal.wrongPassword')
+    } else if (reason === 'VERIFY_PASSWORD_RATE_LIMITED') {
+      sealError.value = t('keys.factor.passwordRateLimited')
     } else if (reason === 'VERIFY_FACTOR_UNAVAILABLE') {
       sealError.value = t('keys.seal.unavailable')
     } else {

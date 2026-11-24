@@ -42,6 +42,16 @@ func (h *APIKeyHandler) SetVerificationService(verificationService *service.APIK
 	h.verificationService = verificationService
 }
 
+// SetPasswordAttemptLimiter 把密码因子的按用户失败预算交给校验服务（router 装配）。
+// 它与登录 2FA 的预算是两个独立的计数桶（同一套 Redis 滑动窗口实现，key 前缀不同），
+// 互不清零、互不锁死。校验服务未装配时什么都不做。
+func (h *APIKeyHandler) SetPasswordAttemptLimiter(limiter service.APIKeyPasswordAttemptLimiter) {
+	if h == nil || h.verificationService == nil {
+		return
+	}
+	h.verificationService.SetPasswordAttemptLimiter(limiter)
+}
+
 // NewAPIKeyHandler creates a new APIKeyHandler
 func NewAPIKeyHandler(apiKeyService *service.APIKeyService, secretService *service.APIKeySecretService) *APIKeyHandler {
 	return &APIKeyHandler{
@@ -429,7 +439,7 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	if keyUpdateEmitsPlaintext(req) {
 		verifiedMethod, verr := h.keyVerificationGuard(c, subject.UserID, keyID, req.Verification)
 		if verr != nil {
-			response.ErrorFrom(c, verr)
+			respondVerificationError(c, verr)
 			return
 		}
 		annotateKeyShowVerification(c, verifiedMethod)
@@ -510,7 +520,7 @@ func (h *APIKeyHandler) BatchRotate(c *gin.Context) {
 	// 必须同样要求三选一身份校验：没校验通过就一条都不轮换（审计记 rejected）。
 	verifiedMethod, verifyErr := h.keyVerificationGuard(c, subject.UserID, 0, req.Verification)
 	if verifyErr != nil {
-		response.ErrorFrom(c, verifyErr)
+		respondVerificationError(c, verifyErr)
 		return
 	}
 	results, err := h.apiKeyService.BatchRotate(c.Request.Context(), subject.UserID, req.IDs)

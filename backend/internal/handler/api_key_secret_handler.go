@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -22,7 +23,12 @@ import (
 //	GET    /api/v1/user/api-keys/:id/secret-seal  取密文（前端拿密码解密）
 //	DELETE /api/v1/user/api-keys/:id/secret-seal  删除密文（关闭「后续可查看」）
 //
-// 服务端只做存取：不生成密钥、不接触密码、不解密。密文的加解密全部发生在浏览器。
+// 服务端只做存取：不生成密钥、不解密。密文的加解密全部发生在浏览器。
+//
+// 注意「不解密」不等于「看不到密码」：封存请求（PUT）把登录密码和密文放在同一个请求体里发来，
+// 服务端只拿它做一次 bcrypt 比对（确认封存用的确实是登录密码，否则以后必然解不开）并过按用户的
+// 失败预算，然后丢弃——不落库、不进日志、不进审计（该路由的请求体整体不入审计库）。
+// GET / DELETE 不带密码。
 
 // apiKeySecretSealRequest 是 PUT 的请求体。kdf 原样保存，salt 就在里面。
 //
@@ -83,17 +89,28 @@ func (h *APIKeyHandler) PutSecretSeal(c *gin.Context) {
 		response.ErrorFrom(c, service.ErrAPIKeySecretInvalid)
 		return
 	}
-	// 旧客户端没有 password / auth_factor 字段：保持兼容放行（不记录因子），
-	// 新客户端两个字段必带，封存前先验证登录密码，避免「创建成功、以后解不开」。
+	// 旧客户端没有 password / auth_factor 字段（不记录因子），新客户端两个字段必带，
+	// 封存前先验证登录密码，避免「创建成功、以后解不开」。
 	legacySeal := authFactor == "" && strings.TrimSpace(req.Password) == ""
+	if legacySeal && h.verificationService != nil {
+		// 兼容分支不是无校验的后门：账号存在可用因子时同样要过校验（旧客户端提供不了，只能被拒），
+		// 否则持会话者不带任何材料就能覆盖已封存的密文、把 auth_factor 清成 NULL。
+		// 没有任何可用因子的账号保持放行。
+		if err := h.verificationService.VerifyForLegacySeal(c.Request.Context(), subject.UserID); err != nil {
+			setVerificationAudit(c, nil, auditVerificationRejected, infraerrors.Reason(err))
+			response.ErrorFrom(c, err)
+			return
+		}
+		setVerificationAudit(c, nil, auditVerificationSkipped, "")
+	}
 	if !legacySeal {
 		if h.verificationService == nil {
 			response.ErrorFrom(c, service.ErrAPIKeyVerificationUnavailable)
 			return
 		}
 		if err := h.verificationService.VerifyForSeal(c.Request.Context(), subject.UserID, req.Password); err != nil {
-			setVerificationAudit(c, nil, auditVerificationRejected, "VERIFY_PASSWORD_INVALID")
-			response.ErrorFrom(c, err)
+			setVerificationAudit(c, nil, auditVerificationRejected, infraerrors.Reason(err))
+			respondVerificationError(c, err)
 			return
 		}
 		if authFactor == "" {
