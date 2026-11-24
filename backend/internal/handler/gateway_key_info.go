@@ -406,10 +406,10 @@ func (h *GatewayHandler) keyInfoGroupCatalog(ctx context.Context) map[int64]*ser
 		cache.mu.Unlock()
 		return catalog, nil
 	})
-	if err != nil {
-		return stale
+	if catalog, ok := value.(map[int64]*service.Group); err == nil && ok {
+		return catalog
 	}
-	return value.(map[int64]*service.Group)
+	return stale
 }
 
 func (h *GatewayHandler) keyInfoAvailableGroups(ctx context.Context, userID int64) ([]service.Group, error) {
@@ -438,7 +438,8 @@ func (h *GatewayHandler) keyInfoAvailableGroups(ctx context.Context, userID int6
 	if err != nil {
 		return nil, err
 	}
-	return value.([]service.Group), nil
+	groups, _ := value.([]service.Group) // only this function stores into the flight, always this type
+	return groups, nil
 }
 
 func itoa(v int64) string {

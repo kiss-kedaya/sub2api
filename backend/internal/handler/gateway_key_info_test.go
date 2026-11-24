@@ -11,6 +11,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -130,7 +131,9 @@ func newKeyInfoFixture(t *testing.T) *keyInfoFixture {
 		apiKeyService: apiKeyService, usageService: usageService, cfg: cfg,
 	}
 	id := int64(1)
-	expires := time.Now().Add(10 * 24 * time.Hour)
+	// Half a day past the tenth day: GetDaysUntilExpiry truncates to whole days, so an expiry exactly 10 days out
+	// reads 9 as soon as the clock ticks (it did on Linux, where the clock is finer than the test's own setup).
+	expires := time.Now().Add(10*24*time.Hour + 12*time.Hour)
 	apiKey := &service.APIKey{
 		ID: 100, UserID: 7, Name: "ci-key", KeyPrefix: "fixture1", Key: "fixture1-THE-FULL-PLAINTEXT-SECRET-zzzz", KeyHash: "hash-should-not-leak",
 		Status: service.StatusActive, GroupID: &id, Group: &g1, RouteGroupIDs: []int64{1, 2},
@@ -142,6 +145,29 @@ func newKeyInfoFixture(t *testing.T) *keyInfoFixture {
 }
 
 func strPtr(s string) *string { return &s }
+
+// keyInfoObj / keyInfoList / keyInfoStr narrow a decoded JSON value: a response of the wrong shape
+// fails the test with a message instead of panicking mid-way.
+func keyInfoObj(t *testing.T, v any) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	require.True(t, ok, "want a JSON object, got %T", v)
+	return m
+}
+
+func keyInfoList(t *testing.T, v any) []any {
+	t.Helper()
+	l, ok := v.([]any)
+	require.True(t, ok, "want a JSON array, got %T", v)
+	return l
+}
+
+func keyInfoStr(t *testing.T, v any) string {
+	t.Helper()
+	s, ok := v.(string)
+	require.True(t, ok, "want a JSON string, got %T", v)
+	return s
+}
 
 func (f *keyInfoFixture) call(t *testing.T, path string, handle func(*gin.Context), mutate ...func(*service.APIKey)) (int, map[string]any, string) {
 	t.Helper()
@@ -208,29 +234,29 @@ func TestKeyInfoDescribesTheKey(t *testing.T) {
 	require.NotContains(t, body, "unusable_cause")
 	require.Equal(t, "smart", body["route_mode"])
 	require.EqualValues(t, 4, body["concurrency_limit"])
-	require.EqualValues(t, 10, body["days_until_expiry"], "10 days from now, rounded up like the key list does")
+	require.EqualValues(t, 10, body["days_until_expiry"], "10½ days from now, whole days truncated like the key list")
 
-	quota := body["quota"].(map[string]any)
+	quota := keyInfoObj(t, body["quota"])
 	require.Equal(t, true, quota["limited"])
 	require.EqualValues(t, 10, quota["limit"])
 	require.EqualValues(t, 3.5, quota["used"])
 	require.EqualValues(t, 6.5, quota["remaining"])
 
-	windows := body["rate_limits"].([]any)
+	windows := keyInfoList(t, body["rate_limits"])
 	require.Len(t, windows, 2, "only the windows the key was given")
-	first := windows[0].(map[string]any)
+	first := keyInfoObj(t, windows[0])
 	require.Equal(t, "5h", first["window"])
 	require.EqualValues(t, 2, first["limit"])
 	require.EqualValues(t, 0.5, first["used"])
 	require.EqualValues(t, 1.5, first["remaining"])
 	require.NotEmpty(t, first["reset_at"])
 
-	groups := body["groups"].([]any)
+	groups := keyInfoList(t, body["groups"])
 	require.Len(t, groups, 2)
-	require.Equal(t, "Claude Max", groups[0].(map[string]any)["name"])
-	require.Equal(t, true, groups[0].(map[string]any)["primary"])
-	require.Equal(t, "GPT Fast", groups[1].(map[string]any)["name"])
-	require.Equal(t, false, groups[1].(map[string]any)["primary"])
+	require.Equal(t, "Claude Max", keyInfoObj(t, groups[0])["name"])
+	require.Equal(t, true, keyInfoObj(t, groups[0])["primary"])
+	require.Equal(t, "GPT Fast", keyInfoObj(t, groups[1])["name"])
+	require.Equal(t, false, keyInfoObj(t, groups[1])["primary"])
 }
 
 func timePtr(t time.Time) *time.Time { return &t }
@@ -241,7 +267,7 @@ func TestKeyInfoUnlimitedKeyHasNoQuotaOrWindows(t *testing.T) {
 		k.Quota, k.QuotaUsed, k.RateLimit5h, k.RateLimit1d, k.ExpiresAt = 0, 0, 0, 0, nil
 		k.RouteGroupIDs = nil
 	})
-	quota := body["quota"].(map[string]any)
+	quota := keyInfoObj(t, body["quota"])
 	require.Equal(t, false, quota["limited"])
 	require.NotContains(t, quota, "limit")
 	require.NotContains(t, quota, "remaining")
@@ -285,15 +311,15 @@ func TestKeyGroupsReportStateAndTheMultiplierTheKeyPays(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	require.Equal(t, "sub2api.key_groups", body["object"])
 	require.NotEmpty(t, body["timezone"])
-	groups := body["groups"].([]any)
+	groups := keyInfoList(t, body["groups"])
 	require.Len(t, groups, 3, "the two bound groups first, then the one more the user may bind")
 	byName := map[string]map[string]any{}
 	for _, g := range groups {
-		m := g.(map[string]any)
-		byName[m["name"].(string)] = m
+		m := keyInfoObj(t, g)
+		byName[keyInfoStr(t, m["name"])] = m
 	}
-	require.Equal(t, "Claude Max", groups[0].(map[string]any)["name"], "routing order first")
-	require.Equal(t, "GPT Fast", groups[1].(map[string]any)["name"])
+	require.Equal(t, "Claude Max", keyInfoObj(t, groups[0])["name"], "routing order first")
+	require.Equal(t, "GPT Fast", keyInfoObj(t, groups[1])["name"])
 
 	claude := byName["Claude Max"]
 	require.Equal(t, true, claude["bound_to_key"])
@@ -326,8 +352,8 @@ func TestKeyGroupsShowTheGroupsTheKeyRoutesToEvenWhenNoLongerBindable(t *testing
 	_, body, _ := f.call(t, "/v1/sub2api/groups", f.handler.KeyGroups, func(k *service.APIKey) { g := f.groups.active[1]; g.IsExclusive = true; _ = g })
 
 	names := []string{}
-	for _, g := range body["groups"].([]any) {
-		names = append(names, g.(map[string]any)["name"].(string))
+	for _, g := range keyInfoList(t, body["groups"]) {
+		names = append(names, keyInfoStr(t, keyInfoObj(t, g)["name"]))
 	}
 	require.Contains(t, names, "Claude Max")
 	require.Contains(t, names, "GPT Fast")
@@ -343,7 +369,13 @@ func TestKeyGroupsApplyThePeakFactorOnlyInsideThePeakWindow(t *testing.T) {
 			g := f.groups.active[0]
 			k.Group = &g
 		})
-		return body["groups"].([]any)[0].(map[string]any)
+		return keyInfoObj(t, keyInfoList(t, body["groups"])[0])
+	}
+	// A peak window is [start, end) inside one day of the platform time zone and the handler reads its own clock,
+	// so two minutes of the day cannot honour the fixture windows: 23:59 (no end can be later than it) and 03:00.
+	local := time.Now().In(timezone.Location())
+	if minute := local.Hour()*60 + local.Minute(); minute == 23*60+59 || minute == 3*60 {
+		t.Skip("the fixture peak windows cannot hold in this exact minute")
 	}
 	always := peakFor("00:00", "23:59")
 	require.Equal(t, true, always["peak_rate_enabled"])
@@ -352,10 +384,7 @@ func TestKeyGroupsApplyThePeakFactorOnlyInsideThePeakWindow(t *testing.T) {
 	require.EqualValues(t, 2.4, always["effective_rate_multiplier"], "inside the window the peak factor is included")
 
 	never := peakFor("03:00", "03:01")
-	nowMinutes := time.Now().In(time.UTC).Hour()*60 + time.Now().In(time.UTC).Minute()
-	if nowMinutes != 3*60 {
-		require.EqualValues(t, 1.2, never["effective_rate_multiplier"], "outside the window it is not")
-	}
+	require.EqualValues(t, 1.2, never["effective_rate_multiplier"], "outside the window it is not")
 }
 
 func TestKeyGroupsAreCachedBrieflyAndSharedAcrossKeys(t *testing.T) {
@@ -379,7 +408,7 @@ func TestKeyUsageReportsTodayWeekMonthAndRange(t *testing.T) {
 	require.Equal(t, "sub2api.key_usage", body["object"])
 	require.Equal(t, "Asia/Shanghai", body["timezone"])
 	for _, name := range []string{"today", "last_7_days", "this_month", "range"} {
-		blk := body[name].(map[string]any)
+		blk := keyInfoObj(t, body[name])
 		require.EqualValues(t, 7, blk["requests"], name)
 		require.EqualValues(t, 150, blk["total_tokens"], name)
 		require.EqualValues(t, 0.25, blk["actual_cost"], name, "user-facing cost")
@@ -387,7 +416,7 @@ func TestKeyUsageReportsTodayWeekMonthAndRange(t *testing.T) {
 		require.NotEmpty(t, blk["start"], name)
 		require.NotEmpty(t, blk["end"], name)
 	}
-	r := body["range"].(map[string]any)
+	r := keyInfoObj(t, body["range"])
 	require.Equal(t, "2026-11-01", r["start"])
 	require.Equal(t, "2026-11-10", r["end"], "end is inclusive")
 	require.Len(t, body["daily"], 1)
@@ -409,7 +438,7 @@ func TestKeyUsageRangeIsValidatedAndBounded(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			code, body, _ := f.call(t, path, f.handler.KeyUsage)
 			require.Equal(t, http.StatusBadRequest, code)
-			require.Equal(t, "invalid_request_error", body["error"].(map[string]any)["type"])
+			require.Equal(t, "invalid_request_error", keyInfoObj(t, body["error"])["type"])
 		})
 	}
 	code, _, _ := f.call(t, "/v1/sub2api/usage?start_date=2026-08-26&end_date=2026-11-23", f.handler.KeyUsage)
