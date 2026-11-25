@@ -297,7 +297,7 @@ func (r *usageLogRepository) GetUsageTrendWithFilters(ctx context.Context, start
 	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
 		Query: "usage_trend_with_filters", UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
 		Model: model, Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
-		Extra:   granularity,
+		Extra:   usageGranularityKey(granularity),
 		Filters: &usageFiltersFingerprint{RequestType: requestType, Stream: stream, BillingType: billingType},
 	}, func(ctx context.Context) ([]TrendDataPoint, error) {
 		return r.getUsageTrendWithFiltersResolved(ctx, startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
@@ -318,7 +318,7 @@ func (r *usageLogRepository) GetUsageTrendWithUsageFilters(ctx context.Context, 
 	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
 		Query: "usage_trend_usage_filters", Timezone: resolveUsageStatsTimezone(),
 		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
-		Extra: granularity, Filters: usageFiltersFingerprintOf(filters),
+		Extra: usageGranularityKey(granularity), Filters: usageFiltersFingerprintOf(filters),
 	}, func(ctx context.Context) ([]TrendDataPoint, error) {
 		if r.rollupReadEnabled.Load() {
 			if trend, covered, rollupErr := r.GetUsageTrendWithRollups(ctx, startTime, endTime, granularity, filters); rollupErr == nil && covered {

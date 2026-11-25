@@ -860,6 +860,28 @@ dashboard_cache:
   stats_refresh_timeout_seconds: 180
 
 # =============================================================================
+# Usage Stats Cache Configuration
+# 用量统计缓存配置（重启生效）
+# =============================================================================
+# Short-lived Redis cache in front of the usage_logs aggregates behind the usage page,
+# the key list and /v1/usage. Writes never invalidate it, so TTL is the maximum staleness.
+# 用量页、密钥列表、/v1/usage 背后的 usage_logs 聚合查询的 Redis 短缓存；写入不失效，统计最多滞后 TTL。
+usage_stats_cache:
+  enabled: true
+  # Cache TTL
+  # 缓存 TTL
+  ttl: 60s
+  # How many cache-miss aggregates of one user / API key one process may run on the database at once
+  # (0 = no cap). The surplus waits up to load_queue_timeout, then is answered 503 USAGE_STATS_BUSY
+  # instead of piling more scans on a saturated database. Cache hits never wait.
+  # 单进程同时允许多少个「某用户 / 某 API Key」的未命中聚合查询跑在数据库上（0 = 不限）。
+  # 超出的排队最多 load_queue_timeout，仍拿不到名额就返回 503 USAGE_STATS_BUSY；命中缓存的请求不排队。
+  max_concurrent_loads: 8
+  # How long a cache miss waits for one of those slots (0 = turn the surplus away at once)
+  # 未命中请求等待名额的最长时间（0 = 超出的立即拒绝）
+  load_queue_timeout: 8s
+
+# =============================================================================
 # Dashboard Aggregation Configuration
 # 仪表盘预聚合配置（重启生效）
 # =============================================================================

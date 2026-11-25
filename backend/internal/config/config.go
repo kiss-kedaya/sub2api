@@ -1961,6 +1961,12 @@ type OpsMetricsCollectorCacheConfig struct {
 type UsageStatsCacheConfig struct {
 	Enabled bool          `mapstructure:"enabled"`
 	TTL     time.Duration `mapstructure:"ttl"`
+	// MaxConcurrentLoads caps how many cache-miss aggregates of one user or API key (the usage page, the key
+	// list, /v1/usage) one process runs on the database at once; 0 means no cap. The surplus waits up to
+	// LoadQueueTimeout for a slot and is then answered 503 USAGE_STATS_BUSY instead of piling connections on.
+	MaxConcurrentLoads int `mapstructure:"max_concurrent_loads"`
+	// LoadQueueTimeout is how long a miss waits for one of those slots; 0 turns the surplus away at once.
+	LoadQueueTimeout time.Duration `mapstructure:"load_queue_timeout"`
 }
 
 type JWTConfig struct {
@@ -2702,6 +2708,9 @@ func setDefaults() {
 	// write path never invalidates it, so TTL is the maximum staleness.
 	viper.SetDefault("usage_stats_cache.enabled", true)
 	viper.SetDefault("usage_stats_cache.ttl", 60*time.Second)
+	// At most 8 user/API-key aggregates scan usage_logs at once per process; the rest queue for up to 8 s.
+	viper.SetDefault("usage_stats_cache.max_concurrent_loads", 8)
+	viper.SetDefault("usage_stats_cache.load_queue_timeout", 8*time.Second)
 
 	// JWT
 	viper.SetDefault("jwt.secret", "")
@@ -4225,6 +4234,12 @@ func (c *Config) Validate() error {
 	}
 	if c.UsageStatsCache.TTL < 0 {
 		return fmt.Errorf("usage_stats_cache.ttl must be non-negative")
+	}
+	if c.UsageStatsCache.MaxConcurrentLoads < 0 {
+		return fmt.Errorf("usage_stats_cache.max_concurrent_loads must be non-negative")
+	}
+	if c.UsageStatsCache.LoadQueueTimeout < 0 {
+		return fmt.Errorf("usage_stats_cache.load_queue_timeout must be non-negative")
 	}
 	if c.Ops.Cleanup.ErrorLogRetentionDays < 0 {
 		return fmt.Errorf("ops.cleanup.error_log_retention_days must be non-negative")
