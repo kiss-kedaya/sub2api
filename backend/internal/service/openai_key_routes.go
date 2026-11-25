@@ -125,8 +125,8 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 		selection, decision, err := selectOne(ctx, apiKey.GroupID, append([]string(nil), platformOverride...), requestedModel)
 		return selection, decision, apiKey, err
 	}
-	groupIDs = s.orderGroupsByQuality(ctx, groupIDs)
-	routes := newAPIKeyRouteIterator(ctx, apiKey, groupIDs, requestedModel, s.hydrateAPIKeyGroup, nil, s.routeModelsCatalog, s.ResolveChannelMappingAndRestrict, openAIMessagesKeyRouteModel)
+	plan := planRouteGroups(ctx, s.routeGroupDeps(ctx, apiKey), apiKey, groupIDs, requestedModel, routeSessionHashFromContext(ctx))
+	routes := newAPIKeyRouteIterator(ctx, apiKey, plan.Order, requestedModel, s.hydrateAPIKeyGroup, nil, s.routeModelsCatalog, s.ResolveChannelMappingAndRestrict, openAIMessagesKeyRouteModel)
 	var lastErr error
 	var lastDecision OpenAIAccountScheduleDecision
 	for candidate, ok := routes.next(); ok; candidate, ok = routes.next() {
@@ -139,6 +139,7 @@ func (s *OpenAIGatewayService) selectAlongKeyRoutes(
 		routeCtx := ContextWithAPIKeyRoute(ctx, routed)
 		selection, decision, err := selectOne(routeCtx, routed.GroupID, groupPlatform, candidate.model)
 		if err == nil {
+			plan.remember(ctx, candidate.sourceGroupID)
 			return selection, decision, routed, nil
 		}
 		lastErr = err
@@ -179,6 +180,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForCapabilityAlongKeyRo
 	if s == nil || apiKey == nil {
 		return nil, OpenAIAccountScheduleDecision{}, apiKey, ErrNoAvailableAccounts
 	}
+	ctx = withRouteSessionHash(ctx, sessionHash)
 	selected, err := withModelTransientFallback(ctx, func(ctx context.Context) (openAIKeyRouteSelection, error) {
 		result, decision, key, err := selectWithUpstreamPreferences(ctx, s.cache, apiKey, excludedIDs, func(excludedIDs map[int64]struct{}) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
 			return s.selectAlongKeyRoutes(ctx, apiKey, platformOverride, requestedModel, func(ctx context.Context, groupID *int64, groupPlatform []string, model string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
@@ -205,6 +207,7 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImagesAlongKeyRoutes
 	if s == nil || apiKey == nil {
 		return nil, OpenAIAccountScheduleDecision{}, apiKey, ErrNoAvailableAccounts
 	}
+	ctx = withRouteSessionHash(ctx, sessionHash)
 	selected, err := withModelTransientFallback(ctx, func(ctx context.Context) (openAIKeyRouteSelection, error) {
 		result, decision, key, err := selectWithUpstreamPreferences(ctx, s.cache, apiKey, excludedIDs, func(excludedIDs map[int64]struct{}) (*AccountSelectionResult, OpenAIAccountScheduleDecision, *APIKey, error) {
 			return s.selectAlongKeyRoutes(ctx, apiKey, []string{PlatformOpenAI}, requestedModel, func(ctx context.Context, groupID *int64, _ []string, model string) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {

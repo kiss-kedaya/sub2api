@@ -476,6 +476,10 @@ type apiKeyRouteCandidate struct {
 	catalog  groupModelsCatalog
 	presence groupCatalogModelPresence
 	model    string
+	// sourceGroupID is the entry of the key's own group list this candidate came
+	// from. key.GroupID can differ (a Claude fallback redirects to another group),
+	// and a session binds to the list entry, so the same entry is tried first next time.
+	sourceGroupID int64
 }
 
 type apiKeyRouteIterator struct {
@@ -652,7 +656,7 @@ func (r *apiKeyRouteIterator) loadNext() bool {
 		if presence == groupCatalogModelPresent {
 			r.siblingHasPresent = true
 		}
-		r.candidates = append(r.candidates, apiKeyRouteCandidate{key: routed, catalog: cat, presence: presence, model: model})
+		r.candidates = append(r.candidates, apiKeyRouteCandidate{key: routed, catalog: cat, presence: presence, model: model, sourceGroupID: groupID})
 		return true
 	}
 	return false
