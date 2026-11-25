@@ -198,6 +198,9 @@ func sensitiveStepUpRoutes() []stepUpRouteCase {
 		{http.MethodPost, "/api/v1/admin/users/1/replace-group", "admin"},
 		{http.MethodPut, "/api/v1/admin/users/1/platform-quotas", "admin"},
 		{http.MethodPost, "/api/v1/admin/users/1/platform-quotas/reset", "admin"},
+		// 破玻璃重置 2FA：清空目标用户的 TOTP 并撤销其全部因子的 step-up 授权，
+		// 是降低他人账号安全强度的动作，必须真人 step-up、机器凭据一律 403。
+		{http.MethodPost, "/api/v1/admin/users/1/reset-2fa", "admin"},
 		// 部署 / 回滚 / 重启属主机生命周期动作
 		{http.MethodPost, "/api/v1/admin/system/update", "admin"},
 		{http.MethodPost, "/api/v1/admin/system/rollback", "admin"},

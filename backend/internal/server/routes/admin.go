@@ -463,6 +463,10 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers, s
 		// 平台配额直接决定用户可用额度：改配额/重置配额窗口要求 step-up。
 		users.PUT("/:id/platform-quotas", gin.HandlerFunc(stepUpAuth), h.Admin.User.UpdateUserPlatformQuotas)
 		users.POST("/:id/platform-quotas/reset", gin.HandlerFunc(stepUpAuth), h.Admin.User.ResetUserPlatformQuotaWindow)
+		// 破玻璃重置 2FA：清空目标用户的 TOTP 并撤销其全部因子的 step-up 授权，
+		// 是「能降低他人账号安全强度」的高风险动作。必须真人 step-up（机器凭据
+		// 一律 403），原因必填并写审计，同时邮件通知目标用户。Passkey 保留。
+		users.POST("/:id/reset-2fa", gin.HandlerFunc(stepUpAuth), h.Admin.User.ResetUser2FA)
 
 		// User attribute values
 		users.GET("/:id/attributes", h.Admin.UserAttribute.GetUserAttributes)

@@ -165,6 +165,11 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"user_group_rates_old": {}, "user_group_rates_new": {}, "user_group_rates_changed": {},
 	"user_allowed_groups_old": {}, "user_allowed_groups_new": {}, "user_allowed_groups_changed": {},
 	"user_restrict_public_groups_old": {}, "user_restrict_public_groups_new": {}, "user_restrict_public_groups_changed": {},
+	// 管理员破玻璃重置 2FA：只记「授权撤销是否成功 / 用户是否已收到通知 /
+	// 是否还保留 Passkey」三个结果位；目标用户与原因写进服务层同步落库的
+	// admin.user.reset_2fa 记录，totp_secret 任何形式都不入库。
+	"admin_2fa_reset_revoked_stepup": {}, "admin_2fa_reset_notified": {},
+	"admin_2fa_reset_passkey_bound": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.
@@ -268,19 +273,23 @@ var auditActionOverrides = map[string]string{
 	"POST /api/v1/user/step-up/passkey/finish":                   service.AuditActionStepUpVerify,
 	"POST /api/v1/user/step-up/passkey/begin":                    service.AuditActionStepUpVerify,
 	"POST /api/v1/admin/audit-logs/clear":                        service.AuditActionAuditLogClear,
-	"POST /api/v1/admin/accounts/data":                           "admin.accounts.import",
-	"POST /api/v1/admin/backups":                                 "admin.backups.create",
-	"POST /api/v1/admin/backups/:id/restore":                     "admin.backups.restore",
-	"DELETE /api/v1/admin/backups/:id":                           "admin.backups.delete",
-	"PUT /api/v1/admin/backups/s3-config":                        "admin.backups.s3_config.update",
-	"POST /api/v1/admin/settings/admin-api-key/regenerate":       "admin.admin_api_key.regenerate",
-	"DELETE /api/v1/admin/settings/admin-api-key":                "admin.admin_api_key.delete",
-	"PUT /api/v1/admin/prompt-audit/config":                      "admin.prompt_audit.config.update",
-	"POST /api/v1/admin/prompt-audit/endpoints/probe":            "admin.prompt_audit.endpoint.probe",
-	"DELETE /api/v1/admin/prompt-audit/events/:id":               "admin.prompt_audit.event.delete",
-	"POST /api/v1/admin/prompt-audit/events/batch-delete":        "admin.prompt_audit.events.batch_delete",
-	"POST /api/v1/admin/prompt-audit/events/delete-preview":      "admin.prompt_audit.events.delete_preview",
-	"POST /api/v1/admin/prompt-audit/events/delete-by-filter":    "admin.prompt_audit.events.filter_delete",
+	// 管理员破玻璃重置 2FA：固定动作名，便于按动作检索「谁在什么时候重置了
+	// 谁的 2FA、原因是什么」。完整记录（目标用户、原因、重置前后状态）由
+	// 服务层同步落库，这里的中间件记录提供请求级上下文。
+	"POST /api/v1/admin/users/:id/reset-2fa":                  service.AuditActionAdminUserReset2FA,
+	"POST /api/v1/admin/accounts/data":                        "admin.accounts.import",
+	"POST /api/v1/admin/backups":                              "admin.backups.create",
+	"POST /api/v1/admin/backups/:id/restore":                  "admin.backups.restore",
+	"DELETE /api/v1/admin/backups/:id":                        "admin.backups.delete",
+	"PUT /api/v1/admin/backups/s3-config":                     "admin.backups.s3_config.update",
+	"POST /api/v1/admin/settings/admin-api-key/regenerate":    "admin.admin_api_key.regenerate",
+	"DELETE /api/v1/admin/settings/admin-api-key":             "admin.admin_api_key.delete",
+	"PUT /api/v1/admin/prompt-audit/config":                   "admin.prompt_audit.config.update",
+	"POST /api/v1/admin/prompt-audit/endpoints/probe":         "admin.prompt_audit.endpoint.probe",
+	"DELETE /api/v1/admin/prompt-audit/events/:id":            "admin.prompt_audit.event.delete",
+	"POST /api/v1/admin/prompt-audit/events/batch-delete":     "admin.prompt_audit.events.batch_delete",
+	"POST /api/v1/admin/prompt-audit/events/delete-preview":   "admin.prompt_audit.events.delete_preview",
+	"POST /api/v1/admin/prompt-audit/events/delete-by-filter": "admin.prompt_audit.events.filter_delete",
 	// 浏览器端封存密文的写操作：只留「存/删了哪把 Key」，请求体（含密文与 salt）
 	// 整体不入审计库，见 auditBodyOmittedRoutes。
 	"PUT /api/v1/user/api-keys/:id/secret-seal":    service.AuditActionAPIKeySecretSeal,

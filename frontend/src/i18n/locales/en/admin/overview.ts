@@ -459,6 +459,32 @@ export default {
         success: 'Deleted {count} users',
         failed: 'Failed to delete {count} users. They remain selected for retry.'
       },
+      // Administrator break-glass 2FA reset (the sanctioned path when a user lost their authenticator).
+      reset2fa: {
+        menuItem: 'Reset 2FA',
+        dangerBadge: 'Dangerous',
+        title: 'Reset this user\'s two-factor authentication',
+        targetHint: 'User ID {id} · {role}',
+        warningTitle: 'Two-factor authentication will stop working and must be re-bound',
+        warningBody: 'This action is audited and the user is notified by email. Existing 5-minute verification windows are revoked immediately; sensitive actions in that user\'s current session require verification again.',
+        adminTargetWarning: 'The target is an administrator account: they must re-bind an authenticator soon, otherwise their next login will be blocked at the 2FA step.',
+        passkeyNotice: 'Only TOTP is reset. Any passkey the user has bound is kept and is still required at login.',
+        reasonLabel: 'Reset reason (required)',
+        reasonHelp: 'The reason is written to the audit log and emailed to the user, so describe how you verified the request.',
+        reasonPlaceholder: 'e.g. User lost their authenticator; identity verified through a support ticket',
+        reasonRequired: 'Please enter a reset reason',
+        reasonTooLong: 'The reset reason must not exceed {max} characters',
+        confirm: 'Reset 2FA',
+        submitting: 'Resetting...',
+        success: 'Two-factor authentication for {email} has been reset and the user has been notified',
+        successWithPasskey: 'Two-factor authentication for {email} has been reset and the user has been notified. Their passkey is kept, so passkey verification is still required at login.',
+        successWithoutEmail: 'Two-factor authentication for {email} has been reset, but the notification email could not be sent — please contact the user directly.',
+        stepUpNotRevoked: 'The reset completed, but some earlier verification grants could not be revoked. Ask the user to sign in again.',
+        targetNotEnabled: 'This user does not have 2FA enabled',
+        userNotFound: 'User not found or already deleted',
+        unavailable: 'The reset service is temporarily unavailable, please retry later',
+        failed: 'Reset failed, please retry later'
+      },
       bulkLimits: {
         short: 'Set limits',
         action: 'Set limits ({count})',

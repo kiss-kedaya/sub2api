@@ -83,6 +83,12 @@ const (
 	ReasonRevenueOperations   Reason = "money_moving_operation"
 	ReasonDataManagementWrite Reason = "backup_source_and_s3_writes"
 	ReasonHostLifecycleWrite  Reason = "dangerous_host_lifecycle_action"
+	// ReasonAccountSecurityReset covers the break-glass 2FA reset: an admin
+	// wipes another account's TOTP (including their own when they locked
+	// themselves out) and revokes every factor's step-up grant. It weakens the
+	// target account's security, so it needs the operator's own recent 2FA and
+	// can never be driven by a machine credential.
+	ReasonAccountSecurityReset Reason = "account_security_factor_reset"
 
 	// secret_free reasons
 	ReasonUsageAnalytics           Reason = "usage_analytics_no_secrets"
@@ -191,6 +197,9 @@ const (
 	ResourceMihomo            Resource = "mihomo"
 	ResourceUserAPIKeys       Resource = "user_api_keys"
 	ResourceRevenueOperations Resource = "revenue_operations"
+	// ResourceAccountSecurity 覆盖「降低目标账号安全强度」的管理动作：
+	// 目前只有破玻璃重置 2FA。它与资金、上行凭证无关，单独成族便于按资源检索审计。
+	ResourceAccountSecurity Resource = "account_security"
 )
 
 // Resolved is the classification of one route.
@@ -315,6 +324,11 @@ var stepUpExact = []exactRule{
 	{method: "POST", path: "/api/v1/admin/users/:id/platform-quotas/reset", res: Resolved{ClassStepUpRequired, ReasonRevenueOperations, ResourceRevenueOperations, "exact:users.platform-quotas-reset"}},
 	{method: "PUT", path: "/api/v1/admin/groups/:id/rate-multipliers", res: Resolved{ClassStepUpRequired, ReasonRevenueOperations, ResourceRevenueOperations, "exact:groups.rate-multipliers"}},
 	{method: "DELETE", path: "/api/v1/admin/groups/:id/rate-multipliers", res: Resolved{ClassStepUpRequired, ReasonRevenueOperations, ResourceRevenueOperations, "exact:groups.rate-multipliers.clear"}},
+	// 破玻璃重置 2FA：管理员可清空任意用户（含管理员自己）的 TOTP，是一次
+	// 「降低目标账号安全强度」的动作，必须先过管理员本人的 step-up 2FA；
+	// 机器凭据默认拒绝（只有 machine_allowlisted 才接受机器凭据）。
+	// 原因必填、审计同步落库、邮件通知目标用户，详见 service.Admin2FAResetService。
+	{method: "POST", path: "/api/v1/admin/users/:id/reset-2fa", res: Resolved{ClassStepUpRequired, ReasonAccountSecurityReset, ResourceAccountSecurity, "exact:users.reset-2fa"}},
 	// 危险的主机生命周期操作
 	{method: "POST", path: "/api/v1/admin/system/update", res: Resolved{ClassStepUpRequired, ReasonHostLifecycleWrite, ResourceRevenueOperations, "exact:system.update"}},
 	{method: "POST", path: "/api/v1/admin/system/rollback", res: Resolved{ClassStepUpRequired, ReasonHostLifecycleWrite, ResourceRevenueOperations, "exact:system.rollback"}},

@@ -888,6 +888,37 @@ func ProvideAPIKeyService(
 }
 
 // ProviderSet is the Wire provider set for all services
+// ProvideAdmin2FAResetService 装配管理端破玻璃重置 2FA 服务。
+//
+// 用 Provide 而不是把三个依赖塞进 TotpService：破玻璃只需要「清 TOTP 字段、
+// 撤销授权、发通知、写审计」，让 TotpService 去依赖审计仓库与通知邮件服务会
+// 把用户自助 2FA 流程也一起绑死在这两个重量级依赖上。
+//
+// RefreshTokenCache 用来枚举目标用户已知的会话（会话族 ID），step-up 授权键
+// 由 RefreshTokenCache + repository.NewTotpCache 同一 Redis 上的
+// RevokeStepUpGrantsForUser 删除。这里的 stepUpGrantRevoker 用类型断言从
+// TotpCache 取：生产装配下 TotpCache 一定是 *repository.TotpCache。
+func ProvideAdmin2FAResetService(
+	userRepo UserRepository,
+	totpService *TotpService,
+	refreshTokenCache RefreshTokenCache,
+	notificationEmailService *NotificationEmailService,
+	auditLogService *AuditLogService,
+) *Admin2FAResetService {
+	var stepUp StepUpGrantRevoker
+	if revoker, ok := any(totpService.cache).(StepUpGrantRevoker); ok {
+		stepUp = revoker
+	}
+	return NewAdmin2FAResetService(Admin2FAResetDeps{
+		UserRepo:      userRepo,
+		Totp:          totpService,
+		RefreshCache:  refreshTokenCache,
+		StepUp:        stepUp,
+		Notifications: notificationEmailService,
+		Audit:         auditLogService,
+	})
+}
+
 // ProvideTotpService 在原有构造之后注入 Passkey 凭据仓库：双因子因子策略
 // （RequiredFactors）需要判断用户是否绑定了 Passkey。NewTotpService 的签名
 // 保持不变，避免大量既有测试构造点改动。
@@ -1026,6 +1057,7 @@ var ProviderSet = wire.NewSet(
 	NewUserAttributeService,
 	NewUsageCache,
 	ProvideTotpService,
+	ProvideAdmin2FAResetService,
 	NewErrorPassthroughService,
 	NewTLSFingerprintProfileService,
 	NewPluginManager,

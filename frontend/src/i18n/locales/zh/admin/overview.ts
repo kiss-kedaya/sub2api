@@ -459,6 +459,32 @@ export default {
         success: '已删除 {count} 个用户',
         failed: '{count} 个用户删除失败，已保留选中，可重试。'
       },
+      // 管理员破玻璃重置用户 2FA（用户忘掉动态口令时的唯一正规出路）
+      reset2fa: {
+        menuItem: '重置 2FA',
+        dangerBadge: '危险操作',
+        title: '重置该用户的双因素认证',
+        targetHint: '用户 ID {id} · {role}',
+        warningTitle: '重置后该用户的双因素认证将失效，需要重新绑定',
+        warningBody: '此项操作会记录审计并通知用户。旧的 5 分钟免验证授权会立即作废，该用户当前会话的敏感操作需要重新验证。',
+        adminTargetWarning: '目标是管理员账号：重置后该管理员需要尽快重新绑定动态口令，否则再次登录会卡在 2FA。',
+        passkeyNotice: '本次只重置 TOTP 动态口令。该用户已绑定的 Passkey 会保留，登录时仍然需要 Passkey 验证。',
+        reasonLabel: '重置原因（必填）',
+        reasonHelp: '原因会写进审计，并通过邮件告知用户，请写清楚核实方式。',
+        reasonPlaceholder: '例如：用户忘记动态口令，已通过工单核实身份',
+        reasonRequired: '请填写重置原因',
+        reasonTooLong: '重置原因不能超过 {max} 个字',
+        confirm: '确认重置',
+        submitting: '重置中...',
+        success: '{email} 的双因素认证已重置，已发送通知邮件',
+        successWithPasskey: '{email} 的双因素认证已重置，已发送通知邮件。该用户仍绑定了 Passkey，登录仍需 Passkey。',
+        successWithoutEmail: '{email} 的双因素认证已重置，但通知邮件未发出，请另行联系用户。',
+        stepUpNotRevoked: '重置已完成，但旧的免验证授权未能全部撤销，建议让该用户重新登录。',
+        targetNotEnabled: '该用户未启用 2FA',
+        userNotFound: '用户不存在或已被删除',
+        unavailable: '重置服务暂不可用，请稍后重试',
+        failed: '重置失败，请稍后重试'
+      },
       bulkLimits: {
         short: '设置限制',
         action: '批量设置限制（{count}）',

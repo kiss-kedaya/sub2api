@@ -309,6 +309,7 @@
     "POST /admin/users/blacklist-matches :: src/api/admin/users.ts#findBlacklistedEmailUsers",
     "POST /admin/users/${userId}/replace-group :: src/api/admin/users.ts#replaceGroup",
     "POST /admin/users/${id}/platform-quotas/reset :: src/api/admin/users.ts#resetPlatformQuotaWindow",
+    "POST /admin/users/${id}/reset-2fa :: src/api/admin/users.ts#resetUser2FA",
     "POST /admin/users/${id}/balance :: src/api/admin/users.ts#updateBalance",
     "PUT /admin/users/${id}/platform-quotas :: src/api/admin/users.ts#updatePlatformQuotas",
     "PUT /admin/users/${id} :: src/api/admin/users.ts#update"
