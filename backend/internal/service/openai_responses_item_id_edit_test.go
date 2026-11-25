@@ -319,6 +319,31 @@ func allocatedBytesDuring(fn func()) uint64 {
 	return after.TotalAlloc - before.TotalAlloc
 }
 
+// MemStats 和 testing.AllocsPerRun 都是进程级计数：同包其他测试遗留的后台
+// goroutine 在测量窗口里分配的内存也会被算进来（CI 上出现过 66 次 > 40 的误报），
+// 噪声只会让读数偏大，所以对“上界断言”取多次测量的最小值。
+const allocMeasureAttempts = 5
+
+func minAllocatedBytes(first uint64, fn func()) uint64 {
+	best := first
+	for i := 1; i < allocMeasureAttempts; i++ {
+		if b := allocatedBytesDuring(fn); b < best {
+			best = b
+		}
+	}
+	return best
+}
+
+func minAllocsPerRun(runs int, fn func()) float64 {
+	best := testing.AllocsPerRun(runs, fn)
+	for i := 1; i < allocMeasureAttempts; i++ {
+		if a := testing.AllocsPerRun(runs, fn); a < best {
+			best = a
+		}
+	}
+	return best
+}
+
 // 内存断言：改写 N 个大 item 只允许分配“结果本身”那一份，且结果没有多余容量，
 // 也不与入参共享内存（入参还要留给 failover 重放和计费估算）。
 func TestSanitizeOpenAIResponsesInputItemIDsAllocatesOnlyTheResult(t *testing.T) {
@@ -331,6 +356,7 @@ func TestSanitizeOpenAIResponsesInputItemIDsAllocatesOnlyTheResult(t *testing.T)
 		require.NoError(t, err)
 		require.True(t, changed)
 	})
+	newBytes = minAllocatedBytes(newBytes, func() { _, _, _ = sanitizeOpenAIResponsesInputItemIDs(body) })
 	var want []byte
 	legacyBytes := allocatedBytesDuring(func() {
 		want, _, _ = legacySanitizeOpenAIResponsesInputItemIDs(body)
@@ -346,7 +372,7 @@ func TestSanitizeOpenAIResponsesInputItemIDsAllocatesOnlyTheResult(t *testing.T)
 	require.Less(t, newBytes, uint64(len(got))+256<<10, "只应分配结果那一份（new=%d legacy=%d body=%d）", newBytes, legacyBytes, len(body))
 	require.Greater(t, legacyBytes, 2*uint64(len(body)), "旧实现应当有多份中间复制，说明度量有效")
 
-	allocs := testing.AllocsPerRun(20, func() { _, _, _ = sanitizeOpenAIResponsesInputItemIDs(body) })
+	allocs := minAllocsPerRun(20, func() { _, _, _ = sanitizeOpenAIResponsesInputItemIDs(body) })
 	legacyAllocs := testing.AllocsPerRun(20, func() { _, _, _ = legacySanitizeOpenAIResponsesInputItemIDs(body) })
 	require.Less(t, allocs, 40.0, "分配次数不应随被改 item 数线性增长（旧实现=%v）", legacyAllocs)
 	require.Greater(t, legacyAllocs, 3*256.0)
