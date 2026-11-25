@@ -135,7 +135,7 @@ func TestExecuteAdmin2FAResetOutputMatchesActualStepUpRevocation(t *testing.T) {
 			mock.ExpectClose()
 
 			var out bytes.Buffer
-			err = executeAdmin2FAReset(context.Background(), 41, &out,
+			err = executeAdmin2FAReset(context.Background(), 41, false, &out,
 				func() (*config.Config, error) { return &config.Config{}, nil },
 				func(*config.Config) (*sql.DB, error) { return db, nil },
 				func(ctx context.Context, _ *config.Config, userID int64) error {

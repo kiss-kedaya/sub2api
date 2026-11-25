@@ -31,20 +31,39 @@ var (
 	errAdmin2FAResetReadOnly  = errors.New("read-only crypto test mode forbids administrator TOTP recovery")
 )
 
+// Returned instead of errAdmin2FAResetArguments whenever -clear-admin-passkeys was
+// given, so the operator sees the full correct usage of the opt-in switch.
+var errAdmin2FAResetPasskeyArguments = errors.New("administrator Passkey clearing requires only -reset-admin-2fa -user-id <positive ID> -confirm -clear-admin-passkeys")
+
 const admin2FAResetSQL = `UPDATE users
 SET totp_enabled = FALSE, totp_secret_encrypted = NULL, totp_enabled_at = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = $1 AND role = 'admin' AND status = 'active' AND deleted_at IS NULL
 RETURNING id`
 
+// Runs only after admin2FAResetSQL matched the administrator in the same
+// transaction. passkey_user_handles (the stable per-user WebAuthn ID, not a
+// credential) is deliberately left in place so a new Passkey can be enrolled.
+const admin2FAClearPasskeysSQL = `DELETE FROM passkey_credentials WHERE user_id = $1`
+
+// Shown by -h. Deleting Passkeys is opt-in; the default recovery never touches them.
+const admin2FAClearPasskeysUsage = "Also delete every Passkey of the administrator; only valid together with -reset-admin-2fa -user-id <ID> -confirm. " +
+	"Afterwards the administrator has neither TOTP nor a Passkey and must enroll a factor again through the existing flow (enable TOTP or register a new Passkey)"
+
 // A recovery-related flag always consumes the command, including invalid or
 // explicitly false flags. It must never accidentally fall through to HTTP setup,
 // migrations, dependency wiring, or normal server startup.
-func dispatchAdmin2FAReset(fs *flag.FlagSet, enabled bool, userID int64, confirmed bool, run func(int64) error) (bool, error) {
-	requested, conflicting := false, false
+//
+// -clear-admin-passkeys is the opt-in extension: it is valid only together with
+// -reset-admin-2fa -user-id <positive ID> -confirm (an explicit =false is
+// rejected like the other flags). Without it the command behaves exactly as before.
+func dispatchAdmin2FAReset(fs *flag.FlagSet, enabled bool, userID int64, confirmed, clearPasskeys bool, run func(userID int64, clearPasskeys bool) error) (bool, error) {
+	requested, conflicting, passkeysRequested := false, false, false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "reset-admin-2fa", "user-id", "confirm":
 			requested = true
+		case "clear-admin-passkeys":
+			requested, passkeysRequested = true, true
 		default:
 			conflicting = true
 		}
@@ -56,24 +75,29 @@ func dispatchAdmin2FAReset(fs *flag.FlagSet, enabled bool, userID int64, confirm
 		switch name {
 		case "reset-admin-2fa", "user-id", "confirm":
 			requested = true
+		case "clear-admin-passkeys":
+			requested, passkeysRequested = true, true
 		}
 	}
 	if !requested {
 		return false, nil
 	}
-	if !enabled || userID <= 0 || !confirmed || conflicting || fs.NArg() != 0 || run == nil {
+	if !enabled || userID <= 0 || !confirmed || conflicting || fs.NArg() != 0 || run == nil || (passkeysRequested && !clearPasskeys) {
+		if passkeysRequested {
+			return true, errAdmin2FAResetPasskeyArguments
+		}
 		return true, errAdmin2FAResetArguments
 	}
-	return true, run(userID)
+	return true, run(userID, clearPasskeys)
 }
 
-func runAdmin2FAResetCommand(userID int64) error {
+func runAdmin2FAResetCommand(userID int64, clearPasskeys bool) error {
 	if service.CryptoAdminTestMode() {
 		return errAdmin2FAResetReadOnly
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return executeAdmin2FAReset(ctx, userID, os.Stdout, config.LoadForBootstrap, openAdmin2FAResetDatabase, clearAdmin2FAResetSessions)
+	return executeAdmin2FAReset(ctx, userID, clearPasskeys, os.Stdout, config.LoadForBootstrap, openAdmin2FAResetDatabase, clearAdmin2FAResetSessions)
 }
 
 func openAdmin2FAResetDatabase(cfg *config.Config) (*sql.DB, error) {
@@ -100,6 +124,7 @@ func openAdmin2FAResetDatabase(cfg *config.Config) (*sql.DB, error) {
 func executeAdmin2FAReset(
 	ctx context.Context,
 	userID int64,
+	clearPasskeys bool,
 	out io.Writer,
 	loadConfig func() (*config.Config, error),
 	openDatabase func(*config.Config) (*sql.DB, error),
@@ -120,13 +145,22 @@ func executeAdmin2FAReset(
 		return errAdmin2FAResetDatabase
 	}
 	defer func() { _ = db.Close() }()
-	if err := resetAdmin2FAInDatabase(ctx, db, userID); err != nil {
+	clearedPasskeys, err := resetAdmin2FAInDatabase(ctx, db, userID, clearPasskeys)
+	if err != nil {
 		return err
 	}
 
 	// Recovery is already committed. Redis failure must not be reported as an
 	// unchanged database, and should not prevent a forgotten-TOTP recovery.
+	// The cleanup below runs after the Passkey rows are gone and expands every
+	// factor (TOTP and Passkey) into its step-up grant keys, so with
+	// -clear-admin-passkeys the Passkey factor's grants are revoked as well.
 	message := "Administrator two-factor authentication has been reset.\n"
+	if clearPasskeys {
+		// Count only: never the credential IDs, names or data.
+		message += fmt.Sprintf("Removed %d Passkey credential(s) of this administrator.\n", clearedPasskeys)
+		message += "The administrator now has neither TOTP nor a Passkey and must enroll a factor again through the existing flow (enable TOTP or register a new Passkey).\n"
+	}
 	if clearSessions == nil || clearSessions(ctx, cfg, userID) != nil {
 		message += "Warning: database recovery completed, but refresh-session and step-up cleanup could not be completed; some sessions may remain active.\n"
 	} else {
@@ -139,29 +173,44 @@ func executeAdmin2FAReset(
 	return nil
 }
 
-func resetAdmin2FAInDatabase(ctx context.Context, db *sql.DB, userID int64) error {
+// resetAdmin2FAInDatabase resets the TOTP fields and, only when clearPasskeys is
+// set, then deletes the administrator's Passkey credentials in the same
+// transaction. The Passkey delete runs after the identity match so a non-admin,
+// disabled or deleted account never loses credentials. Returns the number of
+// deleted Passkey credentials (always 0 without clearPasskeys).
+func resetAdmin2FAInDatabase(ctx context.Context, db *sql.DB, userID int64, clearPasskeys bool) (int64, error) {
 	if userID <= 0 {
-		return errAdmin2FAResetArguments
+		return 0, errAdmin2FAResetArguments
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return errAdmin2FAResetDatabase
+		return 0, errAdmin2FAResetDatabase
 	}
 	defer func() { _ = tx.Rollback() }()
 	var matchedID int64
 	if err := tx.QueryRowContext(ctx, admin2FAResetSQL, userID).Scan(&matchedID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return errAdmin2FAResetIdentity
+			return 0, errAdmin2FAResetIdentity
 		}
-		return errAdmin2FAResetDatabase
+		return 0, errAdmin2FAResetDatabase
 	}
 	if matchedID != userID {
-		return errAdmin2FAResetDatabase
+		return 0, errAdmin2FAResetDatabase
+	}
+	var clearedPasskeys int64
+	if clearPasskeys {
+		result, err := tx.ExecContext(ctx, admin2FAClearPasskeysSQL, userID)
+		if err != nil {
+			return 0, errAdmin2FAResetDatabase
+		}
+		if clearedPasskeys, err = result.RowsAffected(); err != nil {
+			return 0, errAdmin2FAResetDatabase
+		}
 	}
 	if err := tx.Commit(); err != nil {
-		return errAdmin2FAResetCommit
+		return 0, errAdmin2FAResetCommit
 	}
-	return nil
+	return clearedPasskeys, nil
 }
 
 func clearAdmin2FAResetSessions(ctx context.Context, cfg *config.Config, userID int64) error {

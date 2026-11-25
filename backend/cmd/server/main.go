@@ -114,6 +114,7 @@ func main() {
 	atRestBatch := flag.Int("atrest-batch", atrestmigrate.DefaultBatchSize, "Rows per batch for -atrest-migrate")
 	atRestDryRun := flag.Bool("atrest-dry-run", true, "Only count rows for -atrest-migrate; set =false to write (dry-run by default)")
 	resetAdmin2FA := flag.Bool("reset-admin-2fa", false, "Recover a forgotten administrator TOTP configuration and exit")
+	clearAdminPasskeys := flag.Bool("clear-admin-passkeys", false, admin2FAClearPasskeysUsage)
 	issueAdmin2FACode := flag.Bool("issue-admin-2fa-code", false, "Issue a one-time administrator TOTP disable authorization code and exit")
 	resetAdminUserID := flag.Int64("user-id", 0, "Administrator user ID for -reset-admin-2fa or -issue-admin-2fa-code")
 	confirmAdmin2FAReset := flag.Bool("confirm", false, "Confirm administrator TOTP recovery or TOTP installation key export")
@@ -138,7 +139,7 @@ func main() {
 		}
 		return
 	}
-	if handled, err := dispatchAdmin2FAReset(flag.CommandLine, *resetAdmin2FA, *resetAdminUserID, *confirmAdmin2FAReset, runAdmin2FAResetCommand); handled {
+	if handled, err := dispatchAdmin2FAReset(flag.CommandLine, *resetAdmin2FA, *resetAdminUserID, *confirmAdmin2FAReset, *clearAdminPasskeys, runAdmin2FAResetCommand); handled {
 		if err != nil {
 			log.Fatal(err)
 		}
