@@ -225,54 +225,86 @@ const deepSeekMissingToolOutput = `{"error":"tool_output_missing","message":"The
 // makes the whole conversation unusable after an interrupted client tool call.
 // The synthetic result keeps the call and its output adjacent and gives the
 // model an explicit interrupted result; no client item is dropped.
+//
+// Every OpenAI-platform Responses request passes through here and almost none
+// needs a repair, so the scan reads the body in place and allocates only when
+// an output has to be inserted (the history is then edited by span patches,
+// not re-encoded).
 func repairDeepSeekMissingToolOutputs(body []byte) ([]byte, bool, error) {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
+	if len(body) == 0 {
 		return body, false, nil
 	}
-	if gjson.GetBytes(body, "previous_response_id").String() != "" {
+	view := openAIWSPayloadStringView(body)
+	if gjson.Get(view, "previous_response_id").String() != "" {
 		// A continuation may resolve the call output from stored history.
 		return body, false, nil
 	}
-	input := gjson.GetBytes(body, "input")
+	input := gjson.Get(view, "input")
 	if !input.IsArray() {
 		return body, false, nil
 	}
-	paired, changed := deepSeekPairMissingToolOutputs(input.Array())
-	if !changed {
+	patch := newJSONSpanPatcher(body)
+	deepSeekPairMissingToolOutputs(input, patch)
+	// Only a body that needs a repair has to be well-formed; skip the full
+	// validation pass for the (vast majority of) requests that need none.
+	if !patch.dirty() || !gjson.ValidBytes(body) {
 		return body, false, nil
 	}
-	raw, err := json.Marshal(paired)
-	if err != nil {
-		return body, false, err
-	}
-	next, err := sjson.SetRawBytes(body, "input", raw)
-	if err != nil {
-		return body, false, err
-	}
-	return next, true, nil
+	next, changed := patch.apply()
+	return next, changed, nil
 }
 
-func deepSeekPairMissingToolOutputs(input []gjson.Result) ([]json.RawMessage, bool) {
-	answered := make(map[string]struct{}, len(input))
-	for _, item := range input {
-		if !isDeepSeekToolOutputType(item.Get("type").String()) {
-			continue
-		}
-		if callID := item.Get("call_id").String(); callID != "" {
-			answered[callID] = struct{}{}
-		}
+// deepSeekPairMissingToolOutputs records, in patch, a synthetic output for every
+// tool call without one. The outputs go right before the first item that is
+// neither a call nor an output (or at the end of the array), so a call and its
+// output stay adjacent.
+func deepSeekPairMissingToolOutputs(input gjson.Result, patch *jsonSpanPatcher) {
+	const (
+		itemOther = iota
+		itemCall
+		itemOutput
+	)
+	type scannedItem struct {
+		start  int
+		kind   int
+		typ    string
+		callID string
 	}
+	var items []scannedItem
+	var answered map[string]struct{}
+	lastEnd := 0
+	input.ForEach(func(_, item gjson.Result) bool {
+		start, end, ok := jsonResultSpan(patch.doc, item)
+		if !ok {
+			patch.bad = true
+			return false
+		}
+		lastEnd = end
+		itemType := item.Get("type").String()
+		switch {
+		case isDeepSeekToolCallType(itemType):
+			items = append(items, scannedItem{start: start, kind: itemCall, typ: itemType, callID: item.Get("call_id").String()})
+		case isDeepSeekToolOutputType(itemType):
+			if callID := item.Get("call_id").String(); callID != "" {
+				if answered == nil {
+					answered = make(map[string]struct{})
+				}
+				answered[callID] = struct{}{}
+			}
+			items = append(items, scannedItem{start: start, kind: itemOutput})
+		default:
+			items = append(items, scannedItem{start: start, kind: itemOther})
+		}
+		return true
+	})
 
-	out := make([]json.RawMessage, 0, len(input))
 	type pendingCall struct {
 		callID   string
 		callType string
 	}
-	pending := make([]pendingCall, 0, 4)
-	flush := func() bool {
-		if len(pending) == 0 {
-			return false
-		}
+	var pending []pendingCall
+	flush := func(at int, atEnd bool) {
+		var text strings.Builder
 		for _, call := range pending {
 			raw, err := json.Marshal(map[string]string{
 				"type":    deepSeekToolOutputType(call.callType),
@@ -282,39 +314,38 @@ func deepSeekPairMissingToolOutputs(input []gjson.Result) ([]json.RawMessage, bo
 			if err != nil {
 				continue
 			}
-			out = append(out, raw)
+			if atEnd {
+				_ = text.WriteByte(',')
+			}
+			_, _ = text.Write(raw)
+			if !atEnd {
+				_ = text.WriteByte(',')
+			}
 		}
 		pending = pending[:0]
-		return true
+		if text.Len() > 0 {
+			patch.insertAt(at, text.String())
+		}
 	}
-
-	changed := false
-	for _, item := range input {
-		itemType := item.Get("type").String()
-		if isDeepSeekToolCallType(itemType) {
-			out = append(out, json.RawMessage(item.Raw))
-			callID := item.Get("call_id").String()
-			if callID != "" {
-				if _, ok := answered[callID]; !ok {
-					answered[callID] = struct{}{}
-					pending = append(pending, pendingCall{callID: callID, callType: itemType})
-				}
+	for _, it := range items {
+		switch it.kind {
+		case itemCall:
+			if it.callID == "" {
+				continue
 			}
-			continue
+			if _, ok := answered[it.callID]; !ok {
+				if answered == nil {
+					answered = make(map[string]struct{})
+				}
+				answered[it.callID] = struct{}{}
+				pending = append(pending, pendingCall{callID: it.callID, callType: it.typ})
+			}
+		case itemOutput:
+		default:
+			flush(it.start, false)
 		}
-		if isDeepSeekToolOutputType(itemType) {
-			out = append(out, json.RawMessage(item.Raw))
-			continue
-		}
-		if flush() {
-			changed = true
-		}
-		out = append(out, json.RawMessage(item.Raw))
 	}
-	if flush() {
-		changed = true
-	}
-	return out, changed
+	flush(lastEnd, true)
 }
 
 func isDeepSeekToolCallType(itemType string) bool {

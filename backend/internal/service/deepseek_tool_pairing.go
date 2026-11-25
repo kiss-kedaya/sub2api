@@ -1,12 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
-	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 // dropOrphanDeepSeekToolMessages removes role=tool messages whose
@@ -15,39 +14,73 @@ import (
 // "Messages with role 'tool' must be a response to a preceding message with
 // 'tool_calls'" and an agent history rewritten by a client can contain such
 // orphans (e.g. after a reconnect or a dropped assistant turn).
+//
+// The scan reads the body in place (no copy of the messages array); the
+// rebuilt array is written once, and only when something is dropped.
 func dropOrphanDeepSeekToolMessages(body []byte) []byte {
-	messages := gjson.GetBytes(body, "messages")
+	messages := gjson.Get(openAIWSPayloadStringView(body), "messages")
 	if !messages.IsArray() {
 		return body
 	}
-	announced := make(map[string]struct{})
-	kept := make([]string, 0, len(messages.Array()))
-	changed := false
-	for _, m := range messages.Array() {
+	var announced map[string]struct{}
+	var dropped []int
+	index := 0
+	messages.ForEach(func(_, m gjson.Result) bool {
 		switch m.Get("role").String() {
 		case "assistant":
 			for _, tc := range m.Get("tool_calls").Array() {
 				if id := tc.Get("id").String(); id != "" {
+					if announced == nil {
+						announced = make(map[string]struct{})
+					}
 					announced[id] = struct{}{}
 				}
 			}
 		case "tool":
 			id := m.Get("tool_call_id").String()
 			if _, ok := announced[id]; id == "" || !ok {
-				changed = true
-				continue
+				dropped = append(dropped, index)
 			}
 		}
-		kept = append(kept, m.Raw)
-	}
-	if !changed {
+		index++
+		return true
+	})
+	if len(dropped) == 0 {
 		return body
 	}
-	out, err := sjson.SetRawBytes(body, "messages", []byte("["+strings.Join(kept, ",")+"]"))
-	if err != nil {
+	arrayStart, arrayEnd, ok := jsonResultSpan(body, messages)
+	if !ok || !gjson.Valid(messages.Raw) {
 		return body
 	}
-	return out
+	out := make([]byte, 0, len(body))
+	out = append(out, body[:arrayStart]...)
+	out = append(out, '[')
+	index = 0
+	next := 0
+	intact := true
+	messages.ForEach(func(_, m gjson.Result) bool {
+		i := index
+		index++
+		if next < len(dropped) && dropped[next] == i {
+			next++
+			return true
+		}
+		start, end, ok := jsonResultSpan(body, m)
+		if !ok {
+			intact = false
+			return false
+		}
+		if len(out) > arrayStart+1 {
+			out = append(out, ',')
+		}
+		out = append(out, body[start:end]...)
+		return true
+	})
+	if !intact {
+		return body
+	}
+	out = append(out, ']')
+	return append(out, body[arrayEnd:]...)
 }
 
 // normalizeDeepSeekChatMessages rebuilds tool pairs into the exact order
@@ -55,12 +88,16 @@ func dropOrphanDeepSeekToolMessages(body []byte) []byte {
 // replies). The orphan-only filter is not enough when another message sits
 // between the assistant and its replies.
 func normalizeDeepSeekChatMessages(body []byte) []byte {
-	raw := gjson.GetBytes(body, "messages")
+	raw := gjson.Get(openAIWSPayloadStringView(body), "messages")
 	if !raw.IsArray() {
 		return body
 	}
+	start, end, ok := jsonResultSpan(body, raw)
+	if !ok {
+		return body
+	}
 	var messages []apicompat.ChatMessage
-	if err := json.Unmarshal([]byte(raw.Raw), &messages); err != nil {
+	if err := json.Unmarshal(body[start:end], &messages); err != nil {
 		return body
 	}
 	normalized := apicompat.NormalizeChatMessages(messages)
@@ -68,9 +105,11 @@ func normalizeDeepSeekChatMessages(body []byte) []byte {
 	if err != nil {
 		return body
 	}
-	out, err := sjson.SetRawBytes(body, "messages", encoded)
-	if err != nil {
+	if bytes.Equal(encoded, body[start:end]) {
 		return body
 	}
-	return out
+	out := make([]byte, 0, len(body)-(end-start)+len(encoded))
+	out = append(out, body[:start]...)
+	out = append(out, encoded...)
+	return append(out, body[end:]...)
 }

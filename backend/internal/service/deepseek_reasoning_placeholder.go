@@ -2,11 +2,9 @@ package service
 
 import (
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 // DeepSeek thinking mode rejects a replayed assistant turn that produced
@@ -44,37 +42,50 @@ func targetsDeepSeekAPIHost(account *Account) bool {
 	return strings.EqualFold(u.Hostname(), ds.Hostname())
 }
 
+// JSON fragments the placeholder patches write. They are built from the
+// placeholder text so the constant stays the single source of truth.
+const (
+	deepSeekReasoningPlaceholderJSON   = `"` + deepSeekReasoningPlaceholderText + `"`
+	deepSeekReasoningPlaceholderMember = `"reasoning_content":` + deepSeekReasoningPlaceholderJSON
+	deepSeekNativeReasoningContentJSON = `[{"type":"reasoning_text","text":` + deepSeekReasoningPlaceholderJSON + `}]`
+	deepSeekNativeReasoningMember      = `"content":` + deepSeekNativeReasoningContentJSON
+)
+
 // ensureDeepSeekChatReasoningPlaceholders fills an empty reasoning_content on
 // every assistant message. Non-empty plaintext and non-DeepSeek upstreams are
 // returned byte-for-byte unchanged.
+//
+// One scan collects every fill as a span patch and the body is written once.
+// The previous per-message sjson.SetBytes copied the whole body for each
+// assistant turn (O(messages × body)).
 func ensureDeepSeekChatReasoningPlaceholders(account *Account, body []byte) []byte {
 	if !targetsDeepSeekAPIHost(account) {
 		return body
 	}
-	messages := gjson.GetBytes(body, "messages")
-	if !messages.IsArray() || len(messages.Array()) == 0 {
+	messages := gjson.Get(openAIWSPayloadStringView(body), "messages")
+	if !messages.IsArray() {
 		return body
 	}
-	updated := body
-	changed := false
-	for i, msg := range messages.Array() {
+	patch := newJSONSpanPatcher(body)
+	messages.ForEach(func(_, msg gjson.Result) bool {
 		if strings.TrimSpace(msg.Get("role").String()) != "assistant" {
-			continue
+			return true
 		}
-		if msg.Get("reasoning_content").String() != "" {
-			continue
+		reasoning := msg.Get("reasoning_content")
+		if reasoning.String() != "" {
+			return true
 		}
-		next, err := sjson.SetBytes(updated, "messages."+strconv.Itoa(i)+".reasoning_content", deepSeekReasoningPlaceholderText)
-		if err != nil {
-			return body
+		if reasoning.Exists() {
+			patch.replace(reasoning, deepSeekReasoningPlaceholderJSON)
+		} else {
+			patch.appendMember(msg, deepSeekReasoningPlaceholderMember)
 		}
-		updated = next
-		changed = true
+		return true
+	})
+	if out, changed := patch.applyIfValid(messages); changed {
+		return out
 	}
-	if !changed {
-		return body
-	}
-	return updated
+	return body
 }
 
 // ensureDeepSeekNativeReasoningPlaceholders is the native Responses analogue:
@@ -85,37 +96,35 @@ func ensureDeepSeekNativeReasoningPlaceholders(account *Account, body []byte) []
 	if account == nil || account.Platform != PlatformDeepseek || !account.UsesNativeCNResponses() {
 		return body
 	}
-	input := gjson.GetBytes(body, "input")
-	if !input.IsArray() || len(input.Array()) == 0 {
+	input := gjson.Get(openAIWSPayloadStringView(body), "input")
+	if !input.IsArray() {
 		return body
 	}
-	placeholder := []byte(`[{"type":"reasoning_text","text":" "}]`)
-	updated := body
-	changed := false
-	for i, item := range input.Array() {
+	patch := newJSONSpanPatcher(body)
+	input.ForEach(func(_, item gjson.Result) bool {
 		if strings.TrimSpace(item.Get("type").String()) != "reasoning" {
-			continue
-		}
-		if hasDeepSeekNativeReasoningText(item.Get("content")) {
-			continue
+			return true
 		}
 		content := item.Get("content")
+		if hasDeepSeekNativeReasoningText(content) {
+			return true
+		}
 		// A non-array vendor shape belongs to the client; do not rewrite it.
 		if content.Exists() && content.Type != gjson.Null && !content.IsArray() {
-			continue
+			return true
 		}
 		if content.IsArray() && len(content.Array()) > 0 && strings.TrimSpace(gjson.Get(item.Raw, "content.0.text").String()) != "" {
-			continue
+			return true
 		}
-		next, err := sjson.SetRawBytes(updated, "input."+strconv.Itoa(i)+".content", placeholder)
-		if err != nil {
-			return body
+		if content.Exists() {
+			patch.replace(content, deepSeekNativeReasoningContentJSON)
+		} else {
+			patch.appendMember(item, deepSeekNativeReasoningMember)
 		}
-		updated = next
-		changed = true
+		return true
+	})
+	if out, changed := patch.applyIfValid(input); changed {
+		return out
 	}
-	if !changed {
-		return body
-	}
-	return updated
+	return body
 }

@@ -1,11 +1,9 @@
 package service
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 // DeepSeek's Anthropic-compatible endpoint enforces the thinking round-trip:
@@ -21,29 +19,40 @@ import (
 // touched; text-only assistant turns and real thinking blocks are left alone.
 const deepSeekThinkingPlaceholderText = " "
 
+// JSON fragments the patches write, built from the placeholder text.
+const (
+	deepSeekThinkingPlaceholderJSON   = `"` + deepSeekThinkingPlaceholderText + `"`
+	deepSeekThinkingPlaceholderMember = `"thinking":` + deepSeekThinkingPlaceholderJSON
+	// Inserted in front of the first block of a non-empty content array.
+	deepSeekThinkingPlaceholderBlock = `{"type":"thinking","thinking":` + deepSeekThinkingPlaceholderJSON + `},`
+)
+
 // ensureDeepSeekThinkingReplayPlaceholders inserts the placeholder into
 // assistant messages of a passback-required DeepSeek model. Non-DeepSeek models
 // and bodies without an assistant tool-call turn are returned unchanged.
+//
+// One scan collects every edit as a span patch and the body is written once;
+// the previous per-message sjson.SetRawBytes copied the whole body per turn.
 func ensureDeepSeekThinkingReplayPlaceholders(body []byte, model string) ([]byte, bool) {
 	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek-") {
 		return body, false
 	}
-	messages := gjson.GetBytes(body, "messages")
-	if !messages.IsArray() || len(messages.Array()) == 0 {
+	messages := gjson.Get(openAIWSPayloadStringView(body), "messages")
+	if !messages.IsArray() {
 		return body, false
 	}
-	updated := body
-	changed := false
-	for i, msg := range messages.Array() {
+	patch := newJSONSpanPatcher(body)
+	messages.ForEach(func(_, msg gjson.Result) bool {
 		if strings.TrimSpace(msg.Get("role").String()) != "assistant" {
-			continue
+			return true
 		}
 		content := msg.Get("content")
-		if !content.IsArray() || len(content.Array()) == 0 || !strings.HasPrefix(content.Raw, "[") {
-			continue
+		if !content.IsArray() {
+			return true
 		}
-		hasThinking, hasEmptyThinking, hasToolUse := false, false, false
-		for _, block := range content.Array() {
+		blocks, hasThinking, hasEmptyThinking, hasToolUse := 0, false, false, false
+		content.ForEach(func(_, block gjson.Result) bool {
+			blocks++
 			switch strings.TrimSpace(block.Get("type").String()) {
 			case "thinking":
 				hasThinking = true
@@ -55,44 +64,39 @@ func ensureDeepSeekThinkingReplayPlaceholders(body []byte, model string) ([]byte
 			case "tool_use":
 				hasToolUse = true
 			}
+			return true
+		})
+		if blocks == 0 {
+			return true
 		}
 		if hasEmptyThinking && hasToolUse {
 			// The client kept the thinking slot but blanked its text. Fill the
 			// text instead of adding a second block.
-			blocks := make([]string, 0, len(content.Array()))
-			for _, block := range content.Array() {
-				raw := block.Raw
-				if strings.TrimSpace(block.Get("type").String()) == "thinking" &&
-					strings.TrimSpace(block.Get("thinking").String()) == "" {
-					if fixed, err := sjson.SetBytes([]byte(raw), "thinking", deepSeekThinkingPlaceholderText); err == nil {
-						raw = string(fixed)
-					}
+			content.ForEach(func(_, block gjson.Result) bool {
+				if strings.TrimSpace(block.Get("type").String()) != "thinking" {
+					return true
 				}
-				blocks = append(blocks, raw)
-			}
-			rewritten := "[" + strings.Join(blocks, ",") + "]"
-			next, err := sjson.SetRawBytes(updated, fmt.Sprintf("messages.%d.content", i), []byte(rewritten))
-			if err != nil {
-				continue
-			}
-			updated = next
-			changed = true
-			continue
+				thinking := block.Get("thinking")
+				if strings.TrimSpace(thinking.String()) != "" {
+					return true
+				}
+				if thinking.Exists() {
+					patch.replace(thinking, deepSeekThinkingPlaceholderJSON)
+				} else {
+					patch.appendMember(block, deepSeekThinkingPlaceholderMember)
+				}
+				return true
+			})
+			return true
 		}
 		if hasThinking || !hasToolUse {
-			continue
+			return true
 		}
-		placeholder := `{"type":"thinking","thinking":"` + deepSeekThinkingPlaceholderText + `"}`
-		rewritten := "[" + placeholder + "," + strings.TrimPrefix(content.Raw, "[")
-		next, err := sjson.SetRawBytes(updated, fmt.Sprintf("messages.%d.content", i), []byte(rewritten))
-		if err != nil {
-			continue
-		}
-		updated = next
-		changed = true
+		patch.insertAfterOpen(content, deepSeekThinkingPlaceholderBlock)
+		return true
+	})
+	if out, changed := patch.applyIfValid(messages); changed {
+		return out, true
 	}
-	if !changed {
-		return body, false
-	}
-	return updated, true
+	return body, false
 }
