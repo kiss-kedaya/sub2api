@@ -55,6 +55,13 @@ const (
 	// expensive. Kedaya's default view is 90m; historical cards can wait.
 	channelMonitorV2BusyOverlap    = 8 * time.Second
 	channelMonitorV2BackfillMinGap = 15 * time.Minute
+
+	// 稳态保留期清理的节奏。历史回填走完以后，RecomputeLiveRange 不清理、RecomputeRange 也不再被调用，
+	// 1m 事实表和汇总表会一直涨过保留期（生产上 1m 事实最老的行是 11 天前、保留 7 天，
+	// error_metrics_1m 跨度 23 天，汇总表跨度 104 天、保留 90 天）。由持有 leader 锁的那一轮 tick
+	// 在实时窗口刷新之后调用有界的 PruneRetention，最多每 30 分钟一次；单次调用的批数、时长和
+	// 语句超时上限在仓储里，没删完的下个周期接着删，积压是慢慢清掉的，不会一次写爆 WAL/IO。
+	channelMonitorV2PruneInterval = 30 * time.Minute
 )
 
 // channelMonitorRuntimeSubscriber is the optional settings hook that lets the
@@ -87,6 +94,9 @@ type ChannelMonitorV2Aggregator struct {
 	// lastBackfillAt is the last time this process attempted a historical chunk.
 	// Live 90m ticks do not update it.
 	lastBackfillAt time.Time
+	// lastPruneAt is the last time this process attempted a steady-state
+	// retention prune (success or failure); see channelMonitorV2PruneInterval.
+	lastPruneAt time.Time
 	// nextWaitFloor is applied after runOnce when failures require backoff.
 	nextWaitFloor time.Duration
 	// cursorLoaded is true after the first successful watermark read (or init).
@@ -328,12 +338,17 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 		logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] overlap aggregation failed: %v", err)
 		return
 	}
+	// 实时窗口本身花了多久：历史回填和保留期清理都据此判断数据库是否忙，
+	// 要在清理开始之前取，别把清理自己的耗时算进回填的门槛。
+	liveElapsed := time.Since(startedLive)
 	s.mu.Lock()
 	// 成功后推进内存水位，下一次 tick 只需覆盖 now-RecentOverlap。
 	s.liveThrough = now
 	lastBackfill := s.lastBackfillAt
 	s.mu.Unlock()
-	if !channelMonitorV2AllowBackfill(time.Since(startedLive), lastBackfill, now) {
+	// 与实时窗口刷新在同一个 goroutine、同一把 leader 锁之内顺序执行，不会与它并发。
+	s.maybePruneRetention(ctx, now, liveElapsed)
+	if !channelMonitorV2AllowBackfill(liveElapsed, lastBackfill, now) {
 		if lastBackfill.IsZero() {
 			s.mu.Lock()
 			if s.lastBackfillAt.IsZero() {
@@ -386,6 +401,32 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 		return
 	}
 	s.recordBackfillSuccess(start, time.Since(started), now)
+}
+
+// maybePruneRetention 在稳态下清掉超过保留期的行，最多每 channelMonitorV2PruneInterval 一次。
+// 历史回填还没走完时由仓储自己跳过（回填要拿旧的 1m 行重建日汇总）。
+// 失败只记日志、不影响聚合：失败也算一次尝试，下个周期再来。
+func (s *ChannelMonitorV2Aggregator) maybePruneRetention(ctx context.Context, now time.Time, liveElapsed time.Duration) {
+	// 实时窗口这一轮已经很慢（数据库忙）：和历史回填一样让路，不记时间戳，下一轮再看。
+	if liveElapsed > channelMonitorV2BusyOverlap {
+		return
+	}
+	s.mu.Lock()
+	if !s.lastPruneAt.IsZero() && now.Sub(s.lastPruneAt) < channelMonitorV2PruneInterval {
+		s.mu.Unlock()
+		return
+	}
+	s.lastPruneAt = now
+	s.mu.Unlock()
+
+	res, err := s.repo.PruneRetention(ctx, now)
+	if err != nil {
+		logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] retention prune failed (deleted=%d batches=%d): %v", res.Deleted, res.Batches, err)
+		return
+	}
+	if res.Deleted > 0 || res.Backlog {
+		logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] retention prune: deleted=%d batches=%d backlog_left=%t", res.Deleted, res.Batches, res.Backlog)
+	}
 }
 
 // channelMonitorV2MaxChunkForDepth returns the hard ceiling for a historical

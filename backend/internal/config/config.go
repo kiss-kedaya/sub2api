@@ -2118,7 +2118,7 @@ type DashboardAggregationConfig struct {
 	BackfillMaxDays int `mapstructure:"backfill_max_days"`
 	// Retention: 各表保留窗口（天）
 	Retention DashboardAggregationRetentionConfig `mapstructure:"retention"`
-	// RecomputeDays: 启动时重算最近 N 天
+	// RecomputeDays: 启动时重算最近 N 天；大于 0 时同时开启每小时一次的「最近 3 小时」迟到行自愈
 	RecomputeDays int `mapstructure:"recompute_days"`
 	// DimensionRollupsEnabled controls writing dimension-level usage rollups.
 	DimensionRollupsEnabled bool `mapstructure:"dimension_rollups_enabled"`

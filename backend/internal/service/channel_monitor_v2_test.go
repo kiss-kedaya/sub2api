@@ -92,6 +92,9 @@ func (s *channelMonitorV2RepoStub) RecomputeLiveRange(context.Context, time.Time
 func (s *channelMonitorV2RepoStub) GetAggregationWatermark(context.Context) (*ChannelMonitorV2AggregationWatermark, error) {
 	return &ChannelMonitorV2AggregationWatermark{}, nil
 }
+func (s *channelMonitorV2RepoStub) PruneRetention(context.Context, time.Time) (ChannelMonitorV2PruneResult, error) {
+	return ChannelMonitorV2PruneResult{}, nil
+}
 
 func TestChannelMonitorV2BootstrapProgress(t *testing.T) {
 	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
