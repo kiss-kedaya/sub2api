@@ -39,8 +39,8 @@ func TestTextStillRedactsUpstreamDiagnostics(t *testing.T) {
 		},
 		{
 			name:   "private ip",
-			input:  "connection to 10.254.0.2:8496 refused",
-			banned: []string{"10.254.0.2"},
+			input:  "connection to 10.1.2.3:8080 refused",
+			banned: []string{"10.1.2.3"},
 		},
 		{
 			name:   "api key",
@@ -49,8 +49,8 @@ func TestTextStillRedactsUpstreamDiagnostics(t *testing.T) {
 		},
 		{
 			name:   "upstream url",
-			input:  "POST https://direct.uniprep.world/v1/messages failed",
-			banned: []string{"https://direct.uniprep.world/v1/messages"},
+			input:  "POST https://relay.example.test/v1/messages failed",
+			banned: []string{"https://relay.example.test/v1/messages"},
 		},
 	}
 	for _, tc := range cases {
