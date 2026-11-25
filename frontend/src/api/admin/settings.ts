@@ -414,6 +414,7 @@ export interface SystemSettings {
   passkey_rp_origins: string[];
   session_binding_enabled: boolean; // 会话 IP/UA 绑定
   step_up_enabled: boolean; // 敏感操作 step-up 2FA
+  login_shape_disguise_enabled: boolean; // 登录首步凭据无效挑战稳定伪装（默认关闭）
   audit_log_retention_days: number; // 审计日志保留天数
   login_agreement_enabled: boolean;
   login_agreement_mode: "modal" | "checkbox" | string;
@@ -768,6 +769,7 @@ export interface UpdateSettingsRequest {
   passkey_enabled?: boolean;
   session_binding_enabled?: boolean; // 会话 IP/UA 绑定
   step_up_enabled?: boolean; // 敏感操作 step-up 2FA
+  login_shape_disguise_enabled?: boolean; // 登录首步凭据无效挑战稳定伪装（省略=保持现值）
   audit_log_retention_days?: number; // 审计日志保留天数
   login_agreement_enabled?: boolean;
   login_agreement_mode?: "modal" | "checkbox" | string;

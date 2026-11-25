@@ -1136,6 +1136,15 @@
                     <Toggle v-model="form.step_up_enabled" />
                   </template>
                 </SettingRow>
+                <!-- 登录首步凭据无效挑战稳定伪装（审计 A-P1-02，默认关闭） -->
+                <SettingRow
+                  :label="t('admin.settings.security.loginShapeDisguise')"
+                  :hint="t('admin.settings.security.loginShapeDisguiseHint')"
+                  :on="form.login_shape_disguise_enabled">
+                  <template #control>
+                    <Toggle v-model="form.login_shape_disguise_enabled" data-testid="login-shape-disguise-toggle" />
+                  </template>
+                </SettingRow>
                 <!-- 会话 IP/UA 绑定 -->
                 <SettingRow
                   :label="t('admin.settings.security.sessionBinding')"
@@ -7940,6 +7949,7 @@ const form = reactive<SettingsForm>({
   passkey_rp_origins: [],
   session_binding_enabled: false,
   step_up_enabled: false,
+  login_shape_disguise_enabled: false,
   audit_log_retention_days: 180,
   login_agreement_enabled: false,
   login_agreement_mode: "modal",
@@ -9528,6 +9538,7 @@ function buildSettingsPayload(): UpdateSettingsRequest {
       passkey_enabled: form.passkey_enabled,
       session_binding_enabled: form.session_binding_enabled,
       step_up_enabled: form.step_up_enabled,
+      login_shape_disguise_enabled: form.login_shape_disguise_enabled,
       // 清空数字框时 v-model.number 会得到空串，后端 int 字段解析空串会 400 拒绝整次保存；
       // 空/非法值回退默认 180（与后端 parseAuditLogRetentionDays("") 语义一致，0 仍表示永久保留）。
       audit_log_retention_days: Number.isFinite(form.audit_log_retention_days)
