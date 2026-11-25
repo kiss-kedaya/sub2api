@@ -32,6 +32,11 @@ func stripEmptyChatToolCallIdentityFromSSELine(line string) string {
 	if trimmed == "" || trimmed == "[DONE]" {
 		return line
 	}
+	// Same fast failure as stripEmptyChatToolCallIdentity, taken before the
+	// payload is copied into a byte slice for every line.
+	if !strings.Contains(payload, "tool_calls") {
+		return line
+	}
 	rewritten, changed := stripEmptyChatToolCallIdentity([]byte(payload))
 	if !changed {
 		return line

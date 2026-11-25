@@ -16,7 +16,11 @@ import (
 // client's response protocol. It is an egress operation: callers must inspect
 // upstream model/usage information before passing the payload here.
 func RewriteRequestedModelResponse(payload []byte, protocol, model string) []byte {
-	if model == "" || len(payload) == 0 || !gjson.ValidBytes(payload) {
+	if model == "" || len(payload) == 0 {
+		return payload
+	}
+	probe := requestedModelProbe{payload: payload}
+	if !probe.mayChange(protocol, model) || !gjson.ValidBytes(payload) {
 		return payload
 	}
 	root := gjson.ParseBytes(payload)
@@ -62,7 +66,7 @@ func RewriteRequestedModelResponse(payload []byte, protocol, model string) []byt
 	}
 	updated := payload
 	for _, path := range paths {
-		value := root.Get(path)
+		value := probe.get(path)
 		if value.Type != gjson.String || value.Str == model {
 			continue
 		}
@@ -71,6 +75,70 @@ func RewriteRequestedModelResponse(payload []byte, protocol, model string) []byt
 		}
 	}
 	return updated
+}
+
+var (
+	requestedModelKeyNeedle     = []byte("model")
+	requestedModelEscapedNeedle = []byte(`\u`)
+)
+
+// requestedModelCannotAppear reports that no key spelled model/modelVersion can
+// occur in data: the text holds no "model" and no \u escape that could spell it.
+func requestedModelCannotAppear(data []byte) bool {
+	return !bytes.Contains(data, requestedModelKeyNeedle) && !bytes.Contains(data, requestedModelEscapedNeedle)
+}
+
+// requestedModelProbe reads model fields straight from the payload bytes and
+// remembers what it read, so the cheap "does anything change" test and the
+// rewrite itself never look up the same path twice.
+type requestedModelProbe struct {
+	payload []byte
+	n       int
+	paths   [3]string
+	values  [3]gjson.Result
+}
+
+func (p *requestedModelProbe) get(path string) gjson.Result {
+	for i := 0; i < p.n; i++ {
+		if p.paths[i] == path {
+			return p.values[i]
+		}
+	}
+	value := gjson.GetBytes(p.payload, path)
+	if p.n < len(p.paths) {
+		p.paths[p.n], p.values[p.n] = path, value
+		p.n++
+	}
+	return value
+}
+
+func (p *requestedModelProbe) differs(path, model string) bool {
+	value := p.get(path)
+	return value.Type == gjson.String && value.Str != model
+}
+
+// mayChange is a cheap necessary condition for RewriteRequestedModelResponse
+// to return anything but its payload: some model field of the protocol is a
+// string other than model. It reads the same paths (a superset of them, where
+// they depend on the event type), so the error and validity checks, which only
+// ever lead to returning the payload, need not run for the common unchanged
+// frame.
+func (p *requestedModelProbe) mayChange(protocol, model string) bool {
+	if requestedModelCannotAppear(p.payload) {
+		return false
+	}
+	switch protocol {
+	case "openai":
+		return p.differs("model", model) || p.differs("response.model", model)
+	case "anthropic":
+		return p.differs("model", model) || p.differs("message.model", model)
+	case "realtime":
+		return p.differs("model", model) || p.differs("response.model", model) || p.differs("session.model", model)
+	case "gemini":
+		// Array bodies address one path per element; leave them to the full check.
+		return true
+	}
+	return false
 }
 
 // InstallRequestedModelResponse wraps only the final client-facing writer. The
@@ -110,12 +178,17 @@ const requestedModelPendingLimit = 1 << 20
 
 func (w *requestedModelResponseWriter) active() bool {
 	status := w.Status()
-	encoding := strings.TrimSpace(w.Header().Get("Content-Encoding"))
+	// Same value as Header().Get without canonicalizing the key on every write.
+	encoding := ""
+	if values := w.Header()["Content-Encoding"]; len(values) > 0 {
+		encoding = strings.TrimSpace(values[0])
+	}
 	return status >= 200 && status < 300 && (encoding == "" || encoding == "identity") && w.enabled()
 }
 
 func (w *requestedModelResponseWriter) contentType() string {
-	return strings.ToLower(strings.TrimSpace(strings.SplitN(w.Header().Get("Content-Type"), ";", 2)[0]))
+	mediaType, _, _ := strings.Cut(w.Header().Get("Content-Type"), ";")
+	return strings.ToLower(strings.TrimSpace(mediaType))
 }
 
 func (w *requestedModelResponseWriter) WriteHeaderNow() {
@@ -129,7 +202,13 @@ func (w *requestedModelResponseWriter) WriteHeaderNow() {
 }
 
 func (w *requestedModelResponseWriter) Write(data []byte) (int, error) {
-	if !w.active() {
+	return w.write(data, w.active())
+}
+
+// write is Write once the caller has evaluated active(); the two evaluations
+// in WriteString's path would read the same status, header and group.
+func (w *requestedModelResponseWriter) write(data []byte, active bool) (int, error) {
+	if !active {
 		w.finish()
 		return w.ResponseWriter.Write(data)
 	}
@@ -255,6 +334,10 @@ func requestedModelSSEFrameEnd(data []byte) int {
 }
 
 func (w *requestedModelResponseWriter) rewriteSSEFrame(frame []byte) []byte {
+	if requestedModelCannotAppear(frame) {
+		// No data line can carry a model field, so nothing would change.
+		return frame
+	}
 	lines := bytes.SplitAfter(frame, []byte("\n"))
 	type dataLine struct{ index, start, end int }
 	var dataLines []dataLine
@@ -274,10 +357,18 @@ func (w *requestedModelResponseWriter) rewriteSSEFrame(frame []byte) []byte {
 		if start < len(content) && content[start] == ' ' {
 			start++
 		}
-		if len(dataLines) > 0 {
-			payload = append(payload, '\n')
+		switch len(dataLines) {
+		case 0:
+			// A single data line, the common case, is read in place: the
+			// rewrite never writes to its input.
+			payload = content[start:]
+		case 1:
+			// The payload still aliases the frame; copy before appending.
+			payload = append(append(make([]byte, 0, len(payload)+1+len(content)-start), payload...), '\n')
+			payload = append(payload, content[start:]...)
+		default:
+			payload = append(append(payload, '\n'), content[start:]...)
 		}
-		payload = append(payload, content[start:]...)
 		dataLines = append(dataLines, dataLine{index: index, start: start, end: len(content)})
 	}
 	updated := RewriteRequestedModelResponse(payload, w.protocol, w.model)
@@ -299,8 +390,11 @@ func (w *requestedModelResponseWriter) rewriteSSEFrame(frame []byte) []byte {
 }
 
 func (w *requestedModelResponseWriter) WriteString(value string) (int, error) {
-	if len(w.pending) == 0 && len(w.pendingJSON) == 0 && !w.active() {
-		return w.ResponseWriter.WriteString(value)
+	if len(w.pending) == 0 && len(w.pendingJSON) == 0 {
+		if !w.active() {
+			return w.ResponseWriter.WriteString(value)
+		}
+		return w.write([]byte(value), true)
 	}
 	return w.Write([]byte(value))
 }

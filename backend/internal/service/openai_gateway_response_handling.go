@@ -2208,6 +2208,16 @@ func grokModerationRefusalProtocolError(account *Account, payload []byte) error 
 	return fmt.Errorf("%s %s", grokContentPolicyRejectionPrefix, extractOpenAISSEErrorMessage(payload))
 }
 
+// grokModerationRefusalProtocolErrorFromString is grokModerationRefusalProtocolError
+// for callers holding the payload as a string: every non-Grok line returns
+// before the payload is copied into a byte slice.
+func grokModerationRefusalProtocolErrorFromString(account *Account, payload string) error {
+	if account == nil || !strings.EqualFold(strings.TrimSpace(account.Platform), PlatformGrok) {
+		return nil
+	}
+	return grokModerationRefusalProtocolError(account, []byte(payload))
+}
+
 func (s *OpenAIGatewayService) writeGrokModerationRefusalProtocolError(resp *http.Response, c *gin.Context, account *Account, payload []byte) error {
 	refusalErr := grokModerationRefusalProtocolError(account, payload)
 	if refusalErr == nil {

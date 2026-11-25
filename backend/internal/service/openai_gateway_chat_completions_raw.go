@@ -408,7 +408,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		refusalDetector.ObserveSSELine(line)
 		if payload, ok := extractOpenAISSEDataLine(line); ok {
 			trimmedPayload := strings.TrimSpace(payload)
-			if refusalErr := grokModerationRefusalProtocolError(account, []byte(payload)); refusalErr != nil {
+			if refusalErr := grokModerationRefusalProtocolErrorFromString(account, payload); refusalErr != nil {
 				// Some relays carry a real 403 inside an HTTP 200 CC stream,
 				// including Responses failure envelopes on the raw endpoint.
 				// Stop before missing-usage/truncation handling can replace it.
@@ -431,10 +431,11 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			terminal.ObserveDataLine(trimmedPayload)
 			if trimmedPayload != "[DONE]" {
 				root := gjson.Parse(payload)
+				rootType := root.Get("type").String()
 				if openAIExplicitUpstreamError(root, pendingSSEEventType) {
 					nonBillableUpstreamError = true
 					upstreamErrorPending = true
-				} else if root.Get("type").String() == "response.completed" || root.Get("type").String() == "response.done" {
+				} else if rootType == "response.completed" || rootType == "response.done" {
 					nonBillableUpstreamError = false
 				} else {
 					for _, choice := range root.Get("choices").Array() {
@@ -445,7 +446,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 						}
 					}
 				}
-				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(root.Get("type").String()))
+				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(rootType))
 				tally.AddPayload(payload)
 				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
 				if u := extractCCStreamUsageFromRoot(root, resp.Header); u != nil {
@@ -629,6 +630,9 @@ func isOpenAIChatUsageOnlyStreamChunk(payload string) bool {
 	if strings.TrimSpace(payload) == "" {
 		return false
 	}
+	if !jsonMayContainText(payload, "usage") {
+		return false
+	}
 	if !gjson.Get(payload, "usage").Exists() {
 		return false
 	}
@@ -640,6 +644,9 @@ func isOpenAIChatUsageOnlyStreamChunk(payload string) bool {
 // CC 协议中 usage 仅出现在末尾 chunk（且仅当 include_usage 生效时），
 // 但上游可能在多个 chunk 中重复——总是用最新值。
 func extractCCStreamUsageFromRoot(root gjson.Result, headers http.Header) *OpenAIUsage {
+	if !jsonMayContainText(root.Raw, "usage") {
+		return nil
+	}
 	usageResult := root.Get("usage")
 	if !usageResult.Exists() || !usageResult.IsObject() {
 		return nil

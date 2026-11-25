@@ -48,8 +48,10 @@ func (t *openAIRawStreamTerminalState) ObserveDataLine(payload string) {
 		t.sawDone = true
 		return
 	}
-	if usage := gjson.Get(payload, "usage"); usage.Exists() && usage.IsObject() {
-		t.sawUsage = true
+	if !t.sawUsage && jsonMayContainText(payload, "usage") {
+		if usage := gjson.Get(payload, "usage"); usage.Exists() && usage.IsObject() {
+			t.sawUsage = true
+		}
 	}
 	if t.sawFinishReason {
 		return
