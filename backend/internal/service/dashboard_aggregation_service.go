@@ -20,6 +20,21 @@ const (
 	defaultDashboardGroupUsageSyncTimeout = 6 * time.Minute
 	dashboardAggregationRetentionInterval = 6 * time.Hour
 
+	// 迟到行自愈：每小时把最近 3 小时重新聚合一遍。
+	//
+	// 每分钟的聚合只重算 [水位-lookback, now)（默认回看 120 秒）。created_at 落在某个小时末尾、
+	// 提交又晚于约 2 分钟的行，之后不会再被任何一次增量覆盖，用量页读小时汇总时就会一直少算，
+	// 直到下次进程启动按 recompute_days 重算。这类行真实存在：Live 通话用开始时间做 created_at、
+	// 结束（最长 1 小时）才落库；媒体/视频结算失败重试沿用旧 created_at。
+	//
+	// 成本：3 小时约 120 万行 usage_logs，按小时分 4 批（与启动重算同一条 aggregateRange 路径，
+	// 每批一个有界语句），每小时一次，只在 leader 上、持有 running 互斥期间运行。
+	// 窗口取 3 小时而不是 2 小时：错过一次（拿不到锁、分钟聚合恰好在跑）也还有下一次来补。
+	dashboardAggregationSelfHealWindow   = 3 * time.Hour
+	dashboardAggregationSelfHealInterval = time.Hour
+	// 4 批小时聚合 + 取锁；必须小于 leader 锁 TTL，锁才不会在运行中途过期。
+	dashboardAggregationSelfHealTimeout = 5 * time.Minute
+
 	// dashboardAggregationLeaderLockKey 保证多副本部署中每个周期只有一个实例执行聚合。
 	dashboardAggregationLeaderLockKey = "dashboard:aggregation:leader"
 	// TTL 必须覆盖 dashboard 聚合与分组日汇总两个有界阶段，避免任务中途失锁。
@@ -63,6 +78,7 @@ type DashboardAggregationService struct {
 	cfg                  config.DashboardAggregationConfig
 	running              int32
 	lastRetentionCleanup atomic.Value // time.Time
+	lastSelfHeal         atomic.Value // time.Time，最近一次自愈开始的时间（成功或失败都记）
 
 	lockCache  LeaderLockCache
 	db         *sql.DB
@@ -115,10 +131,14 @@ func (s *DashboardAggregationService) Start() {
 
 	if s.cfg.RecomputeDays > 0 {
 		go s.recomputeRecentDays()
+		// 启动重算刚覆盖过最近几天，第一次自愈从一小时后算起。
+		s.lastSelfHeal.Store(time.Now().UTC())
 	}
 
 	s.timingWheel.ScheduleRecurring("dashboard:aggregation", interval, func() {
 		s.runScheduledAggregation()
+		// 分钟聚合刚释放 running 互斥，紧接着检查自愈（一小时内只会真正执行一次）。
+		s.runSelfHealSafely()
 	})
 	logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 聚合作业启动 (interval=%v, lookback=%ds)", interval, s.cfg.LookbackSeconds)
 	if !s.cfg.BackfillEnabled {
@@ -330,25 +350,27 @@ func (s *DashboardAggregationService) syncGroupUsageRollups(ctx context.Context,
 	return repo.SyncGroupUsageRollups(ctx, GroupUsageTodayStart(now))
 }
 
-func (s *DashboardAggregationService) backfillRange(ctx context.Context, start, end time.Time) error {
+// acquireAggregationRun 同时拿下进程内的 running 互斥和跨实例的 leader 锁（与分钟聚合同一把），
+// 缺一就返回 errDashboardAggregationRunning。返回的 release 依次释放两者。
+func (s *DashboardAggregationService) acquireAggregationRun(ctx context.Context) (func(), error) {
 	if !atomic.CompareAndSwapInt32(&s.running, 0, 1) {
-		return errDashboardAggregationRunning
+		return nil, errDashboardAggregationRunning
 	}
-	defer atomic.StoreInt32(&s.running, 0)
-	release, ok := tryAcquireSingletonLeaderLock(ctx, s.lockCache, s.db, dashboardAggregationLeaderLockKey, s.instanceID, dashboardAggregationLeaderLockTTL)
+	releaseLock, ok := tryAcquireSingletonLeaderLock(ctx, s.lockCache, s.db, dashboardAggregationLeaderLockKey, s.instanceID, dashboardAggregationLeaderLockTTL)
 	if !ok {
-		return errDashboardAggregationRunning
+		atomic.StoreInt32(&s.running, 0)
+		return nil, errDashboardAggregationRunning
 	}
-	defer release()
+	return func() {
+		releaseLock()
+		atomic.StoreInt32(&s.running, 0)
+	}, nil
+}
 
-	jobStart := time.Now().UTC()
-	startUTC := start.UTC()
-	endUTC := end.UTC()
-	if !endUTC.After(startUTC) {
-		return errors.New("回填时间范围无效")
-	}
-
-	cursor := startUTC.Truncate(time.Hour)
+// aggregateInBatches 按 backfill_batch_hours 把 [start, end) 切成整点对齐的批次逐批聚合，
+// 每批一个有界语句，批间检查维度汇总的存储预算。启动重算、回填与迟到行自愈共用。
+func (s *DashboardAggregationService) aggregateInBatches(ctx context.Context, start, end time.Time) error {
+	cursor := start.Truncate(time.Hour)
 	batchHours := s.cfg.BackfillBatchHours
 	if batchHours <= 0 {
 		batchHours = 1
@@ -358,10 +380,10 @@ func (s *DashboardAggregationService) backfillRange(ctx context.Context, start, 
 	if batchHours > 24*365 {
 		batchHours = 24 * 365
 	}
-	for cursor.Before(endUTC) {
+	for cursor.Before(end) {
 		windowEnd := cursor.Add(time.Duration(batchHours) * time.Hour)
-		if windowEnd.After(endUTC) {
-			windowEnd = endUTC
+		if windowEnd.After(end) {
+			windowEnd = end
 		}
 		if err := s.aggregateRange(ctx, cursor, windowEnd); err != nil {
 			return err
@@ -370,6 +392,82 @@ func (s *DashboardAggregationService) backfillRange(ctx context.Context, start, 
 			return err
 		}
 		cursor = windowEnd
+	}
+	return nil
+}
+
+// DashboardAggregationSelfHealRange 返回迟到行自愈在 now 时刻重新聚合的 [start, end)：
+// 最近 dashboardAggregationSelfHealWindow，起点对齐到整点。
+func DashboardAggregationSelfHealRange(now time.Time) (start, end time.Time) {
+	end = now.UTC()
+	return end.Add(-dashboardAggregationSelfHealWindow).Truncate(time.Hour), end
+}
+
+// runSelfHealSafely 在分钟聚合的定时回调里调用自愈。回调里的 panic 会让这个定时任务不再被重新排期
+// （ScheduleRecurring 在回调返回之后才续期），那就连每分钟的聚合一起停了；自愈的任何意外都不该
+// 把分钟聚合带走，所以在这里接住、只记日志。
+func (s *DashboardAggregationService) runSelfHealSafely() {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 迟到行自愈 panic（已忽略，不影响分钟聚合）: %v", r)
+		}
+	}()
+	s.runSelfHeal()
+}
+
+// runSelfHeal 每小时（节流）把最近 3 小时重新聚合一遍，补上分钟聚合覆盖不到的迟到行
+// （原因与成本见 dashboardAggregationSelfHealWindow 的注释）。
+//
+//   - 与分钟聚合互斥：先拿 running 互斥再拿同一把 leader 锁，拿不到就直接返回、不记时间戳，
+//     下一个分钟 tick 再来看；
+//   - 失败只记日志，不影响分钟聚合；失败也算一次尝试，下个小时再试；
+//   - recompute_days<=0 或聚合被禁用时不跑；
+//   - 不调 repo.RecomputeRange：它会先删掉窗口所在整天的 daily_users 再只按窗口内的用户重建，
+//     3 小时窗口会把当天日活压成窗口内的人数；这里走 upsert（与分钟聚合同一条 SQL），
+//     也不动水位。
+func (s *DashboardAggregationService) runSelfHeal() {
+	if s == nil || s.repo == nil || !s.cfg.Enabled || s.cfg.RecomputeDays <= 0 {
+		return
+	}
+	now := time.Now().UTC()
+	if last, ok := s.lastSelfHeal.Load().(time.Time); ok && now.Sub(last) < dashboardAggregationSelfHealInterval {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), dashboardAggregationSelfHealTimeout)
+	defer cancel()
+	release, err := s.acquireAggregationRun(ctx)
+	if err != nil {
+		return
+	}
+	defer release()
+
+	s.lastSelfHeal.Store(now)
+	start, end := DashboardAggregationSelfHealRange(now)
+	if err := s.aggregateInBatches(ctx, start, end); err != nil {
+		logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 迟到行自愈失败，下个小时再试 (start=%s end=%s): %v",
+			start.Format(time.RFC3339), end.Format(time.RFC3339), err)
+		return
+	}
+	logger.LegacyPrintf("service.dashboard_aggregation", "[DashboardAggregation] 迟到行自愈完成 (start=%s end=%s duration=%s)",
+		start.Format(time.RFC3339), end.Format(time.RFC3339), time.Since(now).String())
+}
+
+func (s *DashboardAggregationService) backfillRange(ctx context.Context, start, end time.Time) error {
+	release, err := s.acquireAggregationRun(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	jobStart := time.Now().UTC()
+	startUTC := start.UTC()
+	endUTC := end.UTC()
+	if !endUTC.After(startUTC) {
+		return errors.New("回填时间范围无效")
+	}
+	if err := s.aggregateInBatches(ctx, startUTC, endUTC); err != nil {
+		return err
 	}
 
 	updateErr := s.repo.UpdateAggregationWatermark(ctx, endUTC)

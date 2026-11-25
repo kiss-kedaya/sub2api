@@ -904,8 +904,8 @@ dashboard_aggregation:
   # Backfill max range (days)
   # 回填最大跨度（天）
   backfill_max_days: 31
-  # Recompute recent N days on startup
-  # 启动时重算最近 N 天
+  # Recompute recent N days on startup; > 0 also runs an hourly self-heal of the last 3 hours (late usage rows)
+  # 启动时重算最近 N 天；大于 0 时同时开启每小时一次的「最近 3 小时」迟到行自愈
   recompute_days: 2
   # Write dimension-level rollups
   # 写入维度级汇总
