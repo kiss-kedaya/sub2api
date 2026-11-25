@@ -143,6 +143,38 @@ func (c *gatewayCache) DeleteSessionAccountID(ctx context.Context, groupID int64
 	return c.rdb.Del(ctx, key).Err()
 }
 
+// routeGroupPrefix namespaces the smart-routing group bindings away from the
+// account-level sticky sessions above.
+const routeGroupPrefix = "route_group:"
+
+// buildRouteGroupKey names the binding of one conversation to one of an API key's
+// groups: route_group:{apiKeyID}:{model}:{session}. The model and the session hash
+// are digested so the key stays short and safe whatever the client sent.
+func buildRouteGroupKey(apiKeyID int64, model, sessionHash string) string {
+	m := sha256.Sum256([]byte(model))
+	h := sha256.Sum256([]byte(sessionHash))
+	return fmt.Sprintf("%s%d:%s:%s", routeGroupPrefix, apiKeyID, hex.EncodeToString(m[:6]), hex.EncodeToString(h[:12]))
+}
+
+var _ service.RouteGroupBindingCache = (*gatewayCache)(nil)
+
+// GetRouteGroup returns the group a session is bound to, or ErrStickySessionNotFound.
+func (c *gatewayCache) GetRouteGroup(ctx context.Context, apiKeyID int64, model, sessionHash string) (int64, error) {
+	groupID, err := c.rdb.Get(ctx, buildRouteGroupKey(apiKeyID, model, sessionHash)).Int64()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return 0, service.ErrStickySessionNotFound
+		}
+		return 0, err
+	}
+	return groupID, nil
+}
+
+// SetRouteGroup binds (or re-binds) a session to a group and restarts its lifetime.
+func (c *gatewayCache) SetRouteGroup(ctx context.Context, apiKeyID int64, model, sessionHash string, groupID int64, ttl time.Duration) error {
+	return c.rdb.Set(ctx, buildRouteGroupKey(apiKeyID, model, sessionHash), groupID, ttl).Err()
+}
+
 var claimOpenAIResponsesSessionWindowScript = redis.NewScript(`
 local previous = redis.call('GET', KEYS[1])
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])

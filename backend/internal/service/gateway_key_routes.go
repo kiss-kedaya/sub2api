@@ -94,8 +94,8 @@ func (s *GatewayService) selectAccountAlongKeyRoutesOnce(ctx context.Context, ap
 		result, err := s.SelectAccountWithLoadAwareness(ctx, apiKey.GroupID, sessionHash, requestedModel, excludedIDs, metadataUserID, sub2apiUserID)
 		return result, apiKey, err
 	}
-	groupIDs = s.orderGroupsByQuality(ctx, groupIDs)
-	routes := newAPIKeyRouteIterator(ctx, apiKey, groupIDs, requestedModel, s.hydrateAPIKeyGroup, s.resolveAPIKeyRouteCandidate, s.ensureGroupModelsCatalog, s.ResolveChannelMappingAndRestrict, nil)
+	plan := planRouteGroups(ctx, s.routeGroupDeps(ctx, apiKey), apiKey, groupIDs, requestedModel, sessionHash)
+	routes := newAPIKeyRouteIterator(ctx, apiKey, plan.Order, requestedModel, s.hydrateAPIKeyGroup, s.resolveAPIKeyRouteCandidate, s.ensureGroupModelsCatalog, s.ResolveChannelMappingAndRestrict, nil)
 	var lastErr error
 	for candidate, ok := routes.next(); ok; candidate, ok = routes.next() {
 		routed := candidate.key
@@ -112,6 +112,7 @@ func (s *GatewayService) selectAccountAlongKeyRoutesOnce(ctx context.Context, ap
 		}
 		result, err := s.SelectAccountWithLoadAwareness(routeCtx, routed.GroupID, sessionHash, candidate.model, excludedIDs, metadataUserID, sub2apiUserID)
 		if err == nil {
+			plan.remember(ctx, candidate.sourceGroupID)
 			return result, routed, nil
 		}
 		lastErr = err
