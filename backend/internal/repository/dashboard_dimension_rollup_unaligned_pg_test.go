@@ -165,7 +165,7 @@ func runRollupDifferential(t *testing.T, db *sql.DB, cfg rollupDiffConfig) {
 func runRollupDifferentialOnce(t *testing.T, db *sql.DB, cfg rollupDiffConfig) (rolledOver bool) {
 	t.Helper()
 	// Leave room for the run: a window that straddles the top of the hour would see a moving open hour.
-	if untilNext := floorLocalHour(time.Now()).Add(time.Hour).Sub(time.Now()); untilNext < 90*time.Second {
+	if untilNext := time.Until(floorLocalHour(time.Now()).Add(time.Hour)); untilNext < 90*time.Second {
 		time.Sleep(untilNext + 2*time.Second)
 	}
 	e := newRollupDiffEnv(t, db, cfg)
