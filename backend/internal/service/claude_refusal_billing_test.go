@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Claude 违规拒答（stop_reason=refusal）不计费：余额、订阅、key 额度、账号额度、账号统计成本都是 0，
-// token 数保留用于排查，用量行 request_type=claude_refusal 且 stream 标志不丢。
+// Claude 违规拒答（stop_reason=refusal）照常计费：余额、订阅、key 额度、账号额度、账号统计成本与「同 token 数的普通请求」
+// 逐项一致，唯一区别是用量行 request_type=claude_refusal（stream 标志不丢），便于按用户、按类型查询。
 
 const claudeRefusalBillingModel = "claude-sonnet-4"
 
@@ -96,27 +96,37 @@ func (f *claudeRefusalBillingFixture) record(t *testing.T) *UsageLog {
 	return f.usageRepo.lastLog
 }
 
-func TestGatewayServiceRecordUsage_ClaudeRefusalIsNotBilled(t *testing.T) {
+func TestGatewayServiceRecordUsage_ClaudeRefusalIsBilledAndTagged(t *testing.T) {
 	refusal := ClaudeUsage{InputTokens: 44, Refusal: true}
+	sameTokens := ClaudeUsage{InputTokens: 44} // 对照组：同样的 token 数，没有拒答标志
 	normal := ClaudeUsage{InputTokens: 44, OutputTokens: 12}
 
 	for _, stream := range []bool{true, false} {
 		t.Run(fmt.Sprintf("balance_legacy_path/stream=%t", stream), func(t *testing.T) {
 			f := newClaudeRefusalBillingFixture(t, refusal, stream, false, false)
 			log := f.record(t)
+			ctl := newClaudeRefusalBillingFixture(t, sameTokens, stream, false, false)
+			ctlLog := ctl.record(t)
 
-			require.Zero(t, log.TotalCost)
-			require.Zero(t, log.ActualCost)
-			require.Equal(t, 44, log.InputTokens, "token 数保留用于排查")
+			require.Positive(t, log.TotalCost, "上游照常收费，拒答也照常计费")
+			require.Positive(t, log.ActualCost)
+			require.InDelta(t, ctlLog.TotalCost, log.TotalCost, 1e-12, "与同 token 数的普通请求金额一致")
+			require.InDelta(t, ctlLog.ActualCost, log.ActualCost, 1e-12)
+			require.Equal(t, 44, log.InputTokens)
 			require.Zero(t, log.OutputTokens)
 			require.Equal(t, RequestTypeClaudeRefusal, log.RequestType)
+			require.NotEqual(t, RequestTypeClaudeRefusal, ctlLog.RequestType, "只有拒答打标记")
 			require.Equal(t, stream, log.Stream)
 			require.NotNil(t, log.BillingMode)
 			require.Equal(t, string(BillingModeToken), *log.BillingMode)
-			require.Nil(t, log.AccountStatsCost, "账号统计成本不能按 token 数套价算出非 0")
-			require.Zero(t, f.userRepo.deductCalls, "余额不变")
-			require.Zero(t, f.quotaSvc.quotaCalls, "key 额度不扣")
-			require.Zero(t, f.quotaSvc.rateLimitCalls, "key 限速额度不扣")
+			require.NotNil(t, log.AccountStatsCost, "账号统计成本照常算")
+			require.NotNil(t, ctlLog.AccountStatsCost)
+			require.Positive(t, *log.AccountStatsCost)
+			require.InDelta(t, *ctlLog.AccountStatsCost, *log.AccountStatsCost, 1e-12)
+			require.Equal(t, 1, f.userRepo.deductCalls, "余额照常扣")
+			require.InDelta(t, log.ActualCost, f.userRepo.lastAmount, 1e-12)
+			require.Equal(t, 1, f.quotaSvc.quotaCalls, "key 额度照常扣")
+			require.Equal(t, ctl.quotaSvc.rateLimitCalls, f.quotaSvc.rateLimitCalls, "key 限速额度与普通请求一致")
 
 			// 入库前的 legacy 字段同步：request_type 不变，stream 标志不丢，也不会被当成 ws。
 			log.SyncRequestTypeAndLegacyFields()
@@ -128,16 +138,22 @@ func TestGatewayServiceRecordUsage_ClaudeRefusalIsNotBilled(t *testing.T) {
 		t.Run(fmt.Sprintf("balance_billing_repo/stream=%t", stream), func(t *testing.T) {
 			f := newClaudeRefusalBillingFixture(t, refusal, stream, false, true)
 			log := f.record(t)
+			ctl := newClaudeRefusalBillingFixture(t, sameTokens, stream, false, true)
+			ctl.record(t)
 
 			require.Equal(t, RequestTypeClaudeRefusal, log.RequestType)
-			require.Equal(t, 1, f.billingRepo.calls, "结算/预扣释放照常走一遍，只是金额为 0")
-			cmd := f.billingRepo.lastCmd
+			require.Equal(t, 1, f.billingRepo.calls)
+			cmd, ctlCmd := f.billingRepo.lastCmd, ctl.billingRepo.lastCmd
 			require.NotNil(t, cmd)
-			require.Zero(t, cmd.BalanceCost)
-			require.Zero(t, cmd.SubscriptionCost)
-			require.Zero(t, cmd.APIKeyQuotaCost)
-			require.Zero(t, cmd.APIKeyRateLimitCost)
-			require.Zero(t, cmd.AccountQuotaCost, "账号额度不扣")
+			require.NotNil(t, ctlCmd)
+			require.Positive(t, cmd.BalanceCost)
+			require.Positive(t, cmd.APIKeyQuotaCost)
+			require.Positive(t, cmd.AccountQuotaCost, "账号额度照常扣")
+			require.InDelta(t, ctlCmd.BalanceCost, cmd.BalanceCost, 1e-12)
+			require.InDelta(t, ctlCmd.SubscriptionCost, cmd.SubscriptionCost, 1e-12)
+			require.InDelta(t, ctlCmd.APIKeyQuotaCost, cmd.APIKeyQuotaCost, 1e-12)
+			require.InDelta(t, ctlCmd.APIKeyRateLimitCost, cmd.APIKeyRateLimitCost, 1e-12)
+			require.InDelta(t, ctlCmd.AccountQuotaCost, cmd.AccountQuotaCost, 1e-12)
 			require.Equal(t, 44, cmd.InputTokens)
 		})
 	}
@@ -145,18 +161,25 @@ func TestGatewayServiceRecordUsage_ClaudeRefusalIsNotBilled(t *testing.T) {
 	t.Run("subscription_legacy_path", func(t *testing.T) {
 		f := newClaudeRefusalBillingFixture(t, refusal, true, true, false)
 		log := f.record(t)
+		ctl := newClaudeRefusalBillingFixture(t, sameTokens, true, true, false)
+		ctlLog := ctl.record(t)
 		require.Equal(t, BillingTypeSubscription, log.BillingType)
 		require.Equal(t, RequestTypeClaudeRefusal, log.RequestType)
-		require.Zero(t, log.ActualCost)
-		require.Zero(t, f.subRepo.incrementCalls, "订阅额度不扣")
-		require.Zero(t, f.userRepo.deductCalls)
+		require.Positive(t, log.ActualCost)
+		require.InDelta(t, ctlLog.ActualCost, log.ActualCost, 1e-12)
+		require.Equal(t, 1, f.subRepo.incrementCalls, "订阅额度照常扣")
+		require.Equal(t, ctl.subRepo.incrementCalls, f.subRepo.incrementCalls)
+		require.Zero(t, f.userRepo.deductCalls, "订阅计费不动余额")
 	})
 
 	t.Run("subscription_billing_repo", func(t *testing.T) {
 		f := newClaudeRefusalBillingFixture(t, refusal, true, true, true)
 		f.record(t)
+		ctl := newClaudeRefusalBillingFixture(t, sameTokens, true, true, true)
+		ctl.record(t)
 		require.NotNil(t, f.billingRepo.lastCmd)
-		require.Zero(t, f.billingRepo.lastCmd.SubscriptionCost)
+		require.Positive(t, f.billingRepo.lastCmd.SubscriptionCost)
+		require.InDelta(t, ctl.billingRepo.lastCmd.SubscriptionCost, f.billingRepo.lastCmd.SubscriptionCost, 1e-12)
 		require.Zero(t, f.billingRepo.lastCmd.BalanceCost)
 	})
 
@@ -270,7 +293,7 @@ func TestClaudeRefusalForwardEndToEnd(t *testing.T) {
 			normalBody = claudeControlStreamSSE(`"end_turn"`, "hello", true)
 		}
 
-		t.Run(p.name+"/refusal_settles_free", func(t *testing.T) {
+		t.Run(p.name+"/refusal_is_billed_and_tagged", func(t *testing.T) {
 			result, clientBody := run(t, p, refusalBody)
 			require.True(t, result.Usage.Refusal)
 			require.False(t, result.NonBillableUpstreamError, "拒答不是上游错误，走独立标志")
@@ -282,9 +305,9 @@ func TestClaudeRefusalForwardEndToEnd(t *testing.T) {
 			require.Equal(t, RequestTypeClaudeRefusal, log.RequestType)
 			require.Equal(t, p.stream, log.Stream)
 			require.Equal(t, 44, log.InputTokens)
-			require.Zero(t, log.TotalCost)
-			require.Zero(t, log.ActualCost)
-			require.Zero(t, billingRepo.lastCmd.BalanceCost)
+			require.Positive(t, log.TotalCost, "上游照常收费，拒答也照常计费")
+			require.Positive(t, log.ActualCost)
+			require.Positive(t, billingRepo.lastCmd.BalanceCost)
 		})
 
 		t.Run(p.name+"/normal_answer_still_billed", func(t *testing.T) {

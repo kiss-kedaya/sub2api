@@ -20,7 +20,7 @@ const (
 	RequestTypeWSV2          RequestType = 3
 	RequestTypeCyberBlocked  RequestType = 4 // cyber_policy 命中（透传但被上游安全策略拒绝）
 	RequestTypeLive          RequestType = 5
-	RequestTypeClaudeRefusal RequestType = 6 // Claude 以 stop_reason=refusal 结束（违规拒答，不计费）
+	RequestTypeClaudeRefusal RequestType = 6 // Claude 以 stop_reason=refusal 结束（违规拒答，上游照常收费，只打类型标记）
 )
 
 func (t RequestType) IsValid() bool {
