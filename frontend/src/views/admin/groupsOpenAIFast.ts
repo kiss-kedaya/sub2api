@@ -139,11 +139,3 @@ export function findInvalidOpenAITierMultiplier(
   ).issue;
   return ultrafast ? { tier: "ultrafast", issue: ultrafast } : null;
 }
-
-/** 倍率显示：最多 4 位小数、去掉多余的 0（0.30000000000000004 → 0.3，2 → 2）。 */
-export function formatTierMultiplier(value: number): string {
-  const rounded = Number(value.toFixed(OPENAI_TIER_MULTIPLIER_DECIMALS));
-  // 极小的积四舍五入会变成 0，显示 0 会误导
-  if (rounded === 0 && value !== 0) return String(Number(value.toPrecision(2)));
-  return String(rounded);
-}

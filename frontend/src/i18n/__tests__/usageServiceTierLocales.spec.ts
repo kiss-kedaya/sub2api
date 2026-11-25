@@ -16,8 +16,13 @@ describe('usage service tier locale keys', () => {
     expect(zh.usage.serviceTierMultiplier).toBe('档位倍率')
     expect(zh.usage.groupRate).toBe('分组倍率')
     expect(zh.usage.combinedRate).toBe('综合倍率')
-    // 没有档位倍率的老数据仍显示原来的「倍率」
+    // 没有档位倍率的老数据仍显示原来的「倍率」和「原始」
     expect(zh.usage.rate).toBe('倍率')
+    expect(zh.usage.original).toBe('原始')
+    // 有档位倍率的行：「原始」显示标准价；管理端多一行上游成本（只用于对账）
+    expect(zh.usage.originalStandard).toBe('原始（标准价）')
+    expect(zh.usage.upstreamCost).toBe('上游成本')
+    expect(zh.usage.upstreamCostHint).toContain('对账')
   })
 
   it('contains en labels for the tier multiplier rows', () => {
@@ -25,6 +30,10 @@ describe('usage service tier locale keys', () => {
     expect(en.usage.groupRate).toBe('Group rate')
     expect(en.usage.combinedRate).toBe('Combined rate')
     expect(en.usage.rate).toBe('Rate')
+    expect(en.usage.original).toBe('Original')
+    expect(en.usage.originalStandard).toBe('Original (Standard price)')
+    expect(en.usage.upstreamCost).toBe('Upstream cost')
+    expect(en.usage.upstreamCostHint).toContain('reconciliation')
   })
 
   it('contains en labels for service tier tooltip', () => {

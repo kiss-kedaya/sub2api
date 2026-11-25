@@ -38,6 +38,9 @@ const messages: Record<string, string> = {
   'usage.rate': 'Rate',
   'usage.accountMultiplier': 'Account rate',
   'usage.original': 'Original',
+  'usage.originalStandard': 'Original (Standard price)',
+  'usage.upstreamCost': 'Upstream cost',
+  'usage.upstreamCostHint': 'Upstream tier price actually charged; reconciliation only',
   'usage.userBilled': 'User billed',
   'usage.accountBilled': 'Account billed',
   'usage.imageUnit': ' images',
@@ -304,84 +307,195 @@ describe('admin UsageTable tooltip', () => {
   })
 
   describe('service tier multiplier rows', () => {
+    // 后端口径：rate_multiplier = 分组倍率（不含档位倍率）；total_cost = 上游按档位实际收的价（已含官方档位比值）；
+    // actual_cost = 标准价 × 档位倍率 × 分组倍率。下面都用同一个标准价 0.01136、分组倍率 0.16。
+    // 无覆盖 Fast：官方 2×，total 就是标准价 × 2。
     const tierRow = {
       request_id: 'req-tier-multiplier',
-      actual_cost: 0.00033530,
-      total_cost: 0.0023124,
+      total_cost: 0.02272,
+      rate_multiplier: 0.16,
+      service_tier: 'priority',
+      service_tier_multiplier: 2,
+      actual_cost: 0.0036352,
       account_rate_multiplier: 1,
-      rate_multiplier: 0.145,
-      service_tier: 'ultrafast',
-      service_tier_multiplier: 1,
-      input_cost: 0.001,
-      output_cost: 0.0013124,
+      input_cost: 0.01,
+      output_cost: 0.01272,
       cache_creation_cost: 0,
       cache_read_cost: 0,
       input_tokens: 100,
       output_tokens: 100,
     }
+    // 免费 Fast（分组覆盖 1×）：total 仍是 Fast 价，用户只付标准价 × 分组倍率。
+    const freeFastRow = { ...tierRow, request_id: 'req-free-fast', service_tier_multiplier: 1, actual_cost: 0.0018176 }
+    // UltraFast 官方 6×（total = 标准价 × 6），分组覆盖成 3×。
+    const ultrafastOverrideRow = {
+      ...tierRow, request_id: 'req-ultrafast-override', service_tier: 'ultrafast',
+      total_cost: 0.06816, service_tier_multiplier: 3, actual_cost: 0.0054528,
+    }
 
-    // 气泡左列是标签、右列是数字：返回「标签 → 数字」，断言行的顺序和内容
-    async function openTooltip(row: Record<string, unknown>) {
+    // 气泡左列是标签、右列是数字：返回「标签 → 数字」，断言行的顺序和内容。
+    // admin = 管理端（默认 props，带账号计费 / 上游成本）；用户端传 showAccountBilling=false。
+    async function openTooltip(row: Record<string, unknown>, { admin = false } = {}) {
       const wrapper = mount(UsageTable, {
-        props: { data: [row as never], loading: false, columns: [], showAccountBilling: false },
+        props: { data: [row as never], loading: false, columns: [], ...(admin ? {} : { showAccountBilling: false }) },
         global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
       })
       const triggers = wrapper.findAll('.group.relative')
       await triggers[triggers.length - 1].trigger('mouseenter')
       await nextTick()
       const rows = wrapper.get('.fixed').findAll('div.flex.items-center.justify-between.gap-6')
+      const line = (label: string) => rows.find((item) => item.findAll('span')[0].text() === label)
       return {
         wrapper,
-        labels: rows.map((line) => line.findAll('span')[0].text()),
-        value: (label: string) => rows.find((line) => line.findAll('span')[0].text() === label)?.findAll('span')[1].text(),
+        labels: rows.map((item) => item.findAll('span')[0].text()),
+        line,
+        value: (label: string) => line(label)?.findAll('span')[1].text(),
       }
     }
 
-    it('adds tier multiplier and combined rate rows, and renames Rate to Group rate', async () => {
+    // 例：无覆盖 Fast 行 total 已含官方 2×，不能拿 total 当「原始」去乘综合倍率
+    it('Fast without an override: shows the standard price, so standard price x combined rate = user billed', async () => {
       const { labels, value } = await openTooltip(tierRow)
 
-      // 顺序：服务档位 → 档位倍率 → 分组倍率 → 综合倍率 → 原始 → 用户扣费
-      expect(labels).toEqual(['Service tier', 'Tier multiplier', 'Group rate', 'Combined rate', 'Original', 'User billed'])
+      // 顺序：服务档位 → 档位倍率 → 分组倍率 → 综合倍率 → 原始（标准价）→ 用户扣费；用户端没有「上游成本」
+      expect(labels).toEqual([
+        'Service tier', 'Tier multiplier', 'Group rate', 'Combined rate', 'Original (Standard price)', 'User billed',
+      ])
+      expect(value('Service tier')).toBe('Fast')
+      expect(value('Tier multiplier')).toBe('2×')
+      expect(value('Group rate')).toBe('0.16×')
+      expect(value('Combined rate')).toBe('0.32×')
+      expect(value('Original (Standard price)')).toBe('$0.01136000')
+      expect(value('User billed')).toBe('$0.00363520')
+    })
+
+    it('free Fast (override 1x): total stays the Fast price but the standard price and the charge are lower', async () => {
+      const { labels, value } = await openTooltip(freeFastRow)
+      expect(labels).toEqual([
+        'Service tier', 'Tier multiplier', 'Group rate', 'Combined rate', 'Original (Standard price)', 'User billed',
+      ])
+      expect(value('Tier multiplier')).toBe('1×')
+      expect(value('Group rate')).toBe('0.16×')
+      expect(value('Combined rate')).toBe('0.16×')
+      expect(value('Original (Standard price)')).toBe('$0.01136000')
+      expect(value('User billed')).toBe('$0.00181760')
+    })
+
+    it('UltraFast with an override', async () => {
+      const { value } = await openTooltip(ultrafastOverrideRow)
       expect(value('Service tier')).toBe('Ultrafast')
-      expect(value('Tier multiplier')).toBe('1.00x')
-      expect(value('Group rate')).toBe('0.145x')
-      expect(value('Combined rate')).toBe('0.145x')
-      expect(value('Original')).toBe('$0.00231240')
+      expect(value('Tier multiplier')).toBe('3×')
+      expect(value('Group rate')).toBe('0.16×')
+      expect(value('Combined rate')).toBe('0.48×')
+      expect(value('Original (Standard price)')).toBe('$0.01136000')
+      expect(value('User billed')).toBe('$0.00545280')
+    })
+
+    it('matches the owner reference: Ultrafast, tier 1x, group 0.145x, charge $0.00033530', async () => {
+      const { value } = await openTooltip({
+        ...tierRow, service_tier: 'ultrafast', service_tier_multiplier: 1,
+        rate_multiplier: 0.145, total_cost: 0.0138744, actual_cost: 0.000335298,
+      })
+      expect(value('Tier multiplier')).toBe('1×')
+      expect(value('Group rate')).toBe('0.145×')
+      expect(value('Combined rate')).toBe('0.145×')
+      expect(value('Original (Standard price)')).toBe('$0.00231240')
       expect(value('User billed')).toBe('$0.00033530')
     })
 
+    // 档位倍率 / 分组倍率 / 综合倍率：至多 4 位小数、去掉多余的 0（1 → 1×，0.145 → 0.145×，2.5 → 2.5×），不补零
     it.each([
-      { service_tier: 'priority', rate_multiplier: 0.16, service_tier_multiplier: 2, tier: 'Fast', combined: '0.32x', multiplier: '2.00x' },
-      { service_tier: 'fast', rate_multiplier: 0.16, service_tier_multiplier: 2.5, tier: 'Fast', combined: '0.40x', multiplier: '2.50x' },
-      { service_tier: 'ultrafast', rate_multiplier: 0.16, service_tier_multiplier: 6, tier: 'Ultrafast', combined: '0.96x', multiplier: '6.00x' },
-      // 0.1 × 3 在浮点里是 0.30000000000000004，必须按 4 位小数、去掉多余的 0 显示
-      { service_tier: 'priority', rate_multiplier: 0.1, service_tier_multiplier: 3, tier: 'Fast', combined: '0.30x', multiplier: '3.00x' },
-      { service_tier: 'priority', rate_multiplier: 1.2345, service_tier_multiplier: 3, tier: 'Fast', combined: '3.7035x', multiplier: '3.00x' },
-    ])('shows $tier $service_tier_multiplier x group $rate_multiplier = $combined', async ({ tier, combined, multiplier, ...patch }) => {
-      const { value } = await openTooltip({ ...tierRow, ...patch })
+      { service_tier: 'priority', rate_multiplier: 0.16, service_tier_multiplier: 2, tier: 'Fast', group: '0.16×', multiplier: '2×', combined: '0.32×' },
+      { service_tier: 'fast', rate_multiplier: 0.16, service_tier_multiplier: 2.5, tier: 'Fast', group: '0.16×', multiplier: '2.5×', combined: '0.4×' },
+      { service_tier: 'ultrafast', rate_multiplier: 0.16, service_tier_multiplier: 6, tier: 'Ultrafast', group: '0.16×', multiplier: '6×', combined: '0.96×' },
+      { service_tier: 'priority', rate_multiplier: 1, service_tier_multiplier: 1, tier: 'Fast', group: '1×', multiplier: '1×', combined: '1×' },
+      // 0.1 × 3 在浮点里是 0.30000000000000004，必须抹掉浮点噪声
+      { service_tier: 'priority', rate_multiplier: 0.1, service_tier_multiplier: 3, tier: 'Fast', group: '0.1×', multiplier: '3×', combined: '0.3×' },
+      { service_tier: 'priority', rate_multiplier: 1.2345, service_tier_multiplier: 3, tier: 'Fast', group: '1.2345×', multiplier: '3×', combined: '3.7035×' },
+    ])('shows $tier tier $multiplier x group $group = $combined, standard price unchanged', async ({ tier, group, multiplier, combined, ...patch }) => {
+      // 标准价固定 0.01136，实付 = 标准价 × 档位倍率 × 分组倍率
+      const actual = 0.01136 * patch.service_tier_multiplier * patch.rate_multiplier
+      const { value } = await openTooltip({ ...tierRow, ...patch, actual_cost: actual })
       expect(value('Service tier')).toBe(tier)
       expect(value('Tier multiplier')).toBe(multiplier)
+      expect(value('Group rate')).toBe(group)
       expect(value('Combined rate')).toBe(combined)
+      expect(value('Original (Standard price)')).toBe('$0.01136000')
     })
 
+    it('admin bubble adds an upstream cost row (= total_cost) with a reconciliation note; the user bubble does not', async () => {
+      const admin = await openTooltip(freeFastRow, { admin: true })
+      // 上游成本在用户扣费之后、账号计费之前
+      expect(admin.labels).toEqual([
+        'Service tier', 'Tier multiplier', 'Group rate', 'Combined rate', 'Original (Standard price)', 'User billed',
+        'Upstream cost', 'Account rate', 'Account billed',
+      ])
+      expect(admin.value('Upstream cost')).toBe('$0.02272000')
+      expect(admin.wrapper.get('[data-testid="usage-upstream-cost"]').text()).toContain('Upstream tier price actually charged; reconciliation only')
+      // 账号计费那一块照旧（仍按 total_cost × 账号倍率），只是分隔线挪到了上游成本上
+      expect(admin.value('Account billed')).toBe('$0.02272000')
+      expect(admin.wrapper.get('[data-testid="usage-upstream-cost"]').classes()).toContain('border-t')
+      expect(admin.line('Account rate')!.classes()).not.toContain('border-t')
+      admin.wrapper.unmount()
+
+      const user = await openTooltip(freeFastRow)
+      expect(user.labels).not.toContain('Upstream cost')
+      expect(user.wrapper.find('[data-testid="usage-upstream-cost"]').exists()).toBe(false)
+      // 用户端连数字都不能出现：total_cost 只有管理端能看到
+      expect(user.wrapper.get('.fixed').text()).not.toContain('0.02272')
+    })
+
+    // 分组倍率 × 档位倍率 ≤ 0 时反推标准价会除零：整行退回老样子，不出现新行、不出现 NaN / Infinity
+    it.each([
+      // 老样子的「倍率」沿用 `rate_multiplier || 1`，所以 0 / 缺失都显示 1.00x
+      { name: 'group rate 0', patch: { rate_multiplier: 0 }, rate: '1.00x' },
+      { name: 'group rate missing', patch: { rate_multiplier: undefined }, rate: '1.00x' },
+      { name: 'product underflows to 0', patch: { rate_multiplier: 1e-200, service_tier_multiplier: 1e-200 }, rate: undefined },
+    ])('falls back to the old bubble when group rate x tier multiplier is not positive: $name', async ({ patch, rate }) => {
+      for (const admin of [false, true]) {
+        const { wrapper, labels, value } = await openTooltip({ ...tierRow, ...patch }, { admin })
+        expect(labels.slice(0, 4)).toEqual(['Service tier', 'Rate', 'Original', 'User billed'])
+        // 老样子：原始 = total_cost
+        expect(value('Original')).toBe('$0.02272000')
+        if (rate) expect(value('Rate')).toBe(rate)
+        for (const testid of ['usage-tier-multiplier', 'usage-combined-multiplier', 'usage-standard-price', 'usage-upstream-cost']) {
+          expect(wrapper.find(`[data-testid="${testid}"]`).exists(), testid).toBe(false)
+        }
+        const text = wrapper.get('.fixed').text()
+        expect(text).not.toContain('NaN')
+        expect(text).not.toContain('Infinity')
+        wrapper.unmount()
+      }
+    })
+
+    // 老数据（后端还没记录档位倍率）：气泡和以前一模一样，「原始」仍是 total_cost，管理端也没有「上游成本」
     it('keeps the old tooltip for rows without a recorded tier multiplier', async () => {
       for (const patch of [
         { service_tier_multiplier: null },
         { service_tier_multiplier: undefined },
         { service_tier_multiplier: 0 },
       ]) {
-        const { wrapper, labels, value } = await openTooltip({ ...tierRow, ...patch })
-        expect(labels).toEqual(['Service tier', 'Rate', 'Original', 'User billed'])
-        expect(value('Rate')).toBe('0.145x')
-        expect(wrapper.find('[data-testid="usage-tier-multiplier"]').exists()).toBe(false)
-        expect(wrapper.find('[data-testid="usage-combined-multiplier"]').exists()).toBe(false)
-        wrapper.unmount()
+        const user = await openTooltip({ ...tierRow, ...patch })
+        expect(user.labels).toEqual(['Service tier', 'Rate', 'Original', 'User billed'])
+        expect(user.value('Rate')).toBe('0.16x')
+        expect(user.value('Original')).toBe('$0.02272000')
+        user.wrapper.unmount()
+
+        const admin = await openTooltip({ ...tierRow, ...patch }, { admin: true })
+        expect(admin.labels).toEqual(['Service tier', 'Rate', 'Original', 'User billed', 'Account rate', 'Account billed'])
+        // 账号倍率这一行仍自带分隔线（和改动前一样）
+        expect(admin.line('Account rate')!.classes()).toEqual(expect.arrayContaining(['border-t', 'pt-1.5']))
+        for (const testid of ['usage-tier-multiplier', 'usage-combined-multiplier', 'usage-standard-price', 'usage-upstream-cost']) {
+          expect(admin.wrapper.find(`[data-testid="${testid}"]`).exists(), testid).toBe(false)
+        }
+        admin.wrapper.unmount()
       }
     })
 
     it.each([null, 'standard', 'default', 'flex'])('ignores a stray tier multiplier on a %s row', async (serviceTier) => {
-      const { wrapper, labels } = await openTooltip({ ...tierRow, service_tier: serviceTier, service_tier_multiplier: 2 })
+      const { wrapper, labels, value } = await openTooltip({ ...tierRow, service_tier: serviceTier, service_tier_multiplier: 2 })
       expect(labels).toEqual(['Service tier', 'Rate', 'Original', 'User billed'])
+      expect(value('Original')).toBe('$0.02272000')
       expect(wrapper.find('[data-testid="usage-tier-multiplier"]').exists()).toBe(false)
     })
 
@@ -398,6 +512,7 @@ describe('admin UsageTable tooltip', () => {
       expect(wrapper.find('[data-testid="fixed-tool-billing"]').exists()).toBe(true)
       expect(labels).not.toContain('Tier multiplier')
       expect(labels).not.toContain('Combined rate')
+      expect(labels).not.toContain('Original (Standard price)')
     })
 
     it('follows the hovered row when the tooltip moves to another request', async () => {

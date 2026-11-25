@@ -27,6 +27,45 @@ export function getUsageServiceTierMultiplier(row: {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
 }
 
+export interface UsageTierPricing {
+  /** 该请求实际叠加的档位倍率（有分组覆盖时是覆盖值，没有覆盖时是官方档位比值） */
+  tierMultiplier: number
+  /** 分组倍率（不含档位倍率） */
+  groupRate: number
+  /** 综合倍率 = 分组倍率 × 档位倍率 */
+  combinedRate: number
+  /** 标准价 = 用户扣费 / 综合倍率，所以「标准价 × 综合倍率 = 用户扣费」恒成立 */
+  standardPrice: number
+}
+
+/**
+ * Fast / UltraFast 且后端记录了档位倍率的行：把费用明细里「标准价 × 综合倍率 = 用户扣费」要用的数一次算好。
+ *
+ * 后端口径：rate_multiplier 是分组倍率（不含档位倍率）；total_cost 是上游按档位实际收的价（已含官方档位比值，
+ * Fast 就是标准价 × 2）；actual_cost（用户扣费）= 标准价 × 档位倍率 × 分组倍率。
+ * 所以不能把 total_cost 当「原始」去乘综合倍率：无覆盖行 total 已含官方比值会重复乘，免费 Fast 这类覆盖行实付更低。
+ *
+ * 返回 null = 老数据 / 不是 Fast·UltraFast / 分组倍率或乘积不是正数（反推会除零）：调用方整行保持老样子。
+ */
+export function getUsageTierPricing(row: {
+  service_tier?: string | null
+  service_tier_multiplier?: number | null
+  rate_multiplier?: number | null
+  actual_cost?: number | null
+}): UsageTierPricing | null {
+  const tierMultiplier = getUsageServiceTierMultiplier(row)
+  if (tierMultiplier === null) return null
+  const groupRate = row.rate_multiplier
+  if (typeof groupRate !== 'number' || !Number.isFinite(groupRate) || groupRate <= 0) return null
+  const combinedRate = groupRate * tierMultiplier
+  if (!Number.isFinite(combinedRate) || combinedRate <= 0) return null
+  // 缺失的扣费和气泡里其它金额一样按 0 显示
+  const actual = typeof row.actual_cost === 'number' && Number.isFinite(row.actual_cost) ? row.actual_cost : 0
+  const standardPrice = actual / combinedRate
+  if (!Number.isFinite(standardPrice)) return null
+  return { tierMultiplier, groupRate, combinedRate, standardPrice }
+}
+
 export function getUsageServiceTierLabel(
   serviceTier: string | null | undefined,
   translate: (key: string) => string,

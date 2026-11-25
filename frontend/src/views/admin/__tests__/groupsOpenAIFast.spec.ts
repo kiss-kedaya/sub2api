@@ -4,7 +4,6 @@ import {
   OPENAI_TIER_DEFAULT_MULTIPLIER,
   buildOpenAITierMultiplierPayload,
   findInvalidOpenAITierMultiplier,
-  formatTierMultiplier,
   normalizeGroupOpenAIFast,
   openAITierMultiplierInputId,
   openAITierMultiplierToForm,
@@ -233,20 +232,7 @@ describe("findInvalidOpenAITierMultiplier", () => {
   });
 });
 
-describe("tier multiplier display helpers", () => {
-  it("trims trailing zeros and float noise", () => {
-    expect(formatTierMultiplier(0.16 * 2)).toBe("0.32");
-    expect(formatTierMultiplier(0.1 * 3)).toBe("0.3");
-    expect(formatTierMultiplier(2)).toBe("2");
-    expect(formatTierMultiplier(2.5)).toBe("2.5");
-    expect(formatTierMultiplier(0.145)).toBe("0.145");
-    expect(formatTierMultiplier(0)).toBe("0");
-  });
-
-  it("does not round a tiny positive product down to 0", () => {
-    expect(formatTierMultiplier(0.00004)).toBe("0.00004");
-  });
-
+describe("tier multiplier helpers", () => {
   it("builds the input id used by both the field and the submit-time focus", () => {
     expect(openAITierMultiplierInputId("create", "fast")).toBe(
       "create-openai-fast-multiplier",

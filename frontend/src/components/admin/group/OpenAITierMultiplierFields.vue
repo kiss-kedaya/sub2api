@@ -61,10 +61,10 @@
 // 校验、换算都在 groupsOpenAIFast.ts（纯函数）；这里只管渲染和把值回写给表单。
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { formatMultiplierCompact } from "@/utils/formatters";
 import {
   OPENAI_TIER_DEFAULT_MULTIPLIER,
   OPENAI_TIER_MULTIPLIER_MAX,
-  formatTierMultiplier,
   openAITierMultiplierInputId,
   parseOpenAITierMultiplier,
   type OpenAITier,
@@ -119,7 +119,7 @@ const fields = computed(() =>
 
     let preview: string | null = null;
     if (!issue) {
-      const rate = formatTierMultiplier(props.groupRate);
+      const rate = formatMultiplierCompact(props.groupRate);
       preview =
         effective === null
           ? t("admin.groups.openaiFast.tierMultiplier.previewOfficial", {
@@ -129,8 +129,8 @@ const fields = computed(() =>
           : t("admin.groups.openaiFast.tierMultiplier.previewValue", {
               name,
               rate,
-              multiplier: formatTierMultiplier(effective),
-              total: formatTierMultiplier(props.groupRate * effective),
+              multiplier: formatMultiplierCompact(effective),
+              total: formatMultiplierCompact(props.groupRate * effective),
             });
     }
 
