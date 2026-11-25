@@ -60,6 +60,33 @@ func TestAdminUsageListRequestTypePriority(t *testing.T) {
 	require.Nil(t, repo.listFilters.Stream)
 }
 
+func TestAdminUsageListClaudeRefusalRequestType(t *testing.T) {
+	repo := &adminUsageRepoCapture{}
+	router := newAdminUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/usage?request_type=claude_refusal&stream=true", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, repo.listFilters.RequestType)
+	require.Equal(t, int16(service.RequestTypeClaudeRefusal), *repo.listFilters.RequestType)
+	require.Nil(t, repo.listFilters.Stream)
+}
+
+func TestAdminUsageStatsClaudeRefusalRequestType(t *testing.T) {
+	repo := &adminUsageRepoCapture{}
+	router := newAdminUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/usage/stats?request_type=claude_refusal", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, repo.statsFilters.RequestType)
+	require.Equal(t, int16(service.RequestTypeClaudeRefusal), *repo.statsFilters.RequestType)
+}
+
 func TestAdminUsageListUsesRequestedModelForDisplayModelFilter(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)

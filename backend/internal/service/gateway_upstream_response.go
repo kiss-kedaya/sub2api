@@ -1325,6 +1325,8 @@ type sseUsagePatch struct {
 	hasCacheCreation1h       bool
 	webSearchRequests        int
 	hasWebSearchRequests     bool
+	// refusal：message_delta.delta.stop_reason == "refusal"。该事件可以不带 usage。
+	refusal bool
 }
 
 func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePatch {
@@ -1375,12 +1377,20 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 		return patch
 
 	case "message_delta":
+		patch := &sseUsagePatch{}
+		if delta, ok := event["delta"].(map[string]any); ok {
+			if reason, _ := delta["stop_reason"].(string); reason == claudeStopReasonRefusal {
+				patch.refusal = true
+			}
+		}
 		usageObj, _ := event["usage"].(map[string]any)
 		if len(usageObj) == 0 {
+			if patch.refusal {
+				return patch
+			}
 			return nil
 		}
 
-		patch := &sseUsagePatch{}
 		// An explicit input_tokens=0 is only authoritative when the same event
 		// restates the cache split (Kiro-style final usage, upstream issue
 		// #8407). A bare placeholder zero - what re-serializing relays emit -
@@ -1466,6 +1476,10 @@ func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
 		return
 	}
 
+	// 只置位不清除：后续事件不能把已确认的拒答改回计费。
+	if patch.refusal {
+		usage.Refusal = true
+	}
 	if patch.hasInputTokens {
 		usage.InputTokens = patch.inputTokens
 	}
@@ -1677,6 +1691,8 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 		}
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
+	// 违规拒答：只看顶层结构化 stop_reason，不看正文。
+	response.Usage.noteStopReason(gjson.GetBytes(body, "stop_reason").String())
 
 	// 解析嵌套的 cache_creation 对象中的 5m/1h 明细
 	cc5m := gjson.GetBytes(body, "usage.cache_creation.ephemeral_5m_input_tokens")

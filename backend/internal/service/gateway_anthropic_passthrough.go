@@ -894,6 +894,8 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 			mergeAnthropicWebSearchRequests(usage, msgUsage)
 		}
 	case "message_delta":
+		// 违规拒答的 message_delta 可以不带 usage，所以 stop_reason 要在 usage 判断之前读。
+		usage.noteStopReason(parsed.Get("delta.stop_reason").String())
 		deltaUsage := parsed.Get("usage")
 		if deltaUsage.Exists() {
 			// An explicit input_tokens=0 is only authoritative when the same
@@ -1092,6 +1094,8 @@ func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 	}
 
 	parsed := gjson.ParseBytes(body)
+	// 违规拒答：只看顶层结构化 stop_reason，不看正文；放在 usage 判断前，缺 usage 也能识别。
+	usage.noteStopReason(parsed.Get("stop_reason").String())
 	usageNode := parsed.Get("usage")
 	if !usageNode.Exists() {
 		return usage

@@ -90,6 +90,31 @@ func TestUsageLogFromService_PrefersRequestTypeForLegacyFields(t *testing.T) {
 	require.True(t, adminDTO.OpenAIWSMode)
 }
 
+func TestUsageLogFromService_ClaudeRefusalKeepsStreamAndZeroCost(t *testing.T) {
+	t.Parallel()
+
+	for _, stream := range []bool{true, false} {
+		log := &service.UsageLog{
+			RequestID:   "req_refusal",
+			Model:       "claude-sonnet-4",
+			RequestType: service.RequestTypeClaudeRefusal,
+			Stream:      stream,
+			InputTokens: 44,
+		}
+
+		userDTO := UsageLogFromService(log)
+		adminDTO := UsageLogFromServiceAdmin(log)
+
+		require.Equal(t, "claude_refusal", userDTO.RequestType)
+		require.Equal(t, stream, userDTO.Stream)
+		require.False(t, userDTO.OpenAIWSMode)
+		require.Equal(t, 44, userDTO.InputTokens, "token 数保留")
+		require.Zero(t, userDTO.ActualCost)
+		require.Equal(t, "claude_refusal", adminDTO.RequestType)
+		require.Equal(t, stream, adminDTO.Stream)
+	}
+}
+
 func TestUsageCleanupTaskFromService_RequestTypeMapping(t *testing.T) {
 	t.Parallel()
 
