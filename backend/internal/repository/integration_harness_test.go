@@ -34,10 +34,18 @@ const (
 	postgresImageTag = "postgres:18.1-alpine3.23"
 )
 
+// externalPostgresDSNEnv points the suite at an already running PostgreSQL so it
+// can run on machines without a container runtime. Redis is not started in that
+// mode: tests that need it (testRedis) are skipped.
+const externalPostgresDSNEnv = "SUB2API_TEST_POSTGRES_DSN"
+
 var (
 	integrationDB        *sql.DB
 	integrationEntClient *dbent.Client
 	integrationRedis     *redisclient.Client
+	// integrationDSN is the connection string behind integrationDB, for tests
+	// that need extra pools (for example one pinned to a different search_path).
+	integrationDSN string
 
 	redisNamespaceSeq uint64
 )
@@ -48,6 +56,10 @@ func TestMain(m *testing.M) {
 	if err := timezone.Init("UTC"); err != nil {
 		log.Printf("failed to init timezone: %v", err)
 		os.Exit(1)
+	}
+
+	if dsn := strings.TrimSpace(os.Getenv(externalPostgresDSNEnv)); dsn != "" {
+		os.Exit(runWithExternalPostgres(ctx, m, dsn))
 	}
 
 	if !dockerIsAvailable(ctx) {
@@ -91,6 +103,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	integrationDSN = dsn
 	integrationDB, err = openSQLWithRetry(ctx, dsn, 30*time.Second)
 	if err != nil {
 		log.Printf("failed to open sql db: %v", err)
@@ -132,6 +145,27 @@ func TestMain(m *testing.M) {
 	_ = integrationDB.Close()
 
 	os.Exit(code)
+}
+
+// runWithExternalPostgres runs the suite against an existing PostgreSQL and
+// returns the exit code. Migrations are idempotent, so re-runs against the same
+// database are cheap.
+func runWithExternalPostgres(ctx context.Context, m *testing.M, dsn string) int {
+	db, err := openSQLWithRetry(ctx, dsn, 30*time.Second)
+	if err != nil {
+		log.Printf("failed to open external postgres: %v", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+	if err := ApplyMigrations(ctx, db); err != nil {
+		log.Printf("failed to apply db migrations: %v", err)
+		return 1
+	}
+	integrationDSN = dsn
+	integrationDB = db
+	integrationEntClient = dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	defer func() { _ = integrationEntClient.Close() }()
+	return m.Run()
 }
 
 func dockerIsAvailable(ctx context.Context) bool {
@@ -247,6 +281,9 @@ func testEntSQLTx(t *testing.T) (*dbent.Client, *sql.Tx) {
 
 func testRedis(t *testing.T) *redisclient.Client {
 	t.Helper()
+	if integrationRedis == nil {
+		t.Skip("redis is not available (external postgres mode)")
+	}
 
 	prefix := fmt.Sprintf(
 		"it:%s:%d:%d:",
