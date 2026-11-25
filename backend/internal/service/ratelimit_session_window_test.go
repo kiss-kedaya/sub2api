@@ -195,6 +195,7 @@ func TestUpdateSessionWindow_UsesResetHeader(t *testing.T) {
 	headers.Set("anthropic-ratelimit-unified-5h-reset", fmt.Sprintf("%d", resetUnix))
 
 	svc.UpdateSessionWindow(context.Background(), account, headers)
+	svc.accountWrites.wait() // 写库已转后台，等它落完再断言
 
 	if len(repo.sessionWindowCalls) != 1 {
 		t.Fatalf("expected 1 UpdateSessionWindow call, got %d", len(repo.sessionWindowCalls))
@@ -231,6 +232,7 @@ func TestUpdateSessionWindow_FallbackPredictionWhenNoResetHeader(t *testing.T) {
 	expectedEnd := expectedStart.Add(5 * time.Hour)
 
 	svc.UpdateSessionWindow(context.Background(), account, headers)
+	svc.accountWrites.wait() // 写库已转后台，等它落完再断言
 
 	if len(repo.sessionWindowCalls) != 1 {
 		t.Fatalf("expected 1 UpdateSessionWindow call, got %d", len(repo.sessionWindowCalls))
@@ -269,6 +271,7 @@ func TestUpdateSessionWindow_CorrectsStalePrediction(t *testing.T) {
 	headers.Set("anthropic-ratelimit-unified-5h-reset", fmt.Sprintf("%d", realResetUnix))
 
 	svc.UpdateSessionWindow(context.Background(), account, headers)
+	svc.accountWrites.wait() // 写库已转后台，等它落完再断言
 
 	if len(repo.sessionWindowCalls) != 1 {
 		t.Fatalf("expected 1 UpdateSessionWindow call, got %d", len(repo.sessionWindowCalls))
@@ -297,6 +300,7 @@ func TestUpdateSessionWindow_NoUpdateWhenHeaderMatchesStored(t *testing.T) {
 	headers.Set("anthropic-ratelimit-unified-5h-reset", fmt.Sprintf("%d", futureUnix)) // same as stored
 
 	svc.UpdateSessionWindow(context.Background(), account, headers)
+	svc.accountWrites.wait() // 写库已转后台，等它落完再断言
 
 	if len(repo.sessionWindowCalls) != 1 {
 		t.Fatalf("expected 1 UpdateSessionWindow call, got %d", len(repo.sessionWindowCalls))
@@ -327,6 +331,7 @@ func TestUpdateSessionWindow_ClearsUtilizationOnWindowReset(t *testing.T) {
 	headers.Set("anthropic-ratelimit-unified-5h-utilization", "0.15")
 
 	svc.UpdateSessionWindow(context.Background(), account, headers)
+	svc.accountWrites.wait() // 写库已转后台，等它落完再断言
 
 	// Should have 2 UpdateExtra calls: one to clear utilization, one to store new utilization
 	if len(repo.updateExtraCalls) != 2 {
@@ -364,6 +369,7 @@ func TestUpdateSessionWindow_NoClearUtilizationOnCorrection(t *testing.T) {
 	headers.Set("anthropic-ratelimit-unified-5h-utilization", "0.30")
 
 	svc.UpdateSessionWindow(context.Background(), account, headers)
+	svc.accountWrites.wait() // 写库已转后台，等它落完再断言
 
 	// Only 1 UpdateExtra call (store utilization), no clear call
 	if len(repo.updateExtraCalls) != 1 {
@@ -390,6 +396,7 @@ func TestUpdateSessionWindow_SamplesFable7dOiHeaders(t *testing.T) {
 	headers.Set("anthropic-ratelimit-unified-7d_oi-reset", fmt.Sprintf("%d", resetOIUnix))
 
 	svc.UpdateSessionWindow(context.Background(), account, headers)
+	svc.accountWrites.wait() // 写库已转后台，等它落完再断言
 
 	if len(repo.updateExtraCalls) != 1 {
 		t.Fatalf("expected 1 UpdateExtra call, got %d", len(repo.updateExtraCalls))
@@ -416,6 +423,7 @@ func TestUpdateSessionWindow_ClearsFable7dOiOnWindowReset(t *testing.T) {
 	headers.Set("anthropic-ratelimit-unified-5h-reset", fmt.Sprintf("%d", resetUnix))
 
 	svc.UpdateSessionWindow(context.Background(), account, headers)
+	svc.accountWrites.wait() // 写库已转后台，等它落完再断言
 
 	if len(repo.updateExtraCalls) != 1 {
 		t.Fatalf("expected 1 UpdateExtra (clear) call, got %d", len(repo.updateExtraCalls))
