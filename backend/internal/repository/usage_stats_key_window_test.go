@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"testing"
 	"time"
@@ -306,6 +307,23 @@ func TestUsageStatsKeyWindowTrendIdentityIncludesUserAndTimezone(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// gatedExecutor holds every query until release is closed, so a test can look at Redis while a scan is in flight.
+type gatedExecutor struct {
+	sqlExecutor
+	started chan struct{} // buffered: one signal per query that reached the gate
+	release chan struct{}
+}
+
+func (g *gatedExecutor) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	g.started <- struct{}{}
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return g.sqlExecutor.QueryContext(ctx, query, args...)
+}
+
 // A poll that gave up (the /v1/usage budget) leaves nothing behind in Redis while the scan is still running, and
 // what the finished scan publishes afterwards is the real answer: the next poll reads it, not an empty report.
 func TestUsageStatsKeyWindowBudgetTimeoutNeverCachesAnEmptyAnswer(t *testing.T) {
@@ -314,20 +332,25 @@ func TestUsageStatsKeyWindowBudgetTimeoutNeverCachesAnEmptyAnswer(t *testing.T) 
 	for _, agg := range keyWindowAggregates() {
 		t.Run(agg.name, func(t *testing.T) {
 			repo, mock, server := newKeyWindowRepo(t, time.Minute)
-			slow := 300 * time.Millisecond
-			mock.ExpectQuery(agg.query).WillDelayFor(slow).WillReturnRows(agg.rows(9))
+			gate := &gatedExecutor{sqlExecutor: repo.sql, started: make(chan struct{}, 1), release: make(chan struct{})}
+			repo.sql = gate
+			agg.expect(mock, 9)
 
-			// The handler's budget, shortened: the caller gives up long before the scan is done.
+			// The handler's budget, shortened: the caller gives up while the scan is still held at the gate.
 			budget, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancel()
-			began := time.Now()
 			_, err := agg.run(budget, repo, 42, 7, start, end)
 			require.ErrorIs(t, err, context.DeadlineExceeded)
-			require.Less(t, time.Since(began), slow, "the caller must not wait for the scan once its budget is gone")
-			require.Empty(t, server.Keys(), "nothing may be published for a caller that gave up")
+			select {
+			case <-gate.started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the scan never started: the caller's budget must not cancel the shared load")
+			}
+			require.Empty(t, server.Keys(), "nothing may be published for a caller that gave up, while the scan is in flight")
 
 			// The scan was not cancelled with the caller: it finishes and publishes what the database said.
-			require.Eventually(t, func() bool { return len(server.Keys()) == 1 }, 5*time.Second, 5*time.Millisecond)
+			close(gate.release)
+			require.Eventually(t, func() bool { return len(server.Keys()) == 1 }, 5*time.Second, time.Millisecond)
 			require.Equal(t, usageStatsKeyWindowTTL, server.TTL(server.Keys()[0]))
 			got, err := agg.ask(repo, 42, 7, start, end)
 			require.NoError(t, err)
