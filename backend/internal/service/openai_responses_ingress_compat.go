@@ -6,20 +6,21 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
 
 // normalizeOpenAIResponsesLegacyIngress accepts the Chat Completions-shaped
 // payloads that a few Responses clients still emit. Native Responses input is
 // always authoritative because this path has no separate full-replay attempt.
-func normalizeOpenAIResponsesLegacyIngress(body []byte) ([]byte, bool, error) {
+func normalizeOpenAIResponsesLegacyIngress(c *gin.Context, body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
 	// Native requests can contain large image data URLs. Decode the full object
 	// only when a legacy top-level field needs compatibility handling.
 	view := parseRawJSONView(body)
-	if view.IsObject() && gjson.ValidBytes(body) {
+	if view.IsObject() && RequestBodyTop(c, body).Valid() {
 		hasLegacyField := false
 		view.ForEach(func(key, _ gjson.Result) bool {
 			switch key.Str {

@@ -234,7 +234,7 @@ func TestPatchGrokResponsesBodySanitizesComposerReasoningParameters(t *testing.T
 func TestExtractGrokResponsesReasoningEffortSupportsOpenAICompatibleField(t *testing.T) {
 	t.Parallel()
 
-	effort := extractOpenAIReasoningEffortFromBody(
+	effort := extractOpenAIReasoningEffortFromBody(nil,
 		[]byte(`{"model":"grok-4.3","reasoning_effort":"high"}`),
 		"grok-4.3",
 	)

@@ -48,7 +48,7 @@ func (s *GatewayService) ForwardAsResponses(
 		return nil, CrossProtocolConversionError{}
 	}
 
-	normalizedBody, normalized, err := normalizeOpenAIResponsesLegacyIngress(body)
+	normalizedBody, normalized, err := normalizeOpenAIResponsesLegacyIngress(c, body)
 	if err != nil {
 		return nil, err
 	}

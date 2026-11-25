@@ -88,7 +88,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 		return nil, fmt.Errorf("convert responses to chat completions: %w", err)
 	}
 
-	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(c, body, upstreamModel, billingModel, originalModel)
 	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
 	chatReq.Model = upstreamModel
@@ -113,7 +113,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	chatBody = clampOllamaCloudUpstreamMaxTokens(account, chatBody)
 	// Keep the final outbound tier for usage-time reconciliation. A policy
 	// filter that removes the field therefore leaves this nil.
-	serviceTier := extractOpenAIServiceTierFromBody(chatBody)
+	serviceTier := extractOpenAIServiceTierFromBody(c, chatBody)
 
 	logger.L().Debug("openai responses: forwarding via raw chat completions",
 		zap.Int64("account_id", account.ID),

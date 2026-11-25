@@ -508,7 +508,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	legacyCompact := service.IsOpenAIResponsesCompactPath(c)
-	nativeV2 := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(body)
+	nativeV2 := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(c, body)
 	if nativeV2 {
 		// 原生 v2 压缩出站前补注 x-codex-beta-features: remote_compaction_v2，
 		// 与真实 Codex 线型一致（网关链剥头后本级负责恢复，#5586）。
@@ -521,7 +521,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	defer stopCompactKeepalive()
 
 	// 校验请求体 JSON 合法性
-	if !gjson.ValidBytes(body) {
+	if !service.RequestBodyTop(c, body).Valid() {
 		logRequestBodyParseFailure(reqLog, body, nil)
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
@@ -532,7 +532,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 
 	// 使用 gjson 只读提取字段做校验，避免完整 Unmarshal
-	modelResult := gjson.GetBytes(body, "model")
+	modelResult := service.RequestBodyTop(c, body).Get("model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
@@ -559,7 +559,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	} else if changed {
 		body = cappedBody
 	}
-	bootstrap := applyCodexBootstrapNormalizations(body)
+	bootstrap := applyCodexBootstrapNormalizations(c, body)
 	body = bootstrap.Body
 	if bootstrap.UntrustedContext {
 		reqLog.Info("openai.codex_untrusted_context_normalized",
@@ -577,17 +577,17 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		)
 	}
 
-	reqStream, ok := parseOpenAICompatibleStream(body)
+	reqStream, ok := parseOpenAICompatibleStream(c, body)
 	if !ok {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", invalidStreamFieldTypeMessage)
 		return
 	}
-	if _, err := service.ValidateOpenAIServiceTierField(body); err != nil {
+	if _, err := service.ValidateOpenAIServiceTierField(c, body); err != nil {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
-	previousResponseID := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
+	previousResponseID := strings.TrimSpace(service.RequestBodyTop(c, body).Get("previous_response_id").String())
 	if previousResponseID != "" {
 		previousResponseIDKind := service.ClassifyOpenAIPreviousResponseIDKind(previousResponseID)
 		reqLog = reqLog.With(
@@ -635,7 +635,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// 使用 IsExplicitImageGenerationIntent 排除被动 image_gen namespace 声明。
 	// Codex 在所有请求中被动声明 image_gen namespace，宽泛检测会导致禁了生图的
 	// 分组中所有 Codex 请求被 403（#4447），并误占生图并发槽位。
-	imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, body)
+	imageIntent := service.IsExplicitImageGenerationIntent(c, "/v1/responses", reqModel, body)
 	if imageIntent {
 		c.Request = c.Request.WithContext(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
 	}
@@ -704,7 +704,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 
 	// 余额模式在途预留：防止并发请求在预检时看到同一份余额而集体透支。
-	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(reqModel, body))
+	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(c, reqModel, body))
 	if err != nil {
 		reqLog.Info("openai.inflight_reservation_rejected", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
@@ -1215,8 +1215,8 @@ func isBareOpenAIResponsesPath(c *gin.Context) bool {
 	}
 }
 
-func isOpenAIRemoteCompactionV2Request(body []byte) bool {
-	stream, valid := parseOpenAICompatibleStream(body)
+func isOpenAIRemoteCompactionV2Request(c *gin.Context, body []byte) bool {
+	stream, valid := parseOpenAICompatibleStream(c, body)
 	return valid && stream && service.HasCompactionTriggerInInput(body)
 }
 
@@ -1232,7 +1232,7 @@ func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Con
 		} else if changed {
 			body = normalized
 		}
-		if isOpenAIRemoteCompactionV2Request(body) {
+		if isOpenAIRemoteCompactionV2Request(c, body) {
 			return body, true
 		}
 		c.Request.URL.Path = strings.TrimRight(c.Request.URL.Path, "/") + "/compact"
@@ -1400,7 +1400,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
-	if !gjson.ValidBytes(body) {
+	if !service.RequestBodyTop(c, body).Valid() {
 		logRequestBodyParseFailure(reqLog, body, nil)
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
@@ -1410,7 +1410,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
-	modelResult := gjson.GetBytes(body, "model")
+	modelResult := service.RequestBodyTop(c, body).Get("model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
@@ -1502,7 +1502,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	}
 
 	// 余额模式在途预留（与计费同口径估算；计费任务扣减余额缓存后才释放）。
-	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(reqModel, body))
+	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(c, reqModel, body))
 	if inflightErr != nil {
 		status, code, message, retryAfter := billingErrorDetails(inflightErr)
 		if retryAfter > 0 {
@@ -2571,7 +2571,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 	}
 	permissions := service.APIKeyQueueRequestPermissions{Models: []string{reqModel}, Capabilities: service.APIKeyQueueCapabilityForbiddenWhenClaudeCodeOnly}
-	if service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, firstMessage) {
+	if service.IsExplicitImageGenerationIntent(nil, "/v1/responses", reqModel, firstMessage) {
 		permissions.Capabilities |= service.APIKeyQueueCapabilityImageGeneration
 	}
 	ctx = service.WithAPIKeyQueueRequestPermissions(ctx, permissions)
@@ -2599,7 +2599,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 
-	imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, firstMessage)
+	imageIntent := service.IsExplicitImageGenerationIntent(nil, "/v1/responses", reqModel, firstMessage)
 	if imageIntent {
 		ctx = service.WithOpenAIImageGenerationIntent(ctx)
 		c.Request = c.Request.WithContext(ctx)
@@ -2818,7 +2818,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// WSv2 传输本身已隐含 Responses 支持，此处为防御性对齐。
 	// 使用 IsExplicitImageGenerationIntent 排除被动 namespace 声明（#4476）。
 	requiredCapability := service.OpenAIEndpointCapabilityChatCompletions
-	if service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, firstMessage) && requestPlatform == service.PlatformOpenAI {
+	if service.IsExplicitImageGenerationIntent(nil, "/v1/responses", reqModel, firstMessage) && requestPlatform == service.PlatformOpenAI {
 		requiredCapability = service.OpenAIEndpointCapabilityResponses
 	}
 
@@ -3047,7 +3047,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			TurnStarted:                 recordTurnStart,
 			BeforeRequest: func(turn int, payload []byte, originalModel string) ([]byte, error) {
 				turnPermissions := service.APIKeyQueueRequestPermissions{Models: []string{originalModel}, Capabilities: service.APIKeyQueueCapabilityForbiddenWhenClaudeCodeOnly}
-				if service.IsExplicitImageGenerationIntent("/v1/responses", originalModel, payload) {
+				if service.IsExplicitImageGenerationIntent(nil, "/v1/responses", originalModel, payload) {
 					turnPermissions.Capabilities |= service.APIKeyQueueCapabilityImageGeneration
 				}
 				ctx = service.WithAPIKeyQueueRequestPermissions(ctx, turnPermissions)

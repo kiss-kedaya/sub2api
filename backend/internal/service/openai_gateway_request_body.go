@@ -88,14 +88,16 @@ func shouldPreserveOpenAIResponsesNoneReasoningEffort(account *Account) bool {
 // Codex 0.149.0 needs a single advertised effort to directly select a visible
 // non-reasoning model. Treat that catalog-only "none" value as omission for
 // compatible upstreams, while preserving official OpenAI request semantics.
-func filterOpenAIResponsesNoneReasoningEffortForAccount(account *Account, body []byte) ([]byte, error) {
+func filterOpenAIResponsesNoneReasoningEffortForAccount(c *gin.Context, account *Account, body []byte) ([]byte, error) {
 	if len(body) == 0 || shouldPreserveOpenAIResponsesNoneReasoningEffort(account) {
 		return body, nil
 	}
 
+	// RequestBodyTop is asked again after each delete: the rewritten body is a new
+	// slice and gets its own index, so a lookup never sees the pre-delete bytes.
 	out := body
 	for _, path := range []string{"reasoning.effort", "reasoning_effort"} {
-		effort := gjson.GetBytes(out, path)
+		effort := RequestBodyTop(c, out).Get(path)
 		if effort.Type != gjson.String || !strings.EqualFold(strings.TrimSpace(effort.String()), "none") {
 			continue
 		}
@@ -105,7 +107,7 @@ func filterOpenAIResponsesNoneReasoningEffortForAccount(account *Account, body [
 		}
 		out = next
 	}
-	if reasoning := gjson.GetBytes(out, "reasoning"); reasoning.IsObject() && len(reasoning.Map()) == 0 {
+	if reasoning := RequestBodyTop(c, out).Get("reasoning"); reasoning.IsObject() && len(reasoning.Map()) == 0 {
 		next, err := sjson.DeleteBytes(out, "reasoning")
 		if err != nil {
 			return body, fmt.Errorf("strip empty reasoning object: %w", err)
@@ -707,7 +709,7 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 		}
 		normalized = next
 	}
-	if next, removed, err := normalizeOpenAIParallelToolCallsWithoutTools(normalized, false); err != nil {
+	if next, removed, err := normalizeOpenAIParallelToolCallsWithoutTools(nil, normalized, false); err != nil {
 		return body, false, err
 	} else if removed {
 		normalized = next
@@ -719,15 +721,15 @@ func normalizeOpenAICompactRequestBody(body []byte) ([]byte, bool, error) {
 	return normalized, true, nil
 }
 
-func normalizeOpenAIParallelToolCallsWithoutTools(body []byte, responsesLite bool) ([]byte, bool, error) {
+func normalizeOpenAIParallelToolCallsWithoutTools(c *gin.Context, body []byte, responsesLite bool) ([]byte, bool, error) {
 	if responsesLite {
 		return body, false, nil
 	}
-	parallel := gjson.GetBytes(body, "parallel_tool_calls")
+	parallel := RequestBodyTop(c, body).Get("parallel_tool_calls")
 	if !parallel.Exists() {
 		return body, false, nil
 	}
-	if openAIRequestBodyHasTools(body) {
+	if openAIRequestBodyHasTools(c, body) {
 		return body, false, nil
 	}
 	normalized, err := sjson.DeleteBytes(body, "parallel_tool_calls")
@@ -738,11 +740,12 @@ func normalizeOpenAIParallelToolCallsWithoutTools(body []byte, responsesLite boo
 }
 
 // openAIRequestBodyHasTools 同时识别顶层 tools 和 input[].additional_tools。
-func openAIRequestBodyHasTools(body []byte) bool {
-	if tools := gjson.GetBytes(body, "tools"); tools.IsArray() && len(tools.Array()) > 0 {
+func openAIRequestBodyHasTools(c *gin.Context, body []byte) bool {
+	top := RequestBodyTop(c, body)
+	if tools := top.Get("tools"); tools.IsArray() && len(tools.Array()) > 0 {
 		return true
 	}
-	for _, item := range gjson.GetBytes(body, "input").Array() {
+	for _, item := range top.Get("input").Array() {
 		if strings.TrimSpace(item.Get("type").String()) != "additional_tools" {
 			continue
 		}
@@ -814,16 +817,19 @@ func normalizeOpenAIResponsesReasoningContentReplay(body []byte) ([]byte, bool, 
 	return normalized, true, nil
 }
 
-func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body []byte, knownStoreFalse bool) ([]byte, bool, error) {
-	if !knownStoreFalse && gjson.GetBytes(body, "store").Type != gjson.False {
+func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(c *gin.Context, body []byte, knownStoreFalse bool) ([]byte, bool, error) {
+	top := RequestBodyTop(c, body)
+	if !knownStoreFalse && top.Get("store").Type != gjson.False {
 		return body, false, nil
 	}
+	// input keeps coming from the root view: replaceOpenAIRawInput relies on the
+	// child's offset being relative to that view.
 	root := parseRawJSONView(body)
 	input := root.Get("input")
 	if !input.IsArray() {
 		return body, false, nil
 	}
-	if !root.IsObject() || !gjson.ValidBytes(body) || !utf8.Valid(body) || hasDuplicateJSONObjectKeys(root) {
+	if !root.IsObject() || !top.Valid() || !utf8.Valid(body) || hasDuplicateJSONObjectKeys(root) {
 		return normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body, knownStoreFalse)
 	}
 
@@ -1529,7 +1535,7 @@ func normalizeOpenAIResponsesCompatibilityBody(body []byte, account *Account, re
 	changed := false
 	if account.IsOpenAIOAuthLike() {
 		var err error
-		normalized, changed, err = normalizeOpenAIResponsesLegacyIngress(body)
+		normalized, changed, err = normalizeOpenAIResponsesLegacyIngress(nil, body)
 		if err != nil {
 			return body, false, err
 		}
@@ -1541,13 +1547,13 @@ func normalizeOpenAIResponsesCompatibilityBody(body []byte, account *Account, re
 		changed = true
 	}
 	if account.IsOpenAIApiKey() {
-		if next, normalizedParallel, err := normalizeOpenAIParallelToolCallsWithoutTools(normalized, responsesLite); err != nil {
+		if next, normalizedParallel, err := normalizeOpenAIParallelToolCallsWithoutTools(nil, normalized, responsesLite); err != nil {
 			return body, false, err
 		} else if normalizedParallel {
 			normalized = next
 			changed = true
 		}
-		if next, normalizedReasoning, err := normalizeOpenAIAPIKeyStoreFalseReasoningReplay(normalized, false); err != nil {
+		if next, normalizedReasoning, err := normalizeOpenAIAPIKeyStoreFalseReasoningReplay(nil, normalized, false); err != nil {
 			return body, false, err
 		} else if normalizedReasoning {
 			normalized = next
@@ -1622,7 +1628,7 @@ func normalizeOpenAIResponsesCompatibilityBody(body []byte, account *Account, re
 		normalized = schemaBody
 		changed = true
 	}
-	if openAIRequestBodyImageGenerationToolNeedsNormalization(normalized) {
+	if openAIRequestBodyImageGenerationToolNeedsNormalization(nil, normalized) {
 		var reqBody map[string]any
 		if err := json.Unmarshal(normalized, &reqBody); err != nil {
 			return body, false, fmt.Errorf("normalize websocket image tool body: %w", err)
@@ -1799,10 +1805,11 @@ func isOpenAICodexModel(model string) bool {
 // billingModel, originalModel）：显式 effort 的模型归一化（max 保留判定）用第一个
 // 非空候选；body 未携带 effort 时的模型后缀推导依次尝试每个候选——OAuth 的
 // normalizeCodexModel 会剥掉 upstreamModel 的 effort 后缀，只有原始模型名还留着。
-func extractOpenAIReasoningEffortFromBody(body []byte, modelCandidates ...string) *string {
-	reasoningEffort := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
+func extractOpenAIReasoningEffortFromBody(c *gin.Context, body []byte, modelCandidates ...string) *string {
+	top := RequestBodyTop(c, body)
+	reasoningEffort := strings.TrimSpace(top.Get("reasoning.effort").String())
 	if reasoningEffort == "" {
-		reasoningEffort = strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
+		reasoningEffort = strings.TrimSpace(top.Get("reasoning_effort").String())
 	}
 	if reasoningEffort != "" {
 		normalized := normalizeOpenAIReasoningEffortForModel(reasoningEffort, firstNonEmpty(modelCandidates...))
@@ -1819,17 +1826,20 @@ func extractOpenAIReasoningEffortFromBody(body []byte, modelCandidates ...string
 	return &value
 }
 
-func explicitRequestedReasoningEffortFromBody(body []byte) string {
+func explicitRequestedReasoningEffortFromBody(c *gin.Context, body []byte) string {
 	// Each gjson.GetBytes call is a full body rescan, and the misses below are
 	// the common case. Skip a probe when its key text cannot appear in the body;
 	// escaped keys ("\u0072easoning") must still work, so a body containing any
 	// backslash keeps the original unconditional behaviour.
 	hasEscape := bytes.IndexByte(body, '\\') >= 0
+	// A body with any backslash defeats the prefilter above; on a large body the
+	// top-level index then answers the probes instead of one rescan each.
+	top := RequestBodyTop(c, body)
 	for _, probe := range reasoningEffortProbes {
 		if !hasEscape && !bytes.Contains(body, probe.key) {
 			continue
 		}
-		if raw := strings.TrimSpace(gjson.GetBytes(body, probe.path).String()); raw != "" {
+		if raw := strings.TrimSpace(top.Get(probe.path).String()); raw != "" {
 			return raw
 		}
 	}
@@ -1852,8 +1862,8 @@ var reasoningEffortProbes = []reasoningEffortProbe{
 // group policy rewriting and before model-family remapping (max -> xhigh).
 // Empty or unknown values return nil. "max" is preserved even for models that
 // later persist "xhigh".
-func CanonicalRequestedReasoningEffort(body []byte, modelCandidates ...string) *string {
-	if raw := explicitRequestedReasoningEffortFromBody(body); raw != "" {
+func CanonicalRequestedReasoningEffort(c *gin.Context, body []byte, modelCandidates ...string) *string {
+	if raw := explicitRequestedReasoningEffortFromBody(c, body); raw != "" {
 		canonical := NormalizeMaxReasoningEffort(raw)
 		if canonical == "" {
 			return nil
@@ -1865,7 +1875,7 @@ func CanonicalRequestedReasoningEffort(body []byte, modelCandidates ...string) *
 			return &value
 		}
 	}
-	if model := strings.TrimSpace(gjson.GetBytes(body, "model").String()); model != "" {
+	if model := strings.TrimSpace(RequestBodyTop(c, body).Get("model").String()); model != "" {
 		if value := canonicalReasoningEffortFromModelSuffix(model); value != "" {
 			return &value
 		}
@@ -1907,11 +1917,11 @@ func extractOpenAIServiceTier(reqBody map[string]any) *string {
 	return normalizeOpenAIServiceTier(raw)
 }
 
-func extractOpenAIServiceTierFromBody(body []byte) *string {
+func extractOpenAIServiceTierFromBody(c *gin.Context, body []byte) *string {
 	if len(body) == 0 {
 		return nil
 	}
-	return normalizeOpenAIServiceTier(gjson.GetBytes(body, "service_tier").String())
+	return normalizeOpenAIServiceTier(RequestBodyTop(c, body).Get("service_tier").String())
 }
 
 func normalizeOpenAIServiceTier(raw string) *string {
@@ -1966,8 +1976,8 @@ func boundInvalidOpenAIServiceTierValue(raw string) string {
 //   - an explicitly present non-string value, an empty string, or any other
 //     unknown value → *ErrInvalidOpenAIServiceTier (handler maps to HTTP 400),
 //     matching OpenAI's enum validation semantics
-func ValidateOpenAIServiceTierField(body []byte) (string, error) {
-	tierResult := gjson.GetBytes(body, "service_tier")
+func ValidateOpenAIServiceTierField(c *gin.Context, body []byte) (string, error) {
+	tierResult := RequestBodyTop(c, body).Get("service_tier")
 	if !tierResult.Exists() || tierResult.Type == gjson.Null {
 		return "", nil
 	}
@@ -2438,11 +2448,11 @@ func openAIJSONValueMayContainImageInput(value gjson.Result) bool {
 	return false
 }
 
-func openAIRequestBodyMayContainEmptyBase64InputImage(body []byte) bool {
+func openAIRequestBodyMayContainEmptyBase64InputImage(c *gin.Context, body []byte) bool {
 	if len(body) == 0 || !openAIRequestBodyMayContainInputImageToken(body) {
 		return false
 	}
-	input := gjson.GetBytes(body, "input")
+	input := RequestBodyTop(c, body).Get("input")
 	if !input.Exists() {
 		return false
 	}
@@ -2481,8 +2491,8 @@ func openAIJSONValueMayContainEmptyBase64InputImage(value gjson.Result) bool {
 	return false
 }
 
-func sanitizeEmptyBase64InputImagesInOpenAIBody(body []byte) ([]byte, bool, error) {
-	if !openAIRequestBodyMayContainEmptyBase64InputImage(body) {
+func sanitizeEmptyBase64InputImagesInOpenAIBody(c *gin.Context, body []byte) ([]byte, bool, error) {
+	if !openAIRequestBodyMayContainEmptyBase64InputImage(c, body) {
 		return body, false, nil
 	}
 
@@ -2624,7 +2634,7 @@ func extractOpenAIReasoningEffort(reqBody map[string]any, modelCandidates ...str
 
 func CanonicalRequestedReasoningEffortFromReqBody(reqBody map[string]any, modelCandidates ...string) *string {
 	if reqBody == nil {
-		return CanonicalRequestedReasoningEffort(nil, modelCandidates...)
+		return CanonicalRequestedReasoningEffort(nil, nil, modelCandidates...)
 	}
 	raw := ""
 	if reasoning, ok := reqBody["reasoning"].(map[string]any); ok {
@@ -2644,7 +2654,7 @@ func CanonicalRequestedReasoningEffortFromReqBody(reqBody map[string]any, modelC
 		}
 		return &canonical
 	}
-	return CanonicalRequestedReasoningEffort(nil, modelCandidates...)
+	return CanonicalRequestedReasoningEffort(nil, nil, modelCandidates...)
 }
 
 func normalizeOpenAIReasoningEffort(raw string) string {

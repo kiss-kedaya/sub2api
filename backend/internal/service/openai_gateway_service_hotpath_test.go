@@ -802,19 +802,19 @@ func TestOpenAIGatewayService_Forward_StripsImageGenerationToolForSparkAPIKey(t 
 func TestOpenAIRequestBodyMayContainEmptyBase64InputImageSeesEscapedJSON(t *testing.T) {
 	body := []byte(`{"input":[{"type":"message","content":[{"type":"input_image","image_` + "\\u0075" + `rl":"data:image/png;base64` + "\\u002c" + `   "}]}]}`)
 
-	require.True(t, openAIRequestBodyMayContainEmptyBase64InputImage(body))
+	require.True(t, openAIRequestBodyMayContainEmptyBase64InputImage(nil, body))
 }
 
 func TestOpenAIRequestBodyMayContainEmptyBase64InputImageSeesEscapedImageType(t *testing.T) {
 	body := []byte(`{"input":[{"type":"message","content":[{"type":"input_` + "\\u0069" + `mage","image_url":"data:image/png;base64,   "}]}]}`)
 
-	require.True(t, openAIRequestBodyMayContainEmptyBase64InputImage(body))
+	require.True(t, openAIRequestBodyMayContainEmptyBase64InputImage(nil, body))
 }
 
 func TestOpenAIRequestBodyMayContainEmptyBase64InputImageSeesEscapedInputPrefix(t *testing.T) {
 	body := []byte(`{"input":[{"type":"message","content":[{"type":"inp` + "\\u0075" + `t_image","image_url":"data:image/png;base64,   "}]}]}`)
 
-	require.True(t, openAIRequestBodyMayContainEmptyBase64InputImage(body))
+	require.True(t, openAIRequestBodyMayContainEmptyBase64InputImage(nil, body))
 }
 
 func TestOpenAIGatewayService_Forward_ImageOnlyModelKeepsSupportedVerbosity(t *testing.T) {
@@ -954,7 +954,7 @@ func TestExtractOpenAIReasoningEffortFromBody(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractOpenAIReasoningEffortFromBody(tt.body, tt.model)
+			got := extractOpenAIReasoningEffortFromBody(nil, tt.body, tt.model)
 			if tt.wantNil {
 				require.Nil(t, got)
 				return
@@ -1017,7 +1017,7 @@ func TestSanitizeEmptyBase64InputImagesInOpenAIRequestBodyMap(t *testing.T) {
 }
 
 func TestSanitizeEmptyBase64InputImagesInOpenAIBody(t *testing.T) {
-	body, changed, err := sanitizeEmptyBase64InputImagesInOpenAIBody([]byte(`{
+	body, changed, err := sanitizeEmptyBase64InputImagesInOpenAIBody(nil, []byte(`{
 		"model":"gpt-5.4",
 		"stream":true,
 		"input":[

@@ -115,7 +115,7 @@ func bindRequestedReasoningEffort(c *gin.Context, body []byte, model string) {
 	if c == nil || c.Request == nil {
 		return
 	}
-	effort := service.CanonicalRequestedReasoningEffort(body, model)
+	effort := service.CanonicalRequestedReasoningEffort(c, body, model)
 	if effort == nil {
 		return
 	}
@@ -142,7 +142,7 @@ func stampForwardRequestedReasoningEffort(result *service.ForwardResult, request
 }
 
 func applyOpenAIReasoningEffortPolicyForRequest(c *gin.Context, apiKey *service.APIKey, body []byte) ([]byte, bool, error) {
-	bindRequestedReasoningEffort(c, body, strings.TrimSpace(gjson.GetBytes(body, "model").String()))
+	bindRequestedReasoningEffort(c, body, strings.TrimSpace(service.RequestBodyTop(c, body).Get("model").String()))
 	maxEffort, mappings, overLimit, ok := openAIReasoningEffortPolicyForRequest(c, apiKey)
 	if !ok {
 		return body, false, nil
@@ -170,7 +170,7 @@ func bindOpenAIReasoningEffortPolicyForMessagesRequest(c *gin.Context, apiKey *s
 	if c == nil || c.Request == nil {
 		return
 	}
-	bindRequestedReasoningEffort(c, body, strings.TrimSpace(gjson.GetBytes(body, "model").String()))
+	bindRequestedReasoningEffort(c, body, strings.TrimSpace(service.RequestBodyTop(c, body).Get("model").String()))
 	// The Messages bridge synthesizes a default OpenAI effort when
 	// output_config.effort is omitted. Bind the group policy only for an
 	// explicit client value so the ceiling does not alter that default.

@@ -11,7 +11,7 @@ var openAIResponsesImageIntentRoutingBenchmarkSink service.OpenAIEndpointCapabil
 
 func BenchmarkOpenAIResponsesImageIntentRouting_LargeToolsBody(b *testing.B) {
 	body := buildLargeOpenAIResponsesToolsBody(32 << 20)
-	if service.IsExplicitImageGenerationIntent("/v1/responses", "gpt-5.4", body) {
+	if service.IsExplicitImageGenerationIntent(nil, "/v1/responses", "gpt-5.4", body) {
 		b.Fatal("large tools body must not have explicit image intent")
 	}
 	platform := service.PlatformOpenAI
@@ -20,7 +20,7 @@ func BenchmarkOpenAIResponsesImageIntentRouting_LargeToolsBody(b *testing.B) {
 		b.SetBytes(int64(len(body)))
 		b.ReportAllocs()
 		for range b.N {
-			imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", "gpt-5.4", body)
+			imageIntent := service.IsExplicitImageGenerationIntent(nil, "/v1/responses", "gpt-5.4", body)
 			openAIResponsesImageIntentRoutingBenchmarkSink = openAIResponsesRequiredCapability(imageIntent, platform)
 		}
 	})
@@ -29,10 +29,10 @@ func BenchmarkOpenAIResponsesImageIntentRouting_LargeToolsBody(b *testing.B) {
 		b.SetBytes(int64(len(body)))
 		b.ReportAllocs()
 		for range b.N {
-			imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", "gpt-5.4", body)
+			imageIntent := service.IsExplicitImageGenerationIntent(nil, "/v1/responses", "gpt-5.4", body)
 			// 对照优化前路径：路由阶段会再次扫描同一份未修改的 body。
 			requiredCapability := service.OpenAIEndpointCapabilityChatCompletions
-			if service.IsExplicitImageGenerationIntent("/v1/responses", "gpt-5.4", body) && platform == service.PlatformOpenAI {
+			if service.IsExplicitImageGenerationIntent(nil, "/v1/responses", "gpt-5.4", body) && platform == service.PlatformOpenAI {
 				requiredCapability = service.OpenAIEndpointCapabilityResponses
 			}
 			if imageIntent && requiredCapability != service.OpenAIEndpointCapabilityResponses {

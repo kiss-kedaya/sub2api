@@ -472,6 +472,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			// see the rehydrated tool intent or it will replace client functions
 			// with the native-search tool-free route. Explicit current-turn tool
 			// intent still uses the original pre-sanitization source above.
+			// bodytop-ok: scratch copy, rewritten in place here. It must never be passed
+			// to RequestBodyTop: that index is keyed by slice identity and would answer
+			// from the previous contents.
 			grokIntentSourceBody = append(grokIntentSourceBody[:0], body...)
 		}
 		loweredTools := inheritedState.LoweredTools
@@ -483,7 +486,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			LoweredTools:  loweredTools,
 		})
 	}
-	if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload) {
+	if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(nil, payload) {
 		liteBody, liteChanged, liteErr := normalizeOpenAIResponsesLitePayloadForAccount(body, account)
 		if liteErr != nil {
 			return nil, fmt.Errorf("normalize responses Lite payload: %w", liteErr)
@@ -506,7 +509,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if buildErr != nil {
 			return nil, buildErr
 		}
-		if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(payload) {
+		if account.Platform != PlatformGrok && isOpenAIResponsesLiteWebSocketPayload(nil, payload) {
 			upstreamReq.Header.Set(responsesLiteHeader, "true")
 		}
 		return upstreamReq, nil
@@ -689,9 +692,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			UpstreamResponseModel:         responseModelObserver.Model(),
 			UpstreamResponseModelConflict: responseModelObserver.Conflict(),
 			UpstreamResponseServiceTier:   responseModelObserver.ServiceTier(),
-			ServiceTier:                   resolvedOpenAIUpstreamServiceTierFromObserver(responseModelObserver, extractOpenAIServiceTierFromBody(body)),
-			ReasoningEffort:               ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(body, mappedModel, originalModel), body, mappedModel),
-			RequestedReasoningEffort:      CanonicalRequestedReasoningEffort(body, originalModel, mappedModel),
+			ServiceTier:                   resolvedOpenAIUpstreamServiceTierFromObserver(responseModelObserver, extractOpenAIServiceTierFromBody(nil, body)),
+			ReasoningEffort:               ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(nil, body, mappedModel, originalModel), body, mappedModel),
+			RequestedReasoningEffort:      CanonicalRequestedReasoningEffort(nil, body, originalModel, mappedModel),
 			Stream:                        reqStream,
 			OpenAIWSMode:                  true,
 			UpstreamTerminalEvent:         upstreamTerminalEvent,

@@ -301,7 +301,7 @@ func BenchmarkOptimizedNormalizeOpenAIAPIKeyStoreFalseReasoningReplayLargeHistor
 		return fmt.Sprintf(`{"type":"reasoning","id":"rs_%d","encrypted_content":"%s"}`, index, payload)
 	})
 	benchmarkOpenAIRawRewrite(b, body, func(body []byte) ([]byte, bool, error) {
-		return normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body, false)
+		return normalizeOpenAIAPIKeyStoreFalseReasoningReplay(nil, body, false)
 	})
 }
 

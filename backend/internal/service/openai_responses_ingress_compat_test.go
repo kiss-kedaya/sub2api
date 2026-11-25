@@ -10,7 +10,7 @@ import (
 func TestNormalizeOpenAIResponsesLegacyIngressMessagesOnly(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","stream":false,"messages":[{"role":"system","content":"repo policy"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"q\":\"hello\"}"}}]},{"role":"tool","tool_call_id":"call_1","content":"ok"}],"previous_response_id":"resp_stale"}`)
 
-	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(body)
+	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(nil, body)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(normalized, "messages").Exists())
@@ -27,7 +27,7 @@ func TestNormalizeOpenAIResponsesLegacyIngressMessagesOnly(t *testing.T) {
 func TestNormalizeOpenAIResponsesLegacyIngressConvertsChatTopLevelFields(t *testing.T) {
 	body := []byte(`{"model":"gpt-4.1","messages":[{"role":"user","content":"weather?"}],"tools":[{"type":"function","function":{"name":"lookup","description":"Lookup weather","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}},"max_tokens":64,"reasoning_effort":"high","service_tier":"flex","temperature":0.2,"top_p":0.7}`)
 
-	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(body)
+	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(nil, body)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "user", gjson.GetBytes(normalized, "input.0.role").String())
@@ -48,7 +48,7 @@ func TestNormalizeOpenAIResponsesLegacyIngressConvertsChatTopLevelFields(t *test
 func TestNormalizeOpenAIResponsesLegacyIngressNativeInputRemainsAuthoritative(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":[{"id":"msg_native","type":"message","role":"user","content":[{"type":"input_text","text":"keep me"}]}],"messages":[{"role":"user","content":"do not merge"}],"tools":[{"type":"function","function":{"name":"native_shape"}}],"tool_choice":{"type":"function","function":{"name":"native_shape"}},"previous_response_id":"resp_keep"}`)
 
-	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(body)
+	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(nil, body)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(normalized, "messages").Exists())
@@ -63,7 +63,7 @@ func TestNormalizeOpenAIResponsesLegacyIngressNativeInputRemainsAuthoritative(t 
 func TestNormalizeOpenAIResponsesLegacyIngressKeepsPromptAliasAndDropsCommands(t *testing.T) {
 	body := []byte(`{"model":"gpt-4.1","prompt":"hello","commands":[{"name":"legacy"}]}`)
 
-	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(body)
+	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(nil, body)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "hello", gjson.GetBytes(normalized, "input").String())
@@ -74,7 +74,7 @@ func TestNormalizeOpenAIResponsesLegacyIngressKeepsPromptAliasAndDropsCommands(t
 func TestNormalizeOpenAIResponsesLegacyIngressPreservesNativePromptTemplate(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","prompt":{"id":"pmpt_abc","version":"7","variables":{"topic":"ownership"}}}`)
 
-	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(body)
+	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(nil, body)
 	require.NoError(t, err)
 	require.False(t, changed)
 	require.JSONEq(t, string(body), string(normalized))
@@ -85,7 +85,7 @@ func TestNormalizeOpenAIResponsesLegacyIngressPreservesNativePromptTemplate(t *t
 func TestNormalizeOpenAIResponsesLegacyIngressPreservesUnknownPromptShapeWhileDroppingCommands(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","prompt":["one","two"],"commands":[{"name":"legacy"}]}`)
 
-	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(body)
+	normalized, changed, err := normalizeOpenAIResponsesLegacyIngress(nil, body)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, int64(2), gjson.GetBytes(normalized, "prompt.#").Int())

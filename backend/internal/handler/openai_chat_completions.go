@@ -73,7 +73,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	if !gjson.ValidBytes(body) {
+	if !service.RequestBodyTop(c, body).Valid() {
 		logRequestBodyParseFailure(reqLog, body, nil)
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
@@ -83,7 +83,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	modelResult := gjson.GetBytes(body, "model")
+	modelResult := service.RequestBodyTop(c, body).Get("model")
 	if !modelResult.Exists() || modelResult.Type != gjson.String || modelResult.String() == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
@@ -109,12 +109,12 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	} else if changed {
 		body = cappedBody
 	}
-	reqStream, ok := parseOpenAICompatibleStream(body)
+	reqStream, ok := parseOpenAICompatibleStream(c, body)
 	if !ok {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", invalidStreamFieldTypeMessage)
 		return
 	}
-	if _, err := service.ValidateOpenAIServiceTierField(body); err != nil {
+	if _, err := service.ValidateOpenAIServiceTierField(c, body); err != nil {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
@@ -168,7 +168,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	}
 
 	// 余额模式在途预留：防止并发请求在预检时看到同一份余额而集体透支。
-	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(reqModel, body))
+	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(c, reqModel, body))
 	if err != nil {
 		reqLog.Info("openai_chat_completions.inflight_reservation_rejected", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)

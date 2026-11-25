@@ -5,19 +5,18 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
 )
 
 const openAICompatMessagesBridgeContextKey = "openai_compat_messages_bridge"
 
-func isOpenAICompatMessagesBridgeBody(body []byte) bool {
+func isOpenAICompatMessagesBridgeBody(c *gin.Context, body []byte) bool {
 	if len(body) == 0 {
 		return false
 	}
 	if bytes.Contains(body, []byte(openAICompatClaudeCodeTodoGuardMarker)) {
 		return true
 	}
-	return isOpenAICompatMessagesBridgePromptCacheKey(gjson.GetBytes(body, "prompt_cache_key").String())
+	return isOpenAICompatMessagesBridgePromptCacheKey(RequestBodyTop(c, body).Get("prompt_cache_key").String())
 }
 
 func isOpenAICompatMessagesBridgeRequestBody(reqBody map[string]any) bool {

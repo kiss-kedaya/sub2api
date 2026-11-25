@@ -77,7 +77,7 @@ func (s *OpenAIGatewayService) forwardSelectedExcelBPS(ctx context.Context, c *g
 			model := gjson.GetBytes(body, "model").String()
 			gone := newClientGoneOpenAIForwardResult(
 				c, account, body, firstNonEmptyString(clientModel, model), "", model,
-				extractOpenAIReasoningEffortFromBody(body, model), gjson.GetBytes(body, "stream").Bool(), start,
+				extractOpenAIReasoningEffortFromBody(c, body, model), gjson.GetBytes(body, "stream").Bool(), start,
 			)
 			if gone != nil {
 				gone.UpstreamEndpoint = "/basispoints/api/responses"

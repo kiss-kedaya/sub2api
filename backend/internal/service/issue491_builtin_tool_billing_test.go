@@ -90,7 +90,7 @@ func TestIssue491NativeSearchCountExcludesClientDeclaredFunctions(t *testing.T) 
 		{"type":"function","name":"lookup_docs"},
 		{"type":"function","function":{"name":"web_search"}}
 	]}`)
-	skip := declaredClientFunctionToolNames(body)
+	skip := declaredClientFunctionToolNames(nil, body)
 	require.Contains(t, skip, "web_search")
 	require.Contains(t, skip, "lookup_docs")
 	require.NotContains(t, skip, "web_search_preview", "内置工具只按类型声明，没有函数名")
@@ -514,11 +514,11 @@ func TestIssue491ToolDeclarationEdgeCases(t *testing.T) {
 		`{"model":"m","input":"x","tools":null}`,
 		`{"model":"m","input":"x","tools":[{}]}`,
 	} {
-		require.Nil(t, declaredClientFunctionToolNames([]byte(body)), "空/缺省 tools 不应产生跳过名单: %s", body)
+		require.Nil(t, declaredClientFunctionToolNames(nil, []byte(body)), "空/缺省 tools 不应产生跳过名单: %s", body)
 	}
 
 	// 大小写：类型和名字都按小写归一。
-	lower := declaredClientFunctionToolNames([]byte(`{"tools":[{"type":"Function","name":"WEB_SEARCH"}]}`))
+	lower := declaredClientFunctionToolNames(nil, []byte(`{"tools":[{"type":"Function","name":"WEB_SEARCH"}]}`))
 	require.Contains(t, lower, "web_search")
 	require.Equal(t, 0, countNativeSearchCallsFromJSONBytes(
 		[]byte(`{"output":[{"type":"FUNCTION_CALL","name":"Web_Search","call_id":"c1"}]}`), lower),

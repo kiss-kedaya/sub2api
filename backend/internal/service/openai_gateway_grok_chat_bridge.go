@@ -669,7 +669,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 		if result.RequestID == "" {
 			result.RequestID = firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id"))
 		}
-		result.ReasoningEffort = extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
+		result.ReasoningEffort = extractOpenAIReasoningEffortFromBody(c, body, upstreamModel, billingModel, originalModel)
 	}
 	return result, err
 }

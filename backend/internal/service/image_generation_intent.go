@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
 
@@ -21,11 +22,15 @@ func isOpenAIResponsesLiteHeader(value string) bool {
 	return err == nil && parsed
 }
 
-func isOpenAIResponsesLiteWebSocketPayload(body []byte) bool {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
+func isOpenAIResponsesLiteWebSocketPayload(c *gin.Context, body []byte) bool {
+	if len(body) == 0 {
 		return false
 	}
-	return isOpenAIResponsesLiteHeader(gjson.GetBytes(body, "client_metadata."+responsesLiteWSMetadataKey).String())
+	top := RequestBodyTop(c, body)
+	if !top.Valid() {
+		return false
+	}
+	return isOpenAIResponsesLiteHeader(top.Get("client_metadata." + responsesLiteWSMetadataKey).String())
 }
 
 // isOpenAIResponsesLiteParallelToolCallsError recognizes the upstream contract
@@ -100,11 +105,11 @@ func IsImageGenerationIntent(endpoint string, requestedModel string, body []byte
 // IsExplicitImageGenerationIntent 仅检测原生 image_generation 工具、图片模型和显式 tool_choice，
 // 不检测被动的 image_gen namespace 声明。用于 capability 路由决策——被动 namespace 不应
 // 强制要求原生 Responses 能力，否则 Chat Completions-only 账号会被误过滤（#4476）。
-func IsExplicitImageGenerationIntent(endpoint string, requestedModel string, body []byte) bool {
+func IsExplicitImageGenerationIntent(c *gin.Context, endpoint string, requestedModel string, body []byte) bool {
 	if IsImageGenerationEndpoint(endpoint) || isOpenAIImageGenerationModel(requestedModel) {
 		return true
 	}
-	if len(body) == 0 || !gjson.ValidBytes(body) {
+	if len(body) == 0 || !RequestBodyTop(c, body).Valid() {
 		return false
 	}
 	var modelSeen, toolsSeen, toolChoiceSeen bool
@@ -298,11 +303,15 @@ func openAIRequestBodyHasImageGenerationDeclaration(body []byte) bool {
 		openAIJSONToolChoiceSelectsImageGeneration(gjson.GetBytes(body, "tool_choice"))
 }
 
-func openAIRequestBodyImageGenerationToolNeedsNormalization(body []byte) bool {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
+func openAIRequestBodyImageGenerationToolNeedsNormalization(c *gin.Context, body []byte) bool {
+	if len(body) == 0 {
 		return false
 	}
-	tools := gjson.GetBytes(body, "tools")
+	top := RequestBodyTop(c, body)
+	if !top.Valid() {
+		return false
+	}
+	tools := top.Get("tools")
 	if !tools.IsArray() {
 		return false
 	}
