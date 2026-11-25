@@ -459,6 +459,39 @@ export interface UserGroupLoad {
   models?: string[]
 }
 
+/**
+ * 管理员「破玻璃」重置用户 2FA 的结果（POST /admin/users/:id/reset-2fa）。
+ *
+ * 只重置 TOTP：`passkey_bound` 为 true 时该用户的 Passkey 仍然有效，登录仍需
+ * Passkey；`remaining_factors` 是重置后仍需验证的因子清单。
+ */
+export interface ResetUser2FAResponse {
+  user_id: number
+  email: string
+  target_role: string
+  target_is_admin: boolean
+  reason: string
+  totp_previously_enabled: boolean
+  totp_enabled_at?: string
+  totp_enabled: boolean
+  passkey_bound: boolean
+  notification_queued: boolean
+  remaining_factors: string[]
+  revoked_step_up_grants: boolean
+  reset_at: string
+}
+
+/**
+ * 管理员破玻璃重置用户的双因素认证（TOTP）。
+ *
+ * 后端要求：reason 必填 1~500 字、调用者必须刚完成 step-up 2FA、机器凭据一律 403。
+ * 成功后该用户的 TOTP 被清空、全部因子的 step-up 授权被撤销，并发邮件通知用户。
+ */
+export async function resetUser2FA(id: number, reason: string): Promise<ResetUser2FAResponse> {
+  const { data } = await apiClient.post<ResetUser2FAResponse>(`/admin/users/${id}/reset-2fa`, { reason })
+  return data
+}
+
 export interface UserLoadResponse {
   user_id: number
   current_concurrency: number
@@ -497,6 +530,7 @@ export const usersAPI = {
   getPlatformQuotas,
   updatePlatformQuotas,
   resetPlatformQuotaWindow,
+  resetUser2FA,
 }
 
 export default usersAPI

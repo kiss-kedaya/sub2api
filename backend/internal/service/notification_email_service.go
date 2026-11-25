@@ -35,6 +35,10 @@ const (
 	NotificationEmailEventOpsScheduledReport          = "ops.scheduled_report"
 	NotificationEmailEventTicketReply                 = "ticket.reply"
 	NotificationEmailEventTicketAdminNotify           = "ticket.admin_notify"
+	// NotificationEmailEventAdminSecurityTwoFactorReset 是管理员「破玻璃重置
+	// 2FA」后发给目标用户的必发通知（不可退订）：用户的双因素认证被管理员
+	// 清空，必须被告知重置原因、操作时间与仍需自己做的事。
+	NotificationEmailEventAdminSecurityTwoFactorReset = "admin.security.two_factor_reset"
 
 	notificationEmailTemplateKeyPrefix    = "notification_email_template:"
 	notificationEmailPreferenceKeyPrefix  = "notification_email_preference:"
@@ -562,6 +566,22 @@ func (s *NotificationEmailService) runtimeVariables(ctx context.Context, event, 
 		}
 		variables["ticket_link_display"] = "none"
 	}
+	if event == NotificationEmailEventAdminSecurityTwoFactorReset {
+		// 真实邮件里绝不能出现预览样例值：调用方漏传的字段一律清成占位，
+		// 宁可邮件里写 "-"，也不能让用户看到 example.com 或假原因。
+		for _, key := range adminEmailSecurityResetPlaceholders() {
+			switch key {
+			case "site_name", "recipient_name", "recipient_email":
+				continue
+			}
+			variables[key] = "-"
+		}
+		variables["rebind_link_display"] = ""
+		variables["remaining_factors"] = ""
+		variables["passkey_retained"] = "no"
+		variables["target_is_admin"] = "no"
+	}
+
 	for key, value := range input.Variables {
 		variables[key] = value
 	}
@@ -981,6 +1001,7 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 			"report_end_time":     "2026-07-19T01:00:26Z",
 			"report_html":         "<h2>日报</h2><p>请求量：2,374</p>",
 		}
+		addNotificationEmailAdminSecurityResetSampleVariables(variables, notificationEmailLocaleChinese)
 		addNotificationEmailOpsSummarySampleVariables(variables)
 		return variables
 	}
@@ -1030,8 +1051,41 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 		"report_end_time":     "2026-07-19T01:00:26Z",
 		"report_html":         "<h2>Daily summary</h2><p>Requests: 2,374</p>",
 	}
+	addNotificationEmailAdminSecurityResetSampleVariables(variables, notificationEmailDefaultLocale)
 	addNotificationEmailOpsSummarySampleVariables(variables)
 	return variables
+}
+
+// adminEmailSecurityResetPlaceholders 是「管理员重置 2FA」通知的占位符清单。
+//
+// 单独成函数（而不是内联 append）是为了让事件定义、样例变量与模板渲染使用同一份
+// 清单：漏一个占位符，模板校验会在后台模板页直接报错。
+func adminEmailSecurityResetPlaceholders() []string {
+	return append(append([]string{}, notificationEmailCommonPlaceholders...),
+		"reset_reason", "reset_at", "operator_name", "passkey_retained",
+		"remaining_factors", "rebind_url", "rebind_link_display")
+}
+
+// addNotificationEmailAdminSecurityResetSampleVariables 给后台模板预览填样例值。
+// 预览里不能出现真实用户数据，这里全部用固定示例。
+func addNotificationEmailAdminSecurityResetSampleVariables(variables map[string]string, locale string) {
+	if normalizeNotificationLocale(locale) == notificationEmailLocaleChinese {
+		variables["reset_reason"] = "用户忘记动态口令，经工单核实身份后由管理员重置"
+		variables["reset_at"] = "2026-11-25 09:30:00 UTC"
+		variables["operator_name"] = "admin@example.com"
+		variables["passkey_retained"] = "yes"
+		variables["remaining_factors"] = "passkey"
+		variables["rebind_url"] = "https://example.com/settings/security"
+		variables["rebind_link_display"] = "https://example.com/settings/security"
+		return
+	}
+	variables["reset_reason"] = "The user lost their authenticator; identity verified via support ticket."
+	variables["reset_at"] = "2026-11-25 09:30:00 UTC"
+	variables["operator_name"] = "admin@example.com"
+	variables["passkey_retained"] = "yes"
+	variables["remaining_factors"] = "passkey"
+	variables["rebind_url"] = "https://example.com/settings/security"
+	variables["rebind_link_display"] = "https://example.com/settings/security"
 }
 
 func addNotificationEmailOpsSummarySampleVariables(variables map[string]string) {
@@ -1065,6 +1119,9 @@ var notificationEmailEventOrder = []string{
 	NotificationEmailEventTicketAdminNotify,
 	NotificationEmailEventAuthVerifyCode,
 	NotificationEmailEventAuthPasswordReset,
+	// 破玻璃重置 2FA 紧跟认证类：它是账号安全事件，排在验证码/密码重置之后，
+	// 方便管理员在邮件模板页按「认证安全」分组立刻找到。
+	NotificationEmailEventAdminSecurityTwoFactorReset,
 	NotificationEmailEventNotificationEmailVerifyCode,
 	NotificationEmailEventSubscriptionPurchaseSuccess,
 	NotificationEmailEventSubscriptionExpiryReminder,
@@ -1110,6 +1167,14 @@ var notificationEmailEventDefinitions = map[string]NotificationEmailEventInfo{
 		Category:     "auth",
 		Optional:     false,
 		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "reset_url", "expires_in_minutes"),
+	},
+	NotificationEmailEventAdminSecurityTwoFactorReset: {
+		Event:        NotificationEmailEventAdminSecurityTwoFactorReset,
+		Label:        "管理员重置双因素认证",
+		Description:  "管理员「破玻璃」重置用户 TOTP 后必发通知：包含重置原因、操作时间、操作管理员、是否保留 Passkey 与重新绑定入口。不可退订。",
+		Category:     "auth",
+		Optional:     false,
+		Placeholders: adminEmailSecurityResetPlaceholders(),
 	},
 	NotificationEmailEventNotificationEmailVerifyCode: {
 		Event:        NotificationEmailEventNotificationEmailVerifyCode,
@@ -1261,6 +1326,38 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 <p>此链接将在 <strong>{{expires_in_minutes}}</strong> 分钟后失效。</p>
 <p class="muted">如果按钮无法点击，请复制以下链接到浏览器中打开：<br>{{reset_url}}</p>
 <p>如果不是您本人操作，请忽略此邮件。</p>`),
+		},
+	},
+	NotificationEmailEventAdminSecurityTwoFactorReset: {
+		notificationEmailDefaultLocale: {
+			Subject: "[{{site_name}}] Your two-factor authentication was reset by an administrator",
+			HTML: notificationEmailCard("#dc2626", "Two-factor authentication reset", `
+<p>Hello {{recipient_name}},</p>
+<p>An administrator reset the two-factor authentication (TOTP) on your account. The authenticator you had bound <strong>no longer works</strong>, and a new one must be bound before it protects your account again.</p>
+<p><strong>Reason for the reset:</strong> {{reset_reason}}<br>
+<strong>Reset time:</strong> {{reset_at}}<br>
+<strong>Operator:</strong> {{operator_name}}</p>
+<p>Passkey credentials are kept: {{passkey_retained}} (yes = your passkey login still works, no = you currently have no passkey bound).</p>
+<p>Two-factor factors you still need to verify after this reset: {{remaining_factors}}</p>
+<p>Please bind a new authenticator as soon as possible in Security settings.</p>
+<p><a class="button" href="{{rebind_url}}">Go to security settings</a></p>
+<p class="muted">If the button does not work, copy this link into your browser:<br>{{rebind_link_display}}</p>
+<p class="muted">If you did not ask anyone to reset your two-factor authentication, contact support immediately.</p>`),
+		},
+		notificationEmailLocaleChinese: {
+			Subject: "[{{site_name}}] 您的双因素认证已被管理员重置",
+			HTML: notificationEmailCard("#dc2626", "双因素认证已被重置", `
+<p>{{recipient_name}}，您好：</p>
+<p>管理员重置了您账号上的双因素认证（TOTP）。<strong>您原来绑定的动态口令已失效</strong>，需要重新绑定后双因素认证才会重新生效。</p>
+<p><strong>重置原因：</strong>{{reset_reason}}<br>
+<strong>操作时间：</strong>{{reset_at}}<br>
+<strong>操作管理员：</strong>{{operator_name}}</p>
+<p>Passkey 凭据是否保留：{{passkey_retained}}（yes = 您的 Passkey 登录仍然有效，no = 您当前没有绑定 Passkey）。</p>
+<p>重置后您仍需验证的因子：{{remaining_factors}}</p>
+<p>请尽快在安全设置中重新绑定新的动态口令。</p>
+<p><a class="button" href="{{rebind_url}}">前往安全设置</a></p>
+<p class="muted">如果按钮无法点击，请复制以下链接到浏览器中打开：<br>{{rebind_link_display}}</p>
+<p class="muted">如果不是您本人申请重置，请立刻联系客服。</p>`),
 		},
 	},
 	NotificationEmailEventNotificationEmailVerifyCode: {

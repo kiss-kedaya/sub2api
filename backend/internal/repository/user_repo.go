@@ -1638,6 +1638,39 @@ func (r *userRepository) DisableTotp(ctx context.Context, userID int64) error {
 	return nil
 }
 
+// ResetTotpForAdmin 是管理端破玻璃重置的写库入口：把 totp_enabled 置 false，
+// 并清空 totp_secret_encrypted / totp_enabled_at。
+//
+// 与 DisableTotpWithExpectedRole 的区别：管理员没有用户的动态码可验证，因此
+// 不绑定角色/密文前置条件；但 UPDATE 仍然带 totp_enabled = true，这样：
+//   - 目标用户本来就没开 2FA（并发关闭或误判）→ 影响 0 行 → ErrUserSecurityStateChanged；
+//   - 目标用户在此期间重绑了新密钥 → 仍然被同一条件覆盖（重置语义是「清掉」），
+//     不会残留一把用户以为还生效、实际已失效的密钥。
+//
+// Passkey 凭据、登录会话、step-up 授权都不由本方法处理：Passkey 刻意保留，
+// step-up 授权由服务层按因子枚举撤销（repository.TotpStepUpGrantKeys）。
+func (r *userRepository) ResetTotpForAdmin(ctx context.Context, userID int64) error {
+	if userID <= 0 {
+		return service.ErrUserNotFound
+	}
+	client := clientFromContext(ctx, r.client)
+	affected, err := client.User.Update().
+		Where(dbuser.IDEQ(userID), dbuser.TotpEnabledEQ(true), dbuser.DeletedAtIsNil()).
+		SetTotpEnabled(false).
+		ClearTotpEnabledAt().
+		ClearTotpSecretEncrypted().
+		Save(ctx)
+	if err != nil {
+		return translatePersistenceError(err, service.ErrUserNotFound, nil)
+	}
+	if affected == 0 {
+		// 乐观条件不成立：期间被关掉/删掉/重绑到另一个版本。让服务层回 400/409，
+		// 而不是假装成功（审计要写真实结果）。
+		return service.ErrUserSecurityStateChanged
+	}
+	return nil
+}
+
 // DisableTotpWithExpectedRole binds the write to the identity state used for
 // verification. Role, active status and the verified secret share one UPDATE.
 func (r *userRepository) DisableTotpWithExpectedRole(ctx context.Context, userID int64, expectedRole string, expectedSecret *string) error {

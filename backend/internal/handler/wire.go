@@ -59,12 +59,15 @@ func ProvideAdminHandlers(
 	excelGrant *admin.ExcelGrantHandler,
 	totpService *service.TotpService,
 	userService *service.UserService,
+	admin2FAReset *service.Admin2FAResetService,
 ) *AdminHandlers {
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	accountHandler.SetCodexTicketSettings(settingService)
 	accountHandler.SetClaudeResetCreditService(claudeResetCredits)
 	accountHandler.SetStepUpDependencies(totpService, userService, settingService)
+	// 破玻璃重置 2FA：装配在用户 handler 上，路由 POST /users/:id/reset-2fa。
+	userHandler.SetAdmin2FAResetService(admin2FAReset)
 	return &AdminHandlers{
 		DebugDump:              admin.NewDebugDumpHandler(),
 		ExcelGrant:             excelGrant,

@@ -456,6 +456,12 @@
     <UserBalanceHistoryModal :show="showBalanceHistoryModal" :user="balanceHistoryUser" @close="closeBalanceHistoryModal" @deposit="handleDepositFromHistory" @withdraw="handleWithdrawFromHistory" />
     <GroupReplaceModal :show="showGroupReplaceModal" :user="groupReplaceUser" :old-group="groupReplaceOldGroup" :all-groups="allGroups" @close="closeGroupReplaceModal" @success="loadUsers" />
     <UserAttributesConfigModal :show="showAttributesModal" @close="handleAttributesModalClose" />
+    <UserReset2FAModal
+      :show="showReset2FAModal"
+      :user="reset2FAUser"
+      @close="closeReset2FAModal"
+      @success="handleReset2FASuccess"
+    />
   </AppLayout>
   <TotpStepUpDialog :controller="stepUp" />
 </template>
@@ -502,6 +508,7 @@ import UserAllowedGroupsModal from '@/components/admin/user/UserAllowedGroupsMod
 import UserBalanceModal from '@/components/admin/user/UserBalanceModal.vue'
 import UserBalanceHistoryModal from '@/components/admin/user/UserBalanceHistoryModal.vue'
 import GroupReplaceModal from '@/components/admin/user/GroupReplaceModal.vue'
+import UserReset2FAModal from '@/components/admin/user/UserReset2FAModal.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import { useStepUp, isStepUpRequired, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 
@@ -1177,6 +1184,17 @@ const rowMenuItems = (user: AdminUser): DropdownMenuItem[][] => {
       { label: t('admin.users.withdraw'), icon: 'i-lucide-circle-minus', onSelect: () => handleWithdraw(user) },
       { label: t('admin.users.platformQuota.menuItem'), icon: 'i-lucide-chart-column', onSelect: () => handlePlatformQuota(user) },
       { label: t('admin.users.balanceHistory'), icon: 'i-lucide-wallet', onSelect: () => handleBalanceHistory(user) }
+    ],
+    [
+      // 破玻璃重置 2FA：用户自己关 2FA 要输动态码，忘了就只能在管理端重置。
+      // 危险操作单独成组（error 色），且对管理员目标也开放——管理员自己忘了
+      // 2FA 时这是唯一自救路径（后端审计里会标注 target_role=admin）。
+      {
+        label: t('admin.users.reset2fa.menuItem'),
+        icon: 'i-lucide-shield-off',
+        color: 'error',
+        onSelect: () => handleReset2FA(user)
+      }
     ]
   ]
   if (user.role !== 'admin') {
@@ -1203,6 +1221,10 @@ const allowedGroupsUser = ref<AdminUser | null>(null)
 const showGroupReplaceModal = ref(false)
 const groupReplaceUser = ref<AdminUser | null>(null)
 const groupReplaceOldGroup = ref<{ id: number; name: string } | null>(null)
+
+// 破玻璃重置 2FA 弹窗状态：目标用户、原因必填、step-up 二次验证都在弹窗内完成。
+const showReset2FAModal = ref(false)
+const reset2FAUser = ref<AdminUser | null>(null)
 
 // Balance (Deposit/Withdraw) modal state
 const showBalanceModal = ref(false)
@@ -1472,6 +1494,21 @@ const closeGroupReplaceModal = () => {
   showGroupReplaceModal.value = false
   groupReplaceUser.value = null
   groupReplaceOldGroup.value = null
+}
+
+const handleReset2FA = (user: AdminUser) => {
+  reset2FAUser.value = user
+  showReset2FAModal.value = true
+}
+
+const closeReset2FAModal = () => {
+  showReset2FAModal.value = false
+  reset2FAUser.value = null
+}
+
+// 重置成功后刷新列表：2FA 状态变了，行上的数据要重新取。
+const handleReset2FASuccess = () => {
+  loadUsers()
 }
 
 const handleDelete = (user: AdminUser) => {

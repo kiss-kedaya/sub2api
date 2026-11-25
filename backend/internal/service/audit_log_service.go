@@ -97,6 +97,20 @@ func (s *AuditLogService) List(ctx context.Context, filter *AuditLogFilter) (*Au
 	return s.repo.List(ctx, filter)
 }
 
+// RecordNow 同步写入一条审计记录（绕过异步队列，落库后才返回）。
+//
+// 只给「低频 + 高风险 + 必须保证已留痕」的操作使用（例如破玻璃重置 2FA）：
+// 这类操作如果走异步队列，接口返回成功时记录可能还在内存里，进程被重启就丢证据。
+func (s *AuditLogService) RecordNow(ctx context.Context, entry *AuditLog) error {
+	if s == nil || s.repo == nil || entry == nil {
+		return nil
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now().UTC()
+	}
+	return s.repo.Insert(ctx, entry)
+}
+
 // GetByID 查询单条详情。
 func (s *AuditLogService) GetByID(ctx context.Context, id int64) (*AuditLog, error) {
 	return s.repo.GetByID(ctx, id)

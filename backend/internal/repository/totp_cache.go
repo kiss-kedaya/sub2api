@@ -68,6 +68,12 @@ func (c *TotpCache) MarkLoginCodeUsed(ctx context.Context, userID int64, codeDig
 
 // NewTotpCache creates a new TOTP cache
 func NewTotpCache(rdb *redis.Client) service.TotpCache {
+	return NewTotpCacheStore(rdb)
+}
+
+// NewTotpCacheStore 返回具体类型：需要 step-up 授权撤销（break-glass 重置 2FA）
+// 或其它 TotpCache 接口之外能力的装配点用它，避免调用方再做类型断言。
+func NewTotpCacheStore(rdb *redis.Client) *TotpCache {
 	return &TotpCache{rdb: rdb}
 }
 
@@ -261,6 +267,51 @@ func TotpStepUpGrantKeys(userID int64, sessionKey string) []string {
 		keys = append(keys, totpStepUpKey(userID, sessionKey, factor))
 	}
 	return append(keys, totpStepUpLegacyKey(userID, sessionKey))
+}
+
+// RevokeStepUpGrantsForUser 撤销某用户全部会话、全部因子的 step-up 授权。
+//
+// 与 RevokeTwoFactorGrantsForUser 的区别：后者撤销的是登录用的 2FA 凭证
+// （two_factor_grant:*，按用户索引集合删除），而 step-up 的 5 分钟免验证窗口
+// 是按「用户 + 会话 + 因子」存的（totp:stepup:*），删前者不会让后者失效。
+// 管理员破玻璃重置 2FA 必须两者都撤销，否则重置前刚过 2FA 的那台浏览器还能
+// 在 5 分钟内继续跑敏感操作。
+//
+// 会话键来源：
+//   - 遗留会话键 u<uid>（无会话绑定的旧 JWT）；
+//   - 该用户每个 refresh token 的 FamilyID（当前会话）。只按用户索引集合列举，
+//     绝不 SCAN 整库。
+func (c *TotpCache) RevokeStepUpGrantsForUser(ctx context.Context, userID int64, sessionKeys []string) (int64, error) {
+	if c == nil || c.rdb == nil || userID <= 0 {
+		return 0, fmt.Errorf("invalid step-up grant user")
+	}
+	seen := make(map[string]struct{}, len(sessionKeys)+1)
+	sessions := make([]string, 0, len(sessionKeys)+1)
+	addSession := func(key string) {
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		sessions = append(sessions, key)
+	}
+	addSession(fmt.Sprintf("u%d", userID))
+	for _, key := range sessionKeys {
+		addSession(key)
+	}
+
+	keys := make([]string, 0, len(sessions)*len(service.AllFactors()))
+	for _, session := range sessions {
+		keys = append(keys, TotpStepUpGrantKeys(userID, session)...)
+	}
+	// 旧二进制会在滚动发布期间按旧布局读写，键清单里已包含旧布局；
+	// 这里一次性 DEL（键数量 = 会话数 × (因子数+1)，极小，不需要分块）。
+	if _, err := c.rdb.Del(ctx, keys...).Result(); err != nil {
+		return 0, fmt.Errorf("delete step-up grants: %w", err)
+	}
+	return int64(len(keys)), nil
 }
 
 // SetStepUpGrant 记录一次某因子的 step-up 验证通过（sudo 窗口），绑定用户+会话+因子。

@@ -41,6 +41,10 @@ type UserHandler struct {
 	totpService           *service.TotpService                // 角色提升为管理员的 step-up 门控
 	userService           *service.UserService
 	settingService        *service.SettingService // step-up 功能开关
+	// admin2FAReset 是破玻璃重置 2FA 的装配点。用 SetAdmin2FAResetService 注入，
+	// 不塞构造函数参数：这是低频管理功能，不该让所有 NewUserHandler 调用方
+	// （含大量测试）都跟着改签名。
+	admin2FAReset *service.Admin2FAResetService
 }
 
 // NewUserHandler creates a new admin user handler
@@ -62,6 +66,14 @@ func NewUserHandler(
 		userService:           userService,
 		settingService:        settingService,
 	}
+}
+
+// SetAdmin2FAResetService 注入破玻璃重置 2FA 服务（装配见 handler.ProvideAdminHandlers）。
+func (h *UserHandler) SetAdmin2FAResetService(reset *service.Admin2FAResetService) {
+	if h == nil {
+		return
+	}
+	h.admin2FAReset = reset
 }
 
 // CreateUserRequest represents admin create user request
