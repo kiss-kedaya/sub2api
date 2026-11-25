@@ -41,8 +41,16 @@ func (d *openAIChatSilentRefusalDetector) Enabled() bool {
 	return d != nil && d.enabled
 }
 
+// decided reports that the stream has shown output, usage or an error: from
+// here on ShouldReleaseClientOutput is true and IsSilentRefusal false whatever
+// follows, because those flags only ever turn on. Later lines then need no
+// parsing, which spares a full JSON validation per chunk of a normal answer.
+func (d *openAIChatSilentRefusalDetector) decided() bool {
+	return d.sawContent || d.sawToolCall || d.sawFunctionCall || d.sawUsage || d.sawError || d.sawReasoning
+}
+
 func (d *openAIChatSilentRefusalDetector) ObserveSSELine(line string) {
-	if d == nil || !d.enabled {
+	if d == nil || !d.enabled || d.decided() {
 		return
 	}
 	if eventType, ok := extractOpenAISSEEventLine(line); ok {
@@ -50,14 +58,19 @@ func (d *openAIChatSilentRefusalDetector) ObserveSSELine(line string) {
 		return
 	}
 	if payload, ok := extractOpenAISSEDataLine(line); ok {
-		d.ObservePayload([]byte(payload))
+		d.observePayload([]byte(payload))
 	}
 }
 
 func (d *openAIChatSilentRefusalDetector) ObservePayload(payload []byte) {
-	if d == nil || !d.enabled {
+	if d == nil || !d.enabled || d.decided() {
 		return
 	}
+	d.observePayload(payload)
+}
+
+// observePayload folds one payload into the detector unconditionally.
+func (d *openAIChatSilentRefusalDetector) observePayload(payload []byte) {
 	payload = bytes.TrimSpace(payload)
 	if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
 		return

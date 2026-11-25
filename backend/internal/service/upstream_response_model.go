@@ -267,6 +267,10 @@ func firstValidTrimmedGJSONString(payload []byte, paths ...string) string {
 		return ""
 	}
 	for _, path := range paths {
+		// A path whose names are absent from the payload cannot resolve.
+		if !jsonPathMayExistBytes(payload, path) {
+			continue
+		}
 		value := gjson.GetBytes(payload, path)
 		if !value.Exists() || value.Type != gjson.String {
 			continue
@@ -286,6 +290,9 @@ func firstValidTrimmedGJSONString(payload []byte, paths ...string) string {
 
 func firstTrimmedGJSONResultString(root gjson.Result, paths ...string) string {
 	for _, path := range paths {
+		if !jsonPathMayExist(root.Raw, path) {
+			continue
+		}
 		value := root.Get(path)
 		if !value.Exists() || value.Type != gjson.String {
 			continue

@@ -287,6 +287,17 @@ func isOpenAINonBillableRequestError(upstreamMsg string, upstreamBody []byte) bo
 // openAIExplicitUpstreamError inspects only the provider's envelope, never generated
 // client errors or echoed output. Callers on streaming paths reuse their parsed root.
 func openAIExplicitUpstreamError(root gjson.Result, eventType string) bool {
+	// A failure is announced by an error key or by an "error"/"failed" value
+	// (type, status, finish_reason); a delta that holds none of those words
+	// cannot be one, which spares nine scans of every chunk of a normal answer.
+	if eventType != "error" && eventType != "response.failed" &&
+		!jsonMayContainText(root.Raw, "error") && !jsonMayContainText(root.Raw, "failed") {
+		return false
+	}
+	return openAIExplicitUpstreamErrorUnfiltered(root, eventType)
+}
+
+func openAIExplicitUpstreamErrorUnfiltered(root gjson.Result, eventType string) bool {
 	if strings.EqualFold(root.Get("error.code").String(), "cyber_policy") ||
 		strings.EqualFold(root.Get("response.error.code").String(), "cyber_policy") {
 		return false
