@@ -38,7 +38,7 @@ func reasoningCodecSampleText(n int) string {
 	for len(vocab) < 2000 {
 		var sb strings.Builder
 		for i, k := 0, 1+rng.Intn(3); i < k; i++ {
-			sb.WriteString(syllables[rng.Intn(len(syllables))])
+			_, _ = sb.WriteString(syllables[rng.Intn(len(syllables))])
 		}
 		vocab = append(vocab, sb.String())
 	}
@@ -47,7 +47,7 @@ func reasoningCodecSampleText(n int) string {
 	for i := range cjk {
 		var word strings.Builder
 		for j, k := 0, 2+rng.Intn(2); j < k; j++ {
-			word.WriteRune(han[rng.Intn(len(han))])
+			_, _ = word.WriteRune(han[rng.Intn(len(han))])
 		}
 		cjk[i] = word.String()
 	}
@@ -56,19 +56,19 @@ func reasoningCodecSampleText(n int) string {
 	var sb strings.Builder
 	for words := 0; sb.Len() < n; words++ {
 		if words%40 >= 34 { // 每 40 个词里夹 6 个中文词
-			sb.WriteString(cjk[zipfCJK.Uint64()])
+			_, _ = sb.WriteString(cjk[zipfCJK.Uint64()])
 			continue
 		}
-		sb.WriteString(vocab[zipf.Uint64()])
+		_, _ = sb.WriteString(vocab[zipf.Uint64()])
 		switch rng.Intn(12) {
 		case 0:
-			sb.WriteString(". ")
+			_, _ = sb.WriteString(". ")
 		case 1:
-			sb.WriteString(", ")
+			_, _ = sb.WriteString(", ")
 		case 2:
-			sb.WriteString("\n")
+			_, _ = sb.WriteString("\n")
 		default:
-			sb.WriteString(" ")
+			_, _ = sb.WriteString(" ")
 		}
 	}
 	return sb.String()[:n]
