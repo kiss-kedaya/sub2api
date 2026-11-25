@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -321,32 +320,32 @@ func appendConnectionTraceArgs(args []any, v service.ConnectionTrace, detail str
 // placeholder order, jsonb cast and conflict clause are those of the single-row
 // statement it replaced, so a one-row batch is the identical statement.
 func connectionTraceInsertSQL(rows int) string {
-	var b strings.Builder
-	b.WriteString(`INSERT INTO request_connection_traces
+	buf := make([]byte, 0, 512+rows*connectionTraceColumnCount*6)
+	buf = append(buf, `INSERT INTO request_connection_traces
   (trace_id,started_at,request_id,client_request_id,user_id,api_key_id,account_id,group_id,model,path,client_ip,user_agent,stream,detail,source,host,scheme,method,http_version,tls_version,upstream_status,network_error)
-  VALUES `)
+  VALUES `...)
 	n := 0
 	for row := 0; row < rows; row++ {
 		if row > 0 {
-			b.WriteByte(',')
+			buf = append(buf, ',')
 		}
-		b.WriteByte('(')
+		buf = append(buf, '(')
 		for col := 0; col < connectionTraceColumnCount; col++ {
 			if col > 0 {
-				b.WriteByte(',')
+				buf = append(buf, ',')
 			}
 			n++
-			b.WriteByte('$')
-			b.WriteString(strconv.Itoa(n))
+			buf = append(buf, '$')
+			buf = strconv.AppendInt(buf, int64(n), 10)
 			if col == connectionTraceDetailColumn {
-				b.WriteString("::jsonb")
+				buf = append(buf, "::jsonb"...)
 			}
 		}
-		b.WriteByte(')')
+		buf = append(buf, ')')
 	}
-	b.WriteString(`
-  ON CONFLICT (trace_id) DO NOTHING`)
-	return b.String()
+	buf = append(buf, `
+  ON CONFLICT (trace_id) DO NOTHING`...)
+	return string(buf)
 }
 
 // execAsyncCommit runs one diagnostics write in its own transaction with
