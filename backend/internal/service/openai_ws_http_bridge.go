@@ -472,6 +472,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			// see the rehydrated tool intent or it will replace client functions
 			// with the native-search tool-free route. Explicit current-turn tool
 			// intent still uses the original pre-sanitization source above.
+			// bodytop-ok: scratch copy, rewritten in place here. It must never be passed
+			// to RequestBodyTop: that index is keyed by slice identity and would answer
+			// from the previous contents.
 			grokIntentSourceBody = append(grokIntentSourceBody[:0], body...)
 		}
 		loweredTools := inheritedState.LoweredTools

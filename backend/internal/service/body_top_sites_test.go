@@ -133,14 +133,23 @@ func TestMigratedSitesMatchGJSON(t *testing.T) {
 		site := site
 		t.Run(site.name, func(t *testing.T) {
 			g := jsonbody.New(int64(5000 + si))
+			indexed := 0
 			for i := 0; i < topDiffBodiesPerSite; i++ {
 				body := g.Body()
 				want := site.run(nil, body)
-				got := site.run(newTopTestContext(), body)
+				c := newTopTestContext()
+				got := site.run(c, body)
+				if _, ok := c.Get(bodyTopMemoKey); ok {
+					indexed++
+				}
 				if got != want {
 					t.Fatalf("%s, body #%d\n  gjson path: %s\n  index path: %s\n  body: %q", site.name, i, want, got, topLogBody(body))
 				}
 			}
+			// The comparison above says nothing if the index never ran (a context
+			// RequestBodyTop leaves alone). Some functions return before asking when a
+			// byte prefilter rules the body out, hence the modest floor.
+			require.Greaterf(t, indexed*100, topDiffBodiesPerSite*30, "%s asked the index for only %d of %d bodies", site.name, indexed, topDiffBodiesPerSite)
 		})
 	}
 }

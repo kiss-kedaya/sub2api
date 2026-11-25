@@ -35,7 +35,12 @@ import (
 //     number, unterminated string or container, trailing garbage once the end is
 //     reached, more than bodyTopMaxMembers members);
 //   - a top-level key spells an escape (gjson matches keys after unescaping);
-//   - a nested object that a two-key path has to enter is large or not valid JSON;
+//   - a nested object that a two-key path has to enter is large or not valid JSON,
+//     or more than bodyTopMaxNestedEntries of them would have to be entered;
+//   - a member a two-key path would have to look into is an array (gjson walks it
+//     with its own bracket matching, which on malformed text can run past the
+//     extent the squash rule gives it; a well-formed array never answers a named
+//     key, but this one is not known to be well-formed);
 //   - the path is anything but plain keys (wildcards, queries, modifiers, array
 //     indexes ...).
 //
@@ -48,8 +53,18 @@ import (
 //
 // The index is cached per request on the gin context and keyed by the identity
 // (data pointer and length) of the body slice. That relies on the invariant the
-// gateway already needs for failover retries: a body slice is never modified
-// after it has been handed on; every rewrite returns a new slice.
+// gateway already needs for failover retries:
+//
+//	A body slice handed to RequestBodyTop must never be modified in place
+//	afterwards (no copy into it, no append(buf[:0], ...) over it, no sjson
+//	ReplaceInPlace, no pooled buffer refilled for the next body); every rewrite
+//	returns a new slice. A buffer that is reused must not be passed in.
+//
+// body_top_contract_test.go greps the gateway sources for those idioms and fails
+// on an unannotated one.
+//
+// WebSocket contexts are left out: their context lives as long as the connection,
+// the memo would pin two request bodies for all of it, and frames are small.
 //
 // Composite values (objects, arrays) are returned as zero-copy views of the body,
 // unlike gjson.GetBytes which copies them: read them, do not keep them past the
@@ -63,6 +78,11 @@ const (
 	// bodyTopMaxNestedBytes bounds the nested object a two-key path validates
 	// before running gjson on it (reasoning, generationConfig ... are tiny).
 	bodyTopMaxNestedBytes = 4 << 10
+	// bodyTopMaxNestedEntries bounds how many same-named members one two-key
+	// lookup may enter (validate + search). A request has one reasoning object; a
+	// body with many is cheaper to hand to gjson, and this keeps the work of a
+	// lookup within a small constant of gjson's own on any input.
+	bodyTopMaxNestedEntries = 8
 	// bodyTopDefaultMinBytes: below this a request body is cheap to rescan and
 	// the original gjson path is kept.
 	bodyTopDefaultMinBytes = 16 << 10
@@ -112,8 +132,12 @@ type BodyTop struct {
 }
 
 // RequestBodyTop returns the lookup handle for body, creating the index at most
-// once per distinct body per request. A nil c, or a body below the size threshold,
-// yields a handle that forwards to gjson.
+// once per distinct body per request. A nil c, a context without a request, a
+// WebSocket context, or a body below the size threshold yields a handle that
+// forwards to gjson.
+//
+// The caller promises not to modify body in place afterwards (see the file
+// comment): the index is keyed by the slice's identity, not its content.
 func RequestBodyTop(c *gin.Context, body []byte) BodyTop {
 	if c == nil || int64(len(body)) < bodyTopMinBytes.Load() {
 		return BodyTop{body: body}
@@ -123,6 +147,11 @@ func RequestBodyTop(c *gin.Context, body []byte) BodyTop {
 		memo, _ = v.(*bodyTopMemo)
 	}
 	if memo == nil {
+		// IsWebsocket reads the request headers, hence the nil check first. It is
+		// asked once per request: later calls find the memo.
+		if c.Request == nil || c.IsWebsocket() {
+			return BodyTop{body: body}
+		}
 		memo = &bodyTopMemo{}
 		c.Set(bodyTopMemoKey, memo)
 	}
@@ -171,6 +200,7 @@ func (x *bodyTopIndex) get(path string) (res gjson.Result, handled bool) {
 	}
 	x.mu.Lock()
 	defer x.mu.Unlock()
+	entered := 0
 	for k := 0; ; k++ {
 		if k == len(x.members) && !x.advance() {
 			// The object ended without an answer: gjson finds nothing either. If the
@@ -184,11 +214,18 @@ func (x *bodyTopIndex) get(path string) (res gjson.Result, handled bool) {
 		if !nested {
 			return x.valueResult(m), true
 		}
-		// Only an object can hold a named member; gjson never lets an array answer
-		// a non-numeric key, and scalars have no members. A first-key member that
-		// does not contain the key is skipped, as gjson continues with the next one.
-		if x.body[m.valStart] != '{' {
+		// Only an object can hold a named member, and scalars have no members: a
+		// first-key member that does not contain the key is skipped, as gjson
+		// continues with the next one. An array is left to gjson, see the file comment.
+		switch x.body[m.valStart] {
+		case '{':
+		case '[':
+			return gjson.Result{}, false
+		default:
 			continue
+		}
+		if entered++; entered > bodyTopMaxNestedEntries {
+			return gjson.Result{}, false
 		}
 		sub := x.body[m.valStart:m.valEnd]
 		if len(sub) > bodyTopMaxNestedBytes || !validJSON(sub) {

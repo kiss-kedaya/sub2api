@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -295,9 +296,12 @@ func TestBodyTopNilAndEmptyBodies(t *testing.T) {
 
 // ---- memo on the gin context ----
 
+// newTopTestContext is a context like a plain HTTP request's: RequestBodyTop leaves
+// contexts without a request (and WebSocket ones) alone.
 func newTopTestContext() *gin.Context {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	return c
 }
 

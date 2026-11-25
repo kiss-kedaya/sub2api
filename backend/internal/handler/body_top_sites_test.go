@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/testutil/jsonbody"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 // Differential test for the migrated handler call sites: each function runs once
@@ -35,9 +37,12 @@ func padTopBody(body []byte) []byte {
 	return []byte(s[:i+1] + `"_pad":"` + topSitePad + `"` + sep + s[i+1:])
 }
 
+// newTopHandlerTestContext is a context like a plain HTTP request's: RequestBodyTop
+// leaves contexts without a request (and WebSocket ones) alone.
 func newTopHandlerTestContext() *gin.Context {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	return c
 }
 
@@ -73,14 +78,21 @@ func TestMigratedHandlerSitesMatchGJSON(t *testing.T) {
 		site := site
 		t.Run(site.name, func(t *testing.T) {
 			g := jsonbody.New(int64(9000 + si))
+			indexed := 0
 			for i := 0; i < bodies; i++ {
 				body := padTopBody(g.Body())
 				want := site.run(nil, body)
-				got := site.run(newTopHandlerTestContext(), body)
+				c := newTopHandlerTestContext()
+				got := site.run(c, body)
+				if _, ok := c.Get("__sub2api_body_top_memo"); ok {
+					indexed++
+				}
 				if got != want {
 					t.Fatalf("%s, body #%d\n  gjson path: %s\n  index path: %s\n  body (first 400 bytes): %.400q", site.name, i, want, got, body)
 				}
 			}
+			// The comparison says nothing if the index never ran.
+			require.Greaterf(t, indexed*100, bodies*50, "%s asked the index for only %d of %d bodies", site.name, indexed, bodies)
 		})
 	}
 }
