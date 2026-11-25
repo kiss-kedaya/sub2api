@@ -1963,7 +1963,8 @@ type UsageStatsCacheConfig struct {
 	TTL     time.Duration `mapstructure:"ttl"`
 	// MaxConcurrentLoads caps how many cache-miss aggregates of one user or API key (the usage page, the key
 	// list, /v1/usage) one process runs on the database at once; 0 means no cap. The surplus waits up to
-	// LoadQueueTimeout for a slot and is then answered 503 USAGE_STATS_BUSY instead of piling connections on.
+	// LoadQueueTimeout for a slot and is then answered 429 USAGE_STATS_BUSY (Retry-After: 2) instead of piling
+	// connections on. One user / API key holds at most max(2, MaxConcurrentLoads/4) slots at once.
 	MaxConcurrentLoads int `mapstructure:"max_concurrent_loads"`
 	// LoadQueueTimeout is how long a miss waits for one of those slots; 0 turns the surplus away at once.
 	LoadQueueTimeout time.Duration `mapstructure:"load_queue_timeout"`

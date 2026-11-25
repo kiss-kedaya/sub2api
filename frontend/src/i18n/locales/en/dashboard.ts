@@ -658,6 +658,8 @@ export default {
     exportWaiting: 'Rate limited, waiting to resume…',
     exportRateLimited: 'Usage export is still rate limited. Try a shorter date range or try again later.',
     exportRecordsChanged: 'Usage records changed during export. Try again or choose a completed date range.',
+    statsBusy: 'Statistics are busy, retrying shortly',
+    statsBusyGaveUp: 'Statistics are still busy. Showing the previous data; try Refresh in a moment.',
     model: 'Model',
     requestedModel: 'Requested',
     upstreamModel: 'Upstream',

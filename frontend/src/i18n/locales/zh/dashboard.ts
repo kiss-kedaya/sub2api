@@ -662,6 +662,8 @@ export default {
     exportWaiting: '导出已限流，等待继续…',
     exportRateLimited: '导出仍被限流，请缩短日期范围或稍后重试。',
     exportRecordsChanged: '导出期间使用记录发生变化，请重试或选择已结束的日期范围。',
+    statsBusy: '统计繁忙，稍后自动重试',
+    statsBusyGaveUp: '统计仍然繁忙，当前显示的是上一次的数据，请稍后点击刷新',
     model: '模型',
     requestedModel: '请求',
     upstreamModel: '上游',

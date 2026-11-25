@@ -1,8 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -212,16 +215,16 @@ func TestAccountWriteThrottleRunner_GoRejectsBusyAccountAndFullSlotsWithoutBlock
 		}
 	}
 
-	require.True(t, r.Go(context.Background(), 1, task(1)))
-	require.False(t, r.Go(context.Background(), 1, task(1)), "同一账号已有在途写入：不排队")
-	require.True(t, r.Go(context.Background(), 2, task(2)))
-	require.False(t, r.Go(context.Background(), 3, task(3)), "槽位已满：不排队")
+	require.True(t, r.Go(context.Background(), 1, task(1), nil))
+	require.False(t, r.Go(context.Background(), 1, task(1), nil), "同一账号已有在途写入：不排队")
+	require.True(t, r.Go(context.Background(), 2, task(2), nil))
+	require.False(t, r.Go(context.Background(), 3, task(3), nil), "槽位已满：不排队")
 	<-started
 	<-started
 
 	close(release)
 	r.wait()
-	require.True(t, r.Go(context.Background(), 3, func(context.Context) {}), "闭包结束后槽位和账号占用都已释放")
+	require.True(t, r.Go(context.Background(), 3, func(context.Context) {}, nil), "闭包结束后槽位和账号占用都已释放")
 	r.wait()
 }
 
@@ -241,7 +244,7 @@ func TestAccountWriteThrottleRunner_GoDetachesCancelKeepsValuesAndSetsTimeout(t 
 		gotErr = ctx.Err()
 		gotValue = ctx.Value(ctxKey{})
 		gotDeadline, hasDeadline = ctx.Deadline()
-	}))
+	}, nil))
 	r.wait()
 
 	require.NoError(t, gotErr, "请求 ctx 的取消不能把后台写入取消")
@@ -252,9 +255,9 @@ func TestAccountWriteThrottleRunner_GoDetachesCancelKeepsValuesAndSetsTimeout(t 
 
 func TestAccountWriteThrottleRunner_RecoversPanicAndReleasesAccount(t *testing.T) {
 	var r accountWriteRunner
-	require.True(t, r.Go(context.Background(), 1, func(context.Context) { panic("boom") }))
+	require.True(t, r.Go(context.Background(), 1, func(context.Context) { panic("boom") }, nil))
 	r.wait() // 后台 goroutine 的 panic 没有 gin Recovery 兜底，必须在这里被接住，进程不能崩
-	require.True(t, r.Go(context.Background(), 1, func(context.Context) {}), "panic 之后账号和槽位必须释放")
+	require.True(t, r.Go(context.Background(), 1, func(context.Context) {}, nil), "panic 之后账号和槽位必须释放")
 	r.wait()
 }
 
@@ -265,7 +268,7 @@ func TestAccountWriteThrottleRunner_ExclusiveWaitsForInflightAndBlocksNewGo(t *t
 	require.True(t, r.Go(context.Background(), 1, func(context.Context) {
 		close(started)
 		<-release
-	}))
+	}, nil))
 	<-started
 
 	entered := make(chan struct{})
@@ -287,12 +290,12 @@ func TestAccountWriteThrottleRunner_ExclusiveWaitsForInflightAndBlocksNewGo(t *t
 
 	close(release)
 	<-entered
-	require.False(t, r.Go(context.Background(), 1, func(context.Context) {}), "Exclusive 持有期间该账号的后台写入被拒绝")
-	require.True(t, r.Go(context.Background(), 2, func(context.Context) {}), "不影响别的账号")
+	require.False(t, r.Go(context.Background(), 1, func(context.Context) {}, nil), "Exclusive 持有期间该账号的后台写入被拒绝")
+	require.True(t, r.Go(context.Background(), 2, func(context.Context) {}, nil), "不影响别的账号")
 
 	close(proceed)
 	<-finished
-	require.True(t, r.Go(context.Background(), 1, func(context.Context) {}), "Exclusive 结束后恢复")
+	require.True(t, r.Go(context.Background(), 1, func(context.Context) {}, nil), "Exclusive 结束后恢复")
 	r.wait()
 }
 
@@ -303,8 +306,113 @@ func TestAccountWriteThrottleRunner_ExclusiveRunsInlineOnFreeAccountAndReleasesO
 	require.True(t, ran)
 
 	require.Panics(t, func() { r.Exclusive(2, func() { panic("boom") }) })
-	require.True(t, r.Go(context.Background(), 2, func(context.Context) {}), "fn panic 后账号占用必须释放")
+	require.True(t, r.Go(context.Background(), 2, func(context.Context) {}, nil), "fn panic 后账号占用必须释放")
 	r.wait()
+}
+
+func TestAccountWriteThrottleRunner_OnFailRunsWhenTheClosurePanics(t *testing.T) {
+	var r accountWriteRunner
+	var failed atomic.Int32
+	require.True(t, r.Go(context.Background(), 1, func(context.Context) { panic("boom") }, func() { failed.Add(1) }))
+	r.wait()
+	require.EqualValues(t, 1, failed.Load(), "panic 被 runner 吞掉之后必须通知调用方撤销去抖记账")
+}
+
+func TestAccountWriteThrottleRunner_OnFailRunsWhenTheClosureHitsItsTimeout(t *testing.T) {
+	r := accountWriteRunner{writeTimeout: 20 * time.Millisecond}
+	var failed atomic.Int32
+	require.True(t, r.Go(context.Background(), 1, func(ctx context.Context) { <-ctx.Done() }, func() { failed.Add(1) }))
+	r.wait()
+	require.EqualValues(t, 1, failed.Load(), "写到时限还没完成，里面的写入可能没落库")
+}
+
+func TestAccountWriteThrottleRunner_OnFailStaysQuietWhenTheClosureFinishes(t *testing.T) {
+	var r accountWriteRunner
+	var failed atomic.Int32
+	require.True(t, r.Go(context.Background(), 1, func(context.Context) {}, func() { failed.Add(1) }))
+	r.wait()
+	require.Zero(t, failed.Load())
+}
+
+func TestAccountWriteThrottleRunner_ExclusiveGivesUpOnAStuckBackgroundWriteAndStillRuns(t *testing.T) {
+	// DB 驱动不理 ctx，后台写入永远不返回：429 路径的 Exclusive 不能跟着永久挂住，
+	// 超时后必须继续执行 fn（rejected 状态要落库）。
+	r := accountWriteRunner{exclusiveWait: 50 * time.Millisecond}
+	stuck, started := make(chan struct{}), make(chan struct{})
+	require.True(t, r.Go(context.Background(), 1, func(context.Context) {
+		close(started)
+		<-stuck
+	}, nil))
+	<-started
+
+	type outcome struct {
+		ran     bool
+		elapsed time.Duration
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		begin := time.Now()
+		var out outcome
+		r.Exclusive(1, func() { out.ran = true })
+		out.elapsed = time.Since(begin)
+		done <- out
+	}()
+	select {
+	case out := <-done:
+		require.True(t, out.ran, "超时之后继续执行 fn")
+		require.GreaterOrEqual(t, out.elapsed, 40*time.Millisecond, "先老老实实等满时限，不是一上来就绕过顺序保证")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Exclusive 被卡住的后台写入永久挂住")
+	}
+
+	// 超时的 Exclusive 没有占用账号：卡住的那次写入仍占着，后台写入照旧被拒绝；它一返回账号就恢复。
+	require.False(t, r.Go(context.Background(), 1, func(context.Context) {}, nil))
+	close(stuck)
+	r.wait()
+	require.True(t, r.Go(context.Background(), 1, func(context.Context) {}, nil), "卡住的写入返回之后账号恢复正常")
+	r.wait()
+}
+
+func TestAccountWriteThrottleRunner_ExclusiveWaitTimeoutWarnsAtMostOncePerInterval(t *testing.T) {
+	var out lockedLogBuffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&out, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	r := accountWriteRunner{exclusiveWait: 10 * time.Millisecond}
+	stuck, started := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() {
+		close(stuck)
+		r.wait()
+	})
+	require.True(t, r.Go(context.Background(), 1, func(context.Context) {
+		close(started)
+		<-stuck
+	}, nil))
+	<-started
+
+	for i := 0; i < 5; i++ {
+		r.Exclusive(1, func() {})
+	}
+	require.Equal(t, 1, strings.Count(out.String(), "account_write_exclusive_wait_timeout"), "库卡死时每个 429 都会走到这里，日志必须限频")
+}
+
+// lockedLogBuffer 是并发安全的日志缓冲（别的测试遗留的 goroutine 也可能往默认 logger 写）。
+type lockedLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func TestSessionWindowWrite_RedundantTo(t *testing.T) {

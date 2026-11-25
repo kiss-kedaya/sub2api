@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,6 +32,12 @@ const (
 	accountWriteMaxInflight = 16
 	// accountWriteTimeout 是一个后台写闭包（清空 + 窗口 + 采样三步合计）的 DB 时限。
 	accountWriteTimeout = 3 * time.Second
+	// accountWriteExclusiveWait 是 Exclusive 最多等在途后台写入多久。闭包最迟 accountWriteTimeout 就会被
+	// ctx 掐掉，所以正常情况下远等不到这么久；只有 DB 驱动不理 ctx、闭包一直不返回时才会走到这里。
+	accountWriteExclusiveWait = accountWriteTimeout + time.Second
+	// accountWriteWarnEvery 是「Exclusive 等超时」这条 warn 日志的最小间隔：库卡死时每个 429 都会走到，
+	// 一条一行会把日志淹掉。
+	accountWriteWarnEvery = 10 * time.Second
 )
 
 // accountWriteState 是一次待写入的内容。redundantTo 报告：上次成功写入 last 之后，
@@ -128,20 +135,33 @@ func (g *accountWriteGate[S]) size() int {
 //
 // ponytail: 每个闭包一个 goroutine，没有常驻 worker 和队列；闭包量再大就改成定长 worker 池。
 type accountWriteRunner struct {
-	maxInflight int // 0 = accountWriteMaxInflight；测试可调小
+	// 下面三项为 0 时用对应的 accountWrite* 常量；测试可调小。
+	maxInflight   int
+	writeTimeout  time.Duration
+	exclusiveWait time.Duration
 
 	mu       sync.Mutex
 	running  int
 	inflight map[int64]chan struct{} // 账号 → 该账号当前写入结束时关闭
 	wg       sync.WaitGroup
+
+	lastExclusiveWarn atomic.Int64 // Unix 纳秒：上一条「Exclusive 等超时」日志的时间
 }
 
 // Go 在后台执行 fn，返回是否已受理。ctx 只用来继承 value：取消信号被剥掉（客户端断开不能
 // 把写入取消），改用 accountWriteTimeout 限时。
-func (r *accountWriteRunner) Go(ctx context.Context, id int64, fn func(ctx context.Context)) bool {
+//
+// fn panic、或执行到时限（里面的写入可能没写完）时调用 onFail（可为 nil）：调用方要在这里撤销
+// 去抖记账，否则没落库的内容被记成「已写入」，同账号同内容的后续响应会被压制到记账到期。
+// fn 里自己能看到的写失败（返回 error）仍由 fn 自己撤销。
+func (r *accountWriteRunner) Go(ctx context.Context, id int64, fn func(ctx context.Context), onFail func()) bool {
 	limit := r.maxInflight
 	if limit <= 0 {
 		limit = accountWriteMaxInflight
+	}
+	timeout := r.writeTimeout
+	if timeout <= 0 {
+		timeout = accountWriteTimeout
 	}
 	r.mu.Lock()
 	if _, busy := r.inflight[id]; busy || r.running >= limit {
@@ -166,15 +186,22 @@ func (r *accountWriteRunner) Go(ctx context.Context, id int64, fn func(ctx conte
 			r.mu.Unlock()
 			r.wg.Done()
 		}()
-		// 这里的 panic 没有 gin Recovery 兜底，会直接带崩整个进程。
+		wctx, cancel := context.WithTimeout(bg, timeout)
+		defer cancel()
+		// 这里的 panic 没有 gin Recovery 兜底，会直接带崩整个进程；吞掉之后要让调用方撤销记账。
+		// 这个 defer 比 cancel 后注册、先执行，所以 wctx.Err() 反映的是 fn 自己跑的时候有没有超时。
+		finished := false
 		defer func() {
-			if p := recover(); p != nil {
+			p := recover()
+			if p != nil {
 				slog.Error("account_write_panic", "account_id", id, "panic", p, "stack", string(debug.Stack()))
 			}
+			if onFail != nil && (p != nil || !finished || wctx.Err() != nil) {
+				onFail()
+			}
 		}()
-		wctx, cancel := context.WithTimeout(bg, accountWriteTimeout)
-		defer cancel()
 		fn(wctx)
+		finished = true
 	}()
 	return true
 }
@@ -182,14 +209,31 @@ func (r *accountWriteRunner) Go(ctx context.Context, id int64, fn func(ctx conte
 // Exclusive 等该账号在途的后台写入结束后，在当前 goroutine 里同步执行 fn；fn 执行期间该账号
 // 的后台写入会被拒绝（丢弃、之后重试）。用于 429 这类必须强制落库、又要与后台写入保持先后顺序
 // （同一账号先写 allowed 再写 rejected）的路径。fn 里不能再调 Exclusive（会死锁）。
+//
+// 等待有上限（accountWriteExclusiveWait）：后台写入最迟 accountWriteTimeout 就被 ctx 掐掉，正常
+// 等不到上限；只有 DB 驱动不理 ctx、闭包一直不返回时才会超时。429 的 rejected 状态必须落库，
+// 所以超时后不再等、也不占用账号，直接执行 fn（不再保证与那个卡住的后台写入的先后顺序），并打一条限频 warn。
 func (r *accountWriteRunner) Exclusive(id int64, fn func()) {
-	own := r.acquire(id)
-	defer r.release(id, own)
+	own, ok := r.acquire(id)
+	if ok {
+		defer r.release(id, own)
+	}
 	fn()
 }
 
-// acquire 等到该账号没有在途写入，然后占住它。
-func (r *accountWriteRunner) acquire(id int64) chan struct{} {
+// acquire 等到该账号没有在途写入，然后占住它。等满 exclusiveWait 仍没等到就返回 (nil, false)，
+// 调用方此时没有占用账号（也就不能 release）。
+func (r *accountWriteRunner) acquire(id int64) (own chan struct{}, ok bool) {
+	wait := r.exclusiveWait
+	if wait <= 0 {
+		wait = accountWriteExclusiveWait
+	}
+	var timer *time.Timer // 只在真的要等时才建，一次 Exclusive 共用一个总时限
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	for {
 		r.mu.Lock()
 		done, busy := r.inflight[id]
@@ -197,13 +241,29 @@ func (r *accountWriteRunner) acquire(id int64) chan struct{} {
 			if r.inflight == nil {
 				r.inflight = make(map[int64]chan struct{})
 			}
-			own := make(chan struct{})
+			own = make(chan struct{})
 			r.inflight[id] = own
 			r.mu.Unlock()
-			return own
+			return own, true
 		}
 		r.mu.Unlock()
-		<-done
+		if timer == nil {
+			timer = time.NewTimer(wait)
+		}
+		select {
+		case <-done:
+		case <-timer.C:
+			r.warnExclusiveWaitTimeout(id, wait)
+			return nil, false
+		}
+	}
+}
+
+func (r *accountWriteRunner) warnExclusiveWaitTimeout(id int64, waited time.Duration) {
+	now := time.Now().UnixNano()
+	if last := r.lastExclusiveWarn.Load(); now-last >= int64(accountWriteWarnEvery) && r.lastExclusiveWarn.CompareAndSwap(last, now) {
+		slog.Warn("account_write_exclusive_wait_timeout", "account_id", id, "waited", waited,
+			"detail", "in-flight background write never returned; writing without waiting for it")
 	}
 }
 

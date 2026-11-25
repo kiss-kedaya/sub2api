@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -88,15 +90,35 @@ type usageStatsCacheKey struct {
 	Extra   string                   `json:"extra,omitempty"`
 }
 
-// endUserScoped reports whether the aggregate is one user's or one API key's, i.e. something an end user
-// can trigger by opening a page, as opposed to an admin report over everything or over one account.
-// Only these go through the concurrency gate: admin reports have their own limit, and the account scans
-// that feed rate-limit decisions must never queue behind a user's usage page.
-func (k usageStatsCacheKey) endUserScoped() bool {
-	if k.UserID > 0 || k.APIKeyID > 0 || len(k.APIKeyIDs) > 0 {
-		return true
+// gateOwner names who a cache miss is charged to in the concurrency gate, or "" when the aggregate is not an
+// end user's: an admin report over everything or over one account. Only end-user aggregates go through the
+// gate: admin reports are few and sit behind the admin panel, and the account scans that feed rate-limit
+// decisions must never queue behind a user's usage page.
+//
+// The owner is the user when the key names one, otherwise the API key: a key-scoped aggregate such as
+// /v1/usage never carries its owner down to the repository, so a client with several keys gets a share
+// per key (the shared slots still bound them all). A list of keys is charged to its lowest id, which is the
+// same for every visit to the same page of one user's keys.
+func (k usageStatsCacheKey) gateOwner() string {
+	switch {
+	case k.UserID > 0:
+		return "u" + strconv.FormatInt(k.UserID, 10)
+	case k.Filters != nil && k.Filters.UserID > 0:
+		return "u" + strconv.FormatInt(k.Filters.UserID, 10)
+	case k.APIKeyID > 0:
+		return "k" + strconv.FormatInt(k.APIKeyID, 10)
+	case k.Filters != nil && k.Filters.APIKeyID > 0:
+		return "k" + strconv.FormatInt(k.Filters.APIKeyID, 10)
+	case len(k.APIKeyIDs) > 0:
+		return "k" + strconv.FormatInt(slices.Min(k.APIKeyIDs), 10)
 	}
-	return k.Filters != nil && (k.Filters.UserID > 0 || k.Filters.APIKeyID > 0)
+	return ""
+}
+
+// endUserScoped reports whether the aggregate is one user's or one API key's, i.e. something an end user
+// can trigger by opening a page.
+func (k usageStatsCacheKey) endUserScoped() bool {
+	return k.gateOwner() != ""
 }
 
 // usageFiltersFingerprint mirrors the comparable portion of UsageLogFilters.
@@ -220,8 +242,8 @@ func loadUsageStatsCachedWithTimeout[T any](
 		// Past this point the aggregate really runs on the database, so this is where the cap applies (a hit
 		// or a remembered failure above never takes a slot). Waiting for a slot is not part of the database
 		// budget: the load context starts once the slot is ours.
-		if key.endUserScoped() {
-			release, err := cache.gate.acquire(base)
+		if owner := key.gateOwner(); owner != "" {
+			release, err := cache.gate.acquire(base, owner)
 			if err != nil {
 				// Not remembered: being turned away says nothing about the next attempt.
 				return nil, err
@@ -232,7 +254,7 @@ func loadUsageStatsCachedWithTimeout[T any](
 		defer cancel()
 		value, loadErr := load(loadCtx)
 		if loadErr != nil {
-			cache.rememberFailure(redisKey, loadErr)
+			cache.rememberFailure(redisKey, loadErr, loadCtx.Err())
 			return nil, loadErr
 		}
 		// Publish bytes, not shared pointers: user handlers redact admin-only
@@ -276,15 +298,22 @@ func (c *usageStatsCache) paused() bool {
 
 // rememberFailure keeps a database failure for a short while, so a struggling database is not asked the same
 // question again by every refresh. Two kinds are treated specially:
-//   - a cancellation is not remembered at all: the shared load is detached from every caller, so something else
-//     (an operator killing the statement, a shutdown) stopped it, and that says nothing about the next attempt;
-//   - a timeout is remembered longer than other errors, because the same scan will time out again.
-func (c *usageStatsCache) rememberFailure(key string, err error) {
+//   - a scan that ran out of time is remembered longer than other errors, because the same scan will run out
+//     again. That is our own load budget (budgetErr, the load context's error: lib/pq reports it as the
+//     server's "canceling statement due to user request", so the driver's text cannot tell it apart), a
+//     deadline from further down, or the server's own statement_timeout;
+//   - a statement somebody stopped is not remembered at all: the shared load is detached from every caller, so
+//     an operator's pg_cancel_backend, a migration's reader canceller ("due to user request") or a shutdown
+//     stopped it, and that says nothing about the next attempt: once the database is back the same question
+//     must be asked again instead of replaying the error for 30 seconds.
+func (c *usageStatsCache) rememberFailure(key string, err, budgetErr error) {
 	switch {
-	case errors.Is(err, context.Canceled):
-		return
-	case usagestats.IsStatsTimeout(err):
+	case errors.Is(budgetErr, context.DeadlineExceeded),
+		errors.Is(err, context.DeadlineExceeded),
+		usagestats.IsStatementTimeout(err):
 		c.failures.Set(key, err, usageStatsCacheTimeoutTTL)
+	case errors.Is(err, context.Canceled), usagestats.IsStatementCanceledByRequest(err):
+		return
 	default:
 		c.failures.SetDefault(key, err)
 	}

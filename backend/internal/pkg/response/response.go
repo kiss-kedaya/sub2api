@@ -105,6 +105,14 @@ func ErrorFrom(c *gin.Context, err error) bool {
 		log.Printf("[ERROR] %s %s\n  Error: %s", c.Request.Method, c.Request.URL.Path, logredact.RedactText(err.Error()))
 	}
 
+	// A throttling answer (429, or 503 asking the client to come back) tells the client how long to wait. Errors
+	// carry that as metadata "retry_after" (whole seconds); this puts it where HTTP clients look for it.
+	if statusCode == http.StatusTooManyRequests || statusCode == http.StatusServiceUnavailable {
+		if seconds, convErr := strconv.Atoi(status.Metadata["retry_after"]); convErr == nil && seconds > 0 {
+			c.Header("Retry-After", strconv.Itoa(seconds))
+		}
+	}
+
 	ErrorWithDetails(c, statusCode, status.Message, status.Reason, status.Metadata)
 	return true
 }

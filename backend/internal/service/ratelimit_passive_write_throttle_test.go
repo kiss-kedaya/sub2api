@@ -686,3 +686,148 @@ func TestHandleUpstreamError_Fable429PassiveUsageBypassesThrottle(t *testing.T) 
 	processSuccess(svc, account, limited)
 	require.Equal(t, 2, repo.extraAttempts)
 }
+
+// panicRepo 让接下来 N 次 UpdateSessionWindow / UpdateExtra panic（模拟 repo 层的 bug），其余照常计数。
+// 后台闭包的 panic 被 runner 的 recover 吞掉，计数只在 svc.accountWrites.wait() 之后读。
+type panicRepo struct {
+	*throttleCountingRepo
+	panicWindow int
+	panicExtra  int
+}
+
+func (r *panicRepo) UpdateSessionWindow(ctx context.Context, id int64, start, end *time.Time, status string) error {
+	if r.panicWindow > 0 {
+		r.panicWindow--
+		r.windowAttempts++
+		panic("boom in UpdateSessionWindow")
+	}
+	return r.throttleCountingRepo.UpdateSessionWindow(ctx, id, start, end, status)
+}
+
+func (r *panicRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
+	if r.panicExtra > 0 {
+		r.panicExtra--
+		r.extraAttempts++
+		panic("boom in UpdateExtra")
+	}
+	return r.throttleCountingRepo.UpdateExtra(ctx, id, updates)
+}
+
+func TestUpdateSessionWindow_PanicInTheBackgroundWriteIsNotRecordedAsWritten(t *testing.T) {
+	// 后台闭包里 panic 被 runner 吞掉：库里什么都没写成，去抖记账必须一起撤销，
+	// 否则同账号同内容的响应会被压制到 60 秒记账到期（窗口状态和被动采样都不更新）。
+	reset := time.Now().Add(3 * time.Hour).Truncate(time.Second)
+
+	t.Run("窗口写入 panic：下一个同样的响应照常重写窗口和采样", func(t *testing.T) {
+		repo := &panicRepo{throttleCountingRepo: newThrottleCountingRepo(), panicWindow: 1}
+		svc, _ := newThrottleTestService(repo)
+		account := steadyStateAccount(1, reset)
+		headers := anthropicSuccessHeaders("allowed", reset, "0.42")
+
+		processSuccess(svc, account, headers) // 窗口写入 panic，闭包在这里中断，采样也没写
+		require.Equal(t, 1, repo.windowAttempts)
+		require.Equal(t, 0, repo.extraAttempts)
+		require.Empty(t, repo.sessionWindowCalls)
+
+		processSuccess(svc, account, headers) // 同账号同内容，没过 60 秒：不能被去抖挡掉
+		require.Equal(t, 2, repo.windowAttempts, "panic 没写成，必须放行重试")
+		require.Len(t, repo.sessionWindowCalls, 1)
+		require.Equal(t, 1, repo.extraAttempts, "闭包被 panic 打断时采样也没写成，同样不能被挡掉")
+
+		processSuccess(svc, account, headers)
+		require.Equal(t, 2, repo.windowAttempts, "写成功之后才开始去抖")
+		require.Equal(t, 1, repo.extraAttempts)
+	})
+
+	t.Run("采样写入 panic：下一个同样的响应照常重写采样", func(t *testing.T) {
+		repo := &panicRepo{throttleCountingRepo: newThrottleCountingRepo(), panicExtra: 1}
+		svc, _ := newThrottleTestService(repo)
+		account := steadyStateAccount(1, reset)
+		headers := anthropicSuccessHeaders("allowed", reset, "0.42")
+
+		processSuccess(svc, account, headers)
+		require.Equal(t, 1, repo.extraAttempts)
+		require.Empty(t, repo.updateExtraCalls, "第一次 panic，采样没有落库")
+
+		processSuccess(svc, account, headers)
+		require.Equal(t, 2, repo.extraAttempts, "panic 没写成，必须放行重试")
+		require.Len(t, repo.updateExtraCalls, 1)
+
+		attempts := repo.extraAttempts
+		processSuccess(svc, account, headers)
+		require.Equal(t, attempts, repo.extraAttempts, "写成功之后才开始去抖")
+	})
+}
+
+// stuckFirstWindowRepo 的第一次 UpdateSessionWindow 一直阻塞到 release 被关闭（模拟 DB 驱动不理 ctx、
+// 后台写入永远不返回），之后的调用照常记录。并发安全：429 路径和后台写入会同时调它。
+type stuckFirstWindowRepo struct {
+	*sessionWindowMockRepo
+	stuckOnce atomic.Bool
+	started   chan struct{} // 第一次调用卡住时关闭
+	release   chan struct{}
+	mu        sync.Mutex
+	statuses  []string
+}
+
+func newStuckFirstWindowRepo() *stuckFirstWindowRepo {
+	return &stuckFirstWindowRepo{
+		sessionWindowMockRepo: &sessionWindowMockRepo{},
+		started:               make(chan struct{}),
+		release:               make(chan struct{}),
+	}
+}
+
+func (r *stuckFirstWindowRepo) UpdateSessionWindow(_ context.Context, _ int64, _, _ *time.Time, status string) error {
+	if r.stuckOnce.CompareAndSwap(false, true) {
+		close(r.started)
+		<-r.release
+		return nil
+	}
+	r.mu.Lock()
+	r.statuses = append(r.statuses, status)
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *stuckFirstWindowRepo) UpdateExtra(context.Context, int64, map[string]any) error { return nil }
+func (r *stuckFirstWindowRepo) SetRateLimited(context.Context, int64, time.Time) error   { return nil }
+func (r *stuckFirstWindowRepo) SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
+	return nil
+}
+
+func (r *stuckFirstWindowRepo) writtenStatuses() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.statuses...)
+}
+
+func TestUpdateSessionWindow_429StillPersistsRejectedWhenTheBackgroundWriteNeverReturns(t *testing.T) {
+	// 一个成功响应的后台写入卡死在 DB 上、永远不返回：429 路径不能跟着永久挂住（该账号的 429 处理 goroutine
+	// 会泄漏、rejected 永远落不了库，账号继续被调度），超时之后必须照常把 rejected 写进去。
+	reset := time.Now().Add(3 * time.Hour).Truncate(time.Second)
+	repo := newStuckFirstWindowRepo()
+	svc, _ := newThrottleTestService(repo)
+	svc.accountWrites.exclusiveWait = 50 * time.Millisecond
+	account := steadyStateAccount(1, reset)
+
+	svc.UpdateSessionWindow(context.Background(), account, anthropicSuccessHeaders("allowed", reset, "0.42"))
+	<-repo.started // 后台写入已经卡在 DB 上
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.HandleUpstreamError(context.Background(), account, http.StatusTooManyRequests, legacy429Headers(reset), nil, "claude-opus-5")
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("429 路径被卡住的后台写入永久挂住")
+	}
+	require.Equal(t, []string{"rejected"}, repo.writtenStatuses(), "超时后 rejected 必须落库")
+
+	close(repo.release) // 卡住的写入终于返回：账号恢复正常
+	svc.accountWrites.wait()
+	processSuccess(svc, account, anthropicSuccessHeaders("allowed", reset, "0.42"))
+	require.Equal(t, []string{"rejected", "allowed"}, repo.writtenStatuses(), "429 之后的成功响应把状态写回 allowed")
+}

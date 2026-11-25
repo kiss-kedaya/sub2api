@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { defineComponent } from 'vue'
+import { defineComponent, nextTick } from 'vue'
 
 import UsageView from '../UsageView.vue'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
@@ -69,6 +69,8 @@ const messages: Record<string, string> = {
   'usage.exporting': 'Exporting',
   'usage.exportCsv': 'Export CSV',
   'usage.failedToLoad': 'Failed to load',
+  'usage.statsBusy': 'Statistics are busy, retrying shortly',
+  'usage.statsBusyGaveUp': 'Statistics are still busy, showing the previous data',
   'usage.noDataToExport': 'No data',
   'usage.preparingExport': 'Preparing export',
   'usage.exportSuccess': 'Export success',
@@ -681,6 +683,198 @@ describe('user UsageView', () => {
     window.URL.revokeObjectURL = originalRevokeObjectURL
     vi.unstubAllGlobals()
     clickSpy.mockRestore()
+  })
+
+  describe('when the backend turns an aggregate away (429 USAGE_STATS_BUSY)', () => {
+    // What the API client rejects with for that answer: the Retry-After header is already read into retryAfter.
+    const busy = (retryAfter = '2') => ({
+      status: 429, code: 429, reason: 'USAGE_STATS_BUSY', retryAfter, message: 'Usage statistics are busy',
+    })
+    const trendPoint = (date: string) => ({
+      date, requests: 1, input_tokens: 1, output_tokens: 1, cache_creation_tokens: 0, cache_read_tokens: 0,
+      total_tokens: 2, cost: 0.1, actual_cost: 0.1,
+    })
+    const groupRow = { group_id: 1, group_name: 'default', requests: 1, total_tokens: 2, cost: 0.1, actual_cost: 0.1 }
+    const hint = (wrapper: ReturnType<typeof mountUsageView>) => wrapper.find('[data-testid="usage-stats-busy"]')
+
+    // The first load runs on real timers (flushPromises needs them); the busy answer arrives after fake timers
+    // are installed, so Retry-After can be stepped through exactly.
+    async function mountLoaded() {
+      getDashboardSnapshotV2.mockResolvedValue({ trend: [trendPoint('2026-03-08')], groups: [groupRow] })
+      const wrapper = mountUsageView()
+      await flushPromises()
+      const vm = wrapper.vm as any
+      expect(vm.trendData).toHaveLength(1)
+      expect(vm.groupStats).toHaveLength(1)
+      vi.useFakeTimers()
+      getDashboardSnapshotV2.mockClear()
+      return { wrapper, vm }
+    }
+    async function settle() {
+      await vi.advanceTimersByTimeAsync(0)
+      await nextTick()
+    }
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('keeps the charts on screen, shows a hint, and retries once after Retry-After', async () => {
+      const { wrapper, vm } = await mountLoaded()
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      getDashboardSnapshotV2.mockRejectedValueOnce(busy('2'))
+
+      vm.refreshData()
+      await settle()
+
+      expect(getDashboardSnapshotV2).toHaveBeenCalledTimes(1)
+      expect(vm.trendData).toHaveLength(1)
+      expect(vm.groupStats).toHaveLength(1)
+      expect(hint(wrapper).text()).toBe('Statistics are busy, retrying shortly')
+      expect(consoleError).not.toHaveBeenCalled()
+      expect(showError).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(getDashboardSnapshotV2).toHaveBeenCalledTimes(1)
+
+      getDashboardSnapshotV2.mockResolvedValueOnce({ trend: [trendPoint('2026-03-09'), trendPoint('2026-03-10')], groups: [] })
+      await vi.advanceTimersByTimeAsync(1)
+      await nextTick()
+      expect(getDashboardSnapshotV2).toHaveBeenCalledTimes(2)
+      expect(vm.trendData).toHaveLength(2)
+      expect(hint(wrapper).exists()).toBe(false)
+      consoleError.mockRestore()
+      wrapper.unmount()
+    })
+
+    it('retries only once: a second busy answer only changes the hint', async () => {
+      const { wrapper, vm } = await mountLoaded()
+      getDashboardSnapshotV2.mockRejectedValue(busy('1'))
+
+      vm.refreshData()
+      await settle()
+      expect(getDashboardSnapshotV2).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(1000)
+      await nextTick()
+      expect(getDashboardSnapshotV2).toHaveBeenCalledTimes(2)
+      expect(hint(wrapper).text()).toBe('Statistics are still busy, showing the previous data')
+
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(getDashboardSnapshotV2).toHaveBeenCalledTimes(2)
+      expect(vm.trendData).toHaveLength(1)
+      expect(vm.groupStats).toHaveLength(1)
+      wrapper.unmount()
+    })
+
+    it('waits as long as Retry-After says', async () => {
+      const { wrapper, vm } = await mountLoaded()
+      getDashboardSnapshotV2.mockRejectedValueOnce(busy('5'))
+
+      vm.refreshData()
+      await settle()
+      await vi.advanceTimersByTimeAsync(4999)
+      expect(getDashboardSnapshotV2).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(getDashboardSnapshotV2).toHaveBeenCalledTimes(2)
+      wrapper.unmount()
+    })
+
+    it('retries every busy part of the page together, once, and keeps what each one already shows', async () => {
+      const { wrapper, vm } = await mountLoaded()
+      const statsBefore = vm.usageStats
+      expect(statsBefore).not.toBeNull()
+      const endpointStats = [{ endpoint: '/v1/messages', requests: 1, total_tokens: 2, cost: 0.1, actual_cost: 0.1 }]
+      getStats.mockClear()
+      getDashboardModels.mockClear()
+      query.mockClear()
+      getStats.mockRejectedValueOnce(busy('2')).mockRejectedValueOnce(busy('2'))
+      getDashboardModels.mockRejectedValueOnce(busy('2'))
+      query.mockRejectedValueOnce(busy('2'))
+      getDashboardSnapshotV2.mockRejectedValueOnce(busy('2'))
+
+      vm.refreshData()
+      await settle()
+      // Five answers turned away, one hint.
+      expect(wrapper.findAll('[data-testid="usage-stats-busy"]')).toHaveLength(1)
+      expect(vm.usageStats).toEqual(statsBefore)
+      expect(vm.requestedModelStats).toHaveLength(1)
+      expect(vm.usageLogs).toHaveLength(1)
+      expect(showError).not.toHaveBeenCalled()
+
+      getStats.mockResolvedValue({ total_requests: 9, endpoints: endpointStats })
+      await vi.advanceTimersByTimeAsync(2000)
+      await nextTick()
+      // One automatic retry of each part (summary + endpoints, models, records, charts), not a loop.
+      expect(getStats).toHaveBeenCalledTimes(4)
+      expect(getDashboardModels).toHaveBeenCalledTimes(2)
+      expect(query).toHaveBeenCalledTimes(2)
+      expect(getDashboardSnapshotV2).toHaveBeenCalledTimes(2)
+      expect(vm.usageStats).toMatchObject({ total_requests: 9 })
+      expect(hint(wrapper).exists()).toBe(false)
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(getStats).toHaveBeenCalledTimes(4)
+      wrapper.unmount()
+    })
+
+    it('does not show the load-failed toast when the record list is turned away, and retries it once', async () => {
+      const { wrapper, vm } = await mountLoaded()
+      const rows = vm.usageLogs
+      query.mockClear()
+      query.mockRejectedValueOnce(busy('2'))
+
+      vm.refreshData()
+      await settle()
+      expect(showError).not.toHaveBeenCalled()
+      expect(vm.usageLogs).toEqual(rows)
+      expect(vm.loading).toBe(false)
+      expect(hint(wrapper).exists()).toBe(true)
+
+      query.mockResolvedValueOnce({ items: [usageLog, { ...usageLog, id: 2 }], total: 2, pages: 1 })
+      await vi.advanceTimersByTimeAsync(2000)
+      await nextTick()
+      expect(query).toHaveBeenCalledTimes(2)
+      expect(vm.usageLogs).toHaveLength(2)
+      expect(vm.pagination.total).toBe(2)
+      wrapper.unmount()
+    })
+
+    it('a refresh the user starts cancels the pending automatic retry', async () => {
+      const { wrapper, vm } = await mountLoaded()
+      getDashboardSnapshotV2.mockRejectedValueOnce(busy('2'))
+      vm.refreshData()
+      await settle()
+      expect(hint(wrapper).exists()).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(500)
+      vm.refreshData() // answered normally this time
+      await settle()
+      expect(hint(wrapper).exists()).toBe(false)
+      expect(getDashboardSnapshotV2).toHaveBeenCalledTimes(2)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(getDashboardSnapshotV2).toHaveBeenCalledTimes(2)
+      wrapper.unmount()
+    })
+
+    it('leaves every other failure as it was: charts cleared, error logged, no hint, no retry', async () => {
+      const { wrapper, vm } = await mountLoaded()
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      // The per-user panel limit is also a 429 but a different answer: it is not this page's busy state.
+      getDashboardSnapshotV2.mockRejectedValueOnce({ status: 429, code: 429, reason: 'RATE_LIMITED', retryAfter: '30' })
+
+      vm.refreshData()
+      await settle()
+      expect(vm.trendData).toEqual([])
+      expect(vm.groupStats).toEqual([])
+      expect(consoleError).toHaveBeenCalledWith('Failed to load chart data:', expect.objectContaining({ reason: 'RATE_LIMITED' }))
+      expect(hint(wrapper).exists()).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(getDashboardSnapshotV2).toHaveBeenCalledTimes(1)
+      consoleError.mockRestore()
+      wrapper.unmount()
+    })
   })
 })
 
