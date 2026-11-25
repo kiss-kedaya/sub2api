@@ -112,6 +112,11 @@ type PasskeySession struct {
 	Kind     string               `json:"kind"`
 	UserID   int64                `json:"user_id,omitempty"`
 	WebAuthn webauthn.SessionData `json:"webauthn"`
+	// Decoy 标记登录首步「凭据无效」时下发的伪装 Passkey ceremony（login_shape_disguise）。
+	// UserID 是 token 用户 ID 段：镜像真实账号时就是真实用户 ID，否则是 HMAC 取的占位值。
+	// 伪装登录会话只会用 FinishDisguisedLogin 消费它；真实登录会话拿到它，行为与拿到「同一用户的另一个
+	// 真实 ceremony」完全一致（FinishLoginForUser 不区分，没有认证器的有效签名谁也过不了校验）。
+	Decoy bool `json:"decoy,omitempty"`
 }
 
 type PasskeySessionStore interface {
@@ -158,6 +163,8 @@ type PasskeyService struct {
 	repo     PasskeyRepository
 	sessions PasskeySessionStore
 	userRepo UserRepository
+	// idSpace 缓存「现网最大用户 ID 的 2 的幂上界」，只给登录首步伪装 token 估算用户 ID 段（见 passkey_login_disguise.go）。
+	idSpace disguiseIDSpaceCache
 }
 
 func NewPasskeyService(

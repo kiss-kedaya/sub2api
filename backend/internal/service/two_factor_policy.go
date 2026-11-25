@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -226,6 +227,36 @@ func (s *TotpService) LoginRequiredFactors(ctx context.Context, user *User) ([]F
 	}
 	// 全局 TOTP 登录要求关闭：登录不要求 TOTP，但 Passkey 绑定仍然要求。
 	return MissingFactors(factors, []Factor{FactorTOTP}), nil
+}
+
+// LoginFactorsForEmail 返回邮箱对应的「已启用账号」，以及密码正确时它会被要求完成的登录因子
+// （与 LoginRequiredFactors 同一判定）。账号不存在 / 未启用 / 没有任何登录因子时返回 (nil, nil, nil)。
+//
+// 只给登录首步的「凭据无效」伪装用（login_shape_disguise）：它要让「密码错」的诱饵挑战和
+// 「密码对」的真实挑战形状一致，就必须知道真实形状。读取失败返回错误，调用方退回稳定的伪装形状。
+func (s *TotpService) LoginFactorsForEmail(ctx context.Context, email string) (*User, []Factor, error) {
+	if s == nil || s.userRepo == nil {
+		return nil, nil, ErrTwoFactorPolicyUnavailable
+	}
+	// 与 AuthService.Login 用同样的原始邮箱查用户，大小写 / 别名口径保持一致。
+	user, err := s.userRepo.GetByEmail(ctx, email)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("load user for login disguise: %w", err)
+	}
+	if user == nil || !user.IsActive() {
+		return nil, nil, nil
+	}
+	factors, err := s.LoginRequiredFactors(ctx, user)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(factors) == 0 {
+		return nil, nil, nil
+	}
+	return user, factors, nil
 }
 
 // StepUpEnabled 读取全局 step-up 开关（严格模式：读取失败返回错误，由调用方

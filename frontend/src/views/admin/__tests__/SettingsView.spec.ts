@@ -842,7 +842,7 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockResolvedValue(undefined);
   });
 
-  it.each(["totp_enabled", "step_up_enabled"])("saves enabled %s without requesting a code", async (field) => {
+  it.each(["totp_enabled", "step_up_enabled", "login_shape_disguise_enabled"])("saves enabled %s without requesting a code", async (field) => {
     const wrapper = mountView();
     await flushPromises();
     (wrapper.vm as unknown as { form: Record<string, unknown> }).form[field] = true;

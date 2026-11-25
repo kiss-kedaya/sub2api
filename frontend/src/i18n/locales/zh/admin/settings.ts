@@ -298,6 +298,8 @@ export default {
         stepUp: '敏感操作二次验证 (step-up 2FA)',
         stepUpHint: '开启后，账号/代理导出、备份创建与下载、S3 配置修改、提升管理员等敏感操作需要先完成 TOTP 二次验证（15 分钟内有效）。开启前需本人已启用 2FA；关闭本开关或全局 2FA 开关时，需要用当前账号的动态码完成验证。',
         stepUpEnableRequiresTotp: '开启敏感操作二次验证前，请先在个人资料中为当前账号启用 2FA (TOTP)。',
+        loginShapeDisguise: '登录首步伪装二次验证挑战',
+        loginShapeDisguiseHint: '开启后，邮箱或密码错误时下发的二次验证挑战不再固定为「动态码」，而是镜像该邮箱对应账号真实的二次验证形状（密码对错不再改变响应），账号不存在时按邮箱稳定伪装，用来堵住「从登录首步探测账号是否绑定通行密钥」。副作用：手误输错密码的用户偶尔会先看到通行密钥验证。默认关闭；开启前请用真实账号逐类验证登录。',
         sessionBinding: '会话 IP/UA 绑定',
         sessionBindingHint: '将登录会话与客户端 IP 和 User-Agent 绑定，任一变化即强制该会话失效并需重新登录（提升被盗凭证的利用门槛）。',
         auditRetention: '操作日志保留天数',

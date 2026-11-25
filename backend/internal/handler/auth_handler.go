@@ -35,6 +35,9 @@ type AuthHandler struct {
 	passkeys *service.PasskeyService
 	// twoFactorLimiter 按账号维度限制 2FA 校验尝试（60s 滚动窗口 5 次）。
 	twoFactorLimiter twoFactorRateLimiter
+	// disguise 为登录首步「凭据无效」挑战提供按邮箱稳定的伪装素材（审计 A-P1-02）。
+	// 没有可用密钥时为 nil；是否启用由 SettingKeyLoginShapeDisguiseEnabled 决定（默认关闭）。
+	disguise *service.LoginDisguise
 
 	dingTalkClientInstance *DingTalkClient
 	dingTalkClientMu       sync.Mutex
@@ -46,6 +49,10 @@ type AuthHandler struct {
 
 // NewAuthHandler creates a new AuthHandler
 func NewAuthHandler(cfg *config.Config, authService *service.AuthService, userService *service.UserService, settingService *service.SettingService, promoService *service.PromoService, redeemService *service.RedeemService, totpService *service.TotpService, userAttributeService *service.UserAttributeService) *AuthHandler {
+	var disguise *service.LoginDisguise
+	if cfg != nil {
+		disguise = service.NewLoginDisguise(cfg.JWT.Secret)
+	}
 	return &AuthHandler{
 		cfg:                  cfg,
 		authService:          authService,
@@ -55,6 +62,7 @@ func NewAuthHandler(cfg *config.Config, authService *service.AuthService, userSe
 		redeemService:        redeemService,
 		totpService:          totpService,
 		userAttributeService: userAttributeService,
+		disguise:             disguise,
 	}
 }
 
@@ -317,6 +325,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			h.settingSvc.LoginTOTPEnabled(c.Request.Context()) {
 			// 响应是 200 挑战，但审计必须仍按「凭据错误」记失败，否则撞库/爆破
 			// 在审计里会显示成成功登录。
+			if h.loginShapeDisguiseActive(c.Request.Context()) {
+				// 开关打开（默认关闭）：挑战形状不再固定为 TOTP 单因子，镜像真实账号 /
+				// HMAC 稳定伪装，见 auth_login_disguise.go。
+				h.respondDisguisedLoginChallenge(c, req.Email, req.Password)
+				return
+			}
 			h.createLoginChallenge(c, 0, req.Email)
 			return
 		}
@@ -568,6 +582,13 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 	// 审计：2FA 验证请求也登记被验证账号的邮箱指纹（不含明文）。
 	markAuthAuditEmail(c, session.Email)
 
+	// 开关打开期间下发的伪装挑战会话：与真实会话同序、同错误码、同限速、会话同样不因失败而销毁，
+	// 永远不会放行，见 auth_login_disguise.go。开关关闭时不会产生这种会话，这里不可达。
+	if session.Decoy {
+		h.respondDecoyLogin2FA(c, session, &req)
+		return
+	}
+
 	// 第一步下发的「凭据无效」统一挑战：第二步必然失败，统一返回
 	// INVALID_CREDENTIALS（与真实 2FA 账号「密码已验证、动态码错误」区分开，
 	// 也不暴露账号是否存在）。账号维度限速用邮箱散列做键，避免被拿来当
@@ -792,6 +813,11 @@ func (h *AuthHandler) Login2FAPasskeyFinish(c *gin.Context) {
 		return
 	}
 	session, err := h.totpService.GetLoginSession(c.Request.Context(), req.TempToken)
+	// 伪装挑战会话（开关打开期间下发）先于 UserID<=0 的拒绝分支处理：它要与真实会话表现一致。
+	if err == nil && session != nil && session.Decoy {
+		h.respondDecoyPasskeyFinish(c, session, &req)
+		return
+	}
 	if err != nil || session == nil || session.UserID <= 0 {
 		response.BadRequest(c, "Invalid or expired 2FA session")
 		return

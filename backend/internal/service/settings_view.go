@@ -25,6 +25,7 @@ type SystemSettings struct {
 	PasskeyEnabled                      bool // Passkey 登录
 	SessionBindingEnabled               bool // 会话 IP/UA 绑定（变更即失效）
 	StepUpEnabled                       bool // 敏感操作 step-up 2FA 门控
+	LoginShapeDisguiseEnabled           bool // 登录首步「凭据无效」挑战按邮箱稳定伪装（审计 A-P1-02，默认关闭）
 	AuditLogRetentionDays               int  // 审计日志保留天数（<=0 永久保留）
 	LoginAgreementEnabled               bool
 	LoginAgreementMode                  string
