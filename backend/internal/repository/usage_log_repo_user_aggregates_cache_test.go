@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/stretchr/testify/require"
 )
@@ -346,6 +347,11 @@ func TestUsageGateGuardsUserAggregatesButNotAccountScans(t *testing.T) {
 		},
 		"keys 30 day totals": func() error {
 			_, err := repo.GetBatchAPIKeyUsageStats(ctx, []int64{5}, time.Time{}, time.Time{})
+			return err
+		},
+		// The COUNT behind the user's record list is the heaviest query of the page; it used to bypass the gate.
+		"user record list total": func() error {
+			_, _, err := repo.ListWithFilters(ctx, pagination.PaginationParams{Page: 1, PageSize: 20}, f)
 			return err
 		},
 	}

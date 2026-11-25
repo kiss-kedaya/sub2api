@@ -3,8 +3,10 @@
 package response
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -206,6 +208,93 @@ func TestErrorFrom(t *testing.T) {
 			require.Equal(t, tt.wantBody, got)
 		})
 	}
+}
+
+func TestErrorFromTellsThrottledClientsHowLongToWait(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name           string
+		err            error
+		wantStatus     int
+		wantRetryAfter string // "" = no Retry-After header
+	}{
+		{
+			name:           "too_many_requests_with_retry_after",
+			err:            errors2.TooManyRequests("USAGE_STATS_BUSY", "busy").WithMetadata(map[string]string{"retry_after": "2"}),
+			wantStatus:     http.StatusTooManyRequests,
+			wantRetryAfter: "2",
+		},
+		{
+			name:           "service_unavailable_with_retry_after",
+			err:            errors2.ServiceUnavailable("BUSY", "busy").WithMetadata(map[string]string{"retry_after": "5"}),
+			wantStatus:     http.StatusServiceUnavailable,
+			wantRetryAfter: "5",
+		},
+		{
+			name:       "too_many_requests_without_metadata",
+			err:        errors2.TooManyRequests("RATE_LIMITED", "slow down"),
+			wantStatus: http.StatusTooManyRequests,
+		},
+		{
+			name:       "unparsable_retry_after_is_ignored",
+			err:        errors2.TooManyRequests("RATE_LIMITED", "slow down").WithMetadata(map[string]string{"retry_after": "soon"}),
+			wantStatus: http.StatusTooManyRequests,
+		},
+		{
+			name:       "zero_retry_after_is_ignored",
+			err:        errors2.TooManyRequests("RATE_LIMITED", "slow down").WithMetadata(map[string]string{"retry_after": "0"}),
+			wantStatus: http.StatusTooManyRequests,
+		},
+		{
+			name:       "negative_retry_after_is_ignored",
+			err:        errors2.TooManyRequests("RATE_LIMITED", "slow down").WithMetadata(map[string]string{"retry_after": "-3"}),
+			wantStatus: http.StatusTooManyRequests,
+		},
+		{
+			name:       "other_statuses_do_not_get_the_header",
+			err:        errors2.Conflict("CONFLICT", "conflict").WithMetadata(map[string]string{"retry_after": "2"}),
+			wantStatus: http.StatusConflict,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			require.True(t, ErrorFrom(c, tt.err))
+			require.Equal(t, tt.wantStatus, w.Code)
+			require.Equal(t, tt.wantRetryAfter, w.Header().Get("Retry-After"))
+		})
+	}
+
+	// The reason and the wait stay in the body too, for clients that cannot read headers.
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	require.True(t, ErrorFrom(c, errors2.TooManyRequests("USAGE_STATS_BUSY", "busy").WithMetadata(map[string]string{"retry_after": "2"})))
+	got := parseResponseBody(t, w)
+	require.Equal(t, "USAGE_STATS_BUSY", got.Reason)
+	require.Equal(t, map[string]string{"retry_after": "2"}, got.Metadata)
+}
+
+// Only a server failure is an [ERROR] line; a client that is merely asked to come back later (429) is not.
+func TestErrorFromLogsServerFailuresButNotThrottling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previous := log.Writer()
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	logged := func(err error) string {
+		var out bytes.Buffer
+		log.SetOutput(&out)
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/usage/stats", nil)
+		require.True(t, ErrorFrom(c, err))
+		return out.String()
+	}
+
+	require.Empty(t, logged(errors2.TooManyRequests("USAGE_STATS_BUSY", "busy").WithMetadata(map[string]string{"retry_after": "2"})))
+	require.Contains(t, logged(errors2.ServiceUnavailable("DOWN", "down")), "[ERROR] GET /api/v1/usage/stats")
 }
 
 // ---------- 新增测试 ----------

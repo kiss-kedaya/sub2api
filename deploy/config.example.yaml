@@ -872,10 +872,13 @@ usage_stats_cache:
   # 缓存 TTL
   ttl: 60s
   # How many cache-miss aggregates of one user / API key one process may run on the database at once
-  # (0 = no cap). The surplus waits up to load_queue_timeout, then is answered 503 USAGE_STATS_BUSY
-  # instead of piling more scans on a saturated database. Cache hits never wait.
+  # (0 = no cap). The surplus waits up to load_queue_timeout, then is answered 429 USAGE_STATS_BUSY
+  # (with Retry-After: 2) instead of piling more scans on a saturated database. Cache hits never wait.
+  # One user / API key can hold at most max(2, this/4) of the slots at once; its own surplus waits for its
+  # own earlier queries, never in front of other users.
   # 单进程同时允许多少个「某用户 / 某 API Key」的未命中聚合查询跑在数据库上（0 = 不限）。
-  # 超出的排队最多 load_queue_timeout，仍拿不到名额就返回 503 USAGE_STATS_BUSY；命中缓存的请求不排队。
+  # 超出的排队最多 load_queue_timeout，仍拿不到名额就返回 429 USAGE_STATS_BUSY（带 Retry-After: 2）；命中缓存的请求不排队。
+  # 同一个用户 / API Key 同时最多占 max(2, 本值/4) 个名额，它自己多出来的查询只排它自己的队，不会挡在别人前面。
   max_concurrent_loads: 8
   # How long a cache miss waits for one of those slots (0 = turn the surplus away at once)
   # 未命中请求等待名额的最长时间（0 = 超出的立即拒绝）

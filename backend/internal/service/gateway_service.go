@@ -620,7 +620,8 @@ type ClaudeUsage struct {
 	CacheReadEstimated bool `json:"-"`
 	// Refusal 表示上游以 stop_reason=refusal 结束（Claude 违规拒答，内容为空）。
 	// 只认结构化 stop_reason，不看正文；置位后不会被后续事件清掉。
-	// 拒答不计费，见 recordUsageCore。
+	// 拒答照常计费（上游照常收费，余额 / 订阅 / 额度都和普通请求一样扣），置位后只在用量日志上
+	// 打 request_type=claude_refusal 标记，见 recordUsageCore。
 	Refusal bool `json:"-"`
 }
 

@@ -310,13 +310,13 @@ func TestUserListTotalIsCountedOncePerFilterSet(t *testing.T) {
 
 	expectCount(45)
 	expectPage()
-	_, page1, err := repo.listUsageLogsWithPagination(ctx, where, args, pageOf(1), true)
+	_, page1, err := repo.listUsageLogsWithPagination(ctx, where, args, pageOf(1), 1)
 	require.NoError(t, err)
 	require.EqualValues(t, 45, page1.Total)
 
 	// Turning the page: the total is reused, only the page itself is read.
 	expectPage()
-	_, page2, err := repo.listUsageLogsWithPagination(ctx, where, args, pageOf(2), true)
+	_, page2, err := repo.listUsageLogsWithPagination(ctx, where, args, pageOf(2), 1)
 	require.NoError(t, err)
 	require.EqualValues(t, 45, page2.Total)
 	require.Equal(t, 3, page2.Pages)
@@ -324,14 +324,14 @@ func TestUserListTotalIsCountedOncePerFilterSet(t *testing.T) {
 	// Other filters have their own total.
 	expectCount(8)
 	expectPage()
-	_, filtered, err := repo.listUsageLogsWithPagination(ctx, where+" AND group_id = $3", append(append([]any{}, args...), int64(97)), pageOf(1), true)
+	_, filtered, err := repo.listUsageLogsWithPagination(ctx, where+" AND group_id = $3", append(append([]any{}, args...), int64(97)), pageOf(1), 1)
 	require.NoError(t, err)
 	require.EqualValues(t, 8, filtered.Total)
 
 	// Callers that ask for a live count (admin, ExactTotal, the legacy ListBy* helpers) still get one every time.
 	expectCount(46)
 	expectPage()
-	_, live, err := repo.listUsageLogsWithPagination(ctx, where, args, pageOf(1), false)
+	_, live, err := repo.listUsageLogsWithPagination(ctx, where, args, pageOf(1), 0)
 	require.NoError(t, err)
 	require.EqualValues(t, 46, live.Total)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -379,6 +379,59 @@ func TestListWithFiltersReusesTheTotalOnlyForAUsersOwnList(t *testing.T) {
 	expectCount(4)
 	expectPage()
 	require.EqualValues(t, 4, totalOf(byKey, 2), "no user: every page counts live")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// The cached COUNT of a user's own list is an end-user aggregate like the cards and charts next to it: a saturated
+// database turns it away before it reaches the scan. Admin-style scopes (a key or an account without a user) count
+// live and never wait for a user's slot, exactly as before.
+func TestUserListTotalGoesThroughTheUserGateButAdminScopesDoNot(t *testing.T) {
+	ctx := context.Background()
+	repo, mock, cache := newCachedUsageRepo(t)
+	cache.gate = newUsageStatsGate(1, 30*time.Millisecond)
+	holdUsageStatsSlot(t, cache, 999)
+	start, end := usagePageWindow()
+	pageOf := func(n int) pagination.PaginationParams { return pagination.PaginationParams{Page: n, PageSize: 20} }
+
+	// No database expectation: being turned away must happen before the COUNT runs.
+	_, _, err := repo.ListWithFilters(ctx, pageOf(1), userPageFilters(7, start, end))
+	require.ErrorIs(t, err, ErrUsageStatsBusy)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM usage_logs`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(3)))
+	mock.ExpectQuery(`FROM usage_logs .*LIMIT`).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	_, page, err := repo.ListWithFilters(ctx, pageOf(1), usagestats.UsageLogFilters{APIKeyID: 9, StartTime: &start, EndTime: &end})
+	require.NoError(t, err)
+	require.EqualValues(t, 3, page.Total)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// Naming the user in the cache key is only about who the COUNT is charged to; it must not let one user's total be
+// handed to another, or make a user's repeat visit miss.
+func TestUserListTotalsAreNotSharedBetweenUsers(t *testing.T) {
+	ctx := context.Background()
+	repo, mock, _ := newCachedUsageRepo(t)
+	start, end := usagePageWindow()
+	pageOf := func(n int) pagination.PaginationParams { return pagination.PaginationParams{Page: n, PageSize: 20} }
+	expectPage := func() {
+		mock.ExpectQuery(`FROM usage_logs .*LIMIT`).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	}
+
+	for _, userID := range []int64{1, 2} {
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM usage_logs`).WithArgs(userID, start, end).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(userID * 10))
+		expectPage()
+		_, page, err := repo.ListWithFilters(ctx, pageOf(1), userPageFilters(userID, start, end))
+		require.NoError(t, err)
+		require.EqualValues(t, userID*10, page.Total, "user %d", userID)
+	}
+	// Second visit of each: the page is read again, the totals come from the cache and still belong to their user.
+	for _, userID := range []int64{1, 2} {
+		expectPage()
+		_, page, err := repo.ListWithFilters(ctx, pageOf(2), userPageFilters(userID, start, end))
+		require.NoError(t, err)
+		require.EqualValues(t, userID*10, page.Total, "user %d", userID)
+	}
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

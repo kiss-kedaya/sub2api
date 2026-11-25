@@ -2073,6 +2073,16 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 	writeSample := hasSample && s.passiveUsageWrites.Allow(id, sample)
 
 	if writeWindow || writeSample {
+		// 这次没写成（槽位满、账号已有在途写入、闭包 panic 或超时）就撤销这次的记账：没落库的内容不能记成已写入，
+		// 否则同账号同内容的后续响应会被压制到记账到期。下一个响应会再试。
+		forget := func() {
+			if writeWindow {
+				s.sessionWindowWrites.Forget(id)
+			}
+			if writeSample {
+				s.passiveUsageWrites.Forget(id)
+			}
+		}
 		accepted := s.accountWrites.Go(ctx, id, func(ctx context.Context) {
 			// 三步在同一个闭包里按顺序执行：清空必须先于采样写入，否则新采样会被清掉。
 			if clearSamples {
@@ -2097,15 +2107,10 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 					s.passiveUsageWrites.Forget(id)
 				}
 			}
-		})
+		}, forget)
 		if !accepted {
-			// 槽位满了，或该账号已有在途写入：丢弃，不排队不阻塞；撤销记账，下一个响应会再试。
-			if writeWindow {
-				s.sessionWindowWrites.Forget(id)
-			}
-			if writeSample {
-				s.passiveUsageWrites.Forget(id)
-			}
+			// 槽位满了，或该账号已有在途写入：丢弃，不排队不阻塞。
+			forget()
 		}
 	}
 

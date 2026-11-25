@@ -36,6 +36,16 @@
         </div>
       </UCard>
 
+      <p
+        v-if="statsBusyNotice"
+        class="flex items-center gap-1.5 text-sm text-muted"
+        role="status"
+        data-testid="usage-stats-busy"
+      >
+        <UIcon name="i-lucide-clock" class="size-4 shrink-0" />
+        {{ t(statsBusyNotice === 'retrying' ? 'usage.statsBusy' : 'usage.statsBusyGaveUp') }}
+      </p>
+
       <div class="usage-charts grid grid-cols-1 gap-4 lg:grid-cols-2">
         <ModelDistributionChart
           v-model:metric="modelDistributionMetric"
@@ -279,6 +289,7 @@ import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { collectUsageForExport, isUsageExportRateLimited, UsageExportChangedError } from '@/utils/usageExport'
+import { isUsageStatsBusyError, usageStatsBusyRetryDelayMs } from '@/utils/usageStatsBusy'
 import { getBillingModeLabel, getDisplayBillingMode as resolveDisplayBillingMode } from '@/utils/billingMode'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import type {
@@ -378,6 +389,48 @@ let chartReqSeq = 0
 let summaryReqSeq = 0
 let statsReqSeq = 0
 let modelStatsReqSeq = 0
+
+// 统计繁忙：后端并发闸把某个聚合挡在了库外（429 USAGE_STATS_BUSY，带 Retry-After）。这不是故障：
+// 保留屏幕上已有的数据（不清图表、不弹错误），显示一条不打断的提示，按 Retry-After 自动重试一次，
+// 重试仍繁忙就只改提示、不再重试（别循环打一个已经饱和的库）。
+type BusyLoader = 'logs' | 'summary' | 'endpoints' | 'models' | 'charts'
+const statsBusyNotice = ref<'' | 'retrying' | 'failed'>('')
+const busyRetries = new Map<BusyLoader, () => Promise<void>>() // 等着自动重试的加载，同一个加载只排一次
+const busyRetried = new Set<BusyLoader>() // 正在跑的那一次自动重试：再繁忙就不再重试
+let busyRetryTimer: ReturnType<typeof setTimeout> | undefined
+
+const clearStatsBusy = () => {
+  if (busyRetryTimer !== undefined) clearTimeout(busyRetryTimer)
+  busyRetryTimer = undefined
+  busyRetries.clear()
+  busyRetried.clear()
+  statsBusyNotice.value = ''
+}
+
+const runBusyRetries = async () => {
+  busyRetryTimer = undefined
+  const queued = [...busyRetries]
+  busyRetries.clear()
+  queued.forEach(([key]) => busyRetried.add(key))
+  await Promise.allSettled(queued.map(([, reload]) => reload()))
+  busyRetried.clear()
+  if (statsBusyNotice.value === 'retrying') statsBusyNotice.value = ''
+}
+
+// 返回 true 表示这个错误是「统计繁忙」：调用方保留已有数据、不报错，其余交给这里排重试。
+const deferWhenStatsBusy = (error: unknown, loader: BusyLoader, reload: () => Promise<void>): boolean => {
+  if (!isUsageStatsBusyError(error)) return false
+  if (busyRetried.has(loader)) {
+    statsBusyNotice.value = 'failed'
+    return true
+  }
+  statsBusyNotice.value = 'retrying'
+  busyRetries.set(loader, reload)
+  if (busyRetryTimer === undefined) {
+    busyRetryTimer = setTimeout(() => void runBusyRetries(), usageStatsBusyRetryDelayMs(error))
+  }
+  return true
+}
 
 const formatLocalDate = (date: Date): string =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
@@ -556,6 +609,8 @@ const loadLogs = async (silent = false) => {
       if (inflightOpen.value) void loadInflight(false)
     }
   } catch (error: any) {
+    // 列表总数（COUNT）也走后端并发闸：繁忙时保留当前这页、不弹错误，稍后自动重试一次。
+    if (generation === logsGeneration && deferWhenStatsBusy(error, 'logs', () => loadLogs(silent))) return
     if (!silent && error?.name !== 'AbortError' && error?.code !== 'ERR_CANCELED') {
       appStore.showError(t('usage.failedToLoad'))
     }
@@ -574,6 +629,7 @@ const loadSummary = async () => {
     usageStats.value = stats
   } catch (error) {
     if (seq !== summaryReqSeq) return
+    if (deferWhenStatsBusy(error, 'summary', loadSummary)) return
     console.error('Failed to load usage summary:', error)
   } finally {
     if (seq === summaryReqSeq) statsLoading.value = false
@@ -591,6 +647,7 @@ const loadEndpointStats = async () => {
     endpointPathStats.value = []
   } catch (error) {
     if (seq !== statsReqSeq) return
+    if (deferWhenStatsBusy(error, 'endpoints', loadEndpointStats)) return
     console.error('Failed to load endpoint stats:', error)
     inboundEndpointStats.value = []
     upstreamEndpointStats.value = []
@@ -618,6 +675,7 @@ const loadModelStats = async () => {
     refreshModelOptions(response.models || [])
   } catch (error) {
     if (seq !== modelStatsReqSeq) return
+    if (deferWhenStatsBusy(error, 'models', loadModelStats)) return
     console.error('Failed to load model stats:', error)
     requestedModelStats.value = []
   } finally {
@@ -641,6 +699,7 @@ const loadChartData = async () => {
     groupStats.value = snapshot.groups || []
   } catch (error) {
     if (seq !== chartReqSeq) return
+    if (deferWhenStatsBusy(error, 'charts', loadChartData)) return
     console.error('Failed to load chart data:', error)
     trendData.value = []
     groupStats.value = []
@@ -660,6 +719,7 @@ const refreshModelOptions = (models: ModelStat[]) => {
 }
 
 const applyFilters = () => {
+  clearStatsBusy()
   pagination.page = 1
   void loadLogs()
   loadStats()
@@ -669,6 +729,7 @@ const applyFilters = () => {
 }
 
 const refreshData = () => {
+  clearStatsBusy()
   // 刷新时先把还在使用中的快捷时间窗（近24小时等）滑到当前时刻，
   // 不然加载时算出来的窗口把刷新后产生的记录挡在外面，看起来像没刷新。
   const presetRange = dateRangeRef.value?.refreshActivePreset?.() ?? null
@@ -1054,6 +1115,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  clearStatsBusy()
   exportController?.abort()
   abortController?.abort()
   document.removeEventListener('click', handleColumnClickOutside)

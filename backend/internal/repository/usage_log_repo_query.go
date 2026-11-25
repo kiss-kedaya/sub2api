@@ -52,15 +52,15 @@ func (r *usageLogRepository) GetByID(ctx context.Context, id int64) (log *servic
 }
 
 func (r *usageLogRepository) ListByUser(ctx context.Context, userID int64, params pagination.PaginationParams) ([]service.UsageLog, *pagination.PaginationResult, error) {
-	return r.listUsageLogsWithPagination(ctx, "WHERE user_id = $1", []any{userID}, params, false)
+	return r.listUsageLogsWithPagination(ctx, "WHERE user_id = $1", []any{userID}, params, 0)
 }
 
 func (r *usageLogRepository) ListByAPIKey(ctx context.Context, apiKeyID int64, params pagination.PaginationParams) ([]service.UsageLog, *pagination.PaginationResult, error) {
-	return r.listUsageLogsWithPagination(ctx, "WHERE api_key_id = $1", []any{apiKeyID}, params, false)
+	return r.listUsageLogsWithPagination(ctx, "WHERE api_key_id = $1", []any{apiKeyID}, params, 0)
 }
 
 func (r *usageLogRepository) ListByAccount(ctx context.Context, accountID int64, params pagination.PaginationParams) ([]service.UsageLog, *pagination.PaginationResult, error) {
-	return r.listUsageLogsWithPagination(ctx, "WHERE account_id = $1", []any{accountID}, params, false)
+	return r.listUsageLogsWithPagination(ctx, "WHERE account_id = $1", []any{accountID}, params, 0)
 }
 
 func (r *usageLogRepository) ListByUserAndTimeRange(ctx context.Context, userID int64, startTime, endTime time.Time) ([]service.UsageLog, *pagination.PaginationResult, error) {
@@ -149,7 +149,11 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 		// A user's own list keeps its exact total, but the total is the same for every page of the same filters:
 		// count once per minute instead of once per page turn (paging a filtered list took ~2.3 s per page, all of
 		// it the COUNT). Admin and ExactTotal callers keep the live count.
-		logs, page, err = r.listUsageLogsWithPagination(ctx, whereClause, args, params, filters.UserID > 0 && !filters.ExactTotal)
+		var cacheTotalForUser int64
+		if !filters.ExactTotal {
+			cacheTotalForUser = filters.UserID
+		}
+		logs, page, err = r.listUsageLogsWithPagination(ctx, whereClause, args, params, cacheTotalForUser)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -221,7 +225,9 @@ func usageListTotalCacheExtra(whereClause string, args []any) string {
 	return strings.Join(parts, "\x1f")
 }
 
-func (r *usageLogRepository) listUsageLogsWithPagination(ctx context.Context, whereClause string, args []any, params pagination.PaginationParams, cacheTotal bool) ([]service.UsageLog, *pagination.PaginationResult, error) {
+// listUsageLogsWithPagination lists one page with its exact total. cacheTotalForUser > 0 serves the total
+// through the stats cache on behalf of that user (the user a user's own list is scoped to); 0 counts live.
+func (r *usageLogRepository) listUsageLogsWithPagination(ctx context.Context, whereClause string, args []any, params pagination.PaginationParams, cacheTotalForUser int64) ([]service.UsageLog, *pagination.PaginationResult, error) {
 	countQuery := "SELECT COUNT(*) FROM usage_logs " + whereClause
 	countTotal := func(ctx context.Context) (int64, error) {
 		var n int64
@@ -232,9 +238,12 @@ func (r *usageLogRepository) listUsageLogsWithPagination(ctx context.Context, wh
 	}
 	var total int64
 	var err error
-	if cacheTotal {
+	if cacheTotalForUser > 0 {
+		// The user is already part of Extra (it is a WHERE argument), so naming it in the key as well changes no
+		// answer and cannot mix users up. It is what makes this COUNT, the heaviest query of the usage page,
+		// an end-user aggregate: it now goes through the per-user concurrency gate like the others.
 		total, err = loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
-			Query: "usage_list_total", Extra: usageListTotalCacheExtra(whereClause, args),
+			Query: "usage_list_total", UserID: cacheTotalForUser, Extra: usageListTotalCacheExtra(whereClause, args),
 		}, countTotal)
 	} else {
 		total, err = countTotal(ctx)

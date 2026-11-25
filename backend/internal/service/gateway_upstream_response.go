@@ -1476,7 +1476,7 @@ func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
 		return
 	}
 
-	// 只置位不清除：后续事件不能把已确认的拒答改回计费。
+	// 只置位不清除：后续事件不能把已确认的拒答标记清掉（拒答照常计费，标记只决定用量日志的类型）。
 	if patch.refusal {
 		usage.Refusal = true
 	}
