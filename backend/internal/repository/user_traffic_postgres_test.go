@@ -249,7 +249,7 @@ func trafficOptimizationDatabase(t testing.TB) (*usageLogRepository, *sql.DB) {
 	require.NoError(t, err)
 	_, err = db.Exec(strings.ReplaceAll(string(migration), "CREATE TABLE IF NOT EXISTS", "CREATE TEMP TABLE IF NOT EXISTS"))
 	require.NoError(t, err)
-	indexes, err := os.ReadFile("../../migrations/308_user_traffic_cursor_indexes_notx.sql")
+	indexes, err := os.ReadFile("../../migrations/273_user_traffic_cursor_indexes_notx.sql")
 	require.NoError(t, err)
 	for range 2 {
 		// Temporary tables do not need concurrent index creation.

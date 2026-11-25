@@ -2,15 +2,59 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 )
+
+// Connection traces are written in batches. A single writer used to commit one
+// row per transaction, so its throughput was capped by commit latency and a
+// 256-slot queue dropped traces as soon as the database slowed down.
+const (
+	connectionTraceQueueCap       = 4096
+	connectionTraceBatchMax       = 256
+	connectionTraceBatchWindow    = 20 * time.Millisecond
+	connectionTraceWriteTimeout   = 5 * time.Second // per attempt, one context per batch
+	connectionTraceWriteAttempts  = 3
+	connectionTraceMaxDetailBytes = 128 * 1024
+	connectionTraceLogInterval    = 10 * time.Second
+	connectionTraceColumnCount    = 22
+	connectionTraceDetailColumn   = 13 // zero-based position of the jsonb column
+)
+
+// connectionTraceShutdownBudget bounds how long a stop request may spend
+// persisting what is still queued. A variable only so tests can shrink it.
+var connectionTraceShutdownBudget = 3 * time.Second
+
+var errConnectionTraceTooLarge = errors.New("connection trace exceeds bound")
+
+// connectionDropCounter counts diagnostics rows that were given up on and turns
+// the count into at most one log line per interval, so an outage cannot flood
+// the log with one line per request.
+type connectionDropCounter struct {
+	total    atomic.Int64
+	reported atomic.Int64
+	nextLog  atomic.Int64
+}
+
+// add records n drops. When logNow is true the caller should log sinceLastLog.
+func (c *connectionDropCounter) add(n int, now time.Time) (sinceLastLog int64, logNow bool) {
+	total := c.total.Add(int64(n))
+	next := c.nextLog.Load()
+	if now.UnixNano() < next || !c.nextLog.CompareAndSwap(next, now.Add(connectionTraceLogInterval).UnixNano()) {
+		return 0, false
+	}
+	return total - c.reported.Swap(total), true
+}
 
 // RecordConnectionTrace never blocks the response on database I/O. The queue,
 // payload, retries and retention cleanup are bounded and diagnostics-only.
@@ -22,39 +66,47 @@ func (r *usageLogRepository) RecordConnectionTrace(record service.ConnectionTrac
 	select {
 	case <-r.connectionDone:
 		return
+	default:
+	}
+	select {
 	case r.connectionQueue <- record:
 	default:
-		logger.LegacyPrintf("connection_diagnostics", "queue full; trace dropped")
+		if dropped, ok := r.connectionQueueDrops.add(1, time.Now()); ok {
+			logger.LegacyPrintf("connection_diagnostics", "queue full; trace dropped (%d since last report)", dropped)
+		}
 	}
 }
 
 func (r *usageLogRepository) startConnectionWriter() {
 	r.connectionOnce.Do(func() {
-		r.connectionQueue = make(chan service.ConnectionTrace, 256)
+		r.connectionQueue = make(chan service.ConnectionTrace, connectionTraceQueueCap)
 		r.connectionDone = make(chan struct{})
+		r.connectionExited = make(chan struct{})
 		go r.runConnectionWriter()
 	})
 }
 
 func (r *usageLogRepository) runConnectionWriter() {
+	defer close(r.connectionExited)
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
+	batch := make([]service.ConnectionTrace, 0, connectionTraceBatchMax)
 	for {
+		// A stop request wins over queued work, so shutdown is bounded by the
+		// drain budget instead of by however much is still queued.
 		select {
 		case <-r.connectionDone:
+			r.drainConnectionQueue(batch[:0])
 			return
-		case record := <-r.connectionQueue:
-			for attempt := 0; attempt < 3; attempt++ {
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				err := r.writeConnectionTrace(ctx, record)
-				cancel()
-				if err == nil {
-					break
-				}
-				if attempt == 2 {
-					logger.LegacyPrintf("connection_diagnostics", "trace persistence failed")
-				}
-			}
+		default:
+		}
+		select {
+		case <-r.connectionDone:
+			continue
+		case first := <-r.connectionQueue:
+			batch = r.collectConnectionBatch(append(batch[:0], first))
+			r.flushConnectionBatch(context.Background(), batch)
+			clear(batch) // do not keep written traces reachable until the next batch
 		case <-ticker.C:
 			// The run interval is one hour, so a small per-run batch can never
 			// outpace ingestion: the table writes millions of rows a day while
@@ -112,19 +164,211 @@ func (r *usageLogRepository) runConnectionWriter() {
 	}
 }
 
-func (r *usageLogRepository) writeConnectionTrace(ctx context.Context, v service.ConnectionTrace) error {
-	raw, err := json.Marshal(v.Detail)
+// collectConnectionBatch tops a batch up to the batch limit, waiting at most the
+// batch window after its first trace for more to arrive.
+func (r *usageLogRepository) collectConnectionBatch(batch []service.ConnectionTrace) []service.ConnectionTrace {
+	timer := time.NewTimer(connectionTraceBatchWindow)
+	defer timer.Stop()
+	for len(batch) < connectionTraceBatchMax {
+		select {
+		case record := <-r.connectionQueue:
+			batch = append(batch, record)
+		case <-timer.C:
+			return batch
+		case <-r.connectionDone:
+			return batch
+		}
+	}
+	return batch
+}
+
+// takeQueuedConnectionTraces tops a batch up with what is already queued,
+// without waiting.
+func (r *usageLogRepository) takeQueuedConnectionTraces(batch []service.ConnectionTrace) []service.ConnectionTrace {
+	for len(batch) < connectionTraceBatchMax {
+		select {
+		case record := <-r.connectionQueue:
+			batch = append(batch, record)
+		default:
+			return batch
+		}
+	}
+	return batch
+}
+
+// drainConnectionQueue persists what is still queued when the writer is told to
+// stop. One deadline bounds the whole drain: once it passes, every remaining
+// batch fails immediately and is counted as dropped.
+func (r *usageLogRepository) drainConnectionQueue(batch []service.ConnectionTrace) {
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTraceShutdownBudget)
+	defer cancel()
+	for {
+		batch = r.takeQueuedConnectionTraces(batch)
+		if len(batch) == 0 {
+			return
+		}
+		r.flushConnectionBatch(ctx, batch)
+		clear(batch)
+		batch = batch[:0]
+	}
+}
+
+// flushConnectionBatch persists one batch. Every failure ends in a counted,
+// rate-limited drop; nothing here can block or panic the writer.
+func (r *usageLogRepository) flushConnectionBatch(ctx context.Context, batch []service.ConnectionTrace) {
+	args := make([]any, 0, len(batch)*connectionTraceColumnCount)
+	for i := range batch {
+		raw, err := json.Marshal(batch[i].Detail)
+		if err == nil && len(raw) > connectionTraceMaxDetailBytes {
+			err = errConnectionTraceTooLarge
+		}
+		if err != nil {
+			// Only this trace is lost; the rest of the batch is unaffected.
+			r.dropConnectionTraces(1, err)
+			continue
+		}
+		args = appendConnectionTraceArgs(args, batch[i], string(raw))
+	}
+	rows := len(args) / connectionTraceColumnCount
+	if rows == 0 {
+		return
+	}
+	err := r.writeConnectionTraceRows(ctx, args)
+	if err == nil {
+		return
+	}
+	if rows == 1 || !connectionTraceDataError(err) {
+		// Database trouble hits every row alike; writing them one by one would
+		// only multiply the timeouts, so give the batch up.
+		r.dropConnectionTraces(rows, err)
+		return
+	}
+	// A data error does not say which row caused it. Write the rows one by one
+	// so a single bad value costs only its own trace.
+	for i := 0; i < rows; i++ {
+		rowErr := r.writeConnectionTraceRows(ctx, args[i*connectionTraceColumnCount:(i+1)*connectionTraceColumnCount])
+		if rowErr == nil {
+			continue
+		}
+		if connectionTraceDataError(rowErr) {
+			r.dropConnectionTraces(1, rowErr)
+			continue
+		}
+		// The database went away mid-way: stop instead of retrying every remaining row.
+		r.dropConnectionTraces(rows-i, rowErr)
+		return
+	}
+}
+
+func (r *usageLogRepository) dropConnectionTraces(n int, err error) {
+	if dropped, ok := r.connectionWriteDrops.add(n, time.Now()); ok {
+		logger.LegacyPrintf("connection_diagnostics", "trace persistence failed; %d dropped since last report (%s)", dropped, connectionTraceFailureReason(err))
+	}
+}
+
+// connectionTraceFailureReason names a failure without the database's own
+// message, which can echo the offending value.
+func connectionTraceFailureReason(err error) string {
+	var pgErr *pq.Error
+	switch {
+	case errors.As(err, &pgErr):
+		return "sqlstate " + string(pgErr.Code)
+	case errors.Is(err, errConnectionTraceTooLarge):
+		return "detail exceeds bound"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	default:
+		return "write failed"
+	}
+}
+
+// connectionTraceDataError reports SQLSTATE classes 22 (data exception) and 23
+// (integrity violation): retrying the same values can never succeed.
+func connectionTraceDataError(err error) bool {
+	var pgErr *pq.Error
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	class := pgErr.Code.Class()
+	return class == "22" || class == "23"
+}
+
+// writeConnectionTraceRows inserts len(args)/connectionTraceColumnCount rows in
+// one asynchronous-commit transaction. Retrying is safe: ON CONFLICT DO NOTHING
+// makes a repeated insert harmless even if an earlier commit's outcome is unknown.
+func (r *usageLogRepository) writeConnectionTraceRows(parent context.Context, args []any) error {
+	query := connectionTraceInsertSQL(len(args) / connectionTraceColumnCount)
+	var err error
+	for attempt := 0; attempt < connectionTraceWriteAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(parent, connectionTraceWriteTimeout)
+		err = execAsyncCommit(ctx, r.db, query, args...)
+		cancel()
+		// A data error repeats on every retry and a finished parent context cannot
+		// recover: only transient failures earn another attempt.
+		if err == nil || connectionTraceDataError(err) || parent.Err() != nil {
+			return err
+		}
+	}
+	return err
+}
+
+// appendConnectionTraceArgs appends one row's values in column order.
+func appendConnectionTraceArgs(args []any, v service.ConnectionTrace, detail string) []any {
+	return append(args, v.TraceID, v.StartedAt, v.RequestID, v.ClientRequestID, v.UserID, v.APIKeyID, v.AccountID, v.GroupID, v.Model, v.Path, v.ClientIP, v.UserAgent, v.Stream, detail, v.Source, v.Host, connectionTraceProtocolScheme(v.Scheme), v.Method, connectionTraceProtocolVersion(v.HTTPVersion), connectionTraceProtocolVersion(v.TLSVersion), v.UpstreamStatus, v.NetworkError)
+}
+
+// connectionTraceInsertSQL builds the multi-row INSERT. The column list,
+// placeholder order, jsonb cast and conflict clause are those of the single-row
+// statement it replaced, so a one-row batch is the identical statement.
+func connectionTraceInsertSQL(rows int) string {
+	var b strings.Builder
+	b.WriteString(`INSERT INTO request_connection_traces
+  (trace_id,started_at,request_id,client_request_id,user_id,api_key_id,account_id,group_id,model,path,client_ip,user_agent,stream,detail,source,host,scheme,method,http_version,tls_version,upstream_status,network_error)
+  VALUES `)
+	n := 0
+	for row := 0; row < rows; row++ {
+		if row > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('(')
+		for col := 0; col < connectionTraceColumnCount; col++ {
+			if col > 0 {
+				b.WriteByte(',')
+			}
+			n++
+			b.WriteByte('$')
+			b.WriteString(strconv.Itoa(n))
+			if col == connectionTraceDetailColumn {
+				b.WriteString("::jsonb")
+			}
+		}
+		b.WriteByte(')')
+	}
+	b.WriteString(`
+  ON CONFLICT (trace_id) DO NOTHING`)
+	return b.String()
+}
+
+// execAsyncCommit runs one diagnostics write in its own transaction with
+// synchronous_commit off for that transaction only. Diagnostics can lose the
+// last few hundred milliseconds if the database crashes, and in exchange the
+// commit no longer waits behind every other writer for a WAL flush. SET LOCAL
+// ends with the transaction: the session and the server setting are untouched.
+// Only call it on a pool (never on a caller's transaction, whose durability it
+// would change) and never for billing, balance or usage-log writes.
+func execAsyncCommit(ctx context.Context, db *sql.DB, query string, args ...any) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if len(raw) > 128*1024 {
-		return fmt.Errorf("connection trace exceeds bound")
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, "SET LOCAL synchronous_commit = off"); err != nil {
+		return err
 	}
-	_, err = r.db.ExecContext(ctx, `INSERT INTO request_connection_traces
-  (trace_id,started_at,request_id,client_request_id,user_id,api_key_id,account_id,group_id,model,path,client_ip,user_agent,stream,detail,source,host,scheme,method,http_version,tls_version,upstream_status,network_error)
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22)
-  ON CONFLICT (trace_id) DO NOTHING`, v.TraceID, v.StartedAt, v.RequestID, v.ClientRequestID, v.UserID, v.APIKeyID, v.AccountID, v.GroupID, v.Model, v.Path, v.ClientIP, v.UserAgent, v.Stream, string(raw), v.Source, v.Host, connectionTraceProtocolScheme(v.Scheme), v.Method, connectionTraceProtocolVersion(v.HTTPVersion), connectionTraceProtocolVersion(v.TLSVersion), v.UpstreamStatus, v.NetworkError)
-	return err
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // A completed terminal never proves client receipt. Cancellations after a
@@ -305,9 +549,17 @@ func (r *usageLogRepository) ImportEdgeConnections(ctx context.Context, records 
 	return tx.Commit()
 }
 
+// StopConnectionDiagnostics stops the writer and gives it a bounded moment to
+// persist what is already queued; the process closes the database right after.
 func (r *usageLogRepository) StopConnectionDiagnostics() {
 	r.startConnectionWriter()
 	r.connectionStop.Do(func() { close(r.connectionDone) })
+	timer := time.NewTimer(connectionTraceShutdownBudget + time.Second)
+	defer timer.Stop()
+	select {
+	case <-r.connectionExited:
+	case <-timer.C:
+	}
 }
 
 // Retention windows and pruning budgets for the two high-volume diagnostic
