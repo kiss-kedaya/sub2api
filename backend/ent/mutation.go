@@ -23061,6 +23061,10 @@ type GroupMutation struct {
 	allow_live                              *bool
 	force_openai_fast                       *bool
 	free_openai_fast                        *bool
+	openai_fast_multiplier                  *float64
+	addopenai_fast_multiplier               *float64
+	openai_ultrafast_multiplier             *float64
+	addopenai_ultrafast_multiplier          *float64
 	require_oauth_only                      *bool
 	require_privacy_set                     *bool
 	default_mapped_model                    *string
@@ -26231,6 +26235,146 @@ func (m *GroupMutation) ResetFreeOpenaiFast() {
 	m.free_openai_fast = nil
 }
 
+// SetOpenaiFastMultiplier sets the "openai_fast_multiplier" field.
+func (m *GroupMutation) SetOpenaiFastMultiplier(f float64) {
+	m.openai_fast_multiplier = &f
+	m.addopenai_fast_multiplier = nil
+}
+
+// OpenaiFastMultiplier returns the value of the "openai_fast_multiplier" field in the mutation.
+func (m *GroupMutation) OpenaiFastMultiplier() (r float64, exists bool) {
+	v := m.openai_fast_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOpenaiFastMultiplier returns the old "openai_fast_multiplier" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldOpenaiFastMultiplier(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOpenaiFastMultiplier is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOpenaiFastMultiplier requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOpenaiFastMultiplier: %w", err)
+	}
+	return oldValue.OpenaiFastMultiplier, nil
+}
+
+// AddOpenaiFastMultiplier adds f to the "openai_fast_multiplier" field.
+func (m *GroupMutation) AddOpenaiFastMultiplier(f float64) {
+	if m.addopenai_fast_multiplier != nil {
+		*m.addopenai_fast_multiplier += f
+	} else {
+		m.addopenai_fast_multiplier = &f
+	}
+}
+
+// AddedOpenaiFastMultiplier returns the value that was added to the "openai_fast_multiplier" field in this mutation.
+func (m *GroupMutation) AddedOpenaiFastMultiplier() (r float64, exists bool) {
+	v := m.addopenai_fast_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearOpenaiFastMultiplier clears the value of the "openai_fast_multiplier" field.
+func (m *GroupMutation) ClearOpenaiFastMultiplier() {
+	m.openai_fast_multiplier = nil
+	m.addopenai_fast_multiplier = nil
+	m.clearedFields[group.FieldOpenaiFastMultiplier] = struct{}{}
+}
+
+// OpenaiFastMultiplierCleared returns if the "openai_fast_multiplier" field was cleared in this mutation.
+func (m *GroupMutation) OpenaiFastMultiplierCleared() bool {
+	_, ok := m.clearedFields[group.FieldOpenaiFastMultiplier]
+	return ok
+}
+
+// ResetOpenaiFastMultiplier resets all changes to the "openai_fast_multiplier" field.
+func (m *GroupMutation) ResetOpenaiFastMultiplier() {
+	m.openai_fast_multiplier = nil
+	m.addopenai_fast_multiplier = nil
+	delete(m.clearedFields, group.FieldOpenaiFastMultiplier)
+}
+
+// SetOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field.
+func (m *GroupMutation) SetOpenaiUltrafastMultiplier(f float64) {
+	m.openai_ultrafast_multiplier = &f
+	m.addopenai_ultrafast_multiplier = nil
+}
+
+// OpenaiUltrafastMultiplier returns the value of the "openai_ultrafast_multiplier" field in the mutation.
+func (m *GroupMutation) OpenaiUltrafastMultiplier() (r float64, exists bool) {
+	v := m.openai_ultrafast_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOpenaiUltrafastMultiplier returns the old "openai_ultrafast_multiplier" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldOpenaiUltrafastMultiplier(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOpenaiUltrafastMultiplier is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOpenaiUltrafastMultiplier requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOpenaiUltrafastMultiplier: %w", err)
+	}
+	return oldValue.OpenaiUltrafastMultiplier, nil
+}
+
+// AddOpenaiUltrafastMultiplier adds f to the "openai_ultrafast_multiplier" field.
+func (m *GroupMutation) AddOpenaiUltrafastMultiplier(f float64) {
+	if m.addopenai_ultrafast_multiplier != nil {
+		*m.addopenai_ultrafast_multiplier += f
+	} else {
+		m.addopenai_ultrafast_multiplier = &f
+	}
+}
+
+// AddedOpenaiUltrafastMultiplier returns the value that was added to the "openai_ultrafast_multiplier" field in this mutation.
+func (m *GroupMutation) AddedOpenaiUltrafastMultiplier() (r float64, exists bool) {
+	v := m.addopenai_ultrafast_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearOpenaiUltrafastMultiplier clears the value of the "openai_ultrafast_multiplier" field.
+func (m *GroupMutation) ClearOpenaiUltrafastMultiplier() {
+	m.openai_ultrafast_multiplier = nil
+	m.addopenai_ultrafast_multiplier = nil
+	m.clearedFields[group.FieldOpenaiUltrafastMultiplier] = struct{}{}
+}
+
+// OpenaiUltrafastMultiplierCleared returns if the "openai_ultrafast_multiplier" field was cleared in this mutation.
+func (m *GroupMutation) OpenaiUltrafastMultiplierCleared() bool {
+	_, ok := m.clearedFields[group.FieldOpenaiUltrafastMultiplier]
+	return ok
+}
+
+// ResetOpenaiUltrafastMultiplier resets all changes to the "openai_ultrafast_multiplier" field.
+func (m *GroupMutation) ResetOpenaiUltrafastMultiplier() {
+	m.openai_ultrafast_multiplier = nil
+	m.addopenai_ultrafast_multiplier = nil
+	delete(m.clearedFields, group.FieldOpenaiUltrafastMultiplier)
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (m *GroupMutation) SetRequireOauthOnly(b bool) {
 	m.require_oauth_only = &b
@@ -27132,7 +27276,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 72)
+	fields := make([]string, 0, 74)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -27310,6 +27454,12 @@ func (m *GroupMutation) Fields() []string {
 	if m.free_openai_fast != nil {
 		fields = append(fields, group.FieldFreeOpenaiFast)
 	}
+	if m.openai_fast_multiplier != nil {
+		fields = append(fields, group.FieldOpenaiFastMultiplier)
+	}
+	if m.openai_ultrafast_multiplier != nil {
+		fields = append(fields, group.FieldOpenaiUltrafastMultiplier)
+	}
 	if m.require_oauth_only != nil {
 		fields = append(fields, group.FieldRequireOauthOnly)
 	}
@@ -27475,6 +27625,10 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.ForceOpenaiFast()
 	case group.FieldFreeOpenaiFast:
 		return m.FreeOpenaiFast()
+	case group.FieldOpenaiFastMultiplier:
+		return m.OpenaiFastMultiplier()
+	case group.FieldOpenaiUltrafastMultiplier:
+		return m.OpenaiUltrafastMultiplier()
 	case group.FieldRequireOauthOnly:
 		return m.RequireOauthOnly()
 	case group.FieldRequirePrivacySet:
@@ -27628,6 +27782,10 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldForceOpenaiFast(ctx)
 	case group.FieldFreeOpenaiFast:
 		return m.OldFreeOpenaiFast(ctx)
+	case group.FieldOpenaiFastMultiplier:
+		return m.OldOpenaiFastMultiplier(ctx)
+	case group.FieldOpenaiUltrafastMultiplier:
+		return m.OldOpenaiUltrafastMultiplier(ctx)
 	case group.FieldRequireOauthOnly:
 		return m.OldRequireOauthOnly(ctx)
 	case group.FieldRequirePrivacySet:
@@ -28076,6 +28234,20 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetFreeOpenaiFast(v)
 		return nil
+	case group.FieldOpenaiFastMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOpenaiFastMultiplier(v)
+		return nil
+	case group.FieldOpenaiUltrafastMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOpenaiUltrafastMultiplier(v)
+		return nil
 	case group.FieldRequireOauthOnly:
 		v, ok := value.(bool)
 		if !ok {
@@ -28253,6 +28425,12 @@ func (m *GroupMutation) AddedFields() []string {
 	if m.addsort_order != nil {
 		fields = append(fields, group.FieldSortOrder)
 	}
+	if m.addopenai_fast_multiplier != nil {
+		fields = append(fields, group.FieldOpenaiFastMultiplier)
+	}
+	if m.addopenai_ultrafast_multiplier != nil {
+		fields = append(fields, group.FieldOpenaiUltrafastMultiplier)
+	}
 	if m.addrpm_limit != nil {
 		fields = append(fields, group.FieldRpmLimit)
 	}
@@ -28322,6 +28500,10 @@ func (m *GroupMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedFallbackGroupIDOnInvalidRequest()
 	case group.FieldSortOrder:
 		return m.AddedSortOrder()
+	case group.FieldOpenaiFastMultiplier:
+		return m.AddedOpenaiFastMultiplier()
+	case group.FieldOpenaiUltrafastMultiplier:
+		return m.AddedOpenaiUltrafastMultiplier()
 	case group.FieldRpmLimit:
 		return m.AddedRpmLimit()
 	case group.FieldProfitMinMargin:
@@ -28519,6 +28701,20 @@ func (m *GroupMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddSortOrder(v)
 		return nil
+	case group.FieldOpenaiFastMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddOpenaiFastMultiplier(v)
+		return nil
+	case group.FieldOpenaiUltrafastMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddOpenaiUltrafastMultiplier(v)
+		return nil
 	case group.FieldRpmLimit:
 		v, ok := value.(int)
 		if !ok {
@@ -28626,6 +28822,12 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldModelRouting) {
 		fields = append(fields, group.FieldModelRouting)
 	}
+	if m.FieldCleared(group.FieldOpenaiFastMultiplier) {
+		fields = append(fields, group.FieldOpenaiFastMultiplier)
+	}
+	if m.FieldCleared(group.FieldOpenaiUltrafastMultiplier) {
+		fields = append(fields, group.FieldOpenaiUltrafastMultiplier)
+	}
 	return fields
 }
 
@@ -28717,6 +28919,12 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldModelRouting:
 		m.ClearModelRouting()
+		return nil
+	case group.FieldOpenaiFastMultiplier:
+		m.ClearOpenaiFastMultiplier()
+		return nil
+	case group.FieldOpenaiUltrafastMultiplier:
+		m.ClearOpenaiUltrafastMultiplier()
 		return nil
 	}
 	return fmt.Errorf("unknown Group nullable field %s", name)
@@ -28902,6 +29110,12 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldFreeOpenaiFast:
 		m.ResetFreeOpenaiFast()
+		return nil
+	case group.FieldOpenaiFastMultiplier:
+		m.ResetOpenaiFastMultiplier()
+		return nil
+	case group.FieldOpenaiUltrafastMultiplier:
+		m.ResetOpenaiUltrafastMultiplier()
 		return nil
 	case group.FieldRequireOauthOnly:
 		m.ResetRequireOauthOnly()

@@ -144,6 +144,8 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetAllowLive(groupIn.AllowLive).
 		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
 		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).
+		SetNillableOpenaiFastMultiplier(groupIn.OpenAIFastMultiplier).
+		SetNillableOpenaiUltrafastMultiplier(groupIn.OpenAIUltrafastMultiplier).
 		SetRequireOauthOnly(groupIn.RequireOAuthOnly).
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
@@ -346,6 +348,16 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetProfitSafetyBuffer(groupIn.ProfitSafetyBuffer)
 
 	// 显式处理可空字段：nil 需要 clear，非 nil 需要 set。
+	if groupIn.OpenAIFastMultiplier != nil {
+		builder = builder.SetOpenaiFastMultiplier(*groupIn.OpenAIFastMultiplier)
+	} else {
+		builder = builder.ClearOpenaiFastMultiplier()
+	}
+	if groupIn.OpenAIUltrafastMultiplier != nil {
+		builder = builder.SetOpenaiUltrafastMultiplier(*groupIn.OpenAIUltrafastMultiplier)
+	} else {
+		builder = builder.ClearOpenaiUltrafastMultiplier()
+	}
 	if groupIn.DailyLimitUSD != nil {
 		builder = builder.SetDailyLimitUsd(*groupIn.DailyLimitUSD)
 	} else {

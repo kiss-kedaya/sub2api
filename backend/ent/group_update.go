@@ -1139,6 +1139,60 @@ func (_u *GroupUpdate) SetNillableFreeOpenaiFast(v *bool) *GroupUpdate {
 	return _u
 }
 
+// SetOpenaiFastMultiplier sets the "openai_fast_multiplier" field.
+func (_u *GroupUpdate) SetOpenaiFastMultiplier(v float64) *GroupUpdate {
+	_u.mutation.ResetOpenaiFastMultiplier()
+	_u.mutation.SetOpenaiFastMultiplier(v)
+	return _u
+}
+
+// SetNillableOpenaiFastMultiplier sets the "openai_fast_multiplier" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableOpenaiFastMultiplier(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetOpenaiFastMultiplier(*v)
+	}
+	return _u
+}
+
+// AddOpenaiFastMultiplier adds value to the "openai_fast_multiplier" field.
+func (_u *GroupUpdate) AddOpenaiFastMultiplier(v float64) *GroupUpdate {
+	_u.mutation.AddOpenaiFastMultiplier(v)
+	return _u
+}
+
+// ClearOpenaiFastMultiplier clears the value of the "openai_fast_multiplier" field.
+func (_u *GroupUpdate) ClearOpenaiFastMultiplier() *GroupUpdate {
+	_u.mutation.ClearOpenaiFastMultiplier()
+	return _u
+}
+
+// SetOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field.
+func (_u *GroupUpdate) SetOpenaiUltrafastMultiplier(v float64) *GroupUpdate {
+	_u.mutation.ResetOpenaiUltrafastMultiplier()
+	_u.mutation.SetOpenaiUltrafastMultiplier(v)
+	return _u
+}
+
+// SetNillableOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableOpenaiUltrafastMultiplier(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetOpenaiUltrafastMultiplier(*v)
+	}
+	return _u
+}
+
+// AddOpenaiUltrafastMultiplier adds value to the "openai_ultrafast_multiplier" field.
+func (_u *GroupUpdate) AddOpenaiUltrafastMultiplier(v float64) *GroupUpdate {
+	_u.mutation.AddOpenaiUltrafastMultiplier(v)
+	return _u
+}
+
+// ClearOpenaiUltrafastMultiplier clears the value of the "openai_ultrafast_multiplier" field.
+func (_u *GroupUpdate) ClearOpenaiUltrafastMultiplier() *GroupUpdate {
+	_u.mutation.ClearOpenaiUltrafastMultiplier()
+	return _u
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_u *GroupUpdate) SetRequireOauthOnly(v bool) *GroupUpdate {
 	_u.mutation.SetRequireOauthOnly(v)
@@ -2031,6 +2085,24 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.OpenaiFastMultiplier(); ok {
+		_spec.SetField(group.FieldOpenaiFastMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedOpenaiFastMultiplier(); ok {
+		_spec.AddField(group.FieldOpenaiFastMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.OpenaiFastMultiplierCleared() {
+		_spec.ClearField(group.FieldOpenaiFastMultiplier, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.OpenaiUltrafastMultiplier(); ok {
+		_spec.SetField(group.FieldOpenaiUltrafastMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedOpenaiUltrafastMultiplier(); ok {
+		_spec.AddField(group.FieldOpenaiUltrafastMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.OpenaiUltrafastMultiplierCleared() {
+		_spec.ClearField(group.FieldOpenaiUltrafastMultiplier, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
@@ -3501,6 +3573,60 @@ func (_u *GroupUpdateOne) SetNillableFreeOpenaiFast(v *bool) *GroupUpdateOne {
 	return _u
 }
 
+// SetOpenaiFastMultiplier sets the "openai_fast_multiplier" field.
+func (_u *GroupUpdateOne) SetOpenaiFastMultiplier(v float64) *GroupUpdateOne {
+	_u.mutation.ResetOpenaiFastMultiplier()
+	_u.mutation.SetOpenaiFastMultiplier(v)
+	return _u
+}
+
+// SetNillableOpenaiFastMultiplier sets the "openai_fast_multiplier" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableOpenaiFastMultiplier(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetOpenaiFastMultiplier(*v)
+	}
+	return _u
+}
+
+// AddOpenaiFastMultiplier adds value to the "openai_fast_multiplier" field.
+func (_u *GroupUpdateOne) AddOpenaiFastMultiplier(v float64) *GroupUpdateOne {
+	_u.mutation.AddOpenaiFastMultiplier(v)
+	return _u
+}
+
+// ClearOpenaiFastMultiplier clears the value of the "openai_fast_multiplier" field.
+func (_u *GroupUpdateOne) ClearOpenaiFastMultiplier() *GroupUpdateOne {
+	_u.mutation.ClearOpenaiFastMultiplier()
+	return _u
+}
+
+// SetOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field.
+func (_u *GroupUpdateOne) SetOpenaiUltrafastMultiplier(v float64) *GroupUpdateOne {
+	_u.mutation.ResetOpenaiUltrafastMultiplier()
+	_u.mutation.SetOpenaiUltrafastMultiplier(v)
+	return _u
+}
+
+// SetNillableOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableOpenaiUltrafastMultiplier(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetOpenaiUltrafastMultiplier(*v)
+	}
+	return _u
+}
+
+// AddOpenaiUltrafastMultiplier adds value to the "openai_ultrafast_multiplier" field.
+func (_u *GroupUpdateOne) AddOpenaiUltrafastMultiplier(v float64) *GroupUpdateOne {
+	_u.mutation.AddOpenaiUltrafastMultiplier(v)
+	return _u
+}
+
+// ClearOpenaiUltrafastMultiplier clears the value of the "openai_ultrafast_multiplier" field.
+func (_u *GroupUpdateOne) ClearOpenaiUltrafastMultiplier() *GroupUpdateOne {
+	_u.mutation.ClearOpenaiUltrafastMultiplier()
+	return _u
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_u *GroupUpdateOne) SetRequireOauthOnly(v bool) *GroupUpdateOne {
 	_u.mutation.SetRequireOauthOnly(v)
@@ -4423,6 +4549,24 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.OpenaiFastMultiplier(); ok {
+		_spec.SetField(group.FieldOpenaiFastMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedOpenaiFastMultiplier(); ok {
+		_spec.AddField(group.FieldOpenaiFastMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.OpenaiFastMultiplierCleared() {
+		_spec.ClearField(group.FieldOpenaiFastMultiplier, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.OpenaiUltrafastMultiplier(); ok {
+		_spec.SetField(group.FieldOpenaiUltrafastMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedOpenaiUltrafastMultiplier(); ok {
+		_spec.AddField(group.FieldOpenaiUltrafastMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.OpenaiUltrafastMultiplierCleared() {
+		_spec.ClearField(group.FieldOpenaiUltrafastMultiplier, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
