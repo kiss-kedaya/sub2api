@@ -295,9 +295,22 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 	// 运维想把 data_through 往回拨来回填历史空洞时，**必须重启进程才生效**。而生产
 	// 要求 24h 不停机、只接受滚动上线，重启是被严格限制的操作——不该为了补数据而重启。
 	// 一次单行读的开销相对每分钟一次聚合可以忽略。
-	if wm, wmErr := s.repo.GetAggregationWatermark(ctx); wmErr == nil && wm != nil && !wm.DataThrough.IsZero() {
+	if wm, wmErr := s.repo.GetAggregationWatermark(ctx); wmErr == nil && wm != nil {
 		s.mu.Lock()
-		s.liveThrough = wm.DataThrough.UTC().Truncate(time.Minute)
+		if !wm.DataThrough.IsZero() {
+			s.liveThrough = wm.DataThrough.UTC().Truncate(time.Minute)
+		}
+		// 历史回填游标同理：另一个实例可能已经把历史走到了更早的位置，走完以后稳态清理会删掉
+		// 那些区间的 1m 行（清理读的就是库里的游标）。本进程的内存游标只在启动时读过一次，
+		// 不跟上就会对已被清理的区间重新 RecomputeRange，把 12h / 1d 汇总重建成残缺值，
+		// 整天对齐的回放还会删掉已有的 1d 行（审计 AUD-7）。回填只会往更早走（库里用 LEAST 推进），
+		// 所以只采纳「更早」的库游标；库游标为空（被运维清空）或更晚时保持内存游标不变，
+		// 不凭空放行任何回放。
+		if !wm.BackfillCursor.IsZero() && !s.backfillAt.IsZero() {
+			if dbCursor := wm.BackfillCursor.UTC().Truncate(time.Minute); dbCursor.Before(s.backfillAt) {
+				s.backfillAt = dbCursor
+			}
+		}
 		s.mu.Unlock()
 	}
 
