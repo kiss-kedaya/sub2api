@@ -946,6 +946,13 @@ func removeThinkingDependentContextStrategies(body []byte) []byte {
 // claude package 的该常量含义。
 const anthropicBetaContextManagementToken = "context-management-2025-06-27"
 
+// anthropicBetaCompactToken 是 context_management 的第二种授权 beta。
+// compact_20260112 是 context_management.edits 里的压缩触发器（官方 beta
+// `compact-2026-01-12`），客户端只带这个 token 时上游同样接受 context_management。
+// 若只认 context-management-2025-06-27，该字段会被剥掉：上游收不到 trigger，
+// compaction 永不触发，stop_reason 从 "compaction" 退化成 "end_turn"（P1 beta compact）。
+const anthropicBetaCompactToken = "compact-2026-01-12"
+
 // sanitizeAnthropicBodyForBetaTokens 是对 Anthropic 直连路径上 body↔beta header
 // **能力维度**对称约束的统一实现，与 Bedrock 路径的
 // `sanitizeBedrockFieldsForBetaTokens` 对称。
@@ -954,7 +961,8 @@ const anthropicBetaContextManagementToken = "context-management-2025-06-27"
 //   - context_management 是 Claude Code CLI 2.1.87+ 默认携带的 beta 字段
 //     （含 clear_thinking_20251015 等清理策略）
 //   - 其被 Anthropic 上游接受的前提是 anthropic-beta header 含
-//     `context-management-2025-06-27`
+//     `context-management-2025-06-27`，或含 `compact-2026-01-12`
+//     （compact_20260112 压缩触发器专用授权，见 anthropicBetaCompactToken）
 //   - 若两侧不一致上游 Pydantic schema 拒收：
 //     "context_management: Extra inputs are not permitted"
 //
@@ -1003,9 +1011,10 @@ func sanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 
 	changed := false
 
-	// context_management：需要 context-management beta。
+	// context_management：需要 context-management 或 compact beta。
 	if b, deleted := stripAnthropicBodyFieldUnlessBeta(
-		body, "context_management", anthropicBetaHeader, anthropicBetaContextManagementToken,
+		body, "context_management", anthropicBetaHeader,
+		anthropicBetaContextManagementToken, anthropicBetaCompactToken,
 	); deleted {
 		body, changed = b, true
 	}

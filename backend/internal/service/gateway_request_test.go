@@ -1691,3 +1691,24 @@ func TestNormalizeGLMOpenAIReasoningEffort(t *testing.T) {
 		})
 	}
 }
+
+// TestSanitizeAnthropicBodyForBetaTokens_ContextManagementCompactBeta 锁定 P1「beta compact_20260112」：
+// compact_20260112 压缩触发器同样授权 context_management，不能因为 header 只带
+// compact-2026-01-12 就把字段剥掉——剥掉后上游收不到 trigger，compaction 永不触发，
+// stop_reason 会从 "compaction" 退化成 "end_turn"。
+func TestSanitizeAnthropicBodyForBetaTokens_ContextManagementCompactBeta(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-5-5","context_management":{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":50000},"pause_after_compaction":true}]},"messages":[{"role":"user","content":"hi"}]}`)
+
+	out, changed := sanitizeAnthropicBodyForBetaTokens(body, "compact-2026-01-12")
+	require.False(t, changed, "compact beta must authorize context_management")
+	require.Equal(t, body, out)
+	require.True(t, gjson.GetBytes(out, "context_management").Exists())
+
+	out, changed = sanitizeAnthropicBodyForBetaTokens(body, "context-management-2025-06-27")
+	require.False(t, changed)
+	require.True(t, gjson.GetBytes(out, "context_management").Exists())
+
+	out, changed = sanitizeAnthropicBodyForBetaTokens(body, "context-1m-2025-08-07")
+	require.True(t, changed, "without either beta the field must be stripped")
+	require.False(t, gjson.GetBytes(out, "context_management").Exists())
+}
