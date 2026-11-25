@@ -330,8 +330,11 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 			if event.Usage != nil {
 				mergeAnthropicUsage(&usage, *event.Usage)
 			}
-			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
-				finalResp.StopReason = apicompat.AnthropicStopReasonPtr(event.Delta.StopReason)
+			if event.Delta != nil {
+				usage.noteStopReason(event.Delta.StopReason)
+				if event.Delta.StopReason != "" && finalResp != nil {
+					finalResp.StopReason = apicompat.AnthropicStopReasonPtr(event.Delta.StopReason)
+				}
 			}
 		}
 		if event.Type == "content_block_start" && event.ContentBlock != nil && finalResp != nil {
@@ -566,6 +569,10 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		// Extract usage from message_delta
 		if event.Type == "message_delta" && event.Usage != nil {
 			mergeAnthropicUsage(&usage, *event.Usage)
+		}
+		// 违规拒答的 message_delta 可以不带 usage，stop_reason 单独记。
+		if event.Type == "message_delta" && event.Delta != nil {
+			usage.noteStopReason(event.Delta.StopReason)
 		}
 		// Also capture usage from message_start (carries cache fields)
 		if event.Type == "message_start" && event.Message != nil {

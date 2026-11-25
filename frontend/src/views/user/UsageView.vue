@@ -740,6 +740,7 @@ const handleIpGeoBatchFailed = () => {
 const getRequestTypeExportText = (log: UsageLog): string => {
   const requestType = resolveUsageRequestType(log)
   if (requestType === 'cyber') return 'Cyber'
+  if (requestType === 'claude_refusal') return 'Claude policy refusal'
   if (requestType === 'live') return 'Live'
   if (requestType === 'ws_v2') return 'WS'
   if (requestType === 'stream') return 'Stream'

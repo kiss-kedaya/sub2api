@@ -288,6 +288,31 @@ func TestPrepareUsageLogInsert_PersistsNativeCompactionV2WithoutChangingRequestT
 	require.False(t, log.OpenAIWSMode)
 }
 
+func TestPrepareUsageLogInsert_ClaudeRefusalKeepsStreamFlag(t *testing.T) {
+	for _, stream := range []bool{true, false} {
+		log := &service.UsageLog{
+			UserID:         1,
+			APIKeyID:       2,
+			AccountID:      3,
+			RequestID:      "req-claude-refusal",
+			Model:          "claude-sonnet-4",
+			RequestedModel: "claude-sonnet-4",
+			InputTokens:    44,
+			RequestType:    service.RequestTypeClaudeRefusal,
+			Stream:         stream,
+			CreatedAt:      time.Date(2025, 1, 5, 14, 0, 0, 0, time.UTC),
+		}
+
+		prepared := prepareUsageLogInsert(log)
+
+		require.Len(t, prepared.args, len(usageLogInsertArgTypes))
+		require.Equal(t, int16(service.RequestTypeClaudeRefusal), prepared.args[30], "request_type 入库值是 6")
+		require.Equal(t, stream, prepared.args[31], "拒答不覆盖真实 stream 字段")
+		require.Equal(t, false, prepared.args[32])
+		require.Equal(t, service.RequestTypeClaudeRefusal, log.RequestType)
+	}
+}
+
 func TestPrepareUsageLogInsert_PersistsImageSizeMetadata(t *testing.T) {
 	imageSize := "4K"
 	inputSize := "1024x1024"
@@ -906,6 +931,13 @@ func TestBuildRequestTypeFilterConditionLegacyFallback(t *testing.T) {
 			request:   int16(service.RequestTypeWSV2),
 			wantWhere: "(request_type = $3 OR (request_type = 0 AND openai_ws_mode = TRUE))",
 			wantArg:   int16(service.RequestTypeWSV2),
+		},
+		{
+			// 拒答是显式类型，没有 legacy 推导：只按 request_type 精确匹配，不能顺带命中 request_type=0 的旧行。
+			name:      "claude_refusal_exact_match",
+			request:   int16(service.RequestTypeClaudeRefusal),
+			wantWhere: "request_type = $3",
+			wantArg:   int16(service.RequestTypeClaudeRefusal),
 		},
 		{
 			name:      "invalid_request_type_normalized_to_unknown",

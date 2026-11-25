@@ -21,6 +21,7 @@ func TestParseUsageRequestType(t *testing.T) {
 		{name: "sync", input: "sync", want: RequestTypeSync},
 		{name: "stream", input: "stream", want: RequestTypeStream},
 		{name: "ws_v2", input: "ws_v2", want: RequestTypeWSV2},
+		{name: "claude_refusal", input: "claude_refusal", want: RequestTypeClaudeRefusal},
 		{name: "case_insensitive", input: "WS_V2", want: RequestTypeWSV2},
 		{name: "trim_spaces", input: "  stream  ", want: RequestTypeStream},
 		{name: "invalid", input: "xxx", wantErr: true},
@@ -49,6 +50,8 @@ func TestRequestTypeNormalizeAndString(t *testing.T) {
 	require.Equal(t, "sync", RequestTypeSync.String())
 	require.Equal(t, "stream", RequestTypeStream.String())
 	require.Equal(t, "ws_v2", RequestTypeWSV2.String())
+	require.Equal(t, "claude_refusal", RequestTypeClaudeRefusal.String())
+	require.Equal(t, RequestTypeClaudeRefusal, RequestType(6).Normalize())
 }
 
 func TestRequestTypeFromLegacy(t *testing.T) {

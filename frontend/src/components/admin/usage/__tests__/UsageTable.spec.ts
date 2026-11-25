@@ -62,6 +62,7 @@ const messages: Record<string, string> = {
   'usage.imageTotalPrice': 'Image total price',
   'usage.stream': 'Stream',
   'usage.sync': 'Sync',
+  'usage.claudeRefusal': 'Claude policy refusal',
   'usage.nativeCompactionV2': 'Compaction',
   'admin.usage.billingModeToken': 'Token',
   'admin.usage.billingModePerRequest': 'Per request',
@@ -254,6 +255,48 @@ describe('admin UsageTable tooltip', () => {
     expect(requestBadges[1].text()).toBe('Sync')
     expect(wrapper.findAll('[data-testid="native-compaction-badge"]')).toHaveLength(1)
     expect(wrapper.get('[data-testid="native-compaction-badge"]').text()).toBe('Compaction')
+  })
+
+  it('labels Claude policy refusal rows with a distinct warning badge, stream or not', () => {
+    const DataTableStreamStub = {
+      props: ['data'],
+      template: `
+        <div>
+          <div v-for="row in data" :key="row.request_id">
+            <slot name="cell-stream" :row="row" />
+          </div>
+        </div>
+      `,
+    }
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          { ...baseImageRow, request_id: 'req-refusal-stream', request_type: 'claude_refusal', stream: true, actual_cost: 0, total_cost: 0 },
+          { ...baseImageRow, request_id: 'req-refusal-sync', request_type: 'claude_refusal', stream: false, actual_cost: 0, total_cost: 0 },
+          { ...baseImageRow, request_id: 'req-cyber', request_type: 'cyber', stream: false },
+        ],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStreamStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    const badges = wrapper.findAll('[data-testid="request-type-badge"]')
+    expect(badges).toHaveLength(3)
+    expect(badges[0].text()).toBe('Claude policy refusal')
+    expect(badges[1].text()).toBe('Claude policy refusal')
+    expect(badges[0].classes()).toContain('bg-orange-100')
+    expect(badges[0].classes()).toContain('text-orange-800')
+    // 与 cyber（红）、unknown/其它类型的颜色区分开
+    expect(badges[2].classes()).toContain('bg-red-100')
+    expect(badges[2].classes()).not.toContain('bg-orange-100')
   })
 
   it('shows service tier and billing breakdown in cost tooltip', async () => {

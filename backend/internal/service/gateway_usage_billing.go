@@ -930,8 +930,11 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		}
 	}
 
+	// Claude 违规拒答（stop_reason=refusal，内容为空）：上游没有产出，不收费。
+	// 与下面的 NonBillableUpstreamError 同样处理：保留 token 数用于排查，费用清零。
+	claudeRefusal := result.Usage.Refusal && result.ForcedBillingCost <= 0
 	// Preserve rejected-request usage for diagnostics without charging it.
-	if result.NonBillableUpstreamError && result.ForcedBillingCost <= 0 {
+	if claudeRefusal || (result.NonBillableUpstreamError && result.ForcedBillingCost <= 0) {
 		billingMode := string(BillingModeToken)
 		if cost != nil && strings.TrimSpace(cost.BillingMode) != "" {
 			billingMode = cost.BillingMode
@@ -950,9 +953,14 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	accountRateMultiplier := account.BillingRateMultiplier()
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
 		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
+	if claudeRefusal {
+		// 用量页「类型」列显示「Claude违规拒答」；Stream 标志保持真实值（入库时 legacy 字段沿用）。
+		usageLog.RequestType = RequestTypeClaudeRefusal
+	}
 
-	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
-	if apiKey.GroupID != nil && !isCacheStorageOnlyResult(result) {
+	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）。
+	// 拒答不跳过会按 token 数套自定义规则/价格表算出非零账号成本，所以这里直接不算（留空即按 total_cost=0）。
+	if apiKey.GroupID != nil && !isCacheStorageOnlyResult(result) && !claudeRefusal {
 		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
 			account.ID, *apiKey.GroupID, result.UpstreamModel, result.Model,
 			// Anthropic's input_tokens excludes cache_read and cache_creation (billed separately);

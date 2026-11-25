@@ -618,6 +618,20 @@ type ClaudeUsage struct {
 	// CacheReadEstimated 表示 CacheReadInputTokens 是无终帧时按请求体估算的值
 	// （见 incomplete_request_usage.go），不是上游上报的，不进入线上格式。
 	CacheReadEstimated bool `json:"-"`
+	// Refusal 表示上游以 stop_reason=refusal 结束（Claude 违规拒答，内容为空）。
+	// 只认结构化 stop_reason，不看正文；置位后不会被后续事件清掉。
+	// 拒答不计费，见 recordUsageCore。
+	Refusal bool `json:"-"`
+}
+
+// claudeStopReasonRefusal 是 Anthropic 违规拒答的结构化 stop_reason。
+const claudeStopReasonRefusal = "refusal"
+
+// noteStopReason 记录上游给出的 stop_reason；只有 refusal 会置位 Refusal，其它值（含空）一律不动。
+func (u *ClaudeUsage) noteStopReason(reason string) {
+	if u != nil && reason == claudeStopReasonRefusal {
+		u.Refusal = true
+	}
 }
 
 // ForwardResult 转发结果

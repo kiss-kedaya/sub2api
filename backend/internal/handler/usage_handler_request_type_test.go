@@ -109,6 +109,20 @@ func TestUserUsageListRequestTypePriority(t *testing.T) {
 	require.Nil(t, repo.listFilters.Stream)
 }
 
+func TestUserUsageListClaudeRefusalRequestType(t *testing.T) {
+	repo := &userUsageRepoCapture{}
+	router := newUserUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage?request_type=claude_refusal", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, repo.listFilters.RequestType)
+	require.Equal(t, int16(service.RequestTypeClaudeRefusal), *repo.listFilters.RequestType)
+	require.Nil(t, repo.listFilters.Stream, "按拒答类型筛选时不再叠加 stream 推导")
+}
+
 func TestUserUsageListInvalidRequestType(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
