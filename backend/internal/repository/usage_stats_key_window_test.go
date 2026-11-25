@@ -22,6 +22,11 @@ const (
 	keyWindowModelSQL = `(?s)FROM usage_logs.*GROUP BY COALESCE`
 	// keyWindowAnySQL matches any of the three, for tests that only care that the database was asked.
 	keyWindowAnySQL = `(?s)FROM usage_logs`
+
+	// keyWindowTTL is how long such an answer is kept, written out on purpose instead of read from the constant
+	// under test: the moving /v1/usage window is cut on a 15 minute grid (handler.usageDefaultRangeBucket), and an
+	// answer that expires before its grid cell ends brings the rescans of heavy keys back.
+	keyWindowTTL = 15 * time.Minute
 )
 
 var (
@@ -113,10 +118,10 @@ func TestKeyAggregateTTL(t *testing.T) {
 		window   time.Duration
 		want     time.Duration
 	}{
-		{"key, 30 days", 7, 30 * 24 * time.Hour, usageStatsKeyWindowTTL},
-		{"key, 7 days", 7, 7 * 24 * time.Hour, usageStatsKeyWindowTTL},
-		{"key, 2 days", 7, 48 * time.Hour, usageStatsKeyWindowTTL},
-		{"key, just over the longest natural day", 7, 25*time.Hour + time.Nanosecond, usageStatsKeyWindowTTL},
+		{"key, 30 days", 7, 30 * 24 * time.Hour, keyWindowTTL},
+		{"key, 7 days", 7, 7 * 24 * time.Hour, keyWindowTTL},
+		{"key, 2 days", 7, 48 * time.Hour, keyWindowTTL},
+		{"key, just over the longest natural day", 7, 25*time.Hour + time.Nanosecond, keyWindowTTL},
 		{"key, a 25 hour DST day is still today", 7, 25 * time.Hour, 0},
 		{"key, one natural day", 7, 24 * time.Hour, 0},
 		{"key, a 23 hour DST day", 7, 23 * time.Hour, 0},
@@ -144,9 +149,9 @@ func TestUsageStatsKeyWindowTTLIsNotPartOfTheIdentity(t *testing.T) {
 	require.NotContains(t, string(raw), "ttl")
 }
 
-// Every entry point that answers one key over several days keeps the answer five minutes; everything else stays
+// Every entry point that answers one key over several days keeps the answer fifteen minutes; everything else stays
 // on the cache's own TTL (one minute here).
-func TestUsageStatsKeyWindowAggregatesAreKeptFiveMinutes(t *testing.T) {
+func TestUsageStatsKeyWindowAggregatesAreKeptFifteenMinutes(t *testing.T) {
 	start := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
 	cases := []struct {
 		name     string
@@ -154,8 +159,8 @@ func TestUsageStatsKeyWindowAggregatesAreKeptFiveMinutes(t *testing.T) {
 		window   time.Duration
 		want     time.Duration
 	}{
-		{"key, 30 days", 7, 30 * 24 * time.Hour, usageStatsKeyWindowTTL},
-		{"key, 2 days", 7, 48 * time.Hour, usageStatsKeyWindowTTL},
+		{"key, 30 days", 7, 30 * 24 * time.Hour, keyWindowTTL},
+		{"key, 2 days", 7, 48 * time.Hour, keyWindowTTL},
 		{"key, today", 7, 24 * time.Hour, time.Minute},
 		{"key, an hour", 7, time.Hour, time.Minute},
 		{"no key, 30 days", 0, 30 * 24 * time.Hour, time.Minute},
@@ -177,8 +182,8 @@ func TestUsageStatsKeyWindowAggregatesAreKeptFiveMinutes(t *testing.T) {
 	}
 }
 
-// Over time: a poll every minute finds the multi-day answer until five minutes are up, and only then scans again.
-func TestUsageStatsKeyWindowAnswerExpiresAfterFiveMinutes(t *testing.T) {
+// Over time: a poll every minute finds the multi-day answer until fifteen minutes are up, and only then scans again.
+func TestUsageStatsKeyWindowAnswerExpiresAfterFifteenMinutes(t *testing.T) {
 	start := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
 	end := start.Add(30 * 24 * time.Hour)
 	for _, agg := range keyWindowAggregates() {
@@ -189,17 +194,17 @@ func TestUsageStatsKeyWindowAnswerExpiresAfterFiveMinutes(t *testing.T) {
 			require.NoError(t, err)
 			require.EqualValues(t, 1, got)
 
-			// No further expectation is registered: a query during the next four minutes would fail the test.
-			for range 4 {
+			// No further expectation is registered: a query during the next fourteen minutes would fail the test.
+			for range 14 {
 				server.FastForward(time.Minute)
 				got, err = agg.ask(repo, 42, 7, start, end)
 				require.NoError(t, err)
-				require.EqualValues(t, 1, got, "still inside the five minutes")
+				require.EqualValues(t, 1, got, "still inside the fifteen minutes")
 			}
 			server.FastForward(59 * time.Second)
 			got, err = agg.ask(repo, 42, 7, start, end)
 			require.NoError(t, err)
-			require.EqualValues(t, 1, got, "4 min 59 s old")
+			require.EqualValues(t, 1, got, "14 min 59 s old")
 
 			server.FastForward(2 * time.Second)
 			agg.expect(mock, 2)
@@ -231,16 +236,26 @@ func TestUsageStatsSingleDayKeyAggregateStillExpiresAfterOneMinute(t *testing.T)
 	}
 }
 
-// An operator who configured a longer TTL than five minutes keeps it: the constant only ever extends.
+// An operator who configured a longer TTL than fifteen minutes keeps it: the constant only ever extends. A
+// shorter one (a few minutes) is raised to it, which is the point of the constant.
 func TestUsageStatsKeyWindowNeverShortensTheConfiguredTTL(t *testing.T) {
 	start := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
-	repo, mock, server := newKeyWindowRepo(t, 10*time.Minute)
-	usageStatsAggregateRow(mock, 1, 0)
-	_, err := repo.GetAPIKeyStatsAggregated(context.Background(), 7, start, start.Add(30*24*time.Hour))
-	require.NoError(t, err)
-	keys := server.Keys()
-	require.Len(t, keys, 1)
-	require.Equal(t, 10*time.Minute, server.TTL(keys[0]))
+	for _, tc := range []struct{ configured, want time.Duration }{
+		{time.Minute, keyWindowTTL},
+		{10 * time.Minute, keyWindowTTL},
+		{keyWindowTTL, keyWindowTTL},
+		{30 * time.Minute, 30 * time.Minute},
+	} {
+		t.Run(tc.configured.String(), func(t *testing.T) {
+			repo, mock, server := newKeyWindowRepo(t, tc.configured)
+			usageStatsAggregateRow(mock, 1, 0)
+			_, err := repo.GetAPIKeyStatsAggregated(context.Background(), 7, start, start.Add(30*24*time.Hour))
+			require.NoError(t, err)
+			keys := server.Keys()
+			require.Len(t, keys, 1)
+			require.Equal(t, tc.want, server.TTL(keys[0]))
+		})
+	}
 }
 
 // The identity of a multi-day answer still carries everything that changes it: a longer TTL must not let one
@@ -259,7 +274,8 @@ func TestUsageStatsKeyWindowAggregatesNeverShareAnEntry(t *testing.T) {
 			}{
 				{"first key", 7, start, end, 1},
 				{"another key, same window", 9, start, end, 2},
-				{"same key, next 5 minute bucket", 7, start.Add(5 * time.Minute), end.Add(5 * time.Minute), 3},
+				{"same key, next 15 minute bucket", 7, start.Add(15 * time.Minute), end.Add(15 * time.Minute), 3},
+				{"same key, a window shifted by a few seconds", 7, start.Add(7 * time.Second), end.Add(7 * time.Second), 5},
 				{"same key, another window length", 7, start, end.Add(24 * time.Hour), 4},
 			}
 			for _, ask := range asks {

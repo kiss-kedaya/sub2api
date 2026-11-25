@@ -38,17 +38,34 @@ const (
 	usageStatsCacheFailureTTL  = 5 * time.Second
 	// usageStatsCacheTimeoutTTL is how long a timed-out aggregate is remembered. A scan that did not fit
 	// the load budget will not fit it again five seconds later; asking again at every refresh only keeps
-	// a slot and the disk busy for another full budget.
+	// a slot and the disk busy for another full budget. (One API key's multi-day aggregate has its own budget and
+	// memory, below.)
 	usageStatsCacheTimeoutTTL = 30 * time.Second
 
 	// usageStatsKeyWindowTTL is how long the answer to one API key's multi-day aggregate (the /v1/usage reports,
 	// the per-key usage panels) is reused. Clients poll those every few seconds to a minute, so the cache's own
 	// 60 s TTL lapsed just before the next poll and a heavy key's month was re-aggregated from usage_logs on
 	// almost every call. It is a constant, not a setting: the cache's TTL still governs everything else.
-	usageStatsKeyWindowTTL = 5 * time.Minute
+	// It is not shorter than the grid the moving /v1/usage window is cut on (handler.usageDefaultRangeBucket, also
+	// 15 minutes): an answer computed anywhere inside one grid cell is therefore still cached when the cell ends,
+	// so a key is aggregated once per cell however often it is polled. Keep the two in step.
+	usageStatsKeyWindowTTL = 15 * time.Minute
 	// usageStatsKeyWindowOver is the window length above which that longer TTL applies. A single natural day
 	// (23 to 25 hours around a DST change) is a "today" view and keeps the cache's own TTL.
 	usageStatsKeyWindowOver = 25 * time.Hour
+
+	// usageStatsKeyWindowLoadTimeout is the database budget of one API key's multi-day aggregate, in place of
+	// usageStatsCacheLoadTimeout. A heavy key's 15 days of usage_logs need 16 to 28 seconds while the disk is
+	// saturated. Cut at 15 seconds such a scan produced nothing to publish, was started again after the timeout
+	// memory lapsed, and burnt another 15 seconds and ~2 GB of reads every time: on production 49 of the 76
+	// statements cancelled in 40 minutes were these. It stays below the database role's statement_timeout (30 s)
+	// on purpose: then it is our own budget that ends the scan, which rememberFailure recognises by the load
+	// context's error, and not the server's cancel, which says nothing about whose budget ran out.
+	usageStatsKeyWindowLoadTimeout = 28 * time.Second
+	// usageStatsKeyWindowTimeoutTTL is how long a timed-out multi-day key aggregate is remembered (in this
+	// process). A scan that did not fit 28 seconds will not fit them again half a minute later, and retrying at
+	// the pace of usageStatsCacheTimeoutTTL only keeps one more slot and the disk busy for 28 seconds each time.
+	usageStatsKeyWindowTimeoutTTL = 5 * time.Minute
 )
 
 // keyAggregateTTL is the cache lifetime for an aggregate of one API key over [start, end): usageStatsKeyWindowTTL
@@ -108,6 +125,8 @@ type usageStatsCacheKey struct {
 	Extra   string                   `json:"extra,omitempty"`
 	// TTL is how long the answer stays cached when it must outlive the cache's own TTL (see keyAggregateTTL);
 	// 0 keeps the cache's TTL. It says how long to reuse an answer, not what was asked, so it is not hashed.
+	// It also marks the class of one API key's multi-day aggregate (keyWindowAggregate), which gets its own scan
+	// budget and timeout memory: set it only through keyAggregateTTL.
 	TTL time.Duration `json:"-"`
 }
 
@@ -140,6 +159,26 @@ func (k usageStatsCacheKey) gateOwner() string {
 // can trigger by opening a page.
 func (k usageStatsCacheKey) endUserScoped() bool {
 	return k.gateOwner() != ""
+}
+
+// keyWindowAggregate reports whether the aggregate is one API key's multi-day answer: the class that
+// keyAggregateTTL gives a TTL, and the only one with the long scan budget and the long memory of a timeout.
+func (k usageStatsCacheKey) keyWindowAggregate() bool { return k.TTL > 0 }
+
+// loadTimeout is the database budget of the aggregate.
+func (k usageStatsCacheKey) loadTimeout() time.Duration {
+	if k.keyWindowAggregate() {
+		return usageStatsKeyWindowLoadTimeout
+	}
+	return usageStatsCacheLoadTimeout
+}
+
+// timeoutMemory is how long the aggregate is remembered as too slow after it ran out of time.
+func (k usageStatsCacheKey) timeoutMemory() time.Duration {
+	if k.keyWindowAggregate() {
+		return usageStatsKeyWindowTimeoutTTL
+	}
+	return usageStatsCacheTimeoutTTL
 }
 
 // usageFiltersFingerprint mirrors the comparable portion of UsageLogFilters.
@@ -212,14 +251,15 @@ type usageStatsCacheResult[T any] struct {
 
 // loadUsageStatsCached serves one aggregate from Redis when possible, otherwise
 // from load(). It never returns cache errors: a broken cache degrades to the
-// database path.
+// database path. The database budget of the shared load is the usual 15 seconds,
+// or 28 for one API key's multi-day aggregate (usageStatsCacheKey.loadTimeout).
 func loadUsageStatsCached[T any](
 	cache *usageStatsCache,
 	ctx context.Context,
 	key usageStatsCacheKey,
 	load func(context.Context) (T, error),
 ) (T, error) {
-	return loadUsageStatsCachedWithTimeout(cache, ctx, key, usageStatsCacheLoadTimeout, load)
+	return loadUsageStatsCachedWithTimeout(cache, ctx, key, key.loadTimeout(), load)
 }
 
 // loadUsageStatsCachedWithTimeout is loadUsageStatsCached with an explicit
@@ -275,7 +315,7 @@ func loadUsageStatsCachedWithTimeout[T any](
 		defer cancel()
 		value, loadErr := load(loadCtx)
 		if loadErr != nil {
-			cache.rememberFailure(redisKey, loadErr, loadCtx.Err())
+			cache.rememberFailure(redisKey, loadErr, loadCtx.Err(), key.timeoutMemory())
 			return nil, loadErr
 		}
 		// Publish bytes, not shared pointers: user handlers redact admin-only
@@ -319,20 +359,20 @@ func (c *usageStatsCache) paused() bool {
 
 // rememberFailure keeps a database failure for a short while, so a struggling database is not asked the same
 // question again by every refresh. Two kinds are treated specially:
-//   - a scan that ran out of time is remembered longer than other errors, because the same scan will run out
-//     again. That is our own load budget (budgetErr, the load context's error: lib/pq reports it as the
-//     server's "canceling statement due to user request", so the driver's text cannot tell it apart), a
+//   - a scan that ran out of time is remembered for timeoutTTL, longer than other errors, because the same scan
+//     will run out again. That is our own load budget (budgetErr, the load context's error: lib/pq reports it
+//     as the server's "canceling statement due to user request", so the driver's text cannot tell it apart), a
 //     deadline from further down, or the server's own statement_timeout;
 //   - a statement somebody stopped is not remembered at all: the shared load is detached from every caller, so
 //     an operator's pg_cancel_backend, a migration's reader canceller ("due to user request") or a shutdown
 //     stopped it, and that says nothing about the next attempt: once the database is back the same question
 //     must be asked again instead of replaying the error for 30 seconds.
-func (c *usageStatsCache) rememberFailure(key string, err, budgetErr error) {
+func (c *usageStatsCache) rememberFailure(key string, err, budgetErr error, timeoutTTL time.Duration) {
 	switch {
 	case errors.Is(budgetErr, context.DeadlineExceeded),
 		errors.Is(err, context.DeadlineExceeded),
 		usagestats.IsStatementTimeout(err):
-		c.failures.Set(key, err, usageStatsCacheTimeoutTTL)
+		c.failures.Set(key, err, timeoutTTL)
 	case errors.Is(err, context.Canceled), usagestats.IsStatementCanceledByRequest(err):
 		return
 	default:

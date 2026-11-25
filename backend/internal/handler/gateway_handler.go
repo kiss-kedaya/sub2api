@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/bits"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1843,7 +1844,7 @@ func (h *GatewayHandler) Usage(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// 解析可选的日期范围参数（用于 model_stats 查询）
-	startTime, endTime := h.parseUsageDateRange(c)
+	startTime, endTime := h.parseUsageDateRange(c, apiKey.ID)
 	days, ok := parseAPIKeyDailyUsageDays(c.DefaultQuery("days", ""))
 	if !ok {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Invalid days, allowed range is 1-90")
@@ -1894,21 +1895,37 @@ func (h *GatewayHandler) Usage(c *gin.Context) {
 // moves in. The window is part of the aggregate cache key, so a window that moved every minute made every
 // poll a new key and a new scan of the key's usage_logs; polls in the same bucket now share one answer.
 // The price: the model report lags by up to this much (the today / total summary is not windowed, and stays live).
-const usageDefaultRangeBucket = 5 * time.Minute
+// It must not exceed repository.usageStatsKeyWindowTTL (kept equal), so that an answer computed anywhere inside
+// a bucket is still cached when the bucket ends.
+const usageDefaultRangeBucket = 15 * time.Minute
 
-// usageDefaultRange is the moving 30-day window, cut on bucket boundaries. end is the last boundary at or before
-// now, so it is never in the future and start < end always holds; both bounds sit on the same grid, so every
-// poll inside one bucket asks the identical question.
-func usageDefaultRange(now time.Time) (time.Time, time.Time) {
-	end := now.Truncate(usageDefaultRangeBucket)
-	return end.AddDate(0, 0, -30).Truncate(usageDefaultRangeBucket), end
+// usageKeyPhase is where one API key's bucket grid starts: whole seconds in [0, usageDefaultRangeBucket).
+// With one shared grid every key's window moves at the same instants, so every heavy key is re-aggregated in
+// the same moment once per bucket: a taller spike than the one the bucket removes. Giving each key its own
+// phase spreads those scans over the whole bucket. It is a pure function of the id (Fibonacci hashing, so
+// neighbouring ids land far apart), because both gateways share one Redis and must cut the same window for
+// the same key: do not seed it per process.
+func usageKeyPhase(apiKeyID int64) time.Duration {
+	hi, _ := bits.Mul64(uint64(apiKeyID)*0x9E3779B97F4A7C15, uint64(usageDefaultRangeBucket/time.Second))
+	return time.Duration(hi) * time.Second
+}
+
+// usageDefaultRange is the moving 30-day window of one API key, cut on that key's grid (bucket steps shifted by
+// usageKeyPhase). end is the last grid point at or before now, so it is never in the future and start < end
+// always holds; both bounds sit on the same grid, so every poll of the key inside one bucket asks the identical
+// question.
+func usageDefaultRange(now time.Time, apiKeyID int64) (time.Time, time.Time) {
+	phase := usageKeyPhase(apiKeyID)
+	floor := func(at time.Time) time.Time { return at.Add(-phase).Truncate(usageDefaultRangeBucket).Add(phase) }
+	end := floor(now)
+	return floor(end.AddDate(0, 0, -30)), end
 }
 
 // parseUsageDateRange 解析 start_date / end_date query params，默认返回近 30 天范围
-func (h *GatewayHandler) parseUsageDateRange(c *gin.Context) (time.Time, time.Time) {
+func (h *GatewayHandler) parseUsageDateRange(c *gin.Context, apiKeyID int64) (time.Time, time.Time) {
 	// Moving defaults must be stable long enough to reuse aggregate cache entries.
 	// Explicit date ranges below retain their original day boundaries.
-	startTime, endTime := usageDefaultRange(timezone.Now())
+	startTime, endTime := usageDefaultRange(timezone.Now(), apiKeyID)
 
 	if s := c.Query("start_date"); s != "" {
 		if t, err := timezone.ParseInLocation("2006-01-02", s); err == nil {
