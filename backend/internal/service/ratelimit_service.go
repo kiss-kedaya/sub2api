@@ -44,6 +44,12 @@ type RateLimitService struct {
 	// OpenAI Team 联动熔断的进程内去重：teamID → 去重窗口截止时间
 	openaiTeamLinkedMu     sync.Mutex
 	openaiTeamLinkedRecent map[string]time.Time
+
+	// Anthropic 响应头驱动的账号行写入：按账号去抖 + 后台有界异步（见 account_write_throttle.go）。
+	// 零值可用。
+	sessionWindowWrites accountWriteGate[sessionWindowWrite]
+	passiveUsageWrites  accountWriteGate[passiveUsageSample]
+	accountWrites       accountWriteRunner
 }
 
 type AccountRuntimeBlocker interface {
@@ -1253,9 +1259,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			windowEnd = *result.fiveHourReset
 		}
 		windowStart := windowEnd.Add(-5 * time.Hour)
-		if err := s.accountRepo.UpdateSessionWindow(ctx, account.ID, &windowStart, &windowEnd, "rejected"); err != nil {
-			slog.Warn("rate_limit_update_session_window_failed", "account_id", account.ID, "error", err)
-		}
+		s.writeRejectedSessionWindow(ctx, account.ID, windowStart, windowEnd)
 
 		slog.Info("anthropic_account_rate_limited", "account_id", account.ID, "reset_at", result.resetAt, "reset_in", time.Until(result.resetAt).Truncate(time.Second))
 		return
@@ -1331,9 +1335,7 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 	// 根据重置时间反推5h窗口
 	windowEnd := resetAt
 	windowStart := resetAt.Add(-5 * time.Hour)
-	if err := s.accountRepo.UpdateSessionWindow(ctx, account.ID, &windowStart, &windowEnd, "rejected"); err != nil {
-		slog.Warn("rate_limit_update_session_window_failed", "account_id", account.ID, "error", err)
-	}
+	s.writeRejectedSessionWindow(ctx, account.ID, windowStart, windowEnd)
 
 	slog.Info("account_rate_limited", "account_id", account.ID, "reset_at", resetAt)
 }
@@ -1646,8 +1648,8 @@ func (s *RateLimitService) persistAnthropicFableWindowLimit(ctx context.Context,
 	}
 	// 429 响应头本身携带最新的窗口用量（7d_oi utilization=1.0）。限流期内
 	// Fable 请求不再调度到该账号，若不在此处采样，7d F 进度条会冻结在
-	// 限流前的旧值直到窗口重置。
-	s.samplePassiveUsageFromHeaders(ctx, account, headers)
+	// 限流前的旧值直到窗口重置。之后不会再有响应来补这一次，所以绕过去抖强制写。
+	s.writePassiveUsageNow(ctx, account.ID, headers)
 	if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, anthropicFableRateLimitKey, limit.resetAt, limit.reason); err != nil {
 		slog.Warn("anthropic_fable_window_rate_limit_set_failed",
 			"account_id", account.ID,
@@ -2005,7 +2007,9 @@ func (s *RateLimitService) handle529(ctx context.Context, account *Account) {
 	slog.Info("account_overloaded", "account_id", account.ID, "until", until)
 }
 
-// UpdateSessionWindow 从成功响应更新5h窗口状态
+// UpdateSessionWindow 从成功响应更新5h窗口状态。
+// 在每个成功响应的路径上、写 SSE 响应头之前同步调用，所以这里不能等 DB：
+// 写库按账号去抖，真要写的放进后台有界闭包，见 accountWriteGate / accountWriteRunner。
 func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Account, headers http.Header) {
 	status := headers.Get("anthropic-ratelimit-unified-5h-status")
 	if status == "" {
@@ -2053,24 +2057,57 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 		slog.Info("account_session_window_initialized", "account_id", account.ID, "window_start", start, "window_end", end, "status", status)
 	}
 
+	// 同步部分只做 map 查找，决定这次响应要写哪几步；库写入放进后台闭包，请求路径永不等 DB。
+	// 窗口/状态/采样与上次成功写入相比没变化、且没到刷新间隔时什么都不做：热点账号每个响应都走到这里，
+	// 不去抖就是每个响应整行重写两次。
+	id := account.ID
+	writeWindow := s.sessionWindowWrites.Allow(id, newSessionWindowWrite(windowStart, windowEnd, status))
 	// 窗口重置时清除旧的 utilization 和被动采样数据，避免残留上个窗口的数据
-	if windowEnd != nil && needInitWindow {
-		_ = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
-			"session_window_utilization":      nil,
-			"passive_usage_7d_utilization":    nil,
-			"passive_usage_7d_reset":          nil,
-			"passive_usage_7d_oi_utilization": nil,
-			"passive_usage_7d_oi_reset":       nil,
-			"passive_usage_sampled_at":        nil,
-		})
+	clearSamples := writeWindow && windowEnd != nil && needInitWindow
+	if clearSamples {
+		// 清空之后的第一次采样必须落库，不能被「和上次差不多」挡掉
+		s.passiveUsageWrites.Forget(id)
 	}
-
-	if err := s.accountRepo.UpdateSessionWindow(ctx, account.ID, windowStart, windowEnd, status); err != nil {
-		slog.Warn("session_window_update_failed", "account_id", account.ID, "error", err)
-	}
-
 	// 被动采样：从响应头收集 5h + 7d + 7d_oi utilization，合并为一次 DB 写入
-	s.samplePassiveUsageFromHeaders(ctx, account, headers)
+	sample, hasSample := parsePassiveUsageSample(headers)
+	writeSample := hasSample && s.passiveUsageWrites.Allow(id, sample)
+
+	if writeWindow || writeSample {
+		accepted := s.accountWrites.Go(ctx, id, func(ctx context.Context) {
+			// 三步在同一个闭包里按顺序执行：清空必须先于采样写入，否则新采样会被清掉。
+			if clearSamples {
+				_ = s.accountRepo.UpdateExtra(ctx, id, map[string]any{
+					"session_window_utilization":      nil,
+					"passive_usage_7d_utilization":    nil,
+					"passive_usage_7d_reset":          nil,
+					"passive_usage_7d_oi_utilization": nil,
+					"passive_usage_7d_oi_reset":       nil,
+					"passive_usage_sampled_at":        nil,
+				})
+			}
+			if writeWindow {
+				if err := s.accountRepo.UpdateSessionWindow(ctx, id, windowStart, windowEnd, status); err != nil {
+					slog.Warn("session_window_update_failed", "account_id", id, "error", err)
+					s.sessionWindowWrites.Forget(id) // 没写成功不能记成已写入，下次还会尝试
+				}
+			}
+			if writeSample {
+				if err := s.accountRepo.UpdateExtra(ctx, id, sample.extraUpdates(time.Now())); err != nil {
+					slog.Warn("passive_usage_update_failed", "account_id", id, "error", err)
+					s.passiveUsageWrites.Forget(id)
+				}
+			}
+		})
+		if !accepted {
+			// 槽位满了，或该账号已有在途写入：丢弃，不排队不阻塞；撤销记账，下一个响应会再试。
+			if writeWindow {
+				s.sessionWindowWrites.Forget(id)
+			}
+			if writeSample {
+				s.passiveUsageWrites.Forget(id)
+			}
+		}
+	}
 
 	// 如果状态为allowed且之前有限流，说明窗口已重置，清除限流状态
 	if status == "allowed" && account.IsRateLimited() {
@@ -2080,52 +2117,31 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 	}
 }
 
-// samplePassiveUsageFromHeaders 从 Anthropic 响应头收集 5h/7d/7d_oi 的
-// utilization 与 reset 被动采样数据，合并为一次 Extra 写入。无数据时不写。
-func (s *RateLimitService) samplePassiveUsageFromHeaders(ctx context.Context, account *Account, headers http.Header) {
-	extraUpdates := make(map[string]any, 6)
-	// 5h utilization（0-1 小数），供 estimateSetupTokenUsage 使用
-	if utilStr := headers.Get("anthropic-ratelimit-unified-5h-utilization"); utilStr != "" {
-		if util, err := strconv.ParseFloat(utilStr, 64); err == nil {
-			extraUpdates["session_window_utilization"] = util
+// writeRejectedSessionWindow 是 429 路径：把库里的会话窗口写成 rejected。与后台异步写入互斥，
+// 保证同一账号先后写 allowed / rejected 的顺序；库里已是 rejected，成功响应的去抖记录同时作废。
+func (s *RateLimitService) writeRejectedSessionWindow(ctx context.Context, accountID int64, start, end time.Time) {
+	s.accountWrites.Exclusive(accountID, func() {
+		if err := s.accountRepo.UpdateSessionWindow(ctx, accountID, &start, &end, "rejected"); err != nil {
+			slog.Warn("rate_limit_update_session_window_failed", "account_id", accountID, "error", err)
 		}
+		s.sessionWindowWrites.Forget(accountID)
+	})
+}
+
+// writePassiveUsageNow 绕过去抖同步写一次被动采样（429 之后不会再有响应来补这一次），
+// 与后台异步写入互斥以保证顺序。响应头里没有采样数据时不写。
+func (s *RateLimitService) writePassiveUsageNow(ctx context.Context, accountID int64, headers http.Header) {
+	sample, ok := parsePassiveUsageSample(headers)
+	if !ok {
+		return
 	}
-	// 7d utilization（0-1 小数）
-	if utilStr := headers.Get("anthropic-ratelimit-unified-7d-utilization"); utilStr != "" {
-		if util, err := strconv.ParseFloat(utilStr, 64); err == nil {
-			extraUpdates["passive_usage_7d_utilization"] = util
+	s.accountWrites.Exclusive(accountID, func() {
+		s.passiveUsageWrites.Record(accountID, sample)
+		if err := s.accountRepo.UpdateExtra(ctx, accountID, sample.extraUpdates(time.Now())); err != nil {
+			slog.Warn("passive_usage_update_failed", "account_id", accountID, "error", err)
+			s.passiveUsageWrites.Forget(accountID) // 没写成功不能记成已写入，下次还会尝试
 		}
-	}
-	// 7d reset timestamp
-	if resetStr := headers.Get("anthropic-ratelimit-unified-7d-reset"); resetStr != "" {
-		if ts, err := strconv.ParseInt(resetStr, 10, 64); err == nil {
-			if ts > 1e11 {
-				ts = ts / 1000
-			}
-			extraUpdates["passive_usage_7d_reset"] = ts
-		}
-	}
-	// 7d_oi (Fable 专属 7d 窗口) utilization（0-1 小数）
-	if utilStr := headers.Get("anthropic-ratelimit-unified-7d_oi-utilization"); utilStr != "" {
-		if util, err := strconv.ParseFloat(utilStr, 64); err == nil {
-			extraUpdates["passive_usage_7d_oi_utilization"] = util
-		}
-	}
-	// 7d_oi reset timestamp
-	if resetStr := headers.Get("anthropic-ratelimit-unified-7d_oi-reset"); resetStr != "" {
-		if ts, err := strconv.ParseInt(resetStr, 10, 64); err == nil {
-			if ts > 1e11 {
-				ts = ts / 1000
-			}
-			extraUpdates["passive_usage_7d_oi_reset"] = ts
-		}
-	}
-	if len(extraUpdates) > 0 {
-		extraUpdates["passive_usage_sampled_at"] = time.Now().UTC().Format(time.RFC3339)
-		if err := s.accountRepo.UpdateExtra(ctx, account.ID, extraUpdates); err != nil {
-			slog.Warn("passive_usage_update_failed", "account_id", account.ID, "error", err)
-		}
-	}
+	})
 }
 
 // ClearRateLimit 清除账号的限流状态
