@@ -2,6 +2,10 @@
 -- 用量页「类型」列显示「Claude违规拒答」，该行不计费。
 -- 不放宽约束的话，这类用量行写库会被 usage_logs_request_type_check 拒绝（整条用量丢失）。
 -- NOT VALID：usage_logs 是大表，不做全表校验；存量行本来就都在 0..5 内，只约束新写入的行。
+-- DROP/ADD CONSTRAINT 需要 usage_logs 的 ACCESS EXCLUSIVE 锁，拿锁期间会让这张表上的新查询全部排队。
+-- 限定最长等 5 秒：拿不到就让整个迁移失败回滚（发版在换二进制之前中止，线上实例不受影响），再重试。
+SET LOCAL lock_timeout = '5s';
+
 ALTER TABLE usage_logs
     DROP CONSTRAINT IF EXISTS usage_logs_request_type_check;
 
