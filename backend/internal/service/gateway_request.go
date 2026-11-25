@@ -1396,10 +1396,15 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte, mappedModel string) []b
 	return newBody
 }
 
-// filterThinkingBlocksInternal removes invalid thinking blocks from request
-// 策略：
-//   - 当 thinking.type 不是 "enabled"/"adaptive"：移除所有 thinking 相关块
-//   - 当 thinking.type 是 "enabled"/"adaptive"：仅移除缺失/无效 signature 的 thinking 块
+// filterThinkingBlocksInternal removes invalid thinking blocks from request.
+//
+// 策略（与顶层 thinking 参数无关）：
+//   - assistant 消息里「签名非空且非 dummy」的 thinking 块一律保留，交由上游验签：
+//     上游对历史 thinking 签名独立校验，顶层是否声明 thinking 不影响结论；把真实但
+//     非法的签名剥掉会让上游的 400 消失，客户端于是拿到 200 却看不到预期的
+//     "Invalid signature in thinking block" 报错（P0 不支持错误签名）。
+//   - 仅移除签名缺失 / 空串 / dummy 占位 的 thinking 块：保留对「客户端回传历史不带
+//     签名」（Claude Code 常见）的兼容，避免这类请求被上游 400。
 func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 	// Fast path: if body doesn't contain "thinking", skip parsing
 	if !bytes.Contains(body, []byte(`"type":"thinking"`)) &&
@@ -1414,14 +1419,6 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return body
-	}
-
-	// Check if thinking is enabled
-	thinkingEnabled := false
-	if thinking, ok := req["thinking"].(map[string]any); ok {
-		if thinkType, ok := thinking["type"].(string); ok && (thinkType == "enabled" || thinkType == "adaptive") {
-			thinkingEnabled = true
-		}
 	}
 
 	messages, ok := req["messages"].([]any)
@@ -1455,9 +1452,14 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 			blockType, _ := blockMap["type"].(string)
 
 			if blockType == "thinking" || blockType == "redacted_thinking" {
-				// When thinking is enabled and this is an assistant message,
-				// only keep thinking blocks with valid signatures
-				if thinkingEnabled && role == "assistant" {
+				// Keep assistant thinking blocks that carry a non-empty, non-dummy
+				// signature so the upstream can validate it and reply with its own 400
+				// (e.g. "Invalid signature in thinking block") when the signature is foreign
+				// or invalid. Dropping such blocks silently turns that 400 into a 200
+				// and hides the real error from the client.
+				// Missing/empty/dummy signatures are still stripped to keep clients that
+				// omit the field (Claude Code history) from failing upstream.
+				if role == "assistant" {
 					signature, _ := blockMap["signature"].(string)
 					if signature != "" && signature != antigravity.DummyThoughtSignature {
 						newContent = append(newContent, block)
