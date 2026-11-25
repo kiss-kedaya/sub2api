@@ -111,6 +111,15 @@ func safeProtocolPath(value string) bool {
 		"response.output_text.delta", "response.function_call_arguments.delta", "response.error.message",
 		"error.message", "error.type", "error.code", "message.start", "message.stop",
 		"io.EOF", "net.Error", "url.Error", "http.Client", "context.Canceled", "context.DeadlineExceeded",
+		// Anthropic Messages 官方的参数路径与错误字段：这些是公开 API 文档里
+		// 的字段名，暴露给客户端不构成上游诊断泄漏，但被误判成域名后客户端
+		// 完全看不懂报错（曾把 thinking.type.enabled 打码成 [redacted]）。
+		"thinking.type.enabled", "thinking.type.adaptive", "thinking.type.disabled", "thinking.type",
+		"thinking.budget_tokens", "output_config.effort", "output_config.format",
+		"temperature", "max_tokens", "top_p", "top_k", "stop_sequences",
+		"tool_choice.type", "tool_choice.name", "content.type",
+		"messages.content", "messages.role", "system.content", "metadata.user_id",
+		"error.request_id", "error.docs",
 	} {
 		if value == known {
 			return true
