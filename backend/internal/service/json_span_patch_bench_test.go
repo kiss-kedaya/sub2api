@@ -26,8 +26,8 @@ func spanBenchText(n int) string {
 	const unit = `line of tool output with "quotes", a\path and unicode é世界 `
 	var b strings.Builder
 	for b.Len() < n {
-		b.WriteString(strings.NewReplacer(`"`, `\"`, `\`, `\\`).Replace(unit))
-		b.WriteString(`\n`)
+		_, _ = b.WriteString(strings.NewReplacer(`"`, `\"`, `\`, `\\`).Replace(unit))
+		_, _ = b.WriteString(`\n`)
 	}
 	return b.String()
 }
@@ -37,10 +37,10 @@ func buildSpanChatBody(msgs, size int, orphans bool) []byte {
 	text := spanBenchText(size / msgs)
 	half := spanBenchText(size / msgs / 2)
 	var b strings.Builder
-	b.WriteString(`{"model":"deepseek-v4-pro","stream":true,"messages":[`)
+	_, _ = b.WriteString(`{"model":"deepseek-v4-pro","stream":true,"messages":[`)
 	for i := 0; i < msgs; i++ {
 		if i > 0 {
-			b.WriteByte(',')
+			_ = b.WriteByte(',')
 		}
 		switch i % 4 {
 		case 0:
@@ -57,7 +57,7 @@ func buildSpanChatBody(msgs, size int, orphans bool) []byte {
 			fmt.Fprintf(&b, `{"role":"assistant","content":"%s"}`, half)
 		}
 	}
-	b.WriteString(`]}`)
+	_, _ = b.WriteString(`]}`)
 	return []byte(b.String())
 }
 
@@ -66,10 +66,10 @@ func buildSpanAnthropicBody(msgs, size int) []byte {
 	text := spanBenchText(size / msgs)
 	half := spanBenchText(size / msgs / 2)
 	var b strings.Builder
-	b.WriteString(`{"model":"deepseek-v4-pro","stream":true,"messages":[`)
+	_, _ = b.WriteString(`{"model":"deepseek-v4-pro","stream":true,"messages":[`)
 	for i := 0; i < msgs; i++ {
 		if i > 0 {
-			b.WriteByte(',')
+			_ = b.WriteByte(',')
 		}
 		switch i % 3 {
 		case 0:
@@ -80,7 +80,7 @@ func buildSpanAnthropicBody(msgs, size int) []byte {
 			fmt.Fprintf(&b, `{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_%d","content":"%s"}]}`, i-1, text)
 		}
 	}
-	b.WriteString(`]}`)
+	_, _ = b.WriteString(`]}`)
 	return []byte(b.String())
 }
 
@@ -89,10 +89,10 @@ func buildSpanAnthropicBody(msgs, size int) []byte {
 func buildSpanResponsesBody(items, size int, missing bool) []byte {
 	text := spanBenchText(size / items)
 	var b strings.Builder
-	b.WriteString(`{"model":"deepseek-v4-pro","stream":true,"input":[`)
+	_, _ = b.WriteString(`{"model":"deepseek-v4-pro","stream":true,"input":[`)
 	for i := 0; i < items; i++ {
 		if i > 0 {
-			b.WriteByte(',')
+			_ = b.WriteByte(',')
 		}
 		switch i % 4 {
 		case 0:
@@ -109,7 +109,7 @@ func buildSpanResponsesBody(items, size int, missing bool) []byte {
 			fmt.Fprintf(&b, `{"type":"function_call_output","call_id":"call_%d","output":"%s"}`, outputID, text)
 		}
 	}
-	b.WriteString(`]}`)
+	_, _ = b.WriteString(`]}`)
 	return []byte(b.String())
 }
 
@@ -244,17 +244,17 @@ func TestSpanPatchAllocationCeilings(t *testing.T) {
 			func(b []byte) { legacyDropOrphanDeepSeekToolMessages(b) },
 			func(b []byte) { dropOrphanDeepSeekToolMessages(b) }},
 		{"repair, nothing missing", responses, 0.1, 10,
-			func(b []byte) { legacyRepairDeepSeekMissingToolOutputs(b) },
-			func(b []byte) { repairDeepSeekMissingToolOutputs(b) }},
+			func(b []byte) { _, _, _ = legacyRepairDeepSeekMissingToolOutputs(b) },
+			func(b []byte) { _, _, _ = repairDeepSeekMissingToolOutputs(b) }},
 		{"repair, outputs missing", responsesMissing, 1.5, 0,
-			func(b []byte) { legacyRepairDeepSeekMissingToolOutputs(b) },
-			func(b []byte) { repairDeepSeekMissingToolOutputs(b) }},
+			func(b []byte) { _, _, _ = legacyRepairDeepSeekMissingToolOutputs(b) },
+			func(b []byte) { _, _, _ = repairDeepSeekMissingToolOutputs(b) }},
 		{"stream usage, absent", stream, 1.5, 0,
-			func(b []byte) { legacyEnsureOpenAIChatStreamUsage(b) },
-			func(b []byte) { ensureOpenAIChatStreamUsage(b) }},
+			func(b []byte) { _, _ = legacyEnsureOpenAIChatStreamUsage(b) },
+			func(b []byte) { _, _ = ensureOpenAIChatStreamUsage(b) }},
 		{"stream usage, already true", streamDone, 0.01, 0,
-			func(b []byte) { legacyEnsureOpenAIChatStreamUsage(b) },
-			func(b []byte) { ensureOpenAIChatStreamUsage(b) }},
+			func(b []byte) { _, _ = legacyEnsureOpenAIChatStreamUsage(b) },
+			func(b []byte) { _, _ = ensureOpenAIChatStreamUsage(b) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

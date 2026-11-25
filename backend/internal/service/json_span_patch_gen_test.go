@@ -112,10 +112,10 @@ func (g *spanGen) sprinkleWhitespace(compact string) string {
 	for i := 0; i < len(compact); i++ {
 		c := compact[i]
 		if inString {
-			b.WriteByte(c)
+			_ = b.WriteByte(c)
 			if c == '\\' && i+1 < len(compact) {
 				i++
-				b.WriteByte(compact[i])
+				_ = b.WriteByte(compact[i])
 			} else if c == '"' {
 				inString = false
 			}
@@ -123,17 +123,17 @@ func (g *spanGen) sprinkleWhitespace(compact string) string {
 		}
 		switch c {
 		case '"':
-			b.WriteString(ws[g.r.Intn(len(ws))])
-			b.WriteByte(c)
+			_, _ = b.WriteString(ws[g.r.Intn(len(ws))])
+			_ = b.WriteByte(c)
 			inString = true
 		case '{', '[', ',', ':':
-			b.WriteByte(c)
-			b.WriteString(ws[g.r.Intn(len(ws))])
+			_ = b.WriteByte(c)
+			_, _ = b.WriteString(ws[g.r.Intn(len(ws))])
 		case '}', ']':
-			b.WriteString(ws[g.r.Intn(len(ws))])
-			b.WriteByte(c)
+			_, _ = b.WriteString(ws[g.r.Intn(len(ws))])
+			_ = b.WriteByte(c)
 		default:
-			b.WriteByte(c)
+			_ = b.WriteByte(c)
 		}
 	}
 	return b.String()
