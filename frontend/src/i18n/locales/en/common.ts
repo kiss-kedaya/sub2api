@@ -274,8 +274,7 @@ export default {
     passwordRequired: 'Password is required',
     passwordMinLength: 'Password must be at least 6 characters',
     loginFailed: 'Login failed. Please check your credentials and try again.',
-    totpChallengeHint: 'Check your email and password. If you have set up an authenticator, you can use its code to continue.',
-    verifyWithAuthenticator: 'Verify with authenticator',
+    loginChallengeBackHint: 'No authenticator set up? Tap here to go back and check your email and password.',
     errors: {
       INVALID_CREDENTIALS: 'Invalid email or password. Please try again.',
       USER_NOT_ACTIVE: 'Account has been disabled.',

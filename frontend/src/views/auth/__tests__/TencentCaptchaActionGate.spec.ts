@@ -84,7 +84,7 @@ function mountLogin() {
         TurnstileWidget: CaptchaChallengeStub,
         Icon: true,
         LoginAgreementPrompt: true,
-        TotpLoginModal: true,
+        TotpFactorPane: true,
         EmailOAuthButtons: OAuthButtonStub,
         LinuxDoOAuthSection: true,
         DingTalkOAuthSection: true,

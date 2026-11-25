@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import TotpLoginModal from '@/components/auth/TotpLoginModal.vue'
+import TotpFactorPane from '@/components/auth/TotpFactorPane.vue'
 
 const { showErrorMock } = vi.hoisted(() => ({ showErrorMock: vi.fn() }))
 
@@ -17,7 +17,7 @@ function setError(wrapper: ReturnType<typeof mount>, message: string, retryAfter
   vm.setError(message, retryAfter)
 }
 
-describe('TotpLoginModal account rate limit', () => {
+describe('TotpFactorPane account rate limit', () => {
   beforeEach(() => {
     sessionStorage.clear()
     showErrorMock.mockReset()
@@ -30,7 +30,7 @@ describe('TotpLoginModal account rate limit', () => {
   })
 
   it('disables the input and shows a countdown after 5 submits in 60s (local limit)', async () => {
-    const wrapper = mount(TotpLoginModal, {
+    const wrapper = mount(TotpFactorPane, {
       props: { tempToken: 'temp-token', userEmailMasked: 'u***@example.com', accountKey: 'user@example.com' }
     })
     const input = wrapper.get('input[autocomplete="one-time-code"]')
@@ -59,7 +59,7 @@ describe('TotpLoginModal account rate limit', () => {
   })
 
   it('honors server Retry-After on 429 and does not rely on local counting', async () => {
-    const wrapper = mount(TotpLoginModal, {
+    const wrapper = mount(TotpFactorPane, {
       props: { tempToken: 'temp-token', accountKey: 'user@example.com' }
     })
     const input = wrapper.get('input[autocomplete="one-time-code"]')
