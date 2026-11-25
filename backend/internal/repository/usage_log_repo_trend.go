@@ -296,9 +296,12 @@ func (r *usageLogRepository) GetUserModelStats(ctx context.Context, userID int64
 func (r *usageLogRepository) GetUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) (results []TrendDataPoint, err error) {
 	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
 		Query: "usage_trend_with_filters", UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
-		Model: model, Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+		// The day labels are cut in the database session's time zone, so it is part of what was asked.
+		Model: model, Timezone: resolveUsageStatsTimezone(),
+		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
 		Extra:   usageGranularityKey(granularity),
 		Filters: &usageFiltersFingerprint{RequestType: requestType, Stream: stream, BillingType: billingType},
+		TTL:     keyAggregateTTL(apiKeyID, startTime, endTime),
 	}, func(ctx context.Context) ([]TrendDataPoint, error) {
 		return r.getUsageTrendWithFiltersResolved(ctx, startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
 	})
@@ -515,6 +518,7 @@ func (r *usageLogRepository) GetModelStatsWithFiltersBySource(ctx context.Contex
 		ModelSource: usagestats.NormalizeModelSource(source),
 		Start:       startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
 		Filters: &usageFiltersFingerprint{RequestType: requestType, Stream: stream, BillingType: billingType},
+		TTL:     keyAggregateTTL(apiKeyID, startTime, endTime),
 	}, func(ctx context.Context) ([]ModelStat, error) {
 		return r.getModelStatsWithFiltersBySourceResolved(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType, source)
 	})

@@ -38,10 +38,14 @@ func TestUsageStatsCacheRangesKeepExplicitDatesAndBoundRollingDefaults(t *testin
 				require.True(t, gatewayStart.Equal(expectedStart))
 				require.True(t, gatewayEnd.Equal(expectedEnd))
 			} else {
-				for _, end := range []time.Time{parsed.EndTime, gatewayEnd} {
-					require.True(t, end.Equal(end.Truncate(time.Minute)))
-					require.False(t, end.Before(before.Add(-time.Minute)))
-					require.False(t, end.After(time.Now()))
+				// The user usage page moves by the minute; /v1/usage by the 5 minute bucket (see usageDefaultRange).
+				for _, tc := range []struct {
+					end  time.Time
+					step time.Duration
+				}{{parsed.EndTime, time.Minute}, {gatewayEnd, usageDefaultRangeBucket}} {
+					require.True(t, tc.end.Equal(tc.end.Truncate(tc.step)))
+					require.False(t, tc.end.Before(before.Add(-tc.step)))
+					require.False(t, tc.end.After(time.Now()))
 				}
 				require.True(t, parsed.StartTime.Equal(parsed.EndTime.AddDate(0, 0, -7)))
 				require.True(t, gatewayStart.Equal(gatewayEnd.AddDate(0, 0, -30)))

@@ -363,7 +363,7 @@ func (c captureQuerySQL) QueryContext(ctx context.Context, query string, args ..
 	if c.args != nil {
 		*c.args = append([]any(nil), args...)
 	}
-	return c.db.QueryContext(ctx, query, args...)
+	return c.db.QueryContext(ctx, query, args...) //nolint:gosec // G701: 测试用透传包装，query 由被测代码构造、这里只记录并转发，不拼接任何输入
 }
 
 func normalizeSQLWhitespace(sql string) string {

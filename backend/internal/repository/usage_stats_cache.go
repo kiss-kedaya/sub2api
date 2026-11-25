@@ -40,7 +40,25 @@ const (
 	// the load budget will not fit it again five seconds later; asking again at every refresh only keeps
 	// a slot and the disk busy for another full budget.
 	usageStatsCacheTimeoutTTL = 30 * time.Second
+
+	// usageStatsKeyWindowTTL is how long the answer to one API key's multi-day aggregate (the /v1/usage reports,
+	// the per-key usage panels) is reused. Clients poll those every few seconds to a minute, so the cache's own
+	// 60 s TTL lapsed just before the next poll and a heavy key's month was re-aggregated from usage_logs on
+	// almost every call. It is a constant, not a setting: the cache's TTL still governs everything else.
+	usageStatsKeyWindowTTL = 5 * time.Minute
+	// usageStatsKeyWindowOver is the window length above which that longer TTL applies. A single natural day
+	// (23 to 25 hours around a DST change) is a "today" view and keeps the cache's own TTL.
+	usageStatsKeyWindowOver = 25 * time.Hour
 )
+
+// keyAggregateTTL is the cache lifetime for an aggregate of one API key over [start, end): usageStatsKeyWindowTTL
+// for a multi-day window, 0 (the cache's own TTL) for anything else. Callers put it in usageStatsCacheKey.TTL.
+func keyAggregateTTL(apiKeyID int64, start, end time.Time) time.Duration {
+	if apiKeyID > 0 && end.Sub(start) > usageStatsKeyWindowOver {
+		return usageStatsKeyWindowTTL
+	}
+	return 0
+}
 
 // usageStatsCache is a best-effort, short-TTL Redis cache in front of the
 // dashboard and usage aggregation queries. Every method is safe to call on a
@@ -88,6 +106,9 @@ type usageStatsCacheKey struct {
 	// It is a value (not a pointer) so nil optionals stay nil in the hash.
 	Filters *usageFiltersFingerprint `json:"filters,omitempty"`
 	Extra   string                   `json:"extra,omitempty"`
+	// TTL is how long the answer stays cached when it must outlive the cache's own TTL (see keyAggregateTTL);
+	// 0 keeps the cache's TTL. It says how long to reuse an answer, not what was asked, so it is not hashed.
+	TTL time.Duration `json:"-"`
 }
 
 // gateOwner names who a cache miss is charged to in the concurrency gate, or "" when the aggregate is not an
@@ -264,7 +285,7 @@ func loadUsageStatsCachedWithTimeout[T any](
 			return usageStatsCacheResult[T]{value: value}, nil
 		}
 		// base, not loadCtx: a scan that used up its budget still produced a good answer worth keeping.
-		cache.set(base, redisKey, raw)
+		cache.set(base, redisKey, raw, key.TTL)
 		return usageStatsCacheResult[T]{raw: raw}, nil
 	})
 	select {
@@ -340,13 +361,15 @@ func (c *usageStatsCache) get(ctx context.Context, key string) ([]byte, bool) {
 	return raw, true
 }
 
-func (c *usageStatsCache) set(ctx context.Context, key string, raw []byte) {
+// set stores one answer for max(the cache's TTL, ttl): a longer TTL asked for by the caller wins, a shorter
+// one never cuts into what the operator configured.
+func (c *usageStatsCache) set(ctx context.Context, key string, raw []byte, ttl time.Duration) {
 	if c.paused() || ctx.Err() != nil {
 		return
 	}
 	opCtx, cancel := context.WithTimeout(ctx, usageStatsCacheOpTimeout)
 	defer cancel()
-	if err := c.rdb.Set(opCtx, key, raw, c.ttl).Err(); err != nil && ctx.Err() == nil {
+	if err := c.rdb.Set(opCtx, key, raw, max(c.ttl, ttl)).Err(); err != nil && ctx.Err() == nil {
 		c.pause(err)
 	}
 }

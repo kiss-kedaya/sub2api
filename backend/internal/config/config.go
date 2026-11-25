@@ -1957,7 +1957,9 @@ type OpsMetricsCollectorCacheConfig struct {
 
 // UsageStatsCacheConfig controls the Redis cache in front of the dashboard and
 // usage aggregation queries. TTL is intentionally short: cached numbers may lag
-// freshly written usage logs by at most TTL.
+// freshly written usage logs by at most TTL. The one exception is one API key's
+// multi-day aggregate (/v1/usage reports, key usage panels), which is kept for a fixed
+// 5 minutes whenever TTL is shorter (repository.usageStatsKeyWindowTTL).
 type UsageStatsCacheConfig struct {
 	Enabled bool          `mapstructure:"enabled"`
 	TTL     time.Duration `mapstructure:"ttl"`
