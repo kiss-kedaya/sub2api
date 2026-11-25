@@ -27,7 +27,7 @@ func TestUsageStatsCacheRangesKeepExplicitDatesAndBoundRollingDefaults(t *testin
 			before := time.Now()
 			parsed, ok := (&UsageHandler{}).parseUserUsageFilters(c, true)
 			require.True(t, ok)
-			gatewayStart, gatewayEnd := (&GatewayHandler{}).parseUsageDateRange(c)
+			gatewayStart, gatewayEnd := (&GatewayHandler{}).parseUsageDateRange(c, 42)
 			if explicit {
 				require.Equal(t, time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), parsed.StartTime)
 				require.Equal(t, time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC), parsed.EndTime)
@@ -38,12 +38,16 @@ func TestUsageStatsCacheRangesKeepExplicitDatesAndBoundRollingDefaults(t *testin
 				require.True(t, gatewayStart.Equal(expectedStart))
 				require.True(t, gatewayEnd.Equal(expectedEnd))
 			} else {
-				// The user usage page moves by the minute; /v1/usage by the 5 minute bucket (see usageDefaultRange).
+				// The user usage page moves by the minute; /v1/usage by the 15 minute bucket of its key (see usageDefaultRange).
 				for _, tc := range []struct {
-					end  time.Time
-					step time.Duration
-				}{{parsed.EndTime, time.Minute}, {gatewayEnd, usageDefaultRangeBucket}} {
-					require.True(t, tc.end.Equal(tc.end.Truncate(tc.step)))
+					end    time.Time
+					step   time.Duration
+					onGrid bool
+				}{
+					{parsed.EndTime, time.Minute, parsed.EndTime.Equal(parsed.EndTime.Truncate(time.Minute))},
+					{gatewayEnd, usageDefaultRangeBucket, onKeyGrid(gatewayEnd, 42)},
+				} {
+					require.True(t, tc.onGrid)
 					require.False(t, tc.end.Before(before.Add(-tc.step)))
 					require.False(t, tc.end.After(time.Now()))
 				}

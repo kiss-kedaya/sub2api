@@ -45,7 +45,10 @@ const (
 	// the per-key usage panels) is reused. Clients poll those every few seconds to a minute, so the cache's own
 	// 60 s TTL lapsed just before the next poll and a heavy key's month was re-aggregated from usage_logs on
 	// almost every call. It is a constant, not a setting: the cache's TTL still governs everything else.
-	usageStatsKeyWindowTTL = 5 * time.Minute
+	// It is not shorter than the grid the moving /v1/usage window is cut on (handler.usageDefaultRangeBucket, also
+	// 15 minutes): an answer computed anywhere inside one grid cell is therefore still cached when the cell ends,
+	// so a key is aggregated once per cell however often it is polled. Keep the two in step.
+	usageStatsKeyWindowTTL = 15 * time.Minute
 	// usageStatsKeyWindowOver is the window length above which that longer TTL applies. A single natural day
 	// (23 to 25 hours around a DST change) is a "today" view and keeps the cache's own TTL.
 	usageStatsKeyWindowOver = 25 * time.Hour
