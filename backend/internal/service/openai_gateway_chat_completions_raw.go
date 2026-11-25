@@ -617,12 +617,52 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 // ensureOpenAIChatStreamUsage 确保 raw Chat Completions 流式请求会让上游返回 usage。
 // usage 也会继续向下游透传，支持级联代理和下游计费系统。
+//
+// 常见形状（根是对象；stream_options 缺失或是对象）原地定位后只写一次、只分配一次，
+// 客户端本来就带 include_usage=true 时直接返回原切片；其余形状（stream_options 是数组/标量、
+// 根不是对象……）仍交给 sjson，沿用它原有的改写与报错。
 func ensureOpenAIChatStreamUsage(body []byte) ([]byte, error) {
+	if out, ok := ensureOpenAIChatStreamUsageInPlace(body); ok {
+		return out, nil
+	}
 	updated, err := sjson.SetBytes(body, "stream_options.include_usage", true)
 	if err != nil {
 		return body, err
 	}
 	return updated, nil
+}
+
+func ensureOpenAIChatStreamUsageInPlace(body []byte) ([]byte, bool) {
+	streamOptions := gjson.Get(openAIWSPayloadStringView(body), "stream_options")
+	switch {
+	case streamOptions.IsObject():
+		usage := streamOptions.Get("include_usage")
+		if usage.Type == gjson.True {
+			return body, true
+		}
+		patch := newJSONSpanPatcher(body)
+		if usage.Exists() {
+			patch.replace(usage, "true")
+		} else {
+			patch.appendMember(streamOptions, `"include_usage":true`)
+		}
+		return patch.apply()
+	case !streamOptions.Exists():
+		// 与 sjson 的写法一致：只取第一个 '{' 到最后一个 '}'，首尾空白和 '}' 之后的内容不保留。
+		start := 0
+		for start < len(body) && body[start] <= ' ' {
+			start++
+		}
+		end := bytes.LastIndexByte(body, '}')
+		if start >= len(body) || body[start] != '{' || end <= start {
+			return nil, false
+		}
+		object := body[start : end+1]
+		patch := newJSONSpanPatcher(object)
+		patch.appendMemberIn(0, len(object), `"stream_options":{"include_usage":true}`)
+		return patch.apply()
+	}
+	return nil, false
 }
 
 func isOpenAIChatUsageOnlyStreamChunk(payload string) bool {
