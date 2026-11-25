@@ -87,6 +87,9 @@ func (w *automationObserverWriter) observeLine(line []byte) {
 	if bytes.Equal(line, []byte("[DONE]")) {
 		return
 	} // DONE alone cannot prove protocol completion.
+	if !automationLineMayMatter(line) {
+		return
+	}
 	var item struct {
 		Type     string          `json:"type"`
 		Error    json.RawMessage `json:"error"`
@@ -127,6 +130,84 @@ func (w *automationObserverWriter) observeLine(line []byte) {
 		}
 	}
 }
+
+// Every verdict observeLine can reach hinges on one of a few JSON string
+// literals (the terminal event types and finish reasons) or on an "error" key,
+// which encoding/json matches case-insensitively. A line holding none of them
+// as a whole string, and no \u escape that could spell one, cannot change the
+// verdict whatever its structure, which spares decoding the great majority of
+// data lines (plain deltas) in full.
+//
+// automationLineMayMatter is that conservative necessary condition: false
+// means observeLine would leave failed and terminal untouched. One pass over
+// the line: only a quote or a backslash needs a closer look.
+func automationLineMayMatter(line []byte) bool {
+	for i, b := range line {
+		switch b {
+		case '"':
+			if automationVerdictLiteralAt(line[i+1:]) {
+				return true
+			}
+		case '\\':
+			if i+1 < len(line) && line[i+1] == 'u' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// The closing quote is part of each literal: they must be whole strings.
+var (
+	automationResponseLiterals  = []string{`response.failed"`, `response.incomplete"`, `response.completed"`}
+	automationMessageLiterals   = []string{`message_stop"`}
+	automationStopLiterals      = []string{`stop"`}
+	automationLengthLiterals    = []string{`length"`}
+	automationToolLiterals      = []string{`tool_calls"`}
+	automationFunctionLiterals  = []string{`function_call"`}
+	automationUpperStopLiterals = []string{`STOP"`}
+	automationMaxLiterals       = []string{`MAX_TOKENS"`}
+)
+
+// automationVerdictLiteralAt reports whether s, which follows an opening
+// quote, is one of the verdict literals up to and including its closing quote.
+func automationVerdictLiteralAt(s []byte) bool {
+	if len(s) == 0 {
+		return false
+	}
+	var candidates []string
+	switch s[0] {
+	case 'e', 'E':
+		// A key that encoding/json folds onto "error" (ASCII only: no other
+		// rune folds to e, r or o) or the "error" event type.
+		return len(s) >= 6 && s[1]|0x20 == 'r' && s[2]|0x20 == 'r' && s[3]|0x20 == 'o' && s[4]|0x20 == 'r' && s[5] == '"'
+	case 'r':
+		candidates = automationResponseLiterals
+	case 'm':
+		candidates = automationMessageLiterals
+	case 's':
+		candidates = automationStopLiterals
+	case 'l':
+		candidates = automationLengthLiterals
+	case 't':
+		candidates = automationToolLiterals
+	case 'f':
+		candidates = automationFunctionLiterals
+	case 'S':
+		candidates = automationUpperStopLiterals
+	case 'M':
+		candidates = automationMaxLiterals
+	default:
+		return false
+	}
+	for _, literal := range candidates {
+		if len(s) >= len(literal) && string(s[:len(literal)]) == literal {
+			return true
+		}
+	}
+	return false
+}
+
 func OpsAutomationObserver(engine *service.OpsAutomationService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
