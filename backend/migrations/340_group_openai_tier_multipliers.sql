@@ -3,6 +3,10 @@
 -- NULL keeps the official, model-owned tier pricing (Fast 2x / 2.5x, UltraFast 6x).
 -- A value is the customer-facing multiplier applied on top of the group's rate
 -- multiplier; 1 means no surcharge (free Fast / free UltraFast).
+-- 下面的 ALTER 需要 groups / usage_logs 的 ACCESS EXCLUSIVE 锁，拿锁期间这两张表上的新查询会全部排队。
+-- 限定最长等 5 秒：拿不到就让整个迁移失败回滚（发版在换二进制之前中止，线上实例不受影响），再重试。
+SET LOCAL lock_timeout = '5s';
+
 ALTER TABLE groups
     ADD COLUMN IF NOT EXISTS openai_fast_multiplier NUMERIC(10,4),
     ADD COLUMN IF NOT EXISTS openai_ultrafast_multiplier NUMERIC(10,4);
