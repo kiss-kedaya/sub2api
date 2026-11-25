@@ -332,6 +332,22 @@ type ChannelMonitorV2Repository interface {
 	// Implementations must use a short error-dedup lookback and skip retention
 	// prune so a busy Postgres does not stall channel status.
 	RecomputeLiveRange(ctx context.Context, start, end time.Time) error
+	// PruneRetention drops rows past their per-tier TTL in the steady state
+	// (RecomputeLiveRange never prunes and RecomputeRange only runs while history
+	// is being walked). It must be bounded: small independent batches, a cap on the
+	// batches and the wall time of one call, and a per-statement timeout. Whatever
+	// the budget leaves is dropped by the next call.
+	PruneRetention(ctx context.Context, now time.Time) (ChannelMonitorV2PruneResult, error)
+}
+
+// ChannelMonitorV2PruneResult reports what one bounded PruneRetention call did.
+type ChannelMonitorV2PruneResult struct {
+	// Deleted is the number of rows removed across all tables.
+	Deleted int64
+	// Batches is the number of DELETE statements that completed.
+	Batches int
+	// Backlog is true when the budget ran out while expired rows may remain.
+	Backlog bool
 }
 
 // ChannelMonitorV2BootstrapProductWindow is the longest UI range that must be

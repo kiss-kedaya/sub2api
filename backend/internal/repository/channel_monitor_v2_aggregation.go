@@ -3,8 +3,11 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 // Platform is derived from group/account (usage_logs has no provider column on upstream schema).
@@ -118,6 +121,143 @@ func (r *channelMonitorV2Repository) pruneChannelMonitorV2Retention(ctx context.
 		}
 	}
 	return nil
+}
+
+// 稳态保留期清理。
+//
+// pruneChannelMonitorV2Retention 只在 RecomputeRange（首次种子和历史回填）里跑；历史走完以后稳态每分钟
+// 只调 RecomputeLiveRange（prune=false），保留期清理就再也没人调了：生产上 1m 事实表最老的行是 11 天前
+// （保留 7 天）、error_metrics_1m 跨度 23.7 天、汇总表跨度 104 天（保留 90 天），每多留一天 1m 事实加索引
+// 约 1.5GB。PruneRetention 补上这一环，用同一份 channelMonitorV2RetentionRules，但是有界的：
+//
+//   - 每条 DELETE 独立自动提交（不进聚合器的写事务，也就没有跨表锁顺序问题），一批最多 batchSize 行，
+//     从最老的 bucket_start 开始，子查询走 bucket_start 的索引（1m 事实表的主键/时间索引，汇总表的
+//     (bucket_seconds, bucket_start, ...) 主键），不全表扫；
+//   - 每次调用的总时长、总批数有上限，轮询各张表各删一批，没删完的下个周期接着删：积压慢慢清，
+//     不会一次写爆 WAL/IO；
+//   - 每条语句有自己的超时（小于集群 30 秒的 statement_timeout），失败只丢这张表这一轮，其他表照删；
+//   - 历史回填还没走完时不清（与事务内的版本同一个门槛）：回填要拿旧的 1m 行重建日汇总。
+//
+// 与实时窗口刷新的互斥沿用聚合器的 leader 锁：调用方在持锁的同一轮 tick 里、同一个 goroutine 中
+// 顺序调用，本方法不额外加锁。
+
+// channelMonitorV2PruneLimits 是一次 PruneRetention 调用的预算。
+type channelMonitorV2PruneLimits struct {
+	batchSize        int           // 每条 DELETE 最多删多少行
+	maxBatches       int           // 一次调用最多执行多少条 DELETE
+	maxDuration      time.Duration // 一次调用的总时长上限
+	statementTimeout time.Duration // 每条语句的超时
+	pause            time.Duration // 删满一整批之后让出 IO 的间隔
+}
+
+var channelMonitorV2DefaultPruneLimits = channelMonitorV2PruneLimits{
+	batchSize:        20000,
+	maxBatches:       100, // 最多 200 万行/次
+	maxDuration:      60 * time.Second,
+	statementTimeout: 20 * time.Second,
+	pause:            150 * time.Millisecond,
+}
+
+// PruneRetention 实现 service.ChannelMonitorV2Repository：用默认上限做一次有界清理。
+func (r *channelMonitorV2Repository) PruneRetention(ctx context.Context, now time.Time) (service.ChannelMonitorV2PruneResult, error) {
+	return r.pruneRetentionBatched(ctx, now, channelMonitorV2DefaultPruneLimits)
+}
+
+func (r *channelMonitorV2Repository) pruneRetentionBatched(ctx context.Context, now time.Time, limits channelMonitorV2PruneLimits) (service.ChannelMonitorV2PruneResult, error) {
+	var res service.ChannelMonitorV2PruneResult
+	finished, err := r.channelMonitorV2HistoryWalkFinished(ctx, now, limits.statementTimeout)
+	if err != nil || !finished {
+		return res, err
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, limits.maxDuration)
+	defer cancel()
+	var errs []error
+	active := append([]channelMonitorV2RetentionRule(nil), channelMonitorV2RetentionRules...)
+	for len(active) > 0 {
+		next := active[:0]
+		for _, rule := range active {
+			if res.Batches >= limits.maxBatches || runCtx.Err() != nil {
+				res.Backlog = true
+				return res, errors.Join(errs...)
+			}
+			deleted, execErr := r.deleteExpiredBatch(runCtx, rule, now, limits)
+			if execErr != nil {
+				if runCtx.Err() != nil {
+					// 总时长用完，这条语句被取消：不算这张表的错，下个周期接着删。
+					res.Backlog = true
+					return res, errors.Join(errs...)
+				}
+				errs = append(errs, execErr)
+				continue // 这张表这一轮不再试，其他表照删
+			}
+			res.Batches++
+			res.Deleted += deleted
+			if deleted >= int64(limits.batchSize) {
+				next = append(next, rule) // 删满一批：多半还有，下一轮接着删
+				sleepContext(runCtx, limits.pause)
+			}
+		}
+		active = next
+	}
+	return res, errors.Join(errs...)
+}
+
+// channelMonitorV2HistoryWalkFinished 与 pruneChannelMonitorV2Retention 同一个门槛：
+// backfill_cursor 走到 90 天的边缘才说明历史回填结束。读不到游标（没有行、为 NULL）按没结束处理。
+func (r *channelMonitorV2Repository) channelMonitorV2HistoryWalkFinished(ctx context.Context, now time.Time, timeout time.Duration) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var cursor sql.NullTime
+	err := r.db.QueryRowContext(ctx, `SELECT backfill_cursor FROM channel_monitor_v2_watermarks WHERE id = 1`).Scan(&cursor)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read channel monitor v2 backfill cursor: %w", err)
+	}
+	return cursor.Valid && !cursor.Time.After(channelMonitorV2RetentionCutoff(now, channelMonitorV2RetentionMax)), nil
+}
+
+// channelMonitorV2PruneBatchSQL 删一张表里最老的至多 LIMIT 行过期数据。ctid + ARRAY(子查询) 让外层
+// DELETE 走 TID 扫描、只碰子查询选出来的行；子查询 ORDER BY bucket_start LIMIT 走 bucket_start 的索引
+// （1m 事实表的主键或时间索引，汇总表以 bucket_seconds 等值开头的主键），按时间从最老的读起，
+// 不全表扫。参数见 channelMonitorV2PruneBatchArgs。
+func channelMonitorV2PruneBatchSQL(rule channelMonitorV2RetentionRule) string {
+	if rule.bucketSeconds == 0 {
+		return fmt.Sprintf(`DELETE FROM %[1]s WHERE ctid = ANY(ARRAY(SELECT ctid FROM %[1]s WHERE bucket_start < $1 ORDER BY bucket_start LIMIT $2))`, rule.table)
+	}
+	return fmt.Sprintf(`DELETE FROM %[1]s WHERE ctid = ANY(ARRAY(SELECT ctid FROM %[1]s WHERE bucket_seconds = $1 AND bucket_start < $2 ORDER BY bucket_start LIMIT $3))`, rule.table)
+}
+
+func channelMonitorV2PruneBatchArgs(rule channelMonitorV2RetentionRule, now time.Time, batchSize int) []any {
+	cutoff := channelMonitorV2RetentionCutoff(now, rule.retention)
+	if rule.bucketSeconds == 0 {
+		return []any{cutoff, batchSize}
+	}
+	return []any{rule.bucketSeconds, cutoff, batchSize}
+}
+
+func (r *channelMonitorV2Repository) deleteExpiredBatch(ctx context.Context, rule channelMonitorV2RetentionRule, now time.Time, limits channelMonitorV2PruneLimits) (int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, limits.statementTimeout)
+	defer cancel()
+	result, err := r.db.ExecContext(ctx, channelMonitorV2PruneBatchSQL(rule), channelMonitorV2PruneBatchArgs(rule, now, limits.batchSize)...)
+	if err != nil {
+		return 0, fmt.Errorf("prune %s (bucket_seconds=%d): %w", rule.table, rule.bucketSeconds, err)
+	}
+	return result.RowsAffected()
+}
+
+func sleepContext(ctx context.Context, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
 }
 
 const (
