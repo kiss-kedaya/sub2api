@@ -144,7 +144,10 @@ func poorQuality() GroupRouteQualitySnapshot {
 
 func ctxWithUpstreamFailure(accountID int64) context.Context {
 	ctx := withUpstreamAttempts(context.Background())
-	state := ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts)
+	state, ok := ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts)
+	if !ok {
+		panic("withUpstreamAttempts did not install the attempt state")
+	}
 	state.mu.Lock()
 	state.failed[accountID] = false
 	state.mu.Unlock()
