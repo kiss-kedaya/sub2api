@@ -85,6 +85,16 @@ type TotpLoginSession struct {
 	// 空值表示历史流程（OAuth pending 兑换等）仍按「只校验 TOTP」处理。
 	RequiredFactors []Factor `json:"required_factors,omitempty"`
 	PassedFactors   []Factor `json:"passed_factors,omitempty"`
+	// Decoy 标记「凭据无效」时下发的伪装挑战会话（只在 login_shape_disguise_enabled 打开时产生）。
+	// 它的 UserID 永远是 0，永远不会放行；第二步按 RequiredFactors 表现得和真实会话一样，
+	// 详见 login_shape_disguise.go。老实例读到未知字段会忽略，仍按 UserID<=0 走旧诱饵分支。
+	Decoy bool `json:"decoy,omitempty"`
+	// DecoyPasswordProbe 是诱饵会话里第一步所提交密码的 HMAC 指纹，只用于让第二步的
+	// 「密码是否与第一步一致」判断和真实会话的「密码对不对」判断表现一致。
+	DecoyPasswordProbe string `json:"decoy_password_probe,omitempty"`
+	// DecoyScope 是这个邮箱的伪装 Passkey ceremony 所用的用户 ID 段，对应真实会话里的 UserID：
+	// 第二步只接受用户 ID 段相同的 ceremony，其余与真实会话一样返回会话无效。
+	DecoyScope int64 `json:"decoy_scope,omitempty"`
 }
 
 type PendingOAuthBindLoginSession struct {
@@ -820,6 +830,38 @@ func (s *TotpService) CreateLoginSessionForFactors(
 		TokenExpiry:     time.Now().Add(totpLoginTTL),
 		RequiredFactors: sortFactorsForChallenge(required),
 		PassedFactors:   append([]Factor(nil), sortFactorsForChallenge(passed)...),
+	}
+	if err := s.cache.SetLoginSession(ctx, tempToken, session, totpLoginTTL); err != nil {
+		return "", fmt.Errorf("store login session: %w", err)
+	}
+	return tempToken, nil
+}
+
+// CreateDecoyLoginSession 创建「凭据无效」时的伪装挑战会话：UserID 恒为 0、Decoy 恒为 true，
+// 永远不会签发令牌；RequiredFactors 记录它对外宣称的因子形状，第二步据此表现得和真实会话一样。
+// TTL、temp_token 形态与 CreateLoginSessionForFactors 完全相同。
+func (s *TotpService) CreateDecoyLoginSession(
+	ctx context.Context,
+	email string,
+	factors []Factor,
+	passwordProbe string,
+	scope int64,
+) (string, error) {
+	if len(factors) == 0 {
+		return "", fmt.Errorf("invalid decoy login session factors")
+	}
+	tempToken, err := generateRandomToken(32)
+	if err != nil {
+		return "", fmt.Errorf("generate temp token: %w", err)
+	}
+	session := &TotpLoginSession{
+		UserID:             0,
+		Email:              email,
+		TokenExpiry:        time.Now().Add(totpLoginTTL),
+		RequiredFactors:    sortFactorsForChallenge(factors),
+		Decoy:              true,
+		DecoyPasswordProbe: passwordProbe,
+		DecoyScope:         scope,
 	}
 	if err := s.cache.SetLoginSession(ctx, tempToken, session, totpLoginTTL); err != nil {
 		return "", fmt.Errorf("store login session: %w", err)

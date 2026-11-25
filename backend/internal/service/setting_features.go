@@ -213,6 +213,19 @@ func (s *SettingService) LoginTOTPEnabled(ctx context.Context) bool {
 	return value == "true"
 }
 
+// LoginShapeDisguiseEnabled 报告登录首步「凭据无效」挑战是否按邮箱稳定伪装（审计 A-P1-02）。
+// 默认关闭；设置缺失或读取失败都按关闭处理（沿用旧的固定 TOTP 诱饵），不会因为存储抖动改变登录响应。
+func (s *SettingService) LoginShapeDisguiseEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyLoginShapeDisguiseEnabled)
+	if err != nil {
+		return false
+	}
+	return value == "true"
+}
+
 // PasskeyEnabled reports the effective runtime switch. WebAuthn deployment
 // configuration remains the security boundary; the database setting can only
 // disable a valid configured relying party, never replace or weaken it.

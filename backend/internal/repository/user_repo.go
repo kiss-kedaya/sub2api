@@ -35,6 +35,7 @@ type userRepository struct {
 var _ service.RedeemUserAdjustmentRepository = (*userRepository)(nil)
 var _ service.TotpRoleConditionalDisabler = (*userRepository)(nil)
 var _ service.TotpAtomicBinder = (*userRepository)(nil)
+var _ service.UserMaxIDReader = (*userRepository)(nil)
 
 func NewUserRepository(client *dbent.Client, sqlDB *sql.DB) service.UserRepository {
 	return newUserRepositoryWithSQL(client, sqlDB)
@@ -1436,6 +1437,20 @@ func (r *userRepository) RemoveGroupFromUserAllowedGroups(ctx context.Context, u
 		Where(userallowedgroup.UserIDEQ(userID), userallowedgroup.GroupIDEQ(groupID)).
 		Exec(ctx)
 	return err
+}
+
+// MaxUserID 返回当前最大的用户 ID（没有用户时为 0），走主键倒序取第一条。
+// 只用来估算登录首步伪造 passkey_session_token 里用户 ID 段的取值范围（service.UserMaxIDReader），
+// 调用方做了进程内缓存，不在登录热路径上逐次查询。
+func (r *userRepository) MaxUserID(ctx context.Context) (int64, error) {
+	id, err := r.client.User.Query().Order(dbent.Desc(dbuser.FieldID)).FirstID(ctx)
+	if dbent.IsNotFound(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return int64(id), nil
 }
 
 func (r *userRepository) GetFirstAdmin(ctx context.Context) (*service.User, error) {

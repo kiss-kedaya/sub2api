@@ -278,6 +278,9 @@ const (
 	// TOTP 双因素认证设置
 	SettingKeyTotpEnabled    = "totp_enabled"    // 是否启用 TOTP 2FA 功能
 	SettingKeyPasskeyEnabled = "passkey_enabled" // 是否启用 Passkey 登录（仍要求有效的 WebAuthn 部署配置）
+	// SettingKeyLoginShapeDisguiseEnabled 登录首步「凭据无效」挑战是否按邮箱稳定伪装并镜像真实账号的因子形状
+	// （审计 A-P1-02，设计见 login_shape_disguise.go）。默认关闭，关闭时登录首步响应与旧实现逐字节一致。
+	SettingKeyLoginShapeDisguiseEnabled = "login_shape_disguise_enabled"
 
 	// 会话安全设置
 	SettingKeySessionBindingEnabled = "session_binding_enabled" // 会话 IP/UA 绑定（变更即失效），默认开启；IP 粒度见 security.session_binding_mode
