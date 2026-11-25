@@ -593,6 +593,99 @@ func TestAdminResetUserTOTPReportsUnrevokedStepUpGrants(t *testing.T) {
 	require.Equal(t, false, fixture.audit.entries[0].Extra["revoked_step_up_grants"])
 }
 
+// 重置提交之后，目标用户已经签发的 access token 同样作废（用户端 / 管理端 JWT 中间件查的就是这个撤销时间点）：
+// 只删 refresh token 挡不住无状态的 access JWT，它们默认还能用 60 分钟（审计 AUD-6）。
+// 旁观者用户不受影响，重置之后新签发的 token 照常可用。
+func TestAdminResetUserTOTPRevokesAlreadyIssuedAccessTokens(t *testing.T) {
+	fixture := newAdmin2FAResetFixture(t, admin2FAResetFixtureOptions{})
+	ctx := context.Background()
+	authSvc := service.NewAuthService(nil, nil, nil, fixture.refreshCache, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	issuedBefore := time.Now().UTC().Add(-10 * time.Minute)
+	require.False(t, authSvc.IsAccessTokenRevoked(ctx, 3249, issuedBefore), "重置前仍然有效")
+
+	resetStart := time.Now().UTC()
+	result, err := fixture.svc.AdminResetUserTOTP(ctx, admin2FAResetInput("用户忘记动态口令"))
+	require.NoError(t, err)
+	require.True(t, result.RevokedStepUpGrants)
+	require.NotContains(t, result.IncompleteSteps, service.Admin2FAResetStepSessionRevocation)
+
+	require.True(t, authSvc.IsAccessTokenRevoked(ctx, 3249, issuedBefore), "重置时刻之前签发的 access token 必须作废")
+	require.True(t, authSvc.IsAccessTokenRevoked(ctx, 3249, resetStart.Add(-time.Second)))
+	require.False(t, authSvc.IsAccessTokenRevoked(ctx, 3249, time.Now().UTC().Add(5*time.Second)), "重置之后新签发的 token 不受影响")
+	require.False(t, authSvc.IsAccessTokenRevoked(ctx, 99, issuedBefore), "旁观者用户不受影响")
+}
+
+// 写库没成功（并发改了状态）时什么都不撤：不会出现「用户被登出了、2FA 却没变」的半成功状态。
+func TestAdminResetUserTOTPDoesNotRevokeAccessTokensWhenTheWriteFails(t *testing.T) {
+	fixture := newAdmin2FAResetFixture(t, admin2FAResetFixtureOptions{})
+	fixture.repo.resetErr = service.ErrUserSecurityStateChanged
+	ctx := context.Background()
+
+	_, err := fixture.svc.AdminResetUserTOTP(ctx, admin2FAResetInput("用户忘记动态口令"))
+	require.ErrorIs(t, err, service.ErrUserSecurityStateChanged)
+	authSvc := service.NewAuthService(nil, nil, nil, fixture.refreshCache, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	require.False(t, authSvc.IsAccessTokenRevoked(ctx, 3249, time.Now().UTC().Add(-time.Minute)))
+}
+
+// access token 撤销失败（调用失败 / 缓存根本不支持撤销）：写库已提交，请求不能变成 5xx；
+// 失败如实记入 incomplete_steps（session_revocation）与审计，revoked_step_up_grants 为 false，
+// 其余善后（refresh token、step-up 授权）照常完成。
+func TestAdminResetUserTOTPReportsAccessTokenRevocationFailureWithoutFailingTheRequest(t *testing.T) {
+	failing := func(c service.RefreshTokenCache) service.RefreshTokenCache { return accessRevocationFailingCache{c} }
+	unsupported := func(c service.RefreshTokenCache) service.RefreshTokenCache {
+		return refreshCacheWithoutAccessRevocation{c}
+	}
+	for name, wrap := range map[string]func(service.RefreshTokenCache) service.RefreshTokenCache{
+		"revocation call fails":           failing,
+		"cache has no revocation support": unsupported,
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := newAdmin2FAResetFixture(t, admin2FAResetFixtureOptions{})
+			ctx := context.Background()
+			require.NoError(t, fixture.totpCache.SetStepUpGrant(ctx, fixture.user.ID, "family-a", service.FactorTOTP, service.StepUpGrantTTL))
+			svc := service.NewAdmin2FAResetService(service.Admin2FAResetDeps{
+				UserRepo:      fixture.repo,
+				Totp:          fixture.totp,
+				RefreshCache:  wrap(fixture.refreshCache),
+				StepUp:        fixture.stepUp,
+				Notifications: fixture.notifications,
+				Audit:         service.NewAuditLogService(fixture.audit, nil),
+			})
+
+			result, err := svc.AdminResetUserTOTP(ctx, admin2FAResetInput("用户忘记动态口令"))
+			require.NoError(t, err, "写库已提交，善后失败不能变成请求失败")
+			require.Equal(t, 1, fixture.repo.resetCalls)
+			require.Contains(t, result.IncompleteSteps, service.Admin2FAResetStepSessionRevocation)
+			require.False(t, result.RevokedStepUpGrants)
+
+			// 其余善后照常做完：refresh token 已删，step-up 授权已撤。
+			_, err = fixture.refreshCache.GetRefreshToken(ctx, "hash-a")
+			require.ErrorIs(t, err, service.ErrRefreshTokenNotFound)
+			granted, err := fixture.totpCache.HasStepUpGrant(ctx, fixture.user.ID, "family-a", service.FactorTOTP)
+			require.NoError(t, err)
+			require.False(t, granted)
+
+			require.Len(t, fixture.audit.entries, 1)
+			require.Contains(t, fmt.Sprint(fixture.audit.entries[0].Extra["incomplete_steps"]), service.Admin2FAResetStepSessionRevocation)
+			require.Equal(t, false, fixture.audit.entries[0].Extra["revoked_step_up_grants"])
+		})
+	}
+}
+
+// accessRevocationFailingCache 支持撤销 access token，但调用总是失败。
+type accessRevocationFailingCache struct{ service.RefreshTokenCache }
+
+func (accessRevocationFailingCache) RevokeAccessTokensBefore(context.Context, int64, time.Time, time.Duration) error {
+	return errors.New("redis unavailable")
+}
+
+func (accessRevocationFailingCache) AccessTokensRevokedBefore(context.Context, int64) (time.Time, error) {
+	return time.Time{}, nil
+}
+
+// refreshCacheWithoutAccessRevocation 只暴露 service.RefreshTokenCache 接口本身，屏蔽掉 access token 撤销能力。
+type refreshCacheWithoutAccessRevocation struct{ service.RefreshTokenCache }
+
 // 装配缺失（仓储不支持 TotpAdminResetter）时必须 fail-closed，而不是静默成功。
 func TestAdminResetUserTOTPUnavailableWithoutResetter(t *testing.T) {
 	fixture := newAdmin2FAResetFixture(t, admin2FAResetFixtureOptions{})

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,8 @@ type reset2FARouteFixture struct {
 	repo      *reset2FAUserRepo
 	audit     *reset2FAAuditCapture
 	totpCache service.TotpCache
+	// refreshCache 是真实的 refresh token 缓存（miniredis）：重置后用它核对 access token 的撤销时间点。
+	refreshCache service.RefreshTokenCache
 	// events 按顺序记录一次请求依次经过了哪些中间件（每次请求前清空）。
 	events []string
 }
@@ -154,7 +157,7 @@ func buildReset2FARouter(t *testing.T, authMode string, user *service.User) *res
 	userHandler.SetAdmin2FAResetService(resetService)
 
 	settings := stepUpRouteSettings(map[string]string{service.SettingKeyStepUpEnabled: "true"})
-	fixture := &reset2FARouteFixture{repo: repo, audit: auditRepo, totpCache: totpCacheStore}
+	fixture := &reset2FARouteFixture{repo: repo, audit: auditRepo, totpCache: totpCacheStore, refreshCache: refreshCache}
 
 	adminAuth := middleware.AdminAuthMiddleware(func(c *gin.Context) {
 		fixture.events = append(fixture.events, "adminAuth")
@@ -453,4 +456,31 @@ func TestReset2FASuccessReturnsResetResultAndAudits(t *testing.T) {
 	require.Equal(t, service.HashAuditEmail("user-3249@example.test"), entry.Extra["target_email_hash"])
 	require.NotContains(t, entry.RequestBody, "top-secret")
 	require.False(t, strings.Contains(rec.Body.String(), "top-secret"))
+
+	// 返回体字段集合固定（前端按这些字段渲染）：撤销已签发的 access token 不新增、不改名任何字段。
+	var raw struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw), rec.Body.String())
+	keys := make([]string, 0, len(raw.Data))
+	for key := range raw.Data {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	require.Equal(t, []string{
+		"email", "incomplete_steps", "notification_queued", "passkey_bound", "reason", "remaining_factors",
+		"reset_at", "revoked_step_up_grants", "target_is_admin", "target_role", "totp_enabled",
+		"totp_enabled_at", "totp_previously_enabled", "user_id",
+	}, keys)
+
+	// 目标用户已经签发的 access token 被撤销（撤销时间点 = 重置完成的时刻）；操作管理员自己的不受影响。
+	store, ok := fixture.refreshCache.(service.AccessTokenRevocationStore)
+	require.True(t, ok, "生产的 refresh token 缓存必须支持 access token 撤销")
+	cutoff, err := store.AccessTokensRevokedBefore(context.Background(), 3249)
+	require.NoError(t, err)
+	require.False(t, cutoff.IsZero(), "重置后必须记下目标用户的 access token 撤销时间点")
+	require.WithinDuration(t, time.Now().UTC(), cutoff, time.Minute)
+	actorCutoff, err := store.AccessTokensRevokedBefore(context.Background(), reset2FAActorID)
+	require.NoError(t, err)
+	require.True(t, actorCutoff.IsZero(), "操作管理员自己的 access token 不受影响")
 }

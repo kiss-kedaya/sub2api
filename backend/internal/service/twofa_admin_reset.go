@@ -35,8 +35,8 @@ import (
 //     返回体的 incomplete_steps 里列出，绝不把已提交的重置变成 5xx（否则管理员
 //     重试只会撞上「未启用 2FA」）；审计行在写库成功后一定会尝试落库。
 //   - 撤销在写库之后：与 #641 命令行同一个清理函数（RevokeUserSessionsForTwoFactorReset，
-//     撤销全部 refresh token / step-up 授权 / 绑定预算）；写库失败时什么都不动，
-//     不会出现「用户被登出了、2FA 却没变」的半成功状态。
+//     撤销全部 refresh token / 已签发的 access token / step-up 授权 / 绑定预算）；写库失败时什么都不动，
+//     不会出现「用户被登出了、2FA 却没变」的半成功状态。被重置的用户在所有设备上立刻掉线，需要重新登录。
 //   - 审计里绝不记录 totp_secret（任何形式，含前缀/掩码），也不记目标用户邮箱
 //     明文（只记不可逆指纹），只记「重置前的开关状态与设置时间」。
 
@@ -120,7 +120,7 @@ type Admin2FAResetResult struct {
 	// RemainingFactors 是重置后该用户仍需验证的因子（通常是 [passkey] 或空）。
 	RemainingFactors []string `json:"remaining_factors"`
 	// RevokedStepUpGrants 报告该用户的会话与全部因子的 step-up 授权是否确认撤销
-	// （字段名沿用旧版，含义已扩展到 refresh token 与绑定预算）。
+	// （字段名沿用旧版，含义已扩展到 refresh token、已签发的 access token 与绑定预算）。
 	RevokedStepUpGrants bool `json:"revoked_step_up_grants"`
 	// IncompleteSteps 列出重置已经提交、但没能完成的善后步骤
 	// （session_revocation / notification / audit）；空表示全部完成。
@@ -305,11 +305,11 @@ func normalizeAdmin2FAResetReason(raw string) (string, error) {
 // revokeSessionsAfterReset 撤销目标用户「所有会话 × 所有因子」的旧状态。
 //
 // 三类都要撤：
-//  1. refresh token / step-up 授权（totp:stepup:<uid>:<factor>:<session>，含遗留键
-//     u<uid>）/ 绑定预算（totp:attempts）/ 绑定会话（totp:setup）：与 #641 命令行共用
+//  1. refresh token / 已签发的 access token / step-up 授权（totp:stepup:<uid>:<factor>:<session>，
+//     含遗留键 u<uid>）/ 绑定预算（totp:attempts）/ 绑定会话（totp:setup）：与 #641 命令行共用
 //     RevokeUserSessionsForTwoFactorReset，重置前刚过 2FA 的浏览器不能在 5 分钟内
-//     继续跑敏感操作，账号被盗时攻击者已有的会话也被踢下线，忘码输错 5 次的用户
-//     重新绑定不会被旧预算卡住；
+//     继续跑敏感操作，账号被盗时攻击者已有的会话（含尚未过期的 access token）也被踢下线，
+//     忘码输错 5 次的用户重新绑定不会被旧预算卡住；
 //  2. 2FA 登录凭证（two_factor_grant:*，按用户索引集合删）——用户用旧的
 //     "5 分钟免重复验证" Cookie 登录另一个会话的风险。
 //
