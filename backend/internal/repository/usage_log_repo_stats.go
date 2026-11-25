@@ -69,6 +69,7 @@ func (r *usageLogRepository) GetAPIKeyStatsAggregated(ctx context.Context, apiKe
 	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
 		Query: "api_key_stats_aggregated", APIKeyID: apiKeyID,
 		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
+		TTL: keyAggregateTTL(apiKeyID, startTime, endTime),
 	}, func(ctx context.Context) (*usagestats.UsageStats, error) {
 		return r.getAPIKeyStatsAggregatedUncached(ctx, apiKeyID, startTime, endTime)
 	})
