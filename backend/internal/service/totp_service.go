@@ -95,6 +95,9 @@ type TotpLoginSession struct {
 	// DecoyScope 是这个邮箱的伪装 Passkey ceremony 所用的用户 ID 段，对应真实会话里的 UserID：
 	// 第二步只接受用户 ID 段相同的 ceremony，其余与真实会话一样返回会话无效。
 	DecoyScope int64 `json:"decoy_scope,omitempty"`
+	// DecoyAccountID 是这个伪装会话镜像的真实账号的用户 ID（邮箱没有可镜像的真实账号时为 0）。第二步用它让伪装会话
+	// 与真实会话落在同一个「账号 + 客户端 IP」限速桶里（审计 AUD-6）。它只用来选限速键：伪装会话的 UserID 仍恒为 0。
+	DecoyAccountID int64 `json:"decoy_account_id,omitempty"`
 }
 
 type PendingOAuthBindLoginSession struct {
@@ -840,12 +843,14 @@ func (s *TotpService) CreateLoginSessionForFactors(
 // CreateDecoyLoginSession 创建「凭据无效」时的伪装挑战会话：UserID 恒为 0、Decoy 恒为 true，
 // 永远不会签发令牌；RequiredFactors 记录它对外宣称的因子形状，第二步据此表现得和真实会话一样。
 // TTL、temp_token 形态与 CreateLoginSessionForFactors 完全相同。
+// accountID 是它镜像的真实账号的用户 ID（没有可镜像的账号时传 0），只用来选第二步的限速桶，不影响放行判断。
 func (s *TotpService) CreateDecoyLoginSession(
 	ctx context.Context,
 	email string,
 	factors []Factor,
 	passwordProbe string,
 	scope int64,
+	accountID int64,
 ) (string, error) {
 	if len(factors) == 0 {
 		return "", fmt.Errorf("invalid decoy login session factors")
@@ -862,6 +867,7 @@ func (s *TotpService) CreateDecoyLoginSession(
 		Decoy:              true,
 		DecoyPasswordProbe: passwordProbe,
 		DecoyScope:         scope,
+		DecoyAccountID:     accountID,
 	}
 	if err := s.cache.SetLoginSession(ctx, tempToken, session, totpLoginTTL); err != nil {
 		return "", fmt.Errorf("store login session: %w", err)

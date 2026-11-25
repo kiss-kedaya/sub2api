@@ -19,6 +19,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/repository" //nolint:depguard // 需要真实的 Passkey 会话存储来核对 token 形态与 Redis TTL。
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
@@ -146,7 +147,7 @@ type disguiseHarness struct {
 	handler  *AuthHandler
 	router   *gin.Engine
 	redis    *miniredis.Miniredis
-	limiter  *disguiseLimiter
+	limiter  *disguiseLimiter // 内存限速器；newDisguiseHarnessWithRedis 夹具里为 nil（改用生产的 Redis 限速器）
 	settings *loginTOTPSettingRepo
 	users    map[int64]*service.User
 	secrets  map[int64]string
@@ -154,9 +155,24 @@ type disguiseHarness struct {
 
 	userRepo    *disguiseUserRepo
 	passkeyRepo *disguisePasskeyRepo
+
+	// remoteAddr 非空时作为后续请求的 RemoteAddr，用来模拟不同的客户端 IP（默认是 httptest 的 192.0.2.1）。
+	remoteAddr string
 }
 
 func newDisguiseHarness(t *testing.T, switchValue string) *disguiseHarness {
+	t.Helper()
+	return newDisguiseHarnessWith(t, switchValue, false)
+}
+
+// newDisguiseHarnessWithRedis 与 newDisguiseHarness 相同，但限速与 TOTP 缓存都换成生产实现（middleware.TwoFactorRateLimiter、
+// repository.TotpCache）跑在 miniredis 上：第二步的滑动窗口桶与首步的凭证校验桶是真实口径，不是同口径的内存替身。
+func newDisguiseHarnessWithRedis(t *testing.T, switchValue string) *disguiseHarness {
+	t.Helper()
+	return newDisguiseHarnessWith(t, switchValue, true)
+}
+
+func newDisguiseHarnessWith(t *testing.T, switchValue string, realBackends bool) *disguiseHarness {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -170,13 +186,15 @@ func newDisguiseHarness(t *testing.T, switchValue string) *disguiseHarness {
 
 	h := &disguiseHarness{
 		t:       t,
-		limiter: newDisguiseLimiter(),
 		users:   map[int64]*service.User{},
 		secrets: map[int64]string{},
 		cfg:     cfg,
 		settings: &loginTOTPSettingRepo{values: map[string]string{
 			service.SettingKeyTotpEnabled: "true",
 		}},
+	}
+	if !realBackends {
+		h.limiter = newDisguiseLimiter()
 	}
 	if switchValue != "" {
 		h.settings.values[service.SettingKeyLoginShapeDisguiseEnabled] = switchValue
@@ -220,7 +238,11 @@ func newDisguiseHarness(t *testing.T, switchValue string) *disguiseHarness {
 	settingSvc := service.NewSettingService(h.settings, cfg)
 	authSvc := service.NewAuthService(nil, userRepo, nil, twoFactorGrantRefreshCache{}, cfg,
 		settingSvc, nil, nil, nil, nil, nil, nil, nil)
-	totpSvc := service.NewTotpService(userRepo, twoFactorGrantTestEncryptor{}, newTwoFactorGrantCacheStub(), settingSvc, nil, nil)
+	var totpCache service.TotpCache = newTwoFactorGrantCacheStub()
+	if realBackends {
+		totpCache = repository.NewTotpCache(redisClient)
+	}
+	totpSvc := service.NewTotpService(userRepo, twoFactorGrantTestEncryptor{}, totpCache, settingSvc, nil, nil)
 	totpSvc.SetPasskeyRepository(passkeyRepo)
 	userSvc := service.NewUserService(userRepo, nil, nil, nil)
 	passkeySvc, err := service.NewPasskeyService(cfg, passkeyRepo, repository.NewPasskeySessionStore(redisClient), userRepo)
@@ -229,7 +251,11 @@ func newDisguiseHarness(t *testing.T, switchValue string) *disguiseHarness {
 	h.userRepo, h.passkeyRepo = userRepo, passkeyRepo
 	h.handler = NewAuthHandler(cfg, authSvc, userSvc, settingSvc, nil, nil, totpSvc, nil)
 	h.handler.SetPasskeyService(passkeySvc)
-	h.handler.SetTwoFactorRateLimiter(h.limiter)
+	if realBackends {
+		h.handler.SetTwoFactorRateLimiter(middleware2.NewTwoFactorRateLimiter(redisClient))
+	} else {
+		h.handler.SetTwoFactorRateLimiter(h.limiter)
+	}
 
 	h.router = gin.New()
 	h.router.POST("/api/v1/auth/login", h.handler.Login)
@@ -243,6 +269,9 @@ func (h *disguiseHarness) post(path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "disguise-test-agent")
+	if h.remoteAddr != "" {
+		req.RemoteAddr = h.remoteAddr
+	}
 	w := httptest.NewRecorder()
 	h.router.ServeHTTP(w, req)
 	return w
@@ -259,6 +288,9 @@ func (h *disguiseHarness) loginWithCookies(email, password string, cookies ...*h
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(loginRequestBody(email, password)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "disguise-test-agent")
+	if h.remoteAddr != "" {
+		req.RemoteAddr = h.remoteAddr
+	}
 	for _, cookie := range cookies {
 		req.AddCookie(cookie)
 	}
@@ -720,7 +752,10 @@ func TestDecoyLogin2FAMatchesRealSessionTranscript(t *testing.T) {
 				})
 			}
 
-			// 额度是按键分开的：伪装会话耗尽自己的额度，不影响真实账号的额度（不能被拿来锁真实用户）。
+			// 额度桶（审计 AUD-6）：同一个 IP 上，伪装会话与真实会话共用「账号 + IP」桶——伪装会话耗尽它之后，
+			// 真实会话在同一个 IP 上同样被限速（两边分开的话，429 与 401 的差别就是「密码对不对」的信号）；
+			// 换一个 IP 就互不影响：伪装会话不能被拿来锁别处的真实用户。
+			// 同口径 Redis 限速器上的完整对拍见 auth_login_disguise_budget_test.go。
 			h.limiter.clear()
 			decoy := h.firstStep(email, disguiseTestWrong)
 			for i := 0; i < 8; i++ {
@@ -728,7 +763,13 @@ func TestDecoyLogin2FAMatchesRealSessionTranscript(t *testing.T) {
 			}
 			realVars := h.firstStep(email, disguiseTestPassword)
 			w := h.post("/api/v1/auth/login/2fa", login2FABody(realVars.tempToken, email, disguiseTestPassword, "000000"))
-			require.NotEqual(t, http.StatusTooManyRequests, w.Code, "伪装会话不得耗尽真实账号的额度")
+			require.Equal(t, http.StatusTooManyRequests, w.Code, "同一个 IP：真实会话与伪装会话共用桶，必须同样被限速")
+
+			h.remoteAddr = "198.51.100.77:4000"
+			defer func() { h.remoteAddr = "" }()
+			realElsewhere := h.firstStep(email, disguiseTestPassword)
+			w = h.post("/api/v1/auth/login/2fa", login2FABody(realElsewhere.tempToken, email, disguiseTestPassword, "000000"))
+			require.NotEqual(t, http.StatusTooManyRequests, w.Code, "换一个 IP：伪装会话不得耗尽别处真实账号的额度")
 		})
 	}
 }
