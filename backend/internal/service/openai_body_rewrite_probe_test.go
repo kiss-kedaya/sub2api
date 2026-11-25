@@ -1005,17 +1005,17 @@ func byteSizeName(n int) string {
 func syntheticResponsesBody(target int, repeat bool) []byte {
 	r := rand.New(rand.NewSource(7))
 	var b strings.Builder
-	b.WriteString(`{"model":"gpt-5","instructions":"`)
-	b.WriteString(strings.Repeat(`You are a coding agent.\nUse the \"shell\" tool.\n`, 160))
-	b.WriteString(`","tools":[`)
+	_, _ = b.WriteString(`{"model":"gpt-5","instructions":"`)
+	_, _ = b.WriteString(strings.Repeat(`You are a coding agent.\nUse the \"shell\" tool.\n`, 160))
+	_, _ = b.WriteString(`","tools":[`)
 	for i := 0; i < 12; i++ {
 		if i > 0 {
-			b.WriteString(",")
+			_, _ = b.WriteString(",")
 		}
 		fmt.Fprintf(&b, `{"type":"function","name":"tool_%d","description":"does thing %d","strict":false,"parameters":{"type":"object","properties":{"cmd":{"type":"string","description":"command to run"},"timeout":{"type":"number"}},"required":["cmd"]}}`, i, i)
 	}
-	b.WriteString(`],"tool_choice":"auto","parallel_tool_calls":true,"reasoning":{"effort":"high"},"store":false,"stream":true,"prompt_cache_key":"cache-key","input":[`)
-	b.WriteString(`{"type":"message","role":"user","content":[{"type":"input_text","text":"fix the failing test"}]}`)
+	_, _ = b.WriteString(`],"tool_choice":"auto","parallel_tool_calls":true,"reasoning":{"effort":"high"},"store":false,"stream":true,"prompt_cache_key":"cache-key","input":[`)
+	_, _ = b.WriteString(`{"type":"message","role":"user","content":[{"type":"input_text","text":"fix the failing test"}]}`)
 	for i := 0; b.Len() < target; i++ {
 		fmt.Fprintf(&b, `,{"type":"reasoning","id":"rs_%d","summary":[],"encrypted_content":"%s"}`, i, strings.Repeat("gAAAAAB", 120))
 		fmt.Fprintf(&b, `,{"type":"function_call","id":"fc_%d","call_id":"call_%d","name":"shell","arguments":"{\"cmd\":\"ls -la\",\"workdir\":\"/src\"}"}`, i, i)
@@ -1026,28 +1026,28 @@ func syntheticResponsesBody(target int, repeat bool) []byte {
 		}
 		fmt.Fprintf(&b, `,{"type":"function_call_output","call_id":"%s","output":"%s"}`, callID, out)
 	}
-	b.WriteString(`]}`)
+	_, _ = b.WriteString(`]}`)
 	return []byte(b.String())
 }
 
 func syntheticChatBody(target int, developer bool) []byte {
 	var b strings.Builder
-	b.WriteString(`{"model":"deepseek-chat","stream":true,"messages":[{"role":"system","content":"` + strings.Repeat(`be brief\n`, 100) + `"}`)
+	_, _ = b.WriteString(`{"model":"deepseek-chat","stream":true,"messages":[{"role":"system","content":"` + strings.Repeat(`be brief\n`, 100) + `"}`)
 	for i := 0; b.Len() < target; i++ {
 		fmt.Fprintf(&b, `,{"role":"user","content":"question %d %s"}`, i, strings.Repeat("lorem ipsum \\\"dolor\\\" sit\\n", 40))
 		fmt.Fprintf(&b, `,{"role":"assistant","content":null,"tool_calls":[{"id":"call_%d","type":"function","function":{"name":"f","arguments":"{}"}}]}`, i)
 		fmt.Fprintf(&b, `,{"role":"tool","tool_call_id":"call_%d","content":"%s"}`, i, strings.Repeat("result line\\n", 60))
 	}
 	if developer {
-		b.WriteString(`,{"role":"developer","content":"note"}`)
+		_, _ = b.WriteString(`,{"role":"developer","content":"note"}`)
 	}
-	b.WriteString(`]}`)
+	_, _ = b.WriteString(`]}`)
 	return []byte(b.String())
 }
 
 func syntheticAnthropicBody(target int, unsigned bool) []byte {
 	var b strings.Builder
-	b.WriteString(`{"model":"claude-sonnet-4","max_tokens":4096,"thinking":{"type":"enabled","budget_tokens":2048},"system":[{"type":"text","text":"` + strings.Repeat(`system prompt\n`, 100) + `"}],"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}`)
+	_, _ = b.WriteString(`{"model":"claude-sonnet-4","max_tokens":4096,"thinking":{"type":"enabled","budget_tokens":2048},"system":[{"type":"text","text":"` + strings.Repeat(`system prompt\n`, 100) + `"}],"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}`)
 	for i := 0; b.Len() < target; i++ {
 		sig := strings.Repeat("EqQBCkYIBRgC", 80)
 		if unsigned && i == 1 {
@@ -1057,7 +1057,7 @@ func syntheticAnthropicBody(target int, unsigned bool) []byte {
 			strings.Repeat("considering options\\n", 30), sig, i)
 		fmt.Fprintf(&b, `,{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_%d","content":"%s"}]}`, i, strings.Repeat("output line\\n", 60))
 	}
-	b.WriteString(`]}`)
+	_, _ = b.WriteString(`]}`)
 	return []byte(b.String())
 }
 
@@ -1188,7 +1188,7 @@ func BenchmarkLiteParallelToolCallsPinned(b *testing.B) {
 					}
 					return true
 				})
-				if !(parallel.Type == gjson.False && json.Valid(body)) {
+				if parallel.Type != gjson.False || !json.Valid(body) {
 					b.Fatal("expected pinned body")
 				}
 			}
@@ -1208,17 +1208,17 @@ func BenchmarkLiteParallelToolCallsPinned(b *testing.B) {
 func BenchmarkFilterEmptyPartsFromGeminiRequest(b *testing.B) {
 	build := func(target int, empty bool) []byte {
 		var sb strings.Builder
-		sb.WriteString(`{"generationConfig":{"temperature":0.5},"contents":[`)
+		_, _ = sb.WriteString(`{"generationConfig":{"temperature":0.5},"contents":[`)
 		for i := 0; sb.Len() < target; i++ {
 			if i > 0 {
-				sb.WriteString(",")
+				_, _ = sb.WriteString(",")
 			}
 			fmt.Fprintf(&sb, `{"role":"user","parts":[{"text":"%s"}]},{"role":"model","parts":[{"functionCall":{"name":"f","args":{"q":"%d"}}}]}`, strings.Repeat("lorem ipsum \\\"dolor\\\" sit\\n", 40), i)
 		}
 		if empty {
-			sb.WriteString(`,{"role":"model","parts":[]}`)
+			_, _ = sb.WriteString(`,{"role":"model","parts":[]}`)
 		}
-		sb.WriteString(`]}`)
+		_, _ = sb.WriteString(`]}`)
 		return []byte(sb.String())
 	}
 	for _, size := range []int{50 << 10, 300 << 10, 1 << 20} {

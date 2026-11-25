@@ -31,14 +31,14 @@ func legacyNormalizeCompatSeedJSON(v json.RawMessage) string {
 // numbers, unsorted and duplicate keys).
 func bigRandomJSON(r *rand.Rand, size int) string {
 	var b strings.Builder
-	b.WriteByte('[')
+	_ = b.WriteByte('[')
 	for b.Len() < size {
 		if b.Len() > 1 {
-			b.WriteString(jsonSep(r))
+			_, _ = b.WriteString(jsonSep(r))
 		}
-		b.WriteString(randomJSONValue(r, 3))
+		_, _ = b.WriteString(randomJSONValue(r, 3))
 	}
-	b.WriteByte(']')
+	_ = b.WriteByte(']')
 	return b.String()
 }
 
@@ -142,14 +142,14 @@ func TestCompatSeedMemoConcurrent(t *testing.T) {
 func BenchmarkNormalizeCompatSeedJSON(b *testing.B) {
 	tools := func(n, salt int) json.RawMessage {
 		var sb strings.Builder
-		sb.WriteString("[")
+		_, _ = sb.WriteString("[")
 		for i := 0; i < n; i++ {
 			if i > 0 {
-				sb.WriteString(",")
+				_, _ = sb.WriteString(",")
 			}
 			fmt.Fprintf(&sb, `{"type":"function","function":{"name":"tool_%d_%d","description":"does thing number %d with a longer description text","parameters":{"type":"object","properties":{"path":{"type":"string","description":"file path"},"limit":{"type":"integer"}},"required":["path"]}}}`, salt, i, i)
 		}
-		sb.WriteString("]")
+		_, _ = sb.WriteString("]")
 		return json.RawMessage(sb.String())
 	}
 	for _, n := range []int{4, 20, 100} {

@@ -404,7 +404,7 @@ func validJSONString(b []byte, i int) (int, bool) {
 				}
 				for k := 1; k <= 4; k++ {
 					h := b[i+k]
-					if !(h >= '0' && h <= '9' || h >= 'a' && h <= 'f' || h >= 'A' && h <= 'F') {
+					if (h < '0' || h > '9') && (h < 'a' || h > 'f') && (h < 'A' || h > 'F') {
 						return i, false
 					}
 				}

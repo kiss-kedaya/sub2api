@@ -90,11 +90,11 @@ func randomJSONString(r *rand.Rand) string {
 	}
 	n := r.Intn(5)
 	var b strings.Builder
-	b.WriteByte('"')
+	_ = b.WriteByte('"')
 	for i := 0; i < n; i++ {
-		b.WriteString(frags[r.Intn(len(frags))])
+		_, _ = b.WriteString(frags[r.Intn(len(frags))])
 	}
-	b.WriteByte('"')
+	_ = b.WriteByte('"')
 	return b.String()
 }
 
