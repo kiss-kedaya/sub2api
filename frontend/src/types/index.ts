@@ -695,6 +695,10 @@ export interface GroupRecentRateChange {
 export interface AdminGroup extends Group {
   force_openai_fast: boolean
   free_openai_fast: boolean
+  // 叠在分组倍率上的服务档位倍率（OpenAI / Composite 分组）；null / 缺省 = 官方默认。
+  // 例：分组倍率 0.16、Fast 档位倍率 2 → Fast 请求按 0.32 倍计费；填 1 = 不加价。
+  openai_fast_multiplier?: number | null
+  openai_ultrafast_multiplier?: number | null
   model_pricing: import('@/api/admin/channels').ChannelModelPricing[]
   // 分组利润控制（openai/anthropic/gemini/grok/antigravity 分组可启用；margin/buffer 为小数存储）。
   // 仅管理员可见：与 rate_multiplier 相乘即可反推上游成本上限，不得下放到 Group。
@@ -1000,6 +1004,9 @@ export interface CreateGroupRequest {
   long_context_pricing_enabled?: boolean
   force_openai_fast?: boolean
   free_openai_fast?: boolean
+  // 档位倍率：省略 = 不改（更新）/ 默认（创建）；>0 设置（≤100、最多 4 位小数）；0 = 清除回官方默认。
+  openai_fast_multiplier?: number
+  openai_ultrafast_multiplier?: number
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
@@ -1074,6 +1081,9 @@ export interface UpdateGroupRequest {
   long_context_pricing_enabled?: boolean
   force_openai_fast?: boolean
   free_openai_fast?: boolean
+  // 档位倍率：省略 = 不改（更新）/ 默认（创建）；>0 设置（≤100、最多 4 位小数）；0 = 清除回官方默认。
+  openai_fast_multiplier?: number
+  openai_ultrafast_multiplier?: number
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
@@ -1977,6 +1987,8 @@ export interface UsageLog {
   /** Conservatively associated semantic error; not a durable delivery outcome or wire status. */
   failure_status_code?: number | null
   service_tier?: string | null
+  /** 该请求服务档位（Fast / UltraFast）实际叠加的档位倍率；null / 缺省 = 没有记录（老数据）。 */
+  service_tier_multiplier?: number | null
   reasoning_effort?: string | null
   inbound_endpoint?: string | null
   upstream_endpoint?: string | null

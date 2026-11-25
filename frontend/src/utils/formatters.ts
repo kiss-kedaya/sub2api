@@ -15,3 +15,14 @@ export function formatMultiplier(val: number): string {
   if (val < 0.0001) return val.toPrecision(2)
   return val.toFixed(4).replace(/(\.\d{2}\d*?)0+$/, '$1')
 }
+
+/**
+ * 倍率的紧凑写法：至多 4 位小数、去掉多余的 0、不补零（1 -> "1"，0.145 -> "0.145"，2.5 -> "2.5"），
+ * 调用方自己拼「×」。0.1 × 3 这类浮点噪声（0.30000000000000004）也会被抹掉。
+ */
+export function formatMultiplierCompact(val: number): string {
+  const rounded = Number(val.toFixed(4))
+  // 极小的正数四舍五入会变成 0，显示 0 会误导，改用 2 位有效数字
+  if (rounded === 0 && val !== 0) return String(Number(val.toPrecision(2)))
+  return String(rounded)
+}

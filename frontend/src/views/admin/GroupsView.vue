@@ -1452,6 +1452,14 @@
                   v-model="createForm.free_openai_fast"
                 />
               </UFormField>
+              <OpenAITierMultiplierFields
+                id-prefix="create"
+                class="mt-5"
+                v-model:fast="createForm.openai_fast_multiplier"
+                v-model:ultrafast="createForm.openai_ultrafast_multiplier"
+                :group-rate="normalizePreviewNumber(createForm.rate_multiplier, 1)"
+                :free-fast="createForm.free_openai_fast"
+              />
             </div>
             <!-- Claude Code 客户端限制（仅 anthropic 平台） -->
             <div v-if="createForm.platform === 'anthropic'">
@@ -2816,6 +2824,14 @@
                   v-model="editForm.free_openai_fast"
                 />
               </UFormField>
+              <OpenAITierMultiplierFields
+                id-prefix="edit"
+                class="mt-5"
+                v-model:fast="editForm.openai_fast_multiplier"
+                v-model:ultrafast="editForm.openai_ultrafast_multiplier"
+                :group-rate="normalizePreviewNumber(editForm.rate_multiplier, 1)"
+                :free-fast="editForm.free_openai_fast"
+              />
             </div>
             <!-- Claude Code 客户端限制（仅 anthropic 平台） -->
             <div v-if="editForm.platform === 'anthropic'">
@@ -3532,8 +3548,13 @@ import {
   supportsMessagesDispatchPlatform,
   type MessagesDispatchMappingRow,
 } from "./groupsMessagesDispatch";
+import OpenAITierMultiplierFields from "@/components/admin/group/OpenAITierMultiplierFields.vue";
 import {
+  buildOpenAITierMultiplierPayload,
+  findInvalidOpenAITierMultiplier,
   normalizeGroupOpenAIFast,
+  openAITierMultiplierInputId,
+  openAITierMultiplierToForm,
   supportsGroupOpenAIFast,
 } from "./groupsOpenAIFast";
 import {
@@ -4232,6 +4253,9 @@ const createForm = reactive({
   long_context_pricing_enabled: true,
   force_openai_fast: false,
   free_openai_fast: false,
+  // Fast / UltraFast 档位倍率输入框的值：空字符串 = 官方默认（提交时发 0）
+  openai_fast_multiplier: "" as string | number,
+  openai_ultrafast_multiplier: "" as string | number,
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
@@ -4645,6 +4669,8 @@ const editForm = reactive({
   long_context_pricing_enabled: true,
   force_openai_fast: false,
   free_openai_fast: false,
+  openai_fast_multiplier: "" as string | number,
+  openai_ultrafast_multiplier: "" as string | number,
   model_pricing: [] as PricingFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
@@ -5178,6 +5204,8 @@ const closeCreateModal = () => {
   createForm.long_context_pricing_enabled = true;
   createForm.force_openai_fast = false;
   createForm.free_openai_fast = false;
+  createForm.openai_fast_multiplier = "";
+  createForm.openai_ultrafast_multiplier = "";
   createForm.model_pricing = [];
   createForm.web_search_price_per_call = null;
   createForm.search_price_per_1k = null;
@@ -5272,6 +5300,32 @@ const validateDeepseekToolPrices = (form: {
   return true;
 };
 
+// Fast / UltraFast 档位倍率：规则见 groupsOpenAIFast.ts；不合法就报错并把焦点放到那个输入框。
+const validateOpenAITierMultipliers = (
+  idPrefix: "create" | "edit",
+  form: {
+    platform: string;
+    free_openai_fast: boolean;
+    openai_fast_multiplier: unknown;
+    openai_ultrafast_multiplier: unknown;
+  },
+): boolean => {
+  const invalid = findInvalidOpenAITierMultiplier(form.platform, form);
+  if (!invalid) return true;
+  appStore.showError(
+    t("admin.groups.openaiFast.tierMultiplier.invalid", {
+      name:
+        invalid.tier === "fast"
+          ? t("admin.groups.openaiFast.tierMultiplier.fastLabel")
+          : t("admin.groups.openaiFast.tierMultiplier.ultrafastLabel"),
+    }),
+  );
+  document
+    .getElementById(openAITierMultiplierInputId(idPrefix, invalid.tier))
+    ?.focus();
+  return false;
+};
+
 const handleCreateGroup = async () => {
   if (!createForm.name.trim()) {
     appStore.showError(t("admin.groups.nameRequired"));
@@ -5284,7 +5338,11 @@ const handleCreateGroup = async () => {
   ) {
     return;
   }
-  if (!validateProfitControlForm(createForm) || !validateDeepseekToolPrices(createForm)) {
+  if (
+    !validateProfitControlForm(createForm) ||
+    !validateDeepseekToolPrices(createForm) ||
+    !validateOpenAITierMultipliers("create", createForm)
+  ) {
     return;
   }
   // 模型白名单：开启且没有任何条目时阻止提交，与后端 400 对齐。
@@ -5315,6 +5373,8 @@ const handleCreateGroup = async () => {
         createForm.platform,
         createForm.free_openai_fast,
       ),
+      // 档位倍率：空 → 0（官方默认），数字 → 数字；不支持的平台 / 免费 Fast 时的 Fast 省略
+      ...buildOpenAITierMultiplierPayload(createForm.platform, createForm),
       model_pricing: groupPricingToAPI(
         createForm.model_pricing,
         createForm.platform,
@@ -5465,6 +5525,12 @@ const handleEdit = async (group: AdminGroup) => {
     group.long_context_pricing_enabled ?? true;
   editForm.force_openai_fast = group.force_openai_fast ?? false;
   editForm.free_openai_fast = group.free_openai_fast ?? false;
+  editForm.openai_fast_multiplier = openAITierMultiplierToForm(
+    group.openai_fast_multiplier,
+  );
+  editForm.openai_ultrafast_multiplier = openAITierMultiplierToForm(
+    group.openai_ultrafast_multiplier,
+  );
   editForm.model_pricing = groupPricingFromAPI(group.model_pricing);
   editForm.allow_image_generation = group.allow_image_generation ?? false;
   editForm.allow_batch_image_generation =
@@ -5624,6 +5690,8 @@ const closeEditModal = () => {
   editForm.long_context_pricing_enabled = true;
   editForm.force_openai_fast = false;
   editForm.free_openai_fast = false;
+  editForm.openai_fast_multiplier = "";
+  editForm.openai_ultrafast_multiplier = "";
   editForm.model_pricing = [];
   editForm.web_search_price_per_call = null;
   editForm.search_price_per_1k = null;
@@ -5659,7 +5727,11 @@ const handleUpdateGroup = async () => {
   ) {
     return;
   }
-  if (!validateProfitControlForm(editForm) || !validateDeepseekToolPrices(editForm)) {
+  if (
+    !validateProfitControlForm(editForm) ||
+    !validateDeepseekToolPrices(editForm) ||
+    !validateOpenAITierMultipliers("edit", editForm)
+  ) {
     return;
   }
   // 模型白名单：开启且没有任何条目时阻止提交，与后端 400 对齐。
@@ -5694,6 +5766,8 @@ const handleUpdateGroup = async () => {
         editForm.platform,
         editForm.free_openai_fast,
       ),
+      // 档位倍率：空 → 0（清除回官方默认），数字 → 数字；不支持的平台 / 免费 Fast 时的 Fast 省略（不改）
+      ...buildOpenAITierMultiplierPayload(editForm.platform, editForm),
       model_pricing: groupPricingToAPI(
         editForm.model_pricing,
         editForm.platform,

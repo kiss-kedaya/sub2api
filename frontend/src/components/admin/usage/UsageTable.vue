@@ -517,15 +517,35 @@
             <span class="text-gray-400">{{ t('usage.serviceTier') }}</span>
             <span class="font-semibold text-cyan-300">{{ getUsageServiceTierLabel(tooltipData?.service_tier, t) }}</span>
           </div>
+          <!--
+            Fast / UltraFast 且后端记录了档位倍率（tooltipTierPricing 有值）：
+            档位倍率 → 分组倍率 → 综合倍率；「原始」改显示标准价，标准价 × 综合倍率 = 用户扣费。老数据没有这几行、保持原样。
+          -->
+          <div v-if="tooltipTierPricing" data-testid="usage-tier-multiplier" class="flex items-center justify-between gap-6">
+            <span class="text-gray-400">{{ t('usage.serviceTierMultiplier') }}</span>
+            <span class="font-semibold text-cyan-300">{{ tierX(tooltipTierPricing.tierMultiplier) }}</span>
+          </div>
           <div v-if="isIndependentToolUsage(tooltipData)" data-testid="fixed-tool-billing" class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.toolBilling') }}</span>
             <span class="font-semibold text-blue-400">{{ t('usage.fixedPerCall') }}</span>
+          </div>
+          <div v-else-if="tooltipTierPricing" class="flex items-center justify-between gap-6">
+            <span class="text-gray-400">{{ t('usage.groupRate') }}</span>
+            <span class="font-semibold text-blue-400">{{ tierX(tooltipTierPricing.groupRate) }}</span>
           </div>
           <div v-else class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.rate') }}</span>
             <span class="font-semibold text-blue-400">{{ formatMultiplier(tooltipData?.rate_multiplier || 1) }}x</span>
           </div>
-          <div class="flex items-center justify-between gap-6">
+          <div v-if="tooltipTierPricing" data-testid="usage-combined-multiplier" class="flex items-center justify-between gap-6">
+            <span class="text-gray-400">{{ t('usage.combinedRate') }}</span>
+            <span class="font-semibold text-blue-400">{{ tierX(tooltipTierPricing.combinedRate) }}</span>
+          </div>
+          <div v-if="tooltipTierPricing" data-testid="usage-standard-price" class="flex items-center justify-between gap-6">
+            <span class="text-gray-400">{{ t('usage.originalStandard') }}</span>
+            <span class="font-medium text-white">${{ tooltipTierPricing.standardPrice.toFixed(8) }}</span>
+          </div>
+          <div v-else class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.original') }}</span>
             <span class="font-medium text-white">${{ tooltipData?.total_cost?.toFixed(8) || '0.00000000' }}</span>
           </div>
@@ -533,9 +553,16 @@
             <span class="text-gray-400">{{ t('usage.userBilled') }}</span>
             <span class="font-semibold text-green-400">${{ tooltipData?.actual_cost?.toFixed(8) || '0.00000000' }}</span>
           </div>
-          <!-- Account billing (separated from user billing) -->
+          <!-- Account billing (separated from user billing)；上游成本和账号计费一样只给管理端看（用户端传 showAccountBilling=false） -->
           <template v-if="showAccountBilling">
-            <div class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5">
+            <div v-if="tooltipTierPricing" data-testid="usage-upstream-cost" class="border-t border-gray-700 pt-1.5">
+              <div class="flex items-center justify-between gap-6">
+                <span class="text-gray-400">{{ t('usage.upstreamCost') }}</span>
+                <span class="font-medium text-white">${{ tooltipData?.total_cost?.toFixed(8) || '0.00000000' }}</span>
+              </div>
+              <div class="mt-0.5 text-[10px] leading-tight text-gray-500">{{ t('usage.upstreamCostHint') }}</div>
+            </div>
+            <div class="flex items-center justify-between gap-6" :class="tooltipTierPricing ? '' : 'border-t border-gray-700 pt-1.5'">
               <span class="text-gray-400">{{ t('usage.accountMultiplier') }}</span>
               <span class="font-semibold text-blue-400">{{ formatMultiplier(tooltipData?.account_rate_multiplier ?? 1) }}x</span>
             </div>
@@ -569,9 +596,9 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useClipboard } from '@/composables/useClipboard'
 import { formatDateTime, formatReasoningEffort, reasoningEffortValuesEqual } from '@/utils/format'
-import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
+import { formatCacheTokens, formatMultiplier, formatMultiplierCompact } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
-import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
+import { getUsageServiceTierLabel, getUsageTierPricing } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import {
   LATENCY_BAR_CLASSES,
@@ -719,6 +746,15 @@ const copyUpstreamRequestId = (upstreamRequestId: string) =>
 const tooltipVisible = ref(false)
 const tooltipPosition = ref({ x: 0, y: 0 })
 const tooltipData = ref<AdminUsageLog | null>(null)
+// Fast / UltraFast 且后端有档位倍率记录、分组倍率×档位倍率 > 0 时才有值（算法和口径见 getUsageTierPricing）；
+// 固定计费的工具调用没有服务档位。null = 老数据，整个气泡保持老样子。
+const tooltipTierPricing = computed(() =>
+  tooltipData.value && !isIndependentToolUsage(tooltipData.value)
+    ? getUsageTierPricing(tooltipData.value)
+    : null,
+)
+// 档位倍率 / 分组倍率 / 综合倍率用紧凑写法（1×、0.145×、2.5×），其余既有行不动
+const tierX = (value: number) => `${formatMultiplierCompact(value)}×`
 
 // Tooltip state - token
 const tokenTooltipVisible = ref(false)

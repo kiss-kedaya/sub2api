@@ -1287,7 +1287,28 @@ export default {
         force: 'Force Fast (priority)',
         hint: 'Forces service_tier=priority on OpenAI requests in this group. The global Fast/Flex policy can still filter or block it. New requests update immediately after saving; existing WebSocket sessions must reconnect.',
         free: 'Free Fast',
-        freeHint: 'Fast requests in this group still use the priority tier, but customers are charged the equivalent Standard price.'
+        freeHint: 'Fast requests in this group still use the priority tier, but customers are charged the equivalent Standard price.',
+        // Tier multiplier: stacks on the group rate (group rate 0.16 x Fast multiplier 2 = 0.32x), not a standalone rate
+        tierMultiplier: {
+          fastLabel: 'Fast tier multiplier',
+          ultrafastLabel: 'UltraFast tier multiplier',
+          fastHint: 'Stacks on the group rate. Blank = official default (usually 2×, 2.5× for GPT-5.5); 1 = no surcharge.',
+          ultrafastHint: 'Stacks on the group rate. Blank = official default (6×); 1 = no surcharge.',
+          placeholder: 'Default {value}',
+          useDefault: 'Official default',
+          useDefaultAria: 'Clear {name} and use the official default',
+          freeOneX: 'Free 1×',
+          freeOneXAria: 'Set {name} to 1×, no surcharge',
+          lockedFree: '1× (Free Fast is on)',
+          previewValue: '{name} requests are billed at group rate {rate} × tier multiplier {multiplier} = {total}×',
+          previewOfficial: '{name} requests are billed at group rate {rate} × the official tier multiplier',
+          invalid: '{name} is invalid: must be above 0, at most 100, with up to 4 decimal places',
+          errors: {
+            nonPositive: 'Must be greater than 0 (enter 1 for free)',
+            tooLarge: 'Must not exceed 100',
+            tooManyDecimals: 'At most 4 decimal places'
+          }
+        }
       },
       invalidRequestFallback: {
         title: 'Invalid Request Fallback Group',
