@@ -930,11 +930,12 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		}
 	}
 
-	// Claude 违规拒答（stop_reason=refusal，内容为空）：上游没有产出，不收费。
-	// 与下面的 NonBillableUpstreamError 同样处理：保留 token 数用于排查，费用清零。
-	claudeRefusal := result.Usage.Refusal && result.ForcedBillingCost <= 0
+	// Claude 违规拒答（stop_reason=refusal，内容为空）：上游照常收这笔钱，所以这里和普通请求走同一条计费路径
+	// （余额 / 订阅 / key 额度 / 账号额度 / 账号统计成本全部照常），只在用量日志上打「Claude违规拒答」类型标记，
+	// 便于按用户、按类型查询。
+	claudeRefusal := result.Usage.Refusal
 	// Preserve rejected-request usage for diagnostics without charging it.
-	if claudeRefusal || (result.NonBillableUpstreamError && result.ForcedBillingCost <= 0) {
+	if result.NonBillableUpstreamError && result.ForcedBillingCost <= 0 {
 		billingMode := string(BillingModeToken)
 		if cost != nil && strings.TrimSpace(cost.BillingMode) != "" {
 			billingMode = cost.BillingMode
@@ -958,9 +959,8 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		usageLog.RequestType = RequestTypeClaudeRefusal
 	}
 
-	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）。
-	// 拒答不跳过会按 token 数套自定义规则/价格表算出非零账号成本，所以这里直接不算（留空即按 total_cost=0）。
-	if apiKey.GroupID != nil && !isCacheStorageOnlyResult(result) && !claudeRefusal {
+	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）。拒答和普通请求一样算。
+	if apiKey.GroupID != nil && !isCacheStorageOnlyResult(result) {
 		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
 			account.ID, *apiKey.GroupID, result.UpstreamModel, result.Model,
 			// Anthropic's input_tokens excludes cache_read and cache_creation (billed separately);
