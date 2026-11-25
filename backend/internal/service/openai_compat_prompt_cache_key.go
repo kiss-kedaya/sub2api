@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"strings"
+	"sync"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 )
@@ -171,6 +172,21 @@ func deriveAnthropicCacheControlPromptCacheKey(req *apicompat.AnthropicRequest) 
 }
 
 func normalizeCompatSeedJSON(v json.RawMessage) string {
+	if len(v) < compatSeedMemoMinItem || len(v) > compatSeedMemoMaxItem {
+		return normalizeCompatSeedJSONUncached(v)
+	}
+	if out, ok := compatSeedMemo.get(v); ok {
+		return out
+	}
+	out := normalizeCompatSeedJSONUncached(v)
+	compatSeedMemo.put(v, out)
+	return out
+}
+
+// normalizeCompatSeedJSONUncached re-encodes v canonically: decoded into generic
+// values and marshalled back, so key order, whitespace and number spelling do
+// not change the seed. Input that is not valid JSON is returned as is.
+func normalizeCompatSeedJSONUncached(v json.RawMessage) string {
 	if len(v) == 0 {
 		return ""
 	}
@@ -183,4 +199,87 @@ func normalizeCompatSeedJSON(v json.RawMessage) string {
 		return string(v)
 	}
 	return string(out)
+}
+
+// The same tool arrays, system prompts and history items are canonicalized on
+// every request of a conversation (session seeds, transcript block keys), and
+// the result depends on the input bytes alone, so repeats are answered from a
+// bounded memo instead of a decode/encode round trip. Small inputs are cheaper
+// to recompute than to look up, and oversized ones would crowd the memo.
+const (
+	compatSeedMemoMinItem  = 512
+	compatSeedMemoMaxItem  = 256 << 10
+	compatSeedMemoShards   = 16
+	compatSeedMemoMaxBytes = 32 << 20 // per generation, across all shards
+)
+
+var compatSeedMemo = newCompatSeedMemo(compatSeedMemoShards, compatSeedMemoMaxBytes)
+
+// compatSeedMemoShard keeps two generations: a hit in the old one moves the
+// entry forward, and when the current one fills up the old one is dropped.
+type compatSeedMemoShard struct {
+	mu       sync.Mutex
+	cur, old map[string]string
+	curBytes int
+	maxBytes int
+}
+
+type compatSeedMemoCache struct {
+	shards []compatSeedMemoShard
+}
+
+func newCompatSeedMemo(shards, maxBytes int) *compatSeedMemoCache {
+	c := &compatSeedMemoCache{shards: make([]compatSeedMemoShard, shards)}
+	for i := range c.shards {
+		c.shards[i].maxBytes = maxBytes / shards
+		c.shards[i].cur = make(map[string]string)
+	}
+	return c
+}
+
+// shard picks a shard from the length and the first and last bytes: cheap, and
+// the same input always lands in the same shard.
+func (c *compatSeedMemoCache) shard(v []byte) *compatSeedMemoShard {
+	h := uint32(len(v)) * 2654435761
+	for i := 0; i < 16 && i < len(v); i++ {
+		h = h*16777619 ^ uint32(v[i])
+		h = h*16777619 ^ uint32(v[len(v)-1-i])
+	}
+	return &c.shards[h%uint32(len(c.shards))]
+}
+
+func (c *compatSeedMemoCache) get(v []byte) (string, bool) {
+	s := c.shard(v)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if out, ok := s.cur[string(v)]; ok {
+		return out, true
+	}
+	if out, ok := s.old[string(v)]; ok {
+		s.putLocked(string(v), out)
+		return out, true
+	}
+	return "", false
+}
+
+func (c *compatSeedMemoCache) put(v []byte, out string) {
+	key := string(v)
+	s := c.shard(v)
+	s.mu.Lock()
+	s.putLocked(key, out)
+	s.mu.Unlock()
+}
+
+func (s *compatSeedMemoShard) putLocked(key, out string) {
+	size := len(key) + len(out)
+	if size > s.maxBytes {
+		return
+	}
+	if s.curBytes+size > s.maxBytes {
+		s.old, s.cur, s.curBytes = s.cur, make(map[string]string), 0
+	}
+	if _, exists := s.cur[key]; !exists {
+		s.cur[key] = out
+		s.curBytes += size
+	}
 }

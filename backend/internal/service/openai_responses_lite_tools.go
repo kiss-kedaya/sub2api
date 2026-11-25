@@ -1,7 +1,6 @@
 package service
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -255,22 +254,43 @@ func normalizeOpenAIResponsesLiteToolsPayload(body []byte) ([]byte, bool, error)
 	return rebuilt, true, nil
 }
 
+// liteParallelToolCallsPinned reports whether body is a valid JSON object whose
+// effective (last) parallel_tool_calls is already false, i.e. the payload needs
+// no rewrite. Validity is part of the answer because a malformed body must keep
+// failing in the decoder below instead of being forwarded.
+func liteParallelToolCallsPinned(body []byte) bool {
+	var last string
+	found := false
+	if jsonForEachMember(jsonView(body), func(key, val string) bool {
+		if key == "parallel_tool_calls" {
+			last, found = val, true
+		}
+		return true
+	}) {
+		return found && last == "false" && validJSON(body)
+	}
+	// A key spelled with escapes, or text the scanner cannot follow: let gjson
+	// decide, as before.
+	root := parseRawJSONView(body)
+	if !root.IsObject() {
+		return false
+	}
+	var parallel gjson.Result
+	// Match map decoding: the last occurrence of a duplicate key wins.
+	root.ForEach(func(key, value gjson.Result) bool {
+		if key.Str == "parallel_tool_calls" {
+			parallel = value
+		}
+		return true
+	})
+	return parallel.Type == gjson.False && validJSON(body)
+}
+
 // normalizeOpenAIResponsesLiteParallelToolCallsPayload pins the Lite-only
 // parallel tool setting while preserving large JSON numbers via UseNumber.
 func normalizeOpenAIResponsesLiteParallelToolCallsPayload(body []byte) ([]byte, bool, error) {
-	root := parseRawJSONView(body)
-	if root.IsObject() {
-		var parallel gjson.Result
-		// Match map decoding: the last occurrence of a duplicate key wins.
-		root.ForEach(func(key, value gjson.Result) bool {
-			if key.Str == "parallel_tool_calls" {
-				parallel = value
-			}
-			return true
-		})
-		if parallel.Type == gjson.False && json.Valid(body) {
-			return body, false, nil
-		}
+	if liteParallelToolCallsPinned(body) {
+		return body, false, nil
 	}
 	var requestBody map[string]any
 	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {

@@ -188,6 +188,44 @@ func responsesCallPairsIntact(input any) bool {
 	return true
 }
 
+// stripDeepSeekReasoningSummarySwitches drops reasoning.summary and
+// reasoning.generate_summary, then a reasoning object left empty, with the result
+// of three sjson deletes but far less copying: a delete whose nested key is
+// missing still copies everything in front of the reasoning key (usually the
+// whole input) before sjson finds out, and every delete that does apply copies
+// the whole body again. Here the two keys come out of the small reasoning object
+// and the body is rebuilt once, around it.
+func stripDeepSeekReasoningSummarySwitches(body []byte) []byte {
+	reasoning := gjson.GetBytes(body, "reasoning")
+	if reasoning.IsObject() {
+		nested := []byte(reasoning.Raw)
+		stripped := false
+		for _, key := range []string{"summary", "generate_summary"} {
+			if !gjson.GetBytes(nested, key).Exists() {
+				continue
+			}
+			if next, err := sjson.DeleteBytes(nested, key); err == nil {
+				nested, stripped = next, true
+			}
+		}
+		if stripped {
+			// The splice sjson performs for a nested path.
+			out := make([]byte, 0, len(body)-len(reasoning.Raw)+len(nested))
+			out = append(out, body[:reasoning.Index]...)
+			out = append(out, nested...)
+			out = append(out, body[reasoning.Index+len(reasoning.Raw):]...)
+			body = out
+			reasoning = gjson.ParseBytes(nested)
+		}
+	}
+	if reasoning.IsObject() && len(reasoning.Map()) == 0 {
+		if next, err := sjson.DeleteBytes(body, "reasoning"); err == nil {
+			body = next
+		}
+	}
+	return body
+}
+
 func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte {
 	if account != nil && account.Platform == PlatformDeepseek {
 		body = stripUnsupportedDeepSeekResponseFormat(body)
@@ -228,20 +266,17 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 	// input 里既有的 summary 历史原样保留。reasoning 里若无其它内容则整个
 	// 对象一起去掉，避免空对象再触发别的校验。
 	if dedupe {
-		strippedSwitches := false
-		for _, path := range []string{"reasoning.summary", "reasoning.generate_summary"} {
-			if stripped, err := sjson.DeleteBytes(normalized, path); err == nil {
-				normalized = stripped
-				strippedSwitches = true
-			}
-		}
-		if strippedSwitches {
-			if reasoning := gjson.GetBytes(normalized, "reasoning"); reasoning.IsObject() && len(reasoning.Map()) == 0 {
-				if next, err := sjson.DeleteBytes(normalized, "reasoning"); err == nil {
-					normalized = next
-				}
-			}
-		}
+		normalized = stripDeepSeekReasoningSummarySwitches(normalized)
+	}
+
+	// The passes below decode the whole body into maps; when the raw text proves
+	// they would all leave it alone, skip the decode (and the garbage it makes).
+	if !native && !responsesBodyMayRewrite(normalized, responsesRewriteScope{
+		dedupe:          dedupe,
+		reasoning:       true,
+		deepSeekAccount: account != nil && account.Platform == PlatformDeepseek,
+	}) {
+		return normalized
 	}
 
 	var requestBody map[string]any
@@ -321,6 +356,12 @@ func RewriteInboundDeepSeekCallIDs(groupPlatform, model string, body []byte) []b
 	// tool calls: routing can still land on a DeepSeek-backed upstream even when
 	// the group platform and the requested model alias say nothing about it.
 	if !deepSeekCallIDScope(groupPlatform, model) && !bodyHasToolCallIDs(body) {
+		return body
+	}
+	// Tool-heavy bodies nearly always pass the check above, and almost none of
+	// them repeat an id: prove that on the raw text instead of decoding the whole
+	// body into maps first.
+	if !responsesBodyMayRewrite(body, responsesRewriteScope{dedupe: true}) {
 		return body
 	}
 	var requestBody map[string]any

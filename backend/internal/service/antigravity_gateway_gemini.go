@@ -534,6 +534,11 @@ func cleanGeminiRequest(body []byte) ([]byte, error) {
 // filterEmptyPartsFromGeminiRequest 过滤掉 parts 为空的消息
 // Gemini API 不接受空 parts，需要在请求前过滤
 func filterEmptyPartsFromGeminiRequest(body []byte) ([]byte, error) {
+	// Contents without an empty parts array are the norm; look at the raw text
+	// before decoding the whole request.
+	if !geminiEmptyPartsMayChange(body) {
+		return body, nil
+	}
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
