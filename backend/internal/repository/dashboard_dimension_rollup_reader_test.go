@@ -83,11 +83,12 @@ func TestDashboardRollupBoundsUseOnlyClosedHours(t *testing.T) {
 				repo := &usageLogRepository{sql: db}
 				repo.SetDashboardRollupReadEnabled(true)
 				repo.SetDashboardRollupStaleness(time.Minute)
-				cutoff, effectiveEnd, ok := repo.rollupBoundsForDimension(context.Background(), start, end, "user", 0)
+				window, ok := repo.rollupBoundsForDimension(context.Background(), start, end, "user", 0)
 				require.Equal(t, tc.covered, ok)
 				if ok {
-					require.Equal(t, expectedCutoff, cutoff)
-					require.Equal(t, time.Now().UTC(), effectiveEnd)
+					require.Equal(t, start, window.from, "an hour-aligned start has no raw head")
+					require.Equal(t, expectedCutoff, window.cutoff)
+					require.Equal(t, time.Now().UTC(), window.to)
 				}
 				require.NoError(t, mock.ExpectationsWereMet())
 			})
@@ -98,7 +99,7 @@ func TestDashboardRollupBoundsUseOnlyClosedHours(t *testing.T) {
 func TestDashboardRollupReadDisabledFallsBackToRawPath(t *testing.T) {
 	repo := newUsageLogRepositoryWithSQL(nil, nil)
 	repo.SetDashboardRollupReadEnabled(false)
-	_, _, ok := repo.rollupBounds(context.Background(), time.Now().Add(-time.Hour), time.Now())
+	_, ok := repo.rollupBounds(context.Background(), time.Now().Add(-time.Hour), time.Now())
 	require.False(t, ok)
 }
 

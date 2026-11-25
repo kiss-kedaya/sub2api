@@ -46,61 +46,107 @@ func (r *usageLogRepository) SetDashboardRollupStaleness(value time.Duration) {
 	r.rollupStalenessNanos.Store(int64(value))
 }
 
-func (r *usageLogRepository) rollupBounds(ctx context.Context, start, end time.Time) (time.Time, time.Time, bool) {
+// rollupWindow is how one requested range [start, end) is answered when the
+// hourly rollups can be read. The rollups hold whole hours in the aggregation
+// time zone, so a range that does not start on an hour boundary is split in
+// three: [start, from) is the part of the first hour before the next boundary
+// and [cutoff, to) is the open hour. Both are read from usage_logs by the very
+// query the caller runs for a whole range; [from, cutoff) are closed whole
+// hours and come from the rollups.
+type rollupWindow struct {
+	start, from, cutoff, to time.Time
+}
+
+type timeRange struct{ start, end time.Time }
+
+// rawRanges are the parts of the window that still come from usage_logs,
+// oldest first. Either may be empty: a start on an hour boundary has no head,
+// a window that ends in a closed hour has no tail.
+func (w rollupWindow) rawRanges() []timeRange {
+	ranges := make([]timeRange, 0, 2)
+	if w.from.After(w.start) {
+		ranges = append(ranges, timeRange{w.start, w.from})
+	}
+	if w.to.After(w.cutoff) {
+		ranges = append(ranges, timeRange{w.cutoff, w.to})
+	}
+	return ranges
+}
+
+// floorLocalHour rounds t down to the start of its hour in the aggregation
+// time zone, which is how the rollup buckets are cut (date_trunc('hour', ts AT
+// TIME ZONE tz)). Truncating the absolute time would put the boundaries of a
+// half-hour zone half an hour off the buckets.
+func floorLocalHour(t time.Time) time.Time {
+	_, offset := t.In(timezone.Location()).Zone()
+	shift := time.Duration(offset) * time.Second
+	return t.Add(shift).Truncate(time.Hour).Add(-shift).UTC()
+}
+
+// ceilLocalHour is the first hour boundary at or after t.
+func ceilLocalHour(t time.Time) time.Time {
+	floor := floorLocalHour(t)
+	if floor.Before(t) {
+		floor = floor.Add(time.Hour)
+	}
+	return floor
+}
+
+func (r *usageLogRepository) rollupBounds(ctx context.Context, start, end time.Time) (rollupWindow, bool) {
 	if r == nil || r.sql == nil || !r.rollupReadEnabled.Load() || !end.After(start) {
-		return time.Time{}, time.Time{}, false
+		return rollupWindow{}, false
 	}
 	now := time.Now().UTC()
 	effectiveEnd := end.UTC()
 	if effectiveEnd.After(now) {
 		effectiveEnd = now
 	}
-	startLocal := start.In(timezone.Location())
-	if startLocal.Minute() != 0 || startLocal.Second() != 0 || startLocal.Nanosecond() != 0 {
-		return time.Time{}, time.Time{}, false
-	}
-	rollupEnd := effectiveEnd.In(timezone.Location()).Truncate(time.Hour).UTC()
-	if !rollupEnd.After(start.UTC()) {
-		return time.Time{}, time.Time{}, false
+	// The first hour that can come from the rollups starts at or after start.
+	// What lies before it (up to 59m59s of the first hour) is read from usage_logs.
+	from := ceilLocalHour(start)
+	rollupEnd := floorLocalHour(effectiveEnd)
+	if !rollupEnd.After(from) {
+		return rollupWindow{}, false
 	}
 	var watermark time.Time
 	if err := scanSingleRow(ctx, r.sql, "SELECT last_aggregated_at FROM usage_dashboard_aggregation_watermark WHERE id = 1", nil, &watermark); err != nil {
-		return time.Time{}, time.Time{}, false
+		return rollupWindow{}, false
 	}
 	watermark = watermark.UTC()
 	staleness := time.Duration(r.rollupStalenessNanos.Load())
 	if staleness <= 0 {
 		staleness = time.Minute
 	}
-	watermarkHour := watermark.Truncate(time.Hour)
+	watermarkHour := floorLocalHour(watermark)
 	// The open hour is read from usage_logs. A delayed refresh in that hour
 	// does not change which earlier hours can be read from the rollups.
-	if now.Sub(watermark) > staleness && !watermarkHour.Equal(now.Truncate(time.Hour)) {
-		return time.Time{}, time.Time{}, false
+	if now.Sub(watermark) > staleness && !watermarkHour.Equal(floorLocalHour(now)) {
+		return rollupWindow{}, false
 	}
 	var coverageStart time.Time
-	if err := scanSingleRow(ctx, r.sql, "SELECT COALESCE(MIN(bucket_start), TIMESTAMPTZ 'epoch') FROM usage_dashboard_hourly", nil, &coverageStart); err != nil || coverageStart.Equal(time.Unix(0, 0).UTC()) || start.UTC().Before(coverageStart.UTC()) {
-		return time.Time{}, time.Time{}, false
+	if err := scanSingleRow(ctx, r.sql, "SELECT COALESCE(MIN(bucket_start), TIMESTAMPTZ 'epoch') FROM usage_dashboard_hourly", nil, &coverageStart); err != nil || coverageStart.Equal(time.Unix(0, 0).UTC()) || from.Before(coverageStart.UTC()) {
+		return rollupWindow{}, false
 	}
 	// Keep the raw tail and the full-hour rollups disjoint at rollover.
 	cutoff := watermarkHour
 	if cutoff.After(rollupEnd) {
 		cutoff = rollupEnd
 	}
-	if !cutoff.After(start.UTC()) {
-		return time.Time{}, time.Time{}, false
+	if !cutoff.After(from) {
+		return rollupWindow{}, false
 	}
-	return cutoff, effectiveEnd, true
+	return rollupWindow{start: start.UTC(), from: from, cutoff: cutoff, to: effectiveEnd}, true
 }
 
 // rollupBoundsForDimension additionally proves that every processed hour in
-// the requested range has a row for the selected dimension. This keeps partial
-// backfills and failed bucket writes on the raw-query path instead of silently
-// returning incomplete aggregates.
-func (r *usageLogRepository) rollupBoundsForDimension(ctx context.Context, start, end time.Time, dimensionType string, userID int64) (time.Time, time.Time, bool) {
-	cutoff, effectiveEnd, ok := r.rollupBounds(ctx, start, end)
+// the rollup part of the range has a row for the selected dimension. This keeps
+// partial backfills and failed bucket writes on the raw-query path instead of
+// silently returning incomplete aggregates. The raw head is not part of that
+// proof: it never reads the rollups.
+func (r *usageLogRepository) rollupBoundsForDimension(ctx context.Context, start, end time.Time, dimensionType string, userID int64) (rollupWindow, bool) {
+	window, ok := r.rollupBounds(ctx, start, end)
 	if !ok {
-		return time.Time{}, time.Time{}, false
+		return rollupWindow{}, false
 	}
 
 	expected := `
@@ -108,7 +154,7 @@ func (r *usageLogRepository) rollupBoundsForDimension(ctx context.Context, start
 		FROM usage_dashboard_hourly
 		WHERE bucket_start >= $1 AND bucket_start < $2 AND total_requests > 0
 	`
-	args := []any{start.UTC(), cutoff.UTC(), dimensionType}
+	args := []any{window.from, window.cutoff, dimensionType}
 	if userID > 0 {
 		expected = `
 			SELECT bucket_start
@@ -147,9 +193,9 @@ func (r *usageLogRepository) rollupBoundsForDimension(ctx context.Context, start
 	}())
 	var complete bool
 	if err := scanSingleRow(ctx, r.sql, query, args, &complete); err != nil || !complete {
-		return time.Time{}, time.Time{}, false
+		return rollupWindow{}, false
 	}
-	return cutoff, effectiveEnd, true
+	return window, true
 }
 
 func (r *usageLogRepository) queryRollupMetrics(ctx context.Context, start, end time.Time, dimensionType string, userID int64, endpointType string) ([]dashboardRollupMetric, error) {
@@ -199,15 +245,15 @@ func (r *usageLogRepository) GetUserUsageTrendWithRollups(ctx context.Context, s
 	if granularity != "hour" && granularity != "day" {
 		return nil, false, nil
 	}
-	cutoff, effectiveEnd, ok := r.rollupBoundsForDimension(ctx, startTime, endTime, "user", 0)
+	window, ok := r.rollupBoundsForDimension(ctx, startTime, endTime, "user", 0)
 	if !ok {
 		return nil, false, nil
 	}
-	metrics, err := r.queryRollupMetrics(ctx, startTime, cutoff, "user", 0, "")
+	metrics, err := r.queryRollupMetrics(ctx, window.from, window.cutoff, "user", 0, "")
 	if err != nil || len(metrics) == 0 {
 		return nil, false, err
 	}
-	points, err := r.mergeUserTrendMetrics(ctx, metrics, cutoff, effectiveEnd, granularity)
+	points, err := r.mergeUserTrendMetrics(ctx, metrics, window, granularity)
 	if err != nil {
 		return nil, false, err
 	}
@@ -218,11 +264,11 @@ func (r *usageLogRepository) GetUserUsageTrendWithRollups(ctx context.Context, s
 }
 
 func (r *usageLogRepository) GetUserSpendingRankingWithRollups(ctx context.Context, startTime, endTime time.Time, limit int) (*UserSpendingRankingResponse, bool, error) {
-	cutoff, effectiveEnd, ok := r.rollupBoundsForDimension(ctx, startTime, endTime, "user", 0)
+	window, ok := r.rollupBoundsForDimension(ctx, startTime, endTime, "user", 0)
 	if !ok {
 		return nil, false, nil
 	}
-	metrics, err := r.queryRollupMetrics(ctx, startTime, cutoff, "user", 0, "")
+	metrics, err := r.queryRollupMetrics(ctx, window.from, window.cutoff, "user", 0, "")
 	if err != nil || len(metrics) == 0 {
 		return nil, false, err
 	}
@@ -235,12 +281,12 @@ func (r *usageLogRepository) GetUserSpendingRankingWithRollups(ctx context.Conte
 		item.ActualCost += m.ActualCost
 		byUser[m.UserID] = item
 	}
-	if effectiveEnd.After(cutoff) {
-		tail, err := r.getUserSpendingRankingRaw(ctx, cutoff, effectiveEnd, 1_000_000)
+	for _, raw := range window.rawRanges() {
+		part, err := r.getUserSpendingRankingRaw(ctx, raw.start, raw.end, 1_000_000)
 		if err != nil {
 			return nil, false, err
 		}
-		for _, item := range tail.Ranking {
+		for _, item := range part.Ranking {
 			merged := byUser[item.UserID]
 			merged.UserID = item.UserID
 			merged.Requests += item.Requests
@@ -281,7 +327,7 @@ func (r *usageLogRepository) GetUserSpendingRankingWithRollups(ctx context.Conte
 	return &UserSpendingRankingResponse{Ranking: items, TotalActualCost: totalActualCost, TotalRequests: totalRequests, TotalTokens: totalTokens}, true, nil
 }
 
-func (r *usageLogRepository) mergeUserTrendMetrics(ctx context.Context, metrics []dashboardRollupMetric, cutoff, end time.Time, granularity string) ([]UserUsageTrendPoint, error) {
+func (r *usageLogRepository) mergeUserTrendMetrics(ctx context.Context, metrics []dashboardRollupMetric, window rollupWindow, granularity string) ([]UserUsageTrendPoint, error) {
 	points := make(map[string]UserUsageTrendPoint)
 	add := func(date string, m dashboardRollupMetric) {
 		key := strconv.FormatInt(m.UserID, 10) + "\x00" + date
@@ -296,12 +342,12 @@ func (r *usageLogRepository) mergeUserTrendMetrics(ctx context.Context, metrics 
 	for _, m := range metrics {
 		add(formatRollupDate(m.BucketStart, granularity), m)
 	}
-	if end.After(cutoff) {
-		tail, err := r.getUserUsageTrendRawAll(ctx, cutoff, end, granularity)
+	for _, raw := range window.rawRanges() {
+		part, err := r.getUserUsageTrendRawAll(ctx, raw.start, raw.end, granularity)
 		if err != nil {
 			return nil, err
 		}
-		for _, p := range tail {
+		for _, p := range part {
 			add(p.Date, dashboardRollupMetric{UserID: p.UserID, Requests: p.Requests, InputTokens: p.Tokens, Cost: p.Cost, ActualCost: p.ActualCost})
 		}
 	}
@@ -451,12 +497,12 @@ func (r *usageLogRepository) GetUsageTrendWithRollups(ctx context.Context, start
 	if filters.APIKeyID != 0 || filters.AccountID != 0 || filters.GroupID != 0 || filters.Model != "" || unsupportedRollupModelSource(filters.ModelFilterSource) || filters.RequestType != nil || filters.Stream != nil || filters.BillingType != nil || filters.BillingMode != "" || filters.UpstreamModelMismatch != nil || filters.NativeCompactionV2 != nil {
 		return nil, false, nil
 	}
-	var cutoff, effectiveEnd time.Time
+	var window rollupWindow
 	var ok bool
 	if filters.UserID > 0 {
-		cutoff, effectiveEnd, ok = r.rollupBoundsForDimension(ctx, startTime, endTime, "user", filters.UserID)
+		window, ok = r.rollupBoundsForDimension(ctx, startTime, endTime, "user", filters.UserID)
 	} else {
-		cutoff, effectiveEnd, ok = r.rollupBounds(ctx, startTime, endTime)
+		window, ok = r.rollupBounds(ctx, startTime, endTime)
 	}
 	if !ok {
 		return nil, false, nil
@@ -476,7 +522,7 @@ func (r *usageLogRepository) GetUsageTrendWithRollups(ctx context.Context, start
 		byDate[p.Date] = row
 	}
 	if filters.UserID > 0 {
-		metrics, err := r.queryRollupMetrics(ctx, startTime, cutoff, "user", filters.UserID, "")
+		metrics, err := r.queryRollupMetrics(ctx, window.from, window.cutoff, "user", filters.UserID, "")
 		if err != nil || len(metrics) == 0 {
 			return nil, false, err
 		}
@@ -484,7 +530,7 @@ func (r *usageLogRepository) GetUsageTrendWithRollups(ctx context.Context, start
 			merge(TrendDataPoint{Date: formatRollupDate(m.BucketStart, granularity), Requests: m.Requests, InputTokens: m.InputTokens, OutputTokens: m.OutputTokens, CacheCreationTokens: m.CacheCreation, CacheReadTokens: m.CacheRead, TotalTokens: m.InputTokens + m.OutputTokens + m.CacheCreation + m.CacheRead, Cost: m.Cost, ActualCost: m.ActualCost})
 		}
 	} else {
-		metrics, err := r.queryGlobalHourlyMetrics(ctx, startTime, cutoff)
+		metrics, err := r.queryGlobalHourlyMetrics(ctx, window.from, window.cutoff)
 		if err != nil || len(metrics) == 0 {
 			return nil, false, err
 		}
@@ -492,12 +538,12 @@ func (r *usageLogRepository) GetUsageTrendWithRollups(ctx context.Context, start
 			merge(TrendDataPoint{Date: formatRollupDate(m.BucketStart, granularity), Requests: m.Requests, InputTokens: m.InputTokens, OutputTokens: m.OutputTokens, CacheCreationTokens: m.CacheCreation, CacheReadTokens: m.CacheRead, TotalTokens: m.InputTokens + m.OutputTokens + m.CacheCreation + m.CacheRead, Cost: m.Cost, ActualCost: m.ActualCost})
 		}
 	}
-	if effectiveEnd.After(cutoff) {
-		tail, err := r.getUsageTrendWithFilters(ctx, cutoff, effectiveEnd, granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2)
+	for _, raw := range window.rawRanges() {
+		part, err := r.getUsageTrendWithFilters(ctx, raw.start, raw.end, granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.ModelFilterSource, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2)
 		if err != nil {
 			return nil, false, err
 		}
-		for _, p := range tail {
+		for _, p := range part {
 			merge(p)
 		}
 	}
@@ -518,11 +564,11 @@ func (r *usageLogRepository) GetModelStatsWithRollups(ctx context.Context, start
 		userScoped = "user_model"
 	}
 	dimensionType := rollupDimensionType(source, userScoped)
-	cutoff, effectiveEnd, ok := r.rollupBoundsForDimension(ctx, startTime, endTime, dimensionType, filters.UserID)
+	window, ok := r.rollupBoundsForDimension(ctx, startTime, endTime, dimensionType, filters.UserID)
 	if !ok {
 		return nil, false, nil
 	}
-	metrics, err := r.queryRollupMetrics(ctx, startTime, cutoff, dimensionType, filters.UserID, "")
+	metrics, err := r.queryRollupMetrics(ctx, window.from, window.cutoff, dimensionType, filters.UserID, "")
 	if err != nil || len(metrics) == 0 {
 		return nil, false, err
 	}
@@ -544,12 +590,12 @@ func (r *usageLogRepository) GetModelStatsWithRollups(ctx context.Context, start
 	for _, m := range metrics {
 		merge(ModelStat{Model: m.DimensionKey, Requests: m.Requests, InputTokens: m.InputTokens, OutputTokens: m.OutputTokens, CacheCreationTokens: m.CacheCreation, CacheReadTokens: m.CacheRead, TotalTokens: m.InputTokens + m.OutputTokens + m.CacheCreation + m.CacheRead, Cost: m.Cost, ActualCost: m.ActualCost, AccountCost: m.AccountCost})
 	}
-	if effectiveEnd.After(cutoff) {
-		tail, err := r.getModelStatsWithFiltersBySource(ctx, cutoff, effectiveEnd, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, nil, nil, nil, source, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2)
+	for _, raw := range window.rawRanges() {
+		part, err := r.getModelStatsWithFiltersBySource(ctx, raw.start, raw.end, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, nil, nil, nil, source, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2)
 		if err != nil {
 			return nil, false, err
 		}
-		for _, m := range tail {
+		for _, m := range part {
 			merge(m)
 		}
 	}
@@ -575,11 +621,11 @@ func (r *usageLogRepository) GetGroupStatsWithRollups(ctx context.Context, start
 	if userID > 0 {
 		dimensionType = "user_group"
 	}
-	cutoff, effectiveEnd, ok := r.rollupBoundsForDimension(ctx, startTime, endTime, dimensionType, userID)
+	window, ok := r.rollupBoundsForDimension(ctx, startTime, endTime, dimensionType, userID)
 	if !ok {
 		return nil, false, nil
 	}
-	metrics, err := r.queryRollupMetrics(ctx, startTime, cutoff, dimensionType, userID, "")
+	metrics, err := r.queryRollupMetrics(ctx, window.from, window.cutoff, dimensionType, userID, "")
 	if err != nil || len(metrics) == 0 {
 		return nil, false, err
 	}
@@ -597,12 +643,12 @@ func (r *usageLogRepository) GetGroupStatsWithRollups(ctx context.Context, start
 	for _, m := range metrics {
 		merge(usagestats.GroupStat{GroupID: m.GroupID, Requests: m.Requests, TotalTokens: m.InputTokens + m.OutputTokens + m.CacheCreation + m.CacheRead, Cost: m.Cost, ActualCost: m.ActualCost, AccountCost: m.AccountCost})
 	}
-	if effectiveEnd.After(cutoff) {
-		tail, err := r.getGroupStatsWithFilters(ctx, cutoff, effectiveEnd, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2, filters.OmitAccountCost)
+	for _, raw := range window.rawRanges() {
+		part, err := r.getGroupStatsWithFilters(ctx, raw.start, raw.end, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch, filters.NativeCompactionV2, filters.OmitAccountCost)
 		if err != nil {
 			return nil, false, err
 		}
-		for _, m := range tail {
+		for _, m := range part {
 			merge(m)
 		}
 	}
@@ -667,11 +713,11 @@ func (r *usageLogRepository) GetStatsWithRollups(ctx context.Context, filters Us
 	if userID == 0 {
 		endpointType = "endpoint"
 	}
-	cutoff, effectiveEnd, ok := r.rollupBoundsForDimension(ctx, start, end, endpointType, userID)
+	window, ok := r.rollupBoundsForDimension(ctx, start, end, endpointType, userID)
 	if !ok {
 		return nil, false, nil
 	}
-	// A scoped request only needs half of the answer: skip the other half's rollup rows and its raw tail query.
+	// A scoped request only needs half of the answer: skip the other half's rollup rows and its raw queries.
 	wantTotals := filters.StatsScope != usagestats.StatsScopeEndpoints
 	wantEndpoints := filters.StatsScope != usagestats.StatsScopeSummary
 	stats := &UsageStats{}
@@ -679,7 +725,7 @@ func (r *usageLogRepository) GetStatsWithRollups(ctx context.Context, filters Us
 	var durationCount int64
 	if wantTotals {
 		if userID > 0 {
-			metrics, err := r.queryRollupMetrics(ctx, start, cutoff, "user", userID, "")
+			metrics, err := r.queryRollupMetrics(ctx, window.from, window.cutoff, "user", userID, "")
 			if err != nil || len(metrics) == 0 {
 				return nil, false, err
 			}
@@ -689,7 +735,7 @@ func (r *usageLogRepository) GetStatsWithRollups(ctx context.Context, filters Us
 				durationCount += m.DurationCount
 			}
 		} else {
-			metrics, err := r.queryGlobalHourlyMetrics(ctx, start, cutoff)
+			metrics, err := r.queryGlobalHourlyMetrics(ctx, window.from, window.cutoff)
 			if err != nil || len(metrics) == 0 {
 				return nil, false, err
 			}
@@ -701,7 +747,7 @@ func (r *usageLogRepository) GetStatsWithRollups(ctx context.Context, filters Us
 		}
 	}
 	if wantEndpoints {
-		endpointMetrics, err := r.queryRollupMetrics(ctx, start, cutoff, endpointType, userID, "")
+		endpointMetrics, err := r.queryRollupMetrics(ctx, window.from, window.cutoff, endpointType, userID, "")
 		if err != nil {
 			return nil, false, err
 		}
@@ -720,23 +766,28 @@ func (r *usageLogRepository) GetStatsWithRollups(ctx context.Context, filters Us
 				stats.EndpointPaths = append(stats.EndpointPaths, endpoint)
 			}
 		}
+		// The rollups hold one row per endpoint and hour. Without a raw edge to merge (an hour-aligned start and a
+		// closed end) nothing else would add the hours of one endpoint up.
+		stats.Endpoints = consolidateEndpointStats(stats.Endpoints)
+		stats.UpstreamEndpoints = consolidateEndpointStats(stats.UpstreamEndpoints)
+		stats.EndpointPaths = consolidateEndpointStats(stats.EndpointPaths)
 	}
-	if effectiveEnd.After(cutoff) {
-		tailFilters := filters
-		tailStart, tailEnd := cutoff, effectiveEnd
-		tailFilters.StartTime, tailFilters.EndTime = &tailStart, &tailEnd
-		tail, err := r.getStatsWithFiltersRaw(ctx, tailFilters)
+	for _, raw := range window.rawRanges() {
+		rawFilters := filters
+		rawStart, rawEnd := raw.start, raw.end
+		rawFilters.StartTime, rawFilters.EndTime = &rawStart, &rawEnd
+		part, err := r.getStatsWithFiltersRaw(ctx, rawFilters)
 		if err != nil {
 			return nil, false, err
 		}
-		mergeUsageStats(stats, tail)
+		mergeUsageStats(stats, part)
 		if wantTotals {
-			tailDuration, tailCount, err := r.queryRawDurationSummary(ctx, tailStart, tailEnd, userID)
+			rawDuration, rawCount, err := r.queryRawDurationSummary(ctx, rawStart, rawEnd, userID)
 			if err != nil {
 				return nil, false, err
 			}
-			totalDuration += tailDuration
-			durationCount += tailCount
+			totalDuration += rawDuration
+			durationCount += rawCount
 		}
 	}
 	if durationCount > 0 {
