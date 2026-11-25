@@ -59,9 +59,10 @@ func TestDispatchAdmin2FAResetRequiresExplicitIsolatedConfirmedMode(t *testing.T
 			}
 			require.NoError(t, fs.Parse(tc.args))
 			calls := 0
-			handled, err := dispatchAdmin2FAReset(fs, *enabled, *userID, *confirmed, func(id int64) error {
+			handled, err := dispatchAdmin2FAReset(fs, *enabled, *userID, *confirmed, false, func(id int64, clearPasskeys bool) error {
 				calls++
 				require.EqualValues(t, 41, id)
+				require.False(t, clearPasskeys, "the default recovery must never clear Passkeys")
 				return nil
 			})
 			require.Equal(t, tc.handled, handled)
@@ -119,7 +120,8 @@ func TestAdmin2FAResetDatabaseTransactionsAndStaticErrors(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _ = db.Close() }()
 			tc.mock(mock)
-			err = resetAdmin2FAInDatabase(context.Background(), db, 41)
+			cleared, err := resetAdmin2FAInDatabase(context.Background(), db, 41, false)
+			require.Zero(t, cleared, "the default recovery never reports deleted Passkeys")
 			if tc.want == nil {
 				require.NoError(t, err)
 			} else {
@@ -155,7 +157,7 @@ func TestAdmin2FAResetOnlyChangesActiveNonDeletedAdministratorTotp(t *testing.T)
 			}
 			_, err = db.Exec(`INSERT INTO users VALUES (41, $1, $2, 'admin@example.com', 'unchanged-password-hash', TRUE, 'PRIVATE-SECRET', '2026-10-20', '2026-10-20', $3)`, tc.role, tc.status, deletedAt)
 			require.NoError(t, err)
-			err = resetAdmin2FAInDatabase(context.Background(), db, 41)
+			_, err = resetAdmin2FAInDatabase(context.Background(), db, 41, false)
 			if tc.wantReset {
 				require.NoError(t, err)
 			} else {
@@ -188,7 +190,7 @@ func TestExecuteAdmin2FAResetReportsCommittedRecoveryAndJWTLimit(t *testing.T) {
 			mock.ExpectPing()
 			mock.ExpectClose()
 			var out bytes.Buffer
-			err = executeAdmin2FAReset(context.Background(), 41, &out,
+			err = executeAdmin2FAReset(context.Background(), 41, false, &out,
 				func() (*config.Config, error) { return &config.Config{}, nil },
 				func(*config.Config) (*sql.DB, error) { return db, nil },
 				func(_ context.Context, _ *config.Config, userID int64) error {
@@ -226,7 +228,7 @@ func TestExecuteAdmin2FAResetRejectsInvalidIDAndRedactsConfigOrConnectionErrors(
 				userID = 0
 			}
 			loadCalls, openCalls, cleanupCalls := 0, 0, 0
-			err := executeAdmin2FAReset(context.Background(), userID, &out,
+			err := executeAdmin2FAReset(context.Background(), userID, false, &out,
 				func() (*config.Config, error) {
 					loadCalls++
 					if stage == "config" {
@@ -256,7 +258,7 @@ func TestExecuteAdmin2FAResetRejectsInvalidIDAndRedactsConfigOrConnectionErrors(
 func TestExecuteAdmin2FAResetIsDisabledInReadOnlyCryptoTestMode(t *testing.T) {
 	t.Setenv("CRYPTO_ADMIN_TEST_MODE", "true")
 	loadCalls, openCalls, cleanupCalls := 0, 0, 0
-	err := executeAdmin2FAReset(context.Background(), 41, io.Discard,
+	err := executeAdmin2FAReset(context.Background(), 41, false, io.Discard,
 		func() (*config.Config, error) { loadCalls++; return &config.Config{}, nil },
 		func(*config.Config) (*sql.DB, error) { openCalls++; return nil, nil },
 		func(context.Context, *config.Config, int64) error { cleanupCalls++; return nil })
