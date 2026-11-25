@@ -630,6 +630,15 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		}
 	}
 
+	// 开关打开（默认关闭）时，真实会话先过与伪装会话共用的「账号 + 客户端 IP」桶，再走下面的账号桶；
+	// 开关关闭时 ipBucket 为 0，这里什么都不做。见 auth_login_disguise.go「限速桶的取舍」。
+	ipBucket := h.realSessionIPBucket(c, session.UserID)
+	if ipBucket != 0 {
+		if _, ok := checkTwoFactorRateLimit(c, h.twoFactorLimiter, ipBucket); !ok {
+			return
+		}
+	}
+
 	// 账号维度限速：同一账号 60 秒滚动窗口内最多 5 次 2FA 校验尝试。
 	// 超限 429 + Retry-After；限流存储故障 fail-closed（只影响 2FA 校验）。
 	attemptCtx, ok := checkTwoFactorRateLimit(c, h.twoFactorLimiter, session.UserID)
@@ -740,6 +749,9 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 
 	// 成功验证后清空账号维度计数（成功即清）。
 	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, session.UserID)
+	if ipBucket != 0 {
+		resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, ipBucket)
+	}
 
 	// 因子编排：TOTP 通过后，若账号还绑定了 Passkey，必须继续完成 Passkey
 	// 断言才签发令牌。漏一个因子一律 fail-closed（不下发令牌、不降级）。
@@ -828,6 +840,13 @@ func (h *AuthHandler) Login2FAPasskeyFinish(c *gin.Context) {
 		response.BadRequest(c, "No passkey step is required for this login session")
 		return
 	}
+	// 开关打开（默认关闭）时先过与伪装会话共用的「账号 + 客户端 IP」桶；关闭时 ipBucket 为 0，什么都不做。
+	ipBucket := h.realSessionIPBucket(c, session.UserID)
+	if ipBucket != 0 {
+		if _, ok := checkTwoFactorRateLimit(c, h.twoFactorLimiter, ipBucket); !ok {
+			return
+		}
+	}
 	attemptCtx, ok := checkTwoFactorRateLimit(c, h.twoFactorLimiter, session.UserID)
 	if !ok {
 		return
@@ -867,6 +886,9 @@ func (h *AuthHandler) Login2FAPasskeyFinish(c *gin.Context) {
 		return
 	}
 	resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, session.UserID)
+	if ipBucket != 0 {
+		resetTwoFactorRateLimit(c.Request.Context(), h.twoFactorLimiter, ipBucket)
+	}
 	_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
 	issueTwoFactorGrant(c, h.totpService, user.ID, service.TwoFactorGrantScopeLogin, service.FactorPasskey)
 	middleware2.SetAuditAction(c, service.AuditActionLogin2FA)

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,22 @@ type cleanupRefreshCache struct {
 	deleteOne  []string
 	deleteErr  error
 	deleteAllE error
+	// 已签发 access token 的撤销记录（实现 service.AccessTokenRevocationStore）。
+	accessRevoked []int64
+	accessCutoff  []time.Time
+	accessTTL     []time.Duration
+	accessErr     error
+}
+
+func (c *cleanupRefreshCache) RevokeAccessTokensBefore(_ context.Context, userID int64, before time.Time, ttl time.Duration) error {
+	c.accessRevoked = append(c.accessRevoked, userID)
+	c.accessCutoff = append(c.accessCutoff, before)
+	c.accessTTL = append(c.accessTTL, ttl)
+	return c.accessErr
+}
+
+func (c *cleanupRefreshCache) AccessTokensRevokedBefore(context.Context, int64) (time.Time, error) {
+	return time.Time{}, nil
 }
 
 func (c *cleanupRefreshCache) GetUserTokenHashes(context.Context, int64) ([]string, error) {
@@ -94,6 +111,7 @@ func TestRevokeUserSessionsForTwoFactorResetRevokesEverythingForTheUser(t *testi
 	}
 	stepUp, state := &cleanupStepUp{}, &cleanupState{}
 
+	started := time.Now().UTC()
 	require.NoError(t, service.RevokeUserSessionsForTwoFactorReset(context.Background(), 7, refresh, stepUp, state))
 
 	require.Equal(t, []int64{7}, refresh.deleteAll, "a trustworthy index is dropped as a whole")
@@ -102,6 +120,13 @@ func TestRevokeUserSessionsForTwoFactorResetRevokesEverythingForTheUser(t *testi
 	require.Equal(t, []string{"family-1", "family-2"}, stepUp.sessionKeys, "the legacy u<uid> key is added by the grant store itself")
 	require.Equal(t, 1, state.setupDeleted)
 	require.Equal(t, 1, state.attemptsCleared)
+
+	// 已签发的 access JWT：撤销时间点是「此刻」（重置完成的时刻），保留期要长于 access token 的最长有效期。
+	require.Equal(t, []int64{7}, refresh.accessRevoked)
+	require.Len(t, refresh.accessCutoff, 1)
+	require.False(t, refresh.accessCutoff[0].Before(started), "cutoff %s must not predate the call (%s)", refresh.accessCutoff[0], started)
+	require.WithinDuration(t, time.Now().UTC(), refresh.accessCutoff[0], time.Minute)
+	require.GreaterOrEqual(t, refresh.accessTTL[0], 24*time.Hour)
 }
 
 // 索引里混进了别的用户的令牌：只删能证明属于该用户的令牌，绝不整组删除，
@@ -124,6 +149,8 @@ func TestRevokeUserSessionsForTwoFactorResetNeverTrustsAForeignIndexEntry(t *tes
 	require.Equal(t, []string{"family-own"}, stepUp.sessionKeys, "the other user's session must not be revoked")
 	require.Equal(t, 1, state.setupDeleted)
 	require.Equal(t, 1, state.attemptsCleared)
+	// access token 的撤销只按用户 ID 记一个时间点，不依赖会话索引，也不会波及别的用户。
+	require.Equal(t, []int64{7}, refresh.accessRevoked)
 }
 
 // 读不到索引/令牌：没法证明归属，一个令牌都不删，但授权与预算照常清理，错误如实返回。
@@ -156,20 +183,38 @@ func TestRevokeUserSessionsForTwoFactorResetLookupFailureStillClearsGrantsAndBud
 
 // 任何一步失败都不能挡住后面的步骤，所有错误合并返回。
 func TestRevokeUserSessionsForTwoFactorResetAttemptsEveryStepAndJoinsErrors(t *testing.T) {
-	errAll, errStepUp, errSetup, errAttempts := errors.New("delete all"), errors.New("step-up"), errors.New("setup"), errors.New("attempts")
+	errAll, errAccess, errStepUp, errSetup, errAttempts := errors.New("delete all"), errors.New("access"), errors.New("step-up"), errors.New("setup"), errors.New("attempts")
 	refresh := &cleanupRefreshCache{
 		hashes:     []string{"a"},
 		tokens:     map[string]*service.RefreshTokenData{"a": ownedToken(7, "family-1")},
 		deleteAllE: errAll,
+		accessErr:  errAccess,
 	}
 	stepUp := &cleanupStepUp{err: errStepUp}
 	state := &cleanupState{setupErr: errSetup, attemptsErr: errAttempts}
 
 	err := service.RevokeUserSessionsForTwoFactorReset(context.Background(), 7, refresh, stepUp, state)
-	for _, want := range []error{errAll, errStepUp, errSetup, errAttempts} {
+	for _, want := range []error{errAll, errAccess, errStepUp, errSetup, errAttempts} {
 		require.ErrorIs(t, err, want)
 	}
 	require.Equal(t, []int64{7}, refresh.deleteAll)
+	require.Equal(t, []int64{7}, refresh.accessRevoked)
+	require.Equal(t, 1, stepUp.calls)
+	require.Equal(t, 1, state.setupDeleted)
+	require.Equal(t, 1, state.attemptsCleared)
+}
+
+// refresh token 缓存不支持撤销 access token（只暴露 RefreshTokenCache 接口本身）：如实报错而不是谎报「已撤销」，
+// 其余步骤照做。
+func TestRevokeUserSessionsForTwoFactorResetReportsUnsupportedAccessTokenRevocation(t *testing.T) {
+	refresh := &cleanupRefreshCache{}
+	stepUp, state := &cleanupStepUp{}, &cleanupState{}
+
+	err := service.RevokeUserSessionsForTwoFactorReset(context.Background(), 7, struct{ service.RefreshTokenCache }{refresh}, stepUp, state)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "access token revocation unavailable")
+	require.Equal(t, []int64{7}, refresh.deleteAll, "the remaining steps still run")
+	require.Empty(t, refresh.accessRevoked)
 	require.Equal(t, 1, stepUp.calls)
 	require.Equal(t, 1, state.setupDeleted)
 	require.Equal(t, 1, state.attemptsCleared)

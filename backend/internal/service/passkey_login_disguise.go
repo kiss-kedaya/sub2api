@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"golang.org/x/sync/singleflight"
 )
 
 // 登录首步 Passkey 伪装（审计 A-P1-02，设计见 login_shape_disguise.go）。
@@ -31,14 +32,56 @@ type UserMaxIDReader interface {
 }
 
 const (
-	disguiseIDSpaceTTL         = 10 * time.Minute
+	disguiseIDSpaceTTL = 10 * time.Minute
+	// disguiseIDSpaceFailureTTL 是查询失败（超时 / 库错误 / 没有用户）之后不再重试的时间。失败不缓存的话，
+	// 库读变慢或出错时每个非镜像的伪装登录都要重查并等满 disguiseIDSpaceQueryBudget（审计 AUD-6），
+	// 这是开关打开后的拒绝服务面。失败期间沿用上一次成功的值，没有就用保守常量。
+	disguiseIDSpaceFailureTTL  = 10 * time.Second
 	disguiseIDSpaceQueryBudget = 500 * time.Millisecond
 )
 
 type disguiseIDSpaceCache struct {
-	mu    sync.Mutex
-	space int64
-	at    time.Time
+	mu     sync.Mutex
+	space  int64     // 上一次成功读到的上界，0 = 还没有成功过
+	at     time.Time // 上一次成功的时间
+	failAt time.Time // 上一次失败的时间
+	flight singleflight.Group
+}
+
+// cached 返回仍然有效的缓存结果：成功结果缓存 disguiseIDSpaceTTL，失败结果缓存 disguiseIDSpaceFailureTTL。
+func (c *disguiseIDSpaceCache) cached() (int64, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.space > 0 && time.Since(c.at) < disguiseIDSpaceTTL {
+		return c.space, true
+	}
+	if !c.failAt.IsZero() && time.Since(c.failAt) < disguiseIDSpaceFailureTTL {
+		return c.fallbackLocked(), true
+	}
+	return 0, false
+}
+
+func (c *disguiseIDSpaceCache) fallbackLocked() int64 {
+	if c.space > 0 {
+		return c.space
+	}
+	return loginDisguiseUserIDSpaceFallback
+}
+
+// record 写回一次查询的结果并返回本次应当使用的上界。
+func (c *disguiseIDSpaceCache) record(maxID int64, err error) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err != nil || maxID <= 0 {
+		c.failAt = time.Now()
+		return c.fallbackLocked()
+	}
+	space := nextPowerOfTwo(maxID)
+	if space < loginDisguiseUserIDSpaceFloor {
+		space = loginDisguiseUserIDSpaceFloor
+	}
+	c.space, c.at, c.failAt = space, time.Now(), time.Time{}
+	return space
 }
 
 // nextPowerOfTwo 返回不小于 n 的最小 2 的幂（n<=1 返回 1）。取 2 的幂而不是精确的最大 ID，
@@ -51,32 +94,33 @@ func nextPowerOfTwo(n int64) int64 {
 }
 
 // disguiseUserIDSpace 返回伪造用户 ID 段的取值上界。读不到最大用户 ID 时沿用上一次的值，
-// 没有上一次的值就用保守常量。
+// 没有上一次的值就用保守常量；失败结果同样缓存（disguiseIDSpaceFailureTTL），不会每个请求都重查。
+//
+// 查询在锁外并用 singleflight 合并并发：同一时刻只有一个请求去读库（受 disguiseIDSpaceQueryBudget 限制），
+// 其余请求共用它的结果。此前持锁查询，库读卡住时所有伪装登录排队，N 个并发要等 N × 预算。
 func (s *PasskeyService) disguiseUserIDSpace(ctx context.Context) int64 {
 	reader, ok := s.userRepo.(UserMaxIDReader)
 	if !ok {
 		return loginDisguiseUserIDSpaceFallback
 	}
-	s.idSpace.mu.Lock()
-	defer s.idSpace.mu.Unlock()
-	if s.idSpace.space > 0 && time.Since(s.idSpace.at) < disguiseIDSpaceTTL {
-		return s.idSpace.space
+	cache := &s.idSpace
+	if space, hit := cache.cached(); hit {
+		return space
 	}
-	queryCtx, cancel := context.WithTimeout(ctx, disguiseIDSpaceQueryBudget)
-	defer cancel()
-	maxID, err := reader.MaxUserID(queryCtx)
-	if err != nil || maxID <= 0 {
-		if s.idSpace.space > 0 {
-			return s.idSpace.space
+	result, _, _ := cache.flight.Do("max-user-id", func() (any, error) {
+		if space, hit := cache.cached(); hit { // 排队期间别的请求刚刷新过
+			return space, nil
 		}
-		return loginDisguiseUserIDSpaceFallback
+		// 查询不跟随发起请求的取消：它的结果要给所有合并进来的请求共用。
+		queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), disguiseIDSpaceQueryBudget)
+		defer cancel()
+		maxID, err := reader.MaxUserID(queryCtx)
+		return cache.record(maxID, err), nil
+	})
+	if space, ok := result.(int64); ok {
+		return space
 	}
-	space := nextPowerOfTwo(maxID)
-	if space < loginDisguiseUserIDSpaceFloor {
-		space = loginDisguiseUserIDSpaceFloor
-	}
-	s.idSpace.space, s.idSpace.at = space, time.Now()
-	return space
+	return loginDisguiseUserIDSpaceFallback
 }
 
 // discardPasskeyReads 做与真实路径等价的无副作用读（用户行、user handle、凭据列表各一次点查），结果丢弃。

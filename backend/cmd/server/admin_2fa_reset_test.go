@@ -206,13 +206,16 @@ func TestExecuteAdmin2FAResetReportsCommittedRecoveryAndJWTLimit(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 1, cleanupCalls)
 			require.Contains(t, out.String(), "has been reset")
-			require.Contains(t, out.String(), "Existing access JWTs remain valid until their current expiry")
 			require.NotContains(t, out.String(), "PRIVATE")
 			if cleanupFails {
 				require.Contains(t, out.String(), "database recovery completed, but")
 				require.Contains(t, out.String(), "some sessions may remain active")
+				require.Contains(t, out.String(), "Access JWTs issued before this recovery may stay valid until they expire")
 			} else {
-				require.Contains(t, out.String(), "discoverable step-up grants have been revoked")
+				// Access JWTs are revoked together with the refresh sessions, so the old
+				// "remain valid until their current expiry" warning must be gone.
+				require.Contains(t, out.String(), "Refresh sessions, access tokens and discoverable step-up grants have been revoked")
+				require.NotContains(t, out.String(), "remain valid")
 			}
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
@@ -284,10 +287,22 @@ func TestAdmin2FAResetSessionCleanupOnlyTouchesTargetUserIndexedSessions(t *test
 	for _, key := range []string{"totp:stepup:41:u41", "totp:stepup:41:family-a", "totp:stepup:41:family-b", "totp:setup:41", "totp:attempts:41", "totp:stepup:42:family-other", "sched:acc:123"} {
 		require.NoError(t, rdb.Set(ctx, key, "PRIVATE", time.Hour).Err())
 	}
+	before := time.Now().UTC().Add(-time.Second)
 	require.NoError(t, clearAdmin2FAResetSessionsWithCache(ctx, cache, rdb, 41))
 	for _, key := range []string{"refresh_token:own-a", "refresh_token:own-b", "user_refresh_tokens:41", "totp:stepup:41:u41", "totp:stepup:41:family-a", "totp:stepup:41:family-b", "totp:setup:41", "totp:attempts:41"} {
 		require.False(t, server.Exists(key), key)
 	}
+	// Access JWTs the target user already holds are revoked as well (the cutoff is "now");
+	// other users keep theirs.
+	store, ok := cache.(service.AccessTokenRevocationStore)
+	require.True(t, ok, "the production refresh-token cache must support access-token revocation")
+	cutoff, err := store.AccessTokensRevokedBefore(ctx, 41)
+	require.NoError(t, err)
+	require.False(t, cutoff.Before(before), "cutoff %s should be the recovery moment", cutoff)
+	require.False(t, cutoff.After(time.Now().UTC().Add(time.Second)))
+	untouched, err := store.AccessTokensRevokedBefore(ctx, 42)
+	require.NoError(t, err)
+	require.True(t, untouched.IsZero())
 	for _, key := range []string{"refresh_token:other", "user_refresh_tokens:42", "totp:stepup:42:family-other", "sched:acc:123"} {
 		require.True(t, server.Exists(key), key)
 	}

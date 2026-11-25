@@ -27,9 +27,9 @@ import (
 const (
 	literalAdmin2FAResetSQL       = "UPDATE users SET totp_enabled = FALSE, totp_secret_encrypted = NULL, totp_enabled_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND role = 'admin' AND status = 'active' AND deleted_at IS NULL RETURNING id"
 	literalClearPasskeysSQL       = "DELETE FROM passkey_credentials WHERE user_id = $1"
-	passkeyClearedOutputTemplate  = "Administrator two-factor authentication has been reset.\nRemoved %d Passkey credential(s) of this administrator.\nThe administrator now has neither TOTP nor a Passkey and must enroll a factor again through the existing flow (enable TOTP or register a new Passkey).\nRefresh sessions and discoverable step-up grants have been revoked.\nExisting access JWTs remain valid until their current expiry; this command does not revoke them.\n"
-	defaultResetOutputRevoked     = "Administrator two-factor authentication has been reset.\nRefresh sessions and discoverable step-up grants have been revoked.\nExisting access JWTs remain valid until their current expiry; this command does not revoke them.\n"
-	defaultResetOutputCleanupWarn = "Administrator two-factor authentication has been reset.\nWarning: database recovery completed, but refresh-session and step-up cleanup could not be completed; some sessions may remain active.\nExisting access JWTs remain valid until their current expiry; this command does not revoke them.\n"
+	passkeyClearedOutputTemplate  = "Administrator two-factor authentication has been reset.\nRemoved %d Passkey credential(s) of this administrator.\nThe administrator now has neither TOTP nor a Passkey and must enroll a factor again through the existing flow (enable TOTP or register a new Passkey).\nRefresh sessions, access tokens and discoverable step-up grants have been revoked.\n"
+	defaultResetOutputRevoked     = "Administrator two-factor authentication has been reset.\nRefresh sessions, access tokens and discoverable step-up grants have been revoked.\n"
+	defaultResetOutputCleanupWarn = "Administrator two-factor authentication has been reset.\nWarning: database recovery completed, but refresh-session, access-token and step-up cleanup could not be completed; some sessions may remain active.\nAccess JWTs issued before this recovery may stay valid until they expire.\n"
 )
 
 func newPasskeyRecoveryFlagSet() (*flag.FlagSet, *bool, *int64, *bool, *bool) {

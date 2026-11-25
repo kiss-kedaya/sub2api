@@ -49,6 +49,41 @@ func TestEnforceStepUpWithinAcceptsAGrantIssuedWithinMaxAge(t *testing.T) {
 	require.False(t, passed)
 }
 
+// 授权的年龄 = 窗口总长 - 剩余时间。剩余时间比窗口总长还长（遗留键、改小 TTL 常量之前留下的键）时年龄是负数，
+// 不是按 StepUpGrantTTL 签发的授权，无法证明它「新鲜」：fail-closed，不能因为负数不大于 maxAge 就放行（审计 AUD-6）。
+func TestEnforceStepUpWithinRejectsAGrantWhoseRemainingTTLExceedsTheWindow(t *testing.T) {
+	for _, remaining := range []time.Duration{
+		service.StepUpGrantTTL + time.Millisecond,
+		service.StepUpGrantTTL + time.Minute,
+		14 * time.Minute,
+		24 * time.Hour,
+	} {
+		passed, rec := enforceFreshForUser1(t, stubStepUpGrantChecker{granted: true, remaining: remaining}, freshTestWindow)
+		require.False(t, passed, "remaining=%s", remaining)
+		require.Equal(t, http.StatusForbidden, rec.Code, "remaining=%s", remaining)
+		require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED", "remaining=%s", remaining)
+	}
+
+	// 边界：剩余时间恰好等于窗口总长（年龄 0，刚签发）仍然放行。
+	passed, _ := enforceFreshForUser1(t, stubStepUpGrantChecker{granted: true, remaining: service.StepUpGrantTTL}, freshTestWindow)
+	require.True(t, passed)
+
+	// 只影响要求新鲜度的路由：不传 maxAge 的既有路由语义不变。
+	passed, _ = enforceFreshForUser1(t, stubStepUpGrantChecker{granted: true, remaining: 14 * time.Minute}, 0)
+	require.True(t, passed)
+}
+
+// 多因子：任何一个因子的剩余时间异常长，同样整体拒绝。
+func TestEnforceStepUpWithinRejectsAnyFactorWithAnOverlongRemainingTTL(t *testing.T) {
+	grants := factorAgedGrants{
+		service.FactorTOTP:    service.StepUpGrantTTL - 10*time.Second,
+		service.FactorPasskey: 14 * time.Minute,
+	}
+	passed, rec := enforceFreshForUser1(t, grants, freshTestWindow)
+	require.False(t, passed)
+	require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
+}
+
 // 路由级门控放行时已经写了「已跳过验证码」的响应头。新鲜度检查随后拒绝这个请求，
 // 没有跳过任何验证：这些响应头必须撤掉，否则前端会提示「刚刚免验证执行了敏感操作」。
 func TestEnforceStepUpWithinRejectionDropsTheSkipHeadersAnEarlierGateWrote(t *testing.T) {

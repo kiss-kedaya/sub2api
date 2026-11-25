@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -273,5 +274,112 @@ func TestPasskeyServiceDisguiseUserIDSpaceIsSafeForConcurrentUse(t *testing.T) {
 	}
 	wg.Wait()
 	require.Zero(t, mismatches.Load())
+	require.EqualValues(t, 1, reader.calls.Load())
+}
+
+// ---- 用户 ID 上界缓存：查询失败 / 变慢（审计 AUD-6） ----
+
+// hungMaxIDReader 模拟读库卡住：一直等到调用方给的 ctx 到期（预算用完）才返回超时错误。
+type hungMaxIDReader struct {
+	UserRepository
+	calls atomic.Int32
+}
+
+func (r *hungMaxIDReader) MaxUserID(ctx context.Context) (int64, error) {
+	r.calls.Add(1)
+	<-ctx.Done()
+	return 0, ctx.Err()
+}
+
+// 读库超时失败时：并发的伪装登录只共用一次查询（不是每个请求各查一次、持锁排队），失败结果被缓存，
+// 缓存期内的后续请求既不查库也不等待。此前 N 个并发要等 N × 500ms，且每个请求都再查一次。
+func TestPasskeyServiceDisguiseUserIDSpaceFailureIsSharedAndCached(t *testing.T) {
+	reader := &hungMaxIDReader{}
+	svc := &PasskeyService{userRepo: reader}
+	const callers = 8
+
+	start := time.Now()
+	var wg sync.WaitGroup
+	results := make([]int64, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = svc.disguiseUserIDSpace(context.Background())
+		}(i)
+	}
+	wg.Wait()
+	elapsed := time.Since(start)
+
+	require.EqualValues(t, 1, reader.calls.Load(), "并发请求必须共用同一次查询")
+	require.Less(t, elapsed, 3*disguiseIDSpaceQueryBudget, "不得持锁串行：%d 个并发的总耗时应接近一次预算，实际 %v", callers, elapsed)
+	for _, space := range results {
+		require.Equal(t, loginDisguiseUserIDSpaceFallback, space, "没有历史值时用保守常量")
+	}
+
+	// 失败结果被缓存：缓存期内不再查库，也不等待。
+	again := time.Now()
+	for i := 0; i < 50; i++ {
+		require.Equal(t, loginDisguiseUserIDSpaceFallback, svc.disguiseUserIDSpace(context.Background()))
+	}
+	require.EqualValues(t, 1, reader.calls.Load(), "失败结果缓存期内不得重查")
+	require.Less(t, time.Since(again), disguiseIDSpaceQueryBudget/2)
+
+	// 缓存期过后才重试一次。
+	svc.idSpace.mu.Lock()
+	svc.idSpace.failAt = svc.idSpace.failAt.Add(-2 * disguiseIDSpaceFailureTTL)
+	svc.idSpace.mu.Unlock()
+	require.Equal(t, loginDisguiseUserIDSpaceFallback, svc.disguiseUserIDSpace(context.Background()))
+	require.EqualValues(t, 2, reader.calls.Load())
+}
+
+// 失败期间沿用上一次成功的值（而不是退回保守常量）；成功结果过期、重查失败时同样如此，失败也只重试一次 / 10 秒。
+func TestPasskeyServiceDisguiseUserIDSpaceKeepsLastGoodValueWhileFailing(t *testing.T) {
+	reader := &maxIDReaderStub{maxID: 3000}
+	svc := &PasskeyService{userRepo: reader}
+	require.Equal(t, int64(4096), svc.disguiseUserIDSpace(context.Background()))
+
+	// 成功结果过期，之后读库一直失败。
+	svc.idSpace.mu.Lock()
+	svc.idSpace.at = svc.idSpace.at.Add(-2 * disguiseIDSpaceTTL)
+	svc.idSpace.mu.Unlock()
+	reader.err = errors.New("statement timeout")
+	for i := 0; i < 20; i++ {
+		require.Equal(t, int64(4096), svc.disguiseUserIDSpace(context.Background()), "失败期间沿用上一次成功的值")
+	}
+	require.EqualValues(t, 2, reader.calls.Load(), "一次成功 + 一次失败重查，失败期内不再重查")
+
+	// 库恢复后，失败缓存期过去就能拿到新值。
+	reader.err, reader.maxID = nil, 9000
+	svc.idSpace.mu.Lock()
+	svc.idSpace.failAt = svc.idSpace.failAt.Add(-2 * disguiseIDSpaceFailureTTL)
+	svc.idSpace.mu.Unlock()
+	require.Equal(t, int64(16384), svc.disguiseUserIDSpace(context.Background()))
+}
+
+// ctxAwareMaxIDReader 像真实的库读一样尊重 ctx：ctx 已经取消 / 到期就返回错误。
+type ctxAwareMaxIDReader struct {
+	UserRepository
+	maxID int64
+	calls atomic.Int32
+}
+
+func (r *ctxAwareMaxIDReader) MaxUserID(ctx context.Context) (int64, error) {
+	r.calls.Add(1)
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.maxID, nil
+}
+
+// 合并的查询不跟随发起请求的取消：第一个请求的 ctx 已经取消，查询照样完成并写入缓存，
+// 不会把一次取消变成所有请求的「读库失败」（用 4096 与保守常量 16384 区分「读到了」和「退回常量」）。
+func TestPasskeyServiceDisguiseUserIDSpaceQuerySurvivesCallerCancellation(t *testing.T) {
+	reader := &ctxAwareMaxIDReader{maxID: 3000}
+	svc := &PasskeyService{userRepo: reader}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.Equal(t, int64(4096), svc.disguiseUserIDSpace(ctx))
+	require.Equal(t, int64(4096), svc.disguiseUserIDSpace(context.Background()))
 	require.EqualValues(t, 1, reader.calls.Load())
 }

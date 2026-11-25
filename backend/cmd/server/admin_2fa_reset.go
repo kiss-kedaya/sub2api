@@ -161,12 +161,15 @@ func executeAdmin2FAReset(
 		message += fmt.Sprintf("Removed %d Passkey credential(s) of this administrator.\n", clearedPasskeys)
 		message += "The administrator now has neither TOTP nor a Passkey and must enroll a factor again through the existing flow (enable TOTP or register a new Passkey).\n"
 	}
+	// The cleanup also revokes every access JWT issued before this moment
+	// (service.RevokeUserSessionsForTwoFactorReset), so the administrator is signed
+	// out on every device and has to log in again.
 	if clearSessions == nil || clearSessions(ctx, cfg, userID) != nil {
-		message += "Warning: database recovery completed, but refresh-session and step-up cleanup could not be completed; some sessions may remain active.\n"
+		message += "Warning: database recovery completed, but refresh-session, access-token and step-up cleanup could not be completed; some sessions may remain active.\n"
+		message += "Access JWTs issued before this recovery may stay valid until they expire.\n"
 	} else {
-		message += "Refresh sessions and discoverable step-up grants have been revoked.\n"
+		message += "Refresh sessions, access tokens and discoverable step-up grants have been revoked.\n"
 	}
-	message += "Existing access JWTs remain valid until their current expiry; this command does not revoke them.\n"
 	if _, err := io.WriteString(out, message); err != nil {
 		return errAdmin2FAResetOutput
 	}
