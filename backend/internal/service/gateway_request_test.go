@@ -350,6 +350,27 @@ func TestFilterThinkingBlocks(t *testing.T) {
 	}
 }
 
+// TestFilterThinkingBlocks_KeepsSignatureWithoutTopLevelThinking 锁定 P0「不支持错误签名」语义：
+// 客户端回传历史 assistant thinking 块、但请求未声明顶层 thinking 时，只要签名非空，
+// 就必须原样透传给上游，让上游自行验签并返回 400；预过滤不能把它删掉变成 200。
+func TestFilterThinkingBlocks_KeepsSignatureWithoutTopLevelThinking(t *testing.T) {
+	// 无 thinking 参数 + assistant 带非空签名（可能来自其它账号/历史）：必须保留。
+	withSig := `{"model":"claude-opus-5","max_tokens":4096,"messages":[{"role":"user","content":"q"},{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"EuYECmMIDhgCKkBZ"},{"type":"text","text":"a"}]},{"role":"user","content":"q2"}]}`
+	got := FilterThinkingBlocks([]byte(withSig), "claude-opus-5")
+	require.Equal(t, withSig, string(got), "signature must reach upstream so it can reject invalid ones with 400")
+
+	// 同一 body 声明了 thinking 参数时也应保留（原有行为不回退）。
+	withThinking := `{"thinking":{"type":"adaptive"},"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"sig_123"},{"type":"text","text":"a"}]}]}`
+	require.Equal(t, withThinking, string(FilterThinkingBlocks([]byte(withThinking), "claude-opus-5")))
+
+	// 空签名 / 缺失签名：仍然剥离，保持 Claude Code 历史不带签名的兼容性。
+	emptySig := `{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":""},{"type":"text","text":"a"}]}]}`
+	require.NotContains(t, string(FilterThinkingBlocks([]byte(emptySig), "claude-opus-5")), `"type":"thinking"`)
+
+	missingSig := `{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"t"},{"type":"text","text":"a"}]}]}`
+	require.NotContains(t, string(FilterThinkingBlocks([]byte(missingSig), "claude-opus-5")), `"type":"thinking"`)
+}
+
 func TestFilterThinkingBlocksForRetry_DisablesThinkingAndPreservesAsText(t *testing.T) {
 	input := []byte(`{
 		"model":"claude-3-5-sonnet-20241022",
