@@ -1424,6 +1424,11 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 		!bytes.Contains(body, []byte(`"thinking" :`)) {
 		return body
 	}
+	// History that only carries signed thinking blocks (the usual Claude Code
+	// replay) needs no rewrite; check the raw text before decoding everything.
+	if !thinkingFilterMayChange(body) {
+		return body
+	}
 
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {

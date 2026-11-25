@@ -37,6 +37,11 @@ func normalizeStrictChatDeveloperRoles(account *Account, targetURL string, body 
 	if !requiresSystemChatRole(account, targetURL) {
 		return body, nil
 	}
+	// Nearly every body has no developer message; prove that on the raw text
+	// instead of unmarshalling the body, the messages and every message.
+	if !strictChatRolesMayChange(body) {
+		return body, nil
+	}
 	var root map[string]json.RawMessage
 	if json.Unmarshal(body, &root) != nil || root == nil {
 		return nil, errors.New("chat role normalization: invalid request object")
