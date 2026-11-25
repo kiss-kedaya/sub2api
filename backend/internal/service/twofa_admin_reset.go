@@ -106,12 +106,12 @@ type Admin2FAResetResult struct {
 //     依赖审计仓库与通知邮件服务；
 //   - 装配顺序上（wire_gen）通知邮件服务与审计服务都已就绪，可以走 Provide 函数。
 type Admin2FAResetService struct {
-	userRepo     UserRepository
-	totp         *TotpService
-	refreshCache RefreshTokenCache
-	stepUp       StepUpGrantRevoker
+	userRepo      UserRepository
+	totp          *TotpService
+	refreshCache  RefreshTokenCache
+	stepUp        StepUpGrantRevoker
 	notifications *NotificationEmailService
-	audit        *AuditLogService
+	audit         *AuditLogService
 }
 
 // Admin2FAResetDeps 是构造参数包，避免构造函数长到不可读。
@@ -136,12 +136,12 @@ type StepUpGrantRevoker interface {
 // NewAdmin2FAResetService 构造管理端破玻璃重置服务。
 func NewAdmin2FAResetService(deps Admin2FAResetDeps) *Admin2FAResetService {
 	return &Admin2FAResetService{
-		userRepo:     deps.UserRepo,
-		totp:         deps.Totp,
-		refreshCache: deps.RefreshCache,
-		stepUp:       deps.StepUp,
+		userRepo:      deps.UserRepo,
+		totp:          deps.Totp,
+		refreshCache:  deps.RefreshCache,
+		stepUp:        deps.StepUp,
 		notifications: deps.Notifications,
-		audit:        deps.Audit,
+		audit:         deps.Audit,
 	}
 }
 
@@ -434,10 +434,4 @@ func admin2FAResetOperatorName(input Admin2FAResetInput) string {
 		return "#" + strconv.FormatInt(input.ActorUserID, 10)
 	}
 	return "-"
-}
-
-// errorsIsUserSecurityStateChanged 供 handler 判定并发冲突（目标用户在此期间
-// 自己重绑/关闭了 TOTP）。
-func errorsIsUserSecurityStateChanged(err error) bool {
-	return errors.Is(err, ErrUserSecurityStateChanged)
 }

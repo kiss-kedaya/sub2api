@@ -916,7 +916,8 @@ func ProvideAdmin2FAResetService(
 		StepUp:        stepUp,
 		Notifications: notificationEmailService,
 		Audit:         auditLogService,
-	})}
+	})
+}
 
 // ProvideTotpService 在原有构造之后注入 Passkey 凭据仓库：双因子因子策略
 // （RequiredFactors）需要判断用户是否绑定了 Passkey。NewTotpService 的签名
