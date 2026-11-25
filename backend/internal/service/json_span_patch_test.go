@@ -2,6 +2,8 @@ package service
 
 import (
 	"encoding/json"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -174,6 +176,18 @@ func TestDeepSeekPlaceholderFragmentsAreValidJSON(t *testing.T) {
 
 // ---- 与旧 sjson 实现对照（oracle）----
 
+// spanOracleRuns 是每个函数的随机种子数；-short 时缩到五分之一，
+// 本地压测可以用环境变量 SPAN_ORACLE_RUNS=20000 放大。
+func spanOracleRuns(def int) int {
+	if v, err := strconv.Atoi(os.Getenv("SPAN_ORACLE_RUNS")); err == nil && v > 0 {
+		return v
+	}
+	if testing.Short() {
+		return def / 5
+	}
+	return def
+}
+
 type spanStrictness int
 
 const (
@@ -189,10 +203,7 @@ const (
 //   - 输入不是合法 JSON 时，新实现要么原样返回要么与旧实现一致。
 func runSpanOracle(t *testing.T, gen func(g *spanGen) (doc string, compact bool), mode spanStrictness, run func(t *testing.T, seed int64, input []byte) (want, got []byte)) {
 	t.Helper()
-	runs := 400
-	if testing.Short() {
-		runs = 80
-	}
+	runs := spanOracleRuns(400)
 	check := func(seed int64, text string, compact bool) {
 		input := []byte(text)
 		orig := append([]byte(nil), input...)
@@ -291,10 +302,7 @@ func TestRepairDeepSeekMissingToolOutputsMatchesSJSONOracle(t *testing.T) {
 }
 
 func TestEnsureOpenAIChatStreamUsageMatchesSJSONOracle(t *testing.T) {
-	runs := 600
-	if testing.Short() {
-		runs = 120
-	}
+	runs := spanOracleRuns(600)
 	for seed := int64(1); seed <= int64(runs); seed++ {
 		g := newSpanGen(seed)
 		text, _ := g.streamOptionsDoc()

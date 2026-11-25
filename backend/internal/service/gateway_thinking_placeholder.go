@@ -95,7 +95,7 @@ func ensureDeepSeekThinkingReplayPlaceholders(body []byte, model string) ([]byte
 		patch.insertAfterOpen(content, deepSeekThinkingPlaceholderBlock)
 		return true
 	})
-	if out, changed := patch.apply(); changed {
+	if out, changed := patch.applyIfValid(messages); changed {
 		return out, true
 	}
 	return body, false

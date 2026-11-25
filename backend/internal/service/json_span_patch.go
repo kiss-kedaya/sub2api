@@ -120,6 +120,17 @@ func (p *jsonSpanPatcher) appendMemberIn(start, end int, member string) {
 // dirty 报告是否已经收集到补丁。
 func (p *jsonSpanPatcher) dirty() bool { return len(p.patches) > 0 }
 
+// applyIfValid 同 apply，但只在被扫描的区域 region（messages/input 数组）是合法 JSON 时才输出。
+// 对非法 JSON，gjson 的遍历与 sjson 逐次重新定位对「垃圾」的理解并不一致，给它打补丁只会得到更坏的 JSON，
+// 所以原样返回（对应原来 sjson 出错时的行为）；各入口在进入这些函数之前本来就已经校验过 JSON，这里是兜底。
+// 校验比整个函数的其余部分还便宜（约 1.8 GB/s，不分配）。
+func (p *jsonSpanPatcher) applyIfValid(region gjson.Result) ([]byte, bool) {
+	if !p.dirty() || !gjson.Valid(region.Raw) {
+		return p.doc, false
+	}
+	return p.apply()
+}
+
 // apply 输出打完补丁的文本。没有补丁、或补丁无效（越界、重叠、与原文对不上）时返回 doc 本身
 // （同一个切片）和 changed=false；否则返回恰好 len(doc)+delta 字节的新切片。
 func (p *jsonSpanPatcher) apply() (out []byte, changed bool) {

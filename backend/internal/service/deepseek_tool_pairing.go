@@ -49,7 +49,7 @@ func dropOrphanDeepSeekToolMessages(body []byte) []byte {
 		return body
 	}
 	arrayStart, arrayEnd, ok := jsonResultSpan(body, messages)
-	if !ok {
+	if !ok || !gjson.Valid(messages.Raw) {
 		return body
 	}
 	out := make([]byte, 0, len(body))

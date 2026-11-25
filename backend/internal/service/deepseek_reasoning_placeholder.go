@@ -82,7 +82,7 @@ func ensureDeepSeekChatReasoningPlaceholders(account *Account, body []byte) []by
 		}
 		return true
 	})
-	if out, changed := patch.apply(); changed {
+	if out, changed := patch.applyIfValid(messages); changed {
 		return out
 	}
 	return body
@@ -123,7 +123,7 @@ func ensureDeepSeekNativeReasoningPlaceholders(account *Account, body []byte) []
 		}
 		return true
 	})
-	if out, changed := patch.apply(); changed {
+	if out, changed := patch.applyIfValid(input); changed {
 		return out
 	}
 	return body
