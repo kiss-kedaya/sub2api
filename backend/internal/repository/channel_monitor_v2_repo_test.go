@@ -16,13 +16,18 @@ func TestChannelMonitorV2DateBinOriginIsUTC(t *testing.T) {
 	require.Equal(t, "TIMESTAMPTZ '1970-01-01 00:00:00+00'", channelMonitorV2DateBinOrigin)
 	require.Equal(t, "date_bin($1::interval,m.bucket_start,TIMESTAMPTZ '1970-01-01 00:00:00+00')", channelMonitorV2DateBinExpr("m.bucket_start"))
 
-	for _, query := range []string{
-		channelMonitorV2FixedRollupBoundsSQL,
+	statements := []string{
+		channelMonitorV2FixedRollupBoundsCTE,
 		channelMonitorV2MetricsRollupSQL,
 		channelMonitorV2UserMetricsRollupSQL,
 		channelMonitorV2HistogramRollupSQL,
 		channelMonitorV2ErrorRollupSQL,
-	} {
+	}
+	// The statements that actually run embed those fragments.
+	for _, rollup := range channelMonitorV2RollupSyncs {
+		statements = append(statements, rollup.sql)
+	}
+	for _, query := range statements {
 		require.Contains(t, query, channelMonitorV2DateBinOrigin)
 		require.NotContains(t, query, "TIMESTAMPTZ '1970-01-01'")
 	}
@@ -278,7 +283,7 @@ func TestChannelMonitorV2EmptyRestrictedScopeReturnsEmptyMatrixForEveryGrouping(
 }
 
 func TestChannelMonitorV2ErrorAggregationCountsFinalUserErrorsOnly(t *testing.T) {
-	query := strings.ToLower(channelMonitorV2ErrorAggregationSQL)
+	query := strings.ToLower(channelMonitorV2FactSyncSQL)
 	require.Contains(t, query, "not current_error.is_count_tokens")
 	require.Contains(t, query, "error_type = 'cyber_policy'")
 	require.Contains(t, query, "distinct on")
@@ -295,7 +300,7 @@ func TestChannelMonitorV2ErrorAggregationCountsFinalUserErrorsOnly(t *testing.T)
 }
 
 func TestChannelMonitorV2ErrorAggregationResolvesCompositePlatform(t *testing.T) {
-	query := strings.ToLower(channelMonitorV2ErrorAggregationSQL)
+	query := strings.ToLower(channelMonitorV2FactSyncSQL)
 	// Composite groups are a routing layer: error facts must resolve the concrete
 	// account platform (joining groups/accounts) so they aggregate under the same
 	// platform key as usage facts instead of the never-enabled 'composite' platform.
@@ -335,7 +340,7 @@ func TestChannelMonitorV2ErrorSamplesExcludeNonStreamingAndImageRequests(t *test
 		"COALESCE(current_error.request_type, 0) NOT IN (4, 6)",
 		"NOT LIKE '/v1/images%'",
 	} {
-		require.Contains(t, channelMonitorV2ErrorAggregationSQL, condition)
+		require.Contains(t, channelMonitorV2FactSyncSQL, condition)
 	}
 }
 
@@ -410,7 +415,7 @@ func TestSameFixedRollupBucket(t *testing.T) {
 // Needles present in service.ClassifyChannelMonitorV2Error must appear in the
 // aggregation SQL CASE so rollup categories match drilldown classification.
 func TestChannelMonitorV2SQLTaxonomyContainsGoNeedles(t *testing.T) {
-	sql := channelMonitorV2ErrorAggregationSQL
+	sql := channelMonitorV2FactSyncSQL
 	needles := []string{
 		"blocked keyword",
 		"invalid_api_key",
