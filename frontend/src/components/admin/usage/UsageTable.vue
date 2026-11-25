@@ -517,13 +517,22 @@
             <span class="text-gray-400">{{ t('usage.serviceTier') }}</span>
             <span class="font-semibold text-cyan-300">{{ getUsageServiceTierLabel(tooltipData?.service_tier, t) }}</span>
           </div>
+          <!-- Fast / UltraFast 且后端记录了档位倍率：档位倍率 × 分组倍率 = 综合倍率；老数据没有这几行 -->
+          <div v-if="tooltipTierMultiplier !== null" data-testid="usage-tier-multiplier" class="flex items-center justify-between gap-6">
+            <span class="text-gray-400">{{ t('usage.serviceTierMultiplier') }}</span>
+            <span class="font-semibold text-cyan-300">{{ formatMultiplier(tooltipTierMultiplier) }}x</span>
+          </div>
           <div v-if="isIndependentToolUsage(tooltipData)" data-testid="fixed-tool-billing" class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.toolBilling') }}</span>
             <span class="font-semibold text-blue-400">{{ t('usage.fixedPerCall') }}</span>
           </div>
           <div v-else class="flex items-center justify-between gap-6">
-            <span class="text-gray-400">{{ t('usage.rate') }}</span>
-            <span class="font-semibold text-blue-400">{{ formatMultiplier(tooltipData?.rate_multiplier || 1) }}x</span>
+            <span class="text-gray-400">{{ tooltipTierMultiplier !== null ? t('usage.groupRate') : t('usage.rate') }}</span>
+            <span class="font-semibold text-blue-400">{{ formatMultiplier(tooltipGroupRate) }}x</span>
+          </div>
+          <div v-if="tooltipTierMultiplier !== null" data-testid="usage-combined-multiplier" class="flex items-center justify-between gap-6">
+            <span class="text-gray-400">{{ t('usage.combinedRate') }}</span>
+            <span class="font-semibold text-blue-400">{{ formatMultiplier(tooltipGroupRate * tooltipTierMultiplier) }}x</span>
           </div>
           <div class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.original') }}</span>
@@ -571,7 +580,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { formatDateTime, formatReasoningEffort, reasoningEffortValuesEqual } from '@/utils/format'
 import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
-import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
+import { getUsageServiceTierLabel, getUsageServiceTierMultiplier } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import {
   LATENCY_BAR_CLASSES,
@@ -719,6 +728,14 @@ const copyUpstreamRequestId = (upstreamRequestId: string) =>
 const tooltipVisible = ref(false)
 const tooltipPosition = ref({ x: 0, y: 0 })
 const tooltipData = ref<AdminUsageLog | null>(null)
+// 分组倍率（旧数据缺省按 1 显示）；档位倍率只在 Fast / UltraFast 且后端有记录时有值，
+// 固定计费的工具调用没有服务档位，不显示。有值时气泡多出「档位倍率」「综合倍率」两行。
+const tooltipGroupRate = computed(() => tooltipData.value?.rate_multiplier || 1)
+const tooltipTierMultiplier = computed(() =>
+  tooltipData.value && !isIndependentToolUsage(tooltipData.value)
+    ? getUsageServiceTierMultiplier(tooltipData.value)
+    : null,
+)
 
 // Tooltip state - token
 const tokenTooltipVisible = ref(false)

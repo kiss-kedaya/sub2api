@@ -32,6 +32,9 @@ const messages: Record<string, string> = {
   'usage.serviceTierUltrafast': 'Ultrafast',
   'usage.serviceTierFlex': 'Flex',
   'usage.serviceTierStandard': 'Standard',
+  'usage.serviceTierMultiplier': 'Tier multiplier',
+  'usage.groupRate': 'Group rate',
+  'usage.combinedRate': 'Combined rate',
   'usage.rate': 'Rate',
   'usage.accountMultiplier': 'Account rate',
   'usage.original': 'Original',
@@ -298,6 +301,127 @@ describe('admin UsageTable tooltip', () => {
     expect(text).toContain('$5.0000 / 1M tokens')
     expect(text).toContain('$30.0000 / 1M tokens')
     expect(text).toContain('$0.069568')
+  })
+
+  describe('service tier multiplier rows', () => {
+    const tierRow = {
+      request_id: 'req-tier-multiplier',
+      actual_cost: 0.00033530,
+      total_cost: 0.0023124,
+      account_rate_multiplier: 1,
+      rate_multiplier: 0.145,
+      service_tier: 'ultrafast',
+      service_tier_multiplier: 1,
+      input_cost: 0.001,
+      output_cost: 0.0013124,
+      cache_creation_cost: 0,
+      cache_read_cost: 0,
+      input_tokens: 100,
+      output_tokens: 100,
+    }
+
+    // 气泡左列是标签、右列是数字：返回「标签 → 数字」，断言行的顺序和内容
+    async function openTooltip(row: Record<string, unknown>) {
+      const wrapper = mount(UsageTable, {
+        props: { data: [row as never], loading: false, columns: [], showAccountBilling: false },
+        global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+      })
+      const triggers = wrapper.findAll('.group.relative')
+      await triggers[triggers.length - 1].trigger('mouseenter')
+      await nextTick()
+      const rows = wrapper.get('.fixed').findAll('div.flex.items-center.justify-between.gap-6')
+      return {
+        wrapper,
+        labels: rows.map((line) => line.findAll('span')[0].text()),
+        value: (label: string) => rows.find((line) => line.findAll('span')[0].text() === label)?.findAll('span')[1].text(),
+      }
+    }
+
+    it('adds tier multiplier and combined rate rows, and renames Rate to Group rate', async () => {
+      const { labels, value } = await openTooltip(tierRow)
+
+      // 顺序：服务档位 → 档位倍率 → 分组倍率 → 综合倍率 → 原始 → 用户扣费
+      expect(labels).toEqual(['Service tier', 'Tier multiplier', 'Group rate', 'Combined rate', 'Original', 'User billed'])
+      expect(value('Service tier')).toBe('Ultrafast')
+      expect(value('Tier multiplier')).toBe('1.00x')
+      expect(value('Group rate')).toBe('0.145x')
+      expect(value('Combined rate')).toBe('0.145x')
+      expect(value('Original')).toBe('$0.00231240')
+      expect(value('User billed')).toBe('$0.00033530')
+    })
+
+    it.each([
+      { service_tier: 'priority', rate_multiplier: 0.16, service_tier_multiplier: 2, tier: 'Fast', combined: '0.32x', multiplier: '2.00x' },
+      { service_tier: 'fast', rate_multiplier: 0.16, service_tier_multiplier: 2.5, tier: 'Fast', combined: '0.40x', multiplier: '2.50x' },
+      { service_tier: 'ultrafast', rate_multiplier: 0.16, service_tier_multiplier: 6, tier: 'Ultrafast', combined: '0.96x', multiplier: '6.00x' },
+      // 0.1 × 3 在浮点里是 0.30000000000000004，必须按 4 位小数、去掉多余的 0 显示
+      { service_tier: 'priority', rate_multiplier: 0.1, service_tier_multiplier: 3, tier: 'Fast', combined: '0.30x', multiplier: '3.00x' },
+      { service_tier: 'priority', rate_multiplier: 1.2345, service_tier_multiplier: 3, tier: 'Fast', combined: '3.7035x', multiplier: '3.00x' },
+    ])('shows $tier $service_tier_multiplier x group $rate_multiplier = $combined', async ({ tier, combined, multiplier, ...patch }) => {
+      const { value } = await openTooltip({ ...tierRow, ...patch })
+      expect(value('Service tier')).toBe(tier)
+      expect(value('Tier multiplier')).toBe(multiplier)
+      expect(value('Combined rate')).toBe(combined)
+    })
+
+    it('keeps the old tooltip for rows without a recorded tier multiplier', async () => {
+      for (const patch of [
+        { service_tier_multiplier: null },
+        { service_tier_multiplier: undefined },
+        { service_tier_multiplier: 0 },
+      ]) {
+        const { wrapper, labels, value } = await openTooltip({ ...tierRow, ...patch })
+        expect(labels).toEqual(['Service tier', 'Rate', 'Original', 'User billed'])
+        expect(value('Rate')).toBe('0.145x')
+        expect(wrapper.find('[data-testid="usage-tier-multiplier"]').exists()).toBe(false)
+        expect(wrapper.find('[data-testid="usage-combined-multiplier"]').exists()).toBe(false)
+        wrapper.unmount()
+      }
+    })
+
+    it.each([null, 'standard', 'default', 'flex'])('ignores a stray tier multiplier on a %s row', async (serviceTier) => {
+      const { wrapper, labels } = await openTooltip({ ...tierRow, service_tier: serviceTier, service_tier_multiplier: 2 })
+      expect(labels).toEqual(['Service tier', 'Rate', 'Original', 'User billed'])
+      expect(wrapper.find('[data-testid="usage-tier-multiplier"]').exists()).toBe(false)
+    })
+
+    it('does not add tier rows to fixed-price tool calls', async () => {
+      const { wrapper, labels } = await openTooltip({
+        ...tierRow,
+        inbound_endpoint: '/v1/tools/search',
+        rate_multiplier: 1,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_tokens: 0,
+        cache_read_tokens: 0,
+      })
+      expect(wrapper.find('[data-testid="fixed-tool-billing"]').exists()).toBe(true)
+      expect(labels).not.toContain('Tier multiplier')
+      expect(labels).not.toContain('Combined rate')
+    })
+
+    it('follows the hovered row when the tooltip moves to another request', async () => {
+      const wrapper = mount(UsageTable, {
+        props: {
+          data: [
+            { ...tierRow, request_id: 'req-with-tier' },
+            { ...tierRow, request_id: 'req-old-row', service_tier_multiplier: null },
+          ] as never[],
+          loading: false,
+          columns: [],
+          showAccountBilling: false,
+        },
+        global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+      })
+      // 每行两个触发点：[tokens 1, cost 1, tokens 2, cost 2]
+      const triggers = wrapper.findAll('.group.relative')
+      await triggers[1].trigger('mouseenter')
+      await nextTick()
+      expect(wrapper.text()).toContain('Combined rate')
+      await triggers[3].trigger('mouseenter')
+      await nextTick()
+      expect(wrapper.text()).not.toContain('Combined rate')
+    })
   })
 
   it.each(['/v1/tools/search', '/v1/tools/fetch'])('shows fixed billing only for zero-token independent tool %s', async (endpoint) => {

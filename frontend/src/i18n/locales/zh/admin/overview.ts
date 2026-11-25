@@ -1285,7 +1285,28 @@ export default {
         force: '强制使用 Fast（priority）',
         hint: '开启后，此分组的 OpenAI 请求会强制写入 service_tier=priority；全局 Fast/Flex 策略仍可过滤或拦截。保存后新请求立即生效，已建立的 WebSocket 会话需重连。',
         free: '免费 Fast',
-        freeHint: '该分组的 Fast 请求仍使用 priority 档位，但客户实际费用按同一请求的 Standard 价格计算。'
+        freeHint: '该分组的 Fast 请求仍使用 priority 档位，但客户实际费用按同一请求的 Standard 价格计算。',
+        // 档位倍率：叠在分组倍率上（分组倍率 0.16 × Fast 档位倍率 2 = 0.32 倍），不是独立倍率
+        tierMultiplier: {
+          fastLabel: 'Fast 档位倍率',
+          ultrafastLabel: 'UltraFast 档位倍率',
+          fastHint: '叠在分组倍率上；留空 = 官方默认（通常 2×，GPT-5.5 为 2.5×）；填 1 = 不加价。',
+          ultrafastHint: '叠在分组倍率上；留空 = 官方默认（6×）；填 1 = 不加价。',
+          placeholder: '默认 {value}',
+          useDefault: '官方默认',
+          useDefaultAria: '将 {name} 清空，使用官方默认',
+          freeOneX: '免费 1×',
+          freeOneXAria: '将 {name} 设为 1×，不加价',
+          lockedFree: '1×（免费 Fast 已开启）',
+          previewValue: '{name} 请求按 分组倍率 {rate} × 档位倍率 {multiplier} = {total}× 计费',
+          previewOfficial: '{name} 请求按 分组倍率 {rate} × 官方档位倍率 计费',
+          invalid: '{name}不合法：需大于 0、不超过 100、最多 4 位小数',
+          errors: {
+            nonPositive: '必须大于 0；想免费请填 1',
+            tooLarge: '不能超过 100',
+            tooManyDecimals: '最多 4 位小数'
+          }
+        }
       },
       invalidRequestFallback: {
         title: '无效请求兜底分组',

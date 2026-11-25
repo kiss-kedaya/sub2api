@@ -13,6 +13,20 @@ export function formatUsageServiceTier(serviceTier?: string | null): string {
   return normalized
 }
 
+/**
+ * 该行实际叠加的服务档位倍率（叠在分组倍率上）。只有 Fast / UltraFast 且后端有记录时才有值；
+ * Standard / Flex、没有记录的老数据、不是正数的值都返回 null，调用方据此决定要不要多显示一行。
+ */
+export function getUsageServiceTierMultiplier(row: {
+  service_tier?: string | null
+  service_tier_multiplier?: number | null
+}): number | null {
+  const tier = normalizeUsageServiceTier(row.service_tier)
+  if (tier !== 'priority' && tier !== 'ultrafast') return null
+  const value = row.service_tier_multiplier
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
 export function getUsageServiceTierLabel(
   serviceTier: string | null | undefined,
   translate: (key: string) => string,
