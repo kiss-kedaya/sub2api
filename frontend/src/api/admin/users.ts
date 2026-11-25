@@ -478,14 +478,20 @@ export interface ResetUser2FAResponse {
   notification_queued: boolean
   remaining_factors: string[]
   revoked_step_up_grants: boolean
+  /**
+   * 重置已提交、但没能完成的善后步骤（session_revocation / notification / audit）；
+   * 空数组表示全部完成。旧后端不返回该字段，所以是可选的。
+   */
+  incomplete_steps?: string[]
   reset_at: string
 }
 
 /**
  * 管理员破玻璃重置用户的双因素认证（TOTP）。
  *
- * 后端要求：reason 必填 1~500 字、调用者必须刚完成 step-up 2FA、机器凭据一律 403。
- * 成功后该用户的 TOTP 被清空、全部因子的 step-up 授权被撤销，并发邮件通知用户。
+ * 后端要求：reason 必填 1~500 字（入库前清洗成纯文本）、调用者必须在 60 秒内刚完成 step-up 2FA
+ * （共享的 5 分钟窗口不够新鲜）、不能重置自己、机器凭据一律 403、每个管理员每分钟 3 次 / 每小时 20 次。
+ * 成功后该用户的 TOTP 被清空、全部会话与因子的 step-up 授权被撤销，并发邮件通知用户。
  */
 export async function resetUser2FA(id: number, reason: string): Promise<ResetUser2FAResponse> {
   const { data } = await apiClient.post<ResetUser2FAResponse>(`/admin/users/${id}/reset-2fa`, { reason })

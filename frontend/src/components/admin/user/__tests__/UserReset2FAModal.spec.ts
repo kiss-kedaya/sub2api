@@ -43,7 +43,7 @@ enableAutoUnmount(afterEach)
 
 const targetUser = {
   id: 3249,
-  email: '1921089334@qq.com',
+  email: 'user-3249@example.test',
   role: 'user',
   status: 'active'
 } as any
@@ -107,7 +107,7 @@ describe('UserReset2FAModal', () => {
 
   it('展示目标用户邮箱与警告文案', () => {
     const wrapper = mountModal()
-    expect(wrapper.find('[data-test="reset-2fa-target-email"]').text()).toBe('1921089334@qq.com')
+    expect(wrapper.find('[data-test="reset-2fa-target-email"]').text()).toBe('user-3249@example.test')
     // 警告文案来自 i18n key：标题与正文都要渲染出来（t 被替换成 key）。
     expect(wrapper.html()).toContain('admin.users.reset2fa.warningTitle')
     expect(wrapper.html()).toContain('admin.users.reset2fa.warningBody')
@@ -226,6 +226,99 @@ describe('UserReset2FAModal', () => {
     expect(wrapper.emitted('close')).toBeUndefined()
     expect(showError).not.toHaveBeenCalled()
     expect(wrapper.find('[data-test="reset-2fa-error"]').exists()).toBe(false)
+  })
+
+  it('确认前提示：高危操作要当场验证，5 分钟内的旧验证不算', () => {
+    const wrapper = mountModal()
+    expect(wrapper.html()).toContain('admin.users.reset2fa.freshVerifyNotice')
+  })
+
+  it('共享 API 客户端拍平后的错误（status/code/reason）同样映射成本地化提示：重置自己', async () => {
+    resetUser2FA.mockRejectedValue({
+      status: 400,
+      code: 400,
+      reason: 'RESET_2FA_SELF_TARGET',
+      message: 'you cannot reset your own two-factor authentication through the API'
+    })
+    const wrapper = mountModal()
+    await typeReason(wrapper, '我自己忘了动态口令')
+    await submit(wrapper)
+    expect(wrapper.find('[data-test="reset-2fa-error"]').text()).toContain('admin.users.reset2fa.selfTarget')
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.emitted('success')).toBeUndefined()
+  })
+
+  it('拍平后的「未启用 2FA」「用户不存在」错误也能本地化', async () => {
+    resetUser2FA.mockRejectedValueOnce({ status: 400, reason: 'RESET_2FA_TARGET_NOT_ENABLED', message: 'this user does not have 2FA enabled' })
+    const wrapper = mountModal()
+    await typeReason(wrapper, '用户忘记动态口令')
+    await submit(wrapper)
+    expect(wrapper.find('[data-test="reset-2fa-error"]').text()).toContain('admin.users.reset2fa.targetNotEnabled')
+
+    resetUser2FA.mockRejectedValueOnce({ status: 404, reason: 'USER_NOT_FOUND', message: 'user not found' })
+    await submit(wrapper)
+    expect(wrapper.find('[data-test="reset-2fa-error"]').text()).toContain('admin.users.reset2fa.userNotFound')
+  })
+
+  it('被限流（每分钟 3 次 / 每小时 20 次）时提示稍后再试', async () => {
+    resetUser2FA.mockRejectedValue({ status: 429, retryAfter: '42', code: 429, reason: 'RATE_LIMITED', message: 'Too many requests' })
+    const wrapper = mountModal()
+    await typeReason(wrapper, '用户忘记动态口令')
+    await submit(wrapper)
+    expect(wrapper.find('[data-test="reset-2fa-error"]').text()).toContain('admin.users.reset2fa.rateLimited')
+    expect(wrapper.emitted('close')).toBeUndefined()
+  })
+
+  it('未知错误码回落到后端 message，没有 message 才用通用失败文案', async () => {
+    resetUser2FA.mockRejectedValueOnce({ status: 500, reason: 'SOMETHING_ELSE', message: 'database is down' })
+    const wrapper = mountModal()
+    await typeReason(wrapper, '用户忘记动态口令')
+    await submit(wrapper)
+    expect(wrapper.find('[data-test="reset-2fa-error"]').text()).toContain('database is down')
+
+    resetUser2FA.mockRejectedValueOnce({ status: 500 })
+    await submit(wrapper)
+    expect(wrapper.find('[data-test="reset-2fa-error"]').text()).toContain('admin.users.reset2fa.failed')
+  })
+
+  it('重置已提交但旧会话/授权没撤干净时提示让用户重新登录', async () => {
+    resetUser2FA.mockResolvedValue({
+      user_id: 3249,
+      email: targetUser.email,
+      notification_queued: true,
+      revoked_step_up_grants: false,
+      passkey_bound: false,
+      incomplete_steps: ['session_revocation']
+    })
+    const wrapper = mountModal()
+    await typeReason(wrapper, '用户忘记动态口令')
+    await submit(wrapper)
+    expect(showError).toHaveBeenCalledWith(
+      expect.stringContaining('admin.users.reset2fa.stepUpNotRevoked'),
+      expect.any(Number)
+    )
+    // 重置本身成功：弹窗照常关闭。
+    expect(wrapper.emitted('success')).toHaveLength(1)
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('重置已提交但服务端审计行没写进去时明确提示，不报「全部完成」', async () => {
+    resetUser2FA.mockResolvedValue({
+      user_id: 3249,
+      email: targetUser.email,
+      notification_queued: true,
+      revoked_step_up_grants: true,
+      passkey_bound: false,
+      incomplete_steps: ['audit']
+    })
+    const wrapper = mountModal()
+    await typeReason(wrapper, '用户忘记动态口令')
+    await submit(wrapper)
+    expect(showError).toHaveBeenCalledWith(
+      expect.stringContaining('admin.users.reset2fa.auditNotRecorded'),
+      expect.any(Number)
+    )
+    expect(wrapper.emitted('success')).toHaveLength(1)
   })
 
   it('每次重新打开都会清空上次填写的原因', async () => {

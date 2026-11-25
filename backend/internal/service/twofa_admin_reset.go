@@ -5,12 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/util/textsanitize"
+	"github.com/google/uuid"
 )
 
 // 管理端「破玻璃」重置用户 TOTP。
@@ -20,18 +21,24 @@ import (
 // 三点约束：
 //
 //  1. 正规化：管理端接口 POST /api/v1/admin/users/:id/reset-2fa，不再手改库；
-//  2. 原因必填：reason 1~500 字，缺省即 400，并原样写进审计；
+//  2. 原因必填：reason 1~500 字（入库前清洗成纯文本），缺省即 400，并写进审计；
 //  3. 必须通知用户：邮件告知「双因素认证已被管理员重置」+ 原因 + 操作时间。
 //
 // 边界（与需求一致）：
 //   - 只重置 TOTP。Passkey 凭据原样保留（不删除、不撤销），返回体与邮件都写明，
 //     避免管理员误以为一次重置清空了全部因子。
-//   - 目标用户是管理员也允许重置：管理员自己忘了 2FA 时这是唯一的自救路径，
-//     但审计里会显式标注 target_role=admin。
-//   - 无论写库成败，都撤销该用户所有因子的 step-up 授权：2FA 状态一变更，
-//     旧的 5 分钟免验证窗口就必须失效（复用 #588 的按因子枚举撤销）。
-//   - 审计里绝不记录 totp_secret（任何形式，含前缀/掩码），只记「重置前的开关
-//     状态与设置时间」。
+//   - 目标用户是其他管理员也允许重置，审计里显式标注 target_role=admin；
+//     但不允许重置自己：过 step-up 本身就要 2FA，真丢了自己的码这条路用不了，
+//     只会便宜了窗口内的会话劫持。自己丢码走服务器上的命令行（-reset-admin-2fa）。
+//   - 唯一的关键步骤是写库。读 Passkey 在写库之前（读失败就整体不写）；写库成功
+//     之后的善后（撤销会话与授权、发邮件、写审计）任何一步失败都只记日志，并在
+//     返回体的 incomplete_steps 里列出，绝不把已提交的重置变成 5xx（否则管理员
+//     重试只会撞上「未启用 2FA」）；审计行在写库成功后一定会尝试落库。
+//   - 撤销在写库之后：与 #641 命令行同一个清理函数（RevokeUserSessionsForTwoFactorReset，
+//     撤销全部 refresh token / step-up 授权 / 绑定预算）；写库失败时什么都不动，
+//     不会出现「用户被登出了、2FA 却没变」的半成功状态。
+//   - 审计里绝不记录 totp_secret（任何形式，含前缀/掩码），也不记目标用户邮箱
+//     明文（只记不可逆指纹），只记「重置前的开关状态与设置时间」。
 
 const (
 	// Admin2FAResetReasonMaxLength 是原因字段的长度上限（按字符计，不是字节）。
@@ -39,10 +46,24 @@ const (
 	// AuditActionAdminUserReset2FA 是审计记录的动作名，与 auditActionOverrides
 	// 里的路由动作名保持一致，便于按动作检索。
 	AuditActionAdminUserReset2FA = "admin.user.reset_2fa"
+
+	// Admin2FAResetFreshStepUpWindow 是破玻璃重置要求的「新鲜」二次验证窗口：
+	// 调用者的 step-up 授权必须是这么久之内刚签发的。普通敏感操作共用 5 分钟窗口
+	// （StepUpGrantTTL），但重置别人的 2FA 是能降低他人账号安全强度的高危动作，
+	// 窗口内任何旧验证都放行就和「旧授权不能替代当前 TOTP」不一致（见 TotpService.Disable）。
+	Admin2FAResetFreshStepUpWindow = 60 * time.Second
+
+	// admin2FAResetPostCommitTimeout 是写库提交之后善后（撤销、发邮件）的整体时限。
+	admin2FAResetPostCommitTimeout = 30 * time.Second
+
+	// 善后步骤名，出现在返回体 incomplete_steps 与审计 incomplete_steps 里。
+	Admin2FAResetStepSessionRevocation = "session_revocation"
+	Admin2FAResetStepNotification      = "notification"
+	Admin2FAResetStepAudit             = "audit"
 )
 
 var (
-	// ErrAdmin2FAResetReasonRequired 原因字段为空。
+	// ErrAdmin2FAResetReasonRequired 原因字段为空（清洗成纯文本之后为空也算）。
 	ErrAdmin2FAResetReasonRequired = infraerrors.BadRequest(
 		"RESET_2FA_REASON_REQUIRED", "a reset reason is required")
 	// ErrAdmin2FAResetReasonTooLong 原因字段超长。
@@ -52,6 +73,10 @@ var (
 	// ErrAdmin2FAResetTargetNotEnabled 目标用户没有启用 TOTP。
 	ErrAdmin2FAResetTargetNotEnabled = infraerrors.BadRequest(
 		"RESET_2FA_TARGET_NOT_ENABLED", "this user does not have 2FA enabled")
+	// ErrAdmin2FAResetSelfTarget 管理员试图重置自己的 2FA。
+	ErrAdmin2FAResetSelfTarget = infraerrors.BadRequest(
+		"RESET_2FA_SELF_TARGET",
+		"you cannot reset your own two-factor authentication through the API; if you lost your own authenticator, use the server-side break-glass command (-reset-admin-2fa)")
 	// ErrAdmin2FAResetUnavailable 重置能力装配缺失。
 	ErrAdmin2FAResetUnavailable = infraerrors.ServiceUnavailable(
 		"RESET_2FA_UNAVAILABLE", "two-factor reset service unavailable")
@@ -79,8 +104,9 @@ type Admin2FAResetResult struct {
 	// TargetRole 是目标用户的角色；为 admin 时前端要额外提示。
 	TargetRole string `json:"target_role"`
 	// TargetIsAdmin 便于前端直接判断（避免比较字符串）。
-	TargetIsAdmin bool   `json:"target_is_admin"`
-	Reason        string `json:"reason"`
+	TargetIsAdmin bool `json:"target_is_admin"`
+	// Reason 是清洗成纯文本之后真正入库、写进邮件的原因。
+	Reason string `json:"reason"`
 	// TotpPreviouslyEnabled / TotpEnabledAt 是重置前的状态，重置后必为 false / 空。
 	TotpPreviouslyEnabled bool       `json:"totp_previously_enabled"`
 	TotpEnabledAt         *time.Time `json:"totp_enabled_at,omitempty"`
@@ -93,9 +119,13 @@ type Admin2FAResetResult struct {
 	NotificationQueued bool `json:"notification_queued"`
 	// RemainingFactors 是重置后该用户仍需验证的因子（通常是 [passkey] 或空）。
 	RemainingFactors []string `json:"remaining_factors"`
-	// RevokedStepUpGrants 报告全部因子的 step-up 授权是否确认撤销。
-	RevokedStepUpGrants bool      `json:"revoked_step_up_grants"`
-	ResetAt             time.Time `json:"reset_at"`
+	// RevokedStepUpGrants 报告该用户的会话与全部因子的 step-up 授权是否确认撤销
+	// （字段名沿用旧版，含义已扩展到 refresh token 与绑定预算）。
+	RevokedStepUpGrants bool `json:"revoked_step_up_grants"`
+	// IncompleteSteps 列出重置已经提交、但没能完成的善后步骤
+	// （session_revocation / notification / audit）；空表示全部完成。
+	IncompleteSteps []string  `json:"incomplete_steps"`
+	ResetAt         time.Time `json:"reset_at"`
 }
 
 // Admin2FAResetService 是管理端破玻璃重置的依赖装配点。
@@ -157,23 +187,26 @@ type TotpAdminResetter interface {
 
 // AdminResetUserTOTP 是管理端破玻璃重置的唯一实现入口。
 //
-// 调用方（handler）负责 step-up 门控与机器凭据拒绝；本函数只做业务：
-// 参数校验 → 读目标用户 → 撤销全部因子的 step-up 授权 → 清 TOTP → 发邮件 → 审计。
+// 调用方（handler）负责 step-up 门控、新鲜度与机器凭据拒绝；本函数只做业务：
+// 参数校验 → 读目标用户与 Passkey → 清 TOTP → 撤销会话与授权 → 发邮件 → 审计。
 //
-// 错误语义：
+// 错误语义（全部发生在写库之前，什么都没改）：
+//   - 目标是操作者自己 → ErrAdmin2FAResetSelfTarget（HTTP 400）
 //   - 目标用户不存在 → ErrUserNotFound（HTTP 404）
 //   - 目标用户没启用 2FA → ErrAdmin2FAResetTargetNotEnabled（HTTP 400）
-//   - reason 空/超长 → 400
+//   - reason 清洗后为空/超长 → 400
+//
+// 写库成功之后本函数不再返回错误：善后失败写进 result.IncompleteSteps。
 func (s *Admin2FAResetService) AdminResetUserTOTP(ctx context.Context, input Admin2FAResetInput) (*Admin2FAResetResult, error) {
 	if s == nil || s.userRepo == nil || s.totp == nil {
 		return nil, ErrAdmin2FAResetUnavailable
 	}
-	reason := strings.TrimSpace(input.Reason)
-	if reason == "" {
-		return nil, ErrAdmin2FAResetReasonRequired
+	if input.ActorUserID > 0 && input.ActorUserID == input.TargetUserID {
+		return nil, ErrAdmin2FAResetSelfTarget
 	}
-	if utf8.RuneCountInString(reason) > Admin2FAResetReasonMaxLength {
-		return nil, ErrAdmin2FAResetReasonTooLong
+	reason, err := normalizeAdmin2FAResetReason(input.Reason)
+	if err != nil {
+		return nil, err
 	}
 	if input.TargetUserID <= 0 {
 		return nil, ErrUserNotFound
@@ -190,36 +223,28 @@ func (s *Admin2FAResetService) AdminResetUserTOTP(ctx context.Context, input Adm
 	if !user.TotpEnabled {
 		return nil, ErrAdmin2FAResetTargetNotEnabled
 	}
-
-	// 撤销放在写库之前：即使后面写库失败，也不能让旧的 5 分钟免验证窗口活着。
-	revoked := true
-	if err := s.revokeStepUpGrants(ctx, user.ID); err != nil {
-		revoked = false
-		slog.Warn("admin 2fa reset: revoke step-up grants failed",
-			"target_user_id", user.ID, "actor_user_id", input.ActorUserID, "err", err)
-	}
-
 	resetter, ok := s.userRepo.(TotpAdminResetter)
 	if !ok {
 		return nil, ErrAdmin2FAResetUnavailable
 	}
+
+	// Passkey 因子刻意不动：只读一次用于返回体与邮件说明。读失败就按「未绑定」
+	// 写邮件会错误地宣称「只剩密码」，所以必须在写库之前读：读不到就整体不写。
+	passkeyBound, err := s.totp.PasskeyFactorBound(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("read passkey factor before admin 2fa reset: %w", err)
+	}
+
+	// 唯一的关键步骤。失败原样上抛，此时没有撤销任何东西、没有发邮件、没有审计。
 	if err := resetter.ResetTotpForAdmin(ctx, user.ID); err != nil {
-		// 撤销已经发生，但重置没成：把真实错误上抛，由 handler 映射成 400/5xx。
 		return nil, err
 	}
 
-	// Passkey 因子刻意不动：只读一次用于返回体与邮件说明。
-	passkeyBound, err := s.totp.PasskeyFactorBound(ctx, user.ID)
-	if err != nil {
-		// 读不到就按「未绑定」返回会让邮件错误地宣称「只剩密码」，直接 5xx。
-		return nil, fmt.Errorf("read passkey factor after admin 2fa reset: %w", err)
-	}
+	// ---- 重置已提交。从这里开始不再返回错误，只记录没做完的善后步骤。----
 	remaining := make([]string, 0, 1)
 	if passkeyBound {
 		remaining = append(remaining, FactorPasskey.String())
 	}
-
-	resetAt := time.Now().UTC()
 	result := &Admin2FAResetResult{
 		UserID:                user.ID,
 		Email:                 user.Email,
@@ -231,72 +256,84 @@ func (s *Admin2FAResetService) AdminResetUserTOTP(ctx context.Context, input Adm
 		TotpEnabledAfter:      false,
 		PasskeyBound:          passkeyBound,
 		RemainingFactors:      remaining,
-		RevokedStepUpGrants:   revoked,
-		ResetAt:               resetAt,
+		IncompleteSteps:       []string{},
+		ResetAt:               time.Now().UTC(),
 	}
-	result.NotificationQueued = s.sendNotice(ctx, input, user, result)
 
-	// 审计：结构化的重置前后状态，绝不写 totp_secret。
-	s.auditReset(input, user, result)
+	// 善后不跟随请求取消：管理员在写库提交后断开连接，不代表这次重置没发生，旧会话照样
+	// 必须撤、用户照样必须被通知。给它们一个独立的有限时限，免得 Redis/SMTP 卡住拖死请求。
+	postCtx, cancelPost := context.WithTimeout(context.WithoutCancel(ctx), admin2FAResetPostCommitTimeout)
+	defer cancelPost()
+
+	if err := s.revokeSessionsAfterReset(postCtx, user.ID); err != nil {
+		slog.Warn("admin 2fa reset: session and step-up revocation incomplete",
+			"target_user_id", user.ID, "actor_user_id", input.ActorUserID, "err", err)
+		result.IncompleteSteps = append(result.IncompleteSteps, Admin2FAResetStepSessionRevocation)
+	} else {
+		result.RevokedStepUpGrants = true
+	}
+
+	result.NotificationQueued = s.sendNotice(postCtx, input, user, result)
+	if !result.NotificationQueued {
+		result.IncompleteSteps = append(result.IncompleteSteps, Admin2FAResetStepNotification)
+	}
+
+	// 审计：结构化的重置前后状态，绝不写 totp_secret。审计行本身写失败时只能
+	// 在返回体里说明（它没法记录自己的失败），路由级审计中间件仍会留一条请求记录。
+	if !s.auditReset(input, user, result) {
+		result.IncompleteSteps = append(result.IncompleteSteps, Admin2FAResetStepAudit)
+	}
 	return result, nil
 }
 
-// revokeStepUpGrants 撤销目标用户「所有因子 × 所有会话」的 step-up 授权。
+// normalizeAdmin2FAResetReason 把原因清洗成纯文本并校验长度。
 //
-// 两类授权都要撤：
-//  1. 2FA 登录凭证（two_factor_grant:*，按用户索引集合删）——用户用旧的
-//     "5 分钟免重复验证" Cookie 登录另一个会话的风险；
-//  2. step-up 免验证窗口（totp:stepup:<uid>:<factor>:<session>）——重置前刚
-//     过 2FA 的浏览器还能在 5 分钟内跑敏感操作。
-//
-// 会话键来自该用户的 refresh token 会话族（FamilyID）+ 遗留键 u<uid>，
-// 绝不 SCAN 整库。任一环节失败都返回错误，由调用方如实上报，不谎报「已撤销」。
-func (s *Admin2FAResetService) revokeStepUpGrants(ctx context.Context, userID int64) error {
-	var errs []error
-	if s.totp != nil {
-		if err := s.totp.RevokeTwoFactorGrantsForUser(ctx, userID); err != nil {
-			errs = append(errs, fmt.Errorf("revoke two-factor grants: %w", err))
-		}
+// 清洗与工单标题、用户名、Key 名用同一套（textsanitize）：HTML 标记、控制字符、
+// 零宽字符与 U+202E 之类的双向覆写字符都会被去掉。NUL 尤其要去掉：它会让
+// PostgreSQL 的 JSONB 拒收，重置成功了但服务层审计行丢失。清洗后为空按「必填」拒绝。
+func normalizeAdmin2FAResetReason(raw string) (string, error) {
+	reason := textsanitize.PlainText(raw)
+	if reason == "" {
+		return "", ErrAdmin2FAResetReasonRequired
 	}
-	if s.stepUp == nil {
-		errs = append(errs, errors.New("step-up grant store unavailable"))
-	} else {
-		sessionKeys := s.sessionKeysForUser(ctx, userID)
-		if _, err := s.stepUp.RevokeStepUpGrantsForUser(ctx, userID, sessionKeys); err != nil {
-			errs = append(errs, fmt.Errorf("revoke step-up grants: %w", err))
-		}
+	if utf8.RuneCountInString(reason) > Admin2FAResetReasonMaxLength {
+		return "", ErrAdmin2FAResetReasonTooLong
+	}
+	return reason, nil
+}
+
+// revokeSessionsAfterReset 撤销目标用户「所有会话 × 所有因子」的旧状态。
+//
+// 三类都要撤：
+//  1. refresh token / step-up 授权（totp:stepup:<uid>:<factor>:<session>，含遗留键
+//     u<uid>）/ 绑定预算（totp:attempts）/ 绑定会话（totp:setup）：与 #641 命令行共用
+//     RevokeUserSessionsForTwoFactorReset，重置前刚过 2FA 的浏览器不能在 5 分钟内
+//     继续跑敏感操作，账号被盗时攻击者已有的会话也被踢下线，忘码输错 5 次的用户
+//     重新绑定不会被旧预算卡住；
+//  2. 2FA 登录凭证（two_factor_grant:*，按用户索引集合删）——用户用旧的
+//     "5 分钟免重复验证" Cookie 登录另一个会话的风险。
+//
+// 任一环节失败都继续做完其余环节，错误合并返回，由调用方如实上报，不谎报「已撤销」。
+func (s *Admin2FAResetService) revokeSessionsAfterReset(ctx context.Context, userID int64) error {
+	var errs []error
+	if err := s.totp.RevokeTwoFactorGrantsForUser(ctx, userID); err != nil {
+		errs = append(errs, fmt.Errorf("revoke two-factor grants: %w", err))
+	}
+	var state TwoFactorResetStateStore
+	if s.totp.cache != nil {
+		state = s.totp.cache
+	}
+	if err := RevokeUserSessionsForTwoFactorReset(ctx, userID, s.refreshCache, s.stepUp, state); err != nil {
+		errs = append(errs, fmt.Errorf("revoke sessions and step-up grants: %w", err))
 	}
 	return errors.Join(errs...)
 }
 
-// sessionKeysForUser 列出该用户已知的会话键（refresh token 会话族 ID）。
-//
-// 列举失败时返回空切片：撤销函数内部仍会处理遗留键 u<uid>，比因为读不到
-// 会话列表就整体跳过撤销更安全。
-func (s *Admin2FAResetService) sessionKeysForUser(ctx context.Context, userID int64) []string {
-	if s.refreshCache == nil || userID <= 0 {
-		return nil
-	}
-	hashes, err := s.refreshCache.GetUserTokenHashes(ctx, userID)
-	if err != nil {
-		slog.Warn("admin 2fa reset: list refresh tokens for session keys failed",
-			"target_user_id", userID, "err", err)
-		return nil
-	}
-	keys := make([]string, 0, len(hashes))
-	seen := make(map[string]struct{}, len(hashes))
-	for _, hash := range hashes {
-		data, err := s.refreshCache.GetRefreshToken(ctx, hash)
-		if err != nil || data == nil || data.FamilyID == "" || data.UserID != userID {
-			continue
-		}
-		if _, ok := seen[data.FamilyID]; ok {
-			continue
-		}
-		seen[data.FamilyID] = struct{}{}
-		keys = append(keys, data.FamilyID)
-	}
-	return keys
+// admin2FAResetSourceID 生成每次重置独有的邮件投递台账键：投递台账按 SourceID 去重，
+// 键里只有时间戳时（旧实现用 UnixNano）同一用户两次重置在时钟精度内会撞键，第二封
+// 邮件被静默吞掉却仍报「已发出」。带上随机 UUID，每次重置必然是独立的一封。
+func admin2FAResetSourceID(userID int64) string {
+	return fmt.Sprintf("%d-%s", userID, uuid.NewString())
 }
 
 // sendNotice 发送「管理员重置了你的双因素认证」通知邮件。
@@ -304,6 +341,10 @@ func (s *Admin2FAResetService) sessionKeysForUser(ctx context.Context, userID in
 // 返回「是否已发出」。邮件是必须通知用户的动作，但重置本身已提交，不能因为
 // SMTP 抖动让整个接口报失败——那样管理员会重试，而重试会拿到「该用户未启用
 // 2FA」的 400。所以失败只降级成 result 标记 + 日志 + 审计字段。
+//
+// 邮件正文只写「管理员」+ 原因 + 时间，不带操作者的邮箱/姓名：邮件发给目标用户，
+// 目标账号可能正是被攻击者控制的那个，操作管理员的邮箱不该泄给它；用户质疑时
+// 凭操作时间 + 审计记录对账即可。
 func (s *Admin2FAResetService) sendNotice(
 	ctx context.Context,
 	input Admin2FAResetInput,
@@ -320,31 +361,26 @@ func (s *Admin2FAResetService) sendNotice(
 		slog.Warn("admin 2fa reset: target user has no email", "target_user_id", user.ID)
 		return false
 	}
-	baseURL := strings.TrimSpace(s.notifications.baseURL(ctx))
-	rebindURL := ""
-	if baseURL != "" {
-		rebindURL = strings.TrimSuffix(baseURL, "/") + "/settings/security"
-	}
+	// 重新绑定入口在前端的个人资料页（/profile，ProfileTotpCard）。基址沿用工单邮件
+	// 同一套取法：站点前端地址（frontend_url）优先，取不到才回退 api_base_url，
+	// 并校验协议/主机，非法值一律当作没配。
+	rebindURL := ticketEmailLink(ctx, s.notifications.settingRepo, "/profile")
 	variables := map[string]string{
 		"reset_reason":        result.Reason,
 		"reset_at":            result.ResetAt.Format("2006-01-02 15:04:05 UTC"),
 		"remaining_factors":   admin2FAResetRemainingFactorText(result.RemainingFactors),
 		"passkey_retained":    admin2FAResetYesNo(result.PasskeyBound),
 		"target_is_admin":     admin2FAResetYesNo(result.TargetIsAdmin),
-		"operator_name":       admin2FAResetOperatorName(input),
 		"rebind_url":          rebindURL,
 		"rebind_link_display": firstNonEmpty(rebindURL, "-"),
 	}
-	// 每次重置都必须是独立的一封：SourceID 带时间戳，否则投递台账会把同一用户的
-	// 第二次重置当成「已发过」而静默吞掉。
-	sourceID := fmt.Sprintf("%d-%d", user.ID, result.ResetAt.UnixNano())
 	err := s.notifications.Send(ctx, NotificationEmailSendInput{
 		Event:          NotificationEmailEventAdminSecurityTwoFactorReset,
 		RecipientEmail: recipient,
 		RecipientName:  firstNonEmpty(strings.TrimSpace(user.Username), emailRecipientName(recipient)),
 		UserID:         user.ID,
 		SourceType:     "admin_2fa_reset",
-		SourceID:       sourceID,
+		SourceID:       admin2FAResetSourceID(user.ID),
 		Variables:      variables,
 	})
 	if err != nil {
@@ -357,12 +393,12 @@ func (s *Admin2FAResetService) sendNotice(
 }
 
 // auditReset 写一条同步审计（不经异步队列），因为破玻璃是低频高风险操作，
-// 必须保证「接口返回成功时审计已在库里」。
-func (s *Admin2FAResetService) auditReset(input Admin2FAResetInput, user *User, result *Admin2FAResetResult) {
+// 必须保证「接口返回成功时审计已在库里」。返回审计行是否确认落库。
+func (s *Admin2FAResetService) auditReset(input Admin2FAResetInput, user *User, result *Admin2FAResetResult) bool {
 	if s.audit == nil {
 		slog.Error("admin 2fa reset: audit service unavailable, reset not audited",
 			"target_user_id", user.ID, "actor_user_id", input.ActorUserID)
-		return
+		return false
 	}
 	entry := &AuditLog{
 		CreatedAt:  result.ResetAt,
@@ -377,8 +413,9 @@ func (s *Admin2FAResetService) auditReset(input Admin2FAResetInput, user *User, 
 		ActorRole:  input.ActorRole,
 		AuthMethod: input.AuthMethod,
 		Extra: map[string]any{
-			"target_user_id":         user.ID,
-			"target_user_email":      user.Email,
+			"target_user_id": user.ID,
+			// 只存不可逆指纹，不存邮箱明文（与认证审计的 email_hash 同一套）。
+			"target_email_hash":      HashAuditEmail(user.Email),
 			"target_role":            user.Role,
 			"target_is_admin":        user.IsAdmin(),
 			"reason":                 result.Reason,
@@ -389,6 +426,7 @@ func (s *Admin2FAResetService) auditReset(input Admin2FAResetInput, user *User, 
 			"remaining_factors":      strings.Join(result.RemainingFactors, ","),
 			"revoked_step_up_grants": result.RevokedStepUpGrants,
 			"notification_queued":    result.NotificationQueued,
+			"incomplete_steps":       strings.Join(result.IncompleteSteps, ","),
 			"reset_at":               result.ResetAt.Format(time.RFC3339),
 		},
 	}
@@ -400,7 +438,9 @@ func (s *Admin2FAResetService) auditReset(input Admin2FAResetInput, user *User, 
 	if err := s.audit.RecordNow(context.WithoutCancel(context.Background()), entry); err != nil {
 		slog.Error("admin 2fa reset: audit insert failed",
 			"target_user_id", user.ID, "actor_user_id", input.ActorUserID, "err", err)
+		return false
 	}
+	return true
 }
 
 func admin2FAResetEnabledAtValue(t *time.Time) string {
@@ -422,16 +462,4 @@ func admin2FAResetYesNo(value bool) string {
 		return "yes"
 	}
 	return "no"
-}
-
-// admin2FAResetOperatorName 只回传管理员邮箱，不回传任何凭证。
-// 邮件里让人知道「是哪个管理员操作的」，便于用户质疑时对账。
-func admin2FAResetOperatorName(input Admin2FAResetInput) string {
-	if email := strings.TrimSpace(input.ActorEmail); email != "" {
-		return email
-	}
-	if input.ActorUserID > 0 {
-		return "#" + strconv.FormatInt(input.ActorUserID, 10)
-	}
-	return "-"
 }

@@ -109,36 +109,61 @@ func (p *PanelRateLimiter) SecretSealWrite() gin.HandlerFunc {
 	return p.fixedUserTier("api_key_secret_write", apiKeySecretWriteRPM, nil)
 }
 
+// admin2FAResetPerMinute / admin2FAResetPerHour 是破玻璃重置他人 2FA 的固定限流：
+// 每个管理员每分钟 3 次、每小时 20 次。这个接口一次降低一个账号的安全强度，没有批量
+// 用法；正常处理工单一次一个。上限是给「会话被劫持后批量清空别人 2FA」设的天花板。
+const (
+	admin2FAResetPerMinute = 3
+	admin2FAResetPerHour   = 20
+)
+
+// Admin2FAReset 是破玻璃重置他人 2FA 的固定档按管理员限流（每分钟 3 次 + 每小时 20 次，
+// 两档都要过）。与面板限流设置无关：这是安全护栏，始终存在；底层 Redis 出错时 fail-open
+// （该路由本身要过 step-up，Redis 不可用时门控已经 fail-closed）。
+func (p *PanelRateLimiter) Admin2FAReset() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if p.fixedUserAllow(c, "admin_2fa_reset", admin2FAResetPerMinute, panelRateLimitWindow, nil) &&
+			p.fixedUserAllow(c, "admin_2fa_reset_hourly", admin2FAResetPerHour, time.Hour, nil) {
+			c.Next()
+		}
+	}
+}
+
 // fixedUserTier 是「固定档按用户限流」的公共实现：不读面板限流设置、始终存在；
 // 没有认证主体时放行；底层 Redis 出错时 fail-open。counts 非 nil 时只给返回 true 的请求计数。
 func (p *PanelRateLimiter) fixedUserTier(bucket string, rpm int, counts func(*gin.Context) bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if p == nil || p.limiter == nil {
+		if p.fixedUserAllow(c, bucket, rpm, panelRateLimitWindow, counts) {
 			c.Next()
-			return
 		}
-		subject, ok := GetAuthSubjectFromContext(c)
-		if !ok || subject.UserID <= 0 {
-			c.Next()
-			return
-		}
-		if counts != nil && !counts(c) {
-			c.Next()
-			return
-		}
-		key := "panel:" + bucket + ":user:" + strconv.FormatInt(subject.UserID, 10)
-		result, err := p.limiter.Allow(c.Request.Context(), key, rpm, panelRateLimitWindow)
-		if err != nil {
-			slog.Warn("panel fixed-tier rate limit check failed, allowing request", "bucket", bucket, "error", err)
-			c.Next()
-			return
-		}
-		if !result.Allowed {
-			abortPanelRateLimited(c, result.RetryAfter)
-			return
-		}
-		c.Next()
 	}
+}
+
+// fixedUserAllow 对「当前认证用户 + bucket」做一次固定窗口计数。返回 true 表示放行
+// （包括没有限流器/没有认证主体/不计数/Redis 出错这些放行分支）；返回 false 表示已写
+// 429 并中止请求，调用方不要再继续。
+func (p *PanelRateLimiter) fixedUserAllow(c *gin.Context, bucket string, limit int, window time.Duration, counts func(*gin.Context) bool) bool {
+	if p == nil || p.limiter == nil {
+		return true
+	}
+	subject, ok := GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		return true
+	}
+	if counts != nil && !counts(c) {
+		return true
+	}
+	key := "panel:" + bucket + ":user:" + strconv.FormatInt(subject.UserID, 10)
+	result, err := p.limiter.Allow(c.Request.Context(), key, limit, window)
+	if err != nil {
+		slog.Warn("panel fixed-tier rate limit check failed, allowing request", "bucket", bucket, "error", err)
+		return true
+	}
+	if !result.Allowed {
+		abortPanelRateLimited(c, result.RetryAfter)
+		return false
+	}
+	return true
 }
 
 // requestRegeneratesKey 报告 PUT /keys/:id 的请求体是否带 regenerate_key=true。

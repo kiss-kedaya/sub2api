@@ -151,7 +151,7 @@ func RegisterAdminRoutes(
 		registerDashboardRoutes(admin, h)
 
 		// 用户管理
-		registerUserManagementRoutes(admin, h, stepUpAuth)
+		registerUserManagementRoutes(admin, h, stepUpAuth, panelRateLimiter)
 
 		// 分组管理
 		registerGroupRoutes(admin, h, stepUpAuth)
@@ -427,7 +427,7 @@ func registerDashboardRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	}
 }
 
-func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
+func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware, panelRateLimiter *middleware.PanelRateLimiter) {
 	users := admin.Group("/users")
 	{
 		users.GET("", h.Admin.User.List)
@@ -463,10 +463,13 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers, s
 		// 平台配额直接决定用户可用额度：改配额/重置配额窗口要求 step-up。
 		users.PUT("/:id/platform-quotas", gin.HandlerFunc(stepUpAuth), h.Admin.User.UpdateUserPlatformQuotas)
 		users.POST("/:id/platform-quotas/reset", gin.HandlerFunc(stepUpAuth), h.Admin.User.ResetUserPlatformQuotaWindow)
-		// 破玻璃重置 2FA：清空目标用户的 TOTP 并撤销其全部因子的 step-up 授权，
+		// 破玻璃重置 2FA：清空目标用户的 TOTP 并撤销其全部会话与因子的 step-up 授权，
 		// 是「能降低他人账号安全强度」的高风险动作。必须真人 step-up（机器凭据
 		// 一律 403），原因必填并写审计，同时邮件通知目标用户。Passkey 保留。
-		users.POST("/:id/reset-2fa", gin.HandlerFunc(stepUpAuth), h.Admin.User.ResetUser2FA)
+		// 处理器内另外拒绝「重置自己」并要求 60 秒内刚完成的新鲜验证（不吃共享的 5 分钟
+		// 窗口）。限流挂在 step-up 之后、处理器之前：每个管理员每分钟 3 次、每小时 20 次
+		// （被自重置/新鲜度检查拒绝的请求也计数，那也是一次对这个高危接口的尝试）。
+		users.POST("/:id/reset-2fa", gin.HandlerFunc(stepUpAuth), panelRateLimiter.Admin2FAReset(), h.Admin.User.ResetUser2FA)
 
 		// User attribute values
 		users.GET("/:id/attributes", h.Admin.UserAttribute.GetUserAttributes)

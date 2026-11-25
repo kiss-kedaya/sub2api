@@ -27,6 +27,8 @@ type admin2FAResetRepo struct {
 	getErr     error
 	resetCalls int
 	resetErr   error
+	// afterReset 在写库成功之后立即执行（模拟管理员在提交瞬间断开连接）。
+	afterReset func()
 }
 
 func (r *admin2FAResetRepo) GetByID(context.Context, int64) (*service.User, error) {
@@ -46,6 +48,9 @@ func (r *admin2FAResetRepo) ResetTotpForAdmin(context.Context, int64) error {
 	r.user.TotpEnabled = false
 	r.user.TotpSecretEncrypted = nil
 	r.user.TotpEnabledAt = nil
+	if r.afterReset != nil {
+		r.afterReset()
+	}
 	return nil
 }
 
@@ -53,19 +58,27 @@ func (r *admin2FAResetRepo) ResetTotpForAdmin(context.Context, int64) error {
 type admin2FAResetPasskeys struct {
 	service.PasskeyRepository
 	records []service.PasskeyCredentialRecord
+	err     error
 }
 
 func (p *admin2FAResetPasskeys) ListByUserID(context.Context, int64) ([]service.PasskeyCredentialRecord, error) {
+	if p.err != nil {
+		return nil, p.err
+	}
 	return p.records, nil
 }
 
 // admin2FAResetAuditCapture 捕获服务层同步写入的审计记录。
 type admin2FAResetAuditCapture struct {
 	service.AuditLogRepository
-	entries []*service.AuditLog
+	entries   []*service.AuditLog
+	insertErr error
 }
 
 func (c *admin2FAResetAuditCapture) Insert(_ context.Context, entry *service.AuditLog) error {
+	if c.insertErr != nil {
+		return c.insertErr
+	}
 	copied := *entry
 	c.entries = append(c.entries, &copied)
 	return nil
@@ -145,7 +158,10 @@ func newLineWriter(conn net.Conn) *smtpLineWriter { return &smtpLineWriter{conn:
 
 func (w *smtpLineWriter) write(line string) { _, _ = w.conn.Write([]byte(line)) }
 
-type smtpLineReader struct{ buf []byte; conn net.Conn }
+type smtpLineReader struct {
+	buf  []byte
+	conn net.Conn
+}
 
 func newLineReader(conn net.Conn) *smtpLineReader { return &smtpLineReader{conn: conn} }
 
@@ -218,25 +234,34 @@ func (r *admin2FAResetSettingsRepo) Delete(_ context.Context, key string) error 
 }
 
 type admin2FAResetFixtureOptions struct {
-	passkeys    []service.PasskeyCredentialRecord
-	enableSMTP  bool
+	passkeys   []service.PasskeyCredentialRecord
+	enableSMTP bool
 	// plainCache 用一层只声明 TotpCache 接口的包装，模拟「缓存实现不支持
 	// 按用户撤销 2FA 凭证」的装配，用来验证撤销失败时如实上报而不是谎报成功。
 	plainCache bool
+	// passkeyErr 让读取 Passkey 失败（重置前预检）。
+	passkeyErr error
+	// auditErr 让服务层审计行写入失败。
+	auditErr error
 }
 
 // admin2FAResetFixture 组装一次可用的破玻璃重置环境。
 type admin2FAResetFixture struct {
 	svc       *service.Admin2FAResetService
 	repo      *admin2FAResetRepo
+	totp      *service.TotpService
 	totpCache service.TotpCache
 	// rawCache 是具体的 *repository.TotpCache：只有它实现了 step-up 授权撤销。
-	rawCache *repository.TotpCache
-	stepUp   service.StepUpGrantRevoker
-	audit    *admin2FAResetAuditCapture
-	smtp     *admin2FAResetSMTP
-	user     *service.User
-	settings *admin2FAResetSettingsRepo
+	rawCache     *repository.TotpCache
+	refreshCache service.RefreshTokenCache
+	stepUp       service.StepUpGrantRevoker
+	audit        *admin2FAResetAuditCapture
+	smtp         *admin2FAResetSMTP
+	user         *service.User
+	settings     *admin2FAResetSettingsRepo
+	passkeys     *admin2FAResetPasskeys
+	// notifications 是装配进 svc 的通知邮件服务（没开 SMTP 时没有发信能力）。
+	notifications *service.NotificationEmailService
 }
 
 func newAdmin2FAResetFixture(t *testing.T, opts admin2FAResetFixtureOptions) *admin2FAResetFixture {
@@ -247,7 +272,7 @@ func newAdmin2FAResetFixture(t *testing.T, opts admin2FAResetFixtureOptions) *ad
 	secretCipher := "v1:encrypted-secret-should-never-enter-audit"
 	user := &service.User{
 		ID:                  3249,
-		Email:               "1921089334@qq.com",
+		Email:               "user-3249@example.test",
 		Username:            "uid3249",
 		Role:                service.RoleUser,
 		Status:              service.StatusActive,
@@ -276,7 +301,8 @@ func newAdmin2FAResetFixture(t *testing.T, opts admin2FAResetFixtureOptions) *ad
 		cache = plainTotpCache{totpCache}
 	}
 	totpService := service.NewTotpService(repo, nil, cache, nil, nil, nil)
-	totpService.SetPasskeyRepository(&admin2FAResetPasskeys{records: opts.passkeys})
+	passkeys := &admin2FAResetPasskeys{records: opts.passkeys, err: opts.passkeyErr}
+	totpService.SetPasskeyRepository(passkeys)
 
 	settings := &admin2FAResetSettingsRepo{values: map[string]string{
 		service.SettingKeySiteName:    "TestSite",
@@ -305,7 +331,7 @@ func newAdmin2FAResetFixture(t *testing.T, opts admin2FAResetFixtureOptions) *ad
 		notifications = service.NewNotificationEmailService(settings, service.NewEmailService(settings, nil))
 	}
 
-	auditRepo := &admin2FAResetAuditCapture{}
+	auditRepo := &admin2FAResetAuditCapture{insertErr: opts.auditErr}
 	auditService := service.NewAuditLogService(auditRepo, nil)
 
 	return &admin2FAResetFixture{
@@ -317,14 +343,18 @@ func newAdmin2FAResetFixture(t *testing.T, opts admin2FAResetFixtureOptions) *ad
 			Notifications: notifications,
 			Audit:         auditService,
 		}),
-		repo:      repo,
-		totpCache: totpCache,
-		rawCache:  totpCacheStore,
-		stepUp:    totpCacheStore,
-		audit:     auditRepo,
-		smtp:      smtp,
-		user:      user,
-		settings:  settings,
+		repo:          repo,
+		totp:          totpService,
+		totpCache:     totpCache,
+		rawCache:      totpCacheStore,
+		refreshCache:  refreshCache,
+		stepUp:        totpCacheStore,
+		audit:         auditRepo,
+		smtp:          smtp,
+		user:          user,
+		settings:      settings,
+		passkeys:      passkeys,
+		notifications: notifications,
 	}
 }
 
@@ -425,7 +455,7 @@ func TestAdminResetUserTOTPSuccessResetsTotpRevokesGrantsAuditsAndNotifies(t *te
 		require.NoError(t, err)
 		require.True(t, granted)
 	}
-// 旁观者用户的授权必须原样保留（只写授权键，不需要 refresh 会话索引）。
+	// 旁观者用户的授权必须原样保留（只写授权键，不需要 refresh 会话索引）。
 	require.NoError(t, fixture.totpCache.SetStepUpGrant(ctx, 99, "family-b", service.FactorTOTP, service.StepUpGrantTTL))
 
 	result, err := fixture.svc.AdminResetUserTOTP(ctx, admin2FAResetInput("用户忘记动态口令，经工单核实身份"))
@@ -463,7 +493,9 @@ func TestAdminResetUserTOTPSuccessResetsTotpRevokesGrantsAuditsAndNotifies(t *te
 	require.Equal(t, "用户忘记动态口令，经工单核实身份", entry.Extra["reason"])
 	require.Equal(t, false, entry.Extra["totp_enabled_after"])
 	require.Equal(t, true, entry.Extra["totp_enabled_before"])
-	require.Equal(t, fixture.user.Email, entry.Extra["target_user_email"])
+	// 审计里不再存邮箱明文，只存不可逆指纹。
+	require.Equal(t, service.HashAuditEmail(fixture.user.Email), entry.Extra["target_email_hash"])
+	require.NotContains(t, entry.Extra, "target_user_email")
 	require.Equal(t, "user", entry.Extra["target_role"])
 	require.Equal(t, false, entry.Extra["target_is_admin"])
 	require.Equal(t, true, entry.Extra["revoked_step_up_grants"])
@@ -477,8 +509,10 @@ func TestAdminResetUserTOTPSuccessResetsTotpRevokesGrantsAuditsAndNotifies(t *te
 	// 4) 通知邮件真的发出，正文含原因/管理员/重绑入口，且不泄露密文。
 	require.Equal(t, int64(1), fixture.smtp.messages.Load())
 	body, _ := fixture.smtp.lastBody.Load().(string)
-	require.Contains(t, body, "admin@example.test")
-	require.Contains(t, body, "/settings/security")
+	// 邮件只写「管理员」+ 原因 + 时间，不带操作者邮箱；重新绑定入口是前端真实存在的 /profile。
+	require.NotContains(t, body, "admin@example.test")
+	require.Contains(t, body, "https://app.example.test/profile")
+	require.NotContains(t, body, "/settings/security")
 	require.NotContains(t, body, "encrypted-secret")
 	require.True(t, result.NotificationQueued)
 }
