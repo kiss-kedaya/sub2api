@@ -243,6 +243,10 @@ func normalizeOpenAIResponsesLiteToolsPayload(body []byte) ([]byte, bool, error)
 	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {
 		return body, false, fmt.Errorf("decode responses Lite request body: %w", err)
 	}
+	if requestBody == nil {
+		// 合法 JSON `null` 解出来是 nil map，后面的写入会 panic；它不是对象，原样放行让上游去拒绝。
+		return body, false, nil
+	}
 	changed, err := normalizeOpenAIResponsesLiteTools(requestBody)
 	if err != nil || !changed {
 		return body, false, err
@@ -295,6 +299,10 @@ func normalizeOpenAIResponsesLiteParallelToolCallsPayload(body []byte) ([]byte, 
 	var requestBody map[string]any
 	if err := decodeOpenAIJSONUseNumber(body, &requestBody); err != nil {
 		return body, false, fmt.Errorf("decode responses Lite request body: %w", err)
+	}
+	if requestBody == nil {
+		// 同上：`null` 不是对象，往 nil map 写 parallel_tool_calls 会 panic。
+		return body, false, nil
 	}
 	changed, err := ensureOpenAIResponsesLiteParallelToolCalls(requestBody, false)
 	if err != nil || !changed {

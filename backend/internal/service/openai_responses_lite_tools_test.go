@@ -612,3 +612,24 @@ func TestOpenAIGatewayServiceForward_DisablesParallelToolCallsForResponsesLiteAP
 		})
 	}
 }
+
+// 合法 JSON `null`（以及它前后带空白）解成 nil map：以前两个 Lite 归一化函数会往 nil map 写入而 panic。
+// 现在原样放行（不是对象，让上游去拒绝），不改写、不报错。
+func TestNormalizeOpenAIResponsesLitePayload_NullBodyDoesNotPanic(t *testing.T) {
+	for _, body := range []string{`null`, " null\n", "\tnull "} {
+		t.Run(strings.TrimSpace(body), func(t *testing.T) {
+			require.NotPanics(t, func() {
+				got, changed, err := normalizeOpenAIResponsesLiteParallelToolCallsPayload([]byte(body))
+				require.NoError(t, err)
+				require.False(t, changed)
+				require.Equal(t, body, string(got))
+			})
+			require.NotPanics(t, func() {
+				got, changed, err := normalizeOpenAIResponsesLiteToolsPayload([]byte(body))
+				require.NoError(t, err)
+				require.False(t, changed)
+				require.Equal(t, body, string(got))
+			})
+		})
+	}
+}
