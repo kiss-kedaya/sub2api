@@ -13,6 +13,24 @@ type jsonValidator struct {
 	primitive           []byte
 }
 
+// validPrimitive is json.Valid for the number/true/false/null tokens collected
+// in primitive, with the overwhelmingly common shapes decided without a scan.
+func validPrimitive(p []byte) bool {
+	switch string(p) {
+	case "true", "false", "null", "0":
+		return true
+	}
+	if len(p) > 0 && p[0] >= '1' && p[0] <= '9' {
+		for _, c := range p[1:] {
+			if c < '0' || c > '9' {
+				return json.Valid(p)
+			}
+		}
+		return true
+	}
+	return json.Valid(p)
+}
+
 func (v *jsonValidator) state() byte {
 	if len(v.stack) == 0 {
 		return v.root
@@ -28,10 +46,10 @@ func (v *jsonValidator) set(s byte) {
 }
 func (v *jsonValidator) complete() bool {
 	if len(v.primitive) > 0 {
-		if !json.Valid(v.primitive) {
+		if !validPrimitive(v.primitive) {
 			return false
 		}
-		v.primitive = nil
+		v.primitive = v.primitive[:0]
 		v.set(3)
 	}
 	return len(v.stack) == 0 && v.root == 3 && !v.quoted
@@ -78,10 +96,10 @@ func (v *jsonValidator) accept(b byte) bool {
 			v.primitive = append(v.primitive, b)
 			return true
 		}
-		if !json.Valid(v.primitive) {
+		if !validPrimitive(v.primitive) {
 			return false
 		}
-		v.primitive = nil
+		v.primitive = v.primitive[:0]
 		v.set(3)
 	}
 	if space {
