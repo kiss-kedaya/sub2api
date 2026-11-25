@@ -1655,14 +1655,29 @@ func (r *usageLogRepository) getAccountStatsBreakdown(ctx context.Context, accou
 // Callers must verify ownership of every id first: the query is keyed by
 // api_key_id only. The single statement is what keeps a page of keys from
 // turning into one aggregate query per row (N+1).
+//
+// The window start is aligned down to the minute and the result is shared through the stats cache, like the
+// other usage aggregates: every visit to the key list used to scan 24 hours of each listed key's rows, and
+// since `since` carried the call's own nanoseconds, no two visits could ever share an answer. The shared
+// window can start up to a minute earlier than the caller asked and lags by at most the cache TTL.
 func (r *usageLogRepository) GetAPIKeysUsage24h(ctx context.Context, apiKeyIDs []int64, since time.Time) (map[int64]usagestats.APIKeyUsage24h, error) {
 	ids := normalizePositiveInt64IDs(apiKeyIDs)
+	if len(ids) == 0 {
+		return map[int64]usagestats.APIKeyUsage24h{}, nil
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	since = since.Truncate(time.Minute)
+	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+		Query: "api_keys_usage_24h", APIKeyIDs: ids, Start: since.UTC().Format(time.RFC3339Nano),
+	}, func(ctx context.Context) (map[int64]usagestats.APIKeyUsage24h, error) {
+		return r.getAPIKeysUsage24hUncached(ctx, ids, since)
+	})
+}
+
+func (r *usageLogRepository) getAPIKeysUsage24hUncached(ctx context.Context, ids []int64, since time.Time) (map[int64]usagestats.APIKeyUsage24h, error) {
 	out := make(map[int64]usagestats.APIKeyUsage24h, len(ids))
 	for _, id := range ids {
 		out[id] = usagestats.APIKeyUsage24h{}
-	}
-	if len(ids) == 0 {
-		return out, nil
 	}
 	const query = `
 		SELECT

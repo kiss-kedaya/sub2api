@@ -55,6 +55,15 @@ func safeDateFormat(granularity string) string {
 	return "YYYY-MM-DD"
 }
 
+// usageGranularityKey is the granularity as the SQL sees it: every spelling safeDateFormat does not know
+// is grouped by day, so it shares the day entry instead of minting one cache key per spelling.
+func usageGranularityKey(granularity string) string {
+	if _, ok := dateFormatWhitelist[granularity]; ok {
+		return granularity
+	}
+	return "day"
+}
+
 // appendRawUsageLogModelWhereCondition keeps direct model filters on the raw model column for backward
 // compatibility with historical rows. Requested/upstream analytics must use
 // resolveModelDimensionExpression instead.

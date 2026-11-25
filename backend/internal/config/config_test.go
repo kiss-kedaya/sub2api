@@ -2737,3 +2737,38 @@ func TestLoad_DefaultGatewayImageStreamConfig(t *testing.T) {
 		t.Fatalf("image stream timeout = %d, want greater than ordinary stream timeout %d", cfg.Gateway.ImageStreamDataIntervalTimeout, cfg.Gateway.StreamDataIntervalTimeout)
 	}
 }
+
+func TestLoadDefaultUsageStatsCache(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.UsageStatsCache.Enabled)
+	require.Equal(t, 60*time.Second, cfg.UsageStatsCache.TTL)
+	// At most 8 user/API-key aggregates scan usage_logs at once per process; the surplus queues for 8 s.
+	require.Equal(t, 8, cfg.UsageStatsCache.MaxConcurrentLoads)
+	require.Equal(t, 8*time.Second, cfg.UsageStatsCache.LoadQueueTimeout)
+}
+
+func TestLoadUsageStatsCacheGateFromEnv(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("USAGE_STATS_CACHE_MAX_CONCURRENT_LOADS", "0")
+	t.Setenv("USAGE_STATS_CACHE_LOAD_QUEUE_TIMEOUT", "2s")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 0, cfg.UsageStatsCache.MaxConcurrentLoads, "0 turns the cap off")
+	require.Equal(t, 2*time.Second, cfg.UsageStatsCache.LoadQueueTimeout)
+}
+
+func TestValidateUsageStatsCacheGateIsNonNegative(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	cfg.UsageStatsCache.MaxConcurrentLoads = -1
+	require.EqualError(t, cfg.Validate(), "usage_stats_cache.max_concurrent_loads must be non-negative")
+	cfg.UsageStatsCache.MaxConcurrentLoads = 0
+	cfg.UsageStatsCache.LoadQueueTimeout = -time.Second
+	require.EqualError(t, cfg.Validate(), "usage_stats_cache.load_queue_timeout must be non-negative")
+	cfg.UsageStatsCache.LoadQueueTimeout = 0
+	require.NoError(t, cfg.Validate(), "a zero queue timeout (turn surplus away at once) is valid")
+}
