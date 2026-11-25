@@ -64,6 +64,12 @@ func (r *usageLogRepository) RecordTrafficBatch(ctx context.Context, events []se
 		args = append(args, e.EventID, e.UserID, e.APIKeyID, e.GroupID, e.RequestID, e.Endpoint, e.Method, e.StartedAt, e.FinishedAt, e.UploadBytes, e.DownloadBytes, e.StatusCode, e.Outcome, e.RequestComplete, e.MeasurementVersion)
 	}
 	query := fmt.Sprintf(insertTrafficSQLTemplate, strings.Join(values, ","))
+	// Traffic metering is diagnostic, so its commit does not wait for a WAL flush
+	// (see execAsyncCommit). A repository bound to a caller's transaction has no
+	// pool (r.db is nil) and must leave that transaction's durability alone.
+	if r.db != nil {
+		return execAsyncCommit(ctx, r.db, query, args...)
+	}
 	_, err := r.sql.ExecContext(ctx, query, args...)
 	return err
 }

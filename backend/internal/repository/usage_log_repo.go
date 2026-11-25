@@ -159,6 +159,10 @@ type usageLogRepository struct {
 	sql             sqlExecutor
 	db              *sql.DB
 
+	connectionExited     chan struct{}         // closed once the trace writer has drained and returned
+	connectionQueueDrops connectionDropCounter // trace queue full
+	connectionWriteDrops connectionDropCounter // trace oversize, bad value or database failure
+
 	createBatchOnce      sync.Once
 	createBatchCh        chan usageLogCreateRequest
 	bestEffortBatchOnce  sync.Once
