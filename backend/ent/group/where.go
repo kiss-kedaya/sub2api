@@ -330,6 +330,16 @@ func FreeOpenaiFast(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldFreeOpenaiFast, v))
 }
 
+// OpenaiFastMultiplier applies equality check predicate on the "openai_fast_multiplier" field. It's identical to OpenaiFastMultiplierEQ.
+func OpenaiFastMultiplier(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenaiFastMultiplier, v))
+}
+
+// OpenaiUltrafastMultiplier applies equality check predicate on the "openai_ultrafast_multiplier" field. It's identical to OpenaiUltrafastMultiplierEQ.
+func OpenaiUltrafastMultiplier(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenaiUltrafastMultiplier, v))
+}
+
 // RequireOauthOnly applies equality check predicate on the "require_oauth_only" field. It's identical to RequireOauthOnlyEQ.
 func RequireOauthOnly(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRequireOauthOnly, v))
@@ -2603,6 +2613,106 @@ func FreeOpenaiFastEQ(v bool) predicate.Group {
 // FreeOpenaiFastNEQ applies the NEQ predicate on the "free_openai_fast" field.
 func FreeOpenaiFastNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldFreeOpenaiFast, v))
+}
+
+// OpenaiFastMultiplierEQ applies the EQ predicate on the "openai_fast_multiplier" field.
+func OpenaiFastMultiplierEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenaiFastMultiplier, v))
+}
+
+// OpenaiFastMultiplierNEQ applies the NEQ predicate on the "openai_fast_multiplier" field.
+func OpenaiFastMultiplierNEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldOpenaiFastMultiplier, v))
+}
+
+// OpenaiFastMultiplierIn applies the In predicate on the "openai_fast_multiplier" field.
+func OpenaiFastMultiplierIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldOpenaiFastMultiplier, vs...))
+}
+
+// OpenaiFastMultiplierNotIn applies the NotIn predicate on the "openai_fast_multiplier" field.
+func OpenaiFastMultiplierNotIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldOpenaiFastMultiplier, vs...))
+}
+
+// OpenaiFastMultiplierGT applies the GT predicate on the "openai_fast_multiplier" field.
+func OpenaiFastMultiplierGT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldOpenaiFastMultiplier, v))
+}
+
+// OpenaiFastMultiplierGTE applies the GTE predicate on the "openai_fast_multiplier" field.
+func OpenaiFastMultiplierGTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldOpenaiFastMultiplier, v))
+}
+
+// OpenaiFastMultiplierLT applies the LT predicate on the "openai_fast_multiplier" field.
+func OpenaiFastMultiplierLT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldOpenaiFastMultiplier, v))
+}
+
+// OpenaiFastMultiplierLTE applies the LTE predicate on the "openai_fast_multiplier" field.
+func OpenaiFastMultiplierLTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldOpenaiFastMultiplier, v))
+}
+
+// OpenaiFastMultiplierIsNil applies the IsNil predicate on the "openai_fast_multiplier" field.
+func OpenaiFastMultiplierIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldOpenaiFastMultiplier))
+}
+
+// OpenaiFastMultiplierNotNil applies the NotNil predicate on the "openai_fast_multiplier" field.
+func OpenaiFastMultiplierNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldOpenaiFastMultiplier))
+}
+
+// OpenaiUltrafastMultiplierEQ applies the EQ predicate on the "openai_ultrafast_multiplier" field.
+func OpenaiUltrafastMultiplierEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldOpenaiUltrafastMultiplier, v))
+}
+
+// OpenaiUltrafastMultiplierNEQ applies the NEQ predicate on the "openai_ultrafast_multiplier" field.
+func OpenaiUltrafastMultiplierNEQ(v float64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldOpenaiUltrafastMultiplier, v))
+}
+
+// OpenaiUltrafastMultiplierIn applies the In predicate on the "openai_ultrafast_multiplier" field.
+func OpenaiUltrafastMultiplierIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldOpenaiUltrafastMultiplier, vs...))
+}
+
+// OpenaiUltrafastMultiplierNotIn applies the NotIn predicate on the "openai_ultrafast_multiplier" field.
+func OpenaiUltrafastMultiplierNotIn(vs ...float64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldOpenaiUltrafastMultiplier, vs...))
+}
+
+// OpenaiUltrafastMultiplierGT applies the GT predicate on the "openai_ultrafast_multiplier" field.
+func OpenaiUltrafastMultiplierGT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldOpenaiUltrafastMultiplier, v))
+}
+
+// OpenaiUltrafastMultiplierGTE applies the GTE predicate on the "openai_ultrafast_multiplier" field.
+func OpenaiUltrafastMultiplierGTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldOpenaiUltrafastMultiplier, v))
+}
+
+// OpenaiUltrafastMultiplierLT applies the LT predicate on the "openai_ultrafast_multiplier" field.
+func OpenaiUltrafastMultiplierLT(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldOpenaiUltrafastMultiplier, v))
+}
+
+// OpenaiUltrafastMultiplierLTE applies the LTE predicate on the "openai_ultrafast_multiplier" field.
+func OpenaiUltrafastMultiplierLTE(v float64) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldOpenaiUltrafastMultiplier, v))
+}
+
+// OpenaiUltrafastMultiplierIsNil applies the IsNil predicate on the "openai_ultrafast_multiplier" field.
+func OpenaiUltrafastMultiplierIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldOpenaiUltrafastMultiplier))
+}
+
+// OpenaiUltrafastMultiplierNotNil applies the NotNil predicate on the "openai_ultrafast_multiplier" field.
+func OpenaiUltrafastMultiplierNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldOpenaiUltrafastMultiplier))
 }
 
 // RequireOauthOnlyEQ applies the EQ predicate on the "require_oauth_only" field.

@@ -44,6 +44,10 @@ type OpenAIRecordUsageInput struct {
 	// Responses handler from stream=true + compaction_trigger. It never stores
 	// the request payload and does not replace the transport request type.
 	NativeCompactionV2 bool
+	// TierPolicy is the group's service-tier billing policy captured while the
+	// request was in flight, from the same group object that decided any forced
+	// tier. nil falls back to the key's routed group.
+	TierPolicy *OpenAITierBillingPolicy
 	ChannelUsageFields
 }
 
@@ -148,22 +152,17 @@ func openAIUsagePricingAt(input *OpenAIRecordUsageInput) time.Time {
 	return timezone.Now()
 }
 
-func groupBillsOpenAIFastAtStandard(apiKey *APIKey, account *Account, serviceTier string) bool {
-	if apiKey == nil || apiKey.Group == nil || !apiKey.Group.FreeOpenAIFast {
-		return false
+// openAITierPolicyForUsage picks the policy that bills this request: the one
+// captured at request time when it belongs to the billed group, else the policy
+// of the key's routed group.
+func openAITierPolicyForUsage(input *OpenAIRecordUsageInput, apiKey *APIKey) *OpenAITierBillingPolicy {
+	if input != nil && input.TierPolicy != nil && apiKey != nil && apiKey.GroupID != nil && input.TierPolicy.GroupID == *apiKey.GroupID {
+		return input.TierPolicy
 	}
-	if account == nil || !account.IsOpenAI() {
-		return false
+	if apiKey == nil {
+		return nil
 	}
-	if !groupSupportsOpenAIFast(apiKey.Group.Platform) {
-		return false
-	}
-	switch normalizeBillingServiceTier(serviceTier) {
-	case "priority", "fast":
-		return true
-	default:
-		return false
-	}
+	return openAITierBillingPolicyFromGroup(apiKey.Group)
 }
 
 // RecordUsage records usage and deducts balance
@@ -391,29 +390,26 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		}
 	}
 
-	// Free Fast changes only the customer charge. Keep priority TotalCost and
-	// service_tier for upstream accounting, but evaluate ActualCost once more at
-	// the Standard tier using the same channel, peak, and long-context policy.
-	if !result.NonBillableUpstreamError && groupBillsOpenAIFastAtStandard(apiKey, billingAccount, serviceTier) {
-		standardCost, standardErr := s.calculateOpenAIRecordUsageCost(
-			ctx,
-			result,
-			apiKey,
-			billingModels,
-			multiplier,
-			imageMultiplier,
-			videoMultiplier,
-			baseMultiplier,
-			tokens,
-			"",
-			longContextBillingGate,
-			pricingAt,
-		)
-		if standardErr != nil {
-			return standardErr
-		}
-		if cost != nil && standardCost != nil {
-			cost.ActualCost = standardCost.ActualCost
+	// A group can bill Fast / UltraFast at its own tier multiplier (on top of the
+	// group rate) instead of the official tier price; "free Fast" is a Fast
+	// multiplier of 1. That changes only the customer charge: TotalCost keeps the
+	// real upstream tier price and service_tier keeps the tier actually used.
+	// ActualCost is evaluated again at the Standard tier with the same channel,
+	// peak and long-context policy, then scaled by the tier multiplier.
+	var serviceTierMultiplier *float64
+	if !result.NonBillableUpstreamError && result.ForcedBillingCost <= 0 && cost != nil &&
+		(cost.BillingMode == "" || cost.BillingMode == string(BillingModeToken)) {
+		if tier := openAIPremiumTier(serviceTier); tier != "" {
+			override, hasOverride := openAITierPolicyForUsage(input, apiKey).multiplierFor(billingAccount, tier)
+			applied, appliedErr := s.applyOpenAITierBilling(
+				billingCtx, result, apiKey, billingModels, billingMultiplier, imageMultiplier, videoMultiplier,
+				billingBaseMultiplier, tokens, serviceTier, longContextBillingGate, pricingAt, cost, override, hasOverride,
+			)
+			if appliedErr != nil && hasOverride {
+				// Never fall back to the surcharged price once the group promised another one.
+				return appliedErr
+			}
+			serviceTierMultiplier = applied
 		}
 	}
 
@@ -475,6 +471,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		UpstreamResponseModel:    optionalTrimmedStringPtr(result.UpstreamResponseModel),
 		UpstreamModelMismatch:    upstreamModelMismatch(sentModel, result.UpstreamResponseModel),
 		ServiceTier:              result.ServiceTier,
+		ServiceTierMultiplier:    serviceTierMultiplier,
 		ReasoningEffort:          result.ReasoningEffort,
 		RequestedReasoningEffort: coalesceRequestedReasoningEffort(result.RequestedReasoningEffort, result.ReasoningEffort),
 		InboundEndpoint:          optionalTrimmedStringPtr(input.InboundEndpoint),

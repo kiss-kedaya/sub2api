@@ -129,7 +129,7 @@ func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 
-	idx := len(prepared.args) - 4
+	idx := len(prepared.args) - 5
 	arg, ok := prepared.args[idx].(sql.NullString)
 	require.True(t, ok, "upstream_request_id arg should be sql.NullString, got %T", prepared.args[idx])
 	require.True(t, arg.Valid)
@@ -142,4 +142,28 @@ func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	require.False(t, nullArg.Valid, "absent upstream request id must be NULL")
 
 	require.Contains(t, usageLogSelectColumns, "upstream_request_id")
+}
+
+// TestPrepareUsageLogInsert_ServiceTierMultiplierArgWiring pins service_tier_multiplier
+// right before created_at (which stays last), numeric, and NULL when it was not recorded.
+func TestPrepareUsageLogInsert_ServiceTierMultiplierArgWiring(t *testing.T) {
+	multiplier := 1.5
+	prepared := prepareUsageLogInsert(&service.UsageLog{
+		UserID: 1, APIKeyID: 2, RequestID: "client:tier-multiplier", Model: "gpt-5",
+		ServiceTierMultiplier: &multiplier, CreatedAt: time.Now().UTC(),
+	})
+	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
+
+	idx := len(prepared.args) - 2
+	require.Equal(t, "numeric", usageLogInsertArgTypes[idx])
+	require.Equal(t, "timestamptz", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-1], "created_at stays last")
+	got, ok := prepared.args[idx].(*float64)
+	require.True(t, ok, "service_tier_multiplier arg should be a *float64, got %T", prepared.args[idx])
+	require.NotNil(t, got)
+	require.Equal(t, multiplier, *got)
+
+	absent := prepareUsageLogInsert(&service.UsageLog{UserID: 1, APIKeyID: 2, RequestID: "client:no-tier", Model: "gpt-5", CreatedAt: time.Now().UTC()})
+	none, ok := absent.args[idx].(*float64)
+	require.True(t, ok)
+	require.Nil(t, none, "a request without a premium tier stores NULL")
 }

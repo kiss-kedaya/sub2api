@@ -374,6 +374,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, res)
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
+			// Same group object the request context forces tiers from, captured before the async billing task runs.
+			tierPolicy := service.OpenAITierBillingPolicyFromRequest(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
@@ -389,6 +391,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					IPAddress:          clientIP,
 					APIKeyService:      h.apiKeyService,
 					QuotaPlatform:      quotaPlatform,
+					TierPolicy:         tierPolicy,
 					SessionID:          sessionID,
 					ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel),
 					PricingAt:          pricingAt,

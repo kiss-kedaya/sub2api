@@ -257,6 +257,8 @@ type CreateGroupRequest struct {
 	AllowLive                      bool                                      `json:"allow_live"`
 	ForceOpenAIFast                bool                                      `json:"force_openai_fast"`
 	FreeOpenAIFast                 bool                                      `json:"free_openai_fast"`
+	OpenAIFastMultiplier           *float64                                  `json:"openai_fast_multiplier"`
+	OpenAIUltrafastMultiplier      *float64                                  `json:"openai_ultrafast_multiplier"`
 	RequireOAuthOnly               bool                                      `json:"require_oauth_only"`
 	RequirePrivacySet              bool                                      `json:"require_privacy_set"`
 	DefaultMappedModel             string                                    `json:"default_mapped_model"`
@@ -338,6 +340,8 @@ type UpdateGroupRequest struct {
 	AllowLive                      *bool                                      `json:"allow_live"`
 	ForceOpenAIFast                *bool                                      `json:"force_openai_fast"`
 	FreeOpenAIFast                 *bool                                      `json:"free_openai_fast"`
+	OpenAIFastMultiplier           *float64                                   `json:"openai_fast_multiplier"`
+	OpenAIUltrafastMultiplier      *float64                                   `json:"openai_ultrafast_multiplier"`
 	RequireOAuthOnly               *bool                                      `json:"require_oauth_only"`
 	RequirePrivacySet              *bool                                      `json:"require_privacy_set"`
 	DefaultMappedModel             *string                                    `json:"default_mapped_model"`
@@ -749,6 +753,8 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		AllowLive:                       req.AllowLive,
 		ForceOpenAIFast:                 req.ForceOpenAIFast,
 		FreeOpenAIFast:                  req.FreeOpenAIFast,
+		OpenAIFastMultiplier:            req.OpenAIFastMultiplier,
+		OpenAIUltrafastMultiplier:       req.OpenAIUltrafastMultiplier,
 		RequireOAuthOnly:                req.RequireOAuthOnly,
 		RequirePrivacySet:               req.RequirePrivacySet,
 		DefaultMappedModel:              req.DefaultMappedModel,
@@ -912,6 +918,8 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		AllowLive:                       req.AllowLive,
 		ForceOpenAIFast:                 req.ForceOpenAIFast,
 		FreeOpenAIFast:                  req.FreeOpenAIFast,
+		OpenAIFastMultiplier:            req.OpenAIFastMultiplier,
+		OpenAIUltrafastMultiplier:       req.OpenAIUltrafastMultiplier,
 		RequireOAuthOnly:                req.RequireOAuthOnly,
 		RequirePrivacySet:               req.RequirePrivacySet,
 		DefaultMappedModel:              req.DefaultMappedModel,

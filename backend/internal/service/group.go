@@ -114,10 +114,14 @@ type Group struct {
 	CrossProtocolConversionEnabled bool
 	// ReturnRequestedModel overrides response model metadata with the requested
 	// model name, including requests that have no model mapping.
-	ReturnRequestedModel        bool `json:"return_requested_model"`
-	AllowLive                   bool
-	ForceOpenAIFast             bool // 强制 OpenAI 网关请求使用 service_tier=priority
-	FreeOpenAIFast              bool // OpenAI Fast 请求按 Standard 价格向用户计费
+	ReturnRequestedModel bool `json:"return_requested_model"`
+	AllowLive            bool
+	ForceOpenAIFast      bool // 强制 OpenAI 网关请求使用 service_tier=priority
+	FreeOpenAIFast       bool // OpenAI Fast 请求按 Standard 价格向用户计费
+	// OpenAIFastMultiplier / OpenAIUltrafastMultiplier 是叠加在分组倍率上的服务档位倍率：
+	// nil 沿用官方档位价（Fast 通常 2x，GPT-5.5 为 2.5x，UltraFast 6x）；1 表示不加价。
+	OpenAIFastMultiplier        *float64
+	OpenAIUltrafastMultiplier   *float64
 	RequireOAuthOnly            bool // 仅允许非 apikey 类型账号关联（OpenAI/Antigravity/Anthropic/Gemini）
 	RequirePrivacySet           bool // 调度时仅允许 privacy 已成功设置的账号（OpenAI/Antigravity/Anthropic/Gemini）
 	DefaultMappedModel          string

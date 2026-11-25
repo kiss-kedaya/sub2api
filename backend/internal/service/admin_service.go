@@ -306,6 +306,8 @@ type CreateGroupInput struct {
 	AllowLive                      bool
 	ForceOpenAIFast                bool
 	FreeOpenAIFast                 bool
+	OpenAIFastMultiplier           *float64 // 0 或 nil = 官方档位价；(0,100] = 叠加在分组倍率上的倍率
+	OpenAIUltrafastMultiplier      *float64
 	DefaultMappedModel             string
 	RequireOAuthOnly               bool
 	RequirePrivacySet              bool
@@ -402,6 +404,8 @@ type UpdateGroupInput struct {
 	AllowLive                      *bool
 	ForceOpenAIFast                *bool
 	FreeOpenAIFast                 *bool
+	OpenAIFastMultiplier           *float64 // 省略=不改；0=清除回官方档位价；(0,100]=设置
+	OpenAIUltrafastMultiplier      *float64
 	DefaultMappedModel             *string
 	RequireOAuthOnly               *bool
 	RequirePrivacySet              *bool

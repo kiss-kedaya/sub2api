@@ -994,6 +994,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, res)
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
+			// Same group object the request context forces tiers from, captured before the async billing task runs.
+			tierPolicy := service.OpenAITierBillingPolicyFromRequest(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			// 计费锚点：本请求实际使用的分组（选路后 apiKey 已替换为路由 key）。
@@ -1017,6 +1019,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					RequestPayloadHash: requestPayloadHash,
 					APIKeyService:      h.apiKeyService,
 					QuotaPlatform:      quotaPlatform,
+					TierPolicy:         tierPolicy,
 					SessionID:          sessionID,
 					ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel),
 					PricingAt:          pricingAt,
@@ -1715,6 +1718,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, res)
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
+			// Same group object the request context forces tiers from, captured before the async billing task runs.
+			tierPolicy := service.OpenAITierBillingPolicyFromRequest(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
@@ -1731,6 +1736,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					RequestPayloadHash: requestPayloadHash,
 					APIKeyService:      h.apiKeyService,
 					QuotaPlatform:      quotaPlatform,
+					TierPolicy:         tierPolicy,
 					SessionID:          sessionID,
 					ChannelUsageFields: clientRequestedUsageFields(c, channelMappingMsg, reqModel, res.UpstreamModel),
 					PricingAt:          pricingAt,

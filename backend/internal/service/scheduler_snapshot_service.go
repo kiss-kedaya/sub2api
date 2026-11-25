@@ -219,7 +219,14 @@ type schedulerGroupRefreshState struct {
 	nextTry  time.Time
 }
 
-const schedulerGroupCacheTTL = 10 * time.Minute
+// schedulerGroupCacheTTL bounds how long one process may keep serving a group
+// policy it read earlier. The outbox event for a group edit is consumed by a single
+// process (they share one watermark), so every other process only learns about the
+// edit when its own entry expires: with the old 10 minutes a rate or policy change
+// kept applying to a share of requests for minutes after the admin saved it.
+// Expired entries are refreshed in the background (coalesced per group), never on
+// the request path.
+const schedulerGroupCacheTTL = 30 * time.Second
 
 const (
 	schedulerGroupRefreshRetryBase = 5 * time.Second

@@ -134,6 +134,10 @@ const (
 	FieldForceOpenaiFast = "force_openai_fast"
 	// FieldFreeOpenaiFast holds the string denoting the free_openai_fast field in the database.
 	FieldFreeOpenaiFast = "free_openai_fast"
+	// FieldOpenaiFastMultiplier holds the string denoting the openai_fast_multiplier field in the database.
+	FieldOpenaiFastMultiplier = "openai_fast_multiplier"
+	// FieldOpenaiUltrafastMultiplier holds the string denoting the openai_ultrafast_multiplier field in the database.
+	FieldOpenaiUltrafastMultiplier = "openai_ultrafast_multiplier"
 	// FieldRequireOauthOnly holds the string denoting the require_oauth_only field in the database.
 	FieldRequireOauthOnly = "require_oauth_only"
 	// FieldRequirePrivacySet holds the string denoting the require_privacy_set field in the database.
@@ -294,6 +298,8 @@ var Columns = []string{
 	FieldAllowLive,
 	FieldForceOpenaiFast,
 	FieldFreeOpenaiFast,
+	FieldOpenaiFastMultiplier,
+	FieldOpenaiUltrafastMultiplier,
 	FieldRequireOauthOnly,
 	FieldRequirePrivacySet,
 	FieldDefaultMappedModel,
@@ -743,6 +749,16 @@ func ByForceOpenaiFast(opts ...sql.OrderTermOption) OrderOption {
 // ByFreeOpenaiFast orders the results by the free_openai_fast field.
 func ByFreeOpenaiFast(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFreeOpenaiFast, opts...).ToFunc()
+}
+
+// ByOpenaiFastMultiplier orders the results by the openai_fast_multiplier field.
+func ByOpenaiFastMultiplier(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldOpenaiFastMultiplier, opts...).ToFunc()
+}
+
+// ByOpenaiUltrafastMultiplier orders the results by the openai_ultrafast_multiplier field.
+func ByOpenaiUltrafastMultiplier(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldOpenaiUltrafastMultiplier, opts...).ToFunc()
 }
 
 // ByRequireOauthOnly orders the results by the require_oauth_only field.

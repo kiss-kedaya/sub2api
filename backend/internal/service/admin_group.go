@@ -373,8 +373,36 @@ func sanitizeGroupOpenAIFast(group *Group) {
 		if group != nil {
 			group.ForceOpenAIFast = false
 			group.FreeOpenAIFast = false
+			group.OpenAIFastMultiplier = nil
+			group.OpenAIUltrafastMultiplier = nil
 		}
 	}
+}
+
+// openAITierMultiplierMax bounds the per-group Fast/UltraFast tier multiplier.
+const openAITierMultiplierMax = 100.0
+
+// normalizeGroupOpenAITierMultiplier turns the admin input into the stored value:
+// nil/0 clears the override (official tier pricing), (0,100] is stored rounded to
+// four decimals, anything else is rejected.
+func normalizeGroupOpenAITierMultiplier(field string, value *float64) (*float64, error) {
+	if value == nil {
+		return nil, nil
+	}
+	v := *value
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > openAITierMultiplierMax {
+		return nil, infraerrors.Newf(http.StatusBadRequest, "INVALID_OPENAI_TIER_MULTIPLIER",
+			"%s must be greater than 0 and at most %g (0 clears it)", field, openAITierMultiplierMax)
+	}
+	if v == 0 {
+		return nil, nil
+	}
+	rounded := math.Round(v*10000) / 10000
+	if rounded <= 0 {
+		return nil, infraerrors.Newf(http.StatusBadRequest, "INVALID_OPENAI_TIER_MULTIPLIER",
+			"%s must be at least 0.0001 (0 clears it)", field)
+	}
+	return &rounded, nil
 }
 
 func normalizeCreateGroupInputForSimpleMode(input *CreateGroupInput) {
@@ -584,6 +612,15 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		return nil, err
 	}
 
+	openAIFastMultiplier, err := normalizeGroupOpenAITierMultiplier("openai_fast_multiplier", input.OpenAIFastMultiplier)
+	if err != nil {
+		return nil, err
+	}
+	openAIUltrafastMultiplier, err := normalizeGroupOpenAITierMultiplier("openai_ultrafast_multiplier", input.OpenAIUltrafastMultiplier)
+	if err != nil {
+		return nil, err
+	}
+
 	group := &Group{
 		Name:                            input.Name,
 		Description:                     input.Description,
@@ -640,6 +677,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		AllowLive:                       input.AllowLive,
 		ForceOpenAIFast:                 input.ForceOpenAIFast,
 		FreeOpenAIFast:                  input.FreeOpenAIFast,
+		OpenAIFastMultiplier:            openAIFastMultiplier,
+		OpenAIUltrafastMultiplier:       openAIUltrafastMultiplier,
 		RequireOAuthOnly:                input.RequireOAuthOnly,
 		RequirePrivacySet:               input.RequirePrivacySet,
 		DefaultMappedModel:              input.DefaultMappedModel,
@@ -1098,6 +1137,20 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.FreeOpenAIFast != nil {
 		group.FreeOpenAIFast = *input.FreeOpenAIFast
+	}
+	if input.OpenAIFastMultiplier != nil {
+		multiplier, err := normalizeGroupOpenAITierMultiplier("openai_fast_multiplier", input.OpenAIFastMultiplier)
+		if err != nil {
+			return nil, err
+		}
+		group.OpenAIFastMultiplier = multiplier
+	}
+	if input.OpenAIUltrafastMultiplier != nil {
+		multiplier, err := normalizeGroupOpenAITierMultiplier("openai_ultrafast_multiplier", input.OpenAIUltrafastMultiplier)
+		if err != nil {
+			return nil, err
+		}
+		group.OpenAIUltrafastMultiplier = multiplier
 	}
 	if input.RequireOAuthOnly != nil {
 		group.RequireOAuthOnly = *input.RequireOAuthOnly

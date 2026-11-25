@@ -3208,19 +3208,14 @@ func TestOpenAIGatewayServiceRecordUsage_FreeOpenAIFastChargesStandard(t *testin
 	require.InDelta(t, standardTotal*0.5, usageRepo.lastLog.ActualCost, 1e-10)
 }
 
-func TestGroupBillsOpenAIFastAtStandardRequiresOpenAIAccount(t *testing.T) {
-	apiKey := &APIKey{Group: &Group{Platform: PlatformComposite, FreeOpenAIFast: true}}
+func TestOpenAITierBillingPolicyRequiresOpenAIAccount(t *testing.T) {
+	policy := openAITierBillingPolicyFromGroup(&Group{Platform: PlatformComposite, FreeOpenAIFast: true})
 
-	require.True(t, groupBillsOpenAIFastAtStandard(
-		apiKey,
-		&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
-		"priority",
-	))
-	require.False(t, groupBillsOpenAIFastAtStandard(
-		apiKey,
-		&Account{Platform: PlatformGrok, Type: AccountTypeAPIKey},
-		"priority",
-	))
+	multiplier, ok := policy.multiplierFor(&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}, "priority")
+	require.True(t, ok)
+	require.Equal(t, 1.0, multiplier)
+	_, ok = policy.multiplierFor(&Account{Platform: PlatformGrok, Type: AccountTypeAPIKey}, "priority")
+	require.False(t, ok)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_ServiceTierNeverRaisedByUpstreamResponse(t *testing.T) {

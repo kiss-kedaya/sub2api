@@ -816,6 +816,34 @@ func (_c *GroupCreate) SetNillableFreeOpenaiFast(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetOpenaiFastMultiplier sets the "openai_fast_multiplier" field.
+func (_c *GroupCreate) SetOpenaiFastMultiplier(v float64) *GroupCreate {
+	_c.mutation.SetOpenaiFastMultiplier(v)
+	return _c
+}
+
+// SetNillableOpenaiFastMultiplier sets the "openai_fast_multiplier" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableOpenaiFastMultiplier(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetOpenaiFastMultiplier(*v)
+	}
+	return _c
+}
+
+// SetOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field.
+func (_c *GroupCreate) SetOpenaiUltrafastMultiplier(v float64) *GroupCreate {
+	_c.mutation.SetOpenaiUltrafastMultiplier(v)
+	return _c
+}
+
+// SetNillableOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableOpenaiUltrafastMultiplier(v *float64) *GroupCreate {
+	if v != nil {
+		_c.SetOpenaiUltrafastMultiplier(*v)
+	}
+	return _c
+}
+
 // SetRequireOauthOnly sets the "require_oauth_only" field.
 func (_c *GroupCreate) SetRequireOauthOnly(v bool) *GroupCreate {
 	_c.mutation.SetRequireOauthOnly(v)
@@ -1788,6 +1816,14 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.FreeOpenaiFast(); ok {
 		_spec.SetField(group.FieldFreeOpenaiFast, field.TypeBool, value)
 		_node.FreeOpenaiFast = value
+	}
+	if value, ok := _c.mutation.OpenaiFastMultiplier(); ok {
+		_spec.SetField(group.FieldOpenaiFastMultiplier, field.TypeFloat64, value)
+		_node.OpenaiFastMultiplier = &value
+	}
+	if value, ok := _c.mutation.OpenaiUltrafastMultiplier(); ok {
+		_spec.SetField(group.FieldOpenaiUltrafastMultiplier, field.TypeFloat64, value)
+		_node.OpenaiUltrafastMultiplier = &value
 	}
 	if value, ok := _c.mutation.RequireOauthOnly(); ok {
 		_spec.SetField(group.FieldRequireOauthOnly, field.TypeBool, value)
@@ -2984,6 +3020,54 @@ func (u *GroupUpsert) SetFreeOpenaiFast(v bool) *GroupUpsert {
 // UpdateFreeOpenaiFast sets the "free_openai_fast" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateFreeOpenaiFast() *GroupUpsert {
 	u.SetExcluded(group.FieldFreeOpenaiFast)
+	return u
+}
+
+// SetOpenaiFastMultiplier sets the "openai_fast_multiplier" field.
+func (u *GroupUpsert) SetOpenaiFastMultiplier(v float64) *GroupUpsert {
+	u.Set(group.FieldOpenaiFastMultiplier, v)
+	return u
+}
+
+// UpdateOpenaiFastMultiplier sets the "openai_fast_multiplier" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateOpenaiFastMultiplier() *GroupUpsert {
+	u.SetExcluded(group.FieldOpenaiFastMultiplier)
+	return u
+}
+
+// AddOpenaiFastMultiplier adds v to the "openai_fast_multiplier" field.
+func (u *GroupUpsert) AddOpenaiFastMultiplier(v float64) *GroupUpsert {
+	u.Add(group.FieldOpenaiFastMultiplier, v)
+	return u
+}
+
+// ClearOpenaiFastMultiplier clears the value of the "openai_fast_multiplier" field.
+func (u *GroupUpsert) ClearOpenaiFastMultiplier() *GroupUpsert {
+	u.SetNull(group.FieldOpenaiFastMultiplier)
+	return u
+}
+
+// SetOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field.
+func (u *GroupUpsert) SetOpenaiUltrafastMultiplier(v float64) *GroupUpsert {
+	u.Set(group.FieldOpenaiUltrafastMultiplier, v)
+	return u
+}
+
+// UpdateOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateOpenaiUltrafastMultiplier() *GroupUpsert {
+	u.SetExcluded(group.FieldOpenaiUltrafastMultiplier)
+	return u
+}
+
+// AddOpenaiUltrafastMultiplier adds v to the "openai_ultrafast_multiplier" field.
+func (u *GroupUpsert) AddOpenaiUltrafastMultiplier(v float64) *GroupUpsert {
+	u.Add(group.FieldOpenaiUltrafastMultiplier, v)
+	return u
+}
+
+// ClearOpenaiUltrafastMultiplier clears the value of the "openai_ultrafast_multiplier" field.
+func (u *GroupUpsert) ClearOpenaiUltrafastMultiplier() *GroupUpsert {
+	u.SetNull(group.FieldOpenaiUltrafastMultiplier)
 	return u
 }
 
@@ -4361,6 +4445,62 @@ func (u *GroupUpsertOne) SetFreeOpenaiFast(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateFreeOpenaiFast() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateFreeOpenaiFast()
+	})
+}
+
+// SetOpenaiFastMultiplier sets the "openai_fast_multiplier" field.
+func (u *GroupUpsertOne) SetOpenaiFastMultiplier(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenaiFastMultiplier(v)
+	})
+}
+
+// AddOpenaiFastMultiplier adds v to the "openai_fast_multiplier" field.
+func (u *GroupUpsertOne) AddOpenaiFastMultiplier(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddOpenaiFastMultiplier(v)
+	})
+}
+
+// UpdateOpenaiFastMultiplier sets the "openai_fast_multiplier" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateOpenaiFastMultiplier() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenaiFastMultiplier()
+	})
+}
+
+// ClearOpenaiFastMultiplier clears the value of the "openai_fast_multiplier" field.
+func (u *GroupUpsertOne) ClearOpenaiFastMultiplier() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenaiFastMultiplier()
+	})
+}
+
+// SetOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field.
+func (u *GroupUpsertOne) SetOpenaiUltrafastMultiplier(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenaiUltrafastMultiplier(v)
+	})
+}
+
+// AddOpenaiUltrafastMultiplier adds v to the "openai_ultrafast_multiplier" field.
+func (u *GroupUpsertOne) AddOpenaiUltrafastMultiplier(v float64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddOpenaiUltrafastMultiplier(v)
+	})
+}
+
+// UpdateOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateOpenaiUltrafastMultiplier() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenaiUltrafastMultiplier()
+	})
+}
+
+// ClearOpenaiUltrafastMultiplier clears the value of the "openai_ultrafast_multiplier" field.
+func (u *GroupUpsertOne) ClearOpenaiUltrafastMultiplier() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenaiUltrafastMultiplier()
 	})
 }
 
@@ -5933,6 +6073,62 @@ func (u *GroupUpsertBulk) SetFreeOpenaiFast(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateFreeOpenaiFast() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateFreeOpenaiFast()
+	})
+}
+
+// SetOpenaiFastMultiplier sets the "openai_fast_multiplier" field.
+func (u *GroupUpsertBulk) SetOpenaiFastMultiplier(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenaiFastMultiplier(v)
+	})
+}
+
+// AddOpenaiFastMultiplier adds v to the "openai_fast_multiplier" field.
+func (u *GroupUpsertBulk) AddOpenaiFastMultiplier(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddOpenaiFastMultiplier(v)
+	})
+}
+
+// UpdateOpenaiFastMultiplier sets the "openai_fast_multiplier" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateOpenaiFastMultiplier() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenaiFastMultiplier()
+	})
+}
+
+// ClearOpenaiFastMultiplier clears the value of the "openai_fast_multiplier" field.
+func (u *GroupUpsertBulk) ClearOpenaiFastMultiplier() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenaiFastMultiplier()
+	})
+}
+
+// SetOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field.
+func (u *GroupUpsertBulk) SetOpenaiUltrafastMultiplier(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetOpenaiUltrafastMultiplier(v)
+	})
+}
+
+// AddOpenaiUltrafastMultiplier adds v to the "openai_ultrafast_multiplier" field.
+func (u *GroupUpsertBulk) AddOpenaiUltrafastMultiplier(v float64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.AddOpenaiUltrafastMultiplier(v)
+	})
+}
+
+// UpdateOpenaiUltrafastMultiplier sets the "openai_ultrafast_multiplier" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateOpenaiUltrafastMultiplier() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateOpenaiUltrafastMultiplier()
+	})
+}
+
+// ClearOpenaiUltrafastMultiplier clears the value of the "openai_ultrafast_multiplier" field.
+func (u *GroupUpsertBulk) ClearOpenaiUltrafastMultiplier() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearOpenaiUltrafastMultiplier()
 	})
 }
 
