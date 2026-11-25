@@ -270,7 +270,9 @@ func enforceStepUpWithin(c *gin.Context, grantChecker stepUpGrantChecker, userRe
 		}
 		// 授权的年龄 = 窗口总长 - 剩余时间（所有授权都以 StepUpGrantTTL 签发）。
 		// 年龄超过 maxAge 的旧授权不能替代当前验证：按缺这个因子处理，让前端当场重新验证。
-		if maxAge > 0 && service.StepUpGrantTTL-remaining > maxAge {
+		// 年龄为负（剩余时间比窗口总长还长）说明这枚授权不是按 StepUpGrantTTL 签发的（遗留键、改过 TTL 常量之前
+		// 的键），无法证明它「新鲜」，同样 fail-closed——不能因为算出负数就当成刚签发的放行。
+		if age := service.StepUpGrantTTL - remaining; maxAge > 0 && (age < 0 || age > maxAge) {
 			// 路由级门控已经为这个请求写了「已跳过验证码」的响应头；这里请求被拒了，
 			// 没有跳过任何验证，必须撤掉：否则前端右下角会提示「刚刚免验证执行了敏感操作」。
 			c.Writer.Header().Del(StepUpSkippedHeader)
