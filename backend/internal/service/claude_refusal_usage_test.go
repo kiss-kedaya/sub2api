@@ -39,13 +39,13 @@ const (
 func claudeControlStreamSSE(stopReasonLiteral, text string, withMessageStop bool) string {
 	textJSON, _ := json.Marshal(text)
 	var b strings.Builder
-	b.WriteString("event: message_start\ndata: " + `{"type":"message_start","message":{"id":"msg_ctl","type":"message","role":"assistant","model":"claude-sonnet-4","content":[],"stop_reason":null,"usage":{"input_tokens":44,"output_tokens":1}}}` + "\n\n")
-	b.WriteString("event: content_block_start\ndata: " + `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n")
-	b.WriteString("event: content_block_delta\ndata: " + `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":` + string(textJSON) + `}}` + "\n\n")
-	b.WriteString("event: content_block_stop\ndata: " + `{"type":"content_block_stop","index":0}` + "\n\n")
-	b.WriteString("event: message_delta\ndata: " + `{"type":"message_delta","delta":{"stop_reason":` + stopReasonLiteral + `,"stop_sequence":null},"usage":{"output_tokens":12}}` + "\n\n")
+	_, _ = b.WriteString("event: message_start\ndata: " + `{"type":"message_start","message":{"id":"msg_ctl","type":"message","role":"assistant","model":"claude-sonnet-4","content":[],"stop_reason":null,"usage":{"input_tokens":44,"output_tokens":1}}}` + "\n\n")
+	_, _ = b.WriteString("event: content_block_start\ndata: " + `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n")
+	_, _ = b.WriteString("event: content_block_delta\ndata: " + `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":` + string(textJSON) + `}}` + "\n\n")
+	_, _ = b.WriteString("event: content_block_stop\ndata: " + `{"type":"content_block_stop","index":0}` + "\n\n")
+	_, _ = b.WriteString("event: message_delta\ndata: " + `{"type":"message_delta","delta":{"stop_reason":` + stopReasonLiteral + `,"stop_sequence":null},"usage":{"output_tokens":12}}` + "\n\n")
 	if withMessageStop {
-		b.WriteString("event: message_stop\ndata: " + claudeStopEvent + "\n\n")
+		_, _ = b.WriteString("event: message_stop\ndata: " + claudeStopEvent + "\n\n")
 	}
 	return b.String()
 }
