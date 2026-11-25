@@ -17,14 +17,14 @@ func Text(r *rand.Rand, n int) string {
 	var b strings.Builder
 	for i := 0; i < n; i++ {
 		if i > 0 {
-			b.WriteByte(' ')
+			_ = b.WriteByte(' ')
 		}
-		b.WriteString(words[r.Intn(len(words))])
+		_, _ = b.WriteString(words[r.Intn(len(words))])
 		switch r.Intn(40) {
 		case 0:
-			b.WriteString(`\n`)
+			_, _ = b.WriteString(`\n`)
 		case 1:
-			b.WriteString(`\"`)
+			_, _ = b.WriteString(`\"`)
 		}
 	}
 	return b.String()
@@ -67,7 +67,7 @@ func ResponsesStreamWithEcho(n, tools, instructionWords int) [][]byte {
 	var text strings.Builder
 	for len(frames) < n-4 {
 		delta := Text(r, 1) + " "
-		text.WriteString(delta)
+		_, _ = text.WriteString(delta)
 		add("response.output_text.delta", `{"type":"response.output_text.delta","sequence_number":SEQ,"item_id":"msg_000001","output_index":0,"content_index":0,"delta":"`+delta+`","logprobs":[],"obfuscation":"abcdefghij"}`)
 	}
 	full := text.String()
@@ -180,7 +180,7 @@ func (g *Gen) Escape(s string) string {
 		if g.Chance(0.5) && s[i] < 0x80 {
 			fmt.Fprintf(&b, `\u%04x`, s[i])
 		} else {
-			b.WriteByte(s[i])
+			_ = b.WriteByte(s[i])
 		}
 	}
 	return b.String()
@@ -197,33 +197,33 @@ func (g *Gen) StringBody() string {
 	for i := 0; i < n; i++ {
 		switch g.r.Intn(16) {
 		case 0:
-			b.WriteString(`\"`)
+			_, _ = b.WriteString(`\"`)
 		case 1:
-			b.WriteString(`\\`)
+			_, _ = b.WriteString(`\\`)
 		case 2:
-			b.WriteString(`\n`)
+			_, _ = b.WriteString(`\n`)
 		case 3:
-			b.WriteString(`é`)
+			_, _ = b.WriteString(`é`)
 		case 4:
-			b.WriteString(`😀`)
+			_, _ = b.WriteString(`😀`)
 		case 5:
-			b.WriteString("你好")
+			_, _ = b.WriteString("你好")
 		case 6:
-			b.WriteString("\x5cu00e9")
+			_, _ = b.WriteString("\x5cu00e9")
 		case 7:
-			b.WriteString(`\/`)
+			_, _ = b.WriteString(`\/`)
 		case 8:
 			if g.Chance(0.05) {
-				b.WriteString(g.Pick("\t", "\x01", "\x7f", `\x`, `\u12`, `\uzzzz`, "\xff", "\xc3"))
+				_, _ = b.WriteString(g.Pick("\t", "\x01", "\x7f", `\x`, `\u12`, `\uzzzz`, "\xff", "\xc3"))
 			}
 		case 9:
-			b.WriteString("data: ")
+			_, _ = b.WriteString("data: ")
 		case 10:
-			b.WriteString(g.Pick("response.completed", `\"type\":\"error\"`, "error", "finish_reason", `\"stop\"`, "message_stop", "STOP", "model", "ſtatus", "K"))
+			_, _ = b.WriteString(g.Pick("response.completed", `\"type\":\"error\"`, "error", "finish_reason", `\"stop\"`, "message_stop", "STOP", "model", "ſtatus", "K"))
 		case 11:
-			b.WriteString(`\u` + g.Pick("0065", "0072", "0074", "006d", "0073"))
+			_, _ = b.WriteString(`\u` + g.Pick("0065", "0072", "0074", "006d", "0073"))
 		default:
-			b.WriteByte(byte('a' + g.r.Intn(26)))
+			_ = b.WriteByte(byte('a' + g.r.Intn(26)))
 		}
 	}
 	return b.String()
@@ -441,17 +441,17 @@ func (g *Gen) SSEStream() string {
 		eol = "\r\n"
 	}
 	if g.Chance(0.05) {
-		out.WriteString("\xef\xbb\xbf")
+		_, _ = out.WriteString("\xef\xbb\xbf")
 	}
 	for events := 1 + g.r.Intn(6); events > 0; events-- {
 		if g.Chance(0.2) {
-			out.WriteString(": heartbeat " + g.StringBody() + eol)
+			_, _ = out.WriteString(": heartbeat " + g.StringBody() + eol)
 		}
 		if g.Chance(0.4) {
-			out.WriteString("event: " + g.Pick(InterestingTypes...) + eol)
+			_, _ = out.WriteString("event: " + g.Pick(InterestingTypes...) + eol)
 		}
 		if g.Chance(0.1) {
-			out.WriteString(g.Pick("id: 7", "retry: 100", "DATA: {}", "data : {}", "  data: {}", "d", "da", "dat", "data") + eol)
+			_, _ = out.WriteString(g.Pick("id: 7", "retry: 100", "DATA: {}", "data : {}", "  data: {}", "d", "da", "dat", "data") + eol)
 		}
 		var data string
 		switch {
@@ -466,19 +466,19 @@ func (g *Gen) SSEStream() string {
 		sep := g.Pick(": ", ":", ":  ", ":\t")
 		if g.Chance(0.12) && strings.Contains(data, ",") {
 			for _, p := range strings.SplitAfter(data, ",") {
-				out.WriteString("data" + sep + p + eol)
+				_, _ = out.WriteString("data" + sep + p + eol)
 			}
 		} else {
-			out.WriteString("data" + sep + data + eol)
+			_, _ = out.WriteString("data" + sep + data + eol)
 			if g.Chance(0.05) {
-				out.WriteString("data" + sep + g.Pick("{}", "1", " ", "x") + eol)
+				_, _ = out.WriteString("data" + sep + g.Pick("{}", "1", " ", "x") + eol)
 			}
 		}
 		if !g.Chance(0.05) {
-			out.WriteString(eol)
+			_, _ = out.WriteString(eol)
 		}
 		if g.Chance(0.05) {
-			out.WriteString(eol)
+			_, _ = out.WriteString(eol)
 		}
 	}
 	return out.String()

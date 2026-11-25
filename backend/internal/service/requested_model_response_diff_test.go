@@ -154,7 +154,11 @@ func TestRewriteRequestedModelResponseMatchesReference(t *testing.T) {
 		protocol := requestedModelTestProtocols[g.Intn(len(requestedModelTestProtocols))]
 		model := g.Pick("client-model", "model-a", "model-b", "", "x")
 		input := []byte(payload)
-		got := RewriteRequestedModelResponse(append([]byte(nil), input...), protocol, model)
+		buf := append([]byte(nil), input...)
+		got := RewriteRequestedModelResponse(buf, protocol, model)
+		if !bytes.Equal(buf, input) {
+			t.Fatalf("seed %d: RewriteRequestedModelResponse modified its input\npayload %q\nnow     %q", seed, input, buf)
+		}
 		want := refRewriteRequestedModelResponse(append([]byte(nil), input...), protocol, model)
 		if !bytes.Equal(got, want) {
 			t.Fatalf("seed %d protocol %q model %q\npayload %q\n got  %q\n want %q", seed, protocol, model, payload, got, want)
@@ -177,29 +181,33 @@ func TestRewriteSSEFrameMatchesReference(t *testing.T) {
 		eol := g.Pick("\n", "\n", "\r\n")
 		var frame strings.Builder
 		if g.Chance(0.3) {
-			frame.WriteString("event: " + g.Pick("response.created", "error", "response.failed", " error ", "message_start", "x") + eol)
+			_, _ = frame.WriteString("event: " + g.Pick("response.created", "error", "response.failed", " error ", "message_start", "x") + eol)
 		}
 		if g.Chance(0.1) {
-			frame.WriteString(": comment" + eol + "id: 7" + eol)
+			_, _ = frame.WriteString(": comment" + eol + "id: 7" + eol)
 		}
 		payload := requestedModelTestPayload(g)
 		sep := g.Pick("data: ", "data:", "data:  ")
 		if g.Chance(0.2) && strings.Contains(payload, ",") {
 			for _, part := range strings.SplitAfter(payload, ",") {
-				frame.WriteString(sep + part + eol)
+				_, _ = frame.WriteString(sep + part + eol)
 			}
 		} else {
-			frame.WriteString(sep + payload + eol)
+			_, _ = frame.WriteString(sep + payload + eol)
 		}
 		if g.Chance(0.1) {
-			frame.WriteString(sep + g.Pick("[DONE]", "{}", "x") + eol)
+			_, _ = frame.WriteString(sep + g.Pick("[DONE]", "{}", "x") + eol)
 		}
-		frame.WriteString(eol)
+		_, _ = frame.WriteString(eol)
 		protocol := requestedModelTestProtocols[g.Intn(len(requestedModelTestProtocols))]
 		model := g.Pick("client-model", "model-a", "model-b")
 		w := &requestedModelResponseWriter{protocol: protocol, model: model}
 		input := []byte(frame.String())
-		got := w.rewriteSSEFrame(append([]byte(nil), input...))
+		buf := append([]byte(nil), input...)
+		got := w.rewriteSSEFrame(buf)
+		if !bytes.Equal(buf, input) {
+			t.Fatalf("seed %d: rewriteSSEFrame modified the frame it was given\nframe %q\nnow   %q", seed, input, buf)
+		}
 		want := refRewriteSSEFrame(append([]byte(nil), input...), protocol, model)
 		if !bytes.Equal(got, want) {
 			t.Fatalf("seed %d protocol %q model %q\nframe %q\n got  %q\n want %q", seed, protocol, model, input, got, want)
@@ -228,7 +236,7 @@ func TestRequestedModelWriterTypicalStreamsMatchReference(t *testing.T) {
 	} {
 		var want bytes.Buffer
 		for _, frame := range tc.frames {
-			want.Write(refRewriteSSEFrame(frame, tc.protocol, "client-model"))
+			_, _ = want.Write(refRewriteSSEFrame(frame, tc.protocol, "client-model"))
 		}
 		require.Contains(t, want.String(), "client-model", name)
 		stream := ssefixture.Join(tc.frames)

@@ -360,8 +360,9 @@ func (w *requestedModelResponseWriter) rewriteSSEFrame(frame []byte) []byte {
 		switch len(dataLines) {
 		case 0:
 			// A single data line, the common case, is read in place: the
-			// rewrite never writes to its input.
-			payload = content[start:]
+			// rewrite never writes to its input, and the capacity is cut so
+			// that an append could not reach the bytes that follow the line.
+			payload = content[start:len(content):len(content)]
 		case 1:
 			// The payload still aliases the frame; copy before appending.
 			payload = append(append(make([]byte, 0, len(payload)+1+len(content)-start), payload...), '\n')
