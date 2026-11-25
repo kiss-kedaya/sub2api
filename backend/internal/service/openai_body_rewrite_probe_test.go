@@ -942,15 +942,20 @@ func TestProbesEmptyAndNilBodies(t *testing.T) {
 	}
 }
 
+// atU spells unicode escapes as "@uXXXX" in test sources and turns them into
+// real JSON escapes, so the sources carry no backslash sequences to mangle.
+func atU(s string) string { return strings.ReplaceAll(s, "@u", `\u`) }
+
 // Constructs the probes deliberately do not interpret must reach the decoder.
 func TestProbesHandOverUnusualBodies(t *testing.T) {
 	deep := strings.Repeat("[", jsonProbeMaxDepth+8) + strings.Repeat("]", jsonProbeMaxDepth+8)
 	relay := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	for name, body := range map[string]string{
 		"nesting beyond the probe depth": `{"input":[` + deep + `]}`,
-		"escaped model name":             `{"model":"deepseek-flash","input":[{"type":"function_call","call_id":"call_a","name":"f"}]}`,
-		"non-ascii id":                   `{"input":[{"type":"function_call","call_id":"call_é","name":"f"},{"type":"function_call","call_id":"call_é","name":"f"}]}`,
-		"escaped key":                    `{"input":[{"type":"function_call","call_id":"call_a"},{"type":"function_call","call_id":"call_a"}]}`,
+		"escaped model name":             atU(`{"model":"deepse@u0065k-flash","input":[{"type":"function_call","call_id":"call_a","name":"f"}]}`),
+		"escaped non-ascii id":           atU(`{"input":[{"type":"function_call","call_id":"call_@u00e9","name":"f"},{"type":"function_call","call_id":"call_@u00e9","name":"f"}]}`),
+		"raw non-ascii id":               `{"input":[{"type":"function_call","call_id":"call_é","name":"f"},{"type":"function_call","call_id":"call_é","name":"f"}]}`,
+		"escaped key":                    atU(`{"inp@u0075t":[{"type":"function_call","call_id":"call_a"},{"type":"function_call","call_id":"call_a"}]}`),
 		"truncated array":                `{"input":[{"type":"function_call","call_id":"call_a"}`,
 		"duplicate root input":           `{"input":[],"input":[{"type":"function_call","call_id":"call_a"},{"type":"function_call","call_id":"call_a"}]}`,
 		"duplicate type in item":         `{"input":[{"type":"message","type":"function_call","call_id":"call_a"},{"type":"function_call","call_id":"call_a"}]}`,
@@ -960,6 +965,10 @@ func TestProbesHandOverUnusualBodies(t *testing.T) {
 		require.Equalf(t, string(legacyNormalizeDeepSeekResponsesRequestBody(relay, b)), string(normalizeDeepSeekResponsesRequestBody(relay, b)), name)
 		require.Truef(t, responsesBodyMayRewrite(b, responsesRewriteScope{dedupe: true, reasoning: true}), name)
 	}
+	// With nothing else to rewrite, the escaped model name alone must force the decoder.
+	hi := `"input":[{"type":"message","role":"user","content":"hi"}]}`
+	require.True(t, responsesBodyMayRewrite([]byte(atU(`{"model":"deepse@u0065k-flash",`+hi)), responsesRewriteScope{reasoning: true}))
+	require.False(t, responsesBodyMayRewrite([]byte(`{"model":"deepseek-flash",`+hi), responsesRewriteScope{reasoning: true}))
 }
 
 func TestNormalizeDeepSeekResponsesRequestBodySkipsMissingReasoningSwitches(t *testing.T) {
