@@ -340,6 +340,7 @@ const reasoningContentDefaultTTL = 7 * 24 * time.Hour
 
 // SetReasoningContent 按 reasoning item id 缓存 reasoning 全文。
 // itemID 或 content 为空时直接返回 nil（无可缓存内容，属正常情况而非错误）。
+// 大值会被透明 gzip 压缩后再存（见 gateway_cache_reasoning_codec.go），对调用方不可见。
 func (c *gatewayCache) SetReasoningContent(ctx context.Context, itemID string, content string, ttl time.Duration) error {
 	if c == nil || c.rdb == nil {
 		return errors.New("gateway cache unavailable")
@@ -351,11 +352,12 @@ func (c *gatewayCache) SetReasoningContent(ctx context.Context, itemID string, c
 	if ttl <= 0 {
 		ttl = reasoningContentDefaultTTL
 	}
-	return c.rdb.Set(ctx, reasoningContentPrefix+itemID, content, ttl).Err()
+	return c.rdb.Set(ctx, reasoningContentPrefix+itemID, encodeReasoningContent(itemID, content), ttl).Err()
 }
 
-// GetReasoningContent 返回缓存的 reasoning 全文；未命中返回
-// service.ErrReasoningContentNotFound。
+// GetReasoningContent 返回缓存的 reasoning 全文（压缩值会被还原，与写入时逐字节相同）；
+// 未命中返回 service.ErrReasoningContentNotFound。压缩流损坏或解压超限也按未命中处理，
+// 调用方对未命中本来就是降级，不能因此多出一类错误。
 func (c *gatewayCache) GetReasoningContent(ctx context.Context, itemID string) (string, error) {
 	if c == nil || c.rdb == nil {
 		return "", errors.New("gateway cache unavailable")
@@ -371,7 +373,11 @@ func (c *gatewayCache) GetReasoningContent(ctx context.Context, itemID string) (
 		}
 		return "", err
 	}
-	return val, nil
+	content, ok := decodeReasoningContent(val)
+	if !ok {
+		return "", service.ErrReasoningContentNotFound
+	}
+	return content, nil
 }
 
 const (

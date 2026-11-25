@@ -176,8 +176,13 @@ func deepSeekNativeReasoningDigest(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// DeepSeekNativeReasoningCacheKeyPrefix 是 DeepSeek 原生 reasoning 缓存 key 的族前缀。
+// repository 层据此只对这一族做透明压缩（见 gateway_cache_reasoning_codec.go），
+// 所以前缀只在这里定义一次。
+const DeepSeekNativeReasoningCacheKeyPrefix = "deepseek-native-v1:"
+
 func deepSeekNativeReasoningCacheKey(keyID int64, itemID string) string {
-	return fmt.Sprintf("deepseek-native-v1:%d:%s", keyID, deepSeekNativeReasoningDigest(itemID))
+	return fmt.Sprintf("%s%d:%s", DeepSeekNativeReasoningCacheKeyPrefix, keyID, deepSeekNativeReasoningDigest(itemID))
 }
 
 type deepSeekNativeReasoningEntry struct {
