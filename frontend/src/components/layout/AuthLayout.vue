@@ -12,7 +12,10 @@
       class="absolute inset-0 hidden bg-linear-to-br/srgb dark:block dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
     ></div>
     <div class="pointer-events-none absolute inset-0 hidden overflow-hidden dark:block">
-      <div class="auth-grid absolute inset-0"></div>
+      <!-- The mask stays still; the grid inside is one tile (3rem) larger than the screen on every side so it can slide. -->
+      <div class="auth-grid-mask absolute inset-0">
+        <div class="auth-grid absolute -inset-12"></div>
+      </div>
     </div>
 
     <!-- Content: brand above a centred card, as in Nuxt UI's auth pages -->
@@ -85,13 +88,21 @@ onMounted(() => {
 
 <style scoped>
 @reference "../../style.css";
+/* The grid used to move by animating `background-position` under a mask: the browser had to repaint the whole masked
+   screen on every frame for as long as the page stayed open (measured on a phone-sized viewport: about 100 repaints a
+   second while the page was idle, none in light mode). Now the mask sits on a still parent and the grid slides by exactly
+   one tile with `transform`, which is composited and repaints nothing. Touch devices get no drift at all. */
+.auth-grid-mask {
+  mask-image: radial-gradient(circle at center, black 0%, transparent 78%);
+}
+
 .auth-grid {
   background-image:
     linear-gradient(rgba(58, 83, 117, 0.07) 1px, transparent 1px),
     linear-gradient(90deg, rgba(58, 83, 117, 0.07) 1px, transparent 1px);
   background-size: 48px 48px;
-  mask-image: radial-gradient(circle at center, black 0%, transparent 78%);
   animation: auth-grid-drift 28s linear infinite;
+  will-change: transform;
 }
 
 :global(html.dark) .auth-grid {
@@ -101,12 +112,15 @@ onMounted(() => {
 }
 
 @keyframes auth-grid-drift {
-  from { background-position: 0 0; }
-  to { background-position: 48px 48px; }
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(48px, 48px, 0); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .auth-grid { animation: none; }
+@media (prefers-reduced-motion: reduce), (pointer: coarse) {
+  .auth-grid {
+    animation: none;
+    will-change: auto;
+  }
 }
 </style>
 

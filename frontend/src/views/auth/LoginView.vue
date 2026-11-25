@@ -1,215 +1,272 @@
 <template>
   <AuthLayout>
     <div class="space-y-6">
-      <!-- Title -->
+      <!-- Title: follows the step. First the credentials, then (only when the server asks for one) the second factor. -->
       <div>
-        <h2 class="auth-heading">
-          {{ t('auth.welcomeBack') }}
+        <h2 class="auth-heading" data-testid="login-heading">
+          {{ challengeHeading || t('auth.welcomeBack') }}
         </h2>
         <p class="auth-sub">
-          {{ t('auth.signInToAccount') }}
+          {{ challengeSub || t('auth.signInToAccount') }}
         </p>
       </div>
       <!-- Login Form -->
       <!-- 标准登录表单：显式 on + username/current-password 语义，
            让密码管理器只在登录页填账号密码，不要串到其它页面。 -->
-      <form autocomplete="on" @submit.prevent="handleLogin" class="space-y-5">
-        <!-- Email Input -->
-        <div>
-          <label for="email" class="input-label">
-            {{ t('auth.emailLabel') }}
-          </label>
-          <div class="relative">
-            <input
-              id="email"
-              name="email"
-              v-model="formData.email"
-              type="email"
-              required
-              autofocus
-              autocomplete="username"
-              :disabled="authActionDisabled"
-              class="input"
-              :class="{ 'input-error': errors.email }"
-              :placeholder="t('auth.emailPlaceholder')"
-            />
-          </div>
-        </div>
-
-        <!-- Password Input -->
-        <div>
-          <label for="password" class="input-label">
-            {{ t('auth.passwordLabel') }}
-          </label>
-          <div class="relative">
-            <input
-              id="password"
-              name="password"
-              v-model="formData.password"
-              :type="showPassword ? 'text' : 'password'"
-              required
-              autocomplete="current-password"
-              :disabled="authActionDisabled"
-              class="input pr-10"
-              :class="{ 'input-error': errors.password }"
-              :placeholder="t('auth.passwordPlaceholder')"
-            />
-            <button
-              type="button"
-              @click="showPassword = !showPassword"
-              :disabled="authActionDisabled"
-              class="absolute inset-y-0 right-0 flex items-center pr-3 text-dimmed transition-colors hover:text-default"
-            >
-              <Icon v-if="showPassword" name="eyeOff" size="md" />
-              <Icon v-else name="eye" size="md" />
-            </button>
-          </div>
-          <div class="mt-1 flex items-center justify-between">
-            <span></span>
-            <router-link
-              v-if="passwordResetEnabled && !backendModeEnabled"
-              to="/forgot-password"
-              class="text-sm font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
-            >
-              {{ t('auth.forgotPassword') }}
-            </router-link>
-          </div>
-        </div>
-
-        <!-- Turnstile Widget -->
-        <div v-if="captchaEnabled">
-          <TurnstileWidget
-            ref="turnstileRef"
-            :turnstile-enabled="turnstileEnabled"
-            :turnstile-site-key="turnstileSiteKey"
-            :tencent-enabled="tencentCaptchaEnabled"
-            :tencent-app-id="tencentCaptchaAppId"
-            :tencent-region="tencentCaptchaRegion"
-            :aliyun-enabled="aliyunCaptchaEnabled"
-            :aliyun-scene-id="aliyunCaptchaSceneId"
-            :aliyun-prefix="aliyunCaptchaPrefix"
-            :aliyun-region="aliyunCaptchaRegion"
-            @verify="onTurnstileVerify"
-            @expire="onTurnstileExpire"
-            @error="onTurnstileError"
-          />
-        </div>
-
-        <!-- Submit Button -->
-        <button
-          type="submit"
-          :disabled="authActionDisabled || (turnstileEnabled && !turnstileToken)"
-          class="btn btn-primary w-full"
-        >
-          <svg
-            v-if="isLoading"
-            class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"
-            ></circle>
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
-          <Icon v-else name="login" size="md" class="mr-2" />
-          {{ isLoading ? t('auth.signingIn') : t('auth.signIn') }}
-        </button>
-
-        <div
-          v-if="loginChallenge?.nextFactor === 'totp' && !loginChallenge.showTotpCode"
-          class="space-y-2"
-        >
-          <p role="status" class="text-sm text-muted">
-            {{ t('auth.totpChallengeHint') }}
-          </p>
-          <button
-            type="button"
-            class="btn btn-secondary w-full"
-            data-testid="login-authenticator"
-            :disabled="authActionDisabled"
-            @click="loginChallenge.showTotpCode = true"
-          >
-            {{ t('auth.verifyWithAuthenticator') }}
-          </button>
-        </div>
-
-        <LoginAgreementPrompt
-          v-if="loginAgreementEnabled"
-          :accepted="agreementAccepted"
-          :documents="loginAgreementDocuments"
-          :mode="loginAgreementMode"
-          :updated-at="loginAgreementUpdatedAt"
-          :visible="showAgreementModal"
-          @accept="acceptLoginAgreement"
-          @reject="rejectLoginAgreement"
-          @open="showAgreementModal = true"
+      <form autocomplete="on" @submit.prevent="handleFormSubmit" class="space-y-5">
+        <!-- Step head, same as the sign-up page: only while a second factor is being asked for. -->
+        <QuietStepHead
+          v-if="factorShown"
+          data-testid="login-step-head"
+          :current="2"
+          :total="2"
+          :label="t('auth.stepProgress', { current: 2, total: 2 })"
         />
 
-        <div v-if="showPasskeyLogin || showOAuthLogin" class="space-y-3 pt-1">
-          <div class="pt-2 text-center text-[13px] text-muted">
-            {{ t('auth.oauthOrContinue') }}
+        <!-- Step 1: credentials. The pane stays mounted while step 2 is showing, so the fields and the
+             captcha widget are not rebuilt (and do not re-verify) when the user comes back. -->
+        <div
+          class="auth-step-pane"
+          :class="{ 'login-pane-static': !leftCredentialsOnce }"
+          data-testid="login-credentials-pane"
+          :data-pane-state="paneState('credentials')"
+        >
+          <!-- Email Input -->
+          <div>
+            <label for="email" class="input-label">
+              {{ t('auth.emailLabel') }}
+            </label>
+            <div class="relative">
+              <input
+                id="email"
+                ref="emailInput"
+                name="email"
+                v-model="formData.email"
+                type="email"
+                required
+                autocomplete="username"
+                :disabled="inputsLocked"
+                :readonly="isLoading || passkeyLoading"
+                class="input"
+                :class="{ 'input-error': errors.email }"
+                :placeholder="t('auth.emailPlaceholder')"
+              />
+            </div>
           </div>
 
+          <!-- Password Input -->
+          <div>
+            <label for="password" class="input-label">
+              {{ t('auth.passwordLabel') }}
+            </label>
+            <div class="relative">
+              <input
+                id="password"
+                ref="passwordInput"
+                name="password"
+                v-model="formData.password"
+                :type="showPassword ? 'text' : 'password'"
+                required
+                autocomplete="current-password"
+                :disabled="inputsLocked"
+                :readonly="isLoading || passkeyLoading"
+                class="input pr-10"
+                :class="{ 'input-error': errors.password }"
+                :placeholder="t('auth.passwordPlaceholder')"
+              />
+              <button
+                type="button"
+                @click="showPassword = !showPassword"
+                :disabled="authActionDisabled"
+                class="absolute inset-y-0 right-0 flex items-center pr-3 text-dimmed transition-colors hover:text-default"
+              >
+                <Icon v-if="showPassword" name="eyeOff" size="md" />
+                <Icon v-else name="eye" size="md" />
+              </button>
+            </div>
+            <div class="mt-1 flex items-center justify-between">
+              <span></span>
+              <router-link
+                v-if="passwordResetEnabled && !backendModeEnabled"
+                to="/forgot-password"
+                class="text-sm font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
+              >
+                {{ t('auth.forgotPassword') }}
+              </router-link>
+            </div>
+          </div>
+
+          <!-- Turnstile Widget -->
+          <div v-if="captchaEnabled">
+            <TurnstileWidget
+              ref="turnstileRef"
+              :turnstile-enabled="turnstileEnabled"
+              :turnstile-site-key="turnstileSiteKey"
+              :tencent-enabled="tencentCaptchaEnabled"
+              :tencent-app-id="tencentCaptchaAppId"
+              :tencent-region="tencentCaptchaRegion"
+              :aliyun-enabled="aliyunCaptchaEnabled"
+              :aliyun-scene-id="aliyunCaptchaSceneId"
+              :aliyun-prefix="aliyunCaptchaPrefix"
+              :aliyun-region="aliyunCaptchaRegion"
+              @verify="onTurnstileVerify"
+              @expire="onTurnstileExpire"
+              @error="onTurnstileError"
+            />
+          </div>
+
+          <!-- Submit Button -->
           <button
-            v-if="showPasskeyLogin"
-            type="button"
-            class="btn btn-secondary w-full"
-            :disabled="authActionDisabled"
-            @click="handlePasskeyLogin"
+            type="submit"
+            :disabled="authActionDisabled || (turnstileEnabled && !turnstileToken)"
+            class="btn btn-primary w-full"
           >
-            <Icon name="key" size="md" class="mr-2" />
-            {{ passkeyLoading ? t('auth.passkeySigningIn') : t('auth.passkeySignIn') }}
+            <svg
+              v-if="isLoading"
+              class="-ml-1 mr-2 h-4 w-4 animate-spin text-white"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                class="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+              ></circle>
+              <path
+                class="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              ></path>
+            </svg>
+            <Icon v-else name="login" size="md" class="mr-2" />
+            {{ isLoading ? t('auth.signingIn') : t('auth.signIn') }}
           </button>
 
-          <EmailOAuthButtons
-            :disabled="authActionDisabled"
-            :github-enabled="githubOAuthEnabled"
-            :google-enabled="googleOAuthEnabled"
-            :show-divider="false"
-            @start="handleOAuthStart"
+          <LoginAgreementPrompt
+            v-if="loginAgreementEnabled"
+            :accepted="agreementAccepted"
+            :documents="loginAgreementDocuments"
+            :mode="loginAgreementMode"
+            :updated-at="loginAgreementUpdatedAt"
+            :visible="showAgreementModal"
+            @accept="acceptLoginAgreement"
+            @reject="rejectLoginAgreement"
+            @open="showAgreementModal = true"
           />
 
-          <LinuxDoOAuthSection
-            v-if="linuxdoOAuthEnabled"
-            :disabled="authActionDisabled"
-            :show-divider="false"
-            @start="handleOAuthStart"
-          />
-          <DingTalkOAuthSection
-            v-if="dingtalkOAuthEnabled"
-            :disabled="authActionDisabled"
-            :show-divider="false"
-            @start="handleOAuthStart"
-          />
-          <WechatOAuthSection
-            v-if="wechatOAuthEnabled"
-            :disabled="authActionDisabled"
-            :show-divider="false"
-            @start="handleOAuthStart"
-          />
-          <OidcOAuthSection
-            v-if="oidcOAuthEnabled"
-            :disabled="authActionDisabled"
-            :provider-name="oidcOAuthProviderName"
-            :show-divider="false"
-            @start="handleOAuthStart"
-          />
+          <div v-if="showPasskeyLogin || showOAuthLogin" class="space-y-3 pt-1">
+            <div class="pt-2 text-center text-[13px] text-muted">
+              {{ t('auth.oauthOrContinue') }}
+            </div>
+
+            <button
+              v-if="showPasskeyLogin"
+              type="button"
+              class="btn btn-secondary w-full"
+              :disabled="authActionDisabled"
+              @click="handlePasskeyLogin"
+            >
+              <Icon name="key" size="md" class="mr-2" />
+              {{ passkeyLoading ? t('auth.passkeySigningIn') : t('auth.passkeySignIn') }}
+            </button>
+
+            <EmailOAuthButtons
+              :disabled="authActionDisabled"
+              :github-enabled="githubOAuthEnabled"
+              :google-enabled="googleOAuthEnabled"
+              :show-divider="false"
+              @start="handleOAuthStart"
+            />
+
+            <LinuxDoOAuthSection
+              v-if="linuxdoOAuthEnabled"
+              :disabled="authActionDisabled"
+              :show-divider="false"
+              @start="handleOAuthStart"
+            />
+            <DingTalkOAuthSection
+              v-if="dingtalkOAuthEnabled"
+              :disabled="authActionDisabled"
+              :show-divider="false"
+              @start="handleOAuthStart"
+            />
+            <WechatOAuthSection
+              v-if="wechatOAuthEnabled"
+              :disabled="authActionDisabled"
+              :show-divider="false"
+              @start="handleOAuthStart"
+            />
+            <OidcOAuthSection
+              v-if="oidcOAuthEnabled"
+              :disabled="authActionDisabled"
+              :provider-name="oidcOAuthProviderName"
+              :show-divider="false"
+              @start="handleOAuthStart"
+            />
+          </div>
+        </div>
+
+        <!-- Step 2: second factor, inside the card instead of a full-page modal. The pane outlives the challenge by
+             its exit animation (factorView), and its content only mounts once the pane is the one on screen: the
+             code box focuses itself on mount, and a hidden input cannot take focus. -->
+        <div
+          v-if="factorView"
+          class="auth-step-pane"
+          data-testid="login-factor-pane"
+          :data-pane-state="paneState('factor')"
+        >
+          <template v-if="shownPane === 'factor'">
+            <TotpFactorPane
+              v-if="factorView.nextFactor === 'totp'"
+              ref="totpPaneRef"
+              :temp-token="factorView.tempToken"
+              :user-email-masked="factorView.userEmailMasked"
+              :account-key="formData.email"
+              @verify="handle2FAVerify"
+            >
+              <!-- Everyone who typed a wrong password also lands here (the server answers both the same way), so the
+                   sentence that explains it is also the way out: one tap, with a comfortable target on a phone. -->
+              <button
+                type="button"
+                class="-my-1 block w-full py-1 text-left text-[13px] text-muted transition-colors hover:text-highlighted focus-visible:text-highlighted disabled:opacity-60"
+                data-testid="login-challenge-back-hint"
+                :disabled="factorBusy"
+                @click="handle2FACancel"
+              >
+                {{ t('auth.loginChallengeBackHint') }}
+              </button>
+            </TotpFactorPane>
+            <PasskeyFactorPane
+              v-else
+              :supported="passkeySupported"
+              :verifying="passkeyVerifying"
+              :user-email-masked="factorView.userEmailMasked"
+              @verify="handlePasskeyFactor"
+            />
+          </template>
+        </div>
+
+        <!-- Footer: Back pinned left, like the sign-up page. -->
+        <div v-if="factorShown" class="auth-step-footer">
+          <button
+            type="button"
+            class="auth-step-back"
+            data-testid="login-back"
+            :disabled="factorBusy"
+            @click="handle2FACancel"
+          >
+            {{ t('auth.back') }}
+          </button>
+          <span></span>
         </div>
       </form>
     </div>
 
     <!-- Footer -->
-    <template v-if="!backendModeEnabled && publicSettingsLoaded && registrationEnabled" #footer>
+    <template v-if="shownPane === 'credentials' && !backendModeEnabled && publicSettingsLoaded && registrationEnabled" #footer>
       <p class="text-gray-500 dark:text-dark-400">
         {{ t('auth.dontHaveAccount') }}
         <router-link
@@ -221,31 +278,10 @@
       </p>
     </template>
   </AuthLayout>
-
-  <!-- 双因子第二步：TOTP 因子 -->
-  <TotpLoginModal
-    v-if="loginChallenge?.nextFactor === 'totp' && loginChallenge.showTotpCode"
-    ref="totpModalRef"
-    :temp-token="loginChallenge.tempToken"
-    :user-email-masked="loginChallenge.userEmailMasked"
-    :account-key="formData.email"
-    @verify="handle2FAVerify"
-    @cancel="handle2FACancel"
-  />
-
-  <!-- 双因子第二步：Passkey 因子（账号绑定了 Passkey 时） -->
-  <PasskeyLoginModal
-    v-if="loginChallenge && loginChallenge.nextFactor === 'passkey'"
-    :supported="passkeySupported"
-    :verifying="passkeyVerifying"
-    :user-email-masked="loginChallenge.userEmailMasked"
-    @verify="handlePasskeyFactor"
-    @cancel="handle2FACancel"
-  />
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted, watch } from 'vue'
+import { computed, ref, reactive, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { AuthLayout } from '@/components/layout'
@@ -255,8 +291,9 @@ import OidcOAuthSection from '@/components/auth/OidcOAuthSection.vue'
 import WechatOAuthSection from '@/components/auth/WechatOAuthSection.vue'
 import EmailOAuthButtons from '@/components/auth/EmailOAuthButtons.vue'
 import LoginAgreementPrompt from '@/components/auth/LoginAgreementPrompt.vue'
-import TotpLoginModal from '@/components/auth/TotpLoginModal.vue'
-import PasskeyLoginModal from '@/components/auth/PasskeyLoginModal.vue'
+import QuietStepHead from '@/components/common/QuietStepHead.vue'
+import TotpFactorPane from '@/components/auth/TotpFactorPane.vue'
+import PasskeyFactorPane from '@/components/auth/PasskeyFactorPane.vue'
 import Icon from '@/components/icons/Icon.vue'
 import TurnstileWidget from '@/components/CaptchaChallenge.vue'
 import { useAuthStore, useAppStore } from '@/stores'
@@ -352,7 +389,6 @@ interface LoginFactorChallenge {
   requiredFactors: string[]
   passedFactors: string[]
   nextFactor: LoginFactor
-  showTotpCode: boolean
   userEmailMasked: string
   passkeySessionToken: string
   passkeyOptions?: { publicKey: Record<string, unknown> }
@@ -360,7 +396,10 @@ interface LoginFactorChallenge {
 const loginChallenge = ref<LoginFactorChallenge | null>(null)
 const passkeyVerifying = ref<boolean>(false)
 const passkeySupported = computed(() => passkeyAPI.isSupported())
-const totpModalRef = ref<InstanceType<typeof TotpLoginModal> | null>(null)
+const totpPaneRef = ref<InstanceType<typeof TotpFactorPane> | null>(null)
+const totpVerifying = ref<boolean>(false)
+const emailInput = ref<HTMLInputElement | null>(null)
+const passwordInput = ref<HTMLInputElement | null>(null)
 
 /** 把后端登录挑战转成前端状态机（缺字段时按 TOTP 单因子兼容旧后端）。 */
 function applyLoginChallenge(response: TotpLoginResponse): void {
@@ -372,7 +411,6 @@ function applyLoginChallenge(response: TotpLoginResponse): void {
     requiredFactors: required,
     passedFactors: passed,
     nextFactor: next === 'passkey' ? 'passkey' : 'totp',
-    showTotpCode: false,
     userEmailMasked: response.user_email_masked || maskLoginEmail(formData.email),
     passkeySessionToken: response.passkey_session_token || '',
     passkeyOptions: response.passkey_options
@@ -385,7 +423,7 @@ const formData = reactive({
 })
 
 watch([() => formData.email, () => formData.password], () => {
-  loginChallenge.value = null
+  if (loginChallenge.value) leaveChallenge()
 })
 
 const errors = reactive({
@@ -405,6 +443,115 @@ const agreementGateActive = computed(
 const authActionDisabled = computed(
   () => isLoading.value || passkeyLoading.value || !publicSettingsLoaded.value || agreementGateActive.value
 )
+
+// The fields are only really disabled while the page cannot take input at all. While a request is in flight they are
+// read-only instead (see the template): disabling a focused field on a phone drops the soft keyboard, the viewport
+// resizes, and the card jumps once per attempt.
+const inputsLocked = computed(() => !publicSettingsLoaded.value || agreementGateActive.value)
+
+// Back is off while a second-factor request is in flight, same as the old modal's Cancel.
+const factorBusy = computed(() => passkeyVerifying.value || totpVerifying.value)
+
+// ---- Step panes -----------------------------------------------------------------------------------------------
+// Same contract as the sign-up page (auth-quiet.css): the pane that is going away plays its 320ms exit first, and only
+// then the next pane takes its place and plays its own 200ms enter, so there is never a moment with two panes stacked.
+type LoginPane = 'credentials' | 'factor'
+const STEP_EXIT_MS = 320
+const shownPane = ref<LoginPane>('credentials')
+const leavingPane = ref<LoginPane | null>(null)
+const leftCredentialsOnce = ref<boolean>(false)
+/** What the second-step pane renders. Follows the challenge, but outlives it until the pane has finished leaving. */
+const factorView = ref<LoginFactorChallenge | null>(null)
+let paneTimer: ReturnType<typeof setTimeout> | null = null
+let refocusPasswordOnReturn = false
+
+/** The second step, only while it is the pane on screen: the heading, step head and Back button follow this. */
+const factorShown = computed(() => (shownPane.value === 'factor' ? factorView.value : null))
+
+const challengeHeading = computed(() => {
+  const view = factorShown.value
+  if (!view) return ''
+  return view.nextFactor === 'passkey' ? t('auth.passkeyLoginTitle') : t('profile.totp.loginTitle')
+})
+
+const challengeSub = computed(() => {
+  const view = factorShown.value
+  if (!view) return ''
+  return view.nextFactor === 'passkey' ? t('auth.passkeyLoginHint') : t('profile.totp.loginHint')
+})
+
+function paneState(key: LoginPane): 'active' | 'leaving' | 'idle' {
+  if (key !== shownPane.value) return 'idle'
+  return leavingPane.value === key ? 'leaving' : 'active'
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+/**
+ * The credentials pane is (back) on screen with no challenge behind it. The first attempt spent the captcha proof, so ask
+ * for a new one now that the widget is visible (a widget that is reset while hidden can stall until it is visible).
+ */
+function arriveAtCredentials(): void {
+  factorView.value = null
+  if (captchaEnabled.value) void nextTick(() => resetCaptchaProof())
+  if (refocusPasswordOnReturn) {
+    refocusPasswordOnReturn = false
+    // They came back to fix something, and a mistyped password is by far the usual reason: cursor in the box with the
+    // text selected, so the next keystroke replaces it. (An autofill edit that cancelled the step must not grab focus.)
+    void nextTick(() => {
+      passwordInput.value?.focus()
+      passwordInput.value?.select()
+    })
+  }
+}
+
+function showPane(next: LoginPane): void {
+  if (paneTimer) {
+    clearTimeout(paneTimer)
+    paneTimer = null
+  }
+  if (next === shownPane.value) {
+    // changed their mind while the pane was still leaving (e.g. autofill edited the fields): it simply stays
+    leavingPane.value = null
+    if (next === 'credentials') arriveAtCredentials()
+    return
+  }
+  const finish = () => {
+    shownPane.value = next
+    leavingPane.value = null
+    paneTimer = null
+    if (next === 'credentials') arriveAtCredentials()
+  }
+  leftCredentialsOnce.value = true
+  if (prefersReducedMotion()) {
+    finish()
+    return
+  }
+  leavingPane.value = shownPane.value
+  paneTimer = setTimeout(finish, STEP_EXIT_MS)
+}
+
+// `sync`: the pane swap has to start in the same tick the challenge arrives or goes away.
+watch(
+  loginChallenge,
+  (next, previous) => {
+    if (next) factorView.value = next
+    // the second step replacing itself (authenticator code -> passkey) keeps the pane; only a change of step swaps
+    if (Boolean(next) === Boolean(previous)) return
+    showPane(next ? 'factor' : 'credentials')
+  },
+  { flush: 'sync' }
+)
+
+onBeforeUnmount(() => {
+  if (paneTimer) clearTimeout(paneTimer)
+})
 
 const showPasskeyLogin = computed(
   () => passkeyEnabled.value && typeof window !== 'undefined' && typeof window.PublicKeyCredential !== 'undefined'
@@ -468,6 +615,13 @@ onMounted(async () => {
     agreementAccepted.value = true
   } finally {
     publicSettingsLoaded.value = true
+  }
+
+  // `autofocus` used to open the soft keyboard on every phone page load. Focus the email field only on devices with a
+  // precise pointer, and only once the field is enabled and no agreement dialog is in front of it.
+  if (!showAgreementModal.value && window.matchMedia?.('(pointer: fine)').matches) {
+    await nextTick()
+    emailInput.value?.focus()
   }
 })
 
@@ -544,6 +698,9 @@ function onTurnstileVerify(token: string, randstr = ''): void {
 function onTurnstileExpire(): void {
   turnstileToken.value = ''
   tencentCaptchaRandstr.value = ''
+  // While the second step is on screen the widget sits hidden and its proof is not needed any more; saying
+  // "verification expired" there would be a toast about a thing the user cannot see.
+  if (shownPane.value === 'factor' || loginChallenge.value) return
   errors.turnstile = t('auth.turnstileExpired')
 }
 
@@ -558,6 +715,20 @@ function resetCaptchaProof(): void {
   turnstileToken.value = ''
   tencentCaptchaRandstr.value = ''
   errors.turnstile = ''
+}
+
+/**
+ * Back to the credentials step. The first attempt spent the captcha proof, so it is dropped here (it can never be
+ * submitted again) and the widget itself is reset once the credentials pane is on screen again (see showPane).
+ * `refocus`: the user chose to go back (Back, or the hint), so land them in the password box.
+ */
+function leaveChallenge(options: { refocus?: boolean } = {}): void {
+  refocusPasswordOnReturn = options.refocus === true && loginChallenge.value !== null
+  loginChallenge.value = null
+  passkeyVerifying.value = false
+  totpVerifying.value = false
+  turnstileToken.value = ''
+  tencentCaptchaRandstr.value = ''
 }
 
 async function acquireActionProof(): Promise<boolean> {
@@ -618,6 +789,12 @@ function validateForm(): boolean {
 
 // ==================== Form Handlers ====================
 
+/** Enter on the credentials step submits them; on the second step the code box owns Enter. */
+function handleFormSubmit(): void {
+  if (loginChallenge.value) return
+  void handleLogin()
+}
+
 async function handleLogin(): Promise<void> {
   errorMessage.value = ''
   loginChallenge.value = null
@@ -646,7 +823,9 @@ async function handleLogin(): Promise<void> {
         : undefined
     })
 
-    // TOTP 挑战的响应也用于无效凭据，先显示可选的认证器入口。
+    // 第二步的挑战对「需要二次验证」和「凭据无效」是同一个响应：两种人都进卡片里的第二步。
+    // 验证码在这一步被用掉了，但这里不重置：第二步不需要它，重置只会让小组件回到「正在验证…」转圈，
+    // 登录键白白灰着；回到第一步时（leaveChallenge）再取新的。
     if (isTotp2FARequired(response)) {
       applyLoginChallenge(response as TotpLoginResponse)
       isLoading.value = false
@@ -663,10 +842,12 @@ async function handleLogin(): Promise<void> {
 
     // Also show error toast
     appStore.showError(errorMessage.value)
-  } finally {
+    // The proof went to the server with the failed attempt; the next attempt needs a new one. On success the page
+    // navigates away, so there is nothing to reset (it used to restart the widget right before the redirect).
     if (captchaEnabled.value) {
       resetCaptchaProof()
     }
+  } finally {
     isLoading.value = false
   }
 }
@@ -783,7 +964,8 @@ async function finishLoginSuccess(): Promise<void> {
 async function handle2FAVerify(code: string): Promise<void> {
   const challenge = loginChallenge.value
   if (!challenge) return
-  totpModalRef.value?.setVerifying(true)
+  totpVerifying.value = true
+  totpPaneRef.value?.setVerifying(true)
 
   try {
     // 统一登录协议：第二步同时提交「动态码 + 邮箱 + 密码」，服务端重新校验凭据，
@@ -797,12 +979,13 @@ async function handle2FAVerify(code: string): Promise<void> {
     if (isTotp2FARequired(response)) {
       // 两者都绑定：TOTP 通过后进入 Passkey 因子，仍不签发令牌。
       applyLoginChallenge(response as TotpLoginResponse)
-      totpModalRef.value?.setVerifying(false)
+      totpVerifying.value = false
+      totpPaneRef.value?.setVerifying(false)
       return
     }
 
     // 成功即清：清空前端账号维度尝试计数
-    totpModalRef.value?.resetLimit?.()
+    totpPaneRef.value?.resetLimit?.()
     await finishLoginSuccess()
   } catch (error: unknown) {
     if (isChunkLoadError(error)) {
@@ -826,9 +1009,10 @@ async function handle2FAVerify(code: string): Promise<void> {
     // 服务端 429 的 Retry-After 优先于本地计数（网络层已把 header 解出为 retryAfter）。
     const retryAfterSeconds = Number(err.retryAfter ?? err.response?.headers?.['retry-after'] ?? 0) || 0
 
-    if (totpModalRef.value) {
-      totpModalRef.value.setError(message, retryAfterSeconds)
-      totpModalRef.value.setVerifying(false)
+    totpVerifying.value = false
+    if (totpPaneRef.value) {
+      totpPaneRef.value.setError(message, retryAfterSeconds)
+      totpPaneRef.value.setVerifying(false)
     }
   }
 }
@@ -870,20 +1054,14 @@ async function handlePasskeyFactor(): Promise<void> {
 }
 
 function handle2FACancel(): void {
-  loginChallenge.value = null
-  passkeyVerifying.value = false
+  leaveChallenge({ refocus: true })
 }
 </script>
 
 <style scoped>
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease, transform 0.3s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
+/* The first time the page shows, the card already plays its own rise; the credentials pane must not play a second
+   enter on top of it. After the user has been to step 2 and back, the pane animates in like any other step. */
+.auth-step-pane.login-pane-static[data-pane-state='active'] {
+  animation: none;
 }
 </style>

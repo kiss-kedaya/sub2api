@@ -274,8 +274,7 @@ export default {
     passwordRequired: '请输入密码',
     passwordMinLength: '密码至少需要 6 个字符',
     loginFailed: '登录失败，请检查您的凭据后重试。',
-    totpChallengeHint: '请核对邮箱和密码。已绑定认证器的用户可以使用动态码继续登录。',
-    verifyWithAuthenticator: '使用认证器验证',
+    loginChallengeBackHint: '没有绑定验证器？点这里返回，检查邮箱和密码。',
     errors: {
       INVALID_CREDENTIALS: '邮箱或密码不正确，请重试。',
       USER_NOT_ACTIVE: '账号已被禁用',

@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import TotpLoginModal from '@/components/auth/TotpLoginModal.vue'
+import TotpFactorPane from '@/components/auth/TotpFactorPane.vue'
 
 const { showErrorMock } = vi.hoisted(() => ({
   showErrorMock: vi.fn(),
@@ -18,13 +18,13 @@ vi.mock('@/stores', () => ({
   }),
 }))
 
-describe('TotpLoginModal', () => {
+describe('TotpFactorPane', () => {
   beforeEach(() => {
     showErrorMock.mockReset()
   })
 
   it('sends verification errors to toast and does not render inline red text', async () => {
-    const wrapper = mount(TotpLoginModal, {
+    const wrapper = mount(TotpFactorPane, {
       props: {
         tempToken: 'temp-token',
         userEmailMasked: 'u***@example.com',
@@ -40,7 +40,7 @@ describe('TotpLoginModal', () => {
   })
 
   it('keeps login auto-verification and clears the shared input after a rejection', async () => {
-    const wrapper = mount(TotpLoginModal, { props: { tempToken: 'temp-token' } })
+    const wrapper = mount(TotpFactorPane, { props: { tempToken: 'temp-token' } })
     const input = wrapper.get('input[autocomplete="one-time-code"]')
     await input.trigger('paste', { clipboardData: { getData: () => '012 345' } })
     expect(wrapper.emitted('verify')).toEqual([['012345']])
@@ -54,7 +54,7 @@ describe('TotpLoginModal', () => {
   })
 
   it('blocks duplicate verification while the first complete entry is pending', async () => {
-    const wrapper = mount(TotpLoginModal, { props: { tempToken: 'temp-token' } })
+    const wrapper = mount(TotpFactorPane, { props: { tempToken: 'temp-token' } })
     const input = wrapper.get('input[autocomplete="one-time-code"]')
     await input.setValue('12345')
     expect(wrapper.emitted('verify')).toBeUndefined()

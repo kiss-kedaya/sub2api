@@ -1,4 +1,6 @@
 <template>
+  <!-- The real <input> is transparent and covers the six cells. outline-hidden: the cells draw the focus ring themselves,
+       so the browser's own ring around the whole row would be a second, heavier frame on top of them. -->
   <div class="totp-code-input relative mx-auto grid w-full max-w-70 grid-cols-6 gap-2" dir="ltr">
     <input
       v-bind="$attrs"
@@ -15,7 +17,7 @@
       :aria-label="label"
       :aria-invalid="invalid || undefined"
       :disabled="disabled"
-      class="absolute inset-0 z-10 h-full w-full cursor-text bg-transparent text-transparent caret-transparent opacity-100 disabled:cursor-not-allowed"
+      class="absolute inset-0 z-10 h-full w-full cursor-text bg-transparent text-transparent caret-transparent opacity-100 outline-hidden disabled:cursor-not-allowed"
       @input="handleInput"
       @paste="handlePaste"
       @focus="syncSelection"

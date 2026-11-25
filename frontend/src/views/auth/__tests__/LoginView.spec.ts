@@ -81,7 +81,7 @@ function mountLogin() {
         LoginAgreementPrompt: true,
         OidcOAuthSection: true,
         RouterLink: { template: '<a><slot /></a>' },
-        TotpLoginModal: true,
+        TotpFactorPane: true,
         TurnstileWidget: true,
         WechatOAuthSection: true,
         transition: false
