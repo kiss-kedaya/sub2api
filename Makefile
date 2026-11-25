@@ -73,6 +73,8 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/admin/channel/__tests__/ModelTagInput.keyboard.spec.ts \
 	src/components/admin/payment/__tests__/AdminRefundDialog.balance.spec.ts \
 	src/components/admin/user/__tests__/UserPlatformQuotaModal.spec.ts \
+	src/components/admin/user/__tests__/UserReset2FAModal.spec.ts \
+	src/components/admin/user/__tests__/UserReset2FAModal.confirmGate.spec.ts \
 	src/components/user/profile/__tests__/Totp.errors.spec.ts \
 	src/components/user/profile/__tests__/TotpDisableDialog.required.spec.ts \
 	src/components/user/profile/__tests__/ProfileTotpCard.spec.ts \

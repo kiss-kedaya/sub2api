@@ -227,59 +227,12 @@ func clearAdmin2FAResetSessions(ctx context.Context, cfg *config.Config, userID 
 	return clearAdmin2FAResetSessionsWithCache(ctx, repository.NewRefreshTokenCache(rdb), rdb, userID)
 }
 
+// clearAdmin2FAResetSessionsWithCache keeps the recovery command's cleanup on the same
+// implementation as the administrator API (service.RevokeUserSessionsForTwoFactorReset):
+// every refresh token indexed for the user, every step-up grant of every session and
+// factor (including the legacy u<id> key), the enrolment session and the verification
+// attempt budget. It never scans the Redis database.
 func clearAdmin2FAResetSessionsWithCache(ctx context.Context, cache service.RefreshTokenCache, rdb *redis.Client, userID int64) error {
-	hashes, lookupErr := cache.GetUserTokenHashes(ctx, userID)
-	unsafeIndex := lookupErr != nil
-	ownedHashes := make([]string, 0, len(hashes))
-	// Legacy sessions use u<id>; current sessions use refresh-token family IDs.
-	// Discover only this user's indexed sessions. Never scan the Redis database.
-	// Step-up grants are stored per session and per factor; the repository expands
-	// each session key into every factor's key (and the pre-factor layout), so the
-	// key format is defined in exactly one place.
-	sessionKeys := []string{fmt.Sprintf("u%d", userID)}
-	keys := map[string]struct{}{
-		fmt.Sprintf("totp:setup:%d", userID):    {},
-		fmt.Sprintf("totp:attempts:%d", userID): {},
-	}
-	for _, hash := range hashes {
-		data, err := cache.GetRefreshToken(ctx, hash)
-		if errors.Is(err, service.ErrRefreshTokenNotFound) {
-			continue
-		}
-		if err != nil {
-			lookupErr = err
-			unsafeIndex = true
-			continue
-		}
-		if data == nil || data.UserID != userID {
-			lookupErr = errAdmin2FAResetIdentity
-			unsafeIndex = true
-			continue
-		}
-		ownedHashes = append(ownedHashes, hash)
-		if data.FamilyID != "" {
-			sessionKeys = append(sessionKeys, data.FamilyID)
-		}
-	}
-	for _, sessionKey := range sessionKeys {
-		for _, key := range repository.TotpStepUpGrantKeys(userID, sessionKey) {
-			keys[key] = struct{}{}
-		}
-	}
-	var revokeErr error
-	if unsafeIndex {
-		// A malformed or cross-user index must not authorize deleting a token
-		// whose ownership could not be verified.
-		for _, hash := range ownedHashes {
-			revokeErr = errors.Join(revokeErr, cache.DeleteRefreshToken(ctx, hash))
-		}
-	} else {
-		revokeErr = cache.DeleteUserRefreshTokens(ctx, userID)
-	}
-	toDelete := make([]string, 0, len(keys))
-	for key := range keys {
-		toDelete = append(toDelete, key)
-	}
-	_, grantErr := rdb.Del(ctx, toDelete...).Result()
-	return errors.Join(lookupErr, revokeErr, grantErr)
+	totpStore := repository.NewTotpCacheStore(rdb)
+	return service.RevokeUserSessionsForTwoFactorReset(ctx, userID, cache, totpStore, totpStore)
 }

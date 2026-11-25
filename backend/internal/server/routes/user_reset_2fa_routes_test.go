@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler"
 	adminhandler "github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/adminroutepolicy"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
@@ -22,13 +24,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 破玻璃重置 2FA 的 HTTP 层验收：无 step-up → 403；机器凭据 → 403；
-// 无 reason → 400；用户不存在 → 404；用户没开 2FA → 400；成功 → 200 +
-// TOTP 清空 + 审计 + 邮件。
+// 破玻璃重置 2FA 的 HTTP 层验收，走真实的 RegisterAdminRoutes 注册（不是自建路由）：
+// 无 step-up → 403；机器凭据 → 403；重置自己 → 400；授权不够新鲜 → 403；
+// 超过限流 → 429；无 reason → 400；用户不存在 → 404；用户没开 2FA → 400；
+// 成功 → 200 + TOTP 清空 + 审计。
 
 const (
 	reset2FAPath      = "/api/v1/admin/users/3249/reset-2fa"
 	reset2FASessionID = "admin-session"
+	reset2FAActorID   = int64(1)
 )
 
 // reset2FAUserRepo 是只实现重置所需方法的用户仓储桩。
@@ -60,17 +64,19 @@ type reset2FAAuditCapture struct {
 	entries []*service.AuditLog
 }
 
+func (c *reset2FAAuditCapture) Insert(_ context.Context, entry *service.AuditLog) error {
+	copied := *entry
+	c.entries = append(c.entries, &copied)
+	return nil
+}
+
 type reset2FARouteFixture struct {
 	router    *gin.Engine
 	repo      *reset2FAUserRepo
 	audit     *reset2FAAuditCapture
 	totpCache service.TotpCache
-}
-
-func (c *reset2FAAuditCapture) Insert(_ context.Context, entry *service.AuditLog) error {
-	copied := *entry
-	c.entries = append(c.entries, &copied)
-	return nil
+	// events 按顺序记录一次请求依次经过了哪些中间件（每次请求前清空）。
+	events []string
 }
 
 // reset2FAActorRepo 给 step-up 门控提供「当前登录管理员」：门控要读操作者自己
@@ -104,7 +110,9 @@ func (r *reset2FAActorRepo) GetUserAvatar(context.Context, int64) (*service.User
 	return nil, nil
 }
 
-// buildReset2FARouter 装配真实的路由 + step-up 门控 + 审计中间件。
+// buildReset2FARouter 用真实的 RegisterAdminRoutes 注册路由，再包上记录探针：
+// adminAuth 是写入身份的替身，审计中间件与 step-up 门控是真实实现，限流器是真实
+// 的 PanelRateLimiter（miniredis）。
 //
 // authMode 决定认证中间件写入的 auth_method：jwt 模拟真人会话，
 // admin_api_key 模拟机器凭据（step-up 门控必须拒绝）。
@@ -123,7 +131,7 @@ func buildReset2FARouter(t *testing.T, authMode string, user *service.User) *res
 	actorRepo := &reset2FAActorRepo{
 		target: repo,
 		admin: service.User{
-			ID: 1, Email: "admin@example.test", Role: service.RoleAdmin,
+			ID: reset2FAActorID, Email: "admin@example.test", Role: service.RoleAdmin,
 			Status: service.StatusActive, TotpEnabled: true,
 		},
 	}
@@ -146,28 +154,44 @@ func buildReset2FARouter(t *testing.T, authMode string, user *service.User) *res
 	userHandler.SetAdmin2FAResetService(resetService)
 
 	settings := stepUpRouteSettings(map[string]string{service.SettingKeyStepUpEnabled: "true"})
-	realStepUp := middleware.NewStepUpAuthMiddleware(totpService, userService, settings)
+	fixture := &reset2FARouteFixture{repo: repo, audit: auditRepo, totpCache: totpCacheStore}
 
-	r := gin.New()
-	r.Use(gin.Recovery())
-	admin := r.Group("/api/v1/admin")
-	admin.Use(func(c *gin.Context) {
+	adminAuth := middleware.AdminAuthMiddleware(func(c *gin.Context) {
+		fixture.events = append(fixture.events, "adminAuth")
 		c.Set("auth_method", authMode)
-		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: reset2FAActorID})
 		c.Set(string(middleware.ContextKeyUserRole), service.RoleAdmin)
 		c.Set(middleware.ContextKeyAuthEmail, "admin@example.test")
 		// 会话 ID 决定 step-up 授权键：没有它门控会退化成用户级键 u<uid>。
 		c.Set(middleware.ContextKeySessionID, reset2FASessionID)
 		c.Next()
 	})
-	admin.Use(gin.HandlerFunc(middleware.NewAuditLogMiddleware(auditService)))
-	admin.POST("/users/:id/reset-2fa", gin.HandlerFunc(realStepUp), userHandler.ResetUser2FA)
+	realAudit := middleware.NewAuditLogMiddleware(auditService)
+	audit := middleware.AuditLogMiddleware(func(c *gin.Context) {
+		fixture.events = append(fixture.events, "audit")
+		gin.HandlerFunc(realAudit)(c)
+	})
+	realStepUp := middleware.NewStepUpAuthMiddleware(totpService, userService, settings)
+	stepUp := middleware.StepUpAuthMiddleware(func(c *gin.Context) {
+		fixture.events = append(fixture.events, "stepUp")
+		gin.HandlerFunc(realStepUp)(c)
+	})
+	limiter := middleware.NewPanelRateLimiter(rdb, nil)
 
-	return &reset2FARouteFixture{router: r, repo: repo, audit: auditRepo, totpCache: totpCacheStore}
+	r := gin.New()
+	r.Use(gin.Recovery())
+	RegisterAdminRoutes(
+		r.Group("/api/v1"),
+		&handler.Handlers{Admin: &handler.AdminHandlers{Account: &adminhandler.AccountHandler{}, User: userHandler}},
+		adminAuth, audit, stepUp, nil, limiter,
+	)
+	fixture.router = r
+	return fixture
 }
 
-func reset2FARequest(t *testing.T, router *gin.Engine, body string) *httptest.ResponseRecorder {
+func (f *reset2FARouteFixture) post(t *testing.T, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	f.events = nil
 	rec := httptest.NewRecorder()
 	var reader *bytes.Reader
 	if body == "" {
@@ -175,10 +199,27 @@ func reset2FARequest(t *testing.T, router *gin.Engine, body string) *httptest.Re
 	} else {
 		reader = bytes.NewReader([]byte(body))
 	}
-	req := httptest.NewRequest(http.MethodPost, reset2FAPath, reader)
+	req := httptest.NewRequest(http.MethodPost, path, reader)
 	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(rec, req)
+	f.router.ServeHTTP(rec, req)
 	return rec
+}
+
+func reset2FARequest(t *testing.T, fixture *reset2FARouteFixture, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return fixture.post(t, reset2FAPath, body)
+}
+
+// grantFreshStepUp 给操作者写一枚刚签发的 TOTP step-up 授权。
+func (f *reset2FARouteFixture) grantFreshStepUp(t *testing.T) {
+	t.Helper()
+	f.grantStepUpAged(t, 0)
+}
+
+// grantStepUpAged 写一枚「已经签发了 age 这么久」的授权：剩余有效期 = 5 分钟 - age。
+func (f *reset2FARouteFixture) grantStepUpAged(t *testing.T, age time.Duration) {
+	t.Helper()
+	require.NoError(t, f.totpCache.SetStepUpGrant(context.Background(), reset2FAActorID, reset2FASessionID, service.FactorTOTP, service.StepUpGrantTTL-age))
 }
 
 func reset2FATargetUser() *service.User {
@@ -186,7 +227,7 @@ func reset2FATargetUser() *service.User {
 	secret := "v1:top-secret"
 	return &service.User{
 		ID:                  3249,
-		Email:               "1921089334@qq.com",
+		Email:               "user-3249@example.test",
 		Role:                service.RoleUser,
 		Status:              service.StatusActive,
 		TotpEnabled:         true,
@@ -205,11 +246,31 @@ func TestReset2FARouteIsStepUpRequiredInRegistry(t *testing.T) {
 	require.Equal(t, adminroutepolicy.ResourceAccountSecurity, resolved.Resource)
 }
 
+// 真实注册的路由链：adminAuth → 审计 → step-up 门控，然后才是限流与处理器。
+// 这里不自建路由，所以任何人把这条路由从真实注册里挪走或漏挂中间件，这个用例都会红。
+func TestReset2FARealRegistrationRunsAdminAuthAuditAndStepUpInOrder(t *testing.T) {
+	fixture := buildReset2FARouter(t, service.AuditAuthMethodJWT, reset2FATargetUser())
+
+	// 没有授权：请求必须被 step-up 拦在处理器之前，而 adminAuth 与审计都已经执行过。
+	rec := reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令"}`)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.GreaterOrEqual(t, len(fixture.events), 3, "events=%v", fixture.events)
+	require.Equal(t, []string{"adminAuth", "audit", "stepUp"}, fixture.events[:3], "events=%v", fixture.events)
+	require.Zero(t, fixture.repo.resetCalls)
+
+	// 有新鲜授权：同样的链，请求一路走到业务。
+	fixture.grantFreshStepUp(t)
+	rec = reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, []string{"adminAuth", "audit", "stepUp"}, fixture.events[:3], "events=%v", fixture.events)
+	require.Equal(t, 1, fixture.repo.resetCalls)
+}
+
 // 没有 step-up 授权 → 403 STEP_UP_REQUIRED，且不能碰数据库。
 func TestReset2FAWithoutStepUpIsForbidden(t *testing.T) {
 	fixture := buildReset2FARouter(t, service.AuditAuthMethodJWT, reset2FATargetUser())
 
-	rec := reset2FARequest(t, fixture.router, `{"reason":"用户忘记动态口令"}`)
+	rec := reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令"}`)
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
 	require.Zero(t, fixture.repo.resetCalls)
@@ -220,7 +281,7 @@ func TestReset2FAWithoutStepUpIsForbidden(t *testing.T) {
 func TestReset2FAMachineCredentialIsForbidden(t *testing.T) {
 	fixture := buildReset2FARouter(t, service.AuditAuthMethodAdminAPIKey, reset2FATargetUser())
 
-	rec := reset2FARequest(t, fixture.router, `{"reason":"用户忘记动态口令"}`)
+	rec := reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令"}`)
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	// step-up 门控对机器凭据统一以这个机器码拒绝（与其它高风险管理路由一致）。
 	require.Contains(t, rec.Body.String(), "STEP_UP_ADMIN_API_KEY_FORBIDDEN")
@@ -228,13 +289,92 @@ func TestReset2FAMachineCredentialIsForbidden(t *testing.T) {
 	require.Empty(t, fixture.audit.entries)
 }
 
+// 重置自己：即使授权新鲜也一律 400，且不碰数据库。过 step-up 本身就要 2FA，
+// 真丢了自己的码这条路用不了，只会便宜了窗口内的会话劫持。
+func TestReset2FARejectsResettingYourself(t *testing.T) {
+	fixture := buildReset2FARouter(t, service.AuditAuthMethodJWT, reset2FATargetUser())
+	fixture.grantFreshStepUp(t)
+
+	rec := fixture.post(t, "/api/v1/admin/users/1/reset-2fa", `{"reason":"我自己忘了动态口令"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "RESET_2FA_SELF_TARGET")
+	require.Zero(t, fixture.repo.resetCalls)
+	require.Empty(t, fixture.audit.entries)
+	// 自重置在要验证码之前就被拒：授权再旧也是同一个答案，不让管理员白输一次动态码。
+	fixture.grantStepUpAged(t, 4*time.Minute)
+	rec = fixture.post(t, "/api/v1/admin/users/1/reset-2fa", `{"reason":"我自己忘了动态口令"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "RESET_2FA_SELF_TARGET")
+}
+
+// 授权在共享的 5 分钟窗口里、但不够新鲜 → 403 STEP_UP_REQUIRED（前端弹出验证码输入框），
+// 当场重新验证之后同一请求重试成功。窗口内的旧验证不能放行这个高危操作。
+func TestReset2FARequiresFreshStepUpNotTheSharedFiveMinuteWindow(t *testing.T) {
+	fixture := buildReset2FARouter(t, service.AuditAuthMethodJWT, reset2FATargetUser())
+
+	// 90 秒前验证过：对普通敏感操作仍在窗口内，但对这个接口已经不够新鲜。
+	fixture.grantStepUpAged(t, 90*time.Second)
+	rec := reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令"}`)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
+	require.Zero(t, fixture.repo.resetCalls)
+	require.Empty(t, fixture.audit.entries)
+	// 被拒的请求没有跳过任何验证：不能带「已跳过验证码」的响应头，否则前端会提示
+	// 「刚刚免验证执行了敏感操作」。
+	require.Empty(t, rec.Header().Get(middleware.StepUpSkippedHeader))
+	require.Empty(t, rec.Header().Get(middleware.StepUpRemainingHeader))
+
+	// 刚过的验证（30 秒前）仍算新鲜：管理员刚输完验证码，重试不会再被要一遍。
+	fixture.grantStepUpAged(t, 30*time.Second)
+	rec = reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, 1, fixture.repo.resetCalls)
+}
+
+// 限流：每个管理员每分钟最多 3 次，第 4 次 429；限流挂在 step-up 之后，
+// 没有授权被 403 拦下的请求不消耗额度。
+func TestReset2FAIsRateLimitedPerAdminAfterStepUp(t *testing.T) {
+	fixture := buildReset2FARouter(t, service.AuditAuthMethodJWT, reset2FATargetUser())
+
+	// 没授权的 5 次尝试全部 403，不吃额度。
+	for i := 0; i < 5; i++ {
+		rec := reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令"}`)
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	}
+
+	fixture.grantFreshStepUp(t)
+	// 第 1 次成功；第 2、3 次目标已经没有 2FA（400），但仍然计数。
+	require.Equal(t, http.StatusOK, reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令"}`).Code)
+	for i := 0; i < 2; i++ {
+		rec := reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令"}`)
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "RESET_2FA_TARGET_NOT_ENABLED")
+	}
+	rec := reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令"}`)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "RATE_LIMITED")
+	require.NotEmpty(t, rec.Header().Get("Retry-After"))
+	require.Equal(t, 1, fixture.repo.resetCalls)
+}
+
 // 拿到 step-up 授权后：无 reason → 400（且不重置）。
 func TestReset2FAWithStepUpButNoReasonIsBadRequest(t *testing.T) {
 	user := reset2FATargetUser()
 	fixture := buildReset2FARouter(t, service.AuditAuthMethodJWT, user)
-	require.NoError(t, fixture.totpCache.SetStepUpGrant(context.Background(), 1, reset2FASessionID, service.FactorTOTP, service.StepUpGrantTTL))
+	fixture.grantFreshStepUp(t)
 
-	rec := reset2FARequest(t, fixture.router, `{"reason":"   "}`)
+	rec := reset2FARequest(t, fixture, `{"reason":"   "}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "RESET_2FA_REASON_REQUIRED")
+	require.Zero(t, fixture.repo.resetCalls)
+}
+
+// 清洗成纯文本之后什么都不剩的原因（只有标记/零宽字符）同样按「必填」400。
+func TestReset2FAReasonThatSanitizesToNothingIsBadRequest(t *testing.T) {
+	fixture := buildReset2FARouter(t, service.AuditAuthMethodJWT, reset2FATargetUser())
+	fixture.grantFreshStepUp(t)
+
+	rec := reset2FARequest(t, fixture, `{"reason":"<b></b>\u200b\u0000 "}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "RESET_2FA_REASON_REQUIRED")
 	require.Zero(t, fixture.repo.resetCalls)
@@ -244,9 +384,9 @@ func TestReset2FAWithStepUpButNoReasonIsBadRequest(t *testing.T) {
 func TestReset2FAMissingReasonFieldIsBadRequest(t *testing.T) {
 	user := reset2FATargetUser()
 	fixture := buildReset2FARouter(t, service.AuditAuthMethodJWT, user)
-	require.NoError(t, fixture.totpCache.SetStepUpGrant(context.Background(), 1, reset2FASessionID, service.FactorTOTP, service.StepUpGrantTTL))
+	fixture.grantFreshStepUp(t)
 
-	rec := reset2FARequest(t, fixture.router, `{}`)
+	rec := reset2FARequest(t, fixture, `{}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	require.Zero(t, fixture.repo.resetCalls)
 }
@@ -256,9 +396,9 @@ func TestReset2FAUnknownUserIsNotFound(t *testing.T) {
 	user := reset2FATargetUser()
 	fixture := buildReset2FARouter(t, service.AuditAuthMethodJWT, user)
 	fixture.repo.getErr = service.ErrUserNotFound
-	require.NoError(t, fixture.totpCache.SetStepUpGrant(context.Background(), 1, reset2FASessionID, service.FactorTOTP, service.StepUpGrantTTL))
+	fixture.grantFreshStepUp(t)
 
-	rec := reset2FARequest(t, fixture.router, `{"reason":"用户忘记动态口令"}`)
+	rec := reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令"}`)
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 	require.Zero(t, fixture.repo.resetCalls)
 }
@@ -269,26 +409,26 @@ func TestReset2FATargetWithoutTwoFactorIsBadRequest(t *testing.T) {
 	user.TotpEnabled = false
 	user.TotpSecretEncrypted = nil
 	fixture := buildReset2FARouter(t, service.AuditAuthMethodJWT, user)
-	require.NoError(t, fixture.totpCache.SetStepUpGrant(context.Background(), 1, reset2FASessionID, service.FactorTOTP, service.StepUpGrantTTL))
+	fixture.grantFreshStepUp(t)
 
-	rec := reset2FARequest(t, fixture.router, `{"reason":"用户忘记动态口令"}`)
+	rec := reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令"}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "RESET_2FA_TARGET_NOT_ENABLED")
 	require.Zero(t, fixture.repo.resetCalls)
 }
 
-// 成功路径：200 + TOTP 清空 + 审计落库（原因/操作者/前后状态，无 secret）。
+// 成功路径：200 + TOTP 清空 + 审计落库（原因/操作者/前后状态，无 secret、无邮箱明文）。
 func TestReset2FASuccessReturnsResetResultAndAudits(t *testing.T) {
 	user := reset2FATargetUser()
 	fixture := buildReset2FARouter(t, service.AuditAuthMethodJWT, user)
-	require.NoError(t, fixture.totpCache.SetStepUpGrant(context.Background(), 1, reset2FASessionID, service.FactorTOTP, service.StepUpGrantTTL))
+	fixture.grantFreshStepUp(t)
 
-	rec := reset2FARequest(t, fixture.router, `{"reason":"用户忘记动态口令，经工单核实"}`)
+	rec := reset2FARequest(t, fixture, `{"reason":"用户忘记动态口令，经工单核实"}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	var envelope struct {
-		Code int                             `json:"code"`
-		Data service.Admin2FAResetResult     `json:"data"`
+		Code int                         `json:"code"`
+		Data service.Admin2FAResetResult `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), rec.Body.String())
 	require.Equal(t, 0, envelope.Code)
@@ -296,6 +436,10 @@ func TestReset2FASuccessReturnsResetResultAndAudits(t *testing.T) {
 	require.False(t, envelope.Data.TotpEnabledAfter)
 	require.True(t, envelope.Data.TotpPreviouslyEnabled)
 	require.Equal(t, "用户忘记动态口令，经工单核实", envelope.Data.Reason)
+	require.True(t, envelope.Data.RevokedStepUpGrants)
+	// 这个装配没有邮件服务：重置照常成功，响应里明确列出没发出通知。
+	require.Equal(t, []string{service.Admin2FAResetStepNotification}, envelope.Data.IncompleteSteps)
+	require.Contains(t, rec.Body.String(), `"incomplete_steps":["notification"]`)
 	require.Equal(t, 1, fixture.repo.resetCalls)
 	require.False(t, fixture.repo.user.TotpEnabled)
 	require.Nil(t, fixture.repo.user.TotpSecretEncrypted)
@@ -306,5 +450,7 @@ func TestReset2FASuccessReturnsResetResultAndAudits(t *testing.T) {
 	require.Equal(t, "用户忘记动态口令，经工单核实", entry.Extra["reason"])
 	require.Equal(t, false, entry.Extra["totp_enabled_after"])
 	require.Equal(t, true, entry.Extra["totp_enabled_before"])
+	require.Equal(t, service.HashAuditEmail("user-3249@example.test"), entry.Extra["target_email_hash"])
 	require.NotContains(t, entry.RequestBody, "top-secret")
+	require.False(t, strings.Contains(rec.Body.String(), "top-secret"))
 }

@@ -44,6 +44,15 @@
         :description="t('admin.users.reset2fa.passkeyNotice')"
       />
 
+      <!-- 高危操作要当场验证：共享 5 分钟窗口里的旧验证不算，确认时会弹出验证码输入框 -->
+      <UAlert
+        color="neutral"
+        variant="subtle"
+        icon="i-lucide-smartphone"
+        data-test="reset-2fa-fresh-notice"
+        :description="t('admin.users.reset2fa.freshVerifyNotice')"
+      />
+
       <UFormField
         :label="t('admin.users.reset2fa.reasonLabel')"
         required
@@ -187,6 +196,10 @@ async function handleSubmit() {
     if (!result.revoked_step_up_grants) {
       appStore.showError(t('admin.users.reset2fa.stepUpNotRevoked'), 8000)
     }
+    // 重置已提交但服务端审计行没写进去：必须让管理员知道，自己留一份记录。
+    if (result.incomplete_steps?.includes('audit')) {
+      appStore.showError(t('admin.users.reset2fa.auditNotRecorded'), 10000)
+    }
     emit('success', result)
     emit('close')
   } catch (error: any) {
@@ -197,17 +210,26 @@ async function handleSubmit() {
         : t('stepUp.notEnabled')
       return
     }
-    const code = error?.response?.data?.reason as string | undefined
-    errorMessage.value = reset2FAErrorMessage(code, error)
+    errorMessage.value = reset2FAErrorMessage(reset2FAErrorCode(error), error)
   } finally {
     submitting.value = false
   }
 }
 
 /**
+ * 取后端的机器码。共享 API 客户端拒绝时给的是拍平的 { status, code, reason, message }，
+ * 直接用 axios 的调用方拿到的是 error.response.data：两种形状都认。
+ */
+function reset2FAErrorCode(error: any): string | undefined {
+  const code = error?.reason ?? error?.response?.data?.reason
+  return typeof code === 'string' ? code : undefined
+}
+
+/**
  * 把后端的机器码翻成本地化提示；未知码一律回落到后端 message（已是人话）。
  */
 function reset2FAErrorMessage(code: string | undefined, error: any): string {
+  if (!code && error?.status === 429) return t('admin.users.reset2fa.rateLimited')
   switch (code) {
     case 'RESET_2FA_REASON_REQUIRED':
       return t('admin.users.reset2fa.reasonRequired')
@@ -215,12 +237,16 @@ function reset2FAErrorMessage(code: string | undefined, error: any): string {
       return t('admin.users.reset2fa.reasonTooLong', { max: MAX_REASON_LENGTH })
     case 'RESET_2FA_TARGET_NOT_ENABLED':
       return t('admin.users.reset2fa.targetNotEnabled')
+    case 'RESET_2FA_SELF_TARGET':
+      return t('admin.users.reset2fa.selfTarget')
+    case 'RATE_LIMITED':
+      return t('admin.users.reset2fa.rateLimited')
     case 'USER_NOT_FOUND':
       return t('admin.users.reset2fa.userNotFound')
     case 'RESET_2FA_UNAVAILABLE':
       return t('admin.users.reset2fa.unavailable')
     default:
-      return error?.response?.data?.message || t('admin.users.reset2fa.failed')
+      return error?.message || error?.response?.data?.message || t('admin.users.reset2fa.failed')
   }
 }
 </script>

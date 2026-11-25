@@ -1187,8 +1187,9 @@ const rowMenuItems = (user: AdminUser): DropdownMenuItem[][] => {
     ],
     [
       // 破玻璃重置 2FA：用户自己关 2FA 要输动态码，忘了就只能在管理端重置。
-      // 危险操作单独成组（error 色），且对管理员目标也开放——管理员自己忘了
-      // 2FA 时这是唯一自救路径（后端审计里会标注 target_role=admin）。
+      // 危险操作单独成组（error 色），对其他管理员目标也开放（后端审计里会标注
+      // target_role=admin）。重置自己的 2FA 后端一律拒绝（RESET_2FA_SELF_TARGET）：
+      // 过 step-up 本身就要 2FA，自己丢码走服务器上的 -reset-admin-2fa 命令行。
       {
         label: t('admin.users.reset2fa.menuItem'),
         icon: 'i-lucide-shield-off',

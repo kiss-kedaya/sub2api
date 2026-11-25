@@ -1060,6 +1060,10 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 //
 // 单独成函数（而不是内联 append）是为了让事件定义、样例变量与模板渲染使用同一份
 // 清单：漏一个占位符，模板校验会在后台模板页直接报错。
+//
+// operator_name 只为兼容：官方模板和真实发信都不再带操作管理员（邮件发给目标用户，
+// 不该把管理员的邮箱泄给它），但管理员可能已经保存过引用该占位符的自定义模板，
+// 从清单里删掉会让这些模板在后台和发信时直接校验失败。发信时它不会被赋值，渲染为 "-"。
 func adminEmailSecurityResetPlaceholders() []string {
 	return append(append([]string{}, notificationEmailCommonPlaceholders...),
 		"reset_reason", "reset_at", "operator_name", "passkey_retained",
@@ -1075,8 +1079,8 @@ func addNotificationEmailAdminSecurityResetSampleVariables(variables map[string]
 		variables["operator_name"] = "admin@example.com"
 		variables["passkey_retained"] = "yes"
 		variables["remaining_factors"] = "passkey"
-		variables["rebind_url"] = "https://example.com/settings/security"
-		variables["rebind_link_display"] = "https://example.com/settings/security"
+		variables["rebind_url"] = "https://example.com/profile"
+		variables["rebind_link_display"] = "https://example.com/profile"
 		return
 	}
 	variables["reset_reason"] = "The user lost their authenticator; identity verified via support ticket."
@@ -1084,8 +1088,8 @@ func addNotificationEmailAdminSecurityResetSampleVariables(variables map[string]
 	variables["operator_name"] = "admin@example.com"
 	variables["passkey_retained"] = "yes"
 	variables["remaining_factors"] = "passkey"
-	variables["rebind_url"] = "https://example.com/settings/security"
-	variables["rebind_link_display"] = "https://example.com/settings/security"
+	variables["rebind_url"] = "https://example.com/profile"
+	variables["rebind_link_display"] = "https://example.com/profile"
 }
 
 func addNotificationEmailOpsSummarySampleVariables(variables map[string]string) {
@@ -1171,7 +1175,7 @@ var notificationEmailEventDefinitions = map[string]NotificationEmailEventInfo{
 	NotificationEmailEventAdminSecurityTwoFactorReset: {
 		Event:        NotificationEmailEventAdminSecurityTwoFactorReset,
 		Label:        "管理员重置双因素认证",
-		Description:  "管理员「破玻璃」重置用户 TOTP 后必发通知：包含重置原因、操作时间、操作管理员、是否保留 Passkey 与重新绑定入口。不可退订。",
+		Description:  "管理员「破玻璃」重置用户 TOTP 后必发通知：包含重置原因、操作时间、是否保留 Passkey 与重新绑定入口（不带操作管理员信息）。不可退订。",
 		Category:     "auth",
 		Optional:     false,
 		Placeholders: adminEmailSecurityResetPlaceholders(),
@@ -1335,8 +1339,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 <p>Hello {{recipient_name}},</p>
 <p>An administrator reset the two-factor authentication (TOTP) on your account. The authenticator you had bound <strong>no longer works</strong>, and a new one must be bound before it protects your account again.</p>
 <p><strong>Reason for the reset:</strong> {{reset_reason}}<br>
-<strong>Reset time:</strong> {{reset_at}}<br>
-<strong>Operator:</strong> {{operator_name}}</p>
+<strong>Reset time:</strong> {{reset_at}}</p>
 <p>Passkey credentials are kept: {{passkey_retained}} (yes = your passkey login still works, no = you currently have no passkey bound).</p>
 <p>Two-factor factors you still need to verify after this reset: {{remaining_factors}}</p>
 <p>Please bind a new authenticator as soon as possible in Security settings.</p>
@@ -1350,8 +1353,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 <p>{{recipient_name}}，您好：</p>
 <p>管理员重置了您账号上的双因素认证（TOTP）。<strong>您原来绑定的动态口令已失效</strong>，需要重新绑定后双因素认证才会重新生效。</p>
 <p><strong>重置原因：</strong>{{reset_reason}}<br>
-<strong>操作时间：</strong>{{reset_at}}<br>
-<strong>操作管理员：</strong>{{operator_name}}</p>
+<strong>操作时间：</strong>{{reset_at}}</p>
 <p>Passkey 凭据是否保留：{{passkey_retained}}（yes = 您的 Passkey 登录仍然有效，no = 您当前没有绑定 Passkey）。</p>
 <p>重置后您仍需验证的因子：{{remaining_factors}}</p>
 <p>请尽快在安全设置中重新绑定新的动态口令。</p>

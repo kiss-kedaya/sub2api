@@ -152,7 +152,33 @@ func EnforceStepUpAlways(
 	)
 }
 
+// EnforceFreshStepUp 与 EnforceStepUp 语义相同，但额外要求每个已绑定因子的 step-up
+// 授权是 maxAge 之内刚签发的：窗口（StepUpGrantTTL，5 分钟）内更早的验证不能放行。
+// 只给「能降低他人账号安全强度」的少数高危处理器用（如破玻璃重置他人 2FA），
+// 其它路由的窗口语义不变。不够新鲜时返回与「没有授权」相同的 STEP_UP_REQUIRED，
+// 前端沿用现有的验证码弹窗：输入当前验证码后重试即可。
+func EnforceFreshStepUp(
+	c *gin.Context,
+	totpService *service.TotpService,
+	userService *service.UserService,
+	settingService *service.SettingService,
+	maxAge time.Duration,
+) bool {
+	return enforceStepUpWithin(c,
+		stepUpGrantCheckerOrNil(totpService),
+		stepUpUserReaderOrNil(userService),
+		stepUpSettingsOrNil(settingService),
+		maxAge,
+	)
+}
+
 func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader stepUpUserReader, settings stepUpSettingReader) bool {
+	return enforceStepUpWithin(c, grantChecker, userReader, settings, 0)
+}
+
+// enforceStepUpWithin 是门控的唯一实现。maxAge <= 0 表示只要授权仍在窗口内就放行
+// （所有既有路由的语义）；maxAge > 0 时还要求授权已存在的时间不超过 maxAge。
+func enforceStepUpWithin(c *gin.Context, grantChecker stepUpGrantChecker, userReader stepUpUserReader, settings stepUpSettingReader, maxAge time.Duration) bool {
 	// 功能开关关闭时直接放行（含 admin API key），恢复门控引入前的行为。
 	// settings 为 nil 时保持门控（fail-closed）：正常装配不会出现 nil。
 	// 开关读取失败同样 fail-closed：不能因为存储抖动把安全门控静默关掉。
@@ -240,6 +266,19 @@ func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader s
 			SetAuditExtra(c, map[string]any{"two_factor_missing_factors": factor.String()})
 			AbortWithError(c, 403, "STEP_UP_REQUIRED",
 				"This operation requires recent two-factor verification")
+			return false
+		}
+		// 授权的年龄 = 窗口总长 - 剩余时间（所有授权都以 StepUpGrantTTL 签发）。
+		// 年龄超过 maxAge 的旧授权不能替代当前验证：按缺这个因子处理，让前端当场重新验证。
+		if maxAge > 0 && service.StepUpGrantTTL-remaining > maxAge {
+			// 路由级门控已经为这个请求写了「已跳过验证码」的响应头；这里请求被拒了，
+			// 没有跳过任何验证，必须撤掉：否则前端右下角会提示「刚刚免验证执行了敏感操作」。
+			c.Writer.Header().Del(StepUpSkippedHeader)
+			c.Writer.Header().Del(StepUpRemainingHeader)
+			c.Writer.Header().Del(StepUpFactorsHeader)
+			SetAuditExtra(c, map[string]any{"two_factor_missing_factors": factor.String()})
+			AbortWithError(c, 403, "STEP_UP_REQUIRED",
+				"This operation requires a fresh two-factor verification; verify again and retry")
 			return false
 		}
 		if !remainingKnown || remaining < minRemaining {
