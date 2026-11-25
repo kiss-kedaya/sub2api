@@ -245,11 +245,59 @@ func applyGrokResponsesCacheIdentity(body, intentSourceBody []byte, identity str
 	return sjson.SetBytes(out, "tool_choice", grokFreeCacheDisabledToolChoice)
 }
 
+// grokAPIKeyStrippedResponsesFields 是第三方 Grok API key 会以裸 502 拒绝的 OpenAI 专有字段。
+var grokAPIKeyStrippedResponsesFields = [...]string{"store", "include", "previous_response_id", "service_tier"}
+
 // stripGrokAPIKeyOpenAICompatFields drops OpenAI-only Responses fields that
 // third-party Grok API keys (for example third-party relays) reject with a bare 502.
+//
+// 一遍扫描顶层成员、把要删的字段收成 edit、最后一次精确大小输出；一个都没有就原样返回 body。
+// 旧实现对 4 个字段各做一次 gjson.GetBytes（整体重扫）+ sjson.DeleteBytes（整体复制），
+// 4 个字段都在时就是 4 份完整复制品。成员排版宽松（逗号两侧有空白）时交回 sjson，保持逐字节一致。
 func stripGrokAPIKeyOpenAICompatFields(body []byte) ([]byte, error) {
+	root := parseRawJSONView(body)
+	if !root.IsObject() {
+		return stripGrokAPIKeyOpenAICompatFieldsWithSJSON(body)
+	}
+	members := make([]jsonObjMember, 0, 32)
+	var found [len(grokAPIKeyStrippedResponsesFields)]int
+	for i := range found {
+		found[i] = -1
+	}
+	root.ForEach(func(key, value gjson.Result) bool {
+		for i, field := range grokAPIKeyStrippedResponsesFields {
+			// 重复键只删第一个，与 sjson.DeleteBytes 一致。
+			if found[i] < 0 && key.Str == field {
+				found[i] = len(members)
+			}
+		}
+		members = append(members, jsonObjMember{start: key.Index, end: value.Index + len(value.Raw)})
+		return true
+	})
+	var drop [len(grokAPIKeyStrippedResponsesFields)]int
+	dropped := 0
+	for _, idx := range found {
+		if idx >= 0 {
+			drop[dropped] = idx
+			dropped++
+		}
+	}
+	if dropped == 0 {
+		return body, nil
+	}
+	if !jsonObjMembersTight(body, root.Index, members) {
+		return stripGrokAPIKeyOpenAICompatFieldsWithSJSON(body)
+	}
+	sort.Ints(drop[:dropped])
+	edits := appendJSONMemberDrops(make([]jsonEdit, 0, dropped), members, drop[:dropped]...)
+	return applyJSONEdits(body, edits)
+}
+
+// stripGrokAPIKeyOpenAICompatFieldsWithSJSON 是逐字段 sjson 的历史实现，只用于排版宽松或根部不是对象的请求体：
+// 逗号/空白的取舍以 sjson 为准。
+func stripGrokAPIKeyOpenAICompatFieldsWithSJSON(body []byte) ([]byte, error) {
 	out := body
-	for _, field := range []string{"store", "include", "previous_response_id", "service_tier"} {
+	for _, field := range grokAPIKeyStrippedResponsesFields {
 		if !gjson.GetBytes(out, field).Exists() {
 			continue
 		}
