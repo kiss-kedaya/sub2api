@@ -82,7 +82,7 @@ func TestDeclaredClientFunctionToolNamesMatchesLegacy(t *testing.T) {
 		`{"tools":[{"name":"  "}],"functions":[{"name":""}]}`,
 	}
 	for _, body := range fixed {
-		require.Equal(t, legacyDeclaredClientFunctionToolNames([]byte(body)), declaredClientFunctionToolNames([]byte(body)), "body: %q", body)
+		require.Equal(t, legacyDeclaredClientFunctionToolNames([]byte(body)), declaredClientFunctionToolNames(nil, []byte(body)), "body: %q", body)
 	}
 }
 
@@ -172,7 +172,7 @@ func TestDeclaredClientFunctionToolNamesMatchesLegacyRandomized(t *testing.T) {
 	r := rand.New(rand.NewSource(491))
 	for i := 0; i < 4000; i++ {
 		body := randomToolNamesBody(r)
-		require.Equal(t, legacyDeclaredClientFunctionToolNames([]byte(body)), declaredClientFunctionToolNames([]byte(body)), "body: %s", body)
+		require.Equal(t, legacyDeclaredClientFunctionToolNames([]byte(body)), declaredClientFunctionToolNames(nil, []byte(body)), "body: %s", body)
 	}
 }
 
@@ -220,7 +220,7 @@ func TestDeclaredClientFunctionToolNamesDoesNotRetainBody(t *testing.T) {
 	legacyRetained := measure(legacyDeclaredClientFunctionToolNames)
 	require.Greater(t, legacyRetained, int64(bodySize)*3/4, "旧实现应当把整份复制品钉住")
 
-	currentRetained := measure(declaredClientFunctionToolNames)
+	currentRetained := measure(func(body []byte) map[string]struct{} { return declaredClientFunctionToolNames(nil, body) })
 	t.Logf("请求体 %d 字节；map 存活时多留住的堆: legacy=%d current=%d", bodySize, legacyRetained, currentRetained)
 	require.Less(t, currentRetained, int64(bodySize)/8, "key 不应再引用请求体或其复制品")
 }
@@ -229,7 +229,7 @@ func TestDeclaredClientFunctionToolNamesDoesNotRetainBody(t *testing.T) {
 // 且 body 之后被改写（例如就地编辑）时 key 会跟着变。
 func TestDeclaredClientFunctionToolNamesKeysDoNotAliasBody(t *testing.T) {
 	body := largeToolNamesBody(1 << 20)
-	names := declaredClientFunctionToolNames(body)
+	names := declaredClientFunctionToolNames(nil, body)
 	require.Len(t, names, 2)
 
 	base := uintptr(unsafe.Pointer(unsafe.SliceData(body)))
@@ -253,7 +253,7 @@ func TestDeclaredClientFunctionToolNamesBodyIsCollectable(t *testing.T) {
 	names := func() map[string]struct{} {
 		body := largeToolNamesBody(4 << 20)
 		runtime.SetFinalizer(unsafe.SliceData(body), func(*byte) { close(collected) })
-		return declaredClientFunctionToolNames(body)
+		return declaredClientFunctionToolNames(nil, body)
 	}()
 	require.Len(t, names, 2)
 	deadline := time.After(10 * time.Second)
@@ -278,7 +278,7 @@ func BenchmarkDeclaredClientFunctionToolNames(b *testing.B) {
 			fn   func([]byte) map[string]struct{}
 		}{
 			{"legacy", legacyDeclaredClientFunctionToolNames},
-			{"current", declaredClientFunctionToolNames},
+			{"current", func(body []byte) map[string]struct{} { return declaredClientFunctionToolNames(nil, body) }},
 		} {
 			b.Run(fmt.Sprintf("%s/body_%dKB", impl.name, size>>10), func(b *testing.B) {
 				b.ReportAllocs()

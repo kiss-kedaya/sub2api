@@ -15,7 +15,7 @@ type inflightReservationEstimator interface {
 }
 
 // requestMaxOutputTokens 从请求体中提取输出 token 上限（兼容 Anthropic / OpenAI Chat / Responses / Gemini）。
-func requestMaxOutputTokens(body []byte) int {
+func requestMaxOutputTokens(c *gin.Context, body []byte) int {
 	// Cheap prefilter: a path can only match when its key text appears in the
 	// body. Probe fields are scanned one at a time, and each miss used to cost
 	// a full body rescan; on Responses traffic only one of these five keys is
@@ -26,11 +26,15 @@ func requestMaxOutputTokens(body []byte) int {
 	// practice but must keep working, so the prefilter only skips the probe
 	// when the body contains no backslash at all.
 	hasEscape := bytes.IndexByte(body, '\\') >= 0
+	// A body that carries any backslash (every Codex body with a newline in it)
+	// defeats the prefilter and used to be rescanned once per path; the top-level
+	// index answers all five paths from one pass.
+	top := service.RequestBodyTop(c, body)
 	for _, path := range maxOutputTokenPaths {
 		if !hasEscape && !bytes.Contains(body, path.keyBytes) {
 			continue
 		}
-		if v := gjson.GetBytes(body, path.path); v.Exists() && v.Type == gjson.Number && v.Int() > 0 {
+		if v := top.Get(path.path); v.Exists() && v.Type == gjson.Number && v.Int() > 0 {
 			return int(v.Int())
 		}
 	}
@@ -52,11 +56,11 @@ var maxOutputTokenPaths = []maxOutputTokenPath{
 }
 
 // tokenInflightEstimate 文本类请求的估算输入。
-func tokenInflightEstimate(model string, body []byte) service.InflightEstimateRequest {
+func tokenInflightEstimate(c *gin.Context, model string, body []byte) service.InflightEstimateRequest {
 	return service.InflightEstimateRequest{
 		Model:     model,
 		BodyBytes: len(body),
-		MaxTokens: requestMaxOutputTokens(body),
+		MaxTokens: requestMaxOutputTokens(c, body),
 		Kind:      service.InflightEstimateToken,
 	}
 }

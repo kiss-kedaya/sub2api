@@ -946,7 +946,7 @@ func TestPassthroughBilling_PostFilterServiceTier(t *testing.T) {
 	// Pre-filter sanity: extracting from the raw frame would (incorrectly,
 	// pre-fix) report "priority" — this is the very thing the adapter
 	// must NOT do anymore.
-	pre := extractOpenAIServiceTierFromBody(raw)
+	pre := extractOpenAIServiceTierFromBody(nil, raw)
 	require.NotNil(t, pre)
 	require.Equal(t, "priority", *pre,
 		"sanity: raw first frame carries priority that pre-fix billing would have reported")
@@ -960,7 +960,7 @@ func TestPassthroughBilling_PostFilterServiceTier(t *testing.T) {
 	// Post-filter: extracting from the rewritten frame returns nil. This
 	// is the value the adapter now passes to OpenAIForwardResult.ServiceTier;
 	// any observed response tier remains separate for usage-time resolution.
-	post := extractOpenAIServiceTierFromBody(filtered)
+	post := extractOpenAIServiceTierFromBody(nil, filtered)
 	require.Nil(t, post, "fix3: post-filter extraction must preserve a nil outbound tier")
 
 	// And the byte-level invariant the adapter relies on: filtering an
@@ -1052,7 +1052,7 @@ func TestPassthroughBilling_MultiTurnServiceTierFollowsFilteredFrames(t *testing
 		out, blocked, policyErr := svc.applyOpenAIFastPolicyToWSResponseCreate(context.Background(), account, model, payload)
 		if policyErr == nil && blocked == nil &&
 			strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
-			requestServiceTierPtr.Store(extractOpenAIServiceTierFromBody(out))
+			requestServiceTierPtr.Store(extractOpenAIServiceTierFromBody(nil, out))
 		}
 		return out, blocked, policyErr
 	}
@@ -1063,7 +1063,7 @@ func TestPassthroughBilling_MultiTurnServiceTierFollowsFilteredFrames(t *testing
 	firstOut, firstBlocked, firstErr := svc.applyOpenAIFastPolicyToWSResponseCreate(context.Background(), account, "gpt-5.5", firstFrame)
 	require.NoError(t, firstErr)
 	require.Nil(t, firstBlocked)
-	requestServiceTierPtr.Store(extractOpenAIServiceTierFromBody(firstOut))
+	requestServiceTierPtr.Store(extractOpenAIServiceTierFromBody(nil, firstOut))
 	capturedSessionModel = openAIWSPassthroughPolicyModelForFrame(account, firstFrame)
 	require.Nil(t, requestServiceTierPtr.Load(),
 		"turn 1: filter strips service_tier=priority, leaving a nil outbound tier")
@@ -1187,7 +1187,7 @@ func TestPassthroughBilling_BlockedFrameDoesNotMutateServiceTier(t *testing.T) {
 		out, blocked, policyErr := svc.applyOpenAIFastPolicyToWSResponseCreate(context.Background(), account, "gpt-5.5", payload)
 		if policyErr == nil && blocked == nil &&
 			strings.TrimSpace(gjson.GetBytes(payload, "type").String()) == "response.create" {
-			requestServiceTierPtr.Store(extractOpenAIServiceTierFromBody(out))
+			requestServiceTierPtr.Store(extractOpenAIServiceTierFromBody(nil, out))
 		}
 		return out, blocked, policyErr
 	}

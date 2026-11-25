@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
 
@@ -41,9 +43,9 @@ type codexBootstrapNormalization struct {
 // Cheap gjson scan first: typical /v1/responses bodies have no untrusted
 // context/automation/delegation items, and a full encoding/json Decoder walk of
 // those bodies was the hottest CPU path on production.
-func applyCodexBootstrapNormalizations(body []byte) codexBootstrapNormalization {
+func applyCodexBootstrapNormalizations(c *gin.Context, body []byte) codexBootstrapNormalization {
 	result := codexBootstrapNormalization{Body: body}
-	if !codexBootstrapInputLooksRelevant(body) {
+	if !codexBootstrapInputLooksRelevant(c, body) {
 		return result
 	}
 	if next, changed := normalizeCodexUntrustedContext(result.Body); changed {
@@ -61,8 +63,8 @@ func applyCodexBootstrapNormalizations(body []byte) codexBootstrapNormalization 
 	return result
 }
 
-func codexBootstrapInputLooksRelevant(body []byte) bool {
-	input := gjson.GetBytes(body, "input")
+func codexBootstrapInputLooksRelevant(c *gin.Context, body []byte) bool {
+	input := service.RequestBodyTop(c, body).Get("input")
 	if !input.IsArray() {
 		return false
 	}

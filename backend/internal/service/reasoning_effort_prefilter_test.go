@@ -38,7 +38,7 @@ func TestExplicitRequestedReasoningEffortMatchesLegacy(t *testing.T) {
 	}
 	for _, body := range cases {
 		want := legacyExplicitReasoningEffort([]byte(body))
-		got := explicitRequestedReasoningEffortFromBody([]byte(body))
+		got := explicitRequestedReasoningEffortFromBody(nil, []byte(body))
 		require.Equalf(t, want, got, "body=%s", body)
 	}
 }

@@ -71,13 +71,13 @@ func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2StaysOnResponses(t *test
 			require.Equal(t, "max", gjson.GetBytes(normalized, "reasoning.effort").String())
 			require.Equal(t, "all_turns", gjson.GetBytes(normalized, "reasoning.context").String())
 			legacyCompact := service.IsOpenAIResponsesCompactPath(c)
-			nativeV2 := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(normalized)
+			nativeV2 := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(c, normalized)
 			require.False(t, legacyCompact)
 			require.True(t, nativeV2)
 			require.Equal(t, service.OpenAIEndpointCapabilityResponses,
 				openAIResponsesRequiredCapabilityForRequest(false, nativeV2 || legacyCompact, service.PlatformOpenAI))
 
-			reqStream, streamOK := parseOpenAICompatibleStream(normalized)
+			reqStream, streamOK := parseOpenAICompatibleStream(nil, normalized)
 			require.True(t, streamOK)
 			require.True(t, reqStream)
 
@@ -106,7 +106,7 @@ func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2PathAliasesStayOnRespons
 			require.Equal(t, path, c.Request.URL.Path)
 			require.Equal(t, body, normalized)
 			legacyCompact := service.IsOpenAIResponsesCompactPath(c)
-			nativeV2 := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(normalized)
+			nativeV2 := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(c, normalized)
 			require.False(t, legacyCompact)
 			require.True(t, nativeV2)
 			require.Equal(t, service.OpenAIEndpointCapabilityResponses,
@@ -215,14 +215,14 @@ func TestOpenAIResponsesCompactionRoutingFlags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := newCompactBodySignalTestContext(t, tt.path, tt.body)
 			legacyBefore := service.IsOpenAIResponsesCompactPath(c)
-			nativeBefore := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(tt.body)
+			nativeBefore := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(c, tt.body)
 			require.Equal(t, tt.wantLegacyBefore, legacyBefore)
 			require.Equal(t, tt.wantNativeBefore, nativeBefore)
 			normalized, ok := h.normalizeOpenAIResponsesCompactRequest(c, zap.NewNop(), tt.body)
 			require.True(t, ok)
 			require.Equal(t, tt.wantPathAfter, c.Request.URL.Path)
 			legacyAfter := service.IsOpenAIResponsesCompactPath(c)
-			nativeAfter := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(normalized)
+			nativeAfter := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(c, normalized)
 			require.Equal(t, tt.wantLegacyAfter, legacyAfter)
 			require.Equal(t, tt.wantNativeAfter, nativeAfter)
 			require.Equal(t, tt.wantCapabilityAfter,

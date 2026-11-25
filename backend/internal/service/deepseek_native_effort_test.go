@@ -104,7 +104,7 @@ func TestDeepSeekNativeReasoningReplayPreservesNoneInDecodedRequest(t *testing.T
 			account := deepSeekNativeReplayAccount()
 			account.Credentials["api_protocol"] = protocol
 			body := []byte(`{"reasoning":{"effort":"none","summary":"auto"},"reasoning_effort":"none","tool_choice":{"type":"function","name":"lookup"}}`)
-			out, err := filterOpenAIResponsesNoneReasoningEffortForAccount(account, body)
+			out, err := filterOpenAIResponsesNoneReasoningEffortForAccount(nil, account, body)
 			require.NoError(t, err)
 			require.Equal(t, body, out)
 			var decoded map[string]any

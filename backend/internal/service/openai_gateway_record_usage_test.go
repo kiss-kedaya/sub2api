@@ -1562,14 +1562,14 @@ func TestExtractOpenAIServiceTier(t *testing.T) {
 }
 
 func TestExtractOpenAIServiceTierFromBody(t *testing.T) {
-	require.Equal(t, "priority", *extractOpenAIServiceTierFromBody([]byte(`{"service_tier":"fast"}`)))
-	require.Equal(t, "flex", *extractOpenAIServiceTierFromBody([]byte(`{"service_tier":"flex"}`)))
-	require.Equal(t, "auto", *extractOpenAIServiceTierFromBody([]byte(`{"service_tier":"auto"}`)))
-	require.Equal(t, "default", *extractOpenAIServiceTierFromBody([]byte(`{"service_tier":"default"}`)))
-	require.Equal(t, "scale", *extractOpenAIServiceTierFromBody([]byte(`{"service_tier":"scale"}`)))
-	require.Equal(t, "ultrafast", *extractOpenAIServiceTierFromBody([]byte(`{"service_tier":"ultrafast"}`)))
-	require.Nil(t, extractOpenAIServiceTierFromBody([]byte(`{"service_tier":"turbo"}`)))
-	require.Nil(t, extractOpenAIServiceTierFromBody(nil))
+	require.Equal(t, "priority", *extractOpenAIServiceTierFromBody(nil, []byte(`{"service_tier":"fast"}`)))
+	require.Equal(t, "flex", *extractOpenAIServiceTierFromBody(nil, []byte(`{"service_tier":"flex"}`)))
+	require.Equal(t, "auto", *extractOpenAIServiceTierFromBody(nil, []byte(`{"service_tier":"auto"}`)))
+	require.Equal(t, "default", *extractOpenAIServiceTierFromBody(nil, []byte(`{"service_tier":"default"}`)))
+	require.Equal(t, "scale", *extractOpenAIServiceTierFromBody(nil, []byte(`{"service_tier":"scale"}`)))
+	require.Equal(t, "ultrafast", *extractOpenAIServiceTierFromBody(nil, []byte(`{"service_tier":"ultrafast"}`)))
+	require.Nil(t, extractOpenAIServiceTierFromBody(nil, []byte(`{"service_tier":"turbo"}`)))
+	require.Nil(t, extractOpenAIServiceTierFromBody(nil, nil))
 }
 
 func TestOpenAIGatewayServiceRecordUsage_UsesRequestedModelAndUpstreamModelMetadataFields(t *testing.T) {

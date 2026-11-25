@@ -174,7 +174,7 @@ func BenchmarkOpenAIResponses_LargeInputEmptyBase64Guard(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if openAIRequestBodyMayContainEmptyBase64InputImage(body) {
+				if openAIRequestBodyMayContainEmptyBase64InputImage(nil, body) {
 					benchmarkIntSink++
 				}
 			}

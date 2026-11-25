@@ -66,12 +66,12 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	startTime := time.Now()
 
 	// 1. Parse minimal fields needed for routing/billing
-	originalModel := gjson.GetBytes(body, "model").String()
+	originalModel := RequestBodyTop(c, body).Get("model").String()
 	if originalModel == "" {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return nil, fmt.Errorf("missing model in request")
 	}
-	clientStream := gjson.GetBytes(body, "stream").Bool()
+	clientStream := RequestBodyTop(c, body).Get("stream").Bool()
 
 	// 2. Resolve model mapping (same as ForwardAsChatCompletions)
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
@@ -87,7 +87,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		// anchored to the client's stable conversation prefix.
 		grokCacheIdentity = resolveGrokCacheIdentity(c, body, "", upstreamModel)
 	}
-	if openai.RequiresResponsesForToolCalls(upstreamModel) && (len(gjson.GetBytes(body, "tools").Array()) > 0 || len(gjson.GetBytes(body, "functions").Array()) > 0) {
+	if openai.RequiresResponsesForToolCalls(upstreamModel) && (len(RequestBodyTop(c, body).Get("tools").Array()) > 0 || len(RequestBodyTop(c, body).Get("functions").Array()) > 0) {
 		// Managed gateways can retry on a Responses-capable account; a direct /
 		// single-account caller keeps the committed 400.
 		if s.accountRepo != nil {
@@ -97,12 +97,12 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err
 	}
-	if openai.IsGPT6SolOrLunaModelSpelling(upstreamModel) && (len(gjson.GetBytes(body, "tools").Array()) > 0 || len(gjson.GetBytes(body, "functions").Array()) > 0) && gjson.GetBytes(body, "reasoning_effort").String() != "none" {
+	if openai.IsGPT6SolOrLunaModelSpelling(upstreamModel) && (len(RequestBodyTop(c, body).Get("tools").Array()) > 0 || len(RequestBodyTop(c, body).Get("functions").Array()) > 0) && RequestBodyTop(c, body).Get("reasoning_effort").String() != "none" {
 		err := fmt.Errorf("%s requires Responses for tool calls with reasoning; this account only supports Chat Completions. Use reasoning_effort=none or a Responses-capable account", upstreamModel)
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err
 	}
-	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(c, body, upstreamModel, billingModel, originalModel)
 	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
 
@@ -138,7 +138,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	}
 	// Keep the final outbound tier separate from the observed response tier so
 	// usage recording can apply the selected credential's response contract.
-	serviceTier := extractOpenAIServiceTierFromBody(upstreamBody)
+	serviceTier := extractOpenAIServiceTierFromBody(c, upstreamBody)
 	if account.Platform == PlatformGrok {
 		strippedBody, stripErr := stripRedundantGrokChatViewImageTool(upstreamBody)
 		if stripErr != nil {

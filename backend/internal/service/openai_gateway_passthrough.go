@@ -180,7 +180,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if normalized {
 			body = normalizedBody
 		}
-		reqStream = gjson.GetBytes(body, "stream").Bool()
+		reqStream = RequestBodyTop(c, body).Get("stream").Bool()
 
 		accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 		if scopeErr != nil {
@@ -214,7 +214,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		}
 	}
 	if account != nil && account.IsOpenAI() && !account.IsCopilotSDKEnabled() {
-		responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(body)
+		responsesLite := isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) || isOpenAIResponsesLiteWebSocketPayload(c, body)
 		normalizedBody, normalized, normalizeErr := normalizeOpenAIResponsesCompatibilityBody(body, account, responsesLite, isOpenAIResponsesCompactPath(c))
 		if normalizeErr != nil {
 			return nil, fmt.Errorf("normalize passthrough Responses compatibility: %w", normalizeErr)
@@ -244,7 +244,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		setOpenAIResponsesClientToolMapping(c, mapping)
 	}
 
-	sanitizedBody, sanitized, err := sanitizeEmptyBase64InputImagesInOpenAIBody(body)
+	sanitizedBody, sanitized, err := sanitizeEmptyBase64InputImagesInOpenAIBody(c, body)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	// 这样可以与 chat-completions / messages / native /responses 入口的
 	// upstreamModel 保持一致，避免 whitelist 命中差异。当 body 中没有
 	// model 字段时退回 reqModel。
-	policyModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	policyModel := strings.TrimSpace(RequestBodyTop(c, body).Get("model").String())
 	if policyModel == "" {
 		policyModel = reqModel
 	}
@@ -375,7 +375,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if usage == nil {
 			usage = &OpenAIUsage{}
 		}
-		serviceTier := extractOpenAIServiceTierFromBody(body)
+		serviceTier := extractOpenAIServiceTierFromBody(c, body)
 		forwardResult := &OpenAIForwardResult{
 			RequestID:                     resp.Header.Get("x-request-id"),
 			ResponseID:                    responseID,
@@ -407,7 +407,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		return forwardResult
 	}
 	for {
-		actualModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+		actualModel := strings.TrimSpace(RequestBodyTop(c, body).Get("model").String())
 		if actualModel == "" {
 			actualModel = reqModel
 		}
@@ -800,7 +800,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		// experiment. Passthrough may receive it from an older client, so remove
 		// only that token while preserving any independent beta negotiation.
 		stripOpenAILegacyResponsesBeta(req.Header)
-		promptCacheKey := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
+		promptCacheKey := strings.TrimSpace(RequestBodyTop(c, body).Get("prompt_cache_key").String())
 		req.Host = "chatgpt.com"
 		if err := resolveAndSetOpenAIChatGPTAccountHeaders(ctx, s.accountRepo, req.Header, account); err != nil {
 			return nil, fmt.Errorf("resolve chatgpt account headers: %w", err)
@@ -880,8 +880,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	// x-codex-beta-features：按真实 Codex 的会话级行为补注（在账号级覆写之后，
 	// 保证不被覆盖丢失）。
 	applyOpenAICodexBetaFeatures(c, account, req.Header)
-	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
-	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http_passthrough", req.Header, body, "not_applicable")
+	setOpenAICodexRoutingHintFromBody(c, req.Header, account, body)
+	logOpenAIRoutingDiagnosticsFromBody(ctx, c, account, "http_passthrough", req.Header, body, "not_applicable")
 
 	return req, nil
 }

@@ -49,7 +49,7 @@ func newClientGoneOpenAIForwardResult(
 		Model:            originalModel,
 		BillingModel:     billingModel,
 		UpstreamModel:    upstreamModel,
-		ServiceTier:      resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(requestBody)),
+		ServiceTier:      resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(c, requestBody)),
 		ReasoningEffort:  reasoningEffort,
 		Stream:           stream,
 		Duration:         time.Since(startTime),

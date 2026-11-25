@@ -268,7 +268,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		} else {
 			normalized = next
 		}
-		responsesLite := isOpenAIResponsesLiteWebSocketPayload(normalized)
+		responsesLite := isOpenAIResponsesLiteWebSocketPayload(nil, normalized)
 		if compatibilityBody, compatibilityChanged, compatibilityErr := normalizeOpenAIResponsesWebSocketCompatibilityBody(normalized, account, responsesLite); compatibilityErr != nil {
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", compatibilityErr)
 		} else if compatibilityChanged {
@@ -345,7 +345,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			codexImageGenerationExplicitToolPolicy = account.CodexImageGenerationExplicitToolPolicy()
 		}
 		codexBridgeEnabled := isCodexCLI &&
-			!isOpenAIResponsesLiteWebSocketPayload(normalized) &&
+			!isOpenAIResponsesLiteWebSocketPayload(nil, normalized) &&
 			imageGenerationAllowed &&
 			codexImageGenerationExplicitToolPolicy != codexImageGenerationExplicitToolPolicyStrip &&
 			s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
@@ -1051,8 +1051,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				UpstreamResponseModel:         responseModelObserver.Model(),
 				UpstreamResponseModelConflict: responseModelObserver.Conflict(),
 				UpstreamResponseServiceTier:   responseModelObserver.ServiceTier(),
-				ServiceTier:                   resolvedOpenAIUpstreamServiceTierFromObserver(responseModelObserver, extractOpenAIServiceTierFromBody(payload)),
-				ReasoningEffort:               ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(payload, mappedModel, originalModel), payload, mappedModel),
+				ServiceTier:                   resolvedOpenAIUpstreamServiceTierFromObserver(responseModelObserver, extractOpenAIServiceTierFromBody(nil, payload)),
+				ReasoningEffort:               ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(nil, payload, mappedModel, originalModel), payload, mappedModel),
 				Stream:                        reqStream,
 				OpenAIWSMode:                  true,
 				UpstreamTerminalEvent:         terminalEvent,

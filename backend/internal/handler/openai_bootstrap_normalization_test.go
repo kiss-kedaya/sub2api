@@ -20,17 +20,17 @@ func mustJSONString(t *testing.T, value string) string {
 }
 
 func TestCodexBootstrapInputLooksRelevant(t *testing.T) {
-	require.False(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)))
-	require.False(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5"}`)))
-	require.True(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_app","name":"automation_update","output":"x"}]}`)))
-	require.True(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_tui","name":"create_thread","output":"x"}]}`)))
-	require.True(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"agent","name":"codex_apps_open_page","output":"{\"page_id\":null}"}]}`)))
-	require.True(t, codexBootstrapInputLooksRelevant([]byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"agent","name":"codex_apps_selected_page_part_1_of_1","output":"x"}]}`)))
+	require.False(t, codexBootstrapInputLooksRelevant(nil, []byte(`{"model":"gpt-5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}`)))
+	require.False(t, codexBootstrapInputLooksRelevant(nil, []byte(`{"model":"gpt-5"}`)))
+	require.True(t, codexBootstrapInputLooksRelevant(nil, []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_app","name":"automation_update","output":"x"}]}`)))
+	require.True(t, codexBootstrapInputLooksRelevant(nil, []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_tui","name":"create_thread","output":"x"}]}`)))
+	require.True(t, codexBootstrapInputLooksRelevant(nil, []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"agent","name":"codex_apps_open_page","output":"{\"page_id\":null}"}]}`)))
+	require.True(t, codexBootstrapInputLooksRelevant(nil, []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"agent","name":"codex_apps_selected_page_part_1_of_1","output":"x"}]}`)))
 }
 
 func TestApplyCodexBootstrapNormalizationsSkipsOrdinaryResponsesBodies(t *testing.T) {
 	body := []byte(`{"model":"gpt-5","previous_response_id":"","previous_response_id":"resp-1","input":[{"type":"message","role":"user"}]}`)
-	result := applyCodexBootstrapNormalizations(body)
+	result := applyCodexBootstrapNormalizations(nil, body)
 	require.False(t, result.UntrustedContext)
 	require.False(t, result.Automation)
 	require.False(t, result.Delegation)
@@ -40,14 +40,14 @@ func TestApplyCodexBootstrapNormalizationsSkipsOrdinaryResponsesBodies(t *testin
 func TestApplyCodexBootstrapNormalizationsRewritesAutomationAndDelegation(t *testing.T) {
 	output := automationBootstrapOutput("wiki-maintenance", "never", "Review the project and report changes.")
 	autoBody := automationBootstrapBody(t, output)
-	result := applyCodexBootstrapNormalizations(autoBody)
+	result := applyCodexBootstrapNormalizations(nil, autoBody)
 	require.False(t, result.UntrustedContext)
 	require.True(t, result.Automation)
 	require.False(t, result.Delegation)
 	require.Equal(t, "message", gjson.GetBytes(result.Body, "input.0.type").String())
 
 	delegation := []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_app","name":"create_thread","output":` + mustJSONString(t, delegationBootstrapEnvelope) + `}]}`)
-	result = applyCodexBootstrapNormalizations(delegation)
+	result = applyCodexBootstrapNormalizations(nil, delegation)
 	require.False(t, result.UntrustedContext)
 	require.False(t, result.Automation)
 	require.True(t, result.Delegation)
@@ -60,7 +60,7 @@ func TestApplyCodexBootstrapNormalizationsRewritesMixedCodexContext(t *testing.T
 		map[string]any{"type": "function_call_output", "namespace": "codex_app", "name": "create_thread", "output": delegationBootstrapEnvelope},
 		map[string]any{"type": "function_call_output", "namespace": "agent", "name": "goal_objective", "output": "finish"},
 	)
-	result := applyCodexBootstrapNormalizations(body)
+	result := applyCodexBootstrapNormalizations(nil, body)
 	require.True(t, result.UntrustedContext)
 	require.True(t, result.Delegation)
 	require.False(t, result.Automation)

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
-	"github.com/tidwall/gjson"
+	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"golang.org/x/net/http/httpguts"
 )
@@ -71,9 +71,9 @@ func deleteOpenAIHeaderEqualFold(headers http.Header, name string) {
 	}
 }
 
-func setOpenAICodexRoutingHintFromBody(headers http.Header, account *Account, body []byte) {
-	fields := gjson.GetManyBytes(body, "model", "service_tier")
-	setOpenAICodexRoutingHint(headers, account, fields[0].String(), fields[1].String())
+func setOpenAICodexRoutingHintFromBody(c *gin.Context, headers http.Header, account *Account, body []byte) {
+	top := RequestBodyTop(c, body)
+	setOpenAICodexRoutingHint(headers, account, top.Get("model").String(), top.Get("service_tier").String())
 }
 
 // logOpenAIRoutingDiagnostics records only gateway-derived routing state. In
@@ -109,19 +109,20 @@ func logOpenAIRoutingDiagnostics(
 
 func logOpenAIRoutingDiagnosticsFromBody(
 	ctx context.Context,
+	c *gin.Context,
 	account *Account,
 	transport string,
 	headers http.Header,
 	body []byte,
 	wsAffinityDecision string,
 ) {
-	fields := gjson.GetManyBytes(body, "model", "service_tier")
+	top := RequestBodyTop(c, body)
 	logOpenAIRoutingDiagnostics(
 		ctx,
 		account,
 		transport,
-		fields[0].String(),
-		fields[1].String(),
+		top.Get("model").String(),
+		top.Get("service_tier").String(),
 		strings.TrimSpace(headers.Get(openAICodexRoutingHintHeader)) != "",
 		wsAffinityDecision,
 	)

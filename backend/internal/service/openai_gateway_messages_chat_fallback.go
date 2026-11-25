@@ -102,7 +102,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	convertedEffort := chatReq.ReasoningEffort
 	reasoningEffort := &convertedEffort
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
-	serviceTier := extractOpenAIServiceTierFromBody(body)
+	serviceTier := extractOpenAIServiceTierFromBody(c, body)
 
 	chatBody, err := json.Marshal(chatReq)
 	if err != nil {

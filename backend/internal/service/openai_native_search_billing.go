@@ -33,7 +33,7 @@ func rememberOpenAINativeSearchSkipFunctionTools(c *gin.Context, body []byte) {
 	if c == nil {
 		return
 	}
-	names := declaredClientFunctionToolNames(body)
+	names := declaredClientFunctionToolNames(c, body)
 	if len(names) == 0 {
 		c.Set(openAINativeSearchSkipFunctionToolsContextKey, map[string]struct{}{})
 		return
@@ -71,8 +71,8 @@ func openAINativeSearchSkipFunctionTools(c *gin.Context) map[string]struct{} {
 //     复制品钉住（生产 heap profile：298 个存活复制品、551 MB）。改用零拷贝只读视图。
 //   - 视图上取到的 name 仍指向请求体本身，key 必须 strings.Clone 成独立的小字符串，
 //     既不钉住请求体，也不会因为请求体之后被改写而变形。
-func declaredClientFunctionToolNames(body []byte) map[string]struct{} {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
+func declaredClientFunctionToolNames(c *gin.Context, body []byte) map[string]struct{} {
+	if len(body) == 0 || !RequestBodyTop(c, body).Valid() {
 		return nil
 	}
 	root := parseRawJSONView(body)

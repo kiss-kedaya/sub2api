@@ -13,7 +13,7 @@ func BenchmarkOpenAIStoreFalseMetadataRewrite(b *testing.B) {
 	b.SetBytes(int64(len(body)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		out, changed, err := normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body, false)
+		out, changed, err := normalizeOpenAIAPIKeyStoreFalseReasoningReplay(nil, body, false)
 		if err != nil || !changed || len(out) < 69<<20 {
 			b.Fatalf("metadata rewrite failed or image was lost: changed=%v err=%v", changed, err)
 		}

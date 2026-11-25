@@ -21,11 +21,11 @@ func largeNativeResponsesBody(imageBytes int) []byte {
 func TestLargeNativeResponsesRemainsByteIdentical(t *testing.T) {
 	body := largeNativeResponsesBody(2 << 20)
 	for _, fn := range []func([]byte) ([]byte, bool, error){
-		normalizeOpenAIResponsesLegacyIngress,
+		func(body []byte) ([]byte, bool, error) { return normalizeOpenAIResponsesLegacyIngress(nil, body) },
 		sanitizeOpenAIResponsesInputItemIDs,
 		normalizeOpenAIResponsesReasoningContentReplay,
 		func(body []byte) ([]byte, bool, error) {
-			return normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body, false)
+			return normalizeOpenAIAPIKeyStoreFalseReasoningReplay(nil, body, false)
 		},
 	} {
 		out, changed, err := fn(body)
@@ -64,7 +64,7 @@ func TestStoreFalseRawReplayMatchesDecodedBehavior(t *testing.T) {
 	for _, fixture := range fixtures {
 		body := []byte(fixture)
 		want, wantChanged, wantErr := normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body, false)
-		got, changed, err := normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body, false)
+		got, changed, err := normalizeOpenAIAPIKeyStoreFalseReasoningReplay(nil, body, false)
 		require.Equal(t, wantErr != nil, err != nil)
 		if wantErr != nil {
 			continue
@@ -76,11 +76,11 @@ func TestStoreFalseRawReplayMatchesDecodedBehavior(t *testing.T) {
 
 func TestLegacyIngressNativeFastPathKeepsValidation(t *testing.T) {
 	for _, body := range []string{`{"input":[]} trailing`, `{"input":[}`, `[{"input":[]}]`} {
-		_, _, err := normalizeOpenAIResponsesLegacyIngress([]byte(body))
+		_, _, err := normalizeOpenAIResponsesLegacyIngress(nil, []byte(body))
 		require.Error(t, err)
 	}
 	body := []byte(`{"model":"gpt-5.4","input":"keep","mess\u0061ges":[]}`)
-	out, changed, err := normalizeOpenAIResponsesLegacyIngress(body)
+	out, changed, err := normalizeOpenAIResponsesLegacyIngress(nil, body)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(out, "messages").Exists())
@@ -93,11 +93,11 @@ func BenchmarkOpenAILargeNativeRequest(b *testing.B) {
 		name string
 		fn   func([]byte) ([]byte, bool, error)
 	}{
-		{"legacy_ingress", normalizeOpenAIResponsesLegacyIngress},
+		{"legacy_ingress", func(body []byte) ([]byte, bool, error) { return normalizeOpenAIResponsesLegacyIngress(nil, body) }},
 		{"input_ids", sanitizeOpenAIResponsesInputItemIDs},
 		{"reasoning_replay", normalizeOpenAIResponsesReasoningContentReplay},
 		{"api_key_store_false", func(body []byte) ([]byte, bool, error) {
-			return normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body, false)
+			return normalizeOpenAIAPIKeyStoreFalseReasoningReplay(nil, body, false)
 		}},
 	} {
 		b.Run(tc.name, func(b *testing.B) {

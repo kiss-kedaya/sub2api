@@ -17,12 +17,12 @@ import (
 )
 
 func TestRequestMaxOutputTokens(t *testing.T) {
-	require.Equal(t, 1024, requestMaxOutputTokens([]byte(`{"max_tokens":1024}`)))
-	require.Equal(t, 2048, requestMaxOutputTokens([]byte(`{"max_completion_tokens":2048}`)))
-	require.Equal(t, 4096, requestMaxOutputTokens([]byte(`{"max_output_tokens":4096}`)))
-	require.Equal(t, 512, requestMaxOutputTokens([]byte(`{"generationConfig":{"maxOutputTokens":512}}`)))
-	require.Equal(t, 0, requestMaxOutputTokens([]byte(`{"max_tokens":"x"}`)))
-	require.Equal(t, 0, requestMaxOutputTokens([]byte(`{}`)))
+	require.Equal(t, 1024, requestMaxOutputTokens(nil, []byte(`{"max_tokens":1024}`)))
+	require.Equal(t, 2048, requestMaxOutputTokens(nil, []byte(`{"max_completion_tokens":2048}`)))
+	require.Equal(t, 4096, requestMaxOutputTokens(nil, []byte(`{"max_output_tokens":4096}`)))
+	require.Equal(t, 512, requestMaxOutputTokens(nil, []byte(`{"generationConfig":{"maxOutputTokens":512}}`)))
+	require.Equal(t, 0, requestMaxOutputTokens(nil, []byte(`{"max_tokens":"x"}`)))
+	require.Equal(t, 0, requestMaxOutputTokens(nil, []byte(`{}`)))
 }
 
 type countingEstimator struct {
@@ -50,14 +50,14 @@ func TestReserveInflightBalance_SkipsWhenDisabledOrSubscription(t *testing.T) {
 	est := &countingEstimator{cost: 1, priced: true}
 	apiKey := &service.APIKey{User: &service.User{ID: 1}}
 
-	done, err := reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, nil, tokenInflightEstimate("m", []byte(`{}`)))
+	done, err := reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, nil, tokenInflightEstimate(nil, "m", []byte(`{}`)))
 	require.NoError(t, err)
 	done()
 	require.Equal(t, 0, est.calls, "disabled switch must not even estimate")
 
 	cfg.Billing.InflightReservation.Enabled = true
 	apiKey.Group = &service.Group{SubscriptionType: service.SubscriptionTypeSubscription}
-	done, err = reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, &service.UserSubscription{}, tokenInflightEstimate("m", []byte(`{}`)))
+	done, err = reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, &service.UserSubscription{}, tokenInflightEstimate(nil, "m", []byte(`{}`)))
 	require.NoError(t, err)
 	done()
 	require.Equal(t, 0, est.calls, "subscription mode must be unaffected")
@@ -72,12 +72,12 @@ func TestReserveInflightBalance_UnpricedFailOpenByDefaultFailClosedOptIn(t *test
 	apiKey := &service.APIKey{User: &service.User{ID: 1}}
 	est := &countingEstimator{priced: false}
 
-	done, err := reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, nil, tokenInflightEstimate("unknown", nil))
+	done, err := reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, nil, tokenInflightEstimate(nil, "unknown", nil))
 	require.NoError(t, err)
 	done()
 
 	cfg.Billing.InflightReservation.FailClosedOnUnpriced = true
-	_, err = reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, nil, tokenInflightEstimate("unknown", nil))
+	_, err = reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, nil, tokenInflightEstimate(nil, "unknown", nil))
 	require.ErrorIs(t, err, service.ErrInsufficientBalance)
 }
 
@@ -139,7 +139,7 @@ func TestWrapUsageRecordTaskContext_HandsReservationToBillingTask(t *testing.T) 
 	apiKey := &service.APIKey{User: &service.User{ID: 5}}
 
 	c := newInflightTestGinContext()
-	done, err := reserveInflightBalance(c, billing, &countingEstimator{cost: 0.9, priced: true}, apiKey, nil, tokenInflightEstimate("m", nil))
+	done, err := reserveInflightBalance(c, billing, &countingEstimator{cost: 0.9, priced: true}, apiKey, nil, tokenInflightEstimate(nil, "m", nil))
 	require.NoError(t, err)
 	require.Equal(t, 1, cache.count())
 
@@ -154,7 +154,7 @@ func TestWrapUsageRecordTaskContext_HandsReservationToBillingTask(t *testing.T) 
 
 	// Dropped task: the submitter abandons it and the reservation is released.
 	c2 := newInflightTestGinContext()
-	done2, err := reserveInflightBalance(c2, billing, &countingEstimator{cost: 0.9, priced: true}, apiKey, nil, tokenInflightEstimate("m", nil))
+	done2, err := reserveInflightBalance(c2, billing, &countingEstimator{cost: 0.9, priced: true}, apiKey, nil, tokenInflightEstimate(nil, "m", nil))
 	require.NoError(t, err)
 	_, abandon2 := wrapUsageRecordTaskContext(c2.Request.Context(), func(context.Context) {})
 	done2()

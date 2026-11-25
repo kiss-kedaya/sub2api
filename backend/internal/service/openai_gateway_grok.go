@@ -111,7 +111,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if c.Request != nil {
 		clientCtx = c.Request.Context()
 	}
-	reasoningEffortAtDispatch := extractOpenAIReasoningEffortFromBody(patchedBody, originalModel)
+	reasoningEffortAtDispatch := extractOpenAIReasoningEffortFromBody(c, patchedBody, originalModel)
 	upstreamStart := time.Now()
 	var resp *http.Response
 	for attempt := 0; ; attempt++ {
@@ -236,7 +236,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	var imageOutputSizes []string
 	clientDisconnect := false
 	nonBillableUpstreamError := false
-	reasoningEffort := extractOpenAIReasoningEffortFromBody(patchedBody, originalModel)
+	reasoningEffort := extractOpenAIReasoningEffortFromBody(c, patchedBody, originalModel)
 	buildForwardResult := func() *OpenAIForwardResult {
 		if usage == nil {
 			usage = &OpenAIUsage{}

@@ -40,7 +40,7 @@ func TestRequestMaxOutputTokensMatchesLegacy(t *testing.T) {
 	}
 	for _, body := range cases {
 		want := legacyRequestMaxOutputTokens([]byte(body))
-		got := requestMaxOutputTokens([]byte(body))
+		got := requestMaxOutputTokens(nil, []byte(body))
 		require.Equalf(t, want, got, "body=%s", body)
 	}
 }

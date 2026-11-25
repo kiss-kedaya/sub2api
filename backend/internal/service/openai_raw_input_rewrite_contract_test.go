@@ -80,8 +80,8 @@ func TestRewriteOpenAIResponsesInputAppendPreservesRawItems(t *testing.T) {
 func TestOpenAIRequestBodyHasToolsPreservesSingleObjectInputCompatibility(t *testing.T) {
 	body := []byte(`{"input":{"type":"additional_tools","tools":[{"type":"function","name":"spawn_agent"}]},"parallel_tool_calls":false}`)
 
-	require.True(t, openAIRequestBodyHasTools(body))
-	normalized, changed, err := normalizeOpenAIParallelToolCallsWithoutTools(body, false)
+	require.True(t, openAIRequestBodyHasTools(nil, body))
+	normalized, changed, err := normalizeOpenAIParallelToolCallsWithoutTools(nil, body, false)
 	require.NoError(t, err)
 	require.False(t, changed)
 	require.Equal(t, body, normalized)

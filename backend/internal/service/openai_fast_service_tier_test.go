@@ -25,33 +25,33 @@ func TestValidateOpenAIServiceTierField(t *testing.T) {
 	t.Parallel()
 
 	t.Run("fast normalizes to priority", func(t *testing.T) {
-		norm, err := ValidateOpenAIServiceTierField([]byte(`{"model":"gpt-5.5","service_tier":"fast"}`))
+		norm, err := ValidateOpenAIServiceTierField(nil, []byte(`{"model":"gpt-5.5","service_tier":"fast"}`))
 		require.NoError(t, err)
 		require.Equal(t, "priority", norm)
 	})
 
 	t.Run("priority passes through", func(t *testing.T) {
-		norm, err := ValidateOpenAIServiceTierField([]byte(`{"model":"gpt-5.5","service_tier":"priority"}`))
+		norm, err := ValidateOpenAIServiceTierField(nil, []byte(`{"model":"gpt-5.5","service_tier":"priority"}`))
 		require.NoError(t, err)
 		require.Equal(t, "priority", norm)
 	})
 
 	t.Run("case and whitespace insensitive", func(t *testing.T) {
-		norm, err := ValidateOpenAIServiceTierField([]byte(`{"model":"gpt-5.5","service_tier":"  FAST "}`))
+		norm, err := ValidateOpenAIServiceTierField(nil, []byte(`{"model":"gpt-5.5","service_tier":"  FAST "}`))
 		require.NoError(t, err)
 		require.Equal(t, "priority", norm)
 	})
 
 	t.Run("official tiers pass through", func(t *testing.T) {
 		for _, tier := range []string{"flex", "auto", "default", "scale", "ultrafast"} {
-			norm, err := ValidateOpenAIServiceTierField([]byte(`{"model":"gpt-5.5","service_tier":"` + tier + `"}`))
+			norm, err := ValidateOpenAIServiceTierField(nil, []byte(`{"model":"gpt-5.5","service_tier":"`+tier+`"}`))
 			require.NoError(t, err, "tier %q must be accepted", tier)
 			require.Equal(t, tier, norm)
 		}
 	})
 
 	t.Run("invalid tier rejected", func(t *testing.T) {
-		_, err := ValidateOpenAIServiceTierField([]byte(`{"model":"gpt-5.5","service_tier":"turbo"}`))
+		_, err := ValidateOpenAIServiceTierField(nil, []byte(`{"model":"gpt-5.5","service_tier":"turbo"}`))
 		require.Error(t, err)
 		var invalid *ErrInvalidOpenAIServiceTier
 		require.True(t, errors.As(err, &invalid))
@@ -61,19 +61,19 @@ func TestValidateOpenAIServiceTierField(t *testing.T) {
 	})
 
 	t.Run("omitted field stays valid", func(t *testing.T) {
-		norm, err := ValidateOpenAIServiceTierField([]byte(`{"model":"gpt-5.5","input":"hi"}`))
+		norm, err := ValidateOpenAIServiceTierField(nil, []byte(`{"model":"gpt-5.5","input":"hi"}`))
 		require.NoError(t, err)
 		require.Empty(t, norm)
 	})
 
 	t.Run("null value keeps omission semantics", func(t *testing.T) {
-		norm, err := ValidateOpenAIServiceTierField([]byte(`{"model":"gpt-5.5","service_tier":null}`))
+		norm, err := ValidateOpenAIServiceTierField(nil, []byte(`{"model":"gpt-5.5","service_tier":null}`))
 		require.NoError(t, err)
 		require.Empty(t, norm)
 	})
 
 	t.Run("explicit empty string rejected as invalid enum value", func(t *testing.T) {
-		_, err := ValidateOpenAIServiceTierField([]byte(`{"model":"gpt-5.5","service_tier":""}`))
+		_, err := ValidateOpenAIServiceTierField(nil, []byte(`{"model":"gpt-5.5","service_tier":""}`))
 		require.Error(t, err)
 		var invalid *ErrInvalidOpenAIServiceTier
 		require.True(t, errors.As(err, &invalid))
@@ -87,7 +87,7 @@ func TestValidateOpenAIServiceTierField(t *testing.T) {
 			`{"model":"gpt-5.5","service_tier":{}}`,
 			`{"model":"gpt-5.5","service_tier":["priority"]}`,
 		} {
-			_, err := ValidateOpenAIServiceTierField([]byte(raw))
+			_, err := ValidateOpenAIServiceTierField(nil, []byte(raw))
 			require.Error(t, err, "raw=%s must be rejected", raw)
 			var invalid *ErrInvalidOpenAIServiceTier
 			require.True(t, errors.As(err, &invalid), "raw=%s", raw)
@@ -98,7 +98,7 @@ func TestValidateOpenAIServiceTierField(t *testing.T) {
 
 	t.Run("oversized unknown string is truncated", func(t *testing.T) {
 		blob := strings.Repeat("z", 4096)
-		_, err := ValidateOpenAIServiceTierField([]byte(`{"model":"gpt-5.5","service_tier":"` + blob + `"}`))
+		_, err := ValidateOpenAIServiceTierField(nil, []byte(`{"model":"gpt-5.5","service_tier":"`+blob+`"}`))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid service_tier")
 		require.NotContains(t, err.Error(), blob)
@@ -115,7 +115,7 @@ func TestValidateOpenAIServiceTierField(t *testing.T) {
 			`{"model":"gpt-5.5","service_tier":["` + blob + `"]}`,
 		}
 		for _, raw := range payloads {
-			_, err := ValidateOpenAIServiceTierField([]byte(raw))
+			_, err := ValidateOpenAIServiceTierField(nil, []byte(raw))
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "invalid service_tier")
 			require.NotContains(t, err.Error(), blob)

@@ -83,6 +83,7 @@ func shouldStripOpenAIResponsesInputNamespaces(account *Account, transport OpenA
 //     调用会失配并触发 Missing namespace。
 //   - 摊平模式下调用项已被改写成平名，残留 namespace 指向的声明已不存在，一律清理。
 func shouldKeepOpenAIResponsesToolCallNamespaces(
+	c *gin.Context,
 	account *Account,
 	transport OpenAIUpstreamTransport,
 	passthroughEnabled bool,
@@ -96,7 +97,7 @@ func shouldKeepOpenAIResponsesToolCallNamespaces(
 		return false
 	}
 	if account.IsOpenAIApiKey() {
-		return hasOpenAIResponsesNamespaceToolDeclaration(body)
+		return hasOpenAIResponsesNamespaceToolDeclaration(c, body)
 	}
 	if !account.IsOpenAIOAuthLike() {
 		return false
@@ -104,7 +105,7 @@ func shouldKeepOpenAIResponsesToolCallNamespaces(
 	return !shouldFlattenOpenAIResponsesNamespaces(account, transport, passthroughEnabled, compactPath)
 }
 
-func hasOpenAIResponsesNamespaceToolDeclaration(body []byte) bool {
+func hasOpenAIResponsesNamespaceToolDeclaration(c *gin.Context, body []byte) bool {
 	hasNamespaceTool := func(tools gjson.Result) bool {
 		if !tools.IsArray() {
 			return false
@@ -120,7 +121,8 @@ func hasOpenAIResponsesNamespaceToolDeclaration(body []byte) bool {
 		return found
 	}
 
-	if hasNamespaceTool(gjson.GetBytes(body, "tools")) {
+	top := RequestBodyTop(c, body)
+	if hasNamespaceTool(top.Get("tools")) {
 		return true
 	}
 
@@ -128,7 +130,7 @@ func hasOpenAIResponsesNamespaceToolDeclaration(body []byte) bool {
 	// tools and into an input.additional_tools carrier. API-key requests are
 	// intentionally not rewritten by normalizeOpenAIResponsesLiteTools, so the
 	// declaration can arrive here only in this form.
-	input := gjson.GetBytes(body, "input")
+	input := top.Get("input")
 	if !input.IsArray() {
 		return false
 	}

@@ -120,7 +120,7 @@ func TestReserveInflightBalance_KeyQuotaEnforcedWithoutBalanceSwitch(t *testing.
 			defer wg.Done()
 			<-start
 			est := &countingEstimator{cost: 0.3, priced: true}
-			done, err := reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, nil, tokenInflightEstimate("m", nil))
+			done, err := reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, nil, tokenInflightEstimate(nil, "m", nil))
 			if err != nil {
 				if !errors.Is(err, service.ErrAPIKeyQuotaExhausted) {
 					t.Errorf("unexpected error: %v", err)
@@ -147,7 +147,7 @@ func TestReserveInflightBalance_KeyQuotaEnforcedWithoutBalanceSwitch(t *testing.
 	require.Equal(t, 0, cache.inflightCount(apiKey.ID))
 
 	// 释放后额度重新可用（串行路径）。
-	done, err := reserveInflightBalance(newInflightTestGinContext(), billing, &countingEstimator{cost: 0.3, priced: true}, apiKey, nil, tokenInflightEstimate("m", nil))
+	done, err := reserveInflightBalance(newInflightTestGinContext(), billing, &countingEstimator{cost: 0.3, priced: true}, apiKey, nil, tokenInflightEstimate(nil, "m", nil))
 	require.NoError(t, err)
 	require.Equal(t, 1, cache.inflightCount(apiKey.ID))
 	done()
@@ -160,7 +160,7 @@ func TestReserveInflightBalance_TinyQuotaRejectsOversizedRequest(t *testing.T) {
 	billing := newKeyQuotaHandlerBilling(t, cache)
 	apiKey := &service.APIKey{ID: 22, User: &service.User{ID: 8}, Quota: 0.002}
 
-	_, err := reserveInflightBalance(newInflightTestGinContext(), billing, &countingEstimator{cost: 0.0036, priced: true}, apiKey, nil, tokenInflightEstimate("m", nil))
+	_, err := reserveInflightBalance(newInflightTestGinContext(), billing, &countingEstimator{cost: 0.0036, priced: true}, apiKey, nil, tokenInflightEstimate(nil, "m", nil))
 	require.ErrorIs(t, err, service.ErrAPIKeyQuotaExhausted)
 	require.Equal(t, 0, cache.inflightCount(apiKey.ID))
 }
@@ -173,7 +173,7 @@ func TestReserveInflightBalance_QuotaZeroUnaffected(t *testing.T) {
 	est := &countingEstimator{cost: 10, priced: true}
 
 	for i := 0; i < 5; i++ {
-		done, err := reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, nil, tokenInflightEstimate("m", nil))
+		done, err := reserveInflightBalance(newInflightTestGinContext(), billing, est, apiKey, nil, tokenInflightEstimate(nil, "m", nil))
 		require.NoError(t, err)
 		done()
 	}
@@ -188,7 +188,7 @@ func TestReserveInflightBalance_KeyQuotaHeldUntilBillingTaskDone(t *testing.T) {
 	apiKey := &service.APIKey{ID: 24, User: &service.User{ID: 10}, Quota: 1.0}
 
 	c := newInflightTestGinContext()
-	done, err := reserveInflightBalance(c, billing, &countingEstimator{cost: 0.9, priced: true}, apiKey, nil, tokenInflightEstimate("m", nil))
+	done, err := reserveInflightBalance(c, billing, &countingEstimator{cost: 0.9, priced: true}, apiKey, nil, tokenInflightEstimate(nil, "m", nil))
 	require.NoError(t, err)
 	require.Equal(t, 1, cache.inflightCount(apiKey.ID))
 
