@@ -63,8 +63,20 @@ func openAINativeSearchSkipFunctionTools(c *gin.Context) map[string]struct{} {
 //   - 旧版 Chat:  functions[].name
 //
 // 内置工具（例如 {"type":"web_search_preview"}）没有 name，不会被收集。
+//
+// 内存：返回的 map 会挂在 gin.Context 上活到请求结束（流式请求可能几十秒到几分钟）。
+// 这里必须同时做到两件事，否则一个 map 就会把整份请求体拖到请求结束：
+//   - 不能用 gjson.ParseBytes——它会把整个请求体复制成 string，而 tool.Get("name").String()
+//     返回的是该 string 的子串；ToLower/TrimSpace 在无需改动时不复制，map key 就把整份
+//     复制品钉住（生产 heap profile：298 个存活复制品、551 MB）。改用零拷贝只读视图。
+//   - 视图上取到的 name 仍指向请求体本身，key 必须 strings.Clone 成独立的小字符串，
+//     既不钉住请求体，也不会因为请求体之后被改写而变形。
 func declaredClientFunctionToolNames(body []byte) map[string]struct{} {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return nil
+	}
+	root := parseRawJSONView(body)
+	if !root.IsObject() {
 		return nil
 	}
 	names := make(map[string]struct{}, 4)
@@ -73,29 +85,52 @@ func declaredClientFunctionToolNames(body []byte) map[string]struct{} {
 		if name == "" {
 			return
 		}
-		names[name] = struct{}{}
+		if _, dup := names[name]; dup {
+			return
+		}
+		names[strings.Clone(name)] = struct{}{}
 	}
-	parsed := gjson.ParseBytes(body)
-	parsed.Get("tools").ForEach(func(_, tool gjson.Result) bool {
-		if !tool.IsObject() {
+	collectTools := func(tools gjson.Result) {
+		tools.ForEach(func(_, tool gjson.Result) bool {
+			if !tool.IsObject() {
+				return true
+			}
+			kind := strings.ToLower(strings.TrimSpace(tool.Get("type").String()))
+			switch kind {
+			case "", "function", "custom":
+			default:
+				// 内置工具（web_search / web_search_preview / image_generation ...）
+				// 只按类型声明，没有可冲突的客户端函数名。
+				return true
+			}
+			add(tool.Get("name").String())
+			add(tool.Get("function.name").String())
 			return true
-		}
-		kind := strings.ToLower(strings.TrimSpace(tool.Get("type").String()))
-		switch kind {
-		case "", "function", "custom":
-		default:
-			// 内置工具（web_search / web_search_preview / image_generation ...）
-			// 只按类型声明，没有可冲突的客户端函数名。
+		})
+	}
+	collectFunctions := func(functions gjson.Result) {
+		functions.ForEach(func(_, fn gjson.Result) bool {
+			add(fn.Get("name").String())
+			add(fn.Get("function.name").String())
 			return true
+		})
+	}
+	// 一次遍历顶层成员取 tools / functions；重复键只认第一个（与 gjson.Get 一致）。
+	var seenTools, seenFunctions bool
+	root.ForEach(func(key, value gjson.Result) bool {
+		switch key.Str {
+		case "tools":
+			if !seenTools {
+				seenTools = true
+				collectTools(value)
+			}
+		case "functions":
+			if !seenFunctions {
+				seenFunctions = true
+				collectFunctions(value)
+			}
 		}
-		add(tool.Get("name").String())
-		add(tool.Get("function.name").String())
-		return true
-	})
-	parsed.Get("functions").ForEach(func(_, fn gjson.Result) bool {
-		add(fn.Get("name").String())
-		add(fn.Get("function.name").String())
-		return true
+		return !seenTools || !seenFunctions
 	})
 	if len(names) == 0 {
 		return nil
