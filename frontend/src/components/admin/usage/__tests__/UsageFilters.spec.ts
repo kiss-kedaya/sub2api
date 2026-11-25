@@ -20,6 +20,7 @@ const messages: Record<string, string> = {
   'usage.ws': 'WS',
   'usage.stream': 'Stream',
   'usage.sync': 'Sync',
+  'usage.claudeRefusal': 'Claude policy refusal',
   'usage.compactionFilter': 'Request Kind',
   'usage.allCompactionTypes': 'All Requests',
   'usage.compactionOnly': 'Compaction Only',
@@ -588,6 +589,26 @@ describe('UsageFilters — native compaction filter', () => {
     // 改值只落草稿；查询由「查询」按钮 / 回车触发
     expect(filters.native_compaction_v2).toBe(true)
     expect(wrapper.emitted('query')).toBeUndefined()
+    wrapper.unmount()
+  })
+})
+
+describe('UsageFilters — request type filter', () => {
+  it('offers Claude policy refusal as a request type and writes it to the draft', async () => {
+    const filters = defaultFilters()
+    const wrapper = mountFilters(filters)
+
+    const typeSelect = wrapper.findAllComponents(SelectStub).find((select: any) =>
+      (select.props('options') as Array<{ value: unknown }>).some((option) => option.value === 'stream')
+    )
+    expect(typeSelect).toBeDefined()
+    expect(typeSelect!.props('options')).toEqual(
+      expect.arrayContaining([{ value: 'claude_refusal', label: 'Claude policy refusal' }])
+    )
+
+    typeSelect!.vm.$emit('update:modelValue', 'claude_refusal')
+    await wrapper.vm.$nextTick()
+    expect(filters.request_type).toBe('claude_refusal')
     wrapper.unmount()
   })
 })

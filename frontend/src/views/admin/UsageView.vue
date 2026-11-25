@@ -714,6 +714,7 @@ const openCleanupDialog = () => { if (!isObserver.value) cleanupDialogVisible.va
 const getRequestTypeLabel = (log: AdminUsageLog): string => {
   const requestType = resolveUsageRequestType(log)
   if (requestType === 'cyber') return t('usage.cyber')
+  if (requestType === 'claude_refusal') return t('usage.claudeRefusal')
   if (requestType === 'live') return t('usage.live')
   if (requestType === 'ws_v2') return t('usage.ws')
   if (requestType === 'stream') return t('usage.stream')

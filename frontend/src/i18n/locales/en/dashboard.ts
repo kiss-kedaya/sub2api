@@ -709,6 +709,7 @@ export default {
     allCompactionTypes: 'All Requests',
     compactionOnly: 'Compaction Only',
     cyber: 'Cyber',
+    claudeRefusal: 'Claude policy refusal',
     live: 'Live',
     unknown: 'Unknown',
     in: 'In',
