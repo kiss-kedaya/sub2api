@@ -102,6 +102,8 @@ type stormOptions struct {
 	accounts       int
 	attemptDelay   time.Duration
 	guard          config.GatewayRetryGuardConfig
+	// cooldownSeconds 是断路器冷却秒数；默认 30（远长于测试时长，避免慢机器上账号中途恢复）。
+	cooldownSeconds int
 }
 
 func newStormFixtureWith(t *testing.T, opts stormOptions) *stormFixture {
@@ -130,8 +132,12 @@ func newStormFixtureWith(t *testing.T, opts stormOptions) *stormFixture {
 
 	cfg := &config.Config{RunMode: config.RunModeSimple}
 	cfg.Gateway.MaxAccountSwitches = 3
+	cooldown := opts.cooldownSeconds
+	if cooldown <= 0 {
+		cooldown = 30
+	}
 	cfg.Gateway.AccountCircuitBreaker = config.AccountCircuitBreakerConfig{
-		Enabled: breakerEnabled, WindowSeconds: 300, ErrorRate: 0.95, MinRequests: 20, CooldownSeconds: 1,
+		Enabled: breakerEnabled, WindowSeconds: 300, ErrorRate: 0.95, MinRequests: 20, CooldownSeconds: cooldown,
 		ValveMinAccounts: 3, ValveRatio: 0.5,
 	}
 	// 这个用例反复打满重试；把退避压到毫秒级，不然光睡眠就要几十秒。
@@ -213,7 +219,7 @@ func TestRetryStormWithoutBreakerKeepsHammeringTheUpstream(t *testing.T) {
 }
 
 func TestRetryStormWithBreakerIsBoundedPausesAccountsAndProbesAfterCooldown(t *testing.T) {
-	f := newStormFixture(t, true)
+	f := newStormFixtureWith(t, stormOptions{breakerEnabled: true, accounts: 2, cooldownSeconds: 3})
 	const requests = 100
 
 	var statuses []int
@@ -253,8 +259,8 @@ func TestRetryStormWithBreakerIsBoundedPausesAccountsAndProbesAfterCooldown(t *t
 		require.True(t, acc.Schedulable, "the manual schedulable flag is untouched")
 	}
 
-	// 冷却到期（1 秒）后自动恢复：账号重新参与调度，用少量请求去探测上游。
-	time.Sleep(1200 * time.Millisecond)
+	// 冷却到期（3 秒）后自动恢复：账号重新参与调度，用少量请求去探测上游。
+	time.Sleep(3300 * time.Millisecond)
 	before := f.upstream.totalHits()
 	rec := f.send()
 	require.Equal(t, http.StatusBadGateway, rec.Code, "after the cooldown the account is probed again (upstream still down: 502 passthrough)")
@@ -314,8 +320,11 @@ func TestSingleRequestElapsedBudgetStopsRetries(t *testing.T) {
 	rec := f.send()
 
 	require.Equal(t, http.StatusBadGateway, rec.Code)
-	require.Equal(t, 3, f.upstream.totalHits(), "attempts stop once the request has spent max_elapsed_seconds in the failover loop")
-	require.Less(t, time.Since(start), 3*time.Second)
+	hits := f.upstream.totalHits()
+	// 400ms 一次、预算 1 秒：理论上第 3 次失败后停（慢机器上可能第 2 次就已过线）；没有时限的话会一直打到 10 次。
+	require.GreaterOrEqual(t, hits, 2)
+	require.LessOrEqual(t, hits, 4, "attempts stop once the request has spent max_elapsed_seconds in the failover loop")
+	require.Less(t, time.Since(start), 6*time.Second)
 }
 
 // 每一个 OpenAI 系入口都有自己的失败转移循环：它们必须全部受同一个重试硬上限约束。

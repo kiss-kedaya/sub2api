@@ -80,7 +80,7 @@ func tripAccount(breaker *AccountCircuitBreaker, id int64) {
 }
 
 func TestCircuitBreakerTripIsHonoredBySchedulerStickySessionsAndRecoversAutomatically(t *testing.T) {
-	repo, _, breaker, svc, cache := newBreakerSchedFixture(t, 400*time.Millisecond)
+	repo, _, breaker, svc, cache := newBreakerSchedFixture(t, 1500*time.Millisecond)
 	ctx := context.Background()
 	const model = "claude-3-5-sonnet-20241022"
 
@@ -116,7 +116,7 @@ func TestCircuitBreakerTripIsHonoredBySchedulerStickySessionsAndRecoversAutomati
 	require.Nil(t, acc)
 
 	// 冷却到期自动恢复：不需要任何人工操作，账号 1 重新按优先级被选中。
-	time.Sleep(450 * time.Millisecond)
+	time.Sleep(1600 * time.Millisecond)
 	require.False(t, svc.AccountCircuitOpen(1))
 	acc, err = svc.selectAccountForModelWithPlatform(ctx, nil, "", model, nil, PlatformAnthropic)
 	require.NoError(t, err)
