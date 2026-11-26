@@ -117,14 +117,14 @@ export function buildSiteThemeCss(input: unknown): string {
     }
     rules.push(rule(`${DARK} ${CONSOLE_SCOPE}`, {
       '--signal-accent': darkHex(400),
-      '--signal-on-accent': darkHex(950),
-      '--signal-accent-soft': darkRgb(400, 0.16),
+      '--signal-on-accent': '#111217',
+      '--signal-accent-soft': darkRgb(400, 0.12),
       '--signal-command': darkHex(400),
-      '--signal-command-text': darkHex(950),
+      '--signal-command-text': '#111217',
       '--signal-command-hover': darkHex(300),
-      '--signal-nav-active': darkRgb(400, 0.16),
+      '--signal-nav-active': darkRgb(400, 0.12),
       '--signal-nav-active-text': darkHex(200),
-      '--signal-nav-brand': darkHex(200),
+      '--signal-nav-brand': '#f4f6fa',
       '--signal-hero-mark': darkHex(300),
       '--signal-sakura': darkHex(400)
     }))
@@ -179,7 +179,7 @@ const DARK_QUERY = '(prefers-color-scheme: dark)'
  * get the same value because the class, not the media query, decides what is on screen.
  */
 const DEFAULT_THEME_COLOR_LIGHT = '#ffffff'
-const DEFAULT_THEME_COLOR_DARK = '#1b181f'
+const DEFAULT_THEME_COLOR_DARK = '#0f1014'
 
 export function syncThemeColor(darkMode?: boolean): void {
   if (typeof document === 'undefined') return

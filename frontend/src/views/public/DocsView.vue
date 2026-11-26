@@ -1,7 +1,7 @@
 <template>
   <div class="api-docs min-h-screen bg-white text-slate-900 dark:bg-dark-950 dark:text-slate-100">
     <a href="#docs-content" class="sr-only z-60 rounded-md bg-blue-600 px-4 py-3 text-sm text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">{{ t('docs.skipToContent') }}</a>
-    <header class="docs-header sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur-sm dark:border-dark-700 dark:bg-dark-950/95">
+    <header class="docs-header sticky top-0 z-40 border-b border-slate-200/90 bg-white/85 backdrop-blur-md backdrop-saturate-150 dark:border-dark-700/90 dark:bg-dark-950/82">
       <div class="flex h-14 items-center justify-between gap-4 px-5 sm:px-7">
         <router-link to="/home" class="flex min-w-0 items-center gap-2.5 font-semibold tracking-tight">
           <img :src="siteLogo || '/logo.svg'" alt="" class="h-7 w-7 shrink-0 object-contain" />
@@ -349,19 +349,48 @@ onBeforeUnmount(() => {
 <style scoped>
 .api-docs { font-family: ui-sans-serif, system-ui, sans-serif; }
 .docs-code pre { tab-size: 2; }
-/* Fade at the foot of the sidebar list while more entries are scrolled out of view. */
+/* Multi-stop eased gradient eliminates the visible hard edge of a linear fade. */
 .docs-nav-wrap::after {
   content: '';
   pointer-events: none;
   position: absolute;
   inset: auto 0 0 0;
-  height: 32px;
-  background: linear-gradient(to bottom, transparent, var(--docs-sidebar-bg, #fff));
+  height: 40px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in oklab, var(--docs-sidebar-bg, #fff) 38%, transparent) 45%,
+    color-mix(in oklab, var(--docs-sidebar-bg, #fff) 82%, transparent) 78%,
+    var(--docs-sidebar-bg, #fff) 100%
+  );
   opacity: 0;
   transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .docs-nav-wrap.docs-nav-more::after { opacity: 1; }
-:global(.dark) .docs-nav-wrap { --docs-sidebar-bg: var(--color-dark-950); }
 .docs-code code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-@media (prefers-reduced-motion: reduce) { .docs-sidebar { transition: none; } }
+.api-docs :is(button, .docs-category):active {
+  transform: scale(0.97);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .docs-header {
+    background-color: #fff;
+    backdrop-filter: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .docs-sidebar,
+  .docs-nav-wrap::after { transition: none; }
+  .api-docs :is(button, .docs-category):active { transform: none; }
+}
+</style>
+
+<style>
+.dark .api-docs .docs-nav-wrap {
+  --docs-sidebar-bg: var(--color-dark-950);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .dark .api-docs .docs-header {
+    background-color: var(--color-dark-950);
+  }
+}
 </style>

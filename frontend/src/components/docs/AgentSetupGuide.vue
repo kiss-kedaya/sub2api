@@ -21,10 +21,10 @@
           </div>
           <div class="min-w-0 flex-1">
             <p class="text-xs font-medium tracking-wide text-blue-600 dark:text-blue-400">{{ activeAgent.vendor }}</p>
-            <h1 class="mt-1 text-[28px] font-semibold leading-tight tracking-tight text-slate-900 dark:text-slate-100 sm:text-[32px]">
+            <h1 class="mt-1 text-[28px] font-semibold leading-tight tracking-[-0.025em] text-slate-900 dark:text-slate-100 sm:text-[32px]">
               {{ activeAgent.name }} + {{ siteName }}
             </h1>
-            <p class="mt-3 text-[15px] leading-7 text-slate-600 dark:text-slate-300">
+            <p class="mt-3 max-w-[65ch] text-[15px] leading-7 text-slate-600 dark:text-slate-300">
               {{ activeAgent.description }}
             </p>
           </div>
@@ -253,7 +253,7 @@
                     :src="guideShots.createKey.src"
                     :alt="guideShots.createKey.alt"
                     loading="lazy"
-                    class="block w-full object-cover"
+                    class="agent-shot-light block w-full object-cover"
                   />
                   <span class="absolute bottom-2.5 right-2.5 inline-flex items-center gap-1 rounded-md bg-slate-900/75 px-2 py-1 text-[11px] font-medium text-white backdrop-blur-xs">
                     <Icon name="search" size="xs" />
@@ -286,7 +286,7 @@
                       :src="guideShots.keyReceipt.src"
                       :alt="guideShots.keyReceipt.alt"
                       loading="lazy"
-                      class="block w-full object-cover"
+                      class="agent-shot-light block w-full object-cover"
                     />
                     <span class="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded bg-slate-900/75 px-1.5 py-0.5 text-[10px] font-medium text-white">
                       <Icon name="search" size="xs" />
@@ -306,7 +306,7 @@
                       :src="guideShots.importCcs.src"
                       :alt="guideShots.importCcs.alt"
                       loading="lazy"
-                      class="block w-full object-cover"
+                      class="agent-shot-light block w-full object-cover"
                     />
                     <span class="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded bg-slate-900/75 px-1.5 py-0.5 text-[10px] font-medium text-white">
                       <Icon name="search" size="xs" />
@@ -614,10 +614,10 @@
         <p class="mb-2.5 text-xs font-medium tracking-wide text-blue-600 dark:text-blue-400">
           {{ t('docs.category.integrations') }}
         </p>
-        <h1 class="text-[30px] font-semibold leading-tight tracking-tight text-slate-900 dark:text-slate-100 sm:text-[34px]">
+        <h1 class="text-[30px] font-semibold leading-tight tracking-[-0.025em] text-slate-900 dark:text-slate-100 sm:text-[34px]">
           {{ t('docs.agentSetup.title') }}
         </h1>
-        <p class="mt-4 max-w-2xl text-[15px] leading-8 text-slate-600 dark:text-slate-300">
+        <p class="mt-4 max-w-[65ch] text-[15px] leading-8 text-slate-600 dark:text-slate-300">
           {{ t('docs.agentSetup.subtitle') }}
         </p>
 
@@ -678,7 +678,7 @@
       <section
         id="site-ccswitch-workflow"
         data-testid="site-ccswitch-workflow"
-        class="mb-12 scroll-mt-36 rounded-2xl border border-slate-200 bg-[#f8f9fb] p-5 dark:border-dark-700 dark:bg-dark-900/70 sm:p-6"
+        class="mb-12 scroll-mt-36 rounded-2xl border border-slate-200 bg-[#f8f9fb] p-5 dark:border-dark-700 dark:bg-dark-900/80 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:p-6"
       >
         <div class="flex flex-wrap items-start justify-between gap-4">
           <div class="flex items-start gap-3">
@@ -780,7 +780,7 @@
                     :src="guideShots.createKey.src"
                     :alt="guideShots.createKey.alt"
                     loading="lazy"
-                    class="block aspect-[16/10] w-full object-cover object-top"
+                    class="agent-shot-light block aspect-[16/10] w-full object-cover object-top"
                   />
                   <span class="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded bg-slate-900/75 px-2 py-0.5 text-[10px] font-medium text-white">
                     <Icon name="search" size="xs" />
@@ -856,7 +856,7 @@
                       :src="activeStep3Shot.src"
                       :alt="activeStep3Shot.alt"
                       loading="lazy"
-                      class="block aspect-[16/10] w-full object-cover object-center"
+                      class="agent-shot-light block aspect-[16/10] w-full object-cover object-center"
                     />
                     <span class="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded bg-slate-900/75 px-2 py-0.5 text-[10px] font-medium text-white">
                       <Icon name="search" size="xs" />
@@ -909,7 +909,7 @@
                     :src="guideShots.usageRecords.src"
                     :alt="guideShots.usageRecords.alt"
                     loading="lazy"
-                    class="block aspect-[16/10] w-full object-cover object-top"
+                    class="agent-shot-light block aspect-[16/10] w-full object-cover object-top"
                   />
                   <span class="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded bg-slate-900/75 px-2 py-0.5 text-[10px] font-medium text-white">
                     <Icon name="search" size="xs" />
@@ -1007,7 +1007,7 @@
             :key="agent.id"
             :to="agentLocation(agent.id)"
             :data-testid="`agent-card-${agent.id}`"
-            class="group flex min-w-0 flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-sm dark:border-dark-700 dark:bg-dark-900/60 dark:hover:border-blue-500/60"
+            class="agent-card-interactive group flex min-w-0 flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 dark:border-dark-700 dark:bg-dark-900/75 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
           >
             <div class="min-w-0">
               <div class="flex items-start justify-between gap-3">
@@ -1195,37 +1195,39 @@
 
     <!-- Fullscreen Screenshot Lightbox -->
     <Teleport to="body">
-      <div
-        v-if="lightboxShot"
-        data-testid="agent-screenshot-lightbox"
-        role="dialog"
-        aria-modal="true"
-        :aria-label="lightboxShot.alt"
-        class="fixed inset-0 z-70 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-xs sm:p-8"
-        @click.self="closeLightbox"
-      >
-        <div class="relative max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
-          <div class="flex items-center justify-between gap-4 border-b border-slate-800 px-4 py-3">
-            <p class="min-w-0 truncate text-xs font-medium text-slate-200">{{ lightboxShot.caption }}</p>
-            <button
-              type="button"
-              data-testid="agent-lightbox-close"
-              class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white"
-              :aria-label="t('docs.agentSetup.closePreview')"
-              @click="closeLightbox"
-            >
-              <Icon name="x" size="sm" />
-            </button>
-          </div>
-          <div class="max-h-[calc(90vh-52px)] overflow-auto bg-slate-950 p-2">
-            <img
-              :src="lightboxShot.src"
-              :alt="lightboxShot.alt"
-              class="mx-auto block max-h-[82vh] w-auto rounded-lg object-contain"
-            />
+      <Transition name="agent-lightbox">
+        <div
+          v-if="lightboxShot"
+          data-testid="agent-screenshot-lightbox"
+          role="dialog"
+          aria-modal="true"
+          :aria-label="lightboxShot.alt"
+          class="agent-lightbox-backdrop fixed inset-0 z-70 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm sm:p-8"
+          @click.self="closeLightbox"
+        >
+          <div class="agent-lightbox-panel relative max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-2xl border border-dark-700 bg-dark-900 shadow-2xl">
+            <div class="flex items-center justify-between gap-4 border-b border-dark-700 px-4 py-3">
+              <p class="min-w-0 truncate text-xs font-medium text-slate-200">{{ lightboxShot.caption }}</p>
+              <button
+                type="button"
+                data-testid="agent-lightbox-close"
+                class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors duration-150 hover:bg-dark-800 hover:text-white active:scale-[0.95]"
+                :aria-label="t('docs.agentSetup.closePreview')"
+                @click="closeLightbox"
+              >
+                <Icon name="x" size="sm" />
+              </button>
+            </div>
+            <div class="max-h-[calc(90vh-52px)] overflow-auto bg-dark-950 p-2">
+              <img
+                :src="lightboxShot.src"
+                :alt="lightboxShot.alt"
+                class="mx-auto block max-h-[82vh] w-auto rounded-lg object-contain"
+              />
+            </div>
           </div>
         </div>
-      </div>
+      </Transition>
     </Teleport>
   </div>
 </template>
@@ -1482,5 +1484,92 @@ onBeforeUnmount(() => {
 <style scoped>
 .agent-details summary::-webkit-details-marker {
   display: none;
+}
+
+/* Tactile press feedback across buttons, tabs, filter pills and interactive cards (emil-design-eng). */
+.agent-setup :is(button, a[data-testid^='agent-'], [role='tab']):not(:disabled) {
+  transition:
+    transform 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 160ms ease;
+}
+
+.agent-setup :is(button, a[data-testid^='agent-'], [role='tab']):not(:disabled):active {
+  transform: scale(0.97);
+}
+
+.agent-card-interactive {
+  transition:
+    transform 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    border-color 150ms ease,
+    background-color 150ms ease,
+    box-shadow 160ms ease;
+}
+
+.agent-card-interactive:active {
+  transform: scale(0.98);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-card-interactive:hover {
+    transform: translateY(-2px);
+    border-color: rgb(59 130 246 / 0.55);
+    box-shadow: var(--app-shadow-card);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-setup :is(button, a[data-testid^='agent-'], [role='tab']):active,
+  .agent-card-interactive:hover,
+  .agent-card-interactive:active {
+    transform: none;
+  }
+}
+
+/* Soften glaring white-background UI screenshots slightly in dark mode so they sit naturally on obsidian surfaces. */
+</style>
+
+<style>
+.dark .agent-shot-light {
+  filter: brightness(0.92) contrast(1.03);
+}
+
+/* Asymmetric enter/exit lightbox transition from scale(0.96), never scale(0). */
+.agent-lightbox-enter-active {
+  transition: opacity 200ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+.agent-lightbox-leave-active {
+  transition: opacity 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+.agent-lightbox-enter-active .agent-lightbox-panel {
+  transition:
+    transform 220ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    opacity 200ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+.agent-lightbox-leave-active .agent-lightbox-panel {
+  transition:
+    transform 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    opacity 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+.agent-lightbox-enter-from,
+.agent-lightbox-leave-to {
+  opacity: 0;
+}
+.agent-lightbox-enter-from .agent-lightbox-panel {
+  opacity: 0;
+  transform: scale(0.96) translateY(6px);
+}
+.agent-lightbox-leave-to .agent-lightbox-panel {
+  opacity: 0;
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-lightbox-enter-from .agent-lightbox-panel,
+  .agent-lightbox-leave-to .agent-lightbox-panel {
+    transform: none;
+  }
 }
 </style>

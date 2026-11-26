@@ -18,9 +18,9 @@
   <div
     v-else-if="compactHomeEnabled"
     data-testid="compact-home"
-    class="flex min-h-screen flex-col bg-gray-50 text-gray-900 dark:bg-dark-950 dark:text-white"
+    class="flex min-h-screen flex-col bg-gray-50 text-gray-900 dark:bg-dark-950 dark:text-slate-100"
   >
-    <header class="border-b border-gray-200 px-4 py-4 sm:px-6 dark:border-dark-800">
+    <header class="border-b border-gray-200 px-4 py-4 sm:px-6 dark:border-dark-700/80">
       <nav class="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 sm:gap-4">
         <div class="flex min-w-0 flex-1 items-center gap-3">
           <img
@@ -122,7 +122,7 @@
     class="relative flex min-h-screen flex-col bg-default text-default"
   >
     <!-- Background decoration: a static hairline grid that fades out below the hero. -->
-    <div class="home-grid pointer-events-none absolute inset-0" aria-hidden="true"></div>
+    <div class="home-grid pointer-events-none absolute inset-0 opacity-50 dark:opacity-35" aria-hidden="true"></div>
 
     <!-- Header -->
     <header class="relative z-20 px-4 py-4 sm:px-6">
@@ -426,7 +426,7 @@
             <router-link
               :to="{ path: '/docs', query: { page: 'agent-setup', agent: agent.id } }"
               :data-testid="`home-agent-card-${agent.id}`"
-              class="group flex h-full flex-col justify-between rounded-xl border border-default bg-elevated p-4 transition hover:-translate-y-0.5 hover:border-accented"
+              class="home-agent-card group flex h-full flex-col justify-between rounded-xl border border-default bg-elevated p-4"
             >
               <div>
                 <div class="flex items-start justify-between gap-2">
@@ -772,16 +772,50 @@ watch(modelPlazaEnabled, (enabled) => {
 
 <style scoped>
 /*
-  The only decoration on the page: a static hairline grid that fades below the hero.
-  Colours come from the Nuxt UI border token, so it follows the light theme and the plum
-  night theme, and the Appearance setting, without a second palette to maintain.
+  The only decoration on the page: a static hairline grid that fades smoothly below the hero.
+  Multi-stop radial easing prevents a visible edge; dark mode dials opacity down so obsidian stays calm.
 */
 .home-grid {
   background-image:
-    linear-gradient(color-mix(in oklab, var(--ui-border) 62%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in oklab, var(--ui-border) 62%, transparent) 1px, transparent 1px);
+    linear-gradient(color-mix(in oklab, var(--ui-border) 58%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--ui-border) 58%, transparent) 1px, transparent 1px);
   background-size: 44px 44px;
-  mask-image: radial-gradient(ellipse 90% 55% at 50% 0%, #000 30%, transparent 78%);
-  opacity: 0.55;
+  mask-image: radial-gradient(
+    ellipse 88% 54% at 50% 0%,
+    #000 0%,
+    rgb(0 0 0 / 0.72) 34%,
+    rgb(0 0 0 / 0.24) 62%,
+    transparent 82%
+  );
+}
+
+.home-agent-card {
+  transition:
+    transform 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    border-color 150ms ease,
+    background-color 150ms ease,
+    box-shadow 160ms ease;
+}
+
+.home-agent-card:active {
+  transform: scale(0.98);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .home-agent-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--ui-border-accented);
+    box-shadow: var(--app-shadow-card);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-agent-card {
+    transition: border-color 150ms ease, background-color 150ms ease;
+  }
+  .home-agent-card:hover,
+  .home-agent-card:active {
+    transform: none;
+  }
 }
 </style>

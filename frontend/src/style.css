@@ -147,7 +147,7 @@ html[data-theme-switching]::view-transition-new(root) {
 }
 
 html[data-theme-switching]::view-transition-new(root) {
-  animation: theme-switch-fade-in 560ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation: theme-switch-fade-in 300ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
 @keyframes theme-switch-fade-in {
@@ -228,17 +228,17 @@ html[data-theme-switching]::view-transition-new(root) {
   --color-accent-900: #0f172a;
   --color-accent-950: #020617;
 
-  --color-dark-50: #f6eef1;
-  --color-dark-100: #ecdfe4;
-  --color-dark-200: #d8c4cc;
-  --color-dark-300: #c3a9b3;
-  --color-dark-400: #a08891;
-  --color-dark-500: #7e6670;
-  --color-dark-600: #5e4651;
-  --color-dark-700: #3f2f37;
-  --color-dark-800: #261c21;
-  --color-dark-900: #1c1519;
-  --color-dark-950: #140f12;
+  --color-dark-50: #f4f6fa;
+  --color-dark-100: #e4e7ee;
+  --color-dark-200: #cdd2dc;
+  --color-dark-300: #b0b6c4;
+  --color-dark-400: #8e96a8;
+  --color-dark-500: #6d7588;
+  --color-dark-600: #4c5264;
+  --color-dark-700: #2c303a;
+  --color-dark-800: #21242d;
+  --color-dark-900: #16181d;
+  --color-dark-950: #0f1014;
 
   --font-sans:
     system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto,
@@ -788,23 +788,23 @@ html[data-theme-switching]::view-transition-new(root) {
 
   .modal-enter-active & {
     transition:
-      transform 420ms cubic-bezier(0.22, 1.06, 0.36, 1),
-      opacity 300ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1));
+      transform 240ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+      opacity 220ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
   }
 
   .modal-leave-active & {
     transition:
-      transform 200ms cubic-bezier(0.4, 0, 1, 1),
-      opacity 200ms cubic-bezier(0.4, 0, 1, 1);
+      transform 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+      opacity 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
   }
 
   .modal-enter-from & {
-    transform: scale(0.965) translateY(14px);
+    transform: scale(0.96) translateY(8px);
     opacity: 0;
   }
 
   .modal-leave-to & {
-    transform: scale(0.965) translateY(14px);
+    transform: scale(0.97) translateY(4px);
     opacity: 0;
   }
 
@@ -873,12 +873,12 @@ html[data-theme-switching]::view-transition-new(root) {
 }
 
 @utility modal-enter-active {
-  transition: opacity 280ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1));
+  transition: opacity 220ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 
   & .modal-content {
     transition:
-      transform 420ms cubic-bezier(0.22, 1.06, 0.36, 1),
-      opacity 300ms var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1));
+      transform 240ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+      opacity 220ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -892,12 +892,12 @@ html[data-theme-switching]::view-transition-new(root) {
 }
 
 @utility modal-leave-active {
-  transition: opacity 200ms cubic-bezier(0.4, 0, 1, 1);
+  transition: opacity 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 
   & .modal-content {
     transition:
-      transform 200ms cubic-bezier(0.4, 0, 1, 1),
-      opacity 200ms cubic-bezier(0.4, 0, 1, 1);
+      transform 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+      opacity 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -914,7 +914,7 @@ html[data-theme-switching]::view-transition-new(root) {
   opacity: 0;
 
   & .modal-content {
-    transform: scale(0.965) translateY(14px);
+    transform: scale(0.96) translateY(8px);
     opacity: 0;
   }
 
@@ -929,7 +929,7 @@ html[data-theme-switching]::view-transition-new(root) {
   opacity: 0;
 
   & .modal-content {
-    transform: scale(0.965) translateY(14px);
+    transform: scale(0.97) translateY(4px);
     opacity: 0;
   }
 
@@ -1200,10 +1200,13 @@ html[data-theme-switching]::view-transition-new(root) {
 
 @layer base {
   :root {
-    --cb-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+    --cb-ease-out: var(--ease-out);
     --cb-ease-press: cubic-bezier(0.3, 0, 0.2, 1);
-    --cb-t-fast: 120ms;
-    --cb-t-base: 240ms;
+    --cb-t-fast: 140ms;
+    --cb-t-base: 220ms;
     --cb-lift: -1px;
     --cb-press: 0.97;
     /* Primary scale: light = sakura tints (50-300) + ink (400-950); dark = unchanged rose. */

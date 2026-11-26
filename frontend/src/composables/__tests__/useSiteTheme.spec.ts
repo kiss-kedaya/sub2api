@@ -246,7 +246,7 @@ describe('theme-color meta', () => {
   const tags = () => Array.from(document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'))
   // jsdom loads no stylesheet, so --app-page-bg resolves to '' and the built-in fallbacks apply.
   const LIGHT = '#ffffff'
-  const DARK = '#1b181f'
+  const DARK = '#0f1014'
 
   // Earlier suites leave the module's class observer on <html>. Removing `.dark` queues one more
   // sync, which would re-create the tag after it was cleared, so let that run before clearing.

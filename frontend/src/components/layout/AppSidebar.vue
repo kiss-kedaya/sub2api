@@ -16,13 +16,17 @@
     <!-- Header (TeamsMenu in the template): logo, site name and version. -->
     <template #header="{ collapsed }">
       <div class="sidebar-brand" :class="{ 'sidebar-brand--collapsed': collapsed }">
-        <router-link :to="homePath" class="sidebar-brand-link" :title="collapsed ? siteName : undefined" @click="closeMobile">
+        <router-link :to="homePath" class="sidebar-brand-link" :title="siteName" @click="closeMobile">
           <span class="sidebar-logo">
             <img v-if="settingsLoaded" :src="siteLogo || '/logo.svg'" alt="Logo" class="size-full object-contain" />
           </span>
-          <span v-if="!collapsed" class="sidebar-brand-title">{{ siteName }}</span>
         </router-link>
-        <VersionBadge v-if="!collapsed" class="sidebar-version" :version="siteVersion" />
+        <div v-if="!collapsed" class="sidebar-brand-meta">
+          <router-link :to="homePath" class="sidebar-brand-title-link" :title="siteName" @click="closeMobile">
+            <span class="sidebar-brand-title">{{ siteName }}</span>
+          </router-link>
+          <VersionBadge class="sidebar-version" :version="siteVersion" />
+        </div>
       </div>
     </template>
 
@@ -577,13 +581,14 @@ onBeforeUnmount(() => {
 </script>
 
 <style>
-/* Brand row in the sidebar header (where the template has TeamsMenu). */
+/* Brand lockup in the sidebar header: fixed logo on the left, stacked brand title + compact
+   version metadata on the right so long version labels never squeeze or clip the site name. */
 .sidebar-brand {
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .sidebar-brand--collapsed {
@@ -591,59 +596,84 @@ onBeforeUnmount(() => {
 }
 
 .sidebar-brand-link {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: calc(var(--ui-radius) * 1.5);
+  color: var(--ui-text-highlighted);
+  transition: transform 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), background-color 150ms ease;
+}
+
+.sidebar-brand-link:active {
+  transform: scale(0.96);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sidebar-brand-link:hover {
+    background: color-mix(in oklab, var(--ui-bg-elevated) 55%, transparent);
+  }
+}
+
+.sidebar-brand-link:focus-visible,
+.sidebar-brand-title-link:focus-visible {
+  outline: 2px solid var(--ui-border-inverted);
+  outline-offset: 1px;
+}
+
+.sidebar-brand-meta {
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
-  align-items: center;
-  gap: 8px;
-  padding: 6px;
-  border-radius: calc(var(--ui-radius) * 1.5);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.sidebar-brand-title-link {
+  display: block;
+  max-width: 100%;
+  border-radius: 4px;
   color: var(--ui-text-highlighted);
-  transition: background-color 150ms ease;
-}
-
-.sidebar-brand--collapsed .sidebar-brand-link {
-  flex: 0 0 auto;
-}
-
-.sidebar-brand-link:hover {
-  background: color-mix(in oklab, var(--ui-bg-elevated) 50%, transparent);
-}
-
-.sidebar-brand-link:focus-visible {
-  outline: 2px solid var(--ui-border-inverted);
-  outline-offset: -2px;
+  transition: color 150ms ease;
 }
 
 .sidebar-logo {
   display: flex;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 20px;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
   overflow: hidden;
-  border-radius: var(--ui-radius);
+  border-radius: calc(var(--ui-radius) * 1.5);
+  border: 1px solid var(--ui-border-muted);
+  background: var(--ui-bg);
 }
 
 .sidebar-brand-title {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
-  line-height: 20px;
+  line-height: 18px;
   font-weight: 600;
+  letter-spacing: -0.015em;
 }
 
-/* VersionBadge: a small neutral tag after the name (its amber update state stays). */
+/* VersionBadge: quiet metadata line tucked under the site name (amber update state stays). */
 .sidebar-version {
-  flex-shrink: 0;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .sidebar-version > button {
   gap: 4px;
-  padding: 1px 6px;
+  max-width: 100%;
+  padding: 0 5px;
   border-radius: var(--ui-radius);
   font-size: 11px;
-  line-height: 18px;
+  line-height: 16px;
 }
 
 html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {

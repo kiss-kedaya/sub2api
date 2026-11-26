@@ -52,6 +52,11 @@ describe('version controls follow the owner permission', () => {
     expect(wrapper.find('button').exists()).toBe(false)
     expect(app.fetchVersion).not.toHaveBeenCalled()
 
+    // Non-numeric preview/build labels must not receive a stray leading "v".
+    const labelWrapper = mount(VersionBadge, { props: { version: '本地预览 · 演示数据' } })
+    await flushPromises()
+    expect(labelWrapper.text()).toBe('本地预览 · 演示数据')
+
     // A stale callback from an earlier owner session cannot start a mutation.
     await (wrapper.vm as unknown as { handleUpdate: () => Promise<void> }).handleUpdate()
     await (wrapper.vm as unknown as { handleRestart: () => Promise<void> }).handleRestart()

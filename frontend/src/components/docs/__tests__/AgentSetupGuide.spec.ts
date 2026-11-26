@@ -56,7 +56,12 @@ async function mountGuide(props: {
       isAuthenticated: props.isAuthenticated ?? false,
       selectedAgentId: props.selectedAgentId ?? '',
     },
-    global: { plugins: [router] },
+    global: {
+      plugins: [router],
+      stubs: {
+        Transition: { template: '<slot />' },
+      },
+    },
   })
   await flushPromises()
   return { wrapper, router }
