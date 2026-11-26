@@ -254,6 +254,36 @@ func TestJobFailureLogSurvivesLogLevelErrorAndLeaksNothing(t *testing.T) {
 	}
 }
 
+// A receipt that cannot be read is the most common way an in-flight job fails.
+// settle already persists it, so no reason write is needed, but it used to be
+// logged only at Warn (dropped by LOG_LEVEL=error): every job-level failure of a
+// pass now reaches ERROR with its reason code.
+func TestReceiptReadFailureIsLoggedAtErrorWithItsReasonCode(t *testing.T) {
+	resetFailureLog(t, time.Now)
+	buf := captureLogs(t)
+	e, m, c, entry := setupExecutor(t)
+	j := signedJob(c, entry, false)
+	c.txs[j.SweepHash] = true
+	c.receiptError = true
+	expectRunStart(m, j)
+	expectWrite(m, "sweep_pending", nil, nil) // settle records the observation
+	expectUnlock(m)
+
+	summary, err := e.Run(t.Context(), false)
+	if err == nil || summary.Swept != 0 || summary.Advanced != 0 || len(summary.Entries) != 1 {
+		t.Fatalf("summary=%+v err=%v", summary, err)
+	}
+	got := summary.Entries[0]
+	if got.Step != StepReceipt || got.Category != rpc.CategoryTransport || !got.NeedsAttention() {
+		t.Fatalf("entry=%+v", got)
+	}
+	lines := logLines(t, buf, "[cryptopay] sweep job could not advance")
+	if len(lines) != 1 || lines[0]["level"] != "ERROR" || lines[0]["step"] != StepReceipt ||
+		lines[0]["category"] != rpc.CategoryTransport || lines[0]["endpoint_host"] != "127.0.0.1" {
+		t.Fatalf("the failure is not in the ERROR log with its reason code: %v\n%s", lines, buf.String())
+	}
+}
+
 // A job that fails for real (a verdict) keeps its own ERROR line, now with the
 // reason code as well.
 func TestVerdictFailureLogCarriesTheReasonCode(t *testing.T) {

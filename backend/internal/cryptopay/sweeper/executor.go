@@ -753,11 +753,7 @@ func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (Sw
 	}
 	// Transport errors may contain endpoint credentials. The same sanitized
 	// boundary applies to operator logs and persisted payment records.
-	slog.Error("[cryptopay] sweep job failed",
-		"job_id", job.ID, "chain", job.Chain, "address", job.Address,
-		"token", job.Token, "status", job.Status, "revision", job.Revision,
-		"step", stepOf(cause), "category", FailureCategory(cause), "endpoint_host", rpc.HostOf(cause),
-		"detail", rpc.DetailOf(cause), "error", rpc.SafeError(cause))
+	logJobFailure("[cryptopay] sweep job failed", job, cause)
 	job.Error = rpc.SafeError(cause)
 	if job.Revision >= maxSweepAttempts {
 		// Terminal: stop retrying and stop reserving the address.
@@ -814,6 +810,10 @@ func (e *Executor) deferJob(ctx context.Context, job *sweepJob, cause error) (Sw
 }
 
 func pendingError(job *sweepJob, err error) (SweepEntry, error) {
+	// Every job-level failure of a pass comes out through here, whichever step it
+	// came from: log it once per window at ERROR, unless the call that produced it
+	// already did (the limiter keys on job, step and category, not on the message).
+	logJobFailure("[cryptopay] sweep job could not advance", job, err)
 	out := job.outcome()
 	if out.Status == "swept" { // final persistence may have failed
 		out.Status = "pending"
