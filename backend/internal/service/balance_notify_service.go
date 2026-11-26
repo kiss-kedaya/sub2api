@@ -206,6 +206,10 @@ func crossedDownward(oldV, newV, threshold float64) bool {
 // dispatchBalanceLowEmail collects recipients and sends the alert in a goroutine.
 func (s *BalanceNotifyService) dispatchBalanceLowEmail(ctx context.Context, user *User, newBalance, threshold float64, rechargeURL string) {
 	siteName := s.getSiteName(ctx)
+	s.dispatchBalanceLowEmailWithSiteName(user, newBalance, threshold, siteName, rechargeURL)
+}
+
+func (s *BalanceNotifyService) dispatchBalanceLowEmailWithSiteName(user *User, newBalance, threshold float64, siteName, rechargeURL string) {
 	recipients := s.collectBalanceNotifyRecipients(user)
 	slog.Info("CheckBalanceAfterDeduction: sending notification",
 		"user_id", user.ID, "recipients", recipients, "new_balance", newBalance, "threshold", threshold)

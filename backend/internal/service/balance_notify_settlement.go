@@ -77,10 +77,13 @@ func (t *settlementAlertTracker) claim(userID int64, now time.Time, cooldown tim
 }
 
 // release 撤销一次登记（提醒没能真正发出时，让下一次穿越仍有机会提醒）。
-func (t *settlementAlertTracker) release(userID int64) {
+// 仅在记录的时间戳与本次登记一致时删除，避免慢路径回滚误删更新的冷却占位。
+func (t *settlementAlertTracker) release(userID int64, claimedAt time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.at, userID)
+	if last, ok := t.at[userID]; ok && last.Equal(claimedAt) {
+		delete(t.at, userID)
+	}
 }
 
 func (s *BalanceNotifyService) settlementNow() time.Time {
@@ -102,17 +105,29 @@ func (s *BalanceNotifyService) ObserveBalanceSettlements(ctx context.Context, re
 	if ctx.Err() != nil {
 		return
 	}
+	hasCandidate := false
+	for i := range results {
+		if results[i].NotifyEnabled && results[i].Amount > 0 {
+			hasCandidate = true
+			break
+		}
+	}
+	if !hasCandidate {
+		return
+	}
 	cfgCtx, cancel := context.WithTimeout(ctx, settlementLowBalanceLoadTimeout)
 	globalEnabled, globalThreshold, rechargeURL := s.getBalanceNotifyConfig(cfgCtx)
 	cancel()
 	if !globalEnabled || ctx.Err() != nil {
 		return
 	}
+	var siteName string
+	var siteNameLoaded bool
 	for i := range results {
 		if ctx.Err() != nil {
 			return
 		}
-		s.observeSettledBalance(ctx, &results[i], globalThreshold, rechargeURL)
+		s.observeSettledBalance(ctx, &results[i], globalThreshold, rechargeURL, &siteName, &siteNameLoaded)
 	}
 }
 
@@ -121,6 +136,8 @@ func (s *BalanceNotifyService) observeSettledBalance(
 	r *UsageBalanceSettlementResult,
 	globalThreshold float64,
 	rechargeURL string,
+	siteName *string,
+	siteNameLoaded *bool,
 ) {
 	if !r.NotifyEnabled {
 		return
@@ -146,7 +163,8 @@ func (s *BalanceNotifyService) observeSettledBalance(
 	if ctx.Err() != nil {
 		return
 	}
-	if !s.settlementAlerts.claim(r.UserID, s.settlementNow(), settlementLowBalanceCooldown) {
+	claimedAt := s.settlementNow()
+	if !s.settlementAlerts.claim(r.UserID, claimedAt, settlementLowBalanceCooldown) {
 		return
 	}
 	userCtx, cancel := context.WithTimeout(ctx, settlementLowBalanceLoadTimeout)
@@ -154,20 +172,28 @@ func (s *BalanceNotifyService) observeSettledBalance(
 
 	user, err := s.loadAlertUser(userCtx, r.UserID)
 	if err != nil {
-		s.settlementAlerts.release(r.UserID)
+		s.settlementAlerts.release(r.UserID, claimedAt)
 		slog.Warn("settlement low balance alert skipped: user unavailable", "user_id", r.UserID, "error", err)
 		return
 	}
 	if !user.BalanceNotifyEnabled {
 		// 用户在这次 flush 之后刚把提醒关掉；未发出提醒时释放冷却槽。
-		s.settlementAlerts.release(r.UserID)
+		s.settlementAlerts.release(r.UserID, claimedAt)
 		return
 	}
 	if ctx.Err() != nil {
-		s.settlementAlerts.release(r.UserID)
+		s.settlementAlerts.release(r.UserID, claimedAt)
 		return
 	}
-	s.dispatchBalanceLowEmail(userCtx, user, newBalance, threshold, rechargeURL)
+	if !*siteNameLoaded {
+		*siteName = s.getSiteName(userCtx)
+		if ctx.Err() != nil {
+			s.settlementAlerts.release(r.UserID, claimedAt)
+			return
+		}
+		*siteNameLoaded = true
+	}
+	s.dispatchBalanceLowEmailWithSiteName(user, newBalance, threshold, *siteName, rechargeURL)
 }
 
 // loadAlertUser 读取收件人所需的完整用户，瞬时失败时有限次重试。用户已不存在或上下文取消时不重试。

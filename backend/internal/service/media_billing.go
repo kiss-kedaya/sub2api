@@ -168,10 +168,8 @@ func (s *OpenAIGatewayService) settleMediaBillingJob(ctx context.Context, job *M
 				if result.Applied && cmd.BalanceCost > 0 {
 					s.billingCacheService.deductBalanceCacheRelative(ctx, cmd.UserID, cmd.BalanceCost, "service.media_billing")
 				}
-			} else if s.billingDeps().mergeSettlementEnabled() && job.Kind == MediaBillingKindImage {
-				if result != nil && result.Applied && cmd.BalanceCost > 0 {
-					s.billingCacheService.deductBalanceCacheRelative(ctx, cmd.UserID, cmd.BalanceCost, "service.media_billing")
-				}
+			} else if s.billingDeps().mergeSettlementEnabled() {
+				s.syncMediaSettlementBalanceCache(ctx, job, cmd, result)
 			} else {
 				_ = s.billingCacheService.InvalidateUserBalance(ctx, cmd.UserID)
 			}
@@ -203,6 +201,44 @@ func (s *OpenAIGatewayService) settleMediaBillingJob(ctx context.Context, job *M
 		return err
 	}
 	return s.mediaBillingJobs.CompleteMediaBillingJob(ctx, job.ID)
+}
+
+// syncMediaSettlementBalanceCache updates billing:balance:{uid} for synchronous
+// media settlements while merge settlement is enabled without invalidating on
+// debits or no-op retries (which would resurrect unsettled text/image charges).
+func (s *OpenAIGatewayService) syncMediaSettlementBalanceCache(
+	ctx context.Context,
+	job *MediaBillingJob,
+	cmd *UsageBillingCommand,
+	result *UsageBillingApplyResult,
+) {
+	if s == nil || s.billingCacheService == nil || job == nil || cmd == nil || result == nil {
+		return
+	}
+	if job.Kind == MediaBillingKindGrokVideo {
+		if result.Applied {
+			if cmd.SubscriptionID != nil {
+				return
+			}
+			delta := QuantizeUsageBillingAmount(cmd.BalanceCost - job.ReservedAmount)
+			if delta > 0 {
+				s.billingCacheService.deductBalanceCacheRelative(ctx, cmd.UserID, delta, "service.media_billing")
+			} else if delta < 0 {
+				// Partial hold refund increased users.balance: invalidate so the
+				// credit is immediately visible, matching positive outbox deltas.
+				_ = s.billingCacheService.InvalidateUserBalance(ctx, cmd.UserID)
+			}
+			return
+		}
+		if result.NewBalance != nil {
+			// Unclaimed video settlement released the hold back to users.balance.
+			_ = s.billingCacheService.InvalidateUserBalance(ctx, cmd.UserID)
+		}
+		return
+	}
+	if result.Applied && cmd.BalanceCost > 0 {
+		s.billingCacheService.deductBalanceCacheRelative(ctx, cmd.UserID, cmd.BalanceCost, "service.media_billing")
+	}
 }
 
 func (s *OpenAIGatewayService) mediaBillingPostUsageParams(ctx context.Context, job *MediaBillingJob) *postUsageBillingParams {
@@ -365,7 +401,13 @@ func (s *OpenAIGatewayService) CreateGrokVideoBillingJob(ctx context.Context, in
 		CreatedAt: time.Now(), AvailableAt: time.Now().Add(time.Minute)}
 	job, err = s.mediaBillingJobs.CreateMediaBillingJob(ctx, job)
 	if err == nil && s.billingCacheService != nil {
-		_ = s.billingCacheService.InvalidateUserBalance(ctx, input.User.ID)
+		if s.billingDeps().mergeSettlementEnabled() {
+			if job != nil && job.SubscriptionID == nil && job.ReservedAmount > 0 {
+				s.billingCacheService.deductBalanceCacheRelative(ctx, input.User.ID, job.ReservedAmount, "service.media_billing")
+			}
+		} else {
+			_ = s.billingCacheService.InvalidateUserBalance(ctx, input.User.ID)
+		}
 	}
 	return job, err
 }
@@ -393,9 +435,11 @@ func (s *OpenAIGatewayService) FailGrokVideoBillingJob(ctx context.Context, job 
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	_, err := s.mediaBillingJobs.FailMediaBillingJob(ctx, job.ID)
+	result, err := s.mediaBillingJobs.FailMediaBillingJob(ctx, job.ID)
 	if err == nil && s.billingCacheService != nil {
-		_ = s.billingCacheService.InvalidateUserBalance(ctx, job.UserID)
+		if !s.billingDeps().mergeSettlementEnabled() || (result != nil && result.Applied && job.SubscriptionID == nil && job.ReservedAmount > 0) {
+			_ = s.billingCacheService.InvalidateUserBalance(ctx, job.UserID)
+		}
 	}
 	return err
 }
