@@ -58,26 +58,32 @@ func acctSummaryRepo() *acctSummaryUsageRepo {
 
 func TestUserDayUsageSummaryAsksTheDashboardOnlyForTheSitesCurrentDay(t *testing.T) {
 	today := timezone.Today()
-	day := 24 * time.Hour
+	tomorrow := today.AddDate(0, 0, 1)
+	deep := today.Add(5 * time.Hour) // well into the site's day
 	cases := []struct {
-		name       string
-		start, end time.Time
-		dashboard  bool
+		name            string
+		now, start, end time.Time
+		dashboard       bool
 	}{
-		{"the site's current day", today, today.AddDate(0, 0, 1), true},
+		{"the site's current day, well into it", deep, today, tomorrow, true},
+		{"exactly an hour into it", today.Add(time.Hour), today, tomorrow, true},
+		// In the first hour of the day the dashboard answers its whole window at once (a scan of the user's recent days on
+		// every cache expiry): a status poll must not set that off, and today's rows are few that early.
+		{"the first hour of it", today.Add(time.Hour - time.Second), today, tomorrow, false},
+		{"its first instant", today, today, tomorrow, false},
 		// The dashboard only knows today: any other day, even one that starts at a site midnight, is a range read.
-		{"yesterday", today.AddDate(0, 0, -1), today, false},
-		{"tomorrow", today.AddDate(0, 0, 1), today.AddDate(0, 0, 2), false},
-		{"a zone with another midnight", today.Add(3 * time.Hour), today.Add(27 * time.Hour), false},
-		{"a window that is not one day", today, today.AddDate(0, 0, 2), false},
-		{"a window that stops early", today, today.Add(day - time.Second), false},
+		{"yesterday", deep, today.AddDate(0, 0, -1), today, false},
+		{"tomorrow", deep, tomorrow, today.AddDate(0, 0, 2), false},
+		{"a zone with another midnight", deep, today.Add(3 * time.Hour), today.Add(27 * time.Hour), false},
+		{"a window that is not one day", deep, today, today.AddDate(0, 0, 2), false},
+		{"a window that stops early", deep, today, today.Add(24*time.Hour - time.Second), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := acctSummaryRepo()
 			svc := NewUsageService(repo, nil, nil, nil)
 
-			got, err := svc.GetUserDayUsageSummary(context.Background(), 7, tc.start, tc.end)
+			got, err := svc.GetUserDayUsageSummary(context.Background(), 7, tc.now, tc.start, tc.end)
 
 			require.NoError(t, err)
 			if tc.dashboard {
@@ -102,18 +108,19 @@ func TestUserDayUsageSummaryAsksTheDashboardOnlyForTheSitesCurrentDay(t *testing
 func TestUserDayUsageSummaryNeverTurnsAFailureIntoZero(t *testing.T) {
 	boom := errors.New("database busy")
 	today := timezone.Today()
+	now := today.Add(5 * time.Hour)
 
 	t.Run("dashboard error", func(t *testing.T) {
 		repo := acctSummaryRepo()
 		repo.dashboardErr = boom
-		got, err := NewUsageService(repo, nil, nil, nil).GetUserDayUsageSummary(context.Background(), 7, today, today.AddDate(0, 0, 1))
+		got, err := NewUsageService(repo, nil, nil, nil).GetUserDayUsageSummary(context.Background(), 7, now, today, today.AddDate(0, 0, 1))
 		require.ErrorIs(t, err, boom)
 		require.Nil(t, got)
 	})
 	t.Run("range error", func(t *testing.T) {
 		repo := acctSummaryRepo()
 		repo.aggregateErr = boom
-		got, err := NewUsageService(repo, nil, nil, nil).GetUserDayUsageSummary(context.Background(), 7, today.AddDate(0, 0, -1), today)
+		got, err := NewUsageService(repo, nil, nil, nil).GetUserDayUsageSummary(context.Background(), 7, now, today.AddDate(0, 0, -1), today)
 		require.ErrorIs(t, err, boom)
 		require.Nil(t, got)
 	})
@@ -121,10 +128,10 @@ func TestUserDayUsageSummaryNeverTurnsAFailureIntoZero(t *testing.T) {
 		repo := acctSummaryRepo()
 		repo.dashboard, repo.aggregate = nil, nil
 		svc := NewUsageService(repo, nil, nil, nil)
-		got, err := svc.GetUserDayUsageSummary(context.Background(), 7, today, today.AddDate(0, 0, 1))
+		got, err := svc.GetUserDayUsageSummary(context.Background(), 7, now, today, today.AddDate(0, 0, 1))
 		require.Error(t, err)
 		require.Nil(t, got)
-		got, err = svc.GetUserDayUsageSummary(context.Background(), 7, today.AddDate(0, 0, -1), today)
+		got, err = svc.GetUserDayUsageSummary(context.Background(), 7, now, today.AddDate(0, 0, -1), today)
 		require.Error(t, err)
 		require.Nil(t, got)
 	})
@@ -132,7 +139,7 @@ func TestUserDayUsageSummaryNeverTurnsAFailureIntoZero(t *testing.T) {
 		repo := acctSummaryRepo()
 		svc := NewUsageService(repo, nil, nil, nil)
 		for _, id := range []int64{0, -1} {
-			_, err := svc.GetUserDayUsageSummary(context.Background(), id, today, today.AddDate(0, 0, 1))
+			_, err := svc.GetUserDayUsageSummary(context.Background(), id, now, today, today.AddDate(0, 0, 1))
 			require.Error(t, err)
 		}
 		require.Empty(t, repo.dashboardCalls)

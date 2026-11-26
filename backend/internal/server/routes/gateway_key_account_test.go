@@ -30,9 +30,11 @@ func (r *keyInfoRouteUsageRepo) GetUserDashboardStats(_ context.Context, userID 
 	return &usagestats.UserDashboardStats{TodayRequests: 42, TodayInputTokens: 100, TodayOutputTokens: 20, TodayTokens: 120, TodayCost: 0.5, TodayActualCost: 0.42}, nil
 }
 
+// The site's current day is answered by the dashboard read or, in the first hour of that day, by this range read: both
+// return the same figures so the tests do not depend on the time of day.
 func (r *keyInfoRouteUsageRepo) GetUserStatsAggregated(_ context.Context, userID int64, _, _ time.Time) (*usagestats.UsageStats, error) {
 	r.askedUserIDs = append(r.askedUserIDs, userID)
-	return &usagestats.UsageStats{TotalRequests: 24}, nil
+	return &usagestats.UsageStats{TotalRequests: 42, TotalInputTokens: 100, TotalOutputTokens: 20, TotalTokens: 120, TotalCost: 0.5, TotalActualCost: 0.42}, nil
 }
 
 func keyAccountBody(t *testing.T, raw string) map[string]any {

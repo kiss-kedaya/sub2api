@@ -96,7 +96,7 @@ func (h *GatewayHandler) KeyAccount(c *gin.Context) {
 
 	dayStart := frame.TodayStart
 	dayEnd := dayStart.AddDate(0, 0, 1)
-	if summary, err := h.usageService.GetUserDayUsageSummary(ctx, apiKey.UserID, dayStart, dayEnd); err == nil && summary != nil {
+	if summary, err := h.usageService.GetUserDayUsageSummary(ctx, apiKey.UserID, frame.Now, dayStart, dayEnd); err == nil && summary != nil {
 		resp.Today = &keyUsageBlock{
 			Label:              "today",
 			Start:              dayStart.In(frame.Loc).Format("2006-01-02"),

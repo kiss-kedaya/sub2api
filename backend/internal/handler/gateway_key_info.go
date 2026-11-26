@@ -33,7 +33,7 @@ import (
 // program holding only an API key can read the wallet balance and today's usage of the whole account. So whoever holds
 // a valid key can read those figures, and a key must be kept like the money it can spend. It still returns nothing that
 // says who the owner is (no email, username, phone, id) and nothing about the owner's other keys. The existing
-// /v1/usage keeps its own wallet block for compatibility; these endpoints do not copy it.
+// /v1/usage keeps its own wallet block for compatibility; the first three endpoints do not copy it.
 // All four accept a key that is expired or out of quota (it can still say so) and are limited per key.
 const (
 	keyInfoSchemaVersion = 1

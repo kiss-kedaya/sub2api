@@ -52,23 +52,31 @@ func (s *APIKeyService) ListActiveSubscriptions(ctx context.Context, userID int6
 	return subs, nil
 }
 
+// userDashboardWholeAnswerGrace is how far into the site's calendar day the user dashboard still answers its whole
+// window at once instead of from its cached parts (repository.userDashboardClosedGrace, which the service may not
+// import; keep the two in step). That whole answer is a scan of the user's recent days on every cache expiry, which a
+// status poll must not set off, and today's own rows are few that early, so a range read is the cheap answer then.
+const userDashboardWholeAnswerGrace = time.Hour
+
 // GetUserDayUsageSummary returns the sanitized aggregate counters for ONE USER (all of the user's API keys together)
-// over the local day [dayStart, dayEnd).
+// over the local day [dayStart, dayEnd), as of now.
 //
 // It reuses what exists instead of scanning usage_logs again:
-//   - When the day is the one the user dashboard calls "today" (the site's own calendar day, still running), the
-//     answer is the dashboard's: GetUserDashboardStats, whose usage part is cached (days that are over once, today
-//     briefly) and shared with the console, so a status bar and the console page read the same entry.
-//   - Any other day boundary (a caller's time zone with a different midnight) is the per-user aggregate
-//     GetUserStatsAggregated, which has its own cache keyed by the exact range and the same concurrency gate.
+//   - When the day is the one the user dashboard calls "today" (the site's own calendar day, still running) and the
+//     dashboard answers it from its cached parts (an hour into the day), the answer is the dashboard's:
+//     GetUserDashboardStats, whose usage part is cached (days that are over once, today briefly) and shared with the
+//     console, so a status bar and the console page read the same entry.
+//   - Any other day (a caller's time zone with a different midnight) or the first hour of the site's day is the
+//     per-user aggregate GetUserStatsAggregated: one range read over the (user_id, created_at) covering index, cached
+//     by the exact range under the same concurrency gate.
 //
 // Either way a busy or slow database comes back as an error and the caller leaves the block out; it is never
 // turned into zeroes here.
-func (s *UsageService) GetUserDayUsageSummary(ctx context.Context, userID int64, dayStart, dayEnd time.Time) (*usagestats.APIKeyUsageSummary, error) {
+func (s *UsageService) GetUserDayUsageSummary(ctx context.Context, userID int64, now, dayStart, dayEnd time.Time) (*usagestats.APIKeyUsageSummary, error) {
 	if s == nil || s.usageRepo == nil || userID <= 0 {
 		return nil, fmt.Errorf("get user day usage summary: invalid user")
 	}
-	if today := timezone.Today(); dayStart.Equal(today) && dayEnd.Equal(today.AddDate(0, 0, 1)) {
+	if today := timezone.StartOfDay(now); dayStart.Equal(today) && dayEnd.Equal(today.AddDate(0, 0, 1)) && now.Sub(today) >= userDashboardWholeAnswerGrace {
 		stats, err := s.usageRepo.GetUserDashboardStats(ctx, userID)
 		if err != nil {
 			return nil, fmt.Errorf("get user day usage summary: %w", err)

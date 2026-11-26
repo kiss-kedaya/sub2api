@@ -26,16 +26,31 @@ import (
 
 // ---------- fixtures ----------
 
+// The site's current day is answered by the dashboard read once the day is an hour old and by the range read before
+// that (see UsageService.GetUserDayUsageSummary), so the two fakes return the same account figures: what the endpoint
+// answers must not depend on the time of day the test happens to run. Which read answered is recorded separately.
 type keyAccountUsageRepo struct {
 	service.UsageLogRepository
 	dashboard      usagestats.UserDashboardStats
 	dashboardErr   error
 	dashboardUsers []int64
-	dashboardSaw   []time.Duration // time left on the context when the read started
 	aggregate      usagestats.UsageStats
 	aggregateErr   error
 	aggregateCalls []keyAccountAggregateCall
-	keyScoped      int // reads of a single key's usage: the account endpoint must never make one
+	readUsers      []int64         // the user of every usage read, whichever read it was
+	readSaw        []time.Duration // time left on the context when each usage read started; -1: no deadline
+	keyScoped      int             // reads of a single key's usage: the account endpoint must never make one
+}
+
+func (r *keyAccountUsageRepo) failReads(err error) { r.dashboardErr, r.aggregateErr = err, err }
+
+func (r *keyAccountUsageRepo) noteRead(ctx context.Context, userID int64) {
+	r.readUsers = append(r.readUsers, userID)
+	if deadline, ok := ctx.Deadline(); ok {
+		r.readSaw = append(r.readSaw, time.Until(deadline))
+	} else {
+		r.readSaw = append(r.readSaw, -1)
+	}
 }
 
 type keyAccountAggregateCall struct {
@@ -45,11 +60,7 @@ type keyAccountAggregateCall struct {
 
 func (r *keyAccountUsageRepo) GetUserDashboardStats(ctx context.Context, userID int64) (*usagestats.UserDashboardStats, error) {
 	r.dashboardUsers = append(r.dashboardUsers, userID)
-	if deadline, ok := ctx.Deadline(); ok {
-		r.dashboardSaw = append(r.dashboardSaw, time.Until(deadline))
-	} else {
-		r.dashboardSaw = append(r.dashboardSaw, -1)
-	}
+	r.noteRead(ctx, userID)
 	if r.dashboardErr != nil {
 		return nil, r.dashboardErr
 	}
@@ -57,8 +68,9 @@ func (r *keyAccountUsageRepo) GetUserDashboardStats(ctx context.Context, userID 
 	return &out, nil
 }
 
-func (r *keyAccountUsageRepo) GetUserStatsAggregated(_ context.Context, userID int64, start, end time.Time) (*usagestats.UsageStats, error) {
+func (r *keyAccountUsageRepo) GetUserStatsAggregated(ctx context.Context, userID int64, start, end time.Time) (*usagestats.UsageStats, error) {
 	r.aggregateCalls = append(r.aggregateCalls, keyAccountAggregateCall{userID: userID, start: start, end: end})
+	r.noteRead(ctx, userID)
 	if r.aggregateErr != nil {
 		return nil, r.aggregateErr
 	}
@@ -145,8 +157,8 @@ func newKeyAccountFixture(t *testing.T) *keyAccountFixture {
 			ByPlatform: []usagestats.PlatformDashboardStats{{Platform: "platform-breakdown-sentinel", TotalRequests: 1}},
 		},
 		aggregate: usagestats.UsageStats{
-			TotalRequests: 999, TotalInputTokens: 2000, TotalOutputTokens: 300, TotalCacheCreationTokens: 40, TotalCacheReadTokens: 5000,
-			TotalTokens: 7340, TotalCost: 2.5, TotalActualCost: 1.25, TotalAccountCost: ptrFloat(777.7),
+			TotalRequests: 321, TotalInputTokens: 1000, TotalOutputTokens: 200, TotalCacheCreationTokens: 30, TotalCacheReadTokens: 4000,
+			TotalTokens: 5230, TotalCost: 1.75, TotalActualCost: 0.875, TotalAccountCost: ptrFloat(777.7),
 		},
 	}
 	f.handler.apiKeyService = service.NewAPIKeyService(&keyInfoAPIKeyRepo{}, users, f.groups, subs, &keyInfoRateRepo{}, nil, f.handler.cfg)
@@ -249,7 +261,7 @@ func TestKeyAccountReadsTheOwnerNotTheKey(t *testing.T) {
 
 	require.Equal(t, []int64{7}, f.users.asked, "the wallet is read for the key's owner")
 	require.Equal(t, []int64{7}, f.subs.asked)
-	require.Equal(t, []int64{7}, f.usage.dashboardUsers)
+	require.Equal(t, []int64{7}, f.usage.readUsers, "the account's usage is read once, for the owner")
 	require.Zero(t, f.usage.keyScoped, "one key's usage is never read")
 	require.EqualValues(t, 321, keyInfoObj(t, body["today"])["requests"], "the whole account, not the 7 requests of this key")
 	require.EqualValues(t, 1234.56789012, keyInfoObj(t, body["balance"])["wallet"], "not user 100's 1.25 and not user 8's 8.5")
@@ -268,8 +280,8 @@ func TestKeyAccountReadsAreBoundedByABudget(t *testing.T) {
 	f := newKeyAccountFixture(t)
 	f.account(t, "")
 	require.Len(t, f.users.saw, 1)
-	require.Len(t, f.usage.dashboardSaw, 1)
-	for name, left := range map[string]time.Duration{"wallet": f.users.saw[0], "usage": f.usage.dashboardSaw[0]} {
+	require.Len(t, f.usage.readSaw, 1)
+	for name, left := range map[string]time.Duration{"wallet": f.users.saw[0], "usage": f.usage.readSaw[0]} {
 		require.Greater(t, left, time.Duration(0), "%s read has no deadline", name)
 		require.LessOrEqual(t, left, 5*time.Second, "%s read runs on a bounded budget", name)
 	}
@@ -281,7 +293,7 @@ func TestKeyAccountTodayFollowsTheTimezoneParameter(t *testing.T) {
 	site := timezone.Location().String()
 	other := keyAccountOtherZone(t)
 
-	t.Run("no parameter, the site's own zone and an unusable value all mean the site's day, answered by the dashboard", func(t *testing.T) {
+	t.Run("no parameter, the site's own zone and an unusable value all mean the site's day", func(t *testing.T) {
 		for name, query := range map[string]string{
 			"none":      "",
 			"site zone": "?timezone=" + site,
@@ -290,11 +302,18 @@ func TestKeyAccountTodayFollowsTheTimezoneParameter(t *testing.T) {
 			"blank":     "?timezone=%20%20",
 		} {
 			f := newKeyAccountFixture(t)
+			before := timezone.Today()
 			_, body, raw := f.account(t, query)
+			after := timezone.Today()
 			require.Equal(t, site, body["timezone"], name)
 			require.EqualValues(t, 321, keyInfoObj(t, body["today"])["requests"], "%s: %s", name, raw)
-			require.Len(t, f.usage.dashboardUsers, 1, name)
-			require.Empty(t, f.usage.aggregateCalls, "%s: the dashboard's cached 'today' answers the site's day", name)
+			// One usage read answered it: the dashboard's cached read, or (in the first hour of the site's day) a range
+			// read of exactly the site's whole day. Which one depends on the time of day; the day does not.
+			require.Equal(t, 1, len(f.usage.dashboardUsers)+len(f.usage.aggregateCalls), name)
+			for _, call := range f.usage.aggregateCalls {
+				require.True(t, call.start.Equal(before) || call.start.Equal(after), "%s: the site's day starts at its own midnight: %s", name, call.start)
+				require.True(t, call.end.Equal(call.start.AddDate(0, 0, 1)), name)
+			}
 		}
 	})
 
@@ -307,9 +326,9 @@ func TestKeyAccountTodayFollowsTheTimezoneParameter(t *testing.T) {
 		after := timezone.StartOfDayInUserLocation(timezone.NowInUserLocation(other), other)
 		require.Equal(t, other, body["timezone"])
 		today := keyInfoObj(t, body["today"])
-		require.EqualValues(t, 999, today["requests"], raw)
-		require.EqualValues(t, 7340, today["total_tokens"])
-		require.EqualValues(t, 1.25, today["actual_cost"])
+		require.EqualValues(t, 321, today["requests"], raw)
+		require.EqualValues(t, 5230, today["total_tokens"])
+		require.EqualValues(t, 0.875, today["actual_cost"])
 		require.Empty(t, f.usage.dashboardUsers, "the dashboard only knows the site's day")
 		require.Len(t, f.usage.aggregateCalls, 1)
 		call := f.usage.aggregateCalls[0]
@@ -353,7 +372,7 @@ func TestKeyAccountLeavesOutWhatItCouldNotReadInsteadOfReportingZero(t *testing.
 
 	t.Run("today", func(t *testing.T) {
 		f := newKeyAccountFixture(t)
-		f.usage.dashboardErr = busy
+		f.usage.failReads(busy)
 		code, body, raw := f.account(t, "")
 		require.Equal(t, http.StatusOK, code, "a slow aggregate does not fail the endpoint")
 		require.Equal(t, []any{"today"}, body["partial"])
@@ -397,7 +416,8 @@ func TestKeyAccountLeavesOutWhatItCouldNotReadInsteadOfReportingZero(t *testing.
 	})
 	t.Run("everything", func(t *testing.T) {
 		f := newKeyAccountFixture(t)
-		f.users.err, f.subs.err, f.usage.dashboardErr = busy, busy, busy
+		f.users.err, f.subs.err = busy, busy
+		f.usage.failReads(busy)
 		code, body, _ := f.account(t, "")
 		require.Equal(t, http.StatusOK, code)
 		require.ElementsMatch(t, []any{"balance", "subscriptions", "today"}, body["partial"])
@@ -545,7 +565,7 @@ func TestKeyAccountResponseIsNeverCached(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, name)
 		require.Equal(t, "no-store", w.Header().Get("Cache-Control"), "%s: a balance must not sit in a shared cache", name)
 	}
-	f.usage.dashboardErr = errors.New("busy")
+	f.usage.failReads(errors.New("busy"))
 	w := get("")
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "no-store", w.Header().Get("Cache-Control"), "a partial answer is not cacheable either")
