@@ -169,6 +169,10 @@ func keyDailyWindows(t *testing.T, rnd *rand.Rand, zone string, random int, keys
 		{"starts a microsecond after the cut", day(0).Add(time.Microsecond), day(3)},
 		{"starts a microsecond before the cut", day(0).Add(-time.Microsecond), day(3)},
 		{"far future end", day(-3), day(400)},
+		// The window has to be longer than 25 hours to be cut: the three around that length, all across the cut.
+		{"14 hours across midnight (not cut)", day(0).Add(-4 * time.Hour), day(0).Add(10 * time.Hour)},
+		{"exactly 25 hours across midnight (not cut)", day(0).Add(-10 * time.Hour), day(0).Add(15 * time.Hour)},
+		{"25 hours and a microsecond across midnight", day(0).Add(-10 * time.Hour), day(0).Add(15*time.Hour + time.Microsecond)},
 	} {
 		add(g.label, now, g.start, g.end, "day")
 	}
