@@ -677,8 +677,10 @@ func TestEnsureEmailAuthIdentityHandlesEmptyHashAndPreexistingDuplicatesForSameU
 	require.NotNil(t, reloaded.ProviderSubjectHash)
 	require.Equal(t, service.HashAuthIdentitySubject("email", emptyHashEmail), *reloaded.ProviderSubjectHash)
 
-	// 场景 2：历史异常已存在两条同用户行（一条明文 hash=NULL，一条 hash-only），不得因 not singular 报错。
+	// 场景 2：历史异常已存在两条同用户行（一条明文 hash=NULL，一条 hash-only 且带错误 prefix），
+	// 不得因 not singular 报错，且应自愈合并为 1 条规范行并修正 prefix，使后续 .Only(ctx) 恢复正常。
 	const dupEmail = "preexisting-dup@example.com"
+	expectedDupHash := service.HashAuthIdentitySubject("email", dupEmail)
 	_, err = client.AuthIdentity.Create().
 		SetUserID(user.ID).
 		SetProviderType("email").
@@ -687,14 +689,99 @@ func TestEnsureEmailAuthIdentityHandlesEmptyHashAndPreexistingDuplicatesForSameU
 		SetMetadata(map[string]any{"source": "legacy"}).
 		Save(ctx)
 	require.NoError(t, err)
-	_, err = client.AuthIdentity.Create().
+	canonicalRow, err := client.AuthIdentity.Create().
 		SetUserID(user.ID).
 		SetProviderType("email").
 		SetProviderKey("email").
-		SetProviderSubjectHash(service.HashAuthIdentitySubject("email", dupEmail)).
+		SetProviderSubjectHash(expectedDupHash).
+		SetProviderSubjectPrefix("stale000").
 		SetMetadata(map[string]any{"source": "new"}).
 		Save(ctx)
 	require.NoError(t, err)
 
 	require.NoError(t, ensureEmailAuthIdentityWithClient(ctx, client, user.ID, dupEmail, "user_repo_update"))
+
+	// 必须收敛回唯一一行，后续 .Only(ctx) 不再报 not singular。
+	onlyRow, err := client.AuthIdentity.Query().
+		Where(
+			authidentity.ProviderTypeEQ("email"),
+			authidentity.ProviderKeyEQ("email"),
+			service.AuthIdentitySubjectLookupPredicate("email", dupEmail),
+		).
+		Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, canonicalRow.ID, onlyRow.ID)
+	require.NotNil(t, onlyRow.ProviderSubjectHash)
+	require.Equal(t, expectedDupHash, *onlyRow.ProviderSubjectHash)
+	require.NotNil(t, onlyRow.ProviderSubjectPrefix)
+	require.Equal(t, service.AuthSubjectPrefixFromHash(expectedDupHash), *onlyRow.ProviderSubjectPrefix)
+
+	// 场景 3：双写开启时若存在同用户双行（旧明文行 + hash-only 行），先删旧明文行再补写明文，不得触发明文唯一约束冲突。
+	service.ConfigureAuthSubjectPlaintextDualWrite(true)
+	t.Cleanup(func() { service.ConfigureAuthSubjectPlaintextDualWrite(false) })
+	const dualWriteDupEmail = "preexisting-dup-dualwrite@example.com"
+	expectedDWDupHash := service.HashAuthIdentitySubject("email", dualWriteDupEmail)
+	_, err = client.AuthIdentity.Create().
+		SetUserID(user.ID).
+		SetProviderType("email").
+		SetProviderKey("email").
+		SetProviderSubject(dualWriteDupEmail).
+		SetMetadata(map[string]any{"source": "legacy"}).
+		Save(ctx)
+	require.NoError(t, err)
+	dwCanonical, err := client.AuthIdentity.Create().
+		SetUserID(user.ID).
+		SetProviderType("email").
+		SetProviderKey("email").
+		SetProviderSubjectHash(expectedDWDupHash).
+		SetMetadata(map[string]any{"source": "new"}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, ensureEmailAuthIdentityWithClient(ctx, client, user.ID, dualWriteDupEmail, "user_repo_update"))
+	healedDW, err := client.AuthIdentity.Query().
+		Where(
+			authidentity.ProviderTypeEQ("email"),
+			authidentity.ProviderKeyEQ("email"),
+			service.AuthIdentitySubjectLookupPredicate("email", dualWriteDupEmail),
+		).
+		Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, dwCanonical.ID, healedDW.ID)
+	require.NotNil(t, healedDW.ProviderSubject)
+	require.Equal(t, dualWriteDupEmail, *healedDW.ProviderSubject)
+	require.NotNil(t, healedDW.ProviderSubjectPrefix)
+	require.Equal(t, service.AuthSubjectPrefixFromHash(expectedDWDupHash), *healedDW.ProviderSubjectPrefix)
+
+	// 场景 4：双行分别归属不同用户时必须拒绝返回 ErrEmailExists，绝不删除任何一方的记录。
+	other := newAuthSubjectTestUser(t, repo, "edge-other@example.com")
+	const mixedEmail = "mixed-owner-dup@example.com"
+	_, err = client.AuthIdentity.Create().
+		SetUserID(user.ID).
+		SetProviderType("email").
+		SetProviderKey("email").
+		SetProviderSubjectHash(service.HashAuthIdentitySubject("email", mixedEmail)).
+		SetMetadata(map[string]any{"source": "new"}).
+		Save(ctx)
+	require.NoError(t, err)
+	_, err = client.AuthIdentity.Create().
+		SetUserID(other.ID).
+		SetProviderType("email").
+		SetProviderKey("email").
+		SetProviderSubject(mixedEmail).
+		SetMetadata(map[string]any{"source": "legacy"}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	err = ensureEmailAuthIdentityWithClient(ctx, client, user.ID, mixedEmail, "user_repo_update")
+	require.ErrorIs(t, err, service.ErrEmailExists)
+	mixedCount, err := client.AuthIdentity.Query().
+		Where(
+			authidentity.ProviderTypeEQ("email"),
+			authidentity.ProviderKeyEQ("email"),
+			service.AuthIdentitySubjectLookupPredicate("email", mixedEmail),
+		).
+		Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, mixedCount, "跨用户冲突时不得误删任一方记录")
 }

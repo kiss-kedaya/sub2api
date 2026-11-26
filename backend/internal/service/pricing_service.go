@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -1164,9 +1165,9 @@ func (s *PricingService) mergeFallbackPricingData(data map[string]*LiteLLMModelP
 	}
 	fallbackBody, err := os.ReadFile(fallbackPath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) && isDefaultPricingFallbackFile(fallbackPath) {
 			logger.With(zap.String("component", "service.pricing")).
-				Debug(fmt.Sprintf("[Pricing] Fallback merge skipped (file not found): %v", err))
+				Debug(fmt.Sprintf("[Pricing] Default fallback file not found, skipping merge: %v", err))
 			return data
 		}
 		logger.LegacyPrintf("service.pricing", "[Pricing] Fallback merge skipped: %v", err)
@@ -1802,18 +1803,30 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 	return nil
 }
 
+func isDefaultPricingFallbackFile(path string) bool {
+	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	defaultCleaned := filepath.ToSlash(filepath.Clean(config.DefaultPricingFallbackFile))
+	return cleaned == defaultCleaned
+}
+
 func (s *PricingService) logOpenAIImageFallbackOnce(model, candidate string) {
 	key := openAIImageFallbackLogKey{model: model, candidate: candidate}
 	if _, loaded := s.imageFallbackLogged.Load(key); loaded {
 		return
 	}
-	if s.imageFallbackLoggedCount.Load() >= maxLoggedOpenAIImageFallbacks {
-		return
+	for {
+		cur := s.imageFallbackLoggedCount.Load()
+		if cur >= maxLoggedOpenAIImageFallbacks {
+			return
+		}
+		if s.imageFallbackLoggedCount.CompareAndSwap(cur, cur+1) {
+			break
+		}
 	}
 	if _, loaded := s.imageFallbackLogged.LoadOrStore(key, struct{}{}); loaded {
+		s.imageFallbackLoggedCount.Add(-1)
 		return
 	}
-	s.imageFallbackLoggedCount.Add(1)
 	logger.With(zap.String("component", "service.pricing")).
 		Debug(fmt.Sprintf("[Pricing] OpenAI image fallback matched %s -> %s", model, candidate))
 }

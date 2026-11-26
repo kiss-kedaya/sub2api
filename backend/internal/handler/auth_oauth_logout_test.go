@@ -171,4 +171,31 @@ func TestLogoutClearsOnlyPresentTwoFactorAndOAuthCookies(t *testing.T) {
 		require.Nil(t, findCookie(cookies, service.TwoFactorGrantCookieName))
 		require.Less(t, serializedResponseHeaderSize(t, recorder.Result()), 1024)
 	})
+
+	t.Run("both two-factor grant cookies with security headers stay well under 4KB and deduplicate repeated names", func(t *testing.T) {
+		router := gin.New()
+		router.Use(middleware2.SecurityHeaders(config.CSPConfig{Enabled: true}, nil))
+		router.POST("/api/v1/auth/logout", handler.Logout)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", bytes.NewBufferString(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: service.TwoFactorGrantCookieName, Value: "totp-1"})
+		req.AddCookie(&http.Cookie{Name: service.TwoFactorGrantCookieName, Value: "totp-2"})
+		req.AddCookie(&http.Cookie{Name: service.TwoFactorPasskeyGrantCookieName, Value: "passkey-1"})
+
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		resp := recorder.Result()
+		cookies := resp.Cookies()
+		require.Len(t, cookies, 2, "重复携带同名 Cookie 只应下发一条清理头")
+		require.NotNil(t, findCookie(cookies, service.TwoFactorGrantCookieName))
+		require.NotNil(t, findCookie(cookies, service.TwoFactorPasskeyGrantCookieName))
+		require.Equal(t, -1, findCookie(cookies, service.TwoFactorGrantCookieName).MaxAge)
+		require.Equal(t, -1, findCookie(cookies, service.TwoFactorPasskeyGrantCookieName).MaxAge)
+
+		headerBytes := serializedResponseHeaderSize(t, resp)
+		require.Less(t, headerBytes, 2560, "含完整 SecurityHeaders + 两条 2FA 清理头仍须远低于 Nginx 默认 4KB 缓冲上限，实际=%d", headerBytes)
+	})
 }

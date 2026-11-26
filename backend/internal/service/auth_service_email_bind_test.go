@@ -640,6 +640,93 @@ func TestAuthServiceBindEmailIdentity_BackfillsLegacyPlaintextRowWhenDualWriteDi
 	require.Nil(t, identities[0].ProviderSubject)
 }
 
+func TestAuthServiceRecordSuccessfulLogin_BackfillsLegacyPlaintextEmailIdentityAndHealsDuplicates(t *testing.T) {
+	svc, _, client := newAuthServiceForEmailBind(t, nil, nil, nil)
+	service.ConfigureAuthSubjectPlaintextDualWrite(false)
+
+	ctx := context.Background()
+	hashedPassword, err := svc.HashPassword("login-pass-123")
+	require.NoError(t, err)
+
+	// 场景 1：历史明文行在登录回填时原地补写 hash/prefix，不产生重复行。
+	const legacyEmail = "login-legacy@example.com"
+	legacyUser, err := client.User.Create().
+		SetEmail(legacyEmail).
+		SetUsername("login-legacy-user").
+		SetPasswordHash(hashedPassword).
+		SetBalance(1).
+		SetConcurrency(1).
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+	legacyRow, err := client.AuthIdentity.Create().
+		SetUserID(legacyUser.ID).
+		SetProviderType("email").
+		SetProviderKey("email").
+		SetProviderSubject(legacyEmail).
+		SetVerifiedAt(time.Now().UTC()).
+		SetMetadata(map[string]any{"source": "legacy"}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	svc.RecordSuccessfulLogin(ctx, legacyUser.ID)
+
+	onlyRow, err := client.AuthIdentity.Query().
+		Where(
+			authidentity.ProviderTypeEQ("email"),
+			authidentity.ProviderKeyEQ("email"),
+			service.AuthIdentitySubjectLookupPredicate("email", legacyEmail),
+		).
+		Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, legacyRow.ID, onlyRow.ID)
+	require.NotNil(t, onlyRow.ProviderSubjectHash)
+	require.Equal(t, service.HashAuthIdentitySubject("email", legacyEmail), *onlyRow.ProviderSubjectHash)
+	require.Nil(t, onlyRow.ProviderSubject)
+
+	// 场景 2：已有历史双行（一条明文 hash=NULL，一条 hash-only）的用户登录回填时自动去重收敛为 1 行。
+	const dupEmail = "login-dup@example.com"
+	dupUser, err := client.User.Create().
+		SetEmail(dupEmail).
+		SetUsername("login-dup-user").
+		SetPasswordHash(hashedPassword).
+		SetBalance(1).
+		SetConcurrency(1).
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+	_, err = client.AuthIdentity.Create().
+		SetUserID(dupUser.ID).
+		SetProviderType("email").
+		SetProviderKey("email").
+		SetProviderSubject(dupEmail).
+		SetMetadata(map[string]any{"source": "legacy"}).
+		Save(ctx)
+	require.NoError(t, err)
+	hashRow, err := client.AuthIdentity.Create().
+		SetUserID(dupUser.ID).
+		SetProviderType("email").
+		SetProviderKey("email").
+		SetProviderSubjectHash(service.HashAuthIdentitySubject("email", dupEmail)).
+		SetMetadata(map[string]any{"source": "new"}).
+		Save(ctx)
+	require.NoError(t, err)
+
+	svc.RecordSuccessfulLogin(ctx, dupUser.ID)
+
+	healed, err := client.AuthIdentity.Query().
+		Where(
+			authidentity.ProviderTypeEQ("email"),
+			authidentity.ProviderKeyEQ("email"),
+			service.AuthIdentitySubjectLookupPredicate("email", dupEmail),
+		).
+		Only(ctx)
+	require.NoError(t, err)
+	require.Equal(t, hashRow.ID, healed.ID)
+}
+
 func TestAuthServiceBindEmailIdentity_RevokesExistingAccessAndRefreshTokens(t *testing.T) {
 	ctx := context.Background()
 	cache := &emailBindCacheStub{

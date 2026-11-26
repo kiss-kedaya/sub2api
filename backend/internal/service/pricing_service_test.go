@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1255,12 +1256,45 @@ func TestGetModelPricing_OpenAIImageFallbackLoggedOnceAtDebug(t *testing.T) {
 	require.Equal(t, 2, countStructuredLogMatches(logSink, msg25, "debug"))
 }
 
-func TestMergeFallbackPricingData_MissingFileDoesNotWarn(t *testing.T) {
+func TestGetModelPricing_OpenAIImageFallbackCacheStrictlyBoundedUnderConcurrency(t *testing.T) {
+	logSink, restore := captureStructuredLog(t)
+	defer restore()
+
+	gptImage2 := &LiteLLMModelPricing{
+		OutputCostPerImageToken: 3e-5,
+		LiteLLMProvider:         "openai",
+		Mode:                    "image_generation",
+	}
+	svc := &PricingService{
+		pricingData: map[string]*LiteLLMModelPricing{
+			"gpt-image-2": gptImage2,
+		},
+	}
+
+	const totalDistinct = maxLoggedOpenAIImageFallbacks + 128
+	var wg sync.WaitGroup
+	for i := 0; i < totalDistinct; i++ {
+		model := fmt.Sprintf("gpt-image-burst-%d", i)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			require.Same(t, gptImage2, svc.GetModelPricing(model))
+		}()
+	}
+	wg.Wait()
+
+	require.Equal(t, int32(maxLoggedOpenAIImageFallbacks), svc.imageFallbackLoggedCount.Load())
+	require.Equal(t, maxLoggedOpenAIImageFallbacks, countStructuredLogMatches(logSink, "[Pricing] OpenAI image fallback matched ", "debug"))
+	require.Equal(t, 0, countStructuredLogMatches(logSink, "[Pricing] OpenAI image fallback matched ", "warn"))
+}
+
+func TestMergeFallbackPricingData_DefaultMissingPathLogsDebugWhileCustomMissingWarns(t *testing.T) {
 	logSink, restore := captureStructuredLog(t)
 	defer restore()
 
 	dir := t.TempDir()
-	missingPath := filepath.Join(dir, "does-not-exist.json")
+	t.Chdir(dir)
+
 	overridePath := filepath.Join(dir, "overrides.json")
 	require.NoError(t, os.WriteFile(overridePath, []byte(`{
 		"gpt-5.4": {"input_cost_per_token": 9e-06}
@@ -1272,17 +1306,24 @@ func TestMergeFallbackPricingData_MissingFileDoesNotWarn(t *testing.T) {
 			"input_cost_per_token": 2.5e-06, "output_cost_per_token": 1.5e-05}
 	}`), 0644))
 
+	// 1. 默认回退路径 ./resources/model-pricing/model_prices_and_context_window.json 缺失：
+	// 仅记 Debug、不打 WARN，且显式 override 保持生效。
 	svc := &PricingService{cfg: &config.Config{}}
-	svc.cfg.Pricing.FallbackFile = missingPath
+	svc.cfg.Pricing.FallbackFile = config.DefaultPricingFallbackFile
 	svc.cfg.Pricing.OverrideFile = overridePath
 
 	require.NoError(t, svc.loadPricingData(catalogPath))
-	require.InDelta(t, 9e-6, svc.pricingData["gpt-5.4"].InputCostPerToken, 1e-12, "显式 override 不受缺失 fallback 影响")
-	require.True(t, logSink.ContainsMessageAtLevel("[Pricing] Fallback merge skipped (file not found):", "debug"))
+	require.InDelta(t, 9e-6, svc.pricingData["gpt-5.4"].InputCostPerToken, 1e-12, "显式 override 不受缺失默认 fallback 影响")
+	require.True(t, logSink.ContainsMessageAtLevel("[Pricing] Default fallback file not found, skipping merge:", "debug"))
 	require.False(t, logSink.ContainsMessageAtLevel("[Pricing] Fallback merge skipped", "warn"))
 
-	// 非 ENOENT 读取失败（例如配置成了目录）仍应输出 WARN。
+	// 2. 显式配置的自定义回退路径缺失：仍输出 WARN，避免配置拼错被静默吞掉。
+	svc.cfg.Pricing.FallbackFile = filepath.Join(dir, "custom-missing-fallback.json")
+	_ = svc.mergeFallbackPricingData(map[string]*LiteLLMModelPricing{})
+	require.Equal(t, 1, countStructuredLogMatches(logSink, "[Pricing] Fallback merge skipped:", "warn"))
+
+	// 3. 非 ENOENT 读取失败（例如配置成了目录）：仍输出 WARN。
 	svc.cfg.Pricing.FallbackFile = dir
 	_ = svc.mergeFallbackPricingData(map[string]*LiteLLMModelPricing{})
-	require.True(t, logSink.ContainsMessageAtLevel("[Pricing] Fallback merge skipped:", "warn"))
+	require.Equal(t, 2, countStructuredLogMatches(logSink, "[Pricing] Fallback merge skipped:", "warn"))
 }
