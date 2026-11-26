@@ -1,4 +1,4 @@
-import { BILLING_MODE_IMAGE, BILLING_MODE_TOKEN } from '@/constants/channel'
+import { BILLING_MODE_IMAGE, BILLING_MODE_TOKEN, BILLING_MODE_VIDEO } from '@/constants/channel'
 import type { ModelPlazaGroup } from '@/api/modelPlaza'
 
 export interface ModelOffer {
@@ -80,13 +80,20 @@ export function buildModelOffers(groups: ModelPlazaGroup[]): ModelOffer[] {
       const pricing = model.pricing
       if (!pricing) continue
       const mode = pricing.billing_mode || BILLING_MODE_TOKEN
-      const imageRate = mode === BILLING_MODE_IMAGE && group.image_rate_independent
-        ? (Number.isFinite(group.image_rate_multiplier) && group.image_rate_multiplier > 0 ? group.image_rate_multiplier : 1)
-        : rate
+      let mediaRate = rate
+      if (mode === BILLING_MODE_IMAGE && group.image_rate_independent) {
+        mediaRate = Number.isFinite(group.image_rate_multiplier) && group.image_rate_multiplier >= 0 ? group.image_rate_multiplier : 1
+      } else if (mode === BILLING_MODE_VIDEO && group.video_rate_independent) {
+        mediaRate = typeof group.video_rate_multiplier === 'number' && Number.isFinite(group.video_rate_multiplier) && group.video_rate_multiplier >= 0 ? group.video_rate_multiplier : 1
+      }
       const isToken = mode === BILLING_MODE_TOKEN
       const inputPerMillion = isToken ? scaled(pricing.input_price, rate, true) : null
       const outputPerMillion = isToken ? scaled(pricing.output_price, rate, true) : null
-      const requestPrice = isToken ? null : scaled(pricing.per_request_price, imageRate, false)
+      const baseRequestPrice = pricing.per_request_price ?? pricing.intervals?.reduce<number | null>((min, iv) => {
+        if (typeof iv.per_request_price !== 'number' || !Number.isFinite(iv.per_request_price)) return min
+        return min == null || iv.per_request_price < min ? iv.per_request_price : min
+      }, null)
+      const requestPrice = isToken ? null : scaled(baseRequestPrice, mediaRate, false)
       offers.push({
         key: `${group.id}:${model.platform}:${model.name}`,
         modelKey: `${model.platform}:${model.name}`,

@@ -46,6 +46,8 @@ function mountTable(
   extraProps?: {
     imageRateIndependent?: boolean
     imageRateMultiplier?: number | null
+    videoRateIndependent?: boolean
+    videoRateMultiplier?: number | null
     peakWindow?: string
     peakRateMultiplier?: number | null
   }
@@ -309,6 +311,83 @@ describe('PlazaModelPricingTable', () => {
     expect(text).toContain('modelPlaza.table.perRequest')
     // 单位后缀跟在价格后(按次 → / 次)
     expect(text).toContain('modelPlaza.table.perUnitRequest')
+  })
+
+  it('video 模型按每秒单价 × 倍率展示，带按秒计费徽章与 / 秒后缀', () => {
+    const model = tokenModel({
+      name: 'doubao-seedance-2.5',
+      platform: 'openai',
+      pricing: {
+        billing_mode: 'video',
+        input_price: null,
+        output_price: null,
+        cache_write_price: null,
+        cache_read_price: null,
+        image_input_price: null,
+        image_output_price: null,
+        per_request_price: 0.5,
+        intervals: []
+      },
+      official_pricing: null
+    })
+    const wrapper = mountTable([model], 0.5)
+    const text = wrapper.text()
+    expect(text).toContain('$0.25')
+    expect(text).toContain('modelPlaza.table.perVideo')
+    expect(text).toContain('modelPlaza.table.perUnitVideo')
+  })
+
+  it('视频独立倍率开启时，按秒分档价格 × 视频独立倍率，倍率列展示独立倍率', () => {
+    const model = tokenModel({
+      name: 'grok-imagine-video-1.5',
+      platform: 'grok',
+      pricing: {
+        billing_mode: 'video',
+        input_price: null,
+        output_price: null,
+        cache_write_price: null,
+        cache_read_price: null,
+        image_input_price: null,
+        image_output_price: null,
+        per_request_price: null,
+        intervals: [
+          {
+            min_tokens: 0,
+            max_tokens: null,
+            tier_label: '480p',
+            input_price: null,
+            output_price: null,
+            cache_write_price: null,
+            cache_read_price: null,
+            per_request_price: 0.1
+          },
+          {
+            min_tokens: 0,
+            max_tokens: null,
+            tier_label: '720p',
+            input_price: null,
+            output_price: null,
+            cache_write_price: null,
+            cache_read_price: null,
+            per_request_price: 0.2
+          }
+        ]
+      },
+      official_pricing: null
+    })
+    const wrapper = mountTable([model], 0.1, null, {
+      videoRateIndependent: true,
+      videoRateMultiplier: 0.5
+    })
+    const text = wrapper.text()
+    expect(text).toContain('modelPlaza.table.perVideo')
+    expect(text).toContain('480p')
+    expect(text).toContain('$0.05')
+    expect(text).toContain('720p')
+    expect(text).toContain('$0.10')
+    expect(text).toContain('modelPlaza.table.perUnitVideo')
+    const rateCell = wrapper.findAll('tbody tr td').at(-1)!
+    expect(rateCell.text()).toBe('0.5x')
   })
 
   it('token 模型阶梯定价内联进输入/输出列,按倍率折算', () => {

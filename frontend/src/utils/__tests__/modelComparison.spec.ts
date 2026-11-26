@@ -73,6 +73,33 @@ describe('buildModelOffers', () => {
     ])
     expect(offers[0].requestPrice).toBeCloseTo(0.002)
   })
+
+  it('uses the independent video rate and lowest tier for tiered video billing', () => {
+    const offers = buildModelOffers([
+      group({
+        rate_multiplier: 2,
+        video_rate_independent: true,
+        video_rate_multiplier: 0.5,
+        models: [{
+          name: 'grok-imagine-video-1.5',
+          platform: 'grok',
+          pricing: {
+            ...tokenPricing(0, 0),
+            billing_mode: 'video',
+            per_request_price: null,
+            intervals: [
+              { min_tokens: 0, max_tokens: null, tier_label: '720p', input_price: null, output_price: null, cache_write_price: null, cache_read_price: null, per_request_price: 0.14 },
+              { min_tokens: 0, max_tokens: null, tier_label: '480p', input_price: null, output_price: null, cache_write_price: null, cache_read_price: null, per_request_price: 0.08 },
+            ],
+          },
+          official_pricing: null,
+        }],
+      }),
+    ])
+    expect(offers[0].billingMode).toBe('video')
+    expect(offers[0].requestPrice).toBeCloseTo(0.04)
+    expect(offers[0].multiTier).toBe(true)
+  })
 })
 
 describe('compareModels', () => {

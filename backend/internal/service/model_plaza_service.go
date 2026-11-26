@@ -63,6 +63,10 @@ type PlazaGroup struct {
 	// = 档位价 × ImageRateMultiplier，不乘分组/用户专属倍率（与计费口径一致）。
 	ImageRateIndependent bool
 	ImageRateMultiplier  float64
+	// 视频按秒实付倍率：VideoRateIndependent 为 true 时，视频按秒计费模型的实付
+	// = 档位价 × VideoRateMultiplier，不乘分组/用户专属倍率（与计费口径一致）。
+	VideoRateIndependent bool
+	VideoRateMultiplier  float64
 	// LongContextPricingEnabled 分组是否按上下文长度应用阶梯价；关闭时模型展示的是最低档。
 	LongContextPricingEnabled bool
 	Models                    []PlazaModel
@@ -146,6 +150,8 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 			IsExclusive:               g.IsExclusive,
 			ImageRateIndependent:      g.ImageRateIndependent,
 			ImageRateMultiplier:       g.ImageRateMultiplier,
+			VideoRateIndependent:      g.VideoRateIndependent,
+			VideoRateMultiplier:       g.VideoRateMultiplier,
 			LongContextPricingEnabled: g.LongContextPricingEnabled,
 		}
 		groupEnt[g.ID] = g
@@ -273,8 +279,14 @@ func (s *ModelPlazaService) resolvePlazaMetadata(ctx context.Context, platform, 
 
 // fillDisplayPricing 把模型的展示定价换成实收口径：
 // token 模型取计费阶梯表（单价与档位均由真实计费函数得出），
-// 图片/按次模型（或阶梯表不可用时）沿用渠道定价与分组图片档位价。
+// 按次/图片/视频按秒模型（或阶梯表不可用时）按与计费一致的解析链合成展示定价。
 func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaModel, g *Group) *ContextPricingSchedule {
+	if m != nil && strings.EqualFold(strings.TrimSpace(m.Name), MiniMaxH3PriceFamily) {
+		if h3 := plazaMiniMaxH3DisplayPricing(g); h3 != nil {
+			m.Pricing = h3
+			return nil
+		}
+	}
 	if s.billingService != nil && s.resolver != nil {
 		sched, err := s.billingService.ResolveContextPricingSchedule(ctx, s.resolver, ContextPricingScheduleInput{
 			Model:    m.Name,
@@ -282,6 +294,12 @@ func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaMode
 			Platform: m.Platform,
 		})
 		if err == nil && sched != nil && len(sched.Tiers) > 0 {
+			if !scheduleHasAnyTokenPrice(sched) {
+				if nonToken := s.plazaNonTokenDisplayPricing(ctx, m, g); nonToken != nil && isNonTokenBillingMode(nonToken.BillingMode) {
+					m.Pricing = withDefaultMaxReasoningEffortMultiplier(nonToken, m.Name)
+					return nil
+				}
+			}
 			m.Pricing = withDefaultMaxReasoningEffortMultiplier(plazaPricingFromSchedule(m.Pricing, sched), m.Name)
 			if len(sched.Tiers) > 1 {
 				m.LongContextBasis = sched.Basis
@@ -290,7 +308,309 @@ func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaMode
 			return sched
 		}
 	}
-	m.Pricing = withDefaultMaxReasoningEffortMultiplier(plazaImageDisplayPricing(m.Pricing, g), m.Name)
+	m.Pricing = withDefaultMaxReasoningEffortMultiplier(s.plazaNonTokenDisplayPricing(ctx, m, g), m.Name)
+	return nil
+}
+
+func scheduleHasAnyTokenPrice(sched *ContextPricingSchedule) bool {
+	if sched == nil {
+		return false
+	}
+	for _, t := range sched.Tiers {
+		if t.Input != nil || t.Output != nil || t.CacheWrite != nil ||
+			t.CacheWrite1h != nil || t.CacheWrite12h != nil || t.CacheRead != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func isNonTokenBillingMode(mode BillingMode) bool {
+	return mode == BillingModePerRequest || mode == BillingModeImage || mode == BillingModeVideo
+}
+
+// plazaNonTokenDisplayPricing 为按次/图片/视频按秒模型合成展示定价，解析顺序与计费对齐：
+// MiniMax-H3 分组专表 / 分组价卡 > 分组媒体价表（图片/视频）> 渠道价卡 > 视频内置默认价。
+func (s *ModelPlazaService) plazaNonTokenDisplayPricing(ctx context.Context, m *PlazaModel, g *Group) *ChannelModelPricing {
+	if m == nil {
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(m.Name), MiniMaxH3PriceFamily) {
+		if h3 := plazaMiniMaxH3DisplayPricing(g); h3 != nil {
+			return h3
+		}
+	}
+	if s.resolver != nil {
+		resolveCtx := ctx
+		if resolveCtx == nil {
+			resolveCtx = context.Background()
+		}
+		if m.Platform != "" {
+			resolveCtx = WithResolvedTargetPlatform(resolveCtx, m.Platform)
+		}
+		input := PricingInput{Model: m.Name, Group: g}
+		if g != nil {
+			gid := g.ID
+			input.GroupID = &gid
+		}
+		if resolved := s.resolver.Resolve(resolveCtx, input); resolved != nil && isNonTokenBillingMode(resolved.Mode) {
+			card := plazaPricingFromResolvedNonToken(resolved)
+			if resolved.Source == PricingSourceGroup {
+				return card
+			}
+			switch resolved.Mode {
+			case BillingModeImage:
+				return plazaImageDisplayPricing(card, g)
+			case BillingModeVideo:
+				return plazaVideoDisplayPricing(card, m.Name, g, s.billingService)
+			case BillingModePerRequest:
+				if CanonicalGrokImagineVideoPriceFamily(m.Name) != "" && hasConfiguredGroupVideoPrice(g, m.Name) {
+					if video := plazaGroupOnlyVideoDisplayPricing(m.Name, g, s.billingService); video != nil {
+						return video
+					}
+				}
+				return card
+			}
+		}
+	} else if groupCard := matchGroupModelPricing(g, m.Name); groupCard != nil && isNonTokenBillingMode(groupCard.BillingMode) {
+		return plazaPricingFromNonTokenCard(groupCard)
+	}
+
+	if m.Pricing != nil {
+		switch m.Pricing.BillingMode {
+		case BillingModeImage:
+			return plazaImageDisplayPricing(m.Pricing, g)
+		case BillingModeVideo:
+			return plazaVideoDisplayPricing(m.Pricing, m.Name, g, s.billingService)
+		case BillingModePerRequest:
+			if CanonicalGrokImagineVideoPriceFamily(m.Name) != "" && hasConfiguredGroupVideoPrice(g, m.Name) {
+				if video := plazaGroupOnlyVideoDisplayPricing(m.Name, g, s.billingService); video != nil {
+					return video
+				}
+			}
+			return plazaPricingFromNonTokenCard(m.Pricing)
+		}
+	}
+
+	if video := plazaGroupOnlyVideoDisplayPricing(m.Name, g, s.billingService); video != nil {
+		return video
+	}
+	return m.Pricing
+}
+
+func plazaPricingFromResolvedNonToken(resolved *ResolvedPricing) *ChannelModelPricing {
+	if resolved == nil {
+		return nil
+	}
+	out := &ChannelModelPricing{
+		BillingMode: resolved.Mode,
+	}
+	if resolved.channelPricing != nil {
+		out.PerRequestPrice = clonePricingFloat64(resolved.channelPricing.PerRequestPrice)
+		out.MaxReasoningEffortMultiplier = clonePricingFloat64(resolved.channelPricing.MaxReasoningEffortMultiplier)
+	} else if resolved.DefaultPerRequestPrice > 0 {
+		v := resolved.DefaultPerRequestPrice
+		out.PerRequestPrice = &v
+	}
+	if len(resolved.RequestTiers) > 0 {
+		out.Intervals = make([]PricingInterval, 0, len(resolved.RequestTiers))
+		for _, iv := range resolved.RequestTiers {
+			if iv.PerRequestPrice == nil {
+				continue
+			}
+			out.Intervals = append(out.Intervals, clonePricingInterval(iv))
+		}
+	}
+	return out
+}
+
+func plazaPricingFromNonTokenCard(card *ChannelModelPricing) *ChannelModelPricing {
+	if card == nil {
+		return nil
+	}
+	out := &ChannelModelPricing{
+		BillingMode:                  card.BillingMode,
+		PerRequestPrice:              clonePricingFloat64(card.PerRequestPrice),
+		MaxReasoningEffortMultiplier: clonePricingFloat64(card.MaxReasoningEffortMultiplier),
+	}
+	if len(card.Intervals) > 0 {
+		out.Intervals = make([]PricingInterval, 0, len(card.Intervals))
+		for _, iv := range card.Intervals {
+			if iv.PerRequestPrice == nil {
+				continue
+			}
+			out.Intervals = append(out.Intervals, clonePricingInterval(iv))
+		}
+	}
+	return out
+}
+
+func hasConfiguredGroupVideoPrice(g *Group, modelName string) bool {
+	if g == nil {
+		return false
+	}
+	return g.GetVideoPriceForModel(modelName, VideoBillingResolution480P) != nil ||
+		g.GetVideoPriceForModel(modelName, VideoBillingResolution720P) != nil ||
+		g.GetVideoPriceForModel(modelName, VideoBillingResolution1080P) != nil
+}
+
+// plazaVideoDisplayPricing 为视频按秒计费模型合成展示定价，使分辨率档位价与实收口径一致：
+// 每档（480p/720p/1080p）单价 = 分组视频价（按模型优先，次分组默认）> 渠道同档位价 > 渠道默认每秒价 > 内置默认价。
+// 分组未配任何视频价、或定价非视频模式时原样返回。返回克隆，不修改入参。
+func plazaVideoDisplayPricing(p *ChannelModelPricing, modelName string, g *Group, bs *BillingService) *ChannelModelPricing {
+	if p == nil || g == nil || p.BillingMode != BillingModeVideo {
+		return p
+	}
+	p480 := g.GetVideoPriceForModel(modelName, VideoBillingResolution480P)
+	p720 := g.GetVideoPriceForModel(modelName, VideoBillingResolution720P)
+	p1080 := g.GetVideoPriceForModel(modelName, VideoBillingResolution1080P)
+	if p480 == nil && p720 == nil && p1080 == nil {
+		return p
+	}
+	channelTierPrice := func(label string) *float64 {
+		for i := range p.Intervals {
+			if p.Intervals[i].PerRequestPrice == nil {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(p.Intervals[i].TierLabel), label) {
+				return p.Intervals[i].PerRequestPrice
+			}
+			if norm, ok := LookupVideoBillingResolution(p.Intervals[i].TierLabel); ok && norm == label {
+				return p.Intervals[i].PerRequestPrice
+			}
+		}
+		return p.PerRequestPrice
+	}
+	tiers := []struct {
+		label      string
+		groupPrice *float64
+	}{
+		{VideoBillingResolution480P, p480},
+		{VideoBillingResolution720P, p720},
+		{VideoBillingResolution1080P, p1080},
+	}
+	clone := p.Clone()
+	clone.Intervals = make([]PricingInterval, 0, len(tiers))
+	for i, t := range tiers {
+		price := t.groupPrice
+		if price == nil {
+			price = channelTierPrice(t.label)
+		}
+		if price == nil && bs != nil {
+			if def, ok := getDefaultGrokImagineVideoPrice(modelName, t.label); ok {
+				price = &def
+			}
+		}
+		if price == nil {
+			continue
+		}
+		v := *price
+		clone.Intervals = append(clone.Intervals, PricingInterval{
+			TierLabel:       t.label,
+			PerRequestPrice: &v,
+			SortOrder:       i,
+		})
+	}
+	return &clone
+}
+
+func plazaGroupOnlyVideoDisplayPricing(modelName string, g *Group, bs *BillingService) *ChannelModelPricing {
+	if strings.EqualFold(strings.TrimSpace(modelName), MiniMaxH3PriceFamily) {
+		return plazaMiniMaxH3DisplayPricing(g)
+	}
+	family := CanonicalGrokImagineVideoPriceFamily(modelName)
+	normalizedModelPrices := map[string]map[string]float64(nil)
+	if g != nil && len(g.VideoModelPrices) > 0 {
+		normalizedModelPrices = NormalizeVideoModelPrices(g.VideoModelPrices)
+	}
+	modelKey := family
+	if modelKey == "" {
+		modelKey = strings.ToLower(strings.TrimSpace(modelName))
+	}
+	hasExplicitModelVideoPrice := modelKey != "" && len(normalizedModelPrices[modelKey]) > 0
+	if family == "" && !hasExplicitModelVideoPrice {
+		return nil
+	}
+	lookup := func(res string) *float64 {
+		if price := LookupVideoModelPrice(normalizedModelPrices, modelName, res); price != nil {
+			return price
+		}
+		if g != nil {
+			return g.GetVideoPrice(res)
+		}
+		return nil
+	}
+	p480 := lookup(VideoBillingResolution480P)
+	p720 := lookup(VideoBillingResolution720P)
+	p1080 := lookup(VideoBillingResolution1080P)
+	if p480 == nil && p720 == nil && p1080 == nil && (family == "" || bs == nil) {
+		return nil
+	}
+	tiers := []struct {
+		label      string
+		groupPrice *float64
+		optional   bool
+	}{
+		{VideoBillingResolution480P, p480, family == ""},
+		{VideoBillingResolution720P, p720, family == ""},
+		{VideoBillingResolution1080P, p1080, family == "" || family == VideoPriceFamilyGrokImagineVideo},
+	}
+	intervals := make([]PricingInterval, 0, len(tiers))
+	for i, t := range tiers {
+		price := t.groupPrice
+		if price == nil && !t.optional && bs != nil {
+			if def, ok := getDefaultGrokImagineVideoPrice(modelName, t.label); ok {
+				price = &def
+			}
+		}
+		if price == nil {
+			continue
+		}
+		v := *price
+		intervals = append(intervals, PricingInterval{
+			TierLabel:       t.label,
+			PerRequestPrice: &v,
+			SortOrder:       i,
+		})
+	}
+	if len(intervals) == 0 {
+		return nil
+	}
+	return &ChannelModelPricing{
+		BillingMode: BillingModeVideo,
+		Intervals:   intervals,
+	}
+}
+
+func plazaMiniMaxH3DisplayPricing(g *Group) *ChannelModelPricing {
+	if g == nil || len(g.VideoModelPrices) == 0 {
+		return nil
+	}
+	tariff := NormalizeVideoModelPrices(g.VideoModelPrices)[MiniMaxH3PriceFamily]
+	if len(tariff) != 1 {
+		return nil
+	}
+	for key, price := range tariff {
+		if price < 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+			return nil
+		}
+		v := price
+		if key == MiniMaxH3PerSecond {
+			return &ChannelModelPricing{
+				BillingMode:     BillingModeVideo,
+				PerRequestPrice: &v,
+			}
+		}
+		if sec, ok := miniMaxH3RequestSeconds(key); ok {
+			return &ChannelModelPricing{
+				BillingMode: BillingModePerRequest,
+				Intervals: []PricingInterval{{
+					TierLabel:       fmt.Sprintf("%ds", sec),
+					PerRequestPrice: &v,
+				}},
+			}
+		}
+	}
 	return nil
 }
 

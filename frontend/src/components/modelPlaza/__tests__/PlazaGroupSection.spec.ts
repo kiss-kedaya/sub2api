@@ -136,4 +136,16 @@ describe('PlazaGroupSection 高峰配置传递', () => {
     const wrapper = mountSection(group())
     expect(wrapper.findComponent(PlazaModelPricingTable).props('peakWindow')).toBe('')
   })
+
+  it('传递视频独立倍率配置给价格表', () => {
+    const wrapper = mountSection(
+      group({
+        video_rate_independent: true,
+        video_rate_multiplier: 0.5
+      })
+    )
+    const table = wrapper.findComponent(PlazaModelPricingTable)
+    expect(table.props('videoRateIndependent')).toBe(true)
+    expect(table.props('videoRateMultiplier')).toBe(0.5)
+  })
 })
