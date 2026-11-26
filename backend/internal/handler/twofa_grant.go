@@ -3,6 +3,7 @@ package handler
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -231,9 +232,11 @@ func consumeAllTwoFactorGrants(
 
 // requirePasswordVerificationGrant 是「校验当前密码」类入口的 2FA 前置门控。
 //
-// 策略：账号绑定了哪些因子（TOTP / Passkey），就必须同时持有这些因子各自
-// 有效的 5 分钟凭证；漏一个因子都返回 403 STEP_UP_REQUIRED（fail-closed），
-// 前端复用全局双因子对话框完成 /user/totp/step-up 与 Passkey step-up 后重试。
+// 策略（与 step-up 中间件同一条「任选其一」规则，见 service.StepUpSatisfiedFactors）：
+// 账号绑定了 TOTP / Passkey 中的哪些因子，持有其中任一因子有效的 5 分钟凭证即可；
+// 一个有效凭证都没有（含存储故障、过期、未绑定因子的凭证）都返回 403 STEP_UP_REQUIRED
+// （fail-closed），前端复用全局 step-up 对话框完成 /user/totp/step-up 或 Passkey
+// step-up 之一后重试。登录（auth_handler）不走这里，仍要求全部已绑定因子。
 //
 // 一个因子都没绑定的账号保持原有行为（不额外要求）。
 func requirePasswordVerificationGrant(c *gin.Context, totpService *service.TotpService, user *service.User) bool {
@@ -249,10 +252,14 @@ func requirePasswordVerificationGrant(c *gin.Context, totpService *service.TotpS
 		return true
 	}
 	c.Header("Cache-Control", "no-store")
-	satisfied := consumeAllTwoFactorGrants(c, totpService, user.ID, factors)
-	if len(service.MissingFactors(factors, satisfied)) == 0 {
+	satisfied := service.StepUpSatisfiedFactors(factors, consumeAllTwoFactorGrants(c, totpService, user.ID, factors))
+	if len(satisfied) > 0 {
+		// 审计里记录是哪个因子的凭证满足了这次校验（标量因子名，不含凭证材料）。
+		servermiddleware.SetAuditExtra(c, map[string]any{
+			"two_factor_satisfied_factors": strings.Join(service.FactorStrings(satisfied), ","),
+		})
 		return true
 	}
-	response.ErrorFrom(c, service.ErrPasswordTwoFactorRequired)
+	response.ErrorFrom(c, service.ErrPasswordTwoFactorRequired.WithMetadata(service.StepUpChallengeMetadata(factors)))
 	return false
 }

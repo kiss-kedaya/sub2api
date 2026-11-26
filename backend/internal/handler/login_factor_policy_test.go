@@ -290,7 +290,9 @@ func TestLogin2FAPasskeyFinishRejectsSessionWithoutPasskeyFactor(t *testing.T) {
 	require.Empty(t, data.AccessToken)
 }
 
-// GET /user/2fa/policy：矩阵返回值供前端决定弹窗顺序。
+// GET /user/2fa/policy：矩阵返回值供前端决定展示哪些验证方式。
+// required_factors 仍是「已绑定因子」（登录与对话框都要用），step_up_mode=any 明说
+// step-up 任选其一即可；单因子/无因子账号取值也是 any（规则一致，只是选项只有一个或没有）。
 func TestTwoFactorPolicyEndpointMatrix(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -335,6 +337,7 @@ func TestTwoFactorPolicyEndpointMatrix(t *testing.T) {
 					TotpEnabled     bool     `json:"totp_enabled"`
 					PasskeyBound    bool     `json:"passkey_bound"`
 					StepUpEnabled   bool     `json:"step_up_enabled"`
+					StepUpMode      string   `json:"step_up_mode"`
 				} `json:"data"`
 			}
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
@@ -342,6 +345,7 @@ func TestTwoFactorPolicyEndpointMatrix(t *testing.T) {
 			require.Equal(t, tc.totp, envelope.Data.TotpEnabled)
 			require.Equal(t, tc.passkey, envelope.Data.PasskeyBound)
 			require.True(t, envelope.Data.StepUpEnabled)
+			require.Equal(t, "any", envelope.Data.StepUpMode)
 		})
 	}
 }

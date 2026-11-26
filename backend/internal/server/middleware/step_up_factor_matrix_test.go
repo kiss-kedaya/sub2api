@@ -83,16 +83,23 @@ func TestEnforceStepUpFactorMatrix(t *testing.T) {
 			stub:     factorStepUpStub{required: []service.Factor{service.FactorTOTP, service.FactorPasskey}, granted: map[service.Factor]bool{service.FactorTOTP: true, service.FactorPasskey: true}},
 			wantPass: true,
 		},
+		// 两者都绑定：任选其一即可（老板 2026-11-26）。只有一个因子有授权也放行。
 		{
-			name:     "both missing passkey",
+			name:     "both bound, only totp granted",
 			user:     bothUser,
 			stub:     factorStepUpStub{required: []service.Factor{service.FactorTOTP, service.FactorPasskey}, granted: map[service.Factor]bool{service.FactorTOTP: true}},
-			wantCode: "STEP_UP_REQUIRED",
+			wantPass: true,
 		},
 		{
-			name:     "both missing totp",
+			name:     "both bound, only passkey granted",
 			user:     bothUser,
 			stub:     factorStepUpStub{required: []service.Factor{service.FactorTOTP, service.FactorPasskey}, granted: map[service.Factor]bool{service.FactorPasskey: true}},
+			wantPass: true,
+		},
+		{
+			name:     "both bound, none granted",
+			user:     bothUser,
+			stub:     factorStepUpStub{required: []service.Factor{service.FactorTOTP, service.FactorPasskey}},
 			wantCode: "STEP_UP_REQUIRED",
 		},
 		{
@@ -145,7 +152,8 @@ func TestEnforceStepUpFactorMatrix(t *testing.T) {
 	}
 }
 
-// 两者都通过时：X-StepUp-Factors 回传全部因子，剩余时间取最早过期的那个。
+// 两者都有授权时：X-StepUp-Factors 回传全部满足的因子；任选其一，所以免验证窗口取
+// 最晚过期的那个授权（最早的过期后只要还有一个有效授权就仍然免验证）。
 func TestEnforceStepUpBothFactorsReportsHeaders(t *testing.T) {
 	c, rec := newStepUpTestContext(t)
 	c.Set(string(ContextKeyUser), AuthSubject{UserID: 3})
@@ -161,7 +169,35 @@ func TestEnforceStepUpBothFactorsReportsHeaders(t *testing.T) {
 	ok := enforceStepUp(c, stub, stubStepUpUserReader{user: &service.User{ID: 3, TotpEnabled: true}}, stepUpEnabled)
 	require.True(t, ok)
 	require.Equal(t, "1", rec.Header().Get(StepUpSkippedHeader))
-	// 取较小（最早过期）的窗口：140 秒。
-	require.Equal(t, "140", rec.Header().Get(StepUpRemainingHeader))
+	// 取较大（最晚过期）的窗口：280 秒。
+	require.Equal(t, "280", rec.Header().Get(StepUpRemainingHeader))
 	require.Equal(t, "totp,passkey", rec.Header().Get(StepUpFactorsHeader))
+}
+
+// 只有一个因子满足时：X-StepUp-Factors 只回传那个因子，剩余时间就是它自己的。
+func TestEnforceStepUpSingleSatisfiedFactorReportsHeaders(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		granted     service.Factor
+		wantFactors string
+	}{
+		{"totp only", service.FactorTOTP, "totp"},
+		{"passkey only", service.FactorPasskey, "passkey"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, rec := newStepUpTestContext(t)
+			c.Set(string(ContextKeyUser), AuthSubject{UserID: 3})
+
+			stub := factorStepUpStub{
+				required:  []service.Factor{service.FactorTOTP, service.FactorPasskey},
+				granted:   map[service.Factor]bool{tc.granted: true},
+				remaining: map[service.Factor]time.Duration{tc.granted: 100 * time.Second},
+			}
+			ok := enforceStepUp(c, stub, stubStepUpUserReader{user: &service.User{ID: 3, TotpEnabled: true}}, stepUpEnabled)
+			require.True(t, ok)
+			require.Equal(t, "1", rec.Header().Get(StepUpSkippedHeader))
+			require.Equal(t, "100", rec.Header().Get(StepUpRemainingHeader))
+			require.Equal(t, tc.wantFactors, rec.Header().Get(StepUpFactorsHeader))
+		})
+	}
 }

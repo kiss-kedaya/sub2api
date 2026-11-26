@@ -46,7 +46,8 @@ type TotpCache interface {
 	ClearVerifyAttempts(ctx context.Context, userID int64) error
 
 	// Step-up grant methods (敏感操作免授权窗口)，按因子隔离：
-	// 每个因子（totp / passkey）各自一枚 5 分钟授权，两者都要求时必须都有效。
+	// 每个因子（totp / passkey）各自一枚 5 分钟授权；任一已绑定因子的授权有效即可放行
+	// （见 StepUpSatisfiedFactors）。
 	SetStepUpGrant(ctx context.Context, userID int64, sessionKey string, factor Factor, ttl time.Duration) error
 	HasStepUpGrant(ctx context.Context, userID int64, sessionKey string, factor Factor) (bool, error)
 	// StepUpGrantRemaining 返回当前会话某因子 step-up 授权的剩余有效期。

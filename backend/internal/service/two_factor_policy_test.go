@@ -200,3 +200,67 @@ func TestAllFactorsIsTheSingleSourceOfValidFactors(t *testing.T) {
 	require.Equal(t, []Factor{FactorTOTP, FactorPasskey}, AllFactors())
 	require.True(t, FactorTOTP.Valid())
 }
+
+// step-up 的唯一满足规则（任选其一）：已绑定因子里至少一个持有有效凭证即满足；
+// 未绑定因子的凭证、未知因子名、空集合都不算。
+func TestStepUpSatisfiedFactors(t *testing.T) {
+	both := []Factor{FactorTOTP, FactorPasskey}
+	cases := []struct {
+		name     string
+		bound    []Factor
+		verified []Factor
+		want     []Factor
+	}{
+		{"both bound / totp verified", both, []Factor{FactorTOTP}, []Factor{FactorTOTP}},
+		{"both bound / passkey verified", both, []Factor{FactorPasskey}, []Factor{FactorPasskey}},
+		{"both bound / both verified", both, both, both},
+		{"both bound / nothing verified", both, nil, nil},
+		{"both bound / empty verified set", both, []Factor{}, nil},
+		{"totp only / totp verified", []Factor{FactorTOTP}, []Factor{FactorTOTP}, []Factor{FactorTOTP}},
+		{"totp only / only the unbound passkey verified", []Factor{FactorTOTP}, []Factor{FactorPasskey}, nil},
+		{"passkey only / passkey verified", []Factor{FactorPasskey}, []Factor{FactorPasskey}, []Factor{FactorPasskey}},
+		{"passkey only / only the unbound totp verified", []Factor{FactorPasskey}, []Factor{FactorTOTP}, nil},
+		{"no factor bound / both verified (the empty set is never satisfied)", nil, both, nil},
+		{"no factor bound / nothing verified", nil, nil, nil},
+		{"both bound / unknown factor verified", both, []Factor{Factor("sms")}, nil},
+		{"unknown factor bound and verified", []Factor{Factor("sms")}, []Factor{Factor("sms")}, nil},
+		{"result follows the bound order, not the verified order", both, []Factor{FactorPasskey, FactorTOTP}, both},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, StepUpSatisfiedFactors(tc.bound, tc.verified))
+		})
+	}
+}
+
+// 提示客户端「任选其一」的挑战 metadata。
+func TestStepUpChallengeMetadata(t *testing.T) {
+	require.Equal(t, map[string]string{"step_up_mode": "any", "factors": "totp,passkey"},
+		StepUpChallengeMetadata([]Factor{FactorTOTP, FactorPasskey}))
+	require.Equal(t, map[string]string{"step_up_mode": "any", "factors": "passkey"},
+		StepUpChallengeMetadata([]Factor{FactorPasskey}))
+	require.Equal(t, StepUpModeAny, StepUpChallengeMetadata(nil)["step_up_mode"])
+}
+
+// 任选其一只属于 step-up：同一个「两者都绑定」的账号，登录仍要求全部因子，
+// 只验证了其中一个时登录没有完成，而 step-up 已经满足。
+func TestStepUpAnyOneRuleDoesNotRelaxLogin(t *testing.T) {
+	ctx := context.Background()
+	both := &User{ID: 1, TotpEnabled: true}
+	records := []PasskeyCredentialRecord{{ID: 9, UserID: 1}}
+	svc := newFactorPolicyService(both, nil, records, nil, map[string]string{SettingKeyTotpEnabled: "true"})
+
+	login, err := svc.LoginRequiredFactors(ctx, both)
+	require.NoError(t, err)
+	require.Equal(t, []Factor{FactorTOTP, FactorPasskey}, login)
+
+	bound, err := svc.RequiredFactors(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, []Factor{FactorTOTP, FactorPasskey}, bound, "required_factors 仍然是全部已绑定因子")
+
+	for _, only := range []Factor{FactorTOTP, FactorPasskey} {
+		verified := []Factor{only}
+		require.NotEmpty(t, MissingFactors(login, verified), "登录只验证了 %s：还缺另一个因子，不得签发令牌", only)
+		require.Equal(t, verified, StepUpSatisfiedFactors(bound, verified), "step-up 验证其一即满足")
+	}
+}

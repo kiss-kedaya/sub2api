@@ -25,8 +25,8 @@ const (
 	StepUpSkippedHeader = "X-StepUp-Skipped"
 	// StepUpRemainingHeader 回传剩余免授权秒数（向下取整）。
 	StepUpRemainingHeader = "X-StepUp-Remaining"
-	// StepUpFactorsHeader 回传本次通过校验的因子列表（逗号分隔，如 totp,passkey），
-	// 便于前端/排障确认「多因子是否都已满足」。
+	// StepUpFactorsHeader 回传本次满足 step-up 的因子列表（逗号分隔，如 totp 或 totp,passkey）：
+	// 即持有有效授权的已绑定因子。任选其一即可放行，所以可能只有其中一个。
 	StepUpFactorsHeader = "X-StepUp-Factors"
 )
 
@@ -70,8 +70,9 @@ func StepUpSessionKey(c *gin.Context, userID int64) string {
 // 功能开关 step_up_enabled（默认关闭）关闭时中间件直接放行，行为与门控引入前一致。
 // 开启时的通过条件（全部满足）：
 //  1. 必须是 JWT 认证的真人会话——admin API key（机器凭证）一律拒绝
-//  2. 当前用户已启用 TOTP（未启用则拒绝并提示先启用 2FA）
-//  3. 当前会话在有效期内完成过 TOTP step-up 验证（POST /api/v1/user/totp/step-up）
+//  2. 当前用户至少绑定了一个因子（TOTP 或 Passkey；都没有则拒绝并提示先启用 2FA）
+//  3. 当前会话在有效期内完成过任一已绑定因子的 step-up 验证——任选其一即可
+//     （TOTP：POST /api/v1/user/totp/step-up；Passkey：POST /api/v1/user/step-up/passkey/finish）
 //
 // 失败响应使用可区分的错误码，前端据此弹出 TOTP 验证对话框后重试。
 func NewStepUpAuthMiddleware(
@@ -152,8 +153,9 @@ func EnforceStepUpAlways(
 	)
 }
 
-// EnforceFreshStepUp 与 EnforceStepUp 语义相同，但额外要求每个已绑定因子的 step-up
-// 授权是 maxAge 之内刚签发的：窗口（StepUpGrantTTL，5 分钟）内更早的验证不能放行。
+// EnforceFreshStepUp 与 EnforceStepUp 语义相同，但额外要求用来满足 step-up 的授权是
+// maxAge 之内刚签发的：窗口（StepUpGrantTTL，5 分钟）内更早的验证不算数，任一已绑定因子
+// 有新鲜授权即可。
 // 只给「能降低他人账号安全强度」的少数高危处理器用（如破玻璃重置他人 2FA），
 // 其它路由的窗口语义不变。不够新鲜时返回与「没有授权」相同的 STEP_UP_REQUIRED，
 // 前端沿用现有的验证码弹窗：输入当前验证码后重试即可。
@@ -237,10 +239,15 @@ func enforceStepUpWithin(c *gin.Context, grantChecker stepUpGrantChecker, userRe
 	}
 
 	sessionKey := StepUpSessionKey(c, subject.UserID)
-	// 所有已绑定因子都必须各有一枚有效授权：漏一个即 fail-closed，
-	// 绝不允许用另一个因子的凭证降级通过。
-	var minRemaining time.Duration
-	remainingKnown := false
+	// step-up 规则（任选其一）：已绑定因子里至少一个持有有效授权即放行，判定统一走
+	// service.StepUpSatisfiedFactors。这里只读「已绑定因子」的授权：未绑定因子的授权
+	// （例如刚解绑的 Passkey 残留的 5 分钟窗口）根本不会被读取，更不会参与放行。
+	// 授权读取故障仍然 fail-closed（503）：既不当成「已授权」，也不当成「没有授权」。
+	var (
+		verified     []service.Factor
+		maxRemaining time.Duration
+		stale        bool
+	)
 	for _, factor := range factors {
 		granted, err := grantChecker.HasStepUpGrant(c.Request.Context(), subject.UserID, sessionKey, factor)
 		if err != nil {
@@ -249,11 +256,7 @@ func enforceStepUpWithin(c *gin.Context, grantChecker stepUpGrantChecker, userRe
 			return false
 		}
 		if !granted {
-			// 审计里记录缺哪个因子（标量，不含任何凭证材料）。
-			SetAuditExtra(c, map[string]any{"two_factor_missing_factors": factor.String()})
-			AbortWithError(c, 403, "STEP_UP_REQUIRED",
-				"This operation requires recent two-factor verification")
-			return false
+			continue
 		}
 		remaining, ok, err := grantChecker.StepUpGrantRemaining(c.Request.Context(), subject.UserID, sessionKey, factor)
 		if err != nil {
@@ -262,48 +265,73 @@ func enforceStepUpWithin(c *gin.Context, grantChecker stepUpGrantChecker, userRe
 			return false
 		}
 		if !ok {
-			// 授权在 Has 与 Remaining 两次读取之间过期：按未验证处理，让前端重新验证。
-			SetAuditExtra(c, map[string]any{"two_factor_missing_factors": factor.String()})
-			AbortWithError(c, 403, "STEP_UP_REQUIRED",
-				"This operation requires recent two-factor verification")
-			return false
+			// 授权在 Has 与 Remaining 两次读取之间过期：这个因子按未验证处理。
+			continue
 		}
 		// 授权的年龄 = 窗口总长 - 剩余时间（所有授权都以 StepUpGrantTTL 签发）。
-		// 年龄超过 maxAge 的旧授权不能替代当前验证：按缺这个因子处理，让前端当场重新验证。
+		// 年龄超过 maxAge 的旧授权不能替代当前验证：这个因子按未验证处理，让前端当场重新验证。
 		// 年龄为负（剩余时间比窗口总长还长）说明这枚授权不是按 StepUpGrantTTL 签发的（遗留键、改过 TTL 常量之前
 		// 的键），无法证明它「新鲜」，同样 fail-closed——不能因为算出负数就当成刚签发的放行。
 		if age := service.StepUpGrantTTL - remaining; maxAge > 0 && (age < 0 || age > maxAge) {
-			// 路由级门控已经为这个请求写了「已跳过验证码」的响应头；这里请求被拒了，
-			// 没有跳过任何验证，必须撤掉：否则前端右下角会提示「刚刚免验证执行了敏感操作」。
-			c.Writer.Header().Del(StepUpSkippedHeader)
-			c.Writer.Header().Del(StepUpRemainingHeader)
-			c.Writer.Header().Del(StepUpFactorsHeader)
-			SetAuditExtra(c, map[string]any{"two_factor_missing_factors": factor.String()})
-			AbortWithError(c, 403, "STEP_UP_REQUIRED",
-				"This operation requires a fresh two-factor verification; verify again and retry")
-			return false
+			stale = true
+			continue
 		}
-		if !remainingKnown || remaining < minRemaining {
-			minRemaining = remaining
-			remainingKnown = true
+		verified = append(verified, factor)
+		if remaining > maxRemaining {
+			maxRemaining = remaining
 		}
+	}
+
+	satisfied := service.StepUpSatisfiedFactors(factors, verified)
+	if len(satisfied) == 0 {
+		// 路由级门控放行时已经为这个请求写了「已跳过验证码」的响应头；这里请求被拒了，
+		// 没有跳过任何验证，必须撤掉：否则前端右下角会提示「刚刚免验证执行了敏感操作」。
+		c.Writer.Header().Del(StepUpSkippedHeader)
+		c.Writer.Header().Del(StepUpRemainingHeader)
+		c.Writer.Header().Del(StepUpFactorsHeader)
+		// 审计里记录缺哪些因子（标量，不含任何凭证材料）：任选其一，所以缺的是全部已绑定因子。
+		SetAuditExtra(c, map[string]any{"two_factor_missing_factors": joinFactors(factors)})
+		message := "This operation requires recent two-factor verification"
+		if stale {
+			message = "This operation requires a fresh two-factor verification; verify again and retry"
+		}
+		abortStepUpRequired(c, factors, message)
+		return false
 	}
 
 	// 走到这里说明本次敏感操作「本来该要验证码，但因为 5 分钟窗口还有效而跳过」。
 	// 必须把这件事显式回传，不能静默跳过：前端右下角据此展示剩余免授权倒计时。
-	// 多因子时取最早过期的那个因子的剩余时间（窗口在第一个因子过期时失效）。
-	remainingSeconds := int64(minRemaining / time.Second)
+	// 任选其一：窗口在最后一个有效授权过期时才失效，所以取满足 step-up 的授权里最晚过期的剩余时间。
+	remainingSeconds := int64(maxRemaining / time.Second)
 	if remainingSeconds < 0 {
 		remainingSeconds = 0
 	}
 	c.Header(StepUpSkippedHeader, "1")
 	c.Header(StepUpRemainingHeader, strconv.FormatInt(remainingSeconds, 10))
-	c.Header(StepUpFactorsHeader, joinFactors(factors))
+	c.Header(StepUpFactorsHeader, joinFactors(satisfied))
+	// 审计里记录是哪个因子满足了这次 step-up（标量因子名，不含任何凭证材料）。
+	SetAuditExtra(c, map[string]any{"two_factor_satisfied_factors": joinFactors(satisfied)})
 
 	return true
 }
 
-// requiredStepUpFactors 读取用户必须验证的因子。
+// stepUpChallenge 是 STEP_UP_REQUIRED 的响应体：通用错误体之上带 metadata，
+// 告诉客户端「已绑定因子任选其一」（step_up_mode=any，factors=可选因子列表）。
+type stepUpChallenge struct {
+	ErrorResponse
+	Metadata map[string]string `json:"metadata"`
+}
+
+// abortStepUpRequired 写出 403 STEP_UP_REQUIRED 挑战并中止请求。
+func abortStepUpRequired(c *gin.Context, bound []service.Factor, message string) {
+	c.JSON(403, stepUpChallenge{
+		ErrorResponse: NewErrorResponse("STEP_UP_REQUIRED", message),
+		Metadata:      service.StepUpChallengeMetadata(bound),
+	})
+	c.Abort()
+}
+
+// requiredStepUpFactors 读取用户已绑定的因子（step-up 任选其一满足，见 service.StepUpSatisfiedFactors）。
 // 读取失败返回错误（调用方 fail-closed）。
 func requiredStepUpFactors(c *gin.Context, grantChecker stepUpGrantChecker, user *service.User) ([]service.Factor, error) {
 	if reader, ok := grantChecker.(stepUpFactorReader); ok {

@@ -17,18 +17,20 @@ import (
 //
 //  1. 只绑定 TOTP：登录 = 密码 + TOTP；风险操作 step-up = TOTP（现状不变）。
 //  2. 只绑定 Passkey：登录 = 密码 + Passkey；风险操作 step-up = Passkey。
-//  3. 两者都绑定：登录 = 密码 + TOTP + Passkey；风险操作要求两个因子都有
-//     有效的 5 分钟 step-up 凭证。
+//  3. 两者都绑定：登录 = 密码 + TOTP + Passkey（不变）；风险操作 step-up = 任选其一：
+//     至少一个已绑定因子持有有效的 5 分钟 step-up 凭证即可（StepUpSatisfiedFactors）。
 //  4. 每个因子独立签发 5 分钟凭证，同一因子 5 分钟内免重复验证。
-//  5. 任何一步失败都 fail-closed：不允许用另一个因子的凭证降级通过。
+//  5. 任何一步失败都 fail-closed：存储/策略读取故障、凭证缺失或过期一律不放行；
+//     未绑定因子的凭证永远不算；「没有任何已验证因子」永远不算满足。
 //
 // 「已绑定」的唯一判据：
 //   - TOTP：users.totp_enabled = true；
 //   - Passkey：passkey_credentials 里至少有一条该用户的记录。
 //
 // 全局功能开关只控制「能否注册/验证」，不参与「是否必须验证」的判定：
-// 已绑定 Passkey 的账号在 Passkey 服务不可用时是 fail-closed（拒绝），不会
-// 静默降级成单因子。
+// 只绑定 Passkey 的账号在 Passkey 服务不可用时是 fail-closed（拒绝）；同时绑定
+// TOTP 的账号在 Passkey 服务不可用时，step-up 可以靠 TOTP 通过（任选其一），
+// 登录则仍然要求 Passkey。
 type Factor string
 
 const (
@@ -49,7 +51,8 @@ var ErrTwoFactorFactorNotEnrolled = infraerrors.Forbidden(
 	"This operation requires two-factor authentication; please enable TOTP or register a passkey first")
 
 // ErrTwoFactorPasskeyUnavailable Passkey 因子需要验证但服务不可用（未配置/全局关闭）。
-// fail-closed：已绑定 Passkey 的账号不能退回密码或 TOTP 单因子。
+// 登录 fail-closed：已绑定 Passkey 的账号不能退回密码或 TOTP 单因子；
+// step-up 任选其一，同时绑定 TOTP 时可以靠 TOTP 通过（见 StepUpSatisfiedFactors）。
 var ErrTwoFactorPasskeyUnavailable = infraerrors.Forbidden(
 	"TWO_FACTOR_PASSKEY_UNAVAILABLE",
 	"Passkey verification is required for this account but passkeys are currently unavailable")
@@ -133,6 +136,38 @@ func MissingFactors(required, satisfied []Factor) []Factor {
 	return missing
 }
 
+// StepUpModeAny 是 step-up 对「已绑定因子」的满足规则：任选其一即可。
+// 它出现在 /user/2fa/policy 的 step_up_mode 与 STEP_UP_REQUIRED 挑战的 metadata 里。
+// 登录（LoginRequiredFactors）不适用这条规则，仍要求全部已绑定因子。
+const StepUpModeAny = "any"
+
+// StepUpSatisfiedFactors 是 step-up 的唯一满足规则（任选其一）：
+// bound 是账号已绑定的因子，verified 是持有有效 step-up 凭证的因子；
+// 返回 bound 里已验证的因子（保持 bound 顺序），非空即满足。
+//
+//   - 只统计 bound 里的因子：未绑定因子的凭证（例如刚解绑的 Passkey 残留的 5 分钟授权）永远不算；
+//   - bound 为空（没有任何因子）或 verified 里没有任何已绑定因子时返回 nil：
+//     「零个已验证因子」永远不算满足；
+//   - 未知因子名（Valid() 为 false）不算。
+func StepUpSatisfiedFactors(bound, verified []Factor) []Factor {
+	var satisfied []Factor
+	for _, factor := range bound {
+		if factor.Valid() && HasFactor(verified, factor) {
+			satisfied = append(satisfied, factor)
+		}
+	}
+	return satisfied
+}
+
+// StepUpChallengeMetadata 是 STEP_UP_REQUIRED 挑战的 metadata：告诉客户端
+// 「已绑定的因子里任选其一验证即可」（step_up_mode=any，factors=可选因子列表）。
+func StepUpChallengeMetadata(bound []Factor) map[string]string {
+	return map[string]string{
+		"step_up_mode": StepUpModeAny,
+		"factors":      strings.Join(FactorStrings(bound), ","),
+	}
+}
+
 // sortFactorsForChallenge 固定挑战顺序：先 TOTP，再 Passkey。
 // RequiredFactors 本身已按该顺序产出，这里只作为防御性排序。
 func sortFactorsForChallenge(factors []Factor) []Factor {
@@ -164,8 +199,9 @@ func (s *TotpService) SetPasskeyRepository(repo PasskeyRepository) {
 	s.passkeys = repo
 }
 
-// RequiredFactors 返回该用户已绑定、因此在安全操作中必须验证的因子。
-// 顺序固定：先 TOTP 后 Passkey。存储错误一律返回错误，调用方 fail-closed。
+// RequiredFactors 返回该用户已绑定的因子（顺序固定：先 TOTP 后 Passkey）。
+// 登录要求全部完成；step-up 任选其一即可（StepUpSatisfiedFactors）。
+// 存储错误一律返回错误，调用方 fail-closed。
 func (s *TotpService) RequiredFactors(ctx context.Context, userID int64) ([]Factor, error) {
 	if s == nil || s.userRepo == nil || userID <= 0 {
 		return nil, ErrTwoFactorPolicyUnavailable

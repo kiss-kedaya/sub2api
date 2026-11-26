@@ -242,12 +242,13 @@ type TotpStepUpResponse struct {
 	ExpiresIn int64 `json:"expires_in"`
 }
 
-// TwoFactorPolicyResponse 返回当前账号「已绑定因子」及 step-up 需要的因子。
+// TwoFactorPolicyResponse 返回当前账号「已绑定因子」及 step-up 的满足规则。
 //
-// 前端全局 step-up 对话框据此决定依次弹哪些验证（先 TOTP、后 Passkey），
-// 两个都要求时必须两个都通过才重试原请求。
+// 前端全局 step-up 对话框据此决定展示哪些验证方式：已绑定的因子并列展示，
+// step_up_mode=any 时任选其一验证即可放行原请求。
 type TwoFactorPolicyResponse struct {
-	// RequiredFactors 已绑定、因此 step-up 必须全部满足的因子（顺序：totp,passkey）。
+	// RequiredFactors 已绑定的因子（顺序：totp,passkey）。登录要求全部完成；
+	// step-up 按 step_up_mode 满足。字段名沿用旧版，含义是「已绑定」。
 	RequiredFactors []string `json:"required_factors"`
 	// TotpEnabled 是否启用了 TOTP（与 required_factors 中的 totp 一致）。
 	TotpEnabled bool `json:"totp_enabled"`
@@ -255,6 +256,8 @@ type TwoFactorPolicyResponse struct {
 	PasskeyBound bool `json:"passkey_bound"`
 	// StepUpEnabled 全局 step-up 开关（关闭时风险操作不需要二次验证）。
 	StepUpEnabled bool `json:"step_up_enabled"`
+	// StepUpMode step-up 对已绑定因子的满足规则："any" = 任选其一即可（现行唯一取值）。
+	StepUpMode string `json:"step_up_mode"`
 }
 
 // GetPolicy 返回当前账号的双因子策略（需要认证）。
@@ -281,6 +284,7 @@ func (h *TotpHandler) GetPolicy(c *gin.Context) {
 		TotpEnabled:     service.HasFactor(factors, service.FactorTOTP),
 		PasskeyBound:    service.HasFactor(factors, service.FactorPasskey),
 		StepUpEnabled:   stepUpEnabled,
+		StepUpMode:      service.StepUpModeAny,
 	})
 }
 

@@ -265,9 +265,9 @@ func (h *PasskeyHandler) Delete(c *gin.Context) {
 
 // requirePasskeyMutationStepUp 是 Passkey 创建/删除的 2FA 门禁：
 //   - 账号未绑定任何 2FA 因子：直接放行（不额外要求）；
-//   - 已绑定 TOTP / Passkey 因子：必须持有全部已绑定因子各自有效的 5 分钟 grant；
-//     缺任一因子 → 403 STEP_UP_REQUIRED，前端全局双因子对话框完成
-//     /user/totp/step-up 或 /user/step-up/passkey/finish 后自动重试本次请求。
+//   - 已绑定 TOTP / Passkey 因子：任一已绑定因子持有有效的 5 分钟 grant 即可；
+//     一个都没有 → 403 STEP_UP_REQUIRED，前端全局 step-up 对话框完成
+//     /user/totp/step-up 或 /user/step-up/passkey/finish 之一后自动重试本次请求。
 //
 // totpService 或 userService 未装配时保持旧行为（放行），避免非 wire 装配的调用方
 // （测试、脚本）被意外阻断。

@@ -3,20 +3,23 @@
 状态：已实现（本仓库 `feat/passkey-2fa-policy`）
 适用版本：2.3.153 之后
 
-## 策略（老板口径，代码唯一入口：`service.TotpService.RequiredFactors*`）
+> 2026-11-26 变更：**step-up（敏感操作二次验证）改为任选其一**——同时绑定 TOTP 与 Passkey 的账号，验证其中任意一个因子即可放行；**密码登录不变**，仍要求全部已绑定因子。下文各处已按新规则更新。
+
+## 策略（老板口径，代码唯一入口：`service.TotpService.RequiredFactors*` / `service.StepUpSatisfiedFactors`）
 
 | 账号已绑定 | 密码登录 | 管理面风险操作（step-up） |
 | --- | --- | --- |
 | 仅 TOTP | 密码 + TOTP（现状不变） | TOTP step-up 5 分钟凭证（现状不变） |
 | 仅 Passkey | 密码 + Passkey assertion | Passkey step-up 5 分钟凭证 |
-| TOTP + Passkey | 密码 + TOTP + Passkey（顺序固定先 TOTP 后 Passkey） | TOTP 与 Passkey 两个因子都必须各有有效 step-up 凭证 |
+| TOTP + Passkey | 密码 + TOTP + Passkey（顺序固定先 TOTP 后 Passkey） | **TOTP 或 Passkey 任选其一**有有效 step-up 凭证即可 |
 | 都没有 | 密码（现状不变） | 403 拒绝（`STEP_UP_TOTP_NOT_ENABLED`，提示启用 TOTP 或注册 Passkey） |
 
 补充规则：
 
 - **判定依据**只有两条：`users.totp_enabled = true`；`passkey_credentials` 存在该用户记录。全局功能开关只影响「能否注册/验证」，不参与「是否必须验证」的判定。
 - **5 分钟窗口**：每个因子各自独立签发 5 分钟凭证（TOTP / Passkey 各一枚），同一因子 5 分钟内免重复验证；凭证过期、绑定不匹配、Redis 故障一律回到验证挑战。
-- **fail-closed**：任何一步失败（策略读取失败、凭证存储故障、Passkey 服务不可用、缺少任一因子）都不签发令牌、不放行风险操作；不存在用另一个因子降级通过的路径。
+- **fail-closed**：任何一步失败（策略读取失败、凭证存储故障、凭证缺失/过期）都不签发令牌、不放行风险操作。step-up 只统计**已绑定因子**的凭证：未绑定因子的凭证（例如刚解绑的 Passkey 残留的 5 分钟授权）永远不算，「零个已验证因子」永远不算满足。登录没有降级路径，必须全部已绑定因子都完成。
+- 同时绑定两者时，Passkey 服务全局不可用不再锁死 step-up（TOTP 已验证即通过）；只绑 Passkey 的账号仍然 fail-closed。登录仍要求 Passkey。
 - 登录 5 分钟凭证跨入口复用（login / password 两种 scope），但**按因子隔离**：TOTP 凭证不能当 Passkey 凭证用，反之亦然。
 
 登录时 TOTP 是否要求仍沿用既有全局开关语义（`SettingService.LoginRequiresTOTP`），保证只绑 TOTP 的账号行为完全不变；Passkey 因子只看绑定状态，不受该开关影响。
@@ -35,7 +38,9 @@ factor ∈ {totp, passkey}；session_key = refresh token family（无则为 u<us
 
 - TOTP 入口：`POST /api/v1/user/totp/step-up` → 写 `factor=totp`。
 - Passkey 入口：`POST /api/v1/user/step-up/passkey/begin` + `finish` → 断言成功后写 `factor=passkey`。
-- 管理面中间件对 `RequiredFactors` **逐个**校验；缺任一因子返回 `403 STEP_UP_REQUIRED`，全部通过时回传 `X-StepUp-Skipped: 1`、`X-StepUp-Remaining`（取最早过期的因子）与 `X-StepUp-Factors: totp,passkey`。
+- 管理面中间件只读**已绑定因子**（`RequiredFactors`）的授权，任一因子有效即放行（`service.StepUpSatisfiedFactors`），并回传 `X-StepUp-Skipped: 1`、`X-StepUp-Remaining`（取满足 step-up 的授权里最晚过期的一个）与 `X-StepUp-Factors`（满足的因子，如 `totp` 或 `totp,passkey`）；一个有效授权都没有返回 `403 STEP_UP_REQUIRED`，响应体 `metadata` 带 `step_up_mode=any` 与 `factors=totp,passkey`（可选因子），审计记录 `two_factor_satisfied_factors`（放行）/ `two_factor_missing_factors`（拒绝）。授权读取故障仍是 `503 STEP_UP_UNAVAILABLE`。
+- `GET /api/v1/user/2fa/policy` 的 `required_factors` 仍是「已绑定因子」（登录与对话框都要用），新增 `step_up_mode: "any"` 说明 step-up 规则。
+- 「校验当前密码」与 Passkey 增删这两类入口用 5 分钟不透明 Cookie 凭证门控（`requirePasswordVerificationGrant`），与 step-up 中间件同一条规则：任一已绑定因子的凭证有效即可。
 
 ### 2. 不透明 2FA 凭证（登录 / 密码校验免重复）
 
@@ -84,28 +89,29 @@ factor ∈ {totp, passkey}；session_key = refresh token family（无则为 u<us
 ## 前端
 
 - 登录页：按 `required_factors` 依次弹 TOTP / Passkey；Passkey 用 `navigator.credentials.get`，浏览器不支持时展示降级文案（`auth.passkeyUnsupported`）而不是静默失败。
-- step-up 弹窗（全局 gate）：打开时读取 `GET /api/v1/user/2fa/policy`，按策略先 TOTP 后 Passkey；两个因子都通过才 `onVerified()` 并重试原请求。Passkey 不可用时展示降级文案并只能取消（不会让风险操作放行）。
+- step-up 弹窗（全局 gate）：打开时读取 `GET /api/v1/user/2fa/policy`，并列展示已绑定的验证方式（TOTP 输入框 + 「用 Passkey 验证」，或只绑一个时只展示那一个）；`step_up_mode=any` 时验证任意一个因子就 `onVerified()` 并立即重试原请求，一个因子失败/被限速不影响改用另一个。Passkey 不可用时展示降级文案（双因子账号仍可用 TOTP；只绑 Passkey 时只能取消，不会让风险操作放行）。
 - i18n：`zh` / `en` 同步。
 
 ## 测试矩阵
 
 | 场景 | 登录 | step-up 门控 | 覆盖位置 |
 | --- | --- | --- | --- |
-| 只绑 TOTP | 密码+TOTP（现状） | TOTP 凭证通过 | `service/two_factor_policy_test.go`、`middleware/step_up_factor_matrix_test.go` |
+| 只绑 TOTP | 密码+TOTP（现状） | TOTP 凭证通过 | `service/two_factor_policy_test.go`、`middleware/step_up_factor_matrix_test.go`、`middleware/step_up_any_factor_test.go` |
 | 只绑 Passkey | 密码+Passkey | 缺 Passkey 凭证 403；有则通过 | 同上 + `handler/login_factor_policy_test.go` |
-| 两者都绑 | TOTP 后继续 Passkey，缺一不发令牌 | 缺任一因子 403；两枚凭证才通过 | 同上 |
+| 两者都绑 | TOTP 后继续 Passkey，缺一不发令牌 | 任一因子凭证有效即通过；一个都没有 403 | 同上 + `handler/step_up_any_factor_test.go`、`server/routes/stepup_any_factor_e2e_test.go`（真实 Redis 键布局端到端） |
 | 都没绑 | 密码直登 | 403 `STEP_UP_TOTP_NOT_ENABLED` | 同上 |
 | 5 分钟免重复 | 因子凭证命中直接登录 | 窗口内跳过并回传 headers | `service/twofa_grant_factor_test.go`、`repository/totp_stepup_factor_test.go` |
 | 过期重验 | 凭证过期回到挑战 | 窗口过期 403 | 同上 + middleware 矩阵 |
-| fail-closed | 策略/存储故障不签发 | 策略/存储故障 503 | 同上 |
+| fail-closed | 策略/存储故障不签发 | 策略/存储故障 503；未绑定因子的凭证不算 | 同上 |
 | 跨因子复用 | TOTP 凭证不能跳过 Passkey | — | `service/twofa_grant_factor_test.go`、`handler/login_factor_policy_test.go` |
 
-前端：`LoginView.dualFactor.spec.ts`（Passkey-only / TOTP→Passkey / 不支持降级 / TOTP-only）、`TotpStepUpDialog.dualFactor.spec.ts`（双因子顺序 / Passkey-only / 降级 / 策略失败 TOTP 兜底）。
+前端：`LoginView.dualFactor.spec.ts`（Passkey-only / TOTP→Passkey / 不支持降级 / TOTP-only）、`TotpStepUpDialog.dualFactor.spec.ts`（双因子任选其一 / Passkey-only / 降级 / 策略失败 TOTP 兜底 / 无两步走残留文案）。
 
 ## 风险与回滚
 
 - **Redis key 结构变化**：step-up 授权 key 由 `totp:stepup:<uid>:<session>` 变为 `totp:stepup:<uid>:<factor>:<session>`。升级后旧 key 不再命中，用户最多重新验证一次（5 分钟窗口），不涉及数据迁移；回滚会同样失效新 key，行为对称。
-- **已绑 Passkey 的账号被全局关闭 Passkey 服务**：策略按绑定状态要求 Passkey，此时登录/风险操作会 fail-closed。运营上必须先让用户删除 Passkey 或回滚本 PR，不能只关全局开关。
+- **step-up 任选其一的安全影响**：一个因子泄露（连同一个有效会话）就能通过二次验证，此前需要两个因子同时泄露；登录仍要求全部因子，所以拿不到密码+两个因子的人登不进来。
+- **已绑 Passkey 的账号被全局关闭 Passkey 服务**：登录仍按绑定状态要求 Passkey，此时登录会 fail-closed；step-up 对同时绑定 TOTP 的账号靠 TOTP 通过，只绑 Passkey 的账号仍 fail-closed。运营上必须先让用户删除 Passkey 或回滚本 PR，不能只关全局开关。
 - **移动端/旧浏览器不支持 WebAuthn**：只绑 Passkey 的账号无法在这些环境完成登录（策略要求）。这是策略要求的能力边界，前端给出明确降级文案。
 - **证书/断言**：只存储 WebAuthn credential 与用户 handle；challenge 存 Redis 5 分钟一次性，不落日志、不入审计。
 - **回滚**：回滚本 PR 即恢复「只校验 TOTP」的行为；已下发的 Passkey 不透明凭证因子记录不会被旧代码读取（按旧格式视为未知凭证，自动失效）。数据库无 schema 变更。

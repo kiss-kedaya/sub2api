@@ -100,8 +100,8 @@ export async function stepUp(code: string): Promise<TotpStepUpResponse> {
 }
 
 /**
- * 读取当前账号的双因子策略：前端 step-up 弹窗前据此决定依次弹哪些因子
- * （先 TOTP、后 Passkey；两者都要求时必须两个都通过才重试原请求）。
+ * 读取当前账号的双因子策略：前端 step-up 弹窗据此决定展示哪些验证方式
+ * （已绑定的因子并列展示，step_up_mode=any 时验证任意一个就重试原请求）。
  */
 export async function getTwoFactorPolicy(): Promise<TwoFactorPolicy> {
   const { data } = await apiClient.get<TwoFactorPolicy>('/user/2fa/policy')
