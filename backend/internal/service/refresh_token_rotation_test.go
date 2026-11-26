@@ -350,12 +350,13 @@ func TestRefreshRotationLeewayRetryStillChecksUserAndExpiry(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // flakyRefreshCache 在真实存储外面套一层故障注入：让接下来几次「写入新令牌 / 写入已消费墓碑 /
-// 删除单个令牌」失败。
+// 删除单个令牌 / 登记用户与家族集合」失败。
 type flakyRefreshCache struct {
 	service.RefreshTokenCache
 	failNewStore  atomic.Int32
 	failTombstone atomic.Int32
 	failDelete    atomic.Int32
+	failSetAdds   atomic.Int32
 }
 
 var errCacheBoom = errors.New("redis boom")
@@ -376,6 +377,20 @@ func (c *flakyRefreshCache) DeleteRefreshToken(ctx context.Context, tokenHash st
 		return errCacheBoom
 	}
 	return c.RefreshTokenCache.DeleteRefreshToken(ctx, tokenHash)
+}
+
+func (c *flakyRefreshCache) AddToUserTokenSet(ctx context.Context, userID int64, tokenHash string, ttl time.Duration) error {
+	if c.failSetAdds.Add(-1) >= 0 {
+		return errCacheBoom
+	}
+	return c.RefreshTokenCache.AddToUserTokenSet(ctx, userID, tokenHash, ttl)
+}
+
+func (c *flakyRefreshCache) AddToFamilyTokenSet(ctx context.Context, familyID, tokenHash string, ttl time.Duration) error {
+	if c.failSetAdds.Add(-1) >= 0 {
+		return errCacheBoom
+	}
+	return c.RefreshTokenCache.AddToFamilyTokenSet(ctx, familyID, tokenHash, ttl)
 }
 
 func newFlakyRotFixture(t *testing.T, mutate func(*config.Config)) (*rotFixture, *flakyRefreshCache) {
@@ -435,6 +450,19 @@ func TestRefreshRotationSucceedsWhenOldTokenCannotBeConsumedOrDeleted(t *testing
 	rotated, err := f.refresh(rotIPv4A, rotUAChrome130Win, pair0.RefreshToken)
 	require.NoError(t, err)
 	require.NotEmpty(t, rotated.RefreshToken)
+}
+
+// 现有约定不变：令牌登记进用户/家族集合失败不影响主流程（令牌本身已经存好）。
+func TestRefreshRotationSucceedsWhenTokenSetRegistrationFails(t *testing.T) {
+	f, flaky := newFlakyRotFixture(t, nil)
+	pair0 := f.login(rotIPv4A, rotUAChrome130Win)
+
+	flaky.failSetAdds.Store(2) // 用户集合与家族集合都失败
+	rotated, err := f.refresh(rotIPv4A, rotUAChrome130Win, pair0.RefreshToken)
+	require.NoError(t, err, "a failed set registration must not fail the refresh")
+	require.NotNil(t, f.record(rotated.RefreshToken))
+	_, err = f.refresh(rotIPv4A, rotUAChrome130Win, rotated.RefreshToken)
+	require.NoError(t, err)
 }
 
 // ---------------------------------------------------------------------------

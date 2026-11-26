@@ -164,18 +164,32 @@ security:
   # Environment / 环境变量: SECURITY_KEY_ROTATION_GATE_ENABLED=false
   key_rotation_gate_enabled: true
   # Session binding fingerprint mode. The fingerprint binds a login session to
-  # the client network + User-Agent it was created on; a mismatch revokes the
-  # session family (access token + refresh tokens) and forces a new login.
+  # the client network + User-Agent it was created on.
   #   off    - disable binding entirely (emergency rollback switch)
-  #   loose  - compare IPv4 /24 or IPv6 /64 + UA (default; tolerates mobile IP drift)
-  #   strict - compare full IP + UA (any change invalidates the session)
+  #   loose  - compare browser family + OS family (no version numbers) and IPv4 /24 or
+  #            IPv6 /64 (default). An IPv4 <-> IPv6 switch does not count as a change.
+  #   strict - compare full IP + full User-Agent (any change counts)
   # Refresh tokens are always checked when the mode is not off; the admin
   # setting session_binding_enabled additionally checks every access token.
-  # 会话绑定指纹模式：off 关闭（回滚开关）；loose 按 IPv4 /24、IPv6 /64 + UA 比较（默认，
-  # 容忍移动网络换 IP）；strict 完整 IP + UA。非 off 时 refresh 始终校验绑定；
-  # 后台 session_binding_enabled 开关还控制每次请求的 access token 校验。
+  # 会话绑定指纹模式：off 关闭（回滚开关）；loose 比较「浏览器家族 + 系统家族」（不含版本号）
+  # 与 IPv4 /24、IPv6 /64（默认，IPv4 <-> IPv6 切换不算变化）；strict 完整 IP + 完整 UA。
+  # 非 off 时 refresh 始终校验绑定；后台 session_binding_enabled 开关还控制每次请求的 access token 校验。
   # Environment / 环境变量: SECURITY_SESSION_BINDING_MODE=strict
   session_binding_mode: loose
+  # What a fingerprint mismatch does.
+  #   rebind - (default) let the refresh through and re-bind the newly issued tokens to
+  #            the current client; the user stays signed in across WiFi/cellular switches,
+  #            browser updates and the like. An access token used from a changed client is
+  #            still rejected with 401 (the web app then refreshes and re-binds), so a
+  #            stolen access token alone is useless elsewhere. A rate-limited WARN is logged.
+  #   revoke - revoke the whole session family and force a new login (strict behaviour).
+  # Replayed refresh tokens are detected independently of this switch.
+  # 指纹不一致时的处置：rebind（默认）放行并用当前指纹重新绑定新令牌，换网络/浏览器升级不掉线，
+  # 只留一条限频 WARN；access token 在变化后的客户端上仍返回 401（前端随即刷新并重绑），
+  # 单独偷到的 access token 在别处用不了；revoke 撤销整个会话家族并要求重新登录（严格）。
+  # refresh token 重放检测不受这个开关影响。
+  # Environment / 环境变量: SECURITY_SESSION_BINDING_ON_MISMATCH=revoke
+  session_binding_on_mismatch: rebind
   # GitHub / Google OAuth callbacks redirect with a single-use 60-second code
   # instead of putting access/refresh tokens in the URL fragment. The frontend
   # exchanges it via POST /api/v1/auth/oauth/exchange. Set false to roll back
@@ -1089,6 +1103,30 @@ jwt:
   # - >0: 按分钟生效（优先于 expire_hour），默认 60 分钟
   # - =0: 回退使用 expire_hour（仅为显式回退旧行为保留）
   access_token_expire_minutes: 60
+  # Refresh token validity in days, SLIDING: every rotation restarts the clock, so a user who
+  # shows up at least once within this window stays signed in; only someone idle for longer has
+  # to sign in again. Default 14.
+  # 每枚 Refresh Token 的滑动有效期（天，默认 14）：每次轮换从「现在」重新计时，
+  # 只要这段时间内用过一次就一直保持登录，闲置超过才需要重新登录。
+  # Environment / 环境变量: JWT_REFRESH_TOKEN_EXPIRE_DAYS=14
+  refresh_token_expire_days: 14
+  # Absolute lifetime of a login session counted from the first login (days, default 90). Rotation
+  # never extends it; at the cap the user signs in again. Must be >= refresh_token_expire_days
+  # (startup validation fails otherwise); above 365 only logs a warning.
+  # 登录会话从首次登录起的绝对寿命上限（天，默认 90）：轮换不会延长它，到期必须重新登录。
+  # 必须 >= refresh_token_expire_days（否则启动校验失败）；超过 365 只打警告。
+  # Environment / 环境变量: JWT_SESSION_MAX_LIFETIME_DAYS=90
+  session_max_lifetime_days: 90
+  # Retry leeway for an already rotated refresh token, in seconds (default 60, 0 = off, max 600).
+  # If the response of a rotation is lost (mobile network, timeout) the client retries with the
+  # old token: inside this window the retry is accepted (a new token pair is issued, the session
+  # and the token issued by the first rotation stay valid, at most 3 reissues per old token).
+  # Outside it a replayed token revokes the whole session family (theft detection).
+  # 已轮换 Refresh Token 的重试宽限（秒，默认 60，0 = 关闭，最大 600）：轮换的响应丢失（弱网/超时）后，
+  # 客户端用旧令牌重试，宽限内视为合法重试（再发一对新令牌；第一次轮换发的新令牌仍然有效；每个旧令牌最多
+  # 重发 3 次）；超过宽限的重放撤销整个会话家族（防盗用）。
+  # Environment / 环境变量: JWT_REFRESH_TOKEN_REUSE_LEEWAY_SECONDS=60
+  refresh_token_reuse_leeway_seconds: 60
 
 # =============================================================================
 # TOTP (2FA) Configuration
