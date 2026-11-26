@@ -7,57 +7,57 @@
           <img :src="siteLogo || '/logo.svg'" alt="" class="h-7 w-7 shrink-0 object-contain" />
           <span class="truncate">{{ siteName }}</span>
         </router-link>
-        <nav class="flex shrink-0 items-center gap-4 text-sm" :aria-label="t('docs.title')">
-          <router-link :to="consolePath" class="hidden text-slate-500 hover:text-slate-900 dark:hover:text-white sm:block">{{ t('docs.api') }}</router-link>
-          <router-link v-if="showModels" to="/model-plaza" class="hidden text-slate-500 hover:text-slate-900 dark:hover:text-white sm:block">{{ t('docs.models') }}</router-link>
+        <nav class="flex shrink-0 items-center gap-5 text-[14px]" :aria-label="t('docs.title')">
+          <router-link :to="consolePath" class="hidden text-slate-500 transition-colors hover:text-slate-900 dark:hover:text-white sm:block">{{ t('docs.api') }}</router-link>
+          <router-link v-if="showModels" :to="modelsPath" class="hidden text-slate-500 transition-colors hover:text-slate-900 dark:hover:text-white sm:block">{{ t('docs.models') }}</router-link>
           <span class="hidden font-medium sm:block" aria-current="page">{{ t('nav.docs') }}</span>
           <LocaleSwitcher />
-          <button type="button" class="rounded-md p-2 text-slate-500 hover:bg-slate-100 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-dark-800" :aria-label="t('docs.theme')" @click="toggleTheme">
+          <button type="button" class="rounded-full p-2 text-slate-500 hover:bg-slate-100 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-dark-800" :aria-label="t('docs.theme')" @click="toggleTheme">
             <Icon :name="isDark ? 'sun' : 'moon'" size="sm" />
           </button>
         </nav>
       </div>
-      <div class="flex h-12 items-center gap-5 overflow-x-auto border-t border-slate-100 px-5 text-sm dark:border-dark-800 sm:px-7">
+      <div class="flex h-12 items-center gap-6 overflow-x-auto border-t border-slate-100 px-5 text-[14px] dark:border-dark-800 sm:px-7">
         <button type="button" class="inline-flex shrink-0 items-center gap-2 font-semibold lg:pointer-events-none" :aria-expanded="mobileOpen" aria-controls="docs-sidebar" :aria-label="mobileOpen ? t('docs.closeNavigation') : t('docs.openNavigation')" @click="mobileOpen = !mobileOpen">
           <Icon name="menu" size="sm" class="lg:hidden" />
           <Icon name="book" size="sm" class="hidden text-blue-600 lg:block" />
           <span>{{ t('docs.title') }}</span>
         </button>
-        <router-link v-for="category in categories" :key="category" :to="docLocation(firstInCategory(category))" class="docs-category flex h-full shrink-0 items-center border-b-2 px-0.5" :class="page.category === category ? 'border-blue-600 font-medium text-blue-600 dark:text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-white'" :aria-current="page.category === category ? 'page' : undefined">
+        <router-link v-for="category in categories" :key="category" :to="docLocation(firstInCategory(category))" class="docs-category flex h-full shrink-0 items-center border-b-2 px-0.5 transition-colors" :class="page.category === category ? 'border-blue-600 font-medium text-blue-600 dark:text-blue-400' : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-white'" :aria-current="page.category === category ? 'page' : undefined">
           {{ t(`docs.category.${category}`) }}
         </router-link>
       </div>
     </header>
 
     <button v-if="mobileOpen" class="fixed inset-0 z-40 bg-slate-900/30 lg:hidden" :aria-label="t('docs.closeNavigation')" @click="mobileOpen = false"></button>
-    <aside id="docs-sidebar" class="docs-sidebar fixed bottom-0 left-0 top-[105px] z-50 flex w-[260px] flex-col border-r border-slate-200 bg-white px-4 py-5 transition-transform dark:border-dark-700 dark:bg-dark-950 lg:z-30 lg:translate-x-0" :class="mobileOpen ? 'translate-x-0' : '-translate-x-full'" :inert="!mobileOpen && !wideLayout" :aria-label="t('docs.navigation')">
+    <aside id="docs-sidebar" class="docs-sidebar fixed bottom-0 left-0 top-[105px] z-50 flex w-[272px] flex-col border-r border-slate-200 bg-white px-4 py-6 transition-transform dark:border-dark-700 dark:bg-dark-950 lg:z-30 lg:translate-x-0" :class="mobileOpen ? 'translate-x-0' : '-translate-x-full'" :inert="!mobileOpen && !wideLayout" :aria-label="t('docs.navigation')">
       <label class="relative block">
-        <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-2.5 text-slate-400" />
-        <input v-model="search" data-testid="docs-search" type="search" class="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-hidden transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-dark-700 dark:bg-dark-900 dark:focus:ring-blue-900/30" :placeholder="t('docs.search')" :aria-label="t('docs.search')" />
+        <Icon name="search" size="sm" class="pointer-events-none absolute left-3.5 top-3 text-slate-400" />
+        <input v-model="search" data-testid="docs-search" type="search" class="w-full rounded-full border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-[14px] outline-hidden transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-dark-700 dark:bg-dark-900 dark:focus:ring-blue-900/30" :placeholder="t('docs.search')" :aria-label="t('docs.search')" />
       </label>
       <div class="docs-nav-wrap relative mt-6 min-h-0 flex-1" :class="{ 'docs-nav-more': navHasMore }">
       <nav ref="navRef" class="h-full space-y-7 overflow-y-auto pr-1" @scroll.passive="updateNavCue">
         <div v-for="group in navigationGroups" :key="group.category">
-          <h2 class="mb-2 px-2 text-xs font-semibold tracking-wide text-slate-900 dark:text-slate-100">{{ t(`docs.category.${group.category}`) }}</h2>
-          <router-link v-for="entry in group.pages" :key="entry.id" :to="docLocation(entry.id)" class="mb-0.5 flex min-h-9 items-center rounded-lg px-2.5 py-2 text-[13px] leading-5" :class="entry.id === page.id ? 'bg-blue-50 font-medium text-blue-600 dark:bg-blue-500/10 dark:text-blue-400' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-dark-900 dark:hover:text-white'" :aria-current="entry.id === page.id ? 'page' : undefined" @click="mobileOpen = false">
+          <h2 class="mb-2.5 px-3 text-xs font-semibold tracking-wide text-slate-900 dark:text-slate-100">{{ t(`docs.category.${group.category}`) }}</h2>
+          <router-link v-for="entry in group.pages" :key="entry.id" :to="docLocation(entry.id)" class="mb-1 flex min-h-10 items-center rounded-xl px-3 py-2 text-[14px] leading-6 transition-colors" :class="entry.id === page.id ? 'bg-blue-50 font-medium text-blue-600 dark:bg-blue-500/12 dark:text-blue-400' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-dark-900 dark:hover:text-white'" :aria-current="entry.id === page.id ? 'page' : undefined" @click="mobileOpen = false">
             {{ entry.title }}
           </router-link>
         </div>
-        <p v-if="!navigationGroups.length" class="px-2 text-sm text-slate-500">{{ t('docs.noResults') }}</p>
+        <p v-if="!navigationGroups.length" class="px-3 text-sm text-slate-500">{{ t('docs.noResults') }}</p>
       </nav>
       </div>
     </aside>
 
-    <div class="lg:pl-[260px]">
+    <div class="lg:pl-[272px]">
       <main
         id="docs-content"
-        class="mx-auto grid max-w-[1330px] grid-cols-1 gap-12 px-6 py-9 sm:px-12 sm:py-11 xl:gap-14 xl:px-12"
-        :class="isAgentSetupPage ? 'xl:grid-cols-[minmax(0,920px)_170px]' : 'xl:grid-cols-[minmax(0,780px)_170px]'"
+        class="mx-auto grid max-w-[1720px] grid-cols-1 gap-10 px-6 py-10 sm:px-10 sm:py-14 xl:gap-14 xl:px-14"
+        :class="isAgentSetupPage ? 'xl:grid-cols-[minmax(0,1fr)_200px]' : 'xl:grid-cols-[minmax(0,1040px)_200px]'"
       >
         <article
           :key="`${page.id}-${selectedAgentId}`"
-          class="min-w-0"
-          :class="isAgentSetupPage ? 'max-w-[920px]' : 'max-w-[780px]'"
+          class="docs-article-enter w-full min-w-0"
+          :class="isAgentSetupPage ? 'max-w-[1360px]' : 'max-w-[1040px]'"
           data-testid="docs-article"
         >
           <AgentSetupGuide
@@ -70,74 +70,74 @@
           />
 
           <template v-else>
-          <div class="mb-8">
-            <p class="mb-3 text-xs font-medium tracking-wide text-blue-600 dark:text-blue-400">{{ t(`docs.category.${page.category}`) }}</p>
-            <h1 class="text-[30px] font-semibold leading-tight tracking-tight sm:text-[34px]">{{ page.title }}</h1>
-            <p class="mt-5 text-[15px] leading-8 text-slate-600 dark:text-slate-300">{{ page.description }}</p>
+          <div class="mb-10">
+            <p class="mb-3 text-[13px] font-medium tracking-wide text-blue-600 dark:text-blue-400">{{ t(`docs.category.${page.category}`) }}</p>
+            <h1 class="text-[34px] font-semibold leading-[1.15] tracking-[-0.025em] sm:text-[40px]">{{ page.title }}</h1>
+            <p class="mt-5 text-[16px] leading-8 text-slate-600 dark:text-slate-300 sm:text-[17px]">{{ page.description }}</p>
           </div>
 
-          <section v-for="section in page.sections" :id="section.id" :key="section.id" class="docs-section mb-10 scroll-mt-36">
-            <h2 class="mb-4 text-xl font-semibold tracking-tight">
+          <section v-for="section in page.sections" :id="section.id" :key="section.id" class="docs-section mb-12 scroll-mt-36">
+            <h2 class="mb-4 text-[22px] font-semibold tracking-[-0.02em] sm:text-[24px]">
               <a :href="`#${section.id}`" class="group" @click.prevent="jumpTo(section.id)">{{ section.title }}<span class="ml-2 text-blue-400 opacity-0 transition group-hover:opacity-100" aria-hidden="true">#</span></a>
             </h2>
-            <div v-if="section.endpoint" class="docs-endpoint mb-4 flex flex-wrap items-center gap-2" :data-testid="`docs-endpoint-${section.id}`">
-              <span class="rounded-md px-2 py-1 font-mono text-[11px] font-semibold" :class="methodClass(section.endpoint.method)">{{ section.endpoint.method }}</span>
-              <code class="min-w-0 break-all rounded-md bg-slate-100 px-2 py-1 font-mono text-[12px] text-slate-700 dark:bg-dark-800 dark:text-slate-200">{{ section.endpoint.path }}</code>
-              <span class="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-[11px] text-slate-500 dark:border-dark-700 dark:text-slate-400">
+            <div v-if="section.endpoint" class="docs-endpoint mb-4 flex flex-wrap items-center gap-2.5" :data-testid="`docs-endpoint-${section.id}`">
+              <span class="rounded-md px-2.5 py-1 font-mono text-xs font-semibold" :class="methodClass(section.endpoint.method)">{{ section.endpoint.method }}</span>
+              <code class="min-w-0 break-all rounded-md bg-slate-100 px-2.5 py-1 font-mono text-[13px] text-slate-700 dark:bg-dark-800 dark:text-slate-200">{{ section.endpoint.path }}</code>
+              <span class="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2.5 py-0.5 text-xs text-slate-500 dark:border-dark-700 dark:text-slate-400">
                 <Icon :name="section.endpoint.auth === 'apiKey' ? 'key' : 'user'" size="xs" />{{ section.endpoint.auth === 'apiKey' ? t('docs.authApiKey') : t('docs.authSession') }}
               </span>
             </div>
-            <p v-for="paragraph in section.paragraphs" :key="paragraph" class="my-3 text-sm leading-8 text-slate-600 dark:text-slate-300">{{ paragraph }}</p>
-            <div v-if="section.note" class="my-5 flex gap-3 rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm leading-7 text-blue-700 dark:border-blue-800 dark:bg-blue-500/10 dark:text-blue-300">
+            <p v-for="paragraph in section.paragraphs" :key="paragraph" class="my-3.5 text-[15px] leading-8 text-slate-600 dark:text-slate-300">{{ paragraph }}</p>
+            <div v-if="section.note" class="my-6 flex gap-3 rounded-2xl border border-blue-200 bg-blue-50/70 px-5 py-4 text-[15px] leading-7 text-blue-700 dark:border-blue-800 dark:bg-blue-500/10 dark:text-blue-300">
               <Icon name="infoCircle" size="sm" class="mt-1 shrink-0" />
               <p>{{ section.note }}</p>
             </div>
 
-            <div v-if="section.fields" class="my-5 overflow-x-auto rounded-xl border border-slate-200 dark:border-dark-700">
-              <table class="w-full border-collapse text-left text-[13px]">
-                <thead class="bg-slate-50 text-xs text-slate-500 dark:bg-dark-900"><tr><th class="w-1/4 px-4 py-3 font-medium">{{ t('docs.field') }}</th><th class="px-4 py-3 font-medium">{{ t('docs.description') }}</th></tr></thead>
+            <div v-if="section.fields" class="my-6 overflow-x-auto rounded-2xl border border-slate-200 dark:border-dark-700">
+              <table class="w-full border-collapse text-left text-[14px]">
+                <thead class="bg-slate-50 text-xs text-slate-500 dark:bg-dark-900"><tr><th class="w-1/4 px-5 py-3.5 font-medium">{{ t('docs.field') }}</th><th class="px-5 py-3.5 font-medium">{{ t('docs.description') }}</th></tr></thead>
                 <tbody>
                   <tr v-for="field in section.fields" :key="field.name" class="border-t border-slate-200 align-top dark:border-dark-700">
-                    <td class="px-4 py-4"><code class="rounded-sm bg-slate-100 px-1.5 py-1 font-mono text-[12px] dark:bg-dark-800">{{ field.name }}</code><div class="mt-2 text-[11px] text-slate-400">{{ field.type }}<span v-if="field.required" class="ml-1.5 text-rose-500">{{ t('docs.required') }}</span></div></td>
-                    <td class="wrap-break-word px-4 py-4 leading-7 text-slate-600 dark:text-slate-300">{{ field.description }}</td>
+                    <td class="px-5 py-4"><code class="rounded-sm bg-slate-100 px-2 py-1 font-mono text-[13px] dark:bg-dark-800">{{ field.name }}</code><div class="mt-2 text-xs text-slate-400">{{ field.type }}<span v-if="field.required" class="ml-1.5 text-rose-500">{{ t('docs.required') }}</span></div></td>
+                    <td class="wrap-break-word px-5 py-4 leading-7 text-slate-600 dark:text-slate-300">{{ field.description }}</td>
                   </tr>
                 </tbody>
               </table>
             </div>
 
-            <div v-if="section.examples" class="docs-code my-5 overflow-hidden rounded-xl border border-slate-200 bg-[#f8f9fb] dark:border-dark-700 dark:bg-dark-900">
-              <div class="flex min-h-12 items-center justify-between gap-3 border-b border-slate-200 px-3 dark:border-dark-700">
+            <div v-if="section.examples" class="docs-code my-6 overflow-hidden rounded-2xl border border-slate-200 bg-[#f8f9fb] dark:border-dark-700 dark:bg-dark-900">
+              <div class="flex min-h-12 items-center justify-between gap-3 border-b border-slate-200 px-3.5 dark:border-dark-700">
                 <div class="flex min-w-0 gap-1 overflow-x-auto" role="group" :aria-label="section.title">
-                  <button v-for="language in languages(section)" :key="language" type="button" class="min-h-9 rounded-md px-3 py-1.5 font-mono text-[11px] transition" :class="selectedLanguage(section) === language ? 'bg-white font-medium text-blue-600 shadow-xs dark:bg-dark-800 dark:text-blue-400' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'" :aria-pressed="selectedLanguage(section) === language" @click="selectedLanguages[section.id] = language">{{ languageLabels[language] }}</button>
+                  <button v-for="language in languages(section)" :key="language" type="button" class="min-h-9 rounded-full px-3.5 py-1.5 font-mono text-xs transition" :class="selectedLanguage(section) === language ? 'bg-white font-medium text-blue-600 shadow-xs dark:bg-dark-800 dark:text-blue-400' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'" :aria-pressed="selectedLanguage(section) === language" @click="selectedLanguages[section.id] = language">{{ languageLabels[language] }}</button>
                 </div>
-                <button type="button" :data-testid="`docs-copy-${section.id}`" class="inline-flex min-h-9 min-w-9 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-slate-500 hover:bg-white hover:text-slate-900 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-dark-800 dark:hover:text-white" :title="t('docs.copy')" :aria-label="t('docs.copy')" @click="copyExample(section)">
+                <button type="button" :data-testid="`docs-copy-${section.id}`" class="inline-flex min-h-9 min-w-9 shrink-0 items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs text-slate-500 hover:bg-white hover:text-slate-900 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-dark-800 dark:hover:text-white" :title="t('docs.copy')" :aria-label="t('docs.copy')" @click="copyExample(section)">
                   <Icon :name="copiedSection === section.id ? 'check' : 'copy'" size="sm" />
                   <span class="hidden sm:inline">{{ copiedSection === section.id ? t('docs.copied') : t('docs.copy') }}</span>
                 </button>
               </div>
-              <pre class="overflow-x-auto p-5 text-[12px] leading-7 text-slate-700 dark:text-slate-200"><code>{{ example(section) }}</code></pre>
+              <pre class="overflow-x-auto p-5 text-[13px] leading-7 text-slate-700 dark:text-slate-200"><code>{{ example(section) }}</code></pre>
             </div>
 
-            <div v-if="section.links?.length" class="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+            <div v-if="section.links?.length" class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
               <template v-for="(link, index) in section.links" :key="link.page || link.href || index">
-                <router-link v-if="link.page" :to="docLocation(link.page)" class="inline-flex items-center gap-1.5 text-sm text-blue-600 underline decoration-blue-200 underline-offset-4 hover:decoration-blue-600 dark:text-blue-400">{{ link.label }}<Icon name="arrowRight" size="xs" /></router-link>
-                <a v-else-if="link.href" :href="link.href" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 text-sm text-blue-600 underline decoration-blue-200 underline-offset-4 hover:decoration-blue-600 dark:text-blue-400">{{ link.label }}<Icon name="externalLink" size="xs" /></a>
+                <router-link v-if="link.page" :to="docLocation(link.page)" class="inline-flex items-center gap-1.5 text-[15px] text-blue-600 underline decoration-blue-200 underline-offset-4 hover:decoration-blue-600 dark:text-blue-400">{{ link.label }}<Icon name="arrowRight" size="xs" /></router-link>
+                <a v-else-if="link.href" :href="link.href" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 text-[15px] text-blue-600 underline decoration-blue-200 underline-offset-4 hover:decoration-blue-600 dark:text-blue-400">{{ link.label }}<Icon name="externalLink" size="xs" /></a>
               </template>
             </div>
           </section>
           </template>
 
-          <nav class="mt-12 grid grid-cols-2 gap-4 border-t border-slate-200 pt-6 dark:border-dark-700" :aria-label="t('docs.navigation')">
-            <router-link v-if="previousPage" :to="docLocation(previousPage.id)" class="rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50/30 dark:border-dark-700 dark:hover:bg-blue-500/5"><span class="mb-1 block text-[11px] text-slate-400">{{ t('docs.previous') }}</span><span class="text-sm font-medium">{{ previousPage.title }}</span></router-link><span v-else></span>
-            <router-link v-if="nextPage" :to="docLocation(nextPage.id)" class="rounded-xl border border-slate-200 p-4 text-right transition hover:border-blue-300 hover:bg-blue-50/30 dark:border-dark-700 dark:hover:bg-blue-500/5"><span class="mb-1 block text-[11px] text-slate-400">{{ t('docs.next') }}</span><span class="text-sm font-medium">{{ nextPage.title }}</span></router-link>
+          <nav class="mt-14 grid grid-cols-2 gap-4 border-t border-slate-200 pt-7 dark:border-dark-700" :aria-label="t('docs.navigation')">
+            <router-link v-if="previousPage" :to="docLocation(previousPage.id)" class="rounded-2xl border border-slate-200 p-5 transition hover:border-blue-300 hover:bg-blue-50/30 dark:border-dark-700 dark:hover:bg-blue-500/5"><span class="mb-1.5 block text-xs text-slate-400">{{ t('docs.previous') }}</span><span class="text-[15px] font-medium">{{ previousPage.title }}</span></router-link><span v-else></span>
+            <router-link v-if="nextPage" :to="docLocation(nextPage.id)" class="rounded-2xl border border-slate-200 p-5 text-right transition hover:border-blue-300 hover:bg-blue-50/30 dark:border-dark-700 dark:hover:bg-blue-500/5"><span class="mb-1.5 block text-xs text-slate-400">{{ t('docs.next') }}</span><span class="text-[15px] font-medium">{{ nextPage.title }}</span></router-link>
           </nav>
-          <footer class="mt-10 flex flex-wrap items-center justify-between gap-3 pb-4 text-[11px] text-slate-400"><span>{{ siteName }} · {{ t('docs.title') }}</span><span class="font-mono">{{ agentSetupOrigin }}</span></footer>
+          <footer class="mt-10 flex flex-wrap items-center justify-between gap-3 pb-4 text-xs text-slate-400"><span>{{ siteName }} · {{ t('docs.title') }}</span><span class="font-mono">{{ agentSetupOrigin }}</span></footer>
         </article>
 
         <aside class="hidden xl:block">
-          <nav class="sticky top-36 text-xs" :aria-label="t('docs.onThisPage')">
+          <nav class="sticky top-36 text-[13px]" :aria-label="t('docs.onThisPage')">
             <p class="mb-4 font-medium text-slate-500">{{ t('docs.onThisPage') }}</p>
-            <div class="space-y-3 border-l border-slate-200 py-1 pl-4 dark:border-dark-700"><a v-for="section in tocSections" :key="section.id" :href="`#${section.id}`" class="block leading-5" :class="activeSection === section.id ? 'font-medium text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400'" :aria-current="activeSection === section.id ? 'location' : undefined" @click.prevent="jumpTo(section.id)">{{ section.title }}</a></div>
+            <div class="space-y-3 border-l border-slate-200 py-1 pl-4 dark:border-dark-700"><a v-for="section in tocSections" :key="section.id" :href="`#${section.id}`" class="block leading-6 transition-colors" :class="activeSection === section.id ? 'font-medium text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400'" :aria-current="activeSection === section.id ? 'location' : undefined" @click.prevent="jumpTo(section.id)">{{ section.title }}</a></div>
           </nav>
         </aside>
       </main>
@@ -184,6 +184,7 @@ function onAgentTocChange(items: AgentTocItem[]) {
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const showModels = computed(() => appStore.cachedPublicSettings?.model_plaza_enabled === true)
+const modelsPath = computed(() => (authStore.isAuthenticated ? { path: '/model-plaza', query: { embedded: '1' } } : '/model-plaza'))
 const consolePath = computed(() => !authStore.isAuthenticated ? '/login' : authStore.isAdminObserver ? '/admin/usage' : authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
 const categories: DocsCategory[] = ['start', 'guides', 'media', 'integrations', 'account', 'reference']
 const search = ref('')
@@ -371,6 +372,19 @@ onBeforeUnmount(() => {
 .api-docs :is(button, .docs-category):active {
   transform: scale(0.97);
 }
+.docs-article-enter {
+  animation: docs-article-glide 160ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+@keyframes docs-article-glide {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 @media (prefers-reduced-transparency: reduce) {
   .docs-header {
     background-color: #fff;
@@ -378,6 +392,7 @@ onBeforeUnmount(() => {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .docs-article-enter { animation: none; }
   .docs-sidebar,
   .docs-nav-wrap::after { transition: none; }
   .api-docs :is(button, .docs-category):active { transform: none; }

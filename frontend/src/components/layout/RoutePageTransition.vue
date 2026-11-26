@@ -17,9 +17,9 @@ import { RouterView } from 'vue-router'
 import { consolePageKey } from './consoleShell'
 
 /**
- * The CSS runs 180ms (opacity) / 220ms (transform); an explicit duration makes Vue end
- * the leave on a timer as well, so a page can never stay in the out-in placeholder when
- * the browser drops the transitionend event (hidden tab, element detached mid-flight).
+ * Asymmetric fast page transition: quick 90ms exit so the panel never feels blank,
+ * followed by a crisp 160ms ease-out arrival. Explicit durations guarantee Vue hands
+ * over on a timer even if the browser drops transitionend (hidden tab, mid-flight detach).
  *
  * Readers who asked for reduced motion get the stylesheet's `transition: none`, so they
  * also skip the timer and swap pages immediately instead of waiting out the fade.
@@ -28,5 +28,5 @@ const PREFERS_REDUCED_MOTION =
   typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
     : false
-const PAGE_TRANSITION_MS = PREFERS_REDUCED_MOTION ? 0 : { enter: 220, leave: 220 }
+const PAGE_TRANSITION_MS = PREFERS_REDUCED_MOTION ? 0 : { enter: 160, leave: 90 }
 </script>

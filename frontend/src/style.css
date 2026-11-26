@@ -171,24 +171,44 @@ html[data-theme-switching]::view-transition-new(root) {
   }
 }
 
-.page-enter-active,
+.page-enter-active {
+  transition:
+    opacity 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
 .page-leave-active {
-  transition: opacity 180ms var(--cb-ease-out), transform 220ms var(--cb-ease-out);
+  transition: opacity 90ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 .page-enter-from {
   opacity: 0;
-  transform: translateY(5px);
+  transform: translateY(4px);
 }
 
 .page-leave-to {
   opacity: 0;
-  transform: translateY(-3px);
+}
+
+/* Pure-opacity crossfade between public views and the console shell (no transform so fixed headers stay intact). */
+.shell-fade-enter-active {
+  transition: opacity 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.shell-fade-leave-active {
+  transition: opacity 80ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.shell-fade-enter-from,
+.shell-fade-leave-to {
+  opacity: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .page-enter-active,
-  .page-leave-active {
+  .page-leave-active,
+  .shell-fade-enter-active,
+  .shell-fade-leave-active {
     transition: none;
   }
 }

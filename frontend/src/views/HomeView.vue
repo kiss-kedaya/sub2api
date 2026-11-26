@@ -32,12 +32,20 @@
         </div>
         <div class="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2">
           <LocaleSwitcher />
+          <router-link
+            v-if="docUrl && !docsLink.external"
+            :to="docsLink.to"
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:text-dark-400 dark:hover:bg-dark-800"
+            :title="t('home.viewDocs')"
+          >
+            <Icon name="book" size="md" />
+          </router-link>
           <a
-            v-if="docUrl"
+            v-else-if="docUrl"
             :href="docUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 dark:text-dark-400 dark:hover:bg-dark-800"
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:text-dark-400 dark:hover:bg-dark-800"
             :title="t('home.viewDocs')"
           >
             <Icon name="book" size="md" />
@@ -85,19 +93,19 @@
           alt="Logo"
           class="mx-auto mb-6 h-20 w-20 rounded-2xl object-contain"
         />
-        <h1 class="wrap-anywhere text-3xl font-bold md:text-4xl">{{ siteName }}</h1>
-        <p class="mt-4 whitespace-pre-wrap wrap-anywhere text-base text-gray-600 dark:text-dark-300">{{ siteSubtitle }}</p>
-        <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+        <h1 class="wrap-anywhere text-4xl font-semibold tracking-[-0.03em] md:text-5xl">{{ siteName }}</h1>
+        <p class="mt-5 whitespace-pre-wrap wrap-anywhere text-[17px] leading-relaxed text-gray-600 dark:text-dark-300">{{ siteSubtitle }}</p>
+        <div class="mt-9 flex flex-wrap items-center justify-center gap-3.5">
           <router-link
             :to="isAuthenticated ? dashboardPath : '/login'"
-            class="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-primary-700"
+            class="inline-flex min-h-12 items-center justify-center rounded-full bg-primary-600 px-7 py-3 text-[15px] font-medium text-white transition hover:bg-primary-700"
           >
             {{ isAuthenticated ? t('home.goToDashboard') : t('home.login') }}
           </router-link>
           <router-link
             to="/docs?page=agent-setup"
             data-testid="compact-home-agent-setup-cta"
-            class="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-900 dark:text-dark-200 dark:hover:bg-dark-800"
+            class="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-gray-300 bg-white px-6 py-3 text-[15px] font-medium text-gray-700 transition hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-900 dark:text-dark-200 dark:hover:bg-dark-800"
           >
             <Icon name="terminal" size="sm" />
             <span>{{ t('home.agentSetup.navLabel') }}</span>
@@ -126,7 +134,7 @@
 
     <!-- Header -->
     <header class="relative z-20 px-4 py-4 sm:px-6">
-      <nav class="mx-auto flex max-w-6xl items-center justify-between gap-3">
+      <nav class="mx-auto flex max-w-7xl items-center justify-between gap-3">
         <router-link
           to="/home"
           class="flex min-w-0 items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
@@ -142,12 +150,21 @@
         <div class="flex shrink-0 items-center gap-1 sm:gap-2">
           <LocaleSwitcher />
 
+          <router-link
+            v-if="docUrl && !docsLink.external"
+            :to="docsLink.to"
+            class="hidden h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-elevated hover:text-highlighted sm:flex"
+            :title="t('home.viewDocs')"
+            :aria-label="t('home.viewDocs')"
+          >
+            <Icon name="book" size="md" />
+          </router-link>
           <a
-            v-if="docUrl"
+            v-else-if="docUrl"
             :href="docUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="hidden h-9 w-9 items-center justify-center rounded-md text-muted transition-colors hover:bg-elevated hover:text-highlighted sm:flex"
+            class="hidden h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-elevated hover:text-highlighted sm:flex"
             :title="t('home.viewDocs')"
             :aria-label="t('home.viewDocs')"
           >
@@ -202,16 +219,16 @@
     <!-- Main Content -->
     <main class="relative z-10 flex-1 px-4 sm:px-6">
       <!-- Hero: one sentence, two ways in. -->
-      <section data-testid="home-hero" class="mx-auto max-w-3xl pt-14 text-center sm:pt-24">
+      <section data-testid="home-hero" class="mx-auto max-w-4xl pt-16 text-center sm:pt-28">
         <h1
-          class="text-balance text-3xl font-semibold leading-[1.15] tracking-tight text-highlighted sm:text-4xl md:text-5xl"
+          class="text-balance text-4xl font-semibold leading-[1.1] tracking-[-0.03em] text-highlighted sm:text-5xl md:text-[54px]"
         >
           {{ t('home.heroSubtitle') }}
         </h1>
-        <p class="mx-auto mt-4 max-w-xl text-pretty text-base leading-7 text-muted sm:mt-5 sm:text-lg">
+        <p class="mx-auto mt-6 max-w-2xl text-pretty text-[17px] leading-[1.68] text-muted sm:text-[19px]">
           {{ heroDescription }}
         </p>
-        <div class="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
+        <div class="mt-9 flex flex-col items-stretch justify-center gap-3.5 sm:flex-row sm:items-center">
           <UButton
             data-testid="home-hero-cta"
             :to="primaryCta.to"
@@ -219,7 +236,7 @@
             color="neutral"
             variant="solid"
             trailing-icon="i-lucide-arrow-right"
-            class="min-h-11 justify-center px-5 font-medium"
+            class="min-h-12 justify-center rounded-full px-7 text-[15px] font-medium"
           >
             {{ primaryCta.label }}
           </UButton>
@@ -231,7 +248,7 @@
             size="lg"
             color="neutral"
             variant="outline"
-            class="min-h-11 justify-center px-5"
+            class="min-h-12 justify-center rounded-full px-7 text-[15px]"
           >
             {{ t('home.viewDocs') }}
           </UButton>
@@ -239,21 +256,21 @@
       </section>
 
       <!-- Key figures + supported platforms. Cards render only for data the APIs actually returned. -->
-      <section data-testid="home-status" class="mx-auto mt-14 max-w-4xl sm:mt-16">
+      <section data-testid="home-status" class="mx-auto mt-16 max-w-6xl sm:mt-20">
         <div v-if="stats.length">
-          <h2 id="home-stats-title" class="text-sm font-semibold text-highlighted">{{ t('home.stats.title') }}</h2>
+          <h2 id="home-stats-title" class="text-[15px] font-semibold text-highlighted">{{ t('home.stats.title') }}</h2>
 
-          <ul data-testid="home-stats" class="mt-3 flex flex-wrap gap-3">
+          <ul data-testid="home-stats" class="mt-4 flex flex-wrap gap-3.5">
             <UCard
               v-for="stat in stats"
               :key="stat.key"
               as="li"
-              :ui="{ root: 'w-[calc(50%-0.375rem)] min-w-0 bg-elevated sm:w-52', body: 'px-4 py-4' }"
+              :ui="{ root: 'w-[calc(50%-0.4375rem)] min-w-0 rounded-2xl bg-elevated sm:w-52', body: 'px-5 py-5' }"
             >
               <span data-stat-label class="block text-xs font-medium text-toned">{{ stat.label }}</span>
               <span
                 data-stat-value
-                class="mt-1.5 block truncate text-2xl font-semibold tabular-nums tracking-tight text-highlighted"
+                class="mt-2 block truncate text-2xl font-semibold tabular-nums tracking-tight text-highlighted"
               >
                 {{ stat.value }}
               </span>
@@ -261,17 +278,17 @@
           </ul>
         </div>
 
-        <div :class="stats.length ? 'mt-8' : ''">
-          <h2 id="home-providers-title" class="text-xs font-medium text-muted">{{ t('home.providers.title') }}</h2>
-          <ul data-testid="home-provider-list" class="mt-2.5 flex flex-wrap gap-2">
+        <div :class="stats.length ? 'mt-9' : ''">
+          <h2 id="home-providers-title" class="text-[13px] font-medium text-muted">{{ t('home.providers.title') }}</h2>
+          <ul data-testid="home-provider-list" class="mt-3 flex flex-wrap gap-2.5">
             <li
               v-for="provider in providers"
               :key="provider.key"
-              class="inline-flex items-center gap-1.5 rounded-full border border-default bg-elevated py-1.5 pl-2.5 pr-3"
+              class="inline-flex items-center gap-2 rounded-full border border-default bg-elevated py-2 pl-3 pr-4"
             >
               <PlatformIcon v-if="provider.platform" :platform="provider.platform" size="md" />
               <Icon v-else name="plus" size="sm" class="text-dimmed" />
-              <span class="text-sm font-medium text-toned">{{ provider.name }}</span>
+              <span class="text-[14px] font-medium text-toned">{{ provider.name }}</span>
             </li>
           </ul>
         </div>
@@ -280,25 +297,25 @@
       <!-- Quick start: three steps, vertical flow so it never reads as a feature-card row. -->
       <section
         data-testid="home-quickstart"
-        class="mx-auto mt-16 max-w-4xl pb-12"
+        class="mx-auto mt-20 max-w-6xl pb-14"
         aria-labelledby="home-quickstart-title"
       >
-        <h2 id="home-quickstart-title" class="text-xl font-semibold tracking-tight text-highlighted">
+        <h2 id="home-quickstart-title" class="text-[24px] font-semibold leading-[1.2] tracking-[-0.025em] text-highlighted sm:text-[28px]">
           {{ t('home.quickStart.title') }}
         </h2>
-        <p class="mt-2 max-w-2xl text-sm leading-6 text-muted">
+        <p class="mt-2.5 max-w-2xl text-[15px] leading-7 text-muted">
           {{ t('home.quickStart.description') }}
         </p>
 
-        <ol class="mt-8 border-t border-default">
+        <ol class="mt-9 border-t border-default">
           <!-- Step 1: create a key -->
-          <li class="grid gap-3 border-b border-default py-6 sm:grid-cols-[3.5rem_minmax(0,1fr)] sm:gap-4">
+          <li class="grid gap-3 border-b border-default py-7 sm:grid-cols-[3.5rem_minmax(0,1fr)] sm:gap-4">
             <span class="font-mono text-sm tabular-nums text-muted" aria-hidden="true">01</span>
             <div class="min-w-0">
-              <h3 class="text-base font-semibold text-highlighted">
+              <h3 class="text-[18px] font-semibold text-highlighted">
                 {{ t('home.quickStart.createKey.title') }}
               </h3>
-              <p class="mt-1.5 text-sm leading-6 text-muted">
+              <p class="mt-2 text-[15px] leading-7 text-muted">
                 {{ t('home.quickStart.createKey.description') }}
               </p>
               <div class="mt-4">
@@ -309,6 +326,7 @@
                   color="neutral"
                   variant="outline"
                   leading-icon="i-lucide-key-round"
+                  class="rounded-full px-5"
                 >
                   {{ keyAction.label }}
                 </UButton>
@@ -317,18 +335,18 @@
           </li>
 
           <!-- Step 2: point the SDK at the base URL -->
-          <li class="grid gap-3 border-b border-default py-6 sm:grid-cols-[3.5rem_minmax(0,1fr)] sm:gap-4">
+          <li class="grid gap-3 border-b border-default py-7 sm:grid-cols-[3.5rem_minmax(0,1fr)] sm:gap-4">
             <span class="font-mono text-sm tabular-nums text-muted" aria-hidden="true">02</span>
             <div class="min-w-0">
-              <h3 class="text-base font-semibold text-highlighted">
+              <h3 class="text-[18px] font-semibold text-highlighted">
                 {{ t('home.quickStart.config.title') }}
               </h3>
-              <p class="mt-1.5 text-sm leading-6 text-muted">
+              <p class="mt-2 text-[15px] leading-7 text-muted">
                 {{ t('home.quickStart.config.description') }}
               </p>
-              <div class="mt-4 overflow-hidden rounded-lg border border-default bg-muted">
-                <div class="flex items-center justify-between gap-2 border-b border-default py-1 pl-3 pr-1">
-                  <span class="truncate font-mono text-[11px] text-muted">base_url</span>
+              <div class="mt-4 overflow-hidden rounded-2xl border border-default bg-muted">
+                <div class="flex items-center justify-between gap-2 border-b border-default py-1.5 pl-4 pr-2">
+                  <span class="truncate font-mono text-xs text-muted">base_url</span>
                   <UButton
                     data-testid="home-copy-base-url"
                     size="xs"
@@ -341,24 +359,24 @@
                     <span aria-live="polite">{{ copiedField === 'baseUrl' ? t('common.copied') : t('common.copy') }}</span>
                   </UButton>
                 </div>
-                <pre data-testid="home-base-url-example" class="overflow-x-auto px-3 py-3 font-mono text-[13px] leading-6 text-toned"><code>{{ sdkBaseUrl }}</code></pre>
+                <pre data-testid="home-base-url-example" class="overflow-x-auto px-4 py-3.5 font-mono text-[13.5px] leading-6 text-toned"><code>{{ sdkBaseUrl }}</code></pre>
               </div>
             </div>
           </li>
 
           <!-- Step 3: send the first request -->
-          <li class="grid gap-3 border-b border-default py-6 sm:grid-cols-[3.5rem_minmax(0,1fr)] sm:gap-4">
+          <li class="grid gap-3 border-b border-default py-7 sm:grid-cols-[3.5rem_minmax(0,1fr)] sm:gap-4">
             <span class="font-mono text-sm tabular-nums text-muted" aria-hidden="true">03</span>
             <div class="min-w-0">
-              <h3 class="text-base font-semibold text-highlighted">
+              <h3 class="text-[18px] font-semibold text-highlighted">
                 {{ t('home.quickStart.request.title') }}
               </h3>
-              <p class="mt-1.5 text-sm leading-6 text-muted">
+              <p class="mt-2 text-[15px] leading-7 text-muted">
                 {{ t('home.quickStart.request.description') }}
               </p>
-              <div class="mt-4 overflow-hidden rounded-lg border border-default bg-muted">
-                <div class="flex items-center justify-between gap-2 border-b border-default py-1 pl-3 pr-1">
-                  <span class="truncate font-mono text-[11px] text-muted">curl</span>
+              <div class="mt-4 overflow-hidden rounded-2xl border border-default bg-muted">
+                <div class="flex items-center justify-between gap-2 border-b border-default py-1.5 pl-4 pr-2">
+                  <span class="truncate font-mono text-xs text-muted">curl</span>
                   <UButton
                     data-testid="home-copy-request"
                     size="xs"
@@ -371,7 +389,7 @@
                     <span aria-live="polite">{{ copiedField === 'request' ? t('common.copied') : t('common.copy') }}</span>
                   </UButton>
                 </div>
-                <pre data-testid="home-request-example" class="overflow-x-auto px-3 py-3 font-mono text-[13px] leading-6 text-toned"><code>{{ requestExample }}</code></pre>
+                <pre data-testid="home-request-example" class="overflow-x-auto px-4 py-3.5 font-mono text-[13.5px] leading-6 text-toned"><code>{{ requestExample }}</code></pre>
               </div>
               <div class="mt-4">
                 <UButton
@@ -383,7 +401,7 @@
                   variant="link"
                   size="sm"
                   trailing-icon="i-lucide-arrow-up-right"
-                  class="px-0"
+                  class="px-0 text-[14px]"
                 >
                   {{ t('home.quickStart.request.docs') }}
                 </UButton>
@@ -393,18 +411,18 @@
         </ol>
       </section>
 
-      <!-- Agent Setup Launcher: Cloudflare-style picker tied to CC Switch + this site's Import to CCS flow -->
+      <!-- Agent Setup Launcher: airy cards tied to CC Switch + this site's Import to CCS flow -->
       <section
         data-testid="home-agent-setup"
-        class="mx-auto mt-4 max-w-4xl border-t border-default pb-20 pt-12"
+        class="mx-auto mt-6 max-w-6xl border-t border-default pb-24 pt-16"
         aria-labelledby="home-agent-setup-title"
       >
         <div class="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
           <div class="min-w-0">
-            <h2 id="home-agent-setup-title" class="text-xl font-semibold tracking-tight text-highlighted">
+            <h2 id="home-agent-setup-title" class="text-[24px] font-semibold leading-[1.2] tracking-[-0.025em] text-highlighted sm:text-[28px]">
               {{ t('home.agentSetup.title') }}
             </h2>
-            <p class="mt-2 max-w-2xl text-sm leading-6 text-muted">
+            <p class="mt-2.5 max-w-2xl text-[15px] leading-7 text-muted">
               {{ t('home.agentSetup.description') }}
             </p>
           </div>
@@ -415,39 +433,33 @@
             color="neutral"
             variant="outline"
             trailing-icon="i-lucide-arrow-right"
-            class="shrink-0 self-start sm:self-auto"
+            class="shrink-0 self-start rounded-full px-5 sm:self-auto"
           >
             {{ t('home.agentSetup.viewAll') }}
           </UButton>
         </div>
 
-        <ul class="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <ul class="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <li v-for="agent in homeAgentHighlights" :key="agent.id" class="min-w-0">
             <router-link
               :to="{ path: '/docs', query: { page: 'agent-setup', agent: agent.id } }"
               :data-testid="`home-agent-card-${agent.id}`"
-              class="home-agent-card group flex h-full flex-col justify-between rounded-xl border border-default bg-elevated p-4"
+              class="home-agent-card group flex h-full flex-col justify-between rounded-2xl border border-default bg-elevated p-6"
             >
               <div>
-                <div class="flex items-start justify-between gap-2">
-                  <div class="flex min-w-0 items-center gap-2.5">
-                    <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-default bg-default">
-                      <AgentBrandIcon :icon-key="agent.iconKey" :platform="agent.platform" size="sm" />
+                <div class="flex items-center justify-between gap-2.5">
+                  <div class="flex min-w-0 items-center gap-3">
+                    <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-default bg-default">
+                      <AgentBrandIcon :icon-key="agent.iconKey" :platform="agent.platform" size="md" />
                     </span>
-                    <div class="min-w-0">
-                      <span class="block truncate text-[11px] text-muted">{{ agent.vendor }}</span>
-                      <span class="block truncate text-sm font-semibold text-highlighted">{{ agent.name }}</span>
-                    </div>
+                    <span class="truncate text-[16px] font-semibold text-highlighted">{{ agent.name }}</span>
                   </div>
-                  <span class="shrink-0 rounded-full border border-default bg-default px-2 py-0.5 text-[10px] font-medium text-toned">
-                    {{ agent.badge }}
-                  </span>
                 </div>
-                <p class="mt-2.5 line-clamp-2 text-xs leading-5 text-muted">
+                <p class="mt-3.5 line-clamp-2 text-[14px] leading-6 text-muted">
                   {{ agent.summary }}
                 </p>
               </div>
-              <span class="mt-3 inline-flex items-center gap-1 text-xs font-medium text-highlighted">
+              <span class="mt-5 inline-flex items-center gap-1.5 text-[14px] font-medium text-highlighted">
                 <span>{{ t('home.agentSetup.viewGuide') }}</span>
                 <Icon name="arrowRight" size="xs" class="transition-transform group-hover:translate-x-0.5" />
               </span>
@@ -455,21 +467,21 @@
           </li>
         </ul>
 
-        <div class="mt-4 flex flex-col items-start justify-between gap-3 rounded-xl border border-default bg-elevated px-4 py-3.5 sm:flex-row sm:items-center">
-          <div class="flex min-w-0 items-start gap-2.5">
-            <AgentBrandIcon icon-key="ccswitch" size="sm" class="mt-0.5 shrink-0" />
-            <p class="text-xs leading-5 text-muted">
+        <div class="mt-5 flex flex-col items-start justify-between gap-4 rounded-2xl border border-default bg-elevated px-5 py-4 sm:flex-row sm:items-center">
+          <div class="flex min-w-0 items-center gap-3">
+            <AgentBrandIcon icon-key="ccswitch" size="sm" class="shrink-0" />
+            <p class="text-[14px] leading-6 text-muted">
               {{ t('home.agentSetup.ccSwitchStrip') }}
             </p>
           </div>
           <UButton
             data-testid="home-agent-setup-ccs"
             to="/docs?page=agent-setup#site-ccswitch-workflow"
-            size="xs"
+            size="sm"
             color="neutral"
             variant="link"
             trailing-icon="i-lucide-arrow-right"
-            class="shrink-0 px-0"
+            class="shrink-0 px-0 text-[14px]"
           >
             {{ t('home.agentSetup.openCcSwitchGuide') }}
           </UButton>
@@ -479,7 +491,7 @@
 
     <!-- Footer -->
     <footer class="relative z-10 border-t border-default px-4 py-8 sm:px-6">
-      <div class="mx-auto flex max-w-6xl flex-col items-center gap-4 text-center">
+      <div class="mx-auto flex max-w-7xl flex-col items-center gap-4 text-center">
         <p class="max-w-3xl text-xs leading-6 text-muted">
           {{ t('home.footer.riskStrip') }}
         </p>
@@ -488,8 +500,15 @@
           &copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}
         </p>
         <div class="flex items-center gap-4">
+          <router-link
+            v-if="docUrl && !docsLink.external"
+            :to="docsLink.to"
+            class="text-xs text-muted transition-colors hover:text-highlighted"
+          >
+            {{ t('home.docs') }}
+          </router-link>
           <a
-            v-if="docUrl"
+            v-else-if="docUrl"
             :href="docUrl"
             target="_blank"
             rel="noopener noreferrer"

@@ -124,7 +124,7 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'
-import { resolveDocsUrl } from '@/utils/docsUrl'
+import { isExternalDocsUrl, resolveDocsUrl } from '@/utils/docsUrl'
 import { FeatureFlags, isFeatureFlagEnabled, makeSidebarFlag } from '@/utils/featureFlags'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import { SIDEBAR_TOUR_ANCHORS, SIDEBAR_TOUR_SELECTORS } from '@/components/Guide/steps'
@@ -509,11 +509,19 @@ const secondaryNavItems = computed((): NavigationMenuItem[] => {
       icon: 'i-lucide-layout-grid',
       to: { path: '/model-plaza', query: { embedded: '1' } },
       active: route.path === '/model-plaza',
+      onSelect: closeMobile,
       'aria-label': t('nav.modelPlaza')
     })
   }
   if (docUrl.value) {
-    items.push({ label: t('nav.docs'), icon: 'i-lucide-book-open', to: docUrl.value, target: '_blank', 'aria-label': t('nav.docs') })
+    const external = isExternalDocsUrl(docUrl.value)
+    items.push({
+      label: t('nav.docs'),
+      icon: 'i-lucide-book-open',
+      to: docUrl.value,
+      ...(external ? { target: '_blank' as const } : { onSelect: closeMobile }),
+      'aria-label': t('nav.docs')
+    })
   }
   return items
 })

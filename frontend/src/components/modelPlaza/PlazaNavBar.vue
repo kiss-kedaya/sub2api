@@ -1,7 +1,7 @@
 <template>
   <header class="plaza-public-nav">
     <div class="plaza-public-nav-inner">
-      <div class="flex min-w-0 items-center gap-3">
+      <RouterLink to="/home" class="flex min-w-0 items-center gap-3 transition-opacity hover:opacity-85">
         <template v-if="settings">
           <span class="plaza-public-logo">
             <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
@@ -14,22 +14,30 @@
           <span class="h-9 w-9 flex-shrink-0 animate-pulse rounded-lg bg-(--signal-inset,#ededf2)" aria-hidden="true"></span>
           <span class="h-5 w-28 animate-pulse rounded-sm bg-(--signal-inset,#ededf2)" aria-hidden="true"></span>
         </template>
-      </div>
+      </RouterLink>
 
-      <RouterLink
-        v-if="isAuthenticated"
-        :to="backTarget"
-        class="btn btn-primary"
-      >
-        {{ t('modelPlaza.nav.backToDashboard') }}
-      </RouterLink>
-      <RouterLink
-        v-else
-        :to="{ path: '/login', query: { redirect: '/model-plaza' } }"
-        class="btn btn-primary"
-      >
-        {{ t('modelPlaza.nav.login') }}
-      </RouterLink>
+      <div class="flex shrink-0 items-center gap-3">
+        <RouterLink
+          to="/docs?page=agent-setup"
+          class="hidden text-sm font-medium text-(--signal-muted) transition-colors hover:text-(--signal-text) sm:inline-flex"
+        >
+          {{ t('nav.docs') }}
+        </RouterLink>
+        <RouterLink
+          v-if="isAuthenticated"
+          :to="backTarget"
+          class="btn btn-primary"
+        >
+          {{ t('modelPlaza.nav.backToDashboard') }}
+        </RouterLink>
+        <RouterLink
+          v-else
+          :to="{ path: '/login', query: { redirect: '/model-plaza' } }"
+          class="btn btn-primary"
+        >
+          {{ t('modelPlaza.nav.login') }}
+        </RouterLink>
+      </div>
     </div>
   </header>
 </template>

@@ -160,30 +160,38 @@ describe('AgentSetupGuide', () => {
     wrapper.unmount()
   })
 
-  it('renders quick-action buttons, switches Step 3 screenshots, and opens/closes the fullscreen lightbox', async () => {
+  it('renders quick-action buttons, switches workflow steps & Step 3 screenshots, and opens/closes the fullscreen lightbox', async () => {
     const { wrapper } = await mountGuide({ isAuthenticated: true })
 
     expect(wrapper.get('[data-testid="agent-overview-keys-cta"]').attributes('href')).toBe('/keys')
     expect(wrapper.get('[data-testid="agent-quick-plaza"]').attributes('href')).toBe('/model-plaza')
     expect(wrapper.get('[data-testid="agent-quick-usage"]').attributes('href')).toBe('/usage')
 
-    const step3ImgBefore = wrapper.get('[data-testid="overview-shot-step3"] img').attributes('alt')
-    await wrapper.get('[data-testid="step3-shot-tab-modal"]').trigger('click')
-    const step3ImgAfter = wrapper.get('[data-testid="overview-shot-step3"] img').attributes('alt')
-    expect(step3ImgAfter).not.toBe(step3ImgBefore)
-
-    await wrapper.get('[data-testid="overview-shot-step1"]').trigger('click')
+    // Default active step is Step 1; open lightbox from the showcase screenshot
+    const step1ImgAlt = wrapper.get('[data-testid="overview-active-shot"] img').attributes('alt')
+    await wrapper.get('[data-testid="overview-active-shot"]').trigger('click')
     expect(document.body.querySelector('[data-testid="agent-screenshot-lightbox"]')).not.toBeNull()
 
     ;(document.body.querySelector('[data-testid="agent-lightbox-close"]') as HTMLButtonElement).click()
     await flushPromises()
     expect(document.body.querySelector('[data-testid="agent-screenshot-lightbox"]')).toBeNull()
 
-    await wrapper.get('[data-testid="overview-shot-step2"]').trigger('click')
+    // Switch to Step 2 and verify screenshot updates + ESC closes lightbox
+    await wrapper.get('[data-testid="workflow-step-2"]').trigger('click')
+    const step2ImgAlt = wrapper.get('[data-testid="overview-active-shot"] img').attributes('alt')
+    expect(step2ImgAlt).not.toBe(step1ImgAlt)
+    await wrapper.get('[data-testid="overview-active-shot"]').trigger('click')
     expect(document.body.querySelector('[data-testid="agent-screenshot-lightbox"]')).not.toBeNull()
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     await flushPromises()
     expect(document.body.querySelector('[data-testid="agent-screenshot-lightbox"]')).toBeNull()
+
+    // Switch to Step 3 and toggle receipt vs modal screenshot tab
+    await wrapper.get('[data-testid="workflow-step-3"]').trigger('click')
+    const step3ImgBefore = wrapper.get('[data-testid="overview-active-shot"] img').attributes('alt')
+    await wrapper.get('[data-testid="step3-shot-tab-modal"]').trigger('click')
+    const step3ImgAfter = wrapper.get('[data-testid="overview-active-shot"] img').attributes('alt')
+    expect(step3ImgAfter).not.toBe(step3ImgBefore)
 
     wrapper.unmount()
   })

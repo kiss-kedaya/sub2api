@@ -52,12 +52,12 @@ export default {
     },
     agentSetup: {
       navLabel: 'Agent 配置',
-      title: '配合 CC Switch 配置你的 AI Agent',
-      description: '装好 CC Switch 后，在其「应用」页一键安装智能体，再从本站「API 密钥」点「导入到 CCS」即可完成全部配置。',
-      viewAll: '查看 4 步完整教程',
-      viewGuide: '配置指引',
-      ccSwitchStrip: '原生支持 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、DeepSeek Harness 等 14 款 CC Switch 应用一键导入，自动写入端点与余额脚本。',
-      openCcSwitchGuide: '查看 4 步配置全流程'
+      title: '选择你的 AI Agent',
+      description: '装好 CC Switch 后，从本站密钥点「导入到 CCS」即可开用。',
+      viewAll: '完整配置指南',
+      viewGuide: '查看配置',
+      ccSwitchStrip: '原生支持 Claude Code、Codex、Gemini CLI、OpenCode 等 14 款 CC Switch 应用一键导入。',
+      openCcSwitchGuide: '4 步图解'
     },
     footer: {
       allRightsReserved: '保留所有权利。',
