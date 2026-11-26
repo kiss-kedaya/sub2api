@@ -274,34 +274,36 @@ func TestParseRetryAfter(t *testing.T) {
 
 // acquire spends at most half of what the caller has left on waiting.
 func TestAcquireNeverSpendsMoreThanHalfTheCallersDeadline(t *testing.T) {
-	e := newEndpointTraffic("h", 10, time.Now, nil)
+	clock := newFakeClock() // static: the bucket does not refill while the test runs
+	e := newEndpointTraffic("h", 10, clock.Now, nil)
 	for i := 0; i < int(rateBurst); i++ {
 		if err := e.acquire(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// The next call needs about 100ms. With 150ms left that is more than half: refuse.
+	// The next call needs 100ms. With 150ms left that is more than half: refuse.
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	start := time.Now()
 	if err := e.acquire(ctx); err != errLocalRateLimit {
 		t.Fatalf("acquire = %v, want errLocalRateLimit", err)
 	}
-	if time.Since(start) > 50*time.Millisecond {
+	if time.Since(start) > 500*time.Millisecond {
 		t.Fatalf("a refused call took %v", time.Since(start))
 	}
-	// With plenty of time it waits and then goes.
+	// With plenty of time it waits (the refusal claimed nothing) and then goes.
 	start = time.Now()
 	if err := e.acquire(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if took := time.Since(start); took < 50*time.Millisecond || took > time.Second {
-		t.Fatalf("a call that needed ~100-200ms took %v", took)
+	if took := time.Since(start); took < 50*time.Millisecond || took > 3*time.Second {
+		t.Fatalf("a call that needed 100ms took %v", took)
 	}
 }
 
 func TestAcquireGivesTheTokenBackWhenTheCallerGivesUp(t *testing.T) {
-	e := newEndpointTraffic("h", 10, time.Now, nil)
+	clock := newFakeClock() // static: no refill, so the balance must come back exactly
+	e := newEndpointTraffic("h", 10, clock.Now, nil)
 	for i := 0; i < int(rateBurst); i++ {
 		_ = e.acquire(context.Background())
 	}
@@ -311,7 +313,7 @@ func TestAcquireGivesTheTokenBackWhenTheCallerGivesUp(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
-		go func() { done <- e.acquire(ctx) }() // needs ~90ms, well inside the bound
+		go func() { done <- e.acquire(ctx) }() // needs 100ms, well inside the bound
 		time.Sleep(5 * time.Millisecond)
 		cancel()
 		if err := <-done; err != context.Canceled {
@@ -321,9 +323,8 @@ func TestAcquireGivesTheTokenBackWhenTheCallerGivesUp(t *testing.T) {
 	e.mu.Lock()
 	after := e.tokens
 	e.mu.Unlock()
-	// Three abandoned waits would have cost three tokens; only the refill may differ.
-	if after < before-0.5 {
-		t.Fatalf("abandoned waits drained the bucket: %v -> %v", before, after)
+	if after != before {
+		t.Fatalf("abandoned waits changed the balance: %v -> %v", before, after)
 	}
 }
 

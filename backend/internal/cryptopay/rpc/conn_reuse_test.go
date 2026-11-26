@@ -52,16 +52,20 @@ func TestLegacyClientOpensOneConnectionPerCall(t *testing.T) {
 }
 
 func TestIdleConnectionsAreRebuiltAfterTheIdleTimeout(t *testing.T) {
-	fx := newTLSFixture(t, false, blockNumberHandler())
-	pool := fx.pool(t, func(c *publicTransportConfig) { c.idleTimeout = 60 * time.Millisecond })
-	callBlockNumber(t, pool, 3)
-	if got := fx.conns.Load(); got != 1 {
-		t.Fatalf("connections before idling = %d, want 1", got)
-	}
-	time.Sleep(400 * time.Millisecond)
-	callBlockNumber(t, pool, 3)
-	if got := fx.conns.Load(); got != 2 {
-		t.Fatalf("connections after the idle timeout = %d, want 2 (the idle one was closed and rebuilt)", got)
+	for _, http2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("http2=%v", http2), func(t *testing.T) {
+			fx := newTLSFixture(t, http2, blockNumberHandler())
+			pool := fx.pool(t, func(c *publicTransportConfig) { c.idleTimeout = 60 * time.Millisecond })
+			callBlockNumber(t, pool, 3)
+			if got := fx.conns.Load(); got != 1 {
+				t.Fatalf("connections before idling = %d, want 1", got)
+			}
+			time.Sleep(400 * time.Millisecond)
+			callBlockNumber(t, pool, 3)
+			if got := fx.conns.Load(); got != 2 {
+				t.Fatalf("connections after the idle timeout = %d, want 2 (the idle one was closed and rebuilt)", got)
+			}
+		})
 	}
 }
 

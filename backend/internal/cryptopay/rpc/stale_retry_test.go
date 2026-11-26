@@ -90,8 +90,8 @@ func (fx *tlsFixture) staleFixturePool(t *testing.T) (*Pool, *staleDialer, *http
 	return NewPoolWithHTTPClient(fx.url(), client), d, client
 }
 
-// trafficOf reads the counters of the endpoint behind a test client.
-func trafficOf(t *testing.T, client *http.Client, endpoint string) EndpointTraffic {
+// endpointOf returns the pacing and counter state behind a test client's endpoint.
+func endpointOf(t *testing.T, client *http.Client, endpoint string) *endpointTraffic {
 	t.Helper()
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
@@ -105,7 +105,13 @@ func trafficOf(t *testing.T, client *http.Client, endpoint string) EndpointTraff
 	if !ok {
 		t.Fatal("no traffic recorded for the endpoint")
 	}
-	return state.snapshot()
+	return state
+}
+
+// trafficOf reads the counters of the endpoint behind a test client.
+func trafficOf(t *testing.T, client *http.Client, endpoint string) EndpointTraffic {
+	t.Helper()
+	return endpointOf(t, client, endpoint).snapshot()
 }
 
 // dropConnection closes the client's connection without answering.
@@ -202,6 +208,51 @@ func TestStaleRetryHappensAtMostOnce(t *testing.T) {
 	}
 }
 
+// The retry must go on a NEW connection, not on whichever idle one the pool picks
+// next: after a server-wide restart every idle connection is stale at once, and a
+// retry that took the next pooled one would fail the same way.
+func TestStaleRetryUsesANewConnectionEvenWhenSeveralPooledOnesAreStale(t *testing.T) {
+	var inFlight atomic.Int32
+	both := make(chan struct{})
+	var once sync.Once
+	fx := newTLSFixture(t, false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = requestMethod(r)
+		if inFlight.Add(1) == 2 {
+			once.Do(func() { close(both) })
+		}
+		select { // hold the first two requests open together, so the pool opens two connections
+		case <-both:
+		case <-time.After(2 * time.Second):
+		}
+		rpcResult(w, `"0x10"`)
+	}))
+	pool, dialer, client := fx.staleFixturePool(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := callOneBlockNumber(pool, fx.url()); err != nil {
+				t.Errorf("warm-up: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := dialer.dials.Load(); got != 2 {
+		t.Fatalf("warm-up dialled %d connections, want 2 idle ones", got)
+	}
+	dialer.goStale("swallow") // both idle connections are now dead, unnoticed
+	if err := callOneBlockNumber(pool, fx.url()); err != nil {
+		t.Fatalf("the retry must not land on the second stale connection: %v", err)
+	}
+	if got := dialer.dials.Load(); got != 3 {
+		t.Fatalf("dials = %d, want 3 (the retry opened its own connection)", got)
+	}
+	if got := trafficOf(t, client, fx.url()); got.StaleRetries != 1 {
+		t.Fatalf("traffic = %+v, want exactly one stale retry", got)
+	}
+}
+
 // A failure on a connection that was NOT reused says nothing about staleness: the
 // server hung up on a fresh connection, so the call is not repeated.
 func TestFailureOnANewConnectionIsNotRetried(t *testing.T) {
@@ -261,8 +312,14 @@ func TestTimeoutOnAReusedConnectionIsNotRetried(t *testing.T) {
 // pooled connection - a connection the server closed while idle cannot turn a
 // broadcast into "result unknown" - and is never sent twice by this layer.
 func TestBroadcastNeverUsesAPooledConnection(t *testing.T) {
+	for _, http2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("http2=%v", http2), func(t *testing.T) { testBroadcastNeverUsesAPooledConnection(t, http2) })
+	}
+}
+
+func testBroadcastNeverUsesAPooledConnection(t *testing.T, http2 bool) {
 	var sendRaw atomic.Int32
-	fx := newTLSFixture(t, false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fx := newTLSFixture(t, http2, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requestMethod(r) == "eth_sendRawTransaction" {
 			sendRaw.Add(1)
 			rpcResult(w, `"0xabc"`)
@@ -355,23 +412,25 @@ func TestIsStaleConnError(t *testing.T) {
 		err  error
 		want bool
 	}{
-		"EOF":                      {wrap(io.EOF), true},
-		"unexpected EOF":           {wrap(io.ErrUnexpectedEOF), true},
-		"closed connection":        {wrap(net.ErrClosed), true},
-		"reset":                    {wrap(&net.OpError{Op: "read", Err: syscall.ECONNRESET}), true},
-		"broken pipe":              {wrap(&net.OpError{Op: "write", Err: syscall.EPIPE}), true},
-		"server closed idle":       {wrap(errors.New("http: server closed idle connection")), true},
-		"h2 conn lost":             {wrap(errors.New("http2: client connection lost")), true},
-		"h2 goaway":                {wrap(errors.New("http2: server sent GOAWAY and closed the connection; LastStreamID=1")), true},
-		"reset by peer text":       {wrap(errors.New("read tcp 10.0.0.1:5->1.2.3.4:443: read: connection reset by peer")), true},
-		"deadline":                 {wrap(context.DeadlineExceeded), false},
-		"canceled":                 {wrap(context.Canceled), false},
-		"refused":                  {wrap(errors.New("dial tcp 1.2.3.4:443: connect: connection refused")), false},
-		"tls":                      {wrap(errors.New("tls: handshake failure")), false},
-		"not public":               {wrap(errors.New("rpc destination is not public")), false},
-		"local rate limit":         {wrap(errLocalRateLimit), false},
-		"url text must not decide": {&url.Error{Op: "Post", URL: "https://rpc.example.test/EOF/broken pipe", Err: errors.New("boom")}, false},
-		"nil":                      {nil, false},
+		"EOF":                               {wrap(io.EOF), true},
+		"unexpected EOF":                    {wrap(io.ErrUnexpectedEOF), true},
+		"closed connection":                 {wrap(net.ErrClosed), true},
+		"reset":                             {wrap(&net.OpError{Op: "read", Err: syscall.ECONNRESET}), true},
+		"broken pipe":                       {wrap(&net.OpError{Op: "write", Err: syscall.EPIPE}), true},
+		"server closed idle":                {wrap(errors.New("http: server closed idle connection")), true},
+		"h2 conn lost":                      {wrap(errors.New("http2: client connection lost")), true},
+		"h2 goaway":                         {wrap(errors.New("http2: server sent GOAWAY and closed the connection; LastStreamID=1")), true},
+		"reset by peer text":                {wrap(errors.New("read tcp 10.0.0.1:5->1.2.3.4:443: read: connection reset by peer")), true},
+		"deadline":                          {wrap(context.DeadlineExceeded), false},
+		"canceled":                          {wrap(context.Canceled), false},
+		"deadline over a closed connection": {wrap(fmt.Errorf("%w: %w", context.DeadlineExceeded, net.ErrClosed)), false},
+		"cancel over an EOF":                {wrap(fmt.Errorf("%w: %w", context.Canceled, io.EOF)), false},
+		"refused":                           {wrap(errors.New("dial tcp 1.2.3.4:443: connect: connection refused")), false},
+		"tls":                               {wrap(errors.New("tls: handshake failure")), false},
+		"not public":                        {wrap(errors.New("rpc destination is not public")), false},
+		"local rate limit":                  {wrap(errLocalRateLimit), false},
+		"url text must not decide":          {&url.Error{Op: "Post", URL: "https://rpc.example.test/EOF/broken pipe", Err: errors.New("boom")}, false},
+		"nil":                               {nil, false},
 	} {
 		if got := isStaleConnError(tc.err); got != tc.want {
 			t.Errorf("%s: isStaleConnError = %v, want %v", name, got, tc.want)

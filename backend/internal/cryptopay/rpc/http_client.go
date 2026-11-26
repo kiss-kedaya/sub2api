@@ -123,8 +123,8 @@ type publicTransportConfig struct {
 //
 //   - pooled keeps connections alive and speaks HTTP/2 where the provider does, so
 //     a scan pass reuses a handful of connections instead of opening one per call
-//     (a TCP+TLS handshake per call on the busiest host was the timeouts, and the
-//     TIME_WAIT pile, behind the stalled BSC cursor).
+//     (a TCP+TLS handshake per call on a busy host is the likely cause of the
+//     timeouts and of the TIME_WAIT pile seen with the stalled BSC cursor).
 //   - fresh never reuses a connection; see callHint.fresh.
 //
 // Both dial through publicRPCNetwork. Compression stays on (DisableCompression is

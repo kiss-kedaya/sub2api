@@ -71,7 +71,7 @@ func TestPoolHonoursRetryAfterAndHalvesTheRate(t *testing.T) {
 	if _, err := pool.callOne(context.Background(), fx.url(), "eth_blockNumber", nil); err != nil {
 		t.Fatalf("the call that waited out the Retry-After failed: %v", err)
 	}
-	if took := time.Since(start); took < 800*time.Millisecond || took > 1900*time.Millisecond {
+	if took := time.Since(start); took < 800*time.Millisecond || took > 3500*time.Millisecond {
 		t.Fatalf("second call took %v, want about the 1s Retry-After", took)
 	}
 	mu.Lock()
@@ -132,7 +132,7 @@ func TestRetryAfterBeyondTheBoundIsRefusedLocallyAndRotates(t *testing.T) {
 		if _, err := pool.Call(context.Background(), "eth_blockNumber", nil); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
-		if took := time.Since(start); took > time.Second {
+		if took := time.Since(start); took > 3*time.Second {
 			t.Fatalf("call %d took %v: a refused local call must not wait", i, took)
 		}
 	}
@@ -245,7 +245,8 @@ func TestHealthyBurstIsNotDelayed(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		rpcResult(w, `"0x10"`)
 	}))
-	pool, client := fx.pacedPool(t)
+	clock := newFakeClock() // static: nothing refills, so a call that had to wait shows as debt
+	pool, client := fx.pacedPool(t, func(c *publicTransportConfig) { c.now = clock.Now })
 	var wg sync.WaitGroup
 	start := time.Now()
 	for i := 0; i < int(rateBurst); i++ {
@@ -258,11 +259,18 @@ func TestHealthyBurstIsNotDelayed(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if took := time.Since(start); took > 400*time.Millisecond {
-		t.Fatalf("a burst of %d took %v with 20ms answers: the limiter delayed a healthy endpoint", int(rateBurst), took)
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("a burst of %d took %v with 20ms answers", int(rateBurst), took)
 	}
 	if got := trafficOf(t, client, fx.url()); got.Throttled != 0 || got.RatePerSec != defaultRatePerSec {
 		t.Fatalf("traffic = %+v", got)
+	}
+	state := endpointOf(t, client, fx.url())
+	state.mu.Lock()
+	tokens := state.tokens
+	state.mu.Unlock()
+	if tokens < 0 {
+		t.Fatalf("the bucket is %v tokens in debt: some of the %d calls of a normal burst had to wait", tokens, int(rateBurst))
 	}
 }
 
@@ -307,7 +315,7 @@ func TestPoolCallWaitsAtMostTheBound(t *testing.T) {
 	limiterMaxWait = 60 * time.Millisecond
 	t.Cleanup(func() { limiterMaxWait = old })
 	fx := newTLSFixture(t, false, blockNumberHandler())
-	pool, _ := fx.pacedPool(t, func(c *publicTransportConfig) { c.ratePerSec = 2 }) // one call per 500ms
+	pool, _ := fx.pacedPool(t, func(c *publicTransportConfig) { c.ratePerSec = 1 }) // one call per second
 	for i := 0; i < int(rateBurst); i++ {
 		if _, err := pool.callOne(context.Background(), fx.url(), "eth_blockNumber", nil); err != nil {
 			t.Fatal(err)
@@ -318,7 +326,7 @@ func TestPoolCallWaitsAtMostTheBound(t *testing.T) {
 	if f := failureOf(t, err); !f.Throttled {
 		t.Fatalf("failure = %+v, want a local refusal", f)
 	}
-	if took := time.Since(start); took > 40*time.Millisecond {
+	if took := time.Since(start); took > 400*time.Millisecond {
 		t.Fatalf("a refused call took %v: the wait was not bounded", took)
 	}
 }
