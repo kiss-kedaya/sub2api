@@ -1,3 +1,5 @@
+//go:build unit
+
 package ipnotice
 
 import (
@@ -20,7 +22,7 @@ func legacyHasReplayMarker(body []byte) bool {
 // Fragments that sit next to the three markers, so the random bodies hit every near miss: the id
 // tail without its head, the id without the trailing underscore, one half of a fence, one escape.
 var replayMarkerFragments = []string{
-	noticeFence, noticeFence[:3], noticeFence[3:], "⁣", "⁢⁣",
+	noticeFence, noticeFence[:3], noticeFence[3:], "\xe2\x81\xa3", "\xe2\x81\xa2\xe2\x81\xa3",
 	strings.ReplaceAll("§u2063§u2063", "§", `\`), strings.ReplaceAll("§u2063", "§", `\`), strings.ReplaceAll("§u2063§u2062", "§", `\`),
 	strings.ReplaceAll("§§u2063§u2063", "§", `\`), "u2063u2063", "2063",
 	"msg_gateway_notice_", "msg_gateway_notice", "_gateway_notice_", "gateway_notice_", "xmsg_gateway_notice_1",

@@ -1,3 +1,5 @@
+//go:build unit
+
 package service
 
 import (
@@ -194,7 +196,7 @@ func BenchmarkPerf18SanitizeBetaTokens(b *testing.B) {
 				if changed {
 					b.Fatal("unexpected change")
 				}
-				out, changed = sanitizeAnthropicFallbackFields(out, "oauth-2025-04-20")
+				_, changed = sanitizeAnthropicFallbackFields(out, "oauth-2025-04-20")
 				if changed {
 					b.Fatal("unexpected change")
 				}

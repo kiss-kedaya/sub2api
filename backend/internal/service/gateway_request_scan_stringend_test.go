@@ -1,3 +1,5 @@
+//go:build unit
+
 package service
 
 import (
@@ -211,7 +213,7 @@ func perf18RandWS(rng *rand.Rand) string {
 	return []string{" ", "\n", "\t", "\r\n  ", "  "}[rng.Intn(5)]
 }
 
-var perf18Escapes = []string{`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, `A`, `é`, `⁣`, `😀`, `\u0000`, `\\\\`, `\\\"`}
+var perf18Escapes = []string{`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, `A`, `é`, "\xe2\x81\xa3", `😀`, `\u0000`, `\\\\`, `\\\"`}
 
 func perf18RandString(rng *rand.Rand) string {
 	var sb strings.Builder
@@ -225,7 +227,7 @@ func perf18RandString(rng *rand.Rand) string {
 		case r < 2:
 			sb.WriteString(perf18Escapes[rng.Intn(len(perf18Escapes))])
 		case r == 2:
-			sb.WriteString([]string{"é", "—", "😀", "中文", "⁣", " "}[rng.Intn(6)])
+			sb.WriteString([]string{"é", "—", "😀", "中文", "\xe2\x81\xa3", " "}[rng.Intn(6)])
 		default:
 			sb.WriteByte(byte('a' + rng.Intn(26)))
 		}

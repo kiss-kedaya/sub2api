@@ -1,3 +1,5 @@
+//go:build unit
+
 package service
 
 import (
@@ -83,7 +85,7 @@ func perf18ViewCorpus() map[string]string {
 		"responses-string":      `{"model":"gpt-5","input":"hello"}`,
 		"gemini":                `{"model":"gemini-2.5-pro","contents":[{"role":"user","parts":[{"text":"x"}]}],"systemInstruction":{"parts":[{"text":"sys"}]}}`,
 		"system-null":           `{"model":"m","system":null,"messages":[]}`,
-		"escapes":               `{"model":"claude-x\"\\\\","stream":false,"messages":[{"content":"a\\\"}]b"}],"system":"⁣😀"}`,
+		"escapes":               `{"model":"claude-x\"\\\\","stream":false,"messages":[{"content":"a\\\"}]b"}],"system":"` + "\xe2\x81\xa3" + `😀"}`,
 		"whitespace":            "{\n  \"model\" : \"m\" ,\n \"stream\" : true ,\n \"messages\" : [ ]\n}",
 		"no-fields":             `{"messages":[]}`,
 		"empty-object":          `{}`,

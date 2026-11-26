@@ -1,3 +1,5 @@
+//go:build unit
+
 package httputil
 
 import (
@@ -9,6 +11,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
 	"github.com/stretchr/testify/require"
 )
+
+// noticeFenceText is the invisible separator pair (U+2063 twice) the gateway puts around a notice.
+const noticeFenceText = "\xe2\x81\xa3\xe2\x81\xa3"
 
 // refReadLenient is ReadLenientJSONRequestBodyWithPrealloc as it was before the replay pass was
 // skipped when redundant: read (with the replay normalization), lenient normalization, replay again.
@@ -47,7 +52,7 @@ func replayRequestBodies() map[string]string {
 		"bom-and-fenced":                    "\xef\xbb\xbf" + fenced("hi"),
 		"msg-id-only-responses":             `{"input":[{"type":"item_reference","id":"msg_gateway_notice_1"},{"role":"user","content":"hi"}]}`,
 		"msg-id-in-text":                    `{"messages":[{"role":"user","content":"see msg_gateway_notice_ in my notes"}]}`,
-		"escaped-fence-in-text":             `{"messages":[{"role":"assistant","content":"` + `⁣⁣x⁣⁣` + `"}]}`,
+		"escaped-fence-in-text":             `{"messages":[{"role":"assistant","content":"` + noticeFenceText + `x` + noticeFenceText + `"}]}`,
 		"not-json":                          `this is not json`,
 		"empty":                             ``,
 		"valid-json-no-object":              `[1,2,3]`,
@@ -97,7 +102,7 @@ func TestReadLenientJSONRequestBodyMatchesReplayTwice(t *testing.T) {
 	body := replayRequestBodies()["fenced-assistant-with-raw-control"]
 	got, err := ReadLenientJSONRequestBodyWithPrealloc(httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader([]byte(body))), 1<<20)
 	require.NoError(t, err)
-	require.NotContains(t, string(got), "⁣", "the notice fence is stripped after the control byte is repaired")
+	require.NotContains(t, string(got), noticeFenceText, "the notice fence is stripped after the control byte is repaired")
 	require.Contains(t, string(got), `a\tb`, "and the raw tab ended up escaped")
 }
 
