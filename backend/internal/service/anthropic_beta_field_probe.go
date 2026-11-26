@@ -39,9 +39,6 @@ const (
 	betaFieldFallbackCreditToken
 	// betaFieldMessageOutputConfig: output_config on a message of the messages array.
 	betaFieldMessageOutputConfig
-
-	betaFieldsAll = betaFieldContextManagement | betaFieldThinkingBlockBinding | betaFieldFallbacks |
-		betaFieldFallbackCreditToken | betaFieldMessageOutputConfig
 )
 
 // anthropicBetaFieldsToStrip returns the guarded fields the anthropic-beta header does not authorize,

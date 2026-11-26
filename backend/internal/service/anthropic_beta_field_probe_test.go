@@ -15,6 +15,10 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// betaFieldsAll is every guarded field.
+const betaFieldsAll = betaFieldContextManagement | betaFieldThinkingBlockBinding | betaFieldFallbacks |
+	betaFieldFallbackCreditToken | betaFieldMessageOutputConfig
+
 // legacySanitizeAnthropicBodyForBetaTokens / legacySanitizeAnthropicFallbackFields are the two
 // sanitizers exactly as they were before the field probe: one gjson existence lookup per field,
 // the header consulted only for a field that exists.
