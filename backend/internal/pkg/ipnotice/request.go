@@ -156,6 +156,28 @@ func InjectRequest(body []byte, protocol Protocol, notice string) ([]byte, error
 	return sjson.SetBytes(body, field+".-1", message)
 }
 
+// hasReplayMarker reports whether body holds any of the three strings that mark a
+// gateway-written notice: the notice fence as UTF-8, the same fence as JSON escapes, or
+// a gateway notice message id. Its truth value is that of the three bytes.Contains calls
+// it stands for. Almost every request holds none of them, so what matters is how cheaply
+// "none" is proven: the message id is first looked for through its tail "_gateway_notice_",
+// which starts with a byte (underscore) that is far rarer in prose and in base64 than the
+// 'm' of "msg_" (bytes.Index looks for the first byte with IndexByte and gives up on that
+// when it hits too often). The tail is part of the id, so a body without it cannot hold the
+// id and the full id is only searched when the tail is there.
+func hasReplayMarker(body []byte) bool {
+	return bytes.Contains(body, replayFence) ||
+		bytes.Contains(body, replayEscapedFence) ||
+		(bytes.Contains(body, replayNoticeIDTail) && bytes.Contains(body, replayNoticeID))
+}
+
+var (
+	replayFence        = []byte(noticeFence)
+	replayEscapedFence = []byte(`\u2063\u2063`)
+	replayNoticeID     = []byte("msg_gateway_notice_")
+	replayNoticeIDTail = []byte("_gateway_notice_")
+)
+
 // NormalizeReplay reverses only gateway-created assistant/model notice blocks.
 // Each marker identifies a response boundary. Replaying the same input edit on
 // the preceding request prefix restores the original upstream conversation,
@@ -163,7 +185,7 @@ func InjectRequest(body []byte, protocol Protocol, notice string) ([]byte, error
 // or inspect user/tool/signature text for notices. Run this before IP matching,
 // including after an IP change or after the operator disables/edits the policy.
 func NormalizeReplay(body []byte, protocol Protocol) []byte {
-	if protocol == "" || (!bytes.Contains(body, []byte(noticeFence)) && !bytes.Contains(body, []byte(`\u2063\u2063`)) && !bytes.Contains(body, []byte("msg_gateway_notice_"))) {
+	if protocol == "" || !hasReplayMarker(body) {
 		return body
 	}
 	if !gjson.ValidBytes(body) {

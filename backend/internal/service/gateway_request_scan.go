@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"unsafe"
@@ -249,17 +250,37 @@ func skipJSONWhitespace(body []byte, i int) int {
 	return i
 }
 
-// scanJSONStringEnd returns the byte offset just past a string literal.
+// scanJSONStringEnd returns the byte offset just past the string literal whose
+// opening quote is body[i].
+//
+// A string is read as a sequence of tokens: a backslash plus the byte after it
+// (an escape pair), or any other single byte; the first quote that is a token of
+// its own ends the string. A quote is a token of its own exactly when an even
+// number of backslashes (possibly none) sits directly in front of it, because the
+// maximal run of backslashes starts at a token boundary (the opening quote, or a
+// byte that is not a backslash) and pairs up from there. So the scan only has to
+// find the next quote with IndexByte (SIMD) and count the backslashes behind it,
+// instead of looking at every byte of what is usually a long text. Control bytes
+// and invalid escapes are not checked here, same as the byte-at-a-time loop this
+// replaces (gjson.ValidBytes is the gate that rejects them).
 func scanJSONStringEnd(body []byte, i int) (int, error) {
-	for j := i + 1; j < len(body); j++ {
-		switch body[j] {
-		case '\\':
-			j++
-		case '"':
-			return j + 1, nil
+	start := i + 1
+	j := start
+	for {
+		k := bytes.IndexByte(body[j:], '"')
+		if k < 0 {
+			return 0, fmt.Errorf("unterminated string at byte %d", i)
 		}
+		q := j + k
+		backslashes := 0
+		for p := q - 1; p >= start && body[p] == '\\'; p-- {
+			backslashes++
+		}
+		if backslashes&1 == 0 {
+			return q + 1, nil
+		}
+		j = q + 1
 	}
-	return 0, fmt.Errorf("unterminated string at byte %d", i)
 }
 
 // scanJSONValueEnd returns the byte offset just past any JSON value.
