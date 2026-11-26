@@ -1559,20 +1559,16 @@ func (s *AuthService) GenerateToken(ctx context.Context, user *User) (string, er
 		return "", fmt.Errorf("generate session id: %w", err)
 	}
 	bindingHash, bindingCoarse := s.sessionBindingForIssue(ctx)
-	return s.generateAccessTokenWithCoarse(user, sessionID, bindingHash, bindingCoarse)
+	return s.generateAccessToken(user, sessionID, bindingHash, bindingCoarse)
 }
 
 // sessionBindingVersion 是当前签发 token 时写入的会话指纹版本。
 // 老 token 没有该字段（版本 0），中间件据此跳过校验以平滑升级。
 const sessionBindingVersion = 1
 
-// generateAccessToken 生成带会话 ID 与绑定指纹的 access token（不含粗粒度指纹）。
-func (s *AuthService) generateAccessToken(user *User, sessionID, bindingHash string) (string, error) {
-	return s.generateAccessTokenWithCoarse(user, sessionID, bindingHash, "")
-}
-
-// generateAccessTokenWithCoarse 同上，并写入粗粒度指纹（bcs claim）。
-func (s *AuthService) generateAccessTokenWithCoarse(user *User, sessionID, bindingHash, bindingCoarse string) (string, error) {
+// generateAccessToken 生成带会话 ID 与绑定指纹的 access token：bindingHash 是旧算法的指纹哈希
+// （bnd claim，新旧版本混跑时旧实例仍能比对），bindingCoarse 是粗粒度指纹（bcs claim，可为空）。
+func (s *AuthService) generateAccessToken(user *User, sessionID, bindingHash, bindingCoarse string) (string, error) {
 	now := time.Now()
 	var expiresAt time.Time
 	if s.cfg.JWT.AccessTokenExpireMinutes > 0 {
@@ -1882,7 +1878,7 @@ func (s *AuthService) GenerateTokenPairForSession(ctx context.Context, user *Use
 
 	// 生成Access Token（携带会话ID与绑定指纹）
 	bindingHash, bindingCoarse := s.sessionBindingForIssue(ctx)
-	accessToken, err := s.generateAccessTokenWithCoarse(user, familyID, bindingHash, bindingCoarse)
+	accessToken, err := s.generateAccessToken(user, familyID, bindingHash, bindingCoarse)
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
 	}

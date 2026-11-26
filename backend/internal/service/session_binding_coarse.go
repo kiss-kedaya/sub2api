@@ -208,18 +208,18 @@ func coarseProductToken(ua string) string {
 	if i := strings.IndexAny(ua, "/ ("); i >= 0 {
 		end = i
 	}
-	var sb strings.Builder
+	out := make([]byte, 0, 24)
 	for _, r := range strings.ToLower(ua[:end]) {
-		if sb.Len() >= 24 {
+		if len(out) >= 24 {
 			break
 		}
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
-			sb.WriteRune(r)
+			out = append(out, byte(r))
 		}
 	}
-	if sb.Len() == 0 {
+	if len(out) == 0 {
 		return "other"
 	}
-	return sb.String()
+	return string(out)
 }
