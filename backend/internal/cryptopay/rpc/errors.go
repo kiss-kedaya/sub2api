@@ -516,6 +516,33 @@ var safeBusinessPrefixes = []string{
 	"invalid sweep job id",
 	"sweep job ",
 	"no RPC pool for chain",
+	// Written by the sweeper when rpc.Pool.ForChain found no endpoint it could
+	// verify for a job's chain; fixed text, no endpoint, no node words.
+	"no RPC endpoint could be verified",
+	// Written by the manual sweep drain when it ends without having moved
+	// anything. The rest is chain names, job ids and the sweeper's fixed
+	// step/category words, bounded below the 160 byte limit.
+	"sweep drain stopped: ",
+}
+
+// sweepStepPrefixes are the job stages the sweeper may put in front of a
+// reason ("balance_read: RPC connection failed") so a record says WHERE a job
+// stopped. Keep in step with sweeper.Step*; a test in the sweeper package pins
+// it. The text after the prefix is judged on its own, so a prefix never makes
+// an unsafe message safe.
+var sweepStepPrefixes = []string{
+	"validate: ", "balance_read: ", "address_busy: ", "gas_price: ", "gas_fund: ",
+	"nonce: ", "sign: ", "broadcast: ", "receipt: ", "persist: ",
+}
+
+// cutSweepStep splits "<step>: <reason>" into its parts.
+func cutSweepStep(message string) (prefix, rest string, ok bool) {
+	for _, prefix := range sweepStepPrefixes {
+		if rest, found := strings.CutPrefix(message, prefix); found && rest != "" {
+			return prefix, rest, true
+		}
+	}
+	return "", "", false
 }
 
 // boundedBusinessError only forwards a message that matches our own wording and
@@ -595,7 +622,25 @@ func safeRecordedBase(message string) string {
 		"Payment operation canceled; reconcile transaction status before retrying",
 		"Payment operation timed out; reconcile transaction status before retrying":
 		return message
+	// The wallet and mode packages' own sentinels, word for word. They are fixed
+	// sentences without node text, and a locked or disabled signer is the single
+	// most useful thing an operator can be told when a run stops: it used to
+	// reach the record and the run status as the generic sentence below. A test
+	// in the sweeper package pins every one against its sentinel.
+	case "wallet signer is locked; a recovery shard is required",
+		"wallet security lock is active; operator review is required",
+		"wallet signing requires an active sweep authorization",
+		"wallet signing is disabled",
+		"wallet seeds are not configured",
+		"encrypted wallet seeds unavailable",
+		"wallet audit unavailable",
+		"too many rejected recovery shares; the signer is temporarily locked",
+		"cryptopay is read-only in CRYPTO_ADMIN_TEST_MODE":
+		return message
 	default:
+		if prefix, rest, ok := cutSweepStep(message); ok {
+			return prefix + safeRecordedBase(rest)
+		}
 		if message, ok := boundedBusinessError(message); ok {
 			return message
 		}

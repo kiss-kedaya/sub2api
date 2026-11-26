@@ -52,11 +52,10 @@ func sweepFailureEvents(summary *sweeper.Summary, runErr error) []sweepFailureEv
 		for _, entry := range summary.Entries {
 			// Ordinary confirmation waits are not failures. Pending jobs with
 			// an RPC/signing/persistence error still require an operator alert.
-			reason := rpc.SafeRecordedError(entry.Error)
-			if entry.Status != "failed" && entry.Status != "manual_review" &&
-				(entry.Status != "pending" || reason == "" || reason == "awaiting canonical receipt and required confirmations" || reason == "awaiting gas payer transaction confirmation") {
+			if !entry.NeedsAttention() {
 				continue
 			}
+			reason := rpc.SafeRecordedError(entry.Error)
 			if reason == "" {
 				reason = "Payment operation failed; reconcile transaction status before retrying"
 			}
@@ -76,7 +75,13 @@ func sweepFailureEvents(summary *sweeper.Summary, runErr error) []sweepFailureEv
 				identity = "unreserved:" + entry.Chain + ":" + strings.ToLower(entry.Address) + ":" + strings.ToLower(entry.Token)
 			}
 			fingerprint := alertDigest(entry.Status + ":" + reason)
-			body := fmt.Sprintf("链：%s\n归集任务：%s\n原因：%s\n请检查后台 Gas 钱包余额和归集记录；有交易哈希的任务须先核对链上结果，不要重复付款。", chain, task, reason)
+			// Step and category are the sweeper's fixed words, never node text. The
+			// fingerprint ignores them, so a repeat of the same failure does not re-alert.
+			stage := ""
+			if entry.Step != "" {
+				stage = fmt.Sprintf("环节：%s/%s\n", entry.Step, entry.Category)
+			}
+			body := fmt.Sprintf("链：%s\n归集任务：%s\n原因：%s\n%s请检查后台 Gas 钱包余额和归集记录；有交易哈希的任务须先核对链上结果，不要重复付款。", chain, task, reason, stage)
 			events = append(events, sweepFailureEvent{key: sweepAlertPrefix + alertDigest(identity), fingerprint: fingerprint, body: body})
 		}
 	}

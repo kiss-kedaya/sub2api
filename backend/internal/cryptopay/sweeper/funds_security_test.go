@@ -12,10 +12,18 @@ func TestSweepWrongChainCannotConfirmPersistedTransaction(t *testing.T) {
 	j := signedJob(c, entry, false)
 	c.chainID = "0x89" // valid receipt, but this endpoint is Polygon, not BSC
 	c.txs[j.SweepHash] = true
-	expectWrite(mock, "sweep_pending", nil, nil)
+	// An endpoint that cannot be verified for the chain is RPC trouble, not a
+	// verdict on the payment: the reason is recorded, the attempt counter and the
+	// state stay exactly as they were.
+	mock.ExpectExec(`UPDATE sweep_records SET error=\$2\s+WHERE id=\$1 AND job_version=1 AND revision=\$3`).
+		WithArgs(int64(1), "validate: no RPC endpoint could be verified for the chain", j.Revision).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	out, err := e.resume(t.Context(), j)
 	if err == nil || out.Status == "swept" || c.receiptReads != 0 || len(c.signs) != 0 || len(c.raws) != 0 {
 		t.Fatalf("wrong-chain endpoint resolved/spent a BSC job: out=%+v err=%v receipts=%d", out, err, c.receiptReads)
+	}
+	if out.Step != StepValidate || out.Category != CategoryEndpoints {
+		t.Fatalf("the reason code is missing: %+v", out)
 	}
 }
 

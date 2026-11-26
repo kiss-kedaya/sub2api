@@ -1116,43 +1116,9 @@ func (s *Service) runSweepLocked(ctx context.Context, dryRun, manual bool, chain
 		exec = exec.WithChains(chains)
 	}
 	if manual && !dryRun {
-		// A single click must clear the whole queue. First put back failures
-		// that never produced a transaction (safe: nothing was broadcast), then
-		// run passes until no new retryable failure appears. Broadcast failures
-		// stay untouched: retrying those needs an on-chain check, not a guess.
-		if _, err := exec.ResetRetryableFailures(ctx, 200); err != nil {
-			return nil, err
-		}
-		merged := &sweeper.Summary{DryRun: false}
-		// Gas top-ups are serialized by the payer nonce, so one pass can only
-		// sweep the addresses whose gas confirmed while it ran. Keep passing
-		// until the queue is empty (or a retryable failure stops being reset),
-		// otherwise a click only ever drains the first handful of addresses.
-		for round := 0; round < 60; round++ {
-			reset, rerr := 0, error(nil)
-			if round > 0 {
-				reset, rerr = exec.ResetRetryableFailures(ctx, 200)
-				if rerr != nil {
-					return merged, rerr
-				}
-				// Give the previous round's gas top-ups time to mine; without
-				// this sleep every extra round just sees the same pending gas.
-				select {
-				case <-time.After(8 * time.Second):
-				case <-ctx.Done():
-					return merged, ctx.Err()
-				}
-			}
-			pass, perr := exec.RunManualAndWait(ctx, dryRun)
-			mergeSweepSummary(merged, pass)
-			if perr != nil {
-				return merged, perr
-			}
-			if pass.Pending == 0 && pass.Planned == 0 && reset == 0 {
-				break
-			}
-		}
-		return merged, nil
+		// A single click must clear the whole queue, and one failing job must not
+		// keep the rest of it waiting (see drainManualSweep).
+		return drainManualSweep(ctx, exec, defaultSweepDrain)
 	}
 	if manual {
 		return exec.RunManualAndWait(ctx, dryRun)
@@ -2087,16 +2053,4 @@ func (s *Service) reloadIfConfigChanged(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-func mergeSweepSummary(dst, src *sweeper.Summary) {
-	if dst == nil || src == nil {
-		return
-	}
-	dst.Planned += src.Planned
-	dst.Swept += src.Swept
-	dst.Failed += src.Failed
-	dst.Pending += src.Pending
-	dst.GasTopUp += src.GasTopUp
-	dst.Entries = append(dst.Entries, src.Entries...)
 }
