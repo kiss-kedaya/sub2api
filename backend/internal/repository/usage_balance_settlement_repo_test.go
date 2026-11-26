@@ -273,7 +273,7 @@ func TestBalanceSettlementBacklogQueryIsBoundedAndIndexShaped(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	mock.ExpectQuery(`(?s)SELECT 1 FROM billing_balance_settlements WHERE status = \$1 LIMIT \$2.*` +
+	mock.ExpectQuery(`(?s)SELECT 1 FROM billing_balance_settlements WHERE status = \$1 LIMIT \$2.*`+
 		`WHERE status = \$1\s+ORDER BY available_at, id\s+LIMIT \$3`).
 		WithArgs(3, int64(40000), 256).
 		WillReturnRows(sqlmock.NewRows([]string{"depth", "oldest_ms"}).AddRow(int64(1234), int64(2500)))

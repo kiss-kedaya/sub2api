@@ -85,7 +85,9 @@ func TestProvideUsageBalanceSettlementWorker_ZeroLimitsDisableTheTriggersNotTheO
 
 type notifyUserRepoStub struct{ UserRepository }
 
-func (*notifyUserRepoStub) GetByID(context.Context, int64) (*User, error) { return nil, ErrUserNotFound }
+func (*notifyUserRepoStub) GetByID(context.Context, int64) (*User, error) {
+	return nil, ErrUserNotFound
+}
 
 func TestProvideBalanceNotifyService_GetsTheUserReader(t *testing.T) {
 	repo := &notifyUserRepoStub{}
