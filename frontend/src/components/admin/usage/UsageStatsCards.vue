@@ -1,6 +1,6 @@
 <template>
   <div
-    class="grid grid-cols-2 gap-4 transition-opacity lg:grid-cols-4"
+    class="relative z-10 grid grid-cols-2 gap-4 transition-opacity lg:grid-cols-4"
     :class="{ 'opacity-60': refreshing }"
     :aria-busy="loading || undefined"
   >
@@ -54,7 +54,7 @@
               and `pointer-events-none` keeps it from stealing hover from the trigger.
             -->
             <span
-              class="pointer-events-none absolute right-0 top-full z-30 mt-2 hidden w-56 rounded-lg border border-default bg-default p-3 text-left text-xs text-default shadow-lg group-hover:block group-focus:block"
+              class="pointer-events-none absolute right-0 top-full z-30 mt-2 hidden w-56 rounded-lg border border-default bg-default p-3 text-left text-xs text-default shadow-lg group-hover:block group-focus:block group-focus-within:block"
             >
               <span class="mb-2 block font-medium text-highlighted">
                 {{ cacheDetailLabel() }}

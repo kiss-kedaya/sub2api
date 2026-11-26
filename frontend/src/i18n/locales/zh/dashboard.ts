@@ -1220,6 +1220,12 @@ export default {
   profile: {
     title: '个人设置',
     description: '管理您的账户信息和设置',
+    tabs: {
+      profile: '基本资料',
+      bindings: '登录方式',
+      security: '账号安全',
+      notifications: '消息通知',
+    },
     accountBalance: '账户余额',
     concurrencyLimit: '并发限制',
     rpmLimit: 'RPM 限制',

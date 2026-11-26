@@ -230,4 +230,19 @@ describe('WechatOAuthSection', () => {
 
     expect(wrapper.text()).toContain('MOCK-NOT-CONFIGURED')
   })
+
+  it('renders a real WeChat SVG mark inside the login button', () => {
+    seedPublicSettings({
+      wechat_oauth_open_enabled: true,
+      wechat_oauth_mp_enabled: false,
+    })
+
+    const wrapper = mount(WechatOAuthSection, {
+      global: {
+        plugins: [pinia],
+      },
+    })
+
+    expect(wrapper.find('button svg').exists()).toBe(true)
+  })
 })

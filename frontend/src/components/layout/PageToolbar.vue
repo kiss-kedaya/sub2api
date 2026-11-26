@@ -30,6 +30,8 @@ const frame = useDashboardFrame()
 
 <style scoped>
 .page-toolbar-inline {
+  position: relative;
+  z-index: 15;
   display: flex;
   min-width: 0;
   flex-wrap: wrap;

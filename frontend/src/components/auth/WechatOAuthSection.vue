@@ -11,10 +11,7 @@
     @select="startLogin"
   >
     <template #icon-wechat>
-      <span
-        class="inline-flex size-5 items-center justify-center rounded-full bg-green-100 text-xs font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-300"
-        aria-hidden="true"
-      >W</span>
+      <WeChatMark class="size-5 text-[#07C160] dark:text-[#2BD978]" />
     </template>
     <template v-if="disabledHint" #footer>
       <p
@@ -31,6 +28,7 @@
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import WeChatMark from './WeChatMark.vue'
 import SocialLoginButtons from '@/components/common/SocialLoginButtons.vue'
 import type { SocialLoginProvider } from '@/components/common/socialLogin'
 import { resolveWeChatOAuthStart, type OAuthLoginStart } from '@/api/auth'

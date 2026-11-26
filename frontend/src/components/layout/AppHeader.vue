@@ -4,7 +4,7 @@
        header component or <PageNavbar> / <PageToolbar> (see dashboardFrame.ts). -->
   <UDashboardNavbar
     as="header"
-    class="console-navbar signal-header bg-(--app-page-bg)/90 backdrop-blur-md"
+    class="console-navbar signal-header relative z-40 bg-(--app-page-bg)/90 backdrop-blur-md"
     :ui="{ right: 'gap-1.5 sm:gap-2', left: 'min-w-0 flex-1' }"
   >
     <!-- Phones: opens the sidebar drawer (UDashboardSidebarToggle). -->
@@ -83,7 +83,7 @@
 
   <!-- UDashboardToolbar: shown only while a page puts something in it (CSS :has below). -->
   <UDashboardToolbar
-    class="console-toolbar bg-(--app-page-bg)"
+    class="console-toolbar relative z-30 bg-(--app-page-bg)"
     :ui="{ root: 'overflow-visible flex-wrap gap-y-2 py-2' }"
   >
     <div :id="FRAME_TARGETS.toolbarStart" class="console-toolbar-start"></div>
@@ -287,7 +287,8 @@ function formatHeaderMoney(value: number) {
 }
 
 .console-navbar .header-balance:hover .header-balance-detail,
-.console-navbar .header-balance:focus-visible .header-balance-detail {
+.console-navbar .header-balance:focus-visible .header-balance-detail,
+.console-navbar .header-balance:focus-within .header-balance-detail {
   display: block;
 }
 

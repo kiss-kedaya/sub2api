@@ -115,4 +115,39 @@ describe('AffiliateView', () => {
     expect(copyToClipboard).toHaveBeenNthCalledWith(1, affiliateCode, 'affiliate.codeCopied')
     expect(copyToClipboard).toHaveBeenNthCalledWith(2, inviteLink, 'affiliate.linkCopied')
   })
+
+  it('aligns the invite code and invite link copy rows on a shared baseline', async () => {
+    const wrapper = mount(AffiliateView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<main><slot /></main>' },
+          Icon: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    const copyButtons = wrapper.findAll('button').filter((button) =>
+      ['affiliate.copyCode', 'affiliate.copyLink'].includes(button.text()),
+    )
+    expect(copyButtons).toHaveLength(2)
+
+    const columns = copyButtons.map((button) => button.element.parentElement?.parentElement)
+    expect(columns[0]?.parentElement).toBe(columns[1]?.parentElement)
+    columns.forEach((column) => {
+      expect(Array.from(column?.classList ?? [])).toEqual(expect.arrayContaining([
+        'flex',
+        'min-w-0',
+        'flex-col',
+      ]))
+      const copyRow = column?.lastElementChild
+      expect(Array.from(copyRow?.classList ?? [])).toContain('mt-auto')
+    })
+
+    // The invite link stats sit inline in the invite-link header row rather than pushing the row down.
+    const linkHeader = columns[1]?.firstElementChild
+    expect(linkHeader?.textContent).toContain('affiliate.inviteLink')
+    expect(linkHeader?.textContent).toContain('affiliate.customCodes.stats')
+  })
 })

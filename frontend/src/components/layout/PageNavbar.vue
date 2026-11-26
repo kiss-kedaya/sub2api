@@ -29,6 +29,8 @@ const target = computed(() => selector(props.pinned || wide.value ? FRAME_TARGET
 
 <style scoped>
 .page-navbar-inline {
+  position: relative;
+  z-index: 20;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

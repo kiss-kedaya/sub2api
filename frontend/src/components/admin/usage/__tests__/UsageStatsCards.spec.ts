@@ -133,7 +133,7 @@ describe('UsageStatsCards loading', () => {
     const wrapper = mountCards({ stats, loading: true })
 
     expect(wrapper.attributes('aria-busy')).toBe('true')
-    expect(wrapper.classes()).toContain('opacity-60')
+    expect(wrapper.classes()).toEqual(expect.arrayContaining(['relative', 'z-10', 'opacity-60']))
     expect(wrapper.findAll('[aria-hidden="true"]').length).toBe(0)
     expect(wrapper.text()).toContain('250ms')
   })

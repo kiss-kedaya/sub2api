@@ -1218,6 +1218,12 @@ export default {
   profile: {
     title: 'Profile Settings',
     description: 'Manage your account information and settings',
+    tabs: {
+      profile: 'Profile',
+      bindings: 'Sign-In Methods',
+      security: 'Security',
+      notifications: 'Notifications',
+    },
     accountBalance: 'Account Balance',
     concurrencyLimit: 'Concurrency Limit',
     rpmLimit: 'RPM Limit',

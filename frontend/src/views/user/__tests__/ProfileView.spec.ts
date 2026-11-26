@@ -1,4 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ProfileView from '@/views/user/ProfileView.vue'
 
@@ -100,5 +101,160 @@ describe('ProfileView', () => {
     const shell = wrapper.get('[data-testid="profile-shell"]').html()
     expect(shell).toContain('profile-key-verification-card')
     expect(shell.indexOf('profile-key-verification-card')).toBeGreaterThan(shell.indexOf('profile-totp-card'))
+  })
+
+  it('groups profile sections into horizontal tabs and switches panels on click and deep link', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/profile', name: 'Profile', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/profile?tab=security')
+    await router.isReady()
+
+    const wrapper = mount(ProfileView, {
+      attachTo: document.body,
+      global: {
+        plugins: [router],
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          ProfileInfoCard: { props: ['section'], template: '<div :data-testid="`profile-info-card-${section}`" />' },
+          ProfileBalanceNotifyCard: { template: '<div data-testid="profile-balance-notify-card" />' },
+          ProfilePasswordForm: { template: '<div data-testid="profile-password-form" />' },
+          ProfileTotpCard: { template: '<div data-testid="profile-totp-card" />' },
+          ProfilePasskeyCard: { template: '<div data-testid="profile-passkey-card" />' },
+          ProfileKeyVerificationCard: { template: '<div data-testid="profile-key-verification-card" />' },
+          ProfileBarkCard: { template: '<div data-testid="profile-bark-card" />' },
+          TwoFactorSuggestionBanner: { template: '<div data-testid="two-factor-banner" />' },
+          Icon: true,
+        },
+      },
+    })
+
+    try {
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="profile-tabs-toolbar"]').exists()).toBe(true)
+      expect(wrapper.find('#profile-tab-profile').exists()).toBe(true)
+      expect(wrapper.find('#profile-tab-bindings').exists()).toBe(true)
+      expect(wrapper.find('#profile-tab-security').exists()).toBe(true)
+      expect(wrapper.find('#profile-tab-notifications').exists()).toBe(true)
+
+      // Deep link ?tab=security activates the Security panel and hides the others.
+      expect(wrapper.get('[data-testid="profile-tab-panel-security"]').isVisible()).toBe(true)
+      expect(wrapper.get('[data-testid="profile-tab-panel-profile"]').isVisible()).toBe(false)
+      expect(wrapper.get('[data-testid="profile-tab-panel-bindings"]').isVisible()).toBe(false)
+      expect(wrapper.get('[data-testid="profile-tab-panel-notifications"]').isVisible()).toBe(false)
+
+      // Clicking the Sign-In Methods tab switches panel visibility and updates the query string.
+      const tabButtonFor = (id: string) =>
+        wrapper.findAll('button[role="tab"]').find((button) => button.find(`#${id}`).exists())
+      await tabButtonFor('profile-tab-bindings')!.trigger('mousedown')
+      await flushPromises()
+      expect(wrapper.get('[data-testid="profile-tab-panel-bindings"]').isVisible()).toBe(true)
+      expect(wrapper.get('[data-testid="profile-tab-panel-security"]').isVisible()).toBe(false)
+      expect(router.currentRoute.value.query.tab).toBe('bindings')
+
+      // Switching to Notifications reveals the notifications panel and updates the query string.
+      await tabButtonFor('profile-tab-notifications')!.trigger('mousedown')
+      await flushPromises()
+      expect(wrapper.get('[data-testid="profile-tab-panel-notifications"]').isVisible()).toBe(true)
+      expect(wrapper.get('[data-testid="profile-tab-panel-bindings"]').isVisible()).toBe(false)
+      expect(router.currentRoute.value.query.tab).toBe('notifications')
+
+      // Navigating directly back to /profile without ?tab= resets the active tab to profile.
+      await router.push('/profile')
+      await flushPromises()
+      expect(wrapper.get('[data-testid="profile-tab-panel-profile"]').isVisible()).toBe(true)
+      expect(wrapper.get('[data-testid="profile-tab-panel-notifications"]').isVisible()).toBe(false)
+
+      // Switching to bindings and returning via the Profile tab clears the tab query parameter.
+      await tabButtonFor('profile-tab-bindings')!.trigger('mousedown')
+      await flushPromises()
+      expect(router.currentRoute.value.query.tab).toBe('bindings')
+      await tabButtonFor('profile-tab-profile')!.trigger('mousedown')
+      await flushPromises()
+      expect(wrapper.get('[data-testid="profile-tab-panel-profile"]').isVisible()).toBe(true)
+      expect(router.currentRoute.value.query.tab).toBeUndefined()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('scrolls the active tab trigger into view for narrow horizontal tab bars', async () => {
+    const scrollIntoViewMock = vi.fn()
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
+    HTMLElement.prototype.scrollIntoView = scrollIntoViewMock
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/profile', name: 'Profile', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/profile?tab=notifications')
+    await router.isReady()
+
+    const wrapper = mount(ProfileView, {
+      attachTo: document.body,
+      global: {
+        plugins: [router],
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          ProfileInfoCard: { template: '<div />' },
+          ProfileBalanceNotifyCard: { template: '<div />' },
+          ProfilePasswordForm: { template: '<div />' },
+          ProfileTotpCard: { template: '<div />' },
+          ProfilePasskeyCard: { template: '<div />' },
+          ProfileKeyVerificationCard: { template: '<div />' },
+          ProfileBarkCard: { template: '<div />' },
+          TwoFactorSuggestionBanner: { template: '<div />' },
+          Icon: true,
+        },
+      },
+    })
+
+    try {
+      await flushPromises()
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
+    } finally {
+      wrapper.unmount()
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView
+    }
+  })
+
+  it('falls back to the profile tab when an unknown tab query is supplied', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/profile', name: 'Profile', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/profile?tab=nonexistent')
+    await router.isReady()
+
+    const wrapper = mount(ProfileView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          ProfileInfoCard: { template: '<div />' },
+          ProfileBalanceNotifyCard: { template: '<div />' },
+          ProfilePasswordForm: { template: '<div />' },
+          ProfileTotpCard: { template: '<div />' },
+          ProfilePasskeyCard: { template: '<div />' },
+          ProfileKeyVerificationCard: { template: '<div />' },
+          ProfileBarkCard: { template: '<div />' },
+          TwoFactorSuggestionBanner: { template: '<div />' },
+          Icon: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="profile-tab-panel-profile"]').isVisible()).toBe(true)
+    expect(wrapper.get('[data-testid="profile-tab-panel-security"]').isVisible()).toBe(false)
   })
 })
