@@ -1224,6 +1224,15 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
+	// 刷新时发生了指纹重绑（只是 IP 变了所以放行）：成功的刷新默认不进审计，这一条值得留下——
+	// 只带前后两端的粗粒度标签，不含 IP 与完整 UA。
+	if result.BindingRebound {
+		middleware2.SetAuditAction(c, service.AuditActionSessionBindingRebind)
+		middleware2.SetAuditActor(c, result.UserID, "")
+		middleware2.SetAuditExtra(c, map[string]any{"binding_from": result.BindingFrom, "binding_to": result.BindingTo})
+		middleware2.MarkAuditAlways(c)
+	}
+
 	response.Success(c, RefreshTokenResponse{
 		AccessToken:  result.AccessToken,
 		RefreshToken: result.RefreshToken,

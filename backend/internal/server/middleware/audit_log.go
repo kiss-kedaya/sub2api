@@ -21,6 +21,8 @@ const (
 	auditCtxKeyActorID    = "audit_actor_id"
 	auditCtxKeyActorEmail = "audit_actor_email"
 	auditCtxKeySkip       = "audit_skip"
+	// auditCtxKeyForce 让一次成功的 token 刷新也落审计（见 MarkAuditAlways）。
+	auditCtxKeyForce = "audit_force"
 	// auditCtxKeyRecorded 标记本请求已由审计中间件写入完整记录；
 	// 认证层据此避免为同一请求再补记一条低信息量的兜底记录。
 	auditCtxKeyRecorded = "audit_recorded"
@@ -123,6 +125,12 @@ func SkipAudit(c *gin.Context) {
 	c.Set(auditCtxKeySkip, true)
 }
 
+// MarkAuditAlways 让一次「成功的 token 刷新」也落审计：刷新成功是高频常规操作，默认只记失败；
+// 但刷新时发生了指纹重绑（rebind）这种值得事后追溯的事件，handler 调这个函数把它留下。
+func MarkAuditAlways(c *gin.Context) {
+	c.Set(auditCtxKeyForce, true)
+}
+
 // auditExtraAllowedKeys is deliberately narrow: handlers may only attach
 // scalar, non-secret operation summaries. Request bodies and arbitrary maps
 // are never accepted through this channel.
@@ -171,6 +179,9 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	// admin.user.reset_2fa 记录，totp_secret 任何形式都不入库。
 	"admin_2fa_reset_revoked_stepup": {}, "admin_2fa_reset_notified": {},
 	"admin_2fa_reset_passkey_bound": {},
+	// 刷新时的会话指纹重绑（auth.session_binding.rebind）：只记前后两端的粗粒度标签
+	// （如 chrome/windows/ipv4），绝不记 IP 原文与完整 User-Agent。
+	"binding_from": {}, "binding_to": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.
@@ -589,8 +600,9 @@ func NewAuditLogMiddleware(auditService *service.AuditLogService) AuditLogMiddle
 		}
 
 		status := c.Writer.Status()
-		// token 刷新成功属于高频常规操作，只记录失败（潜在攻击信号）。
-		if routeKey == "POST /api/v1/auth/refresh" && status < 400 {
+		// token 刷新成功属于高频常规操作，只记录失败（潜在攻击信号）；
+		// handler 用 MarkAuditAlways 标记过的成功刷新（如指纹重绑）除外。
+		if routeKey == "POST /api/v1/auth/refresh" && status < 400 && !c.GetBool(auditCtxKeyForce) {
 			return
 		}
 

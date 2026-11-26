@@ -46,8 +46,11 @@ const (
 	AuditActionRegister               = "auth.register"
 	AuditActionTokenRefresh           = "auth.token.refresh"
 	AuditActionSessionBindingMismatch = "auth.session_binding.mismatch"
-	AuditActionStepUpVerify           = "auth.step_up.verify"
-	AuditActionAuditLogClear          = "admin.audit_log.clear"
+	// AuditActionSessionBindingRebind 记录一次「刷新时指纹不一致、但只是 IP 变了所以放行并重绑」：
+	// 只带粗粒度标签（浏览器家族/系统家族/IP 家族），不含 IP 与完整 UA。
+	AuditActionSessionBindingRebind = "auth.session_binding.rebind"
+	AuditActionStepUpVerify         = "auth.step_up.verify"
+	AuditActionAuditLogClear        = "admin.audit_log.clear"
 	// AuditActionAdminAuthProbeAlert is written when the admin 401/403 probe
 	// detector crosses its threshold for one source IP. The row carries only
 	// IP, user-agent prefix, hit paths and status-code counts — never header

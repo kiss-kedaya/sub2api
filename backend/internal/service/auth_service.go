@@ -1849,6 +1849,13 @@ type TokenPair struct {
 type TokenPairWithUser struct {
 	TokenPair
 	UserRole string
+	// UserID 是刷新所属的用户（审计用）。
+	UserID int64
+	// BindingRebound 表示这次刷新发生了指纹不一致、但只是 IP 变了所以放行并重绑；
+	// BindingFrom / BindingTo 是前后两端的粗粒度标签（如 chrome/windows/ipv4），不含 IP 与完整 UA。
+	BindingRebound bool
+	BindingFrom    string
+	BindingTo      string
 }
 
 // GenerateTokenPair 生成Access Token和Refresh Token对（新会话）。
@@ -2198,18 +2205,23 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 		s.warnEvent("refresh_leeway_retry", "refresh token retried within the leeway window: a new token pair was issued and the session kept",
 			"user_id", data.UserID, "reissues", data.LeewayReissues)
 	}
+	result := &TokenPairWithUser{
+		TokenPair: *pair,
+		UserRole:  user.Role,
+		UserID:    user.ID,
+	}
 	if rebind {
 		stats.inc(statRefreshBindingRebind)
+		from := BindingLabel(data.BindingCoarse)
+		to := BindingLabel(SessionBindingFromContext(ctx).CoarseFingerprint())
 		s.warnEvent("refresh_binding_rebind", "session binding mismatch on refresh: session kept and re-bound to the current client",
-			"user_id", data.UserID, "from", BindingLabel(data.BindingCoarse), "to", BindingLabel(SessionBindingFromContext(ctx).CoarseFingerprint()))
+			"user_id", data.UserID, "from", from, "to", to)
+		result.BindingRebound, result.BindingFrom, result.BindingTo = true, from, to
 	}
 	if ipFamilySwitch {
 		stats.inc(statRefreshIPFamilySwitch)
 	}
-	return &TokenPairWithUser{
-		TokenPair: *pair,
-		UserRole:  user.Role,
-	}, nil
+	return result, nil
 }
 
 // maxLeewayClockSkew 是容忍的实例间时钟偏差：墓碑的 ConsumedAt 由消费它的那个实例的时钟写入，
