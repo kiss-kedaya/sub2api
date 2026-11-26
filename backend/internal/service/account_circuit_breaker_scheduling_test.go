@@ -207,3 +207,26 @@ type observableUpstreamStub struct {
 func (o *observableUpstreamStub) SetUpstreamAttemptObserver(observer UpstreamAttemptObserver) {
 	o.observer = observer
 }
+
+func TestSelectorFallbackDoesNotRetryAccountPausedByBreaker(t *testing.T) {
+	// 生产里「同账号再试一次」是选号层在候选耗尽后的兜底（每个请求最多一次）。
+	// 账号一旦被断路器停掉，这个兜底资格必须取消，否则会把刚摘掉的账号重新选回来。
+	_, _, breaker, svc, _ := newBreakerSchedFixture(t, time.Minute)
+	pool := &Account{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeAPIKey, Credentials: map[string]any{"pool_mode": true, "pool_mode_retry_count": 3}}
+	failoverErr := &UpstreamFailoverError{StatusCode: 502, RetryableOnSameAccount: true}
+
+	ctx := withUpstreamAttempts(context.Background())
+	svc.InvalidateUpstreamAffinity(ctx, nil, "", pool, failoverErr)
+	state, ok := ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts)
+	require.True(t, ok)
+	require.True(t, state.failed[1], "breaker closed: the account keeps its single fallback attempt")
+
+	tripAccount(breaker, 1)
+	ctx2 := withUpstreamAttempts(context.Background())
+	svc.InvalidateUpstreamAffinity(ctx2, nil, "", pool, failoverErr)
+	state2, ok := ctx2.Value(upstreamAttemptContextKey{}).(*upstreamAttempts)
+	require.True(t, ok)
+	eligible, recorded := state2.failed[1]
+	require.True(t, recorded, "the failed account is still excluded from this request")
+	require.False(t, eligible, "a paused account must not be re-selected by the fallback")
+}

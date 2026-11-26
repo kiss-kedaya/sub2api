@@ -551,6 +551,37 @@ gateway:
     failure_threshold: 2
     window_seconds: 60
     ttl_seconds: 600
+  # 账号错误率断路器：每个进程为每个账号维护一个滑动窗口（内存、无 Redis/DB 往返），
+  # 窗口内「对该账号发起的上游尝试」数 >= min_requests 且 失败率 严格大于 error_rate 时，
+  # 把账号写成临时不可调度 cooldown_seconds 秒（走 temp_unschedulable_until/reason，调度选号、粘连会话、
+  # 后台账号列表都认它），到期自动恢复；恢复后要重新攒够 min_requests 个新样本且仍超阈值才会再次熔断。
+  # 失败 = 连接/传输错误、上游响应超时、上游 5xx、429、401/402/403/407；
+  # 客户端断开、本地 ctx 取消/超时、本机资源耗尽一律不计入。
+  # 环境变量：GATEWAY_ACCOUNT_CIRCUIT_BREAKER_ENABLED / _WINDOW_SECONDS / _ERROR_RATE / _MIN_REQUESTS / _COOLDOWN_SECONDS ...
+  account_circuit_breaker:
+    enabled: true
+    window_seconds: 300
+    error_rate: 0.95
+    min_requests: 20
+    cooldown_seconds: 60
+    # 可选：同一账号在窗口内连续再次熔断时，冷却时间按 2 倍递增（上限 max_cooldown_seconds）。默认关闭。
+    backoff_enabled: false
+    max_cooldown_seconds: 300
+    # 安全阀：同一平台 1 分钟内已被熔断的账号数 >= valve_min_accounts 且占该平台参与统计账号的比例
+    # >= valve_ratio 时，视为本机/网络问题而不是上游问题，不再继续熔断更多账号（并打 ERROR 日志）。
+    valve_min_accounts: 3
+    valve_ratio: 0.5
+  # 单个客户端请求的重试硬上限：不管是同账号重试还是换号，都共用这些预算。
+  # max_attempts：最多向上游发起的尝试次数；max_elapsed_seconds：进入故障转移循环后的总耗时上限；
+  # backoff_*：同账号重试的带抖动指数退避（base、2*base、4*base…，上限 max，睡眠可被 ctx 取消）；
+  # retry_after_*：网关自己返回 503/429 时 Retry-After 的取值区间（秒，随机）。
+  retry_guard:
+    max_attempts: 10
+    max_elapsed_seconds: 60
+    backoff_base_ms: 100
+    backoff_max_ms: 1000
+    retry_after_min_seconds: 5
+    retry_after_max_seconds: 30
   # Grok free-tier local soft gate (scheduler filter only; admin QueryQuota/import probe bypasses it).
   # Enabled by default because free detection requires an explicit subscription_tier/plan_type of "free".
   # Stats/query failures fail open so DB issues do not block all Grok traffic.

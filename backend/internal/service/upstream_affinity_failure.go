@@ -46,6 +46,13 @@ func PreferAlternativeUpstream(ctx context.Context) bool {
 }
 
 func invalidateUpstreamAffinity(ctx context.Context, cache GatewayCache, groupID *int64, keys []string, account *Account, err error) {
+	invalidateUpstreamAffinityWithCircuit(ctx, cache, groupID, keys, account, err, false)
+}
+
+// invalidateUpstreamAffinityWithCircuit 清理失败账号的会话粘连，并记下「本请求里这个账号失败过」。
+// circuitOpen 为 true（账号刚被错误率断路器停掉）时，该账号不再具备「选号层同账号再试一次」的资格：
+// 否则一个已经被摘掉的账号会在候选耗尽后被兜底逻辑重新选中（快照还没来得及更新的那几毫秒里）。
+func invalidateUpstreamAffinityWithCircuit(ctx context.Context, cache GatewayCache, groupID *int64, keys []string, account *Account, err error, circuitOpen bool) {
 	if account == nil || err == nil || ctx == nil {
 		return
 	}
@@ -62,7 +69,7 @@ func invalidateUpstreamAffinity(ctx context.Context, cache GatewayCache, groupID
 	if state, ok := ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts); ok {
 		var upstreamErr *UpstreamFailoverError
 		retry := errors.As(err, &upstreamErr) && upstreamErr.ShouldRetryNextAccount() &&
-			upstreamErr.RetryableOnSameAccount && account.GetPoolModeRetryCount() > 0
+			upstreamErr.RetryableOnSameAccount && account.GetPoolModeRetryCount() > 0 && !circuitOpen
 		state.mu.Lock()
 		state.failed[account.ID] = retry
 		if retry {
@@ -90,7 +97,7 @@ func invalidateUpstreamAffinity(ctx context.Context, cache GatewayCache, groupID
 
 func (s *GatewayService) InvalidateUpstreamAffinity(ctx context.Context, groupID *int64, session string, account *Account, err error) {
 	if s != nil {
-		invalidateUpstreamAffinity(ctx, s.cache, groupID, []string{session}, account, err)
+		invalidateUpstreamAffinityWithCircuit(ctx, s.cache, groupID, []string{session}, account, err, account != nil && s.rateLimitService.AccountCircuitOpen(account.ID))
 	}
 }
 
@@ -102,7 +109,7 @@ func (s *OpenAIGatewayService) InvalidateUpstreamAffinity(ctx context.Context, g
 	if legacy := s.openAILegacySessionCacheKey(ctx, session); legacy != "" {
 		keys = append(keys, legacy)
 	}
-	invalidateUpstreamAffinity(ctx, s.cache, groupID, keys, account, err)
+	invalidateUpstreamAffinityWithCircuit(ctx, s.cache, groupID, keys, account, err, account != nil && s.rateLimitService.AccountCircuitOpen(account.ID))
 }
 
 // selectWithUpstreamPreferences preserves all caller exclusions (profit veto,

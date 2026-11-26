@@ -345,6 +345,14 @@ func NewAccountCircuitBreaker(settings AccountCircuitBreakerSettings, persist fu
 	}
 }
 
+// RunPersistSynchronouslyForTest 让熔断的写库在触发熔断的那次观察里同步完成（默认是异步 goroutine）。
+// 仅供跨包的集成测试使用：这样「熔断之后的下一个请求」的行为是确定的，不依赖 goroutine 调度。
+func (b *AccountCircuitBreaker) RunPersistSynchronouslyForTest() {
+	if b != nil {
+		b.async = func(f func()) { f() }
+	}
+}
+
 // Enabled 报告断路器是否生效。
 func (b *AccountCircuitBreaker) Enabled() bool { return b != nil && b.enabled }
 
