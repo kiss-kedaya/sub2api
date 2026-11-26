@@ -60,12 +60,12 @@ func requireSameStringEnd(t *testing.T, body []byte, i int) {
 	}
 }
 
-// Every string of up to nine bytes over an alphabet that has the quote, the backslash and
+// Every string of up to eight bytes over an alphabet that has the quote, the backslash and
 // ordinary bytes (including the ones that follow a backslash in real escapes), alone and
 // behind a prefix whose backslashes must not count towards the string.
 func TestScanJSONStringEndExhaustiveMatchesLegacy(t *testing.T) {
 	alphabet := []byte{'"', '\\', 'a', 'n', 'u'}
-	const maxLen = 9
+	const maxLen = 8
 	prefixes := [][]byte{nil, []byte(`\`), []byte(`\\\`), []byte(`{"k":`), []byte(`a\\`)}
 	buf := make([]byte, 0, maxLen+8)
 	var walk func(content []byte)

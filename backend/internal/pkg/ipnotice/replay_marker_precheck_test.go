@@ -25,6 +25,7 @@ var replayMarkerFragments = []string{
 	strings.ReplaceAll("§§u2063§u2063", "§", `\`), "u2063u2063", "2063",
 	"msg_gateway_notice_", "msg_gateway_notice", "_gateway_notice_", "gateway_notice_", "xmsg_gateway_notice_1",
 	"msg_gateway_notices", "msg_gateway_notic_", "msg_Gateway_notice_", "msg-gateway-notice-",
+	"sg_gateway_notice_", "xsg_gateway_notice_", "g_gateway_notice_", "_msg_gateway_notice", "mmsg_gateway_notice_",
 	"msg_", "_notice_", "gateway", "notice",
 }
 

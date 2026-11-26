@@ -575,6 +575,8 @@ func (p *ParsedRequest) SystemValue() (any, bool) {
 }
 
 // CloneForBody 为单次账号尝试创建独立 body 视图，避免 failover 复用已改写的 ParsedRequest。
+// body 与 p 上次成功解析的字节完全相同时（failover 循环里的常态）直接带走解析结果，
+// 不再整段校验/重扫；其余 body 照旧完整解析。
 func (p *ParsedRequest) CloneForBody(body []byte) (*ParsedRequest, error) {
 	if p == nil {
 		return nil, fmt.Errorf("parse request: empty request")
@@ -589,6 +591,8 @@ func (p *ParsedRequest) CloneForBody(body []byte) (*ParsedRequest, error) {
 }
 
 // ReplaceBody 统一刷新当前 body 和 raw range，保证后续 helper 读取的是最新请求体。
+// data 与上次成功解析的字节完全相同时（空操作改写原样返回同一个切片）直接复用解析结果，
+// 派生字段照样被恢复成该 body 的解析值；其余 data 完整解析（有效性校验照旧）。
 func (p *ParsedRequest) ReplaceBody(data []byte) error {
 	if p == nil {
 		return fmt.Errorf("parse request: empty request")
