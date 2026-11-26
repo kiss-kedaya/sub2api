@@ -60,7 +60,7 @@ func RegisterUserRoutes(
 			// Passkey 校验共用一个桶），避免成为密码/动态码在线爆破入口。
 			user.GET("/security/verification-factors", h.APIKey.GetVerificationFactors)
 			// 用户自己决定「创建 / 轮换 API Key 时要不要先验证身份」（on / off / auto）。
-			// 只在变宽松（把保护关掉）时要求一次三选一校验，与创建 Key 共用同一个 10 次/分钟的按用户限流桶
+			// 只在降低保护强度（on > auto > off 的任何一步下降）时要求一次三选一校验，与创建 Key 共用同一个 10 次/分钟的按用户限流桶
 			// 和同一份密码失败预算，避免成为密码 / 动态码的另一个在线爆破入口。
 			user.PUT("/security/api-key-create-verification", panelRateLimiter.KeyVerification(), h.APIKey.SetAPIKeyCreateVerification)
 			user.POST("/security/passkey/verify/begin", panelRateLimiter.KeyVerification(), h.APIKey.BeginKeyPasskeyVerification)

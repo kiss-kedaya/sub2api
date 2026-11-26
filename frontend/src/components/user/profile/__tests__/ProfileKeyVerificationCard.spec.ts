@@ -30,7 +30,9 @@ vi.mock('vue-i18n', async (importOriginal) => {
 enableAutoUnmount(afterEach)
 
 // 个人资料页「创建 API Key 时需要验证身份」开关：显示服务端算好的有效值；
-// 从开拨到关（变宽松）先弹三选一校验，从关拨到开（变严）直接保存；没有可用因子时置灰。
+// 从开拨到关（降低保护）先弹三选一校验，从关拨到开（升高保护）直接保存；没有可用因子时置灰。
+// 拨回「不需要」写什么：默认本来就要求校验的账号（开了 TOTP / Passkey）写 off，其余写 auto（恢复默认），
+// 不留下潜伏的 off（评审 PR #688）。
 
 const factorsOf = (overrides: Partial<ApiKeyVerificationFactors> = {}): ApiKeyVerificationFactors => ({
   password_available: true,
@@ -42,6 +44,8 @@ const factorsOf = (overrides: Partial<ApiKeyVerificationFactors> = {}): ApiKeyVe
   create_verification_required: false,
   create_verification_mode: 'auto',
   create_verification_configurable: true,
+  // 仅有登录密码的账号：默认规则下创建 Key 不要求校验。
+  create_verification_default_required: false,
   ...overrides,
 })
 
@@ -51,6 +55,7 @@ const totpAccount = (overrides: Partial<ApiKeyVerificationFactors> = {}) =>
     preferred: 'totp',
     available_methods: ['totp', 'password'],
     create_verification_required: true,
+    create_verification_default_required: true,
     ...overrides,
   })
 
@@ -145,10 +150,25 @@ describe('ProfileKeyVerificationCard', () => {
 
     expect(dialogOpen()).toBe(false)
     expect(mocks.setCreateVerificationMode).toHaveBeenCalledTimes(1)
-    // 变严不带校验材料：第二个参数为空，请求体里不会有 verification 字段（见 api/__tests__/keys.createVerification.spec.ts）。
+    // 升高保护不带校验材料：第二个参数为空，请求体里不会有 verification 字段（见 api/__tests__/keys.createVerification.spec.ts）。
     expect(mocks.setCreateVerificationMode).toHaveBeenCalledWith('on', undefined)
     expect(sw(wrapper).attributes('aria-checked')).toBe('true')
     expect(mocks.showSuccess).toHaveBeenCalledWith('profile.keyVerification.savedOn')
+  })
+
+  it('turning it back on for an account that explicitly switched it off writes on, no verification', async () => {
+    mocks.setCreateVerificationMode.mockResolvedValue(
+      totpAccount({ create_verification_required: true, create_verification_mode: 'on' }),
+    )
+    const wrapper = await render(totpAccount({ create_verification_required: false, create_verification_mode: 'off' }))
+
+    await sw(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(dialogOpen()).toBe(false)
+    expect(mocks.setCreateVerificationMode).toHaveBeenCalledTimes(1)
+    expect(mocks.setCreateVerificationMode).toHaveBeenCalledWith('on', undefined)
+    expect(sw(wrapper).attributes('aria-checked')).toBe('true')
   })
 
   it('clicking the label toggles it too', async () => {
@@ -161,7 +181,7 @@ describe('ProfileKeyVerificationCard', () => {
     expect(mocks.setCreateVerificationMode).toHaveBeenCalledWith('on', undefined)
   })
 
-  it('turning it off (looser) asks for verification first and only saves after it passes', async () => {
+  it('turning it off (lower protection) asks for verification first and only saves after it passes', async () => {
     mocks.setCreateVerificationMode.mockResolvedValue(
       totpAccount({ create_verification_required: false, create_verification_mode: 'off' }),
     )
@@ -176,7 +196,7 @@ describe('ProfileKeyVerificationCard', () => {
     expect(mocks.setCreateVerificationMode).not.toHaveBeenCalled()
     expect(sw(wrapper).attributes('aria-checked')).toBe('true')
 
-    // 默认选中推荐因子（TOTP）：填动态码、确认。
+    // 默认选中推荐因子（TOTP）：填动态码、确认。默认就要求校验的账号只能用 off 表达「不要求」。
     await typeInto('[data-test="key-factor-totp-input"]', '123456')
     await clickAndSettle(inDialog('key-verification-confirm'))
 
@@ -187,10 +207,9 @@ describe('ProfileKeyVerificationCard', () => {
     expect(mocks.showSuccess).toHaveBeenCalledWith('profile.keyVerification.savedOff')
   })
 
-  it('turning it off with a login password sends the password factor', async () => {
-    mocks.setCreateVerificationMode.mockResolvedValue(
-      factorsOf({ create_verification_required: false, create_verification_mode: 'off' }),
-    )
+  it('turning off a password-only account restores the default (auto) instead of leaving a latent off', async () => {
+    // 仅密码账号被设成了 on：拨回「不需要」= 恢复默认。写 off 会留下一个以后（开了 2FA）悄悄让创建 Key 不受保护的旧设置。
+    mocks.setCreateVerificationMode.mockResolvedValue(factorsOf({ create_verification_required: false, create_verification_mode: 'auto' }))
     const wrapper = await render(factorsOf({ create_verification_required: true, create_verification_mode: 'on' }))
 
     await sw(wrapper).trigger('click')
@@ -198,8 +217,63 @@ describe('ProfileKeyVerificationCard', () => {
     await typeInto('[data-test="key-factor-password-input"] input, input[data-test="key-factor-password-input"]', 'my-login-password')
     await clickAndSettle(inDialog('key-verification-confirm'))
 
-    expect(mocks.setCreateVerificationMode).toHaveBeenCalledWith('off', { method: 'password', password: 'my-login-password' })
+    expect(mocks.setCreateVerificationMode).toHaveBeenCalledTimes(1)
+    expect(mocks.setCreateVerificationMode).toHaveBeenCalledWith('auto', { method: 'password', password: 'my-login-password' })
+    expect(mocks.setCreateVerificationMode).not.toHaveBeenCalledWith('off', expect.anything())
     expect(sw(wrapper).attributes('aria-checked')).toBe('false')
+    expect(mocks.showSuccess).toHaveBeenCalledWith('profile.keyVerification.savedOff')
+  })
+
+  it('a 2FA account can still switch it off with its login password, and that is written as off', async () => {
+    mocks.setCreateVerificationMode.mockResolvedValue(
+      totpAccount({ create_verification_required: false, create_verification_mode: 'off' }),
+    )
+    // 校验组件默认选推荐因子（TOTP）；这里让它记住用户上次选的是「登录密码」。
+    window.localStorage.setItem('sub2api.key_verify_method', 'password')
+    const wrapper = await render(totpAccount())
+
+    await sw(wrapper).trigger('click')
+    await flushPromises()
+    await typeInto('[data-test="key-factor-password-input"] input, input[data-test="key-factor-password-input"]', 'my-login-password')
+    await clickAndSettle(inDialog('key-verification-confirm'))
+
+    expect(mocks.setCreateVerificationMode).toHaveBeenCalledWith('off', { method: 'password', password: 'my-login-password' })
+  })
+
+  it('never writes off when the server does not say the default requires verification (field missing)', async () => {
+    // 没有 create_verification_default_required（读不到这条信息）：宁可写 auto，也不留下一个可能潜伏的 off。
+    // 服务端回的有效状态仍是准的，提示按它说。
+    const factors = factorsOf({ create_verification_required: true, create_verification_mode: 'on' })
+    delete factors.create_verification_default_required
+    mocks.setCreateVerificationMode.mockResolvedValue(factorsOf({ create_verification_required: false, create_verification_mode: 'auto' }))
+    const wrapper = await render(factors)
+
+    await sw(wrapper).trigger('click')
+    await flushPromises()
+    await typeInto('[data-test="key-factor-password-input"] input, input[data-test="key-factor-password-input"]', 'my-login-password')
+    await clickAndSettle(inDialog('key-verification-confirm'))
+
+    expect(mocks.setCreateVerificationMode).toHaveBeenCalledWith('auto', { method: 'password', password: 'my-login-password' })
+    expect(mocks.setCreateVerificationMode).not.toHaveBeenCalledWith('off', expect.anything())
+  })
+
+  it('reports the state the server confirmed, not the mode that was requested', async () => {
+    // 请求的是 auto，但这个账号（开了 2FA）的默认就要求校验，服务端回的有效状态仍是「必须」：提示必须按它说，
+    // 不能在界面仍是「开」的时候提示「已关闭」。
+    const factors = totpAccount()
+    delete factors.create_verification_default_required
+    mocks.setCreateVerificationMode.mockResolvedValue(totpAccount({ create_verification_required: true, create_verification_mode: 'auto' }))
+    const wrapper = await render(factors)
+
+    await sw(wrapper).trigger('click')
+    await flushPromises()
+    await typeInto('[data-test="key-factor-totp-input"]', '123456')
+    await clickAndSettle(inDialog('key-verification-confirm'))
+
+    expect(mocks.setCreateVerificationMode).toHaveBeenCalledWith('auto', { method: 'totp', totp_code: '123456' })
+    expect(sw(wrapper).attributes('aria-checked')).toBe('true')
+    expect(mocks.showSuccess).toHaveBeenCalledWith('profile.keyVerification.savedOn')
+    expect(mocks.showSuccess).not.toHaveBeenCalledWith('profile.keyVerification.savedOff')
   })
 
   it('does not call the server when the verification is incomplete', async () => {

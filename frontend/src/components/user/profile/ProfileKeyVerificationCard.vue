@@ -71,7 +71,7 @@
       </template>
     </div>
 
-    <!-- 把保护关掉（变宽松）要先验证一次身份：与创建 Key 是同一个校验组件，同一套三选一。 -->
+    <!-- 把保护关掉（降低保护强度）要先验证一次身份：与创建 Key 是同一个校验组件，同一套三选一。 -->
     <BaseDialog
       :show="showVerify"
       :title="t('profile.keyVerification.verifyTitle')"
@@ -136,10 +136,14 @@ import { extractApiErrorCode, extractApiErrorMessage } from '@/utils/apiError'
 // 「创建 API Key 时需要验证身份」开关。显示的永远是服务端算好的**有效值**
 // （create_verification_required）：默认规则下开了两步验证 / 通行密钥的账号为开，仅有登录密码的账号为关；
 // 用户自己改过之后以改后的为准。
-//   - 从关拨到开（变严）：直接保存，不弹校验；
-//   - 从开拨到关（变宽松）：先弹出三选一身份校验，通过后才保存（被劫持的会话没法静默把保护关掉）；
+//   - 从关拨到开（变严）：写 on，直接保存，不弹校验；
+//   - 从开拨到关（降低保护）：先弹出三选一身份校验，通过后才保存（被劫持的会话没法静默把保护关掉）；
 //   - 账号没有任何可用因子（configurable=false）：无处可验，开关置灰并说明原因。
 // 状态只在服务端确认之后才变化（不做乐观更新），所以界面和真实状态不会错开。
+//
+// 拨回「不需要」时写什么（见 offMode）：默认本来就不要求校验的账号（没有 TOTP / Passkey）写 auto = 恢复默认，
+// 只有默认本来就要求校验的账号才写 off。这样正常使用不会留下潜伏的 off——否则这个账号以后开了 2FA，
+// 那个旧 off 会让创建 Key 悄悄不受保护（评审 PR #688）。
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -155,6 +159,10 @@ let disposed = false
 
 const required = computed(() => factors.value?.create_verification_required === true)
 const configurable = computed(() => factors.value?.create_verification_configurable === true)
+// 拨回「不需要」要写的模式：默认就要求校验的账号写 off；其余（含旧服务端没有该字段）写 auto。
+const offMode = computed<ApiKeyCreateVerificationMode>(() =>
+  factors.value?.create_verification_default_required === true ? 'off' : 'auto',
+)
 
 const statusText = computed(() => {
   if (!configurable.value) return t('profile.keyVerification.unavailable')
@@ -187,11 +195,11 @@ onUnmounted(() => {
 async function onToggle(next: boolean) {
   if (saving.value || !configurable.value || next === required.value) return
   if (next) {
-    // 变严：不需要校验。
+    // 升高保护：不需要校验。
     await save('on')
     return
   }
-  // 变宽松：先验证身份。
+  // 降低保护：先验证身份。
   verifyError.value = ''
   showVerify.value = true
 }
@@ -208,7 +216,7 @@ async function confirmOff() {
   const payload = verificationRef.value?.buildVerification() ?? null
   // 材料不全时校验组件自己会在里面提示具体缺什么。
   if (!payload) return
-  await save('off', payload)
+  await save(offMode.value, payload)
 }
 
 const verificationErrorText = (reason: string): string => {
@@ -231,7 +239,8 @@ async function save(mode: ApiKeyCreateVerificationMode, verification?: ApiKeyVer
     showVerify.value = false
     verificationRef.value?.reset()
     if (!disposed) {
-      appStore.showSuccess(t(mode === 'on' ? 'profile.keyVerification.savedOn' : 'profile.keyVerification.savedOff'))
+      // 提示按服务端确认后的有效状态说，不按我们请求的模式说（旧服务端 / 默认就要求的账号写 auto 时两者会不同）。
+      appStore.showSuccess(t(required.value ? 'profile.keyVerification.savedOn' : 'profile.keyVerification.savedOff'))
     }
   } catch (err: unknown) {
     const reason = extractApiErrorCode(err) ?? ''

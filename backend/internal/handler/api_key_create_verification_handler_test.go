@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,7 +22,7 @@ import (
 
 // 「创建 API Key 时是否需要验证身份」的用户开关（PUT /user/security/api-key-create-verification）的 HTTP 层：
 //   - GET verification-factors 回「有效」要求 + 模式 + 能不能配置；
-//   - PUT 只在变宽松时要求三选一校验，失败不写库，429 带 Retry-After；
+//   - PUT 只在降低保护强度（on > auto > off 的任何一步下降）时要求三选一校验，失败不写库，429 带 Retry-After；
 //   - 审计只记因子名 / 结果 / 改前改后标签，绝不带任何凭据；
 //   - 创建 / 批量轮换 / 明文编辑三个入口都遵守 off。
 
@@ -40,6 +41,8 @@ type handlerCreateVerificationPrefs struct {
 	casErr   error
 	conflict bool // 比较并交换永远「被别人抢先」
 	casCalls int
+	// failGetAfterWrite：第一次成功写入之后，所有读取都失败（写成功了、之后库抖了一下）。
+	failGetAfterWrite bool
 }
 
 func (p *handlerCreateVerificationPrefs) GetAPIKeyCreateVerificationMode(_ context.Context, userID int64) (string, error) {
@@ -65,6 +68,9 @@ func (p *handlerCreateVerificationPrefs) CompareAndSetAPIKeyCreateVerificationMo
 		delete(p.rows, userID)
 	} else {
 		p.rows[userID] = next
+	}
+	if p.failGetAfterWrite {
+		p.getErr = context.DeadlineExceeded
 	}
 	return true, nil
 }
@@ -212,21 +218,22 @@ func cvhReason(t *testing.T, rec *httptest.ResponseRecorder) string {
 
 func TestVerificationFactorsEndpointReportsTheEffectiveSwitch(t *testing.T) {
 	cases := []struct {
-		name             string
-		user             *service.User
-		stored           string
-		wantRequired     bool
-		wantMode         string
-		wantConfigurable bool
+		name                string
+		user                *service.User
+		stored              string
+		wantRequired        bool
+		wantMode            string
+		wantConfigurable    bool
+		wantDefaultRequired bool
 	}{
-		{"password only, never touched", cvhPasswordUser(t), "", false, "auto", true},
-		{"password only, on", cvhPasswordUser(t), "on", true, "on", true},
-		{"password only, off", cvhPasswordUser(t), "off", false, "off", true},
-		{"totp, never touched", cvhTOTPUser(t), "", true, "auto", true},
-		{"totp, off", cvhTOTPUser(t), "off", false, "off", true},
-		{"totp, on", cvhTOTPUser(t), "on", true, "on", true},
-		{"oauth without any factor, never touched", cvhOAuthUser(t), "", false, "auto", false},
-		{"oauth without any factor, stale on cannot lock anyone", cvhOAuthUser(t), "on", false, "on", false},
+		{"password only, never touched", cvhPasswordUser(t), "", false, "auto", true, false},
+		{"password only, on", cvhPasswordUser(t), "on", true, "on", true, false},
+		{"password only, off", cvhPasswordUser(t), "off", false, "off", true, false},
+		{"totp, never touched", cvhTOTPUser(t), "", true, "auto", true, true},
+		{"totp, off", cvhTOTPUser(t), "off", false, "off", true, true},
+		{"totp, on", cvhTOTPUser(t), "on", true, "on", true, true},
+		{"oauth without any factor, never touched", cvhOAuthUser(t), "", false, "auto", false, false},
+		{"oauth without any factor, stale on cannot lock anyone", cvhOAuthUser(t), "on", false, "on", false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,7 +243,10 @@ func TestVerificationFactorsEndpointReportsTheEffectiveSwitch(t *testing.T) {
 			require.Equal(t, tc.wantRequired, factors.CreateVerificationRequired)
 			require.Equal(t, tc.wantMode, factors.CreateVerificationMode)
 			require.Equal(t, tc.wantConfigurable, factors.CreateVerificationConfigurable)
+			require.Equal(t, tc.wantDefaultRequired, factors.CreateVerificationDefaultRequired,
+				"default_required is what auto would give this account, whatever is stored")
 			require.Contains(t, rec.Body.String(), `"create_verification_mode":"`+tc.wantMode+`"`)
+			require.Contains(t, rec.Body.String(), fmt.Sprintf(`"create_verification_default_required":%t`, tc.wantDefaultRequired))
 			require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
 		})
 	}
@@ -247,11 +257,11 @@ func TestVerificationFactorsEndpointReportsTheEffectiveSwitch(t *testing.T) {
 func TestSetCreateVerificationRelaxingRequiresIdentityVerification(t *testing.T) {
 	engine := newCVHEngine(t, cvhTOTPUser(t), 0, "", nil)
 
-	// 1) 开了 2FA 的账号默认就是强制的：关掉就是放宽，没带校验 → 400 VERIFY_REQUIRED，不写库。
+	// 1) 开了 2FA 的账号默认就是强制的：关掉（auto → off）是强度下降，没带校验 → 400 VERIFY_REQUIRED，不写库。
 	rec := cvhPut(engine, `{"mode":"off"}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	require.Equal(t, "VERIFY_REQUIRED", cvhReason(t, rec))
-	require.Contains(t, rec.Body.String(), "turn this protection off")
+	require.Contains(t, rec.Body.String(), "lower this protection")
 	require.Equal(t, "auto", engine.prefs.stored(7))
 	require.Zero(t, engine.prefs.casCalls, "a rejected change must not touch the store")
 	audit := engine.audit.extra()
@@ -287,10 +297,11 @@ func TestSetCreateVerificationRelaxingRequiresIdentityVerification(t *testing.T)
 	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
 }
 
+// 升高保护（强度上升）不需要校验：off → on、off → auto、auto → on。
 func TestSetCreateVerificationTighteningNeedsNoVerification(t *testing.T) {
 	engine := newCVHEngine(t, cvhTOTPUser(t), 0, "off", nil)
 
-	// off → on：变严，不需要校验，也不要求带 verification 字段。
+	// off → on：强度上升，不需要校验，也不要求带 verification 字段。
 	rec := cvhPut(engine, `{"mode":"on"}`)
 	factors := cvhFactorsData(t, rec)
 	require.True(t, factors.CreateVerificationRequired)
@@ -302,35 +313,147 @@ func TestSetCreateVerificationTighteningNeedsNoVerification(t *testing.T) {
 	require.NotContains(t, audit, "api_key_verification", "nothing was verified, so nothing claims it was")
 	require.NotContains(t, audit, "api_key_auth_factor")
 
-	// on → auto（开了 2FA 的账号 auto 同样强制）：持平，不需要校验。
+	// on → auto：对开了 2FA 的账号此刻两边的有效要求都是「必须」，但强度从 2 降到 1——必须校验。
 	rec = cvhPut(engine, `{"mode":"auto"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Equal(t, "VERIFY_REQUIRED", cvhReason(t, rec))
+	require.Equal(t, "on", engine.prefs.stored(7), "the explicit on must survive an unverified request")
+	rec = cvhPut(engine, cvhPasswordBody("auto", cvhPassword))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, "auto", engine.prefs.stored(7))
 	require.Empty(t, engine.prefs.rows, "auto deletes the row")
+	require.Equal(t, true, engine.audit.extra()["api_key_create_verification_relaxed"])
 
 	// 重复提交同一个值：幂等成功，不写库。
 	calls := engine.prefs.casCalls
 	rec = cvhPut(engine, `{"mode":"auto"}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, calls, engine.prefs.casCalls)
+	require.Equal(t, false, engine.audit.extra()["api_key_create_verification_relaxed"])
+
+	// off → auto、auto → on 同样是上升。
+	engine = newCVHEngine(t, cvhTOTPUser(t), 0, "off", nil)
+	rec = cvhPut(engine, `{"mode":"auto"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "auto", engine.prefs.stored(7))
+	rec = cvhPut(engine, `{"mode":"on"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "on", engine.prefs.stored(7))
 }
 
-// 只有登录密码的账号：on → auto 是放宽（输密码的要求没了），auto → off 不是。
-func TestSetCreateVerificationComparesEffectiveRequirementForPasswordOnlyAccounts(t *testing.T) {
-	engine := newCVHEngine(t, cvhPasswordUser(t), 0, "on", nil)
+// 评审 PR #688（潜伏降级）：只有登录密码的账号，auto → off 此刻有效要求不变（都是「不要求」），
+// 但被劫持的会话不能借此把 off 预先埋进去——受害者之后开了 2FA，创建 Key 就不再受保护了。
+func TestSetCreateVerificationBlocksUnverifiedLatentDowngradesForPasswordOnlyAccounts(t *testing.T) {
+	engine := newCVHEngine(t, cvhPasswordUser(t), 0, "", nil)
+
+	// 没有记录（auto）→ off：没带校验 → 400，什么都没写。
+	rec := cvhPut(engine, `{"mode":"off"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Equal(t, "VERIFY_REQUIRED", cvhReason(t, rec))
+	require.Equal(t, "auto", engine.prefs.stored(7))
+	require.Empty(t, engine.prefs.rows)
+	require.Zero(t, engine.prefs.casCalls)
+	require.Equal(t, "rejected", engine.audit.extra()["api_key_verification"])
+
+	// 带了正确密码（本人）才行，审计记「强度下降」。
+	rec = cvhPut(engine, cvhPasswordBody("off", cvhPassword))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "off", engine.prefs.stored(7))
+	require.Equal(t, true, engine.audit.extra()["api_key_create_verification_relaxed"])
+
+	// on → auto、on → off 同样要校验。
+	for _, target := range []string{"auto", "off"} {
+		engine = newCVHEngine(t, cvhPasswordUser(t), 0, "on", nil)
+		rec = cvhPut(engine, `{"mode":"`+target+`"}`)
+		require.Equal(t, http.StatusBadRequest, rec.Code, "on -> %s: %s", target, rec.Body.String())
+		require.Equal(t, "VERIFY_REQUIRED", cvhReason(t, rec))
+		require.Equal(t, "on", engine.prefs.stored(7))
+	}
+}
+
+// 评审 PR #688：开了 2FA、自己设了 on 的账号，on → auto 此刻两边的有效要求都是「必须」，但强度下降：
+// 被劫持的会话不能无校验地把它改成 auto——之后 2FA 被关 / 被管理员重置，原本还会要求输密码的 on 就没了。
+func TestSetCreateVerificationBlocksUnverifiedLoweringOfAnExplicitOn(t *testing.T) {
+	engine := newCVHEngine(t, cvhTOTPUser(t), 0, "on", nil)
 	rec := cvhPut(engine, `{"mode":"auto"}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	require.Equal(t, "VERIFY_REQUIRED", cvhReason(t, rec))
 	require.Equal(t, "on", engine.prefs.stored(7))
+	require.Zero(t, engine.prefs.casCalls)
 
-	rec = cvhPut(engine, cvhPasswordBody("auto", cvhPassword))
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Equal(t, "auto", engine.prefs.stored(7))
+	// 这把 on 之后仍然有效：创建要校验。
+	rec = doJSON(engine.router, http.MethodPost, "/api/v1/keys", `{"name":"still-guarded"}`, nil)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Equal(t, "VERIFY_REQUIRED", cvhReason(t, rec))
+}
 
-	rec = cvhPut(engine, `{"mode":"off"}`)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Equal(t, "off", engine.prefs.stored(7))
-	require.Equal(t, false, engine.audit.extra()["api_key_create_verification_relaxed"])
+// 审计的 relaxed 字段按「保护强度是否下降」记，不是按「有效要求是否下降」：
+// 事后按 relaxed=true 检索，能找出每一次降低保护的修改。
+func TestSetCreateVerificationAuditRelaxedFollowsTheStrength(t *testing.T) {
+	cases := []struct {
+		name        string
+		user        func(*testing.T) *service.User
+		from, to    string
+		verified    bool
+		wantRelaxed bool
+	}{
+		// 有效要求没变、强度下降：也要记 true。
+		{"password only auto->off", cvhPasswordUser, "auto", "off", true, true},
+		{"password only on->auto", cvhPasswordUser, "on", "auto", true, true},
+		{"totp on->auto", cvhTOTPUser, "on", "auto", true, true},
+		// 有效要求下降、强度下降。
+		{"password only on->off", cvhPasswordUser, "on", "off", true, true},
+		{"totp auto->off", cvhTOTPUser, "auto", "off", true, true},
+		{"totp on->off", cvhTOTPUser, "on", "off", true, true},
+		// 上升 / 持平：false。
+		{"password only auto->on", cvhPasswordUser, "auto", "on", false, false},
+		{"password only off->auto", cvhPasswordUser, "off", "auto", false, false},
+		{"password only off->on", cvhPasswordUser, "off", "on", false, false},
+		{"totp off->auto", cvhTOTPUser, "off", "auto", false, false},
+		{"totp off->on", cvhTOTPUser, "off", "on", false, false},
+		{"totp on->on", cvhTOTPUser, "on", "on", false, false},
+		{"totp auto->auto", cvhTOTPUser, "auto", "auto", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newCVHEngine(t, tc.user(t), 0, tc.from, nil)
+			body := `{"mode":"` + tc.to + `"}`
+			if tc.verified {
+				body = cvhPasswordBody(tc.to, cvhPassword)
+			}
+			rec := cvhPut(engine, body)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			audit := engine.audit.extra()
+			require.Equal(t, tc.wantRelaxed, audit["api_key_create_verification_relaxed"])
+			require.Equal(t, tc.from, audit["api_key_create_verification_from"])
+			require.Equal(t, tc.to, audit["api_key_create_verification_to"])
+			if tc.verified {
+				require.Equal(t, "verified", audit["api_key_verification"])
+				require.Equal(t, "password", audit["api_key_auth_factor"])
+			}
+		})
+	}
+}
+
+// 评审 L1：写库成功之后如果还要再读一次因子才回包，这一读失败调用方就拿到 5xx，但开关其实已经改了
+// （前端显示失败、仍是「开」）。现在回包用服务层算好的改后视图：写成功就一定 200，且不再读库。
+func TestSetCreateVerificationStillAnswers200WhenTheStoreFailsAfterTheWrite(t *testing.T) {
+	engine := newCVHEngine(t, cvhTOTPUser(t), 0, "", nil)
+	engine.prefs.failGetAfterWrite = true
+
+	rec := cvhPut(engine, cvhPasswordBody("off", cvhPassword))
+	require.Equal(t, http.StatusOK, rec.Code, "the write committed, so the caller must hear success: %s", rec.Body.String())
+	factors := cvhFactorsData(t, rec)
+	require.Equal(t, "off", factors.CreateVerificationMode)
+	require.False(t, factors.CreateVerificationRequired)
+	require.True(t, factors.CreateVerificationDefaultRequired)
+	require.True(t, factors.CreateVerificationConfigurable)
+	require.Equal(t, "off", engine.prefs.stored(7), "and it really was written")
+	require.Equal(t, true, engine.audit.extra()["api_key_create_verification_relaxed"])
+
+	// 对照：库确实还在抖，单独读（GET）会失败——这正是回包不能依赖它的原因。
+	rec = doJSON(engine.router, http.MethodGet, cvhFactors, "", nil)
+	require.GreaterOrEqual(t, rec.Code, http.StatusInternalServerError)
 }
 
 // 没有任何可用因子的账号：on / off 没有意义（409，不落库），auto 只用来清残留。
@@ -446,7 +569,7 @@ func TestSetCreateVerificationRequiresAuthenticationAndWiring(t *testing.T) {
 	require.Equal(t, "VERIFY_UNAVAILABLE", cvhReason(t, rec))
 }
 
-// TOTP 动态码 / Passkey 票据同样能授权放宽，而且各自只能用一次。
+// TOTP 动态码 / Passkey 票据同样能授权降低保护，而且各自只能用一次。
 func TestSetCreateVerificationRelaxWithTOTPCodeAndPasskeyTicket(t *testing.T) {
 	// 第三方登录 + TOTP（没有登录密码）：只能用动态码。
 	totpUser := accountTypeUser(t, true)
@@ -458,7 +581,7 @@ func TestSetCreateVerificationRelaxWithTOTPCodeAndPasskeyTicket(t *testing.T) {
 	require.Equal(t, "totp", engine.audit.extra()["api_key_auth_factor"])
 	require.NotContains(t, rec.Body.String(), current)
 
-	// 收紧回去，再拿同一个码来放宽：被拒（一码一用）；下一个时间步的新码可以。
+	// 升回去（升高保护不需要校验），再拿同一个码来降低保护：被拒（一码一用）；下一个时间步的新码可以。
 	rec = cvhPut(engine, `{"mode":"on"}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	rec = cvhPut(engine, `{"mode":"off","verification":{"method":"totp","totp_code":"`+current+`"}}`)

@@ -172,7 +172,7 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"admin_2fa_reset_revoked_stepup": {}, "admin_2fa_reset_notified": {},
 	"admin_2fa_reset_passkey_bound": {},
 	// 用户修改「创建 API Key 时是否需要验证身份」开关：只记改前 / 改后的模式标签（auto / on / off）
-	// 和这次修改是否放宽了保护；校验用到的因子名走上面的 api_key_auth_factor，凭据一律不入库。
+	// 和这次修改是否降低了保护强度（on > auto > off）；校验用到的因子名走上面的 api_key_auth_factor，凭据一律不入库。
 	"api_key_create_verification_from": {}, "api_key_create_verification_to": {},
 	"api_key_create_verification_relaxed": {},
 }

@@ -312,8 +312,9 @@ export async function getVerificationFactors(): Promise<ApiKeyVerificationFactor
  * 用户自己决定「创建 API Key 时是否需要验证身份」。
  * `PUT /api/v1/user/security/api-key-create-verification`
  *
- * 只在「变宽松」（有效要求从必须校验变成不要求，也就是把保护关掉）时服务端才要求 `verification`
- * （与创建 Key 同一套三选一）；变严或持平不需要。成功回包与 `getVerificationFactors` 同形，
+ * 服务端按保护强度 on > auto > off 判断：任何让强度**下降**的写入（on→auto、on→off、auto→off，含「没有设置过」→ off）
+ * 只要账号有可用验证方式就要求 `verification`（与创建 Key 同一套三选一）；升高或持平不需要。
+ * 账号没有任何可用因子时只允许 `auto`（on / off 返回 409）。成功回包与 `getVerificationFactors` 同形，
  * 直接用来刷新界面。常见失败（都带 `reason`）：400 `VERIFY_REQUIRED` / `VERIFY_*_INVALID`、
  * 429 `VERIFY_PASSWORD_RATE_LIMITED`（带 Retry-After）、
  * 409 `API_KEY_CREATE_VERIFICATION_NOT_CONFIGURABLE`（账号没有任何可用因子）/ `API_KEY_CREATE_VERIFICATION_CONFLICT`。

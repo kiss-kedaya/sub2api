@@ -900,6 +900,12 @@ export interface ApiKeyVerificationFactors {
   create_verification_mode?: ApiKeyCreateVerificationMode
   /** 账号至少有一个可用因子时才为 true；为 false 时开关没有意义（无处可验），界面置灰。旧服务端没有这个字段。 */
   create_verification_configurable?: boolean
+  /**
+   * 默认规则（auto）下这个账号创建 Key 是否必须校验：开了 TOTP 或绑了 Passkey 才为 true，与用户设置无关。
+   * 界面据此决定把开关拨回「不需要」时写 off 还是 auto：默认本来就不要求的账号写 auto（恢复默认），
+   * 不留下显式的 off——否则它以后开了 2FA，这个旧 off 会让创建 Key 悄悄不受保护。旧服务端没有这个字段（按 auto 处理）。
+   */
+  create_verification_default_required?: boolean
 }
 
 /** 创建 Key / 二次查看时的身份校验载荷。 */

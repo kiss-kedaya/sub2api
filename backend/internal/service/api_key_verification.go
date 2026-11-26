@@ -141,6 +141,11 @@ type APIKeyVerificationFactors struct {
 	// CreateVerificationConfigurable 账号至少有一个可用因子时才为 true；
 	// 为 false 时这个开关没有意义（无处可验），前端置灰并说明原因。
 	CreateVerificationConfigurable bool `json:"create_verification_configurable"`
+	// CreateVerificationDefaultRequired 不动开关（auto）时，这个账号创建 / 轮换 Key 是否必须校验：
+	// 开了 TOTP 或绑了 Passkey 才为 true。前端把开关拨到「不需要」时据此决定写什么：默认本来就要求（true）的账号
+	// 才需要显式写 off；默认本来就不要求（false，例如只有登录密码）的账号写 auto（恢复默认）就够了——
+	// 否则会留下一个等账号以后开了 2FA 才突然生效的潜伏 off。
+	CreateVerificationDefaultRequired bool `json:"create_verification_default_required"`
 }
 
 // Available 报告是否存在至少一个可用因子。
@@ -450,6 +455,7 @@ func (s *APIKeyVerificationService) factorsForUser(ctx context.Context, user *Us
 	}
 	// 默认口径：只认用户自己开启的更强因子；登录密码单独存在时不强制（见字段注释）。
 	factors.CreateVerificationRequired = apiKeyCreateVerificationRequired(APIKeyCreateVerificationAuto, factors)
+	factors.CreateVerificationDefaultRequired = factors.CreateVerificationRequired
 	return factors, nil
 }
 

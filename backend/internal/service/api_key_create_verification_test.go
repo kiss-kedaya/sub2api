@@ -23,7 +23,7 @@ import (
 //
 // 硬性判据：没有设置过开关（没有行 / 没注入仓储）的账号，行为与改造前逐字节一致——
 // api_key_verification_*_test.go 的既有用例一个都不改就全过。这里测的是新增的部分：
-// 账号类型 × 模式 × 创建时带不带校验，以及改开关本身的鉴权（只在变宽松时要校验）。
+// 账号类型 × 模式 × 创建时带不带校验，以及改开关本身的鉴权（按保护强度 on > auto > off：降低才要校验）。
 
 const (
 	cvUserID   = int64(7)
@@ -201,6 +201,21 @@ var (
 
 var cvModes = []string{APIKeyCreateVerificationAuto, APIKeyCreateVerificationOn, APIKeyCreateVerificationOff}
 
+// cvLowered 是产品规格里的「保护强度是否下降」真值表（强度 on(2) > auto(1) > off(0)），手写、不由被测代码算出来：
+// cvLowered[from][to] 为 true 表示 from → to 让保护变弱，有可用验证方式的账号必须先验证身份。
+// 下降 = on→auto、on→off、auto→off（auto 就是「没有记录」，所以「没有记录 → off」也在里面）；上升或持平都不要。
+var cvLowered = map[string]map[string]bool{
+	APIKeyCreateVerificationOn: {
+		APIKeyCreateVerificationOn: false, APIKeyCreateVerificationAuto: true, APIKeyCreateVerificationOff: true,
+	},
+	APIKeyCreateVerificationAuto: {
+		APIKeyCreateVerificationOn: false, APIKeyCreateVerificationAuto: false, APIKeyCreateVerificationOff: true,
+	},
+	APIKeyCreateVerificationOff: {
+		APIKeyCreateVerificationOn: false, APIKeyCreateVerificationAuto: false, APIKeyCreateVerificationOff: false,
+	},
+}
+
 type cvEnv struct {
 	svc   *APIKeyVerificationService
 	prefs *cvPrefs
@@ -286,13 +301,13 @@ func cvWrongCredential(method string) (*APIKeyVerificationInput, error) {
 	}
 }
 
-// requireRelaxRequired 断言「放宽但没带校验」：机器码是 VERIFY_REQUIRED，文案专门说关保护这一步。
+// requireRelaxRequired 断言「降低保护但没带校验」：机器码是 VERIFY_REQUIRED，文案专门说降低保护这一步。
 func requireRelaxRequired(t *testing.T, err error) {
 	t.Helper()
 	require.Error(t, err)
 	require.Equal(t, 400, infraerrors.Code(err))
 	require.Equal(t, "VERIFY_REQUIRED", infraerrors.Reason(err))
-	require.Contains(t, infraerrors.Message(err), "turn this protection off")
+	require.Contains(t, infraerrors.Message(err), "lower this protection")
 }
 
 // ---- 1. 有效要求真值表：创建 / 单条轮换 / 批量轮换共用同一条判定 -------------
@@ -312,6 +327,10 @@ func TestCreateVerificationRequiredTruthTableAcrossAccountsAndModes(t *testing.T
 				require.Equal(t, acct.hasFactor(), factors.CreateVerificationConfigurable,
 					"the switch is only meaningful when the account has something to verify with")
 				require.Equal(t, acct.hasFactor(), factors.Available())
+				// 「默认是否要求」只由账号因子决定（auto 的有效值），与用户存的开关无关：
+				// 前端据它决定把开关拨回「不需要」时写 off 还是 auto（不留下潜伏的 off）。
+				require.Equal(t, acct.required[APIKeyCreateVerificationAuto], factors.CreateVerificationDefaultRequired,
+					"default_required follows the auto rule whatever the stored mode is")
 
 				// 创建 与 会回执明文的编辑（PUT /keys/:id；批量轮换走创建同一个入口）：同一条判定。
 				for name, verify := range map[string]func() (*APIKeyVerificationResult, error){
@@ -468,7 +487,7 @@ func TestAPIKeyVerificationFactorsJSONExposesTheSwitchFields(t *testing.T) {
 	}
 }
 
-// ---- 2. 改开关本身的鉴权：只在「变宽松」时要校验 ---------------------------
+// ---- 2. 改开关本身的鉴权：保护强度（on > auto > off）下降才要校验 ----------------
 
 func TestSetCreateVerificationModeMatrix(t *testing.T) {
 	ctx := context.Background()
@@ -481,7 +500,7 @@ func TestSetCreateVerificationModeMatrix(t *testing.T) {
 				for _, attempt := range []string{"no verification", "wrong verification", "correct verification"} {
 					t.Run(fmt.Sprintf("%s/%s->%s/%s", acct.name, from, to, attempt), func(t *testing.T) {
 						env := newCVEnv(t, acct, from)
-						relaxed := acct.required[from] && !acct.required[to]
+						lowered := cvLowered[from][to]
 
 						var (
 							in      *APIKeyVerificationInput
@@ -499,7 +518,7 @@ func TestSetCreateVerificationModeMatrix(t *testing.T) {
 						switch {
 						case wantErr != nil:
 							require.ErrorIs(t, err, wantErr)
-						case attempt == "no verification" && relaxed:
+						case attempt == "no verification" && lowered:
 							requireRelaxRequired(t, err)
 						default:
 							require.NoError(t, err)
@@ -513,7 +532,7 @@ func TestSetCreateVerificationModeMatrix(t *testing.T) {
 						}
 						require.Equal(t, from, change.From)
 						require.Equal(t, to, change.To)
-						require.Equal(t, relaxed, change.Relaxed)
+						require.Equal(t, lowered, change.Relaxed, "relaxed in the audit means the strength went down")
 						require.Equal(t, from != to, change.Changed)
 						wantFactor := ""
 						if attempt == "correct verification" {
@@ -526,6 +545,12 @@ func TestSetCreateVerificationModeMatrix(t *testing.T) {
 						} else {
 							require.Len(t, env.prefs.swapLog(), 1)
 						}
+						// 回包用的改后视图：开关字段是改后的值，账号因子 / 默认值不变。
+						require.NotNil(t, change.Factors)
+						require.Equal(t, to, change.Factors.CreateVerificationMode)
+						require.Equal(t, acct.required[to], change.Factors.CreateVerificationRequired)
+						require.Equal(t, acct.required[APIKeyCreateVerificationAuto], change.Factors.CreateVerificationDefaultRequired)
+						require.True(t, change.Factors.CreateVerificationConfigurable)
 					})
 				}
 			}
@@ -533,35 +558,64 @@ func TestSetCreateVerificationModeMatrix(t *testing.T) {
 	}
 }
 
-// 比较的是「有效要求」而不是标签：两个典型例子。
-func TestSetCreateVerificationModeComparesEffectiveRequirementNotLabels(t *testing.T) {
+// 评审 PR #688 的三个「潜伏降级」：拿「此刻的有效要求」比较，会让下面这些写入不要校验——
+// 被劫持的会话就能无校验地把保护降下去，等受害者之后开了 2FA / 2FA 被关，降低的值才露出来。
+// 现在按强度判断：任何下降都要校验（只要账号有可用验证方式）。
+func TestSetCreateVerificationModeLoweringNeedsVerificationEvenWhenTheEffectiveRequirementIsUnchanged(t *testing.T) {
 	ctx := context.Background()
 
-	// 仅有密码的账号：auto → off 不是放宽（两边都不强制），不需要校验；
-	// 但 on → auto 是放宽（输密码的要求没了），必须校验。
-	passwordOnly := cvPasswordOnly
-	env := newCVEnv(t, passwordOnly, APIKeyCreateVerificationAuto)
+	// a) 有密码、没开 2FA：auto → off 此刻有效要求都是「不要求」，旧规则放行；之后受害者开了 TOTP 就不再受保护。
+	env := newCVEnv(t, cvPasswordOnly, "")
 	change, err := env.svc.SetCreateVerificationMode(ctx, cvUserID, APIKeyCreateVerificationOff, nil)
-	require.NoError(t, err)
-	require.False(t, change.Relaxed)
-	require.Equal(t, APIKeyCreateVerificationOff, env.prefs.label(cvUserID))
-
-	env = newCVEnv(t, passwordOnly, APIKeyCreateVerificationOn)
-	_, err = env.svc.SetCreateVerificationMode(ctx, cvUserID, APIKeyCreateVerificationAuto, nil)
 	requireRelaxRequired(t, err)
-	require.Equal(t, APIKeyCreateVerificationOn, env.prefs.label(cvUserID))
+	require.Nil(t, change)
+	require.Equal(t, APIKeyCreateVerificationAuto, env.prefs.label(cvUserID), "nothing was written")
+	require.Empty(t, env.prefs.swapLog())
+	// 受害者随后开了 TOTP：创建 Key 仍然要校验（默认规则），没有被预先埋下的 off 绕过。
+	secret := keyVerifyTOTPSecret
+	env.user.TotpEnabled = true
+	env.user.TotpSecretEncrypted = &secret
+	_, err = env.svc.VerifyForCreate(ctx, cvUserID, nil)
+	require.ErrorIs(t, err, ErrAPIKeyVerificationRequired)
+	// 带了正确密码（本人）才能降下去。
+	change, err = env.svc.SetCreateVerificationMode(ctx, cvUserID, APIKeyCreateVerificationOff, env.credential(t, APIKeyFactorPassword))
+	require.NoError(t, err)
+	require.True(t, change.Relaxed)
+	require.Equal(t, APIKeyFactorPassword, change.Factor)
 
-	// 开了 2FA 的账号：auto 本来就是强制的，所以 auto → off 是放宽；off → auto 是变严，不需要校验。
-	withTOTP := cvWithTOTP
-	env = newCVEnv(t, withTOTP, APIKeyCreateVerificationAuto)
+	// a') 同一个洞的 Passkey 变体：有密码 + 绑了 Passkey，但 WebAuthn 全局被临时关掉（Passkey 数恒为 0），
+	// 此刻 auto 对它也是「不要求」。
+	disabledPasskey := cvAccount{name: "password and a passkey, webauthn globally off", signup: "email", primary: APIKeyFactorPassword,
+		required: cvRequired(false, true, false)}
+	env = newCVEnv(t, disabledPasskey, "")
 	_, err = env.svc.SetCreateVerificationMode(ctx, cvUserID, APIKeyCreateVerificationOff, nil)
 	requireRelaxRequired(t, err)
-	env = newCVEnv(t, withTOTP, APIKeyCreateVerificationOff)
-	change, err = env.svc.SetCreateVerificationMode(ctx, cvUserID, APIKeyCreateVerificationAuto, nil)
-	require.NoError(t, err)
-	require.False(t, change.Relaxed)
 	require.Equal(t, APIKeyCreateVerificationAuto, env.prefs.label(cvUserID))
-	require.Empty(t, env.prefs.rows, "back to auto deletes the row")
+
+	// b) 开了 TOTP、自己设了 on（想在 2FA 之外再兜一层密码）：on → auto 此刻两边都是「必须」，旧规则判持平放行；
+	// 之后 TOTP 被关（丢手机 / 管理员重置 2FA），原本还会要求输密码的 on 被悄悄降成了什么都不要求的 auto。
+	env = newCVEnv(t, cvWithTOTP, APIKeyCreateVerificationOn)
+	change, err = env.svc.SetCreateVerificationMode(ctx, cvUserID, APIKeyCreateVerificationAuto, nil)
+	requireRelaxRequired(t, err)
+	require.Nil(t, change)
+	require.Equal(t, APIKeyCreateVerificationOn, env.prefs.label(cvUserID), "the user's explicit on survives")
+	env.user.TotpEnabled = false
+	env.user.TotpSecretEncrypted = nil
+	_, err = env.svc.VerifyForCreate(ctx, cvUserID, nil)
+	require.ErrorIs(t, err, ErrAPIKeyVerificationRequired, "on still asks for the login password after the TOTP is gone")
+
+	// 对照：升高保护从来不要校验（off → auto、auto → on、off → on）。
+	for _, step := range [][2]string{
+		{APIKeyCreateVerificationOff, APIKeyCreateVerificationAuto},
+		{APIKeyCreateVerificationAuto, APIKeyCreateVerificationOn},
+		{APIKeyCreateVerificationOff, APIKeyCreateVerificationOn},
+	} {
+		env = newCVEnv(t, cvPasswordOnly, step[0])
+		change, err = env.svc.SetCreateVerificationMode(ctx, cvUserID, step[1], nil)
+		require.NoError(t, err, "%s -> %s", step[0], step[1])
+		require.False(t, change.Relaxed)
+		require.Equal(t, step[1], env.prefs.label(cvUserID))
+	}
 }
 
 // 没有任何可用因子的账号：on / off 都没有意义，不落库；auto 只用来清掉残留的旧行。
@@ -585,8 +639,10 @@ func TestSetCreateVerificationModeForAccountWithoutAnyFactor(t *testing.T) {
 		t.Run(stored+"->auto", func(t *testing.T) {
 			env := newCVEnv(t, acct, stored)
 			change, err := env.svc.SetCreateVerificationMode(ctx, cvUserID, APIKeyCreateVerificationAuto, nil)
+			// 清残留是「无处可验」的特例：on→auto 虽然强度下降，也不要求（也无法）校验；审计照实记下降。
 			require.NoError(t, err)
-			require.False(t, change.Relaxed, "with nothing to verify with there is nothing to relax")
+			require.Equal(t, cvLowered[stored][APIKeyCreateVerificationAuto], change.Relaxed)
+			require.Empty(t, change.Factor)
 			require.Equal(t, APIKeyCreateVerificationAuto, env.prefs.label(cvUserID))
 			require.Empty(t, env.prefs.rows)
 		})
@@ -629,9 +685,9 @@ func TestSetCreateVerificationModeNormalizesAndRejectsInvalidModes(t *testing.T)
 
 // ---- 3. 并发：读到旧值的请求不能把别人刚收紧的设置改回宽松 ----------------
 
-// 确定性的交错：请求 X 读到 off（不要求校验）、目标 auto（对仅有密码的账号也不要求）→ 在它写入之前，
-// 另一个请求把设置收紧成 on。如果 X 拿读到的旧值直接去写，on 就被悄悄改回 auto，等于没验证身份关掉了保护。
-// 带期望值的写入会失败，X 重新读到 on，发现这次变成了放宽，于是 VERIFY_REQUIRED。
+// 确定性的交错：请求 X 读到 off、目标 auto（强度上升，不要校验）→ 在它写入之前，
+// 另一个请求把设置收紧成 on。如果 X 拿读到的旧值直接去写，on 就被悄悄改回 auto，等于没验证身份降低了保护。
+// 带期望值的写入会失败，X 重新读到 on，发现这次变成了强度下降（on → auto），于是 VERIFY_REQUIRED。
 func TestSetCreateVerificationModeStaleReadCannotBypassTheRelaxRule(t *testing.T) {
 	ctx := context.Background()
 	env := newCVEnv(t, cvPasswordOnly, APIKeyCreateVerificationOff)
@@ -691,11 +747,11 @@ func TestSetCreateVerificationModeGivesUpWithConflictWhenAlwaysRaced(t *testing.
 	require.Equal(t, apiKeyCreateVerificationCASAttempts, env.prefs.getCalls, "bounded retries")
 }
 
-// 并发压力（配合 -race）：一个合法用户反复「收紧 → 验证后放宽」，几个没有凭据的请求者反复尝试放宽。
-// 不变量：没有凭据的请求者的任何一次成功写入，都不能让有效要求从必须校验变成不要求。
-func TestSetCreateVerificationModeConcurrentWritersNeverRelaxWithoutVerification(t *testing.T) {
+// 并发压力（配合 -race）：一个合法用户反复「收紧 → 验证后降低」，几个没有凭据的请求者反复尝试降低 / 写 auto。
+// 不变量：没有凭据的请求者的任何一次成功写入，都不能让保护强度（on > auto > off）下降。
+func TestSetCreateVerificationModeConcurrentWritersNeverLowerWithoutVerification(t *testing.T) {
 	ctx := context.Background()
-	acct := cvPasswordOnly // 仅有密码：on 必须校验，auto / off 不要求
+	acct := cvPasswordOnly
 	env := newCVEnv(t, acct, APIKeyCreateVerificationOff)
 	env.prefs.afterGet = func(int) { runtime.Gosched() } // 扩大「读 → 写」之间的窗口
 
@@ -720,7 +776,7 @@ func TestSetCreateVerificationModeConcurrentWritersNeverRelaxWithoutVerification
 		defer wg.Done()
 		svc := newWriter("legit")
 		for i := 0; i < legitRounds; i++ {
-			// 收紧不需要校验；放宽带登录密码。偶尔被抢先（409）就再来一轮。
+			// 收紧不需要校验；降低带登录密码。偶尔被抢先（409）就再来一轮。
 			_, _ = svc.SetCreateVerificationMode(ctx, cvUserID, APIKeyCreateVerificationOn, nil)
 			_, _ = svc.SetCreateVerificationMode(ctx, cvUserID, APIKeyCreateVerificationOff, &APIKeyVerificationInput{Method: APIKeyFactorPassword, Password: cvPassword})
 		}
@@ -738,7 +794,7 @@ func TestSetCreateVerificationModeConcurrentWritersNeverRelaxWithoutVerification
 				change, err := svc.SetCreateVerificationMode(ctx, cvUserID, target, nil)
 				if err == nil && change.Relaxed {
 					mu.Lock()
-					attackerHits = append(attackerHits, fmt.Sprintf("attacker-%d reported a relaxation: %+v", a, change))
+					attackerHits = append(attackerHits, fmt.Sprintf("attacker-%d lowered the protection: %+v", a, change))
 					mu.Unlock()
 				}
 			}
@@ -752,8 +808,7 @@ func TestSetCreateVerificationModeConcurrentWritersNeverRelaxWithoutVerification
 			continue
 		}
 		from, to := apiKeyCreateVerificationModeLabel(swap.From), apiKeyCreateVerificationModeLabel(swap.To)
-		require.False(t, acct.required[from] && !acct.required[to],
-			"%s moved %s -> %s without verification", swap.Writer, from, to)
+		require.False(t, cvLowered[from][to], "%s moved %s -> %s without verification", swap.Writer, from, to)
 	}
 }
 

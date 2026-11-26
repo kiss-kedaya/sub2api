@@ -120,8 +120,8 @@ func (h *APIKeyHandler) GetVerificationFactors(c *gin.Context) {
 type setAPIKeyCreateVerificationRequest struct {
 	// Mode 目标模式：on（有可用因子就必须校验）/ off（不要求校验）/ auto（恢复默认规则）。
 	Mode string `json:"mode"`
-	// Verification 把保护关掉（有效要求从必须校验变成不要求）时必填的三选一身份校验，
-	// 结构与创建 Key 的 verification 相同。变严或持平不需要。
+	// Verification 降低保护强度（on > auto > off 的任何一步下降）时必填的三选一身份校验，
+	// 结构与创建 Key 的 verification 相同。强度上升或持平不需要。
 	Verification *apiKeyVerificationRequest `json:"verification"`
 }
 
@@ -131,10 +131,11 @@ const setAPIKeyCreateVerificationBodyMaxBytes = 8 << 10
 // SetAPIKeyCreateVerification 用户自己决定「创建 API Key 时是否需要验证身份」。
 // PUT /api/v1/user/security/api-key-create-verification
 //
-// 只在变宽松（有效要求从必须校验变成不要求）时要求三选一身份校验，错误码复用
-// VERIFY_REQUIRED / VERIFY_*_INVALID / VERIFY_PASSWORD_RATE_LIMITED（429 带 Retry-After）；
-// 任何失败都不写库。审计只记因子名与结果，以及改前 / 改后的模式标签，绝不记录任何凭据。
-// 成功时回包与 GET verification-factors 同形，前端直接用它刷新开关状态。
+// 只在降低保护强度（on > auto > off 的任何一步下降，含「没有记录」→ off）时要求三选一身份校验，
+// 错误码复用 VERIFY_REQUIRED / VERIFY_*_INVALID / VERIFY_PASSWORD_RATE_LIMITED（429 带 Retry-After）；
+// 任何失败都不写库。审计只记因子名与结果，以及改前 / 改后的模式标签和「强度是否下降」，绝不记录任何凭据。
+// 成功时回包与 GET verification-factors 同形（改后的视图由服务层算好，写库成功之后不再读库，
+// 所以不会出现「已经改成功、回包时读库抖一下返回 5xx」），前端直接用它刷新开关状态。
 func (h *APIKeyHandler) SetAPIKeyCreateVerification(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -171,13 +172,8 @@ func (h *APIKeyHandler) SetAPIKeyCreateVerification(c *gin.Context) {
 		"api_key_create_verification_to":      change.To,
 		"api_key_create_verification_relaxed": change.Relaxed,
 	})
-	factors, err := svc.Factors(c.Request.Context(), subject.UserID)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
 	c.Header("Cache-Control", "no-store")
-	response.Success(c, factors)
+	response.Success(c, change.Factors)
 }
 
 // BeginKeyPasskeyVerification 为 API Key 创建 / 二次查看生成 Passkey assertion。
