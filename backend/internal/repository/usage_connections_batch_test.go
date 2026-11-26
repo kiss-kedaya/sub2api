@@ -586,8 +586,16 @@ func TestConnectionTraceDropCounter_ConcurrentLoggersAreRateLimited(t *testing.T
 	}
 	wg.Wait()
 	require.EqualValues(t, 1, logged.Load(), "one line for 16000 drops inside one interval")
-	require.EqualValues(t, 1, reported.Load())
 	require.EqualValues(t, 16000, c.total.Load())
+	// The winning goroutine reports every drop counted by the time it reads the
+	// total, and other goroutines add before that, so the first line can carry
+	// more than one drop (a real CI run saw 2). What must hold is that nothing is
+	// lost: the next line carries whatever the first one did not.
+	first := reported.Load()
+	require.GreaterOrEqual(t, first, int64(1))
+	rest, ok := c.add(0, now.Add(connectionTraceLogInterval))
+	require.True(t, ok)
+	require.EqualValues(t, 16000, first+rest, "the two lines together account for every drop")
 }
 
 func TestConnectionTraceWriter_StopFlushesWhatIsQueued(t *testing.T) {
