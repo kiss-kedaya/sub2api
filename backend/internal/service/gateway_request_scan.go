@@ -263,24 +263,104 @@ func skipJSONWhitespace(body []byte, i int) int {
 // instead of looking at every byte of what is usually a long text. Control bytes
 // and invalid escapes are not checked here, same as the byte-at-a-time loop this
 // replaces (gjson.ValidBytes is the gate that rejects them).
+//
+// IndexByte only pays when quotes are far apart: each escaped quote it stops at
+// costs a call, more than reading the few bytes in front of it. So the scan adapts
+// and may hand the rest of the string to the plain byte loop at any token boundary
+// (the start of the string, or just past an escaped quote), which cannot change the
+// result:
+//  1. the first stringEndPlainHead bytes are read by the plain loop (most JSON
+//     strings, keys and short values, end there and never pay for a call);
+//  2. after that IndexByte keeps a debt: every escaped quote adds stringEndHitCost
+//     and pays back the bytes it skipped (never below zero); once the debt passes
+//     stringEndDebtLimit the string is escaped-quote dense (JSON text inside a
+//     string) and the plain loop finishes it;
+//  3. a run of more than stringEndMaxRun backslashes in front of a quote is not
+//     counted back either, the plain loop takes over.
 func scanJSONStringEnd(body []byte, i int) (int, error) {
-	start := i + 1
-	j := start
-	for {
+	j := i + 1
+	plainEnd := min(j+stringEndPlainHead, len(body))
+	for ; j < plainEnd; j++ {
+		switch body[j] {
+		case '\\':
+			j++
+		case '"':
+			return j + 1, nil
+		}
+	}
+	end, _, err := scanJSONStringEndLong(body, i, j)
+	return end, err
+}
+
+// Tuning of scanJSONStringEnd. Measured on the development machine, other CPUs move
+// the numbers but not the shape: one IndexByte round trip (call, backslash count,
+// bookkeeping) costs about as much as 24 bytes of the plain loop, which is why a
+// string whose escaped quotes are closer than that is cheaper to read byte by byte.
+const (
+	stringEndPlainHead = 32
+	stringEndHitCost   = 24
+	stringEndDebtLimit = 20
+	stringEndMaxRun    = 16
+)
+
+// scanJSONStringEndLong is the rest of a string after the head (see scanJSONStringEnd).
+// gaveUp reports that the IndexByte phase was abandoned (items 2 and 3 above) and the
+// plain loop found the closing quote; it does not change the result, only how it was
+// found, which is what tests look at.
+func scanJSONStringEndLong(body []byte, i, j int) (end int, gaveUp bool, err error) {
+	return scanJSONStringEndLongWith(body, i, j, stringEndHitCost, stringEndDebtLimit, stringEndMaxRun)
+}
+
+// scanJSONStringEndLongWith continues a string from j, a token boundary, with the
+// tuning passed in so tests can drive every switch point with tiny values: j is where
+// the head loop stopped (after a whole token) or just past a quote that was the
+// second half of an escape pair, so the byte before j is never part of a run of
+// backslashes that still has to be paired. That is why the backslashes in front of
+// a quote only have to be counted back to j, not to the opening quote.
+func scanJSONStringEndLongWith(body []byte, i, j, hitCost, debtLimit, maxRun int) (int, bool, error) {
+	debt := 0
+	for j < len(body) {
 		k := bytes.IndexByte(body[j:], '"')
 		if k < 0 {
-			return 0, fmt.Errorf("unterminated string at byte %d", i)
+			return 0, false, unterminatedJSONString(i)
 		}
 		q := j + k
-		backslashes := 0
-		for p := q - 1; p >= start && body[p] == '\\'; p-- {
-			backslashes++
+		run := 0
+		for p := q - 1; p >= j && body[p] == '\\'; p-- {
+			if run++; run > maxRun {
+				return scanJSONStringEndPlain(body, i, j)
+			}
 		}
-		if backslashes&1 == 0 {
-			return q + 1, nil
+		if run&1 == 0 {
+			return q + 1, false, nil
+		}
+		// An escaped quote: the string goes on after it, at the next token boundary.
+		if debt += hitCost - (k + 1); debt < 0 {
+			debt = 0
 		}
 		j = q + 1
+		if debt > debtLimit {
+			return scanJSONStringEndPlain(body, i, j)
+		}
 	}
+	return 0, false, unterminatedJSONString(i)
+}
+
+// scanJSONStringEndPlain is the byte-at-a-time loop, started at a token boundary j.
+func scanJSONStringEndPlain(body []byte, i, j int) (int, bool, error) {
+	for ; j < len(body); j++ {
+		switch body[j] {
+		case '\\':
+			j++
+		case '"':
+			return j + 1, true, nil
+		}
+	}
+	return 0, false, unterminatedJSONString(i)
+}
+
+func unterminatedJSONString(i int) error {
+	return fmt.Errorf("unterminated string at byte %d", i)
 }
 
 // scanJSONValueEnd returns the byte offset just past any JSON value.
