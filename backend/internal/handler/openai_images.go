@@ -468,6 +468,8 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			upstreamModel = result.UpstreamModel
 		}
 		sessionID := service.ExtractClientSessionID(c)
+		// 图片请求体可达数 MB：结果里的字符串不能再是它的子串，否则排队的计费任务会钉住整份请求体。
+		result.DetachRequestStrings()
 		usageInput := &service.OpenAIRecordUsageInput{
 			Result:             result,
 			APIKey:             apiKey,
@@ -482,7 +484,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			APIKeyService:      h.apiKeyService,
 			QuotaPlatform:      quotaPlatform,
 			SessionID:          sessionID,
-			ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, requestModel, upstreamModel),
+			ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, requestModel, upstreamModel).Detached(),
 		}
 		dispatchMediaSettlement(c, func(ctx context.Context) error {
 			return h.gatewayService.RecordMediaUsage(ctx, usageInput)

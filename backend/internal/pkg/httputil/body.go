@@ -60,6 +60,18 @@ func (p *PrereadBody) Bytes() []byte {
 	return p.body
 }
 
+// Release 丢掉对请求体的引用。请求处理链结束后调用：gin 会把 gin.Context 放回对象池，
+// 池里的 Context 仍然指着最后一个请求的 *http.Request，计费任务、日志队列也可能带着它，
+// 不清掉的话整份请求体（可达数 MB）要等到 Context 被复用或池被清空才能回收。
+// 释放之后 Read 返回 io.EOF、Bytes 返回 nil；必须只在没有任何后续读取之后调用。
+func (p *PrereadBody) Release() {
+	if p == nil {
+		return
+	}
+	p.body = nil
+	p.reader = bytes.NewReader(nil)
+}
+
 // ReadRequestBodyWithPrealloc reads request body with preallocated buffer based
 // on content length, transparently decoding any Content-Encoding the upstream
 // client used to compress the body (zstd, gzip, deflate).

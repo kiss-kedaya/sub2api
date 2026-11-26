@@ -436,6 +436,8 @@ func (h *OpenAIGatewayHandler) recordDeepSeekToolsUsage(
 		upstreamEndpoint = result.UpstreamEndpoint
 	}
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
+	// 结果里的字符串可能是请求体的子串：复制后，排队的计费任务不再钉住请求体。
+	result.DetachRequestStrings()
 
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
