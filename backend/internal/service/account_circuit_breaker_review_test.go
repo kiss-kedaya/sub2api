@@ -435,6 +435,8 @@ func TestRefineOKAttemptTable(t *testing.T) {
 		{"anthropic 400 org disabled mixed case", PlatformAnthropic, 400, anthropicOrgDisabledMixedCase, attemptFailed},
 		{"anthropic 400 org on hold full payload", PlatformAnthropic, 400, anthropicOrgDisabledOnHoldBody, attemptFailed},
 		{"anthropic 400 org disabled plain text", PlatformAnthropic, 400, []byte("This organization has been disabled"), attemptFailed},
+		{"anthropic 400 org disabled overlapping prefix", PlatformAnthropic, 400, []byte("oorganization has been disabled"), attemptFailed},
+		{"anthropic 400 org disabled surrounded by multibyte utf8", PlatformAnthropic, 400, []byte("错误：THIS ORGANIZATION HAS BEEN DISABLED。"), attemptFailed},
 		{"unlabelled platform 400 org disabled", "", 400, anthropicOrgDisabledBody, attemptFailed},
 		{"anthropic 400 marker finishes exactly at peek limit", PlatformAnthropic, 400, markerAtPeekEdge, attemptFailed},
 		{"anthropic 400 marker truncated at peek edge stays OK", PlatformAnthropic, 400, markerSplitAtPeekEdge, attemptOK},
@@ -451,6 +453,12 @@ func TestRefineOKAttemptTable(t *testing.T) {
 		{"gemini 400 org disabled is not refined", PlatformGemini, 400, anthropicOrgDisabledBody, attemptOK},
 		{"antigravity 400 org disabled is not refined", PlatformAntigravity, 400, anthropicOrgDisabledBody, attemptOK},
 		{"deepseek 400 org disabled is not refined", PlatformDeepseek, 400, anthropicOrgDisabledBody, attemptOK},
+		{"kimi 400 org disabled is not refined", PlatformKimi, 400, anthropicOrgDisabledBody, attemptOK},
+		{"zhipu 400 org disabled is not refined", PlatformZhipu, 400, anthropicOrgDisabledBody, attemptOK},
+		{"minimax 400 org disabled is not refined", PlatformMiniMax, 400, anthropicOrgDisabledBody, attemptOK},
+		{"cline 400 org disabled is not refined", PlatformCline, 400, anthropicOrgDisabledBody, attemptOK},
+		{"command_code 400 org disabled is not refined", PlatformCommandCode, 400, anthropicOrgDisabledBody, attemptOK},
+		{"typesafe 400 org disabled is not refined", PlatformTypeSafe, 400, anthropicOrgDisabledBody, attemptOK},
 		{"composite 400 org disabled is not refined", PlatformComposite, 400, anthropicOrgDisabledBody, attemptOK},
 	}
 	for _, tc := range cases {
@@ -459,6 +467,25 @@ func TestRefineOKAttemptTable(t *testing.T) {
 			require.Equal(t, tc.want, refineAttemptOutcome(attemptOK, tc.platform, tc.status, tc.body))
 		})
 	}
+}
+
+func TestIsAnthropicOrganizationDisabledBodyZeroAllocs(t *testing.T) {
+	largeMiss := bytes.Repeat([]byte("Organization Has Been Disabl"), 250)
+	require.False(t, isAnthropicOrganizationDisabledBody(largeMiss))
+	require.True(t, isAnthropicOrganizationDisabledBody(anthropicOrgDisabledOnHoldBody))
+
+	hitAllocs := testing.AllocsPerRun(100, func() {
+		if !isAnthropicOrganizationDisabledBody(anthropicOrgDisabledOnHoldBody) {
+			t.Fatal("expected match")
+		}
+	})
+	missAllocs := testing.AllocsPerRun(100, func() {
+		if isAnthropicOrganizationDisabledBody(largeMiss) {
+			t.Fatal("expected no match")
+		}
+	})
+	require.Zero(t, hitAllocs)
+	require.Zero(t, missAllocs)
 }
 
 func TestCircuitBreakerWantsAttemptBodyOnlyWhereItCanChangeTheVerdict(t *testing.T) {
@@ -569,6 +596,51 @@ func TestCircuitBreakerAnthropicOrgDisabled400TripsAndDoesNotDilute503(t *testin
 		total, failed := h.windowOf(1)
 		require.Equal(t, 1, total)
 		require.Equal(t, 1, failed, "400 org disabled must not clear the prior 503 failure as a success")
+	})
+
+	t.Run("same-request retry succeeding after 400 org disabled cancels the earlier failure", func(t *testing.T) {
+		h := newCircuitHarness(t, nil)
+		ctx200 := circuitCtxReq(1, PlatformAnthropic, "relay-1", "req-recover-200")
+		h.b.ObserveUpstreamAttemptBody(ctx200, 1, 400, nil, anthropicOrgDisabledBody)
+		h.b.ObserveUpstreamAttempt(ctx200, 1, 200, nil)
+
+		ctxNormal400 := circuitCtxReq(1, PlatformAnthropic, "relay-1", "req-recover-400")
+		h.b.ObserveUpstreamAttemptBody(ctxNormal400, 1, 400, nil, anthropicOrgDisabledBody)
+		h.b.ObserveUpstreamAttemptBody(ctxNormal400, 1, 400, nil, anthropicNormal400Body)
+
+		total, failed := h.windowOf(1)
+		require.Equal(t, 2, total)
+		require.Zero(t, failed)
+		require.Zero(t, h.b.reqSamples.count())
+	})
+
+	t.Run("safety valve respects 400 org disabled failures and normal 400 health", func(t *testing.T) {
+		// All 3 participating Anthropic accounts failing with 400 org-disabled: first 2 trip, 3rd is blocked by valve.
+		allBad := newCircuitHarness(t, nil)
+		for i := 0; i < 20; i++ {
+			for id := int64(1); id <= 3; id++ {
+				allBad.b.ObserveUpstreamAttemptBody(circuitCtxFor(id, PlatformAnthropic, fmt.Sprintf("relay-%d", id)), id, 400, nil, anthropicOrgDisabledBody)
+			}
+		}
+		require.True(t, allBad.b.IsOpen(1))
+		require.True(t, allBad.b.IsOpen(2))
+		require.False(t, allBad.b.IsOpen(3), "third Anthropic account must be held back by the safety valve when no peer is healthy")
+		require.Equal(t, 2, allBad.store.tripCount())
+		require.GreaterOrEqual(t, allBad.logs.count("account_circuit_breaker.valve_blocked"), 1)
+
+		// 1 healthy peer (normal 400s still prove upstream liveness) allows the 2 bad accounts to trip.
+		mixed := newCircuitHarness(t, nil)
+		for i := 0; i < 20; i++ {
+			mixed.b.ObserveUpstreamAttemptBody(circuitCtxFor(3, PlatformAnthropic, "relay-3"), 3, 400, nil, anthropicNormal400Body)
+		}
+		for i := 0; i < 20; i++ {
+			mixed.b.ObserveUpstreamAttemptBody(circuitCtxFor(1, PlatformAnthropic, "relay-1"), 1, 400, nil, anthropicOrgDisabledBody)
+			mixed.b.ObserveUpstreamAttemptBody(circuitCtxFor(2, PlatformAnthropic, "relay-2"), 2, 400, nil, anthropicOrgDisabledBody)
+		}
+		require.True(t, mixed.b.IsOpen(1))
+		require.True(t, mixed.b.IsOpen(2))
+		require.False(t, mixed.b.IsOpen(3))
+		require.Equal(t, 2, mixed.store.tripCount())
 	})
 
 	t.Run("unlabelled platform 400 org disabled still trips", func(t *testing.T) {

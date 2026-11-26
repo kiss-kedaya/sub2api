@@ -236,18 +236,31 @@ func (s *httpUpstreamService) observeUpstreamAttempt(req *http.Request, accountI
 }
 
 // peekResponseBody 读出响应体的前 limit 字节供观察者分类，并把 resp.Body 恢复成「已读前缀 + 剩余」，
-// 调用方读到的内容与没有预读时完全一致。读错误不吞：剩余部分的读取会再遇到同一个错误。
+// 调用方读到的内容与没有预读时完全一致。若预读阶段遇到非 EOF 读错误，则把该错误固定在前缀之后重放，
+// 既不吞掉一次性错误 reader 的错误，也不对已失败的底层 reader 发起二次读取。
 func peekResponseBody(resp *http.Response, limit int64) []byte {
 	if resp == nil || resp.Body == nil || resp.Body == http.NoBody || limit <= 0 {
 		return nil
 	}
 	original := resp.Body
-	prefix, _ := io.ReadAll(io.LimitReader(original, limit))
+	prefix, err := io.ReadAll(io.LimitReader(original, limit))
+	var rest io.Reader = original
+	if err != nil {
+		rest = peekErrReader{err: err}
+	}
 	resp.Body = &prefixedReadCloser{
-		Reader: io.MultiReader(bytes.NewReader(prefix), original),
+		Reader: io.MultiReader(bytes.NewReader(prefix), rest),
 		Closer: original,
 	}
 	return prefix
+}
+
+type peekErrReader struct {
+	err error
+}
+
+func (r peekErrReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
 
 // Do 执行 HTTP 请求
