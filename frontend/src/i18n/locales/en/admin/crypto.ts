@@ -238,6 +238,8 @@ export default {
     saveConfirmTitle: 'Confirm config changes',
     saveConfirmMessage: '{count} change(s) affect where funds move. On-chain operations are irreversible — review before saving:',
     saveConfirmAction: 'Save anyway',
+    saveApplyDeferred: 'Saved. The settings are being applied in the background; if a sweep or scan is running they take effect when it finishes. There is no need to save again.',
+    saveNoResponse: 'The request got no response. The settings may already be saved; refresh the page to check.',
     creditMultiplier: 'Credit multiplier',
     disabled: 'Disabled',
     blockedTitle: 'A transaction is blocking sweeps',

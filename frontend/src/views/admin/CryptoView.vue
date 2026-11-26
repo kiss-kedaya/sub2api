@@ -821,6 +821,7 @@ import {
   exportDepositsCSV,
   initializeWallet,
   updateCryptoConfig,
+  isCryptoNoResponseError,
   testRPCEndpoint,
   autoPickRPC,
   importHotMnemonic,
@@ -829,6 +830,7 @@ import {
   type AdminAddressSummary,
   type CryptoConfig,
   type CryptoConfigPatch,
+  type CryptoConfigSaveResult,
   type DepositConfirmOutcome,
   type DepositRecord,
   type DepositSummary,
@@ -1748,10 +1750,20 @@ async function saveConfig() {
     // rewrite maps the UI never renders (rpc, gas_topup, confirmations,
     // scan_range, per-chain thresholds) — a null map could blank them.
     const save = async (verification?: CryptoVerification) => {
-      await updateCryptoConfig(patch, verification)
+      let result: CryptoConfigSaveResult
+      try {
+        result = await updateCryptoConfig(patch, verification)
+      } catch (err) {
+        // No answer does not mean the save failed: the server may have stored it
+        // and only been slow to answer. Say that instead of "check your connection".
+        if (isCryptoNoResponseError(err)) throw new Error(t('admin.crypto.saveNoResponse'))
+        throw err
+      }
       loadedSnapshot.value = snapshot
       if (rpcUnlocked.value) configuredRPCChains.value = Object.keys(snapshot.rpc).filter(chain => snapshot.rpc[chain]?.trim())
       configSaved.value = true
+      // Stored, but a sweep or scan in progress delays the apply. It is not a failure.
+      if (!result.applied) appStore.showInfo(t('admin.crypto.saveApplyDeferred'), 10000)
       await loadWalletStatus()
     }
     const requiresVerification = Object.keys(patch).some(key => !LOW_RISK_CONFIG_FIELDS.has(key as keyof CryptoConfigPatch))
