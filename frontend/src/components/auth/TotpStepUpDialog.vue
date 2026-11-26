@@ -15,9 +15,6 @@
       <p class="mt-3 text-sm text-muted">
         {{ hintText }}
       </p>
-      <p v-if="progressText" class="mt-1 text-xs text-muted" data-testid="stepup-factor-progress">
-        {{ progressText }}
-      </p>
     </div>
 
     <!-- TOTP 因子 -->
@@ -159,8 +156,10 @@ const verifying = ref(false)
 const code = ref('')
 const codeInput = ref<InstanceType<typeof TotpCodeInput> | null>(null)
 const phase = ref<StepUpFactor>('totp')
+/** 账号已绑定的因子（服务端 required_factors）。step-up 任选其一即可，不要求逐个通过。 */
 const requiredFactors = ref<StepUpFactor[]>(['totp'])
-const verifiedFactors = ref<StepUpFactor[]>([])
+/** 服务端声明 step_up_mode=any：已绑定因子里验证任意一个就放行。 */
+const anyOneFactor = ref(false)
 const attemptFeedback = ref(false)
 const passkeySupported = ref(false)
 const passkeyError = ref('')
@@ -169,43 +168,26 @@ const activeFactors = computed<StepUpFactor[]>(() => {
   const factors = requiredFactors.value.filter((factor) => factor === 'totp' || factor === 'passkey')
   return factors.length ? factors : ['totp']
 })
+const bothFactorsBound = computed(
+  () => activeFactors.value.includes('totp') && activeFactors.value.includes('passkey')
+)
 const busy = computed(() => verifying.value)
 const hintText = computed(() => {
   if (props.hint) return props.hint
+  // 只有服务端明说「任选其一」才这么提示：旧后端不认这个字段，不能对用户许诺它不兑现的规则。
+  if (bothFactorsBound.value && anyOneFactor.value) return t('stepUp.anyOneFactorHint')
   if (phase.value === 'passkey') return t('stepUp.passkeyHint')
-  if (activeFactors.value.includes('passkey')) return t('stepUp.totpThenPasskeyHint')
   return t('stepUp.hint')
-})
-const progressText = computed(() => {
-  if (activeFactors.value.length < 2) return ''
-  if (phase.value === 'passkey') {
-    return hasVerified('totp')
-      ? t('stepUp.totpVerifiedContinuePasskey')
-      : t('stepUp.twoFactorProgress', {
-          current: t('stepUp.factorPasskey'),
-          next: t('stepUp.factorTotp')
-        })
-  }
-  return hasVerified('passkey')
-    ? t('stepUp.passkeyVerifiedContinueTotp')
-    : t('stepUp.twoFactorProgress', {
-        current: t('stepUp.factorTotp'),
-        next: t('stepUp.factorPasskey')
-      })
 })
 
 /** 显式「验证」按钮：TOTP 必须满 6 位、未在验证中且未被限速才可点。 */
 const canSubmitTotp = computed(
   () => phase.value === 'totp' && !verifying.value && canSubmit.value && /^[0-9]{6}$/.test(code.value)
 )
-/** 绑定 Passkey 的账号在 TOTP 阶段并列展示「用 Passkey 验证」(先验哪个因子可自选)。 */
-const passkeyOptionVisible = computed(
-  () => phase.value === 'totp' && activeFactors.value.includes('passkey') && !hasVerified('passkey')
-)
-/** 双因子账号先验完 Passkey 后，仍可用「用 TOTP 验证」切回动态码阶段。 */
-const totpOptionVisible = computed(
-  () => phase.value === 'passkey' && activeFactors.value.includes('totp') && !hasVerified('totp')
-)
+/** 绑定 Passkey 的账号在 TOTP 阶段并列展示「用 Passkey 验证」（任选其一）。 */
+const passkeyOptionVisible = computed(() => phase.value === 'totp' && activeFactors.value.includes('passkey'))
+/** 双因子账号在 Passkey 阶段仍可用「用 TOTP 验证」切回动态码（Passkey 失败/取消后也不会被卡住）。 */
+const totpOptionVisible = computed(() => phase.value === 'passkey' && activeFactors.value.includes('totp'))
 const attemptsRemainingText = computed(() => {
   if (!attemptFeedback.value || remainingSeconds.value > 0 || remainingAttempts.value <= 0) return ''
   return t('stepUp.attemptsRemaining', { count: remainingAttempts.value })
@@ -228,13 +210,14 @@ watch(
 )
 
 /**
- * 读取当前账号必须完成的因子，决定弹窗阶段：
- * 只绑 TOTP → TOTP；只绑 Passkey → Passkey；两者都绑 → 两个因子都要通过
- * （服务端要求全部已绑定因子各持有效 step-up 凭证，顺序可自选，默认先 TOTP）。
+ * 读取当前账号已绑定的因子，决定弹窗展示哪些验证方式：
+ * 只绑 TOTP → TOTP；只绑 Passkey → Passkey；两者都绑 → 并列展示 TOTP 输入框与
+ * 「用 Passkey 验证」，验证其中任意一个就完成 step-up（服务端 step_up_mode=any），默认先 TOTP。
  * 读取失败时按 TOTP 兜底（与旧行为一致），不因策略接口抖动卡死用户。
  */
 async function loadPolicy(): Promise<void> {
   let factors: StepUpFactor[] = ['totp']
+  let anyOne = false
   try {
     const policy = await totpAPI.getTwoFactorPolicy()
     const fromServer = (policy.required_factors || []).filter(
@@ -245,6 +228,7 @@ async function loadPolicy(): Promise<void> {
       factors = ['totp']
     } else if (fromServer.length > 0) {
       factors = fromServer
+      anyOne = policy.step_up_mode === 'any'
     } else {
       factors = ['totp']
     }
@@ -252,19 +236,10 @@ async function loadPolicy(): Promise<void> {
     factors = ['totp']
   }
   requiredFactors.value = factors
+  anyOneFactor.value = anyOne
   phase.value = factors.includes('totp') ? 'totp' : 'passkey'
   if (phase.value === 'totp') {
     nextTick(() => codeInput.value?.focus())
-  }
-}
-
-function hasVerified(factor: StepUpFactor): boolean {
-  return verifiedFactors.value.includes(factor)
-}
-
-function markVerified(factor: StepUpFactor): void {
-  if (!verifiedFactors.value.includes(factor)) {
-    verifiedFactors.value = [...verifiedFactors.value, factor]
   }
 }
 
@@ -273,13 +248,12 @@ function resetState(): void {
   code.value = ''
   verifying.value = false
   attemptFeedback.value = false
-  verifiedFactors.value = []
   passkeyError.value = ''
 }
 
-/** 手动切换当前要验证的因子；已完成的因子不再切换。 */
+/** 手动切换当前要验证的因子（两个因子并列可选，哪个失败都不影响改用另一个）。 */
 function switchFactor(factor: StepUpFactor): void {
-  if (verifying.value || phase.value === factor || hasVerified(factor)) return
+  if (verifying.value || phase.value === factor) return
   if (!activeFactors.value.includes(factor)) return
   phase.value = factor
   passkeyError.value = ''
@@ -305,12 +279,7 @@ async function submit(otp: string) {
     reset()
     resetInputs()
     verifying.value = false
-    markVerified('totp')
-    // 两者都绑定时 TOTP 只是其中一个因子：继续 Passkey 阶段，全部通过才重试原请求。
-    if (activeFactors.value.includes('passkey') && !hasVerified('passkey')) {
-      phase.value = 'passkey'
-      return
-    }
+    // 任选其一：TOTP 通过就够了，直接放行原请求（两者都绑定时也不再要求继续验 Passkey）。
     props.controller.onVerified()
   } catch (err: any) {
     verifying.value = false
@@ -325,7 +294,7 @@ async function submit(otp: string) {
   }
 }
 
-/** Passkey 阶段：浏览器断言成功后，所有绑定的因子才全部通过。 */
+/** Passkey 阶段：浏览器断言通过就放行原请求（任选其一，不再要求另一个因子）。 */
 async function submitPasskey() {
   if (phase.value !== 'passkey' || verifying.value) return
   if (!passkeySupported.value) {
@@ -337,13 +306,6 @@ async function submitPasskey() {
   try {
     await passkeyAPI.stepUp()
     verifying.value = false
-    markVerified('passkey')
-    // 先验 Passkey 的双因子账号还要继续 TOTP，不能提前关闭弹窗。
-    if (activeFactors.value.includes('totp') && !hasVerified('totp')) {
-      phase.value = 'totp'
-      nextTick(() => codeInput.value?.focus())
-      return
-    }
     props.controller.onVerified()
   } catch (err: any) {
     verifying.value = false

@@ -83,6 +83,56 @@ describe('shared client step-up gate', () => {
     expect(adapter.mock.calls[0][0].data).toBeTruthy()
   })
 
+  // 绑定 TOTP 与 Passkey 的账号：403 的 metadata 声明「任选其一」（step_up_mode=any）。
+  // 客户端照常按 STEP_UP_REQUIRED 处理：弹一次窗，验证任意一个因子后只重试一次。
+  it('treats the any-one-factor challenge (step_up_mode metadata) like any STEP_UP_REQUIRED: prompts once, retries once', async () => {
+    const challenge = { step_up_mode: 'any', factors: 'totp,passkey' }
+    let calls = 0
+    const adapter = vi.fn(async (config: any) => {
+      calls += 1
+      if (calls === 1) {
+        throw {
+          response: { status: 403, data: { code: 'STEP_UP_REQUIRED', message: 'verify', metadata: challenge } },
+          code: 'ERR_BAD_REQUEST',
+          isAxiosError: true,
+          config,
+        }
+      }
+      return okResponse()
+    })
+    apiClient.defaults.adapter = adapter
+
+    const pending = apiClient.put('/admin/payment/providers/7', { name: 'x' })
+    await vi.waitFor(() => expect(stepUpGate.visible.value).toBe(true))
+    // 弹窗里验证了其中一个因子就会走到这里（不再要求另一个因子）。
+    stepUpGate.onVerified()
+
+    await expect(pending).resolves.toMatchObject({ data: { ok: true } })
+    expect(adapter).toHaveBeenCalledTimes(2)
+  })
+
+  it('hands the challenge metadata to the caller when the retry is still rejected (no endless prompts)', async () => {
+    const challenge = { step_up_mode: 'any', factors: 'totp,passkey' }
+    const adapter = vi.fn(async (config: any) => {
+      throw {
+        response: { status: 403, data: { code: 'STEP_UP_REQUIRED', message: 'verify', metadata: challenge } },
+        code: 'ERR_BAD_REQUEST',
+        isAxiosError: true,
+        config,
+      }
+    })
+    apiClient.defaults.adapter = adapter
+
+    const pending = apiClient.put('/admin/payment/providers/7', { name: 'x' })
+    const rejection = expect(pending).rejects.toMatchObject({ code: 'STEP_UP_REQUIRED', metadata: challenge })
+    await vi.waitFor(() => expect(stepUpGate.visible.value).toBe(true))
+    stepUpGate.onVerified()
+
+    await rejection
+    expect(adapter).toHaveBeenCalledTimes(2)
+    expect(stepUpGate.visible.value).toBe(false)
+  })
+
   it('shares a single prompt for concurrent sensitive calls (batch save)', async () => {
     const rejections: Array<() => void> = []
     const successes: Array<() => void> = []

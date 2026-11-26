@@ -150,7 +150,8 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"two_factor_grant_ip_hash": {}, "two_factor_grant_ua_hash": {},
 	// 双因子策略（TOTP / Passkey）编排审计：只记录因子名与缺失因子，
 	// 不记录任何凭证、动态码、断言或 challenge。
-	"two_factor_grant_factor": {}, "two_factor_missing_factors": {},
+	// two_factor_satisfied_factors：step-up 放行时，是哪些已绑定因子的授权满足了它（任选其一）。
+	"two_factor_grant_factor": {}, "two_factor_missing_factors": {}, "two_factor_satisfied_factors": {},
 	// API Key 三选一身份校验（密码 / TOTP / Passkey）审计：只记录因子名、
 	// 校验结果与失败机器码；密码 / 动态码 / 断言 / 票据 / grant 明文一律不入库。
 	"api_key_auth_factor": {}, "api_key_verification": {}, "api_key_verification_reason": {},

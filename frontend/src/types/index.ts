@@ -2725,10 +2725,13 @@ export interface TotpLogin2FAPasskeyFinishRequest {
 }
 
 export interface TwoFactorPolicy {
+  /** 已绑定的因子（顺序：totp,passkey）。登录要求全部完成；step-up 按 step_up_mode 满足。 */
   required_factors: string[]
   totp_enabled: boolean
   passkey_bound: boolean
   step_up_enabled: boolean
+  /** step-up 的满足规则：any = 已绑定因子任选其一即可（目前唯一取值；缺省表示后端较旧、没有声明）。 */
+  step_up_mode?: 'any'
 }
 
 export interface TotpLogin2FARequest {

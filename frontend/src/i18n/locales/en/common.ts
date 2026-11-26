@@ -502,14 +502,9 @@ export default {
     passkeyVerifying: 'Waiting for passkey verification...',
     passkeyUnsupported: 'This browser or device does not support passkeys, so this verification cannot be completed.',
     passkeyCancelled: 'Passkey verification was cancelled; nothing was executed.',
-    totpThenPasskeyHint: 'This account has both TOTP and a passkey bound: both factors must be verified, in either order.',
-    totpVerifiedContinuePasskey: 'TOTP passed. Continue with the passkey verification.',
-    passkeyVerifiedContinueTotp: 'Passkey passed. Continue with the TOTP code.',
+    anyOneFactorHint: 'This account has both TOTP and a passkey bound: verifying either one is enough.',
     usePasskey: 'Verify with passkey',
     useTotp: 'Verify with TOTP',
-    twoFactorProgress: 'Two-factor verification: {current} now, {next} next',
-    factorTotp: 'TOTP code',
-    factorPasskey: 'Passkey',
   },
 
   // Recommended 2FA (dismissible, never enforced here)

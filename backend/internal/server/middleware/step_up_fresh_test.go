@@ -73,15 +73,33 @@ func TestEnforceStepUpWithinRejectsAGrantWhoseRemainingTTLExceedsTheWindow(t *te
 	require.True(t, passed)
 }
 
-// 多因子：任何一个因子的剩余时间异常长，同样整体拒绝。
-func TestEnforceStepUpWithinRejectsAnyFactorWithAnOverlongRemainingTTL(t *testing.T) {
+// 多因子（任选其一）：剩余时间异常长的授权无法证明自己新鲜，这个因子不算数；
+// 另一个因子有新鲜授权时仍然放行，所有因子的授权都异常（或其余因子没有授权）才拒绝。
+func TestEnforceStepUpWithinAnOverlongGrantNeverSatisfiesButAFreshOtherFactorStillDoes(t *testing.T) {
 	grants := factorAgedGrants{
 		service.FactorTOTP:    service.StepUpGrantTTL - 10*time.Second,
 		service.FactorPasskey: 14 * time.Minute,
 	}
-	passed, rec := enforceFreshForUser1(t, grants, freshTestWindow)
-	require.False(t, passed)
-	require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
+	passed, _ := enforceFreshForUser1(t, grants, freshTestWindow)
+	require.True(t, passed, "TOTP 授权新鲜，Passkey 授权异常长：只靠 TOTP 放行")
+
+	grants = factorAgedGrants{
+		service.FactorTOTP:    24 * time.Hour,
+		service.FactorPasskey: service.StepUpGrantTTL - 10*time.Second,
+	}
+	passed, _ = enforceFreshForUser1(t, grants, freshTestWindow)
+	require.True(t, passed, "反过来：只靠 Passkey 放行")
+
+	// 唯一的授权异常长 → 拒绝（异常授权永远不能自己满足 step-up）。
+	for _, grants := range []factorAgedGrants{
+		{service.FactorPasskey: 14 * time.Minute},
+		{service.FactorTOTP: 14 * time.Minute, service.FactorPasskey: 24 * time.Hour},
+	} {
+		passed, rec := enforceFreshForUser1(t, grants, freshTestWindow)
+		require.False(t, passed, "grants=%v", grants)
+		require.Equal(t, http.StatusForbidden, rec.Code)
+		require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
+	}
 }
 
 // 路由级门控放行时已经写了「已跳过验证码」的响应头。新鲜度检查随后拒绝这个请求，
@@ -146,20 +164,38 @@ func TestEnforceStepUpWithinKeepsEveryExistingGateBranch(t *testing.T) {
 		stubStepUpUserReader{user: &service.User{ID: 1, TotpEnabled: true}}, stubStepUpSettingReader{enabled: false}, freshTestWindow))
 }
 
-// 每个已绑定因子的授权都必须新鲜：一个因子刚验证、另一个已经陈旧同样不放行。
-func TestEnforceStepUpWithinRequiresEveryBoundFactorToBeFresh(t *testing.T) {
-	grants := factorAgedGrants{
-		service.FactorTOTP:    service.StepUpGrantTTL - 10*time.Second,
-		service.FactorPasskey: service.StepUpGrantTTL - 3*time.Minute,
+// 任选其一：任一已绑定因子有新鲜授权就放行；陈旧授权（窗口内但超过 maxAge）不算数，
+// 所有因子的授权都陈旧才拒绝，并且提示「需要新鲜验证」让前端当场重新验证。
+func TestEnforceStepUpWithinAcceptsAnyBoundFactorWithAFreshGrant(t *testing.T) {
+	// 一个刚验证、另一个已经陈旧：靠刚验证的那个放行（两个方向都测）。
+	for _, grants := range []factorAgedGrants{
+		{service.FactorTOTP: service.StepUpGrantTTL - 10*time.Second, service.FactorPasskey: service.StepUpGrantTTL - 3*time.Minute},
+		{service.FactorTOTP: service.StepUpGrantTTL - 3*time.Minute, service.FactorPasskey: service.StepUpGrantTTL - 10*time.Second},
+	} {
+		passed, _ := enforceFreshForUser1(t, grants, freshTestWindow)
+		require.True(t, passed, "grants=%v", grants)
 	}
-	passed, rec := enforceFreshForUser1(t, grants, freshTestWindow)
-	require.False(t, passed)
-	require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
 
 	// 两个因子都刚验证 → 放行。
-	grants[service.FactorPasskey] = service.StepUpGrantTTL - 20*time.Second
-	passed, _ = enforceFreshForUser1(t, grants, freshTestWindow)
+	passed, _ := enforceFreshForUser1(t, factorAgedGrants{
+		service.FactorTOTP:    service.StepUpGrantTTL - 10*time.Second,
+		service.FactorPasskey: service.StepUpGrantTTL - 20*time.Second,
+	}, freshTestWindow)
 	require.True(t, passed)
+
+	// 两个因子都陈旧（窗口内、但都超过 60 秒）→ 拒绝，提示需要新鲜验证。
+	passed, rec := enforceFreshForUser1(t, factorAgedGrants{
+		service.FactorTOTP:    service.StepUpGrantTTL - 2*time.Minute,
+		service.FactorPasskey: service.StepUpGrantTTL - 3*time.Minute,
+	}, freshTestWindow)
+	require.False(t, passed)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
+	require.Contains(t, rec.Body.String(), "fresh")
+
+	// 只有一个因子有授权且陈旧（另一个根本没有）→ 同样拒绝。
+	passed, _ = enforceFreshForUser1(t, factorAgedGrants{service.FactorPasskey: service.StepUpGrantTTL - 3*time.Minute}, freshTestWindow)
+	require.False(t, passed)
 }
 
 // factorAgedGrants 按因子给出剩余有效期，并声明用户绑定了 TOTP 与 Passkey 两个因子。

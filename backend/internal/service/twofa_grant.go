@@ -45,7 +45,8 @@ const (
 
 	// TwoFactorPasskeyGrantCookieName 承载 Passkey 因子凭证的 HttpOnly Cookie 名。
 	// TOTP 因子继续使用历史 Cookie 名（TwoFactorGrantCookieName），每个因子
-	// 各自一枚 5 分钟凭证、各自独立过期——两者都要求时必须两枚都有效。
+	// 各自一枚 5 分钟凭证、各自独立过期——登录要求已绑定因子的凭证都有效；
+	// 密码校验 / Passkey 增删这类 step-up 入口任选其一即可（StepUpSatisfiedFactors）。
 	TwoFactorPasskeyGrantCookieName = "sub2_2fa_passkey_grant"
 
 	// 凭证校验的每用户/IP 限速：60 秒滚动窗口最多 10 次。

@@ -501,14 +501,9 @@ export default {
     passkeyVerifying: '正在等待 Passkey 验证...',
     passkeyUnsupported: '当前浏览器或设备不支持 Passkey，无法完成本次二次验证。',
     passkeyCancelled: '已取消 Passkey 验证，操作未执行。',
-    totpThenPasskeyHint: '该账号同时绑定了 TOTP 与 Passkey：两个因子都需要验证，可任选先验证哪一个。',
-    totpVerifiedContinuePasskey: '动态码已通过，请继续完成 Passkey 验证。',
-    passkeyVerifiedContinueTotp: 'Passkey 已通过，请继续输入动态码完成验证。',
+    anyOneFactorHint: '该账号同时绑定了 TOTP 与 Passkey：任选其一验证即可。',
     usePasskey: '用 Passkey 验证',
     useTotp: '用 TOTP 验证',
-    twoFactorProgress: '双因子验证：当前 {current}，下一步 {next}',
-    factorTotp: 'TOTP 动态码',
-    factorPasskey: 'Passkey',
   },
 
   // 建议开启 2FA（可关闭提示，非强制）
