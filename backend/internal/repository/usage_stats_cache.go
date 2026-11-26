@@ -67,14 +67,15 @@ const (
 	// the pace of usageStatsCacheTimeoutTTL only keeps one more slot and the disk busy for 28 seconds each time.
 	usageStatsKeyWindowTimeoutTTL = 5 * time.Minute
 
-	// usageStatsKeyClosedDaysTTL is how long the closed days of one API key's by-day trend are kept (see
-	// keyDailyTrendSplit). A day that is over only changes through a late row or a hand rewrite of usage_logs, so
-	// it is read from the table once and then reused until the key changes: the question names [start, splitAt),
-	// and splitAt moves at every local midnight, so the next day asks a new question and nothing has to be
-	// invalidated. 26 hours is the longest natural day (25 at a DST change) plus an hour of margin: an entry is
-	// still there when the midnight that retires it comes, and it does not linger long after. It is above zero on
-	// purpose: that keeps the closed days in the class of one key's multi-day aggregate (keyWindowAggregate), with
-	// its 28 second budget and 5 minute memory of a timeout.
+	// usageStatsKeyClosedDaysTTL is how long the closed days of one API key's multi-day aggregate are kept (see
+	// keyWindowParts: the by-day trend, the by-model report and the key summary; a user's dashboard reuses it). A
+	// day that is over only changes through a late row or a hand rewrite of usage_logs, so it is read from the table
+	// once and then reused until the key changes: the question names [first, splitAt), and splitAt moves at every
+	// local midnight, so the next day asks a new question and nothing has to be invalidated. 26 hours is the longest
+	// natural day (25 at a DST change) plus an hour of margin: an entry is still there when the midnight that
+	// retires it comes, and it does not linger long after. It is above zero on purpose: that keeps the closed days
+	// in the class of one key's multi-day aggregate (keyWindowAggregate), with its 28 second budget and 5 minute
+	// memory of a timeout.
 	usageStatsKeyClosedDaysTTL = 26 * time.Hour
 )
 
@@ -136,8 +137,9 @@ type usageStatsCacheKey struct {
 	// TTL is how long the answer stays cached when it must outlive the cache's own TTL (see keyAggregateTTL);
 	// 0 keeps the cache's TTL. It says how long to reuse an answer, not what was asked, so it is not hashed.
 	// It also marks the class of one API key's multi-day aggregate (keyWindowAggregate), which gets its own scan
-	// budget and timeout memory: set it only through keyAggregateTTL, or usageStatsKeyClosedDaysTTL for the closed
-	// days of a split by-day trend or of a user's dashboard (userDashboardClosedTTL).
+	// budget and timeout memory: set it only through keyAggregateTTL, or from keyWindowParts for the parts of a window
+	// that is read in parts (usageStatsKeyClosedDaysTTL for the closed days, usageStatsKeyWindowTTL for the head), or
+	// usageStatsKeyClosedDaysTTL for the closed days of a user's dashboard (userDashboardClosedTTL).
 	TTL time.Duration `json:"-"`
 }
 
@@ -173,8 +175,9 @@ func (k usageStatsCacheKey) endUserScoped() bool {
 }
 
 // keyWindowAggregate reports whether the aggregate is one API key's multi-day answer: the class that
-// keyAggregateTTL (or, for the closed days of a split by-day trend or of a user's dashboard,
-// usageStatsKeyClosedDaysTTL) gives a TTL, and the only one with the long scan budget and the long memory of a timeout.
+// keyAggregateTTL (or, for the parts of a window read in parts (keyWindowParts) and the closed days of a user's
+// dashboard, usageStatsKeyClosedDaysTTL) gives a TTL, and the only one with the long scan budget and the long memory
+// of a timeout.
 func (k usageStatsCacheKey) keyWindowAggregate() bool { return k.TTL > 0 }
 
 // loadTimeout is the database budget of the aggregate.

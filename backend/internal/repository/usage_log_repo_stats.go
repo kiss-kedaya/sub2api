@@ -64,15 +64,20 @@ func (r *usageLogRepository) getUserStatsAggregatedUncached(ctx context.Context,
 	return &stats, nil
 }
 
-// GetAPIKeyStatsAggregated returns aggregated usage statistics for an API key using database-level aggregation
+// GetAPIKeyStatsAggregated returns aggregated usage statistics for an API key using database-level aggregation.
+//
+// Over several days and when the window still holds today it is read in parts (keyWindowParts), the whole days that
+// are over kept for a day and the rest for the cache TTL or quarter hour, and added up (mergeAPIKeyStats).
 func (r *usageLogRepository) GetAPIKeyStatsAggregated(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {
-	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
-		Query: "api_key_stats_aggregated", APIKeyID: apiKeyID,
-		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
-		TTL: keyAggregateTTL(apiKeyID, startTime, endTime),
-	}, func(ctx context.Context) (*usagestats.UsageStats, error) {
-		return r.getAPIKeyStatsAggregatedUncached(ctx, apiKeyID, startTime, endTime)
-	})
+	return readKeyWindow(r, apiKeyID, startTime, endTime, keyAggregateTTL(apiKeyID, startTime, endTime), func(p keyWindowPart) (*usagestats.UsageStats, error) {
+		return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+			Query: "api_key_stats_aggregated", APIKeyID: apiKeyID,
+			Start: p.start.UTC().Format(time.RFC3339Nano), End: p.end.UTC().Format(time.RFC3339Nano),
+			TTL: p.ttl,
+		}, func(ctx context.Context) (*usagestats.UsageStats, error) {
+			return r.getAPIKeyStatsAggregatedUncached(ctx, apiKeyID, p.start, p.end)
+		})
+	}, mergeAPIKeyStats)
 }
 
 func (r *usageLogRepository) getAPIKeyStatsAggregatedUncached(ctx context.Context, apiKeyID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error) {

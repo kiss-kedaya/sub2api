@@ -246,6 +246,19 @@ func (id onGridOfKey) Match(v driver.Value) bool {
 	return ok && onKeyGrid(at, int64(id))
 }
 
+// atLocalMidnight matches a window bound that is a midnight in the time zone of the windows: where the model report is
+// cut (repository.keyWindowParts).
+type atLocalMidnight struct{}
+
+func (atLocalMidnight) Match(v driver.Value) bool {
+	at, ok := v.(time.Time)
+	if !ok {
+		return false
+	}
+	local := at.In(timezone.Location())
+	return local.Hour() == 0 && local.Minute() == 0 && local.Second() == 0 && local.Nanosecond() == 0
+}
+
 const (
 	usageReportTrendSQL = `(?s)FROM usage_logs.*AND user_id = \$3 AND api_key_id = \$4`
 	usageReportModelSQL = `(?s)FROM usage_logs.*AND api_key_id = \$3`
@@ -293,11 +306,40 @@ func (f *usageKeyReportFixture) expectTrend(userID, apiKeyID int64, day string, 
 }
 
 func (f *usageKeyReportFixture) expectModels(apiKeyID, requests int64) {
+	f.expectModelRows(apiKeyID, onGridOfKey(apiKeyID), onGridOfKey(apiKeyID), requests)
+}
+
+// expectModelParts registers the three reads of a model report whose window holds today (repository.keyWindowParts),
+// oldest first: the head, between the window's start (on the key's grid) and the first midnight; the whole days that
+// are over, from midnight to midnight; and today, from midnight to the window's end (on the grid).
+func (f *usageKeyReportFixture) expectModelParts(apiKeyID, head, closedDays, today int64) {
+	f.expectModelRows(apiKeyID, onGridOfKey(apiKeyID), atLocalMidnight{}, head)
+	f.expectModelRows(apiKeyID, atLocalMidnight{}, atLocalMidnight{}, closedDays)
+	f.expectModelToday(apiKeyID, today)
+}
+
+// expectModelToday registers the read of today's part of a model report that is read in parts.
+func (f *usageKeyReportFixture) expectModelToday(apiKeyID, requests int64) {
+	f.expectModelRows(apiKeyID, atLocalMidnight{}, onGridOfKey(apiKeyID), requests)
+}
+
+func (f *usageKeyReportFixture) expectModelRows(apiKeyID int64, start, end sqlmock.Argument, requests int64) {
 	f.mock.ExpectQuery(usageReportModelSQL).
-		WithArgs(onGridOfKey(apiKeyID), onGridOfKey(apiKeyID), apiKeyID).
+		WithArgs(start, end, apiKeyID).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"model", "requests", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "total_tokens", "cost", "actual_cost", "account_cost",
 		}).AddRow("claude-test", requests, 0, 0, 0, 0, 0, 0, 0, 0))
+}
+
+// modelRequests is the request count of the one model of a /v1/usage response.
+func modelRequests(t *testing.T, modelStats json.RawMessage) int64 {
+	t.Helper()
+	var rows []struct {
+		Requests int64 `json:"requests"`
+	}
+	require.NoError(t, json.Unmarshal(modelStats, &rows))
+	require.Len(t, rows, 1)
+	return rows[0].Requests
 }
 
 // poll is one GET /v1/usage of API key 7 (owned by user 11).
@@ -324,10 +366,13 @@ func (f *usageKeyReportFixture) poll(t *testing.T) map[string]json.RawMessage {
 // is moved by the bucket minus a second while the handler's own is not, so both polls ask for the same window,
 // as two real polls at the two ends of one bucket do.
 //
-// The model report is scanned once per bucket. The by-day report is the exception: it is read in two parts
-// (repository.GetUsageTrendWithFilters), the days that are over once a day and today once per cache TTL (a minute
-// here), so that today's bar is never more than a minute old. A bucket apart only today is read again; the days
-// that are over and the model report are still within their lifetimes.
+// The by-day report and the model report are the exceptions: they are read in parts when their window holds today
+// (repository.keyWindowParts). The days that are over are read once a day and today once per cache TTL (a minute here),
+// so that today's figures are never more than a minute old; the model report has a third part, the head of the
+// window's first day, read once per bucket, because its window moves in steps and the head is the part that moves
+// with it. A bucket apart only today is read again, by both reports; what is over is still within its lifetime. Where
+// the model report is not cut (in the first minutes after midnight the grid point at or before now is still
+// yesterday's, so the window ends before today) it is read whole, once per bucket, as before.
 func TestUsageSecondPollInTheSameBucketReadsNoDatabase(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cases := map[string]struct {
@@ -348,16 +393,26 @@ func TestUsageSecondPollInTheSameBucketReadsNoDatabase(t *testing.T) {
 				f := newUsageKeyReportFixture(t)
 				f.expectTrend(11, 7, "2026-11-25", 21) // the days that are over
 				f.expectTrend(11, 7, "2026-11-26", 2)  // today
-				f.expectModels(7, 34)
 
-				_, endBefore := usageDefaultRange(timezone.Now(), 7)
+				startBefore, endBefore := usageDefaultRange(timezone.Now(), 7)
 				dayBefore := timezone.Today()
+				// 34 requests in all: 1 in the head, 30 in the days that are over, 3 today.
+				modelsInParts := endBefore.After(dayBefore) && startBefore.Before(dayBefore)
+				if modelsInParts {
+					f.expectModelParts(7, 1, 30, 3)
+				} else {
+					f.expectModels(7, 34)
+				}
 				first := f.poll(t)
 				f.server.FastForward(tc.betweenPolls)
-				todayRequests := int64(2)
+				todayRequests, modelRequestsAgain := int64(2), int64(34)
 				if tc.todayAgain {
 					todayRequests = 5
 					f.expectTrend(11, 7, "2026-11-26", todayRequests) // only today: nothing else has expired
+					if modelsInParts {
+						f.expectModelToday(7, 8) // 1 + 30 + 8
+						modelRequestsAgain = 39
+					}
 				}
 				second := f.poll(t)
 				if _, endAfter := usageDefaultRange(timezone.Now(), 7); !endBefore.Equal(endAfter) || !dayBefore.Equal(timezone.Today()) {
@@ -368,7 +423,8 @@ func TestUsageSecondPollInTheSameBucketReadsNoDatabase(t *testing.T) {
 					require.Contains(t, first, report)
 					require.Contains(t, second, report, "the second poll must still carry the report (from the cache)")
 				}
-				require.JSONEq(t, string(first["model_stats"]), string(second["model_stats"]))
+				require.EqualValues(t, 34, modelRequests(t, first["model_stats"]), "modelsInParts %v", modelsInParts)
+				require.EqualValues(t, modelRequestsAgain, modelRequests(t, second["model_stats"]), "modelsInParts %v", modelsInParts)
 				require.JSONEq(t, daily(2), string(first["daily_usage"]))
 				require.JSONEq(t, daily(todayRequests), string(second["daily_usage"]))
 				require.NoError(t, f.mock.ExpectationsWereMet())
@@ -380,10 +436,11 @@ func TestUsageSecondPollInTheSameBucketReadsNoDatabase(t *testing.T) {
 
 // The model report is scanned once per 15 minute bucket of the key: every instant of a bucket shares one scan, the
 // next bucket needs its own, and a bucket whose answer is still fresh is not scanned again when the clock is back
-// in it.
+// in it. The windows end well before today, so each is read whole, whatever day the test runs on: a window that
+// holds today is read in parts (TestUsageSecondPollInTheSameBucketReadsNoDatabase, and the repository's own tests).
 func TestUsageModelReportIsScannedOncePerBucket(t *testing.T) {
 	f := newUsageKeyReportFixture(t)
-	_, base := usageDefaultRange(time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC), 7) // a grid point of key 7: its bucket opens here
+	_, base := usageDefaultRange(time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC), 7) // a grid point of key 7: its bucket opens here
 	models := func(at time.Time) int64 {
 		t.Helper()
 		start, end := usageDefaultRange(at, 7)
