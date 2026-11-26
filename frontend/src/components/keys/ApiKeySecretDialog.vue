@@ -62,11 +62,12 @@
           </button>
           <Toggle
             id="api-key-seal-switch"
-            v-model="sealEnabled"
+            :model-value="sealEnabled"
             class="ml-auto"
             :disabled="sealing"
             :aria-label="t('keys.seal.optIn')"
             data-test="api-key-seal-checkbox"
+            @update:model-value="onSealToggle"
           />
         </div>
         <p v-show="hintOpen" id="api-key-seal-hint" class="text-xs leading-5 text-muted" data-test="api-key-seal-hint">
@@ -226,8 +227,9 @@ const startVisibleWindow = () => {
   }, MIN_VISIBLE_MS)
 }
 
-// ---- "view again with login password" opt-in ---------------------------------
+// ---- "view again with login password" opt-in (enabled by default when account can seal) ---
 const sealEnabled = ref(false)
+const userToggledSeal = ref(false)
 const sealPassword = ref('')
 const sealing = ref(false)
 const sealed = ref(false)
@@ -242,15 +244,20 @@ const passwordInput = ref<{ inputRef?: HTMLInputElement | null } | null>(null)
 const hasVerifiedPassword = computed(() => props.verifiedPassword !== '' && !typeItInstead.value)
 
 const resetSealState = () => {
-  // 默认不勾选：密码框只在用户主动选择「以后可查看」时渲染，
-  // 避免 Key 列表页常驻 password 输入框触发浏览器自动填充。
-  sealEnabled.value = false
+  // 账号支持登录密码封存时默认开启「以后可查看」；回执关闭时弹窗会从 DOM 卸载，不影响列表页。
+  sealEnabled.value = props.canSeal
+  userToggledSeal.value = false
   sealPassword.value = ''
   sealing.value = false
   sealed.value = false
   sealError.value = ''
   hintOpen.value = false
   typeItInstead.value = false
+}
+
+const onSealToggle = (enabled: boolean) => {
+  userToggledSeal.value = true
+  sealEnabled.value = enabled
 }
 
 const requestClose = () => {
@@ -344,7 +351,11 @@ watch(
 watch(
   () => props.canSeal,
   (canSeal) => {
-    if (!canSeal) sealEnabled.value = false
+    if (!canSeal) {
+      sealEnabled.value = false
+    } else if (props.show && !userToggledSeal.value) {
+      sealEnabled.value = true
+    }
   },
 )
 
@@ -354,7 +365,7 @@ watch(sealEnabled, async (enabled) => {
     sealError.value = ''
     return
   }
-  if (hasVerifiedPassword.value) return
+  if (!userToggledSeal.value || hasVerifiedPassword.value) return
   await nextTick()
   passwordInput.value?.inputRef?.focus()
 })

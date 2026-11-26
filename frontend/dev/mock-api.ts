@@ -185,6 +185,31 @@ export function createMockApi(now = new Date()) {
   const scheduledPlanOverrides = new Map<number, Record<string, unknown>>()
   let nextScheduledPlanID = 99
   let nextId = data.keys.length + 1
+  const demoKeySecrets = new Map<string, number>()
+  const platformDemoModels: Record<string, string[]> = {
+    anthropic: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
+    openai: ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5'],
+    gemini: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    grok: ['grok-4', 'grok-4-fast'],
+    deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+    kimi: ['kimi-k2'],
+  }
+  const modelsForBearer = (authorization?: string): string[] => {
+    const token = (authorization || '').replace(/^Bearer\s+/i, '').trim()
+    const keyId = token ? demoKeySecrets.get(token) : undefined
+    if (!keyId) return data.models
+    const key = data.keys.find(item => item.id === keyId)
+    if (!key) return data.models
+    const ids = new Set<number>(key.group_ids?.length ? key.group_ids : key.group_id ? [key.group_id] : [])
+    const matchedGroups = data.groups.filter(group => ids.has(group.id))
+    const list: string[] = []
+    for (const group of matchedGroups) {
+      for (const model of platformDemoModels[group.platform] || []) {
+        if (!list.includes(model)) list.push(model)
+      }
+    }
+    return list.length ? list : data.models
+  }
   let nextOrderId = Math.max(...data.paymentOrders.map(order => order.id)) + 1
   let nextRedeemId = Math.max(...data.redeemHistory.map(item => item.id)) + 1
   const usedDemoCodes = new Set<string>()
@@ -492,7 +517,13 @@ export function createMockApi(now = new Date()) {
   }
   return {
     user: data.user,
-    handle(method: string, path: string, query: URLSearchParams, body: Record<string, unknown> = {}): unknown {
+    handle(
+      method: string,
+      path: string,
+      query: URLSearchParams,
+      body: Record<string, unknown> = {},
+      headers: { authorization?: string } = {},
+    ): unknown {
       if (path === '/api/v1/admin/request-captures/config' || path.startsWith('/api/v1/admin/request-captures/small') || path === '/api/v1/__preview/small-retention') {
         return copy(smallRetention(method, path, query, body))
       }
@@ -942,7 +973,21 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/user/aff') return data.affiliateDetail
         if (path === '/api/v1/user/totp/status') return { enabled: false, enabled_at: null, feature_enabled: false }
         if (path === '/api/v1/user/totp/verification-method') return { method: 'password' }
-        if (path === '/v1/models') return { object: 'list', data: data.models.map(id => ({ id, object: 'model', owned_by: 'local-demo' })) }
+        if (path === '/api/v1/user/security/verification-factors') {
+          return {
+            password_available: true,
+            totp_enabled: false,
+            passkey_count: 0,
+            preferred: 'password',
+            available_methods: ['password'],
+            seal_available: true,
+            create_verification_required: false,
+          }
+        }
+        if (path === '/v1/models') {
+          const ids = modelsForBearer(headers.authorization)
+          return { object: 'list', data: ids.map(id => ({ id, object: 'model', owned_by: 'local-demo' })) }
+        }
         if (path === '/api/v1/keys') {
           const items = data.keys.filter(key => {
             const search = query.get('search')?.toLowerCase()
@@ -1206,12 +1251,20 @@ export function createMockApi(now = new Date()) {
         return data.user
       }
       if (method === 'PUT' && path === '/api/v1/user/password') return { message: '本地演示密码未写入任何账户' }
+      const sealPath = path.match(/^\/api\/v1\/user\/api-keys\/(\d+)\/secret-seal$/)
+      if (sealPath && method === 'PUT') {
+        const key = data.keys.find(item => item.id === Number(sealPath[1]))
+        if (!key) throw new PreviewError(404, '演示密钥不存在')
+        key.has_secret_seal = true
+        return { message: '本地演示已封存密文' }
+      }
       if (method === 'POST' && path === '/api/v1/keys') {
         if (!('name' in body)) throw new PreviewError(422, '请输入演示密钥名称')
         const key = editKey({ ...makeKey(nextId, undefined, new Date().toISOString()), status: 'active', quota: 0 }, body)
         data.keys.unshift(key)
         // 创建响应是唯一一次明文回执；列表里始终只有脱敏视图。
         const secret = `sk-demo-not-valid-${String(nextId).padStart(6, '0')}`
+        demoKeySecrets.set(secret, key.id)
         nextId++
         return { ...key, key: secret }
       }
@@ -1236,7 +1289,9 @@ export function createMockApi(now = new Date()) {
             risk_hit_at: null,
           }
           data.keys[index] = rotatedRow
-          return { ...rotatedRow, key: `sk-demo-rotated-${Date.now().toString(36)}` }
+          const rotatedSecret = `sk-demo-rotated-${Date.now().toString(36)}`
+          demoKeySecrets.set(rotatedSecret, rotatedRow.id)
+          return { ...rotatedRow, key: rotatedSecret }
         }
         data.keys[index] = editKey(data.keys[index], body)
         return data.keys[index]

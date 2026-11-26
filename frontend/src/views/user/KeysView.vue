@@ -1616,20 +1616,39 @@
           />
         </div>
         <div>
-          <label class="input-label" for="ccs-import-model">{{ t('keys.ccsImport.model') }}</label>
+          <div class="mb-1.5 flex items-center justify-between gap-2">
+            <label class="input-label mb-0" for="ccs-import-model">{{ t('keys.ccsImport.model') }}</label>
+            <button
+              v-if="pendingCcsRow && !ccsModelsLoading"
+              type="button"
+              data-test="ccs-import-model-reload"
+              class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              @click="loadCcsModels(pendingCcsRow)"
+            >
+              <UIcon name="i-lucide-refresh-cw" class="size-3" aria-hidden="true" />
+              <span>{{ ccsModelsError || ccsAvailableModels.length === 0 ? t('keys.ccsImport.modelRetry') : t('keys.ccsImport.modelRefresh') }}</span>
+            </button>
+          </div>
           <Select
             id="ccs-import-model"
             :model-value="ccsImportModel"
             :options="ccsModelOptions"
-            :placeholder="t('keys.ccsImport.modelPlaceholder')"
+            :loading="ccsModelsLoading"
+            :disabled="ccsModelsLoading"
+            :placeholder="ccsModelsLoading ? t('keys.ccsImport.modelLoading') : t('keys.ccsImport.modelPlaceholder')"
+            :empty-text="ccsModelsError ? t('keys.ccsImport.modelLoadFailed') : t('keys.ccsImport.modelEmpty')"
             :searchable="true"
-            :creatable="true"
+            :creatable="ccsModelsError"
             :clearable="true"
             :aria-label="t('keys.ccsImport.model')"
             @update:model-value="onCcsModelChange"
           />
-          <p class="input-hint mt-1">
-            {{ ccsModelsLoading ? t('keys.ccsImport.modelLoading') : t('keys.ccsImport.modelHint') }}
+          <p
+            class="input-hint mt-1"
+            :class="ccsModelsError ? 'text-error' : ''"
+            data-test="ccs-import-model-hint"
+          >
+            {{ ccsModelHintText }}
           </p>
         </div>
         <UAlert
@@ -1646,7 +1665,7 @@
           <UButton color="neutral" variant="outline" size="lg" @click="closeCcsImportModal">
             {{ t('common.cancel') }}
           </UButton>
-          <UButton size="lg" :disabled="ccsImportDeeplinkUnsupported" @click="confirmCcsImport">
+          <UButton size="lg" :disabled="ccsImportDeeplinkUnsupported || ccsModelsLoading" @click="confirmCcsImport">
             {{ t('common.import') }}
           </UButton>
         </div>
@@ -1798,7 +1817,6 @@ import {
   buildCcSwitchImportDeeplink,
   CC_SWITCH_APP_LABEL_KEYS,
   CC_SWITCH_APPS,
-  CC_SWITCH_MODEL_SUGGESTIONS,
   ccSwitchProviderDeeplinkSupported,
   defaultCcSwitchModel,
   fetchCcSwitchModels,
@@ -2240,6 +2258,8 @@ const ccsImportApp = ref<CcSwitchApp>('claude')
 const ccsImportModel = ref('')
 const ccsAvailableModels = ref<string[]>([])
 const ccsModelsLoading = ref(false)
+const ccsModelsLoaded = ref(false)
+const ccsModelsError = ref(false)
 let ccsModelsAbort: AbortController | null = null
 
 const ccsAppOptions = computed(() =>
@@ -2253,17 +2273,26 @@ const ccsImportDeeplinkUnsupported = computed(
   () => !ccSwitchProviderDeeplinkSupported(ccsImportApp.value)
 )
 
+// 只展示该密钥通过 /v1/models 真实拉取到的可用模型，不再混入写死的静态猜测模型。
 const ccsModelOptions = computed(() => {
-  const suggestions =
-    ccsAvailableModels.value.length > 0
-      ? ccsAvailableModels.value
-      : CC_SWITCH_MODEL_SUGGESTIONS[ccsImportApp.value] || []
-  const values = [...suggestions]
+  const values = [...ccsAvailableModels.value]
   const current = ccsImportModel.value.trim()
-  if (current && !values.includes(current)) {
+  if (ccsModelsError.value && current && !values.includes(current)) {
     values.unshift(current)
   }
   return values.map((value) => ({ value, label: value }))
+})
+
+const ccsModelHintText = computed(() => {
+  if (ccsModelsLoading.value) return t('keys.ccsImport.modelLoading')
+  if (ccsModelsError.value) return t('keys.ccsImport.modelLoadFailed')
+  if (ccsModelsLoaded.value && ccsAvailableModels.value.length === 0) {
+    return t('keys.ccsImport.modelEmpty')
+  }
+  if (ccsAvailableModels.value.length > 0) {
+    return t('keys.ccsImport.modelLoadedHint', { count: ccsAvailableModels.value.length })
+  }
+  return t('keys.ccsImport.modelHint')
 })
 const selectedKey = ref<ApiKey | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
@@ -3844,10 +3873,43 @@ const resetRateLimitUsage = async () => {
 }
 
 const applyCcsModelDefault = () => {
-  ccsImportModel.value = pickCcSwitchModel(
-    defaultCcSwitchModel(ccsImportApp.value),
-    ccsAvailableModels.value
-  )
+  if (ccsAvailableModels.value.length > 0) {
+    ccsImportModel.value = pickCcSwitchModel(
+      defaultCcSwitchModel(ccsImportApp.value),
+      ccsAvailableModels.value,
+      ccsImportApp.value
+    )
+    return
+  }
+  if (!ccsModelsError.value) {
+    ccsImportModel.value = ''
+  }
+}
+
+const fetchRealModelsForKey = async (
+  baseUrl: string,
+  apiKey: string,
+  signal: AbortSignal
+): Promise<string[]> => {
+  try {
+    return await fetchCcSwitchModels(baseUrl, apiKey, signal)
+  } catch (err) {
+    if (signal.aborted) throw err
+    // 若站点配置了独立 api_base_url 且跨域拦截了浏览器 fetch，回退当前同源拉取 /v1/models。
+    const sameOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+    let differs = false
+    if (sameOrigin) {
+      try {
+        differs = new URL(baseUrl).origin !== sameOrigin
+      } catch {
+        differs = false
+      }
+    }
+    if (differs) {
+      return await fetchCcSwitchModels(sameOrigin, apiKey, signal)
+    }
+    throw err
+  }
 }
 
 const loadCcsModels = async (row: ApiKeyWithPlaintext) => {
@@ -3855,16 +3917,21 @@ const loadCcsModels = async (row: ApiKeyWithPlaintext) => {
   const abort = new AbortController()
   ccsModelsAbort = abort
   ccsAvailableModels.value = []
+  ccsModelsLoaded.value = false
+  ccsModelsError.value = false
   ccsModelsLoading.value = true
   try {
     const baseUrl = publicSettings.value?.api_base_url || window.location.origin
-    const ids = await fetchCcSwitchModels(baseUrl, row.key, abort.signal)
+    const ids = await fetchRealModelsForKey(baseUrl, row.key, abort.signal)
     if (abort.signal.aborted) return
     ccsAvailableModels.value = ids
+    ccsModelsLoaded.value = true
     applyCcsModelDefault()
   } catch {
     if (abort.signal.aborted) return
-    applyCcsModelDefault()
+    ccsModelsError.value = true
+    ccsModelsLoaded.value = true
+    ccsImportModel.value = ''
   } finally {
     if (ccsModelsAbort === abort) {
       ccsModelsLoading.value = false
@@ -3882,7 +3949,7 @@ const importToCcswitch = (row: ApiKeyWithPlaintext) => {
   )
   pendingCcsRow.value = row
   ccsImportApp.value = config.app
-  ccsImportModel.value = config.model || defaultCcSwitchModel(config.app)
+  ccsImportModel.value = ''
   showCcsImportModal.value = true
   void loadCcsModels(row)
 }
@@ -3964,6 +4031,8 @@ const closeCcsImportModal = () => {
   ccsModelsAbort?.abort()
   ccsModelsAbort = null
   ccsModelsLoading.value = false
+  ccsModelsLoaded.value = false
+  ccsModelsError.value = false
   ccsAvailableModels.value = []
   showCcsImportModal.value = false
   pendingCcsRow.value = null

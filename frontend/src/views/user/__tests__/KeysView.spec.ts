@@ -616,6 +616,84 @@ describe('user KeysView column settings', () => {
     }
   })
 
+  it('shows only real models returned by the key /v1/models in Import to CCS and auto-matches on platform switch', async () => {
+    getPublicSettings.mockResolvedValue({ api_base_url: 'https://api.example.com' })
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'Claude', platform: 'anthropic' }])
+    createKey.mockResolvedValue({ ...createApiKey(), id: 91, group_id: 3, group_ids: [3], key: 'sk-real-models-key' })
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        object: 'list',
+        data: [{ id: 'claude-sonnet-4-5-real' }, { id: 'gpt-5.4-real' }],
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const wrapper = await mountView()
+    try {
+      await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+      await wrapper.get('[data-tour="key-form-name"]').setValue('real models key')
+      wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+
+      await getButtonByText(wrapper, 'keys.secretDialog.importCcs').trigger('click')
+      await flushPromises()
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.example.com/v1/models',
+        expect.objectContaining({ headers: { Authorization: 'Bearer sk-real-models-key' } }),
+      )
+      const modelSelect = wrapper.getComponent('#ccs-import-model')
+      const optionValues = (modelSelect.props('options') as Array<{ value: string }>).map((o) => o.value)
+      expect(optionValues).toEqual(['claude-sonnet-4-5-real', 'gpt-5.4-real'])
+      expect(optionValues).not.toContain('claude-sonnet-4-6')
+      expect(modelSelect.props('modelValue')).toBe('claude-sonnet-4-5-real')
+
+      // Switching platform to Codex picks this key's real GPT model instead of a hardcoded fake model.
+      wrapper.getComponent('#ccs-import-platform').vm.$emit('update:modelValue', 'codex')
+      await nextTick()
+      expect(modelSelect.props('modelValue')).toBe('gpt-5.4-real')
+
+      await getButtonByText(wrapper, 'common.import').trigger('click')
+      const params = new URL(String(open.mock.calls[0][0])).searchParams
+      expect(params.get('app')).toBe('codex')
+      expect(params.get('model')).toBe('gpt-5.4-real')
+    } finally {
+      wrapper.unmount()
+      open.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('never shows hardcoded fake models when /v1/models returns empty or fails', async () => {
+    getPublicSettings.mockResolvedValue({ api_base_url: 'https://api.example.com' })
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'Claude', platform: 'anthropic' }])
+    createKey.mockResolvedValue({ ...createApiKey(), id: 92, group_id: 3, group_ids: [3], key: 'sk-empty-models-key' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }))
+    const wrapper = await mountView()
+    try {
+      await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+      await wrapper.get('[data-tour="key-form-name"]').setValue('empty models key')
+      wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+
+      await getButtonByText(wrapper, 'keys.secretDialog.importCcs').trigger('click')
+      await flushPromises()
+
+      const modelSelect = wrapper.getComponent('#ccs-import-model')
+      expect(modelSelect.props('options')).toEqual([])
+      expect(modelSelect.props('modelValue')).toBe('')
+      expect(wrapper.get('[data-test="ccs-import-model-hint"]').text()).toContain('keys.ccsImport.modelEmpty')
+    } finally {
+      wrapper.unmount()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('renders the server-masked key and never builds the mask in the frontend', async () => {
     const wrapper = await mountView()
     expect(wrapper.get('[data-test="key-value"]').text()).toBe('sk-test-****-key')
@@ -2087,10 +2165,9 @@ describe('user KeysView key-rotation remediation', () => {
     await wrapper.get('[data-test="rotate-verify-submit"]').trigger('click')
     await flushPromises()
 
-    // The receipt is up; the switch is there, the password field is not.
+    // The receipt is up; the switch defaults ON, and the password field is not shown because password is remembered.
     expect(wrapper.find('[data-test="api-key-secret-dialog"]').exists()).toBe(true)
-    await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
-    await flushPromises()
+    expect(wrapper.get('[data-test="api-key-seal-checkbox"]').attributes('aria-checked')).toBe('true')
     expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
 
     await new Promise((resolve) => setTimeout(resolve, 1100))
@@ -3405,8 +3482,7 @@ describe('user KeysView 创建弹窗（Quiet 流程）与页面过期守卫', ()
         expect(createKey).toHaveBeenCalledTimes(1)
         expect(lastCreateOptions()).toMatchObject({ verification: { method: 'password', password: 'typed-once' } })
 
-        await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
-        await flushPromises()
+        expect(wrapper.get('[data-test="api-key-seal-checkbox"]').attributes('aria-checked')).toBe('true')
         expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
 
         await finishReceipt(wrapper)
@@ -3418,7 +3494,7 @@ describe('user KeysView 创建弹窗（Quiet 流程）与页面过期守卫', ()
         wrapper.unmount()
       })
 
-      it('创建时没输过密码（只有登录密码的账号）：想要「以后可查看」才在这里输一次', async () => {
+      it('创建时没输过密码（只有登录密码的账号）：回执默认开启「以后可查看」并展示密码框，也可关闭跳过', async () => {
         getVerificationFactors.mockResolvedValue({ ...passwordFactors, create_verification_required: false })
         createKey.mockResolvedValue({ ...createApiKey(), id: 78, group_id: 3, group_ids: [3], key: 'sk-no-password-key' })
         const wrapper = await openCreate()
@@ -3427,11 +3503,8 @@ describe('user KeysView 创建弹窗（Quiet 流程）与页面过期守卫', ()
         await flushPromises()
         expect(lastCreateOptions()).not.toHaveProperty('verification')
 
-        // Declining costs nothing: the receipt just closes.
-        expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
-        await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
-        await flushPromises()
-        // This is the only place the password is asked, and only because the user asked for "view later".
+        // Default ON: switch is checked and password field is immediately ready.
+        expect(wrapper.get('[data-test="api-key-seal-checkbox"]').attributes('aria-checked')).toBe('true')
         const field = wrapper.get('[data-test="api-key-seal-password"]')
         await field.setValue('typed-here')
 
@@ -3481,8 +3554,7 @@ describe('user KeysView 创建弹窗（Quiet 流程）与页面过期守卫', ()
         await wrapper.get('#key-form').trigger('submit')
         await flushPromises()
 
-        await wrapper.get('[data-test="api-key-seal-checkbox"]').trigger('click')
-        await flushPromises()
+        expect(wrapper.get('[data-test="api-key-seal-checkbox"]').attributes('aria-checked')).toBe('true')
         expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(true)
         wrapper.unmount()
       })

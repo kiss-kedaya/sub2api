@@ -12,6 +12,7 @@ import { DEFAULT_SITE_THEME, normalizeSiteTheme, type SiteThemeSettings } from '
 // on-chain deposits) are switched on; with the fixture defaults the router sends them to settings.
 const settings = {
   ...fixtureSettings,
+  hide_ccs_import_button: false,
   risk_control_enabled: true,
   crypto_enabled: true,
   theme_primary: DEFAULT_SITE_THEME.theme_primary,
@@ -141,7 +142,9 @@ export function consolePreviewPlugin(): Plugin {
                 throw new PreviewError(405, '演示主题接口仅支持 GET / PUT')
               }
             } else {
-              result = api.handle(req.method || 'GET', path, url.searchParams, body)
+              result = api.handle(req.method || 'GET', path, url.searchParams, body, {
+                authorization: typeof req.headers.authorization === 'string' ? req.headers.authorization : '',
+              })
             }
             if (path === '/api/v1/settings/public') result = { ...settings, ...previewTheme, api_base_url: `http://${host}` }
             const raw = path === '/setup/status' || path.startsWith('/v1/')
