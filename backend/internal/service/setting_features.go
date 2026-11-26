@@ -280,7 +280,8 @@ func (s *SettingService) IsTotpEncryptionKeyConfigured() bool {
 }
 
 // IsSessionBindingEnabled 检查会话 IP/UA 绑定是否启用（默认开启）。
-// 开启时会话与登录时的 IP/User-Agent 绑定，指纹变化立即失效并撤销该会话。
+// 开启时 access token 与登录时的 IP/User-Agent 绑定，指纹变化的请求返回 401；是否同时撤销
+// 整个会话家族由 security.session_binding_on_mismatch 决定（默认 rebind：不撤销，前端刷新令牌时重绑）。
 // 显式写入 "false" 可关闭；移动网络/多出口 IP 场景可配合
 // security.session_binding_mode=loose（默认）放宽到网段级别。
 func (s *SettingService) IsSessionBindingEnabled(ctx context.Context) bool {
@@ -318,6 +319,18 @@ func (s *SettingService) SessionBindingHash(binding *SessionBinding) string {
 		return ""
 	}
 	return binding.HashForMode(s.SessionBindingMode())
+}
+
+// SessionBindingMatches 报告请求指纹是否仍与令牌里记录的指纹一致（按当前配置的绑定模式；
+// loose 模式下令牌带粗粒度指纹时按粗粒度规则比较，见 SessionBinding.Matches）。
+func (s *SettingService) SessionBindingMatches(binding *SessionBinding, storedHash, storedCoarse string) bool {
+	return binding.Matches(s.SessionBindingMode(), storedHash, storedCoarse)
+}
+
+// SessionBindingRevokesOnMismatch 报告指纹不一致时是否撤销整个会话家族
+// （security.session_binding_on_mismatch=revoke）；默认 rebind 不撤销。
+func (s *SettingService) SessionBindingRevokesOnMismatch() bool {
+	return s != nil && s.cfg != nil && s.cfg.SessionBindingRevokeOnMismatch()
 }
 
 // IsStepUpEnabled 检查敏感操作 step-up 2FA 门控是否启用（默认关闭）。

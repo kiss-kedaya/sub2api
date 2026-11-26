@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -129,8 +130,6 @@ func ensureLoginUserActive(user *service.User) error {
 	return nil
 }
 
-// respondWithTokenPair 生成 Token 对并返回认证响应
-// 如果 Token 对生成失败，回退到只返回 Access Token（向后兼容）
 // SetTwoFactorRateLimiter 注入账号维度 2FA 限速器（由 router 装配）。
 func (h *AuthHandler) SetTwoFactorRateLimiter(limiter twoFactorRateLimiter) {
 	if h == nil {
@@ -148,8 +147,36 @@ func (h *AuthHandler) SetPasskeyService(passkeys *service.PasskeyService) {
 	h.passkeys = passkeys
 }
 
+// respondWithTokenPair 生成 Token 对并返回认证响应。
+// Token 对生成失败时先短退避重试一次；仍失败才回退到只返回 Access Token（向后兼容，会计数并留限频 ERROR）。
 func (h *AuthHandler) respondWithTokenPair(c *gin.Context, user *service.User) {
 	respondWithTokenPair(c, h.authService, user)
+}
+
+// loginTokenPairRetryBackoff 是登录发令牌失败后、重试一次之前的短退避（测试里可调小）。
+var loginTokenPairRetryBackoff = 150 * time.Millisecond
+
+// generateLoginTokenPair 为登录签发 Token 对；失败时短退避后重试一次。
+// Redis 抖动/超时多是瞬时的，一次重试就能避免用户拿到「access token 过期后必须重新登录」的残缺会话。
+// refresh token 存储没配置（配置问题，重试没用）与请求已取消（客户端已经走了）不重试。
+func generateLoginTokenPair(ctx context.Context, authService *service.AuthService, user *service.User) (*service.TokenPair, error) {
+	pair, err := authService.GenerateTokenPair(ctx, user, "")
+	if err == nil || errors.Is(err, service.ErrRefreshTokenCacheNotConfigured) || ctx.Err() != nil {
+		return pair, err
+	}
+	timer := time.NewTimer(loginTokenPairRetryBackoff)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		return nil, err
+	}
+	pair, retryErr := authService.GenerateTokenPair(ctx, user, "")
+	authService.NoteLoginTokenPairRetry(retryErr == nil)
+	if retryErr != nil {
+		return nil, retryErr
+	}
+	return pair, nil
 }
 
 func respondWithTokenPair(c *gin.Context, authService *service.AuthService, user *service.User) {
@@ -158,10 +185,11 @@ func respondWithTokenPair(c *gin.Context, authService *service.AuthService, user
 		return
 	}
 
-	tokenPair, err := authService.GenerateTokenPair(c.Request.Context(), user, "")
+	tokenPair, err := generateLoginTokenPair(c.Request.Context(), authService, user)
 	if err != nil {
-		slog.Error("failed to generate token pair", "error", err, "user_id", user.ID)
-		// 回退到只返回Access Token
+		// 重试之后仍然失败：不能让登录因此整体失败，退回只返回 Access Token（向后兼容）。
+		// 这样的会话在 access token 过期后必须重新登录，所以要计数并留一条限频 ERROR。
+		authService.NoteLoginTokenPairFallback(user.ID, err)
 		token, tokenErr := authService.GenerateToken(c.Request.Context(), user)
 		if tokenErr != nil {
 			response.InternalError(c, "Failed to generate token")

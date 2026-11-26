@@ -56,7 +56,12 @@ func SecurityClientIP(c *gin.Context) string {
 }
 
 // enforceSessionBinding 校验 access token 的会话指纹（IP/UA 绑定）。
-// 指纹不匹配时：撤销该会话家族的所有 refresh token、写入审计安全事件、返回 401。
+// 指纹不匹配时一律写入审计安全事件并返回 401（前端遇到 401 会刷新令牌）；是否同时撤销该会话家族的
+// 所有 refresh token 由 security.session_binding_on_mismatch 决定：
+//   - rebind（默认）：不撤销。401 触发前端刷新，refresh 路径放行并用当前指纹重绑新令牌，
+//     换网络/浏览器升级不会掉线；偷到的 access token 单独在别的网络上仍然用不了；
+//   - revoke：撤销整个会话家族，必须重新登录（升级前的旧行为）。
+//
 // 返回 false 表示请求已被中断。
 //
 // 兼容性：claims.BindingVersion == 0（本特性上线前签发的旧 token）时放行，
@@ -76,13 +81,16 @@ func enforceSessionBinding(
 		return true
 	}
 	binding := requestSessionBinding(c)
-	current := settingService.SessionBindingHash(binding)
-	if current == "" || current == claims.BindingHash {
+	if settingService.SessionBindingMatches(binding, claims.BindingHash, claims.BindingCoarse) {
 		return true
 	}
 
+	revoke := settingService.SessionBindingRevokesOnMismatch()
 	if authService != nil {
-		_ = authService.RevokeSessionFamily(c.Request.Context(), claims.SessionID)
+		if revoke {
+			_ = authService.RevokeSessionFamily(c.Request.Context(), claims.SessionID)
+		}
+		authService.NoteAccessBindingMismatch(claims.UserID, revoke)
 	}
 	if auditService != nil {
 		uid := claims.UserID
@@ -103,6 +111,10 @@ func enforceSessionBinding(
 			StatusCode:  401,
 		})
 	}
-	AbortWithError(c, 401, "SESSION_BINDING_MISMATCH", "Session network fingerprint changed, please login again")
+	if revoke {
+		AbortWithError(c, 401, "SESSION_BINDING_MISMATCH", "Session network fingerprint changed, please login again")
+	} else {
+		AbortWithError(c, 401, "SESSION_BINDING_MISMATCH", "Session network fingerprint changed, refresh the token to continue")
+	}
 	return false
 }

@@ -16,16 +16,27 @@ type RefreshTokenData struct {
 	TokenVersion int64  `json:"token_version"`          // 用于检测密码更改后的Token失效
 	FamilyID     string `json:"family_id"`              // Token家族ID，用于防重放攻击
 	BindingHash  string `json:"binding_hash,omitempty"` // 会话指纹哈希（IP+UA），会话绑定开启时校验
+	// BindingCoarse 是粗粒度指纹（浏览器家族|系统家族|IP 家族|网段短哈希），和 BindingHash 并存：
+	// BindingHash 保持旧算法，新旧版本混跑时旧实例仍能正确比对；loose 模式下新代码优先用它比较
+	// （忽略浏览器/系统版本号，IPv4<->IPv6 切换不算不一致）。旧记录没有该字段，按 BindingHash 比较。
+	BindingCoarse string `json:"binding_coarse,omitempty"`
 	// SessionStartedAt 是该登录会话首次签发的时间。每次轮换都继承同一个值，
-	// 会话绝对寿命上限 = SessionStartedAt + jwt.refresh_token_expire_days；
-	// 超过上限必须重新登录，避免 refresh token 无限滑动续期。旧数据为空时
-	// 视为以 CreatedAt 为起点（升级兼容，不延长也不会缩短既有会话）。
+	// 会话绝对寿命上限 = SessionStartedAt + jwt.session_max_lifetime_days；
+	// 超过上限必须重新登录。refresh token 本身的有效期是滑动的（每次轮换从「现在」起算，
+	// 但不会超过这个上限）。旧数据为空时视为以 CreatedAt 为起点（升级兼容，不延长也不会缩短既有会话）。
 	SessionStartedAt time.Time `json:"session_started_at,omitempty"`
 	// Consumed 标记该 Token 已因轮换被消费。轮换时保留一条短 TTL 墓碑，
 	// 用于再次收到同一 Token 时识别重放并撤销整个 family。
-	Consumed  bool      `json:"consumed,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Consumed bool `json:"consumed,omitempty"`
+	// ConsumedAt 是该 Token 被轮换消费的时间（墓碑上的字段）。已消费 Token 在
+	// jwt.refresh_token_reuse_leeway_seconds 内再次出现，视为响应丢失后的合法重试。
+	// 旧墓碑没有该字段（零值），按原行为处理：任何重放都撤销整个 family。
+	ConsumedAt time.Time `json:"consumed_at,omitempty"`
+	// LeewayReissues 是该已消费 Token 在宽限期内被「重发」新令牌的次数（计数写在墓碑上），
+	// 达到上限后不再重发，按重放处理。
+	LeewayReissues int       `json:"leeway_reissues,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	ExpiresAt      time.Time `json:"expires_at"`
 }
 
 // SessionStart 返回会话首次签发时间，兼容升级前没有 session_started_at 的旧数据。
