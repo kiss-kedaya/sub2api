@@ -294,3 +294,21 @@ func TestHandleFailoverErrorBackoffSleepIsCancelable(t *testing.T) {
 	require.Equal(t, FailoverCanceled, action)
 	require.Less(t, time.Since(start), 2*time.Second)
 }
+
+func TestFailoverStateWithoutConstructorStillGetsTheDefaultBudget(t *testing.T) {
+	// 结构体字面量构造（没走 NewFailoverState）时预算是零值：必须按默认上限工作，
+	// 而不是第一次失败就判定预算用尽。
+	fastRetryGuard(t, nil)
+	fs := &FailoverState{
+		MaxSwitches:           1024,
+		FailedAccountIDs:      map[int64]struct{}{},
+		SameAccountRetryCount: map[int64]int{},
+	}
+	require.Equal(t, FailoverContinue, fs.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 1, "openai", 0, newTestFailoverErr(502, false, false)))
+
+	var b failoverBudget
+	for i := 1; i < 10; i++ {
+		require.Empty(t, b.spend(time.Now()), "attempt %d", i)
+	}
+	require.Equal(t, failoverBudgetReasonAttempts, b.spend(time.Now()))
+}

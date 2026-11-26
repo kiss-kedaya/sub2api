@@ -111,6 +111,7 @@ func newFailoverBudget() failoverBudget {
 // spend 记录「又有一次上游尝试失败了」，并返回此后是否还允许发起新的尝试：
 // 空字符串表示允许；非空是耗尽原因。第 N 次失败且 N 已达上限时耗尽，所以一个请求最多发起 maxAttempts 次尝试。
 func (b *failoverBudget) spend(now time.Time) string {
+	b.ensureInitialized(now)
 	b.attempts++
 	if b.attempts >= b.settings.maxAttempts {
 		return failoverBudgetReasonAttempts
@@ -123,6 +124,7 @@ func (b *failoverBudget) spend(now time.Time) string {
 
 // exhaustedReason 不消耗尝试，只检查耗时（选号失败后的退避循环用）。
 func (b *failoverBudget) exhaustedReason(now time.Time) string {
+	b.ensureInitialized(now)
 	if b.attempts >= b.settings.maxAttempts {
 		return failoverBudgetReasonAttempts
 	}
@@ -133,6 +135,17 @@ func (b *failoverBudget) exhaustedReason(now time.Time) string {
 }
 
 func (b *failoverBudget) elapsed(now time.Time) time.Duration { return now.Sub(b.started) }
+
+// ensureInitialized 兜底零值：不经 newFailoverBudget 构造的 FailoverState（结构体字面量）也要按默认上限工作，
+// 而不是因为 maxAttempts==0 在第一次失败就判定「预算用尽」。
+func (b *failoverBudget) ensureInitialized(now time.Time) {
+	if b.settings.maxAttempts <= 0 {
+		b.settings = currentRetryGuard()
+	}
+	if b.started.IsZero() {
+		b.started = now
+	}
+}
 
 // poolRetryBackoff 是同账号重试（池模式等）的默认退避：base、2*base、4*base…，上限 backoffMax。
 func poolRetryBackoff(retryCount int) time.Duration {
