@@ -1287,6 +1287,26 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	})
 }
 
+// presentRequestCookieNames 返回当前请求实际携带的 Cookie 名称集合。
+// 登出/撤销会话等清理路径据此按需下发 Set-Cookie 删除头，避免一次性输出大量无关 Cookie
+// 导致上游响应头超过 Nginx 默认 4KB proxy_buffer_size 引发 502。
+func presentRequestCookieNames(c *gin.Context) map[string]struct{} {
+	if c == nil || c.Request == nil {
+		return nil
+	}
+	cookies := c.Request.Cookies()
+	if len(cookies) == 0 {
+		return nil
+	}
+	present := make(map[string]struct{}, len(cookies))
+	for _, ck := range cookies {
+		if ck != nil && ck.Name != "" {
+			present[ck.Name] = struct{}{}
+		}
+	}
+	return present
+}
+
 // RevokeAllSessionsResponse 撤销所有会话响应
 type RevokeAllSessionsResponse struct {
 	Message string `json:"message"`

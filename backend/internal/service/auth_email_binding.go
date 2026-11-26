@@ -300,19 +300,47 @@ func replaceBoundEmailAuthIdentityWithClient(
 	return err
 }
 
-func ensureBoundEmailAuthIdentityWithClient(
+// EnsureEmailAuthIdentityWithClient 确保 (email, email, subject) 身份行存在且归属 userID。
+// 先按 hash/明文回退条件查询已有行：
+//   - 任一匹配行归属其他用户时返回 ErrEmailExists；
+//   - 同用户的历史明文行（provider_subject_hash 为空/NULL）原地 UPDATE 回填盲索引，
+//     避免明文双写关闭时再插入一条 (NULL, hash) 行导致 ent: auth_identity not singular；
+//   - 不存在匹配行时才执行 INSERT ... ON CONFLICT (hash) DO NOTHING，并复查并发写入后的归属与回填。
+func EnsureEmailAuthIdentityWithClient(
 	ctx context.Context,
 	client *dbent.Client,
 	userID int64,
 	subject string,
 	source string,
 ) error {
-	if client == nil || userID <= 0 || subject == "" {
+	if client == nil || userID <= 0 {
 		return nil
 	}
-
-	if strings.TrimSpace(source) == "" {
+	subject = strings.ToLower(strings.TrimSpace(subject))
+	if subject == "" {
+		return nil
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
 		source = "auth_service_email_bind"
+	}
+
+	queryIdentities := func() ([]*dbent.AuthIdentity, error) {
+		return client.AuthIdentity.Query().
+			Where(
+				authidentity.ProviderTypeEQ("email"),
+				authidentity.ProviderKeyEQ("email"),
+				AuthIdentitySubjectLookupPredicate("email", subject),
+			).
+			All(ctx)
+	}
+
+	identities, err := queryIdentities()
+	if err != nil {
+		return err
+	}
+	if len(identities) > 0 {
+		return reconcileExistingEmailAuthIdentities(ctx, client, userID, subject, identities)
 	}
 
 	create := client.AuthIdentity.Create().
@@ -320,36 +348,74 @@ func ensureBoundEmailAuthIdentityWithClient(
 		SetProviderType("email").
 		SetProviderKey("email").
 		SetVerifiedAt(time.Now().UTC()).
-		SetMetadata(map[string]any{"source": strings.TrimSpace(source)})
+		SetMetadata(map[string]any{"source": source})
 	create = ApplyAuthIdentitySubjectCreate(create, "email", subject)
 	if err := create.
 		OnConflictColumns(AuthIdentitySubjectHashConflictColumns()...).
 		DoNothing().
 		Exec(ctx); err != nil {
 		// 旧实例在滚动窗口写入的明文行没有 hash：明文唯一索引冲突不视为失败，
-		// 交给下面的查询走 hash/明文回退。
+		// 交给下面的查询走 hash/明文回退并复查归属。
 		if !isSQLNoRowsError(err) && !dbent.IsConstraintError(err) {
 			return err
 		}
 	}
 
-	identity, err := client.AuthIdentity.Query().
-		Where(
-			authidentity.ProviderTypeEQ("email"),
-			authidentity.ProviderKeyEQ("email"),
-			AuthIdentitySubjectLookupPredicate("email", subject),
-		).
-		Only(ctx)
+	identities, err = queryIdentities()
 	if err != nil {
-		if dbent.IsNotFound(err) {
-			return nil
-		}
 		return err
 	}
-	if identity.UserID != userID {
-		return ErrEmailExists
+	if len(identities) == 0 {
+		return nil
+	}
+	return reconcileExistingEmailAuthIdentities(ctx, client, userID, subject, identities)
+}
+
+func reconcileExistingEmailAuthIdentities(
+	ctx context.Context,
+	client *dbent.Client,
+	userID int64,
+	subject string,
+	identities []*dbent.AuthIdentity,
+) error {
+	for _, identity := range identities {
+		if identity.UserID != userID {
+			return ErrEmailExists
+		}
+	}
+
+	expectedHash, expectedPrefix, _ := AuthSubjectColumns("email", subject, HashAuthIdentitySubject)
+	for _, identity := range identities {
+		if identity.ProviderSubjectHash != nil && strings.TrimSpace(*identity.ProviderSubjectHash) == expectedHash {
+			if identity.ProviderSubjectPrefix == nil || strings.TrimSpace(*identity.ProviderSubjectPrefix) == "" {
+				if _, err := client.AuthIdentity.UpdateOneID(identity.ID).
+					SetProviderSubjectPrefix(expectedPrefix).
+					Save(ctx); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}
+
+	// 历史明文行缺少 provider_subject_hash（或与当前盲索引不一致）：原地回填，不新增重复行。
+	target := identities[0]
+	update := client.AuthIdentity.UpdateOneID(target.ID)
+	update = ApplyAuthIdentitySubjectUpdate(update, "email", subject)
+	if _, err := update.Save(ctx); err != nil {
+		return err
 	}
 	return nil
+}
+
+func ensureBoundEmailAuthIdentityWithClient(
+	ctx context.Context,
+	client *dbent.Client,
+	userID int64,
+	subject string,
+	source string,
+) error {
+	return EnsureEmailAuthIdentityWithClient(ctx, client, userID, subject, source)
 }
 
 func normalizeBoundEmailAuthIdentitySubject(email string) string {

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1190,4 +1192,97 @@ func TestCalculateCost_ClaudeSonnetCatalogLadderIsDataDriven(t *testing.T) {
 	cost, err = svc.CalculateCost("claude-sonnet-4-5", under, 1.0)
 	require.NoError(t, err)
 	require.False(t, cost.LongContextBillingApplied, "恰好 200000 不进高档（严格大于）")
+}
+
+func countStructuredLogMatches(sink *inMemoryLogSink, substr, level string) int {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	wantLevel := strings.ToLower(strings.TrimSpace(level))
+	count := 0
+	for _, ev := range sink.events {
+		if ev == nil {
+			continue
+		}
+		if strings.Contains(ev.Message, substr) && strings.ToLower(strings.TrimSpace(ev.Level)) == wantLevel {
+			count++
+		}
+	}
+	return count
+}
+
+func TestGetModelPricing_OpenAIImageFallbackLoggedOnceAtDebug(t *testing.T) {
+	logSink, restore := captureStructuredLog(t)
+	defer restore()
+
+	gptImage2 := &LiteLLMModelPricing{
+		OutputCostPerImageToken: 3e-5,
+		LiteLLMProvider:         "openai",
+		Mode:                    "image_generation",
+	}
+	svc := &PricingService{
+		pricingData: map[string]*LiteLLMModelPricing{
+			"gpt-image-2": gptImage2,
+		},
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got := svc.GetModelPricing("gpt-image-2.5")
+			require.Same(t, gptImage2, got)
+		}()
+	}
+	wg.Wait()
+
+	got26 := svc.GetModelPricing("gpt-image-2.6")
+	require.Same(t, gptImage2, got26)
+	got26Again := svc.GetModelPricing("gpt-image-2.6")
+	require.Same(t, gptImage2, got26Again)
+
+	msg25 := "[Pricing] OpenAI image fallback matched gpt-image-2.5 -> gpt-image-2"
+	msg26 := "[Pricing] OpenAI image fallback matched gpt-image-2.6 -> gpt-image-2"
+	require.Equal(t, 1, countStructuredLogMatches(logSink, msg25, "debug"))
+	require.Equal(t, 0, countStructuredLogMatches(logSink, msg25, "warn"))
+	require.Equal(t, 0, countStructuredLogMatches(logSink, msg25, "info"))
+	require.Equal(t, 1, countStructuredLogMatches(logSink, msg26, "debug"))
+	require.Equal(t, 0, countStructuredLogMatches(logSink, msg26, "warn"))
+
+	// 重新加载后去重缓存清空，新的命中重新记一次 Debug。
+	svc.resetImageFallbackLogCache()
+	require.Same(t, gptImage2, svc.GetModelPricing("gpt-image-2.5"))
+	require.Equal(t, 2, countStructuredLogMatches(logSink, msg25, "debug"))
+}
+
+func TestMergeFallbackPricingData_MissingFileDoesNotWarn(t *testing.T) {
+	logSink, restore := captureStructuredLog(t)
+	defer restore()
+
+	dir := t.TempDir()
+	missingPath := filepath.Join(dir, "does-not-exist.json")
+	overridePath := filepath.Join(dir, "overrides.json")
+	require.NoError(t, os.WriteFile(overridePath, []byte(`{
+		"gpt-5.4": {"input_cost_per_token": 9e-06}
+	}`), 0644))
+
+	catalogPath := filepath.Join(dir, "catalog.json")
+	require.NoError(t, os.WriteFile(catalogPath, []byte(`{
+		"gpt-5.4": {"litellm_provider": "openai", "mode": "chat",
+			"input_cost_per_token": 2.5e-06, "output_cost_per_token": 1.5e-05}
+	}`), 0644))
+
+	svc := &PricingService{cfg: &config.Config{}}
+	svc.cfg.Pricing.FallbackFile = missingPath
+	svc.cfg.Pricing.OverrideFile = overridePath
+
+	require.NoError(t, svc.loadPricingData(catalogPath))
+	require.InDelta(t, 9e-6, svc.pricingData["gpt-5.4"].InputCostPerToken, 1e-12, "显式 override 不受缺失 fallback 影响")
+	require.True(t, logSink.ContainsMessageAtLevel("[Pricing] Fallback merge skipped (file not found):", "debug"))
+	require.False(t, logSink.ContainsMessageAtLevel("[Pricing] Fallback merge skipped", "warn"))
+
+	// 非 ENOENT 读取失败（例如配置成了目录）仍应输出 WARN。
+	svc.cfg.Pricing.FallbackFile = dir
+	_ = svc.mergeFallbackPricingData(map[string]*LiteLLMModelPricing{})
+	require.True(t, logSink.ContainsMessageAtLevel("[Pricing] Fallback merge skipped:", "warn"))
 }

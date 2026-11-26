@@ -584,6 +584,62 @@ func TestAuthServiceBindEmailIdentity_RejectsWrongCurrentPasswordForBoundEmail(t
 	require.Equal(t, 0, newIdentityCount)
 }
 
+func TestAuthServiceBindEmailIdentity_BackfillsLegacyPlaintextRowWhenDualWriteDisabled(t *testing.T) {
+	cache := &emailBindCacheStub{
+		data: &service.VerificationCodeData{
+			Code:      "123456",
+			CreatedAt: time.Now().UTC(),
+			ExpiresAt: time.Now().UTC().Add(10 * time.Minute),
+		},
+	}
+	svc, _, client := newAuthServiceForEmailBind(t, nil, cache, nil)
+	service.ConfigureAuthSubjectPlaintextDualWrite(false)
+
+	ctx := context.Background()
+	hashedPassword, err := svc.HashPassword("current-password")
+	require.NoError(t, err)
+
+	const email = "legacy-rebind@example.com"
+	user, err := client.User.Create().
+		SetEmail(email).
+		SetUsername("legacy-bind-user").
+		SetPasswordHash(hashedPassword).
+		SetBalance(1).
+		SetConcurrency(1).
+		SetRole(service.RoleUser).
+		SetStatus(service.StatusActive).
+		Save(ctx)
+	require.NoError(t, err)
+	legacyIdentity, err := client.AuthIdentity.Create().
+		SetUserID(user.ID).
+		SetProviderType("email").
+		SetProviderKey("email").
+		SetProviderSubject(email).
+		SetVerifiedAt(time.Now().UTC()).
+		SetMetadata(map[string]any{"source": "legacy"}).
+		Save(ctx)
+	require.NoError(t, err)
+	require.Nil(t, legacyIdentity.ProviderSubjectHash)
+
+	updatedUser, err := svc.BindEmailIdentity(ctx, user.ID, email, "123456", "current-password")
+	require.NoError(t, err)
+	require.NotNil(t, updatedUser)
+
+	identities, err := client.AuthIdentity.Query().
+		Where(
+			authidentity.ProviderTypeEQ("email"),
+			authidentity.ProviderKeyEQ("email"),
+			service.AuthIdentitySubjectLookupPredicate("email", email),
+		).
+		All(ctx)
+	require.NoError(t, err)
+	require.Len(t, identities, 1)
+	require.Equal(t, legacyIdentity.ID, identities[0].ID)
+	require.NotNil(t, identities[0].ProviderSubjectHash)
+	require.Equal(t, service.HashAuthIdentitySubject("email", email), *identities[0].ProviderSubjectHash)
+	require.Nil(t, identities[0].ProviderSubject)
+}
+
 func TestAuthServiceBindEmailIdentity_RevokesExistingAccessAndRefreshTokens(t *testing.T) {
 	ctx := context.Background()
 	cache := &emailBindCacheStub{

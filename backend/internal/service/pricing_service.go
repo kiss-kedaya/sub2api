@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -301,6 +302,13 @@ type LiteLLMRawEntry struct {
 	CacheReadInputImageTokenCost        *float64 `json:"cache_read_input_image_token_cost"`
 }
 
+const maxLoggedOpenAIImageFallbacks = 512
+
+type openAIImageFallbackLogKey struct {
+	model     string
+	candidate string
+}
+
 // PricingService 动态价格服务
 type PricingService struct {
 	cfg          *config.Config
@@ -312,6 +320,9 @@ type PricingService struct {
 	// fallback/override 文件在最近一次成功重建时的内容指纹，定时器据此判断是否
 	// 需要从本地目录缓存重建叠加层。
 	customFilesHash string
+	// 按 (model, candidate) 去重 OpenAI image fallback 调试日志，避免高频刷屏。
+	imageFallbackLogged      sync.Map
+	imageFallbackLoggedCount atomic.Int32
 
 	// 停止信号
 	stopCh chan struct{}
@@ -616,6 +627,7 @@ func (s *PricingService) reloadCustomPricingLayers() error {
 	warnDroppedLongContextLadders(s.pricingData, data)
 	s.pricingData = data
 	s.customFilesHash = fingerprint
+	s.resetImageFallbackLogCache()
 	s.mu.Unlock()
 
 	logger.LegacyPrintf("service.pricing", "[Pricing] Custom pricing files changed, reloaded %d models from %s", len(data), pricingFile)
@@ -685,6 +697,7 @@ func (s *PricingService) downloadPricingData() error {
 	s.lastUpdated = time.Now()
 	s.localHash = syncHash
 	s.customFilesHash = customFilesHash
+	s.resetImageFallbackLogCache()
 	s.mu.Unlock()
 
 	logger.LegacyPrintf("service.pricing", "[Pricing] Downloaded %d models successfully", len(data))
@@ -1124,6 +1137,7 @@ func (s *PricingService) loadPricingData(filePath string) error {
 	s.pricingData = pricingData
 	s.localHash = hashStr
 	s.customFilesHash = customFilesHash
+	s.resetImageFallbackLogCache()
 
 	info, _ := os.Stat(filePath)
 	if info != nil {
@@ -1141,11 +1155,20 @@ func (s *PricingService) mergeFallbackPricingData(data map[string]*LiteLLMModelP
 	if data == nil {
 		data = make(map[string]*LiteLLMModelPricing)
 	}
-	if s == nil || s.cfg == nil || strings.TrimSpace(s.cfg.Pricing.FallbackFile) == "" {
+	if s == nil || s.cfg == nil {
 		return data
 	}
-	fallbackBody, err := os.ReadFile(s.cfg.Pricing.FallbackFile)
+	fallbackPath := strings.TrimSpace(s.cfg.Pricing.FallbackFile)
+	if fallbackPath == "" {
+		return data
+	}
+	fallbackBody, err := os.ReadFile(fallbackPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			logger.With(zap.String("component", "service.pricing")).
+				Debug(fmt.Sprintf("[Pricing] Fallback merge skipped (file not found): %v", err))
+			return data
+		}
 		logger.LegacyPrintf("service.pricing", "[Pricing] Fallback merge skipped: %v", err)
 		return data
 	}
@@ -1762,7 +1785,7 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 	if isOpenAIImageGenerationModel(model) {
 		for _, candidate := range []string{"gpt-image-2", "gpt-image-1.5", "gpt-image-1"} {
 			if pricing, ok := s.pricingData[candidate]; ok {
-				logger.LegacyPrintf("service.pricing", "[Pricing] OpenAI image fallback matched %s -> %s", model, candidate)
+				s.logOpenAIImageFallbackOnce(model, candidate)
 				return pricing
 			}
 		}
@@ -1777,6 +1800,27 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 	}
 
 	return nil
+}
+
+func (s *PricingService) logOpenAIImageFallbackOnce(model, candidate string) {
+	key := openAIImageFallbackLogKey{model: model, candidate: candidate}
+	if _, loaded := s.imageFallbackLogged.Load(key); loaded {
+		return
+	}
+	if s.imageFallbackLoggedCount.Load() >= maxLoggedOpenAIImageFallbacks {
+		return
+	}
+	if _, loaded := s.imageFallbackLogged.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	s.imageFallbackLoggedCount.Add(1)
+	logger.With(zap.String("component", "service.pricing")).
+		Debug(fmt.Sprintf("[Pricing] OpenAI image fallback matched %s -> %s", model, candidate))
+}
+
+func (s *PricingService) resetImageFallbackLogCache() {
+	s.imageFallbackLogged.Clear()
+	s.imageFallbackLoggedCount.Store(0)
 }
 
 // generateOpenAIModelVariants 生成 OpenAI 模型的回退变体列表
