@@ -43,6 +43,15 @@
             <Icon name="book" size="md" />
           </a>
           <router-link
+            to="/docs?page=agent-setup"
+            data-testid="compact-home-agent-setup"
+            class="flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+            :title="t('home.agentSetup.navLabel')"
+          >
+            <Icon name="terminal" size="md" />
+            <span class="hidden sm:inline">{{ t('home.agentSetup.navLabel') }}</span>
+          </router-link>
+          <router-link
             v-if="showModelPlazaEntry"
             to="/model-plaza"
             class="flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
@@ -78,12 +87,22 @@
         />
         <h1 class="wrap-anywhere text-3xl font-bold md:text-4xl">{{ siteName }}</h1>
         <p class="mt-4 whitespace-pre-wrap wrap-anywhere text-base text-gray-600 dark:text-dark-300">{{ siteSubtitle }}</p>
-        <router-link
-          :to="isAuthenticated ? dashboardPath : '/login'"
-          class="mt-8 inline-flex min-h-10 items-center justify-center rounded-lg bg-primary-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-primary-700"
-        >
-          {{ isAuthenticated ? t('home.goToDashboard') : t('home.login') }}
-        </router-link>
+        <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+          <router-link
+            :to="isAuthenticated ? dashboardPath : '/login'"
+            class="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-primary-700"
+          >
+            {{ isAuthenticated ? t('home.goToDashboard') : t('home.login') }}
+          </router-link>
+          <router-link
+            to="/docs?page=agent-setup"
+            data-testid="compact-home-agent-setup-cta"
+            class="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-900 dark:text-dark-200 dark:hover:bg-dark-800"
+          >
+            <Icon name="terminal" size="sm" />
+            <span>{{ t('home.agentSetup.navLabel') }}</span>
+          </router-link>
+        </div>
       </div>
     </main>
 
@@ -134,6 +153,16 @@
           >
             <Icon name="book" size="md" />
           </a>
+
+          <router-link
+            data-testid="home-header-agent-setup"
+            to="/docs?page=agent-setup"
+            class="hidden h-9 items-center gap-1.5 rounded-md px-2 text-sm text-muted transition-colors hover:bg-elevated hover:text-highlighted sm:flex"
+            :title="t('home.agentSetup.navLabel')"
+          >
+            <Icon name="terminal" size="md" />
+            <span class="hidden md:inline">{{ t('home.agentSetup.navLabel') }}</span>
+          </router-link>
 
           <router-link
             v-if="showModelPlazaEntry"
@@ -251,7 +280,7 @@
       <!-- Quick start: three steps, vertical flow so it never reads as a feature-card row. -->
       <section
         data-testid="home-quickstart"
-        class="mx-auto mt-16 max-w-4xl pb-20"
+        class="mx-auto mt-16 max-w-4xl pb-12"
         aria-labelledby="home-quickstart-title"
       >
         <h2 id="home-quickstart-title" class="text-xl font-semibold tracking-tight text-highlighted">
@@ -363,6 +392,89 @@
           </li>
         </ol>
       </section>
+
+      <!-- Agent Setup Launcher: Cloudflare-style picker tied to CC Switch + this site's Import to CCS flow -->
+      <section
+        data-testid="home-agent-setup"
+        class="mx-auto mt-4 max-w-4xl border-t border-default pb-20 pt-12"
+        aria-labelledby="home-agent-setup-title"
+      >
+        <div class="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+          <div class="min-w-0">
+            <h2 id="home-agent-setup-title" class="text-xl font-semibold tracking-tight text-highlighted">
+              {{ t('home.agentSetup.title') }}
+            </h2>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-muted">
+              {{ t('home.agentSetup.description') }}
+            </p>
+          </div>
+          <UButton
+            data-testid="home-agent-setup-all"
+            to="/docs?page=agent-setup"
+            size="md"
+            color="neutral"
+            variant="outline"
+            trailing-icon="i-lucide-arrow-right"
+            class="shrink-0 self-start sm:self-auto"
+          >
+            {{ t('home.agentSetup.viewAll') }}
+          </UButton>
+        </div>
+
+        <ul class="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <li v-for="agent in homeAgentHighlights" :key="agent.id" class="min-w-0">
+            <router-link
+              :to="{ path: '/docs', query: { page: 'agent-setup', agent: agent.id } }"
+              :data-testid="`home-agent-card-${agent.id}`"
+              class="group flex h-full flex-col justify-between rounded-xl border border-default bg-elevated p-4 transition hover:-translate-y-0.5 hover:border-accented"
+            >
+              <div>
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex min-w-0 items-center gap-2.5">
+                    <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-default bg-default">
+                      <AgentBrandIcon :icon-key="agent.iconKey" :platform="agent.platform" size="sm" />
+                    </span>
+                    <div class="min-w-0">
+                      <span class="block truncate text-[11px] text-muted">{{ agent.vendor }}</span>
+                      <span class="block truncate text-sm font-semibold text-highlighted">{{ agent.name }}</span>
+                    </div>
+                  </div>
+                  <span class="shrink-0 rounded-full border border-default bg-default px-2 py-0.5 text-[10px] font-medium text-toned">
+                    {{ agent.badge }}
+                  </span>
+                </div>
+                <p class="mt-2.5 line-clamp-2 text-xs leading-5 text-muted">
+                  {{ agent.summary }}
+                </p>
+              </div>
+              <span class="mt-3 inline-flex items-center gap-1 text-xs font-medium text-highlighted">
+                <span>{{ t('home.agentSetup.viewGuide') }}</span>
+                <Icon name="arrowRight" size="xs" class="transition-transform group-hover:translate-x-0.5" />
+              </span>
+            </router-link>
+          </li>
+        </ul>
+
+        <div class="mt-4 flex flex-col items-start justify-between gap-3 rounded-xl border border-default bg-elevated px-4 py-3.5 sm:flex-row sm:items-center">
+          <div class="flex min-w-0 items-start gap-2.5">
+            <AgentBrandIcon icon-key="ccswitch" size="sm" class="mt-0.5 shrink-0" />
+            <p class="text-xs leading-5 text-muted">
+              {{ t('home.agentSetup.ccSwitchStrip') }}
+            </p>
+          </div>
+          <UButton
+            data-testid="home-agent-setup-ccs"
+            to="/docs?page=agent-setup#site-ccswitch-workflow"
+            size="xs"
+            color="neutral"
+            variant="link"
+            trailing-icon="i-lucide-arrow-right"
+            class="shrink-0 px-0"
+          >
+            {{ t('home.agentSetup.openCcSwitchGuide') }}
+          </UButton>
+        </div>
+      </section>
     </main>
 
     <!-- Footer -->
@@ -408,6 +520,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
+import AgentBrandIcon from '@/components/docs/AgentBrandIcon.vue'
 import LegalFooterLinks from '@/components/legal/LegalFooterLinks.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { sanitizeHtml } from '@/utils/sanitize'
@@ -416,10 +529,13 @@ import { apiSiteRoot } from '@/utils/apiBaseUrl'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { formatCurrency, formatNumber } from '@/utils/format'
 import { getModelPlaza, type ModelPlazaResponse } from '@/api/modelPlaza'
+import { getHomeAgentHighlights } from '@/data/agentSetupGuides'
 import { PROJECT_GITHUB_URL } from '@/constants/project'
 import type { GroupPlatform } from '@/types'
 
-const { t } = useI18n()
+const i18nContext = useI18n()
+const t = i18nContext.t
+const activeLocale = computed(() => i18nContext.locale?.value || 'zh')
 
 const authStore = useAuthStore()
 const appStore = useAppStore()
@@ -502,6 +618,7 @@ const endpointBase = computed(() => {
   return ''
 })
 const sdkBaseUrl = computed(() => (endpointBase.value ? `${endpointBase.value}/v1` : ''))
+const homeAgentHighlights = computed(() => getHomeAgentHighlights(activeLocale.value, endpointBase.value || 'http://localhost'))
 
 // Model plaza doubles as the public source for model/platform counts. It is only fetched when
 // the feature is on and anonymous visitors are allowed to read it; any failure simply hides the

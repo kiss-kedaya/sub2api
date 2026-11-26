@@ -14,7 +14,7 @@ let authInitialized = false
 
 // 初始化导航加载状态和预加载
 const navigationLoading = useNavigationLoadingState()
-const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/docs', '/setup', '/payment/result', '/payment/airwallex', '/legal']
+const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/docs', '/agent-setup', '/setup', '/payment/result', '/payment/airwallex', '/legal']
 const BACKEND_MODE_CALLBACK_PATHS = [
   '/auth/callback',
   '/auth/linuxdo/callback',

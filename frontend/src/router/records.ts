@@ -63,6 +63,19 @@ export const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: false, title: 'API documentation', titleKey: 'docs.title' }
   },
   {
+    path: '/agent-setup/:agent?',
+    name: 'AgentSetupRedirect',
+    redirect: (to) => {
+      const agent = typeof to.params.agent === 'string' && to.params.agent.trim() ? to.params.agent.trim() : ''
+      return {
+        path: '/docs',
+        query: agent ? { page: 'agent-setup', agent } : { page: 'agent-setup' },
+        hash: to.hash,
+      }
+    },
+    meta: { requiresAuth: false, title: 'Agent setup', titleKey: 'docs.agentSetup.title' }
+  },
+  {
     path: '/home',
     name: 'Home',
     component: () => import('@/views/HomeView.vue'),

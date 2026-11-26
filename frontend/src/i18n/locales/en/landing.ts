@@ -50,6 +50,15 @@ export default {
         docs: 'Read the full API docs'
       }
     },
+    agentSetup: {
+      navLabel: 'Agent Setup',
+      title: 'Set up your AI agent with CC Switch',
+      description: 'Install your agent inside CC Switch → Apps, create an API key on this site, and click "Import to CCS" to finish setup in one click.',
+      viewAll: 'Read the 4-step guide',
+      viewGuide: 'View guide',
+      ccSwitchStrip: 'Natively supports one-click "Import to CCS" across 14 CC Switch apps (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, Pi, DeepSeek Harness, and more) with automatic balance tracking.',
+      openCcSwitchGuide: 'View 4-step workflow'
+    },
     footer: {
       allRightsReserved: 'All rights reserved.',
       riskStrip: 'This site is an as-is API relay. Output does not represent our views. Unlawful use, child-exploitative content and unattended high-risk automation are prohibited.'

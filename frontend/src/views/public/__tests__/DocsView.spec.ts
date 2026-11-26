@@ -357,4 +357,21 @@ describe('public API documentation page', () => {
     expect(wrap().classes()).not.toContain('docs-nav-more')
     wrapper.unmount()
   })
+
+  it('renders the interactive Agent Setup Guide in the client setup category and navigates into per-agent guides', async () => {
+    const { wrapper, router } = await openDocs('agent-setup')
+    expect(wrapper.find('[data-testid="agent-setup-guide"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="site-ccswitch-workflow"]').exists()).toBe(true)
+    expect(wrapper.find('.docs-category[aria-current="page"]').text()).toBe('Client setup')
+
+    await router.push('/docs?page=agent-setup&agent=claude-code')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="agent-detail-header"]').text()).toContain('Claude Code + Example gateway')
+
+    await wrapper.get('[data-testid="agent-back-all"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.agent).toBeUndefined()
+    expect(wrapper.find('[data-testid="site-ccswitch-workflow"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
 })

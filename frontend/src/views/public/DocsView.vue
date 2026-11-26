@@ -49,8 +49,27 @@
     </aside>
 
     <div class="lg:pl-[260px]">
-      <main id="docs-content" class="mx-auto grid max-w-[1330px] grid-cols-1 gap-12 px-6 py-9 sm:px-12 sm:py-11 xl:grid-cols-[minmax(0,780px)_170px] xl:gap-14 xl:px-12">
-        <article :key="page.id" class="min-w-0 max-w-[780px]" data-testid="docs-article">
+      <main
+        id="docs-content"
+        class="mx-auto grid max-w-[1330px] grid-cols-1 gap-12 px-6 py-9 sm:px-12 sm:py-11 xl:gap-14 xl:px-12"
+        :class="isAgentSetupPage ? 'xl:grid-cols-[minmax(0,920px)_170px]' : 'xl:grid-cols-[minmax(0,780px)_170px]'"
+      >
+        <article
+          :key="`${page.id}-${selectedAgentId}`"
+          class="min-w-0"
+          :class="isAgentSetupPage ? 'max-w-[920px]' : 'max-w-[780px]'"
+          data-testid="docs-article"
+        >
+          <AgentSetupGuide
+            v-if="isAgentSetupPage"
+            :origin="agentSetupOrigin"
+            :site-name="siteName"
+            :is-authenticated="authStore.isAuthenticated"
+            :selected-agent-id="selectedAgentId"
+            @toc-change="onAgentTocChange"
+          />
+
+          <template v-else>
           <div class="mb-8">
             <p class="mb-3 text-xs font-medium tracking-wide text-blue-600 dark:text-blue-400">{{ t(`docs.category.${page.category}`) }}</p>
             <h1 class="text-[30px] font-semibold leading-tight tracking-tight sm:text-[34px]">{{ page.title }}</h1>
@@ -106,18 +125,19 @@
               </template>
             </div>
           </section>
+          </template>
 
           <nav class="mt-12 grid grid-cols-2 gap-4 border-t border-slate-200 pt-6 dark:border-dark-700" :aria-label="t('docs.navigation')">
             <router-link v-if="previousPage" :to="docLocation(previousPage.id)" class="rounded-xl border border-slate-200 p-4 transition hover:border-blue-300 hover:bg-blue-50/30 dark:border-dark-700 dark:hover:bg-blue-500/5"><span class="mb-1 block text-[11px] text-slate-400">{{ t('docs.previous') }}</span><span class="text-sm font-medium">{{ previousPage.title }}</span></router-link><span v-else></span>
             <router-link v-if="nextPage" :to="docLocation(nextPage.id)" class="rounded-xl border border-slate-200 p-4 text-right transition hover:border-blue-300 hover:bg-blue-50/30 dark:border-dark-700 dark:hover:bg-blue-500/5"><span class="mb-1 block text-[11px] text-slate-400">{{ t('docs.next') }}</span><span class="text-sm font-medium">{{ nextPage.title }}</span></router-link>
           </nav>
-          <footer class="mt-10 flex flex-wrap items-center justify-between gap-3 pb-4 text-[11px] text-slate-400"><span>{{ siteName }} · {{ t('docs.title') }}</span><span class="font-mono">{{ origin }}</span></footer>
+          <footer class="mt-10 flex flex-wrap items-center justify-between gap-3 pb-4 text-[11px] text-slate-400"><span>{{ siteName }} · {{ t('docs.title') }}</span><span class="font-mono">{{ agentSetupOrigin }}</span></footer>
         </article>
 
         <aside class="hidden xl:block">
           <nav class="sticky top-36 text-xs" :aria-label="t('docs.onThisPage')">
             <p class="mb-4 font-medium text-slate-500">{{ t('docs.onThisPage') }}</p>
-            <div class="space-y-3 border-l border-slate-200 py-1 pl-4 dark:border-dark-700"><a v-for="section in page.sections" :key="section.id" :href="`#${section.id}`" class="block leading-5" :class="activeSection === section.id ? 'font-medium text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400'" :aria-current="activeSection === section.id ? 'location' : undefined" @click.prevent="jumpTo(section.id)">{{ section.title }}</a></div>
+            <div class="space-y-3 border-l border-slate-200 py-1 pl-4 dark:border-dark-700"><a v-for="section in tocSections" :key="section.id" :href="`#${section.id}`" class="block leading-5" :class="activeSection === section.id ? 'font-medium text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400'" :aria-current="activeSection === section.id ? 'location' : undefined" @click.prevent="jumpTo(section.id)">{{ section.title }}</a></div>
           </nav>
         </aside>
       </main>
@@ -131,12 +151,14 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '@/components/icons/Icon.vue'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
+import AgentSetupGuide, { type AgentTocItem } from '@/components/docs/AgentSetupGuide.vue'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useClipboard } from '@/composables/useClipboard'
 import { toggleColorMode, useSiteColorMode } from '@/composables/useSiteTheme'
 import { sanitizeUrl } from '@/utils/url'
 import { getApiDocs, resolveDocsOrigin, resolveDocsPage, type DocsCategory, type DocsLanguage, type DocsPage, type DocsSection } from '@/data/apiDocs'
+import { resolveAgentGatewayOrigin } from '@/data/agentSetupGuides'
 
 const route = useRoute()
 const router = useRouter()
@@ -145,8 +167,20 @@ const authStore = useAuthStore()
 const { t, locale } = useI18n()
 const { copyToClipboard } = useClipboard()
 const origin = resolveDocsOrigin(typeof window !== 'undefined' ? window.location.origin : '')
+const agentSetupOrigin = computed(() => resolveAgentGatewayOrigin(appStore.apiBaseUrl || appStore.cachedPublicSettings?.api_base_url, origin))
 const pages = computed(() => getApiDocs(locale.value, origin))
 const page = computed(() => resolveDocsPage(pages.value, route.query.page))
+const isAgentSetupPage = computed(() => page.value.id === 'agent-setup')
+const selectedAgentId = computed(() => (typeof route.query.agent === 'string' ? route.query.agent : ''))
+const agentToc = ref<AgentTocItem[]>([])
+const tocSections = computed<AgentTocItem[]>(() => (
+  isAgentSetupPage.value && agentToc.value.length
+    ? agentToc.value
+    : page.value.sections.map(section => ({ id: section.id, title: section.title }))
+))
+function onAgentTocChange(items: AgentTocItem[]) {
+  agentToc.value = items
+}
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const showModels = computed(() => appStore.cachedPublicSettings?.model_plaza_enabled === true)
@@ -246,7 +280,9 @@ async function copyExample(section: DocsSection) {
 }
 
 async function jumpTo(id: string) {
-  await router.replace({ path: '/docs', query: { page: page.value.id }, hash: `#${id}` })
+  const query: Record<string, string> = { page: page.value.id }
+  if (isAgentSetupPage.value && selectedAgentId.value) query.agent = selectedAgentId.value
+  await router.replace({ path: '/docs', query, hash: `#${id}` })
   document.getElementById(id)?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
 }
 
@@ -262,14 +298,15 @@ function observeSections() {
   disconnectSectionObserver()
   activeSection.value = ''
   if (typeof window === 'undefined' || typeof IntersectionObserver === 'undefined') return
-  const elements = page.value.sections.map(section => document.getElementById(section.id)).filter((element): element is HTMLElement => element !== null)
+  const sections = tocSections.value
+  const elements = sections.map(section => document.getElementById(section.id)).filter((element): element is HTMLElement => element !== null)
   if (!elements.length) return
   const observer = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       if (entry.isIntersecting) visibleSectionIds.add(entry.target.id)
       else visibleSectionIds.delete(entry.target.id)
     }
-    const current = page.value.sections.find(section => visibleSectionIds.has(section.id))
+    const current = tocSections.value.find(section => visibleSectionIds.has(section.id))
     if (current) activeSection.value = current.id
     else if (!visibleSectionIds.size) activeSection.value = ''
   }, { rootMargin: '-96px 0px -60% 0px', threshold: 0 })
@@ -277,7 +314,7 @@ function observeSections() {
   sectionObserver = observer
 }
 
-watch(() => page.value.id, async () => {
+watch([() => page.value.id, selectedAgentId], async () => {
   await nextTick()
   observeSections()
   revealActiveEntry()

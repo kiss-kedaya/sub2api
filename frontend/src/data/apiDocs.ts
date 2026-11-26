@@ -109,6 +109,7 @@ export function getApiDocs(locale: string, originValue: string): DocsPage[] {
           { label: l('图像生成', 'Image generation'), page: 'image-generation' },
           { label: l('Nano Banana 图像模型', 'Nano Banana image models'), page: 'nano-banana' },
           { label: l('视频生成', 'Video generation'), page: 'video-generation' },
+          { label: l('Agent 配置指南（含 CC Switch）', 'Agent setup guide (with CC Switch)'), page: 'agent-setup' },
         ] },
       ],
     },
@@ -334,14 +335,25 @@ print(response.json())`,
       ],
     },
     {
+      id: 'agent-setup', category: 'integrations', title: l('Agent 新手配置指南', 'Agent setup guide'),
+      description: l('装好 CC Switch 后，在应用页一键安装智能体，再从本站控制台「API 密钥」一键「导入到 CCS」，覆盖 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Claude Desktop、OpenClaw、Hermes、Pi、DeepSeek Harness 等 14 款应用以及 Cursor / VS Code。', 'Install your agent inside CC Switch → Apps and push config from this site with "Import to CCS" across 14 CC Switch apps plus Cursor and VS Code.'),
+      sections: [
+        { id: 'site-ccswitch-workflow', title: l('4 步上手：本站 + CC Switch 配置全流程', '4-step workflow: Site + CC Switch'), paragraphs: [l('CC Switch 应用页一键安装智能体，本站 API 密钥页点击导入到 CCS 自动写入端点、密钥与余额脚本。', 'Install agents in CC Switch Apps, then use Import to CCS on this site to write endpoint, key, and balance script.')] },
+        { id: 'pick-your-agent', title: l('选择你的 Agent', 'Pick your agent'), paragraphs: [l('覆盖 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Claude Desktop、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code、DeepSeek Harness、Antigravity、Oh My Pi、Cursor 与 VS Code。', 'Covers Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Claude Desktop, OpenClaw, Hermes, Pi, MiniMax Code, Kimi Code, DeepSeek Harness, Antigravity, Oh My Pi, Cursor, and VS Code.')] },
+        { id: 'compare-agents', title: l('各 Agent 分组与接入速查表', 'Agent & group quick reference'), paragraphs: [l('对比每款 Agent 的本站推荐分组、CC Switch 一键安装与导入应用名。', 'Compare recommended site groups, CC Switch app installs, and import app IDs.')] },
+        { id: 'understanding-agents', title: l('用好本站与 CC Switch 的 4 个核心要点', '4 essentials for using this site with CC Switch'), paragraphs: [l('单分组与智能路由、明文回执与导入到 CCS、自动余额脚本、Base URL 与 /v1 容错规则。', 'Smart routing, plaintext receipts, built-in balance scripts, and Base URL tolerance.')] },
+        { id: 'troubleshooting', title: l('报错排查', 'Troubleshooting'), paragraphs: [l('排查找不到导入到 CCS 按钮、ccswitch:// 未唤起、401、403、模型不可用与环境变量覆盖。', 'Troubleshoot Import to CCS visibility, ccswitch:// handler, 401/403, unavailable models, and shell env overrides.')] },
+      ],
+    },
+    {
       id: 'codex', category: 'integrations', title: l('接入 Codex', 'Connect Codex'), description: l('使用 OpenAI Responses 协议接入，保持模型与密钥权限一致。', 'Connect through OpenAI Responses with a model your key is authorized to use.'), sections: [
-        { id: 'codex-settings', title: l('Provider 配置', 'Provider configuration'), paragraphs: [l('将地址填入 Codex 的自定义 provider 配置。model 使用本站模型列表中的完整 ID。示例不包含真实密钥。', 'Add this base URL to your custom Codex provider. Set model to a complete ID from this site’s model list. No real API key is included in the example.')], examples: { toml: `model = "YOUR_MODEL_ID"\nmodel_provider = "site"\n\n[model_providers.site]\nname = "API gateway"\nbase_url = "${origin}/v1"\nwire_api = "responses"\nenv_key = "SITE_API_KEY"`, shell: 'export SITE_API_KEY="YOUR_API_KEY"\ncodex' } },
+        { id: 'codex-settings', title: l('Provider 配置', 'Provider configuration'), paragraphs: [l('将地址填入 Codex 的自定义 provider 配置。model 使用本站模型列表中的完整 ID。示例不包含真实密钥。', 'Add this base URL to your custom Codex provider. Set model to a complete ID from this site’s model list. No real API key is included in the example.')], examples: { toml: `model = "YOUR_MODEL_ID"\nmodel_provider = "site"\n\n[model_providers.site]\nname = "API gateway"\nbase_url = "${origin}/v1"\nwire_api = "responses"\nenv_key = "SITE_API_KEY"`, shell: 'export SITE_API_KEY="YOUR_API_KEY"\ncodex' }, links: [{ label: l('打开交互式 Codex 配置向导（含 CC Switch）', 'Open interactive Codex setup guide (with CC Switch)'), page: 'agent-setup' }] },
         { id: 'codex-tools', title: l('搜索与工具', 'Search and tools'), paragraphs: [l('Codex 的搜索行为取决于客户端是否发出搜索请求，以及本站对应分组是否启用了网页工具。出现 web_search 或 web_fetch 只说明工具可用，最终仍应检查工具结果与引用。', 'Search depends on whether Codex requests it and whether web tools are configured for the selected group. Seeing web_search or web_fetch means a tool is available; still verify its results and citations.'), l('不要把 /v1/responses 手工改成 /v1/chat/completions 来绕过流错误，这会改变协议与工具行为。', 'Do not manually replace /v1/responses with /v1/chat/completions to work around stream errors; that changes protocol and tool behavior.')] },
       ],
     },
     {
       id: 'claude-code', category: 'integrations', title: l('接入 Claude Code', 'Connect Claude Code'), description: l('使用 Anthropic Messages 入口与本站密钥。', 'Use the Anthropic Messages endpoint and a site API key.'), sections: [
-        { id: 'claude-environment', title: l('环境变量', 'Environment variables'), paragraphs: [l('ANTHROPIC_BASE_URL 填站点根地址，客户端会追加 /v1/messages。模型必须在该密钥可用范围内，且分组允许 messages 入口。', 'Set ANTHROPIC_BASE_URL to the site origin; the client appends /v1/messages. Select an authorized model, and ensure the group permits the messages endpoint.')], examples: { shell: `export ANTHROPIC_BASE_URL="${origin}"\nexport ANTHROPIC_AUTH_TOKEN="YOUR_API_KEY"\nexport ANTHROPIC_MODEL="YOUR_MODEL_ID"\nclaude` } },
+        { id: 'claude-environment', title: l('环境变量', 'Environment variables'), paragraphs: [l('ANTHROPIC_BASE_URL 填站点根地址，客户端会追加 /v1/messages。模型必须在该密钥可用范围内，且分组允许 messages 入口。', 'Set ANTHROPIC_BASE_URL to the site origin; the client appends /v1/messages. Select an authorized model, and ensure the group permits the messages endpoint.')], examples: { shell: `export ANTHROPIC_BASE_URL="${origin}"\nexport ANTHROPIC_AUTH_TOKEN="YOUR_API_KEY"\nexport ANTHROPIC_MODEL="YOUR_MODEL_ID"\nclaude` }, links: [{ label: l('打开交互式 Claude Code 配置向导（含 CC Switch）', 'Open interactive Claude Code setup guide (with CC Switch)'), page: 'agent-setup' }] },
         { id: 'claude-cache', title: l('缓存与请求结构', 'Caching and request structure'), paragraphs: [l('客户端发送的 cache_control 标记应保留。不要为了缓存随意更改工具顺序、系统消息或历史内容；缓存命中与上游支持、前缀稳定性及本站现有开关有关。', 'Preserve client-provided cache_control markers. Avoid changing tool ordering, system messages, or history solely to force caching. Cache hits depend on provider support, stable prefixes, and this site’s existing configuration.')] },
       ],
     },
