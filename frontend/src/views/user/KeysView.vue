@@ -1769,7 +1769,7 @@
 <script setup lang="ts">
 import '@/styles/console-workspace.css'
 	import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, inject, type ComponentPublicInstance } from 'vue'
-	import { routerKey } from 'vue-router'
+	import { routeLocationKey, routerKey } from 'vue-router'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
@@ -1784,6 +1784,7 @@ import { useAppUpdate } from '@/composables/useAppUpdate'
 
 const { t } = useI18n()
 const router = inject(routerKey, null)
+const route = inject(routeLocationKey, null)
 
 // The concurrency cell carries its own explanation: hover shows this sentence, keyboard
 // focus and screen readers get it from aria-label.
@@ -4092,6 +4093,29 @@ function formatResetTime(resetAt: string | null): string {
   return `${mins}m`
 }
 
+/** 支持从文档等入口携带 ?action=create 直达创建弹窗，并在消费后清理查询参数避免刷新重复弹出。 */
+const consumeQuickCreateQuery = () => {
+  if (!route) return
+  const rawAction = route.query.action
+  const action = Array.isArray(rawAction) ? rawAction[0] : rawAction
+  if (action !== 'create') return
+  if (!showCreateModal.value && !showEditModal.value) {
+    openCreateModal()
+  }
+  if (router) {
+    const nextQuery = { ...route.query }
+    delete nextQuery.action
+    void router.replace({ path: route.path, query: nextQuery, hash: route.hash }).catch(() => {})
+  }
+}
+
+watch(
+  () => route?.query.action,
+  () => {
+    consumeQuickCreateQuery()
+  },
+)
+
 onMounted(() => {
   loadSavedColumns()
   loadApiKeys()
@@ -4100,6 +4124,7 @@ onMounted(() => {
   loadUserGroupRates()
   loadPublicSettings()
   loadCustomEndpoints()
+  consumeQuickCreateQuery()
   document.addEventListener('click', closeGroupSelector)
   resetTimer = setInterval(() => { now.value = new Date() }, 60000)
 })

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { useEphemeralKeyStore } from '@/stores/ephemeralKeys'
 
 import type { ApiKey } from '@/types'
@@ -3640,6 +3641,54 @@ describe('user KeysView 创建弹窗（Quiet 流程）与页面过期守卫', ()
 
       expect(createKey).not.toHaveBeenCalled()
       expect(appUpdate.blockingOpen.value).toBe(true)
+      wrapper.unmount()
+    })
+  })
+
+  describe('quick create query entry (?action=create)', () => {
+    const mountWithRouter = async (initialPath: string) => {
+      const router = createRouter({
+        history: createMemoryHistory(),
+        routes: [{ path: '/keys', component: KeysView }],
+      })
+      await router.push(initialPath)
+      await router.isReady()
+      const wrapper = mount(KeysView, {
+        global: {
+          plugins: [router],
+          stubs: baseStubs,
+        },
+      })
+      await flushPromises()
+      await nextTick()
+      return { wrapper, router }
+    }
+
+    it('opens the create modal automatically when entering /keys?action=create and cleans only the action param', async () => {
+      const { wrapper, router } = await mountWithRouter('/keys?action=create&source=docs')
+      expect(wrapper.find('#key-form').exists()).toBe(true)
+      expect(router.currentRoute.value.query.action).toBeUndefined()
+      expect(router.currentRoute.value.query.source).toBe('docs')
+      wrapper.unmount()
+    })
+
+    it('opens the create modal when navigating to /keys?action=create while already mounted', async () => {
+      const { wrapper, router } = await mountWithRouter('/keys')
+      expect(wrapper.find('#key-form').exists()).toBe(false)
+
+      await router.push('/keys?action=create')
+      await flushPromises()
+      await nextTick()
+
+      expect(wrapper.find('#key-form').exists()).toBe(true)
+      expect(router.currentRoute.value.query.action).toBeUndefined()
+      wrapper.unmount()
+    })
+
+    it('ignores unrelated action query values', async () => {
+      const { wrapper, router } = await mountWithRouter('/keys?action=inspect')
+      expect(wrapper.find('#key-form').exists()).toBe(false)
+      expect(router.currentRoute.value.query.action).toBe('inspect')
       wrapper.unmount()
     })
   })

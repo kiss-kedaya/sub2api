@@ -20,6 +20,7 @@ export default {
     optional: 'Optional',
     copy: 'Copy code',
     copied: 'Copied',
+    copyEndpoint: 'Copy endpoint URL',
     previous: 'Previous',
     next: 'Next',
     theme: 'Toggle color theme',

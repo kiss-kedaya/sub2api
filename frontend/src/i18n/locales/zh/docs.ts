@@ -20,6 +20,7 @@ export default {
     optional: '可选',
     copy: '复制代码',
     copied: '已复制',
+    copyEndpoint: '复制接口地址',
     previous: '上一篇',
     next: '下一篇',
     theme: '切换明暗主题',
