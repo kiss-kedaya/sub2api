@@ -82,6 +82,36 @@ func TestContainsEmptyTextMemberRandomBodies(t *testing.T) {
 	require.True(t, legacyHasEmptyTextMember(withTail))
 }
 
+// A body full of 'x' (or of "text" keys that are not empty) defeats the anchor; the search then hands the
+// rest of the body to the plain searches. The hand-over must not lose a member that sits right at it, nor
+// one that follows later, nor report one that is not there.
+func TestContainsEmptyTextMemberAdversarialBodies(t *testing.T) {
+	members := []string{`"text":""`, `"text": ""`, `"text" : ""`, `"text" :""`, ``, `"text":"a"`}
+	fillers := map[string]string{
+		"x":        "x",
+		"x-spaced": "xx ",
+		"text-key": `"text":"a",`,
+		"tex":      `"tex`,
+		"mixed":    `{"type":"text","text":"x"},`,
+	}
+	for name, filler := range fillers {
+		for n := 0; n < 400; n++ {
+			prefix := strings.Repeat(filler, n)
+			for _, member := range members {
+				for _, suffix := range []string{"", "}", `,"a":1}`, "xxxx"} {
+					body := []byte(prefix + member + suffix)
+					require.Equal(t, legacyHasEmptyTextMember(body), containsEmptyTextMember(body), "%s x%d %q %q", name, n, member, suffix)
+				}
+			}
+		}
+	}
+	// large: a megabyte of 'x' costs about what the plain searches cost, and the member behind it is found
+	big := []byte(strings.Repeat("x", 1<<20) + `{"type":"text","text":""}`)
+	require.True(t, containsEmptyTextMember(big))
+	require.False(t, containsEmptyTextMember(big[:len(big)-3]))
+	require.False(t, containsEmptyTextMember([]byte(strings.Repeat("x", 1<<20))))
+}
+
 // StripEmptyTextBlocks itself: bodies without an empty text block come back as the very same slice, bodies with
 // one lose it.
 func TestStripEmptyTextBlocksUsesTheProbe(t *testing.T) {

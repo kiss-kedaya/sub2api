@@ -685,8 +685,11 @@ func stripEmptyTextBlocksFromSlice(blocks []any) ([]any, bool) {
 // (one optional space before the colon, one after). It has the truth value of four bytes.Contains
 // calls, but those start every search at a quote, the commonest byte of a JSON body, so bytes.Index
 // spends its time restarting; here the search runs on the 'x' of "text", which in a request is
-// mostly the 'x' of "text" itself, and looks at the bytes around each one.
+// mostly the 'x' of "text" itself, and looks at the bytes around each one. A body that is full of
+// 'x' (hex, a padded string) would make that slower than the plain searches, so after enough misses
+// at a high enough rate the rest of the body goes to them.
 func containsEmptyTextMember(body []byte) bool {
+	misses := 0
 	for off := 0; ; {
 		i := bytes.IndexByte(body[off:], 'x')
 		if i < 0 {
@@ -694,25 +697,43 @@ func containsEmptyTextMember(body []byte) bool {
 		}
 		x := off + i
 		off = x + 1
-		// the key is "text": quote, t, e, x, t, quote
-		if x < 3 || x+3 > len(body) || string(body[x-3:x+3]) != `"text"` {
-			continue
-		}
-		j := x + 3
-		if j < len(body) && body[j] == ' ' {
-			j++
-		}
-		if j >= len(body) || body[j] != ':' {
-			continue
-		}
-		j++
-		if j < len(body) && body[j] == ' ' {
-			j++
-		}
-		if j+1 < len(body) && body[j] == '"' && body[j+1] == '"' {
+		if emptyTextMemberAround(body, x) {
 			return true
 		}
+		// more than one miss per 64 bytes scanned: the anchor is not skipping anything
+		if misses++; misses >= 64 && misses > off>>6 {
+			// a match not yet looked at has its 'x' at off or later, so it starts at off-3 or later
+			return containsEmptyTextMemberPlain(body[off-3:])
+		}
 	}
+}
+
+// emptyTextMemberAround: is the 'x' at body[x] the one of an empty `"text"` member?
+func emptyTextMemberAround(body []byte, x int) bool {
+	// the key is "text": quote, t, e, x, t, quote
+	if x < 3 || x+3 > len(body) || string(body[x-3:x+3]) != `"text"` {
+		return false
+	}
+	j := x + 3
+	if j < len(body) && body[j] == ' ' {
+		j++
+	}
+	if j >= len(body) || body[j] != ':' {
+		return false
+	}
+	j++
+	if j < len(body) && body[j] == ' ' {
+		j++
+	}
+	return j+1 < len(body) && body[j] == '"' && body[j+1] == '"'
+}
+
+// containsEmptyTextMemberPlain is the four-search form containsEmptyTextMember stands for.
+func containsEmptyTextMemberPlain(body []byte) bool {
+	return bytes.Contains(body, patternEmptyText) ||
+		bytes.Contains(body, patternEmptyTextSpaced) ||
+		bytes.Contains(body, patternEmptyTextSp1) ||
+		bytes.Contains(body, patternEmptyTextSp2)
 }
 
 // StripEmptyTextBlocks removes empty text blocks from the request body (including nested tool_result content).
