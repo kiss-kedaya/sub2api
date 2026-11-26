@@ -198,6 +198,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	budget := newFailoverBudget() // 单请求重试硬上限：总尝试次数 + 总耗时
 	var lastFailoverErr *service.UpstreamFailoverError
 	stopJSONKeepalive := func() {}
 	jsonKeepaliveStarted := false
@@ -387,11 +388,16 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 						)
 						return
 					}
+					if reason := budget.spend(time.Now()); reason != "" {
+						logFailoverBudgetExhausted(reqLog, reason, account.ID, failoverErr.StatusCode, &budget)
+						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						return
+					}
 					if failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
-						if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+						if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) && !h.gatewayService.AccountCircuitOpen(account.ID) {
 							sameAccountRetryCount[account.ID]++
-							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
+							retryDelay := sameAccountRetryWait(failoverErr, sameAccountRetryCount[account.ID])
 							reqLog.Warn("openai.images.pool_mode_same_account_retry",
 								zap.Int64("account_id", account.ID),
 								zap.Int("upstream_status", failoverErr.StatusCode),

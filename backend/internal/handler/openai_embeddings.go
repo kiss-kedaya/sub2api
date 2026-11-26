@@ -131,6 +131,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	budget := newFailoverBudget() // 单请求重试硬上限：总尝试次数 + 总耗时
 	var lastFailoverErr *service.UpstreamFailoverError
 	switchCount := 0
 	maxAccountSwitches := h.maxAccountSwitches
@@ -283,12 +284,17 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 					h.handleFailoverExhausted(c, failoverErr, false)
 					return
 				}
+				if reason := budget.spend(time.Now()); reason != "" {
+					logFailoverBudgetExhausted(reqLog, reason, account.ID, failoverErr.StatusCode, &budget)
+					h.handleFailoverExhausted(c, failoverErr, false)
+					return
+				}
 				// Pool mode retry budget is per account. Exhaust it before
 				// excluding this account and selecting the next priority pool.
 				if failoverErr.RetryableOnSameAccount {
 					currentRetryCount := sameAccountRetryCount[account.ID]
 					nextRetryCount, retryDelay, retry := poolModeSameAccountRetry(account, failoverErr, currentRetryCount)
-					if service.PreferAlternativeUpstream(c.Request.Context()) {
+					if service.PreferAlternativeUpstream(c.Request.Context()) || h.gatewayService.AccountCircuitOpen(account.ID) {
 						retry = false
 					}
 					if retry {

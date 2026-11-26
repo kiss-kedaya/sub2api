@@ -61,3 +61,13 @@ func (s *RateLimitService) persistAccountCircuitTrip(ctx context.Context, trip A
 	)
 	return nil
 }
+
+// AccountCircuitOpen 让 handler 的重试循环通过 GatewayService 查询断路器（见 handler.accountCircuitGate）。
+func (s *GatewayService) AccountCircuitOpen(accountID int64) bool {
+	return s != nil && s.rateLimitService.AccountCircuitOpen(accountID)
+}
+
+// AccountCircuitOpen 让 OpenAI 系 handler 的重试循环通过 OpenAIGatewayService 查询断路器。
+func (s *OpenAIGatewayService) AccountCircuitOpen(accountID int64) bool {
+	return s != nil && s.rateLimitService.AccountCircuitOpen(accountID)
+}

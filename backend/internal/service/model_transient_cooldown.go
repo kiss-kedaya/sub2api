@@ -22,6 +22,8 @@ const (
 	modelTransientLongCooldown  = 45 * time.Second
 	modelTransientRetention     = 30 * time.Minute
 	modelTransientMaxEntries    = 50_000
+	// modelTransientMaxModelBytes 是参与记账的模型名最大长度（与 openai_account_model_transient 的 512 字节口径一致）。
+	modelTransientMaxModelBytes = 512
 )
 
 type modelTransientEntry struct {
@@ -99,7 +101,8 @@ func (c *ModelTransientCooldown) ObserveFailure(accountID int64, model string) {
 		return
 	}
 	model = strings.TrimSpace(model)
-	if model == "" || accountID <= 0 {
+	if model == "" || accountID <= 0 || len(model) > modelTransientMaxModelBytes {
+		// 模型名来自客户端请求体；超长的不可能是真实模型，也不能作为 map key 长期占内存。
 		return
 	}
 	key := modelTransientKey(accountID, model)

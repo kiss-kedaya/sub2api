@@ -195,6 +195,7 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 	profitVetoCount := 0
 	accountSlotBusySeen := false
 	switchCount := 0
+	budget := newFailoverBudget() // 单请求重试硬上限：总尝试次数 + 总耗时
 	routingStart := time.Now()
 	channelMapping := service.ChannelMappingResult{}
 
@@ -323,8 +324,13 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 		if c.Writer.Written() || failoverClientGone(c) {
 			return // response bytes must never be replayed on another account
 		}
+		if reason := budget.spend(time.Now()); reason != "" {
+			logFailoverBudgetExhausted(reqLog, reason, account.ID, failoverErr.StatusCode, &budget)
+			h.handleFailoverExhausted(c, failoverErr, false)
+			return
+		}
 		if mediaTool {
-			if count, delay, retry := poolModeSameAccountRetry(account, failoverErr, sameAccountRetries[account.ID]); retry {
+			if count, delay, retry := poolModeSameAccountRetry(account, failoverErr, sameAccountRetries[account.ID]); retry && !h.gatewayService.AccountCircuitOpen(account.ID) {
 				sameAccountRetries[account.ID] = count
 				select {
 				case <-c.Request.Context().Done():

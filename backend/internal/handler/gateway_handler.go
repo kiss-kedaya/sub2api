@@ -99,6 +99,8 @@ func NewGatewayHandler(
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 10
 	maxAccountSwitchesGemini := 3
+	// 单个请求的重试硬上限（总尝试次数/总耗时/退避），进程级，见 retry_guard.go。
+	ConfigureRetryGuard(cfg)
 	if cfg != nil {
 		pingInterval = time.Duration(cfg.Concurrency.PingInterval) * time.Second
 		if cfg.Gateway.MaxAccountSwitches > 0 {
@@ -2205,6 +2207,7 @@ func (h *GatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotT
 }
 
 func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, platform string, streamStarted bool) {
+	markUpstreamPassthroughError(c) // 上游错误的透传，不属于网关自己的 503/429（见 retry_after.go）
 
 	if failoverErr != nil {
 		defer service.GuardUpstreamFinancialError(c, failoverErr.StatusCode, failoverErr.ResponseBody)()
@@ -2273,6 +2276,7 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 
 // handleFailoverExhaustedSimple 简化版本，用于没有响应体的情况
 func (h *GatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, statusCode int, streamStarted bool) {
+	markUpstreamPassthroughError(c) // 上游错误的透传，不属于网关自己的 503/429（见 retry_after.go）
 	status, errType, errMsg := wrapUpstreamClientError(statusCode, nil)
 	status, errType, errMsg = exhaustedFailoverResponse(status, errType, errMsg)
 	service.SetOpsUpstreamError(c, statusCode, errMsg, "")
@@ -2459,6 +2463,7 @@ func (h *GatewayHandler) errorResponseWithCode(c *gin.Context, status int, errTy
 	if code != "" {
 		errorObject["code"] = code
 	}
+	setGatewayRetryAfter(c, status)
 	c.JSON(status, gin.H{
 		"type":  "error",
 		"error": errorObject,

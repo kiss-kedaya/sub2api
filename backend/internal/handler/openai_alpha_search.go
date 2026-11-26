@@ -135,6 +135,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	budget := newFailoverBudget() // 单请求重试硬上限：总尝试次数 + 总耗时
 	var lastFailoverErr *service.UpstreamFailoverError
 	switchCount := 0
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
@@ -279,11 +280,16 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			h.handleFailoverExhausted(c, failoverErr, false)
 			return
 		}
+		if reason := budget.spend(time.Now()); reason != "" {
+			logFailoverBudgetExhausted(reqLog, reason, account.ID, failoverErr.StatusCode, &budget)
+			h.handleFailoverExhausted(c, failoverErr, false)
+			return
+		}
 		if failoverErr.RetryableOnSameAccount {
 			retryLimit := account.GetPoolModeRetryCount()
-			if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+			if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) && !h.gatewayService.AccountCircuitOpen(account.ID) {
 				sameAccountRetryCount[account.ID]++
-				retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
+				retryDelay := sameAccountRetryWait(failoverErr, sameAccountRetryCount[account.ID])
 				reqLog.Warn("openai_alpha_search.same_account_retry",
 					zap.Int64("account_id", account.ID),
 					zap.Int("upstream_status", failoverErr.StatusCode),

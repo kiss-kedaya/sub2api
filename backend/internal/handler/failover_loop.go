@@ -88,6 +88,12 @@ func NewFillFailoverState(maxSwitches int, hasBoundSession bool) *FailoverState 
 // 语义上等同于「无可用账号」：候选账号都不满足分组的利润约束。
 const profitVetoExhaustedMessage = "No available accounts: all candidates rejected by group profit control"
 
+// sameAccountRetryDelayFor 返回第 retryCount 次同账号重试之前的基础等待时间（不含抖动）：
+//   - 错误自带的最小间隔（如 OAuth 429 的 Retry-After）：照用，上限 30s；
+//   - 请求级瞬时故障：500ms 起每次翻倍，上限 30s；
+//   - 其余（池模式同账号重试）：gateway.retry_guard.backoff_base_ms 起每次翻倍，上限 backoff_max_ms。
+//
+// 实际等待用 sameAccountRetryWait（在基础值上加抖动）。
 func sameAccountRetryDelayFor(failoverErr *service.UpstreamFailoverError, retryCount int) time.Duration {
 	if failoverErr == nil {
 		return sameAccountRetryDelay
@@ -98,7 +104,10 @@ func sameAccountRetryDelayFor(failoverErr *service.UpstreamFailoverError, retryC
 		}
 		return failoverErr.SameAccountRetryDelay
 	}
-	if !failoverErr.RequestScopedTransient || retryCount <= 1 {
+	if !failoverErr.RequestScopedTransient {
+		return poolRetryBackoff(retryCount)
+	}
+	if retryCount <= 1 {
 		return sameAccountRetryDelay
 	}
 
@@ -110,6 +119,28 @@ func sameAccountRetryDelayFor(failoverErr *service.UpstreamFailoverError, retryC
 		delay *= 2
 	}
 	return delay
+}
+
+// sameAccountRetryWait 是同账号重试实际要睡的时间：基础值 + 抖动，睡眠本身必须用 sleepWithContext / select ctx.Done()。
+// 上游/协议明确给出的最小间隔只向上抖动（不能比它更早重试）；默认退避在 [0.8, 1.2] 倍内抖动并以 backoff_max_ms 封顶。
+func sameAccountRetryWait(failoverErr *service.UpstreamFailoverError, retryCount int) time.Duration {
+	base := sameAccountRetryDelayFor(failoverErr, retryCount)
+	if failoverErr != nil && (failoverErr.SameAccountRetryDelay > 0 || failoverErr.RequestScopedTransient) {
+		return jitterDelayUp(base)
+	}
+	return jitterDelay(base, currentRetryGuard().backoffMax)
+}
+
+// accountCircuitGate 由能回答「这个账号刚刚是否被错误率断路器停掉」的服务实现（GatewayService / OpenAIGatewayService）。
+type accountCircuitGate interface {
+	AccountCircuitOpen(accountID int64) bool
+}
+
+// accountCircuitOpen 在重试前重新检查账号：断路器一旦打开，在途请求立刻停止对它的同账号重试，
+// 改为把它加入本请求的排除集、直接换号（或结束）。不满足接口的服务（测试替身）按「未熔断」处理。
+func accountCircuitOpen(svc any, accountID int64) bool {
+	gate, ok := svc.(accountCircuitGate)
+	return ok && gate.AccountCircuitOpen(accountID)
 }
 
 func sameAccountRetryAllowed(failoverErr *service.UpstreamFailoverError, retryCount, retryLimit int) bool {
@@ -164,7 +195,7 @@ func poolModeSameAccountRetry(account *service.Account, failoverErr *service.Ups
 		return 0, 0, false
 	}
 	nextCount = retryCount + 1
-	return nextCount, sameAccountRetryDelayFor(failoverErr, nextCount), true
+	return nextCount, sameAccountRetryWait(failoverErr, nextCount), true
 }
 
 // FailoverState 跨循环迭代共享的 failover 状态
@@ -186,6 +217,9 @@ type FailoverState struct {
 	// profitVetoCount 本次请求累计的利润否决次数，用于 maxProfitVetoAttempts 上限。
 	profitVetoCount int
 	fillScheduling  bool
+
+	// budget 是单个请求的重试硬上限（总尝试次数 + 总耗时），见 retry_guard.go。
+	budget failoverBudget
 }
 
 // NewFailoverState 创建 failover 状态
@@ -196,6 +230,7 @@ func NewFailoverState(maxSwitches int, hasBoundSession bool) *FailoverState {
 		SameAccountRetryCount:  make(map[int64]int),
 		hasBoundSession:        hasBoundSession,
 		profitVetoedAccountIDs: make(map[int64]struct{}),
+		budget:                 newFailoverBudget(),
 	}
 }
 
@@ -273,9 +308,32 @@ func (s *FailoverState) HandleFailoverError(
 		return FailoverExhausted
 	}
 
+	// 重试硬上限：每进入一次这里就是一次上游尝试失败。总尝试次数或总耗时用尽后不再发起新的尝试，
+	// 直接把最后一次上游错误交给调用方返回（客户端自己的重试由 Retry-After 去退避）。
+	if reason := s.budget.spend(time.Now()); reason != "" {
+		logger.FromContext(ctx).Warn("gateway.failover_budget_exhausted",
+			zap.String("reason", reason),
+			zap.Int64("account_id", accountID),
+			zap.Int("upstream_status", failoverErr.StatusCode),
+			zap.Int("attempts", s.budget.attempts),
+			zap.Int("max_attempts", s.budget.settings.maxAttempts),
+			zap.Duration("elapsed", s.budget.elapsed(time.Now())),
+			zap.Duration("max_elapsed", s.budget.settings.maxElapsed),
+		)
+		return FailoverExhausted
+	}
+
 	// 同账号重试不算切换账号，粘性会话仅在实际切换时强制缓存计费。
 	retryCount := s.SameAccountRetryCount[accountID]
 	sameAccountRetry := !service.PreferAlternativeUpstream(ctx) && sameAccountRetryAllowed(failoverErr, retryCount, retryLimit)
+	// 重试前重新检查账号：它刚被断路器停掉的话，不再对它做同账号重试，直接走换号。
+	if sameAccountRetry && accountCircuitOpen(gatewayService, accountID) {
+		sameAccountRetry = false
+		logger.FromContext(ctx).Warn("gateway.failover_same_account_retry_skipped_circuit_open",
+			zap.Int64("account_id", accountID),
+			zap.Int("upstream_status", failoverErr.StatusCode),
+		)
+	}
 	if needForceCacheBilling(s.hasBoundSession, failoverErr, sameAccountRetry) {
 		s.ForceCacheBilling = true
 	}
@@ -284,7 +342,7 @@ func (s *FailoverState) HandleFailoverError(
 	// 重试次数上限 retryLimit 由调用方传入（账号级 pool_mode_retry_count 配置）。
 	if sameAccountRetry {
 		s.SameAccountRetryCount[accountID]++
-		retryDelay := sameAccountRetryDelayFor(failoverErr, s.SameAccountRetryCount[accountID])
+		retryDelay := sameAccountRetryWait(failoverErr, s.SameAccountRetryCount[accountID])
 		logger.FromContext(ctx).Warn("gateway.failover_same_account_retry",
 			zap.Int64("account_id", accountID),
 			zap.Int("upstream_status", failoverErr.StatusCode),
@@ -363,6 +421,17 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 		// real failure is required to preserve the existing profit-gate recovery
 		// behavior.
 		(len(s.FailedAccountIDs) <= 1 || s.hasMixedProfitVetoExclusions()) {
+		// 重试预算已用尽（尝试次数/总耗时）：不再清空排除集重来。
+		if reason := s.budget.exhaustedReason(time.Now()); reason != "" {
+			logger.FromContext(ctx).Warn("gateway.failover_budget_exhausted",
+				zap.String("reason", reason),
+				zap.Int("attempts", s.budget.attempts),
+				zap.Int("max_attempts", s.budget.settings.maxAttempts),
+				zap.Duration("elapsed", s.budget.elapsed(time.Now())),
+			)
+			return FailoverExhausted
+		}
+
 		// 排除列表全由利润门否决贡献时，清空后会被原样恢复：退避重试拿不到
 		// 任何新候选，而利润否决不推进 SwitchCount，退避条件将永远成立。
 		// 这里直接判定耗尽，避免每 2s 空转一轮的活锁。

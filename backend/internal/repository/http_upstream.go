@@ -169,7 +169,9 @@ type httpUpstreamService struct {
 	attemptObserver atomic.Pointer[upstreamAttemptObserverBox]
 }
 
-type upstreamAttemptObserverBox struct{ observer service.UpstreamAttemptObserver }
+type upstreamAttemptObserverBox struct {
+	observer service.UpstreamAttemptObserver
+}
 
 // NewHTTPUpstream 创建通用 HTTP 上游服务
 // 使用配置中的连接池参数构建 Transport

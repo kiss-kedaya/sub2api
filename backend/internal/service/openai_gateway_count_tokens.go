@@ -18,6 +18,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// openAIInputTokensMaxResponseBytes 限制 input_tokens 上游响应体的读取上限：合法响应只有几十字节，
+// 中转站返回的整页 HTML 502 等不能被无界读进内存（风暴下每个失败请求一份）。
+const openAIInputTokensMaxResponseBytes = 4 << 20
+
 const (
 	openAIResponsesInputItemTokenOverhead = 3
 	openAIResponsesContentPartOverhead    = 1
@@ -92,7 +96,7 @@ func (s *OpenAIGatewayService) ForwardResponsesInputTokens(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, openAIInputTokensMaxResponseBytes))
 	if err != nil {
 		writeOpenAIResponsesInputTokensError(c, http.StatusBadGateway, "upstream_error", "Failed to read response")
 		return fmt.Errorf("responses input_tokens: read upstream response: %w", err)
@@ -365,7 +369,7 @@ func (s *OpenAIGatewayService) ForwardCountTokensAsAnthropic(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, openAIInputTokensMaxResponseBytes))
 	if err != nil {
 		writeAnthropicCountTokensError(c, http.StatusBadGateway, "upstream_error", "Failed to read response")
 		return fmt.Errorf("read input_tokens response: %w", err)

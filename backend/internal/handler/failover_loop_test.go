@@ -52,8 +52,20 @@ func TestSameAccountRetryDelayFor(t *testing.T) {
 		})
 	}
 
-	t.Run("non request scoped errors keep fixed delay", func(t *testing.T) {
-		require.Equal(t, 500*time.Millisecond, sameAccountRetryDelayFor(&service.UpstreamFailoverError{}, 10))
+	t.Run("pool mode retries back off exponentially from the guard base up to the guard cap", func(t *testing.T) {
+		poolErr := &service.UpstreamFailoverError{RetryableOnSameAccount: true}
+		for retryCount, want := range map[int]time.Duration{
+			1:  100 * time.Millisecond,
+			2:  200 * time.Millisecond,
+			3:  400 * time.Millisecond,
+			4:  800 * time.Millisecond,
+			5:  time.Second,
+			6:  time.Second,
+			10: time.Second,
+		} {
+			require.Equal(t, want, sameAccountRetryDelayFor(poolErr, retryCount), "retry %d", retryCount)
+		}
+		require.Equal(t, time.Second, sameAccountRetryDelayFor(&service.UpstreamFailoverError{}, 10))
 	})
 
 	t.Run("nil error keeps fixed delay", func(t *testing.T) {
@@ -184,7 +196,9 @@ func TestPoolModeSameAccountRetryUsesAccountBudget(t *testing.T) {
 	next, delay, ok := poolModeSameAccountRetry(account, failoverErr, 0)
 	require.True(t, ok)
 	require.Equal(t, 1, next)
-	require.Equal(t, sameAccountRetryDelay, delay)
+	// The first pool-mode retry waits the guard base (100ms) with +/-20% jitter.
+	require.GreaterOrEqual(t, delay, 80*time.Millisecond)
+	require.LessOrEqual(t, delay, 120*time.Millisecond)
 
 	next, _, ok = poolModeSameAccountRetry(account, failoverErr, 1)
 	require.True(t, ok)
@@ -506,8 +520,8 @@ func TestHandleFailoverError_SameAccountRetry(t *testing.T) {
 		require.Equal(t, 0, fs.SwitchCount, "同账号重试不应增加切换计数")
 		require.NotContains(t, fs.FailedAccountIDs, int64(100), "同账号重试不应加入失败列表")
 		require.Empty(t, mock.calls, "同账号重试期间不应调用 TempUnschedule")
-		// 验证等待了 sameAccountRetryDelay (500ms)
-		require.GreaterOrEqual(t, elapsed, 400*time.Millisecond)
+		// 验证等待了带抖动的退避：默认 100ms 起（+/-20%），并且远小于旧的固定 500ms。
+		require.GreaterOrEqual(t, elapsed, 80*time.Millisecond)
 		require.Less(t, elapsed, 2*time.Second)
 	})
 

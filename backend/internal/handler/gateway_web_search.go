@@ -166,6 +166,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		}
 		if selectErr != nil {
 			if attempt == 0 {
+				setGatewayRetryAfter(c, http.StatusServiceUnavailable)
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
 					"type":    "scheduling_error",
 					"message": selectErr.Error(),
@@ -176,6 +177,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		}
 		if selected == nil || selected.Account == nil {
 			if attempt == 0 {
+				setGatewayRetryAfter(c, http.StatusServiceUnavailable)
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
 					"type":    "scheduling_error",
 					"message": "No available accounts",
@@ -226,6 +228,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		return
 	}
 	if account == nil {
+		setGatewayRetryAfter(c, http.StatusServiceUnavailable)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
 			"type":    "scheduling_error",
 			"message": "No available accounts",
