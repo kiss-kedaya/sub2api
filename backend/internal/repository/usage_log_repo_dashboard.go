@@ -592,7 +592,8 @@ type PlatformDashboardStats = usagestats.PlatformDashboardStats
 // GetUserDashboardStats 获取用户专属的仪表盘统计
 func (r *usageLogRepository) GetUserDashboardStats(ctx context.Context, userID int64) (*UserDashboardStats, error) {
 	stats := &UserDashboardStats{}
-	today := timezone.Today()
+	now := r.dashboardNow()
+	today := timezone.StartOfDay(now)
 
 	// API Key 统计
 	if err := scanSingleRow(
@@ -614,14 +615,10 @@ func (r *usageLogRepository) GetUserDashboardStats(ctx context.Context, userID i
 		return nil, err
 	}
 
-	usage, err := loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
-		Query: "user_dashboard_usage", UserID: userID,
-		Start: today.UTC().Format(time.RFC3339Nano),
-	}, func(ctx context.Context) (*UserDashboardStats, error) {
-		return r.getUserDashboardUsageUncached(ctx, userID)
-	})
+	usage, err := r.userDashboardUsage(ctx, userID, now, today)
 	if err != nil {
-		return nil, err
+		// A slow database is not a broken one: the load budget running out answers 429 + Retry-After like the gate.
+		return nil, userDashboardBusy(err)
 	}
 	// Key counts/status stay live; only usage_logs aggregates are cached.
 	result := *usage
@@ -630,12 +627,12 @@ func (r *usageLogRepository) GetUserDashboardStats(ctx context.Context, userID i
 	return &result, nil
 }
 
-func (r *usageLogRepository) getUserDashboardUsageUncached(ctx context.Context, userID int64) (*UserDashboardStats, error) {
+// getUserDashboardUsageUncached answers the usage part of the dashboard whole: one set of reads over everything
+// since windowStart. It is what runs when the answer is not cut at midnight (see userDashboardCut).
+func (r *usageLogRepository) getUserDashboardUsageUncached(ctx context.Context, userID int64, now, windowStart time.Time) (*UserDashboardStats, error) {
 	stats := &UserDashboardStats{}
-	today := timezone.Today()
-	now := timezone.Now()
+	today := timezone.StartOfDay(now)
 	hourStart := now.In(timezone.Location()).Truncate(time.Hour)
-	windowStart := dashboardSubjectWindowStart(now, today)
 	if err := r.fillUserDashboardUsage(ctx, stats, userID, windowStart, today, hourStart); err != nil {
 		return nil, err
 	}
@@ -648,35 +645,34 @@ func (r *usageLogRepository) getUserDashboardUsageUncached(ctx context.Context, 
 	stats.Rpm = rpm
 	stats.Tpm = tpm
 
-	// 按"有效平台"维度拆分（group.platform 优先，否则 account.platform）。
-	// 与 ops 路径口径一致；HAVING 过滤掉无法确定平台的行（避免出现空字符串平台）。
-	// 与上面 fillUserDashboardUsage 的总值可能略微差异，原因有二：
-	//   1) 无平台归属的极少数行（group/account 都没 platform）会被 HAVING 排除；
-	//   2) usageLogSuccessFilterUL 会把 actual_cost = 0 的失败 placeholder 行排除，
-	//      而 totalStatsQuery/todayStatsQuery 没有这层过滤、会把这些行的 request 计数算进去。
-	platformQuery := `
-		SELECT
-			` + usageLogEffectivePlatformExpr + ` as platform,
-			COUNT(*) as total_requests,
-			COALESCE(SUM(ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens), 0) as total_tokens,
-			COALESCE(SUM(ul.actual_cost), 0) as total_actual_cost,
-			COUNT(*) FILTER (WHERE ul.created_at >= $2) as today_requests,
-			COALESCE(SUM(ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens) FILTER (WHERE ul.created_at >= $2), 0) as today_tokens,
-			COALESCE(SUM(ul.actual_cost) FILTER (WHERE ul.created_at >= $2), 0) as today_actual_cost
-		FROM usage_logs ul
-		LEFT JOIN groups g ON g.id = ul.group_id
-		LEFT JOIN accounts a ON a.id = ul.account_id
-		WHERE ul.user_id = $1
-		  AND ul.created_at >= $3
-		  AND ` + usageLogSuccessFilterUL + `
-		GROUP BY ` + usageLogEffectivePlatformExpr + `
-		HAVING ` + usageLogEffectivePlatformExpr + ` IS NOT NULL AND ` + usageLogEffectivePlatformExpr + ` <> ''
-		ORDER BY total_actual_cost DESC
-	`
-	rows, err := r.sql.QueryContext(ctx, platformQuery, userID, today, windowStart)
+	stats.ByPlatform, err = r.userPlatformUsage(ctx, userID, today, windowStart, time.Time{})
 	if err != nil {
 		return nil, err
 	}
+	return stats, nil
+}
+
+// userPlatformUsage is the user's usage per effective platform over [windowStart, before) (a zero before: no end),
+// with what falls on or after today as the "today" columns.
+//
+// 按"有效平台"维度拆分（group.platform 优先，否则 account.platform）。
+// 与 ops 路径口径一致；HAVING 过滤掉无法确定平台的行（避免出现空字符串平台）。
+// 与 fillUserDashboardUsage 的总值可能略微差异，原因有二：
+//  1. 无平台归属的极少数行（group/account 都没 platform）会被 HAVING 排除；
+//  2. usageLogSuccessFilterUL 会把 actual_cost = 0 的失败 placeholder 行排除，
+//     而 totalStatsQuery/todayStatsQuery 没有这层过滤、会把这些行的 request 计数算进去。
+func (r *usageLogRepository) userPlatformUsage(ctx context.Context, userID int64, today, windowStart, before time.Time) ([]PlatformDashboardStats, error) {
+	query := userPlatformUsageHead
+	args := []any{userID, today, windowStart}
+	if !before.IsZero() {
+		query += ` AND ul.created_at < $4`
+		args = append(args, before)
+	}
+	rows, err := r.sql.QueryContext(ctx, query+userPlatformUsageTail, args...)
+	if err != nil {
+		return nil, err
+	}
+	var byPlatform []PlatformDashboardStats
 	for rows.Next() {
 		var p PlatformDashboardStats
 		if err := rows.Scan(
@@ -691,7 +687,7 @@ func (r *usageLogRepository) getUserDashboardUsageUncached(ctx context.Context, 
 			_ = rows.Close()
 			return nil, err
 		}
-		stats.ByPlatform = append(stats.ByPlatform, p)
+		byPlatform = append(byPlatform, p)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -699,9 +695,32 @@ func (r *usageLogRepository) getUserDashboardUsageUncached(ctx context.Context, 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
-	return stats, nil
+	return byPlatform, nil
 }
+
+// userPlatformUsageHead and userPlatformUsageTail are the per-platform statement around an optional
+// " AND ul.created_at < $4" (the end of a part that stops at midnight).
+const userPlatformUsageHead = `
+		SELECT
+			` + usageLogEffectivePlatformExpr + ` as platform,
+			COUNT(*) as total_requests,
+			COALESCE(SUM(ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens), 0) as total_tokens,
+			COALESCE(SUM(ul.actual_cost), 0) as total_actual_cost,
+			COUNT(*) FILTER (WHERE ul.created_at >= $2) as today_requests,
+			COALESCE(SUM(ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens) FILTER (WHERE ul.created_at >= $2), 0) as today_tokens,
+			COALESCE(SUM(ul.actual_cost) FILTER (WHERE ul.created_at >= $2), 0) as today_actual_cost
+		FROM usage_logs ul
+		LEFT JOIN groups g ON g.id = ul.group_id
+		LEFT JOIN accounts a ON a.id = ul.account_id
+		WHERE ul.user_id = $1
+		  AND ul.created_at >= $3`
+
+const userPlatformUsageTail = `
+		  AND ` + usageLogSuccessFilterUL + `
+		GROUP BY ` + usageLogEffectivePlatformExpr + `
+		HAVING ` + usageLogEffectivePlatformExpr + ` IS NOT NULL AND ` + usageLogEffectivePlatformExpr + ` <> ''
+		ORDER BY total_actual_cost DESC
+	`
 
 // getPerformanceStatsByAPIKey 获取指定 API Key 的 RPM 和 TPM（近5分钟平均值）
 func (r *usageLogRepository) getPerformanceStatsByAPIKey(ctx context.Context, apiKeyID int64) (rpm, tpm int64, err error) {

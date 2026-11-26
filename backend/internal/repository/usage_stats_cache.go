@@ -137,7 +137,7 @@ type usageStatsCacheKey struct {
 	// 0 keeps the cache's TTL. It says how long to reuse an answer, not what was asked, so it is not hashed.
 	// It also marks the class of one API key's multi-day aggregate (keyWindowAggregate), which gets its own scan
 	// budget and timeout memory: set it only through keyAggregateTTL, or usageStatsKeyClosedDaysTTL for the closed
-	// days of a split by-day trend.
+	// days of a split by-day trend or of a user's dashboard (userDashboardClosedTTL).
 	TTL time.Duration `json:"-"`
 }
 
@@ -173,8 +173,8 @@ func (k usageStatsCacheKey) endUserScoped() bool {
 }
 
 // keyWindowAggregate reports whether the aggregate is one API key's multi-day answer: the class that
-// keyAggregateTTL (or, for the closed days of a split by-day trend, usageStatsKeyClosedDaysTTL) gives a TTL, and
-// the only one with the long scan budget and the long memory of a timeout.
+// keyAggregateTTL (or, for the closed days of a split by-day trend or of a user's dashboard,
+// usageStatsKeyClosedDaysTTL) gives a TTL, and the only one with the long scan budget and the long memory of a timeout.
 func (k usageStatsCacheKey) keyWindowAggregate() bool { return k.TTL > 0 }
 
 // loadTimeout is the database budget of the aggregate.
