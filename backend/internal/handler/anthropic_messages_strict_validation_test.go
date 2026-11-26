@@ -1182,27 +1182,26 @@ func strictOpusBenchBody(messages, blocks, textBytes int, lead string) []byte {
 func strictOpusBenchBodyWith(messages, blocks, textBytes int, lead string, textAt func(i, j int) (string, bool)) []byte {
 	unit := `The quick brown fox \"jumps\" over the lazy dog, then reads {braces}, [brackets] and (parens)\n`
 	text := lead + strings.Repeat(unit, textBytes/len(unit)+1)
-	var sb strings.Builder
-	sb.WriteString(`{"model":"claude-opus-5-5","system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude.","cache_control":{"type":"ephemeral"}}],"tools":[`)
+	b := append([]byte(nil), `{"model":"claude-opus-5-5","system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude.","cache_control":{"type":"ephemeral"}}],"tools":[`...)
 	for i := 0; i < 20; i++ {
 		if i > 0 {
-			sb.WriteByte(',')
+			b = append(b, ',')
 		}
-		fmt.Fprintf(&sb, `{"name":"tool_%d","description":"Runs a command and returns \"stdout\"; see {docs} for [details] (%d).","input_schema":{"type":"object","properties":{"command":{"type":"string","description":"The command to run"},"timeout":{"type":"number"},"mode":{"type":"string","enum":["a","b","c"]}},"required":["command"]}}`, i, i)
+		b = fmt.Appendf(b, `{"name":"tool_%d","description":"Runs a command and returns \"stdout\"; see {docs} for [details] (%d).","input_schema":{"type":"object","properties":{"command":{"type":"string","description":"The command to run"},"timeout":{"type":"number"},"mode":{"type":"string","enum":["a","b","c"]}},"required":["command"]}}`, i, i)
 	}
-	sb.WriteString(`],"messages":[`)
+	b = append(b, `],"messages":[`...)
 	for i := 0; i < messages; i++ {
 		if i > 0 {
-			sb.WriteByte(',')
+			b = append(b, ',')
 		}
 		role := "user"
 		if i%2 == 1 {
 			role = "assistant"
 		}
-		fmt.Fprintf(&sb, `{"role":"%s","content":[`, role)
+		b = fmt.Appendf(b, `{"role":"%s","content":[`, role)
 		for j := 0; j < blocks; j++ {
 			if j > 0 {
-				sb.WriteByte(',')
+				b = append(b, ',')
 			}
 			blockText := text
 			if textAt != nil {
@@ -1210,18 +1209,18 @@ func strictOpusBenchBodyWith(messages, blocks, textBytes int, lead string, textA
 					blockText = override
 				}
 			}
-			sb.WriteString(`{"type":"text","text":"`)
-			sb.WriteString(blockText)
-			sb.WriteString(`"`)
+			b = append(b, `{"type":"text","text":"`...)
+			b = append(b, blockText...)
+			b = append(b, '"')
 			if j == blocks-1 {
-				sb.WriteString(`,"cache_control":{"type":"ephemeral"}`)
+				b = append(b, `,"cache_control":{"type":"ephemeral"}`...)
 			}
-			sb.WriteString(`}`)
+			b = append(b, '}')
 		}
-		sb.WriteString(`]}`)
+		b = append(b, `]}`...)
 	}
-	sb.WriteString(`],"metadata":{"user_id":"user_abc_account__session_123"},"max_tokens":8192,"temperature":1,"thinking":{"type":"adaptive"},"stream":true}`)
-	return []byte(sb.String())
+	b = append(b, `],"metadata":{"user_id":"user_abc_account__session_123"},"max_tokens":8192,"temperature":1,"thinking":{"type":"adaptive"},"stream":true}`...)
+	return b
 }
 
 func BenchmarkValidateStrictOpusMessagesRequest(b *testing.B) {
