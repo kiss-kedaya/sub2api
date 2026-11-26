@@ -103,6 +103,15 @@ var (
 	// limit of a critical snapshot that has none. The wrapping error says which.
 	ErrBackupArchiveTooLarge = errors.New("backup archive exceeds the size limit")
 
+	// ErrBackupScopedDumperUnsupported is returned when runtime critical-only
+	// table exclusions are requested but the configured DBDumper does not
+	// implement ScopedDBDumper, preventing silent fallback to a full dump.
+	ErrBackupScopedDumperUnsupported = errors.New("database dumper does not support runtime table exclusions for critical-only backup")
+
+	// ErrBackupScheduleCorrupt is returned when the persisted backup schedule JSON
+	// cannot be unmarshaled.
+	ErrBackupScheduleCorrupt = infraerrors.InternalServer("BACKUP_SCHEDULE_CORRUPT", "backup schedule config data is corrupted")
+
 	// ErrSecretEncryptionKeyNotConfigured prevents storing an S3 credential
 	// before startup has initialized a persistent installation encryption key.
 	ErrSecretEncryptionKeyNotConfigured = infraerrors.BadRequest(
@@ -113,10 +122,127 @@ var (
 
 // ─── 接口定义 ───
 
+// BackupDumpOptions customizes a single database dump invocation.
+type BackupDumpOptions struct {
+	// ExcludeTableData lists tables (or pg_dump patterns such as public.usage_logs_*)
+	// whose rows are skipped while preserving all table schemas.
+	ExcludeTableData []string
+}
+
 // DBDumper abstracts database dump/restore operations
 type DBDumper interface {
 	Dump(ctx context.Context) (io.ReadCloser, error)
 	Restore(ctx context.Context, data io.Reader) error
+}
+
+// ScopedDBDumper is an optional extension of DBDumper supporting per-run dump
+// options such as runtime critical-tables-only snapshots.
+type ScopedDBDumper interface {
+	DBDumper
+	DumpWithOptions(ctx context.Context, opts BackupDumpOptions) (io.ReadCloser, error)
+}
+
+// BackupOptions controls per-backup runtime behavior.
+type BackupOptions struct {
+	// CriticalOnly enables critical-tables-only snapshot mode for this backup run
+	// (skipping high-volume log/monitoring/trace/ephemeral table rows while
+	// keeping all table schemas and core business data).
+	CriticalOnly bool
+}
+
+// DefaultCriticalExcludeTableData lists the high-volume log, telemetry,
+// monitoring, capture, and ephemeral tables whose rows are skipped when
+// "critical tables only" backup mode is enabled without an explicit
+// backup.exclude_table_data override. Every table's schema (DDL) is still
+// dumped; core business tables (users, balances, API keys, accounts, groups,
+// channels, billing settlements, orders, deposits, debt, affiliates,
+// subscriptions, redeem/promo codes, support tickets, proxies, settings,
+// secrets, auth identities, passkeys, audit logs, and singleton state/watermark
+// rows) are always backed up in full.
+//
+// Foreign-key invariant: no non-excluded table references any table in this
+// list (e.g. billing_usage_entries references usage_logs, so both are excluded;
+// request_capture_records references request_capture_tasks, so both are
+// excluded; prompt_audit_events references prompt_audit_jobs, so both are
+// excluded).
+var DefaultCriticalExcludeTableData = []string{
+	// Usage logs (including monthly partitions) and derived/dedup/rollup rows
+	"public.usage_logs",
+	"public.usage_logs_*",
+	"public.billing_usage_entries",
+	"public.usage_billing_dedup",
+	"public.usage_billing_dedup_archive",
+	"public.usage_cleanup_tasks",
+	"public.usage_dashboard_daily",
+	"public.usage_dashboard_daily_users",
+	"public.usage_dashboard_hourly",
+	"public.usage_dashboard_hourly_users",
+	"public.usage_dashboard_hourly_dimensions",
+	"public.usage_dashboard_hourly_dimension_coverage",
+	"public.usage_group_daily_rollups",
+
+	// Request capture, connection traces, small-request retention, traffic & prompt/moderation logs
+	"public.request_capture_records",
+	"public.request_capture_tasks",
+	"public.request_connection_traces",
+	"public.small_request_blobs",
+	"public.small_request_records",
+	"public.small_request_responses",
+	"public.small_request_skips",
+	"public.small_request_occurrences",
+	"public.user_traffic_events",
+	"public.user_traffic_hourly",
+	"public.prompt_audit_events",
+	"public.prompt_audit_jobs",
+	"public.content_moderation_logs",
+	"public.security_penalty_events",
+	"public.security_penalty_request_context",
+
+	// Channel / upstream monitoring histories, time-series metrics & scheduled test results
+	"public.channel_monitor_histories",
+	"public.channel_monitor_daily_rollups",
+	"public.channel_monitor_v2_metrics_1m",
+	"public.channel_monitor_v2_error_metrics_1m",
+	"public.channel_monitor_v2_latency_histograms_1m",
+	"public.channel_monitor_v2_user_metrics_1m",
+	"public.channel_monitor_v2_metrics_rollup",
+	"public.channel_monitor_v2_error_metrics_rollup",
+	"public.channel_monitor_v2_latency_histograms_rollup",
+	"public.channel_monitor_v2_user_metrics_rollup",
+	"public.scheduled_test_results",
+	"public.upstream_balance_samples",
+	"public.upstream_monitor_alerts",
+	"public.upstream_monitor_daily",
+	"public.upstream_rate_changes",
+	"public.local_reasoning_results",
+	"public.group_quality_check_results",
+	"public.credential_guard_events",
+
+	// Ops logs, metrics, alerts & automation histories
+	"public.ops_error_logs",
+	"public.ops_system_logs",
+	"public.ops_system_log_cleanup_audits",
+	"public.ops_system_metrics",
+	"public.ops_metrics_hourly",
+	"public.ops_metrics_daily",
+	"public.ops_alert_events",
+	"public.ops_retry_attempts",
+	"public.ops_job_heartbeats",
+	"public.ops_ingress_reject_aggregates",
+	"public.ops_automation_events",
+	"public.ops_automation_outcomes",
+	"public.account_ops_alerts",
+	"public.account_ops_threshold_events",
+	"public.account_schedulable_timer_audit",
+
+	// Ephemeral outboxes, caches, leases & transient event streams
+	"public.scheduler_outbox",
+	"public.auth_cache_invalidation_outbox",
+	"public.idempotency_records",
+	"public.oauth_admission_leases",
+	"public.gemini_cached_contents",
+	"public.batch_image_events",
+	"public.notification_deliveries",
 }
 
 // BackupObjectStore abstracts object storage for backup files
@@ -152,10 +278,11 @@ func (c *BackupS3Config) IsConfigured() bool {
 
 // BackupScheduleConfig 定时备份配置
 type BackupScheduleConfig struct {
-	Enabled     bool   `json:"enabled"`
-	CronExpr    string `json:"cron_expr"`    // cron 表达式，如 "0 2 * * *" 每天凌晨2点
-	RetainDays  int    `json:"retain_days"`  // 备份文件过期天数，默认14，0=不自动清理
-	RetainCount int    `json:"retain_count"` // 最多保留份数，0=不限制
+	Enabled      bool   `json:"enabled"`
+	CronExpr     string `json:"cron_expr"`     // cron 表达式，如 "0 2 * * *" 每天凌晨2点
+	RetainDays   int    `json:"retain_days"`   // 备份文件过期天数，默认14，0=不自动清理
+	RetainCount  int    `json:"retain_count"`  // 最多保留份数，0=不限制
+	CriticalOnly bool   `json:"critical_only"` // 仅备份关键表（跳过用量日志、监控、抓包等大表数据，保留全部表结构）
 }
 
 // BackupRecord 备份记录
@@ -189,12 +316,20 @@ type BackupRecord struct {
 	SHA256 string `json:"sha256,omitempty"`
 }
 
+// hasCriticalArchiveSuffix reports whether a backup filename or object key ends
+// with a critical snapshot archive suffix (.critical.sql.gz or .critical.sql.gz.age).
+func hasCriticalArchiveSuffix(name string) bool {
+	return strings.HasSuffix(name, ".critical.sql.gz") || strings.HasSuffix(name, ".critical.sql.gz.age")
+}
+
 // restoreUnsupported reports whether the in-app restore must refuse this record.
-// The .age suffix is a second signal for a record whose flags were lost: a build
-// that predates them rewrites the whole record list without Scope and Encrypted.
+// The .age and .critical.sql.gz[.age] suffixes are second signals for a record
+// whose flags were lost: a build that predates them rewrites the whole record
+// list without Scope and Encrypted.
 func (r *BackupRecord) restoreUnsupported() bool {
 	return r.Encrypted || r.Scope == backupScopeCritical ||
-		strings.HasSuffix(r.FileName, ".age") || strings.HasSuffix(r.S3Key, ".age")
+		strings.HasSuffix(r.FileName, ".age") || strings.HasSuffix(r.S3Key, ".age") ||
+		hasCriticalArchiveSuffix(r.FileName) || hasCriticalArchiveSuffix(r.S3Key)
 }
 
 // BackupDownloadPart 描述一个可下载的备份分卷。
@@ -289,6 +424,50 @@ func NewBackupService(
 	}
 }
 
+// ServerCriticalModeForced reports whether deployment config
+// (backup.exclude_table_data) enforces critical snapshot mode for every backup.
+func (s *BackupService) ServerCriticalModeForced() bool {
+	return s != nil && len(s.backupCfg.ExcludeTableData) > 0
+}
+
+// AgeEncryptionEnabled reports whether server-side age public-key encryption is
+// configured for backup archives.
+func (s *BackupService) AgeEncryptionEnabled() bool {
+	return s != nil && len(s.backupCfg.AgeRecipients) > 0
+}
+
+type resolvedBackupMode struct {
+	scope            string
+	excludeTables    []string
+	requireRecipient bool
+	nonDefault       bool
+}
+
+func (s *BackupService) resolveBackupMode(opts BackupOptions) resolvedBackupMode {
+	var excludeTables []string
+	requireRecipient := false
+	if len(s.backupCfg.ExcludeTableData) > 0 {
+		excludeTables = append([]string(nil), s.backupCfg.ExcludeTableData...)
+		// Deployment-level backup.exclude_table_data always fails closed without
+		// age recipients, matching the security contract introduced in #583.
+		requireRecipient = true
+	} else if opts.CriticalOnly {
+		excludeTables = append([]string(nil), DefaultCriticalExcludeTableData...)
+	}
+
+	scope := ""
+	if len(excludeTables) > 0 {
+		scope = backupScopeCritical
+	}
+
+	return resolvedBackupMode{
+		scope:            scope,
+		excludeTables:    excludeTables,
+		requireRecipient: requireRecipient,
+		nonDefault:       scope != "" || s.backupEncrypted() || s.backupCfg.MaxArchiveBytes > 0,
+	}
+}
+
 // backupScope is recorded on every backup: "critical" when table data is
 // excluded, empty for a whole-database dump.
 func (s *BackupService) backupScope() string {
@@ -308,10 +487,14 @@ func (s *BackupService) backupEncrypted() bool {
 // else the built-in limit of a critical snapshot, else 0 (no limit). builtin is
 // true only for the second case.
 func (s *BackupService) archiveLimit() (limit int64, builtin bool) {
+	return s.archiveLimitForScope(s.backupScope())
+}
+
+func (s *BackupService) archiveLimitForScope(scope string) (limit int64, builtin bool) {
 	if s.backupCfg.MaxArchiveBytes > 0 {
 		return s.backupCfg.MaxArchiveBytes, false
 	}
-	if s.backupScope() != "" {
+	if scope != "" {
 		return s.criticalMaxArchiveBytes, true
 	}
 	return 0, false
@@ -327,7 +510,15 @@ func (s *BackupService) nonDefaultBackup() bool {
 // backupFileName names the archive; the .age suffix tells a human (and the
 // download link) that it is not plain gzip.
 func (s *BackupService) backupFileName(now time.Time) string {
-	name := fmt.Sprintf("%s_%s.sql.gz", s.dbCfg.DBName, now.Format("20060102_150405"))
+	return s.backupFileNameForScope(now, s.backupScope())
+}
+
+func (s *BackupService) backupFileNameForScope(now time.Time, scope string) string {
+	suffix := ".sql.gz"
+	if scope == backupScopeCritical {
+		suffix = ".critical.sql.gz"
+	}
+	name := fmt.Sprintf("%s_%s%s", s.dbCfg.DBName, now.Format("20060102_150405"), suffix)
 	if s.backupEncrypted() {
 		name += ".age"
 	}
@@ -375,6 +566,9 @@ func (s *BackupService) Start() {
 	if err != nil {
 		logger.LegacyPrintf("service.backup", "[Backup] 加载定时备份配置失败: %v", err)
 		return
+	}
+	if !s.nonDefaultBackup() && schedule.CriticalOnly {
+		s.sweepStaleBackupFiles(time.Now())
 	}
 	if schedule.Enabled && schedule.CronExpr != "" {
 		if err := s.applyCronSchedule(schedule); err != nil {
@@ -624,12 +818,18 @@ func (s *BackupService) TestS3Connection(ctx context.Context, cfg BackupS3Config
 
 func (s *BackupService) GetSchedule(ctx context.Context) (*BackupScheduleConfig, error) {
 	raw, err := s.settingRepo.GetValue(ctx, settingKeyBackupSchedule)
-	if err != nil || raw == "" {
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return &BackupScheduleConfig{}, nil
+		}
+		return nil, err
+	}
+	if raw == "" {
 		return &BackupScheduleConfig{}, nil
 	}
 	var cfg BackupScheduleConfig
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
-		return &BackupScheduleConfig{}, nil
+		return nil, ErrBackupScheduleCorrupt
 	}
 	return &cfg, nil
 }
@@ -696,7 +896,7 @@ func (s *BackupService) applyCronSchedule(cfg *BackupScheduleConfig) error {
 		return infraerrors.BadRequest("INVALID_CRON", fmt.Sprintf("failed to schedule: %v", err))
 	}
 	s.cronEntryID = entryID
-	logger.LegacyPrintf("service.backup", "[Backup] 定时备份已启用: %s", cfg.CronExpr)
+	logger.LegacyPrintf("service.backup", "[Backup] 定时备份已启用: %s (仅关键表: %v)", cfg.CronExpr, cfg.CriticalOnly || s.ServerCriticalModeForced())
 	return nil
 }
 
@@ -727,15 +927,26 @@ func (s *BackupService) runScheduledBackup() {
 	}
 	defer release()
 
-	// 读取定时备份配置中的过期天数
-	schedule, _ := s.GetSchedule(ctx)
+	// 读取定时备份配置中的过期天数与备份范围；读取失败或配置损坏时宁可跳过本次定时任务，
+	// 也绝不能静默退化成 CriticalOnly=false 的无限制全库备份。
+	schedule, err := s.GetSchedule(ctx)
+	if err != nil {
+		logger.LegacyPrintf("service.backup", "[Backup] 定时备份跳过: 读取定时备份配置失败: %v", err)
+		return
+	}
 	expireDays := 14 // 默认14天过期
-	if schedule != nil && schedule.RetainDays > 0 {
-		expireDays = schedule.RetainDays
+	criticalOnly := false
+	if schedule != nil {
+		if schedule.RetainDays > 0 {
+			expireDays = schedule.RetainDays
+		}
+		criticalOnly = schedule.CriticalOnly
 	}
 
-	logger.LegacyPrintf("service.backup", "[Backup] 开始执行定时备份, 过期天数: %d", expireDays)
-	record, err := s.CreateBackup(ctx, "scheduled", expireDays)
+	logger.LegacyPrintf("service.backup", "[Backup] 开始执行定时备份, 过期天数: %d, 仅关键表: %v", expireDays, criticalOnly || s.ServerCriticalModeForced())
+	record, err := s.CreateBackupWithOptions(ctx, "scheduled", expireDays, BackupOptions{
+		CriticalOnly: criticalOnly,
+	})
 	if err != nil {
 		if errors.Is(err, ErrBackupInProgress) {
 			logger.LegacyPrintf("service.backup", "[Backup] 定时备份跳过: 已有备份正在进行中")
@@ -744,7 +955,7 @@ func (s *BackupService) runScheduledBackup() {
 		}
 		return
 	}
-	logger.LegacyPrintf("service.backup", "[Backup] 定时备份完成: id=%s size=%d", record.ID, record.SizeBytes)
+	logger.LegacyPrintf("service.backup", "[Backup] 定时备份完成: id=%s scope=%s size=%d", record.ID, record.Scope, record.SizeBytes)
 
 	// 清理过期备份（复用已加载的 schedule）
 	if schedule == nil {
@@ -757,9 +968,14 @@ func (s *BackupService) runScheduledBackup() {
 
 // ─── 备份/恢复核心 ───
 
-// CreateBackup 创建全量数据库备份并上传到 S3。
+// CreateBackup 创建数据库备份并上传到 S3。
 // expireDays: 备份过期天数，0=永不过期，默认14天
 func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, expireDays int) (*BackupRecord, error) {
+	return s.CreateBackupWithOptions(ctx, triggeredBy, expireDays, BackupOptions{})
+}
+
+// CreateBackupWithOptions 创建数据库备份并上传到 S3，支持单次备份范围选项（如仅备份关键表）。
+func (s *BackupService) CreateBackupWithOptions(ctx context.Context, triggeredBy string, expireDays int, opts BackupOptions) (*BackupRecord, error) {
 	if s.shuttingDown.Load() {
 		return nil, infraerrors.ServiceUnavailable("SERVER_SHUTTING_DOWN", "server is shutting down")
 	}
@@ -790,9 +1006,10 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 		return nil, fmt.Errorf("init object store: %w", err)
 	}
 
+	mode := s.resolveBackupMode(opts)
 	now := time.Now()
 	backupID := uuid.New().String()[:8]
-	fileName := s.backupFileName(now)
+	fileName := s.backupFileNameForScope(now, mode.scope)
 	s3Key := s.buildS3Key(s3Cfg, fileName)
 
 	var expiresAt string
@@ -804,7 +1021,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 		ID:          backupID,
 		Status:      "running",
 		BackupType:  "postgres",
-		Scope:       s.backupScope(),
+		Scope:       mode.scope,
 		Encrypted:   s.backupEncrypted(),
 		FileName:    fileName,
 		S3Key:       s3Key,
@@ -813,7 +1030,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 		ExpiresAt:   expiresAt,
 	}
 
-	archivePath, sizeBytes, digest, err := s.createCompressedBackupFile(ctx)
+	archivePath, sizeBytes, digest, err := s.createCompressedBackupFileWithOptions(ctx, opts)
 	if err != nil {
 		record.Status = "failed"
 		record.ErrorMsg = err.Error()
@@ -823,7 +1040,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 	}
 	defer func() { _ = cleanupBackupFiles(archivePath) }()
 	record.SizeBytes = sizeBytes
-	record.SHA256 = s.recordedDigest(digest)
+	record.SHA256 = recordedDigestForMode(mode, digest)
 	if err := s.saveRecord(ctx, record); err != nil {
 		return nil, fmt.Errorf("save initial record: %w", err)
 	}
@@ -846,6 +1063,11 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 
 // StartBackup 异步创建备份，立即返回 running 状态的记录
 func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, expireDays int) (*BackupRecord, error) {
+	return s.StartBackupWithOptions(ctx, triggeredBy, expireDays, BackupOptions{})
+}
+
+// StartBackupWithOptions 异步创建备份，支持单次备份范围选项（如仅备份关键表）。
+func (s *BackupService) StartBackupWithOptions(ctx context.Context, triggeredBy string, expireDays int, opts BackupOptions) (*BackupRecord, error) {
 	if s.shuttingDown.Load() {
 		return nil, infraerrors.ServiceUnavailable("SERVER_SHUTTING_DOWN", "server is shutting down")
 	}
@@ -882,9 +1104,10 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 		return nil, fmt.Errorf("init object store: %w", err)
 	}
 
+	mode := s.resolveBackupMode(opts)
 	now := time.Now()
 	backupID := uuid.New().String()[:8]
-	fileName := s.backupFileName(now)
+	fileName := s.backupFileNameForScope(now, mode.scope)
 	s3Key := s.buildS3Key(s3Cfg, fileName)
 
 	var expiresAt string
@@ -896,7 +1119,7 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 		ID:          backupID,
 		Status:      "running",
 		BackupType:  "postgres",
-		Scope:       s.backupScope(),
+		Scope:       mode.scope,
 		Encrypted:   s.backupEncrypted(),
 		FileName:    fileName,
 		S3Key:       s3Key,
@@ -932,21 +1155,23 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 				_ = s.saveRecord(context.Background(), record)
 			}
 		}()
-		s.executeBackup(record, objectStore, s3Cfg)
+		s.executeBackup(record, objectStore, s3Cfg, opts)
 	}()
 
 	return &result, nil
 }
 
 // executeBackup 后台执行备份（独立于 HTTP context）
-func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupObjectStore, s3Cfg *BackupS3Config) {
+func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupObjectStore, s3Cfg *BackupS3Config, opts BackupOptions) {
 	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
 	defer cancel()
+
+	mode := s.resolveBackupMode(opts)
 
 	// 阶段1: pg_dump -> gzip 临时文件
 	record.Progress = "dumping"
 	_ = s.saveRecord(ctx, record)
-	archivePath, sizeBytes, digest, err := s.createCompressedBackupFile(ctx)
+	archivePath, sizeBytes, digest, err := s.createCompressedBackupFileWithOptions(ctx, opts)
 	if err != nil {
 		record.Status = "failed"
 		record.ErrorMsg = err.Error()
@@ -957,7 +1182,7 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	}
 	defer func() { _ = cleanupBackupFiles(archivePath) }()
 	record.SizeBytes = sizeBytes
-	record.SHA256 = s.recordedDigest(digest)
+	record.SHA256 = recordedDigestForMode(mode, digest)
 
 	// 阶段2: 单对象或分卷上传
 	record.Progress = "uploading"
@@ -984,14 +1209,21 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 // its size and the SHA-256 (hex) of the bytes written. The digest is computed while
 // writing, so the file is not read a second time.
 func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string, int64, string, error) {
+	return s.createCompressedBackupFileWithOptions(ctx, BackupOptions{})
+}
+
+func (s *BackupService) createCompressedBackupFileWithOptions(ctx context.Context, opts BackupOptions) (string, int64, string, error) {
+	mode := s.resolveBackupMode(opts)
+
 	// Resolve the recipients before pg_dump starts or anything touches the disk:
 	// a bad key must fail the backup, never degrade it into a plaintext archive.
 	recipients, err := parseAgeRecipients(s.backupCfg.AgeRecipients)
 	if err != nil {
 		return "", 0, "", err
 	}
-	// Fail closed: no recipient must never turn a critical snapshot into plaintext.
-	if s.backupScope() != "" && len(recipients) == 0 {
+	// Fail closed: deployment-level backup.exclude_table_data without a recipient
+	// must never turn a critical snapshot into plaintext.
+	if mode.requireRecipient && len(recipients) == 0 {
 		return "", 0, "", ErrBackupCriticalNeedsRecipient
 	}
 
@@ -999,7 +1231,7 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 	// limit, disk error) instead of waiting for it to hit the closed pipe.
 	dumpCtx, cancelDump := context.WithCancel(ctx)
 	defer cancelDump()
-	dumpReader, err := s.dumper.Dump(dumpCtx)
+	dumpReader, err := s.dumpDatabase(dumpCtx, mode.excludeTables)
 	if err != nil {
 		return "", 0, "", fmt.Errorf("pg_dump: %w", err)
 	}
@@ -1017,10 +1249,10 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 	}
 	archivePath := archive.Name()
 
-	limit, builtinLimit := s.archiveLimit()
+	limit, builtinLimit := s.archiveLimitForScope(mode.scope)
 	digest := sha256.New()
 	sink := &limitedArchiveWriter{w: io.MultiWriter(archive, digest), limit: limit, builtin: builtinLimit}
-	copyErr := s.writeBackupArchive(sink, dumpReader, recipients)
+	copyErr := s.writeBackupArchiveForScope(sink, dumpReader, recipients, mode.scope)
 	if copyErr != nil {
 		cancelDump()
 	}
@@ -1043,6 +1275,24 @@ func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string,
 	return archivePath, info.Size(), hex.EncodeToString(digest.Sum(nil)), nil
 }
 
+func (s *BackupService) dumpDatabase(ctx context.Context, excludeTables []string) (io.ReadCloser, error) {
+	if s.dumper == nil {
+		return nil, errors.New("database dumper is not configured")
+	}
+	if len(excludeTables) > 0 {
+		if scoped, ok := s.dumper.(ScopedDBDumper); ok {
+			return scoped.DumpWithOptions(ctx, BackupDumpOptions{ExcludeTableData: excludeTables})
+		}
+		// When exclusions came from runtime options rather than deployment config
+		// (backup.exclude_table_data), never silently fall back to Dump(ctx) which
+		// would run a whole-database dump under a "critical" record.
+		if len(s.backupCfg.ExcludeTableData) == 0 {
+			return nil, ErrBackupScopedDumperUnsupported
+		}
+	}
+	return s.dumper.Dump(ctx)
+}
+
 // backupArchiveFile is the staged archive. It is an *os.File in production; tests
 // wrap it to make Close fail.
 type backupArchiveFile interface {
@@ -1061,7 +1311,11 @@ func createStagedArchive(pattern string) (backupArchiveFile, error) {
 // recordedDigest is the digest a record stores. Only a non-default backup records
 // one, so a default whole-database record stays byte-identical to before.
 func (s *BackupService) recordedDigest(digest string) string {
-	if s.nonDefaultBackup() {
+	return recordedDigestForMode(s.resolveBackupMode(BackupOptions{}), digest)
+}
+
+func recordedDigestForMode(mode resolvedBackupMode, digest string) string {
+	if mode.nonDefault {
 		return digest
 	}
 	return ""
@@ -1073,6 +1327,10 @@ func (s *BackupService) recordedDigest(digest string) string {
 // before the caller closes the file. A partial snapshot is re-taken often, so it
 // trades compression ratio for CPU; the whole-database dump keeps the default.
 func (s *BackupService) writeBackupArchive(dst io.Writer, src io.Reader, recipients []age.Recipient) (err error) {
+	return s.writeBackupArchiveForScope(dst, src, recipients, s.backupScope())
+}
+
+func (s *BackupService) writeBackupArchiveForScope(dst io.Writer, src io.Reader, recipients []age.Recipient, scope string) (err error) {
 	out := dst
 	if len(recipients) > 0 {
 		enc, encErr := s.ageEncrypt(dst, recipients...)
@@ -1088,7 +1346,7 @@ func (s *BackupService) writeBackupArchive(dst io.Writer, src io.Reader, recipie
 	}
 
 	level := gzip.DefaultCompression
-	if s.backupScope() != "" {
+	if scope != "" {
 		level = gzip.BestSpeed
 	}
 	gzWriter, _ := gzip.NewWriterLevel(out, level) // the error is only for an invalid level

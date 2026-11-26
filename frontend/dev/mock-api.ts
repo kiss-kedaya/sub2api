@@ -214,6 +214,28 @@ export function createMockApi(now = new Date()) {
   let nextOrderId = Math.max(...data.paymentOrders.map(order => order.id)) + 1
   let nextRedeemId = Math.max(...data.redeemHistory.map(item => item.id)) + 1
   const usedDemoCodes = new Set<string>()
+  let createVerificationMode: 'auto' | 'on' | 'off' = 'auto'
+  const demoBarkSettings = { configured: false, enabled: false }
+  const verificationFactors = () => {
+    const defaultRequired = false
+    const required = createVerificationMode === 'on'
+      ? true
+      : createVerificationMode === 'off'
+        ? false
+        : defaultRequired
+    return {
+      password_available: true,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: 'password',
+      available_methods: ['password'],
+      seal_available: true,
+      create_verification_required: required,
+      create_verification_mode: createVerificationMode,
+      create_verification_configurable: true,
+      create_verification_default_required: defaultRequired,
+    }
+  }
   const timezoneOf = (query: URLSearchParams) => {
     const timezone = query.get('timezone') || 'UTC'
     try { new Intl.DateTimeFormat('en', { timeZone: timezone }) } catch { throw new PreviewError(400, '无效的时区') }
@@ -516,8 +538,228 @@ export function createMockApi(now = new Date()) {
       }
     })
   }
+  // Stateful backup, usage cleanup, and ticket preview stores so every upgraded workflow works interactively.
+  let demoBackupSchedule = {
+    enabled: true,
+    cron_expr: '0 3 * * *',
+    retain_days: 7,
+    retain_count: 5,
+    critical_only: true,
+    server_critical_forced: false,
+    age_encryption_enabled: false,
+  }
+  const demoBackups: Array<Record<string, unknown>> = [
+    {
+      id: 'bk-demo-crit',
+      status: 'completed',
+      backup_type: 'postgres',
+      scope: 'critical',
+      encrypted: false,
+      file_name: `sub2api_${now.toISOString().slice(0, 10).replaceAll('-', '')}_030000.critical.sql.gz`,
+      s3_key: `backups/2026/11/26/sub2api_${now.toISOString().slice(0, 10).replaceAll('-', '')}_030000.critical.sql.gz`,
+      size_bytes: 18_420_736,
+      triggered_by: 'scheduled',
+      started_at: new Date(now.getTime() - 6 * 3600_000).toISOString(),
+      finished_at: new Date(now.getTime() - 6 * 3600_000 + 24_000).toISOString(),
+      expires_at: new Date(now.getTime() + 7 * 86_400_000).toISOString(),
+    },
+    {
+      id: 'bk-demo-full',
+      status: 'completed',
+      backup_type: 'postgres',
+      scope: '',
+      encrypted: false,
+      file_name: `sub2api_${now.toISOString().slice(0, 10).replaceAll('-', '')}_010000.sql.gz`,
+      s3_key: `backups/2026/11/25/sub2api_${now.toISOString().slice(0, 10).replaceAll('-', '')}_010000.sql.gz`,
+      size_bytes: 642_180_096,
+      triggered_by: 'manual',
+      started_at: new Date(now.getTime() - 26 * 3600_000).toISOString(),
+      finished_at: new Date(now.getTime() - 26 * 3600_000 + 185_000).toISOString(),
+      expires_at: new Date(now.getTime() + 14 * 86_400_000).toISOString(),
+    },
+  ]
+  let nextBackupSeq = 1
+  const demoCleanupTasks: Array<Record<string, unknown>> = [
+    {
+      id: 401,
+      status: 'succeeded',
+      filters: {
+        start_time: new Date(now.getTime() - 48 * 3600_000).toISOString(),
+        end_time: new Date(now.getTime() - 24 * 3600_000).toISOString(),
+        model: 'claude-sonnet-4-5',
+        upstream_model_mismatch: true,
+      },
+      created_by: 1,
+      deleted_rows: 128,
+      started_at: new Date(now.getTime() - 2 * 3600_000).toISOString(),
+      finished_at: new Date(now.getTime() - 2 * 3600_000 + 4_200).toISOString(),
+      created_at: new Date(now.getTime() - 2 * 3600_000).toISOString(),
+      updated_at: new Date(now.getTime() - 2 * 3600_000 + 4_200).toISOString(),
+    },
+  ]
+  let nextCleanupTaskId = 402
+  const demoTicketAttachmentMeta = new Map<number, Record<string, unknown>>([
+    [501, {
+      id: 501,
+      ticket_id: 1001,
+      message_id: 2002,
+      file_name: 'billing-receipt-preview.png',
+      content_type: 'image/png',
+      size_bytes: 4820,
+      width: 640,
+      height: 360,
+      created_at: new Date(now.getTime() - 18 * 60_000).toISOString(),
+    }],
+  ])
+  let nextTicketId = 1003
+  let nextTicketMsgId = 2004
+  const demoTickets: Array<{
+    ticket: Record<string, unknown>
+    messages: Array<Record<string, unknown>>
+  }> = [
+    {
+      ticket: {
+        id: 1001,
+        user_id: data.user.id,
+        subject: '链上充值入账核对与截图凭证',
+        contact: 'console-preview@example.test',
+        category: 'billing',
+        priority: 'high',
+        status: 'waiting_user',
+        assignee_id: 1,
+        assignee_name: '本地预览管理员',
+        user_name: data.user.username,
+        user_email: data.user.email,
+        created_at: new Date(now.getTime() - 45 * 60_000).toISOString(),
+        updated_at: new Date(now.getTime() - 18 * 60_000).toISOString(),
+        last_message_at: new Date(now.getTime() - 18 * 60_000).toISOString(),
+        last_message_preview: '已核对这笔 TRC20 交易并附上对账截图，请查收。',
+        last_message_id: 2002,
+        unread_count: 1,
+      },
+      messages: [
+        {
+          id: 2001,
+          ticket_id: 1001,
+          author_id: data.user.id,
+          author_role: 'user',
+          author_name: data.user.username,
+          content: '你好，刚才转了一笔 50 USDT，麻烦帮忙确认一下入账状态。',
+          kind: 'reply',
+          attachments: [],
+          created_at: new Date(now.getTime() - 45 * 60_000).toISOString(),
+        },
+        {
+          id: 2002,
+          ticket_id: 1001,
+          author_id: 1,
+          author_role: 'admin',
+          author_name: '本地预览管理员',
+          content: '已核对这笔 TRC20 交易并附上对账截图，请查收。',
+          kind: 'reply',
+          attachments: [demoTicketAttachmentMeta.get(501)!],
+          created_at: new Date(now.getTime() - 18 * 60_000).toISOString(),
+        },
+      ],
+    },
+    {
+      ticket: {
+        id: 1002,
+        user_id: data.user.id,
+        subject: 'Claude Code 接入模型列表确认',
+        contact: 'console-preview@example.test',
+        category: 'api',
+        priority: 'normal',
+        status: 'closed',
+        assignee_id: 1,
+        assignee_name: '本地预览管理员',
+        user_name: data.user.username,
+        user_email: data.user.email,
+        created_at: new Date(now.getTime() - 3 * 86_400_000).toISOString(),
+        updated_at: new Date(now.getTime() - 2 * 86_400_000).toISOString(),
+        last_message_at: new Date(now.getTime() - 2 * 86_400_000).toISOString(),
+        last_message_preview: '问题已解决，感谢支持。',
+        last_message_id: 2003,
+        unread_count: 0,
+      },
+      messages: [
+        {
+          id: 2003,
+          ticket_id: 1002,
+          author_id: data.user.id,
+          author_role: 'user',
+          author_name: data.user.username,
+          content: '问题已解决，感谢支持。',
+          kind: 'reply',
+          attachments: [],
+          created_at: new Date(now.getTime() - 2 * 86_400_000).toISOString(),
+        },
+      ],
+    },
+  ]
+  function ticketStatsSnapshot() {
+    const counts: Record<string, number> = {
+      total: demoTickets.length,
+      unread: 0,
+      open: 0,
+      in_progress: 0,
+      waiting_user: 0,
+      resolved: 0,
+      closed: 0,
+    }
+    for (const entry of demoTickets) {
+      const st = String(entry.ticket.status)
+      if (st in counts) counts[st] += 1
+      if (Number(entry.ticket.unread_count || 0) > 0) counts.unread += 1
+    }
+    return { ...counts, can_create: true }
+  }
+  function resolveCleanupWindow(payload: Record<string, unknown>) {
+    const startRaw = typeof payload.start_date === 'string' && payload.start_date.trim()
+      ? payload.start_date.trim()
+      : new Date(now.getTime() - 7 * 86_400_000).toISOString()
+    const endRaw = typeof payload.end_date === 'string' && payload.end_date.trim()
+      ? payload.end_date.trim()
+      : now.toISOString()
+    const toIso = (val: string, endOfDay: boolean) => {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return `${val}T${endOfDay ? '23:59:59' : '00:00:00'}Z`
+      const parsed = Date.parse(val.includes('T') ? val : val.replace(' ', 'T'))
+      return Number.isNaN(parsed) ? now.toISOString() : new Date(parsed).toISOString()
+    }
+    return { start_time: toIso(startRaw, false), end_time: toIso(endRaw, true) }
+  }
+  function matchCleanupUsage(payload: Record<string, unknown>) {
+    const { start_time, end_time } = resolveCleanupWindow(payload)
+    const startMs = Date.parse(start_time)
+    const endMs = Date.parse(end_time)
+    const rows = data.adminUsage.filter((row) => {
+      const ts = Date.parse(row.created_at)
+      if (!Number.isNaN(startMs) && ts < startMs) return false
+      if (!Number.isNaN(endMs) && ts > endMs) return false
+      if (payload.user_id && row.user_id !== Number(payload.user_id)) return false
+      if (payload.api_key_id && row.api_key_id !== Number(payload.api_key_id)) return false
+      if (payload.account_id && row.account_id !== Number(payload.account_id)) return false
+      if (payload.group_id && row.group_id !== Number(payload.group_id)) return false
+      if (typeof payload.model === 'string' && payload.model.trim() && row.model !== payload.model.trim()) return false
+      if (typeof payload.request_id === 'string' && payload.request_id.trim()) {
+        const needle = payload.request_id.trim().replace(/^[=^]/, '').toLowerCase()
+        if (!String(row.request_id || '').toLowerCase().includes(needle)) return false
+      }
+      if (typeof payload.stream === 'boolean' && row.stream !== payload.stream) return false
+      if (typeof payload.billing_type === 'number' && row.billing_type !== payload.billing_type) return false
+      if (typeof payload.billing_mode === 'string' && payload.billing_mode.trim() && row.billing_mode !== payload.billing_mode.trim()) return false
+      return true
+    })
+    return { rows, start_time, end_time }
+  }
   return {
     user: data.user,
+    registerTicketAttachment(meta: Record<string, unknown>) {
+      demoTicketAttachmentMeta.set(Number(meta.id), meta)
+    },
+    unregisterTicketAttachment(id: number) {
+      demoTicketAttachmentMeta.delete(id)
+    },
     handle(
       method: string,
       path: string,
@@ -612,7 +854,38 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/announcements/summary') return { total: 0, unread: 0 }
         if (path === '/api/v1/announcements/popups') return []
         if (path === '/api/v1/tickets/stats' || path === '/api/v1/admin/tickets/stats') {
-          return { total: 0, unread: 0, open: 0, in_progress: 0, waiting_user: 0, resolved: 0, closed: 0, can_create: true }
+          return ticketStatsSnapshot()
+        }
+        if (path === '/api/v1/tickets' || path === '/api/v1/admin/tickets') {
+          const status = query.get('status') || ''
+          const search = (query.get('search') || '').trim().toLowerCase()
+          const category = query.get('category') || ''
+          const priority = query.get('priority') || ''
+          const rows = demoTickets
+            .map(entry => entry.ticket)
+            .filter((t) => {
+              if (status === 'unread' && Number(t.unread_count || 0) <= 0) return false
+              if (status === 'active' && t.status === 'closed') return false
+              if (status && status !== 'unread' && status !== 'active' && t.status !== status) return false
+              if (category && t.category !== category) return false
+              if (priority && t.priority !== priority) return false
+              if (search && !`${t.subject} ${t.last_message_preview} ${t.id}`.toLowerCase().includes(search)) return false
+              return true
+            })
+          return page(copy(rows), query)
+        }
+        const ticketDetailPath = path.match(/^\/api\/v1\/(?:admin\/)?tickets\/(\d+)$/)
+        if (ticketDetailPath) {
+          const entry = demoTickets.find(item => Number(item.ticket.id) === Number(ticketDetailPath[1]))
+          if (!entry) throw new PreviewError(404, '本地演示工单不存在')
+          return copy({
+            ticket: entry.ticket,
+            messages: entry.messages,
+            has_more: false,
+            requester: path.startsWith('/api/v1/admin/')
+              ? { id: data.user.id, username: data.user.username, email: data.user.email, balance: data.user.balance, status: 'active', created_at: data.user.created_at }
+              : undefined,
+          })
         }
         if (['/api/v1/auth/me', '/api/v1/user/profile'].includes(path)) return { ...data.user, run_mode: 'standard' }
         if (path === '/api/v1/admin/compliance') return {
@@ -623,6 +896,8 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/admin/channel-monitor-v2/config') return data.monitorConfig
         if (path === '/api/v1/admin/settings') return adminSettings()
         if (path === '/api/v1/admin/settings/admin-api-key') return { exists: false, masked_key: '' }
+        if (path === '/api/v1/admin/settings/admin-api-keys') return { items: [] }
+        if (path === '/api/v1/admin/affiliates/users') return page([], query)
         if (path === '/api/v1/admin/settings/overload-cooldown') return { enabled: false, cooldown_minutes: 10 }
         if (path === '/api/v1/admin/settings/rate-limit-429-cooldown') return { enabled: false, cooldown_minutes: 5 }
         if (path === '/api/v1/admin/settings/registration-email-blacklist') return { domains: [] }
@@ -636,10 +911,10 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/admin/access-keys') return { items: [], permissions: [] }
         if (path === '/api/v1/admin/settings/gateway-ip-notice') return { enabled: false, ips: [], message: '', rpm: 0, auto_add_enabled: false, sharing_window_minutes: 60, sharing_threshold: 3, key_disable_enabled: false, auto_entries: [] }
         if (path === '/api/v1/admin/settings/key-rotation-risk-ack') return { enabled: false, hours: 24 }
-        if (path === '/api/v1/admin/backups/s3-config') return { endpoint: '', region: '', bucket: '', access_key_id: '', prefix: '', force_path_style: false }
+        if (path === '/api/v1/admin/backups/s3-config') return { endpoint: 'https://demo.r2.cloudflarestorage.com', region: 'auto', bucket: 'kedaya-preview-backups', access_key_id: 'DEMOKEY', prefix: 'backups/', force_path_style: false }
         if (path === '/api/v1/admin/backups/image-storage') return { config: { enabled: false, reuse_backup_s3: false, bucket: '', prefix: '', public_base_url: '', presign_expiry_hours: 24, max_download_bytes: 10485760, endpoint: '', region: '', access_key_id: '', force_path_style: false }, secret_configured: false }
-        if (path === '/api/v1/admin/backups/schedule') return { enabled: false, cron_expr: '0 3 * * *', retain_days: 7, retain_count: 5 }
-        if (path === '/api/v1/admin/backups') return { items: [] }
+        if (path === '/api/v1/admin/backups/schedule') return copy(demoBackupSchedule)
+        if (path === '/api/v1/admin/backups') return { items: copy(demoBackups) }
         if (path === '/api/v1/admin/payment/config') return { enabled: true }
         if (path === '/api/v1/admin/payment/orders') return page(data.paymentOrders, query)
         if (path === '/api/v1/admin/payment/plans') return data.paymentPlans
@@ -649,7 +924,6 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/admin/redeem-codes') return page([], query)
         if (path === '/api/v1/admin/promo-codes') return page([], query)
         if (path === '/api/v1/admin/announcements') return page([], query)
-        if (path === '/api/v1/admin/tickets') return page([], query)
         if (path === '/api/v1/admin/audit-logs') return page([], query)
         if (path === '/api/v1/admin/settings/web-search-emulation') return { enabled: false, providers: [] }
         if (path === '/api/v1/admin/system/check-updates') return {
@@ -863,13 +1137,17 @@ export function createMockApi(now = new Date()) {
             .map(user => ({ id: user.id, email: user.email, deleted: Boolean(user.deleted_at) }))
         }
         if (path === '/api/v1/admin/usage/search-api-keys') {
+          const exactId = query.get('api_key_id') ? Number(query.get('api_key_id')) : null
+          if (exactId && Number.isSafeInteger(exactId)) {
+            return data.adminKeys.filter(key => key.id === exactId).map(key => ({ id: key.id, name: key.name, user_id: key.user_id }))
+          }
           const keyword = query.get('q')?.toLowerCase() ?? ''
           return data.adminKeys.filter(key =>
             (!query.get('user_id') || key.user_id === Number(query.get('user_id'))) &&
             (!keyword || key.name.toLowerCase().includes(keyword))).slice(0, 30)
             .map(key => ({ id: key.id, name: key.name, user_id: key.user_id }))
         }
-        if (path === '/api/v1/admin/usage/cleanup-tasks') return page([], query)
+        if (path === '/api/v1/admin/usage/cleanup-tasks') return page(copy(demoCleanupTasks), query)
         if (path === '/api/v1/admin/ops/errors') return page([], query)
         if (path === '/api/v1/groups/available') return data.groups
         if (path === '/api/v1/groups/rates') return {}
@@ -1002,17 +1280,9 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/user/aff') return data.affiliateDetail
         if (path === '/api/v1/user/totp/status') return { enabled: false, enabled_at: null, feature_enabled: false }
         if (path === '/api/v1/user/totp/verification-method') return { method: 'password' }
-        if (path === '/api/v1/user/security/verification-factors') {
-          return {
-            password_available: true,
-            totp_enabled: false,
-            passkey_count: 0,
-            preferred: 'password',
-            available_methods: ['password'],
-            seal_available: true,
-            create_verification_required: false,
-          }
-        }
+        if (path === '/api/v1/user/passkeys') return []
+        if (path === '/api/v1/user/bark') return { data: { ...demoBarkSettings } }
+        if (path === '/api/v1/user/security/verification-factors') return verificationFactors()
         if (path === '/v1/models') {
           const ids = modelsForBearer(headers.authorization)
           return { object: 'list', data: ids.map(id => ({ id, object: 'model', owned_by: 'local-demo' })) }
@@ -1264,6 +1534,180 @@ export function createMockApi(now = new Date()) {
         data.user.balance = Math.round((data.user.balance + amount) * 100) / 100
         return { transferred_quota: amount, balance: data.user.balance }
       }
+      if (method === 'PUT' && path === '/api/v1/admin/backups/schedule') {
+        demoBackupSchedule = {
+          ...demoBackupSchedule,
+          enabled: Boolean(body.enabled),
+          cron_expr: typeof body.cron_expr === 'string' && body.cron_expr.trim() ? body.cron_expr.trim() : demoBackupSchedule.cron_expr,
+          retain_days: Number.isFinite(Number(body.retain_days)) ? Number(body.retain_days) : demoBackupSchedule.retain_days,
+          retain_count: Number.isFinite(Number(body.retain_count)) ? Number(body.retain_count) : demoBackupSchedule.retain_count,
+          critical_only: Boolean(body.critical_only),
+        }
+        return copy(demoBackupSchedule)
+      }
+      if (method === 'POST' && path === '/api/v1/admin/backups') {
+        const critical = Boolean(body.critical_only)
+        const expireDays = Number.isFinite(Number(body.expire_days)) ? Number(body.expire_days) : 14
+        const id = `bk-demo-${nextBackupSeq++}`
+        const stamp = now.toISOString().slice(0, 10).replaceAll('-', '')
+        const fileName = `sub2api_${stamp}_${id}${critical ? '.critical.sql.gz' : '.sql.gz'}`
+        const rec = {
+          id,
+          status: 'completed',
+          backup_type: 'postgres',
+          scope: critical ? 'critical' : '',
+          encrypted: false,
+          file_name: fileName,
+          s3_key: `backups/2026/11/26/${fileName}`,
+          size_bytes: critical ? 19_120_000 : 655_000_000,
+          triggered_by: 'manual',
+          started_at: new Date().toISOString(),
+          finished_at: new Date().toISOString(),
+          expires_at: expireDays > 0 ? new Date(Date.now() + expireDays * 86_400_000).toISOString() : '',
+        }
+        demoBackups.unshift(rec)
+        return copy(rec)
+      }
+      const deleteBackupPath = path.match(/^\/api\/v1\/admin\/backups\/([^/]+)$/)
+      if (method === 'DELETE' && deleteBackupPath) {
+        const idx = demoBackups.findIndex(item => item.id === deleteBackupPath[1])
+        if (idx >= 0) demoBackups.splice(idx, 1)
+        return { message: 'deleted' }
+      }
+      if (method === 'POST' && path === '/api/v1/admin/usage/cleanup-tasks/preview') {
+        const { rows, start_time, end_time } = matchCleanupUsage(body)
+        return {
+          matched_rows: rows.length,
+          truncated: false,
+          max_range_days: 31,
+          start_time,
+          end_time,
+        }
+      }
+      if (method === 'POST' && path === '/api/v1/admin/usage/cleanup-tasks') {
+        const { rows, start_time, end_time } = matchCleanupUsage(body)
+        const task = {
+          id: nextCleanupTaskId++,
+          status: 'succeeded',
+          filters: {
+            start_time,
+            end_time,
+            user_id: body.user_id,
+            api_key_id: body.api_key_id,
+            account_id: body.account_id,
+            group_id: body.group_id,
+            model: body.model ?? null,
+            request_id: body.request_id ?? null,
+            request_type: body.request_type ?? null,
+            stream: body.stream ?? null,
+            native_compaction_v2: body.native_compaction_v2 ?? null,
+            billing_type: body.billing_type ?? null,
+            billing_mode: body.billing_mode ?? null,
+            upstream_model_mismatch: body.upstream_model_mismatch ?? null,
+          },
+          created_by: 1,
+          deleted_rows: rows.length,
+          started_at: new Date().toISOString(),
+          finished_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }
+        demoCleanupTasks.unshift(task)
+        return copy(task)
+      }
+      const cancelCleanupPath = path.match(/^\/api\/v1\/admin\/usage\/cleanup-tasks\/(\d+)\/cancel$/)
+      if (method === 'POST' && cancelCleanupPath) {
+        const task = demoCleanupTasks.find(item => Number(item.id) === Number(cancelCleanupPath[1]))
+        if (!task) throw new PreviewError(404, '演示清理任务不存在')
+        task.status = 'canceled'
+        return { id: Number(task.id), status: 'canceled' }
+      }
+      if (method === 'POST' && (path === '/api/v1/tickets' || path === '/api/v1/admin/tickets')) {
+        const isAdminRoute = path.startsWith('/api/v1/admin/')
+        const attachmentIds = Array.isArray(body.attachment_ids) ? body.attachment_ids.map(Number).filter(n => Number.isSafeInteger(n) && n > 0) : []
+        const content = typeof body.content === 'string' && body.content.trim() ? body.content.trim() : (attachmentIds.length > 0 ? '[图片]' : '')
+        const ticketId = nextTicketId++
+        const msgId = nextTicketMsgId++
+        const attachments = attachmentIds.map(id => demoTicketAttachmentMeta.get(id)).filter((item): item is Record<string, unknown> => Boolean(item))
+        const ts = new Date().toISOString()
+        const entry = {
+          ticket: {
+            id: ticketId,
+            user_id: isAdminRoute ? Number(body.user_id || data.user.id) : data.user.id,
+            subject: typeof body.subject === 'string' && body.subject.trim() ? body.subject.trim() : '新工单',
+            contact: typeof body.contact === 'string' ? body.contact.trim() : data.user.email,
+            category: typeof body.category === 'string' && body.category ? body.category : 'other',
+            priority: typeof body.priority === 'string' && body.priority ? body.priority : 'normal',
+            status: isAdminRoute ? 'waiting_user' : 'open',
+            assignee_id: isAdminRoute ? 1 : null,
+            assignee_name: isAdminRoute ? '本地预览管理员' : '',
+            user_name: data.user.username,
+            user_email: data.user.email,
+            created_at: ts,
+            updated_at: ts,
+            last_message_at: ts,
+            last_message_preview: content,
+            last_message_id: msgId,
+            unread_count: 0,
+          },
+          messages: [{
+            id: msgId,
+            ticket_id: ticketId,
+            author_id: isAdminRoute ? 1 : data.user.id,
+            author_role: isAdminRoute ? 'admin' : 'user',
+            author_name: isAdminRoute ? '本地预览管理员' : data.user.username,
+            content,
+            kind: 'reply',
+            attachments,
+            created_at: ts,
+          }],
+        }
+        demoTickets.unshift(entry)
+        return copy({ ticket: entry.ticket, messages: entry.messages, has_more: false })
+      }
+      const ticketReadPath = path.match(/^\/api\/v1\/(?:admin\/)?tickets\/(\d+)\/read$/)
+      if (method === 'POST' && ticketReadPath) {
+        const entry = demoTickets.find(item => Number(item.ticket.id) === Number(ticketReadPath[1]))
+        if (entry) entry.ticket.unread_count = 0
+        return { ok: true }
+      }
+      const ticketReplyPath = path.match(/^\/api\/v1\/(?:admin\/)?tickets\/(\d+)\/replies$/)
+      if (method === 'POST' && ticketReplyPath) {
+        const entry = demoTickets.find(item => Number(item.ticket.id) === Number(ticketReplyPath[1]))
+        if (!entry) throw new PreviewError(404, '本地演示工单不存在')
+        const isAdminRoute = path.startsWith('/api/v1/admin/')
+        const attachmentIds = Array.isArray(body.attachment_ids) ? body.attachment_ids.map(Number).filter(n => Number.isSafeInteger(n) && n > 0) : []
+        const content = typeof body.content === 'string' && body.content.trim() ? body.content.trim() : (attachmentIds.length > 0 ? '[图片]' : '')
+        const msgId = nextTicketMsgId++
+        const attachments = attachmentIds.map(id => demoTicketAttachmentMeta.get(id)).filter((item): item is Record<string, unknown> => Boolean(item))
+        const ts = new Date().toISOString()
+        entry.messages.push({
+          id: msgId,
+          ticket_id: Number(entry.ticket.id),
+          author_id: isAdminRoute ? 1 : data.user.id,
+          author_role: isAdminRoute ? 'admin' : 'user',
+          author_name: isAdminRoute ? '本地预览管理员' : data.user.username,
+          content,
+          kind: 'reply',
+          attachments,
+          created_at: ts,
+        })
+        entry.ticket.last_message_id = msgId
+        entry.ticket.last_message_at = ts
+        entry.ticket.updated_at = ts
+        entry.ticket.last_message_preview = content
+        if (typeof body.status === 'string' && body.status) entry.ticket.status = body.status
+        return copy({ ticket: entry.ticket, messages: entry.messages, has_more: false })
+      }
+      const ticketUpdatePath = path.match(/^\/api\/v1\/(?:admin\/)?tickets\/(\d+)$/)
+      if (method === 'PATCH' && ticketUpdatePath) {
+        const entry = demoTickets.find(item => Number(item.ticket.id) === Number(ticketUpdatePath[1]))
+        if (!entry) throw new PreviewError(404, '本地演示工单不存在')
+        if (typeof body.status === 'string') entry.ticket.status = body.status
+        if (typeof body.priority === 'string') entry.ticket.priority = body.priority
+        entry.ticket.updated_at = new Date().toISOString()
+        return copy({ ticket: entry.ticket, messages: entry.messages, has_more: false })
+      }
       if (method === 'PUT' && path === '/api/v1/admin/settings') {
         if (!('payment_recharge_center_enabled' in body)) throw new PreviewError(405, '演示不支持修改其他系统设置')
         if ('payment_recharge_center_enabled' in body) {
@@ -1307,6 +1751,39 @@ export function createMockApi(now = new Date()) {
         return data.user
       }
       if (method === 'PUT' && path === '/api/v1/user/password') return { message: '本地演示密码未写入任何账户' }
+      if (method === 'PUT' && path === '/api/v1/user/bark') {
+        if (typeof body.enabled !== 'boolean') throw new PreviewError(422, '无效的 Bark 推送开关')
+        if ('device_key' in body) {
+          if (typeof body.device_key !== 'string') throw new PreviewError(422, '无效的 Bark 设备 Key')
+          const trimmed = body.device_key.trim()
+          demoBarkSettings.configured = trimmed.length > 0
+          demoBarkSettings.enabled = trimmed.length > 0 && body.enabled
+        } else {
+          demoBarkSettings.enabled = demoBarkSettings.configured && body.enabled
+        }
+        return { data: { ...demoBarkSettings } }
+      }
+      if (method === 'PUT' && path === '/api/v1/user/security/api-key-create-verification') {
+        const mode = body.mode
+        if (mode !== 'auto' && mode !== 'on' && mode !== 'off') {
+          throw new PreviewError(422, '无效的身份验证模式')
+        }
+        const rank: Record<'off' | 'auto' | 'on', number> = { off: 0, auto: 1, on: 2 }
+        if (rank[mode] < rank[createVerificationMode]) {
+          const verification = body.verification as Record<string, unknown> | undefined
+          const hasVerification = Boolean(
+            verification &&
+              typeof verification === 'object' &&
+              typeof verification.method === 'string' &&
+              verification.method.trim(),
+          )
+          if (!hasVerification) {
+            throw new PreviewError(400, '请先完成身份验证')
+          }
+        }
+        createVerificationMode = mode
+        return verificationFactors()
+      }
       const revealAuthPath = path.match(/^\/api\/v1\/user\/api-keys\/(\d+)\/reveal-authorize$/)
       if (revealAuthPath && method === 'POST') {
         const key = data.keys.find(item => item.id === Number(revealAuthPath[1]))

@@ -15,6 +15,9 @@ export interface BackupScheduleConfig {
   cron_expr: string
   retain_days: number
   retain_count: number
+  critical_only?: boolean
+  server_critical_forced?: boolean
+  age_encryption_enabled?: boolean
 }
 
 export interface BackupRecord {
@@ -34,6 +37,9 @@ export interface BackupRecord {
   restore_status?: string
   restore_error?: string
   restored_at?: string
+  scope?: 'critical' | ''
+  encrypted?: boolean
+  sha256?: string
 }
 
 export interface BackupPart {
@@ -56,6 +62,7 @@ export interface BackupDownloadResponse {
 
 export interface CreateBackupRequest {
   expire_days?: number
+  critical_only?: boolean
 }
 
 export interface TestS3Response {

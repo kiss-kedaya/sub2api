@@ -7,12 +7,16 @@ const {
   getS3Config,
   getImageStorageConfig,
   getSchedule,
+  updateSchedule,
+  createBackup,
   listBackups,
   getDownloadURL,
 } = vi.hoisted(() => ({
   getS3Config: vi.fn(),
   getImageStorageConfig: vi.fn(),
   getSchedule: vi.fn(),
+  updateSchedule: vi.fn(),
+  createBackup: vi.fn(),
   listBackups: vi.fn(),
   getDownloadURL: vi.fn(),
 }))
@@ -27,8 +31,8 @@ vi.mock('@/api', () => ({
       updateImageStorageConfig: vi.fn(),
       testImageStorageConnection: vi.fn(),
       getSchedule,
-      updateSchedule: vi.fn(),
-      createBackup: vi.fn(),
+      updateSchedule,
+      createBackup,
       listBackups,
       getBackup: vi.fn(),
       deleteBackup: vi.fn(),
@@ -93,6 +97,8 @@ describe('admin BackupView 分卷备份', () => {
     getS3Config.mockResolvedValue({})
     getImageStorageConfig.mockResolvedValue({ config: {}, secret_configured: false })
     getSchedule.mockResolvedValue({ enabled: false, cron_expr: '', retain_days: 14, retain_count: 10 })
+    updateSchedule.mockReset()
+    createBackup.mockReset()
     getDownloadURL.mockReset()
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
   })
@@ -169,5 +175,181 @@ describe('admin BackupView 分卷备份', () => {
 
     expect(wrapper.find('tbody tr td:nth-child(5)').text()).toBe('-')
     expect(wrapper.findAll('button').some(button => button.text() === 'common.delete')).toBe(false)
+  })
+
+  it('定时备份支持切换并保存只备份关键表开关，并同步到手动备份', async () => {
+    listBackups.mockResolvedValue({ items: [] })
+    updateSchedule.mockResolvedValue({
+      enabled: false,
+      cron_expr: '0 2 * * *',
+      retain_days: 14,
+      retain_count: 10,
+      critical_only: true,
+    })
+    createBackup.mockResolvedValue({
+      ...baseRecord('crit-1'),
+      status: 'completed',
+      scope: 'critical',
+      file_name: 'sub2api_20261126_030000.critical.sql.gz',
+    })
+
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    const scheduleToggle = wrapper.find('[data-testid="schedule-critical-only-toggle"]')
+    expect(scheduleToggle.exists()).toBe(true)
+    expect(scheduleToggle.attributes('aria-checked')).toBe('false')
+
+    await scheduleToggle.trigger('click')
+    await flushPromises()
+    expect(scheduleToggle.attributes('aria-checked')).toBe('true')
+
+    // 点击定时备份卡片的保存按钮（页面中第 3 个 common.save 按钮：S3 / 异步生图 / 定时备份）
+    const saveButtons = wrapper.findAll('button').filter(button => button.text().includes('common.save'))
+    expect(saveButtons).toHaveLength(3)
+    await saveButtons[2].trigger('click')
+    await flushPromises()
+
+    expect(updateSchedule).toHaveBeenCalledWith({
+      enabled: false,
+      cron_expr: '0 2 * * *',
+      retain_days: 14,
+      retain_count: 10,
+      critical_only: true,
+    })
+
+    // 保存后手动备份的仅关键表开关同步开启，点击创建备份会传 critical_only: true
+    const manualToggle = wrapper.find('[data-testid="manual-critical-only-toggle"]')
+    expect(manualToggle.attributes('aria-checked')).toBe('true')
+
+    const createBtn = wrapper.findAll('button').find(button =>
+      button.text().includes('admin.backup.operations.createBackup'),
+    )
+    expect(createBtn).toBeDefined()
+    await createBtn!.trigger('click')
+    await flushPromises()
+
+    expect(createBackup).toHaveBeenCalledWith({
+      expire_days: 14,
+      critical_only: true,
+    })
+    wrapper.unmount()
+  })
+
+  it('手动备份开关可独立关闭以执行单次全量备份', async () => {
+    listBackups.mockResolvedValue({ items: [] })
+    getSchedule.mockResolvedValue({
+      enabled: true,
+      cron_expr: '0 3 * * *',
+      retain_days: 7,
+      retain_count: 5,
+      critical_only: true,
+    })
+    createBackup.mockResolvedValue({ ...baseRecord('full-1'), status: 'completed' })
+
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    const manualToggle = wrapper.find('[data-testid="manual-critical-only-toggle"]')
+    expect(manualToggle.attributes('aria-checked')).toBe('true')
+
+    await manualToggle.trigger('click')
+    await flushPromises()
+    expect(manualToggle.attributes('aria-checked')).toBe('false')
+
+    const createBtn = wrapper.findAll('button').find(button =>
+      button.text().includes('admin.backup.operations.createBackup'),
+    )
+    await createBtn!.trigger('click')
+    await flushPromises()
+
+    expect(createBackup).toHaveBeenCalledWith({
+      expire_days: 14,
+      critical_only: false,
+    })
+    wrapper.unmount()
+  })
+
+  it('服务端强制关键表模式时锁定开关并展示服务端提示', async () => {
+    listBackups.mockResolvedValue({ items: [] })
+    getSchedule.mockResolvedValue({
+      enabled: true,
+      cron_expr: '0 3 * * *',
+      retain_days: 7,
+      retain_count: 5,
+      critical_only: false,
+      server_critical_forced: true,
+      age_encryption_enabled: true,
+    })
+
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    const scheduleToggle = wrapper.find('[data-testid="schedule-critical-only-toggle"]')
+    const manualToggle = wrapper.find('[data-testid="manual-critical-only-toggle"]')
+    const manualLabel = wrapper.find('[data-testid="manual-critical-only-label"]')
+    expect(scheduleToggle.attributes('aria-checked')).toBe('true')
+    expect(scheduleToggle.attributes('disabled')).toBeDefined()
+    expect(manualToggle.attributes('aria-checked')).toBe('true')
+    expect(manualToggle.attributes('disabled')).toBeDefined()
+    expect(manualLabel.attributes('for')).toBe(manualToggle.attributes('id'))
+    expect(manualLabel.element.contains(manualToggle.element)).toBe(false)
+    expect(wrapper.text()).toContain('admin.backup.schedule.criticalForcedByServer')
+    expect(wrapper.text()).toContain('admin.backup.schedule.ageEncryptionActive')
+
+    // 锁定态点击两个开关都不得把状态改回 false
+    await scheduleToggle.trigger('click')
+    await manualToggle.trigger('click')
+    await flushPromises()
+    expect(scheduleToggle.attributes('aria-checked')).toBe('true')
+    expect(manualToggle.attributes('aria-checked')).toBe('true')
+  })
+
+  it('关键表或加密备份显示标识并禁用在线恢复按钮，全量明文备份（含特殊前缀路径）仍可恢复', async () => {
+    listBackups.mockResolvedValue({
+      items: [
+        {
+          ...baseRecord('full-plain'),
+          s3_key: 'backups/.critical.sql.gz/2026/11/26/full-plain.sql.gz',
+        },
+        {
+          ...baseRecord('critical-plain'),
+          file_name: 'sub2api_20261126_030000.critical.sql.gz',
+          s3_key: 'backups/sub2api_20261126_030000.critical.sql.gz',
+        },
+        {
+          ...baseRecord('encrypted-only'),
+          file_name: 'sub2api_20261126_040000.sql.gz.age',
+          s3_key: 'backups/sub2api_20261126_040000.sql.gz.age',
+          encrypted: true,
+        },
+      ],
+    })
+
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows).toHaveLength(3)
+
+    // 第 1 行：全量明文（即便 S3 前缀包含 .critical.sql.gz）-> 无关键表/加密标签，恢复按钮可用
+    expect(rows[0].text()).not.toContain('admin.backup.scope.critical')
+    expect(rows[0].text()).not.toContain('admin.backup.scope.encrypted')
+    const fullRestoreBtn = rows[0].findAll('button').find(b => b.text().includes('admin.backup.actions.restore'))
+    expect(fullRestoreBtn).toBeDefined()
+    expect(fullRestoreBtn!.attributes('disabled')).toBeUndefined()
+
+    // 第 2 行：关键表（无 scope 标志时靠后缀兜底）-> 显示关键表标签，恢复按钮禁用并带提示
+    expect(rows[1].text()).toContain('admin.backup.scope.critical')
+    const criticalRestoreBtn = rows[1].findAll('button').find(b => b.text().includes('admin.backup.actions.restore'))
+    expect(criticalRestoreBtn).toBeDefined()
+    expect(criticalRestoreBtn!.attributes('disabled')).toBeDefined()
+    expect(criticalRestoreBtn!.attributes('title')).toBe('admin.backup.actions.restoreManualOnly')
+
+    // 第 3 行：加密 -> 显示已加密标签，恢复按钮禁用
+    expect(rows[2].text()).toContain('admin.backup.scope.encrypted')
+    const encryptedRestoreBtn = rows[2].findAll('button').find(b => b.text().includes('admin.backup.actions.restore'))
+    expect(encryptedRestoreBtn).toBeDefined()
+    expect(encryptedRestoreBtn!.attributes('disabled')).toBeDefined()
   })
 })

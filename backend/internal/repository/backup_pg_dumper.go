@@ -20,7 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
-// PgDumper implements service.DBDumper using pg_dump/psql
+// PgDumper implements service.ScopedDBDumper (and service.DBDumper) using pg_dump/psql
 type PgDumper struct {
 	cfg            *config.DatabaseConfig
 	backup         config.BackupConfig
@@ -34,6 +34,15 @@ type PgDumper struct {
 	// Nil skips the check; NewPgDumper sets exec.LookPath.
 	lookPath func(string) (string, error)
 }
+
+var _ service.ScopedDBDumper = (*PgDumper)(nil)
+
+// runtimeExcludeTablePattern validates per-run exclude table entries passed via
+// DumpWithOptions. Allows an optional exact schema prefix plus a table name that
+// may contain '*' (used by built-in partition patterns such as public.usage_logs_*),
+// while rejecting schema wildcards, catch-all '*', options, whitespace, quotes,
+// or SQL/shell metacharacters.
+var runtimeExcludeTablePattern = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_*]*$`)
 
 // NewPgDumper creates a new PgDumper
 func NewPgDumper(cfg *config.Config, db *sql.DB) service.DBDumper {
@@ -50,15 +59,21 @@ func NewPgDumper(cfg *config.Config, db *sql.DB) service.DBDumper {
 // a stuck DDL cannot hold the backup (and the migration advisory lock) forever.
 const pgDumpLockWaitTimeout = "30s"
 
-// pgDumpCommand returns the program and arguments for pg_dump.
+// pgDumpCommand returns the program and arguments for pg_dump using the
+// deployment-configured exclude list.
+func (d *PgDumper) pgDumpCommand() (string, []string) {
+	return d.pgDumpCommandForExcludes(d.backup.ExcludeTableData)
+}
+
+// pgDumpCommandForExcludes returns the program and arguments for pg_dump.
 //
-// Without backup.exclude_table_data this is the original full dump, argument for
+// Without excludeTableData this is the original full dump, argument for
 // argument. With it, the dump is a partial snapshot: every table's schema is kept
 // but the listed tables' rows are skipped. --clean/--if-exists are deliberately
 // dropped there: replaying such a snapshot into a live database must fail on the
 // first "already exists" and roll back under --single-transaction, rather than
 // DROP the very tables whose data the snapshot does not contain.
-func (d *PgDumper) pgDumpCommand() (string, []string) {
+func (d *PgDumper) pgDumpCommandForExcludes(excludeTableData []string) (string, []string) {
 	args := []string{
 		"-h", d.cfg.Host,
 		"-p", fmt.Sprintf("%d", d.cfg.Port),
@@ -69,10 +84,10 @@ func (d *PgDumper) pgDumpCommand() (string, []string) {
 	}
 	name := d.pgDumpBinary()
 
-	if len(d.backup.ExcludeTableData) == 0 {
+	if len(excludeTableData) == 0 {
 		return name, append(args, "--clean", "--if-exists")
 	}
-	for _, table := range d.backup.ExcludeTableData {
+	for _, table := range excludeTableData {
 		args = append(args, "--exclude-table-data="+table)
 	}
 	args = append(args, "--lock-wait-timeout="+pgDumpLockWaitTimeout)
@@ -120,12 +135,35 @@ func (d *PgDumper) useNice() bool {
 	return err == nil
 }
 
-// Dump executes pg_dump and returns a streaming reader of the output
+// Dump executes pg_dump with the deployment-configured backup settings and
+// returns a streaming reader of the output.
 func (d *PgDumper) Dump(ctx context.Context) (io.ReadCloser, error) {
+	return d.dumpWithExcludeTableData(ctx, d.backup.ExcludeTableData)
+}
+
+// DumpWithOptions executes pg_dump with per-run dump options. When deployment
+// config already sets backup.exclude_table_data, that list remains authoritative
+// and cannot be weakened by runtime options.
+func (d *PgDumper) DumpWithOptions(ctx context.Context, opts service.BackupDumpOptions) (io.ReadCloser, error) {
+	if len(d.backup.ExcludeTableData) > 0 {
+		return d.dumpWithExcludeTableData(ctx, d.backup.ExcludeTableData)
+	}
+	var exclude []string
+	for i, raw := range opts.ExcludeTableData {
+		table := strings.TrimSpace(raw)
+		if table == "" || !runtimeExcludeTablePattern.MatchString(table) {
+			return nil, fmt.Errorf("invalid exclude_table_data entry at index %d", i)
+		}
+		exclude = append(exclude, table)
+	}
+	return d.dumpWithExcludeTableData(ctx, exclude)
+}
+
+func (d *PgDumper) dumpWithExcludeTableData(ctx context.Context, excludeTableData []string) (io.ReadCloser, error) {
 	if d.db == nil {
 		return nil, errors.New("acquire backup migration lock: nil sql db")
 	}
-	name, args := d.pgDumpCommand()
+	name, args := d.pgDumpCommandForExcludes(excludeTableData)
 	if err := d.checkExecutables(name); err != nil {
 		return nil, err
 	}

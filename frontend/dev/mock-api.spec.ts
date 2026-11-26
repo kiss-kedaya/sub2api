@@ -385,4 +385,39 @@ describe('local custom usage fixtures', () => {
     expect(JSON.stringify(saved)).not.toContain('do-not-echo')
     expect(JSON.stringify(api.handle('GET', configPath(), query()))).not.toContain('do-not-echo')
   })
+  it('supports profile API key creation verification switch, Bark settings and passkeys in preview', () => {
+    const api = createMockApi(date)
+    expect(api.handle('GET', '/api/v1/user/security/verification-factors', query())).toMatchObject({
+      password_available: true,
+      create_verification_required: false,
+      create_verification_mode: 'auto',
+      create_verification_configurable: true,
+      create_verification_default_required: false,
+    })
+
+    // Raising protection to "on" succeeds without verification.
+    expect(api.handle('PUT', '/api/v1/user/security/api-key-create-verification', query(), { mode: 'on' })).toMatchObject({
+      create_verification_required: true,
+      create_verification_mode: 'on',
+      create_verification_configurable: true,
+    })
+
+    // Stepping down without verification is rejected; providing verification succeeds.
+    expect(() => api.handle('PUT', '/api/v1/user/security/api-key-create-verification', query(), { mode: 'auto' })).toThrow(PreviewError)
+    expect(api.handle('PUT', '/api/v1/user/security/api-key-create-verification', query(), {
+      mode: 'auto',
+      verification: { method: 'password', password: 'demo' },
+    })).toMatchObject({
+      create_verification_required: false,
+      create_verification_mode: 'auto',
+    })
+    expect(() => api.handle('PUT', '/api/v1/user/security/api-key-create-verification', query(), { mode: 'invalid' })).toThrow(PreviewError)
+
+    // Bark settings and passkeys load cleanly for the Profile tabs.
+    expect(api.handle('GET', '/api/v1/user/bark', query())).toEqual({ data: { configured: false, enabled: false } })
+    expect(api.handle('PUT', '/api/v1/user/bark', query(), { device_key: 'demo-key', enabled: true })).toEqual({ data: { configured: true, enabled: true } })
+    expect(api.handle('GET', '/api/v1/user/bark', query())).toEqual({ data: { configured: true, enabled: true } })
+    expect(api.handle('PUT', '/api/v1/user/bark', query(), { device_key: '', enabled: false })).toEqual({ data: { configured: false, enabled: false } })
+    expect(api.handle('GET', '/api/v1/user/passkeys', query())).toEqual([])
+  })
 })

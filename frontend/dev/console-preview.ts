@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import vue from '@vitejs/plugin-vue'
@@ -25,6 +25,44 @@ import { createMockApi, PreviewError } from './mock-api'
 
 export const PREVIEW_MODE = 'console-preview'
 const BODY_LIMIT = 64 * 1024
+const TICKET_UPLOAD_LIMIT = 5 * 1024 * 1024
+
+// Real bundled WebP screenshot (with valid PNG fallback) for seeded demo ticket attachment preview.
+const DEMO_TICKET_IMAGE = (() => {
+  const samplePath = fileURLToPath(new URL('../src/assets/docs/agent-setup/site-create-key.webp', import.meta.url))
+  if (existsSync(samplePath)) {
+    return { contentType: 'image/webp', data: readFileSync(samplePath) }
+  }
+  return {
+    contentType: 'image/png',
+    data: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGNkaGBgYGBgAAAABQABYf1lOAAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  }
+})()
+
+function parseMultipartImage(raw: Buffer, contentType: string): { fileName: string; mime: string; data: Buffer } {
+  const match = contentType.match(/boundary=(?:"([^"]+)"|([^;\s]+))/i)
+  const boundary = match?.[1] || match?.[2]
+  if (!boundary) throw new PreviewError(400, '缺少 multipart boundary')
+  const marker = Buffer.from(`--${boundary}`)
+  const start = raw.indexOf(marker)
+  if (start < 0) throw new PreviewError(400, '无效的 multipart 请求体')
+  const headerStart = start + marker.length + 2
+  const sep = raw.indexOf(Buffer.from('\r\n\r\n'), headerStart)
+  if (sep < 0) throw new PreviewError(400, '无效的上传分段')
+  const headersText = raw.subarray(headerStart, sep).toString('utf8')
+  const nextBoundary = raw.indexOf(Buffer.from(`\r\n--${boundary}`), sep + 4)
+  const bodyBuf = nextBoundary > sep + 4 ? raw.subarray(sep + 4, nextBoundary) : raw.subarray(sep + 4)
+  const nameMatch = headersText.match(/filename="([^"]+)"/i)
+  const mimeMatch = headersText.match(/content-type:\s*([^\r\n;]+)/i)
+  return {
+    fileName: nameMatch?.[1] || 'screenshot.png',
+    mime: (mimeMatch?.[1] || 'image/png').trim().toLowerCase(),
+    data: Buffer.from(bodyBuf),
+  }
+}
 
 function send(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
@@ -63,6 +101,10 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 export function consolePreviewPlugin(): Plugin {
   const api = createMockApi()
   let previewTheme: SiteThemeSettings = { ...DEFAULT_SITE_THEME }
+  let nextAttachmentId = 502
+  const ticketAttachmentBlobs = new Map<number, { contentType: string; data: Buffer }>([
+    [501, DEMO_TICKET_IMAGE],
+  ])
   let active = false
   return {
     name: 'local-console-preview',
@@ -128,6 +170,67 @@ export function consolePreviewPlugin(): Plugin {
           return
         }
         if (!/^\/(api|v1|setup)(\/|$)/i.test(path)) { next(); return }
+        if (req.method === 'POST' && /^\/api\/v1\/(?:admin\/)?tickets\/attachments$/.test(path)) {
+          void (async () => {
+            try {
+              const ct = String(req.headers['content-type'] || '')
+              if (!ct.toLowerCase().startsWith('multipart/form-data')) {
+                throw new PreviewError(415, '图片上传仅接受 multipart/form-data')
+              }
+              const chunks: Buffer[] = []
+              let size = 0
+              for await (const chunk of req) {
+                size += Buffer.byteLength(chunk)
+                if (size > TICKET_UPLOAD_LIMIT) throw new PreviewError(413, '演示图片超过 5MB 上限')
+                chunks.push(Buffer.from(chunk))
+              }
+              const parsed = parseMultipartImage(Buffer.concat(chunks), ct)
+              const id = nextAttachmentId++
+              const safeMime = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(parsed.mime)
+                ? parsed.mime
+                : 'image/png'
+              ticketAttachmentBlobs.set(id, { contentType: safeMime, data: parsed.data })
+              const meta = {
+                id,
+                file_name: parsed.fileName,
+                content_type: safeMime,
+                size_bytes: parsed.data.length,
+                width: 640,
+                height: 360,
+                created_at: new Date().toISOString(),
+              }
+              api.registerTicketAttachment(meta)
+              send(res, 200, { code: 0, message: '本地演示数据', data: meta })
+            } catch (error) {
+              const status = error instanceof PreviewError ? error.status : 500
+              send(res, status, { code: status, message: error instanceof PreviewError ? error.message : '演示图片上传失败' })
+            }
+          })()
+          return
+        }
+        const delAttachment = path.match(/^\/api\/v1\/(?:admin\/)?tickets\/attachments\/(\d+)$/)
+        if (req.method === 'DELETE' && delAttachment) {
+          const id = Number(delAttachment[1])
+          ticketAttachmentBlobs.delete(id)
+          api.unregisterTicketAttachment(id)
+          send(res, 200, { code: 0, message: '本地演示数据', data: { deleted: true } })
+          return
+        }
+        const getAttachment = path.match(/^\/api\/v1\/(?:admin\/)?tickets\/\d+\/attachments\/(\d+)$/)
+        if (req.method === 'GET' && getAttachment) {
+          const blob = ticketAttachmentBlobs.get(Number(getAttachment[1]))
+          if (!blob) {
+            send(res, 404, { code: 404, message: '演示工单图片不存在' })
+            return
+          }
+          res.writeHead(200, {
+            'Content-Type': blob.contentType,
+            'Cache-Control': 'private, no-store',
+            'X-Content-Type-Options': 'nosniff',
+          })
+          res.end(blob.data)
+          return
+        }
         void (async () => {
           try {
             const body = await readBody(req)

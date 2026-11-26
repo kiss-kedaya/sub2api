@@ -122,6 +122,10 @@ export default {
         title: 'Scheduled Backup',
         description: 'Configure automatic scheduled backups',
         enabled: 'Enable Scheduled Backup',
+        criticalOnly: 'Critical Tables Only',
+        criticalOnlyHint: 'Preserves all table schemas and backs up core business data (users, balances, API keys, accounts, groups, orders, settings, etc.), while skipping high-volume log, monitoring, capture/trace, and ephemeral tables. Critical snapshots must be restored manually into an empty database and cannot use one-click online restore.',
+        criticalForcedByServer: 'Critical snapshot mode is enforced by server config (backup.exclude_table_data). All scheduled and manual backups use the server exclude list.',
+        ageEncryptionActive: 'Server age public-key encryption is active. Backup archives are encrypted (.age) before upload to S3.',
         cronExpr: 'Cron Expression',
         cronHint: 'e.g. "0 2 * * *" means every day at 2:00 AM',
         retainDays: 'Backup Expire Days',
@@ -133,6 +137,7 @@ export default {
       operations: {
         title: 'Backup Records',
         description: 'Create manual backups and manage existing backup records',
+        criticalOnly: 'Critical Only',
         createBackup: 'Create Backup',
         backing: 'Backing up...',
         backupCreated: 'Backup created successfully',
@@ -142,6 +147,10 @@ export default {
         backupFailed: 'Backup failed',
         restoreRunning: 'Restore in progress...',
         restoreFailed: 'Restore failed',
+      },
+      scope: {
+        critical: 'Critical',
+        encrypted: 'Encrypted'
       },
       columns: {
         status: 'Status',
@@ -177,6 +186,7 @@ export default {
         partLabel: 'Part {index}',
         downloadFailed: 'Download URL is empty',
         restore: 'Restore',
+        restoreManualOnly: 'Critical or encrypted snapshots must be restored manually into an empty database',
         restoreConfirm: 'Are you sure you want to restore from this backup? This will overwrite the current database!',
         restorePasswordPrompt: 'Please enter your admin password to confirm the restore operation',
         restoreSuccess: 'Database restored successfully',
