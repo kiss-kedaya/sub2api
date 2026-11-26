@@ -410,7 +410,9 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
-			channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, partial.UpstreamModel)
+			channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, partial.UpstreamModel).Detached()
+			// 结果里的字符串可能是请求体的子串：复制后，排队的计费任务不再钉住请求体。
+			partial.DetachRequestStrings()
 			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 					Result:             partial,

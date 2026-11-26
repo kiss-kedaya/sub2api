@@ -257,6 +257,9 @@ func (h *GatewayHandler) recordSystemOneUsage(c *gin.Context, apiKey *service.AP
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 	sessionID := service.ExtractClientSessionID(c)
 	requestPayloadHash := service.HashUsageRequestPayload(body)
+	// worker 在请求结束后才跑：闭包里不能再带着 gin.Context（它连着整份请求体）。
+	channelUsageFields := clientRequestedUsageFields(c, mapping, model, result.UpstreamModel).Detached()
+	result.ForwardResult.DetachRequestStrings()
 
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
@@ -274,7 +277,7 @@ func (h *GatewayHandler) recordSystemOneUsage(c *gin.Context, apiKey *service.AP
 			RequestPayloadHash: requestPayloadHash,
 			APIKeyService:      h.apiKeyService,
 			QuotaPlatform:      quotaPlatform,
-			ChannelUsageFields: clientRequestedUsageFields(c, mapping, model, result.UpstreamModel),
+			ChannelUsageFields: channelUsageFields,
 		}); err != nil {
 			logger.L().With(
 				zap.String("component", "handler.gateway.systemone"),

@@ -378,6 +378,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			tierPolicy := service.OpenAITierBillingPolicyFromRequest(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+			// worker 在请求结束后才跑：闭包里不能再带着 gin.Context（它连着整份请求体）。
+			channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel).Detached()
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
@@ -393,7 +395,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					QuotaPlatform:      quotaPlatform,
 					TierPolicy:         tierPolicy,
 					SessionID:          sessionID,
-					ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel),
+					ChannelUsageFields: channelUsageFields,
 					PricingAt:          pricingAt,
 					CyberBlocked:       cyberBlocked,
 				}); err != nil {

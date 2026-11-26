@@ -199,7 +199,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 	body = parsedReq.Body.Bytes()
-	reqModel := parsedReq.Model
+	// parsedReq.Model 是请求体里的零拷贝子串：它会被 usage 任务、日志、结果带到请求之外，
+	// 一个 26 字节的模型名就能把整份（可达 MB 级的）请求体钉在内存里，所以只留一份拷贝。
+	reqModel := strings.Clone(parsedReq.Model)
 	finishModelResponse := service.InstallRequestedModelResponse(c, "anthropic", clientRequestModel, func() bool {
 		return service.ContextShouldReturnRequestedModel(c)
 	})
@@ -227,7 +229,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			return
 		}
 		body = parsedReq.Body.Bytes()
-		reqModel = parsedReq.Model
+		reqModel = strings.Clone(parsedReq.Model)
 		reqStream = parsedReq.Stream
 	}
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
@@ -636,7 +638,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				forceCacheBilling := fs.ForceCacheBilling
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 				sessionID := service.ExtractClientSessionID(c)
-				channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, partial.UpstreamModel)
+				channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, partial.UpstreamModel).Detached()
+				// 结果里的字符串可能是请求体的子串：复制后，排队的计费任务不再钉住请求体。
+				partial.DetachRequestStrings()
 				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 					if recordErr := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 						Result:             partial,
@@ -1020,7 +1024,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			attemptBody := attemptParsedReq.Body.Bytes()
 
 			// 转发请求 - 根据账号平台分流
-			c.Set("parsed_request", attemptParsedReq)
 			var result *service.ForwardResult
 			requestCtx := c.Request.Context()
 			if fs.SwitchCount > 0 {
@@ -1083,6 +1086,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				forceCacheBilling := fs.ForceCacheBilling
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), currentAPIKey)
 				sessionID := service.ExtractClientSessionID(c)
+				// worker 在请求结束后才跑：闭包里不能再带着 gin.Context（它连着整份请求体）。
+				channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel).Detached()
+				// result 里的模型名等字符串可能是请求体的子串：复制后，排队的计费任务不再钉住请求体。
+				result.DetachRequestStrings()
 				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 					if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 						Result:             result,
@@ -1100,7 +1107,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						RequestPayloadHash: requestPayloadHash,
 						ForceCacheBilling:  forceCacheBilling,
 						APIKeyService:      h.apiKeyService,
-						ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+						ChannelUsageFields: channelUsageFields,
 					}); err != nil {
 						logger.L().With(
 							zap.String("component", "handler.gateway.messages"),
