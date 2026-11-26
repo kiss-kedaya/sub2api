@@ -1,8 +1,13 @@
 package routes
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
+	"mime/multipart"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -37,9 +42,11 @@ func (r *ticketRouteUsers) UpdateUserLastActiveAt(context.Context, int64, time.T
 
 type ticketRouteRepo struct {
 	service.TicketRepository
-	filter   service.TicketFilter
-	created  *service.CreateTicketInput
-	lastRead int64
+	filter    service.TicketFilter
+	created   *service.CreateTicketInput
+	lastRead  int64
+	uploaded  *service.TicketAttachmentRecord
+	deletedID int64
 }
 
 func (r *ticketRouteRepo) List(_ context.Context, a service.TicketActor, f service.TicketFilter) ([]service.Ticket, int64, error) {
@@ -71,6 +78,38 @@ func (r *ticketRouteRepo) MarkRead(_ context.Context, a service.TicketActor, id,
 		return service.ErrTicketNotFound
 	}
 	r.lastRead = last
+	return nil
+}
+func (r *ticketRouteRepo) UploadAttachment(_ context.Context, _ service.TicketActor, rec service.TicketAttachmentRecord) (*service.TicketAttachment, error) {
+	r.uploaded = &rec
+	return &service.TicketAttachment{
+		ID:          55,
+		FileName:    rec.FileName,
+		ContentType: rec.ContentType,
+		SizeBytes:   rec.SizeBytes,
+		Width:       rec.Width,
+		Height:      rec.Height,
+		CreatedAt:   time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC),
+	}, nil
+}
+func (r *ticketRouteRepo) GetAttachment(_ context.Context, a service.TicketActor, ticketID, attachmentID int64) (*service.TicketAttachmentContent, error) {
+	if ticketID != 10 || attachmentID != 55 || (!a.Admin && a.UserID != 7) {
+		return nil, service.ErrTicketAttachmentNotFound
+	}
+	return &service.TicketAttachmentContent{
+		TicketAttachment: service.TicketAttachment{
+			ID:          55,
+			FileName:    "shot.png",
+			ContentType: "image/png",
+			SizeBytes:   4,
+			Width:       1,
+			Height:      1,
+		},
+		Data: []byte{0x89, 0x50, 0x4e, 0x47},
+	}, nil
+}
+func (r *ticketRouteRepo) DeletePendingAttachment(_ context.Context, _ service.TicketActor, attachmentID int64) error {
+	r.deletedID = attachmentID
 	return nil
 }
 
@@ -227,9 +266,144 @@ func TestObserverCannotReadRequesterDetailsOrReplyThroughAdminTickets(t *testing
 	r, tokens, _ := ticketRouteEnvironment(t)
 	for _, test := range []struct{ method, path string }{
 		{"GET", "/api/v1/admin/tickets"}, {"GET", "/api/v1/admin/tickets/10"}, {"PATCH", "/api/v1/admin/tickets/10"},
+		{"POST", "/api/v1/admin/tickets/attachments"}, {"GET", "/api/v1/admin/tickets/10/attachments/55"},
+		{"DELETE", "/api/v1/admin/tickets/attachments/55"},
 	} {
 		w := ticketRouteRequest(r, test.method, test.path, tokens[9], `{"status":"closed"}`)
 		require.Equal(t, 403, w.Code)
 		require.NotContains(t, w.Body.String(), "requester@example.test")
 	}
+}
+
+func ticketMultipartUpload(t *testing.T, r *gin.Engine, path, token, field, fileName string, content []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if field != "" {
+		part, err := writer.CreateFormFile(field, fileName)
+		require.NoError(t, err)
+		_, err = part.Write(content)
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+	req := httptest.NewRequest("POST", path, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func TestTicketRoutesAttachmentsAndUnreadFilter(t *testing.T) {
+	r, tokens, repo := ticketRouteEnvironment(t)
+
+	// Unread tab filter passes through both user and admin routes.
+	w := ticketRouteRequest(r, "GET", "/api/v1/tickets?status=unread", tokens[7], "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.Equal(t, "unread", repo.filter.Status)
+	w = ticketRouteRequest(r, "GET", "/api/v1/admin/tickets?status=unread", tokens[1], "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.Equal(t, "unread", repo.filter.Status)
+
+	// Valid PNG upload works on both user and admin attachment routes.
+	img := image.NewRGBA(image.Rect(0, 0, 8, 6))
+	img.Set(0, 0, color.RGBA{R: 10, G: 20, B: 30, A: 255})
+	var pngBuf bytes.Buffer
+	require.NoError(t, png.Encode(&pngBuf, img))
+
+	w = ticketMultipartUpload(t, r, "/api/v1/tickets/attachments", tokens[7], "file", "error.png", pngBuf.Bytes())
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"id":55`)
+	require.Contains(t, w.Body.String(), `"content_type":"image/png"`)
+	require.Equal(t, 8, repo.uploaded.Width)
+	require.Equal(t, 6, repo.uploaded.Height)
+
+	w = ticketMultipartUpload(t, r, "/api/v1/admin/tickets/attachments", tokens[1], "file", "admin.png", pngBuf.Bytes())
+	require.Equal(t, 200, w.Code, w.Body.String())
+
+	// Rejects unauthorized, non-admin on admin route, SVG payload, and missing file.
+	w = ticketMultipartUpload(t, r, "/api/v1/tickets/attachments", "", "file", "error.png", pngBuf.Bytes())
+	require.Equal(t, 401, w.Code)
+	w = ticketMultipartUpload(t, r, "/api/v1/admin/tickets/attachments", tokens[7], "file", "error.png", pngBuf.Bytes())
+	require.Equal(t, 403, w.Code)
+	w = ticketMultipartUpload(t, r, "/api/v1/tickets/attachments", tokens[7], "file", "xss.svg", []byte(`<svg onload="alert(1)"/>`))
+	require.Equal(t, 400, w.Code)
+	w = ticketMultipartUpload(t, r, "/api/v1/tickets/attachments", tokens[7], "", "", nil)
+	require.Equal(t, 400, w.Code)
+
+	// Image-only create and reply work via JSON attachment_ids.
+	w = ticketRouteRequest(r, "POST", "/api/v1/tickets", tokens[7], `{"subject":"Screen","content":"","category":"api","priority":"normal","client_id":"6b7a9b04-1952-491c-ae6d-a2da990d8a8b","attachment_ids":[55]}`)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.Equal(t, []int64{55}, repo.created.AttachmentIDs)
+	w = ticketRouteRequest(r, "POST", "/api/v1/tickets/10/replies", tokens[7], `{"content":"","client_id":"6b7a9b04-1952-491c-ae6d-a2da990d8a8b","attachment_ids":[55]}`)
+	require.Equal(t, 200, w.Code, w.Body.String())
+
+	// GetAttachment enforces auth, ownership isolation, ID validation, and sets hardening headers.
+	w = ticketRouteRequest(r, "GET", "/api/v1/tickets/10/attachments/55", "", "")
+	require.Equal(t, 401, w.Code)
+	w = ticketRouteRequest(r, "GET", "/api/v1/tickets/10/attachments/55", tokens[8], "")
+	require.Equal(t, 404, w.Code)
+	w = ticketRouteRequest(r, "GET", "/api/v1/tickets/10/attachments/bad", tokens[7], "")
+	require.Equal(t, 400, w.Code)
+	w = ticketRouteRequest(r, "GET", "/api/v1/tickets/10/attachments/55", tokens[7], "")
+	require.Equal(t, 200, w.Code)
+	require.Equal(t, "image/png", w.Header().Get("Content-Type"))
+	require.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+	require.Equal(t, "default-src 'none'; sandbox", w.Header().Get("Content-Security-Policy"))
+	require.Equal(t, "private, no-store", w.Header().Get("Cache-Control"))
+	require.Equal(t, "Authorization, Cookie", w.Header().Get("Vary"))
+	require.Equal(t, []byte{0x89, 0x50, 0x4e, 0x47}, w.Body.Bytes())
+	w = ticketRouteRequest(r, "GET", "/api/v1/admin/tickets/10/attachments/55", tokens[1], "")
+	require.Equal(t, 200, w.Code)
+	w = ticketRouteRequest(r, "GET", "/api/v1/admin/tickets/10/attachments/55", tokens[7], "")
+	require.Equal(t, 403, w.Code)
+
+	// DeletePendingAttachment enforces auth, admin role, and ID validation.
+	require.Equal(t, 401, ticketRouteRequest(r, "DELETE", "/api/v1/tickets/attachments/55", "", "").Code)
+	require.Equal(t, 400, ticketRouteRequest(r, "DELETE", "/api/v1/tickets/attachments/bad", tokens[7], "").Code)
+	require.Equal(t, 403, ticketRouteRequest(r, "DELETE", "/api/v1/admin/tickets/attachments/55", tokens[7], "").Code)
+	w = ticketRouteRequest(r, "DELETE", "/api/v1/tickets/attachments/55", tokens[7], "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.Equal(t, int64(55), repo.deletedID)
+	w = ticketRouteRequest(r, "DELETE", "/api/v1/admin/tickets/attachments/88", tokens[1], "")
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.Equal(t, int64(88), repo.deletedID)
+}
+
+func TestTicketRoutesAuditMiddlewareRestoresLargeMultipartUpload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	users := &ticketRouteUsers{users: map[int64]*service.User{
+		7: {ID: 7, Role: service.RoleUser, Status: service.StatusActive, TokenVersion: 1},
+	}}
+	cfg := &config.Config{}
+	cfg.JWT.Secret = "ticket-tests-only-local-signing-key"
+	cfg.JWT.AccessTokenExpireMinutes = 60
+	auth := service.NewAuthService(nil, users, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+	userService := service.NewUserService(users, nil, nil, nil)
+	repo := &ticketRouteRepo{}
+	h := &handler.Handlers{Admin: &handler.AdminHandlers{}, Ticket: handler.NewTicketHandler(service.NewTicketService(repo, users))}
+	auditSvc := service.NewAuditLogService(nil, nil)
+	r := gin.New()
+	v1 := r.Group("/api/v1")
+	RegisterUserRoutes(v1, h, middleware.NewJWTAuthMiddleware(auth, userService, nil, nil), middleware.NewAuditLogMiddleware(auditSvc), nil, nil, nil)
+	token, err := auth.GenerateToken(context.Background(), users.users[7])
+	require.NoError(t, err)
+
+	// Build a valid PNG larger than AuditRequestBodyCaptureLimit so audit
+	// middleware reads a prefix and restores the remainder via io.MultiReader.
+	img := image.NewRGBA(image.Rect(0, 0, 300, 300))
+	img.SetRGBA(0, 0, color.RGBA{R: 12, G: 34, B: 56, A: 255})
+	var pngBuf bytes.Buffer
+	enc := png.Encoder{CompressionLevel: png.NoCompression}
+	require.NoError(t, enc.Encode(&pngBuf, img))
+	require.Greater(t, pngBuf.Len(), service.AuditRequestBodyCaptureLimit)
+
+	w := ticketMultipartUpload(t, r, "/api/v1/tickets/attachments", token, "file", "large.png", pngBuf.Bytes())
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.NotNil(t, repo.uploaded)
+	require.Equal(t, pngBuf.Len(), repo.uploaded.SizeBytes)
+	require.Equal(t, 300, repo.uploaded.Width)
+	require.Equal(t, 300, repo.uploaded.Height)
 }

@@ -1,10 +1,14 @@
 package repository
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"net/url"
 	"os"
 	"strconv"
@@ -22,7 +26,7 @@ import (
 )
 
 // Run with TICKET_TEST_DATABASE_URL set to an explicitly supplied local test DB.
-// Only an isolated generated schema is changed, and only migration 245 is applied.
+// Only an isolated generated schema is changed, and migrations 245 & 344 are applied.
 func ticketPostgres(t *testing.T) (*sql.DB, *service.TicketService, context.Context) {
 	t.Helper()
 	raw := os.Getenv("TICKET_TEST_DATABASE_URL")
@@ -63,11 +67,13 @@ func ticketPostgres(t *testing.T) (*sql.DB, *service.TicketService, context.Cont
 		INSERT INTO users (id,username,email) SELECT n, 'user' || n, 'user' || n || '@example.test' FROM generate_series(1,30) n;
 		INSERT INTO users (id,username,email,role) VALUES (99,'support99','support99@example.test','admin'), (100,'support100','support100@example.test','admin');`)
 	require.NoError(t, err)
-	ddl, err := migrations.FS.ReadFile("245_support_tickets.sql")
-	require.NoError(t, err)
-	for range 2 {
-		_, err = db.ExecContext(ctx, string(ddl))
+	for _, migration := range []string{"245_support_tickets.sql", "344_support_ticket_attachments.sql"} {
+		ddl, err := migrations.FS.ReadFile(migration)
 		require.NoError(t, err)
+		for range 2 {
+			_, err = db.ExecContext(ctx, string(ddl))
+			require.NoError(t, err)
+		}
 	}
 	repo := NewTicketRepository(db)
 	return db, service.NewTicketService(repo, &ticketPostgresUsers{db: db}), ctx
@@ -477,3 +483,90 @@ func TestTicketPostgresOwnerAndAdminAuthorization(t *testing.T) {
 }
 
 func ticketPGString(value string) *string { return &value }
+
+func ticketPGPNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	img.Set(0, 0, color.RGBA{R: 12, G: 34, B: 56, A: 255})
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, img))
+	return buf.Bytes()
+}
+
+func TestTicketPostgresUnreadFilterAndAttachments(t *testing.T) {
+	_, s, ctx := ticketPostgres(t)
+	owner := service.TicketActor{UserID: 1}
+	other := service.TicketActor{UserID: 2}
+	admin := service.TicketActor{UserID: 99, Admin: true}
+	raw := ticketPGPNG(t)
+
+	// Upload and discard a pending attachment; it can no longer be attached.
+	discarded, err := s.UploadAttachment(ctx, owner, service.UploadTicketAttachmentInput{FileName: "discard.png", Data: raw})
+	require.NoError(t, err)
+	require.NoError(t, s.DeletePendingAttachment(ctx, owner, discarded.ID))
+
+	att1, err := s.UploadAttachment(ctx, owner, service.UploadTicketAttachmentInput{FileName: "shot1.png", Data: raw})
+	require.NoError(t, err)
+
+	// Foreign user cannot attach owner's pending image.
+	otherIn := ticketPGInput()
+	otherIn.AttachmentIDs = []int64{att1.ID}
+	_, err = s.Create(ctx, other, otherIn)
+	require.ErrorIs(t, err, service.ErrTicketAttachmentInvalid)
+
+	// Owner creates an image-only ticket.
+	in := ticketPGInput()
+	in.Content = ""
+	in.AttachmentIDs = []int64{att1.ID}
+	created, err := s.Create(ctx, owner, in)
+	require.NoError(t, err)
+	require.Len(t, created.Messages, 1)
+	require.Len(t, created.Messages[0].Attachments, 1)
+	require.Equal(t, att1.ID, created.Messages[0].Attachments[0].ID)
+	require.Equal(t, service.TicketImageOnlyContent, created.Ticket.LastMessagePreview)
+
+	// Already-attached image cannot be deleted as pending or reused in another reply.
+	require.NoError(t, s.DeletePendingAttachment(ctx, owner, att1.ID))
+	_, err = s.Reply(ctx, owner, created.Ticket.ID, service.ReplyTicketInput{
+		Content:       "reuse",
+		ClientID:      uuid.NewString(),
+		AttachmentIDs: []int64{att1.ID},
+	})
+	require.ErrorIs(t, err, service.ErrTicketAttachmentInvalid)
+
+	// Unread folder lists this ticket for admin (not yet read) and not for owner.
+	adminUnread, total, err := s.List(ctx, admin, service.TicketFilter{PaginationParams: pagination.DefaultPagination(), Status: "unread"})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, created.Ticket.ID, adminUnread[0].ID)
+
+	ownerUnread, total, err := s.List(ctx, owner, service.TicketFilter{PaginationParams: pagination.DefaultPagination(), Status: "unread"})
+	require.NoError(t, err)
+	require.Zero(t, total)
+	require.Empty(t, ownerUnread)
+
+	// Admin reads, then replies with an admin-uploaded image; owner can view it and sees ticket in Unread.
+	_, err = s.Detail(ctx, admin, created.Ticket.ID, 0)
+	require.NoError(t, err)
+	require.NoError(t, s.MarkRead(ctx, admin, created.Ticket.ID, created.Ticket.LastMessageID))
+	adminAtt, err := s.UploadAttachment(ctx, admin, service.UploadTicketAttachmentInput{FileName: "admin.png", Data: raw})
+	require.NoError(t, err)
+	replied, err := s.Reply(ctx, admin, created.Ticket.ID, service.ReplyTicketInput{
+		Content:       "check this",
+		ClientID:      uuid.NewString(),
+		AttachmentIDs: []int64{adminAtt.ID},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "[图片] check this", replied.Ticket.LastMessagePreview)
+
+	got, err := s.GetAttachment(ctx, owner, created.Ticket.ID, adminAtt.ID)
+	require.NoError(t, err)
+	require.Equal(t, raw, got.Data)
+	_, err = s.GetAttachment(ctx, other, created.Ticket.ID, adminAtt.ID)
+	require.ErrorIs(t, err, service.ErrTicketAttachmentNotFound)
+
+	ownerUnread, total, err = s.List(ctx, owner, service.TicketFilter{PaginationParams: pagination.DefaultPagination(), Status: "unread"})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, created.Ticket.ID, ownerUnread[0].ID)
+}

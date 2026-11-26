@@ -50,16 +50,18 @@ type Ticket struct {
 }
 
 type TicketMessage struct {
-	ID         int64          `json:"id"`
-	TicketID   int64          `json:"ticket_id"`
-	AuthorID   *int64         `json:"author_id"`
-	AuthorRole string         `json:"author_role"`
-	AuthorName string         `json:"author_name"`
-	Content    string         `json:"content"`
-	Kind       string         `json:"kind"`
-	EventType  string         `json:"event_type,omitempty"`
-	EventData  map[string]any `json:"event_data,omitempty"`
-	CreatedAt  time.Time      `json:"created_at"`
+	ID            int64              `json:"id"`
+	TicketID      int64              `json:"ticket_id"`
+	AuthorID      *int64             `json:"author_id"`
+	AuthorRole    string             `json:"author_role"`
+	AuthorName    string             `json:"author_name"`
+	Content       string             `json:"content"`
+	Kind          string             `json:"kind"`
+	EventType     string             `json:"event_type,omitempty"`
+	EventData     map[string]any     `json:"event_data,omitempty"`
+	Attachments   []TicketAttachment `json:"attachments,omitempty"`
+	AttachmentIDs []int64            `json:"-"`
+	CreatedAt     time.Time          `json:"created_at"`
 }
 
 type TicketDetail struct {
@@ -117,24 +119,29 @@ type TicketFilter struct {
 }
 
 type CreateTicketInput struct {
-	Subject  string `json:"subject"`
-	Contact  string `json:"contact"`
-	Content  string `json:"content"`
-	Category string `json:"category"`
-	Priority string `json:"priority"`
-	ClientID string `json:"client_id"`
+	Subject       string  `json:"subject"`
+	Contact       string  `json:"contact"`
+	Content       string  `json:"content"`
+	Category      string  `json:"category"`
+	Priority      string  `json:"priority"`
+	ClientID      string  `json:"client_id"`
+	AttachmentIDs []int64 `json:"attachment_ids,omitempty"`
+	ImageOnly     bool    `json:"-"`
 }
 
 type AdminCreateTicketInput struct {
-	UserID  int64  `json:"user_id"`
-	Subject string `json:"subject"`
-	Content string `json:"content"`
+	UserID        int64   `json:"user_id"`
+	Subject       string  `json:"subject"`
+	Content       string  `json:"content"`
+	AttachmentIDs []int64 `json:"attachment_ids,omitempty"`
+	ImageOnly     bool    `json:"-"`
 }
 
 type ReplyTicketInput struct {
-	Content  string  `json:"content"`
-	ClientID string  `json:"client_id"`
-	Status   *string `json:"status"`
+	Content       string  `json:"content"`
+	ClientID      string  `json:"client_id"`
+	Status        *string `json:"status"`
+	AttachmentIDs []int64 `json:"attachment_ids,omitempty"`
 }
 
 type UpdateTicketInput struct {
@@ -157,9 +164,12 @@ type TicketRepository interface {
 	EmailConversation(context.Context, int64, int64) (*TicketDetail, error)
 	ProcessPendingEmail(context.Context, func(context.Context, int64, int64) error) (bool, error)
 	Create(context.Context, TicketActor, CreateTicketInput, string) (int64, error)
-	CreateForUser(context.Context, TicketActor, int64, string, string) (int64, error)
+	CreateForUser(context.Context, TicketActor, AdminCreateTicketInput) (int64, error)
 	Mutate(context.Context, TicketActor, int64, string, string, func(*Ticket) (*TicketChange, error)) error
 	MarkRead(context.Context, TicketActor, int64, int64) error
+	UploadAttachment(context.Context, TicketActor, TicketAttachmentRecord) (*TicketAttachment, error)
+	GetAttachment(context.Context, TicketActor, int64, int64) (*TicketAttachmentContent, error)
+	DeletePendingAttachment(context.Context, TicketActor, int64) error
 }
 
 type TicketService struct {
@@ -229,7 +239,7 @@ func (s *TicketService) List(ctx context.Context, actor TicketActor, filter Tick
 		return nil, 0, err
 	}
 	if filter.Page < 1 || filter.PageSize < 1 || filter.PageSize > 100 || filter.Page > math.MaxInt/filter.PageSize ||
-		(filter.Status != "" && filter.Status != "active" && !ticketStatus(filter.Status)) || (filter.Priority != "" && !ticketPriority(filter.Priority)) ||
+		(filter.Status != "" && filter.Status != "active" && filter.Status != "unread" && !ticketStatus(filter.Status)) || (filter.Priority != "" && !ticketPriority(filter.Priority)) ||
 		(filter.Category != "" && !ticketCategory(filter.Category)) || !utf8.ValidString(filter.Search) || utf8.RuneCountInString(filter.Search) > 160 || strings.ContainsRune(filter.Search, 0) {
 		return nil, 0, ticketInvalid("invalid ticket filters or pagination")
 	}
@@ -263,21 +273,33 @@ func (s *TicketService) Create(ctx context.Context, actor TicketActor, in Create
 	if actor.Admin {
 		return nil, ticketInvalid("create tickets through the user route")
 	}
+	attachmentIDs, err := ticketNormalizeAttachmentIDs(in.AttachmentIDs)
+	if err != nil {
+		return nil, err
+	}
+	in.AttachmentIDs = attachmentIDs
 	// 工单标题/正文入库前统一清洗成纯文本：存量的 <img onerror> / <svg onload>
 	// payload 就是从这里写进去的，前端一旦改成 Markdown/v-html 立刻变存储型 XSS。
 	// 清洗必须发生在 request_hash 之前，保证同一份请求的幂等哈希稳定。
 	in.Subject = textsanitize.PlainText(in.Subject)
-	in.Content = textsanitize.PlainText(in.Content)
-	if !ticketText(in.Subject, 160) || !ticketText(in.Content, 10000) || !ticketCategory(in.Category) || !ticketPriority(in.Priority) ||
+	content, imageOnly, err := ticketNormalizeMessageContent(in.Content, len(in.AttachmentIDs) > 0)
+	if err != nil {
+		return nil, err
+	}
+	in.Content = content
+	in.ImageOnly = imageOnly
+	if !ticketText(in.Subject, 160) || !ticketCategory(in.Category) || !ticketPriority(in.Priority) ||
 		!utf8.ValidString(in.Contact) || utf8.RuneCountInString(in.Contact) > 200 || strings.ContainsRune(in.Contact, 0) {
 		return nil, ticketInvalid("subject/content or category/priority is invalid")
 	}
-	var err error
 	in.ClientID, err = ticketClientID(in.ClientID)
 	if err != nil {
 		return nil, err
 	}
-	hash, err := ticketHash(in)
+	hash, err := ticketHash(struct {
+		CreateTicketInput
+		ImageOnly bool `json:"image_only,omitempty"`
+	}{CreateTicketInput: in, ImageOnly: in.ImageOnly})
 	if err != nil {
 		return nil, err
 	}
@@ -300,12 +322,19 @@ func (s *TicketService) CreateForUser(ctx context.Context, actor TicketActor, in
 	if !actor.Admin {
 		return nil, infraerrors.Forbidden("FORBIDDEN", "admin access required")
 	}
+	attachmentIDs, err := ticketNormalizeAttachmentIDs(in.AttachmentIDs)
+	if err != nil {
+		return nil, err
+	}
 	subject := textsanitize.PlainText(in.Subject)
 	if subject == "" {
 		subject = "客服消息"
 	}
-	content := textsanitize.PlainText(in.Content)
-	if in.UserID <= 0 || !ticketText(subject, 160) || !ticketText(content, 10000) {
+	content, imageOnly, err := ticketNormalizeMessageContent(in.Content, len(attachmentIDs) > 0)
+	if err != nil {
+		return nil, err
+	}
+	if in.UserID <= 0 || !ticketText(subject, 160) {
 		return nil, ticketInvalid("user, subject or content is invalid")
 	}
 	target, err := s.users.GetByID(ctx, in.UserID)
@@ -315,7 +344,13 @@ func (s *TicketService) CreateForUser(ctx context.Context, actor TicketActor, in
 	if target == nil || target.DeletedAt != nil || !target.IsActive() {
 		return nil, ticketInvalid("target user is not active")
 	}
-	id, err := s.repo.CreateForUser(ctx, actor, target.ID, subject, content)
+	id, err := s.repo.CreateForUser(ctx, actor, AdminCreateTicketInput{
+		UserID:        target.ID,
+		Subject:       subject,
+		Content:       content,
+		AttachmentIDs: attachmentIDs,
+		ImageOnly:     imageOnly,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -327,10 +362,19 @@ func (s *TicketService) Reply(ctx context.Context, actor TicketActor, id int64, 
 	if err := s.authorize(ctx, actor); err != nil {
 		return nil, err
 	}
+	attachmentIDs, err := ticketNormalizeAttachmentIDs(in.AttachmentIDs)
+	if err != nil {
+		return nil, err
+	}
+	in.AttachmentIDs = attachmentIDs
 	// 回复与新建走同一套入库清洗，管理员和用户回复都不能带标记进库。
-	in.Content = textsanitize.PlainText(in.Content)
-	if id <= 0 || !ticketText(in.Content, 10000) {
-		return nil, ticketInvalid("content must contain 1-10000 characters")
+	content, imageOnly, err := ticketNormalizeMessageContent(in.Content, len(in.AttachmentIDs) > 0)
+	if err != nil {
+		return nil, err
+	}
+	in.Content = content
+	if id <= 0 {
+		return nil, ticketInvalid("invalid ticket ID")
 	}
 	status := "open"
 	if actor.Admin {
@@ -344,14 +388,16 @@ func (s *TicketService) Reply(ctx context.Context, actor TicketActor, id int64, 
 	} else if in.Status != nil {
 		return nil, ticketInvalid("users cannot set reply status")
 	}
-	var err error
 	in.ClientID, err = ticketClientID(in.ClientID)
 	if err != nil {
 		return nil, err
 	}
 	// Explicit and implicit defaults have identical idempotency semantics.
 	in.Status = &status
-	hash, err := ticketHash(in)
+	hash, err := ticketHash(struct {
+		ReplyTicketInput
+		ImageOnly bool `json:"image_only,omitempty"`
+	}{ReplyTicketInput: in, ImageOnly: imageOnly})
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +411,14 @@ func (s *TicketService) Reply(ctx context.Context, actor TicketActor, id int64, 
 		}
 		change := &TicketChange{Ticket: t}
 		ticketSetStatus(change, actor, status)
-		change.Messages = append(change.Messages, TicketMessage{AuthorID: &actor.UserID, AuthorRole: actor.Role(), Kind: "reply", Content: in.Content})
+		change.Messages = append(change.Messages, TicketMessage{
+			AuthorID:      &actor.UserID,
+			AuthorRole:    actor.Role(),
+			Kind:          "reply",
+			Content:       in.Content,
+			EventData:     ticketAttachmentEventData(len(in.AttachmentIDs) > 0, imageOnly),
+			AttachmentIDs: in.AttachmentIDs,
+		})
 		committedChange = change
 		return change, nil
 	})

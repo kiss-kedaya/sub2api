@@ -380,3 +380,175 @@ func TestTicketRepositoryAdminDetailRefreshesRequester(t *testing.T) {
 		require.True(t, detail.Requester.RechargeStatsAvailable)
 	}
 }
+
+func TestTicketRepositoryUnreadListFilterMatchesActorRole(t *testing.T) {
+	for _, admin := range []bool{false, true} {
+		t.Run(service.TicketActor{Admin: admin}.Role(), func(t *testing.T) {
+			r, mock := ticketSQLMock(t)
+			actor := service.TicketActor{UserID: 7, Admin: admin}
+			scope := `t.user_id = \$1`
+			unread := `EXISTS \(SELECT 1 FROM support_ticket_messages m WHERE m.ticket_id = t.id AND m.kind = 'reply' AND m.author_role = 'admin' AND m.id > t.user_read_id\)`
+			if admin {
+				scope = "TRUE"
+				unread = `EXISTS \(SELECT 1 FROM support_ticket_messages m WHERE m.ticket_id = t.id AND m.kind = 'reply' AND m.author_role = 'user' AND m.id > t.admin_read_id\)`
+			}
+			count := mock.ExpectQuery(`SELECT COUNT\(\*\).*WHERE ` + scope + ` AND ` + unread)
+			list := mock.ExpectQuery(`SELECT t.id,.*WHERE ` + scope + ` AND ` + unread + `.*ORDER BY t.updated_at DESC, t.id DESC LIMIT .* OFFSET`)
+			if admin {
+				count.WithArgs()
+				list.WithArgs(20, 0)
+			} else {
+				count.WithArgs(int64(7))
+				list.WithArgs(int64(7), 20, 0)
+			}
+			count.WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			list.WillReturnRows(ticketSQLRows("open", 20)).RowsWillBeClosed()
+			items, total, err := r.List(context.Background(), actor, service.TicketFilter{PaginationParams: pagination.PaginationParams{Page: 1, PageSize: 20}, Status: "unread"})
+			require.NoError(t, err)
+			require.Equal(t, int64(1), total)
+			require.Len(t, items, 1)
+		})
+	}
+}
+
+func TestTicketRepositoryAttachmentsLifecycleAndIsolation(t *testing.T) {
+	// UploadAttachment enforces rate limit, cleans expired orphans, checks pending quota, and inserts.
+	t.Run("upload", func(t *testing.T) {
+		r, mock := ticketSQLMock(t)
+		mock.ExpectBegin()
+		mock.ExpectQuery("INSERT INTO support_ticket_rate_limits.*RETURNING count").WithArgs(int64(7), "write", 20).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+		mock.ExpectExec("DELETE FROM support_ticket_attachments.*FOR UPDATE SKIP LOCKED").WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM support_ticket_attachments").WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+		mock.ExpectQuery("INSERT INTO support_ticket_attachments").
+			WithArgs(int64(7), "shot.png", "image/png", 4, 2, 2, "abc", []byte{1, 2, 3, 4}).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(55, ticketSQLTime))
+		mock.ExpectCommit()
+
+		att, err := r.UploadAttachment(context.Background(), ticketSQLActor, service.TicketAttachmentRecord{
+			FileName: "shot.png", ContentType: "image/png", SizeBytes: 4, Width: 2, Height: 2, SHA256: "abc", Data: []byte{1, 2, 3, 4},
+		})
+		require.NoError(t, err)
+		require.Equal(t, int64(55), att.ID)
+	})
+
+	// UploadAttachment rejects when uploader exceeds pending unattached cap.
+	t.Run("pending_cap", func(t *testing.T) {
+		r, mock := ticketSQLMock(t)
+		mock.ExpectBegin()
+		mock.ExpectQuery("INSERT INTO support_ticket_rate_limits.*RETURNING count").WithArgs(int64(7), "write", 20).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+		mock.ExpectExec("DELETE FROM support_ticket_attachments.*FOR UPDATE SKIP LOCKED").WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM support_ticket_attachments").WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(service.TicketMaxPendingAttachmentsPerUser))
+		mock.ExpectRollback()
+
+		_, err := r.UploadAttachment(context.Background(), ticketSQLActor, service.TicketAttachmentRecord{FileName: "shot.png", ContentType: "image/png", SizeBytes: 4, Width: 2, Height: 2, SHA256: "abc", Data: []byte{1, 2, 3, 4}})
+		require.ErrorIs(t, err, service.ErrTicketRateLimit)
+	})
+
+	// Detail batches attachment metadata query when a message marks has_attachments=true.
+	t.Run("detail_loads_attachments", func(t *testing.T) {
+		r, mock := ticketSQLMock(t)
+		ticketExpectLookup(mock, ticketSQLRows("open", 101), false, false)
+		msgRows := sqlmock.NewRows([]string{"id", "ticket_id", "author_id", "author_role", "author_name", "content", "kind", "event_type", "event_data", "created_at"}).
+			AddRow(101, 10, 7, "user", "owner", "[图片]", "reply", "", []byte(`{"has_attachments":true,"image_only":true}`), ticketSQLTime)
+		mock.ExpectQuery(`WHERE m.ticket_id = \$1 AND m.id <= \$2`).WithArgs(int64(10), int64(101), int64(0)).WillReturnRows(msgRows).RowsWillBeClosed()
+		attRows := sqlmock.NewRows([]string{"id", "ticket_id", "message_id", "file_name", "content_type", "size_bytes", "width", "height", "created_at"}).
+			AddRow(55, 10, 101, "shot.png", "image/png", 1234, 800, 600, ticketSQLTime)
+		mock.ExpectQuery(`SELECT id, ticket_id, message_id, file_name, content_type, size_bytes, width, height, created_at FROM support_ticket_attachments WHERE message_id = ANY\(\$1\) ORDER BY id ASC`).
+			WithArgs(pq.Array([]int64{101})).WillReturnRows(attRows).RowsWillBeClosed()
+		mock.ExpectExec("INSERT INTO support_ticket_views").WithArgs(int64(10), int64(7), false, int64(101)).WillReturnResult(sqlmock.NewResult(0, 1))
+
+		detail, err := r.Detail(context.Background(), ticketSQLActor, 10, 0)
+		require.NoError(t, err)
+		require.Len(t, detail.Messages, 1)
+		require.Len(t, detail.Messages[0].Attachments, 1)
+		require.Equal(t, int64(55), detail.Messages[0].Attachments[0].ID)
+		require.Equal(t, "shot.png", detail.Messages[0].Attachments[0].FileName)
+	})
+
+	// Mutate rolls back if any attachment ID is missing, owned by another user, or already attached.
+	t.Run("mutate_rejects_unowned_or_reused_attachment", func(t *testing.T) {
+		r, mock := ticketSQLMock(t)
+		mock.ExpectBegin()
+		ticketExpectLookup(mock, ticketSQLRows("open", 100), true, false)
+		mock.ExpectQuery("SELECT request_hash FROM support_ticket_messages").WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery("INSERT INTO support_ticket_rate_limits").WithArgs(int64(7), "write", 20).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+		mock.ExpectQuery("INSERT INTO support_ticket_messages").WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(101, ticketSQLTime))
+		mock.ExpectExec("UPDATE support_ticket_attachments SET ticket_id = \\$1, message_id = \\$2 WHERE id = ANY\\(\\$3\\) AND uploader_id = \\$4 AND message_id IS NULL AND ticket_id IS NULL").
+			WithArgs(int64(10), int64(101), pq.Array([]int64{55, 56}), int64(7)).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectRollback()
+
+		authorID := int64(7)
+		err := r.Mutate(context.Background(), ticketSQLActor, 10, ticketSQLUUID, "hash", func(ticket *service.Ticket) (*service.TicketChange, error) {
+			return &service.TicketChange{
+				Ticket: ticket,
+				Messages: []service.TicketMessage{{
+					AuthorID:      &authorID,
+					AuthorRole:    "user",
+					Kind:          "reply",
+					Content:       "check",
+					EventData:     map[string]any{"has_attachments": true},
+					AttachmentIDs: []int64{55, 56},
+				}},
+			}, nil
+		})
+		require.ErrorIs(t, err, service.ErrTicketAttachmentInvalid)
+	})
+
+	// GetAttachment enforces owner scoping for users and allows admin access.
+	t.Run("get_attachment_isolation", func(t *testing.T) {
+		r, mock := ticketSQLMock(t)
+		mock.ExpectQuery(`FROM support_ticket_attachments a JOIN support_tickets t ON t.id = a.ticket_id WHERE a.id = \$1 AND a.ticket_id = \$2 AND a.message_id IS NOT NULL AND t.user_id = \$3`).
+			WithArgs(int64(55), int64(10), int64(7)).WillReturnError(sql.ErrNoRows)
+		_, err := r.GetAttachment(context.Background(), ticketSQLActor, 10, 55)
+		require.ErrorIs(t, err, service.ErrTicketAttachmentNotFound)
+
+		mock.ExpectQuery(`FROM support_ticket_attachments a JOIN support_tickets t ON t.id = a.ticket_id WHERE a.id = \$1 AND a.ticket_id = \$2 AND a.message_id IS NOT NULL AND TRUE`).
+			WithArgs(int64(55), int64(10)).WillReturnRows(
+			sqlmock.NewRows([]string{"id", "ticket_id", "message_id", "file_name", "content_type", "size_bytes", "width", "height", "created_at", "data"}).
+				AddRow(55, 10, 101, "shot.png", "image/png", 4, 2, 2, ticketSQLTime, []byte{1, 2, 3, 4}),
+		)
+		att, err := r.GetAttachment(context.Background(), service.TicketActor{UserID: 9, Admin: true}, 10, 55)
+		require.NoError(t, err)
+		require.Equal(t, []byte{1, 2, 3, 4}, att.Data)
+		require.Equal(t, "image/png", att.ContentType)
+	})
+
+	// DeletePendingAttachment strictly scopes to uploader_id and unattached rows.
+	t.Run("delete_pending_attachment", func(t *testing.T) {
+		r, mock := ticketSQLMock(t)
+		mock.ExpectExec(`DELETE FROM support_ticket_attachments WHERE id = \$1 AND uploader_id = \$2 AND message_id IS NULL AND ticket_id IS NULL`).
+			WithArgs(int64(55), int64(7)).WillReturnResult(sqlmock.NewResult(0, 1))
+		require.NoError(t, r.DeletePendingAttachment(context.Background(), ticketSQLActor, 55))
+	})
+
+	// CreateForUser links admin-uploaded attachments and prefixes preview for text+image replies.
+	t.Run("proactive_create_attaches_and_prefixes_preview", func(t *testing.T) {
+		r, mock := ticketSQLMock(t)
+		adminActor := service.TicketActor{UserID: 9, Admin: true}
+		mock.ExpectBegin()
+		mock.ExpectExec("INSERT INTO support_ticket_user_locks").WithArgs(int64(7)).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectQuery("SELECT user_id FROM support_ticket_user_locks WHERE user_id = \\$1 FOR UPDATE").WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow(7))
+		mock.ExpectQuery("INSERT INTO support_ticket_rate_limits.*RETURNING count").WithArgs(int64(9), "write", 60).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+		mock.ExpectQuery("SELECT id FROM support_tickets").WithArgs(int64(7)).WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery("INSERT INTO support_tickets").WithArgs(int64(7), "客服消息", sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(10))
+		mock.ExpectQuery("INSERT INTO support_ticket_messages").
+			WithArgs(int64(10), int64(9), "admin", "请核对账单", "reply", "", `{"has_attachments":true}`, "", "").
+			WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(20, ticketSQLTime))
+		mock.ExpectExec("UPDATE support_ticket_attachments SET ticket_id = \\$1, message_id = \\$2 WHERE id = ANY\\(\\$3\\) AND uploader_id = \\$4 AND message_id IS NULL AND ticket_id IS NULL").
+			WithArgs(int64(10), int64(20), pq.Array([]int64{55}), int64(9)).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("INSERT INTO settings").WithArgs("ticket_reply_email:20", `{"ticket_id":10,"message_id":20,"attempts":0}`).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("UPDATE support_tickets SET status").
+			WithArgs(int64(10), "waiting_user", "normal", nil, int64(20), "[图片] 请核对账单", ticketSQLTime).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectCommit()
+
+		id, err := r.CreateForUser(context.Background(), adminActor, service.AdminCreateTicketInput{
+			UserID:        7,
+			Subject:       "客服消息",
+			Content:       "请核对账单",
+			AttachmentIDs: []int64{55},
+		})
+		require.NoError(t, err)
+		require.Equal(t, int64(10), id)
+	})
+}

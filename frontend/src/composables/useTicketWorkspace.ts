@@ -3,6 +3,18 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { newClientID, ticketsAPI, type Ticket, type TicketDetail, type TicketFilters, type TicketStats, type TicketReply, type TicketUpdate, type CreateTicket } from '@/api/tickets'
+import {
+  TICKET_IMAGE_MAX_COUNT,
+  clearPendingImages,
+  createObjectURLSafe,
+  hasErroredImages,
+  hasUploadingImages,
+  isTicketAbortError,
+  readyAttachmentIDs,
+  revokeObjectURLSafe,
+  validateTicketImageFile,
+  type PendingTicketImage
+} from '@/components/tickets/ticketImages'
 
 export function useTicketWorkspace(admin: Ref<boolean>) {
   const route = useRoute()
@@ -31,8 +43,16 @@ export function useTicketWorkspace(admin: Ref<boolean>) {
   const syncFailed = ref(false)
   const revision = ref(0)
   const drafts = reactive<Record<string, string>>({})
+  const draftImages = reactive<Record<string, PendingTicketImage[]>>({})
   const draftKey = computed(() => `${admin.value}:${selectedID.value}`)
   const draft = computed({ get: () => drafts[draftKey.value] || '', set: (value: string) => { drafts[draftKey.value] = value } })
+  const draftAttachments = computed(() => draftImages[draftKey.value] || [])
+  const uploadingImages = computed(() => hasUploadingImages(draftAttachments.value))
+  const hasFailedImages = computed(() => hasErroredImages(draftAttachments.value))
+  const canSend = computed(() => {
+    if (mutating.value || uploadingImages.value || hasFailedImages.value) return false
+    return draft.value.trim().length > 0 || readyAttachmentIDs(draftAttachments.value).length > 0
+  })
   let active = true
   let listController: AbortController | null = null
   let detailController: AbortController | null = null
@@ -41,9 +61,11 @@ export function useTicketWorkspace(admin: Ref<boolean>) {
   let detailSequence = 0
   let timelineVersion = 0
   let refreshSequence = 0
+  let statsVersion = 0
   let pollTimer: ReturnType<typeof setTimeout> | undefined
   let searchTimer: ReturnType<typeof setTimeout> | undefined
-  const replyAttempts = new Map<string, { content: string; status: TicketReply['status']; client_id: string }>()
+  const replyAttempts = new Map<string, { content: string; status: TicketReply['status']; attachmentsKey: string; client_id: string }>()
+  const uploadControllers = new Map<string, AbortController>()
   let readBusy = false
   const readCursors = new Map<string, number>()
 
@@ -68,6 +90,7 @@ export function useTicketWorkspace(admin: Ref<boolean>) {
       total.value = list.total
       if (list.page_size > 0 && list.page_size !== filters.page_size) filters.page_size = list.page_size
       stats.value = counts
+      statsVersion++
       listError.value = ''
       if (filters.page > pages.value) { filters.page = pages.value; void loadList(quiet) }
     } catch (error) {
@@ -145,18 +168,102 @@ export function useTicketWorkspace(admin: Ref<boolean>) {
     const last = detail.value?.messages.at(-1)?.id
     const key = draftKey.value
     const id = selectedID.value
+    const scope = admin.value
     if (!last || readBusy || document.hidden || last <= (readCursors.get(key) || 0)) return
+    const detailHadUnread = (detail.value?.ticket.unread_count ?? 0) > 0
+    const beforeStatsVersion = statsVersion
     readBusy = true
     try {
       await api.value.read(id, last)
       readCursors.set(key, last)
-      if (active && draftKey.value === key && detail.value?.ticket.last_message_id === last) {
-        detail.value.ticket.unread_count = 0
-        const item = items.value.find(item => item.id === id)
-        if (item) item.unread_count = 0
+      if (!active || admin.value !== scope) return
+      const item = items.value.find(item => item.id === id)
+      const itemMatchesCursor = !!item && item.last_message_id === last
+      const itemHadUnread = itemMatchesCursor && item.unread_count > 0
+      const detailMatchesCursor = detail.value?.ticket.id === id && detail.value.ticket.last_message_id === last
+      if (detailMatchesCursor && detail.value) detail.value.ticket.unread_count = 0
+      if (itemMatchesCursor && item) item.unread_count = 0
+      if ((detailHadUnread || itemHadUnread) && (detailMatchesCursor || itemMatchesCursor) && statsVersion === beforeStatsVersion && stats.value.unread > 0) {
+        stats.value.unread -= 1
       }
     } catch { /* The next visible refresh retries this cursor. */ }
     finally { readBusy = false }
+  }
+
+  function ensureDraftImages(key: string): PendingTicketImage[] {
+    if (!draftImages[key]) draftImages[key] = []
+    return draftImages[key]
+  }
+
+  async function addDraftImages(files: File[]) {
+    const key = draftKey.value
+    const currentAPI = api.value
+    const list = ensureDraftImages(key)
+    const remaining = TICKET_IMAGE_MAX_COUNT - list.length
+    if (remaining <= 0) {
+      app.showError(t('tickets.imageMaxCount', { max: TICKET_IMAGE_MAX_COUNT }))
+      return
+    }
+    const validFiles: File[] = []
+    for (const file of files) {
+      const invalid = validateTicketImageFile(file)
+      if (invalid === 'type') {
+        app.showError(t('tickets.imageUnsupportedType'))
+        continue
+      }
+      if (invalid === 'size') {
+        app.showError(t('tickets.imageTooLarge'))
+        continue
+      }
+      validFiles.push(file)
+    }
+    if (validFiles.length === 0) return
+    if (validFiles.length > remaining) {
+      app.showError(t('tickets.imageMaxCount', { max: TICKET_IMAGE_MAX_COUNT }))
+    }
+    const candidates = validFiles.slice(0, remaining)
+    await Promise.all(candidates.map(async (file) => {
+      const localID = newClientID()
+      const controller = new AbortController()
+      uploadControllers.set(localID, controller)
+      const pending: PendingTicketImage = reactive({
+        localID,
+        fileName: file.name || 'image.png',
+        previewURL: createObjectURLSafe(file),
+        status: 'uploading'
+      })
+      list.push(pending)
+      try {
+        const uploaded = await currentAPI.uploadAttachment(file, controller.signal)
+        if (!active || controller.signal.aborted || !list.includes(pending)) {
+          if (uploaded?.id) void currentAPI.deletePendingAttachment?.(uploaded.id)?.catch(() => {})
+          return
+        }
+        pending.attachment = uploaded
+        pending.status = 'ready'
+      } catch (error) {
+        if (!active || controller.signal.aborted || !list.includes(pending) || isTicketAbortError(error)) return
+        pending.status = 'error'
+        pending.error = errorMessage(error)
+        app.showError(pending.error)
+      } finally {
+        if (uploadControllers.get(localID) === controller) uploadControllers.delete(localID)
+      }
+    }))
+  }
+
+  function removeDraftImage(localID: string) {
+    uploadControllers.get(localID)?.abort()
+    uploadControllers.delete(localID)
+    const list = draftImages[draftKey.value]
+    if (!list) return
+    const index = list.findIndex((item) => item.localID === localID)
+    if (index === -1) return
+    const [removed] = list.splice(index, 1)
+    revokeObjectURLSafe(removed.previewURL)
+    if (removed.status === 'ready' && removed.attachment?.id) {
+      void api.value.deletePendingAttachment?.(removed.attachment.id)?.catch(() => {})
+    }
   }
 
   async function mutate(action: () => Promise<TicketDetail>, success: string, key: string) {
@@ -174,19 +281,42 @@ export function useTicketWorkspace(admin: Ref<boolean>) {
   }
 
   async function send(status?: TicketReply['status']) {
-    const content = draft.value.trim()
-    if (!content) return false
     const key = draftKey.value
     const id = selectedID.value
+    const content = draft.value.trim()
+    const currentImages = draftImages[key] || []
+    if (hasUploadingImages(currentImages)) {
+      app.showError(t('tickets.imageUploadingWait'))
+      return false
+    }
+    if (hasErroredImages(currentImages)) {
+      app.showError(t('tickets.imageRemoveFailedFirst'))
+      return false
+    }
+    const attachmentIDs = readyAttachmentIDs(currentImages)
+    if (!content && attachmentIDs.length === 0) return false
+    const attachmentsKey = attachmentIDs.join(',')
+    const sentLocalIDs = new Set(currentImages.filter((item) => item.status === 'ready' && item.attachment).map((item) => item.localID))
     let attempt = replyAttempts.get(key)
-    if (!attempt || attempt.content !== content || attempt.status !== status) {
-      attempt = { content, status, client_id: newClientID() }
+    if (!attempt || attempt.content !== content || attempt.status !== status || attempt.attachmentsKey !== attachmentsKey) {
+      attempt = { content, status, attachmentsKey, client_id: newClientID() }
       replyAttempts.set(key, attempt)
     }
-    const request = { content, status, client_id: attempt.client_id }
+    const request: TicketReply = attachmentIDs.length
+      ? { content, status, client_id: attempt.client_id, attachment_ids: attachmentIDs }
+      : { content, status, client_id: attempt.client_id }
     const success = await mutate(() => api.value.reply(id, request), t('tickets.sent'), key)
     if (success) {
       if ((drafts[key] || '').trim() === content) drafts[key] = ''
+      const list = draftImages[key]
+      if (list && sentLocalIDs.size > 0) {
+        for (let i = list.length - 1; i >= 0; i -= 1) {
+          if (sentLocalIDs.has(list[i].localID)) {
+            revokeObjectURLSafe(list[i].previewURL)
+            list.splice(i, 1)
+          }
+        }
+      }
       if (replyAttempts.get(key) === attempt) replyAttempts.delete(key)
     }
     return success
@@ -258,9 +388,13 @@ export function useTicketWorkspace(admin: Ref<boolean>) {
     listController?.abort()
     detailController?.abort()
     olderController?.abort()
+    uploadControllers.forEach((controller) => controller.abort())
+    uploadControllers.clear()
+    Object.values(draftImages).forEach((list) => clearPendingImages(list))
     document.removeEventListener('visibilitychange', onVisibility)
   })
 
   return { filters, items, total, pages, stats, detail, selectedID, loading, detailLoading, loadingOlder, refreshing, mutating,
-    listError, detailError, syncFailed, revision, draft, refresh, older, markRead, send, update, create, resetFilters, select, back, changePage }
+    listError, detailError, syncFailed, revision, draft, draftAttachments, uploadingImages, hasFailedImages, canSend,
+    refresh, older, markRead, addDraftImages, removeDraftImage, send, update, create, resetFilters, select, back, changePage }
 }

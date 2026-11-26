@@ -219,3 +219,27 @@ func TestTicketEmailTemplatePreviewAndCustomValues(t *testing.T) {
 	require.Empty(t, variables["ticket_url"])
 	require.Equal(t, "none", variables["ticket_link_display"])
 }
+
+func TestTicketEmailConversationRendersAttachmentSummary(t *testing.T) {
+	messages := []TicketMessage{
+		{
+			ID: 1, AuthorRole: "user", Kind: "reply", Content: TicketImageOnlyContent,
+			EventData:   map[string]any{"has_attachments": true, "image_only": true},
+			Attachments: []TicketAttachment{{ID: 10}, {ID: 11}},
+		},
+		{
+			ID: 2, AuthorRole: "admin", Kind: "reply", Content: "请看这张截图",
+			EventData:   map[string]any{"has_attachments": true},
+			Attachments: []TicketAttachment{{ID: 12}},
+		},
+	}
+	zhBody := ticketEmailConversation(messages, 2, true)
+	require.Contains(t, zhBody, "发送了 2 张图片")
+	require.Contains(t, zhBody, "请看这张截图")
+	require.Contains(t, zhBody, "附带 1 张图片")
+
+	enBody := ticketEmailConversation(messages, 2, false)
+	require.Contains(t, enBody, "Sent 2 image(s)")
+	require.NotContains(t, enBody, TicketImageOnlyContent)
+	require.Contains(t, enBody, "1 image attachment(s)")
+}

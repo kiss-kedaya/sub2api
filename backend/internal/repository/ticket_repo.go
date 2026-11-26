@@ -112,6 +112,10 @@ func (r *ticketRepository) List(ctx context.Context, actor service.TicketActor, 
 			where = append(where, "t.status <> 'closed'")
 			continue
 		}
+		if f.column == "status" && f.value == "unread" {
+			where = append(where, "EXISTS (SELECT 1 FROM support_ticket_messages m WHERE "+ticketUnread(actor)+")")
+			continue
+		}
 		if f.value != "" {
 			args = append(args, f.value)
 			where = append(where, fmt.Sprintf("t.%s = $%d", f.column, len(args)))
@@ -261,6 +265,9 @@ func (r *ticketRepository) Detail(ctx context.Context, actor service.TicketActor
 		messages = messages[:service.TicketMessagePageSize]
 	}
 	slices.Reverse(messages)
+	if err := r.loadMessageAttachments(ctx, messages); err != nil {
+		return nil, err
+	}
 	detail := &service.TicketDetail{Ticket: ticket, Messages: messages, HasMore: hasMore}
 	if actor.Admin {
 		requester := &service.TicketRequester{}
@@ -321,6 +328,9 @@ func (r *ticketRepository) EmailConversation(ctx context.Context, id, throughMes
 	latest := detail.Messages[len(detail.Messages)-1]
 	if latest.ID != throughMessageID || latest.AuthorRole != "admin" || latest.Kind != "reply" {
 		return nil, service.ErrTicketNotFound
+	}
+	if err := r.loadMessageAttachments(ctx, detail.Messages); err != nil {
+		return nil, err
 	}
 	return detail, nil
 }
@@ -437,7 +447,14 @@ func (r *ticketRepository) Create(ctx context.Context, actor service.TicketActor
 			return err
 		}
 		t := &service.Ticket{ID: id, Status: "open", Priority: in.Priority}
-		message := &service.TicketMessage{AuthorID: &actor.UserID, AuthorRole: "user", Kind: "reply", Content: in.Content}
+		message := &service.TicketMessage{
+			AuthorID:      &actor.UserID,
+			AuthorRole:    "user",
+			Kind:          "reply",
+			Content:       in.Content,
+			EventData:     ticketRepoAttachmentEventData(len(in.AttachmentIDs) > 0, in.ImageOnly),
+			AttachmentIDs: in.AttachmentIDs,
+		}
 		if err := ticketInsertMessage(ctx, tx, t, message, "", ""); err != nil {
 			return err
 		}
@@ -449,10 +466,10 @@ func (r *ticketRepository) Create(ctx context.Context, actor service.TicketActor
 // CreateForUser starts or continues today's ticket for a target user. The daily
 // uniqueness rule means an admin cannot open a second ticket on the same day,
 // so an existing ticket is reopened and receives the new admin message.
-func (r *ticketRepository) CreateForUser(ctx context.Context, actor service.TicketActor, targetUserID int64, subject, content string) (int64, error) {
+func (r *ticketRepository) CreateForUser(ctx context.Context, actor service.TicketActor, in service.AdminCreateTicketInput) (int64, error) {
 	var id int64
 	err := r.transaction(ctx, func(tx *sql.Tx) error {
-		if err := ticketLockOwner(ctx, tx, targetUserID); err != nil {
+		if err := ticketLockOwner(ctx, tx, in.UserID); err != nil {
 			return err
 		}
 		if err := ticketTakeRate(ctx, tx, actor, "write"); err != nil {
@@ -460,7 +477,7 @@ func (r *ticketRepository) CreateForUser(ctx context.Context, actor service.Tick
 		}
 		err := tx.QueryRowContext(ctx, `SELECT id FROM support_tickets
 			WHERE user_id = $1 AND creation_day = (clock_timestamp() AT TIME ZONE 'Asia/Shanghai')::date
-			ORDER BY id DESC LIMIT 1 FOR UPDATE`, targetUserID).Scan(&id)
+			ORDER BY id DESC LIMIT 1 FOR UPDATE`, in.UserID).Scan(&id)
 		if err == nil {
 			ticket, err := getTicket(ctx, tx, actor, id, true)
 			if err != nil {
@@ -475,7 +492,14 @@ func (r *ticketRepository) CreateForUser(ctx context.Context, actor service.Tick
 				})
 				ticket.Status = "waiting_user"
 			}
-			messages = append(messages, service.TicketMessage{AuthorID: &actor.UserID, AuthorRole: "admin", Kind: "reply", Content: content})
+			messages = append(messages, service.TicketMessage{
+				AuthorID:      &actor.UserID,
+				AuthorRole:    "admin",
+				Kind:          "reply",
+				Content:       in.Content,
+				EventData:     ticketRepoAttachmentEventData(len(in.AttachmentIDs) > 0, in.ImageOnly),
+				AttachmentIDs: in.AttachmentIDs,
+			})
 			for i := range messages {
 				if err := ticketInsertMessage(ctx, tx, ticket, &messages[i], "", ""); err != nil {
 					return err
@@ -489,12 +513,19 @@ func (r *ticketRepository) CreateForUser(ctx context.Context, actor service.Tick
 		err = tx.QueryRowContext(ctx, `INSERT INTO support_tickets
 			(user_id, subject, contact, category, priority, status, client_id, request_hash)
 			VALUES ($1, $2, '', 'other', 'normal', 'waiting_user', $3, '') RETURNING id`,
-			targetUserID, subject, uuid.New().String()).Scan(&id)
+			in.UserID, in.Subject, uuid.New().String()).Scan(&id)
 		if err != nil {
 			return err
 		}
 		ticket := &service.Ticket{ID: id, Status: "waiting_user", Priority: "normal"}
-		message := &service.TicketMessage{AuthorID: &actor.UserID, AuthorRole: "admin", Kind: "reply", Content: content}
+		message := &service.TicketMessage{
+			AuthorID:      &actor.UserID,
+			AuthorRole:    "admin",
+			Kind:          "reply",
+			Content:       in.Content,
+			EventData:     ticketRepoAttachmentEventData(len(in.AttachmentIDs) > 0, in.ImageOnly),
+			AttachmentIDs: in.AttachmentIDs,
+		}
 		if err := ticketInsertMessage(ctx, tx, ticket, message, "", ""); err != nil {
 			return err
 		}
@@ -562,18 +593,173 @@ func ticketInsertMessage(ctx context.Context, tx *sql.Tx, ticket *service.Ticket
 	if err != nil {
 		return err
 	}
+	if len(m.AttachmentIDs) > 0 {
+		if m.AuthorID == nil || *m.AuthorID <= 0 {
+			return service.ErrTicketAttachmentInvalid
+		}
+		res, err := tx.ExecContext(ctx, `UPDATE support_ticket_attachments
+			SET ticket_id = $1, message_id = $2
+			WHERE id = ANY($3) AND uploader_id = $4 AND message_id IS NULL AND ticket_id IS NULL`,
+			ticket.ID, m.ID, pq.Array(m.AttachmentIDs), *m.AuthorID)
+		if err != nil {
+			return err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected != int64(len(m.AttachmentIDs)) {
+			return service.ErrTicketAttachmentInvalid
+		}
+	}
 	if m.Kind == "reply" {
 		if err := queueTicketReplyEmail(ctx, tx, ticket.ID, m.ID); err != nil {
 			return err
 		}
 	}
 	ticket.LastMessageID, ticket.LastMessageAt = m.ID, m.CreatedAt
-	preview := []rune(m.Content)
+	previewText := m.Content
+	if len(m.AttachmentIDs) > 0 {
+		imageOnly, _ := m.EventData["image_only"].(bool)
+		if !imageOnly {
+			previewText = service.TicketImageOnlyContent + " " + previewText
+		}
+	}
+	preview := []rune(previewText)
 	if len(preview) > 200 {
 		preview = preview[:200]
 	}
 	ticket.LastMessagePreview = string(preview)
 	return nil
+}
+
+func ticketRepoAttachmentEventData(hasAttachments, imageOnly bool) map[string]any {
+	if !hasAttachments {
+		return nil
+	}
+	data := map[string]any{"has_attachments": true}
+	if imageOnly {
+		data["image_only"] = true
+	}
+	return data
+}
+
+func ticketMessageHasAttachments(m service.TicketMessage) bool {
+	if m.Kind != "reply" || m.EventData == nil {
+		return false
+	}
+	v, _ := m.EventData["has_attachments"].(bool)
+	return v
+}
+
+func (r *ticketRepository) loadMessageAttachments(ctx context.Context, messages []service.TicketMessage) error {
+	messageIDs := make([]int64, 0)
+	indexByID := make(map[int64]int)
+	for i := range messages {
+		if ticketMessageHasAttachments(messages[i]) {
+			messageIDs = append(messageIDs, messages[i].ID)
+			indexByID[messages[i].ID] = i
+		}
+	}
+	if len(messageIDs) == 0 {
+		return nil
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT id, ticket_id, message_id, file_name, content_type, size_bytes, width, height, created_at
+		FROM support_ticket_attachments
+		WHERE message_id = ANY($1)
+		ORDER BY id ASC`, pq.Array(messageIDs))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var att service.TicketAttachment
+		var ticketID, messageID int64
+		if err := rows.Scan(&att.ID, &ticketID, &messageID, &att.FileName, &att.ContentType, &att.SizeBytes, &att.Width, &att.Height, &att.CreatedAt); err != nil {
+			return err
+		}
+		att.TicketID = &ticketID
+		att.MessageID = &messageID
+		if idx, ok := indexByID[messageID]; ok {
+			messages[idx].Attachments = append(messages[idx].Attachments, att)
+		}
+	}
+	return rows.Err()
+}
+
+func (r *ticketRepository) UploadAttachment(ctx context.Context, actor service.TicketActor, record service.TicketAttachmentRecord) (*service.TicketAttachment, error) {
+	var att *service.TicketAttachment
+	err := r.transaction(ctx, func(tx *sql.Tx) error {
+		if err := ticketTakeRate(ctx, tx, actor, "write"); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM support_ticket_attachments
+			WHERE id IN (
+				SELECT id FROM support_ticket_attachments
+				WHERE message_id IS NULL AND created_at < clock_timestamp() - INTERVAL '24 hours'
+				ORDER BY created_at ASC
+				LIMIT 50
+				FOR UPDATE SKIP LOCKED
+			)`); err != nil {
+			return err
+		}
+		var pending int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM support_ticket_attachments
+			WHERE uploader_id = $1 AND message_id IS NULL`, actor.UserID).Scan(&pending); err != nil {
+			return err
+		}
+		if pending >= service.TicketMaxPendingAttachmentsPerUser {
+			return service.ErrTicketRateLimit
+		}
+		var id int64
+		var createdAt time.Time
+		if err := tx.QueryRowContext(ctx, `INSERT INTO support_ticket_attachments
+			(uploader_id, file_name, content_type, size_bytes, width, height, sha256, data)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			RETURNING id, created_at`,
+			actor.UserID, record.FileName, record.ContentType, record.SizeBytes, record.Width, record.Height, record.SHA256, record.Data).Scan(&id, &createdAt); err != nil {
+			return err
+		}
+		att = &service.TicketAttachment{
+			ID:          id,
+			FileName:    record.FileName,
+			ContentType: record.ContentType,
+			SizeBytes:   record.SizeBytes,
+			Width:       record.Width,
+			Height:      record.Height,
+			CreatedAt:   createdAt,
+		}
+		return nil
+	})
+	return att, err
+}
+
+func (r *ticketRepository) GetAttachment(ctx context.Context, actor service.TicketActor, ticketID, attachmentID int64) (*service.TicketAttachmentContent, error) {
+	args := []any{attachmentID, ticketID}
+	where := ticketScope(actor, &args)
+	var out service.TicketAttachmentContent
+	var tid, mid int64
+	err := r.db.QueryRowContext(ctx, `SELECT a.id, a.ticket_id, a.message_id, a.file_name, a.content_type, a.size_bytes, a.width, a.height, a.created_at, a.data
+		FROM support_ticket_attachments a
+		JOIN support_tickets t ON t.id = a.ticket_id
+		WHERE a.id = $1 AND a.ticket_id = $2 AND a.message_id IS NOT NULL AND `+where, args...).
+		Scan(&out.ID, &tid, &mid, &out.FileName, &out.ContentType, &out.SizeBytes, &out.Width, &out.Height, &out.CreatedAt, &out.Data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrTicketAttachmentNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	out.TicketID = &tid
+	out.MessageID = &mid
+	return &out, nil
+}
+
+func (r *ticketRepository) DeletePendingAttachment(ctx context.Context, actor service.TicketActor, attachmentID int64) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM support_ticket_attachments
+		WHERE id = $1 AND uploader_id = $2 AND message_id IS NULL AND ticket_id IS NULL`,
+		attachmentID, actor.UserID)
+	return err
 }
 
 func ticketSave(ctx context.Context, tx *sql.Tx, t *service.Ticket) error {
