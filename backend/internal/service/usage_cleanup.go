@@ -26,16 +26,29 @@ const (
 // - nil 表示未设置该过滤条件
 // - 过滤条件均为精确匹配
 type UsageCleanupFilters struct {
-	StartTime   time.Time `json:"start_time"`
-	EndTime     time.Time `json:"end_time"`
-	UserID      *int64    `json:"user_id,omitempty"`
-	APIKeyID    *int64    `json:"api_key_id,omitempty"`
-	AccountID   *int64    `json:"account_id,omitempty"`
-	GroupID     *int64    `json:"group_id,omitempty"`
-	Model       *string   `json:"model,omitempty"`
-	RequestType *int16    `json:"request_type,omitempty"`
-	Stream      *bool     `json:"stream,omitempty"`
-	BillingType *int8     `json:"billing_type,omitempty"`
+	StartTime             time.Time `json:"start_time"`
+	EndTime               time.Time `json:"end_time"`
+	UserID                *int64    `json:"user_id,omitempty"`
+	APIKeyID              *int64    `json:"api_key_id,omitempty"`
+	AccountID             *int64    `json:"account_id,omitempty"`
+	GroupID               *int64    `json:"group_id,omitempty"`
+	Model                 *string   `json:"model,omitempty"`
+	RequestID             *string   `json:"request_id,omitempty"`
+	RequestType           *int16    `json:"request_type,omitempty"`
+	Stream                *bool     `json:"stream,omitempty"`
+	NativeCompactionV2    *bool     `json:"native_compaction_v2,omitempty"`
+	BillingType           *int8     `json:"billing_type,omitempty"`
+	BillingMode           *string   `json:"billing_mode,omitempty"`
+	UpstreamModelMismatch *bool     `json:"upstream_model_mismatch,omitempty"`
+}
+
+// UsageCleanupPreview 表示清理任务提交前的干跑预估结果
+type UsageCleanupPreview struct {
+	MatchedRows  int64     `json:"matched_rows"`
+	Truncated    bool      `json:"truncated"`
+	MaxRangeDays int       `json:"max_range_days"`
+	StartTime    time.Time `json:"start_time"`
+	EndTime      time.Time `json:"end_time"`
 }
 
 // UsageCleanupTask 表示使用记录清理任务
@@ -71,5 +84,6 @@ type UsageCleanupRepository interface {
 	CancelTask(ctx context.Context, taskID int64, canceledBy int64) (bool, error)
 	MarkTaskSucceeded(ctx context.Context, taskID int64, deletedRows int64) error
 	MarkTaskFailed(ctx context.Context, taskID int64, deletedRows int64, errorMsg string) error
+	CountUsageLogs(ctx context.Context, filters UsageCleanupFilters, limit int) (int64, bool, error)
 	DeleteUsageLogsBatch(ctx context.Context, filters UsageCleanupFilters, limit int) (int64, error)
 }

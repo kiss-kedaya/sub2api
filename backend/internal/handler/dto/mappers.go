@@ -1038,16 +1038,20 @@ func UsageCleanupTaskFromService(task *service.UsageCleanupTask) *UsageCleanupTa
 		ID:     task.ID,
 		Status: task.Status,
 		Filters: UsageCleanupFilters{
-			StartTime:   task.Filters.StartTime,
-			EndTime:     task.Filters.EndTime,
-			UserID:      task.Filters.UserID,
-			APIKeyID:    task.Filters.APIKeyID,
-			AccountID:   task.Filters.AccountID,
-			GroupID:     task.Filters.GroupID,
-			Model:       task.Filters.Model,
-			RequestType: requestTypeStringPtr(task.Filters.RequestType),
-			Stream:      task.Filters.Stream,
-			BillingType: task.Filters.BillingType,
+			StartTime:             task.Filters.StartTime,
+			EndTime:               task.Filters.EndTime,
+			UserID:                task.Filters.UserID,
+			APIKeyID:              task.Filters.APIKeyID,
+			AccountID:             task.Filters.AccountID,
+			GroupID:               task.Filters.GroupID,
+			Model:                 task.Filters.Model,
+			RequestID:             task.Filters.RequestID,
+			RequestType:           requestTypeStringPtr(task.Filters.RequestType),
+			Stream:                task.Filters.Stream,
+			NativeCompactionV2:    task.Filters.NativeCompactionV2,
+			BillingType:           task.Filters.BillingType,
+			BillingMode:           task.Filters.BillingMode,
+			UpstreamModelMismatch: task.Filters.UpstreamModelMismatch,
 		},
 		CreatedBy:    task.CreatedBy,
 		DeletedRows:  task.DeletedRows,
@@ -1058,6 +1062,19 @@ func UsageCleanupTaskFromService(task *service.UsageCleanupTask) *UsageCleanupTa
 		FinishedAt:   task.FinishedAt,
 		CreatedAt:    task.CreatedAt,
 		UpdatedAt:    task.UpdatedAt,
+	}
+}
+
+func UsageCleanupPreviewFromService(preview *service.UsageCleanupPreview) *UsageCleanupPreview {
+	if preview == nil {
+		return nil
+	}
+	return &UsageCleanupPreview{
+		MatchedRows:  preview.MatchedRows,
+		Truncated:    preview.Truncated,
+		MaxRangeDays: preview.MaxRangeDays,
+		StartTime:    preview.StartTime,
+		EndTime:      preview.EndTime,
 	}
 }
 

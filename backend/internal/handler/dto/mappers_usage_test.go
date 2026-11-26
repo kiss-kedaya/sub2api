@@ -119,11 +119,19 @@ func TestUsageCleanupTaskFromService_RequestTypeMapping(t *testing.T) {
 	t.Parallel()
 
 	requestType := int16(service.RequestTypeStream)
+	reqID := "=req_9"
+	compaction := true
+	billingMode := "per_request"
+	mismatch := true
 	task := &service.UsageCleanupTask{
 		ID:     1,
 		Status: service.UsageCleanupStatusPending,
 		Filters: service.UsageCleanupFilters{
-			RequestType: &requestType,
+			RequestType:           &requestType,
+			RequestID:             &reqID,
+			NativeCompactionV2:    &compaction,
+			BillingMode:           &billingMode,
+			UpstreamModelMismatch: &mismatch,
 		},
 	}
 
@@ -131,6 +139,29 @@ func TestUsageCleanupTaskFromService_RequestTypeMapping(t *testing.T) {
 	require.NotNil(t, dtoTask)
 	require.NotNil(t, dtoTask.Filters.RequestType)
 	require.Equal(t, "stream", *dtoTask.Filters.RequestType)
+	require.NotNil(t, dtoTask.Filters.RequestID)
+	require.Equal(t, "=req_9", *dtoTask.Filters.RequestID)
+	require.NotNil(t, dtoTask.Filters.NativeCompactionV2)
+	require.True(t, *dtoTask.Filters.NativeCompactionV2)
+	require.NotNil(t, dtoTask.Filters.BillingMode)
+	require.Equal(t, "per_request", *dtoTask.Filters.BillingMode)
+	require.NotNil(t, dtoTask.Filters.UpstreamModelMismatch)
+	require.True(t, *dtoTask.Filters.UpstreamModelMismatch)
+}
+
+func TestUsageCleanupPreviewFromService(t *testing.T) {
+	t.Parallel()
+	require.Nil(t, UsageCleanupPreviewFromService(nil))
+
+	got := UsageCleanupPreviewFromService(&service.UsageCleanupPreview{
+		MatchedRows:  1234,
+		Truncated:    true,
+		MaxRangeDays: 31,
+	})
+	require.NotNil(t, got)
+	require.Equal(t, int64(1234), got.MatchedRows)
+	require.True(t, got.Truncated)
+	require.Equal(t, 31, got.MaxRangeDays)
 }
 
 func TestRequestTypeStringPtrNil(t *testing.T) {

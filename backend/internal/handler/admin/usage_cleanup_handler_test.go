@@ -23,12 +23,16 @@ import (
 )
 
 type cleanupRepoStub struct {
-	mu         sync.Mutex
-	created    []*service.UsageCleanupTask
-	listTasks  []service.UsageCleanupTask
-	listResult *pagination.PaginationResult
-	listErr    error
-	statusByID map[int64]string
+	mu           sync.Mutex
+	created      []*service.UsageCleanupTask
+	listTasks    []service.UsageCleanupTask
+	listResult   *pagination.PaginationResult
+	listErr      error
+	statusByID   map[int64]string
+	countResult  int64
+	countTrunc   bool
+	countErr     error
+	lastCountFlt service.UsageCleanupFilters
 }
 
 func (s *cleanupRepoStub) CreateTask(ctx context.Context, task *service.UsageCleanupTask) error {
@@ -98,6 +102,16 @@ func (s *cleanupRepoStub) MarkTaskFailed(ctx context.Context, taskID int64, dele
 	return nil
 }
 
+func (s *cleanupRepoStub) CountUsageLogs(ctx context.Context, filters service.UsageCleanupFilters, limit int) (int64, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastCountFlt = filters
+	if s.countErr != nil {
+		return 0, false, s.countErr
+	}
+	return s.countResult, s.countTrunc, nil
+}
+
 func (s *cleanupRepoStub) DeleteUsageLogsBatch(ctx context.Context, filters service.UsageCleanupFilters, limit int) (int64, error) {
 	return 0, nil
 }
@@ -115,6 +129,7 @@ func setupCleanupRouter(cleanupService *service.UsageCleanupService, userID int6
 	}
 
 	handler := NewUsageHandler(nil, nil, nil, cleanupService)
+	router.POST("/api/v1/admin/usage/cleanup-tasks/preview", handler.PreviewCleanupTask)
 	router.POST("/api/v1/admin/usage/cleanup-tasks", handler.CreateCleanupTask)
 	router.GET("/api/v1/admin/usage/cleanup-tasks", handler.ListCleanupTasks)
 	router.POST("/api/v1/admin/usage/cleanup-tasks/:id/cancel", handler.CancelCleanupTask)
@@ -460,4 +475,249 @@ func TestUsageHandlerCancelCleanupTaskSuccess(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestUsageHandlerPreviewCleanupTaskSuccessWithExtendedFilters(t *testing.T) {
+	repo := &cleanupRepoStub{countResult: 256, countTrunc: false}
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
+	cleanupService := service.NewUsageCleanupService(repo, nil, nil, cfg)
+	router := setupCleanupRouter(cleanupService, 99)
+
+	payload := map[string]any{
+		"start_date":              "2026-05-01T00:00:00",
+		"end_date":                "2026-05-01T23:59:59",
+		"timezone":                "UTC",
+		"request_id":              "=req_exact",
+		"native_compaction_v2":    true,
+		"billing_mode":            "image",
+		"upstream_model_mismatch": true,
+	}
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/usage/cleanup-tasks/preview", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Code int                     `json:"code"`
+		Data dto.UsageCleanupPreview `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.Equal(t, int64(256), resp.Data.MatchedRows)
+	require.False(t, resp.Data.Truncated)
+	require.Equal(t, 31, resp.Data.MaxRangeDays)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.NotNil(t, repo.lastCountFlt.RequestID)
+	require.Equal(t, "=req_exact", *repo.lastCountFlt.RequestID)
+	require.NotNil(t, repo.lastCountFlt.NativeCompactionV2)
+	require.True(t, *repo.lastCountFlt.NativeCompactionV2)
+	require.NotNil(t, repo.lastCountFlt.BillingMode)
+	require.Equal(t, "image", *repo.lastCountFlt.BillingMode)
+	require.NotNil(t, repo.lastCountFlt.UpstreamModelMismatch)
+	require.True(t, *repo.lastCountFlt.UpstreamModelMismatch)
+}
+
+func TestUsageHandlerPreviewCleanupTaskAuthAndValidation(t *testing.T) {
+	// Unavailable
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/usage/cleanup-tasks/preview", bytes.NewBufferString(`{}`))
+	rec := httptest.NewRecorder()
+	setupCleanupRouter(nil, 1).ServeHTTP(rec, req)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+
+	// Unauthorized
+	repo := &cleanupRepoStub{}
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
+	cleanupService := service.NewUsageCleanupService(repo, nil, nil, cfg)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/admin/usage/cleanup-tasks/preview", bytes.NewBufferString(`{}`))
+	rec = httptest.NewRecorder()
+	setupCleanupRouter(cleanupService, 0).ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	// Invalid billing mode
+	router := setupCleanupRouter(cleanupService, 1)
+	body, err := json.Marshal(map[string]any{
+		"start_date":   "2026-05-01",
+		"end_date":     "2026-05-02",
+		"timezone":     "UTC",
+		"billing_mode": "invalid_mode",
+	})
+	require.NoError(t, err)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/admin/usage/cleanup-tasks/preview", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestUsageHandlerCreateCleanupTaskWithExtendedFilters(t *testing.T) {
+	repo := &cleanupRepoStub{}
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
+	cleanupService := service.NewUsageCleanupService(repo, nil, nil, cfg)
+	router := setupCleanupRouter(cleanupService, 99)
+
+	payload := map[string]any{
+		"start_date":              "2026-05-01",
+		"end_date":                "2026-05-01",
+		"timezone":                "UTC",
+		"request_id":              "req_xyz99",
+		"native_compaction_v2":    true,
+		"billing_mode":            "video",
+		"upstream_model_mismatch": false,
+	}
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/usage/cleanup-tasks", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Len(t, repo.created, 1)
+	flt := repo.created[0].Filters
+	require.NotNil(t, flt.RequestID)
+	require.Equal(t, "req_xyz99", *flt.RequestID)
+	require.NotNil(t, flt.NativeCompactionV2)
+	require.True(t, *flt.NativeCompactionV2)
+	require.NotNil(t, flt.BillingMode)
+	require.Equal(t, "video", *flt.BillingMode)
+	require.NotNil(t, flt.UpstreamModelMismatch)
+	require.False(t, *flt.UpstreamModelMismatch)
+}
+
+func TestUsageHandlerPreviewCleanupTaskSkipsAuditAndHandlesTimeoutAndCancel(t *testing.T) {
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
+
+	t.Run("sets audit_skip on read-only preview", func(t *testing.T) {
+		repo := &cleanupRepoStub{countResult: 12}
+		cleanupService := service.NewUsageCleanupService(repo, nil, nil, cfg)
+		gin.SetMode(gin.TestMode)
+		router := gin.New()
+		var skipped bool
+		router.Use(func(c *gin.Context) {
+			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
+			c.Next()
+			skipped = c.GetBool("audit_skip")
+		})
+		handler := NewUsageHandler(nil, nil, nil, cleanupService)
+		router.POST("/api/v1/admin/usage/cleanup-tasks/preview", handler.PreviewCleanupTask)
+
+		body := []byte(`{"start_date":"2026-05-01","end_date":"2026-05-01","timezone":"UTC"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/usage/cleanup-tasks/preview", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.True(t, skipped, "preview endpoint must skip admin audit log writes")
+	})
+
+	t.Run("returns 504 with USAGE_CLEANUP_PREVIEW_TIMEOUT on deadline exceeded", func(t *testing.T) {
+		repo := &cleanupRepoStub{countErr: context.DeadlineExceeded}
+		cleanupService := service.NewUsageCleanupService(repo, nil, nil, cfg)
+		router := setupCleanupRouter(cleanupService, 1)
+
+		body := []byte(`{"start_date":"2026-05-01","end_date":"2026-05-01","timezone":"UTC"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/usage/cleanup-tasks/preview", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusGatewayTimeout, rec.Code)
+		var resp response.Response
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Equal(t, "USAGE_CLEANUP_PREVIEW_TIMEOUT", resp.Reason)
+	})
+
+	t.Run("returns cleanly without 500 when client cancels request", func(t *testing.T) {
+		repo := &cleanupRepoStub{countErr: context.Canceled}
+		cleanupService := service.NewUsageCleanupService(repo, nil, nil, cfg)
+		router := setupCleanupRouter(cleanupService, 1)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		body := []byte(`{"start_date":"2026-05-01","end_date":"2026-05-01","timezone":"UTC"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/usage/cleanup-tasks/preview", bytes.NewReader(body)).WithContext(ctx)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		require.NotEqual(t, http.StatusInternalServerError, rec.Code)
+		require.Empty(t, rec.Body.String())
+	})
+}
+
+type searchAPIKeyRepoStub struct {
+	service.APIKeyRepository
+	byID map[int64]*service.APIKey
+}
+
+func (s *searchAPIKeyRepoStub) GetByID(_ context.Context, id int64) (*service.APIKey, error) {
+	key, ok := s.byID[id]
+	if !ok {
+		return nil, service.ErrAPIKeyNotFound
+	}
+	return key, nil
+}
+
+func TestUsageHandlerSearchAPIKeysByExactID(t *testing.T) {
+	repo := &searchAPIKeyRepoStub{
+		byID: map[int64]*service.APIKey{
+			8523: {ID: 8523, Name: "deep-key", UserID: 77, Key: "test-key-must-not-leak"},
+		},
+	}
+	apiKeySvc := service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, &config.Config{})
+	handler := NewUsageHandler(nil, apiKeySvc, nil, nil)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/v1/admin/usage/search-api-keys", handler.SearchAPIKeys)
+
+	// Found without user_id, never leaks secret key
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/usage/search-api-keys?api_key_id=8523", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotContains(t, rec.Body.String(), "test-key-must-not-leak")
+	var resp struct {
+		Data []struct {
+			ID     int64  `json:"id"`
+			Name   string `json:"name"`
+			UserID int64  `json:"user_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Data, 1)
+	require.Equal(t, int64(8523), resp.Data[0].ID)
+	require.Equal(t, "deep-key", resp.Data[0].Name)
+	require.Equal(t, int64(77), resp.Data[0].UserID)
+
+	// User mismatch returns empty list
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/usage/search-api-keys?user_id=99&api_key_id=8523", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	resp.Data = nil
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Empty(t, resp.Data)
+
+	// Missing ID returns empty list
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/usage/search-api-keys?api_key_id=999999", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	resp.Data = nil
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Empty(t, resp.Data)
+
+	// Invalid ID returns 400
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/usage/search-api-keys?api_key_id=0", nil))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
 }

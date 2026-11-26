@@ -195,6 +195,7 @@
     :filters="filters"
     :start-date="startDate"
     :end-date="endDate"
+    :model-options="modelNameOptions"
     @close="cleanupDialogVisible = false"
   />
   <!-- Balance history modal triggered from usage table user click -->

@@ -249,3 +249,26 @@ func TestUsageCleanupTaskFromEntInvalidFilters(t *testing.T) {
 	require.Error(t, err)
 	require.Empty(t, task)
 }
+
+func TestUsageCleanupRepositoryEntMarkDoesNotOverwriteCanceled(t *testing.T) {
+	repo, client := newUsageCleanupEntRepo(t)
+
+	task := &service.UsageCleanupTask{
+		Status:    service.UsageCleanupStatusCanceled,
+		Filters:   service.UsageCleanupFilters{StartTime: time.Now().UTC(), EndTime: time.Now().UTC().Add(time.Hour)},
+		CreatedBy: 5,
+	}
+	require.NoError(t, repo.CreateTask(context.Background(), task))
+
+	require.NoError(t, repo.MarkTaskSucceeded(context.Background(), task.ID, 15))
+	loaded, err := client.UsageCleanupTask.Get(context.Background(), task.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.UsageCleanupStatusCanceled, loaded.Status)
+	require.Equal(t, int64(0), loaded.DeletedRows)
+
+	require.NoError(t, repo.MarkTaskFailed(context.Background(), task.ID, 15, "late err"))
+	loaded, err = client.UsageCleanupTask.Get(context.Background(), task.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.UsageCleanupStatusCanceled, loaded.Status)
+	require.Nil(t, loaded.ErrorMessage)
+}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -53,11 +54,16 @@ type cleanupRepoStub struct {
 	cancelErr     error
 	cancelResult  *bool
 	markFailedErr error
+	countResult   int64
+	countTrunc    bool
+	countErr      error
+	countCalls    []cleanupDeleteCall
+	cancelOnBatch int
 }
 
 type dashboardRepoStub struct {
 	recomputeErr   error
-	recomputeCalls int
+	recomputeCalls atomic.Int32
 }
 
 func (s *dashboardRepoStub) AggregateRange(ctx context.Context, start, end time.Time) error {
@@ -65,7 +71,7 @@ func (s *dashboardRepoStub) AggregateRange(ctx context.Context, start, end time.
 }
 
 func (s *dashboardRepoStub) RecomputeRange(ctx context.Context, start, end time.Time) error {
-	s.recomputeCalls++
+	s.recomputeCalls.Add(1)
 	return s.recomputeErr
 }
 
@@ -219,10 +225,28 @@ func (s *cleanupRepoStub) MarkTaskFailed(ctx context.Context, taskID int64, dele
 	return nil
 }
 
+func (s *cleanupRepoStub) CountUsageLogs(ctx context.Context, filters UsageCleanupFilters, limit int) (int64, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.countCalls = append(s.countCalls, cleanupDeleteCall{filters: filters, limit: limit})
+	if s.countErr != nil {
+		return 0, false, s.countErr
+	}
+	return s.countResult, s.countTrunc, nil
+}
+
 func (s *cleanupRepoStub) DeleteUsageLogsBatch(ctx context.Context, filters UsageCleanupFilters, limit int) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deleteCalls = append(s.deleteCalls, cleanupDeleteCall{filters: filters, limit: limit})
+	if s.cancelOnBatch > 0 && len(s.deleteCalls) == s.cancelOnBatch {
+		if s.statusByID == nil {
+			s.statusByID = map[int64]string{}
+		}
+		for id := range s.statusByID {
+			s.statusByID[id] = UsageCleanupStatusCanceled
+		}
+	}
 	if len(s.deleteQueue) == 0 {
 		return 0, nil
 	}
@@ -580,7 +604,7 @@ func TestUsageCleanupServiceExecuteTaskDashboardRecomputeError(t *testing.T) {
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
 	require.Len(t, repo.markSucceeded, 1)
-	require.Eventually(t, func() bool { return dashboardRepo.recomputeCalls == 1 }, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return dashboardRepo.recomputeCalls.Load() == 1 }, time.Second, 10*time.Millisecond)
 }
 
 func TestUsageCleanupServiceExecuteTaskDashboardRecomputeSuccess(t *testing.T) {
@@ -608,7 +632,7 @@ func TestUsageCleanupServiceExecuteTaskDashboardRecomputeSuccess(t *testing.T) {
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
 	require.Len(t, repo.markSucceeded, 1)
-	require.Eventually(t, func() bool { return dashboardRepo.recomputeCalls == 1 }, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return dashboardRepo.recomputeCalls.Load() == 1 }, time.Second, 10*time.Millisecond)
 }
 
 func TestUsageCleanupServiceExecuteTaskCanceled(t *testing.T) {
@@ -889,4 +913,262 @@ func TestUsageCleanupServiceIsTaskCanceledError(t *testing.T) {
 	_, err := svc.isTaskCanceled(context.Background(), 9)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "status err")
+}
+
+func TestUsageCleanupServicePreviewTaskSuccessAndTruncated(t *testing.T) {
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(12 * time.Hour)
+	reqID := "  =req_exact_1  "
+	billingMode := "  IMAGE "
+	compaction := true
+	mismatch := true
+
+	repo := &cleanupRepoStub{countResult: 100000, countTrunc: true}
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, MaxRangeDays: 14}}
+	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+
+	preview, err := svc.PreviewTask(context.Background(), UsageCleanupFilters{
+		StartTime:             start,
+		EndTime:               end,
+		RequestID:             &reqID,
+		NativeCompactionV2:    &compaction,
+		BillingMode:           &billingMode,
+		UpstreamModelMismatch: &mismatch,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(100000), preview.MatchedRows)
+	require.True(t, preview.Truncated)
+	require.Equal(t, 14, preview.MaxRangeDays)
+	require.True(t, preview.StartTime.Equal(start))
+	require.True(t, preview.EndTime.Equal(end))
+
+	require.Len(t, repo.countCalls, 1)
+	require.Equal(t, defaultUsageCleanupPreviewLimit, repo.countCalls[0].limit)
+	require.NotNil(t, repo.countCalls[0].filters.RequestID)
+	require.Equal(t, "=req_exact_1", *repo.countCalls[0].filters.RequestID)
+	require.NotNil(t, repo.countCalls[0].filters.BillingMode)
+	require.Equal(t, "image", *repo.countCalls[0].filters.BillingMode)
+	require.NotNil(t, repo.countCalls[0].filters.NativeCompactionV2)
+	require.True(t, *repo.countCalls[0].filters.NativeCompactionV2)
+	require.NotNil(t, repo.countCalls[0].filters.UpstreamModelMismatch)
+	require.True(t, *repo.countCalls[0].filters.UpstreamModelMismatch)
+}
+
+func TestUsageCleanupServicePreviewTaskValidationErrors(t *testing.T) {
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end48h := start.Add(48 * time.Hour)
+	repo := &cleanupRepoStub{}
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
+	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+
+	// Invalid billing mode
+	badMode := "crypto"
+	_, err := svc.PreviewTask(context.Background(), UsageCleanupFilters{
+		StartTime:   start,
+		EndTime:     start.Add(time.Hour),
+		BillingMode: &badMode,
+	})
+	require.Error(t, err)
+	require.Equal(t, "USAGE_CLEANUP_INVALID_BILLING_MODE", infraerrors.Reason(err))
+
+	// Short request_id fragment over >24h range rejected
+	shortID := "ab"
+	_, err = svc.PreviewTask(context.Background(), UsageCleanupFilters{
+		StartTime: start,
+		EndTime:   end48h,
+		RequestID: &shortID,
+	})
+	require.Error(t, err)
+	require.Equal(t, "USAGE_CLEANUP_REQUEST_ID_RANGE_TOO_LARGE", infraerrors.Reason(err))
+
+	// Exact =ab over >24h range allowed
+	exactShortID := "=ab"
+	_, err = svc.PreviewTask(context.Background(), UsageCleanupFilters{
+		StartTime: start,
+		EndTime:   end48h,
+		RequestID: &exactShortID,
+	})
+	require.NoError(t, err)
+
+	// Empty operator-only request_id rejected
+	emptyPrefix := "="
+	_, err = svc.PreviewTask(context.Background(), UsageCleanupFilters{
+		StartTime: start,
+		EndTime:   start.Add(time.Hour),
+		RequestID: &emptyPrefix,
+	})
+	require.Error(t, err)
+	require.Equal(t, "USAGE_CLEANUP_INVALID_REQUEST_ID", infraerrors.Reason(err))
+
+	// Range too large includes max_range_days metadata
+	_, err = svc.PreviewTask(context.Background(), UsageCleanupFilters{
+		StartTime: start,
+		EndTime:   start.Add(40 * 24 * time.Hour),
+	})
+	require.Error(t, err)
+	require.Equal(t, "USAGE_CLEANUP_RANGE_TOO_LARGE", infraerrors.Reason(err))
+	appErr := infraerrors.FromError(err)
+	require.Equal(t, "31", appErr.Metadata["max_range_days"])
+
+	// Disabled cleanup returns 503
+	disabledSvc := NewUsageCleanupService(repo, nil, nil, &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: false}})
+	_, err = disabledSvc.PreviewTask(context.Background(), UsageCleanupFilters{
+		StartTime: start,
+		EndTime:   start.Add(time.Hour),
+	})
+	require.Error(t, err)
+	require.Equal(t, http.StatusServiceUnavailable, infraerrors.Code(err))
+}
+
+func TestUsageCleanupServiceRunOnceDrainsQueuedTasks(t *testing.T) {
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	repo := &cleanupRepoStub{
+		claimQueue: []*UsageCleanupTask{
+			{ID: 1, Filters: UsageCleanupFilters{StartTime: start, EndTime: end}},
+			{ID: 2, Filters: UsageCleanupFilters{StartTime: start, EndTime: end}},
+		},
+		deleteQueue: []cleanupDeleteResponse{
+			{deleted: 1},
+			{deleted: 2},
+		},
+	}
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, BatchSize: 5, TaskTimeoutSeconds: 30}}
+	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+
+	svc.runOnce()
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Len(t, repo.markSucceeded, 2)
+	require.Equal(t, int64(1), repo.markSucceeded[0].taskID)
+	require.Equal(t, int64(2), repo.markSucceeded[1].taskID)
+}
+
+func TestUsageCleanupServiceExecuteTaskCanceledMidFinalBatchDoesNotMarkSucceededAndRecomputesDashboard(t *testing.T) {
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	dashboardRepo := &dashboardRepoStub{}
+	dashboard := NewDashboardAggregationService(dashboardRepo, nil, &config.Config{
+		DashboardAgg: config.DashboardAggregationConfig{Enabled: true},
+	})
+	repo := &cleanupRepoStub{
+		statusByID: map[int64]string{
+			42: UsageCleanupStatusRunning,
+		},
+		deleteQueue: []cleanupDeleteResponse{
+			{deleted: 1}, // < batchSize(5), triggers finalize check
+		},
+		cancelOnBatch: 1,
+	}
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, BatchSize: 5}}
+	svc := NewUsageCleanupService(repo, nil, dashboard, cfg)
+
+	svc.executeTask(context.Background(), &UsageCleanupTask{
+		ID:      42,
+		Filters: UsageCleanupFilters{StartTime: start, EndTime: end},
+	})
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Empty(t, repo.markSucceeded, "canceled task must not be overwritten to succeeded")
+	require.Empty(t, repo.markFailed)
+	require.Eventually(t, func() bool { return dashboardRepo.recomputeCalls.Load() == 1 }, time.Second, 10*time.Millisecond)
+}
+
+func TestDescribeUsageCleanupFiltersExtendedFields(t *testing.T) {
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	reqID := "=req-123"
+	compaction := true
+	billingMode := "video"
+	mismatch := false
+
+	desc := describeUsageCleanupFilters(UsageCleanupFilters{
+		StartTime:             start,
+		EndTime:               end,
+		RequestID:             &reqID,
+		NativeCompactionV2:    &compaction,
+		BillingMode:           &billingMode,
+		UpstreamModelMismatch: &mismatch,
+	})
+	require.Contains(t, desc, "request_id==req-123")
+	require.Contains(t, desc, "native_compaction_v2=true")
+	require.Contains(t, desc, "billing_mode=video")
+	require.Contains(t, desc, "upstream_model_mismatch=false")
+}
+
+func TestUsageCleanupServicePreviewTimeoutAndCancel(t *testing.T) {
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, MaxRangeDays: 31}}
+
+	// Internal preview timeout returns 504 USAGE_CLEANUP_PREVIEW_TIMEOUT
+	timeoutRepo := &cleanupRepoStub{countErr: context.DeadlineExceeded}
+	svc := NewUsageCleanupService(timeoutRepo, nil, nil, cfg)
+	_, err := svc.PreviewTask(context.Background(), UsageCleanupFilters{StartTime: start, EndTime: end})
+	require.Error(t, err)
+	require.Equal(t, http.StatusGatewayTimeout, infraerrors.Code(err))
+	require.Equal(t, "USAGE_CLEANUP_PREVIEW_TIMEOUT", infraerrors.Reason(err))
+
+	// Parent cancellation propagates context.Canceled directly (not 500)
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cancelRepo := &cleanupRepoStub{countErr: context.Canceled}
+	cancelSvc := NewUsageCleanupService(cancelRepo, nil, nil, cfg)
+	_, err = cancelSvc.PreviewTask(canceledCtx, UsageCleanupFilters{StartTime: start, EndTime: end})
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestUsageCleanupServiceMaxRangeAllowsInclusiveEndSecond(t *testing.T) {
+	start := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, MaxRangeDays: 1}}
+	repo := &cleanupRepoStub{countResult: 7}
+	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+
+	// Exact 24h range with inclusive end-second expansion (+999_999_999ns) must pass
+	preview, err := svc.PreviewTask(context.Background(), UsageCleanupFilters{
+		StartTime: start,
+		EndTime:   start.Add(24*time.Hour + time.Second - time.Nanosecond),
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(7), preview.MatchedRows)
+
+	// 24h + 1 full second must be rejected
+	_, err = svc.PreviewTask(context.Background(), UsageCleanupFilters{
+		StartTime: start,
+		EndTime:   start.Add(24*time.Hour + time.Second),
+	})
+	require.Error(t, err)
+	require.Equal(t, "USAGE_CLEANUP_RANGE_TOO_LARGE", infraerrors.Reason(err))
+}
+
+func TestUsageCleanupServiceRunOnceRechecksQueuedWakeup(t *testing.T) {
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	repo := &cleanupRepoStub{
+		claimQueue: []*UsageCleanupTask{
+			{ID: 1, Filters: UsageCleanupFilters{StartTime: start, EndTime: end}},
+		},
+		deleteQueue: []cleanupDeleteResponse{
+			{deleted: 1},
+		},
+	}
+	cfg := &config.Config{UsageCleanup: config.UsageCleanupConfig{Enabled: true, BatchSize: 5, TaskTimeoutSeconds: 30}}
+	svc := NewUsageCleanupService(repo, nil, nil, cfg)
+
+	// Simulate a wakeup arriving while running=1: sets recheck=1
+	svc.running = 1
+	svc.runOnce()
+	require.Equal(t, int32(1), svc.recheck)
+
+	// Releasing running and invoking runOnce drains the queued task and resets recheck
+	svc.running = 0
+	svc.runOnce()
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	require.Len(t, repo.markSucceeded, 1)
+	require.Equal(t, int64(1), repo.markSucceeded[0].taskID)
+	require.Equal(t, int32(0), svc.recheck)
 }

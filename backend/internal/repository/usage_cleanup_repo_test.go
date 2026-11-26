@@ -535,7 +535,7 @@ func TestBuildUsageCleanupWhere(t *testing.T) {
 		BillingType: &billingType,
 	})
 
-	require.Equal(t, "created_at >= $1 AND created_at <= $2 AND user_id = $3 AND api_key_id = $4 AND account_id = $5 AND group_id = $6 AND model = $7 AND stream = $8 AND billing_type = $9", where)
+	require.Equal(t, "created_at >= $1 AND created_at <= $2 AND user_id = $3 AND api_key_id = $4 AND account_id = $5 AND group_id = $6 AND COALESCE(NULLIF(TRIM(requested_model), ''), model) = $7 AND stream = $8 AND billing_type = $9", where)
 	require.Equal(t, []any{start, end, userID, apiKeyID, accountID, groupID, "gpt-4", stream, billingType}, args)
 }
 
@@ -584,4 +584,63 @@ func TestBuildUsageCleanupWhereModelEmpty(t *testing.T) {
 
 	require.Equal(t, "created_at >= $1 AND created_at <= $2", where)
 	require.Equal(t, []any{start, end}, args)
+}
+
+func TestBuildUsageCleanupWhereExtendedFilters(t *testing.T) {
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	reqID := "=req_abc"
+	compaction := true
+	billingMode := "image"
+	mismatch := true
+
+	where, args := buildUsageCleanupWhere(service.UsageCleanupFilters{
+		StartTime:             start,
+		EndTime:               end,
+		RequestID:             &reqID,
+		NativeCompactionV2:    &compaction,
+		BillingMode:           &billingMode,
+		UpstreamModelMismatch: &mismatch,
+	})
+
+	require.Contains(t, where, "created_at >= $1 AND created_at <= $2")
+	require.Contains(t, where, "(request_id IN ($3, $4, $5) OR upstream_request_id = $6)")
+	require.Contains(t, where, "native_compaction_v2 = $7")
+	require.Contains(t, where, "billing_mode = $8")
+	require.Contains(t, where, "upstream_model_mismatch IS TRUE")
+	require.Equal(t, []any{start, end, "req_abc", "client:req_abc", "local:req_abc", "req_abc", true, "image"}, args)
+}
+
+func TestUsageCleanupRepositoryCountUsageLogsExactAndTruncated(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := &usageCleanupRepository{sql: db}
+
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	filters := service.UsageCleanupFilters{StartTime: start, EndTime: end}
+
+	// Exact count below limit
+	mock.ExpectQuery(`SELECT COUNT\(\*\)\s+FROM \(\s+SELECT 1\s+FROM usage_logs\s+WHERE created_at >= \$1 AND created_at <= \$2\s+LIMIT \$3\s+\) AS matched_usage_logs`).
+		WithArgs(start, end, 101).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(42)))
+
+	count, truncated, err := repo.CountUsageLogs(context.Background(), filters, 100)
+	require.NoError(t, err)
+	require.Equal(t, int64(42), count)
+	require.False(t, truncated)
+
+	// Truncated when matched exceeds limit
+	mock.ExpectQuery(`SELECT COUNT\(\*\)\s+FROM \(\s+SELECT 1\s+FROM usage_logs\s+WHERE created_at >= \$1 AND created_at <= \$2\s+LIMIT \$3\s+\) AS matched_usage_logs`).
+		WithArgs(start, end, 101).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(101)))
+
+	count, truncated, err = repo.CountUsageLogs(context.Background(), filters, 100)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), count)
+	require.True(t, truncated)
+
+	// Missing time range error
+	_, _, err = repo.CountUsageLogs(context.Background(), service.UsageCleanupFilters{}, 100)
+	require.Error(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
 }

@@ -46,9 +46,21 @@ export interface UsageCleanupFilters {
   account_id?: number
   group_id?: number
   model?: string | null
+  request_id?: string | null
   request_type?: UsageRequestType | null
   stream?: boolean | null
+  native_compaction_v2?: boolean | null
   billing_type?: number | null
+  billing_mode?: string | null
+  upstream_model_mismatch?: boolean | null
+}
+
+export interface UsageCleanupPreview {
+  matched_rows: number
+  truncated: boolean
+  max_range_days: number
+  start_time: string
+  end_time: string
 }
 
 export interface UsageCleanupTask {
@@ -74,9 +86,13 @@ export interface CreateUsageCleanupTaskRequest {
   account_id?: number
   group_id?: number
   model?: string | null
+  request_id?: string | null
   request_type?: UsageRequestType | null
   stream?: boolean | null
+  native_compaction_v2?: boolean | null
   billing_type?: number | null
+  billing_mode?: string | null
+  upstream_model_mismatch?: boolean | null
   timezone?: string
 }
 
@@ -151,18 +167,26 @@ export async function searchUsers(keyword: string): Promise<SimpleUser[]> {
 }
 
 /**
- * Search API keys by user ID and/or keyword (admin only)
+ * Search API keys by user ID, keyword, or exact API key ID (admin only)
  * @param userId - Optional user ID to filter by
  * @param keyword - Optional keyword to search in key name
+ * @param apiKeyId - Optional exact API key ID to resolve directly
  * @returns List of matching API keys (max 30)
  */
-export async function searchApiKeys(userId?: number, keyword?: string): Promise<SimpleApiKey[]> {
+export async function searchApiKeys(
+  userId?: number,
+  keyword?: string,
+  apiKeyId?: number
+): Promise<SimpleApiKey[]> {
   const params: Record<string, unknown> = {}
   if (userId !== undefined) {
     params.user_id = userId
   }
   if (keyword) {
     params.q = keyword
+  }
+  if (apiKeyId !== undefined && apiKeyId > 0) {
+    params.api_key_id = apiKeyId
   }
   const { data } = await apiClient.get<SimpleApiKey[]>('/admin/usage/search-api-keys', {
     params
@@ -181,6 +205,21 @@ export async function listCleanupTasks(
 ): Promise<PaginatedResponse<UsageCleanupTask>> {
   const { data } = await apiClient.get<PaginatedResponse<UsageCleanupTask>>('/admin/usage/cleanup-tasks', {
     params,
+    signal: options?.signal
+  })
+  return data
+}
+
+/**
+ * Preview how many usage records match the cleanup filters (admin only)
+ * @param payload - Cleanup filter parameters
+ * @returns Matched row count and resolved window
+ */
+export async function previewCleanupTask(
+  payload: CreateUsageCleanupTaskRequest,
+  options?: { signal?: AbortSignal }
+): Promise<UsageCleanupPreview> {
+  const { data } = await apiClient.post<UsageCleanupPreview>('/admin/usage/cleanup-tasks/preview', payload, {
     signal: options?.signal
   })
   return data
@@ -213,6 +252,7 @@ export const adminUsageAPI = {
   searchUsers,
   searchApiKeys,
   listCleanupTasks,
+  previewCleanupTask,
   createCleanupTask,
   cancelCleanupTask
 }

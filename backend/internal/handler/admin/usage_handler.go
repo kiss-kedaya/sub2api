@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -54,19 +55,23 @@ func NewUsageHandler(
 	}
 }
 
-// CreateUsageCleanupTaskRequest represents cleanup task creation request
+// CreateUsageCleanupTaskRequest represents cleanup task creation or preview request
 type CreateUsageCleanupTaskRequest struct {
-	StartDate   string  `json:"start_date"`
-	EndDate     string  `json:"end_date"`
-	UserID      *int64  `json:"user_id"`
-	APIKeyID    *int64  `json:"api_key_id"`
-	AccountID   *int64  `json:"account_id"`
-	GroupID     *int64  `json:"group_id"`
-	Model       *string `json:"model"`
-	RequestType *string `json:"request_type"`
-	Stream      *bool   `json:"stream"`
-	BillingType *int8   `json:"billing_type"`
-	Timezone    string  `json:"timezone"`
+	StartDate             string  `json:"start_date"`
+	EndDate               string  `json:"end_date"`
+	UserID                *int64  `json:"user_id"`
+	APIKeyID              *int64  `json:"api_key_id"`
+	AccountID             *int64  `json:"account_id"`
+	GroupID               *int64  `json:"group_id"`
+	Model                 *string `json:"model"`
+	RequestID             *string `json:"request_id"`
+	RequestType           *string `json:"request_type"`
+	Stream                *bool   `json:"stream"`
+	NativeCompactionV2    *bool   `json:"native_compaction_v2"`
+	BillingType           *int8   `json:"billing_type"`
+	BillingMode           *string `json:"billing_mode"`
+	UpstreamModelMismatch *bool   `json:"upstream_model_mismatch"`
+	Timezone              string  `json:"timezone"`
 }
 
 // List handles listing all usage records with filters
@@ -548,10 +553,11 @@ func (h *UsageHandler) SearchUsers(c *gin.Context) {
 	response.Success(c, result)
 }
 
-// SearchAPIKeys handles searching API keys by user
+// SearchAPIKeys handles searching API keys by user or resolving a single API key by ID
 // GET /api/v1/admin/usage/search-api-keys
 func (h *UsageHandler) SearchAPIKeys(c *gin.Context) {
 	userIDStr := c.Query("user_id")
+	apiKeyIDStr := strings.TrimSpace(c.Query("api_key_id"))
 	keyword := c.Query("q")
 
 	var userID int64
@@ -564,17 +570,44 @@ func (h *UsageHandler) SearchAPIKeys(c *gin.Context) {
 		userID = id
 	}
 
-	keys, err := h.apiKeyService.SearchAPIKeys(c.Request.Context(), userID, keyword, 30)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-
 	// Return simplified API key list (only id and name)
 	type SimpleAPIKey struct {
 		ID     int64  `json:"id"`
 		Name   string `json:"name"`
 		UserID int64  `json:"user_id"`
+	}
+
+	if apiKeyIDStr != "" {
+		apiKeyID, err := strconv.ParseInt(apiKeyIDStr, 10, 64)
+		if err != nil || apiKeyID <= 0 {
+			response.BadRequest(c, "Invalid api_key_id")
+			return
+		}
+		key, err := h.apiKeyService.GetByID(c.Request.Context(), apiKeyID)
+		if err != nil {
+			if errors.Is(err, service.ErrAPIKeyNotFound) {
+				response.Success(c, []SimpleAPIKey{})
+				return
+			}
+			response.ErrorFrom(c, err)
+			return
+		}
+		if key == nil || (userID > 0 && key.UserID != userID) {
+			response.Success(c, []SimpleAPIKey{})
+			return
+		}
+		response.Success(c, []SimpleAPIKey{{
+			ID:     key.ID,
+			Name:   key.Name,
+			UserID: key.UserID,
+		}})
+		return
+	}
+
+	keys, err := h.apiKeyService.SearchAPIKeys(c.Request.Context(), userID, keyword, 30)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
 	}
 
 	result := make([]SimpleAPIKey, len(keys))
@@ -617,6 +650,94 @@ func (h *UsageHandler) ListCleanupTasks(c *gin.Context) {
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
+func parseUsageCleanupTaskFilters(req *CreateUsageCleanupTaskRequest) (service.UsageCleanupFilters, string) {
+	req.StartDate = strings.TrimSpace(req.StartDate)
+	req.EndDate = strings.TrimSpace(req.EndDate)
+	if req.StartDate == "" || req.EndDate == "" {
+		return service.UsageCleanupFilters{}, "start_date and end_date are required"
+	}
+
+	startTime, err := parseUsageDateBoundary(req.StartDate, req.Timezone, false)
+	if err != nil {
+		return service.UsageCleanupFilters{}, "Invalid start_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss"
+	}
+	endTime, err := parseUsageDateBoundary(req.EndDate, req.Timezone, true)
+	if err != nil {
+		return service.UsageCleanupFilters{}, "Invalid end_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss"
+	}
+	// Cleanup uses an inclusive end; do not widen a second-precision filter to a day.
+	endTime = endTime.Add(-time.Nanosecond)
+
+	var requestType *int16
+	stream := req.Stream
+	if req.RequestType != nil {
+		trimmed := strings.TrimSpace(*req.RequestType)
+		if trimmed != "" {
+			parsed, err := service.ParseUsageRequestType(trimmed)
+			if err != nil {
+				return service.UsageCleanupFilters{}, err.Error()
+			}
+			value := int16(parsed)
+			requestType = &value
+			stream = nil
+		}
+	}
+
+	return service.UsageCleanupFilters{
+		StartTime:             startTime,
+		EndTime:               endTime,
+		UserID:                req.UserID,
+		APIKeyID:              req.APIKeyID,
+		AccountID:             req.AccountID,
+		GroupID:               req.GroupID,
+		Model:                 req.Model,
+		RequestID:             req.RequestID,
+		RequestType:           requestType,
+		Stream:                stream,
+		NativeCompactionV2:    req.NativeCompactionV2,
+		BillingType:           req.BillingType,
+		BillingMode:           req.BillingMode,
+		UpstreamModelMismatch: req.UpstreamModelMismatch,
+	}, ""
+}
+
+// PreviewCleanupTask estimates how many usage records match the cleanup filters
+// POST /api/v1/admin/usage/cleanup-tasks/preview
+func (h *UsageHandler) PreviewCleanupTask(c *gin.Context) {
+	if h.cleanupService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Usage cleanup service unavailable")
+		return
+	}
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		response.Unauthorized(c, "Unauthorized")
+		return
+	}
+	// Read-only dry-run estimation invoked automatically on filter edits: do not pollute admin audit_logs.
+	middleware.SkipAudit(c)
+
+	var req CreateUsageCleanupTaskRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	filters, badReqMsg := parseUsageCleanupTaskFilters(&req)
+	if badReqMsg != "" {
+		response.BadRequest(c, badReqMsg)
+		return
+	}
+
+	preview, err := h.cleanupService.PreviewTask(c.Request.Context(), filters)
+	if err != nil {
+		if errors.Is(err, context.Canceled) && c.Request.Context().Err() != nil {
+			return
+		}
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, dto.UsageCleanupPreviewFromService(preview))
+}
+
 // CreateCleanupTask handles creating a usage cleanup task
 // POST /api/v1/admin/usage/cleanup-tasks
 func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
@@ -635,50 +756,10 @@ func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	req.StartDate = strings.TrimSpace(req.StartDate)
-	req.EndDate = strings.TrimSpace(req.EndDate)
-	if req.StartDate == "" || req.EndDate == "" {
-		response.BadRequest(c, "start_date and end_date are required")
+	filters, badReqMsg := parseUsageCleanupTaskFilters(&req)
+	if badReqMsg != "" {
+		response.BadRequest(c, badReqMsg)
 		return
-	}
-
-	startTime, err := parseUsageDateBoundary(req.StartDate, req.Timezone, false)
-	if err != nil {
-		response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
-		return
-	}
-	endTime, err := parseUsageDateBoundary(req.EndDate, req.Timezone, true)
-	if err != nil {
-		response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss")
-		return
-	}
-	// Cleanup uses an inclusive end; do not widen a second-precision filter to a day.
-	endTime = endTime.Add(-time.Nanosecond)
-
-	var requestType *int16
-	stream := req.Stream
-	if req.RequestType != nil {
-		parsed, err := service.ParseUsageRequestType(*req.RequestType)
-		if err != nil {
-			response.BadRequest(c, err.Error())
-			return
-		}
-		value := int16(parsed)
-		requestType = &value
-		stream = nil
-	}
-
-	filters := service.UsageCleanupFilters{
-		StartTime:   startTime,
-		EndTime:     endTime,
-		UserID:      req.UserID,
-		APIKeyID:    req.APIKeyID,
-		AccountID:   req.AccountID,
-		GroupID:     req.GroupID,
-		Model:       req.Model,
-		RequestType: requestType,
-		Stream:      stream,
-		BillingType: req.BillingType,
 	}
 
 	var userID any
@@ -701,6 +782,10 @@ func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 	if filters.Model != nil {
 		model = *filters.Model
 	}
+	var requestID any
+	if filters.RequestID != nil {
+		requestID = *filters.RequestID
+	}
 	var streamValue any
 	if filters.Stream != nil {
 		streamValue = *filters.Stream
@@ -709,9 +794,21 @@ func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 	if filters.RequestType != nil {
 		requestTypeName = service.RequestTypeFromInt16(*filters.RequestType).String()
 	}
+	var nativeCompaction any
+	if filters.NativeCompactionV2 != nil {
+		nativeCompaction = *filters.NativeCompactionV2
+	}
 	var billingType any
 	if filters.BillingType != nil {
 		billingType = *filters.BillingType
+	}
+	var billingMode any
+	if filters.BillingMode != nil {
+		billingMode = *filters.BillingMode
+	}
+	var upstreamModelMismatch any
+	if filters.UpstreamModelMismatch != nil {
+		upstreamModelMismatch = *filters.UpstreamModelMismatch
 	}
 
 	idempotencyPayload := struct {
@@ -722,7 +819,7 @@ func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 		Body:       req,
 	}
 	executeAdminIdempotentJSON(c, "admin.usage.cleanup_tasks.create", idempotencyPayload, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 请求创建清理任务: operator=%d start=%s end=%s user_id=%v api_key_id=%v account_id=%v group_id=%v model=%v request_type=%v stream=%v billing_type=%v tz=%q",
+		logger.LegacyPrintf("handler.admin.usage", "[UsageCleanup] 请求创建清理任务: operator=%d start=%s end=%s user_id=%v api_key_id=%v account_id=%v group_id=%v model=%v request_id=%v request_type=%v stream=%v native_compaction_v2=%v billing_type=%v billing_mode=%v upstream_model_mismatch=%v tz=%q",
 			subject.UserID,
 			filters.StartTime.Format(time.RFC3339),
 			filters.EndTime.Format(time.RFC3339),
@@ -731,9 +828,13 @@ func (h *UsageHandler) CreateCleanupTask(c *gin.Context) {
 			accountID,
 			groupID,
 			model,
+			requestID,
 			requestTypeName,
 			streamValue,
+			nativeCompaction,
 			billingType,
+			billingMode,
+			upstreamModelMismatch,
 			req.Timezone,
 		)
 

@@ -842,3 +842,40 @@ describe('UsageFilters — 搜索下拉的输入与收起', () => {
     removeSpy.mockRestore()
   })
 })
+
+describe('UsageFilters — compact 嵌入模式（清理弹窗）', () => {
+  it('uses a 2-column grid without xl:grid-cols-4 and starts advanced collapsed when no advanced filters are active', () => {
+    window.innerWidth = 1440
+    const wrapper = mountFilters(defaultFilters(), { compact: true, flat: true, showActions: false })
+    const common = wrapper.get('[data-testid="usage-filters-common"]')
+    const advanced = wrapper.get('[data-testid="usage-filters-advanced"]')
+    expect(common.classes()).toContain('sm:grid-cols-2')
+    expect(common.classes()).not.toContain('xl:grid-cols-4')
+    expect(advanced.classes()).toContain('sm:grid-cols-2')
+    expect(advanced.classes()).not.toContain('xl:grid-cols-4')
+    // Full-width time range & model fields in compact mode prevent timestamp and long model truncation
+    expect(wrapper.get('[data-testid="usage-filters-field"][data-field="date"]').classes()).toContain('sm:col-span-2')
+    expect(wrapper.get('[data-testid="usage-filters-field"][data-field="model"]').classes()).toContain('sm:col-span-2')
+    expect((wrapper.vm as any).advancedOpen).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('does not count empty string request_type or billing_mode as active filters', () => {
+    const filters = { ...defaultFilters(), request_type: '', billing_mode: '' } as any
+    const wrapper = mountFilters(filters, { compact: true, flat: true, showActions: false })
+    expect(wrapper.find('[data-testid="usage-filters-active-count"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="usage-filters-advanced-count"]').exists()).toBe(false)
+    expect((wrapper.vm as any).advancedOpen).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('auto-expands advanced filters in compact mode when an advanced filter is pre-filled and emits groups-loaded', async () => {
+    mockGroupsList.mockResolvedValueOnce({ items: [{ id: 8, name: 'Grok Demo', platform: 'openai' }], total: 1 })
+    const filters = { ...defaultFilters(), group_id: 8 }
+    const wrapper = mountFilters(filters, { compact: true, flat: true, showActions: false })
+    await flushPromises()
+    expect((wrapper.vm as any).advancedOpen).toBe(true)
+    expect(wrapper.emitted('groups-loaded')).toEqual([[[{ id: 8, name: 'Grok Demo' }]]])
+    wrapper.unmount()
+  })
+})
