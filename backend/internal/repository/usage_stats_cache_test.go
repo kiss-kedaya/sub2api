@@ -218,14 +218,21 @@ func TestUsageStatsCacheRateLimitModelTotalsStayLive(t *testing.T) {
 }
 
 func TestUsageStatsCacheKeepsUserKeyStatusLive(t *testing.T) {
+	useRollupTestTimezone(t, "Asia/Shanghai")
 	cache, _ := newUsageStatsTestCache(t)
 	db, mock := newSQLMock(t)
 	repo := newUsageLogRepositoryWithSQL(nil, db)
 	repo.statsCache = cache
-	key := usageStatsCacheKey{Query: "user_dashboard_usage", UserID: 42, Start: timezone.Today().UTC().Format(time.RFC3339Nano)}
-	_, err := loadUsageStatsCached(cache, context.Background(), key, func(context.Context) (*UserDashboardStats, error) {
-		return &UserDashboardStats{TotalRequests: 123}, nil
-	})
+	// Past the first hour of the day the usage is cached as two parts (the days that are over, and today).
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, timezone.Location())
+	repo.clock = func() time.Time { return now }
+	cut := timezone.StartOfDay(now)
+	ctx := context.Background()
+	_, err := loadUsageStatsCached(cache, ctx, userDashboardClosedKey(42, dashboardSubjectWindowStart(cut, cut), cut),
+		func(context.Context) (*userDashboardPart, error) { return &userDashboardPart{Requests: 100}, nil })
+	require.NoError(t, err)
+	_, err = loadUsageStatsCached(cache, ctx, userDashboardTodayKey(42, cut),
+		func(context.Context) (*userDashboardPart, error) { return &userDashboardPart{Requests: 23}, nil })
 	require.NoError(t, err)
 	for _, active := range []int64{1, 0} {
 		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM api_keys WHERE user_id = \$1 AND deleted_at IS NULL`).
@@ -235,6 +242,7 @@ func TestUsageStatsCacheKeepsUserKeyStatusLive(t *testing.T) {
 		stats, err := repo.GetUserDashboardStats(context.Background(), 42)
 		require.NoError(t, err)
 		require.EqualValues(t, 123, stats.TotalRequests)
+		require.EqualValues(t, 23, stats.TodayRequests)
 		require.Equal(t, active, stats.ActiveAPIKeys)
 	}
 	require.NoError(t, mock.ExpectationsWereMet())
