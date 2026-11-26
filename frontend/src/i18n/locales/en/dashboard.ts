@@ -614,6 +614,7 @@ export default {
     title: 'Usage Records',
     description: 'View and analyze your API usage history',
     costDetails: 'Cost Breakdown',
+    costDetailsStandard: 'Cost Breakdown (Standard price)',
     requestFailed: 'Related error',
     failedMetered: 'Related error (metered)',
     failedMeteredHint: 'This bill is associated with a stream error sharing the request identifier and a nearby completion time. Observed usage remains billed. The error code is not the HTTP status after streaming has started.',

@@ -25,6 +25,14 @@ describe('usage service tier locale keys', () => {
     expect(zh.usage.upstreamCostHint).toContain('对账')
   })
 
+  it('titles the cost breakdown as Standard price when it shows standard-price amounts (zh and en)', () => {
+    // 没缩放的行（老数据 / 有固定加价）仍叫「费用明细」，不能误称标准价
+    expect(zh.usage.costDetails).toBe('费用明细')
+    expect(zh.usage.costDetailsStandard).toBe('费用明细（标准价）')
+    expect(en.usage.costDetails).toBe('Cost Breakdown')
+    expect(en.usage.costDetailsStandard).toBe('Cost Breakdown (Standard price)')
+  })
+
   it('contains en labels for the tier multiplier rows', () => {
     expect(en.usage.serviceTierMultiplier).toBe('Tier multiplier')
     expect(en.usage.groupRate).toBe('Group rate')

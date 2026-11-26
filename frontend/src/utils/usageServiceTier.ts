@@ -66,6 +66,76 @@ export function getUsageTierPricing(row: {
   return { tierMultiplier, groupRate, combinedRate, standardPrice }
 }
 
+/** 费用明细首块里按 token 计费的四个分项金额（USD）。 */
+export interface UsageCostParts {
+  input_cost: number
+  output_cost: number
+  cache_creation_cost: number
+  cache_read_cost: number
+}
+
+// usage_logs 的金额列是 DECIMAL(20,10)：每项最多差 5e-11，分项之和和 total_cost 的舍入误差远小于 1e-9；
+// web search 这类按次加价远大于舍入误差，不会被当成误差放过。
+const COST_SUM_TOLERANCE = 1e-9
+
+const finiteOrZero = (value: number | null | undefined): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : 0
+
+/**
+ * Fast / UltraFast 行的分项金额按标准价口径还原。
+ *
+ * 后端存的 input_cost / output_cost / cache_*_cost 和 total_cost 一样，是上游按档位实际收的价
+ * （例如 UltraFast 官方档位价是标准价的 6 倍），用户实付 = 标准价 × 档位倍率 × 分组倍率。
+ * 「免费 UltraFast」（档位倍率 1×）的行如果直接显示这些分项，输入 / 输出单价会是标准价的 6 倍，
+ * 和下面的 1× 档位倍率、用户扣费对不上。所以按 标准价 ÷ total_cost 等比缩放：
+ * 缩放后分项之和 = 标准价，标准价 × 综合倍率 = 用户扣费。
+ *
+ * 返回 null = 不缩放（调用方照旧显示后端存的金额）：
+ * - 不是带档位倍率的 Fast / UltraFast 行（getUsageTierPricing 为 null）；
+ * - total_cost 不是正数，或 标准价 ÷ total_cost 不是正的有限数（例如扣费为 0）；
+ * - 有图片分项：Fast 档的图片价有显式配置时不随档位缩放，从行里证明不了就整块不动；
+ * - 分项之和对不上 total_cost：说明里面还有按次 / 工具 / 搜索之类的固定加价，不是纯 token 费用。
+ *
+ * 已知限制：标准价是从 actual_cost（落库只保留 8 位小数）反推的，几百 token 以内的小请求，单价最后一两位
+ * 可能有量化误差；分项之和仍然等于气泡里的标准价。Fast 档如果模型只配了部分 priority 价（各分项档位比例不一致），
+ * 单个分项也只是按总比例折算，合计仍是标准价。
+ */
+export function getUsageStandardCostParts(row: {
+  service_tier?: string | null
+  service_tier_multiplier?: number | null
+  rate_multiplier?: number | null
+  actual_cost?: number | null
+  total_cost?: number | null
+  input_cost?: number | null
+  output_cost?: number | null
+  cache_creation_cost?: number | null
+  cache_read_cost?: number | null
+  image_input_cost?: number | null
+  image_output_cost?: number | null
+}): UsageCostParts | null {
+  const pricing = getUsageTierPricing(row)
+  if (!pricing) return null
+  const total = row.total_cost
+  if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return null
+  const ratio = pricing.standardPrice / total
+  if (!Number.isFinite(ratio) || ratio <= 0) return null
+  if (finiteOrZero(row.image_input_cost) > 0 || finiteOrZero(row.image_output_cost) > 0) return null
+  const parts: UsageCostParts = {
+    input_cost: finiteOrZero(row.input_cost),
+    output_cost: finiteOrZero(row.output_cost),
+    cache_creation_cost: finiteOrZero(row.cache_creation_cost),
+    cache_read_cost: finiteOrZero(row.cache_read_cost),
+  }
+  const sum = parts.input_cost + parts.output_cost + parts.cache_creation_cost + parts.cache_read_cost
+  if (Math.abs(sum - total) > COST_SUM_TOLERANCE) return null
+  return {
+    input_cost: parts.input_cost * ratio,
+    output_cost: parts.output_cost * ratio,
+    cache_creation_cost: parts.cache_creation_cost * ratio,
+    cache_read_cost: parts.cache_read_cost * ratio,
+  }
+}
+
 export function getUsageServiceTierLabel(
   serviceTier: string | null | undefined,
   translate: (key: string) => string,

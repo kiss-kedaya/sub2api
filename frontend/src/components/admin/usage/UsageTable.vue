@@ -429,18 +429,18 @@
         <div class="space-y-1.5">
           <!-- Cost Breakdown -->
           <div class="mb-2 border-b border-gray-700 pb-1.5">
-            <div class="text-xs font-semibold text-gray-300 mb-1">{{ t('usage.costDetails') }}</div>
-            <div v-if="tooltipData && tooltipData.input_cost > 0" class="flex items-center justify-between gap-4">
+            <div data-testid="usage-cost-details-title" class="text-xs font-semibold text-gray-300 mb-1">{{ tooltipStandardCosts ? t('usage.costDetailsStandard') : t('usage.costDetails') }}</div>
+            <div v-if="tooltipCosts.input_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.inputCost') }}</span>
-              <span class="font-medium text-white">${{ tooltipData.input_cost.toFixed(8) }}</span>
+              <span class="font-medium text-white">${{ tooltipCosts.input_cost.toFixed(8) }}</span>
             </div>
             <div v-if="tooltipData && hasImageInputCost(tooltipData)" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('usage.imageInputCost') }}</span>
               <span class="font-medium text-fuchsia-300">${{ tooltipData.image_input_cost.toFixed(8) }}</span>
             </div>
-            <div v-if="tooltipData && tooltipData.output_cost > 0" class="flex items-center justify-between gap-4">
+            <div v-if="tooltipCosts.output_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.outputCost') }}</span>
-              <span class="font-medium text-white">${{ tooltipData.output_cost.toFixed(8) }}</span>
+              <span class="font-medium text-white">${{ tooltipCosts.output_cost.toFixed(8) }}</span>
             </div>
             <div v-if="tooltipData && hasImageOutputCost(tooltipData)" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('usage.imageOutputCost') }}</span>
@@ -450,15 +450,15 @@
             <template v-if="tooltipData && !isImageUsage(tooltipData) && (!tooltipData.billing_mode || tooltipData.billing_mode === BILLING_MODE_TOKEN)">
               <div v-if="tooltipData && textInputTokens(tooltipData) > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.inputTokenPrice') }}</span>
-                <span class="font-medium text-sky-300">{{ formatTokenPricePerMillion(tooltipData.input_cost, textInputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="font-medium text-sky-300">{{ formatTokenPricePerMillion(tooltipCosts.input_cost, textInputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
               <div v-if="tooltipData && hasImageInputTokens(tooltipData)" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageInputTokenPrice') }}</span>
                 <span class="font-medium text-fuchsia-300">{{ formatTokenPricePerMillion(tooltipData.image_input_cost ?? 0, tooltipData.image_input_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
-              <div v-if="tooltipData && tooltipData.output_cost > 0 && textOutputTokens(tooltipData) > 0" class="flex items-center justify-between gap-4">
+              <div v-if="tooltipData && tooltipCosts.output_cost > 0 && textOutputTokens(tooltipData) > 0" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.outputTokenPrice') }}</span>
-                <span class="font-medium text-violet-300">{{ formatTokenPricePerMillion(tooltipData.output_cost, textOutputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
+                <span class="font-medium text-violet-300">{{ formatTokenPricePerMillion(tooltipCosts.output_cost, textOutputTokens(tooltipData)) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
               <div v-if="tooltipData && hasImageOutputTokens(tooltipData)" class="flex items-center justify-between gap-4">
                 <span class="text-gray-400">{{ t('usage.imageOutputTokenPrice') }}</span>
@@ -503,13 +503,13 @@
               <span class="text-gray-400">{{ t('usage.unitPrice') }}</span>
               <span class="font-medium text-sky-300">${{ tooltipData?.total_cost?.toFixed(8) || '0.00000000' }}</span>
             </div>
-            <div v-if="tooltipData && tooltipData.cache_creation_cost > 0" class="flex items-center justify-between gap-4">
+            <div v-if="tooltipCosts.cache_creation_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.cacheCreationCost') }}</span>
-              <span class="font-medium text-white">${{ tooltipData.cache_creation_cost.toFixed(8) }}</span>
+              <span class="font-medium text-white">${{ tooltipCosts.cache_creation_cost.toFixed(8) }}</span>
             </div>
-            <div v-if="tooltipData && tooltipData.cache_read_cost > 0" class="flex items-center justify-between gap-4">
+            <div v-if="tooltipCosts.cache_read_cost > 0" class="flex items-center justify-between gap-4">
               <span class="text-gray-400">{{ t('admin.usage.cacheReadCost') }}</span>
-              <span class="font-medium text-white">${{ tooltipData.cache_read_cost.toFixed(8) }}</span>
+              <span class="font-medium text-white">${{ tooltipCosts.cache_read_cost.toFixed(8) }}</span>
             </div>
           </div>
           <!-- Rate and Summary -->
@@ -598,7 +598,12 @@ import { useClipboard } from '@/composables/useClipboard'
 import { formatDateTime, formatReasoningEffort, reasoningEffortValuesEqual } from '@/utils/format'
 import { formatCacheTokens, formatMultiplier, formatMultiplierCompact } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
-import { getUsageServiceTierLabel, getUsageTierPricing } from '@/utils/usageServiceTier'
+import {
+  getUsageServiceTierLabel,
+  getUsageStandardCostParts,
+  getUsageTierPricing,
+  type UsageCostParts,
+} from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import {
   LATENCY_BAR_CLASSES,
@@ -755,6 +760,14 @@ const tooltipTierPricing = computed(() =>
 )
 // 档位倍率 / 分组倍率 / 综合倍率用紧凑写法（1×、0.145×、2.5×），其余既有行不动
 const tierX = (value: number) => `${formatMultiplierCompact(value)}×`
+// 「费用明细」首块（输入 / 输出 / 缓存费用和输入 / 输出单价）：Fast / UltraFast 行后端存的是上游按档位实际收的价
+// （UltraFast 官方是标准价的 6 倍），这里换成标准价口径，和下面的档位倍率、原始（标准价）、用户扣费对得上。
+// null = 不换（老数据、有固定加价 / 图片分项等，守卫见 getUsageStandardCostParts），照旧显示后端存的金额。
+const tooltipStandardCosts = computed(() =>
+  tooltipData.value && tooltipTierPricing.value ? getUsageStandardCostParts(tooltipData.value) : null,
+)
+const NO_COSTS: UsageCostParts = { input_cost: 0, output_cost: 0, cache_creation_cost: 0, cache_read_cost: 0 }
+const tooltipCosts = computed<UsageCostParts>(() => tooltipStandardCosts.value ?? tooltipData.value ?? NO_COSTS)
 
 // Tooltip state - token
 const tokenTooltipVisible = ref(false)
