@@ -152,4 +152,26 @@ describe('TransactionListCard', () => {
     await wrapper.get('[data-testid="transaction-row"]').trigger('click')
     expect(wrapper.emitted('select')).toBeUndefined()
   })
+
+  it('omits the leading icon orb when showIcon is false', () => {
+    const wrapper = mountCard({ items: [income, pending], showIcon: false })
+    expect(wrapper.find('[data-testid="transaction-icon"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-testid="transaction-row"]')).toHaveLength(2)
+  })
+
+  it('marks newly arrived rows as fresh and activates move class only when fresh items are present', async () => {
+    const wrapper = mountCard({
+      items: [{ ...income, isNew: true }, pending],
+      animateItems: true
+    })
+    const list = wrapper.get('[data-testid="transaction-list"]')
+    expect(list.classes()).toContain('tx-list-group--moving')
+
+    const rows = wrapper.findAll('[data-testid="transaction-row"]')
+    expect(rows[0].attributes('data-fresh')).toBe('true')
+    expect(rows[1].attributes('data-fresh')).toBeUndefined()
+
+    await wrapper.setProps({ items: [income, pending] })
+    expect(wrapper.get('[data-testid="transaction-list"]').classes()).not.toContain('tx-list-group--moving')
+  })
 })
