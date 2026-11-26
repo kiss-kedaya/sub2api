@@ -243,7 +243,7 @@ func (s *OpenAIGatewayService) executeDeepSeekSearchCalls(
 		content, ok := s.runDeepSeekSearchCall(ctx, c, account, group, payload)
 		if !ok {
 			// Retry once: hosted search failures are often transient.
-			time.Sleep(deepSeekSearchRetryDelay)
+			_ = sleepWithContext(ctx, deepSeekSearchRetryDelay)
 			content, ok = s.runDeepSeekSearchCall(ctx, c, account, group, payload)
 		}
 		if !ok {

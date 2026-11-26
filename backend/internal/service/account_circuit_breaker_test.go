@@ -124,7 +124,15 @@ func newCircuitHarness(t *testing.T, mutate func(*AccountCircuitBreakerSettings)
 	return h
 }
 
-// circuitCtx 模拟 API Key 鉴权后的网关请求 ctx（带用户 ID、平台、账号名）。
+// circuitCtxFor 模拟 API Key 鉴权 + handler 选号之后的网关请求 ctx（用户 ID、当前账号 ID、平台、账号名）。
+func circuitCtxFor(id int64, platform, name string) context.Context {
+	ctx := context.WithValue(context.Background(), ctxkey.UserID, int64(7))
+	ctx = context.WithValue(ctx, ctxkey.AccountID, id)
+	ctx = context.WithValue(ctx, ctxkey.Platform, platform)
+	return context.WithValue(ctx, ctxkey.AccountName, name)
+}
+
+// circuitCtx 是不绑定具体账号的版本（只有用户 ID）：账号平台/名字不会被记下。
 func circuitCtx(platform, name string) context.Context {
 	ctx := context.WithValue(context.Background(), ctxkey.UserID, int64(7))
 	ctx = context.WithValue(ctx, ctxkey.Platform, platform)
@@ -133,7 +141,7 @@ func circuitCtx(platform, name string) context.Context {
 
 // feed 对账号记 n 次同一结果的尝试。
 func (h *circuitHarness) feed(id int64, platform string, status, n int) {
-	ctx := circuitCtx(platform, fmt.Sprintf("acct-%d", id))
+	ctx := circuitCtxFor(id, platform, fmt.Sprintf("acct-%d", id))
 	for i := 0; i < n; i++ {
 		h.b.ObserveUpstreamAttempt(ctx, id, status, nil)
 	}
@@ -230,7 +238,7 @@ func TestCircuitWindowConcurrentAdds(t *testing.T) {
 // seed 直接往当前桶里写样本（不触发评估），用来构造精确的边界状态。
 func (h *circuitHarness) seed(id int64, platform string, total, failed int) {
 	st := h.b.stateFor(id)
-	ctx := circuitCtx(platform, fmt.Sprintf("acct-%d", id))
+	ctx := circuitCtxFor(id, platform, fmt.Sprintf("acct-%d", id))
 	h.b.noteIdentity(st, ctx)
 	epoch := uint64(h.b.now().UnixNano() / h.b.bucketNanos)
 	st.lastEpoch.Store(epoch)
@@ -552,13 +560,43 @@ func TestCircuitBreakerIgnoresNonGatewayTraffic(t *testing.T) {
 	require.False(t, h.b.IsOpen(1))
 	require.Zero(t, h.b.Stats().Observed)
 	// 账号 ID <= 0 同理
-	h.b.ObserveUpstreamAttempt(circuitCtx("anthropic", "x"), 0, 502, nil)
+	h.b.ObserveUpstreamAttempt(circuitCtxFor(0, "anthropic", "x"), 0, 502, nil)
 	require.Zero(t, h.b.Stats().Observed)
+}
+
+func TestCircuitBreakerGatewayMarkerAcceptsSelectedAccountContexts(t *testing.T) {
+	// Gemini 原生路由的鉴权中间件不写用户 ID，但 handler 选号后会写「当前账号 ID」：同样是真实网关流量。
+	geminiStyle := func(id int64) context.Context {
+		ctx := context.WithValue(context.Background(), ctxkey.AccountID, id)
+		return context.WithValue(ctx, ctxkey.Platform, "gemini")
+	}
+	h := newCircuitHarness(t, nil)
+	for i := 0; i < 20; i++ {
+		h.b.ObserveUpstreamAttempt(geminiStyle(1), 1, 502, nil)
+	}
+	require.True(t, h.b.IsOpen(1), "a request carrying only the selected-account id is gateway traffic")
+	require.Equal(t, "gemini", h.store.trips[0].Platform)
+
+	// 当前账号 ID 与被调用的账号对不上：不是这个账号的网关尝试，不计入，也不会把标签贴过去。
+	h2 := newCircuitHarness(t, nil)
+	for i := 0; i < 50; i++ {
+		h2.b.ObserveUpstreamAttempt(geminiStyle(99), 1, 502, nil)
+	}
+	require.False(t, h2.b.IsOpen(1))
+	require.Zero(t, h2.b.Stats().Observed)
+
+	// 有用户 ID 但没有账号 ID：计入，只是不知道平台（归在「未知平台」桶）。
+	h3 := newCircuitHarness(t, nil)
+	for i := 0; i < 20; i++ {
+		h3.b.ObserveUpstreamAttempt(circuitCtx("anthropic", "x"), 1, 502, nil)
+	}
+	require.True(t, h3.b.IsOpen(1))
+	require.Equal(t, "", h3.store.trips[0].Platform, "labels from another account's context are never adopted")
 }
 
 func TestCircuitBreakerCountsGenuineTransportErrors(t *testing.T) {
 	h := newCircuitHarness(t, nil)
-	ctx := circuitCtx("anthropic", "a")
+	ctx := circuitCtxFor(1, "anthropic", "a")
 	for i := 0; i < 20; i++ {
 		h.b.ObserveUpstreamAttempt(ctx, 1, 0, timeoutNetErr{})
 	}
@@ -728,7 +766,7 @@ func TestCircuitBreakerConcurrentObservationsTripOnce(t *testing.T) {
 	store := &circuitPersistRecorder{}
 	b := NewAccountCircuitBreaker(DefaultAccountCircuitBreakerSettings(), store.persist)
 	b.log = &circuitLogRecorder{}
-	ctx := circuitCtx("anthropic", "a")
+	ctx := circuitCtxFor(1, "anthropic", "a")
 
 	var wg sync.WaitGroup
 	for g := 0; g < 64; g++ {
@@ -757,9 +795,9 @@ func TestCircuitBreakerConcurrentManyAccountsRace(t *testing.T) {
 		wg.Add(1)
 		go func(g int) {
 			defer wg.Done()
-			ctx := circuitCtx("anthropic", "a")
 			for i := 0; i < 3000; i++ {
 				id := int64(1 + (g+i)%40)
+				ctx := circuitCtxFor(id, "anthropic", "a")
 				status := 200
 				if id%2 == 0 {
 					status = 502 // 偶数账号全失败，奇数账号全成功
@@ -852,7 +890,7 @@ func TestFormatCircuitWindow(t *testing.T) {
 // 记录一次结果的开销：热路径上每个上游尝试多付这一次。
 func BenchmarkAccountCircuitBreakerObserveSuccess(b *testing.B) {
 	cb := NewAccountCircuitBreaker(DefaultAccountCircuitBreakerSettings(), nil)
-	ctx := circuitCtx("anthropic", "bench")
+	ctx := circuitCtxFor(42, "anthropic", "bench")
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -863,7 +901,7 @@ func BenchmarkAccountCircuitBreakerObserveSuccess(b *testing.B) {
 
 func BenchmarkAccountCircuitBreakerObserveSuccessSerial(b *testing.B) {
 	cb := NewAccountCircuitBreaker(DefaultAccountCircuitBreakerSettings(), nil)
-	ctx := circuitCtx("anthropic", "bench")
+	ctx := circuitCtxFor(42, "anthropic", "bench")
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		cb.ObserveUpstreamAttempt(ctx, 42, 200, nil)
@@ -875,7 +913,7 @@ func BenchmarkAccountCircuitBreakerObserveFailureSerial(b *testing.B) {
 	settings := DefaultAccountCircuitBreakerSettings()
 	settings.MinRequests = 1 << 19
 	cb := NewAccountCircuitBreaker(settings, nil)
-	ctx := circuitCtx("anthropic", "bench")
+	ctx := circuitCtxFor(42, "anthropic", "bench")
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		cb.ObserveUpstreamAttempt(ctx, 42, 502, nil)
@@ -884,7 +922,10 @@ func BenchmarkAccountCircuitBreakerObserveFailureSerial(b *testing.B) {
 
 func BenchmarkAccountCircuitBreakerObserveManyAccountsParallel(b *testing.B) {
 	cb := NewAccountCircuitBreaker(DefaultAccountCircuitBreakerSettings(), nil)
-	ctx := circuitCtx("anthropic", "bench")
+	ctxs := make([]context.Context, 501)
+	for i := range ctxs {
+		ctxs[i] = circuitCtxFor(int64(i), "anthropic", "bench")
+	}
 	var next atomic.Int64
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
@@ -892,7 +933,8 @@ func BenchmarkAccountCircuitBreakerObserveManyAccountsParallel(b *testing.B) {
 		i := int64(0)
 		for pb.Next() {
 			i++
-			cb.ObserveUpstreamAttempt(ctx, 1+(id*7+i)%500, 200, nil)
+			acct := 1 + (id*7+i)%500
+			cb.ObserveUpstreamAttempt(ctxs[acct], acct, 200, nil)
 		}
 	})
 }

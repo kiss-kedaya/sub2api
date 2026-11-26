@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -356,16 +357,28 @@ func (b *AccountCircuitBreaker) RunPersistSynchronouslyForTest() {
 // Enabled 报告断路器是否生效。
 func (b *AccountCircuitBreaker) Enabled() bool { return b != nil && b.enabled }
 
+// isGatewayAttempt 判断这次上游请求是不是真实的网关用户流量：
+//   - ctx 里有 API Key 鉴权中间件写入的用户 ID；或者
+//   - ctx 里有 handler 选号后写入的「当前账号 ID」且正是这次请求的账号（Gemini 原生路由的鉴权中间件
+//     不写用户 ID，但同样会经过选号）。
+//
+// 后台账号测试、额度/余额探针、模型列表同步等非用户流量两者都没有，不会污染窗口。
+func isGatewayAttempt(ctx context.Context, accountID int64) bool {
+	if uid, _ := ctx.Value(ctxkey.UserID).(int64); uid > 0 {
+		return true
+	}
+	aid, _ := ctx.Value(ctxkey.AccountID).(int64)
+	return aid == accountID
+}
+
 // ObserveUpstreamAttempt 记录一次对账号的上游尝试的结果（实现 UpstreamAttemptObserver）。
 //
-// 只统计真实网关流量：请求 ctx 里必须带 API Key 鉴权中间件写入的用户 ID，
-// 这样后台账号测试、额度/余额探针、模型列表同步等非用户流量不会污染窗口。
-// 失败口径见 classifyUpstreamAttempt。
+// 只统计真实网关流量（见 isGatewayAttempt）。失败口径见 classifyUpstreamAttempt。
 func (b *AccountCircuitBreaker) ObserveUpstreamAttempt(ctx context.Context, accountID int64, statusCode int, err error) {
 	if b == nil || !b.enabled || accountID <= 0 || ctx == nil {
 		return
 	}
-	if uid, _ := ctx.Value(ctxkey.UserID).(int64); uid <= 0 {
+	if !isGatewayAttempt(ctx, accountID) {
 		return
 	}
 	switch classifyUpstreamAttempt(ctx.Err(), statusCode, err) {
@@ -416,7 +429,11 @@ func (b *AccountCircuitBreaker) record(id int64, ctx context.Context, failed boo
 }
 
 // noteIdentity 记下账号的平台和名字（只在第一次看到时从 ctx 取，账号的平台不会变）。
+// 只采信 ctx 里「当前账号 ID」与本账号一致时写入的平台/名字，避免把别的账号的标签贴到这个账号上。
 func (b *AccountCircuitBreaker) noteIdentity(st *accountCircuitState, ctx context.Context) {
+	if aid, _ := ctx.Value(ctxkey.AccountID).(int64); aid != st.id {
+		return
+	}
 	if st.platform.Load() == nil {
 		if p, _ := ctx.Value(ctxkey.Platform).(string); p != "" {
 			st.platform.CompareAndSwap(nil, &p)
@@ -548,7 +565,7 @@ func (b *AccountCircuitBreaker) persistTrip(st *accountCircuitState, trip Accoun
 	}
 	if b.inflight.Add(1) > circuitMaxInflightPersist {
 		b.inflight.Add(-1)
-		b.persistFailed(st, trip, fmt.Errorf("too many in-flight circuit breaker writes"))
+		b.persistFailed(st, trip, errors.New("too many in-flight circuit breaker writes"))
 		return
 	}
 	b.async(func() {

@@ -73,7 +73,7 @@ func newBreakerSchedFixture(t *testing.T, cooldown time.Duration) (*breakerSched
 }
 
 func tripAccount(breaker *AccountCircuitBreaker, id int64) {
-	ctx := circuitCtx(PlatformAnthropic, "acct")
+	ctx := circuitCtxFor(id, PlatformAnthropic, "acct")
 	for i := 0; i < 20; i++ {
 		breaker.ObserveUpstreamAttempt(ctx, id, 502, nil)
 	}
@@ -123,7 +123,7 @@ func TestCircuitBreakerTripIsHonoredBySchedulerStickySessionsAndRecoversAutomati
 	require.Equal(t, int64(1), acc.ID, "cooldown elapsed: the account is schedulable again")
 
 	// 恢复后需要重新积累新样本才可能再次熔断：19 个失败不够。
-	ctxObs := circuitCtx(PlatformAnthropic, "acct")
+	ctxObs := circuitCtxFor(1, PlatformAnthropic, "acct")
 	for i := 0; i < 19; i++ {
 		breaker.ObserveUpstreamAttempt(ctxObs, 1, 502, nil)
 	}

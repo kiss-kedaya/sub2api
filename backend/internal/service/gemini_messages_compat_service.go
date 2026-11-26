@@ -891,7 +891,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 			retryAttempt := attempt - signatureRetryStage
 			if retryAttempt < maxAttempts {
 				logger.LegacyPrintf("service.gemini_messages_compat", "Gemini account %d: upstream request failed, retry %d/%d: %v", account.ID, retryAttempt, maxAttempts, err)
-				sleepGeminiBackoff(attempt)
+				sleepGeminiBackoff(ctx, attempt)
 				continue
 			}
 			setOpsUpstreamError(c, 0, safeErr, "")
@@ -954,7 +954,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 					logger.LegacyPrintf("service.gemini_messages_compat", "Gemini account %d: detected signature-related 400, retrying with downgraded Claude blocks (%s)", account.ID, stageName)
 					geminiReq = retryGeminiReq
 					// Consume one retry budget attempt and continue with the updated request payload.
-					sleepGeminiBackoff(1)
+					sleepGeminiBackoff(ctx, 1)
 					continue
 				}
 			}
@@ -1022,7 +1022,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 				})
 
 				logger.LegacyPrintf("service.gemini_messages_compat", "Gemini account %d: upstream status %d, retry %d/%d", account.ID, resp.StatusCode, retryAttempt, maxAttempts)
-				sleepGeminiBackoff(retryAttempt)
+				sleepGeminiBackoff(ctx, retryAttempt)
 				continue
 			}
 			// Final attempt: surface the upstream error body (mapped below) instead of a generic retry error.
@@ -1521,7 +1521,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			})
 			if attempt < maxAttempts {
 				logger.LegacyPrintf("service.gemini_messages_compat", "Gemini account %d: upstream request failed, retry %d/%d: %v", account.ID, attempt, maxAttempts, err)
-				sleepGeminiBackoff(attempt)
+				sleepGeminiBackoff(ctx, attempt)
 				continue
 			}
 			if action == "countTokens" {
@@ -1601,7 +1601,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 				})
 
 				logger.LegacyPrintf("service.gemini_messages_compat", "Gemini account %d: upstream status %d, retry %d/%d", account.ID, resp.StatusCode, attempt, maxAttempts)
-				sleepGeminiBackoff(attempt)
+				sleepGeminiBackoff(ctx, attempt)
 				continue
 			}
 			if action == "countTokens" {
@@ -2055,7 +2055,9 @@ func (s *GeminiMessagesCompatService) writeGeminiNativeUpstreamError(c *gin.Cont
 	return fmt.Errorf("gemini upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
 }
 
-func sleepGeminiBackoff(attempt int) {
+// sleepGeminiBackoff 是 Gemini 同账号重试之间的退避（带抖动）；睡眠响应 ctx 取消：
+// 客户端断开后立刻停止等待，不再把请求 goroutine 卡到退避结束。
+func sleepGeminiBackoff(ctx context.Context, attempt int) {
 	delay := geminiRetryBaseDelay * time.Duration(1<<uint(attempt-1))
 	if delay > geminiRetryMaxDelay {
 		delay = geminiRetryMaxDelay
@@ -2068,7 +2070,7 @@ func sleepGeminiBackoff(attempt int) {
 	if sleepFor < 0 {
 		sleepFor = 0
 	}
-	time.Sleep(sleepFor)
+	_ = sleepWithContext(ctx, sleepFor)
 }
 
 var (
