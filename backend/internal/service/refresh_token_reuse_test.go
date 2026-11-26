@@ -13,6 +13,7 @@ import (
 
 // newRefreshReuseTestService 用最小 UserRepository 桩 + 完整 RefreshTokenCache 桩
 // 构造认证服务：Refresh Token 有效期 7 天，保证墓碑 TTL 计算与生产一致。
+// 重试宽限保持零值（关闭），这里测的是「宽限之外的重放」语义。
 func newRefreshReuseTestService(t *testing.T) (*service.AuthService, *service.User) {
 	t.Helper()
 	user := &service.User{
@@ -75,9 +76,11 @@ func TestRefreshTokenRotationWithoutReuseKeepsSession(t *testing.T) {
 	}
 }
 
-// 网络重试场景（有意接受的取舍）：客户端已消费旧 token 但没收到响应，
-// 重试同一个旧 token 会被判定为复用并让整条会话失效，用户重新登录。
-func TestRefreshTokenRetryAfterLostResponseRevokesFamily(t *testing.T) {
+// 网络重试场景：客户端已消费旧 token 但没收到响应，重试同一个旧 token。
+// 这里的配置没有设置 jwt.refresh_token_reuse_leeway_seconds（零值 = 关闭宽限，即升级前的行为），
+// 所以重试被判定为复用并让整条会话失效；打开宽限（生产默认 60 秒）后的行为见
+// refresh_token_rotation_test.go 的 TestRefreshRotationLeway*。
+func TestRefreshTokenRetryAfterLostResponseRevokesFamilyWhenLeewayIsOff(t *testing.T) {
 	svc, user := newRefreshReuseTestService(t)
 	ctx := context.Background()
 
