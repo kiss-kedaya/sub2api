@@ -28,10 +28,15 @@ import (
 // service 层补 max_tokens=128000 / temperature=1，那属于本函数之后的行为，
 // 不能当作放行理由。
 //
-// 实现分两层，对任何输入的返回值完全一致：
+// 实现分两层：
 //   - validateStrictOpusMessagesScan：对整段请求体只扫一遍、零分配。它只在能证明
 //     与 gjson 语义一致时才给结论（见该函数注释），其余写法一律交回第二层。
 //   - validateStrictOpusMessagesGJSON：原 gjson 实现，逐字保留，作为兜底。
+//
+// 两层对合法 JSON（gjson.Valid 为真）的返回值完全一致，差分测试逐条验证。非法 JSON 上扫描器遇到不能
+// 保证一致的写法同样退回 gjson，但那里的一致性只是经验上的（差分/fuzz 没再发现分歧），不是证明；
+// 已知的一类分歧（thinking 的值是数组）已退回。线上两个调用点之前都有合法 JSON 闸门
+// （ParseGatewayRequest 里的 gjson.ValidBytes；RequestBodyTop(...).Valid()），非法 JSON 到不了这里。
 //
 // 这个函数跑在限流/调度之前，长上下文请求（几 MB、数百条消息）被 429/503 拒绝前
 // 也要付这笔钱，所以第一层不能走 gjson：gjson 每个顶层字段各扫一遍整段请求体、
@@ -103,7 +108,7 @@ func validateStrictOpusMessagesGJSON(body []byte) (string, bool) {
 
 // validateStrictOpusMessagesScan 单遍扫描整段请求体，按与 gjson 实现完全相同的顺序给出结论。
 // done=false 表示请求体里有无法保证与 gjson 逐字一致的写法，调用方必须改走 gjson 实现；
-// done=true 时 (message, ok) 与 gjson 实现对同一输入的返回值相同。
+// done=true 时 (message, ok) 与 gjson 实现对同一合法 JSON 的返回值相同（非法 JSON 见上面的说明）。
 //
 // 等价性靠“只处理能证明一致的子集”保证，下列情形一律 done=false：
 //   - 顶层不是以 { 开头的对象（gjson 会跳过任意前缀垃圾直到第一个 { 或 [，例如 BOM）；
@@ -115,6 +120,7 @@ func validateStrictOpusMessagesGJSON(body []byte) (string, bool) {
 //   - messages 或 content 数组里有非对象元素（gjson 的 Get 会跳过任意前缀字符去找第一个 { 或 [，
 //     这类元素没有标准语义可复刻，客户端也不会发）；
 //   - thinking.type / top_p / top_k 的字符串值含反斜杠（需要 gjson 的反转义规则）；
+//   - thinking 的值是数组（见 thinkingEnabled：gjson 会下钻数组，畸形文本上收尾位置与 squash 不同）；
 //   - content 块的 type 值含反斜杠（反转义后可能等于 text）：仅该块退回 gjson 逐字求值，其余照常。
 //
 // 不被解释的值（system、tools、metadata、image 的 source、tool_use 的 input ……）只用与
@@ -368,11 +374,22 @@ func (s *opusScan) visitBlock(msgIdx, j, v int) (int, bool) {
 }
 
 // thinkingEnabled 复刻 strings.TrimSpace(gjson.GetBytes(body, "thinking.type").String()) 是否为
-// enabled 或 adaptive。thinking 不是对象时 gjson 找不到 type（数组按下标匹配、其余标量没有子键）；
-// 非字符串的 type 值其字符串形式（数字/true/false/null/原始对象）不可能是 enabled/adaptive。
-// exact=false 表示 thinking 写法不规范或 type 值含反斜杠，需要退回 gjson。
+// enabled 或 adaptive。非字符串的 type 值其字符串形式（数字/true/false/null/原始对象）不可能是
+// enabled/adaptive；thinking 是标量时 gjson 同样取不到 type。
+// exact=false 表示需要退回 gjson：thinking 是数组、写法不规范，或 type 值含反斜杠。
+//
+// thinking 是数组一律退回：gjson 对 "thinking.type" 会下钻进数组（parseArray），合法 JSON 上取不到 type，
+// 但在畸形文本上它的收尾位置与按括号计深的 squash 不同，会看见（或看不见）数组范围内暗藏的第二个
+// "thinking"，例如 {"thinking":[(],"thinking":{"type":"enabled"})}。对象则不同：下面逐成员严格校验，
+// 校验通过时两者的收尾位置必然一致。
 func (s *opusScan) thinkingEnabled() (enabled, exact bool) {
-	if !s.thinking.set || s.thinking.kind != jsonObject {
+	if !s.thinking.set {
+		return false, true
+	}
+	if s.thinking.kind == jsonArray {
+		return false, false
+	}
+	if s.thinking.kind != jsonObject {
 		return false, true
 	}
 	tk := s.thinking.tok

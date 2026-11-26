@@ -171,6 +171,12 @@ var strictOpusSpecCases = func() []strictOpusCase {
 		c("messages 不是数组", `{"max_tokens":1,"messages":{"role":"user"}}`, needMsgs),
 		c("BOM 前缀的合法请求放行（退回 gjson）", "\xef\xbb\xbf{\"max_tokens\":1,"+msgs+"}", ""),
 		c("转义的键名同样识别（退回 gjson）", `{"max\u005ftokens":1,`+msgs+`}`, ""),
+		// thinking 是数组：gjson 会下钻数组，畸形文本上收尾位置与括号计深不同（独立评审发现），一律退回 gjson。
+		c("thinking 数组暗藏第二个 thinking（括号错位）", `{"messages":[{}],"max_tokens":1,"top_p":0,"thinking":[(],"thinking":{"type":"enabled"})}`, thinkP),
+		c("thinking 数组暗藏第二个 thinking（} 被吞）", `{"messages":[{}],"max_tokens":1,"top_p":0,"thinking":[}}]"thinking":{"type":"enabled"}}`, thinkP),
+		c("thinking 数组暗藏第二个 thinking（数字吞掉 [）", `{"messages":[{}],"max_tokens":1,"temperature":0,"thinking":[-[],"thinking":{"type":"enabled"}]}`, thinkT),
+		c("thinking 是合法数组：取不到 type", `{"max_tokens":1,"top_p":0,"thinking":[{"type":"enabled"}],`+msgs+`}`, ""),
+		c("thinking 数组元素里的 thinking：合法 JSON 取不到", `{"max_tokens":1,"temperature":0,"thinking":[{"thinking":{"type":"enabled"}}],`+msgs+`}`, ""),
 	}
 }()
 
@@ -444,6 +450,17 @@ func strictOpusEdgeBodies() []string {
 		`{"max_tokens":1,"messages":[{"role":"user","content":[{"type":"text","text":"x`,
 		`{"max_tokens":1,"messages":[{"role":"user","content":[{"type":"text","text":"`,
 	}
+	// thinking 是数组：评审发现的畸形文本分歧（gjson 下钻数组，收尾位置与括号计深不同），一律退回 gjson。
+	out = append(out,
+		`{"messages":[{}],"max_tokens":1,"top_p":0,"thinking":[(],"thinking":{"type":"enabled"})}`,
+		`{"messages":[{}],"max_tokens":1,"top_p":0,"thinking":[}}]"thinking":{"type":"enabled"}}`,
+		`{"messages":[{}],"max_tokens":1,"temperature":0,"thinking":[-[],"thinking":{"type":"enabled"}]}`,
+		`{"messages":[{}],"max_tokens":1,"top_k":1,"thinking":[{"thinking":{"type":"enabled"}}]}`,
+		`{"messages":[{}],"max_tokens":1,"top_p":0,"thinking":[],"thinking":{"type":"enabled"}}`,
+		`{"messages":[{}],"max_tokens":1,"top_p":0,"thinking":[1,2,3]}`,
+		`{"thinking":[(],"thinking":{"type":"enabled"})}`,
+		`{"messages":[{}],"max_tokens":1,"temperature":0,"temperature":[(],"temperature":0.5)}`,
+	)
 	// 深层嵌套的、被跳过的值：必须迭代跳过，不能栈溢出，边界与 gjson 一致。
 	deep := strings.Repeat("[", 50000) + strings.Repeat("]", 50000)
 	out = append(out,
@@ -476,6 +493,8 @@ func strictOpusSweepSeeds() []string {
 		`{"model":"claude-opus-5-5","messages":[{"role":"user","content":"a","content":[{"type":"text","text":""}]},{"role":"user","content":[{"type":"text","type":"image","text":""},{"text":"y","type":"text","text":""}]}],"max_tokens":2,"stream":true,"system":[{"type":"text","text":"s"}],"tools":[{"name":"t","input_schema":{"type":"object"}}]}`,
 		`{"max_tokens":5,"temperature":0,"thinking":{"type":"enabled"},"messages":[{"content":[{"type":"text","text":"\u00a0\n"}]}]}`,
 		`{"max_tokens":1.5e0,"temperature":-0,"top_k":0,"thinking":{"budget_tokens":1,"type":"adaptive"},"top_p":"1","messages":[{"role":"user","content":[]}]}`,
+		`{"messages":[{}],"max_tokens":1,"top_p":0,"thinking":[(],"thinking":{"type":"enabled"})}`,
+		`{"messages":[{}],"max_tokens":1,"temperature":0,"thinking":[-[],"thinking":{"type":"enabled"}]}`,
 	}
 }
 
@@ -516,6 +535,46 @@ func TestValidateStrictOpusMessagesRequestMatchesGJSON(t *testing.T) {
 		}
 	}
 	st.cut("temperature x thinking x top_p x top_k 全组合")
+
+	// 3b. thinking 是数组（含合法 JSON）：扫描器一律退回 gjson，这里验证退回后结果相同。
+	if scale == 1 {
+		for _, temp := range strictTemperatureStd {
+			for _, think := range strictThinkingArrays {
+				for _, topP := range strictTopPStd {
+					for _, topK := range strictTopKStd {
+						body := `{"model":"claude-opus-5-5","max_tokens":16,"temperature":` + temp + `,"thinking":` + think +
+							`,"top_p":` + topP + `,"top_k":` + topK + `,"messages":[{"role":"user","content":"hi"}]}`
+						st.check(t, strictOpusModel, []byte(body))
+					}
+				}
+			}
+		}
+	}
+	st.cut("thinking 为数组 x temperature x top_p x top_k 全组合（一律退回 gjson）")
+
+	// 3c. thinking 数组陷阱全组合：数组里塞杂质括号并暗藏第二个 thinking（独立评审发现的那一类分歧）。
+	if scale == 1 {
+		heads := []string{
+			`{"messages":[{}],"max_tokens":1,"top_p":0,"thinking":`,
+			`{"messages":[{}],"max_tokens":1,"temperature":0,"thinking":`,
+			`{"messages":[{}],"max_tokens":1,"top_k":1,"thinking":`,
+			`{"messages":[{}],"max_tokens":1,"thinking":`,
+		}
+		for _, head := range heads {
+			for _, inner := range strictTrapInner {
+				for _, closer := range strictTrapCloser {
+					for _, sep := range strictTrapSep {
+						for _, hidden := range strictTrapHidden {
+							for _, tail := range strictTrapTail {
+								st.check(t, strictOpusModel, []byte(head+"["+inner+closer+sep+`"thinking":`+hidden+tail))
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	st.cut("thinking 数组陷阱全组合（4 个开头 x 17 x 7 x 4 x 6 x 8）")
 
 	// 4. 对每个种子请求体做逐字节穷举变异：删除一个字节 / 替换为任一杂质字节 / 在任意位置插入杂质字节。
 	junk := []byte("\"\\{}[](),: \n\t01-.etfnu\x00\xff\xc2\xa0")
@@ -591,6 +650,7 @@ func TestValidateStrictOpusMessagesScanContract(t *testing.T) {
 		"CRLF 与制表符排版":              "{\r\n\t\"max_tokens\":\t16,\r\n\t\"messages\":\t[{\"content\":\t[{\"type\":\t\"text\",\t\"text\":\t\"hi\"}]}]\r\n}",
 		"深层嵌套的被跳过值":                `{"x":` + strings.Repeat("[", 5000) + strings.Repeat("]", 5000) + `,` + tail,
 		"数字写法：负号、小数、指数":            `{"max_tokens":1.6e1,"temperature":-0.0,"top_p":1E0,"top_k":0.0,"messages":[{"content":"x"}]}`,
+		"thinking 是标量时仍由扫描器作答":     `{"thinking":"enabled","temperature":0.5,` + tail,
 	}
 	for name, body := range handled {
 		t.Run("扫描器作答/"+name, func(t *testing.T) {
@@ -616,8 +676,12 @@ func TestValidateStrictOpusMessagesScanContract(t *testing.T) {
 		"尾逗号":                `{"max_tokens":16,"messages":[{"content":"x"}],}`,
 		"对象未闭合":              `{"max_tokens":16,"messages":[{"content":"x"}]`,
 		"thinking.type 值含转义": `{"thinking":{"type":"en\u0061bled"},` + tail,
-		"thinking 开启且 top_p 字符串含转义": `{"thinking":{"type":"enabled"},"temperature":1,"top_p":"\u0031",` + tail,
-		"thinking 对象写法不规范":          `{"thinking":{"type":"enabled",},` + tail,
+		"thinking 开启且 top_p 字符串含转义":         `{"thinking":{"type":"enabled"},"temperature":1,"top_p":"\u0031",` + tail,
+		"thinking 对象写法不规范":                  `{"thinking":{"type":"enabled",},` + tail,
+		"thinking 是数组（合法 JSON 也退回）":         `{"max_tokens":16,"thinking":[],"messages":[{"content":"x"}]}`,
+		"thinking 数组暗藏第二个 thinking（括号错位）":   `{"messages":[{}],"max_tokens":1,"top_p":0,"thinking":[(],"thinking":{"type":"enabled"})}`,
+		"thinking 数组暗藏第二个 thinking（} 被吞）":   `{"messages":[{}],"max_tokens":1,"top_p":0,"thinking":[}}]"thinking":{"type":"enabled"}}`,
+		"thinking 数组暗藏第二个 thinking（数字吞掉 [）": `{"messages":[{}],"max_tokens":1,"temperature":0,"thinking":[-[],"thinking":{"type":"enabled"}]}`,
 	}
 	for name, body := range fallback {
 		t.Run("退回 gjson/"+name, func(t *testing.T) {
@@ -961,10 +1025,21 @@ var (
 	strictThinkingStd = []string{`{"type":"enabled"}`, `{"type":"adaptive"}`, `{"type":"disabled"}`, `{"type":" enabled "}`, `{"type":"ENABLED"}`,
 		`{"type":"Adaptive"}`, `{"type":"enabled","budget_tokens":2048}`, `{"budget_tokens":1,"type":"adaptive"}`,
 		`{"type":"enabled","type":"disabled"}`, `{"type":"disabled","type":"enabled"}`, `{"type":null}`, `{"type":1}`, `{"type":["enabled"]}`,
-		`{"type":{"type":"enabled"}}`, `{"nested":{"type":"enabled"}}`, `"enabled"`, `["enabled"]`, `[{"type":"enabled"}]`, `null`, `true`, `{}`, `[]`,
+		`{"type":{"type":"enabled"}}`, `{"nested":{"type":"enabled"}}`, `"enabled"`, `null`, `true`, `{}`,
 		`{"type"  :  "enabled"  ,  "budget_tokens"  :  5}`, `{"type":"adaptive","display":"summarized"}`, `{"type":""}`, `{"type":"enable"}`}
 	strictThinkingWild = []string{`{"type":"en\u0061bled"}`, `{"ty\u0070e":"enabled"}`, "{\"type\":\"enabled\t\"}", `{"type":"enabled"`, `{"type":"enabled",}`,
 		`{"type":"adaptive"}}`, `{"thinking":{"type":"enabled"}}`, `{"type":"\u0065nabled"}`, `{"type":enabled}`, `{type:"enabled"}`, `{"type":"enabled" "x":1}`}
+
+	// thinking 是数组：合法 JSON 里取不到 type，但扫描器一律退回 gjson（见 thinkingEnabled），这里验证退回后结果相同。
+	strictThinkingArrays = []string{`["enabled"]`, `[{"type":"enabled"}]`, `[]`, `[ ]`, `[1,2]`, `[{"type":"enabled"},{"type":"disabled"}]`,
+		`[[{"type":"enabled"}]]`, `[null]`, `[{"thinking":{"type":"enabled"}}]`}
+
+	// thinking 数组陷阱的部件（见 thinkingTrap）：数组里塞杂质括号，再暗藏第二个 thinking。
+	strictTrapInner  = []string{`(`, `[`, `{`, `-`, `-[`, ``, `}`, `)`, `1`, `"x"`, `[(`, `{(`, `((`, `}}`, `,`, ` `, `null`}
+	strictTrapCloser = []string{`]`, `)`, `}`, `]]`, `])`, `]}`, ``}
+	strictTrapSep    = []string{`,`, ``, ` `, `, `}
+	strictTrapHidden = []string{`{"type":"enabled"}`, `{"type":"adaptive"}`, `{"type":"disabled"}`, `{}`, `[]`, `{"type":"enabled","budget_tokens":1}`}
+	strictTrapTail   = []string{``, `)`, `]`, `}`, `]}`, `)}`, `}}`, `]]`}
 
 	strictTopPStd = []string{`1`, `1.0`, `0.5`, `0`, `0.3`, `"1"`, `"0.5"`, `"abc"`, `null`, `true`, `false`, `[]`, `{}`, `5`, `-1`, `1e0`, `""`, `" 1"`,
 		`"1 "`, `"1e0"`, `1.0000000001`, `0.99999999`}
@@ -981,6 +1056,37 @@ func (g *strictGen) val(std, wild []string) string {
 	return g.pick(std)
 }
 
+// thinkingTrap 生成“thinking 是数组、数组范围内暗藏第二个 thinking”的畸形取值：
+//
+//	[ 杂质 收尾 分隔 "thinking":{…} 杂质
+//
+// 合法 JSON 里不会出现。gjson 对 "thinking.type" 会下钻进数组并在它自己的位置收尾，与按括号计深的 squash 不同，
+// 暗藏的 thinking 对旧实现可见、对只做 squash 的扫描器不可见（反过来也会）。调用方在取值后接逗号和下一个字段，或直接收尾。
+func (g *strictGen) thinkingTrap() string {
+	return "[" + g.pick(strictTrapInner) + g.pick(strictTrapCloser) + g.pick(strictTrapSep) + `"thinking":` + g.pick(strictTrapHidden) + g.pick(strictTrapTail)
+}
+
+// scalar 生成 max_tokens / temperature / top_p / top_k 的取值；畸形模式下偶尔换成“数组里暗藏同名第二个键”的陷阱。
+// 这些字段 gjson 按简单路径查找，数组/对象只做 squash 跳过，应当与扫描器一致。
+func (g *strictGen) scalar(key string, std, wild []string) string {
+	if g.wild && g.pct(4) {
+		return "[" + g.pick(strictTrapInner) + g.pick(strictTrapCloser) + g.pick(strictTrapSep) + `"` + key + `":` +
+			g.pick([]string{"0", "0.5", "1", "5", `"1"`, "true"}) + g.pick(strictTrapTail)
+	}
+	return g.val(std, wild)
+}
+
+// thinking 生成 thinking 的取值：标准模式只出对象和标量；畸形模式还会出数组与陷阱。
+func (g *strictGen) thinking() string {
+	switch {
+	case g.wild && g.pct(8):
+		return g.thinkingTrap()
+	case g.wild && g.pct(6):
+		return g.pick(strictThinkingArrays)
+	}
+	return g.val(strictThinkingStd, strictThinkingWild)
+}
+
 func (g *strictGen) body() string {
 	var f []string
 	add := func(k, v string) { f = append(f, g.member(k, v)) }
@@ -989,19 +1095,19 @@ func (g *strictGen) body() string {
 		add("messages", g.messages())
 	}
 	if g.pct(88) {
-		add("max_tokens", g.val(strictMaxTokensStd, strictMaxTokensWild))
+		add("max_tokens", g.scalar("max_tokens", strictMaxTokensStd, strictMaxTokensWild))
 	}
 	if g.pct(40) {
-		add("temperature", g.val(strictTemperatureStd, strictTemperatureWild))
+		add("temperature", g.scalar("temperature", strictTemperatureStd, strictTemperatureWild))
 	}
 	if g.pct(35) {
-		add("thinking", g.val(strictThinkingStd, strictThinkingWild))
+		add("thinking", g.thinking())
 	}
 	if g.pct(18) {
-		add("top_p", g.val(strictTopPStd, strictTopPWild))
+		add("top_p", g.scalar("top_p", strictTopPStd, strictTopPWild))
 	}
 	if g.pct(18) {
-		add("top_k", g.val(strictTopKStd, strictTopKWild))
+		add("top_k", g.scalar("top_k", strictTopKStd, strictTopKWild))
 	}
 	if g.pct(30) {
 		add("system", g.noise(0))
