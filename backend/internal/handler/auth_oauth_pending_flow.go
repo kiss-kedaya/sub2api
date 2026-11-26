@@ -1601,35 +1601,74 @@ func (h *AuthHandler) consumePendingOAuthSessionOnLogout(c *gin.Context) {
 }
 
 func clearOAuthLogoutCookies(c *gin.Context) {
+	present := presentRequestCookieNames(c)
+	if len(present) == 0 {
+		return
+	}
+	hasCookie := func(name string) bool {
+		_, ok := present[name]
+		return ok
+	}
+
 	secureCookie := isRequestHTTPS(c)
 
-	clearOAuthPendingSessionCookie(c, secureCookie)
-	clearOAuthPendingBrowserCookie(c, secureCookie)
-	clearOAuthBindAccessTokenCookie(c, secureCookie)
+	if hasCookie(oauthPendingSessionCookieName) {
+		clearOAuthPendingSessionCookie(c, secureCookie)
+	}
+	if hasCookie(oauthPendingBrowserCookieName) {
+		clearOAuthPendingBrowserCookie(c, secureCookie)
+	}
+	if hasCookie(oauthBindAccessTokenCookieName) {
+		clearOAuthBindAccessTokenCookie(c, secureCookie)
+	}
 
-	clearCookie(c, linuxDoOAuthStateCookieName, secureCookie)
-	clearCookie(c, linuxDoOAuthVerifierCookie, secureCookie)
-	clearCookie(c, linuxDoOAuthRedirectCookie, secureCookie)
-	clearCookie(c, linuxDoOAuthIntentCookieName, secureCookie)
-	clearCookie(c, linuxDoOAuthBindUserCookieName, secureCookie)
+	for _, name := range []string{
+		linuxDoOAuthStateCookieName,
+		linuxDoOAuthVerifierCookie,
+		linuxDoOAuthRedirectCookie,
+		linuxDoOAuthIntentCookieName,
+		linuxDoOAuthBindUserCookieName,
+	} {
+		if hasCookie(name) {
+			clearCookie(c, name, secureCookie)
+		}
+	}
 
-	oidcClearCookie(c, oidcOAuthStateCookieName, secureCookie)
-	oidcClearCookie(c, oidcOAuthVerifierCookie, secureCookie)
-	oidcClearCookie(c, oidcOAuthRedirectCookie, secureCookie)
-	oidcClearCookie(c, oidcOAuthNonceCookie, secureCookie)
-	oidcClearCookie(c, oidcOAuthIntentCookieName, secureCookie)
-	oidcClearCookie(c, oidcOAuthBindUserCookieName, secureCookie)
+	for _, name := range []string{
+		oidcOAuthStateCookieName,
+		oidcOAuthVerifierCookie,
+		oidcOAuthRedirectCookie,
+		oidcOAuthNonceCookie,
+		oidcOAuthIntentCookieName,
+		oidcOAuthBindUserCookieName,
+	} {
+		if hasCookie(name) {
+			oidcClearCookie(c, name, secureCookie)
+		}
+	}
 
-	wechatClearCookie(c, wechatOAuthStateCookieName, secureCookie)
-	wechatClearCookie(c, wechatOAuthRedirectCookieName, secureCookie)
-	wechatClearCookie(c, wechatOAuthIntentCookieName, secureCookie)
-	wechatClearCookie(c, wechatOAuthModeCookieName, secureCookie)
-	wechatClearCookie(c, wechatOAuthBindUserCookieName, secureCookie)
+	for _, name := range []string{
+		wechatOAuthStateCookieName,
+		wechatOAuthRedirectCookieName,
+		wechatOAuthIntentCookieName,
+		wechatOAuthModeCookieName,
+		wechatOAuthBindUserCookieName,
+	} {
+		if hasCookie(name) {
+			wechatClearCookie(c, name, secureCookie)
+		}
+	}
 
-	wechatPaymentClearCookie(c, wechatPaymentOAuthStateName, secureCookie)
-	wechatPaymentClearCookie(c, wechatPaymentOAuthRedirect, secureCookie)
-	wechatPaymentClearCookie(c, wechatPaymentOAuthContextName, secureCookie)
-	wechatPaymentClearCookie(c, wechatPaymentOAuthScope, secureCookie)
+	for _, name := range []string{
+		wechatPaymentOAuthStateName,
+		wechatPaymentOAuthRedirect,
+		wechatPaymentOAuthContextName,
+		wechatPaymentOAuthScope,
+	} {
+		if hasCookie(name) {
+			wechatPaymentClearCookie(c, name, secureCookie)
+		}
+	}
 }
 
 func buildPendingOAuthSessionStatusPayload(session *dbent.PendingAuthSession) gin.H {

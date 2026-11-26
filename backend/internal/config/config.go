@@ -774,6 +774,9 @@ type TokenRefreshConfig struct {
 	CycleTimeoutSeconds int `mapstructure:"cycle_timeout_seconds"`
 }
 
+// DefaultPricingFallbackFile 是模型定价回退文件的默认相对路径。
+const DefaultPricingFallbackFile = "./resources/model-pricing/model_prices_and_context_window.json"
+
 type PricingConfig struct {
 	// 价格数据远程URL（默认使用LiteLLM镜像）
 	RemoteURL string `mapstructure:"remote_url"`
@@ -2901,7 +2904,7 @@ func setDefaults() {
 	viper.SetDefault("pricing.remote_url", "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json")
 	viper.SetDefault("pricing.hash_url", "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.sha256")
 	viper.SetDefault("pricing.data_dir", "./data")
-	viper.SetDefault("pricing.fallback_file", "./resources/model-pricing/model_prices_and_context_window.json")
+	viper.SetDefault("pricing.fallback_file", DefaultPricingFallbackFile)
 	viper.SetDefault("pricing.override_file", "")
 	viper.SetDefault("pricing.update_interval_hours", 24)
 	viper.SetDefault("pricing.hash_check_interval_minutes", 10)

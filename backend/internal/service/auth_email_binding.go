@@ -10,6 +10,8 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
+	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
+	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
@@ -300,19 +302,62 @@ func replaceBoundEmailAuthIdentityWithClient(
 	return err
 }
 
-func ensureBoundEmailAuthIdentityWithClient(
+// EnsureEmailAuthIdentityWithClient 确保 (email, email, subject) 身份行存在且归属 userID。
+// 先按 hash/明文回退条件查询已有行：
+//   - 任一匹配行归属其他用户时返回 ErrEmailExists；
+//   - 同用户的历史明文行（provider_subject_hash 为空/NULL）原地 UPDATE 回填盲索引，
+//     避免明文双写关闭时再插入一条 (NULL, hash) 行导致 ent: auth_identity not singular；
+//   - 若同用户已存在多条历史异常重复行，保留规范行并清理多余重复行，使后续 .Only() 恢复正常；
+//   - 不存在匹配行时才执行 INSERT ... ON CONFLICT DO NOTHING（同时覆盖 hash 与明文唯一索引，
+//     避免 PostgreSQL 事务内撞明文唯一约束进入 aborted 状态），并复查并发写入后的归属与回填。
+func EnsureEmailAuthIdentityWithClient(
 	ctx context.Context,
 	client *dbent.Client,
 	userID int64,
 	subject string,
 	source string,
 ) error {
-	if client == nil || userID <= 0 || subject == "" {
-		return nil
+	_, _, err := ensureEmailAuthIdentityWithClient(ctx, client, userID, subject, source)
+	return err
+}
+
+func ensureEmailAuthIdentityWithClient(
+	ctx context.Context,
+	client *dbent.Client,
+	userID int64,
+	subject string,
+	source string,
+) (*dbent.AuthIdentity, bool, error) {
+	if client == nil || userID <= 0 {
+		return nil, false, nil
+	}
+	subject = strings.ToLower(strings.TrimSpace(subject))
+	if subject == "" {
+		return nil, false, nil
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "auth_service_email_bind"
 	}
 
-	if strings.TrimSpace(source) == "" {
-		source = "auth_service_email_bind"
+	queryIdentities := func() ([]*dbent.AuthIdentity, error) {
+		return client.AuthIdentity.Query().
+			Where(
+				authidentity.ProviderTypeEQ("email"),
+				authidentity.ProviderKeyEQ("email"),
+				AuthIdentitySubjectLookupPredicate("email", subject),
+			).
+			Order(dbent.Asc(authidentity.FieldID)).
+			All(ctx)
+	}
+
+	identities, err := queryIdentities()
+	if err != nil {
+		return nil, false, err
+	}
+	if len(identities) > 0 {
+		identity, err := reconcileExistingEmailAuthIdentities(ctx, client, userID, subject, identities)
+		return identity, false, err
 	}
 
 	create := client.AuthIdentity.Create().
@@ -320,36 +365,134 @@ func ensureBoundEmailAuthIdentityWithClient(
 		SetProviderType("email").
 		SetProviderKey("email").
 		SetVerifiedAt(time.Now().UTC()).
-		SetMetadata(map[string]any{"source": strings.TrimSpace(source)})
+		SetMetadata(map[string]any{"source": source})
 	create = ApplyAuthIdentitySubjectCreate(create, "email", subject)
-	if err := create.
-		OnConflictColumns(AuthIdentitySubjectHashConflictColumns()...).
+	// 使用无列目标的 ON CONFLICT DO NOTHING：在 PostgreSQL 与 SQLite 下同时吸收
+	// provider_subject_hash 与 provider_subject 两个唯一索引的并发冲突，不会令外层 PG 事务 aborted。
+	execErr := create.
+		OnConflict().
 		DoNothing().
-		Exec(ctx); err != nil {
-		// 旧实例在滚动窗口写入的明文行没有 hash：明文唯一索引冲突不视为失败，
-		// 交给下面的查询走 hash/明文回退。
-		if !isSQLNoRowsError(err) && !dbent.IsConstraintError(err) {
-			return err
+		Exec(ctx)
+	if execErr != nil && !isSQLNoRowsError(execErr) && !dbent.IsConstraintError(execErr) {
+		return nil, false, execErr
+	}
+
+	identities, err = queryIdentities()
+	if err != nil {
+		return nil, false, err
+	}
+	if len(identities) == 0 {
+		return nil, false, nil
+	}
+	identity, err := reconcileExistingEmailAuthIdentities(ctx, client, userID, subject, identities)
+	if err != nil {
+		return nil, false, err
+	}
+	return identity, execErr == nil, nil
+}
+
+func reconcileExistingEmailAuthIdentities(
+	ctx context.Context,
+	client *dbent.Client,
+	userID int64,
+	subject string,
+	identities []*dbent.AuthIdentity,
+) (*dbent.AuthIdentity, error) {
+	for _, identity := range identities {
+		if identity.UserID != userID {
+			return nil, ErrEmailExists
 		}
 	}
 
-	identity, err := client.AuthIdentity.Query().
-		Where(
-			authidentity.ProviderTypeEQ("email"),
-			authidentity.ProviderKeyEQ("email"),
-			AuthIdentitySubjectLookupPredicate("email", subject),
-		).
-		Only(ctx)
-	if err != nil {
-		if dbent.IsNotFound(err) {
-			return nil
+	expectedHash, expectedPrefix, _ := AuthSubjectColumns("email", subject, HashAuthIdentitySubject)
+	var canonical *dbent.AuthIdentity
+	for _, identity := range identities {
+		if identity.ProviderSubjectHash != nil && strings.TrimSpace(*identity.ProviderSubjectHash) == expectedHash {
+			canonical = identity
+			break
 		}
+	}
+
+	if canonical != nil {
+		if len(identities) > 1 {
+			redundantIDs := make([]int64, 0, len(identities)-1)
+			for _, identity := range identities {
+				if identity.ID != canonical.ID {
+					redundantIDs = append(redundantIDs, identity.ID)
+				}
+			}
+			if err := deleteRedundantEmailAuthIdentities(ctx, client, userID, redundantIDs); err != nil {
+				return nil, err
+			}
+		}
+
+		needPlaintextDualWrite := AuthSubjectPlaintextDualWriteEnabled() &&
+			(canonical.ProviderSubject == nil || strings.TrimSpace(*canonical.ProviderSubject) != subject)
+		if needPlaintextDualWrite {
+			return ApplyAuthIdentitySubjectUpdate(
+				client.AuthIdentity.UpdateOneID(canonical.ID),
+				"email",
+				subject,
+			).Save(ctx)
+		}
+		if canonical.ProviderSubjectPrefix == nil || strings.TrimSpace(*canonical.ProviderSubjectPrefix) != expectedPrefix {
+			return client.AuthIdentity.UpdateOneID(canonical.ID).
+				SetProviderSubjectPrefix(expectedPrefix).
+				Save(ctx)
+		}
+		return canonical, nil
+	}
+
+	// 历史明文行缺少 provider_subject_hash（或与当前盲索引不一致）：原地回填，不新增重复行。
+	target := identities[0]
+	if len(identities) > 1 {
+		redundantIDs := make([]int64, 0, len(identities)-1)
+		for _, identity := range identities[1:] {
+			redundantIDs = append(redundantIDs, identity.ID)
+		}
+		if err := deleteRedundantEmailAuthIdentities(ctx, client, userID, redundantIDs); err != nil {
+			return nil, err
+		}
+	}
+	update := client.AuthIdentity.UpdateOneID(target.ID)
+	update = ApplyAuthIdentitySubjectUpdate(update, "email", subject)
+	return update.Save(ctx)
+}
+
+func deleteRedundantEmailAuthIdentities(ctx context.Context, client *dbent.Client, userID int64, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if _, err := client.IdentityAdoptionDecision.Update().
+		Where(identityadoptiondecision.IdentityIDIn(ids...)).
+		ClearIdentityID().
+		Save(ctx); err != nil {
 		return err
 	}
-	if identity.UserID != userID {
-		return ErrEmailExists
+	if _, err := client.AuthIdentityChannel.Delete().
+		Where(authidentitychannel.IdentityIDIn(ids...)).
+		Exec(ctx); err != nil {
+		return err
 	}
-	return nil
+	_, err := client.AuthIdentity.Delete().
+		Where(
+			authidentity.IDIn(ids...),
+			authidentity.UserIDEQ(userID),
+			authidentity.ProviderTypeEQ("email"),
+			authidentity.ProviderKeyEQ("email"),
+		).
+		Exec(ctx)
+	return err
+}
+
+func ensureBoundEmailAuthIdentityWithClient(
+	ctx context.Context,
+	client *dbent.Client,
+	userID int64,
+	subject string,
+	source string,
+) error {
+	return EnsureEmailAuthIdentityWithClient(ctx, client, userID, subject, source)
 }
 
 func normalizeBoundEmailAuthIdentitySubject(email string) string {

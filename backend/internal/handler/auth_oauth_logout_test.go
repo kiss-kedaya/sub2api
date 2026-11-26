@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,9 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -65,4 +69,133 @@ func TestLogoutClearsOAuthStateCookiesAndConsumesPendingSession(t *testing.T) {
 		Only(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, storedSession.ConsumedAt)
+	// 只清理请求实际携带的 7 个 OAuth Cookie，不附带其余未携带的 OAuth/2FA 清理头。
+	require.Len(t, cookies, 7)
+}
+
+func serializedResponseHeaderSize(t *testing.T, resp *http.Response) int {
+	t.Helper()
+	var buf bytes.Buffer
+	_, err := buf.WriteString("HTTP/1.1 200 OK\r\n")
+	require.NoError(t, err)
+	require.NoError(t, resp.Header.Write(&buf))
+	_, err = buf.WriteString("\r\n")
+	require.NoError(t, err)
+	return buf.Len()
+}
+
+func TestLogoutWithoutOAuthOrTwoFactorCookiesKeepsHeadersUnder4KB(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, _ := newOAuthPendingFlowTestHandler(t, false)
+
+	router := gin.New()
+	router.Use(middleware2.SecurityHeaders(config.CSPConfig{Enabled: true}, nil))
+	router.POST("/api/v1/auth/logout", handler.Logout)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "unrelated_cookie", Value: "keep-me"})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	resp := recorder.Result()
+	require.Empty(t, resp.Cookies(), "未携带 OAuth/2FA Cookie 时不应下发任何 Set-Cookie 清理头")
+	require.Empty(t, resp.Header.Values("Set-Cookie"))
+
+	headerBytes := serializedResponseHeaderSize(t, resp)
+	// 含完整 SecurityHeaders（约 1.3KB CSP）在内，无 OAuth/2FA Cookie 时仍远低于 Nginx 默认 4KB proxy_buffer_size（实测约 1.5KB）。
+	require.Less(t, headerBytes, 2048, "无 OAuth/2FA Cookie 时响应头应远低于 Nginx 默认 4KB 缓冲上限，实际=%d", headerBytes)
+}
+
+func TestLogoutClearsOnlyPresentTwoFactorAndOAuthCookies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler, _ := newOAuthPendingFlowTestHandler(t, false)
+
+	t.Run("only totp grant cookie present", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		ginCtx, _ := gin.CreateTestContext(recorder)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", bytes.NewBufferString(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: service.TwoFactorGrantCookieName, Value: "totp-grant-token"})
+		req.AddCookie(&http.Cookie{Name: "unrelated_cookie", Value: "ignored"})
+		ginCtx.Request = req
+
+		handler.Logout(ginCtx)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		cookies := recorder.Result().Cookies()
+		require.Len(t, cookies, 1)
+		totpCookie := findCookie(cookies, service.TwoFactorGrantCookieName)
+		require.NotNil(t, totpCookie)
+		require.Equal(t, -1, totpCookie.MaxAge)
+		require.Equal(t, "/", totpCookie.Path)
+		require.True(t, totpCookie.HttpOnly)
+		require.True(t, totpCookie.Secure)
+		require.Equal(t, http.SameSiteLaxMode, totpCookie.SameSite)
+		require.Nil(t, findCookie(cookies, service.TwoFactorPasskeyGrantCookieName))
+		require.Less(t, serializedResponseHeaderSize(t, recorder.Result()), 1024)
+	})
+
+	t.Run("subset of oauth and passkey grant cookies present", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		ginCtx, _ := gin.CreateTestContext(recorder)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", bytes.NewBufferString(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: oidcOAuthStateCookieName, Value: encodeCookieValue("oidc-state")})
+		req.AddCookie(&http.Cookie{Name: service.TwoFactorPasskeyGrantCookieName, Value: "passkey-grant-token"})
+		req.AddCookie(&http.Cookie{Name: "unrelated_cookie", Value: "ignored"})
+		ginCtx.Request = req
+
+		handler.Logout(ginCtx)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		cookies := recorder.Result().Cookies()
+		require.Len(t, cookies, 2)
+
+		oidcCookie := findCookie(cookies, oidcOAuthStateCookieName)
+		require.NotNil(t, oidcCookie)
+		require.Equal(t, -1, oidcCookie.MaxAge)
+		require.Equal(t, oidcOAuthCookiePath, oidcCookie.Path)
+		require.True(t, oidcCookie.HttpOnly)
+
+		passkeyCookie := findCookie(cookies, service.TwoFactorPasskeyGrantCookieName)
+		require.NotNil(t, passkeyCookie)
+		require.Equal(t, -1, passkeyCookie.MaxAge)
+		require.Equal(t, "/", passkeyCookie.Path)
+		require.True(t, passkeyCookie.HttpOnly)
+		require.True(t, passkeyCookie.Secure)
+
+		require.Nil(t, findCookie(cookies, linuxDoOAuthStateCookieName))
+		require.Nil(t, findCookie(cookies, service.TwoFactorGrantCookieName))
+		require.Less(t, serializedResponseHeaderSize(t, recorder.Result()), 1024)
+	})
+
+	t.Run("both two-factor grant cookies with security headers stay well under 4KB and deduplicate repeated names", func(t *testing.T) {
+		router := gin.New()
+		router.Use(middleware2.SecurityHeaders(config.CSPConfig{Enabled: true}, nil))
+		router.POST("/api/v1/auth/logout", handler.Logout)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", bytes.NewBufferString(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: service.TwoFactorGrantCookieName, Value: "totp-1"})
+		req.AddCookie(&http.Cookie{Name: service.TwoFactorGrantCookieName, Value: "totp-2"})
+		req.AddCookie(&http.Cookie{Name: service.TwoFactorPasskeyGrantCookieName, Value: "passkey-1"})
+
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		resp := recorder.Result()
+		cookies := resp.Cookies()
+		require.Len(t, cookies, 2, "重复携带同名 Cookie 只应下发一条清理头")
+		require.NotNil(t, findCookie(cookies, service.TwoFactorGrantCookieName))
+		require.NotNil(t, findCookie(cookies, service.TwoFactorPasskeyGrantCookieName))
+		require.Equal(t, -1, findCookie(cookies, service.TwoFactorGrantCookieName).MaxAge)
+		require.Equal(t, -1, findCookie(cookies, service.TwoFactorPasskeyGrantCookieName).MaxAge)
+
+		headerBytes := serializedResponseHeaderSize(t, resp)
+		require.Less(t, headerBytes, 2560, "含完整 SecurityHeaders + 两条 2FA 清理头仍须远低于 Nginx 默认 4KB 缓冲上限，实际=%d", headerBytes)
+	})
 }

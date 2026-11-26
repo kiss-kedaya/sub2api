@@ -100,10 +100,20 @@ func clearTwoFactorGrantCookie(c *gin.Context, factor service.Factor) {
 	})
 }
 
-// clearAllTwoFactorGrantCookies 清理所有因子的凭证 Cookie（登出/改密/关闭 2FA 等）。
+// clearAllTwoFactorGrantCookies 清理请求实际携带的所有因子凭证 Cookie（登出/改密/关闭 2FA 等）。
+// 2FA 凭证 Cookie 的 Path 为 "/"，浏览器持有时会在请求中携带；仅对已携带的 Cookie 下发清理头，
+// 避免在无 Cookie 场景下追加多余的 Set-Cookie 响应头。
 func clearAllTwoFactorGrantCookies(c *gin.Context) {
-	clearTwoFactorGrantCookie(c, service.FactorTOTP)
-	clearTwoFactorGrantCookie(c, service.FactorPasskey)
+	present := presentRequestCookieNames(c)
+	if len(present) == 0 {
+		return
+	}
+	if _, ok := present[twoFactorGrantCookieName(service.FactorTOTP)]; ok {
+		clearTwoFactorGrantCookie(c, service.FactorTOTP)
+	}
+	if _, ok := present[twoFactorGrantCookieName(service.FactorPasskey)]; ok {
+		clearTwoFactorGrantCookie(c, service.FactorPasskey)
+	}
 }
 
 // markTwoFactorGrantAudit 写入审计附加字段。字段名都在审计中间件的白名单内，

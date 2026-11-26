@@ -390,41 +390,7 @@ func ensureEmailAuthIdentityWithClient(ctx context.Context, client *dbent.Client
 		return nil
 	}
 
-	create := client.AuthIdentity.Create().
-		SetUserID(userID).
-		SetProviderType("email").
-		SetProviderKey("email").
-		SetVerifiedAt(time.Now().UTC()).
-		SetMetadata(map[string]any{"source": source})
-	create = service.ApplyAuthIdentitySubjectCreate(create, "email", subject)
-	if err := create.
-		OnConflictColumns(service.AuthIdentitySubjectHashConflictColumns()...).
-		DoNothing().
-		Exec(ctx); err != nil {
-		// 滚动窗口兼容：旧实例写入的行只有明文、hash 还是 NULL，冲突会落在
-		// 明文唯一索引上；交给下面的查询走 hash/明文回退。
-		if !isSQLNoRowsError(err) && !dbent.IsConstraintError(err) {
-			return err
-		}
-	}
-
-	identity, err := client.AuthIdentity.Query().
-		Where(
-			authidentity.ProviderTypeEQ("email"),
-			authidentity.ProviderKeyEQ("email"),
-			service.AuthIdentitySubjectLookupPredicate("email", subject),
-		).
-		Only(ctx)
-	if err != nil {
-		if dbent.IsNotFound(err) {
-			return nil
-		}
-		return err
-	}
-	if identity.UserID != userID {
-		return ErrAuthIdentityOwnershipConflict
-	}
-	return nil
+	return service.EnsureEmailAuthIdentityWithClient(ctx, client, userID, subject, source)
 }
 
 func replaceEmailAuthIdentityWithClient(ctx context.Context, client *dbent.Client, userID int64, oldEmail, newEmail string, source string) error {
