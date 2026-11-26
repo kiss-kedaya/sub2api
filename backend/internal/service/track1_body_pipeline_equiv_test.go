@@ -10,7 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unsafe"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -319,4 +321,152 @@ func TestTrack1GroupBEquivalenceAndZeroAlloc(t *testing.T) {
 		}
 	})
 	require.Equal(t, float64(0), dsAllocs, "canonical tight DeepSeek chat messages should do 0 allocs")
+}
+
+func TestTrack1StoreFalseReasoningReplayOmittedSummaryParity(t *testing.T) {
+	// Legacy gjson-based reference (pre-Track-1) matching item.Get("summary").Type == gjson.Null
+	// where gjson.Null == 0 covers both omitted "summary" and explicit "summary": null.
+	legacyNormalize := func(body []byte, knownStoreFalse bool) ([]byte, bool, error) {
+		if !knownStoreFalse && gjson.GetBytes(body, "store").Type != gjson.False {
+			return body, false, nil
+		}
+		input := gjson.GetBytes(body, "input")
+		if !input.IsArray() {
+			return body, false, nil
+		}
+		return normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body, knownStoreFalse)
+	}
+
+	cases := []struct {
+		name            string
+		body            string
+		knownStoreFalse bool
+		wantChanged     bool
+		checkSummaryIdx int
+	}{
+		{
+			name:            "omitted_summary_no_id_store_false",
+			body:            `{"store":false,"input":[{"type":"reasoning","encrypted_content":"enc"}]}`,
+			knownStoreFalse: false,
+			wantChanged:     true,
+			checkSummaryIdx: 0,
+		},
+		{
+			name:            "omitted_summary_no_id_known_store_false",
+			body:            `{"input":[{"type":"reasoning","encrypted_content":"enc"}]}`,
+			knownStoreFalse: true,
+			wantChanged:     true,
+			checkSummaryIdx: 0,
+		},
+		{
+			name:            "omitted_summary_with_rs_id_store_false",
+			body:            `{"store":false,"input":[{"type":"reasoning","id":"rs_1","encrypted_content":"enc"}]}`,
+			knownStoreFalse: false,
+			wantChanged:     true,
+			checkSummaryIdx: 0,
+		},
+		{
+			name:            "omitted_summary_with_rs_id_known_store_false",
+			body:            `{"input":[{"type":"reasoning","id":"rs_1","encrypted_content":"enc"}]}`,
+			knownStoreFalse: true,
+			wantChanged:     true,
+			checkSummaryIdx: 0,
+		},
+		{
+			name:            "omitted_summary_with_non_rs_id",
+			body:            `{"store":false,"input":[{"type":"reasoning","id":"keep_1","encrypted_content":"enc"}]}`,
+			knownStoreFalse: false,
+			wantChanged:     true,
+			checkSummaryIdx: 0,
+		},
+		{
+			name:            "omitted_summary_after_unchanged_item",
+			body:            `{"store":false,"input":[{"type":"message","role":"user","content":"hi"},{"type":"reasoning","encrypted_content":"enc"}]}`,
+			knownStoreFalse: false,
+			wantChanged:     true,
+			checkSummaryIdx: 1,
+		},
+		{
+			name:            "null_summary_no_id",
+			body:            `{"store":false,"input":[{"type":"reasoning","encrypted_content":"enc","summary":null}]}`,
+			knownStoreFalse: false,
+			wantChanged:     true,
+			checkSummaryIdx: 0,
+		},
+		{
+			name:            "empty_summary_noop",
+			body:            `{"store":false,"input":[{"type":"reasoning","id":"keep_1","encrypted_content":"enc","summary":[]}]}`,
+			knownStoreFalse: false,
+			wantChanged:     false,
+			checkSummaryIdx: 0,
+		},
+	}
+
+	ctxModes := []struct {
+		name    string
+		makeCtx func(body []byte) *gin.Context
+	}{
+		{
+			name:    "nil_ctx",
+			makeCtx: func([]byte) *gin.Context { return nil },
+		},
+		{
+			name:    "cold_ctx",
+			makeCtx: func([]byte) *gin.Context { return newTrack1BenchGinContext() },
+		},
+		{
+			name: "warm_RequestBodyTop_ctx",
+			makeCtx: func(body []byte) *gin.Context {
+				c := newTrack1BenchGinContext()
+				_ = RequestBodyTop(c, body)
+				return c
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		for _, cm := range ctxModes {
+			t.Run(tc.name+"/"+cm.name, func(t *testing.T) {
+				body := []byte(tc.body)
+				origSnapshot := append([]byte(nil), body...)
+				c := cm.makeCtx(body)
+
+				wantDec, wantChanged, wantErr := normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body, tc.knownStoreFalse)
+				require.NoError(t, wantErr)
+				wantLegacy, wantLegacyChanged, wantLegacyErr := legacyNormalize(body, tc.knownStoreFalse)
+				require.NoError(t, wantLegacyErr)
+
+				got, gotChanged, gotErr := normalizeOpenAIAPIKeyStoreFalseReasoningReplay(c, body, tc.knownStoreFalse)
+				require.NoError(t, gotErr)
+				require.Equal(t, tc.wantChanged, gotChanged)
+				require.Equal(t, wantChanged, gotChanged)
+				require.Equal(t, wantLegacyChanged, gotChanged)
+				require.JSONEq(t, string(wantDec), string(got))
+				require.JSONEq(t, string(wantLegacy), string(got))
+				require.True(t, gjson.GetBytes(got, fmt.Sprintf("input.%d.summary", tc.checkSummaryIdx)).IsArray())
+				require.Equal(t, origSnapshot, body, "input body must never be mutated in place")
+			})
+		}
+	}
+}
+
+func TestTrack1CompatSeedMemoInvalidJSONDoesNotPinBodySlice(t *testing.T) {
+	invalidItem := `{"broken":` + strings.Repeat("x", compatSeedMemoMinItem+64)
+	callerBody := []byte(`{"prefix":1,"item":` + invalidItem + `,"suffix":2}`)
+	subStart := strings.Index(string(callerBody), invalidItem)
+	require.Greater(t, subStart, 0)
+	subEnd := subStart + len(invalidItem)
+	subView := jsonView(callerBody[subStart:subEnd])
+
+	var scratch canonScratch
+	got := appendCompatSeedJSON(nil, subView, &scratch)
+	require.Equal(t, invalidItem, string(got))
+
+	cached, ok := compatSeedMemo.get(callerBody[subStart:subEnd])
+	require.True(t, ok)
+	require.Equal(t, invalidItem, cached)
+	require.NotEqual(t,
+		uintptr(unsafe.Pointer(unsafe.SliceData(callerBody[subStart:subEnd]))),
+		uintptr(unsafe.Pointer(unsafe.StringData(cached))),
+		"invalid-JSON memo fallback must store a detached copy instead of pinning caller body slice")
 }

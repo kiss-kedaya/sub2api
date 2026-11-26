@@ -208,7 +208,11 @@ func normalizeCompatSeedJSONUncached(v json.RawMessage) string {
 		keyBuf:  keyBack[:0],
 		strBuf:  strBack[:0],
 	}
-	out, ok := appendNormalizedCompatSeedJSON(outBack[:0], jsonView(v), &scratch)
+	out := outBack[:0]
+	if len(v) > len(outBack) {
+		out = make([]byte, 0, len(v))
+	}
+	out, ok := appendNormalizedCompatSeedJSON(out, jsonView(v), &scratch)
 	if !ok {
 		return string(v)
 	}
@@ -232,7 +236,7 @@ func appendCompatSeedJSON(dst []byte, raw string, scratch *canonScratch) []byte 
 		if ok {
 			compatSeedMemo.put(b, string(dst[base:]))
 		} else {
-			compatSeedMemo.put(b, raw)
+			compatSeedMemo.put(b, string(b))
 		}
 		return dst
 	}

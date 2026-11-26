@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -568,6 +567,3 @@ func openAICyberTranscriptItemIsModelGeneratedFields(roleStr, typeStr string) bo
 func openAICyberTranscriptItemIsModelGenerated(item gjson.Result) bool {
 	return openAICyberTranscriptItemIsModelGeneratedFields(item.Get("role").String(), item.Get("type").String())
 }
-
-// Unused import guard for encoding/json if needed by callers in same file: none left.
-var _ = json.RawMessage(nil)

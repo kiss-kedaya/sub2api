@@ -1074,6 +1074,7 @@ func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(c *gin.Context, body []byte,
 			idRaw       string
 			encRaw      string
 			summaryRaw  string
+			hasSummary  bool
 			hasCallID   bool
 		)
 		itemOK := jsonForEachMember(elem, func(k, v string) bool {
@@ -1109,8 +1110,9 @@ func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(c *gin.Context, body []byte,
 					encRaw = v
 				}
 			case "summary":
-				if summaryRaw == "" {
+				if !hasSummary {
 					summaryRaw = v
+					hasSummary = true
 				}
 			case "call_id":
 				hasCallID = true
@@ -1142,7 +1144,7 @@ func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(c *gin.Context, body []byte,
 		}
 
 		stripID := typ == "reasoning" && strings.HasPrefix(id, "rs_")
-		addSummary := typ == "reasoning" && summaryRaw == "null"
+		addSummary := typ == "reasoning" && (!hasSummary || summaryRaw == "null")
 		stripCallID := shouldStripOpenAIResponsesNonPairCallID(typ) && hasCallID
 		if !stripID && !addSummary && !stripCallID {
 			if !changed {
