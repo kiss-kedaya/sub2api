@@ -1902,10 +1902,30 @@ type RedisConfig struct {
 	ReadTimeoutSeconds int `mapstructure:"read_timeout_seconds"`
 	// WriteTimeoutSeconds: 写入超时，避免慢写入阻塞连接池
 	WriteTimeoutSeconds int `mapstructure:"write_timeout_seconds"`
-	// PoolSize: 连接池大小，控制最大并发连接数
+	// PoolSize: 连接池大小，控制最大并发连接数。
+	// 这也是背压阀：Redis 变慢时池子到顶后新请求在 PoolTimeoutMS 内取不到连接就快速失败，
+	// 而不是继续新建连接把已经很慢的 Redis 拖得更慢。
 	PoolSize int `mapstructure:"pool_size"`
-	// MinIdleConns: 最小空闲连接数，保持热连接减少冷启动延迟
+	// MinIdleConns: 最小空闲连接数，保持热连接减少冷启动延迟。
+	// 池会一直把空闲连接补足到这个数量（连接被回收后立刻补建），哪怕根本没有流量，所以保持小值（建议 <=16）。
 	MinIdleConns int `mapstructure:"min_idle_conns"`
+	// MaxIdleConns: 空闲连接上限；0 表示不限制。
+	// 连接用完归还时若空闲数已达上限，该连接会被直接关闭，所以突发期撑大的连接池会很快缩回来
+	// （多个请求同时归还时上限可能被多放过几条，后续请求每取放一次就会再关掉一条超限的）。
+	// go-redis 没有后台回收线程，ConnMaxIdleTime 只在取连接时惰性检查，流量大时 FIFO 轮转会让所有连接都保持“刚用过”，
+	// 因此 MaxIdleConns 是唯一不依赖流量的收缩手段。小于 MinIdleConns 时按 MinIdleConns 处理。
+	MaxIdleConns int `mapstructure:"max_idle_conns"`
+	// PoolFIFO: 空闲连接先进先出。默认 LIFO 下压在栈底的连接永远不会被取到，也就永远不会被 ConnMaxIdleTime/ConnMaxLifetime 检查到。
+	PoolFIFO bool `mapstructure:"pool_fifo"`
+	// PoolTimeoutMS: 连接池耗尽时等待空闲连接的最长时间（毫秒）。
+	// go-redis 对池超时默认重试 MaxRetries(3) 次，单条命令最坏等待约 (1+3)×该值。
+	PoolTimeoutMS int `mapstructure:"pool_timeout_ms"`
+	// ConnMaxIdleTimeSeconds: 空闲连接最长存活时间（秒），0 表示不按空闲时间回收；应小于 Redis 服务端的 timeout。
+	ConnMaxIdleTimeSeconds int `mapstructure:"conn_max_idle_time_seconds"`
+	// ConnMaxLifetimeSeconds: 连接最长存活时间（秒），0 表示不限制；实际到期时间带 ±10% 抖动，避免连接同一时刻集中重建。
+	ConnMaxLifetimeSeconds int `mapstructure:"conn_max_lifetime_seconds"`
+	// PoolStatsIntervalSeconds: 连接池状态日志间隔（秒），0 表示关闭。
+	PoolStatsIntervalSeconds int `mapstructure:"pool_stats_interval_seconds"`
 	// EnableTLS: 是否启用 TLS/SSL 连接
 	EnableTLS bool `mapstructure:"enable_tls"`
 }
@@ -2617,8 +2637,14 @@ func setDefaults() {
 	viper.SetDefault("redis.dial_timeout_seconds", 5)
 	viper.SetDefault("redis.read_timeout_seconds", 3)
 	viper.SetDefault("redis.write_timeout_seconds", 3)
-	viper.SetDefault("redis.pool_size", 1024)
-	viper.SetDefault("redis.min_idle_conns", 128)
+	viper.SetDefault("redis.pool_size", 512)
+	viper.SetDefault("redis.min_idle_conns", 8)
+	viper.SetDefault("redis.max_idle_conns", 64)
+	viper.SetDefault("redis.pool_fifo", true)
+	viper.SetDefault("redis.pool_timeout_ms", 1000)
+	viper.SetDefault("redis.conn_max_idle_time_seconds", 300)
+	viper.SetDefault("redis.conn_max_lifetime_seconds", 1800)
+	viper.SetDefault("redis.pool_stats_interval_seconds", 60)
 	viper.SetDefault("redis.enable_tls", false)
 
 	// Batch Image queue
@@ -3614,6 +3640,23 @@ func (c *Config) Validate() error {
 	}
 	if c.Redis.MinIdleConns > c.Redis.PoolSize {
 		return fmt.Errorf("redis.min_idle_conns cannot exceed redis.pool_size")
+	}
+	// max_idle_conns 不与 pool_size / min_idle_conns 做交叉校验：旧配置（例如 pool_size=32）
+	// 加上新的默认值不能因此启动失败，buildRedisOptions 会把它规整到合理范围。
+	if c.Redis.MaxIdleConns < 0 {
+		return fmt.Errorf("redis.max_idle_conns must be non-negative")
+	}
+	if c.Redis.PoolTimeoutMS <= 0 {
+		return fmt.Errorf("redis.pool_timeout_ms must be positive")
+	}
+	if c.Redis.ConnMaxIdleTimeSeconds < 0 {
+		return fmt.Errorf("redis.conn_max_idle_time_seconds must be non-negative")
+	}
+	if c.Redis.ConnMaxLifetimeSeconds < 0 {
+		return fmt.Errorf("redis.conn_max_lifetime_seconds must be non-negative")
+	}
+	if c.Redis.PoolStatsIntervalSeconds < 0 {
+		return fmt.Errorf("redis.pool_stats_interval_seconds must be non-negative")
 	}
 	if c.BatchImage.QueueEnabled {
 		if strings.TrimSpace(c.BatchImage.QueueReadyKey) == "" {

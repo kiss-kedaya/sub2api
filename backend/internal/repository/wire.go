@@ -240,8 +240,13 @@ func ProvideSQLDB(client *ent.Client) (*sql.DB, error) {
 //   - 速率限制
 //   - 实时统计数据
 //
+// 启动时打印最终生效的连接池参数（不含密码），并按 redis.pool_stats_interval_seconds
+// 周期记录连接池统计；统计日志随客户端 Close 自动停止。
+//
 // 依赖：config.Config
 // 提供：*redis.Client
 func ProvideRedis(cfg *config.Config) *redis.Client {
-	return InitRedis(cfg)
+	client := InitRedis(cfg)
+	observeRedisPool(client, cfg)
+	return client
 }
