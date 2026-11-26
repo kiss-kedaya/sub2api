@@ -148,6 +148,48 @@ func TestGatewayPathCleaningLeavesNonGatewayPathsAlone(t *testing.T) {
 	}
 }
 
+// A script that reads the account behind its key (GET /v1/sub2api/account) types its base URL by hand like anybody
+// else: /v1 repeated, an extra slash or a trailing one must all reach the endpoint. That only works while the path
+// word "account" is in gatewayEndpointSegments; without it the route is not in the alias index and every one of
+// these is a 404. The bare form without /v1 is deliberately not an alias of any /v1/sub2api/* endpoint.
+func TestGatewayPathAliasKeySelfServiceAccount(t *testing.T) {
+	const canonical = "/v1/sub2api/account"
+	for _, path := range []string{
+		canonical,
+		"/v1/v1/sub2api/account",
+		"/v1/v1/v1/sub2api/account",
+		"/v1//sub2api/account",
+		"//v1/sub2api/account",
+		"/v1/sub2api/account/",
+		"/v1/v1//sub2api/account",
+	} {
+		t.Run(path, func(t *testing.T) {
+			router, seen := newGatewayPathAliasTestRouter()
+			handler := GatewayPathAlias(router)
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path+"?timezone=UTC", nil))
+
+			require.Equal(t, http.StatusOK, w.Code, "%s must reach the endpoint", path)
+			require.Len(t, *seen, 1, path)
+			require.Equal(t, canonical, (*seen)[0].Path, path)
+			require.Equal(t, "timezone=UTC", (*seen)[0].RawQuery, path)
+		})
+	}
+
+	t.Run("the endpoint is part of the alias index", func(t *testing.T) {
+		router, _ := newGatewayPathAliasTestRouter()
+		require.True(t, matchGatewayRoute(newGatewayRouteIndex(router), http.MethodGet, canonical))
+	})
+	t.Run("no bare alias without /v1", func(t *testing.T) {
+		router, seen := newGatewayPathAliasTestRouter()
+		w := httptest.NewRecorder()
+		GatewayPathAlias(router).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/sub2api/account", nil))
+		require.Equal(t, http.StatusNotFound, w.Code)
+		require.Empty(t, *seen)
+	})
+}
+
 func TestCollapseGatewaySlashes(t *testing.T) {
 	for in, want := range map[string]string{
 		"/":                         "/",

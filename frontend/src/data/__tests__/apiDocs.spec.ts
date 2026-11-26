@@ -252,11 +252,14 @@ describe('public API documentation', () => {
       expect(ids.indexOf('manage-keys')).toBeLessThan(ids.indexOf('chat-completions'))
     })
 
-    it('documents the three key endpoints with runnable examples that use the site origin and send only the key', () => {
+    it('documents the four key endpoints with runnable examples that use the site origin and send only the key', () => {
       const page = pageOf('en', 'key-self-service')
       const endpoints = page.sections.filter(section => section.endpoint).map(section => `${section.endpoint!.method} ${section.endpoint!.path}`)
-      expect(endpoints).toEqual(['GET /v1/sub2api/key', 'GET /v1/sub2api/groups', 'GET /v1/sub2api/usage'])
+      expect(endpoints).toEqual(['GET /v1/sub2api/key', 'GET /v1/sub2api/groups', 'GET /v1/sub2api/usage', 'GET /v1/sub2api/account'])
       for (const section of page.sections.filter(entry => entry.endpoint)) expect(section.endpoint!.auth).toBe('apiKey')
+      for (const locale of ['zh', 'en']) {
+        expect(pageOf(locale, 'key-self-service').sections[0].fields!.map(field => field.name), locale).toEqual(endpoints)
+      }
 
       const overview = page.sections[0].examples!
       expect(Object.keys(overview)).toEqual(['curl', 'python', 'node'])
@@ -269,6 +272,43 @@ describe('public API documentation', () => {
       }
       const usage = page.sections.find(section => section.id === 'key-info-usage')!.examples!
       expect(usage.curl).toContain('/v1/sub2api/usage?start_date=2026-11-01&end_date=2026-11-07&daily=1')
+
+      // The account endpoint has the same three runnable requests, plus the answer it gives.
+      const account = page.sections.find(section => section.id === 'key-info-account')!.examples!
+      expect(Object.keys(account)).toEqual(['curl', 'python', 'node', 'json'])
+      expect(account.curl!.split('\n')).toEqual([`curl ${origin}/v1/sub2api/account \\`, '  -H "Authorization: Bearer $API_KEY"'])
+      expect(account.python).toContain(`requests.get(\n    "${origin}/v1/sub2api/account"`)
+      expect(account.node).toContain(`fetch("${origin}/v1/sub2api/account"`)
+      for (const snippet of [account.curl!, account.python!, account.node!, account.json!]) {
+        expect(snippet).not.toContain('/v1/v1')
+        expect(snippet).not.toMatch(/sk-[A-Za-z0-9]{8,}/)
+      }
+    })
+
+    it('documents the account endpoint field by field in both languages, and keeps the example in step with it', () => {
+      for (const locale of ['zh', 'en']) {
+        const section = pageOf(locale, 'key-self-service').sections.find(entry => entry.id === 'key-info-account')!
+        expect(section.fields!.map(field => field.name), locale).toEqual(['balance.wallet', 'balance.frozen', 'subscriptions', 'today', 'timezone', 'partial'])
+        for (const field of section.fields!) expect(field.description.length, `${locale}:${field.name}`).toBeGreaterThan(10)
+
+        // The example is what the endpoint answers with: the same keys, in the order the handler writes them.
+        const example = JSON.parse(section.examples!.json!)
+        expect(Object.keys(example), locale).toEqual(['object', 'schema_version', 'timezone', 'balance', 'subscriptions', 'today', 'observed_at'])
+        expect(example.object).toBe('sub2api.account')
+        expect(Object.keys(example.balance)).toEqual(['wallet', 'frozen', 'unit'])
+        expect(Object.keys(example.subscriptions[0])).toEqual(['group_id', 'group_name', 'expires_at', 'remaining', 'unlimited'])
+        expect(Object.keys(example.today)).toEqual(['label', 'start', 'end', 'requests', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'total_tokens', 'cost', 'actual_cost'])
+        const tokens = example.today
+        expect(tokens.total_tokens).toBe(tokens.input_tokens + tokens.output_tokens + tokens.cache_read_tokens + tokens.cache_write_tokens)
+      }
+      expect(pageOf('en', 'key-self-service').description).toContain('account balance')
+      expect(pageOf('zh', 'key-self-service').description).toContain('账号余额')
+    })
+
+    it('tells the reader that holding the key is enough to read the account, in both languages', () => {
+      const warn = (locale: string) => pageOf(locale, 'key-self-service').sections.find(section => section.id === 'key-info-account')!.paragraphs!.join(' ')
+      expect(warn('en')).toContain('Anyone holding this key can read them')
+      expect(warn('zh')).toContain('持有这把密钥的人就能读到这些数字')
     })
 
     it('names the credential each console endpoint needs, and it is the login token', () => {
@@ -286,6 +326,11 @@ describe('public API documentation', () => {
       expect(auth).toContain('/api/v1/auth/refresh')
     })
 
+    it('sends automation to the four self-service endpoints from the console page, in both languages', () => {
+      expect(JSON.stringify(pageOf('en', 'manage-keys').sections[0])).toContain('the four key self-service endpoints')
+      expect(JSON.stringify(pageOf('zh', 'manage-keys').sections[0])).toContain('的四个接口')
+    })
+
     it('says plainly that an API key cannot call the console API, in both languages', () => {
       expect(JSON.stringify(pageOf('zh', 'manage-keys').sections[0])).toContain('API 密钥不能调用它们')
       expect(JSON.stringify(pageOf('en', 'manage-keys').sections[0])).toContain('An API key cannot call them')
@@ -301,19 +346,40 @@ describe('public API documentation', () => {
       }
     })
 
-    it('does not document anything the endpoints are built to hold back', () => {
+    it('documents the balance on the account endpoint only, and nothing the endpoints are built to hold back', () => {
       const text = JSON.stringify([pageOf('en', 'key-self-service'), pageOf('zh', 'key-self-service')])
       // It may say these are NOT returned; it must not present them as response fields.
-      for (const field of ['"name":"balance"', '"name":"account_cost"', '"name":"last_used_ip"', '"name":"ip_whitelist"', '"name":"key"']) {
+      for (const field of ['"name":"account_cost"', '"name":"last_used_ip"', '"name":"ip_whitelist"', '"name":"key"', '"name":"email"', '"name":"username"', '"name":"user_id"', '"name":"balance"']) {
         expect(text).not.toContain(field)
+      }
+      for (const locale of ['zh', 'en']) {
+        // The wallet is a field of exactly one section; the three key-scoped endpoints still carry none.
+        const withBalance = pageOf(locale, 'key-self-service').sections.filter(section => (section.fields || []).some(field => /balance|wallet/.test(field.name)))
+        expect(withBalance.map(section => section.id), locale).toEqual(['key-info-account'])
+      }
+      for (const id of ['key-info-key', 'key-info-groups', 'key-info-usage']) {
+        const examples = pageOf('en', 'key-self-service').sections.find(section => section.id === id)!.examples!
+        expect(JSON.stringify(examples), id).not.toMatch(/balance|wallet/)
       }
       const example = pageOf('en', 'key-self-service').sections.find(section => section.id === 'key-info-key')!.examples!.json!
       expect(Object.keys(JSON.parse(example))).not.toEqual(expect.arrayContaining(['key', 'balance', 'ip_whitelist', 'last_used_ip']))
     })
 
+    it('no longer says the balance is held back, and still names what is', () => {
+      const overview = (locale: string) => JSON.stringify(pageOf(locale, 'key-self-service').sections[0].paragraphs)
+      expect(overview('en')).not.toContain('wallet or subscription balance')
+      expect(overview('zh')).not.toContain('钱包或订阅余额')
+      for (const text of ['key plaintext', 'IP lists', 'email or username', 'upstream accounts', 'upstream cost']) expect(overview('en')).toContain(text)
+      for (const text of ['密钥明文', 'IP 名单', '邮箱与用户名', '上游账号', '上游成本']) expect(overview('zh')).toContain(text)
+      expect(overview('en')).toContain('Four read-only endpoints')
+      expect(overview('zh')).toContain('四个只读接口')
+    })
+
     it('states the real per-minute budget so the docs and the limiter cannot drift apart silently', () => {
       expect(JSON.stringify(pageOf('en', 'key-self-service'))).toContain('30 times a minute')
       expect(JSON.stringify(pageOf('zh', 'key-self-service'))).toContain('每分钟最多 30 次')
+      expect(JSON.stringify(pageOf('en', 'key-self-service'))).toContain('separate counters for the four')
+      expect(JSON.stringify(pageOf('zh', 'key-self-service'))).toContain('四个接口各有独立计数')
     })
   })
 })

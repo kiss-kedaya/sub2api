@@ -347,18 +347,19 @@ print(response.json())`,
     },
     {
       id: 'key-self-service', category: 'account', title: l('用密钥查询自身信息', 'Key self-service API'),
-      description: l('只用 API 密钥就能读：密钥状态与额度、可用分组与倍率、今日与近期用量。', 'Read with only an API key: key status and limits, usable groups and their multipliers, and recent usage.'),
+      description: l('只用 API 密钥就能读：密钥状态与额度、账号余额与今日用量、可用分组与倍率、近期用量。', 'Read with only an API key: key status and limits, account balance and today’s usage, usable groups and their multipliers, and recent usage.'),
       sections: [
         {
           id: 'key-info-overview', title: l('概览', 'Overview'),
           paragraphs: [
-            l('三个只读接口，使用与模型请求相同的 API 密钥（Authorization: Bearer 或 x-api-key）。它们只回答「这把密钥是什么、做过什么」，不返回密钥明文、IP 名单、钱包或订阅余额，也不返回账号、渠道或上游成本。', 'Three read-only endpoints that use the same API key as model requests (Authorization: Bearer or x-api-key). They only answer what this key is and what it has done: no key plaintext, IP lists, wallet or subscription balance, accounts, channels or upstream cost.'),
-            l('已过期或额度用完的密钥也可以查询，并会说明原因；已停用的密钥、被停用的账号、不在 IP 白名单内的请求仍会被拒绝。查询不会刷新密钥的「最近使用」时间。', 'A key that is expired or out of quota can still ask, and the response says why. A switched-off key, a disabled account, or a request from an IP outside the key’s allow-list is still refused. Asking does not refresh the key’s last-used time.'),
+            l('四个只读接口，使用与模型请求相同的 API 密钥（Authorization: Bearer 或 x-api-key）。前三个回答「这把密钥是什么、做过什么」；GET /v1/sub2api/account 回答「这个账号还剩多少钱、今天一共用了多少」。任何一个都不返回密钥明文、IP 名单、邮箱与用户名、上游账号、渠道或上游成本。', 'Four read-only endpoints that use the same API key as model requests (Authorization: Bearer or x-api-key). The first three answer what this key is and what it has done; GET /v1/sub2api/account answers how much the account has left and how much it used today. None of them returns the key plaintext, IP lists, email or username, upstream accounts, channels or upstream cost.'),
+            l('已过期、额度用完或账号余额为 0 的密钥也可以查询，/key 会说明原因；已停用的密钥、被停用的账号、不在 IP 白名单内的请求仍会被拒绝。查询不会刷新密钥的「最近使用」时间。', 'A key that is expired, out of quota or whose account has no balance left can still ask, and /key says why. A switched-off key, a disabled account, or a request from an IP outside the key’s allow-list is still refused. Asking does not refresh the key’s last-used time.'),
           ],
           fields: [
             { name: 'GET /v1/sub2api/key', type: l('密钥', 'key'), description: l('密钥本身：状态、是否可用及原因、到期、额度、限速窗口、绑定分组。', 'The key itself: status, whether it is usable and why not, expiry, quota, rate-limit windows, bound groups.') },
             { name: 'GET /v1/sub2api/groups', type: l('分组', 'groups'), description: l('这把密钥已路由的分组，以及该用户还能绑定的分组：状态与实际支付的倍率。', 'The groups this key routes to, plus the ones its owner may still bind: state and the multiplier actually paid.') },
             { name: 'GET /v1/sub2api/usage', type: l('用量', 'usage'), description: l('这把密钥的今日、近 7 天、本月与自选区间用量。', 'This key’s usage today, over the last 7 days, this month and a range you choose.') },
+            { name: 'GET /v1/sub2api/account', type: l('账号', 'account'), description: l('这个账号的钱包余额、订阅剩余额度，以及今日用量（账号下所有密钥合计，不只这一把）。', 'The account’s wallet balance, what is left of its subscriptions, and today’s usage across all of its keys, not just this one.') },
           ],
           examples: getExamples(origin, '/v1/sub2api/key'),
         },
@@ -404,9 +405,28 @@ print(response.json())`,
           examples: getExamples(origin, '/v1/sub2api/usage?start_date=2026-11-01&end_date=2026-11-07&daily=1'),
         },
         {
+          id: 'key-info-account', title: l('账号余额与今日用量', 'Account balance and today’s usage'),
+          endpoint: { method: 'GET', path: '/v1/sub2api/account', auth: 'apiKey' },
+          paragraphs: [
+            l('这是整个账号的数字，不是这把密钥的：余额是账号的钱包，今日用量是账号下所有密钥的合计。持有这把密钥的人就能读到这些数字，请像保管钱一样保管密钥；只想让脚本看到单把密钥的用量，用 /v1/sub2api/usage。', 'These are the account’s figures, not this key’s: the balance is the account’s wallet, and today’s usage adds up every key of the account. Anyone holding this key can read them, so keep the key like money. To let a script see only one key’s usage, use /v1/sub2api/usage.'),
+          ],
+          fields: [
+            { name: 'balance.wallet', type: 'number', description: l('钱包可用余额，单位 USD，精度与控制台一致。', 'Spendable wallet balance in USD, with the same precision as the console.') },
+            { name: 'balance.frozen', type: 'number', description: l('被仍在运行的异步批量任务冻结、暂时不能花的金额，USD。', 'USD held by asynchronous batch jobs that are still running; it cannot be spent meanwhile.') },
+            { name: 'subscriptions', type: 'array', description: l('有效订阅，没有时是空数组。每项含 group_id、group_name、expires_at 与 remaining：日、周、月限额里最紧的那个还剩多少（USD）。套餐没有任何限额时没有 remaining，unlimited 为 true。', 'Active subscriptions; an empty array when there are none. Each has group_id, group_name, expires_at and remaining: what is left of the tightest of its daily, weekly and monthly limits (USD). A plan with no limit has no remaining, and unlimited is true.') },
+            { name: 'today', type: 'object', description: l('label、start、end（YYYY-MM-DD，同一天）、requests、各类 token、cost（标准价）与 actual_cost（实际扣费），账号下所有密钥合计。', 'label, start and end (YYYY-MM-DD, the same day), requests, the token counts, cost (list price) and actual_cost (what was charged), for all keys of the account together.') },
+            { name: 'timezone', type: 'string', description: l('查询参数，如 Asia/Shanghai，决定「今日」从何时算起，规则与 /v1/sub2api/usage 相同；无效时用站点时区。响应里的 timezone 是实际采用的时区。', 'A query parameter such as Asia/Shanghai that decides when "today" starts, with the same rules as /v1/sub2api/usage; an invalid value falls back to the site timezone. The timezone in the response is the one actually used.') },
+            { name: 'partial', type: 'array', description: l('balance、subscriptions、today 里没能在时限内读出来的块会在这里列出，该块不会出现在响应里，也不会被当成 0 或空。', 'A block among balance, subscriptions and today that could not be read in time is listed here and left out of the response; it is never reported as zero or empty.') },
+          ],
+          examples: {
+            ...getExamples(origin, '/v1/sub2api/account'),
+            json: JSON.stringify({ object: 'sub2api.account', schema_version: 1, timezone: 'Asia/Shanghai', balance: { wallet: 12.34567891, frozen: 0, unit: 'USD' }, subscriptions: [{ group_id: 5, group_name: 'Claude Pro', expires_at: '2026-12-31T16:00:00Z', remaining: 4.2, unlimited: false }], today: { label: 'today', start: '2026-11-26', end: '2026-11-26', requests: 120, input_tokens: 80000, output_tokens: 24000, cache_read_tokens: 150000, cache_write_tokens: 3000, total_tokens: 257000, cost: 1.25, actual_cost: 0.9 }, observed_at: '2026-11-26T04:00:00Z' }, null, 2),
+          },
+        },
+        {
           id: 'key-info-limits', title: l('限流与错误', 'Limits and errors'),
           paragraphs: [
-            l('每把密钥在每个接口上每分钟最多 30 次，三个接口各有独立计数；状态栏每几秒轮询一次不会触顶。超出时返回 429，带 Retry-After（秒）与 code: key_info_rate_limited，等待后重试即可。', 'Each key may call each endpoint 30 times a minute, with separate counters for the three. A status bar polling every few seconds stays far below that. Beyond it the response is 429 with Retry-After (seconds) and code key_info_rate_limited; wait and retry.'),
+            l('每把密钥在每个接口上每分钟最多 30 次，四个接口各有独立计数；状态栏每几秒轮询一次不会触顶。超出时返回 429，带 Retry-After（秒）与 code: key_info_rate_limited，等待后重试即可。', 'Each key may call each endpoint 30 times a minute, with separate counters for the four. A status bar polling every few seconds stays far below that. Beyond it the response is 429 with Retry-After (seconds) and code key_info_rate_limited; wait and retry.'),
             l('常见状态：401 密钥缺失、无效或已停用；403 来源 IP 不在该密钥的白名单内，或所属分组已停用；404 站点以简易模式运行，不提供此信息。', 'Common statuses: 401 for a missing, invalid or switched-off key; 403 when the source IP is outside the key’s allow-list or its group is disabled; 404 when the site runs in simple mode and does not offer this information.'),
           ],
         },
@@ -420,7 +440,7 @@ print(response.json())`,
           id: 'console-auth', title: l('先看这个：登录令牌', 'Read this first: the login token'),
           paragraphs: [
             l('这些接口属于账号，不属于某把 API 密钥：请求头用登录后得到的 access_token（Authorization: Bearer），API 密钥不能调用它们。令牌默认约 60 分钟有效，用登录时一并返回的 refresh_token 调用 POST /api/v1/auth/refresh 续期。', 'These endpoints belong to your account, not to an API key: send the access_token you receive when you sign in (Authorization: Bearer). An API key cannot call them. The token lasts about 60 minutes by default; renew it with the refresh_token from the same response through POST /api/v1/auth/refresh.'),
-            l('本站登录带人机验证，开启了 TOTP 或 Passkey 的账号还要多一步，所以无人值守的脚本通常拿不到令牌。需要自动化时，优先用「用密钥查询自身信息」的三个接口；创建与轮换密钥请在控制台里做。登录令牌的权限远大于 API 密钥，不要写进代码仓库或日志。', 'Sign-in on this site includes a human check, and accounts with TOTP or a Passkey have one more step, so an unattended script usually cannot obtain a token. For automation prefer the three key self-service endpoints, and create or rotate keys in the console. A login token is far more powerful than an API key: keep it out of repositories and logs.'),
+            l('本站登录带人机验证，开启了 TOTP 或 Passkey 的账号还要多一步，所以无人值守的脚本通常拿不到令牌。需要自动化时，优先用「用密钥查询自身信息」的四个接口；创建与轮换密钥请在控制台里做。登录令牌的权限远大于 API 密钥，不要写进代码仓库或日志。', 'Sign-in on this site includes a human check, and accounts with TOTP or a Passkey have one more step, so an unattended script usually cannot obtain a token. For automation prefer the four key self-service endpoints, and create or rotate keys in the console. A login token is far more powerful than an API key: keep it out of repositories and logs.'),
           ],
           note: l('响应统一为 {"code":0,"message":"success","data":…}；出错时 code 非 0，reason 给出机器可读的原因（例如 VERIFY_REQUIRED）。列表接口的 data 是 {items,total,page,page_size,pages}。网关里的 /v1/sub2api/* 接口用的是另一种错误格式（type 与 error 对象），见上一页。', 'Responses share one envelope: {"code":0,"message":"success","data":…}. On failure code is non-zero and reason carries a machine-readable cause such as VERIFY_REQUIRED. List endpoints return {items,total,page,page_size,pages} in data. The /v1/sub2api/* gateway endpoints use a different error format (a type and an error object); see the previous page.'),
           examples: {

@@ -14,16 +14,16 @@ import (
 )
 
 // KeyInfoRateLimitPerMinute is how many times one API key may call EACH key self-service endpoint
-// (/v1/sub2api/key, /groups, /usage) per minute; every endpoint has its own counter, so a status bar that polls all
-// three every few seconds stays far below it, while a loop that polls as fast as it can does not get to turn a
+// (/v1/sub2api/key, /groups, /usage, /account) per minute; every endpoint has its own counter, so a status bar that
+// polls all four every few seconds stays far below it, while a loop that polls as fast as it can does not get to turn a
 // read-only endpoint into database load.
 const KeyInfoRateLimitPerMinute = 30
 
 const keyInfoRateLimitWindow = time.Minute
 
 // KeyInfoRateLimit limits one key self-service endpoint per API key (never per IP: behind the reverse proxy
-// every client shares the same source address). endpoint names the counter ("key", "groups", "usage"), so the
-// endpoints do not draw from one another's budget. It must run after API key authentication.
+// every client shares the same source address). endpoint names the counter ("key", "groups", "usage", "account"),
+// so the endpoints do not draw from one another's budget. It must run after API key authentication.
 //
 // Redis is optional and failures are tolerated: this is a protection for a read-only endpoint, and it must not
 // be able to take the endpoint down. Without a Redis client (single node, tests) it lets everything through.
@@ -78,10 +78,12 @@ func keyInfoRateLimit(limiter panelRateLimitAllower, limit int, endpoint string)
 // isKeySelfServicePath reports whether path is one of the endpoints an API key uses to read information about
 // itself. They only need the key to be recognised: a key that is expired or out of quota must still be able to
 // say so, no billing check applies, and reading them must not count as "the key was used" (a status poll would
-// otherwise keep refreshing last_used_at and hide real activity).
+// otherwise keep refreshing last_used_at and hide real activity). A new key self-service endpoint must be listed
+// here, or a key that is expired, out of quota or whose owner has an empty wallet would be refused by the billing
+// checks before the endpoint can answer.
 func isKeySelfServicePath(path string) bool {
 	switch path {
-	case "/v1/sub2api/billing", "/v1/sub2api/key", "/v1/sub2api/groups", "/v1/sub2api/usage":
+	case "/v1/sub2api/billing", "/v1/sub2api/key", "/v1/sub2api/groups", "/v1/sub2api/usage", "/v1/sub2api/account":
 		return true
 	}
 	return false
