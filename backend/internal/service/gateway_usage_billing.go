@@ -511,7 +511,7 @@ func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingPara
 		deps.billingCacheService.setBalanceCacheAtMost(ctx, p.User.ID, *result.NewBalance)
 		return
 	}
-	if result != nil && result.NewBalance != nil {
+	if result != nil && result.NewBalance != nil && !deps.mergeSettlementEnabled() {
 		deps.billingCacheService.QueueSetBalance(p.User.ID, *result.NewBalance)
 		return
 	}
@@ -531,6 +531,13 @@ func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingPara
 // notifyBalanceLow sends balance low notification after deduction.
 // When result.NewBalance is available (from DB transaction RETURNING), it is used directly
 // to reconstruct oldBalance, avoiding stale Redis reads and concurrent-deduction races.
+//
+// With merge settlement the billing transaction only enqueues the charge
+// (BalanceSettlementDeferred, NewBalance=nil), so this path has nothing exact to
+// compare against. The settlement worker then owns the alert: it sees the exact
+// before/after balance of every flush and fires once per downward crossing
+// (see BalanceNotifyService.ObserveBalanceSettlements). Checking here as well
+// would only repeat it with the stale authentication snapshot.
 func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -544,6 +551,10 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 			"user_nil", p.User == nil,
 			"service_nil", deps.balanceNotifyService == nil,
 		)
+		return
+	}
+	if balanceLowOwnedBySettlementWorker(result) {
+		slog.Debug("notifyBalanceLow: deferred to settlement worker", "user_id", p.User.ID)
 		return
 	}
 
@@ -567,6 +578,17 @@ func resolveOldBalance(p *postUsageBillingParams, result *UsageBillingApplyResul
 	}
 	// Legacy fallback: snapshot balance from request context
 	return p.User.Balance
+}
+
+// balanceLowOwnedBySettlementWorker reports whether this charge's low-balance
+// alert is raised by the settlement worker instead of the request path: the charge
+// was only queued (deferred / finalization pending), so no exact balance exists
+// here, and this process's worker is running the observer. Without a running
+// observer (merge settlement off, no consumer) the legacy check stays in charge.
+func balanceLowOwnedBySettlementWorker(result *UsageBillingApplyResult) bool {
+	return result != nil &&
+		(result.BalanceSettlementDeferred || result.BalanceFinalizationPending) &&
+		UsageBalanceSettlementNotifierActive()
 }
 
 // notifyAccountQuota sends account quota threshold notification after increment.
@@ -636,6 +658,15 @@ type billingDeps struct {
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	cfg                   *config.Config
+}
+
+// mergeSettlementEnabled reports whether balance charges may sit in the merge
+// settlement queue. While it is on, users.balance trails the queue, so the
+// post-deduction balance a synchronous charge returns (for example during a
+// backlog fallback) is not the user's true balance: the cache must stay
+// relative to what it already holds rather than be overwritten by it.
+func (d *billingDeps) mergeSettlementEnabled() bool {
+	return d != nil && d.cfg != nil && d.cfg.Billing.BalanceMergeSettlementEnabled
 }
 
 func (s *GatewayService) billingDeps() *billingDeps {

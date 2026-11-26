@@ -87,6 +87,12 @@ type LiveBalanceAdjustmentOutboxHealth struct {
 	MaxAttempts  int           `json:"max_attempts"`
 	LastError    string        `json:"last_error,omitempty"`
 	StatsError   string        `json:"stats_error,omitempty"`
+	// BalanceSettlement is the merge-settlement queue (billing_balance_settlements):
+	// backlog depth, age of the oldest charge and whether this process fell back to
+	// synchronous charging. Added next to the wallet outbox because they are the
+	// two durable queues an operator watches together during a merge-settlement
+	// canary. Omitted when the settlement worker is not wired.
+	BalanceSettlement *UsageBalanceSettlementHealth `json:"balance_settlement,omitempty"`
 }
 
 type liveBalanceRecoveryStatsProvider interface {
@@ -98,10 +104,18 @@ type liveBalanceAdjustmentApplier interface {
 }
 
 func (s *OpsService) GetLiveBalanceAdjustmentOutboxHealth(ctx context.Context) LiveBalanceAdjustmentOutboxHealth {
-	if s == nil || s.liveBalanceOutboxWorker == nil {
+	if s == nil {
 		return LiveBalanceAdjustmentOutboxHealth{}
 	}
-	return s.liveBalanceOutboxWorker.Health(ctx)
+	health := LiveBalanceAdjustmentOutboxHealth{}
+	if s.liveBalanceOutboxWorker != nil {
+		health = s.liveBalanceOutboxWorker.Health(ctx)
+	}
+	if s.balanceSettlementWorker != nil {
+		settlement := s.balanceSettlementWorker.Health(ctx)
+		health.BalanceSettlement = &settlement
+	}
+	return health
 }
 
 func liveBalanceOutboxRetryDelay(attempt int) time.Duration {

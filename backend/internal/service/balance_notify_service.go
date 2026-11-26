@@ -54,6 +54,11 @@ type BalanceNotifyService struct {
 	accountRepo              AccountQuotaReader
 	notificationEmailService *NotificationEmailService
 	pushNotifier             PushNotifier
+
+	// Merge-settlement low-balance alerts (see balance_notify_settlement.go).
+	userReader       balanceNotifyUserReader
+	settlementAlerts settlementAlertTracker
+	clock            func() time.Time // test hook; nil means time.Now
 }
 
 // NewBalanceNotifyService creates a new BalanceNotifyService.

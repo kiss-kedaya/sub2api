@@ -1106,6 +1106,19 @@ type BillingConfig struct {
 	// false and restarting: the worker keeps running, so queued charges still
 	// drain.
 	BalanceMergeSettlementEnabled bool `mapstructure:"balance_merge_settlement_enabled"`
+	// BalanceMergeSettlementMaxBacklog caps the number of charges waiting in the
+	// merge-settlement queue. Only meaningful while BalanceMergeSettlementEnabled
+	// is true: once the pending row count exceeds it, new requests on this process
+	// are charged synchronously again (the exact code path used when the switch is
+	// off) until the backlog drops below half of it. Rows already queued keep
+	// being settled by the worker, none is lost or charged twice. 0 disables the
+	// row-count trigger.
+	BalanceMergeSettlementMaxBacklog int `mapstructure:"balance_merge_settlement_max_backlog"`
+	// BalanceMergeSettlementMaxAgeSeconds is the age trigger of the same guard:
+	// when the oldest pending charge has waited longer than this, new requests are
+	// charged synchronously until it drops below half of it. 0 disables the age
+	// trigger.
+	BalanceMergeSettlementMaxAgeSeconds int `mapstructure:"balance_merge_settlement_max_age_seconds"`
 	// MinimumBalanceReserve is the conservative preflight floor for balance billing.
 	// Requests in balance mode are rejected when the cached balance is below this
 	// amount, even if it is still positive. Set to 0 to keep the legacy balance > 0 gate.
@@ -2516,6 +2529,12 @@ func setDefaults() {
 	// users.balance 更新。回滚：环境变量置 false 重启即可，worker 始终运行，队列里的
 	// 扣费照常结算，不会丢。
 	viper.SetDefault("billing.balance_merge_settlement_enabled", false)
+	// 合并结算的积压保护（仅在上面的开关为 true 时才有意义）：待结算行数超过
+	// max_backlog 或最老一笔等待超过 max_age_seconds，本进程新请求退回逐请求同步扣费，
+	// 回落到阈值的一半以下才恢复入队；队列里已有的扣费继续结算，不丢、不重复。
+	// 默认值只在队列明显失控时才触发（正常稳态只有几百行、不到 1 秒），0 表示不按该维度退回。
+	viper.SetDefault("billing.balance_merge_settlement_max_backlog", 20000)
+	viper.SetDefault("billing.balance_merge_settlement_max_age_seconds", 30)
 	viper.SetDefault("billing.minimum_balance_reserve", 0.000001)
 	// 无 usage 的 OpenAI 流式异常结束按请求体估算输入时，缓存读占比（0-100）。
 	// 0 = 不臆造缓存折扣，与上游 new-api 异常结束回退（整段 prompt 按普通输入计）
@@ -3591,6 +3610,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Billing.MinimumBalanceReserve < 0 {
 		return fmt.Errorf("billing.minimum_balance_reserve must be non-negative")
+	}
+	if c.Billing.BalanceMergeSettlementMaxBacklog < 0 {
+		return fmt.Errorf("billing.balance_merge_settlement_max_backlog must be non-negative")
+	}
+	if c.Billing.BalanceMergeSettlementMaxAgeSeconds < 0 {
+		return fmt.Errorf("billing.balance_merge_settlement_max_age_seconds must be non-negative")
 	}
 	if c.Billing.OpenAIIncompleteInputCacheReadPercent < 0 || c.Billing.OpenAIIncompleteInputCacheReadPercent > 100 {
 		return fmt.Errorf("billing.openai_incomplete_input_cache_read_percent must be between 0 and 100")

@@ -305,19 +305,29 @@ func beginUsageBillingBalanceFinalization(ctx context.Context, tx *sql.Tx, cmd *
 // 只有当配置开启且本进程确实有结算消费者在运行时才入队：如果配置开启但后台任务
 // 被关闭（如测试模式 / SUB2API_DISABLE_BACKGROUND_JOBS），队列里的扣费将永远没人
 // 结算。这种情况下退回同步扣费，宁可少一次合并，也不能把已提交的扣费留在队列里。
+//
+// 队列积压超过阈值（待结算行数或最老一笔的等待时间，见
+// billing.balance_merge_settlement_max_backlog / _max_age_seconds）时同样退回同步扣费，
+// 带迟滞地恢复。这里只读一个由结算 worker 周期刷新的进程内原子变量，请求路径不查库。
+// 退回后走的就是开关关闭时的那条扣费代码（同一事务语义）；队列里已有的行继续由 worker
+// 结算，同一请求的重试仍由 usage_billing_dedup 保证只扣一次。
 func (r *usageBillingRepository) balanceMergeSettlementActive() bool {
 	if r == nil || !r.mergeBalanceSettlement {
 		return false
 	}
-	if service.UsageBalanceSettlementConsumerRunning() {
-		return true
+	if !service.UsageBalanceSettlementConsumerRunning() {
+		if now := time.Now().UnixNano(); now-r.lastMergeFallbackLog.Load() >= int64(usageBillingMergeFallbackLogInterval) &&
+			r.lastMergeFallbackLog.CompareAndSwap(r.lastMergeFallbackLog.Load(), now) {
+			logger.LegacyPrintf("repository.usage_billing",
+				"ALERT: billing.balance_merge_settlement_enabled=true but no balance settlement consumer is running; falling back to synchronous balance deduction")
+		}
+		return false
 	}
-	if now := time.Now().UnixNano(); now-r.lastMergeFallbackLog.Load() >= int64(usageBillingMergeFallbackLogInterval) &&
-		r.lastMergeFallbackLog.CompareAndSwap(r.lastMergeFallbackLog.Load(), now) {
-		logger.LegacyPrintf("repository.usage_billing",
-			"ALERT: billing.balance_merge_settlement_enabled=true but no balance settlement consumer is running; falling back to synchronous balance deduction")
+	if service.UsageBalanceSettlementBacklogFallbackActive() {
+		service.RecordUsageBalanceSettlementFallbackCharge()
+		return false
 	}
-	return false
+	return true
 }
 
 // enqueueUsageBillingBalance 把一笔余额扣费写入持久化结算队列。
