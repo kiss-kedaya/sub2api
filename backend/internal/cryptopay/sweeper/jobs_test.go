@@ -63,6 +63,7 @@ type localChain struct {
 	canonical    string
 	sendUnknown  bool
 	receiptError bool
+	callError    bool // answers eth_call (the token balance read) with HTTP 503
 	wrongAmount  bool
 	txs          map[string]bool
 	blocks       map[string]uint64
@@ -153,6 +154,10 @@ func (c *localChain) serve(w http.ResponseWriter, r *http.Request) {
 			result = c.chainID
 		}
 	case "eth_call":
+		if c.callError {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		result = fmt.Sprintf("0x%x", c.live)
 	case "eth_gasPrice":
 		result = "0x1"

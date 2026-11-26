@@ -129,13 +129,22 @@ func NewExecutor(db *sql.DB, pools map[string]*rpc.Pool, wallet TransactionWalle
 }
 
 type Summary struct {
-	DryRun   bool         `json:"dry_run"`
-	Planned  int          `json:"planned"`
-	Swept    int          `json:"swept"`
-	Failed   int          `json:"failed"`
-	Pending  int          `json:"pending"`
-	GasTopUp int          `json:"gas_topups"`
+	DryRun   bool `json:"dry_run"`
+	Planned  int  `json:"planned"`
+	Swept    int  `json:"swept"`
+	Failed   int  `json:"failed"`
+	Pending  int  `json:"pending"`
+	GasTopUp int  `json:"gas_topups"`
+	// Advanced counts the jobs that moved forward in this run: a transaction was
+	// signed, the gas top-up confirmed, or the sweep landed. A pass that only
+	// retried failures or waited for the chain leaves it at zero, which is what a
+	// manual drain uses to tell progress from a stall.
+	Advanced int          `json:"advanced"`
 	Entries  []SweepEntry `json:"entries"`
+	// Failures and FailuresOmitted are filled by the manual drain only: the
+	// distinct job failures it went through, even those that later cleared.
+	Failures        []SweepFailure `json:"failures,omitempty"`
+	FailuresOmitted int            `json:"failures_omitted,omitempty"`
 }
 
 type SweepEntry struct {
@@ -148,7 +157,15 @@ type SweepEntry struct {
 	SweepTxHash string `json:"sweep_tx_hash"`
 	Status      string `json:"status"`
 	Error       string `json:"error,omitempty"`
+	// Step and Category are the failure's reason code (see failure.go): where the
+	// job stopped and what kind of problem it was. Empty for a job that did not fail.
+	Step     string `json:"step,omitempty"`
+	Category string `json:"category,omitempty"`
 }
+
+// Add counts one outcome the way Run does. The manual drain uses it to rebuild
+// the counters from the final state of every job.
+func (s *Summary) Add(out SweepEntry) { s.add(out) }
 
 func (s *Summary) add(out SweepEntry) {
 	s.Entries = append(s.Entries, out)
@@ -189,7 +206,7 @@ func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err 
 			"dry_run", dryRun, "chains", scoped,
 			"planned", summary.Planned, "swept", summary.Swept,
 			"failed", summary.Failed, "pending", summary.Pending,
-			"gas_topups", summary.GasTopUp,
+			"gas_topups", summary.GasTopUp, "advanced", summary.Advanced,
 			"elapsed_ms", time.Since(startedAt).Milliseconds(),
 			"error", rpc.SafeError(err))
 	}()
@@ -235,11 +252,15 @@ func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err 
 		for _, job := range jobs {
 			key := addressKey(job.Chain, job.Address)
 			seen[key+"|"+strings.ToLower(job.Token)] = true
+			before := markOf(job)
 			out, resumeErr := e.resume(ctx, job)
 			if out.Status != "swept" {
 				blocked[key] = true
 			}
 			summary.add(out)
+			if !hasStorageFailure(resumeErr) && before.advancedTo(markOf(job)) {
+				summary.Advanced++
+			}
 			if resumeErr != nil {
 				runErrors = joinErrors(runErrors, resumeErr)
 				var storage *persistenceError
@@ -290,6 +311,11 @@ func (e *Executor) Run(ctx context.Context, dryRun bool) (summary *Summary, err 
 			blocked[key] = true
 		}
 		summary.add(out)
+		// A job created in this pass starts with no transaction, so the first hash
+		// (or an immediate sweep) is a forward move.
+		if !dryRun && !hasStorageFailure(sweepErr) && (out.Status == "swept" || out.GasTxHash != "" || out.SweepTxHash != "") {
+			summary.Advanced++
+		}
 		if sweepErr != nil {
 			runErrors = joinErrors(runErrors, sweepErr)
 			var storage *persistenceError
@@ -357,11 +383,15 @@ func (e *Executor) sweepGasLimitFor(chain, token string) uint64 {
 
 func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (SweepEntry, error) {
 	out := SweepEntry{Chain: entry.Chain, Token: entry.Token, Address: entry.Address, Status: "failed"}
+	// refuse reports an entry that never became a job, with its reason code.
+	refuse := func(step string, err error) (SweepEntry, error) {
+		out.Error = rpc.SafeError(err)
+		out.Step, out.Category = step, FailureCategory(err)
+		return out, err
+	}
 	// Last line of defence: never sign for a chain outside the operator scope.
 	if !e.allowsChain(entry.Chain) {
-		err := fmt.Errorf("chain %q is outside the requested sweep scope", entry.Chain)
-		out.Error = rpc.SafeError(err)
-		return out, err
+		return refuse(StepValidate, fmt.Errorf("chain %q is outside the requested sweep scope", entry.Chain))
 	}
 	if entry.RawAmount != nil {
 		entry.RawAmount = new(big.Int).Set(entry.RawAmount)
@@ -369,8 +399,7 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 	}
 	_, _, err := e.validateEntry(entry)
 	if err != nil {
-		out.Error = rpc.SafeError(err)
-		return out, err
+		return refuse(StepValidate, err)
 	}
 	if dryRun {
 		out.Status = "planned"
@@ -378,14 +407,10 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 	}
 	if !common.IsHexAddress(e.config.HotWalletEVM) || isZeroAddress(e.config.HotWalletEVM) ||
 		strings.EqualFold(e.config.HotWalletEVM, entry.Address) {
-		err = fmt.Errorf("sweep refused: invalid receiving address")
-		out.Error = rpc.SafeError(err)
-		return out, err
+		return refuse(StepValidate, fmt.Errorf("sweep refused: invalid receiving address"))
 	}
 	if e.config.Confirmations[entry.Chain] == 0 {
-		err = fmt.Errorf("sweep refused: confirmation depth is not configured for %s", entry.Chain)
-		out.Error = rpc.SafeError(err)
-		return out, err
+		return refuse(StepValidate, fmt.Errorf("sweep refused: confirmation depth is not configured for %s", entry.Chain))
 	}
 	job, err := e.createJob(ctx, entry)
 	if err != nil {
@@ -401,8 +426,7 @@ func (e *Executor) sweepOne(ctx context.Context, entry PlanEntry, dryRun bool) (
 			out.Status = "pending"
 			return out, nil
 		}
-		out.Error = rpc.SafeError(err)
-		return out, err
+		return refuse(StepPersist, err)
 	}
 	return e.resume(ctx, job)
 }
@@ -416,7 +440,7 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		job.Status = "failed"
 		job.Error = "stale pending released: reverted transfer released for replan"
 		if _, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET status='failed', error=$2, updated_at=NOW() WHERE id=$1`, job.ID, job.Error); err != nil {
-			return pendingError(job, err)
+			return pendingError(job, atStep(StepPersist, err))
 		}
 		out = job.outcome()
 		out.Status = "failed"
@@ -435,17 +459,20 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		(job.Status == "sweep_pending" && job.SweepRaw == "") ||
 		(job.Status == "gas_pending" && job.GasRaw == "") {
 		job.Status = "manual_review"
-		return e.jobError(ctx, job, fmt.Errorf("reserved transaction bytes are missing; automatic signing refused"))
+		return e.jobError(ctx, job, atStep(StepValidate, fmt.Errorf("reserved transaction bytes are missing; automatic signing refused")))
 	}
 	// Existing hashes are observed using persisted metadata, even when the
 	// current token/chain/destination configuration no longer permits new work.
 	pool := e.pools[job.Chain]
 	if pool == nil {
-		return e.jobError(ctx, job, fmt.Errorf("unfinished job %d needs an RPC pool for %s", job.ID, job.Chain))
+		return e.jobError(ctx, job, atStep(StepValidate, fmt.Errorf("unfinished job %d needs an RPC pool for %s", job.ID, job.Chain)))
 	}
 	pool, err := pool.ForChain(ctx, uint64(ChainIDs[job.Chain]))
 	if err != nil {
-		return e.jobError(ctx, job, err)
+		if ctx.Err() == nil {
+			err = errChainUnverified
+		}
+		return e.jobError(ctx, job, atStep(StepValidate, err))
 	}
 	required := e.config.Confirmations[job.Chain]
 	if required == 0 {
@@ -455,7 +482,7 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		} else if job.GasHash != "" {
 			_, observeErr = checkReceipt(ctx, pool, job.Chain, job.GasHash, 0)
 		}
-		return e.jobError(ctx, job, joinErrors(fmt.Errorf("confirmation depth is not configured for %s", job.Chain), observeErr))
+		return e.jobError(ctx, job, atStep(StepValidate, joinErrors(fmt.Errorf("confirmation depth is not configured for %s", job.Chain), observeErr)))
 	}
 	if required < job.Confirmations {
 		required = job.Confirmations
@@ -477,7 +504,7 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 			job.Status = "failed"
 			job.Error = "stale pending released: superseded by a swept job for the same address/token"
 			if _, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET status='failed', error=$2, updated_at=NOW() WHERE id=$1`, job.ID, job.Error); err != nil {
-				return pendingError(job, err)
+				return pendingError(job, atStep(StepPersist, err))
 			}
 			out := job.outcome()
 			out.Status = "failed"
@@ -501,7 +528,7 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 			job.Status = "failed"
 			job.Error = "stale pending released: stuck job made no token progress"
 			if _, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET status='failed', error=$2, updated_at=NOW() WHERE id=$1`, job.ID, job.Error); err != nil {
-				return pendingError(job, err)
+				return pendingError(job, atStep(StepPersist, err))
 			}
 			out := job.outcome()
 			out.Status = "failed"
@@ -520,11 +547,11 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 			// record is released. Replace the fee at the same nonce first, so
 			// the release path only ever sees bytes that can still land.
 			if err := e.refreshUnderpricedSweep(ctx, pool, job); err != nil {
-				return pendingError(job, err)
+				return pendingError(job, atStep(StepSign, err))
 			}
 			released, err := e.releaseStaleTransaction(ctx, pool, job, false, true)
 			if err != nil {
-				return pendingError(job, err)
+				return pendingError(job, atStep(StepReceipt, err))
 			}
 			if released {
 				return job.outcome(), nil
@@ -537,7 +564,7 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		// A top-up signed earlier that can never be mined must not hold the
 		// payer for every other address on the chain.
 		if err := e.refreshStuckGas(ctx, pool, job); err != nil {
-			return pendingError(job, err)
+			return pendingError(job, atStep(StepSign, err))
 		}
 		// refreshStuckGas either re-funds (planned) or signs a replacement at the
 		// same nonce. Only a top-up it left untouched may be concluded dead here,
@@ -545,7 +572,7 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		if job.Status == "gas_pending" && job.GasHash == beforeHash {
 			released, err := e.releaseStaleTransaction(ctx, pool, job, true, true)
 			if err != nil {
-				return pendingError(job, err)
+				return pendingError(job, atStep(StepReceipt, err))
 			}
 			if released {
 				return job.outcome(), nil
@@ -555,28 +582,28 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 	if job.GasRaw != "" && !job.GasConfirmed {
 		confirmed, err := e.settle(ctx, pool, job, true, required)
 		if err != nil {
-			return pendingError(job, err)
+			return pendingError(job, atStep(StepReceipt, err))
 		}
 		if !confirmed {
 			return job.outcome(), nil
 		}
 	}
 	if _, _, err := e.validateEntry(job.PlanEntry); err != nil {
-		return e.jobError(ctx, job, err)
+		return e.jobError(ctx, job, atStep(StepValidate, err))
 	}
 	if err := e.checkCurrentSweepBalance(ctx, pool, job); err != nil {
-		return e.jobError(ctx, job, err)
+		return e.jobError(ctx, job, atStep(StepBalanceRead, err))
 	}
 	busy, err := e.addressBusy(ctx, job)
 	if err != nil {
-		return pendingError(job, &persistenceError{err})
+		return pendingError(job, &stepError{step: StepAddressBusy, err: &persistenceError{err}})
 	}
 	if busy {
-		return e.jobError(ctx, job, fmt.Errorf("address has another unresolved transaction"))
+		return e.jobError(ctx, job, atStep(StepAddressBusy, fmt.Errorf("address has another unresolved transaction")))
 	}
 	price, err := pool.GasPrice(ctx)
 	if err != nil {
-		return e.jobError(ctx, job, err)
+		return e.jobError(ctx, job, atStep(StepGasPrice, err))
 	}
 	// GasTopUp is the operator's native-coin budget, not a minimum that an
 	// untrusted RPC quote may increase. Bound fees even if the child already
@@ -589,7 +616,7 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		// `failed`; the job stays retryable instead.
 		slog.Warn("[cryptopay] sweep deferred: no native gas budget configured",
 			"job_id", job.ID, "chain", job.Chain)
-		return e.deferJob(ctx, job, fmt.Errorf("sweep gas budget is not configured for %s", job.Chain))
+		return e.deferJob(ctx, job, atStep(StepGasFund, fmt.Errorf("sweep gas budget is not configured for %s", job.Chain)))
 	}
 	// A budget below the chain's own minimum is not a market condition: no
 	// quote the pool may sign can ever fit, so the job would defer on every run
@@ -599,16 +626,16 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 			"job_id", job.ID, "chain", job.Chain,
 			"floor_wei", chainGasPriceFloor(job.Chain).String(), "budget_wei", cap.String(),
 			"error", err.Error())
-		return e.deferJob(ctx, job, err)
+		return e.deferJob(ctx, job, atStep(StepGasFund, err))
 	}
 	if transferGasBudget(price).Cmp(cap) > 0 {
 		slog.Warn("[cryptopay] sweep deferred: gas quote above the configured budget",
 			"job_id", job.ID, "chain", job.Chain)
-		return e.deferJob(ctx, job, errGasQuoteExceedsBudget)
+		return e.deferJob(ctx, job, atStep(StepGasPrice, errGasQuoteExceedsBudget))
 	}
 	native, err := pool.Balance(ctx, job.Address)
 	if err != nil {
-		return e.jobError(ctx, job, err)
+		return e.jobError(ctx, job, atStep(StepBalanceRead, err))
 	}
 	if native.Cmp(transferGasBudget(price)) < 0 {
 		// A confirmed top-up that no longer covers the budget is not a reason to
@@ -619,13 +646,13 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 		// shortfall; prepareGas already caps the amount by the operator budget.
 		amount := e.gasTopUpAmount(job.Chain, transferGasBudget(price), native)
 		if amount.Sign() <= 0 {
-			return e.deferJob(ctx, job, errGasBudgetInsufficient)
+			return e.deferJob(ctx, job, atStep(StepGasFund, errGasBudgetInsufficient))
 		}
 		if err := e.prepareGas(ctx, pool, job, amount, price); err != nil {
 			if errors.Is(err, errGasPayerPending) {
 				// Another job still owns the gas nonce. This is a deferral,
 				// not a failed transfer, and must not hide partial progress.
-				job.Error = "awaiting gas payer transaction confirmation"
+				job.Error = reasonAwaitingGasPayer
 				if saveErr := e.saveJob(ctx, job); saveErr != nil {
 					return pendingError(job, saveErr)
 				}
@@ -638,13 +665,13 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 				slog.Warn("[cryptopay] sweep deferred: gas funding unavailable",
 					"job_id", job.ID, "chain", job.Chain,
 					"category", rpc.CategoryOf(err), "error", rpc.SafeError(err))
-				return e.deferJob(ctx, job, err)
+				return e.deferJob(ctx, job, atStep(StepGasFund, err))
 			}
-			return e.jobError(ctx, job, err)
+			return e.jobError(ctx, job, atStep(StepGasFund, err))
 		}
 		confirmed, err := e.settle(ctx, pool, job, true, required)
 		if err != nil {
-			return pendingError(job, err)
+			return pendingError(job, atStep(StepReceipt, err))
 		}
 		if !confirmed {
 			return job.outcome(), nil
@@ -653,7 +680,7 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 	// Gas confirmation can take time. Include newly credited deposits before
 	// signing the token transaction, while preserving a signed token verbatim.
 	if err := e.checkCurrentSweepBalance(ctx, pool, job); err != nil {
-		return e.jobError(ctx, job, err)
+		return e.jobError(ctx, job, atStep(StepBalanceRead, err))
 	}
 	if e.isNativeSweep(job.Chain, job.Token) {
 		// A native sweep pays its own fee from the balance it empties, so the
@@ -662,13 +689,13 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 			if errors.Is(err, errNativeSweepBelowGasReserve) {
 				// Waiting for more native coin (or a cheaper quote) is not a
 				// failed payment: keep the bounded attempt counter untouched.
-				return e.deferJob(ctx, job, err)
+				return e.deferJob(ctx, job, atStep(StepBalanceRead, err))
 			}
-			return e.jobError(ctx, job, err)
+			return e.jobError(ctx, job, atStep(StepBalanceRead, err))
 		}
 	}
 	if err := e.prepareSweep(ctx, pool, job, price); err != nil {
-		return e.jobError(ctx, job, err)
+		return e.jobError(ctx, job, atStep(StepSign, err))
 	}
 	return e.finishSweep(ctx, pool, job, required)
 }
@@ -676,7 +703,7 @@ func (e *Executor) resume(ctx context.Context, job *sweepJob) (SweepEntry, error
 func (e *Executor) finishSweep(ctx context.Context, pool *rpc.Pool, job *sweepJob, required uint64) (SweepEntry, error) {
 	_, err := e.settle(ctx, pool, job, false, required)
 	if err != nil {
-		return pendingError(job, err)
+		return pendingError(job, atStep(StepReceipt, err))
 	}
 	return job.outcome(), nil
 }
@@ -698,7 +725,7 @@ func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (Sw
 		job.Status = "failed"
 		job.Error = "stale pending released: " + rpc.SafeRecordedError(cause.Error())
 		if _, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET status='failed', error=$2, updated_at=NOW() WHERE id=$1`, job.ID, job.Error); err != nil {
-			return pendingError(job, err)
+			return pendingError(job, atStep(StepPersist, err))
 		}
 		out := job.outcome()
 		out.Status = "failed"
@@ -707,26 +734,26 @@ func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (Sw
 	}
 	var storage *persistenceError
 	if errors.As(cause, &storage) {
+		logJobFailure("[cryptopay] sweep job state could not be saved", job, cause)
 		return pendingError(job, cause)
 	}
 	// A transport failure or timeout says nothing about the payment. Persisting
 	// it would burn one of the bounded attempts (and could eventually mark a
 	// perfectly valid transaction failed), so the durable state stays exactly as
-	// it was and the next pass retries.
-	if rpc.IsTransient(cause) {
-		slog.Warn("[cryptopay] sweep job deferred: RPC temporarily unavailable",
-			"job_id", job.ID, "chain", job.Chain, "address", job.Address,
-			"category", rpc.CategoryOf(cause), "endpoint_host", rpc.HostOf(cause),
-			"detail", rpc.DetailOf(cause))
+	// it was and the next pass retries. The same holds for a signer that is locked
+	// or not authorised: the job is fine, the run is not. What is recorded instead
+	// is the reason alone, in a write that touches neither the attempt counter
+	// nor updated_at, so an operator can still see where the job stopped; it used
+	// to leave nothing at all, and the log line was a Warn that LOG_LEVEL=error
+	// drops.
+	if rpc.IsTransient(cause) || IsFatalRunError(cause) || errors.Is(cause, errChainUnverified) {
+		logJobFailure("[cryptopay] sweep job could not advance", job, cause)
+		e.recordFailureReason(ctx, job, cause)
 		return pendingError(job, cause)
 	}
 	// Transport errors may contain endpoint credentials. The same sanitized
 	// boundary applies to operator logs and persisted payment records.
-	slog.Error("[cryptopay] sweep job failed",
-		"job_id", job.ID, "chain", job.Chain, "address", job.Address,
-		"token", job.Token, "status", job.Status, "revision", job.Revision,
-		"category", rpc.CategoryOf(cause), "endpoint_host", rpc.HostOf(cause),
-		"detail", rpc.DetailOf(cause), "error", rpc.SafeError(cause))
+	logJobFailure("[cryptopay] sweep job failed", job, cause)
 	job.Error = rpc.SafeError(cause)
 	if job.Revision >= maxSweepAttempts {
 		// Terminal: stop retrying and stop reserving the address.
@@ -735,6 +762,29 @@ func (e *Executor) jobError(ctx context.Context, job *sweepJob, cause error) (Sw
 	}
 	err := e.saveJob(ctx, job)
 	return pendingError(job, joinErrors(cause, err))
+}
+
+// recordFailureReason stores why a job could not advance without touching its
+// state: no revision bump (that is the attempt counter), no updated_at (that is
+// how long the job has been stuck) and no status change. It is diagnostics only;
+// when the write fails or the row has moved on, nothing about the payment changes.
+func (e *Executor) recordFailureReason(ctx context.Context, job *sweepJob, cause error) {
+	reason := rpc.SafeError(cause)
+	if step := stepOf(cause); step != "" {
+		reason = step + ": " + reason
+	}
+	reason = rpc.SafeRecordedError(reason)
+	if reason == job.Error {
+		return
+	}
+	if _, err := e.queries().ExecContext(ctx, `UPDATE sweep_records SET error=$2
+		WHERE id=$1 AND job_version=1 AND revision=$3 AND status NOT IN ('swept','failed')`,
+		job.ID, reason, job.Revision); err != nil {
+		slog.Warn("[cryptopay] could not record sweep failure reason",
+			"job_id", job.ID, "error", rpc.SafeError(err))
+		return
+	}
+	job.Error = reason
 }
 
 // deferJob records a wait-for-resources outcome without consuming a sweep
@@ -754,15 +804,22 @@ func (e *Executor) deferJob(ctx context.Context, job *sweepJob, cause error) (Sw
 	out := job.outcome()
 	out.Status = "pending"
 	out.Error = job.Error
+	// Every deferral is a wait for gas: budget, quote, payer funds or reserve.
+	out.Step, out.Category = stepOf(cause), CategoryGas
 	return out, nil
 }
 
 func pendingError(job *sweepJob, err error) (SweepEntry, error) {
+	// Every job-level failure of a pass comes out through here, whichever step it
+	// came from: log it once per window at ERROR, unless the call that produced it
+	// already did (the limiter keys on job, step and category, not on the message).
+	logJobFailure("[cryptopay] sweep job could not advance", job, err)
 	out := job.outcome()
 	if out.Status == "swept" { // final persistence may have failed
 		out.Status = "pending"
 	}
 	out.Error = rpc.SafeError(err)
+	out.Step, out.Category = stepOf(err), FailureCategory(err)
 	return out, err
 }
 

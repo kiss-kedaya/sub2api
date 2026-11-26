@@ -67,7 +67,7 @@ func (e *Executor) lock(ctx context.Context) (*sql.Conn, func() error, error) {
 		var retry bool
 		if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, sweepLockKey).Scan(&retry); err != nil || !retry {
 			_ = conn.Close()
-			return nil, nil, fmt.Errorf("sweep already running in another instance")
+			return nil, nil, ErrSweepLockHeld
 		}
 	}
 	release := func() error {

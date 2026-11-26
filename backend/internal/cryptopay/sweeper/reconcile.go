@@ -249,7 +249,7 @@ func (e *Executor) retainUnconfirmed(ctx context.Context, job *sweepJob, out *Re
 	} else {
 		job.Status = "sweep_pending"
 	}
-	job.Error = "awaiting canonical receipt and required confirmations"
+	job.Error = reasonAwaitingReceipt
 	if err := e.saveJob(ctx, job); err != nil {
 		return nil, err
 	}

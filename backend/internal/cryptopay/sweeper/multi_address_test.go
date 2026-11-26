@@ -110,8 +110,8 @@ func TestReservedAddressesDoNotAbortTheRun(t *testing.T) {
 		t.Fatalf("a reserved address failed the run: %v", err)
 	}
 	if summary.Swept != 1 || summary.Pending != reserved || summary.Planned != len(entries) ||
-		len(summary.Entries) != len(entries) {
-		t.Fatalf("partial plan was dropped: %+v", summary)
+		len(summary.Entries) != len(entries) || summary.Advanced != 1 {
+		t.Fatalf("partial plan was dropped (only the swept address advanced, not the %d reserved ones): %+v", reserved, summary)
 	}
 	if len(c.raws) != 1 {
 		t.Fatalf("the later address was never swept: sends=%d", len(c.raws))

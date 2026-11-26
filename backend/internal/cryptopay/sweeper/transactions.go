@@ -45,10 +45,10 @@ func (e *Executor) prepareGas(ctx context.Context, pool *rpc.Pool, j *sweepJob, 
 	}
 	hot, err := e.wallet.HotAddresses(ctx)
 	if err != nil {
-		return err
+		return atStep(StepSign, err)
 	}
 	if !common.IsHexAddress(hot.EVM) || isZeroAddress(hot.EVM) {
-		return fmt.Errorf("wallet returned invalid gas payer")
+		return atStep(StepValidate, fmt.Errorf("wallet returned invalid gas payer"))
 	}
 	busy, err := e.gasPayerBusy(ctx, j, hot.EVM)
 	if err != nil {
@@ -62,7 +62,7 @@ func (e *Executor) prepareGas(ctx context.Context, pool *rpc.Pool, j *sweepJob, 
 	// instead of leaving an unmineable reservation behind.
 	balance, err := pool.Balance(ctx, hot.EVM)
 	if err != nil {
-		return err
+		return atStep(StepBalanceRead, err)
 	}
 	required := new(big.Int).Add(amount, new(big.Int).Mul(price, big.NewInt(21000)))
 	if balance.Cmp(required) < 0 {
@@ -74,18 +74,18 @@ func (e *Executor) prepareGas(ctx context.Context, pool *rpc.Pool, j *sweepJob, 
 	// The receiving address may be a cold wallet. Its nonce is irrelevant.
 	nonce, err := pool.Nonce(ctx, hot.EVM)
 	if err != nil {
-		return err
+		return atStep(StepNonce, err)
 	}
 	idx := j.DerivationIndex
 	raw, err := e.wallet.SignEVM(ctx, EVMSignRequest{Index: hot.Index, Kind: "gas", GasIndex: &idx,
 		ChainID: ChainIDs[j.Chain], Token: "native", To: j.Address, Amount: amount.String(),
 		Nonce: nonce, GasPrice: price.String(), GasLimit: 21000})
 	if err != nil {
-		return err
+		return atStep(StepSign, err)
 	}
 	hash, err := validateSigned(raw, j.Chain, hot.EVM, j.Address, "native", amount, nonce, 21000, price)
 	if err != nil {
-		return err
+		return atStep(StepSign, err)
 	}
 	j.GasPayer, j.GasAmount, j.GasNonce = hot.EVM, amount.String(), strconv.FormatUint(nonce, 10)
 	j.GasRaw, j.GasHash, j.Status, j.Error = raw, hash, "gas_pending", ""
@@ -94,11 +94,11 @@ func (e *Executor) prepareGas(ctx context.Context, pool *rpc.Pool, j *sweepJob, 
 
 func (e *Executor) prepareSweep(ctx context.Context, pool *rpc.Pool, j *sweepJob, price *big.Int) error {
 	if e.wallet == nil {
-		return fmt.Errorf("wallet is not initialized")
+		return atStep(StepValidate, fmt.Errorf("wallet is not initialized"))
 	}
 	nonce, err := e.sweepNonce(ctx, pool, j)
 	if err != nil {
-		return err
+		return atStep(StepNonce, err)
 	}
 	// A native coin sweep is a plain value transfer: intrinsic gas only, no
 	// calldata. An ERC-20 sweep needs the larger contract-call budget.
@@ -107,12 +107,12 @@ func (e *Executor) prepareSweep(ctx context.Context, pool *rpc.Pool, j *sweepJob
 		ChainID: ChainIDs[j.Chain], Token: j.Token, To: j.Destination, Amount: j.RawAmount.String(),
 		Nonce: nonce, GasPrice: price.String(), GasLimit: gasLimit})
 	if err != nil {
-		return err
+		return atStep(StepSign, err)
 	}
 	hash, err := validateSigned(raw, j.Chain, j.Address, j.Destination, j.Token,
 		j.RawAmount, nonce, gasLimit, price)
 	if err != nil {
-		return err
+		return atStep(StepSign, err)
 	}
 	j.SweepNonce, j.SweepRaw, j.SweepHash = strconv.FormatUint(nonce, 10), raw, hash
 	j.Status, j.Error = "sweep_pending", ""
@@ -475,11 +475,13 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 	}
 	if err != nil {
 		j.Status = "manual_review"
-		_, saveErr := e.jobError(ctx, j, err)
+		_, saveErr := e.jobError(ctx, j, atStep(StepValidate, err))
 		return false, saveErr
 	}
+	step := StepReceipt
 	state, err := checkReceipt(ctx, pool, j.Chain, hash, required)
 	if err == nil && state == receiptAbsent {
+		step = StepBroadcast
 		var returned string
 		if guard, ok := e.wallet.(interface {
 			GuardSweepBroadcast(context.Context, func() (string, error)) (string, error)
@@ -488,7 +490,7 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 		} else {
 			if guard, ok := e.wallet.(interface{ ValidateSweepAuthorization(context.Context) error }); ok {
 				if guardErr := guard.ValidateSweepAuthorization(ctx); guardErr != nil {
-					return false, guardErr
+					return false, atStep(StepBroadcast, guardErr)
 				}
 			}
 			returned, err = pool.SendRawTransaction(ctx, raw)
@@ -501,6 +503,7 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 			err = fmt.Errorf("broadcast returned a different transaction hash; outcome unknown")
 		}
 		if err == nil {
+			step = StepReceipt
 			state, err = checkReceipt(ctx, pool, j.Chain, hash, required)
 		}
 	}
@@ -508,6 +511,7 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 		state, err = e.waitForReceipt(ctx, pool, j.Chain, hash, required, state)
 	}
 	if err != nil {
+		err = atStep(step, err)
 		j.Error = rpc.SafeError(err)
 		// A timeout is persisted as an observation, never as a status change:
 		// saveJob only bumps the revision here, so a transport failure cannot
@@ -529,7 +533,7 @@ func (e *Executor) settle(ctx context.Context, pool *rpc.Pool, j *sweepJob, gas 
 		return false, e.saveJob(ctx, j)
 	}
 	if state != receiptConfirmed {
-		j.Error = "awaiting canonical receipt and required confirmations"
+		j.Error = reasonAwaitingReceipt
 		return false, e.saveJob(ctx, j)
 	}
 	j.Error = ""
