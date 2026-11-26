@@ -88,6 +88,16 @@ type UsageBalanceSettlementWorker struct {
 	lastBacklogLog      atomic.Int64
 	lastSampleErrLog    atomic.Int64
 	lastObserveDropLog  atomic.Int64
+
+	zapLog *zap.Logger // test hook; nil means the process logger
+}
+
+// logr is the logger for the guard / observer / stats lines.
+func (w *UsageBalanceSettlementWorker) logr() *zap.Logger {
+	if w.zapLog != nil {
+		return w.zapLog
+	}
+	return logger.L()
 }
 
 func NewUsageBalanceSettlementWorker(
@@ -263,7 +273,7 @@ func (w *UsageBalanceSettlementWorker) logStats() {
 			zap.Bool("sync_fallback", fallback),
 		)
 	}
-	logger.L().Info("billing.balance_settlement_flushed", fields...)
+	w.logr().Info("billing.balance_settlement_flushed", fields...)
 }
 
 // runBacklogMonitor 周期性读取队列积压，更新「是否退回同步扣费」状态。独立于 flush 循环，
@@ -301,7 +311,7 @@ func (w *UsageBalanceSettlementWorker) sampleBacklog(parent context.Context) {
 		// 已退回的也留在同步路径直到读数恢复。
 		w.sampleFailures.Add(1)
 		if settlementLogDue(&w.lastSampleErrLog) {
-			logger.L().Warn("billing.balance_settlement_backlog_sample_failed", zap.Error(err))
+			w.logr().Warn("billing.balance_settlement_backlog_sample_failed", zap.Error(err))
 		}
 		return
 	}
@@ -321,7 +331,7 @@ func (w *UsageBalanceSettlementWorker) applyBacklog(backlog UsageBalanceSettleme
 		w.fallbackTransitions.Add(1)
 		if next {
 			w.fallbackSince.Store(now.UnixNano())
-			logger.L().Warn("billing.balance_settlement_fallback_enter",
+			w.logr().Warn("billing.balance_settlement_fallback_enter",
 				zap.Int64("backlog_depth", backlog.Pending),
 				zap.Int64("oldest_age_ms", backlog.OldestAge.Milliseconds()),
 				zap.Int64("max_backlog", maxBacklog),
@@ -329,14 +339,14 @@ func (w *UsageBalanceSettlementWorker) applyBacklog(backlog UsageBalanceSettleme
 			)
 		} else {
 			w.fallbackSince.Store(0)
-			logger.L().Info("billing.balance_settlement_fallback_exit",
+			w.logr().Info("billing.balance_settlement_fallback_exit",
 				zap.Int64("backlog_depth", backlog.Pending),
 				zap.Int64("oldest_age_ms", backlog.OldestAge.Milliseconds()),
 			)
 		}
 	}
 	if backlogOverLimit(backlog, maxBacklog, maxAge) && settlementLogDue(&w.lastBacklogLog) {
-		logger.L().Warn("billing.balance_settlement_backlog_high",
+		w.logr().Warn("billing.balance_settlement_backlog_high",
 			zap.Int64("backlog_depth", backlog.Pending),
 			zap.Bool("backlog_depth_capped", backlog.PendingCapped),
 			zap.Int64("oldest_age_ms", backlog.OldestAge.Milliseconds()),
@@ -368,7 +378,7 @@ func (w *UsageBalanceSettlementWorker) observe(results []UsageBalanceSettlementR
 	default:
 		w.observerDropped.Add(1)
 		if settlementLogDue(&w.lastObserveDropLog) {
-			logger.L().Warn("billing.balance_settlement_observer_dropped",
+			w.logr().Warn("billing.balance_settlement_observer_dropped",
 				zap.Uint64("dropped_total", w.observerDropped.Load()))
 		}
 	}
@@ -389,7 +399,7 @@ func (w *UsageBalanceSettlementWorker) runObserver(ctx context.Context) {
 func (w *UsageBalanceSettlementWorker) deliver(results []UsageBalanceSettlementResult) {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.L().Error("billing.balance_settlement_observer_panic", zap.Any("recover", r))
+			w.logr().Error("billing.balance_settlement_observer_panic", zap.Any("recover", r))
 		}
 	}()
 	w.opts.Observer.ObserveBalanceSettlements(results)

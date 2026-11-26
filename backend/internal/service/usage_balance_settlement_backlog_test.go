@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // guardTestRepo is a settlement repository that also reads the backlog; the test
@@ -80,50 +82,18 @@ func newGuardWorker(repo UsageBalanceSettlementRepository, maxBacklog int64, max
 	}
 }
 
-type settlementLogSink struct {
-	mu     sync.Mutex
-	events []*logger.LogEvent
+// settlementLogCapture records the worker's structured log lines through an
+// injected logger, so no process-wide logging state is touched.
+type settlementLogCapture struct{ logs *observer.ObservedLogs }
+
+func captureSettlementLogs(w *UsageBalanceSettlementWorker) *settlementLogCapture {
+	core, logs := observer.New(zapcore.InfoLevel)
+	w.zapLog = zap.New(core)
+	return &settlementLogCapture{logs: logs}
 }
 
-func (s *settlementLogSink) WriteLogEvent(event *logger.LogEvent) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.events = append(s.events, event)
-}
-
-func (s *settlementLogSink) named(message string) []*logger.LogEvent {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []*logger.LogEvent
-	for _, event := range s.events {
-		if event.Message == message {
-			out = append(out, event)
-		}
-	}
-	return out
-}
-
-var settlementLogCaptureMu sync.Mutex
-
-// captureSettlementLogs routes structured logs into an in-memory sink for the test.
-func captureSettlementLogs(t *testing.T) *settlementLogSink {
-	t.Helper()
-	settlementLogCaptureMu.Lock()
-	require.NoError(t, logger.Init(logger.InitOptions{
-		Level:       "info",
-		Format:      "json",
-		ServiceName: "sub2api",
-		Environment: "test",
-		Output:      logger.OutputOptions{ToStdout: true},
-		Sampling:    logger.SamplingOptions{Enabled: false},
-	}))
-	sink := &settlementLogSink{}
-	logger.SetSink(sink)
-	t.Cleanup(func() {
-		logger.SetSink(nil)
-		settlementLogCaptureMu.Unlock()
-	})
-	return sink
+func (c *settlementLogCapture) named(message string) []observer.LoggedEntry {
+	return c.logs.FilterMessage(message).All()
 }
 
 func TestSettlementGuard_NextStateTable(t *testing.T) {
@@ -314,8 +284,8 @@ func TestSettlementGuard_StopClearsProcessFlags(t *testing.T) {
 
 func TestSettlementGuard_LogsAreRateLimited(t *testing.T) {
 	resetSettlementProcessState(t)
-	sink := captureSettlementLogs(t)
 	w := newGuardWorker(&guardTestRepo{}, 100, 10*time.Second)
+	sink := captureSettlementLogs(w)
 
 	over := UsageBalanceSettlementBacklog{Pending: 150, OldestAge: 2 * time.Second}
 	for i := 0; i < 50; i++ {
@@ -325,12 +295,13 @@ func TestSettlementGuard_LogsAreRateLimited(t *testing.T) {
 	require.Len(t, sink.named("billing.balance_settlement_fallback_enter"), 1, "entering fallback is logged once, not per sample")
 
 	high := sink.named("billing.balance_settlement_backlog_high")[0]
-	require.Equal(t, int64(150), high.Fields["backlog_depth"])
-	require.Equal(t, int64(2000), high.Fields["oldest_age_ms"])
-	require.Equal(t, int64(100), high.Fields["max_backlog"])
-	require.Equal(t, int64(10), high.Fields["max_age_seconds"])
-	require.Equal(t, true, high.Fields["sync_fallback"])
-	require.Equal(t, "warn", high.Level)
+	fields := high.ContextMap()
+	require.Equal(t, int64(150), fields["backlog_depth"])
+	require.Equal(t, int64(2000), fields["oldest_age_ms"])
+	require.Equal(t, int64(100), fields["max_backlog"])
+	require.Equal(t, int64(10), fields["max_age_seconds"])
+	require.Equal(t, true, fields["sync_fallback"])
+	require.Equal(t, zapcore.WarnLevel, high.Level)
 
 	// After the quiet period the next over-limit reading logs again.
 	w.lastBacklogLog.Store(time.Now().Add(-2 * usageBalanceSettlementBacklogLogEvery).UnixNano())
@@ -346,10 +317,10 @@ func TestSettlementGuard_LogsAreRateLimited(t *testing.T) {
 
 func TestSettlementGuard_SampleFailureLogIsRateLimited(t *testing.T) {
 	resetSettlementProcessState(t)
-	sink := captureSettlementLogs(t)
 	repo := &guardTestRepo{}
 	repo.setReadError(context.DeadlineExceeded)
 	w := newGuardWorker(repo, 100, 0)
+	sink := captureSettlementLogs(w)
 	w.backlogReader = repo
 	for i := 0; i < 20; i++ {
 		w.sampleBacklog(context.Background())
@@ -360,8 +331,8 @@ func TestSettlementGuard_SampleFailureLogIsRateLimited(t *testing.T) {
 
 func TestSettlementGuard_StatsLogCarriesBacklogReading(t *testing.T) {
 	resetSettlementProcessState(t)
-	sink := captureSettlementLogs(t)
 	w := newGuardWorker(&guardTestRepo{}, 100, 10*time.Second)
+	sink := captureSettlementLogs(w)
 
 	w.applyBacklog(UsageBalanceSettlementBacklog{Pending: 7, OldestAge: 1500 * time.Millisecond})
 	w.flushes.Store(3)
@@ -370,7 +341,7 @@ func TestSettlementGuard_StatsLogCarriesBacklogReading(t *testing.T) {
 
 	events := sink.named("billing.balance_settlement_flushed")
 	require.Len(t, events, 1)
-	fields := events[0].Fields
+	fields := events[0].ContextMap()
 	require.Equal(t, int64(7), fields["backlog_depth"])
 	require.Equal(t, int64(1500), fields["oldest_age_ms"])
 	require.Equal(t, false, fields["sync_fallback"])
@@ -396,8 +367,8 @@ func TestSettlementGuard_StatsLogCarriesBacklogReading(t *testing.T) {
 
 func TestSettlementGuard_StatsLogIsUnchangedWithoutMonitoring(t *testing.T) {
 	resetSettlementProcessState(t)
-	sink := captureSettlementLogs(t)
 	w := &UsageBalanceSettlementWorker{repo: &guardTestRepo{}}
+	sink := captureSettlementLogs(w)
 
 	w.logStats()
 	require.Empty(t, sink.named("billing.balance_settlement_flushed"), "no activity, no line (as before)")
@@ -407,8 +378,9 @@ func TestSettlementGuard_StatsLogIsUnchangedWithoutMonitoring(t *testing.T) {
 	w.logStats()
 	events := sink.named("billing.balance_settlement_flushed")
 	require.Len(t, events, 1)
+	fields := events[0].ContextMap()
 	for _, key := range []string{"backlog_depth", "backlog_depth_capped", "oldest_age_ms", "sync_fallback"} {
-		require.NotContains(t, events[0].Fields, key, "switch off: the log line keeps its old shape")
+		require.NotContains(t, fields, key, "switch off: the log line keeps its old shape")
 	}
 }
 
