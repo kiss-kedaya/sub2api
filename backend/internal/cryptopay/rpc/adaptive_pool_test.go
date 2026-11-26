@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -553,7 +554,9 @@ func TestEndpointTrafficForReadsTheSharedTransport(t *testing.T) {
 	if _, ok := EndpointTrafficFor("://bad"); ok {
 		t.Fatal("an unparsable endpoint has no traffic")
 	}
-	endpoint := "https://shared-transport-probe.example.test/rpc/key"
+	// The registry belongs to the process, so a repeated run (-count=N) must not see
+	// the counters of the previous one: use an endpoint nobody has used.
+	endpoint := fmt.Sprintf("https://shared-transport-probe-%d.example.test/rpc/key", time.Now().UnixNano())
 	parsed := mustParseURL(t, endpoint)
 	state := sharedPublicTransport().traffic.get(parsed)
 	state.sent(false)
