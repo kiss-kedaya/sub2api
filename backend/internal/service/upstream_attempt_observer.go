@@ -18,7 +18,7 @@ type UpstreamAttemptObserver interface {
 const UpstreamAttemptBodyPeekLimit = 8 << 10
 
 // UpstreamAttemptBodyObserver 是观察者的可选扩展：个别状态码要看响应体前缀才能分对类
-// （Grok 的内容安全 403、Antigravity 的容量不足 503）。传输层只在 WantsAttemptBody 返回 true 时
+// （Anthropic 的组织禁用 400、Grok 的内容安全 403、Antigravity 的容量不足 503）。传输层只在 WantsAttemptBody 返回 true 时
 // 才预读响应体（最多 UpstreamAttemptBodyPeekLimit 字节，预读的内容会原样还给调用方），其余请求不多读一个字节。
 type UpstreamAttemptBodyObserver interface {
 	UpstreamAttemptObserver
@@ -71,10 +71,86 @@ func classifyUpstreamAttempt(ctxErr error, statusCode int, err error) attemptOut
 // 平台标签未知（空）时按可能处理：宁可多读一次小响应体，也不漏改判。
 func attemptBodyRefinable(platform string, statusCode int) bool {
 	switch statusCode {
+	case http.StatusBadRequest:
+		return platform == "" || platform == PlatformAnthropic
 	case http.StatusForbidden:
 		return platform == "" || platform == PlatformGrok
 	case http.StatusServiceUnavailable:
 		return platform == "" || platform == PlatformAntigravity
+	}
+	return false
+}
+
+// refineAttemptOutcome 用响应体前缀改判个别状态码的分类结果：
+//   - attemptOK（Anthropic 400）：组织被禁用（"organization has been disabled"）说明账号本身不可用，改判「失败」；
+//   - attemptFailed（Grok 403 / Antigravity 503）：见 refineFailedAttempt。
+//
+// 响应体读不到、为空、被截断到认不出来、或者经过压缩且未解压时保持原判不变。
+func refineAttemptOutcome(outcome attemptOutcome, platform string, statusCode int, body []byte) attemptOutcome {
+	switch outcome {
+	case attemptOK:
+		return refineOKAttempt(platform, statusCode, body)
+	case attemptFailed:
+		return refineFailedAttempt(platform, statusCode, body)
+	default:
+		return outcome
+	}
+}
+
+var anthropicOrgDisabledMarker = []byte("organization has been disabled")
+
+// refineOKAttempt 用响应体前缀把「状态码看起来像请求问题、实际是账号不可用」的尝试改判为失败：
+//   - Anthropic 400 里的 "organization has been disabled"（组织封禁会返回 400 而非 401/403，
+//     如果不改判，中转混合返回 503 + 400 会把失败率稀释到阈值以下并打断快速熔断）。
+//
+// 其余 400（普通参数错、非 Anthropic 平台、空/压缩/不可读响应体）一律保持「上游活着」。
+func refineOKAttempt(platform string, statusCode int, body []byte) attemptOutcome {
+	if statusCode == http.StatusBadRequest &&
+		(platform == "" || platform == PlatformAnthropic) &&
+		isAnthropicOrganizationDisabledBody(body) {
+		return attemptFailed
+	}
+	return attemptOK
+}
+
+// isAnthropicOrganizationDisabledBody 零分配检测响应体前缀是否包含 "organization has been disabled"（不区分大小写）。
+func isAnthropicOrganizationDisabledBody(body []byte) bool {
+	return containsFoldASCII(body, anthropicOrgDisabledMarker)
+}
+
+// containsFoldASCII 零分配判断 haystack 是否包含纯小写 ASCII 子串 lowerNeedle（不区分 ASCII 大小写）。
+func containsFoldASCII(haystack, lowerNeedle []byte) bool {
+	n := len(lowerNeedle)
+	if n == 0 {
+		return true
+	}
+	if len(haystack) < n {
+		return false
+	}
+	first := lowerNeedle[0]
+	limit := len(haystack) - n
+	for i := 0; i <= limit; i++ {
+		c := haystack[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != first {
+			continue
+		}
+		matched := true
+		for j := 1; j < n; j++ {
+			cb := haystack[i+j]
+			if cb >= 'A' && cb <= 'Z' {
+				cb += 'a' - 'A'
+			}
+			if cb != lowerNeedle[j] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
 	}
 	return false
 }

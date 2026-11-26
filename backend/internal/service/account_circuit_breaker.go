@@ -497,7 +497,7 @@ func (b *AccountCircuitBreaker) ObserveUpstreamAttempt(ctx context.Context, acco
 }
 
 // WantsAttemptBody 报告这次尝试是否需要响应体前缀才能准确分类（实现 UpstreamAttemptBodyObserver）。
-// 只有两种状态码在特定平台上会被误判：Grok 的内容安全 403、Antigravity 的容量不足 503。
+// 只有少数状态码在特定平台上会被误判：Anthropic 的组织禁用 400、Grok 的内容安全 403、Antigravity 的容量不足 503。
 // 传输层只在这里返回 true 时才预读响应体，其余请求不多读一个字节。
 func (b *AccountCircuitBreaker) WantsAttemptBody(ctx context.Context, accountID int64, statusCode int) bool {
 	if b == nil || !b.enabled || accountID <= 0 || ctx == nil {
@@ -522,8 +522,8 @@ func (b *AccountCircuitBreaker) observe(ctx context.Context, accountID int64, st
 		return
 	}
 	outcome := classifyUpstreamAttempt(ctx.Err(), statusCode, err)
-	if outcome == attemptFailed && err == nil && len(body) > 0 {
-		outcome = refineFailedAttempt(attemptPlatform(ctx, accountID), statusCode, body)
+	if (outcome == attemptFailed || outcome == attemptOK) && err == nil && len(body) > 0 {
+		outcome = refineAttemptOutcome(outcome, attemptPlatform(ctx, accountID), statusCode, body)
 	}
 	switch outcome {
 	case attemptIgnored:

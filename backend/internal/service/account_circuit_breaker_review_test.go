@@ -3,6 +3,8 @@
 package service
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -368,12 +370,26 @@ func TestCircuitBreakerEarliestRecovery(t *testing.T) {
 // ---- 误判修正：响应体改判 ----------------------------------------------------------
 
 var (
-	grokPolicyBody      = []byte(`{"error":{"code":"content_policy_violation","message":"Content violates usage guidelines"}}`)
-	grokPolicyTextBody  = []byte(`Request blocked by content moderation`)
-	grokSuspendedBody   = []byte(`{"error":{"code":"account_suspended","message":"Account suspended"}}`)
-	antigravityCapacity = []byte(`{"error":{"code":503,"message":"The model is overloaded.","status":"UNAVAILABLE","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"MODEL_CAPACITY_EXHAUSTED","metadata":{"model":"claude-sonnet-4-5"}}]}}`)
-	antigravityOther    = []byte(`{"error":{"code":503,"message":"upstream connect error","status":"UNAVAILABLE"}}`)
+	grokPolicyBody                 = []byte(`{"error":{"code":"content_policy_violation","message":"Content violates usage guidelines"}}`)
+	grokPolicyTextBody             = []byte(`Request blocked by content moderation`)
+	grokSuspendedBody              = []byte(`{"error":{"code":"account_suspended","message":"Account suspended"}}`)
+	antigravityCapacity            = []byte(`{"error":{"code":503,"message":"The model is overloaded.","status":"UNAVAILABLE","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"MODEL_CAPACITY_EXHAUSTED","metadata":{"model":"claude-sonnet-4-5"}}]}}`)
+	antigravityOther               = []byte(`{"error":{"code":503,"message":"upstream connect error","status":"UNAVAILABLE"}}`)
+	anthropicOrgDisabledBody       = []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"This organization has been disabled."}}`)
+	anthropicOrgDisabledMixedCase  = []byte(`{"error":{"message":"THIS Organization Has Been DISABLED. Please contact support."}}`)
+	anthropicOrgDisabledOnHoldBody = []byte(clientPrivacyOrgOnHoldBody)
+	anthropicNormal400Body         = []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"messages: roles must alternate"}}`)
 )
+
+func gzipBytesForCircuitTest(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, err := zw.Write(raw)
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	return buf.Bytes()
+}
 
 func TestRefineFailedAttemptTable(t *testing.T) {
 	cases := []struct {
@@ -403,30 +419,204 @@ func TestRefineFailedAttemptTable(t *testing.T) {
 	}
 }
 
+func TestRefineOKAttemptTable(t *testing.T) {
+	markerAtPeekEdge := append(bytes.Repeat([]byte("a"), UpstreamAttemptBodyPeekLimit-len(anthropicOrgDisabledMarker)), anthropicOrgDisabledMarker...)
+	markerSplitAtPeekEdge := append(bytes.Repeat([]byte("a"), UpstreamAttemptBodyPeekLimit-len(anthropicOrgDisabledMarker)+1), anthropicOrgDisabledMarker[:len(anthropicOrgDisabledMarker)-1]...)
+	rawCompressed := gzipBytesForCircuitTest(t, anthropicOrgDisabledBody)
+
+	cases := []struct {
+		name     string
+		platform string
+		status   int
+		body     []byte
+		want     attemptOutcome
+	}{
+		{"anthropic 400 org disabled", PlatformAnthropic, 400, anthropicOrgDisabledBody, attemptFailed},
+		{"anthropic 400 org disabled mixed case", PlatformAnthropic, 400, anthropicOrgDisabledMixedCase, attemptFailed},
+		{"anthropic 400 org on hold full payload", PlatformAnthropic, 400, anthropicOrgDisabledOnHoldBody, attemptFailed},
+		{"anthropic 400 org disabled plain text", PlatformAnthropic, 400, []byte("This organization has been disabled"), attemptFailed},
+		{"unlabelled platform 400 org disabled", "", 400, anthropicOrgDisabledBody, attemptFailed},
+		{"anthropic 400 marker finishes exactly at peek limit", PlatformAnthropic, 400, markerAtPeekEdge, attemptFailed},
+		{"anthropic 400 marker truncated at peek edge stays OK", PlatformAnthropic, 400, markerSplitAtPeekEdge, attemptOK},
+		{"anthropic 400 normal invalid request stays OK", PlatformAnthropic, 400, anthropicNormal400Body, attemptOK},
+		{"anthropic 400 empty body stays OK", PlatformAnthropic, 400, nil, attemptOK},
+		{"anthropic 400 raw compressed body stays OK", PlatformAnthropic, 400, rawCompressed, attemptOK},
+		{"anthropic 400 invalid utf8 binary stays OK", PlatformAnthropic, 400, []byte{0xff, 0xfe, 0x00, 0x80, 0x1f, 0x8b}, attemptOK},
+		{"anthropic 400 non-matching similar wording stays OK", PlatformAnthropic, 400, []byte(`{"error":{"message":"account has been disabled"}}`), attemptOK},
+		{"anthropic 200 mentioning org disabled stays OK", PlatformAnthropic, 200, anthropicOrgDisabledBody, attemptOK},
+		{"anthropic 404 mentioning org disabled stays OK", PlatformAnthropic, 404, anthropicOrgDisabledBody, attemptOK},
+		{"anthropic 422 mentioning org disabled stays OK", PlatformAnthropic, 422, anthropicOrgDisabledBody, attemptOK},
+		{"openai 400 org disabled is not refined", PlatformOpenAI, 400, anthropicOrgDisabledBody, attemptOK},
+		{"grok 400 org disabled is not refined", PlatformGrok, 400, anthropicOrgDisabledBody, attemptOK},
+		{"gemini 400 org disabled is not refined", PlatformGemini, 400, anthropicOrgDisabledBody, attemptOK},
+		{"antigravity 400 org disabled is not refined", PlatformAntigravity, 400, anthropicOrgDisabledBody, attemptOK},
+		{"deepseek 400 org disabled is not refined", PlatformDeepseek, 400, anthropicOrgDisabledBody, attemptOK},
+		{"composite 400 org disabled is not refined", PlatformComposite, 400, anthropicOrgDisabledBody, attemptOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, refineOKAttempt(tc.platform, tc.status, tc.body))
+			require.Equal(t, tc.want, refineAttemptOutcome(attemptOK, tc.platform, tc.status, tc.body))
+		})
+	}
+}
+
 func TestCircuitBreakerWantsAttemptBodyOnlyWhereItCanChangeTheVerdict(t *testing.T) {
 	h := newCircuitHarness(t, nil)
 	grok := circuitCtxFor(1, PlatformGrok, "g")
 	anti := circuitCtxFor(2, PlatformAntigravity, "a")
 	claude := circuitCtxFor(3, PlatformAnthropic, "c")
+	openai := circuitCtxFor(5, PlatformOpenAI, "o")
 	unknown := circuitCtx("", "")
 
 	require.True(t, h.b.WantsAttemptBody(grok, 1, 403))
+	require.False(t, h.b.WantsAttemptBody(grok, 1, 400))
 	require.False(t, h.b.WantsAttemptBody(grok, 1, 503))
 	require.False(t, h.b.WantsAttemptBody(grok, 1, 502))
 	require.False(t, h.b.WantsAttemptBody(grok, 1, 200))
 	require.True(t, h.b.WantsAttemptBody(anti, 2, 503))
 	require.False(t, h.b.WantsAttemptBody(anti, 2, 403))
+	require.False(t, h.b.WantsAttemptBody(anti, 2, 400))
+	require.True(t, h.b.WantsAttemptBody(claude, 3, 400))
 	require.False(t, h.b.WantsAttemptBody(claude, 3, 403))
 	require.False(t, h.b.WantsAttemptBody(claude, 3, 503))
+	require.False(t, h.b.WantsAttemptBody(claude, 3, 200))
+	require.False(t, h.b.WantsAttemptBody(openai, 5, 400))
+	require.True(t, h.b.WantsAttemptBody(unknown, 4, 400), "without a platform label 400 may still be refinable")
 	require.True(t, h.b.WantsAttemptBody(unknown, 4, 403), "without a platform label it may still be refinable")
 	require.True(t, h.b.WantsAttemptBody(unknown, 4, 503))
 
 	require.False(t, h.b.WantsAttemptBody(context.Background(), 1, 403), "non-gateway traffic is never inspected")
+	require.False(t, h.b.WantsAttemptBody(context.Background(), 3, 400), "non-gateway 400 is never inspected")
 	require.False(t, h.b.WantsAttemptBody(grok, 0, 403))
+	require.False(t, h.b.WantsAttemptBody(claude, 0, 400))
 	var nilBreaker *AccountCircuitBreaker
 	require.False(t, nilBreaker.WantsAttemptBody(grok, 1, 403))
+	require.False(t, nilBreaker.WantsAttemptBody(claude, 3, 400))
 	off := newCircuitHarness(t, func(s *AccountCircuitBreakerSettings) { s.Enabled = false })
 	require.False(t, off.b.WantsAttemptBody(grok, 1, 403))
+	require.False(t, off.b.WantsAttemptBody(claude, 3, 400))
+}
+
+func TestCircuitBreakerAnthropicOrgDisabled400TripsAndDoesNotDilute503(t *testing.T) {
+	t.Run("pure anthropic 400 org disabled trips at min_requests", func(t *testing.T) {
+		h := newCircuitHarness(t, nil)
+		ctx := circuitCtxFor(1, PlatformAnthropic, "relay-1")
+		for i := 0; i < 19; i++ {
+			h.b.ObserveUpstreamAttemptBody(ctx, 1, 400, nil, anthropicOrgDisabledBody)
+		}
+		require.False(t, h.b.IsOpen(1))
+		h.b.ObserveUpstreamAttemptBody(ctx, 1, 400, nil, anthropicOrgDisabledMixedCase)
+		require.True(t, h.b.IsOpen(1))
+		require.Equal(t, 1, h.store.tripCount())
+		require.Equal(t, 20, h.store.trips[0].Attempts)
+		require.Equal(t, 20, h.store.trips[0].Failures)
+	})
+
+	t.Run("503 flood mixed with 400 org disabled trips instead of diluting error rate below 95%", func(t *testing.T) {
+		h := newCircuitHarness(t, nil)
+		ctx := circuitCtxFor(1, PlatformAnthropic, "relay-1")
+		h.b.ObserveUpstreamAttempt(ctx, 1, 200, nil)
+		for i := 0; i < 10; i++ {
+			h.b.ObserveUpstreamAttempt(ctx, 1, 503, nil)
+			h.b.ObserveUpstreamAttemptBody(ctx, 1, 400, nil, anthropicOrgDisabledOnHoldBody)
+		}
+		require.True(t, h.b.IsOpen(1), "10x 503 + 10x 400 org-disabled + 1x 200 = 20/21 (95.2%) must trip")
+		require.Equal(t, 1, h.store.tripCount())
+		require.False(t, h.store.trips[0].FastTrip)
+		require.Equal(t, 21, h.store.trips[0].Attempts)
+		require.Equal(t, 20, h.store.trips[0].Failures)
+	})
+
+	t.Run("503 flood mixed with 400 org disabled triggers fast-trip despite healthy 5m history", func(t *testing.T) {
+		h := newCircuitHarness(t, nil)
+		ctx := circuitCtxFor(1, PlatformAnthropic, "relay-1")
+		h.feed(1, PlatformAnthropic, 200, 5000)
+		h.clock.Advance(120 * time.Second)
+		for i := 0; i < 59; i++ {
+			h.b.ObserveUpstreamAttempt(ctx, 1, 503, nil)
+		}
+		for i := 0; i < 40; i++ {
+			h.b.ObserveUpstreamAttemptBody(ctx, 1, 400, nil, anthropicOrgDisabledBody)
+		}
+		require.False(t, h.b.IsOpen(1), "99 failures in recent 2 buckets: one short of fast-trip threshold")
+		h.b.ObserveUpstreamAttemptBody(ctx, 1, 400, nil, anthropicOrgDisabledMixedCase)
+		require.True(t, h.b.IsOpen(1), "100 failures with 0 successes in recent 2 buckets must fast-trip")
+		require.Equal(t, 1, h.store.tripCount())
+		require.True(t, h.store.trips[0].FastTrip)
+		require.Equal(t, 100, h.store.trips[0].Attempts)
+		require.Equal(t, 100, h.store.trips[0].Failures)
+		require.Equal(t, int64(1), h.b.Stats().FastTrips)
+	})
+
+	t.Run("normal 400 still counts as live upstream and blocks fast-trip", func(t *testing.T) {
+		h := newCircuitHarness(t, nil)
+		ctx := circuitCtxFor(1, PlatformAnthropic, "relay-1")
+		h.feed(1, PlatformAnthropic, 200, 5000)
+		h.clock.Advance(120 * time.Second)
+		h.feed(1, PlatformAnthropic, 503, 60)
+		h.b.ObserveUpstreamAttemptBody(ctx, 1, 400, nil, anthropicNormal400Body)
+		h.feed(1, PlatformAnthropic, 503, 60)
+		require.False(t, h.b.IsOpen(1), "a normal invalid-request 400 proves the upstream is alive")
+		require.Zero(t, h.store.callCount())
+	})
+
+	t.Run("same-request retry getting 400 org disabled after 503 stays a failure sample", func(t *testing.T) {
+		h := newCircuitHarness(t, nil)
+		ctx := circuitCtxReq(1, PlatformAnthropic, "relay-1", "req-retry-1")
+		h.b.ObserveUpstreamAttempt(ctx, 1, 503, nil)
+		h.b.ObserveUpstreamAttemptBody(ctx, 1, 400, nil, anthropicOrgDisabledBody)
+		total, failed := h.windowOf(1)
+		require.Equal(t, 1, total)
+		require.Equal(t, 1, failed, "400 org disabled must not clear the prior 503 failure as a success")
+	})
+
+	t.Run("unlabelled platform 400 org disabled still trips", func(t *testing.T) {
+		h := newCircuitHarness(t, nil)
+		ctx := circuitCtx("", "")
+		for i := 0; i < 20; i++ {
+			h.b.ObserveUpstreamAttemptBody(ctx, 1, 400, nil, anthropicOrgDisabledBody)
+		}
+		require.True(t, h.b.IsOpen(1))
+	})
+}
+
+func TestCircuitBreakerNonOrgDisabled400NeverTrips(t *testing.T) {
+	rawCompressed := gzipBytesForCircuitTest(t, anthropicOrgDisabledBody)
+	cases := []struct {
+		name     string
+		platform string
+		status   int
+		body     []byte
+		bodyless bool
+	}{
+		{"anthropic normal 400", PlatformAnthropic, 400, anthropicNormal400Body, false},
+		{"anthropic 400 bodyless", PlatformAnthropic, 400, nil, true},
+		{"anthropic 400 empty body", PlatformAnthropic, 400, nil, false},
+		{"anthropic 400 raw compressed body", PlatformAnthropic, 400, rawCompressed, false},
+		{"anthropic 200 with org disabled text", PlatformAnthropic, 200, anthropicOrgDisabledBody, false},
+		{"openai 400 with org disabled text", PlatformOpenAI, 400, anthropicOrgDisabledBody, false},
+		{"grok 400 with org disabled text", PlatformGrok, 400, anthropicOrgDisabledBody, false},
+		{"gemini 400 with org disabled text", PlatformGemini, 400, anthropicOrgDisabledBody, false},
+		{"antigravity 400 with org disabled text", PlatformAntigravity, 400, anthropicOrgDisabledBody, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newCircuitHarness(t, nil)
+			ctx := circuitCtxFor(1, tc.platform, "acct-1")
+			for i := 0; i < 300; i++ {
+				if tc.bodyless {
+					h.b.ObserveUpstreamAttempt(ctx, 1, tc.status, nil)
+				} else {
+					h.b.ObserveUpstreamAttemptBody(ctx, 1, tc.status, nil, tc.body)
+				}
+			}
+			require.False(t, h.b.IsOpen(1))
+			require.Zero(t, h.store.callCount())
+			require.Equal(t, int64(300), h.b.Stats().Observed)
+			require.Zero(t, h.b.Stats().Failures)
+		})
+	}
 }
 
 func TestCircuitBreakerGrokContentPolicyRefusalsDoNotTripAnAccount(t *testing.T) {

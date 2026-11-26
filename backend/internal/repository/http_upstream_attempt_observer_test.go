@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -264,4 +265,198 @@ func TestPeekResponseBodyIgnoresNilEmptyAndZeroLimit(t *testing.T) {
 	zero := &http.Response{Body: body}
 	require.Nil(t, peekResponseBody(zero, 0))
 	require.True(t, zero.Body == body, "a zero limit reads nothing")
+}
+
+func gatewayRequestForAccount(t *testing.T, url string, accountID int64, platform string) *http.Request {
+	t.Helper()
+	ctx := context.WithValue(t.Context(), ctxkey.UserID, int64(9))
+	ctx = context.WithValue(ctx, ctxkey.AccountID, accountID)
+	ctx = context.WithValue(ctx, ctxkey.Platform, platform)
+	ctx = context.WithValue(ctx, ctxkey.AccountName, "acct")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	require.NoError(t, err)
+	return req
+}
+
+func gzipBytesForUpstreamTest(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, err := zw.Write(raw)
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	return buf.Bytes()
+}
+
+func TestHTTPUpstreamPeeks400BodyAndPreservesItForCaller(t *testing.T) {
+	small := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"This organization has been disabled."}}`)
+	big := append(append([]byte(nil), small...), bytes.Repeat([]byte("y"), 2*service.UpstreamAttemptBodyPeekLimit+31)...)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/small":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write(small)
+		case "/big":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write(big)
+		case "/empty":
+			w.WriteHeader(http.StatusBadRequest)
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(small)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	up := NewHTTPUpstream(nil)
+	obs := &bodyAwareObserver{upstreamAttemptRecorder: &upstreamAttemptRecorder{}, wantStatus: http.StatusBadRequest}
+	observableOf(t, up).SetUpstreamAttemptObserver(obs)
+
+	read := func(path string) (int, []byte) {
+		resp, err := up.Do(gatewayRequestForAccount(t, srv.URL+path, 1, service.PlatformAnthropic), "", 1, 1)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+		got, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp.StatusCode, got
+	}
+
+	status, gotSmall := read("/small")
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, small, gotSmall, "downstream caller must receive the complete small 400 body")
+
+	status, gotBig := read("/big")
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, big, gotBig, "downstream caller must receive the complete >8KB 400 body intact")
+
+	status, gotEmpty := read("/empty")
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Empty(t, gotEmpty)
+
+	status, gotOK := read("/ok")
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, small, gotOK)
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	require.Len(t, obs.prefixes, 3, "WantsAttemptBody + ObserveUpstreamAttemptBody must be invoked for HTTP 400 responses")
+	require.Equal(t, small, obs.prefixes[0])
+	require.Len(t, obs.prefixes[1], service.UpstreamAttemptBodyPeekLimit)
+	require.Equal(t, big[:service.UpstreamAttemptBodyPeekLimit], obs.prefixes[1])
+	require.Empty(t, obs.prefixes[2])
+	require.Len(t, obs.snapshot(), 1, "200 must stay on the plain observation path")
+}
+
+func TestHTTPUpstream400AnthropicOrgDisabledEndToEndWithCircuitBreaker(t *testing.T) {
+	orgDisabled := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"This organization has been disabled."}}`)
+	orgDisabledLarge := append(append([]byte(nil), orgDisabled...), bytes.Repeat([]byte("z"), service.UpstreamAttemptBodyPeekLimit+128)...)
+	normal400 := []byte(`{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: field required"}}`)
+	gzippedOrgDisabled := gzipBytesForUpstreamTest(t, orgDisabled)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/400-org-disabled":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write(orgDisabled)
+		case "/400-org-disabled-large":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write(orgDisabledLarge)
+		case "/400-org-disabled-gzip":
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Encoding", "gzip")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write(gzippedOrgDisabled)
+		case "/400-org-disabled-unknown-encoding":
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Encoding", "x-custom")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write(gzippedOrgDisabled)
+		case "/400-normal":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write(normal400)
+		case "/400-empty":
+			w.WriteHeader(http.StatusBadRequest)
+		case "/503":
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"upstream overloaded"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	t.Run("anthropic mixed 503 and 400 org disabled trips breaker while preserving bodies", func(t *testing.T) {
+		var trips []service.AccountCircuitTrip
+		breaker := service.NewAccountCircuitBreaker(service.DefaultAccountCircuitBreakerSettings(), func(_ context.Context, trip service.AccountCircuitTrip) error {
+			trips = append(trips, trip)
+			return nil
+		})
+		breaker.RunPersistSynchronouslyForTest()
+
+		up := NewHTTPUpstream(nil)
+		observableOf(t, up).SetUpstreamAttemptObserver(breaker)
+
+		call := func(path string, acceptGzip bool) []byte {
+			req := gatewayRequestForAccount(t, srv.URL+path, 1, service.PlatformAnthropic)
+			if acceptGzip {
+				req.Header.Set("Accept-Encoding", "gzip")
+			}
+			resp, err := up.Do(req, "", 1, 1)
+			require.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			return body
+		}
+
+		for i := 0; i < 10; i++ {
+			_ = call("/503", false)
+		}
+		for i := 0; i < 6; i++ {
+			require.Equal(t, orgDisabled, call("/400-org-disabled", false))
+		}
+		for i := 0; i < 2; i++ {
+			require.Equal(t, orgDisabledLarge, call("/400-org-disabled-large", false))
+		}
+		for i := 0; i < 2; i++ {
+			require.Equal(t, orgDisabled, call("/400-org-disabled-gzip", true))
+		}
+
+		require.True(t, breaker.IsOpen(1), "10x 503 + 10x Anthropic 400 org-disabled must trip the breaker")
+		require.Len(t, trips, 1)
+		require.Equal(t, 20, trips[0].Attempts)
+		require.Equal(t, 20, trips[0].Failures)
+	})
+
+	t.Run("normal 400, empty 400, undecodable compressed 400, and non-anthropic 400 do not trip", func(t *testing.T) {
+		breaker := service.NewAccountCircuitBreaker(service.DefaultAccountCircuitBreakerSettings(), nil)
+		breaker.RunPersistSynchronouslyForTest()
+		up := NewHTTPUpstream(nil)
+		observableOf(t, up).SetUpstreamAttemptObserver(breaker)
+
+		call := func(accountID int64, platform, path string) []byte {
+			req := gatewayRequestForAccount(t, srv.URL+path, accountID, platform)
+			resp, err := up.Do(req, "", accountID, 1)
+			require.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			return body
+		}
+
+		for i := 0; i < 25; i++ {
+			require.Equal(t, normal400, call(10, service.PlatformAnthropic, "/400-normal"))
+			require.Empty(t, call(11, service.PlatformAnthropic, "/400-empty"))
+			require.Equal(t, gzippedOrgDisabled, call(12, service.PlatformAnthropic, "/400-org-disabled-unknown-encoding"))
+			require.Equal(t, orgDisabled, call(13, service.PlatformOpenAI, "/400-org-disabled"))
+		}
+
+		for _, id := range []int64{10, 11, 12, 13} {
+			require.False(t, breaker.IsOpen(id), "account %d must not trip", id)
+		}
+		stats := breaker.Stats()
+		require.Equal(t, int64(100), stats.Observed)
+		require.Zero(t, stats.Failures)
+	})
 }

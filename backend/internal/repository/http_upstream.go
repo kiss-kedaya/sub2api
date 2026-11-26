@@ -225,7 +225,7 @@ func (s *httpUpstreamService) observeUpstreamAttempt(req *http.Request, accountI
 		status = resp.StatusCode
 	}
 	ctx := req.Context()
-	// 个别状态码要看响应体前缀才能分对类（Grok 的内容安全 403、Antigravity 的容量不足 503）：
+	// 个别状态码要看响应体前缀才能分对类（Anthropic 的组织禁用 400、Grok 的内容安全 403、Antigravity 的容量不足 503）：
 	// 观察者说需要才预读，预读的内容原样还给调用方；其余请求不多读一个字节。
 	if bodyObserver, ok := box.observer.(service.UpstreamAttemptBodyObserver); ok && err == nil && resp != nil &&
 		bodyObserver.WantsAttemptBody(ctx, accountID, status) {
