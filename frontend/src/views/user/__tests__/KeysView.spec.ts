@@ -2132,6 +2132,36 @@ describe('user KeysView key-rotation remediation', () => {
     wrapper.unmount()
   })
 
+  it('开了 TOTP、但用户关掉了「创建时需要验证身份」：单条轮换不弹校验、直接带空 verification 轮换', async () => {
+    listKeys.mockResolvedValue(pageOf([neededKey()]))
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: true,
+      passkey_count: 0,
+      preferred: 'totp',
+      available_methods: ['totp', 'password'],
+      seal_available: true,
+      create_verification_required: false,
+      create_verification_mode: 'off',
+      create_verification_configurable: true,
+    })
+    rotateKey.mockResolvedValue({
+      ...neededKey(),
+      needs_rotation: false,
+      rotation_reasons: [],
+      key: 'sk-rotated-2fa-off',
+    })
+    getKeyRotationGateStatus.mockResolvedValue({ pending_key_count: 0 })
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="key-needs-rotation-rotate"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="rotate-verification"]').exists()).toBe(false)
+    expect(rotateKey).toHaveBeenCalledWith(1, undefined)
+    wrapper.unmount()
+  })
+
   it('开了 TOTP 的账号，单条轮换仍然先过身份校验', async () => {
     listKeys.mockResolvedValue(pageOf([neededKey()]))
     getVerificationFactors.mockResolvedValue({
@@ -2483,6 +2513,45 @@ describe('user KeysView batch rotation, overview and ephemeral bar', () => {
     })
     batchRotateKeys.mockResolvedValue({
       results: [{ id: 1, status: 'ok', key: 'rotated-no-password' }],
+      requested_count: 2,
+      succeeded_count: 1,
+      failed_count: 1,
+    })
+
+    const wrapper = await mountView()
+    await wrapper.get('[data-test="select-all"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="keys-bulk-rotate"]').trigger('click')
+    await nextTick()
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="batch-rotate-verification"]').exists()).toBe(false)
+    expect(batchRotateKeys).toHaveBeenCalledWith([1, 2], undefined)
+    wrapper.unmount()
+  })
+
+  it('开了 TOTP、但用户关掉了「创建时需要验证身份」：批量轮换确认后直接轮换，不弹身份校验', async () => {
+    getVerificationFactors.mockResolvedValue({
+      password_available: true,
+      totp_enabled: true,
+      passkey_count: 0,
+      preferred: 'totp',
+      available_methods: ['totp', 'password'],
+      seal_available: true,
+      create_verification_required: false,
+      create_verification_mode: 'off',
+      create_verification_configurable: true,
+    })
+    listKeys.mockResolvedValue({
+      items: [createApiKey(), { ...createApiKey(), id: 2, name: 'second-key' }],
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    batchRotateKeys.mockResolvedValue({
+      results: [{ id: 1, status: 'ok', key: 'rotated-two-factor-off' }],
       requested_count: 2,
       succeeded_count: 1,
       failed_count: 1,
@@ -3417,6 +3486,29 @@ describe('user KeysView 创建弹窗（Quiet 流程）与页面过期守卫', ()
         expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(true)
         wrapper.unmount()
       })
+    })
+
+    it('开了 TOTP、但用户在个人资料里把「创建时需要验证身份」关掉：没有步骤头、不弹校验，也不带 verification 字段', async () => {
+      // 服务端算好的有效值是 false（模式 off），前端只看它；available_methods 里仍然有 totp。
+      getVerificationFactors.mockResolvedValue({
+        ...totpAccount,
+        create_verification_required: false,
+        create_verification_mode: 'off',
+        create_verification_configurable: true,
+      })
+      createKey.mockResolvedValue({ ...createApiKey(), id: 78, group_id: 3, group_ids: [3], key: 'sk-two-factor-off' })
+      const wrapper = await openCreate()
+
+      expect(wrapper.find('[data-test="key-create-steps"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="key-create-next"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="key-factor-totp-input"]').exists()).toBe(false)
+
+      await fillAndSubmit(wrapper)
+
+      expect(createKey).toHaveBeenCalledTimes(1)
+      expect(lastCreateOptions()).not.toHaveProperty('verification')
+      expect(wrapper.find('[data-test="key-factor-totp-input"]').exists()).toBe(false)
+      wrapper.unmount()
     })
 
     it('老服务端（响应里没有这个字段）：仍按「有可用因子就强制」，密码账号继续走两步', async () => {

@@ -476,7 +476,8 @@ print(response.json())`,
           fields: [
             { name: 'GET /api/v1/groups/available', type: l('分组', 'groups'), description: l('当前账号可以绑定的分组，含状态、基础倍率与高峰倍率设置。', 'The groups this account may bind, with state, base multiplier and peak settings.') },
             { name: 'GET /api/v1/groups/rates', type: l('专属倍率', 'personal rates'), description: l('{分组 id: 倍率}，只列出账号有专属倍率的分组。', '{group id: multiplier}, only for groups where the account has a personal rate.') },
-            { name: 'GET /api/v1/user/security/verification-factors', type: l('校验方式', 'verification'), description: l('这个账号现在可用的校验方式，以及创建与轮换密钥前是否必须校验（create_verification_required）。', 'The verification methods this account can use now, and whether creating or rotating a key requires one (create_verification_required).') },
+            { name: 'GET /api/v1/user/security/verification-factors', type: l('校验方式', 'verification'), description: l('这个账号现在可用的校验方式，以及创建与轮换密钥前是否必须校验（create_verification_required，是把你的开关与账号因子一起算出来的有效值）。', 'The verification methods this account can use now, and whether creating or rotating a key requires one (create_verification_required is the effective value, combining your own switch with the account factors).') },
+            { name: 'PUT /api/v1/user/security/api-key-create-verification', type: l('校验开关', 'verification switch'), description: l('自己决定创建与轮换密钥前要不要验证身份，body 为 {"mode":"on"|"off"|"auto"}。只有把保护关掉（变宽松）时才需要附带 verification。', 'Decide yourself whether creating or rotating a key asks you to verify. The body is {"mode":"on"|"off"|"auto"}; a verification object is only needed when you turn the protection off.') },
           ],
         },
         {

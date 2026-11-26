@@ -936,6 +936,23 @@ func ProvideTotpService(
 	return svc
 }
 
+// ProvideAPIKeyVerificationService 在原有构造之后注入「创建 API Key 时是否需要验证身份」的用户开关存储。
+// NewAPIKeyVerificationService 的签名保持不变，避免大量既有测试构造点改动；不注入时所有账号按 auto
+// （改造前的规则）处理。
+func ProvideAPIKeyVerificationService(
+	userRepo UserRepository,
+	apiKeyRepo APIKeyRepository,
+	secretRepo APIKeySecretRepository,
+	totp *TotpService,
+	passkeys *PasskeyService,
+	cache TotpCache,
+	createPrefs UserSecurityPreferenceRepository,
+) *APIKeyVerificationService {
+	svc := NewAPIKeyVerificationService(userRepo, apiKeyRepo, secretRepo, totp, passkeys, cache)
+	svc.SetCreateVerificationPreferences(createPrefs)
+	return svc
+}
+
 var ProviderSet = wire.NewSet(
 	NewExcelGrantService,
 	NewExcelBPSChannel,
@@ -949,7 +966,7 @@ var ProviderSet = wire.NewSet(
 	NewUserService,
 	ProvideAPIKeyService,
 	NewAPIKeySecretService,
-	NewAPIKeyVerificationService,
+	ProvideAPIKeyVerificationService,
 	NewKeyRotationGateService,
 	NewKeyRotationRiskAckService,
 	NewIPWhitelistAssistService,
