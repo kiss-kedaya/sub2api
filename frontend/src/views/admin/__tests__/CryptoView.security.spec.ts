@@ -5,10 +5,10 @@ import CryptoView from '../CryptoView.vue'
 import zh from '@/i18n/locales/zh/admin/crypto'
 import en from '@/i18n/locales/en/admin/crypto'
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), showSuccess: vi.fn(), showError: vi.fn() }))
+const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), showSuccess: vi.fn(), showError: vi.fn(), showInfo: vi.fn() }))
 vi.mock('@/api/client', () => ({ apiClient: mocks }))
-vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess, showError: mocks.showError }) }))
-vi.mock('@/stores', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess, showError: mocks.showError }) }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess, showError: mocks.showError, showInfo: mocks.showInfo }) }))
+vi.mock('@/stores', () => ({ useAppStore: () => ({ showSuccess: mocks.showSuccess, showError: mocks.showError, showInfo: mocks.showInfo }) }))
 vi.mock('@/composables/useClipboard', () => ({ useClipboard: () => ({ copyToClipboard: vi.fn().mockResolvedValue(true) }) }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) => key + (params ? JSON.stringify(params) : '') }) }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div><slot /></div>' } }))
@@ -290,6 +290,81 @@ describe('Crypto page operation wiring (mocked UI contract only)', () => {
     await verify(wrapper, '234567')
     expect(mocks.put).toHaveBeenCalledWith('/admin/crypto/config', { chains: ['bsc', 'base'], credit_min_amount: 2 }, expect.objectContaining({ headers: { 'X-Crypto-Grant': grantCredential } }))
     expect(serverConfig.rpc).toEqual({ bsc: 'https://one.example,https://two.example' })
+  })
+
+  describe('saving while a sweep or scan is running', () => {
+    const saveOrdinaryEdit = async (wrapper: VueWrapper) => {
+      await configTab(wrapper)
+      await wrapper.get('[data-testid="crypto-sweep-threshold"]').setValue(200)
+      await wrapper.get('.crypto-view__save-bar button').trigger('click')
+      await flushPromises()
+    }
+    const saveSensitiveEdit = async (wrapper: VueWrapper) => {
+      await configTab(wrapper)
+      await wrapper.get('[data-testid="crypto-chain-base"]').trigger('click')
+      await wrapper.get('.crypto-view__save-bar button').trigger('click')
+      await flushPromises()
+      await verify(wrapper, '234567')
+    }
+    const noResponse = { status: 0, message: 'Network error. Please check your connection.' }
+
+    it('says a stored config applies after the running sweep, and does not call it a failure', async () => {
+      mocks.put.mockResolvedValueOnce({ data: { data: { saved: true, applied: false } }, status: 200 })
+      const wrapper = await render()
+      await saveOrdinaryEdit(wrapper)
+      expect(mocks.put).toHaveBeenCalledOnce()
+      expect(mocks.showInfo).toHaveBeenCalledWith('admin.crypto.saveApplyDeferred', expect.any(Number))
+      expect(mocks.showError).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('common.saved')
+    })
+
+    it.each([
+      ['applied', { data: { data: { saved: true, applied: true } }, status: 200 }],
+      ['an older backend that sends only saved', { data: { data: { saved: true } }, status: 200 }]
+    ])('stays quiet when the save is already live (%s)', async (_name, answer) => {
+      mocks.put.mockResolvedValueOnce(answer)
+      const wrapper = await render()
+      await saveOrdinaryEdit(wrapper)
+      expect(wrapper.text()).toContain('common.saved')
+      expect(mocks.showInfo).not.toHaveBeenCalled()
+      expect(mocks.showError).not.toHaveBeenCalled()
+    })
+
+    it('closes the verification dialog on a deferred apply instead of leaving it on the error screen', async () => {
+      mocks.put.mockResolvedValueOnce({ data: { data: { saved: true, applied: false } }, status: 200 })
+      const wrapper = await render()
+      await saveSensitiveEdit(wrapper)
+      expect(mocks.put).toHaveBeenCalledOnce()
+      expect(wrapper.find('#crypto-security-code').exists()).toBe(false)
+      expect(wrapper.find('.crypto-security__error').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('admin.crypto.securityUnavailable')
+      expect(mocks.showInfo).toHaveBeenCalledWith('admin.crypto.saveApplyDeferred', expect.any(Number))
+      expect(mocks.showError).not.toHaveBeenCalled()
+    })
+
+    it('tells the operator the config may already be saved when the verified save gets no answer', async () => {
+      mocks.put.mockRejectedValueOnce(noResponse)
+      const wrapper = await render()
+      await saveSensitiveEdit(wrapper)
+      const error = wrapper.get('.crypto-security__error')
+      expect(error.text()).toContain('admin.crypto.saveNoResponse')
+      expect(error.text()).not.toContain('Network error')
+    })
+
+    it('uses the same wording when an ordinary save gets no answer', async () => {
+      mocks.put.mockRejectedValueOnce(noResponse)
+      const wrapper = await render()
+      await saveOrdinaryEdit(wrapper)
+      expect(mocks.showError).toHaveBeenCalledWith('admin.crypto.saveNoResponse')
+      expect(mocks.showInfo).not.toHaveBeenCalled()
+    })
+
+    it('keeps every other failure as the server reported it', async () => {
+      mocks.put.mockRejectedValueOnce({ status: 409, message: 'Crypto config changed elsewhere' })
+      const wrapper = await render()
+      await saveOrdinaryEdit(wrapper)
+      expect(mocks.showError).toHaveBeenCalledWith('Crypto config changed elsewhere')
+    })
   })
 
   it('shows a public read failure with a plain retry instead of opening a verification dialog', async () => {

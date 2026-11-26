@@ -70,6 +70,7 @@ func newGatewayPathAliasTestRouter() (*gin.Engine, *[]gatewayPathAliasSeen) {
 	router.DELETE("/v1/images/batches/:id", record)
 	router.GET("/v1/usage", record)
 	router.GET("/v1/sub2api/billing", record)
+	router.GET("/v1/sub2api/account", record)
 	router.GET("/v1beta/models", record)
 	router.GET("/v1beta/models/:model", record)
 	router.POST("/v1beta/models/*modelAction", record)

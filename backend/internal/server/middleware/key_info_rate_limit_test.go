@@ -75,7 +75,7 @@ func TestKeyInfoRateLimitCountsPerKeyNotPerClient(t *testing.T) {
 		"the bucket is the API key id: never an IP, never the key text")
 }
 
-// The three endpoints each get their own counter: polling all of them at the allowed rate must not trip any.
+// The four endpoints each get their own counter: polling all of them at the allowed rate must not trip any.
 func TestKeyInfoRateLimitGivesEachEndpointItsOwnCounter(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	limiter := &keyInfoLimiterStub{}
@@ -84,10 +84,10 @@ func TestKeyInfoRateLimitGivesEachEndpointItsOwnCounter(t *testing.T) {
 		c.Set(string(ContextKeyAPIKey), &service.APIKey{ID: 100})
 		c.Next()
 	})
-	for _, endpoint := range []string{"key", "groups", "usage"} {
+	for _, endpoint := range []string{"key", "groups", "usage", "account"} {
 		router.GET("/"+endpoint, keyInfoRateLimit(limiter, 2, endpoint), func(c *gin.Context) { c.Status(http.StatusOK) })
 	}
-	for _, endpoint := range []string{"key", "groups", "usage"} {
+	for _, endpoint := range []string{"key", "groups", "usage", "account"} {
 		for i := 0; i < 2; i++ {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/"+endpoint, nil))
@@ -99,6 +99,7 @@ func TestKeyInfoRateLimitGivesEachEndpointItsOwnCounter(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, w.Code, "only the endpoint that is out of budget is limited")
 	require.Equal(t, 2, limiter.counts["key_info:key:100"])
 	require.Equal(t, 3, limiter.counts["key_info:groups:100"])
+	require.Equal(t, 2, limiter.counts["key_info:account:100"], "the account endpoint's counter is its own")
 }
 
 func TestKeyInfoRateLimitAnswersWithRetryAfterAndAMachineReadableError(t *testing.T) {
@@ -181,17 +182,20 @@ func TestKeyInfoRateLimitBudgetIsGenerousForPollingAndTightForLoops(t *testing.T
 
 func TestIsKeySelfServicePath(t *testing.T) {
 	for path, want := range map[string]bool{
-		"/v1/sub2api/billing": true,
-		"/v1/sub2api/key":     true,
-		"/v1/sub2api/groups":  true,
-		"/v1/sub2api/usage":   true,
-		"/v1/usage":           false, // keeps its own, older handling
-		"/v1/models":          false,
-		"/v1/sub2api/":        false,
-		"/v1/sub2api/keys":    false,
-		"/v1/sub2api/key/":    false,
-		"/sub2api/key":        false,
-		"/api/v1/keys":        false,
+		"/v1/sub2api/billing":  true,
+		"/v1/sub2api/key":      true,
+		"/v1/sub2api/groups":   true,
+		"/v1/sub2api/usage":    true,
+		"/v1/sub2api/account":  true,  // a key that is expired or out of quota must still be able to read its account
+		"/v1/usage":            false, // keeps its own, older handling
+		"/v1/models":           false,
+		"/v1/sub2api/":         false,
+		"/v1/sub2api/keys":     false,
+		"/v1/sub2api/accounts": false,
+		"/v1/sub2api/account/": false,
+		"/v1/sub2api/key/":     false,
+		"/sub2api/key":         false,
+		"/api/v1/keys":         false,
 	} {
 		require.Equal(t, want, isKeySelfServicePath(path), path)
 	}

@@ -52,6 +52,7 @@ var gatewayEndpointSegments = map[string]bool{
 	"billing":        true,
 	"key":            true, // /v1/sub2api/key
 	"groups":         true, // /v1/sub2api/groups
+	"account":        true, // /v1/sub2api/account
 	"realtime":       true,
 	"live":           true,
 	"tts":            true,

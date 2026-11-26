@@ -44,6 +44,8 @@ type CryptoHandler struct {
 	// In production sweepGate is wired from cryptopay.Service in the constructor.
 	signer    cryptoSignerService
 	sweepGate cryptoSweepGateReader
+	// reloader is an optional test seam; production applies config through service.
+	reloader cryptoConfigReloader
 }
 
 func NewCryptoHandler(addressService *addresses.Service, settings *service.SettingService, cryptoSvc *cryptopay.Service, totpService *service.TotpService, cfg *config.Config) *CryptoHandler {
@@ -261,11 +263,45 @@ func (h *CryptoHandler) AdminUpdateConfig(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	// Apply immediately: rebuild pools and restart the scan worker.
-	if h.service != nil {
-		h.service.Reload(c.Request.Context())
+	// The save is durable now; applied only says whether the running service
+	// already uses it. A sweep or scan in progress delays the apply, and the
+	// admin must not be held behind it (see reloadCryptoConfig).
+	applied := h.reloadCryptoConfig(c)
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"saved": true, "applied": applied}})
+}
+
+// cryptoConfigApplyWait is how long a config save waits for the running service
+// to pick the new config up. Well under the browser's request timeout. A var so
+// tests can shorten it.
+var cryptoConfigApplyWait = 3 * time.Second
+
+// cryptoConfigReloader applies the stored crypto config to the running service.
+type cryptoConfigReloader interface {
+	ReloadWithin(ctx context.Context, wait time.Duration) bool
+}
+
+func (h *CryptoHandler) configReloader() cryptoConfigReloader {
+	if h.reloader != nil {
+		return h.reloader
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"saved": true}})
+	if h.service != nil {
+		return h.service
+	}
+	return nil
+}
+
+// reloadCryptoConfig applies the config that was just saved: rebuild pools and
+// restart the scan worker. The apply needs the service's sweep lock, which a
+// manual sweep holds for up to 30 minutes, so the request only waits a few
+// seconds. It then reports applied=false and the apply finishes in the
+// background (even if the admin has already disconnected), instead of hanging
+// until the browser gives up with a network error.
+func (h *CryptoHandler) reloadCryptoConfig(c *gin.Context) (applied bool) {
+	reloader := h.configReloader()
+	if reloader == nil {
+		return true // no running service: nothing to apply
+	}
+	return reloader.ReloadWithin(c.Request.Context(), cryptoConfigApplyWait)
 }
 
 func cryptoConfigRequiresRisk(before, after cryptopay.CryptoConfig) bool {

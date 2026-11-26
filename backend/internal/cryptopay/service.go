@@ -350,6 +350,8 @@ type Service struct {
 	// sweepMu serialises sweep runs: the manual admin trigger and the
 	// scheduler must never send the same funds twice.
 	sweepMu sync.Mutex
+	// reloadQ coalesces the config applies queued by ReloadWithin.
+	reloadQ reloadQueue
 	// chainMon backs the admin node-status page (probe cache, sample window,
 	// on-demand ticker). Read-only; the zero value is ready to use.
 	chainMon             chainMonitor
@@ -396,7 +398,8 @@ func NewService(
 }
 
 // Reload re-reads config and (re)builds pools and the worker. Called at
-// startup and after every admin config save.
+// startup. It waits for sweepMu without a limit, so an HTTP handler must use
+// ReloadWithin instead: a running sweep would otherwise hang the request.
 func (s *Service) Reload(ctx context.Context) { s.reload(ctx) }
 
 // applyRPCThrottle publishes the configured pacing so every endpoint waits its
