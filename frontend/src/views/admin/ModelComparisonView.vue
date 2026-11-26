@@ -120,6 +120,7 @@
               <option value="token">{{ text('按 token', 'Per token') }}</option>
               <option value="per_request">{{ text('按次', 'Per request') }}</option>
               <option value="image">{{ text('按图', 'Per image') }}</option>
+              <option value="video">{{ text('按秒', 'Per second') }}</option>
             </select>
             <select v-model="sort" class="input w-auto text-sm" :aria-label="text('排序', 'Sort')">
               <option value="spread">{{ text('价差从大到小', 'Largest spread') }}</option>
@@ -401,6 +402,12 @@ function pricePair(offer: ModelOffer): string {
   if (offer.billingMode === 'token') {
     return `${formatMoney(offer.inputPerMillion)} / ${formatMoney(offer.outputPerMillion)}`
   }
+  if (offer.billingMode === 'video') {
+    return `${formatRequest(offer.requestPrice)} / ${text('秒', 's')}`
+  }
+  if (offer.billingMode === 'image') {
+    return `${formatRequest(offer.requestPrice)} / ${text('张', 'image')}`
+  }
   return `${formatRequest(offer.requestPrice)} / ${text('次', 'request')}`
 }
 
@@ -421,7 +428,7 @@ function rateLabel(value: number): string {
 function billingLabel(mode: string): string {
   if (mode === 'token') return text('按 token', 'Per token')
   if (mode === 'image') return text('按图', 'Per image')
-  if (mode === 'video') return text('按视频', 'Per video')
+  if (mode === 'video') return text('按秒', 'Per second')
   return text('按次', 'Per request')
 }
 

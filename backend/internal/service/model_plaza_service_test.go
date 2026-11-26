@@ -661,3 +661,206 @@ func TestListPlazaGroups_WithoutCatalogKeepsPricingOnly(t *testing.T) {
 	require.Nil(t, out[0].Models[0].Metadata, "a nil catalogue degrades to pricing only")
 	require.NotNil(t, out[0].Models[0].Pricing)
 }
+
+func TestListGroups_GroupPerRequestAndVideoCardsDisplayInPlaza(t *testing.T) {
+	// Issue #436: Seedance / 异步视频配置分组 per_request 或 video 价卡后，广场必须展示对应按次/按秒价格，
+	// 即使渠道条目没有定价或全局目录里存在 token 兜底价；同时分组价卡优先于分组默认 VideoPrice*。
+	catalog := newStubPricingServiceFromMap(map[string]*LiteLLMModelPricing{
+		"doubao-seedance-2.5": {Mode: "chat", InputCostPerToken: 1e-6, OutputCostPerToken: 2e-6},
+	})
+	channels := []Channel{{
+		ID: 1, Name: "ark-ch", Status: StatusActive, GroupIDs: []int64{10, 20},
+		ModelMapping: map[string]map[string]string{
+			PlatformOpenAI: {
+				"doubao-seedance-2.5": "doubao-seedance-2.5",
+				"doubao-seedance-pro": "doubao-seedance-pro",
+			},
+		},
+	}}
+	groups := []Group{
+		{
+			ID: 10, Name: "per-request-group", Platform: PlatformOpenAI, RateMultiplier: 0.5,
+			VideoRateIndependent: true, VideoRateMultiplier: 0.8,
+			VideoPrice480P: testPtrFloat64(0.05),
+			ModelPricing: []ChannelModelPricing{{
+				Platform:        PlatformOpenAI,
+				Models:          []string{"doubao-seedance-2.5"},
+				BillingMode:     BillingModePerRequest,
+				PerRequestPrice: testPtrFloat64(10),
+			}, {
+				Platform:    PlatformOpenAI,
+				Models:      []string{"doubao-seedance-pro"},
+				BillingMode: BillingModeVideo,
+				Intervals: []PricingInterval{
+					{TierLabel: "480p", PerRequestPrice: testPtrFloat64(0.3)},
+					{TierLabel: "720p", PerRequestPrice: testPtrFloat64(0.5)},
+				},
+			}},
+		},
+		{
+			ID: 20, Name: "flat-video-group", Platform: PlatformOpenAI, RateMultiplier: 1,
+			ModelPricing: []ChannelModelPricing{{
+				Platform:        PlatformOpenAI,
+				Models:          []string{"doubao-seedance-*"},
+				BillingMode:     BillingModeVideo,
+				PerRequestPrice: testPtrFloat64(0.4),
+			}},
+		},
+	}
+
+	svc := newPlazaServiceWithBilling(channels, groups,
+		map[int64]string{10: PlatformOpenAI, 20: PlatformOpenAI}, catalog)
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+
+	byGroup := map[int64]PlazaGroup{}
+	for _, g := range out {
+		byGroup[g.ID] = g
+	}
+
+	g10 := byGroup[10]
+	require.True(t, g10.VideoRateIndependent)
+	require.InDelta(t, 0.8, g10.VideoRateMultiplier, 1e-9)
+	m10 := plazaModelsByName(g10.Models)
+
+	seedanceReq := m10["doubao-seedance-2.5"]
+	require.NotNil(t, seedanceReq.Pricing)
+	require.Equal(t, BillingModePerRequest, seedanceReq.Pricing.BillingMode)
+	require.NotNil(t, seedanceReq.Pricing.PerRequestPrice)
+	require.InDelta(t, 10.0, *seedanceReq.Pricing.PerRequestPrice, 1e-12)
+	require.Empty(t, seedanceReq.Pricing.Intervals)
+	require.Nil(t, seedanceReq.Pricing.InputPrice, "按次价卡不应残留 token 输入价")
+
+	seedanceTiered := m10["doubao-seedance-pro"]
+	require.NotNil(t, seedanceTiered.Pricing)
+	require.Equal(t, BillingModeVideo, seedanceTiered.Pricing.BillingMode)
+	require.Nil(t, seedanceTiered.Pricing.PerRequestPrice)
+	require.Len(t, seedanceTiered.Pricing.Intervals, 2, "分组价卡优先于 VideoPrice480P，不强行扩成 3 档")
+	require.Equal(t, "480p", seedanceTiered.Pricing.Intervals[0].TierLabel)
+	require.InDelta(t, 0.3, *seedanceTiered.Pricing.Intervals[0].PerRequestPrice, 1e-12)
+	require.Equal(t, "720p", seedanceTiered.Pricing.Intervals[1].TierLabel)
+	require.InDelta(t, 0.5, *seedanceTiered.Pricing.Intervals[1].PerRequestPrice, 1e-12)
+
+	g20 := byGroup[20]
+	require.False(t, g20.VideoRateIndependent)
+	m20 := plazaModelsByName(g20.Models)
+	flat := m20["doubao-seedance-2.5"]
+	require.NotNil(t, flat.Pricing)
+	require.Equal(t, BillingModeVideo, flat.Pricing.BillingMode)
+	require.NotNil(t, flat.Pricing.PerRequestPrice)
+	require.InDelta(t, 0.4, *flat.Pricing.PerRequestPrice, 1e-12)
+}
+
+func TestListGroups_GroupVideoPricesAndMiniMaxH3DisplayInPlaza(t *testing.T) {
+	channels := []Channel{{
+		ID: 1, Name: "media-ch", Status: StatusActive, GroupIDs: []int64{10, 20, 30},
+		ModelPricing: []ChannelModelPricing{
+			{
+				Platform:        PlatformGrok,
+				Models:          []string{"grok-imagine-video-1.5"},
+				BillingMode:     BillingModeVideo,
+				PerRequestPrice: testPtrFloat64(0.1),
+				Intervals:       []PricingInterval{{TierLabel: "1080p", PerRequestPrice: testPtrFloat64(0.2)}},
+			},
+			{
+				Platform: PlatformMiniMax,
+				Models:   []string{"MiniMax-H3"},
+			},
+		},
+		ModelMapping: map[string]map[string]string{
+			PlatformGrok: {"grok-imagine-video": "grok-imagine-video"},
+		},
+	}}
+	groups := []Group{
+		{
+			ID: 10, Name: "grok-override", Platform: PlatformGrok, RateMultiplier: 1,
+			VideoRateIndependent: true, VideoRateMultiplier: 0.5,
+			VideoPrice480P: testPtrFloat64(0.06),
+			VideoModelPrices: map[string]map[string]float64{
+				VideoPriceFamilyGrokImagineVideo15: {VideoBillingResolution720P: 0.14},
+			},
+		},
+		{
+			ID: 20, Name: "minimax-sec", Platform: PlatformMiniMax, RateMultiplier: 1,
+			VideoModelPrices: map[string]map[string]float64{
+				MiniMaxH3PriceFamily: {MiniMaxH3PerSecond: 0.02},
+			},
+		},
+		{
+			ID: 30, Name: "minimax-req", Platform: PlatformMiniMax, RateMultiplier: 1,
+			VideoModelPrices: map[string]map[string]float64{
+				MiniMaxH3PriceFamily: {"request_5s": 0.08},
+			},
+		},
+	}
+
+	svc := newPlazaServiceWithBilling(channels, groups,
+		map[int64]string{10: PlatformGrok, 20: PlatformMiniMax, 30: PlatformMiniMax}, nil)
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	byGroup := map[int64]PlazaGroup{}
+	for _, g := range out {
+		byGroup[g.ID] = g
+	}
+
+	// Grok 1.5: 480p 用分组平价 0.06, 720p 用分组模型专价 0.14, 1080p 回落渠道档位价 0.2
+	grokModels := plazaModelsByName(byGroup[10].Models)
+	v15 := grokModels["grok-imagine-video-1.5"].Pricing
+	require.NotNil(t, v15)
+	require.Equal(t, BillingModeVideo, v15.BillingMode)
+	require.Len(t, v15.Intervals, 3)
+	require.InDelta(t, 0.06, *v15.Intervals[0].PerRequestPrice, 1e-12)
+	require.InDelta(t, 0.14, *v15.Intervals[1].PerRequestPrice, 1e-12)
+	require.InDelta(t, 0.2, *v15.Intervals[2].PerRequestPrice, 1e-12)
+
+	// Grok 标准版无渠道定价：480p 用分组价 0.06，720p 回落内置默认价，未配 1080p 不硬拼 1080p
+	vStd := grokModels["grok-imagine-video"].Pricing
+	require.NotNil(t, vStd)
+	require.Equal(t, BillingModeVideo, vStd.BillingMode)
+	require.Len(t, vStd.Intervals, 2)
+	require.Equal(t, "480p", vStd.Intervals[0].TierLabel)
+	require.InDelta(t, 0.06, *vStd.Intervals[0].PerRequestPrice, 1e-12)
+	require.Equal(t, "720p", vStd.Intervals[1].TierLabel)
+	require.InDelta(t, defaultGrokImagineVideoPrice720P, *vStd.Intervals[1].PerRequestPrice, 1e-12)
+
+	// MiniMax-H3 按秒
+	h3Sec := plazaModelsByName(byGroup[20].Models)["MiniMax-H3"].Pricing
+	require.NotNil(t, h3Sec)
+	require.Equal(t, BillingModeVideo, h3Sec.BillingMode)
+	require.NotNil(t, h3Sec.PerRequestPrice)
+	require.InDelta(t, 0.02, *h3Sec.PerRequestPrice, 1e-12)
+
+	// MiniMax-H3 按 5s 次计费
+	h3Req := plazaModelsByName(byGroup[30].Models)["MiniMax-H3"].Pricing
+	require.NotNil(t, h3Req)
+	require.Equal(t, BillingModePerRequest, h3Req.BillingMode)
+	require.Len(t, h3Req.Intervals, 1)
+	require.Equal(t, "5s", h3Req.Intervals[0].TierLabel)
+	require.InDelta(t, 0.08, *h3Req.Intervals[0].PerRequestPrice, 1e-12)
+}
+
+func TestListGroups_ChannelWildcardPerRequestOnAccountListedModel(t *testing.T) {
+	channels := []Channel{{
+		ID: 1, Name: "ch", Status: StatusActive, GroupIDs: []int64{10},
+		ModelPricing: []ChannelModelPricing{{
+			Platform:        PlatformOpenAI,
+			Models:          []string{"doubao-seedance-*"},
+			BillingMode:     BillingModePerRequest,
+			PerRequestPrice: testPtrFloat64(1.5),
+		}},
+	}}
+	groups := []Group{{ID: 10, Name: "g", Platform: PlatformOpenAI, RateMultiplier: 1}}
+	svc := newPlazaServiceWithBilling(channels, groups, map[int64]string{10: PlatformOpenAI}, nil)
+	svc.SetListedModelCatalog(stubPlazaListedModels{models: map[string][]string{
+		PlatformOpenAI: {"doubao-seedance-2.5"},
+	}})
+
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	m := plazaModelsByName(out[0].Models)["doubao-seedance-2.5"]
+	require.NotNil(t, m.Pricing)
+	require.Equal(t, BillingModePerRequest, m.Pricing.BillingMode)
+	require.NotNil(t, m.Pricing.PerRequestPrice)
+	require.InDelta(t, 1.5, *m.Pricing.PerRequestPrice, 1e-12)
+}
