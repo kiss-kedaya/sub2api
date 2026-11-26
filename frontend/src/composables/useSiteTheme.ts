@@ -70,23 +70,26 @@ function scale(prefix: string, palette: PaletteName, value: (palette: PaletteNam
 
 /**
  * Builds the theme stylesheet from allowlisted settings. Default values for
- * radius and font are optional overrides. The shipped primary is sakura. If an
- * administrator selects black for daytime, dark mode still keeps sakura as
- * the night accent unless another chromatic palette is explicitly selected.
+ * radius and font are optional overrides. The shipped primary is Studio Blue.
+ * Selecting `black` keeps a crisp monochrome ink accent in both light (#171717)
+ * and dark (#f4f6fa) modes without falling back to a pink tint.
  */
 export function buildSiteThemeCss(input: unknown): string {
   const theme = normalizeSiteTheme(input)
   const neutral = theme.theme_neutral
   const chromatic: ChromaticPaletteName | null = theme.theme_primary === 'black' ? null : theme.theme_primary
   const primary: PaletteName = chromatic ?? neutral
-  const darkChromatic: ChromaticPaletteName = chromatic ?? 'sakura'
   const neutralScale = scale('--ui-color-neutral', neutral, paletteColor)
   const light: Vars = {
     ...scale('--ui-color-primary', primary, paletteColor),
     ...neutralScale,
-    '--ui-primary': chromatic ? 'var(--ui-color-primary-500)' : paletteColor(neutral, 900)
+    '--ui-primary': chromatic ? 'var(--ui-color-primary-600)' : paletteColor(neutral, 900)
   }
-  const dark: Vars = { ...scale('--ui-color-primary', darkChromatic, paletteColor), ...neutralScale, '--ui-primary': 'var(--ui-color-primary-400)' }
+  const dark: Vars = {
+    ...scale('--ui-color-primary', primary, paletteColor),
+    ...neutralScale,
+    '--ui-primary': chromatic ? 'var(--ui-color-primary-400)' : paletteColor(neutral, 50)
+  }
   if (theme.theme_radius !== DEFAULT_SITE_THEME.theme_radius) {
     light['--ui-radius'] = dark['--ui-radius'] = `${theme.theme_radius}rem`
   }
@@ -94,39 +97,60 @@ export function buildSiteThemeCss(input: unknown): string {
   if (fontStack) light['--font-sans'] = dark['--font-sans'] = fontStack
 
   const rules: string[] = []
-  {
-    const darkHex = (shade: PaletteShade) => paletteHex(darkChromatic, shade)
-    const darkRgb = (shade: PaletteShade, alpha: number) => `rgb(${paletteRgbChannels(darkChromatic, shade)} / ${alpha})`
-    Object.assign(dark, scale('--c-primary', darkChromatic, paletteRgbChannels))
-    if (chromatic) {
-      const lightHex = (shade: PaletteShade) => paletteHex(chromatic, shade)
-      const lightRgb = (shade: PaletteShade, alpha: number) => `rgb(${paletteRgbChannels(chromatic, shade)} / ${alpha})`
-      Object.assign(light, scale('--c-primary', chromatic, paletteRgbChannels), {
-        '--ui-sakura': lightHex(400),
-        '--ui-halo': `0 0 0 3px ${lightRgb(400, 0.5)}`,
-        '--ui-btn': `linear-gradient(180deg, ${lightHex(600)} 0%, ${lightHex(700)} 100%)`,
-        '--ui-btn-hover': `linear-gradient(180deg, ${lightHex(500)} 0%, ${lightHex(600)} 100%)`
-      })
-      rules.push(rule(`${LIGHT} ${CONSOLE_SCOPE}`, {
-        '--signal-accent': lightHex(600),
-        '--signal-command': lightHex(600),
-        '--signal-command-hover': lightHex(700),
-        '--signal-sakura': lightHex(400),
-        '--signal-hero-mark': lightHex(500)
-      }))
-    }
+  if (chromatic) {
+    const lightHex = (shade: PaletteShade) => paletteHex(chromatic, shade)
+    const lightRgb = (shade: PaletteShade, alpha: number) => `rgb(${paletteRgbChannels(chromatic, shade)} / ${alpha})`
+    const darkHex = (shade: PaletteShade) => paletteHex(chromatic, shade)
+    const darkRgb = (shade: PaletteShade, alpha: number) => `rgb(${paletteRgbChannels(chromatic, shade)} / ${alpha})`
+    Object.assign(dark, scale('--c-primary', chromatic, paletteRgbChannels))
+    Object.assign(light, scale('--c-primary', chromatic, paletteRgbChannels), {
+      '--ui-sakura': lightHex(500),
+      '--ui-halo': `0 0 0 3px ${lightRgb(500, 0.24)}`,
+      '--ui-btn': `linear-gradient(180deg, ${lightHex(600)} 0%, ${lightHex(700)} 100%)`,
+      '--ui-btn-hover': `linear-gradient(180deg, ${lightHex(500)} 0%, ${lightHex(600)} 100%)`
+    })
+    rules.push(rule(`${LIGHT} ${CONSOLE_SCOPE}`, {
+      '--signal-accent': lightHex(600),
+      '--signal-command': lightHex(600),
+      '--signal-command-hover': lightHex(700),
+      '--signal-sakura': lightHex(500),
+      '--signal-hero-mark': lightHex(600)
+    }))
     rules.push(rule(`${DARK} ${CONSOLE_SCOPE}`, {
       '--signal-accent': darkHex(400),
       '--signal-on-accent': '#111217',
-      '--signal-accent-soft': darkRgb(400, 0.12),
+      '--signal-accent-soft': darkRgb(400, 0.14),
       '--signal-command': darkHex(400),
       '--signal-command-text': '#111217',
       '--signal-command-hover': darkHex(300),
-      '--signal-nav-active': darkRgb(400, 0.12),
-      '--signal-nav-active-text': darkHex(200),
+      '--signal-nav-active': '#22252e',
+      '--signal-nav-active-text': '#f4f6fa',
       '--signal-nav-brand': '#f4f6fa',
-      '--signal-hero-mark': darkHex(300),
+      '--signal-hero-mark': darkHex(400),
       '--signal-sakura': darkHex(400)
+    }))
+  } else {
+    Object.assign(light, scale('--c-primary', neutral, paletteRgbChannels))
+    Object.assign(dark, scale('--c-primary', neutral, paletteRgbChannels))
+    rules.push(rule(`${LIGHT} ${CONSOLE_SCOPE}`, {
+      '--signal-accent': paletteHex(neutral, 900),
+      '--signal-command': paletteHex(neutral, 900),
+      '--signal-command-hover': paletteHex(neutral, 800),
+      '--signal-sakura': paletteHex(neutral, 500),
+      '--signal-hero-mark': paletteHex(neutral, 900)
+    }))
+    rules.push(rule(`${DARK} ${CONSOLE_SCOPE}`, {
+      '--signal-accent': '#f4f6fa',
+      '--signal-on-accent': '#111217',
+      '--signal-accent-soft': 'rgb(244 246 250 / 0.12)',
+      '--signal-command': '#f4f6fa',
+      '--signal-command-text': '#111217',
+      '--signal-command-hover': '#e4e7ee',
+      '--signal-nav-active': '#22252e',
+      '--signal-nav-active-text': '#f4f6fa',
+      '--signal-nav-brand': '#f4f6fa',
+      '--signal-hero-mark': '#f4f6fa',
+      '--signal-sakura': '#e4e7ee'
     }))
   }
   rules.unshift(rule(LIGHT, light), rule(DARK, dark))

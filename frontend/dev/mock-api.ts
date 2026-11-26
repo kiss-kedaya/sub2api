@@ -622,7 +622,35 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/admin/quality-check/groups') return {}
         if (path === '/api/v1/admin/channel-monitor-v2/config') return data.monitorConfig
         if (path === '/api/v1/admin/settings') return adminSettings()
+        if (path === '/api/v1/admin/settings/admin-api-key') return { exists: false, masked_key: '' }
+        if (path === '/api/v1/admin/settings/overload-cooldown') return { enabled: false, cooldown_minutes: 10 }
+        if (path === '/api/v1/admin/settings/rate-limit-429-cooldown') return { enabled: false, cooldown_minutes: 5 }
+        if (path === '/api/v1/admin/settings/registration-email-blacklist') return { domains: [] }
+        if (path === '/api/v1/admin/settings/panel-rate-limit') return { enabled: false, max_requests: 120, window_seconds: 60 }
+        if (path === '/api/v1/admin/settings/admin-auth-probe') return { enabled: false, interval_minutes: 15 }
+        if (path === '/api/v1/admin/settings/stream-timeout') return { enabled: true, first_token_timeout_seconds: 60, idle_timeout_seconds: 120 }
+        if (path === '/api/v1/admin/settings/rectifier') return { enabled: false, rules: [] }
+        if (path === '/api/v1/admin/settings/beta-policy') return { enabled: false, rules: [] }
+        if (path === '/api/v1/admin/settings/email-templates') return { events: [], locales: ['zh', 'en'], placeholders: [] }
+        if (path === '/api/v1/admin/accounts/ollama-cloud-usage/settings') return { enabled: false, interval_minutes: 30 }
+        if (path === '/api/v1/admin/access-keys') return { items: [], permissions: [] }
+        if (path === '/api/v1/admin/settings/gateway-ip-notice') return { enabled: false, ips: [], message: '', rpm: 0, auto_add_enabled: false, sharing_window_minutes: 60, sharing_threshold: 3, key_disable_enabled: false, auto_entries: [] }
+        if (path === '/api/v1/admin/settings/key-rotation-risk-ack') return { enabled: false, hours: 24 }
+        if (path === '/api/v1/admin/backups/s3-config') return { endpoint: '', region: '', bucket: '', access_key_id: '', prefix: '', force_path_style: false }
+        if (path === '/api/v1/admin/backups/image-storage') return { config: { enabled: false, reuse_backup_s3: false, bucket: '', prefix: '', public_base_url: '', presign_expiry_hours: 24, max_download_bytes: 10485760, endpoint: '', region: '', access_key_id: '', force_path_style: false }, secret_configured: false }
+        if (path === '/api/v1/admin/backups/schedule') return { enabled: false, cron_expr: '0 3 * * *', retain_days: 7, retain_count: 5 }
+        if (path === '/api/v1/admin/backups') return { items: [] }
         if (path === '/api/v1/admin/payment/config') return { enabled: true }
+        if (path === '/api/v1/admin/payment/orders') return page(data.paymentOrders, query)
+        if (path === '/api/v1/admin/payment/plans') return data.paymentPlans
+        if (path === '/api/v1/admin/payment/providers') return []
+        if (path === '/api/v1/admin/subscriptions') return page(data.subscriptions, query)
+        if (path === '/api/v1/admin/proxies') return page(data.adminProxies, query)
+        if (path === '/api/v1/admin/redeem-codes') return page([], query)
+        if (path === '/api/v1/admin/promo-codes') return page([], query)
+        if (path === '/api/v1/admin/announcements') return page([], query)
+        if (path === '/api/v1/admin/tickets') return page([], query)
+        if (path === '/api/v1/admin/audit-logs') return page([], query)
         if (path === '/api/v1/admin/settings/web-search-emulation') return { enabled: false, providers: [] }
         if (path === '/api/v1/admin/system/check-updates') return {
           current_version: 'local-preview', latest_version: 'local-preview', has_update: false,

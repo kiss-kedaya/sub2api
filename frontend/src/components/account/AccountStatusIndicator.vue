@@ -27,7 +27,7 @@
         >
           {{ statusText }}
         </UButton>
-        <span class="max-w-[180px] text-xs leading-4 text-muted">
+        <span class="max-w-[144px] whitespace-normal text-xs leading-4 text-muted">
           {{ tempUnschedRecoveryText }}
         </span>
       </div>

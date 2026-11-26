@@ -15,7 +15,7 @@ export interface DashboardQuickLink {
 /** Stat grid (UPageGrid): two columns on phones, joined four-column block from lg. */
 export const statGridClass = 'grid-cols-2 gap-3 sm:gap-6 lg:grid-cols-4 lg:gap-px'
 
-/** Stat tile (UPageCard variant="subtle"): tinted round icon, small uppercase title. */
+/** Stat tile (UPageCard variant="subtle"): monochrome neutral icon plate, clean uppercase title. */
 export const statCardUi = {
   root: 'bg-muted',
   // Tiles in a row share one height. content-start (lg grid) and a non-growing wrapper
@@ -23,7 +23,8 @@ export const statCardUi = {
   // whether or not a tile has a sub line.
   container: 'gap-y-1.5 content-start',
   wrapper: 'flex-none items-start',
-  leading: 'icon-orb-primary',
+  leading: 'rounded-full bg-elevated/90 p-2.5 text-highlighted ring-1 ring-inset ring-default',
+  leadingIcon: 'text-highlighted',
   title: 'font-normal text-muted text-xs uppercase',
 }
 

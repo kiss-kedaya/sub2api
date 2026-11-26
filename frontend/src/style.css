@@ -20,12 +20,7 @@
   }
 }
 
-@media (hover: hover) and (pointer: fine) {
-  html[data-platform='windows'] .console-sidebar [data-slot='link']:hover,
-  html[data-platform='linux'] .console-sidebar [data-slot='link']:hover {
-    transform: translateX(1px);
-  }
-}
+/* Keep sidebar nav links optically anchored on hover; feedback comes from clean surface shift. */
 
 html[data-platform='ios'] :is(input, textarea, select),
 html[data-platform='android'] :is(input, textarea, select) {
@@ -293,9 +288,9 @@ html[data-theme-switching]::view-transition-new(root) {
     rgba(255, 255, 255, 0.05) 100%
   );
   --background-image-mesh-gradient:
-    radial-gradient(at 40% 20%, rgba(224, 130, 162, 0.14) 0px, transparent 50%),
-    radial-gradient(at 80% 0%, rgba(173, 68, 103, 0.1) 0px, transparent 50%),
-    radial-gradient(at 0% 50%, rgba(150, 58, 89, 0.07) 0px, transparent 50%);
+    radial-gradient(at 40% 20%, rgba(59, 130, 246, 0.1) 0px, transparent 50%),
+    radial-gradient(at 80% 0%, rgba(99, 102, 241, 0.07) 0px, transparent 50%),
+    radial-gradient(at 0% 50%, rgba(14, 165, 233, 0.05) 0px, transparent 50%);
 
   --animate-fade-in: fadeIn 0.3s ease-out;
   --animate-slide-up: slideUp 0.3s ease-out;
@@ -1254,17 +1249,17 @@ html[data-theme-switching]::view-transition-new(root) {
 
   .dark {
     color-scheme: dark;
-    --c-primary-50: 253 242 245;
-    --c-primary-100: 251 233 239;
-    --c-primary-200: 246 208 221;
-    --c-primary-300: 238 170 193;
-    --c-primary-400: 224 130 162;
-    --c-primary-500: 204 94 131;
-    --c-primary-600: 173 68 103;
-    --c-primary-700: 150 58 89;
-    --c-primary-800: 123 49 73;
-    --c-primary-900: 101 42 62;
-    --c-primary-950: 58 21 34;
+    --c-primary-50: 239 246 255;
+    --c-primary-100: 219 234 254;
+    --c-primary-200: 190 219 255;
+    --c-primary-300: 142 197 255;
+    --c-primary-400: 81 162 255;
+    --c-primary-500: 43 127 255;
+    --c-primary-600: 21 93 252;
+    --c-primary-700: 20 71 230;
+    --c-primary-800: 25 60 184;
+    --c-primary-900: 28 57 142;
+    --c-primary-950: 22 36 86;
   }
 
   body {

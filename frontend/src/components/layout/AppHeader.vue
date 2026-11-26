@@ -4,7 +4,7 @@
        header component or <PageNavbar> / <PageToolbar> (see dashboardFrame.ts). -->
   <UDashboardNavbar
     as="header"
-    class="console-navbar signal-header bg-(--app-page-bg)"
+    class="console-navbar signal-header bg-(--app-page-bg)/90 backdrop-blur-md"
     :ui="{ right: 'gap-1.5 sm:gap-2', left: 'min-w-0 flex-1' }"
   >
     <!-- Phones: opens the sidebar drawer (UDashboardSidebarToggle). -->

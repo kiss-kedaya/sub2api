@@ -823,20 +823,56 @@ html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
   }
 }
 
-/* Nav density: restore the main sidebar's 40px rows, 12px icon gap and 14px medium
-   labels. Nuxt UI's vertical default is a 32px row with 10px inline padding. */
+/* Nav density & Studio quiet active pill (aiforui / Antigravity style):
+   clean neutral active surface + hairline edge + crisp highlighted text + primary leading icon. */
 .console-sidebar:not([data-collapsed='true']) [data-slot='link'] {
-  min-height: 2.5rem;
-  gap: 0.75rem;
-  padding: 0.625rem 0.75rem;
-  border-radius: 0.75rem;
+  min-height: 2.375rem;
+  gap: 0.7rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.625rem;
   font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 140ms cubic-bezier(0.23, 1, 0.32, 1), color 140ms cubic-bezier(0.23, 1, 0.32, 1), transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.console-sidebar [data-slot='link']:active,
+.console-sidebar [data-slot='childLink']:active {
+  transform: scale(0.985);
+}
+
+.console-sidebar [data-slot='link'][aria-current='page'],
+.console-sidebar [data-slot='link'][data-active] {
+  background-color: var(--signal-nav-active, var(--ui-bg-elevated)) !important;
+  color: var(--signal-nav-active-text, var(--ui-text-highlighted)) !important;
+  box-shadow: inset 0 0 0 1px var(--ui-border-muted);
+}
+
+html.dark .console-sidebar [data-slot='link'][aria-current='page'],
+html.dark .console-sidebar [data-slot='link'][data-active] {
+  background-color: #22252e !important;
+  color: #f4f6fa !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), inset 0 0 0 1px rgb(255 255 255 / 0.05);
+}
+
+.console-sidebar [data-slot='link'][aria-current='page']::before,
+.console-sidebar [data-slot='link'][data-active]::before {
+  background-color: transparent !important;
+}
+
+.console-sidebar [data-slot='link'][aria-current='page'] [data-slot='linkLeadingIcon'],
+.console-sidebar [data-slot='link'][data-active] [data-slot='linkLeadingIcon'] {
+  color: var(--ui-primary) !important;
+}
+
+.console-sidebar [data-slot='childLink'][aria-current='page'] {
+  background-color: var(--signal-nav-active, var(--ui-bg-elevated)) !important;
+  color: var(--signal-nav-active-text, var(--ui-text-highlighted)) !important;
   font-weight: 500;
 }
 
 .console-sidebar:not([data-collapsed='true']) [data-slot='childLink'] {
   gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  padding: 0.45rem 0.75rem;
   border-radius: 0.5rem;
   font-size: 0.875rem;
 }

@@ -53,8 +53,8 @@ func (r *siteThemeRepoStub) SetMultiple(_ context.Context, updates map[string]st
 
 func siteThemePtr[T any](v T) *T { return &v }
 
-func TestDefaultSiteThemeSettingsUseSakuraPrimary(t *testing.T) {
-	require.Equal(t, SiteThemeSettings{Primary: "sakura", Neutral: "neutral", Radius: 0.375, Font: "system", DefaultMode: "system"}, DefaultSiteThemeSettings())
+func TestDefaultSiteThemeSettingsUseBluePrimary(t *testing.T) {
+	require.Equal(t, SiteThemeSettings{Primary: "blue", Neutral: "neutral", Radius: 0.375, Font: "system", DefaultMode: "system"}, DefaultSiteThemeSettings())
 }
 
 func TestValidateSiteThemePatchAcceptsEveryAllowlistedValue(t *testing.T) {

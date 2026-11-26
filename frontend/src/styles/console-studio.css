@@ -1,8 +1,7 @@
 /*
   Console colour tokens (--signal-*), used by legacy page classes and ~35 components.
-  By day they point at Nuxt UI's tokens, so the admin's Appearance settings (neutral,
-  primary, radius) reach every page; the sakura pinks stay for the small marks and the
-  painting. At night they keep the plum-charcoal palette as literals.
+  By day they follow Nuxt UI's semantic tokens so Appearance settings reach every page;
+  at night they align with the Obsidian Graphite + Studio Blue palette.
 */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
   --signal-bg: var(--app-page-bg);
@@ -14,10 +13,10 @@
   --signal-text: var(--ui-text-highlighted);
   --signal-muted: var(--ui-text-muted);
   --signal-accent: var(--ui-primary);
-  --signal-sakura: #f2b6c6;
-  --signal-amber: #906727;
-  --signal-hover: color-mix(in oklab, var(--ui-bg-elevated) 50%, var(--ui-bg));
-  --signal-accent-soft: var(--ui-bg-elevated);
+  --signal-sakura: #2b7fff;
+  --signal-amber: #b45309;
+  --signal-hover: color-mix(in oklab, var(--ui-bg-elevated) 55%, var(--ui-bg));
+  --signal-accent-soft: color-mix(in oklab, var(--ui-primary) 10%, transparent);
   --signal-on-accent: var(--ui-text-inverted);
   --signal-control-line: var(--ui-border-accented);
   --signal-highlight: transparent;
@@ -28,22 +27,22 @@
   --signal-popover-shadow: var(--app-shadow-popover);
   --signal-command: var(--ui-primary);
   --signal-command-text: var(--ui-text-inverted);
-  --signal-command-hover: color-mix(in oklab, var(--ui-primary) 75%, var(--ui-bg));
+  --signal-command-hover: color-mix(in oklab, var(--ui-primary) 85%, #000000);
   --signal-nav-text: var(--ui-text-muted);
   --signal-nav-muted: var(--ui-text-dimmed);
-  --signal-nav-hover: color-mix(in oklab, var(--ui-bg-elevated) 50%, var(--ui-bg));
+  --signal-nav-hover: color-mix(in oklab, var(--ui-bg-elevated) 60%, var(--ui-bg));
   --signal-nav-active: var(--ui-bg-elevated);
-  --signal-nav-active-text: var(--ui-primary);
+  --signal-nav-active-text: var(--ui-text-highlighted);
   --signal-nav-line: var(--ui-border);
   --signal-nav-strong: var(--ui-text-highlighted);
   --signal-nav-brand: var(--ui-text-highlighted);
   --signal-hero: var(--ui-bg-muted);
   --signal-hero-text: var(--ui-text-highlighted);
   --signal-hero-muted: var(--ui-text-muted);
-  --signal-hero-mark: #e58fa7;
+  --signal-hero-mark: var(--ui-primary);
   --signal-hero-line: var(--ui-border);
-  /* motion tokens (durations and easing for the few transitions left) */
-  --motion-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* motion tokens (durations and easing for crisp responsive feedback) */
+  --motion-out: cubic-bezier(0.23, 1, 0.32, 1);
   --motion-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
   --motion-dur-fast: 140ms;
@@ -61,10 +60,10 @@
   --signal-line: #2c303a;
   --signal-text: #f4f6fa;
   --signal-muted: #b0b6c4;
-  --signal-accent: #f2b6c6;
+  --signal-accent: #51a2ff;
   --signal-amber: #fbcf68;
   --signal-hover: #21252e;
-  --signal-accent-soft: rgb(242 182 198 / 0.12);
+  --signal-accent-soft: rgb(81 162 255 / 0.14);
   --signal-on-accent: #111217;
   --signal-control-line: #3e4452;
   --signal-highlight: rgb(255 255 255 / 0.045);
@@ -73,24 +72,24 @@
   --signal-table-head: #121419;
   --signal-shadow: var(--app-shadow-card);
   --signal-popover-shadow: var(--app-shadow-popover);
-  --signal-command: #f2b6c6;
+  --signal-command: #51a2ff;
   --signal-command-text: #111217;
-  --signal-command-hover: #f7cad6;
+  --signal-command-hover: #8ec5ff;
   --signal-nav-text: #cdd2dc;
   --signal-nav-muted: #9aa0ae;
   --signal-nav-hover: #21252e;
-  --signal-nav-active: rgb(242 182 198 / 0.12);
-  --signal-nav-active-text: #fce2ea;
+  --signal-nav-active: #22252e;
+  --signal-nav-active-text: #f4f6fa;
   --signal-nav-line: #242832;
   --signal-nav-strong: #f4f6fa;
   --signal-nav-brand: #f4f6fa;
   --signal-hero: #1b1e25;
   --signal-hero-text: #f4f6fa;
   --signal-hero-muted: #b0b6c4;
-  --signal-hero-mark: #f7cad6;
+  --signal-hero-mark: #51a2ff;
   --signal-hero-line: #323744;
   --signal-page-surface: #16181d;
-  --signal-sakura: #f2b6c6;
+  --signal-sakura: #51a2ff;
 }
 
 .console-signal {
@@ -172,7 +171,7 @@ body:has(.console-signal) > .select-dropdown-portal {
 }
 
 .console-signal.signal-admin .table-scroll-container :is(th, td) {
-  padding: 12px 14px;
+  padding: 11px 12px;
   font-size: 13px;
 }
 

@@ -54,19 +54,27 @@ describe('useSiteTheme', () => {
     document.getElementById(SITE_THEME_STYLE_ID)?.remove()
   })
 
-  it('default theme: Nuxt UI tokens in light and sakura primary in dark', () => {
+  it('default theme: Nuxt UI tokens in light and Studio Blue primary in both modes', () => {
     const out = css()
     const light = block(out, 'html:root:not(.dark){')
     const dark = block(out, 'html:root.dark{')
-    expect(light.startsWith(`html:root:not(.dark){--ui-color-primary-50:${paletteColor('sakura', 50)};`)).toBe(true)
-    expect(light).toContain('--ui-primary:var(--ui-color-primary-500);')
-    // The default night theme is visibly sakura even when the daytime primary is neutral.
+    expect(light.startsWith(`html:root:not(.dark){--ui-color-primary-50:${paletteColor('blue', 50)};`)).toBe(true)
+    expect(light).toContain('--ui-primary:var(--ui-color-primary-600);')
     expect(dark).toContain(`--ui-color-neutral-950:${paletteColor('neutral', 950)};`)
-    expect(dark).toContain(`--ui-color-primary-400:${paletteColor('sakura', 400)};`)
+    expect(dark).toContain(`--ui-color-primary-400:${paletteColor('blue', 400)};`)
     for (const token of ['--ui-radius', '--font-sans', 'font-family']) {
       expect(out).not.toContain(token)
     }
     expectNoFontDownload(out)
+  })
+
+  it('keeps black primary monochrome in both light and dark modes', () => {
+    const out = buildSiteThemeCss({ ...DEFAULT_SITE_THEME, theme_primary: 'black', theme_neutral: 'zinc' })
+    const light = block(out, 'html:root:not(.dark){')
+    const dark = block(out, 'html:root.dark{')
+    expect(light).toContain(`--ui-primary:${paletteColor('zinc', 900)};`)
+    expect(dark).toContain(`--ui-primary:${paletteColor('zinc', 50)};`)
+    expect(block(out, 'html:root.dark :is(.console-signal,')).toContain('--signal-accent:#f4f6fa;')
   })
 
   it('keeps night text readable across distinct raised surfaces without overriding custom accents', () => {
@@ -94,7 +102,7 @@ describe('useSiteTheme', () => {
       }
     }
     expect(luminance(hex('--app-sidebar-bg'))).toBeGreaterThan(0.01)
-    expect(hex('--ui-primary')).toBe('#f2b6c6')
+    expect(hex('--ui-primary')).toBe('#51a2ff')
     expect(buildSiteThemeCss({ ...DEFAULT_SITE_THEME, theme_primary: 'green' })).toContain(`--ui-color-primary-400:${paletteColor('green', 400)};`)
   })
 
@@ -102,7 +110,7 @@ describe('useSiteTheme', () => {
     const out = buildSiteThemeCss({ ...DEFAULT_SITE_THEME, theme_primary: 'sakura', theme_neutral: 'zinc' })
     const light = block(out, 'html:root:not(.dark){')
     const dark = block(out, 'html:root.dark{')
-    expect(light).toContain('--ui-primary:var(--ui-color-primary-500);')
+    expect(light).toContain('--ui-primary:var(--ui-color-primary-600);')
     expect(dark).toContain('--ui-primary:var(--ui-color-primary-400);')
     for (const rule of [light, dark]) {
       expect(rule).toContain(`--ui-color-primary-400:${paletteColor('sakura', 400)};`)

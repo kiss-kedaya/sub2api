@@ -378,13 +378,13 @@
           </template>
 
           <template #cell-created_at="{ value }">
-            <span class="text-muted">{{ formatDateTime(value) }}</span>
+            <span class="whitespace-nowrap text-xs tabular-nums text-muted">{{ formatDateTime(value) }}</span>
           </template>
           <template #cell-last_used_at="{ value }">
-            <span class="text-muted">{{ value ? formatDateTime(value) : '-' }}</span>
+            <span class="whitespace-nowrap text-xs tabular-nums text-muted">{{ value ? formatDateTime(value) : '-' }}</span>
           </template>
           <template #cell-last_active_at="{ value }">
-            <span class="text-muted">{{ value ? formatDateTime(value) : '-' }}</span>
+            <span class="whitespace-nowrap text-xs tabular-nums text-muted">{{ value ? formatDateTime(value) : '-' }}</span>
           </template>
 
           <template #cell-actions="{ row }">

@@ -55,7 +55,7 @@
     >
       <template #model-cell="{ row }">
         <span
-          class="inline-flex max-w-[100px] items-center gap-1 truncate font-medium"
+          class="inline-flex max-w-[150px] @lg:max-w-[180px] items-center gap-1 truncate font-medium"
           :class="enableBreakdown ? 'text-primary' : 'text-highlighted'"
           :title="row.original.model"
         >

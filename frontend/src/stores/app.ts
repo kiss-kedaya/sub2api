@@ -448,7 +448,7 @@ export const useAppStore = defineStore('app', () => {
         service_quota_enabled: false,
         affiliate_enabled: false,
         allow_user_view_error_requests: false,
-        theme_primary: 'sakura',
+        theme_primary: 'blue',
         theme_neutral: 'neutral',
         theme_radius: 0.375,
         theme_font: 'system',
