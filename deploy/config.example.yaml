@@ -1428,7 +1428,27 @@ billing:
     # Number of requests to allow in half-open state
     # 半开状态允许通过的请求数
     half_open_requests: 3
-  # Conservative minimum balance required before forwarding balance-billed requests.
+  # Durable per-user merge settlement of balance charges (default off). When on,
+  # each completed charge is committed to billing_balance_settlements and a worker
+  # coalesces every pending charge of one user into a single users.balance update,
+  # which removes the row-lock queue under one user's concurrency. Roll back by
+  # setting it to false and restarting: queued charges keep draining.
+  # 余额扣费合并结算（默认关闭）：开启后每笔扣费先落持久化队列，由 worker 按用户合并成一次
+  # users.balance 更新，消除单用户高并发下的行锁排队；回滚把它改回 false 并重启，队列里的扣费照常结算。
+  balance_merge_settlement_enabled: false
+  # Backlog guard (only used while balance_merge_settlement_enabled is true). When the
+  # number of pending charges exceeds max_backlog, or the oldest pending charge has
+  # waited longer than max_age_seconds, new requests on this process are charged
+  # synchronously again (the same path as the switch being off) until both drop below
+  # half of their limits. Charges already queued keep being settled, none is lost or
+  # charged twice. 0 disables that trigger. Both are exposed on
+  # GET /api/v1/admin/ops/live-balance-outbox/health (balance_settlement).
+  # 积压保护（仅在上面的开关为 true 时生效）：待结算行数超过 max_backlog，或最老一笔等待超过
+  # max_age_seconds，本进程新请求退回逐请求同步扣费（与开关关闭时同一条路径），两项都回落到
+  # 阈值的一半以下才恢复入队；队列里已有的扣费继续结算，不丢、不重复。0 = 不按该维度退回。
+  # 当前积压与是否已退回见 GET /api/v1/admin/ops/live-balance-outbox/health 的 balance_settlement。
+  balance_merge_settlement_max_backlog: 20000
+  balance_merge_settlement_max_age_seconds: 30
   # Set to 0 to only require balance > 0.
   # 余额计费请求转发前要求的保守最小余额；设为 0 则仅要求余额 > 0。
   minimum_balance_reserve: 0.000001

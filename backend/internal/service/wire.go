@@ -791,6 +791,7 @@ func ProvideOpsService(
 	settingService *SettingService,
 	authCacheInvalidationWorker *AuthCacheInvalidationWorker,
 	liveBalanceOutboxWorker *LiveBalanceAdjustmentOutboxWorker,
+	balanceSettlementWorker *UsageBalanceSettlementWorker,
 	apiKeyService *APIKeyService,
 ) *OpsService {
 	svc := NewOpsService(
@@ -814,6 +815,7 @@ func ProvideOpsService(
 	}
 	svc.authCacheInvalidationWorker = authCacheInvalidationWorker
 	svc.liveBalanceOutboxWorker = liveBalanceOutboxWorker
+	svc.balanceSettlementWorker = balanceSettlementWorker
 	svc.apiKeyService = apiKeyService
 	startBackgroundJob(func() { svc.StartRuntimeSettingsRefresh(context.Background()) })
 	return svc
@@ -1073,7 +1075,7 @@ var ProviderSet = wire.NewSet(
 	NewUsageRecordWorkerPool,
 	NewBalancePreauthorizationService,
 	NewBalancePreauthorizationRecoveryWorker,
-	NewUsageBalanceSettlementWorker,
+	ProvideUsageBalanceSettlementWorker,
 	ProvideLiveBalanceAdjustmentOutboxWorker,
 	ProvideSchedulerSnapshotService,
 	NewIdentityService,
@@ -1140,10 +1142,28 @@ func ProvidePaymentConfigService(entClient *dbent.Client, settingRepo SettingRep
 }
 
 // ProvideBalanceNotifyService creates BalanceNotifyService
-func ProvideBalanceNotifyService(emailService *EmailService, settingRepo SettingRepository, accountRepo AccountRepository, notificationEmailService *NotificationEmailService) *BalanceNotifyService {
+func ProvideBalanceNotifyService(emailService *EmailService, settingRepo SettingRepository, accountRepo AccountRepository, notificationEmailService *NotificationEmailService, userRepo UserRepository) *BalanceNotifyService {
 	svc := NewBalanceNotifyService(emailService, settingRepo, accountRepo)
 	svc.SetNotificationEmailService(notificationEmailService)
+	svc.SetUserReader(userRepo)
 	return svc
+}
+
+// ProvideUsageBalanceSettlementWorker builds the balance settlement worker. The
+// backlog guard and the low-balance observer are only armed while
+// billing.balance_merge_settlement_enabled is true; with the switch off the worker
+// is the plain legacy one.
+func ProvideUsageBalanceSettlementWorker(repo UsageBalanceSettlementRepository, cfg *config.Config, notify *BalanceNotifyService) *UsageBalanceSettlementWorker {
+	opts := UsageBalanceSettlementWorkerOptions{}
+	if cfg != nil && cfg.Billing.BalanceMergeSettlementEnabled {
+		opts.MergeEnabled = true
+		opts.MaxBacklog = int64(cfg.Billing.BalanceMergeSettlementMaxBacklog)
+		opts.MaxAge = time.Duration(cfg.Billing.BalanceMergeSettlementMaxAgeSeconds) * time.Second
+		if notify != nil {
+			opts.Observer = notify
+		}
+	}
+	return NewUsageBalanceSettlementWorkerWithOptions(repo, opts)
 }
 
 // ProvidePaymentService creates PaymentService and attaches notification email delivery.

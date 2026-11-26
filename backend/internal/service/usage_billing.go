@@ -308,7 +308,17 @@ type UsageBalanceSettlementResult struct {
 	UserID     int64
 	EventCount int
 	Amount     float64
+	// NewBalance is the user's balance right after the settlement UPDATE (read via
+	// RETURNING); the balance right before it is exactly NewBalance + Amount.
 	NewBalance float64
+
+	// Low-balance alert preferences read from the same row by the same UPDATE ...
+	// RETURNING, so the settlement observer can tell whether this flush moved the
+	// balance across the alert threshold without any additional query.
+	NotifyEnabled       bool
+	NotifyThreshold     *float64
+	NotifyThresholdType string
+	TotalRecharged      float64
 }
 
 // UsageBalanceSettlementRepository is the durable consumer side of balance

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -18,6 +19,10 @@ type liveBalanceAdjustmentCacheStub struct {
 	initializeErr       error
 	invalidateErr       error
 	invalidateCalls     int
+	deductErr           error
+	deductCalls         int
+	deductUserID        int64
+	deductAmount        float64
 	adjustCalls         int
 	userID              int64
 	eventID             string
@@ -79,6 +84,13 @@ func (s *liveBalanceReadCacheStub) GetUserBalance(context.Context, int64) (float
 func (s *liveBalanceAdjustmentCacheStub) InvalidateUserBalance(context.Context, int64) error {
 	s.invalidateCalls++
 	return s.invalidateErr
+}
+
+func (s *liveBalanceAdjustmentCacheStub) DeductUserBalance(_ context.Context, userID int64, amount float64) error {
+	s.deductCalls++
+	s.deductUserID = userID
+	s.deductAmount = amount
+	return s.deductErr
 }
 
 func (s *liveBalanceAdjustmentCacheStub) AdjustLiveBalance(_ context.Context, userID int64, eventID string, delta float64) (LiveBalanceResult, error) {
@@ -238,6 +250,74 @@ func TestApplyExternalBalanceOutboxAdjustmentsRequiresOneContiguousUserChain(t *
 	require.ErrorContains(t, service.ApplyExternalBalanceOutboxAdjustments(context.Background(), []LiveBalanceAdjustmentEvent{events[0], {ID: 21, UserID: 7, PredecessorID: 17, DeltaUnits: 1}}), "invalid")
 }
 
+func TestApplyExternalBalanceOutboxAdjustment_MergeSettlementSkipsInvalidationForDebits(t *testing.T) {
+	mergeOn := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: true}}
+	mergeOff := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: false}}
+
+	t.Run("merge on skips invalidation for negative single event but still adjusts wallet", func(t *testing.T) {
+		cache := &liveBalanceAdjustmentCacheStub{result: LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied}}
+		svc := &BillingCacheService{cache: cache, cfg: mergeOn}
+		event := LiveBalanceAdjustmentEvent{ID: 17, UserID: 42, PredecessorID: 11, DeltaUnits: -125000000}
+
+		require.NoError(t, svc.ApplyExternalBalanceOutboxAdjustment(context.Background(), event))
+		require.Zero(t, cache.invalidateCalls, "negative debit must not delete billing:balance:{uid} and resurrect unsettled queue")
+		require.Equal(t, 1, cache.watermarkCalls)
+		require.Equal(t, int64(-125000000), cache.deltaUnits)
+	})
+
+	t.Run("merge on still invalidates for positive single event", func(t *testing.T) {
+		cache := &liveBalanceAdjustmentCacheStub{result: LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied}}
+		svc := &BillingCacheService{cache: cache, cfg: mergeOn}
+		event := LiveBalanceAdjustmentEvent{ID: 18, UserID: 42, PredecessorID: 17, DeltaUnits: 500000000}
+
+		require.NoError(t, svc.ApplyExternalBalanceOutboxAdjustment(context.Background(), event))
+		require.Equal(t, 1, cache.invalidateCalls, "top-ups/refunds must invalidate legacy balance cache immediately")
+		require.Equal(t, 1, cache.watermarkCalls)
+	})
+
+	t.Run("merge on skips invalidation for all-negative batch", func(t *testing.T) {
+		cache := &liveBalanceAdjustmentCacheStub{result: LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied}}
+		svc := &BillingCacheService{cache: cache, cfg: mergeOn}
+		events := []LiveBalanceAdjustmentEvent{
+			{ID: 17, UserID: 42, PredecessorID: 11, DeltaUnits: -100},
+			{ID: 19, UserID: 42, PredecessorID: 17, DeltaUnits: -25},
+		}
+
+		require.NoError(t, svc.ApplyExternalBalanceOutboxAdjustments(context.Background(), events))
+		require.Zero(t, cache.invalidateCalls)
+		require.Equal(t, 1, cache.watermarkCalls)
+	})
+
+	t.Run("merge on invalidates when batch contains any positive delta", func(t *testing.T) {
+		cache := &liveBalanceAdjustmentCacheStub{result: LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied}}
+		svc := &BillingCacheService{cache: cache, cfg: mergeOn}
+		events := []LiveBalanceAdjustmentEvent{
+			{ID: 17, UserID: 42, PredecessorID: 11, DeltaUnits: -100},
+			{ID: 19, UserID: 42, PredecessorID: 17, DeltaUnits: 250},
+		}
+
+		require.NoError(t, svc.ApplyExternalBalanceOutboxAdjustments(context.Background(), events))
+		require.Equal(t, 1, cache.invalidateCalls)
+		require.Equal(t, 1, cache.watermarkCalls)
+	})
+
+	t.Run("merge off preserves unconditional invalidation for negative single and batch events", func(t *testing.T) {
+		cache := &liveBalanceAdjustmentCacheStub{result: LiveBalanceResult{Outcome: LiveBalanceOutcomeApplied}}
+		svc := &BillingCacheService{cache: cache, cfg: mergeOff}
+
+		require.NoError(t, svc.ApplyExternalBalanceOutboxAdjustment(context.Background(), LiveBalanceAdjustmentEvent{
+			ID: 17, UserID: 42, PredecessorID: 11, DeltaUnits: -100,
+		}))
+		require.Equal(t, 1, cache.invalidateCalls)
+
+		require.NoError(t, svc.ApplyExternalBalanceOutboxAdjustments(context.Background(), []LiveBalanceAdjustmentEvent{
+			{ID: 18, UserID: 42, PredecessorID: 17, DeltaUnits: -50},
+			{ID: 19, UserID: 42, PredecessorID: 18, DeltaUnits: -25},
+		}))
+		require.Equal(t, 2, cache.invalidateCalls)
+	})
+}
+
 func TestRecoveringLiveBalanceAdjustmentInitializesFromSnapshotAndReplays(t *testing.T) {
 	cache := &liveBalanceAdjustmentCacheStub{
 		watermarkResults: []LiveBalanceResult{
@@ -380,6 +460,54 @@ func TestCommittedBalanceSyncOnlyInvalidatesLegacyCache(t *testing.T) {
 	require.Equal(t, 1, cache.invalidateCalls)
 	require.Zero(t, cache.adjustCalls)
 	require.Zero(t, cache.watermarkCalls, "durable outbox worker must be the only persistent wallet delta writer")
+}
+
+func TestSyncCommittedLiveBalanceAdjustment_MergeSettlementDeductsDebitsRelatively(t *testing.T) {
+	mergeOn := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: true}}
+	mergeOff := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: false}}
+
+	t.Run("merge on deducts negative admin/refund adjustments relatively without invalidating", func(t *testing.T) {
+		cache := &liveBalanceAdjustmentCacheStub{}
+		svc := &BillingCacheService{cache: cache, cfg: mergeOn}
+
+		syncCommittedLiveBalanceAdjustment(svc, 42, "admin-balance:1", -12.5)
+
+		require.Zero(t, cache.invalidateCalls, "negative adjustment must not delete billing:balance:{uid} and resurrect unsettled queue")
+		require.Equal(t, 1, cache.deductCalls)
+		require.Equal(t, int64(42), cache.deductUserID)
+		require.InDelta(t, 12.5, cache.deductAmount, 1e-9)
+	})
+
+	t.Run("merge on still invalidates for positive adjustments", func(t *testing.T) {
+		cache := &liveBalanceAdjustmentCacheStub{}
+		svc := &BillingCacheService{cache: cache, cfg: mergeOn}
+
+		syncCommittedLiveBalanceAdjustment(svc, 42, "admin-balance:2", 25.0)
+
+		require.Equal(t, 1, cache.invalidateCalls)
+		require.Zero(t, cache.deductCalls)
+	})
+
+	t.Run("merge off keeps legacy invalidation for negative adjustments", func(t *testing.T) {
+		cache := &liveBalanceAdjustmentCacheStub{}
+		svc := &BillingCacheService{cache: cache, cfg: mergeOff}
+
+		syncCommittedLiveBalanceAdjustment(svc, 42, "admin-balance:3", -12.5)
+
+		require.Equal(t, 1, cache.invalidateCalls)
+		require.Zero(t, cache.deductCalls)
+	})
+
+	t.Run("ignores non-finite deltas", func(t *testing.T) {
+		cache := &liveBalanceAdjustmentCacheStub{}
+		svc := &BillingCacheService{cache: cache, cfg: mergeOn}
+
+		syncCommittedLiveBalanceAdjustment(svc, 42, "bad:nan", math.NaN())
+		syncCommittedLiveBalanceAdjustment(svc, 42, "bad:inf", math.Inf(-1))
+
+		require.Zero(t, cache.invalidateCalls)
+		require.Zero(t, cache.deductCalls)
+	})
 }
 
 func TestGetUserBalancePrefersPersistentLiveWallet(t *testing.T) {

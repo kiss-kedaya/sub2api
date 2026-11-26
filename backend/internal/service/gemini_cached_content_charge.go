@@ -85,7 +85,19 @@ func (s *GatewayService) ApplyCachedContentCharge(ctx context.Context, intent *M
 		return err
 	}
 	if s.billingCacheService != nil {
-		_ = s.billingCacheService.InvalidateUserBalance(ctx, cmd.UserID)
+		if result != nil && result.BalanceSettlementDeferred {
+			if result.Applied && cmd.BalanceCost > 0 {
+				s.billingCacheService.deductBalanceCacheRelative(ctx, cmd.UserID, cmd.BalanceCost, "service.gemini_cached_content")
+			}
+		} else if s.billingDeps().mergeSettlementEnabled() {
+			if result != nil && result.NewBalance != nil && s.billingCacheService.balanceBelowEligibilityThreshold(*result.NewBalance) {
+				s.billingCacheService.setBalanceCacheAtMost(ctx, cmd.UserID, *result.NewBalance)
+			} else if result != nil && result.Applied && cmd.BalanceCost > 0 {
+				s.billingCacheService.deductBalanceCacheRelative(ctx, cmd.UserID, cmd.BalanceCost, "service.gemini_cached_content")
+			}
+		} else {
+			_ = s.billingCacheService.InvalidateUserBalance(ctx, cmd.UserID)
+		}
 		if cmd.SubscriptionID != nil && intent.Usage.GroupID != nil {
 			_ = s.billingCacheService.InvalidateSubscription(ctx, cmd.UserID, *intent.Usage.GroupID)
 		}

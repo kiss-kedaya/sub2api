@@ -15,12 +15,76 @@ import (
 
 const usageBalanceSettlementAdvisoryLock int64 = 0x5355423242414c
 
+// balanceSettlementOldestProbeRows 是读「最老一笔」时从队首看的行数。
+const balanceSettlementOldestProbeRows = 256
+
+// balanceSettlementBacklogSQL 硬编码了 status = 3，编译期钉住枚举值避免漂移。
+const (
+	_ uint = uint(service.BalanceSettlementPending - 3)
+	_ uint = uint(3 - service.BalanceSettlementPending)
+)
+
+// balanceSettlementBacklogSQL 读取队列积压，成本与队列深度无关：
+//
+//   - 深度：在部分索引 idx_billing_balance_settlements_pending (available_at, id)
+//     WHERE status = 3 上最多数 $1 行，到达上限即停（调用方把它当「至少这么多」）；
+//   - 最老一笔：按索引序 (available_at, id) 只取队首 $2 行，再在这几行里求最小 created_at。
+//     精确的 min(created_at) 没有索引（建一个就要给热点写入表多一份索引维护），而对全体
+//     待结算行求最小值是全表扫；队首近似的取舍见 service.UsageBalanceSettlementBacklog。
+//
+// 这里使用字面量 status = 3（对应 service.BalanceSettlementPending）而非参数占位符，
+// 确保即使在 plan_cache_mode = force_generic_plan 或未来使用 prepared statement 时，
+// 规划器也始终能匹配部分索引 idx_billing_balance_settlements_pending。
+// 没有任何一处是无界扫描，也没有 FOR UPDATE，不会和结算 worker 争锁。
+const balanceSettlementBacklogSQL = `
+	SELECT
+		(
+			SELECT COUNT(*) FROM (
+				SELECT 1 FROM billing_balance_settlements WHERE status = 3 LIMIT $1
+			) AS counted
+		),
+		COALESCE((
+			SELECT GREATEST(0, EXTRACT(EPOCH FROM (NOW() - MIN(head.created_at))) * 1000)::bigint
+			FROM (
+				SELECT created_at
+				FROM billing_balance_settlements
+				WHERE status = 3
+				ORDER BY available_at, id
+				LIMIT $2
+			) AS head
+		), 0)
+`
+
 type usageBalanceSettlementRepository struct {
 	db *sql.DB
 }
 
 func NewUsageBalanceSettlementRepository(db *sql.DB) service.UsageBalanceSettlementRepository {
 	return &usageBalanceSettlementRepository{db: db}
+}
+
+// BalanceSettlementBacklog 实现 service.UsageBalanceSettlementBacklogReader。
+func (r *usageBalanceSettlementRepository) BalanceSettlementBacklog(
+	ctx context.Context,
+	depthCap int64,
+) (service.UsageBalanceSettlementBacklog, error) {
+	if r == nil || r.db == nil {
+		return service.UsageBalanceSettlementBacklog{}, errors.New("balance settlement database is unavailable")
+	}
+	if depthCap <= 0 {
+		depthCap = 20000
+	}
+	var pending, oldestMs int64
+	if err := r.db.QueryRowContext(ctx, balanceSettlementBacklogSQL,
+		depthCap, balanceSettlementOldestProbeRows,
+	).Scan(&pending, &oldestMs); err != nil {
+		return service.UsageBalanceSettlementBacklog{}, err
+	}
+	return service.UsageBalanceSettlementBacklog{
+		Pending:       pending,
+		PendingCapped: pending >= depthCap,
+		OldestAge:     time.Duration(oldestMs) * time.Millisecond,
+	}, nil
 }
 
 type pendingBalanceSettlement struct {
@@ -142,8 +206,8 @@ func (r *usageBalanceSettlementRepository) FlushPendingBalanceSettlements(
 		if err != nil {
 			return nil, err
 		}
-		for userID, balance := range preappliedBalances {
-			newBalances[userID] = balance
+		for userID, settled := range preappliedBalances {
+			newBalances[userID] = settled
 		}
 	}
 	validIDs := make([]int64, 0, len(pending))
@@ -206,27 +270,46 @@ func (r *usageBalanceSettlementRepository) FlushPendingBalanceSettlements(
 	userIDs := sortedBalanceSettlementUserIDs(totals)
 	results := make([]service.UsageBalanceSettlementResult, 0, len(newBalances))
 	for _, userID := range userIDs {
-		newBalance, ok := newBalances[userID]
+		settled, ok := newBalances[userID]
 		if !ok {
 			continue
 		}
 		amount, _ := totals[userID].Float64()
-		results = append(results, service.UsageBalanceSettlementResult{
-			UserID:     userID,
-			EventCount: counts[userID],
-			Amount:     amount,
-			NewBalance: newBalance,
-		})
+		result := service.UsageBalanceSettlementResult{
+			UserID:              userID,
+			EventCount:          counts[userID],
+			Amount:              amount,
+			NewBalance:          settled.balance,
+			NotifyEnabled:       settled.notifyEnabled,
+			NotifyThresholdType: settled.notifyThresholdType,
+			TotalRecharged:      settled.totalRecharged,
+		}
+		if settled.notifyThreshold.Valid {
+			threshold := settled.notifyThreshold.Float64
+			result.NotifyThreshold = &threshold
+		}
+		results = append(results, result)
 	}
 	return results, nil
+}
+
+// settledUserBalance is what one settlement UPDATE ... RETURNING reports for a
+// user: the balance after the update plus the low-balance alert preferences of the
+// same row, so the observer needs no additional query.
+type settledUserBalance struct {
+	balance             float64
+	notifyEnabled       bool
+	notifyThreshold     sql.NullFloat64
+	notifyThresholdType string
+	totalRecharged      float64
 }
 
 func applyUsageBalanceSettlementTotals(
 	ctx context.Context,
 	tx *sql.Tx,
 	totals map[int64]decimal.Decimal,
-) (map[int64]float64, error) {
-	balances := make(map[int64]float64, len(totals))
+) (map[int64]settledUserBalance, error) {
+	balances := make(map[int64]settledUserBalance, len(totals))
 	if len(totals) == 0 {
 		return balances, nil
 	}
@@ -245,7 +328,8 @@ func applyUsageBalanceSettlementTotals(
 			updated_at = NOW()
 		FROM deltas AS d
 		WHERE u.id = d.user_id AND u.deleted_at IS NULL
-		RETURNING u.id, u.balance
+		RETURNING u.id, u.balance, u.balance_notify_enabled, u.balance_notify_threshold,
+			u.balance_notify_threshold_type, u.total_recharged
 	`, pq.Array(userIDs), pq.Array(amounts))
 	if err != nil {
 		return nil, err
@@ -253,11 +337,18 @@ func applyUsageBalanceSettlementTotals(
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var userID int64
-		var balance float64
-		if err := rows.Scan(&userID, &balance); err != nil {
+		var settled settledUserBalance
+		if err := rows.Scan(
+			&userID,
+			&settled.balance,
+			&settled.notifyEnabled,
+			&settled.notifyThreshold,
+			&settled.notifyThresholdType,
+			&settled.totalRecharged,
+		); err != nil {
 			return nil, err
 		}
-		balances[userID] = balance
+		balances[userID] = settled
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -34,7 +34,7 @@
 
 本部署默认关闭余额预扣（`BILLING_BALANCE_PREAUTHORIZATION_ENABLED=false`）。没有单独评审不要打开。
 
-余额扣费默认逐请求同步结算。可选的持久化合并结算（`BILLING_BALANCE_MERGE_SETTLEMENT_ENABLED=false`）把每笔扣费先写入 `billing_balance_settlements`，再由结算 worker 把同一用户的待结算扣费合并成一次 `users.balance` 更新，消除单用户高并发下的行锁排队。金额、最终余额、失败语义都不变；回滚只需把开关置回 `false` 并重启，队列里的扣费仍会继续结算。
+余额扣费默认逐请求同步结算。可选的持久化合并结算（`BILLING_BALANCE_MERGE_SETTLEMENT_ENABLED=false`）把每笔扣费先写入 `billing_balance_settlements`，再由结算 worker 把同一用户的待结算扣费合并成一次 `users.balance` 更新，消除单用户高并发下的行锁排队。金额、最终余额、失败语义都不变；回滚只需把开关置回 `false` 并重启，队列里的扣费仍会继续结算。开启后还有积压保护：待结算扣费超过 `BILLING_BALANCE_MERGE_SETTLEMENT_MAX_BACKLOG` 笔（默认 20000），或最老一笔等待超过 `BILLING_BALANCE_MERGE_SETTLEMENT_MAX_AGE_SECONDS` 秒（默认 30），本进程的新扣费就退回逐请求同步结算，直到积压回落到阈值的一半以下（已在队列里的扣费继续结算）；队列深度、最老等待时间和是否已退回见 `GET /api/v1/admin/ops/live-balance-outbox/health` 的 `balance_settlement`。
 
 ## 功能
 

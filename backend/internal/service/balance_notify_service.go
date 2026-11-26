@@ -53,7 +53,14 @@ type BalanceNotifyService struct {
 	settingRepo              SettingRepository
 	accountRepo              AccountQuotaReader
 	notificationEmailService *NotificationEmailService
+	pushNotifierMu           sync.RWMutex
 	pushNotifier             PushNotifier
+
+	// Merge-settlement low-balance alerts (see balance_notify_settlement.go).
+	userReader       balanceNotifyUserReader
+	settlementAlerts settlementAlertTracker
+	clock            func() time.Time // test hook; nil means time.Now
+	loadRetryBackoff time.Duration    // test hook; zero means the default backoff
 }
 
 // NewBalanceNotifyService creates a new BalanceNotifyService.
@@ -71,7 +78,22 @@ func (s *BalanceNotifyService) SetNotificationEmailService(notificationEmailServ
 
 // SetPushNotifier wires the optional push channel (Bark). Nil disables it.
 func (s *BalanceNotifyService) SetPushNotifier(n PushNotifier) {
+	if s == nil {
+		return
+	}
+	s.pushNotifierMu.Lock()
 	s.pushNotifier = n
+	s.pushNotifierMu.Unlock()
+}
+
+func (s *BalanceNotifyService) getPushNotifier() PushNotifier {
+	if s == nil {
+		return nil
+	}
+	s.pushNotifierMu.RLock()
+	n := s.pushNotifier
+	s.pushNotifierMu.RUnlock()
+	return n
 }
 
 // resolveBalanceThreshold returns the effective balance threshold.
@@ -154,18 +176,26 @@ func (s *BalanceNotifyService) resolveUserEffectiveThreshold(ctx context.Context
 	if !globalEnabled {
 		return 0, "", false
 	}
+	effectiveThreshold, ok = resolveUserEffectiveThresholdFromGlobal(user, globalThreshold)
+	if !ok {
+		return 0, "", false
+	}
+	return effectiveThreshold, rechargeURL, true
+}
+
+func resolveUserEffectiveThresholdFromGlobal(user *User, globalThreshold float64) (float64, bool) {
 	threshold := globalThreshold
 	if user.BalanceNotifyThreshold != nil {
 		threshold = *user.BalanceNotifyThreshold
 	}
 	if threshold <= 0 {
-		return 0, "", false
+		return 0, false
 	}
-	effectiveThreshold = resolveBalanceThreshold(threshold, user.BalanceNotifyThresholdType, user.TotalRecharged)
+	effectiveThreshold := resolveBalanceThreshold(threshold, user.BalanceNotifyThresholdType, user.TotalRecharged)
 	if effectiveThreshold <= 0 {
-		return 0, "", false
+		return 0, false
 	}
-	return effectiveThreshold, rechargeURL, true
+	return effectiveThreshold, true
 }
 
 // crossedDownward returns true when oldV was at-or-above threshold but newV dropped below it.
@@ -176,6 +206,10 @@ func crossedDownward(oldV, newV, threshold float64) bool {
 // dispatchBalanceLowEmail collects recipients and sends the alert in a goroutine.
 func (s *BalanceNotifyService) dispatchBalanceLowEmail(ctx context.Context, user *User, newBalance, threshold float64, rechargeURL string) {
 	siteName := s.getSiteName(ctx)
+	s.dispatchBalanceLowEmailWithSiteName(user, newBalance, threshold, siteName, rechargeURL)
+}
+
+func (s *BalanceNotifyService) dispatchBalanceLowEmailWithSiteName(user *User, newBalance, threshold float64, siteName, rechargeURL string) {
 	recipients := s.collectBalanceNotifyRecipients(user)
 	slog.Info("CheckBalanceAfterDeduction: sending notification",
 		"user_id", user.ID, "recipients", recipients, "new_balance", newBalance, "threshold", threshold)
@@ -194,10 +228,11 @@ func (s *BalanceNotifyService) dispatchBalanceLowEmail(ctx context.Context, user
 // pushUserBalanceLow sends the phone push for a low balance. Push failures
 // are logged, never fatal: the email path still runs.
 func (s *BalanceNotifyService) pushUserBalanceLow(user *User, newBalance, threshold float64) {
-	if s.pushNotifier == nil {
+	notifier := s.getPushNotifier()
+	if notifier == nil {
 		return
 	}
-	err := s.pushNotifier.PushToUser(context.Background(), user.ID,
+	err := notifier.PushToUser(context.Background(), user.ID,
 		"余额不足",
 		fmt.Sprintf("当前余额 %.2f，已低于提醒阈值 %.2f，请及时充值", newBalance, threshold),
 		"balance")

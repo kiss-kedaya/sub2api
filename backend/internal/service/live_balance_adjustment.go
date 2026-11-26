@@ -90,6 +90,32 @@ type liveBalanceWatermarkedAdjustmentBatchCache interface {
 	) (LiveBalanceResult, error)
 }
 
+func (s *BillingCacheService) mergeSettlementEnabled() bool {
+	return s != nil && s.cfg != nil && s.cfg.Billing.BalanceMergeSettlementEnabled
+}
+
+// shouldInvalidateLegacyBalanceForOutbox reports whether an outbox delivery
+// should delete the legacy short-lived balance cache (billing:balance:{uid}).
+//
+// While merge settlement is enabled, users.balance lags behind unsettled rows
+// in billing_balance_settlements. Deleting billing:balance:{uid} on negative
+// debits emitted by settlement flushes or synchronous fallback would force the
+// next request to reload the higher database balance and resurrect unsettled
+// charges. Positive deltas (top-ups, refunds) still invalidate immediately;
+// in-app negative adjustments (admin/refund deductions) deduct the legacy cache
+// relatively via syncCommittedLiveBalanceAdjustment.
+func (s *BillingCacheService) shouldInvalidateLegacyBalanceForOutbox(events ...LiveBalanceAdjustmentEvent) bool {
+	if !s.mergeSettlementEnabled() {
+		return true
+	}
+	for _, event := range events {
+		if event.DeltaUnits > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *BillingCacheService) ApplyExternalBalanceOutboxAdjustment(
 	ctx context.Context,
 	event LiveBalanceAdjustmentEvent,
@@ -101,8 +127,10 @@ func (s *BillingCacheService) ApplyExternalBalanceOutboxAdjustment(
 	if !ok {
 		return errors.New("live balance cache does not support outbox watermarks")
 	}
-	if err := s.cache.InvalidateUserBalance(ctx, event.UserID); err != nil {
-		return fmt.Errorf("invalidate legacy balance cache: %w", err)
+	if s.shouldInvalidateLegacyBalanceForOutbox(event) {
+		if err := s.cache.InvalidateUserBalance(ctx, event.UserID); err != nil {
+			return fmt.Errorf("invalidate legacy balance cache: %w", err)
+		}
 	}
 	result, err := cache.AdjustLiveBalanceAtWatermark(
 		ctx,
@@ -163,8 +191,10 @@ func (s *BillingCacheService) ApplyExternalBalanceOutboxAdjustments(
 	if !ok {
 		return errors.New("live balance cache does not support batched outbox watermarks")
 	}
-	if err := s.cache.InvalidateUserBalance(ctx, userID); err != nil {
-		return fmt.Errorf("invalidate legacy balance cache: %w", err)
+	if s.shouldInvalidateLegacyBalanceForOutbox(events...) {
+		if err := s.cache.InvalidateUserBalance(ctx, userID); err != nil {
+			return fmt.Errorf("invalidate legacy balance cache: %w", err)
+		}
 	}
 	result, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, userID, events)
 	if err != nil {
@@ -213,11 +243,28 @@ func applyExternalBalanceAdjustmentToCache(ctx context.Context, cache BillingCac
 	}
 }
 
-// syncCommittedLiveBalanceAdjustment only clears the legacy short-lived cache.
-// The database trigger and durable outbox worker are the sole delivery path for
-// persistent live-wallet deltas, preventing a request-thread/outbox double apply.
+// syncCommittedLiveBalanceAdjustment updates the legacy short-lived balance cache
+// after a committed external balance change. The database trigger and durable
+// outbox worker are the sole delivery path for persistent live-wallet deltas,
+// preventing a request-thread/outbox double apply.
+//
+// While merge settlement is enabled, negative adjustments (admin deductions,
+// refund deductions) deduct the cached balance relatively instead of deleting
+// billing:balance:{uid}, avoiding cache resurrection of unsettled queued charges.
+// Positive deltas still invalidate immediately; flag-off keeps legacy invalidation.
 func syncCommittedLiveBalanceAdjustment(cache *BillingCacheService, userID int64, eventID string, delta float64) {
-	if cache == nil || delta == 0 {
+	if cache == nil || delta == 0 || math.IsNaN(delta) || math.IsInf(delta, 0) {
+		return
+	}
+	if cache.mergeSettlementEnabled() && delta < 0 {
+		syncCommittedLiveBalanceAdjustmentWith(
+			func(ctx context.Context) error {
+				return cache.DeductBalanceCache(ctx, userID, -delta)
+			},
+			userID,
+			eventID,
+			delta,
+		)
 		return
 	}
 	syncCommittedLiveBalanceAdjustmentWith(
@@ -231,7 +278,7 @@ func syncCommittedLiveBalanceAdjustment(cache *BillingCacheService, userID int64
 }
 
 func syncCommittedRawLiveBalanceAdjustment(cache BillingCache, userID int64, eventID string, delta float64) {
-	if cache == nil || delta == 0 {
+	if cache == nil || delta == 0 || math.IsNaN(delta) || math.IsInf(delta, 0) {
 		return
 	}
 	syncCommittedLiveBalanceAdjustmentWith(
