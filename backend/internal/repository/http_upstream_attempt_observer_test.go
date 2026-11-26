@@ -38,13 +38,19 @@ func (r *upstreamAttemptRecorder) snapshot() []recordedUpstreamAttempt {
 	return append([]recordedUpstreamAttempt(nil), r.attempts...)
 }
 
+// observableOf 取出真实传输层的观察者注册接口（断言失败直接让测试失败，不能悄悄跳过）。
+func observableOf(t *testing.T, up service.HTTPUpstream) service.UpstreamAttemptObservable {
+	t.Helper()
+	observable, ok := up.(service.UpstreamAttemptObservable)
+	require.True(t, ok, "the real transport must accept an attempt observer")
+	return observable
+}
+
 func newObservedUpstream(t *testing.T) (service.HTTPUpstream, *upstreamAttemptRecorder) {
 	t.Helper()
 	up := NewHTTPUpstream(nil)
-	observable, ok := up.(service.UpstreamAttemptObservable)
-	require.True(t, ok, "the real transport must accept an attempt observer")
 	rec := &upstreamAttemptRecorder{}
-	observable.SetUpstreamAttemptObserver(rec)
+	observableOf(t, up).SetUpstreamAttemptObserver(rec)
 	return up, rec
 }
 
@@ -139,7 +145,7 @@ func TestHTTPUpstreamObserverCannotBreakForwarding(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	up := NewHTTPUpstream(nil)
-	up.(service.UpstreamAttemptObservable).SetUpstreamAttemptObserver(panickingObserver{})
+	observableOf(t, up).SetUpstreamAttemptObserver(panickingObserver{})
 	require.NotPanics(t, func() {
 		resp, err := up.Do(gatewayRequest(t, srv.URL), "", 1, 1)
 		require.NoError(t, err)
@@ -147,7 +153,7 @@ func TestHTTPUpstreamObserverCannotBreakForwarding(t *testing.T) {
 	})
 
 	// 没有注册观察者 / 注销观察者：照常工作
-	up.(service.UpstreamAttemptObservable).SetUpstreamAttemptObserver(nil)
+	observableOf(t, up).SetUpstreamAttemptObserver(nil)
 	resp, err := up.Do(gatewayRequest(t, srv.URL), "", 1, 1)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())

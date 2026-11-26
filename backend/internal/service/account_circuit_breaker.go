@@ -391,12 +391,20 @@ func (b *AccountCircuitBreaker) ObserveUpstreamAttempt(ctx context.Context, acco
 	}
 }
 
+// stateFor 取（必要时创建）账号状态。map 里只会存 *accountCircuitState，类型断言失败不可能发生，
+// 但仍然按 comma-ok 写，失败时退回一个临时状态而不是 panic。
 func (b *AccountCircuitBreaker) stateFor(id int64) *accountCircuitState {
 	if v, ok := b.states.Load(id); ok {
-		return v.(*accountCircuitState) //nolint:errcheck // 只存这一种类型
+		if st, ok := v.(*accountCircuitState); ok {
+			return st
+		}
 	}
-	v, _ := b.states.LoadOrStore(id, &accountCircuitState{id: id})
-	return v.(*accountCircuitState) //nolint:errcheck // 只存这一种类型
+	fresh := &accountCircuitState{id: id}
+	actual, _ := b.states.LoadOrStore(id, fresh)
+	if st, ok := actual.(*accountCircuitState); ok {
+		return st
+	}
+	return fresh
 }
 
 func (b *AccountCircuitBreaker) record(id int64, ctx context.Context, failed bool) {
@@ -639,7 +647,10 @@ func (b *AccountCircuitBreaker) OpenUntil(accountID int64) (time.Time, bool) {
 	if !ok {
 		return time.Time{}, false
 	}
-	st := v.(*accountCircuitState) //nolint:errcheck // 只存这一种类型
+	st, ok := v.(*accountCircuitState)
+	if !ok {
+		return time.Time{}, false
+	}
 	open := st.openUntil.Load()
 	if open == 0 || b.now().UnixNano() >= open {
 		return time.Time{}, false
@@ -656,7 +667,10 @@ func (b *AccountCircuitBreaker) Reset(accountID int64) {
 	if !ok {
 		return
 	}
-	st := v.(*accountCircuitState) //nolint:errcheck // 只存这一种类型
+	st, ok := v.(*accountCircuitState)
+	if !ok {
+		return
+	}
 	st.tripMu.Lock()
 	defer st.tripMu.Unlock()
 	st.openUntil.Store(0)
@@ -706,7 +720,10 @@ func (b *AccountCircuitBreaker) sweep(nowN int64) {
 	idleEpochs := uint64(idleNanos/b.bucketNanos) + 1
 	curEpoch := uint64(nowN / b.bucketNanos)
 	b.states.Range(func(k, v any) bool {
-		st := v.(*accountCircuitState) //nolint:errcheck // 只存这一种类型
+		st, ok := v.(*accountCircuitState)
+		if !ok {
+			return true
+		}
 		if open := st.openUntil.Load(); open != 0 {
 			if nowN < open {
 				return true
@@ -850,8 +867,8 @@ func (b *AccountCircuitBreaker) valveBlocks(platform string, self int64, nowN in
 	}
 	active := 0
 	b.states.Range(func(_, v any) bool {
-		st := v.(*accountCircuitState) //nolint:errcheck // 只存这一种类型
-		if st.platformName() != platform {
+		st, ok := v.(*accountCircuitState)
+		if !ok || st.platformName() != platform {
 			return true
 		}
 		if open := st.openUntil.Load(); open != 0 && nowN < open {
