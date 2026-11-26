@@ -92,23 +92,41 @@ func (s *BalanceNotifyService) settlementNow() time.Time {
 
 // ObserveBalanceSettlements 实现 UsageBalanceSettlementObserver：对一次已提交的结算 flush
 // 里的每个用户判断是否向下穿越了余额提醒阈值，穿越且不在冷却期内才发提醒。
-func (s *BalanceNotifyService) ObserveBalanceSettlements(results []UsageBalanceSettlementResult) {
-	if s == nil || s.userReader == nil || s.emailService == nil || s.settingRepo == nil {
+func (s *BalanceNotifyService) ObserveBalanceSettlements(ctx context.Context, results []UsageBalanceSettlementResult) {
+	if s == nil || s.userReader == nil || s.emailService == nil || s.settingRepo == nil || len(results) == 0 {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	cfgCtx, cancel := context.WithTimeout(ctx, settlementLowBalanceLoadTimeout)
+	globalEnabled, globalThreshold, rechargeURL := s.getBalanceNotifyConfig(cfgCtx)
+	cancel()
+	if !globalEnabled || ctx.Err() != nil {
 		return
 	}
 	for i := range results {
-		s.observeSettledBalance(&results[i])
+		if ctx.Err() != nil {
+			return
+		}
+		s.observeSettledBalance(ctx, &results[i], globalThreshold, rechargeURL)
 	}
 }
 
-func (s *BalanceNotifyService) observeSettledBalance(r *UsageBalanceSettlementResult) {
+func (s *BalanceNotifyService) observeSettledBalance(
+	ctx context.Context,
+	r *UsageBalanceSettlementResult,
+	globalThreshold float64,
+	rechargeURL string,
+) {
 	if !r.NotifyEnabled {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), settlementLowBalanceLoadTimeout)
-	defer cancel()
-
-	// 提醒偏好来自结算那条 UPDATE 的 RETURNING，不需要读库就能解析出有效阈值。
+	// 提醒偏好来自结算那条 UPDATE 的 RETURNING，全局设置已在批次入口读过一次，
+	// 这里不需要任何额外的读库查询就能解析出有效阈值。
 	probe := &User{
 		ID:                         r.UserID,
 		BalanceNotifyEnabled:       true,
@@ -116,7 +134,7 @@ func (s *BalanceNotifyService) observeSettledBalance(r *UsageBalanceSettlementRe
 		BalanceNotifyThresholdType: r.NotifyThresholdType,
 		TotalRecharged:             r.TotalRecharged,
 	}
-	threshold, rechargeURL, ok := s.resolveUserEffectiveThreshold(ctx, probe)
+	threshold, ok := resolveUserEffectiveThresholdFromGlobal(probe, globalThreshold)
 	if !ok {
 		return
 	}
@@ -125,23 +143,34 @@ func (s *BalanceNotifyService) observeSettledBalance(r *UsageBalanceSettlementRe
 	if !crossedDownward(oldBalance, newBalance, threshold) {
 		return
 	}
+	if ctx.Err() != nil {
+		return
+	}
 	if !s.settlementAlerts.claim(r.UserID, s.settlementNow(), settlementLowBalanceCooldown) {
 		return
 	}
-	user, err := s.loadAlertUser(ctx, r.UserID)
+	userCtx, cancel := context.WithTimeout(ctx, settlementLowBalanceLoadTimeout)
+	defer cancel()
+
+	user, err := s.loadAlertUser(userCtx, r.UserID)
 	if err != nil {
 		s.settlementAlerts.release(r.UserID)
 		slog.Warn("settlement low balance alert skipped: user unavailable", "user_id", r.UserID, "error", err)
 		return
 	}
 	if !user.BalanceNotifyEnabled {
-		// 用户在这次 flush 之后刚把提醒关掉。
+		// 用户在这次 flush 之后刚把提醒关掉；未发出提醒时释放冷却槽。
+		s.settlementAlerts.release(r.UserID)
 		return
 	}
-	s.dispatchBalanceLowEmail(ctx, user, newBalance, threshold, rechargeURL)
+	if ctx.Err() != nil {
+		s.settlementAlerts.release(r.UserID)
+		return
+	}
+	s.dispatchBalanceLowEmail(userCtx, user, newBalance, threshold, rechargeURL)
 }
 
-// loadAlertUser 读取收件人所需的完整用户，瞬时失败时有限次重试。用户已不存在时不重试。
+// loadAlertUser 读取收件人所需的完整用户，瞬时失败时有限次重试。用户已不存在或上下文取消时不重试。
 func (s *BalanceNotifyService) loadAlertUser(ctx context.Context, userID int64) (*User, error) {
 	backoff := settlementLowBalanceLoadBackoff
 	if s.loadRetryBackoff > 0 {
@@ -149,11 +178,16 @@ func (s *BalanceNotifyService) loadAlertUser(ctx context.Context, userID int64) 
 	}
 	var lastErr error
 	for attempt := 0; attempt < settlementLowBalanceLoadAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return nil, errors.Join(lastErr, ctx.Err())
+		}
 		if attempt > 0 {
+			timer := time.NewTimer(time.Duration(attempt) * backoff)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return nil, errors.Join(lastErr, ctx.Err())
-			case <-time.After(time.Duration(attempt) * backoff):
+			case <-timer.C:
 			}
 		}
 		user, err := s.userReader.GetByID(ctx, userID)
@@ -164,7 +198,7 @@ func (s *BalanceNotifyService) loadAlertUser(ctx context.Context, userID int64) 
 			err = ErrUserNotFound
 		}
 		lastErr = err
-		if errors.Is(err, ErrUserNotFound) {
+		if errors.Is(err, ErrUserNotFound) || ctx.Err() != nil {
 			break
 		}
 	}

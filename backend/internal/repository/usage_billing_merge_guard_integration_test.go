@@ -195,7 +195,7 @@ func TestBalanceSettlementBacklogQueryNeverScansTheWholeTable(t *testing.T) {
 	planOf := func() string {
 		var plan string
 		require.NoError(t, tx.QueryRowContext(ctx, `EXPLAIN (FORMAT JSON) `+balanceSettlementBacklogSQL,
-			service.BalanceSettlementPending, int64(20000), balanceSettlementOldestProbeRows).Scan(&plan))
+			int64(20000), balanceSettlementOldestProbeRows).Scan(&plan))
 		return plan
 	}
 
@@ -203,6 +203,20 @@ func TestBalanceSettlementBacklogQueryNeverScansTheWholeTable(t *testing.T) {
 	require.NotContains(t, natural, "Seq Scan", "plan the production data shape would get:\n%s", natural)
 	require.Contains(t, natural, "idx_billing_balance_settlements_pending")
 	require.NotContains(t, natural, `"Node Type": "Sort"`, "the oldest-row probe takes the index order, it never sorts the pending set")
+
+	// Under force_generic_plan (prepared statements), the literal status = 3 must
+	// still match the partial index instead of falling back to a full table scan.
+	_, err = tx.ExecContext(ctx, `SET LOCAL plan_cache_mode = force_generic_plan`)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, `PREPARE backlog_generic_plan(bigint, integer) AS `+balanceSettlementBacklogSQL)
+	require.NoError(t, err)
+	defer func() { _, _ = tx.Exec(`DEALLOCATE backlog_generic_plan`) }()
+	var generic string
+	require.NoError(t, tx.QueryRowContext(ctx,
+		`EXPLAIN (FORMAT JSON) EXECUTE backlog_generic_plan(20000, 256)`).Scan(&generic))
+	require.NotContains(t, generic, "Seq Scan", "generic plan must not scan the whole table:\n%s", generic)
+	require.Contains(t, generic, "idx_billing_balance_settlements_pending")
+	require.NotContains(t, generic, `"Node Type": "Sort"`)
 
 	// With sequential scans forbidden the index must still be the way the query is
 	// answered (it proves the status predicate really matches the partial index).
@@ -454,7 +468,7 @@ type integrationObserverSpy struct {
 	results []service.UsageBalanceSettlementResult
 }
 
-func (s *integrationObserverSpy) ObserveBalanceSettlements(results []service.UsageBalanceSettlementResult) {
+func (s *integrationObserverSpy) ObserveBalanceSettlements(_ context.Context, results []service.UsageBalanceSettlementResult) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.results = append(s.results, results...)

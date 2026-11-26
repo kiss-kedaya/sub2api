@@ -316,8 +316,10 @@ func (r *usageBillingRepository) balanceMergeSettlementActive() bool {
 		return false
 	}
 	if !service.UsageBalanceSettlementConsumerRunning() {
-		if now := time.Now().UnixNano(); now-r.lastMergeFallbackLog.Load() >= int64(usageBillingMergeFallbackLogInterval) &&
-			r.lastMergeFallbackLog.CompareAndSwap(r.lastMergeFallbackLog.Load(), now) {
+		now := time.Now().UnixNano()
+		prev := r.lastMergeFallbackLog.Load()
+		if now-prev >= int64(usageBillingMergeFallbackLogInterval) &&
+			r.lastMergeFallbackLog.CompareAndSwap(prev, now) {
 			logger.LegacyPrintf("repository.usage_billing",
 				"ALERT: billing.balance_merge_settlement_enabled=true but no balance settlement consumer is running; falling back to synchronous balance deduction")
 		}

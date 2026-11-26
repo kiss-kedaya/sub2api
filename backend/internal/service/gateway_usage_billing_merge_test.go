@@ -194,3 +194,218 @@ func TestBalanceLowOwnedBySettlementWorker(t *testing.T) {
 	require.False(t, balanceLowOwnedBySettlementWorker(&UsageBillingApplyResult{Applied: true}))
 	require.False(t, balanceLowOwnedBySettlementWorker(nil))
 }
+
+func TestGatewayBillingDepsPropagateMergeSettlementConfig(t *testing.T) {
+	enabledCfg := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: true}}
+	disabledCfg := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: false}}
+
+	require.True(t, (&GatewayService{cfg: enabledCfg}).billingDeps().mergeSettlementEnabled())
+	require.False(t, (&GatewayService{cfg: disabledCfg}).billingDeps().mergeSettlementEnabled())
+	require.False(t, (&GatewayService{}).billingDeps().mergeSettlementEnabled())
+
+	require.True(t, (&OpenAIGatewayService{cfg: enabledCfg}).billingDeps().mergeSettlementEnabled())
+	require.False(t, (&OpenAIGatewayService{cfg: disabledCfg}).billingDeps().mergeSettlementEnabled())
+	require.False(t, (&OpenAIGatewayService{}).billingDeps().mergeSettlementEnabled())
+}
+
+type deferredMediaJobRepoStub struct {
+	MediaBillingJobRepository
+	result    *UsageBillingApplyResult
+	completed bool
+}
+
+func (s *deferredMediaJobRepoStub) ApplyMediaBillingJob(context.Context, string) (*UsageBillingApplyResult, error) {
+	return s.result, nil
+}
+
+func (s *deferredMediaJobRepoStub) CompleteMediaBillingJob(context.Context, string) error {
+	s.completed = true
+	return nil
+}
+
+type deferredUsageBillingRepoStub struct {
+	UsageBillingRepository
+	result *UsageBillingApplyResult
+}
+
+func (s *deferredUsageBillingRepoStub) Apply(context.Context, *UsageBillingCommand) (*UsageBillingApplyResult, error) {
+	return s.result, nil
+}
+
+func TestMediaBillingSettlement_DeferredUsesRelativeCacheDeduction(t *testing.T) {
+	newJob := func() *MediaBillingJob {
+		return &MediaBillingJob{
+			ID:      "media_img_1",
+			Kind:    MediaBillingKindImage,
+			UserID:  42,
+			GroupID: 9,
+			Intent: &MediaBillingIntent{
+				Command: UsageBillingCommand{
+					RequestID:   "req-img-1",
+					APIKeyID:    7,
+					UserID:      42,
+					AccountID:   11,
+					BalanceCost: 1.5,
+				},
+				Usage: UsageLog{
+					RequestID:  "req-img-1",
+					APIKeyID:   7,
+					UserID:     42,
+					AccountID:  11,
+					ActualCost: 1.5,
+					TotalCost:  1.5,
+				},
+			},
+		}
+	}
+
+	t.Run("deferred settlement deducts cache relatively instead of invalidating", func(t *testing.T) {
+		cache := &balanceEligibilityCacheStub{balance: 100}
+		cfg := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: true}}
+		cacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+		t.Cleanup(cacheSvc.Stop)
+		jobRepo := &deferredMediaJobRepoStub{result: deferredResult()}
+		svc := &OpenAIGatewayService{
+			cfg:                 cfg,
+			mediaBillingJobs:    jobRepo,
+			billingCacheService: cacheSvc,
+			usageLogRepo:        &mediaUsageMemoryRepo{},
+		}
+
+		require.NoError(t, svc.settleMediaBillingJob(context.Background(), newJob(), nil))
+		require.True(t, jobRepo.completed)
+		require.Eventually(t, func() bool { return cache.deductCalls.Load() == 1 }, 2*time.Second, 5*time.Millisecond)
+		require.Zero(t, cache.invalidateCalls.Load(), "deferred media billing must not invalidate and resurrect unsettled balance")
+	})
+
+	t.Run("merge enabled backlog fallback also deducts relatively instead of invalidating", func(t *testing.T) {
+		cache := &balanceEligibilityCacheStub{balance: 100}
+		cfg := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: true, MinimumBalanceReserve: 0.01}}
+		cacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+		t.Cleanup(cacheSvc.Stop)
+		newBalance := 98.5
+		jobRepo := &deferredMediaJobRepoStub{result: &UsageBillingApplyResult{Applied: true, NewBalance: &newBalance}}
+		svc := &OpenAIGatewayService{
+			cfg:                 cfg,
+			mediaBillingJobs:    jobRepo,
+			billingCacheService: cacheSvc,
+			usageLogRepo:        &mediaUsageMemoryRepo{},
+		}
+
+		require.NoError(t, svc.settleMediaBillingJob(context.Background(), newJob(), nil))
+		require.Eventually(t, func() bool { return cache.deductCalls.Load() == 1 }, 2*time.Second, 5*time.Millisecond)
+		require.Zero(t, cache.invalidateCalls.Load())
+	})
+
+	t.Run("merge enabled duplicate retry does not double-deduct or invalidate", func(t *testing.T) {
+		cache := &balanceEligibilityCacheStub{balance: 100}
+		cfg := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: true}}
+		cacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+		t.Cleanup(cacheSvc.Stop)
+		jobRepo := &deferredMediaJobRepoStub{result: &UsageBillingApplyResult{Applied: false}}
+		svc := &OpenAIGatewayService{
+			cfg:                 cfg,
+			mediaBillingJobs:    jobRepo,
+			billingCacheService: cacheSvc,
+			usageLogRepo:        &mediaUsageMemoryRepo{},
+		}
+
+		require.NoError(t, svc.settleMediaBillingJob(context.Background(), newJob(), nil))
+		require.Never(t, func() bool { return cache.deductCalls.Load() > 0 || cache.invalidateCalls.Load() > 0 }, 100*time.Millisecond, 10*time.Millisecond)
+	})
+
+	t.Run("flag off keeps legacy invalidation", func(t *testing.T) {
+		cache := &balanceEligibilityCacheStub{balance: 100}
+		cfg := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: false, MinimumBalanceReserve: 0.01}}
+		cacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+		t.Cleanup(cacheSvc.Stop)
+		newBalance := 98.5
+		jobRepo := &deferredMediaJobRepoStub{result: &UsageBillingApplyResult{Applied: true, NewBalance: &newBalance}}
+		svc := &OpenAIGatewayService{
+			cfg:                 cfg,
+			mediaBillingJobs:    jobRepo,
+			billingCacheService: cacheSvc,
+			usageLogRepo:        &mediaUsageMemoryRepo{},
+		}
+
+		require.NoError(t, svc.settleMediaBillingJob(context.Background(), newJob(), nil))
+		require.Equal(t, int64(1), cache.invalidateCalls.Load())
+		require.Zero(t, cache.deductCalls.Load())
+	})
+}
+
+func TestGeminiCachedContentCharge_DeferredUsesRelativeCacheDeduction(t *testing.T) {
+	newIntent := func() *MediaBillingIntent {
+		reqID := GeminiCachedContentUsageRequestIDPrefix + "cache-1"
+		return &MediaBillingIntent{
+			Command: UsageBillingCommand{
+				RequestID:   reqID,
+				APIKeyID:    7,
+				UserID:      42,
+				AccountID:   11,
+				BalanceCost: 0.75,
+			},
+			Usage: UsageLog{
+				RequestID:  reqID,
+				APIKeyID:   7,
+				UserID:     42,
+				AccountID:  11,
+				ActualCost: 0.75,
+				TotalCost:  0.75,
+			},
+		}
+	}
+
+	t.Run("deferred charge deducts cache relatively instead of invalidating", func(t *testing.T) {
+		cache := &balanceEligibilityCacheStub{balance: 100}
+		cfg := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: true}}
+		cacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+		t.Cleanup(cacheSvc.Stop)
+		svc := &GatewayService{
+			cfg:                 cfg,
+			usageBillingRepo:    &deferredUsageBillingRepoStub{result: deferredResult()},
+			billingCacheService: cacheSvc,
+			usageLogRepo:        &mediaUsageMemoryRepo{},
+		}
+
+		require.NoError(t, svc.ApplyCachedContentCharge(context.Background(), newIntent()))
+		require.Eventually(t, func() bool { return cache.deductCalls.Load() == 1 }, 2*time.Second, 5*time.Millisecond)
+		require.Zero(t, cache.invalidateCalls.Load(), "deferred cached content charge must not invalidate and resurrect unsettled balance")
+	})
+
+	t.Run("merge enabled backlog fallback deducts relatively instead of invalidating", func(t *testing.T) {
+		cache := &balanceEligibilityCacheStub{balance: 100}
+		cfg := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: true, MinimumBalanceReserve: 0.01}}
+		cacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+		t.Cleanup(cacheSvc.Stop)
+		newBalance := 99.25
+		svc := &GatewayService{
+			cfg:                 cfg,
+			usageBillingRepo:    &deferredUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true, NewBalance: &newBalance}},
+			billingCacheService: cacheSvc,
+			usageLogRepo:        &mediaUsageMemoryRepo{},
+		}
+
+		require.NoError(t, svc.ApplyCachedContentCharge(context.Background(), newIntent()))
+		require.Eventually(t, func() bool { return cache.deductCalls.Load() == 1 }, 2*time.Second, 5*time.Millisecond)
+		require.Zero(t, cache.invalidateCalls.Load())
+	})
+
+	t.Run("flag off keeps legacy invalidation", func(t *testing.T) {
+		cache := &balanceEligibilityCacheStub{balance: 100}
+		cfg := &config.Config{Billing: config.BillingConfig{BalanceMergeSettlementEnabled: false}}
+		cacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+		t.Cleanup(cacheSvc.Stop)
+		newBalance := 99.25
+		svc := &GatewayService{
+			cfg:                 cfg,
+			usageBillingRepo:    &deferredUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true, NewBalance: &newBalance}},
+			billingCacheService: cacheSvc,
+			usageLogRepo:        &mediaUsageMemoryRepo{},
+		}
+
+		require.NoError(t, svc.ApplyCachedContentCharge(context.Background(), newIntent()))
+		require.Equal(t, int64(1), cache.invalidateCalls.Load())
+		require.Zero(t, cache.deductCalls.Load())
+	})
+}

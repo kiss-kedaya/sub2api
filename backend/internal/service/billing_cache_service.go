@@ -475,6 +475,24 @@ func (s *BillingCacheService) QueueDeductBalance(userID int64, amount float64) {
 	}
 }
 
+// deductBalanceCacheRelative updates the legacy short-lived balance cache by a
+// relative decrement instead of invalidating or publishing a lagging DB row.
+// When in-flight reservations are enabled, it deducts synchronously first so
+// admission immediately sees the post-charge cache before the reservation ends.
+func (s *BillingCacheService) deductBalanceCacheRelative(ctx context.Context, userID int64, amount float64, logTag string) {
+	if s == nil || amount <= 0 {
+		return
+	}
+	if s.InflightReservationEnabled() {
+		if err := s.DeductBalanceCache(ctx, userID, amount); err == nil {
+			return
+		} else {
+			logger.LegacyPrintf(logTag, "Warning: sync deduct balance cache failed for user %d, falling back to queue: %v", userID, err)
+		}
+	}
+	s.QueueDeductBalance(userID, amount)
+}
+
 // InvalidateUserBalance 失效用户余额缓存
 func (s *BillingCacheService) InvalidateUserBalance(ctx context.Context, userID int64) error {
 	if s.cache == nil {

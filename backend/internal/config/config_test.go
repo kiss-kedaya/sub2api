@@ -121,6 +121,32 @@ func TestLoadBalanceMergeSettlementGuardEnvOverrides(t *testing.T) {
 	require.Equal(t, 0, cfg.Billing.BalanceMergeSettlementMaxAgeSeconds)
 }
 
+func TestLoadBalanceMergeSettlementGuardUpperBounds(t *testing.T) {
+	t.Run("accepts exact upper bounds", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+		t.Setenv("BILLING_BALANCE_MERGE_SETTLEMENT_MAX_BACKLOG", "1000000")
+		t.Setenv("BILLING_BALANCE_MERGE_SETTLEMENT_MAX_AGE_SECONDS", "86400")
+		cfg, err := Load()
+		require.NoError(t, err)
+		require.Equal(t, 1_000_000, cfg.Billing.BalanceMergeSettlementMaxBacklog)
+		require.Equal(t, 86400, cfg.Billing.BalanceMergeSettlementMaxAgeSeconds)
+	})
+
+	t.Run("rejects backlog above upper bound", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+		t.Setenv("BILLING_BALANCE_MERGE_SETTLEMENT_MAX_BACKLOG", "1000001")
+		_, err := Load()
+		require.ErrorContains(t, err, "billing.balance_merge_settlement_max_backlog")
+	})
+
+	t.Run("rejects max age above upper bound", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+		t.Setenv("BILLING_BALANCE_MERGE_SETTLEMENT_MAX_AGE_SECONDS", "86401")
+		_, err := Load()
+		require.ErrorContains(t, err, "billing.balance_merge_settlement_max_age_seconds")
+	})
+}
+
 func TestLoadSchedulerRequestFreshnessCanBeEnabledForEmergencyCompatibility(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	t.Setenv("GATEWAY_SCHEDULING_REQUEST_FRESHNESS_ENABLED", "true")
@@ -1904,8 +1930,18 @@ func TestValidateConfigErrors(t *testing.T) {
 			wantErr: "billing.balance_merge_settlement_max_backlog",
 		},
 		{
+			name:    "billing balance merge settlement max backlog exceeds upper bound",
+			mutate:  func(c *Config) { c.Billing.BalanceMergeSettlementMaxBacklog = 1_000_001 },
+			wantErr: "billing.balance_merge_settlement_max_backlog",
+		},
+		{
 			name:    "billing balance merge settlement max age",
 			mutate:  func(c *Config) { c.Billing.BalanceMergeSettlementMaxAgeSeconds = -1 },
+			wantErr: "billing.balance_merge_settlement_max_age_seconds",
+		},
+		{
+			name:    "billing balance merge settlement max age exceeds upper bound",
+			mutate:  func(c *Config) { c.Billing.BalanceMergeSettlementMaxAgeSeconds = 86401 },
 			wantErr: "billing.balance_merge_settlement_max_age_seconds",
 		},
 		{

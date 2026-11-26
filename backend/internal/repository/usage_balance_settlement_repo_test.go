@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -267,15 +268,18 @@ func TestFlushPendingBalanceSettlementsReturnsAlertPreferences(t *testing.T) {
 }
 
 // 积压读取必须是有界查询：深度计数带 LIMIT、最老一笔只看索引序的队首若干行，
-// 两处都过滤 status、没有 FOR UPDATE（不和结算 worker 争锁）。
+// 两处都使用字面量 status = 3（对应 BalanceSettlementPending，避免通用执行计划跳过部分索引）、
+// 没有 FOR UPDATE（不和结算 worker 争锁）。
 func TestBalanceSettlementBacklogQueryIsBoundedAndIndexShaped(t *testing.T) {
+	require.Equal(t, int16(3), service.BalanceSettlementPending, "balanceSettlementBacklogSQL hardcodes status = 3")
+
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	mock.ExpectQuery(`(?s)SELECT 1 FROM billing_balance_settlements WHERE status = \$1 LIMIT \$2.*`+
-		`WHERE status = \$1\s+ORDER BY available_at, id\s+LIMIT \$3`).
-		WithArgs(3, int64(40000), 256).
+	mock.ExpectQuery(`(?s)SELECT 1 FROM billing_balance_settlements WHERE status = 3 LIMIT \$1.*`+
+		`WHERE status = 3\s+ORDER BY available_at, id\s+LIMIT \$2`).
+		WithArgs(int64(40000), 256).
 		WillReturnRows(sqlmock.NewRows([]string{"depth", "oldest_ms"}).AddRow(int64(1234), int64(2500)))
 
 	repo := &usageBalanceSettlementRepository{db: db}
@@ -287,6 +291,7 @@ func TestBalanceSettlementBacklogQueryIsBoundedAndIndexShaped(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	require.NotContains(t, balanceSettlementBacklogSQL, "FOR UPDATE")
+	require.NotContains(t, balanceSettlementBacklogSQL, "status = $")
 }
 
 func TestBalanceSettlementBacklogReportsCappedDepthAndDefaultsTheCap(t *testing.T) {
@@ -295,7 +300,7 @@ func TestBalanceSettlementBacklogReportsCappedDepthAndDefaultsTheCap(t *testing.
 	t.Cleanup(func() { _ = db.Close() })
 
 	mock.ExpectQuery(`(?s)FROM billing_balance_settlements`).
-		WithArgs(3, int64(20000), 256).
+		WithArgs(int64(20000), 256).
 		WillReturnRows(sqlmock.NewRows([]string{"depth", "oldest_ms"}).AddRow(int64(20000), int64(0)))
 
 	repo := &usageBalanceSettlementRepository{db: db}

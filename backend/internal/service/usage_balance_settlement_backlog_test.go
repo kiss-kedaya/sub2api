@@ -4,6 +4,9 @@ package service
 
 import (
 	"context"
+	"errors"
+	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -138,12 +141,27 @@ func TestSettlementGuard_NextStateTable(t *testing.T) {
 
 func TestSettlementGuard_DepthCapAlwaysAllowsTheHalfThresholdComparison(t *testing.T) {
 	require.Equal(t, int64(20000), usageBalanceSettlementDepthCap(0))
+	require.Equal(t, int64(20000), usageBalanceSettlementDepthCap(-100))
 	require.Equal(t, int64(20000), usageBalanceSettlementDepthCap(5000))
 	require.Equal(t, int64(40000), usageBalanceSettlementDepthCap(20000))
 	require.Equal(t, int64(2_000_000), usageBalanceSettlementDepthCap(1_000_000))
+	require.Equal(t, int64(math.MaxInt64-1), usageBalanceSettlementDepthCap(math.MaxInt64/2))
+	require.Equal(t, int64(math.MaxInt64), usageBalanceSettlementDepthCap(math.MaxInt64/2+1))
+	require.Equal(t, int64(math.MaxInt64), usageBalanceSettlementDepthCap(math.MaxInt64))
 	for _, limit := range []int64{1, 100, 20000, 750000} {
 		require.Greater(t, usageBalanceSettlementDepthCap(limit), limit, "a capped reading must still be able to exceed the limit")
 	}
+}
+
+func TestSettlementGuard_BacklogCalmNeverOverflowsOnLargeValues(t *testing.T) {
+	require.False(t, backlogCalm(UsageBalanceSettlementBacklog{Pending: math.MaxInt64}, 100, 0))
+	require.False(t, backlogCalm(UsageBalanceSettlementBacklog{OldestAge: time.Duration(math.MaxInt64)}, 0, 10*time.Second))
+	require.True(t, nextBacklogFallbackState(true, UsageBalanceSettlementBacklog{Pending: math.MaxInt64}, 100, 0))
+	require.True(t, nextBacklogFallbackState(true, UsageBalanceSettlementBacklog{OldestAge: time.Duration(math.MaxInt64)}, 0, 10*time.Second))
+	require.True(t, belowHalfInt64(50, 101))
+	require.False(t, belowHalfInt64(51, 101))
+	require.True(t, belowHalfInt64(math.MaxInt64/2, math.MaxInt64))
+	require.False(t, belowHalfInt64(math.MaxInt64/2+1, math.MaxInt64))
 }
 
 func TestSettlementGuard_ApplyBacklogEntersAndLeavesWithHysteresis(t *testing.T) {
@@ -425,6 +443,11 @@ func TestSettlementGuard_HealthReportsReadingStateAndCounters(t *testing.T) {
 	health = w.Health(context.Background())
 	require.Equal(t, context.DeadlineExceeded.Error(), health.StatsError)
 	require.Equal(t, uint64(5), health.Flushes)
+
+	// Very long database errors are truncated cleanly to 1024 bytes.
+	repo.setReadError(errors.New(strings.Repeat("x", 2048)))
+	health = w.Health(context.Background())
+	require.Len(t, health.StatsError, 1024)
 
 	// Recovery clears the "since" marker.
 	repo.setBacklog(UsageBalanceSettlementBacklog{Pending: 1})

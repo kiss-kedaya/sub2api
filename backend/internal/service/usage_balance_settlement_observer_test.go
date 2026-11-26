@@ -20,7 +20,7 @@ type settlementObserverSpy struct {
 	calls   atomic.Int64
 }
 
-func (s *settlementObserverSpy) ObserveBalanceSettlements(results []UsageBalanceSettlementResult) {
+func (s *settlementObserverSpy) ObserveBalanceSettlements(_ context.Context, results []UsageBalanceSettlementResult) {
 	s.calls.Add(1)
 	if s.panics.Add(-1) >= 0 {
 		panic("observer boom")
@@ -140,4 +140,43 @@ func TestSettlementObserver_PanicDoesNotStopLaterDeliveries(t *testing.T) {
 	worker.flush(context.Background())
 	require.Eventually(t, func() bool { return len(spy.received()) == 1 }, 2*time.Second, 5*time.Millisecond,
 		"a panicking observer must not take the delivery goroutine down")
+}
+
+type blockingSettlementObserver struct {
+	entered chan struct{}
+	calls   atomic.Int64
+}
+
+func (o *blockingSettlementObserver) ObserveBalanceSettlements(ctx context.Context, _ []UsageBalanceSettlementResult) {
+	if o.calls.Add(1) == 1 {
+		close(o.entered)
+	}
+	<-ctx.Done()
+}
+
+func TestSettlementObserver_StopCancelsSlowObserverAndSkipsQueuedBatches(t *testing.T) {
+	resetSettlementProcessState(t)
+	observer := &blockingSettlementObserver{entered: make(chan struct{})}
+	repo := &guardTestRepo{results: []UsageBalanceSettlementResult{{UserID: 4, EventCount: 1, Amount: 1, NewBalance: 5}}}
+	worker := NewUsageBalanceSettlementWorkerWithOptions(repo, UsageBalanceSettlementWorkerOptions{
+		MergeEnabled: true,
+		Observer:     observer,
+	})
+	t.Cleanup(worker.Stop)
+
+	// Queue multiple batches: the first enters the observer and blocks on ctx;
+	// the rest sit in observeCh and must NOT be picked up after Stop cancels ctx.
+	for range 8 {
+		worker.flush(context.Background())
+	}
+	select {
+	case <-observer.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("observer did not start")
+	}
+
+	start := time.Now()
+	worker.Stop()
+	require.Less(t, time.Since(start), 500*time.Millisecond, "Stop must cancel observer ctx and return promptly")
+	require.Equal(t, int64(1), observer.calls.Load(), "shutdown must not start additional queued batches")
 }

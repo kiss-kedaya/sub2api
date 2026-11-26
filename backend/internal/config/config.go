@@ -3611,11 +3611,11 @@ func (c *Config) Validate() error {
 	if c.Billing.MinimumBalanceReserve < 0 {
 		return fmt.Errorf("billing.minimum_balance_reserve must be non-negative")
 	}
-	if c.Billing.BalanceMergeSettlementMaxBacklog < 0 {
-		return fmt.Errorf("billing.balance_merge_settlement_max_backlog must be non-negative")
+	if c.Billing.BalanceMergeSettlementMaxBacklog < 0 || c.Billing.BalanceMergeSettlementMaxBacklog > 1_000_000 {
+		return fmt.Errorf("billing.balance_merge_settlement_max_backlog must be between 0 and 1000000")
 	}
-	if c.Billing.BalanceMergeSettlementMaxAgeSeconds < 0 {
-		return fmt.Errorf("billing.balance_merge_settlement_max_age_seconds must be non-negative")
+	if c.Billing.BalanceMergeSettlementMaxAgeSeconds < 0 || c.Billing.BalanceMergeSettlementMaxAgeSeconds > 86400 {
+		return fmt.Errorf("billing.balance_merge_settlement_max_age_seconds must be between 0 and 86400")
 	}
 	if c.Billing.OpenAIIncompleteInputCacheReadPercent < 0 || c.Billing.OpenAIIncompleteInputCacheReadPercent > 100 {
 		return fmt.Errorf("billing.openai_incomplete_input_cache_read_percent must be between 0 and 100")

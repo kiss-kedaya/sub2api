@@ -18,20 +18,29 @@ const usageBalanceSettlementAdvisoryLock int64 = 0x5355423242414c
 // balanceSettlementOldestProbeRows 是读「最老一笔」时从队首看的行数。
 const balanceSettlementOldestProbeRows = 256
 
+// balanceSettlementBacklogSQL 硬编码了 status = 3，编译期钉住枚举值避免漂移。
+const (
+	_ uint = uint(service.BalanceSettlementPending - 3)
+	_ uint = uint(3 - service.BalanceSettlementPending)
+)
+
 // balanceSettlementBacklogSQL 读取队列积压，成本与队列深度无关：
 //
 //   - 深度：在部分索引 idx_billing_balance_settlements_pending (available_at, id)
-//     WHERE status = 3 上最多数 $2 行，到达上限即停（调用方把它当「至少这么多」）；
-//   - 最老一笔：按索引序 (available_at, id) 只取队首 $3 行，再在这几行里求最小 created_at。
+//     WHERE status = 3 上最多数 $1 行，到达上限即停（调用方把它当「至少这么多」）；
+//   - 最老一笔：按索引序 (available_at, id) 只取队首 $2 行，再在这几行里求最小 created_at。
 //     精确的 min(created_at) 没有索引（建一个就要给热点写入表多一份索引维护），而对全体
 //     待结算行求最小值是全表扫；队首近似的取舍见 service.UsageBalanceSettlementBacklog。
 //
+// 这里使用字面量 status = 3（对应 service.BalanceSettlementPending）而非参数占位符，
+// 确保即使在 plan_cache_mode = force_generic_plan 或未来使用 prepared statement 时，
+// 规划器也始终能匹配部分索引 idx_billing_balance_settlements_pending。
 // 没有任何一处是无界扫描，也没有 FOR UPDATE，不会和结算 worker 争锁。
 const balanceSettlementBacklogSQL = `
 	SELECT
 		(
 			SELECT COUNT(*) FROM (
-				SELECT 1 FROM billing_balance_settlements WHERE status = $1 LIMIT $2
+				SELECT 1 FROM billing_balance_settlements WHERE status = 3 LIMIT $1
 			) AS counted
 		),
 		COALESCE((
@@ -39,9 +48,9 @@ const balanceSettlementBacklogSQL = `
 			FROM (
 				SELECT created_at
 				FROM billing_balance_settlements
-				WHERE status = $1
+				WHERE status = 3
 				ORDER BY available_at, id
-				LIMIT $3
+				LIMIT $2
 			) AS head
 		), 0)
 `
@@ -67,7 +76,7 @@ func (r *usageBalanceSettlementRepository) BalanceSettlementBacklog(
 	}
 	var pending, oldestMs int64
 	if err := r.db.QueryRowContext(ctx, balanceSettlementBacklogSQL,
-		service.BalanceSettlementPending, depthCap, balanceSettlementOldestProbeRows,
+		depthCap, balanceSettlementOldestProbeRows,
 	).Scan(&pending, &oldestMs); err != nil {
 		return service.UsageBalanceSettlementBacklog{}, err
 	}

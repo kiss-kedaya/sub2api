@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"math"
 	"sync/atomic"
 	"time"
 )
@@ -88,7 +89,15 @@ func backlogOverLimit(b UsageBalanceSettlementBacklog, maxBacklog int64, maxAge 
 // backlogCalm 判断队列是否已回落到阈值的一半以下（迟滞：退出条件比进入条件严格得多，
 // 否则读数在阈值附近抖动时会来回切换）。
 func backlogCalm(b UsageBalanceSettlementBacklog, maxBacklog int64, maxAge time.Duration) bool {
-	return (maxBacklog <= 0 || b.Pending*2 < maxBacklog) && (maxAge <= 0 || b.OldestAge*2 < maxAge)
+	return belowHalfInt64(b.Pending, maxBacklog) && belowHalfInt64(int64(b.OldestAge), int64(maxAge))
+}
+
+// belowHalfInt64 checks 2*value < limit without int64 multiplication overflow.
+func belowHalfInt64(value, limit int64) bool {
+	if limit <= 0 || value <= 0 {
+		return true
+	}
+	return value < limit-value
 }
 
 // nextBacklogFallbackState 给出下一个「是否退回同步扣费」状态：
@@ -105,6 +114,12 @@ func nextBacklogFallbackState(active bool, b UsageBalanceSettlementBacklog, maxB
 // 「超过阈值」与「回落到一半以下」两个判断。
 func usageBalanceSettlementDepthCap(maxBacklog int64) int64 {
 	depthCap := int64(usageBalanceSettlementBacklogMinDepthCap)
+	if maxBacklog <= 0 {
+		return depthCap
+	}
+	if maxBacklog > math.MaxInt64/2 {
+		return math.MaxInt64
+	}
 	if doubled := maxBacklog * 2; doubled > depthCap {
 		depthCap = doubled
 	}
@@ -114,7 +129,7 @@ func usageBalanceSettlementDepthCap(maxBacklog int64) int64 {
 // UsageBalanceSettlementObserver 接收每次已提交的结算 flush 的逐用户结果，
 // 用来在合并结算模式下按精确的前后余额发低余额提醒。
 type UsageBalanceSettlementObserver interface {
-	ObserveBalanceSettlements(results []UsageBalanceSettlementResult)
+	ObserveBalanceSettlements(ctx context.Context, results []UsageBalanceSettlementResult)
 }
 
 // UsageBalanceSettlementWorkerOptions 配置结算 worker 的灰度期保护。零值等于改动前的行为：

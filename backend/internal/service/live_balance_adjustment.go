@@ -90,6 +90,32 @@ type liveBalanceWatermarkedAdjustmentBatchCache interface {
 	) (LiveBalanceResult, error)
 }
 
+func (s *BillingCacheService) mergeSettlementEnabled() bool {
+	return s != nil && s.cfg != nil && s.cfg.Billing.BalanceMergeSettlementEnabled
+}
+
+// shouldInvalidateLegacyBalanceForOutbox reports whether an outbox delivery
+// should delete the legacy short-lived balance cache (billing:balance:{uid}).
+//
+// While merge settlement is enabled, users.balance lags behind unsettled rows
+// in billing_balance_settlements. Deleting billing:balance:{uid} on negative
+// debits emitted by settlement flushes or synchronous fallback would force the
+// next request to reload the higher database balance and resurrect unsettled
+// charges. Positive deltas (top-ups, refunds) still invalidate immediately;
+// external negative adjustments (admin/refund deductions) already invalidate
+// the legacy cache synchronously via syncCommittedLiveBalanceAdjustment.
+func (s *BillingCacheService) shouldInvalidateLegacyBalanceForOutbox(events ...LiveBalanceAdjustmentEvent) bool {
+	if !s.mergeSettlementEnabled() {
+		return true
+	}
+	for _, event := range events {
+		if event.DeltaUnits > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *BillingCacheService) ApplyExternalBalanceOutboxAdjustment(
 	ctx context.Context,
 	event LiveBalanceAdjustmentEvent,
@@ -101,8 +127,10 @@ func (s *BillingCacheService) ApplyExternalBalanceOutboxAdjustment(
 	if !ok {
 		return errors.New("live balance cache does not support outbox watermarks")
 	}
-	if err := s.cache.InvalidateUserBalance(ctx, event.UserID); err != nil {
-		return fmt.Errorf("invalidate legacy balance cache: %w", err)
+	if s.shouldInvalidateLegacyBalanceForOutbox(event) {
+		if err := s.cache.InvalidateUserBalance(ctx, event.UserID); err != nil {
+			return fmt.Errorf("invalidate legacy balance cache: %w", err)
+		}
 	}
 	result, err := cache.AdjustLiveBalanceAtWatermark(
 		ctx,
@@ -163,8 +191,10 @@ func (s *BillingCacheService) ApplyExternalBalanceOutboxAdjustments(
 	if !ok {
 		return errors.New("live balance cache does not support batched outbox watermarks")
 	}
-	if err := s.cache.InvalidateUserBalance(ctx, userID); err != nil {
-		return fmt.Errorf("invalidate legacy balance cache: %w", err)
+	if s.shouldInvalidateLegacyBalanceForOutbox(events...) {
+		if err := s.cache.InvalidateUserBalance(ctx, userID); err != nil {
+			return fmt.Errorf("invalidate legacy balance cache: %w", err)
+		}
 	}
 	result, err := cache.AdjustLiveBalanceAtWatermarkBatch(ctx, userID, events)
 	if err != nil {

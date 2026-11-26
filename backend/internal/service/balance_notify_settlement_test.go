@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -152,14 +153,14 @@ func (f *settlementNotifyFixture) neverPushed(t *testing.T, userID int64) {
 func TestSettlementLowBalance_AlertsOnceWhenAFlushCrossesTheThreshold(t *testing.T) {
 	f := newSettlementNotifyFixture(t, 1)
 
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 11, 9)})
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 11, 9)})
 	f.pushed(t, 1, 1)
 	require.Contains(t, f.push.snapshot()[0].body, "9.00", "the alert carries the exact balance after the flush")
 	require.Contains(t, f.push.snapshot()[0].body, "10.00")
 
 	// Every later flush of the same user is already below the threshold: silent,
 	// no matter how many requests it coalesced.
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 9, 7), settled(1, 7, 3)})
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 9, 7), settled(1, 7, 3)})
 	f.neverPushedMore(t, 1, 1)
 }
 
@@ -189,7 +190,7 @@ func TestSettlementLowBalance_CrossingBoundaries(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newSettlementNotifyFixture(t, 1)
-			f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, tt.before, tt.after)})
+			f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, tt.before, tt.after)})
 			if tt.wantAlert {
 				f.pushed(t, 1, 1)
 			} else {
@@ -206,12 +207,12 @@ func TestSettlementLowBalance_PreferencesDecideTheThreshold(t *testing.T) {
 		custom := 5.0
 		r := settled(1, 11, 9) // crosses the global 10, not the user's 5
 		r.NotifyThreshold = &custom
-		f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{r})
+		f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{r})
 		f.neverPushed(t, 1)
 
 		r = settled(1, 6, 4) // crosses the user's 5, not the global 10 (already below it)
 		r.NotifyThreshold = &custom
-		f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{r})
+		f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{r})
 		f.pushed(t, 1, 1)
 	})
 	t.Run("percentage threshold uses total recharged", func(t *testing.T) {
@@ -221,14 +222,14 @@ func TestSettlementLowBalance_PreferencesDecideTheThreshold(t *testing.T) {
 		r.NotifyThreshold = &percent
 		r.NotifyThresholdType = "percentage"
 		r.TotalRecharged = 200
-		f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{r})
+		f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{r})
 		f.pushed(t, 1, 1)
 	})
 	t.Run("user turned alerts off", func(t *testing.T) {
 		f := newSettlementNotifyFixture(t, 1)
 		r := settled(1, 11, 9)
 		r.NotifyEnabled = false
-		f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{r})
+		f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{r})
 		f.neverPushed(t, 1)
 	})
 	t.Run("global switch off", func(t *testing.T) {
@@ -237,7 +238,7 @@ func TestSettlementLowBalance_PreferencesDecideTheThreshold(t *testing.T) {
 		push := &settlementPushSpy{}
 		svc.SetPushNotifier(push)
 		svc.SetUserReader(&settlementUserReaderStub{users: map[int64]*User{1: {ID: 1, BalanceNotifyEnabled: true}}})
-		svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 11, 9)})
+		svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 11, 9)})
 		require.Never(t, func() bool { return len(push.snapshot()) > 0 }, 150*time.Millisecond, 10*time.Millisecond)
 	})
 	t.Run("zero threshold", func(t *testing.T) {
@@ -247,7 +248,7 @@ func TestSettlementLowBalance_PreferencesDecideTheThreshold(t *testing.T) {
 		push := &settlementPushSpy{}
 		svc.SetPushNotifier(push)
 		svc.SetUserReader(&settlementUserReaderStub{users: map[int64]*User{1: {ID: 1, BalanceNotifyEnabled: true}}})
-		svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 1, -1)})
+		svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 1, -1)})
 		require.Never(t, func() bool { return len(push.snapshot()) > 0 }, 150*time.Millisecond, 10*time.Millisecond)
 	})
 }
@@ -255,22 +256,22 @@ func TestSettlementLowBalance_PreferencesDecideTheThreshold(t *testing.T) {
 func TestSettlementLowBalance_CooldownStopsRepeatAlertsPerUser(t *testing.T) {
 	f := newSettlementNotifyFixture(t, 1, 2)
 
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 11, 9)})
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 11, 9)})
 	f.pushed(t, 1, 1)
 
 	// The balance comes back above the threshold (a small top-up) and is spent
 	// again 5 minutes later: a genuine new crossing, but inside the cooldown.
 	f.advance(5 * time.Minute)
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 10.5, 9.5)})
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 10.5, 9.5)})
 	f.neverPushedMore(t, 1, 1)
 
 	// Another user is unaffected by user 1's cooldown.
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(2, 11, 9)})
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(2, 11, 9)})
 	f.pushed(t, 2, 1)
 
 	// Past the cooldown the next crossing alerts again.
 	f.advance(settlementLowBalanceCooldown)
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 10.5, 9.5)})
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 10.5, 9.5)})
 	f.pushed(t, 1, 2)
 }
 
@@ -300,14 +301,14 @@ func TestSettlementLowBalance_UserReadFailureDoesNotConsumeTheCooldown(t *testin
 	f := newSettlementNotifyFixture(t, 1)
 	f.users.setError(errors.New("db timeout"))
 
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 11, 9)})
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 11, 9)})
 	f.neverPushed(t, 1)
 	require.Equal(t, settlementLowBalanceLoadAttempts, f.users.loadCalls(), "a bounded number of attempts, then give up")
 
 	// The alert could not be delivered, so the next crossing still gets its chance
 	// (it must not be swallowed by a cooldown that nothing was sent for).
 	f.users.setError(nil)
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 10.5, 9.5)})
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 10.5, 9.5)})
 	f.pushed(t, 1, 1)
 }
 
@@ -317,7 +318,7 @@ func TestSettlementLowBalance_TransientUserReadFailureIsRetried(t *testing.T) {
 	f := newSettlementNotifyFixture(t, 1)
 	f.users.failFirst = settlementLowBalanceLoadAttempts - 1
 
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 11, 9)})
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 11, 9)})
 
 	f.pushed(t, 1, 1)
 	require.Equal(t, settlementLowBalanceLoadAttempts, f.users.loadCalls())
@@ -327,7 +328,7 @@ func TestSettlementLowBalance_TransientUserReadFailureIsRetried(t *testing.T) {
 // 用户已经被删掉时没有收件人可发，也没有重试的意义。
 func TestSettlementLowBalance_DeletedUserIsNotRetried(t *testing.T) {
 	f := newSettlementNotifyFixture(t) // user 1 does not exist
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 11, 9)})
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 11, 9)})
 	f.neverPushed(t, 1)
 	require.Equal(t, 1, f.users.loadCalls())
 }
@@ -335,14 +336,20 @@ func TestSettlementLowBalance_DeletedUserIsNotRetried(t *testing.T) {
 func TestSettlementLowBalance_UserWhoJustDisabledAlertsIsNotAlerted(t *testing.T) {
 	f := newSettlementNotifyFixture(t, 1)
 	f.users.users[1].BalanceNotifyEnabled = false
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 11, 9)})
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 11, 9)})
 	f.neverPushed(t, 1)
 	require.Equal(t, 1, f.users.loadCalls())
+
+	// Cooldown must be released because no alert was dispatched; if the user
+	// re-enables notifications and crosses again immediately, they must be alerted.
+	f.users.users[1].BalanceNotifyEnabled = true
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 10.5, 9.5)})
+	f.pushed(t, 1, 1)
 }
 
 func TestSettlementLowBalance_OnlyCrossingUsersInABatchAreAlerted(t *testing.T) {
 	f := newSettlementNotifyFixture(t, 1, 2, 3, 4)
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{
 		settled(1, 11, 9),    // crosses
 		settled(2, 100, 90),  // far above
 		settled(3, 9, 8),     // already below
@@ -358,23 +365,26 @@ func TestSettlementLowBalance_OnlyCrossingUsersInABatchAreAlerted(t *testing.T) 
 func TestSettlementLowBalance_IgnoresEmptyBatchesAndUnchangedBalances(t *testing.T) {
 	f := newSettlementNotifyFixture(t, 1)
 	unchanged := settled(1, 9, 9) // Amount 0: nothing was deducted, nothing can have crossed
-	require.NotPanics(t, func() { f.svc.ObserveBalanceSettlements(nil) })
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{unchanged})
+	require.NotPanics(t, func() { f.svc.ObserveBalanceSettlements(context.Background(), nil) })
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{unchanged})
 	f.neverPushed(t, 1)
 	require.Zero(t, f.users.loadCalls())
 }
 
 func TestSettlementLowBalance_NeedsAUserReaderAndServices(t *testing.T) {
 	var nilSvc *BalanceNotifyService
-	require.NotPanics(t, func() { nilSvc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 11, 9)}) })
+	require.NotPanics(t, func() {
+		nilSvc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 11, 9)})
+	})
 
 	svc, settings := newBalanceNotifyServiceForTest()
 	settings.data[SettingKeyBalanceLowNotifyEnabled] = "true"
 	settings.data[SettingKeyBalanceLowNotifyThreshold] = "10"
 	push := &settlementPushSpy{}
 	svc.SetPushNotifier(push)
-	require.NotPanics(t, func() { svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 11, 9)}) },
-		"without a user reader the observer does nothing")
+	require.NotPanics(t, func() {
+		svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 11, 9)})
+	}, "without a user reader the observer does nothing")
 	require.Never(t, func() bool { return len(push.snapshot()) > 0 }, 100*time.Millisecond, 10*time.Millisecond)
 }
 
@@ -384,7 +394,197 @@ func TestSettlementLowBalance_CoalescedRequestsAlertOnce(t *testing.T) {
 	f := newSettlementNotifyFixture(t, 1)
 	r := settled(1, 10.2, 9.0)
 	r.EventCount = 200
-	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{r})
+	f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{r})
 	f.pushed(t, 1, 1)
 	f.neverPushedMore(t, 1, 1)
+}
+
+type countingSettingRepoStub struct {
+	*mockSettingRepo
+	getMultipleCalls atomic.Int64
+	blockGetMultiple chan struct{}
+	onGetMultiple    func()
+}
+
+func (s *countingSettingRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	s.getMultipleCalls.Add(1)
+	if s.onGetMultiple != nil {
+		s.onGetMultiple()
+	}
+	if s.blockGetMultiple != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-s.blockGetMultiple:
+		}
+	}
+	return s.mockSettingRepo.GetMultiple(ctx, keys)
+}
+
+type blockingUserReaderStub struct {
+	entered chan struct{}
+	calls   atomic.Int64
+}
+
+func (r *blockingUserReaderStub) GetByID(ctx context.Context, _ int64) (*User, error) {
+	if r.calls.Add(1) == 1 && r.entered != nil {
+		close(r.entered)
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestSettlementLowBalance_LoadsGlobalConfigOncePerBatch(t *testing.T) {
+	base := newMockSettingRepo()
+	base.data[SettingKeyBalanceLowNotifyEnabled] = "true"
+	base.data[SettingKeyBalanceLowNotifyThreshold] = "10"
+	settings := &countingSettingRepoStub{mockSettingRepo: base}
+	users := &settlementUserReaderStub{users: map[int64]*User{}}
+	batch := make([]UsageBalanceSettlementResult, 0, 50)
+	for id := int64(1); id <= 50; id++ {
+		users.users[id] = &User{ID: id, Username: "u", BalanceNotifyEnabled: true}
+		if id == 25 {
+			batch = append(batch, settled(id, 11, 9))
+		} else {
+			batch = append(batch, settled(id, 100, 99))
+		}
+	}
+	push := &settlementPushSpy{}
+	svc := NewBalanceNotifyService(NewEmailService(settings, nil), settings, nil)
+	svc.SetPushNotifier(push)
+	svc.SetUserReader(users)
+
+	// Empty batch must not query settings at all.
+	svc.ObserveBalanceSettlements(context.Background(), nil)
+	require.Zero(t, settings.getMultipleCalls.Load())
+
+	// 50 users in one batch must load global settings exactly once, not 50 times.
+	svc.ObserveBalanceSettlements(context.Background(), batch)
+	require.Equal(t, int64(1), settings.getMultipleCalls.Load())
+	require.Equal(t, 1, users.loadCalls())
+	require.Eventually(t, func() bool { return push.forUser(25) == 1 }, 2*time.Second, 5*time.Millisecond)
+
+	// Globally disabled: one settings read, zero user reads.
+	base.data[SettingKeyBalanceLowNotifyEnabled] = "false"
+	svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(1, 11, 9), settled(2, 11, 9)})
+	require.Equal(t, int64(2), settings.getMultipleCalls.Load())
+	require.Equal(t, 1, users.loadCalls())
+}
+
+func TestSettlementLowBalance_CancelStopsSlowSettingsAndUserLookupsPromptly(t *testing.T) {
+	t.Run("cancelling ctx unblocks slow settingRepo lookup", func(t *testing.T) {
+		entered := make(chan struct{})
+		base := newMockSettingRepo()
+		base.data[SettingKeyBalanceLowNotifyEnabled] = "true"
+		base.data[SettingKeyBalanceLowNotifyThreshold] = "10"
+		settings := &countingSettingRepoStub{
+			mockSettingRepo:  base,
+			blockGetMultiple: make(chan struct{}),
+			onGetMultiple:    func() { close(entered) },
+		}
+		users := &settlementUserReaderStub{users: map[int64]*User{1: {ID: 1, BalanceNotifyEnabled: true}}}
+		svc := NewBalanceNotifyService(NewEmailService(settings, nil), settings, nil)
+		svc.SetUserReader(users)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			svc.ObserveBalanceSettlements(ctx, []UsageBalanceSettlementResult{settled(1, 11, 9)})
+		}()
+
+		<-entered
+		start := time.Now()
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("ObserveBalanceSettlements did not exit promptly after ctx cancel during settings load")
+		}
+		require.Less(t, time.Since(start), 500*time.Millisecond)
+		require.Zero(t, users.loadCalls())
+	})
+
+	t.Run("cancelling ctx unblocks slow userReader lookup and skips remaining users", func(t *testing.T) {
+		svc, settings := newBalanceNotifyServiceForTest()
+		settings.data[SettingKeyBalanceLowNotifyEnabled] = "true"
+		settings.data[SettingKeyBalanceLowNotifyThreshold] = "10"
+		reader := &blockingUserReaderStub{entered: make(chan struct{})}
+		svc.SetUserReader(reader)
+
+		batch := make([]UsageBalanceSettlementResult, 0, 20)
+		for id := int64(1); id <= 20; id++ {
+			batch = append(batch, settled(id, 11, 9))
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			svc.ObserveBalanceSettlements(ctx, batch)
+		}()
+
+		<-reader.entered
+		start := time.Now()
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("ObserveBalanceSettlements did not exit promptly after ctx cancel during user load")
+		}
+		require.Less(t, time.Since(start), 500*time.Millisecond)
+		require.Equal(t, int64(1), reader.calls.Load(), "must not retry or proceed to subsequent users after cancellation")
+	})
+}
+
+func TestBalanceNotifyService_SetPushNotifierConcurrentWithAlerts(t *testing.T) {
+	f := newSettlementNotifyFixture(t, 1, 2)
+	pushA := &settlementPushSpy{}
+	pushB := &settlementPushSpy{}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < 200; i++ {
+			f.svc.SetPushNotifier(pushA)
+			f.svc.SetPushNotifier(nil)
+			f.svc.SetPushNotifier(pushB)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < 100; i++ {
+			f.svc.CheckBalanceAfterDeduction(context.Background(), &User{
+				ID:                   1,
+				Username:             "u1",
+				BalanceNotifyEnabled: true,
+			}, 11, 2)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < 100; i++ {
+			f.advance(settlementLowBalanceCooldown + time.Second)
+			f.svc.ObserveBalanceSettlements(context.Background(), []UsageBalanceSettlementResult{settled(2, 11, 9)})
+		}
+	}()
+
+	close(start)
+	wg.Wait()
+
+	// Final steady state: setting pushA must deliver subsequent alerts cleanly.
+	f.svc.SetPushNotifier(pushA)
+	before := pushA.forUser(1)
+	f.svc.CheckBalanceAfterDeduction(context.Background(), &User{
+		ID:                   1,
+		Username:             "u1",
+		BalanceNotifyEnabled: true,
+	}, 11, 2)
+	require.Eventually(t, func() bool { return pushA.forUser(1) > before }, 2*time.Second, 5*time.Millisecond)
 }

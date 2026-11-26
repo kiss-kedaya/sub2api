@@ -233,7 +233,7 @@ func (w *UsageBalanceSettlementWorker) cleanup(parent context.Context) {
 	w.logStats()
 }
 
-// logStats 每分钟输出一次增量统计，让灰度期可以从日志判断合并结算的合并率
+// logStats 每 30 秒输出一次增量统计，让灰度期可以从日志判断合并结算的合并率
 // （events / flushes）与失败情况，而不用把计数暴露成新的指标端点。
 //
 // 开启合并结算时，同一行日志还带上最近一次积压采样（队列深度 / 最老一笔等待时间 /
@@ -387,22 +387,25 @@ func (w *UsageBalanceSettlementWorker) observe(results []UsageBalanceSettlementR
 func (w *UsageBalanceSettlementWorker) runObserver(ctx context.Context) {
 	defer w.wg.Done()
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case results := <-w.observeCh:
-			w.deliver(results)
+			w.deliver(ctx, results)
 		}
 	}
 }
 
-func (w *UsageBalanceSettlementWorker) deliver(results []UsageBalanceSettlementResult) {
+func (w *UsageBalanceSettlementWorker) deliver(ctx context.Context, results []UsageBalanceSettlementResult) {
 	defer func() {
 		if r := recover(); r != nil {
 			w.logr().Error("billing.balance_settlement_observer_panic", zap.Any("recover", r))
 		}
 	}()
-	w.opts.Observer.ObserveBalanceSettlements(results)
+	w.opts.Observer.ObserveBalanceSettlements(ctx, results)
 }
 
 // Health 返回运维健康接口用的只读快照。积压读数是一次有界的实时查询（和队列深度无关），
@@ -440,7 +443,7 @@ func (w *UsageBalanceSettlementWorker) Health(ctx context.Context) UsageBalanceS
 	defer cancel()
 	backlog, err := reader.BalanceSettlementBacklog(queryCtx, usageBalanceSettlementDepthCap(w.opts.MaxBacklog))
 	if err != nil {
-		health.StatsError = err.Error()
+		health.StatsError = boundedLiveBalanceOutboxError(err)
 		return health
 	}
 	health.Pending = backlog.Pending

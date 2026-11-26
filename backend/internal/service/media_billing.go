@@ -164,7 +164,17 @@ func (s *OpenAIGatewayService) settleMediaBillingJob(ctx context.Context, job *M
 		if result != nil && result.NewBalance != nil && s.billingCacheService.balanceBelowEligibilityThreshold(*result.NewBalance) {
 			s.billingCacheService.setBalanceCacheAtMost(ctx, cmd.UserID, *result.NewBalance)
 		} else if !cmd.BalancePreauthorized {
-			_ = s.billingCacheService.InvalidateUserBalance(ctx, cmd.UserID)
+			if result != nil && result.BalanceSettlementDeferred {
+				if result.Applied && cmd.BalanceCost > 0 {
+					s.billingCacheService.deductBalanceCacheRelative(ctx, cmd.UserID, cmd.BalanceCost, "service.media_billing")
+				}
+			} else if s.billingDeps().mergeSettlementEnabled() && job.Kind == MediaBillingKindImage {
+				if result != nil && result.Applied && cmd.BalanceCost > 0 {
+					s.billingCacheService.deductBalanceCacheRelative(ctx, cmd.UserID, cmd.BalanceCost, "service.media_billing")
+				}
+			} else {
+				_ = s.billingCacheService.InvalidateUserBalance(ctx, cmd.UserID)
+			}
 		}
 		if cmd.SubscriptionID != nil {
 			_ = s.billingCacheService.InvalidateSubscription(ctx, cmd.UserID, job.GroupID)
