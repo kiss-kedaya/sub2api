@@ -1,0 +1,157 @@
+package repository
+
+import (
+	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
+)
+
+type recordedUpstreamAttempt struct {
+	ctx       context.Context
+	accountID int64
+	status    int
+	err       error
+}
+
+type upstreamAttemptRecorder struct {
+	mu       sync.Mutex
+	attempts []recordedUpstreamAttempt
+}
+
+func (r *upstreamAttemptRecorder) ObserveUpstreamAttempt(ctx context.Context, accountID int64, statusCode int, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.attempts = append(r.attempts, recordedUpstreamAttempt{ctx: ctx, accountID: accountID, status: statusCode, err: err})
+}
+
+func (r *upstreamAttemptRecorder) snapshot() []recordedUpstreamAttempt {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]recordedUpstreamAttempt(nil), r.attempts...)
+}
+
+func newObservedUpstream(t *testing.T) (service.HTTPUpstream, *upstreamAttemptRecorder) {
+	t.Helper()
+	up := NewHTTPUpstream(nil)
+	observable, ok := up.(service.UpstreamAttemptObservable)
+	require.True(t, ok, "the real transport must accept an attempt observer")
+	rec := &upstreamAttemptRecorder{}
+	observable.SetUpstreamAttemptObserver(rec)
+	return up, rec
+}
+
+func gatewayRequest(t *testing.T, url string) *http.Request {
+	t.Helper()
+	ctx := context.WithValue(t.Context(), ctxkey.UserID, int64(9))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	require.NoError(t, err)
+	return req
+}
+
+func TestHTTPUpstreamObservesEveryAttemptExactlyOnce(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(srv.Close)
+	up, rec := newObservedUpstream(t)
+
+	// Do
+	resp, err := up.Do(gatewayRequest(t, srv.URL), "", 7, 1)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Len(t, rec.snapshot(), 1)
+
+	// DoWithTLS without a profile delegates to Do: still exactly one more observation, not two.
+	resp, err = up.DoWithTLS(gatewayRequest(t, srv.URL), "", 8, 1, nil)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Len(t, rec.snapshot(), 2)
+
+	// Plain HTTP with a profile also delegates to Do.
+	resp, err = up.DoWithTLS(gatewayRequest(t, srv.URL), "", 9, 1, &tlsfingerprint.Profile{Name: "unused-for-http"})
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	got := rec.snapshot()
+	require.Len(t, got, 3, "each upstream attempt must be observed exactly once")
+	for i, want := range []int64{7, 8, 9} {
+		require.Equal(t, want, got[i].accountID)
+		require.Equal(t, http.StatusBadGateway, got[i].status)
+		require.NoError(t, got[i].err)
+		require.Equal(t, int64(9), got[i].ctx.Value(ctxkey.UserID), "the observer must see the request context (gateway marker)")
+	}
+}
+
+func TestHTTPUpstreamObservesTransportErrors(t *testing.T) {
+	// 取一个确定没人监听的端口
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+
+	up, rec := newObservedUpstream(t)
+
+	resp, err := up.Do(gatewayRequest(t, "http://"+addr), "", 11, 1)
+	require.Error(t, err)
+	require.Nil(t, resp)
+
+	// 带 TLS 指纹的 https 请求有自己的发送路径：同样只观察一次。
+	resp, err = up.DoWithTLS(gatewayRequest(t, "https://"+addr), "", 12, 1, &tlsfingerprint.Profile{Name: "test"})
+	require.Error(t, err)
+	require.Nil(t, resp)
+
+	got := rec.snapshot()
+	require.Len(t, got, 2)
+	require.Equal(t, int64(11), got[0].accountID)
+	require.Zero(t, got[0].status)
+	require.Error(t, got[0].err)
+	require.Equal(t, int64(12), got[1].accountID)
+	require.Zero(t, got[1].status)
+	require.Error(t, got[1].err)
+}
+
+func TestHTTPUpstreamSuccessIsObservedToo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	t.Cleanup(srv.Close)
+	up, rec := newObservedUpstream(t)
+	resp, err := up.Do(gatewayRequest(t, srv.URL), "", 5, 1)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	got := rec.snapshot()
+	require.Len(t, got, 1)
+	require.Equal(t, http.StatusOK, got[0].status)
+}
+
+type panickingObserver struct{}
+
+func (panickingObserver) ObserveUpstreamAttempt(context.Context, int64, int, error) { panic("boom") }
+
+func TestHTTPUpstreamObserverCannotBreakForwarding(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	t.Cleanup(srv.Close)
+
+	up := NewHTTPUpstream(nil)
+	up.(service.UpstreamAttemptObservable).SetUpstreamAttemptObserver(panickingObserver{})
+	require.NotPanics(t, func() {
+		resp, err := up.Do(gatewayRequest(t, srv.URL), "", 1, 1)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+	})
+
+	// 没有注册观察者 / 注销观察者：照常工作
+	up.(service.UpstreamAttemptObservable).SetUpstreamAttemptObserver(nil)
+	resp, err := up.Do(gatewayRequest(t, srv.URL), "", 1, 1)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	resp, err = NewHTTPUpstream(nil).Do(gatewayRequest(t, srv.URL), "", 1, 1)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+}

@@ -1366,6 +1366,14 @@ type GatewayConfig struct {
 	// Gemini 账户切换最大次数（Gemini 平台单独配置，因 API 限制更严格）
 	MaxAccountSwitchesGemini int `mapstructure:"max_account_switches_gemini"`
 
+	// AccountCircuitBreaker: 账号错误率断路器。每个账号维护一个进程内滑动窗口，
+	// 窗口内上游尝试的失败率过高时把该账号临时停止调度一小段时间，到期自动恢复。
+	AccountCircuitBreaker AccountCircuitBreakerConfig `mapstructure:"account_circuit_breaker"`
+
+	// RetryGuard: 单个客户端请求的重试/故障转移硬上限（总尝试次数、总耗时、同账号退避）
+	// 以及网关自身 503/429 的 Retry-After 区间。
+	RetryGuard GatewayRetryGuardConfig `mapstructure:"retry_guard"`
+
 	// Antigravity 429 fallback 限流时间（分钟），解析重置时间失败时使用
 	AntigravityFallbackCooldownMinutes int `mapstructure:"antigravity_fallback_cooldown_minutes"`
 
@@ -1393,6 +1401,48 @@ type GatewayConfig struct {
 	// CNProviders: 国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）的余额检测配置。
 	// 仅作用于 payg（按量付费）账号：周期探测余额，低于阈值则临时停调。
 	CNProviders GatewayCNProvidersConfig `mapstructure:"cn_providers"`
+}
+
+// AccountCircuitBreakerConfig 控制账号错误率断路器（gateway.account_circuit_breaker.*）。
+//
+// 口径：窗口内「对该账号发起的上游尝试」数 >= MinRequests，且失败数/尝试数 严格大于 ErrorRate
+// 时熔断：账号被写成临时不可调度 CooldownSeconds 秒，到期自动恢复。每个进程只看自己的流量。
+// 失败 = 连接/传输错误、上游响应超时、上游 5xx、429、401/402/403/407；客户端断开、
+// 本地 ctx 取消/超时一律不计入。环境变量形如 GATEWAY_ACCOUNT_CIRCUIT_BREAKER_ENABLED。
+type AccountCircuitBreakerConfig struct {
+	// Enabled 总开关；false 时不记录、不熔断。
+	Enabled bool `mapstructure:"enabled"`
+	// WindowSeconds 滑动窗口长度（秒），内部切成 10 个桶。
+	WindowSeconds int `mapstructure:"window_seconds"`
+	// ErrorRate 触发熔断的失败率阈值，取值 (0,1)，严格大于才触发（恰好等于不触发）。
+	ErrorRate float64 `mapstructure:"error_rate"`
+	// MinRequests 窗口内至少这么多次尝试才允许熔断（样本不足不熔断）。
+	MinRequests int `mapstructure:"min_requests"`
+	// CooldownSeconds 熔断后临时不可调度的秒数。
+	CooldownSeconds int `mapstructure:"cooldown_seconds"`
+	// BackoffEnabled 打开后，同一账号在窗口内连续再次熔断时冷却时间按 2 倍递增，
+	// 上限 MaxCooldownSeconds。默认关闭（每次都是 CooldownSeconds）。
+	BackoffEnabled     bool `mapstructure:"backoff_enabled"`
+	MaxCooldownSeconds int  `mapstructure:"max_cooldown_seconds"`
+	// ValveMinAccounts / ValveRatio 是安全阀：同一平台 1 分钟内已被熔断的账号数
+	// >= ValveMinAccounts 且占该平台参与统计账号的比例 >= ValveRatio 时，视为本机/网络
+	// 问题而不是上游问题，不再继续熔断更多账号并打 ERROR 日志。
+	ValveMinAccounts int     `mapstructure:"valve_min_accounts"`
+	ValveRatio       float64 `mapstructure:"valve_ratio"`
+}
+
+// GatewayRetryGuardConfig 控制单个客户端请求的重试硬上限（gateway.retry_guard.*）。
+type GatewayRetryGuardConfig struct {
+	// MaxAttempts 单个请求最多向上游发起的尝试次数（同账号重试与换号都算）。
+	MaxAttempts int `mapstructure:"max_attempts"`
+	// MaxElapsedSeconds 单个请求从进入故障转移循环起，超过该秒数后不再发起新的尝试。
+	MaxElapsedSeconds int `mapstructure:"max_elapsed_seconds"`
+	// BackoffBaseMs / BackoffMaxMs 同账号重试的带抖动指数退避：base、2*base、4*base…，上限 max。
+	BackoffBaseMs int `mapstructure:"backoff_base_ms"`
+	BackoffMaxMs  int `mapstructure:"backoff_max_ms"`
+	// RetryAfterMinSeconds / RetryAfterMaxSeconds 网关自己返回 503/429 时 Retry-After 的取值区间（秒，随机）。
+	RetryAfterMinSeconds int `mapstructure:"retry_after_min_seconds"`
+	RetryAfterMaxSeconds int `mapstructure:"retry_after_max_seconds"`
 }
 
 // APIKeyQueueConfig applies only to keys with a positive concurrency limit.
@@ -2863,6 +2913,21 @@ func setDefaults() {
 	viper.SetDefault("gateway.failover_on_400", false)
 	viper.SetDefault("gateway.max_account_switches", 10)
 	viper.SetDefault("gateway.max_account_switches_gemini", 3)
+	viper.SetDefault("gateway.account_circuit_breaker.enabled", true)
+	viper.SetDefault("gateway.account_circuit_breaker.window_seconds", 300)
+	viper.SetDefault("gateway.account_circuit_breaker.error_rate", 0.95)
+	viper.SetDefault("gateway.account_circuit_breaker.min_requests", 20)
+	viper.SetDefault("gateway.account_circuit_breaker.cooldown_seconds", 60)
+	viper.SetDefault("gateway.account_circuit_breaker.backoff_enabled", false)
+	viper.SetDefault("gateway.account_circuit_breaker.max_cooldown_seconds", 300)
+	viper.SetDefault("gateway.account_circuit_breaker.valve_min_accounts", 3)
+	viper.SetDefault("gateway.account_circuit_breaker.valve_ratio", 0.5)
+	viper.SetDefault("gateway.retry_guard.max_attempts", 10)
+	viper.SetDefault("gateway.retry_guard.max_elapsed_seconds", 60)
+	viper.SetDefault("gateway.retry_guard.backoff_base_ms", 100)
+	viper.SetDefault("gateway.retry_guard.backoff_max_ms", 1000)
+	viper.SetDefault("gateway.retry_guard.retry_after_min_seconds", 5)
+	viper.SetDefault("gateway.retry_guard.retry_after_max_seconds", 30)
 	viper.SetDefault("gateway.force_codex_cli", false)
 	viper.SetDefault("gateway.codex_quota_overdraft_enabled", true)
 	viper.SetDefault("gateway.codex_quota_overdraft_business_injection_enabled", false)

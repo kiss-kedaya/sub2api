@@ -50,6 +50,9 @@ type RateLimitService struct {
 	sessionWindowWrites accountWriteGate[sessionWindowWrite]
 	passiveUsageWrites  accountWriteGate[passiveUsageSample]
 	accountWrites       accountWriteRunner
+
+	// circuitBreaker 是账号错误率断路器（可选，见 account_circuit_breaker.go）。
+	circuitBreaker *AccountCircuitBreaker
 }
 
 type AccountRuntimeBlocker interface {
@@ -162,7 +165,13 @@ func (s *RateLimitService) notifyAccountSchedulingBlocked(account *Account, unti
 }
 
 func (s *RateLimitService) notifyAccountSchedulingBlockCleared(accountID int64) {
-	if s == nil || s.runtimeBlocker == nil || accountID <= 0 {
+	if s == nil || accountID <= 0 {
+		return
+	}
+	// 手动清除限流/临时不可调度：断路器的内存状态也要一起清掉，否则库里已经可调度了，
+	// 重试循环还会因为「断路器仍打开」而停止重试这个账号。
+	s.circuitBreaker.Reset(accountID)
+	if s.runtimeBlocker == nil {
 		return
 	}
 	s.runtimeBlocker.ClearAccountSchedulingBlock(accountID)

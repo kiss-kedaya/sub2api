@@ -165,7 +165,11 @@ type httpUpstreamService struct {
 	clients map[string]*upstreamClientEntry // 客户端缓存池，key 由隔离策略决定
 	// OpenAI 走 HTTP/HTTPS 代理时的 H2->H1 回退状态（key=标准化 proxyKey）
 	openAIHTTP2Fallbacks sync.Map
+	// attemptObserver 观察每次上游 HTTP 尝试的结果（账号错误率断路器），启动时挂一次，可为空。
+	attemptObserver atomic.Pointer[upstreamAttemptObserverBox]
 }
+
+type upstreamAttemptObserverBox struct{ observer service.UpstreamAttemptObserver }
 
 // NewHTTPUpstream 创建通用 HTTP 上游服务
 // 使用配置中的连接池参数构建 Transport
@@ -194,6 +198,31 @@ func captureUpstreamHeadersForOps(req *http.Request, resp *http.Response) {
 		return
 	}
 	service.CaptureOpsUpstreamHeaders(req.Context(), req, resp)
+}
+
+// SetUpstreamAttemptObserver 注册上游尝试观察者（实现 service.UpstreamAttemptObservable）。
+func (s *httpUpstreamService) SetUpstreamAttemptObserver(observer service.UpstreamAttemptObserver) {
+	if observer == nil {
+		s.attemptObserver.Store(nil)
+		return
+	}
+	s.attemptObserver.Store(&upstreamAttemptObserverBox{observer: observer})
+}
+
+// observeUpstreamAttempt 在 Do / DoWithTLS 各自真正发出请求之后调用一次（DoWithTLS 在 profile 为空或
+// 明文 http 时会转调 Do，所以每次尝试只会被观察一次）。观察者拿到的是这一次尝试的结果，重试的每一次
+// 都单独算一次。观察只是旁路统计，任何情况下（含 panic）都不得影响转发主链路。
+func (s *httpUpstreamService) observeUpstreamAttempt(req *http.Request, accountID int64, resp *http.Response, err error) {
+	box := s.attemptObserver.Load()
+	if box == nil || req == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	status := 0
+	if resp != nil {
+		status = resp.StatusCode
+	}
+	box.observer.ObserveUpstreamAttempt(req.Context(), accountID, status, err)
 }
 
 // Do 执行 HTTP 请求
@@ -241,6 +270,7 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	client = httpClientWithGrokAccessDeniedFallback(client)
 	resp, err := observedUpstreamRequest(client, req)
 	captureUpstreamHeadersForOps(req, resp)
+	s.observeUpstreamAttempt(req, accountID, resp, err)
 	if err != nil {
 		// 请求失败，立即减少计数
 		atomic.AddInt64(&entry.inFlight, -1)
@@ -308,6 +338,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	client = httpClientWithGrokAccessDeniedFallback(client)
 	resp, err := observedUpstreamRequest(client, req)
 	captureUpstreamHeadersForOps(req, resp)
+	s.observeUpstreamAttempt(req, accountID, resp, err)
 	if err != nil {
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
