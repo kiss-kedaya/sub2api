@@ -90,20 +90,19 @@ func (h *CryptoHandler) AdminUpdateSweepDestination(c *gin.Context) {
 		"lock_created":          change.LockCreated,
 	})
 
-	if h.service != nil {
-		if change.Changed || change.Locked {
-			// Best effort: the channel never blocks or fails the operation.
-			h.service.NotifyEvent(c.Request.Context(), cryptopay.EventSweepDestinationChanged, map[string]any{
-				"previous_hot_wallet_evm":    change.Previous.EVM,
-				"hot_wallet_evm":             change.Current.EVM,
-				"previous_hot_wallet_solana": change.Previous.Solana,
-				"hot_wallet_solana":          change.Current.Solana,
-				"changed":                    change.Changed,
-				"lock_created":               change.LockCreated,
-			})
-		}
-		// Rebuild the sweep planner with the new destination immediately.
-		h.service.Reload(c.Request.Context())
+	if h.service != nil && (change.Changed || change.Locked) {
+		// Best effort: the channel never blocks or fails the operation.
+		h.service.NotifyEvent(c.Request.Context(), cryptopay.EventSweepDestinationChanged, map[string]any{
+			"previous_hot_wallet_evm":    change.Previous.EVM,
+			"hot_wallet_evm":             change.Current.EVM,
+			"previous_hot_wallet_solana": change.Previous.Solana,
+			"hot_wallet_solana":          change.Current.Solana,
+			"changed":                    change.Changed,
+			"lock_created":               change.LockCreated,
+		})
 	}
-	response.Success(c, change.JSON())
+	// Rebuild the sweep planner with the new destination immediately — but never
+	// hold this request behind a running sweep (see reloadCryptoConfig).
+	applied := h.reloadCryptoConfig(c)
+	response.Success(c, change.JSON(applied))
 }

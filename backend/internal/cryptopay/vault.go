@@ -13,7 +13,9 @@ func (s *Service) ImportHotMnemonic(ctx context.Context, mnemonic string) error 
 	if err := mode.CheckWritable(); err != nil {
 		return err
 	}
-	s.sweepMu.Lock()
+	if err := s.lockSweepWithin(ctx); err != nil {
+		return err
+	}
 	defer s.sweepMu.Unlock()
 	s.mu.RLock()
 	wallet := s.wallet

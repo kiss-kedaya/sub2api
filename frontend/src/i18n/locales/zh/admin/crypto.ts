@@ -238,6 +238,8 @@ export default {
     saveConfirmTitle: '确认保存配置变更',
     saveConfirmMessage: '检测到 {count} 项影响资金流向的改动，链上操作不可撤销，请核对后保存：',
     saveConfirmAction: '确认保存',
+    saveApplyDeferred: '已保存。配置正在后台应用；如果当前有归集或扫描在进行，会在它结束后自动生效，无需重复保存。',
+    saveNoResponse: '请求没有收到响应；配置可能已经保存，请刷新页面核对。',
     creditMultiplier: '入账倍率',
     disabled: '关闭',
     sweepDryRun: '试运行归集',

@@ -78,6 +78,9 @@ func writeCryptoSignerError(c *gin.Context, err error) bool {
 		response.ErrorWithDetails(c, http.StatusConflict, "wallet shards already exist; use the re-split flow", "CRYPTO_SIGNER_SHARDS_EXIST", nil)
 	case errors.Is(err, wallet.ErrShardsNotAllowed):
 		response.ErrorWithDetails(c, http.StatusConflict, "wallet shard operation is not allowed in the current state", "CRYPTO_SIGNER_STATE_INVALID", nil)
+	case errors.Is(err, cryptopay.ErrSweepBusy):
+		// The change waited a few seconds for the running sweep and gave up; nothing was written.
+		response.ErrorWithDetails(c, http.StatusConflict, "a sweep or scan is running; retry after it finishes", "CRYPTO_SWEEP_BUSY", nil)
 	default:
 		return false
 	}

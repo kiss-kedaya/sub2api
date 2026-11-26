@@ -38,6 +38,28 @@ describe('Crypto request contract (not backend authorization)', () => {
   it('explains deployment-level payment authorization separately from a bad code', () => {
     expect(api.cryptoSecurityErrorKey({ reason: 'CRYPTO_OPERATOR_REQUIRED', status: 403 })).toBe('securityOperatorRequired')
   })
+
+  it('tells the console whether a saved config is already live, and treats a missing flag as live', async () => {
+    client.put.mockResolvedValueOnce({ data: { data: { saved: true, applied: false } }, status: 200 })
+    expect(await api.updateCryptoConfig({ sweep_global_threshold: 200 })).toEqual({ saved: true, applied: false })
+    client.put.mockResolvedValueOnce({ data: { data: { saved: true, applied: true } }, status: 200 })
+    expect(await api.updateCryptoConfig({ sweep_global_threshold: 200 })).toEqual({ saved: true, applied: true })
+    // An older backend answers {saved:true} only, or a bare body: nothing is pending there.
+    client.put.mockResolvedValueOnce({ data: { data: { saved: true } }, status: 200 })
+    expect(await api.updateCryptoConfig({ sweep_global_threshold: 200 })).toEqual({ saved: true, applied: true })
+    client.put.mockResolvedValueOnce({ data: {}, status: 200 })
+    expect(await api.updateCryptoConfig({ sweep_global_threshold: 200 })).toEqual({ saved: true, applied: true })
+  })
+
+  it('recognises the shared client\'s "no answer" error and nothing else', () => {
+    expect(api.isCryptoNoResponseError({ status: 0, message: 'Network error. Please check your connection.' })).toBe(true)
+    expect(api.isCryptoNoResponseError({ status: 502, message: 'Bad gateway' })).toBe(false)
+    expect(api.isCryptoNoResponseError({ status: 409, code: 'CRYPTO_CONFIG_CONFLICT' })).toBe(false)
+    expect(api.isCryptoNoResponseError({ code: 'ERR_CANCELED' })).toBe(false)
+    expect(api.isCryptoNoResponseError(new Error('boom'))).toBe(false)
+    expect(api.isCryptoNoResponseError(null)).toBe(false)
+    expect(api.isCryptoNoResponseError(undefined)).toBe(false)
+  })
   it('reads wallet status and sends initialization seeds only to the built-in wallet initialization endpoint', async () => {
     const status = { ok: true, configured: true, ready: true, enabled: true }
     client.get.mockResolvedValueOnce({ data: { data: status } })
