@@ -75,7 +75,8 @@ func (keyInfoRouteSubRepo) ListActiveByUserID(context.Context, int64) ([]service
 
 type keyInfoRouteUsageRepo struct {
 	service.UsageLogRepository
-	askedKeyIDs []int64
+	askedKeyIDs  []int64
+	askedUserIDs []int64 // account-level reads (GET /v1/sub2api/account), see gateway_key_account_test.go
 }
 
 func (r *keyInfoRouteUsageRepo) GetAPIKeyStatsAggregated(_ context.Context, id int64, _, _ time.Time) (*usagestats.UsageStats, error) {
@@ -95,6 +96,12 @@ func (keyInfoRouteRateRepo) GetRPMOverrideByUserAndGroup(context.Context, int64,
 }
 
 func newKeyInfoRouteRouter(t *testing.T, mutate func(*service.APIKey, *service.User), redisClients ...*redis.Client) (*gin.Engine, *keyInfoRouteAPIKeyRepo, string) {
+	t.Helper()
+	return newKeyInfoRouteRouterWith(t, mutate, &keyInfoRouteUsageRepo{}, redisClients...)
+}
+
+// newKeyInfoRouteRouterWith is newKeyInfoRouteRouter with the usage repository the caller can inspect afterwards.
+func newKeyInfoRouteRouterWith(t *testing.T, mutate func(*service.APIKey, *service.User), usage *keyInfoRouteUsageRepo, redisClients ...*redis.Client) (*gin.Engine, *keyInfoRouteAPIKeyRepo, string) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	group := &service.Group{ID: 42, Name: "G42", Status: service.StatusActive, Hydrated: true, Platform: service.PlatformOpenAI,
@@ -119,7 +126,7 @@ func newKeyInfoRouteRouter(t *testing.T, mutate func(*service.APIKey, *service.U
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	gatewayHandler := handler.NewGatewayHandler(
-		gatewayService, openAIGatewayService, nil, nil, nil, nil, nil, service.NewUsageService(&keyInfoRouteUsageRepo{}, nil, nil, nil),
+		gatewayService, openAIGatewayService, nil, nil, nil, nil, nil, service.NewUsageService(usage, nil, nil, nil),
 		apiKeyService, nil, nil, nil, nil, cfg, nil,
 	)
 	router := gin.New()
@@ -150,7 +157,7 @@ func TestGatewayRoutesKeySelfServiceEndpointsAreRegistered(t *testing.T) {
 			registered[route.Path] = true
 		}
 	}
-	for _, path := range []string{"/v1/sub2api/key", "/v1/sub2api/groups", "/v1/sub2api/usage", "/v1/sub2api/billing"} {
+	for _, path := range []string{"/v1/sub2api/key", "/v1/sub2api/groups", "/v1/sub2api/usage", "/v1/sub2api/account", "/v1/sub2api/billing"} {
 		require.True(t, registered[path], "GET %s should be registered", path)
 	}
 }
