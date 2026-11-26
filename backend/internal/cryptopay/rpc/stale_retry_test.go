@@ -35,11 +35,11 @@ func (c *staleConn) state() string {
 func (c *staleConn) Write(p []byte) (int, error) {
 	switch c.state() {
 	case "swallow":
-		_ = c.Conn.Close() // unblocks the parked Read; the request is "written"
+		_ = c.Close() // unblocks the parked Read; the request is "written"
 		return len(p), nil
 	case "processed":
 		n, err := c.Conn.Write(p)
-		time.AfterFunc(30*time.Millisecond, func() { _ = c.Conn.Close() })
+		time.AfterFunc(30*time.Millisecond, func() { _ = c.Close() })
 		return n, err
 	}
 	return c.Conn.Write(p)
