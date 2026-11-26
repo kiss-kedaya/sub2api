@@ -331,32 +331,14 @@ func (r *usageLogRepository) GetUsageTrendWithFilters(ctx context.Context, start
 	return mergeTrendPointsByDate(closed, today), nil
 }
 
-// keyDailyTrendSplit says where to cut one API key's by-day window [start, end) into the days that are over and
-// the day still being written: the start of today in the window's own time zone (end's location), and whether to
-// cut at all. It is the local midnight, not end-24h: the day of a DST change has 23 or 25 hours.
-//
-// Only the class that keyAggregateTTL gives the long TTL is cut (one key, window over 25 hours), and only by day;
-// a window with no closed day (today starts at or before start) or without today (today starts at or after end)
-// is answered whole, as before, and so is every window when there is no cache: two reads would only cost more.
-//
-// Where the cut falls changes nothing in the answer: the parts cover [start, end) exactly once, and the day
-// labels are cut by the database session's zone, which need not be the window's, so one label can be in both
-// parts and mergeTrendPointsByDate adds them. The cut only decides what can be kept.
+// keyDailyTrendSplit is keyWindowSplit for one API key's by-day trend: only by day is cut. The day labels are cut by
+// the database session's zone, which need not be the window's, so one label can be in both parts and
+// mergeTrendPointsByDate adds them.
 func (r *usageLogRepository) keyDailyTrendSplit(apiKeyID int64, start, end time.Time, granularity string) (time.Time, bool) {
-	if r.statsCache == nil || usageGranularityKey(granularity) != "day" || keyAggregateTTL(apiKeyID, start, end) == 0 {
+	if usageGranularityKey(granularity) != "day" {
 		return time.Time{}, false
 	}
-	now := time.Now()
-	if r.clock != nil {
-		now = r.clock()
-	}
-	loc := end.Location()
-	today := now.In(loc)
-	splitAt := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, loc)
-	if !splitAt.After(start) || !splitAt.Before(end) {
-		return time.Time{}, false
-	}
-	return splitAt, true
+	return r.keyWindowSplit(apiKeyID, start, end)
 }
 
 // mergeTrendPointsByDate adds the parts of one trend up by day label, in label order like the query's ORDER BY.
@@ -592,16 +574,22 @@ func (r *usageLogRepository) GetModelStatsWithFilters(ctx context.Context, start
 
 // GetModelStatsWithFiltersBySource returns model statistics with optional filters and model source dimension.
 // source: requested | upstream | mapping.
+//
+// One API key's report over several days is read in parts when the window still holds today (keyWindowParts): the
+// whole days that are over, which no longer change and are kept for a day, and the rest, which is read again every
+// cache TTL or quarter hour. The parts are added up by model name (mergeModelStats). Everything else is read whole.
 func (r *usageLogRepository) GetModelStatsWithFiltersBySource(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8, source string) (results []ModelStat, err error) {
-	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
-		Query: "model_stats_with_filters", UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
-		ModelSource: usagestats.NormalizeModelSource(source),
-		Start:       startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
-		Filters: &usageFiltersFingerprint{RequestType: requestType, Stream: stream, BillingType: billingType},
-		TTL:     keyAggregateTTL(apiKeyID, startTime, endTime),
-	}, func(ctx context.Context) ([]ModelStat, error) {
-		return r.getModelStatsWithFiltersBySourceResolved(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType, source)
-	})
+	return readKeyWindow(r, apiKeyID, startTime, endTime, keyAggregateTTL(apiKeyID, startTime, endTime), func(p keyWindowPart) ([]ModelStat, error) {
+		return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+			Query: "model_stats_with_filters", UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
+			ModelSource: usagestats.NormalizeModelSource(source),
+			Start:       p.start.UTC().Format(time.RFC3339Nano), End: p.end.UTC().Format(time.RFC3339Nano),
+			Filters: &usageFiltersFingerprint{RequestType: requestType, Stream: stream, BillingType: billingType},
+			TTL:     p.ttl,
+		}, func(ctx context.Context) ([]ModelStat, error) {
+			return r.getModelStatsWithFiltersBySourceResolved(ctx, p.start, p.end, userID, apiKeyID, accountID, groupID, requestType, stream, billingType, source)
+		})
+	}, mergeModelStats)
 }
 
 func (r *usageLogRepository) getModelStatsWithFiltersBySourceResolved(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8, source string) (results []ModelStat, err error) {
@@ -614,14 +602,26 @@ func (r *usageLogRepository) getModelStatsWithFiltersBySourceResolved(ctx contex
 	return r.getModelStatsWithFiltersBySource(ctx, startTime, endTime, userID, apiKeyID, accountID, groupID, "", requestType, stream, billingType, source, "", nil, nil)
 }
 
+// GetModelStatsWithUsageFiltersBySource is GetModelStatsWithFiltersBySource over the shared usage filter shape. A
+// window asked whole keeps the cache's own TTL, as before; only one API key's report that holds today is read in
+// parts (keyWindowParts), whatever the other filters are: each is a condition on the row, so the parts add up.
 func (r *usageLogRepository) GetModelStatsWithUsageFiltersBySource(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters, source string) (results []ModelStat, err error) {
-	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
-		Query: "model_stats_usage_filters", ModelSource: usagestats.NormalizeModelSource(source),
-		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
-		Filters: usageFiltersFingerprintOf(filters),
-	}, func(ctx context.Context) ([]ModelStat, error) {
-		return r.getModelStatsWithUsageFiltersBySourceResolved(ctx, startTime, endTime, filters, source)
-	})
+	return readKeyWindow(r, filters.APIKeyID, startTime, endTime, 0, func(p keyWindowPart) ([]ModelStat, error) {
+		fingerprint := usageFiltersFingerprintOf(filters)
+		if !p.whole {
+			// The key names the part's window in Start and End. The window declared in the filters is the whole one:
+			// left in the identity it would make the entry of every part depend on it (a rolling preset's end moves
+			// every minute), and none could be reused.
+			fingerprint.StartTime, fingerprint.EndTime = "", ""
+		}
+		return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+			Query: "model_stats_usage_filters", ModelSource: usagestats.NormalizeModelSource(source),
+			Start: p.start.UTC().Format(time.RFC3339Nano), End: p.end.UTC().Format(time.RFC3339Nano),
+			Filters: fingerprint, TTL: p.ttl,
+		}, func(ctx context.Context) ([]ModelStat, error) {
+			return r.getModelStatsWithUsageFiltersBySourceResolved(ctx, p.start, p.end, filters, source)
+		})
+	}, mergeModelStats)
 }
 
 func (r *usageLogRepository) getModelStatsWithUsageFiltersBySourceResolved(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters, source string) (results []ModelStat, err error) {

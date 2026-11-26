@@ -108,8 +108,8 @@ func newKeyWindowRepo(t *testing.T, ttl time.Duration) (*usageLogRepository, sql
 	repo := newUsageLogRepositoryWithSQL(nil, db)
 	repo.statsCache = newUsageStatsCache(client, &config.Config{UsageStatsCache: config.UsageStatsCacheConfig{Enabled: true, TTL: ttl}})
 	// These tests are about the cache class of a window asked whole. Their windows start on 2026-11-12, so the clock
-	// stands before it: with the real one a 30 day window would hold today and be answered in two parts. That split
-	// has its own tests (usage_key_daily_split_test.go).
+	// stands before it: with the real one a 30 day window would hold today and be answered in parts, as all three
+	// aggregates are. That split has its own tests (usage_key_daily_split_test.go, usage_key_window_split_test.go).
 	repo.clock = func() time.Time { return time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC) }
 	return repo, mock, server
 }

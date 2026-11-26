@@ -444,26 +444,10 @@ func TestKeyDailyTrendSplitLeavesOtherWindowsWhole(t *testing.T) {
 	})
 }
 
-// Only the by-day trend is cut. The other aggregates of one key over the same window (the model report and the key
-// summary) are read whole and keep the quarter hour: they are the same window, with today in it.
-func TestKeyDailyTrendSplitDoesNotTouchTheOtherKeyAggregates(t *testing.T) {
-	now := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
-	start, end := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 27, 0, 0, 0, 0, time.UTC)
-	for _, agg := range keyWindowAggregates()[1:] { // model report, key summary
-		t.Run(agg.name, func(t *testing.T) {
-			repo, mock, server := newKeyWindowRepo(t, time.Minute)
-			repo.clock = func() time.Time { return now }
-			agg.expect(mock, 5)
-			got, err := agg.ask(repo, splitTrendUser, splitTrendKey, start, end)
-			require.NoError(t, err)
-			require.EqualValues(t, 5, got)
-			require.NoError(t, mock.ExpectationsWereMet(), "one read of the whole window")
-			keys := server.Keys()
-			require.Len(t, keys, 1)
-			require.Equal(t, keyWindowTTL, server.TTL(keys[0]))
-		})
-	}
-}
+// The model report and the key summary of the same key are read in parts too, by the same cut at today's midnight
+// (keyWindowSplit); their tests are in usage_key_window_split_test.go. They are also cut at the first midnight of the
+// window, because the windows they are asked for do not always start at one. The by-day trend is not: the days it is
+// asked for start at a midnight.
 
 func TestMergeTrendPointsByDate(t *testing.T) {
 	a := []TrendDataPoint{pt("2026-11-24", 1), pt("2026-11-25", 2)}
