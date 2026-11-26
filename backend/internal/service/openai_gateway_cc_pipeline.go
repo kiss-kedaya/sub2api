@@ -210,7 +210,7 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	// message that produced reasoning. Cache-backed replay can miss (eviction,
 	// other key, item never recorded); fill only the still-empty slots.
 	if account.Platform == PlatformDeepseek {
-		body = normalizeDeepSeekChatMessages(dropOrphanDeepSeekToolMessages(body))
+		body = normalizeAndDropOrphanDeepSeekChatMessages(body)
 	}
 	body = ensureDeepSeekChatReasoningPlaceholders(account, body)
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)

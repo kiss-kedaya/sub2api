@@ -255,21 +255,17 @@ func GrokModerationSessionHash(c *gin.Context, apiKey *APIKey, body []byte) stri
 // conversations starting with the same greeting.
 func grokModerationTranscriptKeys(apiKey *APIKey, body []byte, write bool) []string {
 	uid := balancePreauthorizationAPIKeyUserID(apiKey)
-	if uid <= 0 || !hasOpenAIContentSessionUserAnchor([]byte(openAIRequestPayloadView(body).Raw)) {
+	if uid <= 0 || len(body) == 0 {
 		return nil
 	}
-	transcript := deriveOpenAICyberTranscriptBlockKeys(uid, body)
-	keys := transcript.lookupKeys
-	if write && len(keys) > 0 {
-		keys = []string{keys[len(keys)-1]}
-		if transcript.preLatestUserKey != "" {
-			keys = append(keys, transcript.preLatestUserKey)
-		}
+	transcript := deriveOpenAICyberTranscriptBlockKeysCore(uid, body, true, write, "grok-moderation-transcript:")
+	if len(transcript.lookupKeys) == 0 {
+		return nil
 	}
-	for i, key := range keys {
-		keys[i] = "grok-moderation-transcript:" + key
+	if write && transcript.preLatestUserKey != "" {
+		return []string{transcript.lookupKeys[0], transcript.preLatestUserKey}
 	}
-	return keys
+	return transcript.lookupKeys
 }
 
 // grokModerationTranscriptBlockTTL bounds how long a refused transcript stays
