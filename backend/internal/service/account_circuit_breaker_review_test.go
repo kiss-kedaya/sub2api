@@ -190,6 +190,17 @@ func TestCircuitBreakerRequestSamplesAreBoundedAndExpire(t *testing.T) {
 	require.Zero(t, c.count(), "expired entries are purged even without new traffic")
 }
 
+func TestCircuitBreakerStatsReportTheRememberedRequestSamples(t *testing.T) {
+	h := newCircuitHarness(t, nil)
+	require.Zero(t, h.b.Stats().RequestSamples)
+	h.b.ObserveUpstreamAttempt(circuitCtxReq(1, "anthropic", "a", "r-1"), 1, 502, nil)
+	h.b.ObserveUpstreamAttempt(circuitCtxReq(1, "anthropic", "a", "r-2"), 1, 502, nil)
+	h.b.ObserveUpstreamAttempt(circuitCtxReq(1, "anthropic", "a", "r-1"), 1, 502, nil) // 同一个请求再失败：仍是一条
+	require.Equal(t, int64(2), h.b.Stats().RequestSamples)
+	h.b.ObserveUpstreamAttempt(circuitCtxReq(1, "anthropic", "a", "r-2"), 1, 200, nil) // 成功撤销那条失败记录
+	require.Equal(t, int64(1), h.b.Stats().RequestSamples)
+}
+
 func TestCircuitBreakerSweepPurgesRequestSamples(t *testing.T) {
 	h := newCircuitHarness(t, nil)
 	h.b.ObserveUpstreamAttempt(circuitCtxReq(1, "anthropic", "a", "r-1"), 1, 502, nil)

@@ -945,7 +945,7 @@ func parseGeminiModelAction(rest string) (model string, action string, err error
 }
 
 func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError) {
-	markUpstreamPassthroughError(c) // 上游错误的透传，不属于网关自己的 503/429（见 retry_after.go）
+	markUpstreamPassthroughError(c, failoverErr) // 上游错误的透传，不属于网关自己的 503/429（见 retry_after.go）
 
 	if failoverErr != nil {
 		defer service.GuardUpstreamFinancialError(c, failoverErr.StatusCode, failoverErr.ResponseBody)()
@@ -1007,7 +1007,7 @@ type pathParseError struct{ msg string }
 func (e *pathParseError) Error() string { return e.msg }
 
 func googleError(c *gin.Context, status int, message string) {
-	setGatewayRetryAfter(c, status)
+	setGatewayRetryAfter(c, status, "", "", message)
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"code":    status,

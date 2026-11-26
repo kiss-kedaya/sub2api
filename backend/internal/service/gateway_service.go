@@ -762,6 +762,9 @@ type UpstreamFailoverError struct {
 	NextAccountAction          NextAccountAction
 	ClientStatusCode           int
 	ClientMessage              string
+	// BudgetExhausted 由 handler 的重试循环在「单请求重试预算（尝试次数/总耗时）用尽」时置位：
+	// 这次错误是被预算截断后返回给客户端的，而不是候选账号自然耗尽。handler 据此给透传的上游 5xx 补 Retry-After。
+	BudgetExhausted bool
 }
 
 func (e *UpstreamFailoverError) Error() string {

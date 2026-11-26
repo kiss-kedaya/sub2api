@@ -14,7 +14,10 @@ import (
 func fastRetryGuard(t *testing.T, mutate func(*config.GatewayRetryGuardConfig)) {
 	t.Helper()
 	cfg := &config.Config{}
-	cfg.Gateway.RetryGuard = config.GatewayRetryGuardConfig{BackoffBaseMs: 1, BackoffMaxMs: 2}
+	cfg.Gateway.RetryGuard = config.GatewayRetryGuardConfig{
+		BackoffBaseMs: 1, BackoffMaxMs: 2,
+		RetryAfterEnabled: true, RetryAfterMinSeconds: 5, RetryAfterMaxSeconds: 15,
+	}
 	if mutate != nil {
 		mutate(&cfg.Gateway.RetryGuard)
 	}
@@ -37,17 +40,18 @@ func TestConfigureRetryGuardDefaultsAndOverrides(t *testing.T) {
 
 	ConfigureRetryGuard(nil)
 	d := currentRetryGuard()
-	require.Equal(t, 10, d.maxAttempts)
-	require.Equal(t, 60*time.Second, d.maxElapsed)
+	require.Equal(t, 30, d.maxAttempts, "filling schedulers must be able to try every candidate before giving up")
+	require.Equal(t, 120*time.Second, d.maxElapsed)
 	require.Equal(t, 100*time.Millisecond, d.backoffBase)
 	require.Equal(t, time.Second, d.backoffMax)
+	require.True(t, d.retryAfterEnabled)
 	require.Equal(t, 5, d.retryAfterMinSeconds)
-	require.Equal(t, 30, d.retryAfterMaxSeconds)
+	require.Equal(t, 15, d.retryAfterMaxSeconds)
 
 	cfg := &config.Config{}
 	cfg.Gateway.RetryGuard = config.GatewayRetryGuardConfig{
 		MaxAttempts: 4, MaxElapsedSeconds: 20, BackoffBaseMs: 50, BackoffMaxMs: 400,
-		RetryAfterMinSeconds: 2, RetryAfterMaxSeconds: 9,
+		RetryAfterEnabled: true, RetryAfterMinSeconds: 2, RetryAfterMaxSeconds: 9,
 	}
 	ConfigureRetryGuard(cfg)
 	s := currentRetryGuard()
@@ -55,16 +59,24 @@ func TestConfigureRetryGuardDefaultsAndOverrides(t *testing.T) {
 	require.Equal(t, 20*time.Second, s.maxElapsed)
 	require.Equal(t, 50*time.Millisecond, s.backoffBase)
 	require.Equal(t, 400*time.Millisecond, s.backoffMax)
+	require.True(t, s.retryAfterEnabled)
 	require.Equal(t, 2, s.retryAfterMinSeconds)
 	require.Equal(t, 9, s.retryAfterMaxSeconds)
 
 	// 非法值回落默认，而不是把硬上限关掉
-	cfg.Gateway.RetryGuard = config.GatewayRetryGuardConfig{MaxAttempts: -1, MaxElapsedSeconds: -5, BackoffBaseMs: -1, BackoffMaxMs: -1}
+	cfg.Gateway.RetryGuard = config.GatewayRetryGuardConfig{
+		MaxAttempts: -1, MaxElapsedSeconds: -5, BackoffBaseMs: -1, BackoffMaxMs: -1,
+		RetryAfterEnabled: true, RetryAfterMinSeconds: -1, RetryAfterMaxSeconds: -1,
+	}
 	ConfigureRetryGuard(cfg)
 	require.Equal(t, defaultRetryGuardSettings(), currentRetryGuard())
 
+	// 整个段都是零值（裸 Config）：全部用默认值，包括 Retry-After 开启。
+	ConfigureRetryGuard(&config.Config{})
+	require.Equal(t, defaultRetryGuardSettings(), currentRetryGuard())
+
 	// 区间颠倒时修正，不 panic
-	cfg.Gateway.RetryGuard = config.GatewayRetryGuardConfig{BackoffBaseMs: 500, BackoffMaxMs: 100, RetryAfterMinSeconds: 20, RetryAfterMaxSeconds: 5}
+	cfg.Gateway.RetryGuard = config.GatewayRetryGuardConfig{BackoffBaseMs: 500, BackoffMaxMs: 100, RetryAfterEnabled: true, RetryAfterMinSeconds: 20, RetryAfterMaxSeconds: 5}
 	ConfigureRetryGuard(cfg)
 	s = currentRetryGuard()
 	require.GreaterOrEqual(t, s.backoffMax, s.backoffBase)
@@ -74,21 +86,77 @@ func TestConfigureRetryGuardDefaultsAndOverrides(t *testing.T) {
 // ---- 预算 --------------------------------------------------------------------
 
 func TestFailoverBudgetAttemptCap(t *testing.T) {
+	t.Cleanup(func() { ConfigureRetryGuard(nil) })
+	ConfigureRetryGuard(nil)
 	b := newFailoverBudget()
-	for i := 1; i < 10; i++ {
+	for i := 1; i < 30; i++ {
 		require.Empty(t, b.spend(time.Now()), "attempt %d may still be followed by another one", i)
 	}
-	require.Equal(t, failoverBudgetReasonAttempts, b.spend(time.Now()), "the 10th failed attempt ends the request: at most 10 upstream attempts")
-	require.Equal(t, 10, b.attempts)
+	require.Equal(t, failoverBudgetReasonAttempts, b.spend(time.Now()), "the 30th failed attempt ends the request: at most 30 upstream attempts")
+	require.Equal(t, 30, b.attempts)
 }
 
 func TestFailoverBudgetElapsedCap(t *testing.T) {
+	t.Cleanup(func() { ConfigureRetryGuard(nil) })
+	ConfigureRetryGuard(nil)
 	b := newFailoverBudget()
-	require.Empty(t, b.spend(b.started.Add(59*time.Second)))
-	require.Equal(t, failoverBudgetReasonElapsed, b.spend(b.started.Add(60*time.Second)))
-	require.Equal(t, failoverBudgetReasonElapsed, b.exhaustedReason(b.started.Add(61*time.Second)))
-	fresh := newFailoverBudget()
-	require.Empty(t, fresh.exhaustedReason(time.Now()))
+	t0 := time.Now()
+	require.True(t, b.started.IsZero(), "the clock has not started: there has been no failure yet")
+	require.Empty(t, b.exhaustedReason(t0.Add(10*time.Hour)), "before the first failure no amount of waiting exhausts the budget")
+	require.Zero(t, b.elapsed(t0.Add(time.Hour)))
+
+	require.Empty(t, b.spend(t0), "the first failure starts the clock")
+	require.Equal(t, t0, b.started)
+	require.Empty(t, b.spend(t0.Add(119*time.Second)))
+	require.Equal(t, failoverBudgetReasonElapsed, b.spend(t0.Add(120*time.Second)))
+	require.Equal(t, failoverBudgetReasonElapsed, b.exhaustedReason(t0.Add(121*time.Second)))
+	require.Equal(t, 121*time.Second, b.elapsed(t0.Add(121*time.Second)))
+}
+
+func TestFailoverBudgetClockStartsAtTheFirstFailureNotAtRequestStart(t *testing.T) {
+	// 回归：请求可能先排队等并发槽位（最长 120 秒），第一次尝试本身也可能很慢。
+	// 这些时间不能吃掉重试预算：第一次失败在 62 秒之后到来时，不能在 attempts=1 就被判定「预算用尽」。
+	fastRetryGuard(t, func(c *config.GatewayRetryGuardConfig) { c.MaxElapsedSeconds = 60 })
+	now := time.Now()
+	fs := NewFillFailoverState(10, false)
+	fs.budget.clock = func() time.Time { return now }
+	failoverErr := newTestFailoverErr(502, true, false)
+
+	now = now.Add(62 * time.Second) // 排队 + 慢的第一次尝试
+	action := fs.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 1, "anthropic", 3, failoverErr)
+	require.Equal(t, FailoverContinue, action, "62s before the first failure must not exhaust a 60s budget at attempts=1")
+	require.Equal(t, 1, fs.budget.attempts)
+	require.False(t, failoverErr.BudgetExhausted)
+
+	// 预算从这次失败起算：再过 59 秒仍可重试，再过 2 秒（共 61 秒）才耗尽。
+	now = now.Add(59 * time.Second)
+	require.Equal(t, FailoverContinue, fs.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 1, "anthropic", 3, failoverErr))
+	now = now.Add(2 * time.Second)
+	require.Equal(t, FailoverExhausted, fs.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 1, "anthropic", 3, failoverErr))
+	require.True(t, failoverErr.BudgetExhausted, "the caller is told the request was cut short by the budget")
+}
+
+func TestFailoverBudgetExhaustionMarksTheErrorForTheCaller(t *testing.T) {
+	fastRetryGuard(t, func(c *config.GatewayRetryGuardConfig) { c.MaxAttempts = 2 })
+	fs := NewFillFailoverState(10, false)
+	first := newTestFailoverErr(502, false, false)
+	require.Equal(t, FailoverContinue, fs.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 1, "openai", 0, first))
+	require.False(t, first.BudgetExhausted)
+	second := newTestFailoverErr(503, false, false)
+	require.Equal(t, FailoverExhausted, fs.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 2, "openai", 0, second))
+	require.True(t, second.BudgetExhausted)
+	require.Same(t, second, fs.LastFailoverErr)
+
+	// 选号失败后的退避分支遇到预算用尽：同样打标记。
+	fastRetryGuard(t, func(c *config.GatewayRetryGuardConfig) { c.MaxAttempts = 10 })
+	fs3 := NewFailoverState(100, false)
+	last := newTestFailoverErr(503, false, false)
+	fs3.LastFailoverErr = last
+	fs3.FailedAccountIDs[1] = struct{}{}
+	fs3.SwitchCount = 1
+	fs3.budget.attempts = 10
+	require.Equal(t, FailoverExhausted, fs3.HandleSelectionExhausted(context.Background()))
+	require.True(t, last.BudgetExhausted)
 }
 
 func TestFailoverBudgetHonorsConfiguredLimits(t *testing.T) {
@@ -127,7 +195,7 @@ func driveFailoverLoop(t *testing.T, fs *FailoverState, svc TempUnscheduler, acc
 }
 
 func TestHandleFailoverErrorCapsTotalAttemptsAcrossAccountsAndRetries(t *testing.T) {
-	fastRetryGuard(t, nil)
+	fastRetryGuard(t, func(c *config.GatewayRetryGuardConfig) { c.MaxAttempts = 10 })
 	accounts := make([]int64, 50)
 	for i := range accounts {
 		accounts[i] = int64(i + 1)
@@ -144,7 +212,7 @@ func TestHandleFailoverErrorCapsTotalAttemptsAcrossAccountsAndRetries(t *testing
 }
 
 func TestHandleFailoverErrorCapCountsPoolModeRetriesOnOneAccount(t *testing.T) {
-	fastRetryGuard(t, nil)
+	fastRetryGuard(t, func(c *config.GatewayRetryGuardConfig) { c.MaxAttempts = 10 })
 	// 单账号、池模式重试预算 10：旧行为是 1 + 10 次尝试，现在总共 10 次。
 	fs := NewFillFailoverState(10, false)
 	attempts, last := driveFailoverLoop(t, fs, &mockTempUnscheduler{}, []int64{7}, 10, newTestFailoverErr(502, true, false))
@@ -162,9 +230,9 @@ func TestHandleFailoverErrorCapIsConfigurable(t *testing.T) {
 }
 
 func TestHandleFailoverErrorElapsedBudgetStopsFurtherAttempts(t *testing.T) {
-	fastRetryGuard(t, nil)
+	fastRetryGuard(t, func(c *config.GatewayRetryGuardConfig) { c.MaxElapsedSeconds = 60 })
 	fs := NewFillFailoverState(10, false)
-	fs.budget.started = time.Now().Add(-61 * time.Second) // 这个请求已经在循环里跑了 61 秒
+	fs.budget.started = time.Now().Add(-61 * time.Second) // 第一次失败发生在 61 秒前
 	failoverErr := newTestFailoverErr(502, true, false)
 
 	action := fs.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 1, "anthropic", 3, failoverErr)
@@ -189,7 +257,7 @@ func TestHandleFailoverErrorWithinBudgetStillRetriesAndSwitches(t *testing.T) {
 
 func TestHandleSelectionExhaustedRespectsBudget(t *testing.T) {
 	// 单账号退避重试分支：预算用尽后不能再清空排除集重来。
-	fastRetryGuard(t, nil)
+	fastRetryGuard(t, func(c *config.GatewayRetryGuardConfig) { c.MaxAttempts = 10; c.MaxElapsedSeconds = 60 })
 	fs := NewFailoverState(100, false) // 非填充调度才有这条退避分支
 	fs.LastFailoverErr = newTestFailoverErr(503, false, false)
 	fs.FailedAccountIDs[1] = struct{}{}
@@ -307,7 +375,7 @@ func TestFailoverStateWithoutConstructorStillGetsTheDefaultBudget(t *testing.T) 
 	require.Equal(t, FailoverContinue, fs.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 1, "openai", 0, newTestFailoverErr(502, false, false)))
 
 	var b failoverBudget
-	for i := 1; i < 10; i++ {
+	for i := 1; i < 30; i++ {
 		require.Empty(t, b.spend(time.Now()), "attempt %d", i)
 	}
 	require.Equal(t, failoverBudgetReasonAttempts, b.spend(time.Now()))

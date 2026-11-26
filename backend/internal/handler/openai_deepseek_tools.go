@@ -326,6 +326,8 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 		}
 		if reason := budget.spend(time.Now()); reason != "" {
 			logFailoverBudgetExhausted(reqLog, reason, account.ID, failoverErr.StatusCode, &budget)
+			markFailoverBudgetExhausted(failoverErr)
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, modelLabel, false, result), false, nil, err)
 			h.handleFailoverExhausted(c, failoverErr, false)
 			return
 		}

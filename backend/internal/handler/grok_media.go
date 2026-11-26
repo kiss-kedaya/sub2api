@@ -706,6 +706,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				}
 				if reason := budget.spend(time.Now()); reason != "" {
 					logFailoverBudgetExhausted(reqLog, reason, account.ID, failoverErr.StatusCode, &budget)
+					markFailoverBudgetExhausted(failoverErr)
+					if failoverErr.ShouldReportAccountScheduleFailure() {
+						h.gatewayService.ReportOpenAIAccountScheduleResult(account, grokMediaScheduleModel(account, routingModel, nil), false, nil)
+					}
 					h.handleFailoverExhausted(c, failoverErr, false)
 					return
 				}

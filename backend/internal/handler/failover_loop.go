@@ -308,18 +308,19 @@ func (s *FailoverState) HandleFailoverError(
 		return FailoverExhausted
 	}
 
-	// 重试硬上限：每进入一次这里就是一次上游尝试失败。总尝试次数或总耗时用尽后不再发起新的尝试，
-	// 直接把最后一次上游错误交给调用方返回（客户端自己的重试由 Retry-After 去退避）。
-	if reason := s.budget.spend(time.Now()); reason != "" {
+	// 重试硬上限：每进入一次这里就是一次上游尝试失败。总尝试次数或总耗时（从第一次失败起算）用尽后
+	// 不再发起新的尝试，直接把最后一次上游错误交给调用方返回（客户端自己的重试由 Retry-After 去退避）。
+	if reason := s.budget.spend(s.budget.now()); reason != "" {
 		logger.FromContext(ctx).Warn("gateway.failover_budget_exhausted",
 			zap.String("reason", reason),
 			zap.Int64("account_id", accountID),
 			zap.Int("upstream_status", failoverErr.StatusCode),
 			zap.Int("attempts", s.budget.attempts),
 			zap.Int("max_attempts", s.budget.settings.maxAttempts),
-			zap.Duration("elapsed", s.budget.elapsed(time.Now())),
+			zap.Duration("elapsed", s.budget.elapsed(s.budget.now())),
 			zap.Duration("max_elapsed", s.budget.settings.maxElapsed),
 		)
+		markFailoverBudgetExhausted(failoverErr)
 		return FailoverExhausted
 	}
 
@@ -422,13 +423,14 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 		// behavior.
 		(len(s.FailedAccountIDs) <= 1 || s.hasMixedProfitVetoExclusions()) {
 		// 重试预算已用尽（尝试次数/总耗时）：不再清空排除集重来。
-		if reason := s.budget.exhaustedReason(time.Now()); reason != "" {
+		if reason := s.budget.exhaustedReason(s.budget.now()); reason != "" {
 			logger.FromContext(ctx).Warn("gateway.failover_budget_exhausted",
 				zap.String("reason", reason),
 				zap.Int("attempts", s.budget.attempts),
 				zap.Int("max_attempts", s.budget.settings.maxAttempts),
-				zap.Duration("elapsed", s.budget.elapsed(time.Now())),
+				zap.Duration("elapsed", s.budget.elapsed(s.budget.now())),
 			)
+			markFailoverBudgetExhausted(s.LastFailoverErr)
 			return FailoverExhausted
 		}
 

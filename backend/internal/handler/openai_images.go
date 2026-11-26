@@ -390,6 +390,8 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					}
 					if reason := budget.spend(time.Now()); reason != "" {
 						logFailoverBudgetExhausted(reqLog, reason, account.ID, failoverErr.StatusCode, &budget)
+						markFailoverBudgetExhausted(failoverErr)
+						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestModel, false, result), false, nil, err)
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}

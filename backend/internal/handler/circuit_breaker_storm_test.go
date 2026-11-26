@@ -141,7 +141,11 @@ func newStormFixtureWith(t *testing.T, opts stormOptions) *stormFixture {
 		ValveMinAccounts: 3,
 	}
 	// 这个用例反复打满重试；把退避压到毫秒级，不然光睡眠就要几十秒。
-	cfg.Gateway.RetryGuard = config.GatewayRetryGuardConfig{BackoffBaseMs: 1, BackoffMaxMs: 2}
+	// 单请求尝试上限固定为 10（生产默认是 30，这里让上界断言保持可读），Retry-After 保持开启。
+	cfg.Gateway.RetryGuard = config.GatewayRetryGuardConfig{
+		BackoffBaseMs: 1, BackoffMaxMs: 2, MaxAttempts: 10,
+		RetryAfterEnabled: true, RetryAfterMinSeconds: 5, RetryAfterMaxSeconds: 15,
+	}
 	if opts.guard.MaxAttempts > 0 {
 		cfg.Gateway.RetryGuard.MaxAttempts = opts.guard.MaxAttempts
 	}
@@ -232,8 +236,9 @@ func TestRetryStormWithBreakerIsBoundedPausesAccountsAndProbesAfterCooldown(t *t
 			if ra := rec.Header().Get("Retry-After"); ra != "" {
 				seconds, err := strconv.Atoi(ra)
 				require.NoError(t, err)
-				require.GreaterOrEqual(t, seconds, 5)
-				require.LessOrEqual(t, seconds, 30)
+				// 熔断冷却是 3 秒：Retry-After = 最早恢复的账号还要多久（向上取整）+ 1–5 秒随机。
+				require.GreaterOrEqual(t, seconds, 2)
+				require.LessOrEqual(t, seconds, 8)
 				sawRetryAfter = true
 			}
 		}
@@ -309,7 +314,7 @@ func TestSingleRequestAttemptCapIsConfigurable(t *testing.T) {
 	require.Equal(t, 4, f.upstream.totalHits())
 }
 
-// 总耗时上限：每次尝试 400ms，上限 1 秒 -> 第 3 次失败时已经过了 1.2 秒，不再发起新的尝试。
+// 总耗时上限：每次尝试 400ms，上限 1 秒，从第一次失败起算 -> 第 4 次失败时已经过了 1.2 秒，不再发起新的尝试。
 func TestSingleRequestElapsedBudgetStopsRetries(t *testing.T) {
 	f := newStormFixtureWith(t, stormOptions{
 		breakerEnabled: false, accounts: 30, attemptDelay: 400 * time.Millisecond,
@@ -321,7 +326,7 @@ func TestSingleRequestElapsedBudgetStopsRetries(t *testing.T) {
 
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	hits := f.upstream.totalHits()
-	// 400ms 一次、预算 1 秒：理论上第 3 次失败后停（慢机器上可能第 2 次就已过线）；没有时限的话会一直打到 10 次。
+	// 400ms 一次、预算 1 秒、从第一次失败起算：快机器上第 4 次失败后停（那时离第一次失败已过 1.2 秒），慢机器上更早；没有时限的话会一直打到 10 次。
 	require.GreaterOrEqual(t, hits, 2)
 	require.LessOrEqual(t, hits, 4, "attempts stop once the request has spent max_elapsed_seconds in the failover loop")
 	require.Less(t, time.Since(start), 6*time.Second)

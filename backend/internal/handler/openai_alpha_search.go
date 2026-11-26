@@ -282,6 +282,8 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		}
 		if reason := budget.spend(time.Now()); reason != "" {
 			logFailoverBudgetExhausted(reqLog, reason, account.ID, failoverErr.StatusCode, &budget)
+			markFailoverBudgetExhausted(failoverErr)
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestedModel, false, result), false, nil, err)
 			h.handleFailoverExhausted(c, failoverErr, false)
 			return
 		}

@@ -498,7 +498,7 @@ func (h *GatewayHandler) responsesErrorResponse(c *gin.Context, status int, code
 		}
 		return
 	}
-	setGatewayRetryAfter(c, status)
+	setGatewayRetryAfter(c, status, "", code, message)
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"code":    code,
@@ -519,7 +519,7 @@ func (h *GatewayHandler) responsesErrorResponseWithTypeAndCode(c *gin.Context, s
 		}
 		return
 	}
-	setGatewayRetryAfter(c, status)
+	setGatewayRetryAfter(c, status, errType, code, message)
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"type":    errType,
@@ -531,7 +531,7 @@ func (h *GatewayHandler) responsesErrorResponseWithTypeAndCode(c *gin.Context, s
 
 // handleResponsesFailoverExhausted writes a failover-exhausted error in Responses format.
 func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
-	markUpstreamPassthroughError(c) // 上游错误的透传，不属于网关自己的 503/429（见 retry_after.go）
+	markUpstreamPassthroughError(c, lastErr) // 上游错误的透传，不属于网关自己的 503/429（见 retry_after.go）
 	if service.StopOpenAICompactSSEKeepaliveCommitted(c) {
 		streamStarted = true
 	}

@@ -246,6 +246,7 @@ type AccountCircuitBreakerStats struct {
 	Recoveries            int64
 	RecoveryRefreshes     int64 // 冷却到期后成功通知调度快照重建的次数
 	RecoveryRefreshFailed int64
+	RequestSamples        int64 // 当前记着的请求级失败样本数（有上界：每分片 4096 条，3 分钟过期）
 	TrackedAccount        int64 // 当前被跟踪的账号数
 }
 
@@ -970,6 +971,7 @@ func (b *AccountCircuitBreaker) Stats() AccountCircuitBreakerStats {
 		Recoveries:            b.stats.recoveries.Load(),
 		RecoveryRefreshes:     b.stats.recoveryRefreshed.Load(),
 		RecoveryRefreshFailed: b.stats.recoveryRefreshFailed.Load(),
+		RequestSamples:        int64(b.reqSamples.count()),
 		TrackedAccount:        tracked,
 	}
 }
