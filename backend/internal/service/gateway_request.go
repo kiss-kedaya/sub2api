@@ -329,6 +329,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 		return ErrDuplicateModelField
 	}
 
+	rewritten := false
 	if scan.modelSet {
 		if scan.modelType != '"' {
 			return fmt.Errorf("invalid model field type")
@@ -344,6 +345,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 				parsed.Body.Replace(normalizedBody)
 				bodyBytes = normalizedBody
 				parsed.Model = normalizedModel
+				rewritten = true
 				// 模型名改写会改变字节偏移，range 必须基于新 body 重算。
 				if scan, err = scanGatewayRequestTopLevel(bodyBytes); err != nil {
 					return DescribeInvalidJSON(bodyBytes)
@@ -377,7 +379,14 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 	}
 
 	applyGatewayRequestRanges(parsed, protocol, scan)
-	parsed.captureBodyView()
+	// A view has to be what parsing these exact bytes would give. A parse that rewrote the body
+	// (the [1m] suffix) is not: Model was read before the rewrite, and sjson writes invalid UTF-8
+	// back as U+FFFD, so parsing the rewritten bytes again reads another Model. No view then; the
+	// next ReplaceBody / CloneForBody of those bytes parses them in full, and records a view of
+	// that parse.
+	if !rewritten {
+		parsed.captureBodyView()
+	}
 	return nil
 }
 

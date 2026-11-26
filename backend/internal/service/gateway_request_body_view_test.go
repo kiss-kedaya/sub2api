@@ -81,6 +81,8 @@ func perf18ViewCorpus() map[string]string {
 	return map[string]string{
 		"anthropic-full":        `{"model":"claude-sonnet-4-5","stream":true,"max_tokens":4096,"metadata":{"user_id":"u1"},"thinking":{"type":"enabled"},"system":[{"type":"text","text":"sys"}],"messages":[{"role":"user","content":"hi"}],"output_config":{"effort":" high "},"speed":"Fast"}`,
 		"anthropic-1m":          `{"model":"claude-sonnet-4-5[1m][1M]","stream":false,"messages":[{"role":"user","content":"hi"}]}`,
+		"anthropic-1m-bad-utf8": "{\"model\":\"claude-\xff[1m]\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+		"anthropic-bad-utf8":    "{\"model\":\"claude-\xc3\",\"messages\":[]}",
 		"responses":             `{"model":"gpt-5","input":[{"role":"user","content":"x"}],"stream":true,"max_tokens":12}`,
 		"responses-string":      `{"model":"gpt-5","input":"hello"}`,
 		"gemini":                `{"model":"gemini-2.5-pro","contents":[{"role":"user","parts":[{"text":"x"}]}],"systemInstruction":{"parts":[{"text":"sys"}]}}`,
@@ -108,6 +110,8 @@ func perf18ViewProtocols() []string {
 // Body) and requires identical fields, ranges, bodies and errors after every step.
 func TestParsedRequestViewReuseMatchesFullParse(t *testing.T) {
 	models := []string{"claude-opus-4-5", "claude-sonnet-4-5[1m]", "gpt-5.4", `we"ird\model`, "café", ""}
+	// raw bytes into the body: gjson accepts them, sjson writes them back as U+FFFD when it rewrites the model
+	rawModels := []string{"claude-\xff[1m]", "\xc3[1M]", "x[1M][1m]\xff", "claude-sonnet-4-5\xe2\x28\xa1[1m]", "\xff", "claude-\xff"}
 	for name, base := range perf18ViewCorpus() {
 		for _, protocol := range perf18ViewProtocols() {
 			for seed := int64(0); seed < 12; seed++ {
@@ -126,7 +130,7 @@ func TestParsedRequestViewReuseMatchesFullParse(t *testing.T) {
 						ctx := fmt.Sprintf("step %d", step)
 						cur := append([]byte(nil), got.Body.Bytes()...)
 						var next []byte
-						op := rng.Intn(13)
+						op := rng.Intn(14)
 						switch op {
 						case 0: // same slice: the no-op rewrite
 							ctx += " same-slice"
@@ -197,6 +201,9 @@ func TestParsedRequestViewReuseMatchesFullParse(t *testing.T) {
 								// carry on with the clone, as a failover attempt does
 								got, want = gotClone, wantClone
 							}
+						case 13: // a model whose raw bytes are not valid UTF-8, with and without the [1m] suffix
+							ctx += " raw-model"
+							next, _ = sjson.SetRawBytes(cur, "model", []byte(`"`+rawModels[rng.Intn(len(rawModels))]+`"`))
 						}
 						if next != nil {
 							requireSameErr(t, refReplaceBody(want, append([]byte(nil), next...)), got.ReplaceBody(append([]byte(nil), next...)), ctx)
@@ -398,4 +405,41 @@ func TestParsedRequestViewAfterLongContextSuffixNormalization(t *testing.T) {
 
 	require.NoError(t, p.ReplaceBody(normalized))
 	require.Equal(t, "claude-sonnet-4-5", p.Model)
+}
+
+// A model name that is not valid UTF-8 and ends in [1m]: gjson accepts the bytes, the first parse reads
+// the Model (and strips the suffix) before sjson rewrites the value, writing the invalid byte as U+FFFD.
+// Parsing the rewritten bytes again reads that value, so a view of the first parse (Model with the raw
+// byte) must not be what ReplaceBody / CloneForBody hand back for the rewritten bytes.
+func TestParsedRequestViewAfterInvalidUTF8ModelRewrite(t *testing.T) {
+	original := "{\"model\":\"claude-\xff[1m]\",\"messages\":[]}"
+	newParsed := func() *ParsedRequest {
+		p, err := ParseGatewayRequest(NewRequestBodyRef([]byte(original)), domain.PlatformAnthropic)
+		require.NoError(t, err)
+		require.Equal(t, "claude-\xff", p.Model, "the first parse keeps what it read before the rewrite")
+		return p
+	}
+	rewritten := append([]byte(nil), newParsed().Body.Bytes()...)
+	require.NotEqual(t, original, string(rewritten))
+	want := &ParsedRequest{Body: NewRequestBodyRef(append([]byte(nil), rewritten...))}
+	require.NoError(t, parseGatewayRequestCurrentBody(want, domain.PlatformAnthropic))
+	require.Equal(t, "claude-\xef\xbf\xbd", want.Model, "parsing the rewritten bytes reads the rewritten value")
+
+	p := newParsed()
+	require.NoError(t, p.ReplaceBody(p.Body.Bytes()))
+	requireSameParsedState(t, want, p, "ReplaceBody, same slice")
+
+	p = newParsed()
+	require.NoError(t, p.ReplaceBody(append([]byte(nil), rewritten...)))
+	requireSameParsedState(t, want, p, "ReplaceBody, equal copy")
+	require.NoError(t, p.ReplaceBody(p.Body.Bytes()))
+	requireSameParsedState(t, want, p, "ReplaceBody again: the view of the full parse is the right one")
+
+	p = newParsed()
+	clone, err := p.CloneForBody(p.Body.Bytes())
+	require.NoError(t, err)
+	requireSameParsedState(t, want, clone, "CloneForBody, same slice")
+	clone, err = newParsed().CloneForBody(append([]byte(nil), rewritten...))
+	require.NoError(t, err)
+	requireSameParsedState(t, want, clone, "CloneForBody, equal copy")
 }
