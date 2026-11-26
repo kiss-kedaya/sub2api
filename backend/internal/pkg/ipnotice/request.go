@@ -161,10 +161,11 @@ func InjectRequest(body []byte, protocol Protocol, notice string) ([]byte, error
 // a gateway notice message id. Its truth value is that of the three bytes.Contains calls
 // it stands for. Almost every request holds none of them, so what matters is how cheaply
 // "none" is proven: the message id is first looked for through its tail "_gateway_notice_",
-// which starts with a byte (underscore) that is far rarer in prose and in base64 than the
-// 'm' of "msg_" (bytes.Index looks for the first byte with IndexByte and gives up on that
-// when it hits too often). The tail is part of the id, so a body without it cannot hold the
-// id and the full id is only searched when the tail is there.
+// which starts with an underscore, a byte that is far rarer in prose and in base64 than the
+// 'm' of "msg_" (about as common in snake_case-heavy code); bytes.Index looks for the first
+// byte of its needle with IndexByte and gives up on that when it hits too often. The tail is
+// part of the id, so a body without it cannot hold the id and the full id is only searched
+// when the tail is there.
 func hasReplayMarker(body []byte) bool {
 	return bytes.Contains(body, replayFence) ||
 		bytes.Contains(body, replayEscapedFence) ||
