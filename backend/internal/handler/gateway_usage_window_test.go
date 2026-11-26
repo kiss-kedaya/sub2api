@@ -282,12 +282,14 @@ func newUsageKeyReportFixture(t *testing.T) *usageKeyReportFixture {
 	}
 }
 
-func (f *usageKeyReportFixture) expectTrend(userID, apiKeyID, requests int64) {
+// expectTrend registers one read of the key's by-day trend, answered with one row for day. The report is read in
+// two parts, one statement each (repository.GetUsageTrendWithFilters): the days that are over, then today.
+func (f *usageKeyReportFixture) expectTrend(userID, apiKeyID int64, day string, requests int64) {
 	f.mock.ExpectQuery(usageReportTrendSQL).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), userID, apiKeyID).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"date", "requests", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "total_tokens", "cost", "actual_cost",
-		}).AddRow("2026-11-26", requests, 0, 0, 0, 0, 0, 0, 0))
+		}).AddRow(day, requests, 0, 0, 0, 0, 0, 0, 0))
 }
 
 func (f *usageKeyReportFixture) expectModels(apiKeyID, requests int64) {
@@ -314,37 +316,61 @@ func (f *usageKeyReportFixture) poll(t *testing.T) map[string]json.RawMessage {
 }
 
 // A client that polls /v1/usage every few seconds costs the database one scan per report per bucket, not one per
-// poll: the second poll of the same bucket is answered from Redis. The mock has exactly one answer per report, so
-// a second scan would be an unexpected query, the report would be missing from the response, and this fails.
+// poll: the second poll of the same bucket is answered from Redis. The mock has exactly the answers the scans need,
+// so a scan too many would be an unexpected query, the report would be missing from the response, and this fails.
 //
 // Besides two polls back to back there is the case that is hardest on the cache: the first poll is the first of
 // its bucket and the second the last, so the entry written by the first must live the whole bucket. Redis' clock
 // is moved by the bucket minus a second while the handler's own is not, so both polls ask for the same window,
 // as two real polls at the two ends of one bucket do.
+//
+// The model report is scanned once per bucket. The by-day report is the exception: it is read in two parts
+// (repository.GetUsageTrendWithFilters), the days that are over once a day and today once per cache TTL (a minute
+// here), so that today's bar is never more than a minute old. A bucket apart only today is read again; the days
+// that are over and the model report are still within their lifetimes.
 func TestUsageSecondPollInTheSameBucketReadsNoDatabase(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for name, betweenPolls := range map[string]time.Duration{"back to back": 0, "a whole bucket apart": usageDefaultRangeBucket - time.Second} {
+	cases := map[string]struct {
+		betweenPolls time.Duration
+		todayAgain   bool // today's part has outlived the cache TTL by the second poll and is read once more
+	}{
+		"back to back":         {betweenPolls: 0},
+		"a whole bucket apart": {betweenPolls: usageDefaultRangeBucket - time.Second, todayAgain: true},
+	}
+	daily := func(todayRequests int64) string {
+		return fmt.Sprintf(`[{"date":"2026-11-25","requests":21,"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"cache_write_tokens":0,"total_tokens":0,"cost":0,"actual_cost":0},`+
+			`{"date":"2026-11-26","requests":%d,"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"cache_write_tokens":0,"total_tokens":0,"cost":0,"actual_cost":0}]`, todayRequests)
+	}
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			for attempt := 0; ; attempt++ {
-				require.Less(t, attempt, 3, "the clock crossed a bucket boundary on every attempt")
+				require.Less(t, attempt, 3, "the clock crossed a bucket boundary or midnight on every attempt")
 				f := newUsageKeyReportFixture(t)
-				f.expectTrend(11, 7, 21)
+				f.expectTrend(11, 7, "2026-11-25", 21) // the days that are over
+				f.expectTrend(11, 7, "2026-11-26", 2)  // today
 				f.expectModels(7, 34)
 
 				_, endBefore := usageDefaultRange(timezone.Now(), 7)
+				dayBefore := timezone.Today()
 				first := f.poll(t)
-				f.server.FastForward(betweenPolls)
+				f.server.FastForward(tc.betweenPolls)
+				todayRequests := int64(2)
+				if tc.todayAgain {
+					todayRequests = 5
+					f.expectTrend(11, 7, "2026-11-26", todayRequests) // only today: nothing else has expired
+				}
 				second := f.poll(t)
-				if _, endAfter := usageDefaultRange(timezone.Now(), 7); !endBefore.Equal(endAfter) {
-					continue // a bucket boundary fell between the two polls: that is the other test's case, go again
+				if _, endAfter := usageDefaultRange(timezone.Now(), 7); !endBefore.Equal(endAfter) || !dayBefore.Equal(timezone.Today()) {
+					continue // a bucket boundary or midnight fell between the two polls: that is another test's case, go again
 				}
 
 				for _, report := range []string{"daily_usage", "model_stats"} {
 					require.Contains(t, first, report)
 					require.Contains(t, second, report, "the second poll must still carry the report (from the cache)")
-					require.JSONEq(t, string(first[report]), string(second[report]))
 				}
-				require.JSONEq(t, `[{"date":"2026-11-26","requests":21,"input_tokens":0,"output_tokens":0,"cache_read_tokens":0,"cache_write_tokens":0,"total_tokens":0,"cost":0,"actual_cost":0}]`, string(second["daily_usage"]))
+				require.JSONEq(t, string(first["model_stats"]), string(second["model_stats"]))
+				require.JSONEq(t, daily(2), string(first["daily_usage"]))
+				require.JSONEq(t, daily(todayRequests), string(second["daily_usage"]))
 				require.NoError(t, f.mock.ExpectationsWereMet())
 				return
 			}

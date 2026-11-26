@@ -174,6 +174,8 @@ type usageLogRepository struct {
 	// aggregates. Nil (no Redis, disabled, or a transaction-scoped repo) keeps
 	// the plain database path.
 	statsCache *usageStatsCache
+	// clock tells keyDailyTrendSplit what day it is. Nil means time.Now; only tests set it.
+	clock func() time.Time
 }
 
 // NewUsageLogRepository builds the usage log repository. rdb and cfg feed the

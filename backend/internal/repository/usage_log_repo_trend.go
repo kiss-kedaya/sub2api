@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -292,19 +293,98 @@ func (r *usageLogRepository) GetUserModelStats(ctx context.Context, userID int64
 	return r.GetModelStatsWithFiltersBySource(ctx, startTime, endTime, userID, 0, 0, 0, nil, nil, nil, usagestats.ModelSourceRequested)
 }
 
-// GetUsageTrendWithFilters returns usage trend data with optional filters
+// GetUsageTrendWithFilters returns usage trend data with optional filters.
+//
+// One API key's by-day trend over several days is answered in two parts when the window still holds today
+// (keyDailyTrendSplit): the days that are over, which no longer change and are kept for a whole day, and today,
+// which is read again every cache TTL. The closed days are scanned once a day instead of every quarter hour, and
+// what is scanned again and again is today's rows only, a fraction of the window's, so no single statement is the
+// scan of a whole month any more and today's bar is at most one cache TTL old instead of a quarter hour.
 func (r *usageLogRepository) GetUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) (results []TrendDataPoint, err error) {
-	return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
-		Query: "usage_trend_with_filters", UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
-		// The day labels are cut in the database session's time zone, so it is part of what was asked.
-		Model: model, Timezone: resolveUsageStatsTimezone(),
-		Start: startTime.UTC().Format(time.RFC3339Nano), End: endTime.UTC().Format(time.RFC3339Nano),
-		Extra:   usageGranularityKey(granularity),
-		Filters: &usageFiltersFingerprint{RequestType: requestType, Stream: stream, BillingType: billingType},
-		TTL:     keyAggregateTTL(apiKeyID, startTime, endTime),
-	}, func(ctx context.Context) ([]TrendDataPoint, error) {
-		return r.getUsageTrendWithFiltersResolved(ctx, startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
-	})
+	trend := func(start, end time.Time, ttl time.Duration) ([]TrendDataPoint, error) {
+		return loadUsageStatsCached(r.statsCache, ctx, usageStatsCacheKey{
+			Query: "usage_trend_with_filters", UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
+			// The day labels are cut in the database session's time zone, so it is part of what was asked.
+			Model: model, Timezone: resolveUsageStatsTimezone(),
+			Start: start.UTC().Format(time.RFC3339Nano), End: end.UTC().Format(time.RFC3339Nano),
+			Extra:   usageGranularityKey(granularity),
+			Filters: &usageFiltersFingerprint{RequestType: requestType, Stream: stream, BillingType: billingType},
+			TTL:     ttl,
+		}, func(ctx context.Context) ([]TrendDataPoint, error) {
+			return r.getUsageTrendWithFiltersResolved(ctx, start, end, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
+		})
+	}
+	splitAt, split := r.keyDailyTrendSplit(apiKeyID, startTime, endTime, granularity)
+	if !split {
+		return trend(startTime, endTime, keyAggregateTTL(apiKeyID, startTime, endTime))
+	}
+	// Either part failing fails the call: half a trend would be taken for the whole of it.
+	closed, err := trend(startTime, splitAt, usageStatsKeyClosedDaysTTL)
+	if err != nil {
+		return nil, err
+	}
+	// ttl 0 is the cache's own TTL, scan budget and memory of a timeout: today holds a fraction of the window's rows.
+	today, err := trend(splitAt, endTime, 0)
+	if err != nil {
+		return nil, err
+	}
+	return mergeTrendPointsByDate(closed, today), nil
+}
+
+// keyDailyTrendSplit says where to cut one API key's by-day window [start, end) into the days that are over and
+// the day still being written: the start of today in the window's own time zone (end's location), and whether to
+// cut at all. It is the local midnight, not end-24h: the day of a DST change has 23 or 25 hours.
+//
+// Only the class that keyAggregateTTL gives the long TTL is cut (one key, window over 25 hours), and only by day;
+// a window with no closed day (today starts at or before start) or without today (today starts at or after end)
+// is answered whole, as before, and so is every window when there is no cache: two reads would only cost more.
+//
+// Where the cut falls changes nothing in the answer: the parts cover [start, end) exactly once, and the day
+// labels are cut by the database session's zone, which need not be the window's, so one label can be in both
+// parts and mergeTrendPointsByDate adds them. The cut only decides what can be kept.
+func (r *usageLogRepository) keyDailyTrendSplit(apiKeyID int64, start, end time.Time, granularity string) (time.Time, bool) {
+	if r.statsCache == nil || usageGranularityKey(granularity) != "day" || keyAggregateTTL(apiKeyID, start, end) == 0 {
+		return time.Time{}, false
+	}
+	now := time.Now()
+	if r.clock != nil {
+		now = r.clock()
+	}
+	loc := end.Location()
+	today := now.In(loc)
+	splitAt := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, loc)
+	if !splitAt.After(start) || !splitAt.Before(end) {
+		return time.Time{}, false
+	}
+	return splitAt, true
+}
+
+// mergeTrendPointsByDate adds the parts of one trend up by day label, in label order like the query's ORDER BY.
+// Every figure of a TrendDataPoint is a sum, so a label found in both parts is the sum of the two rows, and a
+// label found in one is that row unchanged. The result is never nil, as the query's is not.
+func mergeTrendPointsByDate(parts ...[]TrendDataPoint) []TrendDataPoint {
+	byDate := make(map[string]TrendDataPoint)
+	for _, part := range parts {
+		for _, p := range part {
+			row := byDate[p.Date]
+			row.Date = p.Date
+			row.Requests += p.Requests
+			row.InputTokens += p.InputTokens
+			row.OutputTokens += p.OutputTokens
+			row.CacheCreationTokens += p.CacheCreationTokens
+			row.CacheReadTokens += p.CacheReadTokens
+			row.TotalTokens += p.TotalTokens
+			row.Cost += p.Cost
+			row.ActualCost += p.ActualCost
+			byDate[p.Date] = row
+		}
+	}
+	merged := make([]TrendDataPoint, 0, len(byDate))
+	for _, p := range byDate {
+		merged = append(merged, p)
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].Date < merged[j].Date })
+	return merged
 }
 
 func (r *usageLogRepository) getUsageTrendWithFiltersResolved(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) (results []TrendDataPoint, err error) {
