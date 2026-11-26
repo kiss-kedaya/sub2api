@@ -194,4 +194,170 @@ describe('refreshAuthTokens', () => {
     expect(localStorage.getItem('auth_token')).toBeNull()
     expect(localStorage.getItem('refresh_token')).toBeNull()
   })
+
+  it('times the refresh request out after 10 seconds, not 30', async () => {
+    seedSession()
+    mockedPost.mockResolvedValueOnce(refreshedResponse())
+    const { refreshAuthTokens } = await import('@/api/tokenRefresh')
+
+    await refreshAuthTokens({ failedAccessToken: 'old-access' })
+
+    expect(mockedPost).toHaveBeenCalledWith(
+      expect.stringContaining('/auth/refresh'),
+      { refresh_token: 'old-refresh' },
+      expect.objectContaining({ timeout: 10_000 })
+    )
+  })
+
+  describe('one retry with the same refresh token after a transient failure', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+      // 重试等待 = 2s + 随机 0–2s：固定成 2s，测试才确定。
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      seedSession()
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it.each([
+      ['a network error', { code: 'ERR_NETWORK', message: 'Network Error' }],
+      ['a request timeout', { code: 'ECONNABORTED', message: 'timeout of 10000ms exceeded' }],
+      ['a 502 from the gateway', { response: { status: 502, data: '<html>bad gateway</html>' } }],
+      ['a 503 from the service', { response: { status: 503, data: { code: 503, message: 'busy' } } }]
+    ])('retries once after %s, with the very same token', async (_name, failure) => {
+      mockedPost.mockRejectedValueOnce(failure).mockResolvedValueOnce(refreshedResponse())
+      const { refreshAuthTokens } = await import('@/api/tokenRefresh')
+
+      const pending = refreshAuthTokens({ failedAccessToken: 'old-access' })
+      await vi.advanceTimersByTimeAsync(2_100)
+
+      await expect(pending).resolves.toMatchObject({ refresh_token: 'new-refresh' })
+      expect(mockedPost).toHaveBeenCalledTimes(2)
+      expect(mockedPost.mock.calls[0][1]).toEqual({ refresh_token: 'old-refresh' })
+      expect(mockedPost.mock.calls[1][1]).toEqual({ refresh_token: 'old-refresh' })
+      expect(localStorage.getItem('refresh_token')).toBe('new-refresh')
+    })
+
+    it('retries a 200 response that is not the expected JSON (a WAF or gateway page)', async () => {
+      mockedPost
+        .mockResolvedValueOnce({ data: '<html>please verify you are human</html>' })
+        .mockResolvedValueOnce(refreshedResponse())
+      const { refreshAuthTokens } = await import('@/api/tokenRefresh')
+
+      const pending = refreshAuthTokens({ failedAccessToken: 'old-access' })
+      await vi.advanceTimersByTimeAsync(2_100)
+
+      await expect(pending).resolves.toMatchObject({ access_token: 'new-access' })
+      expect(mockedPost).toHaveBeenCalledTimes(2)
+    })
+
+    it('gives up after the single retry fails too', async () => {
+      mockedPost.mockRejectedValue({ code: 'ERR_NETWORK', message: 'Network Error' })
+      const { refreshAuthTokens } = await import('@/api/tokenRefresh')
+
+      const pending = refreshAuthTokens({ failedAccessToken: 'old-access' })
+      const rejection = expect(pending).rejects.toMatchObject({ code: 'ERR_NETWORK' })
+      await vi.advanceTimersByTimeAsync(3_300)
+      await rejection
+
+      expect(mockedPost).toHaveBeenCalledTimes(2)
+      expect(localStorage.getItem('refresh_token')).toBe('old-refresh')
+    })
+
+    it.each([
+      ['a 401 rejection', { response: { status: 401, data: { code: 401, reason: 'REFRESH_TOKEN_REUSE' } } }],
+      ['a 403 from the edge', { response: { status: 403, data: '<html>blocked</html>' } }],
+      ['a 429 rate limit', { response: { status: 429, data: { message: 'slow down' } } }],
+      ['a 400', { response: { status: 400, data: { message: 'bad request' } } }]
+    ])('does not retry %s', async (_name, failure) => {
+      mockedPost.mockRejectedValueOnce(failure)
+      const { refreshAuthTokens } = await import('@/api/tokenRefresh')
+
+      const pending = refreshAuthTokens({ failedAccessToken: 'old-access' })
+      const rejection = expect(pending).rejects.toMatchObject({ response: failure.response })
+      await vi.advanceTimersByTimeAsync(11_500)
+      await rejection
+
+      expect(mockedPost).toHaveBeenCalledTimes(1)
+    })
+
+    it('adopts the tokens another tab refreshed while waiting to retry, without a second request', async () => {
+      mockedPost.mockRejectedValueOnce({ code: 'ERR_NETWORK', message: 'Network Error' })
+      const { refreshAuthTokens } = await import('@/api/tokenRefresh')
+
+      const pending = refreshAuthTokens({ failedAccessToken: 'old-access' })
+      window.setTimeout(() => {
+        localStorage.setItem('auth_token', 'peer-access')
+        localStorage.setItem('token_expires_at', String(Date.now() + 3600_000))
+        localStorage.setItem('refresh_token', 'peer-refresh')
+      }, 500)
+      await vi.advanceTimersByTimeAsync(2_100)
+
+      await expect(pending).resolves.toMatchObject({ access_token: 'peer-access', refresh_token: 'peer-refresh' })
+      expect(mockedPost).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not retry for a session that was logged out while waiting', async () => {
+      mockedPost.mockRejectedValueOnce({ code: 'ERR_NETWORK', message: 'Network Error' })
+      const { refreshAuthTokens } = await import('@/api/tokenRefresh')
+
+      const pending = refreshAuthTokens({ failedAccessToken: 'old-access' })
+      const rejection = expect(pending).rejects.toMatchObject({ code: 'ERR_NETWORK' })
+      window.setTimeout(() => localStorage.clear(), 500)
+      await vi.advanceTimersByTimeAsync(2_100)
+      await rejection
+
+      expect(mockedPost).toHaveBeenCalledTimes(1)
+      expect(localStorage.getItem('refresh_token')).toBeNull()
+    })
+  })
+})
+
+describe('isRefreshTokenRejection', () => {
+  const rejection = (status: number, data: unknown) => ({ response: { status, data } })
+
+  it.each([
+    'REFRESH_TOKEN_INVALID',
+    'REFRESH_TOKEN_EXPIRED',
+    'REFRESH_TOKEN_REUSE',
+    'REFRESH_TOKEN_REUSED',
+    'REFRESH_TOKEN_SESSION_EXPIRED',
+    'SESSION_BINDING_MISMATCH',
+    'TOKEN_REVOKED'
+  ])('401 with the business code %s means the token was rejected', async (reason) => {
+    const { isRefreshTokenRejection } = await import('@/api/tokenRefresh')
+    expect(isRefreshTokenRejection(rejection(401, { code: 401, message: 'x', reason }))).toBe(true)
+  })
+
+  it('403 USER_NOT_ACTIVE means the account was disabled', async () => {
+    const { isRefreshTokenRejection } = await import('@/api/tokenRefresh')
+    expect(isRefreshTokenRejection(rejection(403, { reason: 'USER_NOT_ACTIVE' }))).toBe(true)
+  })
+
+  it('403 BACKEND_MODE_ADMIN_ONLY means a non-admin session can no longer be refreshed', async () => {
+    const { isRefreshTokenRejection } = await import('@/api/tokenRefresh')
+    expect(isRefreshTokenRejection(rejection(403, { code: 403, message: 'x', reason: 'BACKEND_MODE_ADMIN_ONLY' }))).toBe(true)
+    // 没有业务码的 403（网关 / WAF 的页面）仍然不算令牌被拒。
+    expect(isRefreshTokenRejection(rejection(403, { code: 403, message: 'Backend mode is active.' }))).toBe(false)
+  })
+
+  it.each([
+    ['a 401 without a business code', rejection(401, { code: 401, message: 'Unauthorized' })],
+    ['a 401 with an unrelated code', rejection(401, { code: 401, reason: 'SOMETHING_ELSE' })],
+    ['a 401 whose body is an HTML page', rejection(401, '<html>login</html>')],
+    ['a Cloudflare 403', rejection(403, '<html>blocked</html>')],
+    ['a WAF 468', rejection(468, '<html>challenge</html>')],
+    ['a gateway 408', rejection(408, '')],
+    ['a 400', rejection(400, { reason: 'REFRESH_TOKEN_INVALID' })],
+    ['a 429', rejection(429, { reason: 'REFRESH_TOKEN_INVALID' })],
+    ['a 503', rejection(503, { reason: 'REFRESH_TOKEN_INVALID' })],
+    ['a network error without a response', { code: 'ERR_NETWORK', message: 'Network Error' }],
+    ['a plain Error', new Error('Token refresh failed')],
+    ['null', null]
+  ])('%s is not a token rejection', async (_name, error) => {
+    const { isRefreshTokenRejection } = await import('@/api/tokenRefresh')
+    expect(isRefreshTokenRejection(error)).toBe(false)
+  })
 })

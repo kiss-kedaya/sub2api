@@ -41,6 +41,32 @@ const (
 	SessionBindingModeStrict = "strict"
 )
 
+// 会话指纹不一致时的处置方式（security.session_binding_on_mismatch）：
+//   - rebind: 只放行「浏览器家族 + 系统家族没变、只是 IP 变了」的刷新，并用当前指纹重新绑定新令牌
+//     （默认；换网段/浏览器升级不掉线）；家族变了仍撤销。只对首次出示的当前令牌生效——
+//     已被轮换掉的旧令牌在宽限窗口内再次出现，指纹不一致一律按重放处理。access token 校验仍返回 401，
+//     由前端刷新后重绑；
+//   - revoke: 撤销整个会话家族，必须重新登录（升级前的旧行为，要严格的用这个）。
+const (
+	SessionBindingOnMismatchRebind = "rebind"
+	SessionBindingOnMismatchRevoke = "revoke"
+)
+
+// refresh token / 登录会话寿命的默认值。配置默认值与服务层对「手写 Config」的
+// 防御性回退共用同一组常量，避免两处各写一个数字。
+const (
+	// DefaultRefreshTokenExpireDays 是每枚 refresh token 的滑动有效期（天）。
+	DefaultRefreshTokenExpireDays = 14
+	// DefaultSessionMaxLifetimeDays 是登录会话从首次登录起的绝对寿命上限（天）。
+	DefaultSessionMaxLifetimeDays = 90
+	// DefaultRefreshTokenReuseLeewaySeconds 是已轮换 refresh token 的「重试宽限」（秒）。
+	// 窗口越长越容易被踩点（偷到令牌的人抢在受害者之前换一次，受害者随后带着旧令牌回来仍落在窗口内），
+	// 所以取 30 秒：覆盖「响应丢失后立刻重试」，不覆盖「过一会儿再试」。
+	DefaultRefreshTokenReuseLeewaySeconds = 30
+	// MaxRefreshTokenReuseLeewaySeconds 是宽限的上限：再大就等于关掉重放检测。
+	MaxRefreshTokenReuseLeewaySeconds = 120
+)
+
 // DefaultKeyRotationCutoff is the default value of security.key_rotation_cutoff.
 // Active API keys created before this instant are treated as potentially leaked
 // by the key-rotation gate and must be rotated (or put behind an IP allowlist)
@@ -847,6 +873,12 @@ type SecurityConfig struct {
 	// computed and whether it is enforced at all. See SessionBindingMode*
 	// constants. Defaults to "loose"; set "off" to roll the binding back.
 	SessionBindingMode string `mapstructure:"session_binding_mode"`
+	// SessionBindingOnMismatch decides what a fingerprint mismatch does: "rebind"
+	// (default) lets a refresh through when only the IP changed (browser family and OS
+	// family unchanged) and re-binds the freshly issued tokens to the current fingerprint;
+	// "revoke" revokes the whole session family and forces a new login (the behaviour
+	// before rebind existed). See SessionBindingOnMismatch*.
+	SessionBindingOnMismatch string `mapstructure:"session_binding_on_mismatch"`
 	// OAuthCodeExchangeEnabled makes the GitHub / Google OAuth callbacks
 	// redirect the browser with a single-use, 60-second code instead of
 	// putting the access / refresh tokens in the URL fragment. The frontend
@@ -887,6 +919,25 @@ func NormalizeSessionBindingMode(mode string) (string, error) {
 // SessionBindingLoose 报告会话指纹是否按网段归一（loose 模式）。
 func (c *Config) SessionBindingLoose() bool {
 	return c != nil && strings.EqualFold(strings.TrimSpace(c.Security.SessionBindingMode), SessionBindingModeLoose)
+}
+
+// NormalizeSessionBindingOnMismatch 归一化并校验 security.session_binding_on_mismatch；
+// 空值取默认的 rebind。
+func NormalizeSessionBindingOnMismatch(action string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", SessionBindingOnMismatchRebind:
+		return SessionBindingOnMismatchRebind, nil
+	case SessionBindingOnMismatchRevoke:
+		return SessionBindingOnMismatchRevoke, nil
+	default:
+		return "", fmt.Errorf("security.session_binding_on_mismatch must be one of: rebind, revoke")
+	}
+}
+
+// SessionBindingRevokeOnMismatch 报告指纹不一致时是否撤销整个会话家族（仅显式配置 revoke 时为 true；
+// 空值与未知值都按默认的 rebind 处理，手写 Config 的测试与旧部署因此不会被意外踢下线）。
+func (c *Config) SessionBindingRevokeOnMismatch() bool {
+	return c != nil && strings.EqualFold(strings.TrimSpace(c.Security.SessionBindingOnMismatch), SessionBindingOnMismatchRevoke)
 }
 
 // SessionBindingDisabled 报告会话绑定是否被显式关闭。
@@ -2064,10 +2115,20 @@ type JWTConfig struct {
 	// - >0: 使用分钟配置（优先级高于 ExpireHour），默认 60 分钟
 	// - =0: 回退使用 ExpireHour（仅用于显式回退的旧配置）
 	AccessTokenExpireMinutes int `mapstructure:"access_token_expire_minutes"`
-	// RefreshTokenExpireDays: Refresh Token有效期（天），默认30天。
-	// 该值同时是单个登录会话的绝对寿命上限：每次轮换都会继承首次签发时间
-	// （session_started_at），超过该天数必须重新登录，避免无限滑动续期。
+	// RefreshTokenExpireDays: 每枚 Refresh Token 的滑动有效期（天），默认 14 天。
+	// 每次轮换都从「现在」起重新计算，所以只要 14 天内用过一次就一直保持登录，
+	// 闲置超过该天数才需要重新登录。会话的绝对寿命上限见 SessionMaxLifetimeDays。
 	RefreshTokenExpireDays int `mapstructure:"refresh_token_expire_days"`
+	// SessionMaxLifetimeDays: 登录会话从首次登录起的绝对寿命上限（天），默认 90。
+	// 轮换不会延长它，到期必须重新登录；不能小于 RefreshTokenExpireDays——小于时启动会自动抬高
+	// 到相等并打一条警告（不让升级后启动失败：旧版本把 refresh_token_expire_days 同时当绝对上限，
+	// 老部署可能只把它调大过）。
+	SessionMaxLifetimeDays int `mapstructure:"session_max_lifetime_days"`
+	// RefreshTokenReuseLeewaySeconds: 已轮换（已消费）的 Refresh Token 在被消费后的这段
+	// 时间内、由消费它的那个客户端（指纹一致）再次出示，视为「响应丢失后的合法重试」——
+	// 不撤销会话，再签发一对新令牌；别的客户端出示、超过宽限或名额用完的重放仍撤销整个会话家族。
+	// 默认 30 秒，0 = 关闭（旧行为：任何重放都撤销），上限 120 秒。
+	RefreshTokenReuseLeewaySeconds int `mapstructure:"refresh_token_reuse_leeway_seconds"`
 	// RefreshWindowMinutes: 刷新窗口（分钟），在Access Token过期前多久开始允许刷新
 	RefreshWindowMinutes int `mapstructure:"refresh_window_minutes"`
 }
@@ -2561,6 +2622,7 @@ func setDefaults() {
 	viper.SetDefault("security.trust_forwarded_ip_for_api_key_acl", true)
 	viper.SetDefault("security.key_rotation_gate_enabled", true)
 	viper.SetDefault("security.session_binding_mode", SessionBindingModeLoose)
+	viper.SetDefault("security.session_binding_on_mismatch", SessionBindingOnMismatchRebind)
 	viper.SetDefault("security.oauth_code_exchange_enabled", true)
 	// 第三方身份 subject 明文双写默认关闭：新行只落 keyed 盲索引 + 前缀。
 	// 读取路径仍保留明文回退，回填前的历史行不受影响。
@@ -2810,8 +2872,13 @@ func setDefaults() {
 	viper.SetDefault("jwt.secret", "")
 	viper.SetDefault("jwt.expire_hour", 24)
 	viper.SetDefault("jwt.access_token_expire_minutes", 60) // 默认 60 分钟；显式设为 0 才回退到 expire_hour
-	viper.SetDefault("jwt.refresh_token_expire_days", 30)   // 30天Refresh Token有效期（同时是会话绝对寿命上限）
-	viper.SetDefault("jwt.refresh_window_minutes", 2)       // 过期前2分钟开始允许刷新
+	// 每枚 Refresh Token 的滑动有效期；每次轮换重新计时，闲置这么久才需要重新登录
+	viper.SetDefault("jwt.refresh_token_expire_days", DefaultRefreshTokenExpireDays)
+	// 会话从首次登录起的绝对上限（天），必须 >= refresh_token_expire_days
+	viper.SetDefault("jwt.session_max_lifetime_days", DefaultSessionMaxLifetimeDays)
+	// 已轮换 Refresh Token 的重试宽限（秒）；0 = 关闭
+	viper.SetDefault("jwt.refresh_token_reuse_leeway_seconds", DefaultRefreshTokenReuseLeewaySeconds)
+	viper.SetDefault("jwt.refresh_window_minutes", 2) // 过期前2分钟开始允许刷新
 
 	// TOTP
 	viper.SetDefault("totp.encryption_key", "")
@@ -3264,6 +3331,11 @@ func (c *Config) Validate() error {
 		return err
 	}
 	c.Security.SessionBindingMode = sessionBindingMode
+	sessionBindingOnMismatch, err := NormalizeSessionBindingOnMismatch(c.Security.SessionBindingOnMismatch)
+	if err != nil {
+		return err
+	}
+	c.Security.SessionBindingOnMismatch = sessionBindingOnMismatch
 	forwardedClientIPHeaders, err := NormalizeForwardedClientIPHeaders(c.Security.ForwardedClientIPHeaders)
 	if err != nil {
 		return fmt.Errorf("security.forwarded_client_ip_headers: %w", err)
@@ -3482,7 +3554,26 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("jwt.refresh_token_expire_days must be positive")
 	}
 	if c.JWT.RefreshTokenExpireDays > 90 {
-		slog.Warn("jwt.refresh_token_expire_days is high; consider shorter expiration for security", "refresh_token_expire_days", c.JWT.RefreshTokenExpireDays)
+		slog.Warn("jwt.refresh_token_expire_days is high; it is the idle (sliding) validity of every refresh token, consider a shorter value for security", "refresh_token_expire_days", c.JWT.RefreshTokenExpireDays)
+	}
+	if c.JWT.SessionMaxLifetimeDays <= 0 {
+		return fmt.Errorf("jwt.session_max_lifetime_days must be positive")
+	}
+	if c.JWT.SessionMaxLifetimeDays < c.JWT.RefreshTokenExpireDays {
+		// 不让升级后启动失败：旧版本把 refresh_token_expire_days 同时当会话绝对上限，老部署可能只把它调大过
+		// （例如 120 天）而不知道有 session_max_lifetime_days。会话上限不能短于一枚令牌的有效期，抬高到相等并提示。
+		slog.Warn("jwt.session_max_lifetime_days is shorter than jwt.refresh_token_expire_days; raising it to match (set jwt.session_max_lifetime_days explicitly to silence this)",
+			"session_max_lifetime_days", c.JWT.SessionMaxLifetimeDays, "refresh_token_expire_days", c.JWT.RefreshTokenExpireDays)
+		c.JWT.SessionMaxLifetimeDays = c.JWT.RefreshTokenExpireDays
+	}
+	if c.JWT.SessionMaxLifetimeDays > 365 {
+		slog.Warn("jwt.session_max_lifetime_days is above one year; users could stay signed in indefinitely, consider a shorter cap", "session_max_lifetime_days", c.JWT.SessionMaxLifetimeDays)
+	}
+	if c.JWT.RefreshTokenReuseLeewaySeconds < 0 {
+		return fmt.Errorf("jwt.refresh_token_reuse_leeway_seconds must be non-negative (0 disables the leeway)")
+	}
+	if c.JWT.RefreshTokenReuseLeewaySeconds > MaxRefreshTokenReuseLeewaySeconds {
+		return fmt.Errorf("jwt.refresh_token_reuse_leeway_seconds must be <= %d (a longer leeway would defeat refresh token replay detection); use 0 to disable", MaxRefreshTokenReuseLeewaySeconds)
 	}
 	if c.JWT.RefreshWindowMinutes < 0 {
 		return fmt.Errorf("jwt.refresh_window_minutes must be non-negative")

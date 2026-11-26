@@ -53,7 +53,7 @@ func TestCryptoGrantAccessLogoutValidatesSignatureAndSupportsLegacySession(t *te
 	}}}
 	user := &User{ID: 7, Email: "admin@example.test", PasswordHash: "fixture-password-hash", Role: RoleAdmin, Status: StatusActive}
 	for _, session := range []string{"test-session", ""} {
-		token, err := auth.generateAccessToken(user, session, "")
+		token, err := auth.generateAccessToken(user, session, "", "")
 		require.NoError(t, err)
 		require.NoError(t, auth.RevokeCryptoGrantSessionForAccessToken(t.Context(), token))
 		want := session

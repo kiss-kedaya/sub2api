@@ -11,6 +11,7 @@ import (
 	"net/mail"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -36,12 +37,13 @@ var (
 	ErrTokenRevoked        = infraerrors.Unauthorized("TOKEN_REVOKED", "token has been revoked")
 	ErrRefreshTokenInvalid = infraerrors.Unauthorized("REFRESH_TOKEN_INVALID", "invalid refresh token")
 	ErrRefreshTokenExpired = infraerrors.Unauthorized("REFRESH_TOKEN_EXPIRED", "refresh token has expired")
-	// ErrRefreshTokenReuse 表示已消费（已轮换）的 Refresh Token 被再次使用：
+	// ErrRefreshTokenReuse 表示已消费（已轮换）的 Refresh Token 在重试宽限
+	// （jwt.refresh_token_reuse_leeway_seconds）之外被再次使用：
 	// 按标准 OAuth 实践撤销整个 token family，合法端需要重新登录。
 	ErrRefreshTokenReuse  = infraerrors.Unauthorized("REFRESH_TOKEN_REUSE", "refresh token has already been used; the session has been revoked")
 	ErrRefreshTokenReused = infraerrors.Unauthorized("REFRESH_TOKEN_REUSED", "refresh token has been reused")
 	// ErrRefreshTokenSessionExpired 表示该登录会话已达绝对寿命上限
-	// （首次签发时间 + jwt.refresh_token_expire_days），必须重新登录。
+	// （首次签发时间 + jwt.session_max_lifetime_days），必须重新登录。
 	ErrRefreshTokenSessionExpired   = infraerrors.Unauthorized("REFRESH_TOKEN_SESSION_EXPIRED", "session lifetime exceeded, please login again")
 	ErrEmailVerifyRequired          = infraerrors.BadRequest("EMAIL_VERIFY_REQUIRED", "email verification is required")
 	ErrEmailSuffixNotAllowed        = infraerrors.BadRequest("EMAIL_SUFFIX_NOT_ALLOWED", "email suffix is not allowed")
@@ -61,6 +63,10 @@ var (
 	ErrCaptchaProviderConflict = infraerrors.ServiceUnavailable("CAPTCHA_PROVIDER_CONFLICT", "multiple captcha providers are enabled")
 )
 
+// ErrRefreshTokenCacheNotConfigured 表示没有可用的 refresh token 存储：这是配置问题不是瞬时故障，
+// 调用方（如登录发令牌）不该为它重试。
+var ErrRefreshTokenCacheNotConfigured = errors.New("refresh token cache not configured")
+
 // maxTokenLength 限制 token 大小，避免超长 header 触发解析时的异常内存分配。
 const maxTokenLength = 8192
 
@@ -70,7 +76,13 @@ const refreshTokenPrefix = "rt_"
 // refreshTokenReuseWindow 是"已消费 Token 墓碑"的保留上限：在此窗口内重放旧
 // Refresh Token 会被识别为复用并撤销整个 family；超过窗口后旧 Token 仍被拒绝
 // （查不到记录），只是不再连带撤销 family，避免墓碑长期占用 Redis。
+// 窗口内又分两段：消费后 jwt.refresh_token_reuse_leeway_seconds 以内的再次出现是
+// 「响应丢失后的合法重试」（重发新令牌、不撤销）；更晚的才算重放。
 const refreshTokenReuseWindow = 24 * time.Hour
+
+// maxRefreshLeewayReissues 是每个已消费 Token 在宽限期内最多被「重发」新令牌的次数：
+// 合法客户端最多重试一两次；超过说明有人在拿同一个旧令牌批量换新令牌，按重放处理。
+const maxRefreshLeewayReissues = 3
 
 // JWTClaims JWT载荷数据
 type JWTClaims struct {
@@ -86,6 +98,9 @@ type JWTClaims struct {
 	// 不做绑定校验（否则升级瞬间所有既有会话会因指纹算法差异被踢下线）；
 	// >=1 表示按 security.session_binding_mode 计算的指纹，需要强制校验。
 	BindingVersion int `json:"bfv,omitempty"`
+	// BindingCoarse 粗粒度指纹（浏览器家族|系统家族|IP 家族|网段短哈希），与 BindingHash 并存；
+	// loose 模式下优先用它比较（忽略版本号、IPv4<->IPv6 切换）。旧 token 没有该字段。
+	BindingCoarse string `json:"bcs,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -118,6 +133,10 @@ type AuthService struct {
 	defaultSubAssigner    DefaultSubscriptionAssigner
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	billingCacheService   *BillingCacheService
+
+	// stats 是登录会话的进程内计数（refresh 结果、会话绑定、登录发令牌兜底），按需创建。
+	statsOnce sync.Once
+	stats     *authSessionStats
 }
 
 type CaptchaProof struct {
@@ -1521,6 +1540,16 @@ func (s *AuthService) sessionBindingHash(ctx context.Context) string {
 	return SessionBindingFromContext(ctx).HashForMode(s.cfg.Security.SessionBindingMode)
 }
 
+// sessionBindingForIssue 返回签发令牌时写入的会话指纹：旧算法的哈希 + 粗粒度指纹
+// （两者都为空 = 不绑定）。哈希保持旧算法，新旧版本混跑时旧实例仍能正确比对。
+func (s *AuthService) sessionBindingForIssue(ctx context.Context) (hash, coarse string) {
+	hash = s.sessionBindingHash(ctx)
+	if hash == "" {
+		return "", ""
+	}
+	return hash, SessionBindingFromContext(ctx).CoarseFingerprint()
+}
+
 // GenerateToken 生成JWT access token
 // 使用新的access_token_expire_minutes配置项（默认60分钟），显式配置为0时回退到expire_hour。
 // 会话指纹（IP/UA）从 ctx 中提取（由 HTTP 入口中间件注入），缺失时生成不带绑定的 token。
@@ -1529,15 +1558,17 @@ func (s *AuthService) GenerateToken(ctx context.Context, user *User) (string, er
 	if err != nil {
 		return "", fmt.Errorf("generate session id: %w", err)
 	}
-	return s.generateAccessToken(user, sessionID, s.sessionBindingHash(ctx))
+	bindingHash, bindingCoarse := s.sessionBindingForIssue(ctx)
+	return s.generateAccessToken(user, sessionID, bindingHash, bindingCoarse)
 }
 
 // sessionBindingVersion 是当前签发 token 时写入的会话指纹版本。
 // 老 token 没有该字段（版本 0），中间件据此跳过校验以平滑升级。
 const sessionBindingVersion = 1
 
-// generateAccessToken 生成带会话 ID 与绑定指纹的 access token。
-func (s *AuthService) generateAccessToken(user *User, sessionID, bindingHash string) (string, error) {
+// generateAccessToken 生成带会话 ID 与绑定指纹的 access token：bindingHash 是旧算法的指纹哈希
+// （bnd claim，新旧版本混跑时旧实例仍能比对），bindingCoarse 是粗粒度指纹（bcs claim，可为空）。
+func (s *AuthService) generateAccessToken(user *User, sessionID, bindingHash, bindingCoarse string) (string, error) {
 	now := time.Now()
 	var expiresAt time.Time
 	if s.cfg.JWT.AccessTokenExpireMinutes > 0 {
@@ -1548,12 +1579,13 @@ func (s *AuthService) generateAccessToken(user *User, sessionID, bindingHash str
 	}
 
 	claims := &JWTClaims{
-		UserID:       user.ID,
-		Email:        user.Email,
-		Role:         user.Role,
-		TokenVersion: resolvedTokenVersion(user),
-		SessionID:    sessionID,
-		BindingHash:  bindingHash,
+		UserID:        user.ID,
+		Email:         user.Email,
+		Role:          user.Role,
+		TokenVersion:  resolvedTokenVersion(user),
+		SessionID:     sessionID,
+		BindingHash:   bindingHash,
+		BindingCoarse: bindingCoarse,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -1632,11 +1664,15 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldTokenString string) (
 		return "", ErrTokenRevoked
 	}
 
-	// 会话绑定检查：指纹变化的旧 token 不允许换发新 token。
+	// 会话绑定检查：指纹变化的旧 token 的处置由 security.session_binding_on_mismatch 决定：
+	// rebind（默认）只放行「浏览器家族 + 系统家族没变、只是 IP 变了」，下面签发的新 token 带当前指纹，
+	// 即「重绑」；家族变了、或 revoke 模式，撤销整个会话家族。
 	// refresh 路径始终校验绑定（不再受后台 session_binding_enabled 开关控制），
 	// 只有 security.session_binding_mode=off 才整体关闭。
 	if s.cfg != nil && !s.cfg.SessionBindingDisabled() && claims.BindingHash != "" {
-		if current := s.sessionBindingHash(ctx); current != "" && current != claims.BindingHash {
+		binding := SessionBindingFromContext(ctx)
+		if !binding.Matches(s.cfg.Security.SessionBindingMode, claims.BindingHash, claims.BindingCoarse) &&
+			(s.cfg.SessionBindingRevokeOnMismatch() || !binding.ClientFamilyMatches(claims.BindingCoarse)) {
 			_ = s.RevokeSessionFamily(ctx, claims.SessionID)
 			return "", ErrSessionBindingMismatch
 		}
@@ -1813,7 +1849,21 @@ type TokenPair struct {
 type TokenPairWithUser struct {
 	TokenPair
 	UserRole string
+	// UserID 是刷新所属的用户（审计用）。
+	UserID int64
+	// BindingRebound 表示这次刷新发生了指纹不一致、但只是 IP 变了所以放行并重绑；
+	// BindingFrom / BindingTo 是前后两端的粗粒度标签（如 chrome/windows/ipv4），不含 IP 与完整 UA。
+	BindingRebound bool
+	BindingFrom    string
+	BindingTo      string
+	// AuditRebind 表示这次重绑该写一条审计行：同一用户 + 会话家族每个窗口只放行一条（限频），
+	// 超出的不写审计、只在 refresh_binding_rebind_audit_suppressed 里计数。
+	AuditRebind bool
 }
+
+// RefreshGuard 在刷新确认令牌与用户都有效之后、签发新令牌和消费旧令牌之前被调用；
+// 返回 error 就拒绝这次刷新，令牌原样保留（没有被消费，也没有签发任何东西）。
+type RefreshGuard func(user *User) error
 
 // GenerateTokenPair 生成Access Token和Refresh Token对（新会话）。
 // familyID: 可选的Token家族ID，用于Token轮转时保持家族关系
@@ -1823,12 +1873,12 @@ func (s *AuthService) GenerateTokenPair(ctx context.Context, user *User, familyI
 
 // GenerateTokenPairForSession 生成Access Token和Refresh Token对，并显式指定
 // 该登录会话的首次签发时间（sessionStartedAt）。轮换 refresh token 时必须
-// 传入原会话的 SessionStart，使会话绝对寿命上限不会被滑动续期绕过；
-// 传零值表示这是一次全新的登录。
+// 传入原会话的 SessionStart，使会话绝对寿命上限（jwt.session_max_lifetime_days）
+// 不会被滑动续期绕过；传零值表示这是一次全新的登录。
 func (s *AuthService) GenerateTokenPairForSession(ctx context.Context, user *User, familyID string, sessionStartedAt time.Time) (*TokenPair, error) {
 	// 检查 refreshTokenCache 是否可用
 	if s.refreshTokenCache == nil {
-		return nil, errors.New("refresh token cache not configured")
+		return nil, ErrRefreshTokenCacheNotConfigured
 	}
 
 	// 提前确定家族ID：作为 access token 的会话ID（sid），保证同一会话的
@@ -1842,7 +1892,8 @@ func (s *AuthService) GenerateTokenPairForSession(ctx context.Context, user *Use
 	}
 
 	// 生成Access Token（携带会话ID与绑定指纹）
-	accessToken, err := s.generateAccessToken(user, familyID, s.sessionBindingHash(ctx))
+	bindingHash, bindingCoarse := s.sessionBindingForIssue(ctx)
+	accessToken, err := s.generateAccessToken(user, familyID, bindingHash, bindingCoarse)
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
 	}
@@ -1860,21 +1911,44 @@ func (s *AuthService) GenerateTokenPairForSession(ctx context.Context, user *Use
 	}, nil
 }
 
-// refreshTokenMaxLifetime 返回登录会话的绝对寿命上限。
-// 配置校验保证生产环境 jwt.refresh_token_expire_days > 0；这里对 0 做防御性
-// 回退（30 天），避免测试或未走完整配置校验的调用方生成 0 TTL 的会话。
-func (s *AuthService) refreshTokenMaxLifetime() time.Duration {
-	days := 30
+// refreshTokenSlidingTTL 返回每枚 refresh token 的滑动有效期（jwt.refresh_token_expire_days）。
+// 配置校验保证生产环境 > 0；这里对 0 做防御性回退（默认值），避免测试或未走完整配置
+// 校验的调用方生成 0 TTL 的令牌。
+func (s *AuthService) refreshTokenSlidingTTL() time.Duration {
+	days := config.DefaultRefreshTokenExpireDays
 	if s != nil && s.cfg != nil && s.cfg.JWT.RefreshTokenExpireDays > 0 {
 		days = s.cfg.JWT.RefreshTokenExpireDays
 	}
 	return time.Duration(days) * 24 * time.Hour
 }
 
+// sessionMaxLifetime 返回登录会话从首次登录起的绝对寿命上限（jwt.session_max_lifetime_days）。
+// 轮换只延长单枚令牌的有效期，不延长这个上限。上限不会小于一枚令牌的滑动有效期
+// （配置校验保证；这里对手写 Config 再兜一层，避免令牌一发出就超过会话上限）。
+func (s *AuthService) sessionMaxLifetime() time.Duration {
+	days := config.DefaultSessionMaxLifetimeDays
+	if s != nil && s.cfg != nil && s.cfg.JWT.SessionMaxLifetimeDays > 0 {
+		days = s.cfg.JWT.SessionMaxLifetimeDays
+	}
+	maxLifetime := time.Duration(days) * 24 * time.Hour
+	if sliding := s.refreshTokenSlidingTTL(); maxLifetime < sliding {
+		maxLifetime = sliding
+	}
+	return maxLifetime
+}
+
+// refreshTokenReuseLeeway 返回已消费 refresh token 的重试宽限；0 表示关闭（旧行为：任何重放都撤销）。
+func (s *AuthService) refreshTokenReuseLeeway() time.Duration {
+	if s == nil || s.cfg == nil || s.cfg.JWT.RefreshTokenReuseLeewaySeconds <= 0 {
+		return 0
+	}
+	return time.Duration(s.cfg.JWT.RefreshTokenReuseLeewaySeconds) * time.Second
+}
+
 // generateRefreshToken 生成并存储Refresh Token。
-// sessionStartedAt 是会话首次签发时间：refresh token 的有效期不会超过
-// sessionStartedAt + jwt.refresh_token_expire_days，因此轮换只是换凭证，
-// 不会把会话寿命无限延长。零值表示新会话，以当前时刻为起点。
+// 有效期是滑动的：ExpiresAt = min(现在 + jwt.refresh_token_expire_days,
+// 会话起点 + jwt.session_max_lifetime_days)——每次轮换从「现在」重新计时，但绝不超过会话的
+// 绝对上限。sessionStartedAt 是会话首次签发时间，零值表示新会话，以当前时刻为起点。
 func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, familyID string, sessionStartedAt time.Time) (string, error) {
 	// 生成随机Token
 	tokenBytes := make([]byte, 32)
@@ -1896,21 +1970,27 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 	}
 
 	now := time.Now()
-	maxLifetime := s.refreshTokenMaxLifetime()
 	if sessionStartedAt.IsZero() {
 		sessionStartedAt = now
 	}
-	expiresAt := sessionStartedAt.Add(maxLifetime)
-	if !now.Before(expiresAt) {
+	sessionDeadline := sessionStartedAt.Add(s.sessionMaxLifetime())
+	if !now.Before(sessionDeadline) {
 		return "", ErrRefreshTokenSessionExpired
+	}
+	slidingTTL := s.refreshTokenSlidingTTL()
+	expiresAt := now.Add(slidingTTL)
+	if expiresAt.After(sessionDeadline) {
+		expiresAt = sessionDeadline
 	}
 	ttl := time.Until(expiresAt)
 
+	bindingHash, bindingCoarse := s.sessionBindingForIssue(ctx)
 	data := &RefreshTokenData{
 		UserID:           user.ID,
 		TokenVersion:     resolvedTokenVersion(user),
 		FamilyID:         familyID,
-		BindingHash:      s.sessionBindingHash(ctx),
+		BindingHash:      bindingHash,
+		BindingCoarse:    bindingCoarse,
 		SessionStartedAt: sessionStartedAt,
 		CreatedAt:        now,
 		ExpiresAt:        expiresAt,
@@ -1921,14 +2001,23 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 		return "", fmt.Errorf("store refresh token: %w", err)
 	}
 
+	// 令牌已经存好：登记进用户/家族集合是「能被撤销」的前提，必须做完——所以用脱离请求取消的 ctx
+	// （客户端在这一刻断开不能让令牌留在集合之外，那样「撤销全部会话」就够不着它）。
+	regCtx, cancelReg := detachedFinalizeContext(ctx)
+	defer cancelReg()
+
+	// 两个集合（用户/家族）的 TTL 取一枚令牌的完整滑动有效期，而不是这枚令牌的剩余寿命：
+	// 令牌的剩余寿命可能因为接近会话上限而很短，集合若跟着缩短，就会在同一用户/家族里
+	// 另一枚更长寿的令牌过期之前先消失，让「撤销全部会话 / 撤销整个家族」漏掉那枚令牌。
+	// 每次写入都会把集合 TTL 重置为完整的滑动有效期，所以集合总是比它包含的任何令牌活得久。
 	// 添加到用户Token集合
-	if err := s.refreshTokenCache.AddToUserTokenSet(ctx, user.ID, tokenHash, ttl); err != nil {
+	if err := s.refreshTokenCache.AddToUserTokenSet(regCtx, user.ID, tokenHash, slidingTTL); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to add token to user set: %v", err)
 		// 不影响主流程
 	}
 
 	// 添加到家族Token集合
-	if err := s.refreshTokenCache.AddToFamilyTokenSet(ctx, familyID, tokenHash, ttl); err != nil {
+	if err := s.refreshTokenCache.AddToFamilyTokenSet(regCtx, familyID, tokenHash, slidingTTL); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to add token to family set: %v", err)
 		// 不影响主流程
 	}
@@ -1936,17 +2025,54 @@ func (s *AuthService) generateRefreshToken(ctx context.Context, user *User, fami
 	return rawToken, nil
 }
 
-// RefreshTokenPair 使用Refresh Token刷新Token对
-// 实现Token轮转：每次刷新都会生成新的Refresh Token，旧 Token 失效并留下
-// "已消费"墓碑；旧 Token 被再次使用（重放/并发重试）时撤销整个 token family。
+// refreshFinalizeTimeout 是「已经决定要发新令牌」之后各收尾阶段（存令牌、登记集合、标记已消费、
+// 占宽限名额、补偿）的超时。这些步骤必须做完才能保证一致：做一半会留下撤销不到的令牌，
+// 或让旧令牌继续有效，所以它们不跟随请求的取消，只受这个超时约束。
+const refreshFinalizeTimeout = 2 * time.Second
+
+// detachedFinalizeContext 返回脱离请求取消、带 refreshFinalizeTimeout 超时的 ctx（保留 ctx 里的值，如会话指纹）。
+func detachedFinalizeContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), refreshFinalizeTimeout)
+}
+
+// RefreshTokenPair 使用Refresh Token刷新Token对。
+//
+// Token轮转：每次刷新都会签发新的 Refresh Token，旧 Token 被标记为"已消费"（留一条墓碑）。
+// 顺序是「先发后消费」：先创建并存好新令牌，再原子地把旧令牌标记为已消费——新令牌存不进去时旧令牌
+// 保持可用，客户端可以安全重试；撤销落在两步之间时（登出/撤销全部），标记会失败，刚发的新令牌随即被丢弃，
+// 已撤销的会话不会被写回墓碑复活。
+//
+// 已消费的旧 Token 再次出现时：
+//   - 消费之后 jwt.refresh_token_reuse_leeway_seconds 以内、由「消费它的那个客户端」出示、
+//     且重发名额（原子计数，最多 3 个）未用完：视为响应丢失（弱网/超时）后的合法重试，不撤销会话，
+//     再签发一对新令牌（同一家族、同一会话起点；第一次轮换签发的新令牌仍然有效）。
+//     「本人」= 浏览器家族、系统家族、IP 家族、网段（v4 /24、v6 /64）与消费者的指纹全部相同，只忽略 UA 版本号；
+//   - 其余情况——窗口外、指纹不一致（别的客户端、别的网段、别的 IP 家族）、名额用完、缓存没有原子存储——
+//     一律视为重放，撤销整个 token family。宽限路径里指纹不一致不 rebind、不重发。
+//
+// 会话绑定的 rebind 只对「首次出示的当前令牌」放行，且只放行「浏览器家族 + 系统家族没变、只是 IP 变了」；
+// 家族变了仍撤销。绑定是漂移检测器，不是防盗屏障。
+//
+// 会话有两个寿命：每枚令牌滑动 jwt.refresh_token_expire_days（每次轮换重新计时），以及会话
+// 从首次登录起的绝对上限 jwt.session_max_lifetime_days（轮换不延长）。
 func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string) (*TokenPairWithUser, error) {
+	return s.RefreshTokenPairGuarded(ctx, refreshToken, nil)
+}
+
+// RefreshTokenPairGuarded 同 RefreshTokenPair，另带一个可选的 guard（见 RefreshGuard）：
+// 比如后端模式只允许管理员——放在消费令牌之前拦，被拒的用户令牌不会被白白消费。
+func (s *AuthService) RefreshTokenPairGuarded(ctx context.Context, refreshToken string, guard RefreshGuard) (*TokenPairWithUser, error) {
+	stats := s.authStats()
+
 	// 检查 refreshTokenCache 是否可用
 	if s.refreshTokenCache == nil {
+		stats.inc(statRefreshInvalid)
 		return nil, ErrRefreshTokenInvalid
 	}
 
 	// 验证Token格式
 	if !strings.HasPrefix(refreshToken, refreshTokenPrefix) {
+		stats.inc(statRefreshInvalid)
 		return nil, ErrRefreshTokenInvalid
 	}
 
@@ -1956,36 +2082,43 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 	data, err := s.refreshTokenCache.GetRefreshToken(ctx, tokenHash)
 	if err != nil {
 		if errors.Is(err, ErrRefreshTokenNotFound) {
-			// Token不存在，可能是已被使用（Token轮转）或已过期
-			logger.LegacyPrintf("service.auth", "[Auth] Refresh token not found, possible reuse attack")
+			// Token不存在：已过期、所属会话已被撤销，或是超过重放窗口的旧令牌
+			stats.inc(statRefreshInvalid)
 			return nil, ErrRefreshTokenInvalid
 		}
-		logger.LegacyPrintf("service.auth", "[Auth] Error getting refresh token: %v", err)
+		stats.inc(statRefreshUnavailable)
+		if !isContextDone(err) {
+			s.warnEvent("refresh_unavailable", "refresh token lookup failed", "error", err)
+		}
 		return nil, ErrServiceUnavailable
 	}
 
-	// 已消费的 Token 再次出现 = 重放：按标准 OAuth 实践撤销整个 token family。
-	// 这样即使攻击者先用了被盗 Token，合法会话也会随之失效（用户重新登录），
-	// 而不是让攻击者与受害者长期并行持有会话。
+	now := time.Now()
+	leewayRetry := false
 	if data.Consumed {
-		_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
-		logger.LegacyPrintf("service.auth", "[Auth] Refresh token replay detected, family revoked: user_id=%d family=%s", data.UserID, data.FamilyID)
-		return nil, ErrRefreshTokenReuse
+		// 已消费的令牌再次出现：只有宽限内、由消费它的那个客户端再次出示才算合法重试，
+		// 其余一律是重放（窗口外 / 别的客户端 / 名额用完 / 没有原子存储）：撤销整个 token family，
+		// 这样即使攻击者先用了被盗 Token，合法会话也会随之失效，而不是让两边长期并行持有会话。
+		if reason := s.leewayReplayReason(ctx, data, now); reason != "" {
+			return nil, s.revokeAsReplay(ctx, data, reason)
+		}
+		leewayRetry = true
 	}
 
 	// 检查Token是否过期
-	if time.Now().After(data.ExpiresAt) {
+	if now.After(data.ExpiresAt) {
 		// 删除过期Token
 		_ = s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash)
+		stats.inc(statRefreshExpired)
 		return nil, ErrRefreshTokenExpired
 	}
 
 	// 会话绝对寿命上限：轮换不能把会话无限续期。首次签发时间（旧数据回退到
-	// CreatedAt）+ refresh_token_expire_days 到期后必须重新登录。
-	maxLifetime := s.refreshTokenMaxLifetime()
-	if time.Now().After(data.SessionStart().Add(maxLifetime)) {
-		_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
-		logger.LegacyPrintf("service.auth", "[Auth] Refresh session reached absolute lifetime: user_id=%d family=%s", data.UserID, data.FamilyID)
+	// CreatedAt）+ jwt.session_max_lifetime_days 到期后必须重新登录。
+	if now.After(data.SessionStart().Add(s.sessionMaxLifetime())) {
+		s.revokeFamily(ctx, data.FamilyID)
+		stats.inc(statRefreshSessionExpired)
+		s.warnEvent("refresh_session_expired", "refresh session reached its absolute lifetime", "user_id", data.UserID)
 		return nil, ErrRefreshTokenSessionExpired
 	}
 
@@ -1994,67 +2127,413 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			// 用户已删除，撤销整个Token家族
-			_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
+			s.revokeFamily(ctx, data.FamilyID)
+			stats.inc(statRefreshInvalid)
 			return nil, ErrRefreshTokenInvalid
 		}
-		logger.LegacyPrintf("service.auth", "[Auth] Database error getting user for token refresh: %v", err)
+		stats.inc(statRefreshUnavailable)
+		if !isContextDone(err) {
+			s.warnEvent("refresh_unavailable", "load user for token refresh failed", "user_id", data.UserID, "error", err)
+		}
 		return nil, ErrServiceUnavailable
 	}
 
 	// 检查用户状态
 	if !user.IsActive() {
 		// 用户被禁用，撤销整个Token家族
-		_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
+		s.revokeFamily(ctx, data.FamilyID)
+		stats.inc(statRefreshRejected)
 		return nil, ErrUserNotActive
 	}
 
 	// 检查TokenVersion（密码更改后所有Token失效）
 	if data.TokenVersion != resolvedTokenVersion(user) {
 		// TokenVersion不匹配，撤销整个Token家族
-		_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
+		s.revokeFamily(ctx, data.FamilyID)
+		stats.inc(statRefreshRejected)
 		return nil, ErrTokenRevoked
 	}
 
-	// 会话绑定检查：IP/UA 指纹变化即撤销整个会话家族。
+	// 调用方的准入检查（如后端模式只允许管理员）：在签发/消费任何东西之前拦，被拒的令牌原样保留。
+	if guard != nil {
+		if err := guard(user); err != nil {
+			stats.inc(statRefreshRejected)
+			return nil, err
+		}
+	}
+
+	// 会话绑定检查（只对「首次出示的当前令牌」；宽限重试已在上面按「消费者的指纹」比过）：
+	// 指纹不一致时的处置由 security.session_binding_on_mismatch 决定——
+	//   - revoke：撤销整个会话家族（升级前的旧行为）；
+	//   - rebind（默认）：只放行「浏览器家族 + 系统家族没变、只是 IP 变了」，下面签发的新令牌带当前指纹
+	//     （即「重绑」），并留一条限频 WARN（粗粒度标签，不含 IP/完整 UA）；家族变了（换了浏览器/系统，
+	//     或是别的程序拿着令牌）仍然撤销。
 	// refresh 路径始终校验绑定（不再受后台 session_binding_enabled 开关控制），
-	// 只有 security.session_binding_mode=off 才整体关闭；mode=loose（默认）只比较
-	// 网段，避免移动网络/多出口 IP 的正常漂移把用户踢下线。
-	// 兼容：data.BindingHash 为空表示绑定上线前签发的旧会话，放行并在轮转时补齐绑定。
-	// 旧数据没有 SessionStartedAt，指纹是按升级前的严格算法写入的；升级到 loose
-	// 模式后直接比对会误杀全部存量会话，因此旧会话放行一次，轮换后写入新指纹。
-	if s.cfg != nil && !s.cfg.SessionBindingDisabled() && data.BindingHash != "" && !data.SessionStartedAt.IsZero() {
-		if current := s.sessionBindingHash(ctx); current != "" && current != data.BindingHash {
-			_ = s.refreshTokenCache.DeleteTokenFamily(ctx, data.FamilyID)
-			logger.LegacyPrintf("service.auth", "[Auth] Session binding mismatch on refresh for user %d, family revoked", data.UserID)
-			return nil, ErrSessionBindingMismatch
+	// 只有 security.session_binding_mode=off 才整体关闭；mode=loose（默认）只比较粗粒度指纹。
+	rebind, ipFamilySwitch := false, false
+	if !leewayRetry {
+		mismatch, switched := s.refreshBindingState(ctx, data)
+		ipFamilySwitch = switched
+		if mismatch {
+			if reason := s.rebindRefusal(ctx, data); reason != "" {
+				s.revokeFamily(ctx, data.FamilyID)
+				stats.inc(statRefreshBindingRevoke)
+				s.warnEvent("refresh_binding_revoke", "session binding mismatch on refresh: session family revoked",
+					"user_id", data.UserID, "reason", reason,
+					"from", BindingLabel(data.BindingCoarse), "to", BindingLabel(SessionBindingFromContext(ctx).CoarseFingerprint()))
+				return nil, ErrSessionBindingMismatch
+			}
+			rebind = true
 		}
 	}
 
-	// Token轮转：立即让旧 Token 失效，但保留一条短 TTL 的"已消费"墓碑，
-	// 使下一次重放能定位 family 并撤销整个会话链。
-	data.Consumed = true
-	reuseTTL := time.Until(data.ExpiresAt)
-	if reuseTTL > refreshTokenReuseWindow {
-		reuseTTL = refreshTokenReuseWindow
-	}
-	if reuseTTL > 0 {
-		if err := s.refreshTokenCache.StoreRefreshToken(ctx, tokenHash, data, reuseTTL); err != nil {
-			logger.LegacyPrintf("service.auth", "[Auth] Failed to mark old refresh token consumed, deleting it: %v", err)
-			_ = s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash)
+	// 宽限重试的重发名额在新令牌发出之后才原子地占（见 reserveLeewayReissue）：发令牌失败不白占名额。
+
+	// 先发后消费：先创建并存好新令牌（同一个家族ID与会话起点，绝对寿命上限不随轮换延长）。
+	// 存不进去时旧令牌原样保留——客户端可以安全重试，不会被锁在外面。
+	// 已经决定要发令牌之后，存令牌与登记集合都不跟随请求的取消（见 refreshFinalizeTimeout）。
+	issueCtx, cancelIssue := detachedFinalizeContext(ctx)
+	pair, err := s.GenerateTokenPairForSession(issueCtx, user, data.FamilyID, data.SessionStart())
+	cancelIssue()
+	if err != nil {
+		if errors.Is(err, ErrRefreshTokenSessionExpired) {
+			s.revokeFamily(ctx, data.FamilyID)
+			stats.inc(statRefreshSessionExpired)
+			return nil, ErrRefreshTokenSessionExpired
 		}
-	} else if err := s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash); err != nil {
-		logger.LegacyPrintf("service.auth", "[Auth] Failed to delete old refresh token: %v", err)
+		stats.inc(statRefreshUnavailable)
+		if !isContextDone(err) {
+			s.warnEvent("refresh_unavailable", "issuing the new refresh token failed; the old token stays valid so the client can retry",
+				"user_id", data.UserID, "error", err)
+		}
+		return nil, ErrServiceUnavailable
 	}
 
-	// 生成新的Token对，保持同一个家族ID与首次签发时间（绝对寿命上限不随轮换延长）
-	pair, err := s.GenerateTokenPairForSession(ctx, user, data.FamilyID, data.SessionStart())
+	// 新令牌已就位，收尾：首次轮换 → 原子地把旧令牌换成墓碑；宽限内的重试 → 原子地占重发名额（同时确认会话没有在途中被撤销）。
+	// 收尾失败（会话已被撤销 / 无法确认 / 名额用完）时丢弃刚发的新令牌，不把凭证交给已被撤销的会话。
+	leewayRetry, err = s.finalizeRefreshRotation(ctx, tokenHash, data, pair, leewayRetry)
 	if err != nil {
 		return nil, err
 	}
-	return &TokenPairWithUser{
+
+	stats.inc(statRefreshOK)
+	if leewayRetry {
+		stats.inc(statRefreshReuseLeewayRetry)
+		s.warnEvent("refresh_leeway_retry", "refresh token retried within the leeway window: a new token pair was issued and the session kept",
+			"user_id", data.UserID, "reissues", data.LeewayReissues)
+	}
+	result := &TokenPairWithUser{
 		TokenPair: *pair,
 		UserRole:  user.Role,
-	}, nil
+		UserID:    user.ID,
+	}
+	if rebind {
+		stats.inc(statRefreshBindingRebind)
+		from := BindingLabel(data.BindingCoarse)
+		to := BindingLabel(SessionBindingFromContext(ctx).CoarseFingerprint())
+		s.warnEvent("refresh_binding_rebind", "session binding mismatch on refresh: session kept and re-bound to the current client",
+			"user_id", data.UserID, "from", from, "to", to)
+		result.BindingRebound, result.BindingFrom, result.BindingTo = true, from, to
+		// 审计限频：同一用户 + 会话家族每个窗口一条；多出来的只计数。
+		if stats.allowRebindAudit(strconv.FormatInt(user.ID, 10)+":"+data.FamilyID, now) {
+			result.AuditRebind = true
+		} else {
+			stats.inc(statRefreshBindingRebindAuditSuppressed)
+		}
+	}
+	if ipFamilySwitch {
+		stats.inc(statRefreshIPFamilySwitch)
+	}
+	return result, nil
+}
+
+// maxLeewayClockSkew 是容忍的实例间时钟偏差：墓碑的 ConsumedAt 由消费它的那个实例的时钟写入，
+// 比本实例的「现在」晚这么多以内按「现在」处理（elapsed = 0）；晚得更多说明时钟不同步或记录不可信，
+// 不给宽限（按重放处理），避免偏差把宽限窗口等量拉长。宽限依赖各实例做了 NTP 校时。
+const maxLeewayClockSkew = 5 * time.Second
+
+// atomicRefreshStore 返回缓存的原子能力（Redis 实现提供）；测试替身等没有它。
+func (s *AuthService) atomicRefreshStore() (RefreshTokenAtomicStore, bool) {
+	if s == nil || s.refreshTokenCache == nil {
+		return nil, false
+	}
+	store, ok := s.refreshTokenCache.(RefreshTokenAtomicStore)
+	return store, ok
+}
+
+// refreshReuseWithinLeeway 报告一个已消费的 Token 此刻再次出现是否还在重试宽限窗口里。
+// 宽限为 0（关闭）、旧墓碑没有 ConsumedAt、缓存没有原子存储（无法原子地占名额）、
+// ConsumedAt 在未来太远、超过宽限，都不算（按重放处理）。
+func (s *AuthService) refreshReuseWithinLeeway(data *RefreshTokenData, now time.Time) bool {
+	leeway := s.refreshTokenReuseLeeway()
+	if leeway <= 0 || data.ConsumedAt.IsZero() {
+		return false
+	}
+	if _, ok := s.atomicRefreshStore(); !ok {
+		return false
+	}
+	elapsed := now.Sub(data.ConsumedAt)
+	if elapsed < 0 {
+		if -elapsed > maxLeewayClockSkew {
+			return false
+		}
+		elapsed = 0
+	}
+	return elapsed <= leeway
+}
+
+// leewayReplayReason 判断一个已消费的令牌此刻再次出现是否该按重放处理；返回空串表示是合法的宽限内重试。
+// 宽限只给「消费它的那个客户端」：墓碑上记的是消费者的指纹，出示者必须和它「同一个客户端、同一个网络」——
+// 浏览器家族、系统家族、IP 家族、网段全部相同，只忽略 UA 版本号（SameClientAndNetwork）；
+// 不一致（包括只是 IP 家族不同）一律按重放处理，不 rebind、不重发。否则偷到当前令牌的人可以抢在受害者之前
+// 换一次（换到相反的 IP 家族、UA 照抄同样的家族），受害者随后带着旧令牌回来仍落在窗口内，
+// 同一个会话就分叉成两条各自轮换、永远不会互相触发重放检测的链。
+// 同时给宽限路径计数：通过（refresh_leeway_fingerprint_ok）/ 因指纹拒绝（refresh_leeway_fingerprint_reject，在 revokeAsReplay 里计）。
+func (s *AuthService) leewayReplayReason(ctx context.Context, tomb *RefreshTokenData, now time.Time) string {
+	if !s.refreshReuseWithinLeeway(tomb, now) {
+		return "outside_leeway"
+	}
+	if tomb.LeewayReissues >= maxRefreshLeewayReissues {
+		return "reissue_cap"
+	}
+	if !s.leewayFingerprintMatches(ctx, tomb) {
+		return "fingerprint_mismatch"
+	}
+	s.authStats().inc(statRefreshLeewayFingerprintOK)
+	return ""
+}
+
+// leewayFingerprintMatches：当前请求是否和墓碑里记的「消费者」是同一个客户端、同一个网络（见 SameClientAndNetwork）。
+// 绑定整体关闭 / 墓碑没有指纹时没有可比的东西，放行（和绑定关闭时的整体语义一致）。
+func (s *AuthService) leewayFingerprintMatches(ctx context.Context, tomb *RefreshTokenData) bool {
+	if s.cfg == nil || s.cfg.SessionBindingDisabled() || tomb.BindingHash == "" {
+		return true
+	}
+	return SessionBindingFromContext(ctx).SameClientAndNetwork(s.cfg.Security.SessionBindingMode, tomb.BindingHash, tomb.BindingCoarse)
+}
+
+// revokeAsReplay 把一次令牌重放按「撤销整个会话家族」处理，并返回应交给客户端的错误。
+func (s *AuthService) revokeAsReplay(ctx context.Context, rec *RefreshTokenData, reason string) error {
+	s.revokeFamily(ctx, rec.FamilyID)
+	stats := s.authStats()
+	stats.inc(statRefreshReuse)
+	if reason == "fingerprint_mismatch" {
+		stats.inc(statRefreshLeewayFingerprintReject)
+		s.warnEvent("refresh_leeway_fingerprint_reject", "refresh token replayed inside the leeway window by a different client or network: session family revoked",
+			"user_id", rec.UserID, "consumer", BindingLabel(rec.BindingCoarse), "replayer", BindingLabel(SessionBindingFromContext(ctx).CoarseFingerprint()))
+		return ErrRefreshTokenReuse
+	}
+	s.warnEvent("refresh_reuse", "refresh token replay detected: session family revoked", "user_id", rec.UserID, "reason", reason)
+	return ErrRefreshTokenReuse
+}
+
+// revokeFamily 撤销整个会话家族。撤销是安全动作，必须做完：不跟随请求的取消，只受 refreshFinalizeTimeout 约束。
+func (s *AuthService) revokeFamily(ctx context.Context, familyID string) {
+	rctx, cancel := detachedFinalizeContext(ctx)
+	defer cancel()
+	if err := s.refreshTokenCache.DeleteTokenFamily(rctx, familyID); err != nil {
+		s.warnEvent("refresh_revoke_failed", "could not revoke the session family", "error", err)
+	}
+}
+
+// bindingState 比较当前请求指纹与给定的已存指纹：mismatch 表示不一致；
+// ipFamilySwitch 表示一致，但只是因为两边 IP 家族不同而没有比较 IP。绑定关闭 / 没有已存指纹时放行。
+func (s *AuthService) bindingState(ctx context.Context, storedHash, storedCoarse string) (mismatch, ipFamilySwitch bool) {
+	if s.cfg == nil || s.cfg.SessionBindingDisabled() || storedHash == "" {
+		return false, false
+	}
+	switch SessionBindingFromContext(ctx).Match(s.cfg.Security.SessionBindingMode, storedHash, storedCoarse) {
+	case BindingMismatch:
+		return true, false
+	case BindingMatchedAcrossIPFamily:
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// refreshBindingState 是首次出示的当前令牌的指纹比较。
+// 兼容：data.BindingHash 为空表示绑定上线前签发的旧会话，放行并在轮转时补齐绑定。
+// 旧数据没有 SessionStartedAt，指纹是按升级前的严格算法写入的；升级到 loose
+// 模式后直接比对会误杀全部存量会话，因此旧会话放行一次，轮换后写入新指纹。
+func (s *AuthService) refreshBindingState(ctx context.Context, data *RefreshTokenData) (mismatch, ipFamilySwitch bool) {
+	if data.SessionStartedAt.IsZero() {
+		return false, false
+	}
+	return s.bindingState(ctx, data.BindingHash, data.BindingCoarse)
+}
+
+// rebindRefusal 在指纹不一致时判断能不能 rebind：返回空串表示可以放行并重绑，否则返回应该撤销的原因。
+// revoke 模式一律撤销；rebind 模式只放行「浏览器家族 + 系统家族没变、只是 IP 变了」。
+func (s *AuthService) rebindRefusal(ctx context.Context, data *RefreshTokenData) string {
+	if s.cfg.SessionBindingRevokeOnMismatch() {
+		return "revoke_mode"
+	}
+	if !SessionBindingFromContext(ctx).ClientFamilyMatches(data.BindingCoarse) {
+		return "client_family_changed"
+	}
+	return ""
+}
+
+// reserveLeewayReissue 在宽限内的重试把新令牌发出去之前，原子地占一个重发名额（Redis 里计数 +1，上限
+// maxRefreshLeewayReissues；同一个脚本确认墓碑还在——会话没有在途中被撤销）。
+// 先发后占：新令牌已经存好才占名额，所以「发令牌失败」不会白占名额（连续失败几次之后，
+// 正常的重试不会被判成名额用完、撤销整个会话）。占不到（名额用完 / 会话已撤销 / 出错）就丢弃刚发的新令牌。
+func (s *AuthService) reserveLeewayReissue(ctx context.Context, tokenHash string, rec *RefreshTokenData, pair *TokenPair) error {
+	stats := s.authStats()
+	store, ok := s.atomicRefreshStore()
+	if !ok {
+		// leewayReplayReason 已经要求有原子存储；这里只是防御，按重放处理。
+		s.discardIssuedRefreshToken(ctx, pair.RefreshToken)
+		return s.revokeAsReplay(ctx, rec, "no_atomic_store")
+	}
+	rctx, cancel := detachedFinalizeContext(ctx)
+	defer cancel()
+	outcome, reissues, err := store.ReserveLeewayReissue(rctx, tokenHash, maxRefreshLeewayReissues)
+	if err != nil {
+		s.discardIssuedRefreshToken(ctx, pair.RefreshToken)
+		stats.inc(statRefreshUnavailable)
+		s.warnEvent("refresh_unavailable", "could not reserve a leeway reissue; the new token was discarded", "user_id", rec.UserID, "error", err)
+		return ErrServiceUnavailable
+	}
+	switch outcome {
+	case RefreshLeewayReserved:
+		rec.LeewayReissues = reissues
+		return nil
+	case RefreshLeewayCapped:
+		s.discardIssuedRefreshToken(ctx, pair.RefreshToken)
+		return s.revokeAsReplay(ctx, rec, "reissue_cap")
+	default:
+		// 墓碑已不存在：会话在途中被撤销（或墓碑过期）。
+		s.discardIssuedRefreshToken(ctx, pair.RefreshToken)
+		stats.inc(statRefreshInvalid)
+		return ErrRefreshTokenInvalid
+	}
+}
+
+// refreshConsumeResult 是首次轮换里「把旧令牌换成墓碑」这一步的结果。
+type refreshConsumeResult int
+
+const (
+	refreshConsumed       refreshConsumeResult = iota // 旧令牌已换成墓碑
+	refreshConsumeRevoked                             // 旧令牌记录已不存在：会话在飞行中被撤销（或令牌过期）
+	refreshConsumeLost                                // 被另一个并发请求抢先消费
+)
+
+// consumeRefreshToken 把已经换发过新令牌的旧令牌换成"已消费"墓碑：保留一条短 TTL 的墓碑，
+// 使下一次重放能定位 family。墓碑上记的是「消费它的这个客户端」的指纹，宽限内的重试要和它一致。
+// 有原子存储（Redis）时是「记录还在且未被消费才写」，撤销之后的写入失败，不会把墓碑写回去复活会话；
+// 没有原子存储（测试替身）时退回尽力而为的写入——这时服务层不开宽限，写回的墓碑只是个死标记。
+// 收尾不跟随请求的取消（refreshFinalizeTimeout）。返回 error 表示无法确认旧令牌是否已消费。
+func (s *AuthService) consumeRefreshToken(ctx context.Context, tokenHash string, data *RefreshTokenData) (refreshConsumeResult, error) {
+	tomb := *data
+	tomb.Consumed = true
+	tomb.ConsumedAt = time.Now()
+	tomb.LeewayReissues = 0
+	if hash, coarse := s.sessionBindingForIssue(ctx); hash != "" {
+		tomb.BindingHash, tomb.BindingCoarse = hash, coarse
+	}
+	ttl := time.Until(tomb.ExpiresAt)
+	if ttl > refreshTokenReuseWindow {
+		ttl = refreshTokenReuseWindow
+	}
+
+	cctx, cancel := detachedFinalizeContext(ctx)
+	defer cancel()
+	if ttl <= 0 {
+		// 旧令牌恰好到期：没有墓碑可留，直接删除（之后重放只会得到 invalid）。
+		if err := s.refreshTokenCache.DeleteRefreshToken(cctx, tokenHash); err != nil {
+			return refreshConsumed, err
+		}
+		return refreshConsumed, nil
+	}
+	if store, ok := s.atomicRefreshStore(); ok {
+		outcome, err := store.ConsumeRefreshToken(cctx, tokenHash, &tomb, ttl)
+		if err != nil {
+			return refreshConsumed, err
+		}
+		switch outcome {
+		case RefreshConsumeWon:
+			return refreshConsumed, nil
+		case RefreshConsumeAlready:
+			return refreshConsumeLost, nil
+		default:
+			return refreshConsumeRevoked, nil
+		}
+	}
+	if err := s.refreshTokenCache.StoreRefreshToken(cctx, tokenHash, &tomb, ttl); err != nil {
+		s.warnEvent("refresh_consume_failed", "could not mark the old refresh token consumed, deleting it instead", "user_id", data.UserID, "error", err)
+		if delErr := s.refreshTokenCache.DeleteRefreshToken(cctx, tokenHash); delErr != nil {
+			s.warnEvent("refresh_consume_failed", "could not delete the old refresh token", "user_id", data.UserID, "error", delErr)
+		}
+	}
+	return refreshConsumed, nil
+}
+
+// finalizeRefreshRotation 在新令牌已就位之后做收尾，返回这次刷新最终是否算「宽限内重试」。
+// 任何一步发现会话已不可用，都会把刚发的新令牌丢弃——不把凭证交给已被撤销的会话。
+func (s *AuthService) finalizeRefreshRotation(ctx context.Context, tokenHash string, data *RefreshTokenData, pair *TokenPair, leewayRetry bool) (bool, error) {
+	stats := s.authStats()
+	if leewayRetry {
+		// 宽限内的重试：原子地占名额（同时确认墓碑还在）；占不到就丢掉刚发的令牌。
+		return true, s.reserveLeewayReissue(ctx, tokenHash, data, pair)
+	}
+	res, err := s.consumeRefreshToken(ctx, tokenHash, data)
+	if err != nil {
+		// 无法确认旧令牌已被消费：保守起见丢弃刚发的令牌，让客户端用旧令牌安全重试（宽限内会被接受）。
+		s.discardIssuedRefreshToken(ctx, pair.RefreshToken)
+		stats.inc(statRefreshUnavailable)
+		s.warnEvent("refresh_unavailable", "could not mark the old refresh token consumed; the new token was discarded and the client can retry",
+			"user_id", data.UserID, "error", err)
+		return false, ErrServiceUnavailable
+	}
+	switch res {
+	case refreshConsumeRevoked:
+		// 会话在飞行中被撤销（登出/撤销全部/家族撤销）：旧令牌记录已经不存在，不写墓碑，丢弃新令牌。
+		s.discardIssuedRefreshToken(ctx, pair.RefreshToken)
+		stats.inc(statRefreshInvalid)
+		return false, ErrRefreshTokenInvalid
+	case refreshConsumeLost:
+		return s.reconcileLostConsume(ctx, tokenHash, data, pair)
+	}
+	return false, nil
+}
+
+// reconcileLostConsume 处理「并发的另一个请求抢先消费了这枚令牌，而这次请求已经签发了新令牌」：
+// 按宽限内重试判定——同一客户端、窗口内、名额未满，就保留这枚新令牌（占一个重发名额）；否则丢弃它并按重放处理。
+func (s *AuthService) reconcileLostConsume(ctx context.Context, tokenHash string, data *RefreshTokenData, pair *TokenPair) (bool, error) {
+	stats := s.authStats()
+	rctx, cancel := detachedFinalizeContext(ctx)
+	tomb, err := s.refreshTokenCache.GetRefreshToken(rctx, tokenHash)
+	cancel()
+	if err != nil {
+		s.discardIssuedRefreshToken(ctx, pair.RefreshToken)
+		if errors.Is(err, ErrRefreshTokenNotFound) {
+			stats.inc(statRefreshInvalid)
+			return false, ErrRefreshTokenInvalid
+		}
+		stats.inc(statRefreshUnavailable)
+		s.warnEvent("refresh_unavailable", "could not read the tombstone after losing the consume race", "user_id", data.UserID, "error", err)
+		return false, ErrServiceUnavailable
+	}
+	if reason := s.leewayReplayReason(ctx, tomb, time.Now()); reason != "" {
+		s.discardIssuedRefreshToken(ctx, pair.RefreshToken)
+		return false, s.revokeAsReplay(ctx, tomb, reason)
+	}
+	if err := s.reserveLeewayReissue(ctx, tokenHash, tomb, pair); err != nil {
+		return false, err
+	}
+	data.LeewayReissues = tomb.LeewayReissues
+	return true, nil
+}
+
+// discardIssuedRefreshToken 尽力删除一枚刚发出但不会交给客户端的 refresh token。
+func (s *AuthService) discardIssuedRefreshToken(ctx context.Context, rawRefreshToken string) {
+	dctx, cancel := detachedFinalizeContext(ctx)
+	defer cancel()
+	if err := s.refreshTokenCache.DeleteRefreshToken(dctx, hashToken(rawRefreshToken)); err != nil {
+		s.warnEvent("refresh_discard_failed", "could not discard an issued refresh token that was not handed out", "error", err)
+	}
 }
 
 // RevokeRefreshToken 撤销单个Refresh Token

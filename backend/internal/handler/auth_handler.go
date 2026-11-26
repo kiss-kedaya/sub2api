@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -129,8 +130,6 @@ func ensureLoginUserActive(user *service.User) error {
 	return nil
 }
 
-// respondWithTokenPair 生成 Token 对并返回认证响应
-// 如果 Token 对生成失败，回退到只返回 Access Token（向后兼容）
 // SetTwoFactorRateLimiter 注入账号维度 2FA 限速器（由 router 装配）。
 func (h *AuthHandler) SetTwoFactorRateLimiter(limiter twoFactorRateLimiter) {
 	if h == nil {
@@ -148,8 +147,36 @@ func (h *AuthHandler) SetPasskeyService(passkeys *service.PasskeyService) {
 	h.passkeys = passkeys
 }
 
+// respondWithTokenPair 生成 Token 对并返回认证响应。
+// Token 对生成失败时先短退避重试一次；仍失败才回退到只返回 Access Token（向后兼容，会计数并留限频 ERROR）。
 func (h *AuthHandler) respondWithTokenPair(c *gin.Context, user *service.User) {
 	respondWithTokenPair(c, h.authService, user)
+}
+
+// loginTokenPairRetryBackoff 是登录发令牌失败后、重试一次之前的短退避（测试里可调小）。
+var loginTokenPairRetryBackoff = 150 * time.Millisecond
+
+// generateLoginTokenPair 为登录签发 Token 对；失败时短退避后重试一次。
+// Redis 抖动/超时多是瞬时的，一次重试就能避免用户拿到「access token 过期后必须重新登录」的残缺会话。
+// refresh token 存储没配置（配置问题，重试没用）与请求已取消（客户端已经走了）不重试。
+func generateLoginTokenPair(ctx context.Context, authService *service.AuthService, user *service.User) (*service.TokenPair, error) {
+	pair, err := authService.GenerateTokenPair(ctx, user, "")
+	if err == nil || errors.Is(err, service.ErrRefreshTokenCacheNotConfigured) || ctx.Err() != nil {
+		return pair, err
+	}
+	timer := time.NewTimer(loginTokenPairRetryBackoff)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		return nil, err
+	}
+	pair, retryErr := authService.GenerateTokenPair(ctx, user, "")
+	authService.NoteLoginTokenPairRetry(retryErr == nil)
+	if retryErr != nil {
+		return nil, retryErr
+	}
+	return pair, nil
 }
 
 func respondWithTokenPair(c *gin.Context, authService *service.AuthService, user *service.User) {
@@ -158,10 +185,11 @@ func respondWithTokenPair(c *gin.Context, authService *service.AuthService, user
 		return
 	}
 
-	tokenPair, err := authService.GenerateTokenPair(c.Request.Context(), user, "")
+	tokenPair, err := generateLoginTokenPair(c.Request.Context(), authService, user)
 	if err != nil {
-		slog.Error("failed to generate token pair", "error", err, "user_id", user.ID)
-		// 回退到只返回Access Token
+		// 重试之后仍然失败：不能让登录因此整体失败，退回只返回 Access Token（向后兼容）。
+		// 这样的会话在 access token 过期后必须重新登录，所以要计数并留一条限频 ERROR。
+		authService.NoteLoginTokenPairFallback(user.ID, err)
 		token, tokenErr := authService.GenerateToken(c.Request.Context(), user)
 		if tokenErr != nil {
 			response.InternalError(c, "Failed to generate token")
@@ -1184,16 +1212,27 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	result, err := h.authService.RefreshTokenPair(c.Request.Context(), req.RefreshToken)
+	// 后端模式只允许管理员：在消费令牌之前拦（guard 在签发/消费之前调用），被拒用户的令牌原样保留，
+	// 也不会先轮换再报错。响应带明确的业务码 BACKEND_MODE_ADMIN_ONLY，前端据此清登录态。
+	result, err := h.authService.RefreshTokenPairGuarded(c.Request.Context(), req.RefreshToken, func(user *service.User) error {
+		if h.settingSvc != nil && !user.IsAdmin() && h.settingSvc.IsBackendModeEnabled(c.Request.Context()) {
+			return infraerrors.Forbidden("BACKEND_MODE_ADMIN_ONLY", "Backend mode is active. Only admin login is allowed.")
+		}
+		return nil
+	})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	// Backend mode: block non-admin token refresh
-	if h.settingSvc.IsBackendModeEnabled(c.Request.Context()) && result.UserRole != "admin" {
-		response.Forbidden(c, "Backend mode is active. Only admin login is allowed.")
-		return
+	// 刷新时发生了指纹重绑（只是 IP 变了所以放行）：成功的刷新默认不进审计，这一条值得留下——
+	// 只带前后两端的粗粒度标签，不含 IP 与完整 UA。审计行限频（同一用户 + 会话家族每个窗口一条，
+	// 由服务层判定 AuditRebind），计数照常累加。
+	if result.AuditRebind {
+		middleware2.SetAuditAction(c, service.AuditActionSessionBindingRebind)
+		middleware2.SetAuditActor(c, result.UserID, "")
+		middleware2.SetAuditExtra(c, map[string]any{"binding_from": result.BindingFrom, "binding_to": result.BindingTo})
+		middleware2.MarkAuditAlways(c)
 	}
 
 	response.Success(c, RefreshTokenResponse{

@@ -21,7 +21,7 @@ import {
   shouldMarkAdminUIRequest,
   shouldMarkUserUIRequest,
 } from './adminUIRequest'
-import { refreshAuthTokens } from './tokenRefresh'
+import { refreshAuthTokens, isRefreshTokenRejection } from './tokenRefresh'
 import { getAPIBaseURL } from './url'
 import { KEY_ROTATION_REQUIRED_EVENT, isKeyRotationRequiredPayload } from './keyRotationGateCodes'
 import { getAppRuntimeContext, type AppRuntimeContext } from '@runtime/context'
@@ -393,15 +393,20 @@ apiClient.interceptors.response.use(
               })
             }
 
-            if (axios.isAxiosError(refreshError)) {
-              const refreshStatus = refreshError.response?.status ?? 0
-              if (refreshStatus === 0 || refreshStatus === 429 || refreshStatus >= 500) {
-                return Promise.reject({
-                  status: refreshStatus,
-                  code: 'TOKEN_REFRESH_UNAVAILABLE',
-                  message: refreshError.response?.data?.message || refreshError.message
-                })
-              }
+            // 只有服务端明确拒绝这枚令牌（401 + 令牌被拒的业务码，或 403 账号停用）才清登录态。
+            // 其余——网络错误、超时、5xx、429、Cloudflare/WAF 的 403/468/408、没有业务码的 4xx、
+            // 200 返回 HTML——都不是令牌的问题：保留会话，把它当成暂时不可用，让下一次请求再试。
+            if (!isRefreshTokenRejection(refreshError)) {
+              const failedResponse = (refreshError as { response?: { status?: unknown; data?: { message?: unknown } } } | null)?.response
+              const unavailableMessage = failedResponse?.data?.message
+              return Promise.reject({
+                status: typeof failedResponse?.status === 'number' ? failedResponse.status : 0,
+                code: 'TOKEN_REFRESH_UNAVAILABLE',
+                message:
+                  (typeof unavailableMessage === 'string' && unavailableMessage) ||
+                  (refreshError as { message?: string } | null)?.message ||
+                  'Token refresh unavailable'
+              })
             }
 
             // Clear tokens and redirect to login

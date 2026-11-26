@@ -483,15 +483,24 @@ describe('API Client', () => {
       expect(window.location.pathname).toBe('/')
     })
 
-    it.each([401, 403, null])('刷新被拒绝（%s）时仍清除失效会话', async (status) => {
+    it.each([
+      [401, 'REFRESH_TOKEN_INVALID'],
+      [401, 'REFRESH_TOKEN_EXPIRED'],
+      [401, 'REFRESH_TOKEN_REUSE'],
+      [401, 'REFRESH_TOKEN_SESSION_EXPIRED'],
+      [401, 'SESSION_BINDING_MISMATCH'],
+      [401, 'TOKEN_REVOKED'],
+      [403, 'USER_NOT_ACTIVE'],
+      [403, 'BACKEND_MODE_ADMIN_ONLY']
+    ])('服务端明确拒绝这枚刷新令牌（%s %s）时清除失效会话', async (status, reason) => {
       window.history.replaceState({}, '', '/login')
       localStorage.setItem('auth_token', 'expired-token')
       localStorage.setItem('refresh_token', 'refresh-token')
       localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
       localStorage.setItem('token_expires_at', '123')
-      const refreshError = status
-        ? Object.assign(new axios.AxiosError('Refresh rejected'), { response: { status } })
-        : new Error('Invalid refresh response')
+      const refreshError = Object.assign(new axios.AxiosError('Refresh rejected'), {
+        response: { status, data: { code: status, message: 'rejected', reason } }
+      })
       const refresh = await import('@/api/tokenRefresh')
       vi.spyOn(refresh, 'refreshAuthTokens').mockRejectedValueOnce(refreshError)
       apiClient.defaults.adapter = vi.fn().mockRejectedValueOnce({
@@ -504,6 +513,37 @@ describe('API Client', () => {
         expect(localStorage.getItem(key)).toBeNull()
       }
       expect(sessionStorage.getItem('auth_expired')).toBe('1')
+    })
+
+    // 评审：Cloudflare / 雷池的 403 / 468 / 408、没有业务码的 4xx、200 返回 HTML，都不是令牌被拒——
+    // 不能因此清掉用户的登录态。
+    it.each([
+      ['403 from the edge (HTML body)', Object.assign(new axios.AxiosError('Forbidden'), { response: { status: 403, data: '<html>blocked</html>' } })],
+      ['468 from the WAF', Object.assign(new axios.AxiosError('Blocked'), { response: { status: 468, data: '<html>challenge</html>' } })],
+      ['408 from a gateway', Object.assign(new axios.AxiosError('Timeout'), { response: { status: 408, data: '' } })],
+      ['400', Object.assign(new axios.AxiosError('Bad request'), { response: { status: 400, data: { message: 'bad' } } })],
+      ['401 without a business code', Object.assign(new axios.AxiosError('Unauthorized'), { response: { status: 401, data: { code: 401, message: 'Unauthorized' } } })],
+      ['200 that is not the expected JSON', Object.assign(new Error('Token refresh failed'), { code: 'ERR_BAD_REFRESH_RESPONSE' })],
+      ['a plain Error', new Error('Invalid refresh response')]
+    ])('刷新失败但不是令牌被拒（%s）时保留会话', async (_name, refreshError) => {
+      localStorage.setItem('auth_token', 'expired-token')
+      localStorage.setItem('refresh_token', 'refresh-token')
+      localStorage.setItem('auth_user', JSON.stringify({ id: 7 }))
+      localStorage.setItem('token_expires_at', '123')
+      const refresh = await import('@/api/tokenRefresh')
+      vi.spyOn(refresh, 'refreshAuthTokens').mockRejectedValueOnce(refreshError)
+      apiClient.defaults.adapter = vi.fn().mockRejectedValueOnce({
+        response: { status: 401, data: { code: 'TOKEN_EXPIRED' } },
+        config: { url: '/test', headers: { Authorization: 'Bearer expired-token' } },
+      })
+
+      await expect(apiClient.get('/test')).rejects.toMatchObject({ code: 'TOKEN_REFRESH_UNAVAILABLE' })
+      expect(localStorage.getItem('auth_token')).toBe('expired-token')
+      expect(localStorage.getItem('refresh_token')).toBe('refresh-token')
+      expect(localStorage.getItem('auth_user')).toBe(JSON.stringify({ id: 7 }))
+      expect(localStorage.getItem('token_expires_at')).toBe('123')
+      expect(sessionStorage.getItem('auth_expired')).toBeNull()
+      expect(window.location.pathname).toBe('/')
     })
 
     it('刷新期间换号时旧请求不会清除新会话', async () => {

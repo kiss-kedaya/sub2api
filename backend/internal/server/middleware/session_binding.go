@@ -56,7 +56,17 @@ func SecurityClientIP(c *gin.Context) string {
 }
 
 // enforceSessionBinding 校验 access token 的会话指纹（IP/UA 绑定）。
-// 指纹不匹配时：撤销该会话家族的所有 refresh token、写入审计安全事件、返回 401。
+// 指纹不匹配时一律写入审计安全事件并返回 401（前端遇到 401 会刷新令牌）；是否同时撤销该会话家族的
+// 所有 refresh token 由 security.session_binding_on_mismatch 决定：
+//   - rebind（默认）：不撤销。401 触发前端刷新，refresh 路径只放行「浏览器家族 + 系统家族没变、
+//     只是 IP 变了」的重绑，换网段/浏览器升级不会掉线；
+//   - revoke：撤销整个会话家族，必须重新登录（升级前的旧行为）。
+//
+// 这个校验是漂移检测器，不是防盗屏障：loose 模式下两边 IP 家族不同（IPv4 <-> IPv6）时不比较 IP，
+// 只比浏览器家族 + 系统家族，而 UA 是客户端自报的——所以偷到的 access token 换个 IP 家族、
+// 把 UA 写成同样的浏览器家族 + 系统家族就能通过。这种「靠忽略 IP 家族才通过」的请求单独计数
+// （access_ip_family_switch）。令牌被盗要靠 refresh 轮换的重放检测发现。
+//
 // 返回 false 表示请求已被中断。
 //
 // 兼容性：claims.BindingVersion == 0（本特性上线前签发的旧 token）时放行，
@@ -76,13 +86,20 @@ func enforceSessionBinding(
 		return true
 	}
 	binding := requestSessionBinding(c)
-	current := settingService.SessionBindingHash(binding)
-	if current == "" || current == claims.BindingHash {
+	match := settingService.SessionBindingMatch(binding, claims.BindingHash, claims.BindingCoarse)
+	if match != service.BindingMismatch {
+		if match == service.BindingMatchedAcrossIPFamily && authService != nil {
+			authService.NoteAccessIPFamilySwitch()
+		}
 		return true
 	}
 
+	revoke := settingService.SessionBindingRevokesOnMismatch()
 	if authService != nil {
-		_ = authService.RevokeSessionFamily(c.Request.Context(), claims.SessionID)
+		if revoke {
+			_ = authService.RevokeSessionFamily(c.Request.Context(), claims.SessionID)
+		}
+		authService.NoteAccessBindingMismatch(claims.UserID, revoke)
 	}
 	if auditService != nil {
 		uid := claims.UserID
@@ -103,6 +120,10 @@ func enforceSessionBinding(
 			StatusCode:  401,
 		})
 	}
-	AbortWithError(c, 401, "SESSION_BINDING_MISMATCH", "Session network fingerprint changed, please login again")
+	if revoke {
+		AbortWithError(c, 401, "SESSION_BINDING_MISMATCH", "Session network fingerprint changed, please login again")
+	} else {
+		AbortWithError(c, 401, "SESSION_BINDING_MISMATCH", "Session network fingerprint changed, refresh the token to continue")
+	}
 	return false
 }

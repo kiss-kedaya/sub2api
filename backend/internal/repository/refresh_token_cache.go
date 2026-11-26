@@ -77,6 +77,86 @@ func (c *refreshTokenCache) GetRefreshToken(ctx context.Context, tokenHash strin
 	return &data, nil
 }
 
+// consumeRefreshTokenScript 仅当令牌记录还在、且还没被消费时，才把它换成墓碑。
+// 撤销（DeleteTokenFamily / DeleteUserRefreshTokens）会删掉记录，所以撤销之后的消费返回 0，
+// 不会把已撤销的令牌写回去。不在 Lua 里解析整条 JSON（token_version 接近 2^63，cjson 会丢精度），
+// 只做子串判断：RefreshTokenData 的 Consumed 字段 omitempty，已消费的记录里一定有 "consumed":true。
+// 返回：0 记录不存在；1 已改写成墓碑；2 已经是墓碑（被别的请求抢先消费）。
+var consumeRefreshTokenScript = redis.NewScript(`
+local cur = redis.call('GET', KEYS[1])
+if not cur then return 0 end
+if string.find(cur, '"consumed":true', 1, true) then return 2 end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return 1
+`)
+
+// reserveLeewayReissueScript 原子地占用一个宽限重发名额：把墓碑 JSON 里的 leeway_reissues 加一
+// （字段不存在就追加在末尾），TTL 保持不变。墓碑不存在（已撤销）返回 -1，不写任何东西；
+// 记录不是墓碑返回 -3；名额已满返回 -2；成功返回新的计数。
+var reserveLeewayReissueScript = redis.NewScript(`
+local cur = redis.call('GET', KEYS[1])
+if not cur then return -1 end
+if not string.find(cur, '"consumed":true', 1, true) then return -3 end
+local n = tonumber(string.match(cur, '"leeway_reissues":(%d+)') or '0')
+if n >= tonumber(ARGV[1]) then return -2 end
+n = n + 1
+local nxt
+if string.find(cur, '"leeway_reissues":', 1, true) then
+  nxt = string.gsub(cur, '"leeway_reissues":%d+', '"leeway_reissues":' .. n, 1)
+else
+  nxt = string.sub(cur, 1, -2) .. ',"leeway_reissues":' .. n .. '}'
+end
+local ttl = redis.call('PTTL', KEYS[1])
+-- PTTL 取到 0（剩不到 1ms）或 -1（没有过期时间）时也必须带过期时间写回：不带 TTL 的 SET 会留下永不过期的死标记。
+if ttl < 1 then ttl = 1 end
+redis.call('SET', KEYS[1], nxt, 'PX', ttl)
+return n
+`)
+
+// ConsumeRefreshToken 实现 service.RefreshTokenAtomicStore：令牌记录还在且未被消费才改写成墓碑。
+func (c *refreshTokenCache) ConsumeRefreshToken(ctx context.Context, tokenHash string, tombstone *service.RefreshTokenData, ttl time.Duration) (service.RefreshConsumeOutcome, error) {
+	val, err := json.Marshal(tombstone)
+	if err != nil {
+		return service.RefreshConsumeMissing, fmt.Errorf("marshal refresh token tombstone: %w", err)
+	}
+	ms := ttl.Milliseconds()
+	if ms < 1 {
+		ms = 1
+	}
+	res, err := consumeRefreshTokenScript.Run(ctx, c.rdb, []string{refreshTokenKey(tokenHash)}, string(val), ms).Int()
+	if err != nil {
+		return service.RefreshConsumeMissing, err
+	}
+	switch res {
+	case 1:
+		return service.RefreshConsumeWon, nil
+	case 2:
+		return service.RefreshConsumeAlready, nil
+	default:
+		return service.RefreshConsumeMissing, nil
+	}
+}
+
+// ReserveLeewayReissue 实现 service.RefreshTokenAtomicStore：原子地占用一个宽限重发名额。
+func (c *refreshTokenCache) ReserveLeewayReissue(ctx context.Context, tokenHash string, maxReissues int) (service.RefreshLeewayOutcome, int, error) {
+	res, err := reserveLeewayReissueScript.Run(ctx, c.rdb, []string{refreshTokenKey(tokenHash)}, maxReissues).Int()
+	if err != nil {
+		return service.RefreshLeewayMissing, 0, err
+	}
+	switch {
+	case res > 0:
+		return service.RefreshLeewayReserved, res, nil
+	case res == -2:
+		return service.RefreshLeewayCapped, maxReissues, nil
+	case res == -3:
+		return service.RefreshLeewayNotConsumed, 0, nil
+	default:
+		return service.RefreshLeewayMissing, 0, nil
+	}
+}
+
+var _ service.RefreshTokenAtomicStore = (*refreshTokenCache)(nil)
+
 func (c *refreshTokenCache) DeleteRefreshToken(ctx context.Context, tokenHash string) error {
 	key := refreshTokenKey(tokenHash)
 	return c.rdb.Del(ctx, key).Err()
