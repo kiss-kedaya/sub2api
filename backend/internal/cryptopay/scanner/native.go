@@ -89,11 +89,43 @@ func (s *EVMScanner) ScanNativeRange(ctx context.Context, chain string, fromBloc
 
 	blocks := int(toBlock - fromBlock + 1)
 	results := make([]batchResult, blocks)
-	runBatches(ctx, blocks, s.scanWorkers(), func(index int) {
+	scanBlock := func(index int) {
 		block := fromBlock + uint64(index)
 		transfers, err := s.nativeBlockTransfers(ctx, chain, block, recipientSet)
 		results[index] = batchResult{done: true, transfers: transfers, err: err}
-	})
+	}
+	workers := s.scanWorkers()
+	runBatches(ctx, blocks, workers, scanBlock)
+	// Re-run only the blocks that failed transiently, a little later and with fewer
+	// requests in flight each round, exactly as scanRange does for address batches.
+	//
+	// A window is complete only when EVERY block answered, and a window is hundreds
+	// of blocks of ~160 KB each. A public node answers a burst of block reads with
+	// 429 for a few of them; without this one rejected block failed the window and
+	// the next pass downloaded all of it again (BSC, 2026-11-26: ~1 call per block,
+	// ~2.2 blocks/s, the cursor falling behind). The blocks that answered keep their
+	// result, so a 429 costs one block's retry, not the window. A block that is not
+	// re-run keeps its error, so nothing is ever reported scanned that was not.
+	// Retries happen only when part of the window answered (the node is up and
+	// throttling the burst); an outage or an exhausted quota is left to the next pass.
+	for round := 0; round < maxBatchRetryRounds && ctx.Err() == nil; round++ {
+		var failed []int
+		answered := false
+		for index, result := range results {
+			switch {
+			case !result.done:
+			case result.err == nil:
+				answered = true
+			case retryableBatchFailure(result.err):
+				failed = append(failed, index)
+			}
+		}
+		if !answered || len(failed) == 0 || !sleepOrDone(ctx, batchRetryDelay(round)) {
+			break
+		}
+		workers = max(workers/2, 1)
+		runBatches(ctx, len(failed), workers, func(i int) { scanBlock(failed[i]) })
+	}
 
 	// Assemble strictly by block index: neither the transfer order nor the
 	// joined error order depends on which request finished first.

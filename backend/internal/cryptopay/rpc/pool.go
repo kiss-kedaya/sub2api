@@ -276,7 +276,7 @@ func (p *Pool) CallEndpoint(ctx context.Context, method string, params any) (jso
 	var lastErr, lastHardErr error
 	sawRangeLimit := false
 	for round := 0; round < maxCallRounds; round++ {
-		candidates := health.eligible(endpoints)
+		candidates := health.servingMethod(health.eligible(endpoints), method)
 		if hasSpan {
 			capable := health.capableOfSpan(endpoints, span)
 			if len(capable) == 0 {
@@ -308,9 +308,11 @@ func (p *Pool) CallEndpoint(ctx context.Context, method string, params any) (jso
 			}
 			if err == nil {
 				health.succeed(endpoint)
+				health.noteMethodSuccess(endpoint, method)
 				return result, endpoint, nil
 			}
 			health.fail(endpoint, err)
+			health.noteMethodFailure(endpoint, method, err)
 			if isRangeLimitFailure(err) {
 				sawRangeLimit = true
 				if limit := SpanLimitOf(err); hasSpan && limit > 0 && limit < span {

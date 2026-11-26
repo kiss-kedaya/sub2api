@@ -47,13 +47,128 @@ type endpointHealth struct {
 // narrow window forever.
 const learnedSpanTTL = 30 * time.Minute
 
+// methodRefusalThreshold and methodRefusalTTL govern a node that serves some
+// methods and rejects another outright. The BNB Chain public seeds answer blocks
+// in ~100 ms, 16 at a time, and every eth_getLogs with -32005 "limit exceeded":
+// good for reading blocks, useless for logs. Sending each log query to such a node
+// first costs a round trip (and a slice of its limit) before the rotation moves
+// on, so after methodRefusalThreshold refusals in a row with no success in between
+// the node is left out of that method for methodRefusalTTL, then asked again.
+const (
+	methodRefusalThreshold = 3
+	methodRefusalTTL       = 10 * time.Minute
+)
+
+type methodRefusal struct {
+	refusals int
+	until    time.Time
+}
+
 type endpointHealthTracker struct {
 	mu     sync.Mutex
 	states map[string]*endpointHealth
+	// methods is kept apart from states on purpose: succeed() forgets an endpoint's
+	// state on any success, and a node that answers blocks fine must not be
+	// forgiven for refusing logs.
+	methods map[string]map[string]*methodRefusal
 }
 
 func newEndpointHealthTracker() *endpointHealthTracker {
-	return &endpointHealthTracker{states: make(map[string]*endpointHealth)}
+	return &endpointHealthTracker{
+		states:  make(map[string]*endpointHealth),
+		methods: make(map[string]map[string]*methodRefusal),
+	}
+}
+
+// isMethodRefusal reports a node rejecting a log query outright rather than for
+// its size or because it is busy: a JSON-RPC error with no reason we recognise
+// (those are range, rate, auth and the like, each with its own handling) and one of
+// the two codes a node uses for "not available here" ("method not found", and
+// -32005 "limit exceeded").
+func isMethodRefusal(method string, err error) bool {
+	if method != "eth_getLogs" {
+		return false
+	}
+	var failure *Failure
+	if !errors.As(err, &failure) || failure.Kind != "remote" || failure.Reason != "" || failure.SpanLimit != 0 {
+		return false
+	}
+	return failure.RPCCode == -32005 || failure.RPCCode == -32601
+}
+
+// noteMethodFailure counts a refusal of method by endpoint. Any other failure
+// leaves the count alone: a timeout says nothing about whether the node serves logs.
+func (t *endpointHealthTracker) noteMethodFailure(endpoint, method string, err error) {
+	if !isMethodRefusal(method, err) {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.methods == nil {
+		t.methods = make(map[string]map[string]*methodRefusal)
+	}
+	byMethod := t.methods[endpoint]
+	if byMethod == nil {
+		byMethod = make(map[string]*methodRefusal)
+		t.methods[endpoint] = byMethod
+	}
+	state := byMethod[method]
+	if state == nil {
+		state = &methodRefusal{}
+		byMethod[method] = state
+	}
+	now := nowFunc()
+	if now.Before(state.until) {
+		return // already left out: this refusal belongs to a call that started before
+	}
+	state.refusals++
+	if state.refusals >= methodRefusalThreshold {
+		state.until = now.Add(methodRefusalTTL)
+		// On probation afterwards: one more refusal once the cooldown is over leaves
+		// the node out again, so a node that keeps refusing costs one probe per
+		// cooldown, not a fresh run of them. A success forgives it entirely.
+		state.refusals = methodRefusalThreshold - 1
+	}
+}
+
+// noteMethodSuccess forgives the refusals of method by endpoint: one answer proves
+// the node serves it, so a node that refused a single oversized query is never
+// left out.
+func (t *endpointHealthTracker) noteMethodSuccess(endpoint, method string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if byMethod := t.methods[endpoint]; byMethod != nil {
+		delete(byMethod, method)
+		if len(byMethod) == 0 {
+			delete(t.methods, endpoint)
+		}
+	}
+}
+
+// servingMethod drops the endpoints currently left out of method. When that would
+// leave none it returns them all: asking a node that probably refuses is better
+// than not asking, exactly as eligible() does for cooldowns.
+func (t *endpointHealthTracker) servingMethod(endpoints []string, method string) []string {
+	if method != "eth_getLogs" {
+		return endpoints
+	}
+	now := nowFunc()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.methods) == 0 {
+		return endpoints
+	}
+	out := make([]string, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if state := t.methods[endpoint][method]; state != nil && now.Before(state.until) {
+			continue
+		}
+		out = append(out, endpoint)
+	}
+	if len(out) == 0 {
+		return endpoints
+	}
+	return out
 }
 
 // eligible drops endpoints inside their cooldown window. When every endpoint

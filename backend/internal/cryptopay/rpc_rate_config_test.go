@@ -68,8 +68,8 @@ func TestChainStatusNodeCarriesTrafficCounters(t *testing.T) {
 	require.Equal(t, NodeStatusOK, got.Status, "the existing fields are unchanged")
 	require.Equal(t, "10.255.255.1", got.Host)
 	require.NotNil(t, got.Traffic)
-	require.EqualValues(t, 1, got.Traffic.Requests)
-	require.EqualValues(t, 1, got.Traffic.ConnErrors)
+	require.Positive(t, got.Traffic.Requests, "the refused calls were counted")
+	require.Equal(t, got.Traffic.Requests, got.Traffic.ConnErrors, "and every one of them was a connection error")
 
 	raw, err := json.Marshal(got)
 	require.NoError(t, err)
