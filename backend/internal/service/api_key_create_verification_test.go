@@ -895,7 +895,13 @@ func TestRevealAndSealDoNotDependOnThePreferenceStore(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, grant.Token)
 	require.NoError(t, env.svc.VerifyForSeal(ctx, cvUserID, cvPassword))
+	// 旧客户端的封存兼容分支只看「有没有可用因子」：有因子就要求校验，与开关无关。
+	require.ErrorIs(t, env.svc.VerifyForLegacySeal(ctx, cvUserID), ErrAPIKeyVerificationRequired)
+	noFactor := newCVEnv(t, cvNoFactor, APIKeyCreateVerificationOff)
+	noFactor.prefs.getErr = fmt.Errorf("db down")
+	require.NoError(t, noFactor.svc.VerifyForLegacySeal(ctx, cvUserID))
 	require.Zero(t, env.prefs.getCalls, "reveal and seal never read the switch")
+	require.Zero(t, noFactor.prefs.getCalls, "reveal and seal never read the switch")
 }
 
 func TestSetCreateVerificationModeWithoutPreferenceRepositoryIsUnavailable(t *testing.T) {

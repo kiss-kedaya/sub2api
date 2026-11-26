@@ -379,17 +379,7 @@ func (s *APIKeyVerificationService) passkeyCount(ctx context.Context, userID int
 // Factors 计算该账号当前可用的身份校验因子，以及「创建 Key 前是否必须校验」的有效值
 // （叠加了用户自己在个人资料里设的开关；没设过就是默认规则）。
 func (s *APIKeyVerificationService) Factors(ctx context.Context, userID int64) (*APIKeyVerificationFactors, error) {
-	if s == nil || s.userRepo == nil || userID <= 0 {
-		return nil, ErrAPIKeyVerificationUnavailable
-	}
-	user, err := s.userRepo.GetByID(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("load user for api key verification: %w", err)
-	}
-	if user == nil {
-		return nil, ErrAPIKeyVerificationUnavailable
-	}
-	factors, err := s.factorsForUser(ctx, user)
+	user, factors, err := s.loadAccountFactors(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -397,6 +387,25 @@ func (s *APIKeyVerificationService) Factors(ctx context.Context, userID int64) (
 		return nil, err
 	}
 	return factors, nil
+}
+
+// loadAccountFactors 读账号并算出它自身的因子（不读「创建时是否需要验证身份」开关）。
+func (s *APIKeyVerificationService) loadAccountFactors(ctx context.Context, userID int64) (*User, *APIKeyVerificationFactors, error) {
+	if s == nil || s.userRepo == nil || userID <= 0 {
+		return nil, nil, ErrAPIKeyVerificationUnavailable
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load user for api key verification: %w", err)
+	}
+	if user == nil {
+		return nil, nil, ErrAPIKeyVerificationUnavailable
+	}
+	factors, err := s.factorsForUser(ctx, user)
+	if err != nil {
+		return nil, nil, err
+	}
+	return user, factors, nil
 }
 
 // factorsForUser 只看账号自身的因子；CreateVerificationRequired / Mode 在这里是默认（auto）口径，
@@ -559,7 +568,8 @@ func (s *APIKeyVerificationService) VerifyForSeal(ctx context.Context, userID in
 // 走校验：旧客户端提供不了校验材料，只能被拒（VERIFY_REQUIRED），升级到新前端后带登录密码封存即可；
 // 账号没有任何可用因子（第三方注册且未绑 2FA）时保持放行，与创建 Key 是同一条语义。
 func (s *APIKeyVerificationService) VerifyForLegacySeal(ctx context.Context, userID int64) error {
-	factors, err := s.Factors(ctx, userID)
+	// 只关心「有没有可用因子」，不读创建开关：封存路径不依赖 user_security_preferences。
+	_, factors, err := s.loadAccountFactors(ctx, userID)
 	if err != nil {
 		return err
 	}

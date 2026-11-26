@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import USwitch from '@nuxt/ui/components/Switch.vue'
 
 import type { ApiKeyVerificationFactors } from '@/types'
 import ProfileKeyVerificationCard from '../ProfileKeyVerificationCard.vue'
@@ -294,6 +295,16 @@ describe('ProfileKeyVerificationCard', () => {
     await flushPromises()
     expect(mocks.setCreateVerificationMode).toHaveBeenCalledTimes(1)
     expect(sw(wrapper).attributes('disabled')).toBeDefined()
+
+    // 即使控件没被禁用（比如点击事件已经在路上）：处理函数自己也不会再发第二个请求，
+    // 也不会在保存中途弹出校验对话框。
+    const control = wrapper.findComponent(USwitch)
+    expect(control.exists()).toBe(true)
+    control.vm.$emit('update:modelValue', true)
+    control.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect(mocks.setCreateVerificationMode).toHaveBeenCalledTimes(1)
+    expect(dialogOpen()).toBe(false)
 
     resolveSave(factorsOf({ create_verification_required: true, create_verification_mode: 'on' }))
     await flushPromises()
