@@ -257,6 +257,9 @@ describe('public API documentation', () => {
       const endpoints = page.sections.filter(section => section.endpoint).map(section => `${section.endpoint!.method} ${section.endpoint!.path}`)
       expect(endpoints).toEqual(['GET /v1/sub2api/key', 'GET /v1/sub2api/groups', 'GET /v1/sub2api/usage', 'GET /v1/sub2api/account'])
       for (const section of page.sections.filter(entry => entry.endpoint)) expect(section.endpoint!.auth).toBe('apiKey')
+      for (const locale of ['zh', 'en']) {
+        expect(pageOf(locale, 'key-self-service').sections[0].fields!.map(field => field.name), locale).toEqual(endpoints)
+      }
 
       const overview = page.sections[0].examples!
       expect(Object.keys(overview)).toEqual(['curl', 'python', 'node'])
@@ -321,6 +324,11 @@ describe('public API documentation', () => {
       expect(auth).toContain('refresh_token')
       expect(auth).toContain('cannot call them')
       expect(auth).toContain('/api/v1/auth/refresh')
+    })
+
+    it('sends automation to the four self-service endpoints from the console page, in both languages', () => {
+      expect(JSON.stringify(pageOf('en', 'manage-keys').sections[0])).toContain('the four key self-service endpoints')
+      expect(JSON.stringify(pageOf('zh', 'manage-keys').sections[0])).toContain('的四个接口')
     })
 
     it('says plainly that an API key cannot call the console API, in both languages', () => {

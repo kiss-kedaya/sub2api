@@ -151,7 +151,7 @@ func newKeyAccountFixture(t *testing.T) *keyAccountFixture {
 	}
 	f.handler.apiKeyService = service.NewAPIKeyService(&keyInfoAPIKeyRepo{}, users, f.groups, subs, &keyInfoRateRepo{}, nil, f.handler.cfg)
 	f.handler.usageService = service.NewUsageService(usage, nil, nil, nil)
-	f.apiKey.User = &service.User{ID: 7, Role: service.RoleUser, Status: service.StatusActive, Balance: 5}
+	f.apiKey.User = &service.User{ID: 7, Role: service.RoleUser, Status: service.StatusActive, Balance: 5, Email: "snapshot-email-sentinel@example.test", Username: "snapshot-username-sentinel"}
 	return &keyAccountFixture{keyInfoFixture: f, users: users, subs: subs, usage: usage}
 }
 
@@ -516,7 +516,7 @@ func TestKeyAccountAnswersWithExactlyTheDocumentedFields(t *testing.T) {
 
 	for _, forbidden := range []string{
 		// who the owner is, and what else the owner has
-		"owner-email-sentinel", "owner-username-sentinel", "owner-admin-note-sentinel", "owner-password-hash-sentinel",
+		"owner-email-sentinel", "owner-username-sentinel", "snapshot-email-sentinel", "snapshot-username-sentinel", "owner-admin-note-sentinel", "owner-password-hash-sentinel",
 		"owner-totp-secret-sentinel", "owner-avatar-sentinel", "98765.4321", "other-key-name-sentinel", "other-key-plaintext-sentinel",
 		// the key itself and its network rules
 		"THE-FULL-PLAINTEXT-SECRET", "hash-should-not-leak", "203.0.113.9", "198.51.100.7", "192.0.2.55", "ci-key", "fixture1",
