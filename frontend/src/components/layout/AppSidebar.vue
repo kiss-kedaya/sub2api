@@ -826,8 +826,8 @@ html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
 /* Nav density & Studio quiet active pill (aiforui / Antigravity style):
    clean neutral active surface + hairline edge + crisp highlighted text + primary leading icon. */
 .console-sidebar:not([data-collapsed='true']) [data-slot='link'] {
-  min-height: 2.375rem;
-  gap: 0.7rem;
+  min-height: 2.5rem;
+  gap: 0.75rem;
   padding: 0.5rem 0.75rem;
   border-radius: 0.625rem;
   font-size: 0.875rem;

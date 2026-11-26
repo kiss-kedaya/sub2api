@@ -266,6 +266,10 @@ func newWiringConfig(backup config.BackupConfig) *config.Config {
 	}
 }
 
+func (d *PgDumper) pgDumpCommand() (string, []string) {
+	return d.pgDumpCommandForExcludes(d.backup.ExcludeTableData)
+}
+
 // The only hand-off from the configuration to pg_dump's command line is the
 // backup field NewPgDumper copies; every other test builds a PgDumper literal.
 func TestNewPgDumperPassesTheBackupConfigToTheCommand(t *testing.T) {

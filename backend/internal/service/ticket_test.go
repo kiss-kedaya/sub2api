@@ -29,22 +29,22 @@ func (s *ticketUsersStub) GetByID(context.Context, int64) (*User, error) { retur
 
 type ticketRepoStub struct {
 	TicketRepository
-	ticket                Ticket
-	messages              []TicketMessage
-	created               *CreateTicketInput
-	hash                  string
-	listed                bool
-	lastFilter            TicketFilter
-	mutated               bool
-	proactiveUserID       int64
-	proactiveSubject      string
-	proactiveContent      string
-	proactiveAttachments  []int64
-	proactiveImageOnly    bool
-	uploadedRecord        *TicketAttachmentRecord
-	attachmentContent     *TicketAttachmentContent
-	attachmentErr         error
-	deletedAttachmentID   int64
+	ticket               Ticket
+	messages             []TicketMessage
+	created              *CreateTicketInput
+	hash                 string
+	listed               bool
+	lastFilter           TicketFilter
+	mutated              bool
+	proactiveUserID      int64
+	proactiveSubject     string
+	proactiveContent     string
+	proactiveAttachments []int64
+	proactiveImageOnly   bool
+	uploadedRecord       *TicketAttachmentRecord
+	attachmentContent    *TicketAttachmentContent
+	attachmentErr        error
+	deletedAttachmentID  int64
 }
 
 func (r *ticketRepoStub) Create(_ context.Context, _ TicketActor, in CreateTicketInput, hash string) (int64, error) {

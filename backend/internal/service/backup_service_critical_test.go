@@ -48,6 +48,10 @@ func newAgeIdentity(t *testing.T) *age.X25519Identity {
 	return identity
 }
 
+func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string, int64, string, error) {
+	return s.createCompressedBackupFileWithOptions(ctx, BackupOptions{})
+}
+
 // isolateTempDir points os.TempDir at an empty directory so a test can assert a
 // failed backup leaves nothing behind.
 func isolateTempDir(t *testing.T) string {

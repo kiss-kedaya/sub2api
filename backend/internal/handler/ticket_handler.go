@@ -73,24 +73,26 @@ func ticketDetailResponse(c *gin.Context, detail *service.TicketDetail, err erro
 	response.Success(c, detail)
 }
 
-func (h *TicketHandler) List(c *gin.Context)          { h.list(c, false) }
-func (h *TicketHandler) AdminList(c *gin.Context)     { h.list(c, true) }
-func (h *TicketHandler) Stats(c *gin.Context)         { h.stats(c, false) }
-func (h *TicketHandler) AdminStats(c *gin.Context)    { h.stats(c, true) }
-func (h *TicketHandler) Detail(c *gin.Context)        { h.detail(c, false) }
-func (h *TicketHandler) AdminDetail(c *gin.Context)   { h.detail(c, true) }
-func (h *TicketHandler) Reply(c *gin.Context)         { h.reply(c, false) }
-func (h *TicketHandler) AdminReply(c *gin.Context)    { h.reply(c, true) }
-func (h *TicketHandler) Update(c *gin.Context)        { h.update(c, false) }
-func (h *TicketHandler) AdminUpdate(c *gin.Context)   { h.update(c, true) }
-func (h *TicketHandler) MarkRead(c *gin.Context)              { h.markRead(c, false) }
-func (h *TicketHandler) AdminMarkRead(c *gin.Context)         { h.markRead(c, true) }
-func (h *TicketHandler) UploadAttachment(c *gin.Context)             { h.uploadAttachment(c, false) }
-func (h *TicketHandler) AdminUploadAttachment(c *gin.Context)        { h.uploadAttachment(c, true) }
-func (h *TicketHandler) GetAttachment(c *gin.Context)                { h.getAttachment(c, false) }
-func (h *TicketHandler) AdminGetAttachment(c *gin.Context)           { h.getAttachment(c, true) }
-func (h *TicketHandler) DeletePendingAttachment(c *gin.Context)      { h.deletePendingAttachment(c, false) }
-func (h *TicketHandler) AdminDeletePendingAttachment(c *gin.Context) { h.deletePendingAttachment(c, true) }
+func (h *TicketHandler) List(c *gin.Context)                    { h.list(c, false) }
+func (h *TicketHandler) AdminList(c *gin.Context)               { h.list(c, true) }
+func (h *TicketHandler) Stats(c *gin.Context)                   { h.stats(c, false) }
+func (h *TicketHandler) AdminStats(c *gin.Context)              { h.stats(c, true) }
+func (h *TicketHandler) Detail(c *gin.Context)                  { h.detail(c, false) }
+func (h *TicketHandler) AdminDetail(c *gin.Context)             { h.detail(c, true) }
+func (h *TicketHandler) Reply(c *gin.Context)                   { h.reply(c, false) }
+func (h *TicketHandler) AdminReply(c *gin.Context)              { h.reply(c, true) }
+func (h *TicketHandler) Update(c *gin.Context)                  { h.update(c, false) }
+func (h *TicketHandler) AdminUpdate(c *gin.Context)             { h.update(c, true) }
+func (h *TicketHandler) MarkRead(c *gin.Context)                { h.markRead(c, false) }
+func (h *TicketHandler) AdminMarkRead(c *gin.Context)           { h.markRead(c, true) }
+func (h *TicketHandler) UploadAttachment(c *gin.Context)        { h.uploadAttachment(c, false) }
+func (h *TicketHandler) AdminUploadAttachment(c *gin.Context)   { h.uploadAttachment(c, true) }
+func (h *TicketHandler) GetAttachment(c *gin.Context)           { h.getAttachment(c, false) }
+func (h *TicketHandler) AdminGetAttachment(c *gin.Context)      { h.getAttachment(c, true) }
+func (h *TicketHandler) DeletePendingAttachment(c *gin.Context) { h.deletePendingAttachment(c, false) }
+func (h *TicketHandler) AdminDeletePendingAttachment(c *gin.Context) {
+	h.deletePendingAttachment(c, true)
+}
 
 func (h *TicketHandler) list(c *gin.Context, admin bool) {
 	actor, ok := ticketActor(c, admin)

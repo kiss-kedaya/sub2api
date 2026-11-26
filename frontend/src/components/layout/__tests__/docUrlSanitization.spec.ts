@@ -12,7 +12,7 @@ const keyUsageViewSource = readFileSync(resolve(dir, '../../../views/KeyUsageVie
 
 describe('doc_url sanitization', () => {
   it('AppSidebar imports the sanitized internal docs fallback', () => {
-    expect(sidebarSource).toContain("import { resolveDocsUrl } from '@/utils/docsUrl'")
+    expect(sidebarSource).toMatch(/import\s*\{[^}]*\bresolveDocsUrl\b[^}]*\}\s*from\s*'@\/utils\/docsUrl'/)
   })
 
   it('AppSidebar resolves its configured docs URL', () => {

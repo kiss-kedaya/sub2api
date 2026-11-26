@@ -1797,7 +1797,10 @@ export function createMockApi(now = new Date()) {
         const { password: _pw, auth_factor, ...sealPayload } = body
         demoSecretSeals.set(key.id, copy(sealPayload))
         key.has_sealed_secret = true
-        key.seal_auth_factor = typeof auth_factor === 'string' && auth_factor ? auth_factor : 'password'
+        key.seal_auth_factor =
+          auth_factor === 'password' || auth_factor === 'totp' || auth_factor === 'passkey'
+            ? auth_factor
+            : 'password'
         return { message: '本地演示已封存密文' }
       }
       if (method === 'POST' && path === '/api/v1/keys') {

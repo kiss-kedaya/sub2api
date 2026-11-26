@@ -507,12 +507,8 @@ func (s *BackupService) nonDefaultBackup() bool {
 	return s.backupScope() != "" || s.backupEncrypted() || s.backupCfg.MaxArchiveBytes > 0
 }
 
-// backupFileName names the archive; the .age suffix tells a human (and the
-// download link) that it is not plain gzip.
-func (s *BackupService) backupFileName(now time.Time) string {
-	return s.backupFileNameForScope(now, s.backupScope())
-}
-
+// backupFileNameForScope names the archive; the .age suffix tells a human (and
+// the download link) that it is not plain gzip.
 func (s *BackupService) backupFileNameForScope(now time.Time, scope string) string {
 	suffix := ".sql.gz"
 	if scope == backupScopeCritical {
@@ -1205,13 +1201,9 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	}
 }
 
-// createCompressedBackupFile stages the archive on local disk and returns its path,
-// its size and the SHA-256 (hex) of the bytes written. The digest is computed while
-// writing, so the file is not read a second time.
-func (s *BackupService) createCompressedBackupFile(ctx context.Context) (string, int64, string, error) {
-	return s.createCompressedBackupFileWithOptions(ctx, BackupOptions{})
-}
-
+// createCompressedBackupFileWithOptions stages the archive on local disk and
+// returns its path, its size and the SHA-256 (hex) of the bytes written. The
+// digest is computed while writing, so the file is not read a second time.
 func (s *BackupService) createCompressedBackupFileWithOptions(ctx context.Context, opts BackupOptions) (string, int64, string, error) {
 	mode := s.resolveBackupMode(opts)
 
@@ -1308,12 +1300,9 @@ func createStagedArchive(pattern string) (backupArchiveFile, error) {
 	return file, nil
 }
 
-// recordedDigest is the digest a record stores. Only a non-default backup records
-// one, so a default whole-database record stays byte-identical to before.
-func (s *BackupService) recordedDigest(digest string) string {
-	return recordedDigestForMode(s.resolveBackupMode(BackupOptions{}), digest)
-}
-
+// recordedDigestForMode is the digest a record stores. Only a non-default
+// backup records one, so a default whole-database record stays byte-identical
+// to before.
 func recordedDigestForMode(mode resolvedBackupMode, digest string) string {
 	if mode.nonDefault {
 		return digest
@@ -1321,15 +1310,12 @@ func recordedDigestForMode(mode resolvedBackupMode, digest string) string {
 	return ""
 }
 
-// writeBackupArchive streams src through gzip into dst, with an age encryptor
-// in between when recipients are set (dump -> gzip -> age -> dst). Closers run
-// innermost first, so the gzip trailer and the age final chunk are both in dst
-// before the caller closes the file. A partial snapshot is re-taken often, so it
-// trades compression ratio for CPU; the whole-database dump keeps the default.
-func (s *BackupService) writeBackupArchive(dst io.Writer, src io.Reader, recipients []age.Recipient) (err error) {
-	return s.writeBackupArchiveForScope(dst, src, recipients, s.backupScope())
-}
-
+// writeBackupArchiveForScope streams src through gzip into dst, with an age
+// encryptor in between when recipients are set (dump -> gzip -> age -> dst).
+// Closers run innermost first, so the gzip trailer and the age final chunk are
+// both in dst before the caller closes the file. A partial snapshot is re-taken
+// often, so it trades compression ratio for CPU; the whole-database dump keeps
+// the default.
 func (s *BackupService) writeBackupArchiveForScope(dst io.Writer, src io.Reader, recipients []age.Recipient, scope string) (err error) {
 	out := dst
 	if len(recipients) > 0 {

@@ -59,12 +59,6 @@ func NewPgDumper(cfg *config.Config, db *sql.DB) service.DBDumper {
 // a stuck DDL cannot hold the backup (and the migration advisory lock) forever.
 const pgDumpLockWaitTimeout = "30s"
 
-// pgDumpCommand returns the program and arguments for pg_dump using the
-// deployment-configured exclude list.
-func (d *PgDumper) pgDumpCommand() (string, []string) {
-	return d.pgDumpCommandForExcludes(d.backup.ExcludeTableData)
-}
-
 // pgDumpCommandForExcludes returns the program and arguments for pg_dump.
 //
 // Without excludeTableData this is the original full dump, argument for

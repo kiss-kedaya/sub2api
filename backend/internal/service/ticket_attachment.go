@@ -125,7 +125,7 @@ func sanitizeTicketAttachmentFileName(raw, contentType string) string {
 		if r < 0x20 || r == 0x7f || r == '"' || r == '\'' || r == '/' || r == '\\' || r == '<' || r == '>' {
 			continue
 		}
-		b.WriteRune(r)
+		_, _ = b.WriteRune(r)
 	}
 	cleaned := strings.TrimSpace(b.String())
 	if runes := []rune(cleaned); len(runes) > 120 {
