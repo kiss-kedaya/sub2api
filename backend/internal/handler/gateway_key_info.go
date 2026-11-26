@@ -18,19 +18,23 @@ import (
 
 // Key self-service endpoints: what a program holding only an API key may ask the platform about that key.
 //
-//	GET /v1/sub2api/key     the key itself: status, expiry, quota, rate-limit windows, bound groups
-//	GET /v1/sub2api/groups  the groups this key can use, with state and the multiplier it pays
-//	GET /v1/sub2api/usage   this key's usage: today, last 7 days, this month, a chosen range
+//	GET /v1/sub2api/key      the key itself: status, expiry, quota, rate-limit windows, bound groups
+//	GET /v1/sub2api/groups   the groups this key can use, with state and the multiplier it pays
+//	GET /v1/sub2api/usage    this key's usage: today, last 7 days, this month, a chosen range
+//	GET /v1/sub2api/account  the account behind the key: wallet balance, subscription allowance, today's usage of all its keys
 //
-// The exposure rule is "what the key is and what it has done, nothing about the account behind it":
+// The exposure rule of the first three is "what the key is and what it has done, nothing about the account behind it":
 //   - never the key itself (only its stored display prefix), never its IP allow/deny lists or last-used IP;
 //   - never the wallet balance, subscription balance, account list, channel or upstream names, or upstream cost;
 //   - multipliers are the ones the key actually pays (own group, the user's personal rate, the peak factor);
 //   - usage is aggregated for this key id only, with the user-facing cost (actual_cost), never the account cost.
 //
-// A leaked key therefore reveals what that key could already do and how much it has spent, not what else the
-// owner has. The existing /v1/usage keeps its wallet block for compatibility; these endpoints do not copy it.
-// All three accept a key that is expired or out of quota (it can still say so) and are limited per key.
+// /account (gateway_key_account.go) is the one deliberate exception, and only for the money: the owner asked that a
+// program holding only an API key can read the wallet balance and today's usage of the whole account. So whoever holds
+// a valid key can read those figures, and a key must be kept like the money it can spend. It still returns nothing that
+// says who the owner is (no email, username, phone, id) and nothing about the owner's other keys. The existing
+// /v1/usage keeps its own wallet block for compatibility; these endpoints do not copy it.
+// All four accept a key that is expired or out of quota (it can still say so) and are limited per key.
 const (
 	keyInfoSchemaVersion = 1
 	keyInfoCacheTTL      = 20 * time.Second
@@ -499,18 +503,8 @@ func (h *GatewayHandler) KeyUsage(c *gin.Context) {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "Usage information is unavailable")
 		return
 	}
-	userTZ := strings.TrimSpace(c.Query("timezone"))
-	if len(userTZ) > 64 {
-		userTZ = ""
-	}
-	loc := timezone.Location()
-	if userTZ != "" {
-		if loaded, err := time.LoadLocation(userTZ); err == nil {
-			loc = loaded
-		}
-	}
-	now := timezone.NowInUserLocation(userTZ)
-	todayStart := timezone.StartOfDayInUserLocation(now, userTZ)
+	frame := newKeyInfoFrame(c.Query("timezone"))
+	userTZ, loc, now, todayStart := frame.TZ, frame.Loc, frame.Now, frame.TodayStart
 
 	var rangeStart, rangeEnd time.Time
 	hasRange := false
@@ -585,6 +579,31 @@ func (h *GatewayHandler) KeyUsage(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, resp)
+}
+
+// keyInfoFrame is the "when" of a self-service request, resolved once and the same way by every endpoint that takes
+// a timezone parameter: the zone the answer is written in, the current time in it, and the start of the local day.
+// An empty, over-long (more than 64 bytes) or unknown timezone falls back to the site's own time zone.
+type keyInfoFrame struct {
+	TZ         string // the cleaned parameter; "" when none was usable
+	Loc        *time.Location
+	Now        time.Time
+	TodayStart time.Time
+}
+
+func newKeyInfoFrame(raw string) keyInfoFrame {
+	userTZ := strings.TrimSpace(raw)
+	if len(userTZ) > 64 {
+		userTZ = ""
+	}
+	loc := timezone.Location()
+	if userTZ != "" {
+		if loaded, err := time.LoadLocation(userTZ); err == nil {
+			loc = loaded
+		}
+	}
+	now := timezone.NowInUserLocation(userTZ)
+	return keyInfoFrame{TZ: userTZ, Loc: loc, Now: now, TodayStart: timezone.StartOfDayInUserLocation(now, userTZ)}
 }
 
 // keyInfoSubject returns the authenticated key, or writes the same errors the other key-scoped endpoints use.
