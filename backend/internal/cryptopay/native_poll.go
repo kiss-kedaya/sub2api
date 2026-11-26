@@ -420,13 +420,30 @@ func (s *Service) startNativePoller(parent context.Context, interval time.Durati
 // discovery never becomes silent: an operator sees a failing address-poll
 // provider at error level, with the cursor explicitly not advanced.
 func nativeFailureReporter() func(chain string, cause error) {
+	return newNativeFailureReporter(time.Now)
+}
+
+// nativeConfigGapReportEvery is how often a missing explorer key or endpoint is
+// repeated. An outage changes from poll to poll and is worth a line a minute; a
+// missing key does not change until an operator sets one, and logging it every
+// minute (two lines a minute for BSC and Ethereum, for months) buried the real
+// scan failures. It is still repeated, and often enough to matter: without the key
+// the hot wallet's native outflow monitoring is not running, so the gap is
+// reported every quarter of an hour, never hidden.
+const nativeConfigGapReportEvery = 15 * time.Minute
+
+func newNativeFailureReporter(now func() time.Time) func(chain string, cause error) {
 	lastByChain := map[string]time.Time{}
 	return func(chain string, cause error) {
-		now := time.Now()
-		if now.Sub(lastByChain[chain]) < time.Minute {
+		every := time.Minute
+		if errors.Is(cause, explorer.ErrNoAPIKey) || errors.Is(cause, explorer.ErrNoEndpoint) {
+			every = nativeConfigGapReportEvery
+		}
+		current := now()
+		if last, reported := lastByChain[chain]; reported && current.Sub(last) < every {
 			return
 		}
-		lastByChain[chain] = now
+		lastByChain[chain] = current
 		slog.Error("[cryptopay] native txlist scan incomplete; cursor not advanced, retrying",
 			"chain", chain, "cause", safeCause(cause))
 	}

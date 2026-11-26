@@ -331,6 +331,10 @@ func (e *scanStageError) logAttrs() []any {
 		if failure.Quota {
 			attrs = append(attrs, "quota_exhausted", true)
 		}
+		if failure.Throttled {
+			// The 429 is this process's own pacing, not the node's answer.
+			attrs = append(attrs, "local_rate_limit", true)
+		}
 		if failure.SpanLimit != 0 {
 			attrs = append(attrs, "span_limit", failure.SpanLimit)
 		}
@@ -786,7 +790,10 @@ func isRateLimitedScan(err error) bool {
 	}
 	var failure *rpc.Failure
 	if errors.As(err, &failure) {
-		return failure.HTTPStatus == http.StatusTooManyRequests || failure.RPCCode == 429
+		// A refusal by this process's own pacing (Throttled) is not a node saying "wait
+		// a moment": waiting 3 s and repeating the whole pass only meets the limiter
+		// again, so it is left to the chain's own backoff.
+		return !failure.Throttled && (failure.HTTPStatus == http.StatusTooManyRequests || failure.RPCCode == 429)
 	}
 	return false
 }
