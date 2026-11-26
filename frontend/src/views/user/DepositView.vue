@@ -963,7 +963,6 @@ onUnmounted(() => {
 .deposit-view__header { margin-bottom: 1.5rem; }
 .deposit-view__layout { display: grid; grid-template-columns: minmax(0, 1fr) 18rem; gap: 1.25rem; align-items: start; }
 .deposit-view__funding, .deposit-view__guide { min-width: 0; border: 1px solid var(--ui-border); border-radius: 8px; padding: 1.5rem; background: var(--ui-bg); box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .deposit-view__funding, .dark .deposit-view__guide { box-shadow: none; }
 .deposit-view h2 { font-size: .9375rem; line-height: 1.5; font-weight: 650; }
 .deposit-view__section-head { display: flex; align-items: center; gap: .625rem; margin-bottom: 1rem; }
 .deposit-view__section-head--network { flex-wrap: wrap; }
@@ -1074,4 +1073,11 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
   .deposit-view__hash-copy:hover { color: var(--signal-accent, #0891b2); }
 }
 @media (prefers-reduced-motion: reduce) { .deposit-view__chain, .deposit-view__progress-fill { transition: none; } .deposit-view__pending-dot { animation: none; } }
+</style>
+
+<style>
+html.dark .deposit-view__funding,
+html.dark .deposit-view__guide {
+  box-shadow: none;
+}
 </style>

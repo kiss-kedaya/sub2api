@@ -1,5 +1,16 @@
 <template>
-  <UCard :ui="{ header: 'px-4 py-3 sm:px-5', body: 'p-4 sm:p-5' }">
+  <div v-if="bare" class="w-full">
+    <div v-if="loading" class="flex h-48 items-center justify-center">
+      <LoadingSpinner />
+    </div>
+    <div v-else-if="trendData.length > 0 && chartData" class="h-48">
+      <Line :data="chartData" :options="lineOptions" />
+    </div>
+    <div v-else class="flex h-48 items-center justify-center text-sm text-muted">
+      {{ t('admin.dashboard.noDataAvailable') }}
+    </div>
+  </div>
+  <UCard v-else :ui="{ header: 'px-4 py-3 sm:px-5', body: 'p-4 sm:p-5' }">
     <template #header>
       <h3 class="text-xs font-medium uppercase text-muted">
         {{ t('admin.dashboard.tokenUsageTrend') }}
@@ -56,6 +67,8 @@ const props = defineProps<{
   mode?: 'total' | 'breakdown'
   /** Hex color of the single series in total mode (e.g. the theme primary); default stays text gray. */
   color?: string
+  /** Render only the chart body without an outer card or duplicate heading (used inside DashboardChartCard). */
+  bare?: boolean
 }>()
 
 // Token colours (dark mode and Appearance follow automatically).

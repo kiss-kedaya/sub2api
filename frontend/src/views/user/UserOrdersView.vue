@@ -221,8 +221,6 @@ onMounted(() => { fetchOrders(); loadRefundEligibility() })
   box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05);
 }
 
-.dark .signal-orders-toolbar { box-shadow: none; }
-
 .signal-order-action {
   display: inline-flex;
   min-height: 32px;
@@ -258,8 +256,6 @@ onMounted(() => { fetchOrders(); loadRefundEligibility() })
   background: var(--orders-surface);
   box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05);
 }
-
-.dark .signal-orders :deep(.payment-order-table) { box-shadow: none; }
 
 .signal-orders :deep(.payment-order-table .table-wrapper) {
   min-height: 240px;
@@ -303,5 +299,12 @@ onMounted(() => { fetchOrders(); loadRefundEligibility() })
   .signal-orders-toolbar :deep(.select-trigger) {
     width: 100%;
   }
+}
+</style>
+
+<style>
+html.dark .signal-orders-toolbar,
+html.dark .signal-orders .payment-order-table {
+  box-shadow: none;
 }
 </style>

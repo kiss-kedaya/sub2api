@@ -178,4 +178,15 @@ describe('TokenUsageTrend', () => {
     // Hit rate = 500 / (200 + 500 + 300) * 100 = 50%
     expect(hitRateDataset.data[0]).toBe(50)
   })
+
+  it('omits the outer card and duplicate heading when bare is true', () => {
+    const wrapped = mount(TokenUsageTrend, { props: { trendData: sampleTrend } })
+    expect(wrapped.find('h3').exists()).toBe(true)
+    wrapped.unmount()
+
+    const bare = mount(TokenUsageTrend, { props: { trendData: sampleTrend, bare: true } })
+    expect(bare.find('h3').exists()).toBe(false)
+    expect(bare.findComponent(Line).exists()).toBe(true)
+    bare.unmount()
+  })
 })

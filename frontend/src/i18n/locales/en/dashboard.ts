@@ -383,6 +383,7 @@ export default {
     lastUsedAt: 'Last Used',
     lastUsedIP: 'Last Used IP',
     useKey: 'Use Key',
+    agentGuide: 'Agent setup guide',
     useKeyModal: {
       title: 'Use API Key',
       description:

@@ -66,41 +66,66 @@
         <p class="text-xs text-muted" data-test="api-key-reveal-only-this-time">{{ t('keys.reveal.onlyThisTime') }}</p>
       </div>
 
-      <div class="flex flex-wrap items-center justify-end gap-2">
-        <UButton
-          type="button"
-          color="neutral"
-          variant="soft"
-          :label="t('keys.reveal.cancel')"
-          data-test="api-key-reveal-cancel"
-          @click="close"
-        />
-        <UButton
-          v-if="notFound"
-          type="button"
-          color="primary"
-          icon="i-lucide-refresh-cw"
-          :label="t('keys.reveal.rotate')"
-          data-test="api-key-reveal-rotate"
-          @click="emit('rotate')"
-        />
-        <UButton
-          v-else-if="!plaintext"
-          type="submit"
-          color="primary"
-          :loading="loading"
-          :disabled="loading || factorsLoading || !hasAvailableFactor"
-          :label="t('keys.reveal.submit')"
-          data-test="api-key-reveal-submit"
-        />
-        <UButton
-          v-else
-          type="button"
-          color="primary"
-          :label="t('keys.reveal.done')"
-          data-test="api-key-reveal-done"
-          @click="close"
-        />
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div v-if="plaintext" class="flex flex-wrap items-center gap-1" data-test="api-key-reveal-actions">
+          <UButton
+            v-if="!hideCcsImport"
+            type="button"
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            icon="i-lucide-upload"
+            :label="t('keys.secretDialog.importCcs')"
+            data-test="api-key-reveal-import-ccs"
+            @click="emit('import-ccs', plaintext)"
+          />
+          <UButton
+            type="button"
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            icon="i-lucide-square-terminal"
+            :label="t('keys.secretDialog.use')"
+            data-test="api-key-reveal-use"
+            @click="emit('use', plaintext)"
+          />
+        </div>
+        <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <UButton
+            type="button"
+            color="neutral"
+            variant="soft"
+            :label="t('keys.reveal.cancel')"
+            data-test="api-key-reveal-cancel"
+            @click="close"
+          />
+          <UButton
+            v-if="notFound"
+            type="button"
+            color="primary"
+            icon="i-lucide-refresh-cw"
+            :label="t('keys.reveal.rotate')"
+            data-test="api-key-reveal-rotate"
+            @click="emit('rotate')"
+          />
+          <UButton
+            v-else-if="!plaintext"
+            type="submit"
+            color="primary"
+            :loading="loading"
+            :disabled="loading || factorsLoading || !hasAvailableFactor"
+            :label="t('keys.reveal.submit')"
+            data-test="api-key-reveal-submit"
+          />
+          <UButton
+            v-else
+            type="button"
+            color="primary"
+            :label="t('keys.reveal.done')"
+            data-test="api-key-reveal-done"
+            @click="close"
+          />
+        </div>
       </div>
     </form>
   </BaseDialog>
@@ -126,11 +151,17 @@ const props = withDefaults(
   defineProps<{
     show: boolean
     apiKey?: ApiKey | null
+    hideCcsImport?: boolean
   }>(),
-  { apiKey: null },
+  { apiKey: null, hideCcsImport: false },
 )
 
-const emit = defineEmits<{ close: []; rotate: [] }>()
+const emit = defineEmits<{
+  close: []
+  rotate: []
+  use: [secret: string]
+  'import-ccs': [secret: string]
+}>()
 
 const { t } = useI18n()
 const { copyToClipboard } = useClipboard()

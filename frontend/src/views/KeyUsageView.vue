@@ -12,7 +12,7 @@
         <div class="flex items-center gap-3">
           <LocaleSwitcher />
           <a
-            v-if="docUrl"
+            v-if="docUrl && docUrlExternal"
             :href="docUrl"
             target="_blank"
             rel="noopener noreferrer"
@@ -21,6 +21,14 @@
           >
             <Icon name="book" size="md" />
           </a>
+          <router-link
+            v-else-if="docUrl"
+            :to="docUrl"
+            class="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+            :title="t('home.viewDocs')"
+          >
+            <Icon name="book" size="md" />
+          </router-link>
           <button
             @click="toggleTheme"
             class="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
@@ -77,7 +85,7 @@
           <button
             @click="queryKey"
             :disabled="isQuerying"
-            class="h-12 px-7 rounded-xl bg-primary-500 hover:bg-primary-600 text-white font-medium text-sm transition-[background-color,transform,scale] active:scale-[0.97] flex items-center gap-2 whitespace-nowrap disabled:opacity-60"
+            class="h-12 px-7 rounded-xl bg-primary text-inverted hover:opacity-90 font-medium text-sm transition-[opacity,transform,scale] active:scale-[0.97] flex items-center gap-2 whitespace-nowrap disabled:opacity-60"
           >
             <svg v-if="isQuerying" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
               <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity="0.25"/>
@@ -397,12 +405,17 @@
         </p>
         <div class="flex items-center gap-4">
           <a
-            v-if="docUrl"
+            v-if="docUrl && docUrlExternal"
             :href="docUrl"
             target="_blank"
             rel="noopener noreferrer"
             class="text-sm text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-white"
           >{{ t('home.docs') }}</a>
+          <router-link
+            v-else-if="docUrl"
+            :to="docUrl"
+            class="text-sm text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-white"
+          >{{ t('home.docs') }}</router-link>
           <a
             :href="githubUrl"
             target="_blank"
@@ -425,7 +438,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { buildGatewayUrl } from '@/api/client'
 import { formatDateLocalInput } from '@/utils/format'
 import { sanitizeUrl } from '@/utils/url'
-import { resolveDocsUrl } from '@/utils/docsUrl'
+import { isExternalDocsUrl, resolveDocsUrl } from '@/utils/docsUrl'
 import { PROJECT_GITHUB_URL } from '@/constants/project'
 
 const { t, locale } = useI18n()
@@ -436,6 +449,7 @@ const appStore = useAppStore()
 const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Sub2API')
 const siteLogo = computed(() => sanitizeUrl(appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const docUrl = computed(() => resolveDocsUrl(appStore.cachedPublicSettings?.doc_url || appStore.docUrl))
+const docUrlExternal = computed(() => isExternalDocsUrl(docUrl.value))
 const githubUrl = PROJECT_GITHUB_URL
 
 // ==================== Theme (same as HomeView) ====================

@@ -1529,7 +1529,6 @@ onUnmounted(() => {
   background: var(--ui-bg);
   box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05);
 }
-.dark .pay-card { box-shadow: 0 0 0 1px var(--ui-border); }
 .pay-empty { padding: 56px 20px; text-align: center; }
 
 .pay-layout {
@@ -1549,8 +1548,6 @@ onUnmounted(() => {
 .signal-exchange-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 14px; color: var(--ui-text-muted); font-size: 12px; }
 .signal-exchange-link { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 4px 10px; border-radius: 6px; color: var(--ui-text-highlighted); font-weight: 500; box-shadow: inset 0 0 0 1px var(--ui-border-accented); transition: background-color 150ms ease; }
 .signal-exchange-link:hover { background: var(--ui-bg-elevated); }
-.dark .signal-exchange-link { color: var(--payment-accent); box-shadow: inset 0 0 0 1px currentColor; }
-.dark .signal-exchange-link:hover { background: var(--payment-accent-soft); }
 
 .pay-summary { position: sticky; top: 82px; overflow: hidden; }
 .pay-summary__account { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-width: 0; padding: 16px 18px; border-bottom: 1px solid var(--ui-border); }
@@ -1568,8 +1565,6 @@ onUnmounted(() => {
 .pay-rate-note { margin: 0 18px 16px; padding: 10px 0 0; border-top: 1px solid var(--ui-border); color: var(--payment-amber); font-size: 11px; line-height: 1.5; }
 .pay-action { padding: 0 18px 18px; }
 .pay-action__mobile-total { display: none; }
-/* Light theme: flat brand fills, no coloured glow. Dark keeps today's buttons. */
-html:not(.dark) .pay-submit:is(.btn-alipay, .btn-wxpay, .btn-stripe, .btn-airwallex) { box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08); }
 
 .recharge-center-shell { overflow: hidden; }
 .recharge-center-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 16px; border-bottom: 1px solid var(--ui-border); }
@@ -1591,8 +1586,6 @@ html:not(.dark) .pay-submit:is(.btn-alipay, .btn-wxpay, .btn-stripe, .btn-airwal
 
 .signal-payment :deep(.payment-status-card),
 .signal-payment :deep(.payment-subscription-plan) { border: 0; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .signal-payment :deep(.payment-status-card),
-.dark .signal-payment :deep(.payment-subscription-plan) { box-shadow: 0 0 0 1px var(--ui-border); }
 .signal-payment :deep(.payment-status-panel) { width: min(100%, 620px); margin-inline: auto; }
 .signal-payment :deep(.payment-status-card .rounded-xl) { border: 1px solid var(--ui-border); border-radius: 6px; background: var(--payment-muted-bg); }
 .signal-payment :deep(.payment-subscription-plan) { transform: none; }
@@ -1633,5 +1626,26 @@ html:not(.dark) .pay-submit:is(.btn-alipay, .btn-wxpay, .btn-stripe, .btn-airwal
 
 @media (prefers-reduced-motion: reduce) {
   .signal-exchange-link, .signal-tool-button { transition: none; }
+}
+</style>
+
+<style>
+html.dark .signal-payment .pay-card,
+html.dark .signal-payment .payment-status-card,
+html.dark .signal-payment .payment-subscription-plan {
+  box-shadow: 0 0 0 1px var(--ui-border);
+}
+
+html.dark .signal-payment .signal-exchange-link {
+  color: var(--payment-accent);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+html.dark .signal-payment .signal-exchange-link:hover {
+  background: var(--payment-accent-soft);
+}
+
+html:not(.dark) .signal-payment .pay-submit:is(.btn-alipay, .btn-wxpay, .btn-stripe, .btn-airwallex) {
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.08);
 }
 </style>

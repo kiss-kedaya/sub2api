@@ -10,8 +10,8 @@
 */
 :root {
   --ui-radius: 0.25rem;
-  /* Fallback until useSiteTheme runs: the shipped accent is sakura. */
-  --ui-primary: #d987a2;
+  /* Fallback until useSiteTheme runs: the shipped accent is sakura (WCAG AA on white). */
+  --ui-primary: #bb4c70;
 
   /* Frame surfaces: the page behind the panel and the sidebar (template: bg-elevated/25). */
   --app-page-bg: var(--ui-bg);

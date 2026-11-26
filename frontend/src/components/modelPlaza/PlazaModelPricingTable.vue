@@ -2,13 +2,13 @@
   <div class="plaza-pricing-table overflow-x-auto" :style="accentStyle">
     <table class="w-full min-w-[1000px] table-auto border-collapse text-sm tabular-nums">
       <colgroup>
-        <col class="w-[25%]" />
-        <col class="w-[11%]" />
+        <col class="w-[23%]" />
+        <col class="w-[10%]" />
         <col class="w-[9%]" />
-        <col class="w-[14%]" />
-        <col class="w-[11%]" />
+        <col class="w-[17%]" />
+        <col class="w-[10%]" />
         <col class="w-[8%]" />
-        <col class="w-[14%]" />
+        <col class="w-[15%]" />
         <col class="w-[8%]" />
       </colgroup>
       <thead>
@@ -213,7 +213,7 @@
                 v-else-if="hasCachePricing(m)"
                 class="space-y-0.5 font-mono text-xs text-gray-800 dark:text-gray-200"
               >
-                <div>
+                <div class="whitespace-nowrap">
                   <span class="mr-1 font-sans font-normal text-gray-400 dark:text-dark-500">{{ t('modelPlaza.table.cacheWrite') }}</span>
                   {{ paidPerMillion(m.pricing?.cache_write_price)
                   }}<template v-if="m.pricing?.cache_write_1h_price != null"
@@ -224,7 +224,7 @@
                     }}<span class="font-sans font-normal text-gray-400 dark:text-dark-500">)</span></template
                   >
                 </div>
-                <div>
+                <div class="whitespace-nowrap">
                   <span class="mr-1 font-sans font-normal text-gray-400 dark:text-dark-500">{{ t('modelPlaza.table.cacheRead') }}</span>
                   {{ paidPerMillion(m.pricing?.cache_read_price) }}
                 </div>
@@ -317,7 +317,7 @@
               v-else-if="m.official_pricing && hasOfficialCache(m.official_pricing)"
               class="space-y-0.5 font-mono text-xs text-gray-500 dark:text-dark-400"
             >
-              <div>
+              <div class="whitespace-nowrap">
                 <span class="mr-1 font-sans font-normal text-gray-400 dark:text-dark-500">{{ t('modelPlaza.table.cacheWrite') }}</span>
                 {{ official(m.official_pricing.cache_write_price)
                 }}<template v-if="m.official_pricing.cache_write_1h_price != null"
@@ -328,7 +328,7 @@
                   }}<span class="font-sans text-gray-400 dark:text-dark-500">)</span></template
                 >
               </div>
-              <div>
+              <div class="whitespace-nowrap">
                 <span class="mr-1 font-sans font-normal text-gray-400 dark:text-dark-500">{{ t('modelPlaza.table.cacheRead') }}</span>
                 {{ official(m.official_pricing.cache_read_price) }}
               </div>
@@ -647,12 +647,6 @@ function trimZero(n: number): string {
   --pz-bg-hover: color-mix(in srgb, var(--plaza-accent) 13%, transparent);
 }
 
-.dark .plaza-pricing-table {
-  --pz-title: color-mix(in srgb, var(--plaza-accent) 70%, white);
-  --pz-bg: color-mix(in srgb, var(--plaza-accent) 6%, transparent);
-  --pz-bg-hover: color-mix(in srgb, var(--plaza-accent) 10%, transparent);
-}
-
 .pz-bg,
 .pz-cell {
   background-color: var(--pz-bg);
@@ -698,5 +692,13 @@ tbody tr:hover .pz-cell {
   font-size: 11px;
   line-height: 1.5;
   white-space: normal;
+}
+</style>
+
+<style>
+html.dark .plaza-pricing-table {
+  --pz-title: color-mix(in srgb, var(--plaza-accent) 72%, white);
+  --pz-bg: color-mix(in srgb, var(--plaza-accent) 8%, transparent);
+  --pz-bg-hover: color-mix(in srgb, var(--plaza-accent) 14%, transparent);
 }
 </style>

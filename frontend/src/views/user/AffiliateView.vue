@@ -74,7 +74,7 @@
             </div>
           </div>
 
-          <UAlert class="mt-5 dark:bg-primary/10 dark:text-primary dark:ring-primary/25" color="neutral" variant="subtle" icon="i-lucide-info" :title="t('affiliate.tips.title')">
+          <UAlert class="mt-5" color="neutral" variant="subtle" icon="i-lucide-info" :title="t('affiliate.tips.title')">
             <template #description>
               <ul class="mt-1 space-y-1">
                 <li>1. {{ t('affiliate.tips.line1') }}</li>
@@ -372,10 +372,15 @@ onMounted(() => {
 <style scoped>
 /* Sections as cards; the four figures as one joined strip. */
 .affiliate-section { padding: 20px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .affiliate-section { box-shadow: 0 0 0 1px var(--ui-border); }
 .affiliate-metrics { overflow: hidden; border-radius: 8px; box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .affiliate-metrics { box-shadow: 0 0 0 1px var(--ui-border); }
 .console-signal .affiliate-metrics.signal-affiliate-metrics { border-block: 0; }
 .console-signal .affiliate-metrics > .card { box-shadow: none; }
 @media (min-width: 640px) { .affiliate-section { padding: 24px; } }
+</style>
+
+<style>
+html.dark .signal-affiliate .affiliate-section,
+html.dark .signal-affiliate .affiliate-metrics {
+  box-shadow: 0 0 0 1px var(--ui-border);
+}
 </style>

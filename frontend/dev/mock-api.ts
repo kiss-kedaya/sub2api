@@ -186,6 +186,7 @@ export function createMockApi(now = new Date()) {
   let nextScheduledPlanID = 99
   let nextId = data.keys.length + 1
   const demoKeySecrets = new Map<string, number>()
+  const demoSecretSeals = new Map<number, Record<string, unknown>>()
   const platformDemoModels: Record<string, string[]> = {
     anthropic: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
     openai: ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5'],
@@ -988,6 +989,33 @@ export function createMockApi(now = new Date()) {
           const ids = modelsForBearer(headers.authorization)
           return { object: 'list', data: ids.map(id => ({ id, object: 'model', owned_by: 'local-demo' })) }
         }
+        const getSealPath = path.match(/^\/api\/v1\/user\/api-keys\/(\d+)\/secret-seal$/)
+        if (getSealPath) {
+          const id = Number(getSealPath[1])
+          const seal = demoSecretSeals.get(id)
+          if (!seal) throw new PreviewError(404, '演示密钥未封存密文')
+          return copy(seal)
+        }
+        if (path === '/api/v1/keys/overview') {
+          const ids = (query.get('ids') || '')
+            .split(',')
+            .map(Number)
+            .filter((n) => Number.isSafeInteger(n) && n > 0)
+          const cutoff = now.getTime() - 24 * 60 * 60 * 1000
+          return {
+            window_hours: 24,
+            items: ids.map((id) => {
+              const rows = data.usage.filter(
+                (row) => row.api_key_id === id && Date.parse(row.created_at) >= cutoff
+              )
+              return {
+                id,
+                requests_24h: rows.length,
+                cost_24h: summarize(rows).total_actual_cost,
+              }
+            }),
+          }
+        }
         if (path === '/api/v1/keys') {
           const items = data.keys.filter(key => {
             const search = query.get('search')?.toLowerCase()
@@ -1251,11 +1279,20 @@ export function createMockApi(now = new Date()) {
         return data.user
       }
       if (method === 'PUT' && path === '/api/v1/user/password') return { message: '本地演示密码未写入任何账户' }
+      const revealAuthPath = path.match(/^\/api\/v1\/user\/api-keys\/(\d+)\/reveal-authorize$/)
+      if (revealAuthPath && method === 'POST') {
+        const key = data.keys.find(item => item.id === Number(revealAuthPath[1]))
+        if (!key) throw new PreviewError(404, '演示密钥不存在')
+        return { grant: `demo-reveal-grant-${key.id}`, factor: String(body.method || 'password'), expires_in: 300 }
+      }
       const sealPath = path.match(/^\/api\/v1\/user\/api-keys\/(\d+)\/secret-seal$/)
       if (sealPath && method === 'PUT') {
         const key = data.keys.find(item => item.id === Number(sealPath[1]))
         if (!key) throw new PreviewError(404, '演示密钥不存在')
-        key.has_secret_seal = true
+        const { password: _pw, auth_factor, ...sealPayload } = body
+        demoSecretSeals.set(key.id, copy(sealPayload))
+        key.has_sealed_secret = true
+        key.seal_auth_factor = typeof auth_factor === 'string' && auth_factor ? auth_factor : 'password'
         return { message: '本地演示已封存密文' }
       }
       if (method === 'POST' && path === '/api/v1/keys') {

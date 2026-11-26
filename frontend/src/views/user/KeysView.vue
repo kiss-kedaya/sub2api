@@ -151,6 +151,17 @@
                 </button>
               </div>
             </div>
+            <UButton
+              type="button"
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-book-open"
+              class="hidden sm:inline-flex"
+              data-test="keys-agent-guide"
+              @click="openAgentGuide"
+            >
+              {{ t('keys.agentGuide') }}
+            </UButton>
             <UButton icon="i-lucide-plus" data-tour="keys-create-btn" @click="openCreateModal">
               {{ t('keys.createKey') }}
             </UButton>
@@ -312,7 +323,6 @@
                 {{ t('keys.smartRouting') }}
                 {{ t('keys.smartRoutingMore', { count: keyGroupIds(row).length - 1 }) }}
               </UBadge>
-              <span v-else class="text-xs text-muted">{{ t('keys.selectGroup') }}</span>
               <svg
                 class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
                 fill="none"
@@ -363,10 +373,10 @@
               </div>
               <!-- Quota progress (if quota is set) -->
               <div v-if="row.quota > 0" class="mt-1.5">
-                <div class="flex items-center gap-1.5">
+                <div class="flex items-center gap-1.5 whitespace-nowrap">
                   <span class="text-gray-500 dark:text-gray-400">{{ t('keys.quota') }}:</span>
                   <span :class="[
-                    'font-medium',
+                    'font-medium tabular-nums',
                     row.quota_used >= row.quota ? 'text-red-500' :
                     row.quota_used >= row.quota * 0.8 ? 'text-yellow-500' :
                     'text-gray-900 dark:text-white'
@@ -1555,8 +1565,10 @@
       :base-url="publicSettings?.api_base_url || ''"
       :platform="selectedKey?.group?.platform || null"
       :allow-messages-dispatch="selectedKey?.group?.allow_messages_dispatch || false"
+      show-guide-link
       @close="closeUseKeyModal"
       @assign-group="assignGroupForRevealedKey"
+      @open-guide="openAgentGuideFromModal"
     />
 
     <!-- 明文密钥只展示这一次：复制、使用引导、导入 CCS 都从这里进入。
@@ -1575,12 +1587,15 @@
       @sealed="markKeySealedLocally"
     />
 
-    <!-- 刷新后查看 key：只在浏览器本地用登录密码解密服务端密文 -->
+    <!-- 刷新后查看 key：只在浏览器本地用登录密码解密服务端密文；解密后同样可直接导入 CCS 或查看使用配置 -->
     <RevealApiKeyDialog
       :show="showRevealDialog"
       :api-key="revealRow"
+      :hide-ccs-import="!!publicSettings?.hide_ccs_import_button"
       @close="closeRevealDialog"
       @rotate="rotateFromReveal"
+      @use="useDecryptedKey"
+      @import-ccs="importDecryptedToCcswitch"
     />
 
     <!-- 创建时没启用后续查看：说明无法找回，只能轮换 -->
@@ -1753,7 +1768,8 @@
 
 <script setup lang="ts">
 import '@/styles/console-workspace.css'
-	import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+	import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, inject, type ComponentPublicInstance } from 'vue'
+	import { routerKey } from 'vue-router'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
@@ -1767,6 +1783,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import { useAppUpdate } from '@/composables/useAppUpdate'
 
 const { t } = useI18n()
+const router = inject(routerKey, null)
 
 // The concurrency cell carries its own explanation: hover shows this sentence, keyboard
 // focus and screen readers get it from aria-label.
@@ -2873,6 +2890,24 @@ const useRevealedKey = () => {
   openUseKeyModal(row, secret)
 }
 
+// 从「查看已保存密钥」解密弹窗进入"使用密钥"引导：同样把子弹窗叠在解密弹窗之上，便于连续操作。
+const useDecryptedKey = (secret: string) => {
+  const row = revealRow.value
+  if (!row || !secret) return
+  openUseKeyModal(resolveKeyGroupRow(row), secret)
+}
+
+const openAgentGuide = () => {
+  void router?.push({ path: '/docs', query: { page: 'agent-setup' } })
+}
+
+const openAgentGuideFromModal = () => {
+  closeUseKeyModal()
+  closeSecretDialog()
+  closeRevealDialog()
+  openAgentGuide()
+}
+
 // 「使用密钥」里发现无分组时：关掉子弹窗和回执，定位到这一行的分组列直接选分组。
 const assignGroupForRevealedKey = () => {
   const row = selectedKey.value ?? secretRow.value
@@ -3961,6 +3996,13 @@ const importRevealedToCcswitch = () => {
   const secret = secretPlaintext.value
   if (!row || !secret) return
   importToCcswitch({ ...row, key: secret })
+}
+
+// 解密已保存密钥后直接点"导入 CCS"：复用同一套按真实 /v1/models 选模型的导入弹窗。
+const importDecryptedToCcswitch = (secret: string) => {
+  const row = revealRow.value
+  if (!row || !secret) return
+  importToCcswitch({ ...resolveKeyGroupRow(row), key: secret })
 }
 
 const onCcsAppChange = (value: string | number | boolean | null) => {

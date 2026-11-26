@@ -41,6 +41,8 @@ vi.mock('@/composables/useClipboard', () => ({
 const messages: Record<string, string> = {
   'keys.reveal.title': 'Verify your identity to view the key',
   'keys.reveal.description': 'Verification and decryption happen in this browser.',
+  'keys.secretDialog.importCcs': 'Import to CCS',
+  'keys.secretDialog.use': 'Use key',
   'keys.reveal.submit': 'Verify and view',
   'keys.reveal.cancel': 'Cancel',
   'keys.reveal.done': 'Done',
@@ -417,6 +419,29 @@ describe('RevealApiKeyDialog three-way identity verification', () => {
     expect(wrapper.get('[data-test="api-key-reveal-factor-unavailable"]').text()).toContain(
       'Passkey',
     )
+    wrapper.unmount()
+  })
+
+  it('exposes import-to-CCS and use-key actions with the decrypted secret after revealing', async () => {
+    const wrapper = await mountDialog()
+
+    // Before decryption, the post-reveal actions must not appear.
+    expect(wrapper.find('[data-test="api-key-reveal-import-ccs"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="api-key-reveal-use"]').exists()).toBe(false)
+
+    await wrapper.get('[data-test="key-factor-password-input"]').setValue(PASSWORD)
+    await submit(wrapper)
+    await waitForSelector(wrapper, '[data-test="api-key-reveal-value"]')
+
+    await wrapper.get('[data-test="api-key-reveal-import-ccs"]').trigger('click')
+    await wrapper.get('[data-test="api-key-reveal-use"]').trigger('click')
+
+    expect(wrapper.emitted('import-ccs')).toEqual([[KEY]])
+    expect(wrapper.emitted('use')).toEqual([[KEY]])
+
+    await wrapper.setProps({ hideCcsImport: true })
+    expect(wrapper.find('[data-test="api-key-reveal-import-ccs"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="api-key-reveal-use"]').exists()).toBe(true)
     wrapper.unmount()
   })
 })
