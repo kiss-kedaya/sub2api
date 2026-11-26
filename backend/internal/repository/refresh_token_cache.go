@@ -107,11 +107,9 @@ else
   nxt = string.sub(cur, 1, -2) .. ',"leeway_reissues":' .. n .. '}'
 end
 local ttl = redis.call('PTTL', KEYS[1])
-if ttl > 0 then
-  redis.call('SET', KEYS[1], nxt, 'PX', ttl)
-else
-  redis.call('SET', KEYS[1], nxt)
-end
+-- PTTL 取到 0（剩不到 1ms）或 -1（没有过期时间）时也必须带过期时间写回：不带 TTL 的 SET 会留下永不过期的死标记。
+if ttl < 1 then ttl = 1 end
+redis.call('SET', KEYS[1], nxt, 'PX', ttl)
 return n
 `)
 

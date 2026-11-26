@@ -137,6 +137,28 @@ func TestRefreshTokenAtomicReserveLeewayReissueOutcomes(t *testing.T) {
 	require.False(t, mini.Exists(refreshTokenKey("tok")))
 }
 
+// 墓碑只剩不到 1ms（PTTL=0）时占名额：写回时仍带过期时间，不会留下永不过期的死标记；
+// 带不带 TTL 的 SET 会清掉原有的 TTL，所以脚本必须 PX max(ttl,1) 写回。
+func TestRefreshTokenAtomicReserveNeverLeavesAnImmortalTombstone(t *testing.T) {
+	mini, cache, atomic := newAtomicRefreshStore(t)
+	ctx := t.Context()
+	data := storeFixtureToken(t, cache, "tok")
+	won, err := atomic.ConsumeRefreshToken(ctx, "tok", tombstoneOf(data), time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, service.RefreshConsumeWon, won)
+
+	key := refreshTokenKey("tok")
+	mini.SetTTL(key, 500*time.Microsecond) // PTTL 取整后是 0：墓碑即将过期
+	outcome, n, err := atomic.ReserveLeewayReissue(ctx, "tok", 3)
+	require.NoError(t, err)
+	require.Equal(t, service.RefreshLeewayReserved, outcome)
+	require.Equal(t, 1, n)
+	require.Positive(t, mini.TTL(key), "the tombstone must still carry an expiry after the reservation")
+
+	mini.FastForward(10 * time.Millisecond)
+	require.False(t, mini.Exists(key), "and it expires instead of living forever")
+}
+
 // 并发占名额：不论多少个请求同时来，成功的恰好是 max 个。
 func TestRefreshTokenAtomicReserveIsAtomicUnderConcurrency(t *testing.T) {
 	_, cache, atomic := newAtomicRefreshStore(t)

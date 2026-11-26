@@ -54,6 +54,7 @@ type refreshRebindHarness struct {
 	engine       *gin.Engine
 	auditService *service.AuditLogService
 	audit        *rebindAuditRepo
+	authService  *service.AuthService
 	refreshToken string
 }
 
@@ -94,7 +95,7 @@ func newRefreshRebindHarness(t *testing.T) *refreshRebindHarness {
 	r.Use(middleware2.SessionBindingContext(cfg))
 	r.Use(gin.HandlerFunc(middleware2.NewAuditLogMiddleware(auditService)))
 	r.POST("/api/v1/auth/refresh", h.RefreshToken)
-	return &refreshRebindHarness{engine: r, auditService: auditService, audit: repo, refreshToken: pair.RefreshToken}
+	return &refreshRebindHarness{engine: r, auditService: auditService, audit: repo, authService: authService, refreshToken: pair.RefreshToken}
 }
 
 // refresh 用当前持有的 refresh token 发一次 POST /auth/refresh，成功后换成新令牌。
@@ -144,6 +145,22 @@ func TestRefreshHandlerAuditsAFingerprintRebindButNotAnOrdinaryRefresh(t *testin
 	for _, forbidden := range []string{"203.0.113", "198.51.100", "Chrome/130", "AppleWebKit"} {
 		require.NotContains(t, extra, forbidden, "the audit extra carries coarse labels only")
 	}
+}
+
+// 同一会话反复换网络：每次都是重绑、计数照常累加，但审计行限频——每个窗口只有第一次写。
+func TestRefreshHandlerRebindAuditIsRateLimitedPerSession(t *testing.T) {
+	h := newRefreshRebindHarness(t)
+
+	for _, ip := range []string{"198.51.100.77", "192.0.2.50", "198.18.0.9"} { // 每次都是新的 /24
+		require.Equal(t, http.StatusOK, h.refresh(t, ip, rebindUAChrome).Code)
+	}
+
+	rows := h.auditRows()
+	require.Len(t, rows, 1, "three rebinds of one session inside the window leave exactly one audit row")
+	require.Equal(t, service.AuditActionSessionBindingRebind, rows[0].Action)
+	stats := h.authService.AuthStatsSnapshot()
+	require.EqualValues(t, 3, stats["refresh_binding_rebind"], "the counter still counts every rebind")
+	require.EqualValues(t, 2, stats["refresh_binding_rebind_audit_suppressed"])
 }
 
 // 家族变了（换了浏览器/系统）不是 rebind：撤销会话，刷新失败（失败的刷新照常进审计）。

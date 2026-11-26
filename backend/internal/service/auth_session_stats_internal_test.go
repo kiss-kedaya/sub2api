@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"log"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -48,6 +49,33 @@ func captureStatsLog(t *testing.T) *statsLogBuffer {
 		log.SetFlags(prevFlags)
 	})
 	return buf
+}
+
+// 指纹重绑的审计限频：同一个 key（用户 + 会话家族）每个窗口只放行一条，窗口过后再放行；
+// 不同 key 互不影响；表满且都没过期时不再放行新 key（内存有上限），过期的会被清掉腾出位置。
+func TestAuthSessionStatsRebindAuditIsRateLimitedPerKey(t *testing.T) {
+	st := newAuthSessionStats(time.Hour)
+	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+
+	require.True(t, st.allowRebindAudit("1:famA", t0))
+	require.False(t, st.allowRebindAudit("1:famA", t0.Add(time.Minute)), "same user+family inside the window")
+	require.False(t, st.allowRebindAudit("1:famA", t0.Add(rebindAuditWindow-time.Second)))
+	require.True(t, st.allowRebindAudit("1:famB", t0.Add(time.Minute)), "another family of the same user is separate")
+	require.True(t, st.allowRebindAudit("2:famA", t0.Add(time.Minute)), "another user is separate")
+	require.True(t, st.allowRebindAudit("1:famA", t0.Add(rebindAuditWindow)), "the window passed: one more row is allowed")
+	require.False(t, st.allowRebindAudit("1:famA", t0.Add(rebindAuditWindow+time.Second)), "and the new window is limited again")
+}
+
+func TestAuthSessionStatsRebindAuditTableIsBounded(t *testing.T) {
+	st := newAuthSessionStats(time.Hour)
+	t0 := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < rebindAuditMaxKeys; i++ {
+		require.True(t, st.allowRebindAudit(strconv.Itoa(i), t0))
+	}
+	require.False(t, st.allowRebindAudit("one-more", t0.Add(time.Second)), "a full table of unexpired keys admits no new key")
+	require.Len(t, st.rebindAudit, rebindAuditMaxKeys, "memory stays bounded")
+	require.True(t, st.allowRebindAudit("after-expiry", t0.Add(rebindAuditWindow)), "expired keys are purged to make room")
+	require.LessOrEqual(t, len(st.rebindAudit), rebindAuditMaxKeys)
 }
 
 // 第一条事件之后安排一次汇总：只打一条 INFO，里面是累计计数、没有用户 ID；

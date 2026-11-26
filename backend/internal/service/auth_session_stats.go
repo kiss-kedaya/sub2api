@@ -16,7 +16,8 @@ import (
 // 任何日志都不记录令牌明文或哈希。
 
 // authStat 是一个计数器的编号。refresh_* 里 ok 是成功总数，reuse_leeway_retry 与
-// binding_rebind 是成功里的子集；其余是互斥的失败原因。
+// binding_rebind 是成功里的子集；其余是互斥的失败原因。leeway_fingerprint_ok / _reject 是宽限路径上
+// 「本人」判定（浏览器家族 + 系统家族 + IP 家族 + 网段全相同）的通过 / 因指纹拒绝次数。
 type authStat int
 
 const (
@@ -25,9 +26,11 @@ const (
 	statRefreshExpired
 	statRefreshSessionExpired
 	statRefreshReuse
-	statRefreshReuseOtherClient
+	statRefreshLeewayFingerprintReject
+	statRefreshLeewayFingerprintOK
 	statRefreshReuseLeewayRetry
 	statRefreshBindingRebind
+	statRefreshBindingRebindAuditSuppressed
 	statRefreshBindingRevoke
 	statRefreshIPFamilySwitch
 	statRefreshRejected
@@ -42,24 +45,26 @@ const (
 )
 
 var authStatNames = [authStatCount]string{
-	statRefreshOK:               "refresh_ok",
-	statRefreshInvalid:          "refresh_invalid",
-	statRefreshExpired:          "refresh_expired",
-	statRefreshSessionExpired:   "refresh_session_expired",
-	statRefreshReuse:            "refresh_reuse",
-	statRefreshReuseOtherClient: "refresh_reuse_other_client",
-	statRefreshReuseLeewayRetry: "refresh_reuse_leeway_retry",
-	statRefreshBindingRebind:    "refresh_binding_rebind",
-	statRefreshBindingRevoke:    "refresh_binding_revoke",
-	statRefreshIPFamilySwitch:   "refresh_ip_family_switch",
-	statRefreshRejected:         "refresh_rejected",
-	statRefreshUnavailable:      "refresh_unavailable",
-	statAccessBindingMismatch:   "access_binding_mismatch",
-	statAccessBindingRevoke:     "access_binding_revoke",
-	statAccessIPFamilySwitch:    "access_ip_family_switch",
-	statLoginTokenPairRetryOK:   "login_token_pair_retry_ok",
-	statLoginTokenPairFallback:  "login_token_pair_fallback",
-	statWarnSuppressed:          "warn_suppressed",
+	statRefreshOK:                           "refresh_ok",
+	statRefreshInvalid:                      "refresh_invalid",
+	statRefreshExpired:                      "refresh_expired",
+	statRefreshSessionExpired:               "refresh_session_expired",
+	statRefreshReuse:                        "refresh_reuse",
+	statRefreshLeewayFingerprintReject:      "refresh_leeway_fingerprint_reject",
+	statRefreshLeewayFingerprintOK:          "refresh_leeway_fingerprint_ok",
+	statRefreshReuseLeewayRetry:             "refresh_reuse_leeway_retry",
+	statRefreshBindingRebind:                "refresh_binding_rebind",
+	statRefreshBindingRebindAuditSuppressed: "refresh_binding_rebind_audit_suppressed",
+	statRefreshBindingRevoke:                "refresh_binding_revoke",
+	statRefreshIPFamilySwitch:               "refresh_ip_family_switch",
+	statRefreshRejected:                     "refresh_rejected",
+	statRefreshUnavailable:                  "refresh_unavailable",
+	statAccessBindingMismatch:               "access_binding_mismatch",
+	statAccessBindingRevoke:                 "access_binding_revoke",
+	statAccessIPFamilySwitch:                "access_ip_family_switch",
+	statLoginTokenPairRetryOK:               "login_token_pair_retry_ok",
+	statLoginTokenPairFallback:              "login_token_pair_fallback",
+	statWarnSuppressed:                      "warn_suppressed",
 }
 
 const (
@@ -67,6 +72,10 @@ const (
 	// 单条 WARN/ERROR 事件的限频：每种事件每个窗口最多这么多条，超出的只计数。
 	authWarnWindow = time.Minute
 	authWarnBurst  = 10
+	// 指纹重绑的审计限频：同一用户 + 同一会话家族，每个窗口最多写一条审计行（计数照常累加）。
+	// 多出口 NAT 的用户、或拿着令牌不停换网络的人，不会刷出大量审计行。
+	rebindAuditWindow  = 10 * time.Minute
+	rebindAuditMaxKeys = 4096
 )
 
 type authSessionStats struct {
@@ -76,6 +85,7 @@ type authSessionStats struct {
 
 	warnMu      sync.Mutex
 	warnBuckets map[string]*authWarnBucket
+	rebindAudit map[string]time.Time
 }
 
 type authWarnBucket struct {
@@ -87,7 +97,7 @@ func newAuthSessionStats(interval time.Duration) *authSessionStats {
 	if interval <= 0 {
 		interval = authStatsFlushInterval
 	}
-	return &authSessionStats{interval: interval, warnBuckets: make(map[string]*authWarnBucket)}
+	return &authSessionStats{interval: interval, warnBuckets: make(map[string]*authWarnBucket), rebindAudit: make(map[string]time.Time)}
 }
 
 // inc 累加计数；这是自上次汇总以来的第一条事件时，安排一次 interval 之后的汇总。
@@ -143,6 +153,30 @@ func (st *authSessionStats) allowWarn(kind string, now time.Time) bool {
 		st.inc(statWarnSuppressed)
 	}
 	return allowed
+}
+
+// allowRebindAudit 报告这次指纹重绑是否该写审计行：同一个 key（用户 + 会话家族）每个
+// rebindAuditWindow 最多一条；超出的由调用方计入 refresh_binding_rebind_audit_suppressed。
+// key 只在内存里，不进日志。表满（rebindAuditMaxKeys）时先清过期项，仍满就不再放行新 key，
+// 内存因此有上限；代价只是这个窗口里多出来的新会话少写审计行（计数不受影响）。
+func (st *authSessionStats) allowRebindAudit(key string, now time.Time) bool {
+	st.warnMu.Lock()
+	defer st.warnMu.Unlock()
+	if last, ok := st.rebindAudit[key]; ok && !now.Before(last) && now.Sub(last) < rebindAuditWindow {
+		return false
+	}
+	if len(st.rebindAudit) >= rebindAuditMaxKeys {
+		for k, last := range st.rebindAudit {
+			if now.Sub(last) >= rebindAuditWindow || now.Before(last) {
+				delete(st.rebindAudit, k)
+			}
+		}
+		if len(st.rebindAudit) >= rebindAuditMaxKeys {
+			return false
+		}
+	}
+	st.rebindAudit[key] = now
+	return true
 }
 
 // authStats 返回本服务的计数器（按需创建；手写的 &AuthService{} 也能用）。

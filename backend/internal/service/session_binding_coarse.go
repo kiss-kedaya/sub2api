@@ -129,6 +129,32 @@ func (b *SessionBinding) Matches(mode, storedHash, storedCoarse string) bool {
 	return b.Match(mode, storedHash, storedCoarse) != BindingMismatch
 }
 
+// SameClientAndNetwork 是宽限重试用的「本人」判定，比 Match 严得多：浏览器家族、系统家族、IP 家族、
+// 网段（v4 /24、v6 /64）必须全部相同，只忽略 UA 版本号；IP 家族不同（IPv4 <-> IPv6）也算不一致。
+// 宽限窗口里指纹和「消费者」不一致的出示者就是别人——如果像 Match 那样在 IP 家族不同时放行，
+// 攻击者可以抢在受害者之前刷新一次（换到相反的 IP 家族、UA 照抄同样的浏览器/系统家族），
+// 受害者随后带着旧令牌回来会被当成「本人重试」，同一个会话分叉成两条各自轮换的链。
+// 代价：丢了响应之后从 WiFi(IPv4) 切到蜂窝(IPv6) 的重试会被判重放（要重新登录，等于修复之前的行为）。
+// mode=off、令牌没有指纹、当前请求算不出指纹时放行（和 Match 一致：没有可比的东西）。
+func (b *SessionBinding) SameClientAndNetwork(mode, storedHash, storedCoarse string) bool {
+	current := b.HashForMode(mode)
+	if current == "" || storedHash == "" || current == storedHash {
+		return true
+	}
+	if mode != config.SessionBindingModeLoose || storedCoarse == "" {
+		return false
+	}
+	stored, ok := parseCoarseFingerprint(storedCoarse)
+	if !ok {
+		return false
+	}
+	cur, ok := b.coarse()
+	if !ok {
+		return true
+	}
+	return stored == cur
+}
+
 // ClientFamilyMatches 报告令牌里记录的粗粒度指纹与当前请求是否是同一个「浏览器家族 + 系统家族」（不看 IP）。
 // 记录里没有粗粒度指纹（升级前签发的令牌）时无法判断，按过渡期放行；有但解析不了则不放行。
 // refresh 路径的 rebind 只放行「客户端没变、只是 IP 变了」，家族变了（换了浏览器/系统，或是别的程序拿着令牌）仍撤销。

@@ -336,6 +336,13 @@ describe('isRefreshTokenRejection', () => {
     expect(isRefreshTokenRejection(rejection(403, { reason: 'USER_NOT_ACTIVE' }))).toBe(true)
   })
 
+  it('403 BACKEND_MODE_ADMIN_ONLY means a non-admin session can no longer be refreshed', async () => {
+    const { isRefreshTokenRejection } = await import('@/api/tokenRefresh')
+    expect(isRefreshTokenRejection(rejection(403, { code: 403, message: 'x', reason: 'BACKEND_MODE_ADMIN_ONLY' }))).toBe(true)
+    // 没有业务码的 403（网关 / WAF 的页面）仍然不算令牌被拒。
+    expect(isRefreshTokenRejection(rejection(403, { code: 403, message: 'Backend mode is active.' }))).toBe(false)
+  })
+
   it.each([
     ['a 401 without a business code', rejection(401, { code: 401, message: 'Unauthorized' })],
     ['a 401 with an unrelated code', rejection(401, { code: 401, reason: 'SOMETHING_ELSE' })],

@@ -1212,21 +1212,23 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	result, err := h.authService.RefreshTokenPair(c.Request.Context(), req.RefreshToken)
+	// 后端模式只允许管理员：在消费令牌之前拦（guard 在签发/消费之前调用），被拒用户的令牌原样保留，
+	// 也不会先轮换再报错。响应带明确的业务码 BACKEND_MODE_ADMIN_ONLY，前端据此清登录态。
+	result, err := h.authService.RefreshTokenPairGuarded(c.Request.Context(), req.RefreshToken, func(user *service.User) error {
+		if h.settingSvc != nil && !user.IsAdmin() && h.settingSvc.IsBackendModeEnabled(c.Request.Context()) {
+			return infraerrors.Forbidden("BACKEND_MODE_ADMIN_ONLY", "Backend mode is active. Only admin login is allowed.")
+		}
+		return nil
+	})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	// Backend mode: block non-admin token refresh
-	if h.settingSvc.IsBackendModeEnabled(c.Request.Context()) && result.UserRole != "admin" {
-		response.Forbidden(c, "Backend mode is active. Only admin login is allowed.")
-		return
-	}
-
 	// 刷新时发生了指纹重绑（只是 IP 变了所以放行）：成功的刷新默认不进审计，这一条值得留下——
-	// 只带前后两端的粗粒度标签，不含 IP 与完整 UA。
-	if result.BindingRebound {
+	// 只带前后两端的粗粒度标签，不含 IP 与完整 UA。审计行限频（同一用户 + 会话家族每个窗口一条，
+	// 由服务层判定 AuditRebind），计数照常累加。
+	if result.AuditRebind {
 		middleware2.SetAuditAction(c, service.AuditActionSessionBindingRebind)
 		middleware2.SetAuditActor(c, result.UserID, "")
 		middleware2.SetAuditExtra(c, map[string]any{"binding_from": result.BindingFrom, "binding_to": result.BindingTo})

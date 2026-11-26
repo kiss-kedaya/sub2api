@@ -490,7 +490,8 @@ describe('API Client', () => {
       [401, 'REFRESH_TOKEN_SESSION_EXPIRED'],
       [401, 'SESSION_BINDING_MISMATCH'],
       [401, 'TOKEN_REVOKED'],
-      [403, 'USER_NOT_ACTIVE']
+      [403, 'USER_NOT_ACTIVE'],
+      [403, 'BACKEND_MODE_ADMIN_ONLY']
     ])('服务端明确拒绝这枚刷新令牌（%s %s）时清除失效会话', async (status, reason) => {
       window.history.replaceState({}, '', '/login')
       localStorage.setItem('auth_token', 'expired-token')

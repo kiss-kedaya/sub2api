@@ -969,7 +969,7 @@ func TestRefreshRotationLogsNeverContainTokensHashesIPsOrUserAgents(t *testing.T
 		"refresh token replay detected",
 		"retried within the leeway window",
 		"session binding mismatch on refresh: session kept",
-		"replayed by a different client inside the leeway window",
+		"replayed inside the leeway window by a different client or network",
 		"session binding mismatch on refresh: session family revoked",
 		"refresh session reached its absolute lifetime",
 		"issuing the new refresh token failed",

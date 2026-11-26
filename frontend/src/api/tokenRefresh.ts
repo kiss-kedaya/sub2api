@@ -35,7 +35,8 @@ const REFRESH_REJECTION_REASONS: Record<number, ReadonlySet<string>> = {
     'TOKEN_REVOKED'
   ]),
   // 账号已被停用：服务端已经撤销了会话，重试没有意义。
-  403: new Set(['USER_NOT_ACTIVE'])
+  // 后端模式（只允许管理员）下非管理员的会话再也刷新不了：服务端在消费令牌之前拒绝，业务码明确，清登录态回到登录页。
+  403: new Set(['USER_NOT_ACTIVE', 'BACKEND_MODE_ADMIN_ONLY'])
 }
 
 export interface RefreshTokenResponse {
