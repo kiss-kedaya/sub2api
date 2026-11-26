@@ -856,6 +856,8 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			accountReleaseFunc()
 		}
 		if result != nil {
+			// 结果里的字符串可能是请求体的子串：复制后，排队的计费任务不再钉住请求体。
+			result.DetachRequestStrings()
 			usageInput := &service.RecordUsageInput{
 				Result: result, APIKey: apiKey, User: apiKey.User, Account: account,
 				Subscription: subscription, PricingAt: pricingAt,
@@ -864,7 +866,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				UserAgent: c.GetHeader("User-Agent"), IPAddress: ip.GetClientIP(c),
 				RequestPayloadHash: service.HashUsageRequestPayload(body), ForceCacheBilling: fs.ForceCacheBilling,
 				APIKeyService: h.apiKeyService, SessionID: service.ExtractClientSessionID(c),
-				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel).Detached(),
 			}
 			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 				if recordErr := h.gatewayService.RecordUsage(ctx, usageInput); recordErr != nil {

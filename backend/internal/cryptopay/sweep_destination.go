@@ -242,6 +242,7 @@ type SweepDestinationChange struct {
 
 type sweepDestinationChangeJSON struct {
 	Saved       bool                  `json:"saved"`
+	Applied     bool                  `json:"applied"`
 	Changed     bool                  `json:"changed"`
 	Locked      bool                  `json:"locked"`
 	LockCreated bool                  `json:"lock_created"`
@@ -255,12 +256,15 @@ type sweepDestinationJSON struct {
 	HotWalletSolana string `json:"hot_wallet_solana"`
 }
 
-// JSON renders the admin response body. Callers wrap it under "data".
-func (c SweepDestinationChange) JSON() any {
+// JSON renders the admin response body. Callers wrap it under "data". applied
+// says whether the running service already uses the saved destination: false
+// while a sweep or scan delays the apply (it finishes on its own).
+func (c SweepDestinationChange) JSON(applied bool) any {
 	current := sweepDestinationJSON{HotWalletEVM: c.Current.EVM, HotWalletSolana: c.Current.Solana}
 	previous := sweepDestinationJSON{HotWalletEVM: c.Previous.EVM, HotWalletSolana: c.Previous.Solana}
 	return sweepDestinationChangeJSON{
 		Saved:       true,
+		Applied:     applied,
 		Changed:     c.Changed,
 		Locked:      c.Locked,
 		LockCreated: c.LockCreated,

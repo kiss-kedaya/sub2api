@@ -300,17 +300,26 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 // wrapUsageRecordTaskContext 包装计费任务：复制请求级 context 值，并接管请求的在途余额预留引用。
 // 返回的 abandon 在任务未被执行（被丢弃）时必须调用以归还预留引用；任务执行结束时（含 panic）
 // 自动归还，此时余额缓存已在计费路径中同步扣减。
+//
+// 任务在有界队列里排队的时间可以很长（计费库变慢时是分钟级），所以闭包只能带着
+// 「请求级 context 里被复制出来的那几个小值」，不能带着请求 context 本身：请求 context
+// 的值里挂着 gin.Context（service.WithOpsGinContext），再往下就是整个请求体、BodyTop
+// 索引和上游改写副本，一个排队的计费任务会把一次已经结束的请求的整份内存钉住。
 func wrapUsageRecordTaskContext(parent context.Context, task service.UsageRecordTask) (service.UsageRecordTask, func()) {
 	if task == nil {
 		return nil, func() {}
 	}
 	done := func() {}
+	var detached context.Context
 	if parent != nil {
 		done = service.InflightReservationFromContext(parent).Acquire()
+		// usageRecordContext 只读取下面这几个值；先复制到一个与请求无关的 context 上，
+		// 执行时再从它复制到 worker context，结果与直接读 parent 完全一致。
+		detached = usageRecordContext(parent, context.Background())
 	}
 	return func(ctx context.Context) {
 		defer done()
-		task(usageRecordContext(parent, ctx))
+		task(usageRecordContext(detached, ctx))
 	}, done
 }
 
@@ -998,6 +1007,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			tierPolicy := service.OpenAITierBillingPolicyFromRequest(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+			// worker 在请求结束后才跑：闭包里不能再带着 gin.Context（它连着整份请求体）。
+			channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel).Detached()
 			// 计费锚点：本请求实际使用的分组（选路后 apiKey 已替换为路由 key）。
 			// recordUsageCore 据此识别「Claude 模型被非 Claude 分组服务」的跨目录错配，
 			// 改按 Claude 真价与承载 Claude 的上游分组倍率计费。
@@ -1021,7 +1032,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					QuotaPlatform:      quotaPlatform,
 					TierPolicy:         tierPolicy,
 					SessionID:          sessionID,
-					ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel),
+					ChannelUsageFields: channelUsageFields,
 					PricingAt:          pricingAt,
 					CyberBlocked:       cyberBlocked,
 					NativeCompactionV2: nativeV2,
@@ -1722,6 +1733,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			tierPolicy := service.OpenAITierBillingPolicyFromRequest(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+			// worker 在请求结束后才跑：闭包里不能再带着 gin.Context（它连着整份请求体）。
+			channelUsageFields := clientRequestedUsageFields(c, channelMappingMsg, reqModel, res.UpstreamModel).Detached()
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
@@ -1738,7 +1751,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					QuotaPlatform:      quotaPlatform,
 					TierPolicy:         tierPolicy,
 					SessionID:          sessionID,
-					ChannelUsageFields: clientRequestedUsageFields(c, channelMappingMsg, reqModel, res.UpstreamModel),
+					ChannelUsageFields: channelUsageFields,
 					PricingAt:          pricingAt,
 					CyberBlocked:       cyberBlocked,
 				}); err != nil {
@@ -3616,6 +3629,8 @@ func (h *OpenAIGatewayHandler) submitUsageRecordTask(parent context.Context, tas
 }
 
 func (h *OpenAIGatewayHandler) submitOpenAIUsageRecordTask(parent context.Context, result *service.OpenAIForwardResult, task service.UsageRecordTask) {
+	// 结果里的模型名等字符串可能是请求体的零拷贝子串：任务在队列里排队期间会通过它们钉住整份请求体。
+	result.DetachRequestStrings()
 	// Money-critical bills never drop on pool overflow: media, search surcharge, voice.
 	if result != nil && (result.ImageCount > 0 || result.VideoCount > 0 ||
 		result.SearchCount > 0 || result.WebSearchCalls > 0 || result.AudioUsage != nil || result.OCRPages > 0) {

@@ -112,7 +112,16 @@ func TestEmailSinkUsesExistingMailSenderAndSkipsEmptyRecipient(t *testing.T) {
 func TestDisabledConfigSendsNothing(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
+		// Count only this test's own event: a test in another package's process can
+		// dial a just-closed port that this server happened to get (seen once in CI,
+		// together with a "closed server answered" failure in the cryptopay tests).
+		var got struct {
+			Event string `json:"event"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		if got.Event == "signer.setup" {
+			calls.Add(1)
+		}
 	}))
 	defer server.Close()
 

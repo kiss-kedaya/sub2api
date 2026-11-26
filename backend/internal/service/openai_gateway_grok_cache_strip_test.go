@@ -142,6 +142,8 @@ func TestStripGrokAPIKeyOpenAICompatFieldsAllocatesOnlyTheResult(t *testing.T) {
 		got, err = stripGrokAPIKeyOpenAICompatFields(body)
 		require.NoError(t, err)
 	})
+	// 进程级计数会把同包后台 goroutine 的分配算进来（CI 上出现过 +135KB 的误报）：取多次最小值。
+	newBytes = minAllocatedBytes(newBytes, func() { _, _ = stripGrokAPIKeyOpenAICompatFields(body) })
 	var want []byte
 	legacyBytes := allocatedBytesDuring(func() {
 		want, _ = legacyStripGrokAPIKeyOpenAICompatFields(body)

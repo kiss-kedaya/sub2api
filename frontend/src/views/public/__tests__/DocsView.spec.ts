@@ -278,6 +278,11 @@ describe('public API documentation page', () => {
     expect(key.text()).toContain('/v1/sub2api/key')
     expect(key.text()).toContain('API key')
     expect(key.text()).not.toContain('Login token')
+    const account = wrapper.get('[data-testid="docs-endpoint-key-info-account"]')
+    expect(account.text()).toContain('GET')
+    expect(account.text()).toContain('/v1/sub2api/account')
+    expect(account.text()).toContain('API key')
+    expect(account.text()).not.toContain('Login token')
 
     await wrapper.vm.$router.push('/docs?page=manage-keys')
     await flushPromises()
@@ -302,6 +307,10 @@ describe('public API documentation page', () => {
 
     await search.setValue('key_info_rate_limited')
     expect(sidebar()).toContain('Key self-service API')
+
+    await search.setValue('balance.wallet')
+    expect(sidebar()).toContain('Key self-service API')
+    expect(sidebar()).not.toContain('Web fetch')
     wrapper.unmount()
   })
 

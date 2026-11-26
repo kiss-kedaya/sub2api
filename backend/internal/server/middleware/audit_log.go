@@ -182,6 +182,10 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	// 刷新时的会话指纹重绑（auth.session_binding.rebind）：只记前后两端的粗粒度标签
 	// （如 chrome/windows/ipv4），绝不记 IP 原文与完整 User-Agent。
 	"binding_from": {}, "binding_to": {},
+	// 用户修改「创建 API Key 时是否需要验证身份」开关：只记改前 / 改后的模式标签（auto / on / off）
+	// 和这次修改是否降低了保护强度（on > auto > off）；校验用到的因子名走上面的 api_key_auth_factor，凭据一律不入库。
+	"api_key_create_verification_from": {}, "api_key_create_verification_to": {},
+	"api_key_create_verification_relaxed": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.
@@ -311,6 +315,8 @@ var auditActionOverrides = map[string]string{
 	"POST /api/v1/user/security/passkey/verify/begin":  service.AuditActionAPIKeyPasskeyVerify,
 	"POST /api/v1/user/security/passkey/verify/finish": service.AuditActionAPIKeyPasskeyVerify,
 	"POST /api/v1/user/api-keys/:id/reveal-authorize":  service.AuditActionAPIKeyRevealAuthorize,
+	// 用户自己决定「创建 API Key 时是否需要验证身份」：固定动作名，便于检索谁在什么时候把保护关了。
+	"PUT /api/v1/user/security/api-key-create-verification": service.AuditActionAPIKeyCreateVerificationSet,
 }
 
 // auditAuthEventMeta 第三方登录 / 2FA 认证事件的审计元数据。
@@ -529,6 +535,9 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	// 封存密文的读回接口是 GET，本身没有请求体；显式登记为「无可记录体」，
 	// 防止以后给 GET 加 body 或在 Omit 清单里被当成漏项。
 	"GET /api/v1/user/api-keys/:id/secret-seal": {},
+	// 修改「创建 API Key 时是否需要验证身份」的请求体可能带 verification（密码 / 动态码 / 通行密钥票据）：
+	// 键级脱敏之外再整体不入库，审计只靠 extra 里的因子名与改前 / 改后标签。
+	"PUT /api/v1/user/security/api-key-create-verification": {},
 }
 
 // NewAuditLogMiddleware 创建审计中间件。

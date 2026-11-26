@@ -183,6 +183,73 @@ func TestLoadRedisUsernameFromEnvironment(t *testing.T) {
 	require.Equal(t, "app-user", cfg.Redis.Username)
 }
 
+// 连接池默认值：生产里 go-redis 连接数只涨不缩、池耗尽时请求长时间排队，这些默认值是修法的一部分。
+func TestLoadRedisPoolDefaults(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	require.Equal(t, 512, cfg.Redis.PoolSize)
+	require.Equal(t, 8, cfg.Redis.MinIdleConns)
+	require.Equal(t, 64, cfg.Redis.MaxIdleConns)
+	require.True(t, cfg.Redis.PoolFIFO)
+	require.Equal(t, 1000, cfg.Redis.PoolTimeoutMS)
+	require.Equal(t, 300, cfg.Redis.ConnMaxIdleTimeSeconds)
+	require.Equal(t, 1800, cfg.Redis.ConnMaxLifetimeSeconds)
+	require.Equal(t, 60, cfg.Redis.PoolStatsIntervalSeconds)
+	// 超时三件套保持原值。
+	require.Equal(t, 5, cfg.Redis.DialTimeoutSeconds)
+	require.Equal(t, 3, cfg.Redis.ReadTimeoutSeconds)
+	require.Equal(t, 3, cfg.Redis.WriteTimeoutSeconds)
+}
+
+func TestLoadRedisPoolSettingsFromEnvironment(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("REDIS_POOL_SIZE", "300")
+	t.Setenv("REDIS_MIN_IDLE_CONNS", "4")
+	t.Setenv("REDIS_MAX_IDLE_CONNS", "32")
+	t.Setenv("REDIS_POOL_FIFO", "false")
+	t.Setenv("REDIS_POOL_TIMEOUT_MS", "250")
+	t.Setenv("REDIS_CONN_MAX_IDLE_TIME_SECONDS", "120")
+	t.Setenv("REDIS_CONN_MAX_LIFETIME_SECONDS", "600")
+	t.Setenv("REDIS_POOL_STATS_INTERVAL_SECONDS", "15")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 300, cfg.Redis.PoolSize)
+	require.Equal(t, 4, cfg.Redis.MinIdleConns)
+	require.Equal(t, 32, cfg.Redis.MaxIdleConns)
+	require.False(t, cfg.Redis.PoolFIFO)
+	require.Equal(t, 250, cfg.Redis.PoolTimeoutMS)
+	require.Equal(t, 120, cfg.Redis.ConnMaxIdleTimeSeconds)
+	require.Equal(t, 600, cfg.Redis.ConnMaxLifetimeSeconds)
+	require.Equal(t, 15, cfg.Redis.PoolStatsIntervalSeconds)
+}
+
+// 生产环境变量是 REDIS_POOL_SIZE=4096 / REDIS_MIN_IDLE_CONNS=256：加上新增的默认值之后
+// 配置必须仍然通过校验（不能因为新键的交叉校验让新版本起不来），0 表示关闭的几项也要能通过。
+func TestValidateRedisPoolKeepsLegacyConfigsLoadable(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("REDIS_POOL_SIZE", "4096")
+	t.Setenv("REDIS_MIN_IDLE_CONNS", "256")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 4096, cfg.Redis.PoolSize)
+	require.Equal(t, 256, cfg.Redis.MinIdleConns)
+	require.Less(t, cfg.Redis.MaxIdleConns, cfg.Redis.MinIdleConns, "新默认的空闲上限小于旧的预热数：不能拒绝，由 buildRedisOptions 规整")
+
+	// 小连接池（旧版本里 pool_size=32、min_idle_conns=8 是合法配置）。
+	cfg.Redis.PoolSize = 32
+	cfg.Redis.MinIdleConns = 8
+	require.NoError(t, cfg.Validate())
+
+	cfg.Redis.MaxIdleConns = 0
+	cfg.Redis.ConnMaxIdleTimeSeconds = 0
+	cfg.Redis.ConnMaxLifetimeSeconds = 0
+	cfg.Redis.PoolStatsIntervalSeconds = 0
+	require.NoError(t, cfg.Validate())
+}
+
 func TestLoadHTTPIngressSafetyDefaults(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	cfg, err := Load()
@@ -1850,6 +1917,31 @@ func TestValidateConfigErrors(t *testing.T) {
 			name:    "redis idle exceeds pool",
 			mutate:  func(c *Config) { c.Redis.MinIdleConns = c.Redis.PoolSize + 1 },
 			wantErr: "redis.min_idle_conns cannot exceed",
+		},
+		{
+			name:    "redis max idle negative",
+			mutate:  func(c *Config) { c.Redis.MaxIdleConns = -1 },
+			wantErr: "redis.max_idle_conns",
+		},
+		{
+			name:    "redis pool timeout zero",
+			mutate:  func(c *Config) { c.Redis.PoolTimeoutMS = 0 },
+			wantErr: "redis.pool_timeout_ms",
+		},
+		{
+			name:    "redis conn max idle time negative",
+			mutate:  func(c *Config) { c.Redis.ConnMaxIdleTimeSeconds = -1 },
+			wantErr: "redis.conn_max_idle_time_seconds",
+		},
+		{
+			name:    "redis conn max lifetime negative",
+			mutate:  func(c *Config) { c.Redis.ConnMaxLifetimeSeconds = -1 },
+			wantErr: "redis.conn_max_lifetime_seconds",
+		},
+		{
+			name:    "redis pool stats interval negative",
+			mutate:  func(c *Config) { c.Redis.PoolStatsIntervalSeconds = -1 },
+			wantErr: "redis.pool_stats_interval_seconds",
 		},
 		{
 			name:    "dashboard cache disabled negative",

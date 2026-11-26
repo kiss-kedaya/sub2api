@@ -27,10 +27,11 @@ import (
 //
 // 本文件是唯一判定入口，落地两条规则：
 //   - 创建 Key 前的身份校验，方式从账号**实际可用**的因子里三选一；可用性只认：
-//     登录密码可用 / 已开 TOTP / 已绑定 Passkey。**只有开了 TOTP 或绑了 Passkey 的账号
+//     登录密码可用 / 已开 TOTP / 已绑定 Passkey。**默认只有开了 TOTP 或绑了 Passkey 的账号
 //     才强制这一步**——这是用户自己选择的更高安全级别；只有登录密码的账号（含邮箱注册、
-//     用 Google / GitHub 登录的用户）不再被强制输入密码（见 APIKeyVerificationFactors.
-//     CreateVerificationRequired）。要求密码的是「以后还能再查看」的封存，那是创建后另外
+//     用 Google / GitHub 登录的用户）默认不再被强制输入密码（见 APIKeyVerificationFactors.
+//     CreateVerificationRequired）。用户可以在个人资料里自己把这一步改成必须（on）或不要（off），
+//     见 api_key_create_verification.go。要求密码的是「以后还能再查看」的封存，那是创建后另外
 //     勾选的可选项，不是创建的前置条件。
 //   - 「以后还能再查看」的封存密文会记录本次授权因子（api_key_secrets.auth_factor），
 //     再次查看时必须用同一因子重新授权，成功后才签发 5 分钟一次性 reveal grant。
@@ -127,11 +128,24 @@ type APIKeyVerificationFactors struct {
 	// SealAvailable 是否支持「以后还能查看」（本地解密必须用登录密码派生密钥，
 	// 无密码的 OAuth-only 账号只能创建时一次性显示）。
 	SealAvailable bool `json:"seal_available"`
-	// CreateVerificationRequired 创建 / 轮换 Key 前是否必须先通过一次身份校验：
-	// 只有已开 TOTP 或已绑定 Passkey 的账号才为 true。仅有登录密码的账号为 false——
+	// CreateVerificationRequired 创建 / 轮换 Key 前是否必须先通过一次身份校验（账号的**有效**值）：
+	// 默认（auto）只有已开 TOTP 或已绑定 Passkey 的账号才为 true，仅有登录密码的账号为 false——
 	// 不能再因为「有密码」就把人卡在创建这一步（第三方登录用户常常根本不记得密码）。
+	// 用户可以在个人资料里自己改成 on / off（见 api_key_create_verification.go），这里始终是
+	// 把开关与账号因子一起算出来的结果；账号一个可用因子都没有时恒为 false。
 	// AvailableMethods 仍然列出密码：二次查看（解封存密文）和已开 2FA 的账号三选一要用。
 	CreateVerificationRequired bool `json:"create_verification_required"`
+	// CreateVerificationMode 用户在「创建 API Key 时需要验证身份」开关上的设置：
+	// auto（没设置过，沿用默认规则）/ on / off。
+	CreateVerificationMode string `json:"create_verification_mode"`
+	// CreateVerificationConfigurable 账号至少有一个可用因子时才为 true；
+	// 为 false 时这个开关没有意义（无处可验），前端置灰并说明原因。
+	CreateVerificationConfigurable bool `json:"create_verification_configurable"`
+	// CreateVerificationDefaultRequired 不动开关（auto）时，这个账号创建 / 轮换 Key 是否必须校验：
+	// 开了 TOTP 或绑了 Passkey 才为 true。前端把开关拨到「不需要」时据此决定写什么：默认本来就要求（true）的账号
+	// 才需要显式写 off；默认本来就不要求（false，例如只有登录密码）的账号写 auto（恢复默认）就够了——
+	// 否则会留下一个等账号以后开了 2FA 才突然生效的潜伏 off。
+	CreateVerificationDefaultRequired bool `json:"create_verification_default_required"`
 }
 
 // Available 报告是否存在至少一个可用因子。
@@ -177,6 +191,9 @@ func (in APIKeyVerificationInput) Normalize() APIKeyVerificationInput {
 // APIKeyVerificationResult 是一次成功校验的结论（只含因子名，不含凭据）。
 type APIKeyVerificationResult struct {
 	Factor string
+	// SkippedByUserSetting 本次没有做校验，是因为账号把「创建 API Key 时需要验证身份」设成了关闭（off）。
+	// 只用于审计区分「用户自己关掉」与「账号没有因子 / 默认不强制」（skipped_no_factor）。
+	SkippedByUserSetting bool
 }
 
 // APIKeyRevealGrant 是二次查看授权成功的回执。
@@ -248,6 +265,9 @@ type APIKeyVerificationService struct {
 	store      APIKeyVerificationStore
 	// passwordLimiter 是密码因子的按用户失败预算；启动时由 router 注入一次，之后只读。
 	passwordLimiter APIKeyPasswordAttemptLimiter
+	// createPrefs 是「创建 API Key 时是否需要验证身份」的用户开关存储；启动时注入一次，之后只读。
+	// nil 时所有账号一律按 auto（改造前的规则）。
+	createPrefs UserSecurityPreferenceRepository
 }
 
 // SetPasswordAttemptLimiter 注入密码因子的失败预算（router 装配，启动期调用一次）。
@@ -361,21 +381,41 @@ func (s *APIKeyVerificationService) passkeyCount(ctx context.Context, userID int
 	return len(records), nil
 }
 
-// Factors 计算该账号当前可用的身份校验因子。
+// Factors 计算该账号当前可用的身份校验因子，以及「创建 Key 前是否必须校验」的有效值
+// （叠加了用户自己在个人资料里设的开关；没设过就是默认规则）。
 func (s *APIKeyVerificationService) Factors(ctx context.Context, userID int64) (*APIKeyVerificationFactors, error) {
+	user, factors, err := s.loadAccountFactors(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.applyCreateVerificationPolicy(ctx, user.ID, factors); err != nil {
+		return nil, err
+	}
+	return factors, nil
+}
+
+// loadAccountFactors 读账号并算出它自身的因子（不读「创建时是否需要验证身份」开关）。
+func (s *APIKeyVerificationService) loadAccountFactors(ctx context.Context, userID int64) (*User, *APIKeyVerificationFactors, error) {
 	if s == nil || s.userRepo == nil || userID <= 0 {
-		return nil, ErrAPIKeyVerificationUnavailable
+		return nil, nil, ErrAPIKeyVerificationUnavailable
 	}
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("load user for api key verification: %w", err)
+		return nil, nil, fmt.Errorf("load user for api key verification: %w", err)
 	}
 	if user == nil {
-		return nil, ErrAPIKeyVerificationUnavailable
+		return nil, nil, ErrAPIKeyVerificationUnavailable
 	}
-	return s.factorsForUser(ctx, user)
+	factors, err := s.factorsForUser(ctx, user)
+	if err != nil {
+		return nil, nil, err
+	}
+	return user, factors, nil
 }
 
+// factorsForUser 只看账号自身的因子；CreateVerificationRequired / Mode 在这里是默认（auto）口径，
+// 需要叠加用户开关的调用方（Factors、verifyForUser 的无校验分支）再走 applyCreateVerificationPolicy。
+// 二次查看 / 封存只关心哪些因子可用，不依赖开关，所以不会因为偏好表出问题而受影响。
 func (s *APIKeyVerificationService) factorsForUser(ctx context.Context, user *User) (*APIKeyVerificationFactors, error) {
 	if s == nil || user == nil {
 		return nil, ErrAPIKeyVerificationUnavailable
@@ -403,23 +443,28 @@ func (s *APIKeyVerificationService) factorsForUser(ctx context.Context, user *Us
 	if len(methods) > 0 {
 		preferred = methods[0]
 	}
-	return &APIKeyVerificationFactors{
-		PasswordAvailable: passwordAvailable,
-		TOTPEnabled:       totpEnabled,
-		PasskeyCount:      count,
-		Preferred:         preferred,
-		AvailableMethods:  methods,
-		SealAvailable:     passwordAvailable,
-		// 只认用户自己开启的更强因子；登录密码单独存在时不强制（见字段注释）。
-		CreateVerificationRequired: count > 0 || totpEnabled,
-	}, nil
+	factors := &APIKeyVerificationFactors{
+		PasswordAvailable:              passwordAvailable,
+		TOTPEnabled:                    totpEnabled,
+		PasskeyCount:                   count,
+		Preferred:                      preferred,
+		AvailableMethods:               methods,
+		SealAvailable:                  passwordAvailable,
+		CreateVerificationMode:         APIKeyCreateVerificationAuto,
+		CreateVerificationConfigurable: len(methods) > 0,
+	}
+	// 默认口径：只认用户自己开启的更强因子；登录密码单独存在时不强制（见字段注释）。
+	factors.CreateVerificationRequired = apiKeyCreateVerificationRequired(APIKeyCreateVerificationAuto, factors)
+	factors.CreateVerificationDefaultRequired = factors.CreateVerificationRequired
+	return factors, nil
 }
 
 // VerifyForCreate 是创建 / 变更 API Key 明文的身份校验。
 //
-// 返回本次实际使用的因子；账号没有开启 TOTP、也没有绑定 Passkey 时（含只有登录密码的
-// 账号、OAuth-only 账号）放行并返回空串——创建时一次性显示明文，「以后还能查看」是创建后
-// 另外勾选的封存（那里才要登录密码）。账号开了 TOTP 或绑了 Passkey 时未带校验直接 400。
+// 返回本次实际使用的因子；账号的「有效要求」是不要求校验时（默认规则下没开 TOTP、也没绑 Passkey 的账号，
+// 含只有登录密码的账号、OAuth-only 账号；或者用户自己把开关设成了 off）放行并返回空串——创建时一次性显示
+// 明文，「以后还能查看」是创建后另外勾选的封存（那里才要登录密码）。账号的有效要求是必须校验（开了 TOTP
+// 或绑了 Passkey 且没关掉开关，或用户把开关设成了 on）时未带校验直接 400。
 // 请求里主动带了因子（旧页面的密码步骤等）时照常按因子真验证，错了就拒绝。
 //
 // 所有会下发 / 变更明文的入口都必须走这里：创建（POST /keys）、批量轮换
@@ -475,10 +520,17 @@ func (s *APIKeyVerificationService) verifyForUser(ctx context.Context, userID in
 		return nil, err
 	}
 	if in == nil || strings.TrimSpace(in.Method) == "" {
-		// 没开 TOTP、也没绑 Passkey：不强制校验（只有登录密码的账号、OAuth-only 账号都在这里），
-		// 创建时一次性显示明文；开了更强因子的账号不带校验一律拒绝。
+		// 没带校验材料：是否放行取决于「有效要求」——默认规则下没开 TOTP、也没绑 Passkey 的账号不强制
+		// （只有登录密码的账号、OAuth-only 账号都在这里），用户自己把开关设成 off 的账号也不强制；
+		// 其余账号不带校验一律拒绝。账号没有任何可用因子时恒为不强制（on 无法满足，不能把人锁死）。
+		// 带了校验材料的请求不需要读开关：照常往下按因子真验证。
+		if err := s.applyCreateVerificationPolicy(ctx, user.ID, factors); err != nil {
+			return nil, err
+		}
 		if !factors.CreateVerificationRequired {
-			return &APIKeyVerificationResult{}, nil
+			return &APIKeyVerificationResult{
+				SkippedByUserSetting: factors.CreateVerificationMode == APIKeyCreateVerificationOff,
+			}, nil
 		}
 		return nil, ErrAPIKeyVerificationRequired
 	}
@@ -522,7 +574,8 @@ func (s *APIKeyVerificationService) VerifyForSeal(ctx context.Context, userID in
 // 走校验：旧客户端提供不了校验材料，只能被拒（VERIFY_REQUIRED），升级到新前端后带登录密码封存即可；
 // 账号没有任何可用因子（第三方注册且未绑 2FA）时保持放行，与创建 Key 是同一条语义。
 func (s *APIKeyVerificationService) VerifyForLegacySeal(ctx context.Context, userID int64) error {
-	factors, err := s.Factors(ctx, userID)
+	// 只关心「有没有可用因子」，不读创建开关：封存路径不依赖 user_security_preferences。
+	_, factors, err := s.loadAccountFactors(ctx, userID)
 	if err != nil {
 		return err
 	}

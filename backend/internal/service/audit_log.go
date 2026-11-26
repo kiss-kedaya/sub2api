@@ -89,6 +89,10 @@ const (
 	AuditActionAPIKeyPasskeyVerify   = "api_key.verify.passkey"
 	AuditActionAPIKeyRevealAuthorize = "api_key.reveal.authorize"
 	AuditActionAPIKeyUpdate          = "api_key.update"
+	// AuditActionAPIKeyCreateVerificationSet 是用户修改「创建 API Key 时是否需要验证身份」开关的动作名。
+	// extra 只记因子名 / 结果 / 机器码，以及改前 / 改后的模式标签（auto / on / off），
+	// 密码、动态码、断言、票据永远不进审计。
+	AuditActionAPIKeyCreateVerificationSet = "api_key.create_verification.set"
 
 	// 第三方登录（OAuth / 扫码 / 设备登录）与 2FA 挑战的固定动作名。
 	// 与 AuditAuthMethodOAuth / AuditAuthMethodPasskey 配套，让「哪个渠道、

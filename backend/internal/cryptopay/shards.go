@@ -59,7 +59,9 @@ func (s *Service) SetupSignerShards(ctx context.Context, request SignerSetupRequ
 	if err != nil {
 		return nil, err
 	}
-	s.sweepMu.Lock()
+	if err := s.lockSweepWithin(ctx); err != nil {
+		return nil, err
+	}
 	defer s.sweepMu.Unlock()
 	status, err := manager.SetupShards(ctx, wallet.ShardSetupRequest{
 		DataKey: request.DataKey, ShareA: request.ShareA, ConfirmShare: request.ConfirmShare,
@@ -87,7 +89,9 @@ func (s *Service) ResplitSignerShards(ctx context.Context, request SignerSetupRe
 	if err != nil {
 		return nil, err
 	}
-	s.sweepMu.Lock()
+	if err := s.lockSweepWithin(ctx); err != nil {
+		return nil, err
+	}
 	defer s.sweepMu.Unlock()
 	status, err := manager.ResplitShards(ctx, wallet.ShardSetupRequest{
 		DataKey: request.DataKey, ShareA: request.ShareA, ConfirmShare: request.ConfirmShare,
@@ -139,7 +143,9 @@ func (s *Service) UnlockSignerWindow(ctx context.Context, share string) (*wallet
 	}
 	// Serialised with sweep runs: a sweep must not clear the key between this
 	// unlock and the status read below.
-	s.sweepMu.Lock()
+	if err := s.lockSweepWithin(ctx); err != nil {
+		return nil, err
+	}
 	defer s.sweepMu.Unlock()
 	if err := manager.UnlockSigner(ctx, share); err != nil {
 		return nil, err
@@ -217,7 +223,9 @@ func (s *Service) EnableAutoSweep(ctx context.Context, share string) (*wallet.Sh
 	if err != nil {
 		return nil, err
 	}
-	s.sweepMu.Lock()
+	if err := s.lockSweepWithin(ctx); err != nil {
+		return nil, err
+	}
 	defer s.sweepMu.Unlock()
 	return manager.EnableAutoSweep(ctx, share)
 }
@@ -228,7 +236,9 @@ func (s *Service) DisableAutoSweep(ctx context.Context) (*wallet.ShardStatus, er
 	if err != nil {
 		return nil, err
 	}
-	s.sweepMu.Lock()
+	if err := s.lockSweepWithin(ctx); err != nil {
+		return nil, err
+	}
 	defer s.sweepMu.Unlock()
 	return manager.DisableAutoSweep(ctx)
 }
@@ -273,7 +283,9 @@ func (s *Service) ImportHotMnemonicWithShare(ctx context.Context, mnemonic, shar
 	if err != nil {
 		return err
 	}
-	s.sweepMu.Lock()
+	if err := s.lockSweepWithin(ctx); err != nil {
+		return err
+	}
 	defer s.sweepMu.Unlock()
 	if strings.TrimSpace(share) == "" {
 		return manager.ImportHotMnemonic(ctx, mnemonic)

@@ -1081,12 +1081,39 @@ redis:
   # Database number (0-15)
   # 数据库编号（0-15）
   db: 0
-  # Connection pool size (max concurrent connections)
-  # 连接池大小（最大并发连接数）
-  pool_size: 1024
-  # Minimum number of idle connections (高并发场景建议 128+，保持足够热连接)
-  # 最小空闲连接数
-  min_idle_conns: 128
+  # Connection pool size (max concurrent connections per process).
+  # It is also the back-pressure valve: when Redis slows down and the pool is full, new commands wait at most
+  # pool_timeout_ms and then fail fast instead of piling more connections onto an already slow Redis.
+  # Keep total connections of all processes well below Redis `maxclients` (blue/green keeps two processes per host).
+  # 连接池大小（单进程最大并发连接数）。同时是背压阀：Redis 变慢、池子到顶后，新命令最多等 pool_timeout_ms 就快速失败，
+  # 而不是继续新建连接把已经很慢的 Redis 拖得更慢。所有进程的连接总数要远低于 Redis 的 maxclients（蓝绿发版每台机器会有两个进程）。
+  pool_size: 512
+  # Minimum number of idle (pre-warmed) connections. The pool keeps topping idle connections up to this number even without traffic, keep it small (<= 16).
+  # 最小空闲（预热）连接数。池会一直把空闲连接补足到这个数量，没有流量也一样，所以保持小值（建议 <= 16）。
+  min_idle_conns: 8
+  # Idle connection cap (0 = unlimited). A connection returned while the idle count is at the cap is closed
+  # immediately, so a pool inflated by a burst shrinks back quickly. Values below min_idle_conns are raised to it.
+  # 空闲连接上限（0 表示不限制）。归还连接时空闲数已达上限，该连接直接关闭，突发期撑大的连接池很快缩回来。
+  # 小于 min_idle_conns 时按 min_idle_conns 处理。
+  max_idle_conns: 64
+  # FIFO idle connection reuse. With the default LIFO reuse, connections at the bottom of the stack are never picked again,
+  # so conn_max_idle_time / conn_max_lifetime are never checked for them.
+  # 空闲连接先进先出。默认的 LIFO 下压在栈底的连接永远不会被再次取到，也就永远不会被 conn_max_idle_time / conn_max_lifetime 检查。
+  pool_fifo: true
+  # Max wait for a free connection when the pool is exhausted, in milliseconds. go-redis retries pool timeouts
+  # (3 retries by default), so one command waits at most about 4x this value.
+  # 池耗尽时等待空闲连接的最长时间（毫秒）。go-redis 会对池超时重试（默认 3 次），单条命令最坏约等 4 倍该值。
+  pool_timeout_ms: 1000
+  # Idle connections older than this are closed lazily when picked (0 = never). Keep it below the Redis `timeout` setting.
+  # 空闲超过该时间的连接在被取到时惰性关闭（0 表示不回收）。应小于 Redis 服务端的 timeout 配置。
+  conn_max_idle_time_seconds: 300
+  # Connections older than this are closed lazily when picked (0 = unlimited); expiry has a +-10% jitter.
+  # 存活超过该时间的连接在被取到时惰性关闭（0 表示不限制）；到期时间带 ±10% 抖动。
+  conn_max_lifetime_seconds: 1800
+  # Interval of the pool statistics log line (0 = off). Logged only when the numbers changed; WARN when the pool is
+  # over 80% full or pool timeouts happened in the interval.
+  # 连接池统计日志间隔（0 表示关闭）。数值有变化才记录；连接数超过池容量 80% 或本轮出现池超时时升级为 WARN。
+  pool_stats_interval_seconds: 60
   # Enable TLS/SSL connection
   # 是否启用 TLS/SSL 连接
   enable_tls: false

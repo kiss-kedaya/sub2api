@@ -131,11 +131,27 @@ export async function getCryptoConfigPrivate(verification: CryptoVerification): 
   return data.data
 }
 
+export interface CryptoConfigSaveResult {
+  saved: true
+  // false: the config is stored, but the running service has not picked it up yet
+  // (typically a sweep or scan is in progress); it applies by itself when that ends.
+  // Older backends never send the field, which means nothing is pending.
+  applied: boolean
+}
+
 // The backend applies a pointer patch: omitted keys keep their stored value.
 // Sending only the changed fields is what prevents a full-object write from
 // silently rewriting maps the console never rendered.
-export async function updateCryptoConfig(cfg: CryptoConfigPatch, verification?: CryptoVerification): Promise<void> {
-  await apiClient.put('/admin/crypto/config', cfg, cryptoRequestOptions(verification))
+export async function updateCryptoConfig(cfg: CryptoConfigPatch, verification?: CryptoVerification): Promise<CryptoConfigSaveResult> {
+  const { data } = await apiClient.put('/admin/crypto/config', cfg, cryptoRequestOptions(verification))
+  return { saved: true, applied: data?.data?.applied !== false }
+}
+
+// The shared client reports a request that never got an answer (dropped
+// connection, gateway timeout, browser gave up) as status 0. For a write that
+// says nothing about whether the server stored it.
+export function isCryptoNoResponseError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { status?: unknown }).status === 0
 }
 
 export async function listDepositAddresses(userId: number): Promise<DepositAddress[]> {

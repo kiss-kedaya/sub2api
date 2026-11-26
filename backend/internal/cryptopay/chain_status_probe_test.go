@@ -60,13 +60,23 @@ func TestProbeNodeClassifiesEachFailureAndLeaksNothing(t *testing.T) {
 }
 
 func TestProbeNodeToAClosedServerIsAConnectionError(t *testing.T) {
-	dead := newFakeNode(t, fakeNodeOpts{chainID: 56, head: 1})
-	dead.srv.Close()
 	// Default timeout: on Windows a refused loopback connect can take about a second.
-	m, _, _ := newTestMonitor(t, map[string]*fakeNode{"dead": dead})
-	p := m.probeNode("dead", 56)
-	require.Equal(t, NodeErrConnection, p.ErrorKind)
-	require.False(t, p.HasHead)
+	// Another test process can grab the just-freed port and answer it (seen once in
+	// CI: "bad_response"), so a fresh closed port gets up to three tries.
+	var kind string
+	var hasHead bool
+	for attempt := 0; attempt < 3; attempt++ {
+		dead := newFakeNode(t, fakeNodeOpts{chainID: 56, head: 1})
+		dead.srv.Close()
+		m, _, _ := newTestMonitor(t, map[string]*fakeNode{"dead": dead})
+		p := m.probeNode("dead", 56)
+		kind, hasHead = p.ErrorKind, p.HasHead
+		if kind == NodeErrConnection {
+			break
+		}
+	}
+	require.Equal(t, NodeErrConnection, kind)
+	require.False(t, hasHead)
 }
 
 func TestProbeLatencyCoversTheRoundTrip(t *testing.T) {

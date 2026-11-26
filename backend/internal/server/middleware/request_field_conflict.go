@@ -3,11 +3,13 @@ package middleware
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requestmodel"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -66,6 +68,9 @@ func RejectConflictingRequestFields() gin.HandlerFunc {
 			body = doc
 		}
 		requestmodel.ResetRequestBody(c.Request, body)
+		// 处理链返回后（含中途 Abort）丢掉对请求体的引用：gin 把 Context 放回对象池时不重置，
+		// 计费任务、日志队列也可能带着它，不清的话已经结束的请求要多占几个 GC 周期的内存。
+		defer releaseRequestBodyAfterChain(c, c.Request.Body)
 
 		field, conflict := requestmodel.ConflictingField(c.GetHeader("Content-Type"), body)
 		if !conflict {
@@ -77,6 +82,20 @@ func RejectConflictingRequestFields() gin.HandlerFunc {
 		writeGatewayInvalidRequest(c, http.StatusBadRequest, fmt.Sprintf("Request body declares field %.64q more than once", field))
 		c.Abort()
 	}
+}
+
+// releaseRequestBodyAfterChain 清掉本请求在 Request.Body 与 gin.Context 上留下的请求体引用。
+// created 是本中间件回填的那个 Body；链上后面的中间件也可能再回填一个（同一份字节），一并清掉。
+func releaseRequestBodyAfterChain(c *gin.Context, created io.ReadCloser) {
+	if p, ok := created.(*httputil.PrereadBody); ok {
+		p.Release()
+	}
+	if c.Request != nil {
+		if p, ok := c.Request.Body.(*httputil.PrereadBody); ok {
+			p.Release()
+		}
+	}
+	service.ReleaseRequestBodyReferences(c)
 }
 
 // writeGatewayInvalidRequest 按入口协议输出 invalid_request_error：

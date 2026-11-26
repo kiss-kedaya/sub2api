@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ipnotice"
 	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
@@ -60,26 +61,47 @@ func (p *PrereadBody) Bytes() []byte {
 	return p.body
 }
 
+// Release 丢掉对请求体的引用。请求处理链结束后调用：gin 会把 gin.Context 放回对象池，
+// 池里的 Context 仍然指着最后一个请求的 *http.Request，计费任务、日志队列也可能带着它，
+// 不清掉的话整份请求体（可达数 MB）要等到 Context 被复用或池被清空才能回收。
+// 释放之后 Read 返回 io.EOF、Bytes 返回 nil；必须只在没有任何后续读取之后调用。
+func (p *PrereadBody) Release() {
+	if p == nil {
+		return
+	}
+	p.body = nil
+	p.reader = bytes.NewReader(nil)
+}
+
 // ReadRequestBodyWithPrealloc reads request body with preallocated buffer based
 // on content length, transparently decoding any Content-Encoding the upstream
 // client used to compress the body (zstd, gzip, deflate).
 // 已由 PrereadBody 回填的请求体直接返回其完整切片（零拷贝），不检查内部
 // reader 是否已被消费——见 PrereadBody 的文档说明。
 func ReadRequestBodyWithPrealloc(req *http.Request) (body []byte, readErr error) {
+	body, _, readErr = readRequestBodyReplayed(req)
+	return body, readErr
+}
+
+// readRequestBodyReplayed is ReadRequestBodyWithPrealloc. replayUntouched reports that the notice
+// replay normalization ran and handed back the very slice it was given.
+func readRequestBodyReplayed(req *http.Request) (body []byte, replayUntouched bool, readErr error) {
 	defer func() {
 		if readErr == nil && req != nil {
 			requestcapture.FromContext(req.Context()).ClientRequest(body, req.Header.Get("Content-Type"), req.Header)
 			requestcapture.SmallFromContext(req.Context()).ClientRequest(body, req.Header)
 		}
 		if readErr == nil && req != nil && req.URL != nil {
-			body = ipnotice.NormalizeReplay(body, ipnotice.ReplayProtocolForPath(req.URL.Path))
+			read := body
+			body = ipnotice.NormalizeReplay(read, ipnotice.ReplayProtocolForPath(req.URL.Path))
+			replayUntouched = sameSlice(read, body)
 		}
 	}()
 	if req == nil || req.Body == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	if preread, ok := req.Body.(*PrereadBody); ok {
-		return preread.Bytes(), nil
+		return preread.Bytes(), false, nil
 	}
 
 	capHint := requestBodyReadInitCap
@@ -96,24 +118,29 @@ func ReadRequestBodyWithPrealloc(req *http.Request) (body []byte, readErr error)
 
 	raw, err := readRequestBodyChunks(req.Body, capHint, req.ContentLength)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	enc := strings.ToLower(strings.TrimSpace(req.Header.Get("Content-Encoding")))
 	if enc == "" || enc == "identity" {
-		return raw, nil
+		return raw, false, nil
 	}
 
 	decoded, err := decompressRequestBody(enc, raw)
 	if err != nil {
-		return nil, fmt.Errorf("decode Content-Encoding %q: %w", enc, err)
+		return nil, false, fmt.Errorf("decode Content-Encoding %q: %w", enc, err)
 	}
 
 	req.Header.Del("Content-Encoding")
 	req.Header.Del("Content-Length")
 	req.ContentLength = int64(len(decoded))
 
-	return decoded, nil
+	return decoded, false, nil
+}
+
+// sameSlice reports whether a and b are the same slice: same length and same data pointer.
+func sameSlice(a, b []byte) bool {
+	return len(a) == len(b) && (len(a) == 0 || unsafe.SliceData(a) == unsafe.SliceData(b))
 }
 
 // Read bounded chunks as bytes arrive, then assemble the exact-size result.
@@ -169,16 +196,22 @@ func readRequestBodyChunks(reader io.Reader, initialCapacity int, contentLength 
 // ReadLenientJSONRequestBodyWithPrealloc reads a request body and normalizes
 // JSON string control bytes before strict validation.
 func ReadLenientJSONRequestBodyWithPrealloc(req *http.Request, maxNormalizedBytes int64) ([]byte, error) {
-	body, err := ReadRequestBodyWithPrealloc(req)
+	read, replayUntouched, err := readRequestBodyReplayed(req)
 	if err != nil {
 		return nil, err
 	}
-	body, err = NormalizeLenientJSONRequestBody(body, maxNormalizedBytes)
+	body, err := NormalizeLenientJSONRequestBody(read, maxNormalizedBytes)
 	if err != nil {
 		return nil, err
 	}
 	if req != nil && req.URL != nil {
-		body = ipnotice.NormalizeReplay(body, ipnotice.ReplayProtocolForPath(req.URL.Path))
+		// The replay normalization is a function of the bytes and the path alone. It already ran
+		// on exactly these bytes and left them untouched, so running it again could only repeat that
+		// answer; it is needed again only when the lenient pass changed the body (a body that was
+		// not valid JSON because of raw control bytes is only valid now).
+		if !replayUntouched || !sameSlice(read, body) {
+			body = ipnotice.NormalizeReplay(body, ipnotice.ReplayProtocolForPath(req.URL.Path))
+		}
 	}
 	return body, nil
 }

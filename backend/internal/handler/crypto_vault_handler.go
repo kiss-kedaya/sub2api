@@ -2,10 +2,12 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/gin-gonic/gin"
 )
@@ -37,6 +39,10 @@ func (h *CryptoHandler) AdminImportHotMnemonic(c *gin.Context) {
 	}
 	err := h.service.ImportHotMnemonic(cryptoAuditContext(c), req.HotMnemonic)
 	req.HotMnemonic = ""
+	if errors.Is(err, cryptopay.ErrSweepBusy) {
+		writeCryptoSignerError(c, err)
+		return
+	}
 	if err != nil {
 		response.Error(c, http.StatusConflict, "Hot-wallet import refused; check the wallet configuration and unresolved sweeps")
 		return
