@@ -21,6 +21,12 @@ import (
 
 var errCircuitBreakerNoRepo = errors.New("account circuit breaker: account repository is not configured")
 
+// SchedulerAccountRefresher 是账号仓库的可选接口：往调度器 outbox 写一条账号变更事件，
+// 让调度快照重建这个账号所在的桶。断路器在冷却到期后用它把账号放回桶里（见 scheduleRecoveryRefresh）。
+type SchedulerAccountRefresher interface {
+	RefreshSchedulerAccount(ctx context.Context, accountID int64) error
+}
+
 // SetAccountCircuitBreaker 挂上断路器（可选依赖；为 nil 时所有查询都按「没有熔断」处理）。
 func (s *RateLimitService) SetAccountCircuitBreaker(b *AccountCircuitBreaker) {
 	s.circuitBreaker = b
@@ -65,6 +71,30 @@ func (s *RateLimitService) persistAccountCircuitTrip(ctx context.Context, trip A
 // AccountCircuitOpen 让 handler 的重试循环通过 GatewayService 查询断路器（见 handler.accountCircuitGate）。
 func (s *GatewayService) AccountCircuitOpen(accountID int64) bool {
 	return s != nil && s.rateLimitService.AccountCircuitOpen(accountID)
+}
+
+// CircuitRecoveryIn 返回最早结束冷却的熔断账号还要多久恢复（见 AccountCircuitBreaker.EarliestRecovery）。
+func (s *RateLimitService) CircuitRecoveryIn() (time.Duration, bool) {
+	if s == nil {
+		return 0, false
+	}
+	return s.circuitBreaker.EarliestRecovery()
+}
+
+// CircuitRecoveryIn 让 handler 给「没有可用账号」的 503 算 Retry-After。
+func (s *GatewayService) CircuitRecoveryIn() (time.Duration, bool) {
+	if s == nil {
+		return 0, false
+	}
+	return s.rateLimitService.CircuitRecoveryIn()
+}
+
+// CircuitRecoveryIn 让 OpenAI 系 handler 给「没有可用账号」的 503 算 Retry-After。
+func (s *OpenAIGatewayService) CircuitRecoveryIn() (time.Duration, bool) {
+	if s == nil {
+		return 0, false
+	}
+	return s.rateLimitService.CircuitRecoveryIn()
 }
 
 // AccountCircuitOpen 让 OpenAI 系 handler 的重试循环通过 OpenAIGatewayService 查询断路器。

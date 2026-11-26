@@ -138,7 +138,7 @@ func newStormFixtureWith(t *testing.T, opts stormOptions) *stormFixture {
 	}
 	cfg.Gateway.AccountCircuitBreaker = config.AccountCircuitBreakerConfig{
 		Enabled: breakerEnabled, WindowSeconds: 300, ErrorRate: 0.95, MinRequests: 20, CooldownSeconds: cooldown,
-		ValveMinAccounts: 3, ValveRatio: 0.5,
+		ValveMinAccounts: 3,
 	}
 	// 这个用例反复打满重试；把退避压到毫秒级，不然光睡眠就要几十秒。
 	cfg.Gateway.RetryGuard = config.GatewayRetryGuardConfig{BackoffBaseMs: 1, BackoffMaxMs: 2}

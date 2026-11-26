@@ -547,6 +547,9 @@ func attachAccountCircuitBreaker(svc *RateLimitService, cfg *config.Config, upst
 		return
 	}
 	breaker := NewAccountCircuitBreaker(settings, svc.persistAccountCircuitTrip)
+	if refresher, ok := svc.accountRepo.(SchedulerAccountRefresher); ok {
+		breaker.SetRecoveryRefresher(refresher.RefreshSchedulerAccount)
+	}
 	svc.SetAccountCircuitBreaker(breaker)
 	if observable, ok := upstream.(UpstreamAttemptObservable); ok {
 		observable.SetUpstreamAttemptObserver(breaker)

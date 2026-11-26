@@ -1174,8 +1174,11 @@ func (s *TokenRefreshService) postRefreshActions(ctx context.Context, account *A
 			s.notifyAccountSchedulingBlockCleared(account.ID)
 		}
 	}
-	// 刷新成功后清除临时不可调度状态（处理 OAuth 401 恢复场景）
-	if account.TempUnschedulableUntil != nil && time.Now().Before(*account.TempUnschedulableUntil) {
+	// 刷新成功后清除临时不可调度状态（处理 OAuth 401 恢复场景）。
+	// 断路器写的冷却不在此列：token 刷新成功只说明凭证有效，不说明上游已经恢复；
+	// 清掉它会让一个失败率超过阈值的账号立刻回到调度里，而断路器内存状态还认为它是熔断的。
+	if account.TempUnschedulableUntil != nil && time.Now().Before(*account.TempUnschedulableUntil) &&
+		!IsAccountCircuitBreakerReason(account.TempUnschedulableReason) {
 		if clearErr := s.accountRepo.ClearTempUnschedulable(ctx, account.ID); clearErr != nil {
 			slog.Warn("token_refresh.clear_temp_unschedulable_failed",
 				"account_id", account.ID,

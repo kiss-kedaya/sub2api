@@ -554,10 +554,15 @@ gateway:
   # 账号错误率断路器：每个进程为每个账号维护一个滑动窗口（内存、无 Redis/DB 往返），
   # 窗口内「对该账号发起的上游尝试」数 >= min_requests 且 失败率 严格大于 error_rate 时，
   # 把账号写成临时不可调度 cooldown_seconds 秒（走 temp_unschedulable_until/reason，调度选号、粘连会话、
-  # 后台账号列表都认它），到期自动恢复；恢复后要重新攒够 min_requests 个新样本且仍超阈值才会再次熔断。
+  # 后台账号列表都认它），到期自动恢复（到期后进程会往 scheduler outbox 写一条账号变更事件，让调度快照把
+  # 账号放回桶里；进程在冷却期内重启会丢掉这个事件，退回到 gateway.scheduling.full_rebuild_interval_seconds）。
+  # 恢复后要重新攒够 min_requests 个新样本且仍超阈值才会再次熔断。
   # 失败 = 连接/传输错误、上游响应超时、上游 5xx、429、401/402/403/407；
-  # 客户端断开、本地 ctx 取消/超时、本机资源耗尽一律不计入。
+  # 客户端断开、本地 ctx 取消/超时、本机资源耗尽、Grok 内容安全 403、Antigravity 容量不足 503 不计入失败。
+  # 同一个客户端请求在同一账号上无论重试几次只算一个样本（最后一次尝试的结果为准）。
   # 环境变量：GATEWAY_ACCOUNT_CIRCUIT_BREAKER_ENABLED / _WINDOW_SECONDS / _ERROR_RATE / _MIN_REQUESTS / _COOLDOWN_SECONDS ...
+  # 注意：enabled 只接受 true/false（viper 不认 yes/no/on/off，写了会让配置加载失败）；
+  # error_rate 写成 95 会被按百分数解释成 0.95 并在日志里告警；min_requests 低于 5 会被提到 5。
   account_circuit_breaker:
     enabled: true
     window_seconds: 300
@@ -567,21 +572,32 @@ gateway:
     # 可选：同一账号在窗口内连续再次熔断时，冷却时间按 2 倍递增（上限 max_cooldown_seconds）。默认关闭。
     backoff_enabled: false
     max_cooldown_seconds: 300
-    # 安全阀：同一平台 1 分钟内已被熔断的账号数 >= valve_min_accounts 且占该平台参与统计账号的比例
-    # >= valve_ratio 时，视为本机/网络问题而不是上游问题，不再继续熔断更多账号（并打 ERROR 日志）。
+    # 安全阀：同一平台参与统计的账号（含本账号、含 1 分钟内已被熔断的）不少于 valve_min_accounts，
+    # 并且没有任何一个健康账号（仍在接流量、样本数达标、自己不满足熔断条件、最近 2 个桶里至少有一次成功）时，
+    # 视为本机/网络问题而不是上游问题，不再继续熔断（并打 ERROR 日志）。
+    # 只要还有健康账号就照常熔断：6 个账号坏了 4 个，4 个都会被摘掉。
     valve_min_accounts: 3
-    valve_ratio: 0.5
+    # 快速熔断：最近 2 个桶（约 30–60 秒）里样本数 >= fast_trip_min_requests 且一次成功都没有，
+    # 不等失败率在 5 分钟窗口里越线直接熔断（长期健康的账号突然全坏时窗口会被旧的成功样本稀释）。0 = 关闭。
+    fast_trip_min_requests: 100
   # 单个客户端请求的重试硬上限：不管是同账号重试还是换号，都共用这些预算。
-  # max_attempts：最多向上游发起的尝试次数；max_elapsed_seconds：进入故障转移循环后的总耗时上限；
+  # max_attempts：最多向上游发起的尝试次数（默认 30：填充调度要求候选账号都试过才把错误还给用户；
+  #   想要等同于改动之前几乎不设限的行为，设成 1024）；
+  # max_elapsed_seconds：从「第一次上游失败」起算的总耗时上限（默认 120；不含排队等并发槽位的时间，
+  #   也不含第一次尝试本身的耗时）；
   # backoff_*：同账号重试的带抖动指数退避（base、2*base、4*base…，上限 max，睡眠可被 ctx 取消）；
-  # retry_after_*：网关自己返回 503/429 时 Retry-After 的取值区间（秒，随机）。
+  # retry_after_enabled：false 时网关自己生成的 503/429 一律不带 Retry-After（状态码和响应体不变）；
+  # retry_after_*：「没有可用账号」的 503 在拿不到熔断剩余冷却时的 Retry-After 区间（秒，随机）；
+  #   拿得到时用「剩余冷却 + 1–5 秒随机」（最多 30 秒）。用户并发/队列已满的 429 固定 1–3 秒，
+  #   重试预算用尽后透传的上游 5xx 固定 5–10 秒，额度/余额/Key 限流类 429 不带 Retry-After。
   retry_guard:
-    max_attempts: 10
-    max_elapsed_seconds: 60
+    max_attempts: 30
+    max_elapsed_seconds: 120
     backoff_base_ms: 100
     backoff_max_ms: 1000
+    retry_after_enabled: true
     retry_after_min_seconds: 5
-    retry_after_max_seconds: 30
+    retry_after_max_seconds: 15
   # Grok free-tier local soft gate (scheduler filter only; admin QueryQuota/import probe bypasses it).
   # Enabled by default because free detection requires an explicit subscription_tier/plan_type of "free".
   # Stats/query failures fail open so DB issues do not block all Grok traffic.

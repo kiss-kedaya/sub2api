@@ -1,10 +1,14 @@
 package repository
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -160,4 +164,104 @@ func TestHTTPUpstreamObserverCannotBreakForwarding(t *testing.T) {
 	resp, err = NewHTTPUpstream(nil).Do(gatewayRequest(t, srv.URL), "", 1, 1)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
+}
+
+// bodyAwareObserver 同时实现 service.UpstreamAttemptBodyObserver：只对指定状态码要响应体前缀。
+type bodyAwareObserver struct {
+	*upstreamAttemptRecorder
+	wantStatus int
+	mu         sync.Mutex
+	prefixes   [][]byte
+}
+
+func (o *bodyAwareObserver) WantsAttemptBody(_ context.Context, _ int64, status int) bool {
+	return status == o.wantStatus
+}
+
+func (o *bodyAwareObserver) ObserveUpstreamAttemptBody(_ context.Context, _ int64, _ int, _ error, prefix []byte) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.prefixes = append(o.prefixes, append([]byte(nil), prefix...))
+}
+
+func TestHTTPUpstreamPeeksTheBodyOnlyWhenAskedAndHandsItBackIntact(t *testing.T) {
+	small := []byte(`{"error":{"code":"content_policy_violation"}}`)
+	big := bytes.Repeat([]byte("x"), 3*service.UpstreamAttemptBodyPeekLimit+17)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/small":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write(small)
+		case "/big":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write(big)
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(small)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	up := NewHTTPUpstream(nil)
+	obs := &bodyAwareObserver{upstreamAttemptRecorder: &upstreamAttemptRecorder{}, wantStatus: http.StatusForbidden}
+	observableOf(t, up).SetUpstreamAttemptObserver(obs)
+
+	read := func(path string) []byte {
+		resp, err := up.Do(gatewayRequest(t, srv.URL+path), "", 1, 1)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+		got, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return got
+	}
+	require.Equal(t, small, read("/small"), "the caller still sees the whole body")
+	require.Equal(t, big, read("/big"), "a body larger than the peek limit is handed back whole too")
+	require.Equal(t, small, read("/ok"))
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	require.Len(t, obs.prefixes, 2, "only the responses the observer asked about were peeked")
+	require.Equal(t, small, obs.prefixes[0])
+	require.Len(t, obs.prefixes[1], service.UpstreamAttemptBodyPeekLimit, "the peek is bounded")
+	require.Equal(t, big[:service.UpstreamAttemptBodyPeekLimit], obs.prefixes[1])
+	require.Len(t, obs.snapshot(), 1, "the 200 went through the plain observation path")
+}
+
+type erroringBody struct {
+	data []byte
+	err  error
+}
+
+func (b *erroringBody) Read(p []byte) (int, error) {
+	if len(b.data) > 0 {
+		n := copy(p, b.data)
+		b.data = b.data[n:]
+		return n, nil
+	}
+	return 0, b.err
+}
+
+func (b *erroringBody) Close() error { return nil }
+
+func TestPeekResponseBodyKeepsReadErrorsVisibleToTheCaller(t *testing.T) {
+	boom := errors.New("connection reset by peer")
+	resp := &http.Response{Body: &erroringBody{data: []byte("partial"), err: boom}}
+	prefix := peekResponseBody(resp, service.UpstreamAttemptBodyPeekLimit)
+	require.Equal(t, []byte("partial"), prefix)
+
+	got, err := io.ReadAll(resp.Body)
+	require.Equal(t, []byte("partial"), got, "the bytes consumed by the peek are handed back")
+	require.ErrorIs(t, err, boom, "a failing body keeps failing for the caller")
+}
+
+func TestPeekResponseBodyIgnoresNilEmptyAndZeroLimit(t *testing.T) {
+	require.Nil(t, peekResponseBody(nil, 10))
+	require.Nil(t, peekResponseBody(&http.Response{}, 10))
+	empty := &http.Response{Body: http.NoBody}
+	require.Nil(t, peekResponseBody(empty, 10))
+	require.True(t, empty.Body == http.NoBody, "an empty body is left untouched")
+	body := io.NopCloser(strings.NewReader("abc"))
+	zero := &http.Response{Body: body}
+	require.Nil(t, peekResponseBody(zero, 0))
+	require.True(t, zero.Body == body, "a zero limit reads nothing")
 }

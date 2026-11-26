@@ -224,7 +224,30 @@ func (s *httpUpstreamService) observeUpstreamAttempt(req *http.Request, accountI
 	if resp != nil {
 		status = resp.StatusCode
 	}
-	box.observer.ObserveUpstreamAttempt(req.Context(), accountID, status, err)
+	ctx := req.Context()
+	// 个别状态码要看响应体前缀才能分对类（Grok 的内容安全 403、Antigravity 的容量不足 503）：
+	// 观察者说需要才预读，预读的内容原样还给调用方；其余请求不多读一个字节。
+	if bodyObserver, ok := box.observer.(service.UpstreamAttemptBodyObserver); ok && err == nil && resp != nil &&
+		bodyObserver.WantsAttemptBody(ctx, accountID, status) {
+		bodyObserver.ObserveUpstreamAttemptBody(ctx, accountID, status, nil, peekResponseBody(resp, service.UpstreamAttemptBodyPeekLimit))
+		return
+	}
+	box.observer.ObserveUpstreamAttempt(ctx, accountID, status, err)
+}
+
+// peekResponseBody 读出响应体的前 limit 字节供观察者分类，并把 resp.Body 恢复成「已读前缀 + 剩余」，
+// 调用方读到的内容与没有预读时完全一致。读错误不吞：剩余部分的读取会再遇到同一个错误。
+func peekResponseBody(resp *http.Response, limit int64) []byte {
+	if resp == nil || resp.Body == nil || resp.Body == http.NoBody || limit <= 0 {
+		return nil
+	}
+	original := resp.Body
+	prefix, _ := io.ReadAll(io.LimitReader(original, limit))
+	resp.Body = &prefixedReadCloser{
+		Reader: io.MultiReader(bytes.NewReader(prefix), original),
+		Closer: original,
+	}
+	return prefix
 }
 
 // Do 执行 HTTP 请求

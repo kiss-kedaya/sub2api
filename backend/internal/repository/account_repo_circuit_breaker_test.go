@@ -2,10 +2,12 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,4 +43,28 @@ func TestAccountRepository_SetTempUnschedulable_NoopWhenNotExtendingSkipsOutbox(
 	require.NoError(t, repo.SetTempUnschedulable(context.Background(), 42, time.Now().Add(time.Minute), "circuit_breaker: x"))
 	require.Len(t, exec.execQueries, 1)
 	require.NotContains(t, exec.execQueries[0], "scheduler_outbox")
+}
+
+// 断路器冷却到期时没有任何事件会让调度快照重建这个账号所在的桶（构建桶的 SQL 会排除
+// temp_unschedulable_until 还没到期的账号）：RefreshSchedulerAccount 只往 outbox 写一条账号变更事件，不改 accounts 表。
+func TestAccountRepository_RefreshSchedulerAccount_OnlyEnqueuesAnAccountChangedEvent(t *testing.T) {
+	exec := &recordingSQLExecutor{result: rowsAffectedResult(1)}
+	repo := newAccountRepositoryWithSQL(nil, exec, nil)
+
+	require.NoError(t, repo.RefreshSchedulerAccount(context.Background(), 42))
+	require.Len(t, exec.execQueries, 1)
+	query := normalizeSQLWhitespace(exec.execQueries[0])
+	require.Contains(t, query, "INSERT INTO scheduler_outbox")
+	require.NotContains(t, strings.ToLower(query), "update accounts", "the refresh must not touch the accounts table")
+
+	require.Equal(t, service.SchedulerOutboxEventAccountChanged, exec.execArgs[0][0])
+	accountID, ok := exec.execArgs[0][1].(*int64)
+	require.True(t, ok)
+	require.Equal(t, int64(42), *accountID)
+}
+
+func TestAccountRepository_RefreshSchedulerAccount_ReportsOutboxFailures(t *testing.T) {
+	boom := errors.New("outbox insert failed")
+	repo := newAccountRepositoryWithSQL(nil, &recordingSQLExecutor{err: boom}, nil)
+	require.ErrorIs(t, repo.RefreshSchedulerAccount(context.Background(), 42), boom, "the breaker retries on error, so it must not be swallowed")
 }

@@ -3076,6 +3076,16 @@ func (r *accountRepository) SetTempUnschedulable(ctx context.Context, id int64, 
 	return nil
 }
 
+// RefreshSchedulerAccount 往 scheduler outbox 写一条账号变更事件，让调度快照重建这个账号所在的桶
+// （实现 service.SchedulerAccountRefresher）。账号断路器的冷却到期时没有任何事件会触发重建：
+// 构建桶的 SQL 会排除 temp_unschedulable_until 还没到期的账号，不刷新就要等下一次全量重建。
+// 只写 outbox，不改 accounts 表。
+func (r *accountRepository) RefreshSchedulerAccount(ctx context.Context, id int64) error {
+	return enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil)
+}
+
+var _ service.SchedulerAccountRefresher = (*accountRepository)(nil)
+
 func (r *accountRepository) SetGrokCredentialTempUnschedulableIfMatch(
 	ctx context.Context,
 	id int64,

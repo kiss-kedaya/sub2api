@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // ---- 测试替身 ---------------------------------------------------------------
@@ -661,28 +662,67 @@ func TestCircuitBreakerReset(t *testing.T) {
 
 // ---- 安全阀 ------------------------------------------------------------------
 
-func TestCircuitBreakerValveStopsMassTrips(t *testing.T) {
+// valveScenario 让 bad 个账号全失败、good 个账号全成功，按轮交错喂 rounds 轮（模拟同一时间段的并行流量）。
+func (h *circuitHarness) valveScenario(platform string, firstID int64, bad, good, rounds int) (badIDs, goodIDs []int64) {
+	for i := 0; i < bad; i++ {
+		badIDs = append(badIDs, firstID+int64(i))
+	}
+	for i := 0; i < good; i++ {
+		goodIDs = append(goodIDs, firstID+int64(bad+i))
+	}
+	for r := 0; r < rounds; r++ {
+		for _, id := range goodIDs {
+			h.feed(id, platform, 200, 1)
+		}
+		for _, id := range badIDs {
+			h.feed(id, platform, 502, 1)
+		}
+	}
+	return badIDs, goodIDs
+}
+
+func (h *circuitHarness) openCount(ids []int64) int {
+	n := 0
+	for _, id := range ids {
+		if h.b.IsOpen(id) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestCircuitBreakerValveNeverBlocksWhileAHealthyAccountExists(t *testing.T) {
+	// 同平台还有健康账号（仍在接流量、失败率没越线）说明网络和平台都是好的：坏账号一个不剩全部熔断。
+	cases := []struct {
+		name      string
+		bad, good int
+	}{
+		{"4 of 6 bad", 4, 2},
+		{"6 of 12 bad", 6, 6},
+		{"11 of 12 bad, a single healthy account", 11, 1},
+		{"2 of 3 bad", 2, 1},
+		{"3 of 4 bad", 3, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newCircuitHarness(t, nil)
+			bad, good := h.valveScenario("anthropic", 1, tc.bad, tc.good, 40)
+			require.Equal(t, tc.bad, h.openCount(bad), "every failing account must be paused while a healthy one exists")
+			require.Zero(t, h.openCount(good), "healthy accounts are never paused")
+			require.Equal(t, tc.bad, h.store.tripCount())
+			require.Zero(t, h.logs.count("account_circuit_breaker.valve_blocked"))
+			require.Zero(t, h.b.Stats().ValveBlocked)
+		})
+	}
+}
+
+func TestCircuitBreakerValveBlocksWhenEveryParticipatingAccountIsFailing(t *testing.T) {
+	// 12 个账号全部在失败（本机网络故障的样子）：开头两个账号按小池子规模熔断，之后安全阀接管，
+	// 不再继续把整个平台摘光；ERROR 日志按平台限频，只打一条。
 	h := newCircuitHarness(t, nil)
-	const accounts = 10
-	// 全部账号交错失败：模拟本机网络故障（所有账号同时失败）。
-	round := func() {
-		for id := int64(1); id <= accounts; id++ {
-			h.feed(id, "anthropic", 502, 1)
-		}
-	}
-	for i := 0; i < 20; i++ {
-		round()
-	}
-	require.GreaterOrEqual(t, h.store.tripCount(), 1)
-	// 让被安全阀拦下的账号过了复查延迟，再继续失败。
-	for step := 0; step < 4; step++ {
-		h.clock.Advance(11 * time.Second)
-		for i := 0; i < 3; i++ {
-			round()
-		}
-	}
-	require.Equal(t, 5, h.store.tripCount(), "valve: at most 50%% of a platform's accounts are tripped within a minute")
-	require.GreaterOrEqual(t, h.logs.count("account_circuit_breaker.valve_blocked"), 1)
+	bad, _ := h.valveScenario("anthropic", 1, 12, 0, 40)
+	require.LessOrEqual(t, h.openCount(bad), 2, "valve_min_accounts(3) participants all failing: stop at 2 trips")
+	require.GreaterOrEqual(t, h.openCount(bad), 1)
 	require.Equal(t, 1, h.logs.count("account_circuit_breaker.valve_blocked"), "valve log is rate limited per platform")
 	require.Greater(t, h.b.Stats().ValveBlocked, int64(0))
 
@@ -703,18 +743,54 @@ func TestCircuitBreakerValveDoesNotLimitSmallPools(t *testing.T) {
 	require.Zero(t, h.logs.count("account_circuit_breaker.valve_blocked"))
 }
 
+func TestCircuitBreakerValveSeesLowTrafficAndOtherPlatformsAsNoEvidence(t *testing.T) {
+	// 样本数不足的低流量账号既不算参与也不算健康（看不出它好不好）；别的平台的健康账号同样不算。
+	h := newCircuitHarness(t, nil)
+	h.feed(10, "anthropic", 200, 5)
+	h.feed(11, "anthropic", 200, 5)
+	h.feed(12, "openai", 200, 100)
+	for i := 0; i < 20; i++ {
+		for id := int64(1); id <= 4; id++ {
+			h.feed(id, "anthropic", 502, 1)
+		}
+	}
+	require.LessOrEqual(t, h.openCount([]int64{1, 2, 3, 4}), 2, "4 failing participants, no healthy participant on this platform: the valve holds")
+	require.GreaterOrEqual(t, h.logs.count("account_circuit_breaker.valve_blocked"), 1)
+}
+
+func TestCircuitBreakerValveRecoversWhenAHealthyAccountAppears(t *testing.T) {
+	h := newCircuitHarness(t, nil)
+	bad, _ := h.valveScenario("anthropic", 1, 6, 0, 40)
+	require.Greater(t, h.b.Stats().ValveBlocked, int64(0))
+	var stuck int64
+	for _, id := range bad {
+		if !h.b.IsOpen(id) {
+			stuck = id
+			break
+		}
+	}
+	require.NotZero(t, stuck)
+
+	// 一个健康账号出现（有足够的成功样本）：被安全阀拦下的账号在复查延迟之后下一次失败就会熔断。
+	h.feed(200, "anthropic", 200, 25)
+	h.clock.Advance(11 * time.Second)
+	h.feed(stuck, "anthropic", 502, 1)
+	require.True(t, h.b.IsOpen(stuck), "a healthy account exists now: the failing one must be paused")
+}
+
 func TestCircuitBreakerValveForgetsOldTrips(t *testing.T) {
 	h := newCircuitHarness(t, nil)
-	// 先熔断 3 个，满足「已熔断 >= 3」。
+	// 先熔断两个账号；第三个账号越线时「参与账号 = 自己 + 2 个刚熔断的 = 3、且没有健康账号」，被安全阀拦下。
 	for id := int64(1); id <= 3; id++ {
 		h.feed(id, "anthropic", 502, 20)
 	}
-	require.Equal(t, 3, h.store.tripCount())
-	// 过了安全阀统计窗口（1 分钟）后，这 3 次熔断不再计入；第 4 个账号可以熔断。
+	require.Equal(t, 2, h.store.tripCount())
+	require.False(t, h.b.IsOpen(3))
+	// 过了安全阀统计窗口（1 分钟）后，这两次熔断不再计入；第三个账号再失败时可以熔断。
 	h.clock.Advance(61 * time.Second)
-	h.feed(4, "anthropic", 502, 20)
-	require.True(t, h.b.IsOpen(4))
-	require.Equal(t, 4, h.store.tripCount())
+	h.feed(3, "anthropic", 502, 1)
+	require.True(t, h.b.IsOpen(3))
+	require.Equal(t, 3, h.store.tripCount())
 }
 
 // ---- 内存：没有后台 goroutine，空闲账号状态会被回收 -------------------------------
@@ -820,6 +896,34 @@ func TestCircuitBreakerConcurrentManyAccountsRace(t *testing.T) {
 
 // ---- 参数 ---------------------------------------------------------------------
 
+type circuitConfigWarning struct {
+	msg    string
+	fields map[string]any
+}
+
+// captureCircuitConfigWarnings 接管「配置值被调整」的 WARN 输出，返回的切片随调用累积。
+func captureCircuitConfigWarnings(t *testing.T) *[]circuitConfigWarning {
+	t.Helper()
+	old := circuitConfigWarner
+	got := &[]circuitConfigWarning{}
+	circuitConfigWarner = func(msg string, fields ...zap.Field) {
+		enc := zapcore.NewMapObjectEncoder()
+		for _, f := range fields {
+			f.AddTo(enc)
+		}
+		*got = append(*got, circuitConfigWarning{msg: msg, fields: enc.Fields})
+	}
+	t.Cleanup(func() { circuitConfigWarner = old })
+	return got
+}
+
+func circuitSettingsFor(c config.AccountCircuitBreakerConfig) AccountCircuitBreakerSettings {
+	cfg := &config.Config{}
+	c.Enabled = true
+	cfg.Gateway.AccountCircuitBreaker = c
+	return AccountCircuitBreakerSettingsFromConfig(cfg)
+}
+
 func TestAccountCircuitBreakerSettingsFromConfig(t *testing.T) {
 	t.Run("nil config disables", func(t *testing.T) {
 		require.False(t, AccountCircuitBreakerSettingsFromConfig(nil).Enabled)
@@ -828,10 +932,11 @@ func TestAccountCircuitBreakerSettingsFromConfig(t *testing.T) {
 		require.False(t, AccountCircuitBreakerSettingsFromConfig(&config.Config{}).Enabled)
 	})
 	t.Run("config values are honored", func(t *testing.T) {
+		warnings := captureCircuitConfigWarnings(t)
 		cfg := &config.Config{}
 		cfg.Gateway.AccountCircuitBreaker = config.AccountCircuitBreakerConfig{
 			Enabled: true, WindowSeconds: 120, ErrorRate: 0.9, MinRequests: 50, CooldownSeconds: 30,
-			BackoffEnabled: true, MaxCooldownSeconds: 600, ValveMinAccounts: 4, ValveRatio: 0.75,
+			BackoffEnabled: true, MaxCooldownSeconds: 600, ValveMinAccounts: 4, FastTripMinRequests: 250,
 		}
 		s := AccountCircuitBreakerSettingsFromConfig(cfg)
 		require.True(t, s.Enabled)
@@ -842,15 +947,15 @@ func TestAccountCircuitBreakerSettingsFromConfig(t *testing.T) {
 		require.True(t, s.BackoffEnabled)
 		require.Equal(t, 600*time.Second, s.MaxCooldown)
 		require.Equal(t, 4, s.ValveMinAccounts)
-		require.Equal(t, 0.75, s.ValveRatio)
+		require.Equal(t, 250, s.FastTripMinRequests)
+		require.Empty(t, *warnings, "valid values never warn")
 	})
 	t.Run("invalid numbers fall back to defaults instead of disabling protection", func(t *testing.T) {
-		cfg := &config.Config{}
-		cfg.Gateway.AccountCircuitBreaker = config.AccountCircuitBreakerConfig{
-			Enabled: true, WindowSeconds: -1, ErrorRate: 1.5, MinRequests: 0, CooldownSeconds: -5,
-			MaxCooldownSeconds: -1, ValveMinAccounts: -2, ValveRatio: 7,
-		}
-		s := AccountCircuitBreakerSettingsFromConfig(cfg)
+		warnings := captureCircuitConfigWarnings(t)
+		s := circuitSettingsFor(config.AccountCircuitBreakerConfig{
+			WindowSeconds: -1, ErrorRate: 150, MinRequests: 0, CooldownSeconds: -5,
+			MaxCooldownSeconds: -1, ValveMinAccounts: -2, FastTripMinRequests: -9,
+		})
 		d := DefaultAccountCircuitBreakerSettings()
 		require.Equal(t, d.Window, s.Window)
 		require.Equal(t, d.ErrorRate, s.ErrorRate)
@@ -858,7 +963,8 @@ func TestAccountCircuitBreakerSettingsFromConfig(t *testing.T) {
 		require.Equal(t, d.Cooldown, s.Cooldown)
 		require.Equal(t, d.MaxCooldown, s.MaxCooldown)
 		require.Equal(t, d.ValveMinAccounts, s.ValveMinAccounts)
-		require.Equal(t, d.ValveRatio, s.ValveRatio)
+		require.Zero(t, s.FastTripMinRequests, "a negative fast trip threshold means off")
+		require.Len(t, *warnings, 1, "the unusable error_rate is reported")
 	})
 	t.Run("defaults match the documented values", func(t *testing.T) {
 		d := DefaultAccountCircuitBreakerSettings()
@@ -868,7 +974,64 @@ func TestAccountCircuitBreakerSettingsFromConfig(t *testing.T) {
 		require.Equal(t, 20, d.MinRequests)
 		require.Equal(t, 60*time.Second, d.Cooldown)
 		require.False(t, d.BackoffEnabled)
+		require.Equal(t, 3, d.ValveMinAccounts)
+		require.Equal(t, 100, d.FastTripMinRequests)
 	})
+}
+
+func TestAccountCircuitBreakerErrorRateAcceptsPercentagesWithAWarning(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       float64
+		want     float64
+		wantWarn bool
+	}{
+		{"fraction", 0.95, 0.95, false},
+		{"unset", 0, 0.95, false},
+		{"percentage 95", 95, 0.95, true},
+		{"percentage 99.5", 99.5, 0.995, true},
+		{"percentage 50", 50, 0.5, true},
+		{"percentage just above 1", 1.5, 0.015, true},
+		{"exactly 1 is ambiguous", 1, 0.95, true},
+		{"100 percent can never be exceeded", 100, 0.95, true},
+		{"beyond 100", 150, 0.95, true},
+		{"negative", -0.5, 0.95, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			warnings := captureCircuitConfigWarnings(t)
+			s := circuitSettingsFor(config.AccountCircuitBreakerConfig{ErrorRate: tc.in})
+			require.InDelta(t, tc.want, s.ErrorRate, 1e-9)
+			if tc.wantWarn {
+				require.Len(t, *warnings, 1)
+				require.Equal(t, "account_circuit_breaker.config_adjusted", (*warnings)[0].msg)
+				require.Equal(t, "gateway.account_circuit_breaker.error_rate", (*warnings)[0].fields["key"])
+				require.InDelta(t, tc.want, (*warnings)[0].fields["effective"], 1e-9, "the log carries the value actually in effect")
+			} else {
+				require.Empty(t, *warnings)
+			}
+		})
+	}
+}
+
+func TestAccountCircuitBreakerMinRequestsFloor(t *testing.T) {
+	for _, tc := range []struct {
+		in, want int
+		warn     bool
+	}{
+		{1, 5, true}, {2, 5, true}, {4, 5, true}, {5, 5, false}, {6, 6, false}, {20, 20, false}, {0, 20, false}, {-3, 20, false},
+	} {
+		warnings := captureCircuitConfigWarnings(t)
+		s := circuitSettingsFor(config.AccountCircuitBreakerConfig{MinRequests: tc.in})
+		require.Equal(t, tc.want, s.MinRequests, "min_requests=%d", tc.in)
+		require.Equal(t, tc.warn, len(*warnings) == 1, "min_requests=%d", tc.in)
+	}
+}
+
+func TestAccountCircuitBreakerFastTripSettingIsOptOut(t *testing.T) {
+	require.Equal(t, 0, circuitSettingsFor(config.AccountCircuitBreakerConfig{FastTripMinRequests: 0}).FastTripMinRequests, "explicit 0 turns it off")
+	require.Equal(t, 100, circuitSettingsFor(config.AccountCircuitBreakerConfig{FastTripMinRequests: 100}).FastTripMinRequests)
+	require.Equal(t, 100, DefaultAccountCircuitBreakerSettings().FastTripMinRequests, "on by default (config supplies 100 when the key is absent)")
 }
 
 func TestIsAccountCircuitBreakerReason(t *testing.T) {
@@ -912,6 +1075,7 @@ func BenchmarkAccountCircuitBreakerObserveSuccessSerial(b *testing.B) {
 func BenchmarkAccountCircuitBreakerObserveFailureSerial(b *testing.B) {
 	settings := DefaultAccountCircuitBreakerSettings()
 	settings.MinRequests = 1 << 19
+	settings.FastTripMinRequests = 0
 	cb := NewAccountCircuitBreaker(settings, nil)
 	ctx := circuitCtxFor(42, "anthropic", "bench")
 	b.ReportAllocs()

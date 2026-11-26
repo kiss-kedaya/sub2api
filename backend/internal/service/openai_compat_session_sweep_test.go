@@ -11,7 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func countSyncMap(m interface{ Range(func(key, value any) bool) }) int {
+func countSyncMap(m interface {
+	Range(func(key, value any) bool)
+}) int {
 	n := 0
 	m.Range(func(_, _ any) bool { n++; return true })
 	return n
