@@ -16,7 +16,8 @@ import (
 
 // API Key 三选一身份校验（登录密码 / TOTP / Passkey）的 HTTP 层。
 //
-//   GET  /api/v1/user/security/verification-factors      该账号实际可用的因子
+//   GET  /api/v1/user/security/verification-factors      该账号实际可用的因子 + 创建 Key 是否必须校验（有效值）
+//   PUT  /api/v1/user/security/api-key-create-verification  用户自己决定创建 Key 时要不要验证身份（on/off/auto）
 //   POST /api/v1/user/security/passkey/verify/begin      Passkey 校验挑战
 //   POST /api/v1/user/security/passkey/verify/finish     Passkey 校验，签发一次性票据
 //   POST /api/v1/user/api-keys/:id/reveal-authorize      二次查看授权，签发 5 分钟 grant
@@ -29,9 +30,16 @@ import (
 const (
 	auditVerificationVerified = "verified"
 	// auditVerificationSkipped 创建 / 轮换时没有做身份校验：账号没有任何可用因子，或只有登录密码
-	// （没开 TOTP、没绑 Passkey，不强制）。字符串保持原样，审计看板按它过滤。
-	auditVerificationSkipped  = "skipped_no_factor"
-	auditVerificationRejected = "rejected"
+	// （没开 TOTP、没绑 Passkey，默认不强制）。字符串保持原样，审计看板按它过滤。
+	auditVerificationSkipped = "skipped_no_factor"
+	// auditVerificationSkippedByUser 创建 / 轮换时没有做身份校验，是因为用户自己把「创建 API Key 时需要
+	// 验证身份」关掉了（设置为 off）。与 skipped_no_factor 分开记，事后能区分「用户自己关的」和「默认不强制」。
+	auditVerificationSkippedByUser = "skipped_by_user_setting"
+	auditVerificationRejected      = "rejected"
+
+	// apiKeyVerificationSkippedByUserKey 是 keyVerificationGuard 写在 gin.Context 上的标记：本次放行是因为
+	// 用户关掉了开关。annotateKeyShowVerification（签名固定）据此选审计标签。
+	apiKeyVerificationSkippedByUserKey = "api_key_verification_skipped_by_user"
 )
 
 // apiKeyVerificationRequest 是创建 / 二次查看请求里的 verification 对象。
@@ -106,6 +114,66 @@ func (h *APIKeyHandler) GetVerificationFactors(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	response.Success(c, factors)
+}
+
+// setAPIKeyCreateVerificationRequest 是 PUT /user/security/api-key-create-verification 的请求体。
+type setAPIKeyCreateVerificationRequest struct {
+	// Mode 目标模式：on（有可用因子就必须校验）/ off（不要求校验）/ auto（恢复默认规则）。
+	Mode string `json:"mode"`
+	// Verification 降低保护强度（on > auto > off 的任何一步下降）时必填的三选一身份校验，
+	// 结构与创建 Key 的 verification 相同。强度上升或持平不需要。
+	Verification *apiKeyVerificationRequest `json:"verification"`
+}
+
+// setAPIKeyCreateVerificationBodyMaxBytes 请求体上限：mode + 一份校验材料，远用不到 8KB。
+const setAPIKeyCreateVerificationBodyMaxBytes = 8 << 10
+
+// SetAPIKeyCreateVerification 用户自己决定「创建 API Key 时是否需要验证身份」。
+// PUT /api/v1/user/security/api-key-create-verification
+//
+// 只在降低保护强度（on > auto > off 的任何一步下降，含「没有记录」→ off）时要求三选一身份校验，
+// 错误码复用 VERIFY_REQUIRED / VERIFY_*_INVALID / VERIFY_PASSWORD_RATE_LIMITED（429 带 Retry-After）；
+// 任何失败都不写库。审计只记因子名与结果，以及改前 / 改后的模式标签和「强度是否下降」，绝不记录任何凭据。
+// 成功时回包与 GET verification-factors 同形（改后的视图由服务层算好，写库成功之后不再读库，
+// 所以不会出现「已经改成功、回包时读库抖一下返回 5xx」），前端直接用它刷新开关状态。
+func (h *APIKeyHandler) SetAPIKeyCreateVerification(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	svc := h.requireVerificationService(c)
+	if svc == nil {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, setAPIKeyCreateVerificationBodyMaxBytes)
+	var req setAPIKeyCreateVerificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// 不回显解析错误：请求体里可能带着校验材料。
+		setVerificationAudit(c, nil, auditVerificationRejected, "INVALID_REQUEST")
+		response.BadRequest(c, "Invalid request")
+		return
+	}
+	change, err := svc.SetCreateVerificationMode(c.Request.Context(), subject.UserID, req.Mode, req.Verification.toService())
+	if err != nil {
+		setVerificationAudit(c, nil, auditVerificationRejected, infraerrors.Reason(err))
+		// 失败时也留下「想改成什么」（只收合法标签，绝不把请求里的任意字符串写进审计）。
+		if target, valid := service.NormalizeAPIKeyCreateVerificationMode(req.Mode); valid {
+			middleware2.SetAuditExtra(c, map[string]any{"api_key_create_verification_to": target})
+		}
+		respondVerificationError(c, err)
+		return
+	}
+	if change.Factor != "" {
+		setVerificationAudit(c, &service.APIKeyVerificationResult{Factor: change.Factor}, auditVerificationVerified, "")
+	}
+	middleware2.SetAuditExtra(c, map[string]any{
+		"api_key_create_verification_from":    change.From,
+		"api_key_create_verification_to":      change.To,
+		"api_key_create_verification_relaxed": change.Relaxed,
+	})
+	c.Header("Cache-Control", "no-store")
+	response.Success(c, change.Factors)
 }
 
 // BeginKeyPasskeyVerification 为 API Key 创建 / 二次查看生成 Passkey assertion。
@@ -247,7 +315,11 @@ func annotateKeyShowVerification(c *gin.Context, method string) {
 		return
 	}
 	if method == "" {
-		setVerificationAudit(c, nil, auditVerificationSkipped, "")
+		outcome := auditVerificationSkipped
+		if c.GetBool(apiKeyVerificationSkippedByUserKey) {
+			outcome = auditVerificationSkippedByUser
+		}
+		setVerificationAudit(c, nil, outcome, "")
 		return
 	}
 	setVerificationAudit(c, &service.APIKeyVerificationResult{Factor: method}, auditVerificationVerified, "")
@@ -255,9 +327,10 @@ func annotateKeyShowVerification(c *gin.Context, method string) {
 
 // keyVerificationGuard 在真正下发 / 变更 Key 明文前做身份校验。
 //
-// 账号存在可用因子 → 必须带 verification 且校验通过；一个可用因子都没有
-// （OAuth-only 且未绑 2FA）→ 放行并在审计里记 skipped_no_factor，这类账号
-// 只能一次性显示明文（无登录密码可用于本地派生密钥）。
+// 账号的「有效要求」是必须校验 → 必须带 verification 且校验通过；不要求校验（默认规则下没开 TOTP /
+// 没绑 Passkey、用户自己关掉了开关、或一个可用因子都没有的 OAuth-only 账号）→ 放行并在审计里记
+// skipped_no_factor / skipped_by_user_setting，这类账号只能一次性显示明文
+// （没有登录密码可用于本地派生密钥的账号尤其如此）。
 //
 // 创建（POST /keys）与批量轮换（POST /keys/batch-rotate）走 VerifyForCreate；
 // 会回执明文的编辑（PUT /keys/:id）走 VerifyForKeyEdit（先判归属再校验）。
@@ -290,8 +363,11 @@ func (h *APIKeyHandler) keyVerificationGuard(
 	method := ""
 	if result != nil {
 		method = result.Factor
+		if result.SkippedByUserSetting {
+			c.Set(apiKeyVerificationSkippedByUserKey, true)
+		}
 	}
-	// 成功（含 skipped_no_factor 的放行）才打标记：幂等中间件只认「本请求
+	// 成功（含 skipped_no_factor / skipped_by_user_setting 的放行）才打标记：幂等中间件只认「本请求
 	// 已经过校验」的瞬时重放，历史回执 / 跨请求重放一律重新校验。
 	c.Set(service.ApiKeyVerificationGuardPassedKey, true)
 	return method, nil

@@ -83,6 +83,7 @@ describe('ProfileView', () => {
           ProfileBalanceNotifyCard: { template: '<div data-testid="profile-balance-notify-card" />' },
           ProfilePasswordForm: { template: '<div data-testid="profile-password-form" />' },
           ProfileTotpCard: { template: '<div data-testid="profile-totp-card" />' },
+          ProfileKeyVerificationCard: { template: '<div data-testid="profile-key-verification-card" />' },
           Icon: true
         }
       }
@@ -95,5 +96,9 @@ describe('ProfileView', () => {
     expect(wrapper.get('[data-testid="profile-shell"]').html()).toContain('profile-info-card')
     expect(wrapper.get('[data-testid="profile-shell"]').html()).toContain('profile-password-form')
     expect(wrapper.get('[data-testid="profile-shell"]').html()).toContain('profile-totp-card')
+    // 「创建 API Key 时需要验证身份」开关放在安全区里，紧跟在两步验证之后。
+    const shell = wrapper.get('[data-testid="profile-shell"]').html()
+    expect(shell).toContain('profile-key-verification-card')
+    expect(shell.indexOf('profile-key-verification-card')).toBeGreaterThan(shell.indexOf('profile-totp-card'))
   })
 })

@@ -873,6 +873,12 @@ export interface ApiKey {
  */
 export type ApiKeyVerificationMethod = 'password' | 'totp' | 'passkey'
 
+/**
+ * 用户在「创建 API Key 时需要验证身份」开关上的设置：
+ * auto（没设置过，沿用默认规则）/ on（有可用因子就必须校验）/ off（不要求校验，即使开了 2FA）。
+ */
+export type ApiKeyCreateVerificationMode = 'auto' | 'on' | 'off'
+
 export interface ApiKeyVerificationFactors {
   password_available: boolean
   totp_enabled: boolean
@@ -884,11 +890,22 @@ export interface ApiKeyVerificationFactors {
   /** 是否支持「以后还能查看」：本地解密必须用登录密码派生密钥。 */
   seal_available: boolean
   /**
-   * 创建 / 轮换 Key 前是否必须先过一次身份校验（服务端判定）：只有开了 TOTP 或绑了 Passkey 的账号才强制，
-   * 只有登录密码的账号（含用 Google / GitHub 登录的用户）不强制。旧服务端没有这个字段：
+   * 创建 / 轮换 Key 前是否必须先过一次身份校验（服务端判定的**有效值**）：默认只有开了 TOTP 或绑了 Passkey 的账号才强制，
+   * 只有登录密码的账号（含用 Google / GitHub 登录的用户）不强制；用户可以在个人资料里自己改成必须 / 不要
+   * （见 create_verification_mode），账号一个可用因子都没有时恒为 false。旧服务端没有这个字段：
    * 前端按「有任何可用因子就强制」处理（见 utils/apiKeyVerification.ts）。
    */
   create_verification_required?: boolean
+  /** 用户在开关上的设置（auto / on / off）。旧服务端没有这个字段。 */
+  create_verification_mode?: ApiKeyCreateVerificationMode
+  /** 账号至少有一个可用因子时才为 true；为 false 时开关没有意义（无处可验），界面置灰。旧服务端没有这个字段。 */
+  create_verification_configurable?: boolean
+  /**
+   * 默认规则（auto）下这个账号创建 Key 是否必须校验：开了 TOTP 或绑了 Passkey 才为 true，与用户设置无关。
+   * 界面据此决定把开关拨回「不需要」时写 off 还是 auto：默认本来就不要求的账号写 auto（恢复默认），
+   * 不留下显式的 off——否则它以后开了 2FA，这个旧 off 会让创建 Key 悄悄不受保护。旧服务端没有这个字段（按 auto 处理）。
+   */
+  create_verification_default_required?: boolean
 }
 
 /** 创建 Key / 二次查看时的身份校验载荷。 */
