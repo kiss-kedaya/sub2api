@@ -1,5 +1,13 @@
 <template>
-  <div class="group/usage relative text-sm">
+  <div
+    ref="triggerRef"
+    class="group/usage relative text-sm"
+    :tabindex="hasBreakdown ? 0 : undefined"
+    @mouseenter="openTooltip"
+    @mouseleave="closeTooltip"
+    @focusin="openTooltip"
+    @focusout="closeTooltip"
+  >
     <div class="flex items-center gap-1.5">
       <span class="text-gray-500 dark:text-gray-400">{{ t('admin.users.today') }}:</span>
       <span class="font-medium text-gray-900 dark:text-white">${{ today.toFixed(4) }}</span>
@@ -15,35 +23,40 @@
       <span class="font-medium text-gray-900 dark:text-white">${{ total.toFixed(4) }}</span>
     </div>
 
-    <div
-      v-if="hasBreakdown"
-      class="pointer-events-none absolute left-full top-0 z-50 ml-2 min-w-[220px] whitespace-nowrap rounded-md bg-gray-900 px-3 py-2 text-xs text-white opacity-0 shadow-xl transition-opacity duration-100 group-hover/usage:opacity-100 dark:bg-dark-600"
-    >
-      <div class="mb-1.5 flex items-center justify-between gap-3 border-b border-white/10 pb-1 text-[11px] opacity-80">
-        <span>{{ t('admin.users.platformBreakdown') }}</span>
-        <span class="font-mono">{{ t('admin.users.today') }} / {{ t('admin.users.total') }}</span>
-      </div>
+    <Teleport to="body">
       <div
-        v-for="item in sortedBreakdown"
-        :key="item.platform"
-        class="flex items-center justify-between gap-3 py-0.5"
-        :class="{ 'opacity-70 italic': item.isOther }"
+        v-if="hasBreakdown && tooltipOpen"
+        data-testid="platform-usage-breakdown-tooltip"
+        role="tooltip"
+        :style="tooltipStyle"
+        class="pointer-events-none fixed z-[60] min-w-[220px] max-w-[calc(100vw-24px)] whitespace-nowrap rounded-md bg-gray-900 px-3 py-2 text-xs text-white shadow-xl dark:bg-dark-600"
       >
-        <span class="capitalize">
-          {{ item.isOther ? t('admin.users.platformOther') : platformLabel(item.platform) }}
-        </span>
-        <span class="font-mono">
-          ${{ item.today_actual_cost.toFixed(4) }}
-          <span class="opacity-50">/</span>
-          ${{ item.total_actual_cost.toFixed(4) }}
-        </span>
+        <div class="mb-1.5 flex items-center justify-between gap-3 border-b border-white/10 pb-1 text-[11px] opacity-80">
+          <span>{{ t('admin.users.platformBreakdown') }}</span>
+          <span class="font-mono">{{ t('admin.users.today') }} / {{ t('admin.users.total') }}</span>
+        </div>
+        <div
+          v-for="item in sortedBreakdown"
+          :key="item.platform"
+          class="flex items-center justify-between gap-3 py-0.5"
+          :class="{ 'opacity-70 italic': item.isOther }"
+        >
+          <span class="capitalize">
+            {{ item.isOther ? t('admin.users.platformOther') : platformLabel(item.platform) }}
+          </span>
+          <span class="font-mono">
+            ${{ item.today_actual_cost.toFixed(4) }}
+            <span class="opacity-50">/</span>
+            ${{ item.total_actual_cost.toFixed(4) }}
+          </span>
+        </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import type { PlatformUsage } from '@/api/admin/dashboard'
@@ -55,6 +68,57 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const triggerRef = ref<HTMLElement | null>(null)
+const tooltipOpen = ref(false)
+const tooltipPos = ref({ left: 0, top: 0 })
+
+const TOOLTIP_ESTIMATED_WIDTH = 240
+const VIEWPORT_GUTTER = 12
+
+function updateTooltipPosition() {
+  if (typeof window === 'undefined' || !triggerRef.value) return
+  const rect = triggerRef.value.getBoundingClientRect()
+  const estimatedHeight = 44 + sortedBreakdown.value.length * 22
+  let left = rect.right + 8
+  if (left + TOOLTIP_ESTIMATED_WIDTH > window.innerWidth - VIEWPORT_GUTTER) {
+    left = Math.max(VIEWPORT_GUTTER, rect.left - TOOLTIP_ESTIMATED_WIDTH - 8)
+  }
+  const maxTop = Math.max(VIEWPORT_GUTTER, window.innerHeight - estimatedHeight - VIEWPORT_GUTTER)
+  const top = Math.min(Math.max(VIEWPORT_GUTTER, rect.top), maxTop)
+  tooltipPos.value = { left, top }
+}
+
+function attachDismissListeners() {
+  if (typeof window === 'undefined') return
+  window.addEventListener('scroll', closeTooltip, true)
+  window.addEventListener('resize', closeTooltip)
+}
+
+function detachDismissListeners() {
+  if (typeof window === 'undefined') return
+  window.removeEventListener('scroll', closeTooltip, true)
+  window.removeEventListener('resize', closeTooltip)
+}
+
+function openTooltip() {
+  if (!hasBreakdown.value) return
+  updateTooltipPosition()
+  tooltipOpen.value = true
+  attachDismissListeners()
+}
+
+function closeTooltip() {
+  if (!tooltipOpen.value) return
+  tooltipOpen.value = false
+  detachDismissListeners()
+}
+
+onBeforeUnmount(detachDismissListeners)
+
+const tooltipStyle = computed(() => ({
+  left: `${tooltipPos.value.left}px`,
+  top: `${tooltipPos.value.top}px`,
+}))
 
 // 与 UserDashboardStats 保持一致：把"总值 - 各平台之和"的差作为"其他"行展示，
 // 避免 tooltip 内各平台费用加总与列首总值对不上。

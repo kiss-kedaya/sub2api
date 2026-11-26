@@ -16,13 +16,17 @@
     <!-- Header (TeamsMenu in the template): logo, site name and version. -->
     <template #header="{ collapsed }">
       <div class="sidebar-brand" :class="{ 'sidebar-brand--collapsed': collapsed }">
-        <router-link :to="homePath" class="sidebar-brand-link" :title="collapsed ? siteName : undefined" @click="closeMobile">
+        <router-link :to="homePath" class="sidebar-brand-link" :title="siteName" @click="closeMobile">
           <span class="sidebar-logo">
             <img v-if="settingsLoaded" :src="siteLogo || '/logo.svg'" alt="Logo" class="size-full object-contain" />
           </span>
-          <span v-if="!collapsed" class="sidebar-brand-title">{{ siteName }}</span>
         </router-link>
-        <VersionBadge v-if="!collapsed" class="sidebar-version" :version="siteVersion" />
+        <div v-if="!collapsed" class="sidebar-brand-meta">
+          <router-link :to="homePath" class="sidebar-brand-title-link" :title="siteName" @click="closeMobile">
+            <span class="sidebar-brand-title">{{ siteName }}</span>
+          </router-link>
+          <VersionBadge class="sidebar-version" :version="siteVersion" />
+        </div>
       </div>
     </template>
 
@@ -120,7 +124,7 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'
-import { resolveDocsUrl } from '@/utils/docsUrl'
+import { isExternalDocsUrl, resolveDocsUrl } from '@/utils/docsUrl'
 import { FeatureFlags, isFeatureFlagEnabled, makeSidebarFlag } from '@/utils/featureFlags'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import { SIDEBAR_TOUR_ANCHORS, SIDEBAR_TOUR_SELECTORS } from '@/components/Guide/steps'
@@ -505,11 +509,19 @@ const secondaryNavItems = computed((): NavigationMenuItem[] => {
       icon: 'i-lucide-layout-grid',
       to: { path: '/model-plaza', query: { embedded: '1' } },
       active: route.path === '/model-plaza',
+      onSelect: closeMobile,
       'aria-label': t('nav.modelPlaza')
     })
   }
   if (docUrl.value) {
-    items.push({ label: t('nav.docs'), icon: 'i-lucide-book-open', to: docUrl.value, target: '_blank', 'aria-label': t('nav.docs') })
+    const external = isExternalDocsUrl(docUrl.value)
+    items.push({
+      label: t('nav.docs'),
+      icon: 'i-lucide-book-open',
+      to: docUrl.value,
+      ...(external ? { target: '_blank' as const } : { onSelect: closeMobile }),
+      'aria-label': t('nav.docs')
+    })
   }
   return items
 })
@@ -577,13 +589,14 @@ onBeforeUnmount(() => {
 </script>
 
 <style>
-/* Brand row in the sidebar header (where the template has TeamsMenu). */
+/* Brand lockup in the sidebar header: fixed logo on the left, stacked brand title + compact
+   version metadata on the right so long version labels never squeeze or clip the site name. */
 .sidebar-brand {
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .sidebar-brand--collapsed {
@@ -591,59 +604,84 @@ onBeforeUnmount(() => {
 }
 
 .sidebar-brand-link {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: calc(var(--ui-radius) * 1.5);
+  color: var(--ui-text-highlighted);
+  transition: transform 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), background-color 150ms ease;
+}
+
+.sidebar-brand-link:active {
+  transform: scale(0.96);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sidebar-brand-link:hover {
+    background: color-mix(in oklab, var(--ui-bg-elevated) 55%, transparent);
+  }
+}
+
+.sidebar-brand-link:focus-visible,
+.sidebar-brand-title-link:focus-visible {
+  outline: 2px solid var(--ui-border-inverted);
+  outline-offset: 1px;
+}
+
+.sidebar-brand-meta {
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
-  align-items: center;
-  gap: 8px;
-  padding: 6px;
-  border-radius: calc(var(--ui-radius) * 1.5);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.sidebar-brand-title-link {
+  display: block;
+  max-width: 100%;
+  border-radius: 4px;
   color: var(--ui-text-highlighted);
-  transition: background-color 150ms ease;
-}
-
-.sidebar-brand--collapsed .sidebar-brand-link {
-  flex: 0 0 auto;
-}
-
-.sidebar-brand-link:hover {
-  background: color-mix(in oklab, var(--ui-bg-elevated) 50%, transparent);
-}
-
-.sidebar-brand-link:focus-visible {
-  outline: 2px solid var(--ui-border-inverted);
-  outline-offset: -2px;
+  transition: color 150ms ease;
 }
 
 .sidebar-logo {
   display: flex;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 20px;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
   overflow: hidden;
-  border-radius: var(--ui-radius);
+  border-radius: calc(var(--ui-radius) * 1.5);
+  border: 1px solid var(--ui-border-muted);
+  background: var(--ui-bg);
 }
 
 .sidebar-brand-title {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
-  line-height: 20px;
+  line-height: 18px;
   font-weight: 600;
+  letter-spacing: -0.015em;
 }
 
-/* VersionBadge: a small neutral tag after the name (its amber update state stays). */
+/* VersionBadge: quiet metadata line tucked under the site name (amber update state stays). */
 .sidebar-version {
-  flex-shrink: 0;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .sidebar-version > button {
   gap: 4px;
-  padding: 1px 6px;
+  max-width: 100%;
+  padding: 0 5px;
   border-radius: var(--ui-radius);
   font-size: 11px;
-  line-height: 18px;
+  line-height: 16px;
 }
 
 html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
@@ -785,20 +823,56 @@ html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
   }
 }
 
-/* Nav density: restore the main sidebar's 40px rows, 12px icon gap and 14px medium
-   labels. Nuxt UI's vertical default is a 32px row with 10px inline padding. */
+/* Nav density & Studio quiet active pill (aiforui / Antigravity style):
+   clean neutral active surface + hairline edge + crisp highlighted text + primary leading icon. */
 .console-sidebar:not([data-collapsed='true']) [data-slot='link'] {
   min-height: 2.5rem;
   gap: 0.75rem;
-  padding: 0.625rem 0.75rem;
-  border-radius: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.625rem;
   font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 140ms cubic-bezier(0.23, 1, 0.32, 1), color 140ms cubic-bezier(0.23, 1, 0.32, 1), transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.console-sidebar [data-slot='link']:active,
+.console-sidebar [data-slot='childLink']:active {
+  transform: scale(0.985);
+}
+
+.console-sidebar [data-slot='link'][aria-current='page'],
+.console-sidebar [data-slot='link'][data-active] {
+  background-color: var(--signal-nav-active, var(--ui-bg-elevated)) !important;
+  color: var(--signal-nav-active-text, var(--ui-text-highlighted)) !important;
+  box-shadow: inset 0 0 0 1px var(--ui-border-muted);
+}
+
+html.dark .console-sidebar [data-slot='link'][aria-current='page'],
+html.dark .console-sidebar [data-slot='link'][data-active] {
+  background-color: #22252e !important;
+  color: #f4f6fa !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), inset 0 0 0 1px rgb(255 255 255 / 0.05);
+}
+
+.console-sidebar [data-slot='link'][aria-current='page']::before,
+.console-sidebar [data-slot='link'][data-active]::before {
+  background-color: transparent !important;
+}
+
+.console-sidebar [data-slot='link'][aria-current='page'] [data-slot='linkLeadingIcon'],
+.console-sidebar [data-slot='link'][data-active] [data-slot='linkLeadingIcon'] {
+  color: var(--ui-primary) !important;
+}
+
+.console-sidebar [data-slot='childLink'][aria-current='page'] {
+  background-color: var(--signal-nav-active, var(--ui-bg-elevated)) !important;
+  color: var(--signal-nav-active-text, var(--ui-text-highlighted)) !important;
   font-weight: 500;
 }
 
 .console-sidebar:not([data-collapsed='true']) [data-slot='childLink'] {
   gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  padding: 0.45rem 0.75rem;
   border-radius: 0.5rem;
   font-size: 0.875rem;
 }

@@ -12,6 +12,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	dbusagecleanuptask "github.com/Wei-Shaw/sub2api/ent/usagecleanuptask"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -260,6 +261,7 @@ func (r *usageCleanupRepository) MarkTaskSucceeded(ctx context.Context, taskID i
 			finished_at = NOW(),
 			updated_at = NOW()
 		WHERE id = $3
+			AND status <> 'canceled'
 	`
 	_, err := r.sql.ExecContext(ctx, query, service.UsageCleanupStatusSucceeded, deletedRows, taskID)
 	return err
@@ -277,9 +279,42 @@ func (r *usageCleanupRepository) MarkTaskFailed(ctx context.Context, taskID int6
 			finished_at = NOW(),
 			updated_at = NOW()
 		WHERE id = $4
+			AND status <> 'canceled'
 	`
 	_, err := r.sql.ExecContext(ctx, query, service.UsageCleanupStatusFailed, deletedRows, errorMsg, taskID)
 	return err
+}
+
+func (r *usageCleanupRepository) CountUsageLogs(ctx context.Context, filters service.UsageCleanupFilters, limit int) (int64, bool, error) {
+	if filters.StartTime.IsZero() || filters.EndTime.IsZero() {
+		return 0, false, fmt.Errorf("cleanup filters missing time range")
+	}
+	whereClause, args := buildUsageCleanupWhere(filters)
+	if whereClause == "" {
+		return 0, false, fmt.Errorf("cleanup filters missing time range")
+	}
+	if limit <= 0 {
+		limit = 100000
+	}
+	args = append(args, limit+1)
+	query := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM (
+			SELECT 1
+			FROM usage_logs
+			WHERE %s
+			LIMIT $%d
+		) AS matched_usage_logs
+	`, whereClause, len(args))
+
+	var matched int64
+	if err := scanSingleRow(ctx, r.sql, query, args, &matched); err != nil {
+		return 0, false, err
+	}
+	if matched > int64(limit) {
+		return int64(limit), true, nil
+	}
+	return matched, false, nil
 }
 
 func (r *usageCleanupRepository) DeleteUsageLogsBatch(ctx context.Context, filters service.UsageCleanupFilters, limit int) (int64, error) {
@@ -386,60 +421,59 @@ func (r *usageCleanupRepository) deleteUsageLogsBatchWithRollupInvalidation(ctx 
 }
 
 func buildUsageCleanupWhere(filters service.UsageCleanupFilters) (string, []any) {
-	conditions := make([]string, 0, 8)
-	args := make([]any, 0, 8)
-	idx := 1
+	conditions := make([]string, 0, 12)
+	args := make([]any, 0, 12)
 	if !filters.StartTime.IsZero() {
-		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("created_at >= $%d", len(args)+1))
 		args = append(args, filters.StartTime)
-		idx++
 	}
 	if !filters.EndTime.IsZero() {
-		conditions = append(conditions, fmt.Sprintf("created_at <= $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("created_at <= $%d", len(args)+1))
 		args = append(args, filters.EndTime)
-		idx++
 	}
 	if filters.UserID != nil {
-		conditions = append(conditions, fmt.Sprintf("user_id = $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("user_id = $%d", len(args)+1))
 		args = append(args, *filters.UserID)
-		idx++
 	}
 	if filters.APIKeyID != nil {
-		conditions = append(conditions, fmt.Sprintf("api_key_id = $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("api_key_id = $%d", len(args)+1))
 		args = append(args, *filters.APIKeyID)
-		idx++
 	}
 	if filters.AccountID != nil {
-		conditions = append(conditions, fmt.Sprintf("account_id = $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("account_id = $%d", len(args)+1))
 		args = append(args, *filters.AccountID)
-		idx++
 	}
 	if filters.GroupID != nil {
-		conditions = append(conditions, fmt.Sprintf("group_id = $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("group_id = $%d", len(args)+1))
 		args = append(args, *filters.GroupID)
-		idx++
 	}
 	if filters.Model != nil {
 		model := strings.TrimSpace(*filters.Model)
 		if model != "" {
-			conditions = append(conditions, fmt.Sprintf("model = $%d", idx))
-			args = append(args, model)
-			idx++
+			conditions, args = appendUsageLogModelWhereCondition(conditions, args, model, usagestats.ModelSourceRequested)
 		}
 	}
 	if filters.RequestType != nil {
-		condition, conditionArgs := buildRequestTypeFilterCondition(idx, *filters.RequestType)
+		condition, conditionArgs := buildRequestTypeFilterCondition(len(args)+1, *filters.RequestType)
 		conditions = append(conditions, condition)
 		args = append(args, conditionArgs...)
-		idx += len(conditionArgs)
 	} else if filters.Stream != nil {
-		conditions = append(conditions, fmt.Sprintf("stream = $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("stream = $%d", len(args)+1))
 		args = append(args, *filters.Stream)
-		idx++
 	}
 	if filters.BillingType != nil {
-		conditions = append(conditions, fmt.Sprintf("billing_type = $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("billing_type = $%d", len(args)+1))
 		args = append(args, *filters.BillingType)
+	}
+	if filters.RequestID != nil {
+		conditions, args = appendUsageRequestIDCondition(conditions, args, *filters.RequestID)
+	}
+	conditions, args = appendNativeCompactionV2WhereCondition(conditions, args, filters.NativeCompactionV2, "")
+	if filters.BillingMode != nil {
+		conditions, args = appendUsageLogBillingModeWhereCondition(conditions, args, *filters.BillingMode)
+	}
+	if filters.UpstreamModelMismatch != nil {
+		conditions = append(conditions, upstreamModelMismatchCondition("upstream_model_mismatch", *filters.UpstreamModelMismatch))
 	}
 	return strings.Join(conditions, " AND "), args
 }
@@ -565,7 +599,10 @@ func (r *usageCleanupRepository) markTaskSucceededWithEnt(ctx context.Context, t
 	client := clientFromContext(ctx, r.client)
 	now := time.Now()
 	_, err := client.UsageCleanupTask.Update().
-		Where(dbusagecleanuptask.IDEQ(taskID)).
+		Where(
+			dbusagecleanuptask.IDEQ(taskID),
+			dbusagecleanuptask.StatusNEQ(service.UsageCleanupStatusCanceled),
+		).
 		SetStatus(service.UsageCleanupStatusSucceeded).
 		SetDeletedRows(deletedRows).
 		SetFinishedAt(now).
@@ -578,7 +615,10 @@ func (r *usageCleanupRepository) markTaskFailedWithEnt(ctx context.Context, task
 	client := clientFromContext(ctx, r.client)
 	now := time.Now()
 	_, err := client.UsageCleanupTask.Update().
-		Where(dbusagecleanuptask.IDEQ(taskID)).
+		Where(
+			dbusagecleanuptask.IDEQ(taskID),
+			dbusagecleanuptask.StatusNEQ(service.UsageCleanupStatusCanceled),
+		).
 		SetStatus(service.UsageCleanupStatusFailed).
 		SetDeletedRows(deletedRows).
 		SetErrorMessage(errorMsg).

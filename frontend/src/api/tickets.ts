@@ -22,9 +22,30 @@ export function isClientID(value: string): boolean {
 export const ticketStatuses = ['open', 'in_progress', 'waiting_user', 'resolved', 'closed'] as const
 export const ticketCategories = ['billing', 'api', 'account', 'other'] as const
 export const ticketPriorities = ['normal', 'high', 'urgent'] as const
+export const TICKET_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+export const TICKET_IMAGE_MAX_COUNT = 4
+export const TICKET_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
+export const TICKET_IMAGE_ACCEPT = TICKET_IMAGE_MIME_TYPES.join(',')
 export type TicketStatus = typeof ticketStatuses[number]
 export type TicketCategory = typeof ticketCategories[number]
 export type TicketPriority = typeof ticketPriorities[number]
+
+export function isSupportedTicketImageType(type: string): boolean {
+  const normalized = type.trim().toLowerCase()
+  return normalized === 'image/jpg' || (TICKET_IMAGE_MIME_TYPES as readonly string[]).includes(normalized)
+}
+
+export interface TicketAttachment {
+  id: number
+  ticket_id?: number
+  message_id?: number
+  file_name: string
+  content_type: string
+  size_bytes: number
+  width: number
+  height: number
+  created_at: string
+}
 
 export interface Ticket {
   id: number
@@ -55,7 +76,8 @@ export interface TicketMessage {
   content: string
   kind: 'reply' | 'event'
   event_type?: string
-  event_data?: { from?: unknown; to?: unknown }
+  event_data?: { from?: unknown; to?: unknown; has_attachments?: boolean; image_only?: boolean }
+  attachments?: TicketAttachment[]
   created_at: string
 }
 
@@ -83,7 +105,7 @@ export interface TicketFilters {
   page: number
   page_size: number
   search?: string
-  status?: TicketStatus | 'active' | ''
+  status?: TicketStatus | 'active' | 'unread' | ''
   category?: TicketCategory | ''
   priority?: TicketPriority | ''
   assigned_to?: 'all' | 'mine' | 'unassigned'
@@ -95,11 +117,13 @@ export interface CreateTicket {
   category: TicketCategory
   priority: TicketPriority
   client_id: string
+  attachment_ids?: number[]
 }
 export interface TicketReply {
   content: string
   client_id: string
   status?: 'waiting_user' | 'resolved' | 'in_progress'
+  attachment_ids?: number[]
 }
 export interface TicketUpdate {
   status?: TicketStatus
@@ -110,6 +134,7 @@ export interface ProactiveTicketInput {
   user_id: number
   subject?: string
   content: string
+  attachment_ids?: number[]
 }
 
 export function ticketsAPI(admin: boolean) {
@@ -138,6 +163,23 @@ export function ticketsAPI(admin: boolean) {
     },
     async read(id: number, last_message_id: number) {
       await apiClient.post(`${base}/${id}/read`, { last_message_id })
+    },
+    async uploadAttachment(file: File, signal?: AbortSignal) {
+      const form = new FormData()
+      form.append('file', file)
+      return (await apiClient.post<TicketAttachment>(`${base}/attachments`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        signal
+      })).data
+    },
+    async deletePendingAttachment(attachmentID: number) {
+      await apiClient.delete(`${base}/attachments/${attachmentID}`)
+    },
+    async fetchAttachmentBlob(ticketID: number, attachmentID: number, signal?: AbortSignal) {
+      return (await apiClient.get<Blob>(`${base}/${ticketID}/attachments/${attachmentID}`, {
+        responseType: 'blob',
+        signal
+      })).data
     }
   }
 }

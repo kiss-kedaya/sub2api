@@ -122,6 +122,10 @@ export default {
         title: '定时备份',
         description: '配置自动定时备份',
         enabled: '启用定时备份',
+        criticalOnly: '只备份关键表',
+        criticalOnlyHint: '保留全部表结构并完整备份用户、余额、API Key、账号、分组、订单、设置等核心业务数据，跳过用量日志、监控指标、抓包/追踪与临时队列等大表数据以大幅减小备份体积。此类快照仅支持手动恢复到空库，不支持页面一键在线恢复。',
+        criticalForcedByServer: '服务端已通过 backup.exclude_table_data 强制开启关键表快照模式，所有定时与手动备份均按服务端排除清单执行。',
+        ageEncryptionActive: '服务端已配置 age 公钥加密，备份归档将在上传至 S3 前自动加密（.age）。',
         cronExpr: 'Cron 表达式',
         cronHint: '例如 "0 2 * * *" 表示每天凌晨 2 点',
         retainDays: '备份过期天数',
@@ -133,6 +137,7 @@ export default {
       operations: {
         title: '备份记录',
         description: '创建手动备份和管理已有备份记录',
+        criticalOnly: '仅关键表',
         createBackup: '创建备份',
         backing: '备份中...',
         backupCreated: '备份创建成功',
@@ -142,6 +147,10 @@ export default {
         backupFailed: '备份失败',
         restoreRunning: '恢复进行中...',
         restoreFailed: '恢复失败',
+      },
+      scope: {
+        critical: '关键表',
+        encrypted: '已加密'
       },
       columns: {
         status: '状态',
@@ -177,6 +186,7 @@ export default {
         partLabel: '第 {index} 卷',
         downloadFailed: '下载地址为空',
         restore: '恢复',
+        restoreManualOnly: '关键表快照或加密备份仅支持手动恢复到空库',
         restoreConfirm: '确定要从此备份恢复吗？这将覆盖当前数据库！',
         restorePasswordPrompt: '请输入管理员密码以确认恢复操作',
         restoreSuccess: '数据库恢复成功',

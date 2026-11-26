@@ -86,7 +86,7 @@
       </div>
 
       <!-- Information Card -->
-      <UAlert color="neutral" variant="subtle" icon="i-lucide-info" class="dark:bg-primary/10 dark:text-primary dark:ring-primary/25" :title="t('redeem.aboutCodes')">
+      <UAlert color="neutral" variant="subtle" icon="i-lucide-info" :title="t('redeem.aboutCodes')">
         <template #description>
           <ul class="mt-1 list-inside list-disc space-y-1">
             <li>{{ t('redeem.codeRule1') }}</li>

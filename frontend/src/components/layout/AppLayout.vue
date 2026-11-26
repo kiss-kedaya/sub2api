@@ -94,20 +94,40 @@ defineExpose({ replayTour })
 }
 
 .console-frame .console-panel-body {
-  /* Nuxt UI's body is a flex column with gap-4 / sm:gap-6; the page is one child. */
+  /* Nuxt UI's body is a flex column with gap-4 / sm:gap-6; the page is one child.
+     Keep top padding on .signal-main instead of the scroll container so sticky top-0
+     toolbars seal flush against the navbar without a 16px/24px bleed-through gap. */
   gap: 0;
+  padding-top: 0;
 }
 
 .console-frame .signal-main {
   width: 100%;
   min-width: 0;
+  padding-top: 1rem;
+}
+
+@media (min-width: 640px) {
+  .console-frame .signal-main {
+    padding-top: 1.5rem;
+  }
 }
 
 /* Sticky offsets that pages wrote for the old window scroll (under a 64px header). The panel
-   body scrolls below the navbar now and sticky counts from inside its padding, so 0 keeps
-   them where they rest and sticks them at the body's content edge. */
-.console-frame .signal-main :is(.settings-tabs-shell, .pay-summary) {
+   body scrolls directly below the navbar now, so sticky toolbars seal at top: 0 while the
+   payment summary card keeps breathing room matching .signal-main's top inset. */
+.console-frame .signal-main .settings-tabs-shell {
   top: 0;
+}
+
+.console-frame .signal-main .pay-summary {
+  top: 1rem;
+}
+
+@media (min-width: 640px) {
+  .console-frame .signal-main .pay-summary {
+    top: 1.5rem;
+  }
 }
 
 /* Table pages fill the panel height; their table scrolls inside (TablePageLayout). */

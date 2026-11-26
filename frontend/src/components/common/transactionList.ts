@@ -66,6 +66,8 @@ export interface TransactionItem {
   /** Overrides the tone derived from the amount's sign. */
   tone?: TransactionTone
   status?: TransactionStatus
+  /** Highlights and animates a newly arrived record when the list animates updates. */
+  isNew?: boolean
   /** `data-testid` for the row element. */
   testId?: string
 }

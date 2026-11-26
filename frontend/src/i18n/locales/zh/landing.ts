@@ -50,6 +50,15 @@ export default {
         docs: '查看完整接口文档'
       }
     },
+    agentSetup: {
+      navLabel: 'Agent 配置',
+      title: '选择你的 AI Agent',
+      description: '装好 CC Switch 后，从本站密钥点「导入到 CCS」即可开用。',
+      viewAll: '完整配置指南',
+      viewGuide: '查看配置',
+      ccSwitchStrip: '原生支持 Claude Code、Codex、Gemini CLI、OpenCode 等 14 款 CC Switch 应用一键导入。',
+      openCcSwitchGuide: '4 步图解'
+    },
     footer: {
       allRightsReserved: '保留所有权利。',
       riskStrip: '本站提供按原样的 API 中转。输出不代表本站立场。禁止违法、未成年人有害内容及无人工审核的高风险自动化场景。'

@@ -1,164 +1,188 @@
 <template>
   <div class="space-y-6">
-    <section
-      data-testid="profile-overview-hero"
-      class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none"
-    >
-      <div class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:p-6">
-        <div class="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-elevated text-xl font-semibold text-highlighted ring ring-default">
-          <img
-            v-if="avatarUrl"
-            :src="avatarUrl"
-            :alt="displayName"
-            class="h-full w-full object-cover"
-          >
-          <span v-else>{{ avatarInitial }}</span>
+    <template v-if="showProfile">
+      <section
+        data-testid="profile-overview-hero"
+        class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none"
+      >
+        <div class="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:p-6">
+          <div class="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-elevated text-xl font-semibold text-highlighted ring ring-default">
+            <img
+              v-if="avatarUrl"
+              :src="avatarUrl"
+              :alt="displayName"
+              class="h-full w-full object-cover"
+            >
+            <span v-else>{{ avatarInitial }}</span>
+          </div>
+
+          <div class="min-w-0 flex-1 space-y-1.5">
+            <div class="flex flex-wrap items-center gap-2">
+              <h2 class="truncate text-lg font-semibold text-highlighted">
+                {{ displayName }}
+              </h2>
+              <UBadge :color="user?.role === 'admin' ? 'primary' : 'neutral'" variant="subtle">
+                {{ user?.role === 'admin' ? t('profile.administrator') : t('profile.user') }}
+              </UBadge>
+              <UBadge :color="user?.status === 'active' ? 'success' : 'error'" variant="subtle">
+                {{
+                  user?.status === 'active'
+                    ? t('common.active')
+                    : t('common.disabled')
+                }}
+              </UBadge>
+            </div>
+            <p class="truncate text-sm text-muted">
+              {{ primaryEmailDisplay }}
+            </p>
+            <div
+              v-if="sourceHints.length"
+              class="flex flex-wrap gap-1.5 pt-1"
+            >
+              <UBadge
+                v-for="hint in sourceHints"
+                :key="hint.key"
+                color="neutral"
+                variant="outline"
+                icon="i-lucide-link"
+              >
+                {{ hint.text }}
+              </UBadge>
+            </div>
+          </div>
         </div>
 
-        <div class="min-w-0 flex-1 space-y-1.5">
-          <div class="flex flex-wrap items-center gap-2">
-            <h2 class="truncate text-lg font-semibold text-highlighted">
-              {{ displayName }}
-            </h2>
-            <UBadge :color="user?.role === 'admin' ? 'primary' : 'neutral'" variant="subtle">
-              {{ user?.role === 'admin' ? t('profile.administrator') : t('profile.user') }}
-            </UBadge>
-            <UBadge :color="user?.status === 'active' ? 'success' : 'error'" variant="subtle">
-              {{
-                user?.status === 'active'
-                  ? t('common.active')
-                  : t('common.disabled')
-              }}
-            </UBadge>
+        <div class="grid grid-cols-1 divide-y divide-default border-t border-default sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+          <div data-testid="profile-overview-metric-balance" class="px-5 py-4 sm:px-6">
+            <p class="text-xs font-medium text-muted">
+              {{ t('profile.accountBalance') }}
+            </p>
+            <p class="mt-1 text-lg font-semibold tabular-nums text-highlighted">
+              {{ formatCurrency(user?.balance || 0) }}
+            </p>
           </div>
-          <p class="truncate text-sm text-muted">
-            {{ primaryEmailDisplay }}
-          </p>
-          <div
+          <div data-testid="profile-overview-metric-concurrency" class="px-5 py-4 sm:px-6">
+            <p class="text-xs font-medium text-muted">
+              {{ t('profile.concurrencyLimit') }}
+            </p>
+            <p class="mt-1 text-lg font-semibold tabular-nums text-highlighted">
+              {{ user?.concurrency || 0 }}
+            </p>
+          </div>
+          <div data-testid="profile-overview-metric-member-since" class="px-5 py-4 sm:px-6">
+            <p class="text-xs font-medium text-muted">
+              {{ t('profile.memberSince') }}
+            </p>
+            <p class="mt-1 text-lg font-semibold tabular-nums text-highlighted">
+              {{ memberSinceLabel }}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <div class="space-y-6">
+        <div data-testid="profile-main-column" class="space-y-6">
+          <section
+            data-testid="profile-basics-panel"
+            class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none"
+          >
+            <header class="border-b border-default px-5 py-4 sm:px-6">
+              <h3 class="text-base font-semibold text-highlighted">
+                {{ t('profile.basicsTitle') }}
+              </h3>
+              <p class="mt-1 text-sm text-muted">
+                {{ t('profile.basicsDescription') }}
+              </p>
+            </header>
+
+            <div class="grid divide-y divide-default md:grid-cols-2 md:divide-x md:divide-y-0">
+              <div class="p-5 sm:p-6">
+                <ProfileAvatarCard
+                  :user="user"
+                  embedded
+                />
+              </div>
+
+              <div class="p-5 sm:p-6">
+                <ProfileEditForm
+                  :initial-username="user?.username || ''"
+                  embedded
+                />
+              </div>
+            </div>
+          </section>
+
+          <section
+            v-if="showBindings"
+            data-testid="profile-auth-bindings-panel"
+            class="profile-bindings-panel rounded-lg bg-default p-5 shadow-xs ring ring-default sm:p-6 dark:shadow-none"
+          >
+            <ProfileIdentityBindingsSection
+              :user="user"
+              :github-enabled="githubEnabled"
+              :google-enabled="googleEnabled"
+              :linuxdo-enabled="linuxdoEnabled"
+              :dingtalk-enabled="dingtalkEnabled"
+              :oidc-enabled="oidcEnabled"
+              :oidc-provider-name="oidcProviderName"
+              :wechat-enabled="wechatEnabled"
+              :wechat-open-enabled="wechatOpenEnabled"
+              :wechat-mp-enabled="wechatMpEnabled"
+              embedded
+              compact
+            />
+          </section>
+        </div>
+
+        <div data-testid="profile-side-column" class="space-y-6">
+          <section
             v-if="sourceHints.length"
-            class="flex flex-wrap gap-1.5 pt-1"
+            class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none"
           >
-            <UBadge
-              v-for="hint in sourceHints"
-              :key="hint.key"
-              color="neutral"
-              variant="outline"
-              icon="i-lucide-link"
-            >
-              {{ hint.text }}
-            </UBadge>
-          </div>
-        </div>
-      </div>
+            <header class="border-b border-default px-5 py-4 sm:px-6">
+              <h3 class="text-base font-semibold text-highlighted">
+                {{ t('profile.linkedProfileSources') }}
+              </h3>
+              <p class="mt-1 text-sm text-muted">
+                {{ t('profile.linkedProfileSourcesDescription') }}
+              </p>
+            </header>
 
-      <div class="grid grid-cols-1 divide-y divide-default border-t border-default sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-        <div data-testid="profile-overview-metric-balance" class="px-5 py-4 sm:px-6">
-          <p class="text-xs font-medium text-muted">
-            {{ t('profile.accountBalance') }}
-          </p>
-          <p class="mt-1 text-lg font-semibold tabular-nums text-highlighted">
-            {{ formatCurrency(user?.balance || 0) }}
-          </p>
-        </div>
-        <div data-testid="profile-overview-metric-concurrency" class="px-5 py-4 sm:px-6">
-          <p class="text-xs font-medium text-muted">
-            {{ t('profile.concurrencyLimit') }}
-          </p>
-          <p class="mt-1 text-lg font-semibold tabular-nums text-highlighted">
-            {{ user?.concurrency || 0 }}
-          </p>
-        </div>
-        <div data-testid="profile-overview-metric-member-since" class="px-5 py-4 sm:px-6">
-          <p class="text-xs font-medium text-muted">
-            {{ t('profile.memberSince') }}
-          </p>
-          <p class="mt-1 text-lg font-semibold tabular-nums text-highlighted">
-            {{ memberSinceLabel }}
-          </p>
+            <ul class="divide-y divide-default">
+              <li
+                v-for="hint in sourceHints"
+                :key="hint.key"
+                class="flex items-start gap-3 px-5 py-3 text-sm text-default sm:px-6"
+              >
+                <UIcon name="i-lucide-link" class="mt-0.5 size-4 shrink-0 text-dimmed" />
+                <span>{{ hint.text }}</span>
+              </li>
+            </ul>
+          </section>
         </div>
       </div>
+    </template>
+
+    <section
+      v-else-if="showBindings"
+      data-testid="profile-auth-bindings-panel"
+      class="profile-bindings-panel rounded-lg bg-default p-5 shadow-xs ring ring-default sm:p-6 dark:shadow-none"
+    >
+      <ProfileIdentityBindingsSection
+        :user="user"
+        :github-enabled="githubEnabled"
+        :google-enabled="googleEnabled"
+        :linuxdo-enabled="linuxdoEnabled"
+        :dingtalk-enabled="dingtalkEnabled"
+        :oidc-enabled="oidcEnabled"
+        :oidc-provider-name="oidcProviderName"
+        :wechat-enabled="wechatEnabled"
+        :wechat-open-enabled="wechatOpenEnabled"
+        :wechat-mp-enabled="wechatMpEnabled"
+        embedded
+        compact
+      />
     </section>
-
-    <div class="space-y-6">
-      <div data-testid="profile-main-column" class="space-y-6">
-        <section
-          data-testid="profile-basics-panel"
-          class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none"
-        >
-          <header class="border-b border-default px-5 py-4 sm:px-6">
-            <h3 class="text-base font-semibold text-highlighted">
-              {{ t('profile.basicsTitle') }}
-            </h3>
-            <p class="mt-1 text-sm text-muted">
-              {{ t('profile.basicsDescription') }}
-            </p>
-          </header>
-
-          <div class="grid divide-y divide-default md:grid-cols-2 md:divide-x md:divide-y-0">
-            <div class="p-5 sm:p-6">
-              <ProfileAvatarCard
-                :user="user"
-                embedded
-              />
-            </div>
-
-            <div class="p-5 sm:p-6">
-              <ProfileEditForm
-                :initial-username="user?.username || ''"
-                embedded
-              />
-            </div>
-          </div>
-        </section>
-
-        <section
-          data-testid="profile-auth-bindings-panel"
-          class="profile-bindings-panel rounded-lg bg-default p-5 shadow-xs ring ring-default sm:p-6 dark:shadow-none"
-        >
-          <ProfileIdentityBindingsSection
-            :user="user"
-            :github-enabled="githubEnabled"
-            :google-enabled="googleEnabled"
-            :linuxdo-enabled="linuxdoEnabled"
-            :dingtalk-enabled="dingtalkEnabled"
-            :oidc-enabled="oidcEnabled"
-            :oidc-provider-name="oidcProviderName"
-            :wechat-enabled="wechatEnabled"
-            :wechat-open-enabled="wechatOpenEnabled"
-            :wechat-mp-enabled="wechatMpEnabled"
-            embedded
-            compact
-          />
-        </section>
-      </div>
-
-      <div data-testid="profile-side-column" class="space-y-6">
-        <section
-          v-if="sourceHints.length"
-          class="overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none"
-        >
-          <header class="border-b border-default px-5 py-4 sm:px-6">
-            <h3 class="text-base font-semibold text-highlighted">
-              {{ t('profile.linkedProfileSources') }}
-            </h3>
-            <p class="mt-1 text-sm text-muted">
-              {{ t('profile.linkedProfileSourcesDescription') }}
-            </p>
-          </header>
-
-          <ul class="divide-y divide-default">
-            <li
-              v-for="hint in sourceHints"
-              :key="hint.key"
-              class="flex items-start gap-3 px-5 py-3 text-sm text-default sm:px-6"
-            >
-              <UIcon name="i-lucide-link" class="mt-0.5 size-4 shrink-0 text-dimmed" />
-              <span>{{ hint.text }}</span>
-            </li>
-          </ul>
-        </section>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -172,6 +196,7 @@ import type { User, UserAuthBindingStatus, UserAuthProvider, UserProfileSourceCo
 
 const props = withDefaults(defineProps<{
   user: User | null
+  section?: 'all' | 'profile' | 'bindings'
   githubEnabled?: boolean
   googleEnabled?: boolean
   linuxdoEnabled?: boolean
@@ -182,6 +207,7 @@ const props = withDefaults(defineProps<{
   wechatOpenEnabled?: boolean
   wechatMpEnabled?: boolean
 }>(), {
+  section: 'all',
   githubEnabled: false,
   googleEnabled: false,
   linuxdoEnabled: false,
@@ -194,6 +220,9 @@ const props = withDefaults(defineProps<{
 })
 
 const { t } = useI18n()
+
+const showProfile = computed(() => props.section === 'all' || props.section === 'profile')
+const showBindings = computed(() => props.section === 'all' || props.section === 'bindings')
 
 function normalizeBindingStatus(binding: boolean | UserAuthBindingStatus | undefined): boolean | null {
   if (typeof binding === 'boolean') {

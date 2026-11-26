@@ -143,12 +143,10 @@ function swatch(palette: PaletteName, lightShade: PaletteShade, darkShade: Palet
   return { '--swatch-light': paletteHex(palette, lightShade), '--swatch-dark': paletteHex(palette, darkShade) }
 }
 
-// Black keeps the sakura night accent when the visitor chooses a neutral daytime primary.
-const NIGHT_ACCENT = paletteHex('sakura', 400)
-
+// Neutral monochrome primary: crisp ink black in light, crisp white in dark.
 function primarySwatch(value: ThemePrimary): Record<string, string> {
-  if (value === 'black') return { '--swatch-light': paletteHex(draft.value.theme_neutral, 900), '--swatch-dark': NIGHT_ACCENT }
-  return swatch(value, 500, 400)
+  if (value === 'black') return { '--swatch-light': paletteHex(draft.value.theme_neutral, 900), '--swatch-dark': '#f4f6fa' }
+  return swatch(value, 600, 400)
 }
 
 function colorLabel(name: string): string {
@@ -317,20 +315,20 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
 }
 .site-theme-preview {
-  border: 1px solid var(--ui-color-neutral-200, #e5e5e5);
+  border: 1px solid var(--ui-border, #e5e5e5);
   border-radius: calc(var(--site-theme-preview-radius) * 2);
-  background: #ffffff;
+  background: var(--ui-bg, #ffffff);
   padding: 1rem;
 }
 .dark .site-theme-preview {
-  border-color: var(--ui-color-neutral-800, #262626);
-  background: var(--ui-color-neutral-900, #171717);
+  border-color: var(--ui-border, #2c303a);
+  background: var(--ui-bg-muted, #1d2027);
 }
 .site-theme-preview-text {
-  color: var(--ui-color-neutral-700, #404040);
+  color: var(--ui-text, #404040);
 }
 .dark .site-theme-preview-text {
-  color: var(--ui-color-neutral-200, #e5e5e5);
+  color: var(--ui-text, #e4e7ee);
 }
 .site-theme-preview-button,
 .site-theme-preview-badge {
@@ -342,22 +340,21 @@ onBeforeUnmount(() => {
 .site-theme-preview-button {
   padding: 0.375rem 0.75rem;
   font-size: 0.875rem;
-  background: var(--ui-primary, #171717);
-  color: #ffffff;
+  background: var(--ui-primary, #155dfc);
+  color: var(--ui-text-inverted, #ffffff);
 }
-/* Neutral daytime primary keeps the night preview on sakura. */
 .dark .site-theme-preview-button {
-  background: var(--ui-primary, rgb(var(--c-primary-400)));
-  color: var(--ui-color-neutral-900, #171717);
+  background: var(--ui-primary, #51a2ff);
+  color: var(--ui-text-inverted, #111217);
 }
 .site-theme-preview-badge {
   padding: 0.125rem 0.5rem;
   font-size: 0.75rem;
-  background: color-mix(in oklab, var(--ui-primary, #171717) 12%, transparent);
-  color: var(--ui-primary, #171717);
+  background: color-mix(in oklab, var(--ui-primary, #155dfc) 12%, transparent);
+  color: var(--ui-primary, #155dfc);
 }
 .dark .site-theme-preview-badge {
-  background: color-mix(in oklab, var(--ui-primary, rgb(var(--c-primary-400))) 16%, transparent);
-  color: var(--ui-primary, rgb(var(--c-primary-400)));
+  background: color-mix(in oklab, var(--ui-primary, #51a2ff) 16%, transparent);
+  color: var(--ui-primary, #51a2ff);
 }
 </style>

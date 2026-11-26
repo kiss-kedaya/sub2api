@@ -10,7 +10,7 @@
         :subscription-type="group.subscription_type"
         :rate-multiplier="group.rate_multiplier"
         :show-rate="false"
-        class="max-w-24"
+        class="max-w-36"
       />
       <!-- 更多数量：点开查看完整列表 -->
       <UPopover v-if="hiddenCount > 0" :content="{ side: 'bottom', align: 'start' }">

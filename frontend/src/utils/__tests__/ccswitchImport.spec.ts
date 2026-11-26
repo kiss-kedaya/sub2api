@@ -343,4 +343,12 @@ describe('ccswitchImport utils', () => {
   it('falls back to the first key model when the platform default is missing', () => {
     expect(pickCcSwitchModel('claude-sonnet-4-6', ['grok-4.6', 'grok-4.5'])).toBe('grok-4.6')
   })
+
+  it('prefers a real model matching the chosen app family when the hardcoded default is absent', () => {
+    const realKeyModels = ['claude-sonnet-4-5', 'gpt-5.4-mini', 'gemini-2.5-flash', 'grok-4']
+    expect(pickCcSwitchModel('gpt-5.6-sol', realKeyModels, 'codex')).toBe('gpt-5.4-mini')
+    expect(pickCcSwitchModel('gemini-2.5-pro', realKeyModels, 'gemini')).toBe('gemini-2.5-flash')
+    expect(pickCcSwitchModel('grok-4.6', realKeyModels, 'grokbuild')).toBe('grok-4')
+    expect(pickCcSwitchModel('claude-sonnet-4-6', realKeyModels, 'claude')).toBe('claude-sonnet-4-5')
+  })
 })

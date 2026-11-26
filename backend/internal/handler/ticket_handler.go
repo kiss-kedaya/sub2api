@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -72,18 +73,26 @@ func ticketDetailResponse(c *gin.Context, detail *service.TicketDetail, err erro
 	response.Success(c, detail)
 }
 
-func (h *TicketHandler) List(c *gin.Context)          { h.list(c, false) }
-func (h *TicketHandler) AdminList(c *gin.Context)     { h.list(c, true) }
-func (h *TicketHandler) Stats(c *gin.Context)         { h.stats(c, false) }
-func (h *TicketHandler) AdminStats(c *gin.Context)    { h.stats(c, true) }
-func (h *TicketHandler) Detail(c *gin.Context)        { h.detail(c, false) }
-func (h *TicketHandler) AdminDetail(c *gin.Context)   { h.detail(c, true) }
-func (h *TicketHandler) Reply(c *gin.Context)         { h.reply(c, false) }
-func (h *TicketHandler) AdminReply(c *gin.Context)    { h.reply(c, true) }
-func (h *TicketHandler) Update(c *gin.Context)        { h.update(c, false) }
-func (h *TicketHandler) AdminUpdate(c *gin.Context)   { h.update(c, true) }
-func (h *TicketHandler) MarkRead(c *gin.Context)      { h.markRead(c, false) }
-func (h *TicketHandler) AdminMarkRead(c *gin.Context) { h.markRead(c, true) }
+func (h *TicketHandler) List(c *gin.Context)                    { h.list(c, false) }
+func (h *TicketHandler) AdminList(c *gin.Context)               { h.list(c, true) }
+func (h *TicketHandler) Stats(c *gin.Context)                   { h.stats(c, false) }
+func (h *TicketHandler) AdminStats(c *gin.Context)              { h.stats(c, true) }
+func (h *TicketHandler) Detail(c *gin.Context)                  { h.detail(c, false) }
+func (h *TicketHandler) AdminDetail(c *gin.Context)             { h.detail(c, true) }
+func (h *TicketHandler) Reply(c *gin.Context)                   { h.reply(c, false) }
+func (h *TicketHandler) AdminReply(c *gin.Context)              { h.reply(c, true) }
+func (h *TicketHandler) Update(c *gin.Context)                  { h.update(c, false) }
+func (h *TicketHandler) AdminUpdate(c *gin.Context)             { h.update(c, true) }
+func (h *TicketHandler) MarkRead(c *gin.Context)                { h.markRead(c, false) }
+func (h *TicketHandler) AdminMarkRead(c *gin.Context)           { h.markRead(c, true) }
+func (h *TicketHandler) UploadAttachment(c *gin.Context)        { h.uploadAttachment(c, false) }
+func (h *TicketHandler) AdminUploadAttachment(c *gin.Context)   { h.uploadAttachment(c, true) }
+func (h *TicketHandler) GetAttachment(c *gin.Context)           { h.getAttachment(c, false) }
+func (h *TicketHandler) AdminGetAttachment(c *gin.Context)      { h.getAttachment(c, true) }
+func (h *TicketHandler) DeletePendingAttachment(c *gin.Context) { h.deletePendingAttachment(c, false) }
+func (h *TicketHandler) AdminDeletePendingAttachment(c *gin.Context) {
+	h.deletePendingAttachment(c, true)
+}
 
 func (h *TicketHandler) list(c *gin.Context, admin bool) {
 	actor, ok := ticketActor(c, admin)
@@ -231,6 +240,100 @@ func (h *TicketHandler) markRead(c *gin.Context, admin bool) {
 		return
 	}
 	if response.ErrorFrom(c, h.tickets.MarkRead(c.Request.Context(), actor, id, in.LastMessageID)) {
+		return
+	}
+	response.Success(c, gin.H{"message": "ok"})
+}
+
+func (h *TicketHandler) uploadAttachment(c *gin.Context, admin bool) {
+	actor, ok := ticketActor(c, admin)
+	if !ok {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, service.TicketMaxAttachmentBytes+(1<<20))
+	if err := c.Request.ParseMultipartForm(service.TicketMaxAttachmentBytes + (256 << 10)); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			_ = response.ErrorFrom(c, service.ErrTicketAttachmentTooLarge)
+			return
+		}
+		response.BadRequest(c, "invalid multipart image upload")
+		return
+	}
+	if c.Request.MultipartForm != nil {
+		defer func() { _ = c.Request.MultipartForm.RemoveAll() }()
+	}
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		response.BadRequest(c, "missing image file")
+		return
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, service.TicketMaxAttachmentBytes+1))
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			_ = response.ErrorFrom(c, service.ErrTicketAttachmentTooLarge)
+			return
+		}
+		response.BadRequest(c, "failed to read image file")
+		return
+	}
+	if len(data) > service.TicketMaxAttachmentBytes {
+		_ = response.ErrorFrom(c, service.ErrTicketAttachmentTooLarge)
+		return
+	}
+	att, err := h.tickets.UploadAttachment(c.Request.Context(), actor, service.UploadTicketAttachmentInput{
+		FileName: header.Filename,
+		Data:     data,
+	})
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, att)
+}
+
+func (h *TicketHandler) getAttachment(c *gin.Context, admin bool) {
+	actor, ok := ticketActor(c, admin)
+	if !ok {
+		return
+	}
+	id, ok := ticketID(c)
+	if !ok {
+		return
+	}
+	attachmentID, err := strconv.ParseInt(c.Param("attachmentId"), 10, 64)
+	if err != nil || attachmentID <= 0 {
+		response.BadRequest(c, "invalid attachment ID")
+		return
+	}
+	att, err := h.tickets.GetAttachment(c.Request.Context(), actor, id, attachmentID)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	if !service.IsAllowedTicketImageContentType(att.ContentType) {
+		_ = response.ErrorFrom(c, service.ErrTicketAttachmentNotFound)
+		return
+	}
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Content-Security-Policy", "default-src 'none'; sandbox")
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Vary", "Authorization, Cookie")
+	c.Header("Content-Disposition", "inline")
+	c.Data(http.StatusOK, att.ContentType, att.Data)
+}
+
+func (h *TicketHandler) deletePendingAttachment(c *gin.Context, admin bool) {
+	actor, ok := ticketActor(c, admin)
+	if !ok {
+		return
+	}
+	attachmentID, err := strconv.ParseInt(c.Param("attachmentId"), 10, 64)
+	if err != nil || attachmentID <= 0 {
+		response.BadRequest(c, "invalid attachment ID")
+		return
+	}
+	if response.ErrorFrom(c, h.tickets.DeletePendingAttachment(c.Request.Context(), actor, attachmentID)) {
 		return
 	}
 	response.Success(c, gin.H{"message": "ok"})

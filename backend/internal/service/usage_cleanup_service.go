@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -19,7 +21,9 @@ import (
 )
 
 const (
-	usageCleanupWorkerName = "usage_cleanup_worker"
+	usageCleanupWorkerName          = "usage_cleanup_worker"
+	defaultUsageCleanupPreviewLimit = 100000
+	usageCleanupPreviewTimeout      = 5 * time.Second
 )
 
 // UsageCleanupService 负责创建与执行使用记录清理任务
@@ -30,6 +34,7 @@ type UsageCleanupService struct {
 	cfg         *config.Config
 
 	running   int32
+	recheck   int32
 	startOnce sync.Once
 	stopOnce  sync.Once
 
@@ -77,6 +82,18 @@ func describeUsageCleanupFilters(filters UsageCleanupFilters) string {
 	if filters.BillingType != nil {
 		parts = append(parts, fmt.Sprintf("billing_type=%d", *filters.BillingType))
 	}
+	if filters.RequestID != nil {
+		parts = append(parts, "request_id="+strings.TrimSpace(*filters.RequestID))
+	}
+	if filters.NativeCompactionV2 != nil {
+		parts = append(parts, fmt.Sprintf("native_compaction_v2=%t", *filters.NativeCompactionV2))
+	}
+	if filters.BillingMode != nil {
+		parts = append(parts, "billing_mode="+strings.TrimSpace(*filters.BillingMode))
+	}
+	if filters.UpstreamModelMismatch != nil {
+		parts = append(parts, fmt.Sprintf("upstream_model_mismatch=%t", *filters.UpstreamModelMismatch))
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -122,6 +139,41 @@ func (s *UsageCleanupService) ListTasks(ctx context.Context, params pagination.P
 	return s.repo.ListTasks(ctx, params)
 }
 
+func (s *UsageCleanupService) PreviewTask(ctx context.Context, filters UsageCleanupFilters) (*UsageCleanupPreview, error) {
+	if s == nil || s.repo == nil {
+		return nil, fmt.Errorf("cleanup service not ready")
+	}
+	if s.cfg != nil && !s.cfg.UsageCleanup.Enabled {
+		return nil, infraerrors.New(http.StatusServiceUnavailable, "USAGE_CLEANUP_DISABLED", "usage cleanup is disabled")
+	}
+	sanitizeUsageCleanupFilters(&filters)
+	if err := s.validateFilters(filters); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	previewCtx, cancel := context.WithTimeout(ctx, usageCleanupPreviewTimeout)
+	defer cancel()
+	matched, truncated, err := s.repo.CountUsageLogs(previewCtx, filters, defaultUsageCleanupPreviewLimit)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(previewCtx.Err(), context.DeadlineExceeded) {
+			return nil, infraerrors.New(http.StatusGatewayTimeout, "USAGE_CLEANUP_PREVIEW_TIMEOUT", "cleanup preview timed out")
+		}
+		return nil, fmt.Errorf("preview cleanup task: %w", err)
+	}
+	return &UsageCleanupPreview{
+		MatchedRows:  matched,
+		Truncated:    truncated,
+		MaxRangeDays: s.maxRangeDays(),
+		StartTime:    filters.StartTime,
+		EndTime:      filters.EndTime,
+	}, nil
+}
+
 func (s *UsageCleanupService) CreateTask(ctx context.Context, filters UsageCleanupFilters, createdBy int64) (*UsageCleanupTask, error) {
 	if s == nil || s.repo == nil {
 		return nil, fmt.Errorf("cleanup service not ready")
@@ -159,39 +211,65 @@ func (s *UsageCleanupService) runOnce() {
 	if svc == nil {
 		return
 	}
-	if !atomic.CompareAndSwapInt32(&svc.running, 0, 1) {
-		logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] run_once skipped: already_running=true")
-		return
+	for {
+		if !atomic.CompareAndSwapInt32(&svc.running, 0, 1) {
+			atomic.StoreInt32(&svc.recheck, 1)
+			logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] run_once skipped: already_running=true")
+			return
+		}
+		stopLoop := func() bool {
+			defer atomic.StoreInt32(&svc.running, 0)
+			atomic.StoreInt32(&svc.recheck, 0)
+			return svc.drainPendingTasks()
+		}()
+		if stopLoop || atomic.SwapInt32(&svc.recheck, 0) == 0 {
+			return
+		}
+		if svc.workerCtx != nil && svc.workerCtx.Err() != nil {
+			return
+		}
 	}
-	defer atomic.StoreInt32(&svc.running, 0)
-
-	parent := context.Background()
-	if svc.workerCtx != nil {
-		parent = svc.workerCtx
-	}
-	ctx, cancel := context.WithTimeout(parent, svc.taskTimeout())
-	defer cancel()
-
-	task, err := svc.repo.ClaimNextPendingTask(ctx, int64(svc.taskTimeout().Seconds()))
-	if err != nil {
-		logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] claim pending task failed: %v", err)
-		return
-	}
-	if task == nil {
-		slog.Debug("[UsageCleanup] run_once done: no_task=true")
-		return
-	}
-
-	logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] task claimed: task=%d status=%s created_by=%d deleted_rows=%d %s", task.ID, task.Status, task.CreatedBy, task.DeletedRows, describeUsageCleanupFilters(task.Filters))
-	svc.executeTask(ctx, task)
 }
 
-func (s *UsageCleanupService) executeTask(ctx context.Context, task *UsageCleanupTask) {
+func (s *UsageCleanupService) drainPendingTasks() bool {
+	parent := context.Background()
+	if s.workerCtx != nil {
+		parent = s.workerCtx
+	}
+
+	for {
+		if parent.Err() != nil {
+			return true
+		}
+		ctx, cancel := context.WithTimeout(parent, s.taskTimeout())
+		task, err := s.repo.ClaimNextPendingTask(ctx, int64(s.taskTimeout().Seconds()))
+		if err != nil {
+			cancel()
+			logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] claim pending task failed: %v", err)
+			return true
+		}
+		if task == nil {
+			cancel()
+			slog.Debug("[UsageCleanup] run_once done: no_task=true")
+			return false
+		}
+
+		logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] task claimed: task=%d status=%s created_by=%d deleted_rows=%d %s", task.ID, task.Status, task.CreatedBy, task.DeletedRows, describeUsageCleanupFilters(task.Filters))
+		interrupted := s.executeTask(ctx, task)
+		cancel()
+		if interrupted {
+			return true
+		}
+	}
+}
+
+func (s *UsageCleanupService) executeTask(ctx context.Context, task *UsageCleanupTask) bool {
 	if task == nil {
-		return
+		return false
 	}
 
 	batchSize := s.batchSize()
+	initialDeleted := task.DeletedRows
 	deletedTotal := task.DeletedRows
 	start := time.Now()
 	logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] task started: task=%d batch_size=%d deleted_rows=%d %s", task.ID, batchSize, deletedTotal, describeUsageCleanupFilters(task.Filters))
@@ -200,16 +278,25 @@ func (s *UsageCleanupService) executeTask(ctx context.Context, task *UsageCleanu
 	for {
 		if ctx != nil && ctx.Err() != nil {
 			logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] task interrupted: task=%d err=%v", task.ID, ctx.Err())
-			return
+			if deletedTotal > initialDeleted {
+				s.triggerDashboardRecompute(task.ID, task.Filters.StartTime, task.Filters.EndTime)
+			}
+			return true
 		}
 		canceled, err := s.isTaskCanceled(ctx, task.ID)
 		if err != nil {
 			s.markTaskFailed(task.ID, deletedTotal, err)
-			return
+			if deletedTotal > initialDeleted {
+				s.triggerDashboardRecompute(task.ID, task.Filters.StartTime, task.Filters.EndTime)
+			}
+			return false
 		}
 		if canceled {
 			logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] task canceled: task=%d deleted_rows=%d duration=%s", task.ID, deletedTotal, time.Since(start))
-			return
+			if deletedTotal > initialDeleted {
+				s.triggerDashboardRecompute(task.ID, task.Filters.StartTime, task.Filters.EndTime)
+			}
+			return false
 		}
 
 		batchNum++
@@ -218,10 +305,16 @@ func (s *UsageCleanupService) executeTask(ctx context.Context, task *UsageCleanu
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				// 任务被中断（例如服务停止/超时），保持 running 状态，后续通过 stale reclaim 续跑。
 				logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] task interrupted: task=%d err=%v", task.ID, err)
-				return
+				if deletedTotal > initialDeleted {
+					s.triggerDashboardRecompute(task.ID, task.Filters.StartTime, task.Filters.EndTime)
+				}
+				return true
 			}
 			s.markTaskFailed(task.ID, deletedTotal, err)
-			return
+			if deletedTotal > initialDeleted {
+				s.triggerDashboardRecompute(task.ID, task.Filters.StartTime, task.Filters.EndTime)
+			}
+			return false
 		}
 		deletedTotal += deleted
 		if deleted > 0 {
@@ -239,6 +332,14 @@ func (s *UsageCleanupService) executeTask(ctx context.Context, task *UsageCleanu
 		}
 	}
 
+	if canceled, err := s.isTaskCanceled(ctx, task.ID); err == nil && canceled {
+		logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] task canceled before finalize: task=%d deleted_rows=%d duration=%s", task.ID, deletedTotal, time.Since(start))
+		if deletedTotal > initialDeleted {
+			s.triggerDashboardRecompute(task.ID, task.Filters.StartTime, task.Filters.EndTime)
+		}
+		return false
+	}
+
 	updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := s.repo.MarkTaskSucceeded(updateCtx, task.ID, deletedTotal); err != nil {
@@ -247,12 +348,18 @@ func (s *UsageCleanupService) executeTask(ctx context.Context, task *UsageCleanu
 		logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] task succeeded: task=%d deleted_rows=%d duration=%s", task.ID, deletedTotal, time.Since(start))
 	}
 
-	if s.dashboard != nil {
-		if err := s.dashboard.TriggerRecomputeRange(task.Filters.StartTime, task.Filters.EndTime); err != nil {
-			logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] trigger dashboard recompute failed: task=%d err=%v", task.ID, err)
-		} else {
-			logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] trigger dashboard recompute: task=%d start=%s end=%s", task.ID, task.Filters.StartTime.UTC().Format(time.RFC3339), task.Filters.EndTime.UTC().Format(time.RFC3339))
-		}
+	s.triggerDashboardRecompute(task.ID, task.Filters.StartTime, task.Filters.EndTime)
+	return false
+}
+
+func (s *UsageCleanupService) triggerDashboardRecompute(taskID int64, startTime, endTime time.Time) {
+	if s.dashboard == nil {
+		return
+	}
+	if err := s.dashboard.TriggerRecomputeRange(startTime, endTime); err != nil {
+		logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] trigger dashboard recompute failed: task=%d err=%v", taskID, err)
+	} else {
+		logger.LegacyPrintf("service.usage_cleanup", "[UsageCleanup] trigger dashboard recompute: task=%d start=%s end=%s", taskID, startTime.UTC().Format(time.RFC3339), endTime.UTC().Format(time.RFC3339))
 	}
 }
 
@@ -298,9 +405,56 @@ func (s *UsageCleanupService) validateFilters(filters UsageCleanupFilters) error
 	maxDays := s.maxRangeDays()
 	if maxDays > 0 {
 		delta := filters.EndTime.Sub(filters.StartTime)
-		if delta > time.Duration(maxDays)*24*time.Hour {
-			return infraerrors.BadRequest("USAGE_CLEANUP_RANGE_TOO_LARGE", fmt.Sprintf("date range exceeds %d days", maxDays))
+		// Allow <1s sub-second expansion from inclusive end-second boundaries (e.g. exact 24h/31d windows).
+		if delta >= time.Duration(maxDays)*24*time.Hour+time.Second {
+			return infraerrors.BadRequest("USAGE_CLEANUP_RANGE_TOO_LARGE", fmt.Sprintf("date range exceeds %d days", maxDays)).
+				WithMetadata(map[string]string{"max_range_days": strconv.Itoa(maxDays)})
 		}
+	}
+	if filters.BillingMode != nil {
+		switch BillingMode(*filters.BillingMode) {
+		case BillingModeToken, BillingModePerRequest, BillingModeImage, BillingModeVideo:
+		default:
+			return infraerrors.BadRequest("USAGE_CLEANUP_INVALID_BILLING_MODE", "invalid billing_mode")
+		}
+	}
+	if filters.RequestID != nil {
+		if err := validateUsageCleanupRequestID(*filters.RequestID, filters.StartTime, filters.EndTime); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateUsageCleanupRequestID(input string, start, end time.Time) error {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil
+	}
+	exact := strings.HasPrefix(input, "=")
+	if exact || strings.HasPrefix(input, "^") {
+		input = strings.TrimSpace(input[1:])
+	}
+	normalized := NormalizeUsageRequestIDKey(input)
+	if normalized == "" {
+		return infraerrors.BadRequest("USAGE_CLEANUP_INVALID_REQUEST_ID", "request_id cannot be empty")
+	}
+	if exact {
+		return nil
+	}
+	run := 0
+	for _, r := range normalized {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			run++
+		} else {
+			run = 0
+		}
+		if run >= 3 {
+			return nil
+		}
+	}
+	if end.Sub(start) > 24*time.Hour+time.Second {
+		return infraerrors.BadRequest("USAGE_CLEANUP_REQUEST_ID_RANGE_TOO_LARGE", "short request_id pattern requires a date range within 24 hours, or use =exact_id")
 	}
 	return nil
 }
@@ -383,6 +537,22 @@ func sanitizeUsageCleanupFilters(filters *UsageCleanupFilters) {
 	}
 	if filters.BillingType != nil && *filters.BillingType < 0 {
 		filters.BillingType = nil
+	}
+	if filters.RequestID != nil {
+		requestID := strings.TrimSpace(*filters.RequestID)
+		if requestID == "" {
+			filters.RequestID = nil
+		} else {
+			filters.RequestID = &requestID
+		}
+	}
+	if filters.BillingMode != nil {
+		billingMode := strings.ToLower(strings.TrimSpace(*filters.BillingMode))
+		if billingMode == "" {
+			filters.BillingMode = nil
+		} else {
+			filters.BillingMode = &billingMode
+		}
 	}
 }
 

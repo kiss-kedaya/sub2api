@@ -35,6 +35,7 @@
     </div>
     <div v-else class="signal-trend px-2 pb-2 pt-4 sm:px-4">
       <TokenUsageTrend
+        bare
         :trend-data="trend"
         :loading="loading"
         :mode="mode"

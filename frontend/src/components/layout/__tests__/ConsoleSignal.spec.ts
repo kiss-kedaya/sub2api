@@ -232,4 +232,10 @@ describe('console frame (Nuxt UI dashboard)', () => {
     expect(wrapper!.find('.sidebar-nav a[href="/admin/accounts"][data-tour="sidebar-channel-manage"]').exists()).toBe(true)
     expect(wrapper!.find('.sidebar-nav a[href="/keys"][data-tour="sidebar-my-keys"]').exists()).toBe(true)
   })
+
+  it('layers the navbar and toolbar above sticky content in the panel body', async () => {
+    await renderShell('/purchase')
+    expect(navbar().classes()).toEqual(expect.arrayContaining(['relative', 'z-40']))
+    expect(wrapper!.get('.console-toolbar').classes()).toEqual(expect.arrayContaining(['relative', 'z-30']))
+  })
 })

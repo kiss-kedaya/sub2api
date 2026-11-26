@@ -1,11 +1,25 @@
-import type { RouteMeta } from 'vue-router'
+import type { LocationQuery, RouteMeta } from 'vue-router'
 
 /** The global app shell already owns the console frame. */
 export const CONSOLE_SHELL_KEY = Symbol('sub2api.console-shell')
 
-/** Console chrome belongs to authenticated app pages, not auth/public screens. */
-export function isConsoleLayoutRoute(meta: RouteMeta | null | undefined): boolean {
-  return meta?.requiresAuth === true
+interface ConsoleShellRouteLike {
+  path?: string
+  query?: LocationQuery | Record<string, unknown>
+}
+
+/**
+ * Console chrome belongs to authenticated app pages, plus the authenticated
+ * embedded Model Plaza view so switching between Console ↔ Model Plaza keeps
+ * the sidebar & header mounted without teardown flicker.
+ */
+export function isConsoleLayoutRoute(
+  meta: RouteMeta | null | undefined,
+  route?: ConsoleShellRouteLike | null,
+  isAuthenticated = false,
+): boolean {
+  if (meta?.requiresAuth === true) return true
+  return isAuthenticated && route?.path === '/model-plaza' && route.query?.embedded === '1'
 }
 
 /**

@@ -2,21 +2,25 @@
   <div class="deposit-filters">
     <div class="deposit-filters__group" role="group" :aria-label="t('deposit.filterStatusLabel')">
       <span class="deposit-filters__label">{{ t('deposit.filterStatusLabel') }}</span>
-      <button v-for="option in statusOptions" :key="option.value" type="button" class="deposit-filters__pill"
-        :class="{ 'deposit-filters__pill--active': status === option.value }"
-        :aria-pressed="status === option.value" :data-testid="'deposit-filter-status-' + option.value"
-        @click="emit('update:status', option.value)">
-        {{ t(option.labelKey) }}
-      </button>
+      <div class="deposit-filters__track">
+        <button v-for="option in statusOptions" :key="option.value" type="button" class="deposit-filters__pill"
+          :class="{ 'deposit-filters__pill--active': status === option.value }"
+          :aria-pressed="status === option.value" :data-testid="'deposit-filter-status-' + option.value"
+          @click="emit('update:status', option.value)">
+          {{ t(option.labelKey) }}
+        </button>
+      </div>
     </div>
-    <div class="deposit-filters__group" role="group" :aria-label="t('deposit.filterTimeLabel')">
+    <div class="deposit-filters__group deposit-filters__group--range" role="group" :aria-label="t('deposit.filterTimeLabel')">
       <span class="deposit-filters__label">{{ t('deposit.filterTimeLabel') }}</span>
-      <button v-for="option in rangeOptions" :key="option.value" type="button" class="deposit-filters__pill"
-        :class="{ 'deposit-filters__pill--active': range === option.value }"
-        :aria-pressed="range === option.value" :data-testid="'deposit-filter-range-' + option.value"
-        @click="emit('update:range', option.value)">
-        {{ t(option.labelKey) }}
-      </button>
+      <div class="deposit-filters__track">
+        <button v-for="option in rangeOptions" :key="option.value" type="button" class="deposit-filters__pill"
+          :class="{ 'deposit-filters__pill--active': range === option.value }"
+          :aria-pressed="range === option.value" :data-testid="'deposit-filter-range-' + option.value"
+          @click="emit('update:range', option.value)">
+          {{ t(option.labelKey) }}
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -60,13 +64,107 @@ const rangeOptions = DEPOSIT_TIME_RANGES.map(value => ({ value, labelKey: RANGE_
 </script>
 
 <style scoped>
-.deposit-filters { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; margin-bottom: 1rem; }
-.deposit-filters__group { display: flex; flex-wrap: wrap; align-items: center; gap: .375rem; }
-.deposit-filters__label { color: var(--signal-muted, #8c99a6); font-size: .6875rem; }
-.deposit-filters__pill {
-  min-height: 1.875rem; padding: .25rem .625rem; border: 1px solid var(--ui-border);
-  border-radius: 999px; font-size: .75rem; transition: border-color .15s, background .15s;
+.deposit-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.625rem 1.25rem;
 }
-.deposit-filters__pill:hover { background: var(--signal-accent-soft, #0891b212); }
-.deposit-filters__pill--active { border-color: var(--signal-accent, #0891b2); background: var(--signal-accent-soft, #0891b218); font-weight: 600; }
+
+.deposit-filters__group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.deposit-filters__label {
+  color: var(--ui-text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.deposit-filters__track {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.1875rem;
+  padding: 0.1875rem;
+  border: 1px solid var(--ui-border);
+  border-radius: 0.5rem;
+  background: var(--ui-bg-muted);
+}
+
+.deposit-filters__pill {
+  min-height: 1.75rem;
+  padding: 0.1875rem 0.65rem;
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--ui-text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.deposit-filters__pill:focus-visible {
+  outline: 2px solid var(--ui-primary);
+  outline-offset: 1px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .deposit-filters__pill:hover:not(.deposit-filters__pill--active) {
+    color: var(--ui-text-highlighted);
+    background: color-mix(in oklab, var(--ui-bg) 60%, transparent);
+  }
+}
+
+.deposit-filters__pill--active {
+  background: var(--ui-bg);
+  border-color: color-mix(in oklab, var(--ui-primary) 38%, var(--ui-border));
+  color: var(--ui-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.06);
+}
+
+@media (max-width: 640px) {
+  .deposit-filters {
+    gap: 0.625rem;
+  }
+
+  .deposit-filters__group {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.375rem;
+    width: 100%;
+  }
+
+  .deposit-filters__pill {
+    padding: 0.1875rem 0.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deposit-filters__pill {
+    transition: none;
+  }
+}
+</style>
+
+<style>
+html.dark .deposit-filters__track {
+  background: var(--ui-bg-elevated);
+  border-color: var(--ui-border);
+}
+
+html.dark .deposit-filters__pill--active {
+  background: color-mix(in oklab, var(--ui-primary) 16%, var(--ui-bg));
+  border-color: color-mix(in oklab, var(--ui-primary) 45%, transparent);
+  color: var(--ui-primary);
+  box-shadow: none;
+}
 </style>

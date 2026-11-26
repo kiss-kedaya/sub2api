@@ -310,21 +310,16 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     await sleep(1100)
     await nextTick()
   }
-  const switchOn = async (wrapper: VueWrapper) => {
+  const toggleSwitch = async (wrapper: VueWrapper) => {
     await sealSwitch(wrapper).trigger('click')
     await flushPromises()
   }
 
-  // 自动填充串扰修复：回执弹窗默认不渲染密码框，只有用户主动打开
-  // 「以后可查看」时才出现，且使用 new-password + 非凭据 name + 密码管理器忽略标记。
-  it('renders the switch off and only shows the password field after switching it on', async () => {
+  // 账号支持封存时「以后可查看」默认开启；关闭弹窗时由 BaseDialog 卸载 DOM，不影响列表页。
+  it('defaults the switch on when the account can seal and lets the user turn it off', async () => {
     const wrapper = await mountDialog({ canSeal: true })
     expect(wrapper.get('[data-test="api-key-seal-optin"]').exists()).toBe(true)
     expect(sealSwitch(wrapper).attributes('role')).toBe('switch')
-    expect(sealSwitch(wrapper).attributes('aria-checked')).toBe('false')
-    expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
-
-    await switchOn(wrapper)
     expect(sealSwitch(wrapper).attributes('aria-checked')).toBe('true')
     const password = wrapper.get('[data-test="api-key-seal-password"]')
     expect(password.attributes('autocomplete')).toBe('new-password')
@@ -334,13 +329,18 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     // No separate label paragraph: the placeholder and the aria-label say what it is.
     expect(password.attributes('placeholder')).toBe('Login password')
     expect(password.attributes('aria-label')).toBe('Login password')
+
+    await toggleSwitch(wrapper)
+    expect(sealSwitch(wrapper).attributes('aria-checked')).toBe('false')
+    expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('puts the cursor in the password field as soon as the switch is on', async () => {
+  it('puts the cursor in the password field when the user toggles the switch back on', async () => {
     const wrapper = await mountDialog({ canSeal: true })
 
-    await switchOn(wrapper)
+    await toggleSwitch(wrapper) // off
+    await toggleSwitch(wrapper) // back on
     await nextTick()
 
     expect(document.activeElement).toBe(wrapper.get('[data-test="api-key-seal-password"]').element)
@@ -350,9 +350,13 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
   it('toggles from the label text as well as from the switch', async () => {
     const wrapper = await mountDialog({ canSeal: true })
 
+    expect(sealSwitch(wrapper).attributes('aria-checked')).toBe('true')
     await wrapper.get('label[for="api-key-seal-switch"]').trigger('click')
     await flushPromises()
+    expect(sealSwitch(wrapper).attributes('aria-checked')).toBe('false')
 
+    await wrapper.get('label[for="api-key-seal-switch"]').trigger('click')
+    await flushPromises()
     expect(sealSwitch(wrapper).attributes('aria-checked')).toBe('true')
     wrapper.unmount()
   })
@@ -403,7 +407,6 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     const wrapper = await mountDialog({ canSeal: true })
     await unlock()
 
-    await switchOn(wrapper)
     await doneButton(wrapper).trigger('click')
     await flushPromises()
 
@@ -417,7 +420,6 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     const wrapper = await mountDialog({ canSeal: true, authFactor: 'totp' })
     await unlock()
 
-    await switchOn(wrapper)
     await wrapper.get('[data-test="api-key-seal-password"]').setValue('correct horse')
     await doneButton(wrapper).trigger('click')
     await flushPromises()
@@ -438,7 +440,6 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     const wrapper = await mountDialog({ canSeal: true })
     await unlock()
 
-    await switchOn(wrapper)
     const field = wrapper.get('[data-test="api-key-seal-password"]')
     await field.setValue('correct horse')
     await field.trigger('keydown', { key: 'Enter' })
@@ -455,7 +456,6 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     const wrapper = await mountDialog({ canSeal: true })
     await unlock()
 
-    await switchOn(wrapper)
     const field = wrapper.get('[data-test="api-key-seal-password"]')
     await field.setValue('correct horse')
     await field.trigger('keydown', { key: 'Enter' })
@@ -472,7 +472,6 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
   it('does not save on Enter while the receipt is still locked', async () => {
     const wrapper = await mountDialog({ canSeal: true })
 
-    await switchOn(wrapper)
     const field = wrapper.get('[data-test="api-key-seal-password"]')
     await field.setValue('correct horse')
     await field.trigger('keydown', { key: 'Enter' })
@@ -484,11 +483,11 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
   })
 
   describe('when the login password was already typed to create this key', () => {
-    it('asks for nothing more: no field, and Done seals with the remembered password', async () => {
+    it('asks for nothing more: switch defaults on, no field, and Done seals with the remembered password', async () => {
       const wrapper = await mountDialog({ canSeal: true, verifiedPassword: 'typed-once' })
       await unlock()
 
-      await switchOn(wrapper)
+      expect(sealSwitch(wrapper).attributes('aria-checked')).toBe('true')
       expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
 
       await doneButton(wrapper).trigger('click')
@@ -501,10 +500,11 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
       wrapper.unmount()
     })
 
-    it('still lets the user decline: switch left off means nothing is sealed', async () => {
+    it('still lets the user decline: turning the switch off means nothing is sealed', async () => {
       const wrapper = await mountDialog({ canSeal: true, verifiedPassword: 'typed-once' })
       await unlock()
 
+      await toggleSwitch(wrapper)
       await doneButton(wrapper).trigger('click')
       await flushPromises()
 
@@ -516,7 +516,6 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
 
     it('never renders or stores the remembered password', async () => {
       const wrapper = await mountDialog({ canSeal: true, verifiedPassword: 'typed-once' })
-      await switchOn(wrapper)
       await wrapper.get('[data-test="api-key-seal-info"]').trigger('click')
 
       expect(wrapper.html()).not.toContain('typed-once')
@@ -536,7 +535,6 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
       const wrapper = await mountDialog({ canSeal: true, verifiedPassword: 'typed-once' })
       await unlock()
 
-      await switchOn(wrapper)
       await doneButton(wrapper).trigger('click')
       await flushPromises()
 
@@ -557,7 +555,6 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
       putSecretSeal.mockRejectedValueOnce({ status: 400, reason: 'VERIFY_PASSWORD_INVALID' })
       const wrapper = await mountDialog({ canSeal: true, verifiedPassword: 'typed-once' })
       await unlock()
-      await switchOn(wrapper)
       await doneButton(wrapper).trigger('click')
       await flushPromises()
       expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(true)
@@ -566,8 +563,8 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
       await nextTick()
       await wrapper.setProps({ show: true, secret: 'sk-second-xyz', verifiedPassword: 'typed-again' })
       await nextTick()
-      await switchOn(wrapper)
 
+      expect(sealSwitch(wrapper).attributes('aria-checked')).toBe('true')
       expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(false)
       wrapper.unmount()
     })
@@ -580,9 +577,9 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
       await nextTick()
       await wrapper.setProps({ show: true, secret: 'sk-second-xyz' })
       await nextTick()
-      await switchOn(wrapper)
 
       // The parent cleared it: the user is asked, because the dialog kept nothing.
+      expect(sealSwitch(wrapper).attributes('aria-checked')).toBe('true')
       expect(wrapper.find('[data-test="api-key-seal-password"]').exists()).toBe(true)
       wrapper.unmount()
     })
@@ -593,7 +590,6 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     const wrapper = await mountDialog({ canSeal: true })
     await unlock()
 
-    await switchOn(wrapper)
     await wrapper.get('[data-test="api-key-seal-password"]').setValue('wrong password')
     await doneButton(wrapper).trigger('click')
     await flushPromises()
@@ -614,7 +610,6 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     const wrapper = await mountDialog({ canSeal: true })
     await unlock()
 
-    await switchOn(wrapper)
     await wrapper.get('[data-test="api-key-seal-password"]').setValue('correct horse')
     await doneButton(wrapper).trigger('click')
     await flushPromises()
@@ -632,7 +627,6 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     const wrapper = await mountDialog({ canSeal: true })
     await unlock()
 
-    await switchOn(wrapper)
     await wrapper.get('[data-test="api-key-seal-password"]').setValue('whatever')
     await doneButton(wrapper).trigger('click')
     await flushPromises()
@@ -653,13 +647,12 @@ describe('ApiKeySecretDialog password-encrypted opt-in', () => {
     const wrapper = await mountDialog({ canSeal: true })
     await unlock()
 
-    await switchOn(wrapper)
     await wrapper.get('[data-test="api-key-seal-password"]').setValue('whatever')
     await doneButton(wrapper).trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-test="api-key-seal-error"]').exists()).toBe(true)
 
-    await switchOn(wrapper) // off
+    await toggleSwitch(wrapper) // off
     expect(wrapper.find('[data-test="api-key-seal-error"]').exists()).toBe(false)
     wrapper.unmount()
   })

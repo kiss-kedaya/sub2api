@@ -35,10 +35,11 @@ const isVisible = computed(() => isLoading.value)
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 2px;
   z-index: 9999;
   overflow: hidden;
   background: transparent;
+  pointer-events: none;
 }
 
 .navigation-progress-bar {

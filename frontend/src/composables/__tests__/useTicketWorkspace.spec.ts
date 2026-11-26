@@ -7,11 +7,13 @@ import type { TicketDetail } from '@/api/tickets'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(), stats: vi.fn(), detail: vi.fn(), reply: vi.fn(), update: vi.fn(), create: vi.fn(), read: vi.fn(),
-  showSuccess: vi.fn(), showError: vi.fn()
+  uploadAttachment: vi.fn(), deletePendingAttachment: vi.fn(),
+  showSuccess: vi.fn(), showError: vi.fn(),
+  clientIDCounter: 0
 }))
 vi.mock('@/api/tickets', () => ({
   ticketsAPI: () => mocks,
-  newClientID: () => '11111111-1111-4111-8111-111111111111'
+  newClientID: () => `11111111-1111-4111-8111-${String(++mocks.clientIDCounter).padStart(12, '0')}`
 }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => mocks }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
@@ -37,11 +39,13 @@ async function setup() {
   return router
 }
 beforeEach(() => {
+  mocks.clientIDCounter = 0
   vi.resetAllMocks()
   mocks.list.mockResolvedValue({ items: [fixture(1).ticket, fixture(2).ticket], total: 2, page: 1, page_size: 20, pages: 1 })
   mocks.stats.mockResolvedValue({ total: 2, open: 2, in_progress: 0, waiting_user: 0, resolved: 0, closed: 0, unread: 1, can_create: true })
   mocks.detail.mockImplementation((id: number) => Promise.resolve(fixture(id)))
   mocks.read.mockResolvedValue(undefined)
+  mocks.deletePendingAttachment.mockResolvedValue(undefined)
 })
 afterEach(() => { wrapper?.unmount(); vi.useRealTimers() })
 
@@ -146,5 +150,110 @@ describe('ticket workspace', () => {
     await workspace.refresh(true)
     expect(workspace.detail.value?.requester?.balance).toBe(12.5)
     expect(workspace.detail.value?.messages).toHaveLength(1)
+  })
+  it('filters unread tickets and decrements stats.unread when marking an unread ticket read', async () => {
+    await setup()
+    expect(workspace.stats.value.unread).toBe(1)
+    await workspace.markRead()
+    expect(workspace.stats.value.unread).toBe(0)
+    workspace.filters.status = 'unread'
+    await flushPromises()
+    expect(mocks.list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'unread', page: 1 }),
+      expect.any(AbortSignal)
+    )
+  })
+  it('uploads draft images per ticket, supports image-only send, and rejects unsupported types', async () => {
+    const router = await setup()
+    mocks.uploadAttachment.mockResolvedValueOnce({
+      id: 91, file_name: 'a.png', content_type: 'image/png', size_bytes: 100, width: 10, height: 10, created_at: ''
+    })
+    const svg = new File(['<svg/>'], 'bad.svg', { type: 'image/svg+xml' })
+    await workspace.addDraftImages([svg])
+    expect(mocks.uploadAttachment).not.toHaveBeenCalled()
+    expect(mocks.showError).toHaveBeenCalledWith('tickets.imageUnsupportedType')
+
+    const png = new File(['png'], 'a.png', { type: 'image/png' })
+    await workspace.addDraftImages([png])
+    expect(workspace.draftAttachments.value).toHaveLength(1)
+    expect(workspace.canSend.value).toBe(true)
+
+    await router.push('/tickets/2')
+    await flushPromises()
+    expect(workspace.draftAttachments.value).toHaveLength(0)
+
+    await router.push('/tickets/1')
+    await flushPromises()
+    expect(workspace.draftAttachments.value).toHaveLength(1)
+
+    mocks.reply.mockResolvedValueOnce(fixture(1, 5))
+    expect(await workspace.send()).toBe(true)
+    expect(mocks.reply).toHaveBeenCalledWith(1, expect.objectContaining({
+      content: '',
+      attachment_ids: [91]
+    }))
+    expect(workspace.draftAttachments.value).toHaveLength(0)
+  })
+  it('clears unread state even if the user switches tickets while markRead is in flight, and avoids double-decrement when stats refresh concurrently', async () => {
+    const router = await setup()
+    const readDeferred = deferred<void>()
+    mocks.read.mockReturnValueOnce(readDeferred.promise)
+    const pendingRead = workspace.markRead()
+    await router.push('/tickets/2')
+    await flushPromises()
+    readDeferred.resolve(undefined)
+    await pendingRead
+    expect(workspace.items.value.find(item => item.id === 1)?.unread_count).toBe(0)
+    expect(workspace.stats.value.unread).toBe(0)
+
+    // Concurrent refresh updates stats.unread from 2 to 1 on server before markRead resolves -> must stay 1.
+    mocks.stats.mockResolvedValueOnce({ total: 2, open: 2, in_progress: 0, waiting_user: 0, resolved: 0, closed: 0, unread: 2, can_create: true })
+    await workspace.refresh(true)
+    expect(workspace.stats.value.unread).toBe(2)
+    const readDeferred2 = deferred<void>()
+    mocks.read.mockReturnValueOnce(readDeferred2.promise)
+    const pendingRead2 = workspace.markRead()
+    mocks.stats.mockResolvedValueOnce({ total: 2, open: 2, in_progress: 0, waiting_user: 0, resolved: 0, closed: 0, unread: 1, can_create: true })
+    await workspace.refresh(true)
+    expect(workspace.stats.value.unread).toBe(1)
+    readDeferred2.resolve(undefined)
+    await pendingRead2
+    expect(workspace.stats.value.unread).toBe(1)
+  })
+  it('aborts removed in-flight uploads, deletes removed ready attachments on server, and validates files before applying slot limits', async () => {
+    await setup()
+    let capturedSignal: AbortSignal | undefined
+    const pendingUpload = deferred<{ id: number; file_name: string; content_type: string; size_bytes: number; width: number; height: number; created_at: string }>()
+    mocks.uploadAttachment.mockImplementationOnce((_file: File, signal?: AbortSignal) => {
+      capturedSignal = signal
+      return pendingUpload.promise
+    })
+    const uploadPromise = workspace.addDraftImages([new File(['png'], 'slow.png', { type: 'image/png' })])
+    expect(workspace.draftAttachments.value).toHaveLength(1)
+    const localID = workspace.draftAttachments.value[0].localID
+    workspace.removeDraftImage(localID)
+    expect(capturedSignal?.aborted).toBe(true)
+    pendingUpload.resolve({ id: 301, file_name: 'slow.png', content_type: 'image/png', size_bytes: 10, width: 1, height: 1, created_at: '' })
+    await uploadPromise
+    expect(mocks.deletePendingAttachment).toHaveBeenCalledWith(301)
+
+    // Removing a ready attachment calls deletePendingAttachment immediately.
+    mocks.uploadAttachment.mockResolvedValueOnce({ id: 302, file_name: 'ready.png', content_type: 'image/png', size_bytes: 10, width: 1, height: 1, created_at: '' })
+    await workspace.addDraftImages([new File(['png'], 'ready.png', { type: 'image/png' })])
+    workspace.removeDraftImage(workspace.draftAttachments.value[0].localID)
+    expect(mocks.deletePendingAttachment).toHaveBeenCalledWith(302)
+
+    // Invalid file in a mixed batch must not consume a slot of the 4 valid images.
+    mocks.uploadAttachment.mockImplementation((file: File) => Promise.resolve({
+      id: 400 + Number(file.name[0]), file_name: file.name, content_type: 'image/png', size_bytes: 10, width: 1, height: 1, created_at: ''
+    }))
+    await workspace.addDraftImages([
+      new File(['text'], 'notes.txt', { type: 'text/plain' }),
+      new File(['1'], '1.png', { type: 'image/png' }),
+      new File(['2'], '2.png', { type: 'image/png' }),
+      new File(['3'], '3.png', { type: 'image/png' }),
+      new File(['4'], '4.png', { type: 'image/png' }),
+    ])
+    expect(workspace.draftAttachments.value).toHaveLength(4)
   })
 })

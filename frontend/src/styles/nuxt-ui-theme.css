@@ -1,91 +1,86 @@
 /*
   Nuxt UI design tokens.
-  - Light: Nuxt UI's own defaults (text / bg / border derived from --ui-color-neutral-*), so
-    the admin's Appearance settings (neutral palette, primary, radius, font) drive the whole
-    light theme. useSiteTheme writes the palette and --ui-primary on html:root:not(.dark).
-  - Dark: neutral ink-black surfaces with sakura primary, independently of the daytime neutral.
+  - Light: pure neutral studio surfaces (text / bg / border derived from --ui-color-neutral-*),
+    with crisp Studio Blue primary accent so every CTA and focus state clears WCAG AA.
+  - Dark: Obsidian Graphite neutral surfaces with luminous Studio Blue primary.
   Nuxt UI declares its defaults in `@layer theme`; these rules are unlayered, so they win.
   Keep `--ui-radius` at 0.25rem: Nuxt UI derives the whole `rounded-*` scale from it, and
   0.25rem reproduces Tailwind's default radii (the Appearance radius overrides it).
 */
 :root {
   --ui-radius: 0.25rem;
-  /* Fallback until useSiteTheme runs: the shipped accent is sakura. */
-  --ui-primary: #d987a2;
+  /* Fallback until useSiteTheme runs: Studio Blue 600 (5.17:1 WCAG AA with white text). */
+  --ui-primary: #155dfc;
 
-  /* Frame surfaces: the page behind the panel and the sidebar (template: bg-elevated/25). */
+  /* Frame surfaces: pure crisp canvas + whisper-tinted sidebar. */
   --app-page-bg: var(--ui-bg);
-  --app-sidebar-bg: color-mix(in oklab, var(--ui-bg-elevated) 25%, var(--ui-bg));
+  --app-sidebar-bg: color-mix(in oklab, var(--ui-bg-elevated) 28%, var(--ui-bg));
 
-  /* Quiet depth, not a glow: the border defines the edge, the shadow separates planes. */
-  --app-shadow-card: 0 1px 2px rgb(35 24 32 / 0.035), 0 4px 12px -8px rgb(35 24 32 / 0.14);
-  --app-shadow-popover: 0 3px 8px -4px rgb(35 24 32 / 0.12), 0 12px 28px -12px rgb(35 24 32 / 0.18);
-  --app-shadow-dialog: 0 8px 20px -10px rgb(35 24 32 / 0.16), 0 24px 64px -24px rgb(35 24 32 / 0.22);
+  /* Quiet depth, not a glow: hairline border defines the edge, subtle shadow separates planes. */
+  --app-shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 12px -8px rgb(15 23 42 / 0.10);
+  --app-shadow-popover: 0 4px 12px -4px rgb(15 23 42 / 0.10), 0 14px 32px -12px rgb(15 23 42 / 0.16);
+  --app-shadow-dialog: 0 10px 24px -10px rgb(15 23 42 / 0.14), 0 28px 64px -24px rgb(15 23 42 / 0.22);
 
   /*
     Ledger semantics (record rows). Pinned here instead of reusing --ui-success /
     --ui-error: those follow the admin's appearance palette, and a "credited" row
-    must stay green even when the theme's success colour is re-pointed. Light
-    values clear 4.5:1 against the white card; dark values are the ink theme's
-    own mint/rose contrast tokens.
+    must stay green even when the theme's success colour is re-pointed.
   */
   --app-amount-positive: #15803d;
   --app-amount-negative: var(--ui-text-highlighted);
   --app-amount-reversal: #b91c1c;
   --app-amount-pending: #6b7280;
-  /* Control outline on the quiet auth surfaces: the default ring-accented is
-     ~2.5:1 on ink and the "or continue with" buttons are the only edge they have. */
+  /* Control outline on quiet auth surfaces. */
   --app-control-border: var(--ui-border-accented);
 }
 
 .dark {
-  --ui-primary: #f2b6c6;
-  --ui-secondary: #c4a7d8;
-  --ui-success: #9bd4b3;
-  --ui-info: #a8c6dc;
-  --ui-warning: #e5c58b;
-  --ui-error: #e3a0aa;
+  /* Obsidian Graphite dark theme: crisp neutral slate-black surfaces with calibrated luminous accents.
+     Every foreground clears WCAG AA (>= 4.8:1) across every surface step while avoiding muddy casts. */
+  --ui-primary: #51a2ff;
+  --ui-secondary: #a5b4fc;
+  --ui-success: #6ee7b7;
+  --ui-info: #7dd3fc;
+  --ui-warning: #fbcf68;
+  --ui-error: #fca5a5;
 
-  --ui-text-dimmed: #b7a8b4;
-  --ui-text-muted: #c9b6c2;
-  --ui-text-toned: #ddcbd5;
-  --ui-text: #eadde5;
-  --ui-text-highlighted: #fff4f8;
-  --ui-text-inverted: #211820;
+  --ui-text-dimmed: #9aa0ae;
+  --ui-text-muted: #b0b6c4;
+  --ui-text-toned: #cdd2dc;
+  --ui-text: #e4e7ee;
+  --ui-text-highlighted: #f4f6fa;
+  --ui-text-inverted: #111217;
 
-  /* Raised ink surfaces stay dark, without merging into a nearly black frame. */
-  --ui-bg: #211e25;
-  --ui-bg-muted: #29252e;
-  --ui-bg-elevated: #312c37;
-  --ui-bg-accented: #3a3441;
-  --ui-bg-inverted: #fff4f8;
+  /* Strictly rising luminance steps for surface hierarchy without washed-out glare. */
+  --ui-bg: #16181d;
+  --ui-bg-muted: #1d2027;
+  --ui-bg-elevated: #242831;
+  --ui-bg-accented: #2e333f;
+  --ui-bg-inverted: #f4f6fa;
 
-  --ui-border: #4b424f;
-  --ui-border-muted: #38313d;
-  --ui-border-accented: #65596d;
-  --ui-border-inverted: #fff4f8;
+  --ui-border: #2c303a;
+  --ui-border-muted: #21242c;
+  --ui-border-accented: #3e4452;
+  --ui-border-inverted: #f4f6fa;
 
-  --app-page-bg: #1b181f;
-  --app-sidebar-bg: #211d26;
-  --app-shadow-card: 0 1px 2px rgb(0 0 0 / 0.12), 0 5px 14px -9px rgb(0 0 0 / 0.3);
-  --app-shadow-popover: 0 4px 10px -5px rgb(0 0 0 / 0.25), 0 14px 32px -14px rgb(0 0 0 / 0.38);
-  --app-shadow-dialog: 0 10px 24px -12px rgb(0 0 0 / 0.3), 0 28px 64px -24px rgb(0 0 0 / 0.45);
+  --app-page-bg: #0f1014;
+  --app-sidebar-bg: #181a20;
+  /* Top hairline rim light + deep ambient shadow conveys material elevation on dark surfaces. */
+  --app-shadow-card: inset 0 1px 0 rgb(255 255 255 / 0.045), 0 1px 2px rgb(0 0 0 / 0.24), 0 6px 16px -10px rgb(0 0 0 / 0.48);
+  --app-shadow-popover: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 6px 16px -4px rgb(0 0 0 / 0.42), 0 18px 36px -12px rgb(0 0 0 / 0.56);
+  --app-shadow-dialog: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 12px 28px -10px rgb(0 0 0 / 0.50), 0 32px 72px -20px rgb(0 0 0 / 0.68);
 
-  /* Ink-theme ledger tones: 9.8:1, 13.9:1, 7.8:1 and 8.6:1 against --ui-bg. */
-  --app-amount-positive: #9bd4b3;
+  /* Obsidian ledger tones: crisp high-contrast mint, coral and neutral ink on --ui-bg. */
+  --app-amount-positive: #6ee7b7;
   --app-amount-negative: var(--ui-text-highlighted);
-  --app-amount-reversal: #e3a0aa;
-  --app-amount-pending: #c9b6c2;
-  /* 4.2:1 against the #211e25 card, so the social buttons keep a visible edge. */
-  --app-control-border: #8a7b95;
+  --app-amount-reversal: #fca5a5;
+  --app-amount-pending: #b0b6c4;
+  /* 4.27:1 against #16181d card so outline / OAuth controls keep a clear edge. */
+  --app-control-border: #757c91;
 }
 
 /*
-  Switch knob: Nuxt UI paints it with `bg-default` plus a shadow. In the light theme that is a
-  white knob on the neutral-200 track (the shadow supplies the edge); in the ink night theme
-  `bg-default` resolves to #211e25, which is only ~1.3:1 against the unchecked `--ui-bg-accented`
-  (#3a3441) track and loses the shadow too. Paint the knob with the inverted surface (#fff4f8 in
-  this theme) so the off state keeps a visible edge; the checked state keeps ink-on-primary.
+  Switch knob: keep unchecked thumb clearly visible against the dark track.
   Scoped to the switch's own thumb slot so sliders and other `thumb` slots are untouched.
 */
 .dark [role='switch'] [data-slot='thumb'] {

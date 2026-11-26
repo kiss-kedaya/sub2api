@@ -225,3 +225,11 @@ const filteredGroups = computed(() => {
   @apply my-2 border-l-4 border-gray-300 pl-3 text-gray-600 dark:border-dark-600 dark:text-dark-300;
 }
 </style>
+
+<style>
+html.dark .model-plaza-content .plaza-status-error {
+  border-color: rgb(252 165 165 / 0.35);
+  background: rgb(252 165 165 / 0.08);
+  color: #fca5a5;
+}
+</style>

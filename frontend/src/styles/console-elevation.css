@@ -1,6 +1,5 @@
-/* Sign-in pages (AuthLayout `.auth-paper`), light mode: black primary with a faint top
-   light, hairline inputs with a sakura focus halo, a soft card. The console no longer
-   uses this file: its light theme is Nuxt UI's own (see styles/nuxt-ui-theme.css). */
+/* Sign-in pages (AuthLayout `.auth-paper`), light mode: neutral ink primary with subtle
+   top rim, hairline inputs with a studio blue focus halo, and a crisp surface card. */
 html:not(.dark) {
   --elev-line: #e5e5e5;
   --elev-line-strong: #d4d4d4;
@@ -10,8 +9,8 @@ html:not(.dark) {
   --elev-shadow-lg: 0 10px 15px -3px rgba(10, 10, 10, 0.08), 0 4px 6px -4px rgba(10, 10, 10, 0.06);
   --elev-radius: 8px;
   --elev-radius-sm: 6px;
-  --elev-ease: cubic-bezier(0.2, 0, 0, 1);
-  --elev-halo: 0 0 0 3px rgba(242, 182, 198, 0.5);
+  --elev-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --elev-halo: 0 0 0 3px rgba(21, 93, 252, 0.22);
   --elev-btn: linear-gradient(180deg, #262626 0%, #0a0a0a 100%);
   --elev-btn-hover: linear-gradient(180deg, #333333 0%, #171717 100%);
 }

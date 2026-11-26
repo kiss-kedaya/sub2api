@@ -295,6 +295,7 @@
     "PUT /admin/upstream-monitor/alert-rules :: src/api/admin/upstreamMonitor.ts#saveAlertRule",
     "POST /admin/usage/cleanup-tasks/${taskId}/cancel :: src/api/admin/usage.ts#cancelCleanupTask",
     "POST /admin/usage/cleanup-tasks :: src/api/admin/usage.ts#createCleanupTask",
+    "POST /admin/usage/cleanup-tasks/preview :: src/api/admin/usage.ts#previewCleanupTask",
     "POST /admin/user-attributes :: src/api/admin/userAttributes.ts#createDefinition",
     "DELETE /admin/user-attributes/${id} :: src/api/admin/userAttributes.ts#deleteDefinition",
     "POST /admin/user-attributes/batch :: src/api/admin/userAttributes.ts#getBatchUserAttributes",

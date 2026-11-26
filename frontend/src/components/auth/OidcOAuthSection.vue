@@ -1,5 +1,5 @@
 <template>
-  <!-- Generic OIDC sign-in: provider name decides the label, initials the mark. -->
+  <!-- Generic OIDC sign-in: provider name decides the label, OpenID mark the icon. -->
   <SocialLoginButtons
     :providers="providers"
     :disabled="disabled"
@@ -8,12 +8,7 @@
     @select="startLogin"
   >
     <template #icon-oidc>
-      <span
-        class="inline-flex size-5 items-center justify-center rounded-full bg-primary-100 text-xs font-semibold text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
-        aria-hidden="true"
-      >
-        {{ providerInitial }}
-      </span>
+      <OidcMark class="size-5 text-sky-600 dark:text-sky-400" />
     </template>
   </SocialLoginButtons>
 </template>
@@ -22,6 +17,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import OidcMark from './OidcMark.vue'
 import SocialLoginButtons from '@/components/common/SocialLoginButtons.vue'
 import type { SocialLoginProvider } from '@/components/common/socialLogin'
 import type { OAuthLoginStart } from '@/api/auth'
@@ -47,8 +43,6 @@ const normalizedProviderName = computed(() => {
   const name = props.providerName?.trim()
   return name || 'OIDC'
 })
-
-const providerInitial = computed(() => normalizedProviderName.value.charAt(0).toUpperCase() || 'O')
 
 const providers = computed<SocialLoginProvider[]>(() => [{
   id: 'oidc',

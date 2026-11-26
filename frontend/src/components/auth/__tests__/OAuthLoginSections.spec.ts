@@ -60,4 +60,15 @@ describe('OAuth login sections', () => {
       }
     })
   })
+
+  it.each([
+    ['linuxdo', LinuxDoOAuthSection],
+    ['dingtalk', DingTalkOAuthSection],
+    ['oidc', OidcOAuthSection]
+  ] as const)('renders a real SVG mark instead of text initials for %s', (_provider, component) => {
+    const wrapper = mount(component)
+    const svg = wrapper.find('button svg')
+    expect(svg.exists()).toBe(true)
+    expect(svg.find('text').exists()).toBe(false)
+  })
 })

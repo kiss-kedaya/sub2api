@@ -50,6 +50,15 @@ export default {
         docs: 'Read the full API docs'
       }
     },
+    agentSetup: {
+      navLabel: 'Agent Setup',
+      title: 'Pick your AI agent',
+      description: 'Install in CC Switch → Apps, then push your key from this site with "Import to CCS".',
+      viewAll: 'Full setup guide',
+      viewGuide: 'View setup',
+      ccSwitchStrip: 'Native one-click "Import to CCS" across 14 CC Switch apps including Claude Code, Codex, Gemini CLI, and OpenCode.',
+      openCcSwitchGuide: '4-step guide'
+    },
     footer: {
       allRightsReserved: 'All rights reserved.',
       riskStrip: 'This site is an as-is API relay. Output does not represent our views. Unlawful use, child-exploitative content and unattended high-risk automation are prohibited.'

@@ -65,13 +65,34 @@ func (h *BackupHandler) TestS3Connection(c *gin.Context) {
 
 // ─── 定时备份 ───
 
+// BackupScheduleResponse extends BackupScheduleConfig with read-only server
+// capabilities (whether deployment config forces critical mode or enables age
+// encryption) without persisting runtime config flags into the settings table.
+type BackupScheduleResponse struct {
+	service.BackupScheduleConfig
+	ServerCriticalForced bool `json:"server_critical_forced,omitempty"`
+	AgeEncryptionEnabled bool `json:"age_encryption_enabled,omitempty"`
+}
+
+func (h *BackupHandler) scheduleResponse(cfg *service.BackupScheduleConfig) BackupScheduleResponse {
+	var base service.BackupScheduleConfig
+	if cfg != nil {
+		base = *cfg
+	}
+	return BackupScheduleResponse{
+		BackupScheduleConfig: base,
+		ServerCriticalForced: h.backupService.ServerCriticalModeForced(),
+		AgeEncryptionEnabled: h.backupService.AgeEncryptionEnabled(),
+	}
+}
+
 func (h *BackupHandler) GetSchedule(c *gin.Context) {
 	cfg, err := h.backupService.GetSchedule(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, cfg)
+	response.Success(c, h.scheduleResponse(cfg))
 }
 
 func (h *BackupHandler) UpdateSchedule(c *gin.Context) {
@@ -85,13 +106,14 @@ func (h *BackupHandler) UpdateSchedule(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, cfg)
+	response.Success(c, h.scheduleResponse(cfg))
 }
 
 // ─── 备份操作 ───
 
 type CreateBackupRequest struct {
-	ExpireDays *int `json:"expire_days"` // nil=使用默认值14，0=永不过期
+	ExpireDays   *int  `json:"expire_days"`   // nil=使用默认值14，0=永不过期
+	CriticalOnly *bool `json:"critical_only"` // true=仅备份关键表（跳过大表/日志表数据）
 }
 
 func (h *BackupHandler) CreateBackup(c *gin.Context) {
@@ -105,8 +127,11 @@ func (h *BackupHandler) CreateBackup(c *gin.Context) {
 	if req.ExpireDays != nil {
 		expireDays = *req.ExpireDays
 	}
+	criticalOnly := req.CriticalOnly != nil && *req.CriticalOnly
 
-	record, err := h.backupService.StartBackup(c.Request.Context(), "manual", expireDays)
+	record, err := h.backupService.StartBackupWithOptions(c.Request.Context(), "manual", expireDays, service.BackupOptions{
+		CriticalOnly: criticalOnly,
+	})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

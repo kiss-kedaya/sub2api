@@ -59,7 +59,7 @@ describe('account operations tabs and independent saves', () => {
     const wrapper = create('channels'); await flushPromises()
     expect(wrapper.get('[data-testid="test-admin-bark"]').attributes('disabled')).toBeDefined()
     expect(wrapper.get('[data-testid="test-admin-email"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-testid="configure-admin-bark"]').attributes('href')).toBe('/profile')
+    expect(wrapper.get('[data-testid="configure-admin-bark"]').attributes('href')).toBe('/profile?tab=notifications')
     expect(wrapper.text()).toContain(`accountOps.adminReasons.${reason}`)
     expect(testAccountOpsAdminChannel).not.toHaveBeenCalled()
     wrapper.unmount()

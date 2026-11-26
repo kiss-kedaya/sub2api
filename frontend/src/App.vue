@@ -23,17 +23,24 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import RoutePageTransition from '@/components/layout/RoutePageTransition.vue'
 import { isConsoleLayoutRoute } from '@/components/layout/consoleShell'
 import { useClientAnchorNavigation } from '@/composables/useClientAnchorNavigation'
+import { useRouteIntentPrefetch } from '@/composables/useRouteIntentPrefetch'
 
 const router = useRouter()
 useClientAnchorNavigation(router)
+useRouteIntentPrefetch(router)
 // 标签页开着不刷新会一直跑旧代码；发现服务端有新版前端就提示，并在下一次跳转时整页加载。
 const appUpdate = useAppUpdate()
 let stopAppUpdate: (() => void) | null = null
 const nuxtUiLocale = useNuxtUiLocale()
 const route = useRoute()
-const consoleShell = computed(() => isConsoleLayoutRoute(route.meta))
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const consoleShell = computed(() => isConsoleLayoutRoute(route.meta, route, authStore.isAuthenticated))
+const PREFERS_REDUCED_MOTION =
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    : false
+const SHELL_TRANSITION_MS = PREFERS_REDUCED_MOTION ? 0 : { enter: 150, leave: 80 }
 const subscriptionStore = useSubscriptionStore()
 const announcementStore = useAnnouncementStore()
 const ticketStore = useTicketNotificationStore()
@@ -192,10 +199,12 @@ onMounted(async () => {
        The app's own Toast and dialogs keep working alongside it. -->
   <UApp :locale="nuxtUiLocale">
     <NavigationProgress />
-    <AppLayout v-if="consoleShell">
-      <RoutePageTransition />
-    </AppLayout>
-    <RoutePageTransition v-else />
+    <Transition name="shell-fade" mode="out-in" :duration="SHELL_TRANSITION_MS">
+      <AppLayout v-if="consoleShell">
+        <RoutePageTransition />
+      </AppLayout>
+      <RoutePageTransition v-else />
+    </Transition>
     <Toast />
     <AnnouncementPopup />
     <AdminComplianceDialog />

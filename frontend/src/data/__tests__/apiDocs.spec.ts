@@ -381,5 +381,66 @@ describe('public API documentation', () => {
       expect(JSON.stringify(pageOf('en', 'key-self-service'))).toContain('separate counters for the four')
       expect(JSON.stringify(pageOf('zh', 'key-self-service'))).toContain('四个接口各有独立计数')
     })
+
+    it('provides quick-create actions, valid summary cards, and complete JSON examples on both key pages', () => {
+      for (const locale of ['zh', 'en']) {
+        for (const id of ['key-self-service', 'manage-keys']) {
+          const page = pageOf(locale, id)
+          const sectionIds = new Set(page.sections.map(section => section.id))
+          expect(page.quickActions?.some(action => action.kind === 'createKey'), `${locale}:${id}`).toBe(true)
+          expect(page.quickActions?.some(action => action.kind === 'manageKeys'), `${locale}:${id}`).toBe(true)
+          expect(page.summaryCards, `${locale}:${id}`).toHaveLength(4)
+          for (const card of page.summaryCards!) {
+            expect(sectionIds.has(card.sectionId), `${locale}:${id}:${card.sectionId}`).toBe(true)
+          }
+        }
+
+        const selfService = pageOf(locale, 'key-self-service')
+        for (const id of ['key-info-key', 'key-info-groups', 'key-info-usage', 'key-info-account']) {
+          const examples = selfService.sections.find(section => section.id === id)!.examples!
+          expect(Object.keys(examples), `${locale}:${id}`).toEqual(['curl', 'python', 'node', 'json'])
+          expect(() => JSON.parse(examples.json!)).not.toThrow()
+        }
+        const groupsJson = JSON.parse(selfService.sections.find(section => section.id === 'key-info-groups')!.examples!.json!)
+        expect(groupsJson.object).toBe('sub2api.key_groups')
+        if ('description' in groupsJson.groups[0]) {
+          expect(groupsJson.groups[0].description).toBeTruthy()
+        }
+        const usageJson = JSON.parse(selfService.sections.find(section => section.id === 'key-info-usage')!.examples!.json!)
+        expect(usageJson.object).toBe('sub2api.key_usage')
+        expect(Object.keys(usageJson.daily[0])).toEqual(['date', 'requests', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'total_tokens', 'cost', 'actual_cost'])
+        const limits = selfService.sections.find(section => section.id === 'key-info-limits')!
+        expect(limits.fields!.map(field => field.name)).toEqual(['401', '403', '404', '429'])
+        expect(JSON.parse(limits.examples!.json!).error.code).toBe('key_info_rate_limited')
+        expect(selfService.sections.find(section => section.id === 'key-info-account')!.noteTone).toBe('warning')
+
+        const manage = pageOf(locale, 'manage-keys')
+        const create = manage.sections.find(section => section.id === 'console-create')!
+        expect(create.action?.kind).toBe('createKey')
+        expect(Object.keys(create.examples!)).toEqual(['curl', 'python', 'node', 'json'])
+        for (const snippet of [create.examples!.curl!, create.examples!.python!, create.examples!.node!]) {
+          expect(snippet).toContain('ACCESS_TOKEN')
+          expect(snippet).not.toContain('$API_KEY')
+          expect(snippet).not.toContain('"API_KEY"')
+          expect(snippet).not.toContain('.API_KEY')
+        }
+        for (const snippet of Object.values(create.examples!)) {
+          expect(snippet).not.toMatch(/sk-[A-Za-z0-9]{8,}/)
+        }
+        expect(JSON.parse(create.examples!.json!).code).toBe(0)
+        expect(JSON.parse(manage.sections.find(section => section.id === 'console-list')!.examples!.json!).code).toBe(0)
+        const batchRotateSection = manage.sections.find(section => section.id === 'console-update')!
+        const batchRotateJson = JSON.parse(batchRotateSection.examples!.json!)
+        expect(batchRotateJson.data.succeeded_count).toBe(1)
+        expect(batchRotateJson.data.results[1].error_code).toBe('API_KEY_ROTATE_FAILED')
+        expect(batchRotateSection.fields!.find(field => field.name.includes('batch-rotate'))!.description).toContain('404')
+        expect(JSON.parse(manage.sections.find(section => section.id === 'console-errors')!.examples!.json!).reason).toBe('VERIFY_REQUIRED')
+
+        const authPage = pageOf(locale, 'authentication')
+        expect(authPage.quickActions?.some(action => action.kind === 'createKey'), `${locale}:authentication`).toBe(true)
+        const authLinks = authPage.sections.flatMap(section => section.links || []).map(link => link.page)
+        expect(authLinks, `${locale}:authentication links`).toEqual(expect.arrayContaining(['key-self-service', 'manage-keys']))
+      }
+    })
   })
 })

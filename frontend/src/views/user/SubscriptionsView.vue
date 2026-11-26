@@ -440,8 +440,6 @@ onMounted(() => {
   box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05);
 }
 
-.dark .signal-subscription-card { box-shadow: none; }
-
 .signal-subscription-card__header {
   display: flex;
   align-items: flex-start;
@@ -451,8 +449,6 @@ onMounted(() => {
   border-bottom: 1px solid var(--subscriptions-line);
   background: var(--ui-bg-muted);
 }
-
-.dark .signal-subscription-card__header { background: var(--subscriptions-bg); }
 
 .signal-subscription-card__header > div:first-child {
   min-width: 0;
@@ -550,5 +546,15 @@ onMounted(() => {
   .signal-subscription-card__header h3 + span {
     flex-shrink: 0;
   }
+}
+</style>
+
+<style>
+html.dark .signal-subscription-card {
+  box-shadow: none;
+}
+
+html.dark .signal-subscription-card__header {
+  background: var(--subscriptions-bg);
 }
 </style>

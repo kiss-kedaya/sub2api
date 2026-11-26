@@ -30,20 +30,29 @@
         <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div class="flex min-w-0 flex-1 items-start gap-4">
             <div
+              :data-testid="`profile-binding-${item.provider}-icon`"
               :class="providerIconClass(item.provider)"
-              class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold"
+              class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl"
             >
               <Icon
                 v-if="item.provider === 'email'"
                 name="mail"
-                size="sm"
+                size="md"
                 class="text-current"
               />
-              <span v-else>{{ providerInitial(item.provider) }}</span>
+              <GitHubMark v-else-if="item.provider === 'github'" class="size-5" />
+              <GoogleMark v-else-if="item.provider === 'google'" class="size-5" />
+              <LinuxDoMark v-else-if="item.provider === 'linuxdo'" class="size-5" />
+              <DingTalkMark v-else-if="item.provider === 'dingtalk'" class="size-5" />
+              <OidcMark v-else-if="item.provider === 'oidc'" class="size-5" />
+              <WeChatMark v-else-if="item.provider === 'wechat'" class="size-5" />
             </div>
 
-            <div class="min-w-0 flex-1 space-y-3">
-              <div class="flex flex-wrap items-center gap-2">
+            <div class="min-w-0 flex-1 space-y-2">
+              <div
+                class="flex flex-wrap items-center gap-2"
+                :class="props.embedded ? 'min-h-9' : 'min-h-11'"
+              >
                 <h3 class="font-medium text-gray-900 dark:text-white">
                   {{ item.label }}
                 </h3>
@@ -150,7 +159,10 @@
             </div>
           </div>
 
-          <div class="flex shrink-0 flex-wrap items-center gap-3">
+          <div
+            class="flex shrink-0 flex-wrap items-center gap-3"
+            :class="props.embedded ? 'sm:min-h-9' : 'sm:min-h-11'"
+          >
             <UButton
               v-if="item.provider === 'email' && compact"
               data-testid="profile-binding-email-toggle"
@@ -215,6 +227,12 @@ import {
   unbindAuthIdentity,
 } from '@/api/user'
 import Icon from '@/components/icons/Icon.vue'
+import GitHubMark from '@/components/auth/GitHubMark.vue'
+import GoogleMark from '@/components/auth/GoogleMark.vue'
+import LinuxDoMark from '@/components/auth/LinuxDoMark.vue'
+import DingTalkMark from '@/components/auth/DingTalkMark.vue'
+import OidcMark from '@/components/auth/OidcMark.vue'
+import WeChatMark from '@/components/auth/WeChatMark.vue'
 import { useAppStore, useAuthStore } from '@/stores'
 import type { User, UserAuthBindingStatus, UserAuthProvider } from '@/types'
 
@@ -511,46 +529,24 @@ const providerItems = computed(() => [
   },
 ])
 
-function providerInitial(provider: UserAuthProvider): string {
-  if (provider === 'github') {
-    return 'GH'
-  }
-  if (provider === 'google') {
-    return 'G'
-  }
-  if (provider === 'linuxdo') {
-    return 'L'
-  }
-  if (provider === 'dingtalk') {
-    return 'D'
-  }
-  if (provider === 'wechat') {
-    return 'W'
-  }
-  if (provider === 'oidc') {
-    return 'O'
-  }
-  return 'E'
-}
-
 function providerIconClass(provider: UserAuthProvider): string {
   if (provider === 'github') {
-    return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200'
+    return 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100'
   }
   if (provider === 'google') {
-    return 'bg-red-100 text-red-600 dark:bg-red-900/20 dark:text-red-300'
+    return 'bg-white ring-1 ring-inset ring-gray-200 dark:bg-dark-800 dark:ring-dark-700'
   }
   if (provider === 'linuxdo') {
-    return 'bg-orange-100 text-orange-600 dark:bg-orange-900/20 dark:text-orange-300'
+    return 'bg-amber-50 ring-1 ring-inset ring-amber-200/70 dark:bg-amber-950/30 dark:ring-amber-800/40'
   }
   if (provider === 'dingtalk') {
-    return 'bg-blue-100 text-blue-600 dark:bg-blue-900/20 dark:text-blue-300'
+    return 'bg-blue-50 text-[#1677FF] dark:bg-blue-950/40 dark:text-[#40A9FF]'
   }
   if (provider === 'wechat') {
-    return 'bg-green-100 text-green-600 dark:bg-green-900/20 dark:text-green-300'
+    return 'bg-emerald-50 text-[#07C160] dark:bg-emerald-950/40 dark:text-[#2BD978]'
   }
   if (provider === 'oidc') {
-    return 'bg-sky-100 text-sky-600 dark:bg-sky-900/20 dark:text-sky-300'
+    return 'bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400'
   }
   return 'bg-primary-100 text-primary-600 dark:bg-primary-900/20 dark:text-primary-300'
 }

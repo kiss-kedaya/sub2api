@@ -9,8 +9,8 @@
 
       <!-- Settings Form -->
       <UForm v-else :state="form" :disabled="saving" class="space-y-6" novalidate @submit="saveSettings">
-        <!-- Toolbar: tab bar on the left, the form save action on the right (template settings toolbar) -->
-        <div class="settings-toolbar relative z-10 flex min-h-14 flex-wrap items-center gap-3 border-b border-default bg-(--ui-bg) px-1 py-1">
+        <!-- Toolbar: sticky translucent tab bar on the left, the form save action on the right -->
+        <div class="settings-toolbar sticky top-0 z-10 flex min-h-14 flex-wrap items-center gap-3 border-b border-default bg-(--ui-bg)/90 px-1 py-1 backdrop-blur-md">
           <UTabs
             :model-value="activeTab"
             :items="settingsTabItems"

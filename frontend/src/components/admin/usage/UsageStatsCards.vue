@@ -1,32 +1,32 @@
 <template>
   <div
-    class="grid grid-cols-2 gap-4 transition-opacity lg:grid-cols-4"
+    class="relative z-10 grid grid-cols-2 gap-4 transition-opacity lg:grid-cols-4"
     :class="{ 'opacity-60': refreshing }"
     :aria-busy="loading || undefined"
   >
     <div class="card p-4 flex items-center gap-3">
-      <div class="usage-stat-icon rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30 text-blue-600">
+      <div class="usage-stat-icon flex size-10 shrink-0 items-center justify-center rounded-full bg-elevated/90 text-highlighted ring-1 ring-inset ring-default">
         <Icon name="document" size="md" />
       </div>
-      <div>
-        <p class="text-xs font-medium text-gray-500">{{ t('usage.totalRequests') }}</p>
-        <p class="text-xl font-bold">
+      <div class="min-w-0">
+        <p class="text-xs font-medium text-muted">{{ t('usage.totalRequests') }}</p>
+        <p class="text-xl font-bold text-highlighted tabular-nums">
           <span v-if="pending" class="inline-block rounded-sm bg-elevated align-middle motion-safe:animate-pulse h-5 w-16" aria-hidden="true" />
           <template v-else>{{ stats?.total_requests?.toLocaleString() || '0' }}</template>
         </p>
-        <p class="text-xs text-gray-400">{{ t('usage.inSelectedRange') }}</p>
+        <p class="text-xs text-muted">{{ t('usage.inSelectedRange') }}</p>
       </div>
     </div>
     <div class="card p-4 flex items-center gap-3">
-      <div class="usage-stat-icon rounded-lg bg-amber-100 p-2 dark:bg-amber-900/30 text-amber-600"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" /></svg></div>
-      <div>
-        <p class="text-xs font-medium text-gray-500">{{ t('usage.totalTokens') }}</p>
-        <p class="text-xl font-bold">
+      <div class="usage-stat-icon flex size-10 shrink-0 items-center justify-center rounded-full bg-elevated/90 text-highlighted ring-1 ring-inset ring-default"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" /></svg></div>
+      <div class="min-w-0">
+        <p class="text-xs font-medium text-muted">{{ t('usage.totalTokens') }}</p>
+        <p class="text-xl font-bold text-highlighted tabular-nums">
           <span v-if="pending" class="inline-block rounded-sm bg-elevated align-middle motion-safe:animate-pulse h-5 w-16" aria-hidden="true" />
           <template v-else>{{ formatTokens(stats?.total_tokens || 0) }}</template>
         </p>
         <p v-if="pending" class="text-xs"><span class="inline-block rounded-sm bg-elevated align-middle motion-safe:animate-pulse h-3 w-36" aria-hidden="true" /></p>
-        <p v-else class="flex flex-wrap items-center gap-x-1 text-xs text-gray-500">
+        <p v-else class="flex flex-wrap items-center gap-x-1 text-xs text-muted tabular-nums">
           <span>{{ t('usage.in') }}: {{ formatTokens(stats?.total_input_tokens || 0) }}</span>
           <span>/</span>
           <span>{{ t('usage.out') }}: {{ formatTokens(stats?.total_output_tokens || 0) }}</span>
@@ -34,7 +34,7 @@
           <span class="group relative inline-flex cursor-help items-center gap-0.5" tabindex="0">
             <span>{{ cacheLabel() }}: {{ formatTokens(stats?.total_cache_tokens || 0) }}</span>
             <svg
-              class="h-3.5 w-3.5 text-gray-400"
+              class="h-3.5 w-3.5 text-dimmed"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -54,9 +54,9 @@
               and `pointer-events-none` keeps it from stealing hover from the trigger.
             -->
             <span
-              class="pointer-events-none absolute right-0 top-full z-30 mt-2 hidden w-56 rounded-lg border border-gray-200 bg-white p-3 text-left text-xs text-gray-700 shadow-lg group-hover:block group-focus:block dark:border-dark-600 dark:bg-dark-800 dark:text-dark-200"
+              class="pointer-events-none absolute right-0 top-full z-30 mt-2 hidden w-56 rounded-lg border border-default bg-default p-3 text-left text-xs text-default shadow-lg group-hover:block group-focus:block group-focus-within:block"
             >
-              <span class="mb-2 block font-medium text-gray-900 dark:text-white">
+              <span class="mb-2 block font-medium text-highlighted">
                 {{ cacheDetailLabel() }}
               </span>
               <span class="flex items-center justify-between gap-3">
@@ -77,19 +77,19 @@
       </div>
     </div>
     <div class="card p-4 flex items-center gap-3">
-      <div class="usage-stat-icon rounded-lg bg-green-100 p-2 dark:bg-green-900/30 text-green-600">
+      <div class="usage-stat-icon flex size-10 shrink-0 items-center justify-center rounded-full bg-elevated/90 text-highlighted ring-1 ring-inset ring-default">
         <Icon name="dollar" size="md" />
       </div>
       <div class="min-w-0 flex-1">
-        <p class="text-xs font-medium text-gray-500">{{ t('usage.totalCost') }}</p>
-        <p class="text-xl font-bold text-green-600">
+        <p class="text-xs font-medium text-muted">{{ t('usage.totalCost') }}</p>
+        <p class="text-xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
           <span v-if="pending" class="inline-block rounded-sm bg-elevated align-middle motion-safe:animate-pulse h-5 w-20" aria-hidden="true" />
           <template v-else>${{ (stats?.total_actual_cost || 0).toFixed(4) }}</template>
         </p>
         <p v-if="pending" class="text-xs"><span class="inline-block rounded-sm bg-elevated align-middle motion-safe:animate-pulse h-3 w-24" aria-hidden="true" /></p>
-        <p v-else class="text-xs text-gray-400">
+        <p v-else class="text-xs text-muted tabular-nums">
           <template v-if="showAccountCost && totalAccountCost != null">
-            <span class="text-orange-500">{{ t('usage.accountCost') }} ${{ totalAccountCost.toFixed(4) }}</span>
+            <span class="text-amber-700 dark:text-amber-400">{{ t('usage.accountCost') }} ${{ totalAccountCost.toFixed(4) }}</span>
             <span> · </span>
           </template>
           <span>
@@ -100,12 +100,12 @@
       </div>
     </div>
     <div class="card p-4 flex items-center gap-3">
-      <div class="usage-stat-icon rounded-lg bg-purple-100 p-2 dark:bg-purple-900/30 text-purple-600">
+      <div class="usage-stat-icon flex size-10 shrink-0 items-center justify-center rounded-full bg-elevated/90 text-highlighted ring-1 ring-inset ring-default">
         <Icon name="clock" size="md" />
       </div>
-      <div>
-        <p class="text-xs font-medium text-gray-500">{{ t('usage.avgDuration') }}</p>
-        <p class="text-xl font-bold">
+      <div class="min-w-0">
+        <p class="text-xs font-medium text-muted">{{ t('usage.avgDuration') }}</p>
+        <p class="text-xl font-bold text-highlighted tabular-nums">
           <span v-if="pending" class="inline-block rounded-sm bg-elevated align-middle motion-safe:animate-pulse h-5 w-14" aria-hidden="true" />
           <template v-else>{{ formatDuration(stats?.average_duration_ms || 0) }}</template>
         </p>
@@ -158,13 +158,3 @@ const formatTokens = (value: number) => {
 const cacheLabel = () => t('usage.cacheTotal')
 const cacheDetailLabel = () => t('usage.cacheBreakdown')
 </script>
-
-<style scoped>
-/* Light mode: neutral icon chips with a hairline ring (Nuxt UI dashboard stats). */
-html:not(.dark) .usage-stat-icon {
-  border-radius: 9999px;
-  background: #f4f4f4;
-  box-shadow: inset 0 0 0 1px #e5e5e5;
-  color: #171717;
-}
-</style>

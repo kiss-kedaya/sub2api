@@ -48,9 +48,11 @@
         <section class="affiliate-section">
 
           <div class="grid gap-4 md:grid-cols-2">
-            <div class="space-y-2">
-              <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('affiliate.yourCode') }}</p>
-              <div class="flex flex-col items-stretch gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900 sm:flex-row sm:items-center">
+            <div class="flex min-w-0 flex-col gap-2">
+              <div class="flex min-h-5 items-center justify-between gap-2">
+                <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('affiliate.yourCode') }}</p>
+              </div>
+              <div class="mt-auto flex flex-col items-stretch gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900 sm:flex-row sm:items-center">
                 <code class="min-w-0 break-all text-sm font-semibold text-gray-900 dark:text-white sm:flex-1 sm:truncate">{{ detail.aff_code }}</code>
                 <button class="btn btn-secondary btn-sm w-full sm:w-auto sm:shrink-0" @click="copyCode">
                   <Icon name="copy" size="sm" />
@@ -59,12 +61,14 @@
               </div>
             </div>
 
-            <div class="space-y-2">
-              <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('affiliate.inviteLink') }}</p>
-              <p class="text-xs text-gray-500 dark:text-dark-400">
-                {{ t('affiliate.customCodes.stats', { count: detail.aff_code_invite_count ?? 0, amount: formatCurrency(detail.aff_code_rebate_amount ?? 0) }) }}
-              </p>
-              <div class="flex flex-col items-stretch gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900 sm:flex-row sm:items-center">
+            <div class="flex min-w-0 flex-col gap-2">
+              <div class="flex min-h-5 flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <p class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('affiliate.inviteLink') }}</p>
+                <p class="text-xs tabular-nums text-gray-500 dark:text-dark-400">
+                  {{ t('affiliate.customCodes.stats', { count: detail.aff_code_invite_count ?? 0, amount: formatCurrency(detail.aff_code_rebate_amount ?? 0) }) }}
+                </p>
+              </div>
+              <div class="mt-auto flex flex-col items-stretch gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 dark:border-dark-700 dark:bg-dark-900 sm:flex-row sm:items-center">
                 <code class="min-w-0 break-all text-sm text-gray-700 dark:text-gray-300 sm:flex-1 sm:truncate">{{ inviteLink }}</code>
                 <button class="btn btn-secondary btn-sm w-full sm:w-auto sm:shrink-0" @click="copyInviteLink">
                   <Icon name="copy" size="sm" />
@@ -74,7 +78,7 @@
             </div>
           </div>
 
-          <UAlert class="mt-5 dark:bg-primary/10 dark:text-primary dark:ring-primary/25" color="neutral" variant="subtle" icon="i-lucide-info" :title="t('affiliate.tips.title')">
+          <UAlert class="mt-5" color="neutral" variant="subtle" icon="i-lucide-info" :title="t('affiliate.tips.title')">
             <template #description>
               <ul class="mt-1 space-y-1">
                 <li>1. {{ t('affiliate.tips.line1') }}</li>
@@ -372,10 +376,15 @@ onMounted(() => {
 <style scoped>
 /* Sections as cards; the four figures as one joined strip. */
 .affiliate-section { padding: 20px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .affiliate-section { box-shadow: 0 0 0 1px var(--ui-border); }
 .affiliate-metrics { overflow: hidden; border-radius: 8px; box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .affiliate-metrics { box-shadow: 0 0 0 1px var(--ui-border); }
 .console-signal .affiliate-metrics.signal-affiliate-metrics { border-block: 0; }
 .console-signal .affiliate-metrics > .card { box-shadow: none; }
 @media (min-width: 640px) { .affiliate-section { padding: 24px; } }
+</style>
+
+<style>
+html.dark .signal-affiliate .affiliate-section,
+html.dark .signal-affiliate .affiliate-metrics {
+  box-shadow: 0 0 0 1px var(--ui-border);
+}
 </style>

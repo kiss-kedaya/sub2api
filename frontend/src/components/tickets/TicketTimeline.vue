@@ -22,31 +22,88 @@
               <strong>{{ author(message) }}</strong>
               <span>{{ t(message.author_role === 'admin' ? 'tickets.admin' : 'tickets.user') }}</span>
             </div>
-            <p>{{ message.content }}</p>
+            <p v-if="showMessageText(message)">{{ message.content }}</p>
+            <div v-if="message.attachments?.length" class="timeline-attachments">
+              <TicketMessageImage
+                v-for="attachment in message.attachments"
+                :key="attachment.id"
+                :ticket-id="message.ticket_id"
+                :attachment="attachment"
+                :admin="admin"
+                @preview="openLightbox"
+              />
+            </div>
             <time :datetime="message.created_at" :title="fullTime(message.created_at)">{{ fullTime(message.created_at) }}</time>
           </article>
         </template>
       </li>
     </ol>
+    <Teleport to="body">
+      <div
+        v-if="lightbox"
+        class="ticket-lightbox"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="lightbox.attachment.file_name || t('tickets.imagePreview')"
+        @click.self="closeLightbox"
+      >
+        <div class="ticket-lightbox-inner">
+          <div class="ticket-lightbox-bar">
+            <span class="ticket-lightbox-caption">
+              {{ lightbox.attachment.file_name }}
+              <small v-if="lightbox.attachment.width && lightbox.attachment.height">{{ lightbox.attachment.width }}×{{ lightbox.attachment.height }}</small>
+            </span>
+            <div class="ticket-lightbox-actions">
+              <a
+                class="ticket-lightbox-btn"
+                :href="lightbox.url"
+                :download="lightbox.attachment.file_name || 'image'"
+                :title="t('tickets.imageDownload')"
+                :aria-label="t('tickets.imageDownload')"
+              >
+                <Icon name="download" size="sm" />
+              </a>
+              <button
+                type="button"
+                class="ticket-lightbox-btn"
+                :title="t('tickets.imageClosePreview')"
+                :aria-label="t('tickets.imageClosePreview')"
+                @click="closeLightbox"
+              >
+                <Icon name="x" size="sm" />
+              </button>
+            </div>
+          </div>
+          <img :src="lightbox.url" :alt="lightbox.attachment.file_name || t('tickets.imagePreview')" />
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
-import type { TicketMessage } from '@/api/tickets'
+import TicketMessageImage from '@/components/tickets/TicketMessageImage.vue'
+import type { TicketAttachment, TicketMessage } from '@/api/tickets'
 
 const props = defineProps<{ messages: TicketMessage[]; admin: boolean; hasMore: boolean; loadingOlder: boolean }>()
 const emit = defineEmits<{ older: []; bottom: [value: boolean] }>()
 const { t, locale } = useI18n()
 const scroller = ref<HTMLElement | null>(null)
+const lightbox = ref<{ url: string; attachment: TicketAttachment } | null>(null)
 const visibleMessages = computed(() => props.messages.filter(message => {
   if (message.kind !== 'event') return true
   if (message.event_type === 'assignment_changed' || message.event_type === 'priority_changed') return false
   if (message.event_type === 'status_changed') return message.event_data?.from === 'closed' || message.event_data?.to === 'closed'
   return true
 }))
+const showMessageText = (message: TicketMessage) => {
+  if (!message.content) return false
+  if (message.attachments?.length && message.event_data?.image_only) return false
+  return true
+}
 const isSelf = (message: TicketMessage) => message.author_role === (props.admin ? 'admin' : 'user')
 const author = (message: TicketMessage) => {
   if (!props.admin && message.author_role === 'admin') return t('tickets.team')
@@ -61,6 +118,29 @@ const eventText = (message: TicketMessage) => {
 const fullTime = (value: string) => new Intl.DateTimeFormat(locale.value === 'zh' ? 'zh-CN' : 'en-GB', {
   month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
 }).format(new Date(value))
+
+function onLightboxKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    closeLightbox()
+  }
+}
+function openLightbox(payload: { url: string; attachment: TicketAttachment }) {
+  lightbox.value = payload
+  window.addEventListener('keydown', onLightboxKeydown)
+}
+function closeLightbox() {
+  lightbox.value = null
+  window.removeEventListener('keydown', onLightboxKeydown)
+}
+watch(visibleMessages, (messages) => {
+  const openID = lightbox.value?.attachment.id
+  if (!openID) return
+  const stillPresent = messages.some((message) => message.attachments?.some((att) => att.id === openID))
+  if (!stillPresent) closeLightbox()
+})
+onBeforeUnmount(() => { window.removeEventListener('keydown', onLightboxKeydown) })
 
 function handleScroll() {
   const el = scroller.value
@@ -102,6 +182,7 @@ defineExpose({ scrollToBottom, capturePosition, restorePosition })
 .timeline-author strong { font-size: 12px; font-weight: 600; }
 .timeline-author span { font-size: 11px; color: var(--signal-muted); }
 .timeline-message p { margin: 0 0 12px; font-size: 14px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.timeline-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
 .timeline-entry time { display: block; color: var(--signal-muted); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 1.6; }
 .timeline-event { display: flex; align-items: center; flex-direction: column; gap: 3px; text-align: center; }
 .timeline-event-label { max-width: 92%; padding: 5px 10px; background: var(--signal-bg); color: var(--signal-muted); font-size: 11px; overflow-wrap: anywhere; }

@@ -752,4 +752,47 @@ describe('ProfileIdentityBindingsSection', () => {
     expect(wrapper.find('[data-testid="profile-binding-linuxdo-action"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="profile-binding-oidc-action"]').exists()).toBe(false)
   })
+
+  it('renders real SVG brand icons instead of letter initials for every provider', () => {
+    const wrapper = mount(ProfileIdentityBindingsSection, {
+      global: {
+        plugins: [pinia],
+      },
+      props: {
+        user: createUser(),
+        githubEnabled: true,
+        googleEnabled: true,
+        linuxdoEnabled: true,
+        dingtalkEnabled: true,
+        oidcEnabled: true,
+        wechatEnabled: true,
+      },
+    })
+
+    for (const provider of ['email', 'github', 'google', 'linuxdo', 'dingtalk', 'oidc', 'wechat'] as const) {
+      const iconBox = wrapper.get(`[data-testid="profile-binding-${provider}-icon"]`)
+      expect(iconBox.find('svg').exists()).toBe(true)
+      expect(iconBox.text().trim()).toBe('')
+    }
+  })
+
+  it('matches title and action container height to the icon tile in embedded and standalone modes', () => {
+    const embedded = mount(ProfileIdentityBindingsSection, {
+      global: { plugins: [pinia] },
+      props: { user: createUser(), embedded: true, compact: true },
+    })
+    const embeddedTitleRow = embedded.get('[data-testid="profile-binding-email-status"]').element.parentElement
+    const embeddedActionsRow = embedded.get('[data-testid="profile-binding-email-toggle"]').element.parentElement
+    expect(Array.from(embeddedTitleRow?.classList ?? [])).toContain('min-h-9')
+    expect(Array.from(embeddedActionsRow?.classList ?? [])).toContain('sm:min-h-9')
+
+    const standalone = mount(ProfileIdentityBindingsSection, {
+      global: { plugins: [pinia] },
+      props: { user: createUser(), embedded: false, githubEnabled: true },
+    })
+    const standaloneTitleRow = standalone.get('[data-testid="profile-binding-github-status"]').element.parentElement
+    const standaloneActionsRow = standalone.get('[data-testid="profile-binding-github-action"]').element.parentElement
+    expect(Array.from(standaloneTitleRow?.classList ?? [])).toContain('min-h-11')
+    expect(Array.from(standaloneActionsRow?.classList ?? [])).toContain('sm:min-h-11')
+  })
 })

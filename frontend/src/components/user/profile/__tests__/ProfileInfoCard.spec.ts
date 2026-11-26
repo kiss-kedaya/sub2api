@@ -194,4 +194,22 @@ describe('ProfileInfoCard', () => {
     expect(wrapper.get('[data-testid="profile-basics-panel"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="profile-auth-bindings-panel"]').exists()).toBe(true)
   })
+
+  it('renders only profile basics or only auth bindings when section is scoped', () => {
+    const profileOnly = mount(ProfileInfoCard, {
+      props: { user: createUser(), section: 'profile' },
+      global: { stubs: { Icon: true } },
+    })
+    expect(profileOnly.find('[data-testid="profile-overview-hero"]').exists()).toBe(true)
+    expect(profileOnly.find('[data-testid="profile-basics-panel"]').exists()).toBe(true)
+    expect(profileOnly.find('[data-testid="profile-auth-bindings-panel"]').exists()).toBe(false)
+
+    const bindingsOnly = mount(ProfileInfoCard, {
+      props: { user: createUser(), section: 'bindings' },
+      global: { stubs: { Icon: true } },
+    })
+    expect(bindingsOnly.find('[data-testid="profile-overview-hero"]').exists()).toBe(false)
+    expect(bindingsOnly.find('[data-testid="profile-basics-panel"]').exists()).toBe(false)
+    expect(bindingsOnly.find('[data-testid="profile-auth-bindings-panel"]').exists()).toBe(true)
+  })
 })

@@ -315,7 +315,11 @@
     </UPopover>
 
     <!-- Read-only users see the public version without system API requests. -->
-    <span v-else-if="version" class="text-xs text-muted">
+    <span
+      v-else-if="version"
+      class="block truncate text-[11px] leading-4 text-muted tabular-nums"
+      :title="formatVersion(version)"
+    >
       {{ formatVersion(version) }}
     </span>
   </div>
@@ -362,7 +366,8 @@ const latestVersion = computed(() => appStore.latestVersion)
 function formatVersion(version?: string): string {
   const normalized = (version || '').trim()
   if (!normalized) return ''
-  return normalized.startsWith('v') ? normalized : `v${normalized}`
+  if (normalized.startsWith('v')) return normalized
+  return /^\d/.test(normalized) ? `v${normalized}` : normalized
 }
 
 const displayCurrentVersion = computed(() => formatVersion(currentVersion.value))

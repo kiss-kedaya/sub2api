@@ -383,6 +383,7 @@ export default {
     lastUsedAt: 'Last Used',
     lastUsedIP: 'Last Used IP',
     useKey: 'Use Key',
+    agentGuide: 'Agent setup guide',
     useKeyModal: {
       title: 'Use API Key',
       description:
@@ -533,12 +534,17 @@ export default {
     },
     ccsImport: {
       title: 'Import to CCS',
-      description: 'Choose the platform and model to import. Defaults follow the current group, and you can change them.',
+      description: 'Choose the target platform and pick a model from this key’s actual available models.',
       platform: 'Platform',
       model: 'Model',
-      modelPlaceholder: 'e.g. claude-sonnet-4-6',
-      modelHint: 'The default follows the platform. The list is loaded from this key’s /v1/models. Changing the platform applies that platform’s default model.',
-      modelLoading: 'Loading models with the current API key…',
+      modelPlaceholder: 'Select an available model for this key',
+      modelHint: 'Models are fetched directly from this key’s /v1/models. Switching platform auto-matches an available model.',
+      modelLoadedHint: 'Loaded {count} available models from this key’s /v1/models.',
+      modelLoading: 'Loading available models for this key…',
+      modelEmpty: 'No available models found for this key. Check its bound groups or channel status.',
+      modelLoadFailed: 'Failed to load models for this key. Retry or enter a model ID manually.',
+      modelRefresh: 'Refresh',
+      modelRetry: 'Retry',
       claude: 'Claude Code',
       claudeDesktop: 'Claude Desktop',
       gemini: 'Gemini CLI',
@@ -1212,6 +1218,12 @@ export default {
   profile: {
     title: 'Profile Settings',
     description: 'Manage your account information and settings',
+    tabs: {
+      profile: 'Profile',
+      bindings: 'Sign-In Methods',
+      security: 'Security',
+      notifications: 'Notifications',
+    },
     accountBalance: 'Account Balance',
     concurrencyLimit: 'Concurrency Limit',
     rpmLimit: 'RPM Limit',

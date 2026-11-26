@@ -28,7 +28,7 @@
             />
             <div
               v-if="showDropdown && searchResults.length > 0"
-              class="absolute inset-x-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
+              class="absolute inset-x-0 top-full z-30 mt-1 max-h-48 overflow-y-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
             >
               <UButton
                 v-for="user in searchResults"

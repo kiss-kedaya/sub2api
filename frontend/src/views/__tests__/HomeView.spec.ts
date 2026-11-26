@@ -214,6 +214,7 @@ describe('HomeView custom and compact modes', () => {
     const wrapper = await mountHome({ compact_home_enabled: true, home_content: ' \n\t ' })
 
     expect(wrapper.get('[data-testid="compact-home"]').text()).toContain('Test site')
+    expect(wrapper.get('[data-testid="compact-home-agent-setup-cta"]').attributes('href')).toBe('/docs?page=agent-setup')
   })
 
   it.each([undefined, false])('selects the default home when compact mode is %s', async (enabled) => {
@@ -249,13 +250,25 @@ describe('HomeView default home structure', () => {
     expect(wrapper.find('[data-testid="home-hero"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="home-status"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="home-quickstart"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="home-agent-setup"]').exists()).toBe(true)
     expect(text).toContain('home.heroSubtitle')
     expect(text).toContain('home.providers.title')
     expect(text).toContain('home.quickStart.title')
     expect(text).toContain('home.quickStart.createKey.title')
     expect(text).toContain('home.quickStart.config.title')
     expect(text).toContain('home.quickStart.request.title')
+    expect(text).toContain('home.agentSetup.title')
     expect(text).toContain('home.footer.riskStrip')
+  })
+
+  it('links directly from the home agent picker cards into the built-in Agent Setup Guide', async () => {
+    const wrapper = await mountHome()
+
+    expect(linkHref(wrapper, 'home-header-agent-setup')).toBe('/docs?page=agent-setup')
+    expect(linkHref(wrapper, 'home-agent-setup-all')).toBe('/docs?page=agent-setup')
+    expect(linkHref(wrapper, 'home-agent-card-claude-code')).toBe('/docs?page=agent-setup&agent=claude-code')
+    expect(linkHref(wrapper, 'home-agent-card-codex')).toBe('/docs?page=agent-setup&agent=codex')
+    expect(linkHref(wrapper, 'home-agent-setup-ccs')).toBe('/docs?page=agent-setup#site-ccswitch-workflow')
   })
 
   it('renders the three quick-start steps in order', async () => {

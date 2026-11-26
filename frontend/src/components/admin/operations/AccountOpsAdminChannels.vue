@@ -44,7 +44,7 @@ const reason = (value?: string) => t(`accountOps.adminReasons.${value || 'unavai
             <p id="admin-bark-label" class="text-sm font-medium text-highlighted">{{ t('accountOps.adminBark') }}</p>
             <p class="mt-0.5 text-xs text-muted">{{ t('accountOps.adminProfileSource') }} · {{ status?.bark_available ? t('accountOps.channelConfigured') : reason(status?.bark_unavailable_reason) }}</p>
             <p v-if="!config.use_admin_bark" class="mt-1 text-xs text-muted">{{ t('accountOps.channelUnused') }}</p>
-            <UButton v-if="!status?.bark_available" color="neutral" variant="link" size="xs" class="px-0" to="/profile" data-testid="configure-admin-bark" :label="t('accountOps.configureInProfile')" />
+            <UButton v-if="!status?.bark_available" color="neutral" variant="link" size="xs" class="px-0" to="/profile?tab=notifications" data-testid="configure-admin-bark" :label="t('accountOps.configureInProfile')" />
           </div>
           <div class="flex items-center gap-3">
             <Toggle :model-value="config.use_admin_bark === true" aria-labelledby="admin-bark-label" :disabled="busy || (!config.use_admin_bark && (config.webhooks?.length ?? 0) >= 5)"

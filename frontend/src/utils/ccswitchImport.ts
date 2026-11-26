@@ -177,8 +177,31 @@ export function parseCcSwitchModelsList(payload: unknown): string[] {
   return ids
 }
 
-export function pickCcSwitchModel(preferred: string, available: string[]): string {
+const CC_SWITCH_APP_MODEL_MATCHERS: Partial<Record<CcSwitchApp, RegExp>> = {
+  claude: /^claude/i,
+  'claude-desktop': /^claude/i,
+  codex: /^(gpt|o[134]|codex)/i,
+  gemini: /^gemini/i,
+  agy: /^gemini/i,
+  grokbuild: /^grok/i,
+  dsh: /^deepseek/i,
+  kimi: /^(kimi|moonshot)/i,
+  mcode: /^(minimax|abab)/i
+}
+
+export function pickCcSwitchModel(
+  preferred: string,
+  available: string[],
+  app?: CcSwitchApp
+): string {
   if (preferred && available.includes(preferred)) return preferred
+  if (app && available.length > 0) {
+    const matcher = CC_SWITCH_APP_MODEL_MATCHERS[app]
+    if (matcher) {
+      const matched = available.find((id) => matcher.test(id))
+      if (matched) return matched
+    }
+  }
   if (available.length > 0) return available[0]
   return preferred
 }

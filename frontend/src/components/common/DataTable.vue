@@ -1167,7 +1167,7 @@ defineExpose({
 }
 
 [data-data-table][data-hidden-end] > table > * > tr > .data-table-pin-end {
-  box-shadow: inset 1px 0 0 var(--ui-border);
+  box-shadow: -10px 0 18px -12px rgb(0 0 0 / 0.24), inset 1px 0 0 var(--ui-border);
 }
 
 /* Inside a card (the table page layout and other card wrappers) the card already draws the

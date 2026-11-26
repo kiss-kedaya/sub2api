@@ -282,8 +282,24 @@ func ticketEmailConversationAs(messages []TicketMessage, latestID int64, chinese
 				label += " · New reply"
 			}
 		}
+		imageOnly, _ := message.EventData["image_only"].(bool)
 		content := html.EscapeString(strings.ReplaceAll(message.Content, "\r\n", "\n"))
 		content = strings.ReplaceAll(content, "\n", "<br>")
+		if len(message.Attachments) > 0 {
+			if imageOnly {
+				if chinese {
+					content = fmt.Sprintf(`<span style="color:#0f766e">📎 发送了 %d 张图片，请前往工单中心查看</span>`, len(message.Attachments))
+				} else {
+					content = fmt.Sprintf(`<span style="color:#0f766e">📎 Sent %d image(s). Open the ticket center to view.</span>`, len(message.Attachments))
+				}
+			} else {
+				if chinese {
+					content += fmt.Sprintf(`<div style="margin-top:8px;font-size:12px;color:#0f766e">📎 附带 %d 张图片，请前往工单中心查看</div>`, len(message.Attachments))
+				} else {
+					content += fmt.Sprintf(`<div style="margin-top:8px;font-size:12px;color:#0f766e">📎 %d image attachment(s) — open the ticket center to view</div>`, len(message.Attachments))
+				}
+			}
+		}
 		_, _ = fmt.Fprintf(&body, `<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="width:100%%;table-layout:fixed;margin:0 0 16px;border:1px solid %s;border-radius:12px;background:%s"><tr><td style="padding:16px 18px;word-break:break-word;overflow-wrap:anywhere"><p style="margin:0 0 6px;font-size:13px;font-weight:700;color:%s">%s</p><p style="margin:0 0 12px;font-size:11px;color:#64748b">%s · UTC+8</p><div style="font-size:14px;line-height:1.8;color:#1e293b;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere">%s</div></td></tr></table>`, border, background, color, label, message.CreatedAt.In(zone).Format("2006-01-02 15:04"), content)
 	}
 	return body.String()

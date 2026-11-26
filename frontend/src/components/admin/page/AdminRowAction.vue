@@ -39,7 +39,11 @@ withDefaults(defineProps<{
   justify-content: center;
   border-radius: 6px;
   color: var(--ui-text-muted);
-  transition: color 140ms ease, background-color 140ms ease;
+  transition: color 140ms cubic-bezier(0.23, 1, 0.32, 1), background-color 140ms cubic-bezier(0.23, 1, 0.32, 1), transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.admin-row-action:active:not(:disabled) {
+  transform: scale(0.94);
 }
 
 .admin-row-action:focus-visible {
@@ -57,37 +61,24 @@ withDefaults(defineProps<{
   color: var(--ui-text-highlighted);
 }
 
+.admin-row-action--primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--ui-primary) 12%, transparent);
+  color: var(--ui-primary);
+}
+
 .admin-row-action--danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--ui-error) 10%, transparent);
+  background: color-mix(in oklab, var(--ui-error) 12%, transparent);
   color: var(--ui-error);
 }
 
 .admin-row-action--success:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--ui-success) 10%, transparent);
+  background: color-mix(in oklab, var(--ui-success) 12%, transparent);
   color: var(--ui-success);
 }
 
 .admin-row-action--warning:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--ui-warning) 12%, transparent);
-  color: #c2410c;
-}
-
-/* Night theme keeps the row buttons' current colours: muted text, tinted hover fill. */
-.dark .admin-row-action:hover:not(:disabled) {
-  background: #3f2f37;
-  color: var(--ui-text-muted);
-}
-
-.dark .admin-row-action--danger:hover:not(:disabled) {
-  background: rgb(127 29 29 / 0.2);
-}
-
-.dark .admin-row-action--success:hover:not(:disabled) {
-  background: rgb(20 83 45 / 0.2);
-}
-
-.dark .admin-row-action--warning:hover:not(:disabled) {
-  background: rgb(124 45 18 / 0.2);
+  background: color-mix(in oklab, var(--ui-warning) 14%, transparent);
+  color: #b45309;
 }
 
 @media (max-width: 767px) {
@@ -101,5 +92,11 @@ withDefaults(defineProps<{
   .admin-row-action {
     transition: none;
   }
+}
+</style>
+
+<style>
+html.dark .admin-row-action--warning:hover:not(:disabled) {
+  color: var(--ui-warning);
 }
 </style>

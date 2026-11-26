@@ -21,7 +21,7 @@ export interface SiteThemeSettings {
 }
 
 export const DEFAULT_SITE_THEME: Readonly<SiteThemeSettings> = Object.freeze({
-  theme_primary: 'sakura',
+  theme_primary: 'blue',
   theme_neutral: 'neutral',
   theme_radius: 0.375,
   theme_font: 'system',

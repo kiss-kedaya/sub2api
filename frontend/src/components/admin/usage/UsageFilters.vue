@@ -1,12 +1,12 @@
 <template>
   <div
     class="usage-filters"
-    :class="flat ? 'px-4 py-4 sm:px-6 sm:py-5' : 'card p-4 sm:p-5'"
+    :class="flat ? (compact ? '' : 'px-4 py-4 sm:px-6 sm:py-5') : 'card p-4 sm:p-5'"
     data-testid="usage-filters"
   >
     <!-- overflow-visible：卡片本身没有可见边框，不需要裁切；留着 overflow-hidden 会把搜索下拉裁掉（高级区收起时卡片很矮，只剩一行半） -->
     <UCard
-      :ui="{ root: 'ring-0 bg-transparent overflow-visible', body: showActions ? 'p-0 sm:p-0' : '' }"
+      :ui="{ root: 'ring-0 bg-transparent overflow-visible', body: 'p-0 sm:p-0' }"
       data-testid="usage-filters-card"
     >
       <!-- 标题栏：标题 + 已生效筛选数 + 高级筛选开关（Nuxt UI 折叠） -->
@@ -22,41 +22,47 @@
             data-testid="usage-filters-active-count"
           />
         </div>
-        <UButton
-          color="neutral"
-          variant="ghost"
-          size="sm"
-          trailing-icon="i-lucide-chevron-down"
-          :aria-expanded="advancedOpen"
-          class="usage-filters-press"
-          data-testid="usage-filters-advanced-toggle"
-          @click="toggleAdvanced"
-        >
-          <!-- 有默认插槽时 UButton 不再渲染 label，所以文字要和徽标一起写在插槽里（改前有高级条件时按钮只剩一个数字） -->
-          {{ t('admin.usage.filters.advanced') }}
-          <UBadge
-            v-if="advancedFilterCount > 0"
-            :label="String(advancedFilterCount)"
+        <div class="flex items-center gap-1">
+          <slot name="header-actions" />
+          <UButton
             color="neutral"
-            variant="subtle"
+            variant="ghost"
             size="sm"
-            data-testid="usage-filters-advanced-count"
-          />
-          <template #trailing>
-            <UIcon
-              name="i-lucide-chevron-down"
-              :class="['size-4', ICON_TRANSITION, advancedOpen ? 'rotate-180' : '']"
+            trailing-icon="i-lucide-chevron-down"
+            :aria-expanded="advancedOpen"
+            class="usage-filters-press"
+            data-testid="usage-filters-advanced-toggle"
+            @click="toggleAdvanced"
+          >
+            <!-- 有默认插槽时 UButton 不再渲染 label，所以文字要和徽标一起写在插槽里（改前有高级条件时按钮只剩一个数字） -->
+            {{ t('admin.usage.filters.advanced') }}
+            <UBadge
+              v-if="advancedFilterCount > 0"
+              :label="String(advancedFilterCount)"
+              color="neutral"
+              variant="subtle"
+              size="sm"
+              data-testid="usage-filters-advanced-count"
             />
-          </template>
-        </UButton>
+            <template #trailing>
+              <UIcon
+                name="i-lucide-chevron-down"
+                :class="['size-4', ICON_TRANSITION, advancedOpen ? 'rotate-180' : '']"
+              />
+            </template>
+          </UButton>
+        </div>
       </div>
 
-      <!-- 常用筛选：时间范围 / 用户 / API 密钥 / 模型（桌面 4 列、平板 2 列、手机 1 列） -->
-      <div class="mt-3 grid gap-x-4 gap-y-3 sm:grid-cols-2 xl:grid-cols-4" data-testid="usage-filters-common">
+      <!-- 常用筛选：时间范围 / 用户 / API 密钥 / 模型（默认桌面 4 列、平板 2 列、手机 1 列；compact 模式用于弹窗 2 列） -->
+      <div
+        :class="['mt-3 grid items-end gap-x-4 gap-y-3 sm:grid-cols-2', compact ? '' : 'xl:grid-cols-4']"
+        data-testid="usage-filters-common"
+      >
         <UFormField
           v-bind="{ 'data-testid': 'usage-filters-field', 'data-field': 'date' }"
           :label="t('admin.dashboard.timeRange')"
-          class="min-w-0"
+          :class="['min-w-0', compact ? 'sm:col-span-2' : '']"
         >
           <DateRangePicker
             ref="dateRangeRef"
@@ -204,9 +210,9 @@
 
         <!-- 模型 -->
         <UFormField
-          v-bind="{ 'data-testid': FIELD_TESTID }"
+          v-bind="{ 'data-testid': FIELD_TESTID, 'data-field': 'model' }"
           :label="t('usage.model')"
-          class="min-w-0"
+          :class="['min-w-0', compact && !observer ? 'sm:col-span-2' : '']"
         >
           <Select v-bind="field('model')" :options="modelOptions" :placeholder="allLabel(modelOptions)" searchable @change="emitQuery" />
         </UFormField>
@@ -219,7 +225,7 @@
       <Transition name="usage-adv">
         <div v-show="advancedOpen" class="mt-3" data-testid="usage-filters-advanced-collapsible">
           <div
-            class="grid gap-x-4 gap-y-3 sm:grid-cols-2 xl:grid-cols-4"
+            :class="['grid items-end gap-x-4 gap-y-3 sm:grid-cols-2', compact ? '' : 'xl:grid-cols-4']"
             data-testid="usage-filters-advanced"
           >
             <UFormField
@@ -227,7 +233,7 @@
               v-bind="{ 'data-testid': FIELD_TESTID }"
               :label="t('admin.usage.requestId')"
               :hint="t('admin.usage.filters.requestIdHint')"
-              :ui="{ hint: 'text-xs text-dimmed' }"
+              :ui="{ labelWrapper: 'gap-2 min-w-0', label: 'shrink-0 whitespace-nowrap', hint: 'min-w-0 truncate text-xs text-dimmed' }"
               class="min-w-0"
             >
               <UInput
@@ -305,7 +311,7 @@
                 v-bind="{ 'data-testid': FIELD_TESTID }"
                 :label="t('admin.usage.upstreamModelAudit')"
                 :hint="t('admin.usage.filters.upstreamModelAuditHint')"
-                :ui="{ hint: 'text-xs text-dimmed' }"
+                :ui="{ labelWrapper: 'gap-2 min-w-0', label: 'shrink-0 whitespace-nowrap', hint: 'min-w-0 truncate text-xs text-dimmed' }"
                 class="min-w-0"
               >
                 <Select v-bind="field('upstream_model_mismatch')" :options="upstreamModelMismatchOptions" :placeholder="allLabel(upstreamModelMismatchOptions)" @change="emitQuery" />
@@ -503,6 +509,8 @@ interface Props {
   mode?: 'usage' | 'errors' | 'ranking'
   /** 嵌入统一卡片内使用：去掉自身卡片外观 */
   flat?: boolean
+  /** 紧凑 2 列布局（用于清理弹窗等窄容器，避免 4 列挤压导致时间范围和标签提示折行错位） */
+  compact?: boolean
   observer?: boolean
   /** 列设置菜单项（由页面注入，本组件只负责放到「更多」菜单里） */
   columnMenuItems?: DropdownMenuItem[]
@@ -512,6 +520,7 @@ const props = withDefaults(defineProps<Props>(), {
   showActions: true,
   mode: 'usage',
   flat: false,
+  compact: false,
   observer: false,
   columnMenuItems: () => []
 })
@@ -526,7 +535,9 @@ const emit = defineEmits([
   'reset',
   'export',
   'export-csv',
-  'cleanup'
+  'cleanup',
+  'groups-loaded',
+  'entity-label'
 ])
 
 // 展开箭头：200ms，强 ease-out（内置 ease 起步偏软，点下去不像「立刻有反应」）
@@ -559,14 +570,12 @@ const onDateRangeChange = (range: { startDate: string; endDate: string; preset: 
  * 只有用户自己点过才会展开。这样 12 个筛选器不会在小屏一进页面就铺满。
  */
 const MIN_ADVANCED_WIDTH = 768
-const initialAdvancedOpen = () =>
-  typeof window === 'undefined' ? false : window.innerWidth >= MIN_ADVANCED_WIDTH
-// 初值直接按视口宽算（不等 onMounted）：桌面/平板展开、手机收起，首帧就不会闪一下。
-const advancedOpen = ref(initialAdvancedOpen())
-const toggleAdvanced = () => {
-  advancedOpen.value = !advancedOpen.value
+const initialAdvancedOpen = () => {
+  if (props.compact) {
+    return advancedFilterCount.value > 0
+  }
+  return typeof window === 'undefined' ? false : window.innerWidth >= MIN_ADVANCED_WIDTH
 }
-
 // --- 已生效筛选计数（只统计有值的项，用于标题栏提示） ---
 const activeFilterCount = computed(() => {
   const f = filters.value || {}
@@ -583,10 +592,10 @@ const activeFilterCount = computed(() => {
     }
   }
   if (f.model != null && f.model !== '') count += 1
-  if (f.request_type != null) count += 1
+  if (f.request_type != null && f.request_type !== '') count += 1
   if (f.native_compaction_v2 != null) count += 1
   if (f.billing_type != null) count += 1
-  if (f.billing_mode != null) count += 1
+  if (f.billing_mode != null && f.billing_mode !== '') count += 1
   if (f.upstream_model_mismatch != null) count += 1
   if (f.error_phase) count += 1
   if (f.error_category) count += 1
@@ -601,16 +610,22 @@ const advancedFilterCount = computed(() => {
   if (!props.observer && f.request_id?.trim?.()) count += 1
   if (!props.observer && f.account_id != null && f.account_id !== '') count += 1
   if (!props.observer && f.group_id != null && f.group_id !== '') count += 1
-  if (f.request_type != null) count += 1
+  if (f.request_type != null && f.request_type !== '') count += 1
   if (f.native_compaction_v2 != null) count += 1
   if (f.billing_type != null) count += 1
-  if (f.billing_mode != null) count += 1
+  if (f.billing_mode != null && f.billing_mode !== '') count += 1
   if (f.upstream_model_mismatch != null) count += 1
   if (f.error_phase) count += 1
   if (f.error_category) count += 1
   if (f.status_code != null) count += 1
   return count
 })
+
+// 初值直接按视口宽算（不等 onMounted）：桌面/平板展开、手机收起，首帧就不会闪一下。
+const advancedOpen = ref(initialAdvancedOpen())
+const toggleAdvanced = () => {
+  advancedOpen.value = !advancedOpen.value
+}
 
 const dateRangeRef = ref<InstanceType<typeof DateRangePicker> | null>(null)
 
@@ -820,6 +835,7 @@ const selectUser = async (u: SimpleUser) => {
   userKeyword.value = u.email
   showUserDropdown.value = false
   filters.value.user_id = u.id
+  emit('entity-label', { kind: 'user', id: u.id, label: u.email })
   clearApiKey()
 
   // 选定用户后自动带出该用户的 API 密钥候选
@@ -844,6 +860,7 @@ const selectApiKey = (k: SimpleApiKey) => {
   apiKeyKeyword.value = k.name || String(k.id)
   showApiKeyDropdown.value = false
   filters.value.api_key_id = k.id
+  emit('entity-label', { kind: 'apiKey', id: k.id, label: k.name || `#${k.id}` })
 }
 
 const clearApiKey = () => {
@@ -882,6 +899,7 @@ const selectAccount = (a: SimpleAccount) => {
   accountKeyword.value = a.name
   showAccountDropdown.value = false
   filters.value.account_id = a.id
+  emit('entity-label', { kind: 'account', id: a.id, label: a.name })
 }
 
 const clearAccount = () => {
@@ -934,6 +952,7 @@ onMounted(async () => {
       (page, size) => adminAPI.groups.list(page, size), 1000, 1000
     )
     groupOptions.value.push(...groups.map((g) => ({ value: g.id, label: g.name })))
+    emit('groups-loaded', groups.map((g) => ({ id: g.id, name: g.name })))
     const meta = new Map<number, GroupOptionMeta>()
     for (const group of groups) {
       meta.set(group.id, {
@@ -1001,12 +1020,30 @@ watch(
   }
 )
 
-// 供外部（如用户排行下钻）在程序化设置 user_id 后回显选中的用户邮箱
+// 供外部（如用户排行下钻、清理弹窗回显）在程序化设置 ID 后回显选中项文本
 const setUserKeyword = (email: string) => {
   clearPendingUserSearch()
   userKeyword.value = email
   userResults.value = []
   showUserDropdown.value = false
+}
+
+const setApiKeyKeyword = (name: string) => {
+  if (apiKeySearchTimeout) clearTimeout(apiKeySearchTimeout)
+  apiKeyKeyword.value = name
+  apiKeyResults.value = []
+  showApiKeyDropdown.value = false
+}
+
+const setAccountKeyword = (name: string) => {
+  if (accountSearchTimeout) clearTimeout(accountSearchTimeout)
+  accountKeyword.value = name
+  accountResults.value = []
+  showAccountDropdown.value = false
+}
+
+const setAdvancedOpen = (open: boolean) => {
+  advancedOpen.value = open
 }
 
 const getUserSearchRevision = () => userSearchSequence
@@ -1017,7 +1054,15 @@ const getUserSearchRevision = () => userSearchSequence
 const refreshActivePreset = (): { startDate: string; endDate: string } | null =>
   dateRangeRef.value?.refreshActivePreset?.() ?? null
 
-defineExpose({ getUserSearchRevision, setUserKeyword, refreshActivePreset, advancedOpen })
+defineExpose({
+  getUserSearchRevision,
+  setUserKeyword,
+  setApiKeyKeyword,
+  setAccountKeyword,
+  setAdvancedOpen,
+  refreshActivePreset,
+  advancedOpen
+})
 </script>
 
 <style scoped>

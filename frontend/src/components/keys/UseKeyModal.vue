@@ -253,9 +253,9 @@
         </section>
 
         <!-- Usage Note -->
-        <div v-if="showPlatformNote" class="flex items-start gap-3 rounded-lg border border-default bg-muted p-3 dark:border-blue-800 dark:bg-blue-900/20">
-          <Icon name="infoCircle" size="md" class="mt-0.5 flex-shrink-0 text-muted dark:text-blue-500" />
-          <p class="text-sm text-default dark:text-blue-300">
+        <div v-if="showPlatformNote" class="flex items-start gap-3 rounded-lg border border-default bg-muted p-3 dark:border-sky-500/25 dark:bg-sky-500/10">
+          <Icon name="infoCircle" size="md" class="mt-0.5 flex-shrink-0 text-muted dark:text-sky-400" />
+          <p class="text-sm text-default dark:text-sky-200">
             {{ platformNote }}
           </p>
         </div>
@@ -263,10 +263,20 @@
     </div>
 
     <template #footer>
-      <div class="flex justify-end">
+      <div class="flex w-full flex-wrap items-center justify-between gap-2">
+        <button
+          v-if="showGuideLink"
+          type="button"
+          class="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+          data-test="use-key-open-guide"
+          @click="emit('open-guide')"
+        >
+          <span>{{ t('keys.agentGuide') }}</span>
+          <span aria-hidden="true">→</span>
+        </button>
         <button
           @click="emit('close')"
-          class="btn btn-secondary"
+          class="btn btn-secondary ml-auto"
         >
           {{ t('common.close') }}
         </button>
@@ -297,12 +307,14 @@ interface Props {
   baseUrl: string
   platform: GroupPlatform | null
   allowMessagesDispatch?: boolean
+  showGuideLink?: boolean
 }
 
 interface Emits {
   (e: 'close'): void
   // 无分组时用户可以一键去分配分组，而不是只看到一段文字。
   (e: 'assign-group'): void
+  (e: 'open-guide'): void
 }
 
 interface TabConfig {

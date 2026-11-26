@@ -9,11 +9,12 @@ import type { DocsPage } from '@/data/apiDocs'
 const mocks = vi.hoisted(() => ({
   copy: vi.fn().mockResolvedValue(true),
   settings: { publicSettingsLoaded: true, siteName: 'Example gateway', siteLogo: '', cachedPublicSettings: null },
+  auth: { isAuthenticated: false, isAdmin: false, isAdminObserver: false },
   docs: null as null | (() => unknown),
 }))
 
 vi.mock('@/stores/app', () => ({ useAppStore: () => mocks.settings }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ isAuthenticated: false, isAdmin: false }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => mocks.auth }))
 vi.mock('@/composables/useClipboard', () => ({ useClipboard: () => ({ copyToClipboard: mocks.copy }) }))
 vi.mock('@/data/apiDocs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/data/apiDocs')>()
@@ -81,7 +82,7 @@ async function openDocs(query = 'quick-start', options: { attachTo?: boolean } =
     history: createMemoryHistory(),
     routes: [
       { path: '/docs', component: DocsView, meta: { requiresAuth: false } },
-      ...['/home', '/login', '/model-plaza'].map(path => ({ path, component: { template: '<div />' } })),
+      ...['/home', '/login', '/dashboard', '/keys', '/model-plaza'].map(path => ({ path, component: { template: '<div />' } })),
     ],
   })
   await router.push(`/docs?page=${query}`)
@@ -98,6 +99,9 @@ describe('public API documentation page', () => {
   beforeEach(() => {
     mocks.copy.mockClear()
     mocks.docs = null
+    mocks.auth.isAuthenticated = false
+    mocks.auth.isAdmin = false
+    mocks.auth.isAdminObserver = false
     IntersectionObserverMock.instances = []
     vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
     Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() })
@@ -356,5 +360,182 @@ describe('public API documentation page', () => {
     await wrapper.get('#docs-sidebar nav').trigger('scroll')
     expect(wrap().classes()).not.toContain('docs-nav-more')
     wrapper.unmount()
+  })
+
+  it('renders the interactive Agent Setup Guide in the client setup category and navigates into per-agent guides', async () => {
+    const { wrapper, router } = await openDocs('agent-setup')
+    expect(wrapper.find('[data-testid="agent-setup-guide"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="site-ccswitch-workflow"]').exists()).toBe(true)
+    expect(wrapper.find('.docs-category[aria-current="page"]').text()).toBe('Client setup')
+
+    await router.push('/docs?page=agent-setup&agent=claude-code')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="agent-detail-header"]').text()).toContain('Claude Code + Example gateway')
+
+    await wrapper.get('[data-testid="agent-back-all"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query.agent).toBeUndefined()
+    expect(wrapper.find('[data-testid="site-ccswitch-workflow"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('collapses non-active sidebar categories by default and never fights manual expand/collapse actions', async () => {
+    const { wrapper, router } = await openDocs('key-self-service')
+    const toggle = (cat: string) => wrapper.get(`[data-testid="docs-group-toggle-${cat}"]`)
+    const list = (cat: string) => wrapper.get(`[data-testid="docs-group-list-${cat}"]`)
+    const expanded = (cat: string) => toggle(cat).attributes('aria-expanded') === 'true'
+
+    // Initial state: only the current page's category (account) is expanded; all others are collapsed.
+    expect(expanded('account')).toBe(true)
+    expect(list('account').isVisible()).toBe(true)
+    for (const cat of ['start', 'guides', 'media', 'integrations', 'reference']) {
+      expect(expanded(cat), `initial ${cat}`).toBe(false)
+      expect(list(cat).isVisible(), `initial visibility ${cat}`).toBe(false)
+    }
+
+    // Expanding another category keeps the current category open as well (no auto-fighting).
+    await toggle('reference').trigger('click')
+    await nextTick()
+    expect(expanded('reference')).toBe(true)
+    expect(expanded('account')).toBe(true)
+
+    // User manually collapses the active category: it must stay collapsed even across sibling page navigation.
+    await toggle('account').trigger('click')
+    await nextTick()
+    expect(expanded('account')).toBe(false)
+    expect(expanded('reference')).toBe(true)
+
+    await router.push('/docs?page=manage-keys')
+    await flushPromises()
+    expect(expanded('account')).toBe(false)
+    expect(expanded('reference')).toBe(true)
+
+    // Navigating to a different category expands the new category while keeping unrelated user-expanded categories open.
+    await router.push('/docs?page=streaming')
+    await flushPromises()
+    expect(expanded('guides')).toBe(true)
+    expect(expanded('reference')).toBe(true)
+    expect(expanded('account')).toBe(false)
+
+    // Navigating into a user-expanded category (reference) absorbs it as active, so moving away later collapses it cleanly.
+    await router.push('/docs?page=responses')
+    await flushPromises()
+    expect(expanded('reference')).toBe(true)
+    expect(expanded('guides')).toBe(false)
+
+    await router.push('/docs?page=image-generation')
+    await flushPromises()
+    expect(expanded('media')).toBe(true)
+    expect(expanded('reference')).toBe(false)
+
+    // Clicking the active category tab in the top bar after collapsing it re-opens that category.
+    await toggle('media').trigger('click')
+    await nextTick()
+    expect(expanded('media')).toBe(false)
+    const mediaTab = wrapper.findAll('.docs-category').find(link => link.text() === 'Image & video')!
+    await mediaTab.trigger('click')
+    await nextTick()
+    expect(expanded('media')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('auto-expands matching sidebar categories during search and restores the pre-search collapse state afterward', async () => {
+    const { wrapper } = await openDocs('key-self-service')
+    const toggle = (cat: string) => wrapper.get(`[data-testid="docs-group-toggle-${cat}"]`)
+    const search = wrapper.get('[data-testid="docs-search"]')
+
+    expect(toggle('account').attributes('aria-expanded')).toBe('true')
+    expect(toggle('reference').attributes('aria-expanded')).toBe('false')
+
+    await search.setValue('Web fetch')
+    expect(toggle('reference').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('[data-testid="docs-group-list-reference"]').isVisible()).toBe(true)
+
+    // Even during search, manually collapsing a matching group is respected.
+    await toggle('reference').trigger('click')
+    await nextTick()
+    expect(toggle('reference').attributes('aria-expanded')).toBe('false')
+
+    // Clearing search restores the pre-search state (account expanded, reference collapsed).
+    await search.setValue('')
+    expect(toggle('account').attributes('aria-expanded')).toBe('true')
+    expect(toggle('reference').attributes('aria-expanded')).toBe('false')
+
+    // Clicking a top category tab while searching clears the stale query so the chosen category is visible.
+    await search.setValue('definitely-no-match-xyz')
+    expect(wrapper.find('[data-testid="docs-group-guides"]').exists()).toBe(false)
+    const guidesTab = wrapper.findAll('.docs-category').find(link => link.text() === 'API guides')!
+    await guidesTab.trigger('click')
+    await flushPromises()
+    expect((search.element as HTMLInputElement).value).toBe('')
+    expect(wrapper.find('[data-testid="docs-group-guides"]').exists()).toBe(true)
+    expect(toggle('guides').attributes('aria-expanded')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('reveals a deep active sidebar entry after a previously collapsed category finishes expanding, without hijacking manual toggles', async () => {
+    const { wrapper, router } = await openDocs('quick-start', { attachTo: true })
+    const nav = wrapper.get('#docs-sidebar nav').element as HTMLElement
+    Object.defineProperty(nav, 'clientHeight', { configurable: true, value: 240 })
+    Object.defineProperty(nav, 'scrollHeight', { configurable: true, value: 960 })
+    Object.defineProperty(nav, 'offsetTop', { configurable: true, value: 0 })
+
+    // Give the deep target entry in the currently collapsed `reference` group a below-the-fold offset.
+    const deepLink = wrapper.get('#docs-sidebar a[href="/docs?page=deepseek-ocr"]').element as HTMLElement
+    Object.defineProperty(deepLink, 'offsetTop', { configurable: true, value: 840 })
+    Object.defineProperty(deepLink, 'offsetHeight', { configurable: true, value: 36 })
+    nav.scrollTop = 0
+
+    // Navigating across categories into `deepseek-ocr` expands `reference` and reveals the active entry.
+    await router.push('/docs?page=deepseek-ocr')
+    await flushPromises()
+    await nextTick()
+    expect(wrapper.get('[data-testid="docs-group-toggle-reference"]').attributes('aria-expanded')).toBe('true')
+    expect(nav.scrollTop).toBeGreaterThan(0)
+
+    // Manually toggling another category must not jump the user's current scroll position.
+    nav.scrollTop = 40
+    await wrapper.get('[data-testid="docs-group-toggle-guides"]').trigger('click')
+    await nextTick()
+    expect(nav.scrollTop).toBe(40)
+    wrapper.unmount()
+  })
+
+  it('renders quick-create key actions, summary jump cards, and endpoint copy on key-self-service, manage-keys, and authentication', async () => {
+    // Logged-out visitor routes through /login with redirect=/keys?action=create.
+    const { wrapper, router } = await openDocs('key-self-service')
+    const createCta = wrapper.get('[data-testid="docs-quick-create-key"]')
+    expect(createCta.text()).toContain('Sign in to create key')
+    expect(router.resolve(createCta.attributes('href')!).path).toBe('/login')
+    expect(router.resolve(createCta.attributes('href')!).query.redirect).toBe('/keys?action=create')
+    const manageCta = wrapper.get('[data-testid="docs-quick-manage-keys"]')
+    expect(router.resolve(manageCta.attributes('href')!).path).toBe('/login')
+    expect(router.resolve(manageCta.attributes('href')!).query.redirect).toBe('/keys')
+
+    // Summary jump card navigates to its anchor.
+    await wrapper.get('[data-testid="docs-summary-card-key-info-account"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.hash).toBe('#key-info-account')
+
+    // Endpoint copy button copies the full endpoint URL for the current origin.
+    await wrapper.get('[data-testid="docs-copy-endpoint-key-info-account"]').trigger('click')
+    await flushPromises()
+    expect(mocks.copy).toHaveBeenCalledWith(expect.stringContaining('/v1/sub2api/account'), 'Copied')
+
+    // Related `authentication` doc page also surfaces the quick-create action.
+    await router.push('/docs?page=authentication')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="docs-quick-create-key"]').text()).toContain('Sign in to create key')
+    expect(router.resolve(wrapper.get('[data-testid="docs-quick-create-key"]').attributes('href')!).query.redirect).toBe('/keys?action=create')
+
+    // Logged-in visitor routes directly to /keys?action=create on both key pages and inline section CTA.
+    wrapper.unmount()
+    mocks.auth.isAuthenticated = true
+    const authed = await openDocs('manage-keys')
+    expect(authed.wrapper.get('[data-testid="docs-quick-create-key"]').text()).toContain('Quick create API key')
+    expect(authed.wrapper.get('[data-testid="docs-quick-create-key"]').attributes('href')).toBe('/keys?action=create')
+    expect(authed.wrapper.get('[data-testid="docs-quick-manage-keys"]').attributes('href')).toBe('/keys')
+    expect(authed.wrapper.get('[data-testid="docs-section-action-console-create"]').attributes('href')).toBe('/keys?action=create')
+    authed.wrapper.unmount()
   })
 })

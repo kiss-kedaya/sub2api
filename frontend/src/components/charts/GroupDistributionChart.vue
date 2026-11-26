@@ -32,7 +32,7 @@
     >
       <template #group-cell="{ row }">
         <span
-          class="inline-flex max-w-[100px] items-center gap-1 truncate font-medium"
+          class="inline-flex max-w-[150px] @lg:max-w-[180px] items-center gap-1 truncate font-medium"
           :class="row.original.deleted ? 'text-dimmed line-through' : enableBreakdown && row.original.group_id > 0 ? 'text-primary' : 'text-highlighted'"
           :title="row.original.group_name || String(row.original.group_id)"
         >

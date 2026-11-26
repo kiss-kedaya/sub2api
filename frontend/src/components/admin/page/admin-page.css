@@ -57,7 +57,7 @@ html:not(.dark) .admin-stat-icon > svg {
 }
 
 .dark .account-advanced {
-  border-top-color: #5e4651;
+  border-top-color: var(--ui-border);
 }
 
 .account-advanced-summary {

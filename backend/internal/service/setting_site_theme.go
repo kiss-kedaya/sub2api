@@ -41,10 +41,9 @@ type SiteThemeSettings struct {
 	DefaultMode string  `json:"theme_default_mode"`
 }
 
-// DefaultSiteThemeSettings matches the look the site shipped with before the
-// theme became configurable.
+// DefaultSiteThemeSettings returns the shipped neutral studio palette with blue accent.
 func DefaultSiteThemeSettings() SiteThemeSettings {
-	return SiteThemeSettings{Primary: "sakura", Neutral: "neutral", Radius: 0.375, Font: "system", DefaultMode: "system"}
+	return SiteThemeSettings{Primary: "blue", Neutral: "neutral", Radius: 0.375, Font: "system", DefaultMode: "system"}
 }
 
 // SiteThemePatch carries the fields of one update; nil leaves a field unchanged.

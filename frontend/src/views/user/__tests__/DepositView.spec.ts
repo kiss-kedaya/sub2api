@@ -1116,164 +1116,248 @@ describe('user deposit confirmation progress: in-flight states', () => {
   })
 })
 
-describe('user deposit amount pre-check', () => {
+describe('user deposit streamlined funding steps', () => {
   const bscAddress = '0x' + '12'.repeat(20)
-  const amount = (wrapper: ReturnType<typeof render>) => wrapper.get('[data-testid="deposit-amount-input"]')
-  const copyButton = (wrapper: ReturnType<typeof render>) =>
-    wrapper.get('.deposit-view__copy').element as HTMLButtonElement
 
-  async function typeAmount(wrapper: ReturnType<typeof render>, value: string) {
-    await amount(wrapper).setValue(value)
-  }
-
-  function usdtInfo(overrides: Record<string, unknown> = {}) {
-    return {
-      enabled: true,
-      chains: [{ chain: 'bsc', address: bscAddress, tokens: ['USDT'] }],
-      rate: 6.7, min_amount: 1, max_amount: 0,
-      ...overrides
-    }
-  }
-
-  it('does not gate anything before the user declares an amount', async () => {
+  it('omits the removed amount pre-check step and lets users copy the deposit address directly', async () => {
     mocks.getDepositHistory.mockResolvedValue([])
+    mocks.copy.mockResolvedValueOnce(true)
     const wrapper = render()
     await flushPromises()
 
-    expect(amount(wrapper).attributes('aria-invalid')).toBe('false')
-    expect(wrapper.get('[data-testid="deposit-amount-hint"]').text())
-      .toBe('deposit.amountHintMin {"min":"1","unit":"USDT"}')
-    expect(wrapper.find('[data-testid="deposit-amount-error"]').exists()).toBe(false)
-    expect(copyButton(wrapper).disabled).toBe(false)
-    await wrapper.get('.deposit-view__copy').trigger('click')
+    expect(wrapper.find('[data-testid="deposit-amount-input"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="deposit-copy-blocked"]').exists()).toBe(false)
+    expect(wrapper.findAll('.deposit-view__step').map(step => step.text())).toEqual(['01', '02'])
+
+    const copyBtn = wrapper.get('.deposit-view__copy')
+    expect((copyBtn.element as HTMLButtonElement).disabled).toBe(false)
+    await copyBtn.trigger('click')
     expect(mocks.copy).toHaveBeenCalledWith(bscAddress)
   })
+})
 
-  it('warns immediately when the amount is below the minimum and blocks the transfer action', async () => {
-    mocks.getDepositHistory.mockResolvedValue([])
+describe('user deposit history presentation and smooth updates', () => {
+  const creditedRow = {
+    chain: 'bsc', tx_hash: hash, token: 'USDT', amount: '10',
+    status: 'credited', credited: 67, created_at: '2026-01-01T00:00:00Z'
+  }
+  const incomingHash = '0x' + 'ef'.repeat(32)
+  const incomingRow = {
+    chain: 'ethereum', tx_hash: incomingHash, token: 'ETH', amount: '0.25',
+    status: 'pending', credited: 0, confirmations: 1, required_confirmations: 3,
+    created_at: '2026-01-03T00:00:00Z'
+  }
+
+  it('does not render circular icon/avatar plates on deposit history rows', async () => {
     const wrapper = render()
     await flushPromises()
 
-    await typeAmount(wrapper, '0.5')
-    expect(wrapper.get('[data-testid="deposit-amount-error"]').text())
-      .toBe('deposit.amountBelowMin {"min":"1","unit":"USDT"}')
-    expect(amount(wrapper).attributes('aria-invalid')).toBe('true')
-    expect(copyButton(wrapper).disabled).toBe(true)
-    expect(wrapper.get('[data-testid="deposit-copy-blocked"]').text()).toBe('deposit.copyBlockedByAmount')
-
-    // 即使绕过禁用态触发 click，也不会把地址交出去。
-    await wrapper.get('.deposit-view__copy').trigger('click')
-    expect(mocks.copy).not.toHaveBeenCalled()
+    expect(wrapper.findAll('[data-testid="deposit-history-row"]')).toHaveLength(2)
+    expect(wrapper.find('[data-testid="transaction-icon"]').exists()).toBe(false)
   })
 
-  it('accepts exactly the minimum and shows the estimated credit', async () => {
-    mocks.getDepositHistory.mockResolvedValue([])
+  it('keeps rows rendered without skeleton flicker during background 5s polls and skips unchanged snapshots', async () => {
+    fakeTimers()
+    let releasePoll!: (rows: unknown[]) => void
+    mocks.getDepositHistory
+      .mockResolvedValueOnce([creditedRow])
+      .mockImplementationOnce(() => new Promise(resolve => { releasePoll = resolve }))
     const wrapper = render()
     await flushPromises()
 
-    await typeAmount(wrapper, '1')
-    expect(wrapper.find('[data-testid="deposit-amount-error"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="deposit-amount-hint"]').text()).toBe('deposit.amountWithinRange')
-    expect(wrapper.get('[data-testid="deposit-amount-credit"]').text())
-      .toBe('deposit.amountEstimateCredit {"credit":"6.7"}')
-    expect(copyButton(wrapper).disabled).toBe(false)
+    const rowBefore = wrapper.get('[data-testid="deposit-history-row"]').element
+    expect(wrapper.find('[data-testid="transaction-list-loading"]').exists()).toBe(false)
+
+    // Advance to the 5s background poll while the request is still in flight.
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
+    // Rows stay visible and steady — no skeleton replacement, no refresh button spinner.
+    expect(wrapper.find('[data-testid="transaction-list-loading"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-testid="deposit-history-row"]')).toHaveLength(1)
+    expect((wrapper.get('.deposit-view__history-head button').element as HTMLButtonElement).disabled).toBe(false)
+
+    // Resolve with unchanged ledger fields (even if preview fixture timestamp ticks).
+    releasePoll([{ ...creditedRow, created_at: '2026-01-01T00:00:05Z' }])
+    await flushPromises()
+
+    const rowAfter = wrapper.get('[data-testid="deposit-history-row"]')
+    expect(rowAfter.element).toBe(rowBefore)
+    expect(rowAfter.attributes('data-fresh')).toBeUndefined()
   })
 
-  it('warns above the per-transfer cap and accepts exactly the cap', async () => {
-    mocks.getDepositInfo.mockResolvedValue(usdtInfo({ max_amount: 100 }))
-    mocks.getDepositHistory.mockResolvedValue([])
+  it('animates only newly arriving records and clears their fresh state after the highlight window', async () => {
+    fakeTimers()
+    mocks.getDepositHistory
+      .mockResolvedValueOnce([creditedRow])
+      .mockResolvedValueOnce([incomingRow, creditedRow])
+      .mockResolvedValue([incomingRow, creditedRow])
     const wrapper = render()
     await flushPromises()
 
-    await typeAmount(wrapper, '100')
-    expect(wrapper.find('[data-testid="deposit-amount-error"]').exists()).toBe(false)
-    await typeAmount(wrapper, '100.01')
-    expect(wrapper.get('[data-testid="deposit-amount-error"]').text())
-      .toBe('deposit.amountAboveMax {"max":"100","unit":"USDT"}')
-    expect(copyButton(wrapper).disabled).toBe(true)
+    // Existing rows loaded initially are not marked as newly popped-in.
+    expect(wrapper.get('[data-testid="deposit-history-row"]').attributes('data-fresh')).toBeUndefined()
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-testid="deposit-history-row"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain(incomingHash)
+    expect(rows[0].attributes('data-fresh')).toBe('true')
+    expect(rows[1].attributes('data-fresh')).toBeUndefined()
+
+    // Highlight state clears automatically once the entrance animation finishes.
+    await vi.advanceTimersByTimeAsync(2400)
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="deposit-history-row"]')[0].attributes('data-fresh')).toBeUndefined()
   })
 
-  it('rejects text and zero immediately with a readable error', async () => {
-    mocks.getDepositHistory.mockResolvedValue([])
+  it('marks the first deposit discovered after an empty history as fresh', async () => {
+    fakeTimers()
+    mocks.getDepositHistory
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([incomingRow])
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="deposit-no-history"]').exists()).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    const rows = wrapper.findAll('[data-testid="deposit-history-row"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].attributes('data-fresh')).toBe('true')
+  })
+
+  it('updates confirmation progress in place without marking an existing row as new or flashing skeletons', async () => {
+    fakeTimers()
+    mocks.getDepositHistory
+      .mockResolvedValueOnce([pendingRow({ confirmations: 1, required_confirmations: 3 })])
+      .mockResolvedValue([pendingRow({ confirmations: 2, required_confirmations: 3 })])
     const wrapper = render()
     await flushPromises()
 
-    await typeAmount(wrapper, 'abc')
-    expect(wrapper.get('[data-testid="deposit-amount-error"]').text()).toBe('deposit.amountInvalid')
-    await typeAmount(wrapper, '0')
-    expect(wrapper.get('[data-testid="deposit-amount-error"]').text()).toBe('deposit.amountInvalid')
-    expect(copyButton(wrapper).disabled).toBe(true)
+    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('width: 33%')
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="transaction-list-loading"]').exists()).toBe(false)
+    expect(wrapper.get('.deposit-view__progress-fill').attributes('style')).toContain('width: 67%')
+    expect(wrapper.get('[data-testid="deposit-history-row"]').attributes('data-fresh')).toBeUndefined()
   })
 
-  it('prefers the explicit credit_min_amount / credit_max_amount fields', async () => {
-    mocks.getDepositInfo.mockResolvedValue(usdtInfo({ min_amount: 1, credit_min_amount: 5, credit_max_amount: 500 }))
-    mocks.getDepositHistory.mockResolvedValue([])
+  it('keeps existing rows visible while a manual refresh is in flight', async () => {
+    let releaseManual!: (rows: unknown[]) => void
+    mocks.getDepositHistory
+      .mockResolvedValueOnce([creditedRow])
+      .mockImplementationOnce(() => new Promise(resolve => { releaseManual = resolve }))
     const wrapper = render()
     await flushPromises()
 
-    await typeAmount(wrapper, '2')
-    expect(wrapper.get('[data-testid="deposit-amount-error"]').text())
-      .toBe('deposit.amountBelowMin {"min":"5","unit":"USDT"}')
+    await wrapper.get('.deposit-view__history-head button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="transaction-list-loading"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-testid="deposit-history-row"]')).toHaveLength(1)
+    expect((wrapper.get('.deposit-view__history-head button').element as HTMLButtonElement).disabled).toBe(true)
+
+    releaseManual([incomingRow, creditedRow])
+    await flushPromises()
+    expect((wrapper.get('.deposit-view__history-head button').element as HTMLButtonElement).disabled).toBe(false)
+    expect(wrapper.findAll('[data-testid="deposit-history-row"]')[0].attributes('data-fresh')).toBe('true')
   })
 
-  it('performs no validation at all when the deployment exposes no thresholds', async () => {
-    mocks.getDepositInfo.mockResolvedValue(usdtInfo({ min_amount: 0, max_amount: 0 }))
-    mocks.getDepositHistory.mockResolvedValue([])
+  it('animates only the newly arrived transfer when a second deposit shares the same tx_hash', async () => {
+    fakeTimers()
+    const secondSameTx = {
+      chain: 'bsc', tx_hash: hash, token: 'USDC', amount: '25',
+      status: 'pending', credited: 0, confirmations: 1, required_confirmations: 3,
+      created_at: '2026-01-01T00:00:05Z'
+    }
+    mocks.getDepositHistory
+      .mockResolvedValueOnce([creditedRow])
+      .mockResolvedValue([secondSameTx, creditedRow])
     const wrapper = render()
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="deposit-amount-hint"]').text()).toBe('deposit.amountNoLimit')
-    await typeAmount(wrapper, '999999')
-    expect(wrapper.find('[data-testid="deposit-amount-error"]').exists()).toBe(false)
-    expect(copyButton(wrapper).disabled).toBe(false)
+    const originalRowEl = wrapper.get('[data-testid="deposit-history-row"]').element
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+
+    const rows = wrapper.findAll('[data-testid="deposit-history-row"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].attributes('data-fresh')).toBe('true')
+    expect(rows[1].attributes('data-fresh')).toBeUndefined()
+    expect(rows[1].element).toBe(originalRowEl)
   })
 
-  it('compares a market-priced coin by USD notional using the display quote', async () => {
-    mocks.getDepositInfo.mockResolvedValue({
-      enabled: true,
-      chains: [{
-        chain: 'ethereum', address: '0x' + '34'.repeat(20), tokens: ['ETH', 'USDT'],
-        assets: [
-          { symbol: 'ETH', native: true, market_priced: true, rate: null, reference_price_usd: '3210.12' },
-          { symbol: 'USDT', native: false, market_priced: false, rate: 6.7 }
-        ]
-      }],
-      min_amount: 0.001, max_amount: 10000
+  it('clears fresh animation markers when switching local filters so returning rows never replay pop-in', async () => {
+    fakeTimers()
+    mocks.getDepositHistory
+      .mockResolvedValueOnce([creditedRow])
+      .mockResolvedValue([incomingRow, creditedRow])
+    const wrapper = render()
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="deposit-history-row"]')[0].attributes('data-fresh')).toBe('true')
+
+    await wrapper.get('[data-testid="deposit-filter-status-credited"]').trigger('click')
+    await wrapper.get('[data-testid="deposit-filter-status-all"]').trigger('click')
+    const rows = wrapper.findAll('[data-testid="deposit-history-row"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].attributes('data-fresh')).toBeUndefined()
+    expect(rows[1].attributes('data-fresh')).toBeUndefined()
+  })
+
+  it('shows manual refresh loading feedback if clicked while a silent 5s background poll is already in flight', async () => {
+    fakeTimers()
+    let releasePoll!: (rows: unknown[]) => void
+    mocks.getDepositHistory
+      .mockResolvedValueOnce([creditedRow])
+      .mockImplementationOnce(() => new Promise(resolve => { releasePoll = resolve }))
+    const wrapper = render()
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
+    expect((wrapper.get('.deposit-view__history-head button').element as HTMLButtonElement).disabled).toBe(false)
+
+    // Clicking Refresh during the in-flight poll should show loading feedback without firing a duplicate request.
+    await wrapper.get('.deposit-view__history-head button').trigger('click')
+    expect(mocks.getDepositHistory).toHaveBeenCalledTimes(2)
+    expect((wrapper.get('.deposit-view__history-head button').element as HTMLButtonElement).disabled).toBe(true)
+
+    releasePoll([creditedRow])
+    await flushPromises()
+    expect((wrapper.get('.deposit-view__history-head button').element as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('keeps loaded history visible without flashing skeletons when retrying a failed deposit-info load', async () => {
+    let releaseRetryInfo!: (value: unknown) => void
+    mocks.getDepositInfo
+      .mockRejectedValueOnce({ status: 503 })
+      .mockImplementationOnce(() => new Promise(resolve => { releaseRetryInfo = resolve }))
+    mocks.getDepositHistory.mockResolvedValue([creditedRow])
+    const wrapper = render()
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-testid="deposit-history-row"]')).toHaveLength(1)
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+
+    // While deposit-info retries, existing history rows remain mounted instead of flashing skeletons.
+    expect(wrapper.find('[data-testid="transaction-list-loading"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-testid="deposit-history-row"]')).toHaveLength(1)
+
+    releaseRetryInfo({
+      enabled: true, chains: [{ chain: 'bsc', address: '0x' + '12'.repeat(20), tokens: ['USDT'] }],
+      rate: 6.7, min_amount: 1, max_amount: 0
     })
-    mocks.getDepositHistory.mockResolvedValue([])
-    const wrapper = render()
     await flushPromises()
-
-    // 稳定币默认选中；切到 ETH 后限额按美元名义价值比较。
-    await wrapper.findAll('.deposit-view__asset')[1].trigger('click')
-    await typeAmount(wrapper, '0.0000003')
-    expect(wrapper.get('[data-testid="deposit-amount-error"]').text())
-      .toBe('deposit.amountBelowMin {"min":"0.001","unit":"USD"}')
-    expect(copyButton(wrapper).disabled).toBe(true)
-
-    await typeAmount(wrapper, '1')
-    expect(wrapper.find('[data-testid="deposit-amount-error"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="deposit-amount-notional"]').text())
-      .toBe('deposit.amountEstimateMarket {"usd":"3210.12"}')
-  })
-
-  it('degrades to an explanation instead of a rejection when no market quote exists', async () => {
-    mocks.getDepositInfo.mockResolvedValue({
-      enabled: true,
-      chains: [{
-        chain: 'ethereum', address: '0x' + '34'.repeat(20), tokens: ['ETH'],
-        assets: [{ symbol: 'ETH', native: true, market_priced: true, rate: null }]
-      }],
-      min_amount: 0.001, max_amount: 10000
-    })
-    mocks.getDepositHistory.mockResolvedValue([])
-    const wrapper = render()
-    await flushPromises()
-
-    await typeAmount(wrapper, '0.5')
-    expect(wrapper.get('[data-testid="deposit-amount-hint"]').text()).toBe('deposit.amountUnverifiable')
-    expect(wrapper.find('[data-testid="deposit-amount-error"]').exists()).toBe(false)
-    expect(copyButton(wrapper).disabled).toBe(false)
+    expect(wrapper.find('.deposit-view__address-block').exists()).toBe(true)
   })
 })
 

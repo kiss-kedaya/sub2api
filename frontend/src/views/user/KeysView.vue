@@ -151,6 +151,17 @@
                 </button>
               </div>
             </div>
+            <UButton
+              type="button"
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-book-open"
+              class="hidden sm:inline-flex"
+              data-test="keys-agent-guide"
+              @click="openAgentGuide"
+            >
+              {{ t('keys.agentGuide') }}
+            </UButton>
             <UButton icon="i-lucide-plus" data-tour="keys-create-btn" @click="openCreateModal">
               {{ t('keys.createKey') }}
             </UButton>
@@ -312,7 +323,6 @@
                 {{ t('keys.smartRouting') }}
                 {{ t('keys.smartRoutingMore', { count: keyGroupIds(row).length - 1 }) }}
               </UBadge>
-              <span v-else class="text-xs text-muted">{{ t('keys.selectGroup') }}</span>
               <svg
                 class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
                 fill="none"
@@ -363,10 +373,10 @@
               </div>
               <!-- Quota progress (if quota is set) -->
               <div v-if="row.quota > 0" class="mt-1.5">
-                <div class="flex items-center gap-1.5">
+                <div class="flex items-center gap-1.5 whitespace-nowrap">
                   <span class="text-gray-500 dark:text-gray-400">{{ t('keys.quota') }}:</span>
                   <span :class="[
-                    'font-medium',
+                    'font-medium tabular-nums',
                     row.quota_used >= row.quota ? 'text-red-500' :
                     row.quota_used >= row.quota * 0.8 ? 'text-yellow-500' :
                     'text-gray-900 dark:text-white'
@@ -1555,8 +1565,10 @@
       :base-url="publicSettings?.api_base_url || ''"
       :platform="selectedKey?.group?.platform || null"
       :allow-messages-dispatch="selectedKey?.group?.allow_messages_dispatch || false"
+      show-guide-link
       @close="closeUseKeyModal"
       @assign-group="assignGroupForRevealedKey"
+      @open-guide="openAgentGuideFromModal"
     />
 
     <!-- 明文密钥只展示这一次：复制、使用引导、导入 CCS 都从这里进入。
@@ -1575,12 +1587,15 @@
       @sealed="markKeySealedLocally"
     />
 
-    <!-- 刷新后查看 key：只在浏览器本地用登录密码解密服务端密文 -->
+    <!-- 刷新后查看 key：只在浏览器本地用登录密码解密服务端密文；解密后同样可直接导入 CCS 或查看使用配置 -->
     <RevealApiKeyDialog
       :show="showRevealDialog"
       :api-key="revealRow"
+      :hide-ccs-import="!!publicSettings?.hide_ccs_import_button"
       @close="closeRevealDialog"
       @rotate="rotateFromReveal"
+      @use="useDecryptedKey"
+      @import-ccs="importDecryptedToCcswitch"
     />
 
     <!-- 创建时没启用后续查看：说明无法找回，只能轮换 -->
@@ -1616,20 +1631,39 @@
           />
         </div>
         <div>
-          <label class="input-label" for="ccs-import-model">{{ t('keys.ccsImport.model') }}</label>
+          <div class="mb-1.5 flex items-center justify-between gap-2">
+            <label class="input-label mb-0" for="ccs-import-model">{{ t('keys.ccsImport.model') }}</label>
+            <button
+              v-if="pendingCcsRow && !ccsModelsLoading"
+              type="button"
+              data-test="ccs-import-model-reload"
+              class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              @click="loadCcsModels(pendingCcsRow)"
+            >
+              <UIcon name="i-lucide-refresh-cw" class="size-3" aria-hidden="true" />
+              <span>{{ ccsModelsError || ccsAvailableModels.length === 0 ? t('keys.ccsImport.modelRetry') : t('keys.ccsImport.modelRefresh') }}</span>
+            </button>
+          </div>
           <Select
             id="ccs-import-model"
             :model-value="ccsImportModel"
             :options="ccsModelOptions"
-            :placeholder="t('keys.ccsImport.modelPlaceholder')"
+            :loading="ccsModelsLoading"
+            :disabled="ccsModelsLoading"
+            :placeholder="ccsModelsLoading ? t('keys.ccsImport.modelLoading') : t('keys.ccsImport.modelPlaceholder')"
+            :empty-text="ccsModelsError ? t('keys.ccsImport.modelLoadFailed') : t('keys.ccsImport.modelEmpty')"
             :searchable="true"
-            :creatable="true"
+            :creatable="ccsModelsError"
             :clearable="true"
             :aria-label="t('keys.ccsImport.model')"
             @update:model-value="onCcsModelChange"
           />
-          <p class="input-hint mt-1">
-            {{ ccsModelsLoading ? t('keys.ccsImport.modelLoading') : t('keys.ccsImport.modelHint') }}
+          <p
+            class="input-hint mt-1"
+            :class="ccsModelsError ? 'text-error' : ''"
+            data-test="ccs-import-model-hint"
+          >
+            {{ ccsModelHintText }}
           </p>
         </div>
         <UAlert
@@ -1646,7 +1680,7 @@
           <UButton color="neutral" variant="outline" size="lg" @click="closeCcsImportModal">
             {{ t('common.cancel') }}
           </UButton>
-          <UButton size="lg" :disabled="ccsImportDeeplinkUnsupported" @click="confirmCcsImport">
+          <UButton size="lg" :disabled="ccsImportDeeplinkUnsupported || ccsModelsLoading" @click="confirmCcsImport">
             {{ t('common.import') }}
           </UButton>
         </div>
@@ -1734,7 +1768,8 @@
 
 <script setup lang="ts">
 import '@/styles/console-workspace.css'
-	import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+	import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, inject, type ComponentPublicInstance } from 'vue'
+	import { routeLocationKey, routerKey } from 'vue-router'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
@@ -1748,6 +1783,8 @@ import { useClipboard } from '@/composables/useClipboard'
 import { useAppUpdate } from '@/composables/useAppUpdate'
 
 const { t } = useI18n()
+const router = inject(routerKey, null)
+const route = inject(routeLocationKey, null)
 
 // The concurrency cell carries its own explanation: hover shows this sentence, keyboard
 // focus and screen readers get it from aria-label.
@@ -1798,7 +1835,6 @@ import {
   buildCcSwitchImportDeeplink,
   CC_SWITCH_APP_LABEL_KEYS,
   CC_SWITCH_APPS,
-  CC_SWITCH_MODEL_SUGGESTIONS,
   ccSwitchProviderDeeplinkSupported,
   defaultCcSwitchModel,
   fetchCcSwitchModels,
@@ -2240,6 +2276,8 @@ const ccsImportApp = ref<CcSwitchApp>('claude')
 const ccsImportModel = ref('')
 const ccsAvailableModels = ref<string[]>([])
 const ccsModelsLoading = ref(false)
+const ccsModelsLoaded = ref(false)
+const ccsModelsError = ref(false)
 let ccsModelsAbort: AbortController | null = null
 
 const ccsAppOptions = computed(() =>
@@ -2253,17 +2291,26 @@ const ccsImportDeeplinkUnsupported = computed(
   () => !ccSwitchProviderDeeplinkSupported(ccsImportApp.value)
 )
 
+// 只展示该密钥通过 /v1/models 真实拉取到的可用模型，不再混入写死的静态猜测模型。
 const ccsModelOptions = computed(() => {
-  const suggestions =
-    ccsAvailableModels.value.length > 0
-      ? ccsAvailableModels.value
-      : CC_SWITCH_MODEL_SUGGESTIONS[ccsImportApp.value] || []
-  const values = [...suggestions]
+  const values = [...ccsAvailableModels.value]
   const current = ccsImportModel.value.trim()
-  if (current && !values.includes(current)) {
+  if (ccsModelsError.value && current && !values.includes(current)) {
     values.unshift(current)
   }
   return values.map((value) => ({ value, label: value }))
+})
+
+const ccsModelHintText = computed(() => {
+  if (ccsModelsLoading.value) return t('keys.ccsImport.modelLoading')
+  if (ccsModelsError.value) return t('keys.ccsImport.modelLoadFailed')
+  if (ccsModelsLoaded.value && ccsAvailableModels.value.length === 0) {
+    return t('keys.ccsImport.modelEmpty')
+  }
+  if (ccsAvailableModels.value.length > 0) {
+    return t('keys.ccsImport.modelLoadedHint', { count: ccsAvailableModels.value.length })
+  }
+  return t('keys.ccsImport.modelHint')
 })
 const selectedKey = ref<ApiKey | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
@@ -2842,6 +2889,24 @@ const useRevealedKey = () => {
   const secret = secretPlaintext.value
   if (!row || !secret) return
   openUseKeyModal(row, secret)
+}
+
+// 从「查看已保存密钥」解密弹窗进入"使用密钥"引导：同样把子弹窗叠在解密弹窗之上，便于连续操作。
+const useDecryptedKey = (secret: string) => {
+  const row = revealRow.value
+  if (!row || !secret) return
+  openUseKeyModal(resolveKeyGroupRow(row), secret)
+}
+
+const openAgentGuide = () => {
+  void router?.push({ path: '/docs', query: { page: 'agent-setup' } })
+}
+
+const openAgentGuideFromModal = () => {
+  closeUseKeyModal()
+  closeSecretDialog()
+  closeRevealDialog()
+  openAgentGuide()
 }
 
 // 「使用密钥」里发现无分组时：关掉子弹窗和回执，定位到这一行的分组列直接选分组。
@@ -3844,10 +3909,43 @@ const resetRateLimitUsage = async () => {
 }
 
 const applyCcsModelDefault = () => {
-  ccsImportModel.value = pickCcSwitchModel(
-    defaultCcSwitchModel(ccsImportApp.value),
-    ccsAvailableModels.value
-  )
+  if (ccsAvailableModels.value.length > 0) {
+    ccsImportModel.value = pickCcSwitchModel(
+      defaultCcSwitchModel(ccsImportApp.value),
+      ccsAvailableModels.value,
+      ccsImportApp.value
+    )
+    return
+  }
+  if (!ccsModelsError.value) {
+    ccsImportModel.value = ''
+  }
+}
+
+const fetchRealModelsForKey = async (
+  baseUrl: string,
+  apiKey: string,
+  signal: AbortSignal
+): Promise<string[]> => {
+  try {
+    return await fetchCcSwitchModels(baseUrl, apiKey, signal)
+  } catch (err) {
+    if (signal.aborted) throw err
+    // 若站点配置了独立 api_base_url 且跨域拦截了浏览器 fetch，回退当前同源拉取 /v1/models。
+    const sameOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+    let differs = false
+    if (sameOrigin) {
+      try {
+        differs = new URL(baseUrl).origin !== sameOrigin
+      } catch {
+        differs = false
+      }
+    }
+    if (differs) {
+      return await fetchCcSwitchModels(sameOrigin, apiKey, signal)
+    }
+    throw err
+  }
 }
 
 const loadCcsModels = async (row: ApiKeyWithPlaintext) => {
@@ -3855,16 +3953,21 @@ const loadCcsModels = async (row: ApiKeyWithPlaintext) => {
   const abort = new AbortController()
   ccsModelsAbort = abort
   ccsAvailableModels.value = []
+  ccsModelsLoaded.value = false
+  ccsModelsError.value = false
   ccsModelsLoading.value = true
   try {
     const baseUrl = publicSettings.value?.api_base_url || window.location.origin
-    const ids = await fetchCcSwitchModels(baseUrl, row.key, abort.signal)
+    const ids = await fetchRealModelsForKey(baseUrl, row.key, abort.signal)
     if (abort.signal.aborted) return
     ccsAvailableModels.value = ids
+    ccsModelsLoaded.value = true
     applyCcsModelDefault()
   } catch {
     if (abort.signal.aborted) return
-    applyCcsModelDefault()
+    ccsModelsError.value = true
+    ccsModelsLoaded.value = true
+    ccsImportModel.value = ''
   } finally {
     if (ccsModelsAbort === abort) {
       ccsModelsLoading.value = false
@@ -3882,7 +3985,7 @@ const importToCcswitch = (row: ApiKeyWithPlaintext) => {
   )
   pendingCcsRow.value = row
   ccsImportApp.value = config.app
-  ccsImportModel.value = config.model || defaultCcSwitchModel(config.app)
+  ccsImportModel.value = ''
   showCcsImportModal.value = true
   void loadCcsModels(row)
 }
@@ -3894,6 +3997,13 @@ const importRevealedToCcswitch = () => {
   const secret = secretPlaintext.value
   if (!row || !secret) return
   importToCcswitch({ ...row, key: secret })
+}
+
+// 解密已保存密钥后直接点"导入 CCS"：复用同一套按真实 /v1/models 选模型的导入弹窗。
+const importDecryptedToCcswitch = (secret: string) => {
+  const row = revealRow.value
+  if (!row || !secret) return
+  importToCcswitch({ ...resolveKeyGroupRow(row), key: secret })
 }
 
 const onCcsAppChange = (value: string | number | boolean | null) => {
@@ -3964,6 +4074,8 @@ const closeCcsImportModal = () => {
   ccsModelsAbort?.abort()
   ccsModelsAbort = null
   ccsModelsLoading.value = false
+  ccsModelsLoaded.value = false
+  ccsModelsError.value = false
   ccsAvailableModels.value = []
   showCcsImportModal.value = false
   pendingCcsRow.value = null
@@ -3981,6 +4093,29 @@ function formatResetTime(resetAt: string | null): string {
   return `${mins}m`
 }
 
+/** 支持从文档等入口携带 ?action=create 直达创建弹窗，并在消费后清理查询参数避免刷新重复弹出。 */
+const consumeQuickCreateQuery = () => {
+  if (!route) return
+  const rawAction = route.query.action
+  const action = Array.isArray(rawAction) ? rawAction[0] : rawAction
+  if (action !== 'create') return
+  if (!showCreateModal.value && !showEditModal.value) {
+    openCreateModal()
+  }
+  if (router) {
+    const nextQuery = { ...route.query }
+    delete nextQuery.action
+    void router.replace({ path: route.path, query: nextQuery, hash: route.hash }).catch(() => {})
+  }
+}
+
+watch(
+  () => route?.query.action,
+  () => {
+    consumeQuickCreateQuery()
+  },
+)
+
 onMounted(() => {
   loadSavedColumns()
   loadApiKeys()
@@ -3989,6 +4124,7 @@ onMounted(() => {
   loadUserGroupRates()
   loadPublicSettings()
   loadCustomEndpoints()
+  consumeQuickCreateQuery()
   document.addEventListener('click', closeGroupSelector)
   resetTimer = setInterval(() => { now.value = new Date() }, 60000)
 })

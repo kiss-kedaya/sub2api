@@ -34,6 +34,7 @@ describe('R5 effective administrator channels', () => {
     expect(wrapper.get('[data-testid="admin-bark-row"]').text()).toContain('accountOps.channelUnused')
     expect(wrapper.get('[data-testid="admin-bark-row"]').text()).toContain('accountOps.adminReasons.bark_unconfigured')
     expect(wrapper.get('[data-testid="test-admin-bark"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="configure-admin-bark"]').attributes('href')).toBe('/profile?tab=notifications')
     wrapper.unmount()
   })
 

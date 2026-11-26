@@ -86,27 +86,26 @@
             <p v-if="chartsError" role="alert" class="py-12 text-center text-sm text-muted">
               {{ t('admin.dashboard.failedToLoad') }}
             </p>
-            <TokenUsageTrend v-else :trend-data="trendData" :loading="chartsLoading" />
+            <TokenUsageTrend v-else bare :trend-data="trendData" :loading="chartsLoading" />
           </div>
         </DashboardChartCard>
 
-        <UCard class="admin-model-card" :ui="{ root: 'min-w-0', body: 'p-0 sm:p-0' }">
-          <ModelDistributionChart
-            :model-stats="modelStats"
-            :enable-ranking-view="true"
-            :ranking-items="rankingItems"
-            :ranking-total-actual-cost="rankingTotalActualCost"
-            :ranking-total-requests="rankingTotalRequests"
-            :ranking-total-tokens="rankingTotalTokens"
-            :loading="chartsLoading"
-            :model-stats-error="chartsError"
-            :ranking-loading="rankingLoading"
-            :ranking-error="rankingError"
-            :start-date="startDate"
-            :end-date="endDate"
-            @ranking-click="goToUserUsage"
-          />
-        </UCard>
+        <ModelDistributionChart
+          class="admin-model-card"
+          :model-stats="modelStats"
+          :enable-ranking-view="true"
+          :ranking-items="rankingItems"
+          :ranking-total-actual-cost="rankingTotalActualCost"
+          :ranking-total-requests="rankingTotalRequests"
+          :ranking-total-tokens="rankingTotalTokens"
+          :loading="chartsLoading"
+          :model-stats-error="chartsError"
+          :ranking-loading="rankingLoading"
+          :ranking-error="rankingError"
+          :start-date="startDate"
+          :end-date="endDate"
+          @ranking-click="goToUserUsage"
+        />
 
         <!-- User Usage Trend (Top 12) -->
         <DashboardChartCard
@@ -155,7 +154,7 @@ import DashboardChartCard from '@/components/dashboard/DashboardChartCard.vue'
 import DashboardQuickLinks from '@/components/dashboard/DashboardQuickLinks.vue'
 import { statCorners, statGridClass, type DashboardQuickLink } from '@/components/dashboard/dashboardUi'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
-import { useSiteColorMode } from '@/composables/useSiteTheme'
+import { chartTooltipStyle, useChartTheme } from '@/components/charts/chartTheme'
 
 import {
   Chart as ChartJS,
@@ -252,14 +251,8 @@ const userTrendTotalTokens = computed(() =>
   userTrend.value.reduce((sum, point) => sum + toFiniteNumber(point.tokens), 0)
 )
 
-// Dark mode follows the html.dark class, so the chart colors switch with the theme toggle
-const { isDark: isDarkMode } = useSiteColorMode()
-
-// Chart colors
-const chartColors = computed(() => ({
-  text: isDarkMode.value ? '#e5e7eb' : '#374151',
-  grid: isDarkMode.value ? '#374151' : '#e5e7eb'
-}))
+// Chart palette & tooltip follow the active site theme (light / dark + Appearance)
+const chartTheme = useChartTheme()
 
 // Line chart options (for user trend chart)
 const lineOptions = computed(() => ({
@@ -273,7 +266,7 @@ const lineOptions = computed(() => ({
     legend: {
       position: 'top' as const,
       labels: {
-        color: chartColors.value.text,
+        color: chartTheme.value.text,
         usePointStyle: true,
         pointStyle: 'circle',
         padding: 15,
@@ -283,6 +276,7 @@ const lineOptions = computed(() => ({
       }
     },
     tooltip: {
+      ...chartTooltipStyle(chartTheme.value),
       itemSort: (a: any, b: any) => {
         const aValue = typeof a?.raw === 'number' ? a.raw : Number(a?.parsed?.y ?? 0)
         const bValue = typeof b?.raw === 'number' ? b.raw : Number(b?.parsed?.y ?? 0)
@@ -298,10 +292,10 @@ const lineOptions = computed(() => ({
   scales: {
     x: {
       grid: {
-        color: chartColors.value.grid
+        color: chartTheme.value.grid
       },
       ticks: {
-        color: chartColors.value.text,
+        color: chartTheme.value.text,
         font: {
           size: 10
         }
@@ -309,10 +303,10 @@ const lineOptions = computed(() => ({
     },
     y: {
       grid: {
-        color: chartColors.value.grid
+        color: chartTheme.value.grid
       },
       ticks: {
-        color: chartColors.value.text,
+        color: chartTheme.value.text,
         font: {
           size: 10
         },
@@ -584,67 +578,11 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* The shared trend and model components bring their own `.card`; inside these Nuxt UI cards
-   they are only content. The doubled class outranks the admin skin's `.console-signal.signal-admin .card`. */
-.admin-trend-card.admin-trend-card :deep(.card),
-.admin-model-card.admin-model-card :deep(.card) {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+.admin-trend-card :deep(.h-48) {
+  height: 280px;
 }
 
-.admin-trend-card.admin-trend-card :deep(.card) { padding: 0; }
-.admin-trend-card :deep(.card > h3) { display: none; }
-.admin-trend-card :deep(.h-48) { height: 280px; }
-
-/* Model distribution: its header row reads like the other card headers. */
-.admin-model-card :deep(.card) { padding: 16px; }
-.admin-model-card :deep(.card > div:first-child) {
-  margin: -16px -16px 16px;
-  padding: 16px;
-  border-bottom: 1px solid var(--ui-border);
-}
-.admin-model-card :deep(.card > div:first-child > h3) {
-  color: var(--ui-text-muted);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 16px;
-  text-transform: uppercase;
-}
-
-/* Its tables as the template's HomeSales: tinted header row with rounded ends, hairline rows.
-   Direct children only, so the expanded per-user sub-table keeps its own look. */
-.admin-model-card :deep(.max-h-48) { max-height: 300px; }
-.admin-model-card :deep(.max-h-48 > table) { border-collapse: separate; border-spacing: 0; }
-.admin-model-card :deep(.max-h-48 > table > thead > tr > th) {
-  padding: 8px 10px;
-  border-block: 1px solid var(--ui-border);
-  background: color-mix(in srgb, var(--ui-bg-elevated) 50%, transparent);
-  color: var(--ui-text-highlighted);
-  font-weight: 600;
-}
-.admin-model-card :deep(.max-h-48 > table > thead > tr > th:first-child) {
-  border-left: 1px solid var(--ui-border);
-  border-radius: 8px 0 0 8px;
-}
-.admin-model-card :deep(.max-h-48 > table > thead > tr > th:last-child) {
-  border-right: 1px solid var(--ui-border);
-  border-radius: 0 8px 8px 0;
-}
-.admin-model-card :deep(.max-h-48 > table > tbody > tr > td:not([colspan])) {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--ui-border);
-  color: var(--ui-text-muted);
-}
-.admin-model-card :deep(.max-h-48 > table > tbody > tr > td:first-child:not([colspan])),
-.admin-model-card :deep(.max-h-48 > table > tbody > tr > td.text-green-600) {
-  color: var(--ui-text-highlighted);
-  font-weight: 500;
-}
-.admin-model-card :deep(.max-h-48 > table > tbody > tr:last-child > td) { border-bottom: 0; }
-
-@media (min-width: 640px) {
-  .admin-model-card :deep(.card) { padding: 16px 24px; }
-  .admin-model-card :deep(.card > div:first-child) { margin: -16px -24px 16px; padding: 16px 24px; }
+.admin-model-card :deep(.max-h-56) {
+  max-height: 300px;
 }
 </style>

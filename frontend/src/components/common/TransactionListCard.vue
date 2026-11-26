@@ -8,13 +8,13 @@
   <UCard
     :data-testid="testId"
     class="shadow-xs dark:shadow-none"
-    :ui="{ root: 'transaction-list-card', header: 'p-4 sm:p-5', body: 'p-0', footer: 'px-4 py-3 sm:px-5' }"
+    :ui="{ root: 'transaction-list-card', header: 'px-4 py-4 sm:px-5 sm:py-4', body: 'p-0 sm:p-0', footer: 'px-4 py-3 sm:px-5' }"
   >
     <template #header>
-      <div class="flex flex-wrap items-start justify-between gap-3">
+      <div class="flex flex-wrap items-center justify-between gap-3">
         <div class="min-w-0">
-          <h2 class="text-base font-semibold text-highlighted">{{ title }}</h2>
-          <p v-if="subtitle" class="mt-1 text-xs leading-relaxed text-muted">{{ subtitle }}</p>
+          <h2 class="text-base font-semibold tracking-tight text-highlighted">{{ title }}</h2>
+          <p v-if="subtitle" class="mt-0.5 text-xs leading-relaxed text-muted">{{ subtitle }}</p>
         </div>
         <div v-if="$slots.actions" class="flex shrink-0 flex-wrap items-center gap-2">
           <slot name="actions" />
@@ -22,7 +22,7 @@
       </div>
     </template>
 
-    <div v-if="$slots.toolbar" class="border-b border-default px-4 py-3 sm:px-5">
+    <div v-if="$slots.toolbar" class="border-b border-default bg-elevated/25 px-4 py-3 sm:px-5">
       <slot name="toolbar" />
     </div>
 
@@ -36,6 +36,8 @@
       :empty-test-id="emptyTestId"
       :loading-label="loadingLabel"
       :interactive="interactive"
+      :show-icon="showIcon"
+      :animate-items="animateItems"
       @select="emit('select', $event)"
     >
       <template v-if="$slots['item-details']" #item-details="slotProps">
@@ -69,6 +71,10 @@ withDefaults(defineProps<{
   loadingLabel?: string
   /** Makes rows clickable / keyboard selectable and emits `select`. */
   interactive?: boolean
+  /** Renders the circular leading type icon plate on each row. */
+  showIcon?: boolean
+  /** Animates newly added rows popping in and existing rows gliding into place. */
+  animateItems?: boolean
   /** `data-testid` for the card root, used by page specs. */
   testId?: string
 }>(), {
@@ -80,6 +86,8 @@ withDefaults(defineProps<{
   emptyTestId: 'transaction-list-empty',
   loadingLabel: '',
   interactive: false,
+  showIcon: true,
+  animateItems: false,
   testId: 'transaction-list-card'
 })
 

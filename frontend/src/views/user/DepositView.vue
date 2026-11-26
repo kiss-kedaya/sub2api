@@ -93,19 +93,9 @@
                 {{ assetLabel(asset) }}
               </button>
             </div>
-            <!-- 02 金额预检：先让用户报出要转多少，范围外当场拦住，别等钱转出去才发现不入账。 -->
-            <div v-if="current" class="deposit-view__amount-check">
-              <div class="deposit-view__section-head deposit-view__section-head--amount">
-                <span class="deposit-view__step">02</span>
-                <h2>{{ t('deposit.amountCheckTitle') }}</h2>
-                <span class="deposit-view__section-note">{{ t('deposit.amountCheckHint') }}</span>
-              </div>
-              <DepositAmountField v-model="amountInput" :check="amountCheck" :unit="selectedSymbol || 'USDT'"
-                :limit-unit="limitUnit" :rate="selectedFixedRate" :disabled="networkTransferBlocked" />
-            </div>
             <template v-if="current && !networkTransferBlocked">
               <div class="deposit-view__section-head deposit-view__section-head--address">
-                <span class="deposit-view__step">03</span>
+                <span class="deposit-view__step">02</span>
                 <h2>{{ t('deposit.transferToAddress') }}</h2>
                 <span v-for="tk in current.tokens" :key="tk" class="deposit-view__token">{{ tk }}</span>
               </div>
@@ -120,12 +110,9 @@
                 <div class="deposit-view__address-info">
                   <span class="deposit-view__label">{{ t('deposit.yourAddress') }} · {{ chainLabel(current.chain) }}</span>
                   <code class="deposit-view__address">{{ current.address }}</code>
-                  <button type="button" class="btn btn-primary deposit-view__copy" :disabled="amountBlocksTransfer"
-                    :title="amountBlocksTransfer ? t('deposit.copyBlockedByAmount') : undefined" @click="copyAddress">
+                  <button type="button" class="btn btn-primary deposit-view__copy" @click="copyAddress">
                     {{ copied ? t('deposit.copied') : t('deposit.copyAddress') }}
                   </button>
-                  <p v-if="amountBlocksTransfer" class="deposit-view__copy-warning" role="status"
-                    data-testid="deposit-copy-blocked">{{ t('deposit.copyBlockedByAmount') }}</p>
                   <p class="deposit-view__copy-status" role="status" aria-live="polite">{{ copyError ? t('deposit.copyFailed') : t('deposit.exclusiveNotice') }}</p>
                 </div>
               </div>
@@ -175,15 +162,17 @@
         </div>
 
         <!-- 记录区：Nuxt UI 的共享 TransactionListCard（收入/支出/回滚语义在组件里统一）。
-             明细（原因、回滚提示、客服入口、确认进度、交易哈希）走 item-details 插槽，
-             临时入账/回滚状态不丢。 -->
+             隐藏左侧圆形图标板（无需头像式圆圈），启用新记录弹出加入动画；
+             明细（原因、回滚提示、客服入口、确认进度、交易哈希）走 item-details 插槽。 -->
         <TransactionListCard
           class="deposit-view__history"
           :title="t('deposit.history')"
           :subtitle="canPollHistory ? (pendingRows.length ? t('deposit.autoRefreshPending') : t('deposit.autoRefresh')) : ''"
           :items="historyItems"
-          :loading="loading || refreshingHistory"
+          :loading="initialHistoryLoading"
           :skeleton-rows="3"
+          :show-icon="false"
+          :animate-items="true"
           :empty-icon="filtersActive ? 'i-lucide-filter-x' : 'i-lucide-wallet-minimal'"
           :empty-title="filtersActive ? t('deposit.noFilteredHistory') : t('deposit.noHistory')"
           :empty-description="filtersActive ? t('deposit.noFilteredHistoryHint') : (info?.enabled ? t('deposit.noHistoryHint') : '')"
@@ -198,73 +187,96 @@
                 variant="outline"
                 size="sm"
                 icon="i-lucide-refresh-ccw"
-                :loading="loading || refreshingHistory"
-                :label="loading || refreshingHistory ? t('common.loading') : t('common.refresh')"
-                @click="refreshHistory"
+                :loading="manualRefreshingHistory"
+                :disabled="loading || manualRefreshingHistory"
+                :label="t('common.refresh')"
+                @click="refreshHistory({ manual: true })"
               />
             </div>
           </template>
 
-          <template #toolbar>
-            <p v-if="historyError" class="deposit-view__history-error" role="alert">{{ t('deposit.historyFailed') }}</p>
-            <!-- 本地筛选：只重排已加载的记录，不重新请求、不影响 5 秒自动刷新。 -->
-            <DepositHistoryFilters v-if="history.length" v-model:status="statusFilter" v-model:range="timeRange" />
-            <p v-if="history.length && filtersActive" class="deposit-view__filter-note" data-testid="deposit-filter-note">
-              {{ t('deposit.filterResult', { n: displayRows.length, total: history.length }) }}
-            </p>
-            <!-- 后端只返回最近 50 条且不分页：筛选范围要说清楚，别让人以为更早的记录没了。 -->
-            <p v-if="history.length >= HISTORY_PAGE_LIMIT" class="deposit-view__filter-note" data-testid="deposit-history-limit">
-              {{ t('deposit.historyLimitHint', { n: history.length }) }}
-            </p>
-            <div v-if="pendingRows.length" class="deposit-view__pending" role="status">
-              <span class="deposit-view__pending-dot" aria-hidden="true"></span>
-              <div class="deposit-view__pending-body">
-                <strong>{{ t('deposit.pendingSummary', { n: pendingRows.length }) }}</strong>
-                <ul class="deposit-view__pending-list">
-                  <li v-for="(item, i) in pendingRows.slice(0, PENDING_SUMMARY_LIMIT)" :key="item.row.tx_hash + '-' + i">{{ pendingLine(item) }}</li>
-                </ul>
-                <p v-if="pendingRows.length > PENDING_SUMMARY_LIMIT" class="deposit-view__pending-more">
-                  {{ t('deposit.pendingMore', { n: pendingRows.length - PENDING_SUMMARY_LIMIT }) }}
+          <template v-if="historyError || history.length || pendingRows.length" #toolbar>
+            <div class="deposit-view__toolbar">
+              <p v-if="historyError" class="deposit-view__history-error" role="alert">{{ t('deposit.historyFailed') }}</p>
+              <!-- 本地筛选：只重排已加载的记录，不重新请求、不影响后台静默检测。 -->
+              <DepositHistoryFilters v-if="history.length" v-model:status="statusFilter" v-model:range="timeRange" />
+              <div v-if="(history.length && filtersActive) || history.length >= HISTORY_PAGE_LIMIT" class="deposit-view__filter-notes">
+                <p v-if="history.length && filtersActive" class="deposit-view__filter-note" data-testid="deposit-filter-note">
+                  {{ t('deposit.filterResult', { n: displayRows.length, total: history.length }) }}
                 </p>
+                <!-- 后端只返回最近 50 条且不分页：筛选范围要说清楚，别让人以为更早的记录没了。 -->
+                <p v-if="history.length >= HISTORY_PAGE_LIMIT" class="deposit-view__filter-note" data-testid="deposit-history-limit">
+                  {{ t('deposit.historyLimitHint', { n: history.length }) }}
+                </p>
+              </div>
+              <div v-if="pendingRows.length" class="deposit-view__pending" role="status">
+                <span class="deposit-view__pending-dot" aria-hidden="true"></span>
+                <div class="deposit-view__pending-body">
+                  <strong>{{ t('deposit.pendingSummary', { n: pendingRows.length }) }}</strong>
+                  <ul class="deposit-view__pending-list">
+                    <li v-for="item in pendingRows.slice(0, PENDING_SUMMARY_LIMIT)" :key="item.key">{{ pendingLine(item) }}</li>
+                  </ul>
+                  <p v-if="pendingRows.length > PENDING_SUMMARY_LIMIT" class="deposit-view__pending-more">
+                    {{ t('deposit.pendingMore', { n: pendingRows.length - PENDING_SUMMARY_LIMIT }) }}
+                  </p>
+                </div>
               </div>
             </div>
           </template>
 
           <template #item-details="{ item }">
-            <span v-if="creditUnderReview(item.row)" class="deposit-view__status" data-testid="deposit-credit-under-review">{{ statusLabel(item.row) }}</span>
-            <span v-if="revokeReasonText(item.row)" class="deposit-view__reason deposit-view__reason--revoked" data-testid="deposit-revoke-reason">{{ revokeReasonText(item.row) }}</span>
-            <span v-else-if="item.row.reason" class="deposit-view__reason">{{ reasonText(item.row.reason, item.row.token === 'native', item.row.status) }}</span>
-            <span v-if="item.row.status === 'revoked'" class="deposit-view__reason deposit-view__reason--revoked" data-testid="deposit-revoked-hint">{{ t('deposit.revokedHint') }}</span>
-            <span v-else-if="item.row.status === 'provisional'" class="deposit-view__hint" data-testid="deposit-provisional-hint">{{ t('deposit.provisionalHint') }}</span>
-            <!-- 回滚后的下一步：能点就点。地址/邮箱直接开客服，纯文本联系方式就复制，没配就直说。 -->
-            <span v-if="item.row.status === 'revoked'" class="deposit-view__support">
-              <a v-if="supportLink" :href="supportLink" target="_blank" rel="noopener noreferrer"
-                class="deposit-view__support-action" data-testid="deposit-support-link">{{ t('deposit.revokedSupportAction') }}</a>
-              <template v-else-if="contactInfo">
-                <button type="button" class="deposit-view__support-action" data-testid="deposit-support-copy"
-                  @click="copySupportContact">{{ t('deposit.revokedSupportAction') }}</button>
-                <span class="deposit-view__support-contact">{{ contactInfo }}</span>
-                <span v-if="supportCopied" class="deposit-view__support-copied" role="status"
-                  data-testid="deposit-support-copied">{{ t('deposit.supportCopied') }}</span>
-              </template>
-              <template v-else>{{ t('deposit.supportUnavailable') }}</template>
-            </span>
-            <div v-if="isConfirmingRow(item.row)" class="deposit-view__progress">
-              <span class="deposit-view__progress-text" :data-testid="'deposit-progress-text-' + item.row.status">{{ progressText(item.row, item.progress) }}</span>
-              <span v-if="item.progress" class="deposit-view__progress-track" role="progressbar" aria-valuemin="0"
-                :aria-valuemax="item.progress.required" :aria-valuenow="item.progress.done" :aria-label="progressText(item.row, item.progress)">
-                <span class="deposit-view__progress-fill" :style="{ width: item.progress.percent + '%' }"></span>
-              </span>
-            </div>
-            <div v-if="item.row.tx_hash" class="deposit-view__transaction">
-              <div class="deposit-view__hash-row">
-                <a v-if="explorerTxURL(item.row.chain, item.row.tx_hash)" :href="explorerTxURL(item.row.chain, item.row.tx_hash)"
-                  target="_blank" rel="noopener noreferrer" class="deposit-view__hash"
-                  :aria-label="t('deposit.viewTransaction', { hash: item.row.tx_hash })">{{ item.row.tx_hash }}</a>
-                <code v-else class="deposit-view__hash">{{ item.row.tx_hash }}</code>
-                <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-copy" square
-                  class="deposit-view__hash-copy" :aria-label="t('deposit.copyTxHash')" :title="t('deposit.copyTxHash')"
-                  @click="copyToClipboard(item.row.tx_hash)" />
+            <div v-if="hasRowDetails(item.row)" class="deposit-view__details">
+              <div
+                v-if="hasRowCallout(item.row)"
+                class="deposit-view__callout"
+                :class="rowCalloutClass(item.row)"
+              >
+                <span v-if="creditUnderReview(item.row)" class="deposit-view__status" data-testid="deposit-credit-under-review">{{ statusLabel(item.row) }}</span>
+                <span v-if="revokeReasonText(item.row)" class="deposit-view__reason deposit-view__reason--revoked" data-testid="deposit-revoke-reason">{{ revokeReasonText(item.row) }}</span>
+                <span v-else-if="item.row.reason" class="deposit-view__reason">{{ reasonText(item.row.reason, item.row.token === 'native', item.row.status) }}</span>
+                <span v-if="item.row.status === 'revoked'" class="deposit-view__reason deposit-view__reason--revoked" data-testid="deposit-revoked-hint">{{ t('deposit.revokedHint') }}</span>
+                <span v-else-if="item.row.status === 'provisional'" class="deposit-view__hint" data-testid="deposit-provisional-hint">{{ t('deposit.provisionalHint') }}</span>
+                <!-- 回滚后的下一步：能点就点。地址/邮箱直接开客服，纯文本联系方式就复制，没配就直说。 -->
+                <span v-if="item.row.status === 'revoked'" class="deposit-view__support">
+                  <a v-if="supportLink" :href="supportLink" target="_blank" rel="noopener noreferrer"
+                    class="deposit-view__support-action" data-testid="deposit-support-link">{{ t('deposit.revokedSupportAction') }}</a>
+                  <template v-else-if="contactInfo">
+                    <button type="button" class="deposit-view__support-action" data-testid="deposit-support-copy"
+                      @click="copySupportContact">{{ t('deposit.revokedSupportAction') }}</button>
+                    <span class="deposit-view__support-contact">{{ contactInfo }}</span>
+                    <span v-if="supportCopied" class="deposit-view__support-copied" role="status"
+                      data-testid="deposit-support-copied">{{ t('deposit.supportCopied') }}</span>
+                  </template>
+                  <template v-else>{{ t('deposit.supportUnavailable') }}</template>
+                </span>
+              </div>
+              <div v-if="isConfirmingRow(item.row)" class="deposit-view__progress">
+                <div class="deposit-view__progress-head">
+                  <span class="deposit-view__progress-text" :data-testid="'deposit-progress-text-' + item.row.status">{{ progressText(item.row, item.progress) }}</span>
+                  <span v-if="item.progress" class="deposit-view__progress-pct">{{ item.progress.percent }}%</span>
+                </div>
+                <span v-if="item.progress" class="deposit-view__progress-track" role="progressbar" aria-valuemin="0"
+                  :aria-valuemax="item.progress.required" :aria-valuenow="item.progress.done" :aria-label="progressText(item.row, item.progress)">
+                  <span class="deposit-view__progress-fill" :style="{ width: item.progress.percent + '%' }"></span>
+                </span>
+              </div>
+              <div v-if="item.row.tx_hash" class="deposit-view__transaction">
+                <div class="deposit-view__hash-row">
+                  <template v-if="explorerTxURL(item.row.chain, item.row.tx_hash)">
+                    <a :href="explorerTxURL(item.row.chain, item.row.tx_hash)"
+                      target="_blank" rel="noopener noreferrer" class="deposit-view__hash"
+                      :title="item.row.tx_hash"
+                      :aria-label="t('deposit.viewTransaction', { hash: item.row.tx_hash })">{{ item.row.tx_hash }}</a>
+                    <UIcon name="i-lucide-arrow-up-right" class="deposit-view__hash-ext" aria-hidden="true" />
+                  </template>
+                  <code v-else class="deposit-view__hash" :title="item.row.tx_hash">{{ item.row.tx_hash }}</code>
+                  <UButton color="neutral" variant="ghost" size="xs"
+                    :icon="copiedTxKey === item.id ? 'i-lucide-check' : 'i-lucide-copy'" square
+                    class="deposit-view__hash-copy"
+                    :class="{ 'deposit-view__hash-copy--done': copiedTxKey === item.id }"
+                    :aria-label="t('deposit.copyTxHash')" :title="t('deposit.copyTxHash')"
+                    @click="copyTxHash(item.row.tx_hash, String(item.id))" />
+                </div>
               </div>
             </div>
           </template>
@@ -288,7 +300,6 @@ import UserPageHeader from '@/components/user/UserPageHeader.vue'
 import Icon from '@/components/icons/Icon.vue'
 import KeyRotationGateNotice from '@/components/user/KeyRotationGateNotice.vue'
 import KeyRotationRiskAckBanner from '@/components/user/KeyRotationRiskAckBanner.vue'
-import DepositAmountField from '@/components/deposit/DepositAmountField.vue'
 import DepositHistoryFilters from '@/components/deposit/DepositHistoryFilters.vue'
 import TransactionListCard from '@/components/common/TransactionListCard.vue'
 import type { TransactionItem, TransactionStatus, TransactionTone } from '@/components/common/transactionList'
@@ -302,7 +313,9 @@ import { useKeyRotationGate } from '@/composables/useKeyRotationGate'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { explorerTxURL } from '@/utils/cryptoExplorer'
-import { depositAmountLimits, validateDepositAmount, type DepositAmountCheck } from '@/utils/depositAmount'
+import {
+  depositTransferIdentity, findNewDepositKeys, isSameDepositHistory, uniqueDepositRowKeys,
+} from '@/utils/depositHistorySync'
 import { depositRevokeReasonCopy } from '@/utils/depositRevoke'
 import { supportContactHref } from '@/utils/depositSupport'
 import {
@@ -310,7 +323,7 @@ import {
   type ConfirmationProgress,
 } from '@/utils/depositProgress'
 import {
-  filterDepositHistory, isDepositFilterActive,
+  isDepositFilterActive, matchesDepositStatus, matchesDepositTimeRange,
   type DepositStatusFilter, type DepositTimeRange,
 } from '@/utils/depositHistoryFilter'
 import {
@@ -336,12 +349,14 @@ const riskAckActive = computed(
 // that a fresh deposit appears without a manual refresh, while hidden tabs and
 // unmounted views schedule nothing.
 const HISTORY_POLL_MS = 5000
+const FRESH_HIGHLIGHT_MS = 2400
 const PENDING_SUMMARY_LIMIT = 3
 // The history endpoint returns the most recent 50 rows and is not paginated;
 // the local filters therefore only ever see those rows.
 const HISTORY_PAGE_LIMIT = 50
 
 interface HistoryRow {
+  key: string
   row: DepositRecord
   progress: ConfirmationProgress | null
 }
@@ -361,19 +376,26 @@ interface AssetOption {
 const info = ref<DepositInfo | null>(null)
 const history = ref<DepositRecord[]>([])
 const loading = ref(true)
+const initialHistoryLoading = ref(true)
+const historyLoadedOnce = ref(false)
+const manualRefreshingHistory = ref(false)
+const freshRecordIds = ref<Set<string>>(new Set())
 const selectedChain = ref('')
 const selectedAsset = ref('')
 const copied = ref(false)
 const copyError = ref(false)
+const copiedTxKey = ref('')
 const qrError = ref(false)
 const loadError = ref(false)
 const historyError = ref(false)
-const refreshingHistory = ref(false)
 const canPollHistory = computed(() =>
   !depositBlocked.value && !loading.value && info.value?.enabled === true && !historyError.value
 )
 let disposed = false
+let historyInFlight = false
 let copyTimer: ReturnType<typeof setTimeout> | null = null
+let copiedTxTimer: ReturnType<typeof setTimeout> | null = null
+const freshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const qrCanvas = ref<HTMLCanvasElement | null>(null)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -497,32 +519,6 @@ const referencePrice = computed(() => {
 
 const limitUnit = computed(() => (selectedMarketPriced.value ? 'USD' : rateUnit.value))
 
-// ---- 金额预检 ----
-// The user declares what they are about to send so an amount the backend would
-// never credit is caught before the money leaves the wallet. Thresholds come
-// from deposit-info only: a deployment that exposes none performs no check
-// (never a hard-coded default that could reject a legitimate transfer).
-const amountInput = ref('')
-const amountLimits = computed(() => depositAmountLimits(info.value))
-// The market quote is display-only: without it a market-priced amount cannot be
-// converted to USD notional, so its range check degrades to "unverifiable".
-const referencePriceUsd = computed<number | null>(() => {
-  const raw = referencePrice.value
-  if (!raw) return null
-  const price = Number(raw)
-  return Number.isFinite(price) && price > 0 ? price : null
-})
-const amountCheck = computed<DepositAmountCheck>(() =>
-  validateDepositAmount(amountInput.value, amountLimits.value, {
-    marketPriced: selectedMarketPriced.value,
-    priceUsd: referencePriceUsd.value
-  })
-)
-// Invalid/out-of-range amount blocks the page's transfer action (copying the
-// address is how this page hands the transfer to the wallet). An empty field
-// means "no amount declared" and keeps the page working exactly as before.
-const amountBlocksTransfer = computed(() => Boolean(current.value) && amountCheck.value.blocked)
-
 function assetLabel(asset: AssetOption): string {
   if (!asset.native) return asset.symbol
   return `${asset.symbol} (${nativeNetworkLabel(selectedChain.value)})`
@@ -556,25 +552,56 @@ function progressText(row: DepositRecord, progress: ConfirmationProgress | null)
   return copy.params ? t(copy.key, copy.params) : t(copy.key)
 }
 
-const rows = computed<HistoryRow[]>(() => history.value.map(row => ({ row, progress: rowProgress(row) })))
+const rows = computed<HistoryRow[]>(() => {
+  const keys = uniqueDepositRowKeys(history.value)
+  return history.value.map((row, index) => ({ key: keys[index], row, progress: rowProgress(row) }))
+})
 const pendingRows = computed(() => rows.value.filter(item => item.row.status === 'pending'))
 
 // ---- 充值记录本地筛选 ----
 // The history endpoint is not paginated (one page of recent rows), so the
 // filters run in the browser: they never trigger a request and never interrupt
-// the 5s refresh loop. If the list ever becomes paginated this becomes a
-// per-page filter, which is why the count hint already says "n of total".
+// the 5s refresh loop. Filtering on `rows` preserves every row's stable key
+// computed from the full snapshot so duplicate tx_hash entries keep their identity.
 const statusFilter = ref<DepositStatusFilter>('all')
 const timeRange = ref<DepositTimeRange>('all')
 const filtersActive = computed(() => isDepositFilterActive(statusFilter.value, timeRange.value))
 const displayRows = computed<HistoryRow[]>(() => {
-  const visible = filterDepositHistory(history.value, statusFilter.value, timeRange.value)
-  return visible.map(row => ({ row, progress: rowProgress(row) }))
+  const now = Date.now()
+  return rows.value.filter(
+    entry => matchesDepositStatus(entry.row, statusFilter.value) && matchesDepositTimeRange(entry.row, timeRange.value, now)
+  )
 })
 
 function resetFilters() {
   statusFilter.value = 'all'
   timeRange.value = 'all'
+}
+
+// Switching filters indicates the user is actively browsing; clear any transient
+// "newly arrived" highlight so rows returning into view never replay pop-in motion.
+watch([statusFilter, timeRange], () => {
+  clearFreshRecords()
+})
+
+function hasRowCallout(row: DepositRecord): boolean {
+  return Boolean(
+    creditUnderReview(row) ||
+    revokeReasonText(row) ||
+    row.reason ||
+    row.status === 'revoked' ||
+    row.status === 'provisional'
+  )
+}
+
+function hasRowDetails(row: DepositRecord): boolean {
+  return hasRowCallout(row) || isConfirmingRow(row) || Boolean(row.tx_hash)
+}
+
+function rowCalloutClass(row: DepositRecord): string {
+  if (row.status === 'revoked') return 'deposit-view__callout--revoked'
+  if (row.status === 'provisional' || creditUnderReview(row)) return 'deposit-view__callout--warning'
+  return 'deposit-view__callout--neutral'
 }
 
 // ---- 记录列表行 ----
@@ -606,14 +633,14 @@ function historyStatus(row: DepositRecord): TransactionStatus | undefined {
   return { label: statusLabel(row), color, testId: 'deposit-history-status' }
 }
 
-function toHistoryItem({ row, progress }: HistoryRow): DepositHistoryItem {
+function toHistoryItem({ row, progress }: HistoryRow, id: string, isNew: boolean): DepositHistoryItem {
   // 已回滚的行只有在原始入账金额可信时才显示 -$X；未知就是未知，不编 0。
   const creditedAmount =
     (row.status === 'credited' || row.status === 'provisional' || row.status === 'revoked') && hasKnownCredit(row)
       ? fmtCredited(row.credited)
       : undefined
   return {
-    id: depositKey(row),
+    id,
     title: `${t(row.status === 'revoked' ? 'deposit.historyRowReversal' : 'deposit.historyRowDeposit')} · ${chainLabel(row.chain)}`,
     subtitle: `${row.amount} ${row.token} · ${formatTime(row.created_at)}`,
     type: row.status === 'revoked' ? 'reversal' : 'chain',
@@ -621,13 +648,17 @@ function toHistoryItem({ row, progress }: HistoryRow): DepositHistoryItem {
     amountPrefix: creditedAmount ? '$' : undefined,
     tone: historyTone(row),
     status: historyStatus(row),
+    isNew,
     testId: 'deposit-history-row',
     row,
     progress
   }
 }
 
-const historyItems = computed<DepositHistoryItem[]>(() => displayRows.value.map(toHistoryItem))
+const historyItems = computed<DepositHistoryItem[]>(() => {
+  const fresh = freshRecordIds.value
+  return displayRows.value.map(entry => toHistoryItem(entry, entry.key, fresh.has(entry.key)))
+})
 
 // ---- 回滚行的客服入口 ----
 // Reuse the site's only public contact field (same source as the user menu).
@@ -760,8 +791,7 @@ function statusText(status: string): string {
 }
 
 async function copyAddress() {
-  // 金额不在入账范围时不放行转账动作：这页「提交」就是把地址交给钱包。
-  if (amountBlocksTransfer.value || depositBlocked.value || networkTransferBlocked.value || !current.value) return
+  if (depositBlocked.value || networkTransferBlocked.value || !current.value) return
   copyError.value = false
   if (await copyToClipboard(current.value.address)) {
     copied.value = true
@@ -769,6 +799,17 @@ async function copyAddress() {
     copyTimer = setTimeout(() => (copied.value = false), 1800)
   } else {
     copyError.value = true
+  }
+}
+
+async function copyTxHash(txHash: string, rowKey: string) {
+  if (!txHash) return
+  if (await copyToClipboard(txHash)) {
+    copiedTxKey.value = rowKey
+    if (copiedTxTimer) clearTimeout(copiedTxTimer)
+    copiedTxTimer = setTimeout(() => {
+      if (copiedTxKey.value === rowKey) copiedTxKey.value = ''
+    }, 1800)
   }
 }
 
@@ -785,7 +826,31 @@ async function renderQR() {
 }
 
 function depositKey(row: DepositRecord): string {
-  return row.chain + ':' + row.tx_hash
+  return depositTransferIdentity(row)
+}
+
+function clearFreshRecords() {
+  for (const timer of freshTimers.values()) clearTimeout(timer)
+  freshTimers.clear()
+  if (freshRecordIds.value.size > 0) freshRecordIds.value = new Set()
+}
+
+function markFreshRecords(keys: string[]) {
+  if (!keys.length) return
+  const next = new Set(freshRecordIds.value)
+  for (const key of keys) {
+    next.add(key)
+    const existing = freshTimers.get(key)
+    if (existing) clearTimeout(existing)
+    freshTimers.set(key, setTimeout(() => {
+      freshTimers.delete(key)
+      if (!freshRecordIds.value.has(key)) return
+      const updated = new Set(freshRecordIds.value)
+      updated.delete(key)
+      freshRecordIds.value = updated
+    }, FRESH_HIGHLIGHT_MS))
+  }
+  freshRecordIds.value = next
 }
 
 // A deposit that was confirming on the last read and is credited now has just
@@ -809,21 +874,36 @@ function schedulePoll() {
   pollTimer = setTimeout(() => void refreshHistory(), HISTORY_POLL_MS)
 }
 
-async function refreshHistory() {
-  if (disposed || depositBlocked.value || loading.value || refreshingHistory.value) return
+async function refreshHistory(options: { manual?: boolean } = {}) {
+  if (disposed || depositBlocked.value || loading.value) return
+  if (historyInFlight) {
+    // A silent background poll is already reading the latest history: reflect
+    // loading feedback on the button until that in-flight read completes.
+    if (options.manual) manualRefreshingHistory.value = true
+    return
+  }
   stopPolling()
-  refreshingHistory.value = true
+  historyInFlight = true
+  if (options.manual) manualRefreshingHistory.value = true
   try {
     const next = await getDepositHistory()
     if (disposed || depositBlocked.value) return
+    const hadLoaded = historyLoadedOnce.value
+    historyLoadedOnce.value = true
+    if (historyError.value) historyError.value = false
+    // 后台检测若无新增记录也无状态变化，不替换数组引用，避免无意义重绘和页面抖动。
+    if (hadLoaded && isSameDepositHistory(history.value, next)) return
+    const addedKeys = hadLoaded ? findNewDepositKeys(history.value, next) : []
     announceCredited(history.value, next)
     history.value = next
-    historyError.value = false
+    if (addedKeys.length) markFreshRecords(addedKeys)
   } catch (error) {
     if (isKeyRotationRequiredError(error)) keyRotationDenied.value = true
     else historyError.value = true
   } finally {
-    refreshingHistory.value = false
+    historyInFlight = false
+    initialHistoryLoading.value = false
+    manualRefreshingHistory.value = false
     schedulePoll()
   }
 }
@@ -922,8 +1002,11 @@ watch(depositBlocked, (blocked) => {
   if (blocked) {
     stopPolling()
     resetNetworkStatuses()
+    clearFreshRecords()
+    historyLoadedOnce.value = false
     history.value = []
   } else {
+    initialHistoryLoading.value = !historyLoadedOnce.value
     void refreshNetworkStatuses()
     void refreshHistory()
   }
@@ -953,7 +1036,9 @@ onUnmounted(() => {
   window.removeEventListener('focus', onWindowFocus)
   stopPolling()
   resetNetworkStatuses()
+  clearFreshRecords()
   if (copyTimer) clearTimeout(copyTimer)
+  if (copiedTxTimer) clearTimeout(copiedTxTimer)
   if (supportCopiedTimer) clearTimeout(supportCopiedTimer)
 })
 </script>
@@ -962,98 +1047,111 @@ onUnmounted(() => {
 .deposit-view { width: 100%; max-width: 76rem; margin: 0 auto; padding: clamp(1rem, 2.4vw, 2rem); color: var(--signal-text, inherit); }
 .deposit-view__header { margin-bottom: 1.5rem; }
 .deposit-view__layout { display: grid; grid-template-columns: minmax(0, 1fr) 18rem; gap: 1.25rem; align-items: start; }
-.deposit-view__funding, .deposit-view__guide { min-width: 0; border: 1px solid var(--ui-border); border-radius: 8px; padding: 1.5rem; background: var(--ui-bg); box-shadow: 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .deposit-view__funding, .dark .deposit-view__guide { box-shadow: none; }
+.deposit-view__funding, .deposit-view__guide { min-width: 0; border: 1px solid var(--ui-border); border-radius: 8px; padding: 1.5rem; background: var(--ui-bg); box-shadow: var(--app-shadow-card, 0 1px 2px rgba(10, 10, 10, 0.05)); }
 .deposit-view h2 { font-size: .9375rem; line-height: 1.5; font-weight: 650; }
 .deposit-view__section-head { display: flex; align-items: center; gap: .625rem; margin-bottom: 1rem; }
 .deposit-view__section-head--network { flex-wrap: wrap; }
 .deposit-view__network-refresh { margin-inline-start: auto; }
-.deposit-view__section-head--address { padding-top: 1.25rem; margin-top: 1.5rem; border-top: 1px solid var(--signal-line, #64748b30); }
-.deposit-view__step { color: var(--signal-muted, #8c99a6); font: .75rem ui-monospace, monospace; }
+.deposit-view__section-head--address { padding-top: 1.25rem; margin-top: 1.5rem; border-top: 1px solid var(--signal-line, var(--ui-border)); }
+.deposit-view__step { color: var(--signal-muted, var(--ui-text-muted)); font: .75rem ui-monospace, monospace; }
 .deposit-view__chains { display: flex; flex-wrap: wrap; gap: .5rem; }
 .deposit-view__chain { display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: .3rem; min-height: 2.5rem; padding: .55rem .875rem; border: 1px solid var(--ui-border-accented); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
-.deposit-view__chain:focus-visible { outline: 2px solid var(--signal-accent, #0891b2); outline-offset: 2px; }
-.deposit-view__chain--active { border-color: var(--signal-accent, #0891b2); background: var(--signal-accent-soft, #0891b218); font-weight: 600; }
+.deposit-view__chain:focus-visible { outline: 2px solid var(--signal-accent, var(--ui-primary)); outline-offset: 2px; }
+.deposit-view__chain--active { border-color: var(--signal-accent, var(--ui-primary)); background: var(--signal-accent-soft, color-mix(in oklab, var(--ui-primary) 10%, transparent)); font-weight: 600; }
 .deposit-view__chain-head { display: inline-flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
 /* 每个网络卡片下的到账预估，跟着徽标一起回答「多久到」。 */
-.deposit-view__chain-eta { color: var(--signal-muted, #8c99a6); font-size: .6875rem; font-weight: 400; line-height: 1.4; }
-.deposit-view__network-dot { width: .375rem; height: .375rem; flex-shrink: 0; border-radius: 50%; background: var(--signal-muted, #8c99a6); }
-.deposit-view__chain--active .deposit-view__network-dot { background: var(--signal-accent, #0891b2); }
-.deposit-view__eta-notice { display: flex; gap: .625rem; align-items: flex-start; padding: .75rem 1rem; margin-top: .75rem; border: 1px solid #0891b233; border-radius: .625rem; background: #0891b20a; font-size: .75rem; line-height: 1.7; }
-.deposit-view__eta-mark { display: grid; place-items: center; width: 1rem; height: 1rem; flex-shrink: 0; margin-top: .15rem; border: 1px solid #0891b2; border-radius: 50%; color: #0891b2; font-size: .6875rem; font-weight: 700; }
-.deposit-view__instant-rule { margin-top: .75rem; padding: .625rem .75rem; border: 1px solid #0891b233; border-radius: .5rem; background: #0891b208; color: var(--signal-muted, #64748b); font-size: .75rem; line-height: 1.7; }
+.deposit-view__chain-eta { color: var(--signal-muted, var(--ui-text-muted)); font-size: .6875rem; font-weight: 400; line-height: 1.4; }
+.deposit-view__network-dot { width: .375rem; height: .375rem; flex-shrink: 0; border-radius: 50%; background: var(--signal-muted, var(--ui-text-muted)); }
+.deposit-view__chain--active .deposit-view__network-dot { background: var(--signal-accent, var(--ui-primary)); }
+.deposit-view__eta-notice { display: flex; gap: .625rem; align-items: flex-start; padding: .75rem 1rem; margin-top: .75rem; border: 1px solid color-mix(in oklab, var(--signal-accent, var(--ui-primary)) 26%, transparent); border-radius: .5rem; background: color-mix(in oklab, var(--signal-accent, var(--ui-primary)) 6%, transparent); font-size: .75rem; line-height: 1.7; }
+.deposit-view__eta-mark { display: grid; place-items: center; width: 1rem; height: 1rem; flex-shrink: 0; margin-top: .15rem; border: 1px solid var(--signal-accent, var(--ui-primary)); border-radius: 50%; color: var(--signal-accent, var(--ui-primary)); font-size: .6875rem; font-weight: 700; }
+.deposit-view__instant-rule { margin-top: .75rem; padding: .625rem .75rem; border: 1px solid color-mix(in oklab, var(--signal-accent, var(--ui-primary)) 24%, transparent); border-radius: .5rem; background: color-mix(in oklab, var(--signal-accent, var(--ui-primary)) 6%, transparent); color: var(--signal-muted, var(--ui-text-muted)); font-size: .75rem; line-height: 1.7; }
 .deposit-view__assets { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
 .deposit-view__asset { display: inline-flex; align-items: center; justify-content: center; min-height: 2.25rem; padding: .45rem .75rem; border: 1px solid var(--ui-border); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
-.deposit-view__asset:focus-visible { outline: 2px solid var(--signal-accent, #0891b2); outline-offset: 2px; }
-.deposit-view__asset--active { border-color: var(--signal-accent, #0891b2); background: var(--signal-accent-soft, #0891b218); font-weight: 600; }
-/* 金额预检区：和地址区一样用上分隔线，但排在选币之后、地址之前。 */
-.deposit-view__amount-check { margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--signal-line, #64748b30); }
-.deposit-view__section-head--amount { flex-wrap: wrap; margin-bottom: .25rem; }
-.deposit-view__section-note { color: var(--signal-muted, #8c99a6); font-size: .6875rem; font-weight: 400; line-height: 1.5; }
-.deposit-view__copy-warning { margin-top: .5rem; color: #dc2626; font-size: .75rem; line-height: 1.6; }
+.deposit-view__asset:focus-visible { outline: 2px solid var(--signal-accent, var(--ui-primary)); outline-offset: 2px; }
+.deposit-view__asset--active { border-color: var(--signal-accent, var(--ui-primary)); background: var(--signal-accent-soft, color-mix(in oklab, var(--ui-primary) 10%, transparent)); font-weight: 600; }
 .deposit-view__token { padding: .15rem .5rem; border-radius: .375rem; border: 1px solid #10b98145; background: #10b98112; color: #10b981; font-size: .6875rem; font-weight: 600; }
 .deposit-view__address-block { display: grid; grid-template-columns: 12.5rem minmax(0, 1fr); gap: 1.25rem; align-items: start; }
 .deposit-view__qr-wrap { text-align: center; }
 .deposit-view__qr { width: 12.5rem; min-height: 12.5rem; display: grid; place-items: center; border: 1px solid #e5e5e5; border-radius: 8px; background: white; color: #334155; overflow: hidden; }
 .deposit-view__qr canvas { display: block; max-width: 100%; height: auto !important; }
-.deposit-view__qr-wrap p { margin-top: .625rem; font-size: .75rem; color: var(--signal-muted, #8c99a6); }
-.deposit-view__label { display: block; margin: .2rem 0 .625rem; font-size: .75rem; color: var(--signal-muted, #8c99a6); }
-.deposit-view__address { display: block; padding: .875rem; min-width: 0; border: 1px solid var(--ui-border); border-radius: 6px; background: #64748b09; font-size: .8125rem; line-height: 1.8; overflow-wrap: anywhere; user-select: all; }
+.deposit-view__qr-wrap p { margin-top: .625rem; font-size: .75rem; color: var(--signal-muted, var(--ui-text-muted)); }
+.deposit-view__label { display: block; margin: .2rem 0 .625rem; font-size: .75rem; color: var(--signal-muted, var(--ui-text-muted)); }
+.deposit-view__address { display: block; padding: .875rem; min-width: 0; border: 1px solid var(--ui-border); border-radius: 6px; background: var(--ui-bg-muted); font-size: .8125rem; line-height: 1.8; overflow-wrap: anywhere; user-select: all; }
 .deposit-view__copy { width: 100%; min-height: 2.75rem; margin-top: .75rem; }
-.deposit-view__copy-status { margin-top: .75rem; font-size: .75rem; line-height: 1.7; color: var(--signal-muted, #8c99a6); }
-.deposit-view__notice, .deposit-view__network-notice { display: flex; gap: .625rem; align-items: flex-start; padding: .875rem 1rem; margin-top: 1.5rem; border: 1px solid #d9770638; border-radius: .625rem; background: #d9770609; font-size: .75rem; line-height: 1.7; }
+.deposit-view__copy-status { margin-top: .75rem; font-size: .75rem; line-height: 1.7; color: var(--signal-muted, var(--ui-text-muted)); }
+.deposit-view__notice, .deposit-view__network-notice { display: flex; gap: .625rem; align-items: flex-start; padding: .875rem 1rem; margin-top: 1.5rem; border: 1px solid #d9770638; border-radius: .5rem; background: #d977060a; font-size: .75rem; line-height: 1.7; }
 .deposit-view__network-notice { margin-top: .75rem; }
 .deposit-view__notice-mark { display: grid; place-items: center; width: 1rem; height: 1rem; flex-shrink: 0; margin-top: .15rem; border: 1px solid #d97706; border-radius: 50%; color: #d97706; font-size: .6875rem; font-weight: 700; }
-.deposit-view__terms { margin-top: 1.25rem; }
-.deposit-view__terms > div { padding: 1rem 0; border-top: 1px solid var(--signal-line, #64748b30); }
-.deposit-view__terms dt { color: var(--signal-muted, #8c99a6); font-size: .75rem; }
+.deposit-view__terms { margin-top: 1rem; }
+.deposit-view__desc { margin-top: .25rem; color: var(--signal-muted, var(--ui-text-muted)); font-size: .75rem; line-height: 1.55; }
+.deposit-view__terms > div { padding: 1rem 0; border-top: 1px solid var(--signal-line, var(--ui-border)); }
+.deposit-view__terms dt { color: var(--signal-muted, var(--ui-text-muted)); font-size: .75rem; }
 .deposit-view__terms dd { margin-top: .5rem; font-size: 1.1875rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .deposit-view__terms dd span { font-size: .8125rem; font-weight: 400; }
 .deposit-view__terms dd.deposit-view__settlement { font-size: .9375rem; line-height: 1.55; font-weight: 600; }
-.deposit-view__reference { margin-top: .75rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.6; }
-.deposit-view__confirmation { display: flex; align-items: flex-start; gap: .625rem; margin-top: .5rem; padding: 1rem; border-radius: .625rem; background: #10b9810a; }
+.deposit-view__reference { margin-top: .75rem; color: var(--signal-muted, var(--ui-text-muted)); font-size: .75rem; line-height: 1.6; }
+.deposit-view__confirmation { display: flex; align-items: flex-start; gap: .625rem; margin-top: .5rem; padding: 1rem; border-radius: .5rem; background: #10b9810d; }
 .deposit-view__confirmation-dot { width: .375rem; height: .375rem; flex-shrink: 0; margin-top: .4rem; background: #10b981; border-radius: 50%; }
 .deposit-view__confirmation strong { font-size: .8125rem; font-weight: 600; }
-.deposit-view__confirmation p { margin-top: .4rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.7; }
+.deposit-view__confirmation p { margin-top: .4rem; color: var(--signal-muted, var(--ui-text-muted)); font-size: .75rem; line-height: 1.7; }
+
+/* ---- 我的充值记录 ---- */
 .deposit-view__history { margin-top: 1.25rem; }
-/* 记录行明细：哈希、原因、进度都挂在共享列表行的 item-details 插槽里。 */
-.deposit-view__transaction { max-width: 24rem; margin-top: .5rem; }
-.deposit-view__hash-row { display: flex; align-items: flex-start; gap: .5rem; }
-.deposit-view__hash { min-width: 0; word-break: break-all; white-space: normal; font: .75rem/1.6 ui-monospace, monospace; }
-a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: underline; text-underline-offset: .15rem; }
-.deposit-view__hash-copy { flex: 0 0 auto; }
-.deposit-view__history-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
-.deposit-view__reason { display: block; max-width: 21rem; margin-top: .4rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.6; }
+.deposit-view__history-head { display: flex; justify-content: flex-end; align-items: center; gap: .75rem; }
+.deposit-view__toolbar { display: flex; flex-direction: column; gap: .75rem; }
+.deposit-view__filter-notes { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem 1rem; }
+.deposit-view__filter-note { margin: 0; color: var(--ui-text-muted); font-size: .75rem; line-height: 1.5; }
+.deposit-view__history-error { margin: 0; padding: .5rem .75rem; border: 1px solid color-mix(in oklab, var(--signal-amber, #d97706) 35%, transparent); border-radius: .5rem; background: color-mix(in oklab, var(--signal-amber, #d97706) 8%, transparent); color: var(--signal-amber, #b45309); font-size: .8125rem; line-height: 1.55; }
+
+.deposit-view__pending { display: flex; align-items: center; gap: .625rem; min-width: 0; padding: .625rem .875rem; border: 1px solid color-mix(in oklab, #d97706 30%, var(--ui-border)); border-radius: .5rem; background: color-mix(in oklab, #d97706 7%, var(--ui-bg)); font-size: .8125rem; line-height: 1.55; }
+.deposit-view__pending-dot { width: .5rem; height: .5rem; flex-shrink: 0; border-radius: 50%; background: #d97706; box-shadow: 0 0 0 3px color-mix(in oklab, #d97706 20%, transparent); animation: deposit-view-pulse 1.8s ease-in-out infinite; }
+.deposit-view__pending-body { min-width: 0; flex: 1 1 auto; display: flex; flex-wrap: wrap; align-items: center; gap: .375rem .75rem; }
+.deposit-view__pending-body strong { font-size: .8125rem; font-weight: 600; color: var(--ui-text-highlighted); }
+.deposit-view__pending-list { display: flex; flex-wrap: wrap; gap: .375rem; margin: 0; padding: 0; list-style: none; font-variant-numeric: tabular-nums; }
+.deposit-view__pending-list li { display: inline-flex; align-items: center; padding: .125rem .55rem; border: 1px solid color-mix(in oklab, #d97706 24%, var(--ui-border)); border-radius: 999px; background: var(--ui-bg); color: var(--ui-text); font-size: .75rem; line-height: 1.45; overflow-wrap: anywhere; }
+.deposit-view__pending-more { margin: 0; color: var(--ui-text-muted); font-size: .75rem; }
+
+/* 记录行明细：状态说明条、确认进度与交易哈希胶囊。 */
+.deposit-view__details { display: flex; flex-direction: column; align-items: flex-start; gap: .625rem; margin-top: .625rem; width: 100%; }
+.deposit-view__callout { display: flex; flex-direction: column; align-items: flex-start; gap: .25rem; width: 100%; max-width: 38rem; padding: .5rem .75rem; border-radius: .375rem; border: 1px solid var(--ui-border); border-inline-start-width: 3px; background: var(--ui-bg-muted); }
+.deposit-view__callout--revoked { border-color: color-mix(in oklab, var(--app-amount-reversal) 24%, var(--ui-border)); border-inline-start-color: var(--app-amount-reversal); background: color-mix(in oklab, var(--app-amount-reversal) 6%, var(--ui-bg)); }
+.deposit-view__callout--warning { border-color: color-mix(in oklab, #d97706 26%, var(--ui-border)); border-inline-start-color: #d97706; background: color-mix(in oklab, #d97706 6%, var(--ui-bg)); }
+.deposit-view__callout--neutral { border-color: var(--ui-border); border-inline-start-color: var(--ui-border-accented); background: var(--ui-bg-muted); }
+
+.deposit-view__transaction { width: 100%; max-width: 100%; }
+.deposit-view__hash-row { display: inline-flex; align-items: center; gap: .25rem; max-width: min(100%, 28rem); padding: .15rem .2rem .15rem .6rem; border: 1px solid var(--ui-border); border-radius: .375rem; background: var(--ui-bg-muted); transition: border-color 140ms ease, background-color 140ms ease; }
+.deposit-view__hash { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: .75rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ui-text-muted); }
+a.deposit-view__hash { text-decoration: none; transition: color 140ms ease; }
+.deposit-view__hash-ext { width: .75rem; height: .75rem; flex: 0 0 auto; color: var(--ui-text-dimmed); transition: color 140ms ease; pointer-events: none; }
+.deposit-view__hash-copy { flex: 0 0 auto; color: var(--ui-text-muted); }
+.deposit-view__hash-copy--done { color: var(--app-amount-positive); }
+
+.deposit-view__reason { display: block; color: var(--ui-text-muted); font-size: .75rem; line-height: 1.55; }
 .deposit-view__reason--revoked { color: var(--app-amount-reversal); }
 /* 回滚行的客服入口：链接/按钮 + 纯文本联系方式的复制兜底。 */
-.deposit-view__support { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .5rem; max-width: 21rem; margin-top: .35rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.6; }
-.deposit-view__support-action { padding: 0; color: var(--signal-accent, #0891b2); font-size: .75rem; font-weight: 600; text-decoration: underline; text-underline-offset: .15rem; }
-.deposit-view__support-contact { color: inherit; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.deposit-view__support-copied { color: var(--app-amount-positive); }
-.deposit-view__filter-note { margin: 0 0 .75rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; }
-.deposit-view__hint { display: block; max-width: 21rem; margin-top: .4rem; color: var(--app-amount-pending); font-size: .75rem; line-height: 1.6; }
-.deposit-view__status { display: block; max-width: 21rem; margin-top: .4rem; color: var(--app-amount-pending); font-size: .75rem; line-height: 1.6; }
-.deposit-view__progress { display: grid; gap: .35rem; max-width: 12rem; margin-top: .45rem; }
-.deposit-view__progress-text { color: var(--signal-muted, #8c99a6); font-size: .75rem; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.deposit-view__progress-track { display: block; height: .25rem; border-radius: 99px; background: #d9770624; overflow: hidden; }
-.deposit-view__progress-fill { display: block; height: 100%; border-radius: inherit; background: #d97706; transition: width .3s ease; }
-.deposit-view__pending { display: flex; align-items: flex-start; gap: .625rem; min-width: 0; margin-bottom: 1rem; padding: .875rem 1rem; border: 1px solid #d9770638; border-radius: .625rem; background: #d9770609; font-size: .8125rem; line-height: 1.6; }
-.deposit-view__pending-dot { width: .5rem; height: .5rem; flex-shrink: 0; margin-top: .45rem; border-radius: 50%; background: #d97706; animation: deposit-view-pulse 1.6s ease-in-out infinite; }
-.deposit-view__pending-body { min-width: 0; flex: 1 1 auto; }
-.deposit-view__pending-body strong { font-weight: 600; }
-.deposit-view__pending-list { margin: .25rem 0 0; padding: 0; list-style: none; font-variant-numeric: tabular-nums; }
-.deposit-view__pending-list li { overflow-wrap: anywhere; }
-.deposit-view__pending-more { margin-top: .25rem; color: var(--signal-muted, #8c99a6); font-size: .75rem; }
-@keyframes deposit-view-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.deposit-view__support { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .5rem; margin-top: .125rem; color: var(--ui-text-muted); font-size: .75rem; line-height: 1.55; }
+.deposit-view__support-action { padding: 0; color: var(--ui-primary); font-size: .75rem; font-weight: 600; text-decoration: underline; text-underline-offset: .15rem; }
+.deposit-view__support-contact { color: var(--ui-text); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.deposit-view__support-copied { color: var(--app-amount-positive); font-weight: 500; }
+.deposit-view__hint { display: block; color: var(--signal-amber, #b45309); font-size: .75rem; line-height: 1.55; }
+.deposit-view__status { display: block; color: var(--signal-amber, #b45309); font-size: .75rem; line-height: 1.55; }
+
+.deposit-view__progress { display: flex; flex-direction: column; gap: .375rem; width: 100%; max-width: 28rem; }
+.deposit-view__progress-head { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
+.deposit-view__progress-text { color: var(--ui-text-muted); font-size: .75rem; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.deposit-view__progress-pct { flex: 0 0 auto; color: var(--signal-amber, #b45309); font-size: .6875rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.deposit-view__progress-track { display: block; height: .375rem; border-radius: 999px; background: color-mix(in oklab, #d97706 16%, var(--ui-bg-elevated)); overflow: hidden; }
+.deposit-view__progress-fill { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #d97706, #f59e0b); transition: width .35s cubic-bezier(0.22, 1, 0.36, 1); }
+
+@keyframes deposit-view-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
 .deposit-view__empty { display: flex; flex-direction: column; align-items: center; gap: .75rem; padding: 3rem 1.25rem; text-align: center; font-size: .875rem; }
-.deposit-view__empty p { max-width: 27rem; font-size: .8125rem; color: var(--signal-muted, #8c99a6); line-height: 1.7; }
-.deposit-view__history-error { margin-bottom: 1rem; color: #d97706; font-size: .8125rem; line-height: 1.6; }
-.deposit-view button:focus-visible { outline: 2px solid var(--signal-accent, #0891b2); outline-offset: 3px; }
+.deposit-view__empty p { max-width: 27rem; font-size: .8125rem; color: var(--signal-muted, var(--ui-text-muted)); line-height: 1.7; }
+.deposit-view button:focus-visible { outline: 2px solid var(--signal-accent, var(--ui-primary)); outline-offset: 3px; }
 @media (max-width: 1100px) { .deposit-view__layout { grid-template-columns: minmax(0, 1fr); } .deposit-view__terms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; } }
 @media (max-width: 640px) {
   /* 底部安全区：iPhone 上最后一屏内容 / 复制按钮不被 Home 指示条压住。 */
   .deposit-view { padding: 1rem .75rem calc(1rem + env(safe-area-inset-bottom)); }
-  .deposit-view__live { display: none; }
   .deposit-view__funding, .deposit-view__guide { padding: 1.125rem; border-radius: .875rem; }
   .deposit-view__chains { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .deposit-view__chain { padding: .65rem .4rem; font-size: .75rem; }
@@ -1063,15 +1161,76 @@ a.deposit-view__hash { color: var(--signal-accent, #0891b2); text-decoration: un
   .deposit-view__terms { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .deposit-view__terms > div { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
   .deposit-view__terms dd { margin-top: 0; font-size: 1rem; text-align: right; }
-  .deposit-view__transaction { max-width: none; }
+  .deposit-view__callout { max-width: none; }
+  .deposit-view__hash-row { width: 100%; max-width: 100%; justify-content: space-between; }
   .deposit-view__progress { max-width: none; }
-  .deposit-view__pending { padding: .75rem .875rem; }
+  .deposit-view__pending { align-items: flex-start; padding: .625rem .75rem; }
+  .deposit-view__pending-dot { margin-top: .375rem; }
 }
 /* 触屏上 :hover 会「粘」在上一次点过的元素上；悬停反馈只在真有指针的设备生效。 */
 @media (hover: hover) and (pointer: fine) {
-  .deposit-view__chain:hover { background: var(--signal-accent-soft, #0891b212); }
-  .deposit-view__asset:hover { background: var(--signal-accent-soft, #0891b212); }
-  .deposit-view__hash-copy:hover { color: var(--signal-accent, #0891b2); }
+  .deposit-view__chain:hover { background: var(--signal-accent-soft, color-mix(in oklab, var(--ui-primary) 8%, transparent)); }
+  .deposit-view__asset:hover { background: var(--signal-accent-soft, color-mix(in oklab, var(--ui-primary) 8%, transparent)); }
+  .deposit-view__hash-row:hover { border-color: color-mix(in oklab, var(--ui-primary) 38%, var(--ui-border)); }
+  .deposit-view__hash-row:hover .deposit-view__hash-ext { color: var(--ui-primary); }
+  a.deposit-view__hash:hover { color: var(--ui-primary); text-decoration: underline; text-underline-offset: .15rem; }
+  .deposit-view__hash-copy:hover { color: var(--ui-primary); }
 }
 @media (prefers-reduced-motion: reduce) { .deposit-view__chain, .deposit-view__progress-fill { transition: none; } .deposit-view__pending-dot { animation: none; } }
+</style>
+
+<style>
+html.dark .deposit-view__funding,
+html.dark .deposit-view__guide {
+  box-shadow: var(--app-shadow-card);
+}
+
+html.dark .deposit-view__pending {
+  border-color: rgb(251 207 104 / 0.24);
+  background: rgb(251 207 104 / 0.07);
+}
+
+html.dark .deposit-view__pending-dot {
+  background: #fbcf68;
+  box-shadow: 0 0 0 3px rgb(251 207 104 / 0.18);
+}
+
+html.dark .deposit-view__pending-list li {
+  border-color: rgb(251 207 104 / 0.2);
+  background: var(--ui-bg-elevated);
+}
+
+html.dark .deposit-view__callout--revoked {
+  border-color: rgb(252 165 165 / 0.24);
+  border-inline-start-color: var(--app-amount-reversal);
+  background: rgb(252 165 165 / 0.07);
+}
+
+html.dark .deposit-view__callout--warning {
+  border-color: rgb(251 207 104 / 0.24);
+  border-inline-start-color: #fbcf68;
+  background: rgb(251 207 104 / 0.07);
+}
+
+html.dark .deposit-view__callout--neutral {
+  background: var(--ui-bg-elevated);
+}
+
+html.dark .deposit-view__hint,
+html.dark .deposit-view__status,
+html.dark .deposit-view__progress-pct {
+  color: #fbcf68;
+}
+
+html.dark .deposit-view__hash-row {
+  background: var(--ui-bg-elevated);
+}
+
+html.dark .deposit-view__progress-track {
+  background: rgb(251 207 104 / 0.14);
+}
+
+html.dark .deposit-view__progress-fill {
+  background: linear-gradient(90deg, #f59e0b, #fbcf68);
+}
 </style>

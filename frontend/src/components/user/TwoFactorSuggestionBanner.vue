@@ -13,7 +13,7 @@
         {{ t('twoFactorSuggestion.body') }}
       </p>
     </div>
-    <RouterLink :to="{ name: 'Profile' }" class="btn btn-primary btn-sm shrink-0">
+    <RouterLink :to="{ name: 'Profile', query: { tab: 'security' } }" class="btn btn-primary btn-sm shrink-0">
       {{ t('twoFactorSuggestion.enable') }}
     </RouterLink>
     <button

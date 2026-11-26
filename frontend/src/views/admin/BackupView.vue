@@ -228,6 +228,22 @@
             </template>
           </SettingRow>
           <SettingRow
+            :label="t('admin.backup.schedule.criticalOnly')"
+            :hint="scheduleCriticalHints"
+            :on="effectiveScheduleCriticalOnly"
+            default-open
+            test-id="schedule-critical-only-row"
+          >
+            <template #control>
+                <Toggle
+                  :model-value="effectiveScheduleCriticalOnly"
+                  :disabled="serverCriticalForced"
+                  data-testid="schedule-critical-only-toggle"
+                  @update:model-value="onScheduleCriticalOnlyChange"
+                />
+            </template>
+          </SettingRow>
+          <SettingRow
             :label="t('admin.backup.schedule.cronExpr')"
             :hint="t('admin.backup.schedule.cronHint')"
             :in-summary="false"
@@ -261,6 +277,27 @@
     <!-- Backup Operations -->
     <SettingsSection :title="t('admin.backup.operations.title')" :description="t('admin.backup.operations.description')">
       <template #actions>
+        <div
+          class="inline-flex items-center gap-2 text-xs text-toned select-none"
+          :class="serverCriticalForced ? 'cursor-not-allowed opacity-60' : ''"
+          :title="serverCriticalForced ? t('admin.backup.schedule.criticalForcedByServer') : undefined"
+        >
+          <Toggle
+            :id="manualCriticalOnlyId"
+            :model-value="effectiveManualCriticalOnly"
+            :disabled="serverCriticalForced"
+            size="sm"
+            data-testid="manual-critical-only-toggle"
+            @update:model-value="onManualCriticalOnlyChange"
+          />
+          <label
+            :for="manualCriticalOnlyId"
+            :class="serverCriticalForced ? 'cursor-not-allowed' : 'cursor-pointer'"
+            data-testid="manual-critical-only-label"
+          >
+            {{ t('admin.backup.operations.criticalOnly') }}
+          </label>
+        </div>
         <UInput v-model.number="manualExpireDays" type="number" min="0" class="w-36" :aria-label="t('admin.backup.operations.expireDays')">
           <template #trailing><span class="text-xs text-muted">{{ t('admin.backup.operations.expireDays') }}</span></template>
         </UInput>
@@ -271,12 +308,23 @@
           {{ creatingBackup ? t('admin.backup.operations.backing') : t('admin.backup.operations.createBackup') }}
         </UButton>
       </template>
-      <UTable :data="backups" :columns="backupColumns" :empty="t('admin.backup.empty')" :ui="{ base: 'min-w-[800px]', th: 'px-3 py-2 text-xs', td: 'px-3 py-2.5 text-xs align-top' }">
+      <UTable :data="backups" :columns="backupColumns" :empty="t('admin.backup.empty')" :ui="{ base: 'min-w-[800px]', th: 'whitespace-nowrap px-3 py-2 text-xs', td: 'px-3 py-2.5 text-xs align-top' }">
         <template #id-cell="{ row }"><span class="font-mono">{{ row.original.id }}</span></template>
         <template #status-cell="{ row: { original: record } }">
           <UBadge :color="statusColor(record.status)" variant="subtle" size="sm">
             {{ record.status === 'running' && record.progress ? t(`admin.backup.progress.${record.progress}`) : t(`admin.backup.status.${record.status}`) }}
           </UBadge>
+        </template>
+        <template #file_name-cell="{ row: { original: record } }">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="font-mono break-all">{{ record.file_name }}</span>
+            <UBadge v-if="isCriticalRecord(record)" color="warning" variant="subtle" size="sm">
+              {{ t('admin.backup.scope.critical') }}
+            </UBadge>
+            <UBadge v-if="isEncryptedRecord(record)" color="neutral" variant="subtle" size="sm">
+              {{ t('admin.backup.scope.encrypted') }}
+            </UBadge>
+          </div>
         </template>
         <template #size-cell="{ row }">{{ formatSize(row.original.size_bytes) }}</template>
         <template #parts-cell="{ row: { original: record } }">{{ record.parts?.length || (record.status === 'running' ? '-' : 1) }}</template>
@@ -288,7 +336,16 @@
             <UButton v-if="record.status === 'completed'" color="neutral" variant="outline" size="xs" @click="downloadBackup(record.id)">
               {{ t('admin.backup.actions.download') }}
             </UButton>
-            <UButton v-if="record.status === 'completed'" color="neutral" variant="outline" size="xs" :loading="restoringId === record.id" :disabled="restoringId === record.id" @click="restoreBackup(record.id)">
+            <UButton
+              v-if="record.status === 'completed'"
+              color="neutral"
+              variant="outline"
+              size="xs"
+              :loading="restoringId === record.id"
+              :disabled="restoringId === record.id || isRestoreUnsupported(record)"
+              :title="isRestoreUnsupported(record) ? t('admin.backup.actions.restoreManualOnly') : undefined"
+              @click="restoreBackup(record.id)"
+            >
               {{ restoringId === record.id ? t('common.loading') : t('admin.backup.actions.restore') }}
             </UButton>
             <UButton v-if="record.status !== 'running'" color="error" variant="ghost" size="xs" @click="removeBackup(record.id)">
@@ -381,7 +438,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api'
 import { useAppStore } from '@/stores'
@@ -461,8 +518,31 @@ const scheduleForm = ref<BackupScheduleConfig>({
   cron_expr: '0 2 * * *',
   retain_days: 14,
   retain_count: 10,
+  critical_only: false,
 })
+const serverCriticalForced = ref(false)
+const ageEncryptionEnabled = ref(false)
 const savingSchedule = ref(false)
+
+const effectiveScheduleCriticalOnly = computed(
+  () => serverCriticalForced.value || Boolean(scheduleForm.value.critical_only),
+)
+
+const scheduleCriticalHints = computed(() => {
+  const hints = [t('admin.backup.schedule.criticalOnlyHint')]
+  if (serverCriticalForced.value) {
+    hints.push(t('admin.backup.schedule.criticalForcedByServer'))
+  }
+  if (ageEncryptionEnabled.value) {
+    hints.push(t('admin.backup.schedule.ageEncryptionActive'))
+  }
+  return hints
+})
+
+function onScheduleCriticalOnlyChange(value: boolean) {
+  if (serverCriticalForced.value) return
+  scheduleForm.value.critical_only = value
+}
 
 // Backups
 const backups = ref<BackupRecord[]>([])
@@ -470,8 +550,43 @@ const loadingBackups = ref(false)
 const creatingBackup = ref(false)
 const restoringId = ref('')
 const manualExpireDays = ref(14)
+const manualCriticalOnly = ref(false)
+const manualCriticalOnlyId = useId()
 const downloadParts = ref<BackupDownloadPart[]>([])
 const downloadPartsModalOpen = ref(false)
+
+const effectiveManualCriticalOnly = computed(
+  () => serverCriticalForced.value || manualCriticalOnly.value,
+)
+
+function onManualCriticalOnlyChange(value: boolean) {
+  if (serverCriticalForced.value) return
+  manualCriticalOnly.value = value
+}
+
+function hasCriticalArchiveSuffix(name?: string): boolean {
+  return Boolean(name && (name.endsWith('.critical.sql.gz') || name.endsWith('.critical.sql.gz.age')))
+}
+
+function isCriticalRecord(record: BackupRecord): boolean {
+  return (
+    record.scope === 'critical' ||
+    hasCriticalArchiveSuffix(record.file_name) ||
+    hasCriticalArchiveSuffix(record.s3_key)
+  )
+}
+
+function isEncryptedRecord(record: BackupRecord): boolean {
+  return (
+    Boolean(record.encrypted) ||
+    Boolean(record.file_name?.endsWith('.age')) ||
+    Boolean(record.s3_key?.endsWith('.age'))
+  )
+}
+
+function isRestoreUnsupported(record: BackupRecord): boolean {
+  return isCriticalRecord(record) || isEncryptedRecord(record)
+}
 
 // Polling
 const pollingTimer = ref<ReturnType<typeof setInterval> | null>(null)
@@ -697,7 +812,11 @@ async function loadSchedule() {
       cron_expr: cfg.cron_expr || '0 2 * * *',
       retain_days: cfg.retain_days || 14,
       retain_count: cfg.retain_count || 10,
+      critical_only: Boolean(cfg.critical_only),
     }
+    serverCriticalForced.value = Boolean(cfg.server_critical_forced)
+    ageEncryptionEnabled.value = Boolean(cfg.age_encryption_enabled)
+    manualCriticalOnly.value = Boolean(cfg.server_critical_forced || cfg.critical_only)
   } catch (error) {
     appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
   }
@@ -706,7 +825,19 @@ async function loadSchedule() {
 async function saveSchedule() {
   savingSchedule.value = true
   try {
-    await adminAPI.backup.updateSchedule(scheduleForm.value)
+    const saved = await adminAPI.backup.updateSchedule({
+      enabled: scheduleForm.value.enabled,
+      cron_expr: scheduleForm.value.cron_expr,
+      retain_days: scheduleForm.value.retain_days,
+      retain_count: scheduleForm.value.retain_count,
+      critical_only: Boolean(scheduleForm.value.critical_only),
+    })
+    if (saved) {
+      serverCriticalForced.value = Boolean(saved.server_critical_forced)
+      ageEncryptionEnabled.value = Boolean(saved.age_encryption_enabled)
+      scheduleForm.value.critical_only = Boolean(saved.critical_only)
+    }
+    manualCriticalOnly.value = Boolean(serverCriticalForced.value || scheduleForm.value.critical_only)
     appStore.showSuccess(t('admin.backup.schedule.saved'))
   } catch (error) {
     appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
@@ -730,7 +861,12 @@ async function loadBackups() {
 async function createBackup() {
   creatingBackup.value = true
   try {
-    const record = await backupStepUp.run(() => adminAPI.backup.createBackup({ expire_days: manualExpireDays.value }))
+    const record = await backupStepUp.run(() =>
+      adminAPI.backup.createBackup({
+        expire_days: manualExpireDays.value,
+        critical_only: effectiveManualCriticalOnly.value,
+      }),
+    )
     // 插入到列表顶部
     backups.value.unshift(record)
     startPolling(record.id)
@@ -782,6 +918,11 @@ function closeDownloadParts() {
 }
 
 async function restoreBackup(id: string) {
+  const target = backups.value.find(r => r.id === id)
+  if (target && isRestoreUnsupported(target)) {
+    appStore.showWarning(t('admin.backup.actions.restoreManualOnly'))
+    return
+  }
   if (!(await confirm(t('admin.backup.actions.restoreConfirm')))) return
   const password = window.prompt(t('admin.backup.actions.restorePasswordPrompt'))
   if (!password) return

@@ -1,5 +1,5 @@
 <template>
-  <div class="payment-order-table">
+  <div class="payment-order-table card overflow-hidden">
   <DataTable :columns="columns" :data="orders" :loading="loading">
     <template #cell-id="{ value }">
       <span class="font-mono text-sm">#{{ value }}</span>
