@@ -523,6 +523,7 @@ func ProvideRateLimitService(
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
 	accountOps *AccountOpsService,
+	httpUpstream HTTPUpstream,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	if healthCache, ok := tempUnschedCache.(OpenAIAPIKeyHealthCache); ok {
@@ -533,7 +534,26 @@ func ProvideRateLimitService(
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
 	svc.SetAccountOpsService(accountOps)
+	attachAccountCircuitBreaker(svc, cfg, httpUpstream)
 	return svc
+}
+
+// attachAccountCircuitBreaker 创建账号错误率断路器，挂到 RateLimitService（供重试循环查询），
+// 并把它注册为真实上游传输层的尝试观察者（每次上游 HTTP 尝试结束时记一笔）。
+// 配置里 gateway.account_circuit_breaker.enabled=false 时什么都不做。
+func attachAccountCircuitBreaker(svc *RateLimitService, cfg *config.Config, upstream HTTPUpstream) {
+	settings := AccountCircuitBreakerSettingsFromConfig(cfg)
+	if svc == nil || !settings.Enabled {
+		return
+	}
+	breaker := NewAccountCircuitBreaker(settings, svc.persistAccountCircuitTrip)
+	if refresher, ok := svc.accountRepo.(SchedulerAccountRefresher); ok {
+		breaker.SetRecoveryRefresher(refresher.RefreshSchedulerAccount)
+	}
+	svc.SetAccountCircuitBreaker(breaker)
+	if observable, ok := upstream.(UpstreamAttemptObservable); ok {
+		observable.SetUpstreamAttemptObserver(breaker)
+	}
 }
 
 // ProvideOpsMetricsCollector creates and starts OpsMetricsCollector.

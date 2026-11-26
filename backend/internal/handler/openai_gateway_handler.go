@@ -427,6 +427,10 @@ func NewOpenAIGatewayHandler(
 ) *OpenAIGatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 3
+	// 单个请求的重试硬上限（总尝试次数/总耗时/退避），进程级，见 retry_guard.go。
+	ConfigureRetryGuard(cfg)
+	// 「没有可用账号」的 503 用断路器的最早恢复时间算 Retry-After（见 retry_after.go）。
+	registerCircuitRecoveryHint(gatewayService)
 	if cfg != nil {
 		pingInterval = time.Duration(cfg.Concurrency.PingInterval) * time.Second
 		if cfg.Gateway.MaxAccountSwitches > 0 {
@@ -743,6 +747,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	budget := newFailoverBudget() // 单请求重试硬上限：总尝试次数 + 总耗时
 	var lastFailoverErr *service.UpstreamFailoverError
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	var passthroughFailoverState openAIPassthroughFailoverState
@@ -1102,12 +1107,24 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						streamStarted = true
 					}
 					shouldRetryNext := failoverErr.ShouldRetryNextAccount()
+					if shouldRetryNext {
+						if reason := budget.spend(time.Now()); reason != "" {
+							logFailoverBudgetExhausted(reqLog, reason, account.ID, failoverErr.StatusCode, &budget)
+							markFailoverBudgetExhausted(failoverErr)
+							if failoverErr.ShouldReportAccountScheduleFailure() {
+								h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, nil), false, nil, err)
+							}
+							retainedUsage.settle(openAISettleUsage(result, submitResponsesUsage))
+							h.handleFailoverExhausted(c, failoverErr, streamStarted)
+							return
+						}
+					}
 					// 池模式：同账号重试
 					if shouldRetryNext && failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
-						if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+						if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) && !h.gatewayService.AccountCircuitOpen(account.ID) {
 							sameAccountRetryCount[account.ID]++
-							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
+							retryDelay := sameAccountRetryWait(failoverErr, sameAccountRetryCount[account.ID])
 							reqLog.Warn("openai.pool_mode_same_account_retry",
 								zap.Int64("account_id", account.ID),
 								zap.Int("upstream_status", failoverErr.StatusCode),
@@ -1539,6 +1556,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	budget := newFailoverBudget() // 单请求重试硬上限：总尝试次数 + 总耗时
 	var lastFailoverErr *service.UpstreamFailoverError
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	effectiveMappedModel := preferredMappedModel
@@ -1797,12 +1815,24 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						return
 					}
 					shouldRetryNext := failoverErr.ShouldRetryNextAccount()
+					if shouldRetryNext {
+						if reason := budget.spend(time.Now()); reason != "" {
+							logFailoverBudgetExhausted(reqLog, reason, account.ID, failoverErr.StatusCode, &budget)
+							markFailoverBudgetExhausted(failoverErr)
+							if failoverErr.ShouldReportAccountScheduleFailure() {
+								h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, nil), false, nil, err)
+							}
+							retainedUsage.settle(openAISettleUsage(result, submitMessagesUsage))
+							h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
+							return
+						}
+					}
 					// 池模式：同账号重试
 					if shouldRetryNext && failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
-						if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+						if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) && !h.gatewayService.AccountCircuitOpen(account.ID) {
 							sameAccountRetryCount[account.ID]++
-							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
+							retryDelay := sameAccountRetryWait(failoverErr, sameAccountRetryCount[account.ID])
 							reqLog.Warn("openai_messages.pool_mode_same_account_retry",
 								zap.Int64("account_id", account.ID),
 								zap.Int("upstream_status", failoverErr.StatusCode),
@@ -1914,6 +1944,7 @@ func resolveOpenAIMessagesMetadataSession(c *gin.Context, sessionHash, promptCac
 
 // anthropicErrorResponse writes an error in Anthropic Messages API format.
 func (h *OpenAIGatewayHandler) anthropicErrorResponse(c *gin.Context, status int, errType, message string) {
+	setGatewayRetryAfter(c, status, errType, "", message)
 	c.JSON(status, gin.H{
 		"type": "error",
 		"error": gin.H{
@@ -1953,6 +1984,7 @@ func (h *OpenAIGatewayHandler) anthropicStreamingAwareError(c *gin.Context, stat
 
 // handleAnthropicFailoverExhausted maps upstream failover errors to Anthropic format.
 func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	markUpstreamPassthroughError(c, failoverErr) // 上游错误的透传，不属于网关自己的 503/429（见 retry_after.go）
 	if failoverErr != nil && failoverErr.IsUpstreamWaitLimit() && service.IsResponseCommitted(c) {
 		return
 	}
@@ -2759,6 +2791,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	budget := newFailoverBudget() // 单请求重试硬上限：总尝试次数 + 总耗时
 	var lastFailoverErr *service.UpstreamFailoverError
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	accountSlotBusySeen := false
@@ -2768,11 +2801,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			return false
 		}
 		retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
-		if service.PreferAlternativeUpstream(c.Request.Context()) || !sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+		if service.PreferAlternativeUpstream(c.Request.Context()) || !sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) || h.gatewayService.AccountCircuitOpen(account.ID) {
 			return false
 		}
 		sameAccountRetryCount[account.ID]++
-		retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
+		retryDelay := sameAccountRetryWait(failoverErr, sameAccountRetryCount[account.ID])
 		reqLog.Warn("openai.websocket.same_account_retry",
 			zap.Int64("account_id", account.ID),
 			zap.Int("upstream_status", failoverErr.StatusCode),
@@ -2800,6 +2833,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			return false
 		}
 		if ctx.Err() != nil {
+			return false
+		}
+		if reason := budget.spend(time.Now()); reason != "" {
+			logFailoverBudgetExhausted(reqLog, reason, account.ID, failoverErr.StatusCode, &budget)
+			markFailoverBudgetExhausted(failoverErr)
+			closeOpenAIWSFailoverExhausted(c, wsConn, failoverErr)
 			return false
 		}
 		h.gatewayService.RecordOpenAIAccountSwitch()
@@ -3570,6 +3609,7 @@ func (h *OpenAIGatewayHandler) ensureResponsesDependencies(c *gin.Context, reqLo
 	reqLog.Error("openai.handler_dependencies_missing", zap.Strings("missing_dependencies", missing))
 
 	if c != nil && c.Writer != nil && !c.Writer.Written() {
+		setGatewayRetryAfter(c, http.StatusServiceUnavailable, "api_error", "", "Service temporarily unavailable")
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": gin.H{
 				"type":    "api_error",
@@ -3702,6 +3742,7 @@ func (h *OpenAIGatewayHandler) handleConcurrencyError(c *gin.Context, err error,
 }
 
 func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	markUpstreamPassthroughError(c, failoverErr) // 上游错误的透传，不属于网关自己的 503/429（见 retry_after.go）
 	if failoverErr != nil && failoverErr.IsUpstreamWaitLimit() && service.IsResponseCommitted(c) {
 		return
 	}
@@ -3884,6 +3925,7 @@ func isSafeRetryAfter(value string) bool {
 
 // handleFailoverExhaustedSimple 简化版本，用于没有响应体的情况
 func (h *OpenAIGatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, statusCode int, streamStarted bool) {
+	markUpstreamPassthroughError(c, nil) // 上游错误的透传，不属于网关自己的 503/429（见 retry_after.go）
 	status, errType, errMsg := wrapUpstreamClientError(statusCode, nil)
 	status, errType, errMsg = exhaustedFailoverResponse(status, errType, errMsg)
 	service.SetOpsUpstreamError(c, statusCode, errMsg, "")
@@ -3951,6 +3993,7 @@ func (h *OpenAIGatewayHandler) handleStreamingAwareErrorWithCode(
 		h.errorResponse(c, status, errType, message)
 		return
 	}
+	setGatewayRetryAfter(c, status, errType, code, message)
 	c.JSON(status, gin.H{"error": gin.H{
 		"type": errType, "code": code, "message": service.ClientUpstreamErrorMessage(message),
 	}})
@@ -4099,6 +4142,7 @@ func (h *OpenAIGatewayHandler) errorResponse(c *gin.Context, status int, errType
 			return
 		}
 	}
+	setGatewayRetryAfter(c, status, errType, "", message)
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"type":    errType,

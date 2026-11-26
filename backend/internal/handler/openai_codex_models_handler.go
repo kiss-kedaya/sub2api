@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -109,6 +110,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 	failedAccountIDs := make(map[int64]struct{})
 	switchCount := 0
 	var lastUpstreamErr error
+	budget := newFailoverBudget() // 单请求重试硬上限：总尝试次数 + 总耗时
 
 	for {
 		account, err := h.gatewayService.SelectAccountForModelWithExclusions(c.Request.Context(), apiKey.GroupID, "", "", failedAccountIDs)
@@ -133,7 +135,7 @@ func (h *OpenAIGatewayHandler) CodexModels(c *gin.Context) {
 			if c.Request.Context().Err() != nil {
 				return
 			}
-			if service.IsRetryableCodexModelsManifestError(err) && fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
+			if service.IsRetryableCodexModelsManifestError(err) && fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) && budget.spend(time.Now()) == "" {
 				failedAccountIDs[account.ID] = struct{}{}
 				switchCount++
 				lastUpstreamErr = err

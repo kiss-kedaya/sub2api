@@ -507,6 +507,7 @@ func (h *GatewayHandler) chatCompletionsErrorResponse(c *gin.Context, status int
 		}
 		return
 	}
+	setGatewayRetryAfter(c, status, errType, "", message)
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"type":    errType,
@@ -525,6 +526,7 @@ func (h *GatewayHandler) chatCompletionsErrorResponseWithCode(c *gin.Context, st
 		}
 		return
 	}
+	setGatewayRetryAfter(c, status, errType, code, message)
 	c.JSON(status, gin.H{
 		"error": gin.H{
 			"type":    errType,
@@ -536,6 +538,7 @@ func (h *GatewayHandler) chatCompletionsErrorResponseWithCode(c *gin.Context, st
 
 // handleCCFailoverExhausted writes a failover-exhausted error in CC format.
 func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
+	markUpstreamPassthroughError(c, lastErr) // 上游错误的透传，不属于网关自己的 503/429（见 retry_after.go）
 	keepaliveCommitted := service.StopOpenAICompactSSEKeepaliveCommitted(c)
 	if streamStarted {
 		// Preserve the existing no-append rule for a stream with semantic bytes.

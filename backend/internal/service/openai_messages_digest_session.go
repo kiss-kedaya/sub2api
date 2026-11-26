@@ -85,6 +85,7 @@ func (s *OpenAIGatewayService) bindOpenAICompatAnthropicDigestPromptCacheKey(acc
 		ExpiresAt:      time.Now().Add(s.openAIWSResponseStickyTTL()),
 	}
 	s.openaiCompatAnthropicDigestSessions.Store(ns+digestChain, binding)
+	s.maybeSweepOpenAICompatSessions()
 	if oldDigestChain != "" && oldDigestChain != digestChain {
 		s.openaiCompatAnthropicDigestSessions.Delete(ns + oldDigestChain)
 	}

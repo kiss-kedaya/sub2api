@@ -191,6 +191,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	budget := newFailoverBudget() // 单请求重试硬上限：总尝试次数 + 总耗时
 	var lastFailoverErr *service.UpstreamFailoverError
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	accountSlotBusySeen := false
@@ -441,12 +442,24 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						return
 					}
 					shouldRetryNext := failoverErr.ShouldRetryNextAccount()
+					if shouldRetryNext {
+						if reason := budget.spend(time.Now()); reason != "" {
+							logFailoverBudgetExhausted(reqLog, reason, account.ID, failoverErr.StatusCode, &budget)
+							markFailoverBudgetExhausted(failoverErr)
+							if failoverErr.ShouldReportAccountScheduleFailure() {
+								h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, nil), false, nil, err)
+							}
+							retainedUsage.settle(openAISettleUsage(result, submitChatUsage))
+							h.handleFailoverExhausted(c, failoverErr, streamStarted)
+							return
+						}
+					}
 					// Pool mode: retry on the same account
 					if shouldRetryNext && failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
-						if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+						if !service.PreferAlternativeUpstream(c.Request.Context()) && sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) && !h.gatewayService.AccountCircuitOpen(account.ID) {
 							sameAccountRetryCount[account.ID]++
-							retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
+							retryDelay := sameAccountRetryWait(failoverErr, sameAccountRetryCount[account.ID])
 							reqLog.Warn("openai_chat_completions.pool_mode_same_account_retry",
 								zap.Int64("account_id", account.ID),
 								zap.Int("upstream_status", failoverErr.StatusCode),
