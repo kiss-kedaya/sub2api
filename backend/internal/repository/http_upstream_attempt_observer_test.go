@@ -699,7 +699,7 @@ func (s *upstreamTestCaptureStore) Records(_ context.Context, taskID, requestID 
 	for _, b := range s.records {
 		var rec requestcapture.Record
 		_ = json.Unmarshal(b, &rec)
-		if rec.TaskID == taskID && (requestID == "" || rec.Meta.RequestID == requestID) {
+		if rec.TaskID == taskID && (requestID == "" || rec.RequestID == requestID) {
 			out = append(out, rec)
 		}
 	}
