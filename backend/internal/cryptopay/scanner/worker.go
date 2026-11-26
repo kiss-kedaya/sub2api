@@ -331,6 +331,10 @@ func (e *scanStageError) logAttrs() []any {
 		if failure.Quota {
 			attrs = append(attrs, "quota_exhausted", true)
 		}
+		if failure.Throttled {
+			// The 429 is this process's own pacing, not the node's answer.
+			attrs = append(attrs, "local_rate_limit", true)
+		}
 		if failure.SpanLimit != 0 {
 			attrs = append(attrs, "span_limit", failure.SpanLimit)
 		}

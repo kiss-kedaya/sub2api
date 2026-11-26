@@ -415,6 +415,8 @@ func applyRPCThrottle(cfg CryptoConfig) {
 		ms = 0
 	}
 	rpc.SetEndpointThrottleInterval(time.Duration(ms) * time.Millisecond)
+	// The adaptive pacing (429 handling) is always on; only its ceiling is configured.
+	rpc.SetEndpointRateCeiling(cfg.RPCRatePerSec)
 }
 
 func (s *Service) reload(ctx context.Context) {

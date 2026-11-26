@@ -12,6 +12,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"sync"
@@ -42,7 +43,7 @@ type Pool struct {
 
 // NewPool builds a pool from a comma-separated endpoint list.
 func NewPool(endpoints string) *Pool {
-	p := &Pool{client: NewPublicHTTPClient(15 * time.Second)}
+	p := &Pool{client: NewPublicHTTPClient(perEndpointCallTimeout)}
 	p.SetEndpoints(endpoints)
 	return p
 }
@@ -470,21 +471,23 @@ func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any)
 	if err != nil {
 		return nil, &Failure{Kind: "request", Host: host}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
+	resp, err := p.post(ctx, endpoint, body, method)
+	switch {
+	case err == nil:
+	case errors.Is(err, errBuildRequest):
 		return nil, &Failure{Kind: "request", Host: host}
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := p.client.Do(req)
-	if err != nil {
+	case errors.Is(err, errLocalRateLimit):
+		// The adaptive limiter refused the call; the node was not asked.
+		return nil, &Failure{Kind: "http", HTTPStatus: http.StatusTooManyRequests, Host: host, Throttled: true}
+	default:
 		failure := NewTransportFailure(err)
 		failure.Host = host
 		return nil, failure
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeBody(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		failure := &Failure{Kind: "http", HTTPStatus: resp.StatusCode, Host: host}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		// Providers refuse an oversized eth_getLogs with HTTP 400/413/422 and say
 		// the limit in the body ("ranges over 100 blocks are not supported on
 		// free plan"), and answer 402/429/503 when the daily allowance or the
@@ -493,12 +496,19 @@ func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any)
 		switch resp.StatusCode {
 		case http.StatusBadRequest, http.StatusPaymentRequired, http.StatusRequestEntityTooLarge,
 			http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusServiceUnavailable:
-			annotateFromErrorBody(failure, body)
+			annotateFromErrorBody(failure, errBody)
+		}
+		if resp.StatusCode == http.StatusPaymentRequired {
+			// 402 is "payment required": the plan's allowance or the prepaid balance
+			// is spent, whatever the body (some providers send none). Waiting seconds
+			// cannot help, so it gets the long quota cooldown and the rotation moves
+			// on, instead of asking again at the next call.
+			failure.Quota = true
 		}
 		return nil, failure
 	}
 	var decoded rpcResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&decoded); err != nil {
 		return nil, &Failure{Kind: "response", Host: host}
 	}
 	if decoded.Error != nil {
@@ -514,6 +524,63 @@ func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any)
 		return nil, &Failure{Kind: "response", Host: host}
 	}
 	return decoded.Result, nil
+}
+
+// maxResponseBytes bounds what one answer is read as. It applies to the
+// DECOMPRESSED stream (the client asks for gzip), so a small body on the wire
+// cannot expand into more memory than this. An answer that does not fit fails as
+// "response", which the scanner answers by splitting the query: that is how an
+// unfiltered eth_getLogs over a busy range (tens of MB) is meant to end.
+const maxResponseBytes = 8 << 20
+
+// maxDrainBytes is how much of an unread answer is discarded so its connection
+// can be reused. Go keeps a connection only when the body was read to its end;
+// a JSON decoder stops at the closing brace, before a chunked body's terminator.
+const maxDrainBytes = 64 << 10
+
+func closeBody(body io.ReadCloser) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(body, maxDrainBytes))
+	_ = body.Close()
+}
+
+// errBuildRequest is post's report that the request could not even be built.
+var errBuildRequest = errors.New("rpc request could not be built")
+
+// post sends one JSON-RPC request.
+//
+// A method that is not on the read-only list goes on a fresh connection and is
+// never sent a second time here: it may change chain state, and "the connection
+// failed" does not say whether the node saw it (that stays a question for the
+// receipt check, exactly as before connections were reused).
+//
+// A read-only method that fails on a REUSED connection with the signature of a
+// connection the server closed while it sat idle is sent once more on a new one.
+// Repeating a read cannot change anything, and without it every idle-timeout race
+// would surface as a failed scan batch. A failure on a connection that was new
+// proves nothing about staleness and is not retried; neither is a timeout.
+func (p *Pool) post(ctx context.Context, endpoint string, body []byte, method string) (*http.Response, error) {
+	readOnly := isReadOnlyMethod(method)
+	resp, reused, err := p.postOnce(ctx, endpoint, body, callHint{fresh: !readOnly})
+	if err == nil || !readOnly || !reused || ctx.Err() != nil || !isStaleConnError(err) {
+		return resp, err
+	}
+	resp, _, err = p.postOnce(ctx, endpoint, body, callHint{fresh: true, staleRetry: true})
+	return resp, err
+}
+
+// postOnce is one attempt; it reports whether the attempt rode a reused connection.
+func (p *Pool) postOnce(ctx context.Context, endpoint string, body []byte, hint callHint) (*http.Response, bool, error) {
+	var reused atomic.Bool
+	reqCtx := httptrace.WithClientTrace(context.WithValue(ctx, callHintKey{}, hint), &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) { reused.Store(info.Reused) },
+	})
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, false, errBuildRequest
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.client.Do(req)
+	return resp, reused.Load(), err
 }
 
 // endpointHost extracts the hostname of a configured endpoint for safe logging.

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 )
 
 // ChainStatus reports every chain's scan position and node health for the admin
@@ -96,7 +98,18 @@ func (s *Service) chainStatusFor(
 		mon.record(plan.Chain, in.Cursor.Block, head)
 	}
 	in.Window = mon.window(plan.Chain)
-	return assembleChainStatus(in), nil
+	st := assembleChainStatus(in)
+	// The traffic counters live in the RPC client, not in the probe, so they are
+	// attached after the pure assembly and leave every existing field untouched.
+	for i := range st.Nodes {
+		if i >= len(plan.Endpoints) {
+			break
+		}
+		if traffic, ok := rpc.EndpointTrafficFor(plan.Endpoints[i]); ok {
+			st.Nodes[i].Traffic = &traffic
+		}
+	}
+	return st, nil
 }
 
 // ChainProgress reports one chain's scan position: the best node head, the

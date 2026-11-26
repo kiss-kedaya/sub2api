@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/mode"
 	"github.com/Wei-Shaw/sub2api/internal/cryptopay/nativeprice"
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 	"maps"
 	"math"
 	"net/url"
@@ -62,6 +63,7 @@ func KnownChain(chain string) bool {
 // stalls every call or disables scanning must be rejected, not clamped.
 const (
 	maxRPCThrottleMs = 10_000
+	maxRPCRatePerSec = rpc.MaxRatePerSec
 	maxRPCBlocks     = 100_000
 	maxRPCAddresses  = 10_000
 )
@@ -87,6 +89,15 @@ type CryptoConfig struct {
 	// disables pacing and keeps the previous behaviour. Keep it small: a scan pass
 	// is hundreds of calls, and every call waits its turn.
 	RPCThrottleMs int `json:"rpc_throttle_ms,omitempty"`
+
+	// RPCRatePerSec is the ceiling, in calls per second, of the adaptive pacing
+	// every RPC endpoint gets. A healthy endpoint is never held below it; an HTTP
+	// 429 halves the rate (and honours Retry-After) and answers without one bring
+	// it back. Zero keeps the default of 20, which a scan pass does not reach:
+	// raise it for a paid plan, set it to the maximum to take the ceiling out of
+	// the way (429 handling still applies). Unlike rpc_throttle_ms this is not a
+	// fixed spacing, so it cannot stretch a scan pass the way that did.
+	RPCRatePerSec int `json:"rpc_rate_per_sec,omitempty"`
 
 	// Sweep settings.
 	SweepGlobalThreshold float64            `json:"sweep_global_threshold"`
@@ -400,6 +411,9 @@ func NormalizeConfig(cfg CryptoConfig) (CryptoConfig, error) {
 	if cfg.RPCThrottleMs < 0 || cfg.RPCThrottleMs > maxRPCThrottleMs {
 		return cfg, fmt.Errorf("crypto config: rpc_throttle_ms must be between 0 and %d", maxRPCThrottleMs)
 	}
+	if cfg.RPCRatePerSec < 0 || cfg.RPCRatePerSec > maxRPCRatePerSec {
+		return cfg, fmt.Errorf("crypto config: rpc_rate_per_sec must be between 0 and %d", maxRPCRatePerSec)
+	}
 	if err := normalizeRPCLimits(&cfg); err != nil {
 		return cfg, err
 	}
@@ -683,6 +697,7 @@ type CryptoConfigPatch struct {
 	RPC                    *map[string]string            `json:"rpc"`
 	RPCLimits              *map[string]RPCEndpointLimits `json:"rpc_limits"`
 	RPCThrottleMs          *int                          `json:"rpc_throttle_ms"`
+	RPCRatePerSec          *int                          `json:"rpc_rate_per_sec"`
 	SweepGlobalThreshold   *float64                      `json:"sweep_global_threshold"`
 	SweepMinPerAddress     *map[string]float64           `json:"sweep_min_per_address"`
 	GasTopUp               *map[string]float64           `json:"gas_topup"`
@@ -729,6 +744,9 @@ func (p CryptoConfigPatch) Apply(base CryptoConfig) CryptoConfig {
 	}
 	if p.RPCThrottleMs != nil {
 		out.RPCThrottleMs = *p.RPCThrottleMs
+	}
+	if p.RPCRatePerSec != nil {
+		out.RPCRatePerSec = *p.RPCRatePerSec
 	}
 	if p.SweepGlobalThreshold != nil {
 		out.SweepGlobalThreshold = *p.SweepGlobalThreshold

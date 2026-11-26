@@ -3,6 +3,8 @@ package cryptopay
 import (
 	"errors"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/cryptopay/rpc"
 )
 
 // Chain states reported by the admin "node status" page.
@@ -151,6 +153,10 @@ type ChainNodeStatus struct {
 	Head      *uint64 `json:"head"`
 	Behind    *uint64 `json:"behind"`
 	ErrorKind *string `json:"error_kind"`
+	// Traffic is what the scanner's own calls to this node did in the current
+	// window (requests, 429s, 402s, timeouts, new connections, current rate):
+	// numbers only. Absent until this process has used the node.
+	Traffic *rpc.EndpointTraffic `json:"traffic,omitempty"`
 }
 
 // ChainProgress is the reusable per-chain scan position. The backfill job

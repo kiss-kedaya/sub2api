@@ -37,7 +37,13 @@ type Failure struct {
 	// monthly allowance (or prepaid balance) is used up. Waiting seconds cannot
 	// help: the pool keeps that endpoint out of rotation for much longer than an
 	// ordinary rate limit instead of spending a request on it for every call.
-	Quota      bool
+	Quota bool
+	// Throttled marks a 429 that this process produced itself: the endpoint was over
+	// the request rate the adaptive limiter allows, and the wait would have been too
+	// long, so nothing was sent. It reads as a 429 everywhere (the pool rotates, the
+	// scanner retries the batch later), but it says nothing about the node's health,
+	// so it never puts the endpoint on a cooldown.
+	Throttled  bool
 	contextErr error
 }
 

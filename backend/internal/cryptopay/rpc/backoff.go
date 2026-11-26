@@ -193,8 +193,14 @@ func (t *endpointHealthTracker) widestLimit(endpoints []string) uint64 {
 
 func endpointCooldown(err error) time.Duration {
 	var failure *Failure
-	if errors.As(err, &failure) && failure.Quota {
-		return quotaEndpointCooldown
+	if errors.As(err, &failure) {
+		if failure.Throttled {
+			// Our own pacing refused the call; the node was never asked.
+			return 0
+		}
+		if failure.Quota {
+			return quotaEndpointCooldown
+		}
 	}
 	switch CategoryOf(err) {
 	case CategoryAuthConfig:
