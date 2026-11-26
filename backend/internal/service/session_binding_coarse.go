@@ -17,6 +17,11 @@ import (
 //   - User-Agent 只取「浏览器家族 + 操作系统家族」，不含版本号；
 //   - IP 只在两边 IP 家族相同（都是 IPv4 或都是 IPv6）时才比较网段，家族不同则忽略 IP。
 //
+// 注意这是一个**漂移检测器，不是防盗屏障**：UA 是客户端自报的，家族不同时又不比较 IP，
+// 所以偷到令牌的人换一个 IP 家族、把 UA 写成同样的浏览器家族 + 系统家族，就能通过比较。
+// 它挡得住的是「别的程序/别的系统直接拿令牌来用」和「同一 IP 家族换了网段」；
+// 令牌被盗要靠 refresh 轮换的重放检测发现（旧令牌被再次出示 → 撤销整个家族）。
+//
 // 它以字符串形式和旧的 BindingHash 并存（见 RefreshTokenData.BindingCoarse / JWTClaims.BindingCoarse）：
 // 旧哈希的算法不变，新旧版本混跑（金丝雀/回滚）时旧实例仍能正确比对，不会因为格式变化误撤销会话。
 
@@ -74,19 +79,62 @@ func (b *SessionBinding) CoarseFingerprint() string {
 	return c.String()
 }
 
-// Matches 报告当前请求指纹是否仍与令牌里记录的指纹一致。
+// BindingMatch 是指纹比较的三态结果。
+type BindingMatch int
+
+const (
+	// BindingMismatch：当前请求与令牌里记录的指纹不一致。
+	BindingMismatch BindingMatch = iota
+	// BindingMatched：一致。
+	BindingMatched
+	// BindingMatchedAcrossIPFamily：一致，但只是因为两边 IP 家族不同（IPv4 <-> IPv6）而没有比较 IP，
+	// 只比了浏览器家族 + 系统家族。这是有意的宽松（WiFi 与蜂窝常在两个家族之间切换），
+	// 所以它不是「换了 IP 也拦得住」的屏障——调用方要单独计数，便于发现异常。
+	BindingMatchedAcrossIPFamily
+)
+
+// Match 比较当前请求指纹与令牌里记录的指纹，区分「一致」与「靠忽略 IP 家族才一致」。
 //   - mode=off 或当前请求算不出指纹：放行（与原语义一致）；
 //   - 先用旧算法的哈希比较（快路径，且新旧版本行为一致）；
 //   - 哈希不同且是 loose 模式、令牌带粗粒度指纹时，再按粗粒度规则比较
-//     （忽略浏览器/系统版本号、IPv4<->IPv6 切换不算不一致）；
+//     （忽略浏览器/系统版本号；两边 IP 家族不同时不比较 IP，但浏览器家族与系统家族必须一致）；
 //   - 旧令牌没有粗粒度指纹，哈希不同即不一致（旧行为）。
-func (b *SessionBinding) Matches(mode, storedHash, storedCoarse string) bool {
+func (b *SessionBinding) Match(mode, storedHash, storedCoarse string) BindingMatch {
 	current := b.HashForMode(mode)
 	if current == "" || storedHash == "" || current == storedHash {
-		return true
+		return BindingMatched
 	}
 	if mode != config.SessionBindingModeLoose || storedCoarse == "" {
-		return false
+		return BindingMismatch
+	}
+	stored, ok := parseCoarseFingerprint(storedCoarse)
+	if !ok {
+		return BindingMismatch
+	}
+	cur, ok := b.coarse()
+	if !ok {
+		return BindingMatched
+	}
+	if !stored.matches(cur) {
+		return BindingMismatch
+	}
+	if stored.family != cur.family {
+		return BindingMatchedAcrossIPFamily
+	}
+	return BindingMatched
+}
+
+// Matches 报告当前请求指纹是否仍与令牌里记录的指纹一致（见 Match）。
+func (b *SessionBinding) Matches(mode, storedHash, storedCoarse string) bool {
+	return b.Match(mode, storedHash, storedCoarse) != BindingMismatch
+}
+
+// ClientFamilyMatches 报告令牌里记录的粗粒度指纹与当前请求是否是同一个「浏览器家族 + 系统家族」（不看 IP）。
+// 记录里没有粗粒度指纹（升级前签发的令牌）时无法判断，按过渡期放行；有但解析不了则不放行。
+// refresh 路径的 rebind 只放行「客户端没变、只是 IP 变了」，家族变了（换了浏览器/系统，或是别的程序拿着令牌）仍撤销。
+func (b *SessionBinding) ClientFamilyMatches(storedCoarse string) bool {
+	if storedCoarse == "" {
+		return true
 	}
 	stored, ok := parseCoarseFingerprint(storedCoarse)
 	if !ok {
@@ -96,7 +144,7 @@ func (b *SessionBinding) Matches(mode, storedHash, storedCoarse string) bool {
 	if !ok {
 		return true
 	}
-	return stored.matches(cur)
+	return stored.browser == cur.browser && stored.os == cur.os
 }
 
 // BindingLabel 把粗粒度指纹转成日志用的低基数标签（如 chrome/windows/ipv4），

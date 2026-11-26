@@ -322,9 +322,14 @@ func (s *SettingService) SessionBindingHash(binding *SessionBinding) string {
 }
 
 // SessionBindingMatches 报告请求指纹是否仍与令牌里记录的指纹一致（按当前配置的绑定模式；
-// loose 模式下令牌带粗粒度指纹时按粗粒度规则比较，见 SessionBinding.Matches）。
+// loose 模式下令牌带粗粒度指纹时按粗粒度规则比较，见 SessionBinding.Match）。
 func (s *SettingService) SessionBindingMatches(binding *SessionBinding, storedHash, storedCoarse string) bool {
-	return binding.Matches(s.SessionBindingMode(), storedHash, storedCoarse)
+	return s.SessionBindingMatch(binding, storedHash, storedCoarse) != BindingMismatch
+}
+
+// SessionBindingMatch 同上，但区分「一致」与「靠忽略 IP 家族才一致」（后者要单独计数）。
+func (s *SettingService) SessionBindingMatch(binding *SessionBinding, storedHash, storedCoarse string) BindingMatch {
+	return binding.Match(s.SessionBindingMode(), storedHash, storedCoarse)
 }
 
 // SessionBindingRevokesOnMismatch 报告指纹不一致时是否撤销整个会话家族

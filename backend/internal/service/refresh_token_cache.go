@@ -15,7 +15,7 @@ type RefreshTokenData struct {
 	UserID       int64  `json:"user_id"`
 	TokenVersion int64  `json:"token_version"`          // 用于检测密码更改后的Token失效
 	FamilyID     string `json:"family_id"`              // Token家族ID，用于防重放攻击
-	BindingHash  string `json:"binding_hash,omitempty"` // 会话指纹哈希（IP+UA），会话绑定开启时校验
+	BindingHash  string `json:"binding_hash,omitempty"` // 会话指纹哈希（IP+UA），会话绑定开启时校验；墓碑上是「消费它的那个客户端」的指纹
 	// BindingCoarse 是粗粒度指纹（浏览器家族|系统家族|IP 家族|网段短哈希），和 BindingHash 并存：
 	// BindingHash 保持旧算法，新旧版本混跑时旧实例仍能正确比对；loose 模式下新代码优先用它比较
 	// （忽略浏览器/系统版本号，IPv4<->IPv6 切换不算不一致）。旧记录没有该字段，按 BindingHash 比较。
@@ -29,14 +29,58 @@ type RefreshTokenData struct {
 	// 用于再次收到同一 Token 时识别重放并撤销整个 family。
 	Consumed bool `json:"consumed,omitempty"`
 	// ConsumedAt 是该 Token 被轮换消费的时间（墓碑上的字段）。已消费 Token 在
-	// jwt.refresh_token_reuse_leeway_seconds 内再次出现，视为响应丢失后的合法重试。
-	// 旧墓碑没有该字段（零值），按原行为处理：任何重放都撤销整个 family。
+	// jwt.refresh_token_reuse_leeway_seconds 内、由「消费它的那个客户端」再次出示，
+	// 视为响应丢失后的合法重试。旧墓碑没有该字段（零值），按原行为处理：任何重放都撤销整个 family。
 	ConsumedAt time.Time `json:"consumed_at,omitempty"`
-	// LeewayReissues 是该已消费 Token 在宽限期内被「重发」新令牌的次数（计数写在墓碑上），
-	// 达到上限后不再重发，按重放处理。
+	// LeewayReissues 是该已消费 Token 在宽限期内被「重发」新令牌的次数。它只由
+	// RefreshTokenAtomicStore.ReserveLeewayReissue 在 Redis 里原子地累加（先占名额再发新令牌），
+	// 服务层不会读改写它；达到上限后不再重发，按重放处理。
 	LeewayReissues int       `json:"leeway_reissues,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	ExpiresAt      time.Time `json:"expires_at"`
+}
+
+// RefreshConsumeOutcome 是 RefreshTokenAtomicStore.ConsumeRefreshToken 的结果。
+type RefreshConsumeOutcome int
+
+const (
+	// RefreshConsumeMissing：令牌记录已不存在——会话被撤销（登出/撤销全部/家族撤销）或令牌已过期。
+	RefreshConsumeMissing RefreshConsumeOutcome = iota
+	// RefreshConsumeWon：这次调用把令牌改写成了墓碑。
+	RefreshConsumeWon
+	// RefreshConsumeAlready：令牌已被另一个并发请求抢先消费。
+	RefreshConsumeAlready
+)
+
+// RefreshLeewayOutcome 是 RefreshTokenAtomicStore.ReserveLeewayReissue 的结果。
+type RefreshLeewayOutcome int
+
+const (
+	// RefreshLeewayMissing：墓碑已不存在——会话被撤销或墓碑已过期。
+	RefreshLeewayMissing RefreshLeewayOutcome = iota
+	// RefreshLeewayReserved：占到了一个重发名额（计数已 +1）。
+	RefreshLeewayReserved
+	// RefreshLeewayCapped：重发名额已用完。
+	RefreshLeewayCapped
+	// RefreshLeewayNotConsumed：记录存在但不是墓碑（仍是可用令牌），不该走宽限路径。
+	RefreshLeewayNotConsumed
+)
+
+// RefreshTokenAtomicStore 是 refresh token 存储的可选能力（Redis 实现提供，服务里类型断言；
+// 故意不放进 RefreshTokenCache，免得波及所有测试替身）。三类竞态要靠它原子地解决：
+//
+//   - 撤销落在「新令牌已存好、旧令牌还没标已消费」之间：旧令牌的墓碑不能被盲写回去
+//     （写回去并重新计时，宽限就会把它变回凭证，让已登出的会话复活）；
+//   - 同一枚已消费令牌被并发出示：重发次数上限必须按原子计数执行，而不是读改写；
+//   - 撤销之后的任何写入都必须失败，而不是悄悄复活墓碑。
+//
+// 缓存没有实现它时，服务层不开重试宽限（任何重放都撤销家族，安全方向），首次轮换的消费退回尽力而为的写入。
+type RefreshTokenAtomicStore interface {
+	// ConsumeRefreshToken 仅当令牌记录仍存在且尚未被消费时，原子地把它改写成 tombstone（TTL = ttl）。
+	ConsumeRefreshToken(ctx context.Context, tokenHash string, tombstone *RefreshTokenData, ttl time.Duration) (RefreshConsumeOutcome, error)
+	// ReserveLeewayReissue 原子地占用一个宽限重发名额：墓碑存在、确实已消费、计数 < maxReissues 时计数 +1，
+	// 返回新计数；墓碑不存在（已撤销）时失败，不会写出任何东西。
+	ReserveLeewayReissue(ctx context.Context, tokenHash string, maxReissues int) (RefreshLeewayOutcome, int, error)
 }
 
 // SessionStart 返回会话首次签发时间，兼容升级前没有 session_started_at 的旧数据。

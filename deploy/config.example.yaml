@@ -167,26 +167,44 @@ security:
   # the client network + User-Agent it was created on.
   #   off    - disable binding entirely (emergency rollback switch)
   #   loose  - compare browser family + OS family (no version numbers) and IPv4 /24 or
-  #            IPv6 /64 (default). An IPv4 <-> IPv6 switch does not count as a change.
+  #            IPv6 /64 (default). When the two sides have different IP families
+  #            (IPv4 <-> IPv6) the IP is NOT compared, only the browser/OS family.
   #   strict - compare full IP + full User-Agent (any change counts)
   # Refresh tokens are always checked when the mode is not off; the admin
   # setting session_binding_enabled additionally checks every access token.
+  # NOTE: this is a drift detector, not a theft barrier. The User-Agent is self-reported and the
+  # IP is ignored across IP families, so a stolen token used from the other IP family with a
+  # matching browser/OS family passes the comparison (such requests are counted in the
+  # access_ip_family_switch / refresh_ip_family_switch statistics). Stolen refresh tokens are
+  # detected by rotation replay detection (see jwt.refresh_token_reuse_leeway_seconds).
   # 会话绑定指纹模式：off 关闭（回滚开关）；loose 比较「浏览器家族 + 系统家族」（不含版本号）
-  # 与 IPv4 /24、IPv6 /64（默认，IPv4 <-> IPv6 切换不算变化）；strict 完整 IP + 完整 UA。
-  # 非 off 时 refresh 始终校验绑定；后台 session_binding_enabled 开关还控制每次请求的 access token 校验。
+  # 与 IPv4 /24、IPv6 /64（默认；两边 IP 家族不同，即 IPv4 <-> IPv6 时不比较 IP，只比浏览器/系统家族）；
+  # strict 完整 IP + 完整 UA。非 off 时 refresh 始终校验绑定；后台 session_binding_enabled 开关还控制
+  # 每次请求的 access token 校验。
+  # 注意：这是「漂移检测器」，不是防盗屏障。UA 是客户端自报的，跨 IP 家族又不比较 IP，所以偷到的令牌
+  # 换到另一个 IP 家族、UA 写成同样的浏览器/系统家族就能通过比较（这类请求单独计数：
+  # access_ip_family_switch / refresh_ip_family_switch）。令牌被盗靠 refresh 轮换的重放检测发现。
   # Environment / 环境变量: SECURITY_SESSION_BINDING_MODE=strict
   session_binding_mode: loose
   # What a fingerprint mismatch does.
-  #   rebind - (default) let the refresh through and re-bind the newly issued tokens to
-  #            the current client; the user stays signed in across WiFi/cellular switches,
-  #            browser updates and the like. An access token used from a changed client is
-  #            still rejected with 401 (the web app then refreshes and re-binds), so a
-  #            stolen access token alone is useless elsewhere. A rate-limited WARN is logged.
+  #   rebind - (default) a refresh is let through only when just the IP changed (browser family and
+  #            OS family unchanged) and the newly issued tokens are re-bound to the current
+  #            client, so WiFi/cellular switches and browser updates do not log the user out. A
+  #            changed browser/OS family still revokes the session. Only the first presentation of
+  #            the current token can rebind: an already rotated token that shows up again inside
+  #            the leeway window from a client whose fingerprint differs from the one that rotated
+  #            it is treated as a replay (session revoked). Every rebind logs a rate-limited WARN
+  #            (coarse labels only, no IP / full User-Agent) and is counted.
+  #            An access token used from a changed client is rejected with 401 (the web app then
+  #            refreshes), except across IP families (see session_binding_mode).
   #   revoke - revoke the whole session family and force a new login (strict behaviour).
   # Replayed refresh tokens are detected independently of this switch.
-  # 指纹不一致时的处置：rebind（默认）放行并用当前指纹重新绑定新令牌，换网络/浏览器升级不掉线，
-  # 只留一条限频 WARN；access token 在变化后的客户端上仍返回 401（前端随即刷新并重绑），
-  # 单独偷到的 access token 在别处用不了；revoke 撤销整个会话家族并要求重新登录（严格）。
+  # 指纹不一致时的处置：rebind（默认）只在「浏览器家族 + 系统家族没变、只是 IP 变了」时放行刷新，
+  # 并把新发的令牌重新绑定到当前客户端——WiFi 与蜂窝切换、浏览器升级不会掉线；浏览器/系统家族变了仍撤销。
+  # 只有首次出示的当前令牌才能 rebind：已被轮换掉的旧令牌在宽限窗口内再次出现、而出示者的指纹与
+  # 消费它的那个客户端不一致，按重放处理（撤销会话）。每次 rebind 留一条限频 WARN（只有粗粒度标签，
+  # 不含 IP/完整 UA）并计数。access token 在变化后的客户端上返回 401（前端随即刷新），跨 IP 家族除外
+  # （见 session_binding_mode）。revoke 撤销整个会话家族并要求重新登录（严格）。
   # refresh token 重放检测不受这个开关影响。
   # Environment / 环境变量: SECURITY_SESSION_BINDING_ON_MISMATCH=revoke
   session_binding_on_mismatch: rebind
@@ -1111,22 +1129,32 @@ jwt:
   # Environment / 环境变量: JWT_REFRESH_TOKEN_EXPIRE_DAYS=14
   refresh_token_expire_days: 14
   # Absolute lifetime of a login session counted from the first login (days, default 90). Rotation
-  # never extends it; at the cap the user signs in again. Must be >= refresh_token_expire_days
-  # (startup validation fails otherwise); above 365 only logs a warning.
+  # never extends it; at the cap the user signs in again. It cannot be shorter than
+  # refresh_token_expire_days: if it is, it is raised to match at startup and a warning is logged
+  # (startup does not fail, so an upgrade that only ever raised refresh_token_expire_days keeps
+  # working). Above 365 only logs a warning.
   # 登录会话从首次登录起的绝对寿命上限（天，默认 90）：轮换不会延长它，到期必须重新登录。
-  # 必须 >= refresh_token_expire_days（否则启动校验失败）；超过 365 只打警告。
+  # 不能短于 refresh_token_expire_days：短于时启动会自动抬高到相等并打一条警告（不会启动失败，
+  # 老部署只调大过 refresh_token_expire_days 也能照常升级）；超过 365 只打警告。
   # Environment / 环境变量: JWT_SESSION_MAX_LIFETIME_DAYS=90
   session_max_lifetime_days: 90
-  # Retry leeway for an already rotated refresh token, in seconds (default 60, 0 = off, max 600).
+  # Retry leeway for an already rotated refresh token, in seconds (default 30, 0 = off, max 120).
   # If the response of a rotation is lost (mobile network, timeout) the client retries with the
   # old token: inside this window the retry is accepted (a new token pair is issued, the session
-  # and the token issued by the first rotation stay valid, at most 3 reissues per old token).
-  # Outside it a replayed token revokes the whole session family (theft detection).
-  # 已轮换 Refresh Token 的重试宽限（秒，默认 60，0 = 关闭，最大 600）：轮换的响应丢失（弱网/超时）后，
+  # and the token issued by the first rotation stay valid, at most 3 reissues per old token,
+  # enforced atomically in Redis). The retry must come from the client that performed the
+  # rotation (same fingerprint); a different client presenting the rotated token, a retry outside
+  # the window, or one over the reissue limit is treated as a replay and revokes the whole
+  # session family (theft detection). A longer window makes the replay detection easier to dodge,
+  # hence the low default and the cap. Requires the Redis refresh-token store (it uses atomic
+  # scripts) and NTP-synchronised instances (the window is measured from the instance clock).
+  # 已轮换 Refresh Token 的重试宽限（秒，默认 30，0 = 关闭，最大 120）：轮换的响应丢失（弱网/超时）后，
   # 客户端用旧令牌重试，宽限内视为合法重试（再发一对新令牌；第一次轮换发的新令牌仍然有效；每个旧令牌最多
-  # 重发 3 次）；超过宽限的重放撤销整个会话家族（防盗用）。
-  # Environment / 环境变量: JWT_REFRESH_TOKEN_REUSE_LEEWAY_SECONDS=60
-  refresh_token_reuse_leeway_seconds: 60
+  # 重发 3 次，在 Redis 里原子执行）。重试必须来自完成那次轮换的客户端（指纹一致）；别的客户端出示已轮换的令牌、
+  # 窗口外、或超过重发上限，一律按重放处理，撤销整个会话家族（防盗用）。窗口越长越容易被踩点，所以默认值低、
+  # 有上限。依赖 Redis 的 refresh token 存储（用到原子脚本）与实例间 NTP 校时（窗口按实例时钟计）。
+  # Environment / 环境变量: JWT_REFRESH_TOKEN_REUSE_LEEWAY_SECONDS=30
+  refresh_token_reuse_leeway_seconds: 30
 
 # =============================================================================
 # TOTP (2FA) Configuration

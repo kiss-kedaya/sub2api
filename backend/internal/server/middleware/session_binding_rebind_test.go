@@ -155,17 +155,18 @@ func TestEnforceSessionBindingRevokeModeRevokesTheSessionFamily(t *testing.T) {
 }
 
 // 浏览器小版本升级、同 /24 漂移、IPv4 <-> IPv6 切换都不算不一致：access token 照常放行，
-// 即使是 revoke 模式也不撤销。
+// 即使是 revoke 模式也不撤销。靠忽略 IP 家族才通过的请求（IPv4 <-> IPv6）单独计数。
 func TestEnforceSessionBindingLooseModeToleratesVersionBumpsAndIPFamilySwitch(t *testing.T) {
 	cases := []struct {
 		name           string
 		loginIP, ua    string
 		requestIP, ua2 string
+		familySwitch   bool
 	}{
-		{"browser version bump", "203.0.113.10", bindUAChrome130Win, "203.0.113.10", bindUAChrome131Win},
-		{"same /24 drift", "203.0.113.10", bindUAChrome130Win, "203.0.113.200", bindUAChrome130Win},
-		{"ipv4 to ipv6", "203.0.113.10", bindUAChrome130Win, "2001:db8:abcd:12::1", bindUAChrome130Win},
-		{"ipv6 to ipv4", "2001:db8:abcd:12::1", bindUAChrome130Win, "198.51.100.77", bindUAChrome130Win},
+		{"browser version bump", "203.0.113.10", bindUAChrome130Win, "203.0.113.10", bindUAChrome131Win, false},
+		{"same /24 drift", "203.0.113.10", bindUAChrome130Win, "203.0.113.200", bindUAChrome130Win, false},
+		{"ipv4 to ipv6", "203.0.113.10", bindUAChrome130Win, "2001:db8:abcd:12::1", bindUAChrome130Win, true},
+		{"ipv6 to ipv4", "2001:db8:abcd:12::1", bindUAChrome130Win, "198.51.100.77", bindUAChrome130Win, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -173,9 +174,26 @@ func TestEnforceSessionBindingLooseModeToleratesVersionBumpsAndIPFamilySwitch(t 
 			token := e.tokenFor(t, tc.loginIP, tc.ua)
 			require.Equal(t, http.StatusOK, e.call(token, tc.requestIP, tc.ua2).Code)
 			require.Empty(t, e.cache.revokedFamilies())
-			require.Zero(t, e.auth.AuthStatsSnapshot()["access_binding_mismatch"])
+			stats := e.auth.AuthStatsSnapshot()
+			require.Zero(t, stats["access_binding_mismatch"])
+			if tc.familySwitch {
+				require.EqualValues(t, 1, stats["access_ip_family_switch"], "passing only because the IP family differs is counted")
+			} else {
+				require.Zero(t, stats["access_ip_family_switch"])
+			}
 		})
 	}
+}
+
+// 跨 IP 家族时 IP 不参与比较，但浏览器家族 + 系统家族必须一致：换了 IP 家族又换了系统/浏览器，照样 401。
+func TestEnforceSessionBindingAcrossIPFamiliesStillRequiresTheSameBrowserAndOSFamily(t *testing.T) {
+	e := newBindingEnforceEnv(t, config.SessionBindingOnMismatchRebind)
+	token := e.tokenFor(t, "203.0.113.10", bindUAChrome130Win)
+
+	w := e.call(token, "2001:db8:dead:beef::1", bindUAFirefoxLinux)
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+	require.EqualValues(t, 1, e.auth.AuthStatsSnapshot()["access_binding_mismatch"])
+	require.Zero(t, e.auth.AuthStatsSnapshot()["access_ip_family_switch"])
 }
 
 // 升级前签发的 access token（没有粗粒度指纹、旧算法哈希）：同一个客户端照常放行；

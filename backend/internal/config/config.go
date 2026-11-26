@@ -42,8 +42,10 @@ const (
 )
 
 // 会话指纹不一致时的处置方式（security.session_binding_on_mismatch）：
-//   - rebind: 放行并用当前指纹重新绑定新令牌（默认；换网络/浏览器升级不掉线），
-//     只留一条限频 WARN；access token 校验仍返回 401，由前端刷新后重绑；
+//   - rebind: 只放行「浏览器家族 + 系统家族没变、只是 IP 变了」的刷新，并用当前指纹重新绑定新令牌
+//     （默认；换网段/浏览器升级不掉线）；家族变了仍撤销。只对首次出示的当前令牌生效——
+//     已被轮换掉的旧令牌在宽限窗口内再次出现，指纹不一致一律按重放处理。access token 校验仍返回 401，
+//     由前端刷新后重绑；
 //   - revoke: 撤销整个会话家族，必须重新登录（升级前的旧行为，要严格的用这个）。
 const (
 	SessionBindingOnMismatchRebind = "rebind"
@@ -58,9 +60,11 @@ const (
 	// DefaultSessionMaxLifetimeDays 是登录会话从首次登录起的绝对寿命上限（天）。
 	DefaultSessionMaxLifetimeDays = 90
 	// DefaultRefreshTokenReuseLeewaySeconds 是已轮换 refresh token 的「重试宽限」（秒）。
-	DefaultRefreshTokenReuseLeewaySeconds = 60
+	// 窗口越长越容易被踩点（偷到令牌的人抢在受害者之前换一次，受害者随后带着旧令牌回来仍落在窗口内），
+	// 所以取 30 秒：覆盖「响应丢失后立刻重试」，不覆盖「过一会儿再试」。
+	DefaultRefreshTokenReuseLeewaySeconds = 30
 	// MaxRefreshTokenReuseLeewaySeconds 是宽限的上限：再大就等于关掉重放检测。
-	MaxRefreshTokenReuseLeewaySeconds = 600
+	MaxRefreshTokenReuseLeewaySeconds = 120
 )
 
 // DefaultKeyRotationCutoff is the default value of security.key_rotation_cutoff.
@@ -870,9 +874,10 @@ type SecurityConfig struct {
 	// constants. Defaults to "loose"; set "off" to roll the binding back.
 	SessionBindingMode string `mapstructure:"session_binding_mode"`
 	// SessionBindingOnMismatch decides what a fingerprint mismatch does: "rebind"
-	// (default) lets the request through and re-binds the freshly issued tokens to
-	// the current fingerprint; "revoke" revokes the whole session family and forces
-	// a new login (the behaviour before rebind existed). See SessionBindingOnMismatch*.
+	// (default) lets a refresh through when only the IP changed (browser family and OS
+	// family unchanged) and re-binds the freshly issued tokens to the current fingerprint;
+	// "revoke" revokes the whole session family and forces a new login (the behaviour
+	// before rebind existed). See SessionBindingOnMismatch*.
 	SessionBindingOnMismatch string `mapstructure:"session_binding_on_mismatch"`
 	// OAuthCodeExchangeEnabled makes the GitHub / Google OAuth callbacks
 	// redirect the browser with a single-use, 60-second code instead of
@@ -2030,11 +2035,14 @@ type JWTConfig struct {
 	// 闲置超过该天数才需要重新登录。会话的绝对寿命上限见 SessionMaxLifetimeDays。
 	RefreshTokenExpireDays int `mapstructure:"refresh_token_expire_days"`
 	// SessionMaxLifetimeDays: 登录会话从首次登录起的绝对寿命上限（天），默认 90。
-	// 轮换不会延长它，到期必须重新登录；必须 >= RefreshTokenExpireDays。
+	// 轮换不会延长它，到期必须重新登录；不能小于 RefreshTokenExpireDays——小于时启动会自动抬高
+	// 到相等并打一条警告（不让升级后启动失败：旧版本把 refresh_token_expire_days 同时当绝对上限，
+	// 老部署可能只把它调大过）。
 	SessionMaxLifetimeDays int `mapstructure:"session_max_lifetime_days"`
 	// RefreshTokenReuseLeewaySeconds: 已轮换（已消费）的 Refresh Token 在被消费后的这段
-	// 时间内再次出现，视为「响应丢失后的合法重试」——不撤销会话，再签发一对新令牌；
-	// 超过宽限的重放仍撤销整个会话家族。默认 60 秒，0 = 关闭（旧行为：任何重放都撤销）。
+	// 时间内、由消费它的那个客户端（指纹一致）再次出示，视为「响应丢失后的合法重试」——
+	// 不撤销会话，再签发一对新令牌；别的客户端出示、超过宽限或名额用完的重放仍撤销整个会话家族。
+	// 默认 30 秒，0 = 关闭（旧行为：任何重放都撤销），上限 120 秒。
 	RefreshTokenReuseLeewaySeconds int `mapstructure:"refresh_token_reuse_leeway_seconds"`
 	// RefreshWindowMinutes: 刷新窗口（分钟），在Access Token过期前多久开始允许刷新
 	RefreshWindowMinutes int `mapstructure:"refresh_window_minutes"`
@@ -3445,8 +3453,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("jwt.session_max_lifetime_days must be positive")
 	}
 	if c.JWT.SessionMaxLifetimeDays < c.JWT.RefreshTokenExpireDays {
-		return fmt.Errorf("jwt.session_max_lifetime_days (%d) must be >= jwt.refresh_token_expire_days (%d): the session cap cannot be shorter than one refresh token's validity",
-			c.JWT.SessionMaxLifetimeDays, c.JWT.RefreshTokenExpireDays)
+		// 不让升级后启动失败：旧版本把 refresh_token_expire_days 同时当会话绝对上限，老部署可能只把它调大过
+		// （例如 120 天）而不知道有 session_max_lifetime_days。会话上限不能短于一枚令牌的有效期，抬高到相等并提示。
+		slog.Warn("jwt.session_max_lifetime_days is shorter than jwt.refresh_token_expire_days; raising it to match (set jwt.session_max_lifetime_days explicitly to silence this)",
+			"session_max_lifetime_days", c.JWT.SessionMaxLifetimeDays, "refresh_token_expire_days", c.JWT.RefreshTokenExpireDays)
+		c.JWT.SessionMaxLifetimeDays = c.JWT.RefreshTokenExpireDays
 	}
 	if c.JWT.SessionMaxLifetimeDays > 365 {
 		slog.Warn("jwt.session_max_lifetime_days is above one year; users could stay signed in indefinitely, consider a shorter cap", "session_max_lifetime_days", c.JWT.SessionMaxLifetimeDays)

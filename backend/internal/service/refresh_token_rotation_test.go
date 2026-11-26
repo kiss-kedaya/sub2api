@@ -45,12 +45,14 @@ type rotFixture struct {
 	mini  *miniredis.Miniredis
 	repo  *emailBindUserRepoStub
 	cache service.RefreshTokenCache
+	cfg   *config.Config
 	svc   *service.AuthService
 	user  *service.User
 }
 
-// newRotFixture 构造认证服务：每枚令牌滑动 14 天、会话上限 90 天、宽限 60 秒、绑定 loose + rebind
-// （都是新的生产默认值）。mutate 改配置，wrap 给 Redis 存储套一层故障注入。
+// newRotFixture 构造认证服务：每枚令牌滑动 14 天、会话上限 90 天、宽限取配置默认值（30 秒）、
+// 绑定 loose + rebind（都是新的生产默认值）。mutate 改配置，wrap 给 Redis 存储套一层故障注入
+// （包装器要自己转发 service.RefreshTokenAtomicStore，否则服务层看不到原子能力，会关掉宽限）。
 func newRotFixture(t *testing.T, mutate func(*config.Config), wrap func(service.RefreshTokenCache) service.RefreshTokenCache) *rotFixture {
 	t.Helper()
 	mini := miniredis.RunT(t)
@@ -77,7 +79,7 @@ func newRotFixture(t *testing.T, mutate func(*config.Config), wrap func(service.
 			AccessTokenExpireMinutes:       60,
 			RefreshTokenExpireDays:         14,
 			SessionMaxLifetimeDays:         90,
-			RefreshTokenReuseLeewaySeconds: 60,
+			RefreshTokenReuseLeewaySeconds: config.DefaultRefreshTokenReuseLeewaySeconds,
 		},
 		Security: config.SecurityConfig{
 			SessionBindingMode:       config.SessionBindingModeLoose,
@@ -88,7 +90,7 @@ func newRotFixture(t *testing.T, mutate func(*config.Config), wrap func(service.
 		mutate(cfg)
 	}
 	svc := service.NewAuthService(nil, repo, nil, cache, cfg, nil, nil, nil, nil, nil, nil, nil, nil)
-	return &rotFixture{t: t, mini: mini, repo: repo, cache: cache, svc: svc, user: user}
+	return &rotFixture{t: t, mini: mini, repo: repo, cache: cache, cfg: cfg, svc: svc, user: user}
 }
 
 func rotCtx(ip, ua string) context.Context {
@@ -165,6 +167,17 @@ func (f *rotFixture) familyMembers(familyID string) []string {
 	return members
 }
 
+// liveRefreshRecords 返回 Redis 里 refresh_token:* 记录（含墓碑）的数量。
+func (f *rotFixture) liveRefreshRecords() int {
+	n := 0
+	for _, key := range f.mini.Keys() {
+		if strings.HasPrefix(key, "refresh_token:") {
+			n++
+		}
+	}
+	return n
+}
+
 // requireSessionRevoked 断言整个会话已被撤销：所给令牌都查不到了。
 func (f *rotFixture) requireSessionRevoked(tokens ...string) {
 	f.t.Helper()
@@ -221,21 +234,22 @@ func TestRefreshRotationLeewayRetryReissuesWithoutRevokingFamily(t *testing.T) {
 // 宽限内的重试不延长宽限窗口：窗口从「消费」那一刻起算，重试不会让它重新计时。
 func TestRefreshRotationLeewayWindowIsAnchoredAtConsumeTime(t *testing.T) {
 	f := newRotFixture(t, nil, nil)
+	leeway := time.Duration(config.DefaultRefreshTokenReuseLeewaySeconds) * time.Second
 	pair0 := f.login(rotIPv4A, rotUAChrome130Win)
 	_, err := f.refresh(rotIPv4A, rotUAChrome130Win, pair0.RefreshToken)
 	require.NoError(t, err)
 	consumedAt := f.record(pair0.RefreshToken).ConsumedAt
 	require.False(t, consumedAt.IsZero(), "rotation must stamp ConsumedAt on the tombstone")
 
-	f.ageConsumedAt(pair0.RefreshToken, 59*time.Second)
+	f.ageConsumedAt(pair0.RefreshToken, leeway-time.Second)
 	_, err = f.refresh(rotIPv4A, rotUAChrome130Win, pair0.RefreshToken)
-	require.NoError(t, err, "59s after consumption is still inside the 60s leeway")
+	require.NoError(t, err, "1s before the end of the leeway window is still inside it")
 	after := f.record(pair0.RefreshToken)
-	require.True(t, after.ConsumedAt.Equal(consumedAt.Add(-59*time.Second)), "a retry must not move ConsumedAt")
+	require.True(t, after.ConsumedAt.Equal(consumedAt.Add(-(leeway - time.Second))), "a retry must not move ConsumedAt")
 
-	f.ageConsumedAt(pair0.RefreshToken, 2*time.Second) // 现在是 61 秒前
+	f.ageConsumedAt(pair0.RefreshToken, 2*time.Second) // 现在是窗口结束后 1 秒
 	_, err = f.refresh(rotIPv4A, rotUAChrome130Win, pair0.RefreshToken)
-	require.ErrorIs(t, err, service.ErrRefreshTokenReuse, "61s after consumption is a replay")
+	require.ErrorIs(t, err, service.ErrRefreshTokenReuse, "1s after the end of the leeway window is a replay")
 }
 
 // 超过宽限的重放仍然撤销整个家族（安全底线）：重放者拿到的、受害者手里的新令牌都作废。
@@ -349,24 +363,41 @@ func TestRefreshRotationLeewayRetryStillChecksUserAndExpiry(t *testing.T) {
 // 先发后消费
 // ---------------------------------------------------------------------------
 
-// flakyRefreshCache 在真实存储外面套一层故障注入：让接下来几次「写入新令牌 / 写入已消费墓碑 /
-// 删除单个令牌 / 登记用户与家族集合」失败。
+// flakyRefreshCache 在真实存储外面套一层故障注入：让接下来几次「写入新令牌 / 原子消费旧令牌 /
+// 占宽限名额 / 删除单个令牌 / 登记用户与家族集合」失败。它自己实现并转发 RefreshTokenAtomicStore——
+// 服务层靠类型断言发现原子能力，嵌入接口类型的包装器不转发就会把它藏起来。
 type flakyRefreshCache struct {
 	service.RefreshTokenCache
 	failNewStore  atomic.Int32
-	failTombstone atomic.Int32
+	failTombstone atomic.Int32 // 原子消费（ConsumeRefreshToken）失败
+	failReserve   atomic.Int32 // 占宽限名额（ReserveLeewayReissue）失败
 	failDelete    atomic.Int32
 	failSetAdds   atomic.Int32
 }
 
 var errCacheBoom = errors.New("redis boom")
 
+func (c *flakyRefreshCache) inner() service.RefreshTokenAtomicStore {
+	store, _ := c.RefreshTokenCache.(service.RefreshTokenAtomicStore)
+	return store
+}
+
+func (c *flakyRefreshCache) ConsumeRefreshToken(ctx context.Context, tokenHash string, tomb *service.RefreshTokenData, ttl time.Duration) (service.RefreshConsumeOutcome, error) {
+	if c.failTombstone.Add(-1) >= 0 {
+		return service.RefreshConsumeMissing, errCacheBoom
+	}
+	return c.inner().ConsumeRefreshToken(ctx, tokenHash, tomb, ttl)
+}
+
+func (c *flakyRefreshCache) ReserveLeewayReissue(ctx context.Context, tokenHash string, maxReissues int) (service.RefreshLeewayOutcome, int, error) {
+	if c.failReserve.Add(-1) >= 0 {
+		return service.RefreshLeewayMissing, 0, errCacheBoom
+	}
+	return c.inner().ReserveLeewayReissue(ctx, tokenHash, maxReissues)
+}
+
 func (c *flakyRefreshCache) StoreRefreshToken(ctx context.Context, tokenHash string, data *service.RefreshTokenData, ttl time.Duration) error {
-	if data.Consumed {
-		if c.failTombstone.Add(-1) >= 0 {
-			return errCacheBoom
-		}
-	} else if c.failNewStore.Add(-1) >= 0 {
+	if !data.Consumed && c.failNewStore.Add(-1) >= 0 {
 		return errCacheBoom
 	}
 	return c.RefreshTokenCache.StoreRefreshToken(ctx, tokenHash, data, ttl)
@@ -423,33 +454,25 @@ func TestRefreshRotationOldTokenStaysUsableWhenNewTokenCannotBeStored(t *testing
 	require.EqualValues(t, 1, f.svc.AuthStatsSnapshot()["refresh_unavailable"])
 }
 
-// 新令牌已经存好之后，旧令牌没能标成「已消费」不该让这次刷新失败：改为直接删除旧令牌。
-func TestRefreshRotationSucceedsWhenTombstoneWriteFails(t *testing.T) {
+// 新令牌已经存好之后，无法确认旧令牌被消费（原子消费出错）：保守起见丢弃刚发的新令牌、返回可重试的 503，
+// 旧令牌原样可用——不会留下一枚没人持有却有效的令牌，也不会把用户锁在外面。
+func TestRefreshRotationFailsClosedWhenTheConsumeCannotBeConfirmed(t *testing.T) {
 	f, flaky := newFlakyRotFixture(t, nil)
 	pair0 := f.login(rotIPv4A, rotUAChrome130Win)
+	require.Equal(t, 1, f.liveRefreshRecords())
 
 	flaky.failTombstone.Store(1)
-	rotated, err := f.refresh(rotIPv4A, rotUAChrome130Win, pair0.RefreshToken)
-	require.NoError(t, err)
-	require.Nil(t, f.record(pair0.RefreshToken), "the old token is deleted as the fallback")
+	_, err := f.refresh(rotIPv4A, rotUAChrome130Win, pair0.RefreshToken)
+	require.ErrorIs(t, err, service.ErrServiceUnavailable)
+	require.Equal(t, 1, f.liveRefreshRecords(), "the token issued in this attempt was discarded: no live credential nobody holds")
+	rec := f.record(pair0.RefreshToken)
+	require.NotNil(t, rec)
+	require.False(t, rec.Consumed, "the old token is untouched and can be retried safely")
 
-	// 旧令牌删掉了：重放只会得到 invalid（没有墓碑可撤销家族），新令牌不受影响。
-	_, err = f.refresh(rotIPv4A, rotUAChrome130Win, pair0.RefreshToken)
-	require.ErrorIs(t, err, service.ErrRefreshTokenInvalid)
-	_, err = f.refresh(rotIPv4A, rotUAChrome130Win, rotated.RefreshToken)
-	require.NoError(t, err)
-}
-
-// 墓碑和删除都失败（Redis 整体不可用）：这次刷新仍然把新令牌发给客户端，不能因为收尾失败把用户锁在外面。
-func TestRefreshRotationSucceedsWhenOldTokenCannotBeConsumedOrDeleted(t *testing.T) {
-	f, flaky := newFlakyRotFixture(t, nil)
-	pair0 := f.login(rotIPv4A, rotUAChrome130Win)
-
-	flaky.failTombstone.Store(1)
-	flaky.failDelete.Store(1)
 	rotated, err := f.refresh(rotIPv4A, rotUAChrome130Win, pair0.RefreshToken)
 	require.NoError(t, err)
 	require.NotEmpty(t, rotated.RefreshToken)
+	require.EqualValues(t, 1, f.svc.AuthStatsSnapshot()["refresh_unavailable"])
 }
 
 // 现有约定不变：令牌登记进用户/家族集合失败不影响主流程（令牌本身已经存好）。
@@ -589,27 +612,54 @@ func TestRefreshRotationLegacySessionWithoutStartFallsBackToCreatedAtForTheCap(t
 // 会话绑定：rebind / revoke
 // ---------------------------------------------------------------------------
 
-// 默认 rebind：换网段 + 换浏览器后刷新不掉线，新令牌带当前指纹（重绑），旧家族不撤销。
+// 默认 rebind：只是换了网段（同一个浏览器 + 系统）时刷新不掉线，新令牌带当前指纹（重绑），旧家族不撤销。
 func TestRefreshRotationBindingMismatchRebindsInsteadOfRevoking(t *testing.T) {
 	f := newRotFixture(t, nil, nil)
 	pair0 := f.login(rotIPv4A, rotUAChrome130Win)
 	login := f.record(pair0.RefreshToken)
 
-	rotated, err := f.refresh(rotIPv4B, rotUAFirefoxLinux, pair0.RefreshToken)
-	require.NoError(t, err, "a changed network/browser must not log the user out")
+	rotated, err := f.refresh(rotIPv4B, rotUAChrome130Win, pair0.RefreshToken)
+	require.NoError(t, err, "a changed network with the same browser/OS must not log the user out")
 
 	rec := f.record(rotated.RefreshToken)
 	require.Equal(t, login.FamilyID, rec.FamilyID, "same session")
 	require.NotEqual(t, login.BindingHash, rec.BindingHash, "the new token is bound to the current fingerprint")
-	rebound := &service.SessionBinding{IP: rotIPv4B, UserAgent: rotUAFirefoxLinux}
+	rebound := &service.SessionBinding{IP: rotIPv4B, UserAgent: rotUAChrome130Win}
 	require.Equal(t, rebound.HashForMode(config.SessionBindingModeLoose), rec.BindingHash)
 	require.Equal(t, rebound.CoarseFingerprint(), rec.BindingCoarse)
 	require.EqualValues(t, 1, f.svc.AuthStatsSnapshot()["refresh_binding_rebind"])
 
 	// 之后从新环境刷新不再算不一致。
-	_, err = f.refresh(rotIPv4B, rotUAFirefoxLinux, rotated.RefreshToken)
+	_, err = f.refresh(rotIPv4B, rotUAChrome130Win, rotated.RefreshToken)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, f.svc.AuthStatsSnapshot()["refresh_binding_rebind"], "only the first refresh from the new client is a rebind")
+}
+
+// rebind 只放行「浏览器家族 + 系统家族没变、只是 IP 变了」：家族变了（换了浏览器/系统，
+// 或是别的程序拿着令牌）即使在默认的 rebind 模式下也撤销整个会话家族。
+func TestRefreshRotationRebindRefusesWhenTheBrowserOrOSFamilyChanged(t *testing.T) {
+	cases := []struct {
+		name string
+		ip   string
+		ua   string
+	}{
+		{"other browser and OS family", rotIPv4B, rotUAFirefoxLinux},
+		{"other browser and OS family on the same network", rotIPv4A, rotUAFirefoxLinux},
+		{"a script holding the token", rotIPv4B, "curl/8.4.0"},
+		{"no user agent at all", rotIPv4B, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRotFixture(t, nil, nil) // 默认 rebind
+			pair0 := f.login(rotIPv4A, rotUAChrome130Win)
+			_, err := f.refresh(tc.ip, tc.ua, pair0.RefreshToken)
+			require.ErrorIs(t, err, service.ErrSessionBindingMismatch)
+			f.requireSessionRevoked(pair0.RefreshToken)
+			stats := f.svc.AuthStatsSnapshot()
+			require.EqualValues(t, 1, stats["refresh_binding_revoke"])
+			require.Zero(t, stats["refresh_binding_rebind"])
+		})
+	}
 }
 
 // revoke 模式保留旧行为：不一致即撤销整个家族，返回 SESSION_BINDING_MISMATCH。
@@ -786,6 +836,8 @@ func TestRefreshRotationConcurrentStormHasOnlyExpectedOutcomes(t *testing.T) {
 		}
 	}
 	require.Positive(t, succeeded)
+	// 重发上限在 Redis 里原子执行：不论怎么交错，成功的最多是「首次轮换 1 个 + 宽限重发 3 个」。
+	require.LessOrEqual(t, succeeded, 1+3, "the reissue cap must hold under concurrency")
 	stats := f.svc.AuthStatsSnapshot()
 	require.EqualValues(t, succeeded, stats["refresh_ok"])
 }
@@ -840,7 +892,7 @@ func TestRefreshRotationLogsNeverContainTokensHashesIPsOrUserAgents(t *testing.T
 	secrets := map[string]string{}
 	remember := func(name, value string) { secrets[name] = value }
 
-	// reuse + leeway retry + rebind（rebind 模式的夹具）
+	// rebind（只换网段）+ 宽限内重试 + 别的客户端在宽限内重放（默认 rebind 模式）
 	f := newRotFixture(t, nil, nil)
 	pair0 := f.login(rotIPv4A, rotUAChrome130Win)
 	remember("login access token", pair0.AccessToken)
@@ -848,22 +900,38 @@ func TestRefreshRotationLogsNeverContainTokensHashesIPsOrUserAgents(t *testing.T
 	remember("login refresh token hash", sha256Hex(pair0.RefreshToken))
 	remember("family id", f.record(pair0.RefreshToken).FamilyID)
 
-	rebound, err := f.refresh(rotIPv4B, rotUAFirefoxLinux, pair0.RefreshToken) // rebind
+	rebound, err := f.refresh(rotIPv4B, rotUAChrome130Win, pair0.RefreshToken) // rebind，消费者指纹 = B
 	require.NoError(t, err)
 	remember("rotated refresh token", rebound.RefreshToken)
 	remember("rotated refresh token hash", sha256Hex(rebound.RefreshToken))
-	retry, err := f.refresh(rotIPv4B, rotUAFirefoxLinux, pair0.RefreshToken) // leeway retry
+	retry, err := f.refresh(rotIPv4B, rotUAChrome130Win, pair0.RefreshToken) // 消费者自己重试
 	require.NoError(t, err)
 	remember("retry refresh token", retry.RefreshToken)
-	f.ageConsumedAt(pair0.RefreshToken, 5*time.Minute)
-	_, err = f.refresh(rotIPv4B, rotUAFirefoxLinux, pair0.RefreshToken) // reuse
+	_, err = f.refresh(rotIPv4A, rotUAChrome130Win, pair0.RefreshToken) // 别的客户端（A）在宽限内重放
 	require.ErrorIs(t, err, service.ErrRefreshTokenReuse)
 
-	// binding revoke + session expired（另起夹具）
+	// 宽限之外的重放
+	f2 := newRotFixture(t, nil, nil)
+	p2 := f2.login(rotIPv4A, rotUAChrome130Win)
+	remember("replay refresh token", p2.RefreshToken)
+	_, err = f2.refresh(rotIPv4A, rotUAChrome130Win, p2.RefreshToken)
+	require.NoError(t, err)
+	f2.ageConsumedAt(p2.RefreshToken, 5*time.Minute)
+	_, err = f2.refresh(rotIPv4A, rotUAChrome130Win, p2.RefreshToken)
+	require.ErrorIs(t, err, service.ErrRefreshTokenReuse)
+
+	// 家族变了（rebind 模式也撤销）
+	f3 := newRotFixture(t, nil, nil)
+	p3 := f3.login(rotIPv4A, rotUAChrome130Win)
+	remember("family-change refresh token", p3.RefreshToken)
+	_, err = f3.refresh(rotIPv4B, rotUAFirefoxLinux, p3.RefreshToken)
+	require.ErrorIs(t, err, service.ErrSessionBindingMismatch)
+
+	// binding revoke + session expired（revoke 模式的夹具）
 	g := newRotFixture(t, func(c *config.Config) { c.Security.SessionBindingOnMismatch = config.SessionBindingOnMismatchRevoke }, nil)
 	gp := g.login(rotIPv4A, rotUAChrome130Win)
 	remember("revoke-mode refresh token", gp.RefreshToken)
-	_, err = g.refresh(rotIPv4B, rotUAFirefoxLinux, gp.RefreshToken)
+	_, err = g.refresh(rotIPv4B, rotUAChrome130Win, gp.RefreshToken)
 	require.ErrorIs(t, err, service.ErrSessionBindingMismatch)
 	hp := g.login(rotIPv4A, rotUAChrome130Win)
 	g.rewrite(hp.RefreshToken, func(m map[string]any) { m["session_started_at"] = rotTime(time.Now().Add(-100 * 24 * time.Hour)) })
@@ -879,7 +947,7 @@ func TestRefreshRotationLogsNeverContainTokensHashesIPsOrUserAgents(t *testing.T
 	require.ErrorIs(t, err, service.ErrServiceUnavailable)
 	flaky.failTombstone.Store(1)
 	_, err = h.refresh(rotIPv4A, rotUAChrome130Win, hq.RefreshToken)
-	require.NoError(t, err)
+	require.ErrorIs(t, err, service.ErrServiceUnavailable)
 
 	out := logs.String()
 	require.NotEmpty(t, out)
@@ -895,13 +963,17 @@ func TestRefreshRotationLogsNeverContainTokensHashesIPsOrUserAgents(t *testing.T
 	require.Contains(t, out, fmt.Sprintf("user_id=%d", f.user.ID))
 	require.Contains(t, out, "from=chrome/windows/ipv4")
 	require.Contains(t, out, "to=firefox/linux/ipv4")
+	require.Contains(t, out, "consumer=chrome/windows/ipv4")
+	require.Contains(t, out, "replayer=chrome/windows/ipv4")
 	for _, message := range []string{
 		"refresh token replay detected",
 		"retried within the leeway window",
 		"session binding mismatch on refresh: session kept",
+		"replayed by a different client inside the leeway window",
 		"session binding mismatch on refresh: session family revoked",
 		"refresh session reached its absolute lifetime",
 		"issuing the new refresh token failed",
+		"could not mark the old refresh token consumed",
 	} {
 		require.Contains(t, out, message)
 	}

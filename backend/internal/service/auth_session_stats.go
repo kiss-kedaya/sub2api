@@ -25,13 +25,16 @@ const (
 	statRefreshExpired
 	statRefreshSessionExpired
 	statRefreshReuse
+	statRefreshReuseOtherClient
 	statRefreshReuseLeewayRetry
 	statRefreshBindingRebind
 	statRefreshBindingRevoke
+	statRefreshIPFamilySwitch
 	statRefreshRejected
 	statRefreshUnavailable
 	statAccessBindingMismatch
 	statAccessBindingRevoke
+	statAccessIPFamilySwitch
 	statLoginTokenPairRetryOK
 	statLoginTokenPairFallback
 	statWarnSuppressed
@@ -44,13 +47,16 @@ var authStatNames = [authStatCount]string{
 	statRefreshExpired:          "refresh_expired",
 	statRefreshSessionExpired:   "refresh_session_expired",
 	statRefreshReuse:            "refresh_reuse",
+	statRefreshReuseOtherClient: "refresh_reuse_other_client",
 	statRefreshReuseLeewayRetry: "refresh_reuse_leeway_retry",
 	statRefreshBindingRebind:    "refresh_binding_rebind",
 	statRefreshBindingRevoke:    "refresh_binding_revoke",
+	statRefreshIPFamilySwitch:   "refresh_ip_family_switch",
 	statRefreshRejected:         "refresh_rejected",
 	statRefreshUnavailable:      "refresh_unavailable",
 	statAccessBindingMismatch:   "access_binding_mismatch",
 	statAccessBindingRevoke:     "access_binding_revoke",
+	statAccessIPFamilySwitch:    "access_ip_family_switch",
 	statLoginTokenPairRetryOK:   "login_token_pair_retry_ok",
 	statLoginTokenPairFallback:  "login_token_pair_fallback",
 	statWarnSuppressed:          "warn_suppressed",
@@ -186,6 +192,13 @@ func (s *AuthService) NoteAccessBindingMismatch(userID int64, revoked bool) {
 		st.inc(statAccessBindingRevoke)
 		s.warnEvent("access_binding_revoke", "session binding mismatch on access token: session family revoked", "user_id", userID)
 	}
+}
+
+// NoteAccessIPFamilySwitch 记录 access token 路径上「靠忽略 IP 家族才通过」的一次比较
+// （令牌绑在 IPv4、请求来自 IPv6，或反过来）。只计数不打日志：正常用户在 WiFi 与蜂窝之间切换就会产生，
+// 但它也是 loose 绑定最松的地方，量突然变大值得看一眼。
+func (s *AuthService) NoteAccessIPFamilySwitch() {
+	s.authStats().inc(statAccessIPFamilySwitch)
 }
 
 // isContextDone 报告错误是否只是调用方取消/超时（客户端断开不是服务端故障，不值得 WARN）。

@@ -58,9 +58,14 @@ func SecurityClientIP(c *gin.Context) string {
 // enforceSessionBinding 校验 access token 的会话指纹（IP/UA 绑定）。
 // 指纹不匹配时一律写入审计安全事件并返回 401（前端遇到 401 会刷新令牌）；是否同时撤销该会话家族的
 // 所有 refresh token 由 security.session_binding_on_mismatch 决定：
-//   - rebind（默认）：不撤销。401 触发前端刷新，refresh 路径放行并用当前指纹重绑新令牌，
-//     换网络/浏览器升级不会掉线；偷到的 access token 单独在别的网络上仍然用不了；
+//   - rebind（默认）：不撤销。401 触发前端刷新，refresh 路径只放行「浏览器家族 + 系统家族没变、
+//     只是 IP 变了」的重绑，换网段/浏览器升级不会掉线；
 //   - revoke：撤销整个会话家族，必须重新登录（升级前的旧行为）。
+//
+// 这个校验是漂移检测器，不是防盗屏障：loose 模式下两边 IP 家族不同（IPv4 <-> IPv6）时不比较 IP，
+// 只比浏览器家族 + 系统家族，而 UA 是客户端自报的——所以偷到的 access token 换个 IP 家族、
+// 把 UA 写成同样的浏览器家族 + 系统家族就能通过。这种「靠忽略 IP 家族才通过」的请求单独计数
+// （access_ip_family_switch）。令牌被盗要靠 refresh 轮换的重放检测发现。
 //
 // 返回 false 表示请求已被中断。
 //
@@ -81,7 +86,11 @@ func enforceSessionBinding(
 		return true
 	}
 	binding := requestSessionBinding(c)
-	if settingService.SessionBindingMatches(binding, claims.BindingHash, claims.BindingCoarse) {
+	match := settingService.SessionBindingMatch(binding, claims.BindingHash, claims.BindingCoarse)
+	if match != service.BindingMismatch {
+		if match == service.BindingMatchedAcrossIPFamily && authService != nil {
+			authService.NoteAccessIPFamilySwitch()
+		}
 		return true
 	}
 

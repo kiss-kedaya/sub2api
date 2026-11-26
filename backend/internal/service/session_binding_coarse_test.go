@@ -173,3 +173,67 @@ func TestRefreshTokenDataAndClaimsStayCompatibleWithPreUpgradeJSON(t *testing.T)
 	require.NoError(t, err)
 	require.Contains(t, string(withCoarse), `"bcs":"chrome|windows|4|abcd1234"`)
 }
+
+// Match 三态：一致 / 靠忽略 IP 家族才一致 / 不一致。后者要被调用方单独计数。
+func TestSessionBindingMatchTellsIPFamilySwitchApart(t *testing.T) {
+	const (
+		chrome130 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+		chrome131 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+		firefox   = "Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0"
+		loose     = config.SessionBindingModeLoose
+	)
+	issued := &service.SessionBinding{IP: "203.0.113.10", UserAgent: chrome130}
+	hash, coarse := issued.HashForMode(loose), issued.CoarseFingerprint()
+
+	cases := []struct {
+		name string
+		b    *service.SessionBinding
+		want service.BindingMatch
+	}{
+		{"same client", &service.SessionBinding{IP: "203.0.113.10", UserAgent: chrome130}, service.BindingMatched},
+		{"same /24 + version bump", &service.SessionBinding{IP: "203.0.113.99", UserAgent: chrome131}, service.BindingMatched},
+		{"ipv4 -> ipv6, same browser/OS", &service.SessionBinding{IP: "2001:db8::1", UserAgent: chrome130}, service.BindingMatchedAcrossIPFamily},
+		{"ipv4 -> ipv6 + version bump", &service.SessionBinding{IP: "2001:db8::1", UserAgent: chrome131}, service.BindingMatchedAcrossIPFamily},
+		{"other /24, same family", &service.SessionBinding{IP: "198.51.100.10", UserAgent: chrome130}, service.BindingMismatch},
+		{"ipv4 -> ipv6 + other browser/OS", &service.SessionBinding{IP: "2001:db8::1", UserAgent: firefox}, service.BindingMismatch},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, tc.b.Match(loose, hash, coarse))
+			require.Equal(t, tc.want != service.BindingMismatch, tc.b.Matches(loose, hash, coarse), "Matches is Match != mismatch")
+		})
+	}
+}
+
+// 已知限制（评审 P5，写成测试免得被误当成屏障）：令牌绑在 IPv4 上时，攻击者换到任意 IPv6 地址、
+// 把 UA 写成同样的浏览器家族 + 系统家族（版本号随便写），比较照样通过——只是被单独计数。
+func TestSessionBindingKnownLimitAnotherIPFamilyWithASpoofedUserAgentPasses(t *testing.T) {
+	loose := config.SessionBindingModeLoose
+	victim := &service.SessionBinding{IP: "203.0.113.10", UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 Safari/537.36"}
+	attacker := &service.SessionBinding{IP: "2001:db8:dead:beef::1", UserAgent: "Mozilla/5.0 (Windows NT 10.0) Chrome/1 Safari/1"}
+
+	require.Equal(t, service.BindingMatchedAcrossIPFamily, attacker.Match(loose, victim.HashForMode(loose), victim.CoarseFingerprint()),
+		"the binding is a drift detector, not a theft barrier: the IP is not compared across IP families")
+	// 但不是完全没有门槛：浏览器/系统家族对不上、或同家族换了网段，仍然被拦。
+	script := &service.SessionBinding{IP: "2001:db8:dead:beef::1", UserAgent: "python-requests/2.31"}
+	require.Equal(t, service.BindingMismatch, script.Match(loose, victim.HashForMode(loose), victim.CoarseFingerprint()))
+	otherNet := &service.SessionBinding{IP: "198.51.100.77", UserAgent: victim.UserAgent}
+	require.Equal(t, service.BindingMismatch, otherNet.Match(loose, victim.HashForMode(loose), victim.CoarseFingerprint()))
+}
+
+// rebind 只放行「浏览器家族 + 系统家族没变」：ClientFamilyMatches 不看 IP；升级前的令牌没有粗粒度指纹，
+// 无法判断，按过渡期放行；有但解析不了则不放行。
+func TestSessionBindingClientFamilyMatches(t *testing.T) {
+	chromeWin := &service.SessionBinding{IP: "203.0.113.10", UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0.0.0 Safari/537.36"}
+	stored := chromeWin.CoarseFingerprint()
+
+	require.True(t, (&service.SessionBinding{IP: "198.51.100.1", UserAgent: "Mozilla/5.0 (Windows NT 10.0) Chrome/131.0.0.0 Safari/537.36"}).ClientFamilyMatches(stored), "version and IP do not matter")
+	require.True(t, (&service.SessionBinding{IP: "2001:db8::1", UserAgent: chromeWin.UserAgent}).ClientFamilyMatches(stored), "nor does the IP family")
+	require.False(t, (&service.SessionBinding{IP: "203.0.113.10", UserAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0"}).ClientFamilyMatches(stored))
+	require.False(t, (&service.SessionBinding{IP: "203.0.113.10", UserAgent: "curl/8.4.0"}).ClientFamilyMatches(stored))
+	require.False(t, (&service.SessionBinding{IP: "203.0.113.10"}).ClientFamilyMatches(stored), "no user agent is not the same client")
+
+	require.True(t, (&service.SessionBinding{IP: "198.51.100.1", UserAgent: "curl/8.4.0"}).ClientFamilyMatches(""), "legacy token without a coarse fingerprint: cannot tell, transitional allow")
+	require.False(t, chromeWin.ClientFamilyMatches("garbage"), "a coarse fingerprint that cannot be parsed is not trusted")
+	require.True(t, (*service.SessionBinding)(nil).ClientFamilyMatches(stored), "no binding on this request: nothing to compare")
+}
