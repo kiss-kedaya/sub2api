@@ -1,6 +1,8 @@
 package service
 
 import (
+	"bytes"
+	"net/http"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -196,6 +198,52 @@ func BenchmarkPerf18SanitizeBetaTokens(b *testing.B) {
 				if changed {
 					b.Fatal("unexpected change")
 				}
+			}
+		})
+	}
+}
+
+// BenchmarkPerf18CacheTTLAndDisplayBeta are the two body predicates buildUpstreamRequest* run per request.
+// "1h-needed": a 1h ephemeral breakpoint on the system block. "1h-literal-only": the string "1h" is in the
+// body (so the substring pre-filter passes) but no cache_control carries it, the full walk case.
+func BenchmarkPerf18CacheTTLAndDisplayBeta(b *testing.B) {
+	for _, sz := range perf18Sizes {
+		base := perf18AnthropicBody(sz.size, perf18Code, "")
+		needed := bytes.Replace(base, []byte(`"cache_control":{"type":"ephemeral"}`), []byte(`"cache_control":{"type":"ephemeral","ttl":"1h"}`), 1)
+		literal := bytes.Replace(base, []byte(`"stream":true`), []byte(`"stream":true,"note":"1h"`), 1)
+		b.Run("1h-needed/"+sz.name, func(b *testing.B) {
+			b.SetBytes(int64(len(needed)))
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if !requestNeedsExtendedCacheTTLBeta(needed) {
+					b.Fatal("expected needed")
+				}
+			}
+		})
+		b.Run("1h-literal-only/"+sz.name, func(b *testing.B) {
+			b.SetBytes(int64(len(literal)))
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if requestNeedsExtendedCacheTTLBeta(literal) {
+					b.Fatal("expected not needed")
+				}
+			}
+		})
+		b.Run("thinking-display/"+sz.name, func(b *testing.B) {
+			b.SetBytes(int64(len(base)))
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if requestNeedsThinkingDisplayUpdatesBeta(base) {
+					b.Fatal("expected not needed")
+				}
+			}
+		})
+		b.Run("apply-header-1h/"+sz.name, func(b *testing.B) {
+			b.SetBytes(int64(len(needed)))
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				h := http.Header{"anthropic-beta": []string{"oauth-2025-04-20"}}
+				applyExtendedCacheTTLBetaHeader(h, needed)
 			}
 		})
 	}

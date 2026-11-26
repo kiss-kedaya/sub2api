@@ -31,6 +31,11 @@ func requestNeedsThinkingDisplayUpdatesBeta(body []byte) bool {
 	if len(body) == 0 {
 		return false
 	}
+	// A walk over the top-level members answers it for every ordinary body; the gjson lookup below
+	// stays as the answer for the shapes the walk does not interpret.
+	if needed, known := thinkingDisplayUpdatesFast(body); known {
+		return needed
+	}
 	display := gjson.GetBytes(body, "thinking.display")
 	if !display.Exists() || display.Type != gjson.String {
 		return false
@@ -44,6 +49,12 @@ func ensureThinkingDisplayUpdatesBeta(betaHeader string, body []byte, drop map[s
 	if !requestNeedsThinkingDisplayUpdatesBeta(body) {
 		return betaHeader
 	}
+	return withThinkingDisplayUpdatesBeta(betaHeader, drop)
+}
+
+// withThinkingDisplayUpdatesBeta is ensureThinkingDisplayUpdatesBeta for a body already known to
+// need the beta (the body scan is not repeated).
+func withThinkingDisplayUpdatesBeta(betaHeader string, drop map[string]struct{}) string {
 	token := claude.BetaThinkingDisplayUpdates
 	if containsBetaToken(betaHeader, token) {
 		return betaHeader
@@ -66,7 +77,7 @@ func applyThinkingDisplayUpdatesBetaHeader(h http.Header, body []byte) {
 		return
 	}
 	current := strings.Join(anthropicBetaHeaderValues(h), ",")
-	next := ensureThinkingDisplayUpdatesBeta(current, body, nil)
+	next := withThinkingDisplayUpdatesBeta(current, nil)
 	if next == current {
 		return
 	}

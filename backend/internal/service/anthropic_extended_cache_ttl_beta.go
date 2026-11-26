@@ -68,6 +68,11 @@ func requestNeedsExtendedCacheTTLBeta(body []byte) bool {
 	if len(body) == 0 || !bytes.Contains(body, []byte(`"`+cacheTTLTarget1h+`"`)) {
 		return false
 	}
+	// One zero-allocation walk answers it for every ordinary body; the gjson walk below stays as
+	// the answer for the shapes the walk does not interpret (see anthropic_cache_control_probe.go).
+	if needed, known := extendedCacheTTLNeededFast(body); known {
+		return needed
+	}
 	needed := false
 	forEachCacheControl(body, func(cc gjson.Result) {
 		if cc.Get("type").String() == "ephemeral" && cc.Get("ttl").String() == cacheTTLTarget1h {
@@ -83,6 +88,12 @@ func ensureExtendedCacheTTLBeta(betaHeader string, body []byte, drop map[string]
 	if !requestNeedsExtendedCacheTTLBeta(body) {
 		return betaHeader
 	}
+	return withExtendedCacheTTLBeta(betaHeader, drop)
+}
+
+// withExtendedCacheTTLBeta is ensureExtendedCacheTTLBeta for a body already known to need the beta
+// (the body scan is not repeated).
+func withExtendedCacheTTLBeta(betaHeader string, drop map[string]struct{}) string {
 	token := claude.BetaExtendedCacheTTL
 	if containsBetaToken(betaHeader, token) {
 		return betaHeader
@@ -104,7 +115,7 @@ func applyExtendedCacheTTLBetaHeader(h http.Header, body []byte) {
 		return
 	}
 	current := strings.Join(anthropicBetaHeaderValues(h), ",")
-	next := ensureExtendedCacheTTLBeta(current, body, nil)
+	next := withExtendedCacheTTLBeta(current, nil)
 	if next == current {
 		return
 	}
