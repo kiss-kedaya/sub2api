@@ -59,6 +59,7 @@ type BalanceNotifyService struct {
 	userReader       balanceNotifyUserReader
 	settlementAlerts settlementAlertTracker
 	clock            func() time.Time // test hook; nil means time.Now
+	loadRetryBackoff time.Duration    // test hook; zero means the default backoff
 }
 
 // NewBalanceNotifyService creates a new BalanceNotifyService.

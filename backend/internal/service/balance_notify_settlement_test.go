@@ -48,16 +48,20 @@ func (s *settlementPushSpy) forUser(userID int64) int {
 }
 
 type settlementUserReaderStub struct {
-	mu    sync.Mutex
-	users map[int64]*User
-	err   error
-	calls int
+	mu        sync.Mutex
+	users     map[int64]*User
+	err       error
+	failFirst int // the first N reads fail with a transient error
+	calls     int
 }
 
 func (r *settlementUserReaderStub) GetByID(_ context.Context, id int64) (*User, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls++
+	if r.calls <= r.failFirst {
+		return nil, errors.New("transient read error")
+	}
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -109,6 +113,7 @@ func newSettlementNotifyFixture(t *testing.T, userIDs ...int64) *settlementNotif
 	}
 	svc.SetPushNotifier(f.push)
 	svc.SetUserReader(f.users)
+	svc.loadRetryBackoff = time.Millisecond
 	svc.clock = func() time.Time {
 		f.clockM.Lock()
 		defer f.clockM.Unlock()
@@ -297,13 +302,34 @@ func TestSettlementLowBalance_UserReadFailureDoesNotConsumeTheCooldown(t *testin
 
 	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 11, 9)})
 	f.neverPushed(t, 1)
-	require.Equal(t, 1, f.users.loadCalls())
+	require.Equal(t, settlementLowBalanceLoadAttempts, f.users.loadCalls(), "a bounded number of attempts, then give up")
 
 	// The alert could not be delivered, so the next crossing still gets its chance
 	// (it must not be swallowed by a cooldown that nothing was sent for).
 	f.users.setError(nil)
 	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 10.5, 9.5)})
 	f.pushed(t, 1, 1)
+}
+
+// 穿越是只会出现一次的边沿：之后的 flush 看到的余额都已经在阈值以下。读用户偶发失败不能
+// 成为这条提醒丢失的原因，所以在放弃之前重试几次。
+func TestSettlementLowBalance_TransientUserReadFailureIsRetried(t *testing.T) {
+	f := newSettlementNotifyFixture(t, 1)
+	f.users.failFirst = settlementLowBalanceLoadAttempts - 1
+
+	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 11, 9)})
+
+	f.pushed(t, 1, 1)
+	require.Equal(t, settlementLowBalanceLoadAttempts, f.users.loadCalls())
+	f.neverPushedMore(t, 1, 1)
+}
+
+// 用户已经被删掉时没有收件人可发，也没有重试的意义。
+func TestSettlementLowBalance_DeletedUserIsNotRetried(t *testing.T) {
+	f := newSettlementNotifyFixture(t) // user 1 does not exist
+	f.svc.ObserveBalanceSettlements([]UsageBalanceSettlementResult{settled(1, 11, 9)})
+	f.neverPushed(t, 1)
+	require.Equal(t, 1, f.users.loadCalls())
 }
 
 func TestSettlementLowBalance_UserWhoJustDisabledAlertsIsNotAlerted(t *testing.T) {

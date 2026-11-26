@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -28,8 +29,13 @@ const (
 	// settlementLowBalanceCooldownMaxEntries 超过这个条目数时清理已过期的冷却记录，
 	// 让冷却表的大小与「最近半小时被提醒过的用户数」同阶，不会随时间无界增长。
 	settlementLowBalanceCooldownMaxEntries = 4096
-	// settlementLowBalanceLoadTimeout 限制一次穿越判断里读设置/读用户的总耗时。
+	// settlementLowBalanceLoadTimeout 限制一次穿越判断里读设置/读用户（含重试）的总耗时。
 	settlementLowBalanceLoadTimeout = 3 * time.Second
+	// settlementLowBalanceLoadAttempts 是穿越后读用户取收件人的最多尝试次数。穿越是只会出现
+	// 一次的边沿（之后的 flush 看到的都已经在阈值以下），读用户偶发失败不能成为这条提醒丢失的原因。
+	settlementLowBalanceLoadAttempts = 3
+	// settlementLowBalanceLoadBackoff 是重试间隔的基数（第 n 次重试前等 n 倍）。
+	settlementLowBalanceLoadBackoff = 150 * time.Millisecond
 )
 
 // balanceNotifyUserReader 是提醒服务取完整用户（收件人、用户名）所需的最小接口。
@@ -122,8 +128,8 @@ func (s *BalanceNotifyService) observeSettledBalance(r *UsageBalanceSettlementRe
 	if !s.settlementAlerts.claim(r.UserID, s.settlementNow(), settlementLowBalanceCooldown) {
 		return
 	}
-	user, err := s.userReader.GetByID(ctx, r.UserID)
-	if err != nil || user == nil || user.ID != r.UserID {
+	user, err := s.loadAlertUser(ctx, r.UserID)
+	if err != nil {
 		s.settlementAlerts.release(r.UserID)
 		slog.Warn("settlement low balance alert skipped: user unavailable", "user_id", r.UserID, "error", err)
 		return
@@ -133,4 +139,34 @@ func (s *BalanceNotifyService) observeSettledBalance(r *UsageBalanceSettlementRe
 		return
 	}
 	s.dispatchBalanceLowEmail(ctx, user, newBalance, threshold, rechargeURL)
+}
+
+// loadAlertUser 读取收件人所需的完整用户，瞬时失败时有限次重试。用户已不存在时不重试。
+func (s *BalanceNotifyService) loadAlertUser(ctx context.Context, userID int64) (*User, error) {
+	backoff := settlementLowBalanceLoadBackoff
+	if s.loadRetryBackoff > 0 {
+		backoff = s.loadRetryBackoff
+	}
+	var lastErr error
+	for attempt := 0; attempt < settlementLowBalanceLoadAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, errors.Join(lastErr, ctx.Err())
+			case <-time.After(time.Duration(attempt) * backoff):
+			}
+		}
+		user, err := s.userReader.GetByID(ctx, userID)
+		if err == nil && user != nil && user.ID == userID {
+			return user, nil
+		}
+		if err == nil {
+			err = ErrUserNotFound
+		}
+		lastErr = err
+		if errors.Is(err, ErrUserNotFound) {
+			break
+		}
+	}
+	return nil, lastErr
 }
