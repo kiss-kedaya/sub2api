@@ -93,10 +93,10 @@ type CryptoConfig struct {
 	// RPCRatePerSec is the ceiling, in calls per second, of the adaptive pacing
 	// every RPC endpoint gets. A healthy endpoint is never held below it; an HTTP
 	// 429 halves the rate (and honours Retry-After) and answers without one bring
-	// it back. Zero keeps the default of 20, which a scan pass does not reach:
-	// raise it for a paid plan, set it to the maximum to take the ceiling out of
-	// the way (429 handling still applies). Unlike rpc_throttle_ms this is not a
-	// fixed spacing, so it cannot stretch a scan pass the way that did.
+	// it back. 0 (unset) means the default, 40 calls/second, which a scan pass does
+	// not reach: raise it for a paid plan, and to take the ceiling out of the way
+	// enter the maximum, 1000 (429 handling still applies). Unlike rpc_throttle_ms
+	// this is not a fixed spacing, so it cannot stretch a scan pass the way that did.
 	RPCRatePerSec int `json:"rpc_rate_per_sec,omitempty"`
 
 	// Sweep settings.

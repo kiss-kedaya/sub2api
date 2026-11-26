@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"math"
 	"net/http"
 	"sync"
@@ -260,7 +261,12 @@ func TestParseRetryAfter(t *testing.T) {
 		want  time.Duration
 	}{
 		{"", 0}, {"0", 0}, {"-5", 0}, {"7", 7 * time.Second}, {" 7 ", 7 * time.Second},
-		{"3600", maxRetryAfter}, {"99999999999999999999", 0}, {date, 20 * time.Second}, {past, 0}, {"soon", 0},
+		{"3600", maxRetryAfter},
+		// A number too large for an int64 is a very long wait, capped like any other,
+		// not a missing header.
+		{"99999999999999999999", maxRetryAfter}, {"18446744073709551616", maxRetryAfter},
+		{"+5", 5 * time.Second}, {"-0", 0}, {"1.5", 0}, {"1e3", 0},
+		{date, 20 * time.Second}, {past, 0}, {"soon", 0},
 	} {
 		header := http.Header{}
 		if tc.value != "" {
@@ -277,7 +283,7 @@ func TestAcquireNeverSpendsMoreThanHalfTheCallersDeadline(t *testing.T) {
 	clock := newFakeClock() // static: the bucket does not refill while the test runs
 	e := newEndpointTraffic("h", 10, clock.Now, nil)
 	for i := 0; i < int(rateBurst); i++ {
-		if err := e.acquire(context.Background()); err != nil {
+		if err := e.acquire(context.Background(), 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -285,7 +291,7 @@ func TestAcquireNeverSpendsMoreThanHalfTheCallersDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if err := e.acquire(ctx); err != errLocalRateLimit {
+	if err := e.acquire(ctx, 0); err != errLocalRateLimit {
 		t.Fatalf("acquire = %v, want errLocalRateLimit", err)
 	}
 	if time.Since(start) > 500*time.Millisecond {
@@ -293,7 +299,7 @@ func TestAcquireNeverSpendsMoreThanHalfTheCallersDeadline(t *testing.T) {
 	}
 	// With plenty of time it waits (the refusal claimed nothing) and then goes.
 	start = time.Now()
-	if err := e.acquire(context.Background()); err != nil {
+	if err := e.acquire(context.Background(), 0); err != nil {
 		t.Fatal(err)
 	}
 	if took := time.Since(start); took < 50*time.Millisecond || took > 3*time.Second {
@@ -305,7 +311,7 @@ func TestAcquireGivesTheTokenBackWhenTheCallerGivesUp(t *testing.T) {
 	clock := newFakeClock() // static: no refill, so the balance must come back exactly
 	e := newEndpointTraffic("h", 10, clock.Now, nil)
 	for i := 0; i < int(rateBurst); i++ {
-		_ = e.acquire(context.Background())
+		_ = e.acquire(context.Background(), 0)
 	}
 	e.mu.Lock()
 	before := e.tokens
@@ -313,7 +319,7 @@ func TestAcquireGivesTheTokenBackWhenTheCallerGivesUp(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
-		go func() { done <- e.acquire(ctx) }() // needs 100ms, well inside the bound
+		go func() { done <- e.acquire(ctx, 0) }() // needs 100ms, well inside the bound
 		time.Sleep(5 * time.Millisecond)
 		cancel()
 		if err := <-done; err != context.Canceled {
@@ -336,7 +342,7 @@ func TestLimiterIsSafeUnderConcurrency(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 200; i++ {
-				if err := e.acquire(context.Background()); err != nil {
+				if err := e.acquire(context.Background(), 0); err != nil {
 					continue
 				}
 				e.sent(false)
@@ -355,4 +361,116 @@ func TestLimiterIsSafeUnderConcurrency(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// --- the defaults -----------------------------------------------------------------------
+
+// The defaults are decisions with numbers behind them (see defaultRatePerSec and
+// rateBurst); pinned, so that changing one is deliberate.
+func TestDefaultPacingKeepsHeadroomForAScanPass(t *testing.T) {
+	if defaultRatePerSec != 40 {
+		t.Fatalf("defaultRatePerSec = %v, want 40", defaultRatePerSec)
+	}
+	if rateBurst != 32 {
+		t.Fatalf("rateBurst = %v, want 32", rateBurst)
+	}
+	if rateBurst <= maxConnsPerHost {
+		t.Fatalf("rateBurst = %v is not above the connection cap %d: calls beyond the cap queue for a connection, pacing must not delay them too", rateBurst, maxConnsPerHost)
+	}
+	if limiterMaxWait != 2*time.Second || rotationMaxWait != 250*time.Millisecond {
+		t.Fatalf("waits = %v / %v, want 2s / 250ms", limiterMaxWait, rotationMaxWait)
+	}
+}
+
+// The load a BSC chain puts on its one log-serving endpoint - about 17-18 calls a
+// second in steady state, a whole pass of 32 batches at once - never waits at the
+// default, and still does not after the first 429 has halved the rate. At 20 calls a
+// second (and a burst of 16) both did.
+func TestScanLoadBelowTheDefaultCeilingNeverWaits(t *testing.T) {
+	clock := newFakeClock()
+	e := newTestEndpoint(clock, defaultRatePerSec)
+	for i := 0; i < int(rateBurst); i++ { // one pass at once
+		if wait := mustReserve(t, e, clock, time.Hour); wait != 0 {
+			t.Fatalf("call %d of a pass waited %v", i, wait)
+		}
+	}
+	step := time.Second / 30 // 30 calls a second, above the estimate
+	for i := 0; i < 600; i++ {
+		clock.Advance(step)
+		if wait := mustReserve(t, e, clock, time.Hour); wait != 0 {
+			t.Fatalf("call %d of a steady 30/s load waited %v at the default ceiling", i, wait)
+		}
+	}
+	// A 429 halves the rate; the load of the estimate (18 a second) still fits.
+	clock.Advance(time.Second)
+	e.rateLimited(clock.Now(), clock.Now().Add(time.Millisecond), 0)
+	clock.Advance(time.Second)
+	for i := 0; i < 360; i++ {
+		clock.Advance(time.Second / 18)
+		if wait := mustReserve(t, e, clock, time.Hour); wait != 0 {
+			t.Fatalf("call %d of a steady 18/s load waited %v after one halving of the default", i, wait)
+		}
+	}
+}
+
+// --- a context that has already run out is a timeout, not a rate limit ---------------
+
+func TestAcquireWithAnExpiredContextIsATimeoutNotARateLimit(t *testing.T) {
+	clock := newFakeClock()
+	e := newTestEndpoint(clock, 20)
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if err := e.acquire(expired, 0); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("acquire with an expired deadline = %v, want context.DeadlineExceeded", err)
+	}
+	canceled, stop := context.WithCancel(context.Background())
+	stop()
+	if err := e.acquire(canceled, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("acquire with a canceled context = %v, want context.Canceled", err)
+	}
+	e.mu.Lock()
+	tokens := e.tokens
+	e.mu.Unlock()
+	if tokens != rateBurst {
+		t.Fatalf("tokens = %v: a call that never started claimed one", tokens)
+	}
+	if got := e.snapshot().Throttled; got != 0 {
+		t.Fatalf("throttled = %d: the call was counted as a local rate limit", got)
+	}
+}
+
+// --- Retry-After is a block, not recovery time ---------------------------------------
+
+// The climb back starts when the block ends. Counted from the 429, the first answer
+// after a 30 s Retry-After lifted the rate straight back to the ceiling and the
+// halving was forgotten.
+func TestRateAfterALongRetryAfterKeepsTheHalving(t *testing.T) {
+	for name, retryAfter := range map[string]time.Duration{"30s": 30 * time.Second, "hostile 24h (capped)": 24 * time.Hour} {
+		t.Run(name, func(t *testing.T) {
+			clock := newFakeClock()
+			e := newTestEndpoint(clock, 20)
+			sent := clock.Now()
+			clock.Advance(10 * time.Millisecond)
+			e.rateLimited(sent, clock.Now(), retryAfter) // 20 -> 10
+			blocked := min(retryAfter, maxRetryAfter)
+			clock.Advance(blocked + time.Second) // one second after the block ended
+			e.answered(clock.Now())
+			e.mu.Lock()
+			rate := e.rate
+			e.mu.Unlock()
+			// One second of recovery is ceiling/60 = 0.33; the whole block counted would be 10 or 20.
+			if rate < 10 || rate > 10.5 {
+				t.Fatalf("rate one second after the block = %v, want about 10.3 (the halving remembered)", rate)
+			}
+			// And it does climb afterwards.
+			clock.Advance(30 * time.Second)
+			e.answered(clock.Now())
+			e.mu.Lock()
+			rate = e.rate
+			e.mu.Unlock()
+			if rate < 19.5 {
+				t.Fatalf("rate after 30 more seconds of answers = %v, want back near the ceiling", rate)
+			}
+		})
+	}
 }

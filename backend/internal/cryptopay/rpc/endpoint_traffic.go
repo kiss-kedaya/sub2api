@@ -32,18 +32,36 @@ import (
 //     429-shaped Failure, which the pool already answers by rotating to another
 //     endpoint and the scanner by retrying the batch later. One slow endpoint can
 //     therefore never hold the scan lock for longer than that.
+//   - A reason to wait for a busy endpoint while a free one is next in line. While
+//     the pool still has another candidate to try, the call waits at most
+//     rotationMaxWait (Pool sets it through callHint): a throttled endpoint is
+//     skipped, not queued behind, so one endpoint at 5 calls/s cannot hold every
+//     worker of a three-endpoint pool at its own pace. The last (or only) candidate
+//     waits the full limiterMaxWait.
 
 const (
 	// defaultRatePerSec is the ceiling of a healthy endpoint, in requests/second.
-	// Steady scanning is a few requests per second per endpoint; this only ever
-	// binds on a sustained flood.
-	defaultRatePerSec = 20.0
-	// MaxRatePerSec is the largest ceiling an operator may configure. Set it to
-	// remove the ceiling in practice; 429 handling still applies.
+	// A BSC scan pass (every 5 s) is about 4*ceil(addresses/200) log queries per
+	// chain - the head security window, the head observation, and the forward range
+	// twice (security and deposits) - and when the free nodes are cut down to one
+	// log-serving endpoint they all land on it: roughly 12 calls/s for 2800
+	// watched addresses, 17-18 with the recent-replay window. 20 left no headroom,
+	// and the first 429 (halving to 10) put demand above capacity. 40 keeps a
+	// healthy endpoint untouched with room to spare; a 429 still halves it.
+	defaultRatePerSec = 40.0
+	// MaxRatePerSec is the largest ceiling an operator may configure
+	// (rpc_rate_per_sec: 0 means the default, 1000 takes the ceiling out of the
+	// way in practice). 429 handling still applies at any value.
 	MaxRatePerSec = 1000
-	// rateBurst is how many calls may start at once: the per-host connection cap,
-	// i.e. the most one endpoint can have in flight anyway.
-	rateBurst = float64(maxConnsPerHost)
+	// rateBurst is how many calls may start at once. It is NOT the connection cap:
+	// calls beyond the cap are not delayed by pacing, they queue for a connection
+	// inside the transport, and one scan pass issues dozens of address batches at
+	// once. A burst equal to the cap (16) made the second half of a normal pass wait
+	// for tokens. 32 covers a pass; sustained load is still bound by the rate.
+	rateBurst = 32.0
+	// rotationMaxWait is how long a call waits for an endpoint's turn while the pool
+	// still has another endpoint to try (see the header comment).
+	rotationMaxWait = 250 * time.Millisecond
 	// rateFloor keeps a throttled endpoint probed (one call per two seconds) so it
 	// can be seen recovering.
 	rateFloor = 0.5
@@ -197,6 +215,13 @@ func (e *endpointTraffic) rateLimited(sentAt, now time.Time, retryAfter time.Dur
 		if until := now.Add(retryAfter); until.After(e.blockedUntil) {
 			e.blockedUntil = until
 		}
+		// The time spent waiting out the Retry-After is not time spent recovering:
+		// the climb back starts when the block ends. Counted as recovery, the first
+		// answer after a 30 s Retry-After lifted the rate straight back to the
+		// ceiling and the halving was forgotten.
+		if e.blockedUntil.After(e.lastRaise) {
+			e.lastRaise = e.blockedUntil
+		}
 		if e.tokens > 0 {
 			e.tokens = 0
 		}
@@ -232,9 +257,17 @@ func (e *endpointTraffic) setCeiling(perSec float64) {
 
 // acquire waits for this endpoint's turn. It returns nil when the call may be
 // sent, errLocalRateLimit when the wait would be too long (nothing is claimed),
-// or the context's error when the caller gave up while waiting.
-func (e *endpointTraffic) acquire(ctx context.Context) error {
+// or the context's error when the caller gave up (or had already run out of time:
+// that is a timeout, not a rate limit). bound, when positive and shorter than
+// limiterMaxWait, is the caller's own limit on the wait.
+func (e *endpointTraffic) acquire(ctx context.Context, bound time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	maxWait := limiterMaxWait
+	if bound > 0 && bound < maxWait {
+		maxWait = bound
+	}
 	if deadline, ok := ctx.Deadline(); ok {
 		// Never spend more than half of what the caller has left on waiting: the
 		// request itself still needs the other half.
@@ -372,7 +405,17 @@ func parseRetryAfter(header http.Header, now time.Time) time.Duration {
 	if value == "" {
 		return 0
 	}
+	if allDigits(value) {
+		// A number too large for any integer type is still a very long wait, not no
+		// wait: cap it like any other long one.
+		seconds, err := strconv.ParseUint(value, 10, 64)
+		if err != nil || seconds > uint64(maxRetryAfter/time.Second) {
+			return maxRetryAfter
+		}
+		return time.Duration(seconds) * time.Second
+	}
 	if seconds, err := strconv.Atoi(value); err == nil {
+		// A signed number ("+5", "-5", "-0"): a negative or zero one is no wait.
 		if seconds <= 0 {
 			return 0
 		}
@@ -387,6 +430,18 @@ func parseRetryAfter(header http.Header, now time.Time) time.Duration {
 		}
 	}
 	return 0
+}
+
+func allDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // logTraffic is the one-line-per-endpoint-per-minute summary. The host is the

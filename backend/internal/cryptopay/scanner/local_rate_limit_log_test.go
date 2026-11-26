@@ -30,8 +30,18 @@ func TestScanFailureLogMarksALocalRateLimit(t *testing.T) {
 	if _, marked := remote["local_rate_limit"]; marked {
 		t.Fatalf("a node's own 429 was marked as local: %v", remote)
 	}
-	if !isRateLimitedScan(&rpc.Failure{Kind: "http", HTTPStatus: 429, Throttled: true}) {
-		t.Fatal("a local refusal must still make the pass wait out a rate limit and try again")
+	// The pass repeats itself after a short wait when a NODE rate limited it. A refusal
+	// by this process's own pacing is not that: repeating the pass 3 s later only meets
+	// the limiter again, so it is left to the chain's backoff.
+	if isRateLimitedScan(&rpc.Failure{Kind: "http", HTTPStatus: 429, Throttled: true}) {
+		t.Fatal("a local refusal must not make the pass wait and repeat itself")
+	}
+	if isRateLimitedScan(errors.Join(&rpc.Failure{Kind: "http", HTTPStatus: 429, Throttled: true})) {
+		t.Fatal("neither inside a joined error")
+	}
+	if !isRateLimitedScan(&rpc.Failure{Kind: "http", HTTPStatus: 429, Host: "bsc.example.test"}) ||
+		!isRateLimitedScan(&rpc.Failure{Kind: "remote", RPCCode: 429}) {
+		t.Fatal("a node's own 429 must still make the pass wait out the rate limit and try again")
 	}
 	if !retryableBatchFailure(errors.Join(&rpc.Failure{Kind: "http", HTTPStatus: 429, Throttled: true})) {
 		t.Fatal("a locally refused batch must be retried later like any rate-limited batch")

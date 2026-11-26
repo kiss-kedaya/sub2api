@@ -38,12 +38,27 @@ const (
 	// maxIdleConns bounds the connections kept warm across all hosts.
 	maxIdleConns = 128
 	// idleConnTimeout closes a connection that has been quiet this long. It is
-	// shorter than the idle timeouts providers and NAT gateways commonly use, so
-	// the pool drops a connection before the other side does and a "stale"
-	// connection stays the rare race that the one retry in Pool covers.
-	idleConnTimeout       = 60 * time.Second
+	// shorter than the idle timeouts providers, load balancers and NAT gateways
+	// commonly use (60 s is the usual one, and a client that waits exactly as long
+	// as the other side races it), so the pool drops a connection before the other
+	// side does and a "stale" connection stays the rare race that the one retry in
+	// Pool covers.
+	idleConnTimeout       = 45 * time.Second
 	expectContinueTimeout = time.Second
 	maxResponseHeaderSize = 16 << 10
+
+	// h2SendPingTimeout and h2PingTimeout are the HTTP/2 health check of a pooled
+	// connection. Go's default is none: a connection that goes silent without a FIN
+	// or an RST (a path black hole, a NAT that dropped the flow) is then reused by
+	// every call, each waiting out its full timeout, for as long as traffic keeps
+	// coming - an HTTP/1.1 connection is dropped after its first timeout, a
+	// multiplexed one is not - until the kernel gives up on the TCP retransmits
+	// (about 15 minutes on Linux). With the check, a connection that has received no
+	// frame for h2SendPingTimeout gets a ping and is closed if h2PingTimeout later
+	// nothing came back, so a dead connection costs one or two calls, not a stalled
+	// chain. A healthy server answers a ping at once, however slow its handlers are.
+	h2SendPingTimeout = 15 * time.Second
+	h2PingTimeout     = 10 * time.Second
 )
 
 // callHint travels in the request context from Pool.callOne to the transport.
@@ -54,6 +69,10 @@ type callHint struct {
 	fresh bool
 	// staleRetry marks that retry, for the traffic summary only.
 	staleRetry bool
+	// maxWait bounds how long the endpoint's pacing may hold this call. Zero means
+	// the default (limiterMaxWait). Pool sets a short one while another endpoint is
+	// left to try, so a busy endpoint is skipped instead of waited for.
+	maxWait time.Duration
 }
 
 type callHintKey struct{}
@@ -112,11 +131,13 @@ type publicTransportConfig struct {
 	now           func() time.Time
 
 	// Seams for tests. The zero values are the production settings.
-	tlsConfig   *tls.Config
-	idleTimeout time.Duration
-	dnsTTL      time.Duration
-	ratePerSec  float64
-	trafficSink func(host string, traffic EndpointTraffic)
+	tlsConfig     *tls.Config
+	idleTimeout   time.Duration
+	dnsTTL        time.Duration
+	ratePerSec    float64
+	h2SendPing    time.Duration
+	h2PingTimeout time.Duration
+	trafficSink   func(host string, traffic EndpointTraffic)
 }
 
 // publicTransport is the http.RoundTripper behind every configured RPC endpoint.
@@ -167,6 +188,14 @@ func newPublicTransport(cfg publicTransportConfig) *publicTransport {
 	if cfg.idleTimeout > 0 {
 		pooled.IdleConnTimeout = cfg.idleTimeout
 	}
+	// Only the pooled transport: a one-shot connection is gone after its one call.
+	pooled.HTTP2 = &http.HTTP2Config{SendPingTimeout: h2SendPingTimeout, PingTimeout: h2PingTimeout}
+	if cfg.h2SendPing > 0 {
+		pooled.HTTP2.SendPingTimeout = cfg.h2SendPing
+	}
+	if cfg.h2PingTimeout > 0 {
+		pooled.HTTP2.PingTimeout = cfg.h2PingTimeout
+	}
 	fresh := build()
 	fresh.DisableKeepAlives = true
 	sink := cfg.trafficSink
@@ -183,7 +212,7 @@ func (t *publicTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	hint, _ := ctx.Value(callHintKey{}).(callHint)
 	endpoint := t.traffic.get(req.URL)
 	if endpoint != nil {
-		if err := endpoint.acquire(ctx); err != nil {
+		if err := endpoint.acquire(ctx, hint.maxWait); err != nil {
 			return nil, err
 		}
 		endpoint.sent(hint.staleRetry)

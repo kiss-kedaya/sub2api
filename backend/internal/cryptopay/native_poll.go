@@ -427,9 +427,10 @@ func nativeFailureReporter() func(chain string, cause error) {
 // repeated. An outage changes from poll to poll and is worth a line a minute; a
 // missing key does not change until an operator sets one, and logging it every
 // minute (two lines a minute for BSC and Ethereum, for months) buried the real
-// scan failures. It is still repeated, so the gap (native outflow monitoring is not
-// running without it) never becomes invisible.
-const nativeConfigGapReportEvery = time.Hour
+// scan failures. It is still repeated, and often enough to matter: without the key
+// the hot wallet's native outflow monitoring is not running, so the gap is
+// reported every quarter of an hour, never hidden.
+const nativeConfigGapReportEvery = 15 * time.Minute
 
 func newNativeFailureReporter(now func() time.Time) func(chain string, cause error) {
 	lastByChain := map[string]time.Time{}

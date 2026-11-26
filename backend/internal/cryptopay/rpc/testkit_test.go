@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -136,4 +137,32 @@ func mustParseURL(t testing.TB, raw string) *url.URL {
 		t.Fatal(err)
 	}
 	return parsed
+}
+
+// twoNodeClient is ONE production-shaped client that reaches two fixtures, so a pool
+// of two endpoints shares a transport (and its pacing state) as it does in
+// production. a's settings are the base; b is reached by its port.
+func twoNodeClient(a, b *tlsFixture, mutate ...func(*publicTransportConfig)) *http.Client {
+	cfg := a.config()
+	cfg.tlsConfig.RootCAs.AddCert(b.server.Certificate())
+	inner := cfg.dial
+	cfg.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if strings.HasSuffix(address, ":"+b.port) {
+			return (&net.Dialer{}).DialContext(ctx, network, b.addr())
+		}
+		return inner(ctx, network, address)
+	}
+	for _, m := range mutate {
+		m(&cfg)
+	}
+	return newPublicHTTPClientConfig(15*time.Second, cfg)
+}
+
+// countingHandler answers every method with 0x10 and counts the requests.
+func countingHandler(hits *atomic.Int32) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = requestMethod(r)
+		hits.Add(1)
+		rpcResult(w, `"0x10"`)
+	})
 }

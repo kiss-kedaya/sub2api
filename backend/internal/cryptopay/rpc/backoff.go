@@ -57,11 +57,19 @@ const learnedSpanTTL = 30 * time.Minute
 const (
 	methodRefusalThreshold = 3
 	methodRefusalTTL       = 10 * time.Minute
+	// methodRefusalEventWindow makes the count one per EVENT, not one per call: the
+	// concurrent calls of one scan pass that hit the same node within a moment (and
+	// a node answering -32005 in words we do not recognise as a rate limit does that
+	// to all of them at once) are one refusal. Three calls in flight at the same
+	// instant must not leave a healthy node out of log queries for ten minutes.
+	methodRefusalEventWindow = 3 * time.Second
 )
 
 type methodRefusal struct {
 	refusals int
 	until    time.Time
+	// last is when the last counted refusal happened.
+	last time.Time
 }
 
 type endpointHealthTracker struct {
@@ -121,6 +129,10 @@ func (t *endpointHealthTracker) noteMethodFailure(endpoint, method string, err e
 	if now.Before(state.until) {
 		return // already left out: this refusal belongs to a call that started before
 	}
+	if !state.last.IsZero() && now.Sub(state.last) < methodRefusalEventWindow {
+		return // the same event as the refusal already counted
+	}
+	state.last = now
 	state.refusals++
 	if state.refusals >= methodRefusalThreshold {
 		state.until = now.Add(methodRefusalTTL)
@@ -143,6 +155,17 @@ func (t *endpointHealthTracker) noteMethodSuccess(endpoint, method string) {
 			delete(t.methods, endpoint)
 		}
 	}
+}
+
+// candidatesFor is the endpoints a call of method may be sent to. The ORDER of the
+// two filters matters: first the nodes that serve the method, then, among those,
+// the ones not cooling down. Each filter falls back to its whole input when it
+// would leave nothing, and the fallback must never reach a node that is known to
+// refuse the method: when the only log-serving node is cooling down, a log query
+// is better sent to it anyway (a retryable 429 or timeout) than to a node that
+// answers -32005, which is final and sends the scanner off to split the query.
+func (t *endpointHealthTracker) candidatesFor(endpoints []string, method string) []string {
+	return t.eligible(t.servingMethod(endpoints, method))
 }
 
 // servingMethod drops the endpoints currently left out of method. When that would

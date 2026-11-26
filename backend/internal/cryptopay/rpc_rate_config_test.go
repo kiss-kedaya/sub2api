@@ -41,13 +41,13 @@ func TestApplyRPCThrottleSetsTheRateCeiling(t *testing.T) {
 		rpc.SetEndpointThrottleInterval(0)
 	})
 	applyRPCThrottle(CryptoConfig{})
-	require.Equal(t, 20.0, rpc.EndpointRateCeiling(), "unset means the default")
+	require.Equal(t, 40.0, rpc.EndpointRateCeiling(), "unset means the default")
 	applyRPCThrottle(CryptoConfig{RPCRatePerSec: 7})
 	require.Equal(t, 7.0, rpc.EndpointRateCeiling())
 	applyRPCThrottle(CryptoConfig{RPCRatePerSec: maxRPCRatePerSec * 5}) // never stored, but never trusted either
 	require.Equal(t, float64(maxRPCRatePerSec), rpc.EndpointRateCeiling())
 	applyRPCThrottle(CryptoConfig{})
-	require.Equal(t, 20.0, rpc.EndpointRateCeiling(), "removing the key restores the default on the next reload")
+	require.Equal(t, 40.0, rpc.EndpointRateCeiling(), "removing the key restores the default on the next reload")
 	require.Nil(t, rpc.ThrottleFor("https://spacing.example"), "the rate ceiling does not switch the opt-in fixed spacing on")
 }
 

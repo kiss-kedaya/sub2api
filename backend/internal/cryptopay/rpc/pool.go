@@ -276,7 +276,7 @@ func (p *Pool) CallEndpoint(ctx context.Context, method string, params any) (jso
 	var lastErr, lastHardErr error
 	sawRangeLimit := false
 	for round := 0; round < maxCallRounds; round++ {
-		candidates := health.servingMethod(health.eligible(endpoints), method)
+		candidates := health.candidatesFor(endpoints, method)
 		if hasSpan {
 			capable := health.capableOfSpan(endpoints, span)
 			if len(capable) == 0 {
@@ -302,7 +302,14 @@ func (p *Pool) CallEndpoint(ctx context.Context, method string, params any) (jso
 		start := int(p.next.Add(1)-1) % len(candidates)
 		for i := 0; i < len(candidates); i++ {
 			endpoint := candidates[(start+i)%len(candidates)]
-			result, err := p.callOne(ctx, endpoint, method, params)
+			// While another endpoint is left to try, a busy one is skipped rather
+			// than waited for: the pacing of one throttled endpoint must not set
+			// the pace of the whole pool. The last candidate waits its full turn.
+			var maxWait time.Duration
+			if i < len(candidates)-1 {
+				maxWait = rotationMaxWait
+			}
+			result, err := p.callOneBounded(ctx, endpoint, method, params, maxWait)
 			if err == nil && policy != nil && needsIndependentEvidence(method) {
 				result, err = p.verifyIndependentEvidence(ctx, policy, endpoint, method, params, result)
 			}
@@ -452,6 +459,12 @@ type rpcResponse struct {
 }
 
 func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any) (json.RawMessage, error) {
+	return p.callOneBounded(ctx, endpoint, method, params, 0)
+}
+
+// callOneBounded is callOne with a limit on how long the endpoint's pacing may hold
+// the call (zero: the default, limiterMaxWait).
+func (p *Pool) callOneBounded(ctx context.Context, endpoint, method string, params any, maxWait time.Duration) (json.RawMessage, error) {
 	// Every caller (rotation, EndpointHead, ConfirmedNonce, GasPrice, receipts)
 	// must be bounded: a node that accepts the connection but never answers
 	// otherwise holds the sweep and its advisory lock for the whole run budget.
@@ -473,7 +486,7 @@ func (p *Pool) callOne(ctx context.Context, endpoint, method string, params any)
 	if err != nil {
 		return nil, &Failure{Kind: "request", Host: host}
 	}
-	resp, err := p.post(ctx, endpoint, body, method)
+	resp, err := p.post(ctx, endpoint, body, method, maxWait)
 	switch {
 	case err == nil:
 	case errors.Is(err, errBuildRequest):
@@ -560,13 +573,13 @@ var errBuildRequest = errors.New("rpc request could not be built")
 // Repeating a read cannot change anything, and without it every idle-timeout race
 // would surface as a failed scan batch. A failure on a connection that was new
 // proves nothing about staleness and is not retried; neither is a timeout.
-func (p *Pool) post(ctx context.Context, endpoint string, body []byte, method string) (*http.Response, error) {
+func (p *Pool) post(ctx context.Context, endpoint string, body []byte, method string, maxWait time.Duration) (*http.Response, error) {
 	readOnly := isReadOnlyMethod(method)
-	resp, reused, err := p.postOnce(ctx, endpoint, body, callHint{fresh: !readOnly})
+	resp, reused, err := p.postOnce(ctx, endpoint, body, callHint{fresh: !readOnly, maxWait: maxWait})
 	if err == nil || !readOnly || !reused || ctx.Err() != nil || !isStaleConnError(err) {
 		return resp, err
 	}
-	resp, _, err = p.postOnce(ctx, endpoint, body, callHint{fresh: true, staleRetry: true})
+	resp, _, err = p.postOnce(ctx, endpoint, body, callHint{fresh: true, staleRetry: true, maxWait: maxWait})
 	return resp, err
 }
 

@@ -587,3 +587,26 @@ func TestSetEndpointRateCeilingFollowsTheConfiguredValue(t *testing.T) {
 		t.Fatalf("an endpoint created later did not get the ceiling")
 	}
 }
+
+// A call whose context has already run out is a timeout. It used to come back as a
+// 429 of the local limiter (half of a negative remaining time is no time at all),
+// which the scanner reads as a rate limit and answers by waiting and repeating the pass.
+func TestExpiredDeadlineIsReportedAsATimeoutByThePool(t *testing.T) {
+	fx := newTLSFixture(t, false, blockNumberHandler())
+	pool, client := fx.pacedPool(t)
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	_, err := pool.callOne(expired, fx.url(), "eth_blockNumber", nil)
+	failure := failureOf(t, err)
+	if failure.Throttled || failure.HTTPStatus == http.StatusTooManyRequests {
+		t.Fatalf("an expired deadline was reported as a rate limit: %+v", failure)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) || CategoryOf(err) != CategoryTimeout {
+		t.Fatalf("error %v (category %s), want a timeout", err, CategoryOf(err))
+	}
+	if parsed, ok := client.Transport.(*publicTransport); ok {
+		if state, found := parsed.traffic.lookup(mustParseURL(t, fx.url())); found && state.snapshot().Throttled != 0 {
+			t.Fatalf("the call was counted as a local refusal")
+		}
+	}
+}

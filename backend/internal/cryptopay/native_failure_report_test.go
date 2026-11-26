@@ -11,8 +11,8 @@ import (
 )
 
 // A provider failure is reported at most once a minute per chain, as before; a
-// missing explorer key (which only an operator can fix) at most once an hour, but
-// still repeated: without it the native outflow monitor is not running.
+// missing explorer key (which only an operator can fix) at most once a quarter of
+// an hour, but still repeated: without it the native outflow monitor is not running.
 func TestNativeFailureReporterThrottlesAMissingKeyHarderThanAnOutage(t *testing.T) {
 	logs := captureLogs(t)
 	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
@@ -36,31 +36,51 @@ func TestNativeFailureReporterThrottlesAMissingKeyHarderThanAnOutage(t *testing.
 	base := count()
 	missing := fmt.Errorf("native txlist scan eth: %w", explorer.ErrNoAPIKey)
 	report("eth", missing)
-	for i := 0; i < 200; i++ { // polls every 10s for 33 minutes
+	for i := 0; i < 84; i++ { // polls every 10s for 14 minutes
 		now = now.Add(10 * time.Second)
 		report("eth", missing)
 	}
 	if got := count() - base; got != 1 {
-		t.Fatalf("missing-key lines in 33 minutes = %d, want 1", got)
+		t.Fatalf("missing-key lines in 14 minutes = %d, want 1", got)
 	}
 	if !strings.Contains(logs.String(), "no explorer API key configured") {
 		t.Fatalf("the line must still say why:\n%s", logs.String())
 	}
-	now = now.Add(time.Hour)
+	now = now.Add(time.Minute) // 15 minutes since the first line
 	report("eth", missing)
 	if got := count() - base; got != 2 {
-		t.Fatalf("missing-key lines after an hour = %d, want 2: the gap must stay visible", got)
+		t.Fatalf("missing-key lines after a quarter of an hour = %d, want 2: the gap must stay visible", got)
+	}
+	for i := 0; i < 84; i++ {
+		now = now.Add(10 * time.Second)
+		report("eth", missing)
+	}
+	if got := count() - base; got != 2 {
+		t.Fatalf("missing-key lines in the next 14 minutes = %d, want still 2", got)
+	}
+	now = now.Add(time.Minute)
+	report("eth", missing)
+	if got := count() - base; got != 3 {
+		t.Fatalf("missing-key lines after half an hour = %d, want 3", got)
 	}
 	// The same applies to a chain with no explorer endpoint at all.
 	report("polygon", fmt.Errorf("native txlist scan polygon: %w", explorer.ErrNoEndpoint))
 	now = now.Add(10 * time.Minute)
 	report("polygon", fmt.Errorf("native txlist scan polygon: %w", explorer.ErrNoEndpoint))
-	if got := count() - base; got != 3 {
-		t.Fatalf("lines = %d, want 3", got)
+	if got := count() - base; got != 4 {
+		t.Fatalf("lines = %d, want 4", got)
 	}
 	// Chains are throttled independently.
 	report("bsc", outage)
-	if got := count() - base; got != 4 {
-		t.Fatalf("lines = %d, want 4: another chain's failure must not be swallowed", got)
+	if got := count() - base; got != 5 {
+		t.Fatalf("lines = %d, want 5: another chain's failure must not be swallowed", got)
+	}
+}
+
+// The reminder interval is a decision: an hour was too long for a gap that means a
+// security monitor is not running.
+func TestNativeConfigGapIsRepeatedEveryQuarterOfAnHour(t *testing.T) {
+	if nativeConfigGapReportEvery != 15*time.Minute {
+		t.Fatalf("nativeConfigGapReportEvery = %v, want 15 minutes", nativeConfigGapReportEvery)
 	}
 }
