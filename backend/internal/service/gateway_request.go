@@ -155,6 +155,99 @@ func clearGatewayRequestRanges(parsed *ParsedRequest) {
 	parsed.inputRange = missingJSONRange()
 }
 
+// gatewayBodyView is everything parseGatewayRequestCurrentBody derives from one
+// body: the scalars and the three raw ranges. A ParsedRequest keeps the view of the
+// last body it parsed successfully, so that ReplaceBody / CloneForBody called with
+// byte-identical content restore it instead of validating and scanning the whole
+// body again. A no-op rewrite hands the very same bytes back, and one Anthropic
+// forward does that a dozen times (profile: 87% of parseGatewayRequestCurrentBody).
+//
+// Restoring is exactly what re-parsing would do: the parse is a pure function of
+// (bytes, protocol), including the [1m] model rewrite, which is idempotent (the view
+// records the body AFTER that rewrite). The view is only created by a successful parse,
+// is dropped before every parse (a failed parse leaves none, so the same bad body is
+// validated again and fails again), and remembers the slice it was derived from, so
+// writing Body directly cannot revive a stale view.
+//
+// Same slice means same bytes: slices handed around the gateway are never modified in
+// place (the contract RequestBodyTop already depends on, guarded by
+// TestRequestBodyTopContractNoInPlaceBodyRewrites). A different slice with the same
+// content is compared byte for byte, which does not rely on that.
+type gatewayBodyView struct {
+	body     []byte // the exact bytes the fields below were derived from; empty means no view
+	protocol string
+
+	model           string
+	stream          bool
+	metadataUserID  string
+	hasSystem       bool
+	thinkingEnabled bool
+	outputEffort    string
+	speed           string
+	maxTokens       int
+	systemRange     jsonRange
+	messagesRange   jsonRange
+	inputRange      jsonRange
+}
+
+// captureBodyView records the view of the body parsed last. Call it only after a
+// successful parse, with the final (post-normalization) body in parsed.Body.
+func (p *ParsedRequest) captureBodyView() {
+	p.view = gatewayBodyView{
+		body:            p.Body.Bytes(),
+		protocol:        p.protocol,
+		model:           p.Model,
+		stream:          p.Stream,
+		metadataUserID:  p.MetadataUserID,
+		hasSystem:       p.HasSystem,
+		thinkingEnabled: p.ThinkingEnabled,
+		outputEffort:    p.OutputEffort,
+		speed:           p.Speed,
+		maxTokens:       p.MaxTokens,
+		systemRange:     p.systemRange,
+		messagesRange:   p.messagesRange,
+		inputRange:      p.inputRange,
+	}
+}
+
+// reuseBodyView restores the derived fields from the view when the current Body is
+// byte-identical to the body the view was derived from. It reports whether it did.
+func (p *ParsedRequest) reuseBodyView(protocol string) bool {
+	v := &p.view
+	body := p.Body.Bytes()
+	if len(v.body) == 0 || v.protocol != protocol || !sameBodyBytes(v.body, body) {
+		return false
+	}
+	p.protocol = protocol
+	p.Model = v.model
+	p.Stream = v.stream
+	p.MetadataUserID = v.metadataUserID
+	p.HasSystem = v.hasSystem
+	p.ThinkingEnabled = v.thinkingEnabled
+	p.OutputEffort = v.outputEffort
+	p.Speed = v.speed
+	p.MaxTokens = v.maxTokens
+	p.systemRange = v.systemRange
+	p.messagesRange = v.messagesRange
+	p.inputRange = v.inputRange
+	// Same bytes, possibly another array: follow the current slice so the view does
+	// not keep the old one alive.
+	v.body = body
+	return true
+}
+
+// sameBodyBytes reports whether a and b hold the same bytes: the same slice (data pointer and length,
+// the identity RequestBodyTop keys on) or equal content.
+func sameBodyBytes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if len(a) == 0 || unsafe.SliceData(a) == unsafe.SliceData(b) {
+		return true
+	}
+	return bytes.Equal(a, b)
+}
+
 func setGatewayRequestRanges(parsed *ParsedRequest, protocol string, jsonStr string) {
 	if parsed == nil {
 		return
@@ -211,6 +304,9 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 	if parsed == nil || parsed.Body == nil {
 		return fmt.Errorf("empty request body")
 	}
+	// Whatever view the previous body had is void from here on; a view is only
+	// recorded once this parse has succeeded.
+	parsed.view = gatewayBodyView{}
 
 	bodyBytes := parsed.Body.Bytes()
 	// Keep the hard JSON validity gate: callers rely on rejecting malformed
@@ -233,6 +329,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 		return ErrDuplicateModelField
 	}
 
+	rewritten := false
 	if scan.modelSet {
 		if scan.modelType != '"' {
 			return fmt.Errorf("invalid model field type")
@@ -248,6 +345,7 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 				parsed.Body.Replace(normalizedBody)
 				bodyBytes = normalizedBody
 				parsed.Model = normalizedModel
+				rewritten = true
 				// 模型名改写会改变字节偏移，range 必须基于新 body 重算。
 				if scan, err = scanGatewayRequestTopLevel(bodyBytes); err != nil {
 					return DescribeInvalidJSON(bodyBytes)
@@ -281,6 +379,14 @@ func parseGatewayRequestCurrentBody(parsed *ParsedRequest, protocol string) erro
 	}
 
 	applyGatewayRequestRanges(parsed, protocol, scan)
+	// A view has to be what parsing these exact bytes would give. A parse that rewrote the body
+	// (the [1m] suffix) is not: Model was read before the rewrite, and sjson writes invalid UTF-8
+	// back as U+FFFD, so parsing the rewritten bytes again reads another Model. No view then; the
+	// next ReplaceBody / CloneForBody of those bytes parses them in full, and records a view of
+	// that parse.
+	if !rewritten {
+		parsed.captureBodyView()
+	}
 	return nil
 }
 
@@ -302,7 +408,15 @@ func applyGatewayRequestRanges(parsed *ParsedRequest, protocol string, scan gate
 	}
 }
 
+// refreshGatewayRequestRanges brings the derived fields of parsed in line with its
+// current Body. When Body is byte-identical to the body of the last successful
+// parse, that parse's result is restored instead of validating and scanning again.
+// Every other body, including every body that differs by a single byte, takes the
+// full parse (validity gate included).
 func refreshGatewayRequestRanges(parsed *ParsedRequest, protocol string) error {
+	if parsed != nil && parsed.reuseBodyView(protocol) {
+		return nil
+	}
 	return parseGatewayRequestCurrentBody(parsed, protocol)
 }
 
@@ -350,10 +464,11 @@ type ParsedRequest struct {
 	MaxTokens       int             // max_tokens 值（用于探测请求拦截）
 	SessionContext  *SessionContext // 可选：请求上下文区分因子（nil 时行为不变）
 
-	protocol      string    // 当前 Body 的协议格式，用于 Body 替换后刷新 raw range
-	systemRange   jsonRange // system/systemInstruction.parts 的 raw JSON 范围，绑定 Body 当前内容
-	messagesRange jsonRange // messages/contents 的 raw JSON 范围，绑定 Body 当前内容
-	inputRange    jsonRange // Responses API input 的 raw JSON 范围，绑定 Body 当前内容
+	protocol      string          // 当前 Body 的协议格式，用于 Body 替换后刷新 raw range
+	systemRange   jsonRange       // system/systemInstruction.parts 的 raw JSON 范围，绑定 Body 当前内容
+	messagesRange jsonRange       // messages/contents 的 raw JSON 范围，绑定 Body 当前内容
+	inputRange    jsonRange       // Responses API input 的 raw JSON 范围，绑定 Body 当前内容
+	view          gatewayBodyView // 上一次成功解析的结果，Body 字节不变时 ReplaceBody/CloneForBody 直接复用
 
 	// GroupID 请求所属分组 ID（来自 API Key）
 	GroupID *int64
@@ -469,6 +584,8 @@ func (p *ParsedRequest) SystemValue() (any, bool) {
 }
 
 // CloneForBody 为单次账号尝试创建独立 body 视图，避免 failover 复用已改写的 ParsedRequest。
+// body 与 p 上次成功解析的字节完全相同时（failover 循环里的常态）直接带走解析结果，
+// 不再整段校验/重扫；其余 body 照旧完整解析。
 func (p *ParsedRequest) CloneForBody(body []byte) (*ParsedRequest, error) {
 	if p == nil {
 		return nil, fmt.Errorf("parse request: empty request")
@@ -483,6 +600,8 @@ func (p *ParsedRequest) CloneForBody(body []byte) (*ParsedRequest, error) {
 }
 
 // ReplaceBody 统一刷新当前 body 和 raw range，保证后续 helper 读取的是最新请求体。
+// data 与上次成功解析的字节完全相同时（空操作改写原样返回同一个切片）直接复用解析结果，
+// 派生字段照样被恢复成该 body 的解析值；其余 data 完整解析（有效性校验照旧）。
 func (p *ParsedRequest) ReplaceBody(data []byte) error {
 	if p == nil {
 		return fmt.Errorf("parse request: empty request")
@@ -570,16 +689,68 @@ func stripEmptyTextBlocksFromSlice(blocks []any) ([]any, bool) {
 	return result, true
 }
 
+// containsEmptyTextMember reports whether body contains an empty text member in one of the four
+// spellings the old pre-filter listed, `"text":""`, `"text": ""`, `"text" : ""` and `"text" :""`
+// (one optional space before the colon, one after). It has the truth value of four bytes.Contains
+// calls, but those start every search at a quote, the commonest byte of a JSON body, so bytes.Index
+// spends its time restarting; here the search runs on the 'x' of "text", which in a request is
+// mostly the 'x' of "text" itself, and looks at the bytes around each one. A body that is full of
+// 'x' (hex, a padded string) would make that slower than the plain searches, so after enough misses
+// at a high enough rate the rest of the body goes to them.
+func containsEmptyTextMember(body []byte) bool {
+	misses := 0
+	for off := 0; ; {
+		i := bytes.IndexByte(body[off:], 'x')
+		if i < 0 {
+			return false
+		}
+		x := off + i
+		off = x + 1
+		if emptyTextMemberAround(body, x) {
+			return true
+		}
+		// more than one miss per 64 bytes scanned: the anchor is not skipping anything
+		if misses++; misses >= 64 && misses > off>>6 {
+			// a match not yet looked at has its 'x' at off or later, so it starts at off-3 or later
+			return containsEmptyTextMemberPlain(body[off-3:])
+		}
+	}
+}
+
+// emptyTextMemberAround: is the 'x' at body[x] the one of an empty `"text"` member?
+func emptyTextMemberAround(body []byte, x int) bool {
+	// the key is "text": quote, t, e, x, t, quote
+	if x < 3 || x+3 > len(body) || string(body[x-3:x+3]) != `"text"` {
+		return false
+	}
+	j := x + 3
+	if j < len(body) && body[j] == ' ' {
+		j++
+	}
+	if j >= len(body) || body[j] != ':' {
+		return false
+	}
+	j++
+	if j < len(body) && body[j] == ' ' {
+		j++
+	}
+	return j+1 < len(body) && body[j] == '"' && body[j+1] == '"'
+}
+
+// containsEmptyTextMemberPlain is the four-search form containsEmptyTextMember stands for.
+func containsEmptyTextMemberPlain(body []byte) bool {
+	return bytes.Contains(body, patternEmptyText) ||
+		bytes.Contains(body, patternEmptyTextSpaced) ||
+		bytes.Contains(body, patternEmptyTextSp1) ||
+		bytes.Contains(body, patternEmptyTextSp2)
+}
+
 // StripEmptyTextBlocks removes empty text blocks from the request body (including nested tool_result content).
 // This is a lightweight pre-filter for the initial request path to prevent upstream 400 errors.
 // Returns the original body unchanged if no empty text blocks are found.
 func StripEmptyTextBlocks(body []byte) []byte {
 	// Fast path: check if body contains empty text patterns
-	hasEmptyTextBlock := bytes.Contains(body, patternEmptyText) ||
-		bytes.Contains(body, patternEmptyTextSpaced) ||
-		bytes.Contains(body, patternEmptyTextSp1) ||
-		bytes.Contains(body, patternEmptyTextSp2)
-	if !hasEmptyTextBlock {
+	if !containsEmptyTextMember(body) {
 		return body
 	}
 
@@ -687,10 +858,7 @@ func FilterThinkingBlocksForRetry(body []byte, mappedModel string) []byte {
 
 	// Check for empty text blocks: {"type":"text","text":""}
 	// These cause upstream 400: "text content blocks must be non-empty"
-	hasEmptyTextBlock := bytes.Contains(body, patternEmptyText) ||
-		bytes.Contains(body, patternEmptyTextSpaced) ||
-		bytes.Contains(body, patternEmptyTextSp1) ||
-		bytes.Contains(body, patternEmptyTextSp2)
+	hasEmptyTextBlock := containsEmptyTextMember(body)
 
 	// Fast path: nothing to process
 	if !hasThinkingContent && !hasEmptyContent && !hasEmptyTextBlock {
@@ -1009,43 +1177,60 @@ func sanitizeAnthropicBodyForBetaTokens(body []byte, anthropicBetaHeader string)
 		return body, false
 	}
 
+	// Only a field the header does not authorize can be stripped, and only if the body could
+	// carry it; both questions are answered without a gjson lookup per field
+	// (anthropic_beta_field_probe.go). A field those answers rule out is skipped, every other one
+	// goes through the original lookup below, unchanged. Deleting a field never makes another one
+	// appear, so the answer for the incoming body holds for every step.
+	maybe := anthropicBetaFieldsMaybeIn(body, anthropicBetaFieldsToStrip(anthropicBetaHeader))
+
 	changed := false
 
 	// context_management：需要 context-management 或 compact beta。
-	if b, deleted := stripAnthropicBodyFieldUnlessBeta(
-		body, "context_management", anthropicBetaHeader,
-		anthropicBetaContextManagementToken, anthropicBetaCompactToken,
-	); deleted {
-		body, changed = b, true
+	if maybe&betaFieldContextManagement != 0 {
+		if b, deleted := stripAnthropicBodyFieldUnlessBeta(
+			body, "context_management", anthropicBetaHeader,
+			anthropicBetaContextManagementToken, anthropicBetaCompactToken,
+		); deleted {
+			body, changed = b, true
+		}
 	}
 
 	// thinking.block_binding：需要 thinking-binding-controls beta。
-	if b, deleted := stripAnthropicBodyFieldUnlessBeta(
-		body, "thinking.block_binding", anthropicBetaHeader, claude.BetaThinkingBindingControls,
-	); deleted {
-		body, changed = b, true
+	if maybe&betaFieldThinkingBlockBinding != 0 {
+		if b, deleted := stripAnthropicBodyFieldUnlessBeta(
+			body, "thinking.block_binding", anthropicBetaHeader, claude.BetaThinkingBindingControls,
+		); deleted {
+			body, changed = b, true
+		}
 	}
 
 	// fallbacks：server-side refusal fallback，仅接受 server-side-fallback beta。
-	if b, deleted := stripAnthropicBodyFieldUnlessBeta(
-		body, "fallbacks", anthropicBetaHeader, claude.BetaServerSideFallback,
-	); deleted {
-		body, changed = b, true
+	if maybe&betaFieldFallbacks != 0 {
+		if b, deleted := stripAnthropicBodyFieldUnlessBeta(
+			body, "fallbacks", anthropicBetaHeader, claude.BetaServerSideFallback,
+		); deleted {
+			body, changed = b, true
+		}
 	}
 
 	// fallback_credit_token：server-side-fallback 或（新旧任一）fallback-credit beta
 	// 任意一个即可保留。
-	if b, deleted := stripAnthropicBodyFieldUnlessBeta(
-		body, "fallback_credit_token", anthropicBetaHeader,
-		claude.BetaServerSideFallback, claude.BetaFallbackCredit, claude.BetaFallbackCreditLegacy,
-	); deleted {
-		body, changed = b, true
+	if maybe&betaFieldFallbackCreditToken != 0 {
+		if b, deleted := stripAnthropicBodyFieldUnlessBeta(
+			body, "fallback_credit_token", anthropicBetaHeader,
+			claude.BetaServerSideFallback, claude.BetaFallbackCredit, claude.BetaFallbackCreditLegacy,
+		); deleted {
+			body, changed = b, true
+		}
 	}
 
 	// messages[].output_config：mid-conversation-output-config beta 专属字段。
 	// 顶层 output_config / effort 不受该 beta 约束，本分支只净化消息内字段。
-	if b, deleted := stripAnthropicMessageOutputConfigUnlessBeta(body, anthropicBetaHeader); deleted {
-		body, changed = b, true
+	if maybe&betaFieldMessageOutputConfig != 0 {
+		if b, deleted := stripAnthropicMessageOutputConfigUnlessBeta(body, anthropicBetaHeader); deleted {
+			body, changed = b, true
+		}
 	}
 
 	return body, changed
@@ -1081,17 +1266,23 @@ func stripAnthropicBodyFieldUnlessBeta(body []byte, field, anthropicBetaHeader s
 // the existing context-management sanitizer so the latter's established
 // early-return behavior remains unchanged during rolling upgrades.
 func sanitizeAnthropicFallbackFields(body []byte, anthropicBetaHeader string) ([]byte, bool) {
+	// Same two-sided shortcut as sanitizeAnthropicBodyForBetaTokens, for the two fallback fields.
+	maybe := anthropicBetaFieldsMaybeIn(body, anthropicBetaFieldsToStrip(anthropicBetaHeader)&(betaFieldFallbacks|betaFieldFallbackCreditToken))
 	changed := false
-	if updated, deleted := stripAnthropicBodyFieldUnlessBeta(
-		body, "fallbacks", anthropicBetaHeader, claude.BetaServerSideFallback,
-	); deleted {
-		body, changed = updated, true
+	if maybe&betaFieldFallbacks != 0 {
+		if updated, deleted := stripAnthropicBodyFieldUnlessBeta(
+			body, "fallbacks", anthropicBetaHeader, claude.BetaServerSideFallback,
+		); deleted {
+			body, changed = updated, true
+		}
 	}
-	if updated, deleted := stripAnthropicBodyFieldUnlessBeta(
-		body, "fallback_credit_token", anthropicBetaHeader,
-		claude.BetaServerSideFallback, claude.BetaFallbackCredit, claude.BetaFallbackCreditLegacy,
-	); deleted {
-		body, changed = updated, true
+	if maybe&betaFieldFallbackCreditToken != 0 {
+		if updated, deleted := stripAnthropicBodyFieldUnlessBeta(
+			body, "fallback_credit_token", anthropicBetaHeader,
+			claude.BetaServerSideFallback, claude.BetaFallbackCredit, claude.BetaFallbackCreditLegacy,
+		); deleted {
+			body, changed = updated, true
+		}
 	}
 	return body, changed
 }
