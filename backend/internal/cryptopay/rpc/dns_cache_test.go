@@ -71,7 +71,7 @@ func TestDNSCacheExpires(t *testing.T) {
 		t.Fatalf("first answer = %v", addrs)
 	}
 	clock.Advance(44 * time.Second)
-	cache.resolve(context.Background(), "h.example.test")
+	_, _ = cache.resolve(context.Background(), "h.example.test")
 	if lookups.Load() != 1 {
 		t.Fatalf("looked up again before the TTL (%d)", lookups.Load())
 	}
@@ -369,6 +369,7 @@ func TestSharedPoolRefusesLoopbackEvenWhenWarm(t *testing.T) {
 		rpcResult(w, `"0x1"`)
 	}))
 	defer server.Close()
+	shrinkRetryDelays(t)
 	pool := NewPool(server.URL)
 	for i := 0; i < 3; i++ {
 		if _, err := pool.BlockNumber(context.Background()); err == nil {

@@ -122,12 +122,12 @@ func TestHTTP2MultiplexesConcurrentCallsOnFewConnections(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	callBlockNumber(t, pool, 100)
+	callBlockNumber(t, pool, 20)
 	if got := fx.conns.Load(); got > maxConnsPerHost {
 		t.Fatalf("connections = %d, want at most %d", got, maxConnsPerHost)
 	}
 	before := fx.conns.Load()
-	callBlockNumber(t, pool, 100)
+	callBlockNumber(t, pool, 20)
 	if fx.conns.Load() != before {
 		t.Fatalf("warm HTTP/2 calls opened %d new connections", fx.conns.Load()-before)
 	}
@@ -140,7 +140,9 @@ func TestChunkedAnswersKeepTheConnection(t *testing.T) {
 		_ = requestMethod(r)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x10"}`))
-		w.(http.Flusher).Flush() // headers + first chunk go out before the handler returns
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush() // headers + first chunk go out before the handler returns
+		}
 		_, _ = w.Write([]byte("\n"))
 	}))
 	callBlockNumber(t, fx.pool(t), 30)

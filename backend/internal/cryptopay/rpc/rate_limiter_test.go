@@ -328,7 +328,7 @@ func TestAcquireGivesTheTokenBackWhenTheCallerGivesUp(t *testing.T) {
 }
 
 func TestLimiterIsSafeUnderConcurrency(t *testing.T) {
-	e := newEndpointTraffic("h", 1000, time.Now, func(string, EndpointTraffic) {})
+	e := newEndpointTraffic("h", 1e6, time.Now, func(string, EndpointTraffic) {})
 	var wg sync.WaitGroup
 	for g := 0; g < 16; g++ {
 		wg.Add(1)

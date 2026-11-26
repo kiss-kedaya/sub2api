@@ -97,11 +97,28 @@ func trafficOf(t *testing.T, client *http.Client, endpoint string) EndpointTraff
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, ok := client.Transport.(*publicTransport).traffic.lookup(parsed)
+	transport, isPublic := client.Transport.(*publicTransport)
+	if !isPublic {
+		t.Fatal("the client does not use the public transport")
+	}
+	state, ok := transport.traffic.lookup(parsed)
 	if !ok {
 		t.Fatal("no traffic recorded for the endpoint")
 	}
 	return state.snapshot()
+}
+
+// dropConnection closes the client's connection without answering.
+func dropConnection(w http.ResponseWriter) {
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		return
+	}
+	conn, _, err := hijacker.Hijack()
+	if err != nil {
+		return
+	}
+	_ = conn.Close()
 }
 
 func callOneBlockNumber(pool *Pool, endpoint string) error {
@@ -160,8 +177,7 @@ func TestStaleRetryHappensAtMostOnce(t *testing.T) {
 		n := handled.Add(1)
 		_ = requestMethod(r)
 		if n >= 2 { // every request after the warm-up is dropped mid-flight
-			conn, _, _ := w.(http.Hijacker).Hijack()
-			_ = conn.Close()
+			dropConnection(w)
 			return
 		}
 		rpcResult(w, `"0x10"`)
@@ -192,8 +208,7 @@ func TestFailureOnANewConnectionIsNotRetried(t *testing.T) {
 	var handled atomic.Int32
 	fx := newTLSFixture(t, false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handled.Add(1)
-		conn, _, _ := w.(http.Hijacker).Hijack()
-		_ = conn.Close()
+		dropConnection(w)
 	}))
 	pool, _, client := fx.staleFixturePool(t)
 	if err := callOneBlockNumber(pool, fx.url()); err == nil {
@@ -294,8 +309,7 @@ func TestBroadcastWithUnknownResultIsReportedNotRepeated(t *testing.T) {
 	fx := newTLSFixture(t, false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requestMethod(r) == "eth_sendRawTransaction" {
 			sendRaw.Add(1)
-			conn, _, _ := w.(http.Hijacker).Hijack()
-			_ = conn.Close() // the node got it, then the connection died
+			dropConnection(w) // the node got it, then the connection died
 			return
 		}
 		rpcResult(w, `"0x10"`)
