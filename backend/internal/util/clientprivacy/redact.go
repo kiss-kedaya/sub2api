@@ -37,7 +37,14 @@ var (
 )
 
 // Text sanitizes free-form error text without altering safe text or whitespace.
+// Every URL is redacted except official public vendor links (publicurl.go).
 func Text(input string) string {
+	return redactText(input, true)
+}
+
+// redactText is Text with the public-link exemption switchable: false redacts
+// every URL.
+func redactText(input string, keepPublicURLs bool) string {
 	if len(input) > maxInputBytes {
 		return redacted
 	}
@@ -48,8 +55,11 @@ func Text(input string) string {
 	if !ok {
 		return redacted
 	}
+	// Input that already carries placeholder runes could forge a kept link, so
+	// it gets the strict path.
+	keeper := urlKeeper{enabled: keepPublicURLs && !hasURLPlaceholder(decoded)}
 	out := privateKeyPattern.ReplaceAllString(decoded, redacted)
-	out = urlPattern.ReplaceAllString(out, redacted)
+	out = urlPattern.ReplaceAllStringFunc(out, keeper.replace)
 	out = credentialPattern.ReplaceAllString(out, redacted)
 	out = credentialContextPattern.ReplaceAllString(out, `${1}`+redacted)
 	out = accountContextPattern.ReplaceAllString(out, redacted)
@@ -79,6 +89,7 @@ func Text(input string) string {
 		return redacted
 	})
 	out = assignmentPattern.ReplaceAllString(out, `${1}`+redacted)
+	out = keeper.restore(out)
 	if out == decoded {
 		return input
 	}
