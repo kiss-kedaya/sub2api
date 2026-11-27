@@ -48,6 +48,8 @@ function mountTable(
     imageRateMultiplier?: number | null
     videoRateIndependent?: boolean
     videoRateMultiplier?: number | null
+    toolRateIndependent?: boolean
+    toolRateMultiplier?: number | null
     peakWindow?: string
     peakRateMultiplier?: number | null
   }
@@ -859,5 +861,80 @@ describe('PlazaModelPricingTable 分时计价', () => {
     const wrapper = mountTable([tokenModel()], 1)
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
     expect(wrapper.find('[title*="modelPlaza.table.timePricingHint"]').exists()).toBe(false)
+  })
+})
+
+describe('PlazaModelPricingTable DeepSeek 工具端点', () => {
+  function deepSeekTool(name: string, unitPrice: number): PlazaModel {
+    return tokenModel({
+      name,
+      platform: 'deepseek',
+      pricing: {
+        billing_mode: 'per_request',
+        input_price: null,
+        output_price: null,
+        cache_write_price: null,
+        cache_read_price: null,
+        image_input_price: null,
+        image_output_price: null,
+        per_request_price: unitPrice,
+        intervals: []
+      },
+      official_pricing: null
+    })
+  }
+
+  it('按标准顺序展示 5 个工具端点及对应计费单位，默认跟随分组/专属倍率', () => {
+    // 故意乱序输入，断言按 search/fetch/ocr/tts/asr 标准序沉在 token 模型之后
+    const models = [
+      deepSeekTool('deepseek-tools-asr', 0.78),
+      deepSeekTool('deepseek-tools-ocr', 0.0015),
+      tokenModel({ name: 'deepseek-chat', platform: 'deepseek' }),
+      deepSeekTool('deepseek-tools-tts', 300),
+      deepSeekTool('deepseek-tools-fetch', 0.005),
+      deepSeekTool('deepseek-tools-search', 0.005)
+    ]
+    const wrapper = mountTable(models, 0.05)
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows).toHaveLength(6)
+    expect(rows[0].find('td').text()).toContain('deepseek-chat')
+    expect(rows.slice(1).map((r) => r.find('td').text())).toEqual([
+      expect.stringContaining('deepseek-tools-search'),
+      expect.stringContaining('deepseek-tools-fetch'),
+      expect.stringContaining('deepseek-tools-ocr'),
+      expect.stringContaining('deepseek-tools-tts'),
+      expect.stringContaining('deepseek-tools-asr')
+    ])
+
+    const text = wrapper.text()
+    expect(text).toContain('modelPlaza.table.perTool')
+    expect(text).toContain('$0.00025')
+    expect(text).toContain('modelPlaza.table.perUnitRequest')
+    expect(text).toContain('$0.000075')
+    expect(text).toContain('modelPlaza.table.perUnitPage')
+    expect(text).toContain('$15.00')
+    expect(text).toContain('modelPlaza.table.perUnitMillionChars')
+    expect(text).toContain('$0.039')
+    expect(text).toContain('modelPlaza.table.perUnitHour')
+  })
+
+  it('工具独立倍率开启时仅影响 DeepSeek 工具端点，倍率列展示工具独立倍率且显式 0 正常显示 $0.00', () => {
+    const models = [
+      tokenModel({ name: 'deepseek-chat', platform: 'deepseek' }),
+      deepSeekTool('deepseek-tools-search', 0.005),
+      deepSeekTool('deepseek-tools-fetch', 0)
+    ]
+    const wrapper = mountTable(models, 0.3, 0.2, {
+      toolRateIndependent: true,
+      toolRateMultiplier: 1
+    })
+    const rows = wrapper.findAll('tbody tr')
+    // token 行仍使用专属倍率 0.2x
+    expect(rows[0].findAll('td').at(-1)!.text()).toContain('0.2x')
+    // 工具行使用工具独立倍率 1x（search=0.005, fetch=0）
+    expect(rows[1].text()).toContain('$0.005')
+    expect(rows[1].findAll('td').at(-1)!.text()).toBe('1x')
+    expect(rows[2].text()).toContain('$0.00')
+    expect(rows[2].findAll('td').at(-1)!.text()).toBe('1x')
   })
 })

@@ -259,7 +259,15 @@ describe('GroupsView DeepSeek fixed tool pricing', () => {
   it.each([null, 0, 'custom'] as const)('loads saved %s prices and submits empty edits as -1 (clear)', async (setting) => {
     const prices = setting === 'custom' ? toolPricePayload : { ocr_price_per_1k_pages: setting, audio_tts_price_per_million_chars: setting, audio_stt_price_per_hour: setting }
     mocks.list.mockResolvedValue({ items: [group({ platform: 'deepseek', ...prices })], total: 1, page: 1, page_size: 20, pages: 1 })
-    mocks.update.mockImplementation(async (_id: number, payload: Partial<AdminGroup>) => group(payload))
+    const normalizeSentinel = (value: number | null | undefined) => (typeof value === 'number' && value < 0 ? null : value)
+    mocks.update.mockImplementation(async (_id: number, payload: Partial<AdminGroup>) => group({
+      ...payload,
+      search_price_per_1k: normalizeSentinel(payload.search_price_per_1k),
+      fetch_price_per_1k: normalizeSentinel(payload.fetch_price_per_1k),
+      ocr_price_per_1k_pages: normalizeSentinel(payload.ocr_price_per_1k_pages),
+      audio_tts_price_per_million_chars: normalizeSentinel(payload.audio_tts_price_per_million_chars),
+      audio_stt_price_per_hour: normalizeSentinel(payload.audio_stt_price_per_hour),
+    }))
     const wrapper = await render()
     await openEdit(wrapper)
     for (const [index, field] of toolPriceFields.entries()) {
@@ -279,6 +287,7 @@ describe('GroupsView DeepSeek fixed tool pricing', () => {
     }
     await wrapper.get('#edit-group-form').trigger('submit')
     await flushPromises()
+    expect(mocks.update).toHaveBeenCalledTimes(2)
     expect(mocks.update).toHaveBeenLastCalledWith(42, expect.objectContaining({ ocr_price_per_1k_pages: -1, audio_tts_price_per_million_chars: -1, audio_stt_price_per_hour: -1 }))
   })
 

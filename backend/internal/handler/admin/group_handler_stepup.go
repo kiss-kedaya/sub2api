@@ -62,10 +62,27 @@ func differentFloat64Ptr(ptr *float64, current *float64) bool {
 	if ptr == nil {
 		return false
 	}
+	if *ptr < 0 {
+		return current != nil
+	}
 	if current == nil {
 		return true
 	}
 	return !groupRateAlmostEqual(*ptr, *current)
+}
+
+// differentOptionalLimit compares a tri-state optional price field (omitted / null / number).
+func differentOptionalLimit(field optionalLimitField, current *float64) bool {
+	if !field.set {
+		return false
+	}
+	if field.value == nil || *field.value < 0 {
+		return current != nil
+	}
+	if current == nil {
+		return true
+	}
+	return !groupRateAlmostEqual(*field.value, *current)
 }
 
 func differentStringPtr(ptr *string, current *string) bool {
@@ -93,10 +110,13 @@ func createGroupRequestTouchesPricing(req *CreateGroupRequest) bool {
 	if req.LongContextPricingEnabled || len(req.ModelPricing) > 0 {
 		return true
 	}
-	if req.ImageRateMultiplier != nil || req.BatchImageDiscountMultiplier != nil || req.BatchImageHoldMultiplier != nil {
+	if req.ImageRateIndependent || req.ImageRateMultiplier != nil || req.BatchImageDiscountMultiplier != nil || req.BatchImageHoldMultiplier != nil {
 		return true
 	}
-	if req.VideoRateMultiplier != nil || len(req.VideoModelPrices) > 0 {
+	if req.VideoRateIndependent || req.VideoRateMultiplier != nil || len(req.VideoModelPrices) > 0 {
+		return true
+	}
+	if req.ToolRateIndependent || (req.ToolRateMultiplier != nil && !groupRateAlmostEqual(*req.ToolRateMultiplier, 1)) {
 		return true
 	}
 	if req.ImagePrice1K != nil || req.ImagePrice2K != nil || req.ImagePrice4K != nil {
@@ -105,7 +125,7 @@ func createGroupRequestTouchesPricing(req *CreateGroupRequest) bool {
 	if req.VideoPrice480P != nil || req.VideoPrice720P != nil || req.VideoPrice1080P != nil {
 		return true
 	}
-	if req.WebSearchPricePerCall != nil || req.SearchPricePer1k != nil || req.OCRPricePer1kPages != nil {
+	if req.WebSearchPricePerCall != nil || req.SearchPricePer1k != nil || req.FetchPricePer1k != nil || req.OCRPricePer1kPages != nil {
 		return true
 	}
 	if req.GrokModerationRefusalPrice != nil {
@@ -156,10 +176,14 @@ func updateGroupRequestTouchesPricing(target *service.Group, req *UpdateGroupReq
 	if req.ModelPricing != nil && !reflect.DeepEqual(*req.ModelPricing, target.ModelPricing) {
 		return true
 	}
-	if differentFloat64(req.ImageRateMultiplier, target.ImageRateMultiplier) ||
+	if (req.ImageRateIndependent != nil && *req.ImageRateIndependent != target.ImageRateIndependent) ||
+		(req.VideoRateIndependent != nil && *req.VideoRateIndependent != target.VideoRateIndependent) ||
+		(req.ToolRateIndependent != nil && *req.ToolRateIndependent != target.ToolRateIndependent) ||
+		differentFloat64(req.ImageRateMultiplier, target.ImageRateMultiplier) ||
 		differentFloat64(req.BatchImageDiscountMultiplier, target.BatchImageDiscountMultiplier) ||
 		differentFloat64(req.BatchImageHoldMultiplier, target.BatchImageHoldMultiplier) ||
-		differentFloat64(req.VideoRateMultiplier, target.VideoRateMultiplier) {
+		differentFloat64(req.VideoRateMultiplier, target.VideoRateMultiplier) ||
+		differentFloat64(req.ToolRateMultiplier, target.ToolRateMultiplier) {
 		return true
 	}
 	if differentFloat64Ptr(req.ImagePrice1K, target.ImagePrice1K) ||
@@ -173,15 +197,26 @@ func updateGroupRequestTouchesPricing(target *service.Group, req *UpdateGroupReq
 	if req.VideoModelPrices != nil && !reflect.DeepEqual(req.VideoModelPrices, target.VideoModelPrices) {
 		return true
 	}
+	effectivePlatform := target.Platform
+	if strings.TrimSpace(req.Platform) != "" {
+		effectivePlatform = strings.TrimSpace(req.Platform)
+	}
+	differentSharedOptionalPrice := func(field optionalLimitField, current *float64) bool {
+		if effectivePlatform == service.PlatformDeepseek {
+			return differentOptionalLimit(field, current)
+		}
+		return differentFloat64Ptr(field.value, current)
+	}
 	if differentFloat64Ptr(req.WebSearchPricePerCall, target.WebSearchPricePerCall) ||
-		differentFloat64Ptr(req.SearchPricePer1k, target.SearchPricePer1k) ||
-		differentFloat64Ptr(req.OCRPricePer1kPages.value, target.OCRPricePer1kPages) ||
+		differentSharedOptionalPrice(req.SearchPricePer1k, target.SearchPricePer1k) ||
+		differentSharedOptionalPrice(req.FetchPricePer1k, target.FetchPricePer1k) ||
+		differentOptionalLimit(req.OCRPricePer1kPages, target.OCRPricePer1kPages) ||
 		differentFloat64Ptr(req.GrokModerationRefusalPrice, target.GrokModerationRefusalPrice) {
 		return true
 	}
 	if differentFloat64Ptr(req.AudioRealtimePricePerMin, target.AudioRealtimePricePerMin) ||
-		differentFloat64Ptr(req.AudioTtsPricePerMillionChars.value, target.AudioTTSPricePerMillionChars) ||
-		differentFloat64Ptr(req.AudioSttPricePerHour.value, target.AudioSTTPricePerHour) {
+		differentSharedOptionalPrice(req.AudioTtsPricePerMillionChars, target.AudioTTSPricePerMillionChars) ||
+		differentSharedOptionalPrice(req.AudioSttPricePerHour, target.AudioSTTPricePerHour) {
 		return true
 	}
 	if req.ProfitControlEnabled != nil && *req.ProfitControlEnabled != target.ProfitControlEnabled {

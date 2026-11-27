@@ -434,7 +434,7 @@ func inflightBillingModelCandidates(ctx context.Context, deps inflightEstimateDe
 	return primary, fallbacks, upstreamInput
 }
 
-func (d inflightEstimateDeps) rates(ctx context.Context, apiKey *APIKey) (text, image float64) {
+func (d inflightEstimateDeps) baseRate(ctx context.Context, apiKey *APIKey) float64 {
 	rate := 1.0
 	if d.cfg != nil && d.cfg.Default.RateMultiplier > 0 {
 		rate = d.cfg.Default.RateMultiplier
@@ -445,7 +445,11 @@ func (d inflightEstimateDeps) rates(ctx context.Context, apiKey *APIKey) (text, 
 			rate = d.userGroupRate(ctx, apiKey.User.ID, *apiKey.GroupID, rate)
 		}
 	}
-	return computePeakAwareMultipliers(apiKey, rate, timezone.Now())
+	return rate
+}
+
+func (d inflightEstimateDeps) rates(ctx context.Context, apiKey *APIKey) (text, image float64) {
+	return computePeakAwareMultipliers(apiKey, d.baseRate(ctx, apiKey), timezone.Now())
 }
 
 func tokenCounts(cfg config.InflightReservationConfig, bodyBytes, maxTokens int) (int, int) {
@@ -581,7 +585,12 @@ func (d inflightEstimateDeps) estimateOne(ctx context.Context, apiKey *APIKey, m
 		}
 	}
 	if req.SearchCalls > 0 {
-		if d.billing != nil {
+		if apiKey != nil && apiKey.Group != nil && apiKey.Group.Platform == PlatformDeepseek {
+			toolRate := resolveToolRateMultiplier(apiKey, d.baseRate(ctx, apiKey))
+			if b := CalculateDeepSeekToolCost(ctx, d.resolver, apiKey.Group, DeepSeekToolsLabelSearch, float64(req.SearchCalls), toolRate); b != nil && b.ActualCost > 0 {
+				cost += b.ActualCost
+			}
+		} else if d.billing != nil {
 			if b := d.billing.CalculateSearchCost(req.SearchCalls, groupSearchPricePer1kFromAPIKey(apiKey), textRate); b != nil && b.ActualCost > 0 {
 				cost += b.ActualCost
 			}
@@ -602,16 +611,35 @@ func (d inflightEstimateDeps) estimate(ctx context.Context, apiKey *APIKey, req 
 		// 非计量请求（媒体状态查询、custom-voices 等）：无需预留，也不算「无法定价」。
 		return 0, true
 	}
-	if apiKey.Group != nil && apiKey.Group.Platform == PlatformDeepseek && d.billing != nil {
-		switch req.Model {
-		case DeepSeekToolsLabelOCR:
-			return d.billing.CalculateOCRCost(1000, groupOCRPriceFromAPIKey(apiKey), 1).ActualCost, true
-		case DeepSeekToolsLabelASR, DeepSeekToolsLabelTTS:
-			return d.billing.CalculateAudioCost(req.AudioMode, req.AudioUnits, deepSeekAudioPriceConfig(apiKey), 1).ActualCost, true
+	if apiKey.Group != nil && apiKey.Group.Platform == PlatformDeepseek && IsDeepSeekToolLabel(req.Model) {
+		toolRate := resolveToolRateMultiplier(apiKey, d.baseRate(ctx, apiKey))
+		if toolRate <= 0 {
+			return 0, true
 		}
+		var units float64
+		switch strings.ToLower(strings.TrimSpace(req.Model)) {
+		case DeepSeekToolsLabelSearch, DeepSeekToolsLabelFetch:
+			calls := req.SearchCalls
+			if req.Units > calls {
+				calls = req.Units
+			}
+			if calls <= 0 {
+				calls = 1
+			}
+			units = float64(calls)
+		case DeepSeekToolsLabelOCR:
+			units = float64(clampDeepSeekOCRPages(req.Units))
+		case DeepSeekToolsLabelASR, DeepSeekToolsLabelTTS:
+			units = req.AudioUnits
+		}
+		return CalculateDeepSeekToolCost(ctx, d.resolver, apiKey.Group, req.Model, units, toolRate).ActualCost, true
 	}
 	textRate, imageRate := d.rates(ctx, apiKey)
-	if textRate <= 0 && imageRate <= 0 {
+	hasPositiveDeepSeekHostedToolRate := req.SearchCalls > 0 &&
+		apiKey.Group != nil &&
+		apiKey.Group.Platform == PlatformDeepseek &&
+		resolveToolRateMultiplier(apiKey, d.baseRate(ctx, apiKey)) > 0
+	if textRate <= 0 && imageRate <= 0 && !hasPositiveDeepSeekHostedToolRate {
 		// 免费分组：不计费，也无需预留。
 		return 0, true
 	}

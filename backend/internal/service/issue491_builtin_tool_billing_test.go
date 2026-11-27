@@ -450,11 +450,11 @@ func TestIssue491ImageGenerationAndSearchCostsAreAdditive(t *testing.T) {
 	key := &APIKey{ID: 7, Group: &Group{ID: 43, SearchPricePer1k: &price}}
 
 	// 纯图片：不带检索扣费。
-	imageOnly := svc.addOpenAISearchSurcharge(&OpenAIForwardResult{ImageCount: 1}, key, 1, &CostBreakdown{TotalCost: 0.04, ActualCost: 0.04})
+	imageOnly := svc.addOpenAISearchSurchargeWithContext(context.Background(), &OpenAIForwardResult{ImageCount: 1}, key, "", 1, &CostBreakdown{TotalCost: 0.04, ActualCost: 0.04})
 	require.InDelta(t, 0.04, imageOnly.TotalCost, 1e-12)
 
 	// 图片 + 2 次检索：0.04 + 2/1000*10。
-	mixed := svc.addOpenAISearchSurcharge(&OpenAIForwardResult{ImageCount: 1, SearchCount: 2}, key, 1, &CostBreakdown{TotalCost: 0.04, ActualCost: 0.04})
+	mixed := svc.addOpenAISearchSurchargeWithContext(context.Background(), &OpenAIForwardResult{ImageCount: 1, SearchCount: 2}, key, "", 1, &CostBreakdown{TotalCost: 0.04, ActualCost: 0.04})
 	require.InDelta(t, 0.06, mixed.TotalCost, 1e-12)
 	require.InDelta(t, 0.06, mixed.ActualCost, 1e-12)
 }

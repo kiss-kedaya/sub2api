@@ -100,6 +100,52 @@ describe('buildModelOffers', () => {
     expect(offers[0].requestPrice).toBeCloseTo(0.04)
     expect(offers[0].multiTier).toBe(true)
   })
+
+  it('applies group rate or independent tool rate to DeepSeek tool models', () => {
+    const offers = buildModelOffers([
+      group({
+        id: 10,
+        name: 'ds-follow',
+        platform: 'deepseek',
+        rate_multiplier: 0.05,
+        tool_rate_independent: false,
+        tool_rate_multiplier: 1,
+        models: [{
+          name: 'deepseek-tools-ocr',
+          platform: 'deepseek',
+          pricing: {
+            ...tokenPricing(0, 0),
+            billing_mode: 'per_request',
+            per_request_price: 0.0015,
+          },
+          official_pricing: null,
+        }],
+      }),
+      group({
+        id: 20,
+        name: 'ds-independent',
+        platform: 'deepseek',
+        rate_multiplier: 0.3,
+        tool_rate_independent: true,
+        tool_rate_multiplier: 1,
+        models: [{
+          name: 'deepseek-tools-ocr',
+          platform: 'deepseek',
+          pricing: {
+            ...tokenPricing(0, 0),
+            billing_mode: 'per_request',
+            per_request_price: 0.00045,
+          },
+          official_pricing: null,
+        }],
+      }),
+    ])
+    expect(offers).toHaveLength(2)
+    expect(offers[0].groupRate).toBeCloseTo(0.05)
+    expect(offers[0].requestPrice).toBeCloseTo(0.000075)
+    expect(offers[1].groupRate).toBeCloseTo(1)
+    expect(offers[1].requestPrice).toBeCloseTo(0.00045)
+  })
 })
 
 describe('compareModels', () => {

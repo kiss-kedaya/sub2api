@@ -9,7 +9,7 @@ func openAIForwardResultHasObservedBillingUnits(result *OpenAIForwardResult) boo
 		return false
 	}
 	return openAIUsageHasTokens(&result.Usage) || result.ImageCount > 0 ||
-		result.SearchCount > 0 || result.WebSearchCalls > 0 ||
+		result.SearchCount > 0 || result.FetchCount > 0 || result.WebSearchCalls > 0 ||
 		result.VideoCount > 0 || result.AudioUsage != nil || result.OCRPages > 0
 }
 

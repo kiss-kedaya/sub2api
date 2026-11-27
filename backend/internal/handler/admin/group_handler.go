@@ -231,7 +231,10 @@ type CreateGroupRequest struct {
 	VideoPrice1080P              *float64                      `json:"video_price_1080p"`
 	VideoModelPrices             map[string]map[string]float64 `json:"video_model_prices,omitempty"`
 	WebSearchPricePerCall        *float64                      `json:"web_search_price_per_call"`
+	ToolRateIndependent          bool                          `json:"tool_rate_independent"`
+	ToolRateMultiplier           *float64                      `json:"tool_rate_multiplier"`
 	SearchPricePer1k             *float64                      `json:"search_price_per_1k"`
+	FetchPricePer1k              *float64                      `json:"fetch_price_per_1k"`
 	OCRPricePer1kPages           *float64                      `json:"ocr_price_per_1k_pages"`
 	GrokModerationRefusalPrice   *float64                      `json:"grok_moderation_refusal_price"`
 	// 搜索专用凭据：为空表示回落到账号自带值。
@@ -316,7 +319,10 @@ type UpdateGroupRequest struct {
 	VideoPrice1080P                 *float64                      `json:"video_price_1080p"`
 	VideoModelPrices                map[string]map[string]float64 `json:"video_model_prices,omitempty"`
 	WebSearchPricePerCall           *float64                      `json:"web_search_price_per_call"`
-	SearchPricePer1k                *float64                      `json:"search_price_per_1k"`
+	ToolRateIndependent             *bool                         `json:"tool_rate_independent"`
+	ToolRateMultiplier              *float64                      `json:"tool_rate_multiplier"`
+	SearchPricePer1k                optionalLimitField            `json:"search_price_per_1k"`
+	FetchPricePer1k                 optionalLimitField            `json:"fetch_price_per_1k"`
 	OCRPricePer1kPages              optionalLimitField            `json:"ocr_price_per_1k_pages"`
 	GrokModerationRefusalPrice      *float64                      `json:"grok_moderation_refusal_price"`
 	SearchProviderBaseURL           *string                       `json:"search_provider_base_url"`
@@ -732,7 +738,10 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		VideoPrice1080P:                 req.VideoPrice1080P,
 		VideoModelPrices:                req.VideoModelPrices,
 		WebSearchPricePerCall:           req.WebSearchPricePerCall,
+		ToolRateIndependent:             req.ToolRateIndependent,
+		ToolRateMultiplier:              req.ToolRateMultiplier,
 		SearchPricePer1k:                req.SearchPricePer1k,
+		FetchPricePer1k:                 req.FetchPricePer1k,
 		OCRPricePer1kPages:              req.OCRPricePer1kPages,
 		GrokModerationRefusalPrice:      req.GrokModerationRefusalPrice,
 		SearchProviderBaseURL:           req.SearchProviderBaseURL,
@@ -894,7 +903,12 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		VideoPrice1080P:                 req.VideoPrice1080P,
 		VideoModelPrices:                req.VideoModelPrices,
 		WebSearchPricePerCall:           req.WebSearchPricePerCall,
-		SearchPricePer1k:                req.SearchPricePer1k,
+		ToolRateIndependent:             req.ToolRateIndependent,
+		ToolRateMultiplier:              req.ToolRateMultiplier,
+		SearchPricePer1k:                req.SearchPricePer1k.value,
+		SearchPricePer1kSet:             req.SearchPricePer1k.set,
+		FetchPricePer1k:                 req.FetchPricePer1k.value,
+		FetchPricePer1kSet:              req.FetchPricePer1k.set,
 		OCRPricePer1kPages:              req.OCRPricePer1kPages.value,
 		OCRPricePer1kPagesSet:           req.OCRPricePer1kPages.set,
 		AudioTTSPricePerMillionCharsSet: req.AudioTtsPricePerMillionChars.set,

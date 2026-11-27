@@ -114,6 +114,10 @@ type modelPlazaGroup struct {
 	// 不取分组/用户专属倍率。
 	VideoRateIndependent bool    `json:"video_rate_independent"`
 	VideoRateMultiplier  float64 `json:"video_rate_multiplier"`
+	// 工具端点独立倍率：为 true 时 DeepSeek 工具端点的实付倍率取 ToolRateMultiplier，
+	// 不取分组/用户专属倍率。
+	ToolRateIndependent bool    `json:"tool_rate_independent"`
+	ToolRateMultiplier  float64 `json:"tool_rate_multiplier"`
 	// 分组是否启用长上下文阶梯计费；关闭时模型实付列只展示最低档/基础价。
 	LongContextPricingEnabled bool              `json:"long_context_pricing_enabled"`
 	Models                    []modelPlazaModel `json:"models"`
@@ -281,6 +285,8 @@ func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64, qu
 		ImageRateMultiplier:       g.ImageRateMultiplier,
 		VideoRateIndependent:      g.VideoRateIndependent,
 		VideoRateMultiplier:       g.VideoRateMultiplier,
+		ToolRateIndependent:       g.ToolRateIndependent,
+		ToolRateMultiplier:        g.ToolRateMultiplier,
 		LongContextPricingEnabled: g.LongContextPricingEnabled,
 		Models:                    models,
 	}

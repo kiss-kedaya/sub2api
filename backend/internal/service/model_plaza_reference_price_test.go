@@ -107,8 +107,13 @@ func TestListGroups_ChannelEntryWithoutPriceKeepsCatalogReference(t *testing.T) 
 func TestListGroups_ReferencePriceEqualsBilledBasePrice(t *testing.T) {
 	for id, g := range plazaGroupsByID(t, deepseekReferenceService(t)) {
 		for _, m := range g.Models {
-			require.NotNil(t, m.OfficialPricing, "group %d %s", id, m.Name)
 			require.NotNil(t, m.Pricing, "group %d %s", id, m.Name)
+			if m.Pricing.BillingMode != BillingModeToken {
+				require.Nil(t, m.OfficialPricing, "group %d non-token %s should not carry token official pricing", id, m.Name)
+				require.NotNil(t, m.Pricing.PerRequestPrice, "group %d non-token %s", id, m.Name)
+				continue
+			}
+			require.NotNil(t, m.OfficialPricing, "group %d %s", id, m.Name)
 			require.InDelta(t, *m.Pricing.InputPrice, *m.OfficialPricing.InputPrice, 1e-15, "group %d %s input", id, m.Name)
 			require.InDelta(t, *m.Pricing.OutputPrice, *m.OfficialPricing.OutputPrice, 1e-15, "group %d %s output", id, m.Name)
 			require.InDelta(t, *m.Pricing.CacheReadPrice, *m.OfficialPricing.CacheReadPrice, 1e-15, "group %d %s cache", id, m.Name)

@@ -872,7 +872,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if pricingAt.IsZero() {
 		pricingAt = timezone.Now()
 	}
-	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
+	baseMultiplier := multiplier
+	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, pricingAt)
+	toolMultiplier := resolveToolRateMultiplier(apiKey, baseMultiplier)
 
 	// 确定计费模型
 	concreteBillingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
@@ -921,7 +923,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 
 	// 计算费用
-	cost := s.calculateRecordUsageCost(billingCtx, result, apiKey, billingModel, multiplier, imageMultiplier, pricingAt)
+	cost := s.calculateRecordUsageCostWithToolMultiplier(billingCtx, result, apiKey, billingModel, multiplier, imageMultiplier, toolMultiplier, pricingAt)
 	if result.ForcedBillingCost > 0 {
 		cost = &CostBreakdown{
 			TotalCost:   result.ForcedBillingCost,
@@ -937,10 +939,10 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		input.BillingModelSource,
 		result.UpstreamResponseModel,
 		result.UpstreamResponseModelConflict,
-		result.ImageCount > 0 || result.AudioUsage != nil || result.OCRPages > 0 || result.SearchCount > 0 || result.CacheStorageTokenHours > 0,
+		result.ImageCount > 0 || result.AudioUsage != nil || result.OCRPages > 0 || result.SearchCount > 0 || result.FetchCount > 0 || result.CacheStorageTokenHours > 0,
 	); responseModel != "" && !strings.EqualFold(responseModel, strings.TrimSpace(billingModel)) {
 		if identified, responseChannelPriced := s.hasIdentifiedResponseModelPricing(billingCtx, responseModel, apiKey); identified {
-			responseCost := s.calculateRecordUsageCost(billingCtx, result, apiKey, responseModel, multiplier, imageMultiplier, pricingAt)
+			responseCost := s.calculateRecordUsageCostWithToolMultiplier(billingCtx, result, apiKey, responseModel, multiplier, imageMultiplier, toolMultiplier, pricingAt)
 			baselineChannelPriced := s.resolveChannelPricing(billingCtx, billingModel, apiKey) != nil
 			if responseModelBillingAdoptable(cost, responseCost, baselineChannelPriced, responseChannelPriced) {
 				// billingModel 到此为止只是定价查表的入参，后续流程只消费 cost，
@@ -974,7 +976,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	// 创建使用日志
 	accountRateMultiplier := account.BillingRateMultiplier()
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
-		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
+		requestedModel, multiplier, imageMultiplier, toolMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
 	if claudeRefusal {
 		// 用量页「类型」列显示「Claude违规拒答」；Stream 标志保持真实值（入库时 legacy 字段沿用）。
 		usageLog.RequestType = RequestTypeClaudeRefusal
@@ -1050,7 +1052,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	return nil
 }
 
-// calculateRecordUsageCost 根据请求类型计算费用。
+// calculateRecordUsageCost 根据请求类型计算费用（保留给旧调用方/单测；
+// 注意此处 multiplier 若含高峰因子会透传给工具倍率，生产路径 recordUsageCore
+// 请使用 calculateRecordUsageCostWithToolMultiplier 显式传入不含高峰的 toolMultiplier）。
 func (s *GatewayService) calculateRecordUsageCost(
 	ctx context.Context,
 	result *ForwardResult,
@@ -1058,6 +1062,22 @@ func (s *GatewayService) calculateRecordUsageCost(
 	billingModel string,
 	multiplier float64,
 	imageMultiplier float64,
+	pricingAt time.Time,
+) *CostBreakdown {
+	return s.calculateRecordUsageCostWithToolMultiplier(
+		ctx, result, apiKey, billingModel, multiplier, imageMultiplier,
+		resolveToolRateMultiplier(apiKey, multiplier), pricingAt,
+	)
+}
+
+func (s *GatewayService) calculateRecordUsageCostWithToolMultiplier(
+	ctx context.Context,
+	result *ForwardResult,
+	apiKey *APIKey,
+	billingModel string,
+	multiplier float64,
+	imageMultiplier float64,
+	toolMultiplier float64,
 	pricingAt time.Time,
 ) *CostBreakdown {
 	// 图片生成：渠道定价为 token 计费时走 token 路径，否则走图片计费
@@ -1069,12 +1089,12 @@ func (s *GatewayService) calculateRecordUsageCost(
 	}
 
 	if result.OCRPages > 0 {
-		return s.billingService.CalculateOCRCost(result.OCRPages, groupOCRPriceFromAPIKey(apiKey), 1)
+		return CalculateDeepSeekToolCost(ctx, s.resolver, apiKeyGroup(apiKey), DeepSeekToolsLabelOCR, float64(result.OCRPages), toolMultiplier)
 	}
 	// Voice audio (TTS / STT / realtime) when present on the forward result.
 	if result.AudioUsage != nil {
 		if result.FixedToolBilling && isDeepSeekSpeechLabel(result.Model) {
-			return s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, deepSeekAudioPriceConfig(apiKey), 1)
+			return CalculateDeepSeekToolCost(ctx, s.resolver, apiKeyGroup(apiKey), result.Model, result.AudioUsage.DurationOrUnits, toolMultiplier)
 		}
 		if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil &&
 			resolved.Mode == BillingModePerRequest {
@@ -1092,29 +1112,52 @@ func (s *GatewayService) calculateRecordUsageCost(
 		return s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, cfg, multiplier)
 	}
 
-	// Token 计费；SearchCount 为叠加 surcharge（不替代 token）。
+	// Token 计费；SearchCount/FetchCount 为叠加 surcharge（不替代 token）。
 	var tokenCost *CostBreakdown
 	if isCacheStorageOnlyResult(result) {
 		tokenCost = &CostBreakdown{BillingMode: string(BillingModeToken)}
 	} else {
 		tokenCost = s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
 	}
-	if result.SearchCount > 0 {
-		price := groupSearchPricePer1kFromAPIKey(apiKey)
-		if price != nil && *price == 0 {
-			logger.LegacyPrintf("service.gateway", "[Billing] search_price_per_1k explicit 0; search free group_model=%s count=%d", billingModel, result.SearchCount)
-		}
-		toolMultiplier := multiplier
-		if result.FixedToolBilling {
-			toolMultiplier = 1
-		}
-		searchCost := s.billingService.CalculateSearchCost(result.SearchCount, price, toolMultiplier)
-		if searchCost != nil && (searchCost.TotalCost > 0 || searchCost.ActualCost > 0) {
-			if tokenCost == nil {
-				return searchCost
+	if result.SearchCount > 0 || result.FetchCount > 0 {
+		group := apiKeyGroup(apiKey)
+		isDeepSeekHosted := result.FixedToolBilling || (group != nil && group.Platform == PlatformDeepseek)
+		var surchargeTotal, surchargeActual float64
+		if result.SearchCount > 0 {
+			price := groupSearchPricePer1kFromAPIKey(apiKey)
+			var sc *CostBreakdown
+			if isDeepSeekHosted {
+				sc = CalculateDeepSeekToolCost(ctx, s.resolver, group, DeepSeekToolsLabelSearch, float64(result.SearchCount), toolMultiplier)
+				if price != nil && *price == 0 && (sc == nil || sc.TotalCost == 0) {
+					logger.LegacyPrintf("service.gateway", "[Billing] search_price_per_1k explicit 0; search free group_model=%s count=%d", billingModel, result.SearchCount)
+				}
+			} else if s.billingService != nil {
+				if price != nil && *price == 0 {
+					logger.LegacyPrintf("service.gateway", "[Billing] search_price_per_1k explicit 0; search free group_model=%s count=%d", billingModel, result.SearchCount)
+				}
+				sc = s.billingService.CalculateSearchCost(result.SearchCount, price, multiplier)
 			}
-			tokenCost.TotalCost += searchCost.TotalCost
-			tokenCost.ActualCost += searchCost.ActualCost
+			if sc != nil {
+				surchargeTotal += sc.TotalCost
+				surchargeActual += sc.ActualCost
+			}
+		}
+		if result.FetchCount > 0 {
+			if fc := CalculateDeepSeekToolCost(ctx, s.resolver, group, DeepSeekToolsLabelFetch, float64(result.FetchCount), toolMultiplier); fc != nil {
+				surchargeTotal += fc.TotalCost
+				surchargeActual += fc.ActualCost
+			}
+		}
+		if surchargeTotal > 0 || surchargeActual > 0 {
+			if tokenCost == nil {
+				return &CostBreakdown{
+					TotalCost:   surchargeTotal,
+					ActualCost:  surchargeActual,
+					BillingMode: string(BillingModePerRequest),
+				}
+			}
+			tokenCost.TotalCost += surchargeTotal
+			tokenCost.ActualCost += surchargeActual
 		}
 	}
 	if storageCost := s.cacheStorageCost(result, billingModel); storageCost > 0 {
@@ -1322,6 +1365,7 @@ func (s *GatewayService) buildRecordUsageLog(
 	requestedModel string,
 	multiplier float64,
 	imageMultiplier float64,
+	toolMultiplier float64,
 	accountRateMultiplier float64,
 	billingType int8,
 	cacheTTLOverridden bool,
@@ -1388,8 +1432,16 @@ func (s *GatewayService) buildRecordUsageLog(
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
 	}
-	if result.FixedToolBilling && (result.OCRPages > 0 || result.AudioUsage != nil) {
-		usageLog.RateMultiplier = 1
+	isDeepSeekToolOnlyCharge := result.FixedToolBilling && (result.OCRPages > 0 ||
+		result.AudioUsage != nil ||
+		((result.SearchCount > 0 || result.FetchCount > 0) &&
+			result.Usage.InputTokens == 0 &&
+			result.Usage.OutputTokens == 0 &&
+			result.Usage.CacheCreationInputTokens == 0 &&
+			result.Usage.CacheReadInputTokens == 0 &&
+			result.Usage.ImageOutputTokens == 0))
+	if isDeepSeekToolOnlyCharge {
+		usageLog.RateMultiplier = toolMultiplier
 	}
 	if cost != nil {
 		usageLog.InputCost = cost.InputCost

@@ -175,7 +175,7 @@ func (h *OpenAIGatewayHandler) deepSeekTools(c *gin.Context, toolPath string, mo
 	case service.DeepSeekToolsPathTTS:
 		estimate.Kind, estimate.SearchCalls, estimate.AudioMode, estimate.AudioUnits = service.InflightEstimateAudio, 0, "tts", float64(service.DeepSeekTTSBillableCharacters(gjson.GetBytes(body, "text").String()))/1_000_000
 	case service.DeepSeekToolsPathOCR:
-		estimate.SearchCalls, estimate.Units = 0, 1000
+		estimate.SearchCalls, estimate.Units = 0, service.EstimateDeepSeekOCRPages(c.GetHeader("Content-Type"), body)
 	}
 	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, estimate)
 	if inflightErr != nil {

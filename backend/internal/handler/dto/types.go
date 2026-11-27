@@ -195,7 +195,10 @@ type Group struct {
 	VideoModelPrices map[string]map[string]float64 `json:"video_model_prices,omitempty"`
 	// Codex alpha/search 网页搜索单次价格（USD/次）；null 表示使用默认价 0.01
 	WebSearchPricePerCall *float64 `json:"web_search_price_per_call"`
+	ToolRateIndependent   bool     `json:"tool_rate_independent"`
+	ToolRateMultiplier    float64  `json:"tool_rate_multiplier"`
 	SearchPricePer1k      *float64 `json:"search_price_per_1k"`
+	FetchPricePer1k       *float64 `json:"fetch_price_per_1k"`
 	OCRPricePer1kPages    *float64 `json:"ocr_price_per_1k_pages"`
 	// GrokModerationRefusalPrice Grok 安全拒绝单次扣费（USD/次）；nil 使用默认 0.1，0 表示不扣费。
 	GrokModerationRefusalPrice   *float64 `json:"grok_moderation_refusal_price"`
