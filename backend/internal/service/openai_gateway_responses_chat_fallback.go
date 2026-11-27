@@ -317,17 +317,23 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	var upstreamErr error
 	// A scan ended by the silence limit has already told the client and carries its
 	// own error; writing the upstream-error frame as well would send two errors.
-	if scan.NonBillableUpstreamError && !errors.Is(scan.Err, errOpenAIUpstreamWaitLimit) {
+	// A mid-stream balance abort already delivered output and must never be waived
+	// as a non-billable upstream error.
+	if scan.NonBillableUpstreamError && !errors.Is(scan.Err, errOpenAIUpstreamWaitLimit) && !isBalanceHoldTopUpError(scan.Err) {
 		upstreamErr = writeCompatUpstreamStreamError(c, "responses", originalModel, scan.UpstreamError)
 	}
 
 	// The stream ended without [DONE] and the client is gone: nothing more will come.
 	if gone := clientDisconnected || watch.Gone(); upstreamErr != nil || scan.Err != nil || (gone && !scan.SawDone) {
+		nonBillable := scan.NonBillableUpstreamError
+		if isBalanceHoldTopUpError(scan.Err) {
+			nonBillable = false
+		}
 		result := &OpenAIForwardResult{
 			RequestID:                   requestID,
 			UpstreamHeaders:             resp.Header,
 			Usage:                       scan.Usage,
-			NonBillableUpstreamError:    scan.NonBillableUpstreamError,
+			NonBillableUpstreamError:    nonBillable,
 			Model:                       originalModel,
 			BillingModel:                billingModel,
 			UpstreamModel:               upstreamModel,

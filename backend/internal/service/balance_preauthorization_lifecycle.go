@@ -363,18 +363,12 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	request BalancePreauthorizationRequest,
 ) (balancePreauthorizationEstimate, error) {
 	outputWindow := request.InitialOutputWindowTokens
-	if isStream, hasHint := BalancePreauthorizationStreamHintFromContext(ctx); hasHint {
-		if isStream {
-			if outputWindow == 0 || outputWindow == DefaultBalancePreauthorizationNonStreamOutputWindow {
-				outputWindow = DefaultBalancePreauthorizationOutputWindow
-			}
+	if outputWindow == 0 {
+		if isStream, hasHint := BalancePreauthorizationStreamHintFromContext(ctx); hasHint && !isStream {
+			outputWindow = DefaultBalancePreauthorizationNonStreamOutputWindow
 		} else {
-			if outputWindow == 0 || outputWindow == DefaultBalancePreauthorizationOutputWindow {
-				outputWindow = DefaultBalancePreauthorizationNonStreamOutputWindow
-			}
+			outputWindow = DefaultBalancePreauthorizationOutputWindow
 		}
-	} else if outputWindow == 0 {
-		outputWindow = DefaultBalancePreauthorizationOutputWindow
 	}
 	base, err := s.resolvedPricingCostInput(ctx, request.CostInput)
 	if err != nil {

@@ -325,6 +325,9 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 			cw.Fprintf("%s\n", line)
 			if observedBytes > 0 {
 				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+					if line != "" {
+						cw.Fprintf("\n")
+					}
 					_ = resp.Body.Close()
 					logger.LegacyPrintf("service.antigravity_gateway", "Stream output hold top-up failed, aborting upstream (antigravity upstream): error=%v", topUpErr)
 					return &antigravityStreamResult{

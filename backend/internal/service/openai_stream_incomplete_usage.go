@@ -44,15 +44,16 @@ func estimateIncompleteStreamOutputTokens(acc *apicompat.BufferedResponseAccumul
 }
 
 // fillIncompleteStreamUsage applies the estimates field by field and returns what
-// it filled in (0 when untouched). Output is filled only when the upstream reported
-// no output tokens at all. Input is filled from the request only when the upstream
-// reported no input side at all; InputTokens stays the total (as OpenAI reports it)
-// and CacheReadInputTokens carries the cache-priced share of it.
+// it filled in (0 when untouched). Output is raised to the observed estimate when
+// the incomplete stream delivered more output than any provisional count reported
+// so far (larger reported counts are preserved). Input is filled from the request
+// only when the upstream reported no input side at all; InputTokens stays the total
+// (as OpenAI reports it) and CacheReadInputTokens carries the cache-priced share of it.
 func fillIncompleteStreamUsage(usage *OpenAIUsage, outputEstimate int, requestBody []byte) (filledOutput, filledInput int) {
 	if usage == nil {
 		return 0, 0
 	}
-	if outputEstimate > 0 && usage.OutputTokens == 0 && usage.ImageOutputTokens == 0 {
+	if outputEstimate > 0 && outputEstimate > usage.OutputTokens && usage.ImageOutputTokens == 0 {
 		usage.OutputTokens = outputEstimate
 		filledOutput = outputEstimate
 	}

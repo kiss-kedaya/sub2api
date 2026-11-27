@@ -530,8 +530,13 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 		if observedBytes > 0 {
 			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+				if !clientDisconnected && clientOutputStarted && eventInProgress {
+					writeLine("")
+					c.Writer.Flush()
+				}
 				s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI raw chat_completions", topUpErr)
 				_ = resp.Body.Close()
+				nonBillableUpstreamError = false
 				balanceAbortErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
 				break
 			}

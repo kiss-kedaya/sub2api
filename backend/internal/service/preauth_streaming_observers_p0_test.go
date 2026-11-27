@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 type preauthStaticUpstream struct {
@@ -310,30 +311,36 @@ func TestBalancePreauthorization_StreamHintDistinguishesGeminiStreamVsNonStream(
 		return f
 	}
 
-	// Case 1: Gemini :streamGenerateContent omits maxOutputTokens and JSON "stream".
-	// EstimateBalancePreauthorizationTokens returns 4096, and WithBalancePreauthorizationStreamHint(ctx, true)
-	// narrows the hold back to the 256-token incremental streaming window.
+	// Case 1: Stream hint true with omitted output window (0) uses 256-token window.
 	streamFixture := newFixtureWithPrice()
 	streamReq := balancePreauthorizationTestRequest()
-	streamReq.InitialOutputWindowTokens = DefaultBalancePreauthorizationNonStreamOutputWindow
+	streamReq.InitialOutputWindowTokens = 0
 	streamGuard, err := streamFixture.service.Preauthorize(WithBalancePreauthorizationStreamHint(context.Background(), true), streamReq)
 	require.NoError(t, err)
 	require.NotNil(t, streamGuard)
 
-	// Case 2: Gemini :generateContent where an attacker injected "stream": true into JSON body.
-	// EstimateBalancePreauthorizationTokens returns 256, and WithBalancePreauthorizationStreamHint(ctx, false)
-	// upgrades the hold to the 4096-token non-streaming window.
+	// Case 2: Stream hint false with omitted output window (0) uses 4096-token window.
 	nonStreamFixture := newFixtureWithPrice()
 	nonStreamReq := balancePreauthorizationTestRequest()
-	nonStreamReq.InitialOutputWindowTokens = DefaultBalancePreauthorizationOutputWindow
+	nonStreamReq.InitialOutputWindowTokens = 0
 	nonStreamGuard, err := nonStreamFixture.service.Preauthorize(WithBalancePreauthorizationStreamHint(context.Background(), false), nonStreamReq)
 	require.NoError(t, err)
 	require.NotNil(t, nonStreamGuard)
+
+	// Case 3: Explicit max_tokens=4096 on a streaming request is NEVER clobbered to 256 by stream hint.
+	explicitStreamFixture := newFixtureWithPrice()
+	explicitStreamReq := balancePreauthorizationTestRequest()
+	explicitStreamReq.InitialOutputWindowTokens = DefaultBalancePreauthorizationNonStreamOutputWindow
+	explicitStreamGuard, err := explicitStreamFixture.service.Preauthorize(WithBalancePreauthorizationStreamHint(context.Background(), true), explicitStreamReq)
+	require.NoError(t, err)
+	require.NotNil(t, explicitStreamGuard)
 
 	require.Greater(t, nonStreamGuard.HoldAmount(), streamGuard.HoldAmount()*10,
 		"non-streaming 4096-token default hold must vastly exceed streaming 256-token window")
 	require.InDelta(t, 0.028+float64(DefaultBalancePreauthorizationOutputWindow)*0.001, streamGuard.HoldAmount(), 0.05)
 	require.InDelta(t, float64(DefaultBalancePreauthorizationNonStreamOutputWindow-DefaultBalancePreauthorizationOutputWindow)*0.001, nonStreamGuard.HoldAmount()-streamGuard.HoldAmount(), 1e-6)
+	require.InDelta(t, nonStreamGuard.HoldAmount(), explicitStreamGuard.HoldAmount(), 1e-6,
+		"explicit max_tokens=4096 with stream hint=true must keep 4096-token hold")
 }
 
 // ============================================================================
@@ -428,7 +435,7 @@ func TestGatewayForwardAsChatAndResponsesBalanceAbort_StreamingAndBuffered(t *te
 		res, err := svc.handleCCBufferedFromAnthropic(resp, c, "claude-sonnet-4-5", "claude-sonnet-4-5", nil, time.Now(), est)
 		require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
 		require.NotNil(t, res)
-		require.Equal(t, http.StatusForbidden, rec.Code)
+		require.Equal(t, http.StatusTooManyRequests, rec.Code)
 		require.True(t, body.closed.Load())
 		require.Greater(t, fixture.wallet.topUpCalls, 0)
 		require.Greater(t, res.Usage.OutputTokens, 100)
@@ -457,7 +464,7 @@ func TestGatewayForwardAsChatAndResponsesBalanceAbort_StreamingAndBuffered(t *te
 		res, err := svc.handleResponsesBufferedStreamingResponse(resp, c, "claude-sonnet-4-5", "claude-sonnet-4-5", nil, time.Now(), apicompat.ResponsesClientToolMapping{}, est)
 		require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
 		require.NotNil(t, res)
-		require.Equal(t, http.StatusForbidden, rec.Code)
+		require.Equal(t, http.StatusTooManyRequests, rec.Code)
 		require.True(t, body.closed.Load())
 		require.Greater(t, fixture.wallet.topUpCalls, 0)
 		require.Greater(t, res.Usage.OutputTokens, 100)
@@ -550,7 +557,7 @@ func TestAntigravityStreamingAndBufferedBalanceAbort_AbortsAndBills(t *testing.T
 		require.NotNil(t, res)
 		require.True(t, res.balanceAborted)
 		require.Greater(t, res.outputTokens, 100)
-		require.Equal(t, http.StatusForbidden, rec.Code)
+		require.Equal(t, http.StatusTooManyRequests, rec.Code)
 		require.True(t, body.closed.Load())
 		require.Greater(t, fixture.wallet.topUpCalls, 0)
 	})
@@ -647,7 +654,7 @@ func TestOpenAICompatStreamingAndBufferedBalanceAbort_AbortsAndBills(t *testing.
 		res, err := svc.handleChatBufferedStreamingResponse(resp, c, account, "gpt-5.1", "gpt-5.1", "gpt-5.1", time.Now())
 		require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
 		require.NotNil(t, res)
-		require.Equal(t, http.StatusForbidden, rec.Code)
+		require.Equal(t, http.StatusTooManyRequests, rec.Code)
 		require.True(t, body.closed.Load())
 		require.Greater(t, fixture.wallet.topUpCalls, 0)
 		require.Greater(t, res.Usage.OutputTokens, 100)
@@ -696,7 +703,7 @@ func TestOpenAICompatStreamingAndBufferedBalanceAbort_AbortsAndBills(t *testing.
 		res, err := svc.handleAnthropicBufferedStreamingResponse(resp, c, account, "gpt-5.1", "gpt-5.1", "gpt-5.1", time.Now())
 		require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
 		require.NotNil(t, res)
-		require.Equal(t, http.StatusForbidden, rec.Code)
+		require.Equal(t, http.StatusTooManyRequests, rec.Code)
 		require.True(t, body.closed.Load())
 		require.Greater(t, fixture.wallet.topUpCalls, 0)
 		require.Greater(t, res.Usage.OutputTokens, 100)
@@ -739,7 +746,7 @@ func TestOpenAICompatStreamingAndBufferedBalanceAbort_AbortsAndBills(t *testing.
 		res2, err2 := svc.handleCCBufferedFromNativeAnthropic(resp2, c2, "claude-sonnet-4-5", "claude-sonnet-4-5", "claude-sonnet-4-5", nil, time.Now())
 		require.ErrorIs(t, err2, ErrBalanceWithholdingFailed)
 		require.NotNil(t, res2)
-		require.Equal(t, http.StatusForbidden, rec2.Code)
+		require.Equal(t, http.StatusTooManyRequests, rec2.Code)
 		require.True(t, body2.closed.Load())
 		require.Greater(t, fixture2.wallet.topUpCalls, 0)
 		require.Greater(t, res2.Usage.OutputTokens, 100)
@@ -766,7 +773,7 @@ func TestOpenAICompatStreamingAndBufferedBalanceAbort_AbortsAndBills(t *testing.
 		res2, err2 := svc.handleResponsesBufferedFromNativeAnthropic(resp2, c2, "claude-sonnet-4-5", "claude-sonnet-4-5", "claude-sonnet-4-5", nil, time.Now(), apicompat.ResponsesClientToolMapping{})
 		require.ErrorIs(t, err2, ErrBalanceWithholdingFailed)
 		require.NotNil(t, res2)
-		require.Equal(t, http.StatusForbidden, rec2.Code)
+		require.Equal(t, http.StatusTooManyRequests, rec2.Code)
 		require.True(t, body2.closed.Load())
 		require.Greater(t, fixture2.wallet.topUpCalls, 0)
 		require.Greater(t, res2.Usage.OutputTokens, 100)
@@ -808,7 +815,7 @@ func TestOpenAICompatStreamingAndBufferedBalanceAbort_AbortsAndBills(t *testing.
 		require.NotNil(t, res1)
 		require.True(t, res1.balanceAborted)
 		require.Greater(t, res1.incompleteOutputTokens, 100)
-		require.Equal(t, http.StatusForbidden, rec1.Code)
+		require.Equal(t, http.StatusTooManyRequests, rec1.Code)
 		require.True(t, body1.closed.Load())
 		require.Greater(t, fixture1.wallet.topUpCalls, 0)
 
@@ -821,7 +828,7 @@ func TestOpenAICompatStreamingAndBufferedBalanceAbort_AbortsAndBills(t *testing.
 		require.NotNil(t, res2)
 		require.True(t, res2.balanceAborted)
 		require.Greater(t, res2.incompleteOutputTokens, 100)
-		require.Equal(t, http.StatusForbidden, rec2.Code)
+		require.Equal(t, http.StatusTooManyRequests, rec2.Code)
 		require.True(t, body2.closed.Load())
 		require.Greater(t, fixture2.wallet.topUpCalls, 0)
 	})
@@ -886,5 +893,371 @@ func TestPreserveOpenAIStreamingResultOnError_KeepsAllTopUpAbortSentinels(t *tes
 		require.Same(t, base, got)
 		require.ErrorIs(t, gotErr, sentinel)
 		require.False(t, errors.Is(gotErr, io.EOF))
+		require.True(t, IsBalanceHoldTopUpError(gotErr))
 	}
+	require.False(t, IsBalanceHoldTopUpError(nil))
+	require.False(t, IsBalanceHoldTopUpError(errors.New("unrelated error")))
+}
+
+// ============================================================================
+// Part 4 (P0-2): Provisional OutputTokens > 0 MUST NOT skip output estimation
+// ============================================================================
+
+func TestProvisionalOutputTokens_RaisedToObservedOutputOnBalanceAbort(t *testing.T) {
+	t.Run("antigravity_forward_upstream_message_start_output_tokens_1", func(t *testing.T) {
+		guard, fixture := newFailingStreamPreauthGuard(t)
+		c, rec, ctx := newPreauthGinContext(t, "/antigravity/v1/messages", guard)
+
+		sseBody := newPreauthClosingBody(buildAnthropicAbortSSE())
+		upstream := &preauthStaticUpstream{
+			fn: func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": {"text/event-stream"}},
+					Body:       sseBody,
+				}, nil
+			},
+		}
+		svc := newAntigravityTestService(&config.Config{})
+		svc.httpUpstream = upstream
+		account := &Account{
+			ID:       501,
+			Name:     "ag-upstream",
+			Platform: PlatformAntigravity,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":  "test-key-must-not-leak",
+				"base_url": "https://api.example.invalid",
+			},
+		}
+		reqBody := []byte(`{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"Explain preauth billing."}]}`)
+
+		res, err := svc.ForwardUpstream(ctx, c, account, reqBody)
+		require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
+		require.NotNil(t, res)
+		require.Greater(t, fixture.wallet.topUpCalls, 0)
+		require.True(t, sseBody.closed.Load())
+		require.Equal(t, 42, res.Usage.InputTokens)
+		require.Greater(t, res.Usage.OutputTokens, 100, "provisional message_start output_tokens=1 must be raised to delivered output")
+		require.True(t, strings.HasSuffix(rec.Body.String(), "\n\n"), "aborted SSE stream must end on a clean blank-line terminator")
+	})
+
+	t.Run("gemini_native_streaming_partial_candidatesTokenCount_1", func(t *testing.T) {
+		guard, fixture := newFailingStreamPreauthGuard(t)
+		c, rec, ctx := newPreauthGinContext(t, "/v1beta/models/gemini-2.5-pro:streamGenerateContent", guard)
+
+		chunk := longChunkPayload(12)
+		stream := strings.Join([]string{
+			fmt.Sprintf(`data: {"candidates":[{"content":{"role":"model","parts":[{"text":%q}]}}],"usageMetadata":{"promptTokenCount":55,"candidatesTokenCount":1,"totalTokenCount":56}}`, chunk),
+			"",
+			fmt.Sprintf(`data: {"candidates":[{"content":{"role":"model","parts":[{"text":%q}]}}]}`, chunk),
+			"",
+			fmt.Sprintf(`data: {"candidates":[{"content":{"role":"model","parts":[{"text":%q}]}}]}`, chunk),
+			"",
+			fmt.Sprintf(`data: {"candidates":[{"content":{"role":"model","parts":[{"text":%q}]}}]}`, chunk),
+			"",
+		}, "\n")
+		sseBody := newPreauthClosingBody(stream)
+		upstream := &preauthStaticUpstream{
+			fn: func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": {"text/event-stream"}},
+					Body:       sseBody,
+				}, nil
+			},
+		}
+		svc := &GeminiMessagesCompatService{httpUpstream: upstream, cfg: &config.Config{}}
+		account := &Account{
+			ID:       502,
+			Platform: PlatformGemini,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":  "test-key-must-not-leak",
+				"base_url": "https://generativelanguage.googleapis.com",
+			},
+		}
+		reqBody := []byte(`{"contents":[{"role":"user","parts":[{"text":"Prompt for partial candidatesTokenCount test."}]}]}`)
+
+		res, err := svc.ForwardNative(ctx, c, account, "gemini-2.5-pro", "streamGenerateContent", true, reqBody)
+		require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
+		require.NotNil(t, res)
+		require.Greater(t, fixture.wallet.topUpCalls, 0)
+		require.Equal(t, 55, res.Usage.InputTokens)
+		require.Greater(t, res.Usage.OutputTokens, 100, "partial candidatesTokenCount=1 must be raised to delivered output")
+		require.True(t, strings.HasSuffix(rec.Body.String(), "\n\n"), "AI Studio pass-through SSE abort must end with blank-line terminator")
+	})
+}
+
+// ============================================================================
+// Part 5 (P0-3): Semantic Responses SSE counting — NO envelope over-counting
+// or false aborts on .done / output_item.done / response.completed
+// ============================================================================
+
+func TestResponsesSSEObserver_NoEnvelopeOvercountOrFalseCompletedAbort(t *testing.T) {
+	// Verify semantic byte extraction for newly added delta types and zero on all non-delta events.
+	require.Equal(t, 12, responsesSSEDataOutputBytes("response.content_part.added", []byte(`{"type":"response.content_part.added","part":{"type":"output_text","text":"hello world!"}}`)))
+	require.Equal(t, 7, responsesSSEDataOutputBytes("response.content_part.added", []byte(`{"type":"response.content_part.added","part":{"type":"refusal","refusal":"blocked"}}`)))
+	require.Equal(t, 11, responsesSSEDataOutputBytes("response.code_interpreter_call_code.delta", []byte(`{"type":"response.code_interpreter_call_code.delta","delta":"print(1+1)\n"}`)))
+	require.Equal(t, 9, responsesSSEDataOutputBytes("response.mcp_call_arguments.delta", []byte(`{"type":"response.mcp_call_arguments.delta","delta":"{\"a\":123}"}`)))
+
+	bigText := strings.Repeat("word ", 400) // ~2000 bytes (~500 tokens)
+	for _, nonDelta := range []struct {
+		eventType string
+		data      string
+	}{
+		{"response.output_text.done", fmt.Sprintf(`{"type":"response.output_text.done","text":%q}`, bigText)},
+		{"response.content_part.done", fmt.Sprintf(`{"type":"response.content_part.done","part":{"type":"output_text","text":%q}}`, bigText)},
+		{"response.output_item.done", fmt.Sprintf(`{"type":"response.output_item.done","item":{"id":"msg_1","type":"message","content":[{"type":"output_text","text":%q}]}}`, bigText)},
+		{"response.completed", fmt.Sprintf(`{"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":%q}]}],"usage":{"input_tokens":20,"output_tokens":500}}}`, bigText)},
+		{"", "[DONE]"},
+	} {
+		require.Zero(t, responsesSSEDataOutputBytes(nonDelta.eventType, []byte(nonDelta.data)),
+			"non-delta event %q must contribute 0 bytes", nonDelta.eventType)
+	}
+
+	// Build a realistic 500-token Responses SSE stream sent in small 4-byte deltas (500 frames)
+	// followed by .done + content_part.done + output_item.done + response.completed.
+	// With raw len(line) counting, 500 small JSON envelopes + 4 duplicate full-text terminal frames
+	// would count >75,000 bytes (~18,750 tokens, 37x over-count!) and falsely abort on response.completed.
+	// With semantic delta counting, total observed bytes == 2000 bytes (~500 tokens).
+	buildStream := func() string {
+		var sb strings.Builder
+		sb.WriteString("event: response.created\n")
+		sb.WriteString(`data: {"type":"response.created","response":{"id":"resp_500","status":"in_progress","model":"gpt-5.1"}}` + "\n\n")
+		var full strings.Builder
+		for i := 0; i < 500; i++ {
+			delta := "abcd" // 4 bytes (~1 token), 500 * 4 = 2000 bytes (~500 tokens)
+			full.WriteString(delta)
+			sb.WriteString("event: response.output_text.delta\n")
+			sb.WriteString(fmt.Sprintf(`data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":%q,"sequence_number":%d}`+"\n\n", delta, i+1))
+		}
+		fullText := full.String()
+		sb.WriteString("event: response.output_text.done\n")
+		sb.WriteString(fmt.Sprintf(`data: {"type":"response.output_text.done","text":%q}`+"\n\n", fullText))
+		sb.WriteString("event: response.content_part.done\n")
+		sb.WriteString(fmt.Sprintf(`data: {"type":"response.content_part.done","part":{"type":"output_text","text":%q}}`+"\n\n", fullText))
+		sb.WriteString("event: response.output_item.done\n")
+		sb.WriteString(fmt.Sprintf(`data: {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","content":[{"type":"output_text","text":%q}]}}`+"\n\n", fullText))
+		sb.WriteString("event: response.completed\n")
+		sb.WriteString(fmt.Sprintf(`data: {"type":"response.completed","response":{"id":"resp_500","status":"completed","model":"gpt-5.1","output":[{"type":"message","content":[{"type":"output_text","text":%q}]}],"usage":{"input_tokens":30,"output_tokens":500}}}`+"\n\n", fullText))
+		return sb.String()
+	}
+
+	// Standard 256-token streaming guard whose wallet allows exactly 8 top-ups
+	// (covering up to 2048 observed semantic bytes) and rejects the 9th top-up with
+	// LiveBalanceOutcomeInsufficient. Our 500-token (2000-byte) stream requires exactly
+	// 8 top-ups under semantic delta counting and ZERO extra bytes/top-ups on .done,
+	// content_part.done, output_item.done, or response.completed. Raw len(line) counting
+	// would tally >80,000 bytes (~40x over-count) and abort falsely well before completion
+	// (and double-count again on every .done/completed frame).
+	newGuardAllowing8TopUps := func(t *testing.T) (*BalancePreauthorizationGuard, *preauthorizationFixture) {
+		t.Helper()
+		f := newPreauthorizationFixture()
+		f.calculator.outputUnitPrice = 0.001
+		f.wallet.topUp = make([]LiveBalanceResult, 0, 9)
+		for i := 0; i < 8; i++ {
+			f.wallet.topUp = append(f.wallet.topUp, LiveBalanceResult{
+				Outcome: LiveBalanceOutcomeApplied,
+				State:   LiveBalanceAttemptAuthorized,
+			})
+		}
+		f.wallet.topUp = append(f.wallet.topUp, LiveBalanceResult{
+			Outcome: LiveBalanceOutcomeInsufficient,
+			State:   LiveBalanceAttemptAuthorized,
+		})
+		req := balancePreauthorizationTestRequest()
+		req.InitialOutputWindowTokens = DefaultBalancePreauthorizationOutputWindow
+		g, err := f.service.Preauthorize(context.Background(), req)
+		require.NoError(t, err)
+		require.NotNil(t, g)
+		return g, f
+	}
+
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	account := &Account{ID: 503, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+
+	t.Run("responses_handleStreamingResponse_no_false_abort", func(t *testing.T) {
+		guard, fixture := newGuardAllowing8TopUps(t)
+		c, _, _ := newPreauthGinContext(t, "/v1/responses", guard)
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(buildStream())),
+		}
+		// Pass background ctx (without guard) to also verify fallback to Gin request ctx after route rebinding!
+		res, err := svc.handleStreamingResponse(context.Background(), resp, c, account, time.Now(), "gpt-5.1", "gpt-5.1")
+		require.NoError(t, err, "500-token (2000-byte) stream must NOT over-count envelopes or abort falsely on response.completed")
+		require.NotNil(t, res)
+		require.Equal(t, 500, res.usage.OutputTokens)
+		require.Equal(t, int64(2000), guard.core.outputHoldTracker.observedOutputBytes, "must observe exact 2000 semantic delta bytes (zero JSON envelopes, zero .done/completed)")
+		require.Equal(t, 8, fixture.wallet.topUpCalls, "2000 semantic bytes across 256-token windows must take exactly 8 top-ups")
+	})
+
+	t.Run("responses_handleStreamingResponsePassthrough_no_false_abort", func(t *testing.T) {
+		guard, fixture := newGuardAllowing8TopUps(t)
+		c, _, _ := newPreauthGinContext(t, "/v1/responses", guard)
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(buildStream())),
+		}
+		res, err := svc.handleStreamingResponsePassthrough(context.Background(), resp, c, account, time.Now(), "gpt-5.1", "gpt-5.1")
+		require.NoError(t, err, "500-token (2000-byte) passthrough stream must NOT over-count envelopes or abort falsely on response.completed")
+		require.NotNil(t, res)
+		require.Equal(t, 500, res.usage.OutputTokens)
+		require.Equal(t, int64(2000), guard.core.outputHoldTracker.observedOutputBytes, "must observe exact 2000 semantic delta bytes (zero JSON envelopes, zero .done/completed)")
+		require.Equal(t, 8, fixture.wallet.topUpCalls, "2000 semantic bytes across 256-token windows must take exactly 8 top-ups")
+	})
+}
+
+// ============================================================================
+// Part 6 (P1-1 / P1-3 / P1-4 / P1-5 / P2): Snake-case Gemini->OpenAI, Copilot,
+// SSE terminators, MarkResponseCommitted, Affinity, NonBillable & CodeExec
+// ============================================================================
+
+func TestGeminiNativeRequestToChatCompletions_HonorsSnakeCaseMaxOutputTokens(t *testing.T) {
+	body := []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}],"generation_config":{"max_output_tokens":321}}`)
+	converted, err := geminiNativeRequestToChatCompletions("gpt-5.1", body, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(321), gjson.GetBytes(converted, "max_tokens").Int())
+
+	// camelCase still takes precedence when both are present.
+	both := []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}],"generationConfig":{"maxOutputTokens":654},"generation_config":{"max_output_tokens":321}}`)
+	convertedBoth, err := geminiNativeRequestToChatCompletions("gpt-5.1", both, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(654), gjson.GetBytes(convertedBoth, "max_tokens").Int())
+}
+
+func TestBalanceHoldAbort_SSEEventTerminators_MarkResponseCommitted_AndAffinityPreserved(t *testing.T) {
+	t.Run("writeAnthropicError_marks_response_committed", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		writeAnthropicError(c, http.StatusTooManyRequests, "insufficient_quota", ErrBalanceWithholdingFailed.Message)
+		require.True(t, IsResponseCommitted(c))
+		require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	})
+
+	t.Run("sse_terminators_on_balance_abort", func(t *testing.T) {
+		// Anthropic passthrough
+		guard1, _ := newFailingStreamPreauthGuard(t)
+		c1, rec1, ctx1 := newPreauthGinContext(t, "/v1/messages", guard1)
+		svc := &GatewayService{cfg: &config.Config{}}
+		resp1 := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: newPreauthClosingBody(buildAnthropicAbortSSE())}
+		_, err1 := svc.handleStreamingResponseAnthropicAPIKeyPassthrough(ctx1, resp1, c1, &Account{ID: 601, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}, time.Now(), "claude-sonnet-4-5")
+		require.ErrorIs(t, err1, ErrBalanceWithholdingFailed)
+		require.True(t, strings.HasSuffix(rec1.Body.String(), "\n\n"), "anthropic passthrough must terminate open SSE event with \\n\\n")
+
+		// Raw chat completions
+		guard2, _ := newFailingStreamPreauthGuard(t)
+		c2, rec2, _ := newPreauthGinContext(t, "/v1/chat/completions", guard2)
+		oaiSvc := &OpenAIGatewayService{cfg: &config.Config{}}
+		resp2 := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: newPreauthClosingBody(buildOpenAIChatAbortSSE("content"))}
+		_, err2 := oaiSvc.streamRawChatCompletions(c2, resp2, &Account{ID: 602, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, "gpt-5.1", "gpt-5.1", "gpt-5.1", nil, nil, time.Now(), 100)
+		require.ErrorIs(t, err2, ErrBalanceWithholdingFailed)
+		require.True(t, strings.HasSuffix(rec2.Body.String(), "\n\n"), "raw chat completions must terminate open SSE event with \\n\\n")
+
+		// Native Anthropic messages on OpenAI gateway
+		guard3, _ := newFailingStreamPreauthGuard(t)
+		c3, rec3, ctx3 := newPreauthGinContext(t, "/v1/messages", guard3)
+		resp3 := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: newPreauthClosingBody(buildAnthropicAbortSSE())}
+		_, err3 := oaiSvc.handleNativeAnthropicStreamingResponse(ctx3, resp3, c3, &Account{ID: 603, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, "claude-sonnet-4-5", "claude-sonnet-4-5", "claude-sonnet-4-5", nil, time.Now())
+		require.ErrorIs(t, err3, ErrBalanceWithholdingFailed)
+		require.True(t, strings.HasSuffix(rec3.Body.String(), "\n\n"), "native anthropic messages must terminate open SSE event with \\n\\n")
+	})
+
+	t.Run("invalidate_upstream_affinity_ignores_balance_hold_topup_errors", func(t *testing.T) {
+		ctx := withUpstreamAttempts(context.Background())
+		account := &Account{ID: 604}
+		invalidateUpstreamAffinity(ctx, nil, nil, []string{"sess-1"}, account, wrapStreamOutputHoldTopUpFailure(ErrBalanceWithholdingFailed))
+		state, ok := ctx.Value(upstreamAttemptContextKey{}).(*upstreamAttempts)
+		require.True(t, ok)
+		require.Empty(t, state.failed, "client balance exhaustion must never mark a healthy upstream account as failed")
+	})
+}
+
+func TestBalanceAbort_ClearsNonBillableAndObservesGeminiCodeExecution(t *testing.T) {
+	t.Run("scanCCStream_clears_non_billable_after_prelude_error_and_output_abort", func(t *testing.T) {
+		guard, fixture := newFailingStreamPreauthGuard(t)
+		c, _, _ := newPreauthGinContext(t, "/v1/responses", guard)
+		chunk := longChunkPayload(12)
+		stream := strings.Join([]string{
+			`data: {"error":{"type":"server_error","message":"transient prelude"}}`,
+			"",
+			fmt.Sprintf(`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{"content":%q}}]}`, chunk),
+			"",
+			fmt.Sprintf(`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{"content":%q}}]}`, chunk),
+			"",
+			fmt.Sprintf(`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{"content":%q}}]}`, chunk),
+			"",
+			fmt.Sprintf(`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","model":"gpt-5.1","choices":[{"index":0,"delta":{"content":%q}}]}`, chunk),
+			"",
+		}, "\n")
+		body := newPreauthClosingBody(stream)
+		resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: body}
+		svc := &OpenAIGatewayService{cfg: &config.Config{}}
+		stashed := []byte(`{"model":"gpt-5.1","input":"hello"}`)
+		stashCompatUpstreamRequestBody(c, nil, stashed)
+
+		res, err := svc.streamChatCompletionsAsResponses(c, resp, "gpt-5.1", nil, nil, false, nil, nil, "gpt-5.1", "gpt-5.1", nil, nil, time.Now())
+		require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
+		require.NotNil(t, res)
+		require.False(t, res.NonBillableUpstreamError, "delivered output on balance abort must never be waived as non-billable")
+		require.Greater(t, fixture.wallet.topUpCalls, 0)
+		require.Greater(t, res.Usage.OutputTokens, 100)
+	})
+
+	t.Run("gemini_code_execution_parts_observed_in_messages_and_chat_compat", func(t *testing.T) {
+		chunk := longChunkPayload(12)
+		codeSSE := strings.Join([]string{
+			fmt.Sprintf(`data: {"candidates":[{"content":{"role":"model","parts":[{"executableCode":{"language":"PYTHON","code":%q}}]}}]}`, chunk),
+			"",
+			fmt.Sprintf(`data: {"candidates":[{"content":{"role":"model","parts":[{"codeExecutionResult":{"outcome":"OUTCOME_OK","output":%q}}]}}]}`, chunk),
+			"",
+			fmt.Sprintf(`data: {"candidates":[{"content":{"role":"model","parts":[{"executableCode":{"language":"PYTHON","code":%q}}]}}]}`, chunk),
+			"",
+			fmt.Sprintf(`data: {"candidates":[{"content":{"role":"model","parts":[{"codeExecutionResult":{"outcome":"OUTCOME_OK","output":%q}}]}}]}`, chunk),
+			"",
+		}, "\n")
+		account := &Account{
+			ID:       605,
+			Platform: PlatformGemini,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":  "test-key-must-not-leak",
+				"base_url": "https://generativelanguage.googleapis.com",
+			},
+		}
+
+		// Messages compat
+		guard1, fixture1 := newFailingStreamPreauthGuard(t)
+		c1, _, ctx1 := newPreauthGinContext(t, "/v1/messages", guard1)
+		svc1 := &GeminiMessagesCompatService{
+			httpUpstream: &preauthStaticUpstream{fn: func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: newPreauthClosingBody(codeSSE)}, nil
+			}},
+			cfg: &config.Config{},
+		}
+		res1, err1 := svc1.Forward(ctx1, c1, account, []byte(`{"model":"gemini-2.5-pro","stream":true,"messages":[{"role":"user","content":"Run python."}]}`))
+		require.ErrorIs(t, err1, ErrBalanceWithholdingFailed)
+		require.NotNil(t, res1)
+		require.Greater(t, fixture1.wallet.topUpCalls, 0)
+		require.Greater(t, res1.Usage.OutputTokens, 100)
+
+		// Chat completions compat
+		guard2, fixture2 := newFailingStreamPreauthGuard(t)
+		c2, _, ctx2 := newPreauthGinContext(t, "/v1/chat/completions", guard2)
+		svc2 := &GeminiMessagesCompatService{
+			httpUpstream: &preauthStaticUpstream{fn: func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: newPreauthClosingBody(codeSSE)}, nil
+			}},
+			cfg: &config.Config{},
+		}
+		res2, err2 := svc2.ForwardAsChatCompletions(ctx2, c2, account, []byte(`{"model":"gemini-2.5-pro","stream":true,"messages":[{"role":"user","content":"Run python."}]}`))
+		require.ErrorIs(t, err2, ErrBalanceWithholdingFailed)
+		require.NotNil(t, res2)
+		require.Greater(t, fixture2.wallet.topUpCalls, 0)
+		require.Greater(t, res2.Usage.OutputTokens, 100)
+	})
 }

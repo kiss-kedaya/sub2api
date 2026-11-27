@@ -264,6 +264,8 @@ func geminiNativeRequestToChatCompletions(model string, body []byte, stream bool
 	}
 	if maxTok := gjson.GetBytes(body, "generationConfig.maxOutputTokens"); maxTok.Exists() {
 		out["max_tokens"] = maxTok.Value()
+	} else if maxTok := gjson.GetBytes(body, "generation_config.max_output_tokens"); maxTok.Exists() {
+		out["max_tokens"] = maxTok.Value()
 	}
 	return json.Marshal(out)
 }
@@ -430,10 +432,12 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 			chunks = []apicompat.ChatCompletionsChunk{chunk}
 		}
 		abortTopUp := func(topUpErr error) {
+			result.NonBillableUpstreamError = false
+			financialFailure = false
 			streamErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
 			streamStatus = http.StatusServiceUnavailable
 			if errors.Is(topUpErr, ErrBalanceWithholdingFailed) {
-				streamStatus = http.StatusForbidden
+				streamStatus = http.StatusTooManyRequests
 			}
 			streamMessage = "Streaming output balance reservation failed"
 			terminal = true

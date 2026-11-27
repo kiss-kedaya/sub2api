@@ -78,12 +78,19 @@ func TestFillIncompleteStreamUsage(t *testing.T) {
 		require.Zero(t, usage.InputTokens)
 		require.False(t, usage.CacheReadEstimated, "a reported cache read is never marked as estimated")
 	})
-	t.Run("reported output is never overwritten", func(t *testing.T) {
-		usage := &OpenAIUsage{InputTokens: 13, OutputTokens: 4}
+	t.Run("larger reported output is never lowered", func(t *testing.T) {
+		usage := &OpenAIUsage{InputTokens: 13, OutputTokens: 120}
 		out, in := fillIncompleteStreamUsage(usage, 99, body)
 		require.Zero(t, out)
 		require.Zero(t, in)
-		require.Equal(t, OpenAIUsage{InputTokens: 13, OutputTokens: 4}, *usage)
+		require.Equal(t, OpenAIUsage{InputTokens: 13, OutputTokens: 120}, *usage)
+	})
+	t.Run("provisional small output is raised to delivered estimate", func(t *testing.T) {
+		usage := &OpenAIUsage{InputTokens: 13, OutputTokens: 4}
+		out, in := fillIncompleteStreamUsage(usage, 99, body)
+		require.Equal(t, 99, out)
+		require.Zero(t, in)
+		require.Equal(t, OpenAIUsage{InputTokens: 13, OutputTokens: 99}, *usage)
 	})
 	t.Run("reported image output is never overwritten", func(t *testing.T) {
 		usage := &OpenAIUsage{ImageOutputTokens: 7}
@@ -184,12 +191,19 @@ func TestApplyIncompleteOpenAIStreamUsage(t *testing.T) {
 		require.Greater(t, result.usage.InputTokens, 0)
 		require.Equal(t, openAIIncompleteCacheReadTokens(result.usage.InputTokens), result.usage.CacheReadInputTokens)
 	})
-	t.Run("reported usage survives a client that left", func(t *testing.T) {
+	t.Run("reported usage larger than estimate survives a client that left", func(t *testing.T) {
 		result := newResult()
-		result.usage = &OpenAIUsage{InputTokens: 13, OutputTokens: 4}
+		result.usage = &OpenAIUsage{InputTokens: 13, OutputTokens: 20}
 		result.clientDisconnect = true
 		applyIncompleteOpenAIStreamUsage(&Account{ID: 1}, result, body, "gpt-5.1", streamErr)
-		require.Equal(t, OpenAIUsage{InputTokens: 13, OutputTokens: 4}, *result.usage)
+		require.Equal(t, OpenAIUsage{InputTokens: 13, OutputTokens: 20}, *result.usage)
+	})
+	t.Run("provisional small output is raised when client leaves after more output", func(t *testing.T) {
+		result := newResult()
+		result.usage = &OpenAIUsage{InputTokens: 13, OutputTokens: 1}
+		result.clientDisconnect = true
+		applyIncompleteOpenAIStreamUsage(&Account{ID: 1}, result, body, "gpt-5.1", streamErr)
+		require.Equal(t, OpenAIUsage{InputTokens: 13, OutputTokens: 10}, *result.usage)
 	})
 	t.Run("nil result and nil usage are safe", func(t *testing.T) {
 		applyIncompleteOpenAIStreamUsage(nil, nil, body, "gpt-5.1", errors.New("boom"))

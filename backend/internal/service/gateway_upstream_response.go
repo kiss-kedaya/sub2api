@@ -820,7 +820,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	var firstTokenMs *int
 	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐帧仅整数
 	// 累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
-	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
+	streamBalanceGuardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(ctx, c)
 	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	// 设置更大的buffer以处理长行
 	maxLineSize := defaultMaxLineSize
@@ -1235,7 +1235,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 							observedBytes := lastObservedOutputBytes
 							lastObservedOutputBytes = 0
 							if observedBytes > 0 {
-								if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, observedBytes); topUpErr != nil {
+								if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamBalanceGuardCtx, observedBytes); topUpErr != nil {
 									if data != "" {
 										if firstTokenMs == nil && data != "[DONE]" {
 											ms := int(time.Since(startTime).Milliseconds())

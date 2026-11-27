@@ -847,6 +847,22 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 									}
 								}
 							}
+							if ec, ok := part["executableCode"].(map[string]any); ok && ec != nil {
+								if code, ok := ec["code"].(string); ok && code != "" {
+									meter.addText(code)
+									if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(code)); topUpErr != nil {
+										return balanceAbortResult(topUpErr)
+									}
+								}
+							}
+							if cer, ok := part["codeExecutionResult"].(map[string]any); ok && cer != nil {
+								if output, ok := cer["output"].(string); ok && output != "" {
+									meter.addText(output)
+									if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(output)); topUpErr != nil {
+										return balanceAbortResult(topUpErr)
+									}
+								}
+							}
 						}
 					}
 				}

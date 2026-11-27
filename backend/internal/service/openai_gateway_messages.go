@@ -1966,6 +1966,7 @@ func writeAnthropicError(c *gin.Context, statusCode int, errType, message string
 		WriteUpstreamFinancialError(c, http.StatusPaymentRequired, nil)
 		return
 	}
+	MarkResponseCommitted(c)
 	c.JSON(statusCode, gin.H{
 		"type": "error",
 		"error": gin.H{

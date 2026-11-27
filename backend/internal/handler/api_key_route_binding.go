@@ -151,7 +151,7 @@ func bindSelectedKeyRoute(c *gin.Context, gateway keyRouteBillingProvider, billi
 			}
 			*binding.Guard = guard
 		} else {
-			estimate := service.EstimateBalancePreauthorizationTokens(body)
+			estimate := service.EstimateBalancePreauthorizationTokensForContext(ctx, body)
 			request := service.BalancePreauthorizationRequest{
 				APIKeyID: selected.ID, UserID: selected.UserID,
 				BillingType:        service.BalancePreauthorizationBillingType(selected, subscription),

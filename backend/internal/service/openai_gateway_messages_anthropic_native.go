@@ -641,10 +641,15 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 			if observedBytes > 0 {
 				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
 					if !clientDisconnected {
+						if inPartialEvent {
+							_, _ = io.WriteString(w, "\n")
+							inPartialEvent = false
+						}
 						flusher.Flush()
 					}
 					s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI native anthropic messages", topUpErr)
 					_ = resp.Body.Close()
+					nonBillableUpstreamError = false
 					abortErr := wrapStreamOutputHoldTopUpFailure(topUpErr)
 					res, _ := finishIncomplete(abortErr)
 					return res, abortErr

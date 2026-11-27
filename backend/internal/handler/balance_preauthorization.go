@@ -48,7 +48,7 @@ func preauthorizeTextGatewayRequest(
 		userID = apiKey.User.ID
 	}
 	payloadHash := service.HashUsageRequestPayload(body)
-	tokenEstimate := service.EstimateBalancePreauthorizationTokens(body)
+	tokenEstimate := service.EstimateBalancePreauthorizationTokensForContext(ctx, body)
 	return preauthorizer.Preauthorize(ctx, service.BalancePreauthorizationRequest{
 		RequestID:                 service.ResolveBalancePreauthorizationRequestID(ctx),
 		APIKeyID:                  apiKey.ID,

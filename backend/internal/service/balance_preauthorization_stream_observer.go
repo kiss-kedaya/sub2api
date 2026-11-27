@@ -33,6 +33,14 @@ func balancePreauthorizationGuardForRequest(ctx context.Context, c *gin.Context)
 	return nonNilContext(ctx), nil
 }
 
+// IsBalanceHoldTopUpError reports whether err came from a mid-stream balance
+// preauthorization hold top-up failure (insufficient balance, wallet outage, or
+// stale guard ownership). Callers must preserve partial billable usage and must
+// NOT fail over, penalize upstream account affinity/health, or refund delivered output.
+func IsBalanceHoldTopUpError(err error) bool {
+	return isBalanceHoldTopUpError(err)
+}
+
 // isBalanceHoldTopUpError reports whether err came from a mid-stream balance
 // preauthorization hold top-up failure (insufficient balance, wallet outage, or
 // stale guard ownership). Callers must preserve partial billable usage and must
@@ -48,11 +56,12 @@ func isBalanceHoldTopUpError(err error) bool {
 
 // balanceHoldAbortClientError maps a hold top-up abort to the HTTP status,
 // error type, and client-safe message used when no response has been written yet.
+// Aligns with handler billingErrorDetails (429 insufficient_quota / 503 billing_service_error).
 func balanceHoldAbortClientError(err error) (status int, errType string, message string) {
 	if errors.Is(err, ErrBalanceWithholdingFailed) {
-		return http.StatusForbidden, "insufficient_balance", ErrBalanceWithholdingFailed.Message
+		return http.StatusTooManyRequests, "insufficient_quota", ErrBalanceWithholdingFailed.Message
 	}
-	return http.StatusServiceUnavailable, "billing_unavailable", ErrBillingServiceUnavailable.Message
+	return http.StatusServiceUnavailable, "billing_service_error", ErrBillingServiceUnavailable.Message
 }
 
 // anthropicEventOutputBytes returns the billable output byte delta carried by
@@ -100,8 +109,14 @@ func responsesEventOutputBytes(event *apicompat.ResponsesStreamEvent) int {
 		"response.function_call_arguments.delta",
 		"response.custom_tool_call_input.delta",
 		"response.reasoning_summary_text.delta",
-		"response.reasoning_text.delta":
+		"response.reasoning_text.delta",
+		"response.code_interpreter_call_code.delta",
+		"response.mcp_call_arguments.delta":
 		return len(event.Delta)
+	case "response.content_part.added":
+		if event.Part != nil {
+			return len(event.Part.Text) + len(event.Part.Refusal)
+		}
 	case "response.output_item.added":
 		if event.Item != nil {
 			return len(event.Item.Name)
@@ -140,6 +155,8 @@ func chatChunkOutputBytes(chunk *apicompat.ChatCompletionsChunk) int {
 
 // responsesSSEDataOutputBytes returns the billable output byte delta carried by
 // a raw OpenAI Responses or Chat Completions SSE data payload.
+// Non-delta Responses events (.done, content_part.done, output_item.done,
+// response.completed, response.done, etc.) and [DONE] always return 0.
 func responsesSSEDataOutputBytes(eventType string, data []byte) int {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("[DONE]")) {
@@ -155,10 +172,27 @@ func responsesSSEDataOutputBytes(eventType string, data []byte) int {
 		"response.function_call_arguments.delta",
 		"response.custom_tool_call_input.delta",
 		"response.reasoning_summary_text.delta",
-		"response.reasoning_text.delta":
+		"response.reasoning_text.delta",
+		"response.code_interpreter_call_code.delta",
+		"response.mcp_call_arguments.delta":
 		return len(gjson.GetBytes(trimmed, "delta").String())
+	case "response.content_part.added":
+		total := 0
+		if v := gjson.GetBytes(trimmed, "part.text"); v.Type == gjson.String {
+			total += len(v.String())
+		}
+		if v := gjson.GetBytes(trimmed, "part.refusal"); v.Type == gjson.String {
+			total += len(v.String())
+		}
+		return total
 	case "response.output_item.added":
 		return len(gjson.GetBytes(trimmed, "item.name").String())
+	}
+	// Never count non-delta Responses frames (.done, content_part.done,
+	// output_item.done, response.completed, response.done) or let them fall
+	// through to the Chat Completions choices[].delta extractor.
+	if strings.HasPrefix(et, "response.") {
+		return 0
 	}
 	if bytes.Contains(trimmed, []byte(`"delta"`)) {
 		total := 0

@@ -49,28 +49,44 @@ func TestGeminiV1BetaModels_PreauthStreamHintMatchesURLAction(t *testing.T) {
 		wantInitialOutHint int
 	}{
 		{
-			name:               "streamGenerateContent without maxOutputTokens attaches stream=true hint",
+			name:               "streamGenerateContent without maxOutputTokens reserves streaming 256 window",
 			modelAction:        "/gemini-2.5-pro:streamGenerateContent",
 			body:               `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`,
 			wantHasStreamHint:  true,
 			wantStreamHint:     true,
-			wantInitialOutHint: service.DefaultBalancePreauthorizationNonStreamOutputWindow,
+			wantInitialOutHint: service.DefaultBalancePreauthorizationOutputWindow,
 		},
 		{
-			name:               "generateContent with spoofed stream=true attaches stream=false hint",
+			name:               "generateContent with spoofed stream=true reserves non-streaming 4096 window",
 			modelAction:        "/gemini-2.5-pro:generateContent",
 			body:               `{"stream":true,"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`,
 			wantHasStreamHint:  true,
 			wantStreamHint:     false,
-			wantInitialOutHint: service.DefaultBalancePreauthorizationOutputWindow,
+			wantInitialOutHint: service.DefaultBalancePreauthorizationNonStreamOutputWindow,
 		},
 		{
-			name:               "generateContent with explicit snake_case max_output_tokens keeps explicit cap without hint",
+			name:               "generateContent with spoofed stream=true and thinkingBudget=1 reserves 4097",
+			modelAction:        "/gemini-2.5-pro:generateContent",
+			body:               `{"stream":true,"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingBudget":1}}}`,
+			wantHasStreamHint:  true,
+			wantStreamHint:     false,
+			wantInitialOutHint: 1 + service.DefaultBalancePreauthorizationNonStreamOutputWindow,
+		},
+		{
+			name:               "generateContent with explicit snake_case max_output_tokens keeps explicit cap",
 			modelAction:        "/gemini-2.5-pro:generateContent",
 			body:               `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generation_config":{"max_output_tokens":768}}`,
-			wantHasStreamHint:  false,
+			wantHasStreamHint:  true,
 			wantStreamHint:     false,
 			wantInitialOutHint: 768,
+		},
+		{
+			name:               "streamGenerateContent with explicit maxOutputTokens=4096 is never clobbered to 256",
+			modelAction:        "/gemini-2.5-pro:streamGenerateContent",
+			body:               `{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":4096}}`,
+			wantHasStreamHint:  true,
+			wantStreamHint:     true,
+			wantInitialOutHint: 4096,
 		},
 	}
 

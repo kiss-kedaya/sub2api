@@ -378,6 +378,9 @@ func (s *OpenAIGatewayService) scanCCStream(
 		if n := chatChunkOutputBytes(&chunk); n > 0 {
 			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, n); topUpErr != nil {
 				_ = resp.Body.Close()
+				s.reportOpenAIStreamOutputHoldTopUpFailure(c, nil, logPrefix, topUpErr)
+				st.NonBillableUpstreamError = false
+				st.UpstreamError = nil
 				st.Err = wrapStreamOutputHoldTopUpFailure(topUpErr)
 				return st
 			}

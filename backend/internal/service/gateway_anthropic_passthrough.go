@@ -762,6 +762,10 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					inPartialEvent = true
 					if observedBytes > 0 {
 						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+							if inPartialEvent {
+								_, _ = io.WriteString(w, "\n")
+								inPartialEvent = false
+							}
 							flusher.Flush()
 							_ = resp.Body.Close()
 							logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Stream output hold top-up failed, aborting upstream: account=%d error=%v", account.ID, topUpErr)

@@ -188,16 +188,18 @@ func geminiUsageReported(usage *ClaudeUsage) bool {
 }
 
 // fillIncompleteGeminiUsage applies the estimates field by field and returns what it
-// filled in (0 when untouched). Output is filled only when the upstream reported no
-// output at all. Input is filled from the request only when the upstream reported no
-// input side at all: InputTokens takes the normal share and CacheReadInputTokens the
-// cache share, flagged as an estimate so a model without a cache price bills it at
-// the input price.
+// filled in (0 when untouched). Output is raised to the observed estimate whenever
+// the upstream reported less than what was actually delivered (for example a
+// provisional message_start output_tokens=1 or early candidatesTokenCount before a
+// mid-stream balance abort). Input is filled from the request only when the upstream
+// reported no input side at all: InputTokens takes the normal share and
+// CacheReadInputTokens the cache share, flagged as an estimate so a model without a
+// cache price bills it at the input price.
 func fillIncompleteGeminiUsage(usage *ClaudeUsage, outputTokens int, requestBody []byte) (filledOutput, filledInput int) {
 	if usage == nil {
 		return 0, 0
 	}
-	if outputTokens > 0 && usage.OutputTokens == 0 && usage.ImageOutputTokens == 0 {
+	if outputTokens > 0 && outputTokens > usage.OutputTokens && usage.ImageOutputTokens == 0 {
 		usage.OutputTokens = outputTokens
 		filledOutput = outputTokens
 	}
