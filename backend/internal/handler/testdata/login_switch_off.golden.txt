@@ -1,13 +1,13 @@
 ## step1 plain unknown pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"n***y@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 plain unknown pw=correct-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"n***y@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 plain unknown-case pw=wrong-password
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
@@ -19,75 +19,75 @@
   cookies=[]
   body={"code":400,"message":"Invalid request: Key: 'LoginRequest.Email' Error:Field validation for 'Email' failed on the 'email' tag"}
 ## step1 plain totp pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***1@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 plain totp pw=correct-password
   status=200
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
   body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***1@example.test","required_factors":["totp"],"next_factor":"totp"}}
 ## step1 plain totp-uppercase pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"U***1@EXAMPLE.TEST","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 plain totp-uppercase pw=correct-password
   status=200
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
   body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"U***1@EXAMPLE.TEST","required_factors":["totp"],"next_factor":"totp"}}
 ## step1 plain passkey pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***2@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 plain passkey pw=correct-password
   status=200
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
   body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***2@example.test","required_factors":["passkey"],"next_factor":"passkey","passkey_session_token":"v1.login_2fa.22.<N>","passkey_options":{"publicKey":{"challenge":"<C>","timeout":300000,"rpId":"example.test","allowCredentials":[{"type":"public-key","id":"cGFzc2tleS1vbmx5LWNyZWRlbnRpYWwtaWQtMzItYnQ","transports":["hybrid","internal"]}],"userVerification":"required"}}}}
 ## step1 plain both pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***3@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 plain both pw=correct-password
   status=200
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
   body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***3@example.test","required_factors":["totp","passkey"],"next_factor":"totp"}}
 ## step1 plain none pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***4@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 plain none pw=correct-password
   status=200
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
   body={"code":0,"message":"success","data":{"access_token":"<TOK>","refresh_token":"<TOK>","expires_in":3600,"token_type":"Bearer","user":{"id":24,"email":"user-24@example.test","username":"","role":"user","balance":0,"frozen_balance":0,"concurrency":0,"status":"active","allowed_groups":null,"created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z","balance_notify_enabled":false,"balance_notify_threshold_type":"","balance_notify_threshold":null,"balance_notify_extra_emails":[{"email":"user-24@example.test","disabled":false,"verified":true,"primary":true}],"total_recharged":0,"rpm_limit":0}}}
 ## step1 plain disabled pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***5@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 plain disabled pw=correct-password
   status=403
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
   body={"code":403,"message":"user is not active","reason":"USER_NOT_ACTIVE"}
 ## step1 bogus-cookies unknown pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"n***y@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 bogus-cookies unknown pw=correct-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"n***y@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 bogus-cookies unknown-case pw=wrong-password
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
@@ -99,60 +99,60 @@
   cookies=[]
   body={"code":400,"message":"Invalid request: Key: 'LoginRequest.Email' Error:Field validation for 'Email' failed on the 'email' tag"}
 ## step1 bogus-cookies totp pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***1@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 bogus-cookies totp pw=correct-password
   status=200
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8 Set-Cookie=sub2_2fa_grant=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax]
   cookies=[sub2_2fa_grant;max-age=-1;httponly=true;secure=true;path=/;samesite=2;valnonempty=false]
   body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***1@example.test","required_factors":["totp"],"next_factor":"totp"}}
 ## step1 bogus-cookies totp-uppercase pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"U***1@EXAMPLE.TEST","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 bogus-cookies totp-uppercase pw=correct-password
   status=200
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8 Set-Cookie=sub2_2fa_grant=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax]
   cookies=[sub2_2fa_grant;max-age=-1;httponly=true;secure=true;path=/;samesite=2;valnonempty=false]
   body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"U***1@EXAMPLE.TEST","required_factors":["totp"],"next_factor":"totp"}}
 ## step1 bogus-cookies passkey pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***2@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 bogus-cookies passkey pw=correct-password
   status=200
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8 Set-Cookie=sub2_2fa_passkey_grant=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax]
   cookies=[sub2_2fa_passkey_grant;max-age=-1;httponly=true;secure=true;path=/;samesite=2;valnonempty=false]
   body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***2@example.test","required_factors":["passkey"],"next_factor":"passkey","passkey_session_token":"v1.login_2fa.22.<N>","passkey_options":{"publicKey":{"challenge":"<C>","timeout":300000,"rpId":"example.test","allowCredentials":[{"type":"public-key","id":"cGFzc2tleS1vbmx5LWNyZWRlbnRpYWwtaWQtMzItYnQ","transports":["hybrid","internal"]}],"userVerification":"required"}}}}
 ## step1 bogus-cookies both pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***3@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 bogus-cookies both pw=correct-password
   status=200
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8 Set-Cookie=sub2_2fa_grant=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax|sub2_2fa_passkey_grant=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax]
   cookies=[sub2_2fa_grant;max-age=-1;httponly=true;secure=true;path=/;samesite=2;valnonempty=false sub2_2fa_passkey_grant;max-age=-1;httponly=true;secure=true;path=/;samesite=2;valnonempty=false]
   body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***3@example.test","required_factors":["totp","passkey"],"next_factor":"totp"}}
 ## step1 bogus-cookies none pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***4@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 bogus-cookies none pw=correct-password
   status=200
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
   body={"code":0,"message":"success","data":{"access_token":"<TOK>","refresh_token":"<TOK>","expires_in":3600,"token_type":"Bearer","user":{"id":24,"email":"user-24@example.test","username":"","role":"user","balance":0,"frozen_balance":0,"concurrency":0,"status":"active","allowed_groups":null,"created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z","balance_notify_enabled":false,"balance_notify_threshold_type":"","balance_notify_threshold":null,"balance_notify_extra_emails":[{"email":"user-24@example.test","disabled":false,"verified":true,"primary":true}],"total_recharged":0,"rpm_limit":0}}}
 ## step1 bogus-cookies disabled pw=wrong-password
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"u***5@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 bogus-cookies disabled pw=correct-password
   status=403
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
@@ -189,10 +189,10 @@
   cookies=[]
   body={"code":400,"message":"Invalid request: Key: 'LoginRequest.Email' Error:Field validation for 'Email' failed on the 'required' tag\nKey: 'LoginRequest.Password' Error:Field validation for 'Password' failed on the 'required' tag"}
 ## step1 very long email
-  status=200
+  status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"a***a@example.test","required_factors":["totp"],"next_factor":"totp"}}
+  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 totp_enabled=false unknown
   status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
@@ -204,140 +204,140 @@
   cookies=[]
   body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
 ## step1 totp_enabled read error unknown
-  status=200
-  headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
-  cookies=[]
-  body={"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"<T>","user_email_masked":"n***y@example.test","required_factors":["totp"],"next_factor":"totp"}}
-## step2 unknown/wrong with-pw
   status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
   body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
+## step2 unknown/wrong with-pw
+  status=400
+  headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
+  cookies=[]
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 unknown/wrong with-pw-again
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 unknown/wrong no-pw
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 unknown/wrong email-mismatch
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 unknown/wrong bad-code-len
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TotpCode' Error:Field validation for 'TotpCode' failed on the 'len' tag"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag\nKey: 'Login2FARequest.TotpCode' Error:Field validation for 'TotpCode' failed on the 'len' tag"}
 ## step2 unknown/wrong burst#1
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 unknown/wrong burst#2
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 unknown/wrong burst#3
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 unknown/wrong burst#4
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 unknown/wrong burst#5
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 unknown/wrong burst#6
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 unknown/wrong burst#7
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 unknown/wrong passkey-finish
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid passkey response"}
 ## step2 totp/wrong with-pw
-  status=401
+  status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 totp/wrong with-pw-again
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 totp/wrong no-pw
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 totp/wrong email-mismatch
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 totp/wrong bad-code-len
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TotpCode' Error:Field validation for 'TotpCode' failed on the 'len' tag"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag\nKey: 'Login2FARequest.TotpCode' Error:Field validation for 'TotpCode' failed on the 'len' tag"}
 ## step2 totp/wrong burst#1
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 totp/wrong burst#2
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 totp/wrong burst#3
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 totp/wrong burst#4
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 totp/wrong burst#5
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 totp/wrong burst#6
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 totp/wrong burst#7
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 totp/wrong passkey-finish
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid passkey response"}
 ## step2 totp/correct with-pw
   status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
@@ -404,70 +404,70 @@
   cookies=[]
   body={"code":400,"message":"No passkey step is required for this login session"}
 ## step2 passkey/wrong with-pw
-  status=401
+  status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 passkey/wrong with-pw-again
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 passkey/wrong no-pw
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 passkey/wrong email-mismatch
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 passkey/wrong bad-code-len
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TotpCode' Error:Field validation for 'TotpCode' failed on the 'len' tag"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag\nKey: 'Login2FARequest.TotpCode' Error:Field validation for 'TotpCode' failed on the 'len' tag"}
 ## step2 passkey/wrong burst#1
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 passkey/wrong burst#2
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 passkey/wrong burst#3
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 passkey/wrong burst#4
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 passkey/wrong burst#5
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 passkey/wrong burst#6
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 passkey/wrong burst#7
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 passkey/wrong passkey-finish
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid passkey response"}
 ## step2 passkey/correct with-pw
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
@@ -534,70 +534,70 @@
   cookies=[]
   body={"code":429,"message":"Too many two-factor verification attempts, please try again later","reason":"TWO_FACTOR_RATE_LIMITED"}
 ## step2 both/wrong with-pw
-  status=401
+  status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 both/wrong with-pw-again
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 both/wrong no-pw
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 both/wrong email-mismatch
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 both/wrong bad-code-len
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TotpCode' Error:Field validation for 'TotpCode' failed on the 'len' tag"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag\nKey: 'Login2FARequest.TotpCode' Error:Field validation for 'TotpCode' failed on the 'len' tag"}
 ## step2 both/wrong burst#1
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 both/wrong burst#2
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 both/wrong burst#3
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 both/wrong burst#4
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 both/wrong burst#5
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 both/wrong burst#6
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 both/wrong burst#7
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 both/wrong passkey-finish
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid passkey response"}
 ## step2 both/correct with-pw
   status=401
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
@@ -664,70 +664,70 @@
   cookies=[]
   body={"code":429,"message":"Too many two-factor verification attempts, please try again later","reason":"TWO_FACTOR_RATE_LIMITED"}
 ## step2 none/wrong with-pw
-  status=401
+  status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":401,"message":"invalid email or password","reason":"INVALID_CREDENTIALS"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 none/wrong with-pw-again
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 none/wrong no-pw
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 none/wrong email-mismatch
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 none/wrong bad-code-len
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TotpCode' Error:Field validation for 'TotpCode' failed on the 'len' tag"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag\nKey: 'Login2FARequest.TotpCode' Error:Field validation for 'TotpCode' failed on the 'len' tag"}
 ## step2 none/wrong burst#1
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 none/wrong burst#2
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 none/wrong burst#3
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 none/wrong burst#4
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 none/wrong burst#5
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 none/wrong burst#6
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 none/wrong burst#7
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid request: Key: 'Login2FARequest.TempToken' Error:Field validation for 'TempToken' failed on the 'required' tag"}
 ## step2 none/wrong passkey-finish
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]
   cookies=[]
-  body={"code":400,"message":"Invalid or expired 2FA session"}
+  body={"code":400,"message":"Invalid passkey response"}
 ## step2 unknown temp token
   status=400
   headers=[Cache-Control=no-store Content-Type=application/json; charset=utf-8]

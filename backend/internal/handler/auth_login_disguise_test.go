@@ -426,20 +426,7 @@ var (
 	shapeTOTPPass = []service.Factor{service.FactorTOTP, service.FactorPasskey}
 )
 
-// ---- 1. 开关关闭：与旧实现逐字节一致 ----
-
-// 旧实现的诱饵响应（captured from origin/main：TOTP 单因子，没有任何 passkey 字段）。
-const legacyDecoyBodyTemplate = `{"code":0,"message":"success","data":{"requires_2fa":true,"temp_token":"«T»","user_email_masked":"%s","required_factors":["totp"],"next_factor":"totp"}}`
-
-func legacyDecoyReference(t *testing.T, h *disguiseHarness, email string) string {
-	t.Helper()
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
-	c.Header("Cache-Control", "no-store")
-	h.handler.createLoginChallenge(c, 0, email) // 旧诱饵函数本身，本 PR 没有改它
-	return recorder.Body.String()
-}
+// ---- 1. 开关关闭：凭据错误统一返回 401 INVALID_CREDENTIALS，不弹 2FA 框 ----
 
 func TestLoginShapeDisguiseOffIsByteIdenticalToLegacy(t *testing.T) {
 	for _, switchValue := range []string{"", "false", "garbage"} {
@@ -457,43 +444,51 @@ func TestLoginShapeDisguiseOffIsByteIdenticalToLegacy(t *testing.T) {
 				{"no-2fa account wrong password", h.emailOf(disguiseUserNoneID), disguiseTestWrong},
 				{"mixed case email", strings.ToUpper(h.emailOf(disguiseUserPasskeyID)), disguiseTestWrong},
 			}
+			var baseline string
 			for _, tc := range cases {
 				w := h.login(tc.email, tc.password)
-				require.Equal(t, http.StatusOK, w.Code, tc.name)
+				require.Equal(t, http.StatusUnauthorized, w.Code, tc.name)
 				require.Equal(t, "no-store", w.Header().Get("Cache-Control"), tc.name)
 				require.Equal(t, "application/json; charset=utf-8", w.Header().Get("Content-Type"), tc.name)
+				require.Empty(t, w.Result().Cookies(), tc.name)
 
-				got := normalizeChallengeBody(w.Body.String())
-				// 与旧诱饵函数的输出逐字节一致……
-				require.Equal(t, normalizeChallengeBody(legacyDecoyReference(t, h, tc.email)), got, tc.name)
-				// ……也与从 origin/main 抓下来的字面量一致。
-				require.Equal(t, fmt.Sprintf(legacyDecoyBodyTemplate, service.MaskEmail(tc.email)), got, tc.name)
-				require.NotContains(t, got, "passkey", tc.name)
+				body := w.Body.String()
+				require.Contains(t, body, `"reason":"INVALID_CREDENTIALS"`, tc.name)
+				require.NotContains(t, body, "requires_2fa", tc.name)
+				require.NotContains(t, body, "temp_token", tc.name)
+				require.NotContains(t, body, "passkey", tc.name)
+				if baseline == "" {
+					baseline = body
+				} else {
+					require.Equal(t, baseline, body, "%s 必须与不存在邮箱的 401 响应逐字节一致", tc.name)
+				}
 			}
 		})
 	}
 }
 
-// 关闭时产生的诱饵会话就是旧会话：不带 Decoy 标记、不带因子形状，第二步走旧分支（失败一次就删会话）。
+// 开关关闭时不再创建诱饵会话；同时保留对滚动升级期间遗留的旧无用户会话（UserID=0）的 fail-closed 拒绝与清理。
 func TestLoginShapeDisguiseOffKeepsLegacySessionsAndSecondStep(t *testing.T) {
 	h := newDisguiseHarness(t, "")
-	w := h.login(h.emailOf(disguiseUserPasskeyID), disguiseTestWrong)
-	vars := parseChallenge(t, w)
+	email := h.emailOf(disguiseUserPasskeyID)
+	w := h.login(email, disguiseTestWrong)
+	require.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "INVALID_CREDENTIALS")
+	require.NotContains(t, w.Body.String(), "temp_token")
 
-	cache := h.handler.totpService
-	session, err := cache.GetLoginSession(context.Background(), vars.tempToken)
+	// 兼容滚动升级期间仍在 TTL 内的旧 UserID=0 诱饵会话：首次提交报 401 并删会话，第二次报 400。
+	legacyToken, err := h.handler.totpService.CreateLoginSession(context.Background(), 0, email)
+	require.NoError(t, err)
+	session, err := h.handler.totpService.GetLoginSession(context.Background(), legacyToken)
 	require.NoError(t, err)
 	require.NotNil(t, session)
 	require.False(t, session.Decoy)
-	require.Empty(t, session.RequiredFactors)
-	require.Empty(t, session.DecoyPasswordProbe)
 	require.EqualValues(t, 0, session.UserID)
 
-	first := h.post("/api/v1/auth/login/2fa", login2FABody(vars.tempToken, h.emailOf(disguiseUserPasskeyID), disguiseTestWrong, "123456"))
+	first := h.post("/api/v1/auth/login/2fa", login2FABody(legacyToken, email, disguiseTestWrong, "123456"))
 	require.Equal(t, http.StatusUnauthorized, first.Code, first.Body.String())
 	require.Contains(t, first.Body.String(), "INVALID_CREDENTIALS")
-	// 旧诱饵分支：失败一次就删会话，第二次是 400「Invalid or expired 2FA session」。
-	second := h.post("/api/v1/auth/login/2fa", login2FABody(vars.tempToken, h.emailOf(disguiseUserPasskeyID), disguiseTestWrong, "123456"))
+	second := h.post("/api/v1/auth/login/2fa", login2FABody(legacyToken, email, disguiseTestWrong, "123456"))
 	require.Equal(t, http.StatusBadRequest, second.Code, second.Body.String())
 }
 
@@ -1121,22 +1116,26 @@ func TestLoginShapeDisguiseSwitchParsing(t *testing.T) {
 				h.settings.errKey = service.SettingKeyLoginShapeDisguiseEnabled
 			}
 			w := h.login(h.emailOf(disguiseUserPasskeyID), disguiseTestWrong)
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 			if tc.want {
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 				require.Equal(t, `required=["passkey"] next=passkey passkey=true`, disguiseShapeOf(w.Body.String()))
 			} else {
-				require.Equal(t, `required=["totp"] next=totp passkey=false`, disguiseShapeOf(w.Body.String()))
+				require.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
+				require.Contains(t, w.Body.String(), "INVALID_CREDENTIALS")
+				require.NotContains(t, w.Body.String(), "requires_2fa")
 			}
 		})
 	}
 }
 
-// 没有可用密钥（JWT secret 为空）时即使开关打开也退回旧诱饵，不会拿空密钥做伪装。
+// 没有可用密钥（JWT secret 为空）时即使开关打开也退回默认 401，不会拿空密钥做伪装。
 func TestLoginShapeDisguiseWithoutSecretFallsBackToLegacy(t *testing.T) {
 	h := newDisguiseHarness(t, "true")
 	h.handler.disguise = service.NewLoginDisguise("")
 	w := h.login(h.emailOf(disguiseUserPasskeyID), disguiseTestWrong)
-	require.Equal(t, `required=["totp"] next=totp passkey=false`, disguiseShapeOf(w.Body.String()))
+	require.Equal(t, http.StatusUnauthorized, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "INVALID_CREDENTIALS")
+	require.NotContains(t, w.Body.String(), "requires_2fa")
 }
 
 // 打开开关后又关闭：已经下发的伪装会话仍按伪装处理（会话自带标记），不会掉进旧分支露出差异。

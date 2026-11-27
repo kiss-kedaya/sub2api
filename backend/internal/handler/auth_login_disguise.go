@@ -18,10 +18,9 @@ import (
 // 登录首步「凭据无效」挑战的稳定伪装（审计 A-P1-02）：handler 侧。
 // 设计与取舍见 service/login_shape_disguise.go；开关 SettingKeyLoginShapeDisguiseEnabled，默认关闭。
 //
-// 开关关闭时本文件里「伪装」相关的函数一个都不会被调用：Login 走原来的 createLoginChallenge，
-// Login2FA / Login2FAPasskeyFinish 只会遇到旧的（Decoy=false）诱饵会话。
-// 唯一会在真实会话路径上被调用的是 loginShapeDisguiseActive / realSessionIPBucket，开关关闭时它们
-// 返回 false / 0，调用方据此跳过额外的限速，响应与旧实现逐字节一致。
+// 开关关闭时本文件里「伪装」相关的函数一个都不会被调用：Login 在凭据无效时直接返回 401 INVALID_CREDENTIALS，
+// 不会下发诱饵会话。唯一会在真实会话路径上被调用的是 loginShapeDisguiseActive / realSessionIPBucket，开关关闭时
+// 它们返回 false / 0，调用方据此跳过额外的限速。
 
 // loginShapeDisguiseActive 报告本次登录失败是否走伪装挑战：开关打开且有可用的伪装密钥。
 func (h *AuthHandler) loginShapeDisguiseActive(ctx context.Context) bool {

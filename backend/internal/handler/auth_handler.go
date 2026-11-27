@@ -342,24 +342,16 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		// 审计：失败也登记被尝试账号的邮箱指纹（不含明文），便于反查撞库。
 		markAuthAuditEmail(c, req.Email)
 		markAuthAuditFailureFromError(c, err)
-		// 统一登录响应（安全 + 体验）：
-		// 「账号不存在」「密码错误」与下面「密码正确但需要 2FA」返回完全相同的挑战结构，
-		// 响应体里没有任何可以区分两种情况的字段，避免登录接口被当作账号枚举 /
-		// 密码有效性探测的 oracle。凭据错误延后到 /auth/login/2fa 统一返回
-		// INVALID_CREDENTIALS（见 Login2FA）。
-		// 全站关闭 TOTP 登录验证时，不会有真实的 TOTP 登录挑战。
-		// 读取设置失败时沿用统一挑战，保持与已绑定账号的登录策略一致。
-		if errors.Is(err, service.ErrInvalidCredentials) && h.totpService != nil &&
+		// 默认行为（login_shape_disguise_enabled 关闭）：
+		// 「账号不存在」与「密码错误（无论账号是否绑定 2FA）」统一返回 401 INVALID_CREDENTIALS，
+		// 不弹 2FA 验证框；authService.Login 已对不存在的邮箱执行等成本 bcrypt 比对，避免被探测账号是否存在。
+		// 仅当显式开启 login_shape_disguise_enabled 且全站启用 TOTP 登录时，才下发伪装挑战，见 auth_login_disguise.go。
+		if errors.Is(err, service.ErrInvalidCredentials) &&
+			h.loginShapeDisguiseActive(c.Request.Context()) &&
 			h.settingSvc.LoginTOTPEnabled(c.Request.Context()) {
 			// 响应是 200 挑战，但审计必须仍按「凭据错误」记失败，否则撞库/爆破
 			// 在审计里会显示成成功登录。
-			if h.loginShapeDisguiseActive(c.Request.Context()) {
-				// 开关打开（默认关闭）：挑战形状不再固定为 TOTP 单因子，镜像真实账号 /
-				// HMAC 稳定伪装，见 auth_login_disguise.go。
-				h.respondDisguisedLoginChallenge(c, req.Email, req.Password)
-				return
-			}
-			h.createLoginChallenge(c, 0, req.Email)
+			h.respondDisguisedLoginChallenge(c, req.Email, req.Password)
 			return
 		}
 		response.ErrorFrom(c, err)
@@ -416,8 +408,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 				response.InternalError(c, "Failed to create 2FA session")
 				return
 			}
-			// 与「凭据错误」下发同一响应结构（见上面的错误分支），客户端无法据此
-			// 判断账号是否存在、密码是否正确。邮箱掩码用请求里的邮箱计算。
+			// 邮箱掩码用请求里的邮箱计算，避免大小写/别名差异。
 			h.respondLoginFactorChallenge(c, tempToken, user, req.Email, factors, satisfied, missing)
 			return
 		}
@@ -444,35 +435,6 @@ type TotpLoginResponse struct {
 	// POST /auth/login/2fa/passkey/finish。
 	PasskeySessionToken string `json:"passkey_session_token,omitempty"`
 	PasskeyOptions      any    `json:"passkey_options,omitempty"`
-}
-
-// createLoginChallenge 下发统一的「第二步校验」挑战（凭据错误路径），并保证
-// 响应体与真实「只缺 TOTP」账号的挑战逐字节一致（除随机 temp_token 取值外）。
-//
-// userID <= 0：第一步没有拿到有效凭据（账号不存在 / 密码错误），第二步只会
-// 统一返回 INVALID_CREDENTIALS，不暴露账号是否存在。因此这里按最常见的
-// TOTP 单因子形态下发挑战，不查询真实用户。
-//
-// 邮箱掩码一律按请求里的邮箱计算，不读库里的真实邮箱，避免大小写/别名差异
-// 让两条路径的响应出现字节差异。
-func (h *AuthHandler) createLoginChallenge(c *gin.Context, userID int64, email string) {
-	if h.totpService == nil {
-		response.InternalError(c, "Failed to create 2FA session")
-		return
-	}
-	tempToken, err := h.totpService.CreateLoginSession(c.Request.Context(), userID, email)
-	if err != nil {
-		slog.Warn("create login challenge session failed", "error", err)
-		response.InternalError(c, "Failed to create 2FA session")
-		return
-	}
-	response.Success(c, TotpLoginResponse{
-		Requires2FA:     true,
-		TempToken:       tempToken,
-		UserEmailMasked: service.MaskEmail(email),
-		RequiredFactors: []string{service.FactorTOTP.String()},
-		NextFactor:      service.FactorTOTP.String(),
-	})
 }
 
 // respondLoginFactorChallenge 下发「按因子挑战」的第二步响应：
@@ -617,10 +579,8 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		return
 	}
 
-	// 第一步下发的「凭据无效」统一挑战：第二步必然失败，统一返回
-	// INVALID_CREDENTIALS（与真实 2FA 账号「密码已验证、动态码错误」区分开，
-	// 也不暴露账号是否存在）。账号维度限速用邮箱散列做键，避免被拿来当
-	// 密码有效性探测的快速通道。
+	// 兼容旧版滚动升级期间尚未过期的无用户 ID 诱饵会话（UserID <= 0）：
+	// 必然失败并统一返回 INVALID_CREDENTIALS，同时限速并清理会话。
 	if session.UserID <= 0 {
 		decoyKey := loginChallengeRateLimitKey(session.Email)
 		if _, ok := checkTwoFactorRateLimit(c, h.twoFactorLimiter, decoyKey); !ok {
