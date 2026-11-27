@@ -17,6 +17,8 @@ vi.mock('@/views/admin/settings/KeyRotationRiskAckSettings.vue', () => ({ defaul
 const {
   getSettings,
   updateSettings,
+  testSmtpConnection,
+  sendTestEmail,
   getWebSearchEmulationConfig,
   updateWebSearchEmulationConfig,
   getAdminApiKey,
@@ -48,6 +50,8 @@ const {
 } = vi.hoisted(() => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
+  testSmtpConnection: vi.fn(),
+  sendTestEmail: vi.fn(),
   getWebSearchEmulationConfig: vi.fn(),
   updateWebSearchEmulationConfig: vi.fn(),
   getAdminApiKey: vi.fn(),
@@ -99,6 +103,8 @@ vi.mock("@/api", () => ({
     settings: {
       getSettings,
       updateSettings,
+      testSmtpConnection,
+      sendTestEmail,
       getWebSearchEmulationConfig,
       updateWebSearchEmulationConfig,
       getAdminApiKey,
@@ -701,6 +707,16 @@ async function openUsersTab(wrapper: ReturnType<typeof mountView>) {
 
   expect(usersTabButton).toBeDefined();
   await usersTabButton?.trigger("mousedown");
+  await flushPromises();
+}
+
+async function openEmailTab(wrapper: ReturnType<typeof mountView>) {
+  const emailTabButton = wrapper
+    .findAll("button")
+    .find((node) => node.text().includes("admin.settings.tabs.email"));
+
+  expect(emailTabButton).toBeDefined();
+  await emailTabButton?.trigger("mousedown");
   await flushPromises();
 }
 
@@ -2843,6 +2859,88 @@ describe("admin SettingsView Anthropic thinking rewrite toggle", () => {
       '[data-testid="rectifier-anthropic-thinking-rewrite"]',
     );
     expect((toggle.element as HTMLInputElement).checked).toBe(true);
+    wrapper.unmount();
+  });
+
+  it("renders and saves SMTP settings and supports test actions when email_verify_enabled is false", async () => {
+    testSmtpConnection.mockReset();
+    sendTestEmail.mockReset();
+    testSmtpConnection.mockResolvedValue({ message: "SMTP connection successful" });
+    sendTestEmail.mockResolvedValue({ message: "Test email sent successfully" });
+
+    getSettings.mockResolvedValue({
+      ...baseSettingsResponse,
+      email_verify_enabled: false,
+      smtp_host: "",
+      smtp_port: 587,
+      smtp_use_tls: true,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await openEmailTab(wrapper);
+
+    expect(wrapper.text()).not.toContain("admin.settings.emailTabDisabledTitle");
+    expect(wrapper.text()).not.toContain("admin.settings.emailTabDisabledHint");
+    const smtpSection = wrapper.find("#settings-smtp");
+    const testEmailSection = wrapper.find("#settings-test-email");
+    expect(smtpSection.exists()).toBe(true);
+    expect(testEmailSection.exists()).toBe(true);
+
+    formOf(wrapper).smtp_host = "smtp.example.com";
+    formOf(wrapper).smtp_port = 465;
+    formOf(wrapper).smtp_username = "alerts@example.com";
+    formOf(wrapper).smtp_from_email = "noreply@example.com";
+    formOf(wrapper).ticket_admin_email = "support@example.com";
+    formOf(wrapper).balance_low_notify_enabled = true;
+    await flushPromises();
+
+    const testConnBtn = smtpSection
+      .findAll("button")
+      .find((b) => b.text().includes("admin.settings.smtp.testConnection"));
+    expect(testConnBtn).toBeDefined();
+    await testConnBtn!.trigger("click");
+    await flushPromises();
+    expect(testSmtpConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        smtp_host: "smtp.example.com",
+        smtp_port: 465,
+        smtp_username: "alerts@example.com",
+        smtp_use_tls: true,
+      }),
+    );
+
+    const testEmailInput = testEmailSection.get('input[type="email"]');
+    await testEmailInput.setValue("owner@example.com");
+    await flushPromises();
+    const sendTestBtn = testEmailSection
+      .findAll("button")
+      .find((b) => b.text().includes("admin.settings.testEmail.sendTestEmail"));
+    expect(sendTestBtn).toBeDefined();
+    await sendTestBtn!.trigger("click");
+    await flushPromises();
+    expect(sendTestEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: "owner@example.com",
+        smtp_host: "smtp.example.com",
+        smtp_port: 465,
+        smtp_from_email: "noreply@example.com",
+      }),
+    );
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        smtp_host: "smtp.example.com",
+        smtp_port: 465,
+        smtp_username: "alerts@example.com",
+        smtp_from_email: "noreply@example.com",
+        ticket_admin_email: "support@example.com",
+        balance_low_notify_enabled: true,
+      }),
+    );
+    expect(updateSettings.mock.calls[0]?.[0]).not.toHaveProperty("email_verify_enabled");
     wrapper.unmount();
   });
 });

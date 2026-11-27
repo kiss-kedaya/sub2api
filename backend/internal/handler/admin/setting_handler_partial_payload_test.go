@@ -190,3 +190,92 @@ func TestUpdateSettingsValidatesTencentCaptchaAppIDWhenEnabledFlagIsOmitted(t *t
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Contains(t, rec.Body.String(), "positive integer")
 }
+
+func TestUpdateSettingsSavesSMTPWhileEmailVerifyDisabled(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
+		service.SettingKeyEmailVerifyEnabled: "false",
+	})
+
+	rec := doUpdateSettings(t, h, map[string]any{
+		"email_verify_enabled":       false,
+		"smtp_host":                  "smtp.example.com",
+		"smtp_port":                  465,
+		"smtp_username":              "mailer@example.com",
+		"smtp_password":              "app-pass",
+		"smtp_from_email":            "noreply@example.com",
+		"smtp_from_name":             "Alerts",
+		"smtp_use_tls":               true,
+		"ticket_admin_email":         "support@example.com",
+		"balance_low_notify_enabled": true,
+	}, nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "false", repo.values[service.SettingKeyEmailVerifyEnabled])
+	require.Equal(t, "smtp.example.com", repo.values[service.SettingKeySMTPHost])
+	require.Equal(t, "465", repo.values[service.SettingKeySMTPPort])
+	require.Equal(t, "mailer@example.com", repo.values[service.SettingKeySMTPUsername])
+	require.Equal(t, "app-pass", repo.values[service.SettingKeySMTPPassword])
+	require.Equal(t, "noreply@example.com", repo.values[service.SettingKeySMTPFrom])
+	require.Equal(t, "Alerts", repo.values[service.SettingKeySMTPFromName])
+	require.Equal(t, "true", repo.values[service.SettingKeySMTPUseTLS])
+	require.Equal(t, "support@example.com", repo.values[service.SettingKeyTicketAdminEmail])
+	require.Equal(t, "true", repo.values[service.SettingKeyBalanceLowNotifyEnabled])
+	require.Contains(t, rec.Body.String(), `"ticket_admin_email":"support@example.com"`)
+}
+
+func TestUpdateSettingsPartialSMTPUpdateDoesNotClobberEditedFields(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
+		service.SettingKeyEmailVerifyEnabled: "false",
+		service.SettingKeySMTPHost:           "smtp.example.com",
+		service.SettingKeySMTPPort:           "587",
+		service.SettingKeySMTPUsername:       "old@example.com",
+		service.SettingKeySMTPFrom:           "old-from@example.com",
+		service.SettingKeySMTPFromName:       "Old Name",
+		service.SettingKeySMTPUseTLS:         "true",
+		service.SettingKeyTicketAdminEmail:   "support@example.com",
+	})
+
+	rec := doUpdateSettings(t, h, map[string]any{
+		"smtp_port":       465,
+		"smtp_from_email": "alerts@example.com",
+		"smtp_use_tls":    false,
+	}, nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "smtp.example.com", repo.values[service.SettingKeySMTPHost])
+	require.Equal(t, "465", repo.values[service.SettingKeySMTPPort])
+	require.Equal(t, "old@example.com", repo.values[service.SettingKeySMTPUsername])
+	require.Equal(t, "alerts@example.com", repo.values[service.SettingKeySMTPFrom])
+	require.Equal(t, "Old Name", repo.values[service.SettingKeySMTPFromName])
+	require.Equal(t, "false", repo.values[service.SettingKeySMTPUseTLS])
+	require.Equal(t, "support@example.com", repo.values[service.SettingKeyTicketAdminEmail])
+	require.Contains(t, rec.Body.String(), `"ticket_admin_email":"support@example.com"`)
+}
+
+func TestUpdateSettingsExplicitEmptySMTPHostRetainsExistingSMTPConfig(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
+		service.SettingKeySMTPHost:     "smtp.example.com",
+		service.SettingKeySMTPPort:     "465",
+		service.SettingKeySMTPUsername: "mailer@example.com",
+		service.SettingKeySMTPFrom:     "noreply@example.com",
+		service.SettingKeySMTPFromName: "Alerts",
+		service.SettingKeySMTPUseTLS:   "true",
+	})
+
+	rec := doUpdateSettings(t, h, map[string]any{
+		"smtp_host":       "",
+		"smtp_port":       587,
+		"smtp_username":   "",
+		"smtp_from_email": "",
+		"smtp_from_name":  "",
+		"smtp_use_tls":    false,
+	}, nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "smtp.example.com", repo.values[service.SettingKeySMTPHost])
+	require.Equal(t, "465", repo.values[service.SettingKeySMTPPort])
+	require.Equal(t, "mailer@example.com", repo.values[service.SettingKeySMTPUsername])
+	require.Equal(t, "noreply@example.com", repo.values[service.SettingKeySMTPFrom])
+	require.Equal(t, "Alerts", repo.values[service.SettingKeySMTPFromName])
+	require.Equal(t, "true", repo.values[service.SettingKeySMTPUseTLS])
+}

@@ -216,8 +216,6 @@ export default {
           },
         },
       },
-      emailTabDisabledTitle: 'Email Verification Not Enabled',
-      emailTabDisabledHint: 'Enable email verification in the Security tab to configure SMTP settings.',
       registration: {
         title: 'Registration Settings',
         description: 'Control user registration and verification',
@@ -1083,7 +1081,7 @@ export default {
       },
       smtp: {
         title: 'SMTP Settings',
-        description: 'Configure email sending for verification codes',
+        description: 'Configure SMTP for system notifications (balance alerts, ticket notifications, subscription reminders) and verification codes',
         testConnection: 'Test Connection',
         testing: 'Testing...',
         host: 'SMTP Host',
