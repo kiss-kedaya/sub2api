@@ -1412,17 +1412,6 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 	}
 }
 
-// createCompressedBackupFileWithOptions stages the archive on local disk and
-// returns its path, its size and the SHA-256 (hex) of the bytes written. The
-// digest is computed while writing, so the file is not read a second time.
-func (s *BackupService) createCompressedBackupFileWithOptions(ctx context.Context, opts BackupOptions) (string, int64, string, error) {
-	run, err := s.resolveBackupRun(ctx, opts)
-	if err != nil {
-		return "", 0, "", err
-	}
-	return s.createCompressedBackupFileForRun(ctx, run)
-}
-
 func (s *BackupService) createCompressedBackupFileForRun(ctx context.Context, run resolvedBackupRun) (string, int64, string, error) {
 	mode := run.mode
 

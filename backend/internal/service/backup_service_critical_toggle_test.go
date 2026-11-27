@@ -40,6 +40,16 @@ func (d *scopedStreamDumper) DumpWithOptions(ctx context.Context, opts BackupDum
 	return d.Dump(ctx)
 }
 
+// createCompressedBackupFileWithOptions is a unit-test helper wrapping resolveBackupRun +
+// createCompressedBackupFileForRun so production files carry no test-only unused methods.
+func (s *BackupService) createCompressedBackupFileWithOptions(ctx context.Context, opts BackupOptions) (string, int64, string, error) {
+	run, err := s.resolveBackupRun(ctx, opts)
+	if err != nil {
+		return "", 0, "", err
+	}
+	return s.createCompressedBackupFileForRun(ctx, run)
+}
+
 func TestDefaultCriticalExcludeTableData_Invariants(t *testing.T) {
 	require.NotEmpty(t, DefaultCriticalExcludeTableData)
 
