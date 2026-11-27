@@ -712,7 +712,7 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 			return
 		}
 
-		secureCookie := isRequestHTTPS(c)
+		secureCookie := h.isRequestHTTPS(c)
 		clearOAuthPendingSessionCookie(c, secureCookie)
 		clearOAuthPendingBrowserCookie(c, secureCookie)
 		h.recordSuccessfulLogin(c, user.ID)
@@ -1238,7 +1238,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		}
 	}
 	h.consumePendingOAuthSessionOnLogout(c)
-	clearOAuthLogoutCookies(c)
+	clearOAuthLogoutCookies(c, h.isRequestHTTPS(c))
 	// 登出后这个浏览器不应该再持有「5 分钟内免 2FA」的凭证。
 	clearAllTwoFactorGrantCookies(c)
 

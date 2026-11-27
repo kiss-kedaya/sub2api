@@ -29,6 +29,7 @@ import SocialLoginButtons from '@/components/common/SocialLoginButtons.vue'
 import type { SocialLoginProvider } from '@/components/common/socialLogin'
 import type { OAuthLoginStart } from '@/api/auth'
 import { resolveAffiliateReferralCode, storeOAuthAffiliateCode } from '@/utils/oauthAffiliate'
+import { sanitizeInternalRedirectPath } from '@/utils/url'
 
 type EmailOAuthProvider = 'github' | 'google'
 const EMAIL_OAUTH_PENDING_PROVIDER_KEY = 'email_oauth_pending_provider'
@@ -74,7 +75,7 @@ const providers = computed<SocialLoginProvider[]>(() =>
 
 function startLogin(provider: string): void {
   const emailProvider = provider as EmailOAuthProvider
-  const redirectTo = (route.query.redirect as string) || '/dashboard'
+  const redirectTo = sanitizeInternalRedirectPath(route.query.redirect, '/dashboard')
   const affiliateCode = resolveAffiliateReferralCode(props.affCode, route.query.aff, route.query.aff_code)
   storeOAuthAffiliateCode(affiliateCode)
   window.sessionStorage.setItem(EMAIL_OAUTH_PENDING_PROVIDER_KEY, emailProvider)

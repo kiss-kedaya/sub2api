@@ -113,4 +113,34 @@ describe('WechatPaymentCallbackView', () => {
     expect(wrapper.text()).toContain('微信支付回调缺少恢复令牌。')
     expect(wrapper.find('.bg-red-50').exists()).toBe(false)
   })
+
+  it('rejects backslash redirect paths and falls back to /purchase', async () => {
+    locationState.current.hash = '#wechat_resume_token=resume-token-123&redirect=%2F%5Cevil.example'
+
+    mount(WechatPaymentCallbackView)
+    await flushPromises()
+
+    expect(replaceMock).toHaveBeenCalledWith({
+      path: '/purchase',
+      query: {
+        wechat_resume: '1',
+        wechat_resume_token: 'resume-token-123',
+      },
+    })
+  })
+
+  it('rejects ASCII tab redirect bypasses and falls back to /purchase', async () => {
+    locationState.current.hash = '#wechat_resume_token=resume-token-123&redirect=%2F%09%2Fevil.example'
+
+    mount(WechatPaymentCallbackView)
+    await flushPromises()
+
+    expect(replaceMock).toHaveBeenCalledWith({
+      path: '/purchase',
+      query: {
+        wechat_resume: '1',
+        wechat_resume_token: 'resume-token-123',
+      },
+    })
+  })
 })

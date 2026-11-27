@@ -141,7 +141,7 @@ func (h *AuthHandler) OIDCOAuthStart(c *gin.Context) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	oidcSetCookie(c, oidcOAuthStateCookieName, encodeCookieValue(state), oidcOAuthCookieMaxAgeSec, secureCookie)
 	oidcSetCookie(c, oidcOAuthRedirectCookie, encodeCookieValue(redirectTo), oidcOAuthCookieMaxAgeSec, secureCookie)
 	intent := normalizeOAuthIntent(c.Query("intent"))
@@ -222,7 +222,7 @@ func (h *AuthHandler) OIDCOAuthCallback(c *gin.Context) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	defer func() {
 		oidcClearCookie(c, oidcOAuthStateCookieName, secureCookie)
 		oidcClearCookie(c, oidcOAuthVerifierCookie, secureCookie)
@@ -621,7 +621,7 @@ func (h *AuthHandler) CompleteOIDCOAuthRegistration(c *gin.Context) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	sessionToken, err := readOAuthPendingSessionCookie(c)
 	if err != nil {
 		clearOAuthPendingSessionCookie(c, secureCookie)
@@ -1246,8 +1246,9 @@ func (h *AuthHandler) tryOIDCVerifiedEmailFastPath(
 	}
 	if err := h.ensureBackendModeAllowsNewUserLogin(ctx); err != nil {
 		log.Printf("[OIDC OAuth] verified-email fast path blocked by backend mode: reason=%s", infraerrors.Reason(err))
-		clearOAuthPendingSessionCookie(c, isRequestHTTPS(c))
-		clearOAuthPendingBrowserCookie(c, isRequestHTTPS(c))
+		secureCookie := h.isRequestHTTPS(c)
+		clearOAuthPendingSessionCookie(c, secureCookie)
+		clearOAuthPendingBrowserCookie(c, secureCookie)
 		redirectOAuthError(c, frontendCallback, "login_blocked", infraerrors.Reason(err), infraerrors.Message(err))
 		return true
 	}
@@ -1283,8 +1284,9 @@ func (h *AuthHandler) tryOIDCVerifiedEmailFastPath(
 		// 已启用 TOTP 的已有账号：与 GitHub/Google 邮箱 OAuth 同口径，
 		// 只下发 2FA 挑战，不签发会话，也不退回会直接登录的 pending 流程。
 		if errors.Is(err, service.ErrLoginTOTPRequired) && user != nil {
-			clearOAuthPendingSessionCookie(c, isRequestHTTPS(c))
-			clearOAuthPendingBrowserCookie(c, isRequestHTTPS(c))
+			secureCookie := h.isRequestHTTPS(c)
+			clearOAuthPendingSessionCookie(c, secureCookie)
+			clearOAuthPendingBrowserCookie(c, secureCookie)
 			provider := strings.TrimSpace(identity.ProviderType)
 			if provider == "" {
 				provider = "oidc"
@@ -1303,8 +1305,9 @@ func (h *AuthHandler) tryOIDCVerifiedEmailFastPath(
 	fragment.Set("expires_in", fmt.Sprintf("%d", tokenPair.ExpiresIn))
 	fragment.Set("token_type", "Bearer")
 	fragment.Set("redirect", redirectTo)
-	clearOAuthPendingSessionCookie(c, isRequestHTTPS(c))
-	clearOAuthPendingBrowserCookie(c, isRequestHTTPS(c))
+	secureCookie := h.isRequestHTTPS(c)
+	clearOAuthPendingSessionCookie(c, secureCookie)
+	clearOAuthPendingBrowserCookie(c, secureCookie)
 	redirectWithFragment(c, frontendCallback, fragment)
 	return true
 }

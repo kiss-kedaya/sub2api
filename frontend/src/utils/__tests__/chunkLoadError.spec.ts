@@ -35,4 +35,24 @@ describe('chunkLoadError', () => {
     await expect(pushOrReload(router, '/dashboard')).resolves.toBeUndefined()
     expect(replace).toHaveBeenCalledWith('/dashboard')
   })
+
+  it.each([
+    '//evil.example/phish',
+    '/\\evil.example/phish',
+    '/\t/evil.example/phish',
+    '/\n/evil.example/phish',
+    'https://evil.example/phish',
+  ])('refuses unsafe redirect target (%s) during chunk recovery', (maliciousTarget) => {
+    const replace = vi.fn()
+    vi.stubGlobal('location', {
+      ...window.location,
+      origin: 'https://app.example.com',
+      replace,
+      pathname: '/login',
+      search: '',
+      hash: '',
+    })
+    expect(recoverFromChunkLoadError(maliciousTarget)).toBe(true)
+    expect(replace).toHaveBeenCalledWith('/login')
+  })
 })

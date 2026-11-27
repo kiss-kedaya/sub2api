@@ -71,4 +71,26 @@ describe('OAuth login sections', () => {
     expect(svg.exists()).toBe(true)
     expect(svg.find('text').exists()).toBe(false)
   })
+
+  it.each([
+    ['linuxdo', LinuxDoOAuthSection],
+    ['dingtalk', DingTalkOAuthSection],
+    ['oidc', OidcOAuthSection]
+  ] as const)('sanitizes repeated array and unsafe redirect query params for %s', async (provider, component) => {
+    routeState.query = { redirect: ['/billing?plan=pro', '/orders'] }
+    const arrWrapper = mount(component)
+    await arrWrapper.get('button').trigger('click')
+    expect(arrWrapper.emitted('start')?.[0]?.[0]).toEqual({
+      provider,
+      params: { redirect: '/billing?plan=pro' }
+    })
+
+    routeState.query = { redirect: ['//evil.example/phish', '/orders'] }
+    const badWrapper = mount(component)
+    await badWrapper.get('button').trigger('click')
+    expect(badWrapper.emitted('start')?.[0]?.[0]).toEqual({
+      provider,
+      params: { redirect: '/dashboard' }
+    })
+  })
 })

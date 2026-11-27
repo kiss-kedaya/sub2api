@@ -266,7 +266,7 @@ func (h *AuthHandler) createOAuthPendingSession(c *gin.Context, payload oauthPen
 		return infraerrors.InternalServer("PENDING_AUTH_SESSION_CREATE_FAILED", "failed to create pending auth session").WithCause(err)
 	}
 
-	setOAuthPendingSessionCookie(c, session.SessionToken, isRequestHTTPS(c))
+	setOAuthPendingSessionCookie(c, session.SessionToken, h.isRequestHTTPS(c))
 	return nil
 }
 
@@ -1547,7 +1547,7 @@ func (h *AuthHandler) shouldSkipPendingOAuthAdoptionPrompt(
 }
 
 func readPendingOAuthBrowserSession(c *gin.Context, h *AuthHandler) (*service.AuthPendingIdentityService, *dbent.PendingAuthSession, func(), error) {
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	clearCookies := func() {
 		clearOAuthPendingSessionCookie(c, secureCookie)
 		clearOAuthPendingBrowserCookie(c, secureCookie)
@@ -1600,7 +1600,7 @@ func (h *AuthHandler) consumePendingOAuthSessionOnLogout(c *gin.Context) {
 	_, _ = svc.ConsumeBrowserSession(c.Request.Context(), sessionToken, browserSessionKey)
 }
 
-func clearOAuthLogoutCookies(c *gin.Context) {
+func clearOAuthLogoutCookies(c *gin.Context, secureCookie bool) {
 	present := presentRequestCookieNames(c)
 	if len(present) == 0 {
 		return
@@ -1609,8 +1609,6 @@ func clearOAuthLogoutCookies(c *gin.Context) {
 		_, ok := present[name]
 		return ok
 	}
-
-	secureCookie := isRequestHTTPS(c)
 
 	if hasCookie(oauthPendingSessionCookieName) {
 		clearOAuthPendingSessionCookie(c, secureCookie)
@@ -2047,7 +2045,7 @@ func (h *AuthHandler) createPendingOAuthAccount(c *gin.Context, provider string)
 // ExchangePendingOAuthCompletion redeems a pending OAuth browser session into a frontend-safe payload.
 // POST /api/v1/auth/oauth/pending/exchange
 func (h *AuthHandler) ExchangePendingOAuthCompletion(c *gin.Context) {
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	clearCookies := func() {
 		clearOAuthPendingSessionCookie(c, secureCookie)
 		clearOAuthPendingBrowserCookie(c, secureCookie)
