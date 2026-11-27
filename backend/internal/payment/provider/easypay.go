@@ -47,6 +47,88 @@ type easyPayCustomMethod struct {
 	DisplayName  string `json:"displayName"`
 }
 
+// easyPayFlexInt unmarshals a JSON integer encoded either as a JSON number (1)
+// or as a quoted integer string ("1"). Many PHP EasyPay gateways return SQL
+// integer columns as strings. Non-integer numbers, leading zeros, explicit plus
+// signs, non-ASCII whitespace, empty/non-numeric strings, booleans, arrays, and
+// objects fail closed with an unmarshal error.
+type easyPayFlexInt int
+
+func (n *easyPayFlexInt) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var raw string
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+		parsed, err := parseEasyPayIntString(raw)
+		if err != nil {
+			return err
+		}
+		*n = easyPayFlexInt(parsed)
+		return nil
+	}
+	var parsed int
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	*n = easyPayFlexInt(parsed)
+	return nil
+}
+
+func parseEasyPayIntString(raw string) (int, error) {
+	raw = strings.Trim(raw, " \t\r\n")
+	if raw == "" {
+		return 0, fmt.Errorf("empty integer string")
+	}
+	digits := raw
+	if digits[0] == '-' {
+		digits = digits[1:]
+	}
+	if len(digits) == 0 || (len(digits) > 1 && digits[0] == '0') {
+		return 0, fmt.Errorf("invalid integer string %q", raw)
+	}
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return 0, fmt.Errorf("invalid integer string %q", raw)
+		}
+	}
+	return strconv.Atoi(raw)
+}
+
+// easyPayFlexMoney unmarshals a JSON money field encoded either as a string
+// ("12.34") or as a finite JSON number (12.34). Booleans, arrays, objects, and
+// overflowing/non-finite JSON numbers fail closed during unmarshal; string
+// values are parsed and validated fail-closed downstream against order amount.
+type easyPayFlexMoney string
+
+func (m *easyPayFlexMoney) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var raw string
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+		*m = easyPayFlexMoney(raw)
+		return nil
+	}
+	var num float64
+	if err := json.Unmarshal(data, &num); err != nil {
+		return err
+	}
+	if math.IsNaN(num) || math.IsInf(num, 0) {
+		return fmt.Errorf("non-finite money value")
+	}
+	*m = easyPayFlexMoney(trimmed)
+	return nil
+}
+
 // NewEasyPay creates a new EasyPay provider.
 // config keys: pid, pkey, apiBase, notifyUrl, returnUrl, cid, cidAlipay, cidWxpay
 func NewEasyPay(instanceID string, config map[string]string) (*EasyPay, error) {
@@ -186,12 +268,12 @@ func (e *EasyPay) createAPIPayment(ctx context.Context, req payment.CreatePaymen
 		return nil, fmt.Errorf("easypay create: %w", err)
 	}
 	var resp struct {
-		Code    int    `json:"code"`
-		Msg     string `json:"msg"`
-		TradeNo string `json:"trade_no"`
-		PayURL  string `json:"payurl"`
-		PayURL2 string `json:"payurl2"` // H5 mobile payment URL
-		QRCode  string `json:"qrcode"`
+		Code    easyPayFlexInt `json:"code"`
+		Msg     string         `json:"msg"`
+		TradeNo string         `json:"trade_no"`
+		PayURL  string         `json:"payurl"`
+		PayURL2 string         `json:"payurl2"` // H5 mobile payment URL
+		QRCode  string         `json:"qrcode"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("easypay parse: %w", err)
@@ -319,21 +401,21 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 		return nil, fmt.Errorf("easypay query failed (HTTP %d)", httpStatus)
 	}
 	type easyPayQueryData struct {
-		OutTradeNo  *string `json:"out_trade_no"`
-		TradeStatus *string `json:"trade_status"`
-		Status      *int    `json:"status"`
-		Money       *string `json:"money"`
-		TradeNo     *string `json:"trade_no"`
+		OutTradeNo  *string           `json:"out_trade_no"`
+		TradeStatus *string           `json:"trade_status"`
+		Status      *easyPayFlexInt   `json:"status"`
+		Money       *easyPayFlexMoney `json:"money"`
+		TradeNo     *string           `json:"trade_no"`
 	}
 	var resp struct {
-		Code        int              `json:"code"`
-		Msg         string           `json:"msg"`
-		OutTradeNo  *string          `json:"out_trade_no"`
-		TradeStatus *string          `json:"trade_status"`
-		Status      *int             `json:"status"`
-		Money       *string          `json:"money"`
-		TradeNo     *string          `json:"trade_no"`
-		Data        easyPayQueryData `json:"data"`
+		Code        easyPayFlexInt    `json:"code"`
+		Msg         string            `json:"msg"`
+		OutTradeNo  *string           `json:"out_trade_no"`
+		TradeStatus *string           `json:"trade_status"`
+		Status      *easyPayFlexInt   `json:"status"`
+		Money       *easyPayFlexMoney `json:"money"`
+		TradeNo     *string           `json:"trade_no"`
+		Data        easyPayQueryData  `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("easypay parse query: %w", err)
@@ -365,9 +447,9 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 
 	money := ""
 	if resp.Money != nil {
-		money = *resp.Money
+		money = string(*resp.Money)
 	} else if resp.Data.Money != nil {
-		money = *resp.Data.Money
+		money = string(*resp.Data.Money)
 	}
 	// Do not substitute out_trade_no for an absent gateway trade_no. Callers
 	// must be able to distinguish a real upstream transaction identifier.
@@ -375,10 +457,13 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 	if resp.TradeNo != nil && strings.TrimSpace(*resp.TradeNo) != "" {
 		responseTradeNo = strings.TrimSpace(*resp.TradeNo)
 	} else if resp.Data.TradeNo != nil && strings.TrimSpace(*resp.Data.TradeNo) != "" {
-		responseTradeNo = *resp.Data.TradeNo
+		responseTradeNo = strings.TrimSpace(*resp.Data.TradeNo)
 	}
 
-	amount, _ := strconv.ParseFloat(money, 64)
+	amount, err := strconv.ParseFloat(strings.TrimSpace(money), 64)
+	if err != nil || math.IsNaN(amount) || math.IsInf(amount, 0) {
+		amount = 0
+	}
 	return &payment.QueryOrderResponse{
 		TradeNo:  responseTradeNo,
 		Status:   status,
