@@ -3149,6 +3149,34 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	turnInflight := newOpenAIWSTurnInflight(c, turn1InflightDone)
 	defer turnInflight.releaseAll()
 
+	ctx, wsPricingAt := h.gatewayService.WithOpenAIRequestPricingContext(ctx, apiKey.GroupID)
+	turnPreauth := newOpenAIWSTurnPreauth("")
+	defer turnPreauth.refundAll(reqLog)
+	turn1PreauthReqID := turnPreauth.nextRequestID(1)
+	turn1PreauthBody := openAIModelMappedBody(firstMessage, channelMappingWS.Mapped, channelMappingWS.MappedModel, h.gatewayService.ReplaceModelInBody)
+	turn1Guard, turn1PreauthErr := preauthorizeTextGatewayRequestWithID(
+		ctx,
+		turn1PreauthReqID,
+		h.balancePreauthorizer,
+		h.gatewayService,
+		apiKey,
+		subscription,
+		turn1PreauthBody,
+		service.BalancePreauthorizationBillingModel(reqModel, channelMappingWS),
+		wsPricingAt,
+		gjson.GetBytes(turn1PreauthBody, "service_tier").String(),
+	)
+	if turn1PreauthErr != nil {
+		reqLog.Info("openai.websocket_turn1_preauthorization_failed", zap.Error(turn1PreauthErr))
+		closeStatus, closeReason := openAIWSPreauthorizationCloseStatusAndReason(turn1PreauthErr)
+		closeOpenAIClientWS(wsConn, closeStatus, closeReason)
+		return
+	}
+	if turn1Guard != nil {
+		turnPreauth.set(reqLog, 1, turn1Guard)
+		c.Request = c.Request.WithContext(turnPreauth.contextForTurn(1, c.Request.Context()))
+	}
+
 	sessionHash := h.gatewayService.GenerateSessionHashWithFallback(
 		c,
 		firstMessage,
@@ -3250,8 +3278,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// 并按最新门复核当前账号（准入与计费同源），峰前建连保活不能让后续 turn
 	// 继续按建连时刻的谷价计费。生图意图只影响能力路由与图片计费，不关门。
 	// 建连时刻只用于选号/准入，不作为任何 turn 的计费定价时刻。
-	wsPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(ctx, apiKey.GroupID)
-	ctx = service.WithOpenAIPreferNativeResponses(wsPricingCtx)
+	ctx = service.WithOpenAIPreferNativeResponses(ctx)
 
 	for {
 		if ctx.Err() != nil {
@@ -3273,15 +3300,35 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			requestPlatform,
 		)
 		if err == nil && routedKey != nil {
-			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
-				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
-				Mapping: &channelMappingWS, Body: firstMessage, Model: reqModel,
-			}); bindErr != nil {
+			isTurn1 := nextInitialTurn.Load() == 1
+			binding := keyRouteBinding{
+				Previous:     apiKey,
+				Selected:     routedKey,
+				Subscription: &subscription,
+				Mapping:      &channelMappingWS,
+				Body:         wsAttemptMessage,
+				Model:        reqModel,
+				PricingAt:    wsPricingAt,
+			}
+			if isTurn1 {
+				binding.Guard = &turn1Guard
+				binding.Body = firstMessage
+				binding.FixedRequestID = turn1PreauthReqID
+			}
+			if bindErr := h.bindSelectedKeyRoute(c, binding); bindErr != nil {
 				releaseRejectedKeyRouteSelection(selection)
-				closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "selected group billing is unavailable")
+				if errors.Is(bindErr, service.ErrBalanceWithholdingFailed) {
+					closeStatus, closeReason := openAIWSPreauthorizationCloseStatusAndReason(bindErr)
+					closeOpenAIClientWS(wsConn, closeStatus, closeReason)
+				} else {
+					closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "selected group billing is unavailable")
+				}
 				return
 			}
 			apiKey = routedKey
+			if isTurn1 && turn1Guard != nil {
+				turnPreauth.set(reqLog, 1, turn1Guard)
+			}
 			ctx = service.ContextWithAPIKeyRoute(ctx, apiKey)
 			wsForwardModel = openAIChannelForwardModel(channelMappingWS, reqModel)
 		}
@@ -3480,7 +3527,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					turnPermissions.Capabilities |= service.APIKeyQueueCapabilityImageGeneration
 				}
 				ctx = service.WithAPIKeyQueueRequestPermissions(ctx, turnPermissions)
-				c.Request = c.Request.WithContext(ctx)
+				c.Request = c.Request.WithContext(turnPreauth.contextForTurn(turn, ctx))
 				if err := h.concurrencyHelper.RevalidateTurnAuth(ctx); err != nil {
 					return nil, openAIWSUserSlotAcquireError(err)
 				}
@@ -3651,7 +3698,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						turnInflight.set(turn, inflightCtx, inflightDone)
 						reservedInflightThisCall = true
 					}
+					reservedPreauthThisCall := false
 					releaseReservedOnErr := func() {
+						if reservedPreauthThisCall {
+							turnPreauth.refund(reqLog, turn)
+						}
 						if reservedInflightThisCall {
 							turnInflight.release(turn)
 						}
@@ -3686,7 +3737,38 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is no longer eligible for this connection, please reconnect", nil)
 					}
 					turnPricing.freeze(turnAt)
+					if turn > 1 || !turnPreauth.has(turn) {
+						turnPreauthMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(turnBillingCtx, turnKey.GroupID, turnModel)
+						turnPreauthBody := openAIModelMappedBody(turnBody, turnPreauthMapping.Mapped, turnPreauthMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
+						turnPreauthReqID := turnPreauth.nextRequestID(turn)
+						turnGuard, preauthErr := preauthorizeTextGatewayRequestWithID(
+							withFixedKeyRouteForPreauthorization(turnPriceCtx, turnKey),
+							turnPreauthReqID,
+							h.balancePreauthorizer,
+							h.gatewayService,
+							turnKey,
+							subscription,
+							turnPreauthBody,
+							service.BalancePreauthorizationBillingModel(turnModel, turnPreauthMapping),
+							turnAt,
+							gjson.GetBytes(turnPreauthBody, "service_tier").String(),
+						)
+						if preauthErr != nil {
+							releaseReservedOnErr()
+							reqLog.Info("openai.websocket_turn_preauthorization_failed",
+								zap.Int("turn", turn),
+								zap.Error(preauthErr),
+							)
+							closeStatus, closeReason := openAIWSPreauthorizationCloseStatusAndReason(preauthErr)
+							return service.NewOpenAIWSClientCloseError(closeStatus, closeReason, preauthErr)
+						}
+						if turnGuard != nil {
+							turnPreauth.set(reqLog, turn, turnGuard)
+							reservedPreauthThisCall = true
+						}
+					}
 					if turn == 1 {
+						c.Request = c.Request.WithContext(turnPreauth.contextForTurn(turn, c.Request.Context()))
 						return nil
 					}
 					turnPermissions := service.APIKeyQueueRequestPermissions{Models: []string{turnModel}, Capabilities: service.APIKeyQueueCapabilityForbiddenWhenClaudeCodeOnly}
@@ -3694,7 +3776,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						turnPermissions.Capabilities |= service.APIKeyQueueCapabilityImageGeneration
 					}
 					ctx = service.WithAPIKeyQueueRequestPermissions(ctx, turnPermissions)
-					c.Request = c.Request.WithContext(ctx)
+					c.Request = c.Request.WithContext(turnPreauth.contextForTurn(turn, ctx))
 					// 防御式清理：避免异常路径下旧槽位覆盖导致泄漏。
 					releaseTurnSlots()
 					// 非首轮 turn 需要重新抢占并发槽位，使用实时刷新的 Key/User 并发上限，避免长连接空闲占槽。
@@ -3740,6 +3822,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 							zap.Error(err),
 						)
 					}
+					turnPreauth.refund(reqLog, turn)
 					turnInflight.release(turn)
 				}()
 				turnStart := getTurnStart(turn)
@@ -3850,6 +3933,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					turnBillingUser = apiKey.User
 				}
 				turnInflightCtx := turnInflight.contextForTurn(turn, ctx)
+				turnPreauthCtx := turnPreauth.contextForTurn(turn, ctx)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 				settleTurn = func(settleCtx context.Context) error {
 					var billingErr error
@@ -3877,7 +3961,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						}
 					})
 					var transferred bool
-					task, transferred = transferBalancePreauthorizationUsageTask(ctx, task)
+					task, transferred = transferBalancePreauthorizationUsageTask(turnPreauthCtx, task)
 					if !transferred {
 						return errDuplicateBalancePreauthorizationUsageTask
 					}
@@ -3909,7 +3993,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 
 		for {
-			err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks)
+			proxyCallCtx := turnPreauth.contextForTurn(attemptInitialTurn, ctx)
+			c.Request = c.Request.WithContext(proxyCallCtx)
+			err := h.gatewayService.ProxyResponsesWebSocketFromClient(proxyCallCtx, c, wsConn, account, token, wsFirstMessage, hooks)
 			if err == nil {
 				reqLog.Info("openai.websocket_ingress_closed", zap.Int64("account_id", account.ID))
 				return
@@ -3941,24 +4027,55 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				replayTurn := int(nextInitialTurn.Load())
 				if replayTurn > 1 {
+					turnPreauth.refund(reqLog, replayTurn)
 					turnInflight.release(replayTurn)
-				} else if !turnInflight.has(1) {
-					// Preserve Turn 1's inflight reservation across failover (including
-					// failover to a passthrough account that does not re-run BeforeTurn(1)).
-					inflightCtx, inflightDone, inflightErr := reserveInflightBalanceCtx(
-						ctx,
-						h.billingCacheService,
-						h.gatewayService,
-						apiKey,
-						subscription,
-						tokenInflightEstimate(c, reqModel, wsAttemptMessage),
-					)
-					if inflightErr != nil {
-						reqLog.Info("openai.websocket_turn1_failover_inflight_reservation_failed", zap.Error(inflightErr))
-						closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "billing check failed")
-						return
+				} else {
+					if !turnInflight.has(1) {
+						// Preserve Turn 1's inflight reservation across failover (including
+						// failover to a passthrough account that does not re-run BeforeTurn(1)).
+						inflightCtx, inflightDone, inflightErr := reserveInflightBalanceCtx(
+							ctx,
+							h.billingCacheService,
+							h.gatewayService,
+							apiKey,
+							subscription,
+							tokenInflightEstimate(c, reqModel, wsAttemptMessage),
+						)
+						if inflightErr != nil {
+							reqLog.Info("openai.websocket_turn1_failover_inflight_reservation_failed", zap.Error(inflightErr))
+							closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "billing check failed")
+							return
+						}
+						turnInflight.set(1, inflightCtx, inflightDone)
 					}
-					turnInflight.set(1, inflightCtx, inflightDone)
+					if !turnPreauth.has(1) {
+						replayPreauthReqID := turnPreauth.nextRequestID(1)
+						replayPreauthBody := openAIModelMappedBody(wsAttemptMessage, channelMappingWS.Mapped, channelMappingWS.MappedModel, h.gatewayService.ReplaceModelInBody)
+						replayGuard, replayPreauthErr := preauthorizeTextGatewayRequestWithID(
+							withFixedKeyRouteForPreauthorization(ctx, apiKey),
+							replayPreauthReqID,
+							h.balancePreauthorizer,
+							h.gatewayService,
+							apiKey,
+							subscription,
+							replayPreauthBody,
+							service.BalancePreauthorizationBillingModel(reqModel, channelMappingWS),
+							wsPricingAt,
+							gjson.GetBytes(replayPreauthBody, "service_tier").String(),
+						)
+						if replayPreauthErr != nil {
+							reqLog.Info("openai.websocket_turn1_failover_preauthorization_failed", zap.Error(replayPreauthErr))
+							closeStatus, closeReason := openAIWSPreauthorizationCloseStatusAndReason(replayPreauthErr)
+							closeOpenAIClientWS(wsConn, closeStatus, closeReason)
+							return
+						}
+						turn1Guard = replayGuard
+						turn1PreauthReqID = replayPreauthReqID
+						if replayGuard != nil {
+							turnPreauth.set(reqLog, 1, replayGuard)
+							c.Request = c.Request.WithContext(turnPreauth.contextForTurn(1, c.Request.Context()))
+						}
+					}
 				}
 				if waitForWSSameAccountRetry(account, failoverErr) {
 					if !ensureUserSlotHeld() {

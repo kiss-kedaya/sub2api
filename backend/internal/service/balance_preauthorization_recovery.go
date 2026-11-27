@@ -33,6 +33,17 @@ func (s *BalancePreauthorizationService) RecoverBalancePreauthorization(
 		}
 		return s.recoverBalancePreauthorizationRefund(ctx, record)
 	case BalanceSettlementAuthorized:
+		if strings.HasPrefix(strings.TrimSpace(record.RequestID), BalancePreauthorizationDirectPGHoldPrefix) {
+			// Direct PG holds (batch image / async video) atomically transition
+			// Authorized -> FinalizationPending inside the PG balance-freeze tx.
+			// Reaching recovery in Authorized therefore proves the process
+			// crashed BEFORE the PG hold tx committed, so refunding Redis is
+			// exact and avoids charging for a hold that never occurred in PG.
+			if err := s.repo.BeginBalancePreauthorizationRefund(ctx, record.RequestID, record.APIKeyID); err != nil {
+				return balancePreauthorizationUnavailable(err)
+			}
+			return s.recoverBalancePreauthorizationRefund(ctx, record)
+		}
 		var err error
 		record, err = s.reconcileAuthorizedBalancePreauthorizationHold(ctx, record)
 		if err != nil {

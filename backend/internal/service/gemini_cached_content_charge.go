@@ -31,6 +31,9 @@ func capturePreparedCachedContentCharge(ctx context.Context, usage *UsageLog, in
 	if input.APIKey == nil || usage.UserID != cmd.UserID {
 		return true
 	}
+	if _, preauth := BalancePreauthorizationGuardFromContext(ctx); preauth && !subscriptionBill {
+		cmd.BalancePreauthorized = true
+	}
 	if capture != nil {
 		capture.intent = &MediaBillingIntent{Command: *cmd, Usage: *usage, QuotaPlatform: input.QuotaPlatform}
 		capture.intent.Usage.User, capture.intent.Usage.APIKey, capture.intent.Usage.Account, capture.intent.Usage.Group, capture.intent.Usage.Subscription = nil, nil, nil, nil, nil
@@ -97,9 +100,6 @@ func (s *GatewayService) ApplyCachedContentCharge(ctx context.Context, intent *M
 		return errors.New("cached content settlement is unavailable")
 	}
 	cmd := &intent.Command
-	if cmd.BalancePreauthorized {
-		return errors.New("cached content charges cannot use an unstored balance hold")
-	}
 	if !strings.HasPrefix(cmd.RequestID, GeminiCachedContentUsageRequestIDPrefix) || cmd.RequestID != intent.Usage.RequestID || cmd.UserID != intent.Usage.UserID || cmd.APIKeyID != intent.Usage.APIKeyID || cmd.AccountID != intent.Usage.AccountID {
 		return errors.New("cached content charge identity conflict")
 	}
@@ -107,27 +107,10 @@ func (s *GatewayService) ApplyCachedContentCharge(ctx context.Context, intent *M
 	if err != nil {
 		return err
 	}
-	if s.billingCacheService != nil {
-		if result != nil && result.BalanceSettlementDeferred {
-			if result.Applied && cmd.BalanceCost > 0 {
-				s.billingCacheService.deductBalanceCacheRelative(ctx, cmd.UserID, cmd.BalanceCost, "service.gemini_cached_content")
-			}
-		} else if s.billingDeps().mergeSettlementEnabled() {
-			if result != nil && result.NewBalance != nil && s.billingCacheService.balanceBelowEligibilityThreshold(*result.NewBalance) {
-				s.billingCacheService.setBalanceCacheAtMost(ctx, cmd.UserID, *result.NewBalance)
-			} else if result != nil && result.Applied && cmd.BalanceCost > 0 {
-				s.billingCacheService.deductBalanceCacheRelative(ctx, cmd.UserID, cmd.BalanceCost, "service.gemini_cached_content")
-			}
-		} else {
-			_ = s.billingCacheService.InvalidateUserBalance(ctx, cmd.UserID)
-		}
-		if cmd.SubscriptionID != nil && intent.Usage.GroupID != nil {
-			_ = s.billingCacheService.InvalidateSubscription(ctx, cmd.UserID, *intent.Usage.GroupID)
-		}
-		if result != nil && result.Applied && cmd.APIKeyRateLimitCost > 0 {
-			s.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(cmd.APIKeyID, cmd.APIKeyRateLimitCost)
-		}
-	}
+	// Apply all Applied-only accounting side effects (API key quota mirror,
+	// exhausted-key auth eviction, rate-limit counters, and user-platform quota)
+	// as soon as Apply commits, before guard.Finalize / preauth recovery can fail
+	// transiently and return early (a subsequent retry sees Applied=false).
 	if result != nil && result.Applied {
 		if s.billingCacheService != nil && cmd.APIKeyQuotaCost > 0 {
 			s.billingCacheService.IncrementAPIKeyQuotaUsage(cmd.APIKeyID, cmd.APIKeyQuotaCost)
@@ -135,27 +118,66 @@ func (s *GatewayService) ApplyCachedContentCharge(ctx context.Context, intent *M
 		if result.APIKeyQuotaExhausted {
 			invalidateExhaustedAPIKeyAuthCache(ctx, s.getAuthCacheInvalidator(), cmd.UserID, cmd.APIKeyID)
 		}
+		if s.billingCacheService != nil && cmd.APIKeyRateLimitCost > 0 {
+			s.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(cmd.APIKeyID, cmd.APIKeyRateLimitCost)
+		}
+		if s.billingCacheService != nil && s.deferredService != nil {
+			// Reuse existing quota/notification updates after the authoritative
+			// ledger commit. Subscription counters below are invalidated rather
+			// than incremented, so suppress that one optimistic update here.
+			key := &APIKey{ID: cmd.APIKeyID, UserID: cmd.UserID, GroupID: intent.Usage.GroupID}
+			cost := &CostBreakdown{ActualCost: intent.Usage.ActualCost, TotalCost: intent.Usage.TotalCost}
+			params := &postUsageBillingParams{Cost: cost, User: &User{ID: cmd.UserID}, APIKey: key, Account: &Account{ID: cmd.AccountID, Type: cmd.AccountType}, AccountRateMultiplier: 1, Platform: intent.QuotaPlatform}
+			if intent.Usage.AccountRateMultiplier != nil {
+				params.AccountRateMultiplier = *intent.Usage.AccountRateMultiplier
+			}
+			if cmd.SubscriptionID != nil {
+				cost.ActualCost = 0
+				params.Platform = ""
+			}
+			// API-key rate counters already updated immediately above.
+			key.RateLimit5h = 0
+			finalizePostUsageBilling(ctx, params, s.billingDeps(), result, true)
+		}
 	}
-	if result != nil && result.Applied && s.billingCacheService != nil && s.deferredService != nil {
-		// Reuse existing quota/notification updates after the authoritative
-		// ledger commit. Subscription counters above were invalidated rather
-		// than incremented, so suppress that one optimistic update here.
-		key := &APIKey{ID: cmd.APIKeyID, UserID: cmd.UserID, GroupID: intent.Usage.GroupID}
-		if cmd.APIKeyRateLimitCost > 0 {
-			key.RateLimit5h = 1
+	if cmd.BalancePreauthorized {
+		var finalizeErr error
+		if guard, ok := BalancePreauthorizationGuardFromContext(ctx); ok {
+			finalizeErr = guard.Finalize(ctx, cmd.BalanceCost, cmd.RequestFingerprint)
+		} else if result != nil && (result.Applied || result.BalanceFinalizationPending) {
+			preauthorizer := NewBalancePreauthorizationService(s.cfg, s.billingService, s.billingCacheService, s.usageBillingRepo)
+			finalizeErr = preauthorizer.RecoverBalancePreauthorization(ctx, BalancePreauthorizationRecord{
+				RequestID:          cmd.RequestID,
+				APIKeyID:           cmd.APIKeyID,
+				UserID:             cmd.UserID,
+				RequestFingerprint: cmd.RequestFingerprint,
+				Amount:             cmd.BalanceCost,
+				Status:             BalanceSettlementFinalizationPending,
+			})
 		}
-		cost := &CostBreakdown{ActualCost: intent.Usage.ActualCost, TotalCost: intent.Usage.TotalCost}
-		params := &postUsageBillingParams{Cost: cost, User: &User{ID: cmd.UserID}, APIKey: key, Account: &Account{ID: cmd.AccountID, Type: cmd.AccountType}, AccountRateMultiplier: 1, Platform: intent.QuotaPlatform}
-		if intent.Usage.AccountRateMultiplier != nil {
-			params.AccountRateMultiplier = *intent.Usage.AccountRateMultiplier
+		if finalizeErr != nil {
+			return finalizeErr
 		}
-		if cmd.SubscriptionID != nil {
-			cost.ActualCost = 0
-			params.Platform = ""
+	}
+	if s.billingCacheService != nil {
+		if !cmd.BalancePreauthorized {
+			if result != nil && result.BalanceSettlementDeferred {
+				if result.Applied && cmd.BalanceCost > 0 {
+					s.billingCacheService.deductBalanceCacheRelative(ctx, cmd.UserID, cmd.BalanceCost, "service.gemini_cached_content")
+				}
+			} else if s.billingDeps().mergeSettlementEnabled() {
+				if result != nil && result.NewBalance != nil && s.billingCacheService.balanceBelowEligibilityThreshold(*result.NewBalance) {
+					s.billingCacheService.setBalanceCacheAtMost(ctx, cmd.UserID, *result.NewBalance)
+				} else if result != nil && result.Applied && cmd.BalanceCost > 0 {
+					s.billingCacheService.deductBalanceCacheRelative(ctx, cmd.UserID, cmd.BalanceCost, "service.gemini_cached_content")
+				}
+			} else {
+				_ = s.billingCacheService.InvalidateUserBalance(ctx, cmd.UserID)
+			}
 		}
-		// API-key rate counters already updated immediately above.
-		key.RateLimit5h = 0
-		finalizePostUsageBilling(ctx, params, s.billingDeps(), result, true)
+		if cmd.SubscriptionID != nil && intent.Usage.GroupID != nil {
+			_ = s.billingCacheService.InvalidateSubscription(ctx, cmd.UserID, *intent.Usage.GroupID)
+		}
 	}
 	usage := intent.Usage
 	if _, err := s.usageLogRepo.Create(ctx, &usage); err != nil {

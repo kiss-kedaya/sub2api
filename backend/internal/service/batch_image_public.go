@@ -84,17 +84,18 @@ type BatchImageOwner struct {
 }
 
 type BatchImagePublicService struct {
-	Repo              BatchImageRepository
-	AccountRepo       BatchImageAccountSelectionRepository
-	GroupRepo         BatchImageGroupPricingRepository
-	UserGroupRateRepo BatchImageUserGroupRateRepository
-	Queue             BatchImageQueue
-	ProviderRegistry  *BatchImageProviderRegistry
-	Pricing           BatchImagePricingResolver
-	BillingRepo       UsageBillingRepository
-	BillingCache      *BillingCacheService
-	AuthCache         APIKeyAuthCacheInvalidator
-	Config            *config.Config
+	Repo                    BatchImageRepository
+	AccountRepo             BatchImageAccountSelectionRepository
+	GroupRepo               BatchImageGroupPricingRepository
+	UserGroupRateRepo       BatchImageUserGroupRateRepository
+	Queue                   BatchImageQueue
+	ProviderRegistry        *BatchImageProviderRegistry
+	Pricing                 BatchImagePricingResolver
+	BillingRepo             UsageBillingRepository
+	BillingCache            *BillingCacheService
+	BalancePreauthorization *BalancePreauthorizationService
+	AuthCache               APIKeyAuthCacheInvalidator
+	Config                  *config.Config
 }
 
 type BatchImagePricingSnapshot struct {
@@ -323,7 +324,41 @@ func (s *BatchImagePublicService) SubmitWithPreCreateCheck(
 	// hold immediately so concurrent submissions do not double-count this batch
 	// during multi-minute upstream uploads/provider.Submit.
 	releaseQuotaHold()
-	if err := reserveBatchImageBalanceHold(ctx, s.BillingRepo, job, requestHash); err != nil {
+	var preauthGuard *BalancePreauthorizationGuard
+	var preauthRequestID string
+	if s.BalancePreauthorization != nil && s.BalancePreauthorization.RequiresPreauthorization(BillingTypeBalance) && holdAmount > 0 {
+		var preauthErr error
+		preauthGuard, preauthErr = s.BalancePreauthorization.PreauthorizeDirectPGHold(
+			ctx,
+			"batch-image:"+job.BatchID,
+			owner.APIKeyID,
+			owner.UserID,
+			holdAmount,
+		)
+		if preauthErr != nil {
+			code := "BILLING_HOLD_FAILED"
+			retErr := ErrBatchImageBillingHoldFailed.WithCause(preauthErr)
+			if errors.Is(preauthErr, ErrBalanceWithholdingFailed) {
+				code = "INSUFFICIENT_BALANCE"
+				retErr = ErrBatchImageInsufficientBalance
+			}
+			_ = s.Repo.RecordBatchImageJobSubmitFailure(ctx, job.BatchID, code, sanitizeBatchImagePublicMessage(retErr.Error()), true)
+			s.hidePreUpstreamSubmitFailure(ctx, owner, job)
+			return nil, retErr
+		}
+		if preauthGuard != nil {
+			preauthRequestID = preauthGuard.RequestID()
+		}
+	}
+	appliedHold, err := reserveBatchImageBalanceHoldWithPreauth(ctx, s.BillingRepo, job, requestHash, preauthRequestID)
+	if err != nil {
+		if preauthGuard != nil {
+			refundCtx, refundCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if refundErr := preauthGuard.Refund(refundCtx); refundErr != nil && !errors.Is(refundErr, ErrBalancePreauthorizationAlreadyFinalized) {
+				logger.L().Warn("batch_image.direct_pg_hold_refund_failed", zap.String("batch_id", job.BatchID), zap.Error(refundErr))
+			}
+			refundCancel()
+		}
 		code := "BILLING_HOLD_FAILED"
 		if errors.Is(err, ErrBatchImageInsufficientBalance) {
 			code = "INSUFFICIENT_BALANCE"
@@ -331,6 +366,21 @@ func (s *BatchImagePublicService) SubmitWithPreCreateCheck(
 		_ = s.Repo.RecordBatchImageJobSubmitFailure(ctx, job.BatchID, code, sanitizeBatchImagePublicMessage(err.Error()), true)
 		s.hidePreUpstreamSubmitFailure(ctx, owner, job)
 		return nil, err
+	}
+	if preauthGuard != nil {
+		if !appliedHold {
+			refundCtx, refundCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if refundErr := preauthGuard.Refund(refundCtx); refundErr != nil && !errors.Is(refundErr, ErrBalancePreauthorizationAlreadyFinalized) {
+				logger.L().Warn("batch_image.direct_pg_hold_refund_failed", zap.String("batch_id", job.BatchID), zap.Error(refundErr))
+			}
+			refundCancel()
+		} else {
+			finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if finErr := preauthGuard.FinalizeDirectPGHold(finalizeCtx); finErr != nil {
+				logger.L().Warn("batch_image.direct_pg_hold_finalize_failed", zap.String("batch_id", job.BatchID), zap.Error(finErr))
+			}
+			finalizeCancel()
+		}
 	}
 	s.invalidateAuthCache(ctx, owner.UserID)
 	if err := s.createPendingItems(ctx, job.BatchID, requestHash, normalized.Items); err != nil {

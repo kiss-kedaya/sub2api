@@ -55,24 +55,32 @@ func buildBatchImageHoldCommand(job *BatchImageJob, requestID string, actualAmou
 	}, nil
 }
 
-func reserveBatchImageBalanceHold(ctx context.Context, repo UsageBillingRepository, job *BatchImageJob, payloadHash string) error {
+func reserveBatchImageBalanceHoldWithPreauth(
+	ctx context.Context,
+	repo UsageBillingRepository,
+	job *BatchImageJob,
+	payloadHash string,
+	preauthRequestID string,
+) (bool, error) {
 	if repo == nil {
-		return ErrBatchImageBillingHoldFailed.WithCause(errors.New("batch image billing repository is not configured"))
+		return false, ErrBatchImageBillingHoldFailed.WithCause(errors.New("batch image billing repository is not configured"))
 	}
 	cmd, err := buildBatchImageHoldCommand(job, BatchImageHoldRequestID(job.BatchID), 0, payloadHash)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if cmd.HoldAmount <= 0 {
-		return nil
+		return false, nil
 	}
-	if _, err := repo.ReserveBatchImageBalance(ctx, cmd); err != nil {
+	cmd.PreauthRequestID = strings.TrimSpace(preauthRequestID)
+	res, err := repo.ReserveBatchImageBalance(ctx, cmd)
+	if err != nil {
 		if errors.Is(err, ErrBatchImageInsufficientBalance) {
-			return ErrBatchImageInsufficientBalance
+			return false, ErrBatchImageInsufficientBalance
 		}
-		return ErrBatchImageBillingHoldFailed.WithCause(err)
+		return false, ErrBatchImageBillingHoldFailed.WithCause(err)
 	}
-	return nil
+	return res == nil || res.Applied, nil
 }
 
 func captureBatchImageBalanceHold(ctx context.Context, repo UsageBillingRepository, job *BatchImageJob, actualAmount float64, payloadHash string) (bool, error) {

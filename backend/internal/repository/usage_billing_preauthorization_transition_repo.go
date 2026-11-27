@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math"
@@ -109,8 +110,13 @@ func (r *usageBillingRepository) CompleteBalancePreauthorizationSettlement(ctx c
 	}
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE billing_balance_settlements
-		SET status = CASE WHEN status IN ($4, $5) THEN status ELSE $3 END,
+		SET status = CASE
+				WHEN status IN ($4, $5) THEN status
+				WHEN request_fingerprint LIKE 'pg-direct-hold:%' THEN $5
+				ELSE $3
+			END,
 			wallet_preapplied = CASE WHEN status = $6 THEN TRUE ELSE wallet_preapplied END,
+			applied_at = CASE WHEN status = $6 AND request_fingerprint LIKE 'pg-direct-hold:%' THEN NOW() ELSE applied_at END,
 			available_at = CASE WHEN status = $6 THEN NOW() ELSE available_at END,
 			last_error = CASE WHEN status = $6 THEN NULL ELSE last_error END,
 			updated_at = CASE WHEN status = $6 THEN NOW() ELSE updated_at END
@@ -127,6 +133,62 @@ func (r *usageBillingRepository) CompleteBalancePreauthorizationSettlement(ctx c
 		service.BalanceSettlementFinalizationPending,
 	)
 	return balancePreauthorizationTransitionResult(result, err, service.BalanceSettlementPending)
+}
+
+// advanceDirectPGHoldToFinalizationPending atomically binds a Redis live_wallet
+// direct-PG hold into the caller's PostgreSQL balance-freeze transaction:
+//  1. Sets sub2api.skip_live_balance_outbox = 'on' locally so the users.balance
+//     decrement in the same transaction does not emit a duplicate negative delta
+//     to live_balance_adjustment_outbox.
+//  2. Moves the billing_balance_settlements row from Authorized ->
+//     FinalizationPending with request_fingerprint = 'pg-direct-hold:' || requestID.
+//     When CompleteBalancePreauthorizationSettlement subsequently runs (in-band
+//     or via crash recovery), matching rows move directly to Applied instead of
+//     Pending so FlushPendingBalanceSettlements never deducts PG twice.
+func advanceDirectPGHoldToFinalizationPending(
+	ctx context.Context,
+	tx *sql.Tx,
+	requestID string,
+	apiKeyID int64,
+	holdAmount float64,
+) error {
+	if tx == nil {
+		return errors.New("usage billing direct PG hold transaction is nil")
+	}
+	requestID = strings.TrimSpace(requestID)
+	holdAmount = service.QuantizeUsageBillingAmount(holdAmount)
+	if requestID == "" || apiKeyID <= 0 {
+		return service.ErrUsageBillingRequestIDRequired
+	}
+	if holdAmount <= 0 || math.IsNaN(holdAmount) || math.IsInf(holdAmount, 0) {
+		return service.ErrInvalidBillingPreauthorizationEstimate
+	}
+	if err := skipLiveBalanceAdjustmentOutbox(ctx, tx); err != nil {
+		return err
+	}
+	fingerprint := service.BalancePreauthorizationDirectPGHoldFingerprintPrefix + requestID
+	result, err := tx.ExecContext(ctx, `
+		UPDATE billing_balance_settlements
+		SET status = CASE WHEN status IN ($5, $6) THEN status ELSE $5 END,
+			amount_usd = CASE WHEN status IN ($5, $6) THEN amount_usd ELSE $3 END,
+			request_fingerprint = CASE WHEN status IN ($5, $6) THEN request_fingerprint ELSE $4 END,
+			updated_at = CASE WHEN status IN ($5, $6) THEN updated_at ELSE NOW() END
+		WHERE request_id = $1
+			AND api_key_id = $2
+			AND (
+				status = $7
+				OR (
+					status IN ($5, $6)
+					AND amount_usd = $3
+					AND request_fingerprint = $4
+				)
+			)
+	`, requestID, apiKeyID, holdAmount, fingerprint,
+		service.BalanceSettlementFinalizationPending,
+		service.BalanceSettlementApplied,
+		service.BalanceSettlementAuthorized,
+	)
+	return balancePreauthorizationTransitionResult(result, err, service.BalanceSettlementFinalizationPending)
 }
 
 func (r *usageBillingRepository) BeginBalancePreauthorizationRefund(ctx context.Context, requestID string, apiKeyID int64) error {
