@@ -545,6 +545,10 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		c.Set("openai_ws_http_bridge", true)
 	}
 
+	bridgeClientCtx := ctx
+	if bridgeClientCtx == nil || bridgeClientCtx.Done() == nil {
+		bridgeClientCtx = openAIClientContext(ctx, c)
+	}
 	turnStart := time.Now()
 	rejectedFieldRetryState := newOpenAIResponsesRejectedFieldRetryState(body)
 	var resp *http.Response
@@ -553,8 +557,16 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if buildErr != nil {
 			return nil, buildErr
 		}
-		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		resp, err = s.doOpenAIUpstreamWithHeaderCancel(bridgeClientCtx, upstreamReq, proxyURL, account)
 		if err != nil {
+			if clientErr := openAIClientErr(bridgeClientCtx); clientErr != nil {
+				if errors.Is(err, errOpenAIRequestNotSent) {
+					return nil, clientErr
+				}
+				return newClientGoneOpenAIForwardResult(
+					c, account, body, originalModel, originalModel, actualModel, nil, true, turnStart,
+				), clientErr
+			}
 			if turn == 1 {
 				return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
 			}
@@ -569,8 +581,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			break
 		}
 
+		resp.Body = s.openAIBufferedBodyWithCancel(bridgeClientCtx, resp.Body)
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, openAIWSHTTPBridgeErrorBodyLimitBytes))
 		_ = resp.Body.Close()
+		if clientErr := openAIClientErr(bridgeClientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
 			result := openAIStreamSilenceResult(resp, s.openAIStreamSilenceUsage(respBody), originalModel, originalModel, originalModel, true, turnStart)
 			if writeErr := writeClientMessage(buildOpenAIWSHTTPBridgeErrorEvent(http.StatusGatewayTimeout, "Upstream did not respond in time")); writeErr != nil {
@@ -639,8 +655,10 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		return nil, fmt.Errorf("upstream http bridge error: status=%d message=%s", resp.StatusCode, upstreamMsg)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	stopCancelBody := context.AfterFunc(ctx, func() { _ = resp.Body.Close() })
-	defer stopCancelBody()
+	if bridgeClientCtx != nil && bridgeClientCtx.Done() != nil {
+		stopCancelBody := context.AfterFunc(bridgeClientCtx, func() { _ = resp.Body.Close() })
+		defer stopCancelBody()
+	}
 	if account.Platform == PlatformGrok {
 		s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, resolveGrokWSUpstreamModel(account, body, originalModel)), account, resp.Header, resp.StatusCode)
 	}
@@ -1042,6 +1060,16 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			return resultWithUsage(), fmt.Errorf("read upstream http bridge stream after error event: %w", scanErr)
 		}
 		return resultWithUsage(), errors.New(bareErrorMessage)
+	}
+	if clientDisconnected || openAIClientErr(bridgeClientCtx) != nil {
+		clientDisconnected = true
+		result := resultWithUsage()
+		applyIncompleteOpenAIWSTurnUsage(account, &result.Usage, turnOutput, body, incompleteOpenAIWSTurn{
+			mode:       "http_bridge",
+			model:      mappedModel,
+			responseID: responseID,
+		})
+		return result, nil
 	}
 	if err := scanner.Err(); err != nil {
 		streamErr := fmt.Errorf("read upstream http bridge stream: %w", err)

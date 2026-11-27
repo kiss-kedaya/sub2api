@@ -2679,15 +2679,7 @@ func normalizeResponsesStreamingTerminalFrameOutput(frame openAISSEDataFrame, ac
 }
 
 func responsesStreamEventMayContributeToOutput(eventType string) bool {
-	switch eventType {
-	case "response.output_text.delta",
-		"response.output_item.added",
-		"response.function_call_arguments.delta",
-		"response.reasoning_summary_text.delta":
-		return true
-	default:
-		return false
-	}
+	return passthroughStreamEventContributesOutput(eventType)
 }
 
 // collectRawResponsesOutputItemsFromSSE 按到达顺序收集 SSE 流中

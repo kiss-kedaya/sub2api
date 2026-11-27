@@ -126,7 +126,16 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 			}
 		}
 		// 区分客户端取消和真正的上游失败，返回更准确的错误消息
-		if c.Request.Context().Err() != nil {
+		if geminiClientGoneCtx(ctx, c) {
+			clientErr := ctx.Err()
+			if clientErr == nil && c != nil && c.Request != nil {
+				clientErr = c.Request.Context().Err()
+			}
+			if result != nil && result.dispatched {
+				return geminiClientGoneForwardResult(
+					"antigravity_usage.client_gone_estimated", account, body, originalModel, billingModel, claudeReq.Stream, startTime,
+				), clientErr
+			}
 			return nil, s.writeClaudeError(c, http.StatusBadGateway, "client_disconnected", "Client disconnected before upstream response")
 		}
 		return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed after retries")
@@ -204,6 +213,18 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					sessionHash:     "", // Forward 方法没有 sessionHash，由上层处理粘性会话清除
 				})
 				if retryErr != nil {
+					if geminiClientGoneCtx(ctx, c) {
+						clientErr := ctx.Err()
+						if clientErr == nil && c != nil && c.Request != nil {
+							clientErr = c.Request.Context().Err()
+						}
+						if retryResult != nil && retryResult.dispatched {
+							return geminiClientGoneForwardResult(
+								"antigravity_usage.client_gone_estimated", account, body, originalModel, mappedModel, claudeReq.Stream, startTime,
+							), clientErr
+						}
+						return nil, clientErr
+					}
 					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 						ProxyID:            opsUpstreamProxyID(account),
 						ProxyName:          opsUpstreamProxyName(account),
@@ -351,6 +372,18 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 								}
 							}
 						} else {
+							if geminiClientGoneCtx(ctx, c) {
+								clientErr := ctx.Err()
+								if clientErr == nil && c != nil && c.Request != nil {
+									clientErr = c.Request.Context().Err()
+								}
+								if retryResult != nil && retryResult.dispatched {
+									return geminiClientGoneForwardResult(
+										"antigravity_usage.client_gone_estimated", account, body, originalModel, mappedModel, claudeReq.Stream, startTime,
+									), clientErr
+								}
+								return nil, clientErr
+							}
 							logger.LegacyPrintf("service.antigravity_gateway", "Antigravity account %d: budget rectifier retry failed: %v", account.ID, retryErr)
 						}
 					}
@@ -465,6 +498,11 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		}
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
+		clientDisconnect = streamRes.clientDisconnect
+		goneOutputTokens = streamRes.outputTokens
+	}
+	if usage == nil {
+		usage = &ClaudeUsage{}
 	}
 	if clientDisconnect {
 		// The client left after the upstream accepted the request: bill what the upstream

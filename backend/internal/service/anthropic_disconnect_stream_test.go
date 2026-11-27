@@ -182,7 +182,7 @@ func TestAnthropicDisconnect_ClientLeavesBeforeAnyFrameBillsEstimatedInput(t *te
 			require.True(t, out.result.ClientDisconnect)
 			total := estimateRequestInputTokens(h.upstream.lastBody())
 			require.Greater(t, total, 0)
-			split := splitIncompleteInput(total)
+			split := splitAnthropicIncompleteInput(total)
 			require.Equal(t, split.Fresh, out.result.Usage.InputTokens, "Anthropic InputTokens is the fresh input only")
 			require.Equal(t, split.CacheRead, out.result.Usage.CacheReadInputTokens)
 			require.True(t, out.result.Usage.CacheReadEstimated)

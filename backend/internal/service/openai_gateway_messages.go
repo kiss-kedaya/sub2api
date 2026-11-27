@@ -427,6 +427,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// Grok may reject encrypted reasoning replayed under a different OAuth
 	// account/cache identity. Match forwardGrokResponses: one strip+retry before
 	// treating the 400 as a hard failure / failover trigger.
+	clientCtx := openAIClientContext(ctx, c)
 	var resp *http.Response
 	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
@@ -440,9 +441,25 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 				return nil, fmt.Errorf("build grok retry request: %w", err)
 			}
 		}
-		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		resp, err = s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 		if err != nil {
+			if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+				if errors.Is(err, errOpenAIRequestNotSent) {
+					return nil, clientErr
+				}
+				var re *string
+				if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
+					v := responsesReq.Reasoning.Effort
+					re = &v
+				}
+				return newClientGoneOpenAIForwardResult(
+					c, account, responsesBody, originalModel, billingModel, upstreamModel, re, clientStream, startTime,
+				), clientErr
+			}
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+		}
+		if resp.StatusCode >= http.StatusBadRequest {
+			resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
 		}
 		if account.Platform != PlatformGrok || attempt > 0 || resp.StatusCode != http.StatusBadRequest {
 			break
@@ -479,9 +496,15 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 
 	// 8. Handle error response with failover
 	if resp.StatusCode >= 400 {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		respBody, upstreamMsg, readErr := s.readOpenAIUpstreamErrorWithError(resp)
 		if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
 			return s.openAIStreamSilenceHTTPError(c, resp, respBody, readErr, originalModel, billingModel, upstreamModel, clientStream, startTime)
+		}
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
 		}
 		if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 			expectedTaskID := account.GetCredential("task_id")

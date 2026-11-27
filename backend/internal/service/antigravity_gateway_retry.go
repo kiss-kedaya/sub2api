@@ -43,7 +43,8 @@ type antigravityRetryLoopParams struct {
 
 // antigravityRetryLoopResult 重试循环的结果
 type antigravityRetryLoopResult struct {
-	resp *http.Response
+	resp       *http.Response
+	dispatched bool
 }
 
 // resolveAntigravityForwardBaseURL 解析转发用 base URL。
@@ -100,6 +101,7 @@ type smartRetryResult struct {
 	action      smartRetryAction
 	resp        *http.Response
 	err         error
+	dispatched  bool
 	switchError *AntigravityAccountSwitchError // 模型限流时返回账号切换信号
 }
 
@@ -127,6 +129,13 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 		p.account.IsOveragesEnabled() &&
 		!p.account.isCreditsExhausted() {
 		result := s.attemptCreditsOveragesRetry(p, baseURL, modelName, waitDuration, resp.StatusCode, respBody)
+		if result.err != nil {
+			return &smartRetryResult{
+				action:     smartRetryActionBreakWithResp,
+				err:        result.err,
+				dispatched: result.dispatched,
+			}
+		}
 		if result.handled && result.resp != nil {
 			return &smartRetryResult{
 				action: smartRetryActionBreakWithResp,
@@ -214,7 +223,8 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 			}
 
 			// 智能重试：创建新请求
-			retryReq, err := antigravity.NewAPIRequestWithURL(p.ctx, baseURL, p.action, p.accessToken, p.body)
+			retryAttemptCtx, retryAttemptTrace := trackGeminiAttempt(p.ctx)
+			retryReq, err := antigravity.NewAPIRequestWithURL(retryAttemptCtx, baseURL, p.action, p.accessToken, p.body)
 			if err != nil {
 				logger.LegacyPrintf("service.antigravity_gateway", "%s status=smart_retry_request_build_failed error=%v", p.prefix, err)
 				p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.requestedModel, p.groupID, p.sessionHash, p.isStickySession)
@@ -229,6 +239,16 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 			}
 
 			retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+			if retryErr != nil && geminiClientGoneCtx(p.ctx, p.c) {
+				if retryResp != nil && retryResp.Body != nil {
+					_ = retryResp.Body.Close()
+				}
+				return &smartRetryResult{
+					action:     smartRetryActionBreakWithResp,
+					err:        geminiClientErr(p.ctx, p.c, retryErr),
+					dispatched: retryAttemptTrace.dispatched(),
+				}
+			}
 			if retryErr == nil && retryResp != nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
 				log.Printf("%s status=%d smart_retry_success attempt=%d/%d", p.prefix, retryResp.StatusCode, attempt, maxAttempts)
 				// 重试成功，清除 MODEL_CAPACITY_EXHAUSTED cooldown
@@ -397,13 +417,24 @@ func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 		totalWaited += waitDuration
 
 		// 创建新请求
-		retryReq, err := antigravity.NewAPIRequestWithURL(p.ctx, baseURL, p.action, p.accessToken, p.body)
+		retryAttemptCtx, retryAttemptTrace := trackGeminiAttempt(p.ctx)
+		retryReq, err := antigravity.NewAPIRequestWithURL(retryAttemptCtx, baseURL, p.action, p.accessToken, p.body)
 		if err != nil {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s single_account_503_retry: request_build_failed error=%v", p.prefix, err)
 			break
 		}
 
 		retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+		if retryErr != nil && geminiClientGoneCtx(p.ctx, p.c) {
+			if retryResp != nil && retryResp.Body != nil {
+				_ = retryResp.Body.Close()
+			}
+			return &smartRetryResult{
+				action:     smartRetryActionBreakWithResp,
+				err:        geminiClientErr(p.ctx, p.c, retryErr),
+				dispatched: retryAttemptTrace.dispatched(),
+			}
+		}
 		if retryErr == nil && retryResp != nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d single_account_503_retry_success attempt=%d/%d total_waited=%v",
 				p.prefix, retryResp.StatusCode, attempt, antigravitySingleAccountSmartRetryMaxAttempts, totalWaited)
@@ -536,7 +567,8 @@ urlFallbackLoop:
 			default:
 			}
 
-			upstreamReq, err := antigravity.NewAPIRequestWithURL(p.ctx, baseURL, p.action, p.accessToken, p.body)
+			attemptCtx, attemptTrace := trackGeminiAttempt(p.ctx)
+			upstreamReq, err := antigravity.NewAPIRequestWithURL(attemptCtx, baseURL, p.action, p.accessToken, p.body)
 			if err != nil {
 				return nil, err
 			}
@@ -546,6 +578,13 @@ urlFallbackLoop:
 				err = errors.New("upstream returned nil response")
 			}
 			if err != nil {
+				if geminiClientGoneCtx(p.ctx, p.c) {
+					clientErr := p.ctx.Err()
+					if clientErr == nil && p.c != nil && p.c.Request != nil {
+						clientErr = p.c.Request.Context().Err()
+					}
+					return &antigravityRetryLoopResult{dispatched: attemptTrace.dispatched()}, clientErr
+				}
 				safeErr := sanitizeUpstreamErrorMessage(err.Error())
 				appendOpsUpstreamError(p.c, OpsUpstreamErrorEvent{
 					ProxyID:            opsUpstreamProxyID(p.account),
@@ -611,7 +650,7 @@ urlFallbackLoop:
 						continue urlFallbackLoop
 					case smartRetryActionBreakWithResp:
 						if smartResult.err != nil {
-							return nil, smartResult.err
+							return &antigravityRetryLoopResult{dispatched: smartResult.dispatched}, smartResult.err
 						}
 						// 模型限流时返回切换账号信号
 						if smartResult.switchError != nil {

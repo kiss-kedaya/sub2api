@@ -220,17 +220,56 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if customUA == "" && account.IsGrokOAuth() {
 		customUA = defaultGrokUpstreamUserAgent()
 	}
+	clientCtx := openAIClientContext(ctx, c)
+	bridgeOnlyClientGoneResult := func() *OpenAIForwardResult {
+		if bridgeUsage.InputTokens == 0 && bridgeUsage.OutputTokens == 0 {
+			return nil
+		}
+		re := extractCCReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
+		re = ApplyThinkingEnabledFallback(re, body, billingModel)
+		return &OpenAIForwardResult{
+			Usage:            bridgeUsage,
+			Model:            originalModel,
+			BillingModel:     billingModel,
+			UpstreamModel:    upstreamModel,
+			ReasoningEffort:  re,
+			Stream:           clientStream,
+			Duration:         time.Since(startTime),
+			ClientDisconnect: true,
+		}
+	}
 	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, upstreamBody, clientStream, token, customUA, grokCacheIdentity)
 	if err != nil {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			if errors.Is(err, errOpenAIRequestNotSent) {
+				return bridgeOnlyClientGoneResult(), clientErr
+			}
+			re := extractCCReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
+			re = ApplyThinkingEnabledFallback(re, body, billingModel)
+			res := newClientGoneOpenAIForwardResult(
+				c, account, upstreamBody, originalModel, billingModel, upstreamModel, re, clientStream, startTime,
+			)
+			if res != nil {
+				addOpenAIUsage(&res.Usage, bridgeUsage)
+				return res, clientErr
+			}
+			return bridgeOnlyClientGoneResult(), clientErr
+		}
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	// 7. Handle error response with failover
 	if resp.StatusCode >= 400 {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return bridgeOnlyClientGoneResult(), clientErr
+		}
 		respBody, upstreamMsg, readErr := s.readOpenAIUpstreamErrorWithError(resp)
 		if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
 			return s.openAIStreamSilenceHTTPError(c, resp, respBody, readErr, originalModel, billingModel, upstreamModel, clientStream, startTime)
+		}
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return bridgeOnlyClientGoneResult(), clientErr
 		}
 		if (account.Platform != PlatformGrok || resp.StatusCode == http.StatusForbidden) && IsGlobalIPBlacklistResponse(respBody) {
 			MarkGlobalIPBlacklistRejection(c)

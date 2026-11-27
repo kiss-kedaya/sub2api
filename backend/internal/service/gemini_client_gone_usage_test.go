@@ -272,7 +272,7 @@ func TestGeminiForwardNative_ClientGoneKeepsReportedUsage(t *testing.T) {
 }
 
 // No usage figure at all: output is estimated from the content that reached the client,
-// input from the request body, 95% of it as cache read.
+// input from the request body (plain input price by default; 95% cache-read when configured).
 func TestGeminiForwardNative_ClientGoneEstimatesMissingUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	account := geminiGoneAPIKeyAccount()
@@ -280,11 +280,19 @@ func TestGeminiForwardNative_ClientGoneEstimatesMissingUsage(t *testing.T) {
 	require.NoError(t, out.err)
 	require.NotNil(t, out.result)
 	require.True(t, out.result.ClientDisconnect)
-	require.Equal(t, 5, out.result.Usage.InputTokens)
-	require.Equal(t, 95, out.result.Usage.CacheReadInputTokens)
+	require.Equal(t, 100, out.result.Usage.InputTokens)
+	require.Zero(t, out.result.Usage.CacheReadInputTokens)
 	require.True(t, out.result.Usage.CacheReadEstimated)
 	require.Equal(t, 4, out.result.Usage.OutputTokens) // "Once upon a time": 16 characters
 	requireGeminiGoneBilled(t, out.result, account, 100, 4)
+
+	withGeminiIncompleteInputCacheReadPercent(t, 95)
+	out95 := driveGeminiGone(t, account, []string{geminiGoneBareEvent1, geminiGoneBareEvent2}, true, "streamGenerateContent", 2, false)
+	require.NoError(t, out95.err)
+	require.NotNil(t, out95.result)
+	require.Equal(t, 5, out95.result.Usage.InputTokens)
+	require.Equal(t, 95, out95.result.Usage.CacheReadInputTokens)
+	require.True(t, out95.result.Usage.CacheReadEstimated)
 }
 
 // The upstream accepted the request and the client left before any output: the request
@@ -296,8 +304,8 @@ func TestGeminiForwardNative_ClientGoneBeforeOutputBillsEstimatedInput(t *testin
 	require.NoErrorf(t, out.err, "result=%v", out.result)
 	require.NotNil(t, out.result)
 	require.True(t, out.result.ClientDisconnect)
-	require.Equal(t, 5, out.result.Usage.InputTokens)
-	require.Equal(t, 95, out.result.Usage.CacheReadInputTokens)
+	require.Equal(t, 100, out.result.Usage.InputTokens)
+	require.Zero(t, out.result.Usage.CacheReadInputTokens)
 	require.Zero(t, out.result.Usage.OutputTokens)
 	require.True(t, out.result.Usage.CacheReadEstimated)
 	requireGeminiGoneBilled(t, out.result, account, 100, 0)
@@ -349,8 +357,8 @@ func TestGeminiForwardNative_NonStreamClientGoneBillsEstimatedInput(t *testing.T
 			require.NotNil(t, out.result)
 			require.True(t, out.result.ClientDisconnect)
 			require.False(t, out.result.Stream)
-			require.Equal(t, 5, out.result.Usage.InputTokens)
-			require.Equal(t, 95, out.result.Usage.CacheReadInputTokens)
+			require.Equal(t, 100, out.result.Usage.InputTokens)
+			require.Zero(t, out.result.Usage.CacheReadInputTokens)
 			require.True(t, out.result.Usage.CacheReadEstimated)
 			require.Zero(t, out.result.Usage.OutputTokens)
 			requireGeminiGoneBilled(t, out.result, account, 100, 0)
@@ -358,8 +366,8 @@ func TestGeminiForwardNative_NonStreamClientGoneBillsEstimatedInput(t *testing.T
 	}
 }
 
-// The client left before the upstream answered: the request was never accepted, nothing
-// is billed, and the retry loop must not keep going for a client that is gone.
+// The client left before dispatch: nothing is sent upstream, nothing is billed,
+// and the retry loop must not run for a client that is already gone.
 func TestGeminiForwardNative_ClientGoneBeforeDispatchDoesNotRetry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	stub := &geminiCompatHTTPUpstreamStub{err: context.Canceled}
@@ -372,6 +380,6 @@ func TestGeminiForwardNative_ClientGoneBeforeDispatchDoesNotRetry(t *testing.T) 
 	result, err := svc.ForwardNative(ctx, c, geminiGoneAPIKeyAccount(), "gemini-2.5-flash", "streamGenerateContent", true, []byte(geminiGoneRequest))
 	require.Nil(t, result)
 	require.Truef(t, errors.Is(err, context.Canceled), "err=%v", err)
-	require.Equal(t, 1, stub.calls, "no retry for a client that is gone")
+	require.Zero(t, stub.calls, "pre-canceled client must not dispatch upstream")
 	require.Less(t, time.Since(started), 3*time.Second)
 }

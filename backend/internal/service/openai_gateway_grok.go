@@ -126,7 +126,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		logGrokAPIKeyUpstreamResult(account, upstreamReq, resp, err)
 		if err != nil {
-			if clientErr := clientCtx.Err(); clientErr != nil {
+			if clientErr := openAIClientErr(clientCtx); clientErr != nil {
 				if errors.Is(err, errOpenAIRequestNotSent) {
 					return nil, clientErr
 				}
@@ -136,6 +136,9 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			}
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 		}
+		if resp.StatusCode >= http.StatusBadRequest {
+			resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
+		}
 
 		// xAI can reject encrypted reasoning or a compaction blob copied from a
 		// different decoder/cache context. Retry once on the same account after
@@ -143,9 +146,16 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		if attempt > 0 || (resp.StatusCode != http.StatusBadRequest && resp.StatusCode != http.StatusUnprocessableEntity) {
 			break
 		}
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			_ = resp.Body.Close()
+			return nil, clientErr
+		}
 		respBody := s.readUpstreamErrorBody(resp)
 		if resp.Body != nil {
 			_ = resp.Body.Close()
+		}
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
 		}
 		invalidEncryptedContent := isGrokInvalidEncryptedContentResponse(resp.StatusCode, respBody)
 		if !invalidEncryptedContent && !isGrokCompactionReplayDecodeError(resp.StatusCode, respBody) {
@@ -175,8 +185,14 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		respBody := s.readUpstreamErrorBody(resp)
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		upstreamMsg := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(respBody))
 		if upstreamMsg == "" {
 			upstreamMsg = fmt.Sprintf("xAI upstream returned status %d", resp.StatusCode)
@@ -1543,15 +1559,26 @@ func (s *OpenAIGatewayService) describeGrokComposerImage(
 		proxyURL = account.Proxy.URL()
 	}
 
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	clientCtx := openAIClientContext(ctx, c)
+	resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 	logGrokAPIKeyUpstreamResult(account, upstreamReq, resp, err)
 	if err != nil {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return "", OpenAIUsage{}, clientErr
+		}
 		return "", OpenAIUsage{}, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}
+	resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return "", OpenAIUsage{}, clientErr
+		}
 		respBody := s.readUpstreamErrorBody(resp)
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return "", OpenAIUsage{}, clientErr
+		}
 		upstreamMsg := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(respBody))
 		if upstreamMsg == "" {
 			upstreamMsg = fmt.Sprintf("xAI image bridge upstream returned status %d", resp.StatusCode)

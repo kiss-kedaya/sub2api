@@ -164,8 +164,10 @@ func shouldMarkCreditsExhausted(resp *http.Response, respBody []byte, reqErr err
 }
 
 type creditsOveragesRetryResult struct {
-	handled bool
-	resp    *http.Response
+	handled    bool
+	resp       *http.Response
+	err        error
+	dispatched bool
 }
 
 // attemptCreditsOveragesRetry 在确认免费配额耗尽后，尝试注入 AI Credits 继续请求。
@@ -185,7 +187,8 @@ func (s *AntigravityGatewayService) attemptCreditsOveragesRetry(
 	logger.LegacyPrintf("service.antigravity_gateway", "%s status=429 credit_overages_retry model=%s account=%d (injecting enabledCreditTypes)",
 		p.prefix, modelKey, p.account.ID)
 
-	creditsReq, err := antigravity.NewAPIRequestWithURL(p.ctx, baseURL, p.action, p.accessToken, creditsBody)
+	creditsAttemptCtx, creditsAttemptTrace := trackGeminiAttempt(p.ctx)
+	creditsReq, err := antigravity.NewAPIRequestWithURL(creditsAttemptCtx, baseURL, p.action, p.accessToken, creditsBody)
 	if err != nil {
 		logger.LegacyPrintf("service.antigravity_gateway", "%s credit_overages_failed model=%s account=%d build_request_err=%v",
 			p.prefix, modelKey, p.account.ID, err)
@@ -193,6 +196,16 @@ func (s *AntigravityGatewayService) attemptCreditsOveragesRetry(
 	}
 
 	creditsResp, err := p.httpUpstream.Do(creditsReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+	if err != nil && geminiClientGoneCtx(p.ctx, p.c) {
+		if creditsResp != nil && creditsResp.Body != nil {
+			_ = creditsResp.Body.Close()
+		}
+		return &creditsOveragesRetryResult{
+			handled:    true,
+			err:        geminiClientErr(p.ctx, p.c, err),
+			dispatched: creditsAttemptTrace.dispatched(),
+		}
+	}
 	if err == nil && creditsResp != nil && creditsResp.StatusCode < 400 {
 		s.clearCreditsExhausted(p.ctx, p.account)
 		logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d credit_overages_success model=%s account=%d",

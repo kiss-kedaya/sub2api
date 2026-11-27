@@ -108,7 +108,7 @@ func newProducedProgress(text string) *anthropicStreamProgress {
 
 func TestFillIncompleteAnthropicUsage(t *testing.T) {
 	body := []byte(anthropicIncompleteRequestBody)
-	wantSplit := splitIncompleteInput(estimateRequestInputTokens(body))
+	wantSplit := splitAnthropicIncompleteInput(estimateRequestInputTokens(body))
 	require.Greater(t, wantSplit.Total, 0)
 	produced := "a streamed answer of some length"
 
@@ -443,7 +443,7 @@ func TestAnthropicUpstreamCall_DepartedClient(t *testing.T) {
 
 func TestAnthropicClientGoneResult(t *testing.T) {
 	body := []byte(anthropicIncompleteRequestBody)
-	split := splitIncompleteInput(estimateRequestInputTokens(body))
+	split := splitAnthropicIncompleteInput(estimateRequestInputTokens(body))
 	require.Greater(t, split.Total, 0)
 
 	t.Run("a request without a response", func(t *testing.T) {

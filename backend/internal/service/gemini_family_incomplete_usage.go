@@ -3,7 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/http/httptrace"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
@@ -152,7 +155,7 @@ func fillIncompleteGeminiUsage(usage *ClaudeUsage, outputTokens int, requestBody
 	}
 	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
 		if total := estimateRequestInputTokens(requestBody); total > 0 {
-			split := splitIncompleteInput(total)
+			split := splitGeminiIncompleteInput(total)
 			usage.InputTokens = split.Fresh
 			usage.CacheReadInputTokens = split.CacheRead
 			usage.CacheReadEstimated = true
@@ -180,6 +183,84 @@ func applyIncompleteGeminiUsage(event string, account *Account, model string, us
 		zap.Bool("client_disconnect", true),
 		zap.Int("estimated_output_tokens", filledOutput),
 		zap.Int("estimated_input_tokens", filledInput),
-		zap.Int("estimated_cache_read_tokens", incompleteCacheReadTokens(filledInput)),
+		zap.Int("estimated_cache_read_tokens", geminiIncompleteCacheReadTokens(filledInput)),
 	).Warn(event)
+}
+
+// geminiUpstreamAttempt tracks whether a single Gemini/Antigravity upstream try
+// was actually written onto the wire before the client disconnected.
+type geminiUpstreamAttempt struct {
+	sawTransport atomic.Bool
+	written      atomic.Bool
+}
+
+func trackGeminiAttempt(ctx context.Context) (context.Context, *geminiUpstreamAttempt) {
+	attempt := &geminiUpstreamAttempt{}
+	traced := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GetConn: func(string) {
+			attempt.sawTransport.Store(true)
+		},
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				attempt.written.Store(true)
+			}
+		},
+	})
+	return traced, attempt
+}
+
+// dispatched reports whether this attempt was sent to the upstream and is still
+// awaiting a response. When a real net/http.Transport ran (GetConn fired), only
+// requests that completed WroteRequest count as dispatched; custom test doubles
+// that bypass net/http.Transport count as dispatched once invoked.
+func (a *geminiUpstreamAttempt) dispatched() bool {
+	if a == nil {
+		return false
+	}
+	if a.sawTransport.Load() {
+		return a.written.Load()
+	}
+	return true
+}
+
+// geminiClientErr resolves a non-nil cancellation error when geminiClientGoneCtx
+// reported the client is gone (handling cases where ctx is detached/alive while
+// c.Request.Context() was canceled).
+func geminiClientErr(ctx context.Context, c *gin.Context, fallback error) error {
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+		return c.Request.Context().Err()
+	}
+	if fallback != nil {
+		return fallback
+	}
+	return context.Canceled
+}
+
+// geminiClientGoneForwardResult builds a billable ForwardResult for a Gemini/Antigravity
+// request whose client disconnected after the request was dispatched to the upstream.
+// Returns nil when the request body cannot be estimated so nothing is invented.
+func geminiClientGoneForwardResult(
+	event string,
+	account *Account,
+	requestBody []byte,
+	originalModel, upstreamModel string,
+	stream bool,
+	startTime time.Time,
+) *ForwardResult {
+	var usage ClaudeUsage
+	applyIncompleteGeminiUsage(event, account, upstreamModel, &usage, 0, requestBody)
+	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 {
+		return nil
+	}
+	return &ForwardResult{
+		Usage:            usage,
+		Model:            originalModel,
+		UpstreamModel:    upstreamModel,
+		Stream:           stream,
+		Duration:         time.Since(startTime),
+		ClientDisconnect: true,
+	}
 }

@@ -103,7 +103,8 @@ func TestAntigravityForwardGemini_StreamClientGoneKeepsReportedUsage(t *testing.
 	requireGeminiGoneBilled(t, out.result, antigravityGoneAccount(), 120, 13)
 }
 
-// No usage figure: output from the relayed content, input from the request body.
+// No usage figure: output from the relayed content, input from the request body
+// (plain input price by default; 95% cache-read share when explicitly configured).
 func TestAntigravityForwardGemini_StreamClientGoneEstimatesMissingUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	events := []string{geminiGoneCodeAssist(geminiGoneBareEvent1), geminiGoneCodeAssist(geminiGoneBareEvent2)}
@@ -111,11 +112,19 @@ func TestAntigravityForwardGemini_StreamClientGoneEstimatesMissingUsage(t *testi
 	require.NoErrorf(t, out.err, "result=%v", out.result)
 	require.NotNil(t, out.result)
 	require.True(t, out.result.ClientDisconnect)
-	require.Equal(t, 5, out.result.Usage.InputTokens)
-	require.Equal(t, 95, out.result.Usage.CacheReadInputTokens)
+	require.Equal(t, 100, out.result.Usage.InputTokens)
+	require.Zero(t, out.result.Usage.CacheReadInputTokens)
 	require.Equal(t, 4, out.result.Usage.OutputTokens)
 	require.True(t, out.result.Usage.CacheReadEstimated)
 	requireGeminiGoneBilled(t, out.result, antigravityGoneAccount(), 100, 4)
+
+	withGeminiIncompleteInputCacheReadPercent(t, 95)
+	out95 := driveAntigravityGone(t, events, true, "streamGenerateContent", 2, false)
+	require.NoErrorf(t, out95.err, "result=%v", out95.result)
+	require.NotNil(t, out95.result)
+	require.Equal(t, 5, out95.result.Usage.InputTokens)
+	require.Equal(t, 95, out95.result.Usage.CacheReadInputTokens)
+	require.True(t, out95.result.Usage.CacheReadEstimated)
 }
 
 // A failed client write is a disconnect: the upstream is closed at once instead of
@@ -140,8 +149,8 @@ func TestAntigravityForwardGemini_NonStreamClientGoneBillsEstimatedInput(t *test
 	require.NotNil(t, out.result)
 	require.True(t, out.result.ClientDisconnect)
 	require.False(t, out.result.Stream)
-	require.Equal(t, 5, out.result.Usage.InputTokens)
-	require.Equal(t, 95, out.result.Usage.CacheReadInputTokens)
+	require.Equal(t, 100, out.result.Usage.InputTokens)
+	require.Zero(t, out.result.Usage.CacheReadInputTokens)
 	require.True(t, out.result.Usage.CacheReadEstimated)
 	require.Zero(t, out.result.Usage.OutputTokens)
 	requireGeminiGoneBilled(t, out.result, antigravityGoneAccount(), 100, 0)

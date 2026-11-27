@@ -125,6 +125,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 		proxyURL = account.Proxy.URL()
 	}
 
+	clientCtx := openAIClientContext(ctx, c)
 	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
 	upstreamReq, _, err := s.buildNativeAnthropicUpstreamRequest(upstreamCtx, c, account, anthropicBody, apiKey, targetURL)
 	releaseUpstreamCtx()
@@ -132,14 +133,31 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 	if err != nil {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			if errors.Is(err, errOpenAIRequestNotSent) {
+				return nil, clientErr
+			}
+			return newClientGoneOpenAIForwardResult(
+				c, account, anthropicBody, originalModel, billingModel, upstreamModel, reasoningEffort, clientStream, startTime,
+			), clientErr
+		}
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
+	}
+	if !reqStream || resp.StatusCode >= http.StatusBadRequest {
+		resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr
 		}
@@ -147,6 +165,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 	}
 
+	stashCompatUpstreamRequestBody(c, account, anthropicBody)
 	if clientStream {
 		return s.handleResponsesStreamingFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)
 	}
@@ -189,7 +208,15 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
-	scanner := bufio.NewScanner(resp.Body)
+	// The client leaving closes the upstream body immediately (no drain window);
+	// input and partial output are billed from observed usage plus estimates.
+	watch := newCompatClientWatch(c, resp.Body)
+	defer watch.Stop()
+	var tally compatAnthropicTally
+	sawMessageStop := false
+	var readErr error
+
+	scanner := bufio.NewScanner(watch.wrapResponse(resp).Body)
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -228,7 +255,14 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		line, rerr := pump.next()
 		if rerr != nil {
 			if errors.Is(rerr, errAnthropicNativeStreamIdle) {
+				if watch.Gone() {
+					readErr = context.Canceled
+					break
+				}
 				return onIdle()
+			}
+			if !errors.Is(rerr, io.EOF) {
+				readErr = rerr
 			}
 			logReadErr(rerr)
 			break
@@ -256,7 +290,14 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		dataLine, rerr := pump.next()
 		if rerr != nil {
 			if errors.Is(rerr, errAnthropicNativeStreamIdle) {
+				if watch.Gone() {
+					readErr = context.Canceled
+					break
+				}
 				return onIdle()
+			}
+			if !errors.Is(rerr, io.EOF) {
+				readErr = rerr
 			}
 			logReadErr(rerr)
 			break
@@ -270,7 +311,11 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
+		tally.AddData(payload)
 		outcome.observe(&event, eventType, []byte(payload))
+		if event.Type == "message_stop" {
+			sawMessageStop = true
+		}
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
 			mergeAnthropicUsage(&usage, event.Message.Usage)
@@ -314,12 +359,29 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		Model:                    originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel,
 		UpstreamEndpoint: "/v1/messages", ReasoningEffort: reasoningEffort,
 		Stream: false, Duration: time.Since(startTime),
+		ClientDisconnect: watch.Gone(),
 	}
 	if outcome.failed {
 		message := sanitizeUpstreamErrorMessage(extractOpenAISSEErrorMessage(outcome.source))
 		writeResponsesError(c, http.StatusBadGateway, "upstream_error", message)
 		MarkResponseCommitted(c)
 		return result, fmt.Errorf("upstream response failed: %s", message)
+	}
+	if watch.Gone() && !sawMessageStop {
+		replaceUpTo := 0
+		if !tally.sawFinalOutput {
+			replaceUpTo = result.Usage.OutputTokens
+		}
+		cause := readErr
+		if cause == nil {
+			cause = context.Canceled
+		}
+		applyCompatIncompleteUsage(c, &result.Usage, compatIncompleteUsage{
+			Path: "responses_native_anthropic_buffered", Model: originalModel, RequestID: requestID,
+			ClientGone: true, Cause: cause, OutputEstimate: tally.EstimateTokens(),
+			ReplaceOutputUpTo: replaceUpTo,
+		})
+		return result, nil
 	}
 	if finalResp == nil {
 		writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream stream ended without a response")
@@ -395,8 +457,17 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
+	sawMessageStop := false
+	var readErr error
 
-	scanner := bufio.NewScanner(resp.Body)
+	// The client leaving (request context ends or client write fails) closes the upstream
+	// body immediately so we never drain upstream tokens after disconnect; input and partial
+	// output are billed from observed usage plus estimates.
+	watch := newCompatClientWatch(c, resp.Body)
+	defer watch.Stop()
+	var tally compatAnthropicTally
+
+	scanner := bufio.NewScanner(watch.wrapResponse(resp).Body)
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -418,13 +489,10 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			Stream:                   true,
 			Duration:                 time.Since(startTime),
 			FirstTokenMs:             firstTokenMs,
-			ClientDisconnect:         clientDisconnected,
+			ClientDisconnect:         clientDisconnected || watch.Gone(),
 		}
 	}
 
-	// 读间隔上限：上游挂住 SSE（不发数据也不断连）时结束转换循环。上游 ctx 为
-	// WithoutCancel 且 http.Client 无整体 Timeout，无此界限则 scanner.Scan()
-	// 永久阻塞（见 anthropic native pump 文件注释）。
 	streamInterval := s.anthropicNativeStreamInterval()
 	pump := newAnthropicNativeLinePump(scanner, streamInterval)
 	defer pump.stop()
@@ -439,17 +507,29 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 	}
 	onIdle := func() (*OpenAIForwardResult, error) {
 		_ = resp.Body.Close()
-		logger.L().Warn("openai responses via native anthropic stream: data interval timeout",
-			zap.String("request_id", requestID),
-			zap.Duration("interval", streamInterval),
-		)
-		return resultWithUsage(), fmt.Errorf("stream data interval timeout")
+		gone := clientDisconnected || watch.Gone()
+		if !gone {
+			logger.L().Warn("openai responses via native anthropic stream: data interval timeout",
+				zap.String("request_id", requestID),
+				zap.Duration("interval", streamInterval),
+			)
+		}
+		res := resultWithUsage()
+		if gone {
+			replaceUpTo := 0
+			if !tally.sawFinalOutput {
+				replaceUpTo = res.Usage.OutputTokens
+			}
+			applyCompatIncompleteUsage(c, &res.Usage, compatIncompleteUsage{
+				Path: "responses_native_anthropic_stream", Model: originalModel, RequestID: requestID,
+				ClientGone: true, Cause: context.Canceled, OutputEstimate: tally.EstimateTokens(),
+				ReplaceOutputUpTo: replaceUpTo,
+			})
+			return res, nil
+		}
+		return res, fmt.Errorf("stream data interval timeout")
 	}
 
-	// 与 CC 姊妹路径（handleCCStreamingFromNativeAnthropic.writeChunk）同语义：
-	// 客户端断开后不再写出，但继续排水上游至流自然结束——Anthropic 的最终
-	// output_tokens 只在末尾 message_delta 携带，提前退出会把整段生成记成 ~1
-	// token，payg 上游照常计费而平台漏记。状态机照常推进以保证 finalize 一致。
 	processAnthropicEvent := func(event *apicompat.AnthropicStreamEvent) {
 		if firstChunk {
 			firstChunk = false
@@ -457,8 +537,11 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			firstTokenMs = &ms
 		}
 
-		if event.Type == "message_stop" && outcome.failed {
-			return
+		if event.Type == "message_stop" {
+			if outcome.failed {
+				return
+			}
+			sawMessageStop = true
 		}
 		if event.Type == "message_delta" && event.Usage != nil {
 			mergeAnthropicUsage(&usage, *event.Usage)
@@ -468,7 +551,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 		}
 
 		events := apicompat.AnthropicEventToResponsesEvents(event, state)
-		if clientDisconnected {
+		if clientDisconnected || watch.Gone() {
 			return
 		}
 		for _, evt := range events {
@@ -485,6 +568,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 				eventType := gjson.GetBytes(restored, "type").String()
 				if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
 					clientDisconnected = true
+					watch.Disconnect()
 					return
 				}
 			}
@@ -499,6 +583,9 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 		if rerr != nil {
 			if errors.Is(rerr, errAnthropicNativeStreamIdle) {
 				return onIdle()
+			}
+			if !errors.Is(rerr, io.EOF) {
+				readErr = rerr
 			}
 			logReadErr(rerr)
 			break
@@ -516,6 +603,9 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			if errors.Is(rerr, errAnthropicNativeStreamIdle) {
 				return onIdle()
 			}
+			if !errors.Is(rerr, io.EOF) {
+				readErr = rerr
+			}
 			logReadErr(rerr)
 			break
 		}
@@ -529,12 +619,30 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			continue
 		}
 
+		tally.AddData(payload)
 		outcome.observe(&event, eventType, []byte(payload))
 		processAnthropicEvent(&event)
 	}
 
 	if outcome.failed {
 		return resultWithUsage(), writeCompatUpstreamStreamError(c, "responses", originalModel, outcome.source)
+	}
+	if gone := clientDisconnected || watch.Gone(); gone && !sawMessageStop {
+		res := resultWithUsage()
+		replaceUpTo := 0
+		if !tally.sawFinalOutput {
+			replaceUpTo = res.Usage.OutputTokens
+		}
+		cause := readErr
+		if cause == nil {
+			cause = context.Canceled
+		}
+		applyCompatIncompleteUsage(c, &res.Usage, compatIncompleteUsage{
+			Path: "responses_native_anthropic_stream", Model: originalModel, RequestID: requestID,
+			ClientGone: true, Cause: cause, OutputEstimate: tally.EstimateTokens(),
+			ReplaceOutputUpTo: replaceUpTo,
+		})
+		return res, nil
 	}
 
 	// Finalize state machine（客户端已断开时仍推进，保证 usage 汇总完整；仅在
