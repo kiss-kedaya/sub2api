@@ -46,7 +46,7 @@ func newOpenAICompactFallbackSignal(c *gin.Context, payload []byte, message stri
 }
 
 func isExplicitOpenAICompactRequest(c *gin.Context, body []byte) bool {
-	return isOpenAIResponsesCompactPath(c) || HasCompactionTriggerInInput(body)
+	return isOpenAIResponsesCompactPath(c) || HasCompactionTriggerInInputCtx(c, body)
 }
 
 // resolveOpenAICompactFallbackModel prefers the account's compact-only rule

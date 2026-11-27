@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/binary"
 	"strings"
 	"unicode/utf8"
 	"unsafe"
@@ -376,14 +377,41 @@ func validJSONLiteral(b []byte, i int, lit string) bool {
 	return len(b)-i >= len(lit) && string(b[i:i+len(lit)]) == lit
 }
 
+const (
+	jsonStringSWARLo = uint64(0x0101010101010101)
+	jsonStringSWARHi = uint64(0x8080808080808080)
+)
+
+// skipSafeJSONStringRun advances i across bytes that are valid unescaped JSON
+// string content (0x20..0xff excluding '"' and '\\'), 8 bytes at a time via SWAR.
+func skipSafeJSONStringRun(b []byte, i int) int {
+	n := len(b)
+	if i < n && jsonStringClass[b[i]] == 0 {
+		for i+8 <= n {
+			w := binary.LittleEndian.Uint64(b[i:])
+			ctrl := (w - 0x20*jsonStringSWARLo) &^ w & jsonStringSWARHi
+			q := w ^ (0x22 * jsonStringSWARLo)
+			quote := (q - jsonStringSWARLo) &^ q & jsonStringSWARHi
+			e := w ^ (0x5c * jsonStringSWARLo)
+			esc := (e - jsonStringSWARLo) &^ e & jsonStringSWARHi
+			if (ctrl | quote | esc) != 0 {
+				break
+			}
+			i += 8
+		}
+		for i < n && jsonStringClass[b[i]] == 0 {
+			i++
+		}
+	}
+	return i
+}
+
 // validJSONString scans a string whose opening quote precedes b[i]; it returns
 // the index after the closing quote.
 func validJSONString(b []byte, i int) (int, bool) {
 	n := len(b)
 	for i < n {
-		for i < n && jsonStringClass[b[i]] == 0 {
-			i++
-		}
+		i = skipSafeJSONStringRun(b, i)
 		if i >= n {
 			return i, false
 		}

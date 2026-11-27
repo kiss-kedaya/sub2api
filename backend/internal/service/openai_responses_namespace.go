@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
@@ -110,15 +111,8 @@ func hasOpenAIResponsesNamespaceToolDeclaration(c *gin.Context, body []byte) boo
 		if !tools.IsArray() {
 			return false
 		}
-		found := false
-		tools.ForEach(func(_, tool gjson.Result) bool {
-			if strings.EqualFold(strings.TrimSpace(tool.Get("type").String()), "namespace") {
-				found = true
-				return false
-			}
-			return true
-		})
-		return found
+		toolsSlice := unsafe.Slice(unsafe.StringData(tools.Raw), len(tools.Raw))
+		return jsonSpanHasNamespaceTool(toolsSlice, 0, len(toolsSlice))
 	}
 
 	top := RequestBodyTop(c, body)
@@ -130,11 +124,72 @@ func hasOpenAIResponsesNamespaceToolDeclaration(c *gin.Context, body []byte) boo
 	// tools and into an input.additional_tools carrier. API-key requests are
 	// intentionally not rewritten by normalizeOpenAIResponsesLiteTools, so the
 	// declaration can arrive here only in this form.
+	if !bytes.Contains(body, []byte(`\u`)) && !containsASCIIFoldAdditionalTools(jsonView(body)) {
+		return false
+	}
+	if idx := top.responsesInput(); idx != nil && idx.usable {
+		return idx.hasAdditionalNamespaceTool
+	}
 	input := top.Get("input")
 	if !input.IsArray() {
 		return false
 	}
+	if !strings.Contains(input.Raw, `\u`) && !containsASCIIFoldAdditionalTools(input.Raw) {
+		return false
+	}
+	inputSlice := unsafe.Slice(unsafe.StringData(input.Raw), len(input.Raw))
 	found := false
+	elemOK := jsonForEachElementSpan(inputSlice, 0, len(inputSlice), func(elemStart, elemEnd int) bool {
+		if inputSlice[elemStart] != '{' {
+			return true
+		}
+		elem := input.Raw[elemStart:elemEnd]
+		if !strings.Contains(elem, `\u`) && !containsASCIIFoldAdditionalTools(elem) {
+			return true
+		}
+		var typeRaw, toolsRaw string
+		var hasType, hasTools bool
+		memberOK := jsonForEachMemberSpan(inputSlice, elemStart, elemEnd, func(key string, valStart, valEnd, _, _ int) bool {
+			switch key {
+			case "type":
+				if !hasType {
+					typeRaw = input.Raw[valStart:valEnd]
+					hasType = true
+				}
+			case "tools":
+				if !hasTools {
+					toolsRaw = input.Raw[valStart:valEnd]
+					hasTools = true
+				}
+			}
+			return !hasType || !hasTools
+		})
+		if !memberOK {
+			item := gjson.Parse(elem)
+			if !strings.EqualFold(strings.TrimSpace(item.Get("type").String()), "additional_tools") {
+				return true
+			}
+			if hasNamespaceTool(item.Get("tools")) {
+				found = true
+				return false
+			}
+			return true
+		}
+		if !hasType || !strings.EqualFold(strings.TrimSpace(extractJSONMemberString(typeRaw, false)), "additional_tools") {
+			return true
+		}
+		if hasTools && len(toolsRaw) > 0 && toolsRaw[0] == '[' {
+			toolsSlice := unsafe.Slice(unsafe.StringData(toolsRaw), len(toolsRaw))
+			if jsonSpanHasNamespaceTool(toolsSlice, 0, len(toolsSlice)) {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	if elemOK {
+		return found
+	}
 	input.ForEach(func(_, item gjson.Result) bool {
 		if !strings.EqualFold(strings.TrimSpace(item.Get("type").String()), "additional_tools") {
 			return true
@@ -195,8 +250,135 @@ func flattenOpenAIResponsesNamespaces(c *gin.Context, body []byte) ([]byte, erro
 // namespace，让 Codex 调用能按上游要求原样回传；判定见
 // shouldKeepOpenAIResponsesToolCallNamespaces。
 func stripOpenAIResponsesInputNamespaces(body []byte, keepToolCallNamespaces bool) ([]byte, error) {
-	if !bytes.Contains(body, []byte(`"namespace"`)) {
+	return stripOpenAIResponsesInputNamespacesCtx(nil, body, keepToolCallNamespaces)
+}
+
+func stripOpenAIResponsesInputNamespacesCtx(c *gin.Context, body []byte, keepToolCallNamespaces bool) ([]byte, error) {
+	if len(body) == 0 || (!bytes.Contains(body, []byte(`"namespace"`)) && !bytes.Contains(body, []byte(`\u`))) {
 		return body, nil
+	}
+	if idx := RequestBodyTop(c, body).responsesInput(); idx != nil && idx.usable {
+		if !idx.isArray || !idx.hasNamespaceField {
+			return body, nil
+		}
+		var edits []jsonEdit
+		for _, it := range idx.items {
+			if it.nsMemberIdx < 0 || (keepToolCallNamespaces && it.isNSToolCall) {
+				continue
+			}
+			if it.tight && it.nsDropEnd > it.nsDropStart {
+				edits = append(edits, jsonEdit{start: int(it.nsDropStart), end: int(it.nsDropEnd)})
+				continue
+			}
+			rawItem := unsafe.Slice(unsafe.SliceData(body[it.start:it.end]), int(it.end-it.start))
+			deleted, deleteErr := sjson.DeleteBytes(rawItem, "namespace")
+			if deleteErr != nil {
+				return body, fmt.Errorf("delete OpenAI input namespace: %w", deleteErr)
+			}
+			edits = append(edits, jsonEdit{
+				start:       int(it.start),
+				end:         int(it.end),
+				replacement: unsafe.String(unsafe.SliceData(deleted), len(deleted)),
+			})
+		}
+		if len(edits) == 0 {
+			return body, nil
+		}
+		stripped, editErr := applyJSONEdits(body, edits)
+		if editErr != nil {
+			return body, editErr
+		}
+		return stripped, nil
+	}
+	if inputStart, inputEnd, isArray, ok := locateJSONInputArraySpan(c, body); ok {
+		if !isArray {
+			return body, nil
+		}
+		var (
+			edits      []jsonEdit
+			membersBuf [16]jsonObjMember
+			walkErr    error
+		)
+		elemOK := jsonForEachElementSpan(body, inputStart, inputEnd, func(elemStart, elemEnd int) bool {
+			if body[elemStart] != '{' {
+				return true
+			}
+			elem := jsonView(body[elemStart:elemEnd])
+			if !strings.Contains(elem, `"namespace"`) && !strings.Contains(elem, `\u`) {
+				return true
+			}
+			members := membersBuf[:0]
+			var typeRaw string
+			var hasType bool
+			nsMemberIdx := -1
+			memberOK := jsonForEachMemberSpan(body, elemStart, elemEnd, func(key string, valStart, valEnd, memberStart, memberEnd int) bool {
+				switch key {
+				case "namespace":
+					if nsMemberIdx < 0 {
+						nsMemberIdx = len(members)
+					}
+				case "type":
+					if !hasType {
+						typeRaw = jsonView(body[valStart:valEnd])
+						hasType = true
+					}
+				}
+				members = append(members, jsonObjMember{start: memberStart, end: memberEnd})
+				return true
+			})
+			if !memberOK {
+				item := gjson.Parse(elem)
+				if !item.IsObject() || !item.Get("namespace").Exists() ||
+					(keepToolCallNamespaces && isOpenAIResponsesToolCallItemType(item.Get("type").String())) {
+					return true
+				}
+				deleted, deleteErr := sjson.DeleteBytes(unsafe.Slice(unsafe.SliceData(body[elemStart:elemEnd]), elemEnd-elemStart), "namespace")
+				if deleteErr != nil {
+					walkErr = fmt.Errorf("delete OpenAI input namespace: %w", deleteErr)
+					return false
+				}
+				edits = append(edits, jsonEdit{
+					start:       elemStart,
+					end:         elemEnd,
+					replacement: unsafe.String(unsafe.SliceData(deleted), len(deleted)),
+				})
+				return true
+			}
+			if nsMemberIdx < 0 {
+				return true
+			}
+			if keepToolCallNamespaces && hasType && isOpenAIResponsesToolCallItemType(extractJSONMemberString(typeRaw, false)) {
+				return true
+			}
+			if jsonObjMembersTight(body, elemStart, members) {
+				edits = appendJSONMemberDrops(edits, members, nsMemberIdx)
+				return true
+			}
+			deleted, deleteErr := sjson.DeleteBytes(unsafe.Slice(unsafe.SliceData(body[elemStart:elemEnd]), elemEnd-elemStart), "namespace")
+			if deleteErr != nil {
+				walkErr = fmt.Errorf("delete OpenAI input namespace: %w", deleteErr)
+				return false
+			}
+			edits = append(edits, jsonEdit{
+				start:       elemStart,
+				end:         elemEnd,
+				replacement: unsafe.String(unsafe.SliceData(deleted), len(deleted)),
+			})
+			return true
+		})
+		if walkErr != nil {
+			return body, walkErr
+		}
+		if elemOK {
+			if len(edits) == 0 {
+				return body, nil
+			}
+			stripped, editErr := applyJSONEdits(body, edits)
+			if editErr != nil {
+				return body, editErr
+			}
+			return stripped, nil
+		}
 	}
 	stripped, _, err := rewriteOpenAIResponsesInput(body, func(_ int, item gjson.Result) (string, bool, bool, error) {
 		// Long histories mostly contain message/reasoning items without namespace;

@@ -28,4 +28,7 @@ func ReleaseRequestBodyReferences(c *gin.Context) {
 	if _, ok := c.Get(debugInboundBodyKey); ok {
 		c.Set(debugInboundBodyKey, []byte(nil))
 	}
+	if _, ok := c.Get(openAINativeSearchSkipFunctionToolsBodyKey); ok {
+		c.Set(openAINativeSearchSkipFunctionToolsBodyKey, []byte(nil))
+	}
 }

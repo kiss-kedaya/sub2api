@@ -3,12 +3,16 @@ package service
 import (
 	"fmt"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 	"unsafe"
+	"weak"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -291,4 +295,37 @@ func BenchmarkDeclaredClientFunctionToolNames(b *testing.B) {
 			})
 		}
 	}
+}
+
+func TestRememberOpenAINativeSearchSkipFunctionToolsDedupAndRelease(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	w := func() weak.Pointer[byte] {
+		body := largeToolNamesBody(1 << 20)
+		rememberOpenAINativeSearchSkipFunctionTools(c, body)
+		skip := openAINativeSearchSkipFunctionTools(c)
+		require.Contains(t, skip, "get_weather")
+		require.Contains(t, skip, "lookup_user")
+
+		// Calling again with the exact same slice hits the slice-identity dedup fast path.
+		c.Set(openAINativeSearchSkipFunctionToolsContextKey, map[string]struct{}{"sentinel": {}})
+		rememberOpenAINativeSearchSkipFunctionTools(c, body)
+		require.Contains(t, openAINativeSearchSkipFunctionTools(c), "sentinel", "same slice must skip recomputation")
+		return weak.Make(&body[0])
+	}()
+
+	if w.Value() == nil {
+		t.Fatal("expected context to retain body before ReleaseRequestBodyReferences")
+	}
+
+	// Passing a distinct slice recomputes skip tools.
+	other := []byte(`{"tools":[{"type":"function","name":"new_tool"}]}`)
+	rememberOpenAINativeSearchSkipFunctionTools(c, other)
+	require.Contains(t, openAINativeSearchSkipFunctionTools(c), "new_tool")
+
+	ReleaseRequestBodyReferences(c)
+	requireBodyCollected(t, w, "ReleaseRequestBodyReferences must release openAINativeSearchSkipFunctionToolsBodyKey")
+	runtime.KeepAlive(c)
 }

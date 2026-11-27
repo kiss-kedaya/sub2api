@@ -1245,7 +1245,7 @@ func isBareOpenAIResponsesPath(c *gin.Context) bool {
 
 func isOpenAIRemoteCompactionV2Request(c *gin.Context, body []byte) bool {
 	stream, valid := parseOpenAICompatibleStream(c, body)
-	return valid && stream && service.HasCompactionTriggerInInput(body)
+	return valid && stream && service.HasCompactionTriggerInInputCtx(c, body)
 }
 
 // normalizeOpenAIResponsesCompactRequest keeps Codex remote compaction v2 on
@@ -1254,7 +1254,7 @@ func isOpenAIRemoteCompactionV2Request(c *gin.Context, body []byte) bool {
 // 返回归一化后的 body；ok=false 表示错误响应已写出，调用方应直接 return。
 func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Context, reqLog *zap.Logger, body []byte) ([]byte, bool) {
 	isCompactRequest := isOpenAILegacyCompactPath(c)
-	if !isCompactRequest && isBareOpenAIResponsesPath(c) && service.HasCompactionTriggerInInput(body) {
+	if !isCompactRequest && isBareOpenAIResponsesPath(c) && service.HasCompactionTriggerInInputCtx(c, body) {
 		if normalized, changed, err := service.NormalizeCompactionTriggerInputOrder(body); err != nil {
 			reqLog.Warn("codex.remote_compact.trigger_order_normalization_failed", zap.Error(err))
 		} else if changed {
@@ -2060,16 +2060,12 @@ const (
 )
 
 func (h *OpenAIGatewayHandler) validateFunctionCallOutputRequest(c *gin.Context, body []byte, reqLog *zap.Logger) bool {
-	if !gjson.GetBytes(body, `input.#(type=="function_call_output")`).Exists() {
+	hasExactFunctionCallOutput, validation := service.ValidateFunctionCallOutputRequestCtx(c, body)
+	if !hasExactFunctionCallOutput || !validation.HasFunctionCallOutput {
 		return true
 	}
 
-	validation := service.ValidateFunctionCallOutputContextBytes(body)
-	if !validation.HasFunctionCallOutput {
-		return true
-	}
-
-	previousResponseID := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
+	previousResponseID := strings.TrimSpace(service.RequestBodyTop(c, body).Get("previous_response_id").String())
 	if previousResponseID != "" {
 		// HTTP 续传对 OpenAI API-key 账号是支持的：保留 previous_response_id，
 		// 由上游按 response.id 解析历史。OAuth/SetupToken 账号由选号阶段跳过并

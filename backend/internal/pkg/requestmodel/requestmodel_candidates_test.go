@@ -2,6 +2,7 @@ package requestmodel
 
 import (
 	"fmt"
+	"math/rand"
 	"runtime"
 	"strings"
 	"testing"
@@ -126,5 +127,61 @@ func TestConflictingModelCandidates(t *testing.T) {
 	}
 	if ConflictingModelCandidates(FromBodyCandidates("", "application/json", []byte(`{"model":"gpt-6-astra","input":{"model":"other"}}`))) {
 		t.Fatal("nested model must not conflict")
+	}
+}
+
+func TestJsonModelAndSessionCandidatesMatchesLegacy(t *testing.T) {
+	fixed := []string{
+		``,
+		`   `,
+		`[]`,
+		`"model"`,
+		`123`,
+		`null`,
+		"\ufeff" + `{"model":"bom-model"}`,
+		`{"model":"a"}{"model":"b"}`,
+		`{"model":"a"} trailing`,
+		`{"model":"a","session":{"model":"s1"},"Model":"A2","SESSION":{"Model":"S2"}}`,
+		`{"mo` + `\u00` + `64el":"escaped-key","se` + `\u00` + `73sion":{"mo` + `\u00` + `64el":"escaped-session"}}`,
+		"{\"\u017Fession\":{\"model\":\"unicode-fold-session\"},\"model\":\"m\"}",
+		`{"model":"  spaced\\nmodel\\u0041  ","session":{"model":"  inner\\t  "}}`,
+		`{"arr":[1,(2),3],"model":"after-parens"}`,
+		`{"obj":{"x":(1)},"model":"after-obj-parens"}`,
+		`{"bad":trueX,"model":"after-bad"}`,
+		`{"model":123,"session":[1,2],"MODEL":"  ","session":{"model":null,"MODEL":"ok"}}`,
+		`{"meta":"(not container)","model":"ok","session":{"nested":{"model":"ignored"},"model":"s"}}`,
+		`{"model":"unclosed`,
+		`{"model":"a",}`,
+		"\x0b" + `{"model":"vt"}`,
+	}
+	for _, raw := range fixed {
+		body := []byte(raw)
+		wantModels, wantSessions := legacyJSONModelAndSessionCandidates(body)
+		gotModels, gotSessions := jsonModelAndSessionCandidates(body)
+		require.Equalf(t, wantModels, gotModels, "models mismatch for %q", raw)
+		require.Equalf(t, wantSessions, gotSessions, "sessions mismatch for %q", raw)
+	}
+
+	r := rand.New(rand.NewSource(20261127))
+	keys := []string{`"model"`, `"Model"`, `"MODEL"`, `"session"`, `"SESSION"`, `"other"`, `"mo\u0064el"`, `"\u017Fession"`, `"m\u00f6del"`}
+	vals := []string{`"gpt-5"`, `"  spaced  "`, `"esc\\nval"`, `"   "`, `123`, `true`, `null`, `[1,2]`, `{"model":"sub","MODEL":"sub2"}`, `{"other":(1)}`}
+	for i := 0; i < 4000; i++ {
+		n := r.Intn(6) + 1
+		parts := make([]string, n)
+		for j := range parts {
+			parts[j] = keys[r.Intn(len(keys))] + ":" + vals[r.Intn(len(vals))]
+		}
+		doc := "{" + strings.Join(parts, ",") + "}"
+		if r.Intn(20) == 0 {
+			doc += `{"model":"second"}`
+		}
+		if r.Intn(20) == 0 && len(doc) > 2 {
+			doc = doc[:len(doc)-1]
+		}
+		body := []byte(doc)
+		wantModels, wantSessions := legacyJSONModelAndSessionCandidates(body)
+		gotModels, gotSessions := jsonModelAndSessionCandidates(body)
+		require.Equalf(t, wantModels, gotModels, "models mismatch for %q", doc)
+		require.Equalf(t, wantSessions, gotSessions, "sessions mismatch for %q", doc)
 	}
 }

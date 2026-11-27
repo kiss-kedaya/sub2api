@@ -165,6 +165,25 @@ func jsonModelAndSessionCandidates(body []byte) (models, sessionModels []string)
 	if len(body) == 0 {
 		return nil, nil
 	}
+	i := 0
+	for i < len(body) && body[i] <= ' ' {
+		i++
+	}
+	if i >= len(body) || body[i] != '{' {
+		return nil, nil
+	}
+	if fastModels, fastSessions, end, ok := walkModelAndSessionObject(body, i, true); ok {
+		for end < len(body) && (body[end] == ' ' || body[end] == '\t' || body[end] == '\n' || body[end] == '\r') {
+			end++
+		}
+		if end == len(body) {
+			return fastModels, fastSessions
+		}
+	}
+	return legacyJSONModelAndSessionCandidates(body)
+}
+
+func legacyJSONModelAndSessionCandidates(body []byte) (models, sessionModels []string) {
 	gjson.Parse(unsafeStringView(body)).ForEach(func(key, value gjson.Result) bool {
 		switch {
 		case value.Type == gjson.String && strings.EqualFold(key.String(), "model"):
@@ -184,6 +203,178 @@ func jsonModelAndSessionCandidates(body []byte) (models, sessionModels []string)
 		return true
 	})
 	return models, sessionModels
+}
+
+func skipCandidateJSONSpace(b []byte, i int) int {
+	for i < len(b) {
+		switch b[i] {
+		case ' ', '\t', '\n', '\r':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+func isASCIIBytes(b []byte) bool {
+	for _, c := range b {
+		if c >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiEqualFold(b []byte, lower string) bool {
+	if len(b) != len(lower) {
+		return false
+	}
+	for i := 0; i < len(lower); i++ {
+		c := b[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != lower[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func skipCandidateJSONValue(b []byte, i int) (int, bool) {
+	if i >= len(b) {
+		return i, false
+	}
+	switch b[i] {
+	case '"':
+		end, _ := scanJSONString(b, i+1)
+		if end >= len(b) {
+			return end, false
+		}
+		return end + 1, true
+	case '{', '[':
+		depth := 0
+		for i < len(b) {
+			switch b[i] {
+			case '"':
+				end, _ := scanJSONString(b, i+1)
+				if end >= len(b) {
+					return end, false
+				}
+				i = end + 1
+				continue
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+				if depth == 0 {
+					return i + 1, true
+				}
+			case '(', ')':
+				// gjson.parseSquash treats '(' / ')' as brackets; fall back to gjson on them.
+				return i, false
+			}
+			i++
+		}
+		return len(b), false
+	default:
+		j := i
+		for j < len(b) {
+			switch b[j] {
+			case ',', '}', ' ', '\t', '\n', '\r':
+				return j, j > i
+			case '"', '{', '[', ']', '(', ')':
+				return j, false
+			}
+			j++
+		}
+		return j, false
+	}
+}
+
+func decodeCandidateJSONString(val []byte) (string, bool) {
+	if len(val) < 2 || val[0] != '"' || val[len(val)-1] != '"' {
+		return "", false
+	}
+	inner := val[1 : len(val)-1]
+	if bytes.IndexByte(inner, '\\') < 0 {
+		return unsafeStringView(inner), true
+	}
+	res := gjson.Parse(unsafeStringView(val))
+	if res.Type != gjson.String {
+		return "", false
+	}
+	return res.String(), true
+}
+
+func walkModelAndSessionObject(b []byte, start int, collectSession bool) (models, sessionModels []string, next int, ok bool) {
+	i := start + 1
+	first := true
+	for {
+		i = skipCandidateJSONSpace(b, i)
+		if i >= len(b) {
+			return nil, nil, i, false
+		}
+		if b[i] == '}' {
+			return models, sessionModels, i + 1, true
+		}
+		if !first {
+			if b[i] != ',' {
+				return nil, nil, i, false
+			}
+			i = skipCandidateJSONSpace(b, i+1)
+			if i >= len(b) {
+				return nil, nil, i, false
+			}
+		}
+		first = false
+		if b[i] != '"' {
+			return nil, nil, i, false
+		}
+		keyEnd, escaped := scanJSONString(b, i+1)
+		if keyEnd >= len(b) || escaped {
+			return nil, nil, keyEnd, false
+		}
+		key := b[i+1 : keyEnd]
+		if !isASCIIBytes(key) {
+			return nil, nil, keyEnd, false
+		}
+		i = skipCandidateJSONSpace(b, keyEnd+1)
+		if i >= len(b) || b[i] != ':' {
+			return nil, nil, i, false
+		}
+		i = skipCandidateJSONSpace(b, i+1)
+		if i >= len(b) {
+			return nil, nil, i, false
+		}
+		valStart := i
+		valEnd, valOK := skipCandidateJSONValue(b, valStart)
+		if !valOK {
+			return nil, nil, valEnd, false
+		}
+		val := b[valStart:valEnd]
+		if asciiEqualFold(key, "model") {
+			if val[0] == '"' {
+				s, sOK := decodeCandidateJSONString(val)
+				if !sOK {
+					return nil, nil, valStart, false
+				}
+				if trimmed := strings.TrimSpace(s); trimmed != "" {
+					models = append(models, strings.Clone(trimmed))
+				}
+			}
+		} else if collectSession && asciiEqualFold(key, "session") {
+			if val[0] == '{' {
+				innerModels, _, innerEnd, innerOK := walkModelAndSessionObject(b, valStart, false)
+				if !innerOK || innerEnd != valEnd {
+					return nil, nil, valStart, false
+				}
+				sessionModels = append(sessionModels, innerModels...)
+			}
+		}
+		i = valEnd
+	}
 }
 
 // jsonModelCandidates 返回顶层所有键名大小写不敏感等于 "model" 的字符串值，

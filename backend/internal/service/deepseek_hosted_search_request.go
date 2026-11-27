@@ -1,14 +1,17 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -231,79 +234,147 @@ const deepSeekMissingToolOutput = `{"error":"tool_output_missing","message":"The
 // an output has to be inserted (the history is then edited by span patches,
 // not re-encoded).
 func repairDeepSeekMissingToolOutputs(body []byte) ([]byte, bool, error) {
-	if len(body) == 0 {
+	return repairDeepSeekMissingToolOutputsCtx(nil, body)
+}
+
+func repairDeepSeekMissingToolOutputsCtx(c *gin.Context, body []byte) ([]byte, bool, error) {
+	if len(body) == 0 || (!bytes.Contains(body, []byte("_call")) && !bytes.Contains(body, []byte(`\u`))) {
 		return body, false, nil
 	}
-	view := openAIWSPayloadStringView(body)
-	if gjson.Get(view, "previous_response_id").String() != "" {
-		// A continuation may resolve the call output from stored history.
+	top := RequestBodyTop(c, body)
+	if top.idx != nil {
+		if top.Get("previous_response_id").String() != "" {
+			return body, false, nil
+		}
+		if idx := top.responsesInput(); idx != nil && idx.usable {
+			if !idx.isArray || !idx.hasDeepSeekToolCall {
+				return body, false, nil
+			}
+			patch := newJSONSpanPatcher(body)
+			deepSeekPairMissingToolOutputsFromIndex(idx, patch)
+			if !patch.dirty() || !top.Valid() {
+				return body, false, nil
+			}
+			next, changed := patch.apply()
+			return next, changed, nil
+		}
+	}
+
+	var inputStart, inputEnd int
+	var isArray, located bool
+	if top.idx != nil {
+		inputStart, inputEnd, isArray, located = locateJSONInputArraySpan(c, body)
+	} else {
+		var prevRespRaw, inputRaw string
+		var hasPrevResp, hasInput bool
+		i := skipJSONWhitespace(body, 0)
+		if i < len(body) && body[i] == '{' {
+			endWs := len(body)
+			for endWs > i && isJSONSpace(body[endWs-1]) {
+				endWs--
+			}
+			if endWs > i+1 && body[endWs-1] == '}' {
+				walkOK := jsonForEachMemberSpan(body, i, endWs, func(key string, valStart, valEnd, _, _ int) bool {
+					switch key {
+					case "previous_response_id":
+						if !hasPrevResp {
+							hasPrevResp = true
+							prevRespRaw = jsonView(body[valStart:valEnd])
+						}
+					case "input":
+						if !hasInput {
+							hasInput = true
+							inputRaw = jsonView(body[valStart:valEnd])
+							inputStart, inputEnd = valStart, valEnd
+						}
+					}
+					return !hasPrevResp || !hasInput
+				})
+				if walkOK {
+					if hasPrevResp && extractJSONMemberString(prevRespRaw, false) != "" {
+						return body, false, nil
+					}
+					if !hasInput || len(inputRaw) == 0 || inputRaw[0] != '[' {
+						return body, false, nil
+					}
+					isArray, located = true, true
+				}
+			}
+		}
+		if !located {
+			view := openAIWSPayloadStringView(body)
+			if gjson.Get(view, "previous_response_id").String() != "" {
+				// A continuation may resolve the call output from stored history.
+				return body, false, nil
+			}
+			input := gjson.Get(view, "input")
+			if !input.IsArray() {
+				return body, false, nil
+			}
+			if input.Index >= 0 && input.Index+len(input.Raw) <= len(body) &&
+				unsafe.StringData(input.Raw) == unsafe.SliceData(body[input.Index:]) {
+				inputStart, inputEnd = input.Index, input.Index+len(input.Raw)
+				isArray, located = true, true
+			}
+		}
+	}
+
+	if located && !isArray {
 		return body, false, nil
 	}
-	input := gjson.Get(view, "input")
-	if !input.IsArray() {
-		return body, false, nil
-	}
+
 	patch := newJSONSpanPatcher(body)
-	deepSeekPairMissingToolOutputs(input, patch)
+	spanDone := false
+	if located {
+		spanDone = deepSeekPairMissingToolOutputsSpan(body, inputStart, inputEnd, patch)
+	}
+	if !spanDone {
+		patch = newJSONSpanPatcher(body)
+		input := parseRawJSONView(body).Get("input")
+		if !input.IsArray() {
+			return body, false, nil
+		}
+		deepSeekPairMissingToolOutputs(input, patch)
+	}
 	// Only a body that needs a repair has to be well-formed; skip the full
 	// validation pass for the (vast majority of) requests that need none.
-	if !patch.dirty() || !gjson.ValidBytes(body) {
+	if !patch.dirty() {
+		return body, false, nil
+	}
+	if top.idx != nil {
+		if !top.Valid() {
+			return body, false, nil
+		}
+	} else if !validJSON(body) && !gjson.ValidBytes(body) {
 		return body, false, nil
 	}
 	next, changed := patch.apply()
 	return next, changed, nil
 }
 
-// deepSeekPairMissingToolOutputs records, in patch, a synthetic output for every
-// tool call without one. The outputs go right before the first item that is
-// neither a call nor an output (or at the end of the array), so a call and its
-// output stay adjacent.
-func deepSeekPairMissingToolOutputs(input gjson.Result, patch *jsonSpanPatcher) {
-	const (
-		itemOther = iota
-		itemCall
-		itemOutput
-	)
-	type scannedItem struct {
-		start  int
-		kind   int
-		typ    string
-		callID string
-	}
-	var items []scannedItem
-	var answered map[string]struct{}
-	lastEnd := 0
-	input.ForEach(func(_, item gjson.Result) bool {
-		start, end, ok := jsonResultSpan(patch.doc, item)
-		if !ok {
-			patch.bad = true
-			return false
-		}
-		lastEnd = end
-		itemType := item.Get("type").String()
-		switch {
-		case isDeepSeekToolCallType(itemType):
-			items = append(items, scannedItem{start: start, kind: itemCall, typ: itemType, callID: item.Get("call_id").String()})
-		case isDeepSeekToolOutputType(itemType):
-			if callID := item.Get("call_id").String(); callID != "" {
-				if answered == nil {
-					answered = make(map[string]struct{})
-				}
-				answered[callID] = struct{}{}
-			}
-			items = append(items, scannedItem{start: start, kind: itemOutput})
-		default:
-			items = append(items, scannedItem{start: start, kind: itemOther})
-		}
-		return true
-	})
+const (
+	deepSeekItemOther = iota
+	deepSeekItemCall
+	deepSeekItemOutput
+)
 
+type deepSeekScannedItem struct {
+	start  int
+	kind   int
+	typ    string
+	callID string
+}
+
+func deepSeekEmitMissingToolOutputs(items []deepSeekScannedItem, answered map[string]struct{}, lastEnd int, patch *jsonSpanPatcher) {
 	type pendingCall struct {
 		callID   string
 		callType string
 	}
 	var pending []pendingCall
 	flush := func(at int, atEnd bool) {
+		if len(pending) == 0 {
+			return
+		}
 		var text strings.Builder
 		for _, call := range pending {
 			raw, err := json.Marshal(map[string]string{
@@ -329,7 +400,7 @@ func deepSeekPairMissingToolOutputs(input gjson.Result, patch *jsonSpanPatcher) 
 	}
 	for _, it := range items {
 		switch it.kind {
-		case itemCall:
+		case deepSeekItemCall:
 			if it.callID == "" {
 				continue
 			}
@@ -340,12 +411,287 @@ func deepSeekPairMissingToolOutputs(input gjson.Result, patch *jsonSpanPatcher) 
 				answered[it.callID] = struct{}{}
 				pending = append(pending, pendingCall{callID: it.callID, callType: it.typ})
 			}
-		case itemOutput:
+		case deepSeekItemOutput:
 		default:
 			flush(it.start, false)
 		}
 	}
 	flush(lastEnd, true)
+}
+
+func deepSeekPairMissingToolOutputsFromIndex(idx *responsesInputIndex, patch *jsonSpanPatcher) {
+	if len(idx.items) == 0 {
+		return
+	}
+	var answered map[string]struct{}
+	for _, it := range idx.items {
+		if it.isObject && isDeepSeekToolOutputType(it.itemType) && it.callID != "" {
+			if answered == nil {
+				answered = make(map[string]struct{})
+			}
+			answered[it.callID] = struct{}{}
+		}
+	}
+	type pendingCall struct {
+		callID   string
+		callType string
+	}
+	var pending []pendingCall
+	flush := func(at int, atEnd bool) {
+		if len(pending) == 0 {
+			return
+		}
+		var text strings.Builder
+		for _, call := range pending {
+			raw, err := json.Marshal(map[string]string{
+				"type":    deepSeekToolOutputType(call.callType),
+				"call_id": call.callID,
+				"output":  deepSeekMissingToolOutput,
+			})
+			if err != nil {
+				continue
+			}
+			if atEnd {
+				_ = text.WriteByte(',')
+			}
+			_, _ = text.Write(raw)
+			if !atEnd {
+				_ = text.WriteByte(',')
+			}
+		}
+		pending = pending[:0]
+		if text.Len() > 0 {
+			patch.insertAt(at, text.String())
+		}
+	}
+	for _, it := range idx.items {
+		if !it.isObject {
+			flush(int(it.start), false)
+			continue
+		}
+		switch {
+		case isDeepSeekToolCallType(it.itemType):
+			if it.callID == "" {
+				continue
+			}
+			if _, ok := answered[it.callID]; !ok {
+				if answered == nil {
+					answered = make(map[string]struct{})
+				}
+				answered[it.callID] = struct{}{}
+				pending = append(pending, pendingCall{callID: it.callID, callType: it.itemType})
+			}
+		case isDeepSeekToolOutputType(it.itemType):
+		default:
+			flush(int(it.start), false)
+		}
+	}
+	flush(int(idx.items[len(idx.items)-1].end), true)
+}
+
+func deepSeekPairMissingToolOutputsSpan(body []byte, inputStart, inputEnd int, patch *jsonSpanPatcher) bool {
+	var callIDsBuf [16]string
+	callIDs := callIDsBuf[:0]
+	var answered map[string]struct{}
+	elemOK := jsonForEachElementSpan(body, inputStart, inputEnd, func(elemStart, elemEnd int) bool {
+		if body[elemStart] != '{' {
+			return true
+		}
+		elem := jsonView(body[elemStart:elemEnd])
+		if !strings.Contains(elem, "_call") && !strings.Contains(elem, "_output") && !strings.Contains(elem, `\u`) {
+			return true
+		}
+		var typeRaw, callIDRaw string
+		var hasType, hasCallID bool
+		memberOK := jsonForEachMemberSpan(body, elemStart, elemEnd, func(key string, valStart, valEnd, _, _ int) bool {
+			switch key {
+			case "type":
+				if !hasType {
+					typeRaw = jsonView(body[valStart:valEnd])
+					hasType = true
+				}
+			case "call_id":
+				if !hasCallID {
+					callIDRaw = jsonView(body[valStart:valEnd])
+					hasCallID = true
+				}
+			}
+			return !hasType || !hasCallID
+		})
+		var itemType, callID string
+		if !memberOK {
+			item := gjson.Parse(elem)
+			itemType = item.Get("type").String()
+			callID = item.Get("call_id").String()
+		} else {
+			if hasType {
+				itemType = extractJSONMemberString(typeRaw, false)
+			}
+			if hasCallID {
+				callID = extractJSONMemberString(callIDRaw, false)
+			}
+		}
+		switch {
+		case isDeepSeekToolCallType(itemType):
+			if callID != "" {
+				callIDs = append(callIDs, callID)
+			}
+		case isDeepSeekToolOutputType(itemType):
+			if callID != "" {
+				if answered == nil {
+					answered = make(map[string]struct{}, 8)
+				}
+				answered[callID] = struct{}{}
+			}
+		}
+		return true
+	})
+	if !elemOK {
+		return false
+	}
+	missing := false
+	for _, callID := range callIDs {
+		if _, ok := answered[callID]; !ok {
+			missing = true
+			break
+		}
+	}
+	if !missing {
+		return true
+	}
+
+	type pendingCall struct {
+		callID   string
+		callType string
+	}
+	var pending []pendingCall
+	lastEnd := 0
+	flush := func(at int, atEnd bool) {
+		if len(pending) == 0 {
+			return
+		}
+		var text strings.Builder
+		for _, call := range pending {
+			raw, err := json.Marshal(map[string]string{
+				"type":    deepSeekToolOutputType(call.callType),
+				"call_id": call.callID,
+				"output":  deepSeekMissingToolOutput,
+			})
+			if err != nil {
+				continue
+			}
+			if atEnd {
+				_ = text.WriteByte(',')
+			}
+			_, _ = text.Write(raw)
+			if !atEnd {
+				_ = text.WriteByte(',')
+			}
+		}
+		pending = pending[:0]
+		if text.Len() > 0 {
+			patch.insertAt(at, text.String())
+		}
+	}
+	elemOK = jsonForEachElementSpan(body, inputStart, inputEnd, func(elemStart, elemEnd int) bool {
+		lastEnd = elemEnd
+		if body[elemStart] != '{' {
+			flush(elemStart, false)
+			return true
+		}
+		elem := jsonView(body[elemStart:elemEnd])
+		if !strings.Contains(elem, "_call") && !strings.Contains(elem, "_output") && !strings.Contains(elem, `\u`) {
+			flush(elemStart, false)
+			return true
+		}
+		var typeRaw, callIDRaw string
+		var hasType, hasCallID bool
+		memberOK := jsonForEachMemberSpan(body, elemStart, elemEnd, func(key string, valStart, valEnd, _, _ int) bool {
+			switch key {
+			case "type":
+				if !hasType {
+					typeRaw = jsonView(body[valStart:valEnd])
+					hasType = true
+				}
+			case "call_id":
+				if !hasCallID {
+					callIDRaw = jsonView(body[valStart:valEnd])
+					hasCallID = true
+				}
+			}
+			return !hasType || !hasCallID
+		})
+		var itemType, callID string
+		if !memberOK {
+			item := gjson.Parse(elem)
+			itemType = item.Get("type").String()
+			callID = item.Get("call_id").String()
+		} else {
+			if hasType {
+				itemType = extractJSONMemberString(typeRaw, false)
+			}
+			if hasCallID {
+				callID = extractJSONMemberString(callIDRaw, false)
+			}
+		}
+		switch {
+		case isDeepSeekToolCallType(itemType):
+			if callID == "" {
+				return true
+			}
+			if _, ok := answered[callID]; !ok {
+				if answered == nil {
+					answered = make(map[string]struct{})
+				}
+				answered[callID] = struct{}{}
+				pending = append(pending, pendingCall{callID: callID, callType: itemType})
+			}
+		case isDeepSeekToolOutputType(itemType):
+		default:
+			flush(elemStart, false)
+		}
+		return true
+	})
+	if !elemOK {
+		return false
+	}
+	flush(lastEnd, true)
+	return true
+}
+
+// deepSeekPairMissingToolOutputs records, in patch, a synthetic output for every
+// tool call without one. The outputs go right before the first item that is
+// neither a call nor an output (or at the end of the array), so a call and its
+// output stay adjacent.
+func deepSeekPairMissingToolOutputs(input gjson.Result, patch *jsonSpanPatcher) {
+	var items []deepSeekScannedItem
+	var answered map[string]struct{}
+	lastEnd := 0
+	input.ForEach(func(_, item gjson.Result) bool {
+		start, end, ok := jsonResultSpan(patch.doc, item)
+		if !ok {
+			patch.bad = true
+			return false
+		}
+		lastEnd = end
+		itemType := item.Get("type").String()
+		switch {
+		case isDeepSeekToolCallType(itemType):
+			items = append(items, deepSeekScannedItem{start: start, kind: deepSeekItemCall, typ: itemType, callID: item.Get("call_id").String()})
+		case isDeepSeekToolOutputType(itemType):
+			if callID := item.Get("call_id").String(); callID != "" {
+				if answered == nil {
+					answered = make(map[string]struct{})
+				}
+				answered[callID] = struct{}{}
+			}
+			items = append(items, deepSeekScannedItem{start: start, kind: deepSeekItemOutput})
+		default:
+			items = append(items, deepSeekScannedItem{start: start, kind: deepSeekItemOther})
+		}
+		return true
+	})
+	deepSeekEmitMissingToolOutputs(items, answered, lastEnd, patch)
 }
 
 func isDeepSeekToolCallType(itemType string) bool {

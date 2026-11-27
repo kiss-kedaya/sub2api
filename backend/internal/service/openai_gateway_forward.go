@@ -153,7 +153,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		keepToolCallNamespaces := shouldKeepOpenAIResponsesToolCallNamespaces(
 			c, account, wsDecision.Transport, passthroughEnabled, compactPath, body,
 		)
-		body, err = stripOpenAIResponsesInputNamespaces(body, keepToolCallNamespaces)
+		body, err = stripOpenAIResponsesInputNamespacesCtx(c, body, keepToolCallNamespaces)
 		if err != nil {
 			setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
 			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
@@ -168,7 +168,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// Keep the existing OpenAI-only compatibility policy. DeepSeek must not
 	// receive fabricated tool results to mask an upstream validation error.
 	if account.Platform == PlatformOpenAI && !compactPath {
-		repairedBody, repaired, repairErr := repairDeepSeekMissingToolOutputs(body)
+		repairedBody, repaired, repairErr := repairDeepSeekMissingToolOutputsCtx(c, body)
 		if repairErr != nil {
 			setOpsUpstreamError(c, http.StatusBadRequest, repairErr.Error(), "")
 			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
@@ -254,7 +254,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
-		normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
+		normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplayCtx(c, body)
 		if reasoningErr != nil {
 			return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
 		}
@@ -265,7 +265,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			reqModel, reqStream, promptCacheKey = requestView.Model, requestView.Stream, requestView.PromptCacheKey
 			originalModel = reqModel
 		}
-		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDs(body)
+		sanitizedBody, changed, sanitizeErr := sanitizeOpenAIResponsesInputItemIDsCtx(c, body)
 		if sanitizeErr != nil {
 			return nil, fmt.Errorf("sanitize OpenAI Responses input item IDs: %w", sanitizeErr)
 		}
