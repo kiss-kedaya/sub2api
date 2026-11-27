@@ -48,7 +48,8 @@ export interface DocsSection {
   endpoint?: DocsEndpoint
   paragraphs?: string[]
   note?: string
-  noteTone?: 'info' | 'warning'
+  noteTone?: 'info' | 'tip' | 'warning' | 'danger'
+  noteTitle?: string
   action?: DocsSectionAction
   fields?: DocsField[]
   examples?: Partial<Record<DocsLanguage, string>>
@@ -60,6 +61,7 @@ export interface DocsPage {
   category: DocsCategory
   title: string
   description: string
+  stepped?: boolean
   quickActions?: DocsQuickAction[]
   summaryCards?: DocsSummaryCard[]
   sections: DocsSection[]
@@ -135,7 +137,7 @@ export function getApiDocs(locale: string, originValue: string): DocsPage[] {
   const ttsRequest = { text: 'Hello, world!', voice_id: 'stella', format: 'wav', filter_markdown: true }
   return [
     {
-      id: 'quick-start', category: 'start', title: l('首次调用 API', 'Your first API request'),
+      id: 'quick-start', category: 'start', stepped: true, title: l('首次调用 API', 'Your first API request'),
       description: l('使用本站创建的 API 密钥，选择可用模型，沿用熟悉的 SDK 或直接发送 HTTP 请求。', 'Use an API key created on this site, select an available model, and connect with your existing SDK or HTTP client.'),
       sections: [
         { id: 'connection', title: l('连接配置', 'Connection settings'), paragraphs: [l('示例地址自动跟随当前站点，包含协议和端口。OpenAI SDK 的 base_url 通常以 /v1 结尾；直接请求时使用完整端点，避免重复添加 /v1。', 'Example URLs follow the current site, including the scheme and port. OpenAI SDK base_url normally ends in /v1; direct HTTP calls use a complete endpoint. Do not append /v1 twice.')], note: l('请使用在本站创建的密钥。模型厂商的账户密码或其他站点的密钥不能代替本站 API 密钥。', 'Use a key created on this site. A model provider account password or a key from another site is not a substitute.'), fields: [
