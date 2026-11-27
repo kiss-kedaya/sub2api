@@ -199,15 +199,39 @@ func TestMiniMaxH3StatusStandardOpenAIVideosCompleted(t *testing.T) {
 		require.Equal(t, "completed", result.VideoStatus)
 		require.Equal(t, http.StatusOK, w.Code)
 	})
-	t.Run("completed with invalid metadata.url is still rejected from billing", func(t *testing.T) {
-		body := `{"id":"video_42","object":"video","status":"completed","metadata":{"url":"http://127.0.0.1/internal.mp4"}}`
-		upstream := &grokMediaContentUpstreamStub{response: grokMediaContentStatusResponse(body)}
-		svc := &OpenAIGatewayService{httpUpstream: upstream}
-		c, _ := grokMediaContentTestContext(http.MethodGet, "/v1/videos/video_42", nil)
-		result, err := svc.ForwardMiniMaxH3(context.Background(), c, miniMaxH3TestAccount(), MiniMaxH3EndpointStatus, MiniMaxH3TaskKey("video_42"), nil)
-		require.NoError(t, err)
-		require.Equal(t, 0, result.VideoCount)
-	})
+	for name, body := range map[string]string{
+		"invalid http metadata.url": `{"id":"video_42","object":"video","status":"completed","metadata":{"url":"http://127.0.0.1/internal.mp4"}}`,
+		"empty metadata.url":        `{"id":"video_42","object":"video","status":"completed","metadata":{"url":""}}`,
+		"null metadata.url":         `{"id":"video_42","object":"video","status":"completed","metadata":{"url":null}}`,
+	} {
+		t.Run("completed with "+name+" is rejected from billing", func(t *testing.T) {
+			upstream := &grokMediaContentUpstreamStub{response: grokMediaContentStatusResponse(body)}
+			svc := &OpenAIGatewayService{httpUpstream: upstream}
+			c, _ := grokMediaContentTestContext(http.MethodGet, "/v1/videos/video_42", nil)
+			result, err := svc.ForwardMiniMaxH3(context.Background(), c, miniMaxH3TestAccount(), MiniMaxH3EndpointStatus, MiniMaxH3TaskKey("video_42"), nil)
+			require.NoError(t, err)
+			require.Equal(t, 0, result.VideoCount)
+		})
+	}
+}
+
+func TestMiniMaxH3MultipartRejectsDuplicateBillingOrPromptFields(t *testing.T) {
+	for name, pairs := range map[string][][2]string{
+		"duplicate seconds": {{"model", "h3-30s"}, {"prompt", "waves"}, {"seconds", "30"}, {"seconds", "1"}},
+		"duplicate n":       {{"model", "h3-30s"}, {"prompt", "waves"}, {"seconds", "15"}, {"n", "2"}, {"n", "1"}},
+		"duplicate prompt":  {{"model", "h3-30s"}, {"prompt", "first"}, {"prompt", "second"}, {"seconds", "15"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var raw bytes.Buffer
+			mw := multipart.NewWriter(&raw)
+			for _, kv := range pairs {
+				require.NoError(t, mw.WriteField(kv[0], kv[1]))
+			}
+			require.NoError(t, mw.Close())
+			_, err := ParseMiniMaxH3RequestWithContentType(mw.FormDataContentType(), raw.Bytes())
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestMiniMaxH3ContentProxiesPublicCDNWithoutCredentials(t *testing.T) {

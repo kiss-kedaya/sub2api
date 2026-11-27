@@ -115,7 +115,7 @@ func parseMiniMaxH3MultipartRequest(boundary string, body []byte) (GrokMediaRequ
 	}
 	reader := multipart.NewReader(bytes.NewReader(body), boundary)
 	var modelVal, promptVal, secondsVal, sizeVal, nVal string
-	hasModel, hasSeconds, hasN := false, false, false
+	hasModel, hasPrompt, hasSeconds, hasN := false, false, false, false
 	for {
 		part, err := reader.NextPart()
 		if err == io.EOF {
@@ -146,15 +146,26 @@ func parseMiniMaxH3MultipartRequest(boundary string, body []byte) (GrokMediaRequ
 				}
 				modelVal, hasModel = trimmed, true
 			case "prompt":
-				promptVal = val
+				if hasPrompt {
+					return info, fmt.Errorf("duplicate prompt field is not allowed")
+				}
+				promptVal, hasPrompt = val, true
 			case "seconds":
+				if hasSeconds {
+					return info, fmt.Errorf("duplicate seconds field is not allowed")
+				}
 				secondsVal, hasSeconds = val, true
 			case "size":
 				sizeVal = strings.TrimSpace(val)
 			case "n":
+				if hasN {
+					return info, fmt.Errorf("duplicate n field is not allowed")
+				}
 				nVal, hasN = strings.TrimSpace(val), true
 			}
 		default:
+			// Unknown passthrough parts are streamed to io.Discard without buffering;
+			// overall request size is enforced by RequestBodyLimit (MaxBodySize).
 			_, _ = io.Copy(io.Discard, part)
 			_ = part.Close()
 		}
@@ -451,15 +462,18 @@ func (s *OpenAIGatewayService) ForwardMiniMaxH3WithContentType(ctx context.Conte
 		}
 	case MiniMaxH3EndpointStatus:
 		result.VideoStatus = strings.ToLower(strings.TrimSpace(gjson.GetBytes(responseBody, "status").String()))
-		rawURL := gjson.GetBytes(responseBody, "metadata.url").String()
+		metaURL := gjson.GetBytes(responseBody, "metadata.url")
 		if result.VideoStatus == "completed" {
-			// Accept both relays returning metadata.url and standard OpenAI Videos
-			// responses (object="video") whose media is retrieved via /content (#720).
-			if validMiniMaxH3OutputURL(rawURL) || (rawURL == "" && gjson.GetBytes(responseBody, "object").String() == "video") {
+			// Accept both relays returning a valid HTTPS metadata.url and standard
+			// OpenAI Videos responses (object="video") where metadata.url is absent
+			// and media is retrieved via /content (#720). A present empty/null/invalid
+			// metadata.url must never fall back to billing.
+			if (metaURL.Type == gjson.String && validMiniMaxH3OutputURL(metaURL.String())) ||
+				(!metaURL.Exists() && gjson.GetBytes(responseBody, "object").String() == "video") {
 				result.VideoCount = 1
 			}
 		}
-		if rawURL != "" {
+		if metaURL.Type == gjson.String && metaURL.String() != "" {
 			responseBody, err = sjson.SetBytes(responseBody, "metadata.url", videoProviderContentProxyURL(VideoProviderMiniMaxH3, taskID))
 			if err != nil {
 				return nil, err
