@@ -936,6 +936,23 @@ export interface ApiKeyPasskeyVerificationTicket {
   expires_in: number
 }
 
+export interface UserPersonalApiKeyStatus {
+  exists: boolean
+  key_prefix?: string
+  created_at?: string | null
+  updated_at?: string | null
+  last_used_at?: string | null
+  last_used_ip?: string
+  rate_limit_rpm: number
+  write_rate_limit_rpm: number
+}
+
+export interface CreateUserPersonalApiKeyResponse {
+  key: string
+  regenerated: boolean
+  status: UserPersonalApiKeyStatus
+}
+
 /** 二次查看授权回执：grant 只回一次，5 分钟一次性，随 GET secret-seal 头发送。 */
 export interface ApiKeyRevealGrant {
   grant: string

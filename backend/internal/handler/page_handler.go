@@ -257,12 +257,16 @@ func (h *PageHandler) checkImageSlugVisibility(c *gin.Context, slug string) bool
 }
 
 // RegisterPageRoutes registers page routes on a router group.
-func RegisterPageRoutes(v1 *gin.RouterGroup, dataDir string, jwtAuth gin.HandlerFunc, adminAuth gin.HandlerFunc, settingService *service.SettingService) {
+func RegisterPageRoutes(v1 *gin.RouterGroup, dataDir string, jwtAuth gin.HandlerFunc, adminAuth gin.HandlerFunc, settingService *service.SettingService, panelRateLimiter *middleware2.PanelRateLimiter) {
 	h := NewPageHandler(dataDir, settingService)
 
-	// Authenticated page content (JWT required + visibility check)
+	// Authenticated page content (JWT / personal API key + backend-mode guard + panel rate limit + visibility check)
 	pages := v1.Group("/pages")
 	pages.Use(jwtAuth)
+	pages.Use(middleware2.BackendModeUserGuard(settingService))
+	if panelRateLimiter != nil {
+		pages.Use(panelRateLimiter.Global())
+	}
 	{
 		pages.GET("/:slug", h.GetPageContent)
 	}

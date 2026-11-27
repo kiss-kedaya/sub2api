@@ -90,6 +90,7 @@ func ProvideAuthService(
 	affiliateService *AffiliateService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
 	billingCacheService *BillingCacheService,
+	personalAPIKeyService *UserPersonalAPIKeyService,
 ) *AuthService {
 	svc := NewAuthService(
 		entClient,
@@ -109,6 +110,7 @@ func ProvideAuthService(
 	svc.SetTencentCaptchaService(tencentCaptchaService)
 	svc.SetAliyunCaptchaService(aliyunCaptchaService)
 	svc.SetBillingCacheService(billingCacheService)
+	svc.SetPersonalAPIKeyRevoker(personalAPIKeyService)
 	return svc
 }
 
@@ -1126,6 +1128,7 @@ var ProviderSet = wire.NewSet(
 	ProvideChannelMonitorV2Aggregator,
 	NewChannelMonitorRequestTemplateService,
 	ProvideUserPlatformQuotaUsageFlusher,
+	NewUserPersonalAPIKeyService,
 )
 
 // ProvideUserPlatformQuotaUsageFlusher 创建并启动 UserPlatformQuotaUsageFlusher。

@@ -254,7 +254,14 @@ export function consolePreviewPlugin(): Plugin {
             send(res, 200, raw ? result : { code: 0, message: '本地演示数据', data: result })
           } catch (error) {
             const status = error instanceof PreviewError ? error.status : 500
-            send(res, status, { code: status, message: error instanceof PreviewError ? error.message : '演示请求处理失败' })
+            const payload: Record<string, unknown> = {
+              code: status,
+              message: error instanceof PreviewError ? error.message : '演示请求处理失败',
+            }
+            if (error instanceof PreviewError && error.reason) {
+              payload.reason = error.reason
+            }
+            send(res, status, payload)
           }
         })()
       })
