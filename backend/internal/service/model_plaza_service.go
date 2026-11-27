@@ -655,6 +655,12 @@ func plazaMiniMaxH3DisplayPricing(g *Group) *ChannelModelPricing {
 				PerRequestPrice: &v,
 			}
 		}
+		if key == MiniMaxH3PerRequest {
+			return &ChannelModelPricing{
+				BillingMode:     BillingModePerRequest,
+				PerRequestPrice: &v,
+			}
+		}
 		if sec, ok := miniMaxH3RequestSeconds(key); ok {
 			return &ChannelModelPricing{
 				BillingMode: BillingModePerRequest,

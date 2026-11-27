@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// MiniMaxH3Videos exposes the custom relay's JSON OpenAI Videos API.
+// MiniMaxH3Videos exposes the OpenAI Videos API (JSON or multipart/form-data).
 func (h *OpenAIGatewayHandler) MiniMaxH3Videos(c *gin.Context) {
 	endpoint, taskID := service.MiniMaxH3EndpointCreate, ""
 	if c.Request.Method != http.MethodPost {
@@ -21,8 +21,8 @@ func (h *OpenAIGatewayHandler) MiniMaxH3Videos(c *gin.Context) {
 		}
 	} else {
 		mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
-		if err != nil || mediaType != "application/json" {
-			h.errorResponse(c, http.StatusUnsupportedMediaType, "invalid_request_error", "MiniMax-H3 requires application/json")
+		if err != nil || (mediaType != "application/json" && mediaType != "multipart/form-data") {
+			h.errorResponse(c, http.StatusUnsupportedMediaType, "invalid_request_error", "MiniMax-H3 requires application/json or multipart/form-data")
 			return
 		}
 	}

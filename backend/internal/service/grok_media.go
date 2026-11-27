@@ -880,7 +880,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		return s.ForwardSeedance(ctx, c, account, endpoint, requestID, body)
 	}
 	if endpoint.IsMiniMaxH3() {
-		return s.ForwardMiniMaxH3(ctx, c, account, endpoint, requestID, body)
+		return s.ForwardMiniMaxH3WithContentType(ctx, c, account, endpoint, requestID, body, contentType)
 	}
 
 	startTime := time.Now()

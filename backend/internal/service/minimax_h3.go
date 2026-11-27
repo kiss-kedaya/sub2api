@@ -5,7 +5,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,6 +28,8 @@ const (
 	OpenAIEndpointCapabilityMiniMaxH3 OpenAIEndpointCapability = "minimax_h3"
 	MiniMaxH3PriceFamily                                       = "minimax-h3"
 	MiniMaxH3PerSecond                                         = "per_second"
+	MiniMaxH3PerRequest                                        = "per_request"
+	miniMaxH3MaxMultipartFieldBytes                            = 64 << 10
 )
 
 func (e GrokMediaEndpoint) IsMiniMaxH3() bool {
@@ -33,9 +38,29 @@ func (e GrokMediaEndpoint) IsMiniMaxH3() bool {
 
 func MiniMaxH3TaskKey(id string) string { return "minimax-h3:" + strings.TrimSpace(id) }
 
-// H3 uses this relay's OpenAI Videos protocol, not MiniMax's native video API.
-// Keep the original JSON so frame/reference media and future fields survive.
+func parseMiniMaxH3SecondsString(raw string) (int, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return 0, nil
+	}
+	duration, err := strconv.Atoi(trimmed)
+	if err != nil || duration < 1 || duration > MiniMaxH3VideoBillingMaxDurationSeconds || trimmed != strconv.Itoa(duration) {
+		return 0, fmt.Errorf("seconds must be an integer from 1 to %d", MiniMaxH3VideoBillingMaxDurationSeconds)
+	}
+	return duration, nil
+}
+
+// H3 uses the OpenAI Videos protocol (JSON or multipart/form-data), not MiniMax's
+// native video API. Keep the original payload so frame/reference media and future
+// fields survive untouched.
 func ParseMiniMaxH3Request(body []byte) (GrokMediaRequestInfo, error) {
+	return ParseMiniMaxH3RequestWithContentType("application/json", body)
+}
+
+func ParseMiniMaxH3RequestWithContentType(contentType string, body []byte) (GrokMediaRequestInfo, error) {
+	if mediaType, params, err := mime.ParseMediaType(contentType); err == nil && mediaType == "multipart/form-data" {
+		return parseMiniMaxH3MultipartRequest(params["boundary"], body)
+	}
 	info := GrokMediaRequestInfo{N: 1, Resolution: "768p"}
 	if !gjson.ValidBytes(body) || !gjson.ParseBytes(body).IsObject() {
 		return info, fmt.Errorf("request body must be a JSON object")
@@ -47,9 +72,27 @@ func ParseMiniMaxH3Request(body []byte) (GrokMediaRequestInfo, error) {
 	if prompt.Type != gjson.String || strings.TrimSpace(prompt.String()) == "" || utf8.RuneCountInString(prompt.String()) > 7000 {
 		return info, fmt.Errorf("prompt must contain 1 to 7000 characters")
 	}
-	duration, err := strconv.Atoi(seconds.String())
-	if seconds.Type != gjson.String || err != nil || duration < 1 || duration > 15 || seconds.String() != strconv.Itoa(duration) {
-		return info, fmt.Errorf("seconds must be an integer string from \"1\" to \"15\"")
+	duration := 0
+	if seconds.Exists() && seconds.Type != gjson.Null {
+		switch seconds.Type {
+		case gjson.String:
+			if strings.TrimSpace(seconds.String()) == "" {
+				return info, fmt.Errorf("seconds must be an integer from 1 to %d", MiniMaxH3VideoBillingMaxDurationSeconds)
+			}
+			parsed, err := parseMiniMaxH3SecondsString(seconds.String())
+			if err != nil {
+				return info, err
+			}
+			duration = parsed
+		case gjson.Number:
+			f := seconds.Float()
+			if math.IsNaN(f) || math.IsInf(f, 0) || f != math.Trunc(f) || f < 1 || f > float64(MiniMaxH3VideoBillingMaxDurationSeconds) {
+				return info, fmt.Errorf("seconds must be an integer from 1 to %d", MiniMaxH3VideoBillingMaxDurationSeconds)
+			}
+			duration = int(f)
+		default:
+			return info, fmt.Errorf("seconds must be an integer from 1 to %d", MiniMaxH3VideoBillingMaxDurationSeconds)
+		}
 	}
 	// H3 creates one task/video. Reject batching fields rather than undercharge.
 	if n := gjson.GetBytes(body, "n"); n.Exists() && (n.Type != gjson.Number || n.Float() != 1) {
@@ -65,19 +108,145 @@ func ParseMiniMaxH3Request(body []byte) (GrokMediaRequestInfo, error) {
 	return info, nil
 }
 
-// Reuse the group's versioned media JSONB: one per_second tariff, or a fixed
-// request_<seconds>s tariff. No currency conversion or resolution fallback.
+func parseMiniMaxH3MultipartRequest(boundary string, body []byte) (GrokMediaRequestInfo, error) {
+	info := GrokMediaRequestInfo{N: 1, Resolution: "768p"}
+	if strings.TrimSpace(boundary) == "" {
+		return info, fmt.Errorf("invalid multipart/form-data boundary")
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	var modelVal, promptVal, secondsVal, sizeVal, nVal string
+	hasModel, hasSeconds, hasN := false, false, false
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return info, fmt.Errorf("invalid multipart/form-data body")
+		}
+		name := part.FormName()
+		if part.FileName() != "" {
+			_, _ = io.Copy(io.Discard, part)
+			_ = part.Close()
+			continue
+		}
+		switch name {
+		case "model", "prompt", "seconds", "size", "n":
+			raw, readErr := io.ReadAll(io.LimitReader(part, miniMaxH3MaxMultipartFieldBytes+1))
+			_ = part.Close()
+			if readErr != nil || len(raw) > miniMaxH3MaxMultipartFieldBytes {
+				return info, fmt.Errorf("multipart field %q is invalid or too large", name)
+			}
+			val := string(raw)
+			switch name {
+			case "model":
+				trimmed := strings.TrimSpace(val)
+				if hasModel && trimmed != modelVal {
+					return info, ErrDuplicateModelField
+				}
+				modelVal, hasModel = trimmed, true
+			case "prompt":
+				promptVal = val
+			case "seconds":
+				secondsVal, hasSeconds = val, true
+			case "size":
+				sizeVal = strings.TrimSpace(val)
+			case "n":
+				nVal, hasN = strings.TrimSpace(val), true
+			}
+		default:
+			_, _ = io.Copy(io.Discard, part)
+			_ = part.Close()
+		}
+	}
+	if !hasModel || modelVal == "" {
+		return info, fmt.Errorf("model is required")
+	}
+	if strings.TrimSpace(promptVal) == "" || utf8.RuneCountInString(promptVal) > 7000 {
+		return info, fmt.Errorf("prompt must contain 1 to 7000 characters")
+	}
+	duration := 0
+	if hasSeconds {
+		if strings.TrimSpace(secondsVal) == "" {
+			return info, fmt.Errorf("seconds must be an integer from 1 to %d", MiniMaxH3VideoBillingMaxDurationSeconds)
+		}
+		parsed, err := parseMiniMaxH3SecondsString(secondsVal)
+		if err != nil {
+			return info, err
+		}
+		duration = parsed
+	}
+	if hasN && nVal != "1" {
+		return info, fmt.Errorf("MiniMax-H3 supports one video per request")
+	}
+	info.Model, info.Prompt, info.DurationSeconds, info.Size = modelVal, promptVal, duration, sizeVal
+	return info, nil
+}
+
+func rewriteMiniMaxH3MultipartModel(contentType string, body []byte, newModel string) ([]byte, string, error) {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "multipart/form-data" || strings.TrimSpace(params["boundary"]) == "" {
+		return body, contentType, nil
+	}
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	var out bytes.Buffer
+	writer := multipart.NewWriter(&out)
+	replaced := false
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid multipart/form-data body")
+		}
+		if part.FileName() == "" && part.FormName() == "model" {
+			_, _ = io.Copy(io.Discard, part)
+			_ = part.Close()
+			if !replaced {
+				if writeErr := writer.WriteField("model", newModel); writeErr != nil {
+					return nil, "", writeErr
+				}
+				replaced = true
+			}
+			continue
+		}
+		dst, createErr := writer.CreatePart(part.Header)
+		if createErr != nil {
+			_ = part.Close()
+			return nil, "", createErr
+		}
+		_, copyErr := io.Copy(dst, part)
+		_ = part.Close()
+		if copyErr != nil {
+			return nil, "", copyErr
+		}
+	}
+	if !replaced {
+		if err := writer.WriteField("model", newModel); err != nil {
+			return nil, "", err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return out.Bytes(), writer.FormDataContentType(), nil
+}
+
+// Reuse the group's versioned media JSONB: one per_second tariff, a flat
+// per_request tariff (any duration up to 30s), or a fixed request_<seconds>s
+// tariff. No currency conversion or resolution fallback.
 func miniMaxH3RequestSeconds(key string) (int, bool) {
 	if !strings.HasPrefix(key, "request_") || !strings.HasSuffix(key, "s") {
 		return 0, false
 	}
 	n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(key, "request_"), "s"))
-	return n, err == nil && n >= 1 && n <= 15 && key == fmt.Sprintf("request_%ds", n)
+	return n, err == nil && n >= 1 && n <= MiniMaxH3VideoBillingMaxDurationSeconds && key == fmt.Sprintf("request_%ds", n)
 }
 
 func QuoteMiniMaxH3Video(prices map[string]map[string]float64, seconds int) (float64, error) {
-	if seconds < 1 || seconds > 15 {
-		return 0, fmt.Errorf("seconds must be between 1 and 15")
+	if seconds < 0 || seconds > MiniMaxH3VideoBillingMaxDurationSeconds {
+		return 0, fmt.Errorf("seconds must be between 1 and %d", MiniMaxH3VideoBillingMaxDurationSeconds)
 	}
 	tariff := prices[MiniMaxH3PriceFamily]
 	if len(tariff) != 1 {
@@ -87,7 +256,13 @@ func QuoteMiniMaxH3Video(prices map[string]map[string]float64, seconds int) (flo
 		if price < 0 || math.IsNaN(price) || math.IsInf(price, 0) {
 			break
 		}
+		if key == MiniMaxH3PerRequest {
+			return price, nil
+		}
 		if key == MiniMaxH3PerSecond {
+			if seconds < 1 {
+				return 0, fmt.Errorf("seconds must be between 1 and %d for per-second video pricing", MiniMaxH3VideoBillingMaxDurationSeconds)
+			}
 			total := price * float64(seconds)
 			if !math.IsInf(total, 0) {
 				return total, nil
@@ -126,7 +301,15 @@ func validMiniMaxH3OutputURL(raw string) bool {
 	return err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil
 }
 
+func isMiniMaxH3ContentRedirect(statusCode int) bool {
+	return statusCode == http.StatusFound || statusCode == http.StatusSeeOther || statusCode == http.StatusTemporaryRedirect
+}
+
 func (s *OpenAIGatewayService) ForwardMiniMaxH3(ctx context.Context, c *gin.Context, account *Account, endpoint GrokMediaEndpoint, taskID string, body []byte) (*OpenAIForwardResult, error) {
+	return s.ForwardMiniMaxH3WithContentType(ctx, c, account, endpoint, taskID, body, "")
+}
+
+func (s *OpenAIGatewayService) ForwardMiniMaxH3WithContentType(ctx context.Context, c *gin.Context, account *Account, endpoint GrokMediaEndpoint, taskID string, body []byte, contentType string) (*OpenAIForwardResult, error) {
 	if account == nil || !endpoint.IsMiniMaxH3() || !account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityMiniMaxH3) {
 		return nil, fmt.Errorf("MiniMax-H3 requires a MiniMax pay-as-you-go API key account with a custom base URL")
 	}
@@ -139,20 +322,43 @@ func (s *OpenAIGatewayService) ForwardMiniMaxH3(ctx context.Context, c *gin.Cont
 		return nil, err
 	}
 	method := http.MethodGet
+	upstreamContentType := "application/json"
 	result := &OpenAIForwardResult{ResponseID: taskID}
 	if endpoint == MiniMaxH3EndpointCreate {
-		info, err := ParseMiniMaxH3Request(body)
+		info, err := ParseMiniMaxH3RequestWithContentType(contentType, body)
 		if err != nil {
 			return nil, err
 		}
-		result.Model, result.BillingModel, result.UpstreamModel = info.Model, info.Model, account.GetMappedModel(info.Model)
-		if !strings.EqualFold(result.UpstreamModel, "MiniMax-H3") {
-			return nil, fmt.Errorf("this video relay only supports MiniMax-H3")
+		mediaType, _, _ := mime.ParseMediaType(contentType)
+		isMultipart := mediaType == "multipart/form-data"
+		effectiveModel := info.Model
+		// compositeTargetPlatformMiddleware rewrites JSON bodies only; apply its
+		// upstream_model alias here for multipart/form-data requests too (#720).
+		if isMultipart {
+			if resolved, ok := ResolvedUpstreamModelFromContext(ctx); ok && resolved != "" {
+				effectiveModel = resolved
+			}
 		}
+		upstreamModel := strings.TrimSpace(account.GetMappedModel(effectiveModel))
+		if upstreamModel == "" {
+			upstreamModel = effectiveModel
+		}
+		result.Model, result.BillingModel, result.UpstreamModel = info.Model, info.Model, upstreamModel
 		result.VideoResolution, result.VideoDurationSeconds = info.Resolution, info.DurationSeconds
-		body, err = sjson.SetBytes(body, "model", result.UpstreamModel)
-		if err != nil {
-			return nil, err
+		if isMultipart {
+			if upstreamModel != info.Model {
+				body, upstreamContentType, err = rewriteMiniMaxH3MultipartModel(contentType, body, upstreamModel)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				upstreamContentType = contentType
+			}
+		} else {
+			body, err = sjson.SetBytes(body, "model", result.UpstreamModel)
+			if err != nil {
+				return nil, err
+			}
 		}
 		method = http.MethodPost
 	}
@@ -170,7 +376,7 @@ func (s *OpenAIGatewayService) ForwardMiniMaxH3(ctx context.Context, c *gin.Cont
 	}
 	account.ApplyHeaderOverrides(req.Header)
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", upstreamContentType)
 	req.Header.Set("Accept", "application/json")
 	proxy := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -189,7 +395,7 @@ func (s *OpenAIGatewayService) ForwardMiniMaxH3(ctx context.Context, c *gin.Cont
 	}
 	defer func() { _ = resp.Body.Close() }()
 	result.Duration, result.ResponseHeaders = time.Since(started), resp.Header.Clone()
-	if endpoint == MiniMaxH3EndpointContent && resp.StatusCode == http.StatusFound {
+	if endpoint == MiniMaxH3EndpointContent && isMiniMaxH3ContentRedirect(resp.StatusCode) {
 		location := resp.Header.Get("Location")
 		if !validMiniMaxH3OutputURL(location) {
 			return nil, fmt.Errorf("MiniMax-H3 content response has an invalid output URL")
@@ -245,10 +451,15 @@ func (s *OpenAIGatewayService) ForwardMiniMaxH3(ctx context.Context, c *gin.Cont
 		}
 	case MiniMaxH3EndpointStatus:
 		result.VideoStatus = strings.ToLower(strings.TrimSpace(gjson.GetBytes(responseBody, "status").String()))
-		if result.VideoStatus == "completed" && validMiniMaxH3OutputURL(gjson.GetBytes(responseBody, "metadata.url").String()) {
-			result.VideoCount = 1
+		rawURL := gjson.GetBytes(responseBody, "metadata.url").String()
+		if result.VideoStatus == "completed" {
+			// Accept both relays returning metadata.url and standard OpenAI Videos
+			// responses (object="video") whose media is retrieved via /content (#720).
+			if validMiniMaxH3OutputURL(rawURL) || (rawURL == "" && gjson.GetBytes(responseBody, "object").String() == "video") {
+				result.VideoCount = 1
+			}
 		}
-		if raw := gjson.GetBytes(responseBody, "metadata.url").String(); raw != "" {
+		if rawURL != "" {
 			responseBody, err = sjson.SetBytes(responseBody, "metadata.url", videoProviderContentProxyURL(VideoProviderMiniMaxH3, taskID))
 			if err != nil {
 				return nil, err

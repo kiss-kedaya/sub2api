@@ -14,7 +14,7 @@
           :items="modeItems"
           class="w-full"
           data-testid="h3-mode"
-          @update:model-value="update({ mode: String($event) })"
+          @update:model-value="update({ mode: $event as MiniMaxH3PricingMode })"
         />
       </UFormField>
       <UFormField v-if="settings.mode === 'per_request'" :label="copy.seconds">
@@ -50,28 +50,50 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { readMiniMaxH3Price, writeMiniMaxH3Price, type MiniMaxH3Pricing } from './miniMaxH3Pricing'
+import {
+  readMiniMaxH3Price,
+  writeMiniMaxH3Price,
+  type MiniMaxH3Pricing,
+  type MiniMaxH3PricingMode
+} from './miniMaxH3Pricing'
 
 const props = defineProps<{ modelValue: MiniMaxH3Pricing }>()
 const emit = defineEmits<{ 'update:modelValue': [value: MiniMaxH3Pricing] }>()
 const { locale } = useI18n()
 const settings = computed(() => readMiniMaxH3Price(props.modelValue))
-const copy = computed(() => locale.value.startsWith('zh') ? {
-  hint: '仅用于支持 JSON /v1/videos 的 MiniMax-H3 中转上游，需配置非 Coding 账号与自定义服务地址。',
-  mode: '计价方式', perSecond: '按请求生成秒数', perRequest: '按固定时长每次',
-  pricePerSecond: '基础价（余额 / 秒）', pricePerRequest: '基础价（余额 / 次）', seconds: '每次固定生成秒数',
-  billing: '沿用视频倍率，按实际选中的分组冻结价格。失败不收费，完成只结算一次；按次计费仅接受所选时长。'
-} : {
-  hint: 'For a MiniMax-H3 relay implementing JSON /v1/videos. Requires a non-Coding account and a custom base URL.',
-  mode: 'Pricing mode', perSecond: 'Per requested second', perRequest: 'Per fixed-duration request',
-  pricePerSecond: 'Base price (balance / second)', pricePerRequest: 'Base price (balance / request)', seconds: 'Fixed request duration (seconds)',
-  billing: 'Uses the video multiplier and freezes the selected group price. Failed tasks do not charge; successful tasks settle once. Per-request pricing accepts only the selected duration.'
-})
+const copy = computed(() =>
+  locale.value.startsWith('zh')
+    ? {
+        hint: '用于支持 OpenAI /v1/videos（JSON 或 multipart）的 MiniMax-H3 中转上游，需配置非 Coding 账号与自定义服务地址。',
+        mode: '计价方式',
+        perSecond: '按请求生成秒数（1–30s）',
+        flatPerRequest: '按次统一计价（不限时长，最长 30s）',
+        perRequest: '按固定时长每次（1–30s）',
+        pricePerSecond: '基础价（余额 / 秒）',
+        pricePerRequest: '基础价（余额 / 次）',
+        seconds: '每次固定生成秒数',
+        billing:
+          '沿用视频倍率，按实际选中的分组冻结价格。失败不收费，完成只结算一次；按固定时长计费仅接受所选时长。'
+      }
+    : {
+        hint: 'For a MiniMax-H3 relay implementing OpenAI /v1/videos (JSON or multipart). Requires a non-Coding account and a custom base URL.',
+        mode: 'Pricing mode',
+        perSecond: 'Per requested second (1-30s)',
+        flatPerRequest: 'Flat per request (any duration up to 30s)',
+        perRequest: 'Per fixed-duration request (1-30s)',
+        pricePerSecond: 'Base price (balance / second)',
+        pricePerRequest: 'Base price (balance / request)',
+        seconds: 'Fixed request duration (seconds)',
+        billing:
+          'Uses the video multiplier and freezes the selected group price. Failed tasks do not charge; successful tasks settle once. Fixed-duration pricing accepts only the selected duration.'
+      }
+)
 const modeItems = computed(() => [
   { label: copy.value.perSecond, value: 'per_second' },
+  { label: copy.value.flatPerRequest, value: 'flat_per_request' },
   { label: copy.value.perRequest, value: 'per_request' }
 ])
-const secondsItems = Array.from({ length: 15 }, (_, i) => ({ label: String(i + 1), value: i + 1 }))
+const secondsItems = Array.from({ length: 30 }, (_, i) => ({ label: String(i + 1), value: i + 1 }))
 function update(change: Partial<ReturnType<typeof readMiniMaxH3Price>>) {
   emit('update:modelValue', writeMiniMaxH3Price(props.modelValue, { ...settings.value, ...change }))
 }
