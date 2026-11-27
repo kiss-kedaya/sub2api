@@ -430,6 +430,13 @@ func TestPaymentPublicRequestHostWithConfig(t *testing.T) {
 		require.Equal(t, "app.example.com", publicRequestHostWithConfig(makeCtx("app.example.com", "127.0.0.1:1234", bad), trustedCfg), "bad=%q", bad)
 	}
 
-	// Trusted peer with single syntactically valid host[:port] is accepted.
-	require.Equal(t, "pay.app.example.com:8443", publicRequestHostWithConfig(makeCtx("127.0.0.1:8080", "127.0.0.1:1234", "pay.app.example.com:8443"), trustedCfg))
+	// Even from a trusted proxy peer, a syntactically valid X-Forwarded-Host is
+	// intentionally ignored in favor of the validated Host header.
+	require.Equal(t, "127.0.0.1:8080", publicRequestHostWithConfig(makeCtx("127.0.0.1:8080", "127.0.0.1:1234", "pay.app.example.com:8443"), trustedCfg))
+	require.Equal(t, "app.example.com:17777", publicRequestHostWithConfig(makeCtx("app.example.com:17777", "127.0.0.1:1234", "evil.example"), trustedCfg))
+
+	// Invalid Host header fails closed to empty string even with valid X-Forwarded-Host.
+	cBadHost := makeCtx("app.example.com", "127.0.0.1:1234", "pay.app.example.com:8443")
+	cBadHost.Request.Host = "evil.example/path"
+	require.Equal(t, "", publicRequestHostWithConfig(cBadHost, trustedCfg))
 }

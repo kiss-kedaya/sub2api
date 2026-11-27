@@ -22,6 +22,20 @@ describe('url sanitization helpers', () => {
     expect(sanitizeInternalRedirectPath(' /purchase?plan_id=7 ', '/purchase')).toBe('/purchase?plan_id=7')
   })
 
+  it('sanitizeInternalRedirectPath handles array and non-string query values without throwing', () => {
+    expect(sanitizeInternalRedirectPath(['/settings', '/orders'])).toBe('/settings')
+    expect(sanitizeInternalRedirectPath(['', '   ', '/purchase?plan_id=9'])).toBe('/purchase?plan_id=9')
+    expect(sanitizeInternalRedirectPath([null, undefined, '/orders'])).toBe('/orders')
+    expect(sanitizeInternalRedirectPath(['//evil.example/phish', '/settings'], '/dashboard')).toBe('/dashboard')
+    expect(sanitizeInternalRedirectPath(['', '   ', null], '/dashboard')).toBe('/dashboard')
+    expect(sanitizeInternalRedirectPath([], '/dashboard')).toBe('/dashboard')
+    expect(sanitizeInternalRedirectPath(null, '/dashboard')).toBe('/dashboard')
+    expect(sanitizeInternalRedirectPath(undefined, '/dashboard')).toBe('/dashboard')
+    expect(sanitizeInternalRedirectPath(123, '/dashboard')).toBe('/dashboard')
+    expect(sanitizeInternalRedirectPath(true, '/dashboard')).toBe('/dashboard')
+    expect(sanitizeInternalRedirectPath({ path: '/settings' }, '/dashboard')).toBe('/dashboard')
+  })
+
   it.each([
     '//evil.example/logo.png',
     '/\\evil.example/logo.png',

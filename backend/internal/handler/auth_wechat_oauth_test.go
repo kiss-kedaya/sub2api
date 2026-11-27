@@ -1564,10 +1564,14 @@ func TestWeChatResolveOAuthAbsoluteURLHardening(t *testing.T) {
 	require.Equal(t, "https://app.example.com"+cbPath,
 		resolveWeChatOAuthAbsoluteURLWithConfig("", "", cSlashXFH, trustedCfg, cbPath))
 
-	// Trusted peer with valid single X-Forwarded-Host and X-Forwarded-Proto is honored on fallback.
+	// Trusted peer honors X-Forwarded-Proto on fallback, but intentionally
+	// ignores X-Forwarded-Host in favor of validated r.Host.
 	cValidTrusted := makeCtx("127.0.0.1:8080", "127.0.0.1:1234", "auth.app.example.com", "https")
-	require.Equal(t, "https://auth.app.example.com"+cbPath,
+	require.Equal(t, "https://127.0.0.1:8080"+cbPath,
 		resolveWeChatOAuthAbsoluteURLWithConfig("", "", cValidTrusted, trustedCfg, cbPath))
+	cDirectPort := makeCtx("app.example.com:17777", "127.0.0.1:1234", "evil.example", "https")
+	require.Equal(t, "https://app.example.com:17777"+cbPath,
+		resolveWeChatOAuthAbsoluteURLWithConfig("", "", cDirectPort, trustedCfg, cbPath))
 
 	// Malformed DB frontend_url falls through to cfg.Server.FrontendURL rather than dropping it.
 	settingRepo := &wechatOAuthSettingRepoStub{

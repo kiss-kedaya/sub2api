@@ -19,14 +19,32 @@ function hasUnsafeControlOrBackslash(value: string): boolean {
   return false
 }
 
+function extractRedirectPathCandidate(path: unknown): string {
+  if (typeof path === 'string') {
+    return path.trim()
+  }
+  if (Array.isArray(path)) {
+    for (const item of path) {
+      if (typeof item === 'string') {
+        const trimmed = item.trim()
+        if (trimmed) {
+          return trimmed
+        }
+      }
+    }
+  }
+  return ''
+}
+
 /**
  * 规范化站内相对跳转路径，拦截协议相对路径、反斜杠、控制字符（含 \t/\r/\n）与跨源解析绕过。
+ * 兼容 Vue Router 重复 query 参数产生的数组与非字符串输入。
  */
 export function sanitizeInternalRedirectPath(
-  path: string | null | undefined,
+  path: unknown,
   fallback = '/dashboard',
 ): string {
-  const value = (path || '').trim()
+  const value = extractRedirectPathCandidate(path)
   if (!value) {
     return fallback
   }

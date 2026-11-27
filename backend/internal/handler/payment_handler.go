@@ -717,17 +717,13 @@ func (h *PaymentHandler) publicRequestScheme(c *gin.Context) string {
 	return "http"
 }
 
-// publicRequestHostWithConfig returns the validated request host, ignoring
-// X-Forwarded-Host unless the peer is an explicitly configured non-wildcard
-// trusted proxy and the header carries a single syntactically valid host[:port].
-func publicRequestHostWithConfig(c *gin.Context, cfg *config.Config) string {
+// publicRequestHostWithConfig returns the validated Host header from the
+// incoming request. X-Forwarded-Host is intentionally ignored even from
+// trusted proxy peers because upstream proxies/WAFs may forward client-supplied
+// X-Forwarded-Host values verbatim while preserving the authoritative Host.
+func publicRequestHostWithConfig(c *gin.Context, _ *config.Config) string {
 	if c == nil || c.Request == nil {
 		return ""
-	}
-	if cfg != nil {
-		if xfHost, ok := ip.TrustedForwardedHost(c, cfg.Server.TrustedProxies, cfg.Server.TrustedProxiesConfigured); ok {
-			return xfHost
-		}
 	}
 	if host, ok := ip.ValidateRequestHost(c.Request.Host); ok {
 		return host

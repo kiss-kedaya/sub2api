@@ -245,6 +245,43 @@ function parseSafeExternalOrSameOriginPayUrl(raw: string): URL | null {
   }
 }
 
+function readTrustedRecoverySnapshotForOrder(currentOrderId: number) {
+  if (typeof window === 'undefined' || currentOrderId <= 0) {
+    return null
+  }
+  let rawSnapshot: string | null = null
+  try {
+    rawSnapshot = window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)
+  } catch {
+    return null
+  }
+  const snapshot = readPaymentRecoverySnapshot(rawSnapshot)
+  if (!snapshot || snapshot.orderId !== currentOrderId) {
+    return null
+  }
+  return snapshot
+}
+
+function resolveSafeQrUrl(rawQr: string, currentOrderId: number): string {
+  const trimmed = rawQr.trim()
+  if (!trimmed || hasUnsafeUrlChar(trimmed)) {
+    return ''
+  }
+  // Bind QR payloads strictly to the active local checkout recovery snapshot
+  // for this order so attacker-crafted query parameters cannot render phishing
+  // payment QR codes under our UI.
+  const snapshot = readTrustedRecoverySnapshotForOrder(currentOrderId)
+  if (!snapshot) {
+    return ''
+  }
+  const expectedQr = snapshot.qrCode.trim()
+  const expectedPayUrl = snapshot.payUrl.trim()
+  if ((expectedQr && expectedQr === trimmed) || (expectedPayUrl && expectedPayUrl === trimmed)) {
+    return trimmed
+  }
+  return ''
+}
+
 function resolveSafePayUrl(rawPayUrl: string, currentOrderId: number): string {
   const parsed = parseSafeExternalOrSameOriginPayUrl(rawPayUrl)
   if (!parsed || typeof window === 'undefined') {
@@ -262,14 +299,8 @@ function resolveSafePayUrl(rawPayUrl: string, currentOrderId: number): string {
   if (parsed.protocol !== 'https:' || currentOrderId <= 0) {
     return ''
   }
-  let rawSnapshot: string | null = null
-  try {
-    rawSnapshot = window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)
-  } catch {
-    return ''
-  }
-  const snapshot = readPaymentRecoverySnapshot(rawSnapshot)
-  if (!snapshot || snapshot.orderId !== currentOrderId || !snapshot.payUrl) {
+  const snapshot = readTrustedRecoverySnapshotForOrder(currentOrderId)
+  if (!snapshot || !snapshot.payUrl) {
     return ''
   }
   const snapshotUrl = parseSafeExternalOrSameOriginPayUrl(snapshot.payUrl)
@@ -281,7 +312,7 @@ function resolveSafePayUrl(rawPayUrl: string, currentOrderId: number): string {
 
 onMounted(() => {
   orderId.value = Number(readRouteQueryString('order_id')) || 0
-  qrUrl.value = readRouteQueryString('qr')
+  qrUrl.value = resolveSafeQrUrl(readRouteQueryString('qr'), orderId.value)
   payUrl.value = resolveSafePayUrl(readRouteQueryString('pay_url'), orderId.value)
   paymentType.value = readRouteQueryString('payment_type')
 

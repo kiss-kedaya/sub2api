@@ -72,10 +72,10 @@ function mountQRCodeView() {
   })
 }
 
-const recoverySnapshotFactory = (orderId: number, payUrl: string) => ({
+const recoverySnapshotFactory = (orderId: number, payUrl: string, qrCode = '') => ({
   orderId,
   amount: 50,
-  qrCode: '',
+  qrCode,
   expiresAt: '2099-01-01T00:30:00.000Z',
   paymentType: 'alipay',
   payUrl,
@@ -200,6 +200,99 @@ describe('PaymentQRCodeView', () => {
       const wrapper = mountQRCodeView()
       await flushPromises()
       expect(wrapper.find('a').exists()).toBe(false)
+      wrapper.unmount()
+    } finally {
+      getItemSpy.mockRestore()
+    }
+  })
+
+  it('rejects arbitrary external qr query parameters when no matching recovery snapshot exists', async () => {
+    routeState.query = {
+      order_id: '42',
+      qr: 'https://evil.example/phish-alipay-qr',
+    }
+
+    const wrapper = mountQRCodeView()
+    await flushPromises()
+
+    expect(wrapper.find('canvas').exists()).toBe(false)
+    expect(qrToCanvas).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('rejects mismatched qr query parameters or wrong orderId even when a local checkout snapshot exists', async () => {
+    window.localStorage.setItem(
+      PAYMENT_RECOVERY_STORAGE_KEY,
+      JSON.stringify(
+        recoverySnapshotFactory(42, 'https://pay.trusted.example/session/42', 'weixin://wxpay/bizpayurl?pr=trusted-42'),
+      ),
+    )
+
+    routeState.query = {
+      order_id: '42',
+      qr: 'weixin://wxpay/bizpayurl?pr=attacker-phish',
+    }
+    const mismatchedWrapper = mountQRCodeView()
+    await flushPromises()
+    expect(mismatchedWrapper.find('canvas').exists()).toBe(false)
+    expect(qrToCanvas).not.toHaveBeenCalled()
+    mismatchedWrapper.unmount()
+
+    routeState.query = {
+      order_id: '99',
+      qr: 'weixin://wxpay/bizpayurl?pr=trusted-42',
+    }
+    const wrongOrderWrapper = mountQRCodeView()
+    await flushPromises()
+    expect(wrongOrderWrapper.find('canvas').exists()).toBe(false)
+    expect(qrToCanvas).not.toHaveBeenCalled()
+    wrongOrderWrapper.unmount()
+  })
+
+  it('renders qr cleanly when it matches snapshot.qrCode or snapshot.payUrl for the order', async () => {
+    const trustedQr = 'weixin://wxpay/bizpayurl?pr=trusted-42'
+    const trustedPayUrl = 'https://pay.trusted.example/qr/42'
+    window.localStorage.setItem(
+      PAYMENT_RECOVERY_STORAGE_KEY,
+      JSON.stringify(recoverySnapshotFactory(42, trustedPayUrl, trustedQr)),
+    )
+
+    routeState.query = {
+      order_id: '42',
+      qr: trustedQr,
+    }
+    const qrWrapper = mountQRCodeView()
+    await flushPromises()
+    expect(qrWrapper.find('canvas').exists()).toBe(true)
+    expect(qrToCanvas).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), trustedQr, expect.any(Object))
+    qrWrapper.unmount()
+
+    qrToCanvas.mockClear()
+    routeState.query = {
+      order_id: '42',
+      qr: trustedPayUrl,
+    }
+    const payUrlQrWrapper = mountQRCodeView()
+    await flushPromises()
+    expect(payUrlQrWrapper.find('canvas').exists()).toBe(true)
+    expect(qrToCanvas).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), trustedPayUrl, expect.any(Object))
+    payUrlQrWrapper.unmount()
+  })
+
+  it('fails closed for qr without crashing when localStorage throws SecurityError', async () => {
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('storage blocked', 'SecurityError')
+    })
+    routeState.query = {
+      order_id: '42',
+      qr: 'weixin://wxpay/bizpayurl?pr=trusted-42',
+    }
+
+    try {
+      const wrapper = mountQRCodeView()
+      await flushPromises()
+      expect(wrapper.find('canvas').exists()).toBe(false)
+      expect(qrToCanvas).not.toHaveBeenCalled()
       wrapper.unmount()
     } finally {
       getItemSpy.mockRestore()

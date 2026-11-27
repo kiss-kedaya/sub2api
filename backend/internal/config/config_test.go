@@ -1540,8 +1540,15 @@ func TestGetServerAddressFromConfigFile(t *testing.T) {
 }
 
 func TestValidateAbsoluteHTTPURL(t *testing.T) {
-	if err := ValidateAbsoluteHTTPURL("https://example.com/path"); err != nil {
-		t.Fatalf("ValidateAbsoluteHTTPURL valid url error: %v", err)
+	for _, good := range []string{
+		"https://example.com/path",
+		"https://example.com:8443/path",
+		"http://127.0.0.1:17777/path",
+		"http://[::1]:8080/path",
+	} {
+		if err := ValidateAbsoluteHTTPURL(good); err != nil {
+			t.Fatalf("ValidateAbsoluteHTTPURL(%q) valid url error: %v", good, err)
+		}
 	}
 	if err := ValidateAbsoluteHTTPURL(""); err == nil {
 		t.Fatalf("ValidateAbsoluteHTTPURL should reject empty url")
@@ -1739,6 +1746,12 @@ func TestValidateAbsoluteHTTPURLMissingHost(t *testing.T) {
 		"https://evil.example,example.com/v1",
 		"https://example.com\t/v1",
 		"https://example.com:0443/v1",
+		"https://example.com:0/v1",
+		"https://example.com:99999/v1",
+		"https://example.com:/v1",
+		"https://bad..example/v1",
+		"https://-bad.example/v1",
+		"https://[fe80::1%25eth0]:443/v1",
 		"https:opaque.example.com",
 	} {
 		if err := ValidateAbsoluteHTTPURL(bad); err == nil {

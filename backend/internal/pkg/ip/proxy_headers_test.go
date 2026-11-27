@@ -4,11 +4,17 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	gin.SetMode(gin.TestMode)
+	os.Exit(m.Run())
+}
 
 func TestIsTrustedProxyPeer(t *testing.T) {
 	t.Parallel()
@@ -28,7 +34,6 @@ func TestIsTrustedProxyPeer(t *testing.T) {
 
 func TestIsRequestHTTPSAndContextHTTPS(t *testing.T) {
 	t.Parallel()
-	gin.SetMode(gin.TestMode)
 
 	makeCtx := func(remoteAddr string, headers map[string][]string, withTLS bool) *gin.Context {
 		rec := httptest.NewRecorder()
@@ -76,7 +81,6 @@ func TestIsRequestHTTPSAndContextHTTPS(t *testing.T) {
 
 func TestValidateRequestHostAndTrustedForwardedHost(t *testing.T) {
 	t.Parallel()
-	gin.SetMode(gin.TestMode)
 
 	for _, valid := range []string{
 		"app.example.com",

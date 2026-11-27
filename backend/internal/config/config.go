@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/spf13/viper"
 	"golang.org/x/net/http/httpguts"
 )
@@ -4643,11 +4644,8 @@ func ValidateAbsoluteHTTPURL(raw string) error {
 	if u.User != nil {
 		return fmt.Errorf("must not include credentials")
 	}
-	if strings.TrimSpace(u.Host) == "" || strings.TrimSpace(u.Hostname()) == "" || strings.ContainsAny(u.Host, ", \t\r\n/\\?#@") {
+	if _, ok := ip.ValidateRequestHost(u.Host); !ok {
 		return fmt.Errorf("invalid host")
-	}
-	if port := u.Port(); port != "" && port[0] == '0' {
-		return fmt.Errorf("invalid port")
 	}
 	if u.Fragment != "" {
 		return fmt.Errorf("must not include fragment")

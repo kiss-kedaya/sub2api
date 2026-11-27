@@ -952,7 +952,7 @@ function maskLoginEmail(email: string): string {
 }
 
 const loginRedirect = (): string =>
-  sanitizeInternalRedirectPath(router.currentRoute.value.query.redirect as string | undefined, '/dashboard')
+  sanitizeInternalRedirectPath(router.currentRoute.value.query.redirect, '/dashboard')
 
 /** 全部因子通过后：清挑战、提示成功、跳转目标页。 */
 async function finishLoginSuccess(): Promise<void> {
