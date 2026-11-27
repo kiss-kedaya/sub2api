@@ -279,8 +279,12 @@ type CreateGroupInput struct {
 	VideoModelPrices map[string]map[string]float64
 	// Codex alpha/search 网页搜索单次价格（USD/次，仅 openai 平台使用）；nil/负数按默认价 0.01 处理
 	WebSearchPricePerCall *float64
-	// 搜索工具单价 per 1k
+	// 工具端点独立倍率与单价配置
+	ToolRateIndependent bool
+	ToolRateMultiplier  *float64
+	// 搜索/抓取/OCR 工具单价 per 1k
 	SearchPricePer1k   *float64
+	FetchPricePer1k    *float64
 	OCRPricePer1kPages *float64
 	// 搜索专用凭据；空表示回落到账号自带值
 	SearchProviderBaseURL *string
@@ -371,10 +375,15 @@ type UpdateGroupInput struct {
 	VideoModelPrices map[string]map[string]float64
 	// Codex alpha/search 网页搜索单次价格（USD/次）；nil 表示不修改，负数表示清除回默认价 0.01
 	WebSearchPricePerCall *float64
-	// 搜索工具单价；nil 不修改，负数清除
-	SearchPricePer1k   *float64
-	OCRPricePer1kPages *float64
-	// Set distinguishes an explicit null (reset to default) from an omitted price.
+	// 工具端点独立倍率；nil 表示不修改
+	ToolRateIndependent *bool
+	ToolRateMultiplier  *float64
+	// 搜索/抓取/OCR 工具单价；nil 且 Set=false 不修改，显式 null 或负数清除
+	SearchPricePer1k      *float64
+	SearchPricePer1kSet   bool
+	FetchPricePer1k       *float64
+	FetchPricePer1kSet    bool
+	OCRPricePer1kPages    *float64
 	OCRPricePer1kPagesSet bool
 	// 搜索专用凭据；nil 不修改，空字符串清除
 	SearchProviderBaseURL *string

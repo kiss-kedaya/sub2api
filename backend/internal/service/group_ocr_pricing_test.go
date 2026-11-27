@@ -29,34 +29,54 @@ func TestGroupOCRPriceSurvivesSnapshotAndCopy(t *testing.T) {
 	var legacy APIKeyAuthGroupSnapshot
 	require.NoError(t, json.Unmarshal([]byte(`{"id":36,"platform":"deepseek","search_provider_config_loaded":true}`), &legacy))
 	require.Nil(t, legacy.OCRPricePer1kPages, "old snapshots must use the default, not fail decoding")
-	loaded, used, err := svc.applyAuthCacheEntry("local-auth-fixture", &APIKeyAuthCacheEntry{Snapshot: &APIKeyAuthSnapshot{Version: apiKeyAuthSnapshotVersion, Group: &legacy}})
+	_, used, err := svc.applyAuthCacheEntry("local-auth-fixture", &APIKeyAuthCacheEntry{Snapshot: &APIKeyAuthSnapshot{Version: apiKeyAuthSnapshotVersion, Group: &legacy}})
+	require.NoError(t, err)
+	require.False(t, used, "legacy DeepSeek snapshots without tool_pricing_config_loaded must reload from DB")
+
+	var current APIKeyAuthGroupSnapshot
+	require.NoError(t, json.Unmarshal([]byte(`{"id":36,"platform":"deepseek","search_provider_config_loaded":true,"tool_pricing_config_loaded":true}`), &current))
+	loaded, used, err := svc.applyAuthCacheEntry("local-auth-fixture", &APIKeyAuthCacheEntry{Snapshot: &APIKeyAuthSnapshot{Version: apiKeyAuthSnapshotVersion, Group: &current}})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Nil(t, loaded.Group.OCRPricePer1kPages)
 	require.False(t, groupMediaPricingLooksIncomplete(&Group{OCRPricePer1kPages: float64Ptr(0)}))
 }
 
-func TestDeepSeekMediaInflightReservationUsesFixedUnits(t *testing.T) {
+func TestDeepSeekMediaInflightReservationUsesToolMultiplierAndUnits(t *testing.T) {
 	group := &Group{ID: 36, Platform: PlatformDeepseek, RateMultiplier: .3}
 	key := &APIKey{Group: group, GroupID: &group.ID, User: &User{ID: 1}}
 	deps := inflightEstimateDeps{billing: &BillingService{}}
 	for _, tc := range []struct {
 		model, mode string
-		units, cost float64
+		units       int
+		audioUnits  float64
+		baseCost    float64
 	}{
-		{DeepSeekToolsLabelASR, "stt", 120.0 / 3600, 120.0 / 3600 * .78},
-		{DeepSeekToolsLabelTTS, "tts", 19.0 / 1_000_000, .0057},
-		{DeepSeekToolsLabelOCR, "", 0, 1.5},
+		{DeepSeekToolsLabelSearch, "", 1, 0, .005},
+		{DeepSeekToolsLabelFetch, "", 1, 0, .005},
+		{DeepSeekToolsLabelASR, "stt", 0, 120.0 / 3600, 120.0 / 3600 * .78},
+		{DeepSeekToolsLabelTTS, "tts", 0, 19.0 / 1_000_000, .0057},
+		{DeepSeekToolsLabelOCR, "", 10, 0, 10.0 / 1000 * 1.5},
+		{DeepSeekToolsLabelOCR, "", 0, 0, 1.0 / 1000 * 1.5},
 	} {
 		t.Run(tc.model, func(t *testing.T) {
-			cost, priced := deps.estimate(t.Context(), key, InflightEstimateRequest{Model: tc.model, Kind: InflightEstimatePerRequest, AudioMode: tc.mode, AudioUnits: tc.units})
+			group.ToolRateIndependent, group.ToolRateMultiplier = false, 1.0
+			cost, priced := deps.estimate(t.Context(), key, InflightEstimateRequest{Model: tc.model, Kind: InflightEstimatePerRequest, Units: tc.units, AudioMode: tc.mode, AudioUnits: tc.audioUnits})
 			require.True(t, priced)
-			require.InDelta(t, tc.cost, cost, 1e-12)
+			require.InDelta(t, tc.baseCost*0.3, cost, 1e-12)
+
+			group.ToolRateIndependent, group.ToolRateMultiplier = true, 1.0
+			cost, priced = deps.estimate(t.Context(), key, InflightEstimateRequest{Model: tc.model, Kind: InflightEstimatePerRequest, Units: tc.units, AudioMode: tc.mode, AudioUnits: tc.audioUnits})
+			require.True(t, priced)
+			require.InDelta(t, tc.baseCost, cost, 1e-12)
+
 			zero := 0.0
+			group.SearchPricePer1k, group.FetchPricePer1k = &zero, &zero
 			group.OCRPricePer1kPages, group.AudioTTSPricePerMillionChars, group.AudioSTTPricePerHour = &zero, &zero, &zero
-			cost, priced = deps.estimate(t.Context(), key, InflightEstimateRequest{Model: tc.model, AudioMode: tc.mode, AudioUnits: tc.units})
+			cost, priced = deps.estimate(t.Context(), key, InflightEstimateRequest{Model: tc.model, Units: tc.units, AudioMode: tc.mode, AudioUnits: tc.audioUnits})
 			require.True(t, priced)
 			require.Zero(t, cost)
+			group.SearchPricePer1k, group.FetchPricePer1k = nil, nil
 			group.OCRPricePer1kPages, group.AudioTTSPricePerMillionChars, group.AudioSTTPricePerHour = nil, nil, nil
 		})
 	}

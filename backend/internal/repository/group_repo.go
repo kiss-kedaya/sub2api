@@ -122,7 +122,10 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetNillableVideoPrice1080p(groupIn.VideoPrice1080P).
 		SetVideoModelPrices(service.NormalizeVideoModelPrices(groupIn.VideoModelPrices)).
 		SetNillableWebSearchPricePerCall(groupIn.WebSearchPricePerCall).
+		SetToolRateIndependent(groupIn.ToolRateIndependent).
+		SetToolRateMultiplier(groupIn.ToolRateMultiplier).
 		SetNillableSearchPricePer1k(groupIn.SearchPricePer1k).
+		SetNillableFetchPricePer1k(groupIn.FetchPricePer1k).
 		SetNillableOcrPricePer1kPages(groupIn.OCRPricePer1kPages).
 		SetNillableSearchProviderBaseURL(groupIn.SearchProviderBaseURL).
 		SetNillableSearchProviderAPIKey(groupIn.SearchProviderAPIKey).
@@ -317,6 +320,8 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetNillableVideoPrice720p(groupIn.VideoPrice720P).
 		SetNillableVideoPrice1080p(groupIn.VideoPrice1080P).
 		SetVideoModelPrices(service.NormalizeVideoModelPrices(groupIn.VideoModelPrices)).
+		SetToolRateIndependent(groupIn.ToolRateIndependent).
+		SetToolRateMultiplier(groupIn.ToolRateMultiplier).
 		SetLongContextPricingEnabled(groupIn.LongContextPricingEnabled).
 		SetModelPricing(modelPricing).
 		SetDefaultValidityDays(groupIn.DefaultValidityDays).
@@ -412,6 +417,11 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		builder = builder.SetSearchPricePer1k(*groupIn.SearchPricePer1k)
 	} else {
 		builder = builder.ClearSearchPricePer1k()
+	}
+	if groupIn.FetchPricePer1k != nil {
+		builder = builder.SetFetchPricePer1k(*groupIn.FetchPricePer1k)
+	} else {
+		builder = builder.ClearFetchPricePer1k()
 	}
 	if groupIn.OCRPricePer1kPages != nil {
 		builder = builder.SetOcrPricePer1kPages(*groupIn.OCRPricePer1kPages)

@@ -361,6 +361,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatScaled, resolveIntervalPrices } from '@/utils/pricing'
+import { deepSeekToolSortOrder, getDeepSeekToolSpec, isDeepSeekToolModel } from '@/utils/deepseekTools'
 import { platformAccentColor, platformBadgeLightClass, platformLabel } from '@/utils/platformColors'
 import {
   BILLING_MODE_TOKEN,
@@ -385,6 +386,9 @@ const props = defineProps<{
   /** 视频独立倍率:true 时视频按秒计费模型的实付倍率取 videoRateMultiplier,不取分组/专属倍率。 */
   videoRateIndependent?: boolean
   videoRateMultiplier?: number | null
+  /** 工具独立倍率:true 时 DeepSeek 工具端点的实付倍率取 toolRateMultiplier,不取分组/专属倍率。 */
+  toolRateIndependent?: boolean
+  toolRateMultiplier?: number | null
   /**
    * 高峰窗口描述(含倍率与服务器时区标注),空串/缺省 = 分组未启用高峰。
    * 表格所有价格均为不含高峰因子的口径,该窗口仅用于分时时段行的 tooltip 披露:
@@ -466,6 +470,11 @@ const sortedModels = computed(() => {
     const ta = billingMode(a) === BILLING_MODE_TOKEN
     const tb = billingMode(b) === BILLING_MODE_TOKEN
     if (ta !== tb) return ta ? -1 : 1
+    if (!ta && !tb) {
+      const da = deepSeekToolSortOrder(a.name)
+      const db = deepSeekToolSortOrder(b.name)
+      if (da !== db) return da - db
+    }
     const pa = a.official_pricing?.output_price ?? null
     const pb = b.official_pricing?.output_price ?? null
     if (pa != null && pb != null && pa !== pb) return pb - pa
@@ -485,6 +494,9 @@ function billingMode(m: PlazaModel): BillingMode {
 }
 
 function billingModeLabel(m: PlazaModel): string {
+  if (isDeepSeekToolModel(m.name)) {
+    return t('modelPlaza.table.perTool')
+  }
   switch (billingMode(m)) {
     case BILLING_MODE_IMAGE:
       return t('modelPlaza.table.perImage')
@@ -514,14 +526,20 @@ function usesIndependentVideoRate(m: PlazaModel): boolean {
   return billingMode(m) === BILLING_MODE_VIDEO && props.videoRateIndependent === true
 }
 
-function usesIndependentMediaRate(m: PlazaModel): boolean {
-  return usesIndependentImageRate(m) || usesIndependentVideoRate(m)
+/** DeepSeek 工具端点且分组开启工具独立倍率:实付倍率取独立倍率,与计费口径一致。 */
+function usesIndependentToolRate(m: PlazaModel): boolean {
+  return isDeepSeekToolModel(m.name) && props.toolRateIndependent === true
 }
 
-/** 按次/按图片/按秒行的生效倍率。 */
+function usesIndependentMediaRate(m: PlazaModel): boolean {
+  return usesIndependentImageRate(m) || usesIndependentVideoRate(m) || usesIndependentToolRate(m)
+}
+
+/** 按次/按图片/按秒/工具行的生效倍率。 */
 function requestRate(m: PlazaModel): number {
   if (usesIndependentImageRate(m)) return props.imageRateMultiplier ?? 1
   if (usesIndependentVideoRate(m)) return props.videoRateMultiplier ?? 1
+  if (usesIndependentToolRate(m)) return props.toolRateMultiplier ?? 1
   return effectiveRate.value
 }
 
@@ -537,8 +555,12 @@ function official(value: number | null | undefined): string {
   return formatScaled(value, PER_MILLION, MIN_DECIMALS)
 }
 
-/** 非 token 计费的单位后缀:按图片 → “/ 张”,按秒 → “/ 秒”,按次 → “/ 次”。 */
+/** 非 token 计费的单位后缀:DeepSeek 工具按各自单位展示,其余按图片 → "/ 张",按秒 → "/ 秒",按次 → "/ 次"。 */
 function perUnitSuffix(m: PlazaModel): string {
+  const toolSpec = getDeepSeekToolSpec(m.name)
+  if (toolSpec) {
+    return t(`modelPlaza.table.${toolSpec.unitKey}`)
+  }
   switch (billingMode(m)) {
     case BILLING_MODE_IMAGE:
       return t('modelPlaza.table.perUnitImage')

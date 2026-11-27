@@ -637,9 +637,14 @@ export interface Group {
   video_model_prices?: VideoModelPrices
   // Codex 网页搜索单次价格（USD/次）；null 表示使用默认价 0.01
   web_search_price_per_call: number | null
-  // Grok Voice 显式定价（分组级）
+  // DeepSeek 工具独立倍率配置（Search/Fetch/OCR/TTS/ASR）
+  tool_rate_independent?: boolean
+  tool_rate_multiplier?: number
+  // 搜索每千次基准价（Grok/DeepSeek）；null = 默认价，0 = 免费
   search_price_per_1k: number | null
-  // DeepSeek OCR（USD/千页）；null = 默认 0.225，0 = 免费
+  // DeepSeek Fetch 每千次基准价；null = 继承搜索价（再回落默认 5），0 = 免费
+  fetch_price_per_1k?: number | null
+  // DeepSeek OCR 每千页基准价；null = 默认 1.5，0 = 免费
   ocr_price_per_1k_pages?: number | null
   // Grok 安全拒绝单次扣费（USD/次）；null = 默认 0.1，0 = 不扣费
   grok_moderation_refusal_price: number | null
@@ -1041,7 +1046,10 @@ export interface CreateGroupRequest {
   video_price_1080p?: number | null
   video_model_prices?: VideoModelPrices
   web_search_price_per_call?: number | null
+  tool_rate_independent?: boolean
+  tool_rate_multiplier?: number
   search_price_per_1k?: number | null
+  fetch_price_per_1k?: number | null
   ocr_price_per_1k_pages?: number | null
   // Grok 安全拒绝单次扣费（USD/次）；null = 默认 0.1，0 = 不扣费
   grok_moderation_refusal_price?: number | null
@@ -1118,7 +1126,10 @@ export interface UpdateGroupRequest {
   video_price_1080p?: number | null
   video_model_prices?: VideoModelPrices
   web_search_price_per_call?: number | null
+  tool_rate_independent?: boolean
+  tool_rate_multiplier?: number
   search_price_per_1k?: number | null
+  fetch_price_per_1k?: number | null
   ocr_price_per_1k_pages?: number | null
   // Grok 安全拒绝单次扣费（USD/次）；null = 默认 0.1，0 = 不扣费
   grok_moderation_refusal_price?: number | null

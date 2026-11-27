@@ -109,11 +109,18 @@ func TestDeepSeekMediaPassThroughAndFixedBilling(t *testing.T) {
 			group.SearchProviderBaseURL, group.SearchProviderAPIKey = &searchURL, &searchCredential
 			rawCost, err := billingSvc.calculateOpenAIRecordUsageCost(t.Context(), result, key, []string{tc.label}, .3, .3, .3, .3, UsageTokens{}, "", nil, time.Now())
 			require.NoError(t, err)
-			require.InDelta(t, tc.cost, rawCost.ActualCost, 1e-12)
+			require.InDelta(t, tc.cost, rawCost.TotalCost, 1e-12)
+			require.InDelta(t, tc.cost*0.3, rawCost.ActualCost, 1e-12)
 			require.NoError(t, billingSvc.RecordUsage(t.Context(), &OpenAIRecordUsageInput{Result: result, APIKey: key, User: key.User, Account: account}))
-			require.Equal(t, QuantizeUsageBillingAmount(tc.cost), logs.lastLog.ActualCost)
-			require.Equal(t, 1.0, logs.lastLog.RateMultiplier)
-			require.Equal(t, QuantizeUsageBillingAmount(tc.cost), bills.lastCmd.BalanceCost)
+			require.Equal(t, QuantizeUsageBillingAmount(tc.cost*0.3), logs.lastLog.ActualCost)
+			require.Equal(t, 0.3, logs.lastLog.RateMultiplier)
+			require.Equal(t, QuantizeUsageBillingAmount(tc.cost*0.3), bills.lastCmd.BalanceCost)
+
+			// Enabling independent tool multiplier keeps fixed 1.0x pricing.
+			group.ToolRateIndependent, group.ToolRateMultiplier = true, 1.0
+			fixedCost, err := billingSvc.calculateOpenAIRecordUsageCost(t.Context(), result, key, []string{tc.label}, .3, .3, .3, .3, UsageTokens{}, "", nil, time.Now())
+			require.NoError(t, err)
+			require.InDelta(t, tc.cost, fixedCost.ActualCost, 1e-12)
 
 			for _, override := range []float64{0, 2} {
 				group.OCRPricePer1kPages, group.AudioSTTPricePerHour, group.AudioTTSPricePerMillionChars = &override, &override, &override
@@ -329,10 +336,10 @@ func TestDeepSeekRecognitionSurvivesClientCancellation(t *testing.T) {
 			group := &Group{ID: 36, Platform: PlatformDeepseek, RateMultiplier: .3}
 			key := &APIKey{ID: 1, GroupID: &group.ID, Group: group, User: &User{ID: 2}}
 			require.NoError(t, billing.RecordUsage(context.WithoutCancel(ctx), &OpenAIRecordUsageInput{Result: result, APIKey: key, User: key.User, Account: account}))
-			want := 4.0 / 3600 * .78
+			want := 4.0 / 3600 * .78 * .3
 			if path == DeepSeekToolsPathOCR {
 				require.Equal(t, 2, result.OCRPages)
-				want = .003
+				want = .003 * .3
 			} else {
 				require.Equal(t, 4.0/3600, result.AudioUsage.DurationOrUnits)
 			}
@@ -383,8 +390,8 @@ func TestDeepSeekTTSClientDisconnectAfterAudioStartedBillsFullText(t *testing.T)
 	group := &Group{ID: 36, Platform: PlatformDeepseek, RateMultiplier: .3}
 	key := &APIKey{ID: 1, GroupID: &group.ID, Group: group, User: &User{ID: 2}}
 	require.NoError(t, billing.RecordUsage(context.WithoutCancel(ctx), &OpenAIRecordUsageInput{Result: result, APIKey: key, User: key.User, Account: account}))
-	require.Equal(t, .0057, logs.lastLog.ActualCost)
-	require.Equal(t, .0057, bills.lastCmd.BalanceCost)
+	require.Equal(t, QuantizeUsageBillingAmount(.0057*.3), logs.lastLog.ActualCost)
+	require.Equal(t, QuantizeUsageBillingAmount(.0057*.3), bills.lastCmd.BalanceCost)
 	select {
 	case <-upstreamCanceled:
 	case <-time.After(3 * time.Second):

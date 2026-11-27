@@ -99,6 +99,7 @@ func TestDeepSeekHostedFetchRejectsOwnedSlotIdentityChangesBeforeExecution(t *te
 			require.Empty(t, upstream.fetchRequests, "ownership must be checked before any paid provider request")
 			if result != nil {
 				require.Zero(t, result.SearchCount)
+				require.Zero(t, result.FetchCount)
 				require.Zero(t, result.WebSearchCalls)
 				require.False(t, result.ClientDisconnect, "a rejected provider event is not user cancellation")
 			}
@@ -181,7 +182,8 @@ func TestDeepSeekHostedFetchAcceptsTerminalRebuiltFromValidatedLiveItems(t *test
 	require.NoError(t, err)
 	require.Len(t, upstream.modelRequests, 2)
 	require.Len(t, upstream.fetchRequests, 1)
-	require.Equal(t, 1, result.SearchCount)
+	require.Zero(t, result.SearchCount)
+	require.Equal(t, 1, result.FetchCount)
 	final := hostedSearchFinal(t, recorder, true)
 	require.Equal(t, "open_page", final.Get("output.0.action.type").String())
 	require.Equal(t, "completed", final.Get("status").String())

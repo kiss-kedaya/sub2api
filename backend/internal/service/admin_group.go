@@ -426,6 +426,9 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	if err := validateOCRPrice(input.OCRPricePer1kPages); err != nil {
 		return nil, err
 	}
+	if err := validateToolPricingInputs(input.SearchPricePer1k, input.FetchPricePer1k, input.ToolRateMultiplier); err != nil {
+		return nil, err
+	}
 	if err := validateGroupLimitValues(input.DailyLimitUSD, input.WeeklyLimitUSD, input.MonthlyLimitUSD); err != nil {
 		return nil, err
 	}
@@ -486,6 +489,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	videoPrice1080P := normalizePrice(input.VideoPrice1080P)
 	webSearchPricePerCall := normalizePrice(input.WebSearchPricePerCall)
 	searchPricePer1k := normalizePrice(input.SearchPricePer1k)
+	fetchPricePer1k := normalizePrice(input.FetchPricePer1k)
 	grokModerationRefusalPrice := normalizePrice(input.GrokModerationRefusalPrice)
 	audioRealtimePricePerMin := normalizePrice(input.AudioRealtimePricePerMin)
 	audioTTSPricePerMillionChars := normalizePrice(input.AudioTTSPricePerMillionChars)
@@ -522,6 +526,10 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 			return nil, errors.New("video_rate_multiplier must be >= 0")
 		}
 		videoRateMultiplier = *input.VideoRateMultiplier
+	}
+	toolRateMultiplier := 1.0
+	if input.ToolRateMultiplier != nil {
+		toolRateMultiplier = *input.ToolRateMultiplier
 	}
 
 	peakRateMultiplier := 1.0
@@ -657,7 +665,10 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		VideoPrice1080P:                 videoPrice1080P,
 		VideoModelPrices:                NormalizeVideoModelPrices(input.VideoModelPrices),
 		WebSearchPricePerCall:           webSearchPricePerCall,
+		ToolRateIndependent:             input.ToolRateIndependent,
+		ToolRateMultiplier:              toolRateMultiplier,
 		SearchPricePer1k:                searchPricePer1k,
+		FetchPricePer1k:                 fetchPricePer1k,
 		OCRPricePer1kPages:              normalizePrice(input.OCRPricePer1kPages),
 		GrokModerationRefusalPrice:      grokModerationRefusalPrice,
 		SearchProviderBaseURL:           trimOptionalString(input.SearchProviderBaseURL),
@@ -694,6 +705,11 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
+	if group.Platform != PlatformDeepseek {
+		group.ToolRateIndependent = false
+		group.ToolRateMultiplier = 1.0
+		group.FetchPricePer1k = nil
+	}
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}
@@ -862,8 +878,24 @@ func validateDeepSeekAudioPrices(tts, asr *float64) error {
 	return nil
 }
 
+func validateToolPricingInputs(searchPrice, fetchPrice, toolRateMultiplier *float64) error {
+	if searchPrice != nil && (math.IsNaN(*searchPrice) || math.IsInf(*searchPrice, 0)) {
+		return infraerrors.BadRequest("INVALID_SEARCH_PRICE", "search_price_per_1k must be a finite number")
+	}
+	if fetchPrice != nil && (math.IsNaN(*fetchPrice) || math.IsInf(*fetchPrice, 0)) {
+		return infraerrors.BadRequest("INVALID_FETCH_PRICE", "fetch_price_per_1k must be a finite number")
+	}
+	if toolRateMultiplier != nil && (math.IsNaN(*toolRateMultiplier) || math.IsInf(*toolRateMultiplier, 0) || *toolRateMultiplier < 0) {
+		return infraerrors.BadRequest("INVALID_TOOL_RATE_MULTIPLIER", "tool_rate_multiplier must be a finite number >= 0")
+	}
+	return nil
+}
+
 func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*Group, error) {
 	if err := validateOCRPrice(input.OCRPricePer1kPages); err != nil {
+		return nil, err
+	}
+	if err := validateToolPricingInputs(input.SearchPricePer1k, input.FetchPricePer1k, input.ToolRateMultiplier); err != nil {
 		return nil, err
 	}
 	if err := validateGroupLimitValues(input.DailyLimitUSD, input.WeeklyLimitUSD, input.MonthlyLimitUSD); err != nil {
@@ -1046,7 +1078,24 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		// Explicit null and a negative value both restore the default price.
 		group.OCRPricePer1kPages = normalizePrice(input.OCRPricePer1kPages)
 	}
-	if input.SearchPricePer1k != nil {
+	if group.Platform == PlatformDeepseek {
+		if input.ToolRateIndependent != nil {
+			group.ToolRateIndependent = *input.ToolRateIndependent
+		}
+		if input.ToolRateMultiplier != nil {
+			group.ToolRateMultiplier = *input.ToolRateMultiplier
+		}
+		if input.FetchPricePer1kSet || input.FetchPricePer1k != nil {
+			group.FetchPricePer1k = normalizePrice(input.FetchPricePer1k)
+		}
+	} else {
+		group.ToolRateIndependent = false
+		group.ToolRateMultiplier = 1.0
+		group.FetchPricePer1k = nil
+	}
+	if group.Platform == PlatformDeepseek && input.SearchPricePer1kSet {
+		group.SearchPricePer1k = normalizePrice(input.SearchPricePer1k)
+	} else if input.SearchPricePer1k != nil {
 		group.SearchPricePer1k = normalizePrice(input.SearchPricePer1k)
 	}
 	if input.GrokModerationRefusalPrice != nil {
@@ -1200,6 +1249,11 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	sanitizeGroupOpenAIFast(group)
+	if group.Platform != PlatformDeepseek {
+		group.ToolRateIndependent = false
+		group.ToolRateMultiplier = 1.0
+		group.FetchPricePer1k = nil
+	}
 	if group.Platform != PlatformOpenAI && group.Platform != PlatformComposite {
 		group.AllowLive = false
 	}

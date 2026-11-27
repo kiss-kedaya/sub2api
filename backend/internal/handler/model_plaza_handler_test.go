@@ -90,6 +90,7 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 		ID: 2, Name: "vip", Description: "d", Platform: "anthropic",
 		SubscriptionType: "standard", RateMultiplier: 1, IsExclusive: true,
 		VideoRateIndependent: true, VideoRateMultiplier: 0.75,
+		ToolRateIndependent: true, ToolRateMultiplier: 1.25,
 		Models: []service.PlazaModel{{
 			Name:     "claude-sonnet",
 			Platform: "anthropic",
@@ -117,6 +118,7 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 		"peak_rate_enabled", "peak_start", "peak_end", "peak_rate_multiplier",
 		"image_rate_independent", "image_rate_multiplier",
 		"video_rate_independent", "video_rate_multiplier",
+		"tool_rate_independent", "tool_rate_multiplier",
 		"long_context_pricing_enabled",
 	} {
 		_, exists := decoded[key]
@@ -125,6 +127,8 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 	require.InDelta(t, 0.5, decoded["user_rate_multiplier"].(float64), 1e-9)
 	require.Equal(t, true, decoded["video_rate_independent"])
 	require.InDelta(t, 0.75, decoded["video_rate_multiplier"].(float64), 1e-9)
+	require.Equal(t, true, decoded["tool_rate_independent"])
+	require.InDelta(t, 1.25, decoded["tool_rate_multiplier"].(float64), 1e-9)
 
 	// 模型条目:pricing + official_pricing 并存;official 缺失字段输出 null 而非省略
 	models := decoded["models"].([]any)

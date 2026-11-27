@@ -67,22 +67,22 @@ type deepSeekHostedCall struct {
 }
 
 type deepSeekHostedSearchState struct {
-	c                        *gin.Context
-	stream                   bool
-	started                  time.Time
-	responseID               string
-	model                    string
-	sequence                 int
-	outputs                  []json.RawMessage
-	usage                    map[string]any
-	searchCount, attempted   int
-	domains                  []string
-	header                   http.Header
-	result                   *OpenAIForwardResult
-	firstTokenMs             *int
-	callIDs                  map[string]struct{}
-	clientDisconnected       bool
-	nonBillableUpstreamError bool
+	c                                  *gin.Context
+	stream                             bool
+	started                            time.Time
+	responseID                         string
+	model                              string
+	sequence                           int
+	outputs                            []json.RawMessage
+	usage                              map[string]any
+	searchCount, fetchCount, attempted int
+	domains                            []string
+	header                             http.Header
+	result                             *OpenAIForwardResult
+	firstTokenMs                       *int
+	callIDs                            map[string]struct{}
+	clientDisconnected                 bool
+	nonBillableUpstreamError           bool
 	// A disabled key leaves an explicitly supplied client web_fetch function
 	// client-owned, including its declaration, call output and forced choice.
 	skipFetchTool bool
@@ -912,13 +912,14 @@ func (s *deepSeekHostedSearchState) addResult(result *OpenAIForwardResult) {
 }
 
 func (s *deepSeekHostedSearchState) finishResult() *OpenAIForwardResult {
-	if s.result == nil && (s.searchCount > 0 || s.clientDisconnected) {
+	if s.result == nil && (s.searchCount > 0 || s.fetchCount > 0 || s.clientDisconnected) {
 		s.result = &OpenAIForwardResult{Model: s.model, Stream: s.stream}
 	}
 	if s.result == nil {
 		return nil
 	}
 	s.result.SearchCount = s.searchCount
+	s.result.FetchCount = s.fetchCount
 	s.result.FixedToolBilling = true
 	s.result.WebSearchCalls = 0
 	s.result.ClientDisconnect = s.result.ClientDisconnect || s.clientDisconnected

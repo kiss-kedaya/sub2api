@@ -63,8 +63,15 @@ type Group struct {
 	// nil 表示使用默认价 defaultWebSearchPricePerCall（官方 $10/1000 次）。
 	WebSearchPricePerCall *float64
 
+	// 工具端点倍率配置（DeepSeek search/fetch/ocr/tts/asr 使用）：
+	// ToolRateIndependent 为 false 时跟随分组/用户有效倍率（不含高峰倍率）；
+	// 为 true 时使用 ToolRateMultiplier。
+	ToolRateIndependent bool
+	ToolRateMultiplier  float64
 	// 搜索工具显式定价（per 1k calls）。
 	SearchPricePer1k *float64
+	// 网页抓取工具显式定价（per 1k calls）；nil 时回落 SearchPricePer1k 再回落默认价，0 免费。
+	FetchPricePer1k *float64
 	// OCR 单价（每 1,000 页，计价单位与本组其它价格一致）；nil 使用默认价，0 免费。
 	OCRPricePer1kPages *float64
 	// 搜索专用凭据：分组可以单独指定一套搜索服务地址与 key，
@@ -495,4 +502,12 @@ func (g *Group) GetSearchPricePer1k() *float64 {
 		return nil
 	}
 	return g.SearchPricePer1k
+}
+
+// GetFetchPricePer1k returns explicit fetch tool price per 1k calls if configured.
+func (g *Group) GetFetchPricePer1k() *float64 {
+	if g == nil {
+		return nil
+	}
+	return g.FetchPricePer1k
 }

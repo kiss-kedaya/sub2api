@@ -125,3 +125,56 @@ func TestGroupPricingChangeStepUpDisabledKeepsLegacyBehavior(t *testing.T) {
 	rec := doGroupRequest(t, router, http.MethodPut, "/api/v1/admin/groups/1", `{"name":"fixture","rate_multiplier":2}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
+
+// DeepSeek 工具定价字段（fetch_price_per_1k / tool_rate_independent / tool_rate_multiplier）改动须触发 step-up；
+// 传默认值不误拦截。
+func TestGroupToolPricingChangeRequiresStepUp(t *testing.T) {
+	for _, body := range []string{
+		`{"name":"ds","platform":"deepseek","rate_multiplier":1,"fetch_price_per_1k":3.5}`,
+		`{"name":"ds","platform":"deepseek","rate_multiplier":1,"tool_rate_independent":true}`,
+		`{"name":"ds","platform":"deepseek","rate_multiplier":1,"tool_rate_multiplier":0.5}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			router := setupGroupStepUpRouter(t, groupStepUpHarness{stepUpEnabled: true})
+			rec := doGroupRequest(t, router, http.MethodPost, "/api/v1/admin/groups", body)
+			require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), "STEP_UP_REQUIRED")
+		})
+	}
+
+	router := setupGroupStepUpRouter(t, groupStepUpHarness{stepUpEnabled: true})
+	rec := doGroupRequest(t, router, http.MethodPost, "/api/v1/admin/groups", `{"name":"ds","platform":"deepseek","rate_multiplier":1,"tool_rate_independent":false,"tool_rate_multiplier":1}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+// 非 DeepSeek 分组（如 Grok）PUT 传入 null 对共享价格字段保持“不修改”语义，不误触发 step-up；
+// DeepSeek 分组传入 null 则清除价格，必须触发 step-up。
+func TestUpdateGroupRequestTouchesPricing_PlatformNullSemantics(t *testing.T) {
+	price := 5.0
+	grok := &service.Group{
+		ID:                           1,
+		Platform:                     service.PlatformGrok,
+		SearchPricePer1k:             &price,
+		AudioTTSPricePerMillionChars: &price,
+		AudioSTTPricePerHour:         &price,
+	}
+	reqNull := &UpdateGroupRequest{
+		SearchPricePer1k:             optionalLimitField{set: true, value: nil},
+		AudioTtsPricePerMillionChars: optionalLimitField{set: true, value: nil},
+		AudioSttPricePerHour:         optionalLimitField{set: true, value: nil},
+	}
+	require.False(t, updateGroupRequestTouchesPricing(grok, reqNull), "Grok null shared price means unchanged")
+
+	clear := -1.0
+	reqClear := &UpdateGroupRequest{
+		SearchPricePer1k: optionalLimitField{set: true, value: &clear},
+	}
+	require.True(t, updateGroupRequestTouchesPricing(grok, reqClear), "Grok -1 sentinel clears price and must trigger step-up")
+
+	ds := &service.Group{
+		ID:               2,
+		Platform:         service.PlatformDeepseek,
+		SearchPricePer1k: &price,
+	}
+	require.True(t, updateGroupRequestTouchesPricing(ds, reqNull), "DeepSeek null clears search_price_per_1k and must trigger step-up")
+}

@@ -255,6 +255,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	pricingAt := openAIUsagePricingAt(input)
 	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, pricingAt)
 	videoMultiplier := resolveVideoRateMultiplier(apiKey, baseMultiplier)
+	toolMultiplier := resolveToolRateMultiplier(apiKey, baseMultiplier)
 
 	var cost *CostBreakdown
 	billingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
@@ -299,6 +300,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		if rebased := s.adjustClaudeFallbackMultiplier(ctx, user.ID, apiKey, claudeGroup, baseMultiplier); rebased != baseMultiplier {
 			billingMultiplier, imageMultiplier = computePeakAwareMultipliers(apiKey, rebased, pricingAt)
 			billingBaseMultiplier = rebased
+			toolMultiplier = resolveToolRateMultiplier(apiKey, rebased)
 		}
 	}
 	cost, err = s.calculateOpenAIRecordUsageCost(
@@ -343,7 +345,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		result.UpstreamResponseModel,
 		result.UpstreamResponseModelConflict,
 		result.ImageCount > 0 || result.VideoCount > 0 || result.WebSearchCalls > 0 ||
-			result.AudioUsage != nil || result.SearchCount > 0 || result.OCRPages > 0,
+			result.AudioUsage != nil || result.SearchCount > 0 || result.FetchCount > 0 || result.OCRPages > 0,
 	); responseModel != "" && !strings.EqualFold(responseModel, baselineBillingModel) {
 		if identified, responseChannelPriced := s.hasIdentifiedOpenAIResponsePricing(ctx, responseModel, apiKey); identified {
 			responseModels := s.filterCNProviderBillingModelCandidates(ctx, account, apiKey, usageBillingModelCandidates(responseModel))
@@ -511,10 +513,22 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		usageLog.ActualCost = canonicalUsageActualCost(cost)
 		usageLog.LongContextBillingApplied = cost.LongContextBillingApplied
 	}
-	if result.FixedToolBilling && (result.WebSearchCalls > 0 || result.AudioUsage != nil || result.OCRPages > 0) {
-		// Standalone tools contain only fixed charges, not model tokens.
-		// Keep mixed hosted requests on their token multiplier below.
-		usageLog.RateMultiplier = 1
+	isDeepSeekToolOnlyCharge := result.FixedToolBilling && (result.WebSearchCalls > 0 ||
+		result.AudioUsage != nil ||
+		result.OCRPages > 0 ||
+		((result.SearchCount > 0 || result.FetchCount > 0) &&
+			result.Usage.InputTokens == 0 &&
+			result.Usage.OutputTokens == 0 &&
+			result.Usage.CacheCreationInputTokens == 0 &&
+			result.Usage.CacheReadInputTokens == 0 &&
+			result.Usage.ImageInputTokens == 0 &&
+			result.Usage.ImageOutputTokens == 0))
+	if isDeepSeekToolOnlyCharge {
+		// Standalone tools and zero-token hosted search/fetch partial results record
+		// their effective tool multiplier (independent tool multiplier or group/user
+		// multiplier excluding peak). Mixed hosted requests with tokens keep their
+		// token multiplier below.
+		usageLog.RateMultiplier = toolMultiplier
 	} else if isVideoUsage && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = videoMultiplier
 	} else if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
@@ -668,11 +682,15 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	pricingAt time.Time,
 ) (*CostBreakdown, error) {
 	billingModel := firstUsageBillingModel(billingModels)
-	toolMultiplier := webSearchMultiplier
-	if result != nil && result.FixedToolBilling {
-		toolMultiplier = 1
-	}
+	toolMultiplier := resolveToolRateMultiplier(apiKey, webSearchMultiplier)
 	if result != nil && result.WebSearchCalls > 0 {
+		if isDeepSeekStandaloneSearchOrFetch(result, apiKey) {
+			toolModel := DeepSeekToolsLabelSearch
+			if result.Model == DeepSeekToolsLabelFetch {
+				toolModel = DeepSeekToolsLabelFetch
+			}
+			return CalculateDeepSeekToolCost(ctx, s.resolver, apiKeyGroup(apiKey), toolModel, float64(result.WebSearchCalls), toolMultiplier), nil
+		}
 		// Codex alpha/search 网页搜索按次计费：上游不返回 usage/token 字段，单价只取
 		// 分组覆盖价（nil 时默认 0.01 = 官方 $10/1000 次），不参与渠道级模型定价。
 		// 倍率与 image/video 按次口径一致：使用不含高峰因子的基础倍率
@@ -694,11 +712,11 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 		}
 	}
 	if result != nil && result.OCRPages > 0 {
-		return s.billingService.CalculateOCRCost(result.OCRPages, groupOCRPriceFromAPIKey(apiKey), toolMultiplier), nil
+		return CalculateDeepSeekToolCost(ctx, s.resolver, apiKeyGroup(apiKey), DeepSeekToolsLabelOCR, float64(result.OCRPages), toolMultiplier), nil
 	}
 	if result != nil && result.AudioUsage != nil {
 		if result.FixedToolBilling && isDeepSeekSpeechLabel(result.Model) {
-			return s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, deepSeekAudioPriceConfig(apiKey), 1), nil
+			return CalculateDeepSeekToolCost(ctx, s.resolver, apiKeyGroup(apiKey), result.Model, result.AudioUsage.DurationOrUnits, toolMultiplier), nil
 		}
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved != nil &&
 			(resolved.Mode == BillingModePerRequest) {
@@ -719,7 +737,7 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 			// 同一次响应里既有生成图片又有内置检索时，图片计费会在这条早返回里
 			// 结束；检索按次费用必须叠加，否则 image_generation + web_search 的
 			// 组合请求会整笔漏收检索费（issue #491 边际审查项）。
-			return s.addOpenAISearchSurcharge(result, apiKey, toolMultiplier, s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier)), nil
+			return s.addOpenAISearchSurchargeWithContext(ctx, result, apiKey, billingModel, toolMultiplier, s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier)), nil
 		}
 	}
 
@@ -750,21 +768,9 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 			lastErr = err
 		}
 	}
-	// Search surcharge is additive. Never let a zero/default search cost mask a
+	// Search/Fetch surcharge is additive. Never let a zero/default tool cost mask a
 	// real token-pricing failure for requests that attempted token billing.
-	searchCost := (*CostBreakdown)(nil)
-	if result != nil && result.SearchCount > 0 {
-		price := groupSearchPricePer1kFromAPIKey(apiKey)
-		if price != nil && *price == 0 {
-			logger.L().Info("openai_usage.search_price_per_1k_explicit_free",
-				zap.Int("search_count", result.SearchCount),
-				zap.String("model", billingModel),
-				zap.Int64("api_key_id", apiKey.ID),
-				zap.Any("group_id", apiKey.GroupID),
-			)
-		}
-		searchCost = s.billingService.CalculateSearchCost(result.SearchCount, price, toolMultiplier)
-	}
+	searchCost := s.calculateOpenAIHostedToolSurcharge(ctx, result, apiKey, billingModel, toolMultiplier)
 
 	tokenBillingAttempted := len(billingModels) > 0 && billingModel != ""
 	if tokenCost == nil {
@@ -789,22 +795,74 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	if searchCost == nil || (searchCost.TotalCost == 0 && searchCost.ActualCost == 0) {
 		return tokenCost, nil
 	}
-	// Additive: tokens + search surcharge.
+	// Additive: tokens + search/fetch surcharge.
 	tokenCost.TotalCost += searchCost.TotalCost
 	tokenCost.ActualCost += searchCost.ActualCost
 	return tokenCost, nil
 }
 
-// addOpenAISearchSurcharge 把内置检索工具的按次费用叠加到已有费用上。
+func (s *OpenAIGatewayService) calculateOpenAIHostedToolSurcharge(
+	ctx context.Context,
+	result *OpenAIForwardResult,
+	apiKey *APIKey,
+	billingModel string,
+	toolMultiplier float64,
+) *CostBreakdown {
+	if result == nil || (result.SearchCount <= 0 && result.FetchCount <= 0) {
+		return nil
+	}
+	group := apiKeyGroup(apiKey)
+	isDeepSeekHosted := result.FixedToolBilling || (group != nil && group.Platform == PlatformDeepseek)
+	combined := &CostBreakdown{BillingMode: string(BillingModePerRequest)}
+	if result.SearchCount > 0 {
+		price := groupSearchPricePer1kFromAPIKey(apiKey)
+		var sc *CostBreakdown
+		if isDeepSeekHosted {
+			sc = CalculateDeepSeekToolCost(ctx, s.resolver, group, DeepSeekToolsLabelSearch, float64(result.SearchCount), toolMultiplier)
+			if price != nil && *price == 0 && (sc == nil || sc.TotalCost == 0) {
+				logger.L().Info("openai_usage.search_price_per_1k_explicit_free",
+					zap.Int("search_count", result.SearchCount),
+					zap.String("model", billingModel),
+					zap.Int64("api_key_id", apiKey.ID),
+					zap.Any("group_id", apiKey.GroupID),
+				)
+			}
+		} else if s.billingService != nil {
+			if price != nil && *price == 0 {
+				logger.L().Info("openai_usage.search_price_per_1k_explicit_free",
+					zap.Int("search_count", result.SearchCount),
+					zap.String("model", billingModel),
+					zap.Int64("api_key_id", apiKey.ID),
+					zap.Any("group_id", apiKey.GroupID),
+				)
+			}
+			sc = s.billingService.CalculateSearchCost(result.SearchCount, price, toolMultiplier)
+		}
+		if sc != nil {
+			combined.TotalCost += sc.TotalCost
+			combined.ActualCost += sc.ActualCost
+		}
+	}
+	if result.FetchCount > 0 {
+		fc := CalculateDeepSeekToolCost(ctx, s.resolver, group, DeepSeekToolsLabelFetch, float64(result.FetchCount), toolMultiplier)
+		if fc != nil {
+			combined.TotalCost += fc.TotalCost
+			combined.ActualCost += fc.ActualCost
+		}
+	}
+	return combined
+}
+
+// addOpenAISearchSurchargeWithContext 把内置检索/抓取工具的按次费用叠加到已有费用上。
 //
 // 用于“按图片/视频等按次计价、且提前 return”的分支：token 路径本来就会在末尾
 // 叠加检索费（见 calculateOpenAIRecordUsageCost），这些早返回分支不会，导致一次
 // 响应里同时含 image_generation 与 web_search 时整笔检索费漏收（issue #491）。
-func (s *OpenAIGatewayService) addOpenAISearchSurcharge(result *OpenAIForwardResult, apiKey *APIKey, toolMultiplier float64, base *CostBreakdown) *CostBreakdown {
-	if result == nil || result.SearchCount <= 0 || s.billingService == nil {
+func (s *OpenAIGatewayService) addOpenAISearchSurchargeWithContext(ctx context.Context, result *OpenAIForwardResult, apiKey *APIKey, billingModel string, toolMultiplier float64, base *CostBreakdown) *CostBreakdown {
+	if result == nil || (result.SearchCount <= 0 && result.FetchCount <= 0) {
 		return base
 	}
-	cost := s.billingService.CalculateSearchCost(result.SearchCount, groupSearchPricePer1kFromAPIKey(apiKey), toolMultiplier)
+	cost := s.calculateOpenAIHostedToolSurcharge(ctx, result, apiKey, billingModel, toolMultiplier)
 	if cost == nil || (cost.TotalCost == 0 && cost.ActualCost == 0) {
 		return base
 	}
@@ -1058,10 +1116,10 @@ func groupMediaPricingLooksIncomplete(group *Group) bool {
 	if group == nil {
 		return true
 	}
-	if group.ImageRateIndependent || group.VideoRateIndependent {
+	if group.ImageRateIndependent || group.VideoRateIndependent || group.ToolRateIndependent {
 		return false
 	}
-	if group.ImageRateMultiplier != 0 || group.VideoRateMultiplier != 0 {
+	if group.ImageRateMultiplier != 0 || group.VideoRateMultiplier != 0 || group.ToolRateMultiplier != 0 {
 		return false
 	}
 	// Any first-class pricing field present means the projection is not a blank shell.
@@ -1071,7 +1129,7 @@ func groupMediaPricingLooksIncomplete(group *Group) bool {
 	if len(group.ModelPricing) > 0 || group.LongContextPricingEnabled {
 		return false
 	}
-	if group.OCRPricePer1kPages != nil || group.SearchPricePer1k != nil ||
+	if group.OCRPricePer1kPages != nil || group.SearchPricePer1k != nil || group.FetchPricePer1k != nil ||
 		group.AudioRealtimePricePerMin != nil ||
 		group.AudioTTSPricePerMillionChars != nil ||
 		group.AudioSTTPricePerHour != nil ||
