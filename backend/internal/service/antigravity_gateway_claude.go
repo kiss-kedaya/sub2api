@@ -441,13 +441,27 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		c.Header("x-request-id", requestID)
 	}
 
+	geminiBody = nil
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
 	goneOutputTokens := 0
+	var estimatedInputTokens int
+	var hasEstimatedInputTokens bool
 	if claudeReq.Stream {
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if len(body) > 0 {
+				estimatedInputTokens = estimateRequestInputTokens(body)
+				hasEstimatedInputTokens = true
+			}
+			body = nil
+			geminiBody = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
 		// 客户端要求流式，直接透传转换
 		streamRes, err := s.handleClaudeStreamingResponse(c, resp, startTime, originalModel)
+		popRelease()
 		if err != nil {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=stream_error error=%v", prefix, err)
 			return nil, err
@@ -469,7 +483,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	if clientDisconnect {
 		// The client left after the upstream accepted the request: bill what the upstream
 		// reported and estimate the rest (gemini_family_incomplete_usage.go).
-		applyIncompleteGeminiUsage("antigravity_usage.client_gone_estimated", account, billingModel, usage, goneOutputTokens, body)
+		applyIncompleteGeminiUsageWithEstimate("antigravity_usage.client_gone_estimated", account, billingModel, usage, goneOutputTokens, body, estimatedInputTokens, hasEstimatedInputTokens)
 	}
 
 	return &ForwardResult{

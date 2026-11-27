@@ -451,6 +451,9 @@ func ResetRequestBody(req *http.Request, body []byte) {
 	if req == nil {
 		return
 	}
+	if prev, ok := req.Body.(*httputil.PrereadBody); ok {
+		prev.Release()
+	}
 	req.Body = httputil.NewPrereadBody(body)
 	req.ContentLength = int64(len(body))
 	req.Header.Set("Content-Length", strconv.Itoa(len(body)))

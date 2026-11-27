@@ -43,6 +43,26 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	startTime := time.Now()
 	// 固定渠道映射后的请求级 canonical body；账号 normalize/strip 不得改写跨 failover hint。
 	canonicalImageIntentBody := body
+	var originalBody []byte
+	var requestView openAIRequestView
+	var reqBody map[string]any
+	var lineageEntryBody []byte
+	inForwardHTTPStream := false
+	estimatedInputTokens := 0
+	hasEstimatedInputTokens := false
+	ctx, releaseForwardSvc := PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+		if inForwardHTTPStream && !hasEstimatedInputTokens && len(body) > 0 {
+			estimatedInputTokens, _ = estimateIncompleteResponsesInput(body)
+			hasEstimatedInputTokens = true
+		}
+		body = nil
+		canonicalImageIntentBody = nil
+		originalBody = nil
+		requestView = openAIRequestView{}
+		reqBody = nil
+		lineageEntryBody = nil
+	})
+	defer releaseForwardSvc()
 
 	restrictionResult := s.detectCodexClientRestriction(c, account, body)
 	apiKeyID := getAPIKeyIDFromContext(c)
@@ -198,8 +218,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		setOpenAIResponsesClientToolMapping(c, mapping)
 	}
 
-	originalBody := body
-	requestView := newOpenAIRequestView(body)
+	originalBody = body
+	requestView = newOpenAIRequestView(body)
 	reqModel, reqStream, promptCacheKey := requestView.Model, requestView.Stream, requestView.PromptCacheKey
 	originalModel := reqModel
 
@@ -350,7 +370,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	bodyModified := false
 	clientPromptCacheKey := promptCacheKey
-	var reqBody map[string]any
 	ensureReqBody := func() (map[string]any, error) {
 		if requestView.HasPatches() {
 			patchedBody, patchErr := requestView.ApplyPatches()
@@ -412,6 +431,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		s.isCodexImageGenerationBridgeEnabled(ctx, account, apiKey)
 	var imageIntent bool
 	canonicalImageIntent := resolveOpenAIImageIntentHint(c, reqModel, canonicalImageIntentBody, IsImageGenerationIntent)
+	canonicalImageIntentBody = nil
 	if isCodexCLI && codexImageGenerationExplicitToolPolicy == codexImageGenerationExplicitToolPolicyStrip {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
@@ -803,7 +823,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// lineage 会话键统一按进场形态的 body 派生：后续重试可能改写 body，
 	// 延迟计算会与下一请求的进场键漂移。
 	lineageGroupID := getOpenAIGroupIDFromContext(c)
-	lineageEntryBody := body
+	lineageEntryBody = body
 	lineageSessionHash := ""
 	if stateStore := s.getOpenAIWSStateStore(); stateStore != nil && stateStore.HasAnySessionInvalidEncryptedContent() {
 		lineageSessionHash = s.GenerateSessionHash(c, body)
@@ -1185,6 +1205,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		// Send request
 		upstreamStart := time.Now()
 		resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
+		releaseUpstreamRequestPayload(upstreamReq, resp)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if headerGuard != nil && headerGuard.stopHeaderWait() {
 			if resp != nil && resp.Body != nil {
@@ -1383,6 +1404,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		serviceTier := extractOpenAIServiceTierFromBody(c, body)
 		// 上游接受后只保留计费需要的标量，避免响应处理期间继续保活完整 input/tools map。
 		reqBody = nil
+		lineageEntryBody = nil
+		requestView = openAIRequestView{}
+		originalBody = nil
 
 		// Handle normal response
 		var usage *OpenAIUsage
@@ -1432,7 +1456,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return forwardResult
 		}
 		if reqStream {
-			streamResult, err := s.handleStreamingResponseWithReasoning(ctx, resp, c, account, startTime, originalModel, upstreamModel, reasoningEffortValue)
+			streamCtx := ctx
+			if isExplicitOpenAICompactContext(c) && !compactModelFallbackRetried {
+				streamCtx = WithCompactFallbackPossible(streamCtx)
+			}
+			inForwardHTTPStream = true
+			streamResult, err := s.handleStreamingResponseWithReasoning(streamCtx, resp, c, account, startTime, originalModel, upstreamModel, reasoningEffortValue)
+			inForwardHTTPStream = false
 			if streamResult != nil {
 				usage = streamResult.usage
 				firstTokenMs = streamResult.firstTokenMs
@@ -1482,7 +1512,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				}
 				// The stream ended without a terminal frame after the upstream produced
 				// output: bill an estimate instead of dropping the output for free.
-				applyIncompleteOpenAIStreamUsage(account, streamResult, body, upstreamModel, err)
+				applyIncompleteOpenAIStreamUsageWithEstimate(account, streamResult, body, estimatedInputTokens, hasEstimatedInputTokens, upstreamModel, err)
 				return preserveOpenAIStreamingResultOnError(buildForwardResult(), err)
 			}
 		} else {

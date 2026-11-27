@@ -3,7 +3,6 @@ package middleware
 import (
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -36,60 +35,62 @@ import (
 // Responses WebSocket 的帧不经过这里，由 ResponsesWebSocket 对每一帧执行同一规则。
 func RejectConflictingRequestFields() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request == nil || c.Request.Body == nil || c.Request.Body == http.NoBody {
-			c.Next()
+		proceed, hasBody := prepareRequestFieldConflictCheck(c)
+		if hasBody {
+			defer releaseRequestBodyAfterChain(c)
+		}
+		if !proceed {
 			return
 		}
-		switch c.Request.Method {
-		case http.MethodPost, http.MethodPut, http.MethodPatch:
-		default:
-			c.Next()
-			return
-		}
-
-		body, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
-		if err != nil {
-			// 超限交回下游：handler 按入口协议返回 413，这里提前改写成 400 会
-			// 把「请求太大」的语义弄错（且测试与线上文案都要一致）。
-			var tooLarge *http.MaxBytesError
-			if errors.As(err, &tooLarge) {
-				// 超限保持 413（handler 读体时是同一套文案），不能改写成 400。
-				writeGatewayInvalidRequest(c, http.StatusRequestEntityTooLarge, bodyTooLargeMessage(tooLarge.Limit))
-				c.Abort()
-				return
-			}
-			// 其它读体失败：按入口协议返回 400，不能吞成 500，也不能带着半截
-			// body 继续往下走。
-			writeGatewayInvalidRequest(c, http.StatusBadRequest, "Request body could not be read")
-			c.Abort()
-			return
-		}
-		if doc := requestmodel.TrimUTF8BOM(body); len(doc) != len(body) && requestmodel.LooksLikeJSON(doc) {
-			body = doc
-		}
-		requestmodel.ResetRequestBody(c.Request, body)
-		// 处理链返回后（含中途 Abort）丢掉对请求体的引用：gin 把 Context 放回对象池时不重置，
-		// 计费任务、日志队列也可能带着它，不清的话已经结束的请求要多占几个 GC 周期的内存。
-		defer releaseRequestBodyAfterChain(c, c.Request.Body)
-
-		field, conflict := requestmodel.ConflictingField(c.GetHeader("Content-Type"), body)
-		if !conflict {
-			c.Next()
-			return
-		}
-		MarkIngressRejected(c, IngressRejectInvalidRequestFields)
-		// 字段名来自客户端请求体，回显时加引号并限制在 64 个字符以内。
-		writeGatewayInvalidRequest(c, http.StatusBadRequest, fmt.Sprintf("Request body declares field %.64q more than once", field))
-		c.Abort()
+		c.Next()
 	}
 }
 
-// releaseRequestBodyAfterChain 清掉本请求在 Request.Body 与 gin.Context 上留下的请求体引用。
-// created 是本中间件回填的那个 Body；链上后面的中间件也可能再回填一个（同一份字节），一并清掉。
-func releaseRequestBodyAfterChain(c *gin.Context, created io.ReadCloser) {
-	if p, ok := created.(*httputil.PrereadBody); ok {
-		p.Release()
+func prepareRequestFieldConflictCheck(c *gin.Context) (proceed bool, hasBody bool) {
+	if c.Request == nil || c.Request.Body == nil || c.Request.Body == http.NoBody {
+		return true, false
 	}
+	switch c.Request.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+	default:
+		return true, false
+	}
+
+	body, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
+	if err != nil {
+		// 超限交回下游：handler 按入口协议返回 413，这里提前改写成 400 会
+		// 把「请求太大」的语义弄错（且测试与线上文案都要一致）。
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			// 超限保持 413（handler 读体时是同一套文案），不能改写成 400。
+			writeGatewayInvalidRequest(c, http.StatusRequestEntityTooLarge, bodyTooLargeMessage(tooLarge.Limit))
+			c.Abort()
+			return false, false
+		}
+		// 其它读体失败：按入口协议返回 400，不能吞成 500，也不能带着半截
+		// body 继续往下走。
+		writeGatewayInvalidRequest(c, http.StatusBadRequest, "Request body could not be read")
+		c.Abort()
+		return false, false
+	}
+	if doc := requestmodel.TrimUTF8BOM(body); len(doc) != len(body) && requestmodel.LooksLikeJSON(doc) {
+		body = doc
+	}
+	requestmodel.ResetRequestBody(c.Request, body)
+
+	field, conflict := requestmodel.ConflictingField(c.GetHeader("Content-Type"), body)
+	if !conflict {
+		return true, true
+	}
+	MarkIngressRejected(c, IngressRejectInvalidRequestFields)
+	// 字段名来自客户端请求体，回显时加引号并限制在 64 个字符以内。
+	writeGatewayInvalidRequest(c, http.StatusBadRequest, fmt.Sprintf("Request body declares field %.64q more than once", field))
+	c.Abort()
+	return false, true
+}
+
+// releaseRequestBodyAfterChain 清掉本请求在 Request.Body 与 gin.Context 上留下的请求体引用。
+func releaseRequestBodyAfterChain(c *gin.Context) {
 	if c.Request != nil {
 		if p, ok := c.Request.Body.(*httputil.PrereadBody); ok {
 			p.Release()

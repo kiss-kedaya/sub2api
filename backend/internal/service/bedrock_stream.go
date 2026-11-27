@@ -35,6 +35,7 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 	if !ok {
 		return nil, errors.New("streaming not supported")
 	}
+	TriggerRequestBodyRelease(ctx, c, account)
 
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")

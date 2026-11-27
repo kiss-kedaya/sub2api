@@ -815,6 +815,12 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		return nil, errors.New("streaming not supported")
 	}
 
+	clientOutputCommitted := false
+	if isPreOutputFailoverDisabled(ctx) {
+		clientOutputCommitted = true
+		TriggerRequestBodyRelease(ctx, c, account)
+	}
+
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
 	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐帧仅整数
@@ -930,6 +936,10 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		}
 		_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", body)
 		flusher.Flush()
+		if !clientOutputCommitted {
+			clientOutputCommitted = true
+			TriggerRequestBodyRelease(ctx, c, account)
+		}
 	}
 
 	needModelReplace := originalModel != mappedModel
@@ -1216,6 +1226,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				}
 
 				for _, block := range outputBlocks {
+					wroteBlock := false
 					if !clientDisconnected {
 						restored := reverseToolNamesIfPresent(c, []byte(block))
 						if _, werr := fmt.Fprint(w, string(restored)); werr != nil {
@@ -1224,6 +1235,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 							markClientGone("client write failed")
 						} else {
 							flusher.Flush()
+							wroteBlock = true
 							lastDataAt = time.Now()
 							resetKeepaliveTimer()
 							// 输出块计量：累加已发字节作 token 上界，跨预扣窗口时补扣。
@@ -1242,7 +1254,14 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 						}
 						if usagePatch != nil {
 							mergeSSEUsagePatch(usage, usagePatch)
+							if usage.InputTokens > 0 || usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 {
+								MarkStreamInputUsageObserved(ctx, c)
+							}
 						}
+					}
+					if wroteBlock && !clientOutputCommitted {
+						clientOutputCommitted = true
+						TriggerRequestBodyRelease(ctx, c, account)
 					}
 				}
 				if sawTerminalEvent {
@@ -1288,6 +1307,10 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				continue
 			}
 			flusher.Flush()
+			if !clientOutputCommitted {
+				clientOutputCommitted = true
+				TriggerRequestBodyRelease(ctx, c, account)
+			}
 			lastDataAt = time.Now()
 			resetKeepaliveTimer()
 		}

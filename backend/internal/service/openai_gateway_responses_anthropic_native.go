@@ -148,6 +148,13 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	}
 
 	if clientStream {
+		ctx, releaseNativeResp := PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			body = nil
+			adaptedBody = nil
+			anthropicBody = nil
+		})
+		defer releaseNativeResp()
+		TriggerRequestBodyRelease(ctx, c, account)
 		return s.handleResponsesStreamingFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)
 	}
 	return s.handleResponsesBufferedFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)

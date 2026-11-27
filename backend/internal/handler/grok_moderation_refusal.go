@@ -13,8 +13,8 @@ import (
 
 // Both plain content-policy errors and legacy failover errors must settle
 // before the ordinary retry/error path. Local session blocks never bill.
-func (h *OpenAIGatewayHandler) handleGrokModerationRefusal(c *gin.Context, key *service.APIKey, account *service.Account,
-	body []byte, model string, stream bool, result *service.OpenAIForwardResult, forwardErr error,
+func (h *OpenAIGatewayHandler) handleGrokModerationRefusalWithPrecomputedKeys(c *gin.Context, key *service.APIKey, account *service.Account,
+	body []byte, precomputedKeys []string, hasPrecomputedKeys bool, model string, stream bool, result *service.OpenAIForwardResult, forwardErr error,
 	submit func(*service.OpenAIForwardResult),
 ) bool {
 	if account == nil || forwardErr == nil {
@@ -27,7 +27,11 @@ func (h *OpenAIGatewayHandler) handleGrokModerationRefusal(c *gin.Context, key *
 		}
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 3*time.Second)
 		defer cancel()
-		h.gatewayService.BlockGlobalIPBlacklistSession(ctx, c, key, body)
+		if hasPrecomputedKeys {
+			h.gatewayService.BlockGrokModerationRefusedKeys(ctx, key, precomputedKeys)
+		} else {
+			h.gatewayService.BlockGlobalIPBlacklistSession(ctx, c, key, body)
+		}
 		if billable {
 			result = service.PrepareGrokModerationRefusalOpenAIResult(result, model, service.GrokModerationRefusalBilledCost(key.Group))
 			result.Stream = stream
@@ -62,7 +66,11 @@ func (h *OpenAIGatewayHandler) handleGrokModerationRefusal(c *gin.Context, key *
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 3*time.Second)
 	defer cancel()
-	h.gatewayService.BlockGrokModerationRefusedRequest(ctx, c, key, body)
+	if hasPrecomputedKeys {
+		h.gatewayService.BlockGrokModerationRefusedKeys(ctx, key, precomputedKeys)
+	} else {
+		h.gatewayService.BlockGrokModerationRefusedRequest(ctx, c, key, body)
+	}
 	result = service.PrepareGrokModerationRefusalOpenAIResult(result, model, service.GrokModerationRefusalBilledCost(key.Group))
 	result.Stream = stream
 	submit(result)

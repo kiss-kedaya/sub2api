@@ -106,6 +106,18 @@ func newProducedProgress(text string) *anthropicStreamProgress {
 	return progress
 }
 
+func fillIncompleteAnthropicUsage(usage *ClaudeUsage, progress *anthropicStreamProgress, requestBody []byte) (filledOutput, filledInput int) {
+	return fillIncompleteAnthropicUsageWithEstimate(usage, progress, requestBody, 0, false)
+}
+
+func estimateIncompleteAnthropicUsage(usage *ClaudeUsage, progress *anthropicStreamProgress, requestBody []byte, clientDisconnect bool) (outputTokens, inputTokens int) {
+	return estimateIncompleteAnthropicUsageWithEstimate(usage, progress, requestBody, 0, false, clientDisconnect)
+}
+
+func applyIncompleteAnthropicStreamUsage(account *Account, result *streamingResult, requestBody []byte, model, requestID string, streamErr error) (outputTokens, inputTokens int) {
+	return applyIncompleteAnthropicStreamUsageWithEstimate(account, result, requestBody, 0, false, model, requestID, streamErr)
+}
+
 func TestFillIncompleteAnthropicUsage(t *testing.T) {
 	body := []byte(anthropicIncompleteRequestBody)
 	wantSplit := splitIncompleteInput(estimateRequestInputTokens(body))

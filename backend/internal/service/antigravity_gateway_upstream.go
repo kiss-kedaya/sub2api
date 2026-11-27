@@ -83,6 +83,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 
 	// 发送请求
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	releaseUpstreamRequestPayload(req, resp)
 	if err != nil {
 		logger.LegacyPrintf("service.antigravity_gateway", "%s upstream request failed: %v", prefix, err)
 		return nil, fmt.Errorf("upstream request failed: %w", err)
@@ -113,6 +114,8 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	var firstTokenMs *int
 	var clientDisconnect bool
 	goneOutputTokens := 0
+	var estimatedInputTokens int
+	var hasEstimatedInputTokens bool
 
 	if claudeReq.Stream {
 		// 流式响应：透传
@@ -123,7 +126,17 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		c.Header("X-Accel-Buffering", "no")
 		c.Status(http.StatusOK)
 
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if len(body) > 0 {
+				estimatedInputTokens = estimateRequestInputTokens(body)
+				hasEstimatedInputTokens = true
+			}
+			body = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
 		streamRes := s.streamUpstreamResponse(c, resp, startTime)
+		popRelease()
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
 		clientDisconnect = streamRes.clientDisconnect
@@ -152,7 +165,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	if clientDisconnect {
 		// The client left after the upstream accepted the request: bill what the upstream
 		// reported and estimate the rest (gemini_family_incomplete_usage.go).
-		applyIncompleteGeminiUsage("antigravity_usage.client_gone_estimated", account, originalModel, usage, goneOutputTokens, body)
+		applyIncompleteGeminiUsageWithEstimate("antigravity_usage.client_gone_estimated", account, originalModel, usage, goneOutputTokens, body, estimatedInputTokens, hasEstimatedInputTokens)
 	}
 
 	// 构建计费结果

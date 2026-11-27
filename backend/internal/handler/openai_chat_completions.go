@@ -203,13 +203,15 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	ccPricingCtx = h.gatewayService.WithCodexQuotaOverdraftScheduling(ccPricingCtx)
 	ccPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(ccPricingCtx, apiKey.GroupID)
 	c.Request = c.Request.WithContext(ccPricingCtx)
-	preauthorizationBody := openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
-	balanceGuard, err := preauthorizeTextGatewayRequest(
-		ccPricingCtx, h.balancePreauthorizer, h.gatewayService,
-		apiKey, subscription, preauthorizationBody,
-		service.BalancePreauthorizationBillingModel(reqModel, channelMapping),
-		pricingAt, gjson.GetBytes(preauthorizationBody, "service_tier").String(),
-	)
+	balanceGuard, err := func() (*service.BalancePreauthorizationGuard, error) {
+		preauthorizationBody := openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
+		return preauthorizeTextGatewayRequest(
+			ccPricingCtx, h.balancePreauthorizer, h.gatewayService,
+			apiKey, subscription, preauthorizationBody,
+			service.BalancePreauthorizationBillingModel(reqModel, channelMapping),
+			pricingAt, gjson.GetBytes(preauthorizationBody, "service_tier").String(),
+		)
+	}()
 	if err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -235,6 +237,36 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		stopStreamHeaderKeepalive = service.StartOpenAIStreamSSEKeepalive(c, h.openAICompactKeepaliveInterval())
 	}
 	defer stopStreamHeaderKeepalive()
+
+	var currentForwardBody []byte
+	var precomputedCyberPlan cyberSessionBlockWritePlan
+	var precomputedCyberLastUserTurn string
+	var hasPrecomputedCyber bool
+	var precomputedGrokKeys []string
+	var hasPrecomputedGrok bool
+	var precomputedRequestPayloadHash string
+	hookCtx, releaseHook := service.WithRequestBodyReleaseHook(c.Request.Context(), c, func(acc *service.Account) {
+		if len(body) > 0 && precomputedRequestPayloadHash == "" {
+			precomputedRequestPayloadHash = service.HashUsageRequestPayload(body)
+		}
+		if h.gatewayService != nil && apiKey != nil {
+			if enabled, _ := h.gatewayService.CyberSessionBlockRuntime(c.Request.Context()); enabled {
+				precomputedCyberPlan = buildCyberSessionBlockWritePlan(apiKey.ID, c, body)
+				hasPrecomputedCyber = true
+			}
+		}
+		if h.contentModerationService != nil && apiKey != nil && h.contentModerationService.ShouldExtractCyberPolicyLastUserTurn(c.Request.Context(), apiKey.GroupID, reqModel) {
+			precomputedCyberLastUserTurn = service.ExtractCyberPolicyLastUserTurn(GetInboundEndpoint(c), body)
+		}
+		if acc != nil && strings.EqualFold(strings.TrimSpace(acc.Platform), service.PlatformGrok) && len(body) > 0 {
+			precomputedGrokKeys = service.PrecomputeGrokModerationTranscriptKeys(apiKey, body)
+			hasPrecomputedGrok = true
+		}
+		body = nil
+		currentForwardBody = nil
+	})
+	c.Request = c.Request.WithContext(hookCtx)
+	defer releaseHook.Clear(c)
 
 	for {
 		if failoverClientGone(c) {
@@ -330,27 +362,35 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
 
-		forwardBody := body
+		currentForwardBody = body
 		if channelMapping.Mapped {
-			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
+			currentForwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
 		// Keep transport-only SSE comments out of the semantic-output
 		// failover decision.  The pre-header manager may have committed one
 		// or more comments while account selection/slot acquisition waited.
 		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
+		forwardCtx := c.Request.Context()
+		if !account.IsPoolMode() && !fillSchedulingSwitchAllowed(switchCount, maxAccountSwitches) {
+			forwardCtx = service.WithPreOutputFailoverDisabled(forwardCtx)
+		}
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
 					accountReleaseFunc()
 				}
 			}()
-			return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, promptCacheKey, "")
+			return h.gatewayService.ForwardAsChatCompletions(forwardCtx, c, account, currentForwardBody, promptCacheKey, "")
 		}()
 		var cyberBlockBodyChat []byte
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyChat = body
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, shouldRecordStandaloneCyberUsage(err, result != nil), cyberBlockBodyChat, body, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
+		payloadHash := precomputedRequestPayloadHash
+		if payloadHash == "" && len(body) > 0 {
+			payloadHash = service.HashUsageRequestPayload(body)
+		}
+		h.recordCyberPolicyIfMarkedWithPrecomputed(c, apiKey, account, subscription, reqModel, shouldRecordStandaloneCyberUsage(err, result != nil), cyberBlockBodyChat, precomputedCyberPlan, hasPrecomputedCyber, body, precomputedCyberLastUserTurn, clientRequestedUsageFields(c, channelMapping, reqModel, ""), payloadHash)
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
@@ -412,7 +452,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			})
 		}
 		if err != nil {
-			if h.handleGrokModerationRefusal(c, apiKey, account, body, reqModel, reqStream, result, err, submitChatUsage) {
+			if h.handleGrokModerationRefusalWithPrecomputedKeys(c, apiKey, account, body, precomputedGrokKeys, hasPrecomputedGrok, reqModel, reqStream, result, err, submitChatUsage) {
 				retainedUsage.discard()
 				return
 			}

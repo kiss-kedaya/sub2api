@@ -871,6 +871,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		requestIDHeader = idHeader
 
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		releaseUpstreamRequestPayload(upstreamReq, resp)
 		if err != nil {
 			if errors.Is(ctx.Err(), context.Canceled) {
 				// The client left before the upstream answered: the request was never
@@ -1172,6 +1173,12 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		c.Header("x-request-id", requestID)
 	}
 
+	// 图片生成计费
+	imageInputSize := s.extractImageInputSize(body)
+	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
+	buildReq = nil
+	geminiReq = nil
+
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	nonBillableUpstreamError := false
@@ -1183,8 +1190,22 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	// what was observed plus the estimates (gemini_family_incomplete_usage.go).
 	clientGone := false
 	goneOutputTokens := 0
+	var estimatedInputTokens int
+	var hasEstimatedInputTokens bool
 	if req.Stream {
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if len(body) > 0 {
+				estimatedInputTokens = estimateRequestInputTokens(body)
+				hasEstimatedInputTokens = true
+			}
+			body = nil
+			buildReq = nil
+			geminiReq = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
 		streamRes, err := s.handleStreamingResponse(c, resp, startTime, originalModel)
+		popRelease()
 		if err != nil {
 			// Read failures and locally synthesized failures keep their existing nil
 			// result behavior; only an observed provider error grants a billing waiver.
@@ -1261,12 +1282,9 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		if usage == nil {
 			usage = &ClaudeUsage{}
 		}
-		applyIncompleteGeminiUsage("gemini_usage.client_gone_estimated", account, mappedModel, usage, goneOutputTokens, body)
+		applyIncompleteGeminiUsageWithEstimate("gemini_usage.client_gone_estimated", account, mappedModel, usage, goneOutputTokens, body, estimatedInputTokens, hasEstimatedInputTokens)
 	}
 
-	// 图片生成计费
-	imageInputSize := s.extractImageInputSize(body)
-	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
 	imageCount := resolveGeminiImageCount(c, originalModel, mappedModel)
 	if clientGone {
 		// The model-name floor of one image only holds for a request that ran to the end.
@@ -1502,6 +1520,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		requestIDHeader = idHeader
 
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		releaseUpstreamRequestPayload(upstreamReq, resp)
 		if err != nil {
 			if errors.Is(ctx.Err(), context.Canceled) {
 				// The client left before the upstream answered: the request was never
@@ -1774,6 +1793,11 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		return nil, s.writeGeminiNativeUpstreamError(c, account, resp, respBody, requestID, isOAuth)
 	}
 
+	// 图片生成计费
+	imageInputSize := s.extractImageInputSize(body)
+	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
+	buildReq = nil
+
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var responseErr error
@@ -1783,9 +1807,22 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	// is billed from what was observed plus the estimates (gemini_family_incomplete_usage.go).
 	clientGone := false
 	goneOutputTokens := 0
+	var estimatedInputTokens int
+	var hasEstimatedInputTokens bool
 
 	if stream {
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if len(body) > 0 {
+				estimatedInputTokens = estimateRequestInputTokens(body)
+				hasEstimatedInputTokens = true
+			}
+			body = nil
+			buildReq = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
 		streamRes, err := s.handleNativeStreamingResponse(c, resp, startTime, isOAuth, account, requestID)
+		popRelease()
 		if err != nil {
 			return nil, err
 		}
@@ -1863,12 +1900,9 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		usage = &ClaudeUsage{}
 	}
 	if clientGone {
-		applyIncompleteGeminiUsage("gemini_usage.client_gone_estimated", account, mappedModel, usage, goneOutputTokens, body)
+		applyIncompleteGeminiUsageWithEstimate("gemini_usage.client_gone_estimated", account, mappedModel, usage, goneOutputTokens, body, estimatedInputTokens, hasEstimatedInputTokens)
 	}
 
-	// 图片生成计费
-	imageInputSize := s.extractImageInputSize(body)
-	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
 	imageCount := resolveGeminiImageCount(c, originalModel, mappedModel)
 	if clientGone {
 		// The model-name floor of one image only holds for a request that ran to the
@@ -2974,9 +3008,10 @@ func isGeminiInsufficientScope(headers http.Header, body []byte) bool {
 
 func estimateGeminiCountTokens(reqBody []byte) int {
 	total := 0
+	root := parseRawJSONView(bytes.TrimPrefix(reqBody, utf8BOM))
 
 	// systemInstruction.parts[].text
-	gjson.GetBytes(reqBody, "systemInstruction.parts").ForEach(func(_, part gjson.Result) bool {
+	root.Get("systemInstruction.parts").ForEach(func(_, part gjson.Result) bool {
 		if t := strings.TrimSpace(part.Get("text").String()); t != "" {
 			total += estimateTokensForText(t)
 		}
@@ -2984,7 +3019,7 @@ func estimateGeminiCountTokens(reqBody []byte) int {
 	})
 
 	// contents[].parts[].text
-	gjson.GetBytes(reqBody, "contents").ForEach(func(_, content gjson.Result) bool {
+	root.Get("contents").ForEach(func(_, content gjson.Result) bool {
 		content.Get("parts").ForEach(func(_, part gjson.Result) bool {
 			if t := strings.TrimSpace(part.Get("text").String()); t != "" {
 				total += estimateTokensForText(t)

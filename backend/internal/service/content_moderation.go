@@ -3361,12 +3361,34 @@ type CyberPolicyRecordInput struct {
 	// RequestBody 是本次请求的原始入站请求体。风控中心详情要展示
 	// 「用户最后一轮输入」，而不是上游错误文本；因此必须在这里带上原始
 	// payload，由服务层按 endpoint 解析出最后一轮用户消息。
-	RequestBody     []byte
-	UpstreamMessage string
-	UpstreamBody    string
-	UpstreamStatus  int
-	UpstreamInTok   int
-	UpstreamOutTok  int
+	RequestBody             []byte
+	PrecomputedLastUserTurn string
+	UpstreamMessage         string
+	UpstreamBody            string
+	UpstreamStatus          int
+	UpstreamInTok           int
+	UpstreamOutTok          int
+}
+
+// ExtractCyberPolicyLastUserTurn extracts the last user turn according to the
+// inbound endpoint protocol.
+func ExtractCyberPolicyLastUserTurn(endpoint string, body []byte) string {
+	return extractCyberPolicyLastUserTurn(endpoint, body)
+}
+
+// ShouldExtractCyberPolicyLastUserTurn reports whether RecordCyberPolicyEvent
+// would inspect RequestBody for the given group and model, using the cached
+// runtime snapshot so normal requests pay zero DB/JSON overhead.
+func (s *ContentModerationService) ShouldExtractCyberPolicyLastUserTurn(ctx context.Context, groupID *int64, model string) bool {
+	if s == nil || s.repo == nil {
+		return false
+	}
+	runtimeSnapshot, err := s.loadRuntimeSnapshot(ctx)
+	if err != nil || runtimeSnapshot == nil || !runtimeSnapshot.riskControlEnabled {
+		return false
+	}
+	cfg := runtimeSnapshot.config
+	return cfg.includesGroup(groupID) && cfg.includesModel(model)
 }
 
 // extractCyberPolicyLastUserTurn 按入站端点选择解析协议，取出用户最后一轮输入。
@@ -3430,7 +3452,10 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 	}
 	// 详情页要展示的是「用户最后一轮输入」，不能拿上游错误顶替。
 	// 只有请求体解析不出内容时，才回退到上游错误文本（由前端按 error 展示）。
-	lastUserTurn := extractCyberPolicyLastUserTurn(in.Endpoint, in.RequestBody)
+	lastUserTurn := in.PrecomputedLastUserTurn
+	if lastUserTurn == "" {
+		lastUserTurn = extractCyberPolicyLastUserTurn(in.Endpoint, in.RequestBody)
+	}
 	log := &ContentModerationLog{
 		RequestID:       in.RequestID,
 		UserID:          userID,

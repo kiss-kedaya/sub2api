@@ -125,6 +125,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		requestIDHeader = idHeader
 
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		releaseUpstreamRequestPayload(upstreamReq, resp)
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -255,10 +256,27 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		return nil, s.writeGeminiChatCompletionsMappedError(c, account, resp.StatusCode, requestID, evBody)
 	}
 
+	imageCount := 0
+	imageInputSize := s.extractImageInputSize(claudeBody)
+	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
+	if isImageGenerationModel(originalModel) {
+		imageCount = 1
+	}
+	buildReq = nil
+	geminiReq = nil
+
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	if clientStream {
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			claudeBody = nil
+			geminiReq = nil
+			buildReq = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
 		streamRes, err := s.handleChatCompletionsStreamingResponseFromGemini(c, resp, startTime, originalModel, account.Type == AccountTypeOAuth, includeUsage)
+		popRelease()
 		if err != nil {
 			return nil, err
 		}
@@ -286,13 +304,6 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 
 	if usage == nil {
 		usage = &ClaudeUsage{}
-	}
-
-	imageCount := 0
-	imageInputSize := s.extractImageInputSize(claudeBody)
-	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
-	if isImageGenerationModel(originalModel) {
-		imageCount = 1
 	}
 
 	return &ForwardResult{

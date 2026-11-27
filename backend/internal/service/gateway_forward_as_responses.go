@@ -185,6 +185,7 @@ func (s *GatewayService) ForwardAsResponses(
 
 	// 11. Send request
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	releaseUpstreamRequestPayload(upstreamReq, resp)
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
@@ -254,6 +255,19 @@ func (s *GatewayService) ForwardAsResponses(
 	var result *ForwardResult
 	var handleErr error
 	if clientStream {
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			if len(estimate.body) > 0 {
+				estimate.precomputedInputToks = estimateRequestInputTokens(estimate.body)
+				estimate.hasPrecomputed = true
+			}
+			estimate.body = nil
+			body = nil
+			anthropicBody = nil
+			wireBody = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
+		popRelease()
 		result, handleErr = s.handleResponsesStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping, estimate)
 	} else {
 		result, handleErr = s.handleResponsesBufferedStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping, estimate)

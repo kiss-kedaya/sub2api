@@ -242,6 +242,24 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	// 3. Account selection + failover loop
 	fs := NewFillFailoverState(h.maxAccountSwitches, false)
+	var forwardBody []byte
+	var precomputedRequestPayloadHash string
+	hookCtx, releaseHook := service.WithRequestBodyReleaseHook(c.Request.Context(), c, func(_ *service.Account) {
+		if len(body) > 0 && precomputedRequestPayloadHash == "" {
+			precomputedRequestPayloadHash = service.HashUsageRequestPayload(body)
+		}
+		if parsedReq != nil {
+			parsedReq.ReleaseBody()
+		}
+		if bodyRef != nil {
+			bodyRef.Replace(nil)
+		}
+		body = nil
+		preauthorizationBody = nil
+		forwardBody = nil
+	})
+	c.Request = c.Request.WithContext(hookCtx)
+	defer releaseHook.Clear(c)
 
 	for {
 		requestCtx = c.Request.Context()
@@ -361,7 +379,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 		// 5. Forward request
 		writerSizeBeforeForward := service.OpenAICompactKeepaliveAdjustedWrittenSize(c)
-		forwardBody := preauthorizationBody
+		forwardBody = preauthorizationBody
 		var result *service.ForwardResult
 		setActualUpstreamEndpoint(c, "")
 		if account.IsGeminiOpenAIProtocol() {
@@ -398,7 +416,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 			}
 			userAgent := c.GetHeader("User-Agent")
 			clientIP := ip.GetClientIP(c)
-			requestPayloadHash := service.HashUsageRequestPayload(body)
+			requestPayloadHash := precomputedRequestPayloadHash
+			if requestPayloadHash == "" && len(body) > 0 {
+				requestPayloadHash = service.HashUsageRequestPayload(body)
+			}
 			inboundEndpoint := GetInboundEndpoint(c)
 			upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)

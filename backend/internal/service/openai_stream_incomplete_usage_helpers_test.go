@@ -116,6 +116,10 @@ func TestFillIncompleteStreamUsage(t *testing.T) {
 	})
 }
 
+func applyIncompleteOpenAIStreamUsage(account *Account, result *openaiStreamingResult, requestBody []byte, model string, streamErr error) {
+	applyIncompleteOpenAIStreamUsageWithEstimate(account, result, requestBody, 0, false, model, streamErr)
+}
+
 func TestApplyIncompleteOpenAIStreamUsage(t *testing.T) {
 	body := []byte(incompleteStreamRequestBody)
 	newResult := func() *openaiStreamingResult {

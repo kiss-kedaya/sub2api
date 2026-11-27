@@ -273,22 +273,31 @@ func grokModerationTranscriptKeys(apiKey *APIKey, body []byte, write bool) []str
 // paying the refusal fee on every attempt, and lets a mistaken match heal.
 const grokModerationTranscriptBlockTTL = 24 * time.Hour
 
-// BlockGrokModerationRefusedRequest locks the refused conversation by its
-// content: the transcript up to and including the refused turn and, when the
-// history holds model output, the history right before that turn. Client
-// identifiers are deliberately not used; see grokModerationSessionBlockEnabled.
-func (s *OpenAIGatewayService) BlockGrokModerationRefusedRequest(ctx context.Context, _ *gin.Context, apiKey *APIKey, body []byte) {
+// PrecomputeGrokModerationTranscriptKeys derives transcript block keys before
+// releasing the request body mid-stream on Grok accounts.
+func PrecomputeGrokModerationTranscriptKeys(apiKey *APIKey, body []byte) []string {
+	return grokModerationTranscriptKeys(apiKey, body, true)
+}
+
+// BlockGrokModerationRefusedKeys locks a refused conversation using
+// precomputed transcript keys when the request body was already released.
+func (s *OpenAIGatewayService) BlockGrokModerationRefusedKeys(ctx context.Context, apiKey *APIKey, keys []string) {
 	store := s.cyberSessionBlockStore()
-	if store == nil {
-		return
-	}
-	keys := grokModerationTranscriptKeys(apiKey, body, true)
-	if len(keys) == 0 {
+	if store == nil || len(keys) == 0 {
 		return
 	}
 	if err := store.SetCyberSessionBlocked(ctx, grokModerationTranscriptScope(apiKey), keys, grokModerationTranscriptBlockTTL); err != nil {
 		logger.L().Warn("openai_gateway.moderation_transcript_block_failed", zap.Error(err))
 	}
+}
+
+// BlockGrokModerationRefusedRequest locks the refused conversation by its
+// content: the transcript up to and including the refused turn and, when the
+// history holds model output, the history right before that turn. Client
+// identifiers are deliberately not used; see grokModerationSessionBlockEnabled.
+func (s *OpenAIGatewayService) BlockGrokModerationRefusedRequest(ctx context.Context, _ *gin.Context, apiKey *APIKey, body []byte) {
+	keys := grokModerationTranscriptKeys(apiKey, body, true)
+	s.BlockGrokModerationRefusedKeys(ctx, apiKey, keys)
 }
 
 // GrokModerationRefusedRequestBlocked reports whether this request resends or

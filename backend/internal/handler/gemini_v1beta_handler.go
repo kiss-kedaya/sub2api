@@ -457,6 +457,16 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		c.Request = c.Request.WithContext(service.WithGeminiCachedContentBound(c.Request.Context()))
 	}
 
+	var precomputedRequestPayloadHash string
+	hookCtx, releaseHook := service.WithRequestBodyReleaseHook(c.Request.Context(), c, func(_ *service.Account) {
+		if len(body) > 0 && precomputedRequestPayloadHash == "" {
+			precomputedRequestPayloadHash = service.HashUsageRequestPayload(body)
+		}
+		body = nil
+	})
+	c.Request = c.Request.WithContext(hookCtx)
+	defer releaseHook.Clear(c)
+
 	// Get subscription (may be nil)
 	subscription, _ := middleware.GetSubscriptionFromContext(c)
 
@@ -858,13 +868,17 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if result != nil {
 			// 结果里的字符串可能是请求体的子串：复制后，排队的计费任务不再钉住请求体。
 			result.DetachRequestStrings()
+			payloadHash := precomputedRequestPayloadHash
+			if payloadHash == "" && len(body) > 0 {
+				payloadHash = service.HashUsageRequestPayload(body)
+			}
 			usageInput := &service.RecordUsageInput{
 				Result: result, APIKey: apiKey, User: apiKey.User, Account: account,
 				Subscription: subscription, PricingAt: pricingAt,
 				QuotaPlatform:   service.QuotaPlatform(c.Request.Context(), apiKey),
 				InboundEndpoint: GetInboundEndpoint(c), UpstreamEndpoint: GetUpstreamEndpoint(c, account.Platform),
 				UserAgent: c.GetHeader("User-Agent"), IPAddress: ip.GetClientIP(c),
-				RequestPayloadHash: service.HashUsageRequestPayload(body), ForceCacheBilling: fs.ForceCacheBilling,
+				RequestPayloadHash: payloadHash, ForceCacheBilling: fs.ForceCacheBilling,
 				APIKeyService: h.apiKeyService, SessionID: service.ExtractClientSessionID(c),
 				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel).Detached(),
 			}

@@ -95,6 +95,7 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 		proxyURL = account.Proxy.URL()
 	}
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	releaseUpstreamRequestPayload(req, resp)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -113,7 +114,14 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 		// Close a blocked read on cancellation, including custom upstream transports.
 		stopClosing := context.AfterFunc(ctx, closeBody)
 		defer stopClosing()
+		var popRelease func()
+		ctx, popRelease = PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			body = nil
+			chatBody = nil
+		})
+		TriggerRequestBodyRelease(ctx, c, account)
 		result, err := s.pipeOpenAIStreamAsGemini(ctx, c, resp.Body, mappedModel, protocol, start)
+		popRelease()
 		result.RequestID = resp.Header.Get("x-request-id")
 		result.UpstreamHeaders = resp.Header
 		result.Duration = time.Since(start)

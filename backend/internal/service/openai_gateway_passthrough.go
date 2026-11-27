@@ -283,6 +283,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		attemptImageIntentInvalidated,
 		IsImageGenerationIntent,
 	)
+	canonicalImageIntentBody = nil
 	if imageIntent && !GroupAllowsImageGeneration(apiKeyGroup(apiKey)) {
 		MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalFeatureGate)
 		c.JSON(http.StatusForbidden, gin.H{
@@ -371,11 +372,23 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	var imageOutputSizes []string
 	nonBillableUpstreamError := false
 	clientDisconnect := false
+	var serviceTier *string
+	inPassthroughStream := false
+	estimatedInputTokens := 0
+	hasEstimatedInputTokens := false
+	ctx, releasePassthroughSvc := PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+		if inPassthroughStream && !hasEstimatedInputTokens && len(body) > 0 {
+			estimatedInputTokens, _ = estimateIncompleteResponsesInput(body)
+			hasEstimatedInputTokens = true
+		}
+		body = nil
+		canonicalImageIntentBody = nil
+	})
+	defer releasePassthroughSvc()
 	buildForwardResult := func() *OpenAIForwardResult {
 		if usage == nil {
 			usage = &OpenAIUsage{}
 		}
-		serviceTier := extractOpenAIServiceTierFromBody(c, body)
 		forwardResult := &OpenAIForwardResult{
 			RequestID:                     resp.Header.Get("x-request-id"),
 			ResponseID:                    responseID,
@@ -427,6 +440,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 		upstreamStart := time.Now()
 		resp, err = s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
+		releaseUpstreamRequestPayload(upstreamReq, resp)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			if clientErr := clientCtx.Err(); clientErr != nil {
@@ -551,8 +565,16 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			s.noteOpenAICodexTurnStateProvenance(c, account)
 		}
 
+		serviceTier = extractOpenAIServiceTierFromBody(c, body)
+
 		if reqStream {
-			result, handleErr := s.handleStreamingResponsePassthrough(ctx, resp, c, account, startTime, reqModel, upstreamPassthroughModel)
+			streamCtx := ctx
+			if isExplicitOpenAICompactContext(c) && !compactModelFallbackRetried {
+				streamCtx = WithCompactFallbackPossible(streamCtx)
+			}
+			inPassthroughStream = true
+			result, handleErr := s.handleStreamingResponsePassthrough(streamCtx, resp, c, account, startTime, reqModel, upstreamPassthroughModel)
+			inPassthroughStream = false
 			if handleErr != nil {
 				if account.IsCopilotSDKEnabled() {
 					handleErr = fmt.Errorf("copilot turn failed: %v", handleErr)
@@ -586,7 +608,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 				_ = resp.Body.Close()
 				// The stream ended without a terminal frame after the upstream accepted
 				// the request: bill an estimate instead of dropping the work for free.
-				applyIncompletePassthroughStreamUsage(account, result, body, upstreamPassthroughModel, handleErr)
+				applyIncompletePassthroughStreamUsageWithEstimate(account, result, body, estimatedInputTokens, hasEstimatedInputTokens, upstreamPassthroughModel, handleErr)
 				return preserveOpenAIStreamingResultOnError(buildForwardResult(), handleErr)
 			}
 			usage = result.usage
@@ -736,7 +758,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		RecordDebugStep(c, "normalize.in", fmt.Sprintf("bytes=%d reasoning_items=%d reasoning_text=%d native=%t",
 			len(body), items, withText, account != nil && account.UsesNativeCNResponses()))
 	}
-	RememberInboundBody(c, body)
+	RememberInboundBodyIfDebug := DebugDumpEnabled()
+	if RememberInboundBodyIfDebug {
+		RememberInboundBody(c, body)
+	}
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
 	if DebugDumpEnabled() {
 		items, withText := countReasoningItems(body)
@@ -2249,6 +2274,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	if !ok {
 		return nil, errors.New("streaming not supported")
 	}
+	if isPreOutputFailoverDisabled(ctx) && !isCompactFallbackPossible(ctx) {
+		TriggerRequestBodyRelease(ctx, c, account)
+	}
 
 	usage := &OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
@@ -2399,6 +2427,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if WriteUpstreamFinancialError(c, 0, bareErrorPayload) {
 			pendingLines = pendingLines[:0]
 			failureDelivered = true
+			if !clientOutputStarted {
+				TriggerRequestBodyRelease(ctx, c, account)
+			}
 			clientOutputStarted = true
 			flushPending = false
 			return
@@ -2409,6 +2440,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if _, err := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, bareErrorPayload, failedMessage)); err != nil {
 			markClientDisconnected()
 			return
+		}
+		if !clientOutputStarted {
+			TriggerRequestBodyRelease(ctx, c, account)
 		}
 		clientOutputStarted = true
 		failureDelivered = true
@@ -2760,11 +2794,16 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				if !writePendingLines() {
 					continue
 				}
+				TriggerRequestBodyRelease(ctx, c, account)
+				clientOutputStarted = true
 			}
 			writeDeepSeekLines := func(lines []string) bool {
 				for _, extra := range lines {
 					if !writeForwardedLine(extra) {
 						return false
+					}
+					if !clientOutputStarted {
+						TriggerRequestBodyRelease(ctx, c, account)
 					}
 					clientOutputStarted = true
 					flushPending = true
@@ -2789,6 +2828,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				line = rewritten
 			}
 			if writeForwardedLine(line) {
+				if !clientOutputStarted {
+					TriggerRequestBodyRelease(ctx, c, account)
+				}
 				clientOutputStarted = true
 				flushPending = true
 				if line == "" {

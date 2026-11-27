@@ -668,81 +668,85 @@ func compositeTargetPlatformMiddlewareResolved(resolver *service.CompositeRouteR
 		resolver = service.NewCompositeRouteResolver(nil)
 	}
 	return func(c *gin.Context) {
-		apiKey, ok := middleware.GetAPIKeyFromContext(c)
-		if !ok || apiKey == nil || apiKey.Group == nil {
-			c.Next()
+		if !prepareCompositeTargetPlatform(c, resolver, upstream, snapshotOnly...) {
 			return
 		}
-		if !apiKey.UsesRequestTargetPlatform() && upstream == nil {
-			c.Next()
-			return
-		}
-		if c.Request == nil || c.Request.Method == http.MethodGet {
-			c.Next()
-			return
-		}
-		if len(snapshotOnly) > 0 && snapshotOnly[0] {
-			c.Request = c.Request.WithContext(service.WithSchedulerSnapshotOnly(c.Request.Context()))
-		}
+		c.Next()
+	}
+}
 
-		body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
-		if err != nil {
-			status := http.StatusBadRequest
-			message := "Failed to read request body"
-			var maxErr *http.MaxBytesError
-			if errors.As(err, &maxErr) {
-				status = http.StatusRequestEntityTooLarge
-				message = "Request body is too large"
-			}
-			c.JSON(status, gin.H{"error": gin.H{"type": "invalid_request_error", "message": message}})
-			c.Abort()
-			return
-		}
+func prepareCompositeTargetPlatform(c *gin.Context, resolver *service.CompositeRouteResolver, upstream service.UpstreamPlatformResolver, snapshotOnly ...bool) bool {
+	apiKey, ok := middleware.GetAPIKeyFromContext(c)
+	if !ok || apiKey == nil || apiKey.Group == nil {
+		return true
+	}
+	if !apiKey.UsesRequestTargetPlatform() && upstream == nil {
+		return true
+	}
+	if c.Request == nil || c.Request.Method == http.MethodGet {
+		return true
+	}
+	if len(snapshotOnly) > 0 && snapshotOnly[0] {
+		c.Request = c.Request.WithContext(service.WithSchedulerSnapshotOnly(c.Request.Context()))
+	}
 
-		// Live 入口按 session.model 分发并改写（与白名单准入、Live handler 的
-		// 解析保持一致），避免顶层 model 别名与 session 模型不一致时改错对象。
-		routePath := c.FullPath()
-		model := requestmodel.FromBodyForRoute(routePath, c.GetHeader("Content-Type"), body)
-		if apiKey.Group.Platform == service.PlatformComposite {
-			if model != "" {
-				decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, compositeRouteEndpointForPath(c.Request.URL.Path))
-				if err != nil {
-					status := http.StatusInternalServerError
-					if errors.Is(err, service.ErrCompositeRouteCacheNotReady) {
-						// A cold immutable projection is a transient readiness condition.
-						// Returning 503 lets clients retry after the background refresh,
-						// while avoiding accidental detector routing that could bypass an
-						// explicit administrator route.
-						status = http.StatusServiceUnavailable
-						c.Header("Retry-After", "1")
-					}
-					c.JSON(status, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
-					c.Abort()
-					return
+	body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
+	if err != nil {
+		status := http.StatusBadRequest
+		message := "Failed to read request body"
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			status = http.StatusRequestEntityTooLarge
+			message = "Request body is too large"
+		}
+		c.JSON(status, gin.H{"error": gin.H{"type": "invalid_request_error", "message": message}})
+		c.Abort()
+		return false
+	}
+
+	// Live 入口按 session.model 分发并改写（与白名单准入、Live handler 的
+	// 解析保持一致），避免顶层 model 别名与 session 模型不一致时改错对象。
+	routePath := c.FullPath()
+	model := requestmodel.FromBodyForRoute(routePath, c.GetHeader("Content-Type"), body)
+	if apiKey.Group.Platform == service.PlatformComposite {
+		if model != "" {
+			decision, err := resolver.Resolve(c.Request.Context(), apiKey.Group.ID, model, compositeRouteEndpointForPath(c.Request.URL.Path))
+			if err != nil {
+				status := http.StatusInternalServerError
+				if errors.Is(err, service.ErrCompositeRouteCacheNotReady) {
+					// A cold immutable projection is a transient readiness condition.
+					// Returning 503 lets clients retry after the background refresh,
+					// while avoiding accidental detector routing that could bypass an
+					// explicit administrator route.
+					status = http.StatusServiceUnavailable
+					c.Header("Retry-After", "1")
 				}
-				if decision.Matched {
-					c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
-					if upstreamModel := strings.TrimSpace(decision.UpstreamModel); upstreamModel != "" && upstreamModel != model && gjson.ValidBytes(body) {
-						if _, modelPath := requestmodel.JSONModelPathForRoute(routePath, body); modelPath != "" {
-							if rewritten, rewriteErr := sjson.SetBytes(body, modelPath, upstreamModel); rewriteErr == nil {
-								body = rewritten
-							}
+				c.JSON(status, gin.H{"error": gin.H{"type": "server_error", "message": "Failed to resolve composite model route"}})
+				c.Abort()
+				return false
+			}
+			if decision.Matched {
+				c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
+				if upstreamModel := strings.TrimSpace(decision.UpstreamModel); upstreamModel != "" && upstreamModel != model && gjson.ValidBytes(body) {
+					if _, modelPath := requestmodel.JSONModelPathForRoute(routePath, body); modelPath != "" {
+						if rewritten, rewriteErr := sjson.SetBytes(body, modelPath, upstreamModel); rewriteErr == nil {
+							body = rewritten
 						}
 					}
 				}
 			}
-		} else if model != "" {
-			if upstream != nil {
-				if platform, ok := upstream.UpstreamPlatformForModel(c.Request.Context(), apiKey, model); ok {
-					c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
-				}
-			} else if platform, ok := service.DetectModelPlatform(model); ok {
+		}
+	} else if model != "" {
+		if upstream != nil {
+			if platform, ok := upstream.UpstreamPlatformForModel(c.Request.Context(), apiKey, model); ok {
 				c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
 			}
+		} else if platform, ok := service.DetectModelPlatform(model); ok {
+			c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
 		}
-		requestmodel.ResetRequestBody(c.Request, body)
-		c.Next()
 	}
+	requestmodel.ResetRequestBody(c.Request, body)
+	return true
 }
 
 func compositeGeminiTargetPlatformMiddleware(resolver *service.CompositeRouteResolver, snapshotOnly ...bool) gin.HandlerFunc {

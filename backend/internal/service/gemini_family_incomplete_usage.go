@@ -136,13 +136,13 @@ func geminiUsageReported(usage *ClaudeUsage) bool {
 		usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 || usage.ImageOutputTokens > 0)
 }
 
-// fillIncompleteGeminiUsage applies the estimates field by field and returns what it
-// filled in (0 when untouched). Output is filled only when the upstream reported no
-// output at all. Input is filled from the request only when the upstream reported no
-// input side at all: InputTokens takes the normal share and CacheReadInputTokens the
-// cache share, flagged as an estimate so a model without a cache price bills it at
-// the input price.
-func fillIncompleteGeminiUsage(usage *ClaudeUsage, outputTokens int, requestBody []byte) (filledOutput, filledInput int) {
+// fillIncompleteGeminiUsageWithEstimate applies the estimates field by field and returns
+// what it filled in (0 when untouched). Output is filled only when the upstream reported
+// no output at all. Input is filled from the request (or a precomputed token estimate)
+// only when the upstream reported no input side at all: InputTokens takes the normal
+// share and CacheReadInputTokens the cache share, flagged as an estimate so a model
+// without a cache price bills it at the input price.
+func fillIncompleteGeminiUsageWithEstimate(usage *ClaudeUsage, outputTokens int, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool) (filledOutput, filledInput int) {
 	if usage == nil {
 		return 0, 0
 	}
@@ -151,7 +151,11 @@ func fillIncompleteGeminiUsage(usage *ClaudeUsage, outputTokens int, requestBody
 		filledOutput = outputTokens
 	}
 	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
-		if total := estimateRequestInputTokens(requestBody); total > 0 {
+		total := precomputedInputTokens
+		if !hasPrecomputed {
+			total = estimateRequestInputTokens(requestBody)
+		}
+		if total > 0 {
 			split := splitIncompleteInput(total)
 			usage.InputTokens = split.Fresh
 			usage.CacheReadInputTokens = split.CacheRead
@@ -162,10 +166,10 @@ func fillIncompleteGeminiUsage(usage *ClaudeUsage, outputTokens int, requestBody
 	return filledOutput, filledInput
 }
 
-// applyIncompleteGeminiUsage fills the missing usage of a request whose client left
-// after the upstream accepted it, and logs the estimate. event names the log line.
-func applyIncompleteGeminiUsage(event string, account *Account, model string, usage *ClaudeUsage, outputTokens int, requestBody []byte) {
-	filledOutput, filledInput := fillIncompleteGeminiUsage(usage, outputTokens, requestBody)
+// applyIncompleteGeminiUsageWithEstimate fills the missing usage of a request whose
+// client left after the upstream accepted it, and logs the estimate. event names the log line.
+func applyIncompleteGeminiUsageWithEstimate(event string, account *Account, model string, usage *ClaudeUsage, outputTokens int, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool) {
+	filledOutput, filledInput := fillIncompleteGeminiUsageWithEstimate(usage, outputTokens, requestBody, precomputedInputTokens, hasPrecomputed)
 	if filledOutput == 0 && filledInput == 0 {
 		return
 	}

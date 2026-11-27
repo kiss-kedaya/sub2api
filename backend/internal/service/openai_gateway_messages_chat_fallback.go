@@ -167,6 +167,12 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 
 	// 5. Convert response
 	if clientStream {
+		ctx, releaseFallback := PushServiceRequestBodyRelease(ctx, c, func(_ *Account) {
+			body = nil
+			chatBody = nil
+		})
+		defer releaseFallback()
+		TriggerRequestBodyRelease(ctx, c, account)
 		return s.streamChatCompletionsAsAnthropic(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
 	return s.bufferChatCompletionsAsAnthropic(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)

@@ -28,11 +28,13 @@ func (s *OpenAIGatewayService) doOpenAIUpstreamOnce(request *http.Request, proxy
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)
 		if handled {
 			captureOpsHeadersFromRequest(request, response)
+			releaseUpstreamRequestPayload(request, response)
 			return response, err
 		}
 	}
 	response, err := s.httpUpstream.Do(request, proxyURL, account.ID, account.Concurrency)
 	captureOpsHeadersFromRequest(request, response)
+	releaseUpstreamRequestPayload(request, response)
 	return response, err
 }
 

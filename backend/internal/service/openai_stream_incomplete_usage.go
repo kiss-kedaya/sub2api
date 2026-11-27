@@ -49,6 +49,10 @@ func estimateIncompleteStreamOutputTokens(acc *apicompat.BufferedResponseAccumul
 // reported no input side at all; InputTokens stays the total (as OpenAI reports it)
 // and CacheReadInputTokens carries the cache-priced share of it.
 func fillIncompleteStreamUsage(usage *OpenAIUsage, outputEstimate int, requestBody []byte) (filledOutput, filledInput int) {
+	return fillIncompleteStreamUsageWithEstimate(usage, outputEstimate, requestBody, 0, false)
+}
+
+func fillIncompleteStreamUsageWithEstimate(usage *OpenAIUsage, outputEstimate int, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool) (filledOutput, filledInput int) {
 	if usage == nil {
 		return 0, 0
 	}
@@ -58,7 +62,15 @@ func fillIncompleteStreamUsage(usage *OpenAIUsage, outputEstimate int, requestBo
 	}
 	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 &&
 		usage.CacheCreationInputTokens == 0 && usage.ImageInputTokens == 0 {
-		if inputTokens, err := estimateIncompleteResponsesInput(requestBody); err == nil && inputTokens > 0 {
+		inputTokens := precomputedInputTokens
+		if !hasPrecomputed {
+			var err error
+			inputTokens, err = estimateIncompleteResponsesInput(requestBody)
+			if err != nil {
+				inputTokens = 0
+			}
+		}
+		if inputTokens > 0 {
 			split := splitOpenAIIncompleteInput(inputTokens)
 			usage.InputTokens = split.Total
 			usage.CacheReadInputTokens = split.CacheRead
@@ -69,8 +81,8 @@ func fillIncompleteStreamUsage(usage *OpenAIUsage, outputEstimate int, requestBo
 	return filledOutput, filledInput
 }
 
-// applyIncompleteOpenAIStreamUsage fills the stream result's usage from the
-// estimates when the stream ended without a terminal frame.
+// applyIncompleteOpenAIStreamUsageWithEstimate fills the stream result's usage from
+// the estimates when the stream ended without a terminal frame.
 //
 // Input is billed once the upstream accepted the request, even when no output was
 // produced: an abnormal end does not refund the prompt (new-api bills the merged
@@ -80,7 +92,7 @@ func fillIncompleteStreamUsage(usage *OpenAIUsage, outputEstimate int, requestBo
 // StreamEndedWithoutTerminal: there the upstream accepted the request and then
 // closed the stream without a terminal frame, so it may already have billed it, and
 // the handler bills the estimate only if no retry succeeds (issue #456).
-func applyIncompleteOpenAIStreamUsage(account *Account, result *openaiStreamingResult, requestBody []byte, model string, streamErr error) {
+func applyIncompleteOpenAIStreamUsageWithEstimate(account *Account, result *openaiStreamingResult, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool, model string, streamErr error) {
 	if streamErr == nil || result == nil || result.usage == nil || !result.incompleteStream {
 		return
 	}
@@ -96,7 +108,7 @@ func applyIncompleteOpenAIStreamUsage(account *Account, result *openaiStreamingR
 	// (new-api bills the merged prompt at the plain input price), so treating it as
 	// free would leave the operator absorbing the cost (issue #456). Output is billed
 	// only for what was really produced.
-	outputTokens, inputTokens := fillIncompleteStreamUsage(result.usage, result.incompleteOutputTokens, requestBody)
+	outputTokens, inputTokens := fillIncompleteStreamUsageWithEstimate(result.usage, result.incompleteOutputTokens, requestBody, precomputedInputTokens, hasPrecomputed)
 	if outputTokens == 0 && inputTokens == 0 {
 		return
 	}

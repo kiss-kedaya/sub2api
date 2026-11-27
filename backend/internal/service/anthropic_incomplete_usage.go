@@ -145,13 +145,13 @@ func (p *anthropicStreamProgress) observeEvent(event *apicompat.AnthropicStreamE
 	}
 }
 
-// fillIncompleteAnthropicUsage applies the estimates field by field and returns
-// what it filled in (0 when untouched). Output is raised to the produced content
+// fillIncompleteAnthropicUsageWithEstimate applies the estimates field by field and
+// returns what it filled in (0 when untouched). Output is raised to the produced content
 // only when no message_delta reported the cumulative output, and never lowered.
-// Input is estimated from the request only when the upstream reported no input
-// side at all; InputTokens then holds the normal-priced share and
-// CacheReadInputTokens the cache-priced share.
-func fillIncompleteAnthropicUsage(usage *ClaudeUsage, progress *anthropicStreamProgress, requestBody []byte) (filledOutput, filledInput int) {
+// Input is estimated from the request (or a precomputed token estimate) only when the
+// upstream reported no input side at all; InputTokens then holds the normal-priced share
+// and CacheReadInputTokens the cache-priced share.
+func fillIncompleteAnthropicUsageWithEstimate(usage *ClaudeUsage, progress *anthropicStreamProgress, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool) (filledOutput, filledInput int) {
 	if usage == nil {
 		return 0, 0
 	}
@@ -162,7 +162,11 @@ func fillIncompleteAnthropicUsage(usage *ClaudeUsage, progress *anthropicStreamP
 		}
 	}
 	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
-		if total := estimateRequestInputTokens(requestBody); total > 0 {
+		total := precomputedInputTokens
+		if !hasPrecomputed {
+			total = estimateRequestInputTokens(requestBody)
+		}
+		if total > 0 {
 			split := splitIncompleteInput(total)
 			usage.InputTokens = split.Fresh
 			usage.CacheReadInputTokens = split.CacheRead
@@ -173,17 +177,17 @@ func fillIncompleteAnthropicUsage(usage *ClaudeUsage, progress *anthropicStreamP
 	return filledOutput, filledInput
 }
 
-// estimateIncompleteAnthropicUsage gates fillIncompleteAnthropicUsage: input is
-// billed once the request was dispatched and the client then left, or whenever
+// estimateIncompleteAnthropicUsageWithEstimate gates fillIncompleteAnthropicUsageWithEstimate:
+// input is billed once the request was dispatched and the client then left, or whenever
 // output was produced. An upstream break that produced nothing stays free.
-func estimateIncompleteAnthropicUsage(usage *ClaudeUsage, progress *anthropicStreamProgress, requestBody []byte, clientDisconnect bool) (outputTokens, inputTokens int) {
+func estimateIncompleteAnthropicUsageWithEstimate(usage *ClaudeUsage, progress *anthropicStreamProgress, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool, clientDisconnect bool) (outputTokens, inputTokens int) {
 	if usage == nil {
 		return 0, 0
 	}
 	if !clientDisconnect && progress.producedTokens() <= 0 {
 		return 0, 0
 	}
-	return fillIncompleteAnthropicUsage(usage, progress, requestBody)
+	return fillIncompleteAnthropicUsageWithEstimate(usage, progress, requestBody, precomputedInputTokens, hasPrecomputed)
 }
 
 // anthropicEstimateSkippedForError lists the failures that keep their own
@@ -215,14 +219,14 @@ func logAnthropicIncompleteEstimate(accountID int64, requestID, model string, cl
 	).Warn("anthropic_usage.incomplete_stream_estimated")
 }
 
-// applyIncompleteAnthropicStreamUsage fills the stream result's usage from the
-// estimates when the stream ended without a terminal frame. requestBody is the
-// body that was sent to the upstream.
-func applyIncompleteAnthropicStreamUsage(account *Account, result *streamingResult, requestBody []byte, model, requestID string, streamErr error) (outputTokens, inputTokens int) {
+// applyIncompleteAnthropicStreamUsageWithEstimate fills the stream result's usage from
+// the estimates when the stream ended without a terminal frame. requestBody is the
+// body that was sent to the upstream (optional when a precomputed estimate is passed).
+func applyIncompleteAnthropicStreamUsageWithEstimate(account *Account, result *streamingResult, requestBody []byte, precomputedInputTokens int, hasPrecomputed bool, model, requestID string, streamErr error) (outputTokens, inputTokens int) {
 	if result == nil || result.usage == nil || !result.incompleteStream || anthropicEstimateSkippedForError(streamErr) {
 		return 0, 0
 	}
-	outputTokens, inputTokens = estimateIncompleteAnthropicUsage(result.usage, result.progress, requestBody, result.clientDisconnect)
+	outputTokens, inputTokens = estimateIncompleteAnthropicUsageWithEstimate(result.usage, result.progress, requestBody, precomputedInputTokens, hasPrecomputed, result.clientDisconnect)
 	accountID := int64(0)
 	if account != nil {
 		accountID = account.ID
@@ -236,7 +240,9 @@ func applyIncompleteAnthropicStreamUsage(account *Account, result *streamingResu
 type anthropicEstimateSource struct {
 	account *Account
 	// body is the Anthropic request body that was sent to the upstream.
-	body []byte
+	body                 []byte
+	precomputedInputToks int
+	hasPrecomputed       bool
 	// model is the model name used for the log line.
 	model string
 }
@@ -244,7 +250,7 @@ type anthropicEstimateSource struct {
 // fill estimates the usage of a converted answer that ended without a terminal
 // frame, in place, and logs what it filled in.
 func (e anthropicEstimateSource) fill(usage *ClaudeUsage, progress *anthropicStreamProgress, requestID string, clientDisconnect bool, cause error) {
-	outputTokens, inputTokens := estimateIncompleteAnthropicUsage(usage, progress, e.body, clientDisconnect)
+	outputTokens, inputTokens := estimateIncompleteAnthropicUsageWithEstimate(usage, progress, e.body, e.precomputedInputToks, e.hasPrecomputed, clientDisconnect)
 	accountID := int64(0)
 	if e.account != nil {
 		accountID = e.account.ID
