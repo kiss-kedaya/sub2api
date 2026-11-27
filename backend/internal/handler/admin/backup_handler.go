@@ -70,8 +70,10 @@ func (h *BackupHandler) TestS3Connection(c *gin.Context) {
 // encryption) without persisting runtime config flags into the settings table.
 type BackupScheduleResponse struct {
 	service.BackupScheduleConfig
-	ServerCriticalForced bool `json:"server_critical_forced,omitempty"`
-	AgeEncryptionEnabled bool `json:"age_encryption_enabled,omitempty"`
+	ServerCriticalForced      bool `json:"server_critical_forced,omitempty"`
+	AgeEncryptionEnabled      bool `json:"age_encryption_enabled,omitempty"`
+	ServerAgeEncryptionForced bool `json:"server_age_encryption_forced,omitempty"`
+	ServerAgeRecipientCount   int  `json:"server_age_recipient_count,omitempty"`
 }
 
 func (h *BackupHandler) scheduleResponse(cfg *service.BackupScheduleConfig) BackupScheduleResponse {
@@ -80,9 +82,11 @@ func (h *BackupHandler) scheduleResponse(cfg *service.BackupScheduleConfig) Back
 		base = *cfg
 	}
 	return BackupScheduleResponse{
-		BackupScheduleConfig: base,
-		ServerCriticalForced: h.backupService.ServerCriticalModeForced(),
-		AgeEncryptionEnabled: h.backupService.AgeEncryptionEnabled(),
+		BackupScheduleConfig:      base,
+		ServerCriticalForced:      h.backupService.ServerCriticalModeForced(),
+		AgeEncryptionEnabled:      h.backupService.AgeEncryptionEnabledForSchedule(cfg),
+		ServerAgeEncryptionForced: h.backupService.ServerAgeEncryptionForced(),
+		ServerAgeRecipientCount:   h.backupService.ServerAgeRecipientCount(),
 	}
 }
 

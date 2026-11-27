@@ -538,6 +538,10 @@ var auditBodyOmittedRoutes = map[string]struct{}{
 	// 修改「创建 API Key 时是否需要验证身份」的请求体可能带 verification（密码 / 动态码 / 通行密钥票据）：
 	// 键级脱敏之外再整体不入库，审计只靠 extra 里的因子名与改前 / 改后标签。
 	"PUT /api/v1/user/security/api-key-create-verification": {},
+	// 备份计划接口允许管理员粘贴 age 公钥；若有人误把 AGE-SECRET-KEY-... 私钥粘进请求体，
+	// 即使 handler 返回 400 拒绝，审计中间件也会在进入 handler 前抓包落库且 audit_logs
+	// 会被关键表备份打包，因此整条路由不记录原始请求体。
+	"PUT /api/v1/admin/backups/schedule": {},
 }
 
 // NewAuditLogMiddleware 创建审计中间件。
