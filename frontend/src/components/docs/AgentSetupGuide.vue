@@ -29,22 +29,33 @@
           </div>
         </div>
 
-        <!-- Primary Action Pills -->
+        <!-- Primary Actions -->
         <div class="mt-7 flex flex-wrap items-center gap-3">
-          <router-link
-            :to="keysActionPath"
+          <button
+            v-if="isAuthenticated"
+            type="button"
             data-testid="agent-detail-keys-cta"
-            class="inline-flex min-h-11 items-center gap-2 rounded-full bg-slate-950 px-6 py-2.5 text-[15px] font-medium text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+            class="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-[14px] font-medium text-inverted shadow-xs transition hover:bg-primary/90"
+            @click="openInPageCreateKey"
           >
             <Icon name="key" size="sm" />
-            <span>{{ isAuthenticated ? t('docs.agentSetup.goCreateKeyAndImport') : t('docs.agentSetup.signInForKey') }}</span>
+            <span>{{ t('docs.agentSetup.goCreateKeyAndImport') }}</span>
+          </button>
+          <router-link
+            v-else
+            :to="keysActionPath"
+            data-testid="agent-detail-keys-cta"
+            class="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-[14px] font-medium text-inverted shadow-xs transition hover:bg-primary/90"
+          >
+            <Icon name="key" size="sm" />
+            <span>{{ t('docs.agentSetup.signInForKey') }}</span>
           </router-link>
           <a
             v-if="activeAgent.ccSwitch.supported"
             :href="catalog.ccSwitchUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="inline-flex min-h-11 items-center gap-2 rounded-full border border-slate-300 bg-white px-5 py-2.5 text-[15px] font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 dark:border-dark-600 dark:bg-dark-900 dark:text-slate-100 dark:hover:bg-dark-800"
+            class="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-[14px] font-medium text-slate-800 transition hover:border-slate-300 hover:bg-slate-50 dark:border-dark-700 dark:bg-dark-900 dark:text-slate-100 dark:hover:bg-dark-800"
           >
             <AgentBrandIcon icon-key="ccswitch" size="sm" />
             <span>{{ t('docs.agentSetup.downloadCcSwitch') }}</span>
@@ -54,7 +65,7 @@
             :href="activeAgent.officialDocsUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="inline-flex min-h-11 items-center gap-1.5 rounded-full px-4 py-2 text-[14px] font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-dark-800 dark:hover:text-white"
+            class="inline-flex h-10 items-center gap-1.5 rounded-xl px-4 text-[14px] font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-dark-800 dark:hover:text-white"
           >
             <span>{{ t('docs.agentSetup.officialDocs') }}</span>
             <Icon name="externalLink" size="xs" />
@@ -62,6 +73,15 @@
         </div>
 
         <div class="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-[14px] text-slate-500 dark:text-slate-400">
+          <router-link
+            v-if="isAuthenticated"
+            to="/keys"
+            data-testid="agent-detail-manage-keys"
+            class="inline-flex items-center gap-1.5 transition hover:text-slate-950 dark:hover:text-white"
+          >
+            <Icon name="key" size="xs" />
+            <span>{{ t('docs.agentSetup.manageAllKeys') }}</span>
+          </router-link>
           <router-link to="/model-plaza" class="inline-flex items-center gap-1.5 transition hover:text-slate-950 dark:hover:text-white">
             <Icon name="grid" size="xs" />
             <span>{{ t('docs.agentSetup.browseModelPlaza') }}</span>
@@ -95,7 +115,7 @@
             <button
               type="button"
               data-testid="agent-copy-baseurl"
-              class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-dark-800 dark:hover:text-white"
+              class="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-dark-800 dark:hover:text-white"
               @click="copyText('agent-base-url', activeAgent.baseUrl)"
             >
               <Icon :name="copiedId === 'agent-base-url' ? 'check' : 'copy'" size="xs" />
@@ -116,7 +136,7 @@
 
           <div
             v-if="activeAgent.ccSwitch.supported"
-            class="inline-flex rounded-full border border-slate-200 bg-slate-100/80 p-1 dark:border-dark-700 dark:bg-dark-900"
+            class="inline-flex rounded-xl border border-slate-200 bg-slate-100/80 p-1 dark:border-dark-700 dark:bg-dark-900"
             role="tablist"
             :aria-label="t('docs.agentSetup.setupMethodLabel')"
           >
@@ -125,7 +145,7 @@
               role="tab"
               data-testid="setup-mode-manual"
               :aria-selected="setupMode === 'manual'"
-              class="inline-flex min-h-9 items-center gap-1.5 rounded-full px-4 py-1.5 text-[14px] font-medium transition"
+              class="inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-[13.5px] font-medium transition"
               :class="setupMode === 'manual'
                 ? 'bg-white text-slate-950 shadow-xs dark:bg-dark-800 dark:text-white'
                 : 'text-slate-600 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white'"
@@ -139,7 +159,7 @@
               role="tab"
               data-testid="setup-mode-ccswitch"
               :aria-selected="setupMode === 'ccswitch'"
-              class="inline-flex min-h-9 items-center gap-1.5 rounded-full px-4 py-1.5 text-[14px] font-medium transition"
+              class="inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-[13.5px] font-medium transition"
               :class="setupMode === 'ccswitch'
                 ? 'bg-white text-slate-950 shadow-xs dark:bg-dark-800 dark:text-white'
                 : 'text-slate-600 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white'"
@@ -160,31 +180,40 @@
           :origin="catalog.origin"
           :is-authenticated="isAuthenticated"
           :agent-id="activeAgent.id"
+          :site-name="siteName"
+          :preferred-platform="activeAgent.platform"
+          :default-key-name="`${activeAgent.name} Key`"
+          :default-ccs-app="activeAgent.ccSwitch.appIds[0]"
+          :allowed-ccs-apps="activeAgent.ccSwitch.appIds"
           @models-loaded="onModelsLoaded"
           @key-meta="onKeyMeta"
+          @ccs-import-opened="clearPendingCcsImport"
+          @ccs-import-cancelled="clearPendingCcsImport"
+          @ccs-imported="onCcsImported"
+          @key-flow-settled="flushPendingCcsImport"
         />
 
         <!-- Mode A (DEFAULT): Manual / In-App Setup with Per-Field Copyable Param Cards & Auto-Filled Snippets -->
         <div v-if="!activeAgent.ccSwitch.supported || setupMode === 'manual'" data-testid="agent-manual-panel" class="space-y-7">
           <!-- OS + Model controls -->
-          <div class="flex max-w-3xl flex-wrap items-start justify-between gap-5 rounded-2xl border border-slate-200 bg-[#f8f9fb] p-5 dark:border-dark-700 dark:bg-dark-900/70">
+          <div class="flex max-w-3xl flex-wrap items-start justify-between gap-5 rounded-xl border border-slate-200/80 bg-white p-5 shadow-(--app-shadow-card) dark:border-dark-700/80 dark:bg-dark-900">
             <div>
               <div class="flex items-center gap-2">
                 <span class="text-xs font-medium text-slate-500 dark:text-slate-400">{{ t('docs.agentSetup.shellSelector') }}</span>
-                <span v-if="osAutoDetected" class="rounded-full bg-slate-200/70 px-2 py-0.5 text-[10.5px] text-slate-600 dark:bg-dark-800 dark:text-slate-400">
+                <span v-if="osAutoDetected" class="rounded-md bg-slate-100 px-2 py-0.5 text-[10.5px] text-slate-600 dark:bg-dark-800 dark:text-slate-400">
                   {{ t('docs.agentSetup.beginnerOsAutoHint') }}
                 </span>
               </div>
-              <div class="mt-2 inline-flex flex-wrap gap-1 rounded-full border border-slate-200 bg-white p-1 dark:border-dark-700 dark:bg-dark-950" role="group" :aria-label="t('docs.agentSetup.shellSelector')">
+              <div class="mt-2 inline-flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-dark-700 dark:bg-dark-950" role="group" :aria-label="t('docs.agentSetup.shellSelector')">
                 <button
                   v-for="os in shellOptions"
                   :key="os.id"
                   type="button"
                   :data-testid="`agent-os-${os.id}`"
                   :aria-pressed="selectedOs === os.id"
-                  class="rounded-full px-3.5 py-1.5 text-[13px] font-medium transition"
+                  class="rounded-lg px-3 py-1.5 text-[13px] font-medium transition"
                   :class="selectedOs === os.id
-                    ? 'bg-slate-900 text-white dark:bg-blue-500 dark:text-white'
+                    ? 'bg-primary text-inverted shadow-xs'
                     : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'"
                   @click="selectOs(os.id)"
                 >
@@ -204,15 +233,15 @@
                   data-testid="agent-model-input"
                   type="text"
                   :placeholder="activeAgent.defaultModel"
-                  class="min-w-[160px] flex-1 rounded-full border border-slate-200 bg-white px-4 py-2 font-mono text-[13px] text-slate-800 outline-hidden transition focus:border-blue-500 dark:border-dark-700 dark:bg-dark-950 dark:text-slate-100"
+                  class="h-10 min-w-[160px] flex-1 rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 font-mono text-[13px] text-slate-800 outline-hidden transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20 dark:border-dark-700 dark:bg-dark-950 dark:text-slate-100"
                 />
                 <button
                   v-for="preset in displayedModelPresets"
                   :key="preset"
                   type="button"
-                  class="rounded-full border px-3 py-1.5 font-mono text-xs transition"
+                  class="rounded-lg border px-2.5 py-1.5 font-mono text-xs transition"
                   :class="effectiveModel === preset
-                    ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-400 dark:bg-blue-500/15 dark:text-blue-300'
+                    ? 'border-primary bg-primary/10 text-primary'
                     : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-dark-700 dark:bg-dark-950 dark:text-slate-300'"
                   @click="customModel = preset"
                 >
@@ -244,7 +273,7 @@
                   <span class="text-[14px] font-semibold text-slate-900 dark:text-slate-100">{{ card.title }}</span>
                   <span
                     v-if="card.badge"
-                    class="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-500/15 dark:text-blue-300"
+                    class="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
                   >
                     {{ card.badge }}
                   </span>
@@ -270,14 +299,14 @@
                             :data-testid="`param-apikey-value-${idx}-${cIdx}-${rIdx}`"
                             class="min-w-0 truncate font-mono text-[13.5px] font-medium text-slate-900 dark:text-slate-100"
                           >{{ displayApiKey }}</code>
-                          <span class="hidden shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300 sm:inline">
+                          <span class="hidden shrink-0 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300 sm:inline">
                             {{ t('docs.agentSetup.paramKeyAutoFilled') }}
                           </span>
                         </div>
                         <button
                           type="button"
                           :data-testid="`agent-copy-param-${idx}-${cIdx}-${rIdx}`"
-                          class="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-dark-600 dark:bg-dark-800 dark:text-slate-200 dark:hover:border-blue-500/50 dark:hover:bg-blue-500/15 dark:hover:text-blue-300"
+                          class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-primary/40 hover:bg-primary/10 hover:text-primary dark:border-dark-600 dark:bg-dark-800 dark:text-slate-200"
                           @click="copyText(`param-${idx}-${cIdx}-${rIdx}`, liveApiKey.trim())"
                         >
                           <Icon :name="copiedId === `param-${idx}-${cIdx}-${rIdx}` ? 'check' : 'copy'" size="xs" />
@@ -286,13 +315,13 @@
                       </div>
 
                       <div v-else class="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2.5">
-                        <span class="text-xs text-amber-700 dark:text-amber-300">
+                        <span class="text-xs text-slate-500 dark:text-slate-400">
                           {{ t('docs.agentSetup.paramKeyMissingHint') }}
                         </span>
                         <button
                           type="button"
                           :data-testid="`param-fill-key-btn-${idx}-${cIdx}-${rIdx}`"
-                          class="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500/15 px-3.5 py-1.5 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-500/35 transition hover:bg-amber-500/25 dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/35"
+                          class="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition hover:bg-primary/15"
                           @click="requestFillKey"
                         >
                           <Icon name="key" size="xs" />
@@ -307,7 +336,7 @@
                         <code class="min-w-0 truncate rounded-lg bg-slate-100 px-2.5 py-1 font-mono text-[13px] font-medium text-slate-900 dark:bg-dark-800 dark:text-slate-100">
                           {{ row.value }}
                         </code>
-                        <span class="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:bg-dark-800 dark:text-slate-400">
+                        <span class="shrink-0 rounded-md bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:bg-dark-800 dark:text-slate-400">
                           {{ t('docs.agentSetup.paramSelectHint') }}
                         </span>
                       </div>
@@ -322,7 +351,7 @@
                         <button
                           type="button"
                           :data-testid="`agent-copy-param-${idx}-${cIdx}-${rIdx}`"
-                          class="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-dark-600 dark:bg-dark-800 dark:text-slate-200 dark:hover:border-blue-500/50 dark:hover:bg-blue-500/15 dark:hover:text-blue-300"
+                          class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-primary/40 hover:bg-primary/10 hover:text-primary dark:border-dark-600 dark:bg-dark-800 dark:text-slate-200"
                           @click="copyText(`param-${idx}-${cIdx}-${rIdx}`, row.value)"
                         >
                           <Icon :name="copiedId === `param-${idx}-${cIdx}-${rIdx}` ? 'check' : 'copy'" size="xs" />
@@ -349,8 +378,8 @@
                   <button
                     type="button"
                     :data-testid="`agent-copy-step-${idx}-${sIdx}`"
-                    class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-slate-600 hover:bg-white hover:text-slate-950 dark:text-slate-300 dark:hover:bg-dark-800 dark:hover:text-white"
-                    @click="copyText(`manual-${idx}-${sIdx}`, resolveCopyableCode(snippet.code))"
+                    class="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-medium text-slate-600 hover:bg-white hover:text-slate-950 dark:text-slate-300 dark:hover:bg-dark-800 dark:hover:text-white"
+                    @click="copyText(`manual-${idx}-${sIdx}`, rawSnippetCode(idx, sIdx, snippet.code))"
                   >
                     <Icon :name="copiedId === `manual-${idx}-${sIdx}` ? 'check' : 'copy'" size="xs" />
                     <span>{{ copiedId === `manual-${idx}-${sIdx}` ? t('docs.copied') : snippetCopyLabel(snippet) }}</span>
@@ -360,12 +389,12 @@
                 <!-- Gentle inline reminder if snippet still has unfilled API key placeholder -->
                 <div
                   v-if="!hasLiveKey && snippet.code.includes('YOUR_API_KEY')"
-                  class="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/70 bg-amber-50/75 px-4 py-2 text-xs text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200"
+                  class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 bg-slate-100/80 px-4 py-2 text-xs text-slate-700 dark:border-dark-700 dark:bg-dark-800/70 dark:text-slate-200"
                 >
                   <span>{{ t('docs.agentSetup.snippetKeyWarning') }}</span>
                   <button
                     type="button"
-                    class="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-600 px-3 py-1 text-[11.5px] font-medium text-white transition hover:bg-amber-700"
+                    class="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-1 text-[11.5px] font-medium text-inverted transition hover:bg-primary/90"
                     @click="requestFillKey"
                   >
                     <Icon name="key" size="xs" />
@@ -373,7 +402,7 @@
                   </button>
                 </div>
 
-                <pre class="overflow-x-auto p-5 font-mono text-[13.5px] leading-7 text-slate-800 dark:text-slate-200"><code><template v-for="(seg, segIdx) in splitCodeForHighlight(snippet.code)" :key="segIdx"><button v-if="seg.isPlaceholder" type="button" class="mx-0.5 inline rounded bg-amber-200/80 px-1.5 py-0.5 font-mono text-[12.5px] font-semibold text-amber-950 underline decoration-amber-600/60 underline-offset-2 transition hover:bg-amber-300 dark:bg-amber-500/25 dark:text-amber-200" @click="requestFillKey">{{ seg.text }}</button><template v-else>{{ seg.text }}</template></template></code></pre>
+                <pre class="overflow-x-auto p-5 font-mono text-[13.5px] leading-7 text-slate-800 dark:text-slate-200"><code><template v-for="(seg, segIdx) in splitCodeForHighlight(snippet.code)" :key="segIdx"><button v-if="seg.isPlaceholder" type="button" class="mx-0.5 inline rounded bg-primary/12 px-1.5 py-0.5 font-mono text-[12.5px] font-semibold text-primary underline decoration-primary/50 underline-offset-2 transition hover:bg-primary/20" @click="requestFillKey">{{ seg.text }}</button><template v-else>{{ seg.text }}</template></template></code></pre>
                 <p v-if="snippet.note" class="border-t border-slate-200 px-5 py-3 text-[13px] leading-6 text-slate-500 dark:border-dark-700 dark:text-slate-400">
                   {{ snippet.note }}
                 </p>
@@ -403,7 +432,7 @@
               <button
                 type="button"
                 data-testid="agent-direct-ccs-import"
-                class="inline-flex min-h-10 items-center gap-2 rounded-full bg-blue-600 px-5 py-2 text-[14px] font-medium text-white shadow-xs transition hover:bg-blue-700"
+                class="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-[14px] font-medium text-inverted shadow-xs transition hover:bg-primary/90"
                 @click="triggerDirectCcsImport"
               >
                 <Icon name="bolt" size="xs" />
@@ -411,7 +440,7 @@
               </button>
               <router-link
                 :to="{ path: '/docs', query: { page: 'agent-setup' }, hash: '#site-ccswitch-workflow' }"
-                class="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-2 text-[13.5px] font-medium text-slate-700 transition hover:bg-slate-50 dark:border-dark-700 dark:bg-dark-950 dark:text-slate-200 dark:hover:bg-dark-800"
+                class="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 text-[13.5px] font-medium text-slate-700 transition hover:bg-slate-50 dark:border-dark-700 dark:bg-dark-950 dark:text-slate-200 dark:hover:bg-dark-800"
               >
                 <span>{{ t('docs.agentSetup.ccsViewFullWalkthrough') }}</span>
                 <Icon name="arrowRight" size="xs" />
@@ -427,9 +456,15 @@
           <CcSwitchInteractiveDemo
             :origin="catalog.origin"
             :site-name="siteName"
-            :active-step="3"
+            :active-step="hasLiveKey ? (importedToCcs ? 3 : 2) : 1"
             :focus-agent-id="activeAgent.id"
             :masked-key-preview="maskedKeyForDemo"
+            :has-live-key="hasLiveKey"
+            :imported-to-ccs="importedToCcs"
+            :guided-mode="false"
+            @request-create-key="handleDemoCreateKey"
+            @request-import-ccs="handleDemoImportCcs"
+            @provider-activated="onProviderActivated"
           />
 
           <!-- Launch Command -->
@@ -438,7 +473,7 @@
               <span class="font-mono text-xs text-slate-500">{{ t('docs.agentSetup.launchCommandLabel') }}</span>
               <button
                 type="button"
-                class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-slate-600 hover:bg-white hover:text-slate-950 dark:text-slate-300 dark:hover:bg-dark-800 dark:hover:text-white"
+                class="inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-medium text-slate-600 hover:bg-white hover:text-slate-950 dark:text-slate-300 dark:hover:bg-dark-800 dark:hover:text-white"
                 @click="copyText('ccs-launch', activeAgent.launchCommand)"
               >
                 <Icon :name="copiedId === 'ccs-launch' ? 'check' : 'copy'" size="xs" />
@@ -464,7 +499,7 @@
                 <template v-if="row.key === 'key' && !hasLiveKey">
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-800 dark:text-amber-200"
+                    class="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-1 text-xs font-medium text-primary transition hover:bg-primary/15"
                     @click="requestFillKey"
                   >
                     <Icon name="key" size="xs" />
@@ -476,7 +511,7 @@
                   <button
                     v-if="row.copyable"
                     type="button"
-                    class="inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-dark-800 dark:hover:text-white"
+                    class="inline-flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-dark-800 dark:hover:text-white"
                     :aria-label="t('docs.agentSetup.copyValue')"
                     @click="copyText(`ccs-field-${row.key}`, row.key === 'key' ? liveApiKey.trim() : row.value)"
                   >
@@ -502,7 +537,7 @@
         <!-- Beginner-Friendly 1-Click In-Browser Connectivity Test -->
         <div
           data-testid="agent-browser-verify"
-          class="mt-5 mb-6 max-w-3xl rounded-2xl border border-slate-200 bg-white p-5 dark:border-dark-700 dark:bg-dark-900/75"
+          class="mt-5 mb-6 max-w-3xl rounded-xl border border-slate-200/80 bg-white p-5 shadow-(--app-shadow-card) dark:border-dark-700/80 dark:bg-dark-900"
         >
           <div class="flex flex-wrap items-center justify-between gap-4">
             <div class="min-w-0 flex-1">
@@ -517,10 +552,10 @@
               type="button"
               data-testid="agent-browser-verify-btn"
               :disabled="verifyRunning"
-              class="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-full px-5 py-2 text-[14px] font-medium transition disabled:opacity-60"
+              class="inline-flex h-10 shrink-0 items-center gap-2 rounded-xl px-4 text-[13.5px] font-medium transition disabled:opacity-60"
               :class="hasLiveKey
-                ? 'bg-blue-600 text-white shadow-xs hover:bg-blue-700'
-                : 'border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200'"
+                ? 'bg-primary text-inverted shadow-xs hover:bg-primary/90'
+                : 'border border-slate-200 bg-slate-50 text-slate-800 hover:bg-slate-100 dark:border-dark-700 dark:bg-dark-800 dark:text-slate-100 dark:hover:bg-dark-700'"
               @click="hasLiveKey ? runBrowserConnectivityTest() : requestFillKey()"
             >
               <Icon :name="verifyRunning ? 'refresh' : hasLiveKey ? 'play' : 'key'" size="xs" :class="{ 'animate-spin': verifyRunning }" />
@@ -554,8 +589,8 @@
               <button
                 type="button"
                 data-testid="agent-copy-verify"
-                class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium text-slate-600 hover:bg-white hover:text-slate-950 dark:text-slate-300 dark:hover:bg-dark-800 dark:hover:text-white"
-                @click="copyText('agent-verify', resolveCopyableCode(activeVerifyCommand))"
+                class="inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-medium text-slate-600 hover:bg-white hover:text-slate-950 dark:text-slate-300 dark:hover:bg-dark-800 dark:hover:text-white"
+                @click="copyText('agent-verify', rawVerifyCommand)"
               >
                 <Icon :name="copiedId === 'agent-verify' ? 'check' : 'copy'" size="xs" />
                 <span>{{ copiedId === 'agent-verify' ? t('docs.copied') : t('docs.agentSetup.copyCommand') }}</span>
@@ -563,19 +598,19 @@
             </div>
             <div
               v-if="!hasLiveKey && activeVerifyCommand.includes('YOUR_API_KEY')"
-              class="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/70 bg-amber-50/75 px-4 py-2 text-xs text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200"
+              class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 bg-slate-100/80 px-4 py-2 text-xs text-slate-700 dark:border-dark-700 dark:bg-dark-800/70 dark:text-slate-200"
             >
               <span>{{ t('docs.agentSetup.snippetKeyWarning') }}</span>
               <button
                 type="button"
-                class="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-600 px-3 py-1 text-[11.5px] font-medium text-white transition hover:bg-amber-700"
+                class="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-3 py-1 text-[11.5px] font-medium text-inverted transition hover:bg-primary/90"
                 @click="requestFillKey"
               >
                 <Icon name="key" size="xs" />
                 <span>{{ t('docs.agentSetup.snippetFillKeyBtn') }}</span>
               </button>
             </div>
-            <pre class="whitespace-pre-wrap break-all p-5 font-mono text-[13.5px] leading-7 text-slate-800 dark:text-slate-200"><code><template v-for="(seg, segIdx) in splitCodeForHighlight(activeVerifyCommand)" :key="segIdx"><button v-if="seg.isPlaceholder" type="button" class="mx-0.5 inline rounded bg-amber-200/80 px-1.5 py-0.5 font-mono text-[12.5px] font-semibold text-amber-950 underline decoration-amber-600/60 underline-offset-2 transition hover:bg-amber-300 dark:bg-amber-500/25 dark:text-amber-200" @click="requestFillKey">{{ seg.text }}</button><template v-else>{{ seg.text }}</template></template></code></pre>
+            <pre class="whitespace-pre-wrap break-all p-5 font-mono text-[13.5px] leading-7 text-slate-800 dark:text-slate-200"><code><template v-for="(seg, segIdx) in splitCodeForHighlight(activeVerifyCommand)" :key="segIdx"><button v-if="seg.isPlaceholder" type="button" class="mx-0.5 inline rounded bg-primary/12 px-1.5 py-0.5 font-mono text-[12.5px] font-semibold text-primary underline decoration-primary/50 underline-offset-2 transition hover:bg-primary/20" @click="requestFillKey">{{ seg.text }}</button><template v-else>{{ seg.text }}</template></template></code></pre>
           </div>
         </div>
 
@@ -591,7 +626,7 @@
             <p class="text-[15px] leading-7 text-slate-700 dark:text-slate-200">{{ prompt }}</p>
             <button
               type="button"
-              class="inline-flex shrink-0 items-center gap-1 rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-dark-800 dark:hover:text-white"
+              class="inline-flex shrink-0 items-center gap-1 rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-dark-800 dark:hover:text-white"
               :aria-label="t('docs.agentSetup.copyValue')"
               @click="copyText(`prompt-${pIdx}`, prompt)"
             >
@@ -695,21 +730,32 @@
           {{ t('docs.agentSetup.subtitle') }}
         </p>
 
-        <!-- Clean Pill Primary Actions -->
+        <!-- Primary Actions -->
         <div class="mt-8 flex flex-wrap items-center gap-3.5" data-testid="agent-quick-actions">
-          <router-link
-            :to="keysActionPath"
+          <button
+            v-if="isAuthenticated"
+            type="button"
             data-testid="agent-overview-keys-cta"
-            class="inline-flex min-h-12 items-center gap-2.5 rounded-full bg-slate-950 px-7 py-3 text-[15px] font-medium text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+            class="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-6 text-[15px] font-medium text-inverted shadow-xs transition hover:bg-primary/90"
+            @click="openInPageCreateKey"
           >
             <Icon name="key" size="sm" />
-            <span>{{ isAuthenticated ? t('docs.agentSetup.openKeys') : t('docs.agentSetup.signInForKey') }}</span>
+            <span>{{ t('docs.agentSetup.goCreateKeyAndImport') }}</span>
+          </button>
+          <router-link
+            v-else
+            :to="keysActionPath"
+            data-testid="agent-overview-keys-cta"
+            class="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-6 text-[15px] font-medium text-inverted shadow-xs transition hover:bg-primary/90"
+          >
+            <Icon name="key" size="sm" />
+            <span>{{ t('docs.agentSetup.signInForKey') }}</span>
           </router-link>
           <a
             :href="catalog.ccSwitchUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="inline-flex min-h-12 items-center gap-2.5 rounded-full border border-slate-300 bg-white px-6 py-3 text-[15px] font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 dark:border-dark-600 dark:bg-dark-900 dark:text-slate-100 dark:hover:bg-dark-800"
+            class="inline-flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 text-[15px] font-medium text-slate-800 transition hover:border-slate-300 hover:bg-slate-50 dark:border-dark-700 dark:bg-dark-900 dark:text-slate-100 dark:hover:bg-dark-800"
           >
             <AgentBrandIcon icon-key="ccswitch" size="sm" />
             <span>{{ t('docs.agentSetup.downloadCcSwitch') }}</span>
@@ -719,6 +765,15 @@
 
         <!-- Quiet Inline Secondary Links -->
         <div class="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2.5 text-[14px] text-slate-500 dark:text-slate-400">
+          <router-link
+            v-if="isAuthenticated"
+            to="/keys"
+            data-testid="agent-overview-manage-keys"
+            class="inline-flex items-center gap-1.5 transition hover:text-slate-950 dark:hover:text-white"
+          >
+            <Icon name="key" size="xs" />
+            <span>{{ t('docs.agentSetup.manageAllKeys') }}</span>
+          </router-link>
           <router-link
             to="/model-plaza"
             data-testid="agent-quick-plaza"
@@ -778,17 +833,17 @@
                 type="button"
                 :data-testid="`workflow-step-${idx + 1}`"
                 :aria-pressed="activeWorkflowStep === idx"
-                class="group flex h-full w-full flex-col rounded-2xl border p-4 text-left transition"
+                class="group flex h-full w-full flex-col rounded-xl border p-4 text-left transition"
                 :class="activeWorkflowStep === idx
-                  ? 'border-blue-500/75 bg-blue-50/60 shadow-xs dark:border-blue-400/55 dark:bg-blue-500/[0.1]'
-                  : 'border-slate-200/90 bg-white hover:border-slate-300 dark:border-dark-700/90 dark:bg-dark-900/55 dark:hover:border-dark-600'"
+                  ? 'border-primary/60 bg-primary/[0.06] shadow-xs dark:border-primary/50 dark:bg-primary/10'
+                  : 'border-slate-200/80 bg-white hover:border-slate-300 dark:border-dark-700/80 dark:bg-dark-900 dark:hover:border-dark-600'"
                 @click="activeWorkflowStep = idx"
               >
                 <div class="flex items-center gap-2.5">
                   <span
-                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full font-mono text-xs font-semibold transition"
+                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg font-mono text-xs font-semibold transition"
                     :class="activeWorkflowStep === idx
-                      ? 'bg-blue-600 text-white dark:bg-blue-500'
+                      ? 'bg-primary text-inverted'
                       : 'bg-slate-100 text-slate-500 dark:bg-dark-800 dark:text-slate-400'"
                   >
                     {{ step.step }}
@@ -807,6 +862,22 @@
             </li>
           </ol>
 
+          <!-- In-page API Key Bar for Overview so beginners can create/unlock/paste & import without leaving -->
+          <DocsApiKeyBar
+            ref="keyBarRef"
+            v-model="liveApiKey"
+            v-model:masked="maskKeyDisplay"
+            :origin="catalog.origin"
+            :is-authenticated="isAuthenticated"
+            :site-name="siteName"
+            @models-loaded="onModelsLoaded"
+            @key-meta="onKeyMeta"
+            @ccs-import-opened="clearPendingCcsImport"
+            @ccs-import-cancelled="clearPendingCcsImport"
+            @ccs-imported="onCcsImported"
+            @key-flow-settled="flushPendingCcsImport"
+          />
+
           <!-- Full-Width Live Interactive CC Switch Simulator (Zero Static Screenshots) -->
           <div class="min-w-0">
             <div class="rounded-3xl border border-slate-200/90 bg-gradient-to-b from-slate-50/95 to-slate-100/60 p-4 dark:border-dark-700 dark:from-dark-900/90 dark:to-dark-950/90 sm:p-5">
@@ -821,7 +892,13 @@
                 :site-name="siteName"
                 :active-step="activeWorkflowStep"
                 :masked-key-preview="maskedKeyForDemo"
+                :has-live-key="hasLiveKey"
+                :imported-to-ccs="importedToCcs"
+                :guided-mode="true"
                 @step-change="activeWorkflowStep = $event"
+                @request-create-key="handleDemoCreateKey"
+                @request-import-ccs="handleDemoImportCcs"
+                @provider-activated="onProviderActivated"
               />
 
               <div class="mt-4 flex flex-wrap items-center justify-between gap-3 px-1">
@@ -833,23 +910,57 @@
                   :href="catalog.ccSwitchUrl"
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-4 py-1.5 text-[13px] font-medium text-slate-800 transition hover:bg-slate-50 dark:border-dark-600 dark:bg-dark-950 dark:text-slate-100 dark:hover:bg-dark-800"
+                  class="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 text-[13px] font-medium text-slate-800 transition hover:bg-slate-50 dark:border-dark-700 dark:bg-dark-950 dark:text-slate-100 dark:hover:bg-dark-800"
                 >
                   <span>{{ t('docs.agentSetup.downloadCcSwitch') }}</span>
                   <Icon name="externalLink" size="xs" />
                 </a>
-                <router-link
-                  v-else-if="activeWorkflowStep === 1 || activeWorkflowStep === 2"
-                  :to="keysActionPath"
-                  class="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full bg-blue-600 px-4 py-1.5 text-[13px] font-medium text-white transition hover:bg-blue-700"
-                >
-                  <Icon name="key" size="xs" />
-                  <span>{{ isAuthenticated ? t('docs.agentSetup.openKeys') : t('docs.agentSetup.signInForKey') }}</span>
-                </router-link>
+                <template v-else-if="activeWorkflowStep === 1">
+                  <button
+                    v-if="isAuthenticated"
+                    type="button"
+                    data-testid="overview-step-create-key"
+                    class="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-4 text-[13px] font-medium text-inverted shadow-xs transition hover:bg-primary/90"
+                    @click="openInPageCreateKey"
+                  >
+                    <Icon name="key" size="xs" />
+                    <span>{{ t('docs.agentSetup.overviewCreateRealKeyBtn') }}</span>
+                  </button>
+                  <router-link
+                    v-else
+                    :to="keysActionPath"
+                    data-testid="overview-step-create-key"
+                    class="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-4 text-[13px] font-medium text-inverted shadow-xs transition hover:bg-primary/90"
+                  >
+                    <Icon name="key" size="xs" />
+                    <span>{{ t('docs.agentSetup.signInForKey') }}</span>
+                  </router-link>
+                </template>
+                <template v-else-if="activeWorkflowStep === 2">
+                  <button
+                    v-if="hasLiveKey || isAuthenticated"
+                    type="button"
+                    data-testid="overview-step-import-ccs"
+                    class="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-4 text-[13px] font-medium text-inverted shadow-xs transition hover:bg-primary/90"
+                    @click="triggerOverviewCcsImport"
+                  >
+                    <Icon name="bolt" size="xs" />
+                    <span>{{ t('docs.agentSetup.overviewImportRealCcsBtn') }}</span>
+                  </button>
+                  <router-link
+                    v-else
+                    :to="keysActionPath"
+                    data-testid="overview-step-import-ccs"
+                    class="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-4 text-[13px] font-medium text-inverted shadow-xs transition hover:bg-primary/90"
+                  >
+                    <Icon name="bolt" size="xs" />
+                    <span>{{ t('docs.agentSetup.overviewLoginImportCcsBtn') }}</span>
+                  </router-link>
+                </template>
                 <router-link
                   v-else
                   :to="usageActionPath"
-                  class="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-4 py-1.5 text-[13px] font-medium text-slate-800 transition hover:bg-slate-50 dark:border-dark-600 dark:bg-dark-950 dark:text-slate-100 dark:hover:bg-dark-800"
+                  class="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 text-[13px] font-medium text-slate-800 transition hover:bg-slate-50 dark:border-dark-700 dark:bg-dark-950 dark:text-slate-100 dark:hover:bg-dark-800"
                 >
                   <Icon name="chartBar" size="xs" />
                   <span>{{ t('docs.agentSetup.openUsageRecords') }}</span>
@@ -876,7 +987,7 @@
           </span>
         </div>
 
-        <!-- Spacious Rounded-Full Filter Pills -->
+        <!-- Filter Tabs -->
         <div class="mt-6 flex flex-wrap items-center gap-2.5" role="group" :aria-label="t('docs.agentSetup.filterByWorkflow')">
           <button
             v-for="filter in workflowFilters"
@@ -884,14 +995,14 @@
             type="button"
             :data-testid="`agent-filter-${filter.key}`"
             :aria-pressed="activeFilter === filter.key"
-            class="inline-flex min-h-10 items-center gap-2 rounded-full border px-4.5 py-2 text-[14px] font-medium transition"
+            class="inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-[13.5px] font-medium transition"
             :class="activeFilter === filter.key
-              ? 'border-slate-950 bg-slate-950 text-white dark:border-white dark:bg-white dark:text-slate-950'
+              ? 'border-primary bg-primary text-inverted shadow-xs'
               : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-950 dark:border-dark-700 dark:bg-dark-900 dark:text-slate-300 dark:hover:text-white'"
             @click="activeFilter = filter.key"
           >
             <span>{{ filter.label }}</span>
-            <span class="tabular-nums opacity-65">{{ filter.count }}</span>
+            <span class="tabular-nums opacity-75">{{ filter.count }}</span>
           </button>
         </div>
 
@@ -916,7 +1027,7 @@
                 </div>
                 <span
                   v-if="agent.ccSwitch.supported"
-                  class="shrink-0 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/12 dark:text-emerald-300"
+                  class="shrink-0 rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/12 dark:text-emerald-300"
                 >
                   {{ t('docs.agentSetup.ccsImportBadge') }}
                 </span>
@@ -941,7 +1052,7 @@
           <button
             type="button"
             data-testid="agent-clear-filter"
-            class="mt-4 rounded-full border border-slate-200 px-5 py-2 text-[14px] font-medium text-slate-700 hover:bg-slate-50 dark:border-dark-700 dark:text-slate-200 dark:hover:bg-dark-800"
+            class="mt-4 inline-flex h-10 items-center rounded-xl border border-slate-200 px-5 text-[14px] font-medium text-slate-700 hover:bg-slate-50 dark:border-dark-700 dark:text-slate-200 dark:hover:bg-dark-800"
             @click="activeFilter = 'all'"
           >
             {{ t('docs.agentSetup.clearFilter') }}
@@ -1034,9 +1145,10 @@ import CcSwitchInteractiveDemo from '@/components/docs/CcSwitchInteractiveDemo.v
 import DocsApiKeyBar from '@/components/docs/DocsApiKeyBar.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import {
-  buildCcSwitchImportDeeplink,
+  isCcSwitchApp,
   parseCcSwitchModelsList,
   pickCcSwitchModel,
+  type CcSwitchApp,
 } from '@/utils/ccswitchImport'
 import {
   getAgentSetupCatalog,
@@ -1080,6 +1192,8 @@ const liveApiKey = ref('')
 const maskKeyDisplay = ref(false)
 const liveModels = ref<string[]>([])
 const liveKeyPlatform = ref<GroupPlatform | undefined>(undefined)
+const importedToCcs = ref(false)
+const pendingCcsImportAfterKey = ref<{ defaultApp?: CcSwitchApp; allowedApps?: CcSwitchApp[] } | null>(null)
 const verifyRunning = ref(false)
 const verifyResult = ref<{ ok: boolean; message: string } | null>(null)
 const ccsImportFeedback = ref('')
@@ -1102,10 +1216,18 @@ const displayApiKey = computed(() => {
   return maskKeyDisplay.value ? maskedKeyForDemo.value : val
 })
 
+const rawApiKeyForCatalog = computed(() => liveApiKey.value.trim() || 'YOUR_API_KEY')
+
 const catalog = computed(() =>
   getAgentSetupCatalog(locale.value, props.origin, customModel.value, displayApiKey.value),
 )
+const rawCatalog = computed(() =>
+  maskKeyDisplay.value && hasLiveKey.value
+    ? getAgentSetupCatalog(locale.value, props.origin, customModel.value, rawApiKeyForCatalog.value)
+    : catalog.value,
+)
 const activeAgent = computed(() => resolveAgentGuide(catalog.value.agents, props.selectedAgentId))
+const rawActiveAgent = computed(() => resolveAgentGuide(rawCatalog.value.agents, props.selectedAgentId))
 const activeWorkflowItem = computed(
   () => catalog.value.siteWorkflowSteps[activeWorkflowStep.value] ?? catalog.value.siteWorkflowSteps[0],
 )
@@ -1113,8 +1235,17 @@ const otherAgents = computed(() =>
   activeAgent.value ? catalog.value.agents.filter((agent) => agent.id !== activeAgent.value!.id) : [],
 )
 
-const keysActionPath = computed(() => (props.isAuthenticated ? '/keys' : '/login'))
-const usageActionPath = computed(() => (props.isAuthenticated ? '/usage' : '/login'))
+const currentDocsFullPath = computed(() =>
+  activeAgent.value
+    ? `/docs?page=agent-setup&agent=${encodeURIComponent(activeAgent.value.id)}`
+    : '/docs?page=agent-setup',
+)
+const loginRedirectLocation = computed(() => ({
+  path: '/login',
+  query: { redirect: currentDocsFullPath.value },
+}))
+const keysActionPath = computed(() => (props.isAuthenticated ? '/keys' : loginRedirectLocation.value))
+const usageActionPath = computed(() => (props.isAuthenticated ? '/usage' : loginRedirectLocation.value))
 const overviewLocation = { path: '/docs', query: { page: 'agent-setup' } }
 const agentLocation = (id: string) => ({ path: '/docs', query: { page: 'agent-setup', agent: id } })
 
@@ -1188,10 +1319,21 @@ const activeVerifyCommand = computed(() => {
   return activeAgent.value.verifyCommands[selectedOs.value] || activeAgent.value.verifyCommands.unix || ''
 })
 
+const rawVerifyCommand = computed(() => {
+  if (!rawActiveAgent.value) return ''
+  return rawActiveAgent.value.verifyCommands[selectedOs.value] || rawActiveAgent.value.verifyCommands.unix || ''
+})
+
 function stepSnippets(step: AgentSetupStep): AgentCodeSnippet[] {
   const byOs = step.snippets?.[selectedOs.value] ?? step.snippets?.unix ?? []
   const generic = step.genericSnippets ?? []
   return [...byOs, ...generic]
+}
+
+function rawSnippetCode(stepIdx: number, snippetIdx: number, fallback: string): string {
+  const rawStep = rawActiveAgent.value?.manualSteps[stepIdx]
+  if (!rawStep) return fallback
+  return stepSnippets(rawStep)[snippetIdx]?.code ?? fallback
 }
 
 function snippetCopyLabel(snippet: AgentCodeSnippet): string {
@@ -1199,15 +1341,6 @@ function snippetCopyLabel(snippet: AgentCodeSnippet): string {
   if (snippet.copyKind === 'config') return t('docs.agentSetup.copyConfig')
   if (snippet.copyKind === 'value') return t('docs.agentSetup.copyValue')
   return t('docs.copy')
-}
-
-function resolveCopyableCode(text: string): string {
-  const rawKey = liveApiKey.value.trim()
-  if (!rawKey) return text
-  if (maskKeyDisplay.value && maskedKeyForDemo.value) {
-    return text.split(maskedKeyForDemo.value).join(rawKey)
-  }
-  return text
 }
 
 function splitCodeForHighlight(code: string): Array<{ text: string; isPlaceholder: boolean }> {
@@ -1225,6 +1358,85 @@ function splitCodeForHighlight(code: string): Array<{ text: string; isPlaceholde
 
 function requestFillKey() {
   keyBarRef.value?.requestFill()
+}
+
+function openInPageCreateKey() {
+  if (props.isAuthenticated) {
+    keyBarRef.value?.openCreateModal()
+    return
+  }
+  requestFillKey()
+}
+
+function handleDemoCreateKey() {
+  if (props.isAuthenticated) {
+    keyBarRef.value?.openCreateModal()
+    return
+  }
+  requestFillKey()
+}
+
+function handleDemoImportCcs(appId: string) {
+  const validApp = isCcSwitchApp(appId) ? appId : undefined
+  if (!hasLiveKey.value) {
+    pendingCcsImportAfterKey.value = {
+      defaultApp: validApp ?? activeAgent.value?.ccSwitch.appIds[0],
+      allowedApps: activeAgent.value?.ccSwitch.appIds,
+    }
+    requestFillKey()
+    return
+  }
+  keyBarRef.value?.openImportCcsModal({
+    defaultApp: validApp ?? activeAgent.value?.ccSwitch.appIds[0],
+    allowedApps: activeAgent.value?.ccSwitch.appIds,
+    platform: liveKeyPlatform.value ?? activeAgent.value?.platform ?? 'anthropic',
+  })
+}
+
+function triggerOverviewCcsImport() {
+  if (!hasLiveKey.value) {
+    pendingCcsImportAfterKey.value = {}
+    requestFillKey()
+    return
+  }
+  keyBarRef.value?.openImportCcsModal({
+    platform: liveKeyPlatform.value ?? 'anthropic',
+  })
+}
+
+function clearPendingCcsImport() {
+  pendingCcsImportAfterKey.value = null
+}
+
+function flushPendingCcsImport() {
+  const secret = liveApiKey.value.trim()
+  if (!hasLiveKey.value || !secret || !pendingCcsImportAfterKey.value) return
+  if (keyBarRef.value?.hasOpenKeyDialog) return
+  const pending = pendingCcsImportAfterKey.value
+  pendingCcsImportAfterKey.value = null
+  keyBarRef.value?.openImportCcsModal({
+    secret,
+    defaultApp: pending.defaultApp,
+    allowedApps: pending.allowedApps,
+    platform: liveKeyPlatform.value ?? activeAgent.value?.platform ?? 'anthropic',
+  })
+}
+
+function onCcsImported() {
+  importedToCcs.value = true
+  pendingCcsImportAfterKey.value = null
+  if (!activeAgent.value) {
+    activeWorkflowStep.value = 3
+  }
+  ccsImportFeedback.value = t('docs.agentSetup.ccsImportTriggered')
+  if (ccsFeedbackTimer) clearTimeout(ccsFeedbackTimer)
+  ccsFeedbackTimer = setTimeout(() => {
+    ccsImportFeedback.value = ''
+  }, 4000)
+}
+
+function onProviderActivated() {
+  importedToCcs.value = true
 }
 
 function selectOs(os: AgentShellOs) {
@@ -1296,43 +1508,20 @@ async function runBrowserConnectivityTest() {
 }
 
 function triggerDirectCcsImport() {
-  const key = liveApiKey.value.trim()
-  if (!key || !activeAgent.value?.ccSwitch.supported) {
+  if (!activeAgent.value?.ccSwitch.supported) return
+  if (!hasLiveKey.value) {
+    pendingCcsImportAfterKey.value = {
+      defaultApp: activeAgent.value.ccSwitch.appIds[0],
+      allowedApps: activeAgent.value.ccSwitch.appIds,
+    }
     requestFillKey()
     return
   }
-  const app = activeAgent.value.ccSwitch.appIds[0]
-  const usageScript = `({
-    request: {
-      url: "{{baseUrl}}".replace(/\\/+$/, "").replace(/\\/v1$/, "") + "/v1/usage",
-      method: "GET",
-      headers: { "Authorization": "Bearer {{apiKey}}" }
-    },
-    extractor: function(response) {
-      const remaining = response?.remaining ?? response?.quota?.remaining ?? response?.balance;
-      const unit = response?.unit ?? response?.quota?.unit ?? "USD";
-      return {
-        isValid: response?.is_active ?? response?.isValid ?? true,
-        remaining,
-        unit
-      };
-    }
-  })`
-  const deeplink = buildCcSwitchImportDeeplink({
-    baseUrl: catalog.value.origin,
+  keyBarRef.value?.openImportCcsModal({
+    defaultApp: activeAgent.value.ccSwitch.appIds[0],
+    allowedApps: activeAgent.value.ccSwitch.appIds,
     platform: liveKeyPlatform.value ?? activeAgent.value.platform ?? 'anthropic',
-    providerName: props.siteName.trim() || 'sub2api',
-    apiKey: key,
-    usageScript,
-    app,
-    model: effectiveModel.value,
   })
-  window.open(deeplink, '_self')
-  ccsImportFeedback.value = t('docs.agentSetup.ccsImportTriggered')
-  if (ccsFeedbackTimer) clearTimeout(ccsFeedbackTimer)
-  ccsFeedbackTimer = setTimeout(() => {
-    ccsImportFeedback.value = ''
-  }, 4000)
 }
 
 async function copyText(id: string, text: string) {
@@ -1366,6 +1555,18 @@ const tocItems = computed<AgentTocItem[]>(() => {
     { id: 'troubleshooting', title: t('docs.agentSetup.troubleshootingTitle') },
   ]
 })
+
+watch(
+  hasLiveKey,
+  (ready) => {
+    if (!ready) return
+    if (!activeAgent.value && activeWorkflowStep.value <= 1) {
+      activeWorkflowStep.value = 2
+    }
+    flushPendingCcsImport()
+  },
+  { flush: 'post' },
+)
 
 watch(
   () => activeAgent.value?.id,
@@ -1413,7 +1614,7 @@ onBeforeUnmount(() => {
 }
 
 /* Tactile press feedback across buttons, tabs, filter pills and interactive cards (emil-design-eng). */
-.agent-setup :is(button, a[data-testid^='agent-'], [role='tab']):not(:disabled) {
+.agent-setup :is(button, a[data-testid^='agent-'], [role='tab']):not(:disabled):not(.ccswitch-app-demo *) {
   transition:
     transform 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
     background-color 150ms ease,
@@ -1422,7 +1623,7 @@ onBeforeUnmount(() => {
     box-shadow 160ms ease;
 }
 
-.agent-setup :is(button, a[data-testid^='agent-'], [role='tab']):not(:disabled):active {
+.agent-setup :is(button, a[data-testid^='agent-'], [role='tab']):not(:disabled):not(.ccswitch-app-demo *):active {
   transform: scale(0.97);
 }
 
@@ -1447,7 +1648,7 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-setup :is(button, a[data-testid^='agent-'], [role='tab']):active,
+  .agent-setup :is(button, a[data-testid^='agent-'], [role='tab']):not(.ccswitch-app-demo *):active,
   .agent-card-interactive:hover,
   .agent-card-interactive:active {
     transform: none;

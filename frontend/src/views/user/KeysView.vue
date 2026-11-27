@@ -1610,82 +1610,14 @@
     />
 
     <!-- CCS import: pick platform + model, then open ccswitch:// deeplink -->
-    <BaseDialog
+    <CcsImportModal
       :show="showCcsImportModal"
-      :title="t('keys.ccsImport.title')"
-      width="narrow"
+      :api-key="pendingCcsRow?.key || ''"
+      :platform="pendingCcsRow?.group?.platform || 'anthropic'"
+      :base-url="publicSettings?.api_base_url || ''"
+      :site-name="publicSettings?.site_name || 'sub2api'"
       @close="closeCcsImportModal"
-    >
-      <div class="space-y-4">
-        <p class="text-sm text-gray-600 dark:text-gray-400">
-          {{ t('keys.ccsImport.description') }}
-        </p>
-        <div>
-          <label class="input-label" for="ccs-import-platform">{{ t('keys.ccsImport.platform') }}</label>
-          <Select
-            id="ccs-import-platform"
-            :model-value="ccsImportApp"
-            :options="ccsAppOptions"
-            :aria-label="t('keys.ccsImport.platform')"
-            @update:model-value="onCcsAppChange"
-          />
-        </div>
-        <div>
-          <div class="mb-1.5 flex items-center justify-between gap-2">
-            <label class="input-label mb-0" for="ccs-import-model">{{ t('keys.ccsImport.model') }}</label>
-            <button
-              v-if="pendingCcsRow && !ccsModelsLoading"
-              type="button"
-              data-test="ccs-import-model-reload"
-              class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-              @click="loadCcsModels(pendingCcsRow)"
-            >
-              <UIcon name="i-lucide-refresh-cw" class="size-3" aria-hidden="true" />
-              <span>{{ ccsModelsError || ccsAvailableModels.length === 0 ? t('keys.ccsImport.modelRetry') : t('keys.ccsImport.modelRefresh') }}</span>
-            </button>
-          </div>
-          <Select
-            id="ccs-import-model"
-            :model-value="ccsImportModel"
-            :options="ccsModelOptions"
-            :loading="ccsModelsLoading"
-            :disabled="ccsModelsLoading"
-            :placeholder="ccsModelsLoading ? t('keys.ccsImport.modelLoading') : t('keys.ccsImport.modelPlaceholder')"
-            :empty-text="ccsModelsError ? t('keys.ccsImport.modelLoadFailed') : t('keys.ccsImport.modelEmpty')"
-            :searchable="true"
-            :creatable="ccsModelsError"
-            :clearable="true"
-            :aria-label="t('keys.ccsImport.model')"
-            @update:model-value="onCcsModelChange"
-          />
-          <p
-            class="input-hint mt-1"
-            :class="ccsModelsError ? 'text-error' : ''"
-            data-test="ccs-import-model-hint"
-          >
-            {{ ccsModelHintText }}
-          </p>
-        </div>
-        <UAlert
-          v-if="ccsImportDeeplinkUnsupported"
-          color="warning"
-          variant="subtle"
-          icon="i-lucide-triangle-alert"
-          :description="t('keys.ccsImport.deeplinkUnsupported')"
-          :ui="{ description: 'text-xs leading-5' }"
-        />
-      </div>
-      <template #footer>
-        <div class="flex justify-end gap-2">
-          <UButton color="neutral" variant="outline" size="lg" @click="closeCcsImportModal">
-            {{ t('common.cancel') }}
-          </UButton>
-          <UButton size="lg" :disabled="ccsImportDeeplinkUnsupported || ccsModelsLoading" @click="confirmCcsImport">
-            {{ t('common.import') }}
-          </UButton>
-        </div>
-      </template>
-    </BaseDialog>
+    />
 
     <!-- Group Selector Dropdown (Teleported to body to avoid overflow clipping) -->
     <Teleport to="body">
@@ -1811,6 +1743,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import Toggle from '@/components/common/Toggle.vue'
 	import Icon from '@/components/icons/Icon.vue'
 	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
+	import CcsImportModal from '@/components/keys/CcsImportModal.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
@@ -1831,18 +1764,6 @@ import { formatDateTime } from '@/utils/format'
 import { accountLacksLoginPassword } from '@/utils/accountPassword'
 import { rateLimitWindows, RATE_LIMIT_BAR_CLASS, RATE_LIMIT_TEXT_CLASS } from '@/utils/keyRateLimits'
 import { platformBadgeLightClass } from '@/utils/platformColors'
-import {
-  buildCcSwitchImportDeeplink,
-  CC_SWITCH_APP_LABEL_KEYS,
-  CC_SWITCH_APPS,
-  ccSwitchProviderDeeplinkSupported,
-  defaultCcSwitchModel,
-  fetchCcSwitchModels,
-  isCcSwitchApp,
-  pickCcSwitchModel,
-  resolveCcSwitchImportConfig,
-  type CcSwitchApp
-} from '@/utils/ccswitchImport'
 
 // Helper to format date for datetime-local input
 const formatDateTimeLocal = (isoDate: string): string => {
@@ -2269,49 +2190,9 @@ const showCcsImportModal = ref(false)
 const showColumnDropdown = ref(false)
 // 正在轮换（重置）密钥的 key ID，用于禁用按钮并显示转圈。
 const rotatingKeyId = ref<number | null>(null)
-// CCS 导入只在刚拿到明文回执时可用：这里带上明文，用完即弃。
+// CCS 导入只在刚拿到明文回执或解密密文时可用：这里带上明文，用完即弃。
 type ApiKeyWithPlaintext = ApiKey & { key: string }
 const pendingCcsRow = ref<ApiKeyWithPlaintext | null>(null)
-const ccsImportApp = ref<CcSwitchApp>('claude')
-const ccsImportModel = ref('')
-const ccsAvailableModels = ref<string[]>([])
-const ccsModelsLoading = ref(false)
-const ccsModelsLoaded = ref(false)
-const ccsModelsError = ref(false)
-let ccsModelsAbort: AbortController | null = null
-
-const ccsAppOptions = computed(() =>
-  CC_SWITCH_APPS.map((value) => ({
-    value,
-    label: t(`keys.ccsImport.${CC_SWITCH_APP_LABEL_KEYS[value]}`)
-  }))
-)
-
-const ccsImportDeeplinkUnsupported = computed(
-  () => !ccSwitchProviderDeeplinkSupported(ccsImportApp.value)
-)
-
-// 只展示该密钥通过 /v1/models 真实拉取到的可用模型，不再混入写死的静态猜测模型。
-const ccsModelOptions = computed(() => {
-  const values = [...ccsAvailableModels.value]
-  const current = ccsImportModel.value.trim()
-  if (ccsModelsError.value && current && !values.includes(current)) {
-    values.unshift(current)
-  }
-  return values.map((value) => ({ value, label: value }))
-})
-
-const ccsModelHintText = computed(() => {
-  if (ccsModelsLoading.value) return t('keys.ccsImport.modelLoading')
-  if (ccsModelsError.value) return t('keys.ccsImport.modelLoadFailed')
-  if (ccsModelsLoaded.value && ccsAvailableModels.value.length === 0) {
-    return t('keys.ccsImport.modelEmpty')
-  }
-  if (ccsAvailableModels.value.length > 0) {
-    return t('keys.ccsImport.modelLoadedHint', { count: ccsAvailableModels.value.length })
-  }
-  return t('keys.ccsImport.modelHint')
-})
 const selectedKey = ref<ApiKey | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
 // 明文 key 的短生命周期状态：只在创建/轮换回执弹窗与"使用密钥"弹窗之间流转，
@@ -3908,86 +3789,9 @@ const resetRateLimitUsage = async () => {
   }
 }
 
-const applyCcsModelDefault = () => {
-  if (ccsAvailableModels.value.length > 0) {
-    ccsImportModel.value = pickCcSwitchModel(
-      defaultCcSwitchModel(ccsImportApp.value),
-      ccsAvailableModels.value,
-      ccsImportApp.value
-    )
-    return
-  }
-  if (!ccsModelsError.value) {
-    ccsImportModel.value = ''
-  }
-}
-
-const fetchRealModelsForKey = async (
-  baseUrl: string,
-  apiKey: string,
-  signal: AbortSignal
-): Promise<string[]> => {
-  try {
-    return await fetchCcSwitchModels(baseUrl, apiKey, signal)
-  } catch (err) {
-    if (signal.aborted) throw err
-    // 若站点配置了独立 api_base_url 且跨域拦截了浏览器 fetch，回退当前同源拉取 /v1/models。
-    const sameOrigin = typeof window !== 'undefined' ? window.location.origin : ''
-    let differs = false
-    if (sameOrigin) {
-      try {
-        differs = new URL(baseUrl).origin !== sameOrigin
-      } catch {
-        differs = false
-      }
-    }
-    if (differs) {
-      return await fetchCcSwitchModels(sameOrigin, apiKey, signal)
-    }
-    throw err
-  }
-}
-
-const loadCcsModels = async (row: ApiKeyWithPlaintext) => {
-  ccsModelsAbort?.abort()
-  const abort = new AbortController()
-  ccsModelsAbort = abort
-  ccsAvailableModels.value = []
-  ccsModelsLoaded.value = false
-  ccsModelsError.value = false
-  ccsModelsLoading.value = true
-  try {
-    const baseUrl = publicSettings.value?.api_base_url || window.location.origin
-    const ids = await fetchRealModelsForKey(baseUrl, row.key, abort.signal)
-    if (abort.signal.aborted) return
-    ccsAvailableModels.value = ids
-    ccsModelsLoaded.value = true
-    applyCcsModelDefault()
-  } catch {
-    if (abort.signal.aborted) return
-    ccsModelsError.value = true
-    ccsModelsLoaded.value = true
-    ccsImportModel.value = ''
-  } finally {
-    if (ccsModelsAbort === abort) {
-      ccsModelsLoading.value = false
-    }
-  }
-}
-
 const importToCcswitch = (row: ApiKeyWithPlaintext) => {
-  const platform = row.group?.platform || 'anthropic'
-  const baseUrl = publicSettings.value?.api_base_url || window.location.origin
-  const config = resolveCcSwitchImportConfig(
-    platform,
-    platform === 'gemini' ? 'gemini' : 'claude',
-    baseUrl
-  )
   pendingCcsRow.value = row
-  ccsImportApp.value = config.app
-  ccsImportModel.value = ''
   showCcsImportModal.value = true
-  void loadCcsModels(row)
 }
 
 // 明文回执弹窗里点"导入 CCS"：把这次拿到的明文交给既有 CCS 导入流程。
@@ -4006,77 +3810,7 @@ const importDecryptedToCcswitch = (secret: string) => {
   importToCcswitch({ ...resolveKeyGroupRow(row), key: secret })
 }
 
-const onCcsAppChange = (value: string | number | boolean | null) => {
-  const app = String(value)
-  if (!isCcSwitchApp(app)) return
-  ccsImportApp.value = app
-  applyCcsModelDefault()
-}
-
-const onCcsModelChange = (value: string | number | boolean | null) => {
-  ccsImportModel.value = value == null ? '' : String(value)
-}
-
-const executeCcsImport = (row: ApiKeyWithPlaintext, app: CcSwitchApp, model: string) => {
-  const baseUrl = publicSettings.value?.api_base_url || window.location.origin
-  const platform = row.group?.platform || 'anthropic'
-
-  const usageScript = `({
-    request: {
-      url: "{{baseUrl}}".replace(/\\/+$/, "").replace(/\\/v1$/, "") + "/v1/usage",
-      method: "GET",
-      headers: { "Authorization": "Bearer {{apiKey}}" }
-    },
-    extractor: function(response) {
-      const remaining = response?.remaining ?? response?.quota?.remaining ?? response?.balance;
-      const unit = response?.unit ?? response?.quota?.unit ?? "USD";
-      return {
-        isValid: response?.is_active ?? response?.isValid ?? true,
-        remaining,
-        unit
-      };
-    }
-  })`
-  const providerName = (publicSettings.value?.site_name || 'sub2api').trim() || 'sub2api'
-  const deeplink = buildCcSwitchImportDeeplink({
-    baseUrl,
-    platform,
-    providerName,
-    apiKey: row.key,
-    usageScript,
-    app,
-    model
-  })
-
-  try {
-    window.open(deeplink, '_self')
-
-    // Check if the protocol handler worked by detecting if we're still focused
-    setTimeout(() => {
-      if (document.hasFocus()) {
-        // Still focused means the protocol handler likely failed
-        appStore.showError(t('keys.ccSwitchNotInstalled'))
-      }
-    }, 100)
-  } catch (error) {
-    appStore.showError(t('keys.ccSwitchNotInstalled'))
-  }
-}
-
-const confirmCcsImport = () => {
-  if (!pendingCcsRow.value) return
-  if (!ccSwitchProviderDeeplinkSupported(ccsImportApp.value)) return
-  executeCcsImport(pendingCcsRow.value, ccsImportApp.value, ccsImportModel.value.trim())
-  closeCcsImportModal()
-}
-
 const closeCcsImportModal = () => {
-  ccsModelsAbort?.abort()
-  ccsModelsAbort = null
-  ccsModelsLoading.value = false
-  ccsModelsLoaded.value = false
-  ccsModelsError.value = false
-  ccsAvailableModels.value = []
   showCcsImportModal.value = false
   pendingCcsRow.value = null
 }
@@ -4133,7 +3867,6 @@ onUnmounted(() => {
   document.removeEventListener('click', closeGroupSelector)
   if (resetTimer) clearInterval(resetTimer)
   if (copiedKeyTimer) clearTimeout(copiedKeyTimer)
-  ccsModelsAbort?.abort()
 })
 </script>
 

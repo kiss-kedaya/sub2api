@@ -8,6 +8,7 @@ import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { applyDocumentTitle } from './documentTitle'
 import { isRestrictedInSimpleMode } from './simpleMode'
 import { isChunkLoadError, recoverFromChunkLoadError } from '@/utils/chunkLoadError'
+import { sanitizeRedirectPath } from '@/utils/url'
 
 export function installNavigationGuards(router: Router, restoreAuth = true) {
 let authInitialized = false
@@ -82,6 +83,15 @@ router.beforeEach(async (to, _from, next) => {
       // (they are blocked from all protected routes, so redirecting would cause a loop)
       if (appStore.backendModeEnabled && !authStore.isAdmin) {
         next()
+        return
+      }
+      const redirectTarget = sanitizeRedirectPath(to.query.redirect, '')
+      if (
+        redirectTarget &&
+        !redirectTarget.startsWith('/login') &&
+        !redirectTarget.startsWith('/register')
+      ) {
+        next(redirectTarget)
         return
       }
       // Admin users go to admin dashboard, regular users go to user dashboard

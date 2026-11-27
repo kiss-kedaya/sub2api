@@ -169,7 +169,7 @@ export function consolePreviewPlugin(): Plugin {
           res.end()
           return
         }
-        if (!/^\/(api|v1|setup)(\/|$)/i.test(path)) { next(); return }
+        if (!/^\/(api|v1|v1beta|setup)(\/|$)/i.test(path)) { next(); return }
         if (req.method === 'POST' && /^\/api\/v1\/(?:admin\/)?tickets\/attachments$/.test(path)) {
           void (async () => {
             try {
@@ -247,10 +247,11 @@ export function consolePreviewPlugin(): Plugin {
             } else {
               result = api.handle(req.method || 'GET', path, url.searchParams, body, {
                 authorization: typeof req.headers.authorization === 'string' ? req.headers.authorization : '',
+                'x-goog-api-key': typeof req.headers['x-goog-api-key'] === 'string' ? req.headers['x-goog-api-key'] : '',
               })
             }
             if (path === '/api/v1/settings/public') result = { ...settings, ...previewTheme, api_base_url: `http://${host}` }
-            const raw = path === '/setup/status' || path.startsWith('/v1/')
+            const raw = path === '/setup/status' || path.startsWith('/v1/') || path.startsWith('/v1beta/')
             send(res, 200, raw ? result : { code: 0, message: '本地演示数据', data: result })
           } catch (error) {
             const status = error instanceof PreviewError ? error.status : 500
@@ -299,7 +300,10 @@ export function consolePreviewPlugin(): Plugin {
             }, { once: true });
             document.addEventListener('click', function(event) {
               var anchor = event.target instanceof Element ? event.target.closest('a[href]') : null;
-              if (anchor && new URL(anchor.href, location.href).origin !== location.origin) {
+              if (!anchor) return;
+              var targetUrl = new URL(anchor.href, location.href);
+              if (targetUrl.protocol === 'ccswitch:') return;
+              if (targetUrl.origin !== location.origin) {
                 event.preventDefault(); event.stopImmediatePropagation();
               }
             }, true);

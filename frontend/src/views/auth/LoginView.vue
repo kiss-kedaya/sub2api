@@ -270,7 +270,7 @@
       <p class="text-gray-500 dark:text-dark-400">
         {{ t('auth.dontHaveAccount') }}
         <router-link
-          to="/register"
+          :to="registerLocation"
           class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
         >
           {{ t('auth.signUp') }}
@@ -314,6 +314,7 @@ import type {
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { clearAllAffiliateReferralCodes } from '@/utils/oauthAffiliate'
 import { isChunkLoadError, pushOrReload, recoverFromChunkLoadError } from '@/utils/chunkLoadError'
+import { sanitizeRedirectPath } from '@/utils/url'
 
 const { t } = useI18n()
 const LOGIN_AGREEMENT_STORAGE_KEY = 'sub2api_login_agreement_consent'
@@ -323,6 +324,10 @@ const LOGIN_AGREEMENT_STORAGE_KEY = 'sub2api_login_agreement_consent'
 const router = useRouter()
 const authStore = useAuthStore()
 const appStore = useAppStore()
+const registerLocation = computed(() => {
+  const safeRedirect = sanitizeRedirectPath(router.currentRoute.value.query?.redirect, '')
+  return safeRedirect ? { path: '/register', query: { redirect: safeRedirect } } : '/register'
+})
 
 // ==================== State ====================
 
@@ -835,7 +840,7 @@ async function handleLogin(): Promise<void> {
     await finishLoginSuccess()
   } catch (error: unknown) {
     if (isChunkLoadError(error)) {
-      recoverFromChunkLoadError((router.currentRoute.value.query.redirect as string) || '/dashboard')
+      recoverFromChunkLoadError(loginRedirect())
       return
     }
     errorMessage.value = extractI18nErrorMessage(error, t, 'auth.errors', t('auth.loginFailed'))
@@ -878,11 +883,10 @@ async function handlePasskeyLogin(): Promise<void> {
     await authStore.loginWithPasskey(proof)
     clearAllAffiliateReferralCodes()
     appStore.showSuccess(t('auth.loginSuccess'))
-    const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
-    await pushOrReload(router, redirectTo)
+    await pushOrReload(router, loginRedirect())
   } catch (error: unknown) {
     if (isChunkLoadError(error)) {
-      recoverFromChunkLoadError((router.currentRoute.value.query.redirect as string) || '/dashboard')
+      recoverFromChunkLoadError(loginRedirect())
       return
     }
     const fallback = error instanceof DOMException && error.name === 'NotAllowedError'
@@ -951,7 +955,7 @@ function maskLoginEmail(email: string): string {
 }
 
 const loginRedirect = (): string =>
-  (router.currentRoute.value.query.redirect as string) || '/dashboard'
+  sanitizeRedirectPath(router.currentRoute.value.query?.redirect)
 
 /** 全部因子通过后：清挑战、提示成功、跳转目标页。 */
 async function finishLoginSuccess(): Promise<void> {

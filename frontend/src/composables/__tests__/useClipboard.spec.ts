@@ -155,4 +155,34 @@ describe('useClipboard', () => {
     expect(copied.value).toBe(false)
     expect(mockShowError).toHaveBeenCalled()
   })
+
+  it('mounts fallback textarea inside active dialog without readonly and restores focus', async () => {
+    Object.defineProperty(window, 'isSecureContext', { value: false, writable: true })
+
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    const btn = document.createElement('button')
+    dialog.appendChild(btn)
+    document.body.appendChild(dialog)
+    btn.focus()
+
+    let observedParent: HTMLElement | null = null
+    let observedReadOnly: boolean | null = null
+    ;(document as any).execCommand = vi.fn(() => {
+      const ta = dialog.querySelector('textarea')
+      observedParent = ta?.parentElement ?? null
+      observedReadOnly = ta?.readOnly ?? null
+      return true
+    })
+
+    const { copyToClipboard } = useClipboard()
+    const result = await copyToClipboard('dialog-secret-123')
+
+    expect(result).toBe(true)
+    expect(observedParent).toBe(dialog)
+    expect(observedReadOnly).toBe(false)
+    expect(dialog.querySelector('textarea')).toBeNull()
+    expect(document.activeElement).toBe(btn)
+    dialog.remove()
+  })
 })

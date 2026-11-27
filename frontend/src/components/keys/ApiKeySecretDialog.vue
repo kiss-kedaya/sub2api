@@ -187,6 +187,8 @@ const props = withDefaults(
     hideCcsImport?: boolean
     /** Account can type a login password (hidden for passwordless OAuth-only accounts). */
     canSeal?: boolean
+    /** Whether the "view later" opt-in defaults on when sealing is available. */
+    defaultSeal?: boolean
     /** 创建这次 Key 时使用的身份校验因子；封存密文时原样记录，二次查看要求同一因子。 */
     authFactor?: string
     /**
@@ -196,7 +198,7 @@ const props = withDefaults(
      */
     verifiedPassword?: string
   }>(),
-  { apiKey: null, hideCcsImport: false, canSeal: false, authFactor: '', verifiedPassword: '' },
+  { apiKey: null, hideCcsImport: false, canSeal: false, defaultSeal: true, authFactor: '', verifiedPassword: '' },
 )
 
 const emit = defineEmits<{ close: []; use: []; 'import-ccs': []; sealed: [] }>()
@@ -245,7 +247,7 @@ const hasVerifiedPassword = computed(() => props.verifiedPassword !== '' && !typ
 
 const resetSealState = () => {
   // 账号支持登录密码封存时默认开启「以后可查看」；回执关闭时弹窗会从 DOM 卸载，不影响列表页。
-  sealEnabled.value = props.canSeal
+  sealEnabled.value = props.canSeal && props.defaultSeal
   userToggledSeal.value = false
   sealPassword.value = ''
   sealing.value = false
@@ -354,7 +356,7 @@ watch(
     if (!canSeal) {
       sealEnabled.value = false
     } else if (props.show && !userToggledSeal.value) {
-      sealEnabled.value = true
+      sealEnabled.value = props.defaultSeal
     }
   },
 )

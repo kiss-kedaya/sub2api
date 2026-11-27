@@ -41,3 +41,38 @@ export function sanitizeUrl(value: string, options: SanitizeOptions = {}): strin
     return ''
   }
 }
+
+const hasControlChar = (value: string): boolean =>
+  Array.from(value).some((ch) => {
+    const code = ch.charCodeAt(0)
+    return code <= 0x1f || code === 0x7f
+  })
+
+/**
+ * 校验并规范化站内重定向路径，防止开放重定向（protocol-relative、外部 URL、控制字符注入）。
+ */
+export function sanitizeRedirectPath(
+  path: unknown,
+  fallback = '/dashboard',
+): string {
+  const raw = Array.isArray(path) ? path[0] : path
+  if (typeof raw !== 'string') return fallback
+  if (hasControlChar(raw)) return fallback
+  const trimmed = raw.trim()
+  if (!trimmed) return fallback
+  if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.startsWith('/\\')) {
+    return fallback
+  }
+  if (trimmed.includes('://')) {
+    return fallback
+  }
+  try {
+    const parsed = new URL(trimmed, 'http://localhost')
+    if (parsed.origin !== 'http://localhost') {
+      return fallback
+    }
+    return trimmed
+  } catch {
+    return fallback
+  }
+}

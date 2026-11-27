@@ -178,6 +178,7 @@ import {
   loadAffiliateReferralCode,
   oauthAffiliatePayload
 } from '@/utils/oauthAffiliate'
+import { sanitizeRedirectPath } from '@/utils/url'
 
 const { t, locale } = useI18n()
 
@@ -808,8 +809,8 @@ async function handleVerify(): Promise<void> {
     // Show success toast
     appStore.showSuccess(t('auth.accountCreatedSuccess', { siteName: siteName.value }))
 
-    // Redirect to dashboard
-    await router.push(pendingRedirect.value || '/dashboard')
+    // Redirect to intended page or dashboard
+    await router.push(sanitizeRedirectPath(pendingRedirect.value))
   } catch (error: unknown) {
     errorMessage.value = buildRegistrationErrorMessage(error, t('auth.verifyFailed'))
 

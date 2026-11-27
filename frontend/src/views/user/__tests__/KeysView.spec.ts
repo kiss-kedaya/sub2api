@@ -589,7 +589,6 @@ describe('user KeysView column settings', () => {
     // 创建/轮换响应是唯一带明文的回执，CCS 导入只能从这次回执进入。
     createKey.mockResolvedValue({ ...createApiKey(), key: 'sk-test-key' })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }))
-    const open = vi.spyOn(window, 'open').mockReturnValue(null)
     const wrapper = await mountView()
     try {
       await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
@@ -602,8 +601,9 @@ describe('user KeysView column settings', () => {
       await flushPromises()
       wrapper.getComponent('#ccs-import-platform').vm.$emit('update:modelValue', app)
       await nextTick()
-      await getButtonByText(wrapper, 'common.import').trigger('click')
-      const params = new URL(String(open.mock.calls[0][0])).searchParams
+      const confirmLink = wrapper.get('[data-test="ccs-import-confirm"]')
+      expect(confirmLink.element.tagName).toBe('A')
+      const params = new URL(confirmLink.attributes('href')!).searchParams
       expect(params.get('endpoint')).toBe(endpoint)
       expect(params.get('usageAutoInterval')).toBe('30')
       const script = atob(params.get('usageScript')!).replaceAll('{{baseUrl}}', endpoint)
@@ -612,7 +612,6 @@ describe('user KeysView column settings', () => {
       expect(request.method).toBe('GET')
     } finally {
       wrapper.unmount()
-      open.mockRestore()
       vi.unstubAllGlobals()
     }
   })
@@ -629,7 +628,6 @@ describe('user KeysView column settings', () => {
       }),
     })
     vi.stubGlobal('fetch', fetchMock)
-    const open = vi.spyOn(window, 'open').mockReturnValue(null)
     const wrapper = await mountView()
     try {
       await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
@@ -657,13 +655,13 @@ describe('user KeysView column settings', () => {
       await nextTick()
       expect(modelSelect.props('modelValue')).toBe('gpt-5.4-real')
 
-      await getButtonByText(wrapper, 'common.import').trigger('click')
-      const params = new URL(String(open.mock.calls[0][0])).searchParams
+      const confirmLink = wrapper.get('[data-test="ccs-import-confirm"]')
+      expect(confirmLink.element.tagName).toBe('A')
+      const params = new URL(confirmLink.attributes('href')!).searchParams
       expect(params.get('app')).toBe('codex')
       expect(params.get('model')).toBe('gpt-5.4-real')
     } finally {
       wrapper.unmount()
-      open.mockRestore()
       vi.unstubAllGlobals()
     }
   })
