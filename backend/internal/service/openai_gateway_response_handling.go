@@ -172,11 +172,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if !stageFirstOutput || len(attemptResponseHeaders) == 0 || c.Writer.Written() {
 			return
 		}
-		for key, values := range attemptResponseHeaders {
-			for _, value := range values {
-				c.Writer.Header().Add(key, value)
-			}
-		}
+		responseheaders.WritePreparedHeaders(c.Writer.Header(), attemptResponseHeaders)
 		// 暂存头此刻才真正写给客户端：turn-state 溯源在这里记录（见
 		// noteStagedOpenAICodexTurnStateCommitted 的 failover 说明）。
 		s.noteStagedOpenAICodexTurnStateCommitted(c, account, attemptResponseHeaders)

@@ -144,6 +144,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
 		SetCrossProtocolConversionEnabled(groupIn.CrossProtocolConversionEnabled).
 		SetReturnRequestedModel(groupIn.ReturnRequestedModel).
+		SetSaveResponseMsgID(groupIn.SaveResponseMsgID).
 		SetAllowLive(groupIn.AllowLive).
 		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
 		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).
@@ -331,6 +332,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetAllowMessagesDispatch(groupIn.AllowMessagesDispatch).
 		SetCrossProtocolConversionEnabled(groupIn.CrossProtocolConversionEnabled).
 		SetReturnRequestedModel(groupIn.ReturnRequestedModel).
+		SetSaveResponseMsgID(groupIn.SaveResponseMsgID).
 		SetAllowLive(groupIn.AllowLive).
 		SetForceOpenaiFast(groupIn.ForceOpenAIFast).
 		SetFreeOpenaiFast(groupIn.FreeOpenAIFast).

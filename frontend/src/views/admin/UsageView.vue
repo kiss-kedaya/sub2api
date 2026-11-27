@@ -743,6 +743,12 @@ const getRequestTypeLabel = (log: AdminUsageLog): string => {
     throw lastError instanceof Error ? lastError : new Error('Export page failed')
   }
 
+const neutralizeSpreadsheetFormula = (value: string): string => (/^[=+\-@\t\r]/.test(value) ? `'${value}` : value)
+const safeExportText = (value: string | null | undefined): string => {
+  if (!value) return ''
+  return neutralizeSpreadsheetFormula(value)
+}
+
 const exportToExcel = async (format: 'xlsx' | 'csv' = 'xlsx') => {
   if (isObserver.value) return
   if (exporting.value) return; exporting.value = true; exportProgress.show = true
@@ -761,7 +767,7 @@ const exportToExcel = async (format: 'xlsx' | 'csv' = 'xlsx') => {
       t('admin.usage.cacheReadCost'), t('admin.usage.cacheCreationCost'),
       t('usage.rate'), t('usage.accountMultiplier'), t('usage.original'), t('usage.userBilled'), t('usage.accountBilled'),
       t('usage.firstToken'), t('usage.duration'),
-      t('admin.usage.requestId'), t('admin.usage.upstreamRequestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
+      t('admin.usage.requestId'), 'X-Request-Id', 'X-Client-Request-Id', t('admin.usage.responseMsgId'), t('admin.usage.upstreamRequestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
     ]
     const ws = XLSX.utils.aoa_to_sheet([headers])
     while (true) {
@@ -775,16 +781,16 @@ const exportToExcel = async (format: 'xlsx' | 'csv' = 'xlsx') => {
       if (p > 1 && res.page_size && res.page_size !== pageSize) throw new Error('Pagination size changed during export')
       pageSize = res.page_size || pageSize
       const rows = (res.items || []).map((log: AdminUsageLog) => [
-        log.created_at, (log.user?.email || log.user_summary?.email || ''), (log.api_key?.name || log.api_key_summary?.name || ''), log.account?.name || log.account_summary?.name || '', log.model,
-        log.upstream_model || log.model, log.upstream_response_model || '', log.upstream_model_mismatch == null ? '' : t(log.upstream_model_mismatch ? 'common.yes' : 'common.no'), formatReasoningEffort(log.reasoning_effort), formatReasoningEffort(log.upstream_reasoning_effort || log.reasoning_effort), log.group?.name || '',
-        log.inbound_endpoint || '', log.upstream_endpoint || '', getRequestTypeLabel(log),
+        log.created_at, safeExportText(log.user?.email || log.user_summary?.email), safeExportText(log.api_key?.name || log.api_key_summary?.name), safeExportText(log.account?.name || log.account_summary?.name), safeExportText(log.model),
+        safeExportText(log.upstream_model || log.model), safeExportText(log.upstream_response_model), log.upstream_model_mismatch == null ? '' : t(log.upstream_model_mismatch ? 'common.yes' : 'common.no'), formatReasoningEffort(log.reasoning_effort), formatReasoningEffort(log.upstream_reasoning_effort || log.reasoning_effort), safeExportText(log.group?.name),
+        safeExportText(log.inbound_endpoint), safeExportText(log.upstream_endpoint), getRequestTypeLabel(log),
         log.input_tokens, log.output_tokens, log.cache_read_tokens, log.cache_creation_tokens,
         log.input_cost?.toFixed(6) || '0.000000', log.output_cost?.toFixed(6) || '0.000000',
         log.cache_read_cost?.toFixed(6) || '0.000000', log.cache_creation_cost?.toFixed(6) || '0.000000',
         log.rate_multiplier?.toPrecision(4) || '1.00', (log.account_rate_multiplier ?? 1).toPrecision(4),
         log.total_cost?.toFixed(6) || '0.000000', log.actual_cost?.toFixed(6) || '0.000000',
         ((log.account_stats_cost ?? log.total_cost) * (log.account_rate_multiplier ?? 1)).toFixed(6), log.first_token_ms ?? '', log.duration_ms,
-        log.request_id || '', log.upstream_request_id || '', log.user_agent || '', log.ip_address || ''
+        safeExportText(log.request_id), safeExportText(log.response_request_id), safeExportText(log.client_request_id), safeExportText(log.response_msg_id), safeExportText(log.upstream_request_id), safeExportText(log.user_agent), safeExportText(log.ip_address)
       ])
       if (rows.length) {
         XLSX.utils.sheet_add_aoa(ws, rows, { origin: -1 })
@@ -824,7 +830,7 @@ const HIDDEN_COLUMNS_VERSION_KEY = 'usage-hidden-columns-version'
 const HIDDEN_COLUMNS_PREV_VERSION = 'request-id-hidden-by-default'
 const HIDDEN_COLUMNS_CURRENT_VERSION = 'upstream-request-id-hidden-by-default'
 
-const observerHiddenColumns = new Set(['endpoint', 'request_id', 'upstream_request_id', 'user_agent', 'ip_address'])
+const observerHiddenColumns = new Set(['endpoint', 'request_id', 'response_msg_id', 'upstream_request_id', 'user_agent', 'ip_address'])
 const allColumns = computed(() => [
   { key: 'user', label: t('admin.usage.user'), sortable: false },
   { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
@@ -840,6 +846,7 @@ const allColumns = computed(() => [
   { key: 'latency', label: t('usage.latency'), sortable: false },
   { key: 'created_at', label: t('usage.time'), sortable: true },
   { key: 'request_id', label: t('admin.usage.requestId'), sortable: false },
+  { key: 'response_msg_id', label: t('admin.usage.responseMsgId'), sortable: false },
   { key: 'upstream_request_id', label: t('admin.usage.upstreamRequestId'), sortable: false },
   { key: 'user_agent', label: t('usage.userAgent'), sortable: false },
   { key: 'ip_address', label: t('admin.usage.ipAddress'), sortable: false }

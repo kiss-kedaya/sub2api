@@ -1159,6 +1159,20 @@ func (_u *GroupUpdate) SetNillableReturnRequestedModel(v *bool) *GroupUpdate {
 	return _u
 }
 
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (_u *GroupUpdate) SetSaveResponseMsgID(v bool) *GroupUpdate {
+	_u.mutation.SetSaveResponseMsgID(v)
+	return _u
+}
+
+// SetNillableSaveResponseMsgID sets the "save_response_msg_id" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableSaveResponseMsgID(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetSaveResponseMsgID(*v)
+	}
+	return _u
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (_u *GroupUpdate) SetAllowLive(v bool) *GroupUpdate {
 	_u.mutation.SetAllowLive(v)
@@ -2161,6 +2175,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.ReturnRequestedModel(); ok {
 		_spec.SetField(group.FieldReturnRequestedModel, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.SaveResponseMsgID(); ok {
+		_spec.SetField(group.FieldSaveResponseMsgID, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
@@ -3678,6 +3695,20 @@ func (_u *GroupUpdateOne) SetNillableReturnRequestedModel(v *bool) *GroupUpdateO
 	return _u
 }
 
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (_u *GroupUpdateOne) SetSaveResponseMsgID(v bool) *GroupUpdateOne {
+	_u.mutation.SetSaveResponseMsgID(v)
+	return _u
+}
+
+// SetNillableSaveResponseMsgID sets the "save_response_msg_id" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableSaveResponseMsgID(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetSaveResponseMsgID(*v)
+	}
+	return _u
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (_u *GroupUpdateOne) SetAllowLive(v bool) *GroupUpdateOne {
 	_u.mutation.SetAllowLive(v)
@@ -4710,6 +4741,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.ReturnRequestedModel(); ok {
 		_spec.SetField(group.FieldReturnRequestedModel, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.SaveResponseMsgID(); ok {
+		_spec.SetField(group.FieldSaveResponseMsgID, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)

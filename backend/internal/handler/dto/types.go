@@ -260,6 +260,8 @@ type AdminGroup struct {
 	Group
 	// ReturnRequestedModel controls response model metadata for this group.
 	ReturnRequestedModel bool `json:"return_requested_model"`
+	// SaveResponseMsgID controls persisting Claude/Anthropic response message IDs on usage logs.
+	SaveResponseMsgID bool `json:"save_response_msg_id"`
 	// 搜索上游配置仅供主管理员读取，普通分组及其嵌套 DTO 不携带。
 	// 密钥本身永不返回，只暴露是否已配置。
 	SearchProviderBaseURL   *string `json:"search_provider_base_url"`
@@ -719,7 +721,13 @@ type UsageLog struct {
 	APIKeyID  int64  `json:"api_key_id"`
 	AccountID int64  `json:"account_id"`
 	RequestID string `json:"request_id"`
-	Model     string `json:"model"`
+	// ResponseRequestID is the final X-Request-Id response header returned to the client.
+	ResponseRequestID *string `json:"response_request_id,omitempty"`
+	// ClientRequestID is the X-Client-Request-Id response header returned to the client.
+	ClientRequestID *string `json:"client_request_id,omitempty"`
+	// ResponseMsgID is the Claude/Anthropic message id (e.g. msg_...) when enabled on the group.
+	ResponseMsgID *string `json:"response_msg_id,omitempty"`
+	Model         string  `json:"model"`
 	// Associated semantic error code, not wire HTTP status or proof of delivery.
 	// Only status is exposed; raw provider errors remain in Ops.
 	FailureStatusCode *int `json:"failure_status_code,omitempty"`

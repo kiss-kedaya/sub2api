@@ -703,7 +703,7 @@ export default {
     inflightLoadFailed: '在途请求加载失败，请点击右上角刷新重试。',
     inflightScheduling: '等待分配账户',
     inflightGroupPending: '等待确定分组',
-    requestIdPlaceholder: '请求/上游 ID；=精确，^前缀',
+    requestIdPlaceholder: 'X-Request-Id / X-Client-Request-Id / msg_...；=精确，^前缀',
     inflightRunningHint: '请求还没结束。点刷新才会更新时长和费用。',
     inflightElapsed: '已运行',
     firstToken: '首 Token',

@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	"github.com/Wei-Shaw/sub2api/internal/util/clientprivacy"
 )
 
 func (s *GatewayService) getUserGroupRateMultiplier(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) float64 {
@@ -251,6 +252,86 @@ func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string)
 		return requestID
 	}
 	return "generated:" + generateRequestID()
+}
+
+// resolveUsageResponseRequestID returns the X-Request-Id header returned to the
+// client, always captured regardless of group msgid settings.
+func resolveUsageResponseRequestID(ctx context.Context, resultRequestID string) *string {
+	if ctx != nil {
+		if v, ok := ctx.Value(ctxkey.ResponseRequestID).(string); ok {
+			if normalized := normalizeUsageTraceID(v); normalized != "" {
+				return &normalized
+			}
+			// Explicit empty value means usageRecordContext observed the live HTTP
+			// response headers and no X-Request-Id was sent (e.g. force_remove).
+			return nil
+		}
+		if ginCtx := OpsGinContextFrom(ctx); ginCtx != nil && ginCtx.Writer != nil {
+			if vals := ginCtx.Writer.Header().Values("X-Request-Id"); len(vals) > 0 {
+				for i := len(vals) - 1; i >= 0; i-- {
+					if normalized := normalizeUsageTraceID(vals[i]); normalized != "" {
+						return &normalized
+					}
+				}
+			}
+			// Live HTTP response had no X-Request-Id header (e.g. force_remove);
+			// do not leak un-sent upstream resultRequestID into a client-visible column.
+			return nil
+		}
+		if v, _ := ctx.Value(ctxkey.RequestID).(string); v != "" {
+			if normalized := normalizeUsageTraceID(v); normalized != "" {
+				return &normalized
+			}
+		}
+	}
+	if trimmed := strings.TrimSpace(resultRequestID); trimmed != "" && !isForcedUsageBillingRequestID(trimmed) {
+		if clientprivacy.Text(trimmed) == trimmed {
+			if normalized := normalizeUsageTraceID(trimmed); normalized != "" {
+				return &normalized
+			}
+		}
+	}
+	return nil
+}
+
+// resolveUsageClientRequestID returns the X-Client-Request-Id header returned to
+// the client, always captured regardless of group msgid settings.
+func resolveUsageClientRequestID(ctx context.Context) *string {
+	if ctx == nil {
+		return nil
+	}
+	if v, _ := ctx.Value(ctxkey.ClientRequestID).(string); v != "" {
+		if normalized := normalizeUsageTraceID(v); normalized != "" {
+			return &normalized
+		}
+	}
+	return nil
+}
+
+// resolveUsageResponseMsgID returns the Claude/Anthropic response message id
+// (e.g. msg_...) only when the effective Anthropic group enables SaveResponseMsgID.
+func resolveUsageResponseMsgID(ctx context.Context, apiKey *APIKey, rawMsgID string) *string {
+	enabled := false
+	hasOverride := false
+	if ctx != nil {
+		if flag, ok := ctx.Value(ctxkey.SaveResponseMsgID).(bool); ok {
+			enabled = flag
+			hasOverride = true
+		} else if g, ok := ctx.Value(ctxkey.Group).(*Group); ok && g != nil {
+			enabled = g.Platform == PlatformAnthropic && g.SaveResponseMsgID
+			hasOverride = true
+		}
+	}
+	if !hasOverride && apiKey != nil && apiKey.Group != nil {
+		enabled = apiKey.Group.Platform == PlatformAnthropic && apiKey.Group.SaveResponseMsgID
+	}
+	if !enabled {
+		return nil
+	}
+	if normalized := normalizeUsageTraceID(rawMsgID); normalized != "" {
+		return &normalized
+	}
+	return nil
 }
 
 func isForcedUsageBillingRequestID(requestID string) bool {
@@ -1388,6 +1469,9 @@ func (s *GatewayService) buildRecordUsageLog(
 		APIKeyID:                 apiKey.ID,
 		AccountID:                account.ID,
 		RequestID:                requestID,
+		ResponseRequestID:        resolveUsageResponseRequestID(ctx, result.RequestID),
+		ClientRequestID:          resolveUsageClientRequestID(ctx),
+		ResponseMsgID:            resolveUsageResponseMsgID(ctx, apiKey, result.ResponseMsgID),
 		UpstreamRequestID:        usageUpstreamRequestIDPtr(account, result.UpstreamHeaders, false),
 		Model:                    result.Model,
 		RequestedModel:           requestedModel,

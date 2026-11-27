@@ -1,10 +1,13 @@
 package handler
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -205,21 +208,24 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 		}
 	}
 
+	requestID := strings.TrimSpace(c.Query("request_id"))
+
 	return &userUsageFilters{
 		Filters: usagestats.UsageLogFilters{
-			UserID:             subject.UserID,
-			APIKeyID:           apiKeyID,
-			GroupID:            groupID,
-			RequestID:          strings.TrimSpace(c.Query("request_id")),
-			Model:              strings.TrimSpace(c.Query("model")),
-			ModelFilterSource:  usagestats.ModelSourceRequested,
-			RequestType:        requestType,
-			Stream:             stream,
-			NativeCompactionV2: nativeCompactionV2,
-			BillingType:        billingType,
-			BillingMode:        billingMode,
-			StartTime:          startPtr,
-			EndTime:            endPtr,
+			UserID:                         subject.UserID,
+			APIKeyID:                       apiKeyID,
+			GroupID:                        groupID,
+			RequestID:                      requestID,
+			ExcludeUpstreamRequestIDSearch: true,
+			Model:                          strings.TrimSpace(c.Query("model")),
+			ModelFilterSource:              usagestats.ModelSourceRequested,
+			RequestType:                    requestType,
+			Stream:                         stream,
+			NativeCompactionV2:             nativeCompactionV2,
+			BillingType:                    billingType,
+			BillingMode:                    billingMode,
+			StartTime:                      startPtr,
+			EndTime:                        endPtr,
 			// Users never see account cost; leaving it out lets the aggregates use the covering index.
 			OmitAccountCost: true,
 		},
@@ -241,6 +247,10 @@ func (h *UsageHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 	parsed, ok := h.parseUserUsageFilters(c, false)
 	if !ok {
+		return
+	}
+	if err := validateUserUsageRequestIDSearch(parsed.Filters.RequestID, parsed.Filters.StartTime, parsed.Filters.EndTime); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
 
@@ -275,7 +285,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 			}
 		}
 		now := time.Now()
-		live := service.VisibleUsageInflight(c.Request.Context(), parsed.Filters.UserID, parsed.Filters, finished)
+		live := visibleUserUsageInflight(c.Request.Context(), parsed.Filters, finished)
 		if len(live) > 0 {
 			head := make([]dto.UsageLog, 0, len(live))
 			for _, row := range live {
@@ -1010,11 +1020,67 @@ func queryInflightOnly(c *gin.Context) bool {
 func (h *UsageHandler) writeUserInflightOnly(c *gin.Context, filters usagestats.UsageLogFilters) {
 	page, pageSize := response.ParsePagination(c)
 	now := time.Now()
-	live := service.VisibleUsageInflight(c.Request.Context(), filters.UserID, filters, nil)
+	live := visibleUserUsageInflight(c.Request.Context(), filters, nil)
 	pageRows, total := service.PageUsageInflight(live, page, pageSize)
 	out := make([]dto.UsageLog, 0, len(pageRows))
 	for _, row := range pageRows {
 		out = append(out, dto.UsageLogFromInflight(row, now))
 	}
 	response.Paginated(c, out, int64(total), page, 10)
+}
+
+func visibleUserUsageInflight(ctx context.Context, filters usagestats.UsageLogFilters, finished map[string]struct{}) []service.UsageInflightSnapshot {
+	liveFilters := filters
+	liveID := strings.TrimSpace(filters.RequestID)
+	if strings.HasPrefix(liveID, "=") || strings.HasPrefix(liveID, "^") {
+		liveID = strings.TrimSpace(liveID[1:])
+	}
+	liveFilters.RequestID = service.NormalizeUsageRequestIDKey(liveID)
+	live := service.VisibleUsageInflight(ctx, filters.UserID, liveFilters, finished)
+	if !strings.HasPrefix(filters.RequestID, "=") && !strings.HasPrefix(filters.RequestID, "^") {
+		return live
+	}
+	target := service.NormalizeUsageRequestIDKey(strings.TrimSpace(filters.RequestID[1:]))
+	matched := live[:0]
+	for _, row := range live {
+		id := service.NormalizeUsageRequestIDKey(row.RequestID)
+		if (filters.RequestID[0] == '=' && id == target) || (filters.RequestID[0] == '^' && strings.HasPrefix(strings.ToLower(id), strings.ToLower(target))) {
+			matched = append(matched, row)
+		}
+	}
+	return matched
+}
+
+// Short LIKE patterns have no useful trigrams; require a bounded date range.
+func validateUserUsageRequestIDSearch(input string, start, end *time.Time) error {
+	if input == "" {
+		return nil
+	}
+	exact := strings.HasPrefix(input, "=")
+	if exact || strings.HasPrefix(input, "^") {
+		input = strings.TrimSpace(input[1:])
+	}
+	if service.NormalizeUsageRequestIDKey(input) == "" {
+		return fmt.Errorf("请求 ID 不能为空")
+	}
+	if exact {
+		return nil
+	}
+	run := 0
+	for _, r := range service.NormalizeUsageRequestIDKey(input) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			run++
+		} else {
+			run = 0
+		}
+		if run >= 3 {
+			return nil
+		}
+	}
+	// User usage date pickers submit date-only YYYY-MM-DD ranges; the default "Last 24h"
+	// spans yesterday..today which parses as [yesterday 00:00, tomorrow 00:00) = 48h.
+	if start == nil || end == nil || end.Sub(*start) > 48*time.Hour+time.Second {
+		return fmt.Errorf("短 ID 或特殊字符搜索请限定在 48 小时内，或使用 =完整ID 精确查找")
+	}
+	return nil
 }

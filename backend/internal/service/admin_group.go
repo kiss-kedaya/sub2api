@@ -685,6 +685,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		AllowMessagesDispatch:           input.AllowMessagesDispatch,
 		CrossProtocolConversionEnabled:  input.CrossProtocolConversionEnabled,
 		ReturnRequestedModel:            input.ReturnRequestedModel,
+		SaveResponseMsgID:               platform == PlatformAnthropic && input.SaveResponseMsgID,
 		AllowLive:                       input.AllowLive,
 		ForceOpenAIFast:                 input.ForceOpenAIFast,
 		FreeOpenAIFast:                  input.FreeOpenAIFast,
@@ -1177,6 +1178,11 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.ReturnRequestedModel != nil {
 		group.ReturnRequestedModel = *input.ReturnRequestedModel
+	}
+	if group.Platform != PlatformAnthropic {
+		group.SaveResponseMsgID = false
+	} else if input.SaveResponseMsgID != nil {
+		group.SaveResponseMsgID = *input.SaveResponseMsgID
 	}
 	if input.AllowLive != nil {
 		group.AllowLive = *input.AllowLive

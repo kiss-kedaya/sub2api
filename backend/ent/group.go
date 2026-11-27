@@ -137,6 +137,8 @@ type Group struct {
 	CrossProtocolConversionEnabled bool `json:"cross_protocol_conversion_enabled,omitempty"`
 	// 响应模型字段返回请求中的模型名，不改变请求路由、计费或正文
 	ReturnRequestedModel bool `json:"return_requested_model,omitempty"`
+	// 是否保存 Claude/Anthropic 响应正文中的消息 ID（msg_...）到使用记录
+	SaveResponseMsgID bool `json:"save_response_msg_id,omitempty"`
 	// 是否允许此 OpenAI 分组访问 Live 接口
 	AllowLive bool `json:"allow_live,omitempty"`
 	// 是否强制此 OpenAI/Composite 分组请求使用 service_tier=priority
@@ -281,7 +283,7 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case group.FieldVideoModelPrices, group.FieldModelPricing, group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig, group.FieldModelAllowlist, group.FieldCodexModelsManifestConfig, group.FieldReasoningEffortMappings:
 			values[i] = new([]byte)
-		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldToolRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldCrossProtocolConversionEnabled, group.FieldReturnRequestedModel, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
+		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldToolRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldCrossProtocolConversionEnabled, group.FieldReturnRequestedModel, group.FieldSaveResponseMsgID, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
 			values[i] = new(sql.NullBool)
 		case group.FieldRateMultiplier, group.FieldPeakRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldToolRateMultiplier, group.FieldSearchPricePer1k, group.FieldFetchPricePer1k, group.FieldOcrPricePer1kPages, group.FieldGrokModerationRefusalPrice, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour, group.FieldOpenaiFastMultiplier, group.FieldOpenaiUltrafastMultiplier, group.FieldProfitMinMargin, group.FieldProfitSafetyBuffer:
 			values[i] = new(sql.NullFloat64)
@@ -698,6 +700,12 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.ReturnRequestedModel = value.Bool
 			}
+		case group.FieldSaveResponseMsgID:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field save_response_msg_id", values[i])
+			} else if value.Valid {
+				_m.SaveResponseMsgID = value.Bool
+			}
 		case group.FieldAllowLive:
 			if value, ok := values[i].(*sql.NullBool); !ok {
 				return fmt.Errorf("unexpected type %T for field allow_live", values[i])
@@ -1113,6 +1121,9 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("return_requested_model=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ReturnRequestedModel))
+	builder.WriteString(", ")
+	builder.WriteString("save_response_msg_id=")
+	builder.WriteString(fmt.Sprintf("%v", _m.SaveResponseMsgID))
 	builder.WriteString(", ")
 	builder.WriteString("allow_live=")
 	builder.WriteString(fmt.Sprintf("%v", _m.AllowLive))

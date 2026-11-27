@@ -134,6 +134,8 @@ const (
 	FieldCrossProtocolConversionEnabled = "cross_protocol_conversion_enabled"
 	// FieldReturnRequestedModel holds the string denoting the return_requested_model field in the database.
 	FieldReturnRequestedModel = "return_requested_model"
+	// FieldSaveResponseMsgID holds the string denoting the save_response_msg_id field in the database.
+	FieldSaveResponseMsgID = "save_response_msg_id"
 	// FieldAllowLive holds the string denoting the allow_live field in the database.
 	FieldAllowLive = "allow_live"
 	// FieldForceOpenaiFast holds the string denoting the force_openai_fast field in the database.
@@ -304,6 +306,7 @@ var Columns = []string{
 	FieldAllowMessagesDispatch,
 	FieldCrossProtocolConversionEnabled,
 	FieldReturnRequestedModel,
+	FieldSaveResponseMsgID,
 	FieldAllowLive,
 	FieldForceOpenaiFast,
 	FieldFreeOpenaiFast,
@@ -443,6 +446,8 @@ var (
 	DefaultCrossProtocolConversionEnabled bool
 	// DefaultReturnRequestedModel holds the default value on creation for the "return_requested_model" field.
 	DefaultReturnRequestedModel bool
+	// DefaultSaveResponseMsgID holds the default value on creation for the "save_response_msg_id" field.
+	DefaultSaveResponseMsgID bool
 	// DefaultAllowLive holds the default value on creation for the "allow_live" field.
 	DefaultAllowLive bool
 	// DefaultForceOpenaiFast holds the default value on creation for the "force_openai_fast" field.
@@ -764,6 +769,11 @@ func ByCrossProtocolConversionEnabled(opts ...sql.OrderTermOption) OrderOption {
 // ByReturnRequestedModel orders the results by the return_requested_model field.
 func ByReturnRequestedModel(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldReturnRequestedModel, opts...).ToFunc()
+}
+
+// BySaveResponseMsgID orders the results by the save_response_msg_id field.
+func BySaveResponseMsgID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSaveResponseMsgID, opts...).ToFunc()
 }
 
 // ByAllowLive orders the results by the allow_live field.

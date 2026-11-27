@@ -699,7 +699,7 @@ export default {
     inflightLoadFailed: 'Could not load in-flight requests. Use the refresh button above to retry.',
     inflightScheduling: 'Waiting for an account',
     inflightGroupPending: 'Waiting for a group',
-    requestIdPlaceholder: 'Request/upstream ID; =exact, ^prefix',
+    requestIdPlaceholder: 'X-Request-Id / X-Client-Request-Id / msg_...; =exact, ^prefix',
     inflightRunningHint: 'Still running. Duration and cost update when you refresh.',
     inflightElapsed: 'Elapsed',
     firstToken: 'First Token',

@@ -39,6 +39,8 @@ const messages: Record<string, string> = {
   'admin.dashboard.day': 'Day',
   'admin.dashboard.hour': 'Hour',
   'admin.users.columnSettings': 'Columns',
+  'admin.usage.requestId': 'Request ID',
+  'admin.usage.responseMsgId': 'Message ID',
   'admin.usage.group': 'Group',
   'admin.usage.billingType': 'Billing type',
   'admin.usage.billingMode': 'Billing mode',
@@ -118,7 +120,7 @@ const statsCardsStub = { props: ['stats', 'loading'], template: '<div data-testi
 const endpointChartStub = { props: ['endpointStats', 'loading'], template: '<div data-testid="endpoint-chart" />' }
 const usageTableStub = {
   props: ['data', 'columns', 'showAccountBilling', 'showUpstreamEndpoint'],
-  emits: ['sort', 'ipGeoBatchFailed'],
+  emits: ['sort', 'ipGeoBatchFailed', 'requestIdClick'],
   template: '<div />',
 }
 
@@ -534,8 +536,8 @@ describe('user UsageView', () => {
     expect(showSuccess).toHaveBeenCalled()
     expect(csvContent.startsWith('\uFEFF')).toBe(true)
     expect(csvContent.slice(1)).toBe([
-      'Time,API Key Name,Model,Reasoning Effort,Inbound Endpoint,IP Address,Type,Billing Mode,Input Tokens,Output Tokens,Cache Read Tokens,Cache Creation Tokens,Rate Multiplier,Billed Cost,Original Cost,First Token (ms),Duration (ms)',
-      '2026-03-08T00:00:00Z,demo-key,gpt-5.4,"\'-",,203.0.113.10,Sync,Token,4057,101,278272,4,1,0.09288300,0.09288300,12,345',
+      'Time,API Key Name,Model,Reasoning Effort,Inbound Endpoint,IP Address,Type,Billing Mode,Input Tokens,Output Tokens,Cache Read Tokens,Cache Creation Tokens,Rate Multiplier,Billed Cost,Original Cost,First Token (ms),Duration (ms),X-Request-Id,X-Client-Request-Id,Message ID',
+      '2026-03-08T00:00:00Z,demo-key,gpt-5.4,"\'-",,203.0.113.10,Sync,Token,4057,101,278272,4,1,0.09288300,0.09288300,12,345,,,',
     ].join('\n'))
     expect(csvContent).toContain('IP Address')
     expect(csvContent).toContain('203.0.113.10')
@@ -949,6 +951,29 @@ describe('user UsageView refresh window', () => {
     expect(after.start_date).toBe(initial.start_date)
     expect(after.end_date).toBe(initial.end_date)
     expect(query).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('exposes request_id and response_msg_id columns and filters on requestIdClick', async () => {
+    const wrapper = mountWithSlider(sliderDateRangeStub(null))
+    await flushPromises()
+    const vm = wrapper.vm as any
+    const visibleKeys = vm.visibleColumns.map((col: { key: string }) => col.key)
+    expect(visibleKeys).toEqual(expect.arrayContaining(['request_id', 'response_msg_id']))
+
+    query.mockClear()
+    getStats.mockClear()
+    getDashboardModels.mockClear()
+    getDashboardSnapshotV2.mockClear()
+    vm.handleRequestIdClick('msg_011ChSwsWaLgTDX3Ay9jabZw')
+    await flushPromises()
+    expect(query).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, request_id: '=msg_011ChSwsWaLgTDX3Ay9jabZw' }),
+      expect.anything(),
+    )
+    expect(getStats).not.toHaveBeenCalled()
+    expect(getDashboardModels).not.toHaveBeenCalled()
+    expect(getDashboardSnapshotV2).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 })

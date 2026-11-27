@@ -1029,6 +1029,15 @@ func writeUpstreamResponse(c *gin.Context, res *service.UpstreamHTTPResult) {
 		if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
 			continue
 		}
+		if strings.EqualFold(k, "X-Request-Id") {
+			for _, v := range vv {
+				if trimmed := strings.TrimSpace(v); trimmed != "" {
+					c.Writer.Header().Set(k, trimmed)
+					break
+				}
+			}
+			continue
+		}
 		for _, v := range vv {
 			c.Writer.Header().Add(k, v)
 		}

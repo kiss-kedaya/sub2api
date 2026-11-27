@@ -332,6 +332,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 
 	return &OpenAIForwardResult{
 		RequestID:                resp.Header.Get("x-request-id"),
+		ResponseMsgID:            observedUpstreamResponseMessageID(c),
 		UpstreamHeaders:          resp.Header,
 		Usage:                    claudeUsageToOpenAIUsage(usage),
 		SearchCount:              usage.WebSearchRequests,
@@ -700,6 +701,7 @@ func (s *OpenAIGatewayService) nativeAnthropicStreamResult(
 	}
 	return &OpenAIForwardResult{
 		RequestID:        resp.Header.Get("x-request-id"),
+		ResponseMsgID:    observedUpstreamResponseMessageID(c),
 		UpstreamHeaders:  resp.Header,
 		Usage:            claudeUsageToOpenAIUsage(usage),
 		SearchCount:      usage.WebSearchRequests,

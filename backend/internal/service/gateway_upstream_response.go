@@ -769,6 +769,7 @@ func partialStreamUsageResult(c *gin.Context, resp *http.Response, streamResult 
 	return &ForwardResult{
 		NonBillableUpstreamError:      nonBillable,
 		RequestID:                     resp.Header.Get("x-request-id"),
+		ResponseMsgID:                 observedUpstreamResponseMessageID(c),
 		UpstreamHeaders:               resp.Header,
 		Usage:                         *streamResult.usage,
 		Model:                         model,

@@ -257,6 +257,7 @@ type CreateGroupRequest struct {
 	AllowMessagesDispatch          bool                                      `json:"allow_messages_dispatch"`
 	CrossProtocolConversionEnabled bool                                      `json:"cross_protocol_conversion_enabled"`
 	ReturnRequestedModel           bool                                      `json:"return_requested_model"`
+	SaveResponseMsgID              bool                                      `json:"save_response_msg_id"`
 	AllowLive                      bool                                      `json:"allow_live"`
 	ForceOpenAIFast                bool                                      `json:"force_openai_fast"`
 	FreeOpenAIFast                 bool                                      `json:"free_openai_fast"`
@@ -343,6 +344,7 @@ type UpdateGroupRequest struct {
 	AllowMessagesDispatch          *bool                                      `json:"allow_messages_dispatch"`
 	CrossProtocolConversionEnabled *bool                                      `json:"cross_protocol_conversion_enabled"`
 	ReturnRequestedModel           *bool                                      `json:"return_requested_model"`
+	SaveResponseMsgID              *bool                                      `json:"save_response_msg_id"`
 	AllowLive                      *bool                                      `json:"allow_live"`
 	ForceOpenAIFast                *bool                                      `json:"force_openai_fast"`
 	FreeOpenAIFast                 *bool                                      `json:"free_openai_fast"`
@@ -759,6 +761,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		AllowMessagesDispatch:           req.AllowMessagesDispatch,
 		CrossProtocolConversionEnabled:  req.CrossProtocolConversionEnabled,
 		ReturnRequestedModel:            req.ReturnRequestedModel,
+		SaveResponseMsgID:               req.SaveResponseMsgID,
 		AllowLive:                       req.AllowLive,
 		ForceOpenAIFast:                 req.ForceOpenAIFast,
 		FreeOpenAIFast:                  req.FreeOpenAIFast,
@@ -929,6 +932,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		AllowMessagesDispatch:           req.AllowMessagesDispatch,
 		CrossProtocolConversionEnabled:  req.CrossProtocolConversionEnabled,
 		ReturnRequestedModel:            req.ReturnRequestedModel,
+		SaveResponseMsgID:               req.SaveResponseMsgID,
 		AllowLive:                       req.AllowLive,
 		ForceOpenAIFast:                 req.ForceOpenAIFast,
 		FreeOpenAIFast:                  req.FreeOpenAIFast,

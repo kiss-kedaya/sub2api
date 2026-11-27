@@ -289,6 +289,9 @@ func (Group) Fields() []ent.Field {
 		field.Bool("return_requested_model").
 			Default(false).
 			Comment("响应模型字段返回请求中的模型名，不改变请求路由、计费或正文"),
+		field.Bool("save_response_msg_id").
+			Default(false).
+			Comment("是否保存 Claude/Anthropic 响应正文中的消息 ID（msg_...）到使用记录"),
 		field.Bool("allow_live").
 			Default(false).
 			Comment("是否允许此 OpenAI 分组访问 Live 接口"),

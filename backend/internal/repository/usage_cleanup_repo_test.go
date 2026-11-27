@@ -604,7 +604,7 @@ func TestBuildUsageCleanupWhereExtendedFilters(t *testing.T) {
 	})
 
 	require.Contains(t, where, "created_at >= $1 AND created_at <= $2")
-	require.Contains(t, where, "(request_id IN ($3, $4, $5) OR upstream_request_id = $6)")
+	require.Contains(t, where, "(request_id IN ($3, $4, $5) OR response_request_id = $6 OR client_request_id = $3 OR response_msg_id = $6 OR upstream_request_id = $6)")
 	require.Contains(t, where, "native_compaction_v2 = $7")
 	require.Contains(t, where, "billing_mode = $8")
 	require.Contains(t, where, "upstream_model_mismatch IS TRUE")

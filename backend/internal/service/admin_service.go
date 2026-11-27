@@ -307,6 +307,7 @@ type CreateGroupInput struct {
 	AllowMessagesDispatch          bool
 	CrossProtocolConversionEnabled bool
 	ReturnRequestedModel           bool
+	SaveResponseMsgID              bool
 	AllowLive                      bool
 	ForceOpenAIFast                bool
 	FreeOpenAIFast                 bool
@@ -410,6 +411,7 @@ type UpdateGroupInput struct {
 	AllowMessagesDispatch          *bool
 	CrossProtocolConversionEnabled *bool
 	ReturnRequestedModel           *bool
+	SaveResponseMsgID              *bool
 	AllowLive                      *bool
 	ForceOpenAIFast                *bool
 	FreeOpenAIFast                 *bool

@@ -994,6 +994,7 @@ var (
 		{Name: "allow_messages_dispatch", Type: field.TypeBool, Default: false},
 		{Name: "cross_protocol_conversion_enabled", Type: field.TypeBool, Default: false},
 		{Name: "return_requested_model", Type: field.TypeBool, Default: false},
+		{Name: "save_response_msg_id", Type: field.TypeBool, Default: false},
 		{Name: "allow_live", Type: field.TypeBool, Default: false},
 		{Name: "force_openai_fast", Type: field.TypeBool, Default: false},
 		{Name: "free_openai_fast", Type: field.TypeBool, Default: false},

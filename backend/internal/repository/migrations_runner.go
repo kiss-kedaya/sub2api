@@ -73,6 +73,13 @@ const usageLogsUserCreatedDimsIndex = "idx_usage_logs_user_created_dims"
 const usageLogsAPIKeyCreatedStatsIndex = "idx_usage_logs_api_key_created_stats"
 const opsErrorLogs5xxTimeSourceIndexMigration = "338_ops_error_logs_5xx_time_index_notx.sql"
 const opsErrorLogs5xxTimeSourceIndex = "idx_ops_error_logs_5xx_time_source"
+const usageLogsResponseIDsIndexesMigration = "348_usage_log_response_ids_indexes_notx.sql"
+const usageLogsResponseRequestIDIndex = "idx_usage_logs_response_request_id"
+const usageLogsClientRequestIDIndex = "idx_usage_logs_client_request_id"
+const usageLogsResponseMsgIDIndex = "idx_usage_logs_response_msg_id"
+const usageLogsResponseRequestIDTrgmIndex = "idx_usage_logs_response_request_id_trgm"
+const usageLogsClientRequestIDTrgmIndex = "idx_usage_logs_client_request_id_trgm"
+const usageLogsResponseMsgIDTrgmIndex = "idx_usage_logs_response_msg_id_trgm"
 
 type migrationChecksumCompatibilityRule struct {
 	fileChecksum       string
@@ -497,6 +504,20 @@ func prepareNonTransactionalMigration(ctx context.Context, db migrationConnectio
 		// CONCURRENTLY 建索引中断会留下 invalid index，重跑前先清掉，
 		// 否则 IF NOT EXISTS 会跳过、索引永远不可用。
 		return dropInvalidIndexIfPresent(ctx, db, opsErrorLogs5xxTimeSourceIndex)
+	case usageLogsResponseIDsIndexesMigration:
+		for _, indexName := range []string{
+			usageLogsResponseRequestIDIndex,
+			usageLogsClientRequestIDIndex,
+			usageLogsResponseMsgIDIndex,
+			usageLogsResponseRequestIDTrgmIndex,
+			usageLogsClientRequestIDTrgmIndex,
+			usageLogsResponseMsgIDTrgmIndex,
+		} {
+			if err := dropInvalidIndexIfPresent(ctx, db, indexName); err != nil {
+				return err
+			}
+		}
+		return nil
 	default:
 		return nil
 	}
