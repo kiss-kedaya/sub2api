@@ -213,8 +213,8 @@ func (s *SettingService) LoginTOTPEnabled(ctx context.Context) bool {
 	return value == "true"
 }
 
-// LoginShapeDisguiseEnabled 报告登录首步「凭据无效」挑战是否按邮箱稳定伪装（审计 A-P1-02）。
-// 默认关闭；设置缺失或读取失败都按关闭处理（沿用旧的固定 TOTP 诱饵），不会因为存储抖动改变登录响应。
+// LoginShapeDisguiseEnabled 报告登录首步「凭据无效」是否下发按邮箱稳定伪装的二次验证挑战（审计 A-P1-02）。
+// 默认关闭；设置缺失或读取失败都按关闭处理（凭据错误直接返回 401 INVALID_CREDENTIALS），不会因为存储抖动改变登录响应。
 func (s *SettingService) LoginShapeDisguiseEnabled(ctx context.Context) bool {
 	if s == nil || s.settingRepo == nil {
 		return false

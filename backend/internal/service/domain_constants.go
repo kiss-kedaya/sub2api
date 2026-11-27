@@ -278,8 +278,8 @@ const (
 	// TOTP 双因素认证设置
 	SettingKeyTotpEnabled    = "totp_enabled"    // 是否启用 TOTP 2FA 功能
 	SettingKeyPasskeyEnabled = "passkey_enabled" // 是否启用 Passkey 登录（仍要求有效的 WebAuthn 部署配置）
-	// SettingKeyLoginShapeDisguiseEnabled 登录首步「凭据无效」挑战是否按邮箱稳定伪装并镜像真实账号的因子形状
-	// （审计 A-P1-02，设计见 login_shape_disguise.go）。默认关闭，关闭时登录首步响应与旧实现逐字节一致。
+	// SettingKeyLoginShapeDisguiseEnabled 登录首步「凭据无效」是否下发按邮箱稳定伪装的二次验证挑战
+	// （审计 A-P1-02，设计见 login_shape_disguise.go）。默认关闭，关闭时凭据错误直接返回 401 INVALID_CREDENTIALS，不弹 2FA 框。
 	SettingKeyLoginShapeDisguiseEnabled = "login_shape_disguise_enabled"
 
 	// 会话安全设置
