@@ -652,12 +652,16 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	req.SMTPPassword = strings.TrimSpace(req.SMTPPassword)
 	req.SMTPFrom = strings.TrimSpace(req.SMTPFrom)
 	req.SMTPFromName = strings.TrimSpace(req.SMTPFromName)
-	req.TicketAdminEmail = strings.TrimSpace(req.TicketAdminEmail)
-	if req.TicketAdminEmail != "" {
-		address, err := mail.ParseAddress(req.TicketAdminEmail)
-		if err != nil || !strings.EqualFold(address.Address, req.TicketAdminEmail) {
-			response.BadRequest(c, "ticket_admin_email must be a plain email address")
-			return
+	if _, sent := sentFields[service.SettingKeyTicketAdminEmail]; !sent {
+		req.TicketAdminEmail = previousSettings.TicketAdminEmail
+	} else {
+		req.TicketAdminEmail = strings.TrimSpace(req.TicketAdminEmail)
+		if req.TicketAdminEmail != "" {
+			address, err := mail.ParseAddress(req.TicketAdminEmail)
+			if err != nil || !strings.EqualFold(address.Address, req.TicketAdminEmail) {
+				response.BadRequest(c, "ticket_admin_email must be a plain email address")
+				return
+			}
 		}
 	}
 	req.TencentCaptchaAppID = strings.TrimSpace(req.TencentCaptchaAppID)
@@ -674,15 +678,37 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	req.AuthSourceDefaultWeChatSubscriptions = normalizeOptionalDefaultSubscriptions(req.AuthSourceDefaultWeChatSubscriptions)
 	req.AuthSourceDefaultDingTalkSubscriptions = normalizeOptionalDefaultSubscriptions(req.AuthSourceDefaultDingTalkSubscriptions)
 
-	// SMTP 配置保护：如果请求中 smtp_host 为空但数据库中已有配置，则保留已有 SMTP 配置
-	// 防止前端加载设置失败时空表单覆盖已保存的 SMTP 配置
+	// SMTP 配置保护：
+	// 1. 增量保存（未传 smtp_host）时仅用旧值补齐未提交的 SMTP 字段，避免覆盖本次显式修改的端口/发件人/TLS；
+	// 2. 显式传入空 smtp_host 且数据库中已有配置时保留已有 SMTP 配置，防止加载失败时空表单清空配置。
 	if req.SMTPHost == "" && previousSettings.SMTPHost != "" {
+		_, hostSent := sentFields[service.SettingKeySMTPHost]
 		req.SMTPHost = previousSettings.SMTPHost
-		req.SMTPPort = previousSettings.SMTPPort
-		req.SMTPUsername = previousSettings.SMTPUsername
-		req.SMTPFrom = previousSettings.SMTPFrom
-		req.SMTPFromName = previousSettings.SMTPFromName
-		req.SMTPUseTLS = previousSettings.SMTPUseTLS
+		if hostSent {
+			req.SMTPPort = previousSettings.SMTPPort
+			req.SMTPUsername = previousSettings.SMTPUsername
+			req.SMTPFrom = previousSettings.SMTPFrom
+			req.SMTPFromName = previousSettings.SMTPFromName
+			req.SMTPUseTLS = previousSettings.SMTPUseTLS
+		} else {
+			if _, sent := sentFields[service.SettingKeySMTPPort]; !sent {
+				req.SMTPPort = previousSettings.SMTPPort
+			}
+			if _, sent := sentFields[service.SettingKeySMTPUsername]; !sent {
+				req.SMTPUsername = previousSettings.SMTPUsername
+			}
+			_, fromEmailSent := sentFields["smtp_from_email"]
+			_, fromKeySent := sentFields[service.SettingKeySMTPFrom]
+			if !fromEmailSent && !fromKeySent {
+				req.SMTPFrom = previousSettings.SMTPFrom
+			}
+			if _, sent := sentFields[service.SettingKeySMTPFromName]; !sent {
+				req.SMTPFromName = previousSettings.SMTPFromName
+			}
+			if _, sent := sentFields[service.SettingKeySMTPUseTLS]; !sent {
+				req.SMTPUseTLS = previousSettings.SMTPUseTLS
+			}
+		}
 	}
 
 	turnstileEnabled := req.TurnstileEnabled
@@ -2366,6 +2392,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		TablePageSizeOptions:                                   updatedSettings.TablePageSizeOptions,
 		CustomMenuItems:                                        dto.ParseCustomMenuItems(updatedSettings.CustomMenuItems),
 		CustomEndpoints:                                        dto.ParseCustomEndpoints(updatedSettings.CustomEndpoints),
+		TicketAdminEmail:                                       updatedSettings.TicketAdminEmail,
 		DefaultConcurrency:                                     updatedSettings.DefaultConcurrency,
 		DefaultBalance:                                         updatedSettings.DefaultBalance,
 		AffiliateRebateRate:                                    updatedSettings.AffiliateRebateRate,

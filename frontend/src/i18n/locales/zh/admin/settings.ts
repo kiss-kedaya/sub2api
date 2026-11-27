@@ -216,8 +216,6 @@ export default {
           },
         },
       },
-      emailTabDisabledTitle: '邮箱验证未启用',
-      emailTabDisabledHint: '请在「安全与认证」选项卡中启用邮箱验证后，再配置 SMTP 设置。',
       registration: {
         title: '注册设置',
         description: '控制用户注册和验证',
@@ -1078,7 +1076,7 @@ export default {
       },
       smtp: {
         title: 'SMTP 设置',
-        description: '配置用于发送验证码的邮件服务',
+        description: '配置用于发送系统通知（余额不足提醒、工单通知、订阅到期提醒等）和验证码的邮件服务',
         testConnection: '测试连接',
         testing: '测试中...',
         host: 'SMTP 主机',

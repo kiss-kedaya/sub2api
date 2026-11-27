@@ -6726,20 +6726,8 @@
         </div>
 
         <div v-show="activeTab === 'email'" class="flex flex-col gap-4 sm:gap-6 lg:gap-12">
-          <!-- Email disabled hint - show when email_verify_enabled is off. A notice, not a settings card:
-               there is nothing to configure here until email verification is switched on. -->
-          <UAlert
-            v-if="!form.email_verify_enabled"
-            color="neutral"
-            variant="subtle"
-            icon="i-lucide-mail-x"
-            :title="t('admin.settings.emailTabDisabledTitle')"
-            :description="t('admin.settings.emailTabDisabledHint')"
-          />
-
-          <!-- SMTP Settings - Only show when email verification is enabled -->
+          <!-- SMTP Settings (independent of registration email_verify_enabled so balance/ticket/expiry notifications work with email verification off) -->
           <SettingsSection
-            v-if="form.email_verify_enabled"
             id="settings-smtp"
             :title="t('admin.settings.smtp.title')"
             :description="t('admin.settings.smtp.description')"
@@ -6886,9 +6874,9 @@
             </SettingPanel>
           </SettingsSection>
 
-          <!-- Send Test Email - Only show when email verification is enabled -->
+          <!-- Send Test Email -->
           <SettingsSection
-            v-if="form.email_verify_enabled"
+            id="settings-test-email"
             :title="t('admin.settings.testEmail.title')"
             :description="t('admin.settings.testEmail.description')"
           >
