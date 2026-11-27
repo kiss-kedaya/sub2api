@@ -298,4 +298,33 @@ describe('PaymentQRCodeView', () => {
       getItemSpy.mockRestore()
     }
   })
+
+  it('rejects negative/non-integer order_id and array qr query values', async () => {
+    const trustedQr = 'weixin://wxpay/bizpayurl?pr=trusted-42'
+    window.localStorage.setItem(
+      PAYMENT_RECOVERY_STORAGE_KEY,
+      JSON.stringify(recoverySnapshotFactory(42, 'https://pay.trusted.example/session/42', trustedQr)),
+    )
+
+    routeState.query = {
+      order_id: '-5',
+      qr: trustedQr,
+    }
+    const negWrapper = mountQRCodeView()
+    await flushPromises()
+    expect(negWrapper.find('canvas').exists()).toBe(false)
+    expect(negWrapper.find('button').exists()).toBe(false)
+    expect(qrToCanvas).not.toHaveBeenCalled()
+    negWrapper.unmount()
+
+    routeState.query = {
+      order_id: '42',
+      qr: ['https://evil.example/phish', trustedQr],
+    }
+    const arrWrapper = mountQRCodeView()
+    await flushPromises()
+    expect(arrWrapper.find('canvas').exists()).toBe(false)
+    expect(qrToCanvas).not.toHaveBeenCalled()
+    arrWrapper.unmount()
+  })
 })

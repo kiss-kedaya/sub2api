@@ -381,7 +381,7 @@ function readLegacyFragmentLogin(params: URLSearchParams): OAuthTokenResponse | 
   return completion
 }
 
-function sanitizeRedirectPath(path: string | null | undefined): string {
+function sanitizeRedirectPath(path: unknown): string {
   return sanitizeInternalRedirectPath(path, '/dashboard')
 }
 
@@ -756,7 +756,7 @@ onMounted(async () => {
   const error = params.get('error')
   const errorDesc = params.get('error_description') || params.get('error_message') || ''
   const redirect = sanitizeRedirectPath(
-    params.get('redirect') || (route.query.redirect as string | undefined) || '/dashboard'
+    params.get('redirect') || route.query.redirect || '/dashboard'
   )
 
   try {
@@ -785,7 +785,7 @@ onMounted(async () => {
 
     const completion = await exchangePendingOAuthCompletion()
     const completionRedirect = sanitizeRedirectPath(
-      completion.redirect || (route.query.redirect as string | undefined) || '/dashboard'
+      completion.redirect || route.query.redirect || '/dashboard'
     )
     applyAdoptionSuggestionState(completion)
     redirectTo.value = completionRedirect

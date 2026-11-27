@@ -310,8 +310,17 @@ function resolveSafePayUrl(rawPayUrl: string, currentOrderId: number): string {
   return snapshotUrl.toString() === parsed.toString() ? parsed.toString() : ''
 }
 
+function parsePositiveOrderId(raw: string): number {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return 0
+  }
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0
+}
+
 onMounted(() => {
-  orderId.value = Number(readRouteQueryString('order_id')) || 0
+  orderId.value = parsePositiveOrderId(readRouteQueryString('order_id'))
   qrUrl.value = resolveSafeQrUrl(readRouteQueryString('qr'), orderId.value)
   payUrl.value = resolveSafePayUrl(readRouteQueryString('pay_url'), orderId.value)
   paymentType.value = readRouteQueryString('payment_type')

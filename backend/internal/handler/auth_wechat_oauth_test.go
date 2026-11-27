@@ -1515,7 +1515,6 @@ func (s *wechatOAuthRefreshTokenCacheStub) IsTokenInFamily(context.Context, stri
 
 func TestWeChatResolveOAuthAbsoluteURLHardening(t *testing.T) {
 	t.Parallel()
-	gin.SetMode(gin.TestMode)
 
 	const cbPath = "/api/v1/auth/oauth/wechat/callback"
 

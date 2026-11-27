@@ -378,7 +378,6 @@ func TestVerifyOrderPublicRejectsBlankOutTradeNo(t *testing.T) {
 
 func TestPaymentPublicRequestHostWithConfig(t *testing.T) {
 	t.Parallel()
-	gin.SetMode(gin.TestMode)
 
 	makeCtx := func(host, remoteAddr string, xfHosts ...string) *gin.Context {
 		rec := httptest.NewRecorder()

@@ -257,26 +257,59 @@ function readRouteQueryString(key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
+function parsePositiveOrderId(raw: string): number {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return 0
+  }
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0
+}
+
+function serializeRemainingQueryForResumeKey(query: Record<string, unknown>): string {
+  const params = new URLSearchParams()
+  const keys = Object.keys(query)
+    .filter((key) => key !== 'resume_token')
+    .sort()
+  for (const key of keys) {
+    const raw = query[key]
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        if (typeof item === 'string') {
+          params.append(key, item)
+        } else if (item === null) {
+          params.append(key, '')
+        }
+      }
+    } else if (typeof raw === 'string') {
+      params.append(key, raw)
+    } else if (raw === null) {
+      params.append(key, '')
+    }
+  }
+  return params.toString()
+}
+
 interface ResumeTokenStorageContext {
   routeOrderId: number
   routeOutTradeNo: string
-  routeTradeStatus: string
+  remainingQueryKey: string
 }
 
-function resolveResumeSessionStorageKey(context: ResumeTokenStorageContext): string | null {
+function resolveResumeSessionStorageKey(context: ResumeTokenStorageContext): string {
   if (context.routeOrderId > 0 && context.routeOutTradeNo) {
-    return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}order:${context.routeOrderId}:trade:${context.routeOutTradeNo}`
+    return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}order:${context.routeOrderId}:trade:${encodeURIComponent(context.routeOutTradeNo)}`
   }
   if (context.routeOrderId > 0) {
     return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}order:${context.routeOrderId}`
   }
   if (context.routeOutTradeNo) {
-    return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}trade:${context.routeOutTradeNo}`
+    return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}trade:${encodeURIComponent(context.routeOutTradeNo)}`
   }
-  if (!context.routeTradeStatus.trim()) {
+  if (!context.remainingQueryKey) {
     return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}token_only`
   }
-  return null
+  return `${PAYMENT_RESULT_RESUME_STORAGE_PREFIX}query:${context.remainingQueryKey}`
 }
 
 function stashResumeToken(resumeToken: string, context: ResumeTokenStorageContext): void {
@@ -285,9 +318,6 @@ function stashResumeToken(resumeToken: string, context: ResumeTokenStorageContex
     return
   }
   const storageKey = resolveResumeSessionStorageKey(context)
-  if (!storageKey) {
-    return
-  }
   try {
     window.sessionStorage.setItem(storageKey, trimmed)
   } catch {
@@ -300,9 +330,6 @@ function readStashedResumeToken(context: ResumeTokenStorageContext): string {
     return ''
   }
   const storageKey = resolveResumeSessionStorageKey(context)
-  if (!storageKey) {
-    return ''
-  }
   try {
     return (window.sessionStorage.getItem(storageKey) || '').trim()
   } catch {
@@ -426,7 +453,7 @@ function scheduleStatusRefresh(refreshOrder: (() => Promise<ResolvedOrder | null
 
 onMounted(async () => {
   const queryResumeToken = readRouteQueryString('resume_token').trim()
-  const routeOrderId = Number(readRouteQueryString('order_id')) || 0
+  const routeOrderId = parsePositiveOrderId(readRouteQueryString('order_id'))
   const routeOutTradeNo = readRouteQueryString('out_trade_no').trim()
   let outTradeNo = routeOutTradeNo
   const routeTradeStatus = readRouteQueryString('trade_status')
@@ -438,7 +465,7 @@ onMounted(async () => {
   const resumeStorageContext: ResumeTokenStorageContext = {
     routeOrderId,
     routeOutTradeNo,
-    routeTradeStatus,
+    remainingQueryKey: serializeRemainingQueryForResumeKey(route.query as Record<string, unknown>),
   }
   if (queryResumeToken) {
     // Stash the signed resume_token in tab-scoped sessionStorage before

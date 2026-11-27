@@ -34,6 +34,7 @@ import type { SocialLoginProvider } from '@/components/common/socialLogin'
 import { resolveWeChatOAuthStart, type OAuthLoginStart } from '@/api/auth'
 import { useAppStore } from '@/stores'
 import { resolveAffiliateReferralCode, storeOAuthAffiliateCode } from '@/utils/oauthAffiliate'
+import { sanitizeInternalRedirectPath } from '@/utils/url'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -94,7 +95,7 @@ function startLogin(): void {
   if (buttonDisabled.value || !resolvedStart.value.mode) {
     return
   }
-  const redirectTo = (route.query.redirect as string) || '/dashboard'
+  const redirectTo = sanitizeInternalRedirectPath(route.query.redirect, '/dashboard')
   storeOAuthAffiliateCode(resolveAffiliateReferralCode(props.affCode, route.query.aff, route.query.aff_code))
   const mode = resolvedStart.value.mode
   emit('start', {

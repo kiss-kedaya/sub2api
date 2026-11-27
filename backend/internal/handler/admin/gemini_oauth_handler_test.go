@@ -11,9 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func init() {
+	gin.SetMode(gin.TestMode)
+}
+
 func TestGeminiOAuthDeriveRedirectURIHardening(t *testing.T) {
 	t.Parallel()
-	gin.SetMode(gin.TestMode)
 
 	makeCtx := func(host, remoteAddr string, withTLS bool, headers map[string]string) *gin.Context {
 		rec := httptest.NewRecorder()
