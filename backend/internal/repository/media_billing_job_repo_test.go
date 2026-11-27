@@ -619,3 +619,84 @@ func TestAbandonMediaBillingJob_MissingJobReturnsNotFound(t *testing.T) {
 	require.False(t, abandoned)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestApplyMediaBillingJob_PreauthorizedRetryChecksFinalizationPendingStatus(t *testing.T) {
+	cases := []struct {
+		name        string
+		jobStatus   string
+		rowStatus   int16
+		wantPending bool
+	}{
+		{
+			name:        "already_billed_finalization_pending_true",
+			jobStatus:   service.MediaBillingBilled,
+			rowStatus:   service.BalanceSettlementFinalizationPending,
+			wantPending: true,
+		},
+		{
+			name:        "already_billed_settlement_pending_false",
+			jobStatus:   service.MediaBillingBilled,
+			rowStatus:   service.BalanceSettlementPending,
+			wantPending: false,
+		},
+		{
+			name:        "ready_unclaimed_finalization_pending_true",
+			jobStatus:   service.MediaBillingReady,
+			rowStatus:   service.BalanceSettlementFinalizationPending,
+			wantPending: true,
+		},
+		{
+			name:        "ready_unclaimed_already_applied_false",
+			jobStatus:   service.MediaBillingReady,
+			rowStatus:   service.BalanceSettlementApplied,
+			wantPending: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, mock := newMediaBillingSQLMock(t)
+			intent := testMediaIntent(0.75)
+			intent.Command.BalancePreauthorized = true
+			intent.Command.Normalize()
+			job := service.MediaBillingJob{
+				ID:        "image-preauth-retry-" + tc.name,
+				Kind:      service.MediaBillingKindImage,
+				UserID:    42,
+				APIKeyID:  7,
+				AccountID: 9,
+				GroupID:   11,
+				Status:    tc.jobStatus,
+				Intent:    intent,
+			}
+
+			mock.ExpectBegin()
+			mock.ExpectQuery(`(?s)SELECT.*FROM media_billing_jobs WHERE id = \$1 FOR UPDATE`).
+				WithArgs(job.ID).WillReturnRows(mediaBillingTestRow(job))
+			if tc.jobStatus == service.MediaBillingReady {
+				mock.ExpectQuery(`(?s)INSERT INTO usage_billing_dedup.*RETURNING id`).
+					WithArgs(intent.Command.RequestID, intent.Command.APIKeyID, intent.Command.RequestFingerprint).
+					WillReturnError(sql.ErrNoRows)
+				mock.ExpectQuery(`(?s)SELECT request_fingerprint\s+FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2`).
+					WithArgs(intent.Command.RequestID, intent.Command.APIKeyID).
+					WillReturnRows(sqlmock.NewRows([]string{"request_fingerprint"}).AddRow(intent.Command.RequestFingerprint))
+			}
+			mock.ExpectQuery(`(?s)SELECT status\s+FROM billing_balance_settlements\s+WHERE request_id = \$1 AND api_key_id = \$2`).
+				WithArgs(intent.Command.RequestID, intent.Command.APIKeyID).
+				WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow(tc.rowStatus))
+			if tc.jobStatus == service.MediaBillingReady {
+				mock.ExpectExec(`(?s)UPDATE media_billing_jobs.*SET status = \$2.*WHERE id = \$1 AND status = \$3`).
+					WithArgs(job.ID, service.MediaBillingBilled, service.MediaBillingReady).
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			}
+			mock.ExpectCommit()
+
+			res, err := repo.ApplyMediaBillingJob(context.Background(), job.ID)
+			require.NoError(t, err)
+			require.NotNil(t, res)
+			require.False(t, res.Applied)
+			require.Equal(t, tc.wantPending, res.BalanceFinalizationPending)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}

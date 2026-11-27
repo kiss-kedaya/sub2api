@@ -26,6 +26,12 @@ const (
 	// directly to Applied (never Pending) so FlushPendingBalanceSettlements
 	// never double-debits PG.
 	BalancePreauthorizationDirectPGHoldFingerprintPrefix = "pg-direct-hold:"
+
+	// balancePreauthorizationDirectPGHoldTTL bounds recovery lag for direct PG
+	// holds (pg-hold:*). Because direct PG holds only span a short local PG
+	// transaction, crashing before PG commits must recover within minutes rather
+	// than locking live_wallet cold-start initialization for the 6-hour default.
+	balancePreauthorizationDirectPGHoldTTL = 2 * time.Minute
 )
 
 // BalancePreauthorizationDirectPGHoldRequestID normalizes a direct-PG-hold
@@ -70,7 +76,8 @@ func (s *BalancePreauthorizationService) PreauthorizeDirectPGHold(
 		return nil, balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
 	}
 	authFingerprint := BalancePreauthorizationDirectPGHoldFingerprintPrefix + requestID
-	return s.authorizeFixedHold(ctx, requestID, apiKeyID, userID, authFingerprint, quantized)
+	expiresAt := time.Now().UTC().Add(balancePreauthorizationDirectPGHoldTTL)
+	return s.authorizeFixedHold(ctx, requestID, apiKeyID, userID, authFingerprint, quantized, expiresAt)
 }
 
 // PreauthorizeFixedAmount reserves an explicit USD hold against Redis
@@ -99,7 +106,7 @@ func (s *BalancePreauthorizationService) PreauthorizeFixedAmount(
 		return nil, balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
 	}
 	quantized := quantizeBillingHoldUpFromFloat(holdAmount)
-	return s.authorizeFixedHold(ctx, requestID, apiKeyID, userID, authorizationFingerprint, quantized)
+	return s.authorizeFixedHold(ctx, requestID, apiKeyID, userID, authorizationFingerprint, quantized, time.Time{})
 }
 
 func (s *BalancePreauthorizationService) authorizeFixedHold(
@@ -109,6 +116,7 @@ func (s *BalancePreauthorizationService) authorizeFixedHold(
 	userID int64,
 	authorizationFingerprint string,
 	holdAmount float64,
+	expiresAt time.Time,
 ) (*BalancePreauthorizationGuard, error) {
 	if s.snapshotReader == nil || s.wallet == nil || s.watermarkWallet == nil || s.repo == nil {
 		return nil, balancePreauthorizationUnavailable(errors.New("balance preauthorization dependency is unavailable"))
@@ -119,6 +127,7 @@ func (s *BalancePreauthorizationService) authorizeFixedHold(
 		UserID:                   userID,
 		AuthorizationFingerprint: authorizationFingerprint,
 		HoldAmount:               holdAmount,
+		ExpiresAt:                expiresAt,
 	})
 	if err != nil {
 		return nil, balancePreauthorizationUnavailable(err)

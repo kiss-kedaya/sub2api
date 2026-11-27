@@ -485,7 +485,16 @@ func (r *usageBillingRepository) ApplyMediaBillingJob(ctx context.Context, id st
 		return &service.UsageBillingApplyResult{}, nil
 	}
 	if job.Status == service.MediaBillingBilled {
-		result := mediaBillingAlreadyBilledResult(job)
+		result := &service.UsageBillingApplyResult{}
+		if job.Kind == service.MediaBillingKindImage && job.Intent != nil && job.Intent.Command.BalancePreauthorized {
+			cmd := job.Intent.Command
+			cmd.Normalize()
+			pending, pendingErr := r.isBalanceFinalizationPendingTx(ctx, tx, cmd.RequestID, cmd.APIKeyID)
+			if pendingErr != nil {
+				return nil, pendingErr
+			}
+			result.BalanceFinalizationPending = pending
+		}
 		if err := tx.Commit(); err != nil {
 			return nil, err
 		}
@@ -520,7 +529,13 @@ func (r *usageBillingRepository) ApplyMediaBillingJob(ctx context.Context, id st
 			}
 			result.NewBalance = holdResult.NewBalance
 		}
-		result.BalanceFinalizationPending = job.Kind == service.MediaBillingKindImage && cmd.BalancePreauthorized
+		if job.Kind == service.MediaBillingKindImage && cmd.BalancePreauthorized {
+			pending, pendingErr := r.isBalanceFinalizationPendingTx(ctx, tx, cmd.RequestID, cmd.APIKeyID)
+			if pendingErr != nil {
+				return nil, pendingErr
+			}
+			result.BalanceFinalizationPending = pending
+		}
 	} else {
 		effectsCommand := cmd
 		if job.Kind == service.MediaBillingKindGrokVideo && job.SubscriptionID == nil {
@@ -553,14 +568,6 @@ func (r *usageBillingRepository) ApplyMediaBillingJob(ctx context.Context, id st
 	}
 	tx = nil
 	return result, nil
-}
-
-func mediaBillingAlreadyBilledResult(job *service.MediaBillingJob) *service.UsageBillingApplyResult {
-	result := &service.UsageBillingApplyResult{}
-	if job != nil && job.Kind == service.MediaBillingKindImage && job.Intent != nil {
-		result.BalanceFinalizationPending = job.Intent.Command.BalancePreauthorized
-	}
-	return result
 }
 
 func (r *usageBillingRepository) captureMediaBillingVideoBalance(ctx context.Context, tx *sql.Tx, job *service.MediaBillingJob, actual float64) (*service.BatchImageBalanceHoldResult, error) {

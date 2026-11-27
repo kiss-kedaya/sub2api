@@ -195,6 +195,10 @@ func (h *unifiedLiveLedgerHarness) PrepareBalancePreauthorization(_ context.Cont
 		cp := *existing
 		return &cp, nil
 	}
+	expiresAt := cmd.ExpiresAt
+	if expiresAt.IsZero() {
+		expiresAt = time.Now().Add(6 * time.Hour)
+	}
 	rec := &BalancePreauthorizationRecord{
 		RequestID:                strings.TrimSpace(cmd.RequestID),
 		APIKeyID:                 cmd.APIKeyID,
@@ -202,7 +206,7 @@ func (h *unifiedLiveLedgerHarness) PrepareBalancePreauthorization(_ context.Cont
 		AuthorizationFingerprint: strings.TrimSpace(cmd.AuthorizationFingerprint),
 		HoldAmount:               QuantizeUsageBillingAmount(cmd.HoldAmount),
 		Status:                   BalanceSettlementPrepared,
-		ExpiresAt:                time.Now().Add(time.Hour),
+		ExpiresAt:                expiresAt,
 		UpdatedAt:                time.Now(),
 	}
 	h.settlements[k] = rec
@@ -322,7 +326,13 @@ func (h *unifiedLiveLedgerHarness) Apply(_ context.Context, cmd *UsageBillingCom
 		if fp != cmd.RequestFingerprint {
 			return nil, ErrUsageBillingRequestConflict
 		}
-		return &UsageBillingApplyResult{Applied: false}, nil
+		res := &UsageBillingApplyResult{Applied: false}
+		if cmd.BalancePreauthorized {
+			if rec, ok := h.settlements[k]; ok && rec.Status == BalanceSettlementFinalizationPending {
+				res.BalanceFinalizationPending = true
+			}
+		}
+		return res, nil
 	}
 	res := &UsageBillingApplyResult{Applied: true}
 	if cmd.BalancePreauthorized {
@@ -666,15 +676,20 @@ func TestBILLH2_BatchImagePublicService_SubmitPreauthAndPGRollbackRefund(t *test
 
 	t.Run("PG hold failure refunds Redis live_wallet hold cleanly", func(t *testing.T) {
 		h := newUnifiedLiveLedgerHarness(userID, 1.0)
-		h.failNextPGHold = errors.New("pg deadlocked")
+		sentinelErr := errors.New("pg deadlocked")
+		h.failNextPGHold = sentinelErr
 		preauth := newPreauthServiceForHarness(h)
 		svc := newBatchService(h, preauth)
 
 		_, err := svc.Submit(ctx, owner, validBatchImageSubmitRequest(), "")
-		require.Error(t, err)
-		// Redis hold must be refunded completely back to $1.00!
+		require.ErrorIs(t, err, sentinelErr)
+		// Redis hold must be refunded completely back to $1.00 and PG row must be Refunded!
 		require.InDelta(t, 1.0, h.walletBalance[userID], 1e-9)
 		require.InDelta(t, 1.0, h.pgBalance[userID], 1e-9)
+		require.Len(t, h.settlements, 1)
+		for _, rec := range h.settlements {
+			require.Equal(t, BalanceSettlementRefunded, rec.Status)
+		}
 	})
 
 	t.Run("successful BatchImagePublicService.Submit blocks concurrent text immediately", func(t *testing.T) {
@@ -977,14 +992,348 @@ func (a *unifiedBillingCacheAdapter) ReadLiveBalanceAttempt(ctx context.Context,
 
 type cachedChargeUsageLogStub struct {
 	UsageLogRepository
-	mu      sync.Mutex
-	created []*UsageLog
+	mu        sync.Mutex
+	created   []*UsageLog
+	failFirst error
 }
 
 func (s *cachedChargeUsageLogStub) Create(_ context.Context, log *UsageLog) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failFirst != nil {
+		err := s.failFirst
+		s.failFirst = nil
+		return false, err
+	}
 	cp := *log
 	s.created = append(s.created, &cp)
 	return true, nil
+}
+
+type p11PlatformQuotaRepoStub struct {
+	UserPlatformQuotaRepository
+}
+
+type p11CachedChargeCacheStub struct {
+	*liveP0BillingCacheStub
+	h              *unifiedLiveLedgerHarness
+	failNextFinal  error
+	platformMu     sync.Mutex
+	platformUsage  map[string]float64
+	finalizeCalled int
+}
+
+func (s *p11CachedChargeCacheStub) AuthorizeLiveBalance(ctx context.Context, userID int64, attemptID string, fallbackBalance, holdAmount float64) (LiveBalanceResult, error) {
+	return s.h.AuthorizeLiveBalance(ctx, userID, attemptID, fallbackBalance, holdAmount)
+}
+func (s *p11CachedChargeCacheStub) AuthorizeExistingLiveBalance(ctx context.Context, userID int64, attemptID string, holdAmount float64) (LiveBalanceResult, error) {
+	return s.h.AuthorizeExistingLiveBalance(ctx, userID, attemptID, holdAmount)
+}
+func (s *p11CachedChargeCacheStub) AuthorizeLiveBalanceAtWatermark(ctx context.Context, userID int64, attemptID string, fallbackBalance float64, fallbackWatermark int64, holdAmount float64) (LiveBalanceResult, error) {
+	return s.h.AuthorizeLiveBalanceAtWatermark(ctx, userID, attemptID, fallbackBalance, fallbackWatermark, holdAmount)
+}
+func (s *p11CachedChargeCacheStub) AuthorizeLiveBalanceAtWatermarkIfSafe(ctx context.Context, userID int64, attemptID string, fallbackBalance float64, fallbackWatermark int64, holdAmount float64, allowInit bool) (LiveBalanceResult, error) {
+	return s.h.AuthorizeLiveBalanceAtWatermarkIfSafe(ctx, userID, attemptID, fallbackBalance, fallbackWatermark, holdAmount, allowInit)
+}
+func (s *p11CachedChargeCacheStub) TopUpLiveBalance(ctx context.Context, userID int64, attemptID string, target float64) (LiveBalanceResult, error) {
+	return s.h.TopUpLiveBalance(ctx, userID, attemptID, target)
+}
+func (s *p11CachedChargeCacheStub) FinalizeLiveBalance(ctx context.Context, userID int64, attemptID string, actual float64) (LiveBalanceResult, error) {
+	s.platformMu.Lock()
+	s.finalizeCalled++
+	failErr := s.failNextFinal
+	s.failNextFinal = nil
+	s.platformMu.Unlock()
+	if failErr != nil {
+		return LiveBalanceResult{}, failErr
+	}
+	return s.h.FinalizeLiveBalance(ctx, userID, attemptID, actual)
+}
+func (s *p11CachedChargeCacheStub) RefundLiveBalance(ctx context.Context, userID int64, attemptID string) (LiveBalanceResult, error) {
+	return s.h.RefundLiveBalance(ctx, userID, attemptID)
+}
+func (s *p11CachedChargeCacheStub) ReadLiveBalanceAttempt(ctx context.Context, userID int64, attemptID string) (LiveBalanceResult, error) {
+	return s.h.ReadLiveBalanceAttempt(ctx, userID, attemptID)
+}
+func (s *p11CachedChargeCacheStub) GetUserPlatformQuotaCache(context.Context, int64, string) (*UserPlatformQuotaCacheEntry, bool, error) {
+	return nil, false, errors.New("cache miss")
+}
+func (s *p11CachedChargeCacheStub) IncrUserPlatformQuotaUsageCache(_ context.Context, _ int64, platform string, cost float64, _ time.Duration, _ bool) error {
+	s.platformMu.Lock()
+	defer s.platformMu.Unlock()
+	if s.platformUsage == nil {
+		s.platformUsage = map[string]float64{}
+	}
+	s.platformUsage[platform] += cost
+	return nil
+}
+
+func TestP1_3_PreauthorizeDirectPGHold_SetsShortExpiresAt(t *testing.T) {
+	ctx := context.Background()
+	const userID int64 = 42
+	const keyID int64 = 7
+
+	h := newUnifiedLiveLedgerHarness(userID, 10.0)
+	preauth := newPreauthServiceForHarness(h)
+
+	before := time.Now().UTC()
+	pgGuard, err := preauth.PreauthorizeDirectPGHold(ctx, "batch-short-ttl", keyID, userID, 1.0)
+	require.NoError(t, err)
+	require.NotNil(t, pgGuard)
+
+	fixedGuard, err := preauth.PreauthorizeFixedAmount(ctx, "rpc-default-ttl", keyID, userID, "fp-rpc", 1.0)
+	require.NoError(t, err)
+	require.NotNil(t, fixedGuard)
+
+	pgRec := h.settlements[unifiedRowKey(pgGuard.RequestID(), keyID)]
+	require.NotNil(t, pgRec)
+	require.WithinDuration(t, before.Add(balancePreauthorizationDirectPGHoldTTL), pgRec.ExpiresAt, 15*time.Second,
+		"direct PG holds must expire in ~2m instead of the 6h default")
+
+	fixedRec := h.settlements[unifiedRowKey(fixedGuard.RequestID(), keyID)]
+	require.NotNil(t, fixedRec)
+	require.True(t, fixedRec.ExpiresAt.Sub(before) > 5*time.Hour,
+		"normal PreauthorizeFixedAmount holds must keep the default 6h TTL")
+}
+
+func TestP1_1_ApplyCachedContentCharge_RetryAfterExpiredTerminalAttemptAndQuotaOrdering(t *testing.T) {
+	ctx := context.Background()
+	const userID int64 = 42
+	const keyID int64 = 7
+	const accountID int64 = 9
+	groupID := int64(11)
+
+	t.Run("retry_after_terminal_attempt_ttl_expiry_skips_recovery_and_succeeds", func(t *testing.T) {
+		h := newUnifiedLiveLedgerHarness(userID, 10.0)
+		cacheStub := &p11CachedChargeCacheStub{
+			liveP0BillingCacheStub: newLiveP0BillingCacheStub(10.0),
+			h:                      h,
+		}
+		cfg := &config.Config{RunMode: config.RunModeStandard}
+		cfg.Billing.BalancePreauthorizationEnabled = true
+		cfg.Database.UserPlatformQuotaFlusherEnabled = true
+		bcs := NewBillingCacheService(cacheStub, nil, nil, nil, nil, nil, cfg, nil)
+		defer bcs.Stop()
+
+		preauth := NewBalancePreauthorizationService(cfg, NewBillingService(cfg, nil), bcs, h)
+		reqID := GeminiCachedContentUsageRequestIDPrefix + "retry-ttl-expired"
+		guard, err := preauth.PreauthorizeFixedAmount(ctx, reqID, keyID, userID, "fp-cached-1", 2.0)
+		require.NoError(t, err)
+		workerGuard, ok := guard.TransferToWorker()
+		require.True(t, ok)
+
+		usageLogs := &cachedChargeUsageLogStub{failFirst: errors.New("temporary usage_log write failure")}
+		gw := &GatewayService{
+			cfg:                   cfg,
+			billingService:        NewBillingService(cfg, nil),
+			billingCacheService:   bcs,
+			usageBillingRepo:      h,
+			usageLogRepo:          usageLogs,
+			deferredService:       &DeferredService{},
+			userPlatformQuotaRepo: &p11PlatformQuotaRepoStub{},
+		}
+		intent := &MediaBillingIntent{
+			QuotaPlatform: PlatformGemini,
+			Command: UsageBillingCommand{
+				RequestID:            reqID,
+				UserID:               userID,
+				APIKeyID:             keyID,
+				AccountID:            accountID,
+				BalanceCost:          1.25,
+				APIKeyQuotaCost:      1.25,
+				APIKeyRateLimitCost:  1.25,
+				BalancePreauthorized: true,
+				RequestPayloadHash:   "hash-cached-1",
+			},
+			Usage: UsageLog{
+				RequestID:  reqID,
+				UserID:     userID,
+				APIKeyID:   keyID,
+				AccountID:  accountID,
+				GroupID:    &groupID,
+				ActualCost: 1.25,
+				TotalCost:  1.25,
+			},
+		}
+		intent.Command.Normalize()
+
+		// Attempt 1: Apply + Finalize succeed (PG moves to BalanceSettlementPending),
+		// then usageLogRepo.Create fails transiently.
+		err = gw.ApplyCachedContentCharge(ContextWithBalancePreauthorizationGuard(ctx, workerGuard), intent)
+		require.ErrorContains(t, err, "temporary usage_log write failure")
+		require.Equal(t, BalanceSettlementPending, h.settlements[unifiedRowKey(reqID, keyID)].Status)
+		require.InDelta(t, 8.75, h.walletBalance[userID], 1e-9)
+
+		// Simulate >15m passing so Redis expires the terminal attempt key!
+		h.mu.Lock()
+		delete(h.walletAttempts, BalancePreauthorizationAttemptID(reqID, keyID))
+		h.mu.Unlock()
+		cacheStub.platformMu.Lock()
+		finalizeCallsBefore := cacheStub.finalizeCalled
+		cacheStub.platformMu.Unlock()
+
+		// Attempt 2: background retry with NO guard (guard == nil). Because PG row
+		// is already Pending (BalanceFinalizationPending == false), recovery must
+		// NOT call RecoverBalancePreauthorization against the expired Redis key.
+		err = gw.ApplyCachedContentCharge(ctx, intent)
+		require.NoError(t, err)
+		cacheStub.platformMu.Lock()
+		finalizeCallsAfter := cacheStub.finalizeCalled
+		cacheStub.platformMu.Unlock()
+		require.Equal(t, finalizeCallsBefore, finalizeCallsAfter, "must not re-invoke FinalizeLiveBalance after settlement already left FinalizationPending")
+		require.Len(t, usageLogs.created, 1)
+		require.InDelta(t, 8.75, h.walletBalance[userID], 1e-9)
+	})
+
+	t.Run("applied_side_effects_run_before_transient_finalize_failure", func(t *testing.T) {
+		h := newUnifiedLiveLedgerHarness(userID, 10.0)
+		cacheStub := &p11CachedChargeCacheStub{
+			liveP0BillingCacheStub: newLiveP0BillingCacheStub(10.0),
+			h:                      h,
+			failNextFinal:          errors.New("transient redis timeout"),
+		}
+		cfg := &config.Config{RunMode: config.RunModeStandard}
+		cfg.Billing.BalancePreauthorizationEnabled = true
+		cfg.Database.UserPlatformQuotaFlusherEnabled = true
+		bcs := NewBillingCacheService(cacheStub, nil, nil, nil, nil, nil, cfg, nil)
+		defer bcs.Stop()
+
+		preauth := NewBalancePreauthorizationService(cfg, NewBillingService(cfg, nil), bcs, h)
+		reqID := GeminiCachedContentUsageRequestIDPrefix + "quota-order-1"
+		guard, err := preauth.PreauthorizeFixedAmount(ctx, reqID, keyID, userID, "fp-cached-2", 2.0)
+		require.NoError(t, err)
+		workerGuard, ok := guard.TransferToWorker()
+		require.True(t, ok)
+
+		usageLogs := &cachedChargeUsageLogStub{}
+		gw := &GatewayService{
+			cfg:                   cfg,
+			billingService:        NewBillingService(cfg, nil),
+			billingCacheService:   bcs,
+			usageBillingRepo:      h,
+			usageLogRepo:          usageLogs,
+			deferredService:       &DeferredService{},
+			userPlatformQuotaRepo: &p11PlatformQuotaRepoStub{},
+		}
+		intent := &MediaBillingIntent{
+			QuotaPlatform: PlatformGemini,
+			Command: UsageBillingCommand{
+				RequestID:            reqID,
+				UserID:               userID,
+				APIKeyID:             keyID,
+				AccountID:            accountID,
+				BalanceCost:          1.50,
+				APIKeyQuotaCost:      1.50,
+				APIKeyRateLimitCost:  1.50,
+				BalancePreauthorized: true,
+				RequestPayloadHash:   "hash-cached-2",
+			},
+			Usage: UsageLog{
+				RequestID:  reqID,
+				UserID:     userID,
+				APIKeyID:   keyID,
+				AccountID:  accountID,
+				GroupID:    &groupID,
+				ActualCost: 1.50,
+				TotalCost:  1.50,
+			},
+		}
+		intent.Command.Normalize()
+
+		// Attempt 1: Apply succeeds (Applied=true), then FinalizeLiveBalance fails transiently.
+		err = gw.ApplyCachedContentCharge(ContextWithBalancePreauthorizationGuard(ctx, workerGuard), intent)
+		require.ErrorContains(t, err, "transient redis timeout")
+		require.Equal(t, BalanceSettlementFinalizationPending, h.settlements[unifiedRowKey(reqID, keyID)].Status)
+
+		// All Applied-only accounting side effects MUST already have been recorded!
+		cacheStub.mu.Lock()
+		quotaIncBefore := cacheStub.quotaIncrements[keyID]
+		cacheStub.mu.Unlock()
+		require.InDelta(t, 1.50, quotaIncBefore, 1e-9, "API key quota must update before Finalize fails")
+		require.Eventually(t, func() bool {
+			cacheStub.mu.Lock()
+			defer cacheStub.mu.Unlock()
+			return math.Abs(cacheStub.rateLimitUpdates[keyID]-1.50) < 1e-9
+		}, 2*time.Second, 10*time.Millisecond, "API key rate limit must update before Finalize fails")
+		cacheStub.platformMu.Lock()
+		platUsed := cacheStub.platformUsage[PlatformGemini]
+		cacheStub.platformMu.Unlock()
+		require.InDelta(t, 1.50, platUsed, 1e-9, "user-platform quota must update before Finalize fails")
+
+		// Attempt 2: background retry (guard == nil). Row is STILL FinalizationPending,
+		// so RecoverBalancePreauthorization runs and succeeds without double-counting quotas!
+		err = gw.ApplyCachedContentCharge(ctx, intent)
+		require.NoError(t, err)
+		require.Equal(t, BalanceSettlementPending, h.settlements[unifiedRowKey(reqID, keyID)].Status)
+		require.InDelta(t, 8.50, h.walletBalance[userID], 1e-9)
+		require.Len(t, usageLogs.created, 1)
+		cacheStub.mu.Lock()
+		quotaIncAfter := cacheStub.quotaIncrements[keyID]
+		cacheStub.mu.Unlock()
+		require.InDelta(t, 1.50, quotaIncAfter, 1e-9, "retry must not double-count API key quota")
+		cacheStub.platformMu.Lock()
+		platUsedAfter := cacheStub.platformUsage[PlatformGemini]
+		cacheStub.platformMu.Unlock()
+		require.InDelta(t, 1.50, platUsedAfter, 1e-9, "retry must not double-count user-platform quota")
+	})
+}
+
+func TestP1_1_SettleMediaBillingJob_RetrySkipsRecoveryWhenFinalizationNotPending(t *testing.T) {
+	ctx := context.Background()
+	cache := newLiveP0BillingCacheStub(100)
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	billingCache := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	defer billingCache.Stop()
+
+	memRepo := &mediaJobMemoryRepo{jobs: map[string]*MediaBillingJob{}, balance: 100}
+	wrapper := &liveP0MediaRepoErrWrapper{
+		mediaJobMemoryRepo: memRepo,
+		// Applied=false AND BalanceFinalizationPending=false simulates a retry after
+		// Apply + CompleteBalancePreauthorizationSettlement already finished (and
+		// after Redis's 15m terminal attempt TTL expired).
+		applyRes: &UsageBillingApplyResult{Applied: false, BalanceFinalizationPending: false},
+	}
+	usageLogs := &mediaUsageMemoryRepo{}
+	// Deliberately leave usageBillingRepo == nil so any accidental call to
+	// RecoverBalancePreauthorization would fail immediately.
+	svc := &OpenAIGatewayService{
+		cfg:                 cfg,
+		mediaBillingJobs:    wrapper,
+		usageLogRepo:        usageLogs,
+		billingCacheService: billingCache,
+	}
+
+	job := &MediaBillingJob{
+		ID:        "media_retry_after_15m_ttl",
+		Kind:      MediaBillingKindImage,
+		UserID:    42,
+		APIKeyID:  78,
+		AccountID: 9,
+		GroupID:   11,
+		Status:    MediaBillingBilled,
+		Intent: &MediaBillingIntent{
+			Command: UsageBillingCommand{
+				RequestID:            "image:retry-settled",
+				UserID:               42,
+				APIKeyID:             78,
+				AccountID:            9,
+				BalanceCost:          0.75,
+				BalancePreauthorized: true,
+			},
+			Usage: UsageLog{
+				RequestID:  "image:retry-settled",
+				UserID:     42,
+				APIKeyID:   78,
+				AccountID:  9,
+				ActualCost: 0.75,
+				TotalCost:  0.75,
+			},
+		},
+	}
+	memRepo.jobs[job.ID] = job
+
+	err := svc.settleMediaBillingJob(ctx, job, nil)
+	require.NoError(t, err, "retry after settlement left FinalizationPending must succeed without calling RecoverBalancePreauthorization")
+	require.Equal(t, MediaBillingDone, memRepo.jobs[job.ID].Status)
+	require.Len(t, usageLogs.logs, 1)
 }

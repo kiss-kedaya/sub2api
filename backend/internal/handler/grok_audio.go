@@ -23,7 +23,8 @@ import (
 )
 
 var (
-	grokRealtimePreauthTopUpInterval = 30 * time.Second
+	grokRealtimePreauthTopUpInterval = 10 * time.Second
+	grokRealtimePreauthTopUpLead     = 15 * time.Second
 	grokRealtimeNow                  = time.Now
 )
 
@@ -225,22 +226,42 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	var topUpAbortErr atomic.Pointer[error]
 	topUpDone := make(chan struct{})
 	perMinCost := h.gatewayService.EstimateAudioPreauthorizationCost(c.Request.Context(), apiKey, model, "realtime", 1.0)
-	if balanceGuard != nil && perMinCost > 0 && grokRealtimePreauthTopUpInterval > 0 {
+	if balanceGuard != nil &&
+		service.BalancePreauthorizationBillingType(apiKey, subscription) == service.BillingTypeBalance &&
+		perMinCost > 0 &&
+		grokRealtimePreauthTopUpInterval > 0 {
 		go func() {
 			defer close(topUpDone)
 			ticker := time.NewTicker(grokRealtimePreauthTopUpInterval)
 			defer ticker.Stop()
+			lead := grokRealtimePreauthTopUpLead
+			if lead < 0 {
+				lead = 0
+			}
 			for {
 				select {
 				case <-proxyCtx.Done():
 					return
 				case <-ticker.C:
-					neededMinutes := math.Max(1.0, math.Floor(grokRealtimeNow().Sub(started).Minutes())+1.0)
+					if proxyCtx.Err() != nil {
+						return
+					}
+					effectiveElapsed := grokRealtimeNow().Sub(started) + lead
+					if effectiveElapsed < 0 {
+						effectiveElapsed = 0
+					}
+					neededMinutes := math.Max(1.0, math.Floor(effectiveElapsed.Minutes())+1.0)
 					target := perMinCost * neededMinutes
 					if target <= balanceGuard.HoldAmount() {
 						continue
 					}
-					if err := balanceGuard.TopUpFixedAmount(proxyCtx, target); err != nil {
+					topUpCtx, cancelTopUp := context.WithTimeout(context.WithoutCancel(proxyCtx), 5*time.Second)
+					err := balanceGuard.TopUpFixedAmount(topUpCtx, target)
+					cancelTopUp()
+					if err != nil {
+						if proxyCtx.Err() != nil {
+							return
+						}
 						errCopy := err
 						topUpAbortErr.Store(&errCopy)
 						// Send the explicit WebSocket Close frame BEFORE canceling proxyCtx;
@@ -258,9 +279,9 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		close(topUpDone)
 	}
 	billableObserved, proxyErr := h.gatewayService.ProxyGrokRealtimeConn(proxyCtx, c, conn, upstream, model)
+	elapsed := grokRealtimeNow().Sub(started)
 	proxyCancel()
 	<-topUpDone
-	elapsed := grokRealtimeNow().Sub(started)
 	if abortErrPtr := topUpAbortErr.Load(); abortErrPtr != nil && *abortErrPtr != nil {
 		reqLog.Info("grok_realtime.preauth_topup_aborted", zap.Error(*abortErrPtr))
 		closeStatus, closeReason := openAIWSPreauthorizationCloseStatusAndReason(*abortErrPtr)

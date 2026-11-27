@@ -107,9 +107,10 @@ func (s *GatewayService) ApplyCachedContentCharge(ctx context.Context, intent *M
 	if err != nil {
 		return err
 	}
-	// Update Redis API key quota mirror and immediately evict exhausted key auth
-	// cache as soon as Apply commits, before guard.Finalize / preauth recovery
-	// can fail transiently and return early.
+	// Apply all Applied-only accounting side effects (API key quota mirror,
+	// exhausted-key auth eviction, rate-limit counters, and user-platform quota)
+	// as soon as Apply commits, before guard.Finalize / preauth recovery can fail
+	// transiently and return early (a subsequent retry sees Applied=false).
 	if result != nil && result.Applied {
 		if s.billingCacheService != nil && cmd.APIKeyQuotaCost > 0 {
 			s.billingCacheService.IncrementAPIKeyQuotaUsage(cmd.APIKeyID, cmd.APIKeyQuotaCost)
@@ -117,12 +118,33 @@ func (s *GatewayService) ApplyCachedContentCharge(ctx context.Context, intent *M
 		if result.APIKeyQuotaExhausted {
 			invalidateExhaustedAPIKeyAuthCache(ctx, s.getAuthCacheInvalidator(), cmd.UserID, cmd.APIKeyID)
 		}
+		if s.billingCacheService != nil && cmd.APIKeyRateLimitCost > 0 {
+			s.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(cmd.APIKeyID, cmd.APIKeyRateLimitCost)
+		}
+		if s.billingCacheService != nil && s.deferredService != nil {
+			// Reuse existing quota/notification updates after the authoritative
+			// ledger commit. Subscription counters below are invalidated rather
+			// than incremented, so suppress that one optimistic update here.
+			key := &APIKey{ID: cmd.APIKeyID, UserID: cmd.UserID, GroupID: intent.Usage.GroupID}
+			cost := &CostBreakdown{ActualCost: intent.Usage.ActualCost, TotalCost: intent.Usage.TotalCost}
+			params := &postUsageBillingParams{Cost: cost, User: &User{ID: cmd.UserID}, APIKey: key, Account: &Account{ID: cmd.AccountID, Type: cmd.AccountType}, AccountRateMultiplier: 1, Platform: intent.QuotaPlatform}
+			if intent.Usage.AccountRateMultiplier != nil {
+				params.AccountRateMultiplier = *intent.Usage.AccountRateMultiplier
+			}
+			if cmd.SubscriptionID != nil {
+				cost.ActualCost = 0
+				params.Platform = ""
+			}
+			// API-key rate counters already updated immediately above.
+			key.RateLimit5h = 0
+			finalizePostUsageBilling(ctx, params, s.billingDeps(), result, true)
+		}
 	}
 	if cmd.BalancePreauthorized {
 		var finalizeErr error
 		if guard, ok := BalancePreauthorizationGuardFromContext(ctx); ok {
 			finalizeErr = guard.Finalize(ctx, cmd.BalanceCost, cmd.RequestFingerprint)
-		} else {
+		} else if result != nil && (result.Applied || result.BalanceFinalizationPending) {
 			preauthorizer := NewBalancePreauthorizationService(s.cfg, s.billingService, s.billingCacheService, s.usageBillingRepo)
 			finalizeErr = preauthorizer.RecoverBalancePreauthorization(ctx, BalancePreauthorizationRecord{
 				RequestID:          cmd.RequestID,
@@ -156,30 +178,6 @@ func (s *GatewayService) ApplyCachedContentCharge(ctx context.Context, intent *M
 		if cmd.SubscriptionID != nil && intent.Usage.GroupID != nil {
 			_ = s.billingCacheService.InvalidateSubscription(ctx, cmd.UserID, *intent.Usage.GroupID)
 		}
-		if result != nil && result.Applied && cmd.APIKeyRateLimitCost > 0 {
-			s.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(cmd.APIKeyID, cmd.APIKeyRateLimitCost)
-		}
-	}
-	if result != nil && result.Applied && s.billingCacheService != nil && s.deferredService != nil {
-		// Reuse existing quota/notification updates after the authoritative
-		// ledger commit. Subscription counters above were invalidated rather
-		// than incremented, so suppress that one optimistic update here.
-		key := &APIKey{ID: cmd.APIKeyID, UserID: cmd.UserID, GroupID: intent.Usage.GroupID}
-		if cmd.APIKeyRateLimitCost > 0 {
-			key.RateLimit5h = 1
-		}
-		cost := &CostBreakdown{ActualCost: intent.Usage.ActualCost, TotalCost: intent.Usage.TotalCost}
-		params := &postUsageBillingParams{Cost: cost, User: &User{ID: cmd.UserID}, APIKey: key, Account: &Account{ID: cmd.AccountID, Type: cmd.AccountType}, AccountRateMultiplier: 1, Platform: intent.QuotaPlatform}
-		if intent.Usage.AccountRateMultiplier != nil {
-			params.AccountRateMultiplier = *intent.Usage.AccountRateMultiplier
-		}
-		if cmd.SubscriptionID != nil {
-			cost.ActualCost = 0
-			params.Platform = ""
-		}
-		// API-key rate counters already updated immediately above.
-		key.RateLimit5h = 0
-		finalizePostUsageBilling(ctx, params, s.billingDeps(), result, true)
 	}
 	usage := intent.Usage
 	if _, err := s.usageLogRepo.Create(ctx, &usage); err != nil {

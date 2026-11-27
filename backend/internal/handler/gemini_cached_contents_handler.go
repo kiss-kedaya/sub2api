@@ -282,7 +282,7 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			precheckDone = precheckRes.HandlerDone
 		}
 		createGuard, preauthErr := preauthorizeFixedAmountGatewayRequest(
-			c.Request.Context(),
+			withFixedKeyRouteForPreauthorization(c.Request.Context(), apiKey),
 			h.balancePreauthorizer,
 			apiKey,
 			subscription,
@@ -388,9 +388,15 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			refundCreateGuard()
 			precheckDone()
 			if usageErr != nil {
+				// Input tokens were already consumed upstream; if settlement failed,
+				// intentionally leave inputGuard unrefunded so crash recovery settles
+				// the durable hold rather than granting a free call.
 				googleError(c, http.StatusServiceUnavailable, "Cached content usage settlement is temporarily unavailable")
 				return
 			}
+			// Safety net when RecordUsage returned nil without finalizing (e.g. simple/zero-cost mode);
+			// no-op when Finalize already settled inputGuard.
+			deferBalancePreauthorizationRefund(reqLog, inputGuard)
 			writeGeminiCachedContentBillingError(c, err)
 			return
 		}
@@ -563,7 +569,8 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 		googleError(c, http.StatusServiceUnavailable, geminiCachedContentUnavailableMessage)
 		return
 	}
-	ttl, err := service.ParseGeminiCachedContentPatchRequest(body, c.Query("updateMask"), svc.Now(), svc.MaxTTLForAccount(account))
+	patchNow := svc.Now()
+	ttl, err := service.ParseGeminiCachedContentPatchRequest(body, c.Query("updateMask"), patchNow, svc.MaxTTLForAccount(account))
 	if err != nil {
 		googleError(c, http.StatusBadRequest, err.Error())
 		return
@@ -576,7 +583,13 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 	var patchRequestID string
 	var patchGuard *service.BalancePreauthorizationGuard
 	patchChargeCommitted := false
-	if extension := svc.Now().Add(ttl).Sub(record.ExpireTime); extension > 0 {
+	defer func() {
+		if !patchChargeCommitted {
+			deferBalancePreauthorizationRefund(reqLog, patchGuard)
+		}
+	}()
+	patchTargetExpire := patchNow.Add(ttl)
+	if extension := patchTargetExpire.Sub(record.ExpireTime); extension > 0 {
 		usage := &service.RecordUsageInput{
 			Result: &service.ForwardResult{
 				Model: record.Model, UpstreamModel: record.UpstreamModelID(),
@@ -602,7 +615,7 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 		defer chargeDone()
 		patchRequestID = service.GeminiCachedContentPatchUsageRequestID(record.PublicID)
 		patchGuard, err = preauthorizeFixedAmountGatewayRequest(
-			c.Request.Context(),
+			withFixedKeyRouteForPreauthorization(c.Request.Context(), apiKey),
 			h.balancePreauthorizer,
 			apiKey,
 			subscription,
@@ -615,11 +628,6 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 			writeGeminiCachedContentBillingError(c, err)
 			return
 		}
-		defer func() {
-			if !patchChargeCommitted {
-				deferBalancePreauthorizationRefund(reqLog, patchGuard)
-			}
-		}()
 	}
 
 	setOpsSelectedAccount(c, account.ID, account.Platform)
@@ -662,11 +670,40 @@ func (h *GatewayHandler) GeminiCachedContentsPatch(c *gin.Context) {
 		googleError(c, http.StatusBadGateway, "Upstream request failed")
 		return
 	}
-	expireTime := service.ClampGeminiCachedContentExpire(upstream.ExpireTime, svc.Now().Add(ttl))
+	expireTime := service.ClampGeminiCachedContentExpire(upstream.ExpireTime, patchTargetExpire)
 	var intent *service.MediaBillingIntent
 	if extended := expireTime.Sub(mutation.Baseline()); extended > 0 {
 		if patchRequestID == "" {
 			patchRequestID = service.GeminiCachedContentPatchUsageRequestID(record.PublicID)
+		}
+		if patchGuard == nil && h.balancePreauthorizer != nil {
+			fallbackAmount := h.gatewayService.QuoteUsageCost(c.Request.Context(), &service.RecordUsageInput{
+				Result: &service.ForwardResult{
+					Model:                  record.Model,
+					UpstreamModel:          record.UpstreamModelID(),
+					CacheStorageTokenHours: service.GeminiCachedContentStorageTokenHours(record.TotalTokenCount, extended),
+				},
+				APIKey:             apiKey,
+				User:               apiKey.User,
+				Subscription:       subscription,
+				PricingAt:          pricingAt,
+				ChannelUsageFields: record.ChannelUsage,
+			})
+			var preauthErr error
+			patchGuard, preauthErr = preauthorizeFixedAmountGatewayRequest(
+				withFixedKeyRouteForPreauthorization(c.Request.Context(), apiKey),
+				h.balancePreauthorizer,
+				apiKey,
+				subscription,
+				patchRequestID,
+				body,
+				fallbackAmount,
+			)
+			if preauthErr != nil {
+				reqLog.Info("gemini.cached_content.patch_post_rpc_preauth_rejected", zap.Float64("amount", fallbackAmount), zap.Error(preauthErr))
+				writeGeminiCachedContentBillingError(c, preauthErr)
+				return
+			}
 		}
 		intent, err = h.prepareGeminiCachedContentChargeWithGuard(c, patchGuard, apiKey, account, subscription, pricingAt,
 			patchRequestID, record.Model, record.UpstreamModelID(), 0,

@@ -374,6 +374,21 @@ func (c *preauthEntrypointsBillingCache) DeductUserBalance(context.Context, int6
 func (c *preauthEntrypointsBillingCache) InvalidateUserBalance(context.Context, int64) error {
 	return nil
 }
+func (c *preauthEntrypointsBillingCache) GetSubscriptionCache(context.Context, int64, int64) (*service.SubscriptionCacheData, error) {
+	return &service.SubscriptionCacheData{
+		Status:    service.SubscriptionStatusActive,
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}, nil
+}
+func (c *preauthEntrypointsBillingCache) SetSubscriptionCache(context.Context, int64, int64, *service.SubscriptionCacheData) error {
+	return nil
+}
+func (c *preauthEntrypointsBillingCache) UpdateSubscriptionUsage(context.Context, int64, int64, float64) error {
+	return nil
+}
+func (c *preauthEntrypointsBillingCache) InvalidateSubscriptionCache(context.Context, int64, int64) error {
+	return nil
+}
 func (c *preauthEntrypointsBillingCache) GetUserPlatformQuotaCache(context.Context, int64, string) (*service.UserPlatformQuotaCacheEntry, bool, error) {
 	return nil, false, nil
 }
@@ -468,7 +483,7 @@ func TestBILLH1_DeepSeekStandaloneTools_PreauthorizeRejectRefundAndFinalize(t *t
 		upstreamCT  string
 		upstreamOut string
 		invoke      func(*OpenAIGatewayHandler, *gin.Context)
-		wantCostMin float64
+		wantCost    float64
 	}{
 		{
 			name:        "search",
@@ -478,7 +493,7 @@ func TestBILLH1_DeepSeekStandaloneTools_PreauthorizeRejectRefundAndFinalize(t *t
 			upstreamCT:  "application/json",
 			upstreamOut: `{"results":[{"title":"hit","url":"https://example.com"}]}`,
 			invoke:      (*OpenAIGatewayHandler).DeepSeekToolsSearch,
-			wantCostMin: 0.049,
+			wantCost:    0.05,
 		},
 		{
 			name:        "fetch",
@@ -488,7 +503,7 @@ func TestBILLH1_DeepSeekStandaloneTools_PreauthorizeRejectRefundAndFinalize(t *t
 			upstreamCT:  "application/json",
 			upstreamOut: `{"content":"fetched page body"}`,
 			invoke:      (*OpenAIGatewayHandler).DeepSeekToolsFetch,
-			wantCostMin: 0.049,
+			wantCost:    0.05,
 		},
 		{
 			name:        "asr",
@@ -498,7 +513,7 @@ func TestBILLH1_DeepSeekStandaloneTools_PreauthorizeRejectRefundAndFinalize(t *t
 			upstreamCT:  "application/json",
 			upstreamOut: `{"text":"hello","duration_ms":36000}`,
 			invoke:      (*OpenAIGatewayHandler).DeepSeekToolsASR,
-			wantCostMin: 0.005, // 36s/3600 * $0.78 = $0.0078; hold was 120s/3600 * $0.78 = $0.026
+			wantCost:    0.0078, // 36s/3600 * $0.78 = $0.0078; hold was 120s/3600 * $0.78 = $0.026
 		},
 		{
 			name:        "tts",
@@ -508,7 +523,7 @@ func TestBILLH1_DeepSeekStandaloneTools_PreauthorizeRejectRefundAndFinalize(t *t
 			upstreamCT:  "audio/wav",
 			upstreamOut: "RIFF-audio-bytes",
 			invoke:      (*OpenAIGatewayHandler).DeepSeekToolsTTS,
-			wantCostMin: 0.029,
+			wantCost:    0.03,
 		},
 		{
 			name:        "ocr",
@@ -518,7 +533,7 @@ func TestBILLH1_DeepSeekStandaloneTools_PreauthorizeRejectRefundAndFinalize(t *t
 			upstreamCT:  "application/json",
 			upstreamOut: `{"id":"ocr-1","object":"ocr.result","page_count":1,"pages":[]}`,
 			invoke:      (*OpenAIGatewayHandler).DeepSeekToolsOCR,
-			wantCostMin: 0.049,
+			wantCost:    0.05,
 		},
 	}
 
@@ -643,12 +658,14 @@ func TestBILLH1_DeepSeekStandaloneTools_PreauthorizeRejectRefundAndFinalize(t *t
 			tc.invoke(h, c)
 
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-			require.Eventually(t, func() bool { return len(ledger.finalizedSnapshot()) == 1 }, 2*time.Second, 10*time.Millisecond)
+			require.Eventually(t, func() bool {
+				return len(ledger.finalizedSnapshot()) == 1 && len(usageLogs.snapshot()) == 1
+			}, 2*time.Second, 10*time.Millisecond)
 			require.Zero(t, ledger.activeHoldCount())
 			logs := usageLogs.snapshot()
 			require.Len(t, logs, 1)
-			require.GreaterOrEqual(t, logs[0].ActualCost, tc.wantCostMin)
-			require.InDelta(t, 1.0-logs[0].ActualCost, ledger.balance(42), 1e-8)
+			require.InDelta(t, tc.wantCost, logs[0].ActualCost, 1e-8)
+			require.InDelta(t, 1.0-tc.wantCost, ledger.balance(42), 1e-8)
 		})
 	}
 }
@@ -826,7 +843,9 @@ func TestBILLH1_OpenAIResponsesWS_PerTurnPreauthRejectRefundAndFinalize(t *testi
 			return turns.Load(), usageLogs.snapshot(), ledger, closeStatus, closeReason
 		}
 		require.Contains(t, string(msg1), "resp_preauth_turn_1")
-		require.Eventually(t, func() bool { return len(ledger.finalizedSnapshot()) >= 1 }, 2*time.Second, 10*time.Millisecond)
+		require.Eventually(t, func() bool {
+			return len(ledger.finalizedSnapshot()) >= 1 && len(usageLogs.snapshot()) >= 1
+		}, 2*time.Second, 10*time.Millisecond)
 
 		if drainAfterTurn1 {
 			// Exhaust live_wallet right before Turn 2!
@@ -848,7 +867,9 @@ func TestBILLH1_OpenAIResponsesWS_PerTurnPreauthRejectRefundAndFinalize(t *testi
 			}
 		} else {
 			require.Contains(t, string(msg2), "resp_preauth_turn_2")
-			require.Eventually(t, func() bool { return len(ledger.finalizedSnapshot()) >= 2 }, 2*time.Second, 10*time.Millisecond)
+			require.Eventually(t, func() bool {
+				return len(ledger.finalizedSnapshot()) >= 2 && len(usageLogs.snapshot()) >= 2
+			}, 2*time.Second, 10*time.Millisecond)
 			_ = client.Close(coderws.StatusNormalClosure, "done")
 		}
 		select {
@@ -1018,7 +1039,9 @@ func TestBILLH1_GrokVoiceHTTPAndRealtimeWS_PreauthTopUpAbortAndRefund(t *testing
 		hOK, ledgerOK, usageOK, keyOK := buildGrokHandler(t, 1.0, upstream.URL, upstream.Client())
 		recOK := callVoice(hOK, keyOK, "tts", `{"text":"0123456789"}`)
 		require.Equal(t, http.StatusOK, recOK.Code, recOK.Body.String())
-		require.Eventually(t, func() bool { return len(ledgerOK.finalizedSnapshot()) == 1 }, 2*time.Second, 10*time.Millisecond)
+		require.Eventually(t, func() bool {
+			return len(ledgerOK.finalizedSnapshot()) == 1 && len(usageOK.snapshot()) == 1
+		}, 2*time.Second, 10*time.Millisecond)
 		logs := usageOK.snapshot()
 		require.Len(t, logs, 1)
 		require.InDelta(t, 0.10, logs[0].ActualCost, 1e-8)
@@ -1123,7 +1146,9 @@ func TestBILLH1_GrokVoiceHTTPAndRealtimeWS_PreauthTopUpAbortAndRefund(t *testing
 		require.Equal(t, coderws.StatusPolicyViolation, cerr.Code)
 		require.Equal(t, "insufficient balance", cerr.Reason)
 
-		require.Eventually(t, func() bool { return len(ledger.finalizedSnapshot()) == 1 }, 2*time.Second, 10*time.Millisecond)
+		require.Eventually(t, func() bool {
+			return len(ledger.finalizedSnapshot()) == 1 && len(usageLogs.snapshot()) == 1
+		}, 2*time.Second, 10*time.Millisecond)
 		logs := usageLogs.snapshot()
 		require.Len(t, logs, 1)
 		require.True(t, strings.HasPrefix(logs[0].RequestID, "grok_realtime:"))
@@ -1249,7 +1274,9 @@ func TestBILLH1_GrokSearch_PreauthorizeRejectRefundAndFinalize(t *testing.T) {
 			h, ledger, usageLogs, key := buildSearchHandler(t, 1.0, upstream)
 			rec := callSearch(h, key)
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-			require.Eventually(t, func() bool { return len(ledger.finalizedSnapshot()) == 1 }, 2*time.Second, 10*time.Millisecond)
+			require.Eventually(t, func() bool {
+				return len(ledger.finalizedSnapshot()) == 1 && len(usageLogs.snapshot()) == 1
+			}, 2*time.Second, 10*time.Millisecond)
 			logs := usageLogs.snapshot()
 			require.Len(t, logs, 1)
 			require.True(t, strings.HasPrefix(logs[0].RequestID, label+":"), "got %q", logs[0].RequestID)
@@ -1527,6 +1554,846 @@ func TestBILLH1_BindSelectedKeyRoute_FixedAmountDeferAndFailoverTopUp(t *testing
 	require.NoError(t, guard.Refund(context.Background()))
 	require.InDelta(t, 0.55, ledger.balance(42), 1e-9)
 	require.Zero(t, ledger.activeHoldCount())
+}
+
+// --- P0-1: DeepSeek Tools Multi-Group Key Preauth Must Not Be Bypassed ---
+
+func TestP0_1_DeepSeekTools_MultiGroupKeyDoesNotBypassPreauth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	searchPricePer1k := 50.0 // $0.05 per call
+
+	buildMultiGroupDeepSeek := func(t *testing.T, balance float64, upstream *httptest.Server) (*OpenAIGatewayHandler, *preauthEntrypointsLedger, *preauthEntrypointsUsageLogRepo, *service.APIKey) {
+		t.Helper()
+		cfg, _, billingSvc := newPreauthTestPricingService(t, `{}`)
+		cfg.Gateway.MaxAccountSwitches = 1
+		ledger := newPreauthEntrypointsLedger(42, balance)
+		usageLogs := &preauthEntrypointsUsageLogRepo{}
+		preauth := newPreauthTestService(t, cfg, billingSvc, ledger)
+
+		dsGroupID := int64(10)
+		openaiGroupID := int64(20)
+		dsGroup := &service.Group{
+			ID:               dsGroupID,
+			Platform:         service.PlatformDeepseek,
+			Status:           service.StatusActive,
+			Hydrated:         true,
+			RateMultiplier:   1.0,
+			SearchPricePer1k: &searchPricePer1k,
+		}
+		openaiGroup := &service.Group{
+			ID:             openaiGroupID,
+			Platform:       service.PlatformOpenAI,
+			Status:         service.StatusActive,
+			Hydrated:       true,
+			RateMultiplier: 1.0,
+		}
+		dsAccount := service.Account{
+			ID: 1, Platform: service.PlatformDeepseek, Type: service.AccountTypeAPIKey,
+			Status: service.StatusActive, Schedulable: true, Priority: 1, GroupIDs: []int64{dsGroupID},
+			Credentials: map[string]any{
+				"base_url":      upstream.URL,
+				"api_key":       "test-key-must-not-leak",
+				"model_mapping": map[string]any{"deepseek-fixture": "deepseek-fixture"},
+			},
+		}
+		repo := openAIImagesFailoverAccountRepo{accounts: []service.Account{dsAccount}}
+		snapshot := service.NewSchedulerSnapshotService(
+			&fakeSchedulerCache{accounts: []*service.Account{&dsAccount}},
+			nil, repo,
+			smartRouteHandlerGroups{groups: map[int64]*service.Group{
+				dsGroupID:     dsGroup,
+				openaiGroupID: openaiGroup,
+			}}, cfg,
+		)
+		_, err := snapshot.GetGroupByIDLite(context.Background(), dsGroupID)
+		require.NoError(t, err)
+		_, err = snapshot.GetGroupByIDLite(context.Background(), openaiGroupID)
+		require.NoError(t, err)
+
+		bcs := service.NewBillingCacheService(&preauthEntrypointsBillingCache{l: ledger}, nil, nil, nil, nil, nil, cfg, nil)
+		t.Cleanup(bcs.Stop)
+		transport := &deepSeekNativeHandlerUpstream{client: upstream.Client()}
+		gateway := service.NewOpenAIGatewayService(
+			repo, usageLogs, ledger, nil, nil, nil, nil, cfg, snapshot, nil,
+			billingSvc, nil, bcs, transport, &service.DeferredService{},
+			nil, nil, nil, nil, nil, nil, nil,
+		)
+		t.Cleanup(gateway.CloseOpenAIWSPool)
+		h := NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(nil), bcs, &service.APIKeyService{}, nil, nil, nil, nil, cfg)
+		h.balancePreauthorizer = preauth
+		// Multi-group key: [10(deepseek), 20(openai)] with primary GroupID=10.
+		// Entry preauth defers because len(CandidateGroupIDs()) == 2; PrepareDeepSeekToolsRouting
+		// filters selected down to [10] with the same GroupID=10. bindSelectedKeyRoute MUST still preauthorize!
+		apiKey := &service.APIKey{
+			ID: 7, UserID: 42, GroupID: &dsGroupID, Group: dsGroup,
+			RouteGroupIDs: []int64{dsGroupID, openaiGroupID},
+			Status:        service.StatusAPIKeyActive,
+			User:          &service.User{ID: 42, Status: service.StatusActive, Balance: 1000.0, Concurrency: 5},
+		}
+		return h, ledger, usageLogs, apiKey
+	}
+
+	makeSearchCtx := func(key *service.APIKey) (*gin.Context, *httptest.ResponseRecorder) {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		req := httptest.NewRequest(http.MethodPost, service.DeepSeekToolsPathSearch, strings.NewReader(`{"query":"multi-group-preauth"}`))
+		req.Header.Set("Content-Type", "application/json")
+		c.Request = req.WithContext(context.WithValue(req.Context(), ctxkey.Group, key.Group))
+		c.Set(string(middleware2.ContextKeyAPIKey), key)
+		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: key.UserID, Concurrency: 5})
+		return c, rec
+	}
+
+	t.Run("low_live_wallet_blocked_before_upstream_even_after_group_narrowing", func(t *testing.T) {
+		var hits atomic.Int32
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hits.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"results":[]}`)
+		}))
+		defer upstream.Close()
+
+		h, ledger, _, apiKey := buildMultiGroupDeepSeek(t, 0.01, upstream)
+		c, rec := makeSearchCtx(apiKey)
+		h.DeepSeekToolsSearch(c)
+
+		require.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
+		require.Zero(t, hits.Load(), "multi-group DeepSeek tools call must NOT bypass preauth after narrowing to 1 group")
+		require.InDelta(t, 0.01, ledger.balance(42), 1e-9)
+		require.Zero(t, ledger.activeHoldCount())
+	})
+
+	t.Run("sufficient_live_wallet_preauthorizes_and_finalizes_exact_cost", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"results":[{"title":"ok","url":"https://example.com"}]}`)
+		}))
+		defer upstream.Close()
+
+		h, ledger, usageLogs, apiKey := buildMultiGroupDeepSeek(t, 1.0, upstream)
+		c, rec := makeSearchCtx(apiKey)
+		h.DeepSeekToolsSearch(c)
+
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Eventually(t, func() bool {
+			return len(ledger.finalizedSnapshot()) == 1 && len(usageLogs.snapshot()) == 1
+		}, 2*time.Second, 10*time.Millisecond)
+		logs := usageLogs.snapshot()
+		require.Len(t, logs, 1)
+		require.InDelta(t, 0.05, logs[0].ActualCost, 1e-8)
+		require.InDelta(t, 0.95, ledger.balance(42), 1e-8)
+		require.Zero(t, ledger.activeHoldCount())
+	})
+}
+
+// --- P0-3: ResponsesWebSocket Turn 2 BeforeTurn & BeforeRequest Preserve Guard on c.Request.Context() ---
+
+func TestP0_3_OpenAIResponsesWS_Turn2PreservesGuardOnRequestContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const pricingJSON = `{
+		"gpt-5.1": {
+			"litellm_provider": "openai",
+			"mode": "chat",
+			"input_cost_per_token": 0.0001,
+			"output_cost_per_token": 0.0002
+		}
+	}`
+
+	upstreamDone := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(upstreamDone)
+		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		for turn := 1; turn <= 2; turn++ {
+			readCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			_, _, err := conn.Read(readCtx)
+			cancel()
+			if err != nil {
+				return
+			}
+			resp := fmt.Sprintf(`{"type":"response.completed","response":{"id":"resp_p03_turn_%d","model":"gpt-5.1","usage":{"input_tokens":10,"output_tokens":5}}}`, turn)
+			writeCtx, wcancel := context.WithTimeout(r.Context(), 3*time.Second)
+			err = conn.Write(writeCtx, coderws.MessageText, []byte(resp))
+			wcancel()
+			if err != nil {
+				return
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	cfg, _, billingSvc := newPreauthTestPricingService(t, pricingJSON)
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+
+	groupID := int64(4213)
+	userID := int64(1713)
+	group := &service.Group{ID: groupID, Name: "ws-p03", Platform: service.PlatformOpenAI, Status: service.StatusActive, Hydrated: true, RateMultiplier: 1.0}
+	ledger := newPreauthEntrypointsLedger(userID, 5.0)
+	preauth := newPreauthTestService(t, cfg, billingSvc, ledger)
+	usageLogs := &preauthEntrypointsUsageLogRepo{}
+
+	accountRepo := &openAIWSUsageHandlerAccountRepoStub{account: service.Account{
+		ID: 9913, Name: "openai-ws-p03", Platform: service.PlatformOpenAI,
+		Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Concurrency: 2,
+		Credentials: map[string]any{
+			"api_key":       "test-key-must-not-leak",
+			"base_url":      upstream.URL,
+			"model_mapping": map[string]any{"gpt-5.1": "gpt-5.1"},
+		},
+		Extra: map[string]any{
+			"openai_apikey_responses_websockets_v2_enabled": true,
+			"openai_apikey_responses_websockets_v2_mode":    service.OpenAIWSIngressModePassthrough,
+		},
+	}}
+	bcs := service.NewBillingCacheService(&preauthEntrypointsBillingCache{l: ledger}, nil, nil, nil, nil, nil, cfg, nil)
+	defer bcs.Stop()
+	gateway := service.NewOpenAIGatewayService(
+		accountRepo, usageLogs, ledger, nil, nil, nil, nil, cfg, nil, nil,
+		billingSvc, nil, bcs, nil, &service.DeferredService{},
+		nil, nil, nil, nil, nil, nil, nil,
+	)
+	defer gateway.CloseOpenAIWSPool()
+
+	// TryAcquireUserSlotForAPIKeyWithLimit forwards c.Request.Context() directly into
+	// acquireUserSlotFn right after BeforeTurn(2) updates c.Request.Context().
+	var userSlotCalls atomic.Int32
+	var turn2GuardMu sync.Mutex
+	var turn2GuardReqID string
+	var turn2GuardOwner bool
+	concurrency := &concurrencyCacheMock{
+		acquireUserSlotFn: func(ctx context.Context, _ int64, _ int, _ string) (bool, error) {
+			if userSlotCalls.Add(1) == 2 {
+				if g, ok := service.BalancePreauthorizationGuardFromContext(ctx); ok {
+					turn2GuardMu.Lock()
+					turn2GuardReqID = g.RequestID()
+					turn2GuardOwner = g.IsCurrentOwner()
+					turn2GuardMu.Unlock()
+				}
+			}
+			return true, nil
+		},
+		acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+	}
+	h := &OpenAIGatewayHandler{
+		gatewayService:      gateway,
+		billingCacheService: bcs,
+		apiKeyService:       &service.APIKeyService{},
+		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(concurrency), SSEPingFormatNone, time.Second),
+	}
+	h.balancePreauthorizer = preauth
+	apiKey := &service.APIKey{
+		ID: 1813, UserID: userID, GroupID: &groupID, Group: group, Status: service.StatusAPIKeyActive,
+		User: &service.User{ID: userID, Status: service.StatusActive, Balance: 1000.0},
+	}
+
+	var postHandlerMu sync.Mutex
+	var postHandlerGuardReqID string
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware2.ContextKeyAPIKey), apiKey)
+		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: userID, Concurrency: 2})
+		c.Next()
+		// After passthrough ran BeforeTurn(2) AND BeforeRequest(2), c.Request.Context()
+		// must STILL carry Turn 2's guard (not wiped by BeforeRequest).
+		if g, ok := service.BalancePreauthorizationGuardFromContext(c.Request.Context()); ok {
+			postHandlerMu.Lock()
+			postHandlerGuardReqID = g.RequestID()
+			postHandlerMu.Unlock()
+		}
+	})
+	router.GET("/openai/v1/responses", h.ResponsesWebSocket)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+	client, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/openai/v1/responses", nil)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() { _ = client.CloseNow() }()
+
+	for turn := 1; turn <= 2; turn++ {
+		frame := fmt.Sprintf(`{"type":"response.create","model":"gpt-5.1","input":"turn %d","max_output_tokens":100}`, turn)
+		wctx, wcancel := context.WithTimeout(context.Background(), 3*time.Second)
+		require.NoError(t, client.Write(wctx, coderws.MessageText, []byte(frame)))
+		wcancel()
+
+		rctx, rcancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, msg, err := client.Read(rctx)
+		rcancel()
+		require.NoError(t, err)
+		require.Contains(t, string(msg), fmt.Sprintf("resp_p03_turn_%d", turn))
+		require.Eventually(t, func() bool {
+			return len(ledger.finalizedSnapshot()) >= turn && len(usageLogs.snapshot()) >= turn
+		}, 2*time.Second, 10*time.Millisecond)
+	}
+	_ = client.Close(coderws.StatusNormalClosure, "done")
+	select {
+	case <-upstreamDone:
+	case <-time.After(time.Second):
+	}
+
+	turn2GuardMu.Lock()
+	gotTurn2ReqID := turn2GuardReqID
+	gotTurn2Owner := turn2GuardOwner
+	turn2GuardMu.Unlock()
+	require.Contains(t, gotTurn2ReqID, ":turn:2:", "BeforeTurn(2) must leave Turn 2's guard on c.Request.Context()")
+	require.True(t, gotTurn2Owner, "Turn 2 guard must be active owner during BeforeTurn(2)")
+
+	require.Eventually(t, func() bool {
+		postHandlerMu.Lock()
+		defer postHandlerMu.Unlock()
+		return strings.Contains(postHandlerGuardReqID, ":turn:2:")
+	}, 2*time.Second, 10*time.Millisecond, "BeforeRequest(2) in passthrough must preserve Turn 2's guard on c.Request.Context()")
+}
+
+// --- P0-2 + P1-5: ResponsesWebSocket Turn 2+ Cross-Group Failover ---
+
+func TestP0_2_OpenAIResponsesWS_Turn2CrossGroupFailoverDoesNotTouchTurn1Guard(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const pricingJSON = `{
+		"gpt-5.1": {
+			"litellm_provider": "openai",
+			"mode": "chat",
+			"input_cost_per_token": 0.0001,
+			"output_cost_per_token": 0.0002
+		}
+	}`
+
+	runScenario := func(t *testing.T, groupASubscription bool) {
+		t.Helper()
+		var groupATurns atomic.Int32
+		var groupBTurns atomic.Int32
+		upstreamA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			n := groupATurns.Add(1)
+			if n >= 2 {
+				// Retryable 429 on Turn 2 triggers current-turn failover to Group B!
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = io.WriteString(w, `{"error":{"type":"rate_limit_error","message":"try another group"}}`)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_groupA_turn1\",\"model\":\"gpt-5.1\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n")
+		}))
+		defer upstreamA.Close()
+
+		upstreamB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			groupBTurns.Add(1)
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_groupB_turn2\",\"model\":\"gpt-5.1\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n")
+		}))
+		defer upstreamB.Close()
+
+		cfg, _, billingSvc := newPreauthTestPricingService(t, pricingJSON)
+		cfg.Gateway.MaxAccountSwitches = 3
+		cfg.Gateway.OpenAIWS.Enabled = true
+		cfg.Gateway.OpenAIWS.APIKeyEnabled = true
+		cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
+		cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+		cfg.Gateway.OpenAIWS.IngressModeDefault = service.OpenAIWSIngressModeHTTPBridge
+
+		groupAID := int64(5101)
+		groupBID := int64(5102)
+		userID := int64(1801)
+		groupA := &service.Group{
+			ID: groupAID, Name: "ws-failover-a", Platform: service.PlatformOpenAI,
+			Status: service.StatusActive, Hydrated: true, RateMultiplier: 1.0,
+		}
+		var initialSub *service.UserSubscription
+		if groupASubscription {
+			groupA.SubscriptionType = service.SubscriptionTypeSubscription
+			initialSub = &service.UserSubscription{
+				ID: 901, UserID: userID, GroupID: groupAID,
+				Status: service.SubscriptionStatusActive, ExpiresAt: time.Now().Add(24 * time.Hour),
+			}
+		}
+		groupB := &service.Group{
+			ID: groupBID, Name: "ws-failover-b", Platform: service.PlatformOpenAI,
+			Status: service.StatusActive, Hydrated: true, RateMultiplier: 2.0,
+		}
+		accountA := service.Account{
+			ID: 101, Name: "acc-a", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Status: service.StatusActive, Schedulable: true, Priority: 1, Concurrency: 2,
+			GroupIDs: []int64{groupAID},
+			Credentials: map[string]any{
+				"api_key":       "test-key-must-not-leak",
+				"base_url":      upstreamA.URL,
+				"model_mapping": map[string]any{"gpt-5.1": "gpt-5.1"},
+			},
+			Extra: map[string]any{
+				"openai_apikey_responses_websockets_v2_enabled": true,
+				"openai_apikey_responses_websockets_v2_mode":    service.OpenAIWSIngressModeHTTPBridge,
+			},
+		}
+		accountB := service.Account{
+			ID: 102, Name: "acc-b", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Status: service.StatusActive, Schedulable: true, Priority: 1, Concurrency: 2,
+			GroupIDs: []int64{groupBID},
+			Credentials: map[string]any{
+				"api_key":       "test-key-must-not-leak",
+				"base_url":      upstreamB.URL,
+				"model_mapping": map[string]any{"gpt-5.1": "gpt-5.1"},
+			},
+			Extra: map[string]any{
+				"openai_apikey_responses_websockets_v2_enabled": true,
+				"openai_apikey_responses_websockets_v2_mode":    service.OpenAIWSIngressModeHTTPBridge,
+			},
+		}
+
+		ledger := newPreauthEntrypointsLedger(userID, 5.0)
+		preauth := newPreauthTestService(t, cfg, billingSvc, ledger)
+		usageLogs := &preauthEntrypointsUsageLogRepo{}
+		repo := openAIImagesFailoverAccountRepo{accounts: []service.Account{accountA, accountB}}
+		snapshot := service.NewSchedulerSnapshotService(
+			&fakeSchedulerCache{accounts: []*service.Account{&accountA, &accountB}},
+			nil, repo,
+			smartRouteHandlerGroups{groups: map[int64]*service.Group{
+				groupAID: groupA,
+				groupBID: groupB,
+			}}, cfg,
+		)
+		_, err := snapshot.GetGroupByIDLite(context.Background(), groupAID)
+		require.NoError(t, err)
+		_, err = snapshot.GetGroupByIDLite(context.Background(), groupBID)
+		require.NoError(t, err)
+
+		bcs := service.NewBillingCacheService(&preauthEntrypointsBillingCache{l: ledger}, nil, nil, nil, nil, nil, cfg, nil)
+		defer bcs.Stop()
+		transport := &deepSeekNativeHandlerUpstream{client: upstreamA.Client()}
+		gateway := service.NewOpenAIGatewayService(
+			repo, usageLogs, ledger, nil, nil, nil, nil, cfg, snapshot, nil,
+			billingSvc, nil, bcs, transport, &service.DeferredService{},
+			nil, nil, nil, nil, nil, nil, nil,
+		)
+		defer gateway.CloseOpenAIWSPool()
+		concurrency := &concurrencyCacheMock{
+			acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },
+			acquireAccountSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		}
+		h := &OpenAIGatewayHandler{
+			gatewayService:      gateway,
+			billingCacheService: bcs,
+			apiKeyService:       &service.APIKeyService{},
+			concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(concurrency), SSEPingFormatNone, time.Second),
+			maxAccountSwitches:  3,
+		}
+		h.balancePreauthorizer = preauth
+
+		apiKey := &service.APIKey{
+			ID: 1820, UserID: userID, GroupID: &groupAID, Group: groupA,
+			RouteGroupIDs: []int64{groupAID, groupBID},
+			Status:        service.StatusAPIKeyActive,
+			User:          &service.User{ID: userID, Status: service.StatusActive, Balance: 1000.0},
+		}
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set(string(middleware2.ContextKeyAPIKey), apiKey)
+			c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: userID, Concurrency: 2})
+			if initialSub != nil {
+				c.Set(string(middleware2.ContextKeySubscription), initialSub)
+			}
+			c.Next()
+		})
+		router.GET("/openai/v1/responses", h.ResponsesWebSocket)
+		srv := httptest.NewServer(router)
+		defer srv.Close()
+
+		dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+		client, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/openai/v1/responses", nil)
+		cancelDial()
+		require.NoError(t, err)
+		defer func() { _ = client.CloseNow() }()
+
+		// Turn 1 succeeds on Group A.
+		wctx1, wcancel1 := context.WithTimeout(context.Background(), 3*time.Second)
+		require.NoError(t, client.Write(wctx1, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"turn one","max_output_tokens":100}`)))
+		wcancel1()
+		rctx1, rcancel1 := context.WithTimeout(context.Background(), 3*time.Second)
+		_, msg1, err := client.Read(rctx1)
+		rcancel1()
+		require.NoError(t, err)
+		require.Contains(t, string(msg1), "resp_groupA_turn1")
+
+		wantFinAfterT1 := 1
+		if groupASubscription {
+			wantFinAfterT1 = 0
+		}
+		require.Eventually(t, func() bool {
+			return len(usageLogs.snapshot()) >= 1 && len(ledger.finalizedSnapshot()) == wantFinAfterT1
+		}, 2*time.Second, 10*time.Millisecond)
+
+		// Turn 2 hits 429 on Group A -> fails over across groups to Balance Group B!
+		wctx2, wcancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+		require.NoError(t, client.Write(wctx2, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":"turn two","max_output_tokens":100}`)))
+		wcancel2()
+		rctx2, rcancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+		_, msg2, err := client.Read(rctx2)
+		rcancel2()
+		require.NoError(t, err, "Turn 2 cross-group failover must succeed without ErrBalancePreauthorizationOwnershipTransferred")
+		require.Contains(t, string(msg2), "resp_groupB_turn2")
+		_ = client.Close(coderws.StatusNormalClosure, "done")
+
+		wantTotalFin := wantFinAfterT1 + 1
+		require.Eventually(t, func() bool {
+			return len(usageLogs.snapshot()) == 2 && len(ledger.finalizedSnapshot()) == wantTotalFin
+		}, 2*time.Second, 10*time.Millisecond)
+
+		require.Equal(t, int32(1), groupBTurns.Load())
+		require.Zero(t, ledger.activeHoldCount(), "must not leak any phantom Turn-1 or Turn-2 hold")
+
+		// 10 input * 0.0001 + 5 output * 0.0002 = $0.002 at 1x, $0.004 at 2x.
+		wantTurn2Cost := 0.004
+		wantCashSpent := wantTurn2Cost
+		if !groupASubscription {
+			wantCashSpent += 0.002
+		}
+		require.InDelta(t, 5.0-wantCashSpent, ledger.balance(userID), 1e-8)
+
+		if groupASubscription {
+			// Subscription Turn 1 -> Balance Turn 2 MUST NOT create any Turn-1 hold at all!
+			for _, id := range ledger.finalizedSnapshot() {
+				require.Contains(t, id, ":turn:2:", "only Turn 2 should have a balance preauth")
+			}
+			for _, id := range ledger.refundedSnapshot() {
+				require.NotContains(t, id, ":turn:1:", "must not leak or allocate a phantom Turn-1 hold")
+			}
+		}
+	}
+
+	t.Run("balance_turn1_to_balance_group_b", func(t *testing.T) {
+		runScenario(t, false)
+	})
+	t.Run("subscription_turn1_to_balance_group_b", func(t *testing.T) {
+		runScenario(t, true)
+	})
+}
+
+// --- P1-2 + P2-1 + CodeRabbit Majors: GrokRealtime Preemptive TopUp, Subscription Gate & Normal Close ---
+
+func TestP1_2_GrokRealtime_PreemptiveTopUpSubscriptionSkipAndNormalDisconnect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rtPrice := 0.05 // $0.05/min
+
+	buildRealtimeServer := func(t *testing.T, balance float64, subscriptionType string, sub *service.UserSubscription, upstreamURL string, client *http.Client) (*httptest.Server, *preauthEntrypointsLedger, *preauthEntrypointsUsageLogRepo) {
+		t.Helper()
+		cfg, _, billingSvc := newPreauthTestPricingService(t, `{}`)
+		ledger := newPreauthEntrypointsLedger(42, balance)
+		usageLogs := &preauthEntrypointsUsageLogRepo{}
+		preauth := newPreauthTestService(t, cfg, billingSvc, ledger)
+
+		groupID := int64(78)
+		group := &service.Group{
+			ID:                       groupID,
+			Platform:                 service.PlatformGrok,
+			Status:                   service.StatusActive,
+			Hydrated:                 true,
+			RateMultiplier:           1.0,
+			SubscriptionType:         subscriptionType,
+			AudioRealtimePricePerMin: &rtPrice,
+		}
+		account := service.Account{
+			ID: 12, Platform: service.PlatformGrok, Type: service.AccountTypeAPIKey,
+			Status: service.StatusActive, Schedulable: true, Priority: 1, GroupIDs: []int64{groupID},
+			Credentials: map[string]any{"base_url": upstreamURL, "api_key": "test-key-must-not-leak"},
+		}
+		repo := openAIImagesFailoverAccountRepo{accounts: []service.Account{account}}
+		snapshot := service.NewSchedulerSnapshotService(
+			&fakeSchedulerCache{accounts: []*service.Account{&account}},
+			nil, repo,
+			smartRouteHandlerGroups{groups: map[int64]*service.Group{groupID: group}}, cfg,
+		)
+		_, err := snapshot.GetGroupByIDLite(context.Background(), groupID)
+		require.NoError(t, err)
+
+		bcs := service.NewBillingCacheService(&preauthEntrypointsBillingCache{l: ledger}, nil, nil, nil, nil, nil, cfg, nil)
+		t.Cleanup(bcs.Stop)
+		transport := &deepSeekNativeHandlerUpstream{client: client}
+		gateway := service.NewOpenAIGatewayService(
+			repo, usageLogs, ledger, nil, nil, nil, nil, cfg, snapshot, nil,
+			billingSvc, nil, bcs, transport, &service.DeferredService{},
+			nil, nil, nil, nil, nil, nil, nil,
+		)
+		t.Cleanup(gateway.CloseOpenAIWSPool)
+		h := NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(nil), bcs, &service.APIKeyService{}, nil, nil, nil, nil, cfg)
+		h.balancePreauthorizer = preauth
+		apiKey := &service.APIKey{
+			ID: 7, UserID: 42, GroupID: &groupID, Group: group, Status: service.StatusAPIKeyActive,
+			User: &service.User{ID: 42, Status: service.StatusActive, Balance: 1000.0, Concurrency: 5},
+		}
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set(string(middleware2.ContextKeyAPIKey), apiKey)
+			c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: apiKey.UserID, Concurrency: 5})
+			if sub != nil {
+				c.Set(string(middleware2.ContextKeySubscription), sub)
+			}
+			c.Next()
+		})
+		router.GET("/v1/realtime", h.GrokRealtime)
+		srv := httptest.NewServer(router)
+		t.Cleanup(srv.Close)
+		return srv, ledger, usageLogs
+	}
+
+	t.Run("preemptive_topup_aborts_before_minute_boundary_and_captures_elapsed_immediately", func(t *testing.T) {
+		origInterval := grokRealtimePreauthTopUpInterval
+		origLead := grokRealtimePreauthTopUpLead
+		origNow := grokRealtimeNow
+		t.Cleanup(func() {
+			grokRealtimePreauthTopUpInterval = origInterval
+			grokRealtimePreauthTopUpLead = origLead
+			grokRealtimeNow = origNow
+		})
+
+		baseTime := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+		var clockOffsetSec atomic.Int64
+		grokRealtimeNow = func() time.Time {
+			return baseTime.Add(time.Duration(clockOffsetSec.Load()) * time.Second)
+		}
+		grokRealtimePreauthTopUpInterval = 15 * time.Millisecond
+		grokRealtimePreauthTopUpLead = 15 * time.Second
+
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.CloseNow() }()
+			_ = conn.Write(r.Context(), coderws.MessageText, []byte(`{"type":"response.output_audio.delta","delta":"AAAA"}`))
+			for {
+				if _, _, err := conn.Read(r.Context()); err != nil {
+					return
+				}
+			}
+		}))
+		defer upstream.Close()
+
+		// $0.06 covers minute 1 ($0.05) but NOT minute 2 ($0.10 total).
+		srv, ledger, usageLogs := buildRealtimeServer(t, 0.06, service.SubscriptionTypeStandard, nil, upstream.URL, upstream.Client())
+		dialCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		client, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/v1/realtime?model=grok-voice-latest", nil)
+		cancel()
+		require.NoError(t, err)
+		defer func() { _ = client.CloseNow() }()
+
+		readCtx1, rcancel1 := context.WithTimeout(context.Background(), 3*time.Second)
+		_, msg, err := client.Read(readCtx1)
+		rcancel1()
+		require.NoError(t, err)
+		require.Contains(t, string(msg), "response.output_audio.delta")
+
+		// Advance clock to 46s (14s BEFORE the 60s boundary!) -> preemptive top-up fires early!
+		clockOffsetSec.Store(46)
+
+		readCtx2, rcancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+		_, _, err = client.Read(readCtx2)
+		rcancel2()
+		require.Error(t, err)
+		var cerr coderws.CloseError
+		require.ErrorAs(t, err, &cerr)
+		require.Equal(t, coderws.StatusPolicyViolation, cerr.Code)
+		require.Equal(t, "insufficient balance", cerr.Reason)
+
+		require.Eventually(t, func() bool {
+			return len(ledger.finalizedSnapshot()) == 1 && len(usageLogs.snapshot()) == 1
+		}, 2*time.Second, 10*time.Millisecond)
+		logs := usageLogs.snapshot()
+		require.InDelta(t, 0.05*(46.0/60.0), logs[0].ActualCost, 1e-6)
+		require.Zero(t, ledger.activeHoldCount())
+	})
+
+	t.Run("subscription_session_skips_periodic_topup_and_never_touches_cash_wallet", func(t *testing.T) {
+		origInterval := grokRealtimePreauthTopUpInterval
+		origNow := grokRealtimeNow
+		t.Cleanup(func() {
+			grokRealtimePreauthTopUpInterval = origInterval
+			grokRealtimeNow = origNow
+		})
+
+		baseTime := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+		var clockOffsetSec atomic.Int64
+		grokRealtimeNow = func() time.Time {
+			return baseTime.Add(time.Duration(clockOffsetSec.Load()) * time.Second)
+		}
+		grokRealtimePreauthTopUpInterval = 15 * time.Millisecond
+
+		sendSecond := make(chan struct{})
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.CloseNow() }()
+			_ = conn.Write(r.Context(), coderws.MessageText, []byte(`{"type":"response.output_audio.delta","delta":"AAAA"}`))
+			<-sendSecond
+			_ = conn.Write(r.Context(), coderws.MessageText, []byte(`{"type":"response.output_audio.delta","delta":"BBBB"}`))
+			for {
+				if _, _, err := conn.Read(r.Context()); err != nil {
+					return
+				}
+			}
+		}))
+		defer upstream.Close()
+
+		sub := &service.UserSubscription{
+			ID: 88, UserID: 42, GroupID: 78,
+			Status: service.SubscriptionStatusActive, ExpiresAt: time.Now().Add(24 * time.Hour),
+		}
+		// Cash wallet is only $0.01 (far below $0.05/min) — subscription session must NOT freeze or abort!
+		srv, ledger, usageLogs := buildRealtimeServer(t, 0.01, service.SubscriptionTypeSubscription, sub, upstream.URL, upstream.Client())
+		dialCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		client, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/v1/realtime?model=grok-voice-latest", nil)
+		cancel()
+		require.NoError(t, err)
+		defer func() { _ = client.CloseNow() }()
+
+		readCtx1, rcancel1 := context.WithTimeout(context.Background(), 3*time.Second)
+		_, msg1, err := client.Read(readCtx1)
+		rcancel1()
+		require.NoError(t, err)
+		require.Contains(t, string(msg1), "AAAA")
+
+		// Advance past 2 minutes and let several top-up ticker intervals pass.
+		clockOffsetSec.Store(125)
+		time.Sleep(50 * time.Millisecond)
+		close(sendSecond)
+
+		readCtx2, rcancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+		_, msg2, err := client.Read(readCtx2)
+		rcancel2()
+		require.NoError(t, err, "subscription realtime session must stay open past funded cash boundaries")
+		require.Contains(t, string(msg2), "BBBB")
+
+		_ = client.Close(coderws.StatusNormalClosure, "done")
+		require.Eventually(t, func() bool { return len(usageLogs.snapshot()) == 1 }, 2*time.Second, 10*time.Millisecond)
+		require.InDelta(t, 0.01, ledger.balance(42), 1e-9, "cash live_wallet must never be touched for subscription sessions")
+		require.Zero(t, ledger.activeHoldCount())
+	})
+
+	t.Run("normal_client_disconnect_cleanly_finalizes_elapsed", func(t *testing.T) {
+		origInterval := grokRealtimePreauthTopUpInterval
+		origNow := grokRealtimeNow
+		t.Cleanup(func() {
+			grokRealtimePreauthTopUpInterval = origInterval
+			grokRealtimeNow = origNow
+		})
+
+		baseTime := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+		var clockOffsetSec atomic.Int64
+		grokRealtimeNow = func() time.Time {
+			return baseTime.Add(time.Duration(clockOffsetSec.Load()) * time.Second)
+		}
+		grokRealtimePreauthTopUpInterval = 15 * time.Millisecond
+
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.CloseNow() }()
+			_ = conn.Write(r.Context(), coderws.MessageText, []byte(`{"type":"response.output_audio.delta","delta":"AAAA"}`))
+			for {
+				if _, _, err := conn.Read(r.Context()); err != nil {
+					return
+				}
+			}
+		}))
+		defer upstream.Close()
+
+		srv, ledger, usageLogs := buildRealtimeServer(t, 1.0, service.SubscriptionTypeStandard, nil, upstream.URL, upstream.Client())
+		dialCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		client, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/v1/realtime?model=grok-voice-latest", nil)
+		cancel()
+		require.NoError(t, err)
+		defer func() { _ = client.CloseNow() }()
+
+		readCtx, rcancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, _, err = client.Read(readCtx)
+		rcancel()
+		require.NoError(t, err)
+
+		clockOffsetSec.Store(20)
+		require.NoError(t, client.Close(coderws.StatusNormalClosure, "bye"))
+
+		require.Eventually(t, func() bool {
+			return len(ledger.finalizedSnapshot()) == 1 && len(usageLogs.snapshot()) == 1
+		}, 2*time.Second, 10*time.Millisecond)
+		wantCost := 0.05 * (20.0 / 60.0)
+		logs := usageLogs.snapshot()
+		require.InDelta(t, wantCost, logs[0].ActualCost, 1e-6)
+		require.InDelta(t, 1.0-wantCost, ledger.balance(42), 1e-6)
+		require.Zero(t, ledger.activeHoldCount())
+	})
+}
+
+// --- P1-4: GeminiCachedContentsPatch Pre-Check Clock Skew Protection ---
+
+func TestP1_4_GeminiCachedContentsPatch_ClockSkewClampedToPrecheckNow(t *testing.T) {
+	env := newCachedBillingEnv(t, 500.0, 900)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "model_pricing.json"), []byte(fmt.Sprintf(`{"gemini-2.5-pro":{
+		"litellm_provider":"gemini","mode":"chat","input_cost_per_token":%g,"output_cost_per_token":0.00001,
+		"cache_storage_cost_per_token_per_hour":%g}}`, cachedBillingInputPrice, cachedBillingStoragePrice)), 0o644))
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	cfg.Pricing.DataDir = dir
+	cfg.Pricing.UpdateIntervalHours = 100000
+	cfg.Default.RateMultiplier = 1.0
+	cfg.Billing.BalancePreauthorizationEnabled = true
+	pricing := service.NewPricingService(cfg, nil)
+	require.NoError(t, pricing.Initialize())
+	billing := service.NewBillingService(cfg, pricing)
+
+	ledger := newPreauthEntrypointsLedger(env.apiKey.UserID, 0.00001)
+	preauth := newPreauthTestService(t, cfg, billing, ledger)
+
+	userRepo := &cachedBillingUserRepo{balance: 500.0}
+	snapshot := service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: []*service.Account{env.accounts[900]}}, nil, nil, nil, nil)
+	gw := service.NewGatewayService(
+		nil, &fakeGroupRepo{group: env.group}, env.usage, ledger, userRepo, nil, nil, nil, cfg, snapshot, nil,
+		billing, nil, &service.BillingCacheService{}, nil, nil, &service.DeferredService{},
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	env.h.gatewayService = gw
+	env.h.balancePreauthorizer = preauth
+	env.h.geminiCachedContentService.SetBillingGateway(gw)
+
+	// Record expires slightly AFTER now + 24h (so pre-check sees extension <= 0).
+	// Upstream PATCH takes 60ms and returns an expireTime 5m later. Without a single
+	// captured patchNow, post-RPC Clamp(upstream, svc.Now().Add(24h)) would exceed
+	// mutation.Baseline() and bill WITHOUT preauth!
+	origExpire := time.Now().Add(24*time.Hour + 25*time.Millisecond)
+	env.seed(origExpire)
+	env.upstream.beforePost = func(int) {
+		time.Sleep(60 * time.Millisecond)
+	}
+
+	rec := env.patch()
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Empty(t, env.usage.totals(), "clock drift during PatchUpstream must not trigger an unpreauthorized charge")
+	ledger.mu.Lock()
+	applyCalls := ledger.applyCalls
+	ledger.mu.Unlock()
+	require.Zero(t, applyCalls, "no unpreauthorized Apply must occur")
+	require.InDelta(t, 0.00001, ledger.balance(env.apiKey.UserID), 1e-9)
 }
 
 func float64Ptr(v float64) *float64 { return &v }

@@ -3149,13 +3149,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	turnInflight := newOpenAIWSTurnInflight(c, turn1InflightDone)
 	defer turnInflight.releaseAll()
 
-	wsPricingCtx, wsPricingAt := h.gatewayService.WithOpenAIRequestPricingContext(ctx, apiKey.GroupID)
+	ctx, wsPricingAt := h.gatewayService.WithOpenAIRequestPricingContext(ctx, apiKey.GroupID)
 	turnPreauth := newOpenAIWSTurnPreauth("")
 	defer turnPreauth.refundAll(reqLog)
 	turn1PreauthReqID := turnPreauth.nextRequestID(1)
 	turn1PreauthBody := openAIModelMappedBody(firstMessage, channelMappingWS.Mapped, channelMappingWS.MappedModel, h.gatewayService.ReplaceModelInBody)
 	turn1Guard, turn1PreauthErr := preauthorizeTextGatewayRequestWithID(
-		wsPricingCtx,
+		ctx,
 		turn1PreauthReqID,
 		h.balancePreauthorizer,
 		h.gatewayService,
@@ -3278,7 +3278,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// 并按最新门复核当前账号（准入与计费同源），峰前建连保活不能让后续 turn
 	// 继续按建连时刻的谷价计费。生图意图只影响能力路由与图片计费，不关门。
 	// 建连时刻只用于选号/准入，不作为任何 turn 的计费定价时刻。
-	ctx = service.WithOpenAIPreferNativeResponses(wsPricingCtx)
+	ctx = service.WithOpenAIPreferNativeResponses(ctx)
 
 	for {
 		if ctx.Err() != nil {
@@ -3300,11 +3300,22 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			requestPlatform,
 		)
 		if err == nil && routedKey != nil {
-			if bindErr := h.bindSelectedKeyRoute(c, keyRouteBinding{
-				Previous: apiKey, Selected: routedKey, Subscription: &subscription,
-				Mapping: &channelMappingWS, Guard: &turn1Guard, Body: firstMessage, Model: reqModel,
-				PricingAt: wsPricingAt, FixedRequestID: turn1PreauthReqID,
-			}); bindErr != nil {
+			isTurn1 := nextInitialTurn.Load() == 1
+			binding := keyRouteBinding{
+				Previous:     apiKey,
+				Selected:     routedKey,
+				Subscription: &subscription,
+				Mapping:      &channelMappingWS,
+				Body:         wsAttemptMessage,
+				Model:        reqModel,
+				PricingAt:    wsPricingAt,
+			}
+			if isTurn1 {
+				binding.Guard = &turn1Guard
+				binding.Body = firstMessage
+				binding.FixedRequestID = turn1PreauthReqID
+			}
+			if bindErr := h.bindSelectedKeyRoute(c, binding); bindErr != nil {
 				releaseRejectedKeyRouteSelection(selection)
 				if errors.Is(bindErr, service.ErrBalanceWithholdingFailed) {
 					closeStatus, closeReason := openAIWSPreauthorizationCloseStatusAndReason(bindErr)
@@ -3315,7 +3326,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				return
 			}
 			apiKey = routedKey
-			if turn1Guard != nil {
+			if isTurn1 && turn1Guard != nil {
 				turnPreauth.set(reqLog, 1, turn1Guard)
 			}
 			ctx = service.ContextWithAPIKeyRoute(ctx, apiKey)
@@ -3516,7 +3527,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					turnPermissions.Capabilities |= service.APIKeyQueueCapabilityImageGeneration
 				}
 				ctx = service.WithAPIKeyQueueRequestPermissions(ctx, turnPermissions)
-				c.Request = c.Request.WithContext(ctx)
+				c.Request = c.Request.WithContext(turnPreauth.contextForTurn(turn, ctx))
 				if err := h.concurrencyHelper.RevalidateTurnAuth(ctx); err != nil {
 					return nil, openAIWSUserSlotAcquireError(err)
 				}
@@ -3756,8 +3767,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 							reservedPreauthThisCall = true
 						}
 					}
-					c.Request = c.Request.WithContext(turnPreauth.contextForTurn(turn, c.Request.Context()))
 					if turn == 1 {
+						c.Request = c.Request.WithContext(turnPreauth.contextForTurn(turn, c.Request.Context()))
 						return nil
 					}
 					turnPermissions := service.APIKeyQueueRequestPermissions{Models: []string{turnModel}, Capabilities: service.APIKeyQueueCapabilityForbiddenWhenClaudeCodeOnly}
@@ -3765,7 +3776,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						turnPermissions.Capabilities |= service.APIKeyQueueCapabilityImageGeneration
 					}
 					ctx = service.WithAPIKeyQueueRequestPermissions(ctx, turnPermissions)
-					c.Request = c.Request.WithContext(ctx)
+					c.Request = c.Request.WithContext(turnPreauth.contextForTurn(turn, ctx))
 					// 防御式清理：避免异常路径下旧槽位覆盖导致泄漏。
 					releaseTurnSlots()
 					// 非首轮 turn 需要重新抢占并发槽位，使用实时刷新的 Key/User 并发上限，避免长连接空闲占槽。

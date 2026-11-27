@@ -84,7 +84,7 @@ func bindSelectedKeyRoute(c *gin.Context, gateway keyRouteBillingProvider, billi
 		return nil
 	}
 	changed := keyRouteGroupChanged(previous, selected)
-	if !changed && !deferKeyRoutePreauthorization(c.Request.Context(), selected) {
+	if !changed && !deferKeyRoutePreauthorization(c.Request.Context(), selected) && !deferKeyRoutePreauthorization(c.Request.Context(), previous) {
 		return nil
 	}
 	ctx := service.ContextWithAPIKeyRoute(c.Request.Context(), selected)
