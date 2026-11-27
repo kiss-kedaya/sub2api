@@ -33,11 +33,11 @@ func CyberSessionExplicitBlockKey(apiKeyID int64, c *gin.Context, body []byte) s
 // by an optional rewrite-tolerant context key. The latter is emitted only after
 // model-generated history has been observed.
 func CyberSessionTranscriptBlockKeys(apiKeyID int64, body []byte) []string {
-	derived := deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body)
+	derived := deriveOpenAICyberTranscriptBlockKeysCore(apiKeyID, body, false, true, "")
 	if len(derived.lookupKeys) == 0 {
 		return nil
 	}
-	keys := []string{derived.lookupKeys[len(derived.lookupKeys)-1]}
+	keys := []string{derived.lookupKeys[0]}
 	if derived.preLatestUserKey != "" && derived.preLatestUserKey != keys[0] {
 		keys = append(keys, derived.preLatestUserKey)
 	}

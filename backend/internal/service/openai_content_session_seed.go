@@ -199,7 +199,152 @@ func hasOpenAIContentSessionUserAnchor(body []byte) bool {
 		return false
 	}
 
-	if messages := gjson.GetBytes(body, "messages"); messages.Exists() && messages.IsArray() {
+	var messagesRaw string
+	var hasMessages bool
+	var inputRaw string
+	var hasInput bool
+	ok := jsonForEachMember(jsonView(body), func(key, val string) bool {
+		switch key {
+		case "messages":
+			if !hasMessages {
+				messagesRaw = val
+				hasMessages = true
+			}
+		case "input":
+			if !hasInput {
+				inputRaw = val
+				hasInput = true
+			}
+		}
+		return true
+	})
+	if !ok {
+		return hasOpenAIContentSessionUserAnchorGJSON(body)
+	}
+
+	var memberBack [32]canonMember
+	var keyBack [256]byte
+	var strBack [512]byte
+	scratch := canonScratch{
+		members: memberBack[:0],
+		keyBuf:  keyBack[:0],
+		strBuf:  strBack[:0],
+	}
+	var canonBack [512]byte
+	canonBuf := canonBack[:0]
+
+	if hasMessages && len(messagesRaw) > 0 && messagesRaw[0] == '[' {
+		anchored := false
+		walkOK := jsonForEachElement(messagesRaw, func(msgRaw string) bool {
+			if len(msgRaw) == 0 || msgRaw[0] != '{' {
+				return true
+			}
+			var roleRaw, contentRaw string
+			var hasContent bool
+			mOK := jsonForEachMember(msgRaw, func(k, v string) bool {
+				switch k {
+				case "role":
+					if roleRaw == "" {
+						roleRaw = v
+					}
+				case "content":
+					if !hasContent {
+						contentRaw = v
+						hasContent = true
+					}
+				}
+				return true
+			})
+			if !mOK {
+				msg := gjson.Parse(msgRaw)
+				if strings.TrimSpace(msg.Get("role").String()) != "user" {
+					return true
+				}
+				anchored = hasMeaningfulOpenAIContent(msg.Get("content"))
+				return false
+			}
+			if strings.TrimSpace(jsonAnyRawStringValue(roleRaw)) != "user" {
+				return true
+			}
+			anchored = hasMeaningfulOpenAIContentRaw(contentRaw, hasContent, &canonBuf, &scratch)
+			return false
+		})
+		if walkOK {
+			return anchored
+		}
+		return hasOpenAIContentSessionUserAnchorGJSON(body)
+	}
+
+	if !hasInput || len(inputRaw) == 0 {
+		return false
+	}
+	if inputRaw[0] == '"' {
+		return strings.TrimSpace(jsonRawStringValue(inputRaw)) != ""
+	}
+	if inputRaw[0] != '[' {
+		return false
+	}
+
+	anchored := false
+	walkOK := jsonForEachElement(inputRaw, func(itemRaw string) bool {
+		if len(itemRaw) == 0 || itemRaw[0] != '{' {
+			return true
+		}
+		var roleRaw, typeRaw, contentRaw, textRaw string
+		var hasContent bool
+		mOK := jsonForEachMember(itemRaw, func(k, v string) bool {
+			switch k {
+			case "role":
+				if roleRaw == "" {
+					roleRaw = v
+				}
+			case "type":
+				if typeRaw == "" {
+					typeRaw = v
+				}
+			case "content":
+				if !hasContent {
+					contentRaw = v
+					hasContent = true
+				}
+			case "text":
+				if textRaw == "" {
+					textRaw = v
+				}
+			}
+			return true
+		})
+		if !mOK {
+			item := gjson.Parse(itemRaw)
+			if strings.TrimSpace(item.Get("role").String()) == "user" {
+				anchored = hasMeaningfulOpenAIContent(item.Get("content"))
+				return false
+			}
+			if strings.TrimSpace(item.Get("type").String()) == "input_text" {
+				anchored = strings.TrimSpace(item.Get("text").String()) != ""
+				return false
+			}
+			return true
+		}
+		if strings.TrimSpace(jsonAnyRawStringValue(roleRaw)) == "user" {
+			anchored = hasMeaningfulOpenAIContentRaw(contentRaw, hasContent, &canonBuf, &scratch)
+			return false
+		}
+		if strings.TrimSpace(jsonAnyRawStringValue(typeRaw)) == "input_text" {
+			anchored = strings.TrimSpace(jsonAnyRawStringValue(textRaw)) != ""
+			return false
+		}
+		return true
+	})
+	if walkOK {
+		return anchored
+	}
+	return hasOpenAIContentSessionUserAnchorGJSON(body)
+}
+
+func hasOpenAIContentSessionUserAnchorGJSON(body []byte) bool {
+	root := parseRawJSONView(body)
+	if messages := root.Get("messages"); messages.Exists() && messages.IsArray() {
 		anchored := false
 		messages.ForEach(func(_, message gjson.Result) bool {
 			if strings.TrimSpace(message.Get("role").String()) != "user" {
@@ -211,7 +356,7 @@ func hasOpenAIContentSessionUserAnchor(body []byte) bool {
 		return anchored
 	}
 
-	input := gjson.GetBytes(body, "input")
+	input := root.Get("input")
 	if !input.Exists() {
 		return false
 	}
@@ -235,6 +380,67 @@ func hasOpenAIContentSessionUserAnchor(body []byte) bool {
 		return true
 	})
 	return anchored
+}
+
+func hasMeaningfulOpenAIContentRaw(contentRaw string, hasContent bool, canonBuf *[]byte, scratch *canonScratch) bool {
+	if !hasContent || contentRaw == "" || contentRaw == "null" {
+		return false
+	}
+	if contentRaw[0] == '"' {
+		return strings.TrimSpace(jsonRawStringValue(contentRaw)) != ""
+	}
+	if contentRaw[0] != '[' {
+		*canonBuf = appendCompatSeedJSON((*canonBuf)[:0], contentRaw, scratch)
+		return isNonEmptyCompatSeedBytes(*canonBuf) && len(bytes.TrimSpace(*canonBuf)) > 0
+	}
+
+	meaningful := false
+	walkOK := jsonForEachElement(contentRaw, func(itemRaw string) bool {
+		if len(itemRaw) > 0 && itemRaw[0] == '"' {
+			meaningful = strings.TrimSpace(jsonRawStringValue(itemRaw)) != ""
+		} else if len(itemRaw) > 0 && itemRaw[0] == '{' {
+			var textRaw string
+			var hasText bool
+			mOK := jsonForEachMember(itemRaw, func(k, v string) bool {
+				if k == "text" && !hasText {
+					textRaw = v
+					hasText = true
+					return false
+				}
+				return true
+			})
+			if !mOK {
+				item := gjson.Parse(itemRaw)
+				if text := item.Get("text"); text.Exists() {
+					meaningful = strings.TrimSpace(text.String()) != ""
+				} else {
+					_, meaningful = normalizeNonEmptyCompatSeedJSON(item)
+				}
+			} else if hasText {
+				meaningful = strings.TrimSpace(jsonAnyRawStringValue(textRaw)) != ""
+			} else {
+				*canonBuf = appendCompatSeedJSON((*canonBuf)[:0], itemRaw, scratch)
+				meaningful = isNonEmptyCompatSeedBytes(*canonBuf)
+			}
+		} else {
+			*canonBuf = appendCompatSeedJSON((*canonBuf)[:0], itemRaw, scratch)
+			meaningful = isNonEmptyCompatSeedBytes(*canonBuf)
+		}
+		return !meaningful
+	})
+	if walkOK {
+		return meaningful
+	}
+	return hasMeaningfulOpenAIContent(gjson.Parse(contentRaw))
+}
+
+func isNonEmptyCompatSeedBytes(b []byte) bool {
+	switch string(b) {
+	case "", `""`, "[]", "{}", "null":
+		return false
+	default:
+		return true
+	}
 }
 
 func hasMeaningfulOpenAIContent(content gjson.Result) bool {

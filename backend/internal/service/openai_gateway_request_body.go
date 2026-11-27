@@ -6,13 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"net/http"
+	"slices"
 	"strings"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -198,6 +200,161 @@ func responsesCallPairsIntact(input any) bool {
 // the whole body again. Here the two keys come out of the small reasoning object
 // and the body is rebuilt once, around it.
 func stripDeepSeekReasoningSummarySwitches(body []byte) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	s := jsonView(body)
+	objStart := jsonSkipSpace(s, 0)
+	if objStart >= len(s) || s[objStart] != '{' {
+		return body
+	}
+	i := objStart + 1
+	prevValEnd := 0
+	for {
+		i = jsonSkipSpace(s, i)
+		if i >= len(s) {
+			return legacyStripDeepSeekReasoningSummarySwitches(body)
+		}
+		if s[i] == '}' {
+			return body
+		}
+		if s[i] == ',' {
+			i++
+			continue
+		}
+		if s[i] != '"' {
+			return legacyStripDeepSeekReasoningSummarySwitches(body)
+		}
+		kEnd, kEsc, kOK := jsonSkipString(s, i)
+		if !kOK || kEsc {
+			return legacyStripDeepSeekReasoningSummarySwitches(body)
+		}
+		kStart := i
+		key := s[kStart+1 : kEnd-1]
+		i = jsonSkipSpace(s, kEnd)
+		if i >= len(s) || s[i] != ':' {
+			return legacyStripDeepSeekReasoningSummarySwitches(body)
+		}
+		vStart := jsonSkipSpace(s, i+1)
+		if vStart >= len(s) {
+			return legacyStripDeepSeekReasoningSummarySwitches(body)
+		}
+		switch s[vStart] {
+		case '"', '{', '[', 't', 'f', 'n', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		default:
+			return legacyStripDeepSeekReasoningSummarySwitches(body)
+		}
+		vEnd, vOK := jsonSkipValue(s, vStart)
+		if !vOK {
+			return legacyStripDeepSeekReasoningSummarySwitches(body)
+		}
+		if key != "reasoning" {
+			prevValEnd = vEnd
+			i = vEnd
+			continue
+		}
+
+		// Found first top-level "reasoning" member.
+		if s[vStart] != '{' {
+			return body
+		}
+		var rMembersBuf [8]jsonObjMember
+		rMembers := rMembersBuf[:0]
+		var dropBuf [2]int
+		drops := dropBuf[:0]
+		summaryCount := 0
+		genSummaryCount := 0
+		ri := vStart + 1
+		for {
+			ri = jsonSkipSpace(s, ri)
+			if ri >= vEnd {
+				return legacyStripDeepSeekReasoningSummarySwitches(body)
+			}
+			if s[ri] == '}' {
+				break
+			}
+			if s[ri] == ',' {
+				ri++
+				continue
+			}
+			if s[ri] != '"' {
+				return legacyStripDeepSeekReasoningSummarySwitches(body)
+			}
+			rkEnd, rkEsc, rkOK := jsonSkipString(s, ri)
+			if !rkOK || rkEsc {
+				return legacyStripDeepSeekReasoningSummarySwitches(body)
+			}
+			rk := s[ri+1 : rkEnd-1]
+			col := jsonSkipSpace(s, rkEnd)
+			if col >= vEnd || s[col] != ':' {
+				return legacyStripDeepSeekReasoningSummarySwitches(body)
+			}
+			rvStart := jsonSkipSpace(s, col+1)
+			rvEnd, rvOK := jsonSkipValue(s, rvStart)
+			if !rvOK || rvEnd > vEnd {
+				return legacyStripDeepSeekReasoningSummarySwitches(body)
+			}
+			idx := len(rMembers)
+			rMembers = append(rMembers, jsonObjMember{start: ri, end: rvEnd})
+			switch rk {
+			case "summary":
+				summaryCount++
+				if summaryCount > 1 {
+					return legacyStripDeepSeekReasoningSummarySwitches(body)
+				}
+				drops = append(drops, idx)
+			case "generate_summary":
+				genSummaryCount++
+				if genSummaryCount > 1 {
+					return legacyStripDeepSeekReasoningSummarySwitches(body)
+				}
+				drops = append(drops, idx)
+			}
+			ri = rvEnd
+		}
+
+		if len(rMembers) > 0 && len(drops) == 0 {
+			return body
+		}
+		if len(drops) == len(rMembers) {
+			next := jsonSkipSpace(s, vEnd)
+			tightBefore := (prevValEnd == 0 && kStart == objStart+1) || (prevValEnd > 0 && body[kStart-1] == ',')
+			if tightBefore && next < len(s) && s[next] == ',' && next == vEnd && next+1 < len(s) && jsonSkipSpace(s, next+1) == next+1 {
+				out, err := applyJSONEdits(body, []jsonEdit{{start: kStart, end: next + 1}})
+				if err == nil {
+					return out
+				}
+			} else if next < len(s) && s[next] == '}' && next == vEnd {
+				if prevValEnd > 0 && body[prevValEnd] == ',' && kStart == prevValEnd+1 {
+					out, err := applyJSONEdits(body, []jsonEdit{{start: prevValEnd, end: vEnd}})
+					if err == nil {
+						return out
+					}
+				} else if prevValEnd == 0 && kStart == objStart+1 {
+					out, err := applyJSONEdits(body, []jsonEdit{{start: kStart, end: vEnd}})
+					if err == nil {
+						return out
+					}
+				}
+			}
+			if nextOut, err := sjson.DeleteBytes(body, "reasoning"); err == nil {
+				return nextOut
+			}
+			return body
+		}
+
+		if jsonObjMembersTight(body, vStart, rMembers) {
+			var editBuf [2]jsonEdit
+			edits := appendJSONMemberDrops(editBuf[:0], rMembers, drops...)
+			if out, err := applyJSONEdits(body, edits); err == nil {
+				return out
+			}
+		}
+		return legacyStripDeepSeekReasoningSummarySwitches(body)
+	}
+}
+
+func legacyStripDeepSeekReasoningSummarySwitches(body []byte) []byte {
 	reasoning := gjson.GetBytes(body, "reasoning")
 	if reasoning.IsObject() {
 		nested := []byte(reasoning.Raw)
@@ -404,11 +561,11 @@ func deepSeekCallIDScope(platform, model string) bool {
 // Platform, mapped model, or a deepseek base URL all count. A client alias that
 // does not start with "deepseek" still has to be cleaned before that upstream.
 func deepSeekDuplicateCallIDRewrite(account *Account, body []byte) bool {
-	model := gjson.GetBytes(body, "model").String()
 	if account == nil {
+		model := gjson.Get(jsonView(body), "model").String()
 		return deepSeekCallIDScope("", model)
 	}
-	if deepSeekCallIDScope(account.Platform, model) || deepSeekCallIDScope("", account.GetMappedModel(model)) {
+	if strings.EqualFold(strings.TrimSpace(account.Platform), PlatformDeepseek) {
 		return true
 	}
 	base := strings.ToLower(account.GetOpenAIBaseURL() + " " + account.GetCNProtocolBaseURL(APIProtocolResponses) + " " + account.GetCNProtocolBaseURL(APIProtocolChatCompletions))
@@ -420,7 +577,11 @@ func deepSeekDuplicateCallIDRewrite(account *Account, body []byte) bool {
 	// duplicate call_id reaches the upstream untouched. Whenever the body
 	// actually carries tool calls, deduping is the safe move: it is a no-op for
 	// bodies without duplicates and it never invents or reorders content.
-	return bodyHasToolCallIDs(body)
+	if bodyHasToolCallIDs(body) {
+		return true
+	}
+	model := gjson.Get(jsonView(body), "model").String()
+	return deepSeekCallIDScope("", model) || deepSeekCallIDScope("", account.GetMappedModel(model))
 }
 
 // bodyHasToolCallIDs reports whether the body carries any responses-style
@@ -822,49 +983,180 @@ func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(c *gin.Context, body []byte,
 	if !knownStoreFalse && top.Get("store").Type != gjson.False {
 		return body, false, nil
 	}
-	// input keeps coming from the root view: replaceOpenAIRawInput relies on the
-	// child's offset being relative to that view.
-	root := parseRawJSONView(body)
-	input := root.Get("input")
-	if !input.IsArray() {
+
+	var (
+		rootKeysBuf [16]string
+		rootKeys    = rootKeysBuf[:0]
+		rootKeysMap map[string]struct{}
+		rootDup     bool
+		inputRaw    string
+		hasInput    bool
+	)
+	rootOK := jsonForEachMember(jsonView(body), func(key, val string) bool {
+		if rootKeysMap != nil {
+			if _, exists := rootKeysMap[key]; exists {
+				rootDup = true
+				return false
+			}
+			rootKeysMap[key] = struct{}{}
+		} else if slices.Contains(rootKeys, key) {
+			rootDup = true
+			return false
+		} else if len(rootKeys) < len(rootKeysBuf) {
+			rootKeys = append(rootKeys, key)
+		} else {
+			rootKeysMap = make(map[string]struct{}, len(rootKeys)+8)
+			for _, k := range rootKeys {
+				rootKeysMap[k] = struct{}{}
+			}
+			rootKeysMap[key] = struct{}{}
+		}
+		if key == "input" && !hasInput {
+			inputRaw = val
+			hasInput = true
+		}
+		return true
+	})
+	if !rootOK || rootDup {
+		return normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body, knownStoreFalse)
+	}
+	if !hasInput || len(inputRaw) == 0 || inputRaw[0] != '[' {
 		return body, false, nil
 	}
-	if !root.IsObject() || !top.Valid() || !utf8.Valid(body) || hasDuplicateJSONObjectKeys(root) {
+	bodyValid := false
+	if top.idx != nil {
+		bodyValid = top.Valid()
+	} else {
+		bodyValid = validJSON(body)
+	}
+	if !bodyValid || !utf8.Valid(body) {
 		return normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body, knownStoreFalse)
 	}
 
-	// Only reasoning metadata needs decoding. Keep large image/tool results as
-	// slices of the original JSON and copy them once into the final request.
-	items := make([]string, 0)
+	// Only reasoning metadata needs decoding. Keep items slice nil while nothing
+	// changes so no-op requests incur zero heap allocations.
+	var items []string
+	unchangedCount := 0
 	changed := false
 	fallback := false
 	var itemErr error
-	input.ForEach(func(_, item gjson.Result) bool {
-		if !item.IsObject() {
-			items = append(items, item.Raw)
+
+	ensureItems := func() {
+		if items != nil {
+			return
+		}
+		items = make([]string, 0, unchangedCount+4)
+		if unchangedCount > 0 {
+			kept := 0
+			jsonForEachElement(inputRaw, func(prevElem string) bool {
+				items = append(items, prevElem)
+				kept++
+				return kept < unchangedCount
+			})
+		}
+	}
+
+	walkOK := jsonForEachElement(inputRaw, func(elem string) bool {
+		if len(elem) == 0 || elem[0] != '{' {
+			if !changed {
+				unchangedCount++
+			} else {
+				items = append(items, elem)
+			}
 			return true
 		}
-		if hasDuplicateJSONObjectKeys(item) {
+
+		var (
+			itemKeysBuf [16]string
+			itemKeys    = itemKeysBuf[:0]
+			itemKeysMap map[string]struct{}
+			typRaw      string
+			idRaw       string
+			encRaw      string
+			summaryRaw  string
+			hasSummary  bool
+			hasCallID   bool
+		)
+		itemOK := jsonForEachMember(elem, func(k, v string) bool {
+			if itemKeysMap != nil {
+				if _, exists := itemKeysMap[k]; exists {
+					fallback = true
+					return false
+				}
+				itemKeysMap[k] = struct{}{}
+			} else if slices.Contains(itemKeys, k) {
+				fallback = true
+				return false
+			} else if len(itemKeys) < len(itemKeysBuf) {
+				itemKeys = append(itemKeys, k)
+			} else {
+				itemKeysMap = make(map[string]struct{}, len(itemKeys)+8)
+				for _, ik := range itemKeys {
+					itemKeysMap[ik] = struct{}{}
+				}
+				itemKeysMap[k] = struct{}{}
+			}
+			switch k {
+			case "type":
+				if typRaw == "" {
+					typRaw = v
+				}
+			case "id":
+				if idRaw == "" {
+					idRaw = v
+				}
+			case "encrypted_content":
+				if encRaw == "" {
+					encRaw = v
+				}
+			case "summary":
+				if !hasSummary {
+					summaryRaw = v
+					hasSummary = true
+				}
+			case "call_id":
+				hasCallID = true
+			}
+			return true
+		})
+		if !itemOK || fallback {
 			fallback = true
 			return false
 		}
-		typ := strings.TrimSpace(item.Get("type").String())
-		id := strings.TrimSpace(item.Get("id").String())
-		encrypted := item.Get("encrypted_content")
-		if (typ == "reasoning" && (encrypted.Type != gjson.String || strings.TrimSpace(encrypted.Str) == "")) ||
+
+		typ := strings.TrimSpace(jsonAnyRawStringValue(typRaw))
+		id := strings.TrimSpace(jsonAnyRawStringValue(idRaw))
+		encNonEmpty := false
+		if len(encRaw) > 0 && encRaw[0] == '"' {
+			if s, ok := jsonPlainString(encRaw); ok {
+				encNonEmpty = strings.TrimSpace(s) != ""
+			} else {
+				encNonEmpty = strings.TrimSpace(jsonRawStringValue(encRaw)) != ""
+			}
+		}
+		if (typ == "reasoning" && !encNonEmpty) ||
 			(typ == "item_reference" && strings.HasPrefix(id, "rs_")) {
-			changed = true
+			if !changed {
+				ensureItems()
+				changed = true
+			}
 			return true
 		}
+
 		stripID := typ == "reasoning" && strings.HasPrefix(id, "rs_")
-		addSummary := typ == "reasoning" && item.Get("summary").Type == gjson.Null
-		stripCallID := shouldStripOpenAIResponsesNonPairCallID(typ) && item.Get("call_id").Exists()
+		addSummary := typ == "reasoning" && (!hasSummary || summaryRaw == "null")
+		stripCallID := shouldStripOpenAIResponsesNonPairCallID(typ) && hasCallID
 		if !stripID && !addSummary && !stripCallID {
-			items = append(items, item.Raw)
+			if !changed {
+				unchangedCount++
+			} else {
+				items = append(items, elem)
+			}
 			return true
 		}
+
 		var decoded map[string]any
-		if err := decodeOpenAIJSONUseNumber([]byte(item.Raw), &decoded); err != nil {
+		if err := decodeOpenAIJSONUseNumber(unsafe.Slice(unsafe.StringData(elem), len(elem)), &decoded); err != nil {
 			itemErr = err
 			return false
 		}
@@ -882,11 +1174,15 @@ func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(c *gin.Context, body []byte,
 			itemErr = err
 			return false
 		}
+		if !changed {
+			ensureItems()
+			changed = true
+		}
 		items = append(items, string(encoded))
-		changed = true
 		return true
 	})
-	if fallback {
+
+	if !walkOK || fallback {
 		return normalizeOpenAIAPIKeyStoreFalseReasoningReplayDecoded(body, knownStoreFalse)
 	}
 	if itemErr != nil {
@@ -895,7 +1191,8 @@ func normalizeOpenAIAPIKeyStoreFalseReasoningReplay(c *gin.Context, body []byte,
 	if !changed {
 		return body, false, nil
 	}
-	return replaceOpenAIRawInput(body, input, items), true, nil
+	inputStart := int(uintptr(unsafe.Pointer(unsafe.StringData(inputRaw))) - uintptr(unsafe.Pointer(unsafe.SliceData(body))))
+	return replaceOpenAIRawInputSpan(body, inputStart, inputStart+len(inputRaw), items), true, nil
 }
 
 // Preserve the decoder's handling of unusual or duplicate-key input objects.
@@ -2455,11 +2752,16 @@ func openAIRequestBodyMayContainEmptyBase64InputImage(c *gin.Context, body []byt
 	if len(body) == 0 || !openAIRequestBodyMayContainInputImageToken(body) {
 		return false
 	}
-	input := RequestBodyTop(c, body).Get("input")
+	var input gjson.Result
+	if c != nil {
+		input = RequestBodyTop(c, body).Get("input")
+	} else {
+		input = gjson.Get(jsonView(body), "input")
+	}
 	if !input.Exists() {
 		return false
 	}
-	return openAIJSONValueMayContainEmptyBase64InputImage(input)
+	return openAIRawMayContainEmptyBase64InputImage(input.Raw, 0)
 }
 
 func openAIRequestBodyMayContainInputImageToken(body []byte) bool {
@@ -2474,10 +2776,99 @@ func openAIJSONValueMayContainEmptyBase64InputImage(value gjson.Result) bool {
 	if !value.Exists() {
 		return false
 	}
+	return openAIRawMayContainEmptyBase64InputImage(value.Raw, 0)
+}
+
+func openAIRawMayContainEmptyBase64InputImage(raw string, depth int) bool {
+	i := jsonSkipSpace(raw, 0)
+	if i >= len(raw) {
+		return false
+	}
+	raw = raw[i:]
+	if !strings.Contains(raw, "input_image") && !strings.Contains(raw, "\\u") {
+		return false
+	}
+	if !strings.Contains(raw, "data:") && !strings.Contains(raw, "\\u") {
+		return false
+	}
+	return openAIRawMayContainEmptyBase64InputImageWalk(raw, depth)
+}
+
+func openAIRawMayContainEmptyBase64InputImageWalk(raw string, depth int) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	if depth > 32 {
+		return openAIJSONValueMayContainEmptyBase64InputImageGJSON(gjson.Parse(raw))
+	}
+	switch raw[0] {
+	case '[':
+		found := false
+		ok := jsonForEachElement(raw, func(elem string) bool {
+			if openAIRawMayContainEmptyBase64InputImageWalk(elem, depth+1) {
+				found = true
+				return false
+			}
+			return true
+		})
+		if !ok {
+			return openAIJSONValueMayContainEmptyBase64InputImageGJSON(gjson.Parse(raw))
+		}
+		return found
+	case '{':
+		var typeRaw, imageURLRaw, contentRaw string
+		var hasType, hasImageURL, hasContent bool
+		ok := jsonForEachMember(raw, func(key, val string) bool {
+			switch key {
+			case "type":
+				if !hasType {
+					typeRaw = val
+					hasType = true
+				}
+			case "image_url":
+				if !hasImageURL {
+					imageURLRaw = val
+					hasImageURL = true
+				}
+			case "content":
+				if !hasContent {
+					contentRaw = val
+					hasContent = true
+				}
+			}
+			return true
+		})
+		if !ok {
+			return openAIJSONValueMayContainEmptyBase64InputImageGJSON(gjson.Parse(raw))
+		}
+		if hasType && len(typeRaw) > 0 && typeRaw[0] == '"' {
+			isInputImage := typeRaw == `"input_image"`
+			if !isInputImage {
+				isInputImage = strings.TrimSpace(jsonRawStringValue(typeRaw)) == "input_image"
+			}
+			if isInputImage && hasImageURL && len(imageURLRaw) > 0 && imageURLRaw[0] == '"' {
+				if isEmptyBase64DataURI(jsonRawStringValue(imageURLRaw)) {
+					return true
+				}
+			}
+		}
+		if hasContent && len(contentRaw) > 0 && (contentRaw[0] == '[' || contentRaw[0] == '{') {
+			return openAIRawMayContainEmptyBase64InputImageWalk(contentRaw, depth+1)
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func openAIJSONValueMayContainEmptyBase64InputImageGJSON(value gjson.Result) bool {
+	if !value.Exists() {
+		return false
+	}
 	if value.IsArray() {
 		found := false
 		value.ForEach(func(_, item gjson.Result) bool {
-			if openAIJSONValueMayContainEmptyBase64InputImage(item) {
+			if openAIJSONValueMayContainEmptyBase64InputImageGJSON(item) {
 				found = true
 				return false
 			}
@@ -2489,7 +2880,7 @@ func openAIJSONValueMayContainEmptyBase64InputImage(value gjson.Result) bool {
 		if strings.TrimSpace(value.Get("type").String()) == "input_image" && isEmptyBase64DataURI(value.Get("image_url").String()) {
 			return true
 		}
-		return openAIJSONValueMayContainEmptyBase64InputImage(value.Get("content"))
+		return openAIJSONValueMayContainEmptyBase64InputImageGJSON(value.Get("content"))
 	}
 	return false
 }
