@@ -133,6 +133,7 @@ type APIKeyAuthGroupSnapshot struct {
 	// 灰度期互相把对方的条目判失效，每次 L1 未命中都打到数据库认证查询上。
 	CrossProtocolConversionEnabled *bool                             `json:"cross_protocol_conversion_enabled,omitempty"`
 	ReturnRequestedModel           bool                              `json:"return_requested_model"`
+	SaveResponseMsgID              bool                              `json:"save_response_msg_id"`
 	AllowLive                      bool                              `json:"allow_live"`
 	ForceOpenAIFast                bool                              `json:"force_openai_fast"`
 	FreeOpenAIFast                 bool                              `json:"free_openai_fast"`

@@ -10,6 +10,7 @@ import (
 const (
 	upstreamResponseModelObserverContextKey = "upstream_response_model_observer"
 	upstreamResponseModelMaxLength          = 200
+	upstreamResponseMessageIDMaxLength      = 128
 )
 
 // upstreamResponseModelObserver tracks one forwarding attempt (or one WS turn).
@@ -36,6 +37,10 @@ type upstreamResponseModelObserver struct {
 	firstTier         string
 	firstTierConflict bool
 	terminalTier      string
+
+	// messageID captures the first Anthropic response message id (e.g. msg_...)
+	// observed in either a non-streaming body or an SSE message_start payload.
+	messageID string
 }
 
 func (o *upstreamResponseModelObserver) Observe(model string, terminal bool) {
@@ -112,13 +117,52 @@ func (o *upstreamResponseModelObserver) ObserveOpenAIFrame(frame openAISSEDataFr
 func (o *upstreamResponseModelObserver) ObserveAnthropic(payload []byte) {
 	model := firstValidTrimmedGJSONString(payload, "message.model", "model")
 	o.Observe(model, false)
-	// usage.speed travels with the message object (message_start in streams,
-	// the top-level body otherwise), i.e. only in payloads that declare a model.
+	// usage.speed and message.id travel with the message object (message_start
+	// in streams, the top-level body otherwise), i.e. only in payloads that
+	// declare a model, keeping delta frames free of extra lookups.
+	// firstValidTrimmedGJSONString already ran gjson.ValidBytes(payload) once
+	// model != "", so follow-up lookups reuse the validated payload directly.
 	if model == "" {
 		return
 	}
-	tier := normalizeObservedAnthropicSpeed(firstValidTrimmedGJSONString(payload, "message.usage.speed", "usage.speed"))
+	if o != nil && o.messageID == "" {
+		o.ObserveMessageID(firstTrimmedGJSONBytesString(payload, "message.id", "id"))
+	}
+	tier := normalizeObservedAnthropicSpeed(firstTrimmedGJSONBytesString(payload, "message.usage.speed", "usage.speed"))
 	o.ObserveServiceTier(tier, false)
+}
+
+// ObserveMessageID records the first non-empty Anthropic response message id,
+// making an owned copy truncated to 128 runes so backing response buffers can
+// be reclaimed immediately.
+func (o *upstreamResponseModelObserver) ObserveMessageID(id string) {
+	if o == nil || o.messageID != "" {
+		return
+	}
+	id = normalizeUsageTraceID(id)
+	if id == "" {
+		return
+	}
+	o.messageID = id
+}
+
+func (o *upstreamResponseModelObserver) MessageID() string {
+	if o == nil {
+		return ""
+	}
+	return o.messageID
+}
+
+func normalizeUsageTraceID(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) > upstreamResponseMessageIDMaxLength {
+		trimmed = string(runes[:upstreamResponseMessageIDMaxLength])
+	}
+	return strings.Clone(trimmed)
 }
 
 // ObserveServiceTier records a tier declared by the upstream response. A
@@ -239,6 +283,10 @@ func observedUpstreamResponseServiceTier(c *gin.Context) string {
 	return upstreamResponseModelObserverFromContext(c).ServiceTier()
 }
 
+func observedUpstreamResponseMessageID(c *gin.Context) string {
+	return upstreamResponseModelObserverFromContext(c).MessageID()
+}
+
 // resolvedOpenAIUpstreamServiceTierFromObserver preserves the final outbound
 // request tier. The observed response tier remains separate on
 // OpenAIForwardResult.UpstreamResponseServiceTier and is reconciled once, at
@@ -262,12 +310,11 @@ func observeOpenAISSEBody(observer *upstreamResponseModelObserver, body string) 
 	})
 }
 
-func firstValidTrimmedGJSONString(payload []byte, paths ...string) string {
+func firstTrimmedGJSONBytesString(payload []byte, paths ...string) string {
 	if len(payload) == 0 {
 		return ""
 	}
 	for _, path := range paths {
-		// A path whose names are absent from the payload cannot resolve.
 		if !jsonPathMayExistBytes(payload, path) {
 			continue
 		}
@@ -276,14 +323,21 @@ func firstValidTrimmedGJSONString(payload []byte, paths ...string) string {
 			continue
 		}
 		if text := strings.TrimSpace(value.String()); text != "" {
-			// Validate only after finding a candidate. This avoids a full validation
-			// pass on the common model-free delta path while still rejecting malformed
-			// payloads that appear to declare a value.
-			if !gjson.ValidBytes(payload) {
-				return ""
-			}
 			return text
 		}
+	}
+	return ""
+}
+
+func firstValidTrimmedGJSONString(payload []byte, paths ...string) string {
+	if text := firstTrimmedGJSONBytesString(payload, paths...); text != "" {
+		// Validate only after finding a candidate. This avoids a full validation
+		// pass on the common model-free delta path while still rejecting malformed
+		// payloads that appear to declare a value.
+		if !gjson.ValidBytes(payload) {
+			return ""
+		}
+		return text
 	}
 	return ""
 }

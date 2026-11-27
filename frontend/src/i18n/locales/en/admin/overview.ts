@@ -1311,6 +1311,12 @@ export default {
         fallbackHint: 'Non-Claude Code requests will use this group. Leave empty to reject directly.',
         noFallback: 'No Fallback (Reject)'
       },
+      saveResponseMsgId: {
+        title: 'Save Response Message ID (msg_id)',
+        tooltip: 'When enabled, extracts and saves the Claude response body id (e.g. msg_...) so users and admins can inspect and search it in usage logs. X-Request-Id and X-Client-Request-Id response headers are always saved regardless of this setting.',
+        enabled: 'Enabled: saves response body msg_id to usage logs',
+        disabled: 'Disabled: only saves X-Request-Id and X-Client-Request-Id response headers'
+      },
       openaiMessages: {
         title: 'OpenAI Messages Dispatch',
         allowDispatch: 'Allow /v1/messages dispatch',

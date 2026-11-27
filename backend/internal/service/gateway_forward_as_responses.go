@@ -555,8 +555,13 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	if !sawStop && clientWatch.isGone() {
 		clientWatch.markGone()
 		estimate.fill(&usage, progress, requestID, true, scanErr)
+		responseMsgID := ""
+		if finalResp != nil {
+			responseMsgID = finalResp.ID
+		}
 		return &ForwardResult{
 			RequestID:                requestID,
+			ResponseMsgID:            responseMsgID,
 			UpstreamHeaders:          resp.Header,
 			Usage:                    usage,
 			Model:                    originalModel,
@@ -621,8 +626,13 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	if sawStop && !sawError && scanErr == nil {
 		s.rateLimitService.observeModelTransientSuccess(context.Background(), c, estimate.account, mappedModel)
 	}
+	var responseMsgID string
+	if finalResp != nil {
+		responseMsgID = normalizeUsageTraceID(finalResp.ID)
+	}
 	return &ForwardResult{
 		RequestID:                requestID,
+		ResponseMsgID:            responseMsgID,
 		UpstreamHeaders:          resp.Header,
 		Usage:                    billedUsage,
 		NonBillableUpstreamError: sawError && !sawStop,
@@ -665,6 +675,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	clientToolRestorer := apicompat.NewResponsesClientToolStreamRestorer(clientToolMapping)
 	var usage ClaudeUsage
 	var firstTokenMs *int
+	var responseMsgID string
 	firstChunk := true
 	clientDisconnected := false
 	sawStop, sawError := false, false
@@ -701,6 +712,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
 			RequestID:                requestID,
+			ResponseMsgID:            responseMsgID,
 			UpstreamHeaders:          resp.Header,
 			Usage:                    usage,
 			Model:                    originalModel,
@@ -740,6 +752,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		}
 		// Also capture usage from message_start
 		if event.Type == "message_start" && event.Message != nil {
+			if responseMsgID == "" && event.Message.ID != "" {
+				responseMsgID = normalizeUsageTraceID(event.Message.ID)
+			}
 			mergeAnthropicUsage(&usage, event.Message.Usage)
 		}
 

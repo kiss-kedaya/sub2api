@@ -816,6 +816,20 @@ func (_c *GroupCreate) SetNillableReturnRequestedModel(v *bool) *GroupCreate {
 	return _c
 }
 
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (_c *GroupCreate) SetSaveResponseMsgID(v bool) *GroupCreate {
+	_c.mutation.SetSaveResponseMsgID(v)
+	return _c
+}
+
+// SetNillableSaveResponseMsgID sets the "save_response_msg_id" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableSaveResponseMsgID(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetSaveResponseMsgID(*v)
+	}
+	return _c
+}
+
 // SetAllowLive sets the "allow_live" field.
 func (_c *GroupCreate) SetAllowLive(v bool) *GroupCreate {
 	_c.mutation.SetAllowLive(v)
@@ -1317,6 +1331,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultReturnRequestedModel
 		_c.mutation.SetReturnRequestedModel(v)
 	}
+	if _, ok := _c.mutation.SaveResponseMsgID(); !ok {
+		v := group.DefaultSaveResponseMsgID
+		_c.mutation.SetSaveResponseMsgID(v)
+	}
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		v := group.DefaultAllowLive
 		_c.mutation.SetAllowLive(v)
@@ -1551,6 +1569,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.ReturnRequestedModel(); !ok {
 		return &ValidationError{Name: "return_requested_model", err: errors.New(`ent: missing required field "Group.return_requested_model"`)}
+	}
+	if _, ok := _c.mutation.SaveResponseMsgID(); !ok {
+		return &ValidationError{Name: "save_response_msg_id", err: errors.New(`ent: missing required field "Group.save_response_msg_id"`)}
 	}
 	if _, ok := _c.mutation.AllowLive(); !ok {
 		return &ValidationError{Name: "allow_live", err: errors.New(`ent: missing required field "Group.allow_live"`)}
@@ -1877,6 +1898,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ReturnRequestedModel(); ok {
 		_spec.SetField(group.FieldReturnRequestedModel, field.TypeBool, value)
 		_node.ReturnRequestedModel = value
+	}
+	if value, ok := _c.mutation.SaveResponseMsgID(); ok {
+		_spec.SetField(group.FieldSaveResponseMsgID, field.TypeBool, value)
+		_node.SaveResponseMsgID = value
 	}
 	if value, ok := _c.mutation.AllowLive(); ok {
 		_spec.SetField(group.FieldAllowLive, field.TypeBool, value)
@@ -3111,6 +3136,18 @@ func (u *GroupUpsert) SetReturnRequestedModel(v bool) *GroupUpsert {
 // UpdateReturnRequestedModel sets the "return_requested_model" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateReturnRequestedModel() *GroupUpsert {
 	u.SetExcluded(group.FieldReturnRequestedModel)
+	return u
+}
+
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (u *GroupUpsert) SetSaveResponseMsgID(v bool) *GroupUpsert {
+	u.Set(group.FieldSaveResponseMsgID, v)
+	return u
+}
+
+// UpdateSaveResponseMsgID sets the "save_response_msg_id" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateSaveResponseMsgID() *GroupUpsert {
+	u.SetExcluded(group.FieldSaveResponseMsgID)
 	return u
 }
 
@@ -4593,6 +4630,20 @@ func (u *GroupUpsertOne) SetReturnRequestedModel(v bool) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateReturnRequestedModel() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateReturnRequestedModel()
+	})
+}
+
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (u *GroupUpsertOne) SetSaveResponseMsgID(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSaveResponseMsgID(v)
+	})
+}
+
+// UpdateSaveResponseMsgID sets the "save_response_msg_id" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateSaveResponseMsgID() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSaveResponseMsgID()
 	})
 }
 
@@ -6284,6 +6335,20 @@ func (u *GroupUpsertBulk) SetReturnRequestedModel(v bool) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateReturnRequestedModel() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateReturnRequestedModel()
+	})
+}
+
+// SetSaveResponseMsgID sets the "save_response_msg_id" field.
+func (u *GroupUpsertBulk) SetSaveResponseMsgID(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetSaveResponseMsgID(v)
+	})
+}
+
+// UpdateSaveResponseMsgID sets the "save_response_msg_id" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateSaveResponseMsgID() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateSaveResponseMsgID()
 	})
 }
 

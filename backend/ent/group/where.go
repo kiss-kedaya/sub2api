@@ -330,6 +330,11 @@ func ReturnRequestedModel(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldReturnRequestedModel, v))
 }
 
+// SaveResponseMsgID applies equality check predicate on the "save_response_msg_id" field. It's identical to SaveResponseMsgIDEQ.
+func SaveResponseMsgID(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSaveResponseMsgID, v))
+}
+
 // AllowLive applies equality check predicate on the "allow_live" field. It's identical to AllowLiveEQ.
 func AllowLive(v bool) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldAllowLive, v))
@@ -2698,6 +2703,16 @@ func ReturnRequestedModelEQ(v bool) predicate.Group {
 // ReturnRequestedModelNEQ applies the NEQ predicate on the "return_requested_model" field.
 func ReturnRequestedModelNEQ(v bool) predicate.Group {
 	return predicate.Group(sql.FieldNEQ(FieldReturnRequestedModel, v))
+}
+
+// SaveResponseMsgIDEQ applies the EQ predicate on the "save_response_msg_id" field.
+func SaveResponseMsgIDEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldSaveResponseMsgID, v))
+}
+
+// SaveResponseMsgIDNEQ applies the NEQ predicate on the "save_response_msg_id" field.
+func SaveResponseMsgIDNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldSaveResponseMsgID, v))
 }
 
 // AllowLiveEQ applies the EQ predicate on the "allow_live" field.

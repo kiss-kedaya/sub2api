@@ -1309,6 +1309,13 @@ export default {
         fallbackHint: '非 Claude Code 请求将使用此分组，留空则直接拒绝',
         noFallback: '不降级（直接拒绝）'
       },
+      saveResponseMsgId: {
+        title: '保存响应消息 ID (msg_id)',
+        tooltip:
+          '开启后，会提取并保存 Claude 响应正文中的 id（如 msg_...），便于在用户和管理员的使用记录中查看和按 ID 查询。无论是否开启，响应头中的 X-Request-Id 与 X-Client-Request-Id 都会始终保存。',
+        enabled: '已开启：保存响应正文中的 msg_id 到使用记录',
+        disabled: '已关闭：仅保存响应头中的 X-Request-Id 与 X-Client-Request-Id'
+      },
       openaiMessages: {
         title: 'OpenAI Messages 调度配置',
         allowDispatch: '允许 /v1/messages 调度',

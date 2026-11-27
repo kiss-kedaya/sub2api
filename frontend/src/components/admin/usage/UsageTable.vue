@@ -272,18 +272,55 @@
         </template>
 
         <template #cell-request_id="{ row }">
-          <div v-if="row.request_id" class="flex max-w-[160px] items-center gap-1.5">
-            <button type="button" class="truncate font-mono text-xs text-gray-500 hover:underline dark:text-gray-400" :title="t('common.search') + ': ' + row.request_id" @click="emit('requestIdClick', row.request_id)">
-              {{ row.request_id }}
+          <div v-if="requestIdEntries(row).length > 0" class="flex max-w-[200px] flex-col gap-0.5">
+            <div v-for="entry in requestIdEntries(row)" :key="entry.key" class="flex items-center gap-1">
+              <span
+                v-if="entry.badge"
+                class="shrink-0 rounded-sm bg-gray-100 px-1 py-px font-mono text-[10px] font-medium leading-tight text-gray-500 dark:bg-dark-700 dark:text-gray-400"
+                :title="entry.headerName"
+              >{{ entry.badge }}</span>
+              <button
+                type="button"
+                class="min-w-0 truncate font-mono text-xs text-gray-500 hover:underline dark:text-gray-400"
+                :data-testid="entry.testId"
+                :title="`${entry.headerName}: ${entry.value} (${t('common.search')})`"
+                @click="emit('requestIdClick', entry.value)"
+              >
+                {{ entry.value }}
+              </button>
+              <button
+                type="button"
+                class="shrink-0 rounded-sm p-0.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-300"
+                :class="copiedRequestId === entry.value ? 'text-green-500 hover:text-green-500' : ''"
+                :title="copiedRequestId === entry.value ? t('keys.copied') : t('keys.copyToClipboard')"
+                @click="copyRequestId(entry.value)"
+              >
+                <Icon :name="copiedRequestId === entry.value ? 'check' : 'copy'" size="sm" class="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+        </template>
+
+        <template #cell-response_msg_id="{ row }">
+          <div v-if="row.response_msg_id" class="flex max-w-[180px] items-center gap-1.5">
+            <button
+              type="button"
+              data-testid="usage-response-msg-id"
+              class="truncate font-mono text-xs text-gray-500 hover:underline dark:text-gray-400"
+              :title="t('common.search') + ': ' + row.response_msg_id"
+              @click="emit('requestIdClick', row.response_msg_id)"
+            >
+              {{ row.response_msg_id }}
             </button>
             <button
               type="button"
               class="shrink-0 rounded-sm p-0.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-300"
-              :class="copiedRequestId === row.request_id ? 'text-green-500 hover:text-green-500' : ''"
-              :title="copiedRequestId === row.request_id ? t('keys.copied') : t('keys.copyToClipboard')"
-              @click="copyRequestId(row.request_id)"
+              :class="copiedRequestId === row.response_msg_id ? 'text-green-500 hover:text-green-500' : ''"
+              :title="copiedRequestId === row.response_msg_id ? t('keys.copied') : t('keys.copyToClipboard')"
+              @click="copyResponseMsgId(row.response_msg_id)"
             >
-              <Icon :name="copiedRequestId === row.request_id ? 'check' : 'copy'" size="sm" class="h-3.5 w-3.5" />
+              <Icon :name="copiedRequestId === row.response_msg_id ? 'check' : 'copy'" size="sm" class="h-3.5 w-3.5" />
             </button>
           </div>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
@@ -744,8 +781,30 @@ const copyIdentifier = async (value: string, copiedMessage: string) => {
 }
 
 const copyRequestId = (requestId: string) => copyIdentifier(requestId, t('admin.usage.requestIdCopied'))
+const copyResponseMsgId = (msgId: string) => copyIdentifier(msgId, t('admin.usage.responseMsgIdCopied'))
 const copyUpstreamRequestId = (upstreamRequestId: string) =>
   copyIdentifier(upstreamRequestId, t('admin.usage.upstreamRequestIdCopied'))
+
+type RequestIdEntry = { key: string; badge: string; headerName: string; value: string; testId: string }
+
+const requestIdEntries = (row: AdminUsageLog): RequestIdEntry[] => {
+  const entries: RequestIdEntry[] = []
+  const respId = row.response_request_id?.trim() || ''
+  const clientId = row.client_request_id?.trim() || ''
+  if (respId) {
+    entries.push({ key: 'resp', badge: 'REQ', headerName: 'X-Request-Id', value: respId, testId: 'usage-response-request-id' })
+  }
+  if (clientId && clientId !== respId) {
+    entries.push({ key: 'client', badge: 'CLI', headerName: 'X-Client-Request-Id', value: clientId, testId: 'usage-client-request-id' })
+  }
+  if (entries.length === 0) {
+    const fallback = row.request_id?.trim() || ''
+    if (fallback) {
+      entries.push({ key: 'fallback', badge: '', headerName: t('admin.usage.requestId'), value: fallback, testId: 'usage-fallback-request-id' })
+    }
+  }
+  return entries
+}
 
 // Tooltip state - cost
 const tooltipVisible = ref(false)

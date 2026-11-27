@@ -99,6 +99,9 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // billing_tier
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
+			sqlmock.AnyArg(), // response_request_id
+			sqlmock.AnyArg(), // client_request_id
+			sqlmock.AnyArg(), // response_msg_id
 			sqlmock.AnyArg(), // upstream_request_id
 			sqlmock.AnyArg(), // session_id
 			log.NativeCompactionV2,
@@ -195,6 +198,9 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // billing_tier
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
+			sqlmock.AnyArg(), // response_request_id
+			sqlmock.AnyArg(), // client_request_id
+			sqlmock.AnyArg(), // response_msg_id
 			sqlmock.AnyArg(), // upstream_request_id
 			sqlmock.AnyArg(), // session_id
 			log.NativeCompactionV2,
@@ -462,7 +468,7 @@ func TestUsageLogRepositoryListWithFiltersRequestID(t *testing.T) {
 	filters := usagestats.UsageLogFilters{RequestID: " req-0123 "}
 
 	// 片段匹配：request_id 与 upstream_request_id 任一命中即可，参数已 trim 并加通配装饰符。
-	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id ILIKE \\$1 OR upstream_request_id ILIKE \\$1\\) ORDER BY id DESC LIMIT \\$2 OFFSET \\$3").
+	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id ILIKE \\$1 OR response_request_id ILIKE \\$1 OR client_request_id ILIKE \\$1 OR response_msg_id ILIKE \\$1 OR upstream_request_id ILIKE \\$1\\) ORDER BY id DESC LIMIT \\$2 OFFSET \\$3").
 		WithArgs("%req-0123%", 21, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
@@ -480,7 +486,7 @@ func TestUsageLogRepositoryListWithFiltersRequestIDEscapesLikeWildcards(t *testi
 	// `%` / `_` / `\` 必须先转义，否则 `%` 拼成 '%%%' 会命中全表。
 	filters := usagestats.UsageLogFilters{RequestID: ` 100%_\x `}
 
-	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id ILIKE \\$1 OR upstream_request_id ILIKE \\$1\\) ORDER BY id DESC LIMIT \\$2 OFFSET \\$3").
+	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id ILIKE \\$1 OR response_request_id ILIKE \\$1 OR client_request_id ILIKE \\$1 OR response_msg_id ILIKE \\$1 OR upstream_request_id ILIKE \\$1\\) ORDER BY id DESC LIMIT \\$2 OFFSET \\$3").
 		WithArgs(`%100\%\_\\x%`, 21, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
@@ -497,7 +503,7 @@ func TestUsageLogRepositoryListWithFiltersRequestIDMatchesClientPrefixFragment(t
 	// 落库的 request_id 形如 client:<uuid>，片段搜索要能命中该前缀，代码不做任何前缀剥离。
 	filters := usagestats.UsageLogFilters{RequestID: "client:0f3a"}
 
-	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id ILIKE \\$1 OR upstream_request_id ILIKE \\$1\\) ORDER BY id DESC LIMIT \\$2 OFFSET \\$3").
+	mock.ExpectQuery("SELECT .* FROM usage_logs WHERE \\(request_id ILIKE \\$1 OR response_request_id ILIKE \\$1 OR client_request_id ILIKE \\$1 OR response_msg_id ILIKE \\$1 OR upstream_request_id ILIKE \\$1\\) ORDER BY id DESC LIMIT \\$2 OFFSET \\$3").
 		WithArgs("%client:0f3a%", 21, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
@@ -1025,6 +1031,9 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			sql.NullString{},
 			sql.NullFloat64{},
+			sql.NullString{Valid: true, String: "4276cee5-69e9-497a-9318-f99c84625bac"}, // response_request_id
+			sql.NullString{Valid: true, String: "564966d3-8995-44d3-bc78-b5730b19a922"}, // client_request_id
+			sql.NullString{Valid: true, String: "msg_011ChSwsWaLgTDX3Ay9jabZw"},         // response_msg_id
 			sql.NullString{}, // upstream_request_id
 			sql.NullString{},
 			false,             // native_compaction_v2
@@ -1032,6 +1041,12 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 		}})
 		require.NoError(t, err)
+		require.NotNil(t, log.ResponseRequestID)
+		require.Equal(t, "4276cee5-69e9-497a-9318-f99c84625bac", *log.ResponseRequestID)
+		require.NotNil(t, log.ClientRequestID)
+		require.Equal(t, "564966d3-8995-44d3-bc78-b5730b19a922", *log.ClientRequestID)
+		require.NotNil(t, log.ResponseMsgID)
+		require.Equal(t, "msg_011ChSwsWaLgTDX3Ay9jabZw", *log.ResponseMsgID)
 		require.Equal(t, 2, log.ImageCount)
 		require.NotNil(t, log.ImageSize)
 		require.Equal(t, "4K", *log.ImageSize)
@@ -1106,6 +1121,9 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullString{},  // response_request_id
+			sql.NullString{},  // client_request_id
+			sql.NullString{},  // response_msg_id
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
@@ -1170,6 +1188,9 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullString{},  // response_request_id
+			sql.NullString{},  // client_request_id
+			sql.NullString{},  // response_msg_id
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			true,              // native_compaction_v2
@@ -1235,6 +1256,9 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullString{},  // response_request_id
+			sql.NullString{},  // client_request_id
+			sql.NullString{},  // response_msg_id
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2

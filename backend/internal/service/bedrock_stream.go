@@ -167,6 +167,12 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 			// 同时移除该字段避免透传给客户端
 			sseData = transformBedrockInvocationMetrics(sseData)
 
+			if observer := upstreamResponseModelObserverFromContext(c); observer != nil {
+				observer.ObserveAnthropic(sseData)
+			} else {
+				beginUpstreamResponseModelObservation(c).ObserveAnthropic(sseData)
+			}
+
 			// 解析 SSE 事件数据提取 usage
 			parseSSEUsagePassthrough(string(sseData), usage)
 			progress.observeData(string(sseData))

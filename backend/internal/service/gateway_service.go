@@ -645,6 +645,9 @@ type ForwardResult struct {
 	// CacheStorageTokenHours records explicit Gemini cache storage separately from token usage.
 	CacheStorageTokenHours float64
 	RequestID              string
+	// ResponseMsgID is the Anthropic response body message id (e.g. msg_...)
+	// observed from non-streaming JSON or SSE message_start.
+	ResponseMsgID string
 	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
 	UpstreamHeaders http.Header
 	Usage           ClaudeUsage

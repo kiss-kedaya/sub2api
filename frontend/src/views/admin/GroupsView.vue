@@ -1566,6 +1566,22 @@
                   :placeholder="t('admin.groups.claudeCode.noFallback')"
                 />
               </UFormField>
+              <UFormField
+                :description="createForm.save_response_msg_id
+                  ? t('admin.groups.saveResponseMsgId.enabled')
+                  : t('admin.groups.saveResponseMsgId.disabled')"
+                class="flex items-center justify-between gap-4 mt-4"
+                :ui="{ container: 'mt-0 shrink-0' }"
+              >
+                <template #label>
+                  <span class="inline-flex items-center gap-1">{{ t("admin.groups.saveResponseMsgId.title") }} <GroupFieldHelp :label="t('admin.groups.saveResponseMsgId.title')" :text="t('admin.groups.saveResponseMsgId.tooltip')" /></span>
+                </template>
+                <Toggle
+                  data-testid="create-save-response-msg-id"
+                  :aria-label="t('admin.groups.saveResponseMsgId.title')"
+                  v-model="createForm.save_response_msg_id"
+                />
+              </UFormField>
             </div>
           </section>
           <UCollapsible v-model:open="createAdvancedOpen" :unmount-on-hide="false" class="space-y-5">
@@ -3023,6 +3039,22 @@
                   :placeholder="t('admin.groups.claudeCode.noFallback')"
                 />
               </UFormField>
+              <UFormField
+                :description="editForm.save_response_msg_id
+                  ? t('admin.groups.saveResponseMsgId.enabled')
+                  : t('admin.groups.saveResponseMsgId.disabled')"
+                class="flex items-center justify-between gap-4 mt-4"
+                :ui="{ container: 'mt-0 shrink-0' }"
+              >
+                <template #label>
+                  <span class="inline-flex items-center gap-1">{{ t("admin.groups.saveResponseMsgId.title") }} <GroupFieldHelp :label="t('admin.groups.saveResponseMsgId.title')" :text="t('admin.groups.saveResponseMsgId.tooltip')" /></span>
+                </template>
+                <Toggle
+                  data-testid="edit-save-response-msg-id"
+                  :aria-label="t('admin.groups.saveResponseMsgId.title')"
+                  v-model="editForm.save_response_msg_id"
+                />
+              </UFormField>
             </div>
           </section>
           <UCollapsible v-model:open="editAdvancedOpen" :unmount-on-hide="false" class="space-y-5">
@@ -4468,6 +4500,7 @@ const createForm = reactive({
   profit_safety_buffer_percent: 0,
   // Claude Code 客户端限制（仅 anthropic 平台使用）
   claude_code_only: false,
+  save_response_msg_id: false,
   fallback_group_id: null as number | null,
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
@@ -4886,6 +4919,7 @@ const editForm = reactive({
   profit_safety_buffer_percent: 0,
   // Claude Code 客户端限制（仅 anthropic 平台使用）
   claude_code_only: false,
+  save_response_msg_id: false,
   fallback_group_id: null as number | null,
   fallback_group_id_on_invalid_request: null as number | null,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
@@ -5420,6 +5454,7 @@ const closeCreateModal = () => {
   createForm.profit_min_margin_percent = 0;
   createForm.profit_safety_buffer_percent = 0;
   createForm.claude_code_only = false;
+  createForm.save_response_msg_id = false;
   createForm.return_requested_model = false;
   createForm.fallback_group_id = null;
   createForm.fallback_group_id_on_invalid_request = null;
@@ -5618,6 +5653,8 @@ const handleCreateGroup = async () => {
       ),
       cross_protocol_conversion_enabled:
         createForm.cross_protocol_conversion_enabled,
+      save_response_msg_id:
+        createForm.platform === "anthropic" && Boolean(createForm.save_response_msg_id),
       messages_dispatch_model_config:
         createForm.platform === "openai"
           ? messagesDispatchFormStateToConfig({
@@ -5807,6 +5844,7 @@ const handleEdit = async (group: AdminGroup) => {
     group.profit_safety_buffer ?? 0,
   );
   editForm.claude_code_only = group.claude_code_only || false;
+  editForm.save_response_msg_id = group.save_response_msg_id || false;
   editForm.fallback_group_id = group.fallback_group_id;
   editForm.fallback_group_id_on_invalid_request =
     group.fallback_group_id_on_invalid_request;
@@ -5940,6 +5978,7 @@ const closeEditModal = () => {
   resetMessagesDispatchFormState(editForm);
   editForm.allow_live = false;
   editForm.cross_protocol_conversion_enabled = false;
+  editForm.save_response_msg_id = false;
   editForm.return_requested_model = false;
   resetModelAllowlistState(editModelAllowlistState);
   editCodexManifestConfig.value = createCodexManifestDefaults();
@@ -6052,6 +6091,8 @@ const handleUpdateGroup = async () => {
           : undefined,
       cross_protocol_conversion_enabled:
         editForm.cross_protocol_conversion_enabled,
+      save_response_msg_id:
+        editForm.platform === "anthropic" && Boolean(editForm.save_response_msg_id),
       reasoning_effort_mappings: reasoningEffortMappingsToAPI(
         editForm.reasoning_effort_mappings,
       ),

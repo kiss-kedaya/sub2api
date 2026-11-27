@@ -19,7 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
-const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, upstream_response_model, upstream_model_mismatch, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, image_input_tokens, image_input_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, video_count, video_resolution, video_duration_seconds, service_tier, reasoning_effort, requested_reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, long_context_billing_applied, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, upstream_request_id, session_id, native_compaction_v2, service_tier_multiplier, created_at"
+const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, requested_model, upstream_model, upstream_response_model, upstream_model_mismatch, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens, image_output_cost, image_input_tokens, image_input_cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, account_rate_multiplier, billing_type, request_type, stream, openai_ws_mode, duration_ms, first_token_ms, user_agent, ip_address, image_count, image_size, image_input_size, image_output_size, image_size_source, image_size_breakdown, video_count, video_resolution, video_duration_seconds, service_tier, reasoning_effort, requested_reasoning_effort, inbound_endpoint, upstream_endpoint, cache_ttl_overridden, long_context_billing_applied, channel_id, model_mapping_chain, billing_tier, billing_mode, account_stats_cost, response_request_id, client_request_id, response_msg_id, upstream_request_id, session_id, native_compaction_v2, service_tier_multiplier, created_at"
 
 func (r *usageLogRepository) GetByID(ctx context.Context, id int64) (log *service.UsageLog, err error) {
 	query := "SELECT " + usageLogSelectColumns + " FROM usage_logs WHERE id = $1"
@@ -116,7 +116,7 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 		conditions = append(conditions, fmt.Sprintf("group_id = $%d", len(args)+1))
 		args = append(args, filters.GroupID)
 	}
-	conditions, args = appendUsageRequestIDCondition(conditions, args, filters.RequestID)
+	conditions, args = appendUsageRequestIDConditionWithOptions(conditions, args, filters.RequestID, !filters.ExcludeUpstreamRequestIDSearch)
 	conditions, args = appendUsageLogModelWhereCondition(conditions, args, filters.Model, filters.ModelFilterSource)
 	conditions, args = appendRequestTypeOrStreamWhereCondition(conditions, args, filters.RequestType, filters.Stream)
 	conditions, args = appendNativeCompactionV2WhereCondition(conditions, args, filters.NativeCompactionV2, "")
@@ -170,8 +170,15 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 	return logs, page, nil
 }
 
-// Exact IDs use the existing btree indexes; prefixes/fragments use migration 256's trigram indexes.
+// Exact IDs use the btree indexes; prefixes/fragments use the trigram GIN indexes
+// (migrations 256 & 348). User-scoped callers set includeUpstream=false so regular
+// users can search request_id, X-Request-Id, X-Client-Request-Id, and response_msg_id
+// without probing admin-only upstream_request_id values.
 func appendUsageRequestIDCondition(conditions []string, args []any, input string) ([]string, []any) {
+	return appendUsageRequestIDConditionWithOptions(conditions, args, input, true)
+}
+
+func appendUsageRequestIDConditionWithOptions(conditions []string, args []any, input string, includeUpstream bool) ([]string, []any) {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return conditions, args
@@ -180,17 +187,29 @@ func appendUsageRequestIDCondition(conditions []string, args []any, input string
 	if strings.HasPrefix(input, "=") {
 		id := strings.TrimSpace(input[1:])
 		base := service.NormalizeUsageRequestIDKey(id)
-		conditions = append(conditions, fmt.Sprintf("(request_id IN ($%d, $%d, $%d) OR upstream_request_id = $%d)", pos, pos+1, pos+2, pos+3))
+		if includeUpstream {
+			conditions = append(conditions, fmt.Sprintf("(request_id IN ($%d, $%d, $%d) OR response_request_id = $%d OR client_request_id = $%d OR response_msg_id = $%d OR upstream_request_id = $%d)", pos, pos+1, pos+2, pos+3, pos, pos+3, pos+3))
+		} else {
+			conditions = append(conditions, fmt.Sprintf("(request_id IN ($%d, $%d, $%d) OR response_request_id = $%d OR client_request_id = $%d OR response_msg_id = $%d)", pos, pos+1, pos+2, pos+3, pos, pos+3))
+		}
 		return conditions, append(args, base, "client:"+base, "local:"+base, id)
 	}
 	pattern := "%" + escapeLikePattern(input) + "%"
 	if strings.HasPrefix(input, "^") {
 		id := strings.TrimSpace(input[1:])
 		base := service.NormalizeUsageRequestIDKey(id)
-		conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR request_id ILIKE $%d OR request_id ILIKE $%d OR upstream_request_id ILIKE $%d)", pos, pos+1, pos+2, pos+3))
+		if includeUpstream {
+			conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR request_id ILIKE $%d OR request_id ILIKE $%d OR response_request_id ILIKE $%d OR client_request_id ILIKE $%d OR response_msg_id ILIKE $%d OR upstream_request_id ILIKE $%d)", pos, pos+1, pos+2, pos+3, pos, pos+3, pos+3))
+		} else {
+			conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR request_id ILIKE $%d OR request_id ILIKE $%d OR response_request_id ILIKE $%d OR client_request_id ILIKE $%d OR response_msg_id ILIKE $%d)", pos, pos+1, pos+2, pos+3, pos, pos+3))
+		}
 		return conditions, append(args, escapeLikePattern(base)+"%", escapeLikePattern("client:"+base)+"%", escapeLikePattern("local:"+base)+"%", escapeLikePattern(id)+"%")
 	}
-	conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR upstream_request_id ILIKE $%d)", pos, pos))
+	if includeUpstream {
+		conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR response_request_id ILIKE $%d OR client_request_id ILIKE $%d OR response_msg_id ILIKE $%d OR upstream_request_id ILIKE $%d)", pos, pos, pos, pos, pos))
+	} else {
+		conditions = append(conditions, fmt.Sprintf("(request_id ILIKE $%d OR response_request_id ILIKE $%d OR client_request_id ILIKE $%d OR response_msg_id ILIKE $%d)", pos, pos, pos, pos))
+	}
 	return conditions, append(args, pattern)
 }
 
@@ -639,6 +658,9 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		billingTier               sql.NullString
 		billingMode               sql.NullString
 		accountStatsCost          sql.NullFloat64
+		responseRequestID         sql.NullString
+		clientRequestID           sql.NullString
+		responseMsgID             sql.NullString
 		upstreamRequestID         sql.NullString
 		sessionID                 sql.NullString
 		nativeCompactionV2        bool
@@ -706,6 +728,9 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		&billingTier,
 		&billingMode,
 		&accountStatsCost,
+		&responseRequestID,
+		&clientRequestID,
+		&responseMsgID,
 		&upstreamRequestID,
 		&sessionID,
 		&nativeCompactionV2,
@@ -844,6 +869,15 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 	}
 	if accountStatsCost.Valid {
 		log.AccountStatsCost = &accountStatsCost.Float64
+	}
+	if responseRequestID.Valid {
+		log.ResponseRequestID = &responseRequestID.String
+	}
+	if clientRequestID.Valid {
+		log.ClientRequestID = &clientRequestID.String
+	}
+	if responseMsgID.Valid {
+		log.ResponseMsgID = &responseMsgID.String
 	}
 	if sessionID.Valid {
 		log.SessionID = &sessionID.String

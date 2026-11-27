@@ -294,6 +294,38 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
 	}
+	if responseRequestID, ok := parent.Value(ctxkey.ResponseRequestID).(string); ok {
+		base = context.WithValue(base, ctxkey.ResponseRequestID, strings.Clone(strings.TrimSpace(responseRequestID)))
+	}
+	if saveMsgID, ok := parent.Value(ctxkey.SaveResponseMsgID).(bool); ok {
+		base = context.WithValue(base, ctxkey.SaveResponseMsgID, saveMsgID)
+	} else if group, ok := parent.Value(ctxkey.Group).(*service.Group); ok && group != nil {
+		base = context.WithValue(base, ctxkey.SaveResponseMsgID, group.Platform == service.PlatformAnthropic && group.SaveResponseMsgID)
+	}
+	// Snapshot the exact X-Request-Id / X-Client-Request-Id response headers written
+	// to the client as small owned strings without retaining gin.Context in the queue.
+	if ginCtx := service.OpsGinContextFrom(parent); ginCtx != nil && ginCtx.Writer != nil {
+		hdr := ginCtx.Writer.Header()
+		if _, hasRespID := base.Value(ctxkey.ResponseRequestID).(string); !hasRespID {
+			resolvedRespID := ""
+			if vals := hdr.Values("X-Request-Id"); len(vals) > 0 {
+				for i := len(vals) - 1; i >= 0; i-- {
+					if v := strings.TrimSpace(vals[i]); v != "" {
+						resolvedRespID = strings.Clone(v)
+						break
+					}
+				}
+			}
+			// Always bind ctxkey.ResponseRequestID (even "") when ginCtx was inspected,
+			// so stripped/force-removed X-Request-Id headers never fall back to raw upstream IDs.
+			base = context.WithValue(base, ctxkey.ResponseRequestID, resolvedRespID)
+		}
+		if _, hasClientID := base.Value(ctxkey.ClientRequestID).(string); !hasClientID {
+			if v := strings.TrimSpace(hdr.Get("X-Client-Request-Id")); v != "" {
+				base = context.WithValue(base, ctxkey.ClientRequestID, strings.Clone(v))
+			}
+		}
+	}
 	return base
 }
 

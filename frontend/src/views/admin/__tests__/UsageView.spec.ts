@@ -37,6 +37,7 @@ const messages: Record<string, string> = {
   'admin.dashboard.hour': 'Hour',
   'admin.usage.failedToLoadUser': 'Failed to load user',
 	'admin.usage.requestId': 'Request ID',
+	'admin.usage.responseMsgId': 'Message ID',
 	'admin.usage.upstreamRequestId': 'Upstream ID',
 	'usage.requestedModel': 'Requested model',
 	'usage.sentUpstreamModel': 'Sent upstream model',
@@ -237,7 +238,7 @@ describe('admin UsageView route filters', () => {
     expect(getById).not.toHaveBeenCalled()
     expect(exportList).not.toHaveBeenCalled()
     expect(vm.activeTab).toBe('usage')
-    expect(vm.visibleColumns.map((column: { key: string }) => column.key)).not.toEqual(expect.arrayContaining(['ip_address', 'endpoint', 'request_id']))
+    expect(vm.visibleColumns.map((column: { key: string }) => column.key)).not.toEqual(expect.arrayContaining(['ip_address', 'endpoint', 'request_id', 'response_msg_id']))
     wrapper.unmount()
   })
 
@@ -926,6 +927,42 @@ describe('admin UsageView model audit export', () => {
 		const row = sheetAddAoa.mock.calls[0][1][0]
 		expect(row.slice(4, 8)).toEqual(['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'Yes'])
 		expect(saveAs).toHaveBeenCalledTimes(1)
+	})
+
+	it('neutralizes spreadsheet formula prefixes in exported response ID columns', async () => {
+		const wrapper = mountRouteFilteredUsageView()
+		vi.advanceTimersByTime(120)
+		await flushPromises()
+		exportList.mockResolvedValueOnce({
+			items: [
+				{
+					id: 99,
+					model: 'claude-opus-5-5',
+					created_at: '2026-08-04T00:00:00Z',
+					request_id: 'client:=CMD|calc',
+					response_request_id: '=HYPERLINK("https://example.com")',
+					client_request_id: '+1+1',
+					response_msg_id: '@SUM(A1:A2)',
+					upstream_request_id: '-upstream',
+				},
+			],
+			total: 1,
+			pages: 1,
+			page_size: 1000,
+		})
+
+		await (wrapper.vm as any).exportToExcel()
+		await flushPromises()
+
+		const row = sheetAddAoa.mock.calls[0][1][0]
+		expect(row.slice(-7, -2)).toEqual([
+			'client:=CMD|calc',
+			'\'=HYPERLINK("https://example.com")',
+			'\'+1+1',
+			'\'@SUM(A1:A2)',
+			'\'-upstream',
+		])
+		wrapper.unmount()
 	})
 
 	it('exports later pages when the backend caps each page at 50', async () => {

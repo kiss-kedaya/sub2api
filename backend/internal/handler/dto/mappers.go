@@ -257,6 +257,7 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 	out := &AdminGroup{
 		Group:                       groupFromServiceBase(g),
 		ReturnRequestedModel:        g.ReturnRequestedModel,
+		SaveResponseMsgID:           g.SaveResponseMsgID,
 		SearchProviderBaseURL:       g.SearchProviderBaseURL,
 		SearchProviderAPIKeySet:     g.SearchProviderAPIKey != nil && *g.SearchProviderAPIKey != "",
 		ForceOpenAIFast:             g.ForceOpenAIFast,
@@ -873,6 +874,9 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		APIKeyID:                  l.APIKeyID,
 		AccountID:                 l.AccountID,
 		RequestID:                 l.RequestID,
+		ResponseRequestID:         l.ResponseRequestID,
+		ClientRequestID:           l.ClientRequestID,
+		ResponseMsgID:             l.ResponseMsgID,
 		Model:                     requestedModel,
 		FailureStatusCode:         l.FailureStatusCode,
 		ServiceTier:               l.ServiceTier,

@@ -181,6 +181,7 @@ func (s *GatewayService) forwardBedrock(
 
 	return &ForwardResult{
 		RequestID:        resp.Header.Get("x-amzn-requestid"),
+		ResponseMsgID:    observedUpstreamResponseMessageID(c),
 		UpstreamHeaders:  resp.Header,
 		Usage:            *usage,
 		Model:            reqModel,
@@ -418,6 +419,12 @@ func (s *GatewayService) handleBedrockNonStreamingResponse(
 	// 转换 Bedrock 特有的 amazon-bedrock-invocationMetrics 为标准 Anthropic usage 格式
 	// 并移除该字段避免透传给客户端
 	body = transformBedrockInvocationMetrics(body)
+
+	observer := upstreamResponseModelObserverFromContext(c)
+	if observer == nil {
+		observer = beginUpstreamResponseModelObservation(c)
+	}
+	observer.ObserveAnthropic(body)
 
 	usage := parseClaudeUsageFromResponseBody(body)
 

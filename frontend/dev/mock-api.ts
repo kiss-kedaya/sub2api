@@ -241,6 +241,36 @@ export function createMockApi(now = new Date()) {
     try { new Intl.DateTimeFormat('en', { timeZone: timezone }) } catch { throw new PreviewError(400, '无效的时区') }
     return timezone
   }
+  const matchesUsageRequestId = (
+    row: { request_id?: string | null; response_request_id?: string | null; client_request_id?: string | null; response_msg_id?: string | null; upstream_request_id?: string | null },
+    rawInput: string | null,
+    includeUpstream: boolean,
+  ): boolean => {
+    const input = rawInput?.trim() ?? ''
+    if (!input) return true
+    const candidates = [
+      row.request_id,
+      row.response_request_id,
+      row.client_request_id,
+      row.response_msg_id,
+      ...(includeUpstream ? [row.upstream_request_id] : []),
+    ].filter((val): val is string => typeof val === 'string' && val.trim().length > 0)
+    if (input.startsWith('=')) {
+      const target = input.slice(1).trim()
+      const base = target.replace(/^(?:client:|local:)/, '')
+      return candidates.some(val => val === target || val === base || val === `client:${base}` || val === `local:${base}`)
+    }
+    if (input.startsWith('^')) {
+      const target = input.slice(1).trim().toLowerCase()
+      const base = target.replace(/^(?:client:|local:)/, '')
+      return candidates.some(val => {
+        const lower = val.toLowerCase()
+        return lower.startsWith(target) || lower.startsWith(base) || lower.startsWith(`client:${base}`) || lower.startsWith(`local:${base}`)
+      })
+    }
+    const needle = input.toLowerCase()
+    return candidates.some(val => val.toLowerCase().includes(needle))
+  }
   function filteredUsage(query: URLSearchParams) {
     const timezone = timezoneOf(query)
     const start = query.get('start_date'), end = query.get('end_date')
@@ -255,6 +285,7 @@ export function createMockApi(now = new Date()) {
         const filter = query.get(field)
         if (filter !== null && filter !== '' && String(row[field]) !== filter) return false
       }
+      if (!matchesUsageRequestId(row, query.get('request_id'), false)) return false
       const model = query.get('model')?.toLowerCase()
       if (model && !row.model.toLowerCase().includes(model)) return false
       if (start || end) {
@@ -294,6 +325,7 @@ export function createMockApi(now = new Date()) {
         const filter = query.get(field)
         if (filter !== null && filter !== '' && String(row[field]) !== filter) return false
       }
+      if (!matchesUsageRequestId(row, query.get('request_id'), true)) return false
       const model = query.get('model')?.toLowerCase()
       if (model && !row.model.toLowerCase().includes(model)) return false
       if (start || end) {

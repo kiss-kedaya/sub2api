@@ -253,9 +253,10 @@ type OpenAIForwardResult struct {
 	// VideoStatus is the normalized task state observed in a video status
 	// response. It lets durable billing resolve a previously unknown failure
 	// before returning the response, without storing media URLs or bodies.
-	VideoStatus string
-	RequestID   string
-	ResponseID  string
+	VideoStatus   string
+	RequestID     string
+	ResponseID    string
+	ResponseMsgID string
 	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
 	UpstreamHeaders http.Header
 	Usage           OpenAIUsage
