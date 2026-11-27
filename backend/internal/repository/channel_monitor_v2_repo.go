@@ -1371,6 +1371,7 @@ func (a *metricAccumulator) metric(minutes float64, admin bool) service.ChannelM
 	}
 	return m
 }
+
 const (
 	// channelMonitorV2HistogramInfBound matches the ELSE 2147483647 (+Inf) bucket in
 	// channelMonitorV2HistogramBoundSQL for samples exceeding the largest finite bucket (600s).
