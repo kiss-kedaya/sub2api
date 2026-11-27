@@ -163,11 +163,12 @@ func TestBackupScheduleEndpointPersistsCriticalOnlyAndReportsServerCapabilities(
 	t.Run("server-enforced critical config and age encryption are surfaced read-only", func(t *testing.T) {
 		identity, err := age.GenerateX25519Identity()
 		require.NoError(t, err)
+		pub := identity.Recipient().String()
 		settings := newBackupHandlerSettingRepo(nil)
 		svc := service.NewBackupService(settings, &config.Config{
 			Backup: config.BackupConfig{
 				ExcludeTableData: []string{"public.usage_logs"},
-				AgeRecipients:    []string{identity.Recipient().String()},
+				AgeRecipients:    []string{pub},
 			},
 		}, handlerTestEncryptor{}, nil, &handlerTestDumper{})
 		h := NewBackupHandler(svc, nil, nil)
@@ -179,6 +180,65 @@ func TestBackupScheduleEndpointPersistsCriticalOnlyAndReportsServerCapabilities(
 
 		require.Equal(t, 200, wGet.Code)
 		require.Contains(t, wGet.Body.String(), `"server_critical_forced":true`)
+		require.Contains(t, wGet.Body.String(), `"age_encryption_enabled":true`)
+		require.Contains(t, wGet.Body.String(), `"server_age_encryption_forced":true`)
+		require.Contains(t, wGet.Body.String(), `"server_age_recipient_count":1`)
+		require.NotContains(t, wGet.Body.String(), pub, "server env recipients must not be echoed in schedule response")
+	})
+
+	t.Run("admin age_recipients and max_rate_mbps round-trip and reject private keys", func(t *testing.T) {
+		identity, err := age.GenerateX25519Identity()
+		require.NoError(t, err)
+		pub := identity.Recipient().String()
+		secret := identity.String()
+
+		settings := newBackupHandlerSettingRepo(nil)
+		svc := service.NewBackupService(settings, &config.Config{}, handlerTestEncryptor{}, nil, &handlerTestDumper{})
+		h := NewBackupHandler(svc, nil, nil)
+
+		// Rejects private key without echoing it.
+		wBad := httptest.NewRecorder()
+		cBad, _ := gin.CreateTestContext(wBad)
+		cBad.Request = httptest.NewRequest("PUT", "/api/v1/admin/backups/schedule",
+			strings.NewReader(`{"enabled":false,"cron_expr":"0 3 * * *","retain_days":7,"retain_count":5,"age_recipients":["`+secret+`"]}`))
+		cBad.Request.Header.Set("Content-Type", "application/json")
+		h.UpdateSchedule(cBad)
+		require.Equal(t, 400, wBad.Code)
+		require.Contains(t, wBad.Body.String(), "BACKUP_AGE_PRIVATE_KEY_FORBIDDEN")
+		require.NotContains(t, wBad.Body.String(), secret)
+
+		// Rejects invalid max_rate_mbps.
+		wRate := httptest.NewRecorder()
+		cRate, _ := gin.CreateTestContext(wRate)
+		cRate.Request = httptest.NewRequest("PUT", "/api/v1/admin/backups/schedule",
+			strings.NewReader(`{"enabled":false,"cron_expr":"0 3 * * *","retain_days":7,"retain_count":5,"max_rate_mbps":501}`))
+		cRate.Request.Header.Set("Content-Type", "application/json")
+		h.UpdateSchedule(cRate)
+		require.Equal(t, 400, wRate.Code)
+		require.Contains(t, wRate.Body.String(), "INVALID_BACKUP_RATE_LIMIT")
+
+		// Saves valid public key and rate limit.
+		wPut := httptest.NewRecorder()
+		cPut, _ := gin.CreateTestContext(wPut)
+		cPut.Request = httptest.NewRequest("PUT", "/api/v1/admin/backups/schedule",
+			strings.NewReader(`{"enabled":false,"cron_expr":"0 3 * * *","retain_days":7,"retain_count":5,"critical_only":true,"age_recipients":["`+pub+`"],"max_rate_mbps":12}`))
+		cPut.Request.Header.Set("Content-Type", "application/json")
+		h.UpdateSchedule(cPut)
+
+		require.Equal(t, 200, wPut.Code)
+		require.Contains(t, wPut.Body.String(), pub)
+		require.Contains(t, wPut.Body.String(), `"max_rate_mbps":12`)
+		require.Contains(t, wPut.Body.String(), `"age_encryption_enabled":true`)
+		require.NotContains(t, wPut.Body.String(), `"server_age_encryption_forced"`)
+
+		// GET returns persisted values.
+		wGet := httptest.NewRecorder()
+		cGet, _ := gin.CreateTestContext(wGet)
+		cGet.Request = httptest.NewRequest("GET", "/api/v1/admin/backups/schedule", nil)
+		h.GetSchedule(cGet)
+		require.Equal(t, 200, wGet.Code)
+		require.Contains(t, wGet.Body.String(), pub)
+		require.Contains(t, wGet.Body.String(), `"max_rate_mbps":12`)
 		require.Contains(t, wGet.Body.String(), `"age_encryption_enabled":true`)
 	})
 }
@@ -248,6 +308,42 @@ func TestBackupCreateEndpointForwardsCriticalOnlyOption(t *testing.T) {
 		require.NotContains(t, w.Body.String(), `.critical.sql.gz`)
 		svc.Stop()
 		require.Empty(t, dumper.excludeTables)
+	})
+
+	t.Run("manual backup inherits admin-configured age_recipients from schedule", func(t *testing.T) {
+		identity, err := age.GenerateX25519Identity()
+		require.NoError(t, err)
+		scheduleJSON, err := json.Marshal(service.BackupScheduleConfig{
+			CriticalOnly:  true,
+			AgeRecipients: []string{identity.Recipient().String()},
+			MaxRateMBps:   10,
+		})
+		require.NoError(t, err)
+		settings := newBackupHandlerSettingRepo(map[string]string{
+			"backup_s3_config": string(s3JSON),
+			"backup_schedule":  string(scheduleJSON),
+		})
+		dumper := &handlerTestDumper{}
+		factory := func(context.Context, *service.BackupS3Config) (service.BackupObjectStore, error) {
+			return handlerTestObjectStore{}, nil
+		}
+		svc := service.NewBackupService(settings, &config.Config{
+			Database: config.DatabaseConfig{DBName: "sub2api"},
+			Totp:     config.TotpConfig{EncryptionKeyConfigured: true},
+		}, handlerTestEncryptor{}, factory, dumper)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("POST", "/api/v1/admin/backups",
+			strings.NewReader(`{"expire_days":7,"critical_only":true}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		NewBackupHandler(svc, nil, nil).CreateBackup(c)
+
+		require.Equal(t, 202, w.Code)
+		require.Contains(t, w.Body.String(), `"encrypted":true`)
+		require.Contains(t, w.Body.String(), `.critical.sql.gz.age`)
+		svc.Stop()
 	})
 }
 

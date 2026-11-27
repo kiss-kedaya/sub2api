@@ -16,8 +16,12 @@ export interface BackupScheduleConfig {
   retain_days: number
   retain_count: number
   critical_only?: boolean
+  age_recipients?: string[]
+  max_rate_mbps?: number
   server_critical_forced?: boolean
   age_encryption_enabled?: boolean
+  server_age_encryption_forced?: boolean
+  server_age_recipient_count?: number
 }
 
 export interface BackupRecord {

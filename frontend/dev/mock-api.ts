@@ -545,8 +545,12 @@ export function createMockApi(now = new Date()) {
     retain_days: 7,
     retain_count: 5,
     critical_only: true,
+    age_recipients: [] as string[],
+    max_rate_mbps: 10,
     server_critical_forced: false,
     age_encryption_enabled: false,
+    server_age_encryption_forced: false,
+    server_age_recipient_count: 0,
   }
   const demoBackups: Array<Record<string, unknown>> = [
     {
@@ -915,6 +919,12 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/admin/backups/image-storage') return { config: { enabled: false, reuse_backup_s3: false, bucket: '', prefix: '', public_base_url: '', presign_expiry_hours: 24, max_download_bytes: 10485760, endpoint: '', region: '', access_key_id: '', force_path_style: false }, secret_configured: false }
         if (path === '/api/v1/admin/backups/schedule') return copy(demoBackupSchedule)
         if (path === '/api/v1/admin/backups') return { items: copy(demoBackups) }
+        const getBackupMatch = path.match(/^\/api\/v1\/admin\/backups\/([^/]+)$/)
+        if (getBackupMatch) {
+          const found = demoBackups.find(item => item.id === getBackupMatch[1])
+          if (!found) throw new PreviewError(404, 'backup not found')
+          return copy(found)
+        }
         if (path === '/api/v1/admin/payment/config') return { enabled: true }
         if (path === '/api/v1/admin/payment/orders') return page(data.paymentOrders, query)
         if (path === '/api/v1/admin/payment/plans') return data.paymentPlans
@@ -1535,6 +1545,33 @@ export function createMockApi(now = new Date()) {
         return { transferred_quota: amount, balance: data.user.balance }
       }
       if (method === 'PUT' && path === '/api/v1/admin/backups/schedule') {
+        const rawRecipients = Array.isArray(body.age_recipients) ? body.age_recipients : []
+        for (const item of rawRecipients) {
+          if (typeof item === 'string' && /age-secret-key-/i.test(item)) {
+            throw new PreviewError(400, 'age private keys must never be stored on the server')
+          }
+        }
+        const recipients: string[] = []
+        const seen = new Set<string>()
+        for (const item of rawRecipients) {
+          if (typeof item !== 'string') continue
+          const trimmed = item.trim()
+          if (!trimmed) continue
+          if (!/^age1[02-9ac-hj-np-z]{58}$/.test(trimmed)) {
+            throw new PreviewError(400, 'invalid age X25519 public key')
+          }
+          if (!seen.has(trimmed)) {
+            seen.add(trimmed)
+            recipients.push(trimmed)
+          }
+        }
+        if (recipients.length > 16) {
+          throw new PreviewError(400, 'at most 16 age recipients are allowed')
+        }
+        const rawRate = body.max_rate_mbps === undefined ? demoBackupSchedule.max_rate_mbps : Number(body.max_rate_mbps)
+        if (!Number.isInteger(rawRate) || rawRate < 0 || rawRate > 500) {
+          throw new PreviewError(400, 'max_rate_mbps must be between 0 and 500')
+        }
         demoBackupSchedule = {
           ...demoBackupSchedule,
           enabled: Boolean(body.enabled),
@@ -1542,21 +1579,26 @@ export function createMockApi(now = new Date()) {
           retain_days: Number.isFinite(Number(body.retain_days)) ? Number(body.retain_days) : demoBackupSchedule.retain_days,
           retain_count: Number.isFinite(Number(body.retain_count)) ? Number(body.retain_count) : demoBackupSchedule.retain_count,
           critical_only: Boolean(body.critical_only),
+          age_recipients: recipients,
+          max_rate_mbps: rawRate,
+          age_encryption_enabled: demoBackupSchedule.server_age_encryption_forced || recipients.length > 0,
         }
         return copy(demoBackupSchedule)
       }
       if (method === 'POST' && path === '/api/v1/admin/backups') {
         const critical = Boolean(body.critical_only)
+        const encrypted = Boolean(demoBackupSchedule.age_encryption_enabled)
         const expireDays = Number.isFinite(Number(body.expire_days)) ? Number(body.expire_days) : 14
         const id = `bk-demo-${nextBackupSeq++}`
         const stamp = now.toISOString().slice(0, 10).replaceAll('-', '')
-        const fileName = `sub2api_${stamp}_${id}${critical ? '.critical.sql.gz' : '.sql.gz'}`
+        const baseSuffix = critical ? '.critical.sql.gz' : '.sql.gz'
+        const fileName = `sub2api_${stamp}_${id}${baseSuffix}${encrypted ? '.age' : ''}`
         const rec = {
           id,
           status: 'completed',
           backup_type: 'postgres',
           scope: critical ? 'critical' : '',
-          encrypted: false,
+          encrypted,
           file_name: fileName,
           s3_key: `backups/2026/11/26/${fileName}`,
           size_bytes: critical ? 19_120_000 : 655_000_000,

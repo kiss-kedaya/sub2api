@@ -233,6 +233,8 @@ var auditBodySensitiveExactKeys = func() map[string]struct{} {
 		// session 为 Ollama Cloud 用量的浏览器会话 Cookie 明文。
 		"proxy_key", "custom_key", "session",
 		"request", CustomUsageExtraKey,
+		// 备份加密配置只应传 age 公钥，但误传私钥时绝不能落入 audit_logs。
+		"age_recipients",
 	}
 	set := make(map[string]struct{}, len(builtin)+len(SensitiveCredentialKeys)+16)
 	for _, k := range builtin {
@@ -330,6 +332,11 @@ func redactAuditValue(value any, depth int) any {
 			out[i] = redactAuditValue(item, depth+1)
 		}
 		return out
+	case string:
+		if strings.Contains(strings.ToUpper(v), "AGE-SECRET-KEY-") {
+			return auditRedactedPlaceholder
+		}
+		return v
 	default:
 		return value
 	}
