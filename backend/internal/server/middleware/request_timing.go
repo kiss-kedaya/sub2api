@@ -33,7 +33,11 @@ func RequestTiming(recorders ...ConnectionTraceRecorder) gin.HandlerFunc {
 		collector := requesttiming.New(time.Now(), c.Request.ContentLength)
 		c.Request = c.Request.WithContext(requesttiming.With(c.Request.Context(), collector))
 		c.Request.Body = collector.WrapBody(c.Request.Body)
-		writer := &timingWriter{ResponseWriter: c.Writer, collector: collector, skipOutcome: geminiPath != ""}
+		writer := &timingWriter{
+			ResponseWriter: c.Writer,
+			collector:      collector,
+			skipOutcome:    geminiPath != "" || len(recorders) == 0 || recorders[0] == nil,
+		}
 		c.Writer = writer
 		finish := func() {
 			writer.mu.Lock()
@@ -176,17 +180,15 @@ func (w *timingWriter) Write(p []byte) (int, error) {
 	start := time.Now()
 	n, err := w.ResponseWriter.Write(p)
 	w.collector.Written(start, n, err, false)
-	if w.skipOutcome {
+	if w.skipOutcome || n <= 0 {
 		return n, err
 	}
 	w.mu.Lock()
-	if n > 0 {
-		w.writes++
-		if w.outcome == nil {
-			w.outcome = requestcapture.NewOutcomeObserver(w.Header().Get("Content-Type"))
-		}
-		w.outcome.Write(p[:n])
+	w.writes++
+	if w.outcome == nil {
+		w.outcome = requestcapture.NewOutcomeObserver(w.Header().Get("Content-Type"))
 	}
+	w.outcome.Write(p[:n])
 	w.mu.Unlock()
 	return n, err
 }
@@ -194,17 +196,15 @@ func (w *timingWriter) WriteString(s string) (int, error) {
 	start := time.Now()
 	n, err := w.ResponseWriter.WriteString(s)
 	w.collector.Written(start, n, err, false)
-	if w.skipOutcome {
+	if w.skipOutcome || n <= 0 {
 		return n, err
 	}
 	w.mu.Lock()
-	if n > 0 {
-		w.writes++
-		if w.outcome == nil {
-			w.outcome = requestcapture.NewOutcomeObserver(w.Header().Get("Content-Type"))
-		}
-		w.outcome.Write([]byte(s[:n]))
+	w.writes++
+	if w.outcome == nil {
+		w.outcome = requestcapture.NewOutcomeObserver(w.Header().Get("Content-Type"))
 	}
+	w.outcome.WriteString(s[:n])
 	w.mu.Unlock()
 	return n, err
 }

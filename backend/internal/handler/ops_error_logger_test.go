@@ -9,7 +9,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ssefixture"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -1958,6 +1960,60 @@ func BenchmarkOpsCaptureWriterSuccessfulSSEFrames(b *testing.B) {
 	}
 }
 
+type opsDiscardHTTPWriter struct {
+	header http.Header
+}
+
+func (d *opsDiscardHTTPWriter) Header() http.Header         { return d.header }
+func (d *opsDiscardHTTPWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (d *opsDiscardHTTPWriter) WriteHeader(int)             {}
+
+func BenchmarkOpsCaptureWriter(b *testing.B) {
+	prevMode := gin.Mode()
+	gin.SetMode(gin.ReleaseMode)
+	b.Cleanup(func() { gin.SetMode(prevMode) })
+
+	enabledOps := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	disabledOps := service.NewOpsService(nil, nil, &config.Config{Ops: config.OpsConfig{Enabled: false}}, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	for _, tc := range []struct {
+		name   string
+		frames [][]byte
+		ops    *service.OpsService
+	}{
+		{"responses_1000_monitoring_enabled", ssefixture.ResponsesStream(1000), enabledOps},
+		{"responses_1000_monitoring_disabled", ssefixture.ResponsesStream(1000), disabledOps},
+		{"chat_1000_monitoring_enabled", ssefixture.ChatStream(1000), enabledOps},
+	} {
+		rawLines := ssefixture.Lines(tc.frames)
+		lines := make([]string, len(rawLines))
+		total := 0
+		for i, line := range rawLines {
+			lines[i] = line + "\n"
+			total += len(lines[i])
+		}
+		router := gin.New()
+		router.Use(OpsErrorLoggerMiddleware(tc.ops))
+		router.POST("/v1/responses", func(c *gin.Context) {
+			c.Status(http.StatusOK)
+			c.Header("Content-Type", "text/event-stream")
+			for _, line := range lines {
+				_, _ = c.Writer.WriteString(line)
+			}
+		})
+		dw := &opsDiscardHTTPWriter{header: make(http.Header)}
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		b.Run(tc.name, func(b *testing.B) {
+			b.SetBytes(int64(total))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				router.ServeHTTP(dw, req)
+			}
+		})
+	}
+}
+
 func TestSetOpsEndpointContext_SetsContextKeys(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
@@ -2257,4 +2313,175 @@ func TestNormalizeOpsErrorType_KeepsGeminiInBandSignalTypes(t *testing.T) {
 	} {
 		require.Equal(t, errType, normalizeOpsErrorType(errType, "PROHIBITED_CONTENT"), errType)
 	}
+}
+
+func TestOpsCaptureWriter_MonitoringDisabledSkips2xxSSEScan(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+	gin.SetMode(gin.TestMode)
+	disabledOps := service.NewOpsService(nil, nil, &config.Config{Ops: config.OpsConfig{Enabled: false}}, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	var captured2xx []byte
+	var captured5xx []byte
+
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(disabledOps))
+	router.POST("/v1/responses", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+		c.Header("Content-Type", "text/event-stream")
+		_, _ = c.Writer.WriteString("event: error\n")
+		_, _ = c.Writer.WriteString("data: {\"type\":\"error\",\"error\":{\"message\":\"boom\"}}\n\n")
+		if w, ok := c.Writer.(*opsCaptureWriter); ok {
+			captured2xx = w.capturedBytes()
+		}
+	})
+	router.POST("/v1/err", func(c *gin.Context) {
+		c.Status(http.StatusInternalServerError)
+		_, _ = c.Writer.WriteString(`{"error":{"message":"fail"}}`)
+		if w, ok := c.Writer.(*opsCaptureWriter); ok {
+			captured5xx = w.capturedBytes()
+		}
+	})
+
+	rec2xx := httptest.NewRecorder()
+	router.ServeHTTP(rec2xx, httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+	require.Equal(t, http.StatusOK, rec2xx.Code)
+	require.Empty(t, captured2xx)
+	require.Zero(t, OpsErrorLogQueueLength())
+
+	rec5xx := httptest.NewRecorder()
+	router.ServeHTTP(rec5xx, httptest.NewRequest(http.MethodPost, "/v1/err", nil))
+	require.Equal(t, http.StatusInternalServerError, rec5xx.Code)
+	require.Equal(t, `{"error":{"message":"fail"}}`, string(captured5xx))
+	require.Zero(t, OpsErrorLogQueueLength())
+}
+
+func TestOpsCaptureWriter_ResponseCreatedAndCompletedWithNullErrorSkipProbe(t *testing.T) {
+	state := &opsCaptureWriterState{limit: opsCaptureWriterLimit}
+	lines := ssefixture.Lines(ssefixture.ResponsesStream(10))
+	for _, line := range lines {
+		state.captureResponseString(line+"\n", http.StatusOK)
+		require.Empty(t, state.probe, "benign line %q must not buffer state.probe", line)
+		require.Empty(t, state.buf.Bytes())
+		require.False(t, state.sseCapturing)
+	}
+}
+
+func TestOpsCaptureWriter_MonitoringEnabledSplitChunkTerminalSSE(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 4)
+	gin.SetMode(gin.TestMode)
+	enabledOps := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(enabledOps))
+	router.POST("/v1/responses", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+		c.Header("Content-Type", "text/event-stream")
+		for _, line := range ssefixture.Lines(ssefixture.ResponsesStream(6)) {
+			_, _ = c.Writer.WriteString(line + "\n")
+		}
+		_, _ = c.Writer.WriteString("event: response.fai")
+		_, _ = c.Writer.WriteString("led\ndata: {\"type\":\"response.failed\",\"error\":{\"code\":\"server_error\",\"message\":\"split failure\"}}\n\n")
+	})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	job := <-opsErrorLogQueue
+	require.Equal(t, "split failure", job.entry.ErrorMessage)
+}
+
+func TestOpsCaptureWriter_WriteStringMatchesWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name   string
+		status int
+		chunks []string
+	}{
+		{"status_500", http.StatusInternalServerError, []string{`{"error":`, `{"message":"bad"}}`}},
+		{"sse_200_error", http.StatusOK, []string{"event: error\n", `data: {"type":"error","error":{"code":"rate_limit_error","message":"slow down"}}`, "\n\n"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r1 := httptest.NewRecorder()
+			c1, _ := gin.CreateTestContext(r1)
+			w1 := acquireOpsCaptureWriter(c1.Writer)
+			defer releaseOpsCaptureWriter(w1)
+
+			r2 := httptest.NewRecorder()
+			c2, _ := gin.CreateTestContext(r2)
+			w2 := acquireOpsCaptureWriter(c2.Writer)
+			defer releaseOpsCaptureWriter(w2)
+
+			w1.WriteHeader(tc.status)
+			w2.WriteHeader(tc.status)
+			for _, ch := range tc.chunks {
+				_, err := w1.Write([]byte(ch))
+				require.NoError(t, err)
+				_, err = w2.WriteString(ch)
+				require.NoError(t, err)
+			}
+			w1.finalizeCapture()
+			w2.finalizeCapture()
+
+			require.Equal(t, w1.capturedBytes(), w2.capturedBytes())
+			err1, ok1 := w1.capturedTerminalError()
+			err2, ok2 := w2.capturedTerminalError()
+			require.Equal(t, ok1, ok2)
+			require.Equal(t, err1, err2)
+		})
+	}
+}
+
+func TestOpsCaptureWriter_FoldedTypeKeyFallback(t *testing.T) {
+	t.Run("exact_type_then_folded_Type_error", func(t *testing.T) {
+		setupOpsErrorLogTestQueue(t, 2)
+		gin.SetMode(gin.TestMode)
+		enabledOps := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		var captured []byte
+		router := gin.New()
+		router.Use(OpsErrorLoggerMiddleware(enabledOps))
+		router.POST("/v1/responses", func(c *gin.Context) {
+			c.Status(http.StatusOK)
+			c.Header("Content-Type", "text/event-stream")
+			_, _ = c.Writer.WriteString("data: {\"type\":\"response.created\",\"Type\":\"error\",\"error\":{\"code\":\"server_error\",\"message\":\"folded boom\"}}\n\n")
+			if w, ok := c.Writer.(*opsCaptureWriter); ok {
+				captured = w.capturedBytes()
+			}
+		})
+
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Contains(t, string(captured), "folded boom")
+	})
+
+	t.Run("exact_type_then_folded_TYPE_response_failed", func(t *testing.T) {
+		state := &opsCaptureWriterState{limit: opsCaptureWriterLimit}
+		state.captureResponseString("data: {\"type\":\"response.created\",\"TYPE\":\"response.failed\",\"response\":{\"error\":{\"code\":\"server_error\",\"message\":\"folded failed\"}}}\n\n", http.StatusOK)
+		require.True(t, state.sseCapturing)
+		require.Contains(t, state.buf.String(), "folded failed")
+	})
+
+	t.Run("folded_Type_error_then_exact_type_benign", func(t *testing.T) {
+		state := &opsCaptureWriterState{limit: opsCaptureWriterLimit}
+		state.captureResponseString("data: {\"Type\":\"error\",\"type\":\"response.created\",\"error\":null}\n\n", http.StatusOK)
+		require.False(t, state.sseCapturing)
+		require.Zero(t, state.buf.Len())
+	})
+
+	t.Run("nested_folded_Type_does_not_buffer_probe", func(t *testing.T) {
+		state := &opsCaptureWriterState{limit: opsCaptureWriterLimit}
+		state.captureResponseString("data: {\"type\":\"response.created\",\"response\":{\"Type\":\"error\"},\"error\":null}\n", http.StatusOK)
+		require.Empty(t, state.probe)
+		require.Zero(t, state.buf.Len())
+		require.False(t, state.sseCapturing)
+	})
+
+	t.Run("folded_Type_only_line_by_line", func(t *testing.T) {
+		state := &opsCaptureWriterState{limit: opsCaptureWriterLimit}
+		state.captureResponseString("data: {\"Type\":\"error\",\"error\":{\"message\":\"line folded\"}}\n", http.StatusOK)
+		state.captureResponseString("\n", http.StatusOK)
+		require.True(t, state.sseCapturing)
+		require.Contains(t, state.buf.String(), "line folded")
+	})
 }

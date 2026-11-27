@@ -298,3 +298,347 @@ func TestRequestedModelPassthroughSSEKeepsObservedModelAndUsage(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestedModelWriterKeepaliveThenFailoverSwitchesGroup(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		initial   bool
+		failover  bool
+		wantModel string
+	}{
+		{"disabled_to_enabled", false, true, "client-model"},
+		{"enabled_to_disabled", true, false, "actual"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			enabled := tc.initial
+			c, recorder, finish := requestedModelWriterTestContext(t, "openai", &enabled)
+			defer finish()
+			c.Status(http.StatusOK)
+			c.Header("Content-Type", "text/event-stream")
+
+			// Pre-upstream keepalive comment must not latch enabled().
+			_, err := c.Writer.Write([]byte(": keepalive\n\n"))
+			require.NoError(t, err)
+			c.Writer.Flush()
+
+			// Simulate bindSelectedKeyRoute switching to another group on failover.
+			enabled = tc.failover
+
+			_, err = c.Writer.WriteString(`data: {"model":"actual","choices":[]}` + "\n\n")
+			require.NoError(t, err)
+
+			// Subsequent group change after first non-comment frame remains latched.
+			enabled = !tc.failover
+			_, err = c.Writer.WriteString(`data: {"model":"actual","choices":[{"delta":{"content":"ok"}}]}` + "\n\n")
+			require.NoError(t, err)
+
+			body := recorder.Body.String()
+			require.True(t, strings.HasPrefix(body, ": keepalive\n\n"))
+			require.Equal(t, 2, strings.Count(body, `"model":"`+tc.wantModel+`"`), body)
+		})
+	}
+}
+
+func TestRequestedModelWriterWriteStringSplitMultiAndOversizedFrames(t *testing.T) {
+	enabled := true
+	c, recorder, finish := requestedModelWriterTestContext(t, "openai", &enabled)
+	c.Status(http.StatusOK)
+	c.Header("Content-Type", "text/event-stream")
+
+	chunks := []string{
+		"event: response.created\n",
+		"data: {\n",
+		`data: "type":"response.created","response":{"model":"actual","error":null}`,
+		"\ndata: }\n\n",
+		"data: " + strings.Repeat("x", requestedModelPendingLimit+8),
+		"\n\n",
+		`data: {"model":"actual"}` + "\n\n",
+	}
+	for _, ch := range chunks {
+		n, err := c.Writer.WriteString(ch)
+		require.NoError(t, err)
+		require.Equal(t, len(ch), n)
+	}
+	finish()
+
+	out := recorder.Body.String()
+	require.Contains(t, out, `"response":{"model":"client-model","error":null}`)
+	require.Contains(t, out, "data: "+strings.Repeat("x", requestedModelPendingLimit+8)+"\n\n")
+	require.Contains(t, out, `data: {"model":"client-model"}`+"\n\n")
+}
+
+func TestRewriteRequestedModelResponseSpanPatchEdgeCases(t *testing.T) {
+	cases := []struct {
+		name     string
+		protocol string
+		model    string
+		payload  string
+	}{
+		{
+			name:     "utf8_bom_object",
+			protocol: "openai",
+			model:    "client-model",
+			payload:  "\xef\xbb\xbf" + `{"model":"actual"}`,
+		},
+		{
+			name:     "duplicate_model_key",
+			protocol: "openai",
+			model:    "client-model",
+			payload:  `{"model":"actual","model":"other"}`,
+		},
+		{
+			name:     "escaped_key_and_value",
+			protocol: "openai",
+			model:    "client-model",
+			payload:  `{"mod\u0065l":"act\u0075al"}`,
+		},
+		{
+			name:     "non_ascii_and_html_chars_in_target_model",
+			protocol: "openai",
+			model:    "模型<>&\"\\test",
+			payload:  `{"model":"actual","response":{"model":"actual","error":null}}`,
+		},
+		{
+			name:     "anthropic_type_after_message",
+			protocol: "anthropic",
+			model:    "client-model",
+			payload:  `{"message":{"model":"actual"},"type":"message_start"}`,
+		},
+		{
+			name:     "realtime_type_after_session",
+			protocol: "realtime",
+			model:    "client-model",
+			payload:  `{"session":{"model":"actual"},"type":"session.created"}`,
+		},
+		{
+			name:     "invalid_json_with_different_model",
+			protocol: "openai",
+			model:    "client-model",
+			payload:  `{"model":"actual",`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := []byte(tc.payload)
+			got := RewriteRequestedModelResponse(append([]byte(nil), in...), tc.protocol, tc.model)
+			want := refRewriteRequestedModelResponse(append([]byte(nil), in...), tc.protocol, tc.model)
+			require.Equal(t, string(want), string(got))
+		})
+	}
+}
+
+func TestRequestedModelWriterKeepaliveLatchingEdgeCases(t *testing.T) {
+	t.Run("split_keepalive_WriteString_false_to_true", func(t *testing.T) {
+		enabled := false
+		c, recorder, finish := requestedModelWriterTestContext(t, "openai", &enabled)
+		defer finish()
+		c.Status(http.StatusOK)
+		c.Header("Content-Type", "text/event-stream")
+
+		for _, chunk := range []string{": keep", "alive\r\n", "\r\n"} {
+			_, err := c.Writer.WriteString(chunk)
+			require.NoError(t, err)
+		}
+		enabled = true
+		_, err := c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+		require.NoError(t, err)
+		enabled = false
+		_, err = c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+		require.NoError(t, err)
+
+		body := recorder.Body.String()
+		require.True(t, strings.HasPrefix(body, ": keepalive\r\n\r\n"), body)
+		require.Equal(t, 2, strings.Count(body, `"model":"client-model"`), body)
+	})
+
+	t.Run("partial_keepalive_double_flip_true_false_true", func(t *testing.T) {
+		t.Run("subcase_a_end_on_false", func(t *testing.T) {
+			enabled := true
+			c, recorder, finish := requestedModelWriterTestContext(t, "openai", &enabled)
+			defer finish()
+			c.Status(http.StatusOK)
+			c.Header("Content-Type", "text/event-stream")
+
+			_, err := c.Writer.WriteString(": keep")
+			require.NoError(t, err)
+			enabled = false
+			_, err = c.Writer.WriteString("alive\n\n")
+			require.NoError(t, err)
+			enabled = true
+			_, err = c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+			require.NoError(t, err)
+			enabled = false
+			_, err = c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+			require.NoError(t, err)
+
+			body := recorder.Body.String()
+			require.True(t, strings.HasPrefix(body, ": keepalive\n\n"), body)
+			require.Equal(t, 2, strings.Count(body, `"model":"client-model"`), body)
+		})
+
+		t.Run("subcase_b_mid_comment_word_split", func(t *testing.T) {
+			enabled := true
+			c, recorder, finish := requestedModelWriterTestContext(t, "openai", &enabled)
+			defer finish()
+			c.Status(http.StatusOK)
+			c.Header("Content-Type", "text/event-stream")
+
+			_, err := c.Writer.WriteString(": keep")
+			require.NoError(t, err)
+			enabled = false
+			_, err = c.Writer.WriteString("alive")
+			require.NoError(t, err)
+			enabled = true
+			_, err = c.Writer.WriteString("\n\n")
+			require.NoError(t, err)
+			_, err = c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+			require.NoError(t, err)
+			enabled = false
+			_, err = c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+			require.NoError(t, err)
+
+			body := recorder.Body.String()
+			require.True(t, strings.HasPrefix(body, ": keepalive\n\n"), body)
+			require.Equal(t, 2, strings.Count(body, `"model":"client-model"`), body)
+		})
+	})
+
+	t.Run("pending_comment_ending_with_newline_then_data", func(t *testing.T) {
+		t.Run("subcase_a_enabled_latched_on_data", func(t *testing.T) {
+			enabled := true
+			c, recorder, finish := requestedModelWriterTestContext(t, "openai", &enabled)
+			defer finish()
+			c.Status(http.StatusOK)
+			c.Header("Content-Type", "text/event-stream")
+
+			_, err := c.Writer.WriteString(": keepalive\n")
+			require.NoError(t, err)
+			_, err = c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+			require.NoError(t, err)
+			enabled = false
+			_, err = c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+			require.NoError(t, err)
+
+			body := recorder.Body.String()
+			require.Equal(t, 2, strings.Count(body, `"model":"client-model"`), body)
+		})
+
+		t.Run("subcase_b_write_crlf_and_split_data", func(t *testing.T) {
+			enabled := true
+			c, recorder, finish := requestedModelWriterTestContext(t, "openai", &enabled)
+			defer finish()
+			c.Status(http.StatusOK)
+			c.Header("Content-Type", "text/event-stream")
+
+			_, err := c.Writer.Write([]byte(": keepalive\r\n"))
+			require.NoError(t, err)
+			_, err = c.Writer.Write([]byte(`data: {"model":"actual"}`))
+			require.NoError(t, err)
+			enabled = false
+			_, err = c.Writer.Write([]byte("\n\n"))
+			require.NoError(t, err)
+			_, err = c.Writer.Write([]byte(`data: {"model":"actual"}` + "\n\n"))
+			require.NoError(t, err)
+
+			body := recorder.Body.String()
+			require.Equal(t, 2, strings.Count(body, `"model":"client-model"`), body)
+		})
+
+		t.Run("subcase_c_flip_true_to_false_before_data", func(t *testing.T) {
+			enabled := true
+			c, recorder, finish := requestedModelWriterTestContext(t, "openai", &enabled)
+			defer finish()
+			c.Status(http.StatusOK)
+			c.Header("Content-Type", "text/event-stream")
+
+			_, err := c.Writer.WriteString(": keepalive\n")
+			require.NoError(t, err)
+			enabled = false
+			_, err = c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+			require.NoError(t, err)
+			enabled = true
+			_, err = c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+			require.NoError(t, err)
+
+			body := recorder.Body.String()
+			require.Equal(t, 2, strings.Count(body, `"model":"actual"`), body)
+			require.Zero(t, strings.Count(body, `"model":"client-model"`), body)
+		})
+	})
+
+	t.Run("alternating_1byte_Write_and_WriteString_split_comments", func(t *testing.T) {
+		for _, wantFinal := range []bool{true, false} {
+			t.Run(fmt.Sprintf("wantFinal=%t", wantFinal), func(t *testing.T) {
+				enabled := false
+				c, recorder, finish := requestedModelWriterTestContext(t, "openai", &enabled)
+				defer finish()
+				c.Status(http.StatusOK)
+				c.Header("Content-Type", "text/event-stream")
+
+				comments := ": c1\r\n: c2\n\r\n"
+				for i := 0; i < len(comments); i++ {
+					enabled = i%2 == 0
+					if i%2 == 0 {
+						_, err := c.Writer.Write([]byte{comments[i]})
+						require.NoError(t, err)
+					} else {
+						_, err := c.Writer.WriteString(comments[i : i+1])
+						require.NoError(t, err)
+					}
+				}
+				enabled = wantFinal
+				_, err := c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+				require.NoError(t, err)
+				enabled = !wantFinal
+				_, err = c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+				require.NoError(t, err)
+
+				body := recorder.Body.String()
+				require.True(t, strings.HasPrefix(body, comments), body)
+				wantModel := "actual"
+				if wantFinal {
+					wantModel = "client-model"
+				}
+				require.Equal(t, 2, strings.Count(body, `"model":"`+wantModel+`"`), body)
+			})
+		}
+	})
+
+	t.Run("oversized_comment_flip_true_false_true", func(t *testing.T) {
+		enabled := true
+		c, recorder, finish := requestedModelWriterTestContext(t, "openai", &enabled)
+		defer finish()
+		c.Status(http.StatusOK)
+		c.Header("Content-Type", "text/event-stream")
+
+		comment := ":" + strings.Repeat("x", requestedModelPendingLimit+16)
+		_, err := c.Writer.WriteString(comment)
+		require.NoError(t, err)
+		enabled = false
+		_, err = c.Writer.WriteString("\n\n")
+		require.NoError(t, err)
+		enabled = true
+		_, err = c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+		require.NoError(t, err)
+		enabled = false
+		_, err = c.Writer.WriteString(`data: {"model":"actual"}` + "\n\n")
+		require.NoError(t, err)
+
+		body := recorder.Body.String()
+		require.True(t, strings.HasPrefix(body, comment+"\n\n"))
+		require.Equal(t, 2, strings.Count(body, `"model":"client-model"`))
+	})
+
+	t.Run("comment_only_finish_verbatim", func(t *testing.T) {
+		enabled := true
+		c, recorder, finish := requestedModelWriterTestContext(t, "openai", &enabled)
+		c.Status(http.StatusOK)
+		c.Header("Content-Type", "text/event-stream")
+
+		_, err := c.Writer.WriteString(": keepalive")
+		require.NoError(t, err)
+		finish()
+
+		require.Equal(t, ": keepalive", recorder.Body.String())
+	})
+}

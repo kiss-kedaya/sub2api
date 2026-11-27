@@ -2,6 +2,7 @@ package requestcapture
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"strings"
 )
@@ -220,7 +221,7 @@ func (j *responseJSON) write(b byte) {
 	if j.invalid {
 		return
 	}
-	depth, state, quoted := len(j.v.stack), j.v.state(), j.v.quoted
+	depth, state, quoted := int(j.v.depth), j.v.state(), j.v.quoted
 	scope := byte(0)
 	if depth > 0 {
 		scope = j.scopes[depth-1]
@@ -285,6 +286,10 @@ func (j *responseJSON) write(b byte) {
 // consumed without the per-byte bookkeeping.
 func (j *responseJSON) feed(p []byte) {
 	for len(p) > 0 && !j.invalid {
+		if depth := int(j.v.depth); depth > 0 && j.scopes[depth-1] == 0 {
+			p = j.feedUnwatched(p)
+			continue
+		}
 		if j.v.quoted {
 			if !j.v.escape && j.v.unicode == 0 {
 				if n := plainStringRun(p); n > 0 {
@@ -293,25 +298,38 @@ func (j *responseJSON) feed(p []byte) {
 					continue
 				}
 			}
-		} else if depth := len(j.v.stack); depth > 0 && j.scopes[depth-1] == 0 {
-			p = j.feedUnwatched(p)
-			continue
 		}
 		j.write(p[0])
 		p = p[1:]
 	}
 }
 
-// feedUnwatched is write for bytes outside any string whose innermost container
-// has scope 0, that is: not the root, response or error object. It stops
-// when a string opens, the container ends or the input is exhausted, and
-// always consumes at least one byte.
+// feedUnwatched is write for bytes inside any container (quoted or unquoted)
+// whose innermost container has scope 0, that is: not the root, response or
+// error object. It stops when the container ends or the input is exhausted,
+// and always consumes at least one byte.
 func (j *responseJSON) feedUnwatched(p []byte) []byte {
 	v := &j.v
 	for len(p) > 0 {
-		depth := len(v.stack)
+		depth := int(v.depth)
 		if depth == 0 || j.scopes[depth-1] != 0 {
 			return p
+		}
+		if v.quoted {
+			if !v.escape && v.unicode == 0 {
+				n := plainStringRun(p)
+				p = p[n:]
+				if len(p) == 0 {
+					return p
+				}
+			}
+			b := p[0]
+			p = p[1:]
+			if !v.accept(b) {
+				j.invalid = true
+				return p
+			}
+			continue
 		}
 		b := p[0]
 		p = p[1:]
@@ -329,22 +347,39 @@ func (j *responseJSON) feedUnwatched(p []byte) []byte {
 		if b == '{' || b == '[' {
 			j.scopes[depth] = 0
 		}
-		if v.quoted {
-			return p
-		}
 	}
 	return p
 }
 
+const (
+	plainStringSWARLo = uint64(0x0101010101010101)
+	plainStringSWARHi = uint64(0x8080808080808080)
+)
+
 // plainStringRun counts the leading bytes of p that a JSON string accepts
 // without any state change: not a quote, a backslash or a control character.
 func plainStringRun(p []byte) int {
-	for i, b := range p {
+	i, n := 0, len(p)
+	for i+8 <= n {
+		w := binary.LittleEndian.Uint64(p[i:])
+		ctrl := (w - 0x20*plainStringSWARLo) &^ w & plainStringSWARHi
+		q := w ^ (0x22 * plainStringSWARLo)
+		quote := (q - plainStringSWARLo) &^ q & plainStringSWARHi
+		e := w ^ (0x5c * plainStringSWARLo)
+		esc := (e - plainStringSWARLo) &^ e & plainStringSWARHi
+		if (ctrl | quote | esc) != 0 {
+			break
+		}
+		i += 8
+	}
+	for i < n {
+		b := p[i]
 		if b < 0x20 || b == '"' || b == '\\' {
 			return i
 		}
+		i++
 	}
-	return len(p)
+	return n
 }
 
 // stringRun is write for a run of plain string bytes; run is never empty.
@@ -360,11 +395,26 @@ func (j *responseJSON) stringRun(run []byte) {
 	}
 }
 
-// reset readies the parser for the next event, keeping the validator buffers.
+// reset readies the parser for the next event without zeroing the fixed arrays.
 func (j *responseJSON) reset() {
-	stack, kinds, primitive := j.v.stack[:0], j.v.kinds[:0], j.v.primitive[:0]
-	*j = responseJSON{}
-	j.v.stack, j.v.kinds, j.v.primitive = stack, kinds, primitive
+	j.v.depth = 0
+	j.v.root = 0
+	j.v.quoted = false
+	j.v.key = false
+	j.v.escape = false
+	j.v.unicode = 0
+	j.v.primLen = 0
+	j.keys = [3]string{}
+	j.tokenN = 0
+	j.capture = false
+	j.keyToken = false
+	j.field = ""
+	j.scope = 0
+	j.invalid = false
+	j.hasError = false
+	j.nonemptyDelta = false
+	j.event = ""
+	j.status = ""
 }
 
 // finishToken interprets the captured string token (quotes included). Only the
