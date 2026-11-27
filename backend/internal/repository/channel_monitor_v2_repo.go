@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -1370,18 +1371,52 @@ func (a *metricAccumulator) metric(minutes float64, admin bool) service.ChannelM
 	}
 	return m
 }
+
+const (
+	// channelMonitorV2HistogramInfBound matches the ELSE 2147483647 (+Inf) bucket in
+	// channelMonitorV2HistogramBoundSQL for samples exceeding the largest finite bucket (600s).
+	channelMonitorV2HistogramInfBound       int64 = 2147483647
+	channelMonitorV2HistogramMaxFiniteBound int64 = 600000
+)
+
 func latencyMetric(sum, count int64, hist map[int64]int64) service.ChannelMonitorV2Latency {
 	result := service.ChannelMonitorV2Latency{SampleCount: count}
 	if count > 0 {
 		avg := float64(sum) / float64(count)
 		result.AvgMs = &avg
 	}
-	result.P50Ms = histPercentile(hist, 0.50)
-	result.P90Ms = histPercentile(hist, 0.90)
-	result.P95Ms = histPercentile(hist, 0.95)
+	result.P50Ms = resolveHistogramPercentile(hist, 0.50, result.AvgMs)
+	result.P90Ms = resolveHistogramPercentile(hist, 0.90, result.AvgMs)
+	result.P95Ms = resolveHistogramPercentile(hist, 0.95, result.AvgMs)
 	return result
 }
+
+func resolveHistogramPercentile(hist map[int64]int64, p float64, avgMs *float64) *int64 {
+	raw := rawHistPercentile(hist, p)
+	if raw == nil {
+		return nil
+	}
+	if *raw < channelMonitorV2HistogramInfBound {
+		return raw
+	}
+	// Never expose the INT32_MAX (+Inf) overflow bucket sentinel (2147483647ms = 2147483.6s)
+	// as a literal latency. When the bucket average also exceeds the last finite bound (600s),
+	// surface the real rounded average; otherwise clamp to 600s so tail percentiles stay >= 600s.
+	fallback := channelMonitorV2HistogramMaxFiniteBound
+	if avgMs != nil && *avgMs > float64(fallback) {
+		rounded := int64(math.Round(*avgMs))
+		if rounded > fallback && rounded < channelMonitorV2HistogramInfBound {
+			fallback = rounded
+		}
+	}
+	return &fallback
+}
+
 func histPercentile(hist map[int64]int64, p float64) *int64 {
+	return resolveHistogramPercentile(hist, p, nil)
+}
+
+func rawHistPercentile(hist map[int64]int64, p float64) *int64 {
 	var total int64
 	keys := make([]int64, 0, len(hist))
 	for bound, count := range hist {

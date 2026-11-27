@@ -78,6 +78,29 @@ func TestChannelMonitorV2HistogramPercentilesAreMergedFromCounts(t *testing.T) {
 	require.Equal(t, int64(1000), *lat.P95Ms)
 }
 
+func TestChannelMonitorV2HistogramOverflowNeverLeaksInt32MaxSentinel(t *testing.T) {
+	// All samples > 600s fall into the +Inf overflow bucket (upper_bound_ms = 2147483647).
+	// latencyMetric must surface the real rounded bucket average (~1193.7s) rather than 2147483647ms.
+	allOverflow := map[int64]int64{channelMonitorV2HistogramInfBound: 9}
+	lat := latencyMetric(9*1193692, 9, allOverflow)
+	require.NotNil(t, lat.P50Ms)
+	require.NotNil(t, lat.P90Ms)
+	require.NotNil(t, lat.P95Ms)
+	require.Equal(t, int64(1193692), *lat.P50Ms)
+	require.Equal(t, int64(1193692), *lat.P90Ms)
+	require.Equal(t, int64(1193692), *lat.P95Ms)
+
+	// When only the P95 tail overflows >600s and bucket average is <600s, clamp P95 to 600000ms.
+	tailOverflow := map[int64]int64{3000: 90, channelMonitorV2HistogramInfBound: 10}
+	tailLat := latencyMetric(90*2000+10*900000, 100, tailOverflow)
+	require.Equal(t, int64(3000), *tailLat.P50Ms)
+	require.Equal(t, int64(3000), *tailLat.P90Ms)
+	require.Equal(t, channelMonitorV2HistogramMaxFiniteBound, *tailLat.P95Ms)
+
+	// Direct histPercentile without an average must also clamp the +Inf sentinel to 600000ms.
+	require.Equal(t, channelMonitorV2HistogramMaxFiniteBound, *histPercentile(allOverflow, 0.50))
+}
+
 func TestChannelMonitorV2MetricIncludesSuccessRate(t *testing.T) {
 	acc := newMetricAccumulator()
 	acc.success, acc.errors = 80, 20

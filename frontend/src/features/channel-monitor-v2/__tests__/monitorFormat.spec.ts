@@ -58,6 +58,7 @@ describe('monitorFormat accuracy', () => {
     expect(formatMonitorMs(300)).toBe('300ms')
     expect(formatMonitorMs(1500)).toBe('1.5s')
     expect(formatMonitorMs(999)).toBe('999ms')
+    expect(formatMonitorMs(2147483647)).toBe('>600s')
   })
 
   it('formats KPI secondary latency as AVG · P90 (P50 is primary)', () => {
