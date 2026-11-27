@@ -234,7 +234,7 @@ func ValidateRequestHost(raw string) (string, bool) {
 			}
 		}
 		addr, err := netip.ParseAddr(host)
-		if err != nil || !addr.Is6() {
+		if err != nil || !addr.Is6() || addr.Zone() != "" {
 			return "", false
 		}
 	} else if strings.Contains(hostport, ":") {
@@ -260,7 +260,7 @@ func ValidateRequestHost(raw string) (string, bool) {
 }
 
 func isValidPortString(port string) bool {
-	if port == "" || len(port) > 5 {
+	if port == "" || len(port) > 5 || port[0] == '0' {
 		return false
 	}
 	for i := 0; i < len(port); i++ {
@@ -276,7 +276,7 @@ func isValidHostNameOrIP(host string) bool {
 	if host == "" {
 		return false
 	}
-	if addr, err := netip.ParseAddr(host); err == nil && addr.IsValid() {
+	if addr, err := netip.ParseAddr(host); err == nil && addr.IsValid() && addr.Zone() == "" {
 		return true
 	}
 	if len(host) > 253 {

@@ -1732,20 +1732,35 @@ func TestDatabaseDSNWithTimezone_WithPassword(t *testing.T) {
 }
 
 func TestValidateAbsoluteHTTPURLMissingHost(t *testing.T) {
-	if err := ValidateAbsoluteHTTPURL("https://"); err == nil {
-		t.Fatalf("ValidateAbsoluteHTTPURL should reject missing host")
+	for _, bad := range []string{
+		"https://",
+		`https://example.com\@evil.com`,
+		"https://user:pass@example.com/v1",
+		"https://evil.example,example.com/v1",
+		"https://example.com\t/v1",
+		"https://example.com:0443/v1",
+		"https:opaque.example.com",
+	} {
+		if err := ValidateAbsoluteHTTPURL(bad); err == nil {
+			t.Fatalf("ValidateAbsoluteHTTPURL(%q) should fail", bad)
+		}
 	}
 }
 
 func TestValidateFrontendRedirectURLInvalidChars(t *testing.T) {
-	if err := ValidateFrontendRedirectURL("/auth/\ncallback"); err == nil {
-		t.Fatalf("ValidateFrontendRedirectURL should reject invalid chars")
-	}
-	if err := ValidateFrontendRedirectURL("http://"); err == nil {
-		t.Fatalf("ValidateFrontendRedirectURL should reject missing host")
-	}
-	if err := ValidateFrontendRedirectURL("mailto:user@example.com"); err == nil {
-		t.Fatalf("ValidateFrontendRedirectURL should reject mailto")
+	for _, bad := range []string{
+		"/auth/\ncallback",
+		"/\t/evil.com",
+		"/\x00/evil.com",
+		`/\evil.com`,
+		"http://",
+		"mailto:user@example.com",
+		"https://user:pass@example.com/auth/callback",
+		"https://evil.example,example.com/auth/callback",
+	} {
+		if err := ValidateFrontendRedirectURL(bad); err == nil {
+			t.Fatalf("ValidateFrontendRedirectURL(%q) should fail", bad)
+		}
 	}
 }
 

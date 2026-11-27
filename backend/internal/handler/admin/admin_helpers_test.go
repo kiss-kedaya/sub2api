@@ -261,9 +261,12 @@ func TestOpsWSHelpers(t *testing.T) {
 	require.True(t, isAddrInTrustedProxies(addr, prefixes))
 	require.False(t, isAddrInTrustedProxies(netip.MustParseAddr("192.168.0.1"), prefixes))
 
-	wildcardPrefixes, _ := parseTrustedProxyList("0.0.0.0/0,::/0")
+	wildcardPrefixes, _ := parseTrustedProxyList("0.0.0.0/0,::/0,::ffff:0.0.0.0/96")
 	require.False(t, isAddrInTrustedProxies(netip.MustParseAddr("127.0.0.1"), wildcardPrefixes))
 	require.False(t, isAddrInTrustedProxies(netip.MustParseAddr("::1"), wildcardPrefixes))
+	mappedPrefixes, mappedInvalid := parseTrustedProxyList("::ffff:127.0.0.1/128")
+	require.Empty(t, mappedInvalid)
+	require.True(t, isAddrInTrustedProxies(netip.MustParseAddr("127.0.0.1"), mappedPrefixes))
 }
 
 func TestOpsWSOriginRejectsForgedXForwardedHost(t *testing.T) {
@@ -283,18 +286,31 @@ func TestOpsWSOriginRejectsForgedXForwardedHost(t *testing.T) {
 	reqMultiXFH.Header.Set("X-Forwarded-Host", "evil.example, app.example.com")
 	require.False(t, isAllowedOpsWSOrigin(reqMultiXFH))
 
-	// Same-host Origin matching r.Host succeeds.
+	// Same-host Origin matching r.Host succeeds (including non-default port stripped by Nginx Host).
 	reqSameHost := httptest.NewRequest(http.MethodGet, "http://app.example.com/api/v1/admin/ops/ws/qps", nil)
 	reqSameHost.Host = "app.example.com"
 	reqSameHost.RemoteAddr = "127.0.0.1:54321"
 	reqSameHost.Header.Set("Origin", "https://app.example.com")
 	require.True(t, isAllowedOpsWSOrigin(reqSameHost))
 
-	// Non-http(s) scheme or userinfo in Origin is rejected.
-	reqBadOrigin := httptest.NewRequest(http.MethodGet, "http://app.example.com/api/v1/admin/ops/ws/qps", nil)
-	reqBadOrigin.Host = "app.example.com"
-	reqBadOrigin.Header.Set("Origin", "https://user@app.example.com")
-	require.False(t, isAllowedOpsWSOrigin(reqBadOrigin))
+	reqPortHost := httptest.NewRequest(http.MethodGet, "http://203.0.113.10/api/v1/admin/ops/ws/qps", nil)
+	reqPortHost.Host = "203.0.113.10"
+	reqPortHost.Header.Set("Origin", "http://203.0.113.10:17777")
+	require.True(t, isAllowedOpsWSOrigin(reqPortHost))
+
+	// Non-http(s) scheme, userinfo, path, query, or invalid host in Origin is rejected.
+	for _, badOrigin := range []string{
+		"https://user@app.example.com",
+		"https://app.example.com/path",
+		"https://app.example.com?q=1",
+		"https://app.example.com#frag",
+		"javascript://app.example.com",
+	} {
+		reqBadOrigin := httptest.NewRequest(http.MethodGet, "http://app.example.com/api/v1/admin/ops/ws/qps", nil)
+		reqBadOrigin.Host = "app.example.com"
+		reqBadOrigin.Header.Set("Origin", badOrigin)
+		require.False(t, isAllowedOpsWSOrigin(reqBadOrigin), "badOrigin=%q", badOrigin)
+	}
 }
 
 // TestOpenAIFastPolicySettingsFromDTO_NormalizesServiceTier 验证 admin

@@ -247,6 +247,10 @@ function isPendingStatus(status: string | null | undefined): boolean {
 function readRouteQueryString(key: string): string {
   const value = route.query[key]
   if (Array.isArray(value)) {
+    const firstNonEmpty = value.find((item): item is string => typeof item === 'string' && item.trim() !== '')
+    if (firstNonEmpty !== undefined) {
+      return firstNonEmpty
+    }
     return typeof value[0] === 'string' ? value[0] : ''
   }
   return typeof value === 'string' ? value : ''
@@ -261,7 +265,12 @@ function restoreRecoverySnapshot(context: {
     return null
   }
 
-  const rawSnapshot = window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)
+  let rawSnapshot: string | null = null
+  try {
+    rawSnapshot = window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)
+  } catch {
+    return null
+  }
   if (!rawSnapshot) {
     return null
   }
@@ -324,7 +333,11 @@ function clearStatusRefreshTimer(): void {
 
 function clearRecoverySnapshot(): void {
   if (typeof window === 'undefined') return
-  clearPaymentRecoverySnapshot(window.localStorage, PAYMENT_RECOVERY_STORAGE_KEY)
+  try {
+    clearPaymentRecoverySnapshot(window.localStorage, PAYMENT_RECOVERY_STORAGE_KEY)
+  } catch {
+    // Ignore restricted storage environments.
+  }
 }
 
 function clearRecoverySnapshotForTerminalStatus(status: string | null | undefined): void {
@@ -366,7 +379,8 @@ onMounted(async () => {
 
   // Scrub the signed resume_token from the browser address bar immediately so
   // it does not linger in browser history or leak via outbound Referer headers.
-  if (resumeToken && typeof router.replace === 'function') {
+  const hasResumeTokenQuery = Object.prototype.hasOwnProperty.call(route.query, 'resume_token')
+  if ((resumeToken || hasResumeTokenQuery) && typeof router.replace === 'function') {
     const sanitizedQuery = { ...route.query }
     delete sanitizedQuery.resume_token
     void Promise.resolve(router.replace({ query: sanitizedQuery })).catch(() => {

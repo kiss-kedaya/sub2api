@@ -262,7 +262,12 @@ function resolveSafePayUrl(rawPayUrl: string, currentOrderId: number): string {
   if (parsed.protocol !== 'https:' || currentOrderId <= 0) {
     return ''
   }
-  const rawSnapshot = window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)
+  let rawSnapshot: string | null = null
+  try {
+    rawSnapshot = window.localStorage.getItem(PAYMENT_RECOVERY_STORAGE_KEY)
+  } catch {
+    return ''
+  }
   const snapshot = readPaymentRecoverySnapshot(rawSnapshot)
   if (!snapshot || snapshot.orderId !== currentOrderId || !snapshot.payUrl) {
     return ''

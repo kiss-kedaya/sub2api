@@ -1099,8 +1099,15 @@ func (h *AuthHandler) resolveWeChatOAuthCallbackURL(ctx context.Context, c *gin.
 		cfg = h.cfg
 		cfgFrontendURL = strings.TrimSpace(h.cfg.Server.FrontendURL)
 	}
+	frontendOrigin := ""
+	for _, candidate := range []string{dbFrontendURL, cfgFrontendURL} {
+		if origin, ok := ip.ExtractHTTPOrigin(candidate); ok {
+			frontendOrigin = origin
+			break
+		}
+	}
 	return resolveWeChatOAuthAbsoluteURLWithConfig(
-		firstNonEmpty(dbFrontendURL, cfgFrontendURL),
+		frontendOrigin,
 		dbAPIBaseURL,
 		c,
 		cfg,
@@ -1319,7 +1326,7 @@ func normalizeWeChatPaymentScope(raw string) string {
 func normalizeWeChatPaymentRedirectPath(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
-		strings.Contains(path, "://") || strings.ContainsAny(path, "\\\r\n") {
+		strings.Contains(path, "://") || hasUnsafeRedirectControlOrBackslash(path) {
 		return wechatPaymentOAuthDefaultTo
 	}
 	if path == "/payment" {

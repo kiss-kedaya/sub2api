@@ -1568,4 +1568,25 @@ func TestWeChatResolveOAuthAbsoluteURLHardening(t *testing.T) {
 	cValidTrusted := makeCtx("127.0.0.1:8080", "127.0.0.1:1234", "auth.app.example.com", "https")
 	require.Equal(t, "https://auth.app.example.com"+cbPath,
 		resolveWeChatOAuthAbsoluteURLWithConfig("", "", cValidTrusted, trustedCfg, cbPath))
+
+	// Malformed DB frontend_url falls through to cfg.Server.FrontendURL rather than dropping it.
+	settingRepo := &wechatOAuthSettingRepoStub{
+		values: map[string]string{
+			service.SettingKeyFrontendURL: "javascript:alert(1)",
+			service.SettingKeyAPIBaseURL:  "https://api.example.com/v1",
+		},
+	}
+	hFallback := &AuthHandler{
+		settingSvc: service.NewSettingService(settingRepo, &config.Config{}),
+		cfg: &config.Config{
+			Server: config.ServerConfig{FrontendURL: "https://cfg-frontend.example.com"},
+		},
+	}
+	require.Equal(t, "https://cfg-frontend.example.com"+cbPath,
+		hFallback.resolveWeChatOAuthCallbackURL(context.Background(), cSpoofed, cbPath))
+
+	// Redirect path normalizer rejects ASCII tab, control chars, and backslashes.
+	for _, bad := range []string{`/\evil.example`, "/\t/evil.example", "/\x00/evil.example", "//evil.example"} {
+		require.Equal(t, wechatPaymentOAuthDefaultTo, normalizeWeChatPaymentRedirectPath(bad), "bad=%q", bad)
+	}
 }

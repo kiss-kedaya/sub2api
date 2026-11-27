@@ -553,14 +553,22 @@ func isAllowedOpsWSOrigin(r *http.Request) bool {
 		}
 	}
 	parsed, err := url.Parse(origin)
-	if err != nil || !parsed.IsAbs() || parsed.User != nil || parsed.Hostname() == "" {
+	if err != nil || !parsed.IsAbs() || parsed.Opaque != "" || parsed.User != nil ||
+		parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return false
 	}
 	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
 	if scheme != "http" && scheme != "https" {
 		return false
 	}
-	originHost := strings.ToLower(parsed.Hostname())
+	validOriginHost, ok := ip.ValidateRequestHost(parsed.Host)
+	if !ok {
+		return false
+	}
+	originHost := strings.ToLower(hostWithoutPort(validOriginHost))
+	if originHost == "" {
+		return false
+	}
 
 	// Match Origin strictly against the request's validated Host header.
 	// Do not read X-Forwarded-Host here: reverse proxies commonly pass
@@ -740,9 +748,17 @@ func parseTrustedProxyList(raw string) (prefixes []netip.Prefix, invalid []strin
 			}
 		}
 
-		if err != nil || !p.IsValid() {
+		if err != nil || !p.IsValid() || p.Bits() == 0 {
 			invalid = append(invalid, item)
 			continue
+		}
+		if p.Addr().Is4In6() {
+			bits := p.Bits() - 96
+			if bits <= 0 {
+				invalid = append(invalid, item)
+				continue
+			}
+			p = netip.PrefixFrom(p.Addr().Unmap(), bits)
 		}
 
 		prefixes = append(prefixes, p.Masked())

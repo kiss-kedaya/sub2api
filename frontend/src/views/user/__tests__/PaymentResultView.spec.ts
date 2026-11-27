@@ -590,4 +590,69 @@ describe('PaymentResultView', () => {
 
     expect(routerReplace).not.toHaveBeenCalled()
   })
+
+  it('scrubs duplicated array resume_token query values and resolves the non-empty token', async () => {
+    routeState.query = {
+      resume_token: ['', 'sensitive-duplicate-token'],
+      order_id: '42',
+      status: 'success',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('COMPLETED'),
+    })
+
+    mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(routerReplace).toHaveBeenCalledTimes(1)
+    expect(routerReplace).toHaveBeenCalledWith({
+      query: {
+        order_id: '42',
+        status: 'success',
+      },
+    })
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('sensitive-duplicate-token')
+  })
+
+  it('resolves order cleanly even when localStorage throws SecurityError', async () => {
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('storage blocked', 'SecurityError')
+    })
+    const removeItemSpy = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new DOMException('storage blocked', 'SecurityError')
+    })
+    routeState.query = {
+      resume_token: 'resume-storage-blocked',
+      order_id: '42',
+      status: 'success',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('COMPLETED'),
+    })
+
+    try {
+      const wrapper = mount(PaymentResultView, {
+        global: {
+          stubs: {
+            OrderStatusBadge: true,
+          },
+        },
+      })
+
+      await flushPromises()
+
+      expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('resume-storage-blocked')
+      expect(wrapper.text()).toContain('payment.result.success')
+    } finally {
+      getItemSpy.mockRestore()
+      removeItemSpy.mockRestore()
+    }
+  })
 })

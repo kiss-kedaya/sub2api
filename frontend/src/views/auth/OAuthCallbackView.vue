@@ -206,6 +206,7 @@ import {
   oauthAffiliatePayload
 } from '@/utils/oauthAffiliate'
 import { consumeOAuthFragment } from '@/utils/oauthCallback'
+import { sanitizeInternalRedirectPath } from '@/utils/url'
 
 const route = useRoute()
 const router = useRouter()
@@ -292,13 +293,7 @@ function readTokenResponse(params: URLSearchParams): OAuthTokenResponse | null {
 }
 
 function sanitizeRedirectPath(path: string | null | undefined): string {
-  const value = (path || '').trim()
-  if (!value) return '/dashboard'
-  if (!value.startsWith('/')) return '/dashboard'
-  if (value.startsWith('//')) return '/dashboard'
-  if (value.includes('://')) return '/dashboard'
-  if (value.includes('\\') || value.includes('\n') || value.includes('\r')) return '/dashboard'
-  return value
+  return sanitizeInternalRedirectPath(path, '/dashboard')
 }
 
 function readPendingEmailOAuthProvider(): 'github' | 'google' | null {

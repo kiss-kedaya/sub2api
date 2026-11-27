@@ -128,4 +128,19 @@ describe('WechatPaymentCallbackView', () => {
       },
     })
   })
+
+  it('rejects ASCII tab redirect bypasses and falls back to /purchase', async () => {
+    locationState.current.hash = '#wechat_resume_token=resume-token-123&redirect=%2F%09%2Fevil.example'
+
+    mount(WechatPaymentCallbackView)
+    await flushPromises()
+
+    expect(replaceMock).toHaveBeenCalledWith({
+      path: '/purchase',
+      query: {
+        wechat_resume: '1',
+        wechat_resume_token: 'resume-token-123',
+      },
+    })
+  })
 })

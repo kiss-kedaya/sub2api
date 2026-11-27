@@ -30,6 +30,8 @@ func TestSanitizeFrontendRedirectPath(t *testing.T) {
 	require.Equal(t, "", sanitizeFrontendRedirectPath("//evil.com"))
 	require.Equal(t, "", sanitizeFrontendRedirectPath("https://evil.com"))
 	require.Equal(t, "", sanitizeFrontendRedirectPath("/\nfoo"))
+	require.Equal(t, "", sanitizeFrontendRedirectPath("/\t/evil.com"))
+	require.Equal(t, "", sanitizeFrontendRedirectPath("/\x00/evil.com"))
 	require.Equal(t, "", sanitizeFrontendRedirectPath(`/\evil.com`))
 	require.Equal(t, "", sanitizeFrontendRedirectPath(`/dashboard\evil`))
 

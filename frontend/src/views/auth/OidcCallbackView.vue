@@ -251,6 +251,7 @@ import PendingOAuthCreateAccountForm, {
   type PendingOAuthCreateAccountPayload
 } from '@/components/auth/PendingOAuthCreateAccountForm.vue'
 import { apiClient } from '@/api/client'
+import { sanitizeInternalRedirectPath } from '@/utils/url'
 import { useAuthStore, useAppStore } from '@/stores'
 import {
   completeOIDCOAuthRegistration,
@@ -393,13 +394,7 @@ function readLegacyFragmentLogin(params: URLSearchParams): OAuthTokenResponse | 
 }
 
 function sanitizeRedirectPath(path: string | null | undefined): string {
-  const value = (path || '').trim()
-  if (!value) return '/dashboard'
-  if (!value.startsWith('/')) return '/dashboard'
-  if (value.startsWith('//')) return '/dashboard'
-  if (value.includes('://')) return '/dashboard'
-  if (value.includes('\\') || value.includes('\n') || value.includes('\r')) return '/dashboard'
-  return value
+  return sanitizeInternalRedirectPath(path, '/dashboard')
 }
 
 async function loadProviderName() {

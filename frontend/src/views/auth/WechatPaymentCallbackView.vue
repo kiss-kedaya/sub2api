@@ -43,6 +43,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores'
+import { sanitizeInternalRedirectPath } from '@/utils/url'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -76,10 +77,7 @@ function parseFragmentParams(): URLSearchParams {
 }
 
 function normalizeRedirectPath(path: string | null | undefined): string {
-  const value = (path || '').trim()
-  if (!value) return '/purchase'
-  if (!value.startsWith('/')) return '/purchase'
-  if (value.startsWith('//') || value.includes('://') || value.includes('\\') || value.includes('\n') || value.includes('\r')) return '/purchase'
+  const value = sanitizeInternalRedirectPath(path, '/purchase')
   if (value === '/payment') return '/purchase'
   if (value.startsWith('/payment?')) return '/purchase' + value.slice('/payment'.length)
   return value

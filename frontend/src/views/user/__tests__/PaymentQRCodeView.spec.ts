@@ -186,4 +186,23 @@ describe('PaymentQRCodeView', () => {
     expect(link.attributes('href')).toBe(`${window.location.origin}/payment/stripe?order_id=42`)
     wrapper.unmount()
   })
+
+  it('fails closed without crashing when localStorage throws SecurityError', async () => {
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('storage blocked', 'SecurityError')
+    })
+    routeState.query = {
+      order_id: '42',
+      pay_url: 'https://pay.trusted.example/session/42',
+    }
+
+    try {
+      const wrapper = mountQRCodeView()
+      await flushPromises()
+      expect(wrapper.find('a').exists()).toBe(false)
+      wrapper.unmount()
+    } finally {
+      getItemSpy.mockRestore()
+    }
+  })
 })

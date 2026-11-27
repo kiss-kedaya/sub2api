@@ -17,6 +17,7 @@ func TestIsTrustedProxyPeer(t *testing.T) {
 	require.False(t, IsTrustedProxyPeer("127.0.0.1:12345", nil, true))
 	require.False(t, IsTrustedProxyPeer("127.0.0.1:12345", []string{"0.0.0.0/0"}, true))
 	require.False(t, IsTrustedProxyPeer("[::1]:12345", []string{"::/0"}, true))
+	require.False(t, IsTrustedProxyPeer("127.0.0.1:12345", []string{"::ffff:0.0.0.0/96"}, true))
 	require.False(t, IsTrustedProxyPeer("203.0.113.10:443", []string{"127.0.0.1/32", "10.10.0.1/32"}, true))
 
 	require.True(t, IsTrustedProxyPeer("127.0.0.1:54321", []string{"127.0.0.1/32"}, true))
@@ -103,8 +104,12 @@ func TestValidateRequestHostAndTrustedForwardedHost(t *testing.T) {
 		"evil.example\r\nX: y",
 		"evil.example:",
 		"evil.example:0",
+		"evil.example:080",
+		"evil.example:0443",
 		"evil.example:65536",
 		"evil.example:abc",
+		"[fe80::1%eth0]",
+		"[fe80::1%25eth0]:443",
 		"-bad.example",
 		"bad..example",
 	} {

@@ -290,6 +290,9 @@ func TestUpdateSettingsValidatesAPIBaseURL(t *testing.T) {
 		"/relative/v1",
 		"ftp://app.example.com/v1",
 		"https://app.example.com/v1#frag",
+		`https://app.example.com\@evil.example/v1`,
+		"https://user:pass@app.example.com/v1",
+		"https://evil.example,app.example.com/v1",
 	} {
 		rec := doUpdateSettings(t, h, map[string]any{"api_base_url": invalid}, nil)
 		require.Equal(t, http.StatusBadRequest, rec.Code, "api_base_url=%q should fail", invalid)

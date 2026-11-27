@@ -4611,24 +4611,43 @@ func GetServerAddress() string {
 	return fmt.Sprintf("%s:%d", host, port)
 }
 
+func hasUnsafeURLControlOrBackslash(raw string) bool {
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+		if ch < 0x20 || ch == 0x7f || ch == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
 // ValidateAbsoluteHTTPURL 验证是否为有效的绝对 HTTP(S) URL
 func ValidateAbsoluteHTTPURL(raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return fmt.Errorf("empty url")
 	}
+	if hasUnsafeURLControlOrBackslash(raw) {
+		return fmt.Errorf("contains invalid characters")
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return err
 	}
-	if !u.IsAbs() {
+	if !u.IsAbs() || u.Opaque != "" {
 		return fmt.Errorf("must be absolute")
 	}
 	if !isHTTPScheme(u.Scheme) {
 		return fmt.Errorf("unsupported scheme: %s", u.Scheme)
 	}
-	if strings.TrimSpace(u.Host) == "" {
-		return fmt.Errorf("missing host")
+	if u.User != nil {
+		return fmt.Errorf("must not include credentials")
+	}
+	if strings.TrimSpace(u.Host) == "" || strings.TrimSpace(u.Hostname()) == "" || strings.ContainsAny(u.Host, ", \t\r\n/\\?#@") {
+		return fmt.Errorf("invalid host")
+	}
+	if port := u.Port(); port != "" && port[0] == '0' {
+		return fmt.Errorf("invalid port")
 	}
 	if u.Fragment != "" {
 		return fmt.Errorf("must not include fragment")
@@ -4642,7 +4661,7 @@ func ValidateFrontendRedirectURL(raw string) error {
 	if raw == "" {
 		return fmt.Errorf("empty url")
 	}
-	if strings.ContainsAny(raw, "\r\n\\") {
+	if hasUnsafeURLControlOrBackslash(raw) {
 		return fmt.Errorf("contains invalid characters")
 	}
 	if strings.HasPrefix(raw, "/") {
@@ -4651,23 +4670,7 @@ func ValidateFrontendRedirectURL(raw string) error {
 		}
 		return nil
 	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return err
-	}
-	if !u.IsAbs() {
-		return fmt.Errorf("must be absolute http(s) url or relative path")
-	}
-	if !isHTTPScheme(u.Scheme) {
-		return fmt.Errorf("unsupported scheme: %s", u.Scheme)
-	}
-	if strings.TrimSpace(u.Host) == "" {
-		return fmt.Errorf("missing host")
-	}
-	if u.Fragment != "" {
-		return fmt.Errorf("must not include fragment")
-	}
-	return nil
+	return ValidateAbsoluteHTTPURL(raw)
 }
 
 func scopeContainsOpenID(scopes string) bool {

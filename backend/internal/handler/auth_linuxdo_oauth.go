@@ -996,6 +996,16 @@ func singleLine(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
+func hasUnsafeRedirectControlOrBackslash(value string) bool {
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if ch < 0x20 || ch == 0x7f || ch == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
 func sanitizeFrontendRedirectPath(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -1004,7 +1014,7 @@ func sanitizeFrontendRedirectPath(path string) string {
 	if len(path) > linuxDoOAuthMaxRedirectLen {
 		return ""
 	}
-	// 只允许同源相对路径（避免开放重定向与反斜杠规范化绕过）。
+	// 只允许同源相对路径（避免开放重定向、反斜杠及控制字符/制表符规范化绕过）。
 	if !strings.HasPrefix(path, "/") {
 		return ""
 	}
@@ -1014,7 +1024,7 @@ func sanitizeFrontendRedirectPath(path string) string {
 	if strings.Contains(path, "://") {
 		return ""
 	}
-	if strings.ContainsAny(path, "\r\n\\") {
+	if hasUnsafeRedirectControlOrBackslash(path) {
 		return ""
 	}
 	return path

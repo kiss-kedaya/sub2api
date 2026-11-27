@@ -911,9 +911,19 @@ func buildWeChatPaymentOAuthStartURL(req CreateOrderRequest, scope string) (stri
 	return u.String(), nil
 }
 
+func hasUnsafePaymentRedirectChars(value string) bool {
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if ch < 0x20 || ch == 0x7f || ch == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
 func paymentRedirectPathFromURL(rawURL string) string {
 	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" || strings.ContainsAny(rawURL, "\\\r\n") {
+	if rawURL == "" || hasUnsafePaymentRedirectChars(rawURL) {
 		return "/purchase"
 	}
 	if strings.HasPrefix(rawURL, "/") {
@@ -931,7 +941,7 @@ func paymentRedirectPathFromURL(rawURL string) string {
 		path = strings.TrimSpace(u.Path)
 	}
 	if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
-		strings.Contains(path, "://") || strings.ContainsAny(path, "\\\r\n") || strings.ContainsAny(u.RawQuery, "\\\r\n") {
+		strings.Contains(path, "://") || hasUnsafePaymentRedirectChars(path) || hasUnsafePaymentRedirectChars(u.RawQuery) {
 		return "/purchase"
 	}
 	if strings.TrimSpace(u.RawQuery) != "" {
@@ -943,7 +953,7 @@ func paymentRedirectPathFromURL(rawURL string) string {
 func normalizePaymentRedirectPath(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") ||
-		strings.Contains(path, "://") || strings.ContainsAny(path, "\\\r\n") {
+		strings.Contains(path, "://") || hasUnsafePaymentRedirectChars(path) {
 		return "/purchase"
 	}
 	if path == "/payment" {

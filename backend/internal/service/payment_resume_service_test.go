@@ -340,6 +340,8 @@ func TestPaymentRedirectPathFromURLRejectsBackslash(t *testing.T) {
 
 	for _, bad := range []string{
 		`/\evil.example`,
+		"/\t/evil.example",
+		"/\x00/evil.example",
 		`/purchase\evil`,
 		`https://shop.invalid/\evil.example`,
 		`https://shop.invalid/purchase?next=\evil`,
