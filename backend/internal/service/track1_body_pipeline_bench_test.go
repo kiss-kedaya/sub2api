@@ -42,10 +42,10 @@ func buildTrack1Corpus() []track1CorpusSample {
 
 		// Build Responses API payload (input array + reasoning + function_call_output + instructions).
 		var respNoop strings.Builder
-		respNoop.WriteString(`{"model":"gpt-5.4","store":false,"instructions":"You are a careful coding assistant.","reasoning":{"effort":"high"},"input":[`)
+		_, _ = respNoop.WriteString(`{"model":"gpt-5.4","store":false,"instructions":"You are a careful coding assistant.","reasoning":{"effort":"high"},"input":[`)
 		for i := 0; i < sp.turns; i++ {
 			if i > 0 {
-				respNoop.WriteByte(',')
+				_ = respNoop.WriteByte(',')
 			}
 			fmt.Fprintf(&respNoop,
 				`{"type":"message","role":"user","content":[{"type":"input_text","text":"step %d inspect %s"}]},`+
@@ -54,7 +54,7 @@ func buildTrack1Corpus() []track1CorpusSample {
 					`{"type":"function_call_output","call_id":"call_%d","output":"content_%d_%s"}`,
 				i, pad[:min(64, len(pad))], i, i, pad[:min(48, len(pad))], i, i, i, i, i, pad)
 		}
-		respNoop.WriteString(`],"tools":[{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}]}`)
+		_, _ = respNoop.WriteString(`],"tools":[{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}]}`)
 
 		respHit := strings.Replace(respNoop.String(),
 			`"reasoning":{"effort":"high"}`,
@@ -69,27 +69,27 @@ func buildTrack1Corpus() []track1CorpusSample {
 
 		// Build Chat Completions canonical + non-canonical/reordered DeepSeek payload.
 		var chatCanon strings.Builder
-		chatCanon.WriteString(`{"model":"deepseek-chat","messages":[`)
+		_, _ = chatCanon.WriteString(`{"model":"deepseek-chat","messages":[`)
 		fmt.Fprintf(&chatCanon, `{"role":"system","content":"system prompt %s"}`, pad[:min(64, len(pad))])
 		for i := 0; i < sp.turns; i++ {
 			fmt.Fprintf(&chatCanon, `,{"role":"user","content":"question %d %s"}`, i, pad[:min(96, len(pad))])
 			fmt.Fprintf(&chatCanon, `,{"role":"assistant","reasoning_content":"thought %d","tool_calls":[`, i)
 			for tc := 0; tc < sp.toolCalls; tc++ {
 				if tc > 0 {
-					chatCanon.WriteByte(',')
+					_ = chatCanon.WriteByte(',')
 				}
 				fmt.Fprintf(&chatCanon, `{"id":"call_%d_%d","type":"function","function":{"name":"lookup","arguments":"{\"q\":%d}"}}`, i, tc, tc)
 			}
-			chatCanon.WriteString(`]}`)
+			_, _ = chatCanon.WriteString(`]}`)
 			for tc := 0; tc < sp.toolCalls; tc++ {
 				fmt.Fprintf(&chatCanon, `,{"role":"tool","content":"result %d %d %s","tool_call_id":"call_%d_%d"}`, i, tc, pad, i, tc)
 			}
 		}
-		chatCanon.WriteString(`]}`)
+		_, _ = chatCanon.WriteString(`]}`)
 
 		// Reordered + orphan tool + extra whitespace variant for rewrite path.
 		var chatReord strings.Builder
-		chatReord.WriteString(`{"model":"deepseek-chat","messages":[`)
+		_, _ = chatReord.WriteString(`{"model":"deepseek-chat","messages":[`)
 		fmt.Fprintf(&chatReord, `{"role":"system","content":"system prompt %s"},`, pad[:min(64, len(pad))])
 		fmt.Fprintf(&chatReord, `{"role":"tool","tool_call_id":"orphan_0","content":"stale"}`)
 		for i := 0; i < sp.turns; i++ {
@@ -98,7 +98,7 @@ func buildTrack1Corpus() []track1CorpusSample {
 			fmt.Fprintf(&chatReord, `,{"role":"user","content":"intervening"}`)
 			fmt.Fprintf(&chatReord, `,{"role":"tool","tool_call_id":"call_%d_0","content":"result %d %s"}`, i, i, pad)
 		}
-		chatReord.WriteString(`]}`)
+		_, _ = chatReord.WriteString(`]}`)
 
 		// Unsorted compat seed item matching sample scale (~350B small item + full tools/message item).
 		smallItem := json.RawMessage(fmt.Sprintf(
@@ -106,9 +106,9 @@ func buildTrack1Corpus() []track1CorpusSample {
 			sp.turns,
 		))
 		var itemObj strings.Builder
-		itemObj.WriteString(`{"role":"assistant","content":"`)
-		itemObj.WriteString(pad)
-		itemObj.WriteString(`","tool_calls":[{"type":"function","id":"call_1","function":{"arguments":"{\"b\":2,\"a\":1}","name":"fn"}}],"z_extra":true}`)
+		_, _ = itemObj.WriteString(`{"role":"assistant","content":"`)
+		_, _ = itemObj.WriteString(pad)
+		_, _ = itemObj.WriteString(`","tool_calls":[{"type":"function","id":"call_1","function":{"arguments":"{\"b\":2,\"a\":1}","name":"fn"}}],"z_extra":true}`)
 
 		out = append(out, track1CorpusSample{
 			name:            sp.name,

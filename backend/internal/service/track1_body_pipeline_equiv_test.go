@@ -144,10 +144,10 @@ func TestTrack1GrokAndCyberTranscriptEquivalence(t *testing.T) {
 
 	// Add >256 message ring overflow case.
 	var ringMsg strings.Builder
-	ringMsg.WriteString(`{"messages":[`)
+	_, _ = ringMsg.WriteString(`{"messages":[`)
 	for i := 0; i < maxOpenAICyberTranscriptLookupKeys+15; i++ {
 		if i > 0 {
-			ringMsg.WriteByte(',')
+			_ = ringMsg.WriteByte(',')
 		}
 		if i == 100 {
 			fmt.Fprintf(&ringMsg, `{"role":"assistant","content":"model %d"}`, i)
@@ -155,7 +155,7 @@ func TestTrack1GrokAndCyberTranscriptEquivalence(t *testing.T) {
 			fmt.Fprintf(&ringMsg, `{"role":"user","content":"turn %d"}`, i)
 		}
 	}
-	ringMsg.WriteString(`]}`)
+	_, _ = ringMsg.WriteString(`]}`)
 	cases = append(cases, ringMsg.String())
 
 	for i, doc := range cases {
@@ -260,18 +260,18 @@ func TestTrack1GroupBEquivalenceAndZeroAlloc(t *testing.T) {
 
 	// 2. normalizeOpenAIAPIKeyStoreFalseReasoningReplay >16 keys & 0-alloc no-op.
 	var wideRoot strings.Builder
-	wideRoot.WriteString(`{"store":false`)
+	_, _ = wideRoot.WriteString(`{"store":false`)
 	for i := 0; i < 20; i++ {
 		fmt.Fprintf(&wideRoot, `,"k%02d":%d`, i, i)
 	}
-	wideRoot.WriteString(`,"input":[{`)
+	_, _ = wideRoot.WriteString(`,"input":[{`)
 	for i := 0; i < 20; i++ {
 		if i > 0 {
-			wideRoot.WriteByte(',')
+			_ = wideRoot.WriteByte(',')
 		}
 		fmt.Fprintf(&wideRoot, `"f%02d":%d`, i, i)
 	}
-	wideRoot.WriteString(`,"type":"message","role":"user","content":"hi"}]}`)
+	_, _ = wideRoot.WriteString(`,"type":"message","role":"user","content":"hi"}]}`)
 	wideBytes := []byte(wideRoot.String())
 	gotWide, changedWide, errWide := normalizeOpenAIAPIKeyStoreFalseReasoningReplay(nil, wideBytes, false)
 	require.NoError(t, errWide)
