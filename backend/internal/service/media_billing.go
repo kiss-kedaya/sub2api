@@ -228,6 +228,16 @@ func (s *OpenAIGatewayService) SetAuthCacheInvalidator(inv APIKeyAuthCacheInvali
 	s.authCacheInvalidator.Store(&inv)
 }
 
+// SetBalancePreauthorizationService wires the shared Redis live_wallet
+// preauthorization service so async video reservations unify onto live_wallet
+// when PREAUTH=true.
+func (s *OpenAIGatewayService) SetBalancePreauthorizationService(svc *BalancePreauthorizationService) {
+	if s == nil {
+		return
+	}
+	s.balancePreauthorization = svc
+}
+
 func (s *OpenAIGatewayService) getAuthCacheInvalidator() APIKeyAuthCacheInvalidator {
 	if s == nil {
 		return nil
@@ -440,7 +450,39 @@ func (s *OpenAIGatewayService) CreateGrokVideoBillingJob(ctx context.Context, in
 		SubscriptionID: unit.Command.SubscriptionID, Status: MediaBillingCreating,
 		ReservedAmount: reservedAmount, Snapshot: snapshot,
 		CreatedAt: time.Now(), AvailableAt: time.Now().Add(time.Minute)}
+	var preauthGuard *BalancePreauthorizationGuard
+	if unit.Command.SubscriptionID == nil && reservedAmount > 0 &&
+		s.balancePreauthorization != nil && s.balancePreauthorization.RequiresPreauthorization(BillingTypeBalance) {
+		preauthGuard, err = s.balancePreauthorization.PreauthorizeDirectPGHold(
+			ctx,
+			"media-video:"+job.ID,
+			job.APIKeyID,
+			job.UserID,
+			reservedAmount,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if preauthGuard != nil {
+			job.PreauthRequestID = preauthGuard.RequestID()
+		}
+	}
 	job, err = s.mediaBillingJobs.CreateMediaBillingJob(ctx, job)
+	if preauthGuard != nil {
+		if err != nil || job == nil || strings.TrimSpace(job.PreauthRequestID) == "" {
+			refundCtx, refundCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if refundErr := preauthGuard.Refund(refundCtx); refundErr != nil && !errors.Is(refundErr, ErrBalancePreauthorizationAlreadyFinalized) {
+				logger.L().Warn("media_billing.direct_pg_hold_refund_failed", zap.Error(refundErr))
+			}
+			refundCancel()
+		} else {
+			finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if finErr := preauthGuard.FinalizeDirectPGHold(finalizeCtx); finErr != nil {
+				logger.L().Warn("media_billing.direct_pg_hold_finalize_failed", zap.String("job_id", job.ID), zap.Error(finErr))
+			}
+			finalizeCancel()
+		}
+	}
 	if err == nil && s.billingCacheService != nil {
 		if s.billingDeps().mergeSettlementEnabled() {
 			if job != nil && job.SubscriptionID == nil && job.ReservedAmount > 0 {

@@ -1454,6 +1454,11 @@ func (s *GatewayService) buildRecordUsageLog(
 ) *UsageLog {
 	durationMs := int(result.Duration.Milliseconds())
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
+	if guard, ok := BalancePreauthorizationGuardFromContext(ctx); ok {
+		if guardReqID := strings.TrimSpace(guard.RequestID()); guardReqID != "" {
+			requestID = guardReqID
+		}
+	}
 	sentModel := upstreamSentModel(result.Model, result.UpstreamModel)
 	if result.UpstreamResponseModelConflict {
 		slog.Warn("upstream_response_model_conflict",

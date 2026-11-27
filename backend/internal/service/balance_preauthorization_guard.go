@@ -88,6 +88,88 @@ func (g *BalancePreauthorizationGuard) HoldAmount() float64 {
 	return g.core.holdAmount
 }
 
+func (g *BalancePreauthorizationGuard) RequestID() string {
+	if g == nil || g.core == nil {
+		return ""
+	}
+	g.core.mu.Lock()
+	defer g.core.mu.Unlock()
+	return g.core.requestID
+}
+
+// TopUpFixedAmount raises an active guard's cumulative live_wallet hold to at
+// least targetHold without touching output-window tracking. Callers use it for
+// fixed/variable non-token holds (e.g. Gemini CachedContent exact upstream
+// token counts, Grok Realtime periodic session extensions, or multi-group
+// route repricing) before committing additional billable work.
+func (g *BalancePreauthorizationGuard) TopUpFixedAmount(ctx context.Context, targetHold float64) error {
+	if g == nil || g.core == nil {
+		return balancePreauthorizationUnavailable(errors.New("balance preauthorization guard is nil"))
+	}
+	if invalidNonnegativeMoney(targetHold) {
+		return balancePreauthorizationUnavailable(ErrInvalidBillingPreauthorizationEstimate)
+	}
+	target := quantizeBillingHoldUpFromFloat(targetHold)
+	ctx = nonNilContext(ctx)
+
+	g.core.mu.Lock()
+	defer g.core.mu.Unlock()
+	if g.core.ownerToken != g.ownerToken {
+		return ErrBalancePreauthorizationOwnershipTransferred
+	}
+	switch g.core.terminalState {
+	case balancePreauthorizationGuardFinalized:
+		return ErrBalancePreauthorizationAlreadyFinalized
+	case balancePreauthorizationGuardRefunded:
+		return ErrBalancePreauthorizationAlreadyRefunded
+	}
+	if target <= g.core.holdAmount {
+		return nil
+	}
+	if g.core.service == nil || g.core.service.wallet == nil {
+		return balancePreauthorizationUnavailable(errors.New("balance preauthorization dependency is unavailable"))
+	}
+	walletCtx, cancel := context.WithTimeout(ctx, balancePreauthorizationWalletTimeout)
+	defer cancel()
+	return g.topUpHold(walletCtx, target)
+}
+
+// FinalizeDirectPGHold completes a direct-PG-hold preauthorization whose
+// PostgreSQL hold transaction ALREADY atomically moved the durable
+// billing_balance_settlements row from Authorized -> FinalizationPending with
+// the pg-direct-hold fingerprint and skipped the PG outbox trigger.
+// It finalizes Redis live_wallet for the exact held amount and transitions the
+// durable row directly to Applied so FlushPendingBalanceSettlements never
+// deducts users.balance a second time.
+func (g *BalancePreauthorizationGuard) FinalizeDirectPGHold(ctx context.Context) error {
+	if g == nil || g.core == nil {
+		return nil
+	}
+	ctx = nonNilContext(ctx)
+
+	g.core.mu.Lock()
+	defer g.core.mu.Unlock()
+	if g.core.ownerToken != g.ownerToken {
+		return ErrBalancePreauthorizationOwnershipTransferred
+	}
+	switch g.core.terminalState {
+	case balancePreauthorizationGuardFinalized:
+		return nil
+	case balancePreauthorizationGuardRefunded:
+		return ErrBalancePreauthorizationAlreadyRefunded
+	}
+	actual := QuantizeUsageBillingAmount(g.core.holdAmount)
+	if actual == 0 {
+		if err := g.finalizeZeroCost(ctx); err != nil {
+			return err
+		}
+	} else if err := g.finalizePositiveCost(ctx, actual); err != nil {
+		return err
+	}
+	g.core.terminalState = balancePreauthorizationGuardFinalized
+	return nil
+}
+
 func (g *BalancePreauthorizationGuard) ReservedOutputTokens() int {
 	if g == nil || g.core == nil {
 		return 0

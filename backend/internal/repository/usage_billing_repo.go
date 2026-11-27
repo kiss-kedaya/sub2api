@@ -436,6 +436,11 @@ func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *
 	if cmd.HoldAmount <= 0 {
 		return &service.BatchImageBalanceHoldResult{}, nil
 	}
+	if preauthID := strings.TrimSpace(cmd.PreauthRequestID); preauthID != "" {
+		if err := advanceDirectPGHoldToFinalizationPending(ctx, tx, preauthID, cmd.APIKeyID, cmd.HoldAmount); err != nil {
+			return nil, err
+		}
+	}
 	var balance, frozen float64
 	err := tx.QueryRowContext(ctx, `
 		UPDATE users

@@ -147,10 +147,11 @@ func (r *usageBillingRepository) CreateMediaBillingJob(ctx context.Context, inpu
 			}
 		} else if created.ReservedAmount > 0 {
 			_, reserveErr := reserveUsageBillingBatchImageBalance(ctx, tx, &service.BatchImageBalanceHoldCommand{
-				UserID:     created.UserID,
-				APIKeyID:   created.APIKeyID,
-				BatchID:    created.ID,
-				HoldAmount: created.ReservedAmount,
+				UserID:           created.UserID,
+				APIKeyID:         created.APIKeyID,
+				BatchID:          created.ID,
+				HoldAmount:       created.ReservedAmount,
+				PreauthRequestID: job.PreauthRequestID,
 			})
 			if reserveErr != nil {
 				if errors.Is(reserveErr, service.ErrBatchImageInsufficientBalance) {
@@ -158,6 +159,7 @@ func (r *usageBillingRepository) CreateMediaBillingJob(ctx context.Context, inpu
 				}
 				return nil, reserveErr
 			}
+			created.PreauthRequestID = job.PreauthRequestID
 		}
 	}
 
@@ -177,6 +179,7 @@ func normalizeNewMediaBillingJob(input *service.MediaBillingJob) (*service.Media
 	job.Kind = strings.TrimSpace(job.Kind)
 	job.UpstreamTaskID = strings.TrimSpace(job.UpstreamTaskID)
 	job.Status = strings.TrimSpace(job.Status)
+	job.PreauthRequestID = strings.TrimSpace(job.PreauthRequestID)
 	job.ReservedAmount = service.QuantizeUsageBillingAmount(job.ReservedAmount)
 	if job.ID == "" || job.UserID <= 0 || job.APIKeyID <= 0 || job.AccountID <= 0 || job.GroupID <= 0 ||
 		job.ReservedAmount < 0 || math.IsNaN(job.ReservedAmount) || math.IsInf(job.ReservedAmount, 0) || job.Attempts < 0 {

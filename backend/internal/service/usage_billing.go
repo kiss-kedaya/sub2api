@@ -233,6 +233,11 @@ type BatchImageBalanceHoldCommand struct {
 	BatchID            string
 	HoldAmount         float64
 	ActualAmount       float64
+	// PreauthRequestID optionally binds a Redis live_wallet direct-PG hold row
+	// (billing_balance_settlements.request_id = "pg-hold:...") into the same PG
+	// balance-freeze transaction, skipping the PG outbox trigger and moving the
+	// settlement row atomically from Authorized -> FinalizationPending.
+	PreauthRequestID string
 }
 
 func (c *BatchImageBalanceHoldCommand) Normalize() {
