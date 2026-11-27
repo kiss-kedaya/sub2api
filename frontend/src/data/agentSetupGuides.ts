@@ -12,11 +12,29 @@ export interface AgentCodeSnippet {
   path?: string
   code: string
   note?: string
+  copyKind?: 'command' | 'config' | 'value'
+}
+
+export interface AgentParamRow {
+  label: string
+  value: string
+  kind?: 'select' | 'url' | 'apiKey' | 'model' | 'text'
+  copyable?: boolean
+  hint?: string
+}
+
+export interface AgentParamCard {
+  title: string
+  badge?: string
+  description?: string
+  rows: AgentParamRow[]
+  note?: string
 }
 
 export interface AgentSetupStep {
   title: string
   description: string
+  paramCards?: AgentParamCard[]
   snippets?: Partial<Record<AgentShellOs, AgentCodeSnippet[]>>
   genericSnippets?: AgentCodeSnippet[]
   links?: { label: string; href?: string; to?: string }[]
@@ -133,6 +151,7 @@ export function getAgentSetupCatalog(
   locale: string,
   originValue: string,
   modelOverride = '',
+  apiKeyOverride = '',
 ): AgentSetupCatalog {
   const zh = locale.toLowerCase().startsWith('zh')
   const l = (cn: string, en: string) => (zh ? cn : en)
@@ -140,13 +159,15 @@ export function getAgentSetupCatalog(
   const v1Base = `${origin}/v1`
   const customModel = modelOverride.trim()
   const pickModel = (fallback: string) => customModel || fallback
+  const apiKey = apiKeyOverride.trim() || 'YOUR_API_KEY'
   const ccSwitchUrl = zh ? CC_SWITCH_HOME_ZH : CC_SWITCH_HOME_EN
 
-  const claudeModel = pickModel('YOUR_MODEL_ID')
-  const codexModel = pickModel('YOUR_MODEL_ID')
+  const claudeModel = customModel
+  const claudeConcreteModel = pickModel('claude-sonnet-4-6')
+  const codexModel = pickModel('gpt-5.6-sol')
   const geminiModel = pickModel('gemini-2.5-pro')
   const grokModel = pickModel('grok-4.6')
-  const openCodeModel = pickModel('YOUR_MODEL_ID')
+  const openCodeModel = pickModel('claude-sonnet-4-6')
 
   const siteWorkflowSteps: SiteWorkflowStep[] = [
     {
@@ -210,7 +231,7 @@ export function getAgentSetupCatalog(
       baseUrl: origin,
       baseUrlRule: l('CCS 一键导入自动填裸域名；即使手动填成 /v1，本站网关也会自动折叠重复前缀。', 'CCS writes the bare origin automatically; even if /v1 is added manually, this gateway folds duplicates.'),
       defaultModel: 'claude-sonnet-4-6',
-      modelPresets: ['YOUR_MODEL_ID', 'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-sonnet-5-5', 'claude-opus-5-5'],
+      modelPresets: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-sonnet-5-5', 'claude-opus-5-5'],
       officialDocsUrl: 'https://docs.anthropic.com/en/docs/claude-code',
       launchCommand: 'claude',
       firstLaunchNote: l('首次启动如果弹出 Anthropic 登录引导，保持 CC Switch 处于「使用中」并新开终端后即可直接走中转密钥，无需官方账号。', 'With CC Switch active and a fresh terminal, Claude Code authenticates via the imported key without needing an Anthropic account.'),
@@ -231,32 +252,34 @@ export function getAgentSetupCatalog(
       },
       manualSteps: [
         {
-          title: l('从本站控制台直接复制配置（最快）', 'Copy generated config from Console → Use Key'),
+          title: l('配置环境变量或写入 settings.json', 'Set environment variables or write settings.json'),
           description: l(
-            '如果你在无桌面 Linux 服务器或不装 CC Switch，可在控制台「API 密钥」找到密钥打开「使用密钥 → Claude Code」，站内会直接生成带密钥的环境变量与 settings.json；下方为通用模板。',
-            'On headless Linux servers or without CC Switch, Console → API Keys → "Use Key" generates ready-to-paste snippets with your key; generic templates are below.',
+            '推荐写入 settings.json（保存后永久生效，VS Code 的 Claude Code 插件也会共用）；如果只是临时试用，直接复制第一段终端命令运行即可。',
+            'Writing settings.json persists across restarts and is shared with the VS Code extension; use the terminal snippet for a quick temporary test.',
           ),
           snippets: {
             unix: [
               {
                 label: 'Terminal (临时生效)',
+                copyKind: 'command',
                 code: [
                   `export ANTHROPIC_BASE_URL="${origin}"`,
-                  'export ANTHROPIC_AUTH_TOKEN="YOUR_API_KEY"',
-                  ...(claudeModel !== 'YOUR_MODEL_ID' ? [`export ANTHROPIC_MODEL="${claudeModel}"`] : []),
+                  `export ANTHROPIC_AUTH_TOKEN="${apiKey}"`,
+                  ...(claudeModel ? [`export ANTHROPIC_MODEL="${claudeModel}"`] : []),
                   'export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
                 ].join('\n'),
               },
               {
                 label: '~/.claude/settings.json',
                 path: '~/.claude/settings.json',
+                copyKind: 'config',
                 code: JSON.stringify(
                   {
                     $schema: 'https://json.schemastore.org/claude-code-settings.json',
                     env: {
                       ANTHROPIC_BASE_URL: origin,
-                      ANTHROPIC_AUTH_TOKEN: 'YOUR_API_KEY',
-                      ...(claudeModel !== 'YOUR_MODEL_ID' ? { ANTHROPIC_MODEL: claudeModel } : {}),
+                      ANTHROPIC_AUTH_TOKEN: apiKey,
+                      ...(claudeModel ? { ANTHROPIC_MODEL: claudeModel } : {}),
                       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
                     },
                   },
@@ -269,23 +292,25 @@ export function getAgentSetupCatalog(
             powershell: [
               {
                 label: 'PowerShell',
+                copyKind: 'command',
                 code: [
                   `$env:ANTHROPIC_BASE_URL="${origin}"`,
-                  '$env:ANTHROPIC_AUTH_TOKEN="YOUR_API_KEY"',
-                  ...(claudeModel !== 'YOUR_MODEL_ID' ? [`$env:ANTHROPIC_MODEL="${claudeModel}"`] : []),
+                  `$env:ANTHROPIC_AUTH_TOKEN="${apiKey}"`,
+                  ...(claudeModel ? [`$env:ANTHROPIC_MODEL="${claudeModel}"`] : []),
                   '$env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
                 ].join('\n'),
               },
               {
                 label: '%USERPROFILE%\\.claude\\settings.json',
                 path: '%USERPROFILE%\\.claude\\settings.json',
+                copyKind: 'config',
                 code: JSON.stringify(
                   {
                     $schema: 'https://json.schemastore.org/claude-code-settings.json',
                     env: {
                       ANTHROPIC_BASE_URL: origin,
-                      ANTHROPIC_AUTH_TOKEN: 'YOUR_API_KEY',
-                      ...(claudeModel !== 'YOUR_MODEL_ID' ? { ANTHROPIC_MODEL: claudeModel } : {}),
+                      ANTHROPIC_AUTH_TOKEN: apiKey,
+                      ...(claudeModel ? { ANTHROPIC_MODEL: claudeModel } : {}),
                       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
                     },
                   },
@@ -297,23 +322,25 @@ export function getAgentSetupCatalog(
             cmd: [
               {
                 label: 'Command Prompt',
+                copyKind: 'command',
                 code: [
                   `set ANTHROPIC_BASE_URL=${origin}`,
-                  'set ANTHROPIC_AUTH_TOKEN=YOUR_API_KEY',
-                  ...(claudeModel !== 'YOUR_MODEL_ID' ? [`set ANTHROPIC_MODEL=${claudeModel}`] : []),
+                  `set ANTHROPIC_AUTH_TOKEN=${apiKey}`,
+                  ...(claudeModel ? [`set ANTHROPIC_MODEL=${claudeModel}`] : []),
                   'set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
                 ].join('\n'),
               },
               {
                 label: '%USERPROFILE%\\.claude\\settings.json',
                 path: '%USERPROFILE%\\.claude\\settings.json',
+                copyKind: 'config',
                 code: JSON.stringify(
                   {
                     $schema: 'https://json.schemastore.org/claude-code-settings.json',
                     env: {
                       ANTHROPIC_BASE_URL: origin,
-                      ANTHROPIC_AUTH_TOKEN: 'YOUR_API_KEY',
-                      ...(claudeModel !== 'YOUR_MODEL_ID' ? { ANTHROPIC_MODEL: claudeModel } : {}),
+                      ANTHROPIC_AUTH_TOKEN: apiKey,
+                      ...(claudeModel ? { ANTHROPIC_MODEL: claudeModel } : {}),
                       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
                     },
                   },
@@ -327,13 +354,13 @@ export function getAgentSetupCatalog(
         {
           title: l('在项目根目录启动', 'Launch in your repository'),
           description: l('确认未装 CLI 时可从 CC Switch「应用」一键装或参考官方安装指南，随后在项目目录运行 claude。', 'Run claude inside your project folder once installed.'),
-          genericSnippets: [{ label: 'Shell', code: 'cd your-project\nclaude' }],
+          genericSnippets: [{ label: 'Shell', copyKind: 'command', code: 'cd your-project\nclaude' }],
         },
       ],
       verifyCommands: {
-        unix: `curl ${origin}/v1/models \\\n  -H "Authorization: Bearer YOUR_API_KEY"`,
-        powershell: `Invoke-RestMethod -Uri "${origin}/v1/models" -Headers @{ Authorization = "Bearer YOUR_API_KEY" }`,
-        cmd: `curl ${origin}/v1/models -H "Authorization: Bearer YOUR_API_KEY"`,
+        unix: `curl ${origin}/v1/models \\\n  -H "Authorization: Bearer ${apiKey}"`,
+        powershell: `Invoke-RestMethod -Uri "${origin}/v1/models" \`\n  -Headers @{ Authorization = "Bearer ${apiKey}" }`,
+        cmd: `curl ${origin}/v1/models -H "Authorization: Bearer ${apiKey}"`,
       },
       examplePrompts: [
         l('帮我梳理当前仓库的目录结构、核心入口文件和运行测试的命令。', 'Summarize this repository structure, entry points, and test commands.'),
@@ -407,7 +434,7 @@ export function getAgentSetupCatalog(
       baseUrl: v1Base,
       baseUrlRule: l('CCS 导入自动配好 Responses 协议与端点；手动写 config.toml 时 base_url 填带 /v1 的地址。', 'CCS sets Responses protocol automatically; manual config.toml uses the /v1 base URL.'),
       defaultModel: 'gpt-5.6-sol',
-      modelPresets: ['YOUR_MODEL_ID', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'gpt-6.1-sol'],
+      modelPresets: ['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'gpt-6.1-sol'],
       officialDocsUrl: 'https://developers.openai.com/codex/',
       launchCommand: 'codex',
       firstLaunchNote: l('启动后输入 /model 可查看当前可用的模型列表；若需在本站拉取完整模型清单，也可在控制台「使用密钥 → Codex」下载 codex-models.json。', 'Run /model inside Codex to verify available models; Console → Use Key can also fetch codex-models.json.'),
@@ -428,16 +455,17 @@ export function getAgentSetupCatalog(
       },
       manualSteps: [
         {
-          title: l('在无桌面环境下手动写入 config.toml 与 auth.json', 'Manual config.toml and auth.json (without CC Switch)'),
+          title: l('写入 config.toml 与 auth.json', 'Write config.toml and auth.json'),
           description: l(
-            '也可以直接在本站控制台「API 密钥 → 使用密钥 → Codex」一键复制带真实密钥与模型清单 URL 的完整配置，支持 HTTP/SSE 与 WebSocket v2 两种模式。',
-            'You can also open Console → API Keys → "Use Key" → Codex to copy a complete config (HTTP/SSE or WebSocket v2) with your key filled in.',
+            '把下面两份配置文件保存到对应路径即可；如果不想自己找文件夹，也可切到右上角「CC Switch 一键导入」自动写入。',
+            'Save the two config files below to their paths, or switch to "CC Switch 1-click" above to write them automatically.',
           ),
           snippets: {
             unix: [
               {
                 label: '~/.codex/config.toml',
                 path: '~/.codex/config.toml',
+                copyKind: 'config',
                 code: [
                   'model_provider = "OpenAI"',
                   `model = "${codexModel}"`,
@@ -456,7 +484,8 @@ export function getAgentSetupCatalog(
               {
                 label: '~/.codex/auth.json',
                 path: '~/.codex/auth.json',
-                code: JSON.stringify({ OPENAI_API_KEY: 'YOUR_API_KEY' }, null, 2),
+                copyKind: 'config',
+                code: JSON.stringify({ OPENAI_API_KEY: apiKey }, null, 2),
                 note: l('如走非 OpenAI 分组路由，把 requires_openai_auth 改为 false，并加 supports_websockets = false 与 env_key = "SUB2API_API_KEY"。', 'For non-OpenAI routed groups, set requires_openai_auth = false, supports_websockets = false, and env_key = "SUB2API_API_KEY".'),
               },
             ],
@@ -464,6 +493,7 @@ export function getAgentSetupCatalog(
               {
                 label: '%USERPROFILE%\\.codex\\config.toml',
                 path: '%USERPROFILE%\\.codex\\config.toml',
+                copyKind: 'config',
                 code: [
                   'model_provider = "OpenAI"',
                   `model = "${codexModel}"`,
@@ -483,13 +513,15 @@ export function getAgentSetupCatalog(
               {
                 label: '%USERPROFILE%\\.codex\\auth.json',
                 path: '%USERPROFILE%\\.codex\\auth.json',
-                code: JSON.stringify({ OPENAI_API_KEY: 'YOUR_API_KEY' }, null, 2),
+                copyKind: 'config',
+                code: JSON.stringify({ OPENAI_API_KEY: apiKey }, null, 2),
               },
             ],
             cmd: [
               {
                 label: '%USERPROFILE%\\.codex\\config.toml',
                 path: '%USERPROFILE%\\.codex\\config.toml',
+                copyKind: 'config',
                 code: [
                   'model_provider = "OpenAI"',
                   `model = "${codexModel}"`,
@@ -509,7 +541,8 @@ export function getAgentSetupCatalog(
               {
                 label: '%USERPROFILE%\\.codex\\auth.json',
                 path: '%USERPROFILE%\\.codex\\auth.json',
-                code: JSON.stringify({ OPENAI_API_KEY: 'YOUR_API_KEY' }, null, 2),
+                copyKind: 'config',
+                code: JSON.stringify({ OPENAI_API_KEY: apiKey }, null, 2),
               },
             ],
           },
@@ -517,13 +550,13 @@ export function getAgentSetupCatalog(
         {
           title: l('启动 Codex', 'Launch Codex'),
           description: l('在项目目录运行 codex 即可开始，使用 /model 切换当前模型。', 'Run codex in your project root and use /model to switch models.'),
-          genericSnippets: [{ label: 'Shell', code: 'cd your-project\ncodex' }],
+          genericSnippets: [{ label: 'Shell', copyKind: 'command', code: 'cd your-project\ncodex' }],
         },
       ],
       verifyCommands: {
-        unix: `curl ${v1Base}/responses \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${codexModel}","input":"Say ok"}'`,
-        powershell: `Invoke-RestMethod -Method Post -Uri "${v1Base}/responses" -Headers @{ Authorization = "Bearer YOUR_API_KEY" } -ContentType "application/json" -Body '{"model":"${codexModel}","input":"Say ok"}'`,
-        cmd: `curl ${v1Base}/responses -H "Authorization: Bearer YOUR_API_KEY" -H "Content-Type: application/json" -d "{\\"model\\":\\"${codexModel}\\",\\"input\\":\\"Say ok\\"}"`,
+        unix: `curl ${v1Base}/responses \\\n  -H "Authorization: Bearer ${apiKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${codexModel}","input":"Say ok"}'`,
+        powershell: `Invoke-RestMethod -Method Post -Uri "${v1Base}/responses" \`\n  -Headers @{ Authorization = "Bearer ${apiKey}" } \`\n  -ContentType "application/json" \`\n  -Body '{"model":"${codexModel}","input":"Say ok"}'`,
+        cmd: `curl ${v1Base}/responses -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d "{\\"model\\":\\"${codexModel}\\",\\"input\\":\\"Say ok\\"}"`,
       },
       examplePrompts: [
         l('分析当前仓库的构建脚本，找出可能拖慢构建的步骤。', 'Inspect the build scripts to find what slows down builds.'),
@@ -604,9 +637,10 @@ export function getAgentSetupCatalog(
             unix: [
               {
                 label: 'Terminal',
+                copyKind: 'command',
                 code: [
                   `export GOOGLE_GEMINI_BASE_URL="${origin}"`,
-                  'export GEMINI_API_KEY="YOUR_API_KEY"',
+                  `export GEMINI_API_KEY="${apiKey}"`,
                   `export GEMINI_MODEL="${geminiModel}"`,
                 ].join('\n'),
               },
@@ -614,9 +648,10 @@ export function getAgentSetupCatalog(
             powershell: [
               {
                 label: 'PowerShell',
+                copyKind: 'command',
                 code: [
                   `$env:GOOGLE_GEMINI_BASE_URL="${origin}"`,
-                  '$env:GEMINI_API_KEY="YOUR_API_KEY"',
+                  `$env:GEMINI_API_KEY="${apiKey}"`,
                   `$env:GEMINI_MODEL="${geminiModel}"`,
                 ].join('\n'),
               },
@@ -624,9 +659,10 @@ export function getAgentSetupCatalog(
             cmd: [
               {
                 label: 'Command Prompt',
+                copyKind: 'command',
                 code: [
                   `set GOOGLE_GEMINI_BASE_URL=${origin}`,
-                  'set GEMINI_API_KEY=YOUR_API_KEY',
+                  `set GEMINI_API_KEY=${apiKey}`,
                   `set GEMINI_MODEL=${geminiModel}`,
                 ].join('\n'),
               },
@@ -636,13 +672,13 @@ export function getAgentSetupCatalog(
         {
           title: l('启动 Gemini CLI', 'Launch Gemini CLI'),
           description: l('在项目目录执行 gemini，认证方式选择「Use Gemini API Key」。', 'Run gemini in your project root and select "Use Gemini API Key".'),
-          genericSnippets: [{ label: 'Shell', code: 'cd your-project\ngemini' }],
+          genericSnippets: [{ label: 'Shell', copyKind: 'command', code: 'cd your-project\ngemini' }],
         },
       ],
       verifyCommands: {
-        unix: `curl "${origin}/v1beta/models" \\\n  -H "x-goog-api-key: YOUR_API_KEY"`,
-        powershell: `Invoke-RestMethod -Uri "${origin}/v1beta/models" -Headers @{ "x-goog-api-key" = "YOUR_API_KEY" }`,
-        cmd: `curl "${origin}/v1beta/models" -H "x-goog-api-key: YOUR_API_KEY"`,
+        unix: `curl "${origin}/v1beta/models" \\\n  -H "x-goog-api-key: ${apiKey}"`,
+        powershell: `Invoke-RestMethod -Uri "${origin}/v1beta/models" \`\n  -Headers @{ "x-goog-api-key" = "${apiKey}" }`,
+        cmd: `curl "${origin}/v1beta/models" -H "x-goog-api-key: ${apiKey}"`,
       },
       examplePrompts: [
         l('通读 docs/ 下的所有文档，帮我总结系统架构和关键配置项。', 'Read everything under docs/ and summarize the system architecture.'),
@@ -718,10 +754,11 @@ export function getAgentSetupCatalog(
           ),
           snippets: {
             unix: [
-              { label: 'Terminal', code: `export GROK_MODELS_BASE_URL="${v1Base}"\nexport XAI_API_KEY="YOUR_API_KEY"` },
+              { label: 'Terminal', copyKind: 'command', code: `export GROK_MODELS_BASE_URL="${v1Base}"\nexport XAI_API_KEY="${apiKey}"` },
               {
                 label: '~/.grok/config.toml',
                 path: '~/.grok/config.toml',
+                copyKind: 'config',
                 code: [
                   '[endpoints]',
                   `models_base_url = "${v1Base}"`,
@@ -742,10 +779,11 @@ export function getAgentSetupCatalog(
               },
             ],
             powershell: [
-              { label: 'PowerShell', code: `$env:GROK_MODELS_BASE_URL="${v1Base}"\n$env:XAI_API_KEY="YOUR_API_KEY"` },
+              { label: 'PowerShell', copyKind: 'command', code: `$env:GROK_MODELS_BASE_URL="${v1Base}"\n$env:XAI_API_KEY="${apiKey}"` },
               {
                 label: '%USERPROFILE%\\.grok\\config.toml',
                 path: '%USERPROFILE%\\.grok\\config.toml',
+                copyKind: 'config',
                 code: [
                   '[endpoints]',
                   `models_base_url = "${v1Base}"`,
@@ -766,20 +804,20 @@ export function getAgentSetupCatalog(
               },
             ],
             cmd: [
-              { label: 'Command Prompt', code: `set GROK_MODELS_BASE_URL=${v1Base}\nset XAI_API_KEY=YOUR_API_KEY` },
+              { label: 'Command Prompt', copyKind: 'command', code: `set GROK_MODELS_BASE_URL=${v1Base}\nset XAI_API_KEY=${apiKey}` },
             ],
           },
         },
         {
           title: l('校验并启动', 'Inspect & launch'),
           description: l('运行 grok inspect 校验配置，再运行 grok 开始会话。', 'Run grok inspect to verify, then start grok.'),
-          genericSnippets: [{ label: 'Shell', code: 'grok inspect\ngrok' }],
+          genericSnippets: [{ label: 'Shell', copyKind: 'command', code: 'grok inspect\ngrok' }],
         },
       ],
       verifyCommands: {
-        unix: `curl ${v1Base}/models \\\n  -H "Authorization: Bearer YOUR_API_KEY"`,
-        powershell: `Invoke-RestMethod -Uri "${v1Base}/models" -Headers @{ Authorization = "Bearer YOUR_API_KEY" }`,
-        cmd: `curl ${v1Base}/models -H "Authorization: Bearer YOUR_API_KEY"`,
+        unix: `curl ${v1Base}/models \\\n  -H "Authorization: Bearer ${apiKey}"`,
+        powershell: `Invoke-RestMethod -Uri "${v1Base}/models" \`\n  -Headers @{ Authorization = "Bearer ${apiKey}" }`,
+        cmd: `curl ${v1Base}/models -H "Authorization: Bearer ${apiKey}"`,
       },
       examplePrompts: [
         l('检查这个后端 handler 的并发安全隐患并给出最小修复补丁。', 'Audit this backend handler for concurrency bugs and propose a minimal patch.'),
@@ -827,7 +865,7 @@ export function getAgentSetupCatalog(
       baseUrl: v1Base,
       baseUrlRule: l('CCS 导入自动处理；手动写 opencode.json 时 Anthropic/OpenAI/Grok 填 /v1，Gemini 填 /v1beta。', 'Handled by CCS; manual opencode.json uses /v1 for Anthropic/OpenAI/Grok and /v1beta for Gemini.'),
       defaultModel: 'claude-sonnet-4-6',
-      modelPresets: ['YOUR_MODEL_ID', 'claude-sonnet-4-6', 'gpt-5.6-sol', 'gemini-2.5-pro', 'grok-4.6'],
+      modelPresets: ['claude-sonnet-4-6', 'gpt-5.6-sol', 'gemini-2.5-pro', 'grok-4.6'],
       officialDocsUrl: 'https://opencode.ai/docs/',
       launchCommand: 'opencode',
       firstLaunchNote: l('进入界面后执行 /models 即可选择已导入的本站模型。', 'Run /models inside OpenCode to select your imported gateway model.'),
@@ -848,28 +886,29 @@ export function getAgentSetupCatalog(
       },
       manualSteps: [
         {
-          title: l('不使用 CC Switch：直接写入 opencode.json', 'Manual opencode.json (without CC Switch)'),
+          title: l('将配置保存到 opencode.json', 'Save configuration to opencode.json'),
           description: l(
-            '控制台「使用密钥 → OpenCode」会按你的分组自动生成带完整上下文窗口参数的 opencode.json；也可使用下方精简模板。',
-            'Console → Use Key → OpenCode generates a full platform-specific opencode.json; a minimal multi-provider template is below.',
+            '先在上方填入或解锁你的密钥，然后直接复制下方完整 JSON 保存到 ~/.config/opencode/opencode.json（Windows 为 %USERPROFILE%\\.config\\opencode\\opencode.json）。',
+            'Unlock or paste your key above, then copy this JSON directly into ~/.config/opencode/opencode.json (or %USERPROFILE%\\.config\\opencode\\opencode.json on Windows).',
           ),
           genericSnippets: [
             {
               label: '~/.config/opencode/opencode.json',
               path: '~/.config/opencode/opencode.json',
+              copyKind: 'config',
               code: JSON.stringify(
                 {
                   $schema: 'https://opencode.ai/config.json',
                   provider: {
                     anthropic: {
                       npm: '@ai-sdk/anthropic',
-                      options: { baseURL: v1Base, apiKey: 'YOUR_API_KEY' },
+                      options: { baseURL: v1Base, apiKey },
                       models: {
-                        [openCodeModel !== 'YOUR_MODEL_ID' ? openCodeModel : 'claude-sonnet-4-6']: { name: 'Claude via Gateway' },
+                        [openCodeModel]: { name: 'Claude via Gateway' },
                       },
                     },
                     openai: {
-                      options: { baseURL: v1Base, apiKey: 'YOUR_API_KEY' },
+                      options: { baseURL: v1Base, apiKey },
                       models: {
                         'gpt-5.6-sol': { name: 'GPT via Gateway', options: { store: false } },
                       },
@@ -888,14 +927,14 @@ export function getAgentSetupCatalog(
         },
         {
           title: l('启动 OpenCode', 'Launch OpenCode'),
-          description: l('在项目目录执行 opencode，按 /models 切换模型。', 'Run opencode in your project and use /models to pick a model.'),
-          genericSnippets: [{ label: 'Shell', code: 'cd your-project\nopencode' }],
+          description: l('在项目目录执行 opencode，输入 /models 即可选择本站模型开始对话。', 'Run opencode in your project and type /models to pick a model.'),
+          genericSnippets: [{ label: 'Shell', copyKind: 'command', code: 'cd your-project\nopencode' }],
         },
       ],
       verifyCommands: {
-        unix: `curl ${v1Base}/models \\\n  -H "Authorization: Bearer YOUR_API_KEY"`,
-        powershell: `Invoke-RestMethod -Uri "${v1Base}/models" -Headers @{ Authorization = "Bearer YOUR_API_KEY" }`,
-        cmd: `curl ${v1Base}/models -H "Authorization: Bearer YOUR_API_KEY"`,
+        unix: `curl ${v1Base}/models \\\n  -H "Authorization: Bearer ${apiKey}"`,
+        powershell: `Invoke-RestMethod -Uri "${v1Base}/models" \`\n  -Headers @{ Authorization = "Bearer ${apiKey}" }`,
+        cmd: `curl ${v1Base}/models -H "Authorization: Bearer ${apiKey}"`,
       },
       examplePrompts: [
         l('先进入 Plan 模式，列出重构这个组件的分步计划，等我确认再动手。', 'Start in Plan mode and outline the refactor plan before editing files.'),
@@ -966,26 +1005,27 @@ export function getAgentSetupCatalog(
         {
           title: l('在 CC Switch 中手动添加 Claude Desktop 供应商', 'Add provider manually in CC Switch'),
           description: l(
-            '如果系统未注册 ccswitch:// 深链，在 CC Switch 左侧切到 Claude Desktop，点右上角 + 填入以下字段并启用：',
-            'If ccswitch:// deeplinks are unavailable, open Claude Desktop in CC Switch, click +, and fill in:',
+            '如果系统未注册 ccswitch:// 深链，在 CC Switch 左侧切到 Claude Desktop，点右上角 + 逐项填入以下参数并启用：',
+            'If ccswitch:// deeplinks are unavailable, open Claude Desktop in CC Switch, click +, and enter each field below:',
           ),
-          genericSnippets: [
+          paramCards: [
             {
-              label: 'CC Switch → Claude Desktop',
-              code: [
-                'App:       Claude Desktop',
-                `Base URL:  ${origin}`,
-                'API Key:   YOUR_API_KEY',
-                `Model:     ${claudeModel !== 'YOUR_MODEL_ID' ? claudeModel : 'claude-sonnet-4-6'}`,
-              ].join('\n'),
+              title: 'CC Switch → Claude Desktop',
+              badge: l('逐项填写', 'Form fields'),
+              rows: [
+                { label: 'App', value: 'Claude Desktop', kind: 'select', copyable: false },
+                { label: 'Base URL', value: origin, kind: 'url', copyable: true, hint: l('填裸域名，不要加 /v1', 'Bare origin without /v1') },
+                { label: 'API Key', value: apiKey, kind: 'apiKey', copyable: true },
+                { label: 'Model', value: claudeConcreteModel, kind: 'model', copyable: true },
+              ],
             },
           ],
         },
       ],
       verifyCommands: {
-        unix: `curl ${origin}/v1/sub2api/key \\\n  -H "x-api-key: YOUR_API_KEY"`,
-        powershell: `Invoke-RestMethod -Uri "${origin}/v1/sub2api/key" -Headers @{ "x-api-key" = "YOUR_API_KEY" }`,
-        cmd: `curl ${origin}/v1/sub2api/key -H "x-api-key: YOUR_API_KEY"`,
+        unix: `curl ${origin}/v1/sub2api/key \\\n  -H "x-api-key: ${apiKey}"`,
+        powershell: `Invoke-RestMethod -Uri "${origin}/v1/sub2api/key" \`\n  -Headers @{ "x-api-key" = "${apiKey}" }`,
+        cmd: `curl ${origin}/v1/sub2api/key -H "x-api-key: ${apiKey}"`,
       },
       examplePrompts: [
         l('把这份会议纪要整理成按负责人分组的行动清单。', 'Turn these meeting notes into an action list grouped by owner.'),
@@ -1033,7 +1073,7 @@ export function getAgentSetupCatalog(
       baseUrl: v1Base,
       baseUrlRule: l('CCS 导入自动配置；手动写配置时 OpenAI 兼容用 /v1，Anthropic 用裸域名。', 'Handled by CCS; manually use /v1 for OpenAI-compatible or bare origin for Anthropic.'),
       defaultModel: 'gpt-5.6-sol',
-      modelPresets: ['YOUR_MODEL_ID', 'gpt-5.6-sol', 'claude-sonnet-4-6', 'grok-4.6'],
+      modelPresets: ['gpt-5.6-sol', 'claude-sonnet-4-6', 'grok-4.6'],
       officialDocsUrl: 'https://github.com/openclaw/openclaw',
       launchCommand: 'openclaw',
       firstLaunchNote: l('在 CC Switch 点「启用」写入配置后，记得重启 OpenClaw gateway 进程使其加载新供应商。', 'Restart the OpenClaw gateway process after clicking Activate in CC Switch.'),
@@ -1054,17 +1094,18 @@ export function getAgentSetupCatalog(
       },
       manualSteps: [
         {
-          title: l('不使用 CC Switch：手动配置自定义供应商', 'Manual provider snippet (without CC Switch)'),
+          title: l('手动配置 openclaw.json 自定义供应商', 'Manual provider snippet for openclaw.json'),
           description: l('修改 openclaw.json 前建议先备份旧文件，保存后重启 gateway 进程。', 'Back up openclaw.json before editing, then restart the gateway.'),
           genericSnippets: [
             {
-              label: 'Provider snippet',
+              label: 'openclaw.json (provider snippet)',
+              copyKind: 'config',
               code: JSON.stringify(
                 {
                   provider: 'sub2api',
                   baseUrl: v1Base,
-                  apiKey: 'YOUR_API_KEY',
-                  model: openCodeModel !== 'YOUR_MODEL_ID' ? openCodeModel : 'gpt-5.6-sol',
+                  apiKey,
+                  model: customModel || 'gpt-5.6-sol',
                 },
                 null,
                 2,
@@ -1074,9 +1115,9 @@ export function getAgentSetupCatalog(
         },
       ],
       verifyCommands: {
-        unix: `curl ${v1Base}/models \\\n  -H "Authorization: Bearer YOUR_API_KEY"`,
-        powershell: `Invoke-RestMethod -Uri "${v1Base}/models" -Headers @{ Authorization = "Bearer YOUR_API_KEY" }`,
-        cmd: `curl ${v1Base}/models -H "Authorization: Bearer YOUR_API_KEY"`,
+        unix: `curl ${v1Base}/models \\\n  -H "Authorization: Bearer ${apiKey}"`,
+        powershell: `Invoke-RestMethod -Uri "${v1Base}/models" \`\n  -Headers @{ Authorization = "Bearer ${apiKey}" }`,
+        cmd: `curl ${v1Base}/models -H "Authorization: Bearer ${apiKey}"`,
       },
       examplePrompts: [
         l('帮我检查今天待办事项，按紧急程度排个优先级。', 'Review my tasks for today and rank them by urgency.'),
@@ -1139,31 +1180,31 @@ export function getAgentSetupCatalog(
       },
       manualSteps: [
         {
-          title: l('7 款应用在「导入到 CCS」中的参数对照', 'App IDs & defaults for manual CC Switch entry'),
+          title: l('7 款应用手动新增供应商参数对照', 'App IDs & defaults for manual CC Switch entry'),
           description: l(
-            '若需要手动在 CC Switch 新增供应商，参考下列 app 标识与推荐默认模型：',
-            'If adding a provider manually inside CC Switch instead of using the deeplink, match these app IDs and endpoints:',
+            '若需要手动在 CC Switch 新增供应商，可逐行复制本站地址与各工具默认模型（无需整块复制）：',
+            'If adding a provider manually inside CC Switch instead of using the deeplink, copy the endpoint and model per app:',
           ),
-          genericSnippets: [
+          paramCards: [
             {
-              label: l('CC Switch 7 款生态应用对照', 'CC Switch ecosystem mapping'),
-              code: [
-                `hermes  (Hermes Agent)     → ${origin}   (gpt-5.6-sol / claude-sonnet-4-6)`,
-                `pi      (Pi)               → ${origin}   (必填模型 ID)`,
-                `omp     (Oh My Pi)         → ${origin}   (必填模型 ID)`,
-                `mcode   (MiniMax Code)     → ${origin}   (必填模型 ID)`,
-                `kimi    (Kimi Code)        → ${origin}   (必填模型 ID)`,
-                `dsh     (DeepSeek Harness) → ${origin}   (deepseek-v4.1 / gpt-5.6-sol)`,
-                `agy     (Antigravity)      → ${origin}   (gemini-2.5-pro)`,
-              ].join('\n'),
+              title: l('CC Switch 7 款生态应用参数', 'CC Switch ecosystem parameters'),
+              badge: l('逐项复制', 'Per-field copy'),
+              rows: [
+                { label: 'Base URL (7 款通用)', value: origin, kind: 'url', copyable: true, hint: l('7 款应用统一填本站裸域名', 'Shared bare origin for all 7 apps') },
+                { label: 'API Key', value: apiKey, kind: 'apiKey', copyable: true },
+                { label: 'hermes (Hermes Agent)', value: 'gpt-5.6-sol', kind: 'model', copyable: true, hint: l('也可选 claude-sonnet-4-6', 'or claude-sonnet-4-6') },
+                { label: 'pi / omp / mcode / kimi', value: 'gpt-5.6-sol', kind: 'model', copyable: true, hint: l('Pi 系列导入或添加时必填模型 ID', 'Model ID is required for Pi-family apps') },
+                { label: 'dsh (DeepSeek Harness)', value: 'deepseek-v4.1', kind: 'model', copyable: true, hint: l('也可选 gpt-5.6-sol', 'or gpt-5.6-sol') },
+                { label: 'agy (Antigravity)', value: 'gemini-2.5-pro', kind: 'model', copyable: true },
+              ],
             },
           ],
         },
       ],
       verifyCommands: {
-        unix: `curl ${v1Base}/sub2api/account \\\n  -H "Authorization: Bearer YOUR_API_KEY"`,
-        powershell: `Invoke-RestMethod -Uri "${v1Base}/sub2api/account" -Headers @{ Authorization = "Bearer YOUR_API_KEY" }`,
-        cmd: `curl ${v1Base}/sub2api/account -H "Authorization: Bearer YOUR_API_KEY"`,
+        unix: `curl ${v1Base}/sub2api/account \\\n  -H "Authorization: Bearer ${apiKey}"`,
+        powershell: `Invoke-RestMethod -Uri "${v1Base}/sub2api/account" \`\n  -Headers @{ Authorization = "Bearer ${apiKey}" }`,
+        cmd: `curl ${v1Base}/sub2api/account -H "Authorization: Bearer ${apiKey}"`,
       },
       examplePrompts: [
         l('检查我当前目录的 git 状态，总结未提交的改动。', 'Check git status in this folder and summarize uncommitted changes.'),
@@ -1210,8 +1251,8 @@ export function getAgentSetupCatalog(
       endpointPath: '/v1/chat/completions',
       baseUrl: v1Base,
       baseUrlRule: l('在 Override OpenAI Base URL 中填写完整的 <origin>/v1。', 'Enter the full <origin>/v1 URL in Override OpenAI Base URL.'),
-      defaultModel: 'YOUR_MODEL_ID',
-      modelPresets: ['YOUR_MODEL_ID', 'claude-sonnet-4-6', 'gpt-5.6-sol', 'gemini-2.5-pro'],
+      defaultModel: 'claude-sonnet-4-6',
+      modelPresets: ['claude-sonnet-4-6', 'gpt-5.6-sol', 'gemini-2.5-pro'],
       officialDocsUrl: 'https://docs.cursor.com/',
       launchCommand: 'Cursor → Settings → Models',
       firstLaunchNote: l('点击 Verify 前，先在 Model Names 里添加并勾选你在本站有权限的模型 ID，关掉未绑定的默认模型。', 'Add a model ID from GET /v1/models and disable unavailable default models before clicking Verify.'),
@@ -1224,42 +1265,40 @@ export function getAgentSetupCatalog(
         installNote: l('Cursor 为独立桌面 IDE，在图形界面直接填入本站 /v1 地址与密钥即可。', 'Cursor is a standalone IDE configured directly inside Settings → Models.'),
         endpoint: v1Base,
         protocolLabel: 'OpenAI Compatible (/v1)',
-        defaultModel: 'YOUR_MODEL_ID',
+        defaultModel: 'claude-sonnet-4-6',
         importHint: l('Cursor 不需要 CC Switch，直接在 Settings → Models 粘贴下方 Base URL 与本站密钥。', 'No CC Switch needed—paste the Base URL and key directly in Cursor Settings → Models.'),
       },
       manualSteps: [
         {
-          title: l('在本站创建密钥并查看可用模型 ID', 'Create a key and check allowed models on this site'),
+          title: l('打开 Cursor Settings → Models 逐项填入参数', 'Enter each field in Cursor Settings → Models'),
           description: l(
-            '在控制台「API 密钥」创建密钥（推荐开启智能路由绑定常用分组），再前往「模型广场」或用下方验证命令查出精确模型名。',
-            'Create a key under Console → API Keys (Smart Routing recommended), and copy exact model IDs from Model Plaza or GET /v1/models.',
+            '按 Ctrl + Shift + J（macOS 按 Cmd + Shift + J）打开设置，切到左侧 Models，按下表逐项点「复制」粘进对应输入框：',
+            'Open Settings (Ctrl+Shift+J / Cmd+Shift+J) → Models, then copy each field below into its matching input:',
           ),
-        },
-        {
-          title: l('打开 Cursor Settings → Models 填入 Base URL 与密钥', 'Configure Base URL & API Key in Cursor Settings → Models'),
-          description: l(
-            '按 Ctrl + Shift + J（macOS 为 Cmd + Shift + J）→ Models → 粘贴本站 API Key → 展开 Override OpenAI Base URL 填入下方地址并打开开关。',
-            'Open Settings (Ctrl+Shift+J / Cmd+Shift+J) → Models → paste your site API key → enable Override OpenAI Base URL with the address below.',
-          ),
-          genericSnippets: [
+          paramCards: [
             {
-              label: 'Override OpenAI Base URL',
-              code: v1Base,
+              title: 'Cursor → Settings → Models',
+              badge: l('逐项复制填写', 'Copy per field'),
+              rows: [
+                { label: 'OpenAI API Key', value: apiKey, kind: 'apiKey', copyable: true, hint: l('粘贴进 OpenAI API Key 栏并打开右侧开关', 'Paste into OpenAI API Key and enable the switch') },
+                { label: 'Override OpenAI Base URL', value: v1Base, kind: 'url', copyable: true, hint: l('展开后填入带 /v1 的地址并打开开关', 'Enable Override OpenAI Base URL and paste this /v1 URL') },
+                { label: '+ Add model', value: openCodeModel, kind: 'model', copyable: true, hint: l('先添加并勾选此模型，再关掉其他未订阅默认模型', 'Add & enable this model, then turn off unsubscribed defaults') },
+              ],
             },
           ],
         },
         {
-          title: l('添加本站模型名并点击 Verify', 'Add your allowed model IDs and click Verify'),
+          title: l('点击 Verify 确认生效', 'Click Verify to confirm'),
           description: l(
-            '在 Model Names 中点 + Add model 添加你的可用模型（并关闭密钥未绑定的默认模型），点击 Verify 通过即可使用。',
-            'Add your allowed model IDs under Model Names, disable unsubscribed defaults, then click Verify.',
+            '确认列表里只勾选了你有权限的模型后，点击 OpenAI API Key 右侧的 Verify 按钮；出现绿色对勾即可在 Chat / Composer 中使用。',
+            'After enabling only models your key can access, click Verify next to OpenAI API Key—a green check means you are ready.',
           ),
         },
       ],
       verifyCommands: {
-        unix: `curl ${v1Base}/chat/completions \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${openCodeModel}","messages":[{"role":"user","content":"Hello!"}]}'`,
-        powershell: `Invoke-RestMethod -Method Post -Uri "${v1Base}/chat/completions" -Headers @{ Authorization = "Bearer YOUR_API_KEY" } -ContentType "application/json" -Body '{"model":"${openCodeModel}","messages":[{"role":"user","content":"Hello!"}]}'`,
-        cmd: `curl ${v1Base}/chat/completions -H "Authorization: Bearer YOUR_API_KEY" -H "Content-Type: application/json" -d "{\\"model\\":\\"${openCodeModel}\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello!\\"}]}"`,
+        unix: `curl ${v1Base}/chat/completions \\\n  -H "Authorization: Bearer ${apiKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${openCodeModel}","messages":[{"role":"user","content":"Hello!"}]}'`,
+        powershell: `Invoke-RestMethod -Method Post -Uri "${v1Base}/chat/completions" \`\n  -Headers @{ Authorization = "Bearer ${apiKey}" } \`\n  -ContentType "application/json" \`\n  -Body '{"model":"${openCodeModel}","messages":[{"role":"user","content":"Hello!"}]}'`,
+        cmd: `curl ${v1Base}/chat/completions -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d "{\\"model\\":\\"${openCodeModel}\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello!\\"}]}"`,
       },
       examplePrompts: [
         l('用 Composer 帮我给这个表单补上校验逻辑和加载状态。', 'Use Composer to add validation and loading states to this form.'),
@@ -1303,8 +1342,8 @@ export function getAgentSetupCatalog(
       endpointPath: '/v1/chat/completions or /v1/messages',
       baseUrl: v1Base,
       baseUrlRule: l('OpenAI Compatible 填 <origin>/v1；Anthropic Custom Base URL 填 <origin>。', 'Use <origin>/v1 for OpenAI Compatible, or <origin> for Anthropic Custom Base URL.'),
-      defaultModel: 'YOUR_MODEL_ID',
-      modelPresets: ['YOUR_MODEL_ID', 'claude-sonnet-4-6', 'gpt-5.6-sol', 'gemini-2.5-pro'],
+      defaultModel: 'claude-sonnet-4-6',
+      modelPresets: ['claude-sonnet-4-6', 'gpt-5.6-sol', 'gemini-2.5-pro'],
       officialDocsUrl: 'https://code.visualstudio.com/docs/copilot/overview',
       launchCommand: 'VS Code → Extensions → Cline / Roo Code',
       firstLaunchNote: l('使用 Claude 模型时，在 Cline / Roo Code 中选 Anthropic + 自定义 Base URL 可保留原生 Prompt 缓存。', 'Choose Anthropic + custom base URL in Cline/Roo for Claude models to preserve prompt caching.'),
@@ -1317,42 +1356,44 @@ export function getAgentSetupCatalog(
         installNote: l('Claude Code / Codex 插件直接继承 CC Switch 配置；Cline / Roo Code 在插件设置面板填下方参数。', 'Claude Code & Codex extensions reuse CC Switch; configure Cline/Roo directly in the extension settings.'),
         endpoint: v1Base,
         protocolLabel: 'OpenAI / Anthropic',
-        defaultModel: 'YOUR_MODEL_ID',
+        defaultModel: 'claude-sonnet-4-6',
         importHint: l('在 VS Code 扩展设置粘贴下方 Base URL 与本站 API 密钥即可。', 'Paste the Base URL and your site API key into extension settings.'),
       },
       manualSteps: [
         {
-          title: l('在 Cline / Roo Code 扩展设置填写本站参数', 'Enter gateway settings in Cline / Roo Code'),
+          title: l('在 Cline / Roo Code 扩展设置逐项填入本站参数', 'Enter each gateway field in Cline / Roo Code'),
           description: l(
-            '打开扩展右上角设置：多模型通用选 OpenAI Compatible（填 /v1）；追求 Claude 原生缓存选 Anthropic（填裸域名）。',
-            'Open extension settings: pick OpenAI Compatible (/v1) for multi-model keys, or Anthropic (bare origin) for native Claude caching.',
+            '打开扩展右上角齿轮设置，按你的用途二选一逐项复制填入（不用整段复制）：想一把密钥混用所有模型选方案 A；主用 Claude 并要原生 Prompt 缓存选方案 B。',
+            'Open extension Settings (gear icon) and copy each field individually: pick Option A for multi-model Smart Routing, or Option B for native Claude Prompt Caching.',
           ),
-          genericSnippets: [
+          paramCards: [
             {
-              label: l('OpenAI Compatible（推荐智能路由多模型）', 'OpenAI Compatible (Smart Routing / multi-model)'),
-              code: [
-                'API Provider: OpenAI Compatible',
-                `Base URL:     ${v1Base}`,
-                'API Key:      YOUR_API_KEY',
-                `Model ID:     ${openCodeModel}`,
-              ].join('\n'),
+              title: l('方案 A：OpenAI Compatible', 'Option A: OpenAI Compatible'),
+              badge: l('推荐 · 智能路由多模型', 'Recommended · Multi-model'),
+              rows: [
+                { label: 'API Provider', value: 'OpenAI Compatible', kind: 'select', copyable: false },
+                { label: 'Base URL', value: v1Base, kind: 'url', copyable: true, hint: l('必须带 /v1 后缀', 'Must include /v1') },
+                { label: 'API Key', value: apiKey, kind: 'apiKey', copyable: true },
+                { label: 'Model ID', value: openCodeModel, kind: 'model', copyable: true },
+              ],
             },
             {
-              label: l('Anthropic 原生（支持 Prompt 缓存）', 'Anthropic Native (with Prompt Caching)'),
-              code: [
-                'API Provider:        Anthropic',
-                `Use custom base URL: ${origin}`,
-                'Anthropic API Key:   YOUR_API_KEY',
-                `Model:               ${claudeModel !== 'YOUR_MODEL_ID' ? claudeModel : 'claude-sonnet-4-6'}`,
-              ].join('\n'),
+              title: l('方案 B：Anthropic 原生', 'Option B: Anthropic Native'),
+              badge: l('支持 Prompt 缓存', 'Prompt Caching'),
+              rows: [
+                { label: 'API Provider', value: 'Anthropic', kind: 'select', copyable: false },
+                { label: 'Use custom base URL', value: origin, kind: 'url', copyable: true, hint: l('先勾选此开关，再粘贴裸域名（不要加 /v1）', 'Check this box first, then paste bare origin') },
+                { label: 'Anthropic API Key', value: apiKey, kind: 'apiKey', copyable: true },
+                { label: 'Model', value: claudeConcreteModel, kind: 'model', copyable: true },
+              ],
             },
           ],
         },
       ],
       verifyCommands: {
-        unix: `curl ${v1Base}/models \\\n  -H "Authorization: Bearer YOUR_API_KEY"`,
-        powershell: `Invoke-RestMethod -Uri "${v1Base}/models" -Headers @{ Authorization = "Bearer YOUR_API_KEY" }`,
-        cmd: `curl ${v1Base}/models -H "Authorization: Bearer YOUR_API_KEY"`,
+        unix: `curl ${v1Base}/models \\\n  -H "Authorization: Bearer ${apiKey}"`,
+        powershell: `Invoke-RestMethod -Uri "${v1Base}/models" \`\n  -Headers @{ Authorization = "Bearer ${apiKey}" }`,
+        cmd: `curl ${v1Base}/models -H "Authorization: Bearer ${apiKey}"`,
       },
       examplePrompts: [
         l('阅读当前打开的文件，排查潜在空指针与未处理异常。', 'Inspect the active file for null-safety issues and unhandled exceptions.'),

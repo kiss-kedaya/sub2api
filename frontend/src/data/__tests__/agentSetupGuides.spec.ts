@@ -77,6 +77,40 @@ describe('agentSetupGuides data', () => {
     expect(unixSnippets.some((snippet) => snippet.code.includes('"ANTHROPIC_MODEL": "claude-opus-5-5"'))).toBe(true)
   })
 
+  it.each(['zh', 'en'])('replaces every YOUR_API_KEY across all agents, paramCards, snippets and verifyCommands when apiKeyOverride is provided (%s)', (locale) => {
+    const token = 'demo-live-key-999'
+    const catalog = getAgentSetupCatalog(locale, 'https://gateway.example.test', '', token)
+    const serialized = JSON.stringify(catalog)
+
+    expect(serialized).not.toContain('YOUR_API_KEY')
+    expect(serialized).not.toContain('YOUR_MODEL_ID')
+    expect(serialized).toContain(token)
+  })
+
+  it('uses structured per-field paramCards for GUI agents and wraps PowerShell verify commands cleanly', () => {
+    const catalog = getAgentSetupCatalog('zh', 'https://gateway.example.test')
+
+    for (const id of ['vscode', 'cursor', 'claude-desktop', 'ccswitch-ecosystem']) {
+      const agent = resolveAgentGuide(catalog.agents, id)!
+      const cards = agent.manualSteps.flatMap((step) => step.paramCards ?? [])
+      expect(cards.length, `${id} should define structured paramCards`).toBeGreaterThanOrEqual(1)
+      expect(cards.some((card) => card.rows.some((row) => row.kind === 'apiKey')), `${id} should include an apiKey param row`).toBe(true)
+      expect(cards.some((card) => card.rows.some((row) => row.copyable)), `${id} should include copyable rows`).toBe(true)
+    }
+
+    const vscode = resolveAgentGuide(catalog.agents, 'vscode')!
+    expect(vscode.manualSteps[0].genericSnippets ?? []).toHaveLength(0)
+    expect(vscode.manualSteps[0].paramCards).toHaveLength(2)
+
+    for (const agent of catalog.agents) {
+      if (agent.verifyCommands.powershell) {
+        expect(agent.verifyCommands.powershell, `${agent.id} powershell verify should be multi-line`).toContain('\n')
+      }
+      expect(agent.defaultModel).not.toContain('YOUR_MODEL_ID')
+      expect(agent.modelPresets.every((m) => !m.includes('YOUR_MODEL_ID'))).toBe(true)
+    }
+  })
+
   it('returns null for unknown agent IDs and builds 6 home highlights', () => {
     const catalog = getAgentSetupCatalog('en', 'https://gateway.example.test')
     expect(resolveAgentGuide(catalog.agents, 'unknown-agent')).toBeNull()
