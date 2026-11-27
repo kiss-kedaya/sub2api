@@ -42,6 +42,67 @@ func (h *BatchImageHandler) Submit(c *gin.Context) {
 	if !h.checkSecurityAuditBeforeSubmit(c, &req) {
 		return
 	}
+	if h.openAI != nil && owner.APIKey != nil {
+		if h.openAI.concurrencyHelper != nil {
+			userID, userConcurrency := resolveConcurrencyUserSubject(c, owner.APIKey)
+			if userID > 0 {
+				var streamStarted bool
+				userRelease, slotErr := h.openAI.concurrencyHelper.AcquireUserSlotWithWait(c, userID, userConcurrency, false, &streamStarted)
+				if slotErr != nil {
+					h.openAI.handleConcurrencyError(c, slotErr, "user", false)
+					return
+				}
+				if userRelease != nil {
+					defer userRelease()
+				}
+			} else {
+				keyRelease, keyErr := h.openAI.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), owner.APIKey.ID, owner.APIKey.ConcurrencyLimit)
+				if keyErr != nil {
+					h.openAI.handleConcurrencyError(c, keyErr, "API key", false)
+					return
+				}
+				if keyRelease != nil {
+					defer keyRelease()
+				}
+			}
+		}
+		if owner.APIKey.IsExpired() {
+			batchImageError(c, service.ErrAPIKeyExpired)
+			return
+		}
+		if owner.APIKey.IsQuotaExhausted() {
+			batchImageError(c, service.ErrAPIKeyQuotaExhausted)
+			return
+		}
+		if h.openAI.billingCacheService != nil {
+			subscription, _ := middleware.GetSubscriptionFromContext(c)
+			if err := h.openAI.billingCacheService.CheckBillingEligibility(
+				c.Request.Context(),
+				owner.APIKey.User,
+				owner.APIKey,
+				owner.APIKey.Group,
+				subscription,
+				service.QuotaPlatform(c.Request.Context(), owner.APIKey),
+			); err != nil {
+				status, errType, message, retryAfter := billingErrorDetails(err)
+				if retryAfter > 0 {
+					c.Header("Retry-After", strconv.Itoa(retryAfter))
+				}
+				code := infraerrors.Reason(err)
+				if strings.TrimSpace(code) == "" {
+					code = strings.ToUpper(errType)
+				}
+				c.JSON(status, gin.H{
+					"error": gin.H{
+						"type":    errType,
+						"code":    code,
+						"message": message,
+					},
+				})
+				return
+			}
+		}
+	}
 	if sessionID := service.ExtractClientSessionID(c); sessionID != "" {
 		req.SessionID = &sessionID
 	}
@@ -303,6 +364,7 @@ func batchImageOwnerFromContext(c *gin.Context) (service.BatchImageOwner, bool) 
 		UserID:   apiKey.UserID,
 		APIKeyID: apiKey.ID,
 		GroupID:  apiKey.GroupID,
+		APIKey:   apiKey,
 	}, true
 }
 

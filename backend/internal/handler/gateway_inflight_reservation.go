@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"sync"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -67,6 +68,40 @@ func tokenInflightEstimate(c *gin.Context, model string, body []byte) service.In
 
 func inflightNoop() {}
 
+const inflightRouteReservationStateKey = "gateway.inflight_route_reservation_state"
+
+type inflightRouteReservationState struct {
+	mu              sync.Mutex
+	req             service.InflightEstimateRequest
+	primary         *service.InflightReservation
+	reservedQuota   float64
+	reservedBalance float64
+	done            bool
+}
+
+func (s *inflightRouteReservationState) handlerDone() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.done = true
+	primary := s.primary
+	s.mu.Unlock()
+	if primary != nil {
+		primary.HandlerDone()
+	}
+}
+
+func (s *inflightRouteReservationState) reservation() *service.InflightReservation {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	primary := s.primary
+	s.mu.Unlock()
+	return primary
+}
+
 // reserveInflightBalance 在 CheckBillingEligibility 之后为请求登记准入预占。
 //
 // 两个维度：
@@ -90,13 +125,23 @@ func reserveInflightBalance(
 	if c == nil || c.Request == nil {
 		return inflightNoop, nil
 	}
-	ctx, done, err := reserveInflightBalanceCtx(c.Request.Context(), billing, estimator, apiKey, subscription, req)
+	res, err := reserveInflightBalanceReservation(c.Request.Context(), billing, estimator, apiKey, subscription, req)
 	if err != nil {
 		return inflightNoop, err
 	}
-	c.Request = c.Request.WithContext(ctx)
-	c.Set(service.UsageInflightRequestContextKey, ctx)
-	return done, nil
+	state := &inflightRouteReservationState{
+		req:     req,
+		primary: res,
+	}
+	if res != nil {
+		state.reservedQuota = res.QuotaAmount()
+		state.reservedBalance = res.BalanceAmount()
+		ctx := service.WithInflightReservation(c.Request.Context(), res)
+		c.Request = c.Request.WithContext(ctx)
+		c.Set(service.UsageInflightRequestContextKey, ctx)
+	}
+	c.Set(inflightRouteReservationStateKey, state)
+	return state.handlerDone, nil
 }
 
 // reserveInflightBalanceCtx 同 reserveInflightBalance，但返回携带预留句柄的新 context
@@ -109,38 +154,173 @@ func reserveInflightBalanceCtx(
 	subscription *service.UserSubscription,
 	req service.InflightEstimateRequest,
 ) (context.Context, func(), error) {
+	res, err := reserveInflightBalanceReservation(ctx, billing, estimator, apiKey, subscription, req)
+	if err != nil || res == nil {
+		return ctx, inflightNoop, err
+	}
+	return service.WithInflightReservation(ctx, res), res.HandlerDone, nil
+}
+
+func reserveInflightBalanceReservation(
+	ctx context.Context,
+	billing *service.BillingCacheService,
+	estimator inflightReservationEstimator,
+	apiKey *service.APIKey,
+	subscription *service.UserSubscription,
+	req service.InflightEstimateRequest,
+) (*service.InflightReservation, error) {
 	if billing == nil || estimator == nil || apiKey == nil || apiKey.User == nil {
-		return ctx, inflightNoop, nil
+		return nil, nil
 	}
 	balanceEnabled := billing.InflightReservationEnabled()
 	// key 级配额是硬上限，不受「余额在途预留」开关控制：只要 quota>0 且缓存支持就预占。
 	quotaEnabled := apiKey.ID > 0 && apiKey.Quota > 0 && billing.APIKeyQuotaReservationEnabled()
 	if !balanceEnabled && !quotaEnabled {
-		return ctx, inflightNoop, nil
+		return nil, nil
 	}
 	subscriptionBill := apiKey.Group != nil && apiKey.Group.IsSubscriptionType() && subscription != nil
 	if subscriptionBill && !quotaEnabled {
-		return ctx, inflightNoop, nil
+		return nil, nil
 	}
 	estimate, priced := estimator.EstimateInflightReservation(ctx, apiKey, req)
 	if !priced {
 		if balanceEnabled && !subscriptionBill && billing.InflightReservationFailClosedOnUnpriced() {
-			return ctx, inflightNoop, service.ErrInsufficientBalance
+			return nil, service.ErrInsufficientBalance
 		}
 		// 无法定价时 key 配额同样 fail-open（审计风险见 PR 说明）。
-		return ctx, inflightNoop, nil
+		return nil, nil
 	}
 	if estimate <= 0 {
-		return ctx, inflightNoop, nil
+		return nil, nil
 	}
 	res, err := billing.ReserveAdmission(ctx, apiKey.User, apiKey, apiKey.Group, subscription, estimate)
 	if err != nil {
-		return ctx, inflightNoop, err
+		return nil, err
 	}
-	if res == nil {
-		return ctx, inflightNoop, nil
+	return res, nil
+}
+
+// adjustInflightReservationForKeyRoute 在智能路由切换到另一分组时按新分组重新估算费用，
+// 若新估算超出已预占额度（如切到更高倍率分组，或从订阅组切到余额组），追加差额预占。
+// 返回的 rollback 供后续步骤（如余额预授权）失败时回滚本次增量预占。
+func adjustInflightReservationForKeyRoute(
+	ctx context.Context,
+	c *gin.Context,
+	billing *service.BillingCacheService,
+	estimator inflightReservationEstimator,
+	selected *service.APIKey,
+	subscription *service.UserSubscription,
+) (context.Context, func(), error) {
+	if c == nil || billing == nil || estimator == nil || selected == nil || selected.User == nil {
+		return ctx, nil, nil
 	}
-	return service.WithInflightReservation(ctx, res), res.HandlerDone, nil
+	raw, exists := c.Get(inflightRouteReservationStateKey)
+	if !exists {
+		return ctx, nil, nil
+	}
+	state, ok := raw.(*inflightRouteReservationState)
+	if !ok || state == nil {
+		return ctx, nil, nil
+	}
+
+	balanceEnabled := billing.InflightReservationEnabled()
+	quotaEnabled := selected.ID > 0 && selected.Quota > 0 && billing.APIKeyQuotaReservationEnabled()
+	if !balanceEnabled && !quotaEnabled {
+		return ctx, nil, nil
+	}
+	subscriptionBill := selected.Group != nil && selected.Group.IsSubscriptionType() && subscription != nil
+	if subscriptionBill && !quotaEnabled {
+		return ctx, nil, nil
+	}
+
+	state.mu.Lock()
+	if state.done {
+		state.mu.Unlock()
+		return ctx, nil, nil
+	}
+	req := state.req
+	prevQuota := state.reservedQuota
+	prevBalance := state.reservedBalance
+	state.mu.Unlock()
+
+	estimate, priced := estimator.EstimateInflightReservation(ctx, selected, req)
+	if !priced {
+		if balanceEnabled && !subscriptionBill && billing.InflightReservationFailClosedOnUnpriced() {
+			return ctx, nil, service.ErrInsufficientBalance
+		}
+		return ctx, nil, nil
+	}
+	if estimate <= 0 {
+		return ctx, nil, nil
+	}
+
+	const deltaEps = 1e-9
+	var quotaDelta float64
+	if quotaEnabled && estimate > prevQuota+deltaEps {
+		quotaDelta = estimate - prevQuota
+	}
+	var balanceDelta float64
+	if balanceEnabled && !subscriptionBill {
+		targetBalance := billing.CapInflightBalanceReservation(estimate)
+		if targetBalance > prevBalance+deltaEps {
+			balanceDelta = targetBalance - prevBalance
+		}
+	}
+	if quotaDelta <= 0 && balanceDelta <= 0 {
+		return ctx, nil, nil
+	}
+
+	deltaRes, err := billing.ReserveAdmissionDelta(ctx, selected.User, selected, selected.Group, subscription, quotaDelta, balanceDelta)
+	if err != nil {
+		return ctx, nil, err
+	}
+	if deltaRes == nil {
+		return ctx, nil, nil
+	}
+
+	addedQuota := deltaRes.QuotaAmount()
+	addedBalance := deltaRes.BalanceAmount()
+	var installedAsPrimary bool
+
+	state.mu.Lock()
+	if state.done {
+		state.mu.Unlock()
+		deltaRes.Release()
+		return ctx, nil, nil
+	}
+	state.reservedQuota += addedQuota
+	state.reservedBalance += addedBalance
+	if state.primary == nil {
+		state.primary = deltaRes
+		installedAsPrimary = true
+	} else {
+		state.primary.Attach(deltaRes)
+	}
+	state.mu.Unlock()
+
+	if installedAsPrimary {
+		ctx = service.WithInflightReservation(ctx, deltaRes)
+	}
+
+	rollback := func() {
+		deltaRes.Release()
+		state.mu.Lock()
+		if state.reservedQuota >= addedQuota {
+			state.reservedQuota -= addedQuota
+		} else {
+			state.reservedQuota = 0
+		}
+		if state.reservedBalance >= addedBalance {
+			state.reservedBalance -= addedBalance
+		} else {
+			state.reservedBalance = 0
+		}
+		if installedAsPrimary && state.primary == deltaRes {
+			state.primary = nil
+		}
+		state.mu.Unlock()
+	}
+	return ctx, rollback, nil
 }
 
 // grokMediaInflightEstimate 媒体生成请求的估算输入；状态/内容查询返回空模型（不预留：

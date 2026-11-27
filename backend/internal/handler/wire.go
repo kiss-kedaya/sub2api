@@ -142,6 +142,7 @@ func ProvideGatewayHandler(
 	// Public model discovery merges catalogue metadata (description, limits,
 	// modalities, capabilities, prices) through the gateway service.
 	if gatewayService != nil {
+		gatewayService.SetAuthCacheInvalidator(apiKeyService)
 		h.modelMetadata = gatewayService
 	}
 	return h
@@ -163,6 +164,9 @@ func ProvideOpenAIGatewayHandler(
 	coordinator *securityaudit.Coordinator,
 ) *OpenAIGatewayHandler {
 	gatewayService.SetPluginManager(pluginManager)
+	if gatewayService != nil {
+		gatewayService.SetAuthCacheInvalidator(apiKeyService)
+	}
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
 	h.balancePreauthorizer = balancePreauthorizationService

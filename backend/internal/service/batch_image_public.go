@@ -79,6 +79,7 @@ type BatchImageOwner struct {
 	UserID   int64
 	APIKeyID int64
 	GroupID  *int64
+	APIKey   *APIKey
 }
 
 type BatchImagePublicService struct {
@@ -90,6 +91,7 @@ type BatchImagePublicService struct {
 	ProviderRegistry  *BatchImageProviderRegistry
 	Pricing           BatchImagePricingResolver
 	BillingRepo       UsageBillingRepository
+	BillingCache      *BillingCacheService
 	AuthCache         APIKeyAuthCacheInvalidator
 	Config            *config.Config
 }
@@ -192,6 +194,7 @@ func NewBatchImagePublicService(repo BatchImageRepository, accountRepo AccountRe
 		ProviderRegistry:  NewBatchImageProviderRegistryFromConfig(cfg),
 		Pricing:           pricing,
 		BillingRepo:       billingRepo,
+		BillingCache:      resolveBatchImageBillingCache(nil, authCache),
 		AuthCache:         authCache,
 		Config:            cfg,
 	}
@@ -239,6 +242,11 @@ func (s *BatchImagePublicService) Submit(ctx context.Context, owner BatchImageOw
 	if err != nil {
 		return nil, err
 	}
+	quotaHoldRelease, err := s.enforceSubmitAPIKeyQuotaAndRateLimits(ctx, owner, pricingSnapshot.HoldAmount)
+	if err != nil {
+		return nil, err
+	}
+	defer quotaHoldRelease()
 	parentBatchID := batchImageOptionalStringPtr(normalized.ParentBatchID)
 	if parentBatchID != nil {
 		parent, parentErr := s.Repo.GetBatchImageJobByBatchIDForOwner(ctx, owner.UserID, owner.APIKeyID, *parentBatchID)
@@ -1092,9 +1100,108 @@ func (s *BatchImagePublicService) enabled() bool {
 }
 
 func (s *BatchImagePublicService) invalidateAuthCache(ctx context.Context, userID int64) {
-	if s != nil && s.AuthCache != nil && userID > 0 {
-		s.AuthCache.InvalidateAuthCacheByUserID(ctx, userID)
+	if s == nil || userID <= 0 {
+		return
 	}
+	invalidateBatchImageUserBalanceAndAuthCache(ctx, s.BillingCache, s.AuthCache, userID)
+}
+
+func isBatchImageUnsettledHoldStatus(status string) bool {
+	switch status {
+	case BatchImageJobStatusCreated,
+		BatchImageJobStatusUploading,
+		BatchImageJobStatusSubmitted,
+		BatchImageJobStatusRunning,
+		BatchImageJobStatusIndexing,
+		BatchImageJobStatusSettling:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *BatchImagePublicService) outstandingAPIKeyHoldAmount(ctx context.Context, owner BatchImageOwner) float64 {
+	if s == nil || s.Repo == nil || owner.UserID <= 0 || owner.APIKeyID <= 0 {
+		return 0
+	}
+	const pageSize = 100
+	const maxPages = 20
+	var total float64
+	for page := 0; page < maxPages; page++ {
+		jobs, err := s.Repo.ListBatchImageJobsForOwner(ctx, owner.UserID, owner.APIKeyID, BatchImageJobFilter{
+			Limit:  pageSize,
+			Offset: page * pageSize,
+		})
+		if err != nil {
+			logger.L().Warn("batch_image.list_outstanding_holds_failed",
+				zap.Int64("user_id", owner.UserID),
+				zap.Int64("api_key_id", owner.APIKeyID),
+				zap.Error(err),
+			)
+			return total
+		}
+		for _, job := range jobs {
+			if job == nil || !isBatchImageUnsettledHoldStatus(job.Status) {
+				continue
+			}
+			hold := job.EstimatedCost
+			if job.HoldAmount != nil {
+				hold = *job.HoldAmount
+			}
+			if hold > 0 {
+				total += hold
+			}
+		}
+		if len(jobs) < pageSize {
+			break
+		}
+	}
+	return total
+}
+
+func (s *BatchImagePublicService) enforceSubmitAPIKeyQuotaAndRateLimits(
+	ctx context.Context,
+	owner BatchImageOwner,
+	holdAmount float64,
+) (func(), error) {
+	if owner.APIKey == nil {
+		return noopRelease, nil
+	}
+	apiKey := owner.APIKey
+	if apiKey.IsExpired() {
+		return noopRelease, ErrAPIKeyExpired
+	}
+	if apiKey.IsQuotaExhausted() {
+		return noopRelease, ErrAPIKeyQuotaExhausted
+	}
+	if holdAmount <= 0 {
+		holdAmount = 0
+	}
+	billingCache := resolveBatchImageBillingCache(s.BillingCache, s.AuthCache)
+	var outstandingHold float64
+	if apiKey.Quota > 0 || apiKey.HasRateLimits() {
+		outstandingHold = s.outstandingAPIKeyHoldAmount(ctx, owner)
+	}
+	projectedAmount := outstandingHold + holdAmount
+	if err := billingCache.CheckAPIKeyChargeEligibility(ctx, apiKey, projectedAmount); err != nil {
+		return noopRelease, err
+	}
+	if billingCache != nil && apiKey.Quota > 0 && holdAmount > 0 {
+		effectiveQuota := apiKey.Quota - outstandingHold
+		if effectiveQuota <= 0 {
+			return noopRelease, ErrAPIKeyQuotaExhausted
+		}
+		quotaCheckKey := *apiKey
+		quotaCheckKey.Quota = effectiveQuota
+		res, err := billingCache.ReserveAPIKeyQuotaHold(ctx, &quotaCheckKey, holdAmount)
+		if err != nil {
+			return noopRelease, err
+		}
+		if res != nil {
+			return res.Release, nil
+		}
+	}
+	return noopRelease, nil
 }
 
 func (s *BatchImagePublicService) maxItems() int {

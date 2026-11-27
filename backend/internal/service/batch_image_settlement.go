@@ -55,12 +55,14 @@ func (r *BatchImageModelPricingResolver) BatchImageUnitPrice(ctx context.Context
 }
 
 type BatchImageSettlementService struct {
-	Repo         BatchImageRepository
-	BillingRepo  UsageBillingRepository
-	UsageLogRepo UsageLogRepository
-	Pricing      BatchImagePricingResolver
-	AuthCache    APIKeyAuthCacheInvalidator
-	Config       *config.Config
+	Repo               BatchImageRepository
+	BillingRepo        UsageBillingRepository
+	UsageLogRepo       UsageLogRepository
+	Pricing            BatchImagePricingResolver
+	BillingCache       *BillingCacheService
+	APIKeyQuotaUpdater BatchImageAPIKeyQuotaUpdater
+	AuthCache          APIKeyAuthCacheInvalidator
+	Config             *config.Config
 }
 
 type BatchImageSettlementResult struct {
@@ -149,7 +151,8 @@ func (s *BatchImageSettlementService) Settle(ctx context.Context, batchID string
 		return nil, ErrBatchImageSettlementCostExceedsHold
 	}
 
-	if err := captureBatchImageBalanceHold(ctx, s.BillingRepo, job, actualCost, manifestHash); err != nil {
+	captured, err := captureBatchImageBalanceHold(ctx, s.BillingRepo, job, actualCost, manifestHash)
+	if err != nil {
 		msg := truncateBatchImageMessage(err.Error(), batchImageMaxErrorMessageLength)
 		if failErr := s.recordSettlementFailure(ctx, job, "SETTLEMENT_BILLING_FAILED", msg); failErr != nil {
 			return nil, failErr
@@ -157,6 +160,9 @@ func (s *BatchImageSettlementService) Settle(ctx context.Context, batchID string
 		return nil, err
 	}
 	s.invalidateAuthCache(ctx, job.UserID)
+	if captured && actualCost > 0 && job.APIKeyID != nil && *job.APIKeyID > 0 {
+		s.recordSettledAPIKeyQuotaAndRateLimit(ctx, job.UserID, *job.APIKeyID, actualCost)
+	}
 
 	now := time.Now()
 	outputExpiresAt := now.Add(s.outputRetentionAfterTerminal())
@@ -284,8 +290,43 @@ func (s *BatchImageSettlementService) recordUsageLog(ctx context.Context, job *B
 }
 
 func (s *BatchImageSettlementService) invalidateAuthCache(ctx context.Context, userID int64) {
-	if s != nil && s.AuthCache != nil && userID > 0 {
-		s.AuthCache.InvalidateAuthCacheByUserID(ctx, userID)
+	if s == nil || userID <= 0 {
+		return
+	}
+	invalidateBatchImageUserBalanceAndAuthCache(ctx, s.BillingCache, s.AuthCache, userID)
+}
+
+func (s *BatchImageSettlementService) recordSettledAPIKeyQuotaAndRateLimit(ctx context.Context, userID, apiKeyID int64, actualCost float64) {
+	if s == nil || apiKeyID <= 0 || actualCost <= 0 {
+		return
+	}
+	baseCtx := context.Background()
+	if ctx != nil {
+		baseCtx = context.WithoutCancel(ctx)
+	}
+	updateCtx, cancel := context.WithTimeout(baseCtx, cacheWriteTimeout)
+	defer cancel()
+	if updater := resolveBatchImageAPIKeyQuotaUpdater(s.APIKeyQuotaUpdater, s.AuthCache); updater != nil {
+		if err := updater.UpdateQuotaUsed(updateCtx, apiKeyID, actualCost); err != nil {
+			logger.L().Warn("batch_image.settlement_api_key_quota_update_failed",
+				zap.Int64("user_id", userID),
+				zap.Int64("api_key_id", apiKeyID),
+				zap.Float64("actual_cost", actualCost),
+				zap.Error(err),
+			)
+		}
+		if err := updater.UpdateRateLimitUsage(updateCtx, apiKeyID, actualCost); err != nil {
+			logger.L().Warn("batch_image.settlement_api_key_rate_limit_update_failed",
+				zap.Int64("user_id", userID),
+				zap.Int64("api_key_id", apiKeyID),
+				zap.Float64("actual_cost", actualCost),
+				zap.Error(err),
+			)
+		}
+	}
+	if bc := resolveBatchImageBillingCache(s.BillingCache, s.AuthCache); bc != nil {
+		bc.IncrementAPIKeyQuotaUsage(apiKeyID, actualCost)
+		bc.QueueUpdateAPIKeyRateLimitUsage(apiKeyID, actualCost)
 	}
 }
 

@@ -78,6 +78,30 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		return
 	}
 
+	if h.concurrencyHelper != nil {
+		userID, userConcurrency := resolveConcurrencyUserSubject(c, apiKey)
+		if userID > 0 {
+			var streamStarted bool
+			userRelease, slotErr := h.concurrencyHelper.AcquireUserSlotWithWait(c, userID, userConcurrency, false, &streamStarted)
+			if slotErr != nil {
+				h.handleConcurrencyError(c, slotErr, "user", false)
+				return
+			}
+			if userRelease != nil {
+				defer userRelease()
+			}
+		} else {
+			keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+			if keyErr != nil {
+				h.handleConcurrencyError(c, keyErr, "API key", false)
+				return
+			}
+			if keyRelease != nil {
+				defer keyRelease()
+			}
+		}
+	}
+
 	// Billing eligibility (same as other requests)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {

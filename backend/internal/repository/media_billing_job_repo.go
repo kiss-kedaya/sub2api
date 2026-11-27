@@ -687,6 +687,39 @@ func (r *usageBillingRepository) ReconcileMediaBillingJob(ctx context.Context, i
 	return nil
 }
 
+// AbandonMediaBillingJob transitions an unbilled poison-pill settlement job from
+// "ready" to "failed" without refunding its hold (upstream work already ran).
+// Already-billed, completed, or failed jobs are left untouched.
+func (r *usageBillingRepository) AbandonMediaBillingJob(ctx context.Context, id string) error {
+	if err := r.validateMediaBillingRepository(); err != nil {
+		return err
+	}
+	id = strings.TrimSpace(id)
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE media_billing_jobs
+		SET status = $2, updated_at = NOW()
+		WHERE id = $1 AND status = $3
+	`, id, service.MediaBillingFailed, service.MediaBillingReady)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 1 {
+		return nil
+	}
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM media_billing_jobs WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return service.ErrMediaBillingJobNotFound
+	}
+	return nil
+}
+
 func (r *usageBillingRepository) CompleteMediaBillingJob(ctx context.Context, id string) error {
 	if err := r.validateMediaBillingRepository(); err != nil {
 		return err

@@ -241,9 +241,41 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			return
 		}
 
+		// Pre-check estimated input + TTL storage cost before creating an upstream
+		// cache so low-balance / exhausted-quota callers cannot create expensive
+		// upstream caches and drive balances negative.
+		estimatedTokens := estimateGeminiCachedContentInputTokens(body)
+		estimatedStorageTokenHours := service.GeminiCachedContentStorageTokenHours(int64(estimatedTokens), ttl)
+		estimatedAmount := h.gatewayService.QuoteUsageCost(c.Request.Context(), &service.RecordUsageInput{
+			Result: &service.ForwardResult{
+				Model:                  modelName,
+				UpstreamModel:          mappedModel,
+				Usage:                  service.ClaudeUsage{InputTokens: estimatedTokens},
+				CacheStorageTokenHours: estimatedStorageTokenHours,
+			},
+			APIKey:             apiKey,
+			User:               apiKey.User,
+			Subscription:       subscription,
+			PricingAt:          pricingAt,
+			ChannelUsageFields: usageFields,
+		})
+		inflightRelease()
+		precheckDone, precheckErr := h.reserveGeminiCachedContentCharge(c, apiKey, subscription, estimatedAmount)
+		if precheckErr != nil {
+			accountReleaseFunc()
+			reqLog.Info("gemini.cached_content.precheck_charge_rejected",
+				zap.Int("estimated_tokens", estimatedTokens),
+				zap.Float64("estimated_amount", estimatedAmount),
+				zap.Error(precheckErr),
+			)
+			writeGeminiCachedContentBillingError(c, precheckErr)
+			return
+		}
+
 		upstream, err := svc.CreateUpstream(c.Request.Context(), account, req, mappedModel, publicID, ttl)
 		accountReleaseFunc()
 		if err != nil {
+			precheckDone()
 			var upErr *service.GeminiCachedContentUpstreamError
 			if errors.As(err, &upErr) {
 				reqLog.Info("gemini.cached_content.upstream_create_failed", zap.Int64("account_id", account.ID), zap.Int("status", upErr.StatusCode))
@@ -284,7 +316,7 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			},
 			APIKey: apiKey, User: apiKey.User, Subscription: subscription, PricingAt: pricingAt, ChannelUsageFields: usageFields,
 		})
-		inflightRelease()
+		precheckDone()
 		chargeDone, err := h.reserveGeminiCachedContentCharge(c, apiKey, subscription, amount)
 		if err != nil {
 			reqLog.Info("gemini.cached_content.storage_charge_rejected", zap.Float64("amount", amount), zap.Error(err))
@@ -803,6 +835,16 @@ func (h *GatewayHandler) cleanupGeminiCachedContentUpstream(reqLog *zap.Logger, 
 	if err := h.geminiCachedContentService.DeleteUpstream(ctx, account, &service.GeminiCachedContent{UpstreamName: upstreamName}); err != nil {
 		reqLog.Error("gemini.cached_content.orphan_cleanup_failed", zap.Int64("account_id", account.ID), zap.String("upstream_name", upstreamName), zap.Error(err))
 	}
+}
+
+// estimateGeminiCachedContentInputTokens estimates input tokens from raw request
+// payload size (~4 bytes/token, minimum 1) for pre-CreateUpstream affordability checks.
+func estimateGeminiCachedContentInputTokens(body []byte) int {
+	tokens := len(body) / 4
+	if tokens < 1 {
+		return 1
+	}
+	return tokens
 }
 
 // reserveGeminiCachedContentCharge 校验余额 / 订阅额度 / API Key 额度足以支付确定金额 amount（倍率后），

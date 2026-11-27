@@ -572,7 +572,7 @@ func (r *apiKeyRouteIterator) next() (apiKeyRouteCandidate, bool) {
 		}
 		candidate := r.candidates[r.nextCandidate]
 		r.nextCandidate++
-		if !candidate.key.Group.CustomModelsListEnabled() {
+		if strings.TrimSpace(r.requestedModel) != "" && !candidate.key.Group.CustomModelsListEnabled() {
 			// 透传账号（OpenAI / Anthropic auto-passthrough）只替换认证、可服务任意
 			// 模型，它的账号映射目录天然不完整：不能按「目录没有该模型」把整组跳过。
 			if !candidate.catalog.passthrough && candidate.presence == groupCatalogModelUnknown {

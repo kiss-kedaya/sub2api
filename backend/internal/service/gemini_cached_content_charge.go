@@ -66,6 +66,14 @@ func (s *GatewayService) PrepareCachedContentCharge(ctx context.Context, input *
 	return capture.intent, nil
 }
 
+// SetAuthCacheInvalidator wires the API key auth cache invalidator so cached
+// content settlements can immediately evict keys whose USD quota becomes exhausted.
+func (s *GatewayService) SetAuthCacheInvalidator(inv APIKeyAuthCacheInvalidator) {
+	if s != nil {
+		s.authCacheInvalidator = inv
+	}
+}
+
 // ApplyCachedContentCharge replays only frozen, credential-free ledger data.
 // A ledger commit followed by a process crash is safe: Apply's durable dedup key
 // and UsageLogRepository's unique request key make recovery idempotent.
@@ -103,6 +111,14 @@ func (s *GatewayService) ApplyCachedContentCharge(ctx context.Context, intent *M
 		}
 		if result != nil && result.Applied && cmd.APIKeyRateLimitCost > 0 {
 			s.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(cmd.APIKeyID, cmd.APIKeyRateLimitCost)
+		}
+	}
+	if result != nil && result.Applied {
+		if s.billingCacheService != nil && cmd.APIKeyQuotaCost > 0 {
+			s.billingCacheService.IncrementAPIKeyQuotaUsage(cmd.APIKeyID, cmd.APIKeyQuotaCost)
+		}
+		if result.APIKeyQuotaExhausted {
+			invalidateExhaustedAPIKeyAuthCache(ctx, s.authCacheInvalidator, cmd.UserID, cmd.APIKeyID)
 		}
 	}
 	if result != nil && result.Applied && s.billingCacheService != nil && s.deferredService != nil {

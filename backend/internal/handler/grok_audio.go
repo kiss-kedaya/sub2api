@@ -19,6 +19,25 @@ import (
 	"go.uber.org/zap"
 )
 
+func resolveConcurrencyUserSubject(c *gin.Context, apiKey *service.APIKey) (userID int64, concurrency int) {
+	if subject, ok := middleware2.GetAuthSubjectFromContext(c); ok {
+		userID = subject.UserID
+		concurrency = subject.Concurrency
+	}
+	if apiKey != nil {
+		if userID <= 0 {
+			userID = apiKey.UserID
+		}
+		if userID <= 0 && apiKey.User != nil {
+			userID = apiKey.User.ID
+		}
+		if concurrency <= 0 && apiKey.User != nil {
+			concurrency = apiKey.User.Concurrency
+		}
+	}
+	return userID, concurrency
+}
+
 // GrokRealtime exposes xAI's native Voice Realtime WebSocket.
 // Only Grok-platform API keys may use this endpoint.
 func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
@@ -32,16 +51,29 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Realtime API is not supported for this platform")
 		return
 	}
-	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
-	if keyErr != nil {
-		h.handleConcurrencyError(c, keyErr, "API key", false)
+	reqLog := requestLogger(c, "handler.openai_gateway.grok_realtime")
+	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
 	}
-	if keyRelease != nil {
-		defer keyRelease()
-	}
-	if !h.ensureResponsesDependencies(c, nil) {
-		return
+	userID, userConcurrency := resolveConcurrencyUserSubject(c, apiKey)
+	if userID > 0 {
+		var streamStarted bool
+		userRelease, acquired := h.acquireResponsesUserSlot(c, userID, userConcurrency, false, &streamStarted, reqLog)
+		if !acquired {
+			return
+		}
+		if userRelease != nil {
+			defer userRelease()
+		}
+	} else {
+		keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+		if keyErr != nil {
+			h.handleConcurrencyError(c, keyErr, "API key", false)
+			return
+		}
+		if keyRelease != nil {
+			defer keyRelease()
+		}
 	}
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
@@ -53,7 +85,6 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		return
 	}
 
-	reqLog := requestLogger(c, "handler.openai_gateway.grok_realtime")
 	model := c.Query("model")
 	if strings.TrimSpace(model) == "" {
 		model = "grok-voice-latest"
@@ -162,16 +193,15 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	defer func() { _ = conn.CloseNow() }()
 
 	started := time.Now()
-	audioObserved, proxyErr := h.gatewayService.ProxyGrokRealtimeConn(c.Request.Context(), c, conn, upstream, model)
+	billableObserved, proxyErr := h.gatewayService.ProxyGrokRealtimeConn(c.Request.Context(), c, conn, upstream, model)
 	elapsed := time.Since(started)
 	if proxyErr != nil {
 		reqLog.Info("grok_realtime.proxy_failed", zap.Error(proxyErr))
 		if !isExpectedGrokRealtimeClose(proxyErr) {
 			_ = conn.Close(coderws.StatusInternalError, "upstream realtime websocket failed")
-			return
 		}
 	}
-	if result := grokRealtimeBillingResult(model, elapsed, audioObserved); result != nil {
+	if result := grokRealtimeBillingResult(model, elapsed, billableObserved); result != nil {
 		h.recordGrokVoiceUsage(c, apiKey, selection.Account, subscription, "realtime", nil, result)
 	}
 }
@@ -209,16 +239,29 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Voice API is not supported for this platform")
 		return
 	}
-	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
-	if keyErr != nil {
-		h.handleConcurrencyError(c, keyErr, "API key", false)
+	reqLog := requestLogger(c, "handler.openai_gateway.grok_voice", zap.String("endpoint", endpoint))
+	if !h.ensureResponsesDependencies(c, reqLog) {
 		return
 	}
-	if keyRelease != nil {
-		defer keyRelease()
-	}
-	if !h.ensureResponsesDependencies(c, nil) {
-		return
+	userID, userConcurrency := resolveConcurrencyUserSubject(c, apiKey)
+	if userID > 0 {
+		var streamStarted bool
+		userRelease, acquired := h.acquireResponsesUserSlot(c, userID, userConcurrency, false, &streamStarted, reqLog)
+		if !acquired {
+			return
+		}
+		if userRelease != nil {
+			defer userRelease()
+		}
+	} else {
+		keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
+		if keyErr != nil {
+			h.handleConcurrencyError(c, keyErr, "API key", false)
+			return
+		}
+		if keyRelease != nil {
+			defer keyRelease()
+		}
 	}
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
@@ -237,7 +280,6 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	}
 	if endpoint == "tts" {
 		subject, _ := middleware2.GetAuthSubjectFromContext(c)
-		reqLog := requestLogger(c, "handler.openai_gateway.grok_voice", zap.String("endpoint", endpoint))
 		// TTS bodies use {"input":"..."} (and variants). Normalize to chat messages so
 		// content moderation extractors see the spoken text.
 		auditBody := body
@@ -274,7 +316,6 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	var last *service.UpstreamFailoverError
 	profitVetoCount := 0
 	accountSlotBusySeen := false
-	reqLog := requestLogger(c, "handler.openai_gateway.grok_voice", zap.String("endpoint", endpoint))
 	selectionModel := "grok-4.5"
 
 	for attempts := 0; attempts < 4; attempts++ {

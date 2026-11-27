@@ -163,6 +163,19 @@ func (r *mediaJobMemoryRepo) ReconcileMediaBillingJob(_ context.Context, id stri
 	return nil
 }
 
+func (r *mediaJobMemoryRepo) AbandonMediaBillingJob(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job := r.jobs[id]
+	if job == nil {
+		return ErrMediaBillingJobNotFound
+	}
+	if job.Status == MediaBillingReady {
+		job.Status = MediaBillingFailed
+	}
+	return nil
+}
+
 type mediaUsageMemoryRepo struct {
 	UsageLogRepository
 	mu   sync.Mutex

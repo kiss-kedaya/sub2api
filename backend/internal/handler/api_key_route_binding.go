@@ -110,6 +110,18 @@ func bindSelectedKeyRoute(c *gin.Context, gateway keyRouteBillingProvider, billi
 		}
 		groups[*selected.GroupID] = struct{}{}
 	}
+	var inflightRollback func()
+	if changed {
+		if billingSvc, ok := billing.(*service.BillingCacheService); ok && billingSvc != nil {
+			if estimator, ok := gateway.(inflightReservationEstimator); ok && estimator != nil {
+				var adjustErr error
+				ctx, inflightRollback, adjustErr = adjustInflightReservationForKeyRoute(ctx, c, billingSvc, estimator, selected, subscription)
+				if adjustErr != nil {
+					return adjustErr
+				}
+			}
+		}
+	}
 	var mapping service.ChannelMappingResult
 	if binding.Mapping != nil {
 		mapping, _ = gateway.ResolveChannelMappingAndRestrict(ctx, selected.GroupID, binding.Model)
@@ -132,6 +144,9 @@ func bindSelectedKeyRoute(c *gin.Context, gateway keyRouteBillingProvider, billi
 				guard, err = preauthorizePerRequestGatewayRequest(ctx, preauthorizer, gateway, selected, subscription, body, model, binding.PricingAt, *binding.PerRequest)
 			}
 			if err != nil {
+				if inflightRollback != nil {
+					inflightRollback()
+				}
 				return err
 			}
 			*binding.Guard = guard
@@ -152,6 +167,9 @@ func bindSelectedKeyRoute(c *gin.Context, gateway keyRouteBillingProvider, billi
 				request.PerRequestEstimate = *binding.PerRequest
 			}
 			if err := (*binding.Guard).RepriceForRoute(ctx, request); err != nil {
+				if inflightRollback != nil {
+					inflightRollback()
+				}
 				return err
 			}
 		}
@@ -168,6 +186,9 @@ func bindSelectedKeyRoute(c *gin.Context, gateway keyRouteBillingProvider, billi
 	c.Set(string(middleware.ContextKeyAPIKey), selected)
 	c.Set(string(middleware.ContextKeySubscription), subscription)
 	c.Request = c.Request.WithContext(ctx)
+	if service.InflightReservationFromContext(ctx) != nil {
+		c.Set(service.UsageInflightRequestContextKey, ctx)
+	}
 	return nil
 }
 

@@ -60,6 +60,7 @@ type MediaBillingJobRepository interface {
 	ApplyMediaBillingJob(context.Context, string) (*UsageBillingApplyResult, error)
 	FailMediaBillingJob(context.Context, string) (*UsageBillingApplyResult, error)
 	ReconcileMediaBillingJob(context.Context, string) error
+	AbandonMediaBillingJob(context.Context, string) error
 	CompleteMediaBillingJob(context.Context, string) error
 	ListMediaBillingJobs(context.Context, int) ([]*MediaBillingJob, error)
 	RetryMediaBillingJob(context.Context, string, time.Duration) error

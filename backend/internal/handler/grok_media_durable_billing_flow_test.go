@@ -220,6 +220,19 @@ func (r *durableMediaHandlerRepo) ReconcileMediaBillingJob(_ context.Context, id
 	return nil
 }
 
+func (r *durableMediaHandlerRepo) AbandonMediaBillingJob(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job := r.jobs[id]
+	if job == nil {
+		return service.ErrMediaBillingJobNotFound
+	}
+	if job.Status == service.MediaBillingReady {
+		job.Status = service.MediaBillingFailed
+	}
+	return nil
+}
+
 func (r *durableMediaHandlerRepo) snapshotByTask(taskID string) (*service.MediaBillingJob, float64, int, int, int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

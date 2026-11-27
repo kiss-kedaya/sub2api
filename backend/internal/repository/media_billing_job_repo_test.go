@@ -516,3 +516,39 @@ func TestRetryMediaBillingJob_DoesNotReopenReconciliation(t *testing.T) {
 	require.ErrorIs(t, repo.RetryMediaBillingJob(context.Background(), "reconciled-video", time.Minute), service.ErrUsageBillingRequestConflict)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestAbandonMediaBillingJob_TransitionsReadyToFailedWithoutRefunding(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs\s+SET status = \$2, updated_at = NOW\(\)\s+WHERE id = \$1 AND status = \$3`).
+		WithArgs("poison-ready-job", service.MediaBillingFailed, service.MediaBillingReady).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	require.NoError(t, repo.AbandonMediaBillingJob(context.Background(), " poison-ready-job "))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAbandonMediaBillingJob_AlreadyBilledOrDoneIsIdempotentNoop(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs\s+SET status = \$2, updated_at = NOW\(\)\s+WHERE id = \$1 AND status = \$3`).
+		WithArgs("already-billed-job", service.MediaBillingFailed, service.MediaBillingReady).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM media_billing_jobs WHERE id = \$1\)`).
+		WithArgs("already-billed-job").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	require.NoError(t, repo.AbandonMediaBillingJob(context.Background(), "already-billed-job"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAbandonMediaBillingJob_MissingJobReturnsNotFound(t *testing.T) {
+	repo, mock := newMediaBillingSQLMock(t)
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs\s+SET status = \$2, updated_at = NOW\(\)\s+WHERE id = \$1 AND status = \$3`).
+		WithArgs("missing-poison-job", service.MediaBillingFailed, service.MediaBillingReady).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM media_billing_jobs WHERE id = \$1\)`).
+		WithArgs("missing-poison-job").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	require.ErrorIs(t, repo.AbandonMediaBillingJob(context.Background(), "missing-poison-job"), service.ErrMediaBillingJobNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
