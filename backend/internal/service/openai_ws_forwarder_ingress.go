@@ -201,7 +201,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		imageInputSize           string
 		payloadBytes             int
 	}
+	initialTurn := 1
+	if hooks != nil && hooks.InitialTurnNumber > 1 {
+		initialTurn = hooks.InitialTurnNumber
+	}
 	ingressSessionOriginalModel := ""
+	if initialTurn > 1 && hooks != nil {
+		ingressSessionOriginalModel = strings.TrimSpace(hooks.InitialRequestModel)
+	}
 
 	applyPayloadMutation := func(current []byte, path string, value any) ([]byte, error) {
 		next, err := sjson.SetBytes(current, path, value)
@@ -515,7 +522,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		return payload, nil
 	}
 
-	firstPayload, err := parseClientPayload(1, firstClientMessage)
+	firstPayload, err := parseClientPayload(initialTurn, firstClientMessage)
 	if err != nil {
 		return err
 	}
@@ -576,7 +583,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		bridgeReplayInputExists := false
 		var bridgeAccountFailoverInput []json.RawMessage
 		bridgeAccountFailoverInputExists := false
-		for turn := 1; ; turn++ {
+		for turn := initialTurn; ; turn++ {
 			if turn > 1 && hooks != nil && hooks.BeforeRequest != nil {
 				if next, err := hooks.BeforeRequest(turn, currentBridgePayload.payloadRaw, currentBridgePayload.originalModel); err != nil {
 					return err
@@ -1406,7 +1413,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 	defer releaseSessionLease()
 
-	turn := 1
+	turn := initialTurn
 	rejectedFieldRetryState = newOpenAIResponsesRejectedFieldRetryState(currentPayload)
 	turnRetry := 0
 	turnRetryStartedAt := time.Time{}

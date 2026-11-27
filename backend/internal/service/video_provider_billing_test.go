@@ -21,7 +21,7 @@ func TestSeedanceDurableBillingSurvivesRestartAndNoClientPoll(t *testing.T) {
 	ctx := context.Background()
 	job, err := svc.CreateGrokVideoBillingJob(ctx, input, pending)
 	require.NoError(t, err)
-	require.Zero(t, job.ReservedAmount, "unknown token usage must not be guessed from video duration")
+	require.Greater(t, job.ReservedAmount, 0.0, "token-billed video must reserve a conservative non-zero hold before upstream submission")
 	require.NoError(t, svc.SubmitGrokVideoBillingJob(ctx, job, SeedanceTaskKey("background"), pending))
 	account := seedanceTestAccount()
 	account.ID = input.Account.ID

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -170,7 +171,11 @@ func (s *OpenAIGatewayService) OpenGrokRealtime(ctx context.Context, account *Ac
 	if err != nil {
 		return nil, err
 	}
-	u.Scheme = "wss"
+	if u.Scheme == "http" && s.cfg != nil && s.cfg.Security.URLAllowlist.AllowInsecureHTTP {
+		u.Scheme = "ws"
+	} else {
+		u.Scheme = "wss"
+	}
 	q := u.Query()
 	q.Set("model", firstNonEmpty(model, "grok-voice-latest"))
 	u.RawQuery = q.Encode()
@@ -225,7 +230,7 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 				errCh <- readErr
 				return
 			}
-			if grokRealtimeEventHasAudio(msg) {
+			if grokRealtimeUpstreamEventIsBillable(msg) {
 				audioObserved.Store(true)
 			}
 			if returnRequestedModel {
@@ -300,7 +305,11 @@ func (s *OpenAIGatewayService) ProbeGrokRealtime(ctx context.Context, account *A
 	if err != nil {
 		return err
 	}
-	u.Scheme = "wss"
+	if u.Scheme == "http" && s.cfg != nil && s.cfg.Security.URLAllowlist.AllowInsecureHTTP {
+		u.Scheme = "ws"
+	} else {
+		u.Scheme = "wss"
+	}
 	q := u.Query()
 	q.Set("model", firstNonEmpty(model, "grok-voice-latest"))
 	u.RawQuery = q.Encode()
@@ -345,6 +354,69 @@ func grokRealtimeEventHasAudio(msg []byte) bool {
 	}
 	return false
 }
+
+// grokRealtimeUpstreamEventIsBillable reports whether an upstream realtime event
+// proves the session produced billable assistant output (audio, transcript,
+// text-only modalities:["text"], tool call arguments, or completed response output).
+func grokRealtimeUpstreamEventIsBillable(msg []byte) bool {
+	if grokRealtimeEventHasAudio(msg) {
+		return true
+	}
+	if !gjson.ValidBytes(msg) {
+		return false
+	}
+	hasNonEmptyString := func(paths ...string) bool {
+		for _, path := range paths {
+			v := gjson.GetBytes(msg, path)
+			if v.Type == gjson.String && strings.TrimSpace(v.String()) != "" {
+				return true
+			}
+		}
+		return false
+	}
+	eventType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(msg, "type").String()))
+	switch eventType {
+	case "response.audio_transcript.delta", "response.audio_transcript.done",
+		"response.output_audio_transcript.delta", "response.output_audio_transcript.done":
+		return hasNonEmptyString("delta", "transcript")
+	case "response.text.delta", "response.text.done",
+		"response.output_text.delta", "response.output_text.done":
+		return hasNonEmptyString("delta", "text")
+	case "response.function_call_arguments.delta", "response.function_call_arguments.done":
+		return hasNonEmptyString("delta", "arguments")
+	case "conversation.item.input_audio_transcription.completed":
+		return hasNonEmptyString("transcript")
+	case "response.content_part.done":
+		return hasNonEmptyString("part.text", "part.transcript", "part.audio")
+	case "response.output_item.done":
+		itemType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(msg, "item.type").String()))
+		itemRole := strings.ToLower(strings.TrimSpace(gjson.GetBytes(msg, "item.role").String()))
+		if itemType == "function_call" && hasNonEmptyString("item.arguments", "item.name") {
+			return true
+		}
+		if itemRole == "assistant" {
+			if content := gjson.GetBytes(msg, "item.content"); content.IsArray() && len(content.Array()) > 0 {
+				return true
+			}
+		}
+		return false
+	case "response.done":
+		if output := gjson.GetBytes(msg, "response.output"); output.IsArray() && len(output.Array()) > 0 {
+			return true
+		}
+		if outTokens := gjson.GetBytes(msg, "response.usage.output_tokens"); outTokens.Type == gjson.Number && outTokens.Float() > 0 {
+			return true
+		}
+		if totalTokens := gjson.GetBytes(msg, "response.usage.total_tokens"); totalTokens.Type == gjson.Number && totalTokens.Float() > 0 {
+			return true
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+const maxGrokSTTFallbackSeconds = 24 * 3600.0
 
 // GrokTTSText returns the text xAI actually synthesizes from a native /tts
 // JSON body. xAI reads the top-level "text" field; "input" and "prompt" are
@@ -406,23 +478,20 @@ func estimateGrokVoiceAudioUsage(endpoint string, reqBody []byte, contentType st
 			}
 		}
 		if secs <= 0 {
-			secs = elapsed.Seconds()
-		}
-		if secs <= 0 {
-			secs = clientSecs
-		}
-		if secs <= 0 {
-			secs = sizeFloor
-		}
-		// Cap untrusted client under-report: if client duration is much smaller than
-		// size/elapsed floors, bill the larger of floors (anti underbill).
-		if clientSecs > 0 && secs == clientSecs {
-			floor := sizeFloor
-			if elapsed.Seconds() > floor {
-				floor = elapsed.Seconds()
+			// When upstream omits audio duration, use the largest positive fallback
+			// among body-size floor, wall-clock elapsed time, and client-reported duration
+			// (clamped) so a short wall-clock elapsed duration never masks sizeFloor.
+			if sizeFloor > secs {
+				secs = sizeFloor
 			}
-			if floor > 0 && clientSecs < floor*0.5 {
-				secs = floor
+			if elapsedSecs := elapsed.Seconds(); elapsedSecs > secs && !math.IsNaN(elapsedSecs) && !math.IsInf(elapsedSecs, 0) {
+				secs = elapsedSecs
+			}
+			if clientSecs > secs && !math.IsNaN(clientSecs) && !math.IsInf(clientSecs, 0) {
+				secs = clientSecs
+			}
+			if secs > maxGrokSTTFallbackSeconds {
+				secs = maxGrokSTTFallbackSeconds
 			}
 		}
 		if secs <= 0 {

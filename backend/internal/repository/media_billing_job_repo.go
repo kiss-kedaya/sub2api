@@ -427,7 +427,7 @@ func (r *usageBillingRepository) PrepareMediaBillingIntent(ctx context.Context, 
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE media_billing_jobs
-		SET intent = $2, status = $3, available_at = NOW(), updated_at = NOW()
+		SET intent = $2, status = $3, attempts = 0, available_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND intent IS NULL
 	`, job.ID, []byte(intentJSON), service.MediaBillingReady); err != nil {
 		return nil, err
@@ -685,6 +685,47 @@ func (r *usageBillingRepository) ReconcileMediaBillingJob(ctx context.Context, i
 		return service.ErrMediaBillingJobNotFound
 	}
 	return nil
+}
+
+// AbandonMediaBillingJob quarantines an unbilled poison-pill settlement job by
+// keeping status = "ready" (satisfying migration 262's CHECK constraint
+// `status <> 'reconciliation' OR (kind = 'grok_video' AND intent IS NULL)`,
+// preserving its frozen intent, frozen_balance hold, and subscription accounting,
+// and allowing immediate settlement once the user tops up) while pushing
+// available_at out by 24h so it leaves the 60s worker hot-loop via the partial
+// index on (available_at, created_at) WHERE status IN ('submitted','ready','billed').
+// Returns (true, nil) only when this call quarantined a "ready" row; already
+// billed/done/failed rows return (false, nil).
+func (r *usageBillingRepository) AbandonMediaBillingJob(ctx context.Context, id string) (bool, error) {
+	if err := r.validateMediaBillingRepository(); err != nil {
+		return false, err
+	}
+	id = strings.TrimSpace(id)
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE media_billing_jobs
+		SET attempts = attempts + 1,
+			available_at = NOW() + INTERVAL '24 hours',
+			updated_at = NOW()
+		WHERE id = $1 AND status = $2 AND intent IS NOT NULL
+	`, id, service.MediaBillingReady)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if affected == 1 {
+		return true, nil
+	}
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM media_billing_jobs WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, service.ErrMediaBillingJobNotFound
+	}
+	return false, nil
 }
 
 func (r *usageBillingRepository) CompleteMediaBillingJob(ctx context.Context, id string) error {

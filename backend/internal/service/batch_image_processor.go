@@ -52,6 +52,7 @@ type BatchImageProviderProcessor struct {
 	AccountResolver  BatchImageAccountResolver
 	Indexer          *BatchImageResultIndexer
 	BillingRepo      UsageBillingRepository
+	BillingCache     *BillingCacheService
 	AuthCache        APIKeyAuthCacheInvalidator
 	DefaultRequeue   time.Duration
 }
@@ -238,9 +239,7 @@ func (p *BatchImageProviderProcessor) releaseTerminalHold(ctx context.Context, j
 	if err := releaseBatchImageBalanceHold(ctx, p.BillingRepo, job, batchImageDerefString(job.RequestHash)); err != nil {
 		return err
 	}
-	if p.AuthCache != nil && job.UserID > 0 {
-		p.AuthCache.InvalidateAuthCacheByUserID(ctx, job.UserID)
-	}
+	invalidateBatchImageUserBalanceAndAuthCache(ctx, p.BillingCache, p.AuthCache, job.UserID)
 	return nil
 }
 

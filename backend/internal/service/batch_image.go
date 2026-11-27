@@ -309,6 +309,7 @@ type BatchImageRepository interface {
 	GetBatchImageJobByBatchIDForOwner(ctx context.Context, userID, apiKeyID int64, batchID string) (*BatchImageJob, error)
 	GetBatchImageJobByID(ctx context.Context, id int64) (*BatchImageJob, error)
 	ListBatchImageJobsForOwner(ctx context.Context, userID, apiKeyID int64, filter BatchImageJobFilter) ([]*BatchImageJob, error)
+	SumOutstandingHoldByAPIKey(ctx context.Context, userID, apiKeyID int64) (float64, error)
 	TransitionBatchImageJobStatus(ctx context.Context, batchID, toStatus string, opts BatchImageTransitionOptions) error
 	// TouchBatchImageJobSubmitting 刷新未提交（created/uploading）job 的 updated_at，
 	// 作为慢提交期间的心跳，防止被 stale 恢复扫描误杀。

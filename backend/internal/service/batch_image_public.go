@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -79,6 +80,7 @@ type BatchImageOwner struct {
 	UserID   int64
 	APIKeyID int64
 	GroupID  *int64
+	APIKey   *APIKey
 }
 
 type BatchImagePublicService struct {
@@ -90,6 +92,7 @@ type BatchImagePublicService struct {
 	ProviderRegistry  *BatchImageProviderRegistry
 	Pricing           BatchImagePricingResolver
 	BillingRepo       UsageBillingRepository
+	BillingCache      *BillingCacheService
 	AuthCache         APIKeyAuthCacheInvalidator
 	Config            *config.Config
 }
@@ -192,12 +195,26 @@ func NewBatchImagePublicService(repo BatchImageRepository, accountRepo AccountRe
 		ProviderRegistry:  NewBatchImageProviderRegistryFromConfig(cfg),
 		Pricing:           pricing,
 		BillingRepo:       billingRepo,
+		BillingCache:      resolveBatchImageBillingCache(nil, authCache),
 		AuthCache:         authCache,
 		Config:            cfg,
 	}
 }
 
 func (s *BatchImagePublicService) Submit(ctx context.Context, owner BatchImageOwner, req BatchImageSubmitRequest, idempotencyKey string) (*BatchImagePublicBatch, error) {
+	return s.SubmitWithPreCreateCheck(ctx, owner, req, idempotencyKey, nil)
+}
+
+// SubmitWithPreCreateCheck runs idempotency lookup BEFORE preCreateCheck so an
+// identical retry for an already-created batch returns the existing batch
+// instead of being falsely rejected by balance/quota/RPM eligibility gates.
+func (s *BatchImagePublicService) SubmitWithPreCreateCheck(
+	ctx context.Context,
+	owner BatchImageOwner,
+	req BatchImageSubmitRequest,
+	idempotencyKey string,
+	preCreateCheck func(context.Context) error,
+) (*BatchImagePublicBatch, error) {
 	if !s.enabled() {
 		return nil, ErrBatchImageDisabled
 	}
@@ -230,6 +247,11 @@ func (s *BatchImagePublicService) Submit(ctx context.Context, owner BatchImageOw
 			return nil, err
 		}
 	}
+	if preCreateCheck != nil {
+		if err := preCreateCheck(ctx); err != nil {
+			return nil, err
+		}
+	}
 
 	provider, account, err := s.selectProviderAndAccount(ctx, owner, normalized.Provider, normalized.Model)
 	if err != nil {
@@ -239,6 +261,15 @@ func (s *BatchImagePublicService) Submit(ctx context.Context, owner BatchImageOw
 	if err != nil {
 		return nil, err
 	}
+	quotaHoldRelease, err := s.enforceSubmitAPIKeyQuotaAndRateLimits(ctx, owner, pricingSnapshot.HoldAmount)
+	if err != nil {
+		return nil, err
+	}
+	var releaseQuotaHoldOnce sync.Once
+	releaseQuotaHold := func() {
+		releaseQuotaHoldOnce.Do(quotaHoldRelease)
+	}
+	defer releaseQuotaHold()
 	parentBatchID := batchImageOptionalStringPtr(normalized.ParentBatchID)
 	if parentBatchID != nil {
 		parent, parentErr := s.Repo.GetBatchImageJobByBatchIDForOwner(ctx, owner.UserID, owner.APIKeyID, *parentBatchID)
@@ -287,6 +318,11 @@ func (s *BatchImagePublicService) Submit(ctx context.Context, owner BatchImageOw
 	if err != nil {
 		return nil, err
 	}
+	// The durable batch row (status='created', hold_amount=holdAmount) is now
+	// visible to SumOutstandingHoldByAPIKey; release the temporary Redis quota
+	// hold immediately so concurrent submissions do not double-count this batch
+	// during multi-minute upstream uploads/provider.Submit.
+	releaseQuotaHold()
 	if err := reserveBatchImageBalanceHold(ctx, s.BillingRepo, job, requestHash); err != nil {
 		code := "BILLING_HOLD_FAILED"
 		if errors.Is(err, ErrBatchImageInsufficientBalance) {
@@ -1092,9 +1128,78 @@ func (s *BatchImagePublicService) enabled() bool {
 }
 
 func (s *BatchImagePublicService) invalidateAuthCache(ctx context.Context, userID int64) {
-	if s != nil && s.AuthCache != nil && userID > 0 {
-		s.AuthCache.InvalidateAuthCacheByUserID(ctx, userID)
+	if s == nil || userID <= 0 {
+		return
 	}
+	invalidateBatchImageUserBalanceAndAuthCache(ctx, s.BillingCache, s.AuthCache, userID)
+}
+
+func (s *BatchImagePublicService) outstandingAPIKeyHoldAmount(ctx context.Context, owner BatchImageOwner) (float64, error) {
+	if s == nil || s.Repo == nil || owner.UserID <= 0 || owner.APIKeyID <= 0 {
+		return 0, nil
+	}
+	total, err := s.Repo.SumOutstandingHoldByAPIKey(ctx, owner.UserID, owner.APIKeyID)
+	if err != nil {
+		logger.L().Warn("batch_image.sum_outstanding_holds_failed",
+			zap.Int64("user_id", owner.UserID),
+			zap.Int64("api_key_id", owner.APIKeyID),
+			zap.Error(err),
+		)
+		return 0, ErrBillingServiceUnavailable.WithCause(err)
+	}
+	if total < 0 {
+		return 0, nil
+	}
+	return total, nil
+}
+
+func (s *BatchImagePublicService) enforceSubmitAPIKeyQuotaAndRateLimits(
+	ctx context.Context,
+	owner BatchImageOwner,
+	holdAmount float64,
+) (func(), error) {
+	if owner.APIKey == nil {
+		return noopRelease, nil
+	}
+	apiKey := owner.APIKey
+	if apiKey.IsExpired() {
+		return noopRelease, ErrAPIKeyExpired
+	}
+	if apiKey.IsQuotaExhausted() {
+		return noopRelease, ErrAPIKeyQuotaExhausted
+	}
+	if holdAmount <= 0 {
+		holdAmount = 0
+	}
+	billingCache := resolveBatchImageBillingCache(s.BillingCache, s.AuthCache)
+	var outstandingHold float64
+	if apiKey.Quota > 0 || apiKey.HasRateLimits() {
+		var err error
+		outstandingHold, err = s.outstandingAPIKeyHoldAmount(ctx, owner)
+		if err != nil {
+			return noopRelease, err
+		}
+	}
+	projectedAmount := outstandingHold + holdAmount
+	if err := billingCache.CheckAPIKeyChargeEligibility(ctx, apiKey, projectedAmount); err != nil {
+		return noopRelease, err
+	}
+	if billingCache != nil && apiKey.Quota > 0 && holdAmount > 0 {
+		effectiveQuota := apiKey.Quota - outstandingHold
+		if effectiveQuota <= 0 {
+			return noopRelease, ErrAPIKeyQuotaExhausted
+		}
+		quotaCheckKey := *apiKey
+		quotaCheckKey.Quota = effectiveQuota
+		res, err := billingCache.ReserveAPIKeyQuotaHold(ctx, &quotaCheckKey, holdAmount)
+		if err != nil {
+			return noopRelease, err
+		}
+		if res != nil {
+			return res.Release, nil
+		}
+	}
+	return noopRelease, nil
 }
 
 func (s *BatchImagePublicService) maxItems() int {
