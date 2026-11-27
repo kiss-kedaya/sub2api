@@ -117,6 +117,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 		proxyURL = account.Proxy.URL()
 	}
 
+	clientCtx := openAIClientContext(ctx, c)
 	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, clientStream)
 	upstreamReq, _, err := s.buildNativeAnthropicUpstreamRequest(upstreamCtx, c, account, body, apiKey, targetURL)
 	releaseUpstreamCtx()
@@ -124,14 +125,31 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 		return nil, err
 	}
 
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 	if err != nil {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			if errors.Is(err, errOpenAIRequestNotSent) {
+				return nil, clientErr
+			}
+			return newClientGoneOpenAIForwardResult(
+				c, account, body, originalModel, billingModel, upstreamModel, reasoningEffort, clientStream, startTime,
+			), clientErr
+		}
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, true)
+	}
+	if !clientStream || resp.StatusCode >= http.StatusBadRequest {
+		resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr
 		}

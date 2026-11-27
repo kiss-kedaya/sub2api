@@ -163,7 +163,7 @@ func fillIncompleteAnthropicUsage(usage *ClaudeUsage, progress *anthropicStreamP
 	}
 	if usage.InputTokens == 0 && usage.CacheReadInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
 		if total := estimateRequestInputTokens(requestBody); total > 0 {
-			split := splitIncompleteInput(total)
+			split := splitAnthropicIncompleteInput(total)
 			usage.InputTokens = split.Fresh
 			usage.CacheReadInputTokens = split.CacheRead
 			usage.CacheReadEstimated = true
@@ -210,7 +210,7 @@ func logAnthropicIncompleteEstimate(accountID int64, requestID, model string, cl
 		zap.Bool("client_disconnect", clientDisconnect),
 		zap.Int("estimated_output_tokens", outputTokens),
 		zap.Int("estimated_input_tokens", inputTokens),
-		zap.Int("estimated_cache_read_tokens", incompleteCacheReadTokens(inputTokens)),
+		zap.Int("estimated_cache_read_tokens", anthropicIncompleteCacheReadTokens(inputTokens)),
 		zap.Error(cause),
 	).Warn("anthropic_usage.incomplete_stream_estimated")
 }
@@ -450,7 +450,7 @@ func anthropicClientGoneResult(account *Account, requestBody []byte, model, upst
 	if total <= 0 {
 		return nil
 	}
-	split := splitIncompleteInput(total)
+	split := splitAnthropicIncompleteInput(total)
 	result := &ForwardResult{
 		Usage:            ClaudeUsage{InputTokens: split.Fresh, CacheReadInputTokens: split.CacheRead, CacheReadEstimated: true},
 		Model:            model,

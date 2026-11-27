@@ -2,6 +2,7 @@ package service
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,6 +136,7 @@ type antigravityCompatStreamSession struct {
 	adapter        antigravityCompatStreamAdapter
 	writer         *antigravityClientWriter
 	usage          *ClaudeUsage
+	meter          geminiOutputMeter
 	pendingEvents  []apicompat.AnthropicStreamEvent
 	firstTokenMs   *int
 	startTime      time.Time
@@ -157,6 +159,7 @@ func newAntigravityCompatStreamSession(
 }
 
 func (s *antigravityCompatStreamSession) consume(line string) {
+	s.meter.observeSSELine(line)
 	claudeEvents := s.processor.ProcessLine(strings.TrimRight(line, "\r\n"))
 	if len(claudeEvents) == 0 {
 		return
@@ -187,6 +190,7 @@ func (s *antigravityCompatStreamSession) result(clientDisconnect bool) *antigrav
 		usage:            s.usage,
 		firstTokenMs:     s.firstTokenMs,
 		clientDisconnect: clientDisconnect,
+		outputTokens:     s.meter.tokens(),
 	}
 }
 
@@ -298,6 +302,13 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStream(
 		c.Status(http.StatusOK)
 	}
 	session := newAntigravityCompatStreamSession(originalModel, startTime, adapter, writer)
+	defer func() { _ = resp.Body.Close() }()
+	var clientDoneCh <-chan struct{}
+	if c != nil && c.Request != nil && c.Request.Context().Done() != nil {
+		clientDoneCh = c.Request.Context().Done()
+		stopClose := context.AfterFunc(c.Request.Context(), func() { _ = resp.Body.Close() })
+		defer stopClose()
+	}
 	events, stopScanner, maxLineSize := s.startAntigravityCompatScanner(resp.Body)
 	defer stopScanner()
 
@@ -312,10 +323,20 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStream(
 	}
 
 	for {
+		if writer.Disconnected() || geminiClientGone(c) {
+			_ = resp.Body.Close()
+			return session.collectResult(true), nil
+		}
 		select {
+		case <-clientDoneCh:
+			_ = resp.Body.Close()
+			return session.collectResult(true), nil
 		case event, open := <-events:
 			if !open {
-				if !session.hasMeaningfulData() && !writer.Disconnected() {
+				if writer.Disconnected() || geminiClientGone(c) {
+					return session.collectResult(true), nil
+				}
+				if !session.hasMeaningfulData() {
 					return nil, antigravityCompatEmptyStreamError()
 				}
 				return session.finish(), nil
@@ -326,9 +347,14 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStream(
 			resetAntigravityCompatTimer(timeoutTimer, timeout)
 			s.observeAntigravityGeminiSSELine(c, event.line)
 			session.consume(event.line)
+			if writer.Disconnected() {
+				_ = resp.Body.Close()
+				return session.collectResult(true), nil
+			}
 
 		case <-timeoutCh:
-			if writer.Disconnected() {
+			if writer.Disconnected() || geminiClientGone(c) {
+				_ = resp.Body.Close()
 				return session.collectResult(true), nil
 			}
 			if !session.hasMeaningfulData() {
@@ -341,6 +367,10 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStream(
 		case <-keepaliveCh:
 			if session.hasMeaningfulData() && !writer.Disconnected() {
 				writer.Write([]byte(": ping\n\n"))
+				if writer.Disconnected() {
+					_ = resp.Body.Close()
+					return session.collectResult(true), nil
+				}
 			}
 		}
 	}
@@ -429,7 +459,10 @@ func (s *AntigravityGatewayService) handleAntigravityCompatReadError(
 	maxLineSize int,
 	prefix string,
 ) (*antigravityStreamResult, error) {
-	if !session.hasMeaningfulData() && !session.writer.Disconnected() {
+	if session.writer.Disconnected() || geminiClientGone(c) {
+		return session.collectResult(true), nil
+	}
+	if !session.hasMeaningfulData() {
 		return nil, antigravityCompatEmptyStreamError()
 	}
 	if disconnect, handled := handleStreamReadError(err, session.writer.Disconnected(), prefix); handled {

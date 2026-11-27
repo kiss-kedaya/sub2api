@@ -79,7 +79,7 @@ func TestAntigravityForward_ClaudeStreamClientGoneEstimatesMissingUsage(t *testi
 	require.True(t, out.result.ClientDisconnect)
 	total := estimateRequestInputTokens(geminiGoneClaudeBody(true))
 	require.Positive(t, total)
-	split := splitIncompleteInput(total)
+	split := splitGeminiIncompleteInput(total)
 	require.Equal(t, split.Fresh, out.result.Usage.InputTokens)
 	require.Equal(t, split.CacheRead, out.result.Usage.CacheReadInputTokens)
 	require.True(t, out.result.Usage.CacheReadEstimated)

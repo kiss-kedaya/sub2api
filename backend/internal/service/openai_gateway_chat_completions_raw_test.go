@@ -963,7 +963,7 @@ func TestForwardAsRawChatCompletions_ClientDisconnectTruncationStillBills(t *tes
 	require.NotNil(t, result)
 }
 
-// 客户端取消会连带取消上游请求，上游读因此报 context.Canceled：同样不判为上游截断。
+// 客户端在流式读取途中取消，上游读因此报 context.Canceled：不判为上游截断，仍按已产出/估算计费。
 func TestForwardAsRawChatCompletions_ClientCancelTruncationStillBills(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -971,18 +971,21 @@ func TestForwardAsRawChatCompletions_ClientCancelTruncationStillBills(t *testing
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	reqCtx, cancelReq := context.WithCancel(context.Background())
+	defer cancelReq()
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(reqCtx)
 	c.Request.Header.Set("Content-Type", "application/json")
-	cancelReq()
 
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_cancel"}},
-		Body: &openAIChatStreamReadErrorCloser{
-			payload: []byte(`data: {"id":"chatcmpl_cancel","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"ok"}}]}` + "\n\n"),
-			err:     context.Canceled,
+	upstream := &httpUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_cancel"}},
+			Body: &openAIChatStreamReadErrorCloser{
+				payload: []byte(`data: {"id":"chatcmpl_cancel","object":"chat.completion.chunk","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"ok"}}]}` + "\n\n"),
+				err:     context.Canceled,
+				onErr:   cancelReq,
+			},
 		},
-	}}
+	}
 
 	svc := &OpenAIGatewayService{
 		cfg:          rawChatCompletionsTestConfig(),
@@ -992,6 +995,7 @@ func TestForwardAsRawChatCompletions_ClientCancelTruncationStillBills(t *testing
 	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	require.True(t, result.ClientDisconnect)
 }
 
 func TestOpenAIRawStreamTerminalState(t *testing.T) {
@@ -1100,7 +1104,8 @@ func TestForwardAsRawChatCompletions_ClientDisconnectDrainsUsage(t *testing.T) {
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream_options.include_usage").Bool())
 }
 
-func TestForwardAsRawChatCompletions_UpstreamRequestIgnoresClientCancel(t *testing.T) {
+// Stage 1A: 客户端在请求发出前已取消时，不再向上游派发请求、也不计费。
+func TestForwardAsRawChatCompletions_ClientCanceledBeforeDispatchSkipsUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	reqCtx, cancel := context.WithCancel(context.Background())
@@ -1130,10 +1135,9 @@ func TestForwardAsRawChatCompletions_UpstreamRequestIgnoresClientCancel(t *testi
 	account := rawChatCompletionsTestAccount()
 
 	result, err := svc.forwardAsRawChatCompletions(reqCtx, c, account, body, "")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotNil(t, upstream.lastReq)
-	require.NoError(t, upstream.lastReq.Context().Err())
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, result)
+	require.Nil(t, upstream.lastReq, "pre-canceled client must not dispatch upstream")
 }
 
 func TestForwardAsChatCompletions_UnknownResponsesSupportFallbackUsesVersionedChatURL(t *testing.T) {

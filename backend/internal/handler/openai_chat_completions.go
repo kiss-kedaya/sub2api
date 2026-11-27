@@ -511,6 +511,23 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					retainedUsage.retain(openAISettleUsage(result, submitChatUsage))
 					continue
 				}
+				if result != nil && result.ClientDisconnect {
+					reqLog.Info("openai_chat_completions.client_disconnected",
+						zap.Int64("account_id", account.ID),
+						zap.Error(err),
+					)
+					retainedUsage.settle(openAISettleUsage(result, submitChatUsage))
+					failoverClientGone(c)
+					return
+				}
+				if failoverClientGone(c) {
+					reqLog.Info("openai_chat_completions.client_disconnected",
+						zap.Int64("account_id", account.ID),
+						zap.Error(err),
+					)
+					retainedUsage.settle(openAISettleUsage(result, submitChatUsage))
+					return
+				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, nil), false, nil, err)
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false

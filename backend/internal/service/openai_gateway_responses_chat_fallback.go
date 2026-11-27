@@ -129,16 +129,31 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	if err != nil {
 		return nil, err
 	}
+	clientCtx := openAIClientContext(ctx, c)
 	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "")
 	if err != nil {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			if errors.Is(err, errOpenAIRequestNotSent) {
+				return nil, clientErr
+			}
+			return newClientGoneOpenAIForwardResult(
+				c, account, body, originalModel, billingModel, upstreamModel, reasoningEffort, clientStream, startTime,
+			), clientErr
+		}
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		respBody, upstreamMsg, readErr := s.readOpenAIUpstreamErrorWithError(resp)
 		if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
 			return s.openAIStreamSilenceHTTPError(c, resp, respBody, readErr, originalModel, billingModel, upstreamModel, clientStream, startTime)
+		}
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
 		}
 		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr

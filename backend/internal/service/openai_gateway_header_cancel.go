@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptrace"
+	"sync/atomic"
 )
 
 // errOpenAIRequestNotSent marks a client that was already gone before the request
@@ -12,6 +14,15 @@ import (
 // billed. It is joined with the client's context error, so errors.Is(err,
 // context.Canceled) still holds.
 var errOpenAIRequestNotSent = errors.New("openai upstream request not sent: client already gone")
+
+// openAIClientErr returns ctx.Err() safely when ctx may be nil (e.g. unit tests
+// invoking gateway methods without an attached gin HTTP request).
+func openAIClientErr(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
+}
 
 // A client that leaves cancels the upstream request at once (owner decision
 // 2026-11-06: disconnect closes the connection immediately, sync or stream). Once
@@ -39,6 +50,18 @@ func (s *OpenAIGatewayService) doOpenAIRequestWithHeaderCancel(clientCtx context
 		return nil, errors.Join(err, errOpenAIRequestNotSent)
 	}
 	upstreamCtx, cancelUpstream := context.WithCancel(request.Context())
+	var sawTransport atomic.Bool
+	var wroteRequest atomic.Bool
+	upstreamCtx = httptrace.WithClientTrace(upstreamCtx, &httptrace.ClientTrace{
+		GetConn: func(string) {
+			sawTransport.Store(true)
+		},
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				wroteRequest.Store(true)
+			}
+		},
+	})
 	watchDone := make(chan struct{})
 	stopWatch := context.AfterFunc(clientCtx, func() {
 		defer close(watchDone)
@@ -55,12 +78,22 @@ func (s *OpenAIGatewayService) doOpenAIRequestWithHeaderCancel(clientCtx context
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
+		// On a real net/http.Transport (GetConn fired), if cancellation interrupted
+		// DNS/TCP/TLS dial before the request finished writing onto the wire, do not
+		// bill the client for an undelivered request.
+		if clientCtx.Err() != nil && sawTransport.Load() && !wroteRequest.Load() {
+			return nil, errors.Join(err, errOpenAIRequestNotSent)
+		}
 		return nil, err
 	}
 	if upstreamCtx.Err() != nil && clientCtx.Err() != nil {
 		cancelUpstream()
+		rejectedByUpstream := resp != nil && resp.StatusCode >= http.StatusBadRequest
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
+		}
+		if rejectedByUpstream || (sawTransport.Load() && !wroteRequest.Load()) {
+			return nil, errors.Join(clientCtx.Err(), errOpenAIRequestNotSent)
 		}
 		return nil, errors.Join(clientCtx.Err(), context.Cause(clientCtx))
 	}

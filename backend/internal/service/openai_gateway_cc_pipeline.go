@@ -260,9 +260,16 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	clientCtx := openAIClientContext(ctx, c)
+	resp, err := s.doOpenAIUpstreamWithHeaderCancel(clientCtx, upstreamReq, proxyURL, account)
 	if err != nil {
+		if clientCtx != nil && clientCtx.Err() != nil {
+			return nil, err
+		}
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+	}
+	if !stream || resp.StatusCode >= http.StatusBadRequest {
+		resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
 	}
 	return resp, nil
 }

@@ -35,6 +35,7 @@ func (w *openAIChatFailingWriter) Write(p []byte) (int, error) {
 type openAIChatStreamReadErrorCloser struct {
 	payload []byte
 	err     error
+	onErr   func()
 	sent    bool
 }
 
@@ -42,6 +43,9 @@ func (r *openAIChatStreamReadErrorCloser) Read(p []byte) (int, error) {
 	if !r.sent {
 		r.sent = true
 		return copy(p, r.payload), nil
+	}
+	if r.onErr != nil {
+		r.onErr()
 	}
 	return 0, r.err
 }
@@ -1087,7 +1091,8 @@ func TestForwardAsChatCompletions_DoneSentinelWithoutTerminalReturnsError(t *tes
 	require.Zero(t, result.Usage.OutputTokens)
 }
 
-func TestForwardAsChatCompletions_UpstreamRequestIgnoresClientCancel(t *testing.T) {
+// Stage 1A: 客户端在请求发出前已取消时，不再向上游派发请求、也不计费。
+func TestForwardAsChatCompletions_ClientCanceledBeforeDispatchSkipsUpstream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -1124,11 +1129,9 @@ func TestForwardAsChatCompletions_UpstreamRequestIgnoresClientCancel(t *testing.
 	}
 
 	result, err := svc.ForwardAsChatCompletions(reqCtx, c, account, body, "", "gpt-5.1")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.NotNil(t, upstream.lastReq)
-	require.NoError(t, upstream.lastContextErr, "client cancellation must not cancel the active upstream request")
-	require.ErrorIs(t, upstream.lastReq.Context().Err(), context.Canceled, "completed requests must release their upstream context")
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, result)
+	require.Nil(t, upstream.lastReq, "pre-canceled client must not dispatch upstream")
 }
 
 // TestBuildChatStreamErrorSSE verifies F4: the error chunk payload follows the

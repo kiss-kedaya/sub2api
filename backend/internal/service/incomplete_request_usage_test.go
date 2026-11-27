@@ -8,6 +8,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// legacyIncompleteInputCacheReadPercent and its wrappers stay in unit tests
+// (golangci-lint runs without -tags=unit) for historical 95%-split comparisons.
+const legacyIncompleteInputCacheReadPercent = 95
+
+func splitIncompleteInput(total int) incompleteInputEstimate {
+	return splitIncompleteInputWithPercent(total, legacyIncompleteInputCacheReadPercent)
+}
+
+func incompleteCacheReadTokens(total int) int {
+	return splitIncompleteInput(total).CacheRead
+}
+
 func TestSplitIncompleteInput(t *testing.T) {
 	for _, tc := range []struct{ total, cacheRead, fresh int }{
 		{-5, 0, 0}, {0, 0, 0}, {1, 0, 1}, {19, 18, 1}, {20, 19, 1}, {100, 95, 5}, {1000, 950, 50}, {123456, 117283, 6173},
@@ -85,6 +97,24 @@ func withOpenAIIncompleteInputCacheReadPercent(t *testing.T, percent int) {
 	t.Cleanup(func() { SetOpenAIIncompleteInputCacheReadPercent(previous) })
 }
 
+// withAnthropicIncompleteInputCacheReadPercent sets the Anthropic-family estimate policy
+// for one test and restores it afterwards.
+func withAnthropicIncompleteInputCacheReadPercent(t *testing.T, percent int) {
+	t.Helper()
+	previous := AnthropicIncompleteInputCacheReadPercent()
+	SetAnthropicIncompleteInputCacheReadPercent(percent)
+	t.Cleanup(func() { SetAnthropicIncompleteInputCacheReadPercent(previous) })
+}
+
+// withGeminiIncompleteInputCacheReadPercent sets the Gemini/Antigravity-family estimate policy
+// for one test and restores it afterwards.
+func withGeminiIncompleteInputCacheReadPercent(t *testing.T, percent int) {
+	t.Helper()
+	previous := GeminiIncompleteInputCacheReadPercent()
+	SetGeminiIncompleteInputCacheReadPercent(percent)
+	t.Cleanup(func() { SetGeminiIncompleteInputCacheReadPercent(previous) })
+}
+
 // An OpenAI-family estimate bills the whole input at the plain input price by
 // default, matching new-api's abnormal-end fallback (issue #456); the share is
 // configurable and clamped.
@@ -104,6 +134,29 @@ func TestOpenAIIncompleteInputCacheReadPolicy(t *testing.T) {
 	require.Equal(t, 100, OpenAIIncompleteInputCacheReadPercent(), "out-of-range values are clamped")
 	SetOpenAIIncompleteInputCacheReadPercent(openAIIncompleteInputCacheReadPercentDefault)
 
-	// The Anthropic/Gemini families keep their historical heuristic.
+	// Anthropic and Gemini families also default to 0% (plain input price) and are independently configurable.
+	require.Zero(t, AnthropicIncompleteInputCacheReadPercent())
+	require.Zero(t, GeminiIncompleteInputCacheReadPercent())
+	require.Equal(t, incompleteInputEstimate{Total: 100, CacheRead: 0, Fresh: 100}, splitAnthropicIncompleteInput(100))
+	require.Equal(t, incompleteInputEstimate{Total: 100, CacheRead: 0, Fresh: 100}, splitGeminiIncompleteInput(100))
+
+	withAnthropicIncompleteInputCacheReadPercent(t, 80)
+	require.Equal(t, incompleteInputEstimate{Total: 100, CacheRead: 80, Fresh: 20}, splitAnthropicIncompleteInput(100))
+	require.Zero(t, splitGeminiIncompleteInput(100).CacheRead)
+
+	withGeminiIncompleteInputCacheReadPercent(t, 95)
+	require.Equal(t, incompleteInputEstimate{Total: 100, CacheRead: 95, Fresh: 5}, splitGeminiIncompleteInput(100))
+	require.Equal(t, 950, geminiIncompleteCacheReadTokens(1000))
+
+	SetAnthropicIncompleteInputCacheReadPercent(-1)
+	require.Equal(t, 0, AnthropicIncompleteInputCacheReadPercent())
+	SetAnthropicIncompleteInputCacheReadPercent(120)
+	require.Equal(t, 100, AnthropicIncompleteInputCacheReadPercent())
+	SetGeminiIncompleteInputCacheReadPercent(-5)
+	require.Equal(t, 0, GeminiIncompleteInputCacheReadPercent())
+	SetGeminiIncompleteInputCacheReadPercent(200)
+	require.Equal(t, 100, GeminiIncompleteInputCacheReadPercent())
+
+	// Legacy helper remains fixed at 95% for historical comparison tests.
 	require.Equal(t, 95, splitIncompleteInput(100).CacheRead)
 }

@@ -56,8 +56,13 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		body = sanitized
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// 创建请求
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
+	attemptCtx, attemptTrace := trackGeminiAttempt(ctx)
+	req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, upstreamURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create upstream request: %w", err)
 	}
@@ -84,6 +89,18 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	// 发送请求
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
+		if geminiClientGoneCtx(ctx, c) {
+			clientErr := ctx.Err()
+			if clientErr == nil && c != nil && c.Request != nil {
+				clientErr = c.Request.Context().Err()
+			}
+			if attemptTrace.dispatched() {
+				return geminiClientGoneForwardResult(
+					"antigravity_usage.client_gone_estimated", account, body, originalModel, originalModel, claudeReq.Stream, startTime,
+				), clientErr
+			}
+			return nil, clientErr
+		}
 		logger.LegacyPrintf("service.antigravity_gateway", "%s upstream request failed: %v", prefix, err)
 		return nil, fmt.Errorf("upstream request failed: %w", err)
 	}

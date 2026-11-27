@@ -2930,3 +2930,57 @@ func TestValidateUsageStatsCacheGateIsNonNegative(t *testing.T) {
 	cfg.UsageStatsCache.LoadQueueTimeout = 0
 	require.NoError(t, cfg.Validate(), "a zero queue timeout (turn surplus away at once) is valid")
 }
+
+func TestBillingIncompleteInputCacheReadPercentDefaultsAndValidation(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 0, cfg.Billing.OpenAIIncompleteInputCacheReadPercent)
+	require.Equal(t, 0, cfg.Billing.AnthropicIncompleteInputCacheReadPercent)
+	require.Equal(t, 0, cfg.Billing.GeminiIncompleteInputCacheReadPercent)
+
+	resetViperWithJWTSecret(t)
+	t.Setenv("BILLING_OPENAI_INCOMPLETE_INPUT_CACHE_READ_PERCENT", "25")
+	t.Setenv("BILLING_ANTHROPIC_INCOMPLETE_INPUT_CACHE_READ_PERCENT", "50")
+	t.Setenv("BILLING_GEMINI_INCOMPLETE_INPUT_CACHE_READ_PERCENT", "95")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.Equal(t, 25, cfg.Billing.OpenAIIncompleteInputCacheReadPercent)
+	require.Equal(t, 50, cfg.Billing.AnthropicIncompleteInputCacheReadPercent)
+	require.Equal(t, 95, cfg.Billing.GeminiIncompleteInputCacheReadPercent)
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Config)
+		substr string
+	}{
+		{
+			name:   "anthropic negative",
+			mutate: func(c *Config) { c.Billing.AnthropicIncompleteInputCacheReadPercent = -1 },
+			substr: "billing.anthropic_incomplete_input_cache_read_percent",
+		},
+		{
+			name:   "anthropic over 100",
+			mutate: func(c *Config) { c.Billing.AnthropicIncompleteInputCacheReadPercent = 101 },
+			substr: "billing.anthropic_incomplete_input_cache_read_percent",
+		},
+		{
+			name:   "gemini negative",
+			mutate: func(c *Config) { c.Billing.GeminiIncompleteInputCacheReadPercent = -1 },
+			substr: "billing.gemini_incomplete_input_cache_read_percent",
+		},
+		{
+			name:   "gemini over 100",
+			mutate: func(c *Config) { c.Billing.GeminiIncompleteInputCacheReadPercent = 101 },
+			substr: "billing.gemini_incomplete_input_cache_read_percent",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			c, err := Load()
+			require.NoError(t, err)
+			tc.mutate(c)
+			require.ErrorContains(t, c.Validate(), tc.substr)
+		})
+	}
+}

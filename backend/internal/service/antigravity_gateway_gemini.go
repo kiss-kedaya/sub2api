@@ -174,7 +174,16 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 			}
 		}
 		// 区分客户端取消和真正的上游失败，返回更准确的错误消息
-		if c.Request.Context().Err() != nil {
+		if geminiClientGoneCtx(ctx, c) {
+			clientErr := ctx.Err()
+			if clientErr == nil && c != nil && c.Request != nil {
+				clientErr = c.Request.Context().Err()
+			}
+			if result != nil && result.dispatched {
+				return geminiClientGoneForwardResult(
+					"antigravity_usage.client_gone_estimated", account, body, originalModel, forwardedModel, stream, startTime,
+				), clientErr
+			}
 			return nil, s.writeGoogleError(c, http.StatusBadGateway, "Client disconnected before upstream response")
 		}
 		return nil, s.writeGoogleError(c, http.StatusBadGateway, "Upstream request failed after retries")
@@ -203,7 +212,8 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 
 				fallbackWrapped, err := s.wrapV1InternalRequest(projectID, fallbackModel, injectedBody)
 				if err == nil {
-					fallbackReq, err := antigravity.NewAPIRequest(ctx, upstreamAction, accessToken, fallbackWrapped)
+					fallbackAttemptCtx, fallbackTrace := trackGeminiAttempt(ctx)
+					fallbackReq, err := antigravity.NewAPIRequest(fallbackAttemptCtx, upstreamAction, accessToken, fallbackWrapped)
 					if err == nil {
 						fallbackResp, err := s.httpUpstream.Do(fallbackReq, proxyURL, account.ID, account.Concurrency)
 						if err == nil && fallbackResp.StatusCode < 400 {
@@ -212,6 +222,17 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 							forwardedModel = fallbackModel
 						} else if fallbackResp != nil {
 							_ = fallbackResp.Body.Close()
+						} else if err != nil && geminiClientGoneCtx(ctx, c) {
+							clientErr := ctx.Err()
+							if clientErr == nil && c != nil && c.Request != nil {
+								clientErr = c.Request.Context().Err()
+							}
+							if fallbackTrace.dispatched() {
+								return geminiClientGoneForwardResult(
+									"antigravity_usage.client_gone_estimated", account, body, originalModel, fallbackModel, stream, startTime,
+								), clientErr
+							}
+							return nil, clientErr
 						}
 					}
 				}
@@ -314,6 +335,18 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 							StatusCode:        http.StatusServiceUnavailable,
 							ForceCacheBilling: switchErr.IsStickySession,
 						}
+					}
+					if geminiClientGoneCtx(ctx, c) {
+						clientErr := ctx.Err()
+						if clientErr == nil && c != nil && c.Request != nil {
+							clientErr = c.Request.Context().Err()
+						}
+						if retryResult != nil && retryResult.dispatched {
+							return geminiClientGoneForwardResult(
+								"antigravity_usage.client_gone_estimated", account, body, originalModel, forwardedModel, stream, startTime,
+							), clientErr
+						}
+						return nil, clientErr
 					}
 					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 						ProxyID:            opsUpstreamProxyID(account),
@@ -456,7 +489,11 @@ handleSuccess:
 
 	// 判断是否为图片生成模型
 	imageCount := 0
-	if isImageGenerationModel(mappedModel) {
+	if clientDisconnect {
+		// The model-name floor of one image only applies when the request completed;
+		// a client that left bills only images actually observed before disconnect.
+		imageCount = observedGeminiImageOutputs(c)
+	} else if isImageGenerationModel(mappedModel) {
 		// Gemini 图片生成 API 每次请求只生成一张图片（API 限制）
 		imageCount = 1
 	}

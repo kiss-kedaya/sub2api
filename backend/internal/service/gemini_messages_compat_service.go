@@ -857,7 +857,11 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	maxAttempts := s.geminiMaxAttemptsPerAccount()
 	// 签名降级重发不占用同号重试次数：每进入一个降级阶段，循环上限顺延一次。
 	for attempt := 1; attempt <= maxAttempts+signatureRetryStage; attempt++ {
-		upstreamReq, idHeader, err := buildReq(ctx)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		attemptCtx, attemptTrace := trackGeminiAttempt(ctx)
+		upstreamReq, idHeader, err := buildReq(attemptCtx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, err
@@ -872,10 +876,17 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
-			if errors.Is(ctx.Err(), context.Canceled) {
-				// The client left before the upstream answered: the request was never
-				// accepted, so nothing is billed and no retry is worth its backoff.
-				return nil, ctx.Err()
+			if geminiClientGoneCtx(ctx, c) {
+				clientErr := ctx.Err()
+				if clientErr == nil && c != nil && c.Request != nil {
+					clientErr = c.Request.Context().Err()
+				}
+				if attemptTrace.dispatched() {
+					return geminiClientGoneForwardResult(
+						"gemini_usage.client_gone_estimated", account, body, originalModel, mappedModel, req.Stream, startTime,
+					), clientErr
+				}
+				return nil, clientErr
 			}
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -1488,7 +1499,11 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	var resp *http.Response
 	maxAttempts := s.geminiMaxAttemptsPerAccount()
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		upstreamReq, idHeader, err := buildReq(ctx)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		attemptCtx, attemptTrace := trackGeminiAttempt(ctx)
+		upstreamReq, idHeader, err := buildReq(attemptCtx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, err
@@ -1503,10 +1518,17 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
-			if errors.Is(ctx.Err(), context.Canceled) {
-				// The client left before the upstream answered: the request was never
-				// accepted, so nothing is billed and no retry is worth its backoff.
-				return nil, ctx.Err()
+			if geminiClientGoneCtx(ctx, c) {
+				clientErr := ctx.Err()
+				if clientErr == nil && c != nil && c.Request != nil {
+					clientErr = c.Request.Context().Err()
+				}
+				if action != "countTokens" && attemptTrace.dispatched() {
+					return geminiClientGoneForwardResult(
+						"gemini_usage.client_gone_estimated", account, body, originalModel, mappedModel, stream, startTime,
+					), clientErr
+				}
+				return nil, clientErr
 			}
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -1852,6 +1874,9 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 				if errors.Is(err, ErrUpstreamResponseBodyTooLarge) || !geminiClientGoneCtx(ctx, c) {
 					return nil, err
 				}
+				if action == "countTokens" {
+					return nil, geminiClientErr(ctx, c, err)
+				}
 				clientGone = true
 			} else {
 				usage = usageResp
@@ -1862,7 +1887,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	if usage == nil {
 		usage = &ClaudeUsage{}
 	}
-	if clientGone {
+	if clientGone && action != "countTokens" {
 		applyIncompleteGeminiUsage("gemini_usage.client_gone_estimated", account, mappedModel, usage, goneOutputTokens, body)
 	}
 
@@ -2771,11 +2796,6 @@ func unwrapIfNeeded(isOAuth bool, raw []byte) []byte {
 		return raw
 	}
 	return inner
-}
-
-func collectGeminiSSE(body io.Reader, isOAuth bool) (map[string]any, *ClaudeUsage, error) {
-	collected, usage, _, err := collectGeminiSSEObserved(body, isOAuth, nil)
-	return collected, usage, err
 }
 
 // geminiSSECollectStats 记录一次 SSE 聚合读到的 data 事件数，以及非 data 行的兜底内容。

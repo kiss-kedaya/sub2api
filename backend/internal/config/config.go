@@ -1186,6 +1186,15 @@ type BillingConfig struct {
 	// absorbs the difference (issue #456). Set 95 to restore the pre-#456
 	// heuristic. Reported usage is never re-split; this only affects estimates.
 	OpenAIIncompleteInputCacheReadPercent int `mapstructure:"openai_incomplete_input_cache_read_percent"`
+	// AnthropicIncompleteInputCacheReadPercent is the share (0-100) of an estimated
+	// input priced as cache read when an Anthropic-family request ends without a usage
+	// report (client disconnect or mid-stream break). Default is 0 (plain input price)
+	// so estimates do not invent a ~7-10x cache discount before message_start arrives.
+	AnthropicIncompleteInputCacheReadPercent int `mapstructure:"anthropic_incomplete_input_cache_read_percent"`
+	// GeminiIncompleteInputCacheReadPercent is the share (0-100) of an estimated
+	// input priced as cache read when a Gemini/Antigravity request ends without a usage
+	// report. Default is 0 (plain input price).
+	GeminiIncompleteInputCacheReadPercent int `mapstructure:"gemini_incomplete_input_cache_read_percent"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
 	//   - billing_cache_service.cacheWriteWorker 异步累加
@@ -2670,6 +2679,8 @@ func setDefaults() {
 	// 0 = 不臆造缓存折扣，与上游 new-api 异常结束回退（整段 prompt 按普通输入计）
 	// 对齐；95 = #456 之前的旧口径。仅影响估算，绝不改写上游真实上报的 usage。
 	viper.SetDefault("billing.openai_incomplete_input_cache_read_percent", 0)
+	viper.SetDefault("billing.anthropic_incomplete_input_cache_read_percent", 0)
+	viper.SetDefault("billing.gemini_incomplete_input_cache_read_percent", 0)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
 	// 在途预留默认关闭。开启后会在准入时按估算费用占用余额，生产保持关，需要时显式打开。
@@ -3794,6 +3805,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Billing.OpenAIIncompleteInputCacheReadPercent < 0 || c.Billing.OpenAIIncompleteInputCacheReadPercent > 100 {
 		return fmt.Errorf("billing.openai_incomplete_input_cache_read_percent must be between 0 and 100")
+	}
+	if c.Billing.AnthropicIncompleteInputCacheReadPercent < 0 || c.Billing.AnthropicIncompleteInputCacheReadPercent > 100 {
+		return fmt.Errorf("billing.anthropic_incomplete_input_cache_read_percent must be between 0 and 100")
+	}
+	if c.Billing.GeminiIncompleteInputCacheReadPercent < 0 || c.Billing.GeminiIncompleteInputCacheReadPercent > 100 {
+		return fmt.Errorf("billing.gemini_incomplete_input_cache_read_percent must be between 0 and 100")
 	}
 	if c.Billing.InflightReservation.TTLSeconds < 0 || c.Billing.InflightReservation.DefaultMaxTokens < 0 ||
 		c.Billing.InflightReservation.MaxOutputTokens < 0 || c.Billing.InflightReservation.MaxInputTokens < 0 ||

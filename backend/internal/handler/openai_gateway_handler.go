@@ -3349,14 +3349,22 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				)
 				if turnErr != nil {
 					h.gatewayService.InvalidateUpstreamAffinity(ctx, apiKey.GroupID, sessionHash, account, turnErr)
-					if result == nil || result.ImageCount <= 0 && !openAIWSTurnSilenceFailure(result, turnErr) {
+					clientDisconnectedWithResult := result != nil && result.ClientDisconnect
+					if !clientDisconnectedWithResult && (result == nil || result.ImageCount <= 0 && !openAIWSTurnSilenceFailure(result, turnErr)) {
 						return
 					}
-					reqLog.Warn("openai.websocket_partial_error_with_image_result",
-						zap.Int64("account_id", account.ID),
-						zap.Int("image_count", result.ImageCount),
-						zap.Error(turnErr),
-					)
+					if clientDisconnectedWithResult {
+						reqLog.Info("openai.websocket_client_disconnected",
+							zap.Int64("account_id", account.ID),
+							zap.Error(turnErr),
+						)
+					} else {
+						reqLog.Warn("openai.websocket_partial_error_with_image_result",
+							zap.Int64("account_id", account.ID),
+							zap.Int("image_count", result.ImageCount),
+							zap.Error(turnErr),
+						)
+					}
 				}
 				if result == nil {
 					return
@@ -3376,7 +3384,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if scheduleModel == "" {
 					scheduleModel = turnRequestedModel
 				}
-				if !openAIWSTurnSilenceFailure(result, turnErr) {
+				if !openAIWSTurnSilenceFailure(result, turnErr) && (turnErr == nil || !result.ClientDisconnect) {
 					h.gatewayService.ReportOpenAIAccountScheduleResult(account, scheduleModel, openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
 				}
 				inboundEndpoint := GetInboundEndpoint(c)

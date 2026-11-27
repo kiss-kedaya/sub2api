@@ -196,7 +196,7 @@ func TestAnthropicDisconnect_BedrockClientLeavesBeforeAnyFrameBillsEstimatedInpu
 	out := h.await("client left before the first frame")
 
 	requireBedrockClientDisconnect(t, out)
-	split := splitIncompleteInput(estimateRequestInputTokens(anthropicKindBedrock.requestBody()))
+	split := splitAnthropicIncompleteInput(estimateRequestInputTokens(anthropicKindBedrock.requestBody()))
 	require.Greater(t, split.Total, 0)
 	require.Equal(t, split.Fresh, out.result.Usage.InputTokens)
 	require.Equal(t, split.CacheRead, out.result.Usage.CacheReadInputTokens)

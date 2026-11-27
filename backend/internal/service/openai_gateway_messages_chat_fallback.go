@@ -145,17 +145,32 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	if err != nil {
 		return nil, err
 	}
+	clientCtx := openAIClientContext(ctx, c)
 	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, chatBody, clientStream, apiKey, account.GetOpenAIUserAgent(), "")
 	if err != nil {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			if errors.Is(err, errOpenAIRequestNotSent) {
+				return nil, clientErr
+			}
+			return newClientGoneOpenAIForwardResult(
+				c, account, chatBody, originalModel, billingModel, upstreamModel, reasoningEffort, clientStream, startTime,
+			), clientErr
+		}
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	// 4. Handle error responses
 	if resp.StatusCode >= 400 {
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
+		}
 		respBody, upstreamMsg, readErr := s.readOpenAIUpstreamErrorWithError(resp)
 		if errors.Is(readErr, errOpenAIUpstreamWaitLimit) {
 			return s.openAIStreamSilenceHTTPError(c, resp, respBody, readErr, originalModel, billingModel, upstreamModel, clientStream, startTime)
+		}
+		if clientErr := openAIClientErr(clientCtx); clientErr != nil {
+			return nil, clientErr
 		}
 		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr
@@ -166,6 +181,9 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 	}
 
 	// 5. Convert response
+	// Keep the body that went upstream: a request that ends without a usage report is
+	// billed for the input it really sent (see applyCompatIncompleteUsage).
+	stashCompatUpstreamRequestBody(c, account, chatBody)
 	if clientStream {
 		return s.streamChatCompletionsAsAnthropic(c, resp, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
 	}
@@ -183,10 +201,35 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsAnthropic(
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
-	ccResp, usage, nonBillableUpstreamError, err := s.readCCUpstreamJSONResponse(c, resp, writeAnthropicError)
+	// The client leaving closes the upstream at once, which fails the read below. The
+	// request was dispatched and accepted, so its input is still billed from an estimate.
+	watch := newCompatClientWatch(c, resp.Body)
+	defer watch.Stop()
+	ccResp, usage, nonBillableUpstreamError, err := s.readCCUpstreamJSONResponse(c, watch.wrapResponse(resp), func(c *gin.Context, status int, errType, message string) {
+		if !watch.Gone() {
+			writeAnthropicError(c, status, errType, message)
+		}
+	})
 	if err != nil && ccResp == nil {
 		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
 			return openAIStreamSilenceResult(resp, usage, originalModel, billingModel, upstreamModel, false, startTime), err
+		}
+		if watch.Gone() && errors.Is(err, context.Canceled) {
+			base := &OpenAIForwardResult{
+				RequestID:                   requestID,
+				UpstreamHeaders:             resp.Header,
+				Model:                       originalModel,
+				BillingModel:                billingModel,
+				UpstreamModel:               upstreamModel,
+				ReasoningEffort:             reasoningEffort,
+				UpstreamResponseServiceTier: observedUpstreamResponseServiceTier(c),
+				ServiceTier:                 resolvedOpenAIUpstreamServiceTier(c, serviceTier),
+				Stream:                      false,
+				Duration:                    time.Since(startTime),
+			}
+			if result := compatBufferedGoneResult(c, nil, "messages_chat_buffered", base, OpenAIUsage{}, nil, err); result != nil {
+				return result, nil
+			}
 		}
 		return nil, err
 	}
@@ -231,9 +274,16 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 	anthropicState := apicompat.NewChatCompletionsToAnthropicStreamState(originalModel)
 	clientDisconnected := false
 
-	// 与 responses 兄弟不同：客户端断开后仍继续做事件转换（喂 anthropicState），
-	// 仅跳过写出，保证 finalize 阶段的 usage 汇总不受断开影响。
+	// The client leaving (its request ends, or a write to it fails) closes the upstream
+	// at once: the next read fails and the scan ends. Chunks already buffered are still
+	// converted so a usage chunk that had arrived keeps its real numbers; otherwise the
+	// output tallied so far and the input sent are billed from an estimate.
+	watch := newCompatClientWatch(c, resp.Body)
+	defer watch.Stop()
+	var tally compatChatTally
+
 	emitChunk := func(chunk *apicompat.ChatCompletionsChunk) {
+		tally.AddChunk(chunk)
 		// CC chunk → Anthropic events (direct, single state machine)
 		anthropicEvents := apicompat.ChatCompletionsChunkToAnthropicEvents(chunk, anthropicState)
 		if clientDisconnected {
@@ -247,6 +297,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			writeStreamHeaders()
 			if _, err := fmt.Fprint(c.Writer, sse); err != nil {
 				clientDisconnected = true
+				watch.Disconnect()
 				break
 			}
 		}
@@ -255,7 +306,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 		}
 	}
 
-	scan := s.scanCCStream(c, resp, "openai messages chat fallback", requestID, startTime, emitChunk)
+	scan := s.scanCCStream(c, watch.wrapResponse(resp), "openai messages chat fallback", requestID, startTime, emitChunk)
 	usage := scan.Usage
 
 	var upstreamErr error
@@ -264,14 +315,8 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 	if scan.NonBillableUpstreamError && !errors.Is(scan.Err, errOpenAIUpstreamWaitLimit) {
 		upstreamErr = writeCompatUpstreamStreamError(c, "messages", originalModel, scan.UpstreamError)
 	}
-	if upstreamErr != nil || scan.Err != nil {
-		// Broken upstream read: skip finalization so no synthetic message_stop
-		// masks the truncation, and surface the error to flag usage incomplete
-		// (mirrors forwardResponsesViaRawChatCompletions).
-		if upstreamErr == nil {
-			upstreamErr = fmt.Errorf("stream usage incomplete: %w", scan.Err)
-		}
-		return &OpenAIForwardResult{
+	if gone := clientDisconnected || watch.Gone(); upstreamErr != nil || scan.Err != nil || (gone && !scan.SawDone) {
+		result := &OpenAIForwardResult{
 			RequestID:                   requestID,
 			UpstreamHeaders:             resp.Header,
 			Usage:                       usage,
@@ -285,8 +330,23 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			Stream:                      true,
 			Duration:                    time.Since(startTime),
 			FirstTokenMs:                scan.FirstTokenMs,
-			ClientDisconnect:            clientDisconnected,
-		}, upstreamErr
+			ClientDisconnect:            gone,
+		}
+		if upstreamErr != nil {
+			return result, upstreamErr
+		}
+		cause := scan.Err
+		if cause == nil {
+			cause = errors.New("missing done sentinel")
+		}
+		applyCompatIncompleteUsage(c, &result.Usage, compatIncompleteUsage{
+			Path: "messages_chat_stream", Model: originalModel, RequestID: requestID,
+			ClientGone: gone, Cause: cause, OutputEstimate: tally.EstimateTokens(),
+		})
+		if gone {
+			return result, nil
+		}
+		return result, fmt.Errorf("stream usage incomplete: %w", cause)
 	}
 
 	// Finalize: close open blocks + emit message_delta/message_stop.
@@ -300,10 +360,13 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			writeStreamHeaders()
 			if _, err := fmt.Fprint(c.Writer, sse); err != nil {
 				clientDisconnected = true
+				watch.Disconnect()
 				break
 			}
 		}
-		c.Writer.Flush()
+		if !clientDisconnected {
+			c.Writer.Flush()
+		}
 	}
 	if !scan.SawDone {
 		logCCStreamMissingDoneSentinel("openai messages chat fallback", requestID)
@@ -323,6 +386,6 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 		Stream:                      true,
 		Duration:                    time.Since(startTime),
 		FirstTokenMs:                scan.FirstTokenMs,
-		ClientDisconnect:            clientDisconnected,
+		ClientDisconnect:            clientDisconnected || watch.Gone(),
 	}, nil
 }
