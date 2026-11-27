@@ -3384,7 +3384,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if scheduleModel == "" {
 					scheduleModel = turnRequestedModel
 				}
-				if !openAIWSTurnSilenceFailure(result, turnErr) && !(turnErr != nil && result.ClientDisconnect) {
+				if !openAIWSTurnSilenceFailure(result, turnErr) && (turnErr == nil || !result.ClientDisconnect) {
 					h.gatewayService.ReportOpenAIAccountScheduleResult(account, scheduleModel, openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
 				}
 				inboundEndpoint := GetInboundEndpoint(c)
