@@ -25,6 +25,9 @@ Sub2API has a built-in payment system that enables user self-service top-up with
 | **Alipay (Direct)** | Desktop QR code, mobile Alipay redirect | Direct integration with Alipay Open Platform, returning desktop QR codes and mobile WAP/app launch links |
 | **WeChat Pay (Direct)** | Native QR, H5, MP/JSAPI Pay | Direct integration with WeChat Pay APIv3 with environment-aware routing |
 | **Stripe** | Card, Alipay, WeChat Pay, Link, etc. | International payments, multi-currency support |
+| **Airwallex** | Card and multi-currency checkout | International acquiring for balance top-ups and plans |
+| **EPUSDT** | USDT (external order gateway) | Integrates with self-hosted EPUSDT webhook gateways |
+| **Built-in On-Chain Crypto Wallet** | EVM multi-chain USDT / USDC deposits & automated sweep | Managed inside the main `sub2api` process (HD deposit addresses + dedicated gas wallet, AES-256-GCM vault, optional SLIP-39 2-of-3 signer shards); see [docs/PAYMENT_CN.md](PAYMENT_CN.md#内置充值钱包部署与恢复) for vault & recovery details |
 
 > Alipay/WeChat Pay direct and EasyPay can both exist as backend provider instances, but the frontend always exposes only two visible buttons: `Alipay` and `WeChat Pay`. Admins choose exactly one source for each visible method: direct or EasyPay. Direct channels connect to payment APIs directly with lower fees; EasyPay aggregates through third-party platforms with easier setup.
 

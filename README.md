@@ -11,25 +11,27 @@
 [![Redis](https://img.shields.io/badge/Redis-7+-DC382D.svg)](https://redis.io/)
 [![License](https://img.shields.io/badge/License-LGPL--3.0-blue.svg)](LICENSE)
 
-**Self-hosted AI API gateway for Claude Code, Codex, Gemini CLI, and Grok.**
+**Self-hosted AI API gateway for Claude Code, Codex, Gemini CLI, Grok, and DeepSeek.**
 
 This repository is [kiss-kedaya/sub2api](https://github.com/kiss-kedaya/sub2api), a maintained fork of [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api).
 
-[English](README.md) | [中文](README_CN.md)
+[English](README.md) | [中文](README_CN.md) | [Dev Guide](DEV_GUIDE.md) | [Glossary](GLOSSARY.md)
 
 </div>
 
 ## What this fork adds
 
-Compared with upstream, this tree is built around a production site that already runs payment, mixed-platform routing, and WebSocket traffic:
+Compared with upstream, this tree is maintained around production gateway, billing, payment, and security workflows:
 
-- **API key smart routing** — one key can bind several groups in strict order; protocol mismatches (for example an OpenAI account on an Anthropic path) are skipped instead of being forced.
-- **Built-in recharge** — EasyPay (including relative `payurl`/`qrcode`), per-provider fee and multiplier, instance recharge terms. See [docs/PAYMENT_CN.md](docs/PAYMENT_CN.md).
-- **Usage dashboard** — 30-day window with hourly rollup when data exists, otherwise a direct `usage_logs` fallback.
-- **Operator controls** — connection timelines, scoped payload capture, cache tests, traffic reports, notifications, channel drilldowns, and managed proxies, with opt-in automation and provider channels. See the [operator capability guide](docs/operator-capabilities.md).
-- **Gateway reliability** — WebSocket client-close is not treated as account failure; oversized passthrough can fall back to HTTP bridge; Spark 429 stays model-scoped; failed forwards release session slots immediately.
+- **Smart multi-group routing** — one API key can bind multiple groups; the router ranks eligible groups by composite health, cache hit rate, TTFT, rate multiplier, and group order with 1-hour sticky group binding, skipping incompatible protocols instead of forcing cross-protocol failover.
+- **Built-in payments & on-chain crypto wallet** — supports EasyPay (including relative `payurl`/`qrcode`), Alipay Direct, WeChat Pay Direct (APIv3), Stripe, Airwallex, EPUSDT, and a built-in on-chain crypto deposit & sweep wallet (HD deposit addresses + dedicated gas wallet stored in an AES-256-GCM vault with optional SLIP-39 / Shamir 2-of-3 signer shards, automated chain scanning, and per-provider fees/multipliers). See [docs/PAYMENT.md](docs/PAYMENT.md) and [docs/PAYMENT_CN.md](docs/PAYMENT_CN.md).
+- **Multi-provider billing & Model Plaza** — supports Anthropic (OAuth / Setup Token / API Key), OpenAI (API Key / OAuth, Fast/UltraFast tier multipliers, long-context pricing), Gemini, Antigravity, Grok, and DeepSeek (including `/v1/tools/{search,fetch,ocr,asr,tts}` per-call tool billing and independent tool multipliers), plus per-call/per-second video pricing and a Model Plaza price catalog.
+- **Security & access control** — TOTP and Passkey (WebAuthn) 2FA, 5-minute 2FA grants, step-up verification for sensitive admin actions, scoped admin API keys (`adm_sc_`, [docs/admin-api-keys.md](docs/admin-api-keys.md)), configurable API key creation verification and browser-side secret sealing, 14-day sliding refresh sessions, audit logging, IP risk controls, and `GET /v1/sub2api/account` self-service balance/usage lookup.
+- **Usage dashboard, monitoring & workspace** — 30-day usage analytics with hourly rollups, Channel Monitor V2 (passive minute-rollup and quality events), support tickets with image attachments, decoupled SMTP alerts, and an Infinite Canvas workspace (`/canvas`).
+- **Operator controls & backups** — connection timelines, scoped payload capture, cache tests, traffic reports, notifications, channel drilldowns, managed proxies, and S3/R2 database backups (full or key-table-only snapshots). See the [operator capability guide](docs/operator-capabilities.md).
+- **Gateway reliability & hot-path performance** — single-pass pure Go JSON request-body handling (`CGO_ENABLED=0`), account error-rate circuit breaking with automatic recovery, WebSocket client-close isolation, oversized passthrough HTTP fallback, and immediate session-slot release on forward failure.
 - **Base URL tolerance** — an Anthropic-style bare host or an OpenAI-style `/v1` base both work; duplicated prefixes (`/v1/v1/messages`) and missing prefixes (`/messages`) are folded/expanded by the server, with auth, rate limits, billing and logs identical to the canonical path. Per-client setup table: [docs/gateway-base-url.md](docs/gateway-base-url.md).
-- **Nuxt UI frontend** — Vue pages use `@nuxt/ui` inside a Vite SPA. The complete UI is embedded in the Go binary; no Node, Nitro or BFF service is required.
+- **Nuxt UI frontend** — Vue 3 pages use `@nuxt/ui` inside a Vite SPA. The complete UI is embedded in the Go binary; no Node, Nitro or BFF service is required.
 - **Ops-safe upgrades** — production `DATABASE_MIGRATION_MODE=validate` on the live process; schema changes are applied out of band. Version is a single file: `backend/cmd/server/VERSION`. GitHub Releases fire only on semantic `v*` tags.
 
 Balance preauthorization stays **off** in this deployment (`BILLING_BALANCE_PREAUTHORIZATION_ENABLED=false`). Do not turn it on without a dedicated review.
@@ -38,11 +40,13 @@ Balance charges are settled per request by default. The optional durable merge s
 
 ## Features
 
-- Multi-account upstreams: Anthropic OAuth / setup token, OpenAI API key and OAuth, Gemini, Grok, Antigravity
-- API keys, groups, sticky sessions, concurrency and rate limits
-- Token-level usage and billing
-- Admin and user dashboards
+- Multi-account upstreams: Anthropic OAuth / Setup Token / API Key, OpenAI API Key / OAuth, Gemini, Grok, Antigravity, DeepSeek
+- API keys, multi-group smart routing, sticky sessions, concurrency and rate limits
+- Token-level, long-context, service-tier, tool-call, and video usage & billing
+- Built-in fiat payments (EasyPay, Alipay Direct, WeChat Pay Direct, Stripe, Airwallex, EPUSDT) and built-in on-chain crypto deposit & sweep wallet
+- Admin and user dashboards, Model Plaza, Channel Monitor V2, support tickets, and Infinite Canvas
 - Composite groups for multi-provider model routing ([docs/COMPOSITE_GROUPS.md](docs/COMPOSITE_GROUPS.md))
+- TOTP + Passkey 2FA, step-up authentication, scoped admin API keys, and audit logs
 - Codex / Claude Code / Gemini CLI / Grok CLI configuration from the key page
 
 ## Stack
