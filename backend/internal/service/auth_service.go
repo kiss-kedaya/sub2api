@@ -132,6 +132,7 @@ type AuthService struct {
 	defaultSubAssigner    DefaultSubscriptionAssigner
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	billingCacheService   *BillingCacheService
+	personalAPIKeyRevoker personalAPIKeyRevoker
 
 	// stats 是登录会话的进程内计数（refresh 结果、会话绑定、登录发令牌兜底），按需创建。
 	statsOnce sync.Once
@@ -147,6 +148,10 @@ type CaptchaProof struct {
 
 type DefaultSubscriptionAssigner interface {
 	AssignOrExtendSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, bool, error)
+}
+
+type personalAPIKeyRevoker interface {
+	Delete(ctx context.Context, userID int64) (bool, error)
 }
 
 type signupGrantPlan struct {
@@ -206,6 +211,10 @@ func (s *AuthService) SetAliyunCaptchaService(aliyunCaptchaService *AliyunCaptch
 
 func (s *AuthService) SetBillingCacheService(billingCacheService *BillingCacheService) {
 	s.billingCacheService = billingCacheService
+}
+
+func (s *AuthService) SetPersonalAPIKeyRevoker(revoker personalAPIKeyRevoker) {
+	s.personalAPIKeyRevoker = revoker
 }
 
 // Register 用户注册，返回token和用户
@@ -1790,6 +1799,13 @@ func (s *AuthService) ResetPassword(ctx context.Context, email, token, newPasswo
 	if err := s.RevokeAllUserSessions(ctx, user.ID); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke refresh tokens for user %d: %v", user.ID, err)
 		// Don't return error - password was already changed successfully
+	}
+
+	// 忘记密码重置属于账号找回/应急恢复场景：同步吊销个人接口密钥，防止遗留 uak_ 继续持有访问权限。
+	if s.personalAPIKeyRevoker != nil {
+		if _, err := s.personalAPIKeyRevoker.Delete(ctx, user.ID); err != nil {
+			logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke personal API key for user %d: %v", user.ID, err)
+		}
 	}
 
 	logger.LegacyPrintf("service.auth", "[Auth] Password reset successful for user: %s", email)

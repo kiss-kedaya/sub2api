@@ -54,6 +54,18 @@ func TestRedactText_GOCSPX(t *testing.T) {
 	}
 }
 
+func TestRedactTextAndJSON_UserPersonalAPIKey(t *testing.T) {
+	secret := "uak_" + strings.Repeat("a1", 32)
+	textOut := RedactText("Authorization: Bearer " + secret + " failed")
+	if strings.Contains(textOut, secret) || !strings.Contains(textOut, "uak_***") {
+		t.Fatalf("expected personal API key redacted in text, got %q", textOut)
+	}
+	jsonOut := RedactText(`{"detail":"bad token ` + secret + `","ok":false}`)
+	if strings.Contains(jsonOut, secret) || !strings.Contains(jsonOut, "uak_***") {
+		t.Fatalf("expected personal API key redacted in json, got %q", jsonOut)
+	}
+}
+
 func TestRedactText_ExtraKeyCacheUsesNormalizedSortedKey(t *testing.T) {
 	clearExtraTextPatternCache()
 

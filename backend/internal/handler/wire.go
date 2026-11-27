@@ -371,9 +371,11 @@ func ProvideAPIKeyHandler(
 	apiKeyService *service.APIKeyService,
 	secretService *service.APIKeySecretService,
 	verificationService *service.APIKeyVerificationService,
+	personalAPIKeyService *service.UserPersonalAPIKeyService,
 ) *APIKeyHandler {
 	h := NewAPIKeyHandler(apiKeyService, secretService)
 	h.SetVerificationService(verificationService)
+	h.SetPersonalAPIKeyService(personalAPIKeyService)
 	return h
 }
 

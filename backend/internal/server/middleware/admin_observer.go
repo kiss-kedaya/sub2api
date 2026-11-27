@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -11,6 +12,9 @@ import (
 const PrimaryAdminUserID int64 = 1
 
 func IsPrimaryAdmin(c *gin.Context) bool {
+	if c == nil || c.GetString("auth_method") == service.AuditAuthMethodUserAPIKey {
+		return false
+	}
 	subject, ok := GetAuthSubjectFromContext(c)
 	role, _ := GetUserRoleFromContext(c)
 	return ok && subject.UserID == PrimaryAdminUserID && role == "admin"

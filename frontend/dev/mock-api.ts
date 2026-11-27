@@ -48,7 +48,7 @@ import { createUsageDraft, supportsCustomUsage, usagePayload, usageTemplate, val
 import type { CustomUsageConfig, CustomUsageResult, CustomUsageTemplate } from '../src/api/admin/customUsage'
 
 export class PreviewError extends Error {
-  constructor(public status: number, message: string) { super(message) }
+  constructor(public status: number, message: string, public reason?: string) { super(message) }
 }
 
 function integer(value: string | null, fallback: number, max: number) {
@@ -216,6 +216,21 @@ export function createMockApi(now = new Date()) {
   const usedDemoCodes = new Set<string>()
   let createVerificationMode: 'auto' | 'on' | 'off' = 'auto'
   const demoBarkSettings = { configured: false, enabled: false }
+  let demoPersonalKeySeq = 1
+  let demoPersonalApiKey: {
+    exists: boolean
+    key_prefix?: string
+    created_at?: string | null
+    updated_at?: string | null
+    last_used_at?: string | null
+    last_used_ip?: string
+    rate_limit_rpm: number
+    write_rate_limit_rpm: number
+  } = {
+    exists: false,
+    rate_limit_rpm: 240,
+    write_rate_limit_rpm: 60,
+  }
   const verificationFactors = () => {
     const defaultRequired = false
     const required = createVerificationMode === 'on'
@@ -1325,6 +1340,7 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/user/passkeys') return []
         if (path === '/api/v1/user/bark') return { data: { ...demoBarkSettings } }
         if (path === '/api/v1/user/security/verification-factors') return verificationFactors()
+        if (path === '/api/v1/user/personal-api-key') return copy(demoPersonalApiKey)
         if (path === '/v1/models') {
           const ids = modelsForBearer(headers.authorization)
           return { object: 'list', data: ids.map(id => ({ id, object: 'model', owned_by: 'local-demo' })) }
@@ -1857,6 +1873,47 @@ export function createMockApi(now = new Date()) {
         }
         createVerificationMode = mode
         return verificationFactors()
+      }
+      if (method === 'POST' && path === '/api/v1/user/personal-api-key') {
+        const verification = body.verification as Record<string, unknown> | undefined
+        const hasVerification = Boolean(
+          verification &&
+            typeof verification === 'object' &&
+            typeof verification.method === 'string' &&
+            verification.method.trim(),
+        )
+        if (!hasVerification) {
+          throw new PreviewError(400, '请先完成身份验证', 'VERIFY_REQUIRED')
+        }
+        const regenerated = demoPersonalApiKey.exists
+        const suffix = String(demoPersonalKeySeq++).padStart(8, '0')
+        const hexBody = `${suffix}${'a1b2c3d4e5f60718'.repeat(3)}${suffix}`.slice(0, 64)
+        const plaintext = `uak_${hexBody}`
+        const nowIso = new Date().toISOString()
+        demoPersonalApiKey = {
+          exists: true,
+          key_prefix: `${plaintext.slice(0, 12)}...${plaintext.slice(-4)}`,
+          created_at: nowIso,
+          updated_at: nowIso,
+          last_used_at: null,
+          last_used_ip: '',
+          rate_limit_rpm: 240,
+          write_rate_limit_rpm: 60,
+        }
+        return {
+          key: plaintext,
+          regenerated,
+          status: copy(demoPersonalApiKey),
+        }
+      }
+      if (method === 'DELETE' && path === '/api/v1/user/personal-api-key') {
+        const deleted = demoPersonalApiKey.exists
+        demoPersonalApiKey = {
+          exists: false,
+          rate_limit_rpm: 240,
+          write_rate_limit_rpm: 60,
+        }
+        return { deleted, message: 'Personal API key deleted successfully' }
       }
       const revealAuthPath = path.match(/^\/api\/v1\/user\/api-keys\/(\d+)\/reveal-authorize$/)
       if (revealAuthPath && method === 'POST') {

@@ -8,16 +8,37 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
-// NewJWTAuthMiddleware 创建 JWT 认证中间件
+// NewJWTAuthMiddleware 创建 JWT 认证中间件（保持既有签名，兼容单测直接构造）
 func NewJWTAuthMiddleware(
 	authService *service.AuthService,
 	userService *service.UserService,
 	settingService *service.SettingService,
 	auditService *service.AuditLogService,
 ) JWTAuthMiddleware {
-	return JWTAuthMiddleware(jwtAuth(authService, userService, userService, settingService, auditService))
+	return JWTAuthMiddleware(jwtAuthWithPersonalKey(authService, userService, userService, settingService, auditService, nil, nil))
+}
+
+// ProvideJWTAuthMiddleware 创建支持 JWT 与用户个人接口密钥（uak_）的认证中间件（wire 生产装配使用）。
+func ProvideJWTAuthMiddleware(
+	authService *service.AuthService,
+	userService *service.UserService,
+	settingService *service.SettingService,
+	auditService *service.AuditLogService,
+	personalKeyService *service.UserPersonalAPIKeyService,
+	redisClient *redis.Client,
+) JWTAuthMiddleware {
+	return JWTAuthMiddleware(jwtAuthWithPersonalKey(
+		authService,
+		userService,
+		userService,
+		settingService,
+		auditService,
+		personalKeyService,
+		newPersonalAPIKeyInvalidGuard(redisClient),
+	))
 }
 
 type jwtUserReader interface {
@@ -28,7 +49,7 @@ type userActivityToucher interface {
 	TouchLastActiveForUser(ctx context.Context, user *service.User)
 }
 
-// jwtAuth JWT认证中间件实现
+// jwtAuth JWT认证中间件实现（兼容包内既有单测）
 func jwtAuth(
 	authService *service.AuthService,
 	userService jwtUserReader,
@@ -36,7 +57,26 @@ func jwtAuth(
 	settingService *service.SettingService,
 	auditService *service.AuditLogService,
 ) gin.HandlerFunc {
+	return jwtAuthWithPersonalKey(authService, userService, activityToucher, settingService, auditService, nil, nil)
+}
+
+func jwtAuthWithPersonalKey(
+	authService *service.AuthService,
+	userService jwtUserReader,
+	activityToucher userActivityToucher,
+	settingService *service.SettingService,
+	auditService *service.AuditLogService,
+	personalKeyAuth userPersonalAPIKeyAuthenticator,
+	personalKeyGuard personalAPIKeyInvalidAttemptGuard,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 优先识别用户个人接口密钥（X-API-Key: uak_... 或 Authorization: Bearer uak_...），
+		// 走 SHA-256 哈希鉴权 + IP 无效尝试防爆破，免浏览器会话指纹绑定。
+		if rawKey, isPersonal := extractPersonalAPIKeyFromRequest(c); isPersonal {
+			authenticatePersonalAPIKey(c, rawKey, personalKeyAuth, personalKeyGuard, userService, activityToucher, auditService)
+			return
+		}
+
 		// 从Authorization header中提取token
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
