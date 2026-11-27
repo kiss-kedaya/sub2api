@@ -334,7 +334,6 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 		} else if delta := amount - estimatedAmount; delta > cachedChargeDeltaEps {
 			deltaRes, reserveErr := h.billingCacheService.ReserveFixedCharge(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, delta)
 			if reserveErr != nil {
-				precheckDone()
 				err = reserveErr
 			} else if deltaRes != nil {
 				precheckRes.Attach(deltaRes)
@@ -343,8 +342,10 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 		if err != nil {
 			reqLog.Info("gemini.cached_content.storage_charge_rejected", zap.Float64("amount", amount), zap.Error(err))
 			h.cleanupGeminiCachedContentUpstream(reqLog, account, upstream.Name)
-			if usageErr := h.submitGeminiCachedContentUsage(c, apiKey, account, subscription, pricingAt,
-				service.GeminiCachedContentCreateUsageRequestID(publicID), modelName, mappedModel, int(tokens), 0, usageFields, body); usageErr != nil {
+			usageErr := h.submitGeminiCachedContentUsage(c, apiKey, account, subscription, pricingAt,
+				service.GeminiCachedContentCreateUsageRequestID(publicID), modelName, mappedModel, int(tokens), 0, usageFields, body)
+			precheckDone()
+			if usageErr != nil {
 				googleError(c, http.StatusServiceUnavailable, "Cached content usage settlement is temporarily unavailable")
 				return
 			}
@@ -877,17 +878,8 @@ type geminiCachedContentEstimateBlock struct {
 	Parts []map[string]json.RawMessage `json:"parts"`
 }
 
-func accumulateGeminiCachedContentBlock(raw json.RawMessage, textBytes, mediaTokens *int) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return
-	}
-	var block geminiCachedContentEstimateBlock
-	if err := json.Unmarshal(trimmed, &block); err != nil || block.Parts == nil {
-		*textBytes += len(trimmed)
-		return
-	}
-	for _, part := range block.Parts {
+func accumulateGeminiCachedContentParts(parts []map[string]json.RawMessage, textBytes, mediaTokens *int, depth int) {
+	for _, part := range parts {
 		for k, v := range part {
 			val := bytes.TrimSpace(v)
 			if len(val) == 0 || bytes.Equal(val, []byte("null")) {
@@ -907,12 +899,48 @@ func accumulateGeminiCachedContentBlock(raw json.RawMessage, textBytes, mediaTok
 				} else {
 					*textBytes += len(val)
 				}
+			case "functionResponse", "function_response":
+				// Multimodal functionResponse may carry nested parts with inlineData/fileData.
+				if depth < 4 {
+					var fnObj map[string]json.RawMessage
+					if err := json.Unmarshal(val, &fnObj); err == nil {
+						for fk, fv := range fnObj {
+							trimmedField := bytes.TrimSpace(fv)
+							if len(trimmedField) == 0 || bytes.Equal(trimmedField, []byte("null")) {
+								continue
+							}
+							if fk == "parts" {
+								var nestedParts []map[string]json.RawMessage
+								if err := json.Unmarshal(trimmedField, &nestedParts); err == nil {
+									accumulateGeminiCachedContentParts(nestedParts, textBytes, mediaTokens, depth+1)
+									continue
+								}
+							}
+							*textBytes += len(trimmedField)
+						}
+						continue
+					}
+				}
+				*textBytes += len(val)
 			default:
 				// Count function calls/responses, executable code, and other structured payloads.
 				*textBytes += len(val)
 			}
 		}
 	}
+}
+
+func accumulateGeminiCachedContentBlock(raw json.RawMessage, textBytes, mediaTokens *int) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return
+	}
+	var block geminiCachedContentEstimateBlock
+	if err := json.Unmarshal(trimmed, &block); err != nil || block.Parts == nil {
+		*textBytes += len(trimmed)
+		return
+	}
+	accumulateGeminiCachedContentParts(block.Parts, textBytes, mediaTokens, 0)
 }
 
 // estimateGeminiCachedContentInputTokens structurally estimates input tokens from a

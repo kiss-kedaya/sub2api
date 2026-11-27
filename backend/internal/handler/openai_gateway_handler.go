@@ -2309,12 +2309,14 @@ func openAIWSAPIKeyAuthorizesGroup(key *service.APIKey, groupID int64) bool {
 	if key == nil || groupID <= 0 {
 		return false
 	}
+	// CandidateGroupIDs() already treats non-empty RouteGroupIDs as authoritative
+	// and falls back to GroupID when RouteGroupIDs is empty.
 	for _, id := range key.CandidateGroupIDs() {
 		if id == groupID {
 			return true
 		}
 	}
-	return key.GroupID != nil && *key.GroupID == groupID
+	return false
 }
 
 // 长连接只在建连时认证了一次 API Key。后续 turn 必须按实时状态复核 Key/User 有效性、
@@ -3921,7 +3923,26 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					)
 				}
 				replayTurn := int(nextInitialTurn.Load())
-				turnInflight.release(replayTurn)
+				if replayTurn > 1 {
+					turnInflight.release(replayTurn)
+				} else if !turnInflight.has(1) {
+					// Preserve Turn 1's inflight reservation across failover (including
+					// failover to a passthrough account that does not re-run BeforeTurn(1)).
+					inflightCtx, inflightDone, inflightErr := reserveInflightBalanceCtx(
+						ctx,
+						h.billingCacheService,
+						h.gatewayService,
+						apiKey,
+						subscription,
+						tokenInflightEstimate(c, reqModel, wsAttemptMessage),
+					)
+					if inflightErr != nil {
+						reqLog.Info("openai.websocket_turn1_failover_inflight_reservation_failed", zap.Error(inflightErr))
+						closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "billing check failed")
+						return
+					}
+					turnInflight.set(1, inflightCtx, inflightDone)
+				}
 				if waitForWSSameAccountRetry(account, failoverErr) {
 					if !ensureUserSlotHeld() {
 						return

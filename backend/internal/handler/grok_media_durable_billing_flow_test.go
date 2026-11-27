@@ -229,7 +229,7 @@ func (r *durableMediaHandlerRepo) AbandonMediaBillingJob(_ context.Context, id s
 		return false, service.ErrMediaBillingJobNotFound
 	}
 	if job.Status == service.MediaBillingReady && job.Intent != nil {
-		job.Status = service.MediaBillingReconciliation
+		job.Attempts++
 		job.AvailableAt = time.Now().Add(24 * time.Hour)
 		return true, nil
 	}

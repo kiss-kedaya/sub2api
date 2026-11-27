@@ -489,7 +489,7 @@ func (r *usageBillingRepository) ApplyMediaBillingJob(ctx context.Context, id st
 		tx = nil
 		return result, nil
 	}
-	if (job.Status != service.MediaBillingReady && job.Status != service.MediaBillingReconciliation) || job.Intent == nil {
+	if job.Status != service.MediaBillingReady || job.Intent == nil {
 		return nil, service.ErrUsageBillingRequestConflict
 	}
 	if err := validateMediaBillingIntentOwner(job, job.Intent); err != nil {
@@ -538,7 +538,7 @@ func (r *usageBillingRepository) ApplyMediaBillingJob(ctx context.Context, id st
 		UPDATE media_billing_jobs
 		SET status = $2, available_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND status = $3
-	`, job.ID, service.MediaBillingBilled, job.Status)
+	`, job.ID, service.MediaBillingBilled, service.MediaBillingReady)
 	if err != nil {
 		return nil, err
 	}
@@ -687,12 +687,15 @@ func (r *usageBillingRepository) ReconcileMediaBillingJob(ctx context.Context, i
 	return nil
 }
 
-// AbandonMediaBillingJob quarantines an unbilled poison-pill settlement job
-// from "ready" into "reconciliation" (preserving its frozen intent, hold, and
-// subscription accounting) and pushes available_at out by 24h so it leaves the
-// worker hot-loop without stranding frozen_balance or blocking a user who tops
-// up and settles later. Returns (true, nil) only when this call transitioned
-// the row from "ready"; already-billed/done/reconciled rows return (false, nil).
+// AbandonMediaBillingJob quarantines an unbilled poison-pill settlement job by
+// keeping status = "ready" (satisfying migration 262's CHECK constraint
+// `status <> 'reconciliation' OR (kind = 'grok_video' AND intent IS NULL)`,
+// preserving its frozen intent, frozen_balance hold, and subscription accounting,
+// and allowing immediate settlement once the user tops up) while pushing
+// available_at out by 24h so it leaves the 60s worker hot-loop via the partial
+// index on (available_at, created_at) WHERE status IN ('submitted','ready','billed').
+// Returns (true, nil) only when this call quarantined a "ready" row; already
+// billed/done/failed rows return (false, nil).
 func (r *usageBillingRepository) AbandonMediaBillingJob(ctx context.Context, id string) (bool, error) {
 	if err := r.validateMediaBillingRepository(); err != nil {
 		return false, err
@@ -700,11 +703,11 @@ func (r *usageBillingRepository) AbandonMediaBillingJob(ctx context.Context, id 
 	id = strings.TrimSpace(id)
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE media_billing_jobs
-		SET status = $2,
+		SET attempts = attempts + 1,
 			available_at = NOW() + INTERVAL '24 hours',
 			updated_at = NOW()
-		WHERE id = $1 AND status = $3 AND intent IS NOT NULL
-	`, id, service.MediaBillingReconciliation, service.MediaBillingReady)
+		WHERE id = $1 AND status = $2 AND intent IS NOT NULL
+	`, id, service.MediaBillingReady)
 	if err != nil {
 		return false, err
 	}
@@ -762,8 +765,7 @@ func (r *usageBillingRepository) ListMediaBillingJobs(ctx context.Context, limit
 		WITH picked AS (
 			SELECT id
 			FROM media_billing_jobs
-			WHERE (status IN ('creating', 'submitted', 'ready', 'billed')
-				OR (status = 'reconciliation' AND intent IS NULL))
+			WHERE status IN ('creating', 'submitted', 'reconciliation', 'ready', 'billed')
 				AND available_at <= NOW()
 			ORDER BY available_at, created_at
 			FOR UPDATE SKIP LOCKED

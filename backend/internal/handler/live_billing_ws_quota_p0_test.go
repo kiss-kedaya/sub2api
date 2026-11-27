@@ -481,9 +481,17 @@ func TestOpenAIWSTurnAPIKeyRefresh_RefreshesQuotaRateLimitsUserAndMatchingGroup(
 	require.InDelta(t, 3.2, refreshedRouted.QuotaUsed, 1e-9)
 	require.Equal(t, 2, refreshedRouted.ConcurrencyLimit)
 
-	// Removing bound group from live key's authorized groups MUST fail closed (no unauthorized group bypass).
+	// Removing bound group from live key's authorized groups MUST fail closed (no unauthorized group bypass),
+	// even if a stale GroupID field still references the removed group while RouteGroupIDs is authoritative.
+	lookup.key.GroupID = &groupID
 	lookup.key.RouteGroupIDs = []int64{otherGroupID}
-	_, rejectedMoved, err := keys.begin(ctx, lookup, 4, conn)
+	_, rejectedStalePrimary, err := keys.begin(ctx, lookup, 4, conn)
+	require.ErrorIs(t, err, errOpenAIWSGroupUnauthorized)
+	require.Nil(t, rejectedStalePrimary)
+
+	lookup.key.GroupID = &otherGroupID
+	lookup.key.RouteGroupIDs = []int64{otherGroupID}
+	_, rejectedMoved, err := keys.begin(ctx, lookup, 5, conn)
 	require.ErrorIs(t, err, errOpenAIWSGroupUnauthorized)
 	require.Nil(t, rejectedMoved)
 }
@@ -1340,6 +1348,12 @@ func TestEstimateGeminiCachedContentInputTokens_MultimodalAndFallback(t *testing
 	fileURISnake := `{"model":"models/gemini-2.5-pro","contents":[{"role":"user","parts":[{"file_data":{"mime_type":"application/pdf","file_uri":"gs://bucket/doc.pdf"}}]}]}`
 	require.Equal(t, geminiCachedContentFileDataPartTokens, estimateGeminiCachedContentInputTokens([]byte(fileURISnake)))
 
+	// Multimodal functionResponse with nested inlineData must also avoid dividing base64 by 4.
+	fnMultimodal := `{"model":"models/gemini-2.5-pro","contents":[{"role":"user","parts":[{"functionResponse":{"name":"load_img","response":{"ok":true},"parts":[{"inlineData":{"mimeType":"image/png","data":"` + bigBase64 + `"}}]}}]}]}`
+	tokensFn := estimateGeminiCachedContentInputTokens([]byte(fnMultimodal))
+	require.GreaterOrEqual(t, tokensFn, geminiCachedContentInlineDataPartTokens)
+	require.Less(t, tokensFn, 2000, "multimodal functionResponse.parts[].inlineData must NOT estimate ~1.33M tokens")
+
 	// Malformed JSON falls back to len(body)/4.
 	malformed := strings.Repeat("{", 400)
 	require.Equal(t, 100, estimateGeminiCachedContentInputTokens([]byte(malformed)))
@@ -1372,4 +1386,26 @@ func TestGeminiCachedContentsCreate_AllowsLargeBase64InlineDataWithSufficientBal
 	rec := env.serve(http.MethodPost, "/v1beta/cachedContents", imgBody, nil, env.h.GeminiCachedContentsCreate)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, 1, env.upstream.methodCalls(http.MethodPost))
+}
+
+func TestGeminiCachedContentsCreate_DeltaRejectReleasesHoldAfterInputUsageBilling(t *testing.T) {
+	// Balance = $0.50: estimated 1024 tokens (~$0.112) passes precheck and creates upstream cache,
+	// but upstream reports 100,000 tokens (~$10.925 > $0.50) -> delta reservation fails!
+	// Handler must delete orphan upstream cache, bill input tokens, release precheck hold cleanly,
+	// and return 429 RESOURCE_EXHAUSTED so a later affordable request still succeeds.
+	env := newCachedBillingEnv(t, 0.50, 900)
+	env.upstream.createBody = `{"name":"cachedContents/up_oversize","expireTime":"` + time.Now().Add(24*time.Hour).UTC().Format(time.RFC3339) + `","usageMetadata":{"totalTokenCount":100000}}`
+	imgBody := `{"model":"models/gemini-2.5-pro","ttl":"86400s","contents":[{"role":"user","parts":[{"inlineData":{"mimeType":"image/png","data":"` + strings.Repeat("A", 10_000) + `"}}]}]}`
+
+	rec := env.serve(http.MethodPost, "/v1beta/cachedContents", imgBody, nil, env.h.GeminiCachedContentsCreate)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "RESOURCE_EXHAUSTED")
+	require.Equal(t, 1, env.upstream.methodCalls(http.MethodPost))
+	require.Equal(t, 1, env.upstream.methodCalls(http.MethodDelete), "orphan upstream cache must be deleted on delta rejection")
+	require.Len(t, env.usage.totals(), 1, "consumed input tokens must still be billed on delta rejection")
+
+	// Subsequent request costing ~$0.112 must succeed (proving precheckRes was released cleanly, not leaked).
+	env.upstream.createBody = `{"name":"cachedContents/up_small","expireTime":"` + time.Now().Add(24*time.Hour).UTC().Format(time.RFC3339) + `","usageMetadata":{"totalTokenCount":1024}}`
+	rec2 := env.serve(http.MethodPost, "/v1beta/cachedContents", imgBody, nil, env.h.GeminiCachedContentsCreate)
+	require.Equal(t, http.StatusOK, rec2.Code, rec2.Body.String())
 }

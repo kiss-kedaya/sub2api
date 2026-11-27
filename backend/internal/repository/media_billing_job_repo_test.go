@@ -538,14 +538,15 @@ func TestPrepareMediaBillingIntent_ResetsAttemptsToZero(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestApplyMediaBillingJob_SettlesQuarantinedReconciliationJobWithIntent(t *testing.T) {
+func TestApplyMediaBillingJob_SettlesQuarantinedReadyJobAfterTopUp(t *testing.T) {
 	repo, mock := newMediaBillingSQLMock(t)
 	intent := testMediaIntent(1.5)
 	intent.Command.Normalize()
 	job := service.MediaBillingJob{
-		ID: "video-reconciled-ready", Kind: service.MediaBillingKindGrokVideo,
+		ID: "video-quarantined-ready", Kind: service.MediaBillingKindGrokVideo,
 		UserID: 42, APIKeyID: 7, AccountID: 9, GroupID: 11,
-		Status: service.MediaBillingReconciliation, ReservedAmount: 1.0, Intent: intent,
+		Status: service.MediaBillingReady, ReservedAmount: 1.0, Intent: intent,
+		Attempts: 6, AvailableAt: time.Now().Add(24 * time.Hour),
 	}
 
 	mock.ExpectBegin()
@@ -565,7 +566,7 @@ func TestApplyMediaBillingJob_SettlesQuarantinedReconciliationJobWithIntent(t *t
 		WithArgs(1.5, int64(7), service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).
 		WillReturnRows(sqlmock.NewRows([]string{"exhausted"}).AddRow(false))
 	mock.ExpectExec(`(?s)UPDATE media_billing_jobs.*SET status = \$2.*WHERE id = \$1 AND status = \$3`).
-		WithArgs(job.ID, service.MediaBillingBilled, service.MediaBillingReconciliation).
+		WithArgs(job.ID, service.MediaBillingBilled, service.MediaBillingReady).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -577,10 +578,10 @@ func TestApplyMediaBillingJob_SettlesQuarantinedReconciliationJobWithIntent(t *t
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestAbandonMediaBillingJob_TransitionsReadyToReconciliationWithCooldown(t *testing.T) {
+func TestAbandonMediaBillingJob_QuarantinesReadyJobWith24hCooldownKeepingValidStatus(t *testing.T) {
 	repo, mock := newMediaBillingSQLMock(t)
-	mock.ExpectExec(`(?s)UPDATE media_billing_jobs\s+SET status = \$2,\s+available_at = NOW\(\) \+ INTERVAL '24 hours',\s+updated_at = NOW\(\)\s+WHERE id = \$1 AND status = \$3 AND intent IS NOT NULL`).
-		WithArgs("poison-ready-job", service.MediaBillingReconciliation, service.MediaBillingReady).
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs\s+SET attempts = attempts \+ 1,\s+available_at = NOW\(\) \+ INTERVAL '24 hours',\s+updated_at = NOW\(\)\s+WHERE id = \$1 AND status = \$2 AND intent IS NOT NULL`).
+		WithArgs("poison-ready-job", service.MediaBillingReady).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	abandoned, err := repo.AbandonMediaBillingJob(context.Background(), " poison-ready-job ")
@@ -591,8 +592,8 @@ func TestAbandonMediaBillingJob_TransitionsReadyToReconciliationWithCooldown(t *
 
 func TestAbandonMediaBillingJob_AlreadyBilledOrDoneReturnsFalseWithoutError(t *testing.T) {
 	repo, mock := newMediaBillingSQLMock(t)
-	mock.ExpectExec(`(?s)UPDATE media_billing_jobs\s+SET status = \$2,\s+available_at = NOW\(\) \+ INTERVAL '24 hours',\s+updated_at = NOW\(\)\s+WHERE id = \$1 AND status = \$3 AND intent IS NOT NULL`).
-		WithArgs("already-billed-job", service.MediaBillingReconciliation, service.MediaBillingReady).
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs\s+SET attempts = attempts \+ 1,\s+available_at = NOW\(\) \+ INTERVAL '24 hours',\s+updated_at = NOW\(\)\s+WHERE id = \$1 AND status = \$2 AND intent IS NOT NULL`).
+		WithArgs("already-billed-job", service.MediaBillingReady).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM media_billing_jobs WHERE id = \$1\)`).
 		WithArgs("already-billed-job").
@@ -606,8 +607,8 @@ func TestAbandonMediaBillingJob_AlreadyBilledOrDoneReturnsFalseWithoutError(t *t
 
 func TestAbandonMediaBillingJob_MissingJobReturnsNotFound(t *testing.T) {
 	repo, mock := newMediaBillingSQLMock(t)
-	mock.ExpectExec(`(?s)UPDATE media_billing_jobs\s+SET status = \$2,\s+available_at = NOW\(\) \+ INTERVAL '24 hours',\s+updated_at = NOW\(\)\s+WHERE id = \$1 AND status = \$3 AND intent IS NOT NULL`).
-		WithArgs("missing-poison-job", service.MediaBillingReconciliation, service.MediaBillingReady).
+	mock.ExpectExec(`(?s)UPDATE media_billing_jobs\s+SET attempts = attempts \+ 1,\s+available_at = NOW\(\) \+ INTERVAL '24 hours',\s+updated_at = NOW\(\)\s+WHERE id = \$1 AND status = \$2 AND intent IS NOT NULL`).
+		WithArgs("missing-poison-job", service.MediaBillingReady).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM media_billing_jobs WHERE id = \$1\)`).
 		WithArgs("missing-poison-job").

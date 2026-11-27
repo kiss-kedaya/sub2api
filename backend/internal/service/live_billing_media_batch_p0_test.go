@@ -783,9 +783,10 @@ func TestMediaBillingWorker_ExponentialBackoffAndAbandonsPoisonPill(t *testing.T
 		"generic transient DB/network errors must remain on bounded 60m backoff instead of abandoning revenue")
 	require.Equal(t, 60*time.Minute, mediaBillingRecoveryDelay(transientJob, errors.New("temporary pg disconnect")))
 
-	// 3. Verify poison pill hitting ErrBalanceWithholdingFailed transitions to
-	// MediaBillingReconciliation (NOT MediaBillingFailed) with 24h cooldown,
-	// leaves the worker hot-loop, and STILL lets a user who tops up settle later.
+	// 3. Verify poison pill hitting ErrBalanceWithholdingFailed stays MediaBillingReady
+	// (satisfying migration 262 CHECK constraint: reconciliation requires kind=grok_video AND intent IS NULL;
+	// never MediaBillingFailed), pushes available_at out 24h to leave the 60s worker hot-loop,
+	// preserves frozen_balance & subscription holds, and STILL lets a user who tops up settle later.
 	ctx := context.Background()
 	memRepo := &mediaJobMemoryRepo{jobs: map[string]*MediaBillingJob{}, balance: 100}
 	wrapper := &liveP0MediaRepoErrWrapper{
@@ -819,20 +820,59 @@ func TestMediaBillingWorker_ExponentialBackoffAndAbandonsPoisonPill(t *testing.T
 
 	require.Equal(t, []string{"poison_job_1"}, wrapper.abandonedIDs)
 	require.Empty(t, wrapper.retriedDelays, "quarantined poison job must not be re-queued into 60s loop")
-	require.Equal(t, MediaBillingReconciliation, memRepo.jobs[poison.ID].Status)
+	require.Equal(t, MediaBillingReady, memRepo.jobs[poison.ID].Status, "must remain ready to satisfy PG migration 262 CHECK constraint")
+	require.Equal(t, mediaBillingBalanceWithholdingMaxAttempts, memRepo.jobs[poison.ID].Attempts)
 	require.True(t, memRepo.jobs[poison.ID].AvailableAt.After(time.Now().Add(23*time.Hour)))
 
+	// Worker must NOT pick up the quarantined job while in 24h cooldown.
+	due, listErr := memRepo.ListMediaBillingJobs(ctx, 10)
+	require.NoError(t, listErr)
+	require.Empty(t, due, "quarantined poison job must be excluded from 60s worker queue until cooldown expires")
+
 	// After the user tops up their balance, SettleGrokVideoBillingJob must still
-	// settle the quarantined reconciliation job instead of returning "already refunded".
+	// settle the quarantined job immediately instead of returning "already refunded".
 	wrapper.applyErr = nil
-	reconciled, err := memRepo.GetMediaBillingJobByID(ctx, poison.ID)
+	quarantined, err := memRepo.GetMediaBillingJobByID(ctx, poison.ID)
 	require.NoError(t, err)
-	require.NoError(t, svc.SettleGrokVideoBillingJob(ctx, reconciled, &OpenAIForwardResult{VideoCount: 1, VideoDurationSeconds: 5}))
+	require.NoError(t, svc.SettleGrokVideoBillingJob(ctx, quarantined, &OpenAIForwardResult{VideoCount: 1, VideoDurationSeconds: 5}))
 	require.Equal(t, MediaBillingDone, memRepo.jobs[poison.ID].Status)
 	require.Equal(t, 1, memRepo.applied)
 	require.InDelta(t, 97.0, memRepo.balance, 1e-9, "balance must capture net (5.0 - 2.0 hold)")
 
+	// 3b. Verify MediaBillingKindImage poison job is also quarantined cleanly (valid under
+	// migration 262 CHECK constraint) and auto-settles once 24h elapses after top-up.
+	wrapper.abandonedIDs = nil
+	wrapper.retriedDelays = nil
+	wrapper.applyErr = ErrBalanceWithholdingFailed
+	imgPoison := &MediaBillingJob{
+		ID:          "image_poison_1",
+		Kind:        MediaBillingKindImage,
+		UserID:      10,
+		APIKeyID:    20,
+		AccountID:   30,
+		GroupID:     40,
+		Status:      MediaBillingReady,
+		Attempts:    mediaBillingBalanceWithholdingMaxAttempts - 1,
+		AvailableAt: time.Now().Add(-time.Minute),
+		Intent: &MediaBillingIntent{
+			Command: UsageBillingCommand{RequestID: "image:poison", UserID: 10, APIKeyID: 20, AccountID: 30, BalanceCost: 1.5},
+			Usage:   UsageLog{RequestID: "image:poison", UserID: 10, APIKeyID: 20, AccountID: 30, ActualCost: 1.5},
+		},
+	}
+	memRepo.jobs[imgPoison.ID] = imgPoison
+	svc.recoverMediaBillingJobs(ctx)
+	require.Equal(t, []string{"image_poison_1"}, wrapper.abandonedIDs)
+	require.Equal(t, MediaBillingReady, memRepo.jobs[imgPoison.ID].Status)
+	require.True(t, memRepo.jobs[imgPoison.ID].AvailableAt.After(time.Now().Add(23*time.Hour)))
+	// Simulate 24h passing + user topping up: worker auto-settles without needing any polling endpoint.
+	wrapper.applyErr = nil
+	memRepo.jobs[imgPoison.ID].AvailableAt = time.Now().Add(-time.Second)
+	svc.recoverMediaBillingJobs(ctx)
+	require.Equal(t, MediaBillingDone, memRepo.jobs[imgPoison.ID].Status)
+	require.Equal(t, 2, memRepo.applied)
+
 	// 4. Before cap, job is retried with exponential backoff (not abandoned).
+	wrapper.retriedDelays = nil
 	wrapper.applyErr = ErrBalanceWithholdingFailed
 	poison2 := &MediaBillingJob{
 		ID:          "poison_job_backoff",

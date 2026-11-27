@@ -778,15 +778,46 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	// negotiated at session.update time. Without this fallback, an empty
 	// model would miss any admin-configured model whitelist and be silently
 	// passed through, defeating that policy on every frame after the first.
-	initialRequestModel := ""
-	if hooks != nil {
-		initialRequestModel = strings.TrimSpace(hooks.InitialRequestModel)
+	initialTurn := 1
+	if hooks != nil && hooks.InitialTurnNumber > 1 {
+		initialTurn = hooks.InitialTurnNumber
 	}
-	if initialRequestModel == "" {
+	initialRequestModel := ""
+	if initialTurn > 1 {
+		// Failover replay of a subsequent turn may have switched models relative
+		// to Turn 1; extract this frame's explicit model first and run per-turn
+		// admission hooks BEFORE MapRequestModel, fast policy, and upstream dial.
 		initialRequestModel = openAIWSPassthroughRequestModelForFrame(firstClientMessage)
+		if initialRequestModel == "" && hooks != nil {
+			initialRequestModel = strings.TrimSpace(hooks.InitialRequestModel)
+		}
+		if hooks != nil {
+			if hooks.PrepareTurnPayload != nil {
+				hooks.PrepareTurnPayload(initialTurn, firstClientMessage, initialRequestModel)
+			}
+			if hooks.BeforeTurn != nil {
+				if err := hooks.BeforeTurn(initialTurn); err != nil {
+					return err
+				}
+			}
+			if hooks.BeforeRequest != nil {
+				if next, err := hooks.BeforeRequest(initialTurn, firstClientMessage, initialRequestModel); err != nil {
+					return err
+				} else if next != nil {
+					firstClientMessage = next
+				}
+			}
+		}
+	} else {
+		if hooks != nil {
+			initialRequestModel = strings.TrimSpace(hooks.InitialRequestModel)
+		}
+		if initialRequestModel == "" {
+			initialRequestModel = openAIWSPassthroughRequestModelForFrame(firstClientMessage)
+		}
 	}
 	if hooks != nil && hooks.MapRequestModel != nil {
-		mappedModel, mapErr := hooks.MapRequestModel(1, initialRequestModel)
+		mappedModel, mapErr := hooks.MapRequestModel(initialTurn, initialRequestModel)
 		if mapErr != nil {
 			return mapErr
 		}
@@ -1022,10 +1053,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	// The group is fixed for this connection. Capture its presentation policy
 	// before relay goroutines start; BeforeTurn may replace c.Request later.
 	returnRequestedModel := ContextShouldReturnRequestedModel(c)
-	initialTurn := 1
-	if hooks != nil && hooks.InitialTurnNumber > 1 {
-		initialTurn = hooks.InitialTurnNumber
-	}
 	turnOffset := initialTurn - 1
 	completedTurns := atomic.Int32{}
 	var activeResponseID atomic.Value
@@ -1223,38 +1250,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			_ = WriteCapturedWSClient(writeCtx, clientConn, coderws.MessageText, eventBytes)
 			cancel()
 		},
-	}
-	if initialTurn > 1 && hooks != nil {
-		// Failover replay of a subsequent turn must re-run per-turn auth,
-		// billing eligibility, inflight reservation, policy, and model mapping.
-		initialReqModel := usageMeta.requestModelForFrame(firstClientMessage)
-		if initialReqModel == "" {
-			initialReqModel = loadCapturedSessionModel()
-		}
-		if hooks.PrepareTurnPayload != nil {
-			hooks.PrepareTurnPayload(initialTurn, firstClientMessage, initialReqModel)
-		}
-		if hooks.BeforeTurn != nil {
-			if err := hooks.BeforeTurn(initialTurn); err != nil {
-				return err
-			}
-		}
-		if hooks.BeforeRequest != nil {
-			if next, err := hooks.BeforeRequest(initialTurn, firstClientMessage, initialReqModel); err != nil {
-				return err
-			} else if next != nil {
-				firstClientMessage = next
-			}
-		}
-		if hooks.MapRequestModel != nil {
-			upstreamModel, err := hooks.MapRequestModel(initialTurn, initialReqModel)
-			if err != nil {
-				return err
-			}
-			if upstreamModel = strings.TrimSpace(upstreamModel); upstreamModel != "" {
-				firstClientMessage = s.ReplaceModelInBody(firstClientMessage, upstreamModel)
-			}
-		}
 	}
 	upstreamFirstMessageSent := false
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
