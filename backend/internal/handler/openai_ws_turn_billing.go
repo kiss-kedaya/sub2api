@@ -21,10 +21,6 @@ type openAIWSTurnBillingGuard struct {
 	settlementErr error
 }
 
-func newOpenAIWSTurnBillingGuard(settleTimeout time.Duration) *openAIWSTurnBillingGuard {
-	return newOpenAIWSTurnBillingGuardWithCompleted(settleTimeout, 0)
-}
-
 func newOpenAIWSTurnBillingGuardWithCompleted(settleTimeout time.Duration, completedTurn int) *openAIWSTurnBillingGuard {
 	if settleTimeout <= 0 {
 		settleTimeout = openAIWSTurnSettlementTimeout

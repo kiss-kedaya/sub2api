@@ -45,9 +45,11 @@ func (c *liveP0WSBillingCache) GetUserPlatformQuotaCache(context.Context, int64,
 }
 
 type liveP0APIKeyLookupStub struct {
-	mu  sync.Mutex
-	key *service.APIKey
-	err error
+	mu       sync.Mutex
+	key      *service.APIKey
+	err      error
+	groups   map[int64]*service.Group
+	groupErr error
 }
 
 func (s *liveP0APIKeyLookupStub) GetByKey(_ context.Context, _ string) (*service.APIKey, error) {
@@ -61,6 +63,22 @@ func (s *liveP0APIKeyLookupStub) GetByKey(_ context.Context, _ string) (*service
 	}
 	cp := *s.key
 	return &cp, nil
+}
+
+func (s *liveP0APIKeyLookupStub) GetGroupByIDLite(_ context.Context, id int64) (*service.Group, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.groupErr != nil {
+		return nil, s.groupErr
+	}
+	if s.groups == nil {
+		return nil, nil
+	}
+	g, ok := s.groups[id]
+	if !ok || g == nil {
+		return nil, service.ErrGroupNotFound
+	}
+	return g, nil
 }
 
 type liveP0APIKeyRepoStub struct {
@@ -494,6 +512,117 @@ func TestOpenAIWSTurnAPIKeyRefresh_RefreshesQuotaRateLimitsUserAndMatchingGroup(
 	_, rejectedMoved, err := keys.begin(ctx, lookup, 5, conn)
 	require.ErrorIs(t, err, errOpenAIWSGroupUnauthorized)
 	require.Nil(t, rejectedMoved)
+}
+
+func TestOpenAIWSTurnAPIKeyRefresh_ValidatesBoundSecondaryRouteGroupLiveState(t *testing.T) {
+	boundGroupID := int64(9)
+	primaryGroupID := int64(17)
+	conn := &service.APIKey{
+		ID:      101,
+		UserID:  42,
+		Key:     "test-ws-secondary-route-group",
+		Status:  service.StatusAPIKeyActive,
+		GroupID: &boundGroupID,
+		Group: &service.Group{
+			ID:               boundGroupID,
+			Platform:         service.PlatformOpenAI,
+			SubscriptionType: service.SubscriptionTypeStandard,
+			Status:           service.StatusActive,
+			RateMultiplier:   1.0,
+		},
+		User: &service.User{ID: 42, Status: service.StatusActive, Balance: 10},
+	}
+	baseLatest := func() *service.APIKey {
+		return &service.APIKey{
+			ID:            101,
+			UserID:        42,
+			Status:        service.StatusAPIKeyActive,
+			GroupID:       &primaryGroupID,
+			Group:         &service.Group{ID: primaryGroupID, Platform: service.PlatformOpenAI, Status: service.StatusActive},
+			RouteGroupIDs: []int64{primaryGroupID, boundGroupID},
+			User:          &service.User{ID: 42, Status: service.StatusActive, Balance: 10},
+		}
+	}
+
+	t.Run("active secondary route group refreshes group metadata and rate multiplier", func(t *testing.T) {
+		freshSecondary := &service.Group{
+			ID:               boundGroupID,
+			Platform:         service.PlatformOpenAI,
+			SubscriptionType: service.SubscriptionTypeStandard,
+			Status:           service.StatusActive,
+			RateMultiplier:   3.25,
+		}
+		lookup := &liveP0APIKeyLookupStub{
+			key:    baseLatest(),
+			groups: map[int64]*service.Group{boundGroupID: freshSecondary},
+		}
+		var keys openAIWSTurnBillingAPIKeys
+		ctx := context.WithValue(context.Background(), ctxkey.Group, conn.Group)
+		turnCtx, refreshed, err := keys.begin(ctx, lookup, 2, conn)
+		require.NoError(t, err)
+		require.Same(t, freshSecondary, refreshed.Group)
+		require.Same(t, freshSecondary, turnCtx.Value(ctxkey.Group))
+	})
+
+	t.Run("disabled secondary route group fails closed", func(t *testing.T) {
+		lookup := &liveP0APIKeyLookupStub{
+			key: baseLatest(),
+			groups: map[int64]*service.Group{
+				boundGroupID: {
+					ID:               boundGroupID,
+					Platform:         service.PlatformOpenAI,
+					SubscriptionType: service.SubscriptionTypeStandard,
+					Status:           service.StatusDisabled,
+				},
+			},
+		}
+		var keys openAIWSTurnBillingAPIKeys
+		_, got, err := keys.begin(context.Background(), lookup, 2, conn)
+		require.ErrorIs(t, err, errOpenAIWSGroupDisabled)
+		require.Nil(t, got)
+	})
+
+	t.Run("deleted secondary route group fails closed", func(t *testing.T) {
+		lookup := &liveP0APIKeyLookupStub{
+			key:    baseLatest(),
+			groups: map[int64]*service.Group{},
+		}
+		var keys openAIWSTurnBillingAPIKeys
+		_, got, err := keys.begin(context.Background(), lookup, 2, conn)
+		require.ErrorIs(t, err, errOpenAIWSGroupDisabled)
+		require.Nil(t, got)
+	})
+
+	t.Run("secondary route group platform or subscription change fails closed", func(t *testing.T) {
+		lookup := &liveP0APIKeyLookupStub{
+			key: baseLatest(),
+			groups: map[int64]*service.Group{
+				boundGroupID: {
+					ID:               boundGroupID,
+					Platform:         service.PlatformAnthropic,
+					SubscriptionType: service.SubscriptionTypeStandard,
+					Status:           service.StatusActive,
+				},
+			},
+		}
+		var keys openAIWSTurnBillingAPIKeys
+		_, got, err := keys.begin(context.Background(), lookup, 2, conn)
+		require.ErrorIs(t, err, errOpenAIWSGroupUnauthorized)
+		require.Nil(t, got)
+	})
+
+	t.Run("transient DB error loading secondary route group fails closed with TryAgainLater", func(t *testing.T) {
+		lookup := &liveP0APIKeyLookupStub{
+			key:      baseLatest(),
+			groupErr: errors.New("pg connection reset"),
+		}
+		var keys openAIWSTurnBillingAPIKeys
+		_, got, err := keys.begin(context.Background(), lookup, 2, conn)
+		require.Error(t, err)
+		require.Nil(t, got)
+		status, _ := openAIWSAPIKeyCloseStatusAndReason(err)
+		require.Equal(t, coderws.StatusTryAgainLater, status)
+	})
 }
 
 func TestOpenAIWSResponses_MultiTurnFailsClosedWhenKeyRevokedOrQuotaExhausted(t *testing.T) {

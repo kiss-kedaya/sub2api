@@ -2218,6 +2218,10 @@ type openAIWSAPIKeyLookup interface {
 	GetByKey(ctx context.Context, key string) (*service.APIKey, error)
 }
 
+type openAIWSGroupLookup interface {
+	GetGroupByIDLite(ctx context.Context, id int64) (*service.Group, error)
+}
+
 var (
 	errOpenAIWSAPIKeyDisabled    = errors.New("api key is no longer active")
 	errOpenAIWSUserDisabled      = errors.New("user is no longer active")
@@ -2420,14 +2424,27 @@ func refreshOpenAIWSTurnBillingAPIKey(ctx context.Context, lookup openAIWSAPIKey
 		if !openAIWSAPIKeyAuthorizesGroup(latest, boundGroupID) {
 			return nil, errOpenAIWSGroupUnauthorized
 		}
+		var liveGroup *service.Group
 		if latest.GroupID != nil && *latest.GroupID == boundGroupID && latest.Group != nil && latest.Group.ID == boundGroupID {
-			if latest.Group.Status != "" && !latest.Group.IsActive() {
+			liveGroup = latest.Group
+		} else if groupLookup, ok := lookup.(openAIWSGroupLookup); ok {
+			loadedGroup, err := groupLookup.GetGroupByIDLite(ctx, boundGroupID)
+			if err != nil {
+				if errors.Is(err, service.ErrGroupNotFound) {
+					return nil, errOpenAIWSGroupDisabled
+				}
+				return nil, err
+			}
+			liveGroup = loadedGroup
+		}
+		if liveGroup != nil {
+			if liveGroup.Status != "" && !liveGroup.IsActive() {
 				return nil, errOpenAIWSGroupDisabled
 			}
-			if conn.Group != nil && (latest.Group.Platform != conn.Group.Platform || latest.Group.SubscriptionType != conn.Group.SubscriptionType) {
+			if conn.Group != nil && (liveGroup.Platform != conn.Group.Platform || liveGroup.SubscriptionType != conn.Group.SubscriptionType) {
 				return nil, errOpenAIWSGroupUnauthorized
 			}
-			turnKey.Group = latest.Group
+			turnKey.Group = liveGroup
 		}
 	} else if (latest.GroupID != nil && *latest.GroupID > 0) || len(latest.CandidateGroupIDs()) > 0 {
 		// Connection started ungrouped, but the key is now bound to specific group(s).

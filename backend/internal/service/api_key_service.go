@@ -1636,3 +1636,13 @@ func (s *APIKeyService) GetByKeyUncached(ctx context.Context, key string) (*APIK
 	s.compileAPIKeyIPRules(loaded)
 	return loaded, nil
 }
+
+// GetGroupByIDLite loads live lightweight group metadata (status, platform,
+// subscription type, multipliers) for persistent connection turn admission
+// when the connection is bound to a secondary route group.
+func (s *APIKeyService) GetGroupByIDLite(ctx context.Context, id int64) (*Group, error) {
+	if s == nil || s.groupRepo == nil || id <= 0 {
+		return nil, nil
+	}
+	return s.groupRepo.GetByIDLite(ctx, id)
+}

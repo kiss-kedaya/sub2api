@@ -1092,8 +1092,8 @@ func TestBatchImageHardening_FailClosedSumNoDoubleCountAndSettlementOrdering(t *
 		require.NoError(t, concurrentErr, "concurrent 2nd batch must NOT see double-counted hold for Job A")
 	})
 
-	t.Run("settlement updates PG quota & rate limit with retry BEFORE invalidating auth cache using detached context", func(t *testing.T) {
-		rec := &liveP0BatchOrderRecorder{quotaFailOnce: true, rateFailOnce: true}
+	t.Run("settlement updates PG quota & rate limit once without retrying non-idempotent SQL BEFORE invalidating auth cache", func(t *testing.T) {
+		rec := &liveP0BatchOrderRecorder{}
 		settleRepo := newFakeBatchImageRepository()
 		job := testSettlingBatchImageJob("imgbatch_order_check")
 		job.UserID = 11
@@ -1111,12 +1111,35 @@ func TestBatchImageHardening_FailClosedSumNoDoubleCountAndSettlementOrdering(t *
 		}
 		_, err := settleSvc.Settle(ctx, job.BatchID)
 		require.NoError(t, err)
-		require.Equal(t, 2, rec.quotaCalls, "transient PG quota update error must retry")
-		require.Equal(t, 2, rec.rateCalls, "transient PG rate-limit update error must retry")
-		require.InDelta(t, 0.50, rec.quotaTotal, 1e-9, "must not double-apply quota")
-		require.InDelta(t, 0.50, rec.rateTotal, 1e-9, "must not double-apply rate limit")
-		require.Equal(t, []string{"pg_quota", "pg_quota", "pg_rate", "pg_rate", "auth_invalidate"}, rec.events,
+		require.Equal(t, 1, rec.quotaCalls)
+		require.Equal(t, 1, rec.rateCalls)
+		require.InDelta(t, 0.50, rec.quotaTotal, 1e-9, "must apply quota exactly once")
+		require.InDelta(t, 0.50, rec.rateTotal, 1e-9, "must apply rate limit exactly once")
+		require.Equal(t, []string{"pg_quota", "pg_rate", "auth_invalidate"}, rec.events,
 			"PG quota & rate-limit updates must finish BEFORE auth cache invalidation")
+
+		// Ambiguous PG errors (e.g. deadline exceeded after commit) must NOT blindly
+		// retry non-idempotent additive SQL and risk double-counting quota/rate limits.
+		errRec := &liveP0BatchOrderRecorder{quotaFailOnce: true, rateFailOnce: true}
+		errJob := testSettlingBatchImageJob("imgbatch_no_blind_retry")
+		errJob.UserID = 11
+		errJob.SuccessCount = 2
+		errJob.FailCount = 0
+		errJob.ItemCount = 2
+		settleRepo.jobs[errJob.BatchID] = errJob
+		errSvc := &BatchImageSettlementService{
+			Repo:               settleRepo,
+			BillingRepo:        &fakeBatchImageBillingRepo{},
+			Pricing:            &fakeBatchImagePricingResolver{unitPrice: 0.25},
+			BillingCache:       billingCache,
+			APIKeyQuotaUpdater: errRec,
+			AuthCache:          errRec,
+		}
+		_, err = errSvc.Settle(ctx, errJob.BatchID)
+		require.NoError(t, err)
+		require.Equal(t, 1, errRec.quotaCalls, "must never blind-retry non-idempotent UpdateQuotaUsed")
+		require.Equal(t, 1, errRec.rateCalls, "must never blind-retry non-idempotent UpdateRateLimitUsage")
+		require.Equal(t, []string{"pg_quota", "pg_rate", "auth_invalidate"}, errRec.events)
 
 		// Verify detached context on canceled caller ctx (P2-2).
 		canceledCtx, cancel := context.WithCancel(context.Background())
