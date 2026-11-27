@@ -3,9 +3,9 @@
     <div class="space-y-6">
       <AdminPageHeader :title="t('admin.plugins.title')" :description="t('admin.plugins.description')">
         <template #meta>
-          <div class="flex flex-wrap gap-1.5">
-            <UBadge color="neutral" variant="subtle" :label="t('admin.plugins.onlyOpenAI')" />
-            <UBadge color="neutral" variant="subtle" :label="t('admin.plugins.noAccountCoupling')" />
+          <div class="flex min-w-0 max-w-full flex-wrap gap-1.5">
+            <UBadge color="neutral" variant="subtle" class="max-w-full" :ui="{ label: 'whitespace-normal text-left' }" :label="t('admin.plugins.onlyOpenAI')" />
+            <UBadge color="neutral" variant="subtle" class="max-w-full" :ui="{ label: 'whitespace-normal text-left' }" :label="t('admin.plugins.noAccountCoupling')" />
           </div>
         </template>
 
@@ -77,9 +77,9 @@
 
             <div class="flex flex-wrap items-center gap-1.5 pt-1">
               <UBadge
-                :color="compatibilityColor(plugin.compatibility.status)"
+                :color="compatibilityColor(plugin.compatibility?.status ?? 'unknown')"
                 variant="subtle"
-                :label="`${t('admin.plugins.compatibility')}: ${t(`admin.plugins.${plugin.compatibility.status}`)}`"
+                :label="`${t('admin.plugins.compatibility')}: ${plugin.compatibility?.status ? t(`admin.plugins.${plugin.compatibility.status}`) : '-'}`"
               />
               <UBadge
                 :color="plugin.runtime_healthy ? 'success' : 'neutral'"
@@ -89,23 +89,23 @@
               <UBadge
                 color="neutral"
                 variant="outline"
-                :label="`${t('admin.plugins.signature')}: ${t(`admin.plugins.${plugin.signature_status}`)}`"
+                :label="`${t('admin.plugins.signature')}: ${t(`admin.plugins.${plugin.signature_status ?? 'unsigned'}`)}`"
               />
-              <span v-if="plugin.compatibility.message" class="text-xs text-muted">{{ plugin.compatibility.message }}</span>
+              <span v-if="plugin.compatibility?.message" class="text-xs text-muted">{{ plugin.compatibility.message }}</span>
             </div>
 
             <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
               <div class="flex gap-1">
                 <dt class="text-muted">{{ t("admin.plugins.currentVersion") }}</dt>
-                <dd class="font-mono text-default">{{ plugin.compatibility.current_sub2api_version }}</dd>
+                <dd class="font-mono text-default">{{ plugin.compatibility?.current_sub2api_version || "-" }}</dd>
               </div>
               <div class="flex gap-1">
                 <dt class="text-muted">{{ t("admin.plugins.requiredVersion") }}</dt>
-                <dd class="font-mono text-default">{{ plugin.compatibility.required_sub2api_version }}</dd>
+                <dd class="font-mono text-default">{{ plugin.compatibility?.required_sub2api_version || "-" }}</dd>
               </div>
               <div class="flex gap-1">
                 <dt class="text-muted">{{ t("admin.plugins.recommendedVersion") }}</dt>
-                <dd class="font-mono text-default">{{ plugin.compatibility.recommended_sub2api_version || "-" }}</dd>
+                <dd class="font-mono text-default">{{ plugin.compatibility?.recommended_sub2api_version || "-" }}</dd>
               </div>
             </dl>
 
@@ -146,7 +146,7 @@
               v-else
               size="sm"
               icon="i-lucide-play"
-              :disabled="busyID === plugin.id || plugin.state === 'starting' || !plugin.compatibility.compatible"
+              :disabled="busyID === plugin.id || plugin.state === 'starting' || !plugin.compatibility?.compatible"
               :label="t('admin.plugins.enable')"
               @click="enablePlugin(plugin)"
             />
@@ -266,7 +266,8 @@ function reportSensitiveActionError(error: unknown): void {
 async function loadPlugins(): Promise<void> {
   loading.value = true;
   try {
-    plugins.value = await adminAPI.plugins.list();
+    const list = await adminAPI.plugins.list();
+    plugins.value = Array.isArray(list) ? list : [];
     for (const plugin of plugins.value) {
       rolloutValues.value[plugin.id] = currentRollout(plugin);
     }
@@ -299,14 +300,14 @@ async function handleFileSelected(event: Event): Promise<void> {
 
 function currentRollout(plugin: PluginInstallation): number {
   return (
-    plugin.bindings.find(
+    (plugin.bindings ?? []).find(
       (binding) => binding.capability === "openai.oauth.outbound_transport.v1",
     )?.rollout_percent || 100
   );
 }
 
 function hasEnabledBinding(plugin: PluginInstallation): boolean {
-  return plugin.bindings.some((binding) => binding.enabled);
+  return (plugin.bindings ?? []).some((binding) => binding.enabled);
 }
 
 function setRollout(id: number, next: number | number[] | undefined): void {
@@ -328,7 +329,7 @@ function pluginMenuItems(plugin: PluginInstallation): DropdownMenuItem[][] {
 
 async function enablePlugin(plugin: PluginInstallation): Promise<void> {
   let acceptUntested = false;
-  if (!plugin.compatibility.tested) {
+  if (!plugin.compatibility?.tested) {
     acceptUntested = await confirm(t("admin.plugins.confirmUntested"));
     if (!acceptUntested) return;
   }
@@ -566,7 +567,7 @@ function stateColor(state: PluginInstallation["state"]): BadgeColor {
 }
 
 function compatibilityColor(
-  status: PluginInstallation["compatibility"]["status"],
+  status?: PluginInstallation["compatibility"]["status"] | "unknown",
 ): BadgeColor {
   if (status === "compatible") return "success";
   if (status === "untested") return "warning";

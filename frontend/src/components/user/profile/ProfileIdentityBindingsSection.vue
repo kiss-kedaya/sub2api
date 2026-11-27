@@ -12,9 +12,9 @@
       </p>
     </div>
 
-    <div :class="props.embedded ? 'space-y-4' : 'divide-y divide-gray-100 dark:divide-dark-700'">
+    <div :class="props.embedded ? 'space-y-4' : 'divide-y divide-default'">
       <div v-if="props.embedded">
-        <p class="text-sm font-semibold text-gray-900 dark:text-white">
+        <p class="text-sm font-semibold text-highlighted">
           {{ t('profile.authBindings.title') }}
         </p>
         <p class="mt-1 text-sm text-muted">
@@ -53,7 +53,7 @@
                 class="flex flex-wrap items-center gap-2"
                 :class="props.embedded ? 'min-h-9' : 'min-h-11'"
               >
-                <h3 class="font-medium text-gray-900 dark:text-white">
+                <h3 class="font-medium text-highlighted">
                   {{ item.label }}
                 </h3>
                 <UBadge
@@ -72,18 +72,18 @@
 
               <p
                 v-if="providerSummary(item.provider)"
-                class="text-sm text-gray-600 dark:text-gray-300"
+                class="text-sm text-default"
               >
                 {{ providerSummary(item.provider) }}
               </p>
 
               <div
                 v-if="hasBindingDetails(item.provider, item.details)"
-                class="grid gap-1 text-sm text-gray-500 dark:text-gray-400"
+                class="grid gap-1 text-sm text-muted"
               >
                 <p
                   v-if="item.provider !== 'email' && item.details?.display_name"
-                  class="font-medium text-gray-700 dark:text-gray-200"
+                  class="font-medium text-highlighted"
                 >
                   {{ item.details.display_name }}
                 </p>
@@ -313,8 +313,8 @@ const compact = computed(() => props.compact)
 const rowClass = computed(() =>
   props.embedded
     ? compact.value
-      ? 'rounded-2xl border border-gray-100 bg-white p-4 shadow-xs dark:border-dark-700 dark:bg-dark-900/40'
-      : 'rounded-2xl border border-gray-100 bg-gray-50/70 p-4 dark:border-dark-700 dark:bg-dark-900/30'
+      ? 'rounded-2xl border border-default bg-default p-4 shadow-xs'
+      : 'rounded-2xl border border-default bg-muted/70 p-4'
     : 'px-6 py-5'
 )
 const emailBound = computed(() => getBindingStatus('email'))
@@ -531,10 +531,10 @@ const providerItems = computed(() => [
 
 function providerIconClass(provider: UserAuthProvider): string {
   if (provider === 'github') {
-    return 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100'
+    return 'bg-muted text-highlighted'
   }
   if (provider === 'google') {
-    return 'bg-white ring-1 ring-inset ring-gray-200 dark:bg-dark-800 dark:ring-dark-700'
+    return 'bg-default ring-1 ring-inset ring-default'
   }
   if (provider === 'linuxdo') {
     return 'bg-amber-50 ring-1 ring-inset ring-amber-200/70 dark:bg-amber-950/30 dark:ring-amber-800/40'

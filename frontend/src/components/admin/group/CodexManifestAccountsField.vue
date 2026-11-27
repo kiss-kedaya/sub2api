@@ -56,32 +56,36 @@
             @update:model-value="searchAccounts"
             @focus="onSearchFocus"
           />
-          <div
-            v-if="showDropdown && (searchResults.length > 0 || searchKeyword.trim() !== '')"
-            class="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
-            data-testid="codex-manifest-dropdown"
-          >
-            <p
-              v-if="searchResults.length === 0"
-              class="px-2 py-1.5 text-sm text-muted"
-              data-testid="codex-manifest-search-empty"
+          <Teleport :to="resolvedTeleportTarget" :disabled="teleportDisabled">
+            <div
+              v-if="showDropdown && (searchResults.length > 0 || searchKeyword.trim() !== '')"
+              ref="dropdownRef"
+              class="fixed z-50 max-h-48 overflow-auto rounded-xl bg-default p-1 shadow-lg ring ring-default"
+              :style="dropdownStyle"
+              data-testid="codex-manifest-dropdown"
             >
-              {{ t("admin.groups.codexModelsManifest.searchEmpty") }}
-            </p>
-            <UButton
-              v-for="account in searchResults"
-              :key="account.id"
-              color="neutral"
-              variant="ghost"
-              block
-              class="justify-start font-normal"
-              :disabled="config.account_ids.includes(account.id)"
-              @click="selectAccount(account)"
-            >
-              <span class="truncate">{{ account.name }}</span>
-              <span class="text-xs text-dimmed">#{{ account.id }}</span>
-            </UButton>
-          </div>
+              <p
+                v-if="searchResults.length === 0"
+                class="px-2 py-1.5 text-sm text-muted"
+                data-testid="codex-manifest-search-empty"
+              >
+                {{ t("admin.groups.codexModelsManifest.searchEmpty") }}
+              </p>
+              <UButton
+                v-for="account in searchResults"
+                :key="account.id"
+                color="neutral"
+                variant="ghost"
+                block
+                class="justify-start font-normal"
+                :disabled="config.account_ids.includes(account.id)"
+                @click="selectAccount(account)"
+              >
+                <span class="truncate">{{ account.name }}</span>
+                <span class="text-xs tabular-nums text-dimmed">#{{ account.id }}</span>
+              </UButton>
+            </div>
+          </Teleport>
         </div>
       </UFormField>
 
@@ -116,7 +120,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, inject, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { portalTargetInjectionKey } from "@nuxt/ui/composables/usePortal";
 import { useI18n } from "vue-i18n";
 import Toggle from "@/components/common/Toggle.vue";
 import { useKeyedDebouncedSearch } from "@/composables/useKeyedDebouncedSearch";
@@ -159,19 +164,99 @@ const searchResults = ref<SimpleAccount[]>([]);
 const showDropdown = ref(false);
 const showValidationError = ref(false);
 const searchContainerRef = ref<HTMLElement | null>(null);
+const dropdownRef = ref<HTMLElement | null>(null);
+const dropdownStyle = ref<Record<string, string>>({});
 
-// 点击下拉容器外部时收起（与 GroupsView 模型路由下拉同一模式）。
+const portalTarget = inject(portalTargetInjectionKey, null);
+const clippingAncestor = ref(false);
+
+const hasClippingAncestor = (el: HTMLElement | null): boolean => {
+  if (typeof window === "undefined") return false;
+  let node = el?.parentElement ?? null;
+  while (node && node !== document.body && node !== document.documentElement) {
+    const style = window.getComputedStyle(node);
+    const ov = `${style.overflow} ${style.overflowX} ${style.overflowY}`;
+    if (/\b(hidden|auto|scroll|clip)\b/.test(ov)) return true;
+    if (
+      (style.transform && style.transform !== "none") ||
+      (style.filter && style.filter !== "none") ||
+      (style.backdropFilter && style.backdropFilter !== "none") ||
+      /\b(layout|paint|strict|content)\b/.test(style.contain || "")
+    ) {
+      return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+};
+
+const resolvedTeleportTarget = computed<string | HTMLElement>(() => {
+  const val = portalTarget?.value;
+  return val && typeof val !== "boolean" ? val : "body";
+});
+
+const teleportDisabled = computed(() => {
+  const val = portalTarget?.value;
+  const hasPortalTarget = typeof val === "boolean" ? val : Boolean(val);
+  return !hasPortalTarget && !clippingAncestor.value;
+});
+
+const MAX_DROPDOWN_HEIGHT = 192; // max-h-48
+
+const updateDropdownPosition = () => {
+  const rect = searchContainerRef.value?.getBoundingClientRect();
+  if (!rect) return;
+  const padding = 8;
+  const gap = 4;
+  const width = Math.min(Math.max(rect.width, 200), window.innerWidth - padding * 2);
+  const left = Math.min(
+    Math.max(rect.left, padding),
+    Math.max(padding, window.innerWidth - width - padding),
+  );
+  const measuredHeight = dropdownRef.value?.offsetHeight || MAX_DROPDOWN_HEIGHT;
+  const spaceBelow = window.innerHeight - padding - (rect.bottom + gap);
+  const spaceAbove = rect.top - gap - padding;
+  const flipAbove = spaceBelow < measuredHeight && spaceAbove > spaceBelow;
+  if (flipAbove) {
+    const maxHeight = Math.max(80, Math.min(MAX_DROPDOWN_HEIGHT, spaceAbove));
+    dropdownStyle.value = {
+      top: "auto",
+      bottom: `${window.innerHeight - (rect.top - gap)}px`,
+      left: `${left}px`,
+      width: `${width}px`,
+      maxHeight: `${maxHeight}px`,
+      transformOrigin: "bottom left",
+    };
+  } else {
+    const maxHeight = Math.max(80, Math.min(MAX_DROPDOWN_HEIGHT, spaceBelow));
+    dropdownStyle.value = {
+      top: `${Math.max(padding, rect.bottom + gap)}px`,
+      bottom: "auto",
+      left: `${left}px`,
+      width: `${width}px`,
+      maxHeight: `${maxHeight}px`,
+      transformOrigin: "top left",
+    };
+  }
+};
+
+// 点击下拉容器外部时收起（支持 Teleport 到 body 或门户宿主的浮层）。
 const handleDocumentClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
-  if (searchContainerRef.value && !searchContainerRef.value.contains(target)) {
+  if (!searchContainerRef.value?.contains(target) && !dropdownRef.value?.contains(target)) {
     showDropdown.value = false;
   }
 };
 onMounted(() => {
+  clippingAncestor.value = hasClippingAncestor(searchContainerRef.value);
   document.addEventListener("click", handleDocumentClick);
+  window.addEventListener("resize", updateDropdownPosition);
+  window.addEventListener("scroll", updateDropdownPosition, true);
 });
 onUnmounted(() => {
   document.removeEventListener("click", handleDocumentClick);
+  window.removeEventListener("resize", updateDropdownPosition);
+  window.removeEventListener("scroll", updateDropdownPosition, true);
 });
 
 const searchRunner = useKeyedDebouncedSearch<SimpleAccount[]>({
@@ -194,6 +279,9 @@ const searchRunner = useKeyedDebouncedSearch<SimpleAccount[]>({
   },
   onSuccess: (_key, result) => {
     searchResults.value = result;
+    if (showDropdown.value) {
+      void nextTick(updateDropdownPosition);
+    }
   },
   onError: () => {
     searchResults.value = [];
@@ -205,7 +293,9 @@ const searchAccounts = () => {
 };
 
 const onSearchFocus = () => {
+  clippingAncestor.value = hasClippingAncestor(searchContainerRef.value);
   showDropdown.value = true;
+  void nextTick(updateDropdownPosition);
   if (searchResults.value.length === 0) {
     searchAccounts();
   }

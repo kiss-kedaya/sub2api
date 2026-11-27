@@ -108,6 +108,7 @@ const accounts = ref<AccountOpsThresholdAccount[]>([])
 const events = ref<AccountOpsEvent[]>([])
 const settings = ref<AccountOpsSettings | null>(null)
 let alive = true
+let polling = false
 let timer: number | undefined
 let sequence = 0
 
@@ -149,36 +150,48 @@ function formatCost(value: number | null | undefined): string {
   return amount.toFixed(4)
 }
 
-async function load() {
-  if (loading.value) return
+function assignIfChanged<T>(target: { value: T }, next: T) {
+  if (JSON.stringify(target.value) !== JSON.stringify(next)) {
+    target.value = next
+  }
+}
+
+async function load(silent = false) {
+  if (loading.value || (silent && polling)) return
   const current = ++sequence
-  loading.value = true
+  if (silent) polling = true
+  else loading.value = true
   const problems: string[] = []
   const jobs: Promise<void>[] = []
   jobs.push(getStats()
-    .then(value => { if (alive && current === sequence) stats.value = value })
+    .then(value => { if (alive && current === sequence) assignIfChanged(stats, value) })
     .catch(err => { problems.push(extractApiErrorMessage(err, t('opsCenter.loadOverviewFailed'))) }))
   if (!observer.value) {
     jobs.push(getAccountOpsThresholdAccounts()
-      .then(value => { if (alive && current === sequence) accounts.value = value })
+      .then(value => { if (alive && current === sequence) assignIfChanged(accounts, value) })
       .catch(err => { problems.push(extractApiErrorMessage(err, t('opsCenter.loadAssetsFailed'))) }))
     jobs.push(getAccountOpsEvents()
-      .then(value => { if (alive && current === sequence) events.value = value.items })
+      .then(value => { if (alive && current === sequence) assignIfChanged(events, value.items) })
       .catch(err => { problems.push(extractApiErrorMessage(err, t('opsCenter.loadAlertsFailed'))) }))
     jobs.push(getAccountOpsSettings()
-      .then(value => { if (alive && current === sequence) settings.value = value })
+      .then(value => { if (alive && current === sequence) assignIfChanged(settings, value) })
       .catch(err => { problems.push(extractApiErrorMessage(err, t('opsCenter.loadSettingsFailed'))) }))
   }
-  await Promise.allSettled(jobs)
-  if (!alive || current !== sequence) return
-  error.value = problems.join(' · ')
-  loading.value = false
+  try {
+    await Promise.allSettled(jobs)
+    if (!alive || current !== sequence) return
+    const nextError = problems.join(' · ')
+    if (error.value !== nextError) error.value = nextError
+  } finally {
+    if (silent) polling = false
+    else if (alive && current === sequence) loading.value = false
+  }
 }
-function refresh() { void load() }
+function refresh() { void load(false) }
 onMounted(() => {
-  void load()
+  void load(false)
   timer = window.setInterval(() => {
-    if (document.visibilityState === 'visible' && !loading.value) void load()
+    if (document.visibilityState === 'visible' && !loading.value && !polling) void load(true)
   }, 60_000)
 })
 onBeforeUnmount(() => {

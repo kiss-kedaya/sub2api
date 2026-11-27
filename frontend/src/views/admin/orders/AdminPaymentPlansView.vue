@@ -25,7 +25,7 @@
         </template>
         <template #cell-group_id="{ value }">
           <span v-if="isGroupMissing(value)" class="inline-flex items-center gap-1 text-sm">
-            <span class="text-dimmed">#{{ value }}</span>
+            <span class="tabular-nums text-dimmed">#{{ value }}</span>
             <UBadge color="error" variant="subtle" :label="t('payment.admin.groupMissing')" />
           </span>
           <GroupBadge
@@ -40,11 +40,11 @@
           <div class="text-sm">
             <span class="font-medium tabular-nums text-highlighted">{{ planCurrencySymbol(row.currency) }}{{ (value ?? 0).toFixed(2) }}</span>
             <span v-if="row.currency" class="ml-1 text-xs text-muted">{{ row.currency }}</span>
-            <span v-if="row.original_price" class="ml-1 text-xs text-dimmed line-through">{{ planCurrencySymbol(row.currency) }}{{ row.original_price.toFixed(2) }}</span>
+            <span v-if="row.original_price" class="ml-1 text-xs tabular-nums text-dimmed line-through">{{ planCurrencySymbol(row.currency) }}{{ row.original_price.toFixed(2) }}</span>
           </div>
         </template>
         <template #cell-validity_days="{ value, row }">
-          <span class="text-sm">{{ value }} {{ t('payment.admin.' + (row.validity_unit || 'days')) }}</span>
+          <span class="text-sm tabular-nums">{{ value }} {{ t('payment.admin.' + (row.validity_unit || 'days')) }}</span>
         </template>
         <template #cell-for_sale="{ value, row }">
           <USwitch :model-value="!!value" :aria-label="t('payment.admin.forSale')" @update:model-value="toggleForSale(row)" />

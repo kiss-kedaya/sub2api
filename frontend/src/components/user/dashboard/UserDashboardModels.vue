@@ -39,7 +39,6 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { usePreferredReducedMotion } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { Chart as ChartJS, ArcElement, Tooltip, type ChartOptions } from 'chart.js'
 import { Doughnut } from 'vue-chartjs'
@@ -47,20 +46,20 @@ import type { TableColumn } from '@nuxt/ui'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import DashboardChartCard from '@/components/dashboard/DashboardChartCard.vue'
 import { compactTableUi } from '@/components/dashboard/dashboardUi'
+import { chartTooltipStyle, useChartTheme } from '@/components/charts/chartTheme'
 import type { ModelStat } from '@/types'
 import { formatTokensK } from '@/utils/format'
 
 ChartJS.register(ArcElement, Tooltip)
 const props = defineProps<{ models: ModelStat[]; startDate: string; endDate: string; loading: boolean; error?: boolean }>()
 const { t } = useI18n()
-const motion = usePreferredReducedMotion()
-// Several series: keep distinct hues so neighbouring slices stay readable.
-const colors = ['#d87a99', '#efb3c6', '#c7a768', '#a491b6', '#8195a6', '#a4aaa3']
+const theme = useChartTheme()
+const colors = computed(() => theme.value.categorical)
 const rankedModels = computed(() => props.models.filter(model => Number.isFinite(model.total_tokens) && model.total_tokens > 0).slice().sort((a, b) => b.total_tokens - a.total_tokens))
 const totalTokens = computed(() => rankedModels.value.reduce((sum, model) => sum + model.total_tokens, 0))
 const modelData = computed(() => totalTokens.value > 0 ? {
   labels: rankedModels.value.map(model => model.model),
-  datasets: [{ data: rankedModels.value.map(model => model.total_tokens), backgroundColor: rankedModels.value.map((_, index) => colors[index % colors.length]), borderWidth: 0 }],
+  datasets: [{ data: rankedModels.value.map(model => model.total_tokens), backgroundColor: rankedModels.value.map((_, index) => colors.value[index % colors.value.length]), borderWidth: 0 }],
 } : null)
 
 interface ModelRow { model: string; total_tokens: number; share: string; color: string }
@@ -68,7 +67,7 @@ const rows = computed<ModelRow[]>(() => rankedModels.value.map((model, index) =>
   model: model.model,
   total_tokens: model.total_tokens,
   share: `${(model.total_tokens / totalTokens.value * 100).toFixed(1)}%`,
-  color: colors[index % colors.length],
+  color: colors.value[index % colors.value.length],
 })))
 const columns = computed<TableColumn<ModelRow>[]>(() => [
   { accessorKey: 'model', header: t('dashboard.model') },
@@ -80,10 +79,16 @@ const options = computed<ChartOptions<'doughnut'>>(() => ({
   responsive: true,
   maintainAspectRatio: false,
   cutout: '72%',
-  animation: { duration: motion.value === 'reduce' ? 0 : 160 },
-  plugins: { legend: { display: false }, tooltip: { callbacks: {
-    label: context => `${context.label}: ${formatTokensK(context.parsed)} tokens`,
-  } } },
+  animation: { duration: 0 },
+  plugins: {
+    legend: { display: false },
+    tooltip: {
+      ...chartTooltipStyle(theme.value),
+      callbacks: {
+        label: context => `${context.label}: ${formatTokensK(context.parsed)} tokens`,
+      },
+    },
+  },
 }))
 </script>
 

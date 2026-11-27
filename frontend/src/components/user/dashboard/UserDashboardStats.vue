@@ -249,7 +249,7 @@ const formatDuration = (ms: number) => ms >= 1000 ? `${(ms / 1000).toFixed(2)}s`
 <style scoped>
 /* Stat tiles are DashboardStat (UPageCard); these rules only serve the platform panel. */
 .signal-label { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--ui-text-muted); }
-.signal-spend { color: var(--signal-amber, #906727); }
+.signal-spend { color: var(--signal-amber, #b45309); }
 .signal-unit { color: var(--ui-text-dimmed); }
 
 .signal-platform-empty { padding: 40px 0; color: var(--ui-text-muted); font-size: 14px; text-align: center; }
@@ -266,10 +266,10 @@ const formatDuration = (ms: number) => ms >= 1000 ? `${(ms / 1000).toFixed(2)}s`
 .signal-quota-label > span:first-child { color: var(--ui-text-muted); }
 .signal-quota-track { height: 4px; margin-top: 4px; overflow: hidden; border-radius: 999px; background: var(--ui-bg-accented); }
 .signal-quota-fill { height: 100%; border-radius: inherit; }
-.signal-quota-fill.bg-green-500 { background: var(--signal-accent, #171717); }
-.signal-quota-fill.bg-amber-500 { background: var(--signal-amber, #906727); }
-.signal-quota-fill.bg-red-500 { background: var(--signal-danger, #dc4545); }
-.signal-quota-label > .signal-disabled { color: var(--signal-danger, #dc4545); }
+.signal-quota-fill.bg-green-500 { background: var(--signal-accent, #155dfc); }
+.signal-quota-fill.bg-amber-500 { background: var(--signal-amber, #d97706); }
+.signal-quota-fill.bg-red-500 { background: var(--signal-danger, #dc2626); }
+.signal-quota-label > .signal-disabled { color: var(--signal-danger, #dc2626); }
 .signal-reset { margin-top: 4px; font-size: 11px; color: var(--ui-text-muted); }
 @media (max-width: 420px) {
   .signal-platform-ledger { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }

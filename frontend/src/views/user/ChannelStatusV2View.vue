@@ -4,7 +4,7 @@
       <UserPageHeader flush :title="t('channelMonitorV2.title')">
         <template #description>
           <span class="inline-flex flex-wrap items-center gap-2">
-            <span class="size-2 shrink-0 rounded-full" :class="loading || refreshing ? 'bg-gray-400' : 'bg-green-500'"></span>
+            <span class="size-2 shrink-0 rounded-full" :class="loading || refreshing ? 'bg-(--ui-text-dimmed)' : 'bg-emerald-500'"></span>
             <span v-if="refreshing" class="inline-flex items-center gap-1 text-highlighted">
               <LoadingSpinner size="sm" />
               {{ t('channelMonitorV2.updating') }}
@@ -16,7 +16,7 @@
             <UBadge v-if="snapshot && !snapshot.coverage.coverage_complete && !bootstrapActive" color="warning" variant="subtle">
               {{ t('channelMonitorV2.partialCoverage') }}
             </UBadge>
-            <UBadge v-if="bootstrapActive" color="primary" variant="subtle">
+            <UBadge v-if="bootstrapActive" color="primary" variant="subtle" class="tabular-nums">
               {{ t('channelMonitorV2.bootstrap.progress', { percent: bootstrapPercent }) }}
             </UBadge>
           </span>
@@ -26,7 +26,7 @@
             color="neutral"
             variant="outline"
             icon="i-lucide-refresh-cw"
-            :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
+            :ui="{ leadingIcon: loading ? 'animate-spin motion-reduce:animate-none' : '' }"
             :disabled="loading"
             :title="t('common.refresh')"
             :aria-label="t('common.refresh')"
@@ -35,29 +35,29 @@
         </template>
       </UserPageHeader>
 
-      <section class="signal-channel-toolbar sticky top-0 z-20 overflow-hidden rounded-lg bg-default shadow-xs ring ring-default dark:shadow-none">
+      <section class="signal-channel-toolbar sticky top-0 z-20 overflow-hidden rounded-lg bg-default shadow-(--app-shadow-card) ring ring-default">
         <!-- First-upgrade silent backfill: show until 30d product window is covered -->
         <div
           v-if="bootstrapActive"
-          class="border-b border-blue-100 bg-blue-50/90 px-5 py-3 dark:border-blue-900/40 dark:bg-blue-950/40 sm:px-6"
+          class="border-b border-primary/20 bg-primary/8 px-5 py-3 sm:px-6"
           role="status"
           aria-live="polite"
         >
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0 flex-1">
-              <p class="text-sm font-semibold text-blue-900 dark:text-blue-100">
+              <p class="text-sm font-semibold text-highlighted">
                 {{ t('channelMonitorV2.bootstrap.title') }}
               </p>
-              <p class="mt-0.5 text-xs text-blue-800/80 dark:text-blue-200/80">
+              <p class="mt-0.5 text-xs text-muted">
                 {{ t('channelMonitorV2.bootstrap.description') }}
               </p>
             </div>
-            <span class="shrink-0 text-xs font-medium tabular-nums text-blue-700 dark:text-blue-300">
+            <span class="shrink-0 text-xs font-medium tabular-nums text-primary">
               {{ t('channelMonitorV2.bootstrap.progress', { percent: bootstrapPercent }) }}
             </span>
           </div>
           <div
-            class="mt-2.5 h-1.5 overflow-hidden rounded-full bg-blue-200/80 dark:bg-blue-900/60"
+            class="mt-2.5 h-1.5 overflow-hidden rounded-full bg-primary/20"
             role="progressbar"
             :aria-valuenow="bootstrapPercent"
             aria-valuemin="0"
@@ -65,16 +65,16 @@
             :aria-label="t('channelMonitorV2.bootstrap.working')"
           >
             <div
-              class="h-full rounded-full bg-blue-500 transition-[width] duration-[250ms] ease-out dark:bg-blue-400"
-              :style="{ width: `${bootstrapPercent}%` }"
+              class="h-full w-full origin-left rounded-full bg-primary transition-transform duration-[240ms] ease-[var(--ease-out)] motion-reduce:transition-none"
+              :style="{ transform: `scaleX(${bootstrapPercent / 100})` }"
             />
           </div>
         </div>
 
         <!-- Single compact toolbar row: range · filters · view controls -->
-        <div class="monitor-toolbar flex flex-nowrap items-center gap-1.5 overflow-x-auto px-4 py-3 sm:gap-2 sm:px-5">
+        <div class="monitor-toolbar flex flex-wrap items-center gap-1.5 px-4 py-3 sm:gap-2 sm:px-5">
           <div
-            class="channel-range-switch shrink-0"
+            class="channel-range-switch shrink-0 rounded-lg"
             role="group"
             :aria-label="t('channelMonitorV2.timeRange')"
           >
@@ -126,7 +126,7 @@
           />
 
           <div
-            class="channel-range-switch shrink-0"
+            class="channel-range-switch shrink-0 rounded-lg"
             role="group"
             :aria-label="t('channelMonitorV2.trendView.label')"
           >
@@ -148,7 +148,7 @@
 
           <div
             v-if="trendView === 'pulse'"
-            class="channel-range-switch shrink-0"
+            class="channel-range-switch shrink-0 rounded-lg"
             role="group"
             :aria-label="t('channelMonitorV2.healthMode.label')"
           >
@@ -168,7 +168,7 @@
       <!-- Overview KPI: success · TTFT · tokens/s(optional) · cache · (+ RPM when throughput visible) -->
       <section
         v-if="snapshot"
-        class="signal-channel-metrics grid grid-cols-2 gap-3 sm:grid-cols-3"
+        class="signal-channel-metrics grid grid-cols-2 gap-3 rounded-lg sm:grid-cols-3"
         :class="showThroughput ? 'xl:grid-cols-5' : 'xl:grid-cols-4'"
         :aria-label="t('channelMonitorV2.summaryAria')"
       >
@@ -213,14 +213,14 @@
       </section>
       <section
         v-else-if="loading"
-        class="signal-channel-metrics grid grid-cols-2 gap-3 sm:grid-cols-3"
+        class="signal-channel-metrics grid grid-cols-2 gap-3 rounded-lg sm:grid-cols-3"
         :class="showThroughput ? 'xl:grid-cols-5' : 'xl:grid-cols-4'"
         aria-hidden="true"
       >
         <div
           v-for="i in (showThroughput ? 5 : 4)"
           :key="i"
-          class="h-24 animate-pulse rounded-lg bg-elevated dark:bg-dark-900/30"
+          class="h-24 animate-pulse rounded-lg bg-elevated motion-reduce:animate-none"
         />
       </section>
 
@@ -242,15 +242,15 @@
         />
         <div
           v-else-if="loading"
-          class="card signal-monitor-surface flex min-h-[320px] items-center justify-center text-sm text-gray-400"
+          class="card signal-monitor-surface flex min-h-[320px] items-center justify-center text-sm text-dimmed"
         >
-          <span class="animate-pulse">{{ t('common.loading') }}</span>
+          <span class="animate-pulse motion-reduce:animate-none">{{ t('common.loading') }}</span>
         </div>
       </div>
 
       <section class="card signal-channel-ledger flex min-h-0 flex-col overflow-hidden">
         <div class="border-b border-default px-4 py-3 sm:px-5">
-          <nav class="channel-range-switch" role="tablist" :aria-label="t('channelMonitorV2.tabs.aria')">
+          <nav class="channel-range-switch max-w-full overflow-x-auto rounded-lg" role="tablist" :aria-label="t('channelMonitorV2.tabs.aria')">
             <button
               v-for="item in tabs"
               :key="item.value"
@@ -263,7 +263,7 @@
             </button>
           </nav>
         </div>
-        <div class="min-h-0 max-h-[min(52vh,520px)] overflow-auto p-4 sm:p-5">
+        <div class="min-h-0 max-h-[min(52dvh,520px)] overflow-auto p-4 sm:p-5">
           <div v-if="activeTab === 'models'" class="table-container border-0">
             <table class="table monitor-table min-w-[720px]">
               <thead>
@@ -281,30 +281,33 @@
                   v-for="row in modelRows"
                   :key="`${row.platform}:${row.model}`"
                   class="cursor-pointer"
+                  tabindex="0"
                   @click="drillModel(row)"
+                  @keydown.enter="drillModel(row)"
+                  @keydown.space.prevent="drillModel(row)"
                 >
                   <td>
                     <div class="flex items-center gap-2">
                       <span :class="statusDot(row.health)" aria-hidden="true"></span>
-                      <div>
-                        <span class="block text-xs text-gray-500 dark:text-dark-400">{{ row.platform }}</span>
-                        <strong class="font-semibold text-gray-900 dark:text-white">
+                      <div class="min-w-0">
+                        <span class="block text-xs text-muted">{{ row.platform }}</span>
+                        <strong class="font-semibold wrap-anywhere text-highlighted">
                           {{ row.model === '__other__' ? t('channelMonitorV2.otherModels') : row.model }}
                         </strong>
                       </div>
                     </div>
                   </td>
-                  <td>
+                  <td class="tabular-nums">
                     <span class="block">{{ formatPercent(1 - row.metrics.error_rate) }}</span>
-                    <small class="text-xs text-gray-400">{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(row.metrics.error_rate) }) }}</small>
+                    <small class="text-xs text-dimmed">{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(row.metrics.error_rate) }) }}</small>
                   </td>
-                  <td>
+                  <td class="tabular-nums">
                     <span class="block">{{ formatMs(row.metrics.ttft.p50_ms) }}</span>
-                    <small class="text-xs text-gray-400">{{ latencyDetail(row.metrics.ttft) }}</small>
+                    <small class="text-xs text-dimmed">{{ latencyDetail(row.metrics.ttft) }}</small>
                   </td>
-                  <td v-if="showThroughput" :title="exactTps(row.metrics.tpm)">{{ formatTps(row.metrics.tpm) }}</td>
-                  <td>{{ formatPercent(row.metrics.cache_rate) }}</td>
-                  <td v-if="showThroughput">{{ formatRate(row.metrics.rpm) }}</td>
+                  <td v-if="showThroughput" class="tabular-nums" :title="exactTps(row.metrics.tpm)">{{ formatTps(row.metrics.tpm) }}</td>
+                  <td class="tabular-nums">{{ formatPercent(row.metrics.cache_rate) }}</td>
+                  <td v-if="showThroughput" class="tabular-nums">{{ formatRate(row.metrics.rpm) }}</td>
                 </tr>
               </tbody>
             </table>
@@ -314,49 +317,50 @@
             <div
               v-for="row in errorRows"
               :key="row.category"
-              class="rounded-lg bg-muted p-4 text-sm ring ring-default dark:bg-dark-900/30 dark:ring-0"
+              class="rounded-lg bg-muted p-4 text-sm ring ring-default dark:bg-elevated/50"
               :class="row.ignored ? 'opacity-60' : ''"
             >
               <button
                 type="button"
                 class="grid w-full grid-cols-[minmax(100px,200px)_1fr_auto_auto] items-center gap-3 text-left"
+                :aria-expanded="expandedErrors.has(row.category)"
                 @click="toggleError(row.category)"
               >
-                <span class="flex min-w-0 items-center gap-1.5 truncate text-gray-700 dark:text-gray-200">
+                <span class="flex min-w-0 items-center gap-1.5 truncate text-highlighted">
                   <span class="truncate">{{ errorLabel(row.category) }}</span>
                   <span v-if="row.ignored" class="badge badge-gray shrink-0 px-1.5! py-0! text-[10px]">{{ t('channelMonitorV2.ignored') }}</span>
                 </span>
-                <span class="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-dark-700">
+                <span class="h-2 overflow-hidden rounded-full bg-elevated">
                   <i
                     class="block h-full rounded-full"
-                    :class="row.ignored ? 'bg-gray-400 dark:bg-gray-500' : 'bg-linear-to-r/srgb from-red-400 to-red-500'"
-                    :style="{ width: `${Math.max(2, row.rate * 100)}%` }"
+                    :class="row.ignored ? 'bg-(--ui-text-dimmed)' : 'bg-linear-to-r/srgb from-red-400 to-red-500'"
+                    :style="{ width: `${Number.isFinite(row.rate) ? Math.max(2, Math.min(100, row.rate * 100)) : 0}%` }"
                   ></i>
                 </span>
                 <small
                   class="w-14 text-right text-xs tabular-nums"
-                  :class="row.ignored ? 'text-gray-400' : 'text-gray-500'"
+                  :class="row.ignored ? 'text-dimmed' : 'text-muted'"
                 >{{ formatPercent(row.rate) }}</small>
-                <Icon name="chevronDown" size="sm" :class="['text-gray-400 transition-transform', expandedErrors.has(row.category) ? 'rotate-180' : '']" />
+                <Icon name="chevronDown" size="sm" :class="['text-dimmed transition-transform duration-150 ease-[var(--ease-out)] motion-reduce:transition-none', expandedErrors.has(row.category) ? 'rotate-180' : '']" />
               </button>
-              <div v-if="expandedErrors.has(row.category)" class="mt-3 space-y-2 border-t border-gray-100 pt-3 dark:border-dark-700">
+              <div v-if="expandedErrors.has(row.category)" class="mt-3 space-y-2 border-t border-default pt-3">
                 <template v-if="isAdmin && (row.details || []).length">
                   <div
                     v-for="(detail, index) in row.details || []"
                     :key="`${row.category}:${index}:${detail.message}`"
-                    class="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-dark-900/50 dark:text-dark-300"
+                    class="rounded-lg bg-default px-3 py-2 text-xs text-muted ring ring-inset ring-default"
                   >
                     <div class="mb-1 flex flex-wrap items-center gap-2">
                       <span class="badge badge-gray px-1.5! py-0! text-[10px]">{{ detail.platform || '-' }}</span>
                       <span class="truncate font-medium">{{ detail.model || '-' }}</span>
-                      <span v-if="detail.status_code" class="text-gray-400">{{ t('channelMonitorV2.errorDetail.http', { code: detail.status_code }) }}</span>
-                      <span v-if="detail.upstream_status_code" class="text-gray-400">{{ t('channelMonitorV2.errorDetail.upstream', { code: detail.upstream_status_code }) }}</span>
-                      <span class="ml-auto text-gray-400">×{{ detail.count }}</span>
+                      <span v-if="detail.status_code" class="tabular-nums text-dimmed">{{ t('channelMonitorV2.errorDetail.http', { code: detail.status_code }) }}</span>
+                      <span v-if="detail.upstream_status_code" class="tabular-nums text-dimmed">{{ t('channelMonitorV2.errorDetail.upstream', { code: detail.upstream_status_code }) }}</span>
+                      <span class="ml-auto tabular-nums text-dimmed">×{{ detail.count }}</span>
                     </div>
-                    <p class="wrap-break-word leading-relaxed">{{ detail.message || detail.error_type || t('channelMonitorV2.errorDetail.noMessage') }}</p>
+                    <p class="wrap-anywhere leading-relaxed">{{ detail.message || detail.error_type || t('channelMonitorV2.errorDetail.noMessage') }}</p>
                   </div>
                 </template>
-                <p v-else class="text-xs text-gray-400">{{ t('channelMonitorV2.errorDetail.empty') }}</p>
+                <p v-else class="text-xs text-dimmed">{{ t('channelMonitorV2.errorDetail.empty') }}</p>
               </div>
             </div>
           </div>
@@ -379,14 +383,14 @@
                   v-for="row in userRows"
                   :key="row.user_id || row.display_label"
                   :class="row.is_self
-                    ? 'bg-primary-50 ring-1 ring-inset ring-primary-200/80 dark:bg-primary-900/25 dark:ring-primary-700/50'
+                    ? 'bg-primary/10 ring-1 ring-inset ring-primary/25'
                     : ''"
                 >
                   <td><MonitorRankBadge :rank="row.rank" /></td>
                   <td>
                     <strong
-                      class="font-semibold"
-                      :class="row.is_self ? 'text-primary-700 dark:text-primary-300' : 'text-gray-900 dark:text-white'"
+                      class="font-semibold wrap-anywhere"
+                      :class="row.is_self ? 'text-primary' : 'text-highlighted'"
                     >
                       {{ row.display_label }}
                       <span
@@ -395,23 +399,23 @@
                       >{{ t('channelMonitorV2.currentUser') }}</span>
                     </strong>
                   </td>
-                  <td>
+                  <td class="tabular-nums">
                     <span class="block">{{ formatPercent(1 - row.metrics.error_rate) }}</span>
-                    <small class="text-xs text-gray-400">{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(row.metrics.error_rate) }) }}</small>
+                    <small class="text-xs text-dimmed">{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(row.metrics.error_rate) }) }}</small>
                   </td>
-                  <td>
+                  <td class="tabular-nums">
                     <span class="block">{{ formatMs(row.metrics.ttft.p50_ms) }}</span>
-                    <small class="text-xs text-gray-400">{{ latencyDetail(row.metrics.ttft) }}</small>
+                    <small class="text-xs text-dimmed">{{ latencyDetail(row.metrics.ttft) }}</small>
                   </td>
-                  <td v-if="showThroughput" :title="exactTps(row.metrics.tpm)">{{ formatTps(row.metrics.tpm) }}</td>
-                  <td>{{ formatPercent(row.metrics.cache_rate) }}</td>
-                  <td v-if="showThroughput">{{ formatRate(row.metrics.rpm) }}</td>
+                  <td v-if="showThroughput" class="tabular-nums" :title="exactTps(row.metrics.tpm)">{{ formatTps(row.metrics.tpm) }}</td>
+                  <td class="tabular-nums">{{ formatPercent(row.metrics.cache_rate) }}</td>
+                  <td v-if="showThroughput" class="tabular-nums">{{ formatRate(row.metrics.rpm) }}</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <div v-if="tabLoading" class="empty-state py-10 text-sm text-gray-400">{{ t('common.loading') }}</div>
+          <div v-if="tabLoading" class="empty-state py-10 text-sm text-dimmed">{{ t('common.loading') }}</div>
           <div v-else-if="activeRowsEmpty" class="empty-state py-10">
             <p class="empty-state-title text-base">
               {{
@@ -695,7 +699,7 @@ async function loadDimensions(signal?: AbortSignal, id = sequence) {
   dimensions.value = next
 }
 
-async function loadMetrics(signal?: AbortSignal, id = sequence) {
+async function loadMetrics(signal?: AbortSignal, id = sequence, silent = false) {
   const [nextSnapshot, nextMatrix] = await Promise.all([
     api.getSnapshot(filter.value, isAdmin.value, signal),
     api.getMatrix(filter.value, matrixGroupBy.value, isAdmin.value, signal),
@@ -704,7 +708,7 @@ async function loadMetrics(signal?: AbortSignal, id = sequence) {
   snapshot.value = nextSnapshot
   matrix.value = nextMatrix
   scheduleAutoRefresh()
-  await loadTab(signal, id)
+  await loadTab(signal, id, silent)
 }
 
 async function reload(silent = true) {
@@ -718,7 +722,7 @@ async function reload(silent = true) {
     // Catalog + metrics in parallel; catalog ignores dimension filters so options never shrink.
     await Promise.all([
       loadDimensions(request.signal, id),
-      loadMetrics(request.signal, id),
+      loadMetrics(request.signal, id, silent),
     ])
   } catch (error) {
     if ((error as { name?: string }).name !== 'CanceledError') {
@@ -742,7 +746,7 @@ async function reloadMetricsOnly(silent = true) {
   refreshing.value = true
   if (!silent) loading.value = true
   try {
-    await loadMetrics(request.signal, id)
+    await loadMetrics(request.signal, id, silent)
   } catch (error) {
     if ((error as { name?: string }).name !== 'CanceledError') {
       appStore.showError(extractApiErrorMessage(error, t('channelMonitorV2.loadFailed')))
@@ -755,8 +759,8 @@ async function reloadMetricsOnly(silent = true) {
     }
   }
 }
-async function loadTab(signal?: AbortSignal, id = sequence) {
-  tabLoading.value = true
+async function loadTab(signal?: AbortSignal, id = sequence, silent = false) {
+  if (!silent) tabLoading.value = true
   try {
     if (activeTab.value === 'models') {
       modelRows.value = (await api.getModels(filter.value, isAdmin.value, signal)).items || []
@@ -933,11 +937,5 @@ onBeforeUnmount(() => {
 .health-healthy  { background: #22c55e; }
 .health-warning  { background: #f59e0b; }
 .health-critical { background: #ef4444; }
-.health-unknown  { background: #9ca3af; }
-.matrix-select {
-  min-width: 10rem;
-}
-details > summary::-webkit-details-marker {
-  display: none;
-}
+.health-unknown  { background: var(--ui-text-dimmed); }
 </style>

@@ -27,7 +27,13 @@
 }
 
 .markdown-body a {
-  @apply font-medium text-blue-600 underline decoration-blue-600/30 decoration-2 underline-offset-2 transition-[text-decoration-color] hover:decoration-blue-600 dark:text-blue-400 dark:decoration-blue-400/30 dark:hover:decoration-blue-400;
+  @apply font-medium text-blue-600 underline decoration-blue-600/30 decoration-2 underline-offset-2 transition-[text-decoration-color] dark:text-blue-400 dark:decoration-blue-400/30;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .markdown-body a:hover {
+    @apply decoration-blue-600 dark:decoration-blue-400;
+  }
 }
 
 .markdown-body ul,
@@ -108,7 +114,13 @@
 }
 
 .markdown-body tbody tr {
-  @apply transition-colors hover:bg-gray-50 dark:hover:bg-dark-700/30;
+  @apply transition-colors;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .markdown-body tbody tr:hover {
+    @apply bg-gray-50 dark:bg-dark-700/30;
+  }
 }
 
 .markdown-body img {

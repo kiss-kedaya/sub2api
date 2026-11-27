@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, shallowMount, type VueWrapper } from '@vue/test-utils'
 import { ref } from 'vue'
@@ -185,5 +187,20 @@ describe('TicketsView requester statistics availability', () => {
     await wrapper!.get('button[aria-label="tickets.refresh"]').trigger('click')
     await flushPromises()
     expectStats(['0', formatCurrency(0), formatCurrency(0)], [true, true, true])
+  })
+
+  it('enforces semantic tokens on proactive picker, reduced-motion spinners, and 16px mobile inputs', () => {
+    const source = readFileSync(resolve(__dirname, '../TicketsView.vue'), 'utf8')
+    expect(source).not.toMatch(/\b(?:text|bg|border)-(?:gray|dark)-/)
+    expect(source).toContain('divide-default')
+    expect(source).toContain('hover:bg-elevated')
+    expect(source).toContain('text-success')
+    expect(source).toContain('overscroll-contain')
+    const spinMatches = source.match(/animate-spin/g) || []
+    expect(spinMatches).toHaveLength(5)
+    const guardedMatches = source.match(/animate-spin motion-reduce:animate-none/g) || []
+    expect(guardedMatches).toHaveLength(5)
+    expect(source).toContain('@media (pointer: coarse), (max-width: 767px)')
+    expect(source).toContain('font-size: 16px;')
   })
 })

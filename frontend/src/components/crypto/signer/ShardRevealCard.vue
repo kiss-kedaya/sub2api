@@ -24,7 +24,7 @@
     </div>
 
     <div v-else class="mt-3 space-y-3" data-testid="shard-reveal-body">
-      <p class="shard-reveal__text rounded-md bg-elevated/60 p-3 font-mono text-sm leading-relaxed break-all text-highlighted">{{ shareText }}</p>
+      <p class="shard-reveal__text rounded-md bg-elevated/60 p-3 font-mono text-sm leading-relaxed wrap-anywhere text-highlighted">{{ shareText }}</p>
 
       <div class="flex flex-wrap items-center gap-2">
         <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-copy" data-testid="shard-copy" @click="copy">{{ t('admin.crypto.signer.wizard.revealCopy') }}</UButton>
@@ -35,7 +35,7 @@
 
       <div class="shard-reveal__qr flex flex-col items-center gap-2 rounded-md bg-white p-3">
         <img v-if="qrDataUrl" :src="qrDataUrl" :alt="t('admin.crypto.signer.wizard.revealQrAlt')" width="208" height="208" class="size-52" />
-        <span class="text-[11px] text-gray-500">{{ t('admin.crypto.signer.wizard.revealQrAlt') }}</span>
+        <span class="text-[11px] text-neutral-600">{{ t('admin.crypto.signer.wizard.revealQrAlt') }}</span>
       </div>
 
       <p v-if="statusKey" role="status" class="text-xs" :class="statusError ? 'text-error' : 'text-success'">{{ t(statusKey) }}</p>

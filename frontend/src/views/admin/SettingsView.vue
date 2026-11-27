@@ -10,7 +10,7 @@
       <!-- Settings Form -->
       <UForm v-else :state="form" :disabled="saving" class="space-y-6" novalidate @submit="saveSettings">
         <!-- Toolbar: sticky translucent tab bar on the left, the form save action on the right -->
-        <div class="settings-toolbar sticky top-0 z-10 flex min-h-14 flex-wrap items-center gap-3 border-b border-default bg-(--ui-bg)/90 px-1 py-1 backdrop-blur-md">
+        <div class="settings-toolbar sticky top-0 z-20 flex min-h-14 flex-wrap items-center gap-3 border-b border-default bg-(--ui-bg)/90 px-1 py-1 backdrop-blur-md">
           <UTabs
             :model-value="activeTab"
             :items="settingsTabItems"
@@ -121,7 +121,7 @@
                       </p>
                       <div class="flex items-center gap-2">
                         <code
-                          class="min-w-0 flex-1 select-all break-all rounded-sm border border-success/30 bg-default px-3 py-2 font-mono text-sm"
+                          class="min-w-0 flex-1 select-all wrap-anywhere rounded-sm border border-success/30 bg-default px-3 py-2 font-mono text-sm"
                         >
                           {{ newAdminApiKey }}
                         </code>
@@ -1104,11 +1104,11 @@
                             : t("admin.settings.security.passkeyNotConfigured")
                         }}
                       </p>
-                      <p class="break-all text-muted">
+                      <p class="wrap-anywhere text-muted">
                         {{ t("admin.settings.security.passkeyRPID") }}:
                         {{ form.passkey_rp_id || t("admin.settings.security.passkeyValueNotConfigured") }}
                       </p>
-                      <p class="break-all text-muted">
+                      <p class="wrap-anywhere text-muted">
                         {{ t("admin.settings.security.passkeyOrigins") }}:
                         {{
                           form.passkey_rp_origins.length > 0
@@ -1511,7 +1511,7 @@
                       <SettingGroup>
                         <SettingRow class="settings-row-stack" :label="t('admin.settings.captcha.provider')" :on="true" :in-summary="false">
                           <template #control>
-                            <div class="settings-segmented" role="group" :aria-label="t('admin.settings.captcha.provider')">
+                            <div class="settings-segmented rounded-lg" role="group" :aria-label="t('admin.settings.captcha.provider')">
                               <UButton
                                 data-testid="captcha-provider-turnstile"
                                 @click="selectCaptchaProvider('turnstile')"
@@ -1594,7 +1594,7 @@
                             :in-summary="false"
                           >
                             <template #control>
-                              <div class="settings-segmented" role="group" :aria-label="t('admin.settings.tencentCaptcha.region')">
+                              <div class="settings-segmented rounded-lg" role="group" :aria-label="t('admin.settings.tencentCaptcha.region')">
                                 <UButton
                                   data-testid="tencent-captcha-region-cn"
                                   @click="form.tencent_captcha_region = 'cn'"
@@ -1730,7 +1730,7 @@
                           :in-summary="false"
                         >
                           <template #control>
-                            <div class="settings-segmented" role="group" :aria-label="t('admin.settings.aliyunCaptcha.region')">
+                            <div class="settings-segmented rounded-lg" role="group" :aria-label="t('admin.settings.aliyunCaptcha.region')">
                               <UButton
                                 @click="form.aliyun_captcha_region = 'cn'"
                                 color="neutral"
@@ -1933,7 +1933,7 @@
                               </UButton>
                               <code
                                 v-if="linuxdoRedirectUrlSuggestion"
-                                class="select-all break-all rounded-sm bg-elevated px-2 py-1 font-mono text-xs text-toned"
+                                class="select-all wrap-anywhere rounded-sm bg-elevated px-2 py-1 font-mono text-xs text-toned"
                               >
                                 {{ linuxdoRedirectUrlSuggestion }}
                               </code>
@@ -2068,7 +2068,7 @@
                           </UButton>
                           <code
                             v-if="githubOAuthRedirectUrlSuggestion"
-                            class="select-all break-all rounded-sm bg-elevated px-2 py-1 font-mono text-xs text-toned"
+                            class="select-all wrap-anywhere rounded-sm bg-elevated px-2 py-1 font-mono text-xs text-toned"
                           >
                             {{ githubOAuthRedirectUrlSuggestion }}
                           </code>
@@ -2176,7 +2176,7 @@
                           </UButton>
                           <code
                             v-if="googleOAuthRedirectUrlSuggestion"
-                            class="select-all break-all rounded-sm bg-elevated px-2 py-1 font-mono text-xs text-toned"
+                            class="select-all wrap-anywhere rounded-sm bg-elevated px-2 py-1 font-mono text-xs text-toned"
                           >
                             {{ googleOAuthRedirectUrlSuggestion }}
                           </code>
@@ -2467,7 +2467,7 @@
                         </UButton>
                         <code
                           v-if="wechatRedirectUrlSuggestion"
-                          class="select-all break-all rounded-sm bg-elevated px-2 py-1 font-mono text-xs text-toned"
+                          class="select-all wrap-anywhere rounded-sm bg-elevated px-2 py-1 font-mono text-xs text-toned"
                         >
                           {{ wechatRedirectUrlSuggestion }}
                         </code>
@@ -2982,7 +2982,7 @@
                           </UButton>
                           <code
                             v-if="oidcRedirectUrlSuggestion"
-                            class="select-all break-all rounded-sm bg-elevated px-2 py-1 font-mono text-xs text-toned"
+                            class="select-all wrap-anywhere rounded-sm bg-elevated px-2 py-1 font-mono text-xs text-toned"
                           >
                             {{ oidcRedirectUrlSuggestion }}
                           </code>
@@ -5187,7 +5187,7 @@
                             "
                           >
                             <template #control>
-                              <div class="settings-segmented" role="group" :aria-label="t( 'admin.settings.site.customEndpoints.visibilityTitle', )">
+                              <div class="settings-segmented rounded-lg" role="group" :aria-label="t( 'admin.settings.site.customEndpoints.visibilityTitle', )">
                                 <UButton
                                   @click="ep.min_recharge = 0"
                                   color="neutral"
@@ -5527,7 +5527,7 @@
                   :on="true"
                   :in-summary="false">
                   <template #control>
-                    <div class="settings-segmented" role="group" :aria-label="localText('展示形式', 'Display mode')">
+                    <div class="settings-segmented rounded-lg" role="group" :aria-label="localText('展示形式', 'Display mode')">
                       <UButton
                         icon="i-lucide-shield"
                         @click="form.login_agreement_mode = 'modal'"
@@ -11661,7 +11661,6 @@ watch(
   white-space: nowrap;
   gap: 2px;
   padding: 2px;
-  border-radius: 8px;
   background: var(--ui-bg-elevated);
 }
 
@@ -11749,15 +11748,6 @@ watch(
   @apply h-[42px];
 }
 
-/* ============ 系统设置 Tab 导航 ============ */
-.settings-tabs-shell {
-  @apply sticky z-20 -mx-1 rounded-2xl border border-white/80 bg-white/90 p-1.5 backdrop-blur-xl;
-  top: 4.75rem;
-  box-shadow:
-    0 12px 28px rgb(15 23 42 / 0.07),
-    0 1px 0 rgb(255 255 255 / 0.9) inset;
-}
-
 .settings-toolbar {
   min-width: 0;
 }
@@ -11771,114 +11761,5 @@ watch(
   .settings-toolbar-save {
     min-height: 40px;
   }
-}
-
-.settings-tabs-scroll {
-  @apply overflow-x-auto;
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-
-.settings-tabs-scroll::-webkit-scrollbar {
-  display: none;
-}
-
-.settings-tabs {
-  @apply flex min-w-max items-center gap-1;
-}
-
-.settings-tab {
-  @apply relative isolate flex h-10 min-w-27 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-transparent px-3 text-sm font-medium text-gray-600 outline-hidden transition-colors duration-200 ease-out dark:text-gray-300;
-}
-
-@media (min-width: 768px) {
-  .settings-tabs {
-    @apply min-w-full;
-  }
-
-  .settings-tab {
-    @apply min-w-0 flex-1 basis-0 overflow-hidden px-2 text-[13px];
-  }
-
-  .settings-tab-icon {
-    @apply h-6 w-6;
-  }
-}
-
-.settings-tab::before {
-  @apply absolute inset-0 -z-10 rounded-xl opacity-0 transition-opacity duration-200;
-  content: "";
-  background: linear-gradient(135deg, rgb(248 250 252 / 0.95), rgb(241 245 249 / 0.8));
-}
-
-.settings-tab:hover::before,
-.settings-tab:focus-visible::before {
-  opacity: 1;
-}
-
-.settings-tab:focus-visible {
-  @apply ring-2 ring-primary-500/40 ring-offset-2 ring-offset-white dark:ring-offset-dark-900;
-}
-
-.settings-tab-active {
-  @apply border-primary-200/80 bg-white text-primary-700 shadow-xs dark:border-primary-400/30 dark:bg-dark-700/95 dark:text-primary-200;
-  box-shadow:
-    0 8px 18px rgb(15 23 42 / 0.08),
-    0 1px 0 rgb(255 255 255 / 0.92) inset;
-}
-
-.settings-tab-active::before {
-  opacity: 0;
-}
-
-.settings-tab-active::after {
-  position: absolute;
-  right: 0.75rem;
-  bottom: 0.25rem;
-  left: 0.75rem;
-  height: 2px;
-  border-radius: 9999px;
-  content: "";
-  background: linear-gradient(90deg, #14b8a6, #0ea5e9);
-}
-
-.settings-tab-icon {
-  @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-gray-500 transition-colors duration-200 dark:text-gray-400;
-}
-
-.settings-tab:hover .settings-tab-icon,
-.settings-tab:focus-visible .settings-tab-icon {
-  @apply text-gray-700 dark:text-gray-200;
-}
-
-.settings-tab-active .settings-tab-icon {
-  @apply bg-primary-50 text-primary-600 dark:bg-primary-400/10 dark:text-primary-300;
-}
-
-.settings-tab-label {
-  @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap leading-none;
-}
-</style>
-
-<style>
-/* Dark-mode overrides for the settings tabs shell. Kept in an UNSCOPED block
-   because Vue's scoped-CSS compiler was dropping the `:global(.dark) ...`
-   rules in the production build, leaving inactive tabs unreadable on dark. */
-.dark .settings-tabs-shell {
-  border-color: rgb(51 65 85 / 0.65);
-  background: rgb(15 23 42 / 0.86);
-  box-shadow:
-    0 16px 36px rgb(0 0 0 / 0.28),
-    0 1px 0 rgb(255 255 255 / 0.06) inset;
-}
-
-.dark .settings-tab::before {
-  background: linear-gradient(135deg, rgb(30 41 59 / 0.9), rgb(51 65 85 / 0.62));
-}
-
-.dark .settings-tab-active {
-  box-shadow:
-    0 12px 26px rgb(0 0 0 / 0.22),
-    0 1px 0 rgb(255 255 255 / 0.08) inset;
 }
 </style>

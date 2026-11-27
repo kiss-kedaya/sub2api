@@ -102,7 +102,7 @@ describe('AffiliateView', () => {
       expect(value?.textContent?.trim()).toBe(expectedValues[index])
       expect(Array.from(value?.classList ?? [])).toEqual(expect.arrayContaining([
         'min-w-0',
-        'break-all',
+        'wrap-anywhere',
         'sm:flex-1',
         'sm:truncate',
       ]))
@@ -149,5 +149,26 @@ describe('AffiliateView', () => {
     const linkHeader = columns[1]?.firstElementChild
     expect(linkHeader?.textContent).toContain('affiliate.inviteLink')
     expect(linkHeader?.textContent).toContain('affiliate.customCodes.stats')
+  })
+
+  it('uses semantic border-primary and motion-reduce:animate-none on the loading spinner', async () => {
+    getAffiliateDetail.mockImplementation(() => new Promise(() => {}))
+    const wrapper = mount(AffiliateView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<main><slot /></main>' },
+          Icon: true,
+        },
+      },
+    })
+
+    const spinner = wrapper.get('.animate-spin')
+    expect(spinner.classes()).toEqual(expect.arrayContaining([
+      'animate-spin',
+      'motion-reduce:animate-none',
+      'border-primary',
+    ]))
+    expect(spinner.classes()).not.toContain('border-primary-500')
+    wrapper.unmount()
   })
 })

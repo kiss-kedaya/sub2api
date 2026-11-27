@@ -1,15 +1,15 @@
 <template>
   <Transition
-    enter-active-class="transition duration-200 ease-out"
-    enter-from-class="translate-y-2 opacity-0"
+    enter-active-class="transition-[transform,opacity] duration-200 ease-out"
+    enter-from-class="translate-y-2 opacity-0 motion-reduce:translate-y-0"
     enter-to-class="translate-y-0 opacity-100"
-    leave-active-class="transition duration-150 ease-in"
+    leave-active-class="transition-[transform,opacity] duration-150 ease-out"
     leave-from-class="translate-y-0 opacity-100"
-    leave-to-class="translate-y-2 opacity-0"
+    leave-to-class="translate-y-2 opacity-0 motion-reduce:translate-y-0"
   >
     <div
       v-if="visible"
-      class="pointer-events-none fixed bottom-4 right-4 z-[60]"
+      class="pointer-events-none fixed bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] right-4 z-[60]"
       role="status"
       aria-live="polite"
       data-testid="step-up-skip-notice"

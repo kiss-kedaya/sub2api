@@ -22,7 +22,7 @@
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="min-w-0">
             <p class="font-medium text-highlighted">{{ item.title || text('（无标题）', '(no title)') }}</p>
-            <p class="mt-1 text-xs text-muted">
+            <p class="mt-1 text-xs tabular-nums text-muted">
               {{ item.channel_name || `#${item.channel_id}` }}
               <span v-if="item.published_at"> · {{ text('发布', 'published') }} {{ formatTime(item.published_at) }}</span>
               <span> · {{ text('首次看到', 'first seen') }} {{ formatTime(item.first_seen_at) }}</span>
@@ -41,7 +41,7 @@
           size="xs"
           color="neutral"
           variant="link"
-          class="mt-1 px-0"
+          class="mt-1 px-0 max-sm:min-h-11 pointer-coarse:min-h-11"
           :label="expanded.has(item.id) ? text('收起', 'Show less') : text('展开全文', 'Show more')"
           @click="toggle(item.id)"
         />
@@ -52,11 +52,11 @@
     </div>
 
     <div class="flex flex-wrap items-center justify-between gap-3 text-sm text-muted">
-      <span>{{ text(`${total} 条公告`, `${total} announcements`) }}</span>
+      <span class="tabular-nums">{{ text(`${total} 条公告`, `${total} announcements`) }}</span>
       <div class="flex items-center gap-2">
-        <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" :disabled="loading || page <= 1" :aria-label="text('上一页', 'Previous page')" @click="load(page - 1)" />
+        <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :disabled="loading || page <= 1" :aria-label="text('上一页', 'Previous page')" @click="load(page - 1)" />
         <span class="tabular-nums">{{ page }} / {{ pages || 1 }}</span>
-        <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" :disabled="loading || page >= pages" :aria-label="text('下一页', 'Next page')" @click="load(page + 1)" />
+        <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :disabled="loading || page >= pages" :aria-label="text('下一页', 'Next page')" @click="load(page + 1)" />
       </div>
     </div>
   </div>

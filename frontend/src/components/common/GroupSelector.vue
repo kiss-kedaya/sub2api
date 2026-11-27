@@ -1,6 +1,6 @@
 <template>
   <div>
-    <UFormField :label="t('admin.users.groups')" :hint="t('common.selectedCount', { count: modelValue.length })">
+    <UFormField :label="t('admin.users.groups')" :hint="t('common.selectedCount', { count: (modelValue ?? []).length })">
       <USelectMenu
         :model-value="selectedVisibleIds"
         :items="items"
@@ -10,7 +10,7 @@
         :filter-fields="['label', 'searchText']"
         :placeholder="t('common.selectedCount', { count: 0 })"
         class="w-full"
-        :ui="{ base: 'min-h-9 py-1', content: 'min-w-72' }"
+        :ui="{ base: 'min-h-10 rounded-xl py-1', content: 'z-50 min-w-72' }"
         data-test="group-selector"
         @update:model-value="handleSelect"
       >
@@ -70,14 +70,16 @@ const { t } = useI18n()
 const authStore = useAuthStore()
 
 interface Props {
-  modelValue: number[]
-  groups: (Group & { account_count?: number })[]
+  modelValue?: number[]
+  groups?: (Group & { account_count?: number })[]
   platform?: GroupPlatform // Optional platform filter
   mixedScheduling?: boolean // For antigravity accounts: allow anthropic/gemini groups
   searchable?: boolean | 'auto'
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  modelValue: () => [],
+  groups: () => [],
   searchable: 'auto'
 })
 const emit = defineEmits<{
@@ -135,7 +137,7 @@ const items = computed<GroupItem[]>(() =>
 const maxTriggerBadges = 3
 const selectedGroups = computed(() => {
   const byId = new Map(filteredGroups.value.map((group) => [group.id, group]))
-  return props.modelValue.map((id) => byId.get(id)).filter((group): group is SelectableGroup => !!group)
+  return (props.modelValue ?? []).map((id) => byId.get(id)).filter((group): group is SelectableGroup => !!group)
 })
 // Ids the menu can show; selections outside the current filter stay in modelValue untouched.
 const selectedVisibleIds = computed(() => selectedGroups.value.map((group) => group.id))
@@ -154,20 +156,22 @@ const handleSelect = (value: unknown) => {
 }
 
 watch(
-  () => [authStore.isSimpleMode, props.groups, props.modelValue] as const,
+  [() => authStore.isSimpleMode, () => props.groups, () => props.modelValue],
   () => {
+    const currentValue = props.modelValue ?? []
     if (!authStore.isSimpleMode || props.groups.length === 0) return
     const visibleIDs = new Set(props.groups.filter((group) => group.platform !== 'composite').map((group) => group.id))
-    const cleaned = props.modelValue.filter((id) => visibleIDs.has(id))
-    if (cleaned.length !== props.modelValue.length) emit('update:modelValue', cleaned)
+    const cleaned = currentValue.filter((id) => visibleIDs.has(id))
+    if (cleaned.length !== currentValue.length) emit('update:modelValue', cleaned)
   },
-  { immediate: true, deep: true }
+  { immediate: true }
 )
 
 const handleChange = (groupId: number, checked: boolean) => {
+  const currentValue = props.modelValue ?? []
   const newValue = checked
-    ? [...props.modelValue, groupId]
-    : props.modelValue.filter((id) => id !== groupId)
+    ? [...currentValue, groupId]
+    : currentValue.filter((id) => id !== groupId)
   emit('update:modelValue', newValue)
 }
 </script>

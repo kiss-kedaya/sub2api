@@ -11,7 +11,7 @@
       <span class="hidden sm:inline">{{ currentLocale?.code.toUpperCase() }}</span>
       <UIcon
         name="i-lucide-chevron-down"
-        class="size-3.5 text-dimmed transition-transform duration-200"
+        class="size-3.5 text-dimmed transition-transform duration-200 ease-out"
         :class="{ 'rotate-180': isOpen }"
       />
     </UButton>

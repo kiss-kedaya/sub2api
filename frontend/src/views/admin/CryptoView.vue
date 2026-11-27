@@ -157,7 +157,7 @@
                       <p class="text-sm font-medium text-highlighted">{{ t('admin.crypto.walletSetupStepsTitle') }}</p>
                       <ol class="mt-2 grid gap-1.5 text-sm text-muted">
                         <li v-for="(step, index) in walletSetupSteps" :key="step" class="flex gap-2">
-                          <span class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary">{{ index + 1 }}</span>
+                          <span class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-semibold text-primary-700 dark:text-primary-300">{{ index + 1 }}</span>
                           <span>{{ t(step) }}</span>
                         </li>
                       </ol>
@@ -335,14 +335,14 @@
                     :ui="statCardUi"
                   >
                     <div class="flex items-center gap-2">
-                      <span class="text-2xl font-semibold text-highlighted">{{ count }}</span>
+                      <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ count }}</span>
                       <UBadge v-if="count <= (poolStatus?.low_watermark ?? 0)" color="warning" variant="subtle">{{ t('admin.crypto.poolLow') }}</UBadge>
                     </div>
                   </UPageCard>
                   <UPageCard v-for="hw in hotWallets" :key="`hw-${hw.chain}`" variant="subtle" :title="`${hw.symbol} · ${hw.chain}`" :ui="statCardUi">
                     <p class="text-xs text-muted">{{ t('admin.crypto.hotGasWallet') }} · <span class="font-mono">{{ short(hw.address) }}</span></p>
                     <div class="flex items-center gap-2">
-                      <span class="text-2xl font-semibold" :class="hw.error ? 'text-warning text-base' : 'text-highlighted'">
+                      <span class="text-2xl font-semibold tabular-nums" :class="hw.error ? 'text-warning text-base' : 'text-highlighted'">
                         {{ hw.error ? t(hw.error_code === 'RPC_DISCOVERY_PENDING' ? 'admin.crypto.rpcDiscovering' : 'admin.crypto.hotWalletUnreachable') : hw.balance }}
                       </span>
                       <UBadge v-if="!hw.error && !hw.enough" color="warning" variant="subtle">{{ t('admin.crypto.gasInsufficient') }}</UBadge>
@@ -369,7 +369,7 @@
                 :ui="statCardUi"
                 class="lg:rounded-none first:rounded-l-lg last:rounded-r-lg"
               >
-                <span class="text-2xl font-semibold text-highlighted">{{ stat.value }}</span>
+                <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ stat.value }}</span>
               </UPageCard>
             </UPageGrid>
 
@@ -591,7 +591,7 @@
                 :ui="statCardUi"
                 class="lg:rounded-none first:rounded-l-lg last:rounded-r-lg"
               >
-                <span class="text-2xl font-semibold text-highlighted">{{ stat.value }}</span>
+                <span class="text-2xl font-semibold tabular-nums text-highlighted">{{ stat.value }}</span>
               </UPageCard>
             </UPageGrid>
 
@@ -2471,7 +2471,11 @@ onMounted(async () => {
   // gate is what enables 执行归集 and names the blocking reason.
   await refreshSweepState()
   await consumeUnlockIntent()
-  unlockTicker = setInterval(() => { unlockClock.value = Date.now() }, 1000)
+  unlockTicker = setInterval(() => {
+    if (document.visibilityState === 'visible' && signerUnlockUntilMs.value > 0) {
+      unlockClock.value = Date.now()
+    }
+  }, 1000)
 })
 
 onUnmounted(() => {

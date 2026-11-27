@@ -36,7 +36,7 @@ const isVisible = computed(() => isLoading.value)
   left: 0;
   right: 0;
   height: 2px;
-  z-index: 9999;
+  z-index: 100;
   overflow: hidden;
   background: transparent;
   pointer-events: none;
@@ -80,11 +80,11 @@ const isVisible = computed(() => isLoading.value)
 
 /* 淡入淡出过渡 */
 .progress-fade-enter-active {
-  transition: opacity 0.15s ease-out;
+  transition: opacity 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 .progress-fade-leave-active {
-  transition: opacity 0.3s ease-out;
+  transition: opacity 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 .progress-fade-enter-from,

@@ -2,8 +2,8 @@
   Legacy page classes inside the console (cards, legacy buttons and inputs, tables,
   pagination, the old Select and date picker, dialogs). Colour tokens live in
   console-studio.css: by day they point at Nuxt UI's --ui-* tokens (so Appearance drives
-  them), at night they keep the plum palette. The frame itself (sidebar, navbar, toolbar)
-  is Nuxt UI's dashboard and needs nothing here.
+  them), at night they keep the Obsidian Graphite + Studio Blue palette. The frame itself
+  (sidebar, navbar, toolbar) is Nuxt UI's dashboard and needs nothing here.
 */
 :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal, body:has(.console-signal) > .account-popover) {
   letter-spacing: 0;
@@ -26,7 +26,7 @@
   letter-spacing: 0;
 }
 
-/* Night: the plum controls as before (by day the style.css tokens already match Nuxt UI). */
+/* Night: Obsidian Graphite + Studio Blue controls (by day the style.css tokens already match Nuxt UI). */
 .dark :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay) .btn-secondary {
   border-color: var(--signal-line);
 }
@@ -278,8 +278,10 @@ html .console-signal .signal-main :is(.date-picker-trigger, .date-picker-dropdow
 @media (prefers-reduced-motion: reduce) {
   :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal) *,
   :is(.console-signal, body:has(.console-signal) > .modal-overlay, body:has(.console-signal) > .dialog-overlay, body:has(.console-signal) > .select-dropdown-portal) {
-    animation: none !important;
-    transition: none !important;
     scroll-behavior: auto !important;
+  }
+
+  .console-signal :where(button:not(:disabled), a, [role='button']):not([data-no-lift]):active {
+    transform: none;
   }
 }

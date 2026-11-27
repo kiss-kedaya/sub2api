@@ -83,7 +83,7 @@ describe('TOTP 弹窗定时器清理', () => {
   })
 
   it('TotpSetupModal 卸载时清理倒计时定时器', async () => {
-    const wrapper = mount(TotpSetupModal)
+    const wrapper = mount(TotpSetupModal, { global: { stubs: { teleport: true } } })
     await flushPromises()
 
     const sendButton = wrapper
@@ -103,7 +103,7 @@ describe('TOTP 弹窗定时器清理', () => {
   })
 
   it('TotpDisableDialog 不再发送邮箱码或创建倒计时', async () => {
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mount(TotpDisableDialog, { global: { stubs: { teleport: true } } })
     await flushPromises()
 
     const sendButton = wrapper
@@ -125,11 +125,11 @@ describe('TOTP 弹窗定时器清理', () => {
       response: { data: { message: 'setup failed' } }
     })
 
-    const wrapper = mount(TotpSetupModal)
+    const wrapper = mount(TotpSetupModal, { global: { stubs: { teleport: true } } })
     await flushPromises()
 
     await wrapper.get('input[type="password"]').setValue('correct horse battery staple')
-    await wrapper.get('button[type="button"].btn-primary').trigger('click')
+    await wrapper.get('[data-testid="totp-setup-next"]').trigger('click')
     await flushPromises()
 
     expect(mocks.showError).toHaveBeenCalledWith('setup failed')
@@ -144,7 +144,7 @@ describe('TOTP 弹窗定时器清理', () => {
       response: { data: { message: 'disable failed' } }
     })
 
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mount(TotpDisableDialog, { global: { stubs: { teleport: true } } })
     await flushPromises()
 
     await wrapper.get('#disable-totp-code').setValue('123456')

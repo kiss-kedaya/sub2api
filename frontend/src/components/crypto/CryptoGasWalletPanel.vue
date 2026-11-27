@@ -20,13 +20,13 @@
             <div class="min-w-0 space-y-3">
               <div>
                 <p class="text-sm font-medium text-highlighted">{{ t('admin.crypto.gasFundingAddress') }}</p>
-                <code class="mt-1 block select-all font-mono text-sm leading-relaxed break-all text-default" data-testid="crypto-gas-address">{{ address }}</code>
+                <code class="mt-1 block select-all font-mono text-sm leading-relaxed wrap-anywhere text-default" data-testid="crypto-gas-address">{{ address }}</code>
               </div>
               <UButton color="neutral" variant="outline" size="xs" icon="i-lucide-copy" data-testid="crypto-gas-copy" @click="copyToClipboard(address)">{{ t('admin.crypto.gasFundingCopy') }}</UButton>
               <p class="gas-wallet__warning text-xs leading-relaxed text-muted">{{ t('admin.crypto.gasFundingWarning', { network: selectedNetwork?.label, symbol: selectedNetwork?.symbol }) }}</p>
               <p class="text-sm" role="status">
                 <span class="text-muted">{{ t('admin.crypto.gasFundingBalance') }}:</span>
-                <strong v-if="selectedBalance && !selectedBalance.error" class="ms-1 text-highlighted">{{ selectedBalance.balance }} {{ selectedNetwork?.symbol }}</strong>
+                <strong v-if="selectedBalance && !selectedBalance.error" class="ms-1 tabular-nums text-highlighted">{{ selectedBalance.balance }} {{ selectedNetwork?.symbol }}</strong>
                 <span v-else class="ms-1 text-muted">{{ t(balanceLoading ? 'common.loading' : selectedBalance?.error_code === 'RPC_DISCOVERY_PENDING' ? 'admin.crypto.rpcDiscovering' : 'admin.crypto.hotWalletUnreachable') }}</span>
               </p>
               <p v-if="selectedBalance && !selectedBalance.error && !selectedBalance.enough" class="gas-wallet__warning text-xs text-warning">{{ t('admin.crypto.gasFundingLowBalance') }}</p>
@@ -129,7 +129,7 @@ watch(address, async (value, _, onCleanup) => {
     if (!stale) qrImage.value = image
   } catch { if (!stale) qrFailed.value = true }
 })
-watch(() => [props.available, props.revision, props.chains.join(',')], () => {
+watch([() => props.available, () => props.revision, () => props.chains.join(',')], () => {
   if (!networks.value.some(network => network.chain === selectedChain.value)) selectedChain.value = networks.value[0]?.chain ?? ''
   void refresh()
 }, { immediate: true })

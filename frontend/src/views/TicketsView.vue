@@ -4,11 +4,11 @@
       <header class="tickets-heading">
         <div class="tickets-heading-title">
           <span class="tickets-heading-icon"><Icon :name="admin ? 'inbox' : 'chat'" size="lg" /></span>
-          <div><h1>{{ t(admin ? 'tickets.adminTitle' : 'tickets.title') }}</h1><p>{{ t('tickets.count', { count: stats.total }) }}<span v-if="stats.unread" class="tickets-unread-summary">{{ t('tickets.unread') }} {{ stats.unread }}</span></p></div>
+          <div class="min-w-0"><h1>{{ t(admin ? 'tickets.adminTitle' : 'tickets.title') }}</h1><p class="tabular-nums">{{ t('tickets.count', { count: stats.total }) }}<span v-if="stats.unread" class="tickets-unread-summary">{{ t('tickets.unread') }} {{ stats.unread }}</span></p></div>
         </div>
         <div class="tickets-heading-actions">
           <span v-if="syncFailed" class="tickets-sync tickets-sync-error" role="status"><span></span>{{ t('tickets.syncFailed') }}</span>
-          <button class="ticket-icon-button" type="button" :disabled="refreshing" :title="t('tickets.refresh')" :aria-label="t('tickets.refresh')" @click="refresh(true)"><Icon name="refresh" size="sm" :class="{ 'animate-spin': refreshing }" /></button>
+          <button class="ticket-icon-button" type="button" :disabled="refreshing" :title="t('tickets.refresh')" :aria-label="t('tickets.refresh')" @click="refresh(true)"><Icon name="refresh" size="sm" :class="{ 'animate-spin motion-reduce:animate-none': refreshing }" /></button>
           <button v-if="!admin" class="ticket-button ticket-button-primary" type="button" :disabled="stats.can_create === false || loading" @click="newTicketOpen = true"><Icon name="plus" size="sm" />{{ t('tickets.newTicket') }}</button>
           <button v-if="admin" class="ticket-button ticket-button-primary" type="button" @click="openProactive"><Icon name="plus" size="sm" />{{ t('tickets.proactiveNew') }}</button>
         </div>
@@ -37,8 +37,8 @@
 
           <div class="tickets-list" :aria-busy="loading">
             <div v-if="loading && !items.length" class="tickets-list-skeleton" role="status" :aria-label="t('tickets.loading')"><div v-for="i in 4" :key="i"><span></span><span></span><span></span></div></div>
-            <div v-else-if="listError" class="tickets-empty" role="alert"><Icon name="exclamationCircle" size="lg" /><p>{{ listError }}</p><button class="ticket-text-button" @click="refresh(true)">{{ t('tickets.retry') }}</button></div>
-            <div v-else-if="!items.length" class="tickets-empty"><Icon name="inbox" size="xl" /><p>{{ t(emptyMessageKey) }}</p><button v-if="hasFilters" class="ticket-text-button" @click="resetFilters">{{ t('tickets.resetFilters') }}</button><button v-else-if="!admin && stats.can_create !== false" class="ticket-text-button" @click="newTicketOpen = true">{{ t('tickets.newTicket') }}</button></div>
+            <div v-else-if="listError" class="tickets-empty" role="alert"><Icon name="exclamationCircle" size="lg" /><p>{{ listError }}</p><button type="button" class="ticket-text-button" @click="refresh(true)">{{ t('tickets.retry') }}</button></div>
+            <div v-else-if="!items.length" class="tickets-empty"><Icon name="inbox" size="xl" /><p>{{ t(emptyMessageKey) }}</p><button v-if="hasFilters" type="button" class="ticket-text-button" @click="resetFilters">{{ t('tickets.resetFilters') }}</button><button v-else-if="!admin && stats.can_create !== false" type="button" class="ticket-text-button" @click="newTicketOpen = true">{{ t('tickets.newTicket') }}</button></div>
             <template v-else>
               <button v-for="item in items" :key="item.id" type="button" class="ticket-list-item" :class="{ selected: selectedID === item.id, unread: item.unread_count > 0 }" :aria-current="selectedID === item.id ? 'true' : undefined" @click="select(item.id)">
                 <span class="ticket-item-top"><span class="ticket-number">#{{ item.id }}</span><time :datetime="item.last_message_at" :title="formatDate(item.last_message_at)">{{ shortDate(item.last_message_at) }}</time></span>
@@ -57,8 +57,8 @@
 
         <section class="tickets-detail" :aria-label="t('tickets.selectDetail')" :aria-busy="detailLoading">
           <div v-if="!selectedID" class="tickets-welcome"><Icon name="chat" size="xl" /><h2>{{ t('tickets.selectTicket') }}</h2></div>
-          <div v-else-if="detailLoading" class="tickets-empty" role="status"><Icon name="refresh" size="lg" class="animate-spin" /><p>{{ t('tickets.loading') }}</p></div>
-          <div v-else-if="!detail" class="tickets-empty" role="alert"><Icon name="exclamationCircle" size="lg" /><p>{{ detailError || t('tickets.loadFailed') }}</p><button class="ticket-text-button" @click="refresh(true)">{{ t('tickets.retry') }}</button><button class="ticket-text-button" @click="back">{{ t('tickets.back') }}</button></div>
+          <div v-else-if="detailLoading" class="tickets-empty" role="status"><Icon name="refresh" size="lg" class="animate-spin motion-reduce:animate-none" /><p>{{ t('tickets.loading') }}</p></div>
+          <div v-else-if="!detail" class="tickets-empty" role="alert"><Icon name="exclamationCircle" size="lg" /><p>{{ detailError || t('tickets.loadFailed') }}</p><button type="button" class="ticket-text-button" @click="refresh(true)">{{ t('tickets.retry') }}</button><button type="button" class="ticket-text-button" @click="back">{{ t('tickets.back') }}</button></div>
           <template v-else>
             <header class="ticket-detail-header">
               <div class="ticket-detail-title-row">
@@ -85,11 +85,11 @@
               <div v-else-if="!admin && detail.ticket.contact" class="ticket-user-contact"><Icon name="userCircle" size="sm" /><span>{{ t('tickets.contact') }}: {{ detail.ticket.contact }}</span></div>
             </header>
 
-            <div v-if="detailError" class="ticket-inline-error" role="alert">{{ detailError }}<button class="ticket-text-button" @click="refresh(true)">{{ t('tickets.retry') }}</button></div>
+            <div v-if="detailError" class="ticket-inline-error" role="alert">{{ detailError }}<button type="button" class="ticket-text-button" @click="refresh(true)">{{ t('tickets.retry') }}</button></div>
             <TicketTimeline ref="timeline" :messages="detail.messages" :admin="admin" :has-more="detail.has_more" :loading-older="loadingOlder" @older="loadOlder" @bottom="onBottom" />
             <div v-if="!atBottom && hasNewMessages" class="ticket-new-message-bar"><button type="button" class="ticket-button" @click="jumpToLatest"><Icon name="arrowDown" size="sm" />{{ t('tickets.newMessages') }}</button></div>
 
-            <footer v-if="detail.ticket.status === 'closed'" class="ticket-closed-bar"><span><Icon name="lock" size="sm" />{{ t('tickets.closed') }}</span><button class="ticket-button" :disabled="mutating" @click="update({ status: 'open' })"><Icon name="refresh" size="sm" />{{ t('tickets.reopen') }}</button></footer>
+            <footer v-if="detail.ticket.status === 'closed'" class="ticket-closed-bar"><span><Icon name="lock" size="sm" />{{ t('tickets.closed') }}</span><button type="button" class="ticket-button" :disabled="mutating" @click="update({ status: 'open' })"><Icon name="refresh" size="sm" />{{ t('tickets.reopen') }}</button></footer>
             <form
               v-else
               class="ticket-composer"
@@ -128,7 +128,7 @@
                   </button>
                   <span class="ticket-character-count" aria-live="off">{{ draft.length ? draft.length + ' / 10000' : '' }}</span>
                 </div>
-                <button type="submit" class="ticket-button ticket-button-primary" :disabled="!canSend"><Icon :name="mutating || uploadingImages ? 'refresh' : 'arrowUp'" size="sm" :class="{ 'animate-spin': mutating || uploadingImages }" />{{ t('tickets.send') }}</button>
+                <button type="submit" class="ticket-button ticket-button-primary" :disabled="!canSend"><Icon :name="mutating || uploadingImages ? 'refresh' : 'arrowUp'" size="sm" :class="{ 'animate-spin motion-reduce:animate-none': mutating || uploadingImages }" />{{ t('tickets.send') }}</button>
               </div>
             </form>
           </template>
@@ -159,7 +159,7 @@
         </div>
         <span class="ticket-character-count">{{ newTicket.content.length }} / 10000</span>
       </form>
-      <template #footer><button class="btn btn-secondary" type="button" :disabled="mutating" @click="closeNewTicket">{{ t('tickets.cancel') }}</button><button class="btn btn-primary" type="submit" form="new-ticket-form" :disabled="mutating || !canSubmitNewTicket || stats.can_create === false"><Icon :name="mutating ? 'refresh' : 'plus'" size="sm" :class="{ 'animate-spin': mutating }" />{{ t('tickets.create') }}</button></template>
+      <template #footer><button class="btn btn-secondary" type="button" :disabled="mutating" @click="closeNewTicket">{{ t('tickets.cancel') }}</button><button class="btn btn-primary" type="submit" form="new-ticket-form" :disabled="mutating || !canSubmitNewTicket || stats.can_create === false"><Icon :name="mutating ? 'refresh' : 'plus'" size="sm" :class="{ 'animate-spin motion-reduce:animate-none': mutating }" />{{ t('tickets.create') }}</button></template>
     </BaseDialog>
     <BaseDialog :show="proactiveOpen" :title="t('tickets.proactiveTitle')" width="normal" :close-on-escape="!proactiveSending" :show-close-button="!proactiveSending" @close="closeProactive">
       <form
@@ -175,15 +175,15 @@
         <div v-if="proactiveDragging" class="ticket-composer-drop-hint">{{ t('tickets.imageDropHint') }}</div>
         <div class="ticket-create-note"><Icon name="infoCircle" size="sm" />{{ t('tickets.proactiveHint') }}</div>
         <label for="proactive-user">{{ t('tickets.proactiveUser') }}<input id="proactive-user" v-model="proactiveUserSearch" class="input" maxlength="120" :placeholder="t('tickets.proactiveUserPlaceholder')" :disabled="proactiveSending" autocomplete="off" @input="onProactiveSearchInput" /></label>
-        <div v-if="proactiveSearching" class="px-3 py-2 text-sm text-gray-500">{{ t('tickets.proactiveSearching') }}</div>
-        <div v-else-if="proactiveUsers.length" class="max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-xs dark:border-gray-700 dark:bg-gray-900">
-          <button v-for="candidate in proactiveUsers" :key="candidate.id" type="button" class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-800" @click="pickProactiveUser(candidate)">
-            <span class="min-w-0"><strong class="block truncate">{{ candidate.username || '#' + candidate.id }}</strong><span class="block truncate text-xs text-gray-500">{{ candidate.email }}</span></span>
-            <span class="shrink-0 text-xs text-gray-400">#{{ candidate.id }}</span>
+        <div v-if="proactiveSearching" class="px-3 py-2 text-sm text-muted">{{ t('tickets.proactiveSearching') }}</div>
+        <div v-else-if="proactiveUsers.length" class="max-h-56 overflow-y-auto overscroll-contain rounded-lg border border-default bg-default divide-y divide-default shadow-(--app-shadow-popover)">
+          <button v-for="candidate in proactiveUsers" :key="candidate.id" type="button" class="flex min-h-11 w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-elevated active:bg-elevated focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary" @click="pickProactiveUser(candidate)">
+            <span class="min-w-0 flex-1"><strong class="block truncate text-highlighted">{{ candidate.username || '#' + candidate.id }}</strong><span class="block truncate text-xs text-muted">{{ candidate.email }}</span></span>
+            <span class="shrink-0 text-xs tabular-nums text-dimmed">#{{ candidate.id }}</span>
           </button>
         </div>
-        <p v-else-if="proactiveSearched && proactiveUserSearch.trim()" class="px-3 text-sm text-gray-500">{{ t('tickets.proactiveNoUsers') }}</p>
-        <p v-if="proactiveUser" class="text-sm text-green-600 dark:text-green-400">{{ t('tickets.proactiveSelected', { user: proactiveUser.username || '#' + proactiveUser.id, email: proactiveUser.email }) }}</p>
+        <p v-else-if="proactiveSearched && proactiveUserSearch.trim()" class="px-3 text-sm text-muted">{{ t('tickets.proactiveNoUsers') }}</p>
+        <p v-if="proactiveUser" class="text-sm text-success">{{ t('tickets.proactiveSelected', { user: proactiveUser.username || '#' + proactiveUser.id, email: proactiveUser.email }) }}</p>
         <label for="proactive-subject">{{ t('tickets.proactiveSubject') }}<input id="proactive-subject" v-model="proactiveSubject" class="input" maxlength="160" :placeholder="t('tickets.proactiveSubjectPlaceholder')" :disabled="proactiveSending" /></label>
         <label for="proactive-content">{{ t('tickets.proactiveContent') }}<textarea id="proactive-content" v-model="proactiveContent" class="input" rows="6" maxlength="10000" :required="proactiveImages.length === 0" :placeholder="t('tickets.proactiveContentPlaceholder')" :disabled="proactiveSending" @paste="onProactivePaste"></textarea></label>
         <div class="ticket-modal-attachments">
@@ -192,7 +192,7 @@
         </div>
         <span class="ticket-character-count">{{ proactiveContent.length }} / 10000</span>
       </form>
-      <template #footer><button class="btn btn-secondary" type="button" :disabled="proactiveSending" @click="closeProactive">{{ t('tickets.cancel') }}</button><button class="btn btn-primary" type="submit" form="proactive-ticket-form" :disabled="proactiveSending || !canSubmitProactive"><Icon :name="proactiveSending ? 'refresh' : 'arrowUp'" size="sm" :class="{ 'animate-spin': proactiveSending }" />{{ t('tickets.proactiveSend') }}</button></template>
+      <template #footer><button class="btn btn-secondary" type="button" :disabled="proactiveSending" @click="closeProactive">{{ t('tickets.cancel') }}</button><button class="btn btn-primary" type="submit" form="proactive-ticket-form" :disabled="proactiveSending || !canSubmitProactive"><Icon :name="proactiveSending ? 'refresh' : 'arrowUp'" size="sm" :class="{ 'animate-spin motion-reduce:animate-none': proactiveSending }" />{{ t('tickets.proactiveSend') }}</button></template>
     </BaseDialog>
     <ConfirmDialog :show="closeDialogOpen" :title="t('tickets.closeTitle')" :message="t('tickets.closeMessage')" :confirm-text="t('tickets.close')" @cancel="closeDialogOpen = false" @confirm="closeTicket" />
   </AppLayout>
@@ -644,3 +644,12 @@ onBeforeUnmount(() => {
   clearPendingImages(proactiveImages)
 })
 </script>
+
+<style scoped>
+@media (pointer: coarse), (max-width: 767px) {
+  .tickets-search input,
+  .ticket-composer textarea {
+    font-size: 16px;
+  }
+}
+</style>

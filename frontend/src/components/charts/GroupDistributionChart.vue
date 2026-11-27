@@ -177,7 +177,7 @@ const chartData = computed(() => {
 })
 
 const doughnutOptions = computed(() => ({
-  ...(props.animationDuration === undefined ? {} : { animation: { duration: props.animationDuration } }),
+  animation: props.animationDuration === undefined ? false : { duration: props.animationDuration },
   responsive: true,
   maintainAspectRatio: false,
   cutout: '62%',

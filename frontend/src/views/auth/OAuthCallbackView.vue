@@ -1,21 +1,21 @@
 <template>
-  <div class="min-h-screen bg-gray-50 px-4 py-10 dark:bg-dark-900">
+  <div class="min-h-dvh bg-(--app-page-bg) px-4 py-10">
     <div class="mx-auto max-w-2xl">
       <div v-if="isProcessing" class="card p-6 text-center">
-        <div class="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"></div>
-        <h1 class="mt-4 text-lg font-semibold text-gray-900 dark:text-white">
+        <div class="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent motion-reduce:animate-none motion-reduce:opacity-75"></div>
+        <h1 class="mt-4 text-lg font-semibold text-highlighted">
           {{ t('auth.oauth.callbackTitle') }}
         </h1>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        <p class="mt-2 text-sm text-muted">
           {{ t('auth.oauth.callbackHint') }}
         </p>
       </div>
 
       <div v-else-if="needsRegistrationCompletion" class="card p-6">
-        <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
+        <h1 class="text-lg font-semibold text-highlighted">
           {{ t('auth.oidc.callbackTitle', { providerName }) }}
         </h1>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        <p class="mt-2 text-sm text-muted">
           {{ registrationHint }}
         </p>
 
@@ -65,11 +65,11 @@
               @keyup.enter="handleSubmitRegistration"
             />
           </div>
-          <p v-if="registrationError" class="text-sm text-red-600 dark:text-red-400">
+          <p v-if="registrationError" class="text-sm text-error">
             {{ registrationError }}
           </p>
           <button
-            class="btn btn-primary w-full"
+            class="btn btn-primary w-full [@media(pointer:coarse)]:min-h-11"
             type="button"
             :disabled="isSubmitting || !canSubmitRegistration"
             @click="handleSubmitRegistration"
@@ -80,10 +80,10 @@
       </div>
 
       <div v-else-if="needsTotpChallenge" class="card p-6">
-        <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
+        <h1 class="text-lg font-semibold text-highlighted">
           {{ t('auth.oidc.callbackTitle', { providerName }) }}
         </h1>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        <p class="mt-2 text-sm text-muted">
           {{
             t('auth.oauthFlow.totpHint', {
               providerName,
@@ -104,12 +104,12 @@
             :disabled="isSubmitting"
             @keyup.enter="handleSubmitTotpChallenge"
           />
-          <p v-if="totpError" class="text-sm text-red-600 dark:text-red-400">
+          <p v-if="totpError" class="text-sm text-error">
             {{ totpError }}
           </p>
           <button
             data-testid="oauth-callback-totp-submit"
-            class="btn btn-primary w-full"
+            class="btn btn-primary w-full [@media(pointer:coarse)]:min-h-11"
             type="button"
             :disabled="isSubmitting || totpCode.trim().length !== 6"
             @click="handleSubmitTotpChallenge"
@@ -120,22 +120,22 @@
       </div>
 
       <div v-else-if="invalidCallback" class="card p-6 text-center">
-        <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
+        <h1 class="text-lg font-semibold text-highlighted">
           {{ t('auth.oauth.invalidCallbackTitle') }}
         </h1>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        <p class="mt-2 text-sm text-muted">
           {{ callbackError || t('auth.oauth.invalidCallbackHint') }}
         </p>
-        <button class="btn btn-primary mt-6" type="button" @click="router.replace('/login')">
+        <button class="btn btn-primary mt-6 [@media(pointer:coarse)]:min-h-11" type="button" @click="router.replace('/login')">
           {{ t('auth.backToLogin') }}
         </button>
       </div>
 
       <div v-else class="card p-6">
-        <h1 class="text-lg font-semibold text-gray-900 dark:text-white">
+        <h1 class="text-lg font-semibold text-highlighted">
           {{ t('auth.oauth.callbackTitle') }}
         </h1>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        <p class="mt-2 text-sm text-muted">
           {{ t('auth.oauth.callbackHint') }}
         </p>
 
@@ -143,8 +143,8 @@
           <div>
             <label class="input-label">{{ t('auth.oauth.code') }}</label>
             <div class="flex gap-2">
-              <input class="input flex-1 font-mono text-sm" :value="code" readonly />
-              <button class="btn btn-secondary" type="button" :disabled="!code" @click="copy(code)">
+              <input class="input min-w-0 flex-1 font-mono text-base sm:text-sm" :value="code" readonly />
+              <button class="btn btn-secondary [@media(pointer:coarse)]:min-h-11" type="button" :disabled="!code" @click="copy(code)">
                 {{ t('common.copy') }}
               </button>
             </div>
@@ -153,9 +153,9 @@
           <div>
             <label class="input-label">{{ t('auth.oauth.state') }}</label>
             <div class="flex gap-2">
-              <input class="input flex-1 font-mono text-sm" :value="state" readonly />
+              <input class="input min-w-0 flex-1 font-mono text-base sm:text-sm" :value="state" readonly />
               <button
-                class="btn btn-secondary"
+                class="btn btn-secondary [@media(pointer:coarse)]:min-h-11"
                 type="button"
                 :disabled="!state"
                 @click="copy(state)"
@@ -168,9 +168,9 @@
           <div>
             <label class="input-label">{{ t('auth.oauth.fullUrl') }}</label>
             <div class="flex gap-2">
-              <input class="input flex-1 font-mono text-xs" :value="fullUrl" readonly />
+              <input class="input min-w-0 flex-1 font-mono text-base sm:text-xs" :value="fullUrl" readonly />
               <button
-                class="btn btn-secondary"
+                class="btn btn-secondary [@media(pointer:coarse)]:min-h-11"
                 type="button"
                 :disabled="!fullUrl"
                 @click="copy(fullUrl)"

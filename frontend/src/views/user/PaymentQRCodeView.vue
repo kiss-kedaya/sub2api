@@ -2,8 +2,8 @@
   <AppLayout>
     <div class="signal-payment-qr">
       <UserPageHeader flush :title="qrUrl ? scanTitle : t('payment.qr.payInNewWindow')" />
-      <section class="signal-payment-qr__panel">
-        <div v-if="qrUrl" class="signal-payment-qr__code">
+      <section class="signal-payment-qr__panel rounded-lg">
+        <div v-if="qrUrl" class="signal-payment-qr__code rounded-lg">
           <canvas ref="qrCanvas"></canvas>
         </div>
         <!-- Scan prompt for QR code -->
@@ -13,7 +13,7 @@
         <div v-if="expired" class="signal-payment-qr__status signal-payment-qr__status--expired">
           <UIcon name="i-lucide-circle-alert" class="size-6" />
           <p>{{ t('payment.qr.expired') }}</p>
-          <UButton class="mt-2" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</UButton>
+          <UButton size="lg" class="mt-2 min-h-11 sm:min-h-0" @click="router.push('/purchase')">{{ t('payment.result.backToRecharge') }}</UButton>
         </div>
         <div v-else class="signal-payment-qr__status">
           <span>{{ qrUrl ? t('payment.qr.expiresIn') : t('payment.qr.payInNewWindowHint') }}</span>
@@ -218,15 +218,15 @@ onUnmounted(() => cleanup())
 
 <style scoped>
 .signal-payment-qr { display: grid; width: min(100%, 480px); gap: 16px; margin-inline: auto; padding-block: 8px 24px; color: var(--ui-text-highlighted); letter-spacing: 0; }
-.signal-payment-qr__panel { display: grid; gap: 16px; padding: 20px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), 0 1px 2px rgba(10, 10, 10, 0.05); }
-.dark .signal-payment-qr__panel { box-shadow: 0 0 0 1px var(--ui-border); }
+.signal-payment-qr__panel { display: grid; gap: 16px; padding: 20px; border-radius: 8px; background: var(--ui-bg); box-shadow: 0 0 0 1px var(--ui-border), var(--app-shadow-card, 0 1px 2px rgba(10, 10, 10, 0.05)); }
+.dark .signal-payment-qr__panel { box-shadow: 0 0 0 1px var(--ui-border), var(--app-shadow-card); }
 .signal-payment-qr__code { display: grid; place-items: center; width: fit-content; max-width: 100%; margin-inline: auto; padding: 12px; border: 1px solid var(--ui-border); border-radius: 8px; background: #ffffff; }
 .signal-payment-qr__code canvas { display: block; max-width: 100%; height: auto !important; }
-.signal-payment-qr__hint { margin: 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.55; text-align: center; }
-.signal-payment-qr__status { display: grid; gap: 4px; padding: 14px 0; border-block: 1px solid var(--ui-border); text-align: center; }
+.signal-payment-qr__hint { margin: 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; text-align: center; }
+.signal-payment-qr__status { display: grid; gap: 4px; padding: 14px 0; border-block: 1px solid var(--ui-border); overflow-wrap: anywhere; text-align: center; }
 .signal-payment-qr__status span, .signal-payment-qr__status p { margin: 0; color: var(--ui-text-muted); font-size: 12px; }
 .signal-payment-qr__status strong { color: var(--ui-text-highlighted); font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
-.signal-payment-qr__status--expired { place-items: center; color: #b45309; }
+.signal-payment-qr__status--expired { place-items: center; color: var(--signal-amber, #b45309); }
 .dark .signal-payment-qr__status--expired { color: var(--ui-warning); }
 .signal-payment-qr__status--expired p { color: inherit; font-size: 15px; font-weight: 600; }
 .signal-payment-qr__actions { display: grid; gap: 8px; }

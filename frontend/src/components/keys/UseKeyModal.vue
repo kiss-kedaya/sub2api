@@ -7,15 +7,15 @@
   >
     <div class="space-y-4">
       <!-- No Group Assigned Warning -->
-      <div v-if="!platform" class="flex items-start gap-3 p-4 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800">
-        <svg class="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+      <div v-if="!platform" class="flex items-start gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4">
+        <svg class="mt-0.5 h-5 w-5 shrink-0 text-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
         </svg>
         <div>
-          <p class="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+          <p class="text-sm font-medium text-highlighted">
             {{ t('keys.useKeyModal.noGroupTitle') }}
           </p>
-          <p class="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
+          <p class="mt-1 text-sm text-toned">
             {{ t('keys.useKeyModal.noGroupDescription') }}
           </p>
           <UButton
@@ -33,12 +33,12 @@
       <!-- Platform-specific content -->
       <template v-else>
         <!-- Description -->
-        <p class="text-sm text-toned dark:text-gray-400">
+        <p class="text-sm text-toned">
           {{ platformDescription }}
         </p>
 
         <!-- Client Tabs -->
-        <div v-if="clientTabs.length" class="overflow-x-auto border-b border-default dark:border-dark-700">
+        <div v-if="clientTabs.length" class="overflow-x-auto border-b border-default">
           <nav class="-mb-px flex min-w-max gap-4 sm:gap-6" aria-label="Client">
             <button
               v-for="tab in clientTabs"
@@ -46,10 +46,10 @@
               type="button"
               @click="activeClientTab = tab.id"
               :class="[
-                'whitespace-nowrap py-2.5 px-1 border-b-2 font-medium text-sm transition-colors',
+                'whitespace-nowrap border-b-2 px-1 py-2.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(pointer:coarse)]:min-h-11',
                 activeClientTab === tab.id
-                  ? 'border-inverted text-highlighted dark:border-primary-500 dark:text-primary-400'
-                  : 'border-transparent text-muted hover:text-highlighted hover:border-accented dark:text-gray-400 dark:hover:text-gray-300'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted [@media(hover:hover)_and_(pointer:fine)]:hover:border-accented [@media(hover:hover)_and_(pointer:fine)]:hover:text-highlighted'
               ]"
             >
               <span class="flex items-center gap-2">
@@ -63,7 +63,7 @@
         <!-- Codex Authentication Mode -->
         <div
           v-if="showCodexAuthMode"
-          class="rounded-lg border border-default p-3 dark:border-dark-700"
+          class="rounded-lg border border-default p-3"
         >
           <div class="mb-2">
             <p class="text-sm font-medium text-highlighted">
@@ -74,7 +74,7 @@
             </p>
           </div>
           <div
-            class="grid grid-cols-2 gap-1 rounded-lg bg-elevated p-1 dark:bg-dark-700"
+            class="grid grid-cols-2 gap-1 rounded-lg bg-elevated p-1"
             role="radiogroup"
             :aria-label="t('keys.useKeyModal.openai.authModeTitle')"
           >
@@ -84,10 +84,10 @@
               data-testid="codex-auth-mode-legacy"
               :aria-checked="codexAuthMode === 'legacy'"
               :class="[
-                'rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                'rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(pointer:coarse)]:min-h-11',
                 codexAuthMode === 'legacy'
-                  ? 'bg-default text-highlighted shadow-xs ring ring-default dark:bg-dark-800 dark:text-primary-300 dark:ring-0'
-                  : 'text-muted hover:text-highlighted dark:text-dark-300 dark:hover:text-white'
+                  ? 'bg-default text-highlighted shadow-xs ring ring-default'
+                  : 'text-muted [@media(hover:hover)_and_(pointer:fine)]:hover:text-highlighted'
               ]"
               @click="codexAuthMode = 'legacy'"
             >
@@ -99,10 +99,10 @@
               data-testid="codex-auth-mode-api-key"
               :aria-checked="codexAuthMode === 'api-key'"
               :class="[
-                'rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                'rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(pointer:coarse)]:min-h-11',
                 codexAuthMode === 'api-key'
-                  ? 'bg-default text-highlighted shadow-xs ring ring-default dark:bg-dark-800 dark:text-primary-300 dark:ring-0'
-                  : 'text-muted hover:text-highlighted dark:text-dark-300 dark:hover:text-white'
+                  ? 'bg-default text-highlighted shadow-xs ring ring-default'
+                  : 'text-muted [@media(hover:hover)_and_(pointer:fine)]:hover:text-highlighted'
               ]"
               @click="codexAuthMode = 'api-key'"
             >
@@ -112,15 +112,15 @@
           <div
             v-if="codexAuthMode === 'api-key'"
             data-testid="codex-api-key-restart-notice"
-            class="mt-3 flex items-start gap-2 border-l-2 border-amber-400 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-500 dark:bg-amber-950/30 dark:text-amber-200"
+            class="mt-3 flex items-start gap-2 rounded-r-md border-l-2 border-warning bg-warning/10 px-3 py-2 text-xs leading-5 text-toned"
           >
-            <Icon name="exclamationCircle" size="sm" class="mt-0.5 flex-shrink-0" />
+            <Icon name="exclamationCircle" size="sm" class="mt-0.5 shrink-0 text-warning" />
             <p>{{ t('keys.useKeyModal.openai.authModeApiKeyRestartNotice') }}</p>
           </div>
         </div>
 
         <!-- OS/Shell Tabs -->
-        <div v-if="showShellTabs" class="overflow-x-auto border-b border-default dark:border-dark-700">
+        <div v-if="showShellTabs" class="overflow-x-auto border-b border-default">
           <nav class="-mb-px flex min-w-max gap-4" aria-label="Tabs">
             <button
               v-for="tab in currentTabs"
@@ -128,10 +128,10 @@
               type="button"
               @click="activeTab = tab.id"
               :class="[
-                'whitespace-nowrap py-2.5 px-1 border-b-2 font-medium text-sm transition-colors',
+                'whitespace-nowrap border-b-2 px-1 py-2.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(pointer:coarse)]:min-h-11',
                 activeTab === tab.id
-                  ? 'border-inverted text-highlighted dark:border-primary-500 dark:text-primary-400'
-                  : 'border-transparent text-muted hover:text-highlighted hover:border-accented dark:text-gray-400 dark:hover:text-gray-300'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted [@media(hover:hover)_and_(pointer:fine)]:hover:border-accented [@media(hover:hover)_and_(pointer:fine)]:hover:text-highlighted'
               ]"
             >
               <span class="flex items-center gap-2">
@@ -150,21 +150,21 @@
             class="relative"
           >
             <!-- File Hint (if exists) -->
-            <p v-if="file.hint" class="text-xs text-amber-600 dark:text-amber-400 mb-1.5 flex items-center gap-1">
-              <Icon name="exclamationCircle" size="sm" class="flex-shrink-0" />
+            <p v-if="file.hint" class="mb-1.5 flex items-center gap-1 text-xs text-warning">
+              <Icon name="exclamationCircle" size="sm" class="shrink-0" />
               {{ file.hint }}
             </p>
-            <div class="overflow-hidden rounded-lg bg-neutral-900 dark:bg-dark-900">
+            <div class="overflow-hidden rounded-lg bg-neutral-900">
               <!-- Code Header -->
-              <div class="flex items-center justify-between px-4 py-2 bg-neutral-800 dark:bg-dark-800 border-b border-neutral-700 dark:border-dark-700">
+              <div class="flex items-center justify-between border-b border-neutral-700 bg-neutral-800 px-4 py-2">
                 <span class="min-w-0 truncate text-xs text-neutral-400 font-mono">{{ file.path }}</span>
                 <button
                   type="button"
                   @click="copyContent(file.content, index)"
-                  class="flex flex-shrink-0 items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg transition-colors"
+                  class="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                   :class="copiedIndex === index
-                    ? 'bg-green-500/20 text-green-400'
-                    : 'bg-neutral-700 hover:bg-neutral-600 text-neutral-300 hover:text-white'"
+                    ? 'bg-emerald-500/20 text-emerald-400'
+                    : 'bg-neutral-700 text-neutral-300 [@media(hover:hover)_and_(pointer:fine)]:hover:bg-neutral-600 [@media(hover:hover)_and_(pointer:fine)]:hover:text-white'"
                 >
                   <svg v-if="copiedIndex === index" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
@@ -184,7 +184,7 @@
         <section
           v-if="showCodexModelCatalog"
           data-testid="codex-model-catalog"
-          class="overflow-hidden rounded-lg border border-default bg-muted dark:border-dark-700 dark:bg-dark-800/50"
+          class="overflow-hidden rounded-lg border border-default bg-muted"
         >
           <div class="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div class="min-w-0">
@@ -197,33 +197,35 @@
               <p class="mt-1 truncate font-mono text-xs text-default">
                 {{ codexModelCatalogMode === 'remote' ? codexModelCatalogUrl : codexModelCatalogPath }}
               </p>
-              <select
-                v-model="codexModelCatalogMode"
-                data-testid="codex-model-catalog-mode"
+              <Select
+                :model-value="codexModelCatalogMode"
+                :options="codexModelCatalogModeOptions"
+                :searchable="false"
                 :aria-label="t('keys.useKeyModal.codexModelCatalog.mode')"
-                class="input mt-2 text-sm"
-              >
-                <option value="remote" :disabled="codexModelCatalogOversized">{{ t('keys.useKeyModal.codexModelCatalog.remote') }}</option>
-                <option value="file">{{ t('keys.useKeyModal.codexModelCatalog.local') }}</option>
-              </select>
-              <p v-if="codexModelCatalogOversized" class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                data-testid="codex-model-catalog-mode"
+                class="mt-2"
+                @update:model-value="codexModelCatalogMode = ($event === 'file' ? 'file' : 'remote')"
+              />
+              <p v-if="codexModelCatalogOversized" class="mt-2 text-xs text-warning">
                 {{ t('keys.useKeyModal.codexModelCatalog.oversized') }}
               </p>
             </div>
-            <button
+            <UButton
               v-if="codexModelManifestState === 'ready'"
-              type="button"
-              class="btn btn-primary min-h-9 flex-shrink-0 px-3 text-xs"
+              color="primary"
+              size="sm"
+              class="shrink-0 rounded-xl"
               @click="downloadCodexModelManifest"
             >
               <Icon name="download" size="sm" class="mr-1.5" />
               {{ t('keys.useKeyModal.codexModelCatalog.download') }}
-            </button>
-            <button
+            </UButton>
+            <UButton
               v-else
-              type="button"
+              color="primary"
+              size="sm"
               data-testid="codex-model-catalog-fetch"
-              class="btn btn-primary min-h-9 flex-shrink-0 px-3 text-xs"
+              class="shrink-0 rounded-xl"
               :disabled="codexModelManifestState === 'loading' || !apiKey"
               @click="loadCodexModelManifest"
             >
@@ -231,31 +233,31 @@
                 name="refresh"
                 size="sm"
                 class="mr-1.5"
-                :class="codexModelManifestState === 'loading' ? 'animate-spin' : ''"
+                :class="codexModelManifestState === 'loading' ? 'animate-spin motion-reduce:animate-none' : ''"
               />
               {{ codexModelManifestState === 'error'
                 ? t('keys.useKeyModal.codexModelCatalog.retry')
                 : t('keys.useKeyModal.codexModelCatalog.fetch') }}
-            </button>
+            </UButton>
           </div>
           <p
             v-if="codexModelManifestState === 'ready'"
-            class="border-t border-default px-4 py-2 text-xs text-emerald-700 dark:border-dark-700 dark:text-emerald-300"
+            class="border-t border-default px-4 py-2 text-xs tabular-nums text-success"
           >
             {{ t('keys.useKeyModal.codexModelCatalog.modelsCount', { count: codexModelManifestModelCount }) }}
           </p>
           <p
             v-else-if="codexModelManifestState === 'error'"
-            class="border-t border-red-200 px-4 py-2 text-xs text-red-700 dark:border-red-900 dark:text-red-300"
+            class="border-t border-error/30 px-4 py-2 text-xs text-error"
           >
             {{ t('keys.useKeyModal.codexModelCatalog.errorDescription') }}
           </p>
         </section>
 
         <!-- Usage Note -->
-        <div v-if="showPlatformNote" class="flex items-start gap-3 rounded-lg border border-default bg-muted p-3 dark:border-sky-500/25 dark:bg-sky-500/10">
-          <Icon name="infoCircle" size="md" class="mt-0.5 flex-shrink-0 text-muted dark:text-sky-400" />
-          <p class="text-sm text-default dark:text-sky-200">
+        <div v-if="showPlatformNote" class="flex items-start gap-3 rounded-lg border border-default bg-muted p-3">
+          <Icon name="infoCircle" size="md" class="mt-0.5 shrink-0 text-primary" />
+          <p class="text-sm text-default">
             {{ platformNote }}
           </p>
         </div>
@@ -267,19 +269,21 @@
         <button
           v-if="showGuideLink"
           type="button"
-          class="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+          class="inline-flex items-center gap-1.5 rounded-md text-sm font-medium text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:underline"
           data-test="use-key-open-guide"
           @click="emit('open-guide')"
         >
           <span>{{ t('keys.agentGuide') }}</span>
           <span aria-hidden="true">→</span>
         </button>
-        <button
+        <UButton
+          color="neutral"
+          variant="soft"
+          class="ml-auto rounded-xl"
           @click="emit('close')"
-          class="btn btn-secondary ml-auto"
         >
           {{ t('common.close') }}
-        </button>
+        </UButton>
       </div>
     </template>
   </BaseDialog>
@@ -290,6 +294,7 @@ import { ref, computed, h, watch, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { saveAs } from 'file-saver'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import { buildCodexModelCatalogUrl, fetchCodexModelsManifest } from '@/api/codex'
@@ -348,6 +353,17 @@ const codexModelManifestModelCount = ref(0)
 const codexModelCatalogMode = ref<'remote' | 'file'>('remote')
 const codexModelManifestResponseBytes = ref(0)
 const codexModelCatalogOversized = computed(() => codexModelManifestResponseBytes.value > 1024 * 1024)
+const codexModelCatalogModeOptions = computed(() => [
+  {
+    value: 'remote',
+    label: t('keys.useKeyModal.codexModelCatalog.remote'),
+    disabled: codexModelCatalogOversized.value
+  },
+  {
+    value: 'file',
+    label: t('keys.useKeyModal.codexModelCatalog.local')
+  }
+])
 const codexModelCatalogUrl = computed(() => buildCodexModelCatalogUrl(props.baseUrl))
 const codexLocalCatalogToml = computed(() => codexModelCatalogMode.value === 'file'
   ? `model_catalog_json = "${CODEX_MODEL_CATALOG_CONFIG_PATH}"\n`
@@ -736,9 +752,9 @@ const wrapToken = (className: string, value: string) =>
 
 const keyword = (value: string) => wrapToken('text-emerald-300', value)
 const variable = (value: string) => wrapToken('text-sky-200', value)
-const operator = (value: string) => wrapToken('text-slate-400', value)
+const operator = (value: string) => wrapToken('text-neutral-400', value)
 const string = (value: string) => wrapToken('text-amber-200', value)
-const comment = (value: string) => wrapToken('text-slate-500', value)
+const comment = (value: string) => wrapToken('text-neutral-500', value)
 
 // Syntax highlighting helpers
 // Generate file configs based on platform and active tab

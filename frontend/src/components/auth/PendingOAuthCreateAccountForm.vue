@@ -64,7 +64,7 @@
     <p v-if="emailVerifyEnabled && sendCodeSuccess" class="text-sm text-green-600 dark:text-green-400">
       {{ t('auth.codeSentSuccess') }}
     </p>
-    <p v-else-if="emailVerifyEnabled" class="text-xs text-gray-500 dark:text-dark-400">
+    <p v-else-if="emailVerifyEnabled" class="text-xs text-muted">
       {{ t('auth.verificationCodeHint') }}
     </p>
     <input
@@ -378,14 +378,33 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.fade-enter-active,
+.fade-enter-active {
+  transition:
+    opacity 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
 .fade-leave-active {
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  transition:
+    opacity 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
   transform: translateY(-8px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: opacity 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+  }
+
+  .fade-enter-from,
+  .fade-leave-to {
+    transform: none;
+  }
 }
 </style>

@@ -1,5 +1,5 @@
 <template>
-  <span class="animated-number">{{ display }}</span>
+  <span class="animated-number tabular-nums">{{ display }}</span>
 </template>
 
 <script setup lang="ts">
@@ -13,7 +13,7 @@ const props = withDefaults(defineProps<{
   decimals?: number
 }>(), {
   format: undefined,
-  duration: 640,
+  duration: 280,
   decimals: 2,
 })
 
@@ -35,11 +35,20 @@ watch(
   () => props.value,
   (next, prev) => {
     fromValue = Number.isFinite(prev) ? prev : next
-    const start = performance.now()
     cancelAnimationFrame(raf)
+    const prefersReducedMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const effectiveDuration = prefersReducedMotion ? 0 : Math.min(Math.max(props.duration, 0), 300)
+    if (effectiveDuration <= 0) {
+      progress.value = 1
+      return
+    }
+    const start = performance.now()
     const tick = (now: number) => {
       const elapsed = now - start
-      progress.value = props.duration <= 0 ? 1 : Math.min(elapsed / props.duration, 1)
+      progress.value = Math.min(elapsed / effectiveDuration, 1)
       if (progress.value < 1) {
         raf = requestAnimationFrame(tick)
       }

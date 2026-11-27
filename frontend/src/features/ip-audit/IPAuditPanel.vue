@@ -5,7 +5,7 @@
       <UButton :label="t('ipAudit.settings')" icon="i-lucide-settings-2" color="neutral" variant="link" class="px-0" data-testid="ip-open-settings" @click="$emit('configure')" />
     </div>
     <UAlert color="warning" variant="subtle" icon="i-lucide-server-off" :description="t('ipAudit.externalHint')" data-testid="host-disconnected" />
-    <UCollapsible :unmount-on-hide="false" data-testid="ip-source-inventory">
+    <UCollapsible data-testid="ip-source-inventory">
       <template #default="{ open }">
         <UButton :label="t('ipAudit.inventory')" icon="i-lucide-shield-check" color="neutral" variant="ghost" class="px-0 font-medium text-default hover:bg-transparent" trailing-icon="i-lucide-chevron-down" :ui="{ trailingIcon: ['transition-transform duration-200', open ? 'rotate-180' : ''] }" />
       </template>
@@ -72,8 +72,8 @@
       <template #loading><p role="status">{{ t('common.loading') }}</p></template>
       <template #empty><p class="text-sm text-muted">{{ t('ipAudit.empty') }}</p></template>
       <template #subject-cell="{ row }">
-        <code class="text-default">{{ row.original.network || (row.original.user_id ? `UID ${row.original.user_id}` : t('ipAudit.unavailable')) }}</code>
-        <p v-if="row.original.actor_id" class="text-dimmed">{{ t('ipAudit.operator') }} #{{ row.original.actor_id }}</p>
+        <code class="min-w-0 wrap-anywhere text-default">{{ row.original.network || (row.original.user_id ? `UID ${row.original.user_id}` : t('ipAudit.unavailable')) }}</code>
+        <p v-if="row.original.actor_id" class="tabular-nums text-dimmed">{{ t('ipAudit.operator') }} #{{ row.original.actor_id }}</p>
       </template>
       <template #source-cell="{ row }">
         <span class="text-default">{{ sourceName(row.original.origin_source || row.original.source) }}</span>
@@ -87,8 +87,8 @@
         <p class="mt-1">{{ label(row.original.effective) }}</p>
         <p v-if="row.original.result" class="text-dimmed">{{ label(row.original.result) }}</p>
       </template>
-      <template #count-cell="{ row }">{{ row.original.count ?? t('ipAudit.unavailable') }} / {{ row.original.threshold ?? t('ipAudit.unavailable') }}</template>
-      <template #time-cell="{ row }">{{ date(row.original.started_at) }}<p class="text-dimmed">{{ date(row.original.expires_at) }}</p></template>
+      <template #count-cell="{ row }"><span class="tabular-nums">{{ row.original.count ?? t('ipAudit.unavailable') }} / {{ row.original.threshold ?? t('ipAudit.unavailable') }}</span></template>
+      <template #time-cell="{ row }"><div class="tabular-nums">{{ date(row.original.started_at) }}<p class="text-dimmed">{{ date(row.original.expires_at) }}</p></div></template>
       <template #actions-cell="{ row }">
         <div class="flex justify-end">
           <UButton v-if="row.original.can_release" :label="t('ipAudit.release')" icon="i-lucide-unlock" color="neutral" variant="outline" size="sm" :disabled="releasing" data-testid="release-source" @click="confirmEntry = row.original" />
@@ -105,7 +105,7 @@
       <div v-if="confirmEntry" class="flex flex-col gap-4" data-testid="release-dialog">
         <p class="flex flex-wrap items-center gap-2 text-sm">
           <span class="font-medium text-highlighted">{{ sourceName(confirmEntry.source) }}</span>
-          <code class="text-default">{{ confirmEntry.network || `UID ${confirmEntry.user_id}` }}</code>
+          <code class="wrap-anywhere text-default">{{ confirmEntry.network || `UID ${confirmEntry.user_id}` }}</code>
         </p>
         <p class="text-sm text-muted">{{ t(confirmEntry.scope === 'all_user_states' ? 'ipAudit.confirmUserScope' : 'ipAudit.confirmHint') }}</p>
         <UFormField :label="t('ipAudit.reason')">
@@ -137,19 +137,19 @@ const loading = ref(false), releasing = ref(false), error = ref(''), confirmEntr
 const reason = ref('operator_review'), reasons = ['operator_review', 'false_positive', 'configuration_fix', 'support_request']
 const states = ['active', 'disabled', 'expired', 'observed', 'historical', 'allowlisted']
 const applied = ref<AuditQuery>({ source: 'anonymous_api', cursor: 0, limit: 20 }), previous = ref<number[]>([]), nextCursor = ref(0)
-const selectedSource = computed(() => inventory.value.find(s => s.id === source.value))
+const selectedSource = computed(() => (inventory.value ?? []).find(s => s.id === source.value))
 const exactSource = computed(() => source.value === 'login_failures' || source.value === 'login_limiter')
 // USelect items cannot carry '' (reka-ui): "all states" is a sentinel mapped back to ''.
 const ALL = '__all__'
 const stateFilter = computed({ get: () => state.value || ALL, set: (value: string) => { state.value = value === ALL ? '' : value } })
-const sourceItems = computed(() => inventory.value.map(item => ({ label: sourceName(item.id), value: item.id })))
+const sourceItems = computed(() => (inventory.value ?? []).map(item => ({ label: sourceName(item.id), value: item.id })))
 const stateItems = computed(() => [{ label: t('ipAudit.allStates'), value: ALL }, ...states.map(value => ({ label: label(value), value }))])
 const sortItems = computed(() => [{ label: t('ipAudit.expiryDesc'), value: 'expires_desc' }, { label: t('ipAudit.expiryAsc'), value: 'expires_asc' }])
 const reasonItems = computed(() => reasons.map(value => ({ label: label(value), value })))
 const tableUi = {
   thead: '[&>tr]:bg-elevated/50 [&>tr]:after:content-none',
   tbody: '[&>tr]:last:[&>td]:border-b-0',
-  th: 'py-2 first:rounded-l-lg last:rounded-r-lg border-y border-default first:border-l last:border-r',
+  th: 'py-2 whitespace-nowrap first:rounded-l-lg last:rounded-r-lg border-y border-default first:border-l last:border-r',
   td: 'border-b border-default align-top',
   separator: 'h-0'
 }
@@ -180,7 +180,11 @@ type Tone = 'error' | 'warning' | 'success' | 'neutral'
 const stateTones: Record<string, Tone> = { active: 'error', observed: 'warning', allowlisted: 'success' }
 const stateTone = (value: string): Tone => stateTones[value] ?? 'neutral'
 let controller: AbortController | undefined, disposed = false
-const date = (value: number | null) => value == null ? t('ipAudit.unavailable') : new Date(value * 1000).toLocaleString()
+const date = (value: number | null) => {
+  if (value == null || !Number.isFinite(value)) return t('ipAudit.unavailable')
+  const d = new Date(value * 1000)
+  return Number.isNaN(d.getTime()) ? t('ipAudit.unavailable') : d.toLocaleString()
+}
 const timestamp = (value: string) => value ? Math.floor(new Date(value).getTime() / 1000) : undefined
 async function load() {
   controller?.abort(); const current = new AbortController(); controller = current
@@ -188,7 +192,11 @@ async function load() {
   try {
     const result = await listIPAudit({ ...applied.value }, current.signal)
     if (current.signal.aborted || disposed) return
-    rows.value = result.items; inventory.value = result.sources; hasMore.value = result.has_more; nextCursor.value = result.next_cursor; partial.value = !!result.partial
+    rows.value = Array.isArray(result?.items) ? result.items : []
+    inventory.value = Array.isArray(result?.sources) ? result.sources : []
+    hasMore.value = Boolean(result?.has_more)
+    nextCursor.value = result?.next_cursor ?? 0
+    partial.value = Boolean(result?.partial)
   } catch { if (!current.signal.aborted && !disposed) error.value = t('ipAudit.loadError') }
   finally { if (controller === current && !disposed) loading.value = false }
 }

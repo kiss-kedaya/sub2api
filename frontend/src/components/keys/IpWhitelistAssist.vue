@@ -36,7 +36,7 @@
       class="rounded-lg border border-default bg-elevated/40 p-3"
       data-test="ip-assist-candidate"
     >
-      <p class="break-all font-mono text-sm text-highlighted" data-test="ip-assist-candidate-ip">
+      <p class="wrap-anywhere font-mono text-sm text-highlighted" data-test="ip-assist-candidate-ip">
         {{ describeIP(candidate.ip, candidate.geo) }}
       </p>
       <p
@@ -52,6 +52,7 @@
           size="xs"
           color="primary"
           :disabled="countdown > 0"
+          class="tabular-nums"
           data-test="ip-assist-confirm"
           @click="confirmCandidate"
         >
@@ -91,12 +92,12 @@
         v-for="item in recentIPs"
         :key="item.ip"
         type="button"
-        class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-elevated/60"
+        class="flex w-full items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:bg-elevated/60 [@media(pointer:coarse)]:min-h-11"
         :data-test="`ip-assist-recent-${item.ip}`"
         @click="chooseIP(item.ip, item.geo)"
       >
-        <span class="break-all font-mono text-default">{{ describeIP(item.ip, item.geo) }}</span>
-        <span class="shrink-0 text-muted">{{ t('keys.ipWhitelistAssist.usedCount', { count: item.count }) }}</span>
+        <span class="min-w-0 wrap-anywhere font-mono text-default">{{ describeIP(item.ip, item.geo) }}</span>
+        <span class="shrink-0 tabular-nums text-muted">{{ t('keys.ipWhitelistAssist.usedCount', { count: item.count }) }}</span>
       </button>
     </div>
 

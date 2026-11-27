@@ -27,7 +27,7 @@ beforeEach(() => {
 
 describe('personal TOTP disable', () => {
   const open = async () => {
-    const wrapper = mount(TotpDisableDialog)
+    const wrapper = mount(TotpDisableDialog, { global: { stubs: { teleport: true } } })
     await flushPromises()
     expect(api.getVerificationMethod).toHaveBeenCalledWith('disable')
     return wrapper
@@ -100,11 +100,11 @@ describe('personal TOTP disable', () => {
 
 describe('TOTP enable with the existing identity verification', () => {
   it('uses the administrator password before showing the QR code', async () => {
-    const wrapper = mount(TotpSetupModal)
+    const wrapper = mount(TotpSetupModal, { global: { stubs: { teleport: true } } })
     await flushPromises()
     expect(api.getVerificationMethod).toHaveBeenCalledWith('enable')
     await wrapper.get('input[type="password"]').setValue('admin-password')
-    await wrapper.get('.btn-primary').trigger('click')
+    await wrapper.get('[data-testid="totp-setup-next"]').trigger('click')
     await flushPromises()
     expect(api.initiateSetup).toHaveBeenCalledWith({ password: 'admin-password' })
     expect(wrapper.text()).toContain('EXAMPLE')
@@ -113,20 +113,20 @@ describe('TOTP enable with the existing identity verification', () => {
 
   it('preserves email verification for ordinary users', async () => {
     api.getVerificationMethod.mockResolvedValueOnce({ method: 'email' })
-    const wrapper = mount(TotpSetupModal)
+    const wrapper = mount(TotpSetupModal, { global: { stubs: { teleport: true } } })
     await flushPromises()
     await wrapper.get('input[maxlength="6"]').setValue('123456')
-    await wrapper.get('.btn-primary').trigger('click')
+    await wrapper.get('[data-testid="totp-setup-next"]').trigger('click')
     await flushPromises()
     expect(api.initiateSetup).toHaveBeenCalledWith({ email_code: '123456' })
   })
 
   it('fails closed for an unexpected setup method', async () => {
     api.getVerificationMethod.mockResolvedValueOnce({ method: 'totp' })
-    const wrapper = mount(TotpSetupModal)
+    const wrapper = mount(TotpSetupModal, { global: { stubs: { teleport: true } } })
     await flushPromises()
     expect(wrapper.emitted('close')).toHaveLength(1)
-    await wrapper.get('.btn-primary').trigger('click')
+    await wrapper.get('[data-testid="totp-setup-next"]').trigger('click')
     expect(api.initiateSetup).not.toHaveBeenCalled()
   })
 })

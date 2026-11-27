@@ -55,21 +55,21 @@
 
       <div v-show="tab === 'records'" class="flex flex-col gap-4">
         <UTable :data="events" :columns="columns" :ui="tableUi">
-          <template #created_at-cell="{ row }">{{ new Date(row.original.created_at).toLocaleString() }}</template>
-          <template #user_id-cell="{ row }">#{{ row.original.user_id }}</template>
+          <template #created_at-cell="{ row }"><span class="tabular-nums">{{ formatCreatedAt(row.original.created_at) }}</span></template>
+          <template #user_id-cell="{ row }"><span class="tabular-nums">#{{ row.original.user_id }}</span></template>
           <template #reason-cell="{ row }"><span class="whitespace-normal text-default">{{ row.original.reason }}</span></template>
-          <template #request_id-cell="{ row }"><code class="break-all text-xs">{{ row.original.request_id }}</code></template>
+          <template #request_id-cell="{ row }"><code class="wrap-anywhere text-xs">{{ row.original.request_id }}</code></template>
           <template #empty>{{ text('暂无记录', 'No records') }}</template>
         </UTable>
         <div class="flex flex-wrap items-center justify-between gap-3 border-t border-default pt-4">
-          <span class="text-sm text-muted">{{ text(`共 ${total} 条记录`, `${total} records`) }}</span>
+          <span class="text-sm tabular-nums text-muted">{{ text(`共 ${total} 条记录`, `${total} records`) }}</span>
           <UPagination :page="page" :total="total" :items-per-page="20" :disabled="busy" @update:page="(value: number) => { page = value; loadEvents() }" />
         </div>
       </div>
     </div>
     <BaseDialog :show="releaseOpen" width="narrow" :title="text('解除此用户的 API 限制', 'Release this user’s API restrictions')" @close="releaseOpen = false">
       <form id="penalty-release" class="space-y-4" @submit.prevent="release">
-        <p class="text-sm text-muted">#{{ userID }} · {{ text('确认解除该用户的全部 API 限制？历史记录仍会保留。', 'Release all API restrictions for this user? Historical events are retained.') }}</p>
+        <p class="text-sm tabular-nums text-muted">#{{ userID }} · {{ text('确认解除该用户的全部 API 限制？历史记录仍会保留。', 'Release all API restrictions for this user? Historical events are retained.') }}</p>
         <UFormField :label="text('解除原因（必填）', 'Release reason (required)')" required><UTextarea v-model.trim="releaseReason" :rows="3" maxlength="1000" required class="w-full" data-testid="penalty-release-reason" /></UFormField>
       </form>
       <template #footer>
@@ -115,17 +115,49 @@ const columns = computed<TableColumn<PenaltyEvent>[]>(() => [
 ])
 const tableUi = { base: 'border-separate border-spacing-0', thead: '[&>tr]:bg-elevated/50 [&>tr]:after:content-none', tbody: '[&>tr]:last:[&>td]:border-b-0', th: 'py-2 first:rounded-l-lg last:rounded-r-lg border-y border-default first:border-l last:border-r', td: 'border-b border-default', separator: 'h-0' }
 let disposed = false
+function formatCreatedAt(value: string): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
+}
 function parseIDs(value: string) { const ids = value.trim() ? value.split(/[\s,，]+/).map(Number) : []; if (ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error(text('ID 必须是正整数', 'IDs must be positive integers')); return [...new Set(ids)] }
-async function loadEvents() { try { const data = await adminPenaltyEvents(page.value, userID.value || undefined); if (!disposed) { events.value = data.items; total.value = data.total } } catch (cause) { if (!disposed) error.value = (cause as Error).message } }
+async function loadEvents() { try { const data = await adminPenaltyEvents(page.value, userID.value || undefined); if (!disposed) { events.value = Array.isArray(data?.items) ? data.items : []; total.value = data?.total ?? 0 } } catch (cause) { if (!disposed) error.value = (cause as Error).message } }
 async function save() {
   if (!config.value || busy.value) return
   // USelect has no native `required`: keep the restricted-group requirement the native select used to enforce.
   if (config.value.policy === 'session_route_then_block' && config.value.target_group_id == null) { success.value = ''; error.value = text('请选择受限分组', 'Select a restricted group'); return }
   busy.value = true; error.value = ''; success.value = ''
-  try { const input = { ...config.value, group_ids: [...config.value.group_ids], exempt_user_ids: parseIDs(exemptIDs.value) }; config.value = await savePenaltyConfig(input); success.value = text('已保存，新请求按新规则检查。', 'Saved. New requests use the updated policy.') } catch (cause) { error.value = (cause as Error).message } finally { busy.value = false }
+  try { const input = { ...config.value, group_ids: [...(config.value.group_ids ?? [])], exempt_user_ids: parseIDs(exemptIDs.value) }; config.value = await savePenaltyConfig(input); success.value = text('已保存，新请求按新规则检查。', 'Saved. New requests use the updated policy.') } catch (cause) { error.value = (cause as Error).message } finally { busy.value = false }
 }
 // The release dialog is the confirmation step (it states the same warning the old window.confirm showed).
 async function release() { if (!userID.value || !releaseReason.value || busy.value) return; busy.value = true; error.value = ''; try { await releasePenalty(userID.value, releaseReason.value); releaseReason.value = ''; releaseOpen.value = false; success.value = text('已解除，后续违规重新累计。', 'Released. Future findings start a new count.'); await loadEvents() } catch (cause) { error.value = (cause as Error).message } finally { busy.value = false } }
-onMounted(async () => { try { const [data, options] = await Promise.all([getPenaltyConfig(), getGroups()]); if (!disposed) { config.value = data; groups.value = options; exemptIDs.value = data.exempt_user_ids.join(', ') } } catch (cause) { if (!disposed) error.value = (cause as Error).message } await loadEvents() })
+onMounted(async () => {
+  try {
+    const [data, options] = await Promise.all([getPenaltyConfig(), getGroups()])
+    if (!disposed) {
+      const normalized: PenaltyConfig = {
+        enabled: false,
+        observe_only: false,
+        policy: 'session_block',
+        threshold: 5,
+        window_hours: 24,
+        duration_hours: 24,
+        target_group_id: null,
+        all_groups: true,
+        risk_control_enabled: false,
+        version: 0,
+        ...(data && typeof data === 'object' ? data : {}),
+        group_ids: Array.isArray(data?.group_ids) ? data.group_ids : [],
+        exempt_user_ids: Array.isArray(data?.exempt_user_ids) ? data.exempt_user_ids : [],
+      }
+      config.value = normalized
+      groups.value = Array.isArray(options) ? options : []
+      exemptIDs.value = normalized.exempt_user_ids.join(', ')
+    }
+  } catch (cause) {
+    if (!disposed) error.value = (cause as Error).message
+  }
+  await loadEvents()
+})
 onUnmounted(() => { disposed = true })
 </script>

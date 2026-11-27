@@ -119,7 +119,7 @@
               color="neutral"
               variant="outline"
               icon="i-lucide-refresh-cw"
-              :ui="{ leadingIcon: loading ? 'animate-spin' : '' }"
+              :ui="{ leadingIcon: loading ? 'animate-spin motion-reduce:animate-none' : '' }"
               :disabled="loading"
               :title="t('common.refresh')"
               :aria-label="t('common.refresh')"
@@ -133,23 +133,31 @@
                 :title="t('keys.columnSettings')"
                 :aria-label="t('keys.columnSettings')"
                 :aria-expanded="showColumnDropdown"
-                @click="showColumnDropdown = !showColumnDropdown"
+                @click="toggleColumnDropdown"
               />
-              <div
-                v-if="showColumnDropdown"
-                class="absolute left-0 top-full z-50 mt-1 max-h-80 w-52 overflow-y-auto rounded-lg bg-default p-1 shadow-lg ring ring-default sm:left-auto sm:right-0"
-              >
-                <button
-                  v-for="col in toggleableColumns"
-                  :key="col.key"
-                  type="button"
-                  @click="toggleColumn(col.key)"
-                  class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm text-default transition-colors hover:bg-elevated"
+              <Teleport to="body">
+                <div
+                  v-if="showColumnDropdown"
+                  ref="columnDropdownMenuRef"
+                  :style="columnDropdownStyle"
+                  data-test="keys-column-dropdown"
+                  :class="[
+                    'fixed z-50 max-h-[min(20rem,calc(100dvh-16px))] w-52 overflow-y-auto rounded-lg bg-default p-1 shadow-(--app-shadow-popover) ring ring-default',
+                    columnDropdownPlacement === 'top' ? 'origin-bottom' : 'origin-top'
+                  ]"
                 >
-                  <span>{{ col.label }}</span>
-                  <UIcon v-if="isColumnVisible(col.key)" name="i-lucide-check" class="size-4 text-highlighted" />
-                </button>
-              </div>
+                  <button
+                    v-for="col in toggleableColumns"
+                    :key="col.key"
+                    type="button"
+                    @click="toggleColumn(col.key)"
+                    class="flex min-h-11 w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm text-default transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-0 [@media(hover:hover)_and_(pointer:fine)]:hover:bg-elevated"
+                  >
+                    <span>{{ col.label }}</span>
+                    <UIcon v-if="isColumnVisible(col.key)" name="i-lucide-check" class="size-4 text-highlighted" />
+                  </button>
+                </div>
+              </Teleport>
             </div>
             <UButton
               type="button"
@@ -162,7 +170,7 @@
             >
               {{ t('keys.agentGuide') }}
             </UButton>
-            <UButton icon="i-lucide-plus" data-tour="keys-create-btn" @click="openCreateModal">
+            <UButton icon="i-lucide-plus" data-tour="keys-create-btn" class="min-h-11 lg:min-h-8" @click="openCreateModal">
               {{ t('keys.createKey') }}
             </UButton>
           </template>
@@ -183,7 +191,7 @@
           @sort="handleSort"
         >
           <template #cell-id="{ value }">
-            <span class="font-mono text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
+            <span class="font-mono text-xs tabular-nums text-muted">#{{ value }}</span>
           </template>
 
           <template #cell-key="{ row }">
@@ -214,12 +222,12 @@
           <template #cell-name="{ value, row }">
             <div class="flex flex-col gap-1">
               <div class="flex items-center gap-1.5">
-                <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+                <span class="font-medium text-highlighted">{{ value }}</span>
                 <Icon
                   v-if="row.ip_whitelist?.length > 0 || row.ip_blacklist?.length > 0"
                   name="shield"
                   size="sm"
-                  class="text-blue-500"
+                  class="text-primary"
                   :title="t('keys.ipRestrictionEnabled')"
                 />
               </div>
@@ -245,7 +253,7 @@
                 >
                   <UIcon
                     name="i-lucide-refresh-cw"
-                    :class="['size-3.5', rotatingKeyId === row.id ? 'animate-spin' : '']"
+                    :class="['size-3.5', rotatingKeyId === row.id ? 'animate-spin motion-reduce:animate-none' : '']"
                   />
                   <span>{{ t('keys.rotationFixByRotate') }}</span>
                 </button>
@@ -276,7 +284,7 @@
                 >
                   <UIcon
                     name="i-lucide-refresh-cw"
-                    :class="['size-3.5', rotatingKeyId === row.id ? 'animate-spin' : '']"
+                    :class="['size-3.5', rotatingKeyId === row.id ? 'animate-spin motion-reduce:animate-none' : '']"
                   />
                   <span>{{ t('keys.riskRotateAction') }}</span>
                 </button>
@@ -290,7 +298,7 @@
             <div
               :ref="(el) => setGroupButtonRef(row.id, el)"
               data-group-cell
-              class="group/dropdown relative -mx-2 -my-1 flex w-fit max-w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-colors duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
+              class="group/dropdown relative -mx-2 -my-1 flex w-fit max-w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-colors duration-200 [@media(hover:hover)_and_(pointer:fine)]:hover:bg-elevated"
               @click="onGroupCellClick($event, row)"
             >
               <button
@@ -313,7 +321,7 @@
                   :data-group-id="primaryGroupId(row)"
                 />
                 <UBadge v-else-if="primaryGroupId(row) != null" color="neutral" variant="subtle" size="sm" data-test="key-bound-group" :data-group-id="primaryGroupId(row)">#{{ primaryGroupId(row) }}</UBadge>
-                <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{ t('keys.noGroup') }}</span>
+                <span v-else class="text-sm text-dimmed">{{ t('keys.noGroup') }}</span>
               </button>
               <GroupRateSignals
                 :signals="availableGroupsById.get(primaryGroupId(row) ?? -1)"
@@ -324,7 +332,7 @@
                 {{ t('keys.smartRoutingMore', { count: keyGroupIds(row).length - 1 }) }}
               </UBadge>
               <svg
-                class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
+                class="h-3.5 w-3.5 text-dimmed opacity-60 transition-opacity [@media(hover:hover)_and_(pointer:fine)]:group-hover/dropdown:opacity-100"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -345,8 +353,8 @@
               :class="[
                 'inline-flex min-w-8 items-center justify-center rounded-sm px-2 py-1 text-sm font-semibold tabular-nums focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-current',
                 (value ?? 0) > 0
-                  ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/25 dark:text-emerald-300 dark:ring-emerald-800'
-                  : 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-dark-400'
+                  ? 'bg-success/10 text-success ring-1 ring-success/30'
+                  : 'bg-elevated text-muted'
               ]"
               :title="concurrencyHint(row)"
               :aria-label="concurrencyHint(row)"
@@ -354,51 +362,51 @@
             >
               {{ value ?? 0 }}<span v-if="row.concurrency_limit" class="ml-1 opacity-70">/ {{ row.concurrency_limit }}</span>
             </span>
-            <span v-if="row.concurrency_limit" class="mt-1 block text-xs text-gray-500">{{ t('keys.queueWaiting') }}: {{ queueWaiting[row.id] ?? '—' }}</span>
+            <span v-if="row.concurrency_limit" class="mt-1 block text-xs tabular-nums text-muted">{{ t('keys.queueWaiting') }}: {{ queueWaiting[row.id] ?? '—' }}</span>
           </template>
 
           <template #cell-usage="{ row }">
             <div class="text-sm">
               <div class="flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
+                <span class="text-muted">{{ t('keys.today') }}:</span>
+                <span class="font-medium tabular-nums text-highlighted">
                   ${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}
                 </span>
               </div>
               <div class="mt-0.5 flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.total') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
+                <span class="text-muted">{{ t('keys.total') }}:</span>
+                <span class="font-medium tabular-nums text-highlighted">
                   ${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}
                 </span>
               </div>
               <!-- Quota progress (if quota is set) -->
               <div v-if="row.quota > 0" class="mt-1.5">
                 <div class="flex items-center gap-1.5 whitespace-nowrap">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('keys.quota') }}:</span>
+                  <span class="text-muted">{{ t('keys.quota') }}:</span>
                   <span :class="[
                     'font-medium tabular-nums',
-                    row.quota_used >= row.quota ? 'text-red-500' :
-                    row.quota_used >= row.quota * 0.8 ? 'text-yellow-500' :
-                    'text-gray-900 dark:text-white'
+                    row.quota_used >= row.quota ? 'text-error' :
+                    row.quota_used >= row.quota * 0.8 ? 'text-warning' :
+                    'text-highlighted'
                   ]">
                     ${{ row.quota_used?.toFixed(2) || '0.00' }} / ${{ row.quota?.toFixed(2) }}
                   </span>
                 </div>
-                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-accented">
                   <div
                     :class="[
-                      'h-full rounded-full transition-[width,background-color]',
-                      row.quota_used >= row.quota ? 'bg-red-500' :
-                      row.quota_used >= row.quota * 0.8 ? 'bg-yellow-500' :
-                      'bg-primary-500'
+                      'h-full w-full origin-left rounded-full transition-[transform,background-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none',
+                      row.quota_used >= row.quota ? 'bg-error' :
+                      row.quota_used >= row.quota * 0.8 ? 'bg-warning' :
+                      'bg-primary'
                     ]"
-                    :style="{ width: Math.min((row.quota_used / row.quota) * 100, 100) + '%' }"
+                    :style="{ transform: `scaleX(${Math.min(Math.max(row.quota_used / row.quota, 0), 1)})` }"
                   />
                 </div>
               </div>
               <button
                 type="button"
-                class="mt-1.5 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/25"
+                class="mt-1.5 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-medium text-primary transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:bg-primary/10"
                 data-test="key-usage-details"
                 @click="openUsageDialog(row)"
               >
@@ -412,12 +420,12 @@
             <!-- 一屏概览：近 24h 调用/消耗（批量接口）+ 到期时间 + IP 白名单状态。 -->
             <div class="space-y-1 text-sm" data-test="key-overview">
               <div class="flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.overview.calls24h') }}:</span>
-                <span class="font-medium tabular-nums text-gray-900 dark:text-white" data-test="key-overview-calls">
+                <span class="text-muted">{{ t('keys.overview.calls24h') }}:</span>
+                <span class="font-medium tabular-nums text-highlighted" data-test="key-overview-calls">
                   {{ overviewFor(row).requests_24h.toLocaleString() }}
                 </span>
-                <span class="text-gray-400">/</span>
-                <span class="font-medium tabular-nums text-gray-900 dark:text-white" data-test="key-overview-cost">
+                <span class="text-dimmed">/</span>
+                <span class="font-medium tabular-nums text-highlighted" data-test="key-overview-cost">
                   ${{ overviewFor(row).cost_24h.toFixed(4) }}
                 </span>
               </div>
@@ -425,8 +433,8 @@
                 {{ overviewIPStatus(row).text }}
               </div>
               <div
-                class="text-xs"
-                :class="row.expires_at && new Date(row.expires_at) < new Date() ? 'text-red-500 dark:text-red-400' : 'text-gray-400 dark:text-gray-500'"
+                class="text-xs tabular-nums"
+                :class="row.expires_at && new Date(row.expires_at) < new Date() ? 'text-error' : 'text-dimmed'"
                 data-test="key-overview-expiry"
               >
                 {{ row.expires_at
@@ -440,15 +448,18 @@
             <div v-if="rateLimitWindows(row).length" class="space-y-1.5 min-w-[140px]">
               <div v-for="w in rateLimitWindows(row)" :key="w.label">
                 <div class="flex items-center justify-between text-xs">
-                  <span class="text-gray-500 dark:text-gray-400">{{ w.label }}</span>
+                  <span class="text-muted">{{ w.label }}</span>
                   <span :class="['font-medium tabular-nums', RATE_LIMIT_TEXT_CLASS[w.tone]]">
                     ${{ w.used.toFixed(2) }}/${{ w.limit.toFixed(2) }}
                   </span>
                 </div>
-                <div class="h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
-                  <div :class="['h-full rounded-full transition-[width,background-color]', RATE_LIMIT_BAR_CLASS[w.tone]]" :style="{ width: w.percent + '%' }" />
+                <div class="h-1 w-full overflow-hidden rounded-full bg-accented">
+                  <div
+                    :class="['h-full w-full origin-left rounded-full transition-[transform,background-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none', RATE_LIMIT_BAR_CLASS[w.tone]]"
+                    :style="{ transform: `scaleX(${Math.min(Math.max(w.percent / 100, 0), 1)})` }"
+                  />
                 </div>
-                <div v-if="w.resetAt && formatResetTime(w.resetAt)" class="text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
+                <div v-if="w.resetAt && formatResetTime(w.resetAt)" class="text-[10px] tabular-nums text-dimmed">
                   ⟳ {{ formatResetTime(w.resetAt) }}
                 </div>
               </div>
@@ -456,24 +467,24 @@
               <button
                 v-if="row.usage_5h > 0 || row.usage_1d > 0 || row.usage_7d > 0"
                 @click.stop="confirmResetRateLimitFromTable(row)"
-                class="mt-0.5 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
+                class="mt-0.5 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-muted transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:bg-elevated [@media(hover:hover)_and_(pointer:fine)]:hover:text-primary"
                 :title="t('keys.resetRateLimitUsage')"
               >
                 <Icon name="refresh" size="xs" />
                 {{ t('keys.resetUsage') }}
               </button>
             </div>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+            <span v-else class="text-sm text-dimmed">-</span>
           </template>
 
           <template #cell-expires_at="{ value }">
             <span v-if="value" :class="[
-              'text-sm',
-              new Date(value) < new Date() ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-dark-400'
+              'text-sm tabular-nums',
+              new Date(value) < new Date() ? 'text-error' : 'text-muted'
             ]">
               {{ formatDateTime(value) }}
             </span>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{ t('keys.noExpiration') }}</span>
+            <span v-else class="text-sm text-dimmed">{{ t('keys.noExpiration') }}</span>
           </template>
 
           <template #cell-status="{ value }">
@@ -489,21 +500,21 @@
           </template>
 
           <template #cell-last_used_at="{ value }">
-            <span v-if="value" class="text-sm text-gray-500 dark:text-dark-400">
+            <span v-if="value" class="text-sm tabular-nums text-muted">
               {{ formatDateTime(value) }}
             </span>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+            <span v-else class="text-sm text-dimmed">-</span>
           </template>
 
           <template #cell-last_used_ip="{ value }">
-            <span v-if="value" class="text-sm text-gray-500 dark:text-dark-400">
+            <span v-if="value" class="font-mono text-sm tabular-nums text-muted">
               {{ value }}
             </span>
-            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+            <span v-else class="text-sm text-dimmed">-</span>
           </template>
 
           <template #cell-created_at="{ value }">
-            <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatDateTime(value) }}</span>
+            <span class="text-sm tabular-nums text-muted">{{ formatDateTime(value) }}</span>
           </template>
 
           <template #cell-actions="{ row }">
@@ -511,18 +522,18 @@
               <!-- 明文 key 只在创建/轮换当次可见，"使用密钥 / 导入 CCS"入口移到
                    明文回执弹窗里，避免让用户以为列表可以随时复制完整 key。 -->
               <!-- Toggle Status Button -->
-              <button type="button" class="key-row-action" @click="toggleKeyStatus(row)">
+              <button type="button" class="key-row-action rounded-md" @click="toggleKeyStatus(row)">
                 <UIcon v-if="row.status === 'active'" name="i-lucide-ban" class="size-4" />
                 <UIcon v-else name="i-lucide-circle-check" class="size-4" />
                 <span>{{ row.status === 'active' ? t('keys.disable') : t('keys.enable') }}</span>
               </button>
               <!-- Edit Button -->
-              <button type="button" class="key-row-action" @click="editKey(row)">
+              <button type="button" class="key-row-action rounded-md" @click="editKey(row)">
                 <UIcon name="i-lucide-pencil" class="size-4" />
                 <span>{{ t('common.edit') }}</span>
               </button>
               <!-- Delete Button -->
-              <button type="button" class="key-row-action key-row-action--danger" @click="confirmDelete(row)">
+              <button type="button" class="key-row-action key-row-action--danger rounded-md" @click="confirmDelete(row)">
                 <UIcon name="i-lucide-trash-2" class="size-4" />
                 <span>{{ t('common.delete') }}</span>
               </button>
@@ -625,7 +636,7 @@
                 class="peer sr-only"
                 @change="selectKeyProvider(provider.value)"
               />
-              <span class="flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border border-accented bg-default px-2 py-3 text-sm font-semibold text-highlighted transition-colors peer-enabled:cursor-pointer hover:peer-enabled:border-inverted peer-checked:border-inverted peer-checked:bg-elevated peer-checked:ring-1 peer-checked:ring-inverted peer-focus-visible:outline-solid peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-inverted peer-disabled:cursor-not-allowed peer-disabled:opacity-40 dark:border-dark-500 dark:bg-transparent dark:text-gray-100 dark:hover:peer-enabled:border-primary/60 dark:peer-checked:border-primary dark:peer-checked:bg-primary/10 dark:peer-checked:ring-primary dark:peer-focus-visible:outline-primary">
+              <span class="flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border border-accented bg-default px-2 py-3 text-sm font-semibold text-highlighted transition-colors peer-enabled:cursor-pointer [@media(hover:hover)_and_(pointer:fine)]:hover:peer-enabled:border-primary/60 peer-checked:border-primary peer-checked:bg-primary/10 peer-checked:ring-1 peer-checked:ring-primary peer-focus-visible:outline-solid peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary peer-disabled:cursor-not-allowed peer-disabled:opacity-40">
                 <span class="flex h-8 items-center justify-center gap-1" aria-hidden="true">
                   <span
                     v-for="platform in provider.icons"
@@ -639,7 +650,7 @@
               </span>
               <span
                 v-if="activeKeyProvider === provider.value"
-                class="pointer-events-none absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-inverted text-inverted dark:bg-primary dark:text-inverted"
+                class="pointer-events-none absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-inverted"
                 aria-hidden="true"
               >
                 <UIcon name="i-lucide-check" class="size-3" />
@@ -722,7 +733,7 @@
                 block
                 trailing-icon="i-lucide-chevron-down"
                 :label="t('keys.smartRoutingOtherRoutes', { count: formData.group_ids.length - 1 })"
-                :ui="{ trailingIcon: 'transition-transform duration-200 group-data-[state=open]:rotate-180' }"
+                :ui="{ trailingIcon: 'transition-transform duration-200 ease-out motion-reduce:transition-none group-data-[state=open]:rotate-180' }"
                 data-test="smart-routes-toggle"
               />
               <template #content>
@@ -827,7 +838,7 @@
           </Select>
           <p
             v-if="!showEditModal && groupsLoaded && !hasAvailableGroups"
-            class="mt-2 text-xs text-amber-600 dark:text-amber-400"
+            class="mt-2 text-xs text-warning"
             data-test="key-no-available-groups-hint"
           >
             {{ t('keys.createWithoutGroupHint') }}
@@ -839,7 +850,7 @@
         <button
           v-if="!showEditModal"
           type="button"
-          class="key-more-toggle"
+          class="key-more-toggle rounded-lg"
           :aria-expanded="createAdvancedOpen"
           aria-controls="key-advanced-settings"
           data-test="key-advanced-toggle"
@@ -964,7 +975,7 @@
           <!-- Quota used display (only in edit mode) -->
           <UFormField v-if="showEditModal && selectedKey && selectedKey.quota > 0" :label="t('keys.quotaUsed')" size="lg">
             <div class="flex items-center gap-2">
-              <div class="flex-1 rounded-md bg-elevated px-3 py-2 text-sm">
+              <div class="flex-1 rounded-md bg-elevated px-3 py-2 text-sm tabular-nums">
                 <span class="font-medium text-highlighted">
                   ${{ selectedKey.quota_used?.toFixed(4) || '0.0000' }}
                 </span>
@@ -1002,11 +1013,11 @@
               </UInput>
               <!-- Usage info (edit mode only) -->
               <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_5h > 0" class="mt-2">
-                <div class="rounded-md bg-elevated px-3 py-2 text-sm">
+                <div class="rounded-md bg-elevated px-3 py-2 text-sm tabular-nums">
                   <span :class="[
                     'font-medium',
-                    selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'text-red-500' :
-                    selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8 ? 'text-yellow-500' :
+                    selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'text-error' :
+                    selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8 ? 'text-warning' :
                     'text-highlighted'
                   ]">
                     ${{ selectedKey.usage_5h?.toFixed(4) || '0.0000' }}
@@ -1019,12 +1030,12 @@
                 <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-accented">
                   <div
                     :class="[
-                      'h-full rounded-full transition-[width,background-color]',
-                      selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'bg-red-500' :
-                      selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8 ? 'bg-yellow-500' :
-                      'bg-green-500'
+                      'h-full w-full origin-left rounded-full transition-[transform,background-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none',
+                      selectedKey.usage_5h >= selectedKey.rate_limit_5h ? 'bg-error' :
+                      selectedKey.usage_5h >= selectedKey.rate_limit_5h * 0.8 ? 'bg-warning' :
+                      'bg-success'
                     ]"
-                    :style="{ width: Math.min((selectedKey.usage_5h / selectedKey.rate_limit_5h) * 100, 100) + '%' }"
+                    :style="{ transform: `scaleX(${Math.min(Math.max(selectedKey.usage_5h / selectedKey.rate_limit_5h, 0), 1)})` }"
                   />
                 </div>
               </div>
@@ -1037,11 +1048,11 @@
               </UInput>
               <!-- Usage info (edit mode only) -->
               <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_1d > 0" class="mt-2">
-                <div class="rounded-md bg-elevated px-3 py-2 text-sm">
+                <div class="rounded-md bg-elevated px-3 py-2 text-sm tabular-nums">
                   <span :class="[
                     'font-medium',
-                    selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'text-red-500' :
-                    selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8 ? 'text-yellow-500' :
+                    selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'text-error' :
+                    selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8 ? 'text-warning' :
                     'text-highlighted'
                   ]">
                     ${{ selectedKey.usage_1d?.toFixed(4) || '0.0000' }}
@@ -1054,12 +1065,12 @@
                 <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-accented">
                   <div
                     :class="[
-                      'h-full rounded-full transition-[width,background-color]',
-                      selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'bg-red-500' :
-                      selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8 ? 'bg-yellow-500' :
-                      'bg-green-500'
+                      'h-full w-full origin-left rounded-full transition-[transform,background-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none',
+                      selectedKey.usage_1d >= selectedKey.rate_limit_1d ? 'bg-error' :
+                      selectedKey.usage_1d >= selectedKey.rate_limit_1d * 0.8 ? 'bg-warning' :
+                      'bg-success'
                     ]"
-                    :style="{ width: Math.min((selectedKey.usage_1d / selectedKey.rate_limit_1d) * 100, 100) + '%' }"
+                    :style="{ transform: `scaleX(${Math.min(Math.max(selectedKey.usage_1d / selectedKey.rate_limit_1d, 0), 1)})` }"
                   />
                 </div>
               </div>
@@ -1072,11 +1083,11 @@
               </UInput>
               <!-- Usage info (edit mode only) -->
               <div v-if="showEditModal && selectedKey && selectedKey.rate_limit_7d > 0" class="mt-2">
-                <div class="rounded-md bg-elevated px-3 py-2 text-sm">
+                <div class="rounded-md bg-elevated px-3 py-2 text-sm tabular-nums">
                   <span :class="[
                     'font-medium',
-                    selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'text-red-500' :
-                    selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8 ? 'text-yellow-500' :
+                    selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'text-error' :
+                    selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8 ? 'text-warning' :
                     'text-highlighted'
                   ]">
                     ${{ selectedKey.usage_7d?.toFixed(4) || '0.0000' }}
@@ -1089,12 +1100,12 @@
                 <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-accented">
                   <div
                     :class="[
-                      'h-full rounded-full transition-[width,background-color]',
-                      selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'bg-red-500' :
-                      selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8 ? 'bg-yellow-500' :
-                      'bg-green-500'
+                      'h-full w-full origin-left rounded-full transition-[transform,background-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none',
+                      selectedKey.usage_7d >= selectedKey.rate_limit_7d ? 'bg-error' :
+                      selectedKey.usage_7d >= selectedKey.rate_limit_7d * 0.8 ? 'bg-warning' :
+                      'bg-success'
                     ]"
-                    :style="{ width: Math.min((selectedKey.usage_7d / selectedKey.rate_limit_7d) * 100, 100) + '%' }"
+                    :style="{ transform: `scaleX(${Math.min(Math.max(selectedKey.usage_7d / selectedKey.rate_limit_7d, 0), 1)})` }"
                   />
                 </div>
               </div>
@@ -1195,7 +1206,7 @@
         <div v-if="isCreateVerificationStep" class="key-step-pane space-y-3" data-test="key-create-verification">
           <div
             v-if="verificationFactorsLoading"
-            class="rounded-lg bg-gray-50 p-3 text-xs text-muted ring ring-inset ring-default dark:bg-dark-900"
+            class="rounded-lg bg-muted p-3 text-xs text-muted ring ring-inset ring-default"
             data-test="key-create-factors-loading"
           >
             {{ t('keys.reveal.factorsLoading') }}
@@ -1332,7 +1343,7 @@
         <p class="text-sm text-muted">{{ t('keys.batchRotate.verifyHint', { count: selectedKeyCount }) }}</p>
         <div
           v-if="batchRotateFactorsLoading"
-          class="rounded-lg bg-gray-50 p-3 text-xs text-muted ring ring-inset ring-default dark:bg-dark-900"
+          class="rounded-lg bg-muted p-3 text-xs text-muted ring ring-inset ring-default"
           data-test="batch-rotate-factors-loading"
         >
           {{ t('keys.reveal.factorsLoading') }}
@@ -1383,7 +1394,7 @@
         </p>
         <div
           v-if="rotateVerifyLoading"
-          class="rounded-lg bg-gray-50 p-3 text-xs text-muted ring ring-inset ring-default dark:bg-dark-900"
+          class="rounded-lg bg-muted p-3 text-xs text-muted ring ring-inset ring-default"
           data-test="rotate-factors-loading"
         >
           {{ t('keys.reveal.factorsLoading') }}
@@ -1446,21 +1457,21 @@
             <div class="flex items-center justify-between gap-2">
               <span class="font-medium">{{ batchRotateNames[item.id] ?? `#${item.id}` }}</span>
               <span
-                :class="['text-xs font-semibold', item.status === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400']"
+                :class="['text-xs font-semibold', item.status === 'ok' ? 'text-success' : 'text-error']"
               >
                 {{ item.status === 'ok' ? t('keys.batchRotate.itemOk') : t('keys.batchRotate.itemFailed') }}
               </span>
             </div>
             <code
               v-if="item.status === 'ok' && item.key"
-              class="mt-1 block break-all rounded bg-elevated px-1.5 py-0.5 font-mono text-xs"
+              class="mt-1 block wrap-anywhere rounded bg-elevated px-1.5 py-0.5 font-mono text-xs"
               data-test="batch-rotate-plaintext"
             >{{ item.key }}</code>
             <p v-else class="mt-1 text-xs text-muted">{{ item.error_code || t('keys.batchRotate.failed') }}</p>
             <p
               v-if="batchRotateSealStatus[item.id]"
               class="mt-1 text-xs"
-              :class="batchRotateSealStatus[item.id] === 'sealed' ? 'text-emerald-600' : 'text-red-600'"
+              :class="batchRotateSealStatus[item.id] === 'sealed' ? 'text-success' : 'text-error'"
               data-test="batch-rotate-seal-status"
             >
               {{ batchRotateSealStatus[item.id] === 'sealed' ? t('keys.batchRotate.itemSealed') : t('keys.batchRotate.itemSealFailed') }}
@@ -1517,7 +1528,7 @@
               </span>
             </div>
           </div>
-          <p v-if="batchRotateSealError" class="text-xs text-red-600" role="alert" data-test="batch-rotate-seal-error">
+          <p v-if="batchRotateSealError" class="text-xs text-error" role="alert" data-test="batch-rotate-seal-error">
             {{ batchRotateSealError }}
           </p>
         </div>
@@ -1617,7 +1628,7 @@
       @close="closeCcsImportModal"
     >
       <div class="space-y-4">
-        <p class="text-sm text-gray-600 dark:text-gray-400">
+        <p class="text-sm text-muted">
           {{ t('keys.ccsImport.description') }}
         </p>
         <div>
@@ -1637,7 +1648,7 @@
               v-if="pendingCcsRow && !ccsModelsLoading"
               type="button"
               data-test="ccs-import-model-reload"
-              class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              class="inline-flex min-h-11 items-center gap-1 rounded px-1 text-xs font-medium text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:underline [@media(pointer:fine)]:min-h-0"
               @click="loadCcsModels(pendingCcsRow)"
             >
               <UIcon name="i-lucide-refresh-cw" class="size-3" aria-hidden="true" />
@@ -1674,13 +1685,56 @@
           :description="t('keys.ccsImport.deeplinkUnsupported')"
           :ui="{ description: 'text-xs leading-5' }"
         />
+        <div
+          v-if="ccsDeeplinkFallbackVisible && ccsDeeplink"
+          data-test="ccs-import-fallback"
+          class="space-y-2.5 rounded-xl border border-default bg-muted/60 p-3 text-xs text-default"
+        >
+          <p class="leading-5 text-toned">{{ t('keys.ccSwitchNotInstalled') }}</p>
+          <div class="flex flex-wrap items-center gap-2">
+            <a
+              :href="ccsDeeplink"
+              data-test="ccs-import-retry"
+              class="inline-flex min-h-8 items-center gap-1 rounded-lg bg-primary px-2.5 py-1 text-xs font-medium text-inverted transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:bg-primary/90 [@media(pointer:coarse)]:min-h-11"
+              @click="onCcsDeeplinkClick"
+            >
+              {{ t('keys.ccsImport.modelRetry') }}
+            </a>
+            <button
+              type="button"
+              data-test="ccs-import-copy-deeplink"
+              class="inline-flex min-h-8 items-center gap-1 rounded-lg border border-accented bg-default px-2.5 py-1 text-xs font-medium text-default transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:bg-elevated [@media(pointer:coarse)]:min-h-11"
+              @click="copyCcsDeeplink"
+            >
+              {{ ccsDeeplinkCopied ? t('common.copied') : t('common.copy') }}
+            </button>
+            <a
+              :href="ccSwitchDownloadUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-test="ccs-import-download"
+              class="inline-flex min-h-8 items-center gap-1 rounded-lg border border-accented bg-default px-2.5 py-1 text-xs font-medium text-default transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:bg-elevated [@media(pointer:coarse)]:min-h-11"
+            >
+              {{ t('docs.agentSetup.downloadCcSwitch') }}
+            </a>
+          </div>
+        </div>
       </div>
       <template #footer>
         <div class="flex justify-end gap-2">
           <UButton color="neutral" variant="outline" size="lg" @click="closeCcsImportModal">
             {{ t('common.cancel') }}
           </UButton>
-          <UButton size="lg" :disabled="ccsImportDeeplinkUnsupported || ccsModelsLoading" @click="confirmCcsImport">
+          <a
+            v-if="!ccsImportDeeplinkUnsupported && !ccsModelsLoading && ccsDeeplink"
+            :href="ccsDeeplink"
+            data-test="ccs-import-launch"
+            class="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 text-sm font-medium text-inverted transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:bg-primary/90 [@media(pointer:coarse)]:min-h-11"
+            @click="onCcsDeeplinkClick"
+          >
+            {{ t('common.import') }}
+          </a>
+          <UButton v-else size="lg" disabled>
             {{ t('common.import') }}
           </UButton>
         </div>
@@ -1693,16 +1747,20 @@
         v-if="groupSelectorKeyId !== null && dropdownPosition"
         ref="dropdownRef"
         data-test="group-selector-dropdown"
-        class="animate-in fade-in slide-in-from-top-2 fixed z-100000020 w-max max-w-[calc(100vw-16px)] overflow-hidden rounded-lg bg-default shadow-lg ring ring-default duration-200 sm:min-w-[380px]"
+        :class="[
+          'fixed z-50 flex w-max max-w-[calc(100vw-16px)] max-h-[calc(100dvh-16px)] flex-col overflow-hidden rounded-lg bg-default shadow-(--app-shadow-popover) ring ring-default transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] motion-reduce:transition-none sm:min-w-[380px]',
+          dropdownPosition.bottom !== undefined ? 'origin-bottom' : 'origin-top'
+        ]"
         style="pointer-events: auto !important;"
         :style="{
           top: dropdownPosition.top !== undefined ? dropdownPosition.top + 'px' : undefined,
           bottom: dropdownPosition.bottom !== undefined ? dropdownPosition.bottom + 'px' : undefined,
-          left: dropdownPosition.left + 'px'
+          left: dropdownPosition.left + 'px',
+          maxHeight: dropdownPosition.maxHeight + 'px'
         }"
       >
         <!-- Search box -->
-        <div class="border-b border-default p-2">
+        <div class="shrink-0 border-b border-default p-2">
           <UInput
             v-model="groupSearchQuery"
             type="text"
@@ -1714,18 +1772,18 @@
           />
         </div>
         <!-- Group list -->
-        <div class="max-h-80 overflow-y-auto p-1.5">
+        <div class="min-h-0 flex-1 max-h-80 overflow-y-auto p-1.5">
           <button
             v-for="option in filteredGroupOptions"
             :key="option.value ?? 'null'"
             @click="changeGroup(selectedKeyForGroup!, option.value)"
             :class="[
               'flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors',
-              'border-b border-gray-100 last:border-0 dark:border-dark-700',
+              'border-b border-muted last:border-0',
               selectedKeyForGroup?.group_id === option.value ||
               (!selectedKeyForGroup?.group_id && option.value === null)
-                ? 'bg-primary-50 dark:bg-primary-900/20'
-                : 'hover:bg-gray-100 dark:hover:bg-dark-700'
+                ? 'bg-primary/10'
+                : '[@media(hover:hover)_and_(pointer:fine)]:hover:bg-elevated'
             ]"
             :title="option.description || undefined"
           >
@@ -1750,7 +1808,7 @@
             />
           </button>
           <!-- Empty state when search has no results -->
-          <div v-if="filteredGroupOptions.length === 0" class="py-4 text-center text-sm text-gray-400 dark:text-gray-500">
+          <div v-if="filteredGroupOptions.length === 0" class="py-4 text-center text-sm text-dimmed">
             {{ t('keys.noGroupFound') }}
           </div>
         </div>
@@ -1782,7 +1840,7 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useClipboard } from '@/composables/useClipboard'
 import { useAppUpdate } from '@/composables/useAppUpdate'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = inject(routerKey, null)
 const route = inject(routeLocationKey, null)
 
@@ -1843,6 +1901,7 @@ import {
   resolveCcSwitchImportConfig,
   type CcSwitchApp
 } from '@/utils/ccswitchImport'
+import { CC_SWITCH_HOME_EN, CC_SWITCH_HOME_ZH } from '@/data/agentSetupGuides'
 
 // Helper to format date for datetime-local input
 const formatDateTimeLocal = (isoDate: string): string => {
@@ -2278,7 +2337,49 @@ const ccsAvailableModels = ref<string[]>([])
 const ccsModelsLoading = ref(false)
 const ccsModelsLoaded = ref(false)
 const ccsModelsError = ref(false)
+const ccsDeeplinkFallbackVisible = ref(false)
+const ccsDeeplinkCopied = ref(false)
 let ccsModelsAbort: AbortController | null = null
+let ccsDeeplinkTimer: ReturnType<typeof setTimeout> | null = null
+let ccsDeeplinkCleanup: (() => void) | null = null
+let ccsDeeplinkCopiedTimer: ReturnType<typeof setTimeout> | null = null
+
+const CCS_USAGE_SCRIPT = `({
+    request: {
+      url: "{{baseUrl}}".replace(/\\/+$/, "").replace(/\\/v1$/, "") + "/v1/usage",
+      method: "GET",
+      headers: { "Authorization": "Bearer {{apiKey}}" }
+    },
+    extractor: function(response) {
+      const remaining = response?.remaining ?? response?.quota?.remaining ?? response?.balance;
+      const unit = response?.unit ?? response?.quota?.unit ?? "USD";
+      return {
+        isValid: response?.is_active ?? response?.isValid ?? true,
+        remaining,
+        unit
+      };
+    }
+  })`
+
+const ccsDeeplink = computed(() => {
+  if (!pendingCcsRow.value || !ccSwitchProviderDeeplinkSupported(ccsImportApp.value)) return ''
+  const baseUrl = publicSettings.value?.api_base_url || (typeof window !== 'undefined' ? window.location.origin : '')
+  const platform = pendingCcsRow.value.group?.platform || 'anthropic'
+  const providerName = (publicSettings.value?.site_name || 'sub2api').trim() || 'sub2api'
+  return buildCcSwitchImportDeeplink({
+    baseUrl,
+    platform,
+    providerName,
+    apiKey: pendingCcsRow.value.key,
+    usageScript: CCS_USAGE_SCRIPT,
+    app: ccsImportApp.value,
+    model: ccsImportModel.value.trim()
+  })
+})
+
+const ccSwitchDownloadUrl = computed(() =>
+  String(locale?.value ?? '').toLowerCase().startsWith('zh') ? CC_SWITCH_HOME_ZH : CC_SWITCH_HOME_EN
+)
 
 const ccsAppOptions = computed(() =>
   CC_SWITCH_APPS.map((value) => ({
@@ -2336,7 +2437,52 @@ const publicSettings = ref<PublicSettings | null>(null)
 const customEndpoints = ref<CustomEndpoint[]>([])
 const dropdownRef = ref<HTMLElement | null>(null)
 const columnDropdownRef = ref<HTMLElement | null>(null)
-const dropdownPosition = ref<{ top?: number; bottom?: number; left: number } | null>(null)
+const columnDropdownMenuRef = ref<HTMLElement | null>(null)
+const columnDropdownStyle = ref<Record<string, string>>({})
+const columnDropdownPlacement = ref<'top' | 'bottom'>('bottom')
+const dropdownPosition = ref<{ top?: number; bottom?: number; left: number; maxHeight: number } | null>(null)
+
+const updateColumnDropdownPosition = () => {
+  if (!columnDropdownRef.value || typeof window === 'undefined') return
+  const rect = columnDropdownRef.value.getBoundingClientRect()
+  const vw = window.innerWidth || 1024
+  const vh = window.innerHeight || 768
+  const margin = 8
+  const gap = 4
+  const menuWidth = Math.min(208, vw - margin * 2)
+  const left = Math.max(margin, Math.min(rect.right - menuWidth, vw - menuWidth - margin))
+  const spaceBelow = vh - rect.bottom - margin - gap
+  const spaceAbove = rect.top - margin - gap
+  const placeAbove = spaceBelow < 220 && spaceAbove > spaceBelow
+  const availableSpace = placeAbove ? spaceAbove : spaceBelow
+  const viewportCap = Math.max(120, vh - margin * 2)
+  const maxHeight = Math.min(320, viewportCap, Math.max(140, availableSpace))
+  columnDropdownPlacement.value = placeAbove ? 'top' : 'bottom'
+  if (placeAbove) {
+    const bottom = Math.max(margin, Math.min(vh - rect.top + gap, vh - margin - maxHeight))
+    columnDropdownStyle.value = {
+      bottom: `${bottom}px`,
+      left: `${left}px`,
+      maxHeight: `${maxHeight}px`,
+      '--transform-origin': 'bottom right',
+    }
+  } else {
+    const top = Math.max(margin, Math.min(rect.bottom + gap, vh - margin - maxHeight))
+    columnDropdownStyle.value = {
+      top: `${top}px`,
+      left: `${left}px`,
+      maxHeight: `${maxHeight}px`,
+      '--transform-origin': 'top right',
+    }
+  }
+}
+
+const toggleColumnDropdown = () => {
+  showColumnDropdown.value = !showColumnDropdown.value
+  if (showColumnDropdown.value) {
+    updateColumnDropdownPosition()
+  }
+}
 const groupButtonRefs = ref<Map<number, HTMLElement>>(new Map())
 let abortController: AbortController | null = null
 
@@ -2793,22 +2939,22 @@ const overviewIPStatus = (row: ApiKey): { text: string; tone: string } => {
   if (whitelist > 0 && blacklist > 0) {
     return {
       text: t('keys.overview.ipBoth', { whitelist, blacklist }),
-      tone: 'text-blue-600 dark:text-blue-400'
+      tone: 'text-primary'
     }
   }
   if (whitelist > 0) {
     return {
       text: t('keys.overview.ipWhitelist', { count: whitelist }),
-      tone: 'text-blue-600 dark:text-blue-400'
+      tone: 'text-primary'
     }
   }
   if (blacklist > 0) {
     return {
       text: t('keys.overview.ipBlacklist', { count: blacklist }),
-      tone: 'text-amber-600 dark:text-amber-400'
+      tone: 'text-warning'
     }
   }
-  return { text: t('keys.overview.ipOpen'), tone: 'text-gray-400 dark:text-gray-500' }
+  return { text: t('keys.overview.ipOpen'), tone: 'text-dimmed' }
 }
 
 const flashCopiedKey = (id: number) => {
@@ -3084,6 +3230,44 @@ const onGroupCellClick = (event: MouseEvent, key: ApiKey) => {
   openGroupSelector(key)
 }
 
+const updateGroupSelectorPosition = (keyId: number) => {
+  const buttonEl = groupButtonRefs.value.get(keyId)
+  if (!buttonEl || typeof window === 'undefined') return
+  const rect = buttonEl.getBoundingClientRect()
+  const vw = window.innerWidth || 1024
+  const vh = window.innerHeight || 768
+  const margin = 8
+  const gap = 4
+  const dropdownEstHeight = 400 // estimated max dropdown height
+  const dropdownEstWidth = Math.min(380, vw - margin * 2)
+  const spaceBelow = vh - rect.bottom - margin - gap
+  const spaceAbove = rect.top - margin - gap
+  // 夹取 left，避免窄屏下浮层超出视口右缘
+  const left = Math.max(margin, Math.min(rect.left, vw - dropdownEstWidth - margin))
+  const placeAbove = spaceBelow < dropdownEstHeight && spaceAbove > spaceBelow
+  const availableSpace = placeAbove ? spaceAbove : spaceBelow
+  const viewportCap = Math.max(120, vh - margin * 2)
+  const maxHeight = Math.min(viewportCap, Math.max(160, availableSpace))
+
+  if (placeAbove) {
+    // Not enough space below, pop upward
+    const bottom = Math.max(margin, Math.min(vh - rect.top + gap, vh - margin - maxHeight))
+    dropdownPosition.value = {
+      bottom,
+      left,
+      maxHeight
+    }
+  } else {
+    // Default: pop downward
+    const top = Math.max(margin, Math.min(rect.bottom + gap, vh - margin - maxHeight))
+    dropdownPosition.value = {
+      top,
+      left,
+      maxHeight
+    }
+  }
+}
+
 const openGroupSelector = (key: ApiKey) => {
   if (isSmartRoutingKey(key)) {
     appStore.showError(t('keys.smartRoutingChangeInEditor'))
@@ -3093,30 +3277,7 @@ const openGroupSelector = (key: ApiKey) => {
     groupSelectorKeyId.value = null
     dropdownPosition.value = null
   } else {
-    const buttonEl = groupButtonRefs.value.get(key.id)
-    if (buttonEl) {
-      const rect = buttonEl.getBoundingClientRect()
-      const dropdownEstHeight = 400 // estimated max dropdown height
-      const dropdownEstWidth = Math.min(380, window.innerWidth - 16)
-      const spaceBelow = window.innerHeight - rect.bottom
-      const spaceAbove = rect.top
-      // 夹取 left，避免窄屏下浮层超出视口右缘
-      const left = Math.max(8, Math.min(rect.left, window.innerWidth - dropdownEstWidth - 8))
-
-      if (spaceBelow < dropdownEstHeight && spaceAbove > spaceBelow) {
-        // Not enough space below, pop upward
-        dropdownPosition.value = {
-          bottom: window.innerHeight - rect.top + 4,
-          left
-        }
-      } else {
-        // Default: pop downward
-        dropdownPosition.value = {
-          top: rect.bottom + 4,
-          left
-        }
-      }
-    }
+    updateGroupSelectorPosition(key.id)
     groupSelectorKeyId.value = key.id
     groupSearchQuery.value = ''
     void loadGroupStatusClasses().then((classes) => {
@@ -3152,7 +3313,11 @@ const closeGroupSelector = (event: MouseEvent) => {
     groupSelectorKeyId.value = null
     dropdownPosition.value = null
   }
-  if (columnDropdownRef.value && !columnDropdownRef.value.contains(target)) {
+  if (
+    columnDropdownRef.value &&
+    !columnDropdownRef.value.contains(target) &&
+    !columnDropdownMenuRef.value?.contains(target)
+  ) {
     showColumnDropdown.value = false
   }
 }
@@ -3975,6 +4140,17 @@ const loadCcsModels = async (row: ApiKeyWithPlaintext) => {
   }
 }
 
+const clearCcsDeeplinkWatch = () => {
+  if (ccsDeeplinkTimer) {
+    clearTimeout(ccsDeeplinkTimer)
+    ccsDeeplinkTimer = null
+  }
+  if (ccsDeeplinkCleanup) {
+    ccsDeeplinkCleanup()
+    ccsDeeplinkCleanup = null
+  }
+}
+
 const importToCcswitch = (row: ApiKeyWithPlaintext) => {
   const platform = row.group?.platform || 'anthropic'
   const baseUrl = publicSettings.value?.api_base_url || window.location.origin
@@ -3983,6 +4159,9 @@ const importToCcswitch = (row: ApiKeyWithPlaintext) => {
     platform === 'gemini' ? 'gemini' : 'claude',
     baseUrl
   )
+  clearCcsDeeplinkWatch()
+  ccsDeeplinkFallbackVisible.value = false
+  ccsDeeplinkCopied.value = false
   pendingCcsRow.value = row
   ccsImportApp.value = config.app
   ccsImportModel.value = ''
@@ -4010,69 +4189,65 @@ const onCcsAppChange = (value: string | number | boolean | null) => {
   const app = String(value)
   if (!isCcSwitchApp(app)) return
   ccsImportApp.value = app
+  ccsDeeplinkFallbackVisible.value = false
   applyCcsModelDefault()
 }
 
 const onCcsModelChange = (value: string | number | boolean | null) => {
   ccsImportModel.value = value == null ? '' : String(value)
+  ccsDeeplinkFallbackVisible.value = false
 }
 
-const executeCcsImport = (row: ApiKeyWithPlaintext, app: CcSwitchApp, model: string) => {
-  const baseUrl = publicSettings.value?.api_base_url || window.location.origin
-  const platform = row.group?.platform || 'anthropic'
-
-  const usageScript = `({
-    request: {
-      url: "{{baseUrl}}".replace(/\\/+$/, "").replace(/\\/v1$/, "") + "/v1/usage",
-      method: "GET",
-      headers: { "Authorization": "Bearer {{apiKey}}" }
-    },
-    extractor: function(response) {
-      const remaining = response?.remaining ?? response?.quota?.remaining ?? response?.balance;
-      const unit = response?.unit ?? response?.quota?.unit ?? "USD";
-      return {
-        isValid: response?.is_active ?? response?.isValid ?? true,
-        remaining,
-        unit
-      };
-    }
-  })`
-  const providerName = (publicSettings.value?.site_name || 'sub2api').trim() || 'sub2api'
-  const deeplink = buildCcSwitchImportDeeplink({
-    baseUrl,
-    platform,
-    providerName,
-    apiKey: row.key,
-    usageScript,
-    app,
-    model
-  })
-
-  try {
-    window.open(deeplink, '_self')
-
-    // Check if the protocol handler worked by detecting if we're still focused
-    setTimeout(() => {
-      if (document.hasFocus()) {
-        // Still focused means the protocol handler likely failed
-        appStore.showError(t('keys.ccSwitchNotInstalled'))
-      }
-    }, 100)
-  } catch (error) {
-    appStore.showError(t('keys.ccSwitchNotInstalled'))
+const onCcsDeeplinkClick = () => {
+  if (!ccsDeeplink.value) return
+  clearCcsDeeplinkWatch()
+  ccsDeeplinkFallbackVisible.value = false
+  let handled = false
+  const markHandled = () => {
+    handled = true
+    clearCcsDeeplinkWatch()
   }
+  const onVisibilityChange = () => {
+    if (document.hidden) markHandled()
+  }
+  window.addEventListener('blur', markHandled, { once: true })
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  ccsDeeplinkCleanup = () => {
+    window.removeEventListener('blur', markHandled)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+  }
+  ccsDeeplinkTimer = setTimeout(() => {
+    ccsDeeplinkTimer = null
+    ccsDeeplinkCleanup?.()
+    ccsDeeplinkCleanup = null
+    if (!handled && showCcsImportModal.value) {
+      ccsDeeplinkFallbackVisible.value = true
+    }
+  }, 1300)
 }
 
-const confirmCcsImport = () => {
-  if (!pendingCcsRow.value) return
-  if (!ccSwitchProviderDeeplinkSupported(ccsImportApp.value)) return
-  executeCcsImport(pendingCcsRow.value, ccsImportApp.value, ccsImportModel.value.trim())
-  closeCcsImportModal()
+const copyCcsDeeplink = async () => {
+  if (!ccsDeeplink.value) return
+  const ok = await copyToClipboard(ccsDeeplink.value, t('common.copied'))
+  if (!ok) return
+  ccsDeeplinkCopied.value = true
+  if (ccsDeeplinkCopiedTimer) clearTimeout(ccsDeeplinkCopiedTimer)
+  ccsDeeplinkCopiedTimer = setTimeout(() => {
+    ccsDeeplinkCopied.value = false
+    ccsDeeplinkCopiedTimer = null
+  }, 1800)
 }
 
 const closeCcsImportModal = () => {
   ccsModelsAbort?.abort()
   ccsModelsAbort = null
+  clearCcsDeeplinkWatch()
+  if (ccsDeeplinkCopiedTimer) {
+    clearTimeout(ccsDeeplinkCopiedTimer)
+    ccsDeeplinkCopiedTimer = null
+  }
+  ccsDeeplinkFallbackVisible.value = false
+  ccsDeeplinkCopied.value = false
   ccsModelsLoading.value = false
   ccsModelsLoaded.value = false
   ccsModelsError.value = false
@@ -4116,6 +4291,15 @@ watch(
   },
 )
 
+const handleFloatingDropdownReposition = () => {
+  if (showColumnDropdown.value) {
+    updateColumnDropdownPosition()
+  }
+  if (groupSelectorKeyId.value !== null) {
+    updateGroupSelectorPosition(groupSelectorKeyId.value)
+  }
+}
+
 onMounted(() => {
   loadSavedColumns()
   loadApiKeys()
@@ -4126,13 +4310,19 @@ onMounted(() => {
   loadCustomEndpoints()
   consumeQuickCreateQuery()
   document.addEventListener('click', closeGroupSelector)
+  window.addEventListener('resize', handleFloatingDropdownReposition)
+  window.addEventListener('scroll', handleFloatingDropdownReposition, true)
   resetTimer = setInterval(() => { now.value = new Date() }, 60000)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', closeGroupSelector)
+  window.removeEventListener('resize', handleFloatingDropdownReposition)
+  window.removeEventListener('scroll', handleFloatingDropdownReposition, true)
   if (resetTimer) clearInterval(resetTimer)
   if (copiedKeyTimer) clearTimeout(copiedKeyTimer)
+  if (ccsDeeplinkCopiedTimer) clearTimeout(ccsDeeplinkCopiedTimer)
+  clearCcsDeeplinkWatch()
   ccsModelsAbort?.abort()
 })
 </script>
@@ -4149,11 +4339,13 @@ onUnmounted(() => {
   font-size: 14px;
   text-align: left;
   color: var(--ui-text-muted);
-  transition: color 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  transition: color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
-.key-more-toggle:hover {
-  color: var(--ui-text-highlighted);
+@media (hover: hover) and (pointer: fine) {
+  .key-more-toggle:hover {
+    color: var(--ui-text-highlighted);
+  }
 }
 
 .key-more-toggle:focus-visible {
@@ -4165,12 +4357,12 @@ onUnmounted(() => {
 .key-more-chevron {
   transition-property: transform, rotate;
   transition-duration: 200ms;
-  transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+  transition-timing-function: var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 /* 步骤切换：新那一步淡入并上移 6px（关键帧来自 auth-quiet.css，display 从 none 变回来时会重放）。 */
 .key-step-pane {
-  animation: auth-step-in 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+  animation: auth-step-in 200ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)) both;
 }
 
 /* 必填项被拦下：那一格横向轻轻抖一下（只动 transform，约 320ms），红边和提示文字由组件自己的 error 状态负责。
@@ -4199,17 +4391,22 @@ onUnmounted(() => {
 }
 
 /* Row actions: quiet ghost buttons, icon over a short label. */
-.key-row-action { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px 6px; border-radius: 6px; color: var(--ui-text-muted); font-size: 11px; line-height: 14px; white-space: nowrap; transition: background-color 150ms ease, color 150ms ease; }
-.key-row-action:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
-.key-row-action:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
-.key-risk-rotate { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--ui-warning) 45%, transparent); color: color-mix(in srgb, var(--ui-warning) 90%, var(--ui-text)); font-size: 11px; line-height: 16px; white-space: nowrap; transition: background-color 150ms ease, color 150ms ease; }
+.key-row-action { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 5px 6px; border-radius: 6px; color: var(--ui-text-muted); font-size: 11px; line-height: 14px; white-space: nowrap; transition: background-color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
+.key-row-action:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 1px; }
+.key-risk-rotate { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--ui-warning) 45%, transparent); color: color-mix(in srgb, var(--ui-warning) 90%, var(--ui-text)); font-size: 11px; line-height: 16px; white-space: nowrap; transition: background-color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
+@media (pointer: coarse) {
+  .key-row-action {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
 /* 触屏设备的 :hover 会粘在最后点过的按钮上；悬停反馈只在指针设备生效。 */
 @media (hover: hover) and (pointer: fine) {
   .key-row-action:hover { background: var(--ui-bg-elevated); color: var(--ui-text-highlighted); }
   .key-row-action--danger:hover { background: color-mix(in srgb, var(--ui-error) 10%, transparent); color: var(--ui-error); }
   .key-risk-rotate:hover { background: color-mix(in srgb, var(--ui-warning) 12%, transparent); color: var(--ui-warning); }
 }
-.key-risk-rotate:focus-visible { outline: 2px solid var(--ui-border-inverted); outline-offset: 1px; }
+.key-risk-rotate:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 1px; }
 .key-risk-rotate:disabled { opacity: 0.6; cursor: progress; }
 @media (prefers-reduced-motion: reduce) { .key-risk-rotate { transition: none; } }
 @media (prefers-reduced-motion: reduce) { .key-row-action { transition: none; } }

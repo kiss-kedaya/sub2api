@@ -2,7 +2,7 @@
   <div
     ref="containerRef"
     class="filter-menu relative"
-    :class="compact ? 'min-w-26 sm:min-w-29' : 'min-w-[150px] sm:min-w-[160px]'"
+    :class="compact ? 'is-compact min-w-26 sm:min-w-29' : 'min-w-[150px] sm:min-w-[160px]'"
   >
     <button
       ref="triggerRef"
@@ -19,11 +19,11 @@
     >
       <span
         class="select-value min-w-0 truncate"
-        :class="compact ? 'max-w-22 sm:max-w-26' : 'max-w-44'"
+        :class="compact ? 'max-w-22 sm:max-w-26' : 'max-w-full sm:max-w-44'"
       >
         {{ t('channelMonitorV2.filters.labelValue', { label, value: selectionLabel }) }}
       </span>
-      <span class="select-icon shrink-0 text-gray-400 transition-transform" :class="isOpen ? 'rotate-180' : ''">
+      <span class="select-icon shrink-0 text-dimmed transition-transform motion-reduce:transition-none" :class="isOpen ? 'rotate-180' : ''">
         <Icon name="chevronDown" size="sm" />
       </span>
     </button>
@@ -43,11 +43,11 @@
         >
           <button
             type="button"
-            class="dropdown-item select-option select-option-group flex w-full items-center justify-between border-b border-gray-100 px-4 py-2 text-left text-sm font-semibold text-gray-700 hover:bg-gray-100 dark:border-dark-700 dark:text-gray-300 dark:hover:bg-dark-700"
+            class="dropdown-item select-option select-option-group flex w-full items-center justify-between border-b border-muted px-4 py-2 text-left text-sm font-semibold text-default"
             @click="clear"
           >
             <span>{{ allLabel }}</span>
-            <Icon v-if="modelValue.length === 0" name="check" size="sm" class="text-primary-500" />
+            <Icon v-if="modelValue.length === 0" name="check" size="sm" class="text-primary" />
           </button>
 
           <button
@@ -55,23 +55,23 @@
             :key="option.value"
             type="button"
             role="option"
-            class="dropdown-item select-option flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+            class="dropdown-item select-option flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-sm text-default"
             :class="modelValue.includes(option.value) ? 'select-option-selected' : ''"
             :aria-selected="modelValue.includes(option.value)"
             @click="toggle(option.value)"
           >
             <span class="flex min-w-0 flex-1 items-center gap-2">
               <span
-                class="checkbox flex h-4 w-4 items-center justify-center rounded-sm border border-gray-300 bg-white text-primary-500 dark:border-dark-600 dark:bg-dark-900"
-                :class="modelValue.includes(option.value) ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30' : ''"
+                class="checkbox flex h-4 w-4 items-center justify-center rounded-sm border border-accented bg-default text-primary"
+                :class="modelValue.includes(option.value) ? 'border-primary bg-primary/10' : ''"
               >
-                <Icon v-if="modelValue.includes(option.value)" name="check" size="sm" class="text-primary-500" />
+                <Icon v-if="modelValue.includes(option.value)" name="check" size="sm" class="text-primary" />
               </span>
               <span class="min-w-0 flex-1 truncate">{{ option.label }}</span>
             </span>
-            <small v-if="option.count != null" class="text-xs text-gray-400">{{ formatCount(option.count) }}</small>
+            <small v-if="option.count != null" class="text-xs tabular-nums text-dimmed">{{ formatCount(option.count) }}</small>
           </button>
-          <p v-if="options.length === 0" class="px-4 py-3 text-center text-xs text-gray-400">{{ t('channelMonitorV2.filters.empty') }}</p>
+          <p v-if="options.length === 0" class="px-4 py-3 text-center text-xs text-dimmed">{{ t('channelMonitorV2.filters.empty') }}</p>
         </div>
       </Transition>
     </Teleport>
@@ -235,38 +235,57 @@ onBeforeUnmount(() => {
 .select-trigger {
   @apply flex w-full items-center justify-between gap-2;
   @apply rounded-xl px-4 py-2.5 text-sm;
-  @apply bg-white dark:bg-dark-800;
-  @apply border border-gray-200 dark:border-dark-600;
-  @apply text-gray-900 dark:text-gray-100;
+  @apply bg-default;
+  @apply border border-default;
+  @apply text-highlighted;
   @apply transition-colors duration-200;
-  @apply focus:border-primary-500 focus:outline-hidden focus:ring-2 focus:ring-primary-500/30;
-  @apply hover:border-gray-300 dark:hover:border-dark-500;
+  @apply focus:border-primary focus:outline-hidden focus:ring-2 focus:ring-primary/30;
   @apply cursor-pointer;
 }
 
 .select-trigger-open {
-  @apply border-primary-500 ring-2 ring-primary-500/30;
-}
-
-.filter-menu summary::-webkit-details-marker {
-  display: none;
+  @apply border-primary ring-2 ring-primary/30;
 }
 
 .filter-dropdown {
-  @apply w-max min-w-[200px] max-h-[min(50vh,360px)] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg dark:border-dark-600 dark:bg-dark-800;
+  @apply w-max min-w-[200px] max-h-[min(50dvh,360px)] overflow-y-auto rounded-xl border border-default bg-default shadow-lg;
 }
 
 .dropdown-item {
   @apply cursor-pointer;
+  transition: background-color 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .select-trigger:hover {
+    border-color: var(--ui-border-accented);
+  }
+
+  .dropdown-item:hover {
+    background-color: var(--ui-bg-elevated);
+  }
 }
 
 .checkbox {
   flex: none;
 }
 
+@media (pointer: coarse), (max-width: 639px) {
+  .filter-menu:not(.is-compact) .select-trigger {
+    min-height: 44px;
+  }
+}
+
 @media (max-width: 640px) {
-  .filter-menu {
+  .filter-menu:not(.is-compact) {
     min-width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .select-trigger,
+  .dropdown-item {
+    transition: none;
   }
 }
 </style>

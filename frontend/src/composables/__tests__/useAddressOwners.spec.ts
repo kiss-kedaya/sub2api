@@ -177,4 +177,18 @@ describe('useAddressOwners', () => {
     await flushPromises()
     expect(ownerOf(address(2))).toBeTruthy()
   })
+
+  it('does not re-trigger getAddressOwners when replaced with a fresh array of identical addresses', async () => {
+    const list = ref<string[]>([address(1)])
+    use(list)
+    await flushPromises()
+    expect(mocks.getAddressOwners).toHaveBeenCalledTimes(1)
+
+    // Clear cache before replacing with an identical new array instance so we
+    // verify the watcher itself did not re-fire (not merely the cache hit).
+    clearAddressOwnerCache()
+    list.value = [address(1)]
+    await flushPromises()
+    expect(mocks.getAddressOwners).toHaveBeenCalledTimes(1)
+  })
 })

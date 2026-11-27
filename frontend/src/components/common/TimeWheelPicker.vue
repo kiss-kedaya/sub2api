@@ -1,6 +1,6 @@
 <template>
   <div class="relative">
-    <UPopover v-model:open="open" :content="{ align: 'start' }">
+    <UPopover v-model:open="open" :content="{ align: 'start' }" :ui="{ content: 'z-50' }">
       <UButton
         color="neutral"
         variant="outline"
@@ -19,7 +19,7 @@
         <!-- iOS-style wheel: two snapping columns, the selected row centred. -->
         <div class="w-44 p-2" data-test="time-wheel-panel">
           <div class="flex gap-1">
-            <div ref="hourCol" class="max-h-40 flex-1 snap-y snap-mandatory overflow-y-auto">
+            <div ref="hourCol" class="max-h-40 flex-1 snap-y snap-mandatory overflow-y-auto overscroll-contain">
               <UButton
                 v-for="h in 24"
                 :key="h"
@@ -34,7 +34,7 @@
                 {{ pad(h - 1) }}
               </UButton>
             </div>
-            <div ref="minuteCol" class="max-h-40 flex-1 snap-y snap-mandatory overflow-y-auto">
+            <div ref="minuteCol" class="max-h-40 flex-1 snap-y snap-mandatory overflow-y-auto overscroll-contain">
               <UButton
                 v-for="m in minuteOptions"
                 :key="m"
@@ -51,7 +51,14 @@
             </div>
           </div>
           <div class="mt-2 flex justify-end">
-            <UButton color="primary" variant="link" size="xs" :label="doneLabel" @click="open = false" />
+            <UButton
+              color="primary"
+              variant="link"
+              size="xs"
+              class="[@media(pointer:coarse)]:min-h-11"
+              :label="doneLabel"
+              @click="open = false"
+            />
           </div>
         </div>
       </template>

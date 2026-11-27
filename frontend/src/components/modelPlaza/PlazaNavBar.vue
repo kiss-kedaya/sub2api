@@ -1,9 +1,9 @@
 <template>
   <header class="plaza-public-nav">
     <div class="plaza-public-nav-inner">
-      <RouterLink to="/home" class="flex min-w-0 items-center gap-3 transition-opacity hover:opacity-85">
+      <RouterLink to="/home" class="plaza-public-brand flex min-w-0 items-center gap-3 transition-opacity">
         <template v-if="settings">
-          <span class="plaza-public-logo">
+          <span class="plaza-public-logo rounded-lg">
             <img :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
           </span>
           <span class="truncate text-base font-semibold">
@@ -11,8 +11,8 @@
           </span>
         </template>
         <template v-else>
-          <span class="h-9 w-9 flex-shrink-0 animate-pulse rounded-lg bg-(--signal-inset,#ededf2)" aria-hidden="true"></span>
-          <span class="h-5 w-28 animate-pulse rounded-sm bg-(--signal-inset,#ededf2)" aria-hidden="true"></span>
+          <span class="h-9 w-9 shrink-0 animate-pulse motion-reduce:animate-none rounded-lg bg-elevated" aria-hidden="true"></span>
+          <span class="h-5 w-28 animate-pulse motion-reduce:animate-none rounded-sm bg-elevated" aria-hidden="true"></span>
         </template>
       </RouterLink>
 
@@ -26,14 +26,14 @@
         <RouterLink
           v-if="isAuthenticated"
           :to="backTarget"
-          class="btn btn-primary"
+          class="btn btn-primary min-h-11 sm:min-h-0"
         >
           {{ t('modelPlaza.nav.backToDashboard') }}
         </RouterLink>
         <RouterLink
           v-else
           :to="{ path: '/login', query: { redirect: '/model-plaza' } }"
-          class="btn btn-primary"
+          class="btn btn-primary min-h-11 sm:min-h-0"
         >
           {{ t('modelPlaza.nav.login') }}
         </RouterLink>
@@ -66,7 +66,7 @@ const backTarget = computed(() => (authStore.isAdmin ? '/admin/dashboard' : '/da
 .plaza-public-nav {
   position: sticky;
   top: 0;
-  z-index: 30;
+  z-index: 40;
   background: var(--signal-surface, #ffffff);
   border-bottom: 1px solid var(--signal-line, #dedee4);
   color: var(--signal-text, #1c1c1e);
@@ -91,8 +91,13 @@ const backTarget = computed(() => (authStore.isAdmin ? '/admin/dashboard' : '/da
   height: 36px;
   overflow: hidden;
   border: 1px solid var(--signal-line, #dedee4);
-  border-radius: 8px;
   background: var(--signal-surface, #ffffff);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .plaza-public-brand:hover {
+    opacity: 0.85;
+  }
 }
 
 @media (min-width: 640px) {

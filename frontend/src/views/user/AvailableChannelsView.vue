@@ -11,31 +11,35 @@
         </template>
 
         <template #filters>
-          <div class="signal-channel-filterbar flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-            <div class="flex flex-1 flex-wrap items-center gap-3">
+          <div class="signal-channel-filterbar flex items-center justify-between gap-3 lg:items-start">
+            <div class="flex min-w-0 flex-1 flex-wrap items-center gap-3">
               <div class="relative w-full sm:w-80">
                 <Icon
                   name="search"
                   size="md"
-                  class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500"
+                  class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-dimmed"
                 />
                 <input
                   v-model="searchQuery"
                   type="text"
+                  autocapitalize="none"
+                  enterkeyhint="search"
                   :placeholder="t('availableChannels.searchPlaceholder')"
                   class="input pl-10"
                 />
               </div>
             </div>
 
-            <div class="flex w-full flex-shrink-0 flex-wrap items-center justify-end gap-3 lg:w-auto">
+            <div class="flex shrink-0 items-center justify-end gap-3">
               <button
+                type="button"
                 @click="loadChannels"
                 :disabled="loading"
-                class="btn btn-secondary"
+                class="btn btn-secondary min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
                 :title="t('common.refresh', 'Refresh')"
+                :aria-label="t('common.refresh', 'Refresh')"
               >
-                <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
+                <Icon name="refresh" size="md" :class="loading ? 'animate-spin motion-reduce:animate-none' : ''" />
               </button>
             </div>
           </div>

@@ -61,7 +61,7 @@ describe('ChannelMonitorV3Timeline unknown bars', () => {
       },
     })
     const bar = wrapper.get('.v3-soft-glass-bar')
-    expect(bar.classes()).toContain('bg-gray-300')
+    expect(bar.classes()).toContain('bg-accented')
     expect(bar.classes()).not.toContain('bg-gray-950')
   })
 
@@ -153,7 +153,7 @@ describe('ChannelMonitorV3Timeline black cache bars', () => {
       props: { buckets: [bucketWithCache('unknown', 0)], countdownSeconds: 0, length: 1 },
     })
     const bar = wrapper.get('.v3-soft-glass-bar')
-    expect(bar.classes()).toContain('bg-gray-300')
+    expect(bar.classes()).toContain('bg-accented')
     expect(bar.classes()).not.toContain('bg-black')
     wrapper.unmount()
   })
@@ -242,7 +242,7 @@ describe('ChannelMonitorV3Timeline time alignment', () => {
     expect(wrapper.get('.v3-soft-glass-bar').classes()).toContain('bg-gray-950')
   })
 
-  it('uses slot indices for focus, tooltips, neighbors and animation delays', async () => {
+  it('uses slot indices for focus, tooltips, and neighbors without mount animation delay', async () => {
     const wrapper = mountTimeline(Array.from({ length: 5 }, (_, index) => recentBucket(index)))
     const slots = wrapper.findAll('.v3-bar-slot')
     await slots[0].trigger('mouseenter')
@@ -250,7 +250,7 @@ describe('ChannelMonitorV3Timeline time alignment', () => {
     await slots[13].get('button').trigger('focus')
     expect(slots[13].get('button').classes()).toContain('is-active')
     expect(slots[14].get('button').classes()).toContain('is-neighbor')
-    expect(slots[13].get('.v3-soft-glass-bar').attributes('style')).toContain('animation-delay: 234ms')
+    expect(slots[13].get('.v3-soft-glass-bar').attributes('style')).not.toContain('animation-delay')
     expect(wrapper.get('[role="tooltip"]').text()).toBe(slots[13].get('button').attributes('aria-label'))
     await slots[13].get('button').trigger('blur')
     expect(wrapper.find('[role="tooltip"]').exists()).toBe(false)

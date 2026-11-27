@@ -17,7 +17,7 @@
         </template>
         <template v-else>
           <div class="timeline-marker" aria-hidden="true"><Icon :name="message.author_role === 'admin' ? 'shield' : 'user'" size="sm" /></div>
-          <article class="timeline-message">
+          <article class="timeline-message rounded-lg">
             <div class="timeline-author">
               <strong>{{ author(message) }}</strong>
               <span>{{ t(message.author_role === 'admin' ? 'tickets.admin' : 'tickets.user') }}</span>
@@ -173,10 +173,10 @@ defineExpose({ scrollToBottom, capturePosition, restorePosition })
 .timeline-older { position: relative; z-index: 1; text-align: center; margin: 0 0 18px; }
 .ticket-timeline { position: relative; display: flex; flex-direction: column; gap: 22px; margin: 4px 0 0; padding: 0; list-style: none; }
 .ticket-timeline::before { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--signal-line); }
-.timeline-entry { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 38px minmax(0, 1fr); align-items: start; animation: ticket-entry-in 180ms ease-out; }
+.timeline-entry { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 38px minmax(0, 1fr); align-items: start; animation: ticket-entry-in 180ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .timeline-marker { grid-column: 2; grid-row: 1; justify-self: center; display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--signal-line); border-radius: 50%; background: var(--signal-surface); color: var(--signal-muted); box-shadow: 0 0 0 5px var(--signal-bg); margin-top: 8px; }
 .timeline-self .timeline-marker { color: var(--signal-accent); border-color: var(--signal-accent); }
-.timeline-message { grid-row: 1; grid-column: 1; min-width: 0; padding: 14px; border: 1px solid var(--signal-line); border-radius: 8px; background: var(--signal-surface); box-shadow: 0 1px 2px #00000004; }
+.timeline-message { grid-row: 1; grid-column: 1; min-width: 0; padding: 14px; border: 1px solid var(--signal-line); background: var(--signal-surface); box-shadow: 0 1px 2px #00000004; }
 .timeline-self .timeline-message { grid-column: 3; background: var(--signal-accent-soft); border-color: color-mix(in srgb, var(--signal-accent) 22%, var(--signal-line)); }
 .timeline-author { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-bottom: 8px; overflow-wrap: anywhere; }
 .timeline-author strong { font-size: 12px; font-weight: 600; }
@@ -188,7 +188,8 @@ defineExpose({ scrollToBottom, capturePosition, restorePosition })
 .timeline-event-label { max-width: 92%; padding: 5px 10px; background: var(--signal-bg); color: var(--signal-muted); font-size: 11px; overflow-wrap: anywhere; }
 .timeline-event time { padding-inline: 8px; background: var(--signal-bg); }
 @keyframes ticket-entry-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-@media (prefers-reduced-motion: reduce) { .timeline-entry { animation: none; } }
+@keyframes ticket-entry-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .timeline-entry { animation: ticket-entry-fade 120ms ease; } }
 @media (max-width: 640px) {
   .ticket-timeline-scroll { padding: 0 10px 20px; }
   .timeline-entry { grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr); }

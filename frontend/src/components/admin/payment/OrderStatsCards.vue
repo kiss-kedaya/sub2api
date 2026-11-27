@@ -53,22 +53,22 @@ const cards = computed<StatCard[]>(() => [
     key: 'today-revenue',
     icon: 'i-lucide-circle-dollar-sign',
     title: t('payment.admin.todayRevenue'),
-    amounts: props.stats.today_amount,
-    hint: `${props.stats.today_count} ${t('payment.admin.orders')}`
+    amounts: props.stats?.today_amount ?? {},
+    hint: `${props.stats?.today_count ?? 0} ${t('payment.admin.orders')}`
   },
   {
     key: 'total-revenue',
     icon: 'i-lucide-credit-card',
     title: t('payment.admin.totalRevenue'),
-    amounts: props.stats.total_amount,
-    hint: `${props.stats.total_count} ${t('payment.admin.orders')}`
+    amounts: props.stats?.total_amount ?? {},
+    hint: `${props.stats?.total_count ?? 0} ${t('payment.admin.orders')}`
   },
-  { key: 'today-orders', icon: 'i-lucide-shopping-bag', title: t('payment.admin.todayOrders'), value: props.stats.today_count },
-  { key: 'avg-amount', icon: 'i-lucide-calculator', title: t('payment.admin.avgAmount'), amounts: props.stats.avg_amount }
+  { key: 'today-orders', icon: 'i-lucide-shopping-bag', title: t('payment.admin.todayOrders'), value: props.stats?.today_count ?? 0 },
+  { key: 'avg-amount', icon: 'i-lucide-calculator', title: t('payment.admin.avgAmount'), amounts: props.stats?.avg_amount ?? {} }
 ])
 
-function sortedAmounts(amounts: CurrencyAmounts): [string, number][] {
-  return Object.entries(amounts).sort(([left], [right]) => left.localeCompare(right))
+function sortedAmounts(amounts?: CurrencyAmounts | null): [string, number][] {
+  return Object.entries(amounts ?? {}).sort(([left], [right]) => left.localeCompare(right))
 }
 
 function formatMoney(currency: string, amount: number): string {

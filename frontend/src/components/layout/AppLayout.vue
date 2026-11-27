@@ -114,12 +114,8 @@ defineExpose({ replayTour })
 }
 
 /* Sticky offsets that pages wrote for the old window scroll (under a 64px header). The panel
-   body scrolls directly below the navbar now, so sticky toolbars seal at top: 0 while the
-   payment summary card keeps breathing room matching .signal-main's top inset. */
-.console-frame .signal-main .settings-tabs-shell {
-  top: 0;
-}
-
+   body scrolls directly below the navbar now, so the payment summary card keeps breathing room
+   matching .signal-main's top inset. */
 .console-frame .signal-main .pay-summary {
   top: 1rem;
 }

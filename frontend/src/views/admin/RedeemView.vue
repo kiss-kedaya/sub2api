@@ -137,11 +137,11 @@
           </template>
 
           <template #cell-used_at="{ value }">
-            <span class="text-muted">{{ value ? formatDateTime(value) : '-' }}</span>
+            <span class="tabular-nums text-muted">{{ value ? formatDateTime(value) : '-' }}</span>
           </template>
 
           <template #cell-expires_at="{ value, row }">
-            <span :class="row.status === 'expired' ? 'text-error' : 'text-muted'">
+            <span class="tabular-nums" :class="row.status === 'expired' ? 'text-error' : 'text-muted'">
               {{ value ? formatDateTime(value) : t('admin.redeem.neverExpires') }}
             </span>
           </template>

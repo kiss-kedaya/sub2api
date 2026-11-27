@@ -23,21 +23,21 @@
         >
           <section class="card deposit-view__funding">
             <div class="mb-4 flex items-center justify-between gap-3">
-              <div class="h-5 w-40 animate-pulse rounded bg-elevated/60"></div>
-              <div class="h-8 w-24 animate-pulse rounded bg-elevated/60"></div>
+              <div class="h-5 w-40 animate-pulse rounded bg-elevated/60 motion-reduce:animate-none"></div>
+              <div class="h-8 w-24 animate-pulse rounded bg-elevated/60 motion-reduce:animate-none"></div>
             </div>
             <div class="grid grid-cols-2 gap-2">
-              <div v-for="i in 4" :key="i" class="h-14 animate-pulse rounded-md bg-elevated/60"></div>
+              <div v-for="i in 4" :key="i" class="h-14 animate-pulse rounded-md bg-elevated/60 motion-reduce:animate-none"></div>
             </div>
-            <div class="mt-5 h-40 animate-pulse rounded-md bg-elevated/60 sm:h-48"></div>
-            <div class="mt-4 h-10 animate-pulse rounded-md bg-elevated/60"></div>
+            <div class="mt-5 h-40 animate-pulse rounded-md bg-elevated/60 motion-reduce:animate-none sm:h-48"></div>
+            <div class="mt-4 h-10 animate-pulse rounded-md bg-elevated/60 motion-reduce:animate-none"></div>
           </section>
           <aside class="card deposit-view__guide">
-            <div class="h-5 w-28 animate-pulse rounded bg-elevated/60"></div>
-            <div class="mt-3 h-4 w-full animate-pulse rounded bg-elevated/60"></div>
-            <div class="mt-2 h-4 w-2/3 animate-pulse rounded bg-elevated/60"></div>
+            <div class="h-5 w-28 animate-pulse rounded bg-elevated/60 motion-reduce:animate-none"></div>
+            <div class="mt-3 h-4 w-full animate-pulse rounded bg-elevated/60 motion-reduce:animate-none"></div>
+            <div class="mt-2 h-4 w-2/3 animate-pulse rounded bg-elevated/60 motion-reduce:animate-none"></div>
             <div class="mt-5 space-y-3">
-              <div v-for="i in 3" :key="i" class="h-12 animate-pulse rounded-md bg-elevated/60"></div>
+              <div v-for="i in 3" :key="i" class="h-12 animate-pulse rounded-md bg-elevated/60 motion-reduce:animate-none"></div>
             </div>
           </aside>
         </div>
@@ -76,11 +76,11 @@
                 <span v-if="c.eta" class="deposit-view__chain-eta">{{ c.eta }}</span>
               </button>
             </div>
-            <div v-if="current && etaNotice" class="deposit-view__eta-notice" role="status">
+            <div v-if="current && etaNotice" class="deposit-view__eta-notice rounded-lg" role="status">
               <span class="deposit-view__eta-mark" aria-hidden="true">i</span>
               <p>{{ etaNotice }}</p>
             </div>
-            <div v-if="current && selectedNetworkNotice" class="deposit-view__network-notice" role="status">
+            <div v-if="current && selectedNetworkNotice" class="deposit-view__network-notice rounded-lg" role="status">
               <span class="deposit-view__notice-mark" aria-hidden="true">!</span>
               <p>{{ t('deposit.networkStatusHint.' + selectedNetworkNotice, { network: chainLabel(current.chain) }) }}</p>
             </div>
@@ -97,11 +97,11 @@
               <div class="deposit-view__section-head deposit-view__section-head--address">
                 <span class="deposit-view__step">02</span>
                 <h2>{{ t('deposit.transferToAddress') }}</h2>
-                <span v-for="tk in current.tokens" :key="tk" class="deposit-view__token">{{ tk }}</span>
+                <span v-for="tk in current.tokens" :key="tk" class="deposit-view__token rounded-md">{{ tk }}</span>
               </div>
               <div class="deposit-view__address-block">
                 <div class="deposit-view__qr-wrap">
-                  <div class="deposit-view__qr">
+                  <div class="deposit-view__qr rounded-lg">
                     <canvas v-show="!qrError" ref="qrCanvas" role="img" :aria-label="t('deposit.qrLabel')"></canvas>
                     <span v-if="qrError">{{ t('deposit.qrFailed') }}</span>
                   </div>
@@ -109,14 +109,14 @@
                 </div>
                 <div class="deposit-view__address-info">
                   <span class="deposit-view__label">{{ t('deposit.yourAddress') }} · {{ chainLabel(current.chain) }}</span>
-                  <code class="deposit-view__address">{{ current.address }}</code>
+                  <code class="deposit-view__address rounded-md">{{ current.address }}</code>
                   <button type="button" class="btn btn-primary deposit-view__copy" @click="copyAddress">
                     {{ copied ? t('deposit.copied') : t('deposit.copyAddress') }}
                   </button>
                   <p class="deposit-view__copy-status" role="status" aria-live="polite">{{ copyError ? t('deposit.copyFailed') : t('deposit.exclusiveNotice') }}</p>
                 </div>
               </div>
-              <div class="deposit-view__notice">
+              <div class="deposit-view__notice rounded-lg">
                 <span class="deposit-view__notice-mark" aria-hidden="true">!</span>
                 <p v-if="selectedOption?.native">
                   {{ t('deposit.nativeNotice', { network: nativeNetworkLabel(current.chain), asset: selectedOption.symbol }) }}
@@ -151,10 +151,10 @@
             <p v-if="selectedMarketPriced && referencePrice" class="deposit-view__reference">
               {{ t('deposit.referencePrice', { price: '$' + referencePrice }) }}
             </p>
-            <p v-if="selectedInstantCredit" class="deposit-view__instant-rule" data-testid="deposit-instant-credit-rule">
+            <p v-if="selectedInstantCredit" class="deposit-view__instant-rule rounded-lg" data-testid="deposit-instant-credit-rule">
               {{ t('deposit.instantCreditRule') }}
             </p>
-            <div class="deposit-view__confirmation">
+            <div class="deposit-view__confirmation rounded-lg">
               <span class="deposit-view__confirmation-dot" aria-hidden="true"></span>
               <div><strong>{{ t('deposit.autoCredit') }}</strong><p>{{ t('deposit.confirmationHint') }}</p></div>
             </div>
@@ -197,7 +197,7 @@
 
           <template v-if="historyError || history.length || pendingRows.length" #toolbar>
             <div class="deposit-view__toolbar">
-              <p v-if="historyError" class="deposit-view__history-error" role="alert">{{ t('deposit.historyFailed') }}</p>
+              <p v-if="historyError" class="deposit-view__history-error rounded-lg" role="alert">{{ t('deposit.historyFailed') }}</p>
               <!-- 本地筛选：只重排已加载的记录，不重新请求、不影响后台静默检测。 -->
               <DepositHistoryFilters v-if="history.length" v-model:status="statusFilter" v-model:range="timeRange" />
               <div v-if="(history.length && filtersActive) || history.length >= HISTORY_PAGE_LIMIT" class="deposit-view__filter-notes">
@@ -209,7 +209,7 @@
                   {{ t('deposit.historyLimitHint', { n: history.length }) }}
                 </p>
               </div>
-              <div v-if="pendingRows.length" class="deposit-view__pending" role="status">
+              <div v-if="pendingRows.length" class="deposit-view__pending rounded-lg" role="status">
                 <span class="deposit-view__pending-dot" aria-hidden="true"></span>
                 <div class="deposit-view__pending-body">
                   <strong>{{ t('deposit.pendingSummary', { n: pendingRows.length }) }}</strong>
@@ -228,7 +228,7 @@
             <div v-if="hasRowDetails(item.row)" class="deposit-view__details">
               <div
                 v-if="hasRowCallout(item.row)"
-                class="deposit-view__callout"
+                class="deposit-view__callout rounded-md"
                 :class="rowCalloutClass(item.row)"
               >
                 <span v-if="creditUnderReview(item.row)" class="deposit-view__status" data-testid="deposit-credit-under-review">{{ statusLabel(item.row) }}</span>
@@ -257,11 +257,11 @@
                 </div>
                 <span v-if="item.progress" class="deposit-view__progress-track" role="progressbar" aria-valuemin="0"
                   :aria-valuemax="item.progress.required" :aria-valuenow="item.progress.done" :aria-label="progressText(item.row, item.progress)">
-                  <span class="deposit-view__progress-fill" :style="{ width: item.progress.percent + '%' }"></span>
+                  <span class="deposit-view__progress-fill" :style="{ transform: `scaleX(${Number.isFinite(item.progress.percent) ? Math.max(0, Math.min(1, item.progress.percent / 100)) : 0})` }"></span>
                 </span>
               </div>
               <div v-if="item.row.tx_hash" class="deposit-view__transaction">
-                <div class="deposit-view__hash-row">
+                <div class="deposit-view__hash-row rounded-md">
                   <template v-if="explorerTxURL(item.row.chain, item.row.tx_hash)">
                     <a :href="explorerTxURL(item.row.chain, item.row.tx_hash)"
                       target="_blank" rel="noopener noreferrer" class="deposit-view__hash"
@@ -1055,7 +1055,7 @@ onUnmounted(() => {
 .deposit-view__section-head--address { padding-top: 1.25rem; margin-top: 1.5rem; border-top: 1px solid var(--signal-line, var(--ui-border)); }
 .deposit-view__step { color: var(--signal-muted, var(--ui-text-muted)); font: .75rem ui-monospace, monospace; }
 .deposit-view__chains { display: flex; flex-wrap: wrap; gap: .5rem; }
-.deposit-view__chain { display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: .3rem; min-height: 2.5rem; padding: .55rem .875rem; border: 1px solid var(--ui-border-accented); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
+.deposit-view__chain { display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: .3rem; min-height: 2.5rem; padding: .55rem .875rem; border: 1px solid var(--ui-border-accented); border-radius: 6px; font-size: .8125rem; transition: transform var(--cb-t-fast, 140ms) var(--cb-ease-press, cubic-bezier(0.3, 0, 0.2, 1)), border-color .15s var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), background-color .15s var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .deposit-view__chain:focus-visible { outline: 2px solid var(--signal-accent, var(--ui-primary)); outline-offset: 2px; }
 .deposit-view__chain--active { border-color: var(--signal-accent, var(--ui-primary)); background: var(--signal-accent-soft, color-mix(in oklab, var(--ui-primary) 10%, transparent)); font-weight: 600; }
 .deposit-view__chain-head { display: inline-flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
@@ -1067,10 +1067,10 @@ onUnmounted(() => {
 .deposit-view__eta-mark { display: grid; place-items: center; width: 1rem; height: 1rem; flex-shrink: 0; margin-top: .15rem; border: 1px solid var(--signal-accent, var(--ui-primary)); border-radius: 50%; color: var(--signal-accent, var(--ui-primary)); font-size: .6875rem; font-weight: 700; }
 .deposit-view__instant-rule { margin-top: .75rem; padding: .625rem .75rem; border: 1px solid color-mix(in oklab, var(--signal-accent, var(--ui-primary)) 24%, transparent); border-radius: .5rem; background: color-mix(in oklab, var(--signal-accent, var(--ui-primary)) 6%, transparent); color: var(--signal-muted, var(--ui-text-muted)); font-size: .75rem; line-height: 1.7; }
 .deposit-view__assets { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
-.deposit-view__asset { display: inline-flex; align-items: center; justify-content: center; min-height: 2.25rem; padding: .45rem .75rem; border: 1px solid var(--ui-border); border-radius: 6px; font-size: .8125rem; transition: border-color .15s, background .15s; }
+.deposit-view__asset { display: inline-flex; align-items: center; justify-content: center; min-height: 2.25rem; padding: .45rem .75rem; border: 1px solid var(--ui-border); border-radius: 6px; font-size: .8125rem; transition: transform var(--cb-t-fast, 140ms) var(--cb-ease-press, cubic-bezier(0.3, 0, 0.2, 1)), border-color .15s var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), background-color .15s var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .deposit-view__asset:focus-visible { outline: 2px solid var(--signal-accent, var(--ui-primary)); outline-offset: 2px; }
 .deposit-view__asset--active { border-color: var(--signal-accent, var(--ui-primary)); background: var(--signal-accent-soft, color-mix(in oklab, var(--ui-primary) 10%, transparent)); font-weight: 600; }
-.deposit-view__token { padding: .15rem .5rem; border-radius: .375rem; border: 1px solid #10b98145; background: #10b98112; color: #10b981; font-size: .6875rem; font-weight: 600; }
+.deposit-view__token { padding: .15rem .5rem; border-radius: .375rem; border: 1px solid color-mix(in oklab, var(--app-amount-positive) 28%, transparent); background: color-mix(in oklab, var(--app-amount-positive) 12%, transparent); color: var(--app-amount-positive); font-size: .6875rem; font-weight: 600; }
 .deposit-view__address-block { display: grid; grid-template-columns: 12.5rem minmax(0, 1fr); gap: 1.25rem; align-items: start; }
 .deposit-view__qr-wrap { text-align: center; }
 .deposit-view__qr { width: 12.5rem; min-height: 12.5rem; display: grid; place-items: center; border: 1px solid #e5e5e5; border-radius: 8px; background: white; color: #334155; overflow: hidden; }
@@ -1090,9 +1090,9 @@ onUnmounted(() => {
 .deposit-view__terms dd { margin-top: .5rem; font-size: 1.1875rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .deposit-view__terms dd span { font-size: .8125rem; font-weight: 400; }
 .deposit-view__terms dd.deposit-view__settlement { font-size: .9375rem; line-height: 1.55; font-weight: 600; }
-.deposit-view__reference { margin-top: .75rem; color: var(--signal-muted, var(--ui-text-muted)); font-size: .75rem; line-height: 1.6; }
-.deposit-view__confirmation { display: flex; align-items: flex-start; gap: .625rem; margin-top: .5rem; padding: 1rem; border-radius: .5rem; background: #10b9810d; }
-.deposit-view__confirmation-dot { width: .375rem; height: .375rem; flex-shrink: 0; margin-top: .4rem; background: #10b981; border-radius: 50%; }
+.deposit-view__reference { margin-top: .75rem; color: var(--signal-muted, var(--ui-text-muted)); font-size: .75rem; font-variant-numeric: tabular-nums; line-height: 1.6; }
+.deposit-view__confirmation { display: flex; align-items: flex-start; gap: .625rem; margin-top: .5rem; padding: 1rem; border-radius: .5rem; background: color-mix(in oklab, var(--app-amount-positive) 7%, transparent); }
+.deposit-view__confirmation-dot { width: .375rem; height: .375rem; flex-shrink: 0; margin-top: .4rem; background: var(--app-amount-positive); border-radius: 50%; }
 .deposit-view__confirmation strong { font-size: .8125rem; font-weight: 600; }
 .deposit-view__confirmation p { margin-top: .4rem; color: var(--signal-muted, var(--ui-text-muted)); font-size: .75rem; line-height: 1.7; }
 
@@ -1105,7 +1105,7 @@ onUnmounted(() => {
 .deposit-view__history-error { margin: 0; padding: .5rem .75rem; border: 1px solid color-mix(in oklab, var(--signal-amber, #d97706) 35%, transparent); border-radius: .5rem; background: color-mix(in oklab, var(--signal-amber, #d97706) 8%, transparent); color: var(--signal-amber, #b45309); font-size: .8125rem; line-height: 1.55; }
 
 .deposit-view__pending { display: flex; align-items: center; gap: .625rem; min-width: 0; padding: .625rem .875rem; border: 1px solid color-mix(in oklab, #d97706 30%, var(--ui-border)); border-radius: .5rem; background: color-mix(in oklab, #d97706 7%, var(--ui-bg)); font-size: .8125rem; line-height: 1.55; }
-.deposit-view__pending-dot { width: .5rem; height: .5rem; flex-shrink: 0; border-radius: 50%; background: #d97706; box-shadow: 0 0 0 3px color-mix(in oklab, #d97706 20%, transparent); animation: deposit-view-pulse 1.8s ease-in-out infinite; }
+.deposit-view__pending-dot { width: .5rem; height: .5rem; flex-shrink: 0; border-radius: 50%; background: #d97706; box-shadow: 0 0 0 3px color-mix(in oklab, #d97706 20%, transparent); animation: deposit-view-pulse 1.8s var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)) infinite; }
 .deposit-view__pending-body { min-width: 0; flex: 1 1 auto; display: flex; flex-wrap: wrap; align-items: center; gap: .375rem .75rem; }
 .deposit-view__pending-body strong { font-size: .8125rem; font-weight: 600; color: var(--ui-text-highlighted); }
 .deposit-view__pending-list { display: flex; flex-wrap: wrap; gap: .375rem; margin: 0; padding: 0; list-style: none; font-variant-numeric: tabular-nums; }
@@ -1120,10 +1120,10 @@ onUnmounted(() => {
 .deposit-view__callout--neutral { border-color: var(--ui-border); border-inline-start-color: var(--ui-border-accented); background: var(--ui-bg-muted); }
 
 .deposit-view__transaction { width: 100%; max-width: 100%; }
-.deposit-view__hash-row { display: inline-flex; align-items: center; gap: .25rem; max-width: min(100%, 28rem); padding: .15rem .2rem .15rem .6rem; border: 1px solid var(--ui-border); border-radius: .375rem; background: var(--ui-bg-muted); transition: border-color 140ms ease, background-color 140ms ease; }
+.deposit-view__hash-row { display: inline-flex; align-items: center; gap: .25rem; max-width: min(100%, 28rem); padding: .15rem .2rem .15rem .6rem; border: 1px solid var(--ui-border); border-radius: .375rem; background: var(--ui-bg-muted); transition: border-color 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), background-color 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .deposit-view__hash { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: .75rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ui-text-muted); }
-a.deposit-view__hash { text-decoration: none; transition: color 140ms ease; }
-.deposit-view__hash-ext { width: .75rem; height: .75rem; flex: 0 0 auto; color: var(--ui-text-dimmed); transition: color 140ms ease; pointer-events: none; }
+a.deposit-view__hash { text-decoration: none; transition: color 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
+.deposit-view__hash-ext { width: .75rem; height: .75rem; flex: 0 0 auto; color: var(--ui-text-dimmed); transition: color 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); pointer-events: none; }
 .deposit-view__hash-copy { flex: 0 0 auto; color: var(--ui-text-muted); }
 .deposit-view__hash-copy--done { color: var(--app-amount-positive); }
 
@@ -1142,7 +1142,7 @@ a.deposit-view__hash { text-decoration: none; transition: color 140ms ease; }
 .deposit-view__progress-text { color: var(--ui-text-muted); font-size: .75rem; line-height: 1.45; font-variant-numeric: tabular-nums; }
 .deposit-view__progress-pct { flex: 0 0 auto; color: var(--signal-amber, #b45309); font-size: .6875rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .deposit-view__progress-track { display: block; height: .375rem; border-radius: 999px; background: color-mix(in oklab, #d97706 16%, var(--ui-bg-elevated)); overflow: hidden; }
-.deposit-view__progress-fill { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #d97706, #f59e0b); transition: width .35s cubic-bezier(0.22, 1, 0.36, 1); }
+.deposit-view__progress-fill { display: block; width: 100%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #d97706, #f59e0b); transform-origin: left center; transition: transform 240ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 
 @keyframes deposit-view-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
 .deposit-view__empty { display: flex; flex-direction: column; align-items: center; gap: .75rem; padding: 3rem 1.25rem; text-align: center; font-size: .875rem; }
@@ -1156,6 +1156,11 @@ a.deposit-view__hash { text-decoration: none; transition: color 140ms ease; }
   .deposit-view__chains { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .deposit-view__chain { padding: .65rem .4rem; font-size: .75rem; }
   .deposit-view__assets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .deposit-view__chain,
+  .deposit-view__asset,
+  .deposit-view__network-refresh,
+  .deposit-view__hash-copy { min-height: 2.75rem; }
+  .deposit-view__hash-copy { min-width: 2.75rem; }
   .deposit-view__address-block { grid-template-columns: minmax(0, 1fr); }
   .deposit-view__qr-wrap { justify-self: center; }
   .deposit-view__terms { grid-template-columns: minmax(0, 1fr); gap: 0; }
@@ -1176,7 +1181,15 @@ a.deposit-view__hash { text-decoration: none; transition: color 140ms ease; }
   a.deposit-view__hash:hover { color: var(--ui-primary); text-decoration: underline; text-underline-offset: .15rem; }
   .deposit-view__hash-copy:hover { color: var(--ui-primary); }
 }
-@media (prefers-reduced-motion: reduce) { .deposit-view__chain, .deposit-view__progress-fill { transition: none; } .deposit-view__pending-dot { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .deposit-view__chain,
+  .deposit-view__asset,
+  .deposit-view__hash-row,
+  a.deposit-view__hash,
+  .deposit-view__hash-ext,
+  .deposit-view__progress-fill { transition: none; }
+  .deposit-view__pending-dot { animation: none; }
+}
 </style>
 
 <style>

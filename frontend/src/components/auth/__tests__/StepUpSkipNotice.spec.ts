@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import StepUpSkipNotice from '../StepUpSkipNotice.vue'
@@ -62,5 +63,20 @@ describe('StepUpSkipNotice', () => {
     recordStepUpSkip(9)
     await flushPromises()
     expect(wrapper.find('[data-testid="step-up-skip-notice-text"]').text()).toContain('0:09')
+  })
+
+  it('uses GPU-only ease-out motion, reduced-motion guard, and safe-area bottom inset', async () => {
+    const wrapper = mountNotice()
+    recordStepUpSkip(30)
+    await flushPromises()
+
+    const notice = wrapper.get('[data-testid="step-up-skip-notice"]')
+    expect(notice.classes()).toContain('bottom-[calc(1rem+env(safe-area-inset-bottom,0px))]')
+
+    const sfc = readFileSync('src/components/auth/StepUpSkipNotice.vue', 'utf8')
+    expect(sfc).toContain('enter-active-class="transition-[transform,opacity] duration-200 ease-out"')
+    expect(sfc).toContain('leave-active-class="transition-[transform,opacity] duration-150 ease-out"')
+    expect(sfc).not.toContain('ease-in')
+    expect(sfc).toContain('motion-reduce:translate-y-0')
   })
 })

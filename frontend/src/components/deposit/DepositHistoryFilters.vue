@@ -2,8 +2,8 @@
   <div class="deposit-filters">
     <div class="deposit-filters__group" role="group" :aria-label="t('deposit.filterStatusLabel')">
       <span class="deposit-filters__label">{{ t('deposit.filterStatusLabel') }}</span>
-      <div class="deposit-filters__track">
-        <button v-for="option in statusOptions" :key="option.value" type="button" class="deposit-filters__pill"
+      <div class="deposit-filters__track rounded-lg">
+        <button v-for="option in statusOptions" :key="option.value" type="button" class="deposit-filters__pill rounded-md"
           :class="{ 'deposit-filters__pill--active': status === option.value }"
           :aria-pressed="status === option.value" :data-testid="'deposit-filter-status-' + option.value"
           @click="emit('update:status', option.value)">
@@ -13,8 +13,8 @@
     </div>
     <div class="deposit-filters__group deposit-filters__group--range" role="group" :aria-label="t('deposit.filterTimeLabel')">
       <span class="deposit-filters__label">{{ t('deposit.filterTimeLabel') }}</span>
-      <div class="deposit-filters__track">
-        <button v-for="option in rangeOptions" :key="option.value" type="button" class="deposit-filters__pill"
+      <div class="deposit-filters__track rounded-lg">
+        <button v-for="option in rangeOptions" :key="option.value" type="button" class="deposit-filters__pill rounded-md"
           :class="{ 'deposit-filters__pill--active': range === option.value }"
           :aria-pressed="range === option.value" :data-testid="'deposit-filter-range-' + option.value"
           @click="emit('update:range', option.value)">
@@ -93,7 +93,6 @@ const rangeOptions = DEPOSIT_TIME_RANGES.map(value => ({ value, labelKey: RANGE_
   gap: 0.1875rem;
   padding: 0.1875rem;
   border: 1px solid var(--ui-border);
-  border-radius: 0.5rem;
   background: var(--ui-bg-muted);
 }
 
@@ -101,14 +100,13 @@ const rangeOptions = DEPOSIT_TIME_RANGES.map(value => ({ value, labelKey: RANGE_
   min-height: 1.75rem;
   padding: 0.1875rem 0.65rem;
   border: 1px solid transparent;
-  border-radius: 0.375rem;
   background: transparent;
   color: var(--ui-text-muted);
   font-size: 0.75rem;
   font-weight: 500;
   line-height: 1.25rem;
   cursor: pointer;
-  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+  transition: color 140ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)), background-color 140ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)), border-color 140ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 .deposit-filters__pill:focus-visible {
@@ -144,7 +142,14 @@ const rangeOptions = DEPOSIT_TIME_RANGES.map(value => ({ value, labelKey: RANGE_
   }
 
   .deposit-filters__pill {
-    padding: 0.1875rem 0.5rem;
+    min-height: 2.75rem;
+    padding: 0.1875rem 0.65rem;
+  }
+}
+
+@media (pointer: coarse) {
+  .deposit-filters__pill {
+    min-height: 2.75rem;
   }
 }
 

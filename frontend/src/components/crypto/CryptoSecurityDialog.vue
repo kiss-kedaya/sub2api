@@ -23,7 +23,7 @@
           <UFormField :label="t('admin.crypto.securityOfflineKey')" :help="t('admin.crypto.securityKeyHint')">
             <UInput id="crypto-security-key" :model-value="secret" readonly autocomplete="off" spellcheck="false" class="w-full" :ui="{ base: 'font-mono' }" />
           </UFormField>
-          <p role="timer" class="text-xs text-muted">{{ t('admin.crypto.securityCountdown', { seconds: countdown }) }}</p>
+          <p role="timer" class="text-xs tabular-nums text-muted">{{ t('admin.crypto.securityCountdown', { seconds: countdown }) }}</p>
         </template>
         <div class="space-y-2">
           <label for="crypto-security-code" class="block font-medium text-default">{{ t('admin.crypto.securityCode') }}</label>

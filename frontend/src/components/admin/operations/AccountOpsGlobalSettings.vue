@@ -33,7 +33,7 @@ const { t } = useI18n({ useScope: 'local', messages: accountOpsMessages })
 const draft = reactive({ balance_low: true, weekly_quota: true, cooldown_minutes: 60 })
 const dirty = ref(false), busy = ref(false)
 let alive = true
-watch(() => [props.config.balance_low, props.config.weekly_quota, props.config.cooldown_minutes], () => {
+watch([() => props.config.balance_low, () => props.config.weekly_quota, () => props.config.cooldown_minutes], () => {
   if (!dirty.value && !busy.value) reset(props.config)
 }, { immediate: true })
 function reset(config: AccountOpsConfig) {

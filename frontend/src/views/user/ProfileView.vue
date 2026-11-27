@@ -10,7 +10,7 @@
       <div
         ref="tabsToolbarRef"
         data-testid="profile-tabs-toolbar"
-        class="profile-tabs-toolbar sticky top-0 z-10 flex min-h-12 items-center border-b border-default bg-(--app-page-bg)/90 px-1 backdrop-blur-md"
+        class="profile-tabs-toolbar sticky top-0 z-20 flex min-h-12 items-center border-b border-default bg-(--app-page-bg)/90 px-1 backdrop-blur-md [@media(prefers-reduced-transparency:reduce)]:bg-(--app-page-bg) [@media(prefers-reduced-transparency:reduce)]:backdrop-blur-none"
       >
         <UTabs
           :model-value="activeTab"
@@ -62,7 +62,7 @@
           class="shadow-xs dark:shadow-none"
           :title="t('common.contactSupport')"
           :description="contactInfo"
-          :ui="{ description: 'font-medium break-all' }"
+          :ui="{ description: 'font-medium wrap-anywhere' }"
         />
       </div>
 

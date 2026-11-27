@@ -146,6 +146,7 @@
                   variant="ghost"
                   size="xs"
                   square
+                  class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                   icon="i-lucide-copy"
                   :title="t('admin.proxies.copyProxyUrl')"
                   :aria-label="t('admin.proxies.copyProxyUrl')"
@@ -169,6 +170,7 @@
                 variant="ghost"
                 size="xs"
                 square
+                class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                 :icon="visiblePasswordIds.has(row.id) ? 'i-lucide-eye-off' : 'i-lucide-eye'"
                 :aria-label="t('admin.proxies.password')"
                 @click.stop="visiblePasswordIds.has(row.id) ? visiblePasswordIds.delete(row.id) : visiblePasswordIds.add(row.id)"
@@ -179,11 +181,13 @@
 
           <template #cell-location="{ row }">
             <div class="flex items-center gap-2">
-              <img
+              <UBadge
                 v-if="row.country_code"
-                :src="flagUrl(row.country_code)"
-                :alt="row.country || row.country_code"
-                class="h-4 w-6 rounded-xs"
+                color="neutral"
+                variant="outline"
+                size="xs"
+                class="shrink-0 font-mono uppercase"
+                :label="row.country_code.toUpperCase()"
               />
               <span v-if="formatLocation(row)" class="text-default">{{ formatLocation(row) }}</span>
               <span v-else class="text-dimmed">-</span>
@@ -196,6 +200,7 @@
               color="neutral"
               variant="soft"
               size="xs"
+              class="tabular-nums max-sm:min-h-11 pointer-coarse:min-h-11"
               :label="t('admin.groups.accountsCount', { count: value || 0 })"
               @click="openAccountsModal(row)"
             />
@@ -1292,9 +1297,6 @@ const formatLocation = (proxy: Proxy) => {
   const parts = [proxy.country, proxy.city].filter(Boolean) as string[]
   return parts.join(' · ')
 }
-
-const flagUrl = (code: string) =>
-  `https://unpkg.com/flag-icons/flags/4x3/${code.toLowerCase()}.svg`
 
 const startTestingProxy = (proxyId: number) => {
   testingProxyIds.value = new Set([...testingProxyIds.value, proxyId])

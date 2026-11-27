@@ -424,7 +424,7 @@
         </UButton>
       </template>
       <UTable :data="backups" :columns="backupColumns" :empty="t('admin.backup.empty')" :ui="{ base: 'min-w-[800px]', th: 'whitespace-nowrap px-3 py-2 text-xs', td: 'px-3 py-2.5 text-xs align-top' }">
-        <template #id-cell="{ row }"><span class="font-mono">{{ row.original.id }}</span></template>
+        <template #id-cell="{ row }"><span class="font-mono tabular-nums">{{ row.original.id }}</span></template>
         <template #status-cell="{ row: { original: record } }">
           <UBadge :color="statusColor(record.status)" variant="subtle" size="sm">
             {{ record.status === 'running' && record.progress ? t(`admin.backup.progress.${record.progress}`) : t(`admin.backup.status.${record.status}`) }}
@@ -432,7 +432,7 @@
         </template>
         <template #file_name-cell="{ row: { original: record } }">
           <div class="flex flex-wrap items-center gap-1.5">
-            <span class="font-mono break-all">{{ record.file_name }}</span>
+            <span class="font-mono wrap-anywhere">{{ record.file_name }}</span>
             <UBadge v-if="isCriticalRecord(record)" color="warning" variant="subtle" size="sm">
               {{ t('admin.backup.scope.critical') }}
             </UBadge>
@@ -441,11 +441,11 @@
             </UBadge>
           </div>
         </template>
-        <template #size-cell="{ row }">{{ formatSize(row.original.size_bytes) }}</template>
-        <template #parts-cell="{ row: { original: record } }">{{ record.parts?.length || (record.status === 'running' ? '-' : 1) }}</template>
-        <template #expires_at-cell="{ row: { original: record } }">{{ record.expires_at ? formatDate(record.expires_at) : t('admin.backup.neverExpire') }}</template>
+        <template #size-cell="{ row }"><span class="tabular-nums">{{ formatSize(row.original.size_bytes) }}</span></template>
+        <template #parts-cell="{ row: { original: record } }"><span class="tabular-nums">{{ record.parts?.length || (record.status === 'running' ? '-' : 1) }}</span></template>
+        <template #expires_at-cell="{ row: { original: record } }"><span class="tabular-nums">{{ record.expires_at ? formatDate(record.expires_at) : t('admin.backup.neverExpire') }}</span></template>
         <template #triggered_by-cell="{ row: { original: record } }">{{ record.triggered_by === 'scheduled' ? t('admin.backup.trigger.scheduled') : t('admin.backup.trigger.manual') }}</template>
-        <template #started_at-cell="{ row }">{{ formatDate(row.original.started_at) }}</template>
+        <template #started_at-cell="{ row }"><span class="tabular-nums">{{ formatDate(row.original.started_at) }}</span></template>
         <template #actions-cell="{ row: { original: record } }">
           <div class="flex flex-wrap gap-1">
             <UButton v-if="record.status === 'completed'" color="neutral" variant="outline" size="xs" @click="downloadBackup(record.id)">
@@ -536,7 +536,7 @@
       <div v-for="part in downloadParts" :key="part.index" class="flex items-center justify-between gap-3 py-2">
         <span class="text-sm text-toned">
           {{ t('admin.backup.actions.partLabel', { index: part.index }) }}
-          <span class="ml-2 text-xs text-muted">{{ formatSize(part.size_bytes) }}</span>
+          <span class="ml-2 text-xs tabular-nums text-muted">{{ formatSize(part.size_bytes) }}</span>
         </span>
         <UButton :to="part.url" rel="noopener" color="neutral" variant="outline" size="xs" icon="i-lucide-download">
           {{ t('admin.backup.actions.download') }}
@@ -1199,14 +1199,3 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 </script>
-
-<style scoped>
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 0.2s ease;
-}
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-</style>

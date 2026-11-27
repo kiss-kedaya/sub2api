@@ -1,5 +1,5 @@
 <template>
-  <section class="plaza-group">
+  <section class="plaza-group rounded-xl">
     <!-- 分组头部:名称/平台/倍率徽章/专属/订阅徽章 + 描述 -->
     <header class="plaza-group-header px-4 py-4 sm:px-5">
       <div class="flex flex-wrap items-center gap-2">
@@ -15,16 +15,16 @@
           :peak-rate-multiplier="group.peak_rate_multiplier"
           always-show-rate
         />
-        <span v-if="group.is_exclusive" class="plaza-chip">
+        <span v-if="group.is_exclusive" class="plaza-chip rounded-md">
           <Icon name="shield" size="xs" class="h-3 w-3" />
           {{ t('modelPlaza.badges.exclusive') }}
         </span>
-        <span v-if="group.subscription_type === 'subscription'" class="plaza-chip">
+        <span v-if="group.subscription_type === 'subscription'" class="plaza-chip rounded-md">
           {{ t('modelPlaza.badges.subscription') }}
         </span>
         <span
           v-if="group.quality_status"
-          class="plaza-chip"
+          class="plaza-chip rounded-md"
           :class="group.quality_status === 'suspect' ? 'plaza-chip-warn' : 'plaza-chip-ok'"
         >
           <Icon name="checkCircle" size="xs" class="h-3 w-3" />
@@ -36,14 +36,14 @@
       </p>
       <p
         v-if="peakNote"
-        class="mt-1.5 inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400"
+        class="mt-1.5 inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400"
       >
         <Icon name="clock" size="xs" class="h-3 w-3" />
         {{ peakNote }}
       </p>
       <p
         v-if="longContextNote"
-        class="mt-1.5 flex items-center gap-1 text-xs text-gray-500 dark:text-dark-400"
+        class="mt-1.5 flex items-center gap-1 text-xs text-muted"
       >
         <Icon name="infoCircle" size="xs" class="h-3 w-3" />
         {{ longContextNote }}
@@ -67,7 +67,7 @@
         :peak-window="peakWindow"
         :peak-rate-multiplier="group.peak_rate_multiplier"
       />
-      <p v-else class="px-5 py-4 text-center text-sm text-gray-400 dark:text-dark-500">
+      <p v-else class="px-5 py-4 text-center text-sm text-dimmed">
         {{ t('modelPlaza.detail.noModels') }}
       </p>
     </div>
@@ -127,7 +127,6 @@ const longContextNote = computed(() => {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--signal-line, #dedee4);
-  border-radius: 8px;
   background: var(--signal-surface, #ffffff);
   box-shadow: var(--signal-shadow);
 }
@@ -145,7 +144,6 @@ const longContextNote = computed(() => {
   gap: 4px;
   min-height: 22px;
   padding: 0 8px;
-  border-radius: 6px;
   background: var(--signal-raised, #f5f5f8);
   color: var(--signal-muted, #63636c);
   font-size: 12px;

@@ -3,8 +3,8 @@
     <div class="canvas-page-layout">
       <div class="card flex-1 min-h-0 overflow-hidden">
         <div v-if="loading" class="flex h-full flex-col items-center justify-center gap-3 py-12">
-          <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent"></div>
-          <p class="text-sm text-gray-500 dark:text-dark-400">{{ t('infiniteCanvas.preparing') }}</p>
+          <div class="h-8 w-8 animate-spin motion-reduce:animate-none rounded-full border-2 border-primary border-t-transparent"></div>
+          <p class="text-sm text-muted">{{ t('infiniteCanvas.preparing') }}</p>
         </div>
 
         <!--
@@ -18,42 +18,42 @@
           data-testid="canvas-confirm"
         >
           <div class="w-full max-w-md">
-            <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 dark:bg-dark-700">
+            <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-elevated">
               <Icon
                 :name="pendingAction === 'rotate' ? 'exclamationTriangle' : 'plus'"
                 size="lg"
-                :class="pendingAction === 'rotate' ? 'text-amber-500' : 'text-primary-500'"
+                :class="pendingAction === 'rotate' ? 'text-warning' : 'text-primary'"
               />
             </div>
 
             <template v-if="pendingAction === 'rotate'">
-              <h3 class="text-center text-lg font-semibold text-gray-900 dark:text-white" data-testid="canvas-rotate-title">
+              <h3 class="text-center text-lg font-semibold text-highlighted" data-testid="canvas-rotate-title">
                 {{ t('infiniteCanvas.rotateTitle') }}
               </h3>
-              <p class="mt-2 text-center text-sm text-gray-500 dark:text-dark-400">{{ t('infiniteCanvas.rotateBody') }}</p>
-              <p v-if="rotationTarget" class="mt-3 break-all text-center text-sm text-gray-700 dark:text-dark-200">
+              <p class="mt-2 text-center text-sm text-muted">{{ t('infiniteCanvas.rotateBody') }}</p>
+              <p v-if="rotationTarget" class="mt-3 wrap-anywhere text-center text-sm text-toned">
                 {{ t('infiniteCanvas.rotateTarget', { key: rotationTarget.keyMasked, count: rotationTarget.groupCount }) }}
               </p>
             </template>
-            <h3 v-else class="text-center text-lg font-semibold text-gray-900 dark:text-white">
+            <h3 v-else class="text-center text-lg font-semibold text-highlighted">
               {{ t('infiniteCanvas.notConfigured') }}
             </h3>
 
             <div
               v-if="factorsLoading"
-              class="mt-5 text-center text-sm text-gray-500 dark:text-dark-400"
+              class="mt-5 text-center text-sm text-muted"
               data-testid="canvas-factors-loading"
             >
               {{ t('infiniteCanvas.verifyLoading') }}
             </div>
             <div v-else-if="needsVerification" class="mt-5 text-left" data-testid="canvas-verification">
-              <p class="mb-2 text-xs text-gray-500 dark:text-dark-400">{{ t('infiniteCanvas.verifyHint') }}</p>
+              <p class="mb-2 text-xs text-muted">{{ t('infiniteCanvas.verifyHint') }}</p>
               <KeyFactorVerification ref="verificationRef" :factors="factors" mode="create" />
             </div>
 
             <p
               v-if="verifyError"
-              class="mt-3 text-center text-sm text-red-600 dark:text-red-400"
+              class="mt-3 text-center text-sm text-error"
               role="alert"
               data-testid="canvas-verify-error"
             >
@@ -61,12 +61,12 @@
             </p>
 
             <div class="mt-6 flex flex-wrap items-center justify-center gap-3">
-              <RouterLink v-if="pendingAction === 'rotate'" to="/dashboard" class="btn btn-secondary" data-testid="canvas-rotate-cancel">
+              <RouterLink v-if="pendingAction === 'rotate'" to="/dashboard" class="btn btn-secondary min-h-11 lg:min-h-0" data-testid="canvas-rotate-cancel">
                 {{ t('infiniteCanvas.rotateCancel') }}
               </RouterLink>
               <button
                 type="button"
-                class="btn btn-primary"
+                class="btn btn-primary min-h-11 lg:min-h-0"
                 :disabled="factorsLoading"
                 data-testid="canvas-confirm-submit"
                 @click="submitPending"
@@ -80,15 +80,15 @@
 
         <div v-else-if="errorMessage" class="flex h-full items-center justify-center p-10 text-center">
           <div class="max-w-md">
-            <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 dark:bg-dark-700">
-              <Icon name="exclamationTriangle" size="lg" class="text-amber-500" />
+            <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-elevated">
+              <Icon name="exclamationTriangle" size="lg" class="text-warning" />
             </div>
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ t('infiniteCanvas.errorTitle') }}</h3>
-            <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">{{ errorMessage }}</p>
-            <RouterLink v-if="errorCode === 'key-unavailable'" to="/keys" class="btn btn-primary mt-6">
+            <h3 class="text-lg font-semibold text-highlighted">{{ t('infiniteCanvas.errorTitle') }}</h3>
+            <p class="mt-2 text-sm text-muted">{{ errorMessage }}</p>
+            <RouterLink v-if="errorCode === 'key-unavailable'" to="/keys" class="btn btn-primary mt-6 min-h-11 lg:min-h-0">
               {{ t('infiniteCanvas.manageKeys') }}
             </RouterLink>
-            <button v-else type="button" class="btn btn-primary mt-6" @click="prepareSession()">
+            <button v-else type="button" class="btn btn-primary mt-6 min-h-11 lg:min-h-0" @click="prepareSession()">
               {{ t('infiniteCanvas.retry') }}
             </button>
           </div>
@@ -279,14 +279,14 @@ onUnmounted(() => { disposed = true })
 @reference "../../style.css";
 .canvas-page-layout {
   @apply flex flex-col;
-  height: calc(100vh - 64px - 4rem);
+  height: calc(100dvh - 64px - 4rem);
 }
 
 .canvas-embed-shell {
-  @apply relative h-full min-h-0 overflow-hidden bg-gray-50 dark:bg-dark-900;
+  @apply relative h-full min-h-0 overflow-hidden bg-muted;
 }
 
 .canvas-embed-frame {
-  @apply h-full w-full border-0 bg-white dark:bg-dark-900;
+  @apply h-full w-full border-0 bg-default;
 }
 </style>

@@ -13,7 +13,7 @@
         autocorrect="off"
         spellcheck="false"
         class="w-full"
-        :ui="{ base: 'font-mono break-all' }"
+        :ui="{ base: 'font-mono wrap-anywhere' }"
         :aria-invalid="invalid || undefined"
         @update:model-value="onInput"
         @paste="onPaste"

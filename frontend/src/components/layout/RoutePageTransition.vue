@@ -21,12 +21,12 @@ import { consolePageKey } from './consoleShell'
  * followed by a crisp 160ms ease-out arrival. Explicit durations guarantee Vue hands
  * over on a timer even if the browser drops transitionend (hidden tab, mid-flight detach).
  *
- * Readers who asked for reduced motion get the stylesheet's `transition: none`, so they
- * also skip the timer and swap pages immediately instead of waiting out the fade.
+ * Readers who asked for reduced motion get the stylesheet's 120ms opacity crossfade
+ * (with slide transform stripped), so the transition duration matches `style.css`.
  */
 const PREFERS_REDUCED_MOTION =
   typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
     : false
-const PAGE_TRANSITION_MS = PREFERS_REDUCED_MOTION ? 0 : { enter: 160, leave: 90 }
+const PAGE_TRANSITION_MS = PREFERS_REDUCED_MOTION ? { enter: 120, leave: 120 } : { enter: 160, leave: 90 }
 </script>

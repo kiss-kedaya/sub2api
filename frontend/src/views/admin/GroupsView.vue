@@ -11,6 +11,7 @@
             <UButton
               icon="i-lucide-plus"
               data-tour="groups-create-btn"
+              class="min-h-11 lg:min-h-8"
               @click="openCreateModal"
             >
               {{ t("admin.groups.createGroup") }}
@@ -151,7 +152,7 @@
           </template>
 
           <template #cell-id="{ value }">
-            <span class="font-mono text-xs text-muted"
+            <span class="font-mono text-xs tabular-nums text-muted"
               >#{{ value }}</span
             >
           </template>
@@ -186,7 +187,7 @@
                     row.weekly_limit_usd != null ||
                     row.monthly_limit_usd != null
                   "
-                  class="flex flex-wrap items-center gap-x-1 gap-y-0.5"
+                  class="flex flex-wrap items-center gap-x-1 gap-y-0.5 tabular-nums"
                 >
                   <span v-if="row.daily_limit_usd != null" class="whitespace-nowrap">
                     <span
@@ -227,7 +228,7 @@
                 }}</span>
                 <div class="text-dimmed">
                   {{ t("admin.groups.usageTotal") }}
-                  <span class="ml-1 font-medium text-default">{{
+                  <span class="ml-1 font-medium tabular-nums text-default">{{
                     formatGroupUsageCost(row.id, "total_cost")
                   }}</span>
                   <UBadge
@@ -665,7 +666,7 @@
                     class="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-elevated/50"
                   >
                     <UCheckbox v-model="item.selected" />
-                    <span class="min-w-0 flex-1 break-all text-sm text-default">
+                    <span class="min-w-0 flex-1 wrap-anywhere text-sm text-default">
                       {{ item.id }}
                       <span
                         v-if="item.id.endsWith('*')"
@@ -1743,7 +1744,10 @@
                               </span>
                             </div>
                             <!-- 账号搜索输入框 -->
-                            <div class="relative account-search-container">
+                            <div
+                              :ref="(el) => setAccountSearchContainerRef(getCreateRuleSearchKey(rule), el)"
+                              class="relative account-search-container"
+                            >
                               <UInput
                                 v-model=" accountSearchKeyword[getCreateRuleSearchKey(rule)] "
                                 type="text"
@@ -1753,30 +1757,35 @@
                                 class="w-full"
                               />
                               <!-- 搜索结果下拉框 -->
-                              <div
-                                v-if="
-                                  showAccountDropdown[getCreateRuleSearchKey(rule)] &&
-                                  accountSearchResults[getCreateRuleSearchKey(rule)]
-                                    ?.length > 0
-                                "
-                                class="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-default bg-default shadow-lg"
-                              >
-                                <UButton
-                                  v-for="account in accountSearchResults[ getCreateRuleSearchKey(rule) ]"
-                                  :key="account.id"
-                                  @click="selectAccount(rule, account)"
-                                  :class="{ 'opacity-50': rule.accounts.some( (a) => a.id === account.id, ), }"
-                                  :disabled=" rule.accounts.some((a) => a.id === account.id) "
-                                  color="neutral"
-                                  variant="ghost"
-                                  size="sm"
-                                  block
-                                  class="justify-start"
-                                ><span>{{ account.name }}</span>
-                                  <span class="ml-2 text-xs text-dimmed"
-                                    >#{{ account.id }}</span
-                                  ></UButton>
-                              </div>
+                              <Teleport :to="accountSearchTeleportTargets[getCreateRuleSearchKey(rule)] || 'body'">
+                                <div
+                                  v-if="
+                                    showAccountDropdown[getCreateRuleSearchKey(rule)] &&
+                                    accountSearchResults[getCreateRuleSearchKey(rule)]
+                                      ?.length > 0
+                                  "
+                                  :ref="(el) => setAccountSearchDropdownRef(getCreateRuleSearchKey(rule), el)"
+                                  data-account-search-dropdown
+                                  class="fixed z-50 max-h-48 overflow-auto rounded-lg border border-default bg-default shadow-lg"
+                                  :style="accountSearchDropdownStyles[getCreateRuleSearchKey(rule)]"
+                                >
+                                  <UButton
+                                    v-for="account in accountSearchResults[ getCreateRuleSearchKey(rule) ]"
+                                    :key="account.id"
+                                    @click="selectAccount(rule, account)"
+                                    :class="{ 'opacity-50': rule.accounts.some( (a) => a.id === account.id, ), }"
+                                    :disabled=" rule.accounts.some((a) => a.id === account.id) "
+                                    color="neutral"
+                                    variant="ghost"
+                                    size="sm"
+                                    block
+                                    class="justify-start"
+                                  ><span>{{ account.name }}</span>
+                                    <span class="ml-2 text-xs tabular-nums text-dimmed"
+                                      >#{{ account.id }}</span
+                                    ></UButton>
+                                </div>
+                              </Teleport>
                             </div>
                             <p class="text-xs text-dimmed mt-1">
                               {{ t("admin.groups.modelRouting.accountsHint") }}
@@ -2117,7 +2126,7 @@
                     class="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-elevated/50"
                   >
                     <UCheckbox v-model="item.selected" />
-                    <span class="min-w-0 flex-1 break-all text-sm text-default">
+                    <span class="min-w-0 flex-1 wrap-anywhere text-sm text-default">
                       {{ item.id }}
                       <span
                         v-if="item.id.endsWith('*')"
@@ -3216,7 +3225,10 @@
                               </span>
                             </div>
                             <!-- 账号搜索输入框 -->
-                            <div class="relative account-search-container">
+                            <div
+                              :ref="(el) => setAccountSearchContainerRef(getEditRuleSearchKey(rule), el)"
+                              class="relative account-search-container"
+                            >
                               <UInput
                                 v-model=" accountSearchKeyword[getEditRuleSearchKey(rule)] "
                                 type="text"
@@ -3226,30 +3238,35 @@
                                 class="w-full"
                               />
                               <!-- 搜索结果下拉框 -->
-                              <div
-                                v-if="
-                                  showAccountDropdown[getEditRuleSearchKey(rule)] &&
-                                  accountSearchResults[getEditRuleSearchKey(rule)]
-                                    ?.length > 0
-                                "
-                                class="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-default bg-default shadow-lg"
-                              >
-                                <UButton
-                                  v-for="account in accountSearchResults[ getEditRuleSearchKey(rule) ]"
-                                  :key="account.id"
-                                  @click="selectAccount(rule, account, true)"
-                                  :class="{ 'opacity-50': rule.accounts.some( (a) => a.id === account.id, ), }"
-                                  :disabled=" rule.accounts.some((a) => a.id === account.id) "
-                                  color="neutral"
-                                  variant="ghost"
-                                  size="sm"
-                                  block
-                                  class="justify-start"
-                                ><span>{{ account.name }}</span>
-                                  <span class="ml-2 text-xs text-dimmed"
-                                    >#{{ account.id }}</span
-                                  ></UButton>
-                              </div>
+                              <Teleport :to="accountSearchTeleportTargets[getEditRuleSearchKey(rule)] || 'body'">
+                                <div
+                                  v-if="
+                                    showAccountDropdown[getEditRuleSearchKey(rule)] &&
+                                    accountSearchResults[getEditRuleSearchKey(rule)]
+                                      ?.length > 0
+                                  "
+                                  :ref="(el) => setAccountSearchDropdownRef(getEditRuleSearchKey(rule), el)"
+                                  data-account-search-dropdown
+                                  class="fixed z-50 max-h-48 overflow-auto rounded-lg border border-default bg-default shadow-lg"
+                                  :style="accountSearchDropdownStyles[getEditRuleSearchKey(rule)]"
+                                >
+                                  <UButton
+                                    v-for="account in accountSearchResults[ getEditRuleSearchKey(rule) ]"
+                                    :key="account.id"
+                                    @click="selectAccount(rule, account, true)"
+                                    :class="{ 'opacity-50': rule.accounts.some( (a) => a.id === account.id, ), }"
+                                    :disabled=" rule.accounts.some((a) => a.id === account.id) "
+                                    color="neutral"
+                                    variant="ghost"
+                                    size="sm"
+                                    block
+                                    class="justify-start"
+                                  ><span>{{ account.name }}</span>
+                                    <span class="ml-2 text-xs tabular-nums text-dimmed"
+                                      >#{{ account.id }}</span
+                                    ></UButton>
+                                </div>
+                              </Teleport>
                             </div>
                             <p class="text-xs text-dimmed mt-1">
                               {{ t("admin.groups.modelRouting.accountsHint") }}
@@ -3363,7 +3380,7 @@
               <PlatformIcon :platform="group.platform" size="xs" />
               {{ t("admin.groups.platforms." + group.platform) }}
             </UBadge>
-            <span class="w-12 text-right font-mono text-xs text-dimmed">#{{ group.id }}</span>
+            <span class="w-12 text-right font-mono text-xs tabular-nums text-dimmed">#{{ group.id }}</span>
           </div>
         </VueDraggable>
       </div>
@@ -3421,7 +3438,7 @@
           >
             <template #public_model-cell="{ row }">
               <div class="max-w-60">
-                <div class="break-all font-medium text-highlighted">
+                <div class="wrap-anywhere font-medium text-highlighted">
                   {{ row.original.public_model }}
                 </div>
                 <div class="mt-1 flex flex-wrap items-center gap-1.5">
@@ -3439,7 +3456,7 @@
                 <PlatformIcon :platform="row.original.target_platform" size="xs" />
                 <span>{{ formatCompositePlatform(row.original.target_platform) }}</span>
               </div>
-              <div class="mt-1 break-all text-xs text-muted">
+              <div class="mt-1 wrap-anywhere text-xs text-muted">
                 {{ row.original.upstream_model || row.original.public_model }}
               </div>
             </template>
@@ -3636,7 +3653,7 @@
                       )
                     }}
                   </div>
-                  <div class="break-all">
+                  <div class="wrap-anywhere">
                     {{ t("admin.groups.compositeRoutes.upstreamModel") }}:
                     {{ compositePreviewDecision.upstream_model }}
                   </div>
@@ -3678,7 +3695,7 @@
 
 <script setup lang="ts">
 import MiniMaxH3PricingFields from "@/components/group/MiniMaxH3PricingFields.vue";
-import { ref, shallowRef, reactive, computed, onMounted, onUnmounted, watch } from "vue";
+import { ref, shallowRef, reactive, computed, nextTick, onMounted, onUnmounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAppStore } from "@/stores/app";
 import { useAuthStore } from "@/stores/auth";
@@ -4585,17 +4602,102 @@ const getRuleSearchKey = (rule: ModelRoutingRule, isEdit: boolean = false) => {
 const accountSearchKeyword = ref<Record<string, string>>({});
 const accountSearchResults = ref<Record<string, SimpleAccount[]>>({});
 const showAccountDropdown = ref<Record<string, boolean>>({});
+const accountSearchContainerRefs = ref<Record<string, HTMLElement | null>>({});
+const accountSearchDropdownRefs = ref<Record<string, HTMLElement | null>>({});
+const accountSearchDropdownStyles = ref<Record<string, Record<string, string>>>({});
+const accountSearchTeleportTargets = ref<Record<string, string | HTMLElement>>({});
+const MAX_ACCOUNT_SEARCH_DROPDOWN_HEIGHT = 192;
+
+const setAccountSearchContainerRef = (key: string, el: unknown) => {
+  if (el instanceof HTMLElement) {
+    accountSearchContainerRefs.value[key] = el;
+  } else {
+    delete accountSearchContainerRefs.value[key];
+  }
+};
+
+const setAccountSearchDropdownRef = (key: string, el: unknown) => {
+  if (el instanceof HTMLElement) {
+    accountSearchDropdownRefs.value[key] = el;
+  } else {
+    delete accountSearchDropdownRefs.value[key];
+  }
+};
+
+const resolveAccountSearchTeleportTarget = (
+  el: HTMLElement | null | undefined,
+): string | HTMLElement =>
+  el?.closest(".base-dialog")?.querySelector<HTMLElement>("[data-base-dialog-portal]") ??
+  "body";
+
+const updateAccountSearchDropdownPosition = (key: string) => {
+  const container = accountSearchContainerRefs.value[key];
+  const rect = container?.getBoundingClientRect();
+  if (!rect) return;
+  accountSearchTeleportTargets.value[key] = resolveAccountSearchTeleportTarget(container);
+  const padding = 8;
+  const gap = 4;
+  const width = Math.min(Math.max(rect.width, 200), window.innerWidth - padding * 2);
+  const left = Math.min(
+    Math.max(rect.left, padding),
+    Math.max(padding, window.innerWidth - width - padding),
+  );
+  const measuredHeight =
+    accountSearchDropdownRefs.value[key]?.offsetHeight ||
+    MAX_ACCOUNT_SEARCH_DROPDOWN_HEIGHT;
+  const spaceBelow = window.innerHeight - padding - (rect.bottom + gap);
+  const spaceAbove = rect.top - gap - padding;
+  const flipAbove = spaceBelow < measuredHeight && spaceAbove > spaceBelow;
+  if (flipAbove) {
+    const maxHeight = Math.max(80, Math.min(MAX_ACCOUNT_SEARCH_DROPDOWN_HEIGHT, spaceAbove));
+    accountSearchDropdownStyles.value[key] = {
+      top: "auto",
+      bottom: `${window.innerHeight - (rect.top - gap)}px`,
+      left: `${left}px`,
+      width: `${width}px`,
+      maxHeight: `${maxHeight}px`,
+      transformOrigin: "bottom left",
+    };
+  } else {
+    const maxHeight = Math.max(80, Math.min(MAX_ACCOUNT_SEARCH_DROPDOWN_HEIGHT, spaceBelow));
+    accountSearchDropdownStyles.value[key] = {
+      top: `${Math.max(padding, rect.bottom + gap)}px`,
+      bottom: "auto",
+      left: `${left}px`,
+      width: `${width}px`,
+      maxHeight: `${maxHeight}px`,
+      transformOrigin: "top left",
+    };
+  }
+};
+
+const syncAccountSearchDropdown = (key: string) => {
+  updateAccountSearchDropdownPosition(key);
+  void nextTick(() => updateAccountSearchDropdownPosition(key));
+};
+
+const updateAllOpenAccountSearchDropdowns = () => {
+  for (const key of Object.keys(showAccountDropdown.value)) {
+    if (showAccountDropdown.value[key]) {
+      updateAccountSearchDropdownPosition(key);
+    }
+  }
+};
 
 const clearAccountSearchStateByKey = (key: string) => {
   delete accountSearchKeyword.value[key];
   delete accountSearchResults.value[key];
   delete showAccountDropdown.value[key];
+  delete accountSearchDropdownStyles.value[key];
+  delete accountSearchTeleportTargets.value[key];
 };
 
 const clearAllAccountSearchState = () => {
   accountSearchKeyword.value = {};
   accountSearchResults.value = {};
   showAccountDropdown.value = {};
+  accountSearchDropdownStyles.value = {};
+  accountSearchTeleportTargets.value = {};
 };
 
 const accountSearchRunner = useKeyedDebouncedSearch<SimpleAccount[]>({
@@ -4614,6 +4716,9 @@ const accountSearchRunner = useKeyedDebouncedSearch<SimpleAccount[]>({
   },
   onSuccess: (key, result) => {
     accountSearchResults.value[key] = result;
+    if (showAccountDropdown.value[key]) {
+      syncAccountSearchDropdown(key);
+    }
   },
   onError: (key) => {
     accountSearchResults.value[key] = [];
@@ -4622,6 +4727,8 @@ const accountSearchRunner = useKeyedDebouncedSearch<SimpleAccount[]>({
 
 // 搜索账号（仅限 anthropic 平台）
 const searchAccounts = (key: string) => {
+  showAccountDropdown.value[key] = true;
+  syncAccountSearchDropdown(key);
   accountSearchRunner.trigger(key, accountSearchKeyword.value[key] || "");
 };
 
@@ -4689,6 +4796,7 @@ const onAccountSearchFocus = (
 ) => {
   const key = getRuleSearchKey(rule, isEdit);
   showAccountDropdown.value[key] = true;
+  syncAccountSearchDropdown(key);
   // 如果没有搜索结果，触发一次搜索
   if (!accountSearchResults.value[key]?.length) {
     searchAccounts(key);
@@ -5280,7 +5388,7 @@ const getQuotaUsageClass = (
     return "font-medium text-dimmed";
   }
   if (!limit || limit <= 0) {
-    return "font-medium text-gray-700 dark:text-gray-300";
+    return "font-medium text-default";
   }
   const ratio = used / limit;
   if (ratio >= 1) {
@@ -5289,7 +5397,7 @@ const getQuotaUsageClass = (
   if (ratio >= 0.8) {
     return "font-semibold text-amber-600 dark:text-amber-400";
   }
-  return "font-medium text-gray-700 dark:text-gray-300";
+  return "font-medium text-default";
 };
 
 const loadUsageSummary = async (refresh = false) => {
@@ -6745,9 +6853,10 @@ watch(
 
 // 点击外部关闭账号搜索下拉框
 const handleClickOutside = (event: MouseEvent) => {
-  const target = event.target as HTMLElement;
+  const target = event.target as HTMLElement | null;
+  if (!target?.closest) return;
   // 检查是否点击在下拉框或输入框内
-  if (!target.closest(".account-search-container")) {
+  if (!target.closest(".account-search-container") && !target.closest("[data-account-search-dropdown]")) {
     Object.keys(showAccountDropdown.value).forEach((key) => {
       showAccountDropdown.value[key] = false;
     });
@@ -6805,6 +6914,8 @@ onMounted(() => {
     loadModelAllowlistCandidates("create", 0, createForm.platform);
   }
   document.addEventListener("click", handleClickOutside);
+  window.addEventListener("resize", updateAllOpenAccountSearchDropdowns);
+  window.addEventListener("scroll", updateAllOpenAccountSearchDropdowns, true);
 });
 
 onUnmounted(() => {
@@ -6812,6 +6923,8 @@ onUnmounted(() => {
   usageSummaryRequest?.abort();
   usageSummaryRequest = null;
   document.removeEventListener("click", handleClickOutside);
+  window.removeEventListener("resize", updateAllOpenAccountSearchDropdowns);
+  window.removeEventListener("scroll", updateAllOpenAccountSearchDropdowns, true);
   accountSearchRunner.clearAll();
   clearAllAccountSearchState();
 });

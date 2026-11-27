@@ -26,18 +26,18 @@
 
     <UAlert v-if="launch" color="warning" variant="subtle" icon="i-lucide-external-link" :title="text('已生成支付入口，请在有效期内完成支付', 'Payment entry created; complete it before it expires')">
       <div class="mt-1 space-y-1 text-sm">
-        <p v-if="launch.pay_url" class="break-all">
+        <p v-if="launch.pay_url" class="wrap-anywhere">
           <a :href="launch.pay_url" target="_blank" rel="noopener noreferrer" class="underline">{{ launch.pay_url }}</a>
         </p>
-        <p v-if="launch.qr_code" class="break-all text-xs">{{ text('二维码内容', 'QR payload') }}: {{ launch.qr_code }}</p>
-        <p v-if="launch.expires_at" class="text-xs text-muted">{{ text('过期时间', 'Expires') }}: {{ formatTime(launch.expires_at) }}</p>
-        <UButton size="xs" color="neutral" variant="outline" :label="text('收起', 'Hide')" @click="launch = null" />
+        <p v-if="launch.qr_code" class="wrap-anywhere text-xs">{{ text('二维码内容', 'QR payload') }}: {{ launch.qr_code }}</p>
+        <p v-if="launch.expires_at" class="text-xs tabular-nums text-muted">{{ text('过期时间', 'Expires') }}: {{ formatTime(launch.expires_at) }}</p>
+        <UButton size="xs" color="neutral" variant="outline" class="max-sm:min-h-11 pointer-coarse:min-h-11" :label="text('收起', 'Hide')" @click="launch = null" />
       </div>
     </UAlert>
 
     <section v-if="tab === 'recharge'" class="card p-4">
       <h3 class="font-semibold">{{ text('充值', 'Recharge') }}</h3>
-      <p class="mt-1 text-xs text-muted">
+      <p class="mt-1 text-xs tabular-nums text-muted">
         {{ text(`金额范围 ${info?.min_amount ?? '—'} ~ ${info?.max_amount ?? '—'}`, `Amount range ${info?.min_amount ?? '—'} ~ ${info?.max_amount ?? '—'}`) }}
         <span v-if="info?.help_text"> · {{ info.help_text }}</span>
       </p>
@@ -78,7 +78,7 @@
       </div>
       <div v-if="redeemResult" class="mt-3 rounded-lg border border-default p-3 text-sm">
         <p class="font-medium">{{ redeemResult.message || text('兑换成功', 'Redeemed') }}</p>
-        <p class="mt-1 text-xs text-muted">
+        <p class="mt-1 text-xs tabular-nums text-muted">
           {{ redeemResult.type }} · {{ redeemResult.value }}
           <span v-if="redeemResult.new_balance !== null && redeemResult.new_balance !== undefined"> · {{ text('新余额', 'new balance') }} {{ redeemResult.new_balance }}</span>
           <span v-if="redeemResult.group_name"> · {{ redeemResult.group_name }}</span>
@@ -96,7 +96,7 @@
               <p class="font-medium">{{ item.group_name || `#${item.id}` }}</p>
               <UBadge :color="item.status === 'active' ? 'success' : 'neutral'" size="sm" variant="subtle">{{ item.status }}</UBadge>
             </div>
-            <p class="mt-1 text-xs text-muted">
+            <p class="mt-1 text-xs tabular-nums text-muted">
               {{ text('到期', 'expires') }}: {{ item.expires_at ? formatTime(item.expires_at) : '—' }}
               <span v-if="item.expires_in_days"> · {{ text('剩', 'in') }} {{ item.expires_in_days }} {{ text('天', 'days') }}</span>
             </p>
@@ -107,7 +107,7 @@
                 <div class="mt-1 h-1.5 overflow-hidden rounded bg-elevated">
                   <div class="h-full bg-primary" :style="{ width: `${Math.min(100, Math.max(0, window.value.percentage))}%` }" />
                 </div>
-                <p class="mt-1 text-muted">{{ text('剩余', 'left') }} {{ formatMoney(window.value.remaining_usd) }}</p>
+                <p class="mt-1 tabular-nums text-muted">{{ text('剩余', 'left') }} {{ formatMoney(window.value.remaining_usd) }}</p>
               </div>
             </div>
           </article>

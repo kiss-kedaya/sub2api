@@ -10,7 +10,7 @@
         <span class="text-dimmed" aria-hidden="true">·</span>
         <span class="font-medium text-highlighted">{{ group.name }}</span>
         <span class="text-dimmed" aria-hidden="true">·</span>
-        <span>{{ t('admin.groups.groupRpmDefault') }}: {{ group.rpm_limit || 0 }}</span>
+        <span class="tabular-nums">{{ t('admin.groups.groupRpmDefault') }}: {{ group.rpm_limit || 0 }}</span>
       </p>
 
       <!-- 添加用户 -->
@@ -28,7 +28,7 @@
             />
             <div
               v-if="showDropdown && searchResults.length > 0"
-              class="absolute inset-x-0 top-full z-30 mt-1 max-h-48 overflow-y-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
+              class="absolute inset-x-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-md bg-default p-1 shadow-lg ring ring-default"
             >
               <UButton
                 v-for="user in searchResults"
@@ -102,7 +102,7 @@
             :ui="tableUi"
           >
             <template #user_id-cell="{ row }">
-              <span class="text-dimmed">{{ row.original.user_id }}</span>
+              <span class="tabular-nums text-dimmed">{{ row.original.user_id }}</span>
             </template>
             <template #user_name-cell="{ row }">
               <span class="text-highlighted">{{ row.original.user_name || '-' }}</span>

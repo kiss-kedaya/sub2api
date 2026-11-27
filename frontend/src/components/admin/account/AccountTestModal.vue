@@ -410,7 +410,7 @@ const handleClose = () => {
 }
 
 watch(
-  () => [props.show, props.account?.id, props.account?.platform, props.account?.type] as const,
+  [() => props.show, () => props.account?.id, () => props.account?.platform, () => props.account?.type],
   ([show]) => {
     stopStandalone()
     if (!show) return
@@ -496,12 +496,14 @@ defineExpose({
   font-size: 12px;
 }
 .account-test-settings { border: 1px solid var(--signal-line); border-radius: 10px; background: var(--signal-surface); overflow: hidden; }
-.account-test-settings-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 11px 14px; font-size: 12px; font-weight: 500; color: var(--signal-muted); text-align: left; transition: color 160ms ease, background 160ms ease; }
-.account-test-settings-toggle:hover { color: var(--signal-text); background: var(--signal-bg); }
+.account-test-settings-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 11px 14px; font-size: 12px; font-weight: 500; color: var(--signal-muted); text-align: left; transition: color 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), background-color 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
+@media (hover: hover) and (pointer: fine) {
+  .account-test-settings-toggle:hover { color: var(--signal-text); background: var(--signal-bg); }
+}
 .account-test-settings-toggle:focus-visible { outline: 2px solid #0f766e; outline-offset: -3px; }
-.account-test-settings-chevron { margin-left: auto; transition: transform 220ms ease; }
+.account-test-settings-chevron { margin-left: auto; transition: transform 220ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .account-test-settings-toggle[aria-expanded=true] .account-test-settings-chevron { transform: rotate(180deg); }
-.account-test-settings-content { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 240ms ease, opacity 240ms ease; }
+.account-test-settings-content { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 240ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)), opacity 240ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)); }
 .account-test-settings-content.is-open { grid-template-rows: 1fr; opacity: 1; }
 .account-test-settings-inner { min-height: 0; overflow: hidden; }
 .account-test-advanced > * { min-width: 0; }

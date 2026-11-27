@@ -754,9 +754,11 @@ html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
   color: var(--ui-text-muted);
 }
 
-.sidebar-subscriptions > div > button:hover {
-  background: color-mix(in oklab, var(--ui-bg-elevated) 50%, transparent);
-  color: var(--ui-text-highlighted);
+@media (hover: hover) and (pointer: fine) {
+  .sidebar-subscriptions > div > button:hover {
+    background: color-mix(in oklab, var(--ui-bg-elevated) 50%, transparent);
+    color: var(--ui-text-highlighted);
+  }
 }
 
 .sidebar-subscriptions > div > button > svg {
@@ -808,7 +810,7 @@ html:not(.dark) .sidebar-version > button:not([class*='bg-amber']) {
 }
 
 .console-flyout-list {
-  max-height: min(70vh, 560px);
+  max-height: min(70dvh, 560px);
   overflow-y: auto;
 }
 
@@ -904,8 +906,8 @@ html.dark .console-sidebar [data-slot='link'][data-active] {
   }
 
   .console-sidebar-drawer [data-slot='header'] button {
-    min-width: 40px;
-    min-height: 40px;
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 </style>

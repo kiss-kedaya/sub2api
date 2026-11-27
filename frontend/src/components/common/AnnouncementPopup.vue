@@ -5,14 +5,14 @@
     :dismissible="false"
     :close="false"
     :title="displayedAnnouncement?.title"
-    :ui="{ content: 'sm:max-w-2xl', body: 'max-h-[50vh] overflow-y-auto', footer: 'justify-end' }"
+    :ui="{ content: 'sm:max-w-2xl', body: 'max-h-[50dvh] overflow-y-auto', footer: 'justify-end' }"
   >
     <template #description>
       <span class="flex flex-wrap items-center gap-2">
         <UBadge v-if="!preview" color="primary" variant="subtle" size="sm" :label="t('announcements.unread')" />
         <span class="inline-flex items-center gap-1.5 text-muted">
           <UIcon name="i-lucide-clock" class="size-4" />
-          <time>{{ displayedAnnouncement ? formatRelativeWithDateTime(displayedAnnouncement.created_at) : '' }}</time>
+          <time class="tabular-nums">{{ displayedAnnouncement ? formatRelativeWithDateTime(displayedAnnouncement.created_at) : '' }}</time>
         </span>
       </span>
     </template>

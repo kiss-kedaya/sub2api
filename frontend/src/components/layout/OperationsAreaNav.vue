@@ -5,7 +5,7 @@
       <span aria-hidden="true">/</span>
       <span>{{ t(area.labelKey) }}</span>
     </div>
-    <div ref="tabs" class="flex min-w-0 gap-1 overflow-x-auto border-b border-default pb-2">
+    <div ref="tabs" class="flex min-w-0 flex-wrap sm:flex-nowrap gap-1 sm:overflow-x-auto border-b border-default pb-2">
       <UButton
         v-for="item in area.items"
         :key="item.path"

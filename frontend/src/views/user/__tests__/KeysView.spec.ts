@@ -602,14 +602,18 @@ describe('user KeysView column settings', () => {
       await flushPromises()
       wrapper.getComponent('#ccs-import-platform').vm.$emit('update:modelValue', app)
       await nextTick()
-      await getButtonByText(wrapper, 'common.import').trigger('click')
-      const params = new URL(String(open.mock.calls[0][0])).searchParams
+      const launchAnchor = wrapper.get('[data-test="ccs-import-launch"]')
+      expect(launchAnchor.element.tagName).toBe('A')
+      const href = launchAnchor.attributes('href') ?? ''
+      expect(href.startsWith('ccswitch://')).toBe(true)
+      const params = new URL(href).searchParams
       expect(params.get('endpoint')).toBe(endpoint)
       expect(params.get('usageAutoInterval')).toBe('30')
       const script = atob(params.get('usageScript')!).replaceAll('{{baseUrl}}', endpoint)
       const request = new Function(`return (${script})`)().request
       expect(request.url).toBe('https://api.example.com/prefix/v1/usage')
       expect(request.method).toBe('GET')
+      expect(open).not.toHaveBeenCalled()
     } finally {
       wrapper.unmount()
       open.mockRestore()
@@ -629,7 +633,6 @@ describe('user KeysView column settings', () => {
       }),
     })
     vi.stubGlobal('fetch', fetchMock)
-    const open = vi.spyOn(window, 'open').mockReturnValue(null)
     const wrapper = await mountView()
     try {
       await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
@@ -657,13 +660,67 @@ describe('user KeysView column settings', () => {
       await nextTick()
       expect(modelSelect.props('modelValue')).toBe('gpt-5.4-real')
 
-      await getButtonByText(wrapper, 'common.import').trigger('click')
-      const params = new URL(String(open.mock.calls[0][0])).searchParams
+      const href = wrapper.get('[data-test="ccs-import-launch"]').attributes('href') ?? ''
+      const params = new URL(href).searchParams
       expect(params.get('app')).toBe('codex')
       expect(params.get('model')).toBe('gpt-5.4-real')
     } finally {
       wrapper.unmount()
-      open.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('launches ccswitch:// without preventDefault and shows calm fallback after 1300ms only when focus never leaves', async () => {
+    vi.useFakeTimers()
+    getPublicSettings.mockResolvedValue({ api_base_url: 'https://api.example.com' })
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'Claude', platform: 'anthropic' }])
+    createKey.mockResolvedValue({ ...createApiKey(), id: 93, group_id: 3, group_ids: [3], key: 'sk-deeplink-fallback' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }))
+    copyToClipboard.mockResolvedValue(true)
+    const wrapper = await mountView()
+    try {
+      await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+      await wrapper.get('[data-tour="key-form-name"]').setValue('fallback key')
+      wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+
+      await getButtonByText(wrapper, 'keys.secretDialog.importCcs').trigger('click')
+      await flushPromises()
+
+      const launchEl = wrapper.get('[data-test="ccs-import-launch"]').element
+      const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true })
+      launchEl.dispatchEvent(clickEvent)
+      expect(clickEvent.defaultPrevented).toBe(false)
+
+      // Blur suppresses fallback.
+      window.dispatchEvent(new Event('blur'))
+      await vi.advanceTimersByTimeAsync(1300)
+      await nextTick()
+      expect(wrapper.find('[data-test="ccs-import-fallback"]').exists()).toBe(false)
+      expect(showError).not.toHaveBeenCalled()
+
+      // Clicking again without blur/visibilitychange reveals the calm inline fallback after 1300ms.
+      await wrapper.get('[data-test="ccs-import-launch"]').trigger('click')
+      await vi.advanceTimersByTimeAsync(1299)
+      await nextTick()
+      expect(wrapper.find('[data-test="ccs-import-fallback"]').exists()).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await nextTick()
+      const fallback = wrapper.get('[data-test="ccs-import-fallback"]')
+      expect(fallback.text()).toContain('keys.ccSwitchNotInstalled')
+      expect(fallback.get('[data-test="ccs-import-retry"]').attributes('href')).toMatch(/^ccswitch:\/\//)
+      expect(fallback.get('[data-test="ccs-import-download"]').attributes('href')).toContain('ccswitch.io')
+      expect(showError).not.toHaveBeenCalled()
+
+      await fallback.get('[data-test="ccs-import-copy-deeplink"]').trigger('click')
+      await flushPromises()
+      expect(copyToClipboard).toHaveBeenCalledWith(expect.stringMatching(/^ccswitch:\/\//), 'common.copied')
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
       vi.unstubAllGlobals()
     }
   })
@@ -3691,5 +3748,176 @@ describe('user KeysView 创建弹窗（Quiet 流程）与页面过期守卫', ()
       expect(router.currentRoute.value.query.action).toBe('inspect')
       wrapper.unmount()
     })
+  })
+})
+
+describe('floating dropdown clamping, scroll tracking, and reduced-motion polish', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    listKeys.mockReset()
+    createKey.mockReset()
+    rotateKey.mockReset()
+    getPublicSettings.mockReset()
+    getDashboardApiKeysUsage.mockReset()
+    getAvailableGroups.mockReset()
+    getUserGroupRates.mockReset()
+    getKeyRotationGateStatus.mockReset()
+    getVerificationFactors.mockReset()
+
+    listKeys.mockResolvedValue({
+      items: [createApiKey()],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    getPublicSettings.mockResolvedValue({})
+    getDashboardApiKeysUsage.mockResolvedValue({ stats: {} })
+    getAvailableGroups.mockResolvedValue([])
+    getUserGroupRates.mockResolvedValue({})
+    getKeyRotationGateStatus.mockResolvedValue({ required: false, items: [] })
+    getVerificationFactors.mockResolvedValue({
+      password_available: false,
+      totp_enabled: false,
+      passkey_count: 0,
+      preferred: '',
+      available_methods: [],
+      seal_available: false,
+    })
+  })
+
+  it('clamps column dropdown height, flips origin-bottom near viewport bottom, and tracks scroll', async () => {
+    const originalInnerWidth = window.innerWidth
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 667 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 375 })
+
+    const { Teleport: _Teleport, ...stubs } = baseStubs
+    const wrapper = await mountViewWithStubs(stubs)
+    try {
+      const triggerBtn = wrapper.get('button[title="Column Settings"]')
+      const triggerWrap = triggerBtn.element.parentElement!
+      let topPos = 315
+      vi.spyOn(triggerWrap, 'getBoundingClientRect').mockImplementation(() => ({
+        x: 580,
+        y: topPos,
+        top: topPos,
+        bottom: topPos + 40,
+        left: 580,
+        right: 624,
+        width: 44,
+        height: 40,
+        toJSON: () => ({}),
+      }))
+
+      await triggerBtn.trigger('click')
+      await nextTick()
+
+      const el = document.body.querySelector('[data-test="keys-column-dropdown"]') as HTMLElement
+      expect(el).not.toBeNull()
+      expect(el.classList.contains('origin-bottom')).toBe(true)
+      expect(el.classList.contains('origin-top')).toBe(false)
+      expect(Number.parseFloat(el.style.bottom)).toBe(64)
+      expect(Number.parseFloat(el.style.maxHeight)).toBe(303)
+
+      topPos = 40
+      window.dispatchEvent(new Event('scroll'))
+      await nextTick()
+
+      expect(el.classList.contains('origin-top')).toBe(true)
+      expect(el.classList.contains('origin-bottom')).toBe(false)
+      expect(Number.parseFloat(el.style.top)).toBe(84)
+      expect(Number.parseFloat(el.style.maxHeight)).toBe(283)
+    } finally {
+      wrapper.unmount()
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+    }
+  })
+
+  it('clamps group selector height and flips origin-bottom on short viewports', async () => {
+    const originalInnerWidth = window.innerWidth
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 320 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 568 })
+
+    const wrapper = await mountView()
+    try {
+      const cell = wrapper.get('[data-group-cell]')
+      vi.spyOn(cell.element, 'getBoundingClientRect').mockReturnValue({
+        x: 24,
+        y: 500,
+        top: 500,
+        bottom: 536,
+        left: 24,
+        right: 160,
+        width: 136,
+        height: 36,
+        toJSON: () => ({}),
+      } as DOMRect)
+
+      await cell.trigger('click')
+      await nextTick()
+
+      const dropdown = wrapper.get('[data-test="group-selector-dropdown"]')
+      expect(dropdown.classes()).toContain('origin-bottom')
+      expect(dropdown.classes()).not.toContain('origin-top')
+      const el = dropdown.element as HTMLElement
+      expect(Number.parseFloat(el.style.bottom)).toBe(72)
+      expect(Number.parseFloat(el.style.maxHeight)).toBe(488)
+    } finally {
+      wrapper.unmount()
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+    }
+  })
+
+  it('gates rotation spinners with motion-reduce:animate-none and adds coarse target + focus ring to CCS model reload', async () => {
+    let resolveRotate!: (value: ApiKey) => void
+    rotateKey.mockImplementation(() => new Promise<ApiKey>((resolve) => { resolveRotate = resolve }))
+    getAvailableGroups.mockResolvedValue([{ id: 3, name: 'Claude', platform: 'anthropic' }])
+    createKey.mockResolvedValue({ ...createApiKey(), id: 92, group_id: 3, group_ids: [3], key: 'test-key-must-not-leak' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }))
+    listKeys.mockResolvedValue({
+      items: [{ ...createApiKey(), id: 11, needs_rotation: true, rotation_reason: 'shared_ip' }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+
+    const wrapper = await mountView()
+    try {
+      const rotateBtn = wrapper.get('[data-test="key-needs-rotation-rotate"]')
+      await rotateBtn.trigger('click')
+      await nextTick()
+      expect(rotateBtn.html()).toContain('animate-spin')
+      expect(rotateBtn.html()).toContain('motion-reduce:animate-none')
+      resolveRotate({ ...createApiKey(), id: 11 })
+      await flushPromises()
+
+      await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
+      await wrapper.get('[data-tour="key-form-name"]').setValue('ccs reload key')
+      wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 3)
+      await nextTick()
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+      await getButtonByText(wrapper, 'keys.secretDialog.importCcs').trigger('click')
+      await flushPromises()
+
+      const reloadBtn = wrapper.get('[data-test="ccs-import-model-reload"]')
+      expect(reloadBtn.classes()).toEqual(expect.arrayContaining([
+        'min-h-11',
+        'px-1',
+        'rounded',
+        '[@media(pointer:fine)]:min-h-0',
+        'focus-visible:outline-2',
+        'focus-visible:outline-offset-2',
+        'focus-visible:outline-primary',
+      ]))
+    } finally {
+      wrapper.unmount()
+      vi.unstubAllGlobals()
+    }
   })
 })

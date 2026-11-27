@@ -26,7 +26,7 @@
           </template>
           <template #right>
           <div class="flex items-center gap-2 text-xs text-muted">
-            <span v-if="draft">{{ t('admin.promptAudit.configVersion', { version: draft.config_version }) }}<template v-if="draft.updated_at"> · {{ formatDate(draft.updated_at) }}</template></span>
+            <span v-if="draft" class="tabular-nums">{{ t('admin.promptAudit.configVersion', { version: draft.config_version }) }}<template v-if="draft.updated_at"> · {{ formatDate(draft.updated_at) }}</template></span>
             <UPopover :content="{ align: 'end' }">
               <UButton icon="i-lucide-info" color="neutral" variant="ghost" size="xs" :aria-label="t('admin.promptAudit.common.about')" :title="t('admin.promptAudit.common.about')" />
               <template #content>
@@ -105,7 +105,7 @@
         </div>
 
         <!-- Pinned to the bottom of the scroll area so the long configuration can be saved from anywhere. -->
-        <div v-if="draft && activeTab === 'config'" class="sticky bottom-0 z-30 border-t border-default bg-default py-3">
+        <div v-if="draft && activeTab === 'config'" class="sticky bottom-0 z-20 border-t border-default bg-default py-3">
           <div class="mx-auto flex w-full max-w-4xl flex-wrap items-center justify-end gap-3">
             <span class="me-auto flex items-center gap-2 text-sm" :class="dirty ? 'text-warning' : 'text-muted'">
               <UIcon :name="dirty ? 'i-lucide-circle-alert' : 'i-lucide-check'" class="size-4 shrink-0" />
@@ -265,7 +265,10 @@ async function loadRuntime() {
 async function loadGroups() {
   loading.groups = true
   loadErrors.groups = ''
-  try { groups.value = await promptAuditAPI.listGroups() }
+  try {
+    const result = await promptAuditAPI.listGroups()
+    groups.value = Array.isArray(result) ? result : []
+  }
   catch (error) { loadErrors.groups = errorMessage(error, 'admin.promptAudit.errors.loadGroups') }
   finally { loading.groups = false }
 }
@@ -274,7 +277,15 @@ async function loadEvents() {
   loadErrors.events = ''
   try {
     const result = await promptAuditAPI.listEvents(appliedFilters.value, events.page, events.page_size)
-    Object.assign(events, result)
+    Object.assign(events, {
+      items: [],
+      total: 0,
+      page: events.page,
+      page_size: events.page_size,
+      pages: 0,
+      ...(result && typeof result === 'object' ? result : {}),
+    })
+    if (!Array.isArray(events.items)) events.items = []
     selectedEventIds.value = []
   } catch (error) {
     loadErrors.events = errorMessage(error, 'admin.promptAudit.errors.loadEvents')
@@ -422,7 +433,10 @@ async function confirmFilterDelete(filters?: PromptEventFilters) {
   } finally { loading.deleting = false }
 }
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value))
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'medium' }).format(d)
 }
 
 onMounted(loadInitial)

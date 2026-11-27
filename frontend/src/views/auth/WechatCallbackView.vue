@@ -2,10 +2,10 @@
   <AuthLayout>
     <div class="space-y-6">
       <div class="text-center">
-        <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
+        <h2 class="text-2xl font-bold text-highlighted">
           {{ t('auth.oidc.callbackTitle', { providerName }) }}
         </h2>
-        <p class="mt-2 text-sm text-gray-500 dark:text-dark-400">
+        <p class="mt-2 text-sm text-muted">
           {{
             isProcessing
               ? t('auth.oidc.callbackProcessing', { providerName })
@@ -28,28 +28,28 @@
         >
           <div
             v-if="adoptionRequired && (suggestedDisplayName || suggestedAvatarUrl)"
-            class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-800/60"
+            class="rounded-xl border border-default bg-muted p-4"
           >
             <div class="space-y-3">
               <div class="space-y-1">
-                <p class="text-sm font-medium text-gray-900 dark:text-white">
+                <p class="text-sm font-medium text-highlighted">
                   {{ t('auth.oauthFlow.profileDetailsTitle', { providerName }) }}
                 </p>
-                <p class="text-xs text-gray-500 dark:text-dark-400">
+                <p class="text-xs text-muted">
                   {{ t('auth.oauthFlow.profileDetailsDescription', { providerName }) }}
                 </p>
               </div>
 
               <label
                 v-if="suggestedDisplayName"
-                class="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-3 text-sm dark:border-dark-600 dark:bg-dark-900/50"
+                class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-default bg-default p-3 text-sm"
               >
-                <input v-model="adoptDisplayName" type="checkbox" class="mt-1 h-4 w-4" />
-                <span class="space-y-1">
-                  <span class="block font-medium text-gray-900 dark:text-white">
+                <input v-model="adoptDisplayName" type="checkbox" class="mt-1 h-4 w-4 shrink-0 accent-primary" />
+                <span class="min-w-0 flex-1 space-y-1">
+                  <span class="block font-medium text-highlighted">
                     {{ t('auth.oauthFlow.useDisplayName') }}
                   </span>
-                  <span class="block text-gray-500 dark:text-dark-400">
+                  <span class="block wrap-anywhere text-muted">
                     {{ suggestedDisplayName }}
                   </span>
                 </span>
@@ -57,19 +57,19 @@
 
               <label
                 v-if="suggestedAvatarUrl"
-                class="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-3 text-sm dark:border-dark-600 dark:bg-dark-900/50"
+                class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-default bg-default p-3 text-sm"
               >
-                <input v-model="adoptAvatar" type="checkbox" class="mt-1 h-4 w-4" />
+                <input v-model="adoptAvatar" type="checkbox" class="mt-1 h-4 w-4 shrink-0 accent-primary" />
                 <img
                   :src="suggestedAvatarUrl"
                   :alt="t('auth.oauthFlow.avatarAlt', { providerName })"
-                  class="h-10 w-10 rounded-full border border-gray-200 object-cover dark:border-dark-600"
+                  class="h-10 w-10 shrink-0 rounded-full border border-default object-cover"
                 />
-                <span class="space-y-1">
-                  <span class="block font-medium text-gray-900 dark:text-white">
+                <span class="min-w-0 flex-1 space-y-1">
+                  <span class="block font-medium text-highlighted">
                     {{ t('auth.oauthFlow.useAvatar') }}
                   </span>
-                  <span class="block break-all text-gray-500 dark:text-dark-400">
+                  <span class="block wrap-anywhere text-muted">
                     {{ suggestedAvatarUrl }}
                   </span>
                 </span>
@@ -78,7 +78,7 @@
           </div>
 
           <template v-if="needsInvitation">
-            <p class="text-sm text-gray-700 dark:text-gray-300">
+            <p class="text-sm text-default">
               {{ t('auth.oidc.invitationRequired', { providerName }) }}
             </p>
             <div>
@@ -92,6 +92,7 @@
               />
             </div>
             <button
+              type="button"
               class="btn btn-primary w-full"
               :disabled="isSubmitting || !invitationCode.trim()"
               @click="handleSubmitInvitation"
@@ -104,14 +105,14 @@
             </button>
 
             <div
-              class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-800/60"
+              class="rounded-xl border border-default bg-muted p-4"
             >
               <div class="space-y-3">
                 <div class="space-y-1">
-                  <p class="text-sm font-medium text-gray-900 dark:text-white">
+                  <p class="text-sm font-medium text-highlighted">
                     {{ t('auth.alreadyHaveAccount') }}
                   </p>
-                  <p class="text-xs text-gray-500 dark:text-dark-400">
+                  <p class="text-xs text-muted">
                     {{
                       hasCurrentAuthToken
                         ? t('auth.oauthFlow.bindCurrentAccountDescription', { providerName })
@@ -145,14 +146,14 @@
 
           <template v-else-if="needsChooser">
             <div
-              class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-800/60"
+              class="rounded-xl border border-default bg-muted p-4"
             >
               <div class="space-y-4">
                 <div class="space-y-1">
-                  <p class="text-sm font-medium text-gray-900 dark:text-white">
+                  <p class="text-sm font-medium text-highlighted">
                     {{ t('auth.oauthFlow.chooseHowToContinue') }}
                   </p>
-                  <p class="text-xs text-gray-500 dark:text-dark-400">
+                  <p class="text-xs text-muted">
                     {{ t('auth.oauthFlow.chooseAccountActionHint') }}
                   </p>
                 </div>
@@ -181,16 +182,16 @@
           </template>
 
           <template v-else-if="needsAdoptionConfirmation">
-            <p class="text-sm text-gray-700 dark:text-gray-300">
+            <p class="text-sm text-default">
               {{ t('auth.oauthFlow.reviewProfileBeforeContinue', { providerName }) }}
             </p>
-            <button class="btn btn-primary w-full" :disabled="isSubmitting" @click="handleContinueLogin">
+            <button type="button" class="btn btn-primary w-full" :disabled="isSubmitting" @click="handleContinueLogin">
               {{ isSubmitting ? t('common.processing') : t('auth.continue') }}
             </button>
           </template>
 
           <template v-else-if="needsCreateAccount">
-            <p class="text-sm text-gray-700 dark:text-gray-300">
+            <p class="text-sm text-default">
               {{ t('auth.oauthFlow.createAccountHint') }}
             </p>
             <PendingOAuthCreateAccountForm
@@ -203,6 +204,7 @@
             />
             <button
               v-if="showBackToChooser"
+              type="button"
               class="btn btn-secondary w-full"
               :disabled="isSubmitting"
               @click="switchToCreateAccountMode()"
@@ -212,19 +214,19 @@
           </template>
 
           <template v-else-if="needsBindLogin">
-            <p class="text-sm text-gray-700 dark:text-gray-300">
+            <p class="text-sm text-default">
               {{ t('auth.oauthFlow.bindSignInToExistingAccount', { providerName }) }}
             </p>
             <div
               v-if="hasCurrentAuthToken"
-              class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-dark-600 dark:bg-dark-800/60"
+              class="rounded-xl border border-default bg-muted p-4"
             >
               <div class="space-y-3">
                 <div class="space-y-1">
-                  <p class="text-sm font-medium text-gray-900 dark:text-white">
+                  <p class="text-sm font-medium text-highlighted">
                     {{ t('auth.oauthFlow.bindCurrentAccountTitle') }}
                   </p>
-                  <p class="text-xs text-gray-500 dark:text-dark-400">
+                  <p class="text-xs text-muted">
                     {{ t('auth.oauthFlow.bindCurrentAccountDescription', { providerName }) }}
                   </p>
                 </div>
@@ -260,6 +262,7 @@
                 @keyup.enter="handleBindLogin"
               />
               <button
+                type="button"
                 data-testid="wechat-bind-login-submit"
                 class="btn btn-primary w-full"
                 :disabled="isSubmitting || !bindLoginEmail.trim() || !bindLoginPassword"
@@ -270,6 +273,7 @@
             </div>
             <button
               v-if="showBackToChooser"
+              type="button"
               class="btn btn-secondary w-full"
               :disabled="isSubmitting"
               @click="switchToCreateAccountMode()"
@@ -279,7 +283,7 @@
           </template>
 
           <template v-else-if="needsTotpChallenge">
-            <p class="text-sm text-gray-700 dark:text-gray-300">
+            <p class="text-sm text-default">
               {{
                 t('auth.oauthFlow.totpHint', {
                   providerName,
@@ -300,6 +304,7 @@
                 @keyup.enter="handleSubmitTotpChallenge"
               />
               <button
+                type="button"
                 data-testid="wechat-bind-login-totp-submit"
                 class="btn btn-primary w-full"
                 :disabled="isSubmitting || totpCode.trim().length !== 6"
@@ -1102,14 +1107,33 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.fade-enter-active,
+.fade-enter-active {
+  transition:
+    opacity 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 180ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
 .fade-leave-active {
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  transition:
+    opacity 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
   transform: translateY(-8px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: opacity 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+  }
+
+  .fade-enter-from,
+  .fade-leave-to {
+    transform: none;
+  }
 }
 </style>

@@ -41,7 +41,7 @@ describe('PlatformUsageBreakdown', () => {
       expect(tooltip).not.toBeNull()
       expect(tooltip?.parentElement).toBe(document.body)
       expect(tooltip?.className).toContain('fixed')
-      expect(tooltip?.className).toContain('z-[60]')
+      expect(tooltip?.className).toContain('z-50')
       expect(tooltip?.textContent).toContain('Claude')
       expect(tooltip?.textContent).toContain('OpenAI')
 

@@ -422,4 +422,12 @@ describe('AccountTestModal', () => {
     await flushPromises()
     expect(stream.reader.releaseLock).toHaveBeenCalledOnce()
   })
+
+  it('gates toggle hover styles behind pointer hover media query', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const sfc = readFileSync(resolve(__dirname, '../AccountTestModal.vue'), 'utf8')
+    expect(sfc).toContain('@media (hover: hover) and (pointer: fine)')
+    expect(sfc).toContain('.account-test-settings-toggle:hover')
+  })
 })

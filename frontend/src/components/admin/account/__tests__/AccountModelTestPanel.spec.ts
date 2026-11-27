@@ -320,4 +320,16 @@ describe('AccountModelTestPanel race regressions', () => {
     const failure = wrapper.get('[data-test="test-failure-11-gpt-one"]')
     expect(failure.classes()).toContain(`is-${kind}`)
   })
+
+  it('uses GPU-composited progress motion, dvh sizing, and hover-gated styles', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const sfc = readFileSync(resolve(__dirname, '../AccountModelTestPanel.vue'), 'utf8')
+    expect(sfc).toContain('@media (hover: hover) and (pointer: fine)')
+    expect(sfc).toContain('prefers-reduced-motion: reduce')
+    expect(sfc).toContain('scaleX(')
+    expect(sfc).toContain('dvh')
+    expect(sfc).not.toMatch(/transition[^;]*box-shadow/)
+    expect(sfc).not.toMatch(/\dvh\b/)
+  })
 })

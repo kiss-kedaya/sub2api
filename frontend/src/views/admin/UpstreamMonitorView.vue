@@ -39,7 +39,7 @@
             </p>
             <p v-if="!overview?.currencies?.length" class="text-2xl font-semibold text-muted">—</p>
           </div>
-          <p class="mt-2 text-xs text-muted">{{ overview?.with_balance ?? 0 }} / {{ overview?.total_accounts ?? 0 }} {{ text('个账号有余额', 'accounts with a balance') }}</p>
+          <p class="mt-2 text-xs tabular-nums text-muted">{{ overview?.with_balance ?? 0 }} / {{ overview?.total_accounts ?? 0 }} {{ text('个账号有余额', 'accounts with a balance') }}</p>
         </article>
 
         <article class="card p-4">
@@ -50,7 +50,7 @@
             </p>
             <p v-if="!overview?.spend?.length" class="text-2xl font-semibold text-muted">—</p>
           </div>
-          <p class="mt-2 text-xs text-muted">
+          <p class="mt-2 text-xs tabular-nums text-muted">
             <template v-for="(item, index) in overview?.spend ?? []" :key="`7d-${item.unit}`">
               <span v-if="index > 0"> · </span>{{ text('近 7 天', 'Last 7 days') }} {{ formatMoney(item.last_7_days, item.unit) }}
             </template>
@@ -70,7 +70,7 @@
             {{ overview?.healthy ?? 0 }}
             <span class="text-sm font-normal text-muted">/ {{ overview?.total_accounts ?? 0 }}</span>
           </p>
-          <p class="mt-2 text-xs text-muted">{{ text('过期', 'Stale') }} {{ overview?.stale ?? 0 }} · {{ text('失败', 'Failed') }} {{ overview?.failed ?? 0 }} · {{ text('不支持', 'Unsupported') }} {{ overview?.unsupported ?? 0 }}</p>
+          <p class="mt-2 text-xs tabular-nums text-muted">{{ text('过期', 'Stale') }} {{ overview?.stale ?? 0 }} · {{ text('失败', 'Failed') }} {{ overview?.failed ?? 0 }} · {{ text('不支持', 'Unsupported') }} {{ overview?.unsupported ?? 0 }}</p>
         </article>
 
         <article class="card p-4">
@@ -82,7 +82,7 @@
         <article class="card p-4">
           <p class="text-xs font-medium text-muted">{{ text('24 小时倍率变动', 'Rate changes in 24h') }}</p>
           <p class="mt-2 text-2xl font-semibold tabular-nums" :class="(overview?.rate_changes_24h ?? 0) > 0 ? 'text-amber-600 dark:text-amber-400' : ''">{{ overview?.rate_changes_24h ?? 0 }}</p>
-          <p class="mt-2 text-xs text-muted">{{ text('最近采样', 'Last sample') }} {{ overview?.last_sample_at ? new Date(overview.last_sample_at).toLocaleString() : '—' }}</p>
+          <p class="mt-2 text-xs tabular-nums text-muted">{{ text('最近采样', 'Last sample') }} {{ overview?.last_sample_at ? new Date(overview.last_sample_at).toLocaleString() : '—' }}</p>
         </article>
       </section>
 
@@ -96,7 +96,7 @@
             v-for="item in overview.attention"
             :key="item.account_id"
             type="button"
-            class="inline-flex max-w-full items-center gap-2 rounded-full border border-default px-3 py-1 text-xs hover:bg-elevated"
+            class="inline-flex max-w-full items-center gap-2 rounded-full border border-default px-3 py-1 text-xs transition-colors max-sm:min-h-11 pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary [@media(hover:hover)_and_(pointer:fine)]:hover:bg-elevated"
             @click="openDetail(item)"
           >
             <span class="truncate font-medium">{{ item.name }}</span>
@@ -121,6 +121,7 @@
                 :key="option"
                 size="xs"
                 color="neutral"
+                class="max-sm:min-h-11 pointer-coarse:min-h-11"
                 :variant="trendDays === option ? 'soft' : 'ghost'"
                 :label="`${option}d`"
                 @click="changeTrendDays(option)"
@@ -131,7 +132,7 @@
 
         <div v-if="trendChart" class="mt-3 overflow-x-auto">
           <svg :viewBox="`0 0 ${trendChart.width} ${trendChart.height}`" class="h-44 w-full min-w-[520px]" role="img" :aria-label="text('余额与消费趋势图', 'Balance and spend trend chart')">
-            <line
+            <rect
               v-for="bar in trendChart.bars"
               :key="`bar-${bar.x}`"
               :x="bar.x"
@@ -154,7 +155,7 @@
           <div class="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted">
             <span class="inline-flex items-center gap-1"><span class="inline-block h-0.5 w-4 bg-emerald-500" />{{ text('余额', 'Balance') }}</span>
             <span class="inline-flex items-center gap-1"><span class="inline-block h-2 w-3 rounded-sm bg-amber-400/60" />{{ text('当天消费', 'Spend') }}</span>
-            <span>{{ text('余额峰值', 'Peak balance') }} {{ formatMoney(trendChart.maxBalance, trendUnit) }}</span>
+            <span class="tabular-nums">{{ text('余额峰值', 'Peak balance') }} {{ formatMoney(trendChart.maxBalance, trendUnit) }}</span>
           </div>
         </div>
         <p v-else class="mt-4 rounded-lg border border-dashed border-default p-6 text-center text-sm text-muted">
@@ -170,7 +171,7 @@
           </div>
           <div class="flex items-center gap-2">
             <USelect v-model="alertStatus" :items="alertStatusItems" class="min-w-32" :aria-label="text('告警状态', 'Alert status')" />
-            <span class="text-xs text-muted">{{ alertTotal }} {{ text('条', 'entries') }}</span>
+            <span class="text-xs tabular-nums text-muted">{{ alertTotal }} {{ text('条', 'entries') }}</span>
           </div>
         </div>
 
@@ -180,7 +181,7 @@
               <p class="flex flex-wrap items-center gap-2 text-sm">
                 <UBadge :color="alert.level === 'critical' ? 'error' : 'warning'" variant="subtle" size="sm">{{ alertKindLabel(alert.kind) }}</UBadge>
                 <span class="font-medium text-highlighted">{{ alert.name || `#${alert.account_id}` }}</span>
-                <span class="text-xs text-muted">{{ new Date(alert.created_at).toLocaleString() }}</span>
+                <span class="text-xs tabular-nums text-muted">{{ new Date(alert.created_at).toLocaleString() }}</span>
               </p>
               <p class="mt-1 text-sm text-muted">{{ alert.message }}</p>
             </div>
@@ -192,19 +193,20 @@
                 color="neutral"
                 variant="outline"
                 icon="i-lucide-check"
+                class="max-sm:min-h-11 pointer-coarse:min-h-11"
                 :label="text('标记已处理', 'Ack')"
                 @click="acknowledge(alert)"
               />
-              <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-scan-search" :label="text('处理', 'Open')" @click="openAlertAccount(alert)" />
+              <UButton size="xs" color="neutral" variant="ghost" icon="i-lucide-scan-search" class="max-sm:min-h-11 pointer-coarse:min-h-11" :label="text('处理', 'Open')" @click="openAlertAccount(alert)" />
             </div>
           </div>
         </div>
         <p v-else class="mt-3 rounded-lg border border-dashed border-default p-4 text-center text-sm text-muted">{{ text('当前筛选下没有告警', 'No alerts for this filter') }}</p>
 
         <div v-if="alertPages > 1" class="mt-3 flex items-center justify-end gap-2 text-xs text-muted">
-          <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="xs" :disabled="alertPage <= 1" @click="loadAlerts(alertPage - 1)" />
-          <span>{{ alertPage }} / {{ alertPages }}</span>
-          <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" size="xs" :disabled="alertPage >= alertPages" @click="loadAlerts(alertPage + 1)" />
+          <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="xs" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :disabled="alertPage <= 1" @click="loadAlerts(alertPage - 1)" />
+          <span class="tabular-nums">{{ alertPage }} / {{ alertPages }}</span>
+          <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" size="xs" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :disabled="alertPage >= alertPages" @click="loadAlerts(alertPage + 1)" />
         </div>
       </section>
       <PageToolbar>
@@ -224,21 +226,21 @@
             <span class="truncate">{{ row.original.name }}</span>
             <UIcon v-if="row.original.alert_enabled" name="i-lucide-bell-ring" class="size-3.5 text-amber-500" :title="text('已设置余额告警', 'Balance alert enabled')" />
           </p>
-          <p class="truncate text-xs text-muted">{{ row.original.notes || `#${row.original.account_id} · ${row.original.platform} · ${row.original.type}` }}</p>
-          <p v-if="row.original.notes" class="truncate text-xs text-muted">#{{ row.original.account_id }} · {{ row.original.platform }} · {{ row.original.type }}</p>
+          <p class="truncate text-xs tabular-nums text-muted">{{ row.original.notes || `#${row.original.account_id} · ${row.original.platform} · ${row.original.type}` }}</p>
+          <p v-if="row.original.notes" class="truncate text-xs tabular-nums text-muted">#{{ row.original.account_id }} · {{ row.original.platform }} · {{ row.original.type }}</p>
         </template>
         <template #balance-cell="{ row }">
           <p class="font-medium tabular-nums">{{ row.original.unlimited ? text('不限', 'Unlimited') : row.original.balance === null ? '—' : formatMoney(row.original.balance, row.original.unit) }}</p>
-          <p class="text-xs text-muted">{{ row.original.balance_read_at ? new Date(row.original.balance_read_at).toLocaleString() : text('尚未采集', 'Not sampled yet') }}</p>
+          <p class="text-xs tabular-nums text-muted">{{ row.original.balance_read_at ? new Date(row.original.balance_read_at).toLocaleString() : text('尚未采集', 'Not sampled yet') }}</p>
         </template>
         <template #status-cell="{ row }">
           <UBadge :color="statusColor(row.original.balance_status)" variant="subtle">{{ statusLabel(row.original.balance_status) }}</UBadge>
-          <p v-if="row.original.alert_threshold != null" class="mt-1 text-xs text-muted">{{ text('阈值', 'Threshold') }} {{ formatMoney(row.original.alert_threshold, row.original.unit) }}</p>
+          <p v-if="row.original.alert_threshold != null" class="mt-1 text-xs tabular-nums text-muted">{{ text('阈值', 'Threshold') }} {{ formatMoney(row.original.alert_threshold, row.original.unit) }}</p>
           <p v-if="row.original.balance_error" class="mt-1 max-w-xs whitespace-normal text-xs text-amber-600 dark:text-amber-400">{{ row.original.balance_error }}</p>
         </template>
         <template #rate-cell="{ row }">
           <p class="tabular-nums">{{ row.original.rate === null ? '—' : `× ${row.original.rate.toFixed(4)}` }}</p>
-          <p class="text-xs text-muted">
+          <p class="text-xs tabular-nums text-muted">
             {{ row.original.rate_sync_enabled ? text('同步已开启', 'Sync on') : text('仅观察', 'Observe only') }}
             <span v-if="row.original.rate_synced != null"> · {{ text('已写回', 'Applied') }} × {{ row.original.rate_synced.toFixed(4) }}</span>
           </p>
@@ -249,19 +251,20 @@
             <p v-if="usageTightestLabel(row.original.usage)" class="text-xs tabular-nums" :class="usagePctClass(usageTightest(row.original.usage)?.remaining_pct ?? 100)">
               {{ usageTightestLabel(row.original.usage) }}
             </p>
-            <p v-if="row.original.usage.expires_at" class="text-xs text-muted">{{ expiryLabel(row.original.usage.expires_at) }}</p>
+            <p v-if="row.original.usage.expires_at" class="text-xs tabular-nums text-muted">{{ expiryLabel(row.original.usage.expires_at) }}</p>
           </div>
           <span v-else class="text-muted">—</span>
         </template>
-        <template #sampled-cell="{ row }">{{ row.original.last_sampled_at ? new Date(row.original.last_sampled_at).toLocaleString() : '—' }}</template>
+        <template #sampled-cell="{ row }"><span class="tabular-nums">{{ row.original.last_sampled_at ? new Date(row.original.last_sampled_at).toLocaleString() : '—' }}</span></template>
         <template #actions-cell="{ row }">
           <div class="flex items-center justify-end gap-1">
-            <UButton icon="i-lucide-bell" color="neutral" variant="ghost" :aria-label="text('告警设置', 'Alert settings')" :title="text('告警设置', 'Alert settings')" @click="openDetail(row.original, true)" />
-            <UButton icon="i-lucide-chart-line" color="neutral" variant="ghost" :aria-label="text('详情', 'Details')" :title="text('详情', 'Details')" @click="openDetail(row.original)" />
+            <UButton icon="i-lucide-bell" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :aria-label="text('告警设置', 'Alert settings')" :title="text('告警设置', 'Alert settings')" @click="openDetail(row.original, true)" />
+            <UButton icon="i-lucide-chart-line" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :aria-label="text('详情', 'Details')" :title="text('详情', 'Details')" @click="openDetail(row.original)" />
             <UButton
               icon="i-lucide-scan-search"
               color="neutral"
               variant="ghost"
+              class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
               :aria-label="text('立即读取', 'Read now')"
               :title="text('立即读取', 'Read now')"
               :loading="probingID === row.original.account_id"
@@ -279,18 +282,18 @@
       </UTable>
 
       <div class="flex flex-wrap items-center justify-between gap-3 border-t border-default pt-3 text-sm text-muted">
-        <span>{{ text(`共 ${total} 个账号`, `${total} accounts`) }}</span>
+        <span class="tabular-nums">{{ text(`共 ${total} 个账号`, `${total} accounts`) }}</span>
         <div class="flex items-center gap-2">
-          <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" :disabled="busy || page <= 1" :aria-label="text('上一页', 'Previous page')" @click="goPage(page - 1)" />
+          <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :disabled="busy || page <= 1" :aria-label="text('上一页', 'Previous page')" @click="goPage(page - 1)" />
           <span class="tabular-nums">{{ page }} / {{ pages || 1 }}</span>
-          <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" :disabled="busy || page >= pages" :aria-label="text('下一页', 'Next page')" @click="goPage(page + 1)" />
+          <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :disabled="busy || page >= pages" :aria-label="text('下一页', 'Next page')" @click="goPage(page + 1)" />
         </div>
       </div>
 
       <section class="card p-4">
-        <button type="button" class="flex w-full items-center justify-between text-left" @click="rateOpen = !rateOpen">
+        <button type="button" class="flex w-full items-center justify-between rounded-md text-left max-sm:min-h-11 pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" @click="rateOpen = !rateOpen">
           <span class="font-semibold">{{ text('倍率变动记录', 'Rate change history') }}</span>
-          <span class="text-xs text-muted">{{ text('最近 7 天 · 共', 'Last 7 days ·') }} {{ rateTotal }} {{ text('条', 'entries') }}</span>
+          <span class="text-xs tabular-nums text-muted">{{ text('最近 7 天 · 共', 'Last 7 days ·') }} {{ rateTotal }} {{ text('条', 'entries') }}</span>
         </button>
         <div v-if="rateOpen" class="mt-3 space-y-3">
           <div class="flex flex-wrap items-center gap-2">
@@ -310,11 +313,11 @@
               </thead>
               <tbody>
                 <tr v-for="change in rateChanges" :key="change.id" class="border-t border-default">
-                  <td class="py-2 pr-4">{{ change.name || `#${change.account_id}` }} <span class="text-xs text-muted">#{{ change.account_id }}</span></td>
+                  <td class="py-2 pr-4">{{ change.name || `#${change.account_id}` }} <span class="text-xs tabular-nums text-muted">#{{ change.account_id }}</span></td>
                   <td class="py-2 pr-4 tabular-nums">× {{ change.old_rate.toFixed(4) }}</td>
                   <td class="py-2 pr-4 tabular-nums" :class="change.new_rate > change.old_rate ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'">× {{ change.new_rate.toFixed(4) }}</td>
                   <td class="py-2 pr-4 tabular-nums" :class="change.change_pct > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'">{{ formatPct(change.change_pct) }}</td>
-                  <td class="py-2">{{ new Date(change.changed_at).toLocaleString() }}</td>
+                  <td class="py-2 tabular-nums">{{ new Date(change.changed_at).toLocaleString() }}</td>
                 </tr>
                 <tr v-if="!rateChanges.length">
                   <td colspan="5" class="py-3 text-center text-muted">{{ text('没有符合条件的倍率变动', 'No rate changes match this filter') }}</td>
@@ -323,9 +326,9 @@
             </table>
           </div>
           <div v-if="ratePages > 1" class="flex items-center justify-end gap-2 text-xs text-muted">
-            <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="xs" :disabled="ratePage <= 1" @click="loadRateChanges(ratePage - 1)" />
-            <span>{{ ratePage }} / {{ ratePages }}</span>
-            <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" size="xs" :disabled="ratePage >= ratePages" @click="loadRateChanges(ratePage + 1)" />
+            <UButton icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="xs" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :disabled="ratePage <= 1" @click="loadRateChanges(ratePage - 1)" />
+            <span class="tabular-nums">{{ ratePage }} / {{ ratePages }}</span>
+            <UButton icon="i-lucide-chevron-right" color="neutral" variant="ghost" size="xs" class="max-sm:min-h-11 max-sm:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11" :disabled="ratePage >= ratePages" @click="loadRateChanges(ratePage + 1)" />
           </div>
         </div>
       </section>
@@ -364,7 +367,7 @@
             </div>
             <div>
               <dt class="text-xs text-muted">{{ text('到期时间', 'Expires') }}</dt>
-              <dd>{{ selected.usage.expires_at ? new Date(selected.usage.expires_at).toLocaleString() : '—' }}</dd>
+              <dd class="tabular-nums">{{ selected.usage.expires_at ? new Date(selected.usage.expires_at).toLocaleString() : '—' }}</dd>
             </div>
           </dl>
           <div v-if="selected.usage.windows?.length" class="mt-3 space-y-2">
@@ -376,10 +379,10 @@
               <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-elevated">
                 <div class="h-full rounded-full" :class="usageBarClass(window.remaining_pct)" :style="{ width: `${Math.max(0, Math.min(100, window.remaining_pct))}%` }" />
               </div>
-              <p v-if="window.reset_at" class="mt-0.5 text-[11px] text-muted">{{ text('下次重置', 'Resets') }} {{ new Date(window.reset_at).toLocaleString() }}</p>
+              <p v-if="window.reset_at" class="mt-0.5 text-[11px] tabular-nums text-muted">{{ text('下次重置', 'Resets') }} {{ new Date(window.reset_at).toLocaleString() }}</p>
             </div>
           </div>
-          <p v-else-if="selected.usage.limit != null" class="mt-2 text-sm">
+          <p v-else-if="selected.usage.limit != null" class="mt-2 text-sm tabular-nums">
             {{ text('密钥额度', 'Key quota') }}：{{ formatMoney(selected.usage.used ?? 0, selected.usage.unit) }} / {{ formatMoney(selected.usage.limit, selected.usage.unit) }}
             <span v-if="selected.usage.min_remaining_pct != null" class="text-muted"> · {{ text('剩余', 'Remaining') }} {{ selected.usage.min_remaining_pct.toFixed(1) }}%</span>
           </p>
@@ -444,7 +447,7 @@
           <div class="mb-2 flex items-center justify-between">
             <p class="text-sm font-medium">{{ text('余额历史', 'Balance history') }}</p>
             <div class="flex items-center gap-1">
-              <UButton v-for="days in [7, 14, 30]" :key="`h-${days}`" size="xs" color="neutral" :variant="historyDays === days ? 'soft' : 'ghost'" :label="`${days}d`" @click="loadHistory(days)" />
+              <UButton v-for="days in [7, 14, 30]" :key="`h-${days}`" size="xs" color="neutral" class="max-sm:min-h-11 pointer-coarse:min-h-11" :variant="historyDays === days ? 'soft' : 'ghost'" :label="`${days}d`" @click="loadHistory(days)" />
             </div>
           </div>
           <svg v-if="chart" viewBox="0 0 600 120" class="h-32 w-full" role="img" :aria-label="text('余额历史曲线', 'Balance history chart')">
@@ -462,7 +465,7 @@
                   <td class="p-2 tabular-nums text-muted">× {{ change.old_rate.toFixed(4) }}</td>
                   <td class="p-2 tabular-nums">→ × {{ change.new_rate.toFixed(4) }}</td>
                   <td class="p-2 tabular-nums" :class="change.change_pct > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'">{{ formatPct(change.change_pct) }}</td>
-                  <td class="p-2 text-right text-xs text-muted">{{ new Date(change.changed_at).toLocaleString() }}</td>
+                  <td class="p-2 text-right text-xs tabular-nums text-muted">{{ new Date(change.changed_at).toLocaleString() }}</td>
                 </tr>
                 <tr v-if="!detailRateChanges.length"><td class="p-3 text-center text-muted">{{ text('暂无记录', 'No records') }}</td></tr>
               </tbody>

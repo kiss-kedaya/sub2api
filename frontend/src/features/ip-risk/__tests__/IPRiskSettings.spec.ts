@@ -75,4 +75,12 @@ describe('IPRiskSettings', () => {
     expect(api.get).toHaveBeenCalledOnce()
     wrapper.unmount()
   })
+
+  it('handles malformed snapshot without crashing', async () => {
+    api.get.mockResolvedValueOnce({} as never)
+    const wrapper = mount(IPRiskSettings, { props: { expanded: true }, global: { plugins: [i18n()] } })
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
 })

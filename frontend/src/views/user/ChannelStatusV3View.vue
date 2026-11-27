@@ -4,7 +4,7 @@
       <UserPageHeader flush :title="t('channelMonitorV3.title')">
         <template #description>
           <span class="inline-flex flex-wrap items-center gap-2">
-            <span class="size-2 rounded-full" :class="refreshing ? 'bg-gray-400' : 'bg-emerald-500'" />
+            <span class="size-2 shrink-0 rounded-full" :class="refreshing ? 'bg-(--ui-text-dimmed)' : 'bg-emerald-500'" />
             <span>{{ snapshot ? t('channelMonitorV3.updatedTo', { time: formatTime(snapshot.coverage.data_through) }) : t('common.loading') }}</span>
             <UBadge v-if="snapshot && !snapshot.coverage.coverage_complete" color="warning" variant="subtle">{{ t('channelMonitorV3.partialCoverage') }}</UBadge>
           </span>
@@ -14,7 +14,7 @@
             color="neutral"
             variant="outline"
             icon="i-lucide-refresh-cw"
-            :ui="{ leadingIcon: refreshing ? 'animate-spin' : '' }"
+            :ui="{ leadingIcon: refreshing ? 'animate-spin motion-reduce:animate-none' : '' }"
             :disabled="loading || refreshing"
             :title="t('common.refresh')"
             :aria-label="t('common.refresh')"
@@ -22,16 +22,16 @@
           />
         </template>
       </UserPageHeader>
-      <section class="signal-channel-toolbar flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-default px-3 py-2.5 shadow-xs ring ring-default sm:px-4 dark:shadow-none">
-        <div class="channel-range-switch">
+      <section class="signal-channel-toolbar flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-default px-3 py-2.5 shadow-(--app-shadow-card) ring ring-default sm:px-4">
+        <div class="channel-range-switch rounded-lg" role="group" :aria-label="t('channelMonitorV2.timeRange')">
           <button v-for="option in ranges" :key="option.value" type="button" :aria-pressed="filter.range === option.value" @click="setRange(option.value)">{{ option.label }}</button>
         </div>
         <span class="text-xs text-muted">{{ t('channelMonitorV3.description') }}</span>
         <span v-if="snapshot" class="ml-auto text-xs font-medium tabular-nums text-muted">{{ t('channelMonitorV3.summary', { success: formatPercent(1 - (latestSnapshotMetrics?.error_rate ?? 0)), cache: formatPercent(latestSnapshotMetrics?.cache_rate ?? 0) }) }}</span>
       </section>
 
-      <div v-if="loading && rows.length === 0" class="signal-channel-loading-grid grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        <div v-for="i in 8" :key="i" class="h-72 animate-pulse rounded-lg bg-elevated" />
+      <div v-if="loading && rows.length === 0" class="signal-channel-loading-grid grid grid-cols-1 gap-5 rounded-lg md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <div v-for="i in 8" :key="i" class="h-72 animate-pulse rounded-lg bg-elevated motion-reduce:animate-none" />
       </div>
       <EmptyState v-else-if="rows.length === 0" :title="t('channelMonitorV3.emptyTitle')" :description="t('channelMonitorV3.emptyDescription')" />
       <div v-else class="channel-status-board space-y-8" data-testid="channel-status-board">
@@ -62,7 +62,7 @@
           </template>
           <div
             v-else
-            class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+            class="grid grid-cols-1 gap-5 rounded-md md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
           >
             <div
               v-for="item in block.items"

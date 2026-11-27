@@ -310,11 +310,11 @@ onUnmounted(() => {
 }
 
 .base-dialog.modal-overlay[data-state='open'] {
-  animation: base-dialog-veil-in 200ms cubic-bezier(0.2, 0, 0, 1);
+  animation: base-dialog-veil-in 200ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 
 .base-dialog.modal-overlay[data-state='closed'] {
-  animation: base-dialog-veil-out 200ms cubic-bezier(0.2, 0, 0, 1) forwards;
+  animation: base-dialog-veil-out 150ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)) forwards;
   pointer-events: none;
 }
 

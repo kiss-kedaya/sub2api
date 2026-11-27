@@ -10,7 +10,7 @@
       </template>
       <span class="ms-auto flex items-center gap-2 text-xs text-muted">
         <UBadge v-if="stale" color="warning" variant="subtle" data-testid="chain-status-stale">{{ t('admin.crypto.chainStatus.stale') }}</UBadge>
-        <span v-if="updatedClock" data-testid="chain-status-updated">{{ t('admin.crypto.chainStatus.updatedAt', { time: updatedClock }) }}</span>
+        <span v-if="updatedClock" class="tabular-nums" data-testid="chain-status-updated">{{ t('admin.crypto.chainStatus.updatedAt', { time: updatedClock }) }}</span>
       </span>
     </div>
 
@@ -39,7 +39,7 @@
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1" :class="chain.enabled ? '' : 'opacity-60'">
           <h3 class="text-base font-semibold text-highlighted">{{ chainName(chain.chain) }}</h3>
           <UBadge :color="stateColor(chain.state)" variant="subtle" data-testid="chain-state">{{ stateLabel(chain.state) }}</UBadge>
-          <span class="ms-auto text-xs" :class="chain.state === 'stalled' ? 'text-warning' : 'text-muted'" data-testid="chain-cursor-age">{{ cursorAge(chain) }}</span>
+          <span class="ms-auto text-xs tabular-nums" :class="chain.state === 'stalled' ? 'text-warning' : 'text-muted'" data-testid="chain-cursor-age">{{ cursorAge(chain) }}</span>
           <UButton
             v-if="scan"
             color="neutral" variant="outline" size="xs"
@@ -76,14 +76,14 @@
               :data-state="chain.state"
               data-testid="chain-bar"
             >
-              <div class="chain-bar__fill" :style="{ width: barWidth(chain) }" data-testid="chain-bar-fill" />
+              <div class="chain-bar__fill" :style="{ transform: barScale(chain) }" data-testid="chain-bar-fill" />
             </div>
             <span class="w-16 shrink-0 text-end text-sm tabular-nums text-highlighted" data-testid="chain-pct">{{ pctText(chain) }}</span>
           </div>
 
           <p v-if="reasonText(chain)" class="text-sm text-error" role="status" data-testid="chain-reason">{{ reasonText(chain) }}</p>
 
-          <p class="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted" data-testid="chain-stats">
+          <p class="flex flex-wrap gap-x-4 gap-y-1 text-sm tabular-nums text-muted" data-testid="chain-stats">
             <span v-for="item in statItems(chain)" :key="item.key" :class="item.warn ? 'text-warning' : ''" :data-stat="item.key">{{ item.text }}</span>
           </p>
 
@@ -109,7 +109,7 @@
               <span class="font-mono text-xs" :class="isBadNode(node) ? 'text-error' : 'text-default'" :title="node.label">{{ node.host || node.label }}</span>
               <span v-if="node.host && nodeIndex(node)" class="-ms-1.5 text-xs tabular-nums text-dimmed" data-testid="node-index">#{{ nodeIndex(node) }}</span>
               <span class="tabular-nums" :class="node.status === 'slow' ? 'text-warning' : 'text-muted'" data-testid="node-latency">{{ latencyText(node) }}</span>
-              <span v-if="node.behind" class="text-warning" data-testid="node-behind">{{ t('admin.crypto.chainStatus.behindBlocks', { n: fmt(node.behind) }) }}</span>
+              <span v-if="node.behind" class="tabular-nums text-warning" data-testid="node-behind">{{ t('admin.crypto.chainStatus.behindBlocks', { n: fmt(node.behind) }) }}</span>
               <span v-if="node.error_kind" class="text-error" data-testid="node-error">{{ errorKindLabel(node.error_kind) }}</span>
             </li>
           </ul>
@@ -358,9 +358,10 @@ function statItems(chain: ChainStatus): StatItem[] {
   return items
 }
 
-function barWidth(chain: ChainStatus): string {
-  if (chain.state === 'synced' || chain.state === 'error' || chain.state === 'no_rpc') return '100%'
-  return chain.progress_pct === null ? '0%' : `${Math.min(100, Math.max(0, chain.progress_pct))}%`
+function barScale(chain: ChainStatus): string {
+  if (chain.state === 'synced' || chain.state === 'error' || chain.state === 'no_rpc') return 'scaleX(1)'
+  const pct = chain.progress_pct === null ? 0 : Math.min(100, Math.max(0, chain.progress_pct))
+  return `scaleX(${pct === 0 ? 0 : pct / 100})`
 }
 
 function barValueNow(chain: ChainStatus): number | undefined {
@@ -397,10 +398,14 @@ function reasonText(chain: ChainStatus): string {
   background-color: color-mix(in oklab, var(--ui-text-muted, #94a3b8) 22%, transparent);
 }
 .chain-bar__fill {
+  position: relative;
+  width: 100%;
   height: 100%;
+  overflow: hidden;
   border-radius: inherit;
   background-color: var(--bar);
-  transition: width 0.4s ease;
+  transform-origin: left;
+  transition: transform 240ms var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1));
 }
 .chain-bar[data-state='catching_up'] { --bar: var(--color-blue-500, #3b82f6); }
 .chain-bar[data-state='stalled'] { --bar: var(--color-orange-500, #f97316); }
@@ -409,19 +414,18 @@ function reasonText(chain: ChainStatus): string {
 .chain-bar[data-state='disabled'] { --bar: var(--color-neutral-400, #a3a3a3); }
 .chain-bar[data-state='error'] .chain-bar__fill,
 .chain-bar[data-state='no_rpc'] .chain-bar__fill { opacity: 0.45; }
-/* Downloader-style flowing stripes, only while the scanner is catching up. */
-.chain-bar[data-state='catching_up'] .chain-bar__fill {
-  background-image: linear-gradient(
-    135deg,
-    rgb(255 255 255 / 0.28) 25%, transparent 25%, transparent 50%,
-    rgb(255 255 255 / 0.28) 50%, rgb(255 255 255 / 0.28) 75%, transparent 75%
-  );
-  background-size: 1rem 1rem;
-  animation: chain-bar-flow 1s linear infinite;
+/* GPU-composited shimmer sweep while the scanner is catching up. */
+.chain-bar[data-state='catching_up'] .chain-bar__fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.32), transparent);
+  transform: translateX(-100%);
+  animation: chain-bar-shimmer 1.4s var(--motion-out, cubic-bezier(0.23, 1, 0.32, 1)) infinite;
 }
-@keyframes chain-bar-flow { to { background-position: 1rem 0; } }
+@keyframes chain-bar-shimmer { to { transform: translateX(100%); } }
 @media (prefers-reduced-motion: reduce) {
   .chain-bar__fill { transition: none; }
-  .chain-bar[data-state='catching_up'] .chain-bar__fill { animation: none; }
+  .chain-bar[data-state='catching_up'] .chain-bar__fill::after { animation: none; display: none; }
 }
 </style>

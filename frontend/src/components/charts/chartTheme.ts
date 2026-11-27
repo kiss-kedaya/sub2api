@@ -24,8 +24,8 @@ const CATEGORICAL: Token[] = [
   token('var(--ui-success)', '#10b981'),
   token('var(--ui-warning)', '#f59e0b'),
   token('var(--ui-error)', '#ef4444'),
-  token('var(--ui-primary)', '#8b5cf6'),
-  token(mix('--ui-info', '--ui-bg', 55), '#ec4899'),
+  token('var(--ui-primary)', '#155dfc', '#51a2ff'),
+  token(mix('--ui-info', '--ui-bg', 55), '#0ea5e9'),
   token(mix('--ui-success', '--ui-bg', 55), '#14b8a6'),
   token(mix('--ui-warning', '--ui-bg', 55), '#f97316'),
   token(mix('--ui-error', '--ui-bg', 55), '#6366f1'),
@@ -41,19 +41,19 @@ const TOKENS = {
   /** Axis ticks, legend labels and the default single-series line. */
   text: token('var(--ui-text-muted)', '#374151', '#e5e7eb'),
   grid: token('var(--ui-border-muted)', '#e5e7eb', '#374151'),
-  surface: token('var(--ui-bg)', '#ffffff', '#18181b'),
-  tooltipBg: token('var(--ui-bg)', '#ffffff', '#18181b'),
+  surface: token('var(--ui-bg)', '#ffffff', '#16181d'),
+  tooltipBg: token('var(--ui-bg)', '#ffffff', '#16181d'),
   tooltipTitle: token('var(--ui-text-highlighted)', '#111827', '#ffffff'),
   tooltipBody: token('var(--ui-text-muted)', '#4b5563', '#d1d5db'),
-  tooltipBorder: token('var(--ui-border)', '#e5e7eb', '#3f3f46'),
+  tooltipBorder: token('var(--ui-border)', '#e5e7eb', '#2a2e38'),
   /** The "others" slice of a ranking. */
   other: token('var(--ui-text-dimmed)', '#94a3b8'),
-  primary: token('var(--ui-primary)', '#171717', '#e5e5e5'),
+  primary: token('var(--ui-primary)', '#155dfc', '#51a2ff'),
   input: token('var(--ui-info)', '#3b82f6'),
   output: token('var(--ui-success)', '#10b981'),
   cacheCreation: token('var(--ui-warning)', '#f59e0b'),
   cacheRead: token(mix('--ui-info', '--ui-bg', 55), '#06b6d4'),
-  cacheHitRate: token('var(--ui-primary)', '#8b5cf6')
+  cacheHitRate: token('var(--ui-primary)', '#155dfc', '#51a2ff')
 } as const
 
 export type ChartTheme = { [K in keyof typeof TOKENS]: string } & { categorical: string[] }

@@ -196,7 +196,7 @@ onBeforeUnmount(() => {
     <UPopover
       :open="show"
       :content="popoverContent"
-      :ui="{ content: 'z-[99999] max-w-[calc(100vw-1rem)]' }"
+      :ui="{ content: 'z-[90] max-w-[calc(100vw-1rem)]' }"
       @update:open="onOpenChange"
     >
       <template #anchor>
@@ -204,10 +204,10 @@ onBeforeUnmount(() => {
           <!-- Trigger Icon -->
           <slot name="trigger">
             <button
-              v-if="props.trigger === 'auto'"
+              v-if="props.trigger === 'auto' || props.trigger === 'click'"
               type="button"
-              data-hint-trigger
-              class="inline-flex size-5 cursor-help items-center justify-center rounded-full text-dimmed transition-colors hover:text-highlighted focus-visible:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
+              :data-hint-trigger="props.trigger === 'auto' ? '' : undefined"
+              class="relative inline-flex size-5 cursor-help items-center justify-center rounded-full text-dimmed transition-colors hover:text-highlighted focus-visible:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:-inset-3 [@media(pointer:coarse)]:after:content-['']"
               :aria-label="props.ariaLabel"
               :aria-expanded="show"
             >
@@ -240,7 +240,7 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="ghost"
             size="xs"
-            class="absolute right-1 top-1"
+            class="absolute right-1 top-1 [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:-inset-2.5 [@media(pointer:coarse)]:after:content-['']"
             aria-label="Close"
             @click.stop="closeTooltip"
           />

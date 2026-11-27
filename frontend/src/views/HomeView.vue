@@ -1,13 +1,13 @@
 <template>
   <!-- Custom Home Content: Full Page Mode -->
-  <div v-if="hasHomeContent" class="min-h-screen">
+  <div v-if="hasHomeContent" class="min-h-dvh">
     <!-- iframe mode -->
     <iframe
       v-if="isHomeContentUrl"
       :src="safeHomeUrl"
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals"
       referrerpolicy="no-referrer"
-      class="h-screen w-full border-0"
+      class="h-dvh w-full border-0"
       allowfullscreen
     ></iframe>
     <!-- HTML mode - SECURITY: homeContent is admin-only setting, XSS risk is acceptable -->
@@ -18,9 +18,9 @@
   <div
     v-else-if="compactHomeEnabled"
     data-testid="compact-home"
-    class="flex min-h-screen flex-col bg-gray-50 text-gray-900 dark:bg-dark-950 dark:text-slate-100"
+    class="flex min-h-svh flex-col bg-(--app-page-bg) text-default"
   >
-    <header class="border-b border-gray-200 px-4 py-4 sm:px-6 dark:border-dark-700/80">
+    <header class="border-b border-default px-4 py-4 sm:px-6">
       <nav class="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 sm:gap-4">
         <div class="flex min-w-0 flex-1 items-center gap-3">
           <img
@@ -28,15 +28,16 @@
             alt="Logo"
             class="h-9 w-9 shrink-0 rounded-lg object-contain"
           />
-          <span class="min-w-0 truncate text-base font-semibold">{{ siteName }}</span>
+          <span class="min-w-0 truncate text-base font-semibold text-highlighted">{{ siteName }}</span>
         </div>
         <div class="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2">
           <LocaleSwitcher />
           <router-link
             v-if="docUrl && !docsLink.external"
             :to="docsLink.to"
-            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:text-dark-400 dark:hover:bg-dark-800"
+            class="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:bg-elevated hover:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-10 sm:min-w-10"
             :title="t('home.viewDocs')"
+            :aria-label="t('home.viewDocs')"
           >
             <Icon name="book" size="md" />
           </router-link>
@@ -45,15 +46,16 @@
             :href="docUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 dark:text-dark-400 dark:hover:bg-dark-800"
+            class="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:bg-elevated hover:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-10 sm:min-w-10"
             :title="t('home.viewDocs')"
+            :aria-label="t('home.viewDocs')"
           >
             <Icon name="book" size="md" />
           </a>
           <router-link
             to="/docs?page=agent-setup"
             data-testid="compact-home-agent-setup"
-            class="flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+            class="flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-muted transition-colors hover:bg-elevated hover:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-10"
             :title="t('home.agentSetup.navLabel')"
           >
             <Icon name="terminal" size="md" />
@@ -62,15 +64,17 @@
           <router-link
             v-if="showModelPlazaEntry"
             to="/model-plaza"
-            class="flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+            class="flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-muted transition-colors hover:bg-elevated hover:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-10"
             :title="t('nav.modelPlaza')"
           >
             <Icon name="grid" size="md" />
             <span class="hidden sm:inline">{{ t('nav.modelPlaza') }}</span>
           </router-link>
           <button
-            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 dark:text-dark-400 dark:hover:bg-dark-800"
+            type="button"
+            class="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-elevated hover:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-10 sm:min-w-10"
             :title="isDark ? t('home.switchToLight') : t('home.switchToDark')"
+            :aria-label="isDark ? t('home.switchToLight') : t('home.switchToDark')"
             @click="toggleTheme"
           >
             <Icon v-if="isDark" name="sun" size="md" />
@@ -78,7 +82,7 @@
           </button>
           <router-link
             :to="isAuthenticated ? dashboardPath : '/login'"
-            class="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200"
+            class="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg bg-inverted px-4 py-2 text-sm font-medium text-inverted transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-10"
           >
             {{ isAuthenticated ? t('home.dashboard') : t('home.login') }}
           </router-link>
@@ -93,19 +97,19 @@
           alt="Logo"
           class="mx-auto mb-6 h-20 w-20 rounded-2xl object-contain"
         />
-        <h1 class="wrap-anywhere text-4xl font-semibold tracking-[-0.03em] md:text-5xl">{{ siteName }}</h1>
-        <p class="mt-5 whitespace-pre-wrap wrap-anywhere text-[17px] leading-relaxed text-gray-600 dark:text-dark-300">{{ siteSubtitle }}</p>
+        <h1 class="wrap-anywhere text-4xl font-semibold tracking-[-0.03em] text-highlighted md:text-5xl">{{ siteName }}</h1>
+        <p class="mt-5 whitespace-pre-wrap wrap-anywhere text-[17px] leading-relaxed text-muted">{{ siteSubtitle }}</p>
         <div class="mt-9 flex flex-wrap items-center justify-center gap-3.5">
           <router-link
             :to="isAuthenticated ? dashboardPath : '/login'"
-            class="inline-flex min-h-12 items-center justify-center rounded-full bg-primary-600 px-7 py-3 text-[15px] font-medium text-white transition hover:bg-primary-700"
+            class="inline-flex min-h-12 items-center justify-center rounded-full bg-primary px-7 py-3 text-[15px] font-medium text-inverted transition-[opacity,transform] hover:opacity-90 active:scale-[0.97] motion-reduce:active:scale-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             {{ isAuthenticated ? t('home.goToDashboard') : t('home.login') }}
           </router-link>
           <router-link
             to="/docs?page=agent-setup"
             data-testid="compact-home-agent-setup-cta"
-            class="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-gray-300 bg-white px-6 py-3 text-[15px] font-medium text-gray-700 transition hover:bg-gray-50 dark:border-dark-700 dark:bg-dark-900 dark:text-dark-200 dark:hover:bg-dark-800"
+            class="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-default bg-default px-6 py-3 text-[15px] font-medium text-default transition-[background-color,transform] hover:bg-elevated active:scale-[0.97] motion-reduce:active:scale-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <Icon name="terminal" size="sm" />
             <span>{{ t('home.agentSetup.navLabel') }}</span>
@@ -114,7 +118,7 @@
       </div>
     </main>
 
-    <footer class="min-w-0 border-t border-gray-200 px-4 py-5 text-center text-sm text-gray-500 wrap-anywhere sm:px-6 dark:border-dark-800 dark:text-dark-400">
+    <footer class="min-w-0 border-t border-default px-4 py-5 text-center text-sm text-muted wrap-anywhere sm:px-6">
       <p class="mx-auto max-w-3xl text-xs leading-6">{{ t('home.footer.riskStrip') }}</p>
       <p class="mt-3">&copy; {{ currentYear }} {{ siteName }}</p>
       <div class="mt-3">
@@ -127,7 +131,7 @@
   <div
     v-else
     data-testid="default-home"
-    class="relative flex min-h-screen flex-col bg-default text-default"
+    class="relative flex min-h-svh flex-col bg-default text-default"
   >
     <!-- Background decoration: a static hairline grid that fades out below the hero. -->
     <div class="home-grid pointer-events-none absolute inset-0 opacity-50 dark:opacity-35" aria-hidden="true"></div>
@@ -153,7 +157,7 @@
           <router-link
             v-if="docUrl && !docsLink.external"
             :to="docsLink.to"
-            class="hidden h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-elevated hover:text-highlighted sm:flex"
+            class="hidden h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-elevated hover:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:flex"
             :title="t('home.viewDocs')"
             :aria-label="t('home.viewDocs')"
           >
@@ -164,7 +168,7 @@
             :href="docUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="hidden h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-elevated hover:text-highlighted sm:flex"
+            class="hidden h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-elevated hover:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:flex"
             :title="t('home.viewDocs')"
             :aria-label="t('home.viewDocs')"
           >
@@ -174,7 +178,7 @@
           <router-link
             data-testid="home-header-agent-setup"
             to="/docs?page=agent-setup"
-            class="hidden h-9 items-center gap-1.5 rounded-md px-2 text-sm text-muted transition-colors hover:bg-elevated hover:text-highlighted sm:flex"
+            class="hidden h-9 items-center gap-1.5 rounded-md px-2 text-sm text-muted transition-colors hover:bg-elevated hover:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:flex"
             :title="t('home.agentSetup.navLabel')"
           >
             <Icon name="terminal" size="md" />
@@ -184,7 +188,7 @@
           <router-link
             v-if="showModelPlazaEntry"
             to="/model-plaza"
-            class="hidden h-9 items-center gap-1.5 rounded-md px-2 text-sm text-muted transition-colors hover:bg-elevated hover:text-highlighted sm:flex"
+            class="hidden h-9 items-center gap-1.5 rounded-md px-2 text-sm text-muted transition-colors hover:bg-elevated hover:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:flex"
             :title="t('nav.modelPlaza')"
           >
             <Icon name="grid" size="md" />
@@ -199,6 +203,7 @@
             :icon="isDark ? 'i-lucide-sun' : 'i-lucide-moon'"
             :title="isDark ? t('home.switchToLight') : t('home.switchToDark')"
             :aria-label="isDark ? t('home.switchToLight') : t('home.switchToDark')"
+            class="min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
             @click="toggleTheme"
           />
 
@@ -208,7 +213,7 @@
             size="md"
             color="neutral"
             :variant="isAuthenticated ? 'solid' : 'outline'"
-            class="ml-0.5 shrink-0"
+            class="ml-0.5 min-h-11 shrink-0 sm:min-h-0"
           >
             {{ headerCta.label }}
           </UButton>
@@ -444,7 +449,7 @@
             <router-link
               :to="{ path: '/docs', query: { page: 'agent-setup', agent: agent.id } }"
               :data-testid="`home-agent-card-${agent.id}`"
-              class="home-agent-card group flex h-full flex-col justify-between rounded-2xl border border-default bg-elevated p-6"
+              class="home-agent-card group flex h-full flex-col justify-between rounded-2xl border border-default bg-elevated p-6 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             >
               <div>
                 <div class="flex items-center justify-between gap-2.5">
@@ -461,7 +466,7 @@
               </div>
               <span class="mt-5 inline-flex items-center gap-1.5 text-[14px] font-medium text-highlighted">
                 <span>{{ t('home.agentSetup.viewGuide') }}</span>
-                <Icon name="arrowRight" size="xs" class="transition-transform group-hover:translate-x-0.5" />
+                <Icon name="arrowRight" size="xs" class="transition-transform group-hover:translate-x-0.5 motion-reduce:transition-none motion-reduce:group-hover:translate-x-0" />
               </span>
             </router-link>
           </li>
@@ -503,7 +508,7 @@
           <router-link
             v-if="docUrl && !docsLink.external"
             :to="docsLink.to"
-            class="text-xs text-muted transition-colors hover:text-highlighted"
+            class="inline-flex min-h-11 items-center rounded-sm px-1 text-xs text-muted transition-colors hover:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-0"
           >
             {{ t('home.docs') }}
           </router-link>
@@ -512,7 +517,7 @@
             :href="docUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="text-xs text-muted transition-colors hover:text-highlighted"
+            class="inline-flex min-h-11 items-center rounded-sm px-1 text-xs text-muted transition-colors hover:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-0"
           >
             {{ t('home.docs') }}
           </a>
@@ -520,7 +525,7 @@
             :href="githubUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="text-xs text-muted transition-colors hover:text-highlighted"
+            class="inline-flex min-h-11 items-center rounded-sm px-1 text-xs text-muted transition-colors hover:text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary sm:min-h-0"
           >
             GitHub
           </a>
@@ -812,12 +817,11 @@ watch(modelPlazaEnabled, (enabled) => {
   transition:
     transform 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
     border-color 150ms ease,
-    background-color 150ms ease,
-    box-shadow 160ms ease;
+    background-color 150ms ease;
 }
 
 .home-agent-card:active {
-  transform: scale(0.98);
+  transform: scale(0.97);
 }
 
 @media (hover: hover) and (pointer: fine) {

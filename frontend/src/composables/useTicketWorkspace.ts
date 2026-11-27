@@ -354,7 +354,7 @@ export function useTicketWorkspace(admin: Ref<boolean>) {
     filters.page = page
     void loadList().catch(() => {})
   }
-  watch(() => [filters.status, filters.category, filters.priority, filters.assigned_to], () => {
+  watch([() => filters.status, () => filters.category, () => filters.priority, () => filters.assigned_to], () => {
     filters.page = 1
     void loadList().catch(() => {})
   })

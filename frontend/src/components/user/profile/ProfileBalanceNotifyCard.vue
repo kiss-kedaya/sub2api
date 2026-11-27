@@ -86,7 +86,7 @@
                     <UButton variant="link" size="xs" class="p-0" :disabled="!verifyCode || verifyCode.length !== 6 || verifyingSaved" @click="verifySavedEmail(entry.email)">
                       {{ t('profile.balanceNotify.verify') }}
                     </UButton>
-                    <span v-if="verifyCountdown > 0" class="text-xs text-dimmed">{{ verifyCountdown }}s</span>
+                    <span v-if="verifyCountdown > 0" class="text-xs tabular-nums text-dimmed">{{ verifyCountdown }}s</span>
                     <UButton v-else variant="link" size="xs" color="neutral" class="p-0" :disabled="sendingSavedCode" @click="sendCodeForSaved(entry.email)">
                       {{ t('profile.balanceNotify.resend') }}
                     </UButton>
@@ -133,7 +133,7 @@
                 <UButton variant="link" size="xs" class="p-0" :disabled="!pe.code || pe.code.length !== 6 || pe.verifying" @click="verifyPending(idx)">
                   {{ t('profile.balanceNotify.verify') }}
                 </UButton>
-                <span v-if="pe.countdown > 0" class="text-xs text-dimmed">{{ pe.countdown }}s</span>
+                <span v-if="pe.countdown > 0" class="text-xs tabular-nums text-dimmed">{{ pe.countdown }}s</span>
                 <UButton v-else variant="link" size="xs" color="neutral" class="p-0" :disabled="pe.sending" @click="sendCodeFor(idx)">
                   {{ t('profile.balanceNotify.resend') }}
                 </UButton>

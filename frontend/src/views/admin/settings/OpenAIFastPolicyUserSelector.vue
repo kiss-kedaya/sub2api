@@ -29,7 +29,7 @@
       </UBadge>
     </div>
 
-    <div>
+    <div ref="anchorRef">
       <UInput
         icon="i-lucide-search"
         v-model="searchQuery"
@@ -43,40 +43,44 @@
       />
     </div>
 
-    <div
-      v-if="showDropdown && searchQuery.trim()"
-      class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md bg-default p-1 ring ring-default shadow-lg"
-    >
-      <div v-if="searchLoading" class="px-4 py-3 text-sm text-muted">
-        {{ t("common.loading") }}
-      </div>
-      <div v-else-if="availableResults.length === 0" class="px-4 py-3 text-sm text-muted">
-        {{ t("admin.settings.openaiFastPolicy.userSearchEmpty") }}
-      </div>
-      <template v-else>
-        <UButton
-          v-for="user in availableResults"
-          :key="user.id"
-          @click="selectUser(user)"
-          color="neutral"
-          variant="ghost"
-          class="w-full justify-between"
-        >
-          <span class="min-w-0 truncate font-medium text-highlighted">
-            {{ user.email }}
-            <span v-if="user.deleted" class="ml-1 text-xs font-normal text-dimmed">
-              {{ t("admin.settings.openaiFastPolicy.userDeleted") }}
+    <Teleport to="body">
+      <div
+        v-if="isDropdownOpen"
+        ref="dropdownRef"
+        :style="dropdownStyle"
+        class="fixed z-50 overflow-auto rounded-xl bg-default p-1 ring ring-default shadow-lg"
+      >
+        <div v-if="searchLoading" class="px-4 py-3 text-sm text-muted">
+          {{ t("common.loading") }}
+        </div>
+        <div v-else-if="availableResults.length === 0" class="px-4 py-3 text-sm text-muted">
+          {{ t("admin.settings.openaiFastPolicy.userSearchEmpty") }}
+        </div>
+        <template v-else>
+          <UButton
+            v-for="user in availableResults"
+            :key="user.id"
+            @click="selectUser(user)"
+            color="neutral"
+            variant="ghost"
+            class="w-full justify-between"
+          >
+            <span class="min-w-0 truncate font-medium text-highlighted">
+              {{ user.email }}
+              <span v-if="user.deleted" class="ml-1 text-xs font-normal text-dimmed">
+                {{ t("admin.settings.openaiFastPolicy.userDeleted") }}
+              </span>
             </span>
-          </span>
-          <span class="shrink-0 text-xs text-dimmed">#{{ user.id }}</span>
-        </UButton>
-      </template>
-    </div>
+            <span class="shrink-0 text-xs tabular-nums text-dimmed">#{{ user.id }}</span>
+          </UButton>
+        </template>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, type CSSProperties } from "vue";
 import { useI18n } from "vue-i18n";
 import { adminAPI } from "@/api/admin";
 import type { SimpleUser } from "@/api/admin/usage";
@@ -91,6 +95,9 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const containerRef = ref<HTMLElement | null>(null);
+const anchorRef = ref<HTMLElement | null>(null);
+const dropdownRef = ref<HTMLElement | null>(null);
+const dropdownStyle = ref<CSSProperties>({});
 const searchQuery = ref("");
 const searchResults = ref<SimpleUser[]>([]);
 const searchLoading = ref(false);
@@ -98,6 +105,65 @@ const showDropdown = ref(false);
 const selectedUsers = ref<Record<number, SimpleUser>>({});
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let searchSequence = 0;
+let positionListenersActive = false;
+
+const isDropdownOpen = computed(() => showDropdown.value && searchQuery.value.trim().length > 0);
+
+function updateDropdownPosition(): void {
+  const anchor = anchorRef.value;
+  if (!anchor) return;
+  const rect = anchor.getBoundingClientRect();
+  const margin = 8;
+  const maxAllowedWidth = Math.max(200, window.innerWidth - margin * 2);
+  const width = Math.min(Math.max(rect.width, 200), maxAllowedWidth);
+  const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+  const spaceBelow = window.innerHeight - rect.bottom - margin - 4;
+  const spaceAbove = rect.top - margin - 4;
+  const openUpward = spaceBelow < 160 && spaceAbove > spaceBelow;
+  const available = openUpward ? spaceAbove : spaceBelow;
+  const maxHeight = Math.max(120, Math.min(240, available));
+
+  if (openUpward) {
+    dropdownStyle.value = {
+      left: `${left}px`,
+      width: `${width}px`,
+      bottom: `${window.innerHeight - rect.top + 4}px`,
+      maxHeight: `${maxHeight}px`,
+      transformOrigin: "bottom center",
+    };
+  } else {
+    dropdownStyle.value = {
+      left: `${left}px`,
+      width: `${width}px`,
+      top: `${rect.bottom + 4}px`,
+      maxHeight: `${maxHeight}px`,
+      transformOrigin: "top center",
+    };
+  }
+}
+
+function addPositionListeners(): void {
+  if (positionListenersActive) return;
+  positionListenersActive = true;
+  window.addEventListener("scroll", updateDropdownPosition, { capture: true, passive: true });
+  window.addEventListener("resize", updateDropdownPosition);
+}
+
+function removePositionListeners(): void {
+  if (!positionListenersActive) return;
+  positionListenersActive = false;
+  window.removeEventListener("scroll", updateDropdownPosition, { capture: true });
+  window.removeEventListener("resize", updateDropdownPosition);
+}
+
+watch(isDropdownOpen, (open) => {
+  if (open) {
+    addPositionListeners();
+    void nextTick(updateDropdownPosition);
+  } else {
+    removePositionListeners();
+  }
+});
 
 const selectedUserIds = computed(() =>
   Array.from(new Set(props.modelValue.filter((id) => Number.isInteger(id) && id > 0))),
@@ -200,7 +266,7 @@ async function hydrateSelectedUsers(userIds: number[]): Promise<void> {
 
 function handleDocumentClick(event: MouseEvent): void {
   const target = event.target as Node | null;
-  if (target && !containerRef.value?.contains(target)) {
+  if (target && !containerRef.value?.contains(target) && !dropdownRef.value?.contains(target)) {
     showDropdown.value = false;
   }
 }
@@ -219,6 +285,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   clearPendingSearch();
+  removePositionListeners();
   document.removeEventListener("click", handleDocumentClick);
 });
 </script>

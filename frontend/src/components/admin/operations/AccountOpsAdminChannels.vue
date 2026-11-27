@@ -30,7 +30,7 @@ const reason = (value?: string) => t(`accountOps.adminReasons.${value || 'unavai
         <li class="flex flex-wrap items-center justify-between gap-3 px-4 py-3" data-testid="admin-email-row">
           <div class="min-w-0">
             <p id="admin-email-label" class="text-sm font-medium text-highlighted">{{ t('accountOps.adminEmail') }}</p>
-            <p class="mt-0.5 break-all text-xs text-muted">{{ t('accountOps.adminProfileSource') }} · {{ status?.email_masked || reason(status?.email_unavailable_reason) }}</p>
+            <p class="mt-0.5 wrap-anywhere text-xs text-muted">{{ t('accountOps.adminProfileSource') }} · {{ status?.email_masked || reason(status?.email_unavailable_reason) }}</p>
             <p v-if="!smtpConfigured" class="mt-1 text-xs text-warning">{{ t('accountOps.smtpMissing') }}</p>
           </div>
           <div class="flex items-center gap-3">

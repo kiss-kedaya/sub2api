@@ -58,11 +58,11 @@ describe('node status panel messages', () => {
 })
 
 describe('motion', () => {
-  it('turns the flowing stripes and the width transition off for prefers-reduced-motion', () => {
+  it('turns the shimmer animation and the transform transition off for prefers-reduced-motion', () => {
     const block = source.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/)
     expect(block, 'the panel must respect prefers-reduced-motion').not.toBeNull()
     expect(block![1]).toContain('animation: none')
     expect(block![1]).toContain('transition: none')
-    expect(source).toMatch(/animation:\s*chain-bar-flow/)
+    expect(source).toMatch(/animation:\s*chain-bar-shimmer/)
   })
 })

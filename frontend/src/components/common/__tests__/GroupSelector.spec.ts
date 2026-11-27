@@ -67,4 +67,12 @@ describe('GroupSelector simple-mode binding policy', () => {
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([[1, 2]])
     expect(wrapper.get('[data-test="group-selector"]').text()).toContain('Composite')
   })
+
+  it('renders cleanly when modelValue is undefined', () => {
+    wrapper = mount(GroupSelector, {
+      props: { modelValue: undefined as unknown as number[], groups },
+      global: { stubs: { GroupBadge: { props: ['name'], template: '<span>{{ name }}</span>' }, Icon: true } }
+    })
+    expect(wrapper.get('[data-test="group-selector"]').exists()).toBe(true)
+  })
 })
