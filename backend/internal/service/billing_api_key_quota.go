@@ -305,14 +305,18 @@ func (s *BillingCacheService) CheckAPIKeyChargeEligibility(ctx context.Context, 
 	const eps = 1e-9
 
 	var dbData *APIKeyRateLimitData
-	loadDB := func() (*APIKeyRateLimitData, error) {
+	loadDBOnly := func() (*APIKeyRateLimitData, error) {
 		if dbData != nil {
 			return dbData, nil
 		}
 		if s == nil || s.apiKeyRateLimitLoader == nil || apiKey.ID <= 0 {
 			return nil, nil
 		}
-		data, err := s.loadAPIKeyRateLimitFromDB(ctx, apiKey.ID)
+		// Read DB snapshot directly without writing back to Redis so a slightly
+		// lagging PG snapshot cannot clobber fresher Redis rate-limit counters.
+		loadCtx, cancel := context.WithTimeout(ctx, balanceLoadTimeout)
+		defer cancel()
+		data, err := s.apiKeyRateLimitLoader.GetRateLimitData(loadCtx, apiKey.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -322,7 +326,7 @@ func (s *BillingCacheService) CheckAPIKeyChargeEligibility(ctx context.Context, 
 
 	if apiKey.Quota > 0 {
 		used := math.Max(0, apiKey.QuotaUsed)
-		if data, err := loadDB(); err == nil && data != nil && data.QuotaUsed > used {
+		if data, err := loadDBOnly(); err == nil && data != nil && data.QuotaUsed > used {
 			used = data.QuotaUsed
 		}
 		if used >= apiKey.Quota || (amount > 0 && used+amount > apiKey.Quota+eps) {
@@ -357,7 +361,7 @@ func (s *BillingCacheService) CheckAPIKeyChargeEligibility(ctx context.Context, 
 			}
 		}
 		if !loadedFromStore {
-			if data, err := loadDB(); err == nil && data != nil {
+			if data, err := loadDBOnly(); err == nil && data != nil {
 				usage5h, usage1d, usage7d = data.Usage5h, data.Usage1d, data.Usage7d
 				w5h, w1d, w7d = data.Window5hStart, data.Window1dStart, data.Window7dStart
 			}

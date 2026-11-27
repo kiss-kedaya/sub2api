@@ -576,7 +576,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		bridgeReplayInputExists := false
 		var bridgeAccountFailoverInput []json.RawMessage
 		bridgeAccountFailoverInputExists := false
-		for turn := 1; ; turn++ {
+		initialBridgeTurn := 1
+		if hooks != nil && hooks.InitialTurnNumber > 1 {
+			initialBridgeTurn = hooks.InitialTurnNumber
+		}
+		for turn := initialBridgeTurn; ; turn++ {
 			if turn > 1 && hooks != nil && hooks.BeforeRequest != nil {
 				if next, err := hooks.BeforeRequest(turn, currentBridgePayload.payloadRaw, currentBridgePayload.originalModel); err != nil {
 					return err
@@ -1407,6 +1411,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	defer releaseSessionLease()
 
 	turn := 1
+	if hooks != nil && hooks.InitialTurnNumber > 1 {
+		turn = hooks.InitialTurnNumber
+	}
 	rejectedFieldRetryState = newOpenAIResponsesRejectedFieldRetryState(currentPayload)
 	turnRetry := 0
 	turnRetryStartedAt := time.Time{}

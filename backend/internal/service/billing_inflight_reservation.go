@@ -74,9 +74,12 @@ type InflightReservation struct {
 	quotaAmount   float64
 	balanceAmount float64
 
-	// extras 挂载由智能路由切组补差产生的增量预留，与主预留共享 Acquire/HandlerDone/Release 生命周期。
-	mu     sync.Mutex
-	extras []*InflightReservation
+	// extras 挂载由智能路由切组补差或固定扣费增量产生的附加预留，
+	// 与主预留共享 HandlerDone（停止续期）与 Release（主引用归零释放）生命周期。
+	mu          sync.Mutex
+	extras      []*InflightReservation
+	handlerDone bool
+	released    bool
 
 	refs        atomic.Int64
 	releaseOnce sync.Once
@@ -116,9 +119,11 @@ func (r *InflightReservation) BalanceAmount() float64 {
 }
 
 // Attach 将同请求的增量预留（如智能路由切到更高倍率分组补差）挂到主预留上，
-// 共享 Acquire / HandlerDone / Release 生命周期。主预留已释放时立即释放 extra。
+// 共享 HandlerDone（停止续期）与 Release（主预留所有 Acquire 引用释放后统一释放）生命周期。
+// 无论 Attach 发生在 Acquire 之前还是之后，extra 都不会在主预留仍有在途引用时提前释放；
+// 主预留已释放时立即释放 extra。
 func (r *InflightReservation) Attach(extra *InflightReservation) {
-	if extra == nil {
+	if extra == nil || extra == r {
 		return
 	}
 	if r == nil {
@@ -126,13 +131,17 @@ func (r *InflightReservation) Attach(extra *InflightReservation) {
 		return
 	}
 	r.mu.Lock()
-	if r.refs.Load() <= 0 {
+	if r.released || r.refs.Load() <= 0 {
 		r.mu.Unlock()
 		extra.Release()
 		return
 	}
+	stopExtraRenewal := r.handlerDone
 	r.extras = append(r.extras, extra)
 	r.mu.Unlock()
+	if stopExtraRenewal {
+		extra.stopRenewalTree()
+	}
 }
 
 func (r *InflightReservation) snapshotExtras() []*InflightReservation {
@@ -145,6 +154,16 @@ func (r *InflightReservation) snapshotExtras() []*InflightReservation {
 	copy(cp, r.extras)
 	r.mu.Unlock()
 	return cp
+}
+
+func (r *InflightReservation) stopRenewalTree() {
+	if r == nil {
+		return
+	}
+	r.stopRenewal()
+	for _, extra := range r.snapshotExtras() {
+		extra.stopRenewalTree()
+	}
 }
 
 // Acquire 为一个异步计费任务增加引用；返回的 done 幂等，必须在任务结束（或被丢弃）时调用。
@@ -162,37 +181,32 @@ func (r *InflightReservation) Acquire() func() {
 			break
 		}
 	}
-	extras := r.snapshotExtras()
-	var extraDones []func()
-	if len(extras) > 0 {
-		extraDones = make([]func(), 0, len(extras))
-		for _, extra := range extras {
-			extraDones = append(extraDones, extra.Acquire())
-		}
-	}
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			r.decRef()
-			for _, done := range extraDones {
-				done()
-			}
 		})
 	}
 }
 
-// HandlerDone handler 结束：停止续期并归还 handler 引用（幂等）。
+// HandlerDone handler 结束：停止续期（含已挂载的增量预留）并归还 handler 引用（幂等）。
+// 若仍有 Acquire 持有的在途计费任务引用，主预留与全部 extras 会一并保持到最后一次 done() 归零。
 func (r *InflightReservation) HandlerDone() {
 	if r == nil {
 		return
 	}
 	r.stopOnce.Do(func() {
 		r.stopRenewal()
+		r.mu.Lock()
+		r.handlerDone = true
+		extras := make([]*InflightReservation, len(r.extras))
+		copy(extras, r.extras)
+		r.mu.Unlock()
+		for _, extra := range extras {
+			extra.stopRenewalTree()
+		}
 		r.decRef()
 	})
-	for _, extra := range r.snapshotExtras() {
-		extra.HandlerDone()
-	}
 }
 
 // Release 立即释放预留（幂等），不论引用计数。
@@ -201,6 +215,11 @@ func (r *InflightReservation) Release() {
 		return
 	}
 	r.stopRenewal()
+	r.mu.Lock()
+	r.released = true
+	extras := r.extras
+	r.extras = nil
+	r.mu.Unlock()
 	r.releaseOnce.Do(func() {
 		r.refs.Store(0)
 		if r.cache != nil {
@@ -218,7 +237,7 @@ func (r *InflightReservation) Release() {
 			relCancel()
 		}
 	})
-	for _, extra := range r.snapshotExtras() {
+	for _, extra := range extras {
 		extra.Release()
 	}
 }
@@ -415,7 +434,8 @@ type InflightEstimateRequest struct {
 	Units int
 	// SearchCalls 叠加的搜索次数（按分组 search_price_per_1k 计）。
 	SearchCalls int
-	// 视频：分辨率与时长（秒）。
+	// 视频：提供方、分辨率与时长（秒）。
+	VideoProvider        string
 	VideoResolution      string
 	VideoDurationSeconds int
 	// 音频：模式（tts/stt/realtime）与计量单位（百万字符/小时/分钟）。
@@ -644,15 +664,8 @@ func (d inflightEstimateDeps) estimateOne(ctx context.Context, apiKey *APIKey, m
 			cost = tokenCost()
 		}
 	case InflightEstimateVideo:
-		if perRequestMode {
-			cost = maxPerRequestPrice(resolved) * float64(units) * math.Max(textRate, imageRate)
-		}
-		if d.billing != nil {
-			if b := d.billing.CalculateVideoCost(model, req.VideoResolution, units, req.VideoDurationSeconds, videoPriceConfigFromAPIKey(apiKey), math.Max(textRate, imageRate)); b != nil && b.ActualCost > cost {
-				cost = b.ActualCost
-			}
-		}
-		if cost <= 0 {
+		videoRate := math.Max(textRate, imageRate)
+		seedanceTokenCost := func() float64 {
 			var pricing *ModelPricing
 			if resolved != nil && (resolved.Mode == BillingModeToken || resolved.Mode == "") && d.resolver != nil {
 				pricing = d.resolver.GetIntervalPricing(resolved, 0)
@@ -661,9 +674,30 @@ func (d inflightEstimateDeps) estimateOne(ctx context.Context, apiKey *APIKey, m
 				pricing, _ = d.billing.GetModelPricing(model)
 			}
 			if pricing != nil && pricing.OutputPricePerToken > 0 {
-				estTokens := seedanceTokenBillingReserveTokens(req.VideoResolution, NormalizeVideoBillingDurationSecondsForProvider(VideoProviderSeedance, req.VideoDurationSeconds))
-				cost = estTokens * pricing.OutputPricePerToken * float64(units) * math.Max(textRate, imageRate)
+				estTokens := seedanceTokenBillingReserveTokens(req.VideoResolution, req.VideoDurationSeconds)
+				return estTokens * pricing.OutputPricePerToken * float64(units) * videoRate
 			}
+			return 0
+		}
+		if perRequestMode {
+			cost = maxPerRequestPrice(resolved) * float64(units) * videoRate
+		}
+		// Token-billed Seedance requests use conservative completion-token reserve
+		// BEFORE generic CalculateVideoCost so unrelated group video prices cannot
+		// mask token billing.
+		isTokenBilledSeedance := req.VideoProvider == VideoProviderSeedance && !perRequestMode
+		if isTokenBilledSeedance {
+			if tc := seedanceTokenCost(); tc > cost {
+				cost = tc
+			}
+		}
+		if (!isTokenBilledSeedance || cost <= 0) && d.billing != nil {
+			if b := d.billing.CalculateVideoCost(model, req.VideoResolution, units, req.VideoDurationSeconds, videoPriceConfigFromAPIKey(apiKey), videoRate); b != nil && b.ActualCost > cost {
+				cost = b.ActualCost
+			}
+		}
+		if cost <= 0 {
+			cost = seedanceTokenCost()
 		}
 	case InflightEstimateAudio:
 		if perRequestMode && resolved.Mode == BillingModePerRequest {

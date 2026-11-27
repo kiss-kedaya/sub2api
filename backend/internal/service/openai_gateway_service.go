@@ -494,7 +494,7 @@ type OpenAIGatewayService struct {
 	billingService        *BillingService
 	rateLimitService      *RateLimitService
 	billingCacheService   *BillingCacheService
-	authCacheInvalidator  APIKeyAuthCacheInvalidator
+	authCacheInvalidator  atomic.Pointer[APIKeyAuthCacheInvalidator]
 	userGroupRateResolver *userGroupRateResolver
 	httpUpstream          HTTPUpstream
 	pluginManager         *PluginManager

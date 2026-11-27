@@ -338,6 +338,7 @@ func grokMediaInflightEstimate(endpoint service.GrokMediaEndpoint, model string,
 			BodyBytes:            len(body),
 			Kind:                 service.InflightEstimateVideo,
 			Units:                1,
+			VideoProvider:        endpoint.VideoProvider(),
 			VideoResolution:      info.Resolution,
 			VideoDurationSeconds: info.DurationSeconds,
 		}

@@ -1022,6 +1022,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	// The group is fixed for this connection. Capture its presentation policy
 	// before relay goroutines start; BeforeTurn may replace c.Request later.
 	returnRequestedModel := ContextShouldReturnRequestedModel(c)
+	initialTurn := 1
+	if hooks != nil && hooks.InitialTurnNumber > 1 {
+		initialTurn = hooks.InitialTurnNumber
+	}
+	turnOffset := initialTurn - 1
 	completedTurns := atomic.Int32{}
 	var activeResponseID atomic.Value
 	turnLifecycle := newOpenAIWSPassthroughTurnLifecycle(true)
@@ -1116,17 +1121,20 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				}
 				usageMeta.captureRequestedReasoningEffort(originalResponseCreate)
 			}
-			turnNo := int(completedTurns.Load()) + 1
+			turnNo := turnOffset + int(completedTurns.Load()) + 1
 			requestModelForThisFrame := ""
 			if isResponseCreate {
 				requestModelForThisFrame = usageMeta.requestModelForFrame(payload)
 				if requestModelForThisFrame == "" {
 					requestModelForThisFrame = loadCapturedSessionModel()
 				}
-				// Passthrough has no relay-level BeforeTurn callback. Run the
-				// same admission hook here, immediately before the frame enters
-				// the upstream path, so long-lived connections re-check account
-				// freshness and per-turn gates after an idle period.
+				// Passthrough has no relay-level BeforeTurn callback. Record the
+				// current turn payload/model first so BeforeTurn's inflight
+				// reservation uses the real turn payload, then run admission
+				// immediately before BeforeRequest and upstream forwarding.
+				if hooks != nil && hooks.PrepareTurnPayload != nil {
+					hooks.PrepareTurnPayload(turnNo, payload, requestModelForThisFrame)
+				}
 				if hooks != nil && hooks.BeforeTurn != nil {
 					if err := hooks.BeforeTurn(turnNo); err != nil {
 						return payload, nil, err
@@ -1137,11 +1145,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 						return payload, nil, err
 					} else if next != nil {
 						payload = next
-					}
-				}
-				if hooks != nil && hooks.BeforeTurn != nil {
-					if err := hooks.BeforeTurn(turnNo); err != nil {
-						return payload, nil, err
 					}
 				}
 				if hooks != nil && hooks.MapRequestModel != nil {
@@ -1221,6 +1224,38 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			cancel()
 		},
 	}
+	if initialTurn > 1 && hooks != nil {
+		// Failover replay of a subsequent turn must re-run per-turn auth,
+		// billing eligibility, inflight reservation, policy, and model mapping.
+		initialReqModel := usageMeta.requestModelForFrame(firstClientMessage)
+		if initialReqModel == "" {
+			initialReqModel = loadCapturedSessionModel()
+		}
+		if hooks.PrepareTurnPayload != nil {
+			hooks.PrepareTurnPayload(initialTurn, firstClientMessage, initialReqModel)
+		}
+		if hooks.BeforeTurn != nil {
+			if err := hooks.BeforeTurn(initialTurn); err != nil {
+				return err
+			}
+		}
+		if hooks.BeforeRequest != nil {
+			if next, err := hooks.BeforeRequest(initialTurn, firstClientMessage, initialReqModel); err != nil {
+				return err
+			} else if next != nil {
+				firstClientMessage = next
+			}
+		}
+		if hooks.MapRequestModel != nil {
+			upstreamModel, err := hooks.MapRequestModel(initialTurn, initialReqModel)
+			if err != nil {
+				return err
+			}
+			if upstreamModel = strings.TrimSpace(upstreamModel); upstreamModel != "" {
+				firstClientMessage = s.ReplaceModelInBody(firstClientMessage, upstreamModel)
+			}
+		}
+	}
 	upstreamFirstMessageSent := false
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
 	firstWriteErr := relayUpstreamFrameConn.WriteFrame(firstWriteCtx, coderws.MessageText, firstClientMessage)
@@ -1287,7 +1322,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				)
 			},
 			OnTurnComplete: func(turn openaiwsv2.RelayTurnResult) {
-				turnNo := int(completedTurns.Add(1))
+				turnNo := turnOffset + int(completedTurns.Add(1))
 				if hooks != nil && hooks.TurnStarted != nil && !turn.StartedAt.IsZero() {
 					hooks.TurnStarted(turnNo, turn.StartedAt)
 				}
@@ -1403,7 +1438,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				}
 				eventType, _, _ := parseOpenAIWSEventEnvelope(payload)
 				if (eventType == "error" || eventType == "response.failed") && hooks != nil && hooks.BeforeUpstreamFailure != nil {
-					turnNo := int(completedTurns.Load()) + 1
+					turnNo := turnOffset + int(completedTurns.Load()) + 1
 					if err := hooks.BeforeUpstreamFailure(turnNo, payload, nil, wroteDownstream); err != nil {
 						return err
 					}
@@ -1526,9 +1561,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		// 正常路径按 terminal 事件逐 turn 已回调；仅在零 turn 场景兜底回调一次。
 		if turnCount == 0 && hooks != nil && hooks.AfterTurn != nil {
 			if hooks.TurnStarted != nil {
-				hooks.TurnStarted(1, time.Now().Add(-result.Duration))
+				hooks.TurnStarted(turnOffset+1, time.Now().Add(-result.Duration))
 			}
-			hooks.AfterTurn(1, result, nil)
+			hooks.AfterTurn(turnOffset+1, result, nil)
 		}
 		return nil
 	}
@@ -1599,9 +1634,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	)
 	if hooks != nil && hooks.AfterTurn != nil {
 		if hooks.TurnStarted != nil {
-			hooks.TurnStarted(turnCount+1, time.Now().Add(-result.Duration))
+			hooks.TurnStarted(turnOffset+turnCount+1, time.Now().Add(-result.Duration))
 		}
-		hooks.AfterTurn(turnCount+1, nil, turnErr)
+		hooks.AfterTurn(turnOffset+turnCount+1, nil, turnErr)
 	}
 	return turnErr
 }

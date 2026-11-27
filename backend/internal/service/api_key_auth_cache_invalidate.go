@@ -116,14 +116,19 @@ func invalidateExhaustedAPIKeyAuthCache(ctx context.Context, invalidator APIKeyA
 	if ctx != nil {
 		baseCtx = context.WithoutCancel(ctx)
 	}
-	evictCtx, cancel := context.WithTimeout(baseCtx, cacheWriteTimeout)
-	defer cancel()
 	if apiKeyID > 0 {
-		if byID, ok := invalidator.(apiKeyIDAuthCacheInvalidator); ok && byID.InvalidateAuthCacheByAPIKeyID(evictCtx, apiKeyID) {
-			return
+		if byID, ok := invalidator.(apiKeyIDAuthCacheInvalidator); ok {
+			evictCtx, cancel := context.WithTimeout(baseCtx, cacheWriteTimeout)
+			evicted := byID.InvalidateAuthCacheByAPIKeyID(evictCtx, apiKeyID)
+			cancel()
+			if evicted {
+				return
+			}
 		}
 	}
 	if userID > 0 {
-		invalidator.InvalidateAuthCacheByUserID(evictCtx, userID)
+		fallbackCtx, cancel := context.WithTimeout(baseCtx, cacheWriteTimeout)
+		invalidator.InvalidateAuthCacheByUserID(fallbackCtx, userID)
+		cancel()
 	}
 }

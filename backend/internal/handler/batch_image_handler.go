@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -42,6 +43,7 @@ func (h *BatchImageHandler) Submit(c *gin.Context) {
 	if !h.checkSecurityAuditBeforeSubmit(c, &req) {
 		return
 	}
+	var preCreateCheck func(context.Context) error
 	if h.openAI != nil && owner.APIKey != nil {
 		if h.openAI.concurrencyHelper != nil {
 			userID, userConcurrency := resolveConcurrencyUserSubject(c, owner.APIKey)
@@ -66,52 +68,92 @@ func (h *BatchImageHandler) Submit(c *gin.Context) {
 				}
 			}
 		}
-		if owner.APIKey.IsExpired() {
-			batchImageError(c, service.ErrAPIKeyExpired)
-			return
-		}
-		if owner.APIKey.IsQuotaExhausted() {
-			batchImageError(c, service.ErrAPIKeyQuotaExhausted)
-			return
-		}
-		if h.openAI.billingCacheService != nil {
-			subscription, _ := middleware.GetSubscriptionFromContext(c)
-			if err := h.openAI.billingCacheService.CheckBillingEligibility(
-				c.Request.Context(),
-				owner.APIKey.User,
-				owner.APIKey,
-				owner.APIKey.Group,
-				subscription,
-				service.QuotaPlatform(c.Request.Context(), owner.APIKey),
-			); err != nil {
-				status, errType, message, retryAfter := billingErrorDetails(err)
-				if retryAfter > 0 {
-					c.Header("Retry-After", strconv.Itoa(retryAfter))
-				}
-				code := infraerrors.Reason(err)
-				if strings.TrimSpace(code) == "" {
-					code = strings.ToUpper(errType)
-				}
-				c.JSON(status, gin.H{
-					"error": gin.H{
-						"type":    errType,
-						"code":    code,
-						"message": message,
-					},
-				})
-				return
+		preCreateCheck = func(checkCtx context.Context) error {
+			if owner.APIKey.IsExpired() {
+				return service.ErrAPIKeyExpired
 			}
+			if owner.APIKey.IsQuotaExhausted() {
+				return service.ErrAPIKeyQuotaExhausted
+			}
+			if h.openAI.billingCacheService != nil {
+				if owner.APIKey.User == nil {
+					return infraerrors.New(http.StatusInternalServerError, "USER_CONTEXT_REQUIRED", "User context not found")
+				}
+				subscription, _ := middleware.GetSubscriptionFromContext(c)
+				if err := h.openAI.billingCacheService.CheckBillingEligibility(
+					checkCtx,
+					owner.APIKey.User,
+					owner.APIKey,
+					owner.APIKey.Group,
+					subscription,
+					service.QuotaPlatform(checkCtx, owner.APIKey),
+				); err != nil {
+					return &batchImageBillingEligibilityError{err: err}
+				}
+			}
+			return nil
 		}
 	}
 	if sessionID := service.ExtractClientSessionID(c); sessionID != "" {
 		req.SessionID = &sessionID
 	}
-	got, err := h.service.Submit(c.Request.Context(), owner, req, c.GetHeader("Idempotency-Key"))
+	if h.service == nil {
+		if preCreateCheck != nil {
+			if err := preCreateCheck(c.Request.Context()); err != nil {
+				writeBatchImageSubmitError(c, err)
+				return
+			}
+		}
+		batchImageError(c, service.ErrBatchImageDisabled)
+		return
+	}
+	got, err := h.service.SubmitWithPreCreateCheck(c.Request.Context(), owner, req, c.GetHeader("Idempotency-Key"), preCreateCheck)
 	if err != nil {
-		batchImageError(c, err)
+		writeBatchImageSubmitError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, got)
+}
+
+type batchImageBillingEligibilityError struct {
+	err error
+}
+
+func (e *batchImageBillingEligibilityError) Error() string {
+	if e == nil || e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e *batchImageBillingEligibilityError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func writeBatchImageSubmitError(c *gin.Context, err error) {
+	var eligErr *batchImageBillingEligibilityError
+	if errors.As(err, &eligErr) && eligErr != nil && eligErr.err != nil {
+		status, errType, message, retryAfter := billingErrorDetails(eligErr.err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+		}
+		code := infraerrors.Reason(eligErr.err)
+		if strings.TrimSpace(code) == "" {
+			code = strings.ToUpper(errType)
+		}
+		c.JSON(status, gin.H{
+			"error": gin.H{
+				"type":    errType,
+				"code":    code,
+				"message": message,
+			},
+		})
+		return
+	}
+	batchImageError(c, err)
 }
 
 func (h *BatchImageHandler) checkSecurityAuditBeforeSubmit(c *gin.Context, req *service.BatchImageSubmitRequest) bool {

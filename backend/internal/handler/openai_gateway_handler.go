@@ -2219,9 +2219,10 @@ type openAIWSAPIKeyLookup interface {
 }
 
 var (
-	errOpenAIWSAPIKeyDisabled = errors.New("api key is no longer active")
-	errOpenAIWSUserDisabled   = errors.New("user is no longer active")
-	errOpenAIWSGroupDisabled  = errors.New("group is no longer active")
+	errOpenAIWSAPIKeyDisabled    = errors.New("api key is no longer active")
+	errOpenAIWSUserDisabled      = errors.New("user is no longer active")
+	errOpenAIWSGroupDisabled     = errors.New("group is no longer active")
+	errOpenAIWSGroupUnauthorized = errors.New("group is no longer authorized")
 )
 
 func openAIWSLookupCanQuery(lookup openAIWSAPIKeyLookup) bool {
@@ -2234,20 +2235,26 @@ func openAIWSLookupCanQuery(lookup openAIWSAPIKeyLookup) bool {
 	return true
 }
 
-func openAIWSAPIKeyCloseReason(err error) string {
+func openAIWSAPIKeyCloseStatusAndReason(err error) (coderws.StatusCode, string) {
 	switch {
 	case errors.Is(err, service.ErrAPIKeyExpired):
-		return "api key expired"
+		return coderws.StatusPolicyViolation, "api key expired"
 	case errors.Is(err, service.ErrAPIKeyQuotaExhausted):
-		return "api key quota exhausted"
+		return coderws.StatusPolicyViolation, "api key quota exhausted"
 	case errors.Is(err, errOpenAIWSUserDisabled):
-		return "user is no longer active"
+		return coderws.StatusPolicyViolation, "user is no longer active"
 	case errors.Is(err, errOpenAIWSGroupDisabled):
-		return "group is no longer active"
+		return coderws.StatusPolicyViolation, "group is no longer active"
+	case errors.Is(err, errOpenAIWSGroupUnauthorized):
+		return coderws.StatusPolicyViolation, "group is no longer authorized"
 	case errors.Is(err, errOpenAIWSAPIKeyDisabled):
-		return "api key disabled"
+		return coderws.StatusPolicyViolation, "api key disabled"
+	case errors.Is(err, service.ErrAPIKeyNotFound):
+		return coderws.StatusPolicyViolation, "api key is no longer valid"
 	default:
-		return "api key is no longer valid"
+		// Transient DB / cache / overload lookup failures close with 1013 so
+		// SDKs reconnect and retry instead of treating it as permanent auth failure.
+		return coderws.StatusTryAgainLater, "temporary api key verification failure, please reconnect"
 	}
 }
 
@@ -2282,16 +2289,32 @@ func validateOpenAIWSTurnAPIKey(key *service.APIKey, requireExplicitActive bool)
 	if key.IsQuotaExhausted() {
 		return service.ErrAPIKeyQuotaExhausted
 	}
-	if key.User != nil {
+	if key.User == nil {
 		if requireExplicitActive {
-			if !key.User.IsActive() {
-				return errOpenAIWSUserDisabled
-			}
-		} else if key.User.Status != "" && !key.User.IsActive() {
 			return errOpenAIWSUserDisabled
 		}
+		return nil
+	}
+	if requireExplicitActive {
+		if !key.User.IsActive() {
+			return errOpenAIWSUserDisabled
+		}
+	} else if key.User.Status != "" && !key.User.IsActive() {
+		return errOpenAIWSUserDisabled
 	}
 	return nil
+}
+
+func openAIWSAPIKeyAuthorizesGroup(key *service.APIKey, groupID int64) bool {
+	if key == nil || groupID <= 0 {
+		return false
+	}
+	for _, id := range key.CandidateGroupIDs() {
+		if id == groupID {
+			return true
+		}
+	}
+	return key.GroupID != nil && *key.GroupID == groupID
 }
 
 // 长连接只在建连时认证了一次 API Key。后续 turn 必须按实时状态复核 Key/User 有效性、
@@ -2375,18 +2398,38 @@ func refreshOpenAIWSTurnBillingAPIKey(ctx context.Context, lookup openAIWSAPIKey
 	turnKey.Window1dStart = latest.Window1dStart
 	turnKey.Window7dStart = latest.Window7dStart
 	turnKey.ConcurrencyLimit = latest.ConcurrencyLimit
+	if len(latest.RouteGroupIDs) > 0 {
+		turnKey.RouteGroupIDs = append([]int64(nil), latest.RouteGroupIDs...)
+	} else {
+		turnKey.RouteGroupIDs = nil
+	}
 	if latest.User != nil {
 		turnKey.User = latest.User
 	}
-	if conn.GroupID != nil && conn.Group != nil &&
-		latest.GroupID != nil && *latest.GroupID == *conn.GroupID &&
-		latest.Group != nil && latest.Group.ID == conn.Group.ID &&
-		latest.Group.Platform == conn.Group.Platform &&
-		latest.Group.SubscriptionType == conn.Group.SubscriptionType {
-		if latest.Group.Status != "" && !latest.Group.IsActive() {
-			return nil, errOpenAIWSGroupDisabled
+	var boundGroupID int64
+	if conn.GroupID != nil && *conn.GroupID > 0 {
+		boundGroupID = *conn.GroupID
+	} else if conn.Group != nil && conn.Group.ID > 0 {
+		boundGroupID = conn.Group.ID
+	}
+	if boundGroupID > 0 {
+		// Fail closed if the live key was moved off or had the connection's
+		// bound group removed from its authorized group/route list.
+		if !openAIWSAPIKeyAuthorizesGroup(latest, boundGroupID) {
+			return nil, errOpenAIWSGroupUnauthorized
 		}
-		turnKey.Group = latest.Group
+		if latest.GroupID != nil && *latest.GroupID == boundGroupID && latest.Group != nil && latest.Group.ID == boundGroupID {
+			if latest.Group.Status != "" && !latest.Group.IsActive() {
+				return nil, errOpenAIWSGroupDisabled
+			}
+			if conn.Group != nil && (latest.Group.Platform != conn.Group.Platform || latest.Group.SubscriptionType != conn.Group.SubscriptionType) {
+				return nil, errOpenAIWSGroupUnauthorized
+			}
+			turnKey.Group = latest.Group
+		}
+	} else if (latest.GroupID != nil && *latest.GroupID > 0) || len(latest.CandidateGroupIDs()) > 0 {
+		// Connection started ungrouped, but the key is now bound to specific group(s).
+		return nil, errOpenAIWSGroupUnauthorized
 	}
 	return &turnKey, nil
 }
@@ -2950,6 +2993,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	cyberBlockPendingAfterFailover := false
 	var cyberTurnBodiesMu sync.Mutex
 	cyberTurnBodies := map[int][]byte{1: append([]byte(nil), firstMessage...)}
+	turnEstimateModels := map[int]string{1: reqModel}
 	setCyberTurnBody := func(turn int, payload []byte) {
 		cyberTurnBodiesMu.Lock()
 		cyberTurnBodies[turn] = append([]byte(nil), payload...)
@@ -2960,6 +3004,24 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		body := append([]byte(nil), cyberTurnBodies[turn]...)
 		cyberTurnBodiesMu.Unlock()
 		return body
+	}
+	setTurnEstimateModel := func(turn int, model string) {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			return
+		}
+		cyberTurnBodiesMu.Lock()
+		turnEstimateModels[turn] = model
+		cyberTurnBodiesMu.Unlock()
+	}
+	readTurnEstimateModel := func(turn int, fallback string) string {
+		cyberTurnBodiesMu.Lock()
+		model := turnEstimateModels[turn]
+		cyberTurnBodiesMu.Unlock()
+		if model != "" {
+			return model
+		}
+		return fallback
 	}
 	grokRefusedTurns := make(map[int]bool)
 	grokIPBlacklistTurns := make(map[int]bool)
@@ -3084,6 +3146,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	oauth429FailoverState := service.OpenAIOAuth429FailoverState{FillScheduling: true}
 	accountSlotBusySeen := false
 	wsAttemptMessage := append([]byte(nil), firstMessage...)
+	var nextInitialTurn atomic.Int64
+	nextInitialTurn.Store(1)
 	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
 		if account == nil || failoverErr == nil || failoverErr.StatusCode != http.StatusTooManyRequests || failoverErr.SameAccountRetryDeadline.IsZero() {
 			return false
@@ -3376,15 +3440,21 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// BeforeTurn 重新冻结 pricingAt 并按最新门复核当前账号。
 		var turnPricing openAIWSTurnPricing
 		var turnBillingAPIKeys openAIWSTurnBillingAPIKeys
-		turnBilling := newOpenAIWSTurnBillingGuard(openAIWSTurnSettlementTimeout)
+		attemptInitialTurn := int(nextInitialTurn.Load())
+		turnBilling := newOpenAIWSTurnBillingGuardWithCompleted(openAIWSTurnSettlementTimeout, attemptInitialTurn-1)
 		hooks := &service.OpenAIWSIngressHooks{
 			ClientLifecycleContext:      clientLifecycleCtx,
 			InitialRequestModel:         reqModel,
 			InitialTurnStartedAt:        firstTurnStartedAt,
+			InitialTurnNumber:           attemptInitialTurn,
 			MaxReasoningEffort:          maxReasoningEffort,
 			MaxReasoningEffortOverLimit: maxReasoningEffortOverLimit,
 			ReasoningEffortMappings:     reasoningEffortMappings,
 			TurnStarted:                 recordTurnStart,
+			PrepareTurnPayload: func(turn int, payload []byte, originalModel string) {
+				setCyberTurnBody(turn, payload)
+				setTurnEstimateModel(turn, originalModel)
+			},
 			BeforeRequest: func(turn int, payload []byte, originalModel string) ([]byte, error) {
 				turnPermissions := service.APIKeyQueueRequestPermissions{Models: []string{originalModel}, Capabilities: service.APIKeyQueueCapabilityForbiddenWhenClaudeCodeOnly}
 				if service.IsExplicitImageGenerationIntent(nil, "/v1/responses", originalModel, payload) {
@@ -3398,6 +3468,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				c.Set(securityAuditWSTurnContextKey, turn)
 				service.BeginOpsStreamTurn(c, turn)
 				setCyberTurnBody(turn, payload)
+				setTurnEstimateModel(turn, originalModel)
 				if h.grokModerationSessionBlocked(c, apiKey, firstMessage) || h.grokModerationSessionBlocked(c, apiKey, payload) {
 					return nil, service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, service.GrokModerationRefusalMessage(), nil)
 				}
@@ -3505,6 +3576,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					if turn > 1 {
 						ctx = h.gatewayService.RefreshSchedulerRequestContext(ctx)
 						c.Request = c.Request.WithContext(ctx)
+						turnCtx = ctx
 					}
 					turnBillingCtx, turnKey, keyErr := turnBillingAPIKeys.begin(turnCtx, h.apiKeyService, turn, apiKey)
 					if keyErr != nil {
@@ -3512,7 +3584,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 							zap.Int("turn", turn),
 							zap.Error(keyErr),
 						)
-						return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, openAIWSAPIKeyCloseReason(keyErr), keyErr)
+						closeStatus, closeReason := openAIWSAPIKeyCloseStatusAndReason(keyErr)
+						return service.NewOpenAIWSClientCloseError(closeStatus, closeReason, keyErr)
 					}
 					turnUser := turnKey.User
 					if turnUser == nil {
@@ -3534,13 +3607,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 							return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", err)
 						}
 					}
+					turnBody := readCyberTurnBody(turn)
+					if len(turnBody) == 0 && (turn == 1 || turn == attemptInitialTurn) {
+						turnBody = wsAttemptMessage
+					}
+					turnModel := openAIWSTurnEstimateModel(turnBody, readTurnEstimateModel(turn, reqModel))
 					reservedInflightThisCall := false
 					if turn > 1 || !turnInflight.has(turn) {
-						turnBody := readCyberTurnBody(turn)
-						if len(turnBody) == 0 && turn == 1 {
-							turnBody = wsAttemptMessage
-						}
-						turnModel := openAIWSTurnEstimateModel(turnBody, reqModel)
 						inflightCtx, inflightDone, inflightErr := reserveInflightBalanceCtx(
 							turnBillingCtx,
 							h.billingCacheService,
@@ -3597,10 +3670,20 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					if turn == 1 {
 						return nil
 					}
+					turnPermissions := service.APIKeyQueueRequestPermissions{Models: []string{turnModel}, Capabilities: service.APIKeyQueueCapabilityForbiddenWhenClaudeCodeOnly}
+					if service.IsExplicitImageGenerationIntent(nil, "/v1/responses", turnModel, turnBody) {
+						turnPermissions.Capabilities |= service.APIKeyQueueCapabilityImageGeneration
+					}
+					ctx = service.WithAPIKeyQueueRequestPermissions(ctx, turnPermissions)
+					c.Request = c.Request.WithContext(ctx)
 					// 防御式清理：避免异常路径下旧槽位覆盖导致泄漏。
 					releaseTurnSlots()
-					// 非首轮 turn 需要重新抢占并发槽位，避免长连接空闲占槽。
-					userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKeyFromGin(c, subject.UserID, subject.Concurrency, turnKey.ID)
+					// 非首轮 turn 需要重新抢占并发槽位，使用实时刷新的 Key/User 并发上限，避免长连接空闲占槽。
+					turnUserConcurrency := subject.Concurrency
+					if turnUser != nil && turnUser.Concurrency > 0 {
+						turnUserConcurrency = turnUser.Concurrency
+					}
+					userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKeyWithLimit(c, subject.UserID, turnUserConcurrency, turnKey.ID, turnKey.ConcurrencyLimit)
 					if err != nil {
 						releaseReservedOnErr()
 						return openAIWSUserSlotAcquireError(err)
@@ -3709,6 +3792,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				if result == nil {
 					return
+				}
+				if turnErr == nil {
+					nextTurn := int64(turn + 1)
+					for {
+						cur := nextInitialTurn.Load()
+						if nextTurn <= cur || nextInitialTurn.CompareAndSwap(cur, nextTurn) {
+							break
+						}
+					}
 				}
 				result.BillingModel = openAIWSTurnBillingModel(result, turnMapping, turnRequestedModel, turnUpstreamModel)
 				reqLog.Debug("openai.websocket_turn_billing",
@@ -3819,12 +3911,17 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				wsAttemptMessage = nextAttemptMessage
 				if retryCurrentTurn {
 					previousResponseID = ""
+					if nextInitialTurn.Load() < 2 {
+						nextInitialTurn.Store(2)
+					}
 					reqLog.Warn("openai.websocket_current_turn_failover_retry",
 						zap.Int64("account_id", account.ID),
 						zap.Int("upstream_status", failoverErr.StatusCode),
 						zap.Int("retry_payload_bytes", len(retryPayload)),
 					)
 				}
+				replayTurn := int(nextInitialTurn.Load())
+				turnInflight.release(replayTurn)
 				if waitForWSSameAccountRetry(account, failoverErr) {
 					if !ensureUserSlotHeld() {
 						return
@@ -3841,6 +3938,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						}
 						currentAccountRelease = wrapReleaseOnDone(ctx, accountRelease)
 					}
+					attemptInitialTurn = replayTurn
+					hooks.InitialTurnNumber = replayTurn
+					turnBilling = newOpenAIWSTurnBillingGuardWithCompleted(openAIWSTurnSettlementTimeout, replayTurn-1)
 					wsFirstMessage = wsAttemptMessage
 					continue
 				}

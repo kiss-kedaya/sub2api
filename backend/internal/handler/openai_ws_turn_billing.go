@@ -22,10 +22,21 @@ type openAIWSTurnBillingGuard struct {
 }
 
 func newOpenAIWSTurnBillingGuard(settleTimeout time.Duration) *openAIWSTurnBillingGuard {
+	return newOpenAIWSTurnBillingGuardWithCompleted(settleTimeout, 0)
+}
+
+func newOpenAIWSTurnBillingGuardWithCompleted(settleTimeout time.Duration, completedTurn int) *openAIWSTurnBillingGuard {
 	if settleTimeout <= 0 {
 		settleTimeout = openAIWSTurnSettlementTimeout
 	}
-	return &openAIWSTurnBillingGuard{settleTimeout: settleTimeout}
+	if completedTurn < 0 {
+		completedTurn = 0
+	}
+	return &openAIWSTurnBillingGuard{
+		settleTimeout: settleTimeout,
+		admittedTurn:  completedTurn,
+		finishedTurn:  completedTurn,
+	}
 }
 
 func (g *openAIWSTurnBillingGuard) BeforeTurn(ctx context.Context, turn int, admit func(context.Context) error) error {

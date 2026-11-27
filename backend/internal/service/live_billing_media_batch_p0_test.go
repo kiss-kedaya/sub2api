@@ -293,11 +293,14 @@ func (r *liveP0MediaRepoErrWrapper) ApplyMediaBillingJob(ctx context.Context, id
 	return r.mediaJobMemoryRepo.ApplyMediaBillingJob(ctx, id)
 }
 
-func (r *liveP0MediaRepoErrWrapper) AbandonMediaBillingJob(ctx context.Context, id string) error {
+func (r *liveP0MediaRepoErrWrapper) AbandonMediaBillingJob(ctx context.Context, id string) (bool, error) {
+	abandoned, err := r.mediaJobMemoryRepo.AbandonMediaBillingJob(ctx, id)
 	r.mu.Lock()
-	r.abandonedIDs = append(r.abandonedIDs, id)
+	if abandoned {
+		r.abandonedIDs = append(r.abandonedIDs, id)
+	}
 	r.mu.Unlock()
-	return r.mediaJobMemoryRepo.AbandonMediaBillingJob(ctx, id)
+	return abandoned, err
 }
 
 func (r *liveP0MediaRepoErrWrapper) RetryMediaBillingJob(ctx context.Context, id string, delay time.Duration) error {
@@ -409,12 +412,12 @@ func TestSettleMediaBillingJob_UpdatesRedisAPIKeyQuotaAndEvictsAuthCacheOnExhaus
 			// Intentionally leave deferredService == nil to prove Redis quota & eviction
 			// do not depend on deferredService or fake APIKey.Quota > 0.
 			svc := &OpenAIGatewayService{
-				cfg:                  cfg,
-				mediaBillingJobs:     wrapper,
-				usageLogRepo:         usageRepo,
-				billingCacheService:  billingCache,
-				authCacheInvalidator: authInv,
+				cfg:                 cfg,
+				mediaBillingJobs:    wrapper,
+				usageLogRepo:        usageRepo,
+				billingCacheService: billingCache,
 			}
+			svc.SetAuthCacheInvalidator(authInv)
 
 			job := &MediaBillingJob{
 				ID:        "media_quota_test_" + tc.name,
@@ -482,12 +485,12 @@ func TestApplyCachedContentCharge_UpdatesRedisAPIKeyQuotaAndEvictsAuthCacheOnExh
 			usageRepo := &mediaUsageMemoryRepo{}
 
 			svc := &GatewayService{
-				cfg:                  cfg,
-				usageBillingRepo:     billingRepo,
-				usageLogRepo:         usageRepo,
-				billingCacheService:  billingCache,
-				authCacheInvalidator: authInv,
+				cfg:                 cfg,
+				usageBillingRepo:    billingRepo,
+				usageLogRepo:        usageRepo,
+				billingCacheService: billingCache,
 			}
+			svc.SetAuthCacheInvalidator(authInv)
 			groupID := int64(5)
 			reqID := GeminiCachedContentUsageRequestIDPrefix + "create:pub_" + name
 			intent := &MediaBillingIntent{
@@ -685,10 +688,52 @@ func TestBatchImageSubmit_EnforcesAPIKeyQuotaOutstandingHoldsAndRateLimits(t *te
 func TestSeedanceTokenBilledVideo_ReservesConservativeHoldAndBlocksLowBalance(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("conservative reserve scales with resolution and duration", func(t *testing.T) {
+	t.Run("conservative reserve scales with resolution and duration and defaults unspecified to 720p/10s", func(t *testing.T) {
+		require.Equal(t, float64(11_000*5), seedanceTokenBillingReserveTokens("480p", 5))
+		require.Equal(t, float64(24_000*5), seedanceTokenBillingReserveTokens("720p", 5))
+		require.Equal(t, float64(50_000*5), seedanceTokenBillingReserveTokens("1080p", 5))
+		require.Equal(t, float64(24_000*10), seedanceTokenBillingReserveTokens("", -1), "empty resolution and auto duration must reserve 720p * 10s, never 480p * 8s")
+		require.Equal(t, float64(24_000*5), seedanceTokenBillingReserveTokens("4k", 5), "unknown resolution must conservatively default to 720p")
 		require.Less(t, seedanceTokenBillingReserveTokens("480p", 5), seedanceTokenBillingReserveTokens("720p", 5))
 		require.Less(t, seedanceTokenBillingReserveTokens("720p", 5), seedanceTokenBillingReserveTokens("1080p", 5))
 		require.Less(t, seedanceTokenBillingReserveTokens("720p", 5), seedanceTokenBillingReserveTokens("720p", 10))
+	})
+
+	t.Run("inflight video estimation uses Seedance token reserve before generic CalculateVideoCost", func(t *testing.T) {
+		cfg := &config.Config{RunMode: config.RunModeStandard}
+		cfg.Default.RateMultiplier = 1
+		groupID := int64(17)
+		group := &Group{
+			ID:                   groupID,
+			Platform:             PlatformOpenAI,
+			Status:               StatusActive,
+			Hydrated:             true,
+			RateMultiplier:       1,
+			VideoRateIndependent: true,
+			VideoRateMultiplier:  1,
+			// Unrelated cheap video price that must NOT mask token-billed Seedance.
+			VideoModelPrices: map[string]map[string]float64{
+				VideoPriceFamilyGrokImagineVideo: {"480p": 0.001, "720p": 0.001},
+			},
+		}
+		key := &APIKey{ID: 71, UserID: 42, User: &User{ID: 42}, GroupID: &groupID, Group: group}
+		resolver := newOpenAITokenImageChannelPricingResolverForTest(t, groupID, "seedance-test")
+		deps := inflightEstimateDeps{
+			cfg:      cfg,
+			billing:  NewBillingService(cfg, nil),
+			resolver: resolver,
+		}
+		cost, priced := deps.estimate(ctx, key, InflightEstimateRequest{
+			Model:                "seedance-test",
+			Kind:                 InflightEstimateVideo,
+			Units:                1,
+			VideoProvider:        VideoProviderSeedance,
+			VideoResolution:      "",
+			VideoDurationSeconds: -1,
+		})
+		require.True(t, priced)
+		// 24_000 * 10s = 240_000 tokens * $15/1M = $3.60 (not masked by $0.001/s video price).
+		require.InDelta(t, 240_000*0.000015, cost, 1e-9)
 	})
 
 	t.Run("$0.01 balance is rejected before upstream submission", func(t *testing.T) {
@@ -729,12 +774,18 @@ func TestMediaBillingWorker_ExponentialBackoffAndAbandonsPoisonPill(t *testing.T
 	pollJob := &MediaBillingJob{Kind: MediaBillingKindGrokVideo, Status: MediaBillingSubmitted, Intent: nil, Attempts: 2}
 	require.Equal(t, 4*time.Minute, mediaBillingRecoveryDelay(pollJob, errors.New("503")))
 
-	// 2. Verify MediaBillingBilled is NEVER abandoned (money already deducted).
+	// 2. Verify MediaBillingBilled is NEVER abandoned (money already deducted)
+	// and generic transient DB/network errors NEVER permanently abandon paid revenue.
 	billedJob := &MediaBillingJob{Status: MediaBillingBilled, Intent: &MediaBillingIntent{}, Attempts: 50}
 	require.False(t, shouldAbandonMediaBillingSettlement(billedJob, ErrBalanceWithholdingFailed))
+	transientJob := &MediaBillingJob{Status: MediaBillingReady, Intent: &MediaBillingIntent{}, Attempts: 50}
+	require.False(t, shouldAbandonMediaBillingSettlement(transientJob, errors.New("temporary pg disconnect")),
+		"generic transient DB/network errors must remain on bounded 60m backoff instead of abandoning revenue")
+	require.Equal(t, 60*time.Minute, mediaBillingRecoveryDelay(transientJob, errors.New("temporary pg disconnect")))
 
-	// 3. Verify poison pill hitting ErrBalanceWithholdingFailed transitions to failed after cap
-	// and never starves healthy jobs.
+	// 3. Verify poison pill hitting ErrBalanceWithholdingFailed transitions to
+	// MediaBillingReconciliation (NOT MediaBillingFailed) with 24h cooldown,
+	// leaves the worker hot-loop, and STILL lets a user who tops up settle later.
 	ctx := context.Background()
 	memRepo := &mediaJobMemoryRepo{jobs: map[string]*MediaBillingJob{}, balance: 100}
 	wrapper := &liveP0MediaRepoErrWrapper{
@@ -742,15 +793,16 @@ func TestMediaBillingWorker_ExponentialBackoffAndAbandonsPoisonPill(t *testing.T
 		applyErr:           ErrBalanceWithholdingFailed,
 	}
 	poison := &MediaBillingJob{
-		ID:          "poison_job_1",
-		Kind:        MediaBillingKindGrokVideo,
-		UserID:      10,
-		APIKeyID:    20,
-		AccountID:   30,
-		GroupID:     40,
-		Status:      MediaBillingReady,
-		Attempts:    mediaBillingBalanceWithholdingMaxAttempts - 1, // next failure reaches cap
-		AvailableAt: time.Now().Add(-time.Minute),
+		ID:             "poison_job_1",
+		Kind:           MediaBillingKindGrokVideo,
+		UserID:         10,
+		APIKeyID:       20,
+		AccountID:      30,
+		GroupID:        40,
+		Status:         MediaBillingReady,
+		ReservedAmount: 2.0,
+		Attempts:       mediaBillingBalanceWithholdingMaxAttempts - 1, // next failure reaches cap
+		AvailableAt:    time.Now().Add(-time.Minute),
 		Intent: &MediaBillingIntent{
 			Command: UsageBillingCommand{RequestID: "grok-video:poison", UserID: 10, APIKeyID: 20, AccountID: 30, BalanceCost: 5},
 			Usage:   UsageLog{RequestID: "grok-video:poison", UserID: 10, APIKeyID: 20, AccountID: 30, ActualCost: 5},
@@ -766,10 +818,22 @@ func TestMediaBillingWorker_ExponentialBackoffAndAbandonsPoisonPill(t *testing.T
 	svc.recoverMediaBillingJobs(ctx)
 
 	require.Equal(t, []string{"poison_job_1"}, wrapper.abandonedIDs)
-	require.Empty(t, wrapper.retriedDelays, "abandoned poison job must not be re-queued")
-	require.Equal(t, MediaBillingFailed, memRepo.jobs[poison.ID].Status)
+	require.Empty(t, wrapper.retriedDelays, "quarantined poison job must not be re-queued into 60s loop")
+	require.Equal(t, MediaBillingReconciliation, memRepo.jobs[poison.ID].Status)
+	require.True(t, memRepo.jobs[poison.ID].AvailableAt.After(time.Now().Add(23*time.Hour)))
 
-	// Before cap, job is retried with exponential backoff (not abandoned).
+	// After the user tops up their balance, SettleGrokVideoBillingJob must still
+	// settle the quarantined reconciliation job instead of returning "already refunded".
+	wrapper.applyErr = nil
+	reconciled, err := memRepo.GetMediaBillingJobByID(ctx, poison.ID)
+	require.NoError(t, err)
+	require.NoError(t, svc.SettleGrokVideoBillingJob(ctx, reconciled, &OpenAIForwardResult{VideoCount: 1, VideoDurationSeconds: 5}))
+	require.Equal(t, MediaBillingDone, memRepo.jobs[poison.ID].Status)
+	require.Equal(t, 1, memRepo.applied)
+	require.InDelta(t, 97.0, memRepo.balance, 1e-9, "balance must capture net (5.0 - 2.0 hold)")
+
+	// 4. Before cap, job is retried with exponential backoff (not abandoned).
+	wrapper.applyErr = ErrBalanceWithholdingFailed
 	poison2 := &MediaBillingJob{
 		ID:          "poison_job_backoff",
 		Kind:        MediaBillingKindGrokVideo,
@@ -786,6 +850,350 @@ func TestMediaBillingWorker_ExponentialBackoffAndAbandonsPoisonPill(t *testing.T
 	svc.recoverMediaBillingJobs(ctx)
 	require.Equal(t, MediaBillingReady, memRepo.jobs[poison2.ID].Status)
 	require.Equal(t, []time.Duration{5 * time.Minute}, wrapper.retriedDelays)
+
+	// 5. Video that polled 20 times resets Attempts=0 when moving into ready, so
+	// a same-tick settlement failure starts at backoff step 0 (1m) and is NOT abandoned.
+	svcPoll, repoPoll, inputPoll, pendingPoll := newMediaBillingServiceTest(t)
+	createdJob, err := svcPoll.CreateGrokVideoBillingJob(ctx, inputPoll, pendingPoll)
+	require.NoError(t, err)
+	require.NoError(t, svcPoll.SubmitGrokVideoBillingJob(ctx, createdJob, "task_polled_20", pendingPoll))
+	repoPoll.jobs[createdJob.ID].Attempts = 20
+	pollWrapper := &liveP0MediaRepoErrWrapper{
+		mediaJobMemoryRepo: repoPoll,
+		applyErr:           ErrBalanceWithholdingFailed,
+	}
+	svcPoll.mediaBillingJobs = pollWrapper
+	polledJob, err := repoPoll.GetMediaBillingJobByID(ctx, createdJob.ID)
+	require.NoError(t, err)
+	require.Equal(t, 20, polledJob.Attempts)
+	err = svcPoll.SettleGrokVideoBillingJob(ctx, polledJob, &OpenAIForwardResult{VideoCount: 1, VideoDurationSeconds: 6})
+	require.ErrorIs(t, err, ErrBalanceWithholdingFailed)
+	require.Equal(t, MediaBillingReady, polledJob.Status)
+	require.Equal(t, 0, polledJob.Attempts, "in-memory Attempts must reset to 0 on PrepareMediaBillingIntent")
+	require.Equal(t, 0, repoPoll.jobs[createdJob.ID].Attempts, "stored Attempts must reset to 0 on PrepareMediaBillingIntent")
+	require.False(t, shouldAbandonMediaBillingSettlement(polledJob, err), "first settlement failure after 20 polls must not abandon")
+	require.Equal(t, 1*time.Minute, mediaBillingRecoveryDelay(polledJob, err), "first settlement failure must start at 1m backoff")
+}
+
+func TestSettleMediaBillingJob_UpdatesQuotaCacheBeforePreauthFinalizeFailure(t *testing.T) {
+	cache := newLiveP0BillingCacheStub(100)
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	billingCache := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCache.Stop)
+	authInv := &liveP0AuthInvalidatorStub{byIDResult: true}
+
+	memRepo := &mediaJobMemoryRepo{jobs: map[string]*MediaBillingJob{}, balance: 100}
+	wrapper := &liveP0MediaRepoErrWrapper{
+		mediaJobMemoryRepo: memRepo,
+		applyRes:           &UsageBillingApplyResult{Applied: true, APIKeyQuotaExhausted: true},
+	}
+	// usageBillingRepo is nil -> RecoverBalancePreauthorization fails during Finalize!
+	svc := &OpenAIGatewayService{
+		cfg:                 cfg,
+		mediaBillingJobs:    wrapper,
+		usageLogRepo:        &mediaUsageMemoryRepo{},
+		billingCacheService: billingCache,
+	}
+	svc.SetAuthCacheInvalidator(authInv)
+
+	job := &MediaBillingJob{
+		ID:        "media_preauth_finalize_fail",
+		Kind:      MediaBillingKindImage,
+		UserID:    42,
+		APIKeyID:  78,
+		AccountID: 9,
+		GroupID:   11,
+		Status:    MediaBillingReady,
+		Intent: &MediaBillingIntent{
+			Command: UsageBillingCommand{
+				RequestID:            "image:finalize-fail",
+				UserID:               42,
+				APIKeyID:             78,
+				AccountID:            9,
+				BalanceCost:          0.75,
+				APIKeyQuotaCost:      0.75,
+				BalancePreauthorized: true,
+			},
+			Usage: UsageLog{
+				RequestID:  "image:finalize-fail",
+				UserID:     42,
+				APIKeyID:   78,
+				AccountID:  9,
+				ActualCost: 0.75,
+				TotalCost:  0.75,
+			},
+		},
+	}
+	memRepo.jobs[job.ID] = job
+
+	err := svc.settleMediaBillingJob(context.Background(), job, nil)
+	require.Error(t, err, "expected preauth recovery/finalize failure when usageBillingRepo is nil")
+	require.Equal(t, MediaBillingBilled, job.Status, "job status must advance to billed once Apply commits")
+	require.InDelta(t, 0.75, cache.quotaIncrements[78], 1e-9, "Redis apikey:quota must update BEFORE Finalize can fail")
+	require.Equal(t, []int64{78}, authInv.evictedKeys, "exhausted key auth cache must evict BEFORE Finalize can fail")
+}
+
+type liveP0BatchOrderRecorder struct {
+	mu               sync.Mutex
+	events           []string
+	quotaFailOnce    bool
+	rateFailOnce     bool
+	quotaCalls       int
+	rateCalls        int
+	quotaTotal       float64
+	rateTotal        float64
+	lastAuthCtxErr   error
+	authCtxHasExpire bool
+}
+
+func (r *liveP0BatchOrderRecorder) UpdateQuotaUsed(_ context.Context, _ int64, cost float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.quotaCalls++
+	r.events = append(r.events, "pg_quota")
+	if r.quotaFailOnce && r.quotaCalls == 1 {
+		return errors.New("transient pg quota error")
+	}
+	r.quotaTotal += cost
+	return nil
+}
+
+func (r *liveP0BatchOrderRecorder) UpdateRateLimitUsage(_ context.Context, _ int64, cost float64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rateCalls++
+	r.events = append(r.events, "pg_rate")
+	if r.rateFailOnce && r.rateCalls == 1 {
+		return errors.New("transient pg rate error")
+	}
+	r.rateTotal += cost
+	return nil
+}
+
+func (r *liveP0BatchOrderRecorder) InvalidateAuthCacheByKey(context.Context, string)      {}
+func (r *liveP0BatchOrderRecorder) InvalidateAuthCacheByHash(context.Context, string)     {}
+func (r *liveP0BatchOrderRecorder) InvalidateAuthCacheForAPIKey(context.Context, *APIKey) {}
+func (r *liveP0BatchOrderRecorder) InvalidateAuthCacheByGroupID(context.Context, int64)   {}
+func (r *liveP0BatchOrderRecorder) InvalidateAuthCacheByUserID(ctx context.Context, _ int64) {
+	r.mu.Lock()
+	r.events = append(r.events, "auth_invalidate")
+	r.lastAuthCtxErr = ctx.Err()
+	_, r.authCtxHasExpire = ctx.Deadline()
+	r.mu.Unlock()
+}
+
+type liveP0InspectingBatchProvider struct {
+	BatchImageProvider
+	onSubmit func()
+}
+
+func (p *liveP0InspectingBatchProvider) Submit(ctx context.Context, job *BatchImageJob, account *Account, input BatchImageInput) (*BatchProviderJob, error) {
+	if p.onSubmit != nil {
+		p.onSubmit()
+	}
+	return p.BatchImageProvider.Submit(ctx, job, account, input)
+}
+
+func TestBatchImageHardening_FailClosedSumNoDoubleCountAndSettlementOrdering(t *testing.T) {
+	ctx := context.Background()
+	cache := newLiveP0BillingCacheStub(100)
+	cfg := &config.Config{RunMode: config.RunModeStandard}
+	billingCache := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCache.Stop)
+
+	req := BatchImageSubmitRequest{
+		Model: "gemini-2.5-flash-image",
+		Items: []BatchImageSubmitItem{{CustomID: "c1", Prompt: "owl"}},
+	}
+
+	t.Run("SumOutstandingHoldByAPIKey failure fails closed", func(t *testing.T) {
+		svc, repo, _, _, _ := newTestBatchImagePublicService(true)
+		svc.BillingCache = billingCache
+		repo.sumHoldErr = errors.New("db down")
+		owner := testBatchImageOwner()
+		owner.APIKey = &APIKey{ID: 22, UserID: 11, Status: StatusAPIKeyActive, Quota: 10.0}
+		_, err := svc.Submit(ctx, owner, req, "")
+		require.ErrorIs(t, err, ErrBillingServiceUnavailable)
+	})
+
+	t.Run("Redis quota hold released immediately after CreateBatchImageJob so concurrent submit is not double-counted", func(t *testing.T) {
+		svc, _, _, _, provider := newTestBatchImagePublicService(true)
+		svc.BillingCache = billingCache
+		// Quota = 0.35, each 1-item batch holds 0.15.
+		// Two concurrent batches need 0.30 <= 0.35; if Job A kept Redis hold during
+		// provider.Submit, Job B would see 0.15 (PG) + 0.15 (Redis) + 0.15 (new) = 0.45 > 0.35 and falsely fail!
+		owner := testBatchImageOwner()
+		owner.APIKey = &APIKey{ID: 25, UserID: 11, Status: StatusAPIKeyActive, Quota: 0.35, QuotaUsed: 0}
+		owner.APIKeyID = 25
+
+		var concurrentErr error
+		var inflightDuringSubmit float64
+		var nestedCalled bool
+		svc.ProviderRegistry = NewBatchImageProviderRegistry(&liveP0InspectingBatchProvider{
+			BatchImageProvider: provider,
+			onSubmit: func() {
+				if nestedCalled {
+					return
+				}
+				nestedCalled = true
+				cache.mu.Lock()
+				for _, v := range cache.quotaInflight[25] {
+					inflightDuringSubmit += v
+				}
+				cache.mu.Unlock()
+				// Submit a 2nd concurrent batch while Job A is in provider.Submit!
+				_, concurrentErr = svc.Submit(ctx, owner, req, "")
+			},
+		})
+
+		_, err := svc.Submit(ctx, owner, req, "")
+		require.NoError(t, err)
+		require.Zero(t, inflightDuringSubmit, "temporary Redis quota hold must be released once durable PG row exists")
+		require.NoError(t, concurrentErr, "concurrent 2nd batch must NOT see double-counted hold for Job A")
+	})
+
+	t.Run("settlement updates PG quota & rate limit with retry BEFORE invalidating auth cache using detached context", func(t *testing.T) {
+		rec := &liveP0BatchOrderRecorder{quotaFailOnce: true, rateFailOnce: true}
+		settleRepo := newFakeBatchImageRepository()
+		job := testSettlingBatchImageJob("imgbatch_order_check")
+		job.UserID = 11
+		job.SuccessCount = 2
+		job.FailCount = 0
+		job.ItemCount = 2
+		settleRepo.jobs[job.BatchID] = job
+		settleSvc := &BatchImageSettlementService{
+			Repo:               settleRepo,
+			BillingRepo:        &fakeBatchImageBillingRepo{},
+			Pricing:            &fakeBatchImagePricingResolver{unitPrice: 0.25},
+			BillingCache:       billingCache,
+			APIKeyQuotaUpdater: rec,
+			AuthCache:          rec,
+		}
+		_, err := settleSvc.Settle(ctx, job.BatchID)
+		require.NoError(t, err)
+		require.Equal(t, 2, rec.quotaCalls, "transient PG quota update error must retry")
+		require.Equal(t, 2, rec.rateCalls, "transient PG rate-limit update error must retry")
+		require.InDelta(t, 0.50, rec.quotaTotal, 1e-9, "must not double-apply quota")
+		require.InDelta(t, 0.50, rec.rateTotal, 1e-9, "must not double-apply rate limit")
+		require.Equal(t, []string{"pg_quota", "pg_quota", "pg_rate", "pg_rate", "auth_invalidate"}, rec.events,
+			"PG quota & rate-limit updates must finish BEFORE auth cache invalidation")
+
+		// Verify detached context on canceled caller ctx (P2-2).
+		canceledCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+		invalidateBatchImageUserBalanceAndAuthCache(canceledCtx, billingCache, rec, 11)
+		require.NoError(t, rec.lastAuthCtxErr, "auth cache invalidation must use context.WithoutCancel")
+		require.True(t, rec.authCtxHasExpire, "auth cache invalidation must have its own timeout")
+	})
+}
+
+type liveP0RateLimitLoaderStub struct {
+	data *APIKeyRateLimitData
+}
+
+func (l *liveP0RateLimitLoaderStub) GetRateLimitData(context.Context, int64) (*APIKeyRateLimitData, error) {
+	cp := *l.data
+	return &cp, nil
+}
+
+type liveP0FallbackCtxCheckStub struct {
+	byIDCtx   context.Context
+	byUserErr error
+	byIDEnded bool
+	hasLimit  bool
+}
+
+func (s *liveP0FallbackCtxCheckStub) InvalidateAuthCacheByKey(context.Context, string)      {}
+func (s *liveP0FallbackCtxCheckStub) InvalidateAuthCacheByHash(context.Context, string)     {}
+func (s *liveP0FallbackCtxCheckStub) InvalidateAuthCacheForAPIKey(context.Context, *APIKey) {}
+func (s *liveP0FallbackCtxCheckStub) InvalidateAuthCacheByGroupID(context.Context, int64)   {}
+func (s *liveP0FallbackCtxCheckStub) InvalidateAuthCacheByAPIKeyID(ctx context.Context, _ int64) bool {
+	s.byIDCtx = ctx
+	return false
+}
+func (s *liveP0FallbackCtxCheckStub) InvalidateAuthCacheByUserID(ctx context.Context, _ int64) {
+	s.byIDEnded = s.byIDCtx != nil && s.byIDCtx.Err() != nil
+	s.byUserErr = ctx.Err()
+	_, s.hasLimit = ctx.Deadline()
+}
+
+func TestCodeRabbitQuickWins_NoRedisClobberFreshFallbackAndAttachAcquireRace(t *testing.T) {
+	t.Run("CheckAPIKeyChargeEligibility does not clobber fresher Redis rate-limit counters with lagging PG snapshot", func(t *testing.T) {
+		now := time.Now()
+		cache := newLiveP0BillingCacheStub(100)
+		// Redis has fresher 5h usage = 4.5 (near limit 5.0), while PG is lagging at 1.0.
+		cache.rateLimitData[901] = &APIKeyRateLimitCacheData{
+			Usage5h:  4.5,
+			Window5h: now.Unix(),
+		}
+		loader := &liveP0RateLimitLoaderStub{
+			data: &APIKeyRateLimitData{
+				QuotaUsed:     1.0,
+				Usage5h:       1.0,
+				Window5hStart: &now,
+			},
+		}
+		cfg := &config.Config{RunMode: config.RunModeStandard}
+		svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+		t.Cleanup(svc.Stop)
+		svc.apiKeyRateLimitLoader = loader
+
+		key := &APIKey{
+			ID:            901,
+			UserID:        11,
+			Status:        StatusAPIKeyActive,
+			Quota:         10.0,
+			RateLimit5h:   5.0,
+			Usage5h:       1.0,
+			Window5hStart: &now,
+		}
+		// Projected +1.0 exceeds fresher Redis 4.5 + 1.0 = 5.5 > 5.0 -> MUST reject!
+		err := svc.CheckAPIKeyChargeEligibility(context.Background(), key, 1.0)
+		require.ErrorIs(t, err, ErrAPIKeyRateLimit5hExceeded)
+		// Redis must STILL hold 4.5, never overwritten with lagging DB 1.0.
+		require.InDelta(t, 4.5, cache.rateLimitData[901].Usage5h, 1e-9)
+	})
+
+	t.Run("invalidateExhaustedAPIKeyAuthCache gives user fallback its own fresh timeout", func(t *testing.T) {
+		canceledCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+		fallbackCheck := &liveP0FallbackCtxCheckStub{}
+		invalidateExhaustedAPIKeyAuthCache(canceledCtx, fallbackCheck, 42, 77)
+		require.True(t, fallbackCheck.byIDEnded, "by-ID context must be canceled before fallback runs")
+		require.NoError(t, fallbackCheck.byUserErr, "user fallback must receive its own fresh non-canceled context")
+		require.True(t, fallbackCheck.hasLimit, "user fallback must have its own timeout deadline")
+	})
+
+	t.Run("InflightReservation Attach after Acquire keeps extra alive until active Acquire done() runs", func(t *testing.T) {
+		cache := newLiveP0BillingCacheStub(100)
+		primary := &InflightReservation{cache: cache, userID: 1, requestID: "primary", amount: 1.0, ttl: time.Minute}
+		primary.refs.Store(1)
+		cache.balanceInflight["primary"] = 1.0
+
+		extra := &InflightReservation{cache: cache, userID: 1, requestID: "extra", amount: 2.0, ttl: time.Minute}
+		extra.refs.Store(1)
+		cache.balanceInflight["extra"] = 2.0
+
+		// Acquire BEFORE Attach (previously caused HandlerDone to immediately release extra!).
+		done := primary.Acquire()
+		primary.Attach(extra)
+		primary.HandlerDone()
+
+		cache.mu.Lock()
+		_, primaryAlive := cache.balanceInflight["primary"]
+		_, extraAlive := cache.balanceInflight["extra"]
+		cache.mu.Unlock()
+		require.True(t, primaryAlive, "primary must remain held while Acquire is active")
+		require.True(t, extraAlive, "extra attached after Acquire must NOT be released early by HandlerDone")
+
+		done()
+		cache.mu.Lock()
+		_, primaryAfter := cache.balanceInflight["primary"]
+		_, extraAfter := cache.balanceInflight["extra"]
+		cache.mu.Unlock()
+		require.False(t, primaryAfter)
+		require.False(t, extraAfter, "extra must release once last Acquire done() drops primary refs to 0")
+	})
 }
 
 func liveP0Int64Ptr(v int64) *int64 { return &v }

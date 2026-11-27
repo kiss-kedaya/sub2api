@@ -128,17 +128,19 @@ func invalidateBatchImageUserBalanceAndAuthCache(ctx context.Context, billingCac
 	if userID <= 0 {
 		return
 	}
+	baseCtx := context.Background()
+	if ctx != nil {
+		baseCtx = context.WithoutCancel(ctx)
+	}
 	if bc := resolveBatchImageBillingCache(billingCache, authCache); bc != nil {
-		baseCtx := context.Background()
-		if ctx != nil {
-			baseCtx = context.WithoutCancel(ctx)
-		}
 		invCtx, cancel := context.WithTimeout(baseCtx, cacheWriteTimeout)
 		_ = bc.InvalidateUserBalance(invCtx, userID)
 		cancel()
 	}
 	if authCache != nil {
-		authCache.InvalidateAuthCacheByUserID(ctx, userID)
+		invCtx, cancel := context.WithTimeout(baseCtx, cacheWriteTimeout)
+		authCache.InvalidateAuthCacheByUserID(invCtx, userID)
+		cancel()
 	}
 }
 

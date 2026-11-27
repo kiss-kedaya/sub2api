@@ -427,7 +427,7 @@ func (r *usageBillingRepository) PrepareMediaBillingIntent(ctx context.Context, 
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE media_billing_jobs
-		SET intent = $2, status = $3, available_at = NOW(), updated_at = NOW()
+		SET intent = $2, status = $3, attempts = 0, available_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND intent IS NULL
 	`, job.ID, []byte(intentJSON), service.MediaBillingReady); err != nil {
 		return nil, err
@@ -489,7 +489,7 @@ func (r *usageBillingRepository) ApplyMediaBillingJob(ctx context.Context, id st
 		tx = nil
 		return result, nil
 	}
-	if job.Status != service.MediaBillingReady || job.Intent == nil {
+	if (job.Status != service.MediaBillingReady && job.Status != service.MediaBillingReconciliation) || job.Intent == nil {
 		return nil, service.ErrUsageBillingRequestConflict
 	}
 	if err := validateMediaBillingIntentOwner(job, job.Intent); err != nil {
@@ -538,7 +538,7 @@ func (r *usageBillingRepository) ApplyMediaBillingJob(ctx context.Context, id st
 		UPDATE media_billing_jobs
 		SET status = $2, available_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND status = $3
-	`, job.ID, service.MediaBillingBilled, service.MediaBillingReady)
+	`, job.ID, service.MediaBillingBilled, job.Status)
 	if err != nil {
 		return nil, err
 	}
@@ -687,37 +687,42 @@ func (r *usageBillingRepository) ReconcileMediaBillingJob(ctx context.Context, i
 	return nil
 }
 
-// AbandonMediaBillingJob transitions an unbilled poison-pill settlement job from
-// "ready" to "failed" without refunding its hold (upstream work already ran).
-// Already-billed, completed, or failed jobs are left untouched.
-func (r *usageBillingRepository) AbandonMediaBillingJob(ctx context.Context, id string) error {
+// AbandonMediaBillingJob quarantines an unbilled poison-pill settlement job
+// from "ready" into "reconciliation" (preserving its frozen intent, hold, and
+// subscription accounting) and pushes available_at out by 24h so it leaves the
+// worker hot-loop without stranding frozen_balance or blocking a user who tops
+// up and settles later. Returns (true, nil) only when this call transitioned
+// the row from "ready"; already-billed/done/reconciled rows return (false, nil).
+func (r *usageBillingRepository) AbandonMediaBillingJob(ctx context.Context, id string) (bool, error) {
 	if err := r.validateMediaBillingRepository(); err != nil {
-		return err
+		return false, err
 	}
 	id = strings.TrimSpace(id)
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE media_billing_jobs
-		SET status = $2, updated_at = NOW()
-		WHERE id = $1 AND status = $3
-	`, id, service.MediaBillingFailed, service.MediaBillingReady)
+		SET status = $2,
+			available_at = NOW() + INTERVAL '24 hours',
+			updated_at = NOW()
+		WHERE id = $1 AND status = $3 AND intent IS NOT NULL
+	`, id, service.MediaBillingReconciliation, service.MediaBillingReady)
 	if err != nil {
-		return err
+		return false, err
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if affected == 1 {
-		return nil
+		return true, nil
 	}
 	var exists bool
 	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM media_billing_jobs WHERE id = $1)`, id).Scan(&exists); err != nil {
-		return err
+		return false, err
 	}
 	if !exists {
-		return service.ErrMediaBillingJobNotFound
+		return false, service.ErrMediaBillingJobNotFound
 	}
-	return nil
+	return false, nil
 }
 
 func (r *usageBillingRepository) CompleteMediaBillingJob(ctx context.Context, id string) error {
@@ -757,7 +762,8 @@ func (r *usageBillingRepository) ListMediaBillingJobs(ctx context.Context, limit
 		WITH picked AS (
 			SELECT id
 			FROM media_billing_jobs
-			WHERE status IN ('creating', 'submitted', 'reconciliation', 'ready', 'billed')
+			WHERE (status IN ('creating', 'submitted', 'ready', 'billed')
+				OR (status = 'reconciliation' AND intent IS NULL))
 				AND available_at <= NOW()
 			ORDER BY available_at, created_at
 			FOR UPDATE SKIP LOCKED

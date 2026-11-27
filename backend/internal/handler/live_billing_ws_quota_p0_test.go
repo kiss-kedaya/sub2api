@@ -283,60 +283,81 @@ func TestOpenAIWSTurnAPIKeyRefresh_FailsClosedOnDeletedRevokedExpiredQuotaUserIn
 		connMut    func(*service.APIKey)
 		lookup     *liveP0APIKeyLookupStub
 		wantErr    error
+		wantStatus coderws.StatusCode
 		wantReason string
 	}{
 		{
 			name:       "deleted_not_found",
 			lookup:     &liveP0APIKeyLookupStub{err: service.ErrAPIKeyNotFound},
 			wantErr:    service.ErrAPIKeyNotFound,
+			wantStatus: coderws.StatusPolicyViolation,
 			wantReason: "api key is no longer valid",
 		},
 		{
-			name:       "db_error_fails_closed",
+			name:       "db_error_fails_closed_with_try_again_later",
 			lookup:     &liveP0APIKeyLookupStub{err: errors.New("db timeout")},
-			wantReason: "api key is no longer valid",
+			wantStatus: coderws.StatusTryAgainLater,
+			wantReason: "temporary api key verification failure, please reconnect",
 		},
 		{
 			name:       "nil_key_fails_closed",
 			lookup:     &liveP0APIKeyLookupStub{key: nil},
 			wantErr:    service.ErrAPIKeyNotFound,
+			wantStatus: coderws.StatusPolicyViolation,
 			wantReason: "api key is no longer valid",
 		},
 		{
 			name:       "id_mismatch_fails_closed",
 			lookup:     &liveP0APIKeyLookupStub{key: &service.APIKey{ID: 999, Status: service.StatusAPIKeyActive}},
 			wantErr:    service.ErrAPIKeyNotFound,
+			wantStatus: coderws.StatusPolicyViolation,
 			wantReason: "api key is no longer valid",
 		},
 		{
 			name:       "disabled_key_fails_closed",
 			lookup:     &liveP0APIKeyLookupStub{key: &service.APIKey{ID: 101, Status: service.StatusAPIKeyDisabled}},
 			wantErr:    errOpenAIWSAPIKeyDisabled,
+			wantStatus: coderws.StatusPolicyViolation,
 			wantReason: "api key disabled",
 		},
 		{
 			name:       "inactive_revoked_key_fails_closed",
 			lookup:     &liveP0APIKeyLookupStub{key: &service.APIKey{ID: 101, Status: service.StatusAPIKeyInactive}},
 			wantErr:    errOpenAIWSAPIKeyDisabled,
+			wantStatus: coderws.StatusPolicyViolation,
 			wantReason: "api key disabled",
 		},
 		{
 			name:       "quota_exhausted_status_fails_closed",
 			lookup:     &liveP0APIKeyLookupStub{key: &service.APIKey{ID: 101, Status: service.StatusAPIKeyQuotaExhausted}},
 			wantErr:    service.ErrAPIKeyQuotaExhausted,
+			wantStatus: coderws.StatusPolicyViolation,
 			wantReason: "api key quota exhausted",
 		},
 		{
 			name:       "quota_used_reaches_limit_fails_closed",
 			lookup:     &liveP0APIKeyLookupStub{key: &service.APIKey{ID: 101, Status: service.StatusAPIKeyActive, Quota: 1.0, QuotaUsed: 1.0}},
 			wantErr:    service.ErrAPIKeyQuotaExhausted,
+			wantStatus: coderws.StatusPolicyViolation,
 			wantReason: "api key quota exhausted",
 		},
 		{
 			name:       "expired_timestamp_fails_closed",
 			lookup:     &liveP0APIKeyLookupStub{key: &service.APIKey{ID: 101, Status: service.StatusAPIKeyActive, ExpiresAt: &past}},
 			wantErr:    service.ErrAPIKeyExpired,
+			wantStatus: coderws.StatusPolicyViolation,
 			wantReason: "api key expired",
+		},
+		{
+			name: "nil_user_fails_closed",
+			lookup: &liveP0APIKeyLookupStub{key: &service.APIKey{
+				ID:     101,
+				Status: service.StatusAPIKeyActive,
+				User:   nil,
+			}},
+			wantErr:    errOpenAIWSUserDisabled,
+			wantStatus: coderws.StatusPolicyViolation,
+			wantReason: "user is no longer active",
 		},
 		{
 			name: "inactive_user_fails_closed",
@@ -346,6 +367,7 @@ func TestOpenAIWSTurnAPIKeyRefresh_FailsClosedOnDeletedRevokedExpiredQuotaUserIn
 				User:   &service.User{ID: 42, Status: service.StatusDisabled},
 			}},
 			wantErr:    errOpenAIWSUserDisabled,
+			wantStatus: coderws.StatusPolicyViolation,
 			wantReason: "user is no longer active",
 		},
 		{
@@ -358,13 +380,28 @@ func TestOpenAIWSTurnAPIKeyRefresh_FailsClosedOnDeletedRevokedExpiredQuotaUserIn
 				User:    &service.User{ID: 42, Status: service.StatusActive},
 			}},
 			wantErr:    errOpenAIWSGroupDisabled,
+			wantStatus: coderws.StatusPolicyViolation,
 			wantReason: "group is no longer active",
+		},
+		{
+			name: "removed_group_authorization_fails_closed",
+			lookup: &liveP0APIKeyLookupStub{key: &service.APIKey{
+				ID:      101,
+				Status:  service.StatusAPIKeyActive,
+				GroupID: func() *int64 { other := int64(99); return &other }(),
+				Group:   &service.Group{ID: 99, Platform: service.PlatformOpenAI, Status: service.StatusActive},
+				User:    &service.User{ID: 42, Status: service.StatusActive},
+			}},
+			wantErr:    errOpenAIWSGroupUnauthorized,
+			wantStatus: coderws.StatusPolicyViolation,
+			wantReason: "group is no longer authorized",
 		},
 		{
 			name:       "empty_conn_key_fails_closed",
 			connMut:    func(k *service.APIKey) { k.Key = "" },
 			lookup:     &liveP0APIKeyLookupStub{key: baseConn()},
 			wantErr:    service.ErrAPIKeyNotFound,
+			wantStatus: coderws.StatusPolicyViolation,
 			wantReason: "api key is no longer valid",
 		},
 	}
@@ -382,7 +419,9 @@ func TestOpenAIWSTurnAPIKeyRefresh_FailsClosedOnDeletedRevokedExpiredQuotaUserIn
 			if tc.wantErr != nil {
 				require.ErrorIs(t, err, tc.wantErr)
 			}
-			require.Equal(t, tc.wantReason, openAIWSAPIKeyCloseReason(err))
+			gotStatus, gotReason := openAIWSAPIKeyCloseStatusAndReason(err)
+			require.Equal(t, tc.wantStatus, gotStatus)
+			require.Equal(t, tc.wantReason, gotReason)
 		})
 	}
 }
@@ -391,29 +430,31 @@ func TestOpenAIWSTurnAPIKeyRefresh_RefreshesQuotaRateLimitsUserAndMatchingGroup(
 	groupID := int64(9)
 	otherGroupID := int64(17)
 	conn := &service.APIKey{
-		ID:      101,
-		UserID:  42,
-		Key:     "test-ws-key-refresh",
-		Status:  service.StatusAPIKeyActive,
-		Quota:   5.0,
-		GroupID: &groupID,
-		Group:   &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive, RateMultiplier: 1.0},
-		User:    &service.User{ID: 42, Status: service.StatusActive, Balance: 10},
+		ID:               101,
+		UserID:           42,
+		Key:              "test-ws-key-refresh",
+		Status:           service.StatusAPIKeyActive,
+		Quota:            5.0,
+		ConcurrencyLimit: 5,
+		GroupID:          &groupID,
+		Group:            &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive, RateMultiplier: 1.0},
+		User:             &service.User{ID: 42, Status: service.StatusActive, Balance: 10},
 	}
 	latestGroup := &service.Group{ID: groupID, Platform: service.PlatformOpenAI, Status: service.StatusActive, RateMultiplier: 2.5}
 	latestUser := &service.User{ID: 42, Status: service.StatusActive, Balance: 4.25}
 	lookup := &liveP0APIKeyLookupStub{
 		key: &service.APIKey{
-			ID:          101,
-			UserID:      42,
-			Status:      service.StatusAPIKeyActive,
-			Quota:       5.0,
-			QuotaUsed:   3.2,
-			RateLimit5h: 4.0,
-			Usage5h:     1.5,
-			GroupID:     &groupID,
-			Group:       latestGroup,
-			User:        latestUser,
+			ID:               101,
+			UserID:           42,
+			Status:           service.StatusAPIKeyActive,
+			Quota:            5.0,
+			QuotaUsed:        3.2,
+			RateLimit5h:      4.0,
+			Usage5h:          1.5,
+			ConcurrencyLimit: 2,
+			GroupID:          &groupID,
+			Group:            latestGroup,
+			User:             latestUser,
 		},
 	}
 
@@ -425,17 +466,26 @@ func TestOpenAIWSTurnAPIKeyRefresh_RefreshesQuotaRateLimitsUserAndMatchingGroup(
 	require.InDelta(t, 3.2, refreshed.QuotaUsed, 1e-9)
 	require.InDelta(t, 4.0, refreshed.RateLimit5h, 1e-9)
 	require.InDelta(t, 1.5, refreshed.Usage5h, 1e-9)
+	require.Equal(t, 2, refreshed.ConcurrencyLimit)
 	require.Same(t, latestUser, refreshed.User)
 	require.Same(t, latestGroup, refreshed.Group)
 	require.Same(t, latestGroup, turnCtx.Value(ctxkey.Group))
 
-	// Smart-routed secondary group is preserved while quota/user fields still refresh.
+	// Authorized smart-routed secondary group is preserved while quota/user/concurrency refresh.
 	lookup.key.GroupID = &otherGroupID
 	lookup.key.Group = &service.Group{ID: otherGroupID, Platform: service.PlatformOpenAI, Status: service.StatusActive, RateMultiplier: 9.0}
+	lookup.key.RouteGroupIDs = []int64{otherGroupID, groupID}
 	_, refreshedRouted, err := keys.begin(ctx, lookup, 3, conn)
 	require.NoError(t, err)
-	require.Same(t, conn.Group, refreshedRouted.Group, "secondary route group must not be overwritten by primary group")
+	require.Same(t, conn.Group, refreshedRouted.Group, "authorized secondary route group must be preserved")
 	require.InDelta(t, 3.2, refreshedRouted.QuotaUsed, 1e-9)
+	require.Equal(t, 2, refreshedRouted.ConcurrencyLimit)
+
+	// Removing bound group from live key's authorized groups MUST fail closed (no unauthorized group bypass).
+	lookup.key.RouteGroupIDs = []int64{otherGroupID}
+	_, rejectedMoved, err := keys.begin(ctx, lookup, 4, conn)
+	require.ErrorIs(t, err, errOpenAIWSGroupUnauthorized)
+	require.Nil(t, rejectedMoved)
 }
 
 func TestOpenAIWSResponses_MultiTurnFailsClosedWhenKeyRevokedOrQuotaExhausted(t *testing.T) {
@@ -880,13 +930,17 @@ func TestGrokRealtime_BillsTextOnlyAbnormalCloseAndMalformedFrame(t *testing.T) 
 				concurrencyHelper:     NewConcurrencyHelper(service.NewConcurrencyService(concurrency), SSEPingFormatNone, time.Second),
 			}
 
+			handlerDone := make(chan struct{})
 			router := gin.New()
 			router.Use(func(c *gin.Context) {
 				c.Set(string(middleware2.ContextKeyAPIKey), apiKey)
 				c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: userID, Concurrency: 2})
 				c.Next()
 			})
-			router.GET("/v1/realtime", h.GrokRealtime)
+			router.GET("/v1/realtime", func(c *gin.Context) {
+				defer close(handlerDone)
+				h.GrokRealtime(c)
+			})
 			srv := httptest.NewServer(router)
 			defer srv.Close()
 
@@ -920,9 +974,15 @@ func TestGrokRealtime_BillsTextOnlyAbnormalCloseAndMalformedFrame(t *testing.T) 
 				}
 			} else {
 				select {
+				case <-handlerDone:
+				case <-time.After(3 * time.Second):
+					t.Fatal("expected GrokRealtime handler to finish after client close")
+				}
+				pool.Stop()
+				select {
 				case log := <-usageRepo.created:
 					t.Fatalf("unexpected usage log for non-billable session: %+v", log)
-				case <-time.After(200 * time.Millisecond):
+				default:
 				}
 			}
 		})
@@ -1093,21 +1153,223 @@ func TestBatchImageHandlerSubmit_EnforcesConcurrencyQuotaAndRateLimits(t *testin
 		h.Submit(c)
 		require.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
 	})
+
+	t.Run("fails_closed_without_panic_when_user_is_nil", func(t *testing.T) {
+		cache := newLiveP0HandlerInflightCache(100)
+		cfg := &config.Config{RunMode: config.RunModeStandard}
+		billingCache := service.NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+		defer billingCache.Stop()
+
+		h := &BatchImageHandler{openAI: &OpenAIGatewayHandler{billingCacheService: billingCache}}
+		key := &service.APIKey{
+			ID: 7405, UserID: userID, Status: service.StatusAPIKeyActive,
+			GroupID: &groupID, Group: group, User: nil,
+		}
+		c, rec := newSubmitContext(key)
+		require.NotPanics(t, func() { h.Submit(c) })
+		require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "USER_CONTEXT_REQUIRED")
+	})
+
+	t.Run("idempotent_retry_returns_existing_batch_even_when_balance_is_now_zero", func(t *testing.T) {
+		cache := newLiveP0HandlerInflightCache(0) // balance depleted by original batch!
+		cfg := &config.Config{RunMode: config.RunModeStandard}
+		cfg.BatchImage.Enabled = true
+		billingCache := service.NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+		defer billingCache.Stop()
+
+		reqHash := service.HashBatchImageSubmitRequest(service.BatchImageSubmitRequest{
+			Model:            "gemini-2.5-flash-image",
+			TaskName:         "retry-task",
+			ResponseMimeType: "image/png",
+			ImageSize:        "1K",
+			Items:            []service.BatchImageSubmitItem{{CustomID: "1", Prompt: "hi"}},
+		})
+		idemKey := "idem-retry-1"
+		apiKeyID := int64(7406)
+		existing := &service.BatchImageJob{
+			BatchID:        "imgbatch_existing_retry",
+			UserID:         userID,
+			APIKeyID:       &apiKeyID,
+			Status:         service.BatchImageJobStatusRunning,
+			Provider:       service.BatchImageProviderVertex,
+			Model:          "gemini-2.5-flash-image",
+			TaskName:       "retry-task",
+			ItemCount:      1,
+			EstimatedCost:  0.15,
+			IdempotencyKey: &idemKey,
+			RequestHash:    &reqHash,
+			CreatedAt:      time.Now(),
+		}
+		batchRepo := &liveP0HandlerBatchImageRepoStub{existing: existing}
+		groupRepo := &liveP0HandlerBatchImageGroupRepoStub{group: &service.Group{
+			ID: groupID, Platform: service.PlatformGemini, Status: service.StatusActive, AllowBatchImageGeneration: true,
+		}}
+		batchSvc := &service.BatchImagePublicService{
+			Repo:        batchRepo,
+			AccountRepo: &liveP0HandlerBatchImageAccountRepoStub{},
+			GroupRepo:   groupRepo,
+			Config:      cfg,
+		}
+		h := &BatchImageHandler{
+			service: batchSvc,
+			openAI:  &OpenAIGatewayHandler{billingCacheService: billingCache},
+		}
+		key := &service.APIKey{
+			ID: apiKeyID, UserID: userID, Status: service.StatusAPIKeyActive,
+			GroupID: &groupID, Group: group,
+			User: &service.User{ID: userID, Status: service.StatusActive, Balance: 0},
+		}
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/batches", bytes.NewBufferString(`{"model":"gemini-2.5-flash-image","task_name":"retry-task","items":[{"custom_id":"1","prompt":"hi"}]}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Request.Header.Set("Idempotency-Key", idemKey)
+		c.Set(string(middleware2.ContextKeyAPIKey), key)
+		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: userID, Concurrency: 1})
+		h.Submit(c)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "imgbatch_existing_retry")
+	})
+}
+
+type liveP0HandlerBatchImageRepoStub struct {
+	service.BatchImageRepository
+	existing *service.BatchImageJob
+}
+
+func (r *liveP0HandlerBatchImageRepoStub) GetBatchImageJobByIdempotencyKey(_ context.Context, userID, apiKeyID int64, key string) (*service.BatchImageJob, error) {
+	if r.existing != nil && r.existing.UserID == userID && r.existing.APIKeyID != nil && *r.existing.APIKeyID == apiKeyID &&
+		r.existing.IdempotencyKey != nil && *r.existing.IdempotencyKey == key {
+		return r.existing, nil
+	}
+	return nil, service.ErrBatchImageJobNotFound
+}
+
+type liveP0HandlerBatchImageGroupRepoStub struct {
+	group *service.Group
+}
+
+func (r *liveP0HandlerBatchImageGroupRepoStub) GetByIDLite(context.Context, int64) (*service.Group, error) {
+	return r.group, nil
+}
+
+type liveP0HandlerBatchImageAccountRepoStub struct {
+	service.BatchImageAccountSelectionRepository
+}
+
+type liveP0APIKeySlotConcurrencyCache struct {
+	concurrencyCacheMock
+	seenAPIKeyLimit int
+}
+
+func (m *liveP0APIKeySlotConcurrencyCache) TrackAPIKeySlot(context.Context, int64, string) error {
+	return nil
+}
+
+func (m *liveP0APIKeySlotConcurrencyCache) GetAPIKeyConcurrencyBatch(_ context.Context, ids []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(ids))
+	for _, id := range ids {
+		out[id] = 0
+	}
+	return out, nil
+}
+
+func (m *liveP0APIKeySlotConcurrencyCache) AcquireAPIKeySlot(_ context.Context, _ int64, maxConcurrency int, _ string) (bool, error) {
+	m.seenAPIKeyLimit = maxConcurrency
+	return true, nil
+}
+
+func (m *liveP0APIKeySlotConcurrencyCache) ReleaseAPIKeySlot(context.Context, int64, string) error {
+	return nil
+}
+
+func (m *liveP0APIKeySlotConcurrencyCache) APIKeySlotTTL() time.Duration {
+	return 30 * time.Second
+}
+
+func (m *liveP0APIKeySlotConcurrencyCache) APIKeySlotRefreshInterval() time.Duration {
+	return 5 * time.Second
+}
+
+func (m *liveP0APIKeySlotConcurrencyCache) RefreshAPIKeySlot(context.Context, int64, string) (bool, error) {
+	return true, nil
+}
+
+func TestTryAcquireUserSlotForAPIKeyWithLimit_UsesRefreshedLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cache := &liveP0APIKeySlotConcurrencyCache{
+		concurrencyCacheMock: concurrencyCacheMock{
+			acquireUserSlotFn: func(context.Context, int64, int, string) (bool, error) { return true, nil },
+		},
+	}
+	helper := NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	ownerCtx, cancelOwner := service.WithAPIKeyAdmissionOwner(context.Background())
+	defer cancelOwner()
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil).WithContext(ownerCtx)
+	// Stale handshake API key in Gin context has ConcurrencyLimit=10, while refreshed turnKey has ConcurrencyLimit=2.
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{ID: 777, ConcurrencyLimit: 10})
+
+	rel, acquired, err := helper.TryAcquireUserSlotForAPIKeyWithLimit(c, 42, 5, 777, 2)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	require.NotNil(t, rel)
+	rel()
+	require.Equal(t, 2, cache.seenAPIKeyLimit, "must enforce refreshed turnKey.ConcurrencyLimit rather than stale Gin context limit")
 }
 
 // --- Fix 5 (Handler): Gemini CachedContent Pre-Check Before CreateUpstream ---
 
+func TestEstimateGeminiCachedContentInputTokens_MultimodalAndFallback(t *testing.T) {
+	// 4MB image => ~5.33MB base64 string. Structural estimation must NOT treat base64 bytes as 1.33M tokens.
+	bigBase64 := strings.Repeat("A", 5_333_333)
+	inlineCamel := `{"model":"models/gemini-2.5-pro","contents":[{"role":"user","parts":[{"text":"describe"},{"inlineData":{"mimeType":"image/png","data":"` + bigBase64 + `"}}]}]}`
+	tokensCamel := estimateGeminiCachedContentInputTokens([]byte(inlineCamel))
+	require.Equal(t, len("describe")/4+geminiCachedContentInlineDataPartTokens, tokensCamel)
+	require.Less(t, tokensCamel, 2000, "4MB inlineData image must NOT estimate ~1.33M tokens")
+
+	inlineSnake := `{"model":"models/gemini-2.5-pro","system_instruction":{"parts":[{"text":"sys"}]},"contents":[{"role":"user","parts":[{"inline_data":{"mime_type":"image/jpeg","data":"` + bigBase64 + `"}}]}]}`
+	tokensSnake := estimateGeminiCachedContentInputTokens([]byte(inlineSnake))
+	require.Equal(t, geminiCachedContentInlineDataPartTokens, tokensSnake)
+
+	// fileData / file_data with empty text still gets conservative non-zero floor.
+	fileURI := `{"model":"models/gemini-2.5-pro","contents":[{"role":"user","parts":[{"fileData":{"mimeType":"video/mp4","fileUri":"gs://bucket/video.mp4"}}]}]}`
+	require.Equal(t, geminiCachedContentFileDataPartTokens, estimateGeminiCachedContentInputTokens([]byte(fileURI)))
+	fileURISnake := `{"model":"models/gemini-2.5-pro","contents":[{"role":"user","parts":[{"file_data":{"mime_type":"application/pdf","file_uri":"gs://bucket/doc.pdf"}}]}]}`
+	require.Equal(t, geminiCachedContentFileDataPartTokens, estimateGeminiCachedContentInputTokens([]byte(fileURISnake)))
+
+	// Malformed JSON falls back to len(body)/4.
+	malformed := strings.Repeat("{", 400)
+	require.Equal(t, 100, estimateGeminiCachedContentInputTokens([]byte(malformed)))
+}
+
 func TestGeminiCachedContentsCreate_RejectsInsufficientBalanceBeforeCreateUpstream(t *testing.T) {
 	// With cachedBillingInputPrice=1.25/1M and cachedBillingStoragePrice=4.50/1M/hr,
-	// a 400KB body estimates ~100,000 tokens -> 100k * (1.25 + 4.50*24)/1M = $10.925 > $1.00 balance.
+	// a 400KB text body estimates 100,000 tokens -> 100k * (1.25 + 4.50*24)/1M = $10.925 > $1.00 balance.
 	env := newCachedBillingEnv(t, 1.0, 900)
 	env.upstream.createBody = cachedBillingCreateBody(time.Now().Add(24 * time.Hour))
 	largeBody := `{"model":"models/gemini-2.5-pro","ttl":"86400s","contents":[{"role":"user","parts":[{"text":"` + strings.Repeat("a", 400_000) + `"}]}]}`
 
 	rec := env.serve(http.MethodPost, "/v1beta/cachedContents", largeBody, nil, env.h.GeminiCachedContentsCreate)
-	require.NotEqual(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, http.StatusTooManyRequests, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "RESOURCE_EXHAUSTED")
+	require.Contains(t, rec.Body.String(), "insufficient balance")
 	require.Equal(t, 0, env.upstream.methodCalls(http.MethodPost), "must reject BEFORE calling CreateUpstream")
 	require.Equal(t, 0, env.upstream.methodCalls(http.MethodDelete), "no orphan upstream cache should be created")
 	require.Empty(t, env.repo.records)
 	require.Empty(t, env.usage.totals())
+}
+
+func TestGeminiCachedContentsCreate_AllowsLargeBase64InlineDataWithSufficientBalance(t *testing.T) {
+	// 500KB base64 image in inlineData estimates 1024 tokens (~$0.112 for 24h), NOT 125k tokens ($13.65).
+	// Even with $1.00 balance (which would reject 125k tokens = $13.65), 1024 tokens = $0.112 must SUCCEED!
+	env := newCachedBillingEnv(t, 1.0, 900)
+	env.upstream.createBody = `{"name":"cachedContents/up_img","expireTime":"` + time.Now().Add(24*time.Hour).UTC().Format(time.RFC3339) + `","usageMetadata":{"totalTokenCount":1024}}`
+	imgBody := `{"model":"models/gemini-2.5-pro","ttl":"86400s","contents":[{"role":"user","parts":[{"inlineData":{"mimeType":"image/png","data":"` + strings.Repeat("A", 500_000) + `"}}]}]}`
+
+	rec := env.serve(http.MethodPost, "/v1beta/cachedContents", imgBody, nil, env.h.GeminiCachedContentsCreate)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, 1, env.upstream.methodCalls(http.MethodPost))
 }

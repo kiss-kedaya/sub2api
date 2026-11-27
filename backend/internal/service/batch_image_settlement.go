@@ -159,10 +159,12 @@ func (s *BatchImageSettlementService) Settle(ctx context.Context, batchID string
 		}
 		return nil, err
 	}
-	s.invalidateAuthCache(ctx, job.UserID)
+	// Persist PG API key quota/rate-limit updates BEFORE invalidating auth cache
+	// so a concurrent auth lookup cannot refill the cache with stale pre-update counters.
 	if captured && actualCost > 0 && job.APIKeyID != nil && *job.APIKeyID > 0 {
 		s.recordSettledAPIKeyQuotaAndRateLimit(ctx, job.UserID, *job.APIKeyID, actualCost)
 	}
+	s.invalidateAuthCache(ctx, job.UserID)
 
 	now := time.Now()
 	outputExpiresAt := now.Add(s.outputRetentionAfterTerminal())
@@ -296,6 +298,34 @@ func (s *BatchImageSettlementService) invalidateAuthCache(ctx context.Context, u
 	invalidateBatchImageUserBalanceAndAuthCache(ctx, s.BillingCache, s.AuthCache, userID)
 }
 
+const (
+	batchImageAPIKeyUsageUpdateMaxAttempts = 3
+)
+
+func retryBatchImageAPIKeyUsageUpdate(baseCtx context.Context, fn func(context.Context) error) (int, error) {
+	var lastErr error
+	for attempt := 1; attempt <= batchImageAPIKeyUsageUpdateMaxAttempts; attempt++ {
+		updateCtx, cancel := context.WithTimeout(baseCtx, cacheWriteTimeout)
+		err := fn(updateCtx)
+		cancel()
+		if err == nil {
+			return attempt, nil
+		}
+		lastErr = err
+		if attempt < batchImageAPIKeyUsageUpdateMaxAttempts {
+			backoff := time.Duration(attempt) * 50 * time.Millisecond
+			timer := time.NewTimer(backoff)
+			select {
+			case <-baseCtx.Done():
+				timer.Stop()
+				return attempt, lastErr
+			case <-timer.C:
+			}
+		}
+	}
+	return batchImageAPIKeyUsageUpdateMaxAttempts, lastErr
+}
+
 func (s *BatchImageSettlementService) recordSettledAPIKeyQuotaAndRateLimit(ctx context.Context, userID, apiKeyID int64, actualCost float64) {
 	if s == nil || apiKeyID <= 0 || actualCost <= 0 {
 		return
@@ -304,22 +334,26 @@ func (s *BatchImageSettlementService) recordSettledAPIKeyQuotaAndRateLimit(ctx c
 	if ctx != nil {
 		baseCtx = context.WithoutCancel(ctx)
 	}
-	updateCtx, cancel := context.WithTimeout(baseCtx, cacheWriteTimeout)
-	defer cancel()
 	if updater := resolveBatchImageAPIKeyQuotaUpdater(s.APIKeyQuotaUpdater, s.AuthCache); updater != nil {
-		if err := updater.UpdateQuotaUsed(updateCtx, apiKeyID, actualCost); err != nil {
-			logger.L().Warn("batch_image.settlement_api_key_quota_update_failed",
+		if attempts, err := retryBatchImageAPIKeyUsageUpdate(baseCtx, func(updateCtx context.Context) error {
+			return updater.UpdateQuotaUsed(updateCtx, apiKeyID, actualCost)
+		}); err != nil {
+			logger.L().Error("batch_image.settlement_api_key_quota_update_failed",
 				zap.Int64("user_id", userID),
 				zap.Int64("api_key_id", apiKeyID),
 				zap.Float64("actual_cost", actualCost),
+				zap.Int("attempts", attempts),
 				zap.Error(err),
 			)
 		}
-		if err := updater.UpdateRateLimitUsage(updateCtx, apiKeyID, actualCost); err != nil {
-			logger.L().Warn("batch_image.settlement_api_key_rate_limit_update_failed",
+		if attempts, err := retryBatchImageAPIKeyUsageUpdate(baseCtx, func(updateCtx context.Context) error {
+			return updater.UpdateRateLimitUsage(updateCtx, apiKeyID, actualCost)
+		}); err != nil {
+			logger.L().Error("batch_image.settlement_api_key_rate_limit_update_failed",
 				zap.Int64("user_id", userID),
 				zap.Int64("api_key_id", apiKeyID),
 				zap.Float64("actual_cost", actualCost),
+				zap.Int("attempts", attempts),
 				zap.Error(err),
 			)
 		}

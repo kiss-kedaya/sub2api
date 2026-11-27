@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -153,7 +154,13 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 	if !h.checkGeminiCachedContentBilling(c, reqLog, apiKey, subscription) {
 		return
 	}
-	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(c, modelName, body))
+	estimatedTokens := estimateGeminiCachedContentInputTokens(body)
+	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, service.InflightEstimateRequest{
+		Model:     modelName,
+		BodyBytes: estimatedTokens * 4,
+		MaxTokens: 1,
+		Kind:      service.InflightEstimateToken,
+	})
 	if err != nil {
 		reqLog.Info("gemini.cached_content.inflight_reservation_rejected", zap.Error(err))
 		status, _, message, retryAfter := billingErrorDetails(err)
@@ -244,7 +251,6 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 		// Pre-check estimated input + TTL storage cost before creating an upstream
 		// cache so low-balance / exhausted-quota callers cannot create expensive
 		// upstream caches and drive balances negative.
-		estimatedTokens := estimateGeminiCachedContentInputTokens(body)
 		estimatedStorageTokenHours := service.GeminiCachedContentStorageTokenHours(int64(estimatedTokens), ttl)
 		estimatedAmount := h.gatewayService.QuoteUsageCost(c.Request.Context(), &service.RecordUsageInput{
 			Result: &service.ForwardResult{
@@ -259,8 +265,7 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			PricingAt:          pricingAt,
 			ChannelUsageFields: usageFields,
 		})
-		inflightRelease()
-		precheckDone, precheckErr := h.reserveGeminiCachedContentCharge(c, apiKey, subscription, estimatedAmount)
+		precheckRes, precheckErr := h.reserveGeminiCachedContentChargeRes(c, apiKey, subscription, estimatedAmount)
 		if precheckErr != nil {
 			accountReleaseFunc()
 			reqLog.Info("gemini.cached_content.precheck_charge_rejected",
@@ -270,6 +275,11 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			)
 			writeGeminiCachedContentBillingError(c, precheckErr)
 			return
+		}
+		inflightRelease()
+		precheckDone := inflightNoop
+		if precheckRes != nil {
+			precheckDone = precheckRes.HandlerDone
 		}
 
 		upstream, err := svc.CreateUpstream(c.Request.Context(), account, req, mappedModel, publicID, ttl)
@@ -305,7 +315,8 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			continue
 		}
 
-		// 缓存 token 数在上游创建后才确定：按确定金额校验余额 / 额度并预留，不足时删除上游缓存，
+		// 缓存 token 数在上游创建后才确定：保持 precheckRes 持续持有并在确定金额高于预估时
+		// 仅追加差额预留（避免先释再锁的 TOCTOU 窗口与双倍计提）；不足时删除上游缓存，
 		// 只收取已发生的缓存 token 输入费。
 		tokens := upstream.TotalTokenCount
 		storageTokenHours := service.GeminiCachedContentStorageTokenHours(tokens, ttl)
@@ -316,8 +327,19 @@ func (h *GatewayHandler) GeminiCachedContentsCreate(c *gin.Context) {
 			},
 			APIKey: apiKey, User: apiKey.User, Subscription: subscription, PricingAt: pricingAt, ChannelUsageFields: usageFields,
 		})
-		precheckDone()
-		chargeDone, err := h.reserveGeminiCachedContentCharge(c, apiKey, subscription, amount)
+		const cachedChargeDeltaEps = 1e-9
+		chargeDone := precheckDone
+		if precheckRes == nil {
+			chargeDone, err = h.reserveGeminiCachedContentCharge(c, apiKey, subscription, amount)
+		} else if delta := amount - estimatedAmount; delta > cachedChargeDeltaEps {
+			deltaRes, reserveErr := h.billingCacheService.ReserveFixedCharge(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, delta)
+			if reserveErr != nil {
+				precheckDone()
+				err = reserveErr
+			} else if deltaRes != nil {
+				precheckRes.Attach(deltaRes)
+			}
+		}
 		if err != nil {
 			reqLog.Info("gemini.cached_content.storage_charge_rejected", zap.Float64("amount", amount), zap.Error(err))
 			h.cleanupGeminiCachedContentUpstream(reqLog, account, upstream.Name)
@@ -837,29 +859,116 @@ func (h *GatewayHandler) cleanupGeminiCachedContentUpstream(reqLog *zap.Logger, 
 	}
 }
 
-// estimateGeminiCachedContentInputTokens estimates input tokens from raw request
-// payload size (~4 bytes/token, minimum 1) for pre-CreateUpstream affordability checks.
+const (
+	geminiCachedContentInlineDataPartTokens = 1024
+	geminiCachedContentFileDataPartTokens   = 2048
+)
+
+type geminiCachedContentEstimatePayload struct {
+	Contents               []json.RawMessage `json:"contents"`
+	SystemInstruction      json.RawMessage   `json:"systemInstruction"`
+	SystemInstructionSnake json.RawMessage   `json:"system_instruction"`
+	Tools                  json.RawMessage   `json:"tools"`
+	ToolConfig             json.RawMessage   `json:"toolConfig"`
+	ToolConfigSnake        json.RawMessage   `json:"tool_config"`
+}
+
+type geminiCachedContentEstimateBlock struct {
+	Parts []map[string]json.RawMessage `json:"parts"`
+}
+
+func accumulateGeminiCachedContentBlock(raw json.RawMessage, textBytes, mediaTokens *int) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return
+	}
+	var block geminiCachedContentEstimateBlock
+	if err := json.Unmarshal(trimmed, &block); err != nil || block.Parts == nil {
+		*textBytes += len(trimmed)
+		return
+	}
+	for _, part := range block.Parts {
+		for k, v := range part {
+			val := bytes.TrimSpace(v)
+			if len(val) == 0 || bytes.Equal(val, []byte("null")) {
+				continue
+			}
+			switch k {
+			case "inlineData", "inline_data":
+				// Do NOT divide raw base64 bytes by 4 (a 4MB image is ~258 tokens, not 1.3M tokens).
+				*mediaTokens += geminiCachedContentInlineDataPartTokens
+			case "fileData", "file_data":
+				// Apply a conservative floor so fileUri-only requests still undergo non-zero pre-check.
+				*mediaTokens += geminiCachedContentFileDataPartTokens
+			case "text":
+				var text string
+				if err := json.Unmarshal(val, &text); err == nil {
+					*textBytes += len(text)
+				} else {
+					*textBytes += len(val)
+				}
+			default:
+				// Count function calls/responses, executable code, and other structured payloads.
+				*textBytes += len(val)
+			}
+		}
+	}
+}
+
+// estimateGeminiCachedContentInputTokens structurally estimates input tokens from a
+// Gemini cachedContents request body for pre-CreateUpstream affordability checks:
+// text/function/code payload bytes are divided by 4 (excluding raw base64 inlineData),
+// inlineData parts add a realistic per-part media token estimate, and fileData parts
+// add a conservative floor. Falls back to len(body)/4 only if JSON is malformed.
 func estimateGeminiCachedContentInputTokens(body []byte) int {
-	tokens := len(body) / 4
+	var payload geminiCachedContentEstimatePayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		tokens := len(body) / 4
+		if tokens < 1 {
+			return 1
+		}
+		return tokens
+	}
+	var textBytes, mediaTokens int
+	for _, content := range payload.Contents {
+		accumulateGeminiCachedContentBlock(content, &textBytes, &mediaTokens)
+	}
+	accumulateGeminiCachedContentBlock(payload.SystemInstruction, &textBytes, &mediaTokens)
+	accumulateGeminiCachedContentBlock(payload.SystemInstructionSnake, &textBytes, &mediaTokens)
+	for _, raw := range []json.RawMessage{payload.Tools, payload.ToolConfig, payload.ToolConfigSnake} {
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
+			textBytes += len(trimmed)
+		}
+	}
+	tokens := textBytes/4 + mediaTokens
 	if tokens < 1 {
 		return 1
 	}
 	return tokens
 }
 
+func (h *GatewayHandler) reserveGeminiCachedContentChargeRes(c *gin.Context, apiKey *service.APIKey, subscription *service.UserSubscription, amount float64) (*service.InflightReservation, error) {
+	ctx := c.Request.Context()
+	res, err := h.billingCacheService.ReserveFixedCharge(ctx, apiKey.User, apiKey, apiKey.Group, subscription, amount)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		return nil, nil
+	}
+	c.Request = c.Request.WithContext(service.WithInflightReservation(ctx, res))
+	return res, nil
+}
+
 // reserveGeminiCachedContentCharge 校验余额 / 订阅额度 / API Key 额度足以支付确定金额 amount（倍率后），
 // 并按该金额在用户、订阅、API Key 维度登记在途预留（不受预留上限封顶，见 ReserveFixedCharge）。
 // 返回的 done 须在 handler 结束时调用；预留随计费任务交接，落库后释放。
 func (h *GatewayHandler) reserveGeminiCachedContentCharge(c *gin.Context, apiKey *service.APIKey, subscription *service.UserSubscription, amount float64) (func(), error) {
-	ctx := c.Request.Context()
-	res, err := h.billingCacheService.ReserveFixedCharge(ctx, apiKey.User, apiKey, apiKey.Group, subscription, amount)
-	if err != nil {
+	res, err := h.reserveGeminiCachedContentChargeRes(c, apiKey, subscription, amount)
+	if err != nil || res == nil {
 		return inflightNoop, err
 	}
-	if res == nil {
-		return inflightNoop, nil
-	}
-	c.Request = c.Request.WithContext(service.WithInflightReservation(ctx, res))
 	return res.HandlerDone, nil
 }
 
