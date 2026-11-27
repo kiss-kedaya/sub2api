@@ -11,25 +11,27 @@
 [![Redis](https://img.shields.io/badge/Redis-7+-DC382D.svg)](https://redis.io/)
 [![License](https://img.shields.io/badge/License-LGPL--3.0-blue.svg)](LICENSE)
 
-**自建 AI API 网关，对接 Claude Code、Codex、Gemini CLI、Grok。**
+**自建 AI API 网关，对接 Claude Code、Codex、Gemini CLI、Grok 与 DeepSeek。**
 
 本仓库是 [kiss-kedaya/sub2api](https://github.com/kiss-kedaya/sub2api)，基于 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) 的维护分支。
 
-[English](README.md) | 中文
+[English](README.md) | 中文 | [开发手册](DEV_GUIDE.md) | [术语表](GLOSSARY.md)
 
 </div>
 
 ## 这个分支多了什么
 
-相对上游，这里按线上站点在跑的能力维护：
+相对上游，这里围绕生产级网关调度、计费、支付与安全能力持续维护：
 
-- **API Key 智能路由**：一把钥匙可按顺序绑定多个分组；协议对不上的账号（例如 Anthropic 路径上的 OpenAI 号）会跳过，而不是硬打。
-- **内置充值**：EasyPay（含相对 `payurl`/`qrcode`）、渠道手续费和倍率、实例充值说明。见 [docs/PAYMENT_CN.md](docs/PAYMENT_CN.md)。
-- **用量看板**：近 30 天；有小时汇总就走 rollup，没有再回 `usage_logs`。
-- **诊断与运维**：连接时间线、限时请求采集、缓存测试、流量统计、账号通知、渠道下钻和独立代理管理；自动化与专项通道按需开启。见 [运维能力与配置边界](docs/operator-capabilities.md)。
-- **网关可靠性**：客户端正常关 WS 不计账号故障；过大透传可走 HTTP bridge；Spark 429 只限该模型；转发失败立刻释放会话槽。
+- **API Key 智能路由**：一把钥匙可绑定多个分组，按可用率、缓存命中、首字延迟、倍率与分组顺序综合评分选组并 1 小时粘性绑定；协议不匹配的账号自动跳过，不跨协议硬打。
+- **内置法币支付与链上充值钱包**：支持 EasyPay（含相对 `payurl`/`qrcode`）、支付宝官方、微信支付官方（APIv3）、Stripe、Airwallex、EPUSDT，以及主进程内置的链上加密货币充值与归集钱包（HD 充值地址 + 独立 Gas 钱包，AES-256-GCM 密文 Vault、可选 SLIP-39 / Shamir 2-of-3 签名分片保护、自动扫链与归集对账、渠道手续费与倍率配置）。见 [docs/PAYMENT_CN.md](docs/PAYMENT_CN.md)。
+- **多平台计费与模型广场**：覆盖 Anthropic（OAuth / Setup Token / API Key）、OpenAI（API Key / OAuth、Fast/UltraFast 档位倍率与长上下文阶梯价）、Gemini、Antigravity、Grok、DeepSeek（含 `/v1/tools/{search,fetch,ocr,asr,tts}` 按次工具计费与独立工具倍率），支持按次/按秒视频定价与模型广场比价展示。
+- **安全与权限体系**：支持 TOTP 与 Passkey（WebAuthn）双因素认证、5 分钟 2FA 授权、敏感管理路由 step-up 二次验证、受限管理员密钥（`adm_sc_`，见 [docs/admin-api-keys.md](docs/admin-api-keys.md)）、用户可配的创建 Key 身份验证开关与浏览器端密文封存、14 天滑动续期会话、操作审计日志、IP 风控，以及 `GET /v1/sub2api/account` Key 查余额与当日用量接口。
+- **用量看板、监控与工作台**：近 30 天用量与小时级 rollup 汇总、渠道监控 V2（被动分钟级聚合与质量事件）、带图片附件的工单系统、与邮箱验证解耦的 SMTP 通知提醒，以及无限画布工作台（`/canvas`）。
+- **诊断、运维与备份**：连接时间线、限时请求采集、缓存测试、流量统计、账号通知、渠道下钻、独立代理管理，以及支持全库或「只备份关键表」的 S3/R2 定时备份。见 [运维能力与配置边界](docs/operator-capabilities.md)。
+- **网关可靠性与热路径性能**：保持 `CGO_ENABLED=0` 纯 Go 单遍大请求体 JSON 处理、账号失败率自动熔断与自愈、客户端正常关 WS 不计账号故障、过大透传降级 HTTP bridge、转发失败立即释放会话槽。
 - **Base URL 容错**：Anthropic 系填裸域名、OpenAI 系填 `/v1` 都可以；重复写多个 `/v1`（如 `/v1/v1/messages`）或完全不带 `/v1`（如 `/messages`）会被服务端自动折叠/补齐，鉴权、限流、计费与日志和规范路径一致。各客户端填法见 [docs/gateway-base-url.md](docs/gateway-base-url.md)。
-- **Nuxt UI 前端**：Vue 页面使用 `@nuxt/ui` 组件，运行方式为 Vite SPA。完整前端嵌入 Go 二进制，无需启动 Node、Nitro 或 BFF 服务。
+- **Nuxt UI 前端**：Vue 3 页面使用 `@nuxt/ui` 组件，运行方式为 Vite SPA。完整前端嵌入 Go 二进制，无需启动 Node、Nitro 或 BFF 服务。
 - **升级纪律**：线上主进程 `DATABASE_MIGRATION_MODE=validate`，迁移单独做。版本号只写在 `backend/cmd/server/VERSION`。GitHub Release 只在推语义化 `v*` 标签时触发。
 
 本部署默认关闭余额预扣（`BILLING_BALANCE_PREAUTHORIZATION_ENABLED=false`）。没有单独评审不要打开。
@@ -38,11 +40,13 @@
 
 ## 功能
 
-- 上游账号：Anthropic OAuth / Setup Token、OpenAI API Key / OAuth、Gemini、Grok、Antigravity
-- API Key、分组、粘性会话、并发与限流
-- Token 级用量与计费
-- 管理端 / 用户端后台
+- 上游账号：Anthropic OAuth / Setup Token / API Key、OpenAI API Key / OAuth、Gemini、Grok、Antigravity、DeepSeek
+- API Key、多分组智能路由、粘性会话、并发与限流
+- Token 级、长上下文、服务档位、按次工具与按次/按秒视频用量与计费
+- 内置法币支付（EasyPay、支付宝官方、微信支付官方、Stripe、Airwallex、EPUSDT）与内置链上加密货币充值/归集钱包
+- 管理端 / 用户端后台、模型广场、渠道监控 V2、工单系统与无限画布
 - 复合分组多厂商路由（[docs/COMPOSITE_GROUPS.md](docs/COMPOSITE_GROUPS.md)）
+- TOTP + Passkey 双因素认证、step-up 二次验证、受限管理员密钥与审计日志
 - 用户页可直接生成 Codex / Claude Code / Gemini CLI / Grok CLI 配置
 
 ## 技术栈
