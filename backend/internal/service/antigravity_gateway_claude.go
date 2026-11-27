@@ -477,37 +477,55 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
+	var responseErr error
+	balanceAborted := false
 	goneOutputTokens := 0
 	if claudeReq.Stream {
 		// 客户端要求流式，直接透传转换
 		streamRes, err := s.handleClaudeStreamingResponse(c, resp, startTime, originalModel)
 		if err != nil {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=stream_error error=%v", prefix, err)
-			return nil, err
+			if streamRes == nil || (!streamRes.balanceAborted && !isBalanceHoldTopUpError(err)) {
+				return nil, err
+			}
+			balanceAborted = true
+			responseErr = err
 		}
-		usage = streamRes.usage
-		firstTokenMs = streamRes.firstTokenMs
-		clientDisconnect = streamRes.clientDisconnect
-		goneOutputTokens = streamRes.outputTokens
+		if streamRes != nil {
+			usage = streamRes.usage
+			firstTokenMs = streamRes.firstTokenMs
+			clientDisconnect = streamRes.clientDisconnect
+			goneOutputTokens = streamRes.outputTokens
+		}
 	} else {
 		// 客户端要求非流式，收集流式响应后转换返回
 		streamRes, err := s.handleClaudeStreamToNonStreaming(c, resp, startTime, originalModel)
 		if err != nil {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=stream_collect_error error=%v", prefix, err)
-			return nil, err
+			if streamRes == nil || (!streamRes.balanceAborted && !isBalanceHoldTopUpError(err)) {
+				return nil, err
+			}
+			balanceAborted = true
+			responseErr = err
 		}
-		usage = streamRes.usage
-		firstTokenMs = streamRes.firstTokenMs
-		clientDisconnect = streamRes.clientDisconnect
-		goneOutputTokens = streamRes.outputTokens
+		if streamRes != nil {
+			usage = streamRes.usage
+			firstTokenMs = streamRes.firstTokenMs
+			clientDisconnect = streamRes.clientDisconnect
+			goneOutputTokens = streamRes.outputTokens
+		}
 	}
 	if usage == nil {
 		usage = &ClaudeUsage{}
 	}
-	if clientDisconnect {
-		// The client left after the upstream accepted the request: bill what the upstream
-		// reported and estimate the rest (gemini_family_incomplete_usage.go).
-		applyIncompleteGeminiUsage("antigravity_usage.client_gone_estimated", account, billingModel, usage, goneOutputTokens, body)
+	if clientDisconnect || balanceAborted {
+		// The client left or balance withholding aborted mid-stream: bill what the
+		// upstream reported and estimate the rest (gemini_family_incomplete_usage.go).
+		event := "antigravity_usage.client_gone_estimated"
+		if balanceAborted {
+			event = "antigravity_usage.balance_abort_estimated"
+		}
+		applyIncompleteGeminiUsage(event, account, billingModel, usage, goneOutputTokens, body)
 	}
 
 	return &ForwardResult{
@@ -523,7 +541,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
 		ClientDisconnect:              clientDisconnect,
-	}, nil
+	}, responseErr
 }
 
 func isSignatureRelatedError(respBody []byte) bool {

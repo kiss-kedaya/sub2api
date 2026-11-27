@@ -399,6 +399,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	watch := newCompatClientWatch(c, resp.Body)
 	defer watch.Stop()
 	var tally compatChatTally
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
+	var balanceAbortErr error
 	markGone := func() {
 		clientDisconnected = true
 		watch.Disconnect()
@@ -441,6 +443,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		observedBytes := 0
 		if eventType, ok := extractOpenAISSEEventLine(line); ok {
 			pendingSSEEventType = eventType
 		}
@@ -486,7 +489,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 					}
 				}
 				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(rootType))
-				tally.AddPayload(payload)
+				observedBytes = tally.AddPayload(payload)
 				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
 				if u := extractCCStreamUsageFromRoot(root, resp.Header); u != nil {
 					usage = *u
@@ -525,6 +528,14 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		if !clientDisconnected && clientOutputStarted {
 			c.Writer.Flush()
 		}
+		if observedBytes > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+				s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI raw chat_completions", topUpErr)
+				_ = resp.Body.Close()
+				balanceAbortErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
+				break
+			}
+		}
 	}
 
 	resultWithUsage := func() *OpenAIForwardResult {
@@ -558,6 +569,13 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			ClientGone: clientGone, Cause: cause, OutputEstimate: tally.EstimateTokens(),
 		})
 		return resultWithUsage()
+	}
+	if balanceAbortErr != nil {
+		if !clientOutputStarted && c != nil && c.Writer != nil && !c.Writer.Written() {
+			status, errType, message := balanceHoldAbortClientError(balanceAbortErr)
+			writeChatCompletionsError(c, status, errType, message)
+		}
+		return finishIncomplete(balanceAbortErr, clientDisconnected || watch.Gone()), balanceAbortErr
 	}
 
 	scanErr := scanner.Err()
@@ -754,35 +772,43 @@ type compatChatTally struct {
 	tools     strings.Builder
 }
 
-func writeIfJSONString(b *strings.Builder, v gjson.Result) {
+func writeIfJSONString(b *strings.Builder, v gjson.Result) int {
 	if v.Type == gjson.String {
-		_, _ = b.WriteString(v.String())
+		s := v.String()
+		_, _ = b.WriteString(s)
+		return len(s)
 	}
+	return 0
 }
 
-// AddPayload reads one raw stream chunk (the JSON after "data:").
-func (t *compatChatTally) AddPayload(payload string) {
+// AddPayload reads one raw stream chunk (the JSON after "data:") and returns
+// the number of billable output bytes accumulated from that payload.
+func (t *compatChatTally) AddPayload(payload string) int {
 	if !strings.Contains(payload, `"delta"`) {
-		return
+		return 0
 	}
+	added := 0
 	gjson.Get(payload, "choices").ForEach(func(_, choice gjson.Result) bool {
 		delta := choice.Get("delta")
-		writeIfJSONString(&t.text, delta.Get("content"))
-		writeIfJSONString(&t.refusal, delta.Get("refusal"))
+		added += writeIfJSONString(&t.text, delta.Get("content"))
+		added += writeIfJSONString(&t.refusal, delta.Get("refusal"))
 		if reasoning := delta.Get("reasoning_content"); reasoning.Type == gjson.String {
-			_, _ = t.reasoning.WriteString(reasoning.String())
+			s := reasoning.String()
+			_, _ = t.reasoning.WriteString(s)
+			added += len(s)
 		} else {
-			writeIfJSONString(&t.reasoning, delta.Get("reasoning"))
+			added += writeIfJSONString(&t.reasoning, delta.Get("reasoning"))
 		}
 		delta.Get("tool_calls").ForEach(func(_, call gjson.Result) bool {
-			writeIfJSONString(&t.tools, call.Get("function.name"))
-			writeIfJSONString(&t.tools, call.Get("function.arguments"))
+			added += writeIfJSONString(&t.tools, call.Get("function.name"))
+			added += writeIfJSONString(&t.tools, call.Get("function.arguments"))
 			return true
 		})
-		writeIfJSONString(&t.tools, delta.Get("function_call.name"))
-		writeIfJSONString(&t.tools, delta.Get("function_call.arguments"))
+		added += writeIfJSONString(&t.tools, delta.Get("function_call.name"))
+		added += writeIfJSONString(&t.tools, delta.Get("function_call.arguments"))
 		return true
 	})
+	return added
 }
 
 // AddChunk reads one parsed stream chunk.

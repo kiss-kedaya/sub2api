@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	DefaultBalancePreauthorizationOutputWindow = 256
-	balancePreauthorizationCompensationTimeout = 3 * time.Second
-	balancePreauthorizationWalletTimeout       = 3 * time.Second
+	DefaultBalancePreauthorizationOutputWindow          = 256
+	DefaultBalancePreauthorizationNonStreamOutputWindow = 4096
+	balancePreauthorizationCompensationTimeout          = 3 * time.Second
+	balancePreauthorizationWalletTimeout                = 3 * time.Second
 )
 
 // 余额不足导致预扣/流式续扣失败时映射为 403，而非 402/429，这是刻意的计费决策：
@@ -362,7 +363,17 @@ func (s *BalancePreauthorizationService) estimateTokenUpperBoundHold(
 	request BalancePreauthorizationRequest,
 ) (balancePreauthorizationEstimate, error) {
 	outputWindow := request.InitialOutputWindowTokens
-	if outputWindow == 0 {
+	if isStream, hasHint := BalancePreauthorizationStreamHintFromContext(ctx); hasHint {
+		if isStream {
+			if outputWindow == 0 || outputWindow == DefaultBalancePreauthorizationNonStreamOutputWindow {
+				outputWindow = DefaultBalancePreauthorizationOutputWindow
+			}
+		} else {
+			if outputWindow == 0 || outputWindow == DefaultBalancePreauthorizationOutputWindow {
+				outputWindow = DefaultBalancePreauthorizationNonStreamOutputWindow
+			}
+		}
+	} else if outputWindow == 0 {
 		outputWindow = DefaultBalancePreauthorizationOutputWindow
 	}
 	base, err := s.resolvedPricingCostInput(ctx, request.CostInput)

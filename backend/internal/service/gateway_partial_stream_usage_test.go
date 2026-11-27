@@ -25,9 +25,8 @@ func newPartialStreamResp() *http.Response {
 }
 
 // TestPartialStreamUsageResult_KeepsTopUpAbort 证明 Anthropic/Gemini 流式补扣失败主动
-// 中止（ErrBalanceWithholdingFailed）即使无 observed usage 也保留 ForwardResult，
-// 让统一计费任务记录诊断信息并完成幂等结算。若上游未返回 usage，
-// actual=0 必须释放预扣，不得把 hold 伪造成实际消费。
+// 中止（ErrBalanceWithholdingFailed）保留 ForwardResult 与估算/已观测到的 usage，
+// 让统一计费任务按已交付输出完成结算，绝不退回已交付内容的费用。
 func TestPartialStreamUsageResult_KeepsTopUpAbort(t *testing.T) {
 	c := newPartialStreamUsageContext(t)
 	resp := newPartialStreamResp()
@@ -36,8 +35,16 @@ func TestPartialStreamUsageResult_KeepsTopUpAbort(t *testing.T) {
 	abortErr := wrapStreamOutputHoldTopUpFailure(ErrBalanceWithholdingFailed)
 
 	kept := partialStreamUsageResult(c, resp, sr, "claude-opus", "claude-opus", time.Now(), abortErr)
-	require.NotNil(t, kept, "top-up abort must keep the result so delivered output settles at hold")
+	require.NotNil(t, kept, "top-up abort must keep the result so delivered output settles cleanly")
 	require.Equal(t, "rid-partial", kept.RequestID)
+
+	// 带估算已交付输出与输入的补扣中止：必须完整保留 usage 供计费结算。
+	srEstimated := &streamingResult{usage: &ClaudeUsage{InputTokens: 20, CacheReadInputTokens: 380, OutputTokens: 128}}
+	keptEstimated := partialStreamUsageResult(c, resp, srEstimated, "claude-opus", "claude-opus", time.Now(), abortErr)
+	require.NotNil(t, keptEstimated)
+	require.Equal(t, 20, keptEstimated.Usage.InputTokens)
+	require.Equal(t, 380, keptEstimated.Usage.CacheReadInputTokens)
+	require.Equal(t, 128, keptEstimated.Usage.OutputTokens)
 }
 
 // TestPartialStreamUsageResult_DropsFailoverAndZeroUsage 证明可重放的 failover 错误恒

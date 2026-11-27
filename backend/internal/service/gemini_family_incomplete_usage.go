@@ -65,62 +65,110 @@ func (m *geminiOutputMeter) addText(s string) {
 }
 
 // observe adds the content of one raw Gemini response chunk (already unwrapped from
-// the Code Assist envelope). Use it only for upstreams that stream deltas; a path that
-// has to cope with cumulative text feeds addText with its computed delta instead.
-func (m *geminiOutputMeter) observe(chunk []byte) {
+// the Code Assist envelope) and returns the number of billable output bytes added.
+// Use it only for upstreams that stream deltas; a path that has to cope with
+// cumulative text feeds addText with its computed delta instead.
+func (m *geminiOutputMeter) observe(chunk []byte) int {
 	if m == nil || len(chunk) == 0 {
-		return
+		return 0
 	}
+	added := 0
 	gjson.GetBytes(chunk, "candidates").ForEach(func(_, candidate gjson.Result) bool {
 		candidate.Get("content.parts").ForEach(func(_, part gjson.Result) bool {
-			m.addText(part.Get("text").String())
+			if s := part.Get("text").String(); s != "" {
+				m.addText(s)
+				added += len(s)
+			}
+			if thought := part.Get("thought"); thought.Type == gjson.String && thought.String() != "" {
+				s := thought.String()
+				m.addText(s)
+				added += len(s)
+			}
 			if call := part.Get("functionCall"); call.Exists() {
-				m.addText(call.Get("name").String())
-				if args := call.Get("args"); args.Exists() {
+				if s := call.Get("name").String(); s != "" {
+					m.addText(s)
+					added += len(s)
+				}
+				if args := call.Get("args"); args.Exists() && args.Raw != "" {
 					m.addText(args.Raw)
+					added += len(args.Raw)
 				}
 			}
-			m.addText(part.Get("executableCode.code").String())
-			m.addText(part.Get("codeExecutionResult.output").String())
+			if s := part.Get("executableCode.code").String(); s != "" {
+				m.addText(s)
+				added += len(s)
+			}
+			if s := part.Get("codeExecutionResult.output").String(); s != "" {
+				m.addText(s)
+				added += len(s)
+			}
 			return true
 		})
 		return true
 	})
+	return added
 }
 
 // observeSSELine adds the content of one raw upstream SSE line ("data: {...}"), reading
-// through the Code Assist {"response": ...} envelope when there is one.
-func (m *geminiOutputMeter) observeSSELine(line string) {
+// through the Code Assist {"response": ...} envelope when there is one, and returns the
+// number of billable output bytes added.
+func (m *geminiOutputMeter) observeSSELine(line string) int {
 	payload, ok := strings.CutPrefix(strings.TrimSpace(line), "data:")
 	if !ok {
-		return
+		return 0
 	}
 	payload = strings.TrimSpace(payload)
 	if inner := gjson.Get(payload, "response"); inner.Type == gjson.JSON {
 		payload = inner.Raw
 	}
-	m.observe([]byte(payload))
+	return m.observe([]byte(payload))
 }
 
 // observeAnthropicSSELine adds the content of one raw Anthropic SSE line (the Antigravity
 // upstream passthrough relays an Anthropic compatible /v1/messages stream): text and
-// thinking deltas, tool input deltas and the tool name.
-func (m *geminiOutputMeter) observeAnthropicSSELine(line string) {
+// thinking deltas, tool input deltas and the tool name, returning billable output bytes added.
+func (m *geminiOutputMeter) observeAnthropicSSELine(line string) int {
 	payload, ok := strings.CutPrefix(strings.TrimSpace(line), "data:")
 	if !ok {
-		return
+		return 0
 	}
 	event := gjson.Parse(strings.TrimSpace(payload))
+	added := 0
 	switch event.Get("type").String() {
 	case "content_block_start":
-		if event.Get("content_block.type").String() == "tool_use" {
-			m.addText(event.Get("content_block.name").String())
+		block := event.Get("content_block")
+		switch block.Get("type").String() {
+		case "text":
+			if s := block.Get("text").String(); s != "" {
+				m.addText(s)
+				added += len(s)
+			}
+		case "thinking":
+			if s := block.Get("thinking").String(); s != "" {
+				m.addText(s)
+				added += len(s)
+			}
+		case "tool_use", "server_tool_use":
+			if s := block.Get("name").String(); s != "" {
+				m.addText(s)
+				added += len(s)
+			}
 		}
 	case "content_block_delta":
-		m.addText(event.Get("delta.text").String())
-		m.addText(event.Get("delta.thinking").String())
-		m.addText(event.Get("delta.partial_json").String())
+		if s := event.Get("delta.text").String(); s != "" {
+			m.addText(s)
+			added += len(s)
+		}
+		if s := event.Get("delta.thinking").String(); s != "" {
+			m.addText(s)
+			added += len(s)
+		}
+		if s := event.Get("delta.partial_json").String(); s != "" {
+			m.addText(s)
+			added += len(s)
+		}
 	}
+	return added
 }
 
 func (m *geminiOutputMeter) tokens() int {

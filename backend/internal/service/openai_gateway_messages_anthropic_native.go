@@ -414,6 +414,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	watch := newCompatClientWatch(c, resp.Body)
 	defer watch.Stop()
 	var tally compatAnthropicTally
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(ctx, c)
 	clientCancelCh := watch.Done()
 	var graceTimer *time.Timer
 	var graceCh <-chan time.Time
@@ -571,6 +572,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 			}
 
 			line := ev.line
+			observedBytes := 0
 			if eventType, ok := extractOpenAISSEEventLine(line); ok && eventType == "error" {
 				sawError = true
 				nonBillableUpstreamError = true
@@ -604,7 +606,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 					firstTokenMs = &ms
 				}
 				parseSSEUsagePassthrough(data, usage)
-				tally.AddData(data)
+				observedBytes = tally.AddData(data)
 			} else {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
@@ -634,6 +636,18 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 					inPartialEvent = false
 				} else {
 					inPartialEvent = true
+				}
+			}
+			if observedBytes > 0 {
+				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+					if !clientDisconnected {
+						flusher.Flush()
+					}
+					s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI native anthropic messages", topUpErr)
+					_ = resp.Body.Close()
+					abortErr := wrapStreamOutputHoldTopUpFailure(topUpErr)
+					res, _ := finishIncomplete(abortErr)
+					return res, abortErr
 				}
 			}
 
@@ -729,34 +743,47 @@ type compatAnthropicTally struct {
 	sawFinalOutput bool
 }
 
-// AddData reads one SSE data payload.
-func (t *compatAnthropicTally) AddData(data string) {
+// AddData reads one SSE data payload and returns the billable output bytes added.
+func (t *compatAnthropicTally) AddData(data string) int {
 	switch gjson.Get(data, "type").String() {
 	case "content_block_start":
 		block := gjson.Get(data, "content_block")
 		switch block.Get("type").String() {
 		case "text":
-			_, _ = t.text.WriteString(block.Get("text").String())
+			s := block.Get("text").String()
+			_, _ = t.text.WriteString(s)
+			return len(s)
 		case "thinking":
-			_, _ = t.thinking.WriteString(block.Get("thinking").String())
+			s := block.Get("thinking").String()
+			_, _ = t.thinking.WriteString(s)
+			return len(s)
 		case "tool_use", "server_tool_use":
-			_, _ = t.tools.WriteString(block.Get("name").String())
+			s := block.Get("name").String()
+			_, _ = t.tools.WriteString(s)
+			return len(s)
 		}
 	case "content_block_delta":
 		delta := gjson.Get(data, "delta")
 		switch delta.Get("type").String() {
 		case "text_delta":
-			_, _ = t.text.WriteString(delta.Get("text").String())
+			s := delta.Get("text").String()
+			_, _ = t.text.WriteString(s)
+			return len(s)
 		case "thinking_delta":
-			_, _ = t.thinking.WriteString(delta.Get("thinking").String())
+			s := delta.Get("thinking").String()
+			_, _ = t.thinking.WriteString(s)
+			return len(s)
 		case "input_json_delta":
-			_, _ = t.tools.WriteString(delta.Get("partial_json").String())
+			s := delta.Get("partial_json").String()
+			_, _ = t.tools.WriteString(s)
+			return len(s)
 		}
 	case "message_delta":
 		if v := gjson.Get(data, "usage.output_tokens"); v.Exists() && v.Type != gjson.Null {
 			t.sawFinalOutput = true
 		}
 	}
+	return 0
 }
 
 // EstimateTokens estimates the output tokens of everything tallied; 0 when nothing was

@@ -139,8 +139,12 @@ func (s *GeminiMessagesCompatService) forwardGeminiNativeViaOpenAICompat(
 		result.RequestID = resp.Header.Get("x-request-id")
 		result.UpstreamHeaders = resp.Header
 		result.Duration = time.Since(start)
-		if result.ClientDisconnect {
-			applyIncompleteGeminiUsage("gemini_usage.client_gone_estimated", account, mappedModel, &result.Usage, outputTokens, body)
+		if result.ClientDisconnect || isBalanceHoldTopUpError(err) {
+			event := "gemini_usage.client_gone_estimated"
+			if !result.ClientDisconnect {
+				event = "gemini_usage.balance_abort_estimated"
+			}
+			applyIncompleteGeminiUsage(event, account, mappedModel, &result.Usage, outputTokens, body)
 		}
 		return result, err
 	}
@@ -425,10 +429,52 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 			}
 			chunks = []apicompat.ChatCompletionsChunk{chunk}
 		}
+		abortTopUp := func(topUpErr error) {
+			streamErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
+			streamStatus = http.StatusServiceUnavailable
+			if errors.Is(topUpErr, ErrBalanceWithholdingFailed) {
+				streamStatus = http.StatusForbidden
+			}
+			streamMessage = "Streaming output balance reservation failed"
+			terminal = true
+		}
 		for _, chunk := range chunks {
 			for _, choice := range chunk.Choices {
 				if choice.Index != 0 {
 					continue
+				}
+				var reasoningText string
+				switch {
+				case choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "":
+					reasoningText = *choice.Delta.ReasoningContent
+				case choice.Delta.Reasoning != nil && *choice.Delta.Reasoning != "":
+					reasoningText = *choice.Delta.Reasoning
+				}
+				if reasoningText != "" {
+					meter.addText(reasoningText)
+					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(reasoningText)); topUpErr != nil {
+						abortTopUp(topUpErr)
+						return
+					}
+				}
+				if len(choice.Delta.ToolCalls) > 0 {
+					toolBytes := 0
+					for _, tc := range choice.Delta.ToolCalls {
+						if tc.Function.Name != "" {
+							meter.addText(tc.Function.Name)
+							toolBytes += len(tc.Function.Name)
+						}
+						if tc.Function.Arguments != "" {
+							meter.addText(tc.Function.Arguments)
+							toolBytes += len(tc.Function.Arguments)
+						}
+					}
+					if toolBytes > 0 {
+						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, toolBytes); topUpErr != nil {
+							abortTopUp(topUpErr)
+							return
+						}
+					}
 				}
 				if choice.Delta.Content != nil && *choice.Delta.Content != "" {
 					if err := ctx.Err(); err != nil {
@@ -437,21 +483,15 @@ func (s *GeminiMessagesCompatService) pipeOpenAIStreamAsGemini(ctx context.Conte
 						terminal = true
 						return
 					}
+					meter.addText(*choice.Delta.Content)
 					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, len(*choice.Delta.Content)); topUpErr != nil {
-						streamErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
-						streamStatus = http.StatusServiceUnavailable
-						if errors.Is(topUpErr, ErrBalanceWithholdingFailed) {
-							streamStatus = http.StatusForbidden
-						}
-						streamMessage = "Streaming output balance reservation failed"
-						terminal = true
+						abortTopUp(topUpErr)
 						return
 					}
 					if result.FirstTokenMs == nil {
 						ms := int(time.Since(start).Milliseconds())
 						result.FirstTokenMs = &ms
 					}
-					meter.addText(*choice.Delta.Content)
 					if err := write(geminiBridgePayload(*choice.Delta.Content, model, "", nil)); err != nil {
 						streamErr = err
 						terminal = true

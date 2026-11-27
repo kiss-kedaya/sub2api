@@ -442,7 +442,7 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 	// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
 	// fast policy filter/force 之后）里的 tier，policy filter 删掉字段后不再
 	// 按原请求 Fast 计费。
-	if handleErr == nil && result != nil {
+	if result != nil && (handleErr == nil || isBalanceHoldTopUpError(handleErr)) {
 		if tier := resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(c, responsesBody)); tier != nil {
 			result.ServiceTier = tier
 		}
@@ -534,6 +534,30 @@ func (s *OpenAIGatewayService) handleChatBufferedStreamingResponse(
 
 	finalResponse, usage, acc, err := s.readOpenAICompatBufferedTerminal(resp, c, "openai chat_completions buffered", requestID)
 	if err != nil {
+		if isBalanceHoldTopUpError(err) {
+			s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI chat_completions buffered", err)
+			status, errType, message := balanceHoldAbortClientError(err)
+			if c != nil && c.Writer != nil && !c.Writer.Written() {
+				writeChatCompletionsError(c, status, errType, message)
+			}
+			base := &OpenAIForwardResult{
+				RequestID:                     requestID,
+				Usage:                         usage,
+				Model:                         originalModel,
+				BillingModel:                  billingModel,
+				UpstreamModel:                 upstreamModel,
+				UpstreamResponseModel:         observedUpstreamResponseModel(c),
+				UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+				UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
+				Stream:                        false,
+				Duration:                      time.Since(startTime),
+			}
+			applyCompatIncompleteUsage(c, &base.Usage, compatIncompleteUsage{
+				Path: "chat_completions_buffered", Account: account, Model: originalModel, RequestID: requestID,
+				Cause: err, OutputEstimate: estimateIncompleteStreamOutputTokens(acc),
+			})
+			return base, err
+		}
 		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
 			writeOpenAIStreamSilenceError(c, false)
 			return openAIStreamSilenceResult(resp, usage, originalModel, billingModel, upstreamModel, false, startTime), openAIStreamSilenceError(err)
@@ -765,6 +789,8 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	watch := newCompatClientWatch(c, resp.Body)
 	defer watch.Stop()
 	streamAcc := apicompat.NewBufferedResponseAccumulator()
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
+	var streamBalanceAbortErr error
 	clientCancelCh := watch.Done()
 	var graceTimer *time.Timer
 	var graceCh <-chan time.Time
@@ -1017,10 +1043,30 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		if len(chunks) > 0 && !clientDisconnected && clientOutputStarted {
 			c.Writer.Flush()
 		}
+		if n := responsesEventOutputBytes(&event.ResponsesStreamEvent); n > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, n); topUpErr != nil {
+				s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI chat_completions", topUpErr)
+				_ = resp.Body.Close()
+				streamBalanceAbortErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
+				return true
+			}
+		}
 		return isTerminalEvent
 	}
 
 	finalizeStream := func() (*OpenAIForwardResult, error) {
+		if streamBalanceAbortErr != nil {
+			if !clientOutputStarted && c != nil && c.Writer != nil && !c.Writer.Written() {
+				status, errType, message := balanceHoldAbortClientError(streamBalanceAbortErr)
+				writeChatCompletionsError(c, status, errType, message)
+			}
+			applyCompatIncompleteUsage(c, &usage, compatIncompleteUsage{
+				Path: "chat_completions_stream", Account: account, Model: originalModel, RequestID: requestID,
+				ClientGone: clientDisconnected || watch.Gone(), Cause: streamBalanceAbortErr,
+				OutputEstimate: estimateIncompleteStreamOutputTokens(streamAcc),
+			})
+			return resultWithUsage(), streamBalanceAbortErr
+		}
 		if streamFailoverErr != nil {
 			if c == nil || c.Writer == nil || !c.Writer.Written() {
 				return nil, streamFailoverErr

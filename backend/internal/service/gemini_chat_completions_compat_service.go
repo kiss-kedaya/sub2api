@@ -273,24 +273,42 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 
 	var usage *ClaudeUsage
 	var firstTokenMs *int
+	var responseErr error
 	clientGone := false
+	balanceAborted := false
 	goneOutputTokens := 0
 	if clientStream {
 		streamRes, err := s.handleChatCompletionsStreamingResponseFromGemini(c, resp, startTime, originalModel, account.Type == AccountTypeOAuth, includeUsage)
 		if err != nil {
-			return nil, err
-		}
-		usage = streamRes.usage
-		firstTokenMs = streamRes.firstTokenMs
-		clientGone = streamRes.clientDisconnect
-		goneOutputTokens = streamRes.outputTokens
-	} else if useUpstreamStream {
-		collected, usageObj, stats, err := collectGeminiSSEObserved(resp.Body, account.Type == AccountTypeOAuth, nil)
-		if err != nil {
-			if !geminiClientGoneCtx(ctx, c) {
-				return nil, s.writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
+			if streamRes == nil || (!streamRes.balanceAborted && !isBalanceHoldTopUpError(err)) {
+				return nil, err
 			}
-			clientGone, usage, goneOutputTokens = true, usageObj, stats.meter.tokens()
+			balanceAborted = true
+			responseErr = err
+		}
+		if streamRes != nil {
+			usage = streamRes.usage
+			firstTokenMs = streamRes.firstTokenMs
+			clientGone = streamRes.clientDisconnect
+			goneOutputTokens = streamRes.outputTokens
+		}
+	} else if useUpstreamStream {
+		collectCtx, _ := balancePreauthorizationGuardForRequest(ctx, c)
+		collected, usageObj, stats, err := collectGeminiSSEObservedWithContext(collectCtx, resp.Body, account.Type == AccountTypeOAuth, nil)
+		if err != nil {
+			if isBalanceHoldTopUpError(err) {
+				_ = resp.Body.Close()
+				status, errType, msg := balanceHoldAbortClientError(err)
+				_ = s.writeChatCompletionsError(c, status, errType, msg)
+				balanceAborted = true
+				responseErr = err
+				usage = usageObj
+				goneOutputTokens = stats.meter.tokens()
+			} else if !geminiClientGoneCtx(ctx, c) {
+				return nil, s.writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
+			} else {
+				clientGone, usage, goneOutputTokens = true, usageObj, stats.meter.tokens()
+			}
 		} else {
 			collectedBytes, _ := json.Marshal(collected)
 			chatResp, usageObj2, err := geminiResponseToChatCompletions(collected, originalModel, collectedBytes, usageObj)
@@ -315,14 +333,18 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 	if usage == nil {
 		usage = &ClaudeUsage{}
 	}
-	if clientGone {
-		applyIncompleteGeminiUsage("gemini_usage.client_gone_estimated", account, mappedModel, usage, goneOutputTokens, originalChatBody)
+	if clientGone || balanceAborted {
+		event := "gemini_usage.client_gone_estimated"
+		if balanceAborted {
+			event = "gemini_usage.balance_abort_estimated"
+		}
+		applyIncompleteGeminiUsage(event, account, mappedModel, usage, goneOutputTokens, originalChatBody)
 	}
 
 	imageCount := 0
 	imageInputSize := s.extractImageInputSize(claudeBody)
 	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
-	if !clientGone && isImageGenerationModel(originalModel) {
+	if !clientGone && !balanceAborted && isImageGenerationModel(originalModel) {
 		imageCount = 1
 	}
 
@@ -340,7 +362,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		ImageSize:        imageSize,
 		ImageInputSize:   imageInputSize,
 		ClientDisconnect: clientGone,
-	}, nil
+	}, responseErr
 }
 
 func (s *GeminiMessagesCompatService) buildGeminiChatCompletionsUpstreamRequestFunc(
@@ -603,6 +625,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 	}
 
 	var meter geminiOutputMeter
+	streamCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	disconnectedResult := func() *geminiStreamResult {
 		return &geminiStreamResult{
 			usage:            &usage,
@@ -610,6 +633,16 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 			clientDisconnect: true,
 			outputTokens:     meter.tokens(),
 		}
+	}
+	balanceAbortResult := func(topUpErr error) (*geminiStreamResult, error) {
+		_ = resp.Body.Close()
+		logger.LegacyPrintf("service.gemini_chat_completions", "Stream output hold top-up failed, aborting upstream: model=%s error=%v", originalModel, topUpErr)
+		return &geminiStreamResult{
+			usage:          &usage,
+			firstTokenMs:   firstTokenMs,
+			outputTokens:   meter.tokens(),
+			balanceAborted: true,
+		}, wrapStreamOutputHoldTopUpFailure(topUpErr)
 	}
 
 	messageID := generateAnthropicMsgID()
@@ -731,6 +764,17 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 								}) {
 									return disconnectedResult(), nil
 								}
+								if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(delta)); topUpErr != nil {
+									return balanceAbortResult(topUpErr)
+								}
+								continue
+							}
+
+							if thoughtText, ok := part["thought"].(string); ok && thoughtText != "" {
+								meter.addText(thoughtText)
+								if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(thoughtText)); topUpErr != nil {
+									return balanceAbortResult(topUpErr)
+								}
 								continue
 							}
 
@@ -747,6 +791,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 										return disconnectedResult(), nil
 									}
 								}
+								observedToolBytes := 0
 								if openToolIndex < 0 {
 									idx := nextBlockIndex
 									nextBlockIndex++
@@ -754,6 +799,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 									openToolName = name
 									sawToolUse = true
 									meter.addText(name)
+									observedToolBytes += len(name)
 									if emitAnthropicEvent(&apicompat.AnthropicStreamEvent{
 										Type:  "content_block_start",
 										Index: &idx,
@@ -784,6 +830,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 								seenToolJSON = newSeen
 								if delta != "" {
 									meter.addText(delta)
+									observedToolBytes += len(delta)
 									if emitAnthropicEvent(&apicompat.AnthropicStreamEvent{
 										Type: "content_block_delta",
 										Delta: &apicompat.AnthropicDelta{
@@ -792,6 +839,11 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 										},
 									}) {
 										return disconnectedResult(), nil
+									}
+								}
+								if observedToolBytes > 0 {
+									if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, observedToolBytes); topUpErr != nil {
+										return balanceAbortResult(topUpErr)
 									}
 								}
 							}

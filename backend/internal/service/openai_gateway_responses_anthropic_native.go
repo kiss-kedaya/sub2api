@@ -213,6 +213,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 	watch := newCompatClientWatch(c, resp.Body)
 	defer watch.Stop()
 	var tally compatAnthropicTally
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	sawMessageStop := false
 	var readErr error
 
@@ -311,7 +312,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
 		}
-		tally.AddData(payload)
+		observedBytes := tally.AddData(payload)
 		outcome.observe(&event, eventType, []byte(payload))
 		if event.Type == "message_stop" {
 			sawMessageStop = true
@@ -342,6 +343,35 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 				case "input_json_delta":
 					finalResp.Content[idx].Input = appendRawJSON(finalResp.Content[idx].Input, event.Delta.PartialJSON)
 				}
+			}
+		}
+		if observedBytes > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+				_ = resp.Body.Close()
+				abortErr := wrapStreamOutputHoldTopUpFailure(topUpErr)
+				if c != nil && c.Writer != nil && !c.Writer.Written() {
+					status, errType, message := balanceHoldAbortClientError(abortErr)
+					writeResponsesError(c, status, errType, message)
+				}
+				result := &OpenAIForwardResult{
+					RequestID: requestID, UpstreamHeaders: resp.Header,
+					Usage: claudeUsageToOpenAIUsage(&usage), SearchCount: usage.WebSearchRequests,
+					NonBillableUpstreamError: outcome.failed,
+					Model:                    originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel,
+					UpstreamEndpoint: "/v1/messages", ReasoningEffort: reasoningEffort,
+					Stream: false, Duration: time.Since(startTime),
+					ClientDisconnect: watch.Gone(),
+				}
+				replaceUpTo := 0
+				if !tally.sawFinalOutput {
+					replaceUpTo = result.Usage.OutputTokens
+				}
+				applyCompatIncompleteUsage(c, &result.Usage, compatIncompleteUsage{
+					Path: "responses_native_anthropic_buffered", Model: originalModel, RequestID: requestID,
+					ClientGone: watch.Gone(), Cause: abortErr, OutputEstimate: tally.EstimateTokens(),
+					ReplaceOutputUpTo: replaceUpTo,
+				})
+				return result, abortErr
 			}
 		}
 	}
@@ -466,6 +496,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 	watch := newCompatClientWatch(c, resp.Body)
 	defer watch.Stop()
 	var tally compatAnthropicTally
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 
 	scanner := bufio.NewScanner(watch.wrapResponse(resp).Body)
 	maxLineSize := defaultMaxLineSize
@@ -619,9 +650,26 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 			continue
 		}
 
-		tally.AddData(payload)
+		observedBytes := tally.AddData(payload)
 		outcome.observe(&event, eventType, []byte(payload))
 		processAnthropicEvent(&event)
+		if observedBytes > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+				_ = resp.Body.Close()
+				abortErr := wrapStreamOutputHoldTopUpFailure(topUpErr)
+				res := resultWithUsage()
+				replaceUpTo := 0
+				if !tally.sawFinalOutput {
+					replaceUpTo = res.Usage.OutputTokens
+				}
+				applyCompatIncompleteUsage(c, &res.Usage, compatIncompleteUsage{
+					Path: "responses_native_anthropic_stream", Model: originalModel, RequestID: requestID,
+					ClientGone: clientDisconnected || watch.Gone(), Cause: abortErr, OutputEstimate: tally.EstimateTokens(),
+					ReplaceOutputUpTo: replaceUpTo,
+				})
+				return res, abortErr
+			}
+		}
 	}
 
 	if outcome.failed {

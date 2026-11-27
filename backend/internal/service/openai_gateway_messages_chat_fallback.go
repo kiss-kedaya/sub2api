@@ -343,6 +343,13 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsAnthropic(
 			Path: "messages_chat_stream", Model: originalModel, RequestID: requestID,
 			ClientGone: gone, Cause: cause, OutputEstimate: tally.EstimateTokens(),
 		})
+		if isBalanceHoldTopUpError(scan.Err) {
+			if c != nil && c.Writer != nil && !c.Writer.Written() {
+				status, errType, message := balanceHoldAbortClientError(scan.Err)
+				writeAnthropicError(c, status, errType, message)
+			}
+			return result, scan.Err
+		}
 		if gone {
 			return result, nil
 		}

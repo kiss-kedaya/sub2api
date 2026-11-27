@@ -579,12 +579,14 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 
 	// Propagate ServiceTier and ReasoningEffort to result for billing
-	if handleErr == nil && result != nil {
-		if compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
-			s.bindOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey, result.ResponseID)
-		}
-		if promptCacheKey != "" && anthropicDigestChain != "" {
-			s.bindOpenAICompatAnthropicDigestPromptCacheKey(account, apiKeyID, anthropicDigestChain, promptCacheKey, anthropicMatchedDigestChain)
+	if result != nil && (handleErr == nil || isBalanceHoldTopUpError(handleErr)) {
+		if handleErr == nil {
+			if compatContinuationEnabled && promptCacheKey != "" && result.ResponseID != "" {
+				s.bindOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey, result.ResponseID)
+			}
+			if promptCacheKey != "" && anthropicDigestChain != "" {
+				s.bindOpenAICompatAnthropicDigestPromptCacheKey(account, apiKeyID, anthropicDigestChain, promptCacheKey, anthropicMatchedDigestChain)
+			}
 		}
 		// 计费 tier 优先采用上游回显值；上游未回显时回退到最终出站 body（经过
 		// fast policy filter/force 之后）里的 tier。
@@ -653,6 +655,31 @@ func (s *OpenAIGatewayService) handleAnthropicBufferedStreamingResponse(
 
 	finalResponse, usage, acc, err := s.readOpenAICompatBufferedTerminal(resp, c, "openai messages buffered", requestID)
 	if err != nil {
+		if isBalanceHoldTopUpError(err) {
+			s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI messages buffered", err)
+			status, errType, message := balanceHoldAbortClientError(err)
+			if c != nil && c.Writer != nil && !c.Writer.Written() {
+				writeAnthropicError(c, status, errType, message)
+			}
+			base := &OpenAIForwardResult{
+				RequestID:                     requestID,
+				UpstreamHeaders:               resp.Header,
+				Usage:                         usage,
+				Model:                         originalModel,
+				BillingModel:                  billingModel,
+				UpstreamModel:                 upstreamModel,
+				UpstreamResponseModel:         observedUpstreamResponseModel(c),
+				UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+				UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
+				Stream:                        false,
+				Duration:                      time.Since(startTime),
+			}
+			applyCompatIncompleteUsage(c, &base.Usage, compatIncompleteUsage{
+				Path: "messages_buffered", Account: account, Model: originalModel, RequestID: requestID,
+				Cause: err, OutputEstimate: estimateIncompleteStreamOutputTokens(acc),
+			})
+			return base, err
+		}
 		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
 			writeOpenAIStreamSilenceError(c, false)
 			return openAIStreamSilenceResult(resp, usage, originalModel, billingModel, upstreamModel, false, startTime), openAIStreamSilenceError(err)
@@ -1139,6 +1166,7 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 	// processed, so a terminal frame that had arrived keeps its real usage.
 	watch := newCompatClientWatch(c, resp.Body)
 	defer watch.Stop()
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	clientCancelCh := watch.Done()
 	var graceTimer *time.Timer
 	var graceCh <-chan time.Time
@@ -1221,6 +1249,12 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 					if err := json.Unmarshal([]byte(payload), &event); err == nil {
 						s.parseSSEUsageBytesWithType([]byte(payload), event.Type, &usage)
 						acc.ProcessEvent(&event)
+						if n := responsesEventOutputBytes(&event); n > 0 {
+							if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, n); topUpErr != nil {
+								_ = resp.Body.Close()
+								return nil, usage, acc, wrapStreamOutputHoldTopUpFailure(topUpErr)
+							}
+						}
 						if response := openAICompatTerminalResponse(&event, []byte(payload)); isOpenAICompatResponsesTerminalEvent(event.Type) && response != nil {
 							if c != nil {
 								c.Set(openAICompatBufferedTerminalRawKey, []byte(frame.Data))
@@ -1281,6 +1315,12 @@ func (s *OpenAIGatewayService) readOpenAICompatBufferedTerminal(
 			s.parseSSEUsageBytesWithType([]byte(payload), event.Type, &usage)
 
 			acc.ProcessEvent(&event)
+			if n := responsesEventOutputBytes(&event); n > 0 {
+				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, n); topUpErr != nil {
+					_ = resp.Body.Close()
+					return nil, usage, acc, wrapStreamOutputHoldTopUpFailure(topUpErr)
+				}
+			}
 
 			if response := openAICompatTerminalResponse(&event, []byte(payload)); isOpenAICompatResponsesTerminalEvent(event.Type) && response != nil {
 				if c != nil {
@@ -1393,6 +1433,8 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	watch := newCompatClientWatch(c, resp.Body)
 	defer watch.Stop()
 	streamAcc := apicompat.NewBufferedResponseAccumulator()
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
+	var streamBalanceAbortErr error
 	clientCancelCh := watch.Done()
 	var graceTimer *time.Timer
 	var graceCh <-chan time.Time
@@ -1625,11 +1667,31 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		if len(events) > 0 && !clientDisconnected {
 			c.Writer.Flush()
 		}
+		if n := responsesEventOutputBytes(&event.ResponsesStreamEvent); n > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, n); topUpErr != nil {
+				s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI messages", topUpErr)
+				_ = resp.Body.Close()
+				streamBalanceAbortErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
+				return true
+			}
+		}
 		return isTerminalEvent
 	}
 
 	// finalizeStream sends any remaining Anthropic events and returns the result.
 	finalizeStream := func() (*OpenAIForwardResult, error) {
+		if streamBalanceAbortErr != nil {
+			if !clientOutputStarted && c != nil && c.Writer != nil && !c.Writer.Written() {
+				status, errType, message := balanceHoldAbortClientError(streamBalanceAbortErr)
+				writeAnthropicError(c, status, errType, message)
+			}
+			applyCompatIncompleteUsage(c, &usage, compatIncompleteUsage{
+				Path: "messages_stream", Account: account, Model: originalModel, RequestID: requestID,
+				ClientGone: clientDisconnected || watch.Gone(), Cause: streamBalanceAbortErr,
+				OutputEstimate: estimateIncompleteStreamOutputTokens(streamAcc),
+			})
+			return resultWithUsage(), streamBalanceAbortErr
+		}
 		if streamFailoverErr != nil {
 			return resultWithUsage(), streamFailoverErr
 		}

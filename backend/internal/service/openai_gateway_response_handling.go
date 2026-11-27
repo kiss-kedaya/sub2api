@@ -66,6 +66,8 @@ type openaiNonStreamingResult struct {
 	imageOutputSizes         []string
 	searchCount              int
 	nonBillableUpstreamError bool
+	incompleteOutputTokens   int
+	balanceAborted           bool
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string) (*openaiStreamingResult, error) {
@@ -1924,11 +1926,28 @@ func openAICacheCreationTTLTokensFromUsage(value gjson.Result, aggregate int) (i
 }
 
 func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*openaiNonStreamingResult, error) {
-	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	inspectSSE := isEventStreamResponse(resp.Header) || (account != nil && account.Type == AccountTypeOAuth)
+	body, partialUsage, incompleteOutputTokens, err := readUpstreamResponseBodyWithBalanceGuard(ctx, resp, s.cfg, c, openAITooLargeError, inspectSSE)
 	if errors.Is(err, errOpenAIUpstreamWaitLimit) && openAIStreamSilenceHasCompletedJSON(body) {
 		err = nil
 	}
 	if err != nil {
+		if isBalanceHoldTopUpError(err) {
+			s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI responses buffered", err)
+			if c != nil && c.Writer != nil && !c.Writer.Written() {
+				status, errType, message := balanceHoldAbortClientError(err)
+				writeResponsesError(c, status, errType, message)
+			}
+			if partialUsage == nil {
+				partialUsage = &OpenAIUsage{}
+			}
+			return &openaiNonStreamingResult{
+				OpenAIUsage:            partialUsage,
+				usage:                  partialUsage,
+				incompleteOutputTokens: incompleteOutputTokens,
+				balanceAborted:         true,
+			}, err
+		}
 		if errors.Is(err, errOpenAIUpstreamWaitLimit) {
 			if openAIStreamSilenceHasSuccessfulTerminal(body) {
 				return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)

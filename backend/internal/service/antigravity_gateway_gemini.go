@@ -452,6 +452,8 @@ handleSuccess:
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
+	var responseErr error
+	balanceAborted := false
 	goneOutputTokens := 0
 
 	if stream {
@@ -459,39 +461,55 @@ handleSuccess:
 		streamRes, err := s.handleGeminiStreamingResponse(c, resp, startTime)
 		if err != nil {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=stream_error error=%v", prefix, err)
-			return nil, err
+			if streamRes == nil || (!streamRes.balanceAborted && !isBalanceHoldTopUpError(err)) {
+				return nil, err
+			}
+			balanceAborted = true
+			responseErr = err
 		}
-		usage = streamRes.usage
-		firstTokenMs = streamRes.firstTokenMs
-		clientDisconnect = streamRes.clientDisconnect
-		goneOutputTokens = streamRes.outputTokens
+		if streamRes != nil {
+			usage = streamRes.usage
+			firstTokenMs = streamRes.firstTokenMs
+			clientDisconnect = streamRes.clientDisconnect
+			goneOutputTokens = streamRes.outputTokens
+		}
 	} else {
 		// 客户端要求非流式，收集流式响应后返回
 		streamRes, err := s.handleGeminiStreamToNonStreaming(c, resp, startTime)
 		if err != nil {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=stream_collect_error error=%v", prefix, err)
-			return nil, err
+			if streamRes == nil || (!streamRes.balanceAborted && !isBalanceHoldTopUpError(err)) {
+				return nil, err
+			}
+			balanceAborted = true
+			responseErr = err
 		}
-		usage = streamRes.usage
-		firstTokenMs = streamRes.firstTokenMs
-		clientDisconnect = streamRes.clientDisconnect
-		goneOutputTokens = streamRes.outputTokens
+		if streamRes != nil {
+			usage = streamRes.usage
+			firstTokenMs = streamRes.firstTokenMs
+			clientDisconnect = streamRes.clientDisconnect
+			goneOutputTokens = streamRes.outputTokens
+		}
 	}
 
 	if usage == nil {
 		usage = &ClaudeUsage{}
 	}
-	if clientDisconnect {
-		// The client left after the upstream accepted the request: bill what the upstream
-		// reported and estimate the rest (gemini_family_incomplete_usage.go).
-		applyIncompleteGeminiUsage("antigravity_usage.client_gone_estimated", account, forwardedModel, usage, goneOutputTokens, body)
+	if clientDisconnect || balanceAborted {
+		// The client left or balance withholding aborted mid-stream: bill what the
+		// upstream reported and estimate the rest (gemini_family_incomplete_usage.go).
+		event := "antigravity_usage.client_gone_estimated"
+		if balanceAborted {
+			event = "antigravity_usage.balance_abort_estimated"
+		}
+		applyIncompleteGeminiUsage(event, account, forwardedModel, usage, goneOutputTokens, body)
 	}
 
 	// 判断是否为图片生成模型
 	imageCount := 0
-	if clientDisconnect {
+	if clientDisconnect || balanceAborted {
 		// The model-name floor of one image only applies when the request completed;
-		// a client that left bills only images actually observed before disconnect.
+		// an interrupted stream bills only images actually observed before abort.
 		imageCount = observedGeminiImageOutputs(c)
 	} else if isImageGenerationModel(mappedModel) {
 		// Gemini 图片生成 API 每次请求只生成一张图片（API 限制）
@@ -513,7 +531,7 @@ handleSuccess:
 		ImageCount:                    imageCount,
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
-	}, nil
+	}, responseErr
 }
 
 // cleanGeminiRequest 清理 Gemini 请求体中的 Schema

@@ -1193,22 +1193,27 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	// body close hangs up on the upstream (no drain window) and the request is billed from
 	// what was observed plus the estimates (gemini_family_incomplete_usage.go).
 	clientGone := false
+	balanceAborted := false
 	goneOutputTokens := 0
 	if req.Stream {
 		streamRes, err := s.handleStreamingResponse(c, resp, startTime, originalModel)
 		if err != nil {
 			// Read failures and locally synthesized failures keep their existing nil
-			// result behavior; only an observed provider error grants a billing waiver.
-			if !errors.Is(err, ErrBalanceWithholdingFailed) && (streamRes == nil || !streamRes.nonBillableUpstreamError) {
+			// result behavior; only an observed provider error or balance hold abort
+			// preserves partial usage for settlement.
+			isBalanceAbort := isBalanceHoldTopUpError(err) || (streamRes != nil && streamRes.balanceAborted)
+			if !isBalanceAbort && (streamRes == nil || !streamRes.nonBillableUpstreamError) {
 				return nil, err
 			}
 			responseErr = err
+			balanceAborted = isBalanceAbort
 			usage = &ClaudeUsage{}
 			if streamRes != nil {
 				if streamRes.usage != nil {
 					usage = streamRes.usage
 				}
 				firstTokenMs = streamRes.firstTokenMs
+				goneOutputTokens = streamRes.outputTokens
 			}
 		} else {
 			usage = streamRes.usage
@@ -1221,7 +1226,8 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		}
 	} else {
 		if useUpstreamStream {
-			collected, usageObj, stats, err := collectGeminiSSEObserved(resp.Body, true, nil)
+			collectCtx, _ := balancePreauthorizationGuardForRequest(ctx, c)
+			collected, usageObj, stats, err := collectGeminiSSEObservedWithContext(collectCtx, resp.Body, true, nil)
 			if stats.dataEvents == 0 && !stats.fallback.Truncated() {
 				stats.errorSignal, _ = detectGeminiResponseSignalInBody(stats.fallback.Bytes())
 				stats.nonBillableUpstreamError = stats.errorSignal.Kind == geminiSignalError
@@ -1237,10 +1243,19 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 				usage = usageObj
 				responseErr = s.writeGeminiMessagesSignalError(c, stats.errorSignal, false)
 			} else if err != nil {
-				if !geminiClientGoneCtx(ctx, c) {
+				if isBalanceHoldTopUpError(err) {
+					_ = resp.Body.Close()
+					status, errType, msg := balanceHoldAbortClientError(err)
+					_ = s.writeClaudeError(c, status, errType, msg)
+					balanceAborted = true
+					responseErr = err
+					usage = usageObj
+					goneOutputTokens = stats.meter.tokens()
+				} else if !geminiClientGoneCtx(ctx, c) {
 					return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
+				} else {
+					clientGone, usage, goneOutputTokens = true, usageObj, stats.meter.tokens()
 				}
-				clientGone, usage, goneOutputTokens = true, usageObj, stats.meter.tokens()
 			} else {
 				collectedBytes, _ := json.Marshal(collected)
 				upstreamResponseModelObserverFromContext(c).ObserveGemini(collectedBytes)
@@ -1268,18 +1283,22 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 			}
 		}
 	}
-	if clientGone {
+	if clientGone || balanceAborted {
 		if usage == nil {
 			usage = &ClaudeUsage{}
 		}
-		applyIncompleteGeminiUsage("gemini_usage.client_gone_estimated", account, mappedModel, usage, goneOutputTokens, body)
+		event := "gemini_usage.client_gone_estimated"
+		if balanceAborted {
+			event = "gemini_usage.balance_abort_estimated"
+		}
+		applyIncompleteGeminiUsage(event, account, mappedModel, usage, goneOutputTokens, body)
 	}
 
 	// 图片生成计费
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
 	imageCount := resolveGeminiImageCount(c, originalModel, mappedModel)
-	if clientGone {
+	if clientGone || balanceAborted {
 		// The model-name floor of one image only holds for a request that ran to the end.
 		imageCount = observedGeminiImageOutputs(c)
 	}
@@ -1804,22 +1823,30 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	// body is closed by the deferred close above, with no drain window, and the request
 	// is billed from what was observed plus the estimates (gemini_family_incomplete_usage.go).
 	clientGone := false
+	balanceAborted := false
 	goneOutputTokens := 0
 
 	if stream {
 		streamRes, err := s.handleNativeStreamingResponse(c, resp, startTime, isOAuth, account, requestID)
 		if err != nil {
-			return nil, err
+			if streamRes == nil || (!streamRes.balanceAborted && !isBalanceHoldTopUpError(err)) {
+				return nil, err
+			}
+			responseErr = err
+			balanceAborted = true
 		}
-		usage = streamRes.usage
-		firstTokenMs = streamRes.firstTokenMs
-		clientGone = streamRes.clientDisconnect
-		goneOutputTokens = streamRes.outputTokens
-		nonBillableUpstreamError = streamRes.nonBillableUpstreamError
+		if streamRes != nil {
+			usage = streamRes.usage
+			firstTokenMs = streamRes.firstTokenMs
+			clientGone = streamRes.clientDisconnect
+			goneOutputTokens = streamRes.outputTokens
+			nonBillableUpstreamError = streamRes.nonBillableUpstreamError
+		}
 	} else {
 		if useUpstreamStream {
 			var best geminiResponseSignal
-			collected, usageObj, stats, err := collectGeminiSSEObserved(resp.Body, isOAuth, func(rawBytes []byte) {
+			collectCtx, _ := balancePreauthorizationGuardForRequest(ctx, c)
+			collected, usageObj, stats, err := collectGeminiSSEObservedWithContext(collectCtx, resp.Body, isOAuth, func(rawBytes []byte) {
 				if sig, ok := detectGeminiResponseSignal(rawBytes); ok && sig.Kind > best.Kind {
 					best = sig
 				}
@@ -1848,13 +1875,22 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 					responseErr = errors.New("upstream response failed: Gemini upstream returned an error event")
 				}
 			} else if err != nil {
-				if !geminiClientGoneCtx(ctx, c) {
+				if isBalanceHoldTopUpError(err) {
+					_ = resp.Body.Close()
+					status, _, msg := balanceHoldAbortClientError(err)
+					_ = s.writeGoogleError(c, status, msg)
+					balanceAborted = true
+					responseErr = err
+					usage = usageObj
+					goneOutputTokens = stats.meter.tokens()
+				} else if !geminiClientGoneCtx(ctx, c) {
 					return nil, s.writeGoogleError(c, http.StatusBadGateway, "Failed to read upstream stream")
+				} else {
+					if best.Kind == geminiSignalError && !geminiUsageReported(usageObj) && stats.meter.tokens() == 0 {
+						return nil, errGeminiClientGone
+					}
+					clientGone, usage, goneOutputTokens = true, usageObj, stats.meter.tokens()
 				}
-				if best.Kind == geminiSignalError && !geminiUsageReported(usageObj) && stats.meter.tokens() == 0 {
-					return nil, errGeminiClientGone
-				}
-				clientGone, usage, goneOutputTokens = true, usageObj, stats.meter.tokens()
 			} else {
 				s.finalizeGeminiSSESignal(c, account, false, requestID, best, stats.dataEvents > 0, stats.fallback)
 				b, _ := json.Marshal(collected)
@@ -1887,15 +1923,19 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	if usage == nil {
 		usage = &ClaudeUsage{}
 	}
-	if clientGone && action != "countTokens" {
-		applyIncompleteGeminiUsage("gemini_usage.client_gone_estimated", account, mappedModel, usage, goneOutputTokens, body)
+	if (clientGone || balanceAborted) && action != "countTokens" {
+		event := "gemini_usage.client_gone_estimated"
+		if balanceAborted {
+			event = "gemini_usage.balance_abort_estimated"
+		}
+		applyIncompleteGeminiUsage(event, account, mappedModel, usage, goneOutputTokens, body)
 	}
 
 	// 图片生成计费
 	imageInputSize := s.extractImageInputSize(body)
 	imageSize := normalizeOpenAIImageSizeTier(imageInputSize)
 	imageCount := resolveGeminiImageCount(c, originalModel, mappedModel)
-	if clientGone {
+	if clientGone || balanceAborted {
 		// The model-name floor of one image only holds for a request that ran to the
 		// end; a client that left bills only the images it really received.
 		imageCount = observedGeminiImageOutputs(c)
@@ -2316,6 +2356,7 @@ type geminiStreamResult struct {
 	clientDisconnect         bool
 	outputTokens             int
 	nonBillableUpstreamError bool
+	balanceAborted           bool
 }
 
 // geminiWriteTracker remembers a failed client write, so a handler that writes through
@@ -2437,13 +2478,9 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 	var fallback geminiSSEFallbackBody
 	finishReason := ""
 	sawToolUse := false
-	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐个文本增量
-	// 仅整数累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流。
-	streamCtx := context.Background()
-	if c.Request != nil {
-		streamCtx = c.Request.Context()
-	}
-	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(streamCtx)
+	// 流式预扣补扣：仅当请求持有带 tracker 的活动预扣 guard 时非空；逐个输出增量
+	// 仅整数累加，跨输出窗口时才原子补扣一次，补扣失败中止上游流并保留已交付计费量。
+	streamCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 
 	nextBlockIndex := 0
 	openBlockIndex := -1
@@ -2457,6 +2494,20 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 	var meter geminiOutputMeter
 	goneResult := func() (*geminiStreamResult, error) {
 		return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs, clientDisconnect: true, outputTokens: meter.tokens(), nonBillableUpstreamError: nonBillableUpstreamError}, nil
+	}
+	balanceAbortResult := func(unwrappedBytes []byte, topUpErr error) (*geminiStreamResult, error) {
+		if u := extractGeminiUsage(unwrappedBytes); u != nil {
+			usage = *u
+		}
+		_ = resp.Body.Close()
+		logger.LegacyPrintf("service.gemini_messages_compat", "Stream output hold top-up failed, aborting upstream: model=%s error=%v", originalModel, topUpErr)
+		return &geminiStreamResult{
+			usage:                    &usage,
+			firstTokenMs:             firstTokenMs,
+			outputTokens:             meter.tokens(),
+			nonBillableUpstreamError: nonBillableUpstreamError,
+			balanceAborted:           true,
+		}, wrapStreamOutputHoldTopUpFailure(topUpErr)
 	}
 
 	reader := bufio.NewReader(resp.Body)
@@ -2582,12 +2633,19 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					},
 				})
 				flusher.Flush()
-				// 文本增量计量：累加已发字节作 token 上界，跨预扣窗口时补扣。补扣
-				// 失败中止上游流并返回错误，避免继续产生无法结算的输出成本。
+				// 文本/思考增量计量：累加已发字节作 token 上界，跨预扣窗口时补扣。补扣
+				// 失败中止上游流并保留已交付输出估算，避免退回已交付内容费用。
 				// tracker 为 nil 时逐增量零开销。
 				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(delta)); topUpErr != nil {
-					logger.LegacyPrintf("service.gemini_messages_compat", "Stream output hold top-up failed, aborting upstream: model=%s error=%v", originalModel, topUpErr)
-					return nil, wrapStreamOutputHoldTopUpFailure(topUpErr)
+					return balanceAbortResult(unwrappedBytes, topUpErr)
+				}
+				continue
+			}
+
+			if thoughtText, ok := part["thought"].(string); ok && thoughtText != "" {
+				meter.addText(thoughtText)
+				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, len(thoughtText)); topUpErr != nil {
+					return balanceAbortResult(unwrappedBytes, topUpErr)
 				}
 				continue
 			}
@@ -2620,6 +2678,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					seenToolJSON = ""
 				}
 
+				observedToolBytes := 0
 				if openToolIndex < 0 {
 					openToolID = "toolu_" + randomHex(8)
 					openToolIndex = nextBlockIndex
@@ -2627,6 +2686,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					nextBlockIndex++
 					sawToolUse = true
 					meter.addText(name)
+					observedToolBytes += len(name)
 
 					writeSSE(c.Writer, "content_block_start", map[string]any{
 						"type":  "content_block_start",
@@ -2657,6 +2717,7 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 				delta, newSeen := computeGeminiTextDelta(seenToolJSON, argsJSONText)
 				seenToolJSON = newSeen
 				meter.addText(delta)
+				observedToolBytes += len(delta)
 				if delta != "" {
 					writeSSE(c.Writer, "content_block_delta", map[string]any{
 						"type":  "content_block_delta",
@@ -2668,6 +2729,11 @@ func (s *GeminiMessagesCompatService) handleStreamingResponse(c *gin.Context, re
 					})
 				}
 				flusher.Flush()
+				if observedToolBytes > 0 {
+					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, observedToolBytes); topUpErr != nil {
+						return balanceAbortResult(unwrappedBytes, topUpErr)
+					}
+				}
 			}
 		}
 
@@ -2810,6 +2876,15 @@ type geminiSSECollectStats struct {
 
 // collectGeminiSSEObserved 在聚合的同时把每个解包后的事件原文交给 observe（可为 nil）。
 func collectGeminiSSEObserved(body io.Reader, isOAuth bool, observe func(rawBytes []byte)) (map[string]any, *ClaudeUsage, geminiSSECollectStats, error) {
+	return collectGeminiSSEObservedWithContext(context.Background(), body, isOAuth, observe)
+}
+
+// collectGeminiSSEObservedWithContext aggregates a Gemini SSE stream into a
+// non-streaming response while observing generated output bytes against any
+// active BalancePreauthorizationGuard on ctx so low-balance buffered streams
+// abort immediately rather than draining unbounded upstream output.
+func collectGeminiSSEObservedWithContext(ctx context.Context, body io.Reader, isOAuth bool, observe func(rawBytes []byte)) (map[string]any, *ClaudeUsage, geminiSSECollectStats, error) {
+	streamBalanceGuard, _ := BalancePreauthorizationGuardFromContext(ctx)
 	reader := bufio.NewReader(body)
 	var parser openAICompatSSEFrameParser
 	var last map[string]any
@@ -2842,7 +2917,7 @@ func collectGeminiSSEObserved(body io.Reader, isOAuth bool, observe func(rawByte
 				var parsed map[string]any
 				_ = json.Unmarshal(rawBytes, &parsed)
 				stats.dataEvents++
-				stats.meter.observe(rawBytes)
+				observedBytes := stats.meter.observe(rawBytes)
 				if observe != nil {
 					observe(rawBytes)
 				}
@@ -2863,6 +2938,11 @@ func collectGeminiSSEObserved(body io.Reader, isOAuth bool, observe func(rawByte
 								collectedTextParts = append(collectedTextParts, text)
 							}
 						}
+					}
+				}
+				if observedBytes > 0 {
+					if topUpErr := streamBalanceGuard.ObserveStreamingOutput(ctx, observedBytes); topUpErr != nil {
+						return nil, usage, stats, wrapStreamOutputHoldTopUpFailure(topUpErr)
 					}
 				}
 			}
@@ -2982,6 +3062,7 @@ type geminiNativeStreamResult struct {
 	clientDisconnect         bool
 	outputTokens             int
 	nonBillableUpstreamError bool
+	balanceAborted           bool
 }
 
 func isGeminiInsufficientScope(headers http.Header, body []byte) bool {
@@ -3169,6 +3250,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 		flusher.Flush()
 	}
 	var meter geminiOutputMeter
+	streamCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	// goneResult ends the stream for a client that left. An upstream that produced only an
 	// error envelope, with no usage and no content, is a failure the client did not wait
 	// for, not billable output.
@@ -3239,7 +3321,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					if u := extractGeminiUsage(rawBytes); u != nil {
 						usage = u
 					}
-					meter.observe(rawBytes)
+					observedBytes := meter.observe(rawBytes)
 					observer.ObserveGemini(rawBytes)
 					observeGeminiImageOutputs(c, rawBytes)
 					if upstreamFinancialFailureEnvelope(rawBytes) {
@@ -3265,6 +3347,23 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 						emit(pendingErrorHeader + line)
 					}
 					pendingErrorHeader = ""
+					if observedBytes > 0 {
+						if topUpErr := streamBalanceGuard.ObserveStreamingOutput(streamCtx, observedBytes); topUpErr != nil {
+							_ = resp.Body.Close()
+							accountID := int64(0)
+							if account != nil {
+								accountID = account.ID
+							}
+							logger.LegacyPrintf("service.gemini_messages_compat", "Stream output hold top-up failed, aborting upstream (native): account=%d error=%v", accountID, topUpErr)
+							return &geminiNativeStreamResult{
+								usage:                    usage,
+								firstTokenMs:             firstTokenMs,
+								outputTokens:             meter.tokens(),
+								nonBillableUpstreamError: nonBillableUpstreamError,
+								balanceAborted:           true,
+							}, wrapStreamOutputHoldTopUpFailure(topUpErr)
+						}
+					}
 				}
 			} else {
 				if !sawDataEvent {

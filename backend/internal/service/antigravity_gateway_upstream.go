@@ -129,6 +129,8 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
+	var responseErr error
+	balanceAborted := false
 	goneOutputTokens := 0
 
 	if claudeReq.Stream {
@@ -145,6 +147,8 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		firstTokenMs = streamRes.firstTokenMs
 		clientDisconnect = streamRes.clientDisconnect
 		goneOutputTokens = streamRes.outputTokens
+		balanceAborted = streamRes.balanceAborted
+		responseErr = streamRes.balanceAbortErr
 	} else {
 		// 非流式响应：直接透传
 		respBody, err := io.ReadAll(resp.Body)
@@ -166,10 +170,14 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 			_, _ = c.Writer.Write(respBody)
 		}
 	}
-	if clientDisconnect {
-		// The client left after the upstream accepted the request: bill what the upstream
-		// reported and estimate the rest (gemini_family_incomplete_usage.go).
-		applyIncompleteGeminiUsage("antigravity_usage.client_gone_estimated", account, originalModel, usage, goneOutputTokens, body)
+	if clientDisconnect || balanceAborted {
+		// The client left or balance withholding aborted mid-stream: bill what the
+		// upstream reported and estimate the rest (gemini_family_incomplete_usage.go).
+		event := "antigravity_usage.client_gone_estimated"
+		if balanceAborted {
+			event = "antigravity_usage.balance_abort_estimated"
+		}
+		applyIncompleteGeminiUsage(event, account, originalModel, usage, goneOutputTokens, body)
 	}
 
 	// 构建计费结果
@@ -193,11 +201,14 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 			CacheCreationInputTokens: usage.CacheCreationInputTokens,
 			CacheReadEstimated:       usage.CacheReadEstimated,
 		},
-	}, nil
+	}, responseErr
 }
 
 // streamUpstreamResponse 透传上游 SSE 流并提取 Claude usage
 func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp *http.Response, startTime time.Time) *antigravityStreamResult {
+	if upstreamResponseModelObserverFromContext(c) == nil {
+		beginUpstreamResponseModelObservation(c)
+	}
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
 
@@ -274,6 +285,7 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 	// hangs up on the upstream (no drain window) and the caller bills what was observed
 	// plus the estimates.
 	var meter geminiOutputMeter
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 
 	for {
 		if cw.Disconnected() || geminiClientGone(c) {
@@ -307,10 +319,24 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 
 			// 尝试从 message_delta 或 message_stop 事件提取 usage
 			s.extractSSEUsage(line, usage)
-			meter.observeAnthropicSSELine(line)
+			observedBytes := meter.observeAnthropicSSELine(line)
 
 			// 透传行
 			cw.Fprintf("%s\n", line)
+			if observedBytes > 0 {
+				if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+					_ = resp.Body.Close()
+					logger.LegacyPrintf("service.antigravity_gateway", "Stream output hold top-up failed, aborting upstream (antigravity upstream): error=%v", topUpErr)
+					return &antigravityStreamResult{
+						usage:            usage,
+						firstTokenMs:     firstTokenMs,
+						clientDisconnect: cw.Disconnected(),
+						outputTokens:     meter.tokens(),
+						balanceAborted:   true,
+						balanceAbortErr:  wrapStreamOutputHoldTopUpFailure(topUpErr),
+					}
+				}
+			}
 
 		case <-intervalCh:
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))

@@ -310,6 +310,14 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		resp.Body = s.openAIBufferedBodyWithCancel(clientCtx, resp.Body)
 		nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 		if err != nil {
+			if nonStreamResult != nil && (nonStreamResult.balanceAborted || isBalanceHoldTopUpError(err)) {
+				usage = nonStreamResult.usage
+				if usage == nil {
+					usage = &OpenAIUsage{}
+				}
+				fillIncompleteStreamUsage(usage, nonStreamResult.incompleteOutputTokens, patchedBody)
+				return buildForwardResult(), err
+			}
 			if clientErr := clientCtx.Err(); clientErr != nil {
 				// Headers arrived and the body read was cut by the client leaving.
 				return newClientGoneOpenAIForwardResult(

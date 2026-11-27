@@ -308,6 +308,7 @@ func (s *OpenAIGatewayService) scanCCStream(
 	var st ccStreamScanState
 	pendingEventType := ""
 	sawSuccessfulFinish := false
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 	for scanner.Scan() {
@@ -374,6 +375,13 @@ func (s *OpenAIGatewayService) scanCCStream(
 			st.FirstTokenMs = &ms
 		}
 		emit(&chunk)
+		if n := chatChunkOutputBytes(&chunk); n > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, n); topUpErr != nil {
+				_ = resp.Body.Close()
+				st.Err = wrapStreamOutputHoldTopUpFailure(topUpErr)
+				return st
+			}
+		}
 	}
 
 	if err := scanner.Err(); err != nil {

@@ -500,6 +500,15 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	// reservation here (after eligibility and before account selection) closes
 	// the race where concurrent low-balance Gemini requests all pass the legacy
 	// snapshot check and incur upstream cost before asynchronous settlement.
+	// Gemini distinguishes streaming (:streamGenerateContent) from non-streaming
+	// (:generateContent) via URL action rather than JSON "stream". Attach the
+	// transport-level stream hint whenever the caller omitted an explicit output
+	// limit so streaming uses the 256-token incremental window while non-streaming
+	// reserves the conservative 4096-token default (even if the body carries a
+	// stray "stream": true field).
+	if !service.HasExplicitBalancePreauthorizationOutputLimit(body) {
+		c.Request = c.Request.WithContext(service.WithBalancePreauthorizationStreamHint(c.Request.Context(), stream))
+	}
 	balanceGuard, err := preauthorizeTextGatewayRequest(
 		c.Request.Context(), h.balancePreauthorizer, h.gatewayService,
 		apiKey, subscription, body,
