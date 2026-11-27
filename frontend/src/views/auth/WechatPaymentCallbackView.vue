@@ -79,7 +79,7 @@ function normalizeRedirectPath(path: string | null | undefined): string {
   const value = (path || '').trim()
   if (!value) return '/purchase'
   if (!value.startsWith('/')) return '/purchase'
-  if (value.startsWith('//') || value.includes('://')) return '/purchase'
+  if (value.startsWith('//') || value.includes('://') || value.includes('\\') || value.includes('\n') || value.includes('\r')) return '/purchase'
   if (value === '/payment') return '/purchase'
   if (value.startsWith('/payment?')) return '/purchase' + value.slice('/payment'.length)
   return value

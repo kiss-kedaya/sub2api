@@ -292,12 +292,13 @@ function readTokenResponse(params: URLSearchParams): OAuthTokenResponse | null {
 }
 
 function sanitizeRedirectPath(path: string | null | undefined): string {
-  if (!path) return '/dashboard'
-  if (!path.startsWith('/')) return '/dashboard'
-  if (path.startsWith('//')) return '/dashboard'
-  if (path.includes('://')) return '/dashboard'
-  if (path.includes('\n') || path.includes('\r')) return '/dashboard'
-  return path
+  const value = (path || '').trim()
+  if (!value) return '/dashboard'
+  if (!value.startsWith('/')) return '/dashboard'
+  if (value.startsWith('//')) return '/dashboard'
+  if (value.includes('://')) return '/dashboard'
+  if (value.includes('\\') || value.includes('\n') || value.includes('\r')) return '/dashboard'
+  return value
 }
 
 function readPendingEmailOAuthProvider(): 'github' | 'google' | null {

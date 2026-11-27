@@ -260,6 +260,41 @@ func TestOpsWSHelpers(t *testing.T) {
 	addr := netip.MustParseAddr("10.0.0.1")
 	require.True(t, isAddrInTrustedProxies(addr, prefixes))
 	require.False(t, isAddrInTrustedProxies(netip.MustParseAddr("192.168.0.1"), prefixes))
+
+	wildcardPrefixes, _ := parseTrustedProxyList("0.0.0.0/0,::/0")
+	require.False(t, isAddrInTrustedProxies(netip.MustParseAddr("127.0.0.1"), wildcardPrefixes))
+	require.False(t, isAddrInTrustedProxies(netip.MustParseAddr("::1"), wildcardPrefixes))
+}
+
+func TestOpsWSOriginRejectsForgedXForwardedHost(t *testing.T) {
+	// Even from a loopback Nginx peer (127.0.0.1), a client-forged
+	// X-Forwarded-Host must never allow a cross-origin WebSocket handshake.
+	reqForged := httptest.NewRequest(http.MethodGet, "http://app.example.com/api/v1/admin/ops/ws/qps", nil)
+	reqForged.Host = "app.example.com"
+	reqForged.RemoteAddr = "127.0.0.1:54321"
+	reqForged.Header.Set("Origin", "https://evil.example")
+	reqForged.Header.Set("X-Forwarded-Host", "evil.example")
+	require.False(t, isAllowedOpsWSOrigin(reqForged))
+
+	reqMultiXFH := httptest.NewRequest(http.MethodGet, "http://app.example.com/api/v1/admin/ops/ws/qps", nil)
+	reqMultiXFH.Host = "app.example.com"
+	reqMultiXFH.RemoteAddr = "127.0.0.1:54321"
+	reqMultiXFH.Header.Set("Origin", "https://evil.example")
+	reqMultiXFH.Header.Set("X-Forwarded-Host", "evil.example, app.example.com")
+	require.False(t, isAllowedOpsWSOrigin(reqMultiXFH))
+
+	// Same-host Origin matching r.Host succeeds.
+	reqSameHost := httptest.NewRequest(http.MethodGet, "http://app.example.com/api/v1/admin/ops/ws/qps", nil)
+	reqSameHost.Host = "app.example.com"
+	reqSameHost.RemoteAddr = "127.0.0.1:54321"
+	reqSameHost.Header.Set("Origin", "https://app.example.com")
+	require.True(t, isAllowedOpsWSOrigin(reqSameHost))
+
+	// Non-http(s) scheme or userinfo in Origin is rejected.
+	reqBadOrigin := httptest.NewRequest(http.MethodGet, "http://app.example.com/api/v1/admin/ops/ws/qps", nil)
+	reqBadOrigin.Host = "app.example.com"
+	reqBadOrigin.Header.Set("Origin", "https://user@app.example.com")
+	require.False(t, isAllowedOpsWSOrigin(reqBadOrigin))
 }
 
 // TestOpenAIFastPolicySettingsFromDTO_NormalizesServiceTier 验证 admin

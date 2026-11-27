@@ -279,3 +279,30 @@ func TestUpdateSettingsExplicitEmptySMTPHostRetainsExistingSMTPConfig(t *testing
 	require.Equal(t, "Alerts", repo.values[service.SettingKeySMTPFromName])
 	require.Equal(t, "true", repo.values[service.SettingKeySMTPUseTLS])
 }
+
+func TestUpdateSettingsValidatesAPIBaseURL(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
+		service.SettingKeyAPIBaseURL: "https://app.example.com/v1",
+	})
+
+	for _, invalid := range []string{
+		"javascript:alert(1)",
+		"/relative/v1",
+		"ftp://app.example.com/v1",
+		"https://app.example.com/v1#frag",
+	} {
+		rec := doUpdateSettings(t, h, map[string]any{"api_base_url": invalid}, nil)
+		require.Equal(t, http.StatusBadRequest, rec.Code, "api_base_url=%q should fail", invalid)
+		require.Contains(t, rec.Body.String(), "API Base URL")
+	}
+
+	// Valid absolute http(s) URL is accepted and trimmed.
+	rec := doUpdateSettings(t, h, map[string]any{"api_base_url": "  https://api.example.com/v1  "}, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "https://api.example.com/v1", repo.values[service.SettingKeyAPIBaseURL])
+
+	// Explicit empty string clears api_base_url.
+	rec = doUpdateSettings(t, h, map[string]any{"api_base_url": ""}, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "", repo.values[service.SettingKeyAPIBaseURL])
+}

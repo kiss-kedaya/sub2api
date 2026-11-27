@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -29,9 +30,46 @@ func TestSanitizeFrontendRedirectPath(t *testing.T) {
 	require.Equal(t, "", sanitizeFrontendRedirectPath("//evil.com"))
 	require.Equal(t, "", sanitizeFrontendRedirectPath("https://evil.com"))
 	require.Equal(t, "", sanitizeFrontendRedirectPath("/\nfoo"))
+	require.Equal(t, "", sanitizeFrontendRedirectPath(`/\evil.com`))
+	require.Equal(t, "", sanitizeFrontendRedirectPath(`/dashboard\evil`))
 
 	long := "/" + strings.Repeat("a", linuxDoOAuthMaxRedirectLen)
 	require.Equal(t, "", sanitizeFrontendRedirectPath(long))
+}
+
+func TestLinuxDoIsRequestHTTPSWithConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	makeCtx := func(remoteAddr string, withTLS bool, xfProtos ...string) *gin.Context {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		req := httptest.NewRequest(http.MethodGet, "http://app.example.com/", nil)
+		req.RemoteAddr = remoteAddr
+		if withTLS {
+			req.TLS = &tls.ConnectionState{}
+		}
+		for _, p := range xfProtos {
+			req.Header.Add("X-Forwarded-Proto", p)
+		}
+		c.Request = req
+		return c
+	}
+
+	require.True(t, isRequestHTTPSWithConfig(makeCtx("203.0.113.10:443", true), nil))
+	require.False(t, isRequestHTTPSWithConfig(makeCtx("127.0.0.1:1234", false, "https"), nil))
+	require.False(t, isRequestHTTPSWithConfig(makeCtx("127.0.0.1:1234", false, "https"), &config.Config{
+		Server: config.ServerConfig{TrustedProxies: []string{"0.0.0.0/0"}, TrustedProxiesConfigured: true},
+	}))
+	require.False(t, isRequestHTTPSWithConfig(makeCtx("203.0.113.10:443", false, "https"), &config.Config{
+		Server: config.ServerConfig{TrustedProxies: []string{"127.0.0.1/32"}, TrustedProxiesConfigured: true},
+	}))
+
+	trustedCfg := &config.Config{
+		Server: config.ServerConfig{TrustedProxies: []string{"127.0.0.1/32"}, TrustedProxiesConfigured: true},
+	}
+	require.True(t, isRequestHTTPSWithConfig(makeCtx("127.0.0.1:1234", false, "https"), trustedCfg))
+	require.False(t, isRequestHTTPSWithConfig(makeCtx("127.0.0.1:1234", false, "https, http"), trustedCfg))
+	require.False(t, isRequestHTTPSWithConfig(makeCtx("127.0.0.1:1234", false, "https", "http"), trustedCfg))
 }
 
 func TestBuildBearerAuthorization(t *testing.T) {

@@ -1512,3 +1512,60 @@ func (s *wechatOAuthRefreshTokenCacheStub) GetFamilyTokenHashes(context.Context,
 func (s *wechatOAuthRefreshTokenCacheStub) IsTokenInFamily(context.Context, string, string) (bool, error) {
 	return false, nil
 }
+
+func TestWeChatResolveOAuthAbsoluteURLHardening(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	const cbPath = "/api/v1/auth/oauth/wechat/callback"
+
+	makeCtx := func(host, remoteAddr, xfHost, xfProto string) *gin.Context {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/api/v1/auth/oauth/wechat/start", nil)
+		req.Host = host
+		req.RemoteAddr = remoteAddr
+		if xfHost != "" {
+			req.Header.Set("X-Forwarded-Host", xfHost)
+		}
+		if xfProto != "" {
+			req.Header.Set("X-Forwarded-Proto", xfProto)
+		}
+		c.Request = req
+		return c
+	}
+
+	trustedCfg := &config.Config{
+		Server: config.ServerConfig{
+			TrustedProxiesConfigured: true,
+			TrustedProxies:           []string{"127.0.0.1/32"},
+		},
+	}
+
+	// Configured frontend_url wins over api_base_url and all request headers.
+	cSpoofed := makeCtx("internal.local", "127.0.0.1:1234", "evil.example", "http")
+	require.Equal(t, "https://app.example.com"+cbPath,
+		resolveWeChatOAuthAbsoluteURLWithConfig("https://app.example.com", "https://api.example.com/v1", cSpoofed, trustedCfg, cbPath))
+
+	// api_base_url with /v1 suffix does not duplicate into /v1/api/v1/...
+	require.Equal(t, "https://app.example.com"+cbPath,
+		resolveWeChatOAuthAbsoluteURLWithConfig("", "https://app.example.com/v1", cSpoofed, trustedCfg, cbPath))
+
+	// Untrusted peer cannot spoof X-Forwarded-Host or X-Forwarded-Proto.
+	cUntrusted := makeCtx("app.example.com", "203.0.113.9:443", "evil.example", "https")
+	require.Equal(t, "http://app.example.com"+cbPath,
+		resolveWeChatOAuthAbsoluteURLWithConfig("", "", cUntrusted, trustedCfg, cbPath))
+
+	// Trusted peer with comma / invalid host syntax falls back to validated r.Host.
+	cBadXFH := makeCtx("app.example.com", "127.0.0.1:1234", "evil.example, app.example.com", "https")
+	require.Equal(t, "https://app.example.com"+cbPath,
+		resolveWeChatOAuthAbsoluteURLWithConfig("", "", cBadXFH, trustedCfg, cbPath))
+	cSlashXFH := makeCtx("app.example.com", "127.0.0.1:1234", `evil.example\bad`, "https")
+	require.Equal(t, "https://app.example.com"+cbPath,
+		resolveWeChatOAuthAbsoluteURLWithConfig("", "", cSlashXFH, trustedCfg, cbPath))
+
+	// Trusted peer with valid single X-Forwarded-Host and X-Forwarded-Proto is honored on fallback.
+	cValidTrusted := makeCtx("127.0.0.1:8080", "127.0.0.1:1234", "auth.app.example.com", "https")
+	require.Equal(t, "https://auth.app.example.com"+cbPath,
+		resolveWeChatOAuthAbsoluteURLWithConfig("", "", cValidTrusted, trustedCfg, cbPath))
+}

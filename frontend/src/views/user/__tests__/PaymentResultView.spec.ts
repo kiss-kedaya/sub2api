@@ -6,6 +6,7 @@ const routeState = vi.hoisted(() => ({
 }))
 
 const routerPush = vi.hoisted(() => vi.fn())
+const routerReplace = vi.hoisted(() => vi.fn())
 const pollOrderStatus = vi.hoisted(() => vi.fn())
 const verifyOrder = vi.hoisted(() => vi.fn())
 const verifyOrderPublic = vi.hoisted(() => vi.fn())
@@ -17,7 +18,7 @@ vi.mock('vue-router', async () => {
   return {
     ...actual,
     useRoute: () => routeState,
-    useRouter: () => ({ push: routerPush }),
+    useRouter: () => ({ push: routerPush, replace: routerReplace }),
   }
 })
 
@@ -94,6 +95,7 @@ describe('PaymentResultView', () => {
   beforeEach(() => {
     routeState.query = {}
     routerPush.mockReset()
+    routerReplace.mockReset()
     pollOrderStatus.mockReset()
     verifyOrder.mockReset()
     verifyOrderPublic.mockReset()
@@ -534,5 +536,58 @@ describe('PaymentResultView', () => {
 
     expect(wrapper.text()).toContain('payment.methods.alipay')
     expect(wrapper.text()).not.toContain('payment.methods.alipay_direct')
+  })
+
+  it('strips resume_token from the URL via router.replace while preserving order_id, out_trade_no, and status', async () => {
+    routeState.query = {
+      resume_token: 'sensitive-resume-token',
+      order_id: '42',
+      out_trade_no: 'sub2_20260420abcd1234',
+      status: 'success',
+    }
+    resolveOrderPublicByResumeToken.mockResolvedValue({
+      data: orderFactory('COMPLETED'),
+    })
+
+    const wrapper = mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(routerReplace).toHaveBeenCalledTimes(1)
+    expect(routerReplace).toHaveBeenCalledWith({
+      query: {
+        order_id: '42',
+        out_trade_no: 'sub2_20260420abcd1234',
+        status: 'success',
+      },
+    })
+    expect(resolveOrderPublicByResumeToken).toHaveBeenCalledWith('sensitive-resume-token')
+    expect(wrapper.text()).toContain('payment.result.success')
+  })
+
+  it('does not call router.replace when no resume_token is present in the URL', async () => {
+    routeState.query = {
+      order_id: '42',
+      status: 'success',
+    }
+    pollOrderStatus.mockResolvedValue(orderFactory('COMPLETED'))
+
+    mount(PaymentResultView, {
+      global: {
+        stubs: {
+          OrderStatusBadge: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(routerReplace).not.toHaveBeenCalled()
   })
 })

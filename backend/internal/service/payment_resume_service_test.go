@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
@@ -106,19 +107,248 @@ func TestCanonicalizeReturnURLRejectsExternalHost(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeReturnURLAllowsConfiguredFrontendHost(t *testing.T) {
+func TestCanonicalizeReturnURLRejectsForgedRefererHost(t *testing.T) {
 	t.Parallel()
 
-	got, err := CanonicalizeReturnURL(
-		"https://app.example.com/payment/result",
+	// Client-controlled Referer must never allowlist a third-party return_url host.
+	if _, err := CanonicalizeReturnURL(
+		"https://evil.example/payment/result",
 		"api.example.com",
-		"https://app.example.com/purchase",
+		"https://evil.example/purchase",
+	); err == nil {
+		t.Fatal("CanonicalizeReturnURL must reject return_url host authorized only by Referer")
+	}
+}
+
+func TestCanonicalizeReturnURLWithAuthoritativeOrigin(t *testing.T) {
+	t.Parallel()
+
+	// Direct IP :17777 checkout where Nginx strips the port in Host must
+	// canonicalize cleanly to the authoritative frontend origin without 400.
+	got, err := CanonicalizeReturnURLWithOrigin(
+		"http://203.0.113.10:17777/payment/result",
+		"http://203.0.113.10",
+		"https://shop.example.com",
 	)
 	if err != nil {
-		t.Fatalf("CanonicalizeReturnURL returned error: %v", err)
+		t.Fatalf("CanonicalizeReturnURLWithOrigin returned error for :17777 checkout: %v", err)
 	}
-	if got != "https://app.example.com/payment/result" {
-		t.Fatalf("CanonicalizeReturnURL = %q, want %q", got, "https://app.example.com/payment/result")
+	if got != "https://shop.example.com/payment/result" {
+		t.Fatalf("got %q, want %q", got, "https://shop.example.com/payment/result")
+	}
+
+	// Forged host or HTTP downgrade is neutralized to authoritative origin.
+	got, err = CanonicalizeReturnURLWithOrigin(
+		"http://evil.example/payment/result#frag",
+		"http://evil.example",
+		"https://shop.example.com/v1",
+	)
+	if err != nil {
+		t.Fatalf("CanonicalizeReturnURLWithOrigin returned error: %v", err)
+	}
+	if got != "https://shop.example.com/payment/result" {
+		t.Fatalf("got %q, want %q", got, "https://shop.example.com/payment/result")
+	}
+
+	// Path, query, credential, and backslash guards still apply with authoritative origin.
+	for _, bad := range []string{
+		"https://shop.example.com/payment/result?trade_status=TRADE_SUCCESS",
+		"https://shop.example.com/orders/42",
+		"https://user:pass@shop.example.com/payment/result",
+		`https://shop.example.com/payment\result`,
+		`https://shop.example.com/payment/result\`,
+	} {
+		if _, err := CanonicalizeReturnURLWithOrigin(bad, "https://shop.example.com", "https://shop.example.com"); err == nil {
+			t.Fatalf("expected %q to be rejected even with authoritative origin", bad)
+		}
+	}
+}
+
+func TestCanonicalizeReturnURLWithoutAuthoritativeOriginRequiresExactSchemeAndHost(t *testing.T) {
+	t.Parallel()
+
+	got, err := CanonicalizeReturnURLWithOrigin(
+		"https://app.example.com/payment/result",
+		"https://app.example.com",
+		"",
+	)
+	if err != nil || got != "https://app.example.com/payment/result" {
+		t.Fatalf("exact match failed: got=%q err=%v", got, err)
+	}
+
+	// Default port matches scheme-normalized origin.
+	got, err = CanonicalizeReturnURLWithOrigin(
+		"https://app.example.com:443/payment/result",
+		"https://app.example.com",
+		"",
+	)
+	if err != nil || got != "https://app.example.com:443/payment/result" {
+		t.Fatalf("default port match failed: got=%q err=%v", got, err)
+	}
+
+	// HTTPS -> HTTP downgrade must be rejected.
+	if _, err := CanonicalizeReturnURLWithOrigin(
+		"http://app.example.com/payment/result",
+		"https://app.example.com",
+		"",
+	); err == nil {
+		t.Fatal("expected HTTPS -> HTTP downgrade to be rejected")
+	}
+
+	// Non-default port mismatch must be rejected.
+	if _, err := CanonicalizeReturnURLWithOrigin(
+		"http://app.example.com:17777/payment/result",
+		"http://app.example.com",
+		"",
+	); err == nil {
+		t.Fatal("expected port mismatch to be rejected")
+	}
+}
+
+func TestResolveAuthoritativeReturnOriginPriorityAndNeverUsesCORS(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sel := &payment.InstanceSelection{
+		Config: map[string]string{
+			"returnUrl": "https://provider.example/payment/result",
+		},
+	}
+
+	// 1. DB frontend_url wins over everything.
+	svc := &PaymentService{
+		cfg: &config.Config{
+			Server: config.ServerConfig{FrontendURL: "https://cfg.example"},
+			CORS:   config.CORSConfig{AllowedOrigins: []string{"https://cors-must-not-be-used.example"}},
+		},
+		configService: &PaymentConfigService{
+			settingRepo: &paymentConfigSettingRepoStub{
+				values: map[string]string{
+					SettingKeyFrontendURL: "https://db-frontend.example/",
+					SettingKeyAPIBaseURL:  "https://db-api.example/v1",
+				},
+			},
+		},
+	}
+	if got := svc.resolveAuthoritativeReturnOrigin(ctx, sel); got != "https://db-frontend.example" {
+		t.Fatalf("priority 1 = %q, want https://db-frontend.example", got)
+	}
+
+	// 2. cfg.Server.FrontendURL wins when DB frontend_url is empty or invalid.
+	svc.configService.settingRepo = &paymentConfigSettingRepoStub{
+		values: map[string]string{
+			SettingKeyFrontendURL: "javascript:alert(1)",
+			SettingKeyAPIBaseURL:  "https://db-api.example/v1",
+		},
+	}
+	if got := svc.resolveAuthoritativeReturnOrigin(ctx, sel); got != "https://cfg.example" {
+		t.Fatalf("priority 2 = %q, want https://cfg.example", got)
+	}
+
+	// 3. DB api_base_url (scheme+host only) wins over provider returnUrl.
+	svc.cfg.Server.FrontendURL = ""
+	if got := svc.resolveAuthoritativeReturnOrigin(ctx, sel); got != "https://db-api.example" {
+		t.Fatalf("priority 3 = %q, want https://db-api.example", got)
+	}
+
+	// 4. Provider instance returnUrl (scheme+host only) is last authoritative fallback.
+	svc.configService.settingRepo = &paymentConfigSettingRepoStub{values: map[string]string{}}
+	if got := svc.resolveAuthoritativeReturnOrigin(ctx, sel); got != "https://provider.example" {
+		t.Fatalf("priority 4 = %q, want https://provider.example", got)
+	}
+
+	// 5. Never falls back to cors.allowed_origins.
+	if got := svc.resolveAuthoritativeReturnOrigin(ctx, nil); got != "" {
+		t.Fatalf("without authoritative sources = %q, want empty (must not use CORS)", got)
+	}
+}
+
+func TestPaymentResumeTokenTTLAndMissingExpiryRejected(t *testing.T) {
+	t.Parallel()
+
+	key := []byte("0123456789abcdef0123456789abcdef")
+	svc := NewPaymentResumeService(key)
+	before := time.Now().Unix()
+	token, err := svc.CreateToken(ResumeTokenClaims{OrderID: 42, UserID: 7})
+	if err != nil {
+		t.Fatalf("CreateToken returned error: %v", err)
+	}
+	claims, err := svc.ParseToken(token)
+	if err != nil {
+		t.Fatalf("ParseToken returned error: %v", err)
+	}
+	ttl := claims.ExpiresAt - before
+	if ttl < int64((2*time.Hour-5*time.Second).Seconds()) || ttl > int64((2*time.Hour+5*time.Second).Seconds()) {
+		t.Fatalf("resume token TTL = %ds, want ~2h (%ds)", ttl, int64((2 * time.Hour).Seconds()))
+	}
+
+	// Token with missing/zero exp must be rejected.
+	zeroExpPayload, err := json.Marshal(ResumeTokenClaims{OrderID: 42, UserID: 7, IssuedAt: before})
+	if err != nil {
+		t.Fatalf("marshal zero exp claims: %v", err)
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(zeroExpPayload)
+	zeroExpToken := encoded + "." + signPaymentResumePayload(encoded, key)
+	if _, err := svc.ParseToken(zeroExpToken); err == nil {
+		t.Fatal("ParseToken must reject tokens with missing/zero exp")
+	}
+}
+
+func TestEffectiveCreateOrderIsMobileEnforcesAlipayForceQRCode(t *testing.T) {
+	t.Parallel()
+
+	officialAlipay := &payment.InstanceSelection{ProviderKey: payment.TypeAlipay}
+	easyPay := &payment.InstanceSelection{ProviderKey: payment.TypeEasyPay}
+
+	// Force QR code enabled without mobile precreate deep link forces mobile=false for Alipay.
+	cfgForceQR := &PaymentConfig{AlipayForceQRCode: true}
+	reqAlipayMobile := CreateOrderRequest{PaymentType: payment.TypeAlipay, IsMobile: true}
+	if effectiveCreateOrderIsMobile(reqAlipayMobile, cfgForceQR, officialAlipay, false) {
+		t.Fatal("expected AlipayForceQRCode to force effectiveMobile=false for official Alipay")
+	}
+	if effectiveCreateOrderIsMobile(reqAlipayMobile, cfgForceQR, easyPay, false) {
+		t.Fatal("expected AlipayForceQRCode to force effectiveMobile=false for EasyPay Alipay")
+	}
+
+	// WeChat is unaffected by AlipayForceQRCode.
+	reqWxMobile := CreateOrderRequest{PaymentType: payment.TypeWxpay, IsMobile: true}
+	if !effectiveCreateOrderIsMobile(reqWxMobile, cfgForceQR, easyPay, false) {
+		t.Fatal("expected AlipayForceQRCode not to affect wxpay")
+	}
+
+	// When mobile precreate deep link is enabled on official Alipay, precreate (not TradeWapPay) takes priority.
+	cfgBoth := &PaymentConfig{AlipayForceQRCode: true, AlipayMobilePrecreateDeepLink: true}
+	precreateOfficial := shouldUseAlipayMobilePrecreate(reqAlipayMobile, cfgBoth, officialAlipay)
+	if !precreateOfficial {
+		t.Fatal("expected mobile precreate enabled for official Alipay")
+	}
+	if !effectiveCreateOrderIsMobile(reqAlipayMobile, cfgBoth, officialAlipay, precreateOfficial) {
+		t.Fatal("expected official Alipay mobile precreate to keep mobile=true so TradePreCreate runs")
+	}
+	// EasyPay does not support official Alipay mobile precreate, so AlipayForceQRCode still forces mobile=false.
+	precreateEasyPay := shouldUseAlipayMobilePrecreate(reqAlipayMobile, cfgBoth, easyPay)
+	if precreateEasyPay {
+		t.Fatal("expected mobile precreate disabled for EasyPay")
+	}
+	if effectiveCreateOrderIsMobile(reqAlipayMobile, cfgBoth, easyPay, precreateEasyPay) {
+		t.Fatal("expected AlipayForceQRCode to force effectiveMobile=false for EasyPay even when precreate toggle is on")
+	}
+}
+
+func TestPaymentRedirectPathFromURLRejectsBackslash(t *testing.T) {
+	t.Parallel()
+
+	for _, bad := range []string{
+		`/\evil.example`,
+		`/purchase\evil`,
+		`https://shop.invalid/\evil.example`,
+		`https://shop.invalid/purchase?next=\evil`,
+		`//evil.example/purchase`,
+		"/purchase\r\nX: 1",
+	} {
+		if got := paymentRedirectPathFromURL(bad); got != "/purchase" {
+			t.Fatalf("paymentRedirectPathFromURL(%q) = %q, want /purchase", bad, got)
+		}
 	}
 }
 

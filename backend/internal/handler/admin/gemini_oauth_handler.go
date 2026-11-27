@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -12,10 +14,20 @@ import (
 
 type GeminiOAuthHandler struct {
 	geminiOAuthService *service.GeminiOAuthService
+	cfg                *config.Config
+	settingService     *service.SettingService
 }
 
 func NewGeminiOAuthHandler(geminiOAuthService *service.GeminiOAuthService) *GeminiOAuthHandler {
 	return &GeminiOAuthHandler{geminiOAuthService: geminiOAuthService}
+}
+
+func (h *GeminiOAuthHandler) SetConfig(cfg *config.Config) {
+	h.cfg = cfg
+}
+
+func (h *GeminiOAuthHandler) SetSettingService(settingService *service.SettingService) {
+	h.settingService = settingService
 }
 
 // GetCapabilities returns the Gemini OAuth configuration capabilities.
@@ -56,7 +68,7 @@ func (h *GeminiOAuthHandler) GenerateAuthURL(c *gin.Context) {
 
 	// Always pass the "hosted" callback URI; the OAuth service may override it depending on
 	// oauth_type and whether the built-in Gemini CLI OAuth client is used.
-	redirectURI := deriveGeminiRedirectURI(c)
+	redirectURI := h.deriveGeminiRedirectURI(c)
 	result, err := h.geminiOAuthService.GenerateAuthURL(c.Request.Context(), req.ProxyID, redirectURI, req.ProjectID, oauthType, req.TierID)
 	if err != nil {
 		msg := err.Error()
@@ -123,24 +135,45 @@ func (h *GeminiOAuthHandler) ExchangeCode(c *gin.Context) {
 	response.Success(c, tokenInfo)
 }
 
-func deriveGeminiRedirectURI(c *gin.Context) string {
-	origin := strings.TrimSpace(c.GetHeader("Origin"))
-	if origin != "" {
-		return strings.TrimRight(origin, "/") + "/auth/callback"
+func (h *GeminiOAuthHandler) deriveGeminiRedirectURI(c *gin.Context) string {
+	var dbFrontendURL, dbAPIBaseURL string
+	if h != nil && h.settingService != nil && c != nil && c.Request != nil {
+		if settings, err := h.settingService.GetAllSettings(c.Request.Context()); err == nil && settings != nil {
+			dbFrontendURL = settings.FrontendURL
+			dbAPIBaseURL = settings.APIBaseURL
+		}
 	}
+	var cfg *config.Config
+	var cfgFrontendURL string
+	if h != nil && h.cfg != nil {
+		cfg = h.cfg
+		cfgFrontendURL = h.cfg.Server.FrontendURL
+	}
+	for _, candidate := range []string{dbFrontendURL, cfgFrontendURL, dbAPIBaseURL} {
+		if origin, ok := ip.ExtractHTTPOrigin(candidate); ok {
+			return origin + "/auth/callback"
+		}
+	}
+	return deriveGeminiRedirectURIFromRequest(c, cfg)
+}
 
+func deriveGeminiRedirectURIFromRequest(c *gin.Context, cfg *config.Config) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	// Never trust raw Origin or X-Forwarded-Host headers when deriving the
+	// OAuth callback base URL. Use validated Host + trusted-proxy-verified proto.
+	host, ok := ip.ValidateRequestHost(c.Request.Host)
+	if !ok {
+		return ""
+	}
 	scheme := "http"
-	if c.Request.TLS != nil {
+	if cfg != nil {
+		if ip.IsRequestHTTPS(c, cfg.Server.TrustedProxies, cfg.Server.TrustedProxiesConfigured) {
+			scheme = "https"
+		}
+	} else if ip.IsContextHTTPS(c) {
 		scheme = "https"
 	}
-	if xfProto := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")); xfProto != "" {
-		scheme = strings.TrimSpace(strings.Split(xfProto, ",")[0])
-	}
-
-	host := strings.TrimSpace(c.Request.Host)
-	if xfHost := strings.TrimSpace(c.GetHeader("X-Forwarded-Host")); xfHost != "" {
-		host = strings.TrimSpace(strings.Split(xfHost, ",")[0])
-	}
-
 	return fmt.Sprintf("%s://%s/auth/callback", scheme, host)
 }

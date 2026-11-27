@@ -358,8 +358,21 @@ onMounted(async () => {
   const resumeToken = readRouteQueryString('resume_token')
   const routeOrderId = Number(readRouteQueryString('order_id')) || 0
   let outTradeNo = readRouteQueryString('out_trade_no')
+  const routeTradeStatus = readRouteQueryString('trade_status')
+  const routeMoney = readRouteQueryString('money')
+  const routeType = readRouteQueryString('type')
   let orderId = 0
   let resumeTokenLookupFailed = false
+
+  // Scrub the signed resume_token from the browser address bar immediately so
+  // it does not linger in browser history or leak via outbound Referer headers.
+  if (resumeToken && typeof router.replace === 'function') {
+    const sanitizedQuery = { ...route.query }
+    delete sanitizedQuery.resume_token
+    void Promise.resolve(router.replace({ query: sanitizedQuery })).catch(() => {
+      // Best-effort URL scrubbing; order resolution continues using the in-memory token.
+    })
+  }
 
   const restored = restoreRecoverySnapshot({
     resumeToken,
@@ -393,7 +406,7 @@ onMounted(async () => {
     orderId = routeOrderId
   }
 
-  const hasLegacyFallbackContext = readRouteQueryString('trade_status').trim() !== ''
+  const hasLegacyFallbackContext = routeTradeStatus.trim() !== ''
   const shouldUsePublicOutTradeNo = outTradeNo !== '' && (hasLegacyFallbackContext || routeOrderId > 0 || orderId > 0)
 
   if (!order.value && orderId && (!resumeToken || routeOrderId > 0)) {
@@ -417,9 +430,9 @@ onMounted(async () => {
   if (!order.value && !orderId && outTradeNo && hasLegacyFallbackContext) {
     returnInfo.value = {
       outTradeNo,
-      money: String(route.query.money || ''),
-      type: String(route.query.type || ''),
-      tradeStatus: String(route.query.trade_status || ''),
+      money: routeMoney,
+      type: routeType,
+      tradeStatus: routeTradeStatus,
     }
   }
 
