@@ -518,6 +518,7 @@ func TestUpstreamFinancialCode400001ParameterVsFinancial(t *testing.T) {
 	t.Run("parameter and validation 400001 errors are not financial", func(t *testing.T) {
 		nonFinancial := []string{
 			`{"error":{"code":"400001","message":"The request parameter temperature is invalid: only 1 is allowed for this model.","param":"","type":"invalid_request_error"}}`,
+			`{"error":{"code":"400001","message":"The request parameter billing_address is required","param":"billing_address","type":"invalid_request_error"}}`,
 			`{"error":{"code":"400001","message":"The request is invalid: message text content must not be empty.","type":"invalid_request_error"}}`,
 			`{"error":{"code":"400001","message":"Invalid parameter max_tokens: must be positive","type":"invalid_request_error"}}`,
 			`{"error":{"code":400001,"message":"Bad request: missing required field messages"}}`,
@@ -539,6 +540,7 @@ func TestUpstreamFinancialCode400001ParameterVsFinancial(t *testing.T) {
 			`{"error":{"code":"400001","message":"已达到使用限制"}}`,
 			`{"error":{"code":"400001","message":"已达到每日使用限制"}}`,
 			`{"error":{"code":"400001","message":"达到当前账号使用限制"}}`,
+			`{"error":{"code":"400001","message":"当前账号使用限制已达到"}}`,
 			`{"error":{"code":"400001","message":"Insufficient balance for this request","type":"invalid_request_error"}}`,
 			`{"error":{"code":"400001","message":"Your credit balance is too low","type":"invalid_request_error"}}`,
 			`{"error":{"ref_code":400901,"message":"blocked"}}`,

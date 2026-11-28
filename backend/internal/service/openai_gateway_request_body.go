@@ -622,6 +622,27 @@ func deepSeekDuplicateCallIDRewrite(account *Account, body []byte) bool {
 	return deepSeekDuplicateCallIDRewriteForModel(account, model)
 }
 
+func deepSeekDuplicateCallIDRewriteForResolvedModel(account *Account, resolvedModel string) bool {
+	resolvedModel = strings.TrimSpace(resolvedModel)
+	if account == nil {
+		return deepSeekCallIDScope("", resolvedModel)
+	}
+	if strings.EqualFold(strings.TrimSpace(account.Platform), PlatformDeepseek) {
+		return true
+	}
+	if deepSeekCallIDScope("", resolvedModel) {
+		return true
+	}
+	if !isNeutralDeepSeekAliasPlatform(account.Platform) {
+		return false
+	}
+	if isExplicitNonDeepSeekModel(resolvedModel) {
+		return false
+	}
+	base := strings.ToLower(account.GetOpenAIBaseURL() + " " + account.GetCNProtocolBaseURL(APIProtocolResponses) + " " + account.GetCNProtocolBaseURL(APIProtocolChatCompletions))
+	return strings.Contains(base, "deepseek")
+}
+
 func deepSeekDuplicateCallIDRewriteForModel(account *Account, model string) bool {
 	model = strings.TrimSpace(model)
 	if account == nil {
@@ -633,31 +654,26 @@ func deepSeekDuplicateCallIDRewriteForModel(account *Account, model string) bool
 	mappedModel := strings.TrimSpace(account.GetMappedModel(model))
 	if mappedModel != "" && !strings.EqualFold(mappedModel, model) {
 		// An explicit account model mapping is authoritative over the client alias.
-		if deepSeekCallIDScope("", mappedModel) {
-			return true
-		}
-		if isExplicitNonDeepSeekModel(mappedModel) {
-			return false
-		}
+		return deepSeekDuplicateCallIDRewriteForResolvedModel(account, mappedModel)
 	}
-	if deepSeekCallIDScope("", model) {
-		return true
-	}
-	if !isNeutralDeepSeekAliasPlatform(account.Platform) {
-		return false
-	}
-	if isExplicitNonDeepSeekModel(model) || isExplicitNonDeepSeekModel(mappedModel) {
-		return false
-	}
-	base := strings.ToLower(account.GetOpenAIBaseURL() + " " + account.GetCNProtocolBaseURL(APIProtocolResponses) + " " + account.GetCNProtocolBaseURL(APIProtocolChatCompletions))
-	return strings.Contains(base, "deepseek")
+	return deepSeekDuplicateCallIDRewriteForResolvedModel(account, model)
 }
 
 // RewriteDeepSeekCallIDsForAccount deduplicates repeated tool call IDs only
-// after the target account is selected, so neutral aliases mapped to
-// non-DeepSeek models (e.g. kimi-k3.1-pro) or routed to native DeepSeek
-// accounts never lose multi-turn tool history before account selection.
+// after the target account is selected, applying the account's model_mapping
+// once when evaluating an inbound client alias.
 func RewriteDeepSeekCallIDsForAccount(account *Account, body []byte, modelOverride ...string) []byte {
+	return rewriteDeepSeekCallIDsForAccount(account, body, false, modelOverride...)
+}
+
+// RewriteDeepSeekCallIDsForForwardedAccount deduplicates repeated tool call IDs
+// on an outbound body whose model has already been resolved/mapped for account,
+// avoiding a second account.GetMappedModel hop on chained model mappings.
+func RewriteDeepSeekCallIDsForForwardedAccount(account *Account, body []byte, forwardedModel ...string) []byte {
+	return rewriteDeepSeekCallIDsForAccount(account, body, true, forwardedModel...)
+}
+
+func rewriteDeepSeekCallIDsForAccount(account *Account, body []byte, alreadyMapped bool, modelOverride ...string) []byte {
 	if account == nil || len(body) == 0 {
 		return body
 	}
@@ -672,7 +688,13 @@ func RewriteDeepSeekCallIDsForAccount(account *Account, body []byte, modelOverri
 	if model == "" {
 		model = strings.TrimSpace(gjson.Get(jsonView(body), "model").String())
 	}
-	if !deepSeekDuplicateCallIDRewriteForModel(account, model) {
+	shouldRewrite := false
+	if alreadyMapped {
+		shouldRewrite = deepSeekDuplicateCallIDRewriteForResolvedModel(account, model)
+	} else {
+		shouldRewrite = deepSeekDuplicateCallIDRewriteForModel(account, model)
+	}
+	if !shouldRewrite {
 		return body
 	}
 	if !responsesBodyMayRewrite(body, responsesRewriteScope{dedupe: true}) {

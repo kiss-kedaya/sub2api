@@ -83,7 +83,7 @@ func upstreamFinancialCode(code string) bool {
 }
 
 var upstreamFinancialMessagePattern = regexp.MustCompile(
-	`(?i)(insufficient (?:account |user |token |wallet )?(?:balance|quota|funds|credits)|(?:balance|credit balance|credits?|wallet|subscription quota)[^\n.!?]{0,48}(?:insufficient|too low|exhausted|depleted|not enough)|(?:run |running )?out of credits|(?:exceeded|reached|exhausted)[^\n.!?]{0,32}(?:current quota|usage limit|spending limit|billing limit|budget)|(?:daily|weekly|monthly|account|api|token)? ?(?:usage|spending|billing|credit|budget) limit[^\n.!?]{0,40}(?:reach|exceed|exhaust)|(?:billing|payment|pre.?consum|pre.?authoriz|withholding)[^\n.!?]{0,48}(?:fail|disabled|not enabled|inactive|not active|frozen|suspended|unavailable|required|declined)|check your plan and billing|(?:余额|餘額|额度|額度|金额|费用|积分|点数|用量|消费|消費)[^\n。！？]{0,20}(?:不足|耗尽|耗盡|用尽|用完|超限|超出|已达|已達|限额|限額|扣除失败)|(?:已达到|已達到|达到|達到)[^\n。！？]{0,12}使用限制|(?:预扣|預扣|扣费|扣費|计费|計費|账单|帳單)[^\n。！？]{0,24}(?:失败|失敗|冻结|凍結|异常|停用|未启用|不可用)|(?:剩余|剩餘|可用)(?:余额|餘額|额度|額度)|需要预扣费额度|credit balance is too low|included free usage|(?:balance|remaining quota|remaining credits)\s*[:=]\s*[$¥￥€£]?-?\d)`,
+	`(?i)(insufficient (?:account |user |token |wallet )?(?:balance|quota|funds|credits)|(?:balance|credit balance|credits?|wallet|subscription quota)[^\n.!?]{0,48}(?:insufficient|too low|exhausted|depleted|not enough)|(?:run |running )?out of credits|(?:exceeded|reached|exhausted)[^\n.!?]{0,32}(?:current quota|usage limit|spending limit|billing limit|budget)|(?:daily|weekly|monthly|account|api|token)? ?(?:usage|spending|billing|credit|budget) limit[^\n.!?]{0,40}(?:reach|exceed|exhaust)|(?:\b(?:billing|payment)\b|pre.?consum|pre.?authoriz|withholding)[^\n.!?]{0,48}(?:fail|disabled|not enabled|inactive|not active|frozen|suspended|unavailable|required|declined)|check your plan and billing|(?:余额|餘額|额度|額度|金额|费用|积分|点数|用量|消费|消費)[^\n。！？]{0,20}(?:不足|耗尽|耗盡|用尽|用完|超限|超出|已达|已達|限额|限額|扣除失败)|(?:已达到|已達到|达到|達到)[^\n。！？]{0,12}使用限制|使用限制[^\n。！？]{0,12}(?:已达到|已達到|达到|達到|已超|超出|超限)|(?:预扣|預扣|扣费|扣費|计费|計費|账单|帳單)[^\n。！？]{0,24}(?:失败|失敗|冻结|凍結|异常|停用|未启用|不可用)|(?:剩余|剩餘|可用)(?:余额|餘額|额度|額度)|需要预扣费额度|credit balance is too low|included free usage|(?:balance|remaining quota|remaining credits)\s*[:=]\s*[$¥￥€£]?-?\d)`,
 )
 
 var upstreamFinancialAmountPattern = regexp.MustCompile(
@@ -99,7 +99,7 @@ func upstreamFinancialMessage(message string) bool {
 
 var upstreamFinancialBalancePattern = regexp.MustCompile(`(?i)(exhausted[^\n.!?]{0,32}(?:credits|balance|funds)|(?:余额|餘額|额度|額度|金额|金額|费用|費用)\s*[:：=]\s*[$¥￥€£]?-?\d|(?:balance|cost|charge|credits)\s+(?:is|of)\s+[$¥￥€£]?\d)`)
 
-var upstreamParameterErrorPattern = regexp.MustCompile(`(?i)^\s*(?:(?:invalid|unknown|unsupported|unrecognized|missing)\s+(?:value\s+for\s+)?(?:parameter|field|model|argument)\b|(?:参数|字段|模型)(?:错误|无效|不支持|不存在))`)
+var upstreamParameterErrorPattern = regexp.MustCompile(`(?i)^\s*(?:(?:the\s+)?request\s+parameter\b|(?:invalid|unknown|unsupported|unrecognized|missing)\s+(?:value\s+for\s+)?(?:parameter|field|model|argument)\b|(?:参数|字段|模型)(?:错误|无效|不支持|不存在))`)
 
 // GuardUpstreamFinancialError shields only writes made by this upstream error
 // handler. It does not write on entry, change classification, or consume retries.

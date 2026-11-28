@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -300,5 +301,24 @@ func TestRewriteDeepSeekCallIDsForAccount_PreservesMappedAliasesAndNativeDeepSee
 		}
 		out := RewriteDeepSeekCallIDsForAccount(acc, kvvChatPayload, "kimi-k3.1-pro")
 		require.Equal(t, string(kvvChatPayload), string(out))
+	})
+
+	t.Run("forwarded outbound body does not apply chained account model_mapping a second time", func(t *testing.T) {
+		acc := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"base_url": "https://platform.deepseek.example/v1",
+				"model_mapping": map[string]any{
+					"custom-k3":     "kimi-k3.1-pro",
+					"kimi-k3.1-pro": "deepseek-chat",
+				},
+			},
+		}
+		forwardedBody := bytes.Replace(kvvChatPayload, []byte(`"custom-k3"`), []byte(`"kimi-k3.1-pro"`), 1)
+		out := RewriteDeepSeekCallIDsForForwardedAccount(acc, forwardedBody)
+		require.Equal(t, string(forwardedBody), string(out))
+		require.Contains(t, string(out), "legacy_lookup_with_a_much_longer_name")
+		require.Contains(t, string(out), "f_new")
 	})
 }

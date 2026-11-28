@@ -1957,7 +1957,17 @@ func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus 
 	}
 
 	// 复用与 status>=400 分支相同的设置过滤（context canceled / 无可用账号等）。
-	isUpstreamError := !streamErr.RequestScoped && (hasOpsUpstreamErrorContext(c) || hasOpsAccountAuthFailure(c))
+	var isUpstreamError bool
+	if !streamErr.RequestScoped {
+		if streamErr.Turn > 0 {
+			isUpstreamError = streamErr.UpstreamStatus > 0 ||
+				strings.TrimSpace(streamErr.UpstreamMessage) != "" ||
+				strings.TrimSpace(streamErr.UpstreamDetail) != "" ||
+				len(streamErr.UpstreamErrors) > 0
+		} else {
+			isUpstreamError = hasOpsUpstreamErrorContext(c) || hasOpsAccountAuthFailure(c)
+		}
+	}
 	if shouldSkipOpsErrorLog(c.Request.Context(), ops, streamErr.Message, streamErr.Message, c.Request.URL.Path, isUpstreamError) {
 		return
 	}

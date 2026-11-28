@@ -3659,13 +3659,6 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if model == "" {
 					model = reqModel
 				}
-				if turn > 1 {
-					effectiveModel := model
-					if channelMappingWS.Mapped && strings.EqualFold(model, reqModel) && strings.TrimSpace(channelMappingWS.MappedModel) != "" {
-						effectiveModel = strings.TrimSpace(channelMappingWS.MappedModel)
-					}
-					payload = service.RewriteDeepSeekCallIDsForAccount(account, payload, effectiveModel)
-				}
 				if turn == 1 {
 					return payload, nil
 				}
@@ -3694,6 +3687,15 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					writeSecurityAuditWSError(ctx, wsConn, decision)
 					return nil, service.NewOpenAIWSClientCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
 				}
+				effectiveModel := model
+				if snap := turnChannelMapping.Load(); snap != nil && snap.turn == turn && strings.TrimSpace(snap.mapping.MappedModel) != "" {
+					effectiveModel = strings.TrimSpace(snap.mapping.MappedModel)
+				} else if strings.EqualFold(model, reqModel) && channelMappingWS.Mapped && strings.TrimSpace(channelMappingWS.MappedModel) != "" {
+					effectiveModel = strings.TrimSpace(channelMappingWS.MappedModel)
+				} else if mapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, model); mapping.Mapped && strings.TrimSpace(mapping.MappedModel) != "" {
+					effectiveModel = strings.TrimSpace(mapping.MappedModel)
+				}
+				payload = service.RewriteDeepSeekCallIDsForAccount(account, payload, effectiveModel)
 				return payload, nil
 			},
 			BeforeUpstreamFailure: func(turn int, payload []byte, forwardErr error, _ bool) error {
@@ -4224,7 +4226,16 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					attemptInitialTurn = replayTurn
 					hooks.InitialTurnNumber = replayTurn
 					turnBilling = newOpenAIWSTurnBillingGuardWithCompleted(openAIWSTurnSettlementTimeout, replayTurn-1)
-					wsFirstMessage = wsAttemptMessage
+					retryModel := strings.TrimSpace(gjson.GetBytes(wsAttemptMessage, "model").String())
+					if retryModel == "" {
+						retryModel = reqModel
+					}
+					if strings.EqualFold(retryModel, reqModel) && channelMappingWS.Mapped && strings.TrimSpace(channelMappingWS.MappedModel) != "" {
+						retryModel = strings.TrimSpace(channelMappingWS.MappedModel)
+					} else if mapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, retryModel); mapping.Mapped && strings.TrimSpace(mapping.MappedModel) != "" {
+						retryModel = strings.TrimSpace(mapping.MappedModel)
+					}
+					wsFirstMessage = service.RewriteDeepSeekCallIDsForAccount(account, wsAttemptMessage, retryModel)
 					continue
 				}
 				if handleWSFailover(account, failoverErr) {

@@ -2560,4 +2560,20 @@ func TestShouldSkipOpsErrorLog_DoesNotSwallowUpstreamInvalidAPIKey(t *testing.T)
 
 	require.Equal(t, http.StatusBadGateway, w.Code)
 	require.Equal(t, int64(1), OpsErrorLogEnqueuedTotal(), "upstream invalid API key failure must still be recorded in ops_error_logs")
+
+	// Saved WebSocket turn error must use its own snapshot provenance even if a
+	// later turn cleared the gin.Context upstream state via BeginOpsStreamTurn.
+	wsCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	wsCtx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	service.BeginOpsStreamTurn(wsCtx, 2)
+	logOpsStreamErrorValue(wsCtx, ops, http.StatusOK, service.OpsStreamError{
+		ErrType:         "authentication_error",
+		Message:         "Invalid API key",
+		IntendedStatus:  http.StatusBadGateway,
+		CountTowardsSLA: true,
+		Turn:            1,
+		UpstreamStatus:  http.StatusUnauthorized,
+		UpstreamMessage: "Invalid API key",
+	})
+	require.Equal(t, int64(2), OpsErrorLogEnqueuedTotal(), "saved WS turn upstream invalid API key failure must still be recorded")
 }
