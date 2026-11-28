@@ -58,12 +58,12 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 	}
 
 	// ponytail: transaction-local planner hint, not an index hint. When ANALYZE
-	// sees no pending rows, both LATERAL probes can otherwise scan the entire
-	// pending index per user. Discourage their extra Sort so (user_id, id) wins;
-	// unavoidable outer sorts still run. Keep JIT off: their disabled-sort cost
-	// can trigger expensive compilation on PostgreSQL 15-17. This still probes
-	// every head; track pending heads if that grows, or retire the pending index
-	// after replacing the Stats last-error lookup that uses its ordering.
+	// sees no pending rows, the loose index scan and LATERAL probes can
+	// otherwise fall back to scanning the entire pending index. Discourage
+	// their extra Sort so idx_live_balance_adjustment_outbox_user_order
+	// (user_id, id) WHERE delivered_at IS NULL wins; unavoidable outer sorts
+	// still run. Keep JIT off: their disabled-sort cost can trigger expensive
+	// compilation on PostgreSQL 15-17.
 	if _, err := tx.ExecContext(ctx, liveBalanceOutboxClaimPlannerSQL); err != nil {
 		rollback()
 		return nil, fmt.Errorf("configure live balance adjustment claim planner: %w", err)
@@ -125,17 +125,41 @@ func (r *liveBalanceAdjustmentOutboxRepository) Claim(
 }
 
 const liveBalanceOutboxClaimSQL = `
-	WITH active_users AS (
-		SELECT h.user_id, first_event.id AS first_id, first_event.available_at, first_event.predecessor_id
-		FROM live_balance_adjustment_heads AS h
+	WITH RECURSIVE pending_users (user_id) AS (
+		-- Loose index scan over idx_live_balance_adjustment_outbox_user_order
+		-- (user_id, id) WHERE delivered_at IS NULL. When no rows are pending
+		-- this ends after one empty index lookup instead of probing every row
+		-- in live_balance_adjustment_heads; a deep per-user backlog is skipped
+		-- in a single B-tree seek via user_id > p.user_id.
+		(
+			SELECT o.user_id
+			FROM live_balance_adjustment_outbox AS o
+			WHERE o.delivered_at IS NULL AND o.user_id > 0
+			ORDER BY o.user_id, o.id
+			LIMIT 1
+		)
+		UNION ALL
+		SELECT (
+			SELECT o.user_id
+			FROM live_balance_adjustment_outbox AS o
+			WHERE o.delivered_at IS NULL AND o.user_id > p.user_id
+			ORDER BY o.user_id, o.id
+			LIMIT 1
+		)
+		FROM pending_users AS p
+		WHERE p.user_id IS NOT NULL
+	), active_users AS (
+		SELECT p.user_id, first_event.id AS first_id, first_event.available_at, first_event.predecessor_id
+		FROM pending_users AS p
 		CROSS JOIN LATERAL (
 			SELECT o.id, o.predecessor_id, o.available_at, o.claimed_at
 			FROM live_balance_adjustment_outbox AS o
-			WHERE o.user_id = h.user_id AND o.delivered_at IS NULL
+			WHERE o.user_id = p.user_id AND o.delivered_at IS NULL
 			ORDER BY o.id
 			LIMIT 1
 		) AS first_event
-		WHERE first_event.available_at <= NOW()
+		WHERE p.user_id IS NOT NULL
+			AND first_event.available_at <= NOW()
 			AND (first_event.claimed_at IS NULL OR first_event.claimed_at < NOW() - ($3 * INTERVAL '1 second'))
 			-- Filter delivery after the primary-key lookup; a stale null_frac
 			-- must not turn this probe into another full pending-index scan.

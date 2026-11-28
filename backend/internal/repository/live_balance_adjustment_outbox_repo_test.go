@@ -25,7 +25,7 @@ func TestLiveBalanceAdjustmentOutboxClaimUsesLeasedOrderedSkipLockedBatch(t *tes
 		WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(true))
 	mock.ExpectExec(`SET LOCAL enable_sort = off; SET LOCAL jit = off`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(`(?s)WITH active_users AS .*live_balance_adjustment_heads AS h.*first_event\.predecessor_id = 0 OR COALESCE.*SELECT predecessor\.delivered_at IS NOT NULL.*WHERE predecessor\.id = first_event\.predecessor_id.*user_pages AS .*row_number\(\) OVER.*lag\(page\.id\).*page\.predecessor_id = page\.previous_id.*LIMIT \$2.*FOR UPDATE OF o.*UPDATE live_balance_adjustment_outbox`).
+	mock.ExpectQuery(`(?s)WITH RECURSIVE pending_users \(user_id\) AS .*o\.delivered_at IS NULL AND o\.user_id > 0.*o\.delivered_at IS NULL AND o\.user_id > p\.user_id.*active_users AS .*FROM pending_users AS p.*first_event\.predecessor_id = 0 OR COALESCE.*SELECT predecessor\.delivered_at IS NOT NULL.*WHERE predecessor\.id = first_event\.predecessor_id.*user_pages AS .*row_number\(\) OVER.*lag\(page\.id\).*page\.predecessor_id = page\.previous_id.*LIMIT \$2.*FOR UPDATE OF o SKIP LOCKED.*UPDATE live_balance_adjustment_outbox`).
 		WithArgs("worker-1", 1024, int64(30), service.LiveBalanceOutboxPerUserMaxBatchSize).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "predecessor_id", "delta", "attempts", "created_at"}).
 			AddRow(17, 42, 11, "-1.25000000", 2, createdAt))
@@ -166,4 +166,71 @@ func TestLiveBalanceAdjustmentOutboxMigrationDefinesTransactionalSkip(t *testing
 	require.Contains(t, sqlText, "live_balance_adjustment_heads")
 	require.Contains(t, sqlText, "predecessor_id")
 	require.Contains(t, sqlText, "FOR EACH ROW EXECUTE FUNCTION enqueue_live_balance_adjustment()")
+}
+
+func TestLiveBalanceAdjustmentOutboxClaimSQLAvoidsFullHeadsScanAndPreservesOrdering(t *testing.T) {
+	// Must drive from the partial pending index (delivered_at IS NULL), never from
+	// live_balance_adjustment_heads (which grows forever and causes thousands of
+	// empty LATERAL probes per poll).
+	require.NotContains(t, liveBalanceOutboxClaimSQL, "FROM live_balance_adjustment_heads")
+	require.Contains(t, liveBalanceOutboxClaimSQL, "WITH RECURSIVE pending_users (user_id) AS")
+	require.Contains(t, liveBalanceOutboxClaimSQL, "WHERE o.delivered_at IS NULL AND o.user_id > 0")
+	require.Contains(t, liveBalanceOutboxClaimSQL, "WHERE o.delivered_at IS NULL AND o.user_id > p.user_id")
+	require.Contains(t, liveBalanceOutboxClaimSQL, "ORDER BY o.user_id, o.id")
+	require.Contains(t, liveBalanceOutboxClaimSQL, "WHERE p.user_id IS NOT NULL")
+	// Must keep single-user contiguous chain ordering and SKIP LOCKED semantics.
+	require.Contains(t, liveBalanceOutboxClaimSQL, "page.predecessor_id = page.previous_id")
+	require.Contains(t, liveBalanceOutboxClaimSQL, "FOR UPDATE OF o SKIP LOCKED")
+}
+
+func TestLiveBalanceAdjustmentOutboxClaimClampsLimitAndLeaseAndSortsByID(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	createdAt := time.Now().UTC()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT pg_try_advisory_xact_lock\(\$1::bigint\)`).
+		WithArgs(liveBalanceOutboxClaimLockKey).
+		WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(true))
+	mock.ExpectExec(`SET LOCAL enable_sort = off; SET LOCAL jit = off`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	// Oversized limit clamps to LiveBalanceOutboxMaxBatchSize; sub-second lease defaults to 30s.
+	mock.ExpectQuery(`(?s)WITH RECURSIVE pending_users`).
+		WithArgs("worker-2", service.LiveBalanceOutboxMaxBatchSize, int64(30), service.LiveBalanceOutboxPerUserMaxBatchSize).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "predecessor_id", "delta", "attempts", "created_at"}).
+			AddRow(25, 9, 20, "0.50000000", 0, createdAt).
+			AddRow(12, 3, 0, "-2.00000000", 1, createdAt))
+	mock.ExpectCommit()
+
+	events, err := (&liveBalanceAdjustmentOutboxRepository{db: db}).Claim(
+		context.Background(), "worker-2", service.LiveBalanceOutboxMaxBatchSize+50, 500*time.Millisecond,
+	)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	require.Equal(t, int64(12), events[0].ID)
+	require.Equal(t, int64(25), events[1].ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestLiveBalanceAdjustmentOutboxClaimEmptyReturnsEmptySlice(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT pg_try_advisory_xact_lock\(\$1::bigint\)`).
+		WithArgs(liveBalanceOutboxClaimLockKey).
+		WillReturnRows(sqlmock.NewRows([]string{"acquired"}).AddRow(true))
+	mock.ExpectExec(`SET LOCAL enable_sort = off; SET LOCAL jit = off`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`(?s)WITH RECURSIVE pending_users`).
+		WithArgs("worker-empty", 16, int64(45), service.LiveBalanceOutboxPerUserMaxBatchSize).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "predecessor_id", "delta", "attempts", "created_at"}))
+	mock.ExpectCommit()
+
+	events, err := (&liveBalanceAdjustmentOutboxRepository{db: db}).Claim(context.Background(), "worker-empty", 16, 45*time.Second)
+	require.NoError(t, err)
+	require.Empty(t, events)
+	require.NoError(t, mock.ExpectationsWereMet())
 }

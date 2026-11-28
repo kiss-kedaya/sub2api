@@ -177,6 +177,47 @@ func TestLiveBalanceAdjustmentOutboxClaimPlanSurvivesEmptyPendingStats(t *testin
 			"DROP TABLE pg_temp.live_balance_adjustment_outbox, pg_temp.live_balance_adjustment_heads")
 		require.NoError(t, err)
 	}()
+
+	// Before any pending rows exist, 4,000 historical heads must not trigger
+	// per-head index probes: the loose index scan terminates on the first lookup.
+	t.Run("empty_outbox_skips_heads", func(t *testing.T) {
+		claimCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		tx, err := conn.BeginTx(claimCtx, nil)
+		require.NoError(t, err)
+		defer func() { _ = tx.Rollback() }()
+		_, err = tx.ExecContext(claimCtx, liveBalanceOutboxClaimPlannerSQL)
+		require.NoError(t, err)
+		var encoded []byte
+		require.NoError(t, tx.QueryRowContext(claimCtx,
+			"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+liveBalanceOutboxClaimSQL,
+			"plan-empty", service.LiveBalanceOutboxMaxBatchSize, int64(30), service.LiveBalanceOutboxPerUserMaxBatchSize).
+			Scan(&encoded))
+		var plans []map[string]any
+		require.NoError(t, json.Unmarshal(encoded, &plans))
+		require.Len(t, plans, 1)
+		var totalLoops float64
+		var visit func(map[string]any)
+		visit = func(node map[string]any) {
+			require.NotEqual(t, "live_balance_adjustment_heads", node["Relation Name"], string(encoded))
+			require.NotEqual(t, "idx_live_balance_adjustment_outbox_pending", node["Index Name"], string(encoded))
+			if node["Index Name"] == "idx_live_balance_adjustment_outbox_user_order" {
+				if loops, ok := node["Actual Loops"].(float64); ok {
+					totalLoops += loops
+				}
+			}
+			if children, ok := node["Plans"].([]any); ok {
+				for _, child := range children {
+					visit(child.(map[string]any))
+				}
+			}
+		}
+		plan := plans[0]["Plan"].(map[string]any)
+		visit(plan)
+		require.Equal(t, float64(0), plan["Actual Rows"])
+		require.LessOrEqual(t, totalLoops, float64(1), "empty outbox must terminate after a single index lookup")
+	})
+
 	_, err = conn.ExecContext(ctx, `
 		INSERT INTO pg_temp.live_balance_adjustment_outbox
 			(id, user_id, predecessor_id, delta, available_at)
@@ -235,6 +276,7 @@ func TestLiveBalanceAdjustmentOutboxClaimPlanSurvivesEmptyPendingStats(t *testin
 			userProbes, predecessorProbes := 0, 0
 			var visit func(map[string]any)
 			visit = func(node map[string]any) {
+				require.NotEqual(t, "live_balance_adjustment_heads", node["Relation Name"], string(encoded))
 				require.NotEqual(t, "idx_live_balance_adjustment_outbox_pending", node["Index Name"], string(encoded))
 				if node["Index Name"] == "idx_live_balance_adjustment_outbox_user_order" {
 					userProbes++
@@ -252,7 +294,7 @@ func TestLiveBalanceAdjustmentOutboxClaimPlanSurvivesEmptyPendingStats(t *testin
 			}
 			plan := plans[0]["Plan"].(map[string]any)
 			visit(plan)
-			require.Equal(t, 2, userProbes, "both LATERAL lookups must be keyed by user")
+			require.Equal(t, 4, userProbes, "loose index scan and both LATERAL lookups must be keyed by user")
 			require.Equal(t, 1, predecessorProbes)
 			require.Equal(t, float64(service.LiveBalanceOutboxMaxBatchSize), plan["Actual Rows"])
 			rows, err := tx.QueryContext(claimCtx, `

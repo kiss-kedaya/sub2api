@@ -3,41 +3,50 @@
 package repository
 
 import (
+	"context"
+	"os"
 	"strings"
 	"testing"
+	"time"
+
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/require"
 )
 
-// live_balance_adjustment_outbox 只保留 1 天已投递行：已投递行是纯历史，
-// 消费者只读 delivered_at IS NULL，所以删除它们不可能丢掉任何余额调整。
-// 写死断言是刻意的：这张表曾涨到 9700 万行 / 20 GB。
-func TestBalanceOutboxDeliveredRetention(t *testing.T) {
-	if liveBalanceOutboxDeliveredRetentionDays != 1 {
-		t.Fatalf("delivered outbox retention = %d days, want 1", liveBalanceOutboxDeliveredRetentionDays)
-	}
-	if liveBalanceOutboxPruneBatch <= 0 || liveBalanceOutboxPrunePasses <= 0 {
-		t.Fatal("outbox prune batch/passes must be positive")
-	}
+// live_balance_adjustment_outbox 的已投递清理归 LiveBalanceAdjustmentOutboxWorker
+// 独占（每 5 分钟通过 DeleteDelivered 清理 1 天前已投递行），usage_connections.go
+// 不得重复扫描或删除同一张表，避免多路清理撞锁。
+func TestUsageConnectionsDoesNotDuplicateBalanceOutboxPruning(t *testing.T) {
+	raw, err := os.ReadFile("usage_connections.go")
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "DELETE FROM live_balance_adjustment_outbox")
 }
 
 // 保留期清理语句必须只删「已投递且超过保留窗口」的行，绝不碰未投递事件。
 func TestBalanceOutboxPruneSQLNeverTouchesUndelivered(t *testing.T) {
-	var b strings.Builder
-	b.WriteString(`DELETE FROM live_balance_adjustment_outbox WHERE ctid IN
-    (SELECT ctid FROM live_balance_adjustment_outbox WHERE delivered_at IS NOT NULL
-       AND delivered_at < NOW()-INTERVAL '`)
-	b.WriteString("1")
-	b.WriteString(` days' LIMIT `)
-	b.WriteString("200000")
-	b.WriteString(")")
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherFunc(func(expected, actual string) error {
+		if !strings.Contains(actual, "delivered_at IS NOT NULL") {
+			t.Fatalf("DeleteDelivered must require delivered_at IS NOT NULL: %s", actual)
+		}
+		if !strings.Contains(actual, "delivered_at < $1") {
+			t.Fatalf("DeleteDelivered must bound delivered_at by retention cutoff: %s", actual)
+		}
+		if strings.Contains(actual, "delivered_at IS NULL") {
+			t.Fatalf("DeleteDelivered must never touch undelivered rows: %s", actual)
+		}
+		return nil
+	})))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
 
-	sql := b.String()
-	if !strings.Contains(sql, "delivered_at IS NOT NULL") {
-		t.Fatal("prune must require delivered_at IS NOT NULL")
-	}
-	if !strings.Contains(sql, "delivered_at < NOW()-INTERVAL") {
-		t.Fatal("prune must bound delivered_at by the retention window")
-	}
-	if strings.Contains(sql, "delivered_at IS NULL") {
-		t.Fatal("prune must never select undelivered rows")
-	}
+	before := time.Now().UTC().Add(-24 * time.Hour)
+	mock.ExpectExec("DELETE FROM live_balance_adjustment_outbox").
+		WithArgs(before, 10000).
+		WillReturnResult(sqlmock.NewResult(0, 5))
+
+	repo := &liveBalanceAdjustmentOutboxRepository{db: db}
+	deleted, err := repo.DeleteDelivered(context.Background(), before, 0)
+	require.NoError(t, err)
+	require.EqualValues(t, 5, deleted)
+	require.NoError(t, mock.ExpectationsWereMet())
 }

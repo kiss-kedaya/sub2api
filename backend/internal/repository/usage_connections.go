@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,14 +82,17 @@ func (r *usageLogRepository) startConnectionWriter() {
 		r.connectionQueue = make(chan service.ConnectionTrace, connectionTraceQueueCap)
 		r.connectionDone = make(chan struct{})
 		r.connectionExited = make(chan struct{})
-		go r.runConnectionWriter()
+		retentionDone := make(chan struct{})
+		go func() {
+			defer close(retentionDone)
+			r.runConnectionRetention()
+		}()
+		go r.runConnectionWriter(retentionDone)
 	})
 }
 
-func (r *usageLogRepository) runConnectionWriter() {
+func (r *usageLogRepository) runConnectionWriter(retentionDone <-chan struct{}) {
 	defer close(r.connectionExited)
-	ticker := time.NewTicker(time.Hour)
-	defer ticker.Stop()
 	batch := make([]service.ConnectionTrace, 0, connectionTraceBatchMax)
 	for {
 		// A stop request wins over queued work, so shutdown is bounded by the
@@ -96,6 +100,7 @@ func (r *usageLogRepository) runConnectionWriter() {
 		select {
 		case <-r.connectionDone:
 			r.drainConnectionQueue(batch[:0])
+			<-retentionDone
 			return
 		default:
 		}
@@ -106,61 +111,118 @@ func (r *usageLogRepository) runConnectionWriter() {
 			batch = r.collectConnectionBatch(append(batch[:0], first))
 			r.flushConnectionBatch(context.Background(), batch)
 			clear(batch) // do not keep written traces reachable until the next batch
-		case <-ticker.C:
-			// The run interval is one hour, so a small per-run batch can never
-			// outpace ingestion: the table writes millions of rows a day while
-			// this deleted ten thousand an hour, which is why a 30-day policy
-			// still left 157GB on disk. Hold a 14-day window and prune several
-			// batches per run instead of one.
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			for pass := 0; pass < connectionTracePrunePasses; pass++ {
-				res, err := r.db.ExecContext(ctx, `DELETE FROM request_connection_traces WHERE trace_id IN
-    (SELECT trace_id FROM request_connection_traces WHERE started_at < NOW()-INTERVAL '7 days' LIMIT `+strconv.Itoa(connectionTracePruneBatch)+`)`)
-				if err != nil {
-					logger.LegacyPrintf("connection_diagnostics", "retention failed")
-					break
-				}
-				if n, err := res.RowsAffected(); err == nil && n < int64(connectionTracePruneBatch) {
-					break
-				}
-			}
-			cancel()
-
-			// user_traffic_events had no retention at all: it reached 67 GB and
-			// 22 days of history. Same window and budget as the traces.
-			trafficCtx, trafficCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			for pass := 0; pass < userTrafficEventPrunePasses; pass++ {
-				res, err := r.db.ExecContext(trafficCtx, `DELETE FROM user_traffic_events WHERE ctid IN
-    (SELECT ctid FROM user_traffic_events WHERE started_at < NOW()-INTERVAL '7 days' LIMIT `+strconv.Itoa(userTrafficEventPruneBatch)+`)`)
-				if err != nil {
-					logger.LegacyPrintf("connection_diagnostics", "traffic event retention failed")
-					break
-				}
-				if n, err := res.RowsAffected(); err == nil && n < int64(userTrafficEventPruneBatch) {
-					break
-				}
-			}
-			trafficCancel()
-
-			// Delivered outbox rows are history only: the consumer selects
-			// undelivered rows exclusively, so pruning what is already applied
-			// can never lose a balance adjustment.
-			outboxCtx, outboxCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			for pass := 0; pass < liveBalanceOutboxPrunePasses; pass++ {
-				res, err := r.db.ExecContext(outboxCtx, `DELETE FROM live_balance_adjustment_outbox WHERE ctid IN
-    (SELECT ctid FROM live_balance_adjustment_outbox WHERE delivered_at IS NOT NULL
-       AND delivered_at < NOW()-INTERVAL '`+strconv.Itoa(liveBalanceOutboxDeliveredRetentionDays)+` days' LIMIT `+strconv.Itoa(liveBalanceOutboxPruneBatch)+`)`)
-				if err != nil {
-					logger.LegacyPrintf("connection_diagnostics", "balance outbox retention failed")
-					break
-				}
-				if n, err := res.RowsAffected(); err == nil && n < int64(liveBalanceOutboxPruneBatch) {
-					break
-				}
-			}
-			outboxCancel()
 		}
 	}
+}
+
+// runConnectionRetention runs hourly diagnostic retention on its own goroutine
+// so slow deletes can never stall trace ingestion or overflow connectionQueue.
+func (r *usageLogRepository) runConnectionRetention() {
+	if r.db == nil {
+		return
+	}
+	ticker := time.NewTicker(connectionRetentionInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.connectionDone:
+			return
+		case <-ticker.C:
+			r.runDiagnosticRetentionWithStop()
+		}
+	}
+}
+
+func (r *usageLogRepository) runDiagnosticRetentionWithStop() {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case <-r.connectionDone:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	r.runDiagnosticRetentionCycle(ctx)
+}
+
+func (r *usageLogRepository) runDiagnosticRetentionCycle(ctx context.Context) {
+	if r.db == nil || ctx.Err() != nil {
+		return
+	}
+	lockCtx, lockCancel := context.WithTimeout(ctx, connectionRetentionLockTimeout)
+	lockConn, err := r.db.Conn(lockCtx)
+	if err != nil {
+		lockCancel()
+		if ctx.Err() == nil {
+			logger.LegacyPrintf("connection_diagnostics", "retention lock connection failed: %v", err)
+		}
+		return
+	}
+	defer func() { _ = lockConn.Close() }()
+
+	var acquired bool
+	err = lockConn.QueryRowContext(lockCtx, `SELECT pg_try_advisory_lock($1)`, diagnosticRetentionLockKey).Scan(&acquired)
+	lockCancel()
+	if err != nil {
+		if ctx.Err() == nil {
+			logger.LegacyPrintf("connection_diagnostics", "retention advisory lock failed: %v", err)
+		}
+		return
+	}
+	if !acquired {
+		return
+	}
+	defer func() {
+		unlockCtx, unlockCancel := context.WithTimeout(context.Background(), connectionRetentionLockTimeout)
+		defer unlockCancel()
+		if _, unlockErr := lockConn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock($1)`, diagnosticRetentionLockKey); unlockErr != nil {
+			logger.LegacyPrintf("connection_diagnostics", "retention advisory unlock failed: %v", unlockErr)
+			// Discard the connection so a leaked session-level advisory lock never returns to the pool.
+			_ = lockConn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}()
+
+	r.pruneDiagnosticTable(ctx, lockConn, "request_connection_traces", connectionTracePruneSQL(), connectionTracePruneBatch, connectionTracePrunePasses)
+	r.pruneDiagnosticTable(ctx, lockConn, "user_traffic_events", userTrafficEventPruneSQL(), userTrafficEventPruneBatch, userTrafficEventPrunePasses)
+}
+
+func (r *usageLogRepository) pruneDiagnosticTable(parent context.Context, conn *sql.Conn, tableName, query string, batchSize, maxPasses int) {
+	tableCtx, tableCancel := context.WithTimeout(parent, connectionRetentionTableBudget)
+	defer tableCancel()
+	for pass := 0; pass < maxPasses; pass++ {
+		if tableCtx.Err() != nil {
+			return
+		}
+		batchCtx, batchCancel := context.WithTimeout(tableCtx, connectionRetentionBatchTimeout)
+		res, err := conn.ExecContext(batchCtx, query)
+		batchCancel()
+		if err != nil {
+			if parent.Err() != nil {
+				return
+			}
+			logger.LegacyPrintf("connection_diagnostics", "%s retention failed (pass=%d): %v", tableName, pass+1, err)
+			return
+		}
+		if n, err := res.RowsAffected(); err == nil && n < int64(batchSize) {
+			return
+		}
+	}
+}
+
+func connectionTracePruneSQL() string {
+	return `DELETE FROM request_connection_traces WHERE ctid IN (SELECT ctid FROM request_connection_traces WHERE started_at < NOW() - INTERVAL '` +
+		strconv.Itoa(connectionTraceRetentionDays) + ` days' LIMIT ` + strconv.Itoa(connectionTracePruneBatch) + `)`
+}
+
+func userTrafficEventPruneSQL() string {
+	return `DELETE FROM user_traffic_events WHERE ctid IN (SELECT ctid FROM user_traffic_events WHERE started_at < NOW() - INTERVAL '` +
+		strconv.Itoa(userTrafficEventRetentionDays) + ` days' LIMIT ` + strconv.Itoa(userTrafficEventPruneBatch) + `)`
 }
 
 // collectConnectionBatch tops a batch up to the batch limit, waiting at most the
@@ -455,7 +517,7 @@ func (r *usageLogRepository) ListConnectionTraces(ctx context.Context, f service
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := &service.ConnectionTraceList{Items: []service.ConnectionTrace{}, Page: f.Page, PageSize: f.PageSize, RetentionDays: 30}
+	out := &service.ConnectionTraceList{Items: []service.ConnectionTrace{}, Page: f.Page, PageSize: f.PageSize, RetentionDays: connectionTraceRetentionDays}
 	for rows.Next() {
 		var v service.ConnectionTrace
 		var raw []byte
@@ -563,29 +625,28 @@ func (r *usageLogRepository) StopConnectionDiagnostics() {
 
 // Retention windows and pruning budgets for the two high-volume diagnostic
 // tables. Traces run ~10 GB/day and traffic events ~3 GB/day, so both windows
-// are deliberately short; the hourly loop drains several batches per run so
-// retention can actually keep up with ingestion.
+// stay at 7 days; small ctid batches keep lock and WAL spikes bounded while
+// enough passes per hour still outpace ingestion (~612k rows/hour at 170/s).
+// Delivered live_balance_adjustment_outbox cleanup lives exclusively in
+// LiveBalanceAdjustmentOutboxWorker (every 5 minutes) to avoid duplicate locks.
 const (
+	diagnosticRetentionLockKey     int64 = 0x5355423244524554 // "SUB2DRET"
+	connectionRetentionLockTimeout       = 5 * time.Second
+
 	connectionTraceRetentionDays = 7
-	connectionTracePruneBatch    = 200000
-	connectionTracePrunePasses   = 20
+	connectionTracePruneBatch    = 10000
+	connectionTracePrunePasses   = 400
 
 	userTrafficEventRetentionDays = 7
-	userTrafficEventPruneBatch    = 200000
-	userTrafficEventPrunePasses   = 20
+	userTrafficEventPruneBatch    = 10000
+	userTrafficEventPrunePasses   = 400
+)
 
-	// live_balance_adjustment_outbox is the durable projection that feeds the
-	// Redis live wallet used by balance preauthorization. A delivered row is
-	// never re-read: the consumer only selects `delivered_at IS NULL`, so the
-	// backlog of delivered rows is pure history. It used to grow forever
-	// (97M rows / 20 GB), which is why it is pruned here with a short window.
-	//
-	// One day of delivered rows is kept for incident forensics (a stuck wallet
-	// is diagnosed by walking the last day of events). Undelivered rows are
-	// never touched by this prune.
-	liveBalanceOutboxDeliveredRetentionDays = 1
-	liveBalanceOutboxPruneBatch             = 200000
-	liveBalanceOutboxPrunePasses            = 4
+// Variables only so tests can shrink intervals and budgets without waiting.
+var (
+	connectionRetentionInterval     = time.Hour
+	connectionRetentionBatchTimeout = 20 * time.Second
+	connectionRetentionTableBudget  = 10 * time.Minute
 )
 
 // Protocol metadata carries no diagnostic value per row and repeats the same
