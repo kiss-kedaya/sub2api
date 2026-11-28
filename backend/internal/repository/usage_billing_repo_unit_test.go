@@ -14,14 +14,15 @@ import (
 )
 
 const (
-	conditionalBalanceDeductSQL = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND balance >= \$1\s+RETURNING balance`
-	overdraftBalanceDeductSQL   = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL\s+RETURNING balance`
-	reserveBatchImageHoldSQL    = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) \+ \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND balance >= \$1\s+RETURNING balance, frozen_balance`
-	captureBatchImageHoldSQL    = `(?s)UPDATE users\s+SET balance = balance\s+\+ CASE WHEN \$1 > \$2 THEN \$1 - \$2 ELSE 0 END\s+- CASE WHEN \$2 > \$1 THEN \$2 - \$1 ELSE 0 END,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$3 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
-	releaseBatchImageHoldSQL    = `(?s)UPDATE users\s+SET balance = balance \+ \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
-	userExistsForBillingSQL     = `(?s)SELECT 1\s+FROM users\s+WHERE id = \$1 AND deleted_at IS NULL`
-	apiKeyQuotaIncrementSQL     = `(?s)UPDATE api_keys\s+SET quota_used = quota_used \+ \$1,.*WHERE id = \$2 AND deleted_at IS NULL\s+RETURNING`
-	apiKeyRateLimitIncrementSQL = `(?s)UPDATE api_keys SET\s+usage_5h = .*WHERE id = \$2 AND deleted_at IS NULL`
+	conditionalBalanceDeductSQL         = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND balance >= \$1\s+RETURNING balance`
+	overdraftBalanceDeductSQL           = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL\s+RETURNING balance`
+	reserveBatchImageHoldSQL            = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) \+ \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND balance >= \$1\s+RETURNING balance, frozen_balance`
+	captureBatchImageHoldSQL            = `(?s)UPDATE users\s+SET balance = balance\s+\+ CASE WHEN \$1 > \$2 THEN \$1 - \$2 ELSE 0 END\s+- CASE WHEN \$2 > \$1 THEN \$2 - \$1 ELSE 0 END,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$3 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
+	releaseBatchImageHoldSQL            = `(?s)UPDATE users\s+SET balance = balance \+ \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
+	userExistsForBillingSQL             = `(?s)SELECT 1\s+FROM users\s+WHERE id = \$1 AND deleted_at IS NULL`
+	apiKeyQuotaIncrementSQL             = `(?s)UPDATE api_keys\s+SET quota_used = quota_used \+ \$1,.*WHERE id = \$2 AND deleted_at IS NULL\s+RETURNING`
+	apiKeyRateLimitIncrementSQL         = `(?s)UPDATE api_keys SET\s+usage_5h = .*WHERE id = \$2 AND deleted_at IS NULL`
+	apiKeyQuotaAndRateLimitIncrementSQL = `(?s)UPDATE api_keys\s+SET quota_used = quota_used \+ \$1,.*usage_5h = .*WHERE id = \$3 AND deleted_at IS NULL\s+RETURNING`
 )
 
 func TestDeductUsageBillingBalance_UsesSufficientBalanceGuard(t *testing.T) {
@@ -114,12 +115,9 @@ func TestApplyUsageBillingEffects_DeletedAPIKeyStillBillsBalance(t *testing.T) {
 	mock.ExpectQuery(conditionalBalanceDeductSQL).
 		WithArgs(10.0, int64(42)).
 		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(90.0))
-	mock.ExpectQuery(apiKeyQuotaIncrementSQL).
-		WithArgs(10.0, int64(7), service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).
+	mock.ExpectQuery(apiKeyQuotaAndRateLimitIncrementSQL).
+		WithArgs(10.0, 10.0, int64(7), service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).
 		WillReturnError(sql.ErrNoRows)
-	mock.ExpectExec(apiKeyRateLimitIncrementSQL).
-		WithArgs(10.0, int64(7)).
-		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 
 	result := &service.UsageBillingApplyResult{Applied: true}
@@ -373,9 +371,9 @@ func TestApply_DuplicatePreauthorizedChecksFinalizationPendingStatus(t *testing.
 			cmd.Normalize()
 
 			mock.ExpectBegin()
-			mock.ExpectQuery(`(?s)INSERT INTO usage_billing_dedup.*RETURNING id`).
+			mock.ExpectQuery(dedupClaimCTESQL).
 				WithArgs(cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint).
-				WillReturnError(sql.ErrNoRows)
+				WillReturnRows(dedupClaimConflictRows())
 			mock.ExpectQuery(`(?s)SELECT request_fingerprint\s+FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2`).
 				WithArgs(cmd.RequestID, cmd.APIKeyID).
 				WillReturnRows(sqlmock.NewRows([]string{"request_fingerprint"}).AddRow(cmd.RequestFingerprint))
@@ -400,3 +398,258 @@ func TestApply_DuplicatePreauthorizedChecksFinalizationPendingStatus(t *testing.
 }
 
 func int16Ptr(v int16) *int16 { return &v }
+
+func TestClaimUsageBillingRequest_SingleCTEAllPaths(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("fresh_request_including_local_claims_in_single_cte", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(dedupClaimCTESQL).
+			WithArgs("local:fresh-1", int64(7), "fp-1").
+			WillReturnRows(dedupClaimClaimedRows(10))
+		mock.ExpectCommit()
+
+		applied, err := (&usageBillingRepository{}).claimUsageBillingRequest(ctx, tx, "local:fresh-1", 7, "fp-1")
+		require.NoError(t, err)
+		require.True(t, applied)
+		require.NoError(t, tx.Commit())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("archived_local_request_same_fingerprint_returns_false_in_single_cte", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(dedupClaimCTESQL).
+			WithArgs("local:archived-1", int64(7), "fp-arch").
+			WillReturnRows(dedupClaimArchivedRows(" fp-arch "))
+		mock.ExpectRollback()
+
+		applied, err := (&usageBillingRepository{}).claimUsageBillingRequest(ctx, tx, "local:archived-1", 7, "fp-arch")
+		require.NoError(t, err)
+		require.False(t, applied)
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("archived_local_request_mismatched_fingerprint_returns_conflict", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(dedupClaimCTESQL).
+			WithArgs("local:archived-2", int64(7), "fp-new").
+			WillReturnRows(dedupClaimArchivedRows("fp-old"))
+		mock.ExpectRollback()
+
+		applied, err := (&usageBillingRepository{}).claimUsageBillingRequest(ctx, tx, "local:archived-2", 7, "fp-new")
+		require.ErrorIs(t, err, service.ErrUsageBillingRequestConflict)
+		require.False(t, applied)
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("existing_hot_dedup_same_fingerprint_returns_false_in_single_cte", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(dedupClaimCTESQL).
+			WithArgs("req-hot-dup", int64(7), "fp-hot").
+			WillReturnRows(dedupClaimExistingRows(" fp-hot "))
+		mock.ExpectRollback()
+
+		applied, err := (&usageBillingRepository{}).claimUsageBillingRequest(ctx, tx, "req-hot-dup", 7, "fp-hot")
+		require.NoError(t, err)
+		require.False(t, applied)
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("existing_hot_dedup_mismatched_fingerprint_returns_conflict_in_single_cte", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(dedupClaimCTESQL).
+			WithArgs("req-hot-conflict", int64(7), "fp-new").
+			WillReturnRows(dedupClaimExistingRows("fp-old"))
+		mock.ExpectRollback()
+
+		applied, err := (&usageBillingRepository{}).claimUsageBillingRequest(ctx, tx, "req-hot-conflict", 7, "fp-new")
+		require.ErrorIs(t, err, service.ErrUsageBillingRequestConflict)
+		require.False(t, applied)
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("concurrent_active_dedup_conflict_same_fingerprint_returns_false", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(dedupClaimCTESQL).
+			WithArgs("req-dup", int64(7), "fp-dup").
+			WillReturnRows(dedupClaimConflictRows())
+		mock.ExpectQuery(`(?s)SELECT request_fingerprint\s+FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2`).
+			WithArgs("req-dup", int64(7)).
+			WillReturnRows(sqlmock.NewRows([]string{"request_fingerprint"}).AddRow("fp-dup"))
+		mock.ExpectRollback()
+
+		applied, err := (&usageBillingRepository{}).claimUsageBillingRequest(ctx, tx, "req-dup", 7, "fp-dup")
+		require.NoError(t, err)
+		require.False(t, applied)
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("active_dedup_conflict_different_fingerprint_returns_conflict", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(dedupClaimCTESQL).
+			WithArgs("req-conflict", int64(7), "fp-new").
+			WillReturnRows(dedupClaimConflictRows())
+		mock.ExpectQuery(`(?s)SELECT request_fingerprint\s+FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2`).
+			WithArgs("req-conflict", int64(7)).
+			WillReturnRows(sqlmock.NewRows([]string{"request_fingerprint"}).AddRow("fp-existing"))
+		mock.ExpectRollback()
+
+		applied, err := (&usageBillingRepository{}).claimUsageBillingRequest(ctx, tx, "req-conflict", 7, "fp-new")
+		require.ErrorIs(t, err, service.ErrUsageBillingRequestConflict)
+		require.False(t, applied)
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("concurrent_archival_between_cte_conflict_and_fallback_select_checks_archive", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(dedupClaimCTESQL).
+			WithArgs("req-race", int64(7), "fp-race").
+			WillReturnRows(dedupClaimConflictRows())
+		mock.ExpectQuery(`(?s)SELECT request_fingerprint\s+FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2`).
+			WithArgs("req-race", int64(7)).
+			WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery(`(?s)SELECT request_fingerprint\s+FROM usage_billing_dedup_archive\s+WHERE request_id = \$1 AND api_key_id = \$2`).
+			WithArgs("req-race", int64(7)).
+			WillReturnRows(sqlmock.NewRows([]string{"request_fingerprint"}).AddRow("fp-race"))
+		mock.ExpectRollback()
+
+		applied, err := (&usageBillingRepository{}).claimUsageBillingRequest(ctx, tx, "req-race", 7, "fp-race")
+		require.NoError(t, err)
+		require.False(t, applied)
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestApplyUsageBillingEffects_MergesAPIKeyQuotaAndRateLimitIntoOneUpdate(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("merges_distinct_quota_and_rate_limit_costs_into_single_update", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(apiKeyQuotaAndRateLimitIncrementSQL).
+			WithArgs(1.5, 2.25, int64(7), service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).
+			WillReturnRows(sqlmock.NewRows([]string{"exhausted"}).AddRow(true))
+		mock.ExpectCommit()
+
+		result := &service.UsageBillingApplyResult{Applied: true}
+		err = (&usageBillingRepository{}).applyUsageBillingEffects(ctx, tx, &service.UsageBillingCommand{
+			UserID:              42,
+			APIKeyID:            7,
+			APIKeyQuotaCost:     1.5,
+			APIKeyRateLimitCost: 2.25,
+		}, result)
+		require.NoError(t, err)
+		require.True(t, result.APIKeyQuotaExhausted)
+		require.NoError(t, tx.Commit())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("merged_update_db_error_propagates", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(apiKeyQuotaAndRateLimitIncrementSQL).
+			WithArgs(1.5, 2.25, int64(7), service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).
+			WillReturnError(sql.ErrConnDone)
+		mock.ExpectRollback()
+
+		err = (&usageBillingRepository{}).applyUsageBillingEffects(ctx, tx, &service.UsageBillingCommand{
+			UserID:              42,
+			APIKeyID:            7,
+			APIKeyQuotaCost:     1.5,
+			APIKeyRateLimitCost: 2.25,
+		}, &service.UsageBillingApplyResult{Applied: true})
+		require.ErrorIs(t, err, sql.ErrConnDone)
+		require.NoError(t, tx.Rollback())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("quota_only_uses_quota_update", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer func() { _ = db.Close() }()
+
+		mock.ExpectBegin()
+		tx, err := db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		mock.ExpectQuery(apiKeyQuotaIncrementSQL).
+			WithArgs(3.0, int64(7), service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).
+			WillReturnRows(sqlmock.NewRows([]string{"exhausted"}).AddRow(false))
+		mock.ExpectCommit()
+
+		result := &service.UsageBillingApplyResult{Applied: true}
+		err = (&usageBillingRepository{}).applyUsageBillingEffects(ctx, tx, &service.UsageBillingCommand{
+			UserID:          42,
+			APIKeyID:        7,
+			APIKeyQuotaCost: 3.0,
+		}, result)
+		require.NoError(t, err)
+		require.False(t, result.APIKeyQuotaExhausted)
+		require.NoError(t, tx.Commit())
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}

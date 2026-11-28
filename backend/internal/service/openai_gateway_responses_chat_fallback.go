@@ -443,8 +443,8 @@ func chatChunkStartsResponsesOutput(chunk *apicompat.ChatCompletionsChunk) bool 
 }
 
 // responsesReasoningCacheTTL 是 reasoning 缓存（按 reasoning item id）的过期时间。
-// Codex 会话可能跨多天恢复历史，取 7 天。
-const responsesReasoningCacheTTL = 7 * 24 * time.Hour
+// 与 repository 层 reasoningContentDefaultTTL 对齐为 48 小时，避免 reasoning_content:* 长期堆积占满 Redis 内存/Swap。
+const responsesReasoningCacheTTL = 48 * time.Hour
 
 // reasoningContentByID 按 reasoning item id 回查缓存的 reasoning 全文，供
 // Responses→CC 桥接在客户端不回传明文 summary（encrypted-only reasoning

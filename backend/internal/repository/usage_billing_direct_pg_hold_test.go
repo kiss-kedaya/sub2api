@@ -50,12 +50,9 @@ func TestReserveBatchImageBalance_WithPreauthSkipsOutboxAndAdvancesSettlementAto
 	cmd.Normalize()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`(?s)INSERT INTO usage_billing_dedup`).
+	mock.ExpectQuery(dedupClaimCTESQL).
 		WithArgs(cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-	mock.ExpectQuery(`(?s)SELECT request_fingerprint\s+FROM usage_billing_dedup_archive`).
-		WithArgs(cmd.RequestID, cmd.APIKeyID).
-		WillReturnError(sql.ErrNoRows)
+		WillReturnRows(dedupClaimClaimedRows(1))
 	mock.ExpectExec(`SET LOCAL sub2api\.skip_live_balance_outbox = 'on'`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`(?s)UPDATE billing_balance_settlements.*status = \$7`).
@@ -101,12 +98,9 @@ func TestReserveBatchImageBalance_WithPreauthRollsBackOnSettlementConflict(t *te
 	cmd.Normalize()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`(?s)INSERT INTO usage_billing_dedup`).
+	mock.ExpectQuery(dedupClaimCTESQL).
 		WithArgs(cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-	mock.ExpectQuery(`(?s)SELECT request_fingerprint\s+FROM usage_billing_dedup_archive`).
-		WithArgs(cmd.RequestID, cmd.APIKeyID).
-		WillReturnError(sql.ErrNoRows)
+		WillReturnRows(dedupClaimClaimedRows(1))
 	mock.ExpectExec(`SET LOCAL sub2api\.skip_live_balance_outbox = 'on'`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`(?s)UPDATE billing_balance_settlements`).
@@ -144,12 +138,9 @@ func TestReserveBatchImageBalance_WithPreauthRollsBackOnPGInsufficientBalance(t 
 	cmd.Normalize()
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`(?s)INSERT INTO usage_billing_dedup`).
+	mock.ExpectQuery(dedupClaimCTESQL).
 		WithArgs(cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-	mock.ExpectQuery(`(?s)SELECT request_fingerprint\s+FROM usage_billing_dedup_archive`).
-		WithArgs(cmd.RequestID, cmd.APIKeyID).
-		WillReturnError(sql.ErrNoRows)
+		WillReturnRows(dedupClaimClaimedRows(1))
 	mock.ExpectExec(`SET LOCAL sub2api\.skip_live_balance_outbox = 'on'`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`(?s)UPDATE billing_balance_settlements`).

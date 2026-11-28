@@ -80,6 +80,10 @@ const usageLogsResponseMsgIDIndex = "idx_usage_logs_response_msg_id"
 const usageLogsResponseRequestIDTrgmIndex = "idx_usage_logs_response_request_id_trgm"
 const usageLogsClientRequestIDTrgmIndex = "idx_usage_logs_client_request_id_trgm"
 const usageLogsResponseMsgIDTrgmIndex = "idx_usage_logs_response_msg_id_trgm"
+const billingSettlementsUserUnsettledIndexMigration = "354_billing_settlements_user_unsettled_index_notx.sql"
+const billingSettlementsUserUnsettledIndex = "idx_billing_balance_settlements_user_unsettled"
+const cmv2HistRollupGlobalBucketIndexMigration = "355_cmv2_hist_rollup_global_bucket_index_notx.sql"
+const cmv2HistRollupGlobalBucketIndex = "idx_cmv2_hist_rollup_global_bucket"
 
 type migrationChecksumCompatibilityRule struct {
 	fileChecksum       string
@@ -518,6 +522,10 @@ func prepareNonTransactionalMigration(ctx context.Context, db migrationConnectio
 			}
 		}
 		return nil
+	case billingSettlementsUserUnsettledIndexMigration:
+		return dropInvalidIndexIfPresent(ctx, db, billingSettlementsUserUnsettledIndex)
+	case cmv2HistRollupGlobalBucketIndexMigration:
+		return dropInvalidIndexIfPresent(ctx, db, cmv2HistRollupGlobalBucketIndex)
 	default:
 		return nil
 	}

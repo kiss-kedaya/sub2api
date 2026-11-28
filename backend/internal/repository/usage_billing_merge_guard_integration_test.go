@@ -176,18 +176,26 @@ func TestBalanceSettlementBacklogQueryNeverScansTheWholeTable(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 
 	userID, keyID := integrationBillingFixtures(t, 1)
-	// 200k already-applied rows (the retention window) and 300 pending ones.
+	userID2, _ := integrationBillingFixtures(t, 1)
+	// 200k already-applied rows (the retention window) and 300 pending ones across
+	// interleaved users with chronological available_at (matching production shape so
+	// idx_billing_balance_settlements_user_unsettled does not get an artificial single-user
+	// correlation=1.0 + 1-page dedup advantage over idx_billing_balance_settlements_pending).
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO billing_balance_settlements
-			(request_id, api_key_id, request_fingerprint, user_id, amount_usd, status, applied_at)
-		SELECT 'explain-applied-' || g, $1, 'fp', $2, 0.01, 4, NOW()
-		FROM generate_series(1, 200000) AS g`, keyID, userID)
+			(request_id, api_key_id, request_fingerprint, user_id, amount_usd, status, available_at, applied_at)
+		SELECT 'explain-applied-' || g, $1, 'fp',
+			CASE WHEN g % 2 = 0 THEN $2::bigint ELSE $3::bigint END,
+			0.01, 4, NOW() + (g * INTERVAL '1 millisecond'), NOW()
+		FROM generate_series(1, 200000) AS g`, keyID, userID, userID2)
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO billing_balance_settlements
-			(request_id, api_key_id, request_fingerprint, user_id, amount_usd, status)
-		SELECT 'explain-pending-' || g, $1, 'fp', $2, 0.01, 3
-		FROM generate_series(1, 300) AS g`, keyID, userID)
+			(request_id, api_key_id, request_fingerprint, user_id, amount_usd, status, available_at)
+		SELECT 'explain-pending-' || g, $1, 'fp',
+			CASE WHEN g % 2 = 0 THEN $2::bigint ELSE $3::bigint END,
+			0.01, 3, NOW() + ((200000 + g) * INTERVAL '1 millisecond')
+		FROM generate_series(1, 300) AS g`, keyID, userID, userID2)
 	require.NoError(t, err)
 	_, err = tx.ExecContext(ctx, `ANALYZE billing_balance_settlements`)
 	require.NoError(t, err)

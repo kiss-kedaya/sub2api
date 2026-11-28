@@ -334,9 +334,10 @@ var _ service.LiveCallStore = (*gatewayCache)(nil)
 
 const reasoningContentPrefix = "reasoning_content:"
 
-// reasoningContentDefaultTTL 是 reasoning 缓存的默认过期时间。Codex 会话可能
-// 跨多天恢复，取 7 天；调用方传入非正 TTL 时兜底。
-const reasoningContentDefaultTTL = 7 * 24 * time.Hour
+// reasoningContentDefaultTTL 是 reasoning 缓存的默认过期时间（调用方传入非正 TTL 时兜底）。
+// 从 7 天缩至 48 小时，防止 Redis 中 reasoning_content:* 长期堆积占满内存/Swap；
+// 当前未暴露独立配置项，如需调整直接修改此常量。
+const reasoningContentDefaultTTL = 48 * time.Hour
 
 // SetReasoningContent 按 reasoning item id 缓存 reasoning 全文。
 // itemID 或 content 为空时直接返回 nil（无可缓存内容，属正常情况而非错误）。
