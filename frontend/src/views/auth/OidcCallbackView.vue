@@ -257,6 +257,7 @@ import PendingOAuthCreateAccountForm, {
   type PendingOAuthCreateAccountPayload
 } from '@/components/auth/PendingOAuthCreateAccountForm.vue'
 import { apiClient } from '@/api/client'
+import { sanitizeInternalRedirectPath } from '@/utils/url'
 import { useAuthStore, useAppStore } from '@/stores'
 import {
   completeOIDCOAuthRegistration,
@@ -398,13 +399,8 @@ function readLegacyFragmentLogin(params: URLSearchParams): OAuthTokenResponse | 
   return completion
 }
 
-function sanitizeRedirectPath(path: string | null | undefined): string {
-  if (!path) return '/dashboard'
-  if (!path.startsWith('/')) return '/dashboard'
-  if (path.startsWith('//')) return '/dashboard'
-  if (path.includes('://')) return '/dashboard'
-  if (path.includes('\n') || path.includes('\r')) return '/dashboard'
-  return path
+function sanitizeRedirectPath(path: unknown): string {
+  return sanitizeInternalRedirectPath(path, '/dashboard')
 }
 
 async function loadProviderName() {
@@ -792,7 +788,7 @@ onMounted(async () => {
   const error = params.get('error')
   const errorDesc = params.get('error_description') || params.get('error_message') || ''
   const redirect = sanitizeRedirectPath(
-    params.get('redirect') || (route.query.redirect as string | undefined) || '/dashboard'
+    params.get('redirect') || route.query.redirect || '/dashboard'
   )
 
   try {
@@ -835,7 +831,7 @@ onMounted(async () => {
 
     const completion = await exchangePendingOAuthCompletion() as PendingOidcCompletion
     const completionRedirect = sanitizeRedirectPath(
-      completion.redirect || (route.query.redirect as string | undefined) || '/dashboard'
+      completion.redirect || route.query.redirect || '/dashboard'
     )
     applyAdoptionSuggestionState(completion)
     redirectTo.value = completionRedirect

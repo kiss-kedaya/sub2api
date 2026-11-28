@@ -22,6 +22,7 @@ func SessionBindingContext(cfg *config.Config) gin.HandlerFunc {
 		// 原始转发头只有在 TCP 对端属于 server.trusted_proxies 时才会被采信；
 		// 直连源站的请求一律使用真实对端地址，避免伪造 CF-Connecting-IP / XFF。
 		ip.SetForwardedIPSettings(c, forwardedIPSettings.TrustForwardedIP, forwardedIPSettings.Headers, cfg.Server.TrustedProxies)
+		ip.SetTrustedProxyConfig(c, cfg.Server.TrustedProxies, cfg.Server.TrustedProxiesConfigured)
 		userAgent := normalizePersistentText(c.Request.UserAgent(), maxPersistentUserAgentBytes)
 		c.Request.Header.Set("User-Agent", userAgent)
 		binding := &service.SessionBinding{

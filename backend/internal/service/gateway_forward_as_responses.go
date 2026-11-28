@@ -463,6 +463,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	var usage ClaudeUsage
 	progress := &anthropicStreamProgress{}
 	sawStop, sawError := false, false
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
 	// 客户端一走就关上游，不再读完整个应答。
 	clientWatch := newAnthropicClientWatch(context.Background(), c, resp.Body)
 	defer clientWatch.stop()
@@ -545,6 +546,32 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 				case "input_json_delta":
 					finalResp.Content[idx].Input = appendRawJSON(finalResp.Content[idx].Input, event.Delta.PartialJSON)
 				}
+			}
+		}
+		if observedBytes := anthropicEventOutputBytes(&event); observedBytes > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+				_ = resp.Body.Close()
+				if !sawStop {
+					estimate.fill(&usage, progress, requestID, false, topUpErr)
+				}
+				status, code, msg := balanceHoldAbortClientError(topUpErr)
+				writeResponsesError(c, status, code, msg)
+				responseMsgID := ""
+				if finalResp != nil {
+					responseMsgID = normalizeUsageTraceID(finalResp.ID)
+				}
+				return &ForwardResult{
+					RequestID:       requestID,
+					ResponseMsgID:   responseMsgID,
+					UpstreamHeaders: resp.Header,
+					Usage:           usage,
+					Model:           originalModel,
+					UpstreamModel:   mappedModel,
+					ReasoningEffort: reasoningEffort,
+					Stream:          false,
+					Duration:        time.Since(startTime),
+					SearchCount:     usage.WebSearchRequests,
+				}, wrapStreamOutputHoldTopUpFailure(topUpErr)
 			}
 		}
 	}
@@ -680,6 +707,8 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	clientDisconnected := false
 	sawStop, sawError := false, false
 	progress := &anthropicStreamProgress{}
+	guardCtx, streamBalanceGuard := balancePreauthorizationGuardForRequest(context.Background(), c)
+	var balanceAbortErr error
 
 	scanner := bufio.NewScanner(newUpstreamErrorFrameReader(resp.Body, resolveUpstreamResponseReadLimit(s.cfg)))
 	maxLineSize := defaultMaxLineSize
@@ -794,6 +823,13 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		if len(events) > 0 && !clientDisconnected {
 			c.Writer.Flush()
 		}
+		if observedBytes := anthropicEventOutputBytes(event); observedBytes > 0 {
+			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, observedBytes); topUpErr != nil {
+				_ = resp.Body.Close()
+				balanceAbortErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
+				return true
+			}
+		}
 		return false
 	}
 
@@ -861,6 +897,12 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		}
 
 		if processEvent(&event) {
+			if balanceAbortErr != nil {
+				if !sawStop {
+					estimate.fill(&usage, progress, requestID, clientDisconnected, balanceAbortErr)
+				}
+				return resultWithUsage(), balanceAbortErr
+			}
 			return resultWithUsage(), nil
 		}
 		if event.Type == "message_stop" {

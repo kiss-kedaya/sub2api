@@ -56,9 +56,9 @@ func invalidateUpstreamAffinityWithCircuit(ctx context.Context, cache GatewayCac
 	if account == nil || err == nil || ctx == nil {
 		return
 	}
-	// Local policy and a canceled client are not an upstream failure.
+	// Local policy, client balance hold abort, and a canceled client are not an upstream failure.
 	var policyErr *BetaBlockedError
-	if errors.As(err, &policyErr) || (errors.Is(err, context.Canceled) && ctx.Err() != nil) {
+	if errors.As(err, &policyErr) || isBalanceHoldTopUpError(err) || (errors.Is(err, context.Canceled) && ctx.Err() != nil) {
 		return
 	}
 	// Neither is a provider that went silent on this one request.

@@ -1,3 +1,5 @@
+import { sanitizeInternalRedirectPath } from './url'
+
 const RELOAD_KEY = 'chunk_reload_attempted'
 const RELOAD_COOLDOWN_MS = 10_000
 
@@ -22,9 +24,8 @@ export function recoverFromChunkLoadError(targetPath?: string): boolean {
     return false
   }
   window.sessionStorage.setItem(RELOAD_KEY, String(now))
-  const next = targetPath && targetPath.startsWith('/')
-    ? targetPath
-    : `${window.location.pathname}${window.location.search}${window.location.hash}`
+  const safeTarget = sanitizeInternalRedirectPath(targetPath, '')
+  const next = safeTarget || `${window.location.pathname}${window.location.search}${window.location.hash}`
   window.location.replace(next)
   return true
 }

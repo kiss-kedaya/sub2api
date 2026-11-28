@@ -156,9 +156,11 @@ func (s *GatewayService) forwardBedrock(
 		// 请求体已去掉 model，估算用客户端原始请求体）。
 		outputTokens, inputTokens := applyIncompleteAnthropicStreamUsage(account, streamResult, body, reqModel, resp.Header.Get("x-request-id"), err)
 		if err != nil {
-			// 估算出了东西才带结果返回；其余读错误保持原行为。
-			if outputTokens > 0 || inputTokens > 0 {
-				return partialStreamUsageResult(c, resp, streamResult, reqModel, mappedModel, startTime, err), err
+			// 估算出了东西或流式预扣补扣中止时带结果返回；其余读错误保持原行为。
+			if outputTokens > 0 || inputTokens > 0 || isBalanceHoldTopUpError(err) {
+				if partial := partialStreamUsageResult(c, resp, streamResult, reqModel, mappedModel, startTime, err); partial != nil {
+					return partial, err
+				}
 			}
 			return nil, err
 		}

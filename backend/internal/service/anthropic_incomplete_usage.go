@@ -76,10 +76,11 @@ func (p *anthropicStreamProgress) producedTokens() int {
 	return p.text.tokens() + p.thinking.tokens() + p.tool.tokens()
 }
 
-// observeData reads one SSE data payload (native, passthrough and Bedrock).
-func (p *anthropicStreamProgress) observeData(data string) {
+// observeData reads one SSE data payload (native, passthrough and Bedrock) and
+// returns the billable output byte count added to the stream meters.
+func (p *anthropicStreamProgress) observeData(data string) int {
 	if p == nil || data == "" || data == "[DONE]" {
-		return
+		return 0
 	}
 	parsed := gjson.Parse(data)
 	switch parsed.Get("type").String() {
@@ -87,27 +88,40 @@ func (p *anthropicStreamProgress) observeData(data string) {
 		block := parsed.Get("content_block")
 		switch block.Get("type").String() {
 		case "text":
-			p.text.add(block.Get("text").String())
+			text := block.Get("text").String()
+			p.text.add(text)
+			return len(text)
 		case "thinking":
-			p.thinking.add(block.Get("thinking").String())
+			thinking := block.Get("thinking").String()
+			p.thinking.add(thinking)
+			return len(thinking)
 		case "tool_use", "server_tool_use":
-			p.tool.add(block.Get("name").String())
+			name := block.Get("name").String()
+			p.tool.add(name)
+			return len(name)
 		}
 	case "content_block_delta":
 		delta := parsed.Get("delta")
 		switch delta.Get("type").String() {
 		case "text_delta":
-			p.text.add(delta.Get("text").String())
+			text := delta.Get("text").String()
+			p.text.add(text)
+			return len(text)
 		case "thinking_delta":
-			p.thinking.add(delta.Get("thinking").String())
+			thinking := delta.Get("thinking").String()
+			p.thinking.add(thinking)
+			return len(thinking)
 		case "input_json_delta":
-			p.tool.add(delta.Get("partial_json").String())
+			partial := delta.Get("partial_json").String()
+			p.tool.add(partial)
+			return len(partial)
 		}
 	case "message_delta":
 		if v := parsed.Get("usage.output_tokens"); v.Exists() && v.Type != gjson.Null {
 			p.outputReported = true
 		}
 	}
+	return 0
 }
 
 // observeEvent is observeData for an already decoded event.
@@ -187,15 +201,17 @@ func estimateIncompleteAnthropicUsage(usage *ClaudeUsage, progress *anthropicStr
 }
 
 // anthropicEstimateSkippedForError lists the failures that keep their own
-// accounting: a replayable failover (the retry is billed on its own), an upstream
-// error event already forwarded to the client, and a balance abort.
+// accounting: a replayable failover (the retry is billed on its own) and an
+// upstream error event already forwarded to the client. A mid-stream balance
+// withholding abort MUST NOT be skipped: output was already delivered to the
+// client and must be estimated and billed rather than refunded.
 func anthropicEstimateSkippedForError(err error) bool {
 	if err == nil {
 		return false
 	}
 	var failoverErr *UpstreamFailoverError
 	var streamErr *AnthropicPassthroughStreamError
-	return errors.As(err, &failoverErr) || errors.As(err, &streamErr) || errors.Is(err, ErrBalanceWithholdingFailed)
+	return errors.As(err, &failoverErr) || errors.As(err, &streamErr)
 }
 
 func logAnthropicIncompleteEstimate(accountID int64, requestID, model string, clientDisconnect bool, outputTokens, inputTokens int, cause error) {

@@ -37,6 +37,7 @@ import {
   type PendingOAuthExchangeResponse
 } from '@/api/auth'
 import { clearAllAffiliateReferralCodes } from '@/utils/oauthAffiliate'
+import { sanitizeInternalRedirectPath } from '@/utils/url'
 
 const route = useRoute()
 const router = useRouter()
@@ -50,13 +51,8 @@ const accountActionError = ref('')
 
 const initialEmail = (route.query.email as string | undefined) || ''
 
-function sanitizeRedirectPath(path: string | null | undefined): string {
-  if (!path) return '/dashboard'
-  if (!path.startsWith('/')) return '/dashboard'
-  if (path.startsWith('//')) return '/dashboard'
-  if (path.includes('://')) return '/dashboard'
-  if (path.includes('\n') || path.includes('\r')) return '/dashboard'
-  return path
+function sanitizeRedirectPath(path: unknown): string {
+  return sanitizeInternalRedirectPath(path, '/dashboard')
 }
 
 function getRequestErrorMessage(error: unknown, fallback: string): string {
@@ -93,7 +89,7 @@ async function handleCreateAccount(payload: PendingOAuthCreateAccountPayload) {
       }
     )
 
-    const redirect = sanitizeRedirectPath(data.redirect || (route.query.redirect as string | undefined))
+    const redirect = sanitizeRedirectPath(data.redirect || route.query.redirect)
 
     if (data.access_token) {
       persistOAuthTokenContext(data)
@@ -128,8 +124,8 @@ async function handleCreateAccount(payload: PendingOAuthCreateAccountPayload) {
 function navigateToBindLogin(email: string) {
   const query: Record<string, string> = { bind: '1' }
   if (email) query.email = email
-  const redirect = route.query.redirect as string | undefined
-  if (redirect) query.redirect = redirect
+  const safeRedirect = sanitizeInternalRedirectPath(route.query.redirect, '')
+  if (safeRedirect) query.redirect = safeRedirect
   router.replace({ path: '/auth/dingtalk/callback', query })
 }
 

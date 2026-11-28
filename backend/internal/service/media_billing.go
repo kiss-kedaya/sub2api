@@ -144,12 +144,42 @@ func (s *OpenAIGatewayService) settleMediaBillingJob(ctx context.Context, job *M
 	if err != nil {
 		return err
 	}
+	job.Status = MediaBillingBilled
 	intent := job.Intent
 	cmd := &intent.Command
+	// Apply all Applied-only accounting side effects (API key quota mirror,
+	// exhausted-key auth eviction, rate-limit counters, and user-platform quota)
+	// as soon as ApplyMediaBillingJob commits, before guard.Finalize / preauth
+	// recovery can fail transiently and return early.
+	if result != nil && result.Applied {
+		if s.billingCacheService != nil && cmd.APIKeyQuotaCost > 0 {
+			s.billingCacheService.IncrementAPIKeyQuotaUsage(cmd.APIKeyID, cmd.APIKeyQuotaCost)
+		}
+		if result.APIKeyQuotaExhausted {
+			invalidateExhaustedAPIKeyAuthCache(ctx, s.getAuthCacheInvalidator(), cmd.UserID, cmd.APIKeyID)
+		}
+		if s.billingCacheService != nil && cmd.APIKeyRateLimitCost > 0 {
+			s.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(cmd.APIKeyID, cmd.APIKeyRateLimitCost)
+		}
+		if s.billingCacheService != nil && s.deferredService != nil {
+			params := s.mediaBillingPostUsageParams(ctx, job)
+			// Balance and subscription caches below are invalidated from the committed
+			// ledger; do not enqueue a second subscription increment here.
+			params.IsSubscriptionBill = false
+			if cmd.SubscriptionID != nil {
+				params.Cost.ActualCost = 0
+			}
+			// API-key rate counters already updated immediately above.
+			if params.APIKey != nil {
+				params.APIKey.RateLimit5h = 0
+			}
+			finalizePostUsageBilling(ctx, params, s.billingDeps(), result, true)
+		}
+	}
 	if cmd.BalancePreauthorized {
 		if guard != nil {
 			err = guard.Finalize(ctx, cmd.BalanceCost, cmd.RequestFingerprint)
-		} else {
+		} else if result != nil && (result.Applied || result.BalanceFinalizationPending) {
 			preauthorizer := NewBalancePreauthorizationService(s.cfg, s.billingService, s.billingCacheService, s.usageBillingRepo)
 			err = preauthorizer.RecoverBalancePreauthorization(ctx, BalancePreauthorizationRecord{
 				RequestID: cmd.RequestID, APIKeyID: cmd.APIKeyID, UserID: cmd.UserID,
@@ -176,21 +206,6 @@ func (s *OpenAIGatewayService) settleMediaBillingJob(ctx context.Context, job *M
 		}
 		if cmd.SubscriptionID != nil {
 			_ = s.billingCacheService.InvalidateSubscription(ctx, cmd.UserID, job.GroupID)
-			if result != nil && result.Applied && cmd.APIKeyRateLimitCost > 0 {
-				s.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(cmd.APIKeyID, cmd.APIKeyRateLimitCost)
-			}
-		}
-	}
-	if result != nil && result.Applied {
-		params := s.mediaBillingPostUsageParams(ctx, job)
-		// Balance and subscription caches above are invalidated from the committed
-		// ledger; do not enqueue a second subscription increment here.
-		if s.billingCacheService != nil && s.deferredService != nil {
-			params.IsSubscriptionBill = false
-			if cmd.SubscriptionID != nil {
-				params.Cost.ActualCost = 0
-			}
-			finalizePostUsageBilling(ctx, params, s.billingDeps(), result, true)
 		}
 	}
 	if s.usageLogRepo == nil {
@@ -201,6 +216,39 @@ func (s *OpenAIGatewayService) settleMediaBillingJob(ctx context.Context, job *M
 		return err
 	}
 	return s.mediaBillingJobs.CompleteMediaBillingJob(ctx, job.ID)
+}
+
+// SetAuthCacheInvalidator wires the API key auth cache invalidator so async
+// media settlements can immediately evict keys whose USD quota becomes exhausted.
+func (s *OpenAIGatewayService) SetAuthCacheInvalidator(inv APIKeyAuthCacheInvalidator) {
+	if s == nil {
+		return
+	}
+	if inv == nil {
+		s.authCacheInvalidator.Store(nil)
+		return
+	}
+	s.authCacheInvalidator.Store(&inv)
+}
+
+// SetBalancePreauthorizationService wires the shared Redis live_wallet
+// preauthorization service so async video reservations unify onto live_wallet
+// when PREAUTH=true.
+func (s *OpenAIGatewayService) SetBalancePreauthorizationService(svc *BalancePreauthorizationService) {
+	if s == nil {
+		return
+	}
+	s.balancePreauthorization = svc
+}
+
+func (s *OpenAIGatewayService) getAuthCacheInvalidator() APIKeyAuthCacheInvalidator {
+	if s == nil {
+		return nil
+	}
+	if ptr := s.authCacheInvalidator.Load(); ptr != nil {
+		return *ptr
+	}
+	return nil
 }
 
 // syncMediaSettlementBalanceCache updates billing:balance:{uid} for synchronous
@@ -384,12 +432,18 @@ func (s *OpenAIGatewayService) CreateGrokVideoBillingJob(ctx context.Context, in
 	if perSecond {
 		factor = float64(seconds)
 	}
-	// Ark's final completion usage is unknown at submission. Freeze its token
-	// unit price, but do not pretend the estimate is actual usage.
+	// Ark's final completion tokens are unknown at submission, but freezing zero
+	// lets a $0.01 balance submit unlimited expensive jobs. Reserve a conservative
+	// token estimate based on resolution and duration; final settlement captures
+	// actual upstream completion tokens and refunds any excess hold.
 	if tokenBilled {
-		factor = 0
+		factor = seedanceTokenBillingReserveTokens(pending.VideoResolution, pending.VideoDurationSeconds)
 	}
 	estimated := scaleVideoMediaIntent(*unit, factor, seconds)
+	reservedAmount := estimated.Command.BalanceCost + estimated.Command.SubscriptionCost
+	if tokenBilled && (unit.RawAmounts[0]+unit.RawAmounts[1]) > 0 && reservedAmount <= 0 {
+		reservedAmount = QuantizeUsageBillingAmount(minSeedanceTokenReserveUSD)
+	}
 	snapshot, err := json.Marshal(grokVideoBillingSnapshot{Pending: pending, Unit: *unit, PerSecond: perSecond, TokenBilled: tokenBilled})
 	if err != nil {
 		return nil, err
@@ -397,9 +451,41 @@ func (s *OpenAIGatewayService) CreateGrokVideoBillingJob(ctx context.Context, in
 	job := &MediaBillingJob{ID: "video_" + uuid.NewString(), Kind: MediaBillingKindGrokVideo,
 		UserID: input.User.ID, APIKeyID: input.APIKey.ID, AccountID: input.Account.ID, GroupID: pending.GroupID,
 		SubscriptionID: unit.Command.SubscriptionID, Status: MediaBillingCreating,
-		ReservedAmount: estimated.Command.BalanceCost + estimated.Command.SubscriptionCost, Snapshot: snapshot,
+		ReservedAmount: reservedAmount, Snapshot: snapshot,
 		CreatedAt: time.Now(), AvailableAt: time.Now().Add(time.Minute)}
+	var preauthGuard *BalancePreauthorizationGuard
+	if unit.Command.SubscriptionID == nil && reservedAmount > 0 &&
+		s.balancePreauthorization != nil && s.balancePreauthorization.RequiresPreauthorization(BillingTypeBalance) {
+		preauthGuard, err = s.balancePreauthorization.PreauthorizeDirectPGHold(
+			ctx,
+			"media-video:"+job.ID,
+			job.APIKeyID,
+			job.UserID,
+			reservedAmount,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if preauthGuard != nil {
+			job.PreauthRequestID = preauthGuard.RequestID()
+		}
+	}
 	job, err = s.mediaBillingJobs.CreateMediaBillingJob(ctx, job)
+	if preauthGuard != nil {
+		if err != nil || job == nil || strings.TrimSpace(job.PreauthRequestID) == "" {
+			refundCtx, refundCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if refundErr := preauthGuard.Refund(refundCtx); refundErr != nil && !errors.Is(refundErr, ErrBalancePreauthorizationAlreadyFinalized) {
+				logger.L().Warn("media_billing.direct_pg_hold_refund_failed", zap.Error(refundErr))
+			}
+			refundCancel()
+		} else {
+			finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if finErr := preauthGuard.FinalizeDirectPGHold(finalizeCtx); finErr != nil {
+				logger.L().Warn("media_billing.direct_pg_hold_finalize_failed", zap.String("job_id", job.ID), zap.Error(finErr))
+			}
+			finalizeCancel()
+		}
+	}
 	if err == nil && s.billingCacheService != nil {
 		if s.billingDeps().mergeSettlementEnabled() {
 			if job != nil && job.SubscriptionID == nil && job.ReservedAmount > 0 {
@@ -535,6 +621,8 @@ func (s *OpenAIGatewayService) SettleGrokVideoBillingJob(ctx context.Context, jo
 		if err != nil {
 			return err
 		}
+		job.Status = MediaBillingReady
+		job.Attempts = 0
 	}
 	return s.settleMediaBillingJob(ctx, job, nil)
 }
@@ -615,6 +703,27 @@ func (s *OpenAIGatewayService) recoverMediaBillingJobs(ctx context.Context) {
 			stop()
 			if err != nil {
 				logger.L().Warn("media_billing.retry", zap.String("job_id", job.ID), zap.Error(err))
+				if shouldAbandonMediaBillingSettlement(job, err) {
+					abandonCtx, abandonCancel := context.WithTimeout(ctx, 3*time.Second)
+					abandoned, abandonErr := s.mediaBillingJobs.AbandonMediaBillingJob(abandonCtx, job.ID)
+					abandonCancel()
+					if abandonErr == nil {
+						if abandoned {
+							logger.L().Error("media_billing.settlement_abandoned_reconciliation_required",
+								zap.String("job_id", job.ID),
+								zap.String("kind", job.Kind),
+								zap.Int64("user_id", job.UserID),
+								zap.Int64("api_key_id", job.APIKeyID),
+								zap.Int("attempts", job.Attempts+1),
+								zap.Float64("reserved_amount", job.ReservedAmount),
+								zap.Error(err),
+							)
+							continue
+						}
+					} else {
+						logger.L().Warn("media_billing.abandon_failed", zap.String("job_id", job.ID), zap.Error(abandonErr))
+					}
+				}
 			}
 			retryCtx, retryCancel := context.WithTimeout(ctx, 3*time.Second)
 			delay := mediaBillingRecoveryDelay(job, err)
@@ -632,7 +741,71 @@ const (
 	grokVideoMissingTaskGrace    = 5 * time.Minute
 	// A job stuck in "creating" never reached the provider; refund after this.
 	mediaBillingCreatingGrace = 10 * time.Minute
+
+	minSeedanceTokenReserveUSD                 = 0.01
+	seedanceTokenReserveDefaultDurationSeconds = 10
+	seedanceTokensPerSecond480P                = 11_000
+	seedanceTokensPerSecond720P                = 24_000
+	seedanceTokensPerSecond1080P               = 50_000
+
+	mediaBillingBalanceWithholdingMaxAttempts = 6
+	mediaBillingTerminalSettlementMaxAttempts = 3
 )
+
+var mediaBillingSettlementBackoff = []time.Duration{
+	1 * time.Minute,
+	2 * time.Minute,
+	5 * time.Minute,
+	15 * time.Minute,
+	30 * time.Minute,
+	60 * time.Minute,
+}
+
+func seedanceTokenBillingReserveTokens(resolution string, durationSeconds int) float64 {
+	seconds := durationSeconds
+	if seconds <= 0 {
+		seconds = seedanceTokenReserveDefaultDurationSeconds
+	} else {
+		seconds = NormalizeVideoBillingDurationSecondsForProvider(VideoProviderSeedance, seconds)
+	}
+	var tokensPerSecond float64
+	if strings.TrimSpace(resolution) == "" {
+		// Unspecified resolution must not fold down to 480p; reserve conservatively at 720p.
+		tokensPerSecond = seedanceTokensPerSecond720P
+	} else if normalized, ok := LookupVideoBillingResolution(resolution); ok {
+		switch normalized {
+		case VideoBillingResolution480P:
+			tokensPerSecond = seedanceTokensPerSecond480P
+		case VideoBillingResolution1080P:
+			tokensPerSecond = seedanceTokensPerSecond1080P
+		default:
+			tokensPerSecond = seedanceTokensPerSecond720P
+		}
+	} else {
+		// Unknown/higher resolution conservatively defaults to at least 720p.
+		tokensPerSecond = seedanceTokensPerSecond720P
+	}
+	return tokensPerSecond * float64(seconds)
+}
+
+func shouldAbandonMediaBillingSettlement(job *MediaBillingJob, err error) bool {
+	if job == nil || err == nil || job.Status != MediaBillingReady || job.Intent == nil {
+		return false
+	}
+	failedAttempts := job.Attempts + 1
+	switch {
+	case errors.Is(err, ErrBalanceWithholdingFailed):
+		return failedAttempts >= mediaBillingBalanceWithholdingMaxAttempts
+	case errors.Is(err, ErrUsageBillingRequestConflict),
+		errors.Is(err, ErrSubscriptionInvalid),
+		errors.Is(err, ErrMediaBillingJobNotFound):
+		return failedAttempts >= mediaBillingTerminalSettlementMaxAttempts
+	default:
+		// Generic transient DB/network errors stay on bounded 60m exponential backoff
+		// rather than abandoning paid revenue.
+		return false
+	}
+}
 
 func grokVideoAutomaticPollExpired(job *MediaBillingJob, now time.Time) bool {
 	return job != nil && job.Kind == MediaBillingKindGrokVideo &&
@@ -644,21 +817,28 @@ func mediaBillingRecoveryDelay(job *MediaBillingJob, err error) time.Duration {
 	if err == nil {
 		return 15 * time.Second
 	}
-	if job == nil || job.Kind != MediaBillingKindGrokVideo || job.Status != MediaBillingSubmitted || job.Intent != nil {
-		return time.Minute
+	if job != nil && job.Kind == MediaBillingKindGrokVideo && job.Status == MediaBillingSubmitted && job.Intent == nil {
+		// Attempts counts all polls, including successful pending observations.
+		// Use it only to pace retries, never as evidence that a task failed.
+		attempts := job.Attempts
+		delay := time.Minute
+		for attempts > 0 && delay < 15*time.Minute {
+			delay *= 2
+			attempts--
+		}
+		if delay > 15*time.Minute {
+			delay = 15 * time.Minute
+		}
+		return delay
 	}
-	// Attempts counts all polls, including successful pending observations.
-	// Use it only to pace retries, never as evidence that a task failed.
-	attempts := job.Attempts
-	delay := time.Minute
-	for attempts > 0 && delay < 15*time.Minute {
-		delay *= 2
-		attempts--
+	attempts := 0
+	if job != nil && job.Attempts > 0 {
+		attempts = job.Attempts
 	}
-	if delay > 15*time.Minute {
-		delay = 15 * time.Minute
+	if attempts >= len(mediaBillingSettlementBackoff) {
+		attempts = len(mediaBillingSettlementBackoff) - 1
 	}
-	return delay
+	return mediaBillingSettlementBackoff[attempts]
 }
 
 func (s *OpenAIGatewayService) reconcileGrokVideoBillingJob(ctx context.Context, job *MediaBillingJob, reason string) error {

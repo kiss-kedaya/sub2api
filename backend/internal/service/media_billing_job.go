@@ -49,6 +49,10 @@ type MediaBillingJob struct {
 	UpdatedAt      time.Time           `json:"updated_at"`
 	AvailableAt    time.Time           `json:"available_at"`
 	Attempts       int                 `json:"attempts"`
+	// PreauthRequestID is a transient, non-persisted live_wallet direct-PG hold
+	// identifier passed into CreateMediaBillingJob so the PG freeze tx atomically
+	// advances the billing_balance_settlements row and suppresses the outbox.
+	PreauthRequestID string `json:"-"`
 }
 
 type MediaBillingJobRepository interface {
@@ -60,6 +64,7 @@ type MediaBillingJobRepository interface {
 	ApplyMediaBillingJob(context.Context, string) (*UsageBillingApplyResult, error)
 	FailMediaBillingJob(context.Context, string) (*UsageBillingApplyResult, error)
 	ReconcileMediaBillingJob(context.Context, string) error
+	AbandonMediaBillingJob(context.Context, string) (bool, error)
 	CompleteMediaBillingJob(context.Context, string) error
 	ListMediaBillingJobs(context.Context, int) ([]*MediaBillingJob, error)
 	RetryMediaBillingJob(context.Context, string, time.Duration) error

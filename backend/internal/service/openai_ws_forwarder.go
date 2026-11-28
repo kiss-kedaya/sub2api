@@ -257,6 +257,10 @@ type OpenAIWSIngressHooks struct {
 	InitialRequestModel string
 	// InitialTurnStartedAt freezes when the first response.create was accepted.
 	InitialTurnStartedAt time.Time
+	// InitialTurnNumber is the logical 1-based turn number of firstClientMessage.
+	// Values <= 1 denote the handshake turn; values > 1 denote a failover replay
+	// of a subsequent turn so per-turn auth/billing/policy hooks still execute.
+	InitialTurnNumber int
 	// MaxReasoningEffort limits explicit reasoning effort values for this WS session.
 	MaxReasoningEffort string
 	// MaxReasoningEffortOverLimit is the access control when an explicit effort
@@ -265,9 +269,13 @@ type OpenAIWSIngressHooks struct {
 	// ReasoningEffortMappings rewrites explicit effort values for this WS session.
 	ReasoningEffortMappings []ReasoningEffortMapping
 	TurnStarted             func(turn int, startedAt time.Time)
-	BeforeTurn              func(turn int) error
-	BeforeRequest           func(turn int, payload []byte, originalModel string) ([]byte, error)
-	BeforeUpstreamFailure   func(turn int, payload []byte, forwardErr error, wroteDownstream bool) error
+	// PrepareTurnPayload records the incoming turn payload & requested model
+	// before BeforeTurn runs (used by passthrough ingress where BeforeTurn runs
+	// ahead of BeforeRequest so inflight reservation sees the current turn).
+	PrepareTurnPayload    func(turn int, payload []byte, originalModel string)
+	BeforeTurn            func(turn int) error
+	BeforeRequest         func(turn int, payload []byte, originalModel string) ([]byte, error)
+	BeforeUpstreamFailure func(turn int, payload []byte, forwardErr error, wroteDownstream bool) error
 	// MapRequestModel resolves the current turn's client model to the model
 	// that must be written into the upstream response.create frame.
 	MapRequestModel func(turn int, originalModel string) (string, error)

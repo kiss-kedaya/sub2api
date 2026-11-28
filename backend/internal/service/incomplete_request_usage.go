@@ -210,18 +210,24 @@ func estimateRequestInputTokensRaw(body []byte) int {
 		return 0
 	}
 	root := gjson.ParseBytes(body)
-	var estimated int
-	var err error
-	switch {
-	case root.Get("contents").Exists() || root.Get("systemInstruction").Exists():
-		estimated = estimateGeminiCountTokens(body)
-	case root.Get("input").Exists():
-		estimated, err = EstimateOpenAIResponsesInputTokens(body)
-	case root.Get("messages").Exists():
-		estimated, err = EstimateAnthropicCountTokens(body)
+	// Evaluate every present protocol shape and keep the largest estimate so a
+	// smuggled empty/tiny foreign field (e.g. "contents":[] on an Anthropic or
+	// OpenAI messages payload) can never hijack the dispatcher and return 0.
+	best := 0
+	if root.Get("contents").Exists() || root.Get("systemInstruction").Exists() || root.Get("system_instruction").Exists() {
+		if estimated := estimateGeminiCountTokens(body); estimated > best {
+			best = estimated
+		}
 	}
-	if err != nil || estimated <= 0 {
-		return 0
+	if root.Get("input").Exists() {
+		if estimated, err := EstimateOpenAIResponsesInputTokens(body); err == nil && estimated > best {
+			best = estimated
+		}
 	}
-	return estimated
+	if root.Get("messages").Exists() {
+		if estimated, err := EstimateAnthropicCountTokens(body); err == nil && estimated > best {
+			best = estimated
+		}
+	}
+	return best
 }

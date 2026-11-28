@@ -163,4 +163,18 @@ describe('balance chip in the header: refresh light', () => {
     await nextTick()
     expect(chip().attributes('data-sync')).toBe('fresh')
   })
+
+  it('keeps the sync ring pseudo-element aligned with the chip continuous-curvature corner-shape', async () => {
+    const [{ readFileSync }, { resolve }] = await Promise.all([
+      import('node:fs'),
+      import('node:path'),
+    ])
+    const headerSrc = readFileSync(resolve(__dirname, '../AppHeader.vue'), 'utf8')
+    const styleSrc = readFileSync(resolve(__dirname, '../../../style.css'), 'utf8')
+    const afterRule = headerSrc.match(/\.console-navbar\s+\.header-balance::after\s*\{[^}]*\}/)?.[0] ?? ''
+    expect(afterRule).toContain('border-radius: inherit;')
+    expect(afterRule).toContain('corner-shape: inherit;')
+    expect(styleSrc).toContain('.header-balance::after')
+    expect(styleSrc).toContain('.header-balance-detail')
+  })
 })

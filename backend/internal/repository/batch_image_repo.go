@@ -125,6 +125,22 @@ func (r *batchImageRepository) ListBatchImageJobsForOwner(ctx context.Context, u
 	return scanBatchImageJobs(rows)
 }
 
+func (r *batchImageRepository) SumOutstandingHoldByAPIKey(ctx context.Context, userID, apiKeyID int64) (float64, error) {
+	var total float64
+	err := r.sql.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(GREATEST(COALESCE(hold_amount, estimated_cost), 0)), 0)
+FROM batch_image_jobs
+WHERE user_id = $1
+  AND api_key_id = $2
+  AND status IN ('created', 'uploading', 'submitted', 'running', 'indexing', 'settling')`,
+		userID, apiKeyID,
+	).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 func (r *batchImageRepository) GetBatchImageJobByID(ctx context.Context, id int64) (*service.BatchImageJob, error) {
 	job, err := scanBatchImageJob(r.sql.QueryRowContext(ctx, batchImageJobSelectSQL+" WHERE id = $1", id))
 	if err != nil {

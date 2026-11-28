@@ -316,6 +316,7 @@ import type {
 import { extractI18nErrorMessage } from '@/utils/apiError'
 import { clearAllAffiliateReferralCodes } from '@/utils/oauthAffiliate'
 import { isChunkLoadError, pushOrReload, recoverFromChunkLoadError } from '@/utils/chunkLoadError'
+import { sanitizeInternalRedirectPath } from '@/utils/url'
 
 const { t } = useI18n()
 const LOGIN_AGREEMENT_STORAGE_KEY = 'sub2api_login_agreement_consent'
@@ -837,7 +838,7 @@ async function handleLogin(): Promise<void> {
     await finishLoginSuccess()
   } catch (error: unknown) {
     if (isChunkLoadError(error)) {
-      recoverFromChunkLoadError((router.currentRoute.value.query.redirect as string) || '/dashboard')
+      recoverFromChunkLoadError(loginRedirect())
       return
     }
     errorMessage.value = extractI18nErrorMessage(error, t, 'auth.errors', t('auth.loginFailed'))
@@ -880,11 +881,11 @@ async function handlePasskeyLogin(): Promise<void> {
     await authStore.loginWithPasskey(proof)
     clearAllAffiliateReferralCodes()
     appStore.showSuccess(t('auth.loginSuccess'))
-    const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
+    const redirectTo = loginRedirect()
     await pushOrReload(router, redirectTo)
   } catch (error: unknown) {
     if (isChunkLoadError(error)) {
-      recoverFromChunkLoadError((router.currentRoute.value.query.redirect as string) || '/dashboard')
+      recoverFromChunkLoadError(loginRedirect())
       return
     }
     const fallback = error instanceof DOMException && error.name === 'NotAllowedError'
@@ -953,7 +954,7 @@ function maskLoginEmail(email: string): string {
 }
 
 const loginRedirect = (): string =>
-  (router.currentRoute.value.query.redirect as string) || '/dashboard'
+  sanitizeInternalRedirectPath(router.currentRoute.value.query.redirect, '/dashboard')
 
 /** 全部因子通过后：清挑战、提示成功、跳转目标页。 */
 async function finishLoginSuccess(): Promise<void> {

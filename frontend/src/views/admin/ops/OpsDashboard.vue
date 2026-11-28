@@ -581,36 +581,40 @@ function buildSwitchTrendParams() {
   return params
 }
 
-async function refreshOverviewWithCancel(fetchSeq: number, signal: AbortSignal, silent = false) {
-  if (!opsEnabled.value) return
+async function refreshOverviewWithCancel(fetchSeq: number, signal: AbortSignal, silent = false): Promise<boolean> {
+  if (!opsEnabled.value) return true
   try {
     const data = await opsAPI.getDashboardOverview(buildApiParams(), { signal })
-    if (fetchSeq !== dashboardFetchSeq) return
+    if (fetchSeq !== dashboardFetchSeq) return false
     overview.value = data
+    return true
   } catch (err: any) {
-    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return
+    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return false
     if (!silent || overview.value === null) {
       overview.value = null
       appStore.showError(err?.message || t('admin.ops.failedToLoadOverview'))
     }
+    return false
   }
 }
 
-async function refreshSwitchTrendWithCancel(fetchSeq: number, signal: AbortSignal, silent = false) {
-  if (!opsEnabled.value) return
+async function refreshSwitchTrendWithCancel(fetchSeq: number, signal: AbortSignal, silent = false): Promise<boolean> {
+  if (!opsEnabled.value) return true
   if (!silent || switchTrend.value === null) {
     loadingSwitchTrend.value = true
   }
   try {
     const data = await opsAPI.getThroughputTrend(buildSwitchTrendParams(), { signal })
-    if (fetchSeq !== dashboardFetchSeq) return
+    if (fetchSeq !== dashboardFetchSeq) return false
     switchTrend.value = data
+    return true
   } catch (err: any) {
-    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return
+    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return false
     if (!silent || switchTrend.value === null) {
       switchTrend.value = null
       appStore.showError(err?.message || t('admin.ops.failedToLoadSwitchTrend'))
     }
+    return false
   } finally {
     if (fetchSeq === dashboardFetchSeq) {
       loadingSwitchTrend.value = false
@@ -618,21 +622,23 @@ async function refreshSwitchTrendWithCancel(fetchSeq: number, signal: AbortSigna
   }
 }
 
-async function refreshThroughputTrendWithCancel(fetchSeq: number, signal: AbortSignal, silent = false) {
-  if (!opsEnabled.value) return
+async function refreshThroughputTrendWithCancel(fetchSeq: number, signal: AbortSignal, silent = false): Promise<boolean> {
+  if (!opsEnabled.value) return true
   if (!silent || throughputTrend.value === null) {
     loadingTrend.value = true
   }
   try {
     const data = await opsAPI.getThroughputTrend(buildApiParams(), { signal })
-    if (fetchSeq !== dashboardFetchSeq) return
+    if (fetchSeq !== dashboardFetchSeq) return false
     throughputTrend.value = data
+    return true
   } catch (err: any) {
-    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return
+    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return false
     if (!silent || throughputTrend.value === null) {
       throughputTrend.value = null
       appStore.showError(err?.message || t('admin.ops.failedToLoadThroughputTrend'))
     }
+    return false
   } finally {
     if (fetchSeq === dashboardFetchSeq) {
       loadingTrend.value = false
@@ -640,8 +646,8 @@ async function refreshThroughputTrendWithCancel(fetchSeq: number, signal: AbortS
   }
 }
 
-async function refreshCoreSnapshotWithCancel(fetchSeq: number, signal: AbortSignal, silent = false) {
-  if (!opsEnabled.value) return
+async function refreshCoreSnapshotWithCancel(fetchSeq: number, signal: AbortSignal, silent = false): Promise<boolean> {
+  if (!opsEnabled.value) return true
   if (!silent || throughputTrend.value === null) {
     loadingTrend.value = true
   }
@@ -650,18 +656,20 @@ async function refreshCoreSnapshotWithCancel(fetchSeq: number, signal: AbortSign
   }
   try {
     const data = await opsAPI.getDashboardSnapshotV2(buildApiParams(), { signal })
-    if (fetchSeq !== dashboardFetchSeq) return
+    if (fetchSeq !== dashboardFetchSeq) return false
     overview.value = data.overview
     throughputTrend.value = data.throughput_trend
     errorTrend.value = data.error_trend
+    return true
   } catch (err: any) {
-    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return
+    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return false
     // Fallback to legacy split endpoints when snapshot endpoint is unavailable.
-    await Promise.all([
+    const results = await Promise.all([
       refreshOverviewWithCancel(fetchSeq, signal, silent),
       refreshThroughputTrendWithCancel(fetchSeq, signal, silent),
       refreshErrorTrendWithCancel(fetchSeq, signal, silent)
     ])
+    return results.every(Boolean)
   } finally {
     if (fetchSeq === dashboardFetchSeq) {
       loadingTrend.value = false
@@ -692,21 +700,23 @@ async function refreshLatencyHistogramWithCancel(fetchSeq: number, signal: Abort
   }
 }
 
-async function refreshErrorTrendWithCancel(fetchSeq: number, signal: AbortSignal, silent = false) {
-  if (!opsEnabled.value) return
+async function refreshErrorTrendWithCancel(fetchSeq: number, signal: AbortSignal, silent = false): Promise<boolean> {
+  if (!opsEnabled.value) return true
   if (!silent || errorTrend.value === null) {
     loadingErrorTrend.value = true
   }
   try {
     const data = await opsAPI.getErrorTrend(buildApiParams(), { signal })
-    if (fetchSeq !== dashboardFetchSeq) return
+    if (fetchSeq !== dashboardFetchSeq) return false
     errorTrend.value = data
+    return true
   } catch (err: any) {
-    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return
+    if (fetchSeq !== dashboardFetchSeq || isCanceledRequest(err)) return false
     if (!silent || errorTrend.value === null) {
       errorTrend.value = null
       appStore.showError(err?.message || t('admin.ops.failedToLoadErrorTrend'))
     }
+    return false
   } finally {
     if (fetchSeq === dashboardFetchSeq) {
       loadingErrorTrend.value = false
@@ -770,18 +780,23 @@ async function fetchData(silent = false) {
     errorMessage.value = ''
   }
   try {
-    await Promise.all([
+    const [coreRefreshed, switchTrendRefreshed] = await Promise.all([
       refreshCoreSnapshotWithCancel(fetchSeq, dashboardFetchController.signal, isSilent),
       refreshSwitchTrendWithCancel(fetchSeq, dashboardFetchController.signal, isSilent),
     ])
     if (fetchSeq !== dashboardFetchSeq) return
 
-    lastUpdated.value = new Date()
+    if (coreRefreshed && switchTrendRefreshed) {
+      lastUpdated.value = new Date()
+      errorMessage.value = ''
+    } else if (isSilent) {
+      errorMessage.value = t('admin.ops.failedToLoadData')
+    }
 
     // Trigger child component refreshes using the same cadence as the header.
     dashboardRefreshToken.value += 1
 
-    // Reset auto refresh countdown after successful fetch
+    // Reset auto refresh countdown after refresh attempt
     if (autoRefreshEnabled.value) {
       autoRefreshCountdown.value = Math.floor(autoRefreshIntervalMs.value / 1000)
     }
@@ -791,9 +806,7 @@ async function fetchData(silent = false) {
   } catch (err) {
     if (!isOpsDisabledError(err)) {
       console.error('[ops] failed to fetch dashboard data', err)
-      if (!isSilent) {
-        errorMessage.value = t('admin.ops.failedToLoadData')
-      }
+      errorMessage.value = t('admin.ops.failedToLoadData')
     }
   } finally {
     if (fetchSeq === dashboardFetchSeq) {

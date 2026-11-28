@@ -55,38 +55,101 @@ func buildBatchImageHoldCommand(job *BatchImageJob, requestID string, actualAmou
 	}, nil
 }
 
-func reserveBatchImageBalanceHold(ctx context.Context, repo UsageBillingRepository, job *BatchImageJob, payloadHash string) error {
+func reserveBatchImageBalanceHoldWithPreauth(
+	ctx context.Context,
+	repo UsageBillingRepository,
+	job *BatchImageJob,
+	payloadHash string,
+	preauthRequestID string,
+) (bool, error) {
 	if repo == nil {
-		return ErrBatchImageBillingHoldFailed.WithCause(errors.New("batch image billing repository is not configured"))
+		return false, ErrBatchImageBillingHoldFailed.WithCause(errors.New("batch image billing repository is not configured"))
 	}
 	cmd, err := buildBatchImageHoldCommand(job, BatchImageHoldRequestID(job.BatchID), 0, payloadHash)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if cmd.HoldAmount <= 0 {
-		return nil
+		return false, nil
 	}
-	if _, err := repo.ReserveBatchImageBalance(ctx, cmd); err != nil {
+	cmd.PreauthRequestID = strings.TrimSpace(preauthRequestID)
+	res, err := repo.ReserveBatchImageBalance(ctx, cmd)
+	if err != nil {
 		if errors.Is(err, ErrBatchImageInsufficientBalance) {
-			return ErrBatchImageInsufficientBalance
+			return false, ErrBatchImageInsufficientBalance
 		}
-		return ErrBatchImageBillingHoldFailed.WithCause(err)
+		return false, ErrBatchImageBillingHoldFailed.WithCause(err)
+	}
+	return res == nil || res.Applied, nil
+}
+
+func captureBatchImageBalanceHold(ctx context.Context, repo UsageBillingRepository, job *BatchImageJob, actualAmount float64, payloadHash string) (bool, error) {
+	if repo == nil {
+		return false, ErrBatchImageSettlementBillingFailed.WithCause(errors.New("batch image billing repository is not configured"))
+	}
+	cmd, err := buildBatchImageHoldCommand(job, BatchImageCaptureRequestID(job.BatchID), actualAmount, payloadHash)
+	if err != nil {
+		return false, err
+	}
+	res, err := repo.CaptureBatchImageBalance(ctx, cmd)
+	if err != nil {
+		return false, ErrBatchImageSettlementBillingFailed.WithCause(err)
+	}
+	return res != nil && res.Applied, nil
+}
+
+// BatchImageAPIKeyQuotaUpdater abstracts API key quota and rate-limit usage
+// persistence when a batch image hold is captured during settlement.
+type BatchImageAPIKeyQuotaUpdater interface {
+	UpdateQuotaUsed(ctx context.Context, apiKeyID int64, cost float64) error
+	UpdateRateLimitUsage(ctx context.Context, apiKeyID int64, cost float64) error
+}
+
+type batchImageBillingCacheProvider interface {
+	BillingCacheService() *BillingCacheService
+}
+
+func resolveBatchImageBillingCache(explicit *BillingCacheService, authCache APIKeyAuthCacheInvalidator) *BillingCacheService {
+	if explicit != nil {
+		return explicit
+	}
+	if provider, ok := authCache.(batchImageBillingCacheProvider); ok && provider != nil {
+		return provider.BillingCacheService()
 	}
 	return nil
 }
 
-func captureBatchImageBalanceHold(ctx context.Context, repo UsageBillingRepository, job *BatchImageJob, actualAmount float64, payloadHash string) error {
-	if repo == nil {
-		return ErrBatchImageSettlementBillingFailed.WithCause(errors.New("batch image billing repository is not configured"))
+func resolveBatchImageAPIKeyQuotaUpdater(explicit BatchImageAPIKeyQuotaUpdater, authCache APIKeyAuthCacheInvalidator) BatchImageAPIKeyQuotaUpdater {
+	if explicit != nil {
+		return explicit
 	}
-	cmd, err := buildBatchImageHoldCommand(job, BatchImageCaptureRequestID(job.BatchID), actualAmount, payloadHash)
-	if err != nil {
-		return err
-	}
-	if _, err := repo.CaptureBatchImageBalance(ctx, cmd); err != nil {
-		return ErrBatchImageSettlementBillingFailed.WithCause(err)
+	if updater, ok := authCache.(BatchImageAPIKeyQuotaUpdater); ok && updater != nil {
+		return updater
 	}
 	return nil
+}
+
+// invalidateBatchImageUserBalanceAndAuthCache evicts both the 5-minute Redis
+// billing:balance:{uid} cache and the API key auth cache after any PG
+// users.balance / frozen_balance mutation in batch image lifecycle paths.
+func invalidateBatchImageUserBalanceAndAuthCache(ctx context.Context, billingCache *BillingCacheService, authCache APIKeyAuthCacheInvalidator, userID int64) {
+	if userID <= 0 {
+		return
+	}
+	baseCtx := context.Background()
+	if ctx != nil {
+		baseCtx = context.WithoutCancel(ctx)
+	}
+	if bc := resolveBatchImageBillingCache(billingCache, authCache); bc != nil {
+		invCtx, cancel := context.WithTimeout(baseCtx, cacheWriteTimeout)
+		_ = bc.InvalidateUserBalance(invCtx, userID)
+		cancel()
+	}
+	if authCache != nil {
+		invCtx, cancel := context.WithTimeout(baseCtx, cacheWriteTimeout)
+		authCache.InvalidateAuthCacheByUserID(invCtx, userID)
+		cancel()
+	}
 }
 
 func releaseBatchImageBalanceHold(ctx context.Context, repo UsageBillingRepository, job *BatchImageJob, payloadHash string) error {

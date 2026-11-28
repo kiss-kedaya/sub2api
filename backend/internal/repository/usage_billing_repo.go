@@ -82,7 +82,15 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 		return nil, err
 	}
 	if !applied {
-		return &service.UsageBillingApplyResult{Applied: false}, nil
+		result := &service.UsageBillingApplyResult{Applied: false}
+		if cmd.BalancePreauthorized {
+			pending, pendingErr := r.isBalanceFinalizationPendingTx(ctx, tx, cmd.RequestID, cmd.APIKeyID)
+			if pendingErr != nil {
+				return nil, pendingErr
+			}
+			result.BalanceFinalizationPending = pending
+		}
+		return result, nil
 	}
 
 	result := &service.UsageBillingApplyResult{Applied: true}
@@ -300,6 +308,27 @@ func beginUsageBillingBalanceFinalization(ctx context.Context, tx *sql.Tx, cmd *
 	return nil
 }
 
+func (r *usageBillingRepository) isBalanceFinalizationPendingTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	requestID string,
+	apiKeyID int64,
+) (bool, error) {
+	var status int16
+	err := tx.QueryRowContext(ctx, `
+		SELECT status
+		FROM billing_balance_settlements
+		WHERE request_id = $1 AND api_key_id = $2
+	`, requestID, apiKeyID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return status == service.BalanceSettlementFinalizationPending, nil
+}
+
 // balanceMergeSettlementActive 判断本次扣费是否走合并结算队列。
 //
 // 只有当配置开启且本进程确实有结算消费者在运行时才入队：如果配置开启但后台任务
@@ -435,6 +464,11 @@ func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, am
 func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
 	if cmd.HoldAmount <= 0 {
 		return &service.BatchImageBalanceHoldResult{}, nil
+	}
+	if preauthID := strings.TrimSpace(cmd.PreauthRequestID); preauthID != "" {
+		if err := advanceDirectPGHoldToFinalizationPending(ctx, tx, preauthID, cmd.APIKeyID, cmd.HoldAmount); err != nil {
+			return nil, err
+		}
 	}
 	var balance, frozen float64
 	err := tx.QueryRowContext(ctx, `

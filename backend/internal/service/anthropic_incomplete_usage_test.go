@@ -238,7 +238,6 @@ func TestApplyIncompleteAnthropicStreamUsage_Eligibility(t *testing.T) {
 			"replayable failover":      &UpstreamFailoverError{StatusCode: http.StatusBadGateway},
 			"wrapped failover":         fmt.Errorf("attempt failed: %w", &UpstreamFailoverError{StatusCode: http.StatusBadGateway}),
 			"forwarded upstream error": &AnthropicPassthroughStreamError{StatusCode: http.StatusBadGateway},
-			"balance abort":            wrapStreamOutputHoldTopUpFailure(ErrBalanceWithholdingFailed),
 		} {
 			result := incomplete(true)
 			out, in := apply(result, err)
@@ -246,6 +245,14 @@ func TestApplyIncompleteAnthropicStreamUsage_Eligibility(t *testing.T) {
 			require.Zero(t, in, name)
 			require.Equal(t, ClaudeUsage{}, *result.usage, name)
 		}
+	})
+	t.Run("balance abort estimates delivered output and input tokens", func(t *testing.T) {
+		result := incomplete(false)
+		out, in := apply(result, wrapStreamOutputHoldTopUpFailure(ErrBalanceWithholdingFailed))
+		require.Greater(t, out, 0)
+		require.Greater(t, in, 0)
+		require.Equal(t, out, result.usage.OutputTokens)
+		require.Equal(t, in, result.usage.InputTokens+result.usage.CacheReadInputTokens)
 	})
 	t.Run("nothing to work with is a no-op", func(t *testing.T) {
 		for name, result := range map[string]*streamingResult{

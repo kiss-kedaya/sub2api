@@ -70,6 +70,17 @@ type InflightReservation struct {
 	quotaCache APIKeyQuotaReservationCache
 	apiKeyID   int64
 
+	// 各维度实际登记到 Redis 的预留金额（用于智能路由切组补差）。
+	quotaAmount   float64
+	balanceAmount float64
+
+	// extras 挂载由智能路由切组补差或固定扣费增量产生的附加预留，
+	// 与主预留共享 HandlerDone（停止续期）与 Release（主引用归零释放）生命周期。
+	mu          sync.Mutex
+	extras      []*InflightReservation
+	handlerDone bool
+	released    bool
+
 	refs        atomic.Int64
 	releaseOnce sync.Once
 	stopOnce    sync.Once
@@ -91,6 +102,70 @@ func (r *InflightReservation) Amount() float64 {
 	return r.amount
 }
 
+// QuotaAmount 返回在 key 配额维度实际预占的金额。
+func (r *InflightReservation) QuotaAmount() float64 {
+	if r == nil {
+		return 0
+	}
+	return r.quotaAmount
+}
+
+// BalanceAmount 返回在余额维度实际预占的金额。
+func (r *InflightReservation) BalanceAmount() float64 {
+	if r == nil {
+		return 0
+	}
+	return r.balanceAmount
+}
+
+// Attach 将同请求的增量预留（如智能路由切到更高倍率分组补差）挂到主预留上，
+// 共享 HandlerDone（停止续期）与 Release（主预留所有 Acquire 引用释放后统一释放）生命周期。
+// 无论 Attach 发生在 Acquire 之前还是之后，extra 都不会在主预留仍有在途引用时提前释放；
+// 主预留已释放时立即释放 extra。
+func (r *InflightReservation) Attach(extra *InflightReservation) {
+	if extra == nil || extra == r {
+		return
+	}
+	if r == nil {
+		extra.Release()
+		return
+	}
+	r.mu.Lock()
+	if r.released || r.refs.Load() <= 0 {
+		r.mu.Unlock()
+		extra.Release()
+		return
+	}
+	stopExtraRenewal := r.handlerDone
+	r.extras = append(r.extras, extra)
+	r.mu.Unlock()
+	if stopExtraRenewal {
+		extra.stopRenewalTree()
+	}
+}
+
+func (r *InflightReservation) snapshotExtras() []*InflightReservation {
+	r.mu.Lock()
+	if len(r.extras) == 0 {
+		r.mu.Unlock()
+		return nil
+	}
+	cp := make([]*InflightReservation, len(r.extras))
+	copy(cp, r.extras)
+	r.mu.Unlock()
+	return cp
+}
+
+func (r *InflightReservation) stopRenewalTree() {
+	if r == nil {
+		return
+	}
+	r.stopRenewal()
+	for _, extra := range r.snapshotExtras() {
+		extra.stopRenewalTree()
+	}
+}
+
 // Acquire 为一个异步计费任务增加引用；返回的 done 幂等，必须在任务结束（或被丢弃）时调用。
 // 预留已释放时返回 no-op。
 func (r *InflightReservation) Acquire() func() {
@@ -107,16 +182,29 @@ func (r *InflightReservation) Acquire() func() {
 		}
 	}
 	var once sync.Once
-	return func() { once.Do(r.decRef) }
+	return func() {
+		once.Do(func() {
+			r.decRef()
+		})
+	}
 }
 
-// HandlerDone handler 结束：停止续期并归还 handler 引用（幂等）。
+// HandlerDone handler 结束：停止续期（含已挂载的增量预留）并归还 handler 引用（幂等）。
+// 若仍有 Acquire 持有的在途计费任务引用，主预留与全部 extras 会一并保持到最后一次 done() 归零。
 func (r *InflightReservation) HandlerDone() {
 	if r == nil {
 		return
 	}
 	r.stopOnce.Do(func() {
 		r.stopRenewal()
+		r.mu.Lock()
+		r.handlerDone = true
+		extras := make([]*InflightReservation, len(r.extras))
+		copy(extras, r.extras)
+		r.mu.Unlock()
+		for _, extra := range extras {
+			extra.stopRenewalTree()
+		}
 		r.decRef()
 	})
 }
@@ -127,6 +215,11 @@ func (r *InflightReservation) Release() {
 		return
 	}
 	r.stopRenewal()
+	r.mu.Lock()
+	r.released = true
+	extras := r.extras
+	r.extras = nil
+	r.mu.Unlock()
 	r.releaseOnce.Do(func() {
 		r.refs.Store(0)
 		if r.cache != nil {
@@ -144,6 +237,9 @@ func (r *InflightReservation) Release() {
 			relCancel()
 		}
 	})
+	for _, extra := range extras {
+		extra.Release()
+	}
 }
 
 func (r *InflightReservation) decRef() {
@@ -260,6 +356,21 @@ func (s *BillingCacheService) InflightReservationFailClosedOnUnpriced() bool {
 	return ok && cfg.FailClosedOnUnpriced
 }
 
+// CapInflightBalanceReservation 返回应用单次余额在途预留上限（MaxReservationUSD）后的金额。
+func (s *BillingCacheService) CapInflightBalanceReservation(estimate float64) float64 {
+	if !validCost(estimate) {
+		return 0
+	}
+	cfg, ok := s.inflightReservationConfig()
+	if !ok {
+		return 0
+	}
+	if cfg.MaxReservationUSD > 0 && estimate > cfg.MaxReservationUSD {
+		return cfg.MaxReservationUSD
+	}
+	return estimate
+}
+
 // ReserveInflightBalance 简化封装：返回释放函数，不续期、不做计费交接（预留最长存活 TTL）。
 func (s *BillingCacheService) ReserveInflightBalance(ctx context.Context, user *User, group *Group, subscription *UserSubscription, estimate float64) (func(), error) {
 	r, err := s.reserveInflight(ctx, user, group, subscription, estimate, false)
@@ -323,7 +434,8 @@ type InflightEstimateRequest struct {
 	Units int
 	// SearchCalls 叠加的搜索次数（按分组 search_price_per_1k 计）。
 	SearchCalls int
-	// 视频：分辨率与时长（秒）。
+	// 视频：提供方、分辨率与时长（秒）。
+	VideoProvider        string
 	VideoResolution      string
 	VideoDurationSeconds int
 	// 音频：模式（tts/stt/realtime）与计量单位（百万字符/小时/分钟）。
@@ -552,13 +664,40 @@ func (d inflightEstimateDeps) estimateOne(ctx context.Context, apiKey *APIKey, m
 			cost = tokenCost()
 		}
 	case InflightEstimateVideo:
-		if perRequestMode {
-			cost = maxPerRequestPrice(resolved) * float64(units) * math.Max(textRate, imageRate)
+		videoRate := math.Max(textRate, imageRate)
+		seedanceTokenCost := func() float64 {
+			var pricing *ModelPricing
+			if resolved != nil && (resolved.Mode == BillingModeToken || resolved.Mode == "") && d.resolver != nil {
+				pricing = d.resolver.GetIntervalPricing(resolved, 0)
+			}
+			if pricing == nil && d.billing != nil {
+				pricing, _ = d.billing.GetModelPricing(model)
+			}
+			if pricing != nil && pricing.OutputPricePerToken > 0 {
+				estTokens := seedanceTokenBillingReserveTokens(req.VideoResolution, req.VideoDurationSeconds)
+				return estTokens * pricing.OutputPricePerToken * float64(units) * videoRate
+			}
+			return 0
 		}
-		if d.billing != nil {
-			if b := d.billing.CalculateVideoCost(model, req.VideoResolution, units, req.VideoDurationSeconds, videoPriceConfigFromAPIKey(apiKey), math.Max(textRate, imageRate)); b != nil && b.ActualCost > cost {
+		if perRequestMode {
+			cost = maxPerRequestPrice(resolved) * float64(units) * videoRate
+		}
+		// Token-billed Seedance requests use conservative completion-token reserve
+		// BEFORE generic CalculateVideoCost so unrelated group video prices cannot
+		// mask token billing.
+		isTokenBilledSeedance := req.VideoProvider == VideoProviderSeedance && !perRequestMode
+		if isTokenBilledSeedance {
+			if tc := seedanceTokenCost(); tc > cost {
+				cost = tc
+			}
+		}
+		if (!isTokenBilledSeedance || cost <= 0) && d.billing != nil {
+			if b := d.billing.CalculateVideoCost(model, req.VideoResolution, units, req.VideoDurationSeconds, videoPriceConfigFromAPIKey(apiKey), videoRate); b != nil && b.ActualCost > cost {
 				cost = b.ActualCost
 			}
+		}
+		if cost <= 0 {
+			cost = seedanceTokenCost()
 		}
 	case InflightEstimateAudio:
 		if perRequestMode && resolved.Mode == BillingModePerRequest {

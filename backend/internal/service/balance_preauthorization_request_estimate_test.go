@@ -40,20 +40,179 @@ func TestEstimateBalancePreauthorizationTokensUsesProtocolEstimators(t *testing.
 }
 
 func TestEstimateBalancePreauthorizationTokensUsesLargestOutputLimit(t *testing.T) {
-	body := []byte(`{"model":"gpt-5","input":"hello","max_tokens":32,"max_completion_tokens":64,"max_output_tokens":48}`)
-	got := EstimateBalancePreauthorizationTokens(body)
-	require.Equal(t, 64, got.OutputTokens)
+	chatBody := []byte(`{"model":"gpt-5","messages":[{"role":"user","content":"hello"}],"max_tokens":32,"max_completion_tokens":64}`)
+	require.Equal(t, 64, EstimateBalancePreauthorizationTokens(chatBody).OutputTokens)
+
+	responsesBody := []byte(`{"model":"gpt-5","input":"hello","max_tokens":32,"max_output_tokens":48}`)
+	require.Equal(t, 48, EstimateBalancePreauthorizationTokens(responsesBody).OutputTokens)
 }
 
 func TestEstimateBalancePreauthorizationTokensFallsBackWithoutIO(t *testing.T) {
 	body := []byte(`{"model":"custom","prompt":"` + strings.Repeat("x", 700) + `"}`)
 	got := EstimateBalancePreauthorizationTokens(body)
 	require.Equal(t, len(body), got.InputTokens)
-	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, got.OutputTokens)
+	require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, got.OutputTokens)
 }
 
 func TestEstimateBalancePreauthorizationTokensIgnoresInvalidOutputLimit(t *testing.T) {
 	body := []byte(`{"model":"gpt-5","input":"hello","max_output_tokens":-1}`)
 	got := EstimateBalancePreauthorizationTokens(body)
-	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, got.OutputTokens)
+	require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, got.OutputTokens)
+}
+
+func TestEstimateBalancePreauthorizationTokensStreamVsNonStreamDefaultWindow(t *testing.T) {
+	nonStreamBody := []byte(`{"model":"gpt-5","input":"hello"}`)
+	require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, EstimateBalancePreauthorizationTokens(nonStreamBody).OutputTokens)
+
+	streamBody := []byte(`{"model":"gpt-5","input":"hello","stream":true}`)
+	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, EstimateBalancePreauthorizationTokens(streamBody).OutputTokens)
+
+	// Explicit transport stream flag overrides absent/conflicting JSON stream field.
+	require.Equal(t, DefaultBalancePreauthorizationOutputWindow, EstimateBalancePreauthorizationTokensForStream(nonStreamBody, true).OutputTokens)
+	require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, EstimateBalancePreauthorizationTokensForStream(streamBody, false).OutputTokens)
+}
+
+func TestEstimateBalancePreauthorizationTokensGeminiSnakeCaseAndThinkingBudgets(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantOutput int
+	}{
+		{
+			name:       "gemini snake_case max_output_tokens",
+			body:       `{"contents":[{"parts":[{"text":"hi"}]}],"generation_config":{"max_output_tokens":1536}}`,
+			wantOutput: 1536,
+		},
+		{
+			name:       "anthropic thinking budget larger than max_tokens",
+			body:       `{"model":"claude-sonnet-4","max_tokens":1024,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":"hi"}]}`,
+			wantOutput: 4096,
+		},
+		{
+			name:       "anthropic thinking budget smaller than max_tokens does not double count",
+			body:       `{"model":"claude-sonnet-4","max_tokens":8192,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":"hi"}]}`,
+			wantOutput: 8192,
+		},
+		{
+			name:       "anthropic thinking budget smaller than non-stream default with omitted max_tokens keeps default window",
+			body:       `{"model":"claude-sonnet-4","thinking":{"type":"enabled","budget_tokens":3000},"messages":[{"role":"user","content":"hi"}]}`,
+			wantOutput: DefaultBalancePreauthorizationNonStreamOutputWindow,
+		},
+		{
+			name:       "anthropic thinking budget larger than non-stream default with omitted max_tokens honors budget",
+			body:       `{"model":"claude-sonnet-4","thinking":{"type":"enabled","budget_tokens":6000},"messages":[{"role":"user","content":"hi"}]}`,
+			wantOutput: 6000,
+		},
+		{
+			name:       "gemini camelCase thinkingBudget with omitted maxOutputTokens reserves budget plus non-stream output window",
+			body:       `{"contents":[{"parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingBudget":2048}}}`,
+			wantOutput: 2048 + DefaultBalancePreauthorizationNonStreamOutputWindow,
+		},
+		{
+			name:       "gemini non-stream thinkingBudget=1 with omitted maxOutputTokens reserves 4097 not 257",
+			body:       `{"contents":[{"parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingBudget":1}}}`,
+			wantOutput: 1 + DefaultBalancePreauthorizationNonStreamOutputWindow,
+		},
+		{
+			name:       "gemini snake_case thinking_budget with omitted max_output_tokens reserves budget plus non-stream output window",
+			body:       `{"contents":[{"parts":[{"text":"hi"}]}],"generation_config":{"thinking_config":{"thinking_budget":1024}}}`,
+			wantOutput: 1024 + DefaultBalancePreauthorizationNonStreamOutputWindow,
+		},
+		{
+			name:       "gemini thinkingBudget with explicit maxOutputTokens takes max",
+			body:       `{"contents":[{"parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":1024,"thinkingConfig":{"thinkingBudget":6144}}}`,
+			wantOutput: 6144,
+		},
+		{
+			name:       "gemini dynamic thinkingBudget -1 ignored",
+			body:       `{"contents":[{"parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingBudget":-1}}}`,
+			wantOutput: DefaultBalancePreauthorizationNonStreamOutputWindow,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EstimateBalancePreauthorizationTokens([]byte(tt.body))
+			require.Equal(t, tt.wantOutput, got.OutputTokens)
+		})
+	}
+
+	// Streaming Gemini thinkingBudget with omitted maxOutputTokens adds the 256-token stream window.
+	streamThinkingBody := []byte(`{"contents":[{"parts":[{"text":"hi"}]}],"generationConfig":{"thinkingConfig":{"thinkingBudget":2048}}}`)
+	require.Equal(t, 2048+DefaultBalancePreauthorizationOutputWindow, EstimateBalancePreauthorizationTokensForStream(streamThinkingBody, true).OutputTokens)
+}
+
+func TestEstimateBalancePreauthorizationTokens_BlocksCrossProtocolFieldSmuggling(t *testing.T) {
+	t.Run("chat completions ignores foreign generationConfig maxOutputTokens", func(t *testing.T) {
+		body := []byte(`{"model":"gpt-5","messages":[{"role":"user","content":"Write a long essay."}],"generationConfig":{"maxOutputTokens":1}}`)
+		got := EstimateBalancePreauthorizationTokens(body)
+		require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, got.OutputTokens)
+	})
+
+	t.Run("chat completions ignores foreign max_output_tokens", func(t *testing.T) {
+		body := []byte(`{"model":"gpt-5","messages":[{"role":"user","content":"Write a long essay."}],"max_output_tokens":1}`)
+		got := EstimateBalancePreauthorizationTokens(body)
+		require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, got.OutputTokens)
+	})
+
+	t.Run("chat completions ignores smuggled empty contents and foreign generationConfig", func(t *testing.T) {
+		longPrompt := strings.Repeat("preauthorization security audit token counting ", 120)
+		body := []byte(`{"model":"claude-sonnet-4","messages":[{"role":"user","content":"` + longPrompt + `"}],"contents":[],"generationConfig":{"maxOutputTokens":1}}`)
+		got := EstimateBalancePreauthorizationTokens(body)
+		require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, got.OutputTokens)
+		require.Greater(t, got.InputTokens, DefaultBalancePreauthorizationInputTokens, "empty contents:[] must not hijack input estimation")
+		require.Greater(t, estimateRequestInputTokensRaw(body), 500, "empty contents:[] must not zero out estimateRequestInputTokensRaw")
+	})
+
+	t.Run("chat completions ignores smuggled non-empty contents with tiny generationConfig", func(t *testing.T) {
+		longPrompt := strings.Repeat("preauthorization security audit token counting ", 120)
+		body := []byte(`{"model":"gpt-5","messages":[{"role":"user","content":"` + longPrompt + `"}],"contents":[{"parts":[{"text":"x"}]}],"generationConfig":{"maxOutputTokens":1}}`)
+		got := EstimateBalancePreauthorizationTokens(body)
+		require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, got.OutputTokens)
+		require.Greater(t, got.InputTokens, DefaultBalancePreauthorizationInputTokens)
+	})
+
+	t.Run("responses ignores foreign generationConfig maxOutputTokens and max_completion_tokens", func(t *testing.T) {
+		body1 := []byte(`{"model":"gpt-5","input":"hi","generationConfig":{"maxOutputTokens":1}}`)
+		require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, EstimateBalancePreauthorizationTokens(body1).OutputTokens)
+
+		body2 := []byte(`{"model":"gpt-5","input":"hi","max_completion_tokens":1}`)
+		require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, EstimateBalancePreauthorizationTokens(body2).OutputTokens)
+	})
+
+	t.Run("gemini ignores foreign max_tokens", func(t *testing.T) {
+		body := []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"max_tokens":1}`)
+		require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, EstimateBalancePreauthorizationTokens(body).OutputTokens)
+	})
+
+	t.Run("streaming explicit max_tokens=4096 is never clobbered to 256", func(t *testing.T) {
+		body := []byte(`{"model":"claude-sonnet-4","stream":true,"max_tokens":4096,"messages":[{"role":"user","content":"hi"}]}`)
+		require.Equal(t, 4096, EstimateBalancePreauthorizationTokens(body).OutputTokens)
+		require.Equal(t, 4096, EstimateBalancePreauthorizationTokensForStream(body, true).OutputTokens)
+	})
+
+	t.Run("anthropic thinking budget without explicit output cap never downgrades default window", func(t *testing.T) {
+		// Recognized messages shape: non-stream thinking.budget_tokens=1 reserves 4096, not 1.
+		msgSmall := []byte(`{"messages":[{"role":"user","content":"hi"}],"thinking":{"type":"enabled","budget_tokens":1}}`)
+		require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, EstimateBalancePreauthorizationTokens(msgSmall).OutputTokens)
+		require.Equal(t, DefaultBalancePreauthorizationOutputWindow, EstimateBalancePreauthorizationTokensForStream(msgSmall, true).OutputTokens)
+
+		// Recognized messages shape: budget larger than default window still wins.
+		msgLarge := []byte(`{"messages":[{"role":"user","content":"hi"}],"thinking":{"type":"enabled","budget_tokens":10000}}`)
+		require.Equal(t, 10000, EstimateBalancePreauthorizationTokens(msgLarge).OutputTokens)
+
+		// Recognized messages shape with explicit max_tokens takes max(explicit, budget).
+		msgExplicit := []byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":512,"thinking":{"type":"enabled","budget_tokens":1}}`)
+		require.Equal(t, 512, EstimateBalancePreauthorizationTokens(msgExplicit).OutputTokens)
+		msgExplicitBudgetLarger := []byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":512,"thinking":{"type":"enabled","budget_tokens":2048}}`)
+		require.Equal(t, 2048, EstimateBalancePreauthorizationTokens(msgExplicitBudgetLarger).OutputTokens)
+
+		// Unrecognized shape (e.g. legacy prompt): thinking.budget_tokens=1 reserves 4096, not 1.
+		unrecognizedSmall := []byte(`{"prompt":"hi","thinking":{"type":"enabled","budget_tokens":1}}`)
+		require.Equal(t, DefaultBalancePreauthorizationNonStreamOutputWindow, EstimateBalancePreauthorizationTokens(unrecognizedSmall).OutputTokens)
+		require.Equal(t, DefaultBalancePreauthorizationOutputWindow, EstimateBalancePreauthorizationTokensForStream(unrecognizedSmall, true).OutputTokens)
+
+		unrecognizedLarge := []byte(`{"prompt":"hi","thinking":{"type":"enabled","budget_tokens":8192}}`)
+		require.Equal(t, 8192, EstimateBalancePreauthorizationTokens(unrecognizedLarge).OutputTokens)
+	})
 }

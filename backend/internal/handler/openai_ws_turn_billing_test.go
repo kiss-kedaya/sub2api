@@ -14,7 +14,7 @@ import (
 )
 
 func TestOpenAIWSTurnBillingGuardChecksEachTurnOnce(t *testing.T) {
-	guard := newOpenAIWSTurnBillingGuard(time.Second)
+	guard := newOpenAIWSTurnBillingGuardWithCompleted(time.Second, 0)
 	checks := 0
 	check := func(context.Context) error {
 		checks++
@@ -29,7 +29,7 @@ func TestOpenAIWSTurnBillingGuardChecksEachTurnOnce(t *testing.T) {
 }
 
 func TestOpenAIWSTurnBillingGuardFailsClosedAfterSettlementError(t *testing.T) {
-	guard := newOpenAIWSTurnBillingGuard(time.Second)
+	guard := newOpenAIWSTurnBillingGuardWithCompleted(time.Second, 0)
 	require.NoError(t, guard.BeforeTurn(context.Background(), 1, func(context.Context) error { return nil }))
 	guard.FinishTurn(context.Background(), 1, func(context.Context) error { return errors.New("ledger unavailable") })
 
@@ -45,7 +45,7 @@ func TestOpenAIWSTurnBillingGuardFailsClosedAfterSettlementError(t *testing.T) {
 }
 
 func TestOpenAIWSTurnBillingGuardPreservesExplicitEligibilityRejection(t *testing.T) {
-	guard := newOpenAIWSTurnBillingGuard(time.Second)
+	guard := newOpenAIWSTurnBillingGuardWithCompleted(time.Second, 0)
 	want := service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", errors.New("balance exhausted"))
 
 	err := guard.BeforeTurn(context.Background(), 1, func(context.Context) error { return want })
@@ -57,7 +57,7 @@ func TestOpenAIWSTurnBillingGuardPreservesExplicitEligibilityRejection(t *testin
 }
 
 func TestOpenAIWSTurnBillingGuardFailsClosedWhenSettlementTimesOut(t *testing.T) {
-	guard := newOpenAIWSTurnBillingGuard(20 * time.Millisecond)
+	guard := newOpenAIWSTurnBillingGuardWithCompleted(20*time.Millisecond, 0)
 	require.NoError(t, guard.BeforeTurn(context.Background(), 1, func(context.Context) error { return nil }))
 	guard.FinishTurn(context.Background(), 1, func(ctx context.Context) error {
 		<-ctx.Done()

@@ -86,6 +86,7 @@ func (r *mediaJobMemoryRepo) PrepareMediaBillingIntent(_ context.Context, id str
 	if j.Intent == nil {
 		j.Intent = i
 		j.Status = MediaBillingReady
+		j.Attempts = 0
 	}
 	return cloneMediaTestJob(j).Intent, nil
 }
@@ -161,6 +162,21 @@ func (r *mediaJobMemoryRepo) ReconcileMediaBillingJob(_ context.Context, id stri
 		job.Status = MediaBillingReconciliation
 	}
 	return nil
+}
+
+func (r *mediaJobMemoryRepo) AbandonMediaBillingJob(_ context.Context, id string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job := r.jobs[id]
+	if job == nil {
+		return false, ErrMediaBillingJobNotFound
+	}
+	if job.Status == MediaBillingReady && job.Intent != nil {
+		job.Attempts++
+		job.AvailableAt = time.Now().Add(24 * time.Hour)
+		return true, nil
+	}
+	return false, nil
 }
 
 type mediaUsageMemoryRepo struct {

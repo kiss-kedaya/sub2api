@@ -427,21 +427,32 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatResponse(
 	if requestID != "" {
 		c.Header("x-request-id", requestID)
 	}
+	var responseErr error
+	balanceAborted := false
 	streamResult, err := s.consumeAntigravityCompatSuccess(c, call, resp)
 	if err != nil {
-		return nil, err
+		if streamResult == nil || (!streamResult.balanceAborted && !isBalanceHoldTopUpError(err)) {
+			return nil, err
+		}
+		balanceAborted = true
+		responseErr = err
 	}
 	if streamResult.usage == nil {
 		streamResult.usage = &ClaudeUsage{}
 	}
-	if streamResult.clientDisconnect {
+	if streamResult.clientDisconnect || balanceAborted {
+		event := "antigravity_usage.client_gone_estimated"
+		if balanceAborted {
+			event = "antigravity_usage.balance_abort_estimated"
+		}
 		applyIncompleteGeminiUsage(
-			"antigravity_usage.client_gone_estimated",
+			event,
 			account,
 			call.billingModel,
 			streamResult.usage,
 			streamResult.outputTokens,
 			call.request.originalBody,
+			streamResult.hasFinalOutput,
 		)
 	}
 
@@ -458,7 +469,7 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatResponse(
 		FirstTokenMs:                  streamResult.firstTokenMs,
 		ReasoningEffort:               call.request.reasoningEffort,
 		ClientDisconnect:              streamResult.clientDisconnect,
-	}, nil
+	}, responseErr
 }
 
 func (s *AntigravityGatewayService) consumeAntigravityCompatSuccess(
@@ -610,6 +621,11 @@ func (s *AntigravityGatewayService) handleChatCompletionsNonStreamingFromAntigra
 ) (*antigravityStreamResult, error) {
 	claudeResponse, result, err := s.collectClaudeStreamResponse(c, resp, startTime, originalModel)
 	if err != nil {
+		if isBalanceHoldTopUpError(err) || (result != nil && result.balanceAborted) {
+			status, errType, msg := balanceHoldAbortClientError(err)
+			_ = s.writeAntigravityCompatError(c, status, errType, msg)
+			return result, err
+		}
 		return nil, s.mapAntigravityCompatCollectionError(c, err)
 	}
 	if result != nil && result.clientDisconnect {
@@ -633,6 +649,11 @@ func (s *AntigravityGatewayService) handleResponsesNonStreamingFromAntigravity(
 ) (*antigravityStreamResult, error) {
 	claudeResponse, result, err := s.collectClaudeStreamResponse(c, resp, startTime, originalModel)
 	if err != nil {
+		if isBalanceHoldTopUpError(err) || (result != nil && result.balanceAborted) {
+			status, errType, msg := balanceHoldAbortClientError(err)
+			_ = s.writeAntigravityCompatError(c, status, errType, msg)
+			return result, err
+		}
 		return nil, s.mapAntigravityCompatCollectionError(c, err)
 	}
 	if result != nil && result.clientDisconnect {

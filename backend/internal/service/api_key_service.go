@@ -369,6 +369,7 @@ type APIKeyService struct {
 	userGroupRateRepo         UserGroupRateRepository
 	cache                     APIKeyCache
 	rateLimitCacheInvalid     RateLimitCacheInvalidator // optional: invalidate Redis rate limit cache
+	billingCacheService       *BillingCacheService      // optional: captured from wire rateLimitCacheInvalid
 	concurrencyService        *ConcurrencyService
 	cfg                       *config.Config
 	authCacheL1               *ristretto.Cache
@@ -450,6 +451,23 @@ func NewAPIKeyService(
 // Called after construction (e.g. in wire) to avoid circular dependencies.
 func (s *APIKeyService) SetRateLimitCacheInvalidator(inv RateLimitCacheInvalidator) {
 	s.rateLimitCacheInvalid = inv
+	if bcs, ok := inv.(*BillingCacheService); ok {
+		s.billingCacheService = bcs
+	}
+}
+
+// BillingCacheService returns the wired BillingCacheService when available.
+func (s *APIKeyService) BillingCacheService() *BillingCacheService {
+	if s == nil {
+		return nil
+	}
+	return s.billingCacheService
+}
+
+// HasAuthLookup reports whether this APIKeyService instance is backed by a
+// repository or auth cache (as opposed to a bare zero-value test stub).
+func (s *APIKeyService) HasAuthLookup() bool {
+	return s != nil && (s.apiKeyRepo != nil || s.cache != nil)
 }
 
 func (s *APIKeyService) SetConcurrencyService(concurrencyService *ConcurrencyService) {
@@ -1617,4 +1635,14 @@ func (s *APIKeyService) GetByKeyUncached(ctx context.Context, key string) (*APIK
 	loaded.EnsureKeyHash()
 	s.compileAPIKeyIPRules(loaded)
 	return loaded, nil
+}
+
+// GetGroupByIDLite loads live lightweight group metadata (status, platform,
+// subscription type, multipliers) for persistent connection turn admission
+// when the connection is bound to a secondary route group.
+func (s *APIKeyService) GetGroupByIDLite(ctx context.Context, id int64) (*Group, error) {
+	if s == nil || s.groupRepo == nil || id <= 0 {
+		return nil, nil
+	}
+	return s.groupRepo.GetByIDLite(ctx, id)
 }

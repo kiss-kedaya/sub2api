@@ -286,7 +286,7 @@ const tableUi = {
   separator: 'h-0'
 }
 const editingHook = ref<AccountOpsWebhook|null>(null), editingProvider = ref<AccountOpsWebhookProvider>('custom'), showWebhook = ref(false), showEmail = ref(false), testingId = ref<string|null>(null)
-let version = 0, accountsVersion = 0, testSequence = 0, mutationSequence = 0, paginationSequence = 0, alive = true, pollingOverview = false, pollingAccounts = false, timer: ReturnType<typeof setInterval>|null = null
+let version = 0, accountsVersion = 0, testSequence = 0, mutationSequence = 0, paginationSequence = 0, eventsPaginated = false, alive = true, pollingOverview = false, pollingAccounts = false, timer: ReturnType<typeof setInterval>|null = null
 function assignIfChanged<T>(target: { value: T }, next: T) {
   if (JSON.stringify(target.value) !== JSON.stringify(next)) target.value = next
 }
@@ -301,6 +301,7 @@ const actionMessage = (e: unknown) => isStepUpBlocked(e) ? stepUpMessage(e) : me
 async function load(silent = false) {
   if (!auth.user || mutating.value || globalSaving.value || (silent && (loading.value || pollingOverview))) return
   const current = ++version
+  const startPaginationSequence = paginationSequence
   if (silent) pollingOverview = true; else loading.value = true
   try {
     const [settings, page] = await Promise.allSettled([getAccountOpsSettings(), getAccountOpsEvents()])
@@ -311,8 +312,11 @@ async function load(silent = false) {
       assignIfChanged(remote, nextRemote)
     } else failures.push(message(settings.reason))
     if (page.status === 'fulfilled') {
-      assignIfChanged(events, page.value.items)
-      if (hasMore.value !== page.value.has_more) hasMore.value = page.value.has_more
+      if (!silent || (!eventsPaginated && paginationSequence === startPaginationSequence)) {
+        if (!silent) eventsPaginated = false
+        assignIfChanged(events, page.value.items)
+        if (hasMore.value !== page.value.has_more) hasMore.value = page.value.has_more
+      }
     } else failures.push(message(page.reason))
     const nextError = [...new Set(failures)].join(' · ')
     if (loadError.value !== nextError) loadError.value = nextError
@@ -422,8 +426,8 @@ async function testChannel(id: string, action: () => Promise<unknown>){
     if(alive&&current===testSequence)testingId.value=null
   }
 }
-async function more(){if(loadingMore.value||loading.value)return;const current=version, sequence=++paginationSequence;loadingMore.value=true;try{const p=await getAccountOpsEvents(events.value.length);if(alive&&current===version){const merged=new Map([...events.value,...p.items].map(e=>[eventKey(e),e]));events.value=[...merged.values()];hasMore.value=p.has_more}}catch(e){if(alive&&current===version)app.showError(message(e))}finally{if(alive&&sequence===paginationSequence)loadingMore.value=false}}
-watch(()=>auth.user?`${auth.user.id}:${auth.user.role}`:'',()=>{version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;loading.value=loadingMore.value=mutating.value=thresholdLoading.value=false;pollingOverview=pollingAccounts=false;thresholdAccounts.value=[];accountGroups.value=[];thresholdReady.value=false;showWebhook.value=showEmail.value=showAddChannel.value=showGroupDialog.value=false;testingId.value=null;enabledDraft.value=globalSaving.value=false;batchAccounts.value=[];loadError.value=''},{flush:'sync'})
+async function more(){if(loadingMore.value||loading.value)return;const current=version, sequence=++paginationSequence;loadingMore.value=true;try{const p=await getAccountOpsEvents(events.value.length);if(alive&&current===version){const merged=new Map([...events.value,...p.items].map(e=>[eventKey(e),e]));events.value=[...merged.values()];hasMore.value=p.has_more;eventsPaginated=true}}catch(e){if(alive&&current===version)app.showError(message(e))}finally{if(alive&&sequence===paginationSequence)loadingMore.value=false}}
+watch(()=>auth.user?`${auth.user.id}:${auth.user.role}`:'',()=>{version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;eventsPaginated=false;loading.value=loadingMore.value=mutating.value=thresholdLoading.value=false;pollingOverview=pollingAccounts=false;thresholdAccounts.value=[];accountGroups.value=[];thresholdReady.value=false;showWebhook.value=showEmail.value=showAddChannel.value=showGroupDialog.value=false;testingId.value=null;enabledDraft.value=globalSaving.value=false;batchAccounts.value=[];loadError.value=''},{flush:'sync'})
 onMounted(()=>{void load(false);void loadAccounts(false);timer=setInterval(()=>{if(document.visibilityState==='visible'&&!loadingMore.value&&!mutating.value&&!globalSaving.value){void load(true);if(activeTab.value==='rules')void loadAccounts(true)}},30000)})
 onBeforeUnmount(()=>{alive=false;pollingOverview=pollingAccounts=false;version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;stepUp.onCancel();if(timer)clearInterval(timer)})
 </script>

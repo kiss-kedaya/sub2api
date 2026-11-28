@@ -14,6 +14,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/payment/provider"
 )
@@ -78,6 +79,7 @@ type CreateOrderRequest struct {
 	ClientIP        string
 	IsMobile        bool
 	IsWeChatBrowser bool
+	SrcScheme       string
 	SrcHost         string
 	SrcURL          string
 	ReturnURL       string
@@ -200,6 +202,7 @@ type PaymentService struct {
 	resumeService            *PaymentResumeService
 	affiliateService         *AffiliateService
 	notificationEmailService *NotificationEmailService
+	cfg                      *config.Config
 	// depositAddressResolver supplies the per-user on-chain address for the
 	// built-in crypto channel. Nil for deployments without that channel.
 	depositAddressResolver DepositAddressResolver
@@ -224,6 +227,10 @@ func NewPaymentService(entClient *dbent.Client, registry *payment.Registry, load
 
 func (s *PaymentService) SetNotificationEmailService(notificationEmailService *NotificationEmailService) {
 	s.notificationEmailService = notificationEmailService
+}
+
+func (s *PaymentService) SetConfig(cfg *config.Config) {
+	s.cfg = cfg
 }
 
 // --- Provider Registry ---

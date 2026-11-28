@@ -140,7 +140,7 @@ func (h *AuthHandler) DingTalkOAuthStart(c *gin.Context) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	setDingTalkCookie(c, dingTalkOAuthStateCookieName, encodeCookieValue(state), dingTalkOAuthCookieMaxAgeSec, secureCookie)
 	setDingTalkCookie(c, dingTalkOAuthRedirectCookie, encodeCookieValue(redirectTo), dingTalkOAuthCookieMaxAgeSec, secureCookie)
 
@@ -316,7 +316,7 @@ func (h *AuthHandler) DingTalkOAuthCallback(c *gin.Context) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	defer func() {
 		clearDingTalkCookie(c, dingTalkOAuthStateCookieName, secureCookie)
 		clearDingTalkCookie(c, dingTalkOAuthRedirectCookie, secureCookie)
@@ -707,7 +707,7 @@ func (h *AuthHandler) CompleteDingTalkOAuthRegistration(c *gin.Context) {
 		return
 	}
 
-	secureCookie := isRequestHTTPS(c)
+	secureCookie := h.isRequestHTTPS(c)
 	sessionToken, err := readOAuthPendingSessionCookie(c)
 	if err != nil {
 		clearOAuthPendingSessionCookie(c, secureCookie)

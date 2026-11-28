@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -552,23 +553,31 @@ func isAllowedOpsWSOrigin(r *http.Request) bool {
 		}
 	}
 	parsed, err := url.Parse(origin)
-	if err != nil || parsed.Hostname() == "" {
+	if err != nil || !parsed.IsAbs() || parsed.Opaque != "" || parsed.User != nil ||
+		parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return false
 	}
-	originHost := strings.ToLower(parsed.Hostname())
-
-	trustProxyHeaders := shouldTrustOpsWSProxyHeaders(r)
-	reqHost := hostWithoutPort(r.Host)
-	if trustProxyHeaders {
-		xfHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
-		if xfHost != "" {
-			xfHost = strings.TrimSpace(strings.Split(xfHost, ",")[0])
-			if xfHost != "" {
-				reqHost = hostWithoutPort(xfHost)
-			}
-		}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return false
 	}
-	reqHost = strings.ToLower(reqHost)
+	validOriginHost, ok := ip.ValidateRequestHost(parsed.Host)
+	if !ok {
+		return false
+	}
+	originHost := strings.ToLower(hostWithoutPort(validOriginHost))
+	if originHost == "" {
+		return false
+	}
+
+	// Match Origin strictly against the request's validated Host header.
+	// Do not read X-Forwarded-Host here: reverse proxies commonly pass
+	// client-supplied X-Forwarded-Host values through to loopback upstreams.
+	validReqHost, ok := ip.ValidateRequestHost(r.Host)
+	if !ok {
+		return false
+	}
+	reqHost := strings.ToLower(hostWithoutPort(validReqHost))
 	if reqHost == "" {
 		return false
 	}
@@ -639,6 +648,9 @@ func isAddrInTrustedProxies(addr netip.Addr, trusted []netip.Prefix) bool {
 		return false
 	}
 	for _, p := range trusted {
+		if p.Bits() == 0 {
+			continue
+		}
 		if p.Contains(addr) {
 			return true
 		}
@@ -736,9 +748,17 @@ func parseTrustedProxyList(raw string) (prefixes []netip.Prefix, invalid []strin
 			}
 		}
 
-		if err != nil || !p.IsValid() {
+		if err != nil || !p.IsValid() || p.Bits() == 0 {
 			invalid = append(invalid, item)
 			continue
+		}
+		if p.Addr().Is4In6() {
+			bits := p.Bits() - 96
+			if bits <= 0 {
+				invalid = append(invalid, item)
+				continue
+			}
+			p = netip.PrefixFrom(p.Addr().Unmap(), bits)
 		}
 
 		prefixes = append(prefixes, p.Masked())
