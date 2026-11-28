@@ -574,7 +574,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	// no usage chunk arrived. Usage the upstream reported is never overwritten.
 	finishIncomplete := func(cause error, clientGone bool) *OpenAIForwardResult {
 		replaceUpTo := 0
-		if !sawFinalOutput {
+		if balanceAbortErr != nil && !sawFinalOutput {
 			replaceUpTo = usage.OutputTokens
 		}
 		applyCompatIncompleteUsage(c, &usage, compatIncompleteUsage{

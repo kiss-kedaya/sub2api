@@ -264,7 +264,15 @@ func TestGeminiMessagesCompatStreamBalanceAbort_ObservesTextThoughtFunctionCallA
 func TestGeminiNativeOpenAICompatStreamBalanceAbort_ObservesContentReasoningToolCallsAndBills(t *testing.T) {
 	for _, field := range []string{"content", "reasoning_content", "tool_calls"} {
 		t.Run(field, func(t *testing.T) {
-			guard, fixture := newFailingStreamPreauthGuard(t)
+			// Allow the first chunk's top-up so chunk 1 is actually funded, emitted, and metered,
+			// then reject chunk 2's top-up before emission so chunk 1's delivered output (>100 tokens)
+			// is billed while rejected chunk 2 is excluded.
+			fixture := newPreauthorizationFixture()
+			fixture.wallet.topUp = []LiveBalanceResult{
+				{Outcome: LiveBalanceOutcomeApplied, State: LiveBalanceAttemptAuthorized},
+				{Outcome: LiveBalanceOutcomeInsufficient, State: LiveBalanceAttemptAuthorized},
+			}
+			guard := streamingPreauthorizationGuard(t, fixture)
 			c, _, ctx := newPreauthGinContext(t, "/v1beta/models/gemini-2.5-pro:streamGenerateContent", guard)
 
 			sseBody := newPreauthClosingBody(buildOpenAIChatAbortSSE(field))

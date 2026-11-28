@@ -1052,6 +1052,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			if topUpErr := streamBalanceGuard.ObserveStreamingOutput(guardCtx, n); topUpErr != nil {
 				s.reportOpenAIStreamOutputHoldTopUpFailure(c, account, "OpenAI chat_completions", topUpErr)
 				_ = resp.Body.Close()
+				nonBillableUpstreamError = false
 				streamBalanceAbortErr = wrapStreamOutputHoldTopUpFailure(topUpErr)
 				return true
 			}
