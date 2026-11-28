@@ -75,6 +75,7 @@ type ChannelMonitorV2Aggregator struct {
 	db         *sql.DB
 	lockCache  LeaderLockCache
 	settings   channelMonitorRuntimeReader
+	groupWatch GroupMonitorWatchEvaluator
 	instanceID string
 	stopCh     chan struct{}
 	// kickCh wakes the loop early after a settings change (buffered 1).
@@ -130,6 +131,17 @@ func (s *ChannelMonitorV2Aggregator) SetLeaderLock(lockCache LeaderLockCache, db
 	if db != nil {
 		s.db = db
 	}
+}
+
+// SetGroupWatchEvaluator injects the optional group-watch evaluator that checks
+// black/green visual transitions for subscribed groups under the same leader lock.
+func (s *ChannelMonitorV2Aggregator) SetGroupWatchEvaluator(e GroupMonitorWatchEvaluator) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.groupWatch = e
+	s.mu.Unlock()
 }
 
 func (s *ChannelMonitorV2Aggregator) Start() {
@@ -358,7 +370,11 @@ func (s *ChannelMonitorV2Aggregator) runOnce() {
 	// 成功后推进内存水位，下一次 tick 只需覆盖 now-RecentOverlap。
 	s.liveThrough = now
 	lastBackfill := s.lastBackfillAt
+	groupWatch := s.groupWatch
 	s.mu.Unlock()
+	if groupWatch != nil {
+		groupWatch.EvaluateMonitorTransitions(ctx, now)
+	}
 	// 与实时窗口刷新在同一个 goroutine、同一把 leader 锁之内顺序执行，不会与它并发。
 	s.maybePruneRetention(ctx, now, liveElapsed)
 	if !channelMonitorV2AllowBackfill(liveElapsed, lastBackfill, now) {
@@ -439,6 +455,12 @@ func (s *ChannelMonitorV2Aggregator) maybePruneRetention(ctx context.Context, no
 	}
 	if res.Deleted > 0 || res.Backlog {
 		logger.LegacyPrintf("service.channel_monitor_v2", "[ChannelMonitorV2] retention prune: deleted=%d batches=%d backlog_left=%t", res.Deleted, res.Batches, res.Backlog)
+	}
+	s.mu.Lock()
+	groupWatch := s.groupWatch
+	s.mu.Unlock()
+	if groupWatch != nil {
+		groupWatch.PruneOldNotifications(ctx, now)
 	}
 }
 

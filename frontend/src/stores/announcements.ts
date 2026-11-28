@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { announcementsAPI } from '@/api'
+import { computed, ref } from 'vue'
+import { announcementsAPI, groupWatchAPI } from '@/api'
 import type { AnnouncementListItem } from '@/api/announcements'
+import type { GroupWatchNotification } from '@/api/groupWatch'
 import type { UserAnnouncement } from '@/types'
 
 // The summary is a couple of counts, so it can be refreshed often; the timeline
@@ -24,6 +25,15 @@ export const useAnnouncementStore = defineStore('announcements', () => {
   const summaryLoading = ref(false)
   const summaryError = ref<string | null>(null)
 
+  // Group-watch subscription notifications (merged into top-right header bell)
+  const groupWatchUnreadCount = ref(0)
+  const groupWatchTotalCount = ref(0)
+  const groupWatchNotifications = ref<GroupWatchNotification[]>([])
+  const groupWatchLoaded = ref(false)
+  const groupWatchLoading = ref(false)
+  const groupWatchError = ref<string | null>(null)
+  const totalUnreadCount = computed(() => unreadCount.value + groupWatchUnreadCount.value)
+
   // Timeline (only fetched when the bell opens)
   const announcements = ref<AnnouncementListItem[]>([])
   const listLoaded = ref(false)
@@ -44,14 +54,21 @@ export const useAnnouncementStore = defineStore('announcements', () => {
 
   let summaryGeneration = 0
   let listGeneration = 0
+  let groupWatchListGeneration = 0
+  let groupWatchMutationVersion = 0
+  let locallyReadGroupWatchIds = new Set<number>()
+  let locallyMarkedAllReadAt: string | null = null
   let summaryLastFetch = 0
   let listLastFetch = 0
+  let groupWatchLastFetch = 0
   let popupLastFetch = 0
 
   let summaryAbort: AbortController | null = null
   let listAbort: AbortController | null = null
+  let groupWatchAbort: AbortController | null = null
   let summaryInflight: Promise<void> | null = null
   let listInflight: Promise<void> | null = null
+  let groupWatchInflight: Promise<void> | null = null
   let popupsInflight: Promise<void> | null = null
 
   /**
@@ -74,10 +91,22 @@ export const useAnnouncementStore = defineStore('announcements', () => {
 
     const request = (async () => {
       try {
-        const data = await announcementsAPI.summary({ signal: controller.signal })
+        const [annResult, gwResult] = await Promise.allSettled([
+          announcementsAPI.summary({ signal: controller.signal }),
+          groupWatchAPI?.getNotificationSummary
+            ? groupWatchAPI.getNotificationSummary({ signal: controller.signal })
+            : Promise.resolve({ total: 0, unread: 0 }),
+        ])
         if (generation !== summaryGeneration) return
-        totalCount.value = data.total
-        unreadCount.value = data.unread
+        if (gwResult.status === 'fulfilled') {
+          groupWatchTotalCount.value = gwResult.value.total
+          groupWatchUnreadCount.value = gwResult.value.unread
+        }
+        if (annResult.status === 'rejected') {
+          throw annResult.reason
+        }
+        totalCount.value = annResult.value.total
+        unreadCount.value = annResult.value.unread
         summaryLoaded.value = true
         summaryError.value = null
       } catch (err: unknown) {
@@ -293,15 +322,115 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     }
   }
 
+  async function ensureGroupWatchList(force = false): Promise<void> {
+    if (!force) {
+      if (groupWatchInflight) return groupWatchInflight
+      if (groupWatchLastFetch > 0 && Date.now() - groupWatchLastFetch < LIST_THROTTLE_MS) return
+    }
+
+    const generation = ++groupWatchListGeneration
+    const mutationAtStart = groupWatchMutationVersion
+    groupWatchLastFetch = Date.now()
+    groupWatchAbort?.abort()
+    const controller = new AbortController()
+    groupWatchAbort = controller
+    groupWatchLoading.value = true
+
+    const request = (async () => {
+      try {
+        const items = groupWatchAPI?.listNotifications
+          ? await groupWatchAPI.listNotifications(false, 30, { signal: controller.signal })
+          : []
+        if (generation !== groupWatchListGeneration) return
+        // Reapply any local read mutations that completed while this fetch was in flight
+        // so an older snapshot never reverts read rows back to unread.
+        const reconciled = groupWatchMutationVersion === mutationAtStart
+          ? items
+          : items.map((item) => {
+              if (item.read_at) return item
+              if (locallyMarkedAllReadAt) return { ...item, read_at: locallyMarkedAllReadAt }
+              if (locallyReadGroupWatchIds.has(item.id)) return { ...item, read_at: new Date().toISOString() }
+              return item
+            })
+        groupWatchNotifications.value = reconciled
+        // Keep global summary counts sourced from getNotificationSummary instead of
+        // overwriting them with the 30-item capped list length.
+        if (!summaryLoaded.value) {
+          groupWatchTotalCount.value = Math.max(groupWatchTotalCount.value, reconciled.length)
+          if (groupWatchUnreadCount.value === 0) {
+            groupWatchUnreadCount.value = reconciled.filter((item) => !item.read_at).length
+          }
+        }
+        groupWatchLoaded.value = true
+        groupWatchError.value = null
+      } catch (err: unknown) {
+        if (generation !== groupWatchListGeneration || isAbortError(err)) return
+        groupWatchLastFetch = 0
+        groupWatchError.value = err instanceof Error ? err.message : String(err)
+        console.error('Failed to fetch group watch notifications:', err)
+      } finally {
+        if (generation === groupWatchListGeneration) groupWatchLoading.value = false
+      }
+    })()
+
+    groupWatchInflight = request
+    try {
+      await request
+    } finally {
+      if (groupWatchInflight === request) groupWatchInflight = null
+    }
+  }
+
+  async function markGroupWatchRead(id: number): Promise<void> {
+    await groupWatchAPI.markNotificationRead(id)
+    groupWatchMutationVersion++
+    locallyReadGroupWatchIds.add(id)
+    const row = groupWatchNotifications.value.find((item) => item.id === id)
+    if (row) {
+      if (!row.read_at) {
+        row.read_at = new Date().toISOString()
+        groupWatchUnreadCount.value = Math.max(0, groupWatchUnreadCount.value - 1)
+      }
+    } else if (groupWatchUnreadCount.value > 0) {
+      groupWatchUnreadCount.value = Math.max(0, groupWatchUnreadCount.value - 1)
+    }
+  }
+
+  async function markAllGroupWatchRead(): Promise<void> {
+    if (groupWatchUnreadCount.value === 0 && !groupWatchNotifications.value.some((n) => !n.read_at)) {
+      return
+    }
+    try {
+      groupWatchLoading.value = true
+      await groupWatchAPI.markAllNotificationsRead()
+      const nowISO = new Date().toISOString()
+      groupWatchMutationVersion++
+      locallyMarkedAllReadAt = nowISO
+      for (const item of groupWatchNotifications.value) {
+        if (!item.read_at) item.read_at = nowISO
+      }
+      groupWatchUnreadCount.value = 0
+    } finally {
+      groupWatchLoading.value = false
+    }
+  }
+
   function reset() {
     summaryGeneration++
     listGeneration++
+    groupWatchListGeneration++
+    groupWatchMutationVersion++
+    locallyReadGroupWatchIds = new Set<number>()
+    locallyMarkedAllReadAt = null
     summaryAbort?.abort()
     listAbort?.abort()
+    groupWatchAbort?.abort()
     summaryAbort = null
     listAbort = null
+    groupWatchAbort = null
     summaryInflight = null
     listInflight = null
+    groupWatchInflight = null
     popupsInflight = null
 
     unreadCount.value = 0
@@ -310,6 +439,14 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     summaryLoading.value = false
     summaryError.value = null
     summaryLastFetch = 0
+
+    groupWatchUnreadCount.value = 0
+    groupWatchTotalCount.value = 0
+    groupWatchNotifications.value = []
+    groupWatchLoaded.value = false
+    groupWatchLoading.value = false
+    groupWatchError.value = null
+    groupWatchLastFetch = 0
 
     announcements.value = []
     listLoaded.value = false
@@ -331,9 +468,17 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     // Badge state
     unreadCount,
     totalCount,
+    totalUnreadCount,
     summaryLoaded,
     summaryLoading,
     summaryError,
+    // Group watch notifications
+    groupWatchUnreadCount,
+    groupWatchTotalCount,
+    groupWatchNotifications,
+    groupWatchLoaded,
+    groupWatchLoading,
+    groupWatchError,
     // Timeline
     announcements,
     listLoaded,
@@ -349,12 +494,15 @@ export const useAnnouncementStore = defineStore('announcements', () => {
     // Actions
     fetchSummary,
     ensureList,
+    ensureGroupWatchList,
     fetchAnnouncements,
     fetchDetail,
     fetchPopups,
     dismissPopup,
     markAsRead,
     markAllAsRead,
+    markGroupWatchRead,
+    markAllGroupWatchRead,
     reset,
   }
 })

@@ -135,7 +135,14 @@ export default {
     total: 'announcements',
     emptyDescription: 'There are no system announcements at this time',
     readStatus: 'You have read this announcement',
-    markReadHint: 'Click "Mark as read" to mark this announcement'
+    markReadHint: 'Click "Mark as read" to mark this announcement',
+    tabAnnouncements: 'Announcements',
+    tabGroupWatch: 'Group Alerts',
+    groupWatchEmpty: 'No group alerts yet',
+    groupWatchEmptyDescription: 'Click the bell icon on any group card in Channel Status to get notified on price changes, outages, or recovery',
+    groupWatchLoadFailed: 'Failed to load group alerts',
+    groupWatchAllMarkedRead: 'All group alerts marked as read',
+    goToChannelStatus: 'Open Channel Status'
   },
 
   // User Subscriptions Page

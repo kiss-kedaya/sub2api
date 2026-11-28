@@ -244,6 +244,50 @@ export function createMockApi(now = new Date()) {
   const usedDemoCodes = new Set<string>()
   let createVerificationMode: 'auto' | 'on' | 'off' = 'auto'
   const demoBarkSettings = { configured: false, enabled: false }
+  const demoGroupWatchSubscriptions = new Set<number>(
+    data.groups.length > 0 ? [data.groups[0].id] : []
+  )
+  const demoGroupWatchNotifications: Array<{
+    id: number
+    group_id: number
+    event_type: 'price_changed' | 'status_black' | 'status_green'
+    title: string
+    content: string
+    metadata: Record<string, string>
+    read_at: string | null
+    created_at: string
+  }> = [
+    {
+      id: 901,
+      group_id: data.groups[0]?.id ?? 1,
+      event_type: 'price_changed',
+      title: `分组改价：${data.groups[0]?.name ?? 'Claude 混合号池'}`,
+      content: `您订阅的分组「${data.groups[0]?.name ?? 'Claude 混合号池'}」（Anthropic）发生价格调整：基础倍率 0.80x → 0.90x（上涨 +0.10x）。`,
+      metadata: { platform: 'anthropic', old_rate: '0.8', new_rate: '0.9' },
+      read_at: null,
+      created_at: new Date(now.getTime() - 12 * 60_000).toISOString(),
+    },
+    {
+      id: 902,
+      group_id: data.groups[0]?.id ?? 1,
+      event_type: 'status_green',
+      title: `分组已恢复（绿）：${data.groups[0]?.name ?? 'Claude 混合号池'}`,
+      content: `您订阅的分组「${data.groups[0]?.name ?? 'Claude 混合号池'}」（Anthropic）已恢复绿色可用（当前可用率 96.4%，缓存率 42.0%）。`,
+      metadata: { platform: 'anthropic', cache_rate: '42.0%', availability_rate: '96.4%' },
+      read_at: null,
+      created_at: new Date(now.getTime() - 28 * 60_000).toISOString(),
+    },
+    {
+      id: 903,
+      group_id: data.groups[0]?.id ?? 1,
+      event_type: 'status_black',
+      title: `分组不可用（黑）：${data.groups[0]?.name ?? 'Claude 混合号池'}`,
+      content: `您订阅的分组「${data.groups[0]?.name ?? 'Claude 混合号池'}」（Anthropic）已变为黑色不可用（缓存率低于 30%；当前可用率 81.9%，缓存率 18.2%）。`,
+      metadata: { platform: 'anthropic', cache_rate: '18.2%', availability_rate: '81.9%' },
+      read_at: new Date(now.getTime() - 40 * 60_000).toISOString(),
+      created_at: new Date(now.getTime() - 45 * 60_000).toISOString(),
+    },
+  ]
   let demoPersonalKeySeq = 1
   let demoPersonalApiKey: {
     exists: boolean
@@ -2065,6 +2109,20 @@ export function createMockApi(now = new Date()) {
         if (path === '/api/v1/user/totp/verification-method') return { method: 'password' }
         if (path === '/api/v1/user/passkeys') return []
         if (path === '/api/v1/user/bark') return { data: { ...demoBarkSettings } }
+        if (path === '/api/v1/group-watch/subscriptions') {
+          return { group_ids: [...demoGroupWatchSubscriptions].sort((a, b) => a - b) }
+        }
+        if (path === '/api/v1/group-watch/notifications/summary') {
+          const unread = demoGroupWatchNotifications.filter(item => !item.read_at).length
+          return { total: demoGroupWatchNotifications.length, unread }
+        }
+        if (path === '/api/v1/group-watch/notifications') {
+          const unreadOnly = query.get('unread_only') === '1' || query.get('unread_only') === 'true'
+          const items = unreadOnly
+            ? demoGroupWatchNotifications.filter(item => !item.read_at)
+            : demoGroupWatchNotifications
+          return copy(items)
+        }
         if (path === '/api/v1/user/security/verification-factors') return verificationFactors()
         if (path === '/api/v1/user/key-rotation-gate') {
           const activeCount = data.keys.filter(key => key.status === 'active').length
@@ -2624,6 +2682,32 @@ export function createMockApi(now = new Date()) {
           demoBarkSettings.enabled = demoBarkSettings.configured && body.enabled
         }
         return { data: { ...demoBarkSettings } }
+      }
+      const groupWatchSubPath = path.match(/^\/api\/v1\/group-watch\/subscriptions\/(\d+)$/)
+      if (groupWatchSubPath) {
+        const groupId = Number(groupWatchSubPath[1])
+        if (method === 'PUT') {
+          demoGroupWatchSubscriptions.add(groupId)
+          return { group_id: groupId, subscribed: true }
+        }
+        if (method === 'DELETE') {
+          demoGroupWatchSubscriptions.delete(groupId)
+          return { group_id: groupId, subscribed: false }
+        }
+      }
+      const groupWatchNotifReadPath = path.match(/^\/api\/v1\/group-watch\/notifications\/(\d+)\/read$/)
+      if (method === 'POST' && groupWatchNotifReadPath) {
+        const id = Number(groupWatchNotifReadPath[1])
+        const target = demoGroupWatchNotifications.find(item => item.id === id)
+        if (target && !target.read_at) target.read_at = new Date().toISOString()
+        return { message: 'ok' }
+      }
+      if (method === 'POST' && path === '/api/v1/group-watch/notifications/read-all') {
+        const ts = new Date().toISOString()
+        for (const item of demoGroupWatchNotifications) {
+          if (!item.read_at) item.read_at = ts
+        }
+        return { message: 'ok' }
       }
       if (method === 'PUT' && path === '/api/v1/user/security/api-key-create-verification') {
         const mode = body.mode

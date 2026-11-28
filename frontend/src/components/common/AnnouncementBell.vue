@@ -8,85 +8,216 @@
       :aria-label="t('announcements.title')"
       @click="openModal"
     >
-      <UChip color="error" :show="unreadCount > 0" inset>
+      <UChip color="error" :show="totalUnreadCount > 0" inset>
         <UIcon name="i-lucide-bell" class="size-5 shrink-0" />
       </UChip>
     </UButton>
 
-    <!-- 公告列表（时间轴）：打开时才拉列表，列表里不带正文 -->
+    <!-- 公告与分组订阅通知抽屉 -->
     <USlideover
       v-model:open="isModalOpen"
       :title="t('announcements.title')"
-      :description="unreadCount > 0 ? `${unreadCount} ${t('announcements.unread')}` : undefined"
+      :description="activeUnreadCount > 0 ? `${activeUnreadCount} ${t('announcements.unread')}` : undefined"
     >
       <template #actions>
         <UButton
-          v-if="unreadCount > 0"
+          v-if="activeUnreadCount > 0"
           color="neutral"
           variant="subtle"
           size="sm"
           icon="i-lucide-check-check"
           :label="t('announcements.markAllRead')"
-          :disabled="loading"
-          @click="markAllAsRead"
+          :disabled="activeTab === 'announcements' ? loading : groupWatchLoading"
+          @click="markActiveAllRead"
         />
       </template>
 
       <template #body>
-        <!-- Loading -->
-        <div v-if="loading && announcements.length === 0" class="flex items-center justify-center py-16">
-          <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
+        <!-- 分区切换：站点公告 / 分组订阅 -->
+        <div
+          class="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-elevated p-1"
+          role="tablist"
+          :aria-label="t('announcements.title')"
+        >
+          <button
+            id="bell-tab-announcements"
+            ref="announcementsTabRef"
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === 'announcements'"
+            aria-controls="bell-panel-announcements"
+            :tabindex="activeTab === 'announcements' ? 0 : -1"
+            class="flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
+            :class="activeTab === 'announcements' ? 'bg-default text-highlighted shadow-xs ring-1 ring-default' : 'text-muted hover:text-highlighted'"
+            data-test="bell-tab-announcements"
+            @click="switchTab('announcements')"
+            @keydown="onTabKeydown"
+          >
+            <span>{{ t('announcements.tabAnnouncements') }}</span>
+            <UBadge v-if="unreadCount > 0" color="error" variant="subtle" size="xs" class="tabular-nums">{{ unreadCount }}</UBadge>
+          </button>
+          <button
+            id="bell-tab-group-watch"
+            ref="groupWatchTabRef"
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === 'group_watch'"
+            aria-controls="bell-panel-group-watch"
+            :tabindex="activeTab === 'group_watch' ? 0 : -1"
+            class="flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors"
+            :class="activeTab === 'group_watch' ? 'bg-default text-highlighted shadow-xs ring-1 ring-default' : 'text-muted hover:text-highlighted'"
+            data-test="bell-tab-group-watch"
+            @click="switchTab('group_watch')"
+            @keydown="onTabKeydown"
+          >
+            <span>{{ t('announcements.tabGroupWatch') }}</span>
+            <UBadge v-if="groupWatchUnreadCount > 0" color="error" variant="subtle" size="xs" class="tabular-nums">{{ groupWatchUnreadCount }}</UBadge>
+          </button>
         </div>
 
-        <!-- Failure: keep it visible instead of falling back to an empty timeline -->
-        <div v-else-if="listError" class="flex flex-col items-center gap-3 py-16 text-center">
-          <UIcon name="i-lucide-triangle-alert" class="size-6 text-error" />
-          <p class="text-sm text-muted">{{ t('announcements.loadFailed') }}</p>
-          <UButton
-            color="neutral"
-            variant="subtle"
-            size="sm"
-            icon="i-lucide-refresh-cw"
-            :label="t('common.tryAgain')"
-            @click="retryList"
+        <div
+          v-if="activeTab === 'announcements'"
+          id="bell-panel-announcements"
+          role="tabpanel"
+          aria-labelledby="bell-tab-announcements"
+          tabindex="0"
+        >
+          <!-- Loading -->
+          <div v-if="loading && announcements.length === 0" class="flex items-center justify-center py-16">
+            <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
+          </div>
+
+          <!-- Failure: keep it visible instead of falling back to an empty timeline -->
+          <div v-else-if="listError" class="flex flex-col items-center gap-3 py-16 text-center">
+            <UIcon name="i-lucide-triangle-alert" class="size-6 text-error" />
+            <p class="text-sm text-muted">{{ t('announcements.loadFailed') }}</p>
+            <UButton
+              color="neutral"
+              variant="subtle"
+              size="sm"
+              icon="i-lucide-refresh-cw"
+              :label="t('common.tryAgain')"
+              @click="retryList"
+            />
+          </div>
+
+          <!-- Announcements List -->
+          <div v-else-if="announcements.length > 0" class="-mx-3 -my-3 space-y-0.5">
+            <UButton
+              v-for="item in announcements"
+              :key="item.id"
+              color="neutral"
+              variant="ghost"
+              block
+              class="justify-start gap-3 px-3 py-2.5 text-left font-normal hover:bg-elevated/50"
+              data-test="announcement-row"
+              @click="openDetail(item)"
+            >
+              <UChip color="error" :show="!item.read_at" inset>
+                <UAvatar
+                  :icon="item.read_at ? 'i-lucide-megaphone' : 'i-lucide-bell-ring'"
+                  size="md"
+                  :ui="{ root: item.read_at ? 'bg-elevated' : 'bg-primary/10', icon: item.read_at ? 'text-dimmed' : 'text-primary' }"
+                />
+              </UChip>
+              <div class="min-w-0 flex-1 text-sm">
+                <p class="flex items-center justify-between gap-3">
+                  <span class="truncate font-medium text-highlighted">{{ item.title }}</span>
+                  <time class="shrink-0 text-xs text-muted tabular-nums">{{ formatRelativeTime(item.created_at) }}</time>
+                </p>
+                <p class="truncate text-dimmed">{{ rowExcerpt(item) }}</p>
+              </div>
+            </UButton>
+          </div>
+
+          <!-- Empty State -->
+          <EmptyState
+            v-else
+            :title="t('announcements.empty')"
+            :description="t('announcements.emptyDescription')"
           />
         </div>
 
-        <!-- Announcements List -->
-        <div v-else-if="announcements.length > 0" class="-mx-3 -my-3 space-y-0.5">
-          <UButton
-            v-for="item in announcements"
-            :key="item.id"
-            color="neutral"
-            variant="ghost"
-            block
-            class="justify-start gap-3 px-3 py-2.5 text-left font-normal hover:bg-elevated/50"
-            data-test="announcement-row"
-            @click="openDetail(item)"
-          >
-            <UChip color="error" :show="!item.read_at" inset>
-              <UAvatar
-                :icon="item.read_at ? 'i-lucide-megaphone' : 'i-lucide-bell-ring'"
-                size="md"
-                :ui="{ root: item.read_at ? 'bg-elevated' : 'bg-primary/10', icon: item.read_at ? 'text-dimmed' : 'text-primary' }"
-              />
-            </UChip>
-            <div class="min-w-0 flex-1 text-sm">
-              <p class="flex items-center justify-between gap-3">
-                <span class="truncate font-medium text-highlighted">{{ item.title }}</span>
-                <time class="shrink-0 text-xs text-muted tabular-nums">{{ formatRelativeTime(item.created_at) }}</time>
-              </p>
-              <p class="truncate text-dimmed">{{ rowExcerpt(item) }}</p>
-            </div>
-          </UButton>
-        </div>
-
-        <!-- Empty State -->
-        <EmptyState
+        <div
           v-else
-          :title="t('announcements.empty')"
-          :description="t('announcements.emptyDescription')"
-        />
+          id="bell-panel-group-watch"
+          role="tabpanel"
+          aria-labelledby="bell-tab-group-watch"
+          tabindex="0"
+        >
+          <div v-if="groupWatchLoading && groupWatchNotifications.length === 0" class="flex items-center justify-center py-16">
+            <UIcon name="i-lucide-loader-circle" class="size-6 animate-spin text-muted" />
+          </div>
+
+          <div v-else-if="groupWatchError" class="flex flex-col items-center gap-3 py-16 text-center">
+            <UIcon name="i-lucide-triangle-alert" class="size-6 text-error" />
+            <p class="text-sm text-muted">{{ t('announcements.groupWatchLoadFailed') }}</p>
+            <UButton
+              color="neutral"
+              variant="subtle"
+              size="sm"
+              icon="i-lucide-refresh-cw"
+              :label="t('common.tryAgain')"
+              @click="retryGroupWatchList"
+            />
+          </div>
+
+          <div v-else-if="groupWatchNotifications.length > 0" class="-mx-2 space-y-1.5">
+            <button
+              v-for="item in groupWatchNotifications"
+              :key="item.id"
+              type="button"
+              class="flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-elevated/60"
+              :class="!item.read_at ? 'bg-primary/[0.04]' : ''"
+              data-test="group-watch-row"
+              @click="openGroupWatchItem(item)"
+            >
+              <UChip color="error" :show="!item.read_at" inset>
+                <span
+                  class="grid size-9 shrink-0 place-items-center rounded-xl"
+                  :class="groupWatchEventIconClass(item.event_type)"
+                >
+                  <UIcon :name="groupWatchEventIcon(item.event_type)" class="size-4" />
+                </span>
+              </UChip>
+              <div class="min-w-0 flex-1 text-sm">
+                <p class="flex items-center justify-between gap-2">
+                  <span class="truncate font-medium text-highlighted">{{ item.title }}</span>
+                  <time class="shrink-0 text-xs text-muted tabular-nums">{{ formatRelativeTime(item.created_at) }}</time>
+                </p>
+                <p class="mt-0.5 whitespace-pre-line break-words text-xs leading-relaxed text-muted">{{ item.content }}</p>
+              </div>
+            </button>
+
+            <div class="pt-2 text-center">
+              <UButton
+                color="neutral"
+                variant="subtle"
+                size="xs"
+                icon="i-lucide-activity"
+                :label="t('announcements.goToChannelStatus')"
+                @click="goToChannelStatus"
+              />
+            </div>
+          </div>
+
+          <EmptyState
+            v-else
+            :title="t('announcements.groupWatchEmpty')"
+            :description="t('announcements.groupWatchEmptyDescription')"
+          >
+            <template #action>
+              <UButton
+                color="primary"
+                variant="soft"
+                size="sm"
+                icon="i-lucide-activity"
+                :label="t('announcements.goToChannelStatus')"
+                @click="goToChannelStatus"
+              />
+            </template>
+          </EmptyState>
+        </div>
       </template>
     </USlideover>
 
@@ -157,6 +288,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -164,10 +296,12 @@ import { useAppStore } from '@/stores/app'
 import { useAnnouncementStore } from '@/stores/announcements'
 import { formatRelativeTime, formatRelativeWithDateTime } from '@/utils/format'
 import type { AnnouncementListItem } from '@/api/announcements'
+import type { GroupWatchEventType, GroupWatchNotification } from '@/api/groupWatch'
 import EmptyState from './EmptyState.vue'
 import '@/styles/announcement-markdown.css'
 
 const { t } = useI18n()
+const router = useRouter()
 const appStore = useAppStore()
 const announcementStore = useAnnouncementStore()
 
@@ -178,13 +312,30 @@ marked.setOptions({
 })
 
 // Badge counts come from the summary endpoint; the timeline is fetched on open.
-const { announcements, loading, listError, unreadCount } = storeToRefs(announcementStore)
+const {
+  announcements,
+  loading,
+  listError,
+  unreadCount,
+  groupWatchUnreadCount,
+  groupWatchNotifications,
+  groupWatchLoading,
+  groupWatchError,
+  totalUnreadCount,
+} = storeToRefs(announcementStore)
 
 // Local overlay state (the slideover / modal handle Escape, outside click and body scroll lock)
 const isModalOpen = ref(false)
+const activeTab = ref<'announcements' | 'group_watch'>('announcements')
+const announcementsTabRef = ref<HTMLButtonElement | null>(null)
+const groupWatchTabRef = ref<HTMLButtonElement | null>(null)
 const detailModalOpen = ref(false)
 const selectedAnnouncement = ref<AnnouncementListItem | null>(null)
 const detailId = ref<number | null>(null)
+
+const activeUnreadCount = computed(() => (
+  activeTab.value === 'announcements' ? unreadCount.value : groupWatchUnreadCount.value
+))
 
 const selectedRead = computed(() => {
   const selected = selectedAnnouncement.value
@@ -226,12 +377,103 @@ function excerpt(content: string): string {
 
 function openModal() {
   isModalOpen.value = true
-  // Lazy: the timeline is only fetched when the panel is actually opened.
+  // If only group-watch alerts have unread items, land directly on that tab.
+  if (unreadCount.value === 0 && groupWatchUnreadCount.value > 0) {
+    activeTab.value = 'group_watch'
+  }
+  // Lazy: the timelines are only fetched when the panel is actually opened.
   void announcementStore.ensureList()
+  void announcementStore.ensureGroupWatchList()
+}
+
+function switchTab(tab: 'announcements' | 'group_watch') {
+  activeTab.value = tab
+  if (tab === 'group_watch') {
+    void announcementStore.ensureGroupWatchList()
+  } else {
+    void announcementStore.ensureList()
+  }
+}
+
+function onTabKeydown(event: KeyboardEvent) {
+  let nextTab: 'announcements' | 'group_watch' | null = null
+  if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+    nextTab = activeTab.value === 'announcements' ? 'group_watch' : 'announcements'
+  } else if (event.key === 'Home') {
+    nextTab = 'announcements'
+  } else if (event.key === 'End') {
+    nextTab = 'group_watch'
+  }
+  if (!nextTab) return
+  event.preventDefault()
+  switchTab(nextTab)
+  if (nextTab === 'announcements') {
+    announcementsTabRef.value?.focus()
+  } else {
+    groupWatchTabRef.value?.focus()
+  }
 }
 
 function retryList() {
   void announcementStore.ensureList(true)
+}
+
+function retryGroupWatchList() {
+  void announcementStore.ensureGroupWatchList(true)
+}
+
+function groupWatchEventIcon(eventType: GroupWatchEventType): string {
+  switch (eventType) {
+    case 'price_changed':
+      return 'i-lucide-trending-up'
+    case 'status_black':
+      return 'i-lucide-alert-octagon'
+    case 'status_green':
+      return 'i-lucide-check-circle-2'
+    default:
+      return 'i-lucide-bell-ring'
+  }
+}
+
+function groupWatchEventIconClass(eventType: GroupWatchEventType): string {
+  switch (eventType) {
+    case 'price_changed':
+      return 'bg-amber-500/12 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400'
+    case 'status_black':
+      return 'bg-neutral-900 text-white dark:bg-zinc-800 dark:text-zinc-100 dark:ring-1 dark:ring-zinc-600/70'
+    case 'status_green':
+      return 'bg-emerald-500/12 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
+    default:
+      return 'bg-primary/10 text-primary'
+  }
+}
+
+async function openGroupWatchItem(item: GroupWatchNotification) {
+  if (!item.read_at) {
+    try {
+      await announcementStore.markGroupWatchRead(item.id)
+    } catch (err: any) {
+      appStore.showError(err?.message || t('common.unknownError'))
+    }
+  }
+}
+
+function goToChannelStatus() {
+  isModalOpen.value = false
+  if (router?.push) void router.push('/monitor')
+}
+
+async function markActiveAllRead() {
+  if (activeTab.value === 'group_watch') {
+    try {
+      await announcementStore.markAllGroupWatchRead()
+      appStore.showSuccess(t('announcements.groupWatchAllMarkedRead'))
+    } catch (err: any) {
+      appStore.showError(err?.message || t('common.unknownError'))
+    }
+    return
+  }
+  await markAllAsRead()
 }
 
 function openDetail(announcement: AnnouncementListItem) {

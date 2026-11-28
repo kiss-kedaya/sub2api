@@ -17,8 +17,15 @@ vi.mock('@/api/groups', () => ({
     getUserGroupRates: vi.fn().mockResolvedValue({}),
   },
 }))
+vi.mock('@/api/groupWatch', () => ({
+  groupWatchAPI: {
+    listSubscriptions: vi.fn().mockResolvedValue([]),
+    subscribe: vi.fn().mockResolvedValue({ group_id: 1, subscribed: true }),
+    unsubscribe: vi.fn().mockResolvedValue({ group_id: 1, subscribed: false }),
+  },
+}))
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showError: vi.fn() }),
+  useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn() }),
 }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({
   default: { template: '<div><slot /></div>' },

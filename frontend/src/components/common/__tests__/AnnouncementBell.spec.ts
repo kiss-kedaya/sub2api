@@ -13,9 +13,20 @@ const api = vi.hoisted(() => ({
   getById: vi.fn(),
   markRead: vi.fn(),
 }))
+const groupWatchApi = vi.hoisted(() => ({
+  getNotificationSummary: vi.fn(),
+  listNotifications: vi.fn(),
+  markNotificationRead: vi.fn(),
+  markAllNotificationsRead: vi.fn(),
+}))
 const listResponse = vi.hoisted(() => ({ value: [] as any[] }))
+const groupWatchResponse = vi.hoisted(() => ({ value: [] as any[] }))
 
-vi.mock('@/api', () => ({ announcementsAPI: api }))
+vi.mock('@/api', () => ({ announcementsAPI: api, groupWatchAPI: groupWatchApi }))
+vi.mock('vue-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-router')>()
+  return { ...actual, useRouter: () => ({ push: vi.fn() }) }
+})
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
@@ -39,10 +50,15 @@ describe('AnnouncementBell', () => {
     setActivePinia(createPinia())
     vi.resetAllMocks()
     listResponse.value = items()
+    groupWatchResponse.value = []
     api.list.mockImplementation(() => Promise.resolve(listResponse.value))
     api.summary.mockResolvedValue({ total: 2, unread: 1 })
     api.popups.mockResolvedValue([])
     api.markRead.mockResolvedValue({ message: 'ok' })
+    groupWatchApi.getNotificationSummary.mockResolvedValue({ total: 0, unread: 0 })
+    groupWatchApi.listNotifications.mockImplementation(() => Promise.resolve(groupWatchResponse.value))
+    groupWatchApi.markNotificationRead.mockResolvedValue({ message: 'ok' })
+    groupWatchApi.markAllNotificationsRead.mockResolvedValue({ message: 'ok' })
   })
 
   async function open() {
@@ -147,5 +163,35 @@ describe('AnnouncementBell', () => {
     await wrapper.get('button[aria-label="announcements.title"]').trigger('click')
     await flushPromises()
     expect(document.body.textContent).toContain('announcements.empty')
+  })
+
+  it('shows unread dot and lists group watch alerts on the group alerts tab', async () => {
+    groupWatchResponse.value = [
+      {
+        id: 101,
+        group_id: 12,
+        event_type: 'price_changed',
+        title: '分组改价：Claude 混合号池',
+        content: '基础倍率 0.80x → 0.90x',
+        read_at: null,
+        created_at: '2026-11-28T09:00:00Z',
+      },
+    ]
+    const store = useAnnouncementStore()
+    store.unreadCount = 0
+    store.groupWatchUnreadCount = 1
+    const wrapper = mount(AnnouncementBell, { attachTo: document.body })
+    expect(wrapper.find('span[data-slot="base"]').exists()).toBe(true)
+
+    await wrapper.get('button[aria-label="announcements.title"]').trigger('click')
+    await flushPromises()
+    const rows = bodyFindAll('[data-test="group-watch-row"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].text()).toContain('分组改价：Claude 混合号池')
+
+    await rows[0].trigger('click')
+    await flushPromises()
+    expect(groupWatchApi.markNotificationRead).toHaveBeenCalledWith(101)
+    expect(store.groupWatchUnreadCount).toBe(0)
   })
 })

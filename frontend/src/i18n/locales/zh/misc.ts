@@ -133,7 +133,14 @@ export default {
     total: '条公告',
     emptyDescription: '暂时没有任何系统公告',
     readStatus: '您已阅读此公告',
-    markReadHint: '点击"已读"标记此公告'
+    markReadHint: '点击"已读"标记此公告',
+    tabAnnouncements: '站点公告',
+    tabGroupWatch: '分组订阅',
+    groupWatchEmpty: '暂无分组订阅提醒',
+    groupWatchEmptyDescription: '在渠道状态页点击卡片右上角小铃铛，即可订阅改价、变黑不可用与恢复绿色通知',
+    groupWatchLoadFailed: '加载分组订阅提醒失败',
+    groupWatchAllMarkedRead: '所有分组订阅提醒已标记为已读',
+    goToChannelStatus: '前往渠道状态'
   },
 
   // User Subscriptions Page

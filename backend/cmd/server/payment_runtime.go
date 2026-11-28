@@ -14,11 +14,12 @@ import (
 )
 
 // provideNotificationRuntime preserves the gateway notifications in both payment roles.
-func provideNotificationRuntime(db *sql.DB, encryptor service.SecretEncryptor, balance *service.BalanceNotifyService, cnBalance *service.CNProviderBalanceCheckService) *notify.UserBarkService {
+func provideNotificationRuntime(db *sql.DB, encryptor service.SecretEncryptor, balance *service.BalanceNotifyService, cnBalance *service.CNProviderBalanceCheckService, groupWatch *service.GroupWatchService) *notify.UserBarkService {
 	bark := notify.NewUserBarkService(db, notify.AdaptEncryptor(encryptor))
 	push := notify.NewPushAdapter(bark)
 	balance.SetPushNotifier(push)
 	cnBalance.SetPushNotifier(push)
+	groupWatch.SetPushNotifier(push)
 	middleware.SetBalanceExhaustedNotifier(balance.NotifyInsufficientBalance)
 	return bark
 }
